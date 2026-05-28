@@ -6,9 +6,112 @@ use rpc::{RpcState, rpc_kill, rpc_send, rpc_spawn};
 use serde::Serialize;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use tauri::menu::MenuBuilder;
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+use tauri::Manager;
+
+const TRAY_MENU_SHOW: &str = "show";
+const TRAY_MENU_QUIT: &str = "quit";
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum DesktopCloseBehavior {
+    CloseToTray,
+    CloseToQuit,
+}
 
 fn pasted_images_dir() -> PathBuf {
     std::env::temp_dir().join("reasonix-pasted-images")
+}
+
+fn parse_desktop_close_behavior(value: &serde_json::Value) -> DesktopCloseBehavior {
+    if let Some(raw) = value
+        .get("desktopCloseBehavior")
+        .and_then(serde_json::Value::as_str)
+    {
+        return match raw.trim() {
+            "closeToQuit" | "quit" | "close-to-quit" => DesktopCloseBehavior::CloseToQuit,
+            _ => DesktopCloseBehavior::CloseToTray,
+        };
+    }
+    match value
+        .get("closeToTray")
+        .and_then(serde_json::Value::as_bool)
+    {
+        Some(false) => DesktopCloseBehavior::CloseToQuit,
+        _ => DesktopCloseBehavior::CloseToTray,
+    }
+}
+
+fn config_path() -> Option<PathBuf> {
+    if let Some(path) = std::env::var_os("REASONIX_CONFIG") {
+        return Some(PathBuf::from(path));
+    }
+    let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE"))?;
+    Some(PathBuf::from(home).join(".reasonix").join("config.json"))
+}
+
+fn desktop_close_behavior() -> DesktopCloseBehavior {
+    if let Ok(raw) = std::env::var("REASONIX_DESKTOP_CLOSE_BEHAVIOR") {
+        return match raw.trim() {
+            "closeToQuit" | "quit" | "close-to-quit" => DesktopCloseBehavior::CloseToQuit,
+            _ => DesktopCloseBehavior::CloseToTray,
+        };
+    }
+    let Some(path) = config_path() else {
+        return DesktopCloseBehavior::CloseToTray;
+    };
+    let Ok(raw) = std::fs::read_to_string(path) else {
+        return DesktopCloseBehavior::CloseToTray;
+    };
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(&raw) else {
+        return DesktopCloseBehavior::CloseToTray;
+    };
+    parse_desktop_close_behavior(&value)
+}
+
+fn show_main_window<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.unminimize();
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
+}
+
+fn install_tray(app: &mut tauri::App) -> tauri::Result<()> {
+    let menu = MenuBuilder::new(app)
+        .text(TRAY_MENU_SHOW, "Show Window")
+        .separator()
+        .text(TRAY_MENU_QUIT, "Quit Reasonix")
+        .build()?;
+
+    let mut tray = TrayIconBuilder::with_id("main")
+        .tooltip("Reasonix")
+        .menu(&menu)
+        .show_menu_on_left_click(false)
+        .on_menu_event(|app, event| match event.id().as_ref() {
+            TRAY_MENU_SHOW => show_main_window(app),
+            TRAY_MENU_QUIT => app.exit(0),
+            _ => {}
+        })
+        .on_tray_icon_event(|tray, event| match event {
+            TrayIconEvent::Click {
+                button: MouseButton::Left,
+                button_state: MouseButtonState::Up,
+                ..
+            }
+            | TrayIconEvent::DoubleClick {
+                button: MouseButton::Left,
+                ..
+            } => show_main_window(tray.app_handle()),
+            _ => {}
+        });
+
+    if let Some(icon) = app.default_window_icon().cloned() {
+        tray = tray.icon(icon);
+    }
+
+    tray.build(app)?;
+    Ok(())
 }
 
 /// #892: bundled libwayland in AppImage can ABI-mismatch the host Wayland
@@ -264,6 +367,17 @@ fn main() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_window_state::Builder::default().build())
+        .on_window_event(|window, event| {
+            if window.label() != "main" {
+                return;
+            }
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                if desktop_close_behavior() == DesktopCloseBehavior::CloseToTray {
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
+            }
+        })
         .manage(RpcState::default())
         .invoke_handler(tauri::generate_handler![
             rpc_spawn,
@@ -276,8 +390,8 @@ fn main() {
             save_clipboard_image
         ])
         .setup(|app| {
-            use tauri::Manager;
             std::thread::spawn(|| purge_old_pasted_images(Duration::from_secs(24 * 60 * 60)));
+            install_tray(app)?;
             if let Some(w) = app.get_webview_window("main") {
                 // HiDPI fit: the JSON config asks for 1024x720 logical px.
                 // On Windows laptops at 200% scale (1920x1080 → 960x540
@@ -309,21 +423,31 @@ fn main() {
         })
         .build(tauri::generate_context!())
         .expect("tauri build failed")
-        .run(|app, event| {
+        .run(|app, event| match event {
             // Tauri 2 normally exits the process via Exit; managed-state drops
             // don't always run. ExitRequested fires before that, so we kill the
             // Node child here too — belt-and-braces vs the Drop on RpcHandle.
-            if let tauri::RunEvent::ExitRequested { .. } = event {
-                use tauri::Manager;
+            tauri::RunEvent::ExitRequested { .. } => {
                 let state = app.state::<RpcState>();
                 let _ = rpc::rpc_kill(state);
             }
+            #[cfg(target_os = "macos")]
+            tauri::RunEvent::Reopen {
+                has_visible_windows,
+                ..
+            } => {
+                if !has_visible_windows {
+                    show_main_window(app);
+                }
+            }
+            _ => {}
         });
 }
 
 #[cfg(test)]
 mod tests {
-    use super::sanitize_image_extension;
+    use super::{parse_desktop_close_behavior, sanitize_image_extension, DesktopCloseBehavior};
+    use serde_json::json;
 
     #[test]
     fn accepts_alphanumeric_extensions() {
@@ -351,5 +475,33 @@ mod tests {
     #[test]
     fn rejects_overlong_extensions() {
         assert_eq!(sanitize_image_extension(Some("verylongext")), "png");
+    }
+
+    #[test]
+    fn desktop_close_behavior_defaults_to_tray() {
+        assert_eq!(
+            parse_desktop_close_behavior(&json!({})),
+            DesktopCloseBehavior::CloseToTray
+        );
+        assert_eq!(
+            parse_desktop_close_behavior(&json!({ "desktopCloseBehavior": "closeToTray" })),
+            DesktopCloseBehavior::CloseToTray
+        );
+    }
+
+    #[test]
+    fn desktop_close_behavior_accepts_quit_modes() {
+        assert_eq!(
+            parse_desktop_close_behavior(&json!({ "desktopCloseBehavior": "closeToQuit" })),
+            DesktopCloseBehavior::CloseToQuit
+        );
+        assert_eq!(
+            parse_desktop_close_behavior(&json!({ "desktopCloseBehavior": "quit" })),
+            DesktopCloseBehavior::CloseToQuit
+        );
+        assert_eq!(
+            parse_desktop_close_behavior(&json!({ "closeToTray": false })),
+            DesktopCloseBehavior::CloseToQuit
+        );
     }
 }

@@ -166,6 +166,10 @@ export interface ReasonixConfig {
   recentWorkspaces?: string[];
   /** Desktop only — open tabs in tab order, each with its workspace dir, loaded session and focus, persisted so restart restores every tab and its conversation (issues #933, #1244). Empty/absent → boot with a single default tab. */
   desktopOpenTabs?: DesktopOpenTab[];
+  /** Desktop only — window close behavior. "closeToTray" (default) hides the window and keeps sessions running; "closeToQuit" exits Reasonix. */
+  desktopCloseBehavior?: "closeToTray" | "closeToQuit";
+  /** Desktop only — boolean alias for desktopCloseBehavior. false means closeToQuit. */
+  closeToTray?: boolean;
   /** Desktop only — `openWith` value for clicking file links. Empty/undefined = OS default app. Examples: "code", "cursor", "C:\\path\\to\\editor.exe". */
   editor?: string;
   theme?: ThemeName | "auto";
