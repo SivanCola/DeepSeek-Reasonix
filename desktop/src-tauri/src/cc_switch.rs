@@ -117,26 +117,36 @@ fn load_from_db(path: &Path) -> Result<Vec<ImportedMcpServer>, String> {
     } else {
         return Err("mcp_servers table has no server or server_config column".to_string());
     };
-    let order_by = if columns.iter().any(|column| column == "name") {
+    let has_name_column = columns.iter().any(|column| column == "name");
+    let name_column = if has_name_column { "name" } else { "id" };
+    let order_by = if has_name_column {
         "name ASC, id ASC"
     } else {
         "id ASC"
     };
-    let query = format!("SELECT id, {config_column} FROM mcp_servers ORDER BY {order_by}");
+    let query =
+        format!("SELECT id, {name_column}, {config_column} FROM mcp_servers ORDER BY {order_by}");
     let mut stmt = conn.prepare(&query).map_err(|err| err.to_string())?;
     let rows = stmt
         .query_map([], |row| {
             let id: String = row.get(0)?;
-            let config: String = row.get(1)?;
-            Ok((id, config))
+            let name: String = row.get(1)?;
+            let config: String = row.get(2)?;
+            Ok((id, name, config))
         })
         .map_err(|err| err.to_string())?;
 
     let mut servers = Vec::new();
     for row in rows {
-        let (id, config) = row.map_err(|err| err.to_string())?;
+        let (id, name, config) = row.map_err(|err| err.to_string())?;
         let parsed: Value = serde_json::from_str(&config).map_err(|err| err.to_string())?;
-        if let Some(server) = parse_server(&id, &parsed) {
+        let display_name = name.trim();
+        let import_name = if display_name.is_empty() {
+            id.as_str()
+        } else {
+            display_name
+        };
+        if let Some(server) = parse_server(import_name, &parsed) {
             servers.push(server);
         }
     }
@@ -383,7 +393,7 @@ mod tests {
             .to_string();
             conn.execute(
                 "INSERT INTO mcp_servers (id, name, server) VALUES (?1, ?2, ?3)",
-                params!["remote", "Remote", server],
+                params!["123e4567-e89b-12d3-a456-426614174000", "Remote", server],
             )
             .expect("row should insert");
         }
@@ -392,7 +402,7 @@ mod tests {
         fs::remove_file(&path).ok();
 
         assert_eq!(servers.len(), 1);
-        assert_eq!(servers[0].name, "remote");
+        assert_eq!(servers[0].name, "Remote");
         assert_eq!(servers[0].transport, "streamable-http");
         assert_eq!(servers[0].url.as_deref(), Some("https://example.test/mcp"));
     }
@@ -428,7 +438,7 @@ mod tests {
         fs::remove_file(&path).ok();
 
         assert_eq!(servers.len(), 1);
-        assert_eq!(servers[0].name, "stdio");
+        assert_eq!(servers[0].name, "Stdio");
         assert_eq!(servers[0].transport, "stdio");
         assert_eq!(servers[0].command.as_deref(), Some("npx"));
     }

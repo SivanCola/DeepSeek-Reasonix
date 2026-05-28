@@ -747,6 +747,22 @@ function stripLegacyMcpConfigForNames(
   }
 }
 
+function legacyMcpRawMatches(entry: string, target: string): boolean {
+  if (entry === target) return true;
+  try {
+    return specToRaw(parseMcpSpec(entry)) === target;
+  } catch {
+    return false;
+  }
+}
+
+/** Remove the legacy raw spec being edited before saving its canonical `mcpServers` entry. */
+export function stripLegacyMcpConfigForRaw(cfg: ReturnType<typeof readConfig>, raw: string): void {
+  if (!Array.isArray(cfg.mcp) || cfg.mcp.length === 0) return;
+  cfg.mcp = cfg.mcp.filter((entry) => !legacyMcpRawMatches(entry, raw));
+  if (cfg.mcp.length === 0) cfg.mcp = undefined;
+}
+
 /** Drain `buffer` to `fd` across partial writes; retry EAGAIN after a 5 ms park. Exported for tests. */
 export function writeAllSync(
   fd: number,
@@ -2832,6 +2848,7 @@ export async function desktopCommand(opts: DesktopOptions): Promise<void> {
         }
         canonical[normalized.name] = normalized.config;
         cfg.mcpServers = canonical;
+        stripLegacyMcpConfigForRaw(cfg, msg.raw);
         stripLegacyMcpConfigForNames(
           cfg,
           new Set([normalized.name, ...(oldName ? [oldName] : [])]),
