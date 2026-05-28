@@ -21,6 +21,7 @@ import {
   type DesktopOpenTab,
   type EditMode,
   type McpServerConfig,
+  type ReasonixConfig,
   bridgeEndpointEnv,
   isPlausibleKey,
   isReasoningEffort,
@@ -646,7 +647,7 @@ function normalizeStringArray(value: unknown): string[] | undefined {
   return value.filter((entry): entry is string => typeof entry === "string");
 }
 
-function normalizeImportedMcpServer(
+export function normalizeImportedMcpServer(
   value: unknown,
 ): { name: string; config: McpServerConfig } | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
@@ -694,7 +695,7 @@ function normalizeImportedMcpServer(
   return null;
 }
 
-function rawForImportedMcpServer(name: string, config: McpServerConfig): string | undefined {
+function rawForImportedMcpServer(name: string | null, config: McpServerConfig): string | undefined {
   if (config.transport === "stdio") {
     if (!config.command) return undefined;
     return specToRaw({
@@ -741,10 +742,7 @@ function importedMcpServerFromSpec(spec: McpServerSpec): ImportedMcpServerInfo |
   };
 }
 
-function stripLegacyMcpConfigForNames(
-  cfg: ReturnType<typeof readConfig>,
-  names: ReadonlySet<string>,
-): void {
+function stripLegacyMcpConfigForNames(cfg: ReasonixConfig, names: ReadonlySet<string>): void {
   if (names.size === 0) return;
   if (Array.isArray(cfg.mcp) && cfg.mcp.length > 0) {
     cfg.mcp = cfg.mcp.filter((raw) => {
@@ -777,10 +775,72 @@ function legacyMcpRawMatches(entry: string, target: string): boolean {
 }
 
 /** Remove the legacy raw spec being edited before saving its canonical `mcpServers` entry. */
-export function stripLegacyMcpConfigForRaw(cfg: ReturnType<typeof readConfig>, raw: string): void {
+export function stripLegacyMcpConfigForRaw(cfg: ReasonixConfig, raw: string): void {
   if (!Array.isArray(cfg.mcp) || cfg.mcp.length === 0) return;
   cfg.mcp = cfg.mcp.filter((entry) => !legacyMcpRawMatches(entry, raw));
   if (cfg.mcp.length === 0) cfg.mcp = undefined;
+}
+
+function importedMcpRawVariants(name: string, config: McpServerConfig): string[] {
+  const variants = [rawForImportedMcpServer(name, config), rawForImportedMcpServer(null, config)];
+  return [...new Set(variants.filter((raw): raw is string => typeof raw === "string"))];
+}
+
+export function applyImportedMcpServersToConfig(
+  cfg: ReasonixConfig,
+  servers: unknown[],
+): { forceSpecs: string[] } {
+  const canonical = { ...(cfg.mcpServers ?? {}) };
+  const importedNames = new Set<string>();
+  const forceSpecs = new Set<string>();
+  const legacyRawSpecs = new Set<string>();
+  for (const server of servers) {
+    const normalized = normalizeImportedMcpServer(server);
+    if (!normalized) continue;
+    canonical[normalized.name] = normalized.config;
+    importedNames.add(normalized.name);
+    const [raw, ...legacyVariants] = importedMcpRawVariants(normalized.name, normalized.config);
+    if (raw) forceSpecs.add(raw);
+    for (const variant of legacyVariants) legacyRawSpecs.add(variant);
+  }
+  if (importedNames.size === 0) {
+    throw new Error("no valid servers received");
+  }
+  cfg.mcpServers = canonical;
+  stripLegacyMcpConfigForNames(cfg, importedNames);
+  for (const raw of legacyRawSpecs) stripLegacyMcpConfigForRaw(cfg, raw);
+  return { forceSpecs: [...forceSpecs] };
+}
+
+export function applyMcpSpecUpdateToConfig(
+  cfg: ReasonixConfig,
+  raw: string,
+  server: unknown,
+): { updatedRaw?: string; forceSpecs: string[] } {
+  const normalized = normalizeImportedMcpServer(server);
+  if (!normalized) {
+    throw new Error("invalid server config");
+  }
+  const canonical = { ...(cfg.mcpServers ?? {}) };
+  let oldName: string | undefined;
+  try {
+    oldName = parseMcpSpec(raw).name ?? undefined;
+  } catch {
+    oldName = undefined;
+  }
+  if (oldName && oldName !== normalized.name) {
+    delete canonical[oldName];
+  }
+  canonical[normalized.name] = normalized.config;
+  cfg.mcpServers = canonical;
+  stripLegacyMcpConfigForRaw(cfg, raw);
+  stripLegacyMcpConfigForNames(cfg, new Set([normalized.name, ...(oldName ? [oldName] : [])]));
+  for (const variant of importedMcpRawVariants(normalized.name, normalized.config).slice(1)) {
+    stripLegacyMcpConfigForRaw(cfg, variant);
+  }
+  if (Object.keys(cfg.mcpServers).length === 0) cfg.mcpServers = undefined;
+  const updatedRaw = rawForImportedMcpServer(normalized.name, normalized.config);
+  return { updatedRaw, forceSpecs: [...new Set([raw, ...(updatedRaw ? [updatedRaw] : [])])] };
 }
 
 /** Drain `buffer` to `fd` across partial writes; retry EAGAIN after a 5 ms park. Exported for tests. */
@@ -1099,7 +1159,7 @@ function summarizeMcpSpec(raw: string): McpSpecInfo {
   }
 }
 
-function classifyMcpStatusReason(reason: string | undefined): McpStatusHint | undefined {
+export function classifyMcpStatusReason(reason: string | undefined): McpStatusHint | undefined {
   if (!reason) return undefined;
   const lower = reason.toLowerCase();
   if (lower.includes("no bearer token") || lower.includes("missing bearer")) {
@@ -2942,29 +3002,10 @@ export async function desktopCommand(opts: DesktopOptions): Promise<void> {
     if (msg.cmd === "mcp_import_servers") {
       try {
         const cfg = readConfig();
-        const canonical = { ...(cfg.mcpServers ?? {}) };
-        const importedNames = new Set<string>();
-        const forceSpecs = new Set<string>();
-        for (const server of msg.servers) {
-          const normalized = normalizeImportedMcpServer(server);
-          if (!normalized) continue;
-          canonical[normalized.name] = normalized.config;
-          importedNames.add(normalized.name);
-          const raw = rawForImportedMcpServer(normalized.name, normalized.config);
-          if (raw) forceSpecs.add(raw);
-        }
-        if (importedNames.size === 0) {
-          emit(
-            { type: "$error", message: "mcp_import_servers: no valid servers received" },
-            tab.id,
-          );
-          return;
-        }
-        cfg.mcpServers = canonical;
-        stripLegacyMcpConfigForNames(cfg, importedNames);
+        const { forceSpecs } = applyImportedMcpServersToConfig(cfg, msg.servers);
         writeConfig(cfg);
         emitMcpSpecs(tab);
-        void bridgeTabMcp(tab, { forceSpecs: [...forceSpecs] });
+        void bridgeTabMcp(tab, { forceSpecs });
       } catch (err) {
         emit({ type: "$error", message: `mcp_import_servers: ${(err as Error).message}` }, tab.id);
       }
@@ -2972,38 +3013,13 @@ export async function desktopCommand(opts: DesktopOptions): Promise<void> {
     }
     if (msg.cmd === "mcp_specs_update") {
       try {
-        const normalized = normalizeImportedMcpServer(msg.server);
-        if (!normalized) {
-          emit({ type: "$error", message: "mcp_specs_update: invalid server config" }, tab.id);
-          return;
-        }
         const cfg = readConfig();
-        const canonical = { ...(cfg.mcpServers ?? {}) };
-        let oldName: string | undefined;
-        try {
-          oldName = parseMcpSpec(msg.raw).name ?? undefined;
-        } catch {
-          oldName = undefined;
-        }
-        if (oldName && oldName !== normalized.name) {
-          delete canonical[oldName];
-        }
-        canonical[normalized.name] = normalized.config;
-        cfg.mcpServers = canonical;
-        stripLegacyMcpConfigForRaw(cfg, msg.raw);
-        stripLegacyMcpConfigForNames(
-          cfg,
-          new Set([normalized.name, ...(oldName ? [oldName] : [])]),
-        );
-        if (Object.keys(cfg.mcpServers).length === 0) cfg.mcpServers = undefined;
+        const { updatedRaw, forceSpecs } = applyMcpSpecUpdateToConfig(cfg, msg.raw, msg.server);
         writeConfig(cfg);
-        const updatedRaw = rawForImportedMcpServer(normalized.name, normalized.config);
         tab.mcpStatuses.delete(msg.raw);
         if (updatedRaw) tab.mcpStatuses.delete(updatedRaw);
         emitMcpSpecs(tab);
-        void bridgeTabMcp(tab, {
-          forceSpecs: [...new Set([msg.raw, ...(updatedRaw ? [updatedRaw] : [])])],
-        });
+        void bridgeTabMcp(tab, { forceSpecs });
       } catch (err) {
         emit({ type: "$error", message: `mcp_specs_update: ${(err as Error).message}` }, tab.id);
       }
