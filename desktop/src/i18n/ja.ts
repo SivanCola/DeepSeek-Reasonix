@@ -51,6 +51,7 @@ export const ja = {
     searchPlaceholder: "最近のパスを検索…",
     empty: "最近のワークスペースはありません",
     browse: "ローカルを参照…",
+    removeRecent: "履歴から削除",
   },
   sidebar: {
     newChat: "新しいチャット",
@@ -157,6 +158,11 @@ export const ja = {
       "コンテキスト圧縮、中断、レート制限の一時停止に関する静かなインライン通知を表示します。",
     shown: "表示",
     hidden: "非表示",
+    desktopCloseBehavior: "ウィンドウを閉じる",
+    desktopCloseBehaviorHint:
+      "既定では閉じると終了します。トレイに隠すと実行中のセッションを維持します。",
+    closeToQuit: "終了",
+    closeToTray: "トレイに隠す",
     editModeReviewDesc: "すべての書き込みを承認",
     editModeAutoDesc: "コマンドを承認、編集は自動",
     editModeYoloDesc: "すべて自動承認 — 完全自動",

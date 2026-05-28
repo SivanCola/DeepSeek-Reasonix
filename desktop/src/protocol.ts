@@ -310,6 +310,7 @@ export type SettingsEvent = {
   recentWorkspaces: string[];
   model: string;
   editor?: string;
+  desktopCloseBehavior?: "closeToTray" | "closeToQuit";
   webSearchEngine?: WebSearchEngineName;
   webSearchEndpoint?: string;
   webSearchApiKeys?: {
@@ -362,6 +363,7 @@ export type SettingsPatch = {
   recentWorkspaces?: string[];
   model?: string;
   editor?: string;
+  desktopCloseBehavior?: "closeToTray" | "closeToQuit";
   webSearchEngine?: WebSearchEngineName;
   webSearchEndpoint?: string | null;
   metasoApiKey?: string | null;

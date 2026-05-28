@@ -248,6 +248,7 @@ export type Settings = {
   recentWorkspaces: string[];
   model: string;
   editor?: string;
+  desktopCloseBehavior?: "closeToTray" | "closeToQuit";
   webSearchEngine?: "bing" | "bing-intl" | "searxng" | "metaso" | "tavily" | "perplexity" | "exa" | "brave" | "ollama";
   webSearchEndpoint?: string;
   webSearchApiKeys?: {
@@ -989,6 +990,7 @@ function applyIncomingRaw(state: State, ev: IncomingEvent): State {
           recentWorkspaces: ev.recentWorkspaces,
           model: ev.model,
           editor: ev.editor,
+          desktopCloseBehavior: ev.desktopCloseBehavior,
           webSearchEngine: ev.webSearchEngine,
           webSearchEndpoint: ev.webSearchEndpoint,
           webSearchApiKeys: ev.webSearchApiKeys,

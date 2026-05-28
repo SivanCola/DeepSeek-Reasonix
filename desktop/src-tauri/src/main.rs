@@ -2,7 +2,7 @@
 
 mod rpc;
 
-use rpc::{RpcState, rpc_kill, rpc_send, rpc_spawn};
+use rpc::{rpc_kill, rpc_send, rpc_spawn, RpcState};
 use serde::Serialize;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -24,47 +24,29 @@ fn pasted_images_dir() -> PathBuf {
 }
 
 fn parse_desktop_close_behavior(value: &serde_json::Value) -> DesktopCloseBehavior {
-    if let Some(raw) = value
+    match value
         .get("desktopCloseBehavior")
         .and_then(serde_json::Value::as_str)
     {
-        return match raw.trim() {
-            "closeToQuit" | "quit" | "close-to-quit" => DesktopCloseBehavior::CloseToQuit,
-            _ => DesktopCloseBehavior::CloseToTray,
-        };
-    }
-    match value
-        .get("closeToTray")
-        .and_then(serde_json::Value::as_bool)
-    {
-        Some(false) => DesktopCloseBehavior::CloseToQuit,
-        _ => DesktopCloseBehavior::CloseToTray,
+        Some("closeToTray") => DesktopCloseBehavior::CloseToTray,
+        _ => DesktopCloseBehavior::CloseToQuit,
     }
 }
 
 fn config_path() -> Option<PathBuf> {
-    if let Some(path) = std::env::var_os("REASONIX_CONFIG") {
-        return Some(PathBuf::from(path));
-    }
     let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE"))?;
     Some(PathBuf::from(home).join(".reasonix").join("config.json"))
 }
 
 fn desktop_close_behavior() -> DesktopCloseBehavior {
-    if let Ok(raw) = std::env::var("REASONIX_DESKTOP_CLOSE_BEHAVIOR") {
-        return match raw.trim() {
-            "closeToQuit" | "quit" | "close-to-quit" => DesktopCloseBehavior::CloseToQuit,
-            _ => DesktopCloseBehavior::CloseToTray,
-        };
-    }
     let Some(path) = config_path() else {
-        return DesktopCloseBehavior::CloseToTray;
+        return DesktopCloseBehavior::CloseToQuit;
     };
     let Ok(raw) = std::fs::read_to_string(path) else {
-        return DesktopCloseBehavior::CloseToTray;
+        return DesktopCloseBehavior::CloseToQuit;
     };
     let Ok(value) = serde_json::from_str::<serde_json::Value>(&raw) else {
-        return DesktopCloseBehavior::CloseToTray;
+        return DesktopCloseBehavior::CloseToQuit;
     };
     parse_desktop_close_behavior(&value)
 }
@@ -191,7 +173,9 @@ fn walk_dir(dir: &Path, depth: u32, max_depth: u32, out: &mut Vec<FileEntry>) {
         if name.starts_with('.') || SKIP_DIRS.contains(&name.as_str()) {
             continue;
         }
-        let Ok(file_type) = entry.file_type() else { continue };
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
         let path = entry.path().to_string_lossy().into_owned();
         if file_type.is_dir() {
             out.push(FileEntry {
@@ -237,7 +221,10 @@ fn git_status(root: String) -> Result<Vec<GitStatusEntry>, String> {
         return Err(format!("not a directory: {root}"));
     }
     let mut cmd = Command::new("git");
-    cmd.arg("status").arg("--porcelain").arg("-z").current_dir(root_path);
+    cmd.arg("status")
+        .arg("--porcelain")
+        .arg("-z")
+        .current_dir(root_path);
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -308,7 +295,9 @@ fn open_in_editor(command: String, path: String, line: Option<u32>) -> Result<()
             cmd.arg(&path);
         }
     }
-    cmd.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
+    cmd.stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
     cmd.spawn().map_err(|e| format!("spawn {trimmed}: {e}"))?;
     Ok(())
 }
@@ -325,7 +314,11 @@ fn sanitize_image_extension(raw: Option<&str>) -> String {
     let ok = !cleaned.is_empty()
         && cleaned.len() <= 8
         && cleaned.chars().all(|c| c.is_ascii_alphanumeric());
-    if ok { cleaned } else { "png".to_string() }
+    if ok {
+        cleaned
+    } else {
+        "png".to_string()
+    }
 }
 
 #[tauri::command]
@@ -344,12 +337,20 @@ fn save_clipboard_image(bytes: Vec<u8>, extension: Option<String>) -> Result<Str
 
 fn purge_old_pasted_images(max_age: Duration) {
     let dir = pasted_images_dir();
-    let Ok(entries) = std::fs::read_dir(&dir) else { return };
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return;
+    };
     let cutoff = SystemTime::now().checked_sub(max_age);
     for entry in entries.flatten() {
-        let Ok(metadata) = entry.metadata() else { continue };
-        if !metadata.is_file() { continue }
-        let Ok(modified) = metadata.modified() else { continue };
+        let Ok(metadata) = entry.metadata() else {
+            continue;
+        };
+        if !metadata.is_file() {
+            continue;
+        }
+        let Ok(modified) = metadata.modified() else {
+            continue;
+        };
         if cutoff.is_some_and(|t| modified < t) {
             let _ = std::fs::remove_file(entry.path());
         }
@@ -433,13 +434,9 @@ fn main() {
             }
             #[cfg(target_os = "macos")]
             tauri::RunEvent::Reopen {
-                has_visible_windows,
+                has_visible_windows: false,
                 ..
-            } => {
-                if !has_visible_windows {
-                    show_main_window(app);
-                }
-            }
+            } => show_main_window(app),
             _ => {}
         });
 }
@@ -478,11 +475,15 @@ mod tests {
     }
 
     #[test]
-    fn desktop_close_behavior_defaults_to_tray() {
+    fn desktop_close_behavior_defaults_to_quit() {
         assert_eq!(
             parse_desktop_close_behavior(&json!({})),
-            DesktopCloseBehavior::CloseToTray
+            DesktopCloseBehavior::CloseToQuit
         );
+    }
+
+    #[test]
+    fn desktop_close_behavior_accepts_tray_mode() {
         assert_eq!(
             parse_desktop_close_behavior(&json!({ "desktopCloseBehavior": "closeToTray" })),
             DesktopCloseBehavior::CloseToTray
@@ -490,17 +491,9 @@ mod tests {
     }
 
     #[test]
-    fn desktop_close_behavior_accepts_quit_modes() {
+    fn desktop_close_behavior_accepts_quit_mode() {
         assert_eq!(
             parse_desktop_close_behavior(&json!({ "desktopCloseBehavior": "closeToQuit" })),
-            DesktopCloseBehavior::CloseToQuit
-        );
-        assert_eq!(
-            parse_desktop_close_behavior(&json!({ "desktopCloseBehavior": "quit" })),
-            DesktopCloseBehavior::CloseToQuit
-        );
-        assert_eq!(
-            parse_desktop_close_behavior(&json!({ "closeToTray": false })),
             DesktopCloseBehavior::CloseToQuit
         );
     }

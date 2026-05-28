@@ -169,6 +169,11 @@ export const de: typeof en = {
       "Zeige leise Inline-Hinweise zur Kontextkomprimierung, Abbruch und Ratelimit-Pausen.",
     shown: "angezeigt",
     hidden: "ausgeblendet",
+    desktopCloseBehavior: "Fenster schließen",
+    desktopCloseBehaviorHint:
+      "Standardmäßig beendet Schließen die App. In die Ablage ausblenden hält laufende Sitzungen aktiv.",
+    closeToQuit: "beenden",
+    closeToTray: "in Ablage",
     editModeReviewDesc: "jeden Schreibzugriff genehmigen",
     editModeAutoDesc: "Befehle genehmigen, Edits auto-anwenden",
     editModeYoloDesc: "nichts genehmigen — Vollautomatik",

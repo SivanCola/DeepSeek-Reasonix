@@ -703,6 +703,28 @@ function PageGeneral({
         </div>
         <div className="setting-row">
           <div className="l">
+            <div className="n">{t("settings.desktopCloseBehavior")}</div>
+            <div className="h">{t("settings.desktopCloseBehaviorHint")}</div>
+          </div>
+          <div className="seg-ctrl">
+            <button
+              type="button"
+              data-on={(settings.desktopCloseBehavior ?? "closeToQuit") === "closeToQuit"}
+              onClick={() => onSave({ desktopCloseBehavior: "closeToQuit" })}
+            >
+              {t("settings.closeToQuit")}
+            </button>
+            <button
+              type="button"
+              data-on={settings.desktopCloseBehavior === "closeToTray"}
+              onClick={() => onSave({ desktopCloseBehavior: "closeToTray" })}
+            >
+              {t("settings.closeToTray")}
+            </button>
+          </div>
+        </div>
+        <div className="setting-row">
+          <div className="l">
             <div className="n">{t("settings.budget")}</div>
             <div className="h">{t("settings.budgetHint")}</div>
           </div>

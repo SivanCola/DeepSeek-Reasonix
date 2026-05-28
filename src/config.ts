@@ -23,6 +23,7 @@ import {
 
 /** Single trust dial: review queues edits + gates shell; auto applies + gates shell; yolo skips both gates; plan blocks every non-readonly tool (write_file / edit_file / multi_edit / run_command) at dispatch. */
 export type EditMode = "review" | "auto" | "yolo" | "plan";
+export type DesktopCloseBehavior = "closeToTray" | "closeToQuit";
 
 export const DEFAULT_MODEL = "deepseek-v4-flash";
 
@@ -166,10 +167,8 @@ export interface ReasonixConfig {
   recentWorkspaces?: string[];
   /** Desktop only — open tabs in tab order, each with its workspace dir, loaded session and focus, persisted so restart restores every tab and its conversation (issues #933, #1244). Empty/absent → boot with a single default tab. */
   desktopOpenTabs?: DesktopOpenTab[];
-  /** Desktop only — window close behavior. "closeToTray" (default) hides the window and keeps sessions running; "closeToQuit" exits Reasonix. */
-  desktopCloseBehavior?: "closeToTray" | "closeToQuit";
-  /** Desktop only — boolean alias for desktopCloseBehavior. false means closeToQuit. */
-  closeToTray?: boolean;
+  /** Desktop only — window close behavior. "closeToTray" hides the window and keeps sessions running; "closeToQuit" exits Reasonix. Default closeToQuit. */
+  desktopCloseBehavior?: DesktopCloseBehavior;
   /** Desktop only — `openWith` value for clicking file links. Empty/undefined = OS default app. Examples: "code", "cursor", "C:\\path\\to\\editor.exe". */
   editor?: string;
   theme?: ThemeName | "auto";
@@ -1264,6 +1263,19 @@ export function saveEditor(editor: string, path: string = defaultConfigPath()): 
   const trimmed = editor.trim();
   if (trimmed) cfg.editor = trimmed;
   else cfg.editor = undefined;
+  writeConfig(cfg, path);
+}
+
+export function loadDesktopCloseBehavior(path: string = defaultConfigPath()): DesktopCloseBehavior {
+  return readConfig(path).desktopCloseBehavior === "closeToTray" ? "closeToTray" : "closeToQuit";
+}
+
+export function saveDesktopCloseBehavior(
+  behavior: DesktopCloseBehavior,
+  path: string = defaultConfigPath(),
+): void {
+  const cfg = readConfig(path);
+  cfg.desktopCloseBehavior = behavior;
   writeConfig(cfg, path);
 }
 
