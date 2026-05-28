@@ -230,6 +230,17 @@ export type UsageStats = {
   liveLogTokens: number;
 };
 
+type WindowControls = Pick<ReturnType<typeof getCurrentWindow>, "isFullscreen" | "isMaximized" | "setFullscreen" | "toggleMaximize">;
+
+export function readWindowExpanded(win: WindowControls, isMac: boolean): Promise<boolean> {
+  return isMac ? win.isFullscreen() : win.isMaximized();
+}
+
+export function toggleWindowExpanded(win: WindowControls, isMac: boolean, expanded: boolean): Promise<void> {
+  if (isMac) return win.setFullscreen(!expanded);
+  return win.toggleMaximize();
+}
+
 export type SessionInfo = {
   name: string;
   messageCount: number;
@@ -249,10 +260,21 @@ export type Settings = {
   model: string;
   editor?: string;
   desktopCloseBehavior?: "closeToTray" | "closeToQuit";
-  webSearchEngine?: "bing" | "bing-intl" | "searxng" | "metaso" | "tavily" | "perplexity" | "exa" | "brave" | "ollama";
+  webSearchEngine?:
+    | "bing"
+    | "bing-intl"
+    | "searxng"
+    | "metaso"
+    | "baidu"
+    | "tavily"
+    | "perplexity"
+    | "exa"
+    | "brave"
+    | "ollama";
   webSearchEndpoint?: string;
   webSearchApiKeys?: {
     metaso?: string;
+    baidu?: string;
     tavily?: string;
     perplexity?: string;
     exa?: string;
@@ -260,7 +282,10 @@ export type Settings = {
     brave?: string;
   };
   subagentModels?: Record<string, "flash" | "pro">;
+  /** Per-model context-window override (tokens). */
+  contextTokens?: Record<string, number>;
   showSystemEvents?: boolean;
+  promptHistory?: string[];
   version: string;
 };
 
@@ -363,6 +388,7 @@ type Action =
 function sanitizeSettingsPatch(patch: SettingsPatch): Partial<Settings> {
   const {
     metasoApiKey: _metaso,
+    baiduApiKey: _baidu,
     tavilyApiKey: _tavily,
     perplexityApiKey: _perplexity,
     exaApiKey: _exa,
@@ -996,6 +1022,7 @@ function applyIncomingRaw(state: State, ev: IncomingEvent): State {
           webSearchApiKeys: ev.webSearchApiKeys,
           subagentModels: ev.subagentModels,
           showSystemEvents: ev.showSystemEvents,
+          promptHistory: ev.promptHistory,
           version: ev.version,
         },
       };
@@ -2449,6 +2476,15 @@ function TabRuntime({
                   setDraft("");
                 }}
                 onDequeueSend={(index) => dispatch({ t: "dequeue_send", index })}
+                initialHistory={state.settings?.promptHistory}
+                onHistoryPush={(entry) => {
+                  // Use saveSettings (RPC only, no local state patch) so the
+                  // sentinel [entry] is never written into state.settings and
+                  // historyRef is not transiently reset. The backend merges
+                  // against the freshly-loaded persisted list and re-emits
+                  // $settings with the merged result (#2051).
+                  saveSettings({ promptHistory: [entry] });
+                }}
               />
             </>
           )}
@@ -2641,13 +2677,23 @@ function TitleBar({
 
   useEffect(() => {
     const win = getCurrentWindow();
-    win.isMaximized().then(setIsMaximized);
+    const syncWindowState = async () => {
+      setIsMaximized(await readWindowExpanded(win, isMac));
+    };
+    void syncWindowState();
     let unlisten: (() => void) | undefined;
     win.listen("tauri://resize", async () => {
-      setIsMaximized(await win.isMaximized());
+      await syncWindowState();
     }).then((fn) => { unlisten = fn; });
-    return () => unlisten?.();
-  }, []);
+    let fullscreenUnlisten: (() => void) | undefined;
+    win.listen("tauri://fullscreen", async () => {
+      await syncWindowState();
+    }).then((fn) => { fullscreenUnlisten = fn; });
+    return () => {
+      unlisten?.();
+      fullscreenUnlisten?.();
+    };
+  }, [isMac]);
 
   useEffect(() => {
     if (!menuOpen) return;
@@ -2698,7 +2744,7 @@ function TitleBar({
               aria-label={isMaximized ? t("app.titlebar.restore") : t("app.titlebar.maximize")}
               onMouseDown={(e) => {
                 e.stopPropagation();
-                win.toggleMaximize();
+                void toggleWindowExpanded(win, true, isMaximized);
               }}
             >
               {isMaximized ? <WinRestore /> : <WinMaximize />}
@@ -2812,7 +2858,7 @@ function TitleBar({
               type="button"
               className="win-ctrl"
               title={isMaximized ? t("app.titlebar.restore") : t("app.titlebar.maximize")}
-              onMouseDown={(e) => { e.stopPropagation(); win.toggleMaximize(); }}
+              onMouseDown={(e) => { e.stopPropagation(); void toggleWindowExpanded(win, false, isMaximized); }}
             >
               {isMaximized ? <WinRestore /> : <WinMaximize />}
             </button>

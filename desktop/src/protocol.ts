@@ -296,8 +296,17 @@ export type EditMode = "review" | "auto" | "yolo" | "plan";
 
 export type ReasoningEffort = "low" | "medium" | "high" | "max";
 
-export type WebSearchEngineName = "bing" | "bing-intl" | "searxng" | "metaso" | "tavily" | "perplexity" | "exa"
-  | "brave" | "ollama";
+export type WebSearchEngineName =
+  | "bing"
+  | "bing-intl"
+  | "searxng"
+  | "metaso"
+  | "baidu"
+  | "tavily"
+  | "perplexity"
+  | "exa"
+  | "brave"
+  | "ollama";
 
 export type SettingsEvent = {
   type: "$settings";
@@ -315,6 +324,7 @@ export type SettingsEvent = {
   webSearchEndpoint?: string;
   webSearchApiKeys?: {
     metaso?: string;
+    baidu?: string;
     tavily?: string;
     perplexity?: string;
     exa?: string;
@@ -323,6 +333,8 @@ export type SettingsEvent = {
   };
   subagentModels?: Record<string, "flash" | "pro">;
   showSystemEvents?: boolean;
+  /** Desktop prompt-history entries seeded on tab load, most-recent-first (#2051). */
+  promptHistory?: string[];
   version: string;
 };
 
@@ -367,13 +379,18 @@ export type SettingsPatch = {
   webSearchEngine?: WebSearchEngineName;
   webSearchEndpoint?: string | null;
   metasoApiKey?: string | null;
+  baiduApiKey?: string | null;
   tavilyApiKey?: string | null;
   perplexityApiKey?: string | null;
   exaApiKey?: string | null;
   ollamaApiKey?: string | null;
   braveApiKey?: string | null;
   subagentModels?: Record<string, "flash" | "pro">;
+  /** Per-model context-window override (tokens). Keys are model ids; values are the prompt-side token cap. */
+  contextTokens?: Record<string, number>;
   showSystemEvents?: boolean;
+  /** Persisted prompt-history entries to update on each send (#2051). */
+  promptHistory?: string[];
 };
 
 export type QQConfigPatch = {

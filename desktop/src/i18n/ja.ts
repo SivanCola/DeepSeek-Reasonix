@@ -174,6 +174,8 @@ export const ja = {
     webSearchEngineBingIntl: "bing-intl — www.bing.com 経由の国際版インデックス",
     webSearchEngineSearxng: "searxng — セルフホスト (/se searxng <url> でエンドポイント設定)",
     webSearchEngineMetaso: "metaso — 100回/日無料 (中国対応、metaso.cnで無料キー取得)",
+    webSearchEngineBaidu:
+      "baidu — Baidu AI Search、公式ドキュメントでは1500回/月無料 (BAIDU_API_KEY または QIANFAN_API_KEY を設定)",
     webSearchEngineTavily: "tavily — 1000回/月無料 (TAVILY_API_KEY を設定)",
     webSearchEnginePerplexity: "perplexity — AIネイティブ (PERPLEXITY_API_KEY を設定)",
     webSearchEngineExa: "exa — AIネイティブ 1000回/月無料 (EXA_API_KEY を設定)",
@@ -186,6 +188,7 @@ export const ja = {
     webSearchApiKeyClear: "クリア",
     webSearchApiKey: {
       metaso: "Metaso APIキー",
+      baidu: "Baidu APIキー",
       tavily: "Tavily APIキー",
       perplexity: "Perplexity APIキー",
       exa: "Exa APIキー",
@@ -275,6 +278,9 @@ export const ja = {
     modelCustom: "カスタムモデルID",
     modelCustomHint: "エンドポイントが提供するOpenAI互換ID (vLLM, Ollama, Together, …)。",
     modelCustomActive: "現在カスタムIDで実行中: {model}",
+    contextTokensLabel: "コンテキストウィンドウサイズ",
+    contextTokensHint: "現在のモデルのプロンプト側トークン上限を上書きします（例: 1000000 で 1M）。空欄なら既定値を使用。",
+    contextTokensPlaceholder: "自動",
     effortSection: "推論努力",
     ctxWindow: "コンテキスト",
     maxOutput: "出力",

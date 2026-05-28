@@ -186,6 +186,8 @@ export const de: typeof en = {
     webSearchEngineSearxng: "searxng — selbst gehostet (Endpunkt via /se searxng <url>)",
     webSearchEngineMetaso:
       "metaso — 100/Tag kostenlos (CN-freundlich, kostenloser Schlüssel auf metaso.cn)",
+    webSearchEngineBaidu:
+      "baidu — Baidu AI Search, laut Baidu-Doku 1500/Monat kostenlos (BAIDU_API_KEY oder QIANFAN_API_KEY setzen)",
     webSearchEngineTavily: "tavily — 1000/Monat kostenlos (TAVILY_API_KEY setzen)",
     webSearchEnginePerplexity: "perplexity — AI-native (PERPLEXITY_API_KEY setzen)",
     webSearchEngineExa: "exa — AI-native 1000/Monat kostenlos (EXA_API_KEY setzen)",
@@ -198,6 +200,7 @@ export const de: typeof en = {
     webSearchApiKeyClear: "Löschen",
     webSearchApiKey: {
       metaso: "Metaso API-Key",
+      baidu: "Baidu API-Key",
       tavily: "Tavily API-Key",
       perplexity: "Perplexity API-Key",
       exa: "Exa API-Key",
@@ -289,6 +292,9 @@ export const de: typeof en = {
     modelCustomHint:
       "Jede OpenAI-kompatible ID, die dein Endpunkt bereitstellt (vLLM, Ollama, Together, …).",
     modelCustomActive: "Läuft aktuell auf benutzerdefinierter ID: {model}",
+    contextTokensLabel: "Kontextfenstergröße",
+    contextTokensHint: "Überschreiben Sie die Prompt-seitige Token-Obergrenze für das aktuelle Modell (z. B. 1000000 für 1M). Leer lassen für den eingebauten Standard.",
+    contextTokensPlaceholder: "Automatisch",
     effortSection: "Reasoning-Effort",
     ctxWindow: "Kontext",
     maxOutput: "Ausgabe",

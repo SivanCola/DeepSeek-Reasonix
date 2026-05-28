@@ -24,6 +24,7 @@ import {
   isPlausibleKey,
   isReasoningEffort,
   loadApiKey,
+  loadBaiduApiKey,
   loadBraveApiKey,
   loadDesktopCloseBehavior,
   loadDesktopOpenTabs,
@@ -31,10 +32,12 @@ import {
   loadEditor,
   loadEndpoint,
   loadExaApiKey,
+  loadMaxIterPerTurn,
   loadMetasoApiKey,
   loadModel,
   loadOllamaApiKey,
   loadPerplexityApiKey,
+  loadPromptHistory,
   loadQQConfig,
   loadReasoningEffort,
   loadRecentWorkspaces,
@@ -54,6 +57,7 @@ import {
   saveEditMode,
   saveEditor,
   saveModel,
+  savePromptHistory,
   saveReasoningEffort,
   saveShowSystemEvents,
   saveSubagentModels,
@@ -177,6 +181,7 @@ type InMessage = { tabId?: string } & (
         | "bing-intl"
         | "searxng"
         | "metaso"
+        | "baidu"
         | "tavily"
         | "perplexity"
         | "exa"
@@ -184,13 +189,16 @@ type InMessage = { tabId?: string } & (
         | "ollama";
       webSearchEndpoint?: string | null;
       metasoApiKey?: string | null;
+      baiduApiKey?: string | null;
       tavilyApiKey?: string | null;
       perplexityApiKey?: string | null;
       exaApiKey?: string | null;
       ollamaApiKey?: string | null;
       braveApiKey?: string | null;
       subagentModels?: Record<string, "flash" | "pro">;
+      contextTokens?: Record<string, number>;
       showSystemEvents?: boolean;
+      promptHistory?: string[];
     }
   | { cmd: "qq_status_get" }
   | { cmd: "qq_connect" }
@@ -243,6 +251,7 @@ interface SettingsEvent {
     | "bing-intl"
     | "searxng"
     | "metaso"
+    | "baidu"
     | "tavily"
     | "perplexity"
     | "exa"
@@ -251,13 +260,17 @@ interface SettingsEvent {
   webSearchEndpoint?: string;
   webSearchApiKeys?: {
     metaso?: string;
+    baidu?: string;
     tavily?: string;
     perplexity?: string;
     exa?: string;
     ollama?: string;
+    brave?: string;
   };
   subagentModels?: Record<string, "flash" | "pro">;
+  contextTokens?: Record<string, number>;
   showSystemEvents?: boolean;
+  promptHistory?: string[];
   version: string;
 }
 
@@ -721,6 +734,7 @@ function maskApiKey(key: string | undefined): string | undefined {
 
 function collectWebSearchApiKeyPrefixes(): {
   metaso?: string;
+  baidu?: string;
   tavily?: string;
   perplexity?: string;
   exa?: string;
@@ -729,6 +743,7 @@ function collectWebSearchApiKeyPrefixes(): {
 } {
   return {
     metaso: maskApiKey(loadMetasoApiKey()),
+    baidu: maskApiKey(loadBaiduApiKey()),
     tavily: maskApiKey(loadTavilyApiKey()),
     perplexity: maskApiKey(loadPerplexityApiKey()),
     exa: maskApiKey(loadExaApiKey()),
@@ -759,7 +774,9 @@ function emitSettings(tab: Tab): void {
       webSearchEndpoint: readConfig().webSearchEndpoint,
       webSearchApiKeys: collectWebSearchApiKeyPrefixes(),
       subagentModels: loadSubagentModels(),
+      contextTokens: readConfig().contextTokens,
       showSystemEvents: loadShowSystemEvents(),
+      promptHistory: loadPromptHistory(),
       version: VERSION,
     },
     tab.id,
@@ -1049,6 +1066,7 @@ function buildRuntimeFor(tab: Tab): RuntimeState {
     budgetUsd: tab.budgetUsd,
     session: tab.currentSession,
     reasoningEffort,
+    maxIterPerTurn: loadMaxIterPerTurn(),
     hooks: tab.hooks,
     hookCwd: tab.rootDir,
   });
@@ -1347,6 +1365,68 @@ export async function desktopCommand(opts: DesktopOptions): Promise<void> {
               .catch(() => undefined);
           });
         return true;
+      case "retry": {
+        if (!tab.runtime) {
+          sendQQInfo("Desktop is not configured yet.", tab);
+          return true;
+        }
+        const prev = tab.runtime.loop.retryLastUser();
+        if (!prev) {
+          sendQQInfo(
+            "There is no previous local user message to retry in this desktop conversation.",
+            tab,
+          );
+          return true;
+        }
+        void runTurn(tab, prev, true);
+        return true;
+      }
+      case "model": {
+        if (!cmd.value) {
+          sendQQInfo(
+            `Current model: ${tab.currentModel}. Use /model flash, /model pro, /model deepseek-v4-flash, or /model deepseek-v4-pro.`,
+            tab,
+          );
+          return true;
+        }
+        const next = normalizeQQRemoteModel(cmd.value);
+        if (!next) {
+          sendQQInfo(
+            "Unsupported desktop model. Use /model flash, /model pro, /model deepseek-v4-flash, or /model deepseek-v4-pro.",
+            tab,
+          );
+          return true;
+        }
+        applyDesktopModel(tab, next);
+        sendQQInfo(`Switched desktop model to ${next}.`, tab);
+        return true;
+      }
+      case "effort":
+        if (!cmd.value) {
+          sendQQInfo(
+            `Current reasoning effort: ${loadReasoningEffort()}. Use /effort low, /effort medium, /effort high, or /effort max.`,
+            tab,
+          );
+          return true;
+        }
+        saveReasoningEffort(cmd.value);
+        tab.runtime?.loop.configure({ reasoningEffort: cmd.value });
+        emitSettings(tab);
+        sendQQInfo(`Switched desktop reasoning effort to ${cmd.value}.`, tab);
+        return true;
+      case "plan":
+        if (!cmd.value) {
+          sendQQInfo(
+            `Current plan mode: ${loadEditMode()}. Use /plan review, /plan auto, or /plan yolo.`,
+            tab,
+          );
+          return true;
+        }
+        saveEditMode(cmd.value);
+        if (tab.toolset) applyPlanMode(tab.toolset.tools, cmd.value);
+        emitSettings(tab);
+        sendQQInfo(`Switched desktop plan mode to ${cmd.value}.`, tab);
+        return true;
       case "btw":
         if (!tab.runtime) {
           sendQQInfo("Desktop is not configured yet.", tab);
@@ -1378,6 +1458,28 @@ export async function desktopCommand(opts: DesktopOptions): Promise<void> {
       default:
         return false;
     }
+  }
+
+  function normalizeQQRemoteModel(value: string): string | null {
+    const lower = value.trim().toLowerCase();
+    if (!lower) return null;
+    if (lower === "flash") return "deepseek-v4-flash";
+    if (lower === "pro") return "deepseek-v4-pro";
+    if (lower === "deepseek-v4-flash" || lower === "deepseek-v4-pro") return lower;
+    return null;
+  }
+
+  function applyDesktopModel(tab: Tab, next: string): void {
+    tab.currentModel = next;
+    saveModel(next);
+    if (tab.toolset) {
+      tab.system = codeSystemPrompt(tab.rootDir, {
+        hasSemanticSearch: tab.toolset.semantic.enabled,
+        modelId: tab.currentModel,
+      });
+      if (tab.runtime) tab.runtime = buildRuntimeFor(tab);
+    }
+    emitSettings(tab);
   }
 
   function parseIndexedChoice(text: string): number {
@@ -2715,6 +2817,7 @@ export async function desktopCommand(opts: DesktopOptions): Promise<void> {
           msg.webSearchEngine !== undefined ||
           msg.webSearchEndpoint !== undefined ||
           msg.metasoApiKey !== undefined ||
+          msg.baiduApiKey !== undefined ||
           msg.tavilyApiKey !== undefined ||
           msg.perplexityApiKey !== undefined ||
           msg.exaApiKey !== undefined ||
@@ -2728,6 +2831,9 @@ export async function desktopCommand(opts: DesktopOptions): Promise<void> {
           }
           if (msg.metasoApiKey !== undefined) {
             cfg.metasoApiKey = msg.metasoApiKey?.trim() || undefined;
+          }
+          if (msg.baiduApiKey !== undefined) {
+            cfg.baiduApiKey = msg.baiduApiKey?.trim() || undefined;
           }
           if (msg.tavilyApiKey !== undefined) {
             cfg.tavilyApiKey = msg.tavilyApiKey?.trim() || undefined;
@@ -2746,9 +2852,23 @@ export async function desktopCommand(opts: DesktopOptions): Promise<void> {
           }
           writeConfig(cfg);
         }
+        if (msg.promptHistory !== undefined && msg.promptHistory.length > 0) {
+          // Frontend sends [newEntry]; merge against the current persisted list
+          // here (on the backend) so concurrent tabs never clobber each other.
+          const existing = loadPromptHistory();
+          const entry = msg.promptHistory[0]!;
+          const merged = [entry, ...existing.filter((e) => e !== entry)].slice(0, 100);
+          savePromptHistory(merged);
+          emitSettings(tab);
+        }
         if (msg.subagentModels !== undefined) {
           saveSubagentModels(msg.subagentModels);
           emitSkills(tab);
+        }
+        if (msg.contextTokens !== undefined) {
+          const cfg = readConfig();
+          cfg.contextTokens = msg.contextTokens;
+          writeConfig(cfg);
         }
         if (msg.model !== undefined) {
           const next = msg.model.trim();

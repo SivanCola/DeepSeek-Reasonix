@@ -11,8 +11,10 @@ import {
   editModeHintShown,
   isPlausibleKey,
   loadApiKey,
+  loadBaiduApiKey,
   loadBaseUrl,
   loadBraveApiKey,
+  loadContextTokens,
   loadDesktopOpenTabs,
   loadEditMode,
   loadEndpoint,
@@ -25,6 +27,7 @@ import {
   loadPricingOverride,
   loadProjectPathAllowed,
   loadProjectShellAllowed,
+  loadPromptHistory,
   loadProxyConfig,
   loadRateLimit,
   loadReasoningEffort,
@@ -45,6 +48,7 @@ import {
   saveDesktopOpenTabs,
   saveEditMode,
   saveIndexConfig,
+  savePromptHistory,
   saveReasoningEffort,
   saveSemanticEmbeddingConfig,
   saveSubagentModels,
@@ -515,6 +519,22 @@ describe("config", () => {
     expect(clearProjectShellAllowed("/empty", path)).toBe(0);
   });
 
+  it("loadPromptHistory returns [] when nothing stored", () => {
+    expect(loadPromptHistory(path)).toEqual([]);
+  });
+
+  it("savePromptHistory / loadPromptHistory round-trip", () => {
+    savePromptHistory(["npm run build", "git commit -am 'wip'"], path);
+    expect(loadPromptHistory(path)).toEqual(["npm run build", "git commit -am 'wip'"]);
+  });
+
+  it("savePromptHistory caps at 100 entries", () => {
+    const entries = Array.from({ length: 150 }, (_, i) => `cmd-${i}`);
+    savePromptHistory(entries, path);
+    expect(loadPromptHistory(path)).toHaveLength(100);
+    expect(loadPromptHistory(path)[0]).toBe("cmd-0");
+  });
+
   it("pathAllowed CRUD mirrors shellAllowed (load/add/dedup/remove/clear)", () => {
     expect(loadProjectPathAllowed("/a", path)).toEqual([]);
     addProjectPathAllowed("/a", "/Users/foo/Documents", path);
@@ -843,8 +863,10 @@ describe("config", () => {
     it("preserves each known engine end-to-end (no silent tavily→default fall-through, #1309)", () => {
       for (const engine of [
         "bing",
+        "bing-intl",
         "searxng",
         "metaso",
+        "baidu",
         "tavily",
         "perplexity",
         "exa",
@@ -868,6 +890,83 @@ describe("config", () => {
       // so an explicit `/search-engine mojeek` later still rejects loudly.
       writeConfig({ webSearchEngine: "mojeek" as unknown as "bing" }, path);
       expect(webSearchEngine(path)).toBe("bing");
+    });
+  });
+
+  describe("loadBaiduApiKey", () => {
+    it("returns BAIDU_API_KEY env var before QIANFAN_API_KEY and config", () => {
+      const origBaidu = process.env.BAIDU_API_KEY;
+      const origQianfan = process.env.QIANFAN_API_KEY;
+      process.env.BAIDU_API_KEY = "baidu-env";
+      process.env.QIANFAN_API_KEY = "qianfan-env";
+      try {
+        writeConfig({ baiduApiKey: "cfg-baidu" }, path);
+        expect(loadBaiduApiKey(path)).toBe("baidu-env");
+      } finally {
+        if (origBaidu === undefined) {
+          // biome-ignore lint/performance/noDelete: env var must be absent, not "undefined"
+          delete process.env.BAIDU_API_KEY;
+        } else {
+          process.env.BAIDU_API_KEY = origBaidu;
+        }
+        if (origQianfan === undefined) {
+          // biome-ignore lint/performance/noDelete: env var must be absent, not "undefined"
+          delete process.env.QIANFAN_API_KEY;
+        } else {
+          process.env.QIANFAN_API_KEY = origQianfan;
+        }
+      }
+    });
+
+    it("falls back to QIANFAN_API_KEY when BAIDU_API_KEY is unset", () => {
+      const origBaidu = process.env.BAIDU_API_KEY;
+      const origQianfan = process.env.QIANFAN_API_KEY;
+      // biome-ignore lint/performance/noDelete: env var must be absent, not "undefined"
+      delete process.env.BAIDU_API_KEY;
+      process.env.QIANFAN_API_KEY = "qianfan-env";
+      try {
+        expect(loadBaiduApiKey(path)).toBe("qianfan-env");
+      } finally {
+        if (origBaidu !== undefined) process.env.BAIDU_API_KEY = origBaidu;
+        if (origQianfan === undefined) {
+          // biome-ignore lint/performance/noDelete: env var must be absent, not "undefined"
+          delete process.env.QIANFAN_API_KEY;
+        } else {
+          process.env.QIANFAN_API_KEY = origQianfan;
+        }
+      }
+    });
+
+    it("falls back to config.baiduApiKey when env vars are unset", () => {
+      const origBaidu = process.env.BAIDU_API_KEY;
+      const origQianfan = process.env.QIANFAN_API_KEY;
+      // biome-ignore lint/performance/noDelete: env var must be absent, not "undefined"
+      delete process.env.BAIDU_API_KEY;
+      // biome-ignore lint/performance/noDelete: env var must be absent, not "undefined"
+      delete process.env.QIANFAN_API_KEY;
+      try {
+        writeConfig({ baiduApiKey: "cfg-baidu" }, path);
+        expect(loadBaiduApiKey(path)).toBe("cfg-baidu");
+      } finally {
+        if (origBaidu !== undefined) process.env.BAIDU_API_KEY = origBaidu;
+        if (origQianfan !== undefined) process.env.QIANFAN_API_KEY = origQianfan;
+      }
+    });
+
+    it("returns undefined when no Baidu key is configured", () => {
+      const origBaidu = process.env.BAIDU_API_KEY;
+      const origQianfan = process.env.QIANFAN_API_KEY;
+      // biome-ignore lint/performance/noDelete: env var must be absent, not "undefined"
+      delete process.env.BAIDU_API_KEY;
+      // biome-ignore lint/performance/noDelete: env var must be absent, not "undefined"
+      delete process.env.QIANFAN_API_KEY;
+      try {
+        writeConfig({ baiduApiKey: undefined }, path);
+        expect(loadBaiduApiKey(path)).toBeUndefined();
+      } finally {
+        if (origBaidu !== undefined) process.env.BAIDU_API_KEY = origBaidu;
+        if (origQianfan !== undefined) process.env.QIANFAN_API_KEY = origQianfan;
+      }
     });
   });
 
@@ -957,6 +1056,38 @@ describe("config", () => {
       saveSubagentModels({}, path);
       expect(loadSubagentModels(path)).toEqual({});
       expect(readConfig(path).subagentModels).toBeUndefined();
+    });
+  });
+
+  describe("contextTokens", () => {
+    it("returns empty when nothing is set", () => {
+      expect(loadContextTokens(path)).toEqual({});
+    });
+
+    it("round-trips per-model token caps", () => {
+      writeConfig({ contextTokens: { mimo: 1_000_000, "qwen-72b": 131_072 } }, path);
+      expect(loadContextTokens(path)).toEqual({ mimo: 1_000_000, "qwen-72b": 131_072 });
+    });
+
+    it("drops non-positive and non-finite values", () => {
+      writeConfig(
+        {
+          contextTokens: {
+            mimo: 1_000_000,
+            bad1: -1,
+            bad2: 0,
+            bad3: Number.POSITIVE_INFINITY,
+            bad4: "nope" as any,
+          },
+        },
+        path,
+      );
+      expect(loadContextTokens(path)).toEqual({ mimo: 1_000_000 });
+    });
+
+    it("floors fractional values", () => {
+      writeConfig({ contextTokens: { mimo: 999_999.7 } }, path);
+      expect(loadContextTokens(path)).toEqual({ mimo: 999_999 });
     });
   });
 });

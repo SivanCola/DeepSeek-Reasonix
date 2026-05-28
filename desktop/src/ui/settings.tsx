@@ -754,6 +754,7 @@ function PageGeneral({
                   | "bing-intl"
                   | "searxng"
                   | "metaso"
+                  | "baidu"
                   | "tavily"
                   | "perplexity"
                   | "exa"
@@ -766,6 +767,7 @@ function PageGeneral({
             <option value="bing-intl">{t("settings.webSearchEngineBingIntl")}</option>
             <option value="searxng">{t("settings.webSearchEngineSearxng")}</option>
             <option value="metaso">{t("settings.webSearchEngineMetaso")}</option>
+            <option value="baidu">{t("settings.webSearchEngineBaidu")}</option>
             <option value="tavily">{t("settings.webSearchEngineTavily")}</option>
             <option value="perplexity">{t("settings.webSearchEnginePerplexity")}</option>
             <option value="exa">{t("settings.webSearchEngineExa")}</option>
@@ -780,11 +782,23 @@ function PageGeneral({
 }
 
 const SEARCH_ENGINE_API_KEY_FIELDS: ReadonlyArray<{
-  engine: "metaso" | "tavily" | "perplexity" | "exa" | "brave" | "ollama";
-  patchKey: "metasoApiKey" | "tavilyApiKey" | "perplexityApiKey" | "exaApiKey" | "braveApiKey" | "ollamaApiKey";
+  engine: "metaso" | "baidu" | "tavily" | "perplexity" | "exa" | "brave" | "ollama";
+  patchKey:
+    | "metasoApiKey"
+    | "baiduApiKey"
+    | "tavilyApiKey"
+    | "perplexityApiKey"
+    | "exaApiKey"
+    | "braveApiKey"
+    | "ollamaApiKey";
   signupUrl: string;
 }> = [
   { engine: "metaso", patchKey: "metasoApiKey", signupUrl: "https://metaso.cn/settings/api" },
+  {
+    engine: "baidu",
+    patchKey: "baiduApiKey",
+    signupUrl: "https://cloud.baidu.com/doc/qianfan/s/2mh4su4uy",
+  },
   { engine: "tavily", patchKey: "tavilyApiKey", signupUrl: "https://app.tavily.com" },
   {
     engine: "perplexity",
@@ -861,8 +875,15 @@ function WebSearchApiKeyRow({
   prefix,
   onSave,
 }: {
-  engine: "metaso" | "tavily" | "perplexity" | "exa" | "brave" | "ollama";
-  patchKey: "metasoApiKey" | "tavilyApiKey" | "perplexityApiKey" | "exaApiKey" | "braveApiKey" | "ollamaApiKey";
+  engine: "metaso" | "baidu" | "tavily" | "perplexity" | "exa" | "brave" | "ollama";
+  patchKey:
+    | "metasoApiKey"
+    | "baiduApiKey"
+    | "tavilyApiKey"
+    | "perplexityApiKey"
+    | "exaApiKey"
+    | "braveApiKey"
+    | "ollamaApiKey";
   signupUrl: string;
   prefix?: string;
   onSave: (patch: SettingsPatch) => void;
@@ -1044,6 +1065,32 @@ function PageModels({
             {t("settings.modelCustomActive", { model: settings.model })}
           </div>
         ) : null}
+        <div className="setting-row" style={{ marginTop: 12 }}>
+          <div className="l">
+            <div className="n">{t("settings.contextTokensLabel")}</div>
+            <div className="h">{t("settings.contextTokensHint")}</div>
+          </div>
+          <div style={{ display: "flex", gap: 6 }}>
+            <input
+              className="field mono"
+              type="number"
+              min={1}
+              value={settings.contextTokens?.[settings.model] ?? ""}
+              onChange={(e) => {
+                const raw = e.target.value.trim();
+                const num = raw ? parseInt(raw, 10) : 0;
+                const next = { ...(settings.contextTokens ?? {}) };
+                if (num > 0 && Number.isFinite(num)) {
+                  next[settings.model] = num;
+                } else {
+                  delete next[settings.model];
+                }
+                onSave({ contextTokens: Object.keys(next).length > 0 ? next : undefined });
+              }}
+              placeholder={t("settings.contextTokensPlaceholder")}
+            />
+          </div>
+        </div>
       </section>
       <section className="section">
         <div className="stitle">{t("settings.effortSection")}</div>

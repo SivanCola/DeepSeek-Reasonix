@@ -172,6 +172,8 @@ export const zhCN: typeof en = {
     webSearchEngineBingIntl: "bing-intl — 国际版索引，走 www.bing.com",
     webSearchEngineSearxng: "searxng — 自托管（端点用 /se searxng <url> 配置）",
     webSearchEngineMetaso: "metaso — 每日 100 次免费（国内友好，metaso.cn 可领免费 key）",
+    webSearchEngineBaidu:
+      "baidu — 百度 AI Search，官方文档写有每月 1500 次免费额度（设置 BAIDU_API_KEY 或 QIANFAN_API_KEY）",
     webSearchEngineTavily: "tavily — 每月 1000 次免费（设置 TAVILY_API_KEY）",
     webSearchEnginePerplexity: "perplexity — AI 直接回答（设置 PERPLEXITY_API_KEY）",
     webSearchEngineExa: "exa — AI 直接回答，每月 1000 次免费（设置 EXA_API_KEY）",
@@ -184,6 +186,7 @@ export const zhCN: typeof en = {
     webSearchApiKeyClear: "清除",
     webSearchApiKey: {
       metaso: "Metaso API key",
+      baidu: "百度 API key",
       tavily: "Tavily API key",
       perplexity: "Perplexity API key",
       exa: "Exa API key",
@@ -270,6 +273,9 @@ export const zhCN: typeof en = {
     modelCustom: "自定义模型 ID",
     modelCustomHint: "任何 OpenAI 兼容的 ID（vLLM、Ollama、Together …）。",
     modelCustomActive: "当前运行自定义 ID：{model}",
+    contextTokensLabel: "上下文窗口大小",
+    contextTokensHint: "为当前模型覆盖提示侧 token 上限（如 1000000 表示 1M）。留空使用内置默认值。",
+    contextTokensPlaceholder: "自动",
     effortSection: "推理强度",
     ctxWindow: "上下文",
     maxOutput: "输出",

@@ -171,6 +171,8 @@ export interface ReasonixConfig {
   desktopCloseBehavior?: DesktopCloseBehavior;
   /** Desktop only — `openWith` value for clicking file links. Empty/undefined = OS default app. Examples: "code", "cursor", "C:\\path\\to\\editor.exe". */
   editor?: string;
+  /** Desktop prompt-history entries, most-recent-first, capped at 100 (#2051). */
+  promptHistory?: string[];
   theme?: ThemeName | "auto";
   /** Stored as `--mcp`-format strings so one parser handles both flag and config. */
   mcp?: string[];
@@ -183,12 +185,13 @@ export interface ReasonixConfig {
   session?: string | null;
   setupCompleted?: boolean;
   search?: boolean;
-  /** Web search engine backend: "bing" (default, scrapes cn.bing.com), "bing-intl" (www.bing.com, indexes international sites), "searxng" (self-hosted SearXNG), "metaso" (Metaso API), "tavily" (LLM-friendly API, free tier), "perplexity" (Perplexity AI), "exa" (Exa API), "brave" (Brave Search API), or "ollama" (Ollama cloud web search). */
+  /** Web search engine backend: "bing" (default, scrapes cn.bing.com), "bing-intl" (www.bing.com, indexes international sites), "searxng" (self-hosted SearXNG), "metaso" (Metaso API), "baidu" (Baidu AI Search API), "tavily" (LLM-friendly API, free tier), "perplexity" (Perplexity AI), "exa" (Exa API), "brave" (Brave Search API), or "ollama" (Ollama cloud web search). */
   webSearchEngine?:
     | "bing"
     | "bing-intl"
     | "searxng"
     | "metaso"
+    | "baidu"
     | "tavily"
     | "perplexity"
     | "exa"
@@ -198,6 +201,8 @@ export interface ReasonixConfig {
   webSearchEndpoint?: string;
   /** Metaso API key. Falls back to METASO_API_KEY env var. */
   metasoApiKey?: string;
+  /** Baidu AI Search API key. Falls back to BAIDU_API_KEY or QIANFAN_API_KEY env var. */
+  baiduApiKey?: string;
   /** Tavily API key. Falls back to TAVILY_API_KEY env var. No baked-in default — free tier is 1000/mo per account, sharing would burn out. */
   tavilyApiKey?: string;
   /** Perplexity API key. Falls back to PERPLEXITY_API_KEY env var. Get one at https://perplexity.ai/settings/api */
@@ -244,6 +249,9 @@ export interface ReasonixConfig {
   /** Preferred display currency for costs (e.g. "USD" or "CNY"). When unset, falls back
    *  to the wallet currency if available, then defaults to CNY. */
   costCurrency?: string;
+  /** Maximum tool-call iterations per turn. Prevents runaway loops from consuming
+   *  unlimited API budget. Default 50. Env `REASONIX_MAX_ITER` overrides. */
+  maxIterPerTurn?: number;
   projects?: {
     [absoluteRootDir: string]: {
       shellAllowed?: string[];
@@ -270,6 +278,8 @@ export interface ReasonixConfig {
   subagentModels?: Record<string, "flash" | "pro">;
   /** Enable the `java_source` tool for finding and decompiling Java class source. Default off. */
   javaSource?: boolean;
+  /** Per-model context-window override (tokens). Keys are model ids; values are prompt-side token caps. */
+  contextTokens?: Record<string, number>;
   /** User-declared extensions to the built-in memory types (#709). Unknown types round-trip even without a declaration; declaring one lets you attach a default priority + lifecycle. */
   memory?: {
     customTypes?: CustomMemoryTypeConfig[];
@@ -358,6 +368,14 @@ export function loadMetasoApiKey(path: string = defaultConfigPath()): string | u
   return undefined;
 }
 
+export function loadBaiduApiKey(path: string = defaultConfigPath()): string | undefined {
+  if (process.env.BAIDU_API_KEY) return process.env.BAIDU_API_KEY.trim();
+  if (process.env.QIANFAN_API_KEY) return process.env.QIANFAN_API_KEY.trim();
+  const cfg = readConfig(path).baiduApiKey;
+  if (cfg && typeof cfg === "string" && cfg.trim()) return cfg.trim();
+  return undefined;
+}
+
 /** Tavily API key — env > config > undefined. Returning undefined means the caller must error out with a clear "go get one at tavily.com" message; we deliberately ship no default because the free 1000/mo quota wouldn't survive being shared. */
 export function loadTavilyApiKey(path: string = defaultConfigPath()): string | undefined {
   if (process.env.TAVILY_API_KEY) return process.env.TAVILY_API_KEY.trim();
@@ -409,9 +427,22 @@ export function defaultConfigPath(): string {
   return join(homedir(), ".reasonix", "config.json");
 }
 
+const PROMPT_HISTORY_CAP = 100;
+
+export function loadPromptHistory(path: string = defaultConfigPath()): string[] {
+  return readConfig(path).promptHistory ?? [];
+}
+
+export function savePromptHistory(entries: string[], path: string = defaultConfigPath()): void {
+  const cfg = readConfig(path);
+  cfg.promptHistory = entries.slice(0, PROMPT_HISTORY_CAP);
+  writeConfig(cfg, path);
+}
+
 const STRING_ARRAY_FIELDS: Array<readonly string[]> = [
   ["mcp"],
   ["mcpDisabled"],
+  ["promptHistory"],
   ["recentWorkspaces"],
   ["skills", "paths"],
 ];
@@ -725,6 +756,18 @@ export function loadPricingOverride(
   return result;
 }
 
+export function loadContextTokens(path: string = defaultConfigPath()): Record<string, number> {
+  const raw = readConfig(path).contextTokens;
+  if (!isPlainObject(raw)) return {};
+  const result: Record<string, number> = {};
+  for (const [model, value] of Object.entries(raw)) {
+    if (typeof value === "number" && value > 0 && Number.isFinite(value)) {
+      result[model] = Math.floor(value);
+    }
+  }
+  return result;
+}
+
 export function loadProxyConfig(path: string = defaultConfigPath()): ProxyConfig {
   const cfg = readConfig(path).proxy;
   if (!cfg || typeof cfg !== "object") return {};
@@ -950,6 +993,7 @@ export function webSearchEngine(
   | "bing-intl"
   | "searxng"
   | "metaso"
+  | "baidu"
   | "tavily"
   | "perplexity"
   | "exa"
@@ -959,6 +1003,7 @@ export function webSearchEngine(
   if (cfg === "bing-intl") return "bing-intl";
   if (cfg === "searxng") return "searxng";
   if (cfg === "metaso") return "metaso";
+  if (cfg === "baidu") return "baidu";
   if (cfg === "tavily") return "tavily";
   if (cfg === "perplexity") return "perplexity";
   if (cfg === "exa") return "exa";
@@ -1289,6 +1334,18 @@ export function saveShowSystemEvents(on: boolean, path: string = defaultConfigPa
   const cfg = readConfig(path);
   cfg.thread = { ...(cfg.thread ?? {}), showSystemEvents: on };
   writeConfig(cfg, path);
+}
+
+/** Load the per-turn iteration cap. Config > env > default (50). */
+export function loadMaxIterPerTurn(path: string = defaultConfigPath()): number {
+  const fromConfig = readConfig(path).maxIterPerTurn;
+  if (typeof fromConfig === "number" && fromConfig > 0) return fromConfig;
+  const fromEnv = process.env.REASONIX_MAX_ITER;
+  if (fromEnv) {
+    const n = Number(fromEnv);
+    if (Number.isFinite(n) && n > 0) return n;
+  }
+  return 50;
 }
 
 export function loadRecentWorkspaces(path: string = defaultConfigPath()): string[] {
