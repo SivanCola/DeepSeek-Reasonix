@@ -120,7 +120,10 @@ export interface McpRuntime {
     signal?: AbortSignal,
   ): Promise<{ ok: true; summary: McpServerSummary } | { ok: false; reason: string }>;
   removeSpec(raw: string, loop?: CacheFirstLoop): Promise<boolean>;
-  reloadFromConfig(loop?: CacheFirstLoop): Promise<{
+  reloadFromConfig(
+    loop?: CacheFirstLoop,
+    opts?: McpReloadOptions,
+  ): Promise<{
     added: string[];
     removed: string[];
     failed: Array<{ spec: string; reason: string }>;
@@ -129,6 +132,10 @@ export interface McpRuntime {
   closeAll(): Promise<void>;
   /** Replace the sink that lifecycle events flow through — App.tsx swaps this in on mount so toasts land in the alt-screen UI instead of corrupting it via stderr. */
   setLifecycleSink(sink: McpLifecycleSink): void;
+}
+
+interface McpReloadOptions {
+  force?: Iterable<string>;
 }
 
 export function createMcpRuntime(ctx: RuntimeContext): McpRuntime {
@@ -331,7 +338,10 @@ export function createMcpRuntime(ctx: RuntimeContext): McpRuntime {
     return true;
   }
 
-  async function reloadFromConfig(loop?: CacheFirstLoop): Promise<{
+  async function reloadFromConfig(
+    loop?: CacheFirstLoop,
+    opts: McpReloadOptions = {},
+  ): Promise<{
     added: string[];
     removed: string[];
     failed: Array<{ spec: string; reason: string }>;
@@ -341,14 +351,17 @@ export function createMcpRuntime(ctx: RuntimeContext): McpRuntime {
     const desired = normalized.map(specToRaw);
     const desiredSet = new Set(desired);
     const currentSet = new Set(records.keys());
+    const forceSet = new Set(opts.force ?? []);
     const added: string[] = [];
     const removed: string[] = [];
     const failed: Array<{ spec: string; reason: string }> = [];
 
     for (const spec of [...currentSet]) {
-      if (!desiredSet.has(spec)) {
+      const noLongerDesired = !desiredSet.has(spec);
+      if (noLongerDesired || forceSet.has(spec)) {
         await removeSpec(spec, loop);
-        removed.push(spec);
+        currentSet.delete(spec);
+        if (noLongerDesired) removed.push(spec);
       }
     }
     for (const spec of desired) {
