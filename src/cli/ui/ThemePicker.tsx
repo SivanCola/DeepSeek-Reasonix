@@ -32,7 +32,7 @@ export function ThemePicker({
       <Text bold>{t("themePicker.header")}</Text>
       <SingleSelect
         items={items}
-        initialValue={currentPreference}
+        initialValue={currentVisiblePreference}
         onSubmit={(value) => onChoose({ kind: "select", value })}
         onCancel={() => onChoose({ kind: "quit" })}
         footer={t("themePicker.footer")}
