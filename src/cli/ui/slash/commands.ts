@@ -56,6 +56,12 @@ export const SLASH_COMMANDS: readonly SlashCommandSpec[] = [
       "fold older turns into a summary message (cache-safe). Auto-fires at 50% ctx; this is the manual trigger.",
   },
   {
+    cmd: "goal",
+    group: "chat",
+    argsHint: "<text>|resume|stop|status",
+    summary: "run a persistent Goal Loop until GOAL_COMPLETED, max attempts, or /goal stop",
+  },
+  {
     cmd: "stop",
     group: "chat",
     summary: "abort the current model turn (typed alternative to Esc)",

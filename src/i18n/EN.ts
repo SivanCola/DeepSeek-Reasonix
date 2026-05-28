@@ -332,6 +332,10 @@ export const EN: TranslationSchema = {
         "narrow oversized tool results + tool-call args in the log; cap at tokens, default 4000",
       argsHint: "[tokens]",
     },
+    goal: {
+      description: "run a persistent Goal Loop until GOAL_COMPLETED, max attempts, or /goal stop",
+      argsHint: "<text>|resume|stop|status",
+    },
     cwd: {
       description:
         "switch the workspace root mid-session — re-points fs / shell / memory tools, reloads project hooks, refreshes the at-mention walker",

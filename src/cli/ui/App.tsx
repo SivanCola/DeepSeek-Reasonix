@@ -38,6 +38,8 @@ import {
   isReasoningEffort,
   loadEndpoint,
   loadEngineeringLifecycleMode,
+  loadGoalMaxAttempts,
+  loadGoalTestTimeoutMs,
   loadHistoryScrollMode,
   loadMaxIterPerTurn,
   loadMouseWheelRows,
@@ -56,6 +58,14 @@ import {
 import { Eventizer } from "../../core/eventize.js";
 import { pauseGate } from "../../core/pause-gate.js";
 import { autoResolveVerdict, shouldAutoResolveCheckpoint } from "../../core/pause-policy.js";
+import { lastAssistantTextFromLoop, runGoalLoop } from "../../goal/runner.js";
+import {
+  createGoalState,
+  formatGoalResumePrompt,
+  loadGoalState,
+  saveGoalState,
+  touchGoalState,
+} from "../../goal/state.js";
 import { formatHookOutcomeMessage, runHooks } from "../../hooks.js";
 import { t, tObj } from "../../i18n/index.js";
 import { CacheFirstLoop, DeepSeekClient, ImmutablePrefix } from "../../index.js";
@@ -849,6 +859,7 @@ function AppInner({
   const handleSubmitRef = useRef<((raw: string) => Promise<void>) | null>(null);
   const busyRef = useRef<boolean>(false);
   const submittingRef = useRef<boolean>(false);
+  const activeGoalRunRef = useRef<{ cancel: () => void } | null>(null);
   // Embedded dashboard server handle. Set when /dashboard boots; null
   // otherwise. Mutations to this ref happen inside the start/stop
   // callbacks; the slash handler uses getDashboardUrl() to surface
@@ -2160,6 +2171,108 @@ function AppInner({
     activeLoop,
   } = useLoopMode({ log, busyRef, handleSubmitRef });
 
+  const startGoalRun = useCallback(
+    (initialState: ReturnType<typeof createGoalState>) => {
+      if (isLoopActive()) stopLoop();
+      if (activeGoalRunRef.current) {
+        activeGoalRunRef.current.cancel();
+        loop.abort();
+      }
+
+      const rootDir = currentRootDirRef.current;
+      let cancelled = false;
+      const runSlot = {
+        cancel: () => {
+          cancelled = true;
+        },
+      };
+      activeGoalRunRef.current = runSlot;
+
+      void (async () => {
+        try {
+          await runGoalLoop({
+            rootDir,
+            loop,
+            state: initialState,
+            onInfo: (message) => log.pushInfo(message),
+            shouldStop: () => cancelled,
+            testTimeoutMs: loadGoalTestTimeoutMs(),
+            getFilesChanged: codeMode ? () => touchedPaths() : undefined,
+            runTurn: async (input) => {
+              const submit = handleSubmitRef.current;
+              if (!submit) throw new Error("Goal runner could not submit a model turn");
+              await submit(input);
+              return lastAssistantTextFromLoop(loop);
+            },
+          });
+        } catch (err) {
+          log.pushWarning("Goal runner failed", err instanceof Error ? err.message : String(err));
+        } finally {
+          if (activeGoalRunRef.current === runSlot) activeGoalRunRef.current = null;
+        }
+      })();
+    },
+    [codeMode, currentRootDirRef, isLoopActive, log, loop, stopLoop, touchedPaths],
+  );
+
+  const handleGoalSlashAction = useCallback(
+    (action: NonNullable<ReturnType<typeof handleSlash>["goal"]>) => {
+      const rootDir = currentRootDirRef.current;
+      if (action.kind === "stop") {
+        activeGoalRunRef.current?.cancel();
+        loop.abort();
+        const loaded = loadGoalState(rootDir);
+        if (loaded.state?.status === "running") {
+          saveGoalState(
+            rootDir,
+            touchGoalState({
+              ...loaded.state,
+              status: "failed",
+              lastError: "Goal stopped by user",
+            }),
+          );
+        }
+        log.pushInfo("Goal stop requested.");
+        return;
+      }
+
+      if (action.kind === "resume") {
+        const loaded = loadGoalState(rootDir);
+        if (loaded.error) {
+          log.pushWarning("Goal resume failed", loaded.error);
+          return;
+        }
+        if (!loaded.state || loaded.state.status !== "running") {
+          log.pushInfo("No running Goal to resume.");
+          return;
+        }
+        const state = loaded.state;
+        setTimeout(() => startGoalRun(state), 0);
+        return;
+      }
+
+      const state = createGoalState(action.goal, { maxAttempts: loadGoalMaxAttempts() });
+      saveGoalState(rootDir, state);
+      setTimeout(() => startGoalRun(state), 0);
+    },
+    [currentRootDirRef, log, loop, startGoalRun],
+  );
+
+  const goalRecoveryShownRef = useRef<string | null>(null);
+  useEffect(() => {
+    const loaded = loadGoalState(currentRootDir);
+    const key = `${loaded.path}:${loaded.state?.updatedAt ?? loaded.error ?? "none"}`;
+    if (goalRecoveryShownRef.current === key) return;
+    goalRecoveryShownRef.current = key;
+    if (loaded.error) {
+      log.pushWarning("Goal state could not be read", loaded.error);
+      return;
+    }
+    if (loaded.state?.status === "running") {
+      log.pushInfo(formatGoalResumePrompt(loaded.state));
+    }
+  }, [currentRootDir, log]);
+
   /**
    * Mount the per-block walkthrough modal against the pending-edits
    * queue. Returns the info text the slash handler should display.
@@ -3033,6 +3146,15 @@ function AppInner({
           pushHistory(text);
           return;
         }
+        if (result.goal) {
+          pushHistory(text);
+          if (result.info) {
+            log.pushInfo(result.info);
+            if (fromQQ) qq.sendText(result.info);
+          }
+          handleGoalSlashAction(result.goal);
+          return;
+        }
         if (result.openSessionsPicker) {
           const sessions = listSessionsForWorkspace(currentRootDir);
           setSessionsPickerList(sessions);
@@ -3556,6 +3678,7 @@ function AppInner({
       liveMcpServers,
       generateCurrentSessionTitle,
       switchWorkspaceRoot,
+      handleGoalSlashAction,
     ],
   );
 

@@ -680,6 +680,7 @@ describe("handleSlash", () => {
       "compact",
       "sessions",
       "new",
+      "goal",
       "exit",
       "apply",
       "discard",
@@ -696,10 +697,31 @@ describe("handleSlash", () => {
     // Case-insensitive.
     expect(suggestSlashCommands("HE").map((s) => s.cmd)).toEqual(["help"]);
     // Empty prefix returns the full non-advanced release list, including code commands.
-    expect(suggestSlashCommands("", true)).toHaveLength(42);
+    expect(suggestSlashCommands("", true)).toHaveLength(43);
     expect(suggestSlashCommands("", true).map((s) => s.cmd)).toContain("logs");
+    expect(suggestSlashCommands("", true).map((s) => s.cmd)).toContain("goal");
     expect(suggestSlashCommands("", true).map((s) => s.cmd)).toContain("language");
     expect(suggestSlashCommands("lan").map((s) => s.cmd)).toContain("language");
+  });
+
+  describe("/goal", () => {
+    it("registers /goal under the chat group", () => {
+      const spec = SLASH_COMMANDS.find((s) => s.cmd === "goal");
+      expect(spec).toBeDefined();
+      expect(spec?.group).toBe("chat");
+      expect(spec?.argsHint).toBe("<text>|resume|stop|status");
+    });
+
+    it("returns a start action for /goal <text>", () => {
+      const r = handleSlash("goal", ["fix", "login"], makeLoop(), { memoryRoot: process.cwd() });
+      expect(r.goal).toEqual({ kind: "start", goal: "fix login" });
+    });
+
+    it("returns status text for bare /goal", () => {
+      const r = handleSlash("goal", [], makeLoop(), { memoryRoot: process.cwd() });
+      expect(r.info).toMatch(/Goal/);
+      expect(r.goal).toBeUndefined();
+    });
   });
 
   describe("/btw — issue #725", () => {

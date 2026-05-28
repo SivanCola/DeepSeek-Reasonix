@@ -1,5 +1,6 @@
 import type { EngineeringLifecycleSnapshot } from "../../../code/lifecycle.js";
 import type { EditMode } from "../../../config.js";
+import type { GoalSlashAction } from "../../../goal/types.js";
 import type { McpServerSummary } from "../../../mcp/summary.js";
 import type { JobRegistry } from "../../../tools/jobs.js";
 import type { PlanStep } from "../../../tools/plan.js";
@@ -32,6 +33,8 @@ export interface SlashResult {
   unknown?: boolean;
   /** `/retry` re-submit text — pushed back through the normal submit flow after log truncation. */
   resubmit?: string;
+  /** `/goal` action — App.tsx owns the async Goal runner. */
+  goal?: GoalSlashAction;
   /** Structured `/context` payload — `info` text can't carry per-segment color for the stacked bar. */
   ctxBreakdown?: {
     systemTokens: number;

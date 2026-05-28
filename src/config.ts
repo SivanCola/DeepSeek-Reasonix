@@ -7,6 +7,7 @@ import { dirname, isAbsolute, join, resolve } from "node:path";
 import { z } from "zod";
 import { type ThemeName, isThemeName, resolveThemeName } from "./cli/ui/theme/tokens.js";
 import { atomicWriteSync } from "./core/atomic-write.js";
+import { DEFAULT_GOAL_MAX_ATTEMPTS, DEFAULT_GOAL_TEST_TIMEOUT_MS } from "./goal/types.js";
 import type { LanguageCode } from "./i18n/types.js";
 import {
   type IndexUserConfig,
@@ -137,6 +138,15 @@ export interface RateLimitConfig {
   rpm?: number;
 }
 
+export interface GoalConfig {
+  /** Max outer Goal attempts. Default 6. Env REASONIX_GOAL_MAX_ATTEMPTS overrides. */
+  max_attempts?: number;
+  /** Camel-case alias accepted for JS callers and hand-written config. */
+  maxAttempts?: number;
+  /** Per-attempt auto-test timeout in ms. Default 120000. */
+  testTimeoutMs?: number;
+}
+
 export interface ProxyConfig {
   /** Proxy URL (e.g. `http://127.0.0.1:7897`, `socks5://host:1080`). Takes precedence over HTTPS_PROXY / HTTP_PROXY / ALL_PROXY env vars when set, so desktop users on Windows can route through Clash without fighting GUI env-var propagation (issue #1868). */
   url?: string;
@@ -249,6 +259,8 @@ export interface ReasonixConfig {
   /** Maximum tool-call iterations per turn. Prevents runaway loops from consuming
    *  unlimited API budget. Default 50. Env `REASONIX_MAX_ITER` overrides. */
   maxIterPerTurn?: number;
+  /** Goal Mode configuration for `/goal <text>`. */
+  goal?: GoalConfig;
   projects?: {
     [absoluteRootDir: string]: {
       shellAllowed?: string[];
@@ -1330,6 +1342,34 @@ export function loadMaxIterPerTurn(path: string = defaultConfigPath()): number {
     if (Number.isFinite(n) && n > 0) return n;
   }
   return 50;
+}
+
+/** Load the outer Goal attempt cap. Config > env > default (6). */
+export function loadGoalMaxAttempts(path: string = defaultConfigPath()): number {
+  const cfg = readConfig(path).goal;
+  const fromConfig = cfg?.max_attempts ?? cfg?.maxAttempts;
+  if (typeof fromConfig === "number" && Number.isInteger(fromConfig) && fromConfig > 0) {
+    return fromConfig;
+  }
+  const fromEnv = process.env.REASONIX_GOAL_MAX_ATTEMPTS;
+  if (fromEnv) {
+    const n = Number.parseInt(fromEnv, 10);
+    if (Number.isInteger(n) && n > 0) return n;
+  }
+  return DEFAULT_GOAL_MAX_ATTEMPTS;
+}
+
+export function loadGoalTestTimeoutMs(path: string = defaultConfigPath()): number {
+  const fromConfig = readConfig(path).goal?.testTimeoutMs;
+  if (typeof fromConfig === "number" && Number.isInteger(fromConfig) && fromConfig > 0) {
+    return fromConfig;
+  }
+  const fromEnv = process.env.REASONIX_GOAL_TEST_TIMEOUT_MS;
+  if (fromEnv) {
+    const n = Number.parseInt(fromEnv, 10);
+    if (Number.isInteger(n) && n > 0) return n;
+  }
+  return DEFAULT_GOAL_TEST_TIMEOUT_MS;
 }
 
 export function loadRecentWorkspaces(path: string = defaultConfigPath()): string[] {

@@ -319,6 +319,10 @@ export const zhCN: TranslationSchema = {
       description: "缩小日志中过大的工具结果和工具调用参数；上限为 tokens，默认 4000",
       argsHint: "[tokens]",
     },
+    goal: {
+      description: "持续执行目标循环，直到 GOAL_COMPLETED、达到最大轮数或 /goal stop",
+      argsHint: "<目标>|resume|stop|status",
+    },
     keys: { description: "键盘 + 鼠标 + 复制粘贴参考" },
     cwd: {
       description:

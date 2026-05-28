@@ -354,6 +354,10 @@ export const JA: TranslationSchema = {
         "ログ内の大きすぎるツール結果とツール呼び出し引数を縮小; トークン数の上限、デフォルト4000",
       argsHint: "[tokens]",
     },
+    goal: {
+      description: "GOAL_COMPLETED、最大試行回数、または /goal stop まで永続的な Goal Loop を実行",
+      argsHint: "<text>|resume|stop|status",
+    },
     cwd: {
       description:
         "セッション中にワークスペースルートを切り替え — fs / shell / memory ツールの向き先を変更、プロジェクトフックを再読込、@メンションのウォーカーを更新",
