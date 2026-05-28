@@ -1449,6 +1449,7 @@ function TabRuntime({
   const [jobsOpen, setJobsOpen] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
   const [contextPanelTab, setContextPanelTab] = useState<ContextPanelTab>("files");
+  const [contextPanelTabNonce, setContextPanelTabNonce] = useState(0);
   const previousApprovalSnapshotRef = useRef<ApprovalSnapshot>({
     confirms: [],
     pathAccess: [],
@@ -1610,6 +1611,7 @@ function TabRuntime({
 
   const openMcpStatus = useCallback(() => {
     setContextPanelTab("tools");
+    setContextPanelTabNonce((nonce) => nonce + 1);
     if (ctxCollapsed) onToggleCtx();
     flashToast(t("toast.mcpStatusOpened"));
   }, [ctxCollapsed, flashToast, onToggleCtx]);
@@ -2627,6 +2629,7 @@ function TabRuntime({
           memory={state.memory}
           memoryDetail={state.memoryDetail}
           activeTab={contextPanelTab}
+          activeTabNonce={contextPanelTabNonce}
           onReadMemory={(path) => sendRpc({ cmd: "memory_read", path })}
           onOpenMcpSettings={() => openSettingsAt("mcp")}
           onEditMcpSpec={openMcpEditor}

@@ -22,6 +22,7 @@ export function ContextPanel({
   memory,
   memoryDetail,
   activeTab,
+  activeTabNonce,
   onReadMemory,
   onOpenMcpSettings,
   onEditMcpSpec,
@@ -35,6 +36,7 @@ export function ContextPanel({
   memory: MemoryEntryInfo[];
   memoryDetail: MemoryDetail | null;
   activeTab?: ContextPanelTab;
+  activeTabNonce?: number;
   onReadMemory: (path: string) => void;
   onOpenMcpSettings?: () => void;
   onEditMcpSpec?: (spec: McpSpecInfo) => void;
@@ -44,7 +46,7 @@ export function ContextPanel({
   const [tab, setTab] = useState<ContextPanelTab>("files");
   useEffect(() => {
     if (activeTab) setTab(activeTab);
-  }, [activeTab]);
+  }, [activeTab, activeTabNonce]);
   const reserved = usage.reservedTokens;
   const lastHit = usage.lastCallCacheHit ?? 0;
   const lastMiss = usage.lastCallCacheMiss ?? 0;
