@@ -1,8 +1,10 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod cc_switch;
 mod rpc;
 
-use rpc::{RpcState, rpc_kill, rpc_send, rpc_spawn};
+use cc_switch::import_cc_switch_mcp;
+use rpc::{rpc_kill, rpc_send, rpc_spawn, RpcState};
 use serde::Serialize;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -88,7 +90,9 @@ fn walk_dir(dir: &Path, depth: u32, max_depth: u32, out: &mut Vec<FileEntry>) {
         if name.starts_with('.') || SKIP_DIRS.contains(&name.as_str()) {
             continue;
         }
-        let Ok(file_type) = entry.file_type() else { continue };
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
         let path = entry.path().to_string_lossy().into_owned();
         if file_type.is_dir() {
             out.push(FileEntry {
@@ -134,7 +138,10 @@ fn git_status(root: String) -> Result<Vec<GitStatusEntry>, String> {
         return Err(format!("not a directory: {root}"));
     }
     let mut cmd = Command::new("git");
-    cmd.arg("status").arg("--porcelain").arg("-z").current_dir(root_path);
+    cmd.arg("status")
+        .arg("--porcelain")
+        .arg("-z")
+        .current_dir(root_path);
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -205,7 +212,9 @@ fn open_in_editor(command: String, path: String, line: Option<u32>) -> Result<()
             cmd.arg(&path);
         }
     }
-    cmd.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
+    cmd.stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
     cmd.spawn().map_err(|e| format!("spawn {trimmed}: {e}"))?;
     Ok(())
 }
@@ -222,7 +231,11 @@ fn sanitize_image_extension(raw: Option<&str>) -> String {
     let ok = !cleaned.is_empty()
         && cleaned.len() <= 8
         && cleaned.chars().all(|c| c.is_ascii_alphanumeric());
-    if ok { cleaned } else { "png".to_string() }
+    if ok {
+        cleaned
+    } else {
+        "png".to_string()
+    }
 }
 
 #[tauri::command]
@@ -241,12 +254,20 @@ fn save_clipboard_image(bytes: Vec<u8>, extension: Option<String>) -> Result<Str
 
 fn purge_old_pasted_images(max_age: Duration) {
     let dir = pasted_images_dir();
-    let Ok(entries) = std::fs::read_dir(&dir) else { return };
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return;
+    };
     let cutoff = SystemTime::now().checked_sub(max_age);
     for entry in entries.flatten() {
-        let Ok(metadata) = entry.metadata() else { continue };
-        if !metadata.is_file() { continue }
-        let Ok(modified) = metadata.modified() else { continue };
+        let Ok(metadata) = entry.metadata() else {
+            continue;
+        };
+        if !metadata.is_file() {
+            continue;
+        }
+        let Ok(modified) = metadata.modified() else {
+            continue;
+        };
         if cutoff.is_some_and(|t| modified < t) {
             let _ = std::fs::remove_file(entry.path());
         }
@@ -269,6 +290,7 @@ fn main() {
             rpc_spawn,
             rpc_send,
             rpc_kill,
+            import_cc_switch_mcp,
             open_in_editor,
             list_workspace_tree,
             git_status,
