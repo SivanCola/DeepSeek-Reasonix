@@ -51,3 +51,8 @@ desktop/src-tauri/binaries/
 *.cpuprofile
 
 .probe-snapshots/
+
+# Local agent development notes, not part of the repo.
+agent.md
+bugs.md
+todo.md

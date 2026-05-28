@@ -56,6 +56,11 @@ import {
   sessionPath,
 } from "./memory/session.js";
 import { type RepairReport, ToolCallRepair } from "./repair/index.js";
+import {
+  appendCacheDiagnostic,
+  buildCacheDiagnostic,
+  latestCacheDiagnostic,
+} from "./telemetry/cache-diagnostics.js";
 import { SessionStats, type TurnStats } from "./telemetry/stats.js";
 import { ToolRegistry } from "./tools.js";
 import { ReadTracker } from "./tools/read-tracker.js";
@@ -911,10 +916,28 @@ export class CacheFirstLoop {
       // Attribute under the actual model used (escalated → pro, else
       // this.model) so cost/usage logs reflect reality.
       const turnStats = this.stats.record(this._turn, this.model, usage ?? new Usage());
+      const prefixEvidence = this.prefix.diagnosticHashes();
+      let cacheDiagnostic = buildCacheDiagnostic({
+        turn: this._turn,
+        model: this.model,
+        usage: turnStats.usage,
+        estimatedCostUsd: turnStats.cost,
+        prefix: prefixEvidence,
+        previous: latestCacheDiagnostic(this.stats.cacheDiagnostics),
+      });
 
       // Carry cumulative stats across app restarts.
       if (this.sessionName) {
         try {
+          const meta = loadSessionMeta(this.sessionName);
+          cacheDiagnostic = buildCacheDiagnostic({
+            turn: this._turn,
+            model: this.model,
+            usage: turnStats.usage,
+            estimatedCostUsd: turnStats.cost,
+            prefix: prefixEvidence,
+            previous: latestCacheDiagnostic(meta.cacheDiagnostics),
+          });
           const last =
             this.stats.turns.length > 0 ? this.stats.turns[this.stats.turns.length - 1] : null;
           patchSessionMeta(this.sessionName, {
@@ -923,11 +946,16 @@ export class CacheFirstLoop {
             cacheMissTokens: this.stats.cumulativeCacheMissTokens,
             totalCompletionTokens: this.stats.cumulativeCompletionTokens,
             lastPromptTokens: last?.usage.promptTokens,
+            cacheDiagnostics: appendCacheDiagnostic(meta.cacheDiagnostics, cacheDiagnostic),
           });
         } catch {
           // Best-effort; don't crash the turn loop on a write failure.
         }
       }
+
+      // Store the per-turn cache diagnostic so the live /cache-miss-report
+      // replays the prefix hashes that were actually in effect at turn time.
+      this.stats.addCacheDiagnostic(cacheDiagnostic);
 
       this.scratch.reasoning = reasoningContent || null;
 
@@ -946,6 +974,7 @@ export class CacheFirstLoop {
         role: "assistant_final",
         content: assistantContent,
         stats: turnStats,
+        cacheDiagnostic,
         repair: report,
       };
 

@@ -1,4 +1,8 @@
 import { createHash } from "node:crypto";
+import {
+  type PrefixDiagnosticHashes,
+  prefixDiagnosticHashes,
+} from "../telemetry/cache-diagnostics.js";
 import type { ChatMessage, ToolSpec } from "../types.js";
 import { readTailMessages } from "./session.js";
 
@@ -65,6 +69,14 @@ export class ImmutablePrefix {
     if (this._fingerprintCache !== null) return this._fingerprintCache;
     this._fingerprintCache = this.computeFingerprint();
     return this._fingerprintCache;
+  }
+
+  diagnosticHashes(): PrefixDiagnosticHashes {
+    return prefixDiagnosticHashes({
+      system: this.system,
+      toolSpecs: this._toolSpecs,
+      fewShots: this.fewShots,
+    });
   }
 
   /** Dev/test only — throws on cache drift, which always means a non-`addTool` mutation slipped in. */
