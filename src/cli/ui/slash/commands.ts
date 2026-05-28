@@ -1,3 +1,4 @@
+import { listThemeNames } from "../theme/tokens.js";
 import type { SlashArgContext, SlashCommandSpec, SlashGroup } from "./types.js";
 
 export const SLASH_GROUP_ORDER = [
@@ -25,6 +26,8 @@ export const SLASH_GROUP_LABEL: Record<SlashGroup, string> = {
 const SLASH_GROUP_RANK = new Map<SlashGroup, number>(
   SLASH_GROUP_ORDER.map((group, index) => [group, index]),
 );
+const THEME_ARG_COMPLETER = ["auto", ...listThemeNames()] as const;
+const THEME_ARGS_HINT = `[${THEME_ARG_COMPLETER.join("|")}]`;
 
 export function orderSlashCommandsByGroup<T extends Pick<SlashCommandSpec, "group">>(
   commands: readonly T[],
@@ -94,19 +97,9 @@ export const SLASH_COMMANDS: readonly SlashCommandSpec[] = [
   {
     cmd: "theme",
     group: "setup",
-    argsHint: "[auto|dark|light|midnight|deep-blue|ember|aurora|paper|high-contrast]",
+    argsHint: THEME_ARGS_HINT,
     summary: "show or persist the terminal theme preference. Bare opens picker.",
-    argCompleter: [
-      "auto",
-      "dark",
-      "light",
-      "midnight",
-      "deep-blue",
-      "ember",
-      "aurora",
-      "paper",
-      "high-contrast",
-    ],
+    argCompleter: THEME_ARG_COMPLETER,
   },
 
   { cmd: "status", group: "info", summary: "current model, flags, context, session" },

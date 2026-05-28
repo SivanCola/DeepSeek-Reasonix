@@ -1526,7 +1526,7 @@ describe("handleSlash", () => {
 
     it("persists auto so env can resolve the active theme", () => {
       const r = handleSlash("theme", ["auto"], makeLoop());
-      expect(r.info).toMatch(/active on next launch: dark/);
+      expect(r.info).toMatch(/active on next launch: graphite/);
       expect(loadTheme()).toBe("auto");
     });
 

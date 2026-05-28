@@ -1198,7 +1198,7 @@ export function resolveThemePreference(
   configTheme: ThemeName | "auto" | undefined,
   envTheme?: string | null,
 ): ThemeName {
-  if (configTheme && configTheme !== "auto") return configTheme;
+  if (configTheme && configTheme !== "auto") return resolveThemeName(configTheme);
   return resolveThemeName(envTheme);
 }
 

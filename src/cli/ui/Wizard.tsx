@@ -29,7 +29,8 @@ import type { LanguageCode } from "../../i18n/types.js";
 import { type CatalogEntry, MCP_CATALOG } from "../../mcp/catalog.js";
 import { MultiSelect, type SelectItem, SingleSelect } from "./Select.js";
 import { ThemeProvider, useTheme } from "./theme/context.js";
-import { type ThemeName, listThemeNames } from "./theme/tokens.js";
+import { themeChoiceLabel } from "./theme/labels.js";
+import { type ThemeName, listThemeNames, resolveThemeName } from "./theme/tokens.js";
 
 export interface WizardProps {
   /** Called once the config has been saved. */
@@ -287,7 +288,11 @@ function ThemeStep({
   onPreview: (theme: ThemeName) => void;
   onSubmit: (theme: ThemeName) => void;
 }) {
-  const initialIndex = Math.max(0, THEME_NAMES.indexOf(initialValue));
+  const resolvedInitial = resolveThemeName(initialValue);
+  const initialIndex = Math.max(
+    0,
+    THEME_NAMES.indexOf(resolvedInitial as (typeof THEME_NAMES)[number]),
+  );
   const [index, setIndex] = useState(initialIndex);
   const theme = useTheme();
 
@@ -320,7 +325,7 @@ function ThemeStep({
               {i === index ? "▸ " : "  "}
             </Text>
             <Text bold={i === index} color={i === index ? theme.fg.strong : theme.fg.body}>
-              {name}
+              {themeChoiceLabel(name)}
             </Text>
             <Text color={theme.fg.meta}>{" — "}</Text>
             <Text color={theme.fg.meta}>{t(`wizard.themeCaption.${name}`)}</Text>

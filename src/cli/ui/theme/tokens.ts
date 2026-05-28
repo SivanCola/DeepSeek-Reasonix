@@ -1,14 +1,18 @@
 import type { Color } from "ink";
 
-export type ThemeName =
-  | "dark"
-  | "light"
-  | "midnight"
-  | "deep-blue"
+export type PublicThemeName =
+  | "graphite"
   | "ember"
   | "aurora"
-  | "paper"
-  | "high-contrast";
+  | "sandstone"
+  | "porcelain"
+  | "linen"
+  | "glacier"
+  | "midnight";
+
+type LegacyThemeName = "dark" | "light" | "deep-blue" | "high-contrast";
+
+export type ThemeName = PublicThemeName | LegacyThemeName;
 
 export interface ThemeTokens {
   fg: {
@@ -98,8 +102,8 @@ const dark = defineTheme({
     faint: "#4d5666",
   },
   tone: {
-    brand: "#fb923c",
-    accent: "#7dd3fc",
+    brand: "#7dd3fc",
+    accent: "#c084fc",
     violet: "#a78bfa",
     ok: "#86efac",
     warn: "#fbbf24",
@@ -107,8 +111,8 @@ const dark = defineTheme({
     info: "#60a5fa",
   },
   toneActive: {
-    brand: "#fed7aa",
-    accent: "#bae6fd",
+    brand: "#bae6fd",
+    accent: "#e9d5ff",
     violet: "#ddd6fe",
     ok: "#bbf7d0",
     warn: "#fde68a",
@@ -127,6 +131,8 @@ const dark = defineTheme({
     selected: "#2c323e",
   },
 });
+
+const graphite = dark;
 
 const light = defineTheme({
   fg: {
@@ -166,6 +172,8 @@ const light = defineTheme({
     selected: "#dde6f5",
   },
 });
+
+const porcelain = light;
 
 const midnight = defineTheme({
   fg: {
@@ -323,7 +331,46 @@ const aurora = defineTheme({
   },
 });
 
-const paper = defineTheme({
+const sandstone = defineTheme({
+  fg: {
+    strong: "#24180f",
+    body: "#38291e",
+    sub: "#6a5848",
+    meta: "#806b58",
+    faint: "#ad9982",
+  },
+  tone: {
+    brand: "#c05621",
+    accent: "#b45309",
+    violet: "#7c3aed",
+    ok: "#15803d",
+    warn: "#b45309",
+    err: "#dc2626",
+    info: "#0369a1",
+  },
+  toneActive: {
+    brand: "#9a3412",
+    accent: "#92400e",
+    violet: "#6d28d9",
+    ok: "#166534",
+    warn: "#92400e",
+    err: "#b91c1c",
+    info: "#075985",
+  },
+  surface: {
+    bg: "#fff4e3",
+    bgInput: "#f3e3cc",
+    bgCode: "#fbedd7",
+    bgElev: "#ead7bd",
+  },
+  messageBg: {
+    user: "#ead7bd",
+    bash: "#efdfd0",
+    selected: "#dfc7a8",
+  },
+});
+
+const linen = defineTheme({
   fg: {
     strong: "#1f1a14",
     body: "#312820",
@@ -359,6 +406,45 @@ const paper = defineTheme({
     user: "#eadcc9",
     bash: "#f0dfd9",
     selected: "#e4d3bd",
+  },
+});
+
+const glacier = defineTheme({
+  fg: {
+    strong: "#172033",
+    body: "#25334a",
+    sub: "#4f647f",
+    meta: "#6b7f99",
+    faint: "#9aacbf",
+  },
+  tone: {
+    brand: "#0284c7",
+    accent: "#2563eb",
+    violet: "#7c3aed",
+    ok: "#15803d",
+    warn: "#b45309",
+    err: "#dc2626",
+    info: "#0369a1",
+  },
+  toneActive: {
+    brand: "#0369a1",
+    accent: "#1d4ed8",
+    violet: "#6d28d9",
+    ok: "#166534",
+    warn: "#92400e",
+    err: "#b91c1c",
+    info: "#075985",
+  },
+  surface: {
+    bg: "#f4faff",
+    bgInput: "#eaf4fb",
+    bgCode: "#f8fbff",
+    bgElev: "#dceaf5",
+  },
+  messageBg: {
+    user: "#dceaf5",
+    bash: "#e8eef7",
+    selected: "#d2e3f0",
   },
 });
 
@@ -402,17 +488,32 @@ const highContrast = defineTheme({
 });
 
 export const THEMES = {
-  dark,
-  light,
-  midnight,
-  "deep-blue": deepBlue,
+  graphite,
   ember,
   aurora,
-  paper,
+  sandstone,
+  porcelain,
+  linen,
+  glacier,
+  midnight,
+  dark,
+  light,
+  "deep-blue": deepBlue,
   "high-contrast": highContrast,
 } as const satisfies Record<ThemeName, ThemeTokens>;
 
-export const DEFAULT_THEME_NAME: ThemeName = "dark";
+export const THEME_NAMES = [
+  "graphite",
+  "ember",
+  "aurora",
+  "sandstone",
+  "porcelain",
+  "linen",
+  "glacier",
+  "midnight",
+] as const satisfies readonly PublicThemeName[];
+
+export const DEFAULT_THEME_NAME: PublicThemeName = "graphite";
 
 export function isThemeName(value: string): value is ThemeName {
   return Object.prototype.hasOwnProperty.call(THEMES, value);
@@ -421,14 +522,14 @@ export function isThemeName(value: string): value is ThemeName {
 export function resolveThemeName(value?: string | null): ThemeName {
   if (!value || value === "auto") return DEFAULT_THEME_NAME;
   // Handle old theme names
-  if (value === "default" || value === "github-dark") return "dark";
-  if (value === "github-light") return "light";
+  if (value === "default" || value === "github-dark" || value === "dark") return "graphite";
+  if (value === "github-light" || value === "light") return "porcelain";
   if (value === "tokyo-night") return "midnight";
   return isThemeName(value) ? value : DEFAULT_THEME_NAME;
 }
 
-export function listThemeNames(): ThemeName[] {
-  return Object.keys(THEMES) as ThemeName[];
+export function listThemeNames(): PublicThemeName[] {
+  return [...THEME_NAMES];
 }
 
 export function themeTokens(name?: string | null): ThemeTokens {
