@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { getAllMcpSpecs } from "../src/cli/commands/desktop.js";
+import { getAllMcpSpecs, stripLegacyMcpConfigForRaw } from "../src/cli/commands/desktop.js";
 import type { ReasonixConfig } from "../src/config.js";
 
 describe("getAllMcpSpecs", () => {
@@ -63,5 +63,15 @@ describe("getAllMcpSpecs", () => {
     const cfg: ReasonixConfig = {};
     const specs = getAllMcpSpecs(cfg);
     expect(specs).toEqual([]);
+  });
+
+  it("removes the edited anonymous legacy spec by normalized raw form", () => {
+    const cfg: ReasonixConfig = {
+      mcp: ["  npx   -y   @scope/fs   /tmp  ", "git=uvx mcp-server-git"],
+    };
+
+    stripLegacyMcpConfigForRaw(cfg, "npx -y @scope/fs /tmp");
+
+    expect(cfg.mcp).toEqual(["git=uvx mcp-server-git"]);
   });
 });
