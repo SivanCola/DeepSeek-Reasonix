@@ -9,6 +9,13 @@ import {
   setActiveTheme,
   themeTokens,
 } from "../src/cli/ui/theme/tokens.js";
+import { EN } from "../src/i18n/EN.js";
+import { JA } from "../src/i18n/JA.js";
+import { de } from "../src/i18n/de.js";
+import { ru } from "../src/i18n/ru.js";
+import { zhCN } from "../src/i18n/zh-CN.js";
+
+const CLI_LOCALES = [EN, zhCN, JA, de, ru];
 
 describe("theme tokens", () => {
   it("resolves missing, auto, and invalid names to the default theme", () => {
@@ -18,7 +25,16 @@ describe("theme tokens", () => {
   });
 
   it("lists all registered themes", () => {
-    expect(listThemeNames()).toEqual(["dark", "light", "midnight", "deep-blue", "high-contrast"]);
+    expect(listThemeNames()).toEqual([
+      "dark",
+      "light",
+      "midnight",
+      "deep-blue",
+      "ember",
+      "aurora",
+      "paper",
+      "high-contrast",
+    ]);
   });
 
   it("provides complete token sets for every theme", () => {
@@ -30,6 +46,14 @@ describe("theme tokens", () => {
       expect(theme.surface.bg).toBeTruthy();
       expect(theme.card.error.color).toBe(theme.tone.err);
       expect(theme.card.streaming.color).toBe(theme.tone.brand);
+    }
+  });
+
+  it("provides wizard captions for every registered theme", () => {
+    for (const locale of CLI_LOCALES) {
+      for (const name of listThemeNames()) {
+        expect(locale.wizard.themeCaption[name]).toBeTruthy();
+      }
     }
   });
 

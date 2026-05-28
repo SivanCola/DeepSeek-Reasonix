@@ -1,6 +1,14 @@
 import type { Color } from "ink";
 
-export type ThemeName = "dark" | "light" | "midnight" | "deep-blue" | "high-contrast";
+export type ThemeName =
+  | "dark"
+  | "light"
+  | "midnight"
+  | "deep-blue"
+  | "ember"
+  | "aurora"
+  | "paper"
+  | "high-contrast";
 
 export interface ThemeTokens {
   fg: {
@@ -90,8 +98,8 @@ const dark = defineTheme({
     faint: "#4d5666",
   },
   tone: {
-    brand: "#7dd3fc",
-    accent: "#c084fc",
+    brand: "#fb923c",
+    accent: "#7dd3fc",
     violet: "#a78bfa",
     ok: "#86efac",
     warn: "#fbbf24",
@@ -99,8 +107,8 @@ const dark = defineTheme({
     info: "#60a5fa",
   },
   toneActive: {
-    brand: "#bae6fd",
-    accent: "#e9d5ff",
+    brand: "#fed7aa",
+    accent: "#bae6fd",
     violet: "#ddd6fe",
     ok: "#bbf7d0",
     warn: "#fde68a",
@@ -237,6 +245,123 @@ const deepBlue = defineTheme({
   },
 });
 
+const ember = defineTheme({
+  fg: {
+    strong: "#fff7ed",
+    body: "#f5dec8",
+    sub: "#c8ad96",
+    meta: "#947a66",
+    faint: "#665142",
+  },
+  tone: {
+    brand: "#fb923c",
+    accent: "#fdba74",
+    violet: "#f0abfc",
+    ok: "#86efac",
+    warn: "#facc15",
+    err: "#fb7185",
+    info: "#7dd3fc",
+  },
+  toneActive: {
+    brand: "#fed7aa",
+    accent: "#ffedd5",
+    violet: "#f5d0fe",
+    ok: "#bbf7d0",
+    warn: "#fef08a",
+    err: "#fecdd3",
+    info: "#bae6fd",
+  },
+  surface: {
+    bg: "#140f0b",
+    bgInput: "#1f160f",
+    bgCode: "#0f0a07",
+    bgElev: "#2a1d13",
+  },
+  messageBg: {
+    user: "#342016",
+    bash: "#2b1c18",
+    selected: "#3a261a",
+  },
+});
+
+const aurora = defineTheme({
+  fg: {
+    strong: "#ecfeff",
+    body: "#d1fae5",
+    sub: "#a7c9bf",
+    meta: "#73958c",
+    faint: "#4d655f",
+  },
+  tone: {
+    brand: "#5eead4",
+    accent: "#93c5fd",
+    violet: "#c4b5fd",
+    ok: "#86efac",
+    warn: "#fbbf24",
+    err: "#fb7185",
+    info: "#67e8f9",
+  },
+  toneActive: {
+    brand: "#99f6e4",
+    accent: "#bfdbfe",
+    violet: "#ddd6fe",
+    ok: "#bbf7d0",
+    warn: "#fde68a",
+    err: "#fecdd3",
+    info: "#a5f3fc",
+  },
+  surface: {
+    bg: "#071817",
+    bgInput: "#0b2422",
+    bgCode: "#061211",
+    bgElev: "#12302d",
+  },
+  messageBg: {
+    user: "#12352f",
+    bash: "#142c34",
+    selected: "#163b3a",
+  },
+});
+
+const paper = defineTheme({
+  fg: {
+    strong: "#1f1a14",
+    body: "#312820",
+    sub: "#5a4a3c",
+    meta: "#766554",
+    faint: "#a38f79",
+  },
+  tone: {
+    brand: "#c05621",
+    accent: "#2563eb",
+    violet: "#7c3aed",
+    ok: "#15803d",
+    warn: "#b45309",
+    err: "#dc2626",
+    info: "#0369a1",
+  },
+  toneActive: {
+    brand: "#9a3412",
+    accent: "#1d4ed8",
+    violet: "#6d28d9",
+    ok: "#166534",
+    warn: "#92400e",
+    err: "#b91c1c",
+    info: "#075985",
+  },
+  surface: {
+    bg: "#fff8ed",
+    bgInput: "#f4eadb",
+    bgCode: "#fbf0df",
+    bgElev: "#eadcc9",
+  },
+  messageBg: {
+    user: "#eadcc9",
+    bash: "#f0dfd9",
+    selected: "#e4d3bd",
+  },
+});
+
 const highContrast = defineTheme({
   fg: {
     strong: "#ffffff",
@@ -281,6 +406,9 @@ export const THEMES = {
   light,
   midnight,
   "deep-blue": deepBlue,
+  ember,
+  aurora,
+  paper,
   "high-contrast": highContrast,
 } as const satisfies Record<ThemeName, ThemeTokens>;
 
