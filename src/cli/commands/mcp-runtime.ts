@@ -190,8 +190,8 @@ export function createMcpRuntime(ctx: RuntimeContext): McpRuntime {
         : ctx.getRequestedCount() === 1 && ctx.getMcpPrefix()
           ? (ctx.getMcpPrefix() as string)
           : "";
-      if (spec.transport === "stdio") preflightStdioSpec(spec);
       const workspaceDir = ctx.getWorkspaceDir?.();
+      if (spec.transport === "stdio") preflightStdioSpec(spec, { cwd: workspaceDir });
       const transport = buildTransportFromSpec(spec, { cwd: workspaceDir });
       mcp = new McpClient({ transport, workspaceDir, requestTimeoutMs: spec.requestTimeoutMs });
       await mcp.initialize({ signal });
