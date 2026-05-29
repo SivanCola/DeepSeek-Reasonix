@@ -171,17 +171,42 @@ describe("Desktop App reducer — usage", () => {
     });
     expect(accumulated.usage.turnCostUsd).toBeCloseTo(0.003, 6);
 
+    const steered = reduce(
+      {
+        ...accumulated,
+        busy: true,
+        messages: [{ kind: "assistant", turn: 1, segments: [], pending: false }],
+      },
+      {
+        t: "incoming",
+        event: {
+          type: "user.message",
+          id: 3,
+          ts: "2026-05-27T00:00:02.000Z",
+          turn: 1,
+          text: "same-turn steer",
+        },
+      },
+    );
+    expect(steered.usage.turnCostUsd).toBeCloseTo(0.003, 6);
+
     const reset = reduce(accumulated, {
       t: "incoming",
       event: {
         type: "user.message",
-        id: 3,
-        ts: "2026-05-27T00:00:02.000Z",
+        id: 4,
+        ts: "2026-05-27T00:00:03.000Z",
         turn: 2,
         text: "next turn",
       },
     });
     expect(reset.usage.turnCostUsd).toBe(0);
+
+    const localReset = reduce(
+      { ...accumulated, usage: { ...accumulated.usage, turnCostUsd: 0.004 } },
+      { t: "send_user", text: "local next turn", clientId: "local-1" },
+    );
+    expect(localReset.usage.turnCostUsd).toBe(0);
   });
 
   it("settles the pending assistant message when an error ends the turn (#1660)", () => {
