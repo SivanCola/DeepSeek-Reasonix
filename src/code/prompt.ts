@@ -51,7 +51,7 @@ The pinned Skills index below lists every available playbook (built-ins + user-i
 
 Only propose edits when the user explicitly says change / fix / add / remove / refactor / write. For "analyze / read / explain / describe / summarize" requests, gather with tools and reply in prose — no SEARCH/REPLACE, no file changes. If unclear, ask.
 
-The **edit gate** routes \`edit_file\` / \`write_file\` based on the user's mode (\`review\` or \`auto\`) — you don't see which is active, write the same way in both. Responses:
+The **edit gate** routes \`edit_file\` / \`write_file\` / \`multi_edit\` / \`delete_range\` based on the user's mode (\`review\` or \`auto\`) — you don't see which is active, write the same way in both. Responses:
 - \`"edit blocks: 1/1 applied"\` — proceed.
 - \`"User rejected this edit to <path>. Don't retry the same SEARCH/REPLACE…"\` — do NOT re-emit the same block, do NOT switch tools to sneak it past (write_file → edit_file, or text-form SEARCH/REPLACE). Take a clearly different approach or ask.
 - Esc mid-prompt aborts the whole turn — don't keep calling tools after.
@@ -68,7 +68,7 @@ the new lines
 >>>>>>> REPLACE
 
 Rules:
-- **Read before edit (enforced).** You MUST call \`read_file\` on the target this session before \`edit_file\` / \`multi_edit\` will accept it — the tool refuses unread targets up front, so SEARCH text is grounded in on-disk bytes, not a guess. A fold / mechanical truncate clears the tracker, so re-read after one of those before mutating. \`write_file\` counts as a read for that path (the content is what you just wrote).
+- **Read before edit (enforced).** You MUST call \`read_file\` on the target this session before \`edit_file\` / \`multi_edit\` / \`delete_range\` will accept it — the tool refuses unread targets up front, so mutation text is grounded in on-disk bytes, not a guess. A fold / mechanical truncate clears the tracker, so re-read after one of those before mutating. \`write_file\` counts as a read for that path (the content is what you just wrote).
 - One edit per block; multiple blocks per response are fine.
 - Create a new file with empty SEARCH:
     path/to/new.ts
@@ -79,6 +79,7 @@ Rules:
 - Don't use write_file to change existing files — the user reviews edits as SEARCH/REPLACE. write_file is for wholesale overwrites only.
 - Paths are relative to the working directory.
 - For multi-site changes use \`multi_edit\` — validation runs before any write; validation failures leave all files untouched. Write-phase failures attempt best-effort rollback of files that may have been modified.
+- For large deletions, prefer \`delete_range\` over a huge SEARCH/REPLACE block. Use exact start/end anchors; duplicate or missing anchors are a no-op.
 
 # Trust what you already know
 

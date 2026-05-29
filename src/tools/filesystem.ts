@@ -16,7 +16,7 @@ import {
   readSubdirMemoryContent,
 } from "../memory/subdir.js";
 import type { ToolCallContext, ToolRegistry } from "../tools.js";
-import { applyEdit, applyMultiEdit, generateWriteDiff } from "./fs/edit.js";
+import { applyDeleteRange, applyEdit, applyMultiEdit, generateWriteDiff } from "./fs/edit.js";
 import { globFiles } from "./fs/glob.js";
 import { extractOutline, formatOutline } from "./fs/outline.js";
 import { searchContent, searchFiles } from "./fs/search.js";
@@ -776,6 +776,51 @@ export function registerFilesystemTools(
       return applyMultiEdit(
         rootDir,
         resolved,
+        ctx?.readTracker ? (abs) => ctx.readTracker!.hasRead(abs) : undefined,
+      );
+    },
+  });
+
+  registry.register({
+    name: "delete_range",
+    description:
+      "Delete a contiguous text range from an existing file using exact start/end anchors. Call read_file on this path first this session. Matching failures, duplicate anchors, or reversed ranges are no-ops and leave the file unchanged. Use this instead of huge SEARCH/REPLACE blocks for large deletions.",
+    parameters: {
+      type: "object",
+      properties: {
+        path: { type: "string" },
+        start_anchor: {
+          type: "string",
+          description: "Exact text that marks the start of the range.",
+        },
+        end_anchor: {
+          type: "string",
+          description: "Exact text that marks the end of the range.",
+        },
+        inclusive: {
+          type: "boolean",
+          description:
+            "When true (default), delete the anchors too. When false, keep both anchors and delete only the text between them.",
+        },
+      },
+      required: ["path", "start_anchor", "end_anchor"],
+    },
+    fn: async (
+      args: { path: string; start_anchor: string; end_anchor: string; inclusive?: boolean },
+      ctx?: ToolCallContext,
+    ) => {
+      const abs = await safePath(args.path, "delete_range", ctx, "write");
+      const guard = prepareAutoGitRollback({
+        rootDir,
+        toolName: "delete_range",
+        absPaths: [abs],
+        autoGitRollback,
+      });
+      if (guard) return guard;
+      return applyDeleteRange(
+        rootDir,
+        abs,
+        args,
         ctx?.readTracker ? (abs) => ctx.readTracker!.hasRead(abs) : undefined,
       );
     },

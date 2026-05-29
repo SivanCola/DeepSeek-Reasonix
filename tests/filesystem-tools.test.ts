@@ -968,7 +968,7 @@ describe("filesystem tools (built-in, sandbox-enforced)", () => {
   });
 
   describe("allowWriting=false (read-only mode)", () => {
-    it("skips registering write_file / edit_file / multi_edit / create_directory / move_file / delete_file / delete_directory / copy_file", async () => {
+    it("skips registering write_file / edit_file / multi_edit / delete_range / create_directory / move_file / delete_file / delete_directory / copy_file", async () => {
       const ro = new ToolRegistry();
       registerFilesystemTools(ro, { rootDir: root, allowWriting: false });
       expect(ro.has("read_file")).toBe(true);
@@ -977,6 +977,7 @@ describe("filesystem tools (built-in, sandbox-enforced)", () => {
       expect(ro.has("write_file")).toBe(false);
       expect(ro.has("edit_file")).toBe(false);
       expect(ro.has("multi_edit")).toBe(false);
+      expect(ro.has("delete_range")).toBe(false);
       expect(ro.has("create_directory")).toBe(false);
       expect(ro.has("move_file")).toBe(false);
       expect(ro.has("delete_file")).toBe(false);

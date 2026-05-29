@@ -138,7 +138,7 @@ import type { PickerSnapshot, ViewerSnapshot } from "./dashboard/use-picker-broa
 import { useViewerBroadcast } from "./dashboard/use-picker-broadcast.js";
 import { formatEditResults, formatPendingPreview } from "./edit-history.js";
 import {
-  buildEditToolBlocks,
+  buildEditToolBlocksForReview,
   formatQueuedReviewToolResult,
   isReviewGatedEditTool,
   shouldApplyEditToolImmediately,
@@ -2043,7 +2043,7 @@ function AppInner({
       // otherwise edit_file writes to the OLD root while read_file looks in
       // the NEW one, producing ENOENT on the next read of a just-edited file.
       const rootForEdit = currentRootDirRef.current;
-      const blocks = buildEditToolBlocks(name, args, rootForEdit);
+      const blocks = await buildEditToolBlocksForReview(name, args, rootForEdit, loop.readTracker);
       if (!blocks || blocks.length === 0) return null;
 
       // Helper: apply the current block(s) + record into history + arm
