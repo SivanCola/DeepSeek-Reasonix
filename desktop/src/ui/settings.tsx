@@ -1,6 +1,7 @@
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import type { Balance, Settings as SettingsType, UsageStats } from "../App";
+import { matchingConnectionTestResult } from "../connection-test-key";
 import { getLangLabel, getSupportedLangs, setLang, t, useLang } from "../i18n";
 import { I } from "../icons";
 import type {
@@ -501,6 +502,16 @@ function PageGeneral({
     setCustomFontDraft(next);
     onSetCustomFontFamily(next);
   };
+  const webSearchEngine = settings.webSearchEngine ?? "bing";
+  const webSearchEngineResult =
+    webSearchEngine === "bing" || webSearchEngine === "bing-intl"
+      ? matchingConnectionTestResult(
+          connectionTests.webSearch,
+          "webSearch",
+          { engine: webSearchEngine },
+          settings,
+        )
+      : undefined;
   return (
     <>
       <section className="section">
@@ -799,7 +810,7 @@ function PageGeneral({
           <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
             <select
               className="field"
-              value={settings.webSearchEngine ?? "bing"}
+              value={webSearchEngine}
               onChange={(e) =>
                 onSave({
                   webSearchEngine: e.target.value as
@@ -829,11 +840,11 @@ function PageGeneral({
             </select>
             <ConnectionTestButton
               target="webSearch"
-              result={connectionTests.webSearch}
+              result={webSearchEngineResult}
               onTest={() =>
                 onTestConnection("webSearch", {
-                  engine: settings.webSearchEngine,
-                  ...(settings.webSearchEngine === "searxng"
+                  engine: webSearchEngine,
+                  ...(webSearchEngine === "searxng"
                     ? { endpoint: settings.webSearchEndpoint || null }
                     : {}),
                 })
@@ -950,6 +961,12 @@ function SearxngEndpointRow({
   testResult?: ConnectionTestResultEvent;
 }) {
   const [draft, setDraft] = useState(settings.webSearchEndpoint ?? "");
+  const result = matchingConnectionTestResult(
+    testResult,
+    "webSearch",
+    { engine: "searxng", endpoint: draft.trim() || null },
+    settings,
+  );
   useEffect(() => {
     setDraft(settings.webSearchEndpoint ?? "");
   }, [settings.webSearchEndpoint]);
@@ -973,7 +990,7 @@ function SearxngEndpointRow({
         />
         <ConnectionTestButton
           target="webSearch"
-          result={testResult}
+          result={result}
           onTest={() =>
             onTestConnection("webSearch", {
               engine: "searxng",
@@ -1022,6 +1039,16 @@ function WebSearchApiKeyRow({
   const [draft, setDraft] = useState("");
   const label = t(`settings.webSearchApiKey.${engine}` as const);
   const isPaidEngine = ["tavily", "perplexity", "exa"].includes(engine);
+  const testKey = draft.trim() || undefined;
+  const result = matchingConnectionTestResult(
+    testResult,
+    "webSearch",
+    { engine, apiKeys: testKey ? { [engine]: testKey } : undefined },
+    {
+      webSearchEngine: engine,
+      webSearchApiKeys: prefix ? { [engine]: prefix } : undefined,
+    },
+  );
   return (
     <div className="setting-row">
       <div className="l">
@@ -1073,9 +1100,8 @@ function WebSearchApiKeyRow({
         ) : null}
         <ConnectionTestButton
           target="webSearch"
-          result={testResult}
+          result={result}
           onTest={() => {
-            const testKey = draft.trim() || undefined;
             onTestConnection("webSearch", {
               engine,
               apiKeys: testKey ? { [engine]: testKey } : undefined,
@@ -1172,6 +1198,12 @@ function ApiKeySection({
   const [key, setKey] = useState("");
   const [urlDraft, setUrlDraft] = useState(baseUrl ?? "");
   const showCustomEndpointWarning = isCustomDeepSeekEndpoint(urlDraft);
+  const deepseekTestResult = matchingConnectionTestResult(
+    connectionTests.deepseek,
+    "deepseek",
+    { apiKey: key || undefined, baseUrl: urlDraft.trim() || null },
+    { apiKeyPrefix, baseUrl },
+  );
   return (
     <section className="section">
       <div className="stitle">{t("settings.apiSection")}</div>
@@ -1206,7 +1238,7 @@ function ApiKeySection({
           </button>
           <ConnectionTestButton
             target="deepseek"
-            result={connectionTests.deepseek}
+            result={deepseekTestResult}
             onTest={() =>
               onTestConnection("deepseek", {
                 apiKey: key || undefined,

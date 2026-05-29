@@ -542,6 +542,7 @@ export type ConnectionTestResultEvent = {
   latencyMs: number;
   status?: number;
   detail?: string;
+  requestKey?: string;
 };
 
 export type IncomingEvent = { tabId?: string } & (
@@ -646,6 +647,7 @@ export type OutgoingCommand = { tabId?: string } & (
   | {
       cmd: "settings_test_connection";
       target: ConnectionTestTarget;
+      requestKey?: string;
       apiKey?: string;
       baseUrl?: string | null;
       engine?: string;

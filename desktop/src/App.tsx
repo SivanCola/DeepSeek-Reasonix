@@ -17,6 +17,10 @@ import {
   restoreAbortedDraft,
   type AbortDraftSource,
 } from "./abort-draft";
+import {
+  attachConnectionTestRequestKey,
+  buildConnectionTestRequestKey,
+} from "./connection-test-key";
 import { getLang, getLangLabel, getSupportedLangs, setLang, t, useLang } from "./i18n";
 import { I } from "./icons";
 import {
@@ -653,7 +657,10 @@ function reduceRaw(state: State, action: Action): State {
         ...state,
         connectionTests: {
           ...state.connectionTests,
-          [action.result.target]: action.result,
+          [action.result.target]: attachConnectionTestRequestKey(
+            action.result,
+            state.connectionTests[action.result.target],
+          ),
         },
       };
     case "push_status":
@@ -1298,7 +1305,7 @@ function applyIncomingRaw(state: State, ev: IncomingEvent): State {
         ...state,
         connectionTests: {
           ...state.connectionTests,
-          [ev.target]: ev,
+          [ev.target]: attachConnectionTestRequestKey(ev, state.connectionTests[ev.target]),
         },
       };
     case "$btw_result":
@@ -1632,6 +1639,7 @@ function TabRuntime({
       endpoint?: string | null;
       apiKeys?: Record<string, string>;
     }) => {
+      const requestKey = buildConnectionTestRequestKey(target, opts, state.settings);
       dispatch({
         t: "connection_test_result",
         result: {
@@ -1640,11 +1648,12 @@ function TabRuntime({
           ok: false,
           message: "",
           latencyMs: -1,
+          requestKey,
         },
       });
-      sendRpc({ cmd: "settings_test_connection", target, ...opts });
+      sendRpc({ cmd: "settings_test_connection", target, requestKey, ...opts });
     },
-    [sendRpc],
+    [sendRpc, state.settings],
   );
   const addMcpSpec = useCallback(
     (spec: string) => sendRpc({ cmd: "mcp_specs_add", spec }),

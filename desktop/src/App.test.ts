@@ -35,6 +35,10 @@ vi.mock("./theme", () => ({
 }));
 
 import { readWindowExpanded, reduce, toggleWindowExpanded } from "./App";
+import {
+  buildConnectionTestRequestKey,
+  matchingConnectionTestResult,
+} from "./connection-test-key";
 import { getThreadMaxWidth } from "./ui/thread-layout";
 
 function initialState(): Parameters<typeof reduce>[0] {
@@ -137,6 +141,91 @@ function makePathPrompt(
 }
 
 describe("Desktop App reducer — usage", () => {
+  it("keeps connection test results scoped to the tested settings", () => {
+    const settings = {
+      reasoningEffort: "low" as const,
+      editMode: "review" as const,
+      budgetUsd: null,
+      workspaceDir: "/workspace",
+      recentWorkspaces: [],
+      model: "deepseek-v4-flash",
+      webSearchEngine: "bing" as const,
+      version: "test",
+    };
+    const requestKey = buildConnectionTestRequestKey(
+      "webSearch",
+      { engine: "bing" },
+      settings,
+    );
+    const pending = reduce(
+      { ...initialState(), settings },
+      {
+        t: "connection_test_result",
+        result: {
+          type: "$connection_test_result",
+          target: "webSearch",
+          ok: false,
+          message: "",
+          latencyMs: -1,
+          requestKey,
+        },
+      },
+    );
+
+    const settled = reduce(pending, {
+      t: "incoming",
+      event: {
+        type: "$connection_test_result",
+        target: "webSearch",
+        ok: true,
+        message: "Connected",
+        latencyMs: 42,
+      },
+    });
+
+    expect(settled.connectionTests.webSearch?.requestKey).toBe(requestKey);
+    expect(
+      matchingConnectionTestResult(
+        settled.connectionTests.webSearch,
+        "webSearch",
+        { engine: "tavily" },
+        { ...settings, webSearchEngine: "tavily" },
+      ),
+    ).toBeUndefined();
+  });
+
+  it("invalidates connection test results when draft credentials change", () => {
+    const firstKey = buildConnectionTestRequestKey(
+      "deepseek",
+      { apiKey: "sk-first", baseUrl: null },
+      { apiKeyPrefix: "saved", baseUrl: undefined },
+    );
+    const secondKey = buildConnectionTestRequestKey(
+      "deepseek",
+      { apiKey: "sk-second", baseUrl: null },
+      { apiKeyPrefix: "saved", baseUrl: undefined },
+    );
+    const result = {
+      type: "$connection_test_result" as const,
+      target: "deepseek" as const,
+      ok: true,
+      message: "Connected",
+      latencyMs: 12,
+      requestKey: firstKey,
+    };
+
+    expect(firstKey).not.toBe(secondKey);
+    expect(firstKey).not.toContain("sk-first");
+    expect(
+      matchingConnectionTestResult(
+        result,
+        "deepseek",
+        { apiKey: "sk-second", baseUrl: null },
+        { apiKeyPrefix: "saved", baseUrl: undefined },
+      ),
+    ).toBeUndefined();
+  });
+
   it("falls back prompt tokens to cache miss tokens when cache fields are absent", () => {
     const next = reduce(initialState(), {
       t: "incoming",

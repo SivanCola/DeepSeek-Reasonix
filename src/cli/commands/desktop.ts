@@ -246,6 +246,7 @@ type InMessage = { tabId?: string } & (
   | {
       cmd: "settings_test_connection";
       target: "deepseek" | "webSearch";
+      requestKey?: string;
       apiKey?: string;
       baseUrl?: string | null;
       engine?: string;
@@ -613,6 +614,7 @@ interface ConnectionTestResultEvent {
   latencyMs: number;
   status?: number;
   detail?: string;
+  requestKey?: string;
 }
 
 /** Direct fd write — bypasses Node's stream layer (and its piped-output
@@ -3558,6 +3560,9 @@ export async function desktopCommand(opts: DesktopOptions): Promise<void> {
     }
     if (msg.cmd === "settings_test_connection") {
       void (async () => {
+        const emitConnectionTestResult = (event: ConnectionTestResultEvent) => {
+          emit(msg.requestKey ? { ...event, requestKey: msg.requestKey } : event, tab.id);
+        };
         try {
           if (msg.target === "deepseek") {
             const ep = loadEndpoint();
@@ -3567,30 +3572,24 @@ export async function desktopCommand(opts: DesktopOptions): Promise<void> {
               resolvedEndpoint: ep,
             });
             if (!endpoint.ok) {
-              emit(
-                {
-                  type: "$connection_test_result",
-                  target: "deepseek",
-                  ok: false,
-                  message: endpoint.message,
-                  latencyMs: 0,
-                },
-                tab.id,
-              );
+              emitConnectionTestResult({
+                type: "$connection_test_result",
+                target: "deepseek",
+                ok: false,
+                message: endpoint.message,
+                latencyMs: 0,
+              });
               return;
             }
             const { apiKey, baseUrl } = endpoint;
             if (!apiKey) {
-              emit(
-                {
-                  type: "$connection_test_result",
-                  target: "deepseek",
-                  ok: false,
-                  message: "No API key configured",
-                  latencyMs: 0,
-                },
-                tab.id,
-              );
+              emitConnectionTestResult({
+                type: "$connection_test_result",
+                target: "deepseek",
+                ok: false,
+                message: "No API key configured",
+                latencyMs: 0,
+              });
               return;
             }
             const started = Date.now();
@@ -3607,80 +3606,62 @@ export async function desktopCommand(opts: DesktopOptions): Promise<void> {
               clearTimeout(timeout);
               const latencyMs = Date.now() - started;
               if (resp.ok) {
-                emit(
-                  {
-                    type: "$connection_test_result",
-                    target: "deepseek",
-                    ok: true,
-                    message: "Connected",
-                    latencyMs,
-                  },
-                  tab.id,
-                );
+                emitConnectionTestResult({
+                  type: "$connection_test_result",
+                  target: "deepseek",
+                  ok: true,
+                  message: "Connected",
+                  latencyMs,
+                });
               } else if (resp.status === 401 || resp.status === 403) {
-                emit(
-                  {
-                    type: "$connection_test_result",
-                    target: "deepseek",
-                    ok: false,
-                    message: "Authentication failed",
-                    latencyMs,
-                    status: resp.status,
-                  },
-                  tab.id,
-                );
+                emitConnectionTestResult({
+                  type: "$connection_test_result",
+                  target: "deepseek",
+                  ok: false,
+                  message: "Authentication failed",
+                  latencyMs,
+                  status: resp.status,
+                });
               } else if (resp.status === 429) {
-                emit(
-                  {
-                    type: "$connection_test_result",
-                    target: "deepseek",
-                    ok: false,
-                    message: "Rate limited",
-                    latencyMs,
-                    status: 429,
-                  },
-                  tab.id,
-                );
+                emitConnectionTestResult({
+                  type: "$connection_test_result",
+                  target: "deepseek",
+                  ok: false,
+                  message: "Rate limited",
+                  latencyMs,
+                  status: 429,
+                });
               } else {
-                emit(
-                  {
-                    type: "$connection_test_result",
-                    target: "deepseek",
-                    ok: false,
-                    message: "Upstream service error",
-                    latencyMs,
-                    status: resp.status,
-                    detail: `HTTP ${resp.status}`,
-                  },
-                  tab.id,
-                );
+                emitConnectionTestResult({
+                  type: "$connection_test_result",
+                  target: "deepseek",
+                  ok: false,
+                  message: "Upstream service error",
+                  latencyMs,
+                  status: resp.status,
+                  detail: `HTTP ${resp.status}`,
+                });
               }
             } catch (err) {
               clearTimeout(timeout);
               const latencyMs = Date.now() - started;
               if (abort.signal.aborted) {
-                emit(
-                  {
-                    type: "$connection_test_result",
-                    target: "deepseek",
-                    ok: false,
-                    message: "Request timed out",
-                    latencyMs,
-                  },
-                  tab.id,
-                );
+                emitConnectionTestResult({
+                  type: "$connection_test_result",
+                  target: "deepseek",
+                  ok: false,
+                  message: "Request timed out",
+                  latencyMs,
+                });
               } else {
-                emit(
-                  {
-                    type: "$connection_test_result",
-                    target: "deepseek",
-                    ok: false,
-                    message: "Connection failed",
-                    latencyMs,
-                    detail: (err as Error).message,
-                  },
-                  tab.id,
-                );
+                emitConnectionTestResult({
+                  type: "$connection_test_result",
+                  target: "deepseek",
+                  ok: false,
+                  message: "Connection failed",
+                  latencyMs,
+                  detail: (err as Error).message,
+                });
               }
             }
             return;
@@ -3699,16 +3680,13 @@ export async function desktopCommand(opts: DesktopOptions): Promise<void> {
               | "brave"
               | "ollama";
             if (!engine) {
-              emit(
-                {
-                  type: "$connection_test_result",
-                  target: "webSearch",
-                  ok: false,
-                  message: "No search engine selected",
-                  latencyMs: 0,
-                },
-                tab.id,
-              );
+              emitConnectionTestResult({
+                type: "$connection_test_result",
+                target: "webSearch",
+                ok: false,
+                message: "No search engine selected",
+                latencyMs: 0,
+              });
               return;
             }
 
@@ -3732,82 +3710,64 @@ export async function desktopCommand(opts: DesktopOptions): Promise<void> {
               });
               clearTimeout(timeout);
               const latencyMs = Date.now() - started;
-              emit(
-                {
-                  type: "$connection_test_result",
-                  target: "webSearch",
-                  ok: true,
-                  message: `Connected · ${results.length} result(s)`,
-                  latencyMs,
-                  ...(isPaidEngine ? { detail: "A minimal test request was sent" } : {}),
-                },
-                tab.id,
-              );
+              emitConnectionTestResult({
+                type: "$connection_test_result",
+                target: "webSearch",
+                ok: true,
+                message: `Connected · ${results.length} result(s)`,
+                latencyMs,
+                ...(isPaidEngine ? { detail: "A minimal test request was sent" } : {}),
+              });
             } catch (err) {
               clearTimeout(timeout);
               const latencyMs = Date.now() - started;
               const errMsg = (err as Error).message ?? String(err);
               if (abort.signal.aborted) {
-                emit(
-                  {
-                    type: "$connection_test_result",
-                    target: "webSearch",
-                    ok: false,
-                    message: "Request timed out",
-                    latencyMs,
-                  },
-                  tab.id,
-                );
+                emitConnectionTestResult({
+                  type: "$connection_test_result",
+                  target: "webSearch",
+                  ok: false,
+                  message: "Request timed out",
+                  latencyMs,
+                });
               } else if (/401|403|unauthorized|invalid.*key/i.test(errMsg)) {
-                emit(
-                  {
-                    type: "$connection_test_result",
-                    target: "webSearch",
-                    ok: false,
-                    message: "Authentication failed",
-                    latencyMs,
-                    detail: errMsg,
-                  },
-                  tab.id,
-                );
+                emitConnectionTestResult({
+                  type: "$connection_test_result",
+                  target: "webSearch",
+                  ok: false,
+                  message: "Authentication failed",
+                  latencyMs,
+                  detail: errMsg,
+                });
               } else if (/429|rate.limit/i.test(errMsg)) {
-                emit(
-                  {
-                    type: "$connection_test_result",
-                    target: "webSearch",
-                    ok: false,
-                    message: "Rate limited",
-                    latencyMs,
-                    detail: errMsg,
-                  },
-                  tab.id,
-                );
+                emitConnectionTestResult({
+                  type: "$connection_test_result",
+                  target: "webSearch",
+                  ok: false,
+                  message: "Rate limited",
+                  latencyMs,
+                  detail: errMsg,
+                });
               } else {
-                emit(
-                  {
-                    type: "$connection_test_result",
-                    target: "webSearch",
-                    ok: false,
-                    message: "Connection failed",
-                    latencyMs,
-                    detail: errMsg,
-                  },
-                  tab.id,
-                );
+                emitConnectionTestResult({
+                  type: "$connection_test_result",
+                  target: "webSearch",
+                  ok: false,
+                  message: "Connection failed",
+                  latencyMs,
+                  detail: errMsg,
+                });
               }
             }
           }
         } catch (err) {
-          emit(
-            {
-              type: "$connection_test_result",
-              target: msg.target,
-              ok: false,
-              message: `Test failed: ${(err as Error).message}`,
-              latencyMs: 0,
-            },
-            tab.id,
-          );
+          emitConnectionTestResult({
+            type: "$connection_test_result",
+            target: msg.target,
+            ok: false,
+            message: `Test failed: ${(err as Error).message}`,
+            latencyMs: 0,
+          });
         }
       })();
       return;
