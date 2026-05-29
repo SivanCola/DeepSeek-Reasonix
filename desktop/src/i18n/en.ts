@@ -222,7 +222,6 @@ export const en = {
     },
     baseUrl: "DeepSeek base URL",
     baseUrlHint: "Override only if using a proxy. Empty = official endpoint. Restart required.",
-    baseUrlCustomCredentialWarning: "Custom endpoints receive your DeepSeek API key during connection tests.",
     workspace: "Workspace",
     workspaceHint:
       "Root dir agent tools operate inside. Switching saves to config and reloads tools.",

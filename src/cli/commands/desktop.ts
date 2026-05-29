@@ -77,7 +77,6 @@ import {
   pauseGate,
 } from "../../core/pause-gate.js";
 import { autoResolveVerdict } from "../../core/pause-policy.js";
-import { resolveDeepSeekConnectionTestTarget } from "../../desktop/deepseek-endpoint-policy.js";
 import { augmentProcessPath } from "../../desktop/login-shell-path.js";
 import {
   type MemoryEntryDetail,
@@ -3537,25 +3536,11 @@ export async function desktopCommand(opts: DesktopOptions): Promise<void> {
         try {
           if (msg.target === "deepseek") {
             const ep = loadEndpoint();
-            const endpoint = resolveDeepSeekConnectionTestTarget({
-              requestedBaseUrl: msg.baseUrl,
-              requestedApiKey: msg.apiKey,
-              resolvedEndpoint: ep,
-            });
-            if (!endpoint.ok) {
-              emit(
-                {
-                  type: "$connection_test_result",
-                  target: "deepseek",
-                  ok: false,
-                  message: endpoint.message,
-                  latencyMs: 0,
-                },
-                tab.id,
-              );
-              return;
-            }
-            const { apiKey, baseUrl } = endpoint;
+            const apiKey = msg.apiKey ?? ep.apiKey;
+            const baseUrl = ((msg.baseUrl ?? ep.baseUrl) || "https://api.deepseek.com").replace(
+              /\/+$/,
+              "",
+            );
             if (!apiKey) {
               emit(
                 {
