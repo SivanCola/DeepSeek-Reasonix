@@ -8,6 +8,7 @@ import {
   detectSlashArgContext,
   handleSlash,
   parseSlash,
+  shouldExposeTuiCardsToSlash,
   suggestSlashCommands,
 } from "../src/cli/ui/slash.js";
 import { DeepSeekClient, Usage } from "../src/client.js";
@@ -560,6 +561,24 @@ describe("handleSlash", () => {
   it("/copy requires TUI cards", () => {
     const r = handleSlash("copy", [], makeLoop());
     expect(r.info).toMatch(/interactive TUI/);
+  });
+
+  it("only exposes TUI card history to local slash submissions", () => {
+    expect(
+      shouldExposeTuiCardsToSlash({
+        fromQQ: false,
+        fromTelegram: false,
+        fromWeixin: false,
+      }),
+    ).toBe(true);
+
+    for (const origin of [
+      { fromQQ: true, fromTelegram: false, fromWeixin: false },
+      { fromQQ: false, fromTelegram: true, fromWeixin: false },
+      { fromQQ: false, fromTelegram: false, fromWeixin: true },
+    ]) {
+      expect(shouldExposeTuiCardsToSlash(origin)).toBe(false);
+    }
   });
 
   describe("detectSlashArgContext", () => {

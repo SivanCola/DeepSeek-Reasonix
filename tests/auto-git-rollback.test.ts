@@ -9,6 +9,8 @@ import { ToolRegistry } from "../src/tools.js";
 import { registerFilesystemTools } from "../src/tools/filesystem.js";
 import { ReadTracker } from "../src/tools/read-tracker.js";
 
+const AMBIENT_GIT_ENV_TEST_TIMEOUT_MS = process.platform === "win32" ? 20_000 : 5_000;
+
 function cleanGitEnv(overrides: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env };
   for (const key of Object.keys(env)) {
@@ -175,32 +177,36 @@ describe("auto-git-rollback memory guard", () => {
     expect(await fs.readFile(join(root, "tracked.txt"), "utf8")).toBe("baseline\n");
   });
 
-  it("ignores ambient Git hook environment variables when checkpointing", async () => {
-    const outerRoot = await mkdtemp(join(tmpdir(), "reasonix-auto-git-outer-"));
-    git(outerRoot, ["init", "-q"]);
-    const previousGitDir = process.env.GIT_DIR;
-    const previousGitWorkTree = process.env.GIT_WORK_TREE;
-    process.env.GIT_DIR = join(outerRoot, ".git");
-    process.env.GIT_WORK_TREE = outerRoot;
+  it(
+    "ignores ambient Git hook environment variables when checkpointing",
+    async () => {
+      const outerRoot = await mkdtemp(join(tmpdir(), "reasonix-auto-git-outer-"));
+      git(outerRoot, ["init", "-q"]);
+      const previousGitDir = process.env.GIT_DIR;
+      const previousGitWorkTree = process.env.GIT_WORK_TREE;
+      process.env.GIT_DIR = join(outerRoot, ".git");
+      process.env.GIT_WORK_TREE = outerRoot;
 
-    try {
-      enableAutoGitRollback(home, root);
-      await fs.writeFile(join(root, "tracked.txt"), "dirty-before-edit\n", "utf8");
+      try {
+        enableAutoGitRollback(home, root);
+        await fs.writeFile(join(root, "tracked.txt"), "dirty-before-edit\n", "utf8");
 
-      await tools.dispatch("read_file", { path: "tracked.txt" }, { readTracker });
-      const out = await tools.dispatch(
-        "edit_file",
-        { path: "tracked.txt", search: "dirty-before-edit", replace: "after-edit" },
-        { readTracker },
-      );
+        await tools.dispatch("read_file", { path: "tracked.txt" }, { readTracker });
+        const out = await tools.dispatch(
+          "edit_file",
+          { path: "tracked.txt", search: "dirty-before-edit", replace: "after-edit" },
+          { readTracker },
+        );
 
-      expect(out).toMatch(/edited tracked\.txt/);
-      expect(git(root, ["show", "HEAD:tracked.txt"])).toBe("dirty-before-edit");
-      expect(git(root, ["log", "-1", "--format=%s"])).toMatch(/pre-edit: edit_file tracked\.txt/);
-    } finally {
-      restoreProcessEnv("GIT_DIR", previousGitDir);
-      restoreProcessEnv("GIT_WORK_TREE", previousGitWorkTree);
-      await rm(outerRoot, { recursive: true, force: true });
-    }
-  });
+        expect(out).toMatch(/edited tracked\.txt/);
+        expect(git(root, ["show", "HEAD:tracked.txt"])).toBe("dirty-before-edit");
+        expect(git(root, ["log", "-1", "--format=%s"])).toMatch(/pre-edit: edit_file tracked\.txt/);
+      } finally {
+        restoreProcessEnv("GIT_DIR", previousGitDir);
+        restoreProcessEnv("GIT_WORK_TREE", previousGitWorkTree);
+        await rm(outerRoot, { recursive: true, force: true });
+      }
+    },
+    AMBIENT_GIT_ENV_TEST_TIMEOUT_MS,
+  );
 });
