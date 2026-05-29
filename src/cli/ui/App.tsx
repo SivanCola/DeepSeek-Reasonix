@@ -3264,6 +3264,8 @@ function AppInner({
           if (result.info) {
             log.pushInfo(result.info);
             if (fromQQ) qq.sendText(result.info);
+            if (fromTelegram) telegram.sendText(result.info);
+            if (fromWeixin) weixin.sendText(result.info);
           }
           handleGoalSlashAction(result.goal);
           return;
