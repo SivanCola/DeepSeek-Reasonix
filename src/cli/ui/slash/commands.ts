@@ -157,6 +157,13 @@ export const SLASH_COMMANDS: readonly SlashCommandSpec[] = [
 
   { cmd: "sessions", group: "session", summary: "list saved sessions (current marked with ▸)" },
   {
+    cmd: "session-persist",
+    group: "session",
+    argsHint: "<on|off>",
+    summary:
+      "toggle whether reasonix resumes the last session on launch. 'off' = always start fresh (#2238).",
+  },
+  {
     cmd: "title",
     group: "session",
     summary: "ask the model to rename this session from the conversation",
@@ -206,6 +213,14 @@ export const SLASH_COMMANDS: readonly SlashCommandSpec[] = [
     summary: "connect, inspect, or disconnect the Telegram channel",
     argCompleter: ["connect", "status", "disconnect"],
     aliases: ["tg"],
+  },
+  {
+    cmd: "weixin",
+    group: "extend",
+    argsHint: "<connect|status|disconnect> [manual token accountId [baseUrl]]",
+    summary: "connect, inspect, or disconnect the Weixin channel",
+    argCompleter: ["connect", "status", "disconnect"],
+    aliases: ["wx"],
   },
 
   {

@@ -169,6 +169,36 @@ describe("SkillStore", () => {
     },
   );
 
+  it("inlines references/ files into body at load time (#2214 — Anthropic Skills spec)", () => {
+    const skillDir = join(home, ".reasonix", "skills", "deep-expert");
+    const refsDir = join(skillDir, "references");
+    mkdirSync(refsDir, { recursive: true });
+    writeFileSync(
+      join(skillDir, "SKILL.md"),
+      "---\ndescription: an expert skill\n---\nCore playbook.\n",
+      "utf8",
+    );
+    writeFileSync(join(refsDir, "methodology.md"), "# Methodology\nBe systematic.", "utf8");
+    writeFileSync(join(refsDir, "examples.md"), "# Examples\nCase 1.", "utf8");
+
+    const skills = new SkillStore({ homeDir: home, projectRoot, disableBuiltins: true }).list();
+    const skill = skills.find((s) => s.name === "deep-expert");
+    expect(skill).toBeDefined();
+    expect(skill?.body).toContain("Core playbook.");
+    expect(skill?.body).toContain("## Reference: methodology");
+    expect(skill?.body).toContain("Be systematic.");
+    expect(skill?.body).toContain("## Reference: examples");
+    expect(skill?.body).toContain("Case 1.");
+  });
+
+  it("flat <name>.md skills are unaffected by references/ loading (#2214)", () => {
+    writeFlatSkill(home, "flat-skill", { description: "flat skill" }, "flat body");
+    // Even if a references/ dir exists elsewhere, flat skills should not touch it.
+    const skills = new SkillStore({ homeDir: home, projectRoot, disableBuiltins: true }).list();
+    const skill = skills.find((s) => s.name === "flat-skill");
+    expect(skill?.body).toBe("flat body");
+  });
+
   it("project scope wins on a name collision with global", () => {
     writeSkillDir(projectRoot, "global", "review", { description: "global one" }, "G", home);
     writeSkillDir(projectRoot, "project", "review", { description: "project one" }, "P", home);
@@ -409,7 +439,9 @@ describe("SkillStore", () => {
     });
   });
 
-  it("loads skills from symlinked directories (#2104)", () => {
+  // Skipped on Windows — symlinkSync throws EPERM there without Developer Mode / admin,
+  // unrelated to the readEntry behavior under test.
+  it.skipIf(process.platform === "win32")("loads skills from symlinked directories (#2104)", () => {
     // Create a real skill directory outside the skills root
     const realDir = mkdtempSync(join(tmpdir(), "reasonix-skills-real-"));
     try {
@@ -434,7 +466,8 @@ describe("SkillStore", () => {
     }
   });
 
-  it("skips broken symlinks gracefully", () => {
+  // Skipped on Windows — symlinkSync to a nonexistent target throws EPERM without admin.
+  it.skipIf(process.platform === "win32")("skips broken symlinks gracefully", () => {
     const skillsDir = join(home, ".reasonix", "skills");
     mkdirSync(skillsDir, { recursive: true });
     symlinkSync(join(tmpdir(), `nonexistent-target-${Date.now()}`), join(skillsDir, "broken"));
