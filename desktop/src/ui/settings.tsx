@@ -1,6 +1,11 @@
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { type ReactNode, useEffect, useRef, useState } from "react";
-import type { Balance, Settings as SettingsType, UsageStats } from "../App";
+import type {
+  Balance,
+  ReasonixCommandStatus,
+  Settings as SettingsType,
+  UsageStats,
+} from "../App";
 import { getLangLabel, getSupportedLangs, setLang, t, useLang } from "../i18n";
 import { I } from "../icons";
 import type {
@@ -88,6 +93,9 @@ export function SettingsModal({
   onOpenQQApplyLink,
   onCheckForUpdates,
   isCheckingForUpdates,
+  onInstallReasonixCommand,
+  isInstallingReasonixCommand,
+  reasonixCommandStatus,
   hasUpdateAvailable,
   onPickWorkspace,
   onImportCcSwitchMcp,
@@ -130,6 +138,9 @@ export function SettingsModal({
   onOpenQQApplyLink: () => void;
   onCheckForUpdates: () => void;
   isCheckingForUpdates: boolean;
+  onInstallReasonixCommand: () => void;
+  isInstallingReasonixCommand: boolean;
+  reasonixCommandStatus: ReasonixCommandStatus | null;
   hasUpdateAvailable: boolean;
   onPickWorkspace: () => void;
   onImportCcSwitchMcp: () => Promise<void>;
@@ -210,6 +221,9 @@ export function SettingsModal({
                 onSetCustomFontFamily={onSetCustomFontFamily}
                 onSave={onSave}
                 onPickWorkspace={onPickWorkspace}
+                onInstallReasonixCommand={onInstallReasonixCommand}
+                isInstallingReasonixCommand={isInstallingReasonixCommand}
+                reasonixCommandStatus={reasonixCommandStatus}
               />
             )}
             {page === "models" && <PageModels settings={settings} onSave={onSave} />}
@@ -460,6 +474,9 @@ function PageGeneral({
   onSetCustomFontFamily,
   onSave,
   onPickWorkspace,
+  onInstallReasonixCommand,
+  isInstallingReasonixCommand,
+  reasonixCommandStatus,
 }: {
   settings: SettingsType;
   theme: Theme;
@@ -474,10 +491,41 @@ function PageGeneral({
   onSetCustomFontFamily: (family: string) => void;
   onSave: (patch: SettingsPatch) => void;
   onPickWorkspace: () => void;
+  onInstallReasonixCommand: () => void;
+  isInstallingReasonixCommand: boolean;
+  reasonixCommandStatus: ReasonixCommandStatus | null;
 }) {
   const [editorDraft, setEditorDraft] = useState(settings.editor ?? "");
   const [customFontDraft, setCustomFontDraft] = useState(customFontFamily);
   const lang = useLang();
+  const commandState = reasonixCommandStatus?.state;
+  const commandHint =
+    commandState === "installed"
+      ? t("settings.installReasonixCommandHintInstalled")
+      : commandState === "needsUpdate"
+        ? t("settings.installReasonixCommandHintUpdate")
+        : commandState === "foreign"
+          ? t("settings.installReasonixCommandHintForeign")
+          : commandState === "unsupported"
+            ? t("settings.installReasonixCommandHintUnsupported")
+            : t("settings.installReasonixCommandHint");
+  const commandAction =
+    isInstallingReasonixCommand
+      ? t("settings.installReasonixCommandInstalling")
+      : commandState === "installed"
+        ? t("settings.installReasonixCommandInstalled")
+        : commandState === "needsUpdate"
+          ? t("settings.installReasonixCommandUpdate")
+          : commandState === "foreign"
+            ? t("settings.installReasonixCommandExists")
+            : commandState === "unsupported"
+              ? t("settings.installReasonixCommandUnsupported")
+              : t("settings.installReasonixCommandAction");
+  const commandDisabled =
+    isInstallingReasonixCommand ||
+    commandState === "installed" ||
+    commandState === "foreign" ||
+    commandState === "unsupported";
   useEffect(() => {
     setCustomFontDraft(customFontFamily);
   }, [customFontFamily]);
@@ -675,6 +723,20 @@ function PageGeneral({
             onChange={(e) => setEditorDraft(e.target.value)}
             onBlur={() => onSave({ editor: editorDraft.trim() })}
           />
+        </div>
+        <div className="setting-row">
+          <div className="l">
+            <div className="n">{t("settings.installReasonixCommand")}</div>
+            <div className="h">{commandHint}</div>
+          </div>
+          <button
+            type="button"
+            className="btn"
+            onClick={onInstallReasonixCommand}
+            disabled={commandDisabled}
+          >
+            {commandAction}
+          </button>
         </div>
       </section>
 
