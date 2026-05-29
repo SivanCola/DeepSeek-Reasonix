@@ -1250,6 +1250,16 @@ function ConnectionTestButton({
   );
 }
 
+function isCustomDeepSeekEndpoint(value: string): boolean {
+  const trimmed = value.trim();
+  if (!trimmed) return false;
+  try {
+    return new URL(trimmed).hostname.toLowerCase() !== "api.deepseek.com";
+  } catch {
+    return false;
+  }
+}
+
 function ApiKeySection({
   baseUrl,
   apiKeyPrefix,
@@ -1276,6 +1286,7 @@ function ApiKeySection({
 }) {
   const [key, setKey] = useState("");
   const [urlDraft, setUrlDraft] = useState(baseUrl ?? "");
+  const showCustomEndpointWarning = isCustomDeepSeekEndpoint(urlDraft);
   return (
     <section className="section">
       <div className="stitle">{t("settings.apiSection")}</div>
@@ -1332,6 +1343,11 @@ function ApiKeySection({
           onBlur={() => onSave({ baseUrl: urlDraft.trim() })}
         />
       </div>
+      {showCustomEndpointWarning ? (
+        <div className="h" style={{ color: "var(--tone-warn)", marginTop: -8 }}>
+          {t("settings.baseUrlCustomCredentialWarning")}
+        </div>
+      ) : null}
     </section>
   );
 }

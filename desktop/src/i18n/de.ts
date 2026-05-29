@@ -232,6 +232,8 @@ export const de: typeof en = {
     baseUrl: "DeepSeek-Basis-URL",
     baseUrlHint:
       "Nur bei Verwendung eines Proxys überschreiben. Leer = offizieller Endpunkt. Neustart erforderlich.",
+    baseUrlCustomCredentialWarning:
+      "Benutzerdefinierte Endpunkte erhalten bei Verbindungstests deinen DeepSeek-API-Schlüssel.",
     workspace: "Arbeitsbereich",
     workspaceHint:
       "Root-Verzeichnis, in dem Agent-Tools arbeiten. Wechseln speichert in der Konfiguration und lädt Tools neu.",

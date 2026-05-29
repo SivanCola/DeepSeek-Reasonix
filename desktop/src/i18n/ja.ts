@@ -230,6 +230,8 @@ export const ja: typeof en = {
     },
     baseUrl: "DeepSeek ベースURL",
     baseUrlHint: "プロキシ使用時のみ上書き。空欄 = 公式エンドポイント。再起動が必要です。",
+    baseUrlCustomCredentialWarning:
+      "カスタムエンドポイントは接続テスト時に DeepSeek APIキーを受け取ります。",
     workspace: "ワークスペース",
     workspaceHint:
       "エージェントツールが操作するルートディレクトリ。切り替えは設定に保存され、ツールが再読み込みされます。",

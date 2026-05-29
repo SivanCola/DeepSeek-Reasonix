@@ -221,6 +221,7 @@ export const zhCN: typeof en = {
     },
     baseUrl: "DeepSeek base URL",
     baseUrlHint: "走代理时再改。留空 = 官方地址。需重启。",
+    baseUrlCustomCredentialWarning: "自定义端点会在连接测试时收到你的 DeepSeek API key。",
     workspace: "工作目录",
     workspaceHint: "agent 工具操作的根目录。切换会写入配置并重载工具。",
     workspaceChange: "更换…",
