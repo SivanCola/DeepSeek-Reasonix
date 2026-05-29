@@ -287,7 +287,7 @@ export const ja: typeof en = {
     qqAccessOwnerWithAllowlist: "所有者 {openId} + 許可リスト {count}",
     qqAccessAllowlist: "許可リスト {count}",
     qqAccessRuntime: "最初の送信者（ランタイムのみ, {openId}）",
-    qqAccessOpen: "オープン（制限なし）",
+    qqAccessOpen: "オープンアクセス",
     qqApplyLabel: "QQボットを申請",
     qqApplyAction: "申請ページを開く",
     qqSave: "保存",

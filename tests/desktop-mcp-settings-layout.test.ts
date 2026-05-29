@@ -19,4 +19,40 @@ describe("desktop MCP settings layout", () => {
     expect(cssRule(".scard .mcp-spec-summary")).toContain("word-break: break-word");
     expect(cssRule(".scard .mcp-remove")).toContain("flex: 0 0 auto");
   });
+
+  it("keeps settings rows and control groups on the shared layout primitives", () => {
+    expect(cssRule(".setting-row")).toContain("grid-template-columns");
+    expect(cssRule(".setting-row")).toContain("minmax(180px, 0.85fr)");
+    expect(cssRule(".settings-body")).toContain("overflow-x: hidden");
+    expect(cssRule(".settings-control-group")).toContain("display: inline-flex");
+    expect(cssRule(".settings-control-group")).toContain("width: 100%");
+    expect(cssRule(".settings-control-group")).toContain("flex-wrap: wrap");
+  });
+
+  it("renders settings status as badges instead of action buttons", () => {
+    expect(cssRule(".settings-status-badge")).toContain("border-radius: 999px");
+    expect(cssRule(".settings-status-badge")).toContain("white-space: nowrap");
+    expect(cssRule('.settings-status-badge[data-tone="success"]')).toContain("var(--success)");
+    expect(cssRule('.settings-status-badge[data-tone="danger"]')).toContain("var(--danger)");
+  });
+
+  it("keeps theme cards grouped and responsive", () => {
+    expect(cssRule(".theme-style-control")).toContain("display: grid");
+    expect(cssRule(".theme-style-control")).toContain("max-width: 520px");
+    expect(cssRule(".theme-style-control")).toContain("width: 100%");
+    expect(cssRule(".theme-mode-bar")).toContain("justify-content: space-between");
+    expect(cssRule(".style-grid")).toContain("grid-template-columns: repeat(2, minmax(0, 1fr))");
+    expect(cssRule(".style-card")).toContain("min-width: 0");
+    expect(cssRule(".style-card")).toContain("border-radius: 8px");
+  });
+
+  it("keeps API credentials on a two-line control layout", () => {
+    expect(cssRule(".credential-row-control")).toContain("display: grid");
+    expect(cssRule(".credential-row-control")).toContain("max-width: 520px");
+    expect(cssRule(".credential-row-control")).toContain("width: 100%");
+    expect(cssRule(".credential-primary-line")).toContain(
+      "grid-template-columns: minmax(0, 1fr) auto auto",
+    );
+    expect(cssRule(".credential-meta-line")).toContain("justify-content: flex-start");
+  });
 });

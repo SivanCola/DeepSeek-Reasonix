@@ -12,10 +12,10 @@ import type {
   SkillInfo,
 } from "../protocol";
 import {
+  type QQDesktopSettingsState,
   describeQQRowSummary,
   getQQConnectIntent,
   getQQStatusLabel,
-  type QQDesktopSettingsState,
 } from "../qq-settings";
 import {
   FONT_FAMILY,
@@ -51,6 +51,134 @@ const PAGE_META: ReadonlyArray<{ id: PageId; icon: keyof typeof I }> = [
   { id: "billing", icon: "coin" },
   { id: "shortcuts", icon: "cpu" },
 ];
+
+const DARK_THEME_STYLES = THEME_STYLES.filter((style) => themeForStyle(style) === THEME.DARK);
+const LIGHT_THEME_STYLES = THEME_STYLES.filter((style) => themeForStyle(style) === THEME.LIGHT);
+const EFFORT_VALUES = ["low", "medium", "high", "max"] as const;
+type EffortValue = (typeof EFFORT_VALUES)[number];
+type SettingsStatusTone = "neutral" | "success" | "danger" | "warning" | "info";
+
+function SettingsSection({
+  title,
+  className,
+  children,
+}: {
+  title: string;
+  className?: string;
+  children: ReactNode;
+}) {
+  return (
+    <section className={className ? `section ${className}` : "section"}>
+      <div className="stitle">{title}</div>
+      {children}
+    </section>
+  );
+}
+
+function SettingsRow({
+  label,
+  hint,
+  className,
+  controlClassName,
+  children,
+}: {
+  label: ReactNode;
+  hint?: ReactNode;
+  className?: string;
+  controlClassName?: string;
+  children: ReactNode;
+}) {
+  return (
+    <div className={className ? `setting-row ${className}` : "setting-row"}>
+      <div className="settings-row-label">
+        <div className="n">{label}</div>
+        {hint ? <div className="h">{hint}</div> : null}
+      </div>
+      <div
+        className={
+          controlClassName ? `settings-control-group ${controlClassName}` : "settings-control-group"
+        }
+      >
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function SettingsControlGroup({
+  className,
+  children,
+}: {
+  className?: string;
+  children: ReactNode;
+}) {
+  return (
+    <div className={className ? `settings-control-group ${className}` : "settings-control-group"}>
+      {children}
+    </div>
+  );
+}
+
+function SettingsStatusBadge({
+  tone = "neutral",
+  title,
+  children,
+  testId,
+}: {
+  tone?: SettingsStatusTone;
+  title?: string;
+  children: ReactNode;
+  testId?: string;
+}) {
+  return (
+    <span className="settings-status-badge" data-tone={tone} title={title} data-testid={testId}>
+      {children}
+    </span>
+  );
+}
+
+function SettingsEmptyState({ children }: { children: ReactNode }) {
+  return <div className="settings-empty-state">{children}</div>;
+}
+
+function ThemeStyleCard({
+  style,
+  selected,
+  onSelect,
+}: {
+  style: ThemeStyle;
+  selected: boolean;
+  onSelect: (style: ThemeStyle) => void;
+}) {
+  return (
+    <button
+      key={style}
+      type="button"
+      className="style-card"
+      data-on={selected}
+      data-style={style}
+      data-mode={themeForStyle(style)}
+      onClick={() => onSelect(style)}
+    >
+      <span className="style-card-head">
+        <span className="style-name">
+          {t(`settings.themeStyle${style[0]!.toUpperCase()}${style.slice(1)}` as any)}
+        </span>
+        <span className="style-mode">
+          {themeForStyle(style) === THEME.DARK ? t("settings.themeDark") : t("settings.themeLight")}
+        </span>
+      </span>
+      <span className="style-swatches" aria-hidden="true">
+        <span />
+        <span />
+        <span />
+      </span>
+      <span className="style-desc">
+        {t(`settings.themeStyle${style[0]!.toUpperCase()}${style.slice(1)}Desc` as any)}
+      </span>
+    </button>
+  );
+}
 
 export function SettingsModal({
   settings,
@@ -148,12 +276,23 @@ export function SettingsModal({
   }, [onClose]);
   const currentMeta = PAGE_META.find((p) => p.id === page) ?? PAGE_META[0]!;
   return (
-    <div className="settings-mask" onClick={onClose}>
-      <div className="settings" onClick={(e) => e.stopPropagation()}>
+    <div
+      className="settings-mask"
+      onClick={onClose}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") onClose();
+      }}
+    >
+      <div
+        className="settings"
+        onClick={(e) => e.stopPropagation()}
+        onKeyDown={(e) => e.stopPropagation()}
+      >
         <nav className="settings-side">
           <div className="sg">{t("settings.title")}</div>
           {PAGE_META.map((p) => (
-            <div
+            <button
+              type="button"
               key={p.id}
               className="row"
               data-active={page === p.id}
@@ -161,7 +300,7 @@ export function SettingsModal({
             >
               <span className="ico">{I[p.icon]({ size: 13 })}</span>
               <span>{t(`settings.page${p.id[0]!.toUpperCase()}${p.id.slice(1)}Label` as any)}</span>
-            </div>
+            </button>
           ))}
         </nav>
         <div className="settings-main">
@@ -302,54 +441,54 @@ export function QQChannelSection({
     setAppId(current.appId ?? "");
     setAppSecret(current.appSecret ?? "");
     setSandbox(current.sandbox ?? true);
-  }, [current.appId, current.appSecret, current.sandbox, configureOpen]);
+  }, [current.appId, current.appSecret, current.sandbox]);
 
   const savePatch = { appId, appSecret, sandbox };
 
+  const statusTone: SettingsStatusTone =
+    current.runtimeState === "connected"
+      ? "success"
+      : current.runtimeState === "failed"
+        ? "danger"
+        : current.runtimeState === "connecting"
+          ? "info"
+          : "neutral";
+  const connectIntent = getQQConnectIntent(current);
   return (
-    <section className="section">
-      <div className="stitle">{t("settings.qqSection")}</div>
+    <SettingsSection title={t("settings.qqSection")}>
       {!configureOpen ? (
-        <div className="setting-row qq-setting-row">
-          <div className="l">
-            <div className="n">{t("settings.qqTitle")}</div>
-            <div className="h">{describeQQRowSummary(current)}</div>
-          </div>
-          <div className="qq-row-actions">
+        <SettingsRow
+          label={t("settings.qqTitle")}
+          hint={describeQQRowSummary(current)}
+          className="qq-setting-row"
+          controlClassName="qq-row-actions"
+        >
+          <SettingsStatusBadge tone={statusTone} testId="qq-status-badge">
+            {getQQStatusLabel(current)}
+          </SettingsStatusBadge>
+          {current.runtimeState === "connected" ? (
+            <button type="button" className="btn danger" onClick={onDisconnect}>
+              {t("settings.qqDisconnect")}
+            </button>
+          ) : (
             <button
               type="button"
-              className={`btn qq-status-btn qq-status-${
-                current.runtimeState === "connected"
-                  ? "on"
-                  : current.runtimeState === "connecting"
-                    ? "connecting"
-                    : current.runtimeState === "failed"
-                      ? "failed"
-                      : "off"
-              }`}
-              onClick={() => {
-                if (getQQConnectIntent(current) === "configure") {
-                  onOpenConfigure();
-                  return;
-                }
-                if (current.runtimeState === "connected") {
-                  onDisconnect();
-                  return;
-                }
-                onConnect();
-              }}
+              className="btn"
+              onClick={connectIntent === "configure" ? onOpenConfigure : onConnect}
             >
-              {getQQStatusLabel(current)}
+              {connectIntent === "configure" ? t("settings.qqConfigure") : t("settings.qqConnect")}
             </button>
+          )}
+          {connectIntent !== "configure" ? (
             <button type="button" className="btn" onClick={onOpenConfigure}>
               {t("settings.qqConfigure")}
             </button>
-          </div>
-        </div>
+          ) : null}
+        </SettingsRow>
       ) : (
         <div className="qq-config-card">
           <div className="qq-config-head">
-            <div>
+            <div className="settings-row-label">
               <div className="n">{t("settings.qqConfigureTitle")}</div>
               <div className="h">{t("settings.qqConfigureHint")}</div>
             </div>
@@ -357,21 +496,15 @@ export function QQChannelSection({
               {t("settings.qqBack")}
             </button>
           </div>
-          <div className="setting-row">
-            <div className="l">
-              <div className="n">{t("settings.qqAppId")}</div>
-            </div>
+          <SettingsRow label={t("settings.qqAppId")}>
             <input
               className="field mono"
               value={appId}
               onChange={(e) => setAppId(e.target.value)}
               placeholder="QQ Open Platform App ID"
             />
-          </div>
-          <div className="setting-row">
-            <div className="l">
-              <div className="n">{t("settings.qqAppSecret")}</div>
-            </div>
+          </SettingsRow>
+          <SettingsRow label={t("settings.qqAppSecret")}>
             <input
               className="field mono"
               type="password"
@@ -379,11 +512,8 @@ export function QQChannelSection({
               onChange={(e) => setAppSecret(e.target.value)}
               placeholder="QQ Open Platform App Secret"
             />
-          </div>
-          <div className="setting-row">
-            <div className="l">
-              <div className="n">{t("settings.qqEnvironment")}</div>
-            </div>
+          </SettingsRow>
+          <SettingsRow label={t("settings.qqEnvironment")}>
             <div className="seg-ctrl">
               <button type="button" data-on={sandbox} onClick={() => setSandbox(true)}>
                 {t("settings.qqSandbox")}
@@ -392,15 +522,12 @@ export function QQChannelSection({
                 {t("settings.qqProduction")}
               </button>
             </div>
-          </div>
-          <div className="setting-row">
-            <div className="l">
-              <div className="n">{t("settings.qqApplyLabel")}</div>
-            </div>
+          </SettingsRow>
+          <SettingsRow label={t("settings.qqApplyLabel")}>
             <button type="button" className="btn" onClick={onOpenApplyLink}>
               {t("settings.qqApplyAction")}
             </button>
-          </div>
+          </SettingsRow>
           <div className="qq-config-actions">
             <button
               type="button"
@@ -425,7 +552,7 @@ export function QQChannelSection({
           </div>
         </div>
       )}
-    </section>
+    </SettingsSection>
   );
 }
 
@@ -460,83 +587,69 @@ function PageGeneral({
 }) {
   const [editorDraft, setEditorDraft] = useState(settings.editor ?? "");
   const [customFontDraft, setCustomFontDraft] = useState(customFontFamily);
+  const [budgetDraft, setBudgetDraft] = useState(
+    settings.budgetUsd == null ? "" : String(settings.budgetUsd),
+  );
   const lang = useLang();
+  useEffect(() => {
+    setEditorDraft(settings.editor ?? "");
+  }, [settings.editor]);
   useEffect(() => {
     setCustomFontDraft(customFontFamily);
   }, [customFontFamily]);
+  useEffect(() => {
+    setBudgetDraft(settings.budgetUsd == null ? "" : String(settings.budgetUsd));
+  }, [settings.budgetUsd]);
   const commitCustomFont = (value: string) => {
     const next = value.trim();
     setCustomFontDraft(next);
     onSetCustomFontFamily(next);
   };
+  const commitBudget = () => {
+    const v = budgetDraft.trim();
+    onSave({ budgetUsd: v === "" ? null : Number(v) });
+  };
+  const visibleThemeStyles = theme === THEME.DARK ? DARK_THEME_STYLES : LIGHT_THEME_STYLES;
   return (
     <>
-      <section className="section">
-        <div className="stitle">{t("settings.appearanceSection")}</div>
-        <div className="setting-row">
-          <div className="l">
-            <div className="n">{t("settings.theme")}</div>
-            <div className="h">{t("settings.themeHint")}</div>
-          </div>
-          <div className="seg-ctrl">
-            <button
-              type="button"
-              data-on={theme === THEME.DARK}
-              onClick={() => onSetTheme(THEME.DARK)}
-            >
-              {t("settings.themeDark")}
-            </button>
-            <button
-              type="button"
-              data-on={theme === THEME.LIGHT}
-              onClick={() => onSetTheme(THEME.LIGHT)}
-            >
-              {t("settings.themeLight")}
-            </button>
-          </div>
-        </div>
-        <div className="setting-row theme-style-row">
-          <div className="l">
-            <div className="n">{t("settings.themeStyle")}</div>
-            <div className="h">{t("settings.themeStyleHint")}</div>
-          </div>
-          <div className="style-grid">
-            {THEME_STYLES.map((style) => (
+      <SettingsSection title={t("settings.appearanceSection")}>
+        <SettingsRow
+          label={t("settings.theme")}
+          hint={t("settings.themeHint")}
+          className="theme-style-row"
+          controlClassName="theme-style-control theme-combo-control"
+        >
+          <div className="theme-mode-bar">
+            <div className="seg-ctrl">
               <button
-                key={style}
                 type="button"
-                className="style-card"
-                data-on={themeStyle === style}
-                data-style={style}
-                onClick={() => onSetThemeStyle(style)}
+                data-on={theme === THEME.DARK}
+                onClick={() => onSetTheme(THEME.DARK)}
               >
-                <span className="style-card-head">
-                  <span className="style-name">
-                    {t(`settings.themeStyle${style[0]!.toUpperCase()}${style.slice(1)}` as any)}
-                  </span>
-                  <span className="style-mode">
-                    {themeForStyle(style) === THEME.DARK
-                      ? t("settings.themeDark")
-                      : t("settings.themeLight")}
-                  </span>
-                </span>
-                <span className="style-swatches" aria-hidden="true">
-                  <span />
-                  <span />
-                  <span />
-                </span>
-                <span className="style-desc">
-                  {t(`settings.themeStyle${style[0]!.toUpperCase()}${style.slice(1)}Desc` as any)}
-                </span>
+                {t("settings.themeDark")}
               </button>
+              <button
+                type="button"
+                data-on={theme === THEME.LIGHT}
+                onClick={() => onSetTheme(THEME.LIGHT)}
+              >
+                {t("settings.themeLight")}
+              </button>
+            </div>
+            <span className="theme-style-caption">{t("settings.themeStyle")}</span>
+          </div>
+          <div className="style-grid" data-mode={theme}>
+            {visibleThemeStyles.map((style) => (
+              <ThemeStyleCard
+                key={style}
+                style={style}
+                selected={themeStyle === style}
+                onSelect={onSetThemeStyle}
+              />
             ))}
           </div>
-        </div>
-        <div className="setting-row">
-          <div className="l">
-            <div className="n">{t("settings.fontScale")}</div>
-            <div className="h">{t("settings.fontScaleHint")}</div>
-          </div>
+        </SettingsRow>
+        <SettingsRow label={t("settings.fontScale")} hint={t("settings.fontScaleHint")}>
           <div className="seg-ctrl">
             <button
               type="button"
@@ -560,12 +673,8 @@ function PageGeneral({
               {t("settings.fontScaleLarge")}
             </button>
           </div>
-        </div>
-        <div className="setting-row">
-          <div className="l">
-            <div className="n">{t("settings.fontFamily")}</div>
-            <div className="h">{t("settings.fontFamilyHint")}</div>
-          </div>
+        </SettingsRow>
+        <SettingsRow label={t("settings.fontFamily")} hint={t("settings.fontFamilyHint")}>
           <div className="seg-ctrl">
             <button
               type="button"
@@ -596,13 +705,12 @@ function PageGeneral({
               {t("settings.fontFamilyCustom")}
             </button>
           </div>
-        </div>
+        </SettingsRow>
         {fontFamily === FONT_FAMILY.CUSTOM && (
-          <div className="setting-row">
-            <div className="l">
-              <div className="n">{t("settings.customFontFamily")}</div>
-              <div className="h">{t("settings.customFontFamilyHint")}</div>
-            </div>
+          <SettingsRow
+            label={t("settings.customFontFamily")}
+            hint={t("settings.customFontFamilyHint")}
+          >
             <input
               className="field font-family-field"
               value={customFontDraft}
@@ -618,39 +726,34 @@ function PageGeneral({
                 }
               }}
             />
-          </div>
+          </SettingsRow>
         )}
-        <div className="setting-row">
-          <div className="l">
-            <div className="n">{t("settings.language")}</div>
-            <div className="h">{t("settings.languageHint")}</div>
-          </div>
+        <SettingsRow label={t("settings.language")} hint={t("settings.languageHint")}>
           <div className="seg-ctrl">
             {getSupportedLangs().map((code) => (
-              <button type="button" key={code} data-on={lang === code} onClick={() => setLang(code)}>
+              <button
+                type="button"
+                key={code}
+                data-on={lang === code}
+                onClick={() => setLang(code)}
+              >
                 {getLangLabel(code)}
               </button>
             ))}
           </div>
-        </div>
-      </section>
+        </SettingsRow>
+      </SettingsSection>
 
-      <section className="section">
-        <div className="stitle">{t("settings.workspaceSection")}</div>
-        <div className="setting-row">
-          <div className="l">
-            <div className="n">{t("settings.currentWorkspace")}</div>
-            <div className="h">{settings.workspaceDir || t("settings.notSelected")}</div>
-          </div>
+      <SettingsSection title={t("settings.workspaceSection")}>
+        <SettingsRow
+          label={t("settings.currentWorkspace")}
+          hint={settings.workspaceDir || t("settings.notSelected")}
+        >
           <button type="button" className="btn" onClick={onPickWorkspace}>
             {t("settings.workspaceChange")}
           </button>
-        </div>
-        <div className="setting-row">
-          <div className="l">
-            <div className="n">{t("settings.editor")}</div>
-            <div className="h">{t("settings.editorHint")}</div>
-          </div>
+        </SettingsRow>
+        <SettingsRow label={t("settings.editor")} hint={t("settings.editorHint")}>
           <input
             className="field mono"
             value={editorDraft}
@@ -658,34 +761,11 @@ function PageGeneral({
             onChange={(e) => setEditorDraft(e.target.value)}
             onBlur={() => onSave({ editor: editorDraft.trim() })}
           />
-        </div>
-      </section>
+        </SettingsRow>
+      </SettingsSection>
 
-      <section className="section">
-        <div className="stitle">{t("settings.behaviorSection")}</div>
-        <div className="setting-row">
-          <div className="l">
-            <div className="n">{t("settings.reasoningEffort")}</div>
-            <div className="h">{t("settings.reasoningEffortHint")}</div>
-          </div>
-          <div className="seg-ctrl">
-            {(["low", "medium", "high", "max"] as const).map((e) => (
-              <button
-                type="button"
-                key={e}
-                data-on={settings.reasoningEffort === e}
-                onClick={() => onSave({ reasoningEffort: e })}
-              >
-                {e}
-              </button>
-            ))}
-          </div>
-        </div>
-        <div className="setting-row">
-          <div className="l">
-            <div className="n">{t("settings.editMode")}</div>
-            <div className="h">{t("settings.editModeHint")}</div>
-          </div>
+      <SettingsSection title={t("settings.behaviorSection")}>
+        <SettingsRow label={t("settings.editMode")} hint={t("settings.editModeHint")}>
           <div className="seg-ctrl">
             {(["plan", "review", "auto", "yolo"] as const).map((m) => (
               <button
@@ -698,12 +778,11 @@ function PageGeneral({
               </button>
             ))}
           </div>
-        </div>
-        <div className="setting-row">
-          <div className="l">
-            <div className="n">{t("settings.showSystemEvents")}</div>
-            <div className="h">{t("settings.showSystemEventsHint")}</div>
-          </div>
+        </SettingsRow>
+        <SettingsRow
+          label={t("settings.showSystemEvents")}
+          hint={t("settings.showSystemEventsHint")}
+        >
           <div className="seg-ctrl">
             <button
               type="button"
@@ -720,12 +799,11 @@ function PageGeneral({
               {t("settings.hidden")}
             </button>
           </div>
-        </div>
-        <div className="setting-row">
-          <div className="l">
-            <div className="n">{t("settings.desktopCloseBehavior")}</div>
-            <div className="h">{t("settings.desktopCloseBehaviorHint")}</div>
-          </div>
+        </SettingsRow>
+        <SettingsRow
+          label={t("settings.desktopCloseBehavior")}
+          hint={t("settings.desktopCloseBehaviorHint")}
+        >
           <div className="seg-ctrl">
             <button
               type="button"
@@ -742,28 +820,25 @@ function PageGeneral({
               {t("settings.closeToTray")}
             </button>
           </div>
-        </div>
-        <div className="setting-row">
-          <div className="l">
-            <div className="n">{t("settings.budget")}</div>
-            <div className="h">{t("settings.budgetHint")}</div>
-          </div>
-          <input
-            className="field"
-            type="number"
-            defaultValue={settings.budgetUsd ?? ""}
-            placeholder={t("settings.budgetPlaceholder")}
-            onBlur={(e) => {
-              const v = e.target.value.trim();
-              onSave({ budgetUsd: v === "" ? null : Number(v) });
-            }}
-          />
-        </div>
-        <div className="setting-row">
-          <div className="l">
-            <div className="n">{t("settings.webSearchEngine")}</div>
-            <div className="h">{t("settings.webSearchEngineNote")}</div>
-          </div>
+        </SettingsRow>
+        <SettingsRow label={t("settings.budget")} hint={t("settings.budgetHint")}>
+          <SettingsControlGroup className="field-layout">
+            <input
+              className="field"
+              type="number"
+              min={0}
+              value={budgetDraft}
+              placeholder={t("settings.budgetPlaceholder")}
+              onChange={(e) => setBudgetDraft(e.target.value)}
+              onBlur={commitBudget}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") e.currentTarget.blur();
+              }}
+            />
+            <span className="field-suffix">USD</span>
+          </SettingsControlGroup>
+        </SettingsRow>
+        <SettingsRow label={t("settings.webSearchEngine")} hint={t("settings.webSearchEngineNote")}>
           <select
             className="field"
             value={settings.webSearchEngine ?? "bing"}
@@ -794,9 +869,9 @@ function PageGeneral({
             <option value="brave">{t("settings.webSearchEngineBrave")}</option>
             <option value="ollama">{t("settings.webSearchEngineOllama")}</option>
           </select>
-        </div>
+        </SettingsRow>
         <WebSearchEngineCredentials settings={settings} onSave={onSave} />
-      </section>
+      </SettingsSection>
     </>
   );
 }
@@ -868,23 +943,27 @@ function SearxngEndpointRow({
     setDraft(settings.webSearchEndpoint ?? "");
   }, [settings.webSearchEndpoint]);
   return (
-    <div className="setting-row">
-      <div className="l">
-        <div className="n">{t("settings.webSearchEndpoint")}</div>
-        <div className="h">{t("settings.webSearchEndpointHint")}</div>
+    <SettingsRow
+      label={t("settings.webSearchEndpoint")}
+      hint={t("settings.webSearchEndpointHint")}
+      controlClassName="credential-row-control"
+    >
+      <div className="credential-control">
+        <div className="credential-primary-line">
+          <input
+            className="field mono"
+            value={draft}
+            placeholder="http://localhost:8080"
+            onChange={(e) => setDraft(e.target.value)}
+            onBlur={() => {
+              const next = draft.trim();
+              if (next === (settings.webSearchEndpoint ?? "")) return;
+              onSave({ webSearchEndpoint: next || null });
+            }}
+          />
+        </div>
       </div>
-      <input
-        className="field mono"
-        value={draft}
-        placeholder="http://localhost:8080"
-        onChange={(e) => setDraft(e.target.value)}
-        onBlur={() => {
-          const next = draft.trim();
-          if (next === (settings.webSearchEndpoint ?? "")) return;
-          onSave({ webSearchEndpoint: next || null });
-        }}
-      />
-    </div>
+    </SettingsRow>
   );
 }
 
@@ -911,10 +990,10 @@ function WebSearchApiKeyRow({
   const [draft, setDraft] = useState("");
   const label = t(`settings.webSearchApiKey.${engine}` as const);
   return (
-    <div className="setting-row">
-      <div className="l">
-        <div className="n">{label}</div>
-        <div className="h">
+    <SettingsRow
+      label={label}
+      hint={
+        <>
           {prefix ? t("settings.apiKeySet", { prefix }) : t("settings.apiKeyNotSet")}{" "}
           <a
             href={signupUrl}
@@ -927,40 +1006,44 @@ function WebSearchApiKeyRow({
           >
             {t("settings.webSearchApiKeySignup")}
           </a>
-        </div>
-      </div>
-      <div style={{ display: "flex", gap: 6 }}>
-        <input
-          className="field mono"
-          type="password"
-          value={draft}
-          placeholder={prefix ?? ""}
-          onChange={(e) => setDraft(e.target.value)}
-        />
-        <button
-          type="button"
-          className="btn primary"
-          disabled={!draft.trim()}
-          onClick={() => {
-            const trimmed = draft.trim();
-            if (!trimmed) return;
-            onSave({ [patchKey]: trimmed } as SettingsPatch);
-            setDraft("");
-          }}
-        >
-          {t("settings.apiKeySave")}
-        </button>
-        {prefix ? (
+        </>
+      }
+      controlClassName="credential-row-control"
+    >
+      <div className="credential-control">
+        <div className="credential-primary-line">
+          <input
+            className="field mono"
+            type="password"
+            value={draft}
+            placeholder={prefix ?? ""}
+            onChange={(e) => setDraft(e.target.value)}
+          />
           <button
             type="button"
-            className="btn"
-            onClick={() => onSave({ [patchKey]: null } as SettingsPatch)}
+            className="btn primary"
+            disabled={!draft.trim()}
+            onClick={() => {
+              const trimmed = draft.trim();
+              if (!trimmed) return;
+              onSave({ [patchKey]: trimmed } as SettingsPatch);
+              setDraft("");
+            }}
           >
-            {t("settings.webSearchApiKeyClear")}
+            {t("settings.apiKeySave")}
           </button>
-        ) : null}
+          {prefix ? (
+            <button
+              type="button"
+              className="btn"
+              onClick={() => onSave({ [patchKey]: null } as SettingsPatch)}
+            >
+              {t("settings.webSearchApiKeyClear")}
+            </button>
+          ) : null}
+        </div>
       </div>
-    </div>
+    </SettingsRow>
   );
 }
 
@@ -977,60 +1060,57 @@ function ApiKeySection({
 }) {
   const [key, setKey] = useState("");
   const [urlDraft, setUrlDraft] = useState(baseUrl ?? "");
+  useEffect(() => {
+    setUrlDraft(baseUrl ?? "");
+  }, [baseUrl]);
   return (
-    <section className="section">
-      <div className="stitle">{t("settings.apiSection")}</div>
-      <div className="setting-row">
-        <div className="l">
-          <div className="n">{t("settings.apiKey")}</div>
-          <div className="h">
-            {apiKeyPrefix
-              ? t("settings.apiKeySet", { prefix: apiKeyPrefix })
-              : t("settings.apiKeyNotSet")}
+    <SettingsSection title={t("settings.apiSection")}>
+      <SettingsRow
+        label={t("settings.apiKey")}
+        hint={
+          apiKeyPrefix
+            ? t("settings.apiKeySet", { prefix: apiKeyPrefix })
+            : t("settings.apiKeyNotSet")
+        }
+        controlClassName="credential-row-control"
+      >
+        <div className="credential-control">
+          <div className="credential-primary-line">
+            <input
+              className="field mono"
+              type="password"
+              value={key}
+              onChange={(e) => setKey(e.target.value)}
+              placeholder="sk-..."
+            />
+            <button
+              type="button"
+              className="btn primary"
+              disabled={!key}
+              onClick={() => {
+                if (!key) return;
+                onSaveApiKey(key);
+                setKey("");
+              }}
+            >
+              {t("settings.apiKeySave")}
+            </button>
           </div>
         </div>
-        <div style={{ display: "flex", gap: 6 }}>
-          <input
-            className="field mono"
-            type="password"
-            value={key}
-            onChange={(e) => setKey(e.target.value)}
-            placeholder="sk-…"
-          />
-          <button
-            type="button"
-            className="btn primary"
-            disabled={!key}
-            onClick={() => {
-              if (!key) return;
-              onSaveApiKey(key);
-              setKey("");
-            }}
-          >
-            {t("settings.apiKeySave")}
-          </button>
-        </div>
-      </div>
-      <div className="setting-row">
-        <div className="l">
-          <div className="n">{t("settings.baseUrl")}</div>
-          <div className="h">{t("settings.baseUrlHint")}</div>
-        </div>
+      </SettingsRow>
+      <SettingsRow label={t("settings.baseUrl")} hint={t("settings.baseUrlHint")}>
         <input
           className="field mono"
           value={urlDraft}
           onChange={(e) => setUrlDraft(e.target.value)}
           onBlur={() => onSave({ baseUrl: urlDraft.trim() })}
         />
-      </div>
-    </section>
+      </SettingsRow>
+    </SettingsSection>
   );
 }
 
 const KNOWN_MODELS = ["deepseek-v4-flash", "deepseek-v4-pro"] as const;
-
-const EFFORT_VALUES = ["low", "medium", "high", "max"] as const;
-type EffortValue = (typeof EFFORT_VALUES)[number];
 
 function PageModels({
   settings,
@@ -1044,53 +1124,51 @@ function PageModels({
   const isKnown = (KNOWN_MODELS as readonly string[]).includes(settings.model);
   return (
     <>
-      <section className="section">
-        <div className="stitle">{t("settings.defaultModelCurrent", { model: settings.model })}</div>
+      <SettingsSection title={t("settings.defaultModelCurrent", { model: settings.model })}>
         <div className="model-grid">
           {KNOWN_MODELS.map((id) => (
-            <div
+            <button
+              type="button"
               key={id}
               className="mcard"
               data-on={settings.model === id}
               onClick={() => onSave({ model: id })}
             >
               <div className="nm">{id}</div>
-            </div>
+            </button>
           ))}
         </div>
-        <div className="setting-row" style={{ marginTop: 12 }}>
-          <div className="l">
-            <div className="n">{t("settings.modelCustom")}</div>
-            <div className="h">{t("settings.modelCustomHint")}</div>
-          </div>
-          <div style={{ display: "flex", gap: 6 }}>
-            <input
-              className="field mono"
-              value={draft}
-              onChange={(e) => setDraft(e.target.value)}
-              placeholder="deepseek-v4-flash"
-            />
-            <button
-              type="button"
-              className="btn primary"
-              disabled={!draft.trim() || draft.trim() === settings.model}
-              onClick={() => onSave({ model: draft.trim() })}
-            >
-              {t("settings.apiKeySave")}
-            </button>
-          </div>
-        </div>
+        <SettingsRow
+          label={t("settings.modelCustom")}
+          hint={t("settings.modelCustomHint")}
+          className="settings-row-spaced"
+        >
+          <input
+            className="field mono"
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            placeholder="deepseek-v4-flash"
+          />
+          <button
+            type="button"
+            className="btn primary"
+            disabled={!draft.trim() || draft.trim() === settings.model}
+            onClick={() => onSave({ model: draft.trim() })}
+          >
+            {t("settings.apiKeySave")}
+          </button>
+        </SettingsRow>
         {!isKnown ? (
-          <div className="h" style={{ marginTop: 6 }}>
+          <div className="settings-inline-note settings-note-block">
             {t("settings.modelCustomActive", { model: settings.model })}
           </div>
         ) : null}
-        <div className="setting-row" style={{ marginTop: 12 }}>
-          <div className="l">
-            <div className="n">{t("settings.contextTokensLabel")}</div>
-            <div className="h">{t("settings.contextTokensHint")}</div>
-          </div>
-          <div style={{ display: "flex", gap: 6 }}>
+        <SettingsRow
+          label={t("settings.contextTokensLabel")}
+          hint={t("settings.contextTokensHint")}
+          className="settings-row-spaced"
+        >
+          <SettingsControlGroup className="field-layout">
             <input
               className="field mono"
               type="number"
@@ -1098,7 +1176,7 @@ function PageModels({
               value={settings.contextTokens?.[settings.model] ?? ""}
               onChange={(e) => {
                 const raw = e.target.value.trim();
-                const num = raw ? parseInt(raw, 10) : 0;
+                const num = raw ? Number.parseInt(raw, 10) : 0;
                 const next = { ...(settings.contextTokens ?? {}) };
                 if (num > 0 && Number.isFinite(num)) {
                   next[settings.model] = num;
@@ -1109,16 +1187,12 @@ function PageModels({
               }}
               placeholder={t("settings.contextTokensPlaceholder")}
             />
-          </div>
-        </div>
-      </section>
-      <section className="section">
-        <div className="stitle">{t("settings.effortSection")}</div>
-        <div className="setting-row">
-          <div className="l">
-            <div className="n">{t("settings.reasoningEffort")}</div>
-            <div className="h">{t("settings.reasoningEffortHint")}</div>
-          </div>
+            <span className="field-suffix">tokens</span>
+          </SettingsControlGroup>
+        </SettingsRow>
+      </SettingsSection>
+      <SettingsSection title={t("settings.effortSection")}>
+        <SettingsRow label={t("settings.reasoningEffort")} hint={t("settings.reasoningEffortHint")}>
           <div className="seg-ctrl">
             {EFFORT_VALUES.map((e) => (
               <button
@@ -1131,8 +1205,8 @@ function PageModels({
               </button>
             ))}
           </div>
-        </div>
-      </section>
+        </SettingsRow>
+      </SettingsSection>
     </>
   );
 }
@@ -1174,8 +1248,9 @@ function PageMCP({
   const connectedCount = specs.filter((s) => s.status === "connected").length;
   const failedCount = specs.filter((s) => s.status === "failed").length;
   const disabledCount = specs.filter((s) => s.status === "disabled").length;
-  const connectingCount = specs.filter((s) => s.status === "configured" || s.status === "handshake")
-    .length;
+  const connectingCount = specs.filter(
+    (s) => s.status === "configured" || s.status === "handshake",
+  ).length;
   const statusKind =
     specs.length === 0
       ? "empty"
@@ -1208,6 +1283,9 @@ function PageMCP({
     onAdd(v);
     setDraft("");
   };
+  const mcpSpecHint = t("settings.mcpSpecFormat")
+    .replaceAll("<code>", "")
+    .replaceAll("</code>", "");
   if (editing) {
     return (
       <McpEditPage
@@ -1247,18 +1325,7 @@ function PageMCP({
           </button>
         </div>
         {specs.length === 0 ? (
-          <div
-            style={{
-              padding: 16,
-              background: "var(--card)",
-              border: "1px solid var(--border)",
-              borderRadius: 10,
-              fontSize: 12,
-              color: "var(--muted)",
-            }}
-          >
-            {t("settings.mcpEmpty")}
-          </div>
+          <SettingsEmptyState>{t("settings.mcpEmpty")}</SettingsEmptyState>
         ) : (
           specs.map((s) => (
             <McpServerCard
@@ -1272,29 +1339,22 @@ function PageMCP({
           ))
         )}
       </section>
-      <section className="section">
-        <div className="stitle">{t("settings.mcpAddSection")}</div>
-        <div className="setting-row">
-          <div className="l">
-            <div className="n">{t("settings.mcpSpecLabel")}</div>
-            <div className="h" dangerouslySetInnerHTML={{ __html: t("settings.mcpSpecFormat") }} />
-          </div>
-          <div style={{ display: "flex", gap: 6 }}>
-            <input
-              className="field mono"
-              value={draft}
-              onChange={(e) => setDraft(e.target.value)}
-              placeholder="github=npx -y @smithery/cli ..."
-              onKeyDown={(e) => {
-                if (e.key === "Enter") submit();
-              }}
-            />
-            <button type="button" className="btn primary" disabled={!draft.trim()} onClick={submit}>
-              {t("settings.mcpAdd")}
-            </button>
-          </div>
-        </div>
-      </section>
+      <SettingsSection title={t("settings.mcpAddSection")}>
+        <SettingsRow label={t("settings.mcpSpecLabel")} hint={mcpSpecHint}>
+          <input
+            className="field mono"
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            placeholder="github=npx -y @smithery/cli ..."
+            onKeyDown={(e) => {
+              if (e.key === "Enter") submit();
+            }}
+          />
+          <button type="button" className="btn primary" disabled={!draft.trim()} onClick={submit}>
+            {t("settings.mcpAdd")}
+          </button>
+        </SettingsRow>
+      </SettingsSection>
     </>
   );
 }
@@ -1352,7 +1412,11 @@ function mcpServerFromRawSpec(spec: McpSpecInfo): ImportedMcpServer | undefined 
     return { name, transport: "streamable-http", url: streamable[1] };
   }
   if (MCP_HTTP_URL.test(body)) {
-    return { name, transport: spec.transport === "streamable-http" ? "streamable-http" : "sse", url: body };
+    return {
+      name,
+      transport: spec.transport === "streamable-http" ? "streamable-http" : "sse",
+      url: body,
+    };
   }
   const argv = splitMcpArgs(body);
   const [command, ...args] = argv;
@@ -1411,7 +1475,9 @@ function normalizeMcpJsonDraft(
       name,
       transport,
       command,
-      args: Array.isArray(raw.args) ? raw.args.filter((a): a is string => typeof a === "string") : [],
+      args: Array.isArray(raw.args)
+        ? raw.args.filter((a): a is string => typeof a === "string")
+        : [],
       env: normalizeStringRecordForMcp(raw.env),
       cwd: typeof raw.cwd === "string" && raw.cwd.trim() ? raw.cwd.trim() : undefined,
       disabled,
@@ -1541,21 +1607,9 @@ function PageSkills({
     onSave({ subagentModels: { ...subagentModels, [name]: value } });
   };
   return (
-    <section className="section">
-      <div className="stitle">{t("settings.skillsLoaded", { count: skills.length })}</div>
+    <SettingsSection title={t("settings.skillsLoaded", { count: skills.length })}>
       {skills.length === 0 ? (
-        <div
-          style={{
-            padding: 16,
-            background: "var(--card)",
-            border: "1px solid var(--border)",
-            borderRadius: 10,
-            fontSize: 12,
-            color: "var(--muted)",
-          }}
-        >
-          {t("settings.skillsEmpty")}
-        </div>
+        <SettingsEmptyState>{t("settings.skillsEmpty")}</SettingsEmptyState>
       ) : (
         skills.map((s) => (
           <div className="scard" key={`${s.scope}:${s.name}`}>
@@ -1565,14 +1619,7 @@ function PageSkills({
               </span>
               <div>
                 <div className="nm">
-                  <span
-                    style={{
-                      fontFamily: "Geist Mono, monospace",
-                      color: "var(--accent)",
-                    }}
-                  >
-                    /{s.name}
-                  </span>
+                  <span className="settings-mono-accent">/{s.name}</span>
                 </div>
                 <div className="sub">
                   {s.scope} · {s.runAs}
@@ -1581,12 +1628,9 @@ function PageSkills({
               </div>
               {s.runAs === "subagent" ? (
                 <select
-                  className="field"
-                  style={{ marginLeft: "auto", minWidth: 96 }}
+                  className="field skill-model-field"
                   value={subagentModels[s.name] ?? "flash"}
-                  onChange={(e) =>
-                    setSubagentModel(s.name, e.target.value as "flash" | "pro")
-                  }
+                  onChange={(e) => setSubagentModel(s.name, e.target.value as "flash" | "pro")}
                   title={t("settings.subagentModelHint")}
                 >
                   <option value="flash">{t("settings.subagentModelFlash")}</option>
@@ -1595,20 +1639,11 @@ function PageSkills({
               ) : null}
             </div>
             <div className="desc">{s.description}</div>
-            <div
-              style={{
-                fontFamily: "Geist Mono, monospace",
-                fontSize: 10.5,
-                color: "var(--muted-2)",
-                marginTop: 4,
-              }}
-            >
-              {s.path}
-            </div>
+            <div className="settings-path-text">{s.path}</div>
           </div>
         ))
       )}
-    </section>
+    </SettingsSection>
   );
 }
 
@@ -1622,10 +1657,9 @@ function PageMemory({
   onRead: (path: string) => void;
 }) {
   return (
-    <section className="section">
-      <div className="stitle">{t("settings.memorySection")}</div>
+    <SettingsSection title={t("settings.memorySection")}>
       {entries.length === 0 ? (
-        <div className="muted-card">{t("settings.memoryDesc")}</div>
+        <SettingsEmptyState>{t("settings.memoryDesc")}</SettingsEmptyState>
       ) : (
         <div className="memory-browser">
           <div className="memory-list">
@@ -1643,12 +1677,10 @@ function PageMemory({
               </button>
             ))}
           </div>
-          <pre className="memory-detail">
-            {detail ? detail.body : t("settings.memoryDesc")}
-          </pre>
+          <pre className="memory-detail">{detail ? detail.body : t("settings.memoryDesc")}</pre>
         </div>
       )}
-    </section>
+    </SettingsSection>
   );
 }
 
@@ -1661,13 +1693,8 @@ function PageRules({
 }) {
   return (
     <>
-      <section className="section">
-        <div className="stitle">{t("settings.editMode")}</div>
-        <div className="setting-row">
-          <div className="l">
-            <div className="n">{t("settings.appMode")}</div>
-            <div className="h">{t("settings.editModeHint")}</div>
-          </div>
+      <SettingsSection title={t("settings.editMode")}>
+        <SettingsRow label={t("settings.appMode")} hint={t("settings.editModeHint")}>
           <div className="seg-ctrl">
             {(["plan", "review", "auto", "yolo"] as const).map((m) => (
               <button
@@ -1680,23 +1707,11 @@ function PageRules({
               </button>
             ))}
           </div>
-        </div>
-      </section>
-      <section className="section">
-        <div className="stitle">{t("settings.ruleAutoApprovalSection")}</div>
-        <div
-          style={{
-            padding: 12,
-            background: "var(--card)",
-            border: "1px solid var(--border)",
-            borderRadius: 10,
-            fontSize: 12,
-            color: "var(--muted)",
-          }}
-        >
-          {t("settings.ruleAutoApprovalHint")}
-        </div>
-      </section>
+        </SettingsRow>
+      </SettingsSection>
+      <SettingsSection title={t("settings.ruleAutoApprovalSection")}>
+        <SettingsEmptyState>{t("settings.ruleAutoApprovalHint")}</SettingsEmptyState>
+      </SettingsSection>
     </>
   );
 }
@@ -1764,8 +1779,8 @@ function PageShortcuts() {
   return (
     <section className="section">
       <div className="kbd-grid">
-        {rows.map((s, i) => (
-          <SectionRow key={i} nm={s.nm} keys={s.keys} />
+        {rows.map((s) => (
+          <SectionRow key={s.nm} nm={s.nm} keys={s.keys} />
         ))}
       </div>
     </section>
