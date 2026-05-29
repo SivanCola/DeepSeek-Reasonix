@@ -84,6 +84,8 @@ export function SettingsModal({
   onDisconnectQQ,
   onSaveQQConfig,
   onOpenQQApplyLink,
+  onCheckForUpdates,
+  isCheckingForUpdates,
   onPickWorkspace,
   onImportCcSwitchMcp,
   onAddMcpSpec,
@@ -123,6 +125,8 @@ export function SettingsModal({
   onDisconnectQQ: () => void;
   onSaveQQConfig: (patch: { appId?: string; appSecret?: string; sandbox: boolean }) => void;
   onOpenQQApplyLink: () => void;
+  onCheckForUpdates: () => void;
+  isCheckingForUpdates: boolean;
   onPickWorkspace: () => void;
   onImportCcSwitchMcp: () => Promise<void>;
   onAddMcpSpec: (spec: string) => void;
@@ -197,6 +201,8 @@ export function SettingsModal({
                 onSetFontFamily={onSetFontFamily}
                 customFontFamily={customFontFamily}
                 onSetCustomFontFamily={onSetCustomFontFamily}
+                onCheckForUpdates={onCheckForUpdates}
+                isCheckingForUpdates={isCheckingForUpdates}
                 onSave={onSave}
                 onPickWorkspace={onPickWorkspace}
               />
@@ -441,6 +447,8 @@ function PageGeneral({
   onSetFontFamily,
   customFontFamily,
   onSetCustomFontFamily,
+  onCheckForUpdates,
+  isCheckingForUpdates,
   onSave,
   onPickWorkspace,
 }: {
@@ -455,6 +463,8 @@ function PageGeneral({
   onSetFontFamily: (family: FontFamily) => void;
   customFontFamily: string;
   onSetCustomFontFamily: (family: string) => void;
+  onCheckForUpdates: () => void;
+  isCheckingForUpdates: boolean;
   onSave: (patch: SettingsPatch) => void;
   onPickWorkspace: () => void;
 }) {
@@ -742,6 +752,22 @@ function PageGeneral({
               {t("settings.closeToTray")}
             </button>
           </div>
+        </div>
+        <div className="setting-row">
+          <div className="l">
+            <div className="n">{t("settings.checkForUpdates")}</div>
+            <div className="h">{t("settings.checkForUpdatesHint")}</div>
+          </div>
+          <button
+            type="button"
+            className="btn"
+            onClick={onCheckForUpdates}
+            disabled={isCheckingForUpdates}
+          >
+            {isCheckingForUpdates
+              ? t("app.update.checkingForUpdates")
+              : t("settings.checkForUpdatesAction")}
+          </button>
         </div>
         <div className="setting-row">
           <div className="l">

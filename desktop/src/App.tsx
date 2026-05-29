@@ -1360,6 +1360,8 @@ interface TabRuntimeProps {
   onToggleSide: () => void;
   onToggleCtx: () => void;
   onToggleCurrency: () => void;
+  onCheckForUpdates: () => void;
+  isCheckingForUpdates: boolean;
   tabsList: { id: string; workspaceDir?: string }[];
   activeTabId: string;
   setActiveTabId: (id: string) => void;
@@ -1394,6 +1396,8 @@ function TabRuntime({
   onToggleSide,
   onToggleCtx,
   onToggleCurrency,
+  onCheckForUpdates,
+  isCheckingForUpdates,
   tabsList,
   activeTabId,
   setActiveTabId,
@@ -2783,6 +2787,8 @@ function TabRuntime({
             onOpenQQApplyLink={() =>
               openUrl("https://q.qq.com/qqbot/openclaw/login.html").catch(() => undefined)
             }
+            onCheckForUpdates={onCheckForUpdates}
+            isCheckingForUpdates={isCheckingForUpdates}
             onPickWorkspace={pickWorkspace}
             onImportCcSwitchMcp={importCcSwitchMcp}
             onAddMcpSpec={addMcpSpec}
@@ -3467,6 +3473,7 @@ export function App() {
   } | null>(null);
   const [menuToast, setMenuToast] = useState<{ msg: string } | null>(null);
   const checkingUpdateRef = useRef(false);
+  const [isCheckingForUpdates, setIsCheckingForUpdates] = useState(false);
   const [currency, setCurrency] = useState<"CNY" | "USD">(() => {
     const v = localStorage.getItem("reasonix.currency");
     return v === "USD" ? "USD" : "CNY";
@@ -3637,39 +3644,45 @@ export function App() {
     };
   }, []);
 
+  const runManualUpdateCheck = useCallback(() => {
+    if (checkingUpdateRef.current) return;
+    checkingUpdateRef.current = true;
+    setIsCheckingForUpdates(true);
+    setMenuToast({ msg: t("app.update.checkingForUpdates") });
+    void check()
+      .then((update) => {
+        if (update) {
+          setPendingUpdate(update);
+          setMenuToast(null);
+        } else {
+          setMenuToast({ msg: t("app.update.alreadyUpToDate") });
+          window.setTimeout(() => setMenuToast(null), 2000);
+        }
+      })
+      .catch((err) => {
+        setMenuToast({
+          msg: t("app.update.checkFailedToast", { message: String(err) }),
+        });
+        window.setTimeout(() => setMenuToast(null), 3000);
+      })
+      .finally(() => {
+        checkingUpdateRef.current = false;
+        setIsCheckingForUpdates(false);
+      });
+  }, []);
+
   // Manual update check triggered from macOS App menu
   useEffect(() => {
     let unlisten: (() => void) | undefined;
     listen("reasonix-menu-check-updates", () => {
-      if (checkingUpdateRef.current) return;
-      checkingUpdateRef.current = true;
-      setMenuToast({ msg: t("app.update.checkingForUpdates") });
-      check()
-        .then((update) => {
-          if (update) {
-            setPendingUpdate(update);
-            setMenuToast(null);
-          } else {
-            setMenuToast({ msg: t("app.update.alreadyUpToDate") });
-            window.setTimeout(() => setMenuToast(null), 2000);
-          }
-        })
-        .catch((err) => {
-          setMenuToast({
-            msg: t("app.update.checkFailedToast", { message: String(err) }),
-          });
-          window.setTimeout(() => setMenuToast(null), 3000);
-        })
-        .finally(() => {
-          checkingUpdateRef.current = false;
-        });
+      runManualUpdateCheck();
     }).then((fn) => {
       unlisten = fn;
     });
     return () => {
       unlisten?.();
     };
-  }, []);
+  }, [runManualUpdateCheck]);
 
   const installUpdate = useCallback(async () => {
     if (!pendingUpdate) return;
@@ -3974,6 +3987,8 @@ export function App() {
           onToggleSide={onToggleSide}
           onToggleCtx={onToggleCtx}
           onToggleCurrency={onToggleCurrency}
+          onCheckForUpdates={runManualUpdateCheck}
+          isCheckingForUpdates={isCheckingForUpdates}
           tabsList={tabs}
           activeTabId={activeTabId}
           setActiveTabId={setActiveTabId}
