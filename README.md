@@ -2,13 +2,9 @@
 
 [中文](README.zh-CN.md)
 
-This fork is a contribution showcase for my work on
-[esengine/DeepSeek-Reasonix](https://github.com/esengine/DeepSeek-Reasonix).
-
-It is not a replacement for the official project. For installation, usage, releases,
-and canonical documentation, please visit the upstream repository:
-
-https://github.com/esengine/DeepSeek-Reasonix
+This fork showcases my contributions to the upstream
+[esengine/DeepSeek-Reasonix](https://github.com/esengine/DeepSeek-Reasonix)
+project; installation, releases, and canonical documentation belong there.
 
 ## Data Source
 

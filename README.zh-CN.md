@@ -2,13 +2,9 @@
 
 [English](README.md)
 
-这个 fork 用来展示我对
+这个 fork 用来展示我在官方上游仓库
 [esengine/DeepSeek-Reasonix](https://github.com/esengine/DeepSeek-Reasonix)
-的贡献记录。
-
-它不是官方项目的替代版本。安装、使用、发布版本和权威文档，请以官方上游仓库为准：
-
-https://github.com/esengine/DeepSeek-Reasonix
+中的贡献记录；安装、发布版本和权威文档请以官方仓库为准。
 
 ## 数据源
 
