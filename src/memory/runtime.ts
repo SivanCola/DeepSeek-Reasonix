@@ -22,6 +22,8 @@ export class ImmutablePrefix {
   private _fingerprintCache: string | null = null;
   /** Frozen tool-spec snapshot — avoids structuredClone per iteration. Invalidated by addTool/removeTool. */
   private _frozenToolsCache: ToolSpec[] | null = null;
+  /** Diagnostic hash cache keyed by immutable tool snapshots. Invalidated with the prefix caches. */
+  private _diagnosticHashesCache = new WeakMap<readonly ToolSpec[], PrefixDiagnosticHashes>();
 
   constructor(opts: ImmutablePrefixOptions) {
     this.system = opts.system;
@@ -33,7 +35,7 @@ export class ImmutablePrefix {
   replaceSystem(s: string): boolean {
     if (this.system === s) return false;
     this.system = s;
-    this._fingerprintCache = null;
+    this.invalidatePrefixCaches();
     return true;
   }
 
@@ -62,7 +64,7 @@ export class ImmutablePrefix {
     if (!name) return false;
     if (this._toolSpecs.some((t) => t.function?.name === name)) return false;
     this._toolSpecs.push(spec);
-    this._fingerprintCache = null;
+    this.invalidatePrefixCaches();
     this._frozenToolsCache = null;
     return true;
   }
@@ -72,7 +74,7 @@ export class ImmutablePrefix {
     const idx = this._toolSpecs.findIndex((t) => t.function?.name === name);
     if (idx < 0) return false;
     this._toolSpecs.splice(idx, 1);
-    this._fingerprintCache = null;
+    this.invalidatePrefixCaches();
     this._frozenToolsCache = null;
     return true;
   }
@@ -83,7 +85,23 @@ export class ImmutablePrefix {
     return this._fingerprintCache;
   }
 
-  diagnosticHashes(toolSpecs: readonly ToolSpec[] = this._toolSpecs): PrefixDiagnosticHashes {
+  diagnosticHashes(toolSpecs: readonly ToolSpec[] = this.tools()): PrefixDiagnosticHashes {
+    if (Object.isFrozen(toolSpecs)) {
+      const cached = this._diagnosticHashesCache.get(toolSpecs);
+      if (cached) return cached;
+      const hashes = this.computeDiagnosticHashes(toolSpecs);
+      this._diagnosticHashesCache.set(toolSpecs, hashes);
+      return hashes;
+    }
+    return this.computeDiagnosticHashes(toolSpecs);
+  }
+
+  private invalidatePrefixCaches(): void {
+    this._fingerprintCache = null;
+    this._diagnosticHashesCache = new WeakMap();
+  }
+
+  private computeDiagnosticHashes(toolSpecs: readonly ToolSpec[]): PrefixDiagnosticHashes {
     return prefixDiagnosticHashes({
       system: this.system,
       toolSpecs,
