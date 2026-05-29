@@ -878,16 +878,13 @@ describe("searchPerplexity", () => {
 
   it("requires an API key — throws a setup-pointing error when none is set", async () => {
     const origKey = process.env.PERPLEXITY_API_KEY;
-    const isolatedConfigPath = `/tmp/reasonix-web-tools-perplexity-missing-${process.pid}.json`;
     // biome-ignore lint/performance/noDelete: env var must be absent, not "undefined"
     delete process.env.PERPLEXITY_API_KEY;
     try {
-      await expect(
-        webSearch("q", { engine: "perplexity", configPath: isolatedConfigPath }),
-      ).rejects.toThrow(/Perplexity.*API key/i);
-      await expect(
-        webSearch("q", { engine: "perplexity", configPath: isolatedConfigPath }),
-      ).rejects.toThrow("perplexity.ai");
+      await expect(webSearch("q", { engine: "perplexity" })).rejects.toThrow(
+        /Perplexity.*API key/i,
+      );
+      await expect(webSearch("q", { engine: "perplexity" })).rejects.toThrow("perplexity.ai");
     } finally {
       if (origKey !== undefined) process.env.PERPLEXITY_API_KEY = origKey;
     }
