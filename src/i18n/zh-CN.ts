@@ -335,7 +335,7 @@ export const zhCN: TranslationSchema = {
       argsHint: "[tokens]",
     },
     goal: {
-      description: "持续执行目标循环，直到 GOAL_COMPLETED、达到最大轮数或 /goal stop",
+      description: "持续执行目标循环直到 GOAL_COMPLETED；未检测到测试命令时会将完成标记为验证跳过",
       argsHint: "<目标>|resume|stop|status",
     },
     keys: { description: "键盘 + 鼠标 + 复制粘贴参考" },

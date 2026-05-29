@@ -349,7 +349,8 @@ export const EN: TranslationSchema = {
       argsHint: "[tokens]",
     },
     goal: {
-      description: "run a persistent Goal Loop until GOAL_COMPLETED, max attempts, or /goal stop",
+      description:
+        "run a persistent Goal Loop until GOAL_COMPLETED; marks completion as verification-skipped when no tests are detected",
       argsHint: "<text>|resume|stop|status",
     },
     cwd: {

@@ -29,6 +29,14 @@ function makeLoop(system = "base system") {
   });
 }
 
+function writeNodeTestScript(rootDir: string, script: string): void {
+  writeFileSync(
+    join(rootDir, "package.json"),
+    JSON.stringify({ scripts: { test: script } }),
+    "utf8",
+  );
+}
+
 describe("goal mode", () => {
   let dir: string;
 
@@ -133,6 +141,77 @@ describe("goal mode", () => {
     expect(new Set(prefixHashes).size).toBe(1);
     expect(loop.prefix.fingerprint).toBe(baseHash);
     expect(loadGoalState(dir).state?.status).toBe("completed");
+  });
+
+  it("rejects GOAL_COMPLETED when auto verification fails", async () => {
+    writeNodeTestScript(dir, "node -e \"console.log('1 failed'); process.exit(1)\"");
+    const loop = makeLoop();
+    const info: string[] = [];
+    const state = createGoalState("Fix login failure", { maxAttempts: 2 });
+    const responses = [
+      "GOAL_COMPLETED\nReason: code looks done",
+      "Still repairing\nFinding: tests still fail",
+    ];
+
+    const result = await runGoalLoop({
+      rootDir: dir,
+      loop,
+      state,
+      testTimeoutMs: 10_000,
+      onInfo: (message) => info.push(message),
+      runTurn: async () => {
+        const content = responses.shift() ?? "Still repairing";
+        loop.appendAndPersist({ role: "assistant", content });
+        return content;
+      },
+    });
+
+    expect(result.completed).toBe(false);
+    expect(result.state.status).toBe("failed");
+    expect(info.join("\n")).toContain("GOAL_COMPLETED was rejected because verification failed");
+    expect(result.state.failedSolutions.some((item) => item.includes("failed verification"))).toBe(
+      true,
+    );
+  });
+
+  it("accepts GOAL_COMPLETED when auto verification passes", async () => {
+    writeNodeTestScript(dir, "node -e \"console.log('1 passed')\"");
+    const loop = makeLoop();
+
+    const result = await runGoalLoop({
+      rootDir: dir,
+      loop,
+      state: createGoalState("Fix login failure", { maxAttempts: 2 }),
+      testTimeoutMs: 10_000,
+      runTurn: async () => {
+        const content = "GOAL_COMPLETED\nReason: tests passed";
+        loop.appendAndPersist({ role: "assistant", content });
+        return content;
+      },
+    });
+
+    expect(result.completed).toBe(true);
+    expect(result.state.attempt).toBe(1);
+    expect(result.state.lastTestResult).toContain("✓ npm test");
+    expect(result.state.lastTestResult).toContain("✓ 1 passed");
+  });
+
+  it("makes verification-skipped completion visible in the final summary", async () => {
+    const loop = makeLoop();
+
+    const result = await runGoalLoop({
+      rootDir: dir,
+      loop,
+      state: createGoalState("Fix login failure", { maxAttempts: 2 }),
+      runTurn: async () => {
+        const content = "GOAL_COMPLETED\nReason: no runnable tests";
+        loop.appendAndPersist({ role: "assistant", content });
+        return content;
+      },
+    });
+
+    expect(result.completed).toBe(true);
+    expect(result.summary).toContain("Verification skipped: no supported test command detected");
   });
 
   it("fails after max attempts without GOAL_COMPLETED", async () => {

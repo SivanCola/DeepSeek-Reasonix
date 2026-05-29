@@ -92,7 +92,7 @@ export function parseVerificationCounts(output: string): VerificationCounts {
 
 export function formatAutoTestResult(result: AutoTestResult): string {
   if (result.status === "skipped") {
-    return ["Tests:", `- skipped: ${result.reason ?? "not detected"}`].join("\n");
+    return ["Tests:", `- Verification skipped: ${result.reason ?? "not detected"}`].join("\n");
   }
   const command = result.command?.display ?? "test command";
   const status = result.status === "passed" ? "passed" : "failed";

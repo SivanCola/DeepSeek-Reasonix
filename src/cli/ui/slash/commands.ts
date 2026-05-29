@@ -62,7 +62,8 @@ export const SLASH_COMMANDS: readonly SlashCommandSpec[] = [
     cmd: "goal",
     group: "chat",
     argsHint: "<text>|resume|stop|status",
-    summary: "run a persistent Goal Loop until GOAL_COMPLETED, max attempts, or /goal stop",
+    summary:
+      "run a persistent Goal Loop until GOAL_COMPLETED; marks completion as verification-skipped when no tests are detected",
   },
   {
     cmd: "stop",

@@ -395,7 +395,8 @@ export const JA: TranslationSchema = {
       argsHint: "[tokens]",
     },
     goal: {
-      description: "GOAL_COMPLETED、最大試行回数、または /goal stop まで永続的な Goal Loop を実行",
+      description:
+        "GOAL_COMPLETED まで永続的な Goal Loop を実行; テスト未検出時は検証スキップとして完了を記録",
       argsHint: "<text>|resume|stop|status",
     },
     cwd: {
