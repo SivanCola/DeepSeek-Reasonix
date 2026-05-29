@@ -39,6 +39,7 @@ export type PageId =
   | "memory"
   | "rules"
   | "billing"
+  | "updates"
   | "shortcuts";
 
 const PAGE_META: ReadonlyArray<{ id: PageId; icon: keyof typeof I }> = [
@@ -49,6 +50,7 @@ const PAGE_META: ReadonlyArray<{ id: PageId; icon: keyof typeof I }> = [
   { id: "memory", icon: "bookmark" },
   { id: "rules", icon: "shield" },
   { id: "billing", icon: "coin" },
+  { id: "updates", icon: "download" },
   { id: "shortcuts", icon: "cpu" },
 ];
 
@@ -201,8 +203,6 @@ export function SettingsModal({
                 onSetFontFamily={onSetFontFamily}
                 customFontFamily={customFontFamily}
                 onSetCustomFontFamily={onSetCustomFontFamily}
-                onCheckForUpdates={onCheckForUpdates}
-                isCheckingForUpdates={isCheckingForUpdates}
                 onSave={onSave}
                 onPickWorkspace={onPickWorkspace}
               />
@@ -234,6 +234,12 @@ export function SettingsModal({
             {page === "rules" && <PageRules settings={settings} onSave={onSave} />}
             {page === "billing" && (
               <PageBilling balance={balance} usage={usage} currency={currency} />
+            )}
+            {page === "updates" && (
+              <PageUpdates
+                onCheckForUpdates={onCheckForUpdates}
+                isCheckingForUpdates={isCheckingForUpdates}
+              />
             )}
             {page === "shortcuts" && <PageShortcuts />}
             {page === "general" ? (
@@ -447,8 +453,6 @@ function PageGeneral({
   onSetFontFamily,
   customFontFamily,
   onSetCustomFontFamily,
-  onCheckForUpdates,
-  isCheckingForUpdates,
   onSave,
   onPickWorkspace,
 }: {
@@ -463,8 +467,6 @@ function PageGeneral({
   onSetFontFamily: (family: FontFamily) => void;
   customFontFamily: string;
   onSetCustomFontFamily: (family: string) => void;
-  onCheckForUpdates: () => void;
-  isCheckingForUpdates: boolean;
   onSave: (patch: SettingsPatch) => void;
   onPickWorkspace: () => void;
 }) {
@@ -755,22 +757,6 @@ function PageGeneral({
         </div>
         <div className="setting-row">
           <div className="l">
-            <div className="n">{t("settings.checkForUpdates")}</div>
-            <div className="h">{t("settings.checkForUpdatesHint")}</div>
-          </div>
-          <button
-            type="button"
-            className="btn"
-            onClick={onCheckForUpdates}
-            disabled={isCheckingForUpdates}
-          >
-            {isCheckingForUpdates
-              ? t("app.update.checkingForUpdates")
-              : t("settings.checkForUpdatesAction")}
-          </button>
-        </div>
-        <div className="setting-row">
-          <div className="l">
             <div className="n">{t("settings.budget")}</div>
             <div className="h">{t("settings.budgetHint")}</div>
           </div>
@@ -824,6 +810,42 @@ function PageGeneral({
         <WebSearchEngineCredentials settings={settings} onSave={onSave} />
       </section>
     </>
+  );
+}
+
+function PageUpdates({
+  onCheckForUpdates,
+  isCheckingForUpdates,
+}: {
+  onCheckForUpdates: () => void;
+  isCheckingForUpdates: boolean;
+}) {
+  return (
+    <section className="section">
+      <div className="stitle">{t("settings.updateSection")}</div>
+      <div className="setting-row">
+        <div className="l">
+          <div className="n">{t("settings.updateCurrentVersion")}</div>
+          <div className="h">{__APP_VERSION__}</div>
+        </div>
+      </div>
+      <div className="setting-row">
+        <div className="l">
+          <div className="n">{t("settings.checkForUpdates")}</div>
+          <div className="h">{t("settings.checkForUpdatesHint")}</div>
+        </div>
+        <button
+          type="button"
+          className="btn"
+          onClick={onCheckForUpdates}
+          disabled={isCheckingForUpdates}
+        >
+          {isCheckingForUpdates
+            ? t("app.update.checkingForUpdates")
+            : t("settings.checkForUpdatesAction")}
+        </button>
+      </div>
+    </section>
   );
 }
 
