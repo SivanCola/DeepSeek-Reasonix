@@ -1362,6 +1362,7 @@ interface TabRuntimeProps {
   onToggleCurrency: () => void;
   onCheckForUpdates: () => void;
   isCheckingForUpdates: boolean;
+  hasUpdateAvailable: boolean;
   tabsList: { id: string; workspaceDir?: string }[];
   activeTabId: string;
   setActiveTabId: (id: string) => void;
@@ -1398,6 +1399,7 @@ function TabRuntime({
   onToggleCurrency,
   onCheckForUpdates,
   isCheckingForUpdates,
+  hasUpdateAvailable,
   tabsList,
   activeTabId,
   setActiveTabId,
@@ -2789,6 +2791,7 @@ function TabRuntime({
             }
             onCheckForUpdates={onCheckForUpdates}
             isCheckingForUpdates={isCheckingForUpdates}
+            hasUpdateAvailable={hasUpdateAvailable}
             onPickWorkspace={pickWorkspace}
             onImportCcSwitchMcp={importCcSwitchMcp}
             onAddMcpSpec={addMcpSpec}
@@ -3989,6 +3992,7 @@ export function App() {
           onToggleCurrency={onToggleCurrency}
           onCheckForUpdates={runManualUpdateCheck}
           isCheckingForUpdates={isCheckingForUpdates}
+          hasUpdateAvailable={Boolean(pendingUpdate)}
           tabsList={tabs}
           activeTabId={activeTabId}
           setActiveTabId={setActiveTabId}

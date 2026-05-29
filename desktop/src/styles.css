@@ -5193,6 +5193,13 @@ html:not([data-platform="macos"]) .cmdk-row .kb .shortcut kbd[data-key="mod"] {
   font-size: 14px;
   color: var(--muted-2);
 }
+.settings-side .row .nav-badge {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  margin-left: auto;
+  background: var(--danger, #e84d33);
+}
 
 .settings-main {
   display: flex;

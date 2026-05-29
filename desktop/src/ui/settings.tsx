@@ -50,8 +50,8 @@ const PAGE_META: ReadonlyArray<{ id: PageId; icon: keyof typeof I }> = [
   { id: "memory", icon: "bookmark" },
   { id: "rules", icon: "shield" },
   { id: "billing", icon: "coin" },
-  { id: "updates", icon: "download" },
   { id: "shortcuts", icon: "cpu" },
+  { id: "updates", icon: "download" },
 ];
 
 export function SettingsModal({
@@ -88,6 +88,7 @@ export function SettingsModal({
   onOpenQQApplyLink,
   onCheckForUpdates,
   isCheckingForUpdates,
+  hasUpdateAvailable,
   onPickWorkspace,
   onImportCcSwitchMcp,
   onAddMcpSpec,
@@ -129,6 +130,7 @@ export function SettingsModal({
   onOpenQQApplyLink: () => void;
   onCheckForUpdates: () => void;
   isCheckingForUpdates: boolean;
+  hasUpdateAvailable: boolean;
   onPickWorkspace: () => void;
   onImportCcSwitchMcp: () => Promise<void>;
   onAddMcpSpec: (spec: string) => void;
@@ -167,6 +169,9 @@ export function SettingsModal({
             >
               <span className="ico">{I[p.icon]({ size: 13 })}</span>
               <span>{t(`settings.page${p.id[0]!.toUpperCase()}${p.id.slice(1)}Label` as any)}</span>
+              {p.id === "updates" && hasUpdateAvailable ? (
+                <span className="nav-badge" aria-hidden />
+              ) : null}
             </div>
           ))}
         </nav>
