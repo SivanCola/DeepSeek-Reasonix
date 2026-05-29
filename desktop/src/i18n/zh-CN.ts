@@ -276,7 +276,7 @@ export const zhCN: typeof en = {
     qqAccessOwnerWithAllowlist: "所有者 {openId} + 白名单 {count}",
     qqAccessAllowlist: "白名单 {count}",
     qqAccessRuntime: "首个私聊用户（仅本次运行，{openId}）",
-    qqAccessOpen: "未绑定",
+    qqAccessOpen: "开放访问",
     qqApplyLabel: "申请 QQ Bot",
     qqApplyAction: "去申请",
     qqSave: "保存",
@@ -290,7 +290,8 @@ export const zhCN: typeof en = {
     modelCustomHint: "任何 OpenAI 兼容的 ID（vLLM、Ollama、Together …）。",
     modelCustomActive: "当前运行自定义 ID：{model}",
     contextTokensLabel: "上下文窗口大小",
-    contextTokensHint: "为当前模型覆盖提示侧 token 上限（如 1000000 表示 1M）。留空使用内置默认值。",
+    contextTokensHint:
+      "为当前模型覆盖提示侧 token 上限（如 1000000 表示 1M）。留空使用内置默认值。",
     contextTokensPlaceholder: "自动",
     effortSection: "推理强度",
     ctxWindow: "上下文",

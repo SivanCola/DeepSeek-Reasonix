@@ -14,7 +14,8 @@ vi.mock("./theme", () => ({
   FONT_FAMILY_STACK: "sans-serif",
   FONT_SCALE: 1,
   FONT_SCALE_ZOOM: 1,
-  THEME: "dark",
+  THEME: { DARK: "dark", LIGHT: "light" },
+  THEME_STYLES: ["graphite", "sandstone", "porcelain", "midnight"],
   defaultStyleForTheme: vi.fn(() => ({
     bg: "#000",
     surface: "#111",
@@ -395,14 +396,14 @@ describe("desktop thread layout", () => {
     const side = 244;
     const ctx = 320;
 
-    expect(
-      getThreadMaxWidth({ viewportWidth: 1000, visibleSide: side, visibleCtx: ctx }),
-    ).toBe(580);
-    expect(
-      getThreadMaxWidth({ viewportWidth: 1400, visibleSide: side, visibleCtx: ctx }),
-    ).toBe(756);
-    expect(
-      getThreadMaxWidth({ viewportWidth: 1800, visibleSide: side, visibleCtx: ctx }),
-    ).toBe(1120);
+    expect(getThreadMaxWidth({ viewportWidth: 1000, visibleSide: side, visibleCtx: ctx })).toBe(
+      580,
+    );
+    expect(getThreadMaxWidth({ viewportWidth: 1400, visibleSide: side, visibleCtx: ctx })).toBe(
+      756,
+    );
+    expect(getThreadMaxWidth({ viewportWidth: 1800, visibleSide: side, visibleCtx: ctx })).toBe(
+      1120,
+    );
   });
 });

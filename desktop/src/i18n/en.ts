@@ -282,7 +282,7 @@ export const en = {
     qqAccessOwnerWithAllowlist: "Owner {openId} + allowlist {count}",
     qqAccessAllowlist: "Allowlist {count}",
     qqAccessRuntime: "First sender (runtime only, {openId})",
-    qqAccessOpen: "Open (unbound)",
+    qqAccessOpen: "Open access",
     qqApplyLabel: "Apply for QQ Bot",
     qqApplyAction: "Open apply page",
     qqSave: "Save",
@@ -297,7 +297,8 @@ export const en = {
     modelCustomHint: "Any OpenAI-compatible id your endpoint serves (vLLM, Ollama, Together, …).",
     modelCustomActive: "Currently running on a custom id: {model}",
     contextTokensLabel: "Context window size",
-    contextTokensHint: "Override the prompt-side token cap for the current model (e.g. 1000000 for 1M). Leave empty to use the built-in default.",
+    contextTokensHint:
+      "Override the prompt-side token cap for the current model (e.g. 1000000 for 1M). Leave empty to use the built-in default.",
     contextTokensPlaceholder: "auto",
     effortSection: "Reasoning effort",
     ctxWindow: "Context",

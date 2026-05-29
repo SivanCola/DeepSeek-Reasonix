@@ -88,6 +88,9 @@ wrapper — don't fork a local table.
   public surface.
 - Don't create new `*.md` documentation files unless explicitly
   asked.
+- Before changing the desktop settings UI, read
+  [`docs/design/settings-ui-guidelines.md`](./docs/design/settings-ui-guidelines.md)
+  and keep the primitives, status badges, and row layout consistent.
 
 ### Errors / fallbacks
 
