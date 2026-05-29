@@ -1,7 +1,4 @@
 import { lookup } from "node:dns/promises";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { loadBaiduApiKey, loadMetasoApiKey, writeConfig } from "../src/config.js";
 import { ToolRegistry } from "../src/tools.js";
@@ -881,19 +878,14 @@ describe("searchPerplexity", () => {
 
   it("requires an API key — throws a setup-pointing error when none is set", async () => {
     const origKey = process.env.PERPLEXITY_API_KEY;
-    const configDir = mkdtempSync(join(tmpdir(), "reasonix-web-tools-perplexity-"));
-    const isolatedConfigPath = join(configDir, "config.json");
     // biome-ignore lint/performance/noDelete: env var must be absent, not "undefined"
     delete process.env.PERPLEXITY_API_KEY;
     try {
-      await expect(
-        webSearch("q", { engine: "perplexity", configPath: isolatedConfigPath }),
-      ).rejects.toThrow(/Perplexity.*API key/i);
-      await expect(
-        webSearch("q", { engine: "perplexity", configPath: isolatedConfigPath }),
-      ).rejects.toThrow("perplexity.ai");
+      await expect(webSearch("q", { engine: "perplexity" })).rejects.toThrow(
+        /Perplexity.*API key/i,
+      );
+      await expect(webSearch("q", { engine: "perplexity" })).rejects.toThrow("perplexity.ai");
     } finally {
-      rmSync(configDir, { recursive: true, force: true });
       if (origKey !== undefined) process.env.PERPLEXITY_API_KEY = origKey;
     }
   });
