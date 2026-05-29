@@ -204,6 +204,7 @@ import {
   type McpServerSummary,
   type PlanModeToggleSource,
   handleSlash,
+  isGoalStopSlash,
   parseSlash,
   suggestSlashCommands,
 } from "./slash.js";
@@ -2374,6 +2375,12 @@ function AppInner({
         },
         submitPrompt: (text: string): SubmitResult => {
           if (busyRef.current) {
+            if (isGoalStopSlash(text) && activeGoalRunRef.current) {
+              const fn = handleSubmitRef.current;
+              if (!fn) return { accepted: false, reason: "TUI not ready" };
+              fn(text).catch(() => undefined);
+              return { accepted: true, reason: "goal stop requested" };
+            }
             if (isBusyPromptCommand(text)) {
               return {
                 accepted: false,
@@ -2922,6 +2929,18 @@ function AppInner({
         return;
       }
       if (busy || submittingRef.current) {
+        if (isGoalStopSlash(text) && activeGoalRunRef.current) {
+          setInput("");
+          resetCursor();
+          pushHistory(text);
+          const info = "Stopping active Goal.";
+          log.pushInfo(info);
+          if (fromQQ) qq.sendText(info);
+          if (fromTelegram) telegram.sendText(info);
+          if (fromWeixin) weixin.sendText(info);
+          handleGoalSlashAction({ kind: "stop" });
+          return;
+        }
         if (busy && text.trim()) {
           if (isBusyPromptCommand(text)) {
             log.pushInfo(t("app.steerCommandRejected"));

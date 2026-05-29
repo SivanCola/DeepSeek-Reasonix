@@ -503,3 +503,10 @@ export function parseSlash(text: string): { cmd: string; args: string[] } | null
   if (!cmd) return null;
   return { cmd, args: parts.slice(1) };
 }
+
+export function isGoalStopSlash(text: string): boolean {
+  const parsed = parseSlash(text.trimStart());
+  if (parsed?.cmd !== "goal") return false;
+  const first = parsed.args[0]?.toLowerCase();
+  return first === "stop" || first === "cancel";
+}

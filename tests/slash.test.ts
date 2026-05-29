@@ -7,6 +7,7 @@ import {
   SLASH_GROUP_ORDER,
   detectSlashArgContext,
   handleSlash,
+  isGoalStopSlash,
   parseSlash,
   suggestSlashCommands,
 } from "../src/cli/ui/slash.js";
@@ -726,6 +727,14 @@ describe("handleSlash", () => {
       const r = handleSlash("goal", [], makeLoop(), { memoryRoot: process.cwd() });
       expect(r.info).toMatch(/Goal/);
       expect(r.goal).toBeUndefined();
+    });
+
+    it("recognizes /goal stop as a busy-safe cancellation command", () => {
+      expect(isGoalStopSlash("/goal stop")).toBe(true);
+      expect(isGoalStopSlash("  /goal cancel")).toBe(true);
+      expect(isGoalStopSlash("/goal status")).toBe(false);
+      expect(isGoalStopSlash("/goal fix login")).toBe(false);
+      expect(isGoalStopSlash("/stop")).toBe(false);
     });
   });
 

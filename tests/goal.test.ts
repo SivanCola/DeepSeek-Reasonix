@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DeepSeekClient } from "../src/client.js";
 import { loadGoalMaxAttempts } from "../src/config.js";
-import { isGoalCompleted } from "../src/goal/completion.js";
+import { isGoalCompleted, stripGoalCompletedMarker } from "../src/goal/completion.js";
 import {
   buildGoalContinuationInput,
   buildInitialGoalInput,
@@ -41,10 +41,23 @@ describe("goal mode", () => {
     process.env.REASONIX_GOAL_MAX_ATTEMPTS = "";
   });
 
-  it("detects GOAL_COMPLETED case-insensitively", () => {
+  it("detects GOAL_COMPLETED only as an explicit marker line", () => {
     expect(isGoalCompleted("GOAL_COMPLETED\nreason: done")).toBe(true);
-    expect(isGoalCompleted("goal_completed in markdown")).toBe(true);
+    expect(isGoalCompleted("goal_completed\nreason: done")).toBe(true);
+    expect(isGoalCompleted("not ready to output GOAL_COMPLETED")).toBe(false);
+    expect(isGoalCompleted("goal_completed in markdown")).toBe(false);
+    expect(isGoalCompleted("> GOAL_COMPLETED")).toBe(false);
+    expect(isGoalCompleted("```\nGOAL_COMPLETED\n```")).toBe(false);
     expect(isGoalCompleted("still working")).toBe(false);
+  });
+
+  it("strips only the explicit GOAL_COMPLETED marker line", () => {
+    expect(stripGoalCompletedMarker("GOAL_COMPLETED\nReason: tests passed")).toBe(
+      "Reason: tests passed",
+    );
+    expect(stripGoalCompletedMarker("not ready to output GOAL_COMPLETED")).toBe(
+      "not ready to output GOAL_COMPLETED",
+    );
   });
 
   it("keeps goal text in stable prefix and out of dynamic inputs", () => {

@@ -9,6 +9,7 @@ export {
   SLASH_GROUP_ORDER,
   countAdvancedCommands,
   detectSlashArgContext,
+  isGoalStopSlash,
   orderSlashCommandsByGroup,
   parseSlash,
   suggestSlashCommands,

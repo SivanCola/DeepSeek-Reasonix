@@ -1,9 +1,27 @@
-const GOAL_COMPLETED_RE = /\bGOAL_COMPLETED\b/i;
-
 export function isGoalCompleted(text: string | null | undefined): boolean {
-  return GOAL_COMPLETED_RE.test(text ?? "");
+  return findGoalCompletedMarkerLine(text ?? "") >= 0;
 }
 
 export function stripGoalCompletedMarker(text: string): string {
-  return text.replace(GOAL_COMPLETED_RE, "").trim();
+  const markerLine = findGoalCompletedMarkerLine(text);
+  if (markerLine < 0) return text.trim();
+  return text
+    .split(/\r?\n/)
+    .filter((_, index) => index !== markerLine)
+    .join("\n")
+    .trim();
+}
+
+function findGoalCompletedMarkerLine(text: string): number {
+  let inFence = false;
+  const lines = text.split(/\r?\n/);
+  for (const [index, line] of lines.entries()) {
+    const trimmed = line.trim();
+    if (/^```/.test(trimmed) || /^~~~/.test(trimmed)) {
+      inFence = !inFence;
+      continue;
+    }
+    if (!inFence && /^GOAL_COMPLETED$/i.test(trimmed)) return index;
+  }
+  return -1;
 }
