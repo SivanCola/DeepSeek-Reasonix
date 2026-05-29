@@ -286,7 +286,9 @@ export function SettingsModal({
       <div
         className="settings"
         onClick={(e) => e.stopPropagation()}
-        onKeyDown={(e) => e.stopPropagation()}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") e.stopPropagation();
+        }}
       >
         <nav className="settings-side">
           <div className="sg">{t("settings.title")}</div>

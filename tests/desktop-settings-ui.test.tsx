@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import React from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Settings } from "../desktop/src/App";
@@ -54,12 +54,14 @@ function renderSettingsModal({
   qq = null,
   theme = "light",
   themeStyle = "sandstone",
+  onClose = vi.fn(),
   onSave = vi.fn(),
 }: {
   settings?: Settings;
   qq?: QQDesktopSettingsState | null;
   theme?: Theme;
   themeStyle?: ThemeStyle;
+  onClose?: () => void;
   onSave?: (patch: SettingsPatch) => void;
 } = {}) {
   const result = render(
@@ -94,7 +96,7 @@ function renderSettingsModal({
       memory={[]}
       memoryDetail={null}
       qq={qq}
-      onClose={vi.fn()}
+      onClose={onClose}
       onSave={onSave}
       onSaveApiKey={vi.fn()}
       onLoadQQ={vi.fn()}
@@ -114,7 +116,7 @@ function renderSettingsModal({
       onReadMemory={vi.fn()}
     />,
   );
-  return { ...result, onSave };
+  return { ...result, onClose, onSave };
 }
 
 describe("desktop settings UI", () => {
@@ -144,6 +146,14 @@ describe("desktop settings UI", () => {
     expect(container.querySelectorAll(".style-card")).toHaveLength(4);
     expect(container.querySelectorAll('.style-grid[data-mode="dark"] .style-card')).toHaveLength(4);
     expect(container.querySelectorAll('.style-card[data-mode="light"]')).toHaveLength(0);
+  });
+
+  it("lets Escape close the modal from focused controls", () => {
+    const { onClose } = renderSettingsModal();
+
+    fireEvent.keyDown(screen.getByRole("button", { name: "light" }), { key: "Escape" });
+
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 
   it("keeps web search API key actions grouped without status-as-button controls", () => {
