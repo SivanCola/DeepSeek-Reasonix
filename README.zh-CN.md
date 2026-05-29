@@ -16,16 +16,16 @@ https://github.com/esengine/DeepSeek-Reasonix/pulls?q=is%3Apr+is%3Aclosed+author
 
 ## 已合入贡献
 
-| PR | 状态 | 日期 | 范围 | PR 元数据 |
+| PR | 状态 | 日期 | 贡献内容 | PR 元数据 |
 | --- | --- | --- | --- | --- |
-| [#2192](https://github.com/esengine/DeepSeek-Reasonix/pull/2192) | 已合入 | 2026-05-29 | SSH remote workspace RFC，为 `ssh://` 目标提供 dry-run bootstrap，也是 [#2140](https://github.com/esengine/DeepSeek-Reasonix/issues/2140) 的设计脚手架。 | 3 个文件，+333/-0 |
-| [#2191](https://github.com/esengine/DeepSeek-Reasonix/pull/2191) | 已合入 | 2026-05-29 | `delete_symbol`：基于 tree-sitter 的 AST-aware 符号删除工具。 | 10 个文件，+444/-11 |
-| [#2190](https://github.com/esengine/DeepSeek-Reasonix/pull/2190) | 已合入 | 2026-05-29 | `delete_range`：基于 anchor range matching 的可靠大块文本删除工具。 | 11 个文件，+314/-15 |
-| [#2189](https://github.com/esengine/DeepSeek-Reasonix/pull/2189) | 已合入 | 2026-05-29 | MCP cache-stable canonicalization：稳定工具顺序和 schema key 排序。 | 2 个文件，+138/-11 |
-| [#2188](https://github.com/esengine/DeepSeek-Reasonix/pull/2188) | 已合入 | 2026-05-29 | Cache diagnostics v1：`/cache-miss-report`、`doctor --cache` 和 prefix hash evidence。 | 20 个文件，+795/-18 |
-| [#2144](https://github.com/esengine/DeepSeek-Reasonix/pull/2144) | 已合入 | 2026-05-29 | 桌面端 close-to-tray 支持，用户启用后关闭窗口可以让会话继续保活。 | 13 个文件，+249/-21 |
-| [#2135](https://github.com/esengine/DeepSeek-Reasonix/pull/2135) | 已合入 | 2026-05-29 | MCP 功能增强：cc-switch 导入、编辑/状态 UI、协议更新、reload 流程和 i18n。 | 28 个文件，+2710/-121 |
-| [#2134](https://github.com/esengine/DeepSeek-Reasonix/pull/2134) | 已合入 | 2026-05-29 | 扩展 Reasonix theme palettes，覆盖 CLI、desktop 和 dashboard，并补充 i18n labels。 | 31 个文件，+1042/-74 |
+| [#2192](https://github.com/esengine/DeepSeek-Reasonix/pull/2192) | 已合入 | 2026-05-29 | 探索远程工作区支持，为后续 SSH 远程开发提供安全预览路径。 | 3 个文件，+333/-0 |
+| [#2191](https://github.com/esengine/DeepSeek-Reasonix/pull/2191) | 已合入 | 2026-05-29 | 让 agent 能更准确地删除完整代码单元，减少手动改错。 | 10 个文件，+444/-11 |
+| [#2190](https://github.com/esengine/DeepSeek-Reasonix/pull/2190) | 已合入 | 2026-05-29 | 提供更可靠的大段内容删除能力，降低长文本改动出错率。 | 11 个文件，+314/-15 |
+| [#2189](https://github.com/esengine/DeepSeek-Reasonix/pull/2189) | 已合入 | 2026-05-29 | 让 MCP 工具加载更稳定，帮助保持缓存表现一致。 | 2 个文件，+138/-11 |
+| [#2188](https://github.com/esengine/DeepSeek-Reasonix/pull/2188) | 已合入 | 2026-05-29 | 增加缓存诊断，让用户更容易理解缓存变化。 | 20 个文件，+795/-18 |
+| [#2144](https://github.com/esengine/DeepSeek-Reasonix/pull/2144) | 已合入 | 2026-05-29 | 让桌面端关闭窗口后仍可保留运行中的会话。 | 13 个文件，+249/-21 |
+| [#2135](https://github.com/esengine/DeepSeek-Reasonix/pull/2135) | 已合入 | 2026-05-29 | 完善 MCP 管理体验，支持导入、编辑、状态查看、重试和清晰反馈。 | 28 个文件，+2710/-121 |
+| [#2134](https://github.com/esengine/DeepSeek-Reasonix/pull/2134) | 已合入 | 2026-05-29 | 增加更多主题与文案，让 CLI 和桌面端有更好的视觉选择。 | 31 个文件，+1042/-74 |
 
 以上 upstream PR 元数据合计：8 个已合入 PR，118 个 changed-file entries，
 +6025/-271 行。

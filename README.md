@@ -16,16 +16,16 @@ Last refreshed: 2026-05-29.
 
 ## Landed Contributions
 
-| PR | Status | Date | Scope | PR metadata |
+| PR | Status | Date | Contribution | PR metadata |
 | --- | --- | --- | --- | --- |
-| [#2192](https://github.com/esengine/DeepSeek-Reasonix/pull/2192) | Merged | 2026-05-29 | SSH remote workspace RFC and dry-run bootstrap for `ssh://` targets; design scaffold for [#2140](https://github.com/esengine/DeepSeek-Reasonix/issues/2140). | 3 files, +333/-0 |
-| [#2191](https://github.com/esengine/DeepSeek-Reasonix/pull/2191) | Merged | 2026-05-29 | `delete_symbol`, an AST-aware symbol deletion tool powered by tree-sitter. | 10 files, +444/-11 |
-| [#2190](https://github.com/esengine/DeepSeek-Reasonix/pull/2190) | Merged | 2026-05-29 | `delete_range`, a reliable large text deletion tool using anchor-based range matching. | 11 files, +314/-15 |
-| [#2189](https://github.com/esengine/DeepSeek-Reasonix/pull/2189) | Merged | 2026-05-29 | MCP cache-stable canonicalization with deterministic tool ordering and schema key sorting. | 2 files, +138/-11 |
-| [#2188](https://github.com/esengine/DeepSeek-Reasonix/pull/2188) | Merged | 2026-05-29 | Cache diagnostics v1: `/cache-miss-report`, `doctor --cache`, and prefix hash evidence. | 20 files, +795/-18 |
-| [#2144](https://github.com/esengine/DeepSeek-Reasonix/pull/2144) | Merged | 2026-05-29 | Desktop close-to-tray support so users can keep sessions alive when the behavior is enabled. | 13 files, +249/-21 |
-| [#2135](https://github.com/esengine/DeepSeek-Reasonix/pull/2135) | Merged | 2026-05-29 | MCP feature enrichment: cc-switch import, edit/status UI, protocol updates, reload flow, and i18n. | 28 files, +2710/-121 |
-| [#2134](https://github.com/esengine/DeepSeek-Reasonix/pull/2134) | Merged | 2026-05-29 | Expanded Reasonix theme palettes across CLI, desktop, and dashboard surfaces with i18n labels. | 31 files, +1042/-74 |
+| [#2192](https://github.com/esengine/DeepSeek-Reasonix/pull/2192) | Merged | 2026-05-29 | Explored remote workspace support and added a safe preview path for future SSH workflows. | 3 files, +333/-0 |
+| [#2191](https://github.com/esengine/DeepSeek-Reasonix/pull/2191) | Merged | 2026-05-29 | Made it easier for the agent to remove complete code units accurately. | 10 files, +444/-11 |
+| [#2190](https://github.com/esengine/DeepSeek-Reasonix/pull/2190) | Merged | 2026-05-29 | Added a safer way to delete large content blocks with less manual copying. | 11 files, +314/-15 |
+| [#2189](https://github.com/esengine/DeepSeek-Reasonix/pull/2189) | Merged | 2026-05-29 | Made MCP tool loading more stable, helping keep cache behavior consistent. | 2 files, +138/-11 |
+| [#2188](https://github.com/esengine/DeepSeek-Reasonix/pull/2188) | Merged | 2026-05-29 | Added cache diagnostics so users can understand cache changes more clearly. | 20 files, +795/-18 |
+| [#2144](https://github.com/esengine/DeepSeek-Reasonix/pull/2144) | Merged | 2026-05-29 | Let desktop users close the window while keeping active sessions running. | 13 files, +249/-21 |
+| [#2135](https://github.com/esengine/DeepSeek-Reasonix/pull/2135) | Merged | 2026-05-29 | Improved MCP management with import, edit, status, retry, and clearer feedback. | 28 files, +2710/-121 |
+| [#2134](https://github.com/esengine/DeepSeek-Reasonix/pull/2134) | Merged | 2026-05-29 | Added more themes and labels, improving visual choice across CLI and desktop. | 31 files, +1042/-74 |
 
 Merged total from the upstream PR metadata above: 8 PRs, 118 changed-file entries,
 +6025/-271 lines.
