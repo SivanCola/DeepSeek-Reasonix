@@ -367,6 +367,12 @@ export const zhCN: typeof en = {
     shortcutSwitchTab: "切换标签",
     shortcutAbort: "中断流式输出",
     shortcutSettings: "设置",
+    // Connection test
+    testConnection: "测试",
+    testingConnection: "测试中…",
+    connectionOk: "已连接 · {latencyMs}ms",
+    connectionFailed: "连接失败",
+    connectionPaidHint: "将向服务商发送一次最小测试请求",
   },
   modal: {
     planFeedbackPlaceholder: "计划存在哪些问题？需要改进哪些地方？",
