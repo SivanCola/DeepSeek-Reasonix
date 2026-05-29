@@ -1258,6 +1258,7 @@ export const en = {
     themeStyleGlacier: "Glacier",
     themeStyleMidnight: "Midnight",
     thisTurn: "This turn",
+    session: "Session",
     tokens: "Tokens",
   },
   thread: {

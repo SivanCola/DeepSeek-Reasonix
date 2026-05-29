@@ -166,6 +166,7 @@ export type PendingRevision = {
 
 export type UsageStats = {
   totalCostUsd: number;
+  turnCostUsd: number;
   totalPromptTokens: number;
   totalCompletionTokens: number;
   cacheHitTokens: number;
@@ -548,6 +549,7 @@ function mergeSessionFiles(existing: SessionFile[], adds: SessionFile[]): Sessio
 function zeroUsage(): UsageStats {
   return {
     totalCostUsd: 0,
+    turnCostUsd: 0,
     totalPromptTokens: 0,
     totalCompletionTokens: 0,
     cacheHitTokens: 0,
@@ -584,6 +586,7 @@ function applyIncomingRaw(state: State, ev: IncomingEvent): State {
       return {
         ...state,
         busy: true,
+        usage: { ...state.usage, turnCostUsd: 0 },
         messages: [
           ...state.messages,
           {
@@ -751,6 +754,7 @@ function applyIncomingRaw(state: State, ev: IncomingEvent): State {
           totalCompletionTokens: ev.totalCompletionTokens,
           cacheHitTokens: ev.cacheHitTokens,
           cacheMissTokens: ev.cacheMissTokens,
+          turnCostUsd: empty ? 0 : state.usage.turnCostUsd,
           lastCallCacheHit: empty ? null : state.usage.lastCallCacheHit,
           lastCallCacheMiss: empty ? null : state.usage.lastCallCacheMiss,
         },
@@ -956,6 +960,7 @@ function applyIncomingRaw(state: State, ev: IncomingEvent): State {
       const hasCall = callHit > 0 || callMiss > 0;
       const usage: UsageStats = {
         totalCostUsd: state.usage.totalCostUsd + (ev.costUsd ?? 0),
+        turnCostUsd: state.usage.turnCostUsd + (ev.costUsd ?? 0),
         totalPromptTokens: state.usage.totalPromptTokens + (u?.prompt_tokens ?? 0),
         totalCompletionTokens: state.usage.totalCompletionTokens + (u?.completion_tokens ?? 0),
         cacheHitTokens: state.usage.cacheHitTokens + callHit,

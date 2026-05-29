@@ -1233,6 +1233,7 @@ export const zhCN = {
     themeStyleGlacier: "冰川",
     themeStyleMidnight: "午夜",
     thisTurn: "本轮",
+    session: "会话",
     tokens: "Tokens",
   },
   thread: {

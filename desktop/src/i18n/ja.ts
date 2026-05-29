@@ -661,6 +661,7 @@ export const ja: typeof en = {
     cache: "キャッシュ",
     tokens: "トークン",
     thisTurn: "このターン",
+    session: "セッション",
     switchWorkspace: "ワークスペース切替 · {workspace}",
     switchCurrency: "通貨切替 (CNY / USD)",
     balance: "残高",

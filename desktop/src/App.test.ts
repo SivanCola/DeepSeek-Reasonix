@@ -52,6 +52,7 @@ function initialState(): Parameters<typeof reduce>[0] {
     activePlan: null,
     usage: {
       totalCostUsd: 0,
+      turnCostUsd: 0,
       totalPromptTokens: 0,
       totalCompletionTokens: 0,
       cacheHitTokens: 0,
@@ -136,7 +137,7 @@ function makePathPrompt(
 }
 
 describe("Desktop App reducer — usage", () => {
-  it("falls back prompt tokens to cache miss tokens when cache fields are absent", () => {
+  it("falls back prompt tokens to cache miss tokens and tracks turn cost", () => {
     const next = reduce(initialState(), {
       t: "incoming",
       event: {
@@ -151,9 +152,36 @@ describe("Desktop App reducer — usage", () => {
     });
 
     expect(next.usage.totalPromptTokens).toBe(1234);
+    expect(next.usage.turnCostUsd).toBe(0.001);
     expect(next.usage.cacheHitTokens).toBe(0);
     expect(next.usage.cacheMissTokens).toBe(1234);
     expect(next.usage.lastCallCacheMiss).toBe(1234);
+
+    const accumulated = reduce(next, {
+      t: "incoming",
+      event: {
+        type: "model.final",
+        id: 2,
+        ts: "2026-05-27T00:00:01.000Z",
+        turn: 1,
+        content: "ok again",
+        usage: { prompt_tokens: 10, completion_tokens: 2, total_tokens: 12 },
+        costUsd: 0.002,
+      },
+    });
+    expect(accumulated.usage.turnCostUsd).toBeCloseTo(0.003, 6);
+
+    const reset = reduce(accumulated, {
+      t: "incoming",
+      event: {
+        type: "user.message",
+        id: 3,
+        ts: "2026-05-27T00:00:02.000Z",
+        turn: 2,
+        text: "next turn",
+      },
+    });
+    expect(reset.usage.turnCostUsd).toBe(0);
   });
 
   it("settles the pending assistant message when an error ends the turn (#1660)", () => {

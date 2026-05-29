@@ -744,7 +744,7 @@ export class CacheFirstLoop {
     // when the user navigates away before the model responds). A failed
     // first round-trip still leaves the message in the log; the user can
     // /retry without re-typing.
-    const turnStartLogIndex = this.log.length;
+    const turnStartLogIndex = this.log.totalLength;
     this.appendAndPersist({ role: "user", content: userInput });
     const toolSpecs = this.prefix.tools();
     const rateLimitState = { shown: false };

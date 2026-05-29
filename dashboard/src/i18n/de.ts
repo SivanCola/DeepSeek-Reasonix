@@ -1306,6 +1306,7 @@ export const de: typeof en = {
     themeStyleGlacier: "Gletscher",
     themeStyleMidnight: "Mitternacht",
     thisTurn: "Dieser Turn",
+    session: "Sitzung",
     tokens: "Tokens",
   },
   thread: {
