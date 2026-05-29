@@ -76,9 +76,7 @@ export function resolveDeepSeekConnectionTestTarget(opts: {
   requestedApiKey?: string;
   resolvedEndpoint: ResolvedDeepSeekEndpoint;
 }): DeepSeekConnectionTestTarget {
-  const requested = validateDeepSeekCredentialedEndpoint(
-    opts.requestedBaseUrl === undefined ? opts.resolvedEndpoint.baseUrl : opts.requestedBaseUrl,
-  );
+  const requested = validateDeepSeekCredentialedEndpoint(opts.requestedBaseUrl);
   if (!requested.ok) return requested;
 
   const resolved = validateDeepSeekCredentialedEndpoint(opts.resolvedEndpoint.baseUrl);

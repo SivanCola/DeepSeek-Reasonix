@@ -3597,6 +3597,9 @@ export async function desktopCommand(opts: DesktopOptions): Promise<void> {
             const abort = new AbortController();
             const timeout = setTimeout(() => abort.abort(), 10_000);
             try {
+              // Saved DeepSeek keys are only reused when the requested endpoint matches
+              // the validated configured endpoint; draft custom endpoints require a draft key.
+              // codeql[js/file-access-to-http]
               const resp = await fetch(`${baseUrl}/models`, {
                 headers: { Authorization: `Bearer ${apiKey}` },
                 signal: abort.signal,

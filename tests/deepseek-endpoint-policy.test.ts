@@ -49,6 +49,21 @@ describe("DeepSeek credentialed endpoint policy", () => {
     });
   });
 
+  it("does not derive the request target from saved endpoint config", () => {
+    const target = resolveDeepSeekConnectionTestTarget({
+      resolvedEndpoint: {
+        baseUrl: "https://proxy.example.com/v1",
+        apiKey: "sk-proxy-key",
+      },
+    });
+
+    expect(target).toEqual({
+      ok: true,
+      baseUrl: DEFAULT_DEEPSEEK_BASE_URL,
+      apiKey: undefined,
+    });
+  });
+
   it("reuses the saved key when the requested endpoint matches the resolved endpoint", () => {
     const target = resolveDeepSeekConnectionTestTarget({
       requestedBaseUrl: "https://proxy.example.com/v1/",
