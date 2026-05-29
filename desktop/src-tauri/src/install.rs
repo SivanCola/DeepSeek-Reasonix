@@ -1,6 +1,14 @@
 use std::fs;
+#[cfg(target_os = "macos")]
+use std::fs::OpenOptions;
+#[cfg(target_os = "macos")]
+use std::io::ErrorKind;
+#[cfg(target_os = "macos")]
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
+#[cfg(target_os = "macos")]
+use std::os::unix::fs::OpenOptionsExt;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 
@@ -102,6 +110,71 @@ fn build_admin_install_shell_script(tmp: &Path, target: &str) -> String {
 }
 
 #[cfg(target_os = "macos")]
+struct AdminTempShim {
+    dir: PathBuf,
+    path: PathBuf,
+}
+
+#[cfg(target_os = "macos")]
+impl Drop for AdminTempShim {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.path);
+        let _ = fs::remove_dir(&self.dir);
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn unique_admin_temp_dir(attempt: u32) -> PathBuf {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    std::env::temp_dir().join(format!(
+        "reasonix-shim-install-{}-{now}-{attempt}",
+        std::process::id()
+    ))
+}
+
+#[cfg(target_os = "macos")]
+fn create_admin_temp_shim(content: &str) -> Result<AdminTempShim, String> {
+    for attempt in 0..16 {
+        let dir = unique_admin_temp_dir(attempt);
+        match fs::create_dir(&dir) {
+            Ok(()) => {}
+            Err(e) if e.kind() == ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(format!("create temp dir: {e}")),
+        }
+
+        let temp = AdminTempShim {
+            path: dir.join("reasonix"),
+            dir,
+        };
+
+        fs::set_permissions(&temp.dir, fs::Permissions::from_mode(0o700))
+            .map_err(|e| format!("chmod temp dir: {e}"))?;
+
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&temp.path)
+            .map_err(|e| format!("create temp shim: {e}"))?;
+        file.write_all(content.as_bytes())
+            .map_err(|e| format!("write temp shim: {e}"))?;
+        file.sync_all()
+            .map_err(|e| format!("sync temp shim: {e}"))?;
+        drop(file);
+
+        fs::set_permissions(&temp.path, fs::Permissions::from_mode(0o500))
+            .map_err(|e| format!("chmod temp shim: {e}"))?;
+
+        return Ok(temp);
+    }
+
+    Err("could not create an exclusive temp shim".to_string())
+}
+
+#[cfg(target_os = "macos")]
 fn expected_shim(app: &AppHandle) -> Result<String, String> {
     let node_path = resource_node_path(app)?;
     let cli_path = resource_cli_path(app)?;
@@ -126,11 +199,9 @@ fn try_install_as_admin(
 
     let shim = generate_shim(&node_path.to_string_lossy(), &cli_path.to_string_lossy());
 
-    let tmp = std::env::temp_dir().join("reasonix-shim-install");
-    fs::write(&tmp, &shim).map_err(|e| format!("write tmp: {e}"))?;
-    fs::set_permissions(&tmp, fs::Permissions::from_mode(0o755)).ok();
+    let tmp = create_admin_temp_shim(&shim)?;
 
-    let shell_script = build_admin_install_shell_script(&tmp, TARGET_PATH);
+    let shell_script = build_admin_install_shell_script(&tmp.path, TARGET_PATH);
 
     let script = format!(
         "do shell script \"{}\" with administrator privileges",
@@ -142,8 +213,6 @@ fn try_install_as_admin(
         .arg(&script)
         .output()
         .map_err(|e| format!("osascript failed: {e}"))?;
-
-    let _ = fs::remove_file(&tmp);
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -328,6 +397,33 @@ mod tests {
         assert!(script.contains(MANAGED_MARKER));
         assert!(script.contains("target exists and was not installed by Reasonix Desktop"));
         assert!(script.contains("cp '/tmp/reasonix shim' '/usr/local/bin/reasonix'"));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn admin_temp_shim_uses_private_exclusive_path() {
+        let temp = create_admin_temp_shim("#!/bin/sh\necho reasonix\n").unwrap();
+        let old_fixed_path = std::env::temp_dir().join("reasonix-shim-install");
+
+        assert_ne!(temp.path, old_fixed_path);
+        assert_eq!(temp.path.file_name().unwrap(), "reasonix");
+        assert!(temp
+            .dir
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .starts_with("reasonix-shim-install-"));
+
+        let dir_mode = temp.dir.metadata().unwrap().permissions().mode() & 0o777;
+        let file_mode = temp.path.metadata().unwrap().permissions().mode() & 0o777;
+        assert_eq!(dir_mode, 0o700);
+        assert_eq!(file_mode, 0o500);
+
+        let path = temp.path.clone();
+        let dir = temp.dir.clone();
+        drop(temp);
+        assert!(!path.exists());
+        assert!(!dir.exists());
     }
 
     #[test]
