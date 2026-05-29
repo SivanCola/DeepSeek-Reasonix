@@ -9,8 +9,6 @@ import type {
 import { getLangLabel, getSupportedLangs, setLang, t, useLang } from "../i18n";
 import { I } from "../icons";
 import type {
-  ConnectionTestResultEvent,
-  ConnectionTestTarget,
   ImportedMcpServer,
   McpSpecInfo,
   MemoryDetail,
@@ -85,8 +83,6 @@ export function SettingsModal({
   memory,
   memoryDetail,
   qq,
-  connectionTests,
-  onTestConnection,
   onClose,
   onSave,
   onSaveApiKey,
@@ -132,17 +128,6 @@ export function SettingsModal({
   memory: MemoryEntryInfo[];
   memoryDetail: MemoryDetail | null;
   qq: QQDesktopSettingsState | null;
-  connectionTests: Record<string, ConnectionTestResultEvent | undefined>;
-  onTestConnection: (
-    target: ConnectionTestTarget,
-    opts?: {
-      apiKey?: string;
-      baseUrl?: string | null;
-      engine?: string;
-      endpoint?: string | null;
-      apiKeys?: Record<string, string>;
-    },
-  ) => void;
   onClose: () => void;
   onSave: (patch: SettingsPatch) => void;
   onSaveApiKey: (key: string) => void;
@@ -239,8 +224,6 @@ export function SettingsModal({
                 onInstallReasonixCommand={onInstallReasonixCommand}
                 isInstallingReasonixCommand={isInstallingReasonixCommand}
                 reasonixCommandStatus={reasonixCommandStatus}
-                connectionTests={connectionTests}
-                onTestConnection={onTestConnection}
               />
             )}
             {page === "models" && <PageModels settings={settings} onSave={onSave} />}
@@ -285,8 +268,6 @@ export function SettingsModal({
                   apiKeyPrefix={settings.apiKeyPrefix}
                   onSave={onSave}
                   onSaveApiKey={onSaveApiKey}
-                  connectionTests={connectionTests}
-                  onTestConnection={onTestConnection}
                 />
                 <QQChannelSection
                   qq={qq}
@@ -496,8 +477,6 @@ function PageGeneral({
   onInstallReasonixCommand,
   isInstallingReasonixCommand,
   reasonixCommandStatus,
-  connectionTests,
-  onTestConnection,
 }: {
   settings: SettingsType;
   theme: Theme;
@@ -515,17 +494,6 @@ function PageGeneral({
   onInstallReasonixCommand: () => void;
   isInstallingReasonixCommand: boolean;
   reasonixCommandStatus: ReasonixCommandStatus | null;
-  connectionTests: Record<string, ConnectionTestResultEvent | undefined>;
-  onTestConnection: (
-    target: ConnectionTestTarget,
-    opts?: {
-      apiKey?: string;
-      baseUrl?: string | null;
-      engine?: string;
-      endpoint?: string | null;
-      apiKeys?: Record<string, string>;
-    },
-  ) => void;
 }) {
   const [editorDraft, setEditorDraft] = useState(settings.editor ?? "");
   const [customFontDraft, setCustomFontDraft] = useState(customFontFamily);
@@ -875,57 +843,38 @@ function PageGeneral({
             <div className="n">{t("settings.webSearchEngine")}</div>
             <div className="h">{t("settings.webSearchEngineNote")}</div>
           </div>
-          <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-            <select
-              className="field"
-              value={settings.webSearchEngine ?? "bing"}
-              onChange={(e) =>
-                onSave({
-                  webSearchEngine: e.target.value as
-                    | "bing"
-                    | "bing-intl"
-                    | "searxng"
-                    | "metaso"
-                    | "baidu"
-                    | "tavily"
-                    | "perplexity"
-                    | "exa"
-                    | "brave"
-                    | "ollama",
-                })
-              }
-            >
-              <option value="bing">{t("settings.webSearchEngineBing")}</option>
-              <option value="bing-intl">{t("settings.webSearchEngineBingIntl")}</option>
-              <option value="searxng">{t("settings.webSearchEngineSearxng")}</option>
-              <option value="metaso">{t("settings.webSearchEngineMetaso")}</option>
-              <option value="baidu">{t("settings.webSearchEngineBaidu")}</option>
-              <option value="tavily">{t("settings.webSearchEngineTavily")}</option>
-              <option value="perplexity">{t("settings.webSearchEnginePerplexity")}</option>
-              <option value="exa">{t("settings.webSearchEngineExa")}</option>
-              <option value="brave">{t("settings.webSearchEngineBrave")}</option>
-              <option value="ollama">{t("settings.webSearchEngineOllama")}</option>
-            </select>
-            <ConnectionTestButton
-              target="webSearch"
-              result={connectionTests.webSearch}
-              onTest={() =>
-                onTestConnection("webSearch", {
-                  engine: settings.webSearchEngine,
-                  ...(settings.webSearchEngine === "searxng"
-                    ? { endpoint: settings.webSearchEndpoint || null }
-                    : {}),
-                })
-              }
-            />
-          </div>
+          <select
+            className="field"
+            value={settings.webSearchEngine ?? "bing"}
+            onChange={(e) =>
+              onSave({
+                webSearchEngine: e.target.value as
+                  | "bing"
+                  | "bing-intl"
+                  | "searxng"
+                  | "metaso"
+                  | "baidu"
+                  | "tavily"
+                  | "perplexity"
+                  | "exa"
+                  | "brave"
+                  | "ollama",
+              })
+            }
+          >
+            <option value="bing">{t("settings.webSearchEngineBing")}</option>
+            <option value="bing-intl">{t("settings.webSearchEngineBingIntl")}</option>
+            <option value="searxng">{t("settings.webSearchEngineSearxng")}</option>
+            <option value="metaso">{t("settings.webSearchEngineMetaso")}</option>
+            <option value="baidu">{t("settings.webSearchEngineBaidu")}</option>
+            <option value="tavily">{t("settings.webSearchEngineTavily")}</option>
+            <option value="perplexity">{t("settings.webSearchEnginePerplexity")}</option>
+            <option value="exa">{t("settings.webSearchEngineExa")}</option>
+            <option value="brave">{t("settings.webSearchEngineBrave")}</option>
+            <option value="ollama">{t("settings.webSearchEngineOllama")}</option>
+          </select>
         </div>
-        <WebSearchEngineCredentials
-          settings={settings}
-          onSave={onSave}
-          onTestConnection={onTestConnection}
-          webSearchTestResult={connectionTests.webSearch}
-        />
+        <WebSearchEngineCredentials settings={settings} onSave={onSave} />
       </section>
     </>
   );
@@ -999,34 +948,14 @@ const SEARCH_ENGINE_API_KEY_FIELDS: ReadonlyArray<{
 function WebSearchEngineCredentials({
   settings,
   onSave,
-  onTestConnection,
-  webSearchTestResult,
 }: {
   settings: SettingsType;
   onSave: (patch: SettingsPatch) => void;
-  onTestConnection: (
-    target: ConnectionTestTarget,
-    opts?: {
-      apiKey?: string;
-      baseUrl?: string | null;
-      engine?: string;
-      endpoint?: string | null;
-      apiKeys?: Record<string, string>;
-    },
-  ) => void;
-  webSearchTestResult?: ConnectionTestResultEvent;
 }) {
   const engine = settings.webSearchEngine ?? "bing";
   if (engine === "bing" || engine === "bing-intl") return null;
   if (engine === "searxng") {
-    return (
-      <SearxngEndpointRow
-        settings={settings}
-        onSave={onSave}
-        onTestConnection={onTestConnection}
-        testResult={webSearchTestResult}
-      />
-    );
+    return <SearxngEndpointRow settings={settings} onSave={onSave} />;
   }
   const field = SEARCH_ENGINE_API_KEY_FIELDS.find((f) => f.engine === engine);
   if (!field) return null;
@@ -1038,8 +967,6 @@ function WebSearchEngineCredentials({
       signupUrl={field.signupUrl}
       prefix={prefix}
       onSave={onSave}
-      onTestConnection={onTestConnection}
-      testResult={webSearchTestResult}
     />
   );
 }
@@ -1047,22 +974,9 @@ function WebSearchEngineCredentials({
 function SearxngEndpointRow({
   settings,
   onSave,
-  onTestConnection,
-  testResult,
 }: {
   settings: SettingsType;
   onSave: (patch: SettingsPatch) => void;
-  onTestConnection: (
-    target: ConnectionTestTarget,
-    opts?: {
-      apiKey?: string;
-      baseUrl?: string | null;
-      engine?: string;
-      endpoint?: string | null;
-      apiKeys?: Record<string, string>;
-    },
-  ) => void;
-  testResult?: ConnectionTestResultEvent;
 }) {
   const [draft, setDraft] = useState(settings.webSearchEndpoint ?? "");
   useEffect(() => {
@@ -1074,29 +988,17 @@ function SearxngEndpointRow({
         <div className="n">{t("settings.webSearchEndpoint")}</div>
         <div className="h">{t("settings.webSearchEndpointHint")}</div>
       </div>
-      <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-        <input
-          className="field mono"
-          value={draft}
-          placeholder="http://localhost:8080"
-          onChange={(e) => setDraft(e.target.value)}
-          onBlur={() => {
-            const next = draft.trim();
-            if (next === (settings.webSearchEndpoint ?? "")) return;
-            onSave({ webSearchEndpoint: next || null });
-          }}
-        />
-        <ConnectionTestButton
-          target="webSearch"
-          result={testResult}
-          onTest={() =>
-            onTestConnection("webSearch", {
-              engine: "searxng",
-              endpoint: draft.trim() || null,
-            })
-          }
-        />
-      </div>
+      <input
+        className="field mono"
+        value={draft}
+        placeholder="http://localhost:8080"
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={() => {
+          const next = draft.trim();
+          if (next === (settings.webSearchEndpoint ?? "")) return;
+          onSave({ webSearchEndpoint: next || null });
+        }}
+      />
     </div>
   );
 }
@@ -1107,8 +1009,6 @@ function WebSearchApiKeyRow({
   signupUrl,
   prefix,
   onSave,
-  onTestConnection,
-  testResult,
 }: {
   engine: "metaso" | "baidu" | "tavily" | "perplexity" | "exa" | "brave" | "ollama";
   patchKey:
@@ -1122,21 +1022,9 @@ function WebSearchApiKeyRow({
   signupUrl: string;
   prefix?: string;
   onSave: (patch: SettingsPatch) => void;
-  onTestConnection: (
-    target: ConnectionTestTarget,
-    opts?: {
-      apiKey?: string;
-      baseUrl?: string | null;
-      engine?: string;
-      endpoint?: string | null;
-      apiKeys?: Record<string, string>;
-    },
-  ) => void;
-  testResult?: ConnectionTestResultEvent;
 }) {
   const [draft, setDraft] = useState("");
   const label = t(`settings.webSearchApiKey.${engine}` as const);
-  const isPaidEngine = ["tavily", "perplexity", "exa"].includes(engine);
   return (
     <div className="setting-row">
       <div className="l">
@@ -1156,7 +1044,7 @@ function WebSearchApiKeyRow({
           </a>
         </div>
       </div>
-      <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+      <div style={{ display: "flex", gap: 6 }}>
         <input
           className="field mono"
           type="password"
@@ -1186,67 +1074,8 @@ function WebSearchApiKeyRow({
             {t("settings.webSearchApiKeyClear")}
           </button>
         ) : null}
-        <ConnectionTestButton
-          target="webSearch"
-          result={testResult}
-          onTest={() => {
-            const testKey = draft.trim() || undefined;
-            onTestConnection("webSearch", {
-              engine,
-              apiKeys: testKey ? { [engine]: testKey } : undefined,
-            });
-          }}
-        />
-        {isPaidEngine ? (
-          <span style={{ fontSize: 10, color: "var(--muted)", maxWidth: 120, lineHeight: 1.3 }}>
-            {t("settings.connectionPaidHint")}
-          </span>
-        ) : null}
       </div>
     </div>
-  );
-}
-
-function ConnectionTestButton({
-  target,
-  result,
-  onTest,
-}: {
-  target: ConnectionTestTarget;
-  result?: ConnectionTestResultEvent;
-  onTest: () => void;
-}) {
-  const isTesting = result && result.latencyMs < 0;
-  const isOk = result?.ok;
-  const isFailed = result && !result.ok && result.latencyMs >= 0;
-
-  let label: string;
-  if (isTesting) {
-    label = t("settings.testingConnection");
-  } else if (isOk) {
-    label = t("settings.connectionOk", { latencyMs: String(result!.latencyMs) });
-  } else if (isFailed) {
-    label = result!.message;
-  } else {
-    label = t("settings.testConnection");
-  }
-
-  return (
-    <button
-      type="button"
-      className={`btn conn-test-btn${isTesting ? " testing" : ""}${isOk ? " ok" : ""}${isFailed ? " err" : ""}`}
-      disabled={isTesting}
-      onClick={onTest}
-      title={
-        isFailed && result?.detail
-          ? result.detail
-          : isOk
-            ? `${target} API connected`
-            : t("settings.testConnection")
-      }
-    >
-      {label}
-    </button>
   );
 }
 
@@ -1255,24 +1084,11 @@ function ApiKeySection({
   apiKeyPrefix,
   onSave,
   onSaveApiKey,
-  connectionTests,
-  onTestConnection,
 }: {
   baseUrl?: string;
   apiKeyPrefix?: string;
   onSave: (patch: SettingsPatch) => void;
   onSaveApiKey: (key: string) => void;
-  connectionTests: Record<string, ConnectionTestResultEvent | undefined>;
-  onTestConnection: (
-    target: ConnectionTestTarget,
-    opts?: {
-      apiKey?: string;
-      baseUrl?: string | null;
-      engine?: string;
-      endpoint?: string | null;
-      apiKeys?: Record<string, string>;
-    },
-  ) => void;
 }) {
   const [key, setKey] = useState("");
   const [urlDraft, setUrlDraft] = useState(baseUrl ?? "");
@@ -1288,7 +1104,7 @@ function ApiKeySection({
               : t("settings.apiKeyNotSet")}
           </div>
         </div>
-        <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+        <div style={{ display: "flex", gap: 6 }}>
           <input
             className="field mono"
             type="password"
@@ -1308,16 +1124,6 @@ function ApiKeySection({
           >
             {t("settings.apiKeySave")}
           </button>
-          <ConnectionTestButton
-            target="deepseek"
-            result={connectionTests.deepseek}
-            onTest={() =>
-              onTestConnection("deepseek", {
-                apiKey: key || undefined,
-                baseUrl: urlDraft.trim() || null,
-              })
-            }
-          />
         </div>
       </div>
       <div className="setting-row">

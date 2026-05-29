@@ -396,12 +396,6 @@ export const en = {
     shortcutSwitchTab: "Switch tab",
     shortcutAbort: "Abort streaming",
     shortcutSettings: "Settings",
-    // Connection test
-    testConnection: "Test",
-    testingConnection: "Testing…",
-    connectionOk: "Connected · {latencyMs}ms",
-    connectionFailed: "Connection failed",
-    connectionPaidHint: "A minimal test request will be sent to the provider",
   },
   modal: {
     planFeedbackPlaceholder: "What problems does the plan have? What needs to be improved?",

@@ -78,7 +78,6 @@ function initialState(): Parameters<typeof reduce>[0] {
     activeSkill: null,
     queuedSends: [],
     retryNonce: 0,
-    connectionTests: {},
   };
 }
 
