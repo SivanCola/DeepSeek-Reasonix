@@ -91,8 +91,12 @@ export interface CacheFirstLoopOptions {
   model?: string;
   stream?: boolean;
   reasoningEffort?: ReasoningEffort;
+  /** Per-turn output token cap passed as `max_tokens`. Undefined = no cap (server default). */
+  maxOutputTokens?: number;
   /** Soft USD cap — warns at 80%, refuses next turn at 100%. Opt-in (default no cap). */
   budgetUsd?: number;
+  /** Maximum tool-call iterations per turn. Overrides config/env. Default 50. */
+  maxIterPerTurn?: number;
   session?: string;
   /** PreToolUse + PostToolUse only — UserPromptSubmit / Stop live at the App boundary. */
   hooks?: ResolvedHook[];
@@ -109,6 +113,8 @@ export interface ReconfigurableOptions {
   stream?: boolean;
   /** V4 thinking mode only; deepseek-chat ignores. */
   reasoningEffort?: ReasoningEffort;
+  /** Per-turn output token cap. Pass null to clear. */
+  maxOutputTokens?: number | null;
 }
 
 export interface LoopAbortOptions {
@@ -131,6 +137,10 @@ export class CacheFirstLoop {
   readonly scratch = new VolatileScratch();
   readonly stats = new SessionStats();
   readonly repair: ToolCallRepair;
+  /** Hard iteration cap per turn — prevents runaway tool-call loops from
+   *  burning unlimited API budget. The model gets one final force-summary
+   *  call when the cap fires. Override via REASONIX_MAX_ITER env var. */
+  static readonly DEFAULT_MAX_ITER_PER_TURN = 50;
   /** Files the model has read this session; gates edit_file / multi_edit so SEARCH text matches on-disk bytes. Cleared on fold / mechanical truncate (the model's byte-level view of the elided history is gone). In-memory only — naturally empty on resume. */
   readonly readTracker = new ReadTracker();
 
@@ -139,7 +149,10 @@ export class CacheFirstLoop {
   model: string;
   stream: boolean;
   reasoningEffort: ReasoningEffort;
+  maxOutputTokens: number | undefined;
   budgetUsd: number | null;
+  /** Maximum tool-call iterations per turn. Config > env > default (50). */
+  maxIterPerTurn: number;
   /** One-shot 80% warning latch — cleared by setBudget so a bump re-arms at the new boundary. */
   private _budgetWarned = false;
   sessionName: string | null;
@@ -208,6 +221,7 @@ export class CacheFirstLoop {
     });
     this.model = opts.model ?? "deepseek-v4-flash";
     this.reasoningEffort = opts.reasoningEffort ?? "high";
+    this.maxOutputTokens = opts.maxOutputTokens;
     this.budgetUsd =
       typeof opts.budgetUsd === "number" && opts.budgetUsd > 0 ? opts.budgetUsd : null;
 
@@ -215,6 +229,7 @@ export class CacheFirstLoop {
     this.hookCwd = opts.hookCwd ?? process.cwd();
     this.confirmationGate = opts.confirmationGate ?? defaultPauseGate;
     this._rebuildSystem = opts.rebuildSystem ?? null;
+    this.maxIterPerTurn = opts.maxIterPerTurn ?? CacheFirstLoop.DEFAULT_MAX_ITER_PER_TURN;
 
     this._streamPreference = opts.stream ?? true;
     this.stream = this._streamPreference;
@@ -406,6 +421,9 @@ export class CacheFirstLoop {
       this.stream = opts.stream;
     }
     if (opts.reasoningEffort !== undefined) this.reasoningEffort = opts.reasoningEffort;
+    if (opts.maxOutputTokens !== undefined) {
+      this.maxOutputTokens = opts.maxOutputTokens ?? undefined;
+    }
   }
 
   /** `null` disables the cap; any change re-arms the 80% warning. */
@@ -765,6 +783,19 @@ export class CacheFirstLoop {
         this._steerQueue.length = 0;
         return;
       }
+      // Hard iteration cap — prevents runaway tool-call loops from
+      // consuming unlimited API budget. (#2037 BUG-028)
+      if (iter >= this.maxIterPerTurn) {
+        yield {
+          turn: this._turn,
+          role: "warning",
+          severity: "high",
+          content: t("loop.iterLimitReached", { max: this.maxIterPerTurn }),
+        };
+        yield* forceSummaryAfterIterLimit(this.summaryContext(), { reason: "stuck" });
+        this._steerQueue.length = 0;
+        return;
+      }
       // Bridge the silence between the PREVIOUS iter's tool result and
       // THIS iter's first streaming byte. R1 can spend 20-90s reasoning
       // about tool output before the first delta lands, and prior to
@@ -815,6 +846,7 @@ export class CacheFirstLoop {
             toolSpecs,
             signal,
             reasoningEffort: this.reasoningEffort,
+            maxTokens: this.maxOutputTokens,
             turn: this._turn,
           });
           assistantContent = result.assistantContent;
@@ -830,6 +862,7 @@ export class CacheFirstLoop {
             signal,
             thinking: thinkingModeForModel(callModel),
             reasoningEffort: this.reasoningEffort,
+            maxTokens: this.maxOutputTokens,
           });
           assistantContent = resp.content;
           reasoningContent = resp.reasoningContent ?? "";
@@ -1059,6 +1092,7 @@ export class CacheFirstLoop {
       recordStats: (model, usage) => this.stats.record(this._turn, model, usage),
       turn: this._turn,
       model: this.model,
+      maxOutputTokens: this.maxOutputTokens,
     };
   }
 

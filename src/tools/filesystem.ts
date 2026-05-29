@@ -3,6 +3,7 @@
 import { promises as fs } from "node:fs";
 import * as pathMod from "node:path";
 import picomatch from "picomatch";
+import { type AutoGitRollbackConfig, prepareAutoGitRollback } from "../code/auto-git-rollback.js";
 import { decodeFileBuffer, encodeFile } from "../code/file-encoding.js";
 import { addProjectPathAllowed, loadProjectPathAllowed } from "../config.js";
 import { type ConfirmationChoice, pauseGate as defaultPauseGate } from "../core/pause-gate.js";
@@ -15,7 +16,7 @@ import {
   readSubdirMemoryContent,
 } from "../memory/subdir.js";
 import type { ToolCallContext, ToolRegistry } from "../tools.js";
-import { applyEdit, applyMultiEdit } from "./fs/edit.js";
+import { applyDeleteRange, applyEdit, applyMultiEdit, generateWriteDiff } from "./fs/edit.js";
 import { globFiles } from "./fs/glob.js";
 import { extractOutline, formatOutline } from "./fs/outline.js";
 import { searchContent, searchFiles } from "./fs/search.js";
@@ -31,6 +32,8 @@ export interface FilesystemToolsOptions {
   outlineThresholdBytes?: number;
   /** Cap on total bytes from listing/grep tools — bounds tree-as-one-string accidents. */
   maxListBytes?: number;
+  /** Opt-in host guard for high-priority auto-git-rollback memories. */
+  autoGitRollback?: AutoGitRollbackConfig;
 }
 
 /** 64 KiB covers ~99% of source files; larger ones (generated bundles, lockfiles, novels) outline-mode by default to keep the cache prefix slim. */
@@ -117,6 +120,7 @@ export function registerFilesystemTools(
   const allowWriting = opts.allowWriting !== false;
   const outlineThresholdBytes = opts.outlineThresholdBytes ?? DEFAULT_OUTLINE_THRESHOLD_BYTES;
   const maxListBytes = opts.maxListBytes ?? DEFAULT_MAX_LIST_BYTES;
+  const autoGitRollback = opts.autoGitRollback;
 
   const normRoot = pathMod.resolve(rootDir);
   /** Approved-this-session directory prefixes — `run_once` keeps the user from being asked twice for follow-up reads in the same dir. Wiped on process exit, not persisted. */
@@ -664,10 +668,21 @@ export function registerFilesystemTools(
     },
     fn: async (args: { path: string; content: string }, ctx?: ToolCallContext) => {
       const abs = await safePath(args.path, "write_file", ctx, "write");
+      const guard = prepareAutoGitRollback({
+        rootDir,
+        toolName: "write_file",
+        absPaths: [abs],
+        autoGitRollback,
+      });
+      if (guard) return guard;
       await fs.mkdir(pathMod.dirname(abs), { recursive: true });
       let encoding: ReturnType<typeof decodeFileBuffer>["encoding"] = "utf8";
+      let oldContent: string | null = null;
       try {
-        encoding = decodeFileBuffer(await fs.readFile(abs)).encoding;
+        const buf = await fs.readFile(abs);
+        const decoded = decodeFileBuffer(buf);
+        encoding = decoded.encoding;
+        oldContent = decoded.text;
       } catch {
         // New file or unreadable — fall back to utf8.
       }
@@ -675,7 +690,8 @@ export function registerFilesystemTools(
       // Just wrote the content; the model knows what's on disk, so a
       // follow-up edit_file shouldn't be gated for re-reading.
       ctx?.readTracker?.markRead(abs);
-      return `wrote ${args.content.length} chars to ${displayRel(rootDir, abs)}`;
+      const rel = displayRel(rootDir, abs);
+      return generateWriteDiff(oldContent, args.content, rel);
     },
   });
 
@@ -692,13 +708,22 @@ export function registerFilesystemTools(
       },
       required: ["path", "search", "replace"],
     },
-    fn: async (args: { path: string; search: string; replace: string }, ctx?: ToolCallContext) =>
-      applyEdit(
+    fn: async (args: { path: string; search: string; replace: string }, ctx?: ToolCallContext) => {
+      const abs = await safePath(args.path, "edit_file", ctx, "write");
+      const guard = prepareAutoGitRollback({
         rootDir,
-        await safePath(args.path, "edit_file", ctx, "write"),
+        toolName: "edit_file",
+        absPaths: [abs],
+        autoGitRollback,
+      });
+      if (guard) return guard;
+      return applyEdit(
+        rootDir,
+        abs,
         args,
         ctx?.readTracker ? (abs) => ctx.readTracker!.hasRead(abs) : undefined,
-      ),
+      );
+    },
   });
 
   registry.register({
@@ -741,9 +766,61 @@ export function registerFilesystemTools(
           replace: e?.replace,
         })),
       );
+      const guard = prepareAutoGitRollback({
+        rootDir,
+        toolName: "multi_edit",
+        absPaths: resolved.map((e) => e.abs),
+        autoGitRollback,
+      });
+      if (guard) return guard;
       return applyMultiEdit(
         rootDir,
         resolved,
+        ctx?.readTracker ? (abs) => ctx.readTracker!.hasRead(abs) : undefined,
+      );
+    },
+  });
+
+  registry.register({
+    name: "delete_range",
+    description:
+      "Delete a contiguous text range from an existing file using exact start/end anchors. Call read_file on this path first this session. Matching failures, duplicate anchors, or reversed ranges are no-ops and leave the file unchanged. Use this instead of huge SEARCH/REPLACE blocks for large deletions.",
+    parameters: {
+      type: "object",
+      properties: {
+        path: { type: "string" },
+        start_anchor: {
+          type: "string",
+          description: "Exact text that marks the start of the range.",
+        },
+        end_anchor: {
+          type: "string",
+          description: "Exact text that marks the end of the range.",
+        },
+        inclusive: {
+          type: "boolean",
+          description:
+            "When true (default), delete the anchors too. When false, keep both anchors and delete only the text between them.",
+        },
+      },
+      required: ["path", "start_anchor", "end_anchor"],
+    },
+    fn: async (
+      args: { path: string; start_anchor: string; end_anchor: string; inclusive?: boolean },
+      ctx?: ToolCallContext,
+    ) => {
+      const abs = await safePath(args.path, "delete_range", ctx, "write");
+      const guard = prepareAutoGitRollback({
+        rootDir,
+        toolName: "delete_range",
+        absPaths: [abs],
+        autoGitRollback,
+      });
+      if (guard) return guard;
+      return applyDeleteRange(
+        rootDir,
+        abs,
+        args,
         ctx?.readTracker ? (abs) => ctx.readTracker!.hasRead(abs) : undefined,
       );
     },

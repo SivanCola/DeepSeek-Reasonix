@@ -87,6 +87,13 @@ export const SLASH_COMMANDS: readonly SlashCommandSpec[] = [
     argCompleter: ["low", "medium", "high", "max"],
   },
   {
+    cmd: "max-tokens",
+    group: "setup",
+    argsHint: "<N|off>",
+    summary:
+      "cap output tokens per turn — useful to limit runaway reasoning. Bare shows current value. 'off' clears the cap.",
+  },
+  {
     cmd: "language",
     group: "setup",
     argsHint: "<EN|zh-CN|de|ru>",
@@ -186,6 +193,14 @@ export const SLASH_COMMANDS: readonly SlashCommandSpec[] = [
     summary: "connect, inspect, or disconnect the QQ channel",
     argCompleter: ["connect", "status", "disconnect"],
   },
+  {
+    cmd: "telegram",
+    group: "extend",
+    argsHint: "<connect|status|disconnect>",
+    summary: "connect, inspect, or disconnect the Telegram channel",
+    argCompleter: ["connect", "status", "disconnect"],
+    aliases: ["tg"],
+  },
 
   {
     cmd: "init",
@@ -254,6 +269,15 @@ export const SLASH_COMMANDS: readonly SlashCommandSpec[] = [
     argCompleter: ["review", "auto", "yolo", "plan"],
   },
   {
+    cmd: "diff",
+    group: "code",
+    argsHint: "[summary|full|none]",
+    summary:
+      "diff display mode: summary (path +stats, default) · full (unified diff) · none (checkmark only)",
+    contextual: "code",
+    argCompleter: ["summary", "full", "none"],
+  },
+  {
     cmd: "plan",
     group: "code",
     argsHint: "[on|off|strict]",
@@ -320,14 +344,15 @@ export const SLASH_COMMANDS: readonly SlashCommandSpec[] = [
   {
     cmd: "search-engine",
     group: "advanced",
-    argsHint: "<bing|bing-intl|searxng|metaso|tavily|perplexity|exa|brave|ollama> [<key>]",
+    argsHint: "<bing|bing-intl|searxng|metaso|baidu|tavily|perplexity|exa|brave|ollama> [<key>]",
     summary:
-      "switch web search backend — bing (default, works from CN without proxy), bing-intl (international index via www.bing.com), searxng (self-hosted), metaso (free 100/d), tavily (free 1000/mo), perplexity (AI-native), exa (AI-native), brave (independent index, free 2000/mo), or ollama (Ollama cloud web search). Provider with no key prompts inline config.",
+      "switch web search backend — bing (default, works from CN without proxy), bing-intl (international index via www.bing.com), searxng (self-hosted), metaso (free 100/d), baidu (Baidu AI Search, free 1500/mo per Baidu docs), tavily (free 1000/mo), perplexity (AI-native), exa (AI-native), brave (independent index, free 2000/mo), or ollama (Ollama cloud web search). Provider with no key prompts inline config.",
     argCompleter: [
       "bing",
       "bing-intl",
       "searxng",
       "metaso",
+      "baidu",
       "tavily",
       "perplexity",
       "exa",

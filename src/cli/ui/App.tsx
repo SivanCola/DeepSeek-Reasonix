@@ -9,6 +9,7 @@ import {
   openEventSink,
 } from "../../adapters/event-sink-jsonl.js";
 import { type AtUrlExpansion, expandAtMentions, expandAtUrls } from "../../at-mentions.js";
+import { prepareAutoGitRollbackForEditBlocks } from "../../code/auto-git-rollback.js";
 import {
   type CheckpointMeta,
   createCheckpoint,
@@ -39,6 +40,8 @@ import {
   loadEndpoint,
   loadEngineeringLifecycleMode,
   loadHistoryScrollMode,
+  loadMaxIterPerTurn,
+  loadMaxOutputTokens,
   loadMouseWheelRows,
   loadReasoningEffort,
   loadTheme,
@@ -89,11 +92,9 @@ import {
   shouldAutoNameSession,
 } from "../../session-title.js";
 import { loadSlashUsage, recordSlashUse } from "../../slash-usage.js";
-import {
-  DEEPSEEK_CONTEXT_TOKENS,
-  DEFAULT_CONTEXT_TOKENS,
-  type SessionSummary,
-} from "../../telemetry/stats.js";
+import type { TelegramChannel } from "../../telegram/channel.js";
+import { useTelegramChannel } from "../../telegram/use-telegram-channel.js";
+import { type SessionSummary, resolveContextTokens } from "../../telemetry/stats.js";
 import { defaultUsageLogPath } from "../../telemetry/usage.js";
 import { warmupTokenizer } from "../../tokenizer.js";
 import type { ToolRegistry } from "../../tools.js";
@@ -138,7 +139,7 @@ import type { PickerSnapshot, ViewerSnapshot } from "./dashboard/use-picker-broa
 import { useViewerBroadcast } from "./dashboard/use-picker-broadcast.js";
 import { formatEditResults, formatPendingPreview } from "./edit-history.js";
 import {
-  buildEditToolBlocks,
+  buildEditToolBlocksForReview,
   formatQueuedReviewToolResult,
   isReviewGatedEditTool,
   shouldApplyEditToolImmediately,
@@ -176,6 +177,7 @@ import { StaticCardStream } from "./layout/StaticCardStream.js";
 import { StatusRow } from "./layout/StatusRow.js";
 import type { StatusBarConfig } from "./layout/StatusRow.js";
 import { shouldEnterPlanModeForExplicitIntent } from "./lifecycle-explicit-intent.js";
+import { shouldSuggestPlanForEngineeringIntent } from "./lifecycle-plan-suggestion.js";
 import { formatLoopStatus } from "./loop.js";
 import { applyMcpAppend } from "./mcp-append.js";
 import { handleMcpBrowseSlash } from "./mcp-browse.js";
@@ -308,10 +310,13 @@ export interface AppProps {
   startupInfoHints?: string[];
   /** Pre-created QQ channel (started before TUI mounts). */
   qqChannel?: QQChannel;
+  telegramChannel?: TelegramChannel;
   /** Ref filled by App on mount so QQ messages flow into the TUI input queue. */
   qqSubmitRef?: { current: ((text: string) => void) | null };
   /** Ref filled by App on mount so QQ errors appear in the TUI log. */
   qqErrorRef?: { current: ((msg: string) => void) | null };
+  telegramSubmitRef?: { current: ((text: string) => void) | null };
+  telegramErrorRef?: { current: ((msg: string) => void) | null };
   /** Resolved chat-history scroll mode, computed by the launcher from config/env. */
   historyScrollMode?: ResolvedHistoryScrollMode;
 }
@@ -460,8 +465,11 @@ function AppInner({
   onSwitchSession,
   startupInfoHints,
   qqChannel,
+  telegramChannel,
   qqSubmitRef,
   qqErrorRef,
+  telegramSubmitRef,
+  telegramErrorRef,
   historyScrollMode,
   themeName,
   setThemeName,
@@ -479,9 +487,7 @@ function AppInner({
   const sessionModel = useAgentState((s) => s.session.model);
   const sessionEffort = useAgentState((s) => s.status.reasoningEffort);
   const ctxTokens = useAgentState((s) => s.status.promptTokens);
-  const ctxCap = useAgentState(
-    (s) => s.status.promptCap ?? DEEPSEEK_CONTEXT_TOKENS[s.session.model] ?? DEFAULT_CONTEXT_TOKENS,
-  );
+  const ctxCap = useAgentState((s) => s.status.promptCap ?? resolveContextTokens(s.session.model));
   const sessionCostUsd = useAgentState((s) => s.status.sessionCost);
   const lastTurnCostUsd = useAgentState((s) => s.status.cost);
   const cacheHitRatio = useAgentState((s) => s.status.cacheHit);
@@ -620,6 +626,7 @@ function AppInner({
       mode: engineeringLifecycleBaseModeRef.current,
     });
   }
+  const lifecyclePlanSuggestionSessionRef = useRef<string | null | undefined>(undefined);
   // Refs that mirror state for stable read-callbacks handed to the
   // embedded dashboard server. The server's `getXxx()` closures are
   // captured once at startDashboard time; without ref-mirrors the
@@ -1029,6 +1036,8 @@ function AppInner({
       hooks: hookList,
       hookCwd: currentRootDir,
       reasoningEffort: initialReasoningEffort ?? loadReasoningEffort(),
+      maxOutputTokens: loadMaxOutputTokens(),
+      maxIterPerTurn: loadMaxIterPerTurn(),
       rebuildSystem,
     });
     loopRef.current = l;
@@ -2037,7 +2046,7 @@ function AppInner({
       // otherwise edit_file writes to the OLD root while read_file looks in
       // the NEW one, producing ENOENT on the next read of a just-edited file.
       const rootForEdit = currentRootDirRef.current;
-      const blocks = buildEditToolBlocks(name, args, rootForEdit);
+      const blocks = await buildEditToolBlocksForReview(name, args, rootForEdit, loop.readTracker);
       if (!blocks || blocks.length === 0) return null;
 
       // Helper: apply the current block(s) + record into history + arm
@@ -2050,6 +2059,8 @@ function AppInner({
       // after —ToolCard renders that with the same text. Pushing here
       // would produce "result shown twice".
       const applyNow = (): string => {
+        const guard = prepareAutoGitRollbackForEditBlocks(rootForEdit, blocks, {});
+        if (guard) return guard;
         const snaps = snapshotBeforeEdits(blocks, rootForEdit);
         const results = applyEditBlocks(blocks, rootForEdit);
         const good = results.some((r) => r.status === "applied" || r.status === "created");
@@ -2263,7 +2274,7 @@ function AppInner({
           // StatsPanel reads). `balance` comes from useSessionInfo via a
           // ref-mirror so this callback stays cheap.
           const s = loop.stats.summary();
-          const ctxCap = DEEPSEEK_CONTEXT_TOKENS[loop.model] ?? DEFAULT_CONTEXT_TOKENS;
+          const ctxCap = resolveContextTokens(loop.model);
           return {
             turns: s.turns,
             totalCostUsd: s.totalCostUsd,
@@ -2712,11 +2723,41 @@ function AppInner({
     onChoiceResolveRef: handleChoiceResolveRef,
   });
 
+  const telegram = useTelegramChannel({
+    codeMode: !!codeMode,
+    initialChannel: telegramChannel,
+    log,
+    setQueuedSubmit,
+    telegramSubmitRef,
+    telegramErrorRef,
+    sessionName: session,
+    currentRootDir,
+    pendingGateIdRef,
+    completedStepIdsRef,
+    planStepsRef,
+    onCreateSession: onSwitchSession ? (name) => onSwitchSession(name) : undefined,
+    onSelectSession: onSwitchSession ? (name) => onSwitchSession(name) : undefined,
+    onModelPick: handleQQModelPick,
+    onThemePick: handleQQThemePick,
+    onShellConfirmRef: handleShellConfirmRef,
+    onPathConfirmRef: handlePathConfirmRef,
+    onPlanCancelRef: handlePlanCancelRef,
+    onPlanFeedbackRef: handlePlanFeedbackRef,
+    onCheckpointConfirmRef: handleCheckpointConfirmRef,
+    onCheckpointReviseRef: handleCheckpointReviseSubmitRef,
+    onPlanRevisionRef: handleReviseConfirmRef,
+    onChoiceResolveRef: handleChoiceResolveRef,
+  });
+
   const handleSubmit = useCallback(
     async (raw: string) => {
-      const incoming = qq.parseSubmit(raw);
+      const qqIncoming = qq.parseSubmit(raw);
+      const incoming =
+        qqIncoming?.handled || qqIncoming?.fromQQ ? qqIncoming : telegram.parseSubmit(raw);
       if (!incoming) return;
-      let { text, fromQQ } = incoming;
+      let { text } = incoming;
+      const fromQQ = "fromQQ" in incoming && incoming.fromQQ;
+      const fromTelegram = "fromTelegram" in incoming && incoming.fromTelegram;
       if (incoming.handled) {
         return;
       }
@@ -2958,12 +2999,17 @@ function AppInner({
             disconnect: qq.disconnect,
             status: qq.status,
           },
+          telegram: {
+            connect: telegram.connect,
+            disconnect: telegram.disconnect,
+            status: telegram.status,
+          },
           sessionId: session,
           getEngineeringLifecycleSnapshot: codeMode
             ? () => engineeringLifecycleRef.current?.snapshot() ?? null
             : undefined,
           jobs: codeMode?.jobs,
-          postInfo: fromQQ ? qq.sendInfo : log.pushInfo,
+          postInfo: fromQQ ? qq.sendInfo : fromTelegram ? telegram.sendInfo : log.pushInfo,
           postDoctor: (checks) => log.showDoctor(checks),
           postUsage: (args) => log.showUsageVerbose(args),
           postKeys: (args) =>
@@ -3023,8 +3069,7 @@ function AppInner({
           generateSessionTitle: generateCurrentSessionTitle,
         });
         if (
-          fromQQ &&
-          qq.handleRemoteSlashResult({
+          (fromQQ ? qq : fromTelegram ? telegram : null)?.handleRemoteSlashResult({
             result,
             codeMode: !!codeMode,
             sessions: listSessionsForWorkspace(currentRootDir),
@@ -3112,6 +3157,7 @@ function AppInner({
           text,
         });
         if (fromQQ && result.info) qq.sendText(result.info);
+        if (fromTelegram && result.info) telegram.sendText(result.info);
         if (outcome.kind === "resubmit") {
           text = outcome.text;
         } else {
@@ -3138,15 +3184,25 @@ function AppInner({
       }
 
       if (codeMode) {
-        if (
-          shouldEnterPlanModeForExplicitIntent({
+        const explicitPlanIntent = shouldEnterPlanModeForExplicitIntent({
+          text,
+          codeMode: true,
+          planMode,
+        });
+        if (explicitPlanIntent) {
+          togglePlanMode(true, "explicit-intent");
+          log.pushInfo(t("app.explicitPlanIntentArmed"));
+        } else if (
+          shouldSuggestPlanForEngineeringIntent({
             text,
             codeMode: true,
             planMode,
+            lifecycleMode: engineeringLifecycleRef.current?.snapshot().mode ?? "off",
+            alreadySuggested: lifecyclePlanSuggestionSessionRef.current === (session ?? null),
           })
         ) {
-          togglePlanMode(true, "explicit-intent");
-          log.pushInfo(t("app.explicitPlanIntentArmed"));
+          log.pushInfo(t("app.lifecyclePlanSuggestion"));
+          lifecyclePlanSuggestionSessionRef.current = session ?? null;
         }
         const before = engineeringLifecycleRef.current?.snapshot().state;
         engineeringLifecycleRef.current?.observeUserPrompt(text);
@@ -3196,6 +3252,7 @@ function AppInner({
       busyRef.current = true;
       setBusy(true);
       qq.noteTurnFromQQ(fromQQ);
+      telegram.noteTurnFromTelegram(fromTelegram);
       abortedThisTurn.current = false;
       // Seal the in-progress history entry so this turn's edits open
       // a new one —prior turns are preserved intact for /history and
@@ -3357,7 +3414,7 @@ function AppInner({
               armUndoBanner,
               pendingEdits,
               syncPendingCount,
-              ctxMax: DEEPSEEK_CONTEXT_TOKENS[loop.model] ?? DEFAULT_CONTEXT_TOKENS,
+              ctxMax: resolveContextTokens(loop.model),
             });
             if (session) {
               const m = loadSessionMeta(session);
@@ -3462,6 +3519,7 @@ function AppInner({
           }
         }
         qq.maybeSendFinalReply(lastAssistantText);
+        telegram.maybeSendFinalReply(lastAssistantText);
       } finally {
         flush();
         // Esc aborted the turn —close any in-flight cards (streaming /
@@ -3477,6 +3535,7 @@ function AppInner({
         setBusy(false);
         submittingRef.current = false;
         qq.clearTurnReply();
+        telegram.clearTurnReply();
         // Refresh balance lazily —don't block the return.
         refreshBalance();
       }
@@ -3532,6 +3591,7 @@ function AppInner({
       startLoop,
       getLoopStatus,
       qq,
+      telegram,
       isLoopActive,
       isLoopFiring,
       clearFiringFlag,
@@ -3632,8 +3692,9 @@ function AppInner({
     setStagedCheckpointRevise(null);
     pendingGateIdRef.current = null;
     qq.resetInteractions();
+    telegram.resetInteractions();
     pauseGate.cancelAll();
-  }, [qq]);
+  }, [qq, telegram]);
 
   // Drain queued submits after the in-flight turn tears down.
   // QQ pause-gate replies are the one exception: they need to re-enter
@@ -3641,13 +3702,13 @@ function AppInner({
   // pauseGate.ask() can be resolved from the remote reply.
   useEffect(() => {
     if (queuedSubmit === null) return;
-    const canBypassBusy = qq.canBypassBusy(queuedSubmit);
+    const canBypassBusy = qq.canBypassBusy(queuedSubmit) || telegram.canBypassBusy(queuedSubmit);
     if ((!busy && !submittingRef.current) || canBypassBusy) {
       const text = queuedSubmit;
       setQueuedSubmit(null);
       void handleSubmit(text);
     }
-  }, [busy, queuedSubmit, handleSubmit, qq]);
+  }, [busy, queuedSubmit, handleSubmit, qq, telegram]);
 
   /**
    * PlanConfirm callback. Three outcomes, all ending with a synthetic
@@ -3909,6 +3970,7 @@ function AppInner({
       pendingGateIdRef.current = request.id;
 
       qq.handlePauseRequest(request.kind, payload);
+      telegram.handlePauseRequest(request.kind, payload);
 
       switch (request.kind) {
         case "run_command":
