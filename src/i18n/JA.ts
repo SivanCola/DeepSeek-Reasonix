@@ -1985,7 +1985,7 @@ export const JA: TranslationSchema = {
     scrollAbovePlural: " \u2191 {scroll} / {max} 行上",
     scrollMore: " \u2014 さらに {remaining} 件",
     scrollPgUp: " \u00b7 PgUp / ホイール",
-    scrollCopy: " \u00b7 /copy でコピーモード",
+    scrollCopy: " \u00b7 /copy で返信をコピー",
   },
   slashArgPicker: {
     ...EN.slashArgPicker,

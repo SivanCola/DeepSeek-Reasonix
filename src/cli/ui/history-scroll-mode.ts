@@ -15,11 +15,12 @@ export function resolveHistoryScrollMode({
 }: ResolveHistoryScrollModeInput = {}): ResolvedHistoryScrollMode {
   if (configured === "native") return "native";
   if (configured === "app") return "app";
+  if ((env.TERM_PROGRAM ?? "").toLowerCase() === "apple_terminal") return "native";
   if (isKnownJumpProneTerminal(env)) return "app";
   if (platform === "win32" && env.TERM_PROGRAM === undefined && env.MSYSTEM === undefined) {
     return "native";
   }
-  return "native";
+  return "app";
 }
 
 function isKnownJumpProneTerminal(env: NodeJS.ProcessEnv | Record<string, string | undefined>) {

@@ -47,7 +47,7 @@
 
     "ms.title": "Mouse",
     "ms.body":
-      "Reasonix sets DECSET 1007 (alternate-scroll) only — wheel events translate to ↑/↓ keypresses for the app, but native click/drag selection is left untouched. Pass <code>--no-mouse</code> to opt out entirely.",
+      "In auto/app scroll mode, Reasonix captures mouse-wheel reports so chat history can scroll inside terminals whose native scrollback does not move TUI content. Pass <code>--no-mouse</code> to opt out entirely.",
 
     "cp.title": "Copy / paste",
     "cp.body":
@@ -56,12 +56,11 @@
     "cp.body.drag":
       "In SSH / mosh / tmux, the alt-screen buffer prevents the terminal from extending the selection past the visible viewport — there is no scrollback above the alt-screen to drag into. Two fixes:",
     "cp.fix1":
-      "<strong><code>/copy</code></strong> — open vim/tmux-style copy mode in-app. Snapshots the current chat to a navigable buffer; <code>y</code> yanks to clipboard via OSC 52 (with a temp-file fallback for terminals that don't support it).",
+      "<strong><code>/copy</code></strong> — copy the latest assistant response through OSC 52. Use <code>/copy all</code> for the full chat or <code>/copy N</code> for the last N serialized chat items. Oversized content falls back to a temp file path.",
     "cp.fix2":
       "<strong><code>--no-alt-screen</code></strong> — render to shell scrollback instead. Drag-select then works terminal-natively (the chat content is real lines in the scrollback above your cursor). Trade-off: redraw can ghost on resize.",
-    "cp.h.copymode": "<code>/copy</code> — copy mode keys",
-    "cp.body.osc":
-      "<code>y</code> with no active selection yanks just the current line. The yank goes through OSC 52 first (works through SSH, mosh, tmux with <code>set -g set-clipboard on</code>); content larger than 75 KB falls back to a temp file whose path is printed on exit.",
+    "cp.h.copymode": "<code>/copy</code>",
+    "cp.body.osc": "<code>/copy</code> uses OSC 52 first; large content falls back to a temp file.",
   };
 
   var zh = {
@@ -105,7 +104,7 @@
 
     "ms.title": "鼠标",
     "ms.body":
-      "Reasonix 只设置 DECSET 1007（alternate-scroll）——滚轮事件转为 ↑/↓ 按键传给应用，原生点击/拖拽选择不受影响。加 <code>--no-mouse</code> 可完全关闭。",
+      "在 auto/app 滚动模式下，Reasonix 会捕获鼠标滚轮事件，让原生 scrollback 无法滚动 TUI 内容的终端也能滚聊天。加 <code>--no-mouse</code> 可完全关闭。",
 
     "cp.title": "复制 / 粘贴",
     "cp.body":
@@ -114,12 +113,11 @@
     "cp.body.drag":
       "SSH / mosh / tmux 下，alt-screen 缓冲区会阻止终端把选区延伸到可视视口以外——alt-screen 上方根本没有 scrollback 可拖入。两种解决方式：",
     "cp.fix1":
-      "<strong><code>/copy</code></strong> — 在应用内打开 vim/tmux 风格的复制模式，把当前聊天快照到可导航的缓冲区；<code>y</code> 通过 OSC 52 复制到剪贴板（不支持 OSC 52 的终端会退到临时文件）。",
+      "<strong><code>/copy</code></strong> — 通过 OSC 52 复制最近一条 assistant 回复。用 <code>/copy all</code> 复制完整聊天，或 <code>/copy N</code> 复制最近 N 个序列化聊天项；内容过大时退到临时文件路径。",
     "cp.fix2":
       "<strong><code>--no-alt-screen</code></strong> — 改为渲染到 shell scrollback。拖拽选择恢复终端原生（聊天内容就是光标上方的真实行）。代价：窗口大小改变时可能出现重绘残影。",
-    "cp.h.copymode": "<code>/copy</code> — 复制模式快捷键",
-    "cp.body.osc":
-      "没有活动选区时按 <code>y</code> 只复制当前行。复制先走 OSC 52（通过 SSH、mosh、开了 <code>set -g set-clipboard on</code> 的 tmux 均可用）；超过 75 KB 的内容退到临时文件，路径在退出时打印。",
+    "cp.h.copymode": "<code>/copy</code>",
+    "cp.body.osc": "<code>/copy</code> 优先使用 OSC 52；大内容会退到临时文件。",
   };
 
   var DICT = { en: en, zh: zh };

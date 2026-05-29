@@ -488,6 +488,7 @@ function AppInner({
   markPhase("app_inner_start");
   const log = useScrollback();
   const agentStore = useAgentStore();
+  const getCardsForSlash = useCallback(() => agentStore.getState().cards, [agentStore]);
   const hasConversation = useAgentState((s) =>
     s.cards.some((c) => c.kind === "user" || c.kind === "streaming"),
   );
@@ -3083,6 +3084,7 @@ function AppInner({
               footer: args.footer,
               oneTime: false,
             }),
+          getCards: getCardsForSlash,
           dispatch: agentStore.dispatch,
           markPlanStepDone: (stepId: string) => {
             const steps = planStepsRef.current;
@@ -3678,6 +3680,7 @@ function AppInner({
       startDashboard,
       stopDashboard,
       getDashboardUrl,
+      getCardsForSlash,
       broadcastDashboardEvent,
       touchedPaths,
       model,

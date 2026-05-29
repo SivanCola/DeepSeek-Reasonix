@@ -131,8 +131,12 @@ function decodeSgrMouseBody(body: string): KeyEvent | null {
   if (!Number.isFinite(btn) || !Number.isFinite(col) || !Number.isFinite(row)) return null;
   const tail = m[4]!;
   if (tail === "m") return { input: "", mouseRelease: true, mouseRow: row, mouseCol: col };
-  if (btn === 64) return { input: "", mouseScrollUp: true, mouseRow: row, mouseCol: col };
-  if (btn === 65) return { input: "", mouseScrollDown: true, mouseRow: row, mouseCol: col };
+  const wheelButton = btn & 0x43;
+  if (wheelButton === 64 || wheelButton === 65) {
+    return wheelButton === 64
+      ? { input: "", mouseScrollUp: true, mouseRow: row, mouseCol: col }
+      : { input: "", mouseScrollDown: true, mouseRow: row, mouseCol: col };
+  }
   if (btn === 0) return { input: "", mouseClick: true, mouseRow: row, mouseCol: col };
   if (btn === 32) return { input: "", mouseDrag: true, mouseRow: row, mouseCol: col };
   return null;

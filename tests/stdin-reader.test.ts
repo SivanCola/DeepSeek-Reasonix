@@ -391,6 +391,18 @@ describe("StdinReader — SGR mouse reports (issue #867)", () => {
     expect(events).toEqual([{ input: "", mouseScrollDown: true, mouseRow: 5, mouseCol: 10 }]);
   });
 
+  it("decodes modified wheel reports as scroll events", () => {
+    const { reader, events } = setup();
+    reader.feed("\x1b[<68;10;5M");
+    reader.feed("\x1b[<69;11;5M");
+    reader.feed("\x1b[<80;12;5M");
+    expect(events).toEqual([
+      { input: "", mouseScrollUp: true, mouseRow: 5, mouseCol: 10 },
+      { input: "", mouseScrollDown: true, mouseRow: 5, mouseCol: 11 },
+      { input: "", mouseScrollUp: true, mouseRow: 5, mouseCol: 12 },
+    ]);
+  });
+
   it("dispatches left-click press + release", () => {
     const { reader, events } = setup();
     reader.feed("\x1b[<0;3;7M");

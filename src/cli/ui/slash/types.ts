@@ -3,6 +3,7 @@ import type { EditMode } from "../../../config.js";
 import type { McpServerSummary } from "../../../mcp/summary.js";
 import type { JobRegistry } from "../../../tools/jobs.js";
 import type { PlanStep } from "../../../tools/plan.js";
+import type { Card } from "../state/cards.js";
 import type { CodeUndoOutput } from "../undo-context.js";
 
 export type { McpServerSummary } from "../../../mcp/summary.js";
@@ -111,6 +112,8 @@ export interface SlashContext {
     }>;
     footer?: string;
   }) => void;
+  /** Current TUI scrollback cards; used by `/copy`. */
+  getCards?: () => ReadonlyArray<Card>;
   dispatch?: (event: import("../state/events.js").AgentEvent) => void;
   setPlanMode?: (on: boolean, source?: PlanModeToggleSource) => void;
   /** Manual escape valve when the model forgot to call `mark_step_complete` — used by `/plans done <id>`. */

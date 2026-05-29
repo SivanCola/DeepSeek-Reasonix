@@ -1,8 +1,8 @@
-// Reasonix is append-only now: the terminal owns scrollback, copy, and the
-// mouse wheel. On most terminals, startup emits disables for common
-// mouse-capture modes so stale state from a prior crashed TUI can't keep
-// eating wheel events. Apple Terminal has had native crashes in its renderer
-// after receiving these private mouse-mode toggles, so its default is silent.
+// In native history mode the terminal owns scrollback, copy, and the mouse
+// wheel. In app history mode Reasonix captures wheel reports so CardStream can
+// scroll consistently in terminals whose native scrollback does not move TUI
+// content. Apple Terminal has had native crashes in its renderer after
+// receiving these private mouse-mode toggles, so its default is silent.
 // REASONIX_MOUSE_MODE remains an escape hatch.
 
 type Mode = "alternate-scroll" | "sgr" | "off" | "apple-terminal-off";

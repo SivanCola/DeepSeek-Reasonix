@@ -94,12 +94,30 @@ describe("history scroll mode resolution", () => {
     );
   });
 
-  it("keeps native scrollback for unknown terminals in auto mode", () => {
+  it("prefers app-managed scrolling for unknown terminals in auto mode", () => {
     expect(
       resolveHistoryScrollMode({
         configured: "auto",
         env: { TERM: "xterm-256color" },
         platform: "linux",
+      }),
+    ).toBe("app");
+  });
+
+  it("keeps native scrollback for terminals where app mouse tracking is risky", () => {
+    expect(
+      resolveHistoryScrollMode({
+        configured: "auto",
+        env: { TERM_PROGRAM: "Apple_Terminal" },
+        platform: "darwin",
+      }),
+    ).toBe("native");
+
+    expect(
+      resolveHistoryScrollMode({
+        configured: "auto",
+        env: {},
+        platform: "win32",
       }),
     ).toBe("native");
   });

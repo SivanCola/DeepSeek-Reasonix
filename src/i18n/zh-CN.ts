@@ -116,6 +116,7 @@ export const zhCN: TranslationSchema = {
               text: "终端原生菜单（Windows Terminal 等的复制 / 粘贴）",
             },
             { key: "滚轮", text: "滚动聊天记录（Web / 云端 / SSH 终端也能用）" },
+            { key: "/copy", text: "复制最近一条 assistant 回复；`/copy all` 复制整个聊天" },
             {
               key: "↑ / ↓",
               text: "输入历史（多行草稿时按行移动光标）— Ctrl+P / Ctrl+N 同义",
@@ -169,6 +170,10 @@ export const zhCN: TranslationSchema = {
             },
             { key: "粘贴", text: "Ctrl+V 或 Ctrl+Shift+V（Win/Linux）· Cmd+V（macOS）" },
             {
+              key: "/copy",
+              text: "复制最近回复 · `/copy all` 复制完整聊天 · `/copy N` 复制最近 N 项",
+            },
+            {
               key: "bracketed paste",
               text: "多行粘贴整体进入 — 中间换行不会触发提交",
             },
@@ -184,7 +189,7 @@ export const zhCN: TranslationSchema = {
         },
       ],
       footer:
-        "滚轮在大多数终端（含 Web / 云端 / SSH）都能滚聊天 — 默认开启 SGR 鼠标跟踪，但不会影响终端原生拖选和右键菜单。直接拖动选中文本无需 Shift。传入 --no-mouse 可关闭。",
+        "滚轮在大多数终端（含 Web / 云端 / SSH）都能滚聊天。如果鼠标跟踪让终端选区受限，可用 /copy 或传入 --no-mouse。",
     },
     tipShownOnce: "仅显示一次",
     modelOverride: "覆盖默认模型",
@@ -335,6 +340,10 @@ export const zhCN: TranslationSchema = {
       argsHint: "[tokens]",
     },
     keys: { description: "键盘 + 鼠标 + 复制粘贴参考" },
+    copy: {
+      description: "复制最近一条 assistant 回复、完整聊天（all），或最近 N 项",
+      argsHint: "[all|last|assistant|N]",
+    },
     cwd: {
       description:
         "切换工作区根目录 — 重新指向文件/Shell/记忆工具，重载项目 hooks，刷新 @ 引用遍历器",
@@ -813,6 +822,11 @@ export const zhCN: TranslationSchema = {
       loopStarted:
         '▸ 循环已启动 — 每 {duration} 重新提交 "{prompt}"。输入任何内容（或 /loop stop）取消。',
       keysNeedsTui: "/keys 需要 TUI 上下文（postKeys 已连接）。",
+      copyNeedsTui: "/copy 仅在交互式 TUI 中可用。",
+      copyUsage: "用法：/copy [all|last|assistant|N]",
+      copyNothing: "还没有可复制的内容。",
+      copyDone: "▸ 已复制 {label} 到剪贴板（{chars} 字符）。",
+      copySavedFile: "▸ {label} 超出终端剪贴板限制；已将 {chars} 字符保存到 {path}",
       aboutHeader: "Reasonix v{version} — 缓存优先的 DeepSeek 编码代理",
       aboutWebsiteLabel: "官网",
       aboutRepoLabel: "仓库",
@@ -1830,7 +1844,7 @@ export const zhCN: TranslationSchema = {
     scrollAbovePlural: " \u2191 {scroll}/{max} 行",
     scrollMore: " \u2014 还有 {remaining} 行",
     scrollPgUp: " \u00b7 PgUp/\u6eda\u8f6e",
-    scrollCopy: " \u00b7 /copy \u8fdb\u5165\u590d\u5236\u6a21\u5f0f",
+    scrollCopy: " \u00b7 /copy \u590d\u5236\u56de\u590d",
   },
   slashArgPicker: {
     noMatch: '\u6ca1\u6709\u5339\u914d "{partial}"',

@@ -40,7 +40,7 @@ Run `reasonix --help` (or any subcommand with `--help`) for the full flag list. 
 | `--no-config` | Ignore `~/.reasonix/config.json` for this run |
 | `--no-dashboard` | Don't auto-start the embedded web dashboard |
 | `--no-alt-screen` | Render to scrollback instead of the alt-screen buffer (preserves chat in shell history; legacy mode, can ghost on resize) |
-| `--no-mouse` | Disable DECSET 1007 (alternate-scroll); wheel reverts to native terminal scroll |
+| `--no-mouse` | Disable app-managed mouse tracking; wheel reverts to native terminal scroll |
 
 ---
 
@@ -57,7 +57,7 @@ Type `/` mid-chat to open the picker. Aliases shown in parentheses. Code-mode-on
 | `/retry` | Truncate and resend your last message — fresh sample |
 | `/compact` | Fold older turns into a summary (cache-safe). Auto-fires at 50% ctx; this is the manual trigger |
 | `/stop` | Abort the current model turn (typed alternative to Esc) |
-| `/copy` | Open vim/tmux-style copy mode — `j`/`k` navigate, `v` select, `y` yank to clipboard. The right answer for SSH / mosh / tmux where drag-select can't extend past the viewport |
+| `/copy [all\|last\|assistant\|N]` | Copy the latest assistant response by default; `all` copies the whole chat and `N` copies the last N items |
 
 ### Setup
 
@@ -176,7 +176,7 @@ Type `/` mid-chat to open the picker. Aliases shown in parentheses. Code-mode-on
 | Drag | Selects text natively — no modifier needed |
 | Right-click | Terminal-native (e.g. paste menu on Windows Terminal) |
 
-Reasonix sets DECSET 1007 (alternate-scroll) only — wheel events translate to ↑/↓ keypresses for the app, but native click/drag selection is left untouched. Pass `--no-mouse` to opt out entirely.
+In auto/app scroll mode, Reasonix captures mouse-wheel reports so chat history can scroll inside terminals whose native scrollback does not move TUI content. Pass `--no-mouse` to opt out entirely.
 
 ---
 
@@ -195,22 +195,8 @@ The default path is **terminal-native**. Drag to select, then use your terminal'
 
 In SSH / mosh / tmux, the alt-screen buffer prevents the terminal from extending the selection past the visible viewport — there is no scrollback above the alt-screen to drag into. Two fixes:
 
-1. **`/copy`** — open vim/tmux-style copy mode in-app. Snapshots the current chat to a navigable buffer; `y` yanks to clipboard via OSC 52 (with a temp-file fallback for terminals that don't support it).
+1. **`/copy`** — copy the latest assistant response through OSC 52. Use `/copy all` for the full chat or `/copy N` for the last N serialized chat items. Oversized content falls back to a temp file path.
 2. **`--no-alt-screen`** — render to shell scrollback instead. Drag-select then works terminal-natively (the chat content is real lines in the scrollback above your cursor). Trade-off: redraw can ghost on resize.
-
-### `/copy` — copy mode keys
-
-| Key | What it does |
-|---|---|
-| `j` / `↓` | Cursor down one line |
-| `k` / `↑` | Cursor up one line |
-| `PgUp` / `PgDn` | Page up / down |
-| `g` / `G` | Jump to top / bottom |
-| `v` | Start (or cancel) selection at the cursor |
-| `y` / `Enter` | Yank selection to clipboard, exit |
-| `q` / `Esc` | Quit without yanking |
-
-`y` with no active selection yanks just the current line. The yank goes through OSC 52 first (works through SSH, mosh, tmux with `set -g set-clipboard on`); content larger than 75 KB falls back to a temp file whose path is printed on exit.
 
 ---
 
