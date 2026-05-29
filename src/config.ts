@@ -204,8 +204,6 @@ export interface ReasonixConfig {
   desktopCloseBehavior?: DesktopCloseBehavior;
   /** Desktop only — `openWith` value for clicking file links. Empty/undefined = OS default app. Examples: "code", "cursor", "C:\\path\\to\\editor.exe". */
   editor?: string;
-  /** Desktop prompt-history entries, most-recent-first, capped at 100 (#2051). */
-  promptHistory?: string[];
   theme?: ThemeName | "auto";
   /** Stored as `--mcp`-format strings so one parser handles both flag and config. */
   mcp?: string[];
@@ -216,6 +214,9 @@ export interface ReasonixConfig {
   /** Canonical MCP server configuration — merges with and overrides legacy `mcp`/`mcpEnv`/`mcpDisabled`. */
   mcpServers?: Record<string, McpServerConfig>;
   session?: string | null;
+  /** When false, each `reasonix code` / `reasonix chat` launch starts a fresh session instead
+   *  of resuming the last one (#2238). Default true preserves existing behavior. */
+  autoResumeSession?: boolean;
   setupCompleted?: boolean;
   search?: boolean;
   /** Web search engine backend: "bing" (default, scrapes cn.bing.com), "bing-intl" (www.bing.com, indexes international sites), "searxng" (self-hosted SearXNG), "metaso" (Metaso API), "baidu" (Baidu AI Search API), "tavily" (LLM-friendly API, free tier), "perplexity" (Perplexity AI), "exa" (Exa API), "brave" (Brave Search API), or "ollama" (Ollama cloud web search). */
@@ -469,22 +470,9 @@ export function defaultConfigPath(): string {
   return join(homedir(), ".reasonix", "config.json");
 }
 
-const PROMPT_HISTORY_CAP = 100;
-
-export function loadPromptHistory(path: string = defaultConfigPath()): string[] {
-  return readConfig(path).promptHistory ?? [];
-}
-
-export function savePromptHistory(entries: string[], path: string = defaultConfigPath()): void {
-  const cfg = readConfig(path);
-  cfg.promptHistory = entries.slice(0, PROMPT_HISTORY_CAP);
-  writeConfig(cfg, path);
-}
-
 const STRING_ARRAY_FIELDS: Array<readonly string[]> = [
   ["mcp"],
   ["mcpDisabled"],
-  ["promptHistory"],
   ["recentWorkspaces"],
   ["shellAllowedGlobal"],
   ["skills", "paths"],
