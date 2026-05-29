@@ -685,6 +685,7 @@ export interface TranslationSchema {
     title: string;
     compactHint: string;
     topTools: string;
+    topToolSchemas: string;
     msg: string;
     turnLabel: string;
   };

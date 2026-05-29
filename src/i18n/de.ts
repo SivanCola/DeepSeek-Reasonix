@@ -1651,6 +1651,7 @@ export const de: TranslationSchema = {
     title: "▣ Kontext",
     compactHint: "  /compact faltet (automatisch bei 50 %) · /new löscht Log",
     topTools: "  Top-Tool-Ergebnisse nach Kosten ({count}):",
+    topToolSchemas: "  Top-Tool-Schemas nach Prompt-Kosten ({count}):",
     msg: "Nachr",
     turnLabel: "Turn",
   },

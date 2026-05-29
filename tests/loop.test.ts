@@ -261,8 +261,8 @@ describe("CacheFirstLoop (non-streaming)", () => {
     await loop.run("go");
 
     expect(prefix.toolSpecs.map((spec) => spec.function.name)).toEqual([
-      "probe",
       "mcp_dynamic_tool",
+      "probe",
     ]);
     expect(loop.stats.cacheDiagnostics).toHaveLength(2);
     expect(loop.stats.cacheDiagnostics[0]?.toolNames).toEqual(["probe"]);

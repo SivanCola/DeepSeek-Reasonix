@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { DeepSeekClient } from "../src/client.js";
 import { CacheFirstLoop } from "../src/loop.js";
-import { ImmutablePrefix } from "../src/memory/runtime.js";
+import { ImmutablePrefix, sortToolSpecs } from "../src/memory/runtime.js";
 import type { ChatMessage, ToolSpec } from "../src/types.js";
 
 interface CapturedRequest {
@@ -123,10 +123,11 @@ describe("ContextManager fold sends cache-aligned summary request", () => {
 
     await loop.compactHistory({ keepRecentTokens: 40 });
     const req = captured[0]!;
+    const expectedTools = sortToolSpecs(TOOLS);
 
     expect(req.tools).toBeDefined();
-    expect(req.tools).toEqual(TOOLS);
-    expect(JSON.stringify(req.tools)).toBe(JSON.stringify(TOOLS));
+    expect(req.tools).toEqual(expectedTools);
+    expect(JSON.stringify(req.tools)).toBe(JSON.stringify(expectedTools));
   });
 
   it("summary request preserves the head conversation bytes (head messages unmodified)", async () => {

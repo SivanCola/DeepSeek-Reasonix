@@ -12,6 +12,27 @@ export interface ImmutablePrefixOptions {
   fewShots?: readonly ChatMessage[];
 }
 
+export interface PrefixComponentHashes {
+  system: string;
+  tools: string;
+  fewShots: string;
+  full: string;
+}
+
+function shortHash(value: unknown): string {
+  return createHash("sha256").update(JSON.stringify(value)).digest("hex").slice(0, 16);
+}
+
+function toolName(spec: ToolSpec): string {
+  return spec.function?.name ?? "";
+}
+
+export function sortToolSpecs(specs: readonly ToolSpec[]): ToolSpec[] {
+  return [...specs]
+    .map((spec) => structuredClone(spec) as ToolSpec)
+    .sort((a, b) => toolName(a).localeCompare(toolName(b)));
+}
+
 export class ImmutablePrefix {
   /** Stable across turns; rebuilt only on /new when REASONIX.md changed on disk. */
   system: string;
@@ -27,7 +48,7 @@ export class ImmutablePrefix {
 
   constructor(opts: ImmutablePrefixOptions) {
     this.system = opts.system;
-    this._toolSpecs = [...(opts.toolSpecs ?? [])];
+    this._toolSpecs = sortToolSpecs(opts.toolSpecs ?? []);
     this.fewShots = Object.freeze([...(opts.fewShots ?? [])]);
   }
 
@@ -63,7 +84,7 @@ export class ImmutablePrefix {
     const name = spec.function?.name;
     if (!name) return false;
     if (this._toolSpecs.some((t) => t.function?.name === name)) return false;
-    this._toolSpecs.push(spec);
+    this._toolSpecs = sortToolSpecs([...this._toolSpecs, spec]);
     this.invalidatePrefixCaches();
     this._frozenToolsCache = null;
     return true;
@@ -109,6 +130,15 @@ export class ImmutablePrefix {
     });
   }
 
+  get componentHashes(): PrefixComponentHashes {
+    return {
+      system: shortHash(this.system),
+      tools: shortHash(this._toolSpecs),
+      fewShots: shortHash(this.fewShots),
+      full: this.fingerprint,
+    };
+  }
+
   /** Dev/test only — throws on cache drift, which always means a non-`addTool` mutation slipped in. */
   verifyFingerprint(): string {
     const fresh = this.computeFingerprint();
@@ -122,12 +152,11 @@ export class ImmutablePrefix {
   }
 
   private computeFingerprint(): string {
-    const blob = JSON.stringify({
+    return shortHash({
       system: this.system,
       tools: this._toolSpecs,
       shots: this.fewShots,
     });
-    return createHash("sha256").update(blob).digest("hex").slice(0, 16);
   }
 }
 
@@ -146,6 +175,7 @@ export class AppendOnlyLog {
   // Monotonic counter bumped on every mutation. Consumers compare against
   // their own snapshot to detect staleness without destructive check-and-clear.
   private _version = 0;
+  private _rewriteVersion = 0;
 
   constructor(opts?: { windowSize?: number; sessionPath?: string }) {
     this._windowSize = opts?.windowSize ?? DEFAULT_WINDOW;
@@ -187,6 +217,7 @@ export class AppendOnlyLog {
     this._totalLength = replacement.length;
     this._fullHistoryCache = null;
     this._version++;
+    this._rewriteVersion++;
   }
 
   // Checks memory window first; falls back to disk for older messages.
@@ -213,11 +244,11 @@ export class AppendOnlyLog {
     if (!this._sessionPath || this._entries.length >= this._totalLength) {
       return this.toMessages();
     }
-    if (this._fullHistoryCache && this._fullHistoryCache.version === this._totalLength) {
+    if (this._fullHistoryCache && this._fullHistoryCache.version === this._version) {
       return this._fullHistoryCache.messages.map((e) => ({ ...e }));
     }
     const whole = readTailMessages(this._sessionPath, this._totalLength);
-    this._fullHistoryCache = { version: this._totalLength, messages: whole };
+    this._fullHistoryCache = { version: this._version, messages: whole };
     return whole.map((e) => ({ ...e }));
   }
 
@@ -247,6 +278,10 @@ export class AppendOnlyLog {
    *  their own snapshot and compare to detect staleness (non-destructive). */
   get version(): number {
     return this._version;
+  }
+
+  get rewriteVersion(): number {
+    return this._rewriteVersion;
   }
 }
 

@@ -61,10 +61,11 @@ import {
   buildCacheDiagnostic,
   latestCacheDiagnostic,
 } from "./telemetry/cache-diagnostics.js";
-import { SessionStats, type TurnStats } from "./telemetry/stats.js";
+import { type CacheDiagnostics, SessionStats, type TurnStats } from "./telemetry/stats.js";
+import { countTokensBounded } from "./tokenizer.js";
 import { ToolRegistry } from "./tools.js";
 import { ReadTracker } from "./tools/read-tracker.js";
-import type { ChatMessage, ToolCall } from "./types.js";
+import type { ChatMessage, ToolCall, ToolSpec } from "./types.js";
 
 export const MID_TURN_STEER_WRAPPER =
   "[Mid-turn steer queued by the user. Do not treat this as a new task; use it only as additional guidance for the current task after completing the current step.]";
@@ -129,6 +130,15 @@ export interface ReconfigurableOptions {
 export interface LoopAbortOptions {
   /** Explicit user interrupts can discard the unfinished turn so the next prompt starts clean. */
   discardCurrentTurn?: boolean;
+}
+
+interface CacheShapeSnapshot {
+  systemHash: string;
+  toolsHash: string;
+  fewShotsHash: string;
+  prefixHash: string;
+  logRewriteVersion: number;
+  toolSchemaTokens: number;
 }
 
 function shrinkMessageForRetention(message: ChatMessage): ChatMessage {
@@ -210,6 +220,7 @@ export class CacheFirstLoop {
   private _turnSelfCorrected = false;
   private _foldedThisTurn = false;
   private context!: ContextManager;
+  private _lastCacheShape: CacheShapeSnapshot | null = null;
 
   /** Subscribe API so UI hooks can derive `running` from finally-guaranteed insertions. */
   get inflight(): InflightSet {
@@ -380,6 +391,7 @@ export class CacheFirstLoop {
     this.stats.reset();
     this._turn = 0;
     this._budgetWarned = false;
+    this._lastCacheShape = null;
     // Drain leftover steer text — otherwise the first step() after /new
     // injects it as a user message and the next turn leaks prior intent.
     this._steerQueue.length = 0;
@@ -410,6 +422,7 @@ export class CacheFirstLoop {
     this.log.compactInPlace([]);
     this.scratch.reset();
     this._inflight.clear();
+    this._lastCacheShape = null;
     this._steerQueue.length = 0;
     this._steerConsumed = false;
     this.sessionName = opts.sessionName;
@@ -552,6 +565,46 @@ export class CacheFirstLoop {
     return [...this.prefix.toMessages(), ...healedMessages];
   }
 
+  private cacheShapeForRequest(toolSpecs: readonly ToolSpec[]): CacheShapeSnapshot {
+    const hashes = this.prefix.componentHashes;
+    return {
+      systemHash: hashes.system,
+      toolsHash: hashes.tools,
+      fewShotsHash: hashes.fewShots,
+      prefixHash: hashes.full,
+      logRewriteVersion: this.log.rewriteVersion,
+      toolSchemaTokens: countTokensBounded(JSON.stringify(toolSpecs)),
+    };
+  }
+
+  private cacheDiagnosticsForUsage(
+    shape: CacheShapeSnapshot,
+    usage: TurnStats["usage"] | null,
+  ): CacheDiagnostics {
+    const prev = this._lastCacheShape;
+    const prefixChangeReasons: CacheDiagnostics["prefixChangeReasons"] = [];
+    if (prev) {
+      if (prev.systemHash !== shape.systemHash) prefixChangeReasons.push("system");
+      if (prev.toolsHash !== shape.toolsHash) prefixChangeReasons.push("tools");
+      if (prev.fewShotsHash !== shape.fewShotsHash) prefixChangeReasons.push("few_shots");
+      if (prev.logRewriteVersion !== shape.logRewriteVersion) {
+        prefixChangeReasons.push("log_rewrite");
+      }
+    }
+    return {
+      prefixHash: shape.prefixHash,
+      prefixChanged: prefixChangeReasons.length > 0,
+      prefixChangeReasons,
+      systemHash: shape.systemHash,
+      toolsHash: shape.toolsHash,
+      fewShotsHash: shape.fewShotsHash,
+      logRewriteVersion: shape.logRewriteVersion,
+      toolSchemaTokens: shape.toolSchemaTokens,
+      promptCacheMissTokens: usage?.promptCacheMissTokens ?? 0,
+      promptCacheHitTokens: usage?.promptCacheHitTokens ?? 0,
+    };
+  }
+
   private healActiveLogBeforeSend(): ChatMessage[] {
     // Skip the expensive 4-pass healing pipeline when the log hasn't
     // changed since the last call — the common case between iterations
@@ -566,22 +619,34 @@ export class CacheFirstLoop {
       DEFAULT_MAX_RESULT_TOKENS,
     );
     const pruned = stripDroppableReasoningContent(argsShrunk.messages);
-    if (healed.healedCount === 0 && argsShrunk.healedCount === 0 && pruned.prunedCount === 0) {
+    // stripDroppableReasoningContent removes reasoning_content from stale plain
+    // assistant turns. Re-stamp only tool-call turns that need round-trip-safe
+    // reasoning fields for thinking-mode models.
+    const stamped = stampMissingReasoningForThinkingMode(pruned.messages, this.model, {
+      toolCallsOnly: true,
+    });
+    const final = stamped.messages;
+    if (
+      healed.healedCount === 0 &&
+      argsShrunk.healedCount === 0 &&
+      pruned.prunedCount === 0 &&
+      stamped.stampedCount === 0
+    ) {
       this._healedCache = current;
       this._healedVersion = this.log.version;
       return current;
     }
-    this.log.compactInPlace(pruned.messages);
-    this._healedCache = pruned.messages;
+    this.log.compactInPlace(final);
+    this._healedCache = final;
     this._healedVersion = this.log.version;
     if (this.sessionName) {
       try {
-        rewriteSession(this.sessionName, pruned.messages);
+        rewriteSession(this.sessionName, final);
       } catch {
         /* disk issue shouldn't block the in-memory heal */
       }
     }
-    return pruned.messages;
+    return final;
   }
 
   abort(opts: LoopAbortOptions = {}): void {
@@ -744,7 +809,7 @@ export class CacheFirstLoop {
     // when the user navigates away before the model responds). A failed
     // first round-trip still leaves the message in the log; the user can
     // /retry without re-typing.
-    const turnStartLogIndex = this.log.length;
+    const turnStartLogIndex = this.log.totalLength;
     this.appendAndPersist({ role: "user", content: userInput });
     const toolSpecs = this.prefix.tools();
     const rateLimitState = { shown: false };
@@ -878,6 +943,7 @@ export class CacheFirstLoop {
       // Snapshot prefix evidence from the same turn-start tool list sent
       // to the API so MCP hot-adds during the turn don't rewrite history.
       const prefixEvidence = this.prefix.diagnosticHashes(toolSpecs);
+      const cacheShape = this.cacheShapeForRequest(toolSpecs);
 
       try {
         callModel = this.model;
@@ -969,9 +1035,16 @@ export class CacheFirstLoop {
         continue;
       }
 
-      // Attribute under the actual model used (escalated → pro, else
-      // callModel) so cost/usage logs reflect reality.
-      const turnStats = this.stats.record(this._turn, callModel, usage ?? new Usage());
+      // Attribute under the actual model used (escalated → pro, else callModel)
+      // so cost/usage logs reflect reality.
+      const cacheDiagnostics = this.cacheDiagnosticsForUsage(cacheShape, usage);
+      this._lastCacheShape = cacheShape;
+      const turnStats = this.stats.record(
+        this._turn,
+        callModel,
+        usage ?? new Usage(),
+        cacheDiagnostics,
+      );
       let cacheDiagnostic = buildCacheDiagnostic({
         turn: this._turn,
         model: callModel,

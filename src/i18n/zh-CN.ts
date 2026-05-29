@@ -1603,6 +1603,7 @@ export const zhCN: TranslationSchema = {
     title: "▣ 上下文",
     compactHint: "  /compact 折叠（超过 50% 自动触发）· /new 清空日志",
     topTools: "  常用工具（按成本排序，{count} 个）：",
+    topToolSchemas: "  工具 schema（按 prompt 成本排序，{count} 个）：",
     msg: "条",
     turnLabel: "轮",
   },

@@ -1699,6 +1699,7 @@ export const EN: TranslationSchema = {
     title: "\u25a3 context",
     compactHint: "  /compact folds (auto at 50%) \u00b7 /new wipes log",
     topTools: "  top tool results by cost ({count}):",
+    topToolSchemas: "  top tool schemas by prompt cost ({count}):",
     msg: "msg",
     turnLabel: "turn",
   },

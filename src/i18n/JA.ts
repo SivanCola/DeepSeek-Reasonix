@@ -1737,6 +1737,7 @@ export const JA: TranslationSchema = {
     title: "\u25a3 コンテキスト",
     compactHint: "  /compact で折りたたみ（50%で自動）\u00b7 /new でログ消去",
     topTools: "  コスト上位のツール結果（{count}）:",
+    topToolSchemas: "  プロンプトコスト上位のツールスキーマ（{count}）:",
     msg: "メッセージ",
     turnLabel: "ターン",
   },

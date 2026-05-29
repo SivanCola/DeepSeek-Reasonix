@@ -7,7 +7,12 @@ import { buildAssistantMessage } from "./loop/messages.js";
 import { DEFAULT_MAX_RESULT_CHARS } from "./mcp/registry.js";
 import type { AppendOnlyLog } from "./memory/runtime.js";
 import { rewriteSession } from "./memory/session.js";
-import { type SessionStats, resolveContextTokens } from "./telemetry/stats.js";
+import {
+  type SessionStats,
+  inputCostUsd,
+  pricingFor,
+  resolveContextTokens,
+} from "./telemetry/stats.js";
 import { countTokensBounded, estimateRequestTokens } from "./tokenizer.js";
 import type { ChatMessage, ToolSpec } from "./types.js";
 
@@ -37,6 +42,12 @@ export const FORCE_SUMMARY_THRESHOLD = 0.8;
 export const TURN_START_FOLD_THRESHOLD = 0.9;
 /** Hard deadline for semantic fold summaries so a hung request cannot stall the turn loop. */
 export const HISTORY_FOLD_SUMMARY_TIMEOUT_MS = 15_000;
+/** Normal-band folds should pay for themselves over a short horizon; aggressive folds still prioritize headroom. */
+export const HISTORY_FOLD_ECONOMIC_HORIZON_TURNS = 3;
+export const HISTORY_FOLD_MIN_ECONOMIC_SAVINGS_FRACTION = 0.15;
+export const HISTORY_FOLD_MIN_ECONOMIC_SAVINGS_USD = 0.002;
+/** Summary + next-turn cold segment reserve used by fold economics. */
+export const HISTORY_FOLD_SUMMARY_RESERVE_TOKENS = 4096;
 /** Prepended to fold summary content so the model knows it's a synthesized recap.
  *  Re-export of the shared constant so existing imports keep resolving. */
 export const HISTORY_FOLD_MARKER = COMPACTION_SUMMARY_MARKER;
@@ -71,6 +82,7 @@ export interface PostUsageDecision {
   tailBudget?: number;
   /** True when this fold is in the 70-85% band — used in user-facing messaging. */
   aggressive?: boolean;
+  economics?: FoldEconomics;
 }
 
 export interface FoldResult {
@@ -78,6 +90,57 @@ export interface FoldResult {
   beforeMessages: number;
   afterMessages: number;
   summaryChars: number;
+}
+
+export interface FoldEconomics {
+  horizonTurns: number;
+  carryInputUsd: number;
+  foldInputUsd: number;
+  savingsUsd: number;
+  savingsFraction: number;
+  worthwhile: boolean;
+}
+
+export function estimateFoldEconomics(
+  usage: Usage,
+  model: string,
+  tailBudgetTokens: number,
+): FoldEconomics {
+  const pricing = pricingFor(model);
+  if (!pricing) {
+    return {
+      horizonTurns: HISTORY_FOLD_ECONOMIC_HORIZON_TURNS,
+      carryInputUsd: 0,
+      foldInputUsd: 0,
+      savingsUsd: 0,
+      savingsFraction: 0,
+      worthwhile: true,
+    };
+  }
+
+  const horizonTurns = HISTORY_FOLD_ECONOMIC_HORIZON_TURNS;
+  const carryInputUsd = inputCostUsd(model, usage) * horizonTurns;
+  const summaryCallUsd = inputCostUsd(model, usage);
+  const postFoldPromptTokens = Math.min(
+    usage.promptTokens,
+    tailBudgetTokens + HISTORY_FOLD_SUMMARY_RESERVE_TOKENS,
+  );
+  const postFoldColdUsd = (postFoldPromptTokens * pricing.inputCacheMiss) / 1_000_000;
+  const postFoldWarmUsd =
+    ((horizonTurns - 1) * postFoldPromptTokens * pricing.inputCacheHit) / 1_000_000;
+  const foldInputUsd = summaryCallUsd + postFoldColdUsd + postFoldWarmUsd;
+  const savingsUsd = carryInputUsd - foldInputUsd;
+  const savingsFraction = carryInputUsd > 0 ? savingsUsd / carryInputUsd : 0;
+  return {
+    horizonTurns,
+    carryInputUsd,
+    foldInputUsd,
+    savingsUsd,
+    savingsFraction,
+    worthwhile:
+      savingsUsd >= HISTORY_FOLD_MIN_ECONOMIC_SAVINGS_USD &&
+      savingsFraction >= HISTORY_FOLD_MIN_ECONOMIC_SAVINGS_FRACTION,
+  };
 }
 
 function buildFoldSummaryInstruction(pinnedSkillNames: string[]): string {
@@ -158,11 +221,17 @@ export class ContextManager {
       };
     }
     if (ratio > HISTORY_FOLD_THRESHOLD) {
+      const tailBudget = Math.floor(ctxMax * HISTORY_FOLD_TAIL_FRACTION);
+      const economics = estimateFoldEconomics(usage, model, tailBudget);
+      if (!economics.worthwhile) {
+        return { kind: "none", ...base, economics };
+      }
       return {
         kind: "fold",
         ...base,
-        tailBudget: Math.floor(ctxMax * HISTORY_FOLD_TAIL_FRACTION),
+        tailBudget,
         aggressive: false,
+        economics,
       };
     }
     return { kind: "none", ...base };

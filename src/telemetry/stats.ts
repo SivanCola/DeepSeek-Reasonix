@@ -106,6 +106,22 @@ export interface TurnStats {
   usage: Usage;
   cost: number;
   cacheHitRatio: number;
+  cacheDiagnostics?: CacheDiagnostics;
+}
+
+export type CacheChurnReason = "system" | "tools" | "few_shots" | "log_rewrite";
+
+export interface CacheDiagnostics {
+  prefixHash: string;
+  prefixChanged: boolean;
+  prefixChangeReasons: CacheChurnReason[];
+  systemHash: string;
+  toolsHash: string;
+  fewShotsHash: string;
+  logRewriteVersion: number;
+  toolSchemaTokens: number;
+  promptCacheMissTokens: number;
+  promptCacheHitTokens: number;
 }
 
 export interface SessionSummary {
@@ -122,6 +138,12 @@ export interface SessionSummary {
   /** Floor estimate for next call — actual cost = this + user delta + new tool outputs. */
   lastPromptTokens: number;
   lastTurnCostUsd: number;
+  totalCacheHitTokens: number;
+  totalCacheMissTokens: number;
+  lastCacheMissTokens: number;
+  lastToolSchemaTokens: number;
+  lastPrefixChanged: boolean;
+  lastPrefixChangeReasons: CacheChurnReason[];
 }
 
 export class SessionStats {
@@ -201,7 +223,12 @@ export class SessionStats {
     this._cacheDiagnostics = [];
   }
 
-  record(turn: number, model: string, usage: Usage): TurnStats {
+  record(
+    turn: number,
+    model: string,
+    usage: Usage,
+    cacheDiagnostics?: CacheDiagnostics,
+  ): TurnStats {
     const cost = costUsd(model, usage);
     const stats: TurnStats = {
       turn,
@@ -209,6 +236,7 @@ export class SessionStats {
       usage,
       cost,
       cacheHitRatio: usage.cacheHitRatio,
+      cacheDiagnostics,
     };
     this.turns.push(stats);
     this.trimOldTurns();
@@ -293,6 +321,12 @@ export class SessionStats {
       cacheHitRatio: round(this.aggregateCacheHitRatio, 4),
       lastPromptTokens: last?.usage.promptTokens ?? this._carryoverLastPromptTokens,
       lastTurnCostUsd: round(last?.cost ?? 0, 6),
+      totalCacheHitTokens: this.cumulativeCacheHitTokens,
+      totalCacheMissTokens: this.cumulativeCacheMissTokens,
+      lastCacheMissTokens: last?.usage.promptCacheMissTokens ?? 0,
+      lastToolSchemaTokens: last?.cacheDiagnostics?.toolSchemaTokens ?? 0,
+      lastPrefixChanged: last?.cacheDiagnostics?.prefixChanged ?? false,
+      lastPrefixChangeReasons: last?.cacheDiagnostics?.prefixChangeReasons ?? [],
     };
   }
 }

@@ -18,6 +18,7 @@ export interface CtxBreakdownData {
   toolsCount: number;
   logMessages: number;
   topTools: Array<{ name: string; tokens: number; turn: number }>;
+  topToolSchemas: Array<{ name: string; tokens: number }>;
 }
 
 /**
@@ -54,6 +55,14 @@ export function computeCtxBreakdown(loop: CacheFirstLoop): CtxBreakdownData {
   const logTokens = userTokens + assistantTokens + toolResultTokens + toolCallTokens;
   const ctxMax = resolveContextTokens(loop.model);
   const topTools = [...toolBreakdown].sort((a, b) => b.tokens - a.tokens).slice(0, 5);
+  const schemaCosts =
+    typeof loop.tools?.schemaTokenCosts === "function"
+      ? loop.tools.schemaTokenCosts()
+      : loop.prefix.toolSpecs.map((spec) => ({
+          name: spec.function.name,
+          tokens: countTokensBounded(JSON.stringify(spec)),
+        }));
+  const topToolSchemas = [...schemaCosts].sort((a, b) => b.tokens - a.tokens).slice(0, 5);
   return {
     systemTokens,
     toolsTokens,
@@ -63,6 +72,7 @@ export function computeCtxBreakdown(loop: CacheFirstLoop): CtxBreakdownData {
     toolsCount: loop.prefix.toolSpecs.length,
     logMessages: entries.length,
     topTools,
+    topToolSchemas,
   };
 }
 
@@ -150,6 +160,17 @@ export function CtxBreakdownBlock({ data }: { data: CtxBreakdownData }): React.R
               >{`    ${t("ctxBreakdown.turnLabel")} ${String(tool.turn).padStart(3)}  `}</Text>
               <Text color={COLOR.info}>{tool.name.padEnd(22)}</Text>
               <Text color={FG.faint}>{`  ${formatTokens(tool.tokens).padStart(8)}`}</Text>
+            </Box>
+          ))}
+        </Box>
+      ) : null}
+      {data.topToolSchemas.length > 0 ? (
+        <Box marginTop={1} flexDirection="column">
+          <Text dim>{t("ctxBreakdown.topToolSchemas", { count: data.topToolSchemas.length })}</Text>
+          {data.topToolSchemas.map((tool) => (
+            <Box key={tool.name}>
+              <Text color={COLOR.info}>{`    ${tool.name.padEnd(28)}`}</Text>
+              <Text dim>{`  ${formatTokens(tool.tokens).padStart(8)}`}</Text>
             </Box>
           ))}
         </Box>

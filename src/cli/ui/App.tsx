@@ -959,6 +959,12 @@ function AppInner({
     cacheHitRatio: 0,
     lastPromptTokens: 0,
     lastTurnCostUsd: 0,
+    totalCacheHitTokens: 0,
+    totalCacheMissTokens: 0,
+    lastCacheMissTokens: 0,
+    lastToolSchemaTokens: 0,
+    lastPrefixChanged: false,
+    lastPrefixChangeReasons: [],
   });
 
   const transcriptRef = useRef<WriteStream | null>(null);

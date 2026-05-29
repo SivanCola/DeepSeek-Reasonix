@@ -1,6 +1,8 @@
 import type { PauseGate } from "./core/pause-gate.js";
 import { truncateForModel, truncateForModelByTokens } from "./mcp/registry.js";
+import { sortToolSpecs } from "./memory/runtime.js";
 import { analyzeSchema, flattenSchema, nestArguments } from "./repair/flatten.js";
+import { countTokensBounded } from "./tokenizer.js";
 import {
   type NormalizedToolRateLimitConfig,
   type ToolRateLimitOption,
@@ -172,13 +174,22 @@ export class ToolRegistry {
   }
 
   specs(): ToolSpec[] {
-    return [...this._tools.values()].map((t) => ({
-      type: "function",
-      function: {
-        name: t.name,
-        description: t.description ?? "",
-        parameters: t.flatSchema ?? t.parameters ?? { type: "object", properties: {} },
-      },
+    return sortToolSpecs(
+      [...this._tools.values()].map((t) => ({
+        type: "function",
+        function: {
+          name: t.name,
+          description: t.description ?? "",
+          parameters: t.flatSchema ?? t.parameters ?? { type: "object", properties: {} },
+        },
+      })),
+    );
+  }
+
+  schemaTokenCosts(): Array<{ name: string; tokens: number }> {
+    return this.specs().map((spec) => ({
+      name: spec.function.name,
+      tokens: countTokensBounded(JSON.stringify(spec)),
     }));
   }
 
