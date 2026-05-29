@@ -30,17 +30,6 @@ Last refreshed: 2026-05-29.
 Merged total from the upstream PR metadata above: 8 PRs, 118 changed-file entries,
 +6025/-271 lines.
 
-## Closed, Not Merged
-
-These PRs are included because they appear in the same upstream closed-PR data
-source. They are kept separate from landed contributions.
-
-| PR | Status | Date | Outcome |
-| --- | --- | --- | --- |
-| [#2187](https://github.com/esengine/DeepSeek-Reasonix/pull/2187) | Closed | 2026-05-28 | Closed in favor of five separate PRs for the Cache-First Roadmap: [#2188](https://github.com/esengine/DeepSeek-Reasonix/pull/2188), [#2189](https://github.com/esengine/DeepSeek-Reasonix/pull/2189), [#2190](https://github.com/esengine/DeepSeek-Reasonix/pull/2190), [#2191](https://github.com/esengine/DeepSeek-Reasonix/pull/2191), and [#2192](https://github.com/esengine/DeepSeek-Reasonix/pull/2192). |
-| [#2128](https://github.com/esengine/DeepSeek-Reasonix/pull/2128) | Closed | 2026-05-28 | Superseded by the bilingual theme palette PR [#2134](https://github.com/esengine/DeepSeek-Reasonix/pull/2134). |
-| [#2125](https://github.com/esengine/DeepSeek-Reasonix/pull/2125) | Closed | 2026-05-28 | Withdrawn in favor of the bilingual MCP feature PR [#2135](https://github.com/esengine/DeepSeek-Reasonix/pull/2135). |
-
 ## Contribution Themes
 
 - Cache-first engineering: diagnostics, stable MCP fingerprints, and tools that reduce token-heavy edit operations.

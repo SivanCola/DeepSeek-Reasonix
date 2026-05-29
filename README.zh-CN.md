@@ -30,16 +30,6 @@ https://github.com/esengine/DeepSeek-Reasonix/pulls?q=is%3Apr+is%3Aclosed+author
 以上 upstream PR 元数据合计：8 个已合入 PR，118 个 changed-file entries，
 +6025/-271 行。
 
-## 已关闭但未合入
-
-这些 PR 也出现在同一个 upstream closed-PR 数据源中，因此保留记录，但和已落地贡献分开展示。
-
-| PR | 状态 | 日期 | 结果 |
-| --- | --- | --- | --- |
-| [#2187](https://github.com/esengine/DeepSeek-Reasonix/pull/2187) | 已关闭 | 2026-05-28 | 改为拆成 5 个独立 Cache-First Roadmap PR：[#2188](https://github.com/esengine/DeepSeek-Reasonix/pull/2188)、[#2189](https://github.com/esengine/DeepSeek-Reasonix/pull/2189)、[#2190](https://github.com/esengine/DeepSeek-Reasonix/pull/2190)、[#2191](https://github.com/esengine/DeepSeek-Reasonix/pull/2191)、[#2192](https://github.com/esengine/DeepSeek-Reasonix/pull/2192)。 |
-| [#2128](https://github.com/esengine/DeepSeek-Reasonix/pull/2128) | 已关闭 | 2026-05-28 | 被中英双语主题配色 PR [#2134](https://github.com/esengine/DeepSeek-Reasonix/pull/2134) 取代。 |
-| [#2125](https://github.com/esengine/DeepSeek-Reasonix/pull/2125) | 已关闭 | 2026-05-28 | 撤回，改由中英双语 MCP 功能 PR [#2135](https://github.com/esengine/DeepSeek-Reasonix/pull/2135) 承接。 |
-
 ## 贡献主题
 
 - Cache-first engineering：缓存诊断、稳定 MCP fingerprint，以及减少 token-heavy edit operations 的工具。
