@@ -1,6 +1,6 @@
 # 我对 DeepSeek-Reasonix 的贡献记录
 
-[English](README.md)
+[English](README.md) | 中文
 
 这个 fork 用来展示我在官方上游仓库
 [esengine/DeepSeek-Reasonix](https://github.com/esengine/DeepSeek-Reasonix)
