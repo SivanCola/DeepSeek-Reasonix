@@ -6,14 +6,6 @@
 [esengine/DeepSeek-Reasonix](https://github.com/esengine/DeepSeek-Reasonix)
 中的贡献记录；安装、发布版本和权威文档请以官方仓库为准。
 
-## 数据源
-
-官方上游仓库中由 `SivanCola` 创建的 closed PR：
-
-https://github.com/esengine/DeepSeek-Reasonix/pulls?q=is%3Apr+is%3Aclosed+author%3ASivanCola
-
-最后刷新时间：2026-05-29。
-
 ## 已合入贡献
 
 | PR | 状态 | 日期 | 贡献内容 | PR 元数据 |
@@ -40,3 +32,11 @@ https://github.com/esengine/DeepSeek-Reasonix/pulls?q=is%3Apr+is%3Aclosed+author
 ## 分支用途
 
 这个分支适合作为我的 fork 的默认落地页。常规开发分支可以继续贴近 upstream，而这个分支让访问者第一眼看到我已经合入官方仓库的具体贡献。
+
+## 数据源
+
+官方上游仓库中由 `SivanCola` 创建的 closed PR：
+
+https://github.com/esengine/DeepSeek-Reasonix/pulls?q=is%3Apr+is%3Aclosed+author%3ASivanCola
+
+最后刷新时间：2026-05-29。

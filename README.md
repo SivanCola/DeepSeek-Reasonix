@@ -6,14 +6,6 @@ This fork showcases my contributions to the upstream
 [esengine/DeepSeek-Reasonix](https://github.com/esengine/DeepSeek-Reasonix)
 project; installation, releases, and canonical documentation belong there.
 
-## Data Source
-
-Closed upstream PRs authored by `SivanCola`:
-
-https://github.com/esengine/DeepSeek-Reasonix/pulls?q=is%3Apr+is%3Aclosed+author%3ASivanCola
-
-Last refreshed: 2026-05-29.
-
 ## Landed Contributions
 
 | PR | Status | Date | Contribution | PR metadata |
@@ -42,3 +34,11 @@ Merged total from the upstream PR metadata above: 8 PRs, 118 changed-file entrie
 This branch is designed as the landing page for my fork. The regular development
 branch can stay close to upstream, while this branch gives visitors a quick, readable
 view of the concrete contributions that landed in the official repository.
+
+## Data Source
+
+Closed upstream PRs authored by `SivanCola`:
+
+https://github.com/esengine/DeepSeek-Reasonix/pulls?q=is%3Apr+is%3Aclosed+author%3ASivanCola
+
+Last refreshed: 2026-05-29.
