@@ -218,6 +218,18 @@ export type PendingRevision = {
   summary?: string;
 };
 
+export type ReasonixCommandState =
+  | "missing"
+  | "installed"
+  | "needsUpdate"
+  | "foreign"
+  | "unsupported";
+
+export type ReasonixCommandStatus = {
+  path: string;
+  state: ReasonixCommandState;
+};
+
 export type UsageStats = {
   totalCostUsd: number;
   totalPromptTokens: number;
@@ -1360,6 +1372,10 @@ interface TabRuntimeProps {
   onToggleSide: () => void;
   onToggleCtx: () => void;
   onToggleCurrency: () => void;
+  onInstallReasonixCommand: () => void;
+  isInstallingReasonixCommand: boolean;
+  reasonixCommandStatus: ReasonixCommandStatus | null;
+  onRefreshReasonixCommandStatus: () => void;
   tabsList: { id: string; workspaceDir?: string }[];
   activeTabId: string;
   setActiveTabId: (id: string) => void;
@@ -1394,6 +1410,10 @@ function TabRuntime({
   onToggleSide,
   onToggleCtx,
   onToggleCurrency,
+  onInstallReasonixCommand,
+  isInstallingReasonixCommand,
+  reasonixCommandStatus,
+  onRefreshReasonixCommandStatus,
   tabsList,
   activeTabId,
   setActiveTabId,
@@ -1431,6 +1451,21 @@ function TabRuntime({
   });
   useLang();
   useDisableTextAssist();
+  const activeRef = useRef(active);
+  useEffect(() => {
+    activeRef.current = active;
+  }, [active]);
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    listen("reasonix-menu-about", () => {
+      if (activeRef.current) setAboutOpen(true);
+    }).then((fn) => {
+      unlisten = fn;
+    });
+    return () => {
+      unlisten?.();
+    };
+  }, []);
   const [draft, setDraft] = useState("");
   const [toast, setToast] = useState<{ msg: string; yolo?: boolean } | null>(null);
   const [splashOn, setSplashOn] = useState<boolean>(() => shouldShowSplash());
@@ -1452,6 +1487,9 @@ function TabRuntime({
   const [aboutOpen, setAboutOpen] = useState(false);
   const [contextPanelTab, setContextPanelTab] = useState<ContextPanelTab>("files");
   const [contextPanelTabNonce, setContextPanelTabNonce] = useState(0);
+  useEffect(() => {
+    if (settingsOpen) onRefreshReasonixCommandStatus();
+  }, [onRefreshReasonixCommandStatus, settingsOpen]);
   const previousApprovalSnapshotRef = useRef<ApprovalSnapshot>({
     confirms: [],
     pathAccess: [],
@@ -2773,6 +2811,9 @@ function TabRuntime({
               openUrl("https://q.qq.com/qqbot/openclaw/login.html").catch(() => undefined)
             }
             onPickWorkspace={pickWorkspace}
+            onInstallReasonixCommand={onInstallReasonixCommand}
+            isInstallingReasonixCommand={isInstallingReasonixCommand}
+            reasonixCommandStatus={reasonixCommandStatus}
             onImportCcSwitchMcp={importCcSwitchMcp}
             onAddMcpSpec={addMcpSpec}
             onRemoveMcpSpec={removeMcpSpec}
@@ -3454,6 +3495,11 @@ export function App() {
     downloaded: number;
     total: number | null;
   } | null>(null);
+  const [menuToast, setMenuToast] = useState<{ msg: string } | null>(null);
+  const installingCommandRef = useRef(false);
+  const [isInstallingReasonixCommand, setIsInstallingReasonixCommand] = useState(false);
+  const [reasonixCommandStatus, setReasonixCommandStatus] =
+    useState<ReasonixCommandStatus | null>(null);
   const [currency, setCurrency] = useState<"CNY" | "USD">(() => {
     const v = localStorage.getItem("reasonix.currency");
     return v === "USD" ? "USD" : "CNY";
@@ -3623,6 +3669,56 @@ export function App() {
       cancelled = true;
     };
   }, []);
+
+  const refreshReasonixCommandStatus = useCallback(() => {
+    void invoke<ReasonixCommandStatus>("reasonix_command_status")
+      .then(setReasonixCommandStatus)
+      .catch(() => {
+        setReasonixCommandStatus(null);
+      });
+  }, []);
+
+  useEffect(() => {
+    refreshReasonixCommandStatus();
+  }, [refreshReasonixCommandStatus]);
+
+  const installReasonixCommand = useCallback(() => {
+    if (installingCommandRef.current) return;
+    installingCommandRef.current = true;
+    setIsInstallingReasonixCommand(true);
+    void invoke<{ path: string; action: string; usedAdmin: boolean }>(
+      "install_reasonix_command",
+    )
+      .then((result) => {
+        const key =
+          result.action === "installed"
+            ? "toast.reasonixCommandInstalled"
+            : "toast.reasonixCommandUpdated";
+        setMenuToast({ msg: t(key, { path: result.path }) });
+        refreshReasonixCommandStatus();
+        window.setTimeout(() => setMenuToast(null), 3000);
+      })
+      .catch((err) => {
+        setMenuToast({ msg: String(err) });
+        window.setTimeout(() => setMenuToast(null), 5000);
+      })
+      .finally(() => {
+        installingCommandRef.current = false;
+        setIsInstallingReasonixCommand(false);
+      });
+  }, [refreshReasonixCommandStatus]);
+
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    listen("reasonix-menu-install-command", () => {
+      installReasonixCommand();
+    }).then((fn) => {
+      unlisten = fn;
+    });
+    return () => {
+      unlisten?.();
+    };
+  }, [installReasonixCommand]);
 
   const installUpdate = useCallback(async () => {
     if (!pendingUpdate) return;
@@ -3927,6 +4023,10 @@ export function App() {
           onToggleSide={onToggleSide}
           onToggleCtx={onToggleCtx}
           onToggleCurrency={onToggleCurrency}
+          onInstallReasonixCommand={installReasonixCommand}
+          isInstallingReasonixCommand={isInstallingReasonixCommand}
+          reasonixCommandStatus={reasonixCommandStatus}
+          onRefreshReasonixCommandStatus={refreshReasonixCommandStatus}
           tabsList={tabs}
           activeTabId={activeTabId}
           setActiveTabId={setActiveTabId}
@@ -3941,6 +4041,11 @@ export function App() {
           onInstall={installUpdate}
           onDismiss={() => setPendingUpdate(null)}
         />
+      ) : null}
+      {menuToast ? (
+        <div className="global-toast">
+          <Toast message={menuToast} />
+        </div>
       ) : null}
     </>
   );

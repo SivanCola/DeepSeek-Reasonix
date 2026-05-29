@@ -77,6 +77,8 @@ export const ja: typeof en = {
     mcpStatusOpened: "MCPステータスパネルを開きました",
     mcpRetryNone: "再試行する失敗MCPサーバーはありません",
     mcpRetryQueued: "失敗したMCPサーバー {count} 件を再試行しています",
+    reasonixCommandInstalled: "reasonix コマンドを {path} にインストールしました",
+    reasonixCommandUpdated: "reasonix コマンドを {path} に更新しました",
     aboutLine: "Reasonix v{version} · キャッシュファーストDeepSeekエージェント",
   },
   composer: {
@@ -185,6 +187,21 @@ export const ja: typeof en = {
       "既定では閉じると終了します。トレイに隠すと実行中のセッションを維持します。",
     closeToQuit: "終了",
     closeToTray: "トレイに隠す",
+    installReasonixCommand: "reasonix コマンドをインストール",
+    installReasonixCommandHint:
+      "/usr/local/bin/reasonix を追加して、ターミナルから Reasonix を実行できるようにします。",
+    installReasonixCommandAction: "インストール",
+    installReasonixCommandInstalling: "インストール中…",
+    installReasonixCommandInstalled: "インストール済み",
+    installReasonixCommandUpdate: "更新",
+    installReasonixCommandExists: "存在します",
+    installReasonixCommandUnsupported: "利用不可",
+    installReasonixCommandHintInstalled: "/usr/local/bin/reasonix にインストール済みです。",
+    installReasonixCommandHintUpdate:
+      "/usr/local/bin/reasonix を更新し、現在の Reasonix アプリを指すようにします。",
+    installReasonixCommandHintForeign:
+      "reasonix コマンドが既に存在し、Reasonix Desktop がインストールしたものではありません。",
+    installReasonixCommandHintUnsupported: "この操作は macOS でのみ利用できます。",
     editModeReviewDesc: "すべての書き込みを承認",
     editModeAutoDesc: "コマンドを承認、編集は自動",
     editModeYoloDesc: "すべて自動承認 — 完全自動",

@@ -8140,6 +8140,18 @@ html[data-platform="macos"] .splash {
   color: var(--text);
 }
 
+.global-toast {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 9999;
+}
+
+.global-toast .toast {
+  position: static;
+}
+
 @media (max-width: 860px) {
   .memory-browser {
     grid-template-columns: 1fr;
