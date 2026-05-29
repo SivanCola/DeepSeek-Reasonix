@@ -4,8 +4,10 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   type DesktopOpenTab,
+  addGlobalShellAllowed,
   addProjectPathAllowed,
   addProjectShellAllowed,
+  clearGlobalShellAllowed,
   clearProjectPathAllowed,
   clearProjectShellAllowed,
   editModeHintShown,
@@ -20,6 +22,7 @@ import {
   loadEndpoint,
   loadEngineeringLifecycleMode,
   loadFilesystemOutlineThresholdBytes,
+  loadGlobalShellAllowed,
   loadIndexConfig,
   loadIndexUserConfig,
   loadModel,
@@ -39,6 +42,7 @@ import {
   readConfig,
   redactKey,
   redactSemanticEmbeddingConfig,
+  removeGlobalShellAllowed,
   removeProjectPathAllowed,
   removeProjectShellAllowed,
   resolveSemanticEmbeddingConfig,
@@ -535,6 +539,31 @@ describe("config", () => {
     expect(loadPromptHistory(path)[0]).toBe("cmd-0");
   });
 
+  it("global shell allowlist CRUD mirrors project (load/add/dedup/remove/clear)", () => {
+    expect(loadGlobalShellAllowed(path)).toEqual([]);
+    addGlobalShellAllowed("npm install", path);
+    addGlobalShellAllowed("git commit", path);
+    addGlobalShellAllowed("npm install", path); // dedup
+    addGlobalShellAllowed("   ", path); // ignored
+    expect(loadGlobalShellAllowed(path)).toEqual(["npm install", "git commit"]);
+    expect(removeGlobalShellAllowed("npm install", path)).toBe(true);
+    expect(removeGlobalShellAllowed("npm install", path)).toBe(false);
+    expect(loadGlobalShellAllowed(path)).toEqual(["git commit"]);
+    expect(clearGlobalShellAllowed(path)).toBe(1);
+    expect(loadGlobalShellAllowed(path)).toEqual([]);
+    expect(clearGlobalShellAllowed(path)).toBe(0);
+  });
+
+  it("global allowlist is independent of any project's allowlist", () => {
+    addGlobalShellAllowed("brew install", path);
+    addProjectShellAllowed("/a", "npm install", path);
+    expect(loadGlobalShellAllowed(path)).toEqual(["brew install"]);
+    expect(loadProjectShellAllowed("/a", path)).toEqual(["npm install"]);
+    // Clearing the project list leaves the global list intact.
+    clearProjectShellAllowed("/a", path);
+    expect(loadGlobalShellAllowed(path)).toEqual(["brew install"]);
+  });
+
   it("pathAllowed CRUD mirrors shellAllowed (load/add/dedup/remove/clear)", () => {
     expect(loadProjectPathAllowed("/a", path)).toEqual([]);
     addProjectPathAllowed("/a", "/Users/foo/Documents", path);
@@ -686,10 +715,10 @@ describe("config", () => {
   });
 
   it("resolveThemePreference lets env override auto but not registered config themes", () => {
-    expect(resolveThemePreference("auto", "light")).toBe("light");
+    expect(resolveThemePreference("auto", "light")).toBe("porcelain");
     expect(resolveThemePreference(undefined, "midnight")).toBe("midnight");
-    expect(resolveThemePreference("dark", "light")).toBe("dark");
-    expect(resolveThemePreference("auto", "unknown")).toBe("dark");
+    expect(resolveThemePreference("dark", "light")).toBe("graphite");
+    expect(resolveThemePreference("auto", "unknown")).toBe("graphite");
   });
 
   it("saveTheme doesn't clobber other persisted fields", () => {

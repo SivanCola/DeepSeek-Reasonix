@@ -86,6 +86,9 @@ export const zhCN: TranslationSchema = {
       '▸ 已恢复会话 "{name}"，包含 {count} 条历史消息 · /new 重新开始 · /sessions 管理',
     newSession: '▸ 会话 "{name}" (新) — 随聊随存 · /sessions 重命名或删除',
     ephemeralSession: "▸ 临时聊天 (不保存会话) — 去掉 --no-session 以启用保存",
+    systemPromptChanged: "▸ 系统提示自上次会话后已变更",
+    systemPromptChangedDetail:
+      "REASONIX.md 或记忆文件发生了更改 — 本轮将产生完整缓存 miss。可使用 /new 以更新后的上下文开始新会话。",
     restoredEdits:
       "▸ 从中断的运行中恢复了 {count} 个待处理的编辑块 — /apply 提交或 /discard 放弃。",
     resumedPlan: "已恢复计划 · {when}{summary}",
@@ -261,7 +264,7 @@ export const zhCN: TranslationSchema = {
     models: { description: "列出从 DeepSeek /models 获取的可用模型" },
     theme: {
       description: "显示或持久化终端主题偏好。无参数时打开选择器。",
-      argsHint: "[auto|dark|light|midnight|deep-blue|high-contrast]",
+      argsHint: "[auto|graphite|ember|aurora|sandstone|porcelain|linen|glacier|midnight]",
     },
     language: {
       description: "切换运行时语言",
@@ -272,6 +275,15 @@ export const zhCN: TranslationSchema = {
     budget: {
       description: "会话美元上限 — 80% 时警告，100% 时拒绝下一轮。默认关闭。单独 /budget 显示状态",
       argsHint: "[usd|off]",
+    },
+    "max-tokens": {
+      description: "限制每轮输出 token 数 — 防止推理失控。默认不限制。单独显示当前设置。",
+      argsHint: "[N|off]",
+    },
+    diff: {
+      description:
+        "配置 edit_file / write_file diff 的显示方式：summary（路径 +统计，默认）· full（unified diff）· none（仅勾选）",
+      argsHint: "[summary|full|none]",
     },
     mcp: { description: "列出附加到此会话的 MCP 服务器 + 工具" },
     resource: {
@@ -313,6 +325,9 @@ export const zhCN: TranslationSchema = {
     doctor: {
       description: "健康检查（api / config / api-reach / index / hooks / project）",
     },
+    "cache-miss-report": {
+      description: "基于本地前缀证据解释最近的提示缓存未命中",
+    },
     context: { description: "显示上下文窗口分解（系统 / 工具 / 日志 / 输入）" },
     retry: { description: "截断并重发您的最后一条消息（重新采样）" },
     compact: {
@@ -342,6 +357,14 @@ export const zhCN: TranslationSchema = {
     qq: {
       description:
         "连接/查看/断开 QQ 通道，首次连接需提供 AppId + AppSecret（可选沙箱模式 sandbox）",
+    },
+    telegram: {
+      description: "连接/查看/断开 Telegram 通道，首次连接需提供 BotFather bot token",
+      argsHint: "[connect [botToken]|status|disconnect]",
+    },
+    weixin: {
+      description: "连接/查看/断开微信通道，首次连接默认使用 iLink 扫码登录",
+      argsHint: "[connect [manual token accountId [baseUrl]]|status|disconnect]",
     },
     setup: { description: "提醒您退出并运行 `reasonix setup`" },
     semantic: {
@@ -433,12 +456,33 @@ export const zhCN: TranslationSchema = {
     themeSubtitle: "方向键切换时即时预览效果，之后可用 /theme 更改。",
     themeSampleHeading: "示例",
     themeFooter: "[↑↓] 移动 · [Enter] 确认 · [Esc] 取消",
+    themeName: {
+      graphite: "石墨",
+      ember: "余烬",
+      aurora: "极光",
+      sandstone: "砂岩",
+      porcelain: "瓷白",
+      linen: "亚麻",
+      glacier: "冰川",
+      midnight: "午夜",
+      dark: "深色",
+      light: "浅色",
+      "deep-blue": "深蓝",
+      "high-contrast": "高对比度",
+    },
     themeCaption: {
-      dark: "深色调（默认）",
-      light: "清爽浅色",
-      midnight: "东京夜色",
-      "deep-blue": "深蓝纯黑",
-      "high-contrast": "高对比度（无障碍）",
+      graphite: "原始深色主题，搭配中性石墨面板",
+      ember: "暖黑深色主题，强化 Reasonix 橙色品牌感",
+      aurora: "青绿色深色主题，低光环境更柔和",
+      sandstone: "原始暖浅色主题",
+      porcelain: "清爽浅色主题，安静高对比",
+      linen: "偏纸张质感的编辑风暖浅色主题",
+      glacier: "清冷浅色主题，搭配清晰蓝色强调色",
+      midnight: "海军蓝深色主题，冷色高亮",
+      dark: "深色调（旧别名）",
+      light: "清爽浅色（旧别名）",
+      "deep-blue": "深蓝纯黑（旧别名）",
+      "high-contrast": "高对比度（旧别名）",
     },
     reviewLabelTheme: "主题",
     mcpTitle: "Reasonix 要为你接入哪些 MCP 服务器？",
@@ -473,6 +517,7 @@ export const zhCN: TranslationSchema = {
   themePicker: {
     header: "主题",
     footer: "↑↓ 选择 · ⏎ 确认 · Esc 取消",
+    autoLabel: "自动",
     currentPref: "当前偏好",
     activeNow: "当前生效",
     autoDesc: "使用 REASONIX_THEME 或默认主题",
@@ -818,11 +863,97 @@ export const zhCN: TranslationSchema = {
       lockAlreadyRunning: "QQ 通道已在进程 {pid} 中运行。请先停止该进程，再启动新的 QQ 通道。",
       unauthorizedMessage: "QQ 忽略了未授权 openid {openid} 的消息。当前访问控制：{access}。",
       runtimeBound:
-        "QQ 已在本次运行中临时绑定到首个发送者 {openid}。如需持久化，请在配置中设置 `qq.ownerOpenId`。",
+        "QQ 已在本次运行中临时绑定到首个发送者 {openid}。如果你希望固定绑定到这个账号，可以在 QQ 设置中手动指定。",
       missingAppId: "缺少 QQ App ID。请先运行 `/qq connect` 完成配置。",
       missingAppSecret: "缺少 QQ App Secret。请先运行 `/qq connect` 完成配置。",
       authFailed: "QQ 机器人鉴权失败，请检查 App ID 和 App Secret。",
       readyTimeout: "QQ 机器人 15 秒内未收到 READY，请检查 App ID 和 App Secret。",
+    },
+    telegram: {
+      unavailable: "/telegram 在当前会话中不可用。",
+      connecting: "Telegram：正在连接...",
+      connectFailed: "Telegram 连接失败：{reason}",
+      disconnecting: "Telegram：正在断开...",
+      disconnectFailed: "Telegram 断开失败：{reason}",
+      usage: "用法：/telegram connect [botToken] | /telegram status | /telegram disconnect",
+      promptBotToken:
+        "Telegram 首次配置：请输入 BotFather 提供的 bot token 后回车。输入 /cancel 可取消。",
+      setupWaitingBotToken: "等待输入 bot token",
+      setupCancelled: "Telegram 首次配置已取消。",
+      credentialsRequired: "Telegram bot token 不能为空。",
+      connected: "Telegram 已在{mode}模式下连接成功，后续启动会自动启用。",
+      alreadyConnected: "Telegram 已在{mode}模式下连接，自动启动已启用。",
+      disconnected: "Telegram 已断开连接，自动启动已关闭。",
+      status:
+        "Telegram：{connected}，自动启动{enabled}，凭据{configured}，botToken {botToken}，访问控制 {access}，当前模式 {mode}。",
+      statusSetup: "Telegram：首次配置进行中 - {step}",
+      stateConnected: "已连接",
+      stateDisconnected: "未连接",
+      stateEnabled: "已启用",
+      stateDisabled: "未启用",
+      stateConfigured: "已配置",
+      stateNotConfigured: "未配置",
+      none: "无",
+      modeChat: "聊天",
+      modeCode: "代码",
+      accessOwner: "所有者 {owner}",
+      accessOwnerWithAllowlist: "所有者 {owner}，白名单 {count}",
+      accessAllowlist: "白名单 {count}",
+      accessRuntime: "首个 Telegram 用户（仅本次运行，{owner}）",
+      accessRequiredShort: "需要配置访问控制",
+      lockAlreadyRunning:
+        "Telegram 通道已在进程 {pid} 中运行。请先停止该进程，再启动新的 Telegram 通道。",
+      unauthorizedMessage: "Telegram 忽略了未授权用户 {userId} 的消息。当前访问控制：{access}。",
+      runtimeBound:
+        "Telegram 已在本次运行中临时绑定到首个发送者 {userId}。如需持久化，请在配置中设置 `telegram.ownerUserId`。",
+      missingBotToken: "缺少 Telegram bot token。请先运行 `/telegram connect` 完成配置。",
+      accessRequired:
+        "Telegram 启动前必须配置访问控制。请在配置中设置 `telegram.ownerUserId` 或 `telegram.allowlist`。",
+      rateLimited: "Telegram 已限流授权用户 {userId}：{seconds} 秒内超过 5 条消息。",
+      rateLimitedReply: "Telegram 收到消息过快，请等待 {seconds} 秒后再发送。",
+    },
+    weixin: {
+      unavailable: "/weixin 在当前会话中不可用。",
+      connecting: "微信：正在连接...",
+      connectFailed: "微信连接失败：{reason}",
+      disconnecting: "微信：正在断开...",
+      disconnectFailed: "微信断开失败：{reason}",
+      usage:
+        "用法：/weixin connect | /weixin connect manual [token accountId [baseUrl]] | /weixin status | /weixin disconnect",
+      promptCredentials:
+        "微信手动配置：请输入 iLink token 和账号 id，中间用空格分隔后回车。输入 /cancel 可取消。",
+      setupWaitingCredentials: "等待输入 iLink token 和账号 id",
+      setupCancelled: "微信首次配置已取消。",
+      credentialsRequired: "微信 token 和账号 id 不能为空。",
+      connected: "微信已在{mode}模式下连接成功，后续启动会自动启用。",
+      alreadyConnected: "微信已在{mode}模式下连接，自动启动已启用。",
+      disconnected: "微信已断开连接，自动启动已关闭。",
+      status:
+        "微信：{connected}，自动启动{enabled}，凭据{configured}，token {token}，账号 {accountId}，访问控制 {access}，当前模式 {mode}。",
+      statusSetup: "微信：首次配置进行中 - {step}",
+      stateConnected: "已连接",
+      stateDisconnected: "未连接",
+      stateEnabled: "已启用",
+      stateDisabled: "未启用",
+      stateConfigured: "已配置",
+      stateNotConfigured: "未配置",
+      none: "无",
+      modeChat: "聊天",
+      modeCode: "代码",
+      accessOwner: "所有者 {owner}",
+      accessOwnerWithAllowlist: "所有者 {owner}，白名单 {count}",
+      accessAllowlist: "白名单 {count}",
+      accessRuntime: "首个微信用户（仅本次运行，{owner}）",
+      accessRequiredShort: "需要配置访问控制",
+      lockAlreadyRunning: "微信通道已在进程 {pid} 中运行。请先停止该进程，再启动新的微信通道。",
+      unauthorizedMessage: "微信忽略了未授权用户 {userId} 的消息。当前访问控制：{access}。",
+      runtimeBound:
+        "微信已在本次运行中临时绑定到首个发送者 {userId}。如需持久化，请在配置中设置 `weixin.ownerUserId`。",
+      missingToken: "缺少微信 iLink token。请先运行 `/weixin connect` 完成配置。",
+      missingAccountId: "缺少微信账号 id。请先运行 `/weixin connect` 完成配置。",
+      accessRequired:
+        "微信启动前必须配置访问控制。请在配置中设置 `weixin.ownerUserId` 或 `weixin.allowlist`。",
+      rateLimited: "微信已限流授权用户 {userId}：{seconds} 秒内超过 5 条消息。",
     },
     admin: {
       doctorNeedsTui: "/doctor 需要 TUI 上下文（postDoctor 已连接）。",
@@ -924,6 +1055,16 @@ export const zhCN: TranslationSchema = {
         "▲ budget → ${cap} 但已花费 ${spent}。下一轮将被拒绝 — 提高上限以继续，或结束会话。",
       budgetSet:
         "budget → ${cap}  （迄今：${spent} · 80% 时警告，100% 时拒绝下一轮 · /budget off 清除）",
+      maxTokensNoCap: "max-tokens → 无限制（使用服务端默认值 · /max-tokens <N> 设置上限）",
+      maxTokensStatus: "max-tokens → 每轮最多 {n} 个输出 token  （/max-tokens off 清除）",
+      maxTokensSet: "max-tokens → {n}  （下一轮输出最多 {n} tokens）",
+      maxTokensOff: "max-tokens → 关闭（无限制，使用服务端默认值）",
+      maxTokensUsage: "用法：/max-tokens <正整数>   例如 /max-tokens 4096  ·  /max-tokens off",
+    },
+    diff: {
+      diffStatus: "diff 显示 → {current}",
+      diffSet: "diff 显示 → {mode}",
+      diffInvalid: "未知模式：{mode}\n可用：{choices}",
     },
     permissions: {
       mutateCodeOnly:
@@ -958,6 +1099,13 @@ export const zhCN: TranslationSchema = {
       projectNone1: '  （无 — 在 ShellConfirm 提示中选择 "always allow" 添加一个，',
       projectNone2: "   或直接 `/permissions add <prefix>`。）",
       projectNoRoot: "项目允许列表 — （无项目根目录；聊天模式仅显示内置条目）",
+      globalHeader: "全局允许列表（{count}）— 对所有项目生效",
+      globalNone: "  （无 — 用 `/permissions add --global <prefix>` 添加。）",
+      addGlobalInfo:
+        "▸ 已添加到全局允许列表：{prefix}\n  → 之后 `{prefix}` 在所有项目中执行都不再询问。",
+      removeGlobalEmpty: "▸ 全局允许列表没有可删除的条目。",
+      clearGlobalConfirm:
+        "将清除 {count} 条全局允许列表条目。请加上 'confirm' 重新执行：/permissions clear --global confirm",
       builtinHeader: "内置允许列表（{count}）— 只读，已编译",
       subcommands:
         "子命令：/permissions add <prefix> · /permissions remove <prefix-or-N> · /permissions clear confirm",

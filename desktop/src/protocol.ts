@@ -167,16 +167,38 @@ export type McpSpecInfo = {
   name: string | null;
   transport: "stdio" | "sse" | "streamable-http";
   summary: string;
+  config?: ImportedMcpServer;
   parseError?: string;
   status: McpSpecStatus;
+  statusHint?: "auth" | "missing-token" | "command" | "network" | "unknown";
   statusReason?: string;
   toolCount?: number;
+  tools?: McpToolInfo[];
+};
+
+export type McpToolInfo = {
+  name: string;
+  registeredName: string;
+  description?: string;
 };
 
 export type McpSpecsEvent = {
   type: "$mcp_specs";
   specs: McpSpecInfo[];
   bridged: boolean;
+};
+
+export type ImportedMcpServer = {
+  name: string;
+  transport: "stdio" | "sse" | "streamable-http";
+  command?: string;
+  args?: string[];
+  env?: Record<string, string>;
+  cwd?: string;
+  url?: string;
+  headers?: Record<string, string>;
+  disabled?: boolean;
+  requestTimeoutMs?: number;
 };
 
 export type SkillScope = "project" | "global" | "builtin";
@@ -319,6 +341,7 @@ export type SettingsEvent = {
   recentWorkspaces: string[];
   model: string;
   editor?: string;
+  desktopCloseBehavior?: "closeToTray" | "closeToQuit";
   webSearchEngine?: WebSearchEngineName;
   webSearchEndpoint?: string;
   webSearchApiKeys?: {
@@ -374,6 +397,7 @@ export type SettingsPatch = {
   recentWorkspaces?: string[];
   model?: string;
   editor?: string;
+  desktopCloseBehavior?: "closeToTray" | "closeToQuit";
   webSearchEngine?: WebSearchEngineName;
   webSearchEndpoint?: string | null;
   metasoApiKey?: string | null;
@@ -576,6 +600,9 @@ export type OutgoingCommand = { tabId?: string } & (
   | { cmd: "mcp_specs_get" }
   | { cmd: "mcp_specs_add"; spec: string }
   | { cmd: "mcp_specs_remove"; spec: string }
+  | { cmd: "mcp_import_servers"; servers: ImportedMcpServer[] }
+  | { cmd: "mcp_specs_update"; raw: string; server: ImportedMcpServer }
+  | { cmd: "mcp_specs_retry"; raw: string }
   | { cmd: "skills_get" }
   | { cmd: "skill_run"; name: string; args?: string }
   | { cmd: "jobs_list" }

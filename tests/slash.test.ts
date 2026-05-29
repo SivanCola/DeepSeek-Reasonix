@@ -20,6 +20,10 @@ import {
 } from "../src/i18n/index.js";
 import { CacheFirstLoop } from "../src/loop.js";
 import { ImmutablePrefix } from "../src/memory/runtime.js";
+import {
+  buildCacheDiagnostic,
+  prefixDiagnosticHashes,
+} from "../src/telemetry/cache-diagnostics.js";
 import { VERSION } from "../src/version.js";
 
 function makeLoop() {
@@ -697,10 +701,11 @@ describe("handleSlash", () => {
     // Case-insensitive.
     expect(suggestSlashCommands("HE").map((s) => s.cmd)).toEqual(["help"]);
     // Empty prefix returns the full non-advanced release list, including code commands.
-    expect(suggestSlashCommands("", true)).toHaveLength(43);
+    expect(suggestSlashCommands("", true)).toHaveLength(48);
     expect(suggestSlashCommands("", true).map((s) => s.cmd)).toContain("logs");
     expect(suggestSlashCommands("", true).map((s) => s.cmd)).toContain("goal");
     expect(suggestSlashCommands("", true).map((s) => s.cmd)).toContain("language");
+    expect(suggestSlashCommands("", true).map((s) => s.cmd)).toContain("weixin");
     expect(suggestSlashCommands("lan").map((s) => s.cmd)).toContain("language");
   });
 
@@ -721,6 +726,13 @@ describe("handleSlash", () => {
       const r = handleSlash("goal", [], makeLoop(), { memoryRoot: process.cwd() });
       expect(r.info).toMatch(/Goal/);
       expect(r.goal).toBeUndefined();
+    });
+  });
+
+  it("resolves Telegram-safe slash aliases", () => {
+    expect(parseSlash("/search_engine bing")).toEqual({
+      cmd: "search-engine",
+      args: ["bing"],
     });
   });
 
@@ -784,6 +796,33 @@ describe("handleSlash", () => {
     it("is surfaced by suggestSlashCommands", () => {
       const names = suggestSlashCommands("sta").map((s) => s.cmd);
       expect(names).toContain("stats");
+    });
+  });
+
+  describe("/cache-miss-report", () => {
+    it("renders a live cache report when no session meta exists", () => {
+      const loop = makeLoop();
+      const turnStats = loop.stats.record(1, loop.model, new Usage(100, 20, 120, 80, 20));
+      const diagnostic = buildCacheDiagnostic({
+        turn: 1,
+        model: loop.model,
+        usage: turnStats.usage,
+        estimatedCostUsd: turnStats.cost,
+        prefix: prefixDiagnosticHashes({ system: "s", toolSpecs: [], fewShots: [] }),
+        previous: null,
+      });
+      loop.stats.addCacheDiagnostic(diagnostic);
+
+      const r = handleSlash("cache-miss-report", [], loop);
+
+      expect(r.info).toContain("cache miss report");
+      expect(r.info).toContain("DeepSeek does not return a cache-miss reason");
+      expect(r.info).toContain("input 100");
+    });
+
+    it("is surfaced by suggestSlashCommands", () => {
+      const names = suggestSlashCommands("cache").map((s) => s.cmd);
+      expect(names).toContain("cache-miss-report");
     });
   });
 
@@ -1623,7 +1662,7 @@ describe("handleSlash", () => {
 
     it("persists auto so env can resolve the active theme", () => {
       const r = handleSlash("theme", ["auto"], makeLoop());
-      expect(r.info).toMatch(/active on next launch: dark/);
+      expect(r.info).toMatch(/active on next launch: graphite/);
       expect(loadTheme()).toBe("auto");
     });
 
