@@ -593,7 +593,7 @@ async function searchPerplexity(
   opts: WebSearchOptions = {},
 ): Promise<SearchResult[]> {
   const topK = Math.max(1, Math.min(20, opts.topK ?? DEFAULT_TOPK));
-  const apiKey = loadPerplexityApiKey();
+  const apiKey = loadPerplexityApiKey(opts.configPath);
   if (!apiKey) throw new Error(t("webErrors.perplexityMissingKey"));
 
   let resp: Response;
