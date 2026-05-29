@@ -41,6 +41,7 @@ import {
   loadEngineeringLifecycleMode,
   loadHistoryScrollMode,
   loadMaxIterPerTurn,
+  loadMaxOutputTokens,
   loadMouseWheelRows,
   loadReasoningEffort,
   loadTheme,
@@ -138,7 +139,7 @@ import type { PickerSnapshot, ViewerSnapshot } from "./dashboard/use-picker-broa
 import { useViewerBroadcast } from "./dashboard/use-picker-broadcast.js";
 import { formatEditResults, formatPendingPreview } from "./edit-history.js";
 import {
-  buildEditToolBlocks,
+  buildEditToolBlocksForReview,
   formatQueuedReviewToolResult,
   isReviewGatedEditTool,
   shouldApplyEditToolImmediately,
@@ -625,6 +626,7 @@ function AppInner({
       mode: engineeringLifecycleBaseModeRef.current,
     });
   }
+  const lifecyclePlanSuggestionSessionRef = useRef<string | null | undefined>(undefined);
   // Refs that mirror state for stable read-callbacks handed to the
   // embedded dashboard server. The server's `getXxx()` closures are
   // captured once at startDashboard time; without ref-mirrors the
@@ -1034,6 +1036,7 @@ function AppInner({
       hooks: hookList,
       hookCwd: currentRootDir,
       reasoningEffort: initialReasoningEffort ?? loadReasoningEffort(),
+      maxOutputTokens: loadMaxOutputTokens(),
       maxIterPerTurn: loadMaxIterPerTurn(),
       rebuildSystem,
     });
@@ -2043,7 +2046,7 @@ function AppInner({
       // otherwise edit_file writes to the OLD root while read_file looks in
       // the NEW one, producing ENOENT on the next read of a just-edited file.
       const rootForEdit = currentRootDirRef.current;
-      const blocks = buildEditToolBlocks(name, args, rootForEdit);
+      const blocks = await buildEditToolBlocksForReview(name, args, rootForEdit, loop.readTracker);
       if (!blocks || blocks.length === 0) return null;
 
       // Helper: apply the current block(s) + record into history + arm
@@ -3195,9 +3198,11 @@ function AppInner({
             codeMode: true,
             planMode,
             lifecycleMode: engineeringLifecycleRef.current?.snapshot().mode ?? "off",
+            alreadySuggested: lifecyclePlanSuggestionSessionRef.current === (session ?? null),
           })
         ) {
           log.pushInfo(t("app.lifecyclePlanSuggestion"));
+          lifecyclePlanSuggestionSessionRef.current = session ?? null;
         }
         const before = engineeringLifecycleRef.current?.snapshot().state;
         engineeringLifecycleRef.current?.observeUserPrompt(text);

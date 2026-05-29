@@ -16,7 +16,7 @@ export type AutoGitRollbackConfig = false | AutoGitRollbackOptions;
 
 interface PrepareOptions {
   rootDir: string;
-  toolName: "edit_file" | "multi_edit" | "write_file" | "edit_blocks";
+  toolName: "edit_file" | "multi_edit" | "write_file" | "edit_blocks" | "delete_range";
   absPaths: readonly string[];
   autoGitRollback?: AutoGitRollbackConfig;
 }

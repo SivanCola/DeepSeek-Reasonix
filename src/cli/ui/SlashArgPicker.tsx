@@ -4,6 +4,7 @@ import React from "react";
 import { t } from "../../i18n/index.js";
 import type { SlashCommandSpec } from "./slash.js";
 import { GLYPH, useColor } from "./theme.js";
+import { type ThemeChoice, themeChoiceLabel } from "./theme/labels.js";
 import { SURFACE } from "./theme/tokens.js";
 import type { AtPickerEntry } from "./useCompletionPickers.js";
 
@@ -110,8 +111,9 @@ export function SlashArgPicker({
       {shown.map((value, i) => {
         const idx = windowStart + i;
         const isDir = pathCandidates?.[idx]?.isDir ?? false;
+        const label = spec.cmd === "theme" ? themeChoiceLabel(value as ThemeChoice) : value;
         return (
-          <ArgRow key={value} value={value} isSelected={idx === selectedIndex} isDir={isDir} />
+          <ArgRow key={value} value={label} isSelected={idx === selectedIndex} isDir={isDir} />
         );
       })}
       {hiddenBelow > 0 ? (

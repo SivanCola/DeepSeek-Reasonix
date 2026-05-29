@@ -110,6 +110,7 @@ export interface McpServerConfig {
   command?: string;
   args?: string[];
   env?: Record<string, string>;
+  cwd?: string;
   transport?: "stdio" | "sse" | "streamable-http";
   /** Claude `.mcp.json` alias for `transport`; `"http"` is treated as `"streamable-http"`. */
   type?: "stdio" | "sse" | "streamable-http" | "http";
@@ -170,6 +171,8 @@ export interface ReasonixConfig {
   /** When false, skip the boot splash animation and show the main UI immediately. Default true. */
   banner?: boolean;
   reasoningEffort?: ReasoningEffort;
+  /** Per-turn output token cap sent as `max_tokens` in the API request (#2196). Null = no cap. */
+  maxOutputTokens?: number | null;
   /** Default workspace root for the desktop client. CLI uses cwd. */
   workspaceDir?: string;
   /** Last N workspace paths the desktop client has opened, most recent first. */
@@ -673,6 +676,7 @@ export function normalizeMcpConfig(cfg: ReasonixConfig, extraLegacy?: string[]):
         command: (serverCfg as McpServerConfig).command ?? "",
         args: (serverCfg as McpServerConfig).args ?? [],
         env,
+        cwd: (serverCfg as McpServerConfig).cwd,
         disabled,
         requestTimeoutMs: (serverCfg as McpServerConfig).requestTimeoutMs,
       };
@@ -1298,7 +1302,7 @@ export function resolveThemePreference(
   configTheme: ThemeName | "auto" | undefined,
   envTheme?: string | null,
 ): ThemeName {
-  if (configTheme && configTheme !== "auto") return configTheme;
+  if (configTheme && configTheme !== "auto") return resolveThemeName(configTheme);
   return resolveThemeName(envTheme);
 }
 
@@ -1315,6 +1319,22 @@ export function saveReasoningEffort(
 ): void {
   const cfg = readConfig(path);
   cfg.reasoningEffort = effort;
+  writeConfig(cfg, path);
+}
+
+/** Returns undefined when no cap is set (caller passes nothing to the API, server default applies). */
+export function loadMaxOutputTokens(path: string = defaultConfigPath()): number | undefined {
+  const v = readConfig(path).maxOutputTokens;
+  if (typeof v === "number" && Number.isInteger(v) && v > 0) return v;
+  return undefined;
+}
+
+export function saveMaxOutputTokens(
+  tokens: number | null,
+  path: string = defaultConfigPath(),
+): void {
+  const cfg = readConfig(path);
+  cfg.maxOutputTokens = tokens ?? undefined;
   writeConfig(cfg, path);
 }
 

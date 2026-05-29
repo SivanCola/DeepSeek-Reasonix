@@ -261,7 +261,7 @@ export const zhCN: TranslationSchema = {
     models: { description: "列出从 DeepSeek /models 获取的可用模型" },
     theme: {
       description: "显示或持久化终端主题偏好。无参数时打开选择器。",
-      argsHint: "[auto|dark|light|midnight|deep-blue|high-contrast]",
+      argsHint: "[auto|graphite|ember|aurora|sandstone|porcelain|linen|glacier|midnight]",
     },
     language: {
       description: "切换运行时语言",
@@ -272,6 +272,10 @@ export const zhCN: TranslationSchema = {
     budget: {
       description: "会话美元上限 — 80% 时警告，100% 时拒绝下一轮。默认关闭。单独 /budget 显示状态",
       argsHint: "[usd|off]",
+    },
+    "max-tokens": {
+      description: "限制每轮输出 token 数 — 防止推理失控。默认不限制。单独显示当前设置。",
+      argsHint: "[N|off]",
     },
     diff: {
       description:
@@ -441,12 +445,33 @@ export const zhCN: TranslationSchema = {
     themeSubtitle: "方向键切换时即时预览效果，之后可用 /theme 更改。",
     themeSampleHeading: "示例",
     themeFooter: "[↑↓] 移动 · [Enter] 确认 · [Esc] 取消",
+    themeName: {
+      graphite: "石墨",
+      ember: "余烬",
+      aurora: "极光",
+      sandstone: "砂岩",
+      porcelain: "瓷白",
+      linen: "亚麻",
+      glacier: "冰川",
+      midnight: "午夜",
+      dark: "深色",
+      light: "浅色",
+      "deep-blue": "深蓝",
+      "high-contrast": "高对比度",
+    },
     themeCaption: {
-      dark: "深色调（默认）",
-      light: "清爽浅色",
-      midnight: "东京夜色",
-      "deep-blue": "深蓝纯黑",
-      "high-contrast": "高对比度（无障碍）",
+      graphite: "原始深色主题，搭配中性石墨面板",
+      ember: "暖黑深色主题，强化 Reasonix 橙色品牌感",
+      aurora: "青绿色深色主题，低光环境更柔和",
+      sandstone: "原始暖浅色主题",
+      porcelain: "清爽浅色主题，安静高对比",
+      linen: "偏纸张质感的编辑风暖浅色主题",
+      glacier: "清冷浅色主题，搭配清晰蓝色强调色",
+      midnight: "海军蓝深色主题，冷色高亮",
+      dark: "深色调（旧别名）",
+      light: "清爽浅色（旧别名）",
+      "deep-blue": "深蓝纯黑（旧别名）",
+      "high-contrast": "高对比度（旧别名）",
     },
     reviewLabelTheme: "主题",
     mcpTitle: "Reasonix 要为你接入哪些 MCP 服务器？",
@@ -481,6 +506,7 @@ export const zhCN: TranslationSchema = {
   themePicker: {
     header: "主题",
     footer: "↑↓ 选择 · ⏎ 确认 · Esc 取消",
+    autoLabel: "自动",
     currentPref: "当前偏好",
     activeNow: "当前生效",
     autoDesc: "使用 REASONIX_THEME 或默认主题",
@@ -872,6 +898,8 @@ export const zhCN: TranslationSchema = {
       missingBotToken: "缺少 Telegram bot token。请先运行 `/telegram connect` 完成配置。",
       accessRequired:
         "Telegram 启动前必须配置访问控制。请在配置中设置 `telegram.ownerUserId` 或 `telegram.allowlist`。",
+      rateLimited: "Telegram 已限流授权用户 {userId}：{seconds} 秒内超过 5 条消息。",
+      rateLimitedReply: "Telegram 收到消息过快，请等待 {seconds} 秒后再发送。",
     },
     admin: {
       doctorNeedsTui: "/doctor 需要 TUI 上下文（postDoctor 已连接）。",
@@ -973,6 +1001,11 @@ export const zhCN: TranslationSchema = {
         "▲ budget → ${cap} 但已花费 ${spent}。下一轮将被拒绝 — 提高上限以继续，或结束会话。",
       budgetSet:
         "budget → ${cap}  （迄今：${spent} · 80% 时警告，100% 时拒绝下一轮 · /budget off 清除）",
+      maxTokensNoCap: "max-tokens → 无限制（使用服务端默认值 · /max-tokens <N> 设置上限）",
+      maxTokensStatus: "max-tokens → 每轮最多 {n} 个输出 token  （/max-tokens off 清除）",
+      maxTokensSet: "max-tokens → {n}  （下一轮输出最多 {n} tokens）",
+      maxTokensOff: "max-tokens → 关闭（无限制，使用服务端默认值）",
+      maxTokensUsage: "用法：/max-tokens <正整数>   例如 /max-tokens 4096  ·  /max-tokens off",
     },
     diff: {
       diffStatus: "diff 显示 → {current}",

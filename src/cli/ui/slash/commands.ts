@@ -1,3 +1,4 @@
+import { listThemeNames } from "../theme/tokens.js";
 import type { SlashArgContext, SlashCommandSpec, SlashGroup } from "./types.js";
 
 export const SLASH_GROUP_ORDER = [
@@ -25,6 +26,8 @@ export const SLASH_GROUP_LABEL: Record<SlashGroup, string> = {
 const SLASH_GROUP_RANK = new Map<SlashGroup, number>(
   SLASH_GROUP_ORDER.map((group, index) => [group, index]),
 );
+const THEME_ARG_COMPLETER = ["auto", ...listThemeNames()] as const;
+const THEME_ARGS_HINT = `[${THEME_ARG_COMPLETER.join("|")}]`;
 
 export function orderSlashCommandsByGroup<T extends Pick<SlashCommandSpec, "group">>(
   commands: readonly T[],
@@ -84,6 +87,13 @@ export const SLASH_COMMANDS: readonly SlashCommandSpec[] = [
     argCompleter: ["low", "medium", "high", "max"],
   },
   {
+    cmd: "max-tokens",
+    group: "setup",
+    argsHint: "<N|off>",
+    summary:
+      "cap output tokens per turn — useful to limit runaway reasoning. Bare shows current value. 'off' clears the cap.",
+  },
+  {
     cmd: "language",
     group: "setup",
     argsHint: "<EN|zh-CN|de|ru>",
@@ -94,9 +104,9 @@ export const SLASH_COMMANDS: readonly SlashCommandSpec[] = [
   {
     cmd: "theme",
     group: "setup",
-    argsHint: "[auto|dark|light|midnight|deep-blue|high-contrast]",
+    argsHint: THEME_ARGS_HINT,
     summary: "show or persist the terminal theme preference. Bare opens picker.",
-    argCompleter: ["auto", "dark", "light", "midnight", "deep-blue", "high-contrast"],
+    argCompleter: THEME_ARG_COMPLETER,
   },
 
   { cmd: "status", group: "info", summary: "current model, flags, context, session" },
@@ -355,7 +365,7 @@ export const SLASH_COMMANDS: readonly SlashCommandSpec[] = [
       "brave",
       "ollama",
     ],
-    aliases: ["se"],
+    aliases: ["se", "search_engine"],
   },
   {
     cmd: "hooks",
@@ -475,7 +485,7 @@ export function parseSlash(text: string): { cmd: string; args: string[] } | null
   // "//" is a line comment, not a slash command
   if (text.startsWith("//")) return null;
   const parts = text.slice(1).trim().split(/\s+/);
-  const cmd = parts[0]?.toLowerCase() ?? "";
+  const cmd = resolveSlashAlias(parts[0]?.toLowerCase() ?? "");
   if (!cmd) return null;
   return { cmd, args: parts.slice(1) };
 }

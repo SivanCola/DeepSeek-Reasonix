@@ -38,6 +38,7 @@ const SAFE_TOOL_NAMES = new Set([
 
 const HIGH_RISK_TOOL_NAMES = new Set([
   "multi_edit",
+  "delete_range",
   "move_file",
   "delete_file",
   "delete_directory",
@@ -51,6 +52,7 @@ const MUTATION_TOOL_NAMES = new Set([
   "edit_file",
   "write_file",
   "multi_edit",
+  "delete_range",
   "move_file",
   "delete_file",
   "delete_directory",

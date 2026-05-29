@@ -686,10 +686,10 @@ describe("config", () => {
   });
 
   it("resolveThemePreference lets env override auto but not registered config themes", () => {
-    expect(resolveThemePreference("auto", "light")).toBe("light");
+    expect(resolveThemePreference("auto", "light")).toBe("porcelain");
     expect(resolveThemePreference(undefined, "midnight")).toBe("midnight");
-    expect(resolveThemePreference("dark", "light")).toBe("dark");
-    expect(resolveThemePreference("auto", "unknown")).toBe("dark");
+    expect(resolveThemePreference("dark", "light")).toBe("graphite");
+    expect(resolveThemePreference("auto", "unknown")).toBe("graphite");
   });
 
   it("saveTheme doesn't clobber other persisted fields", () => {

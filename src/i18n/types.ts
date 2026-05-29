@@ -359,6 +359,7 @@ export interface TranslationSchema {
     themeSubtitle: string;
     themeSampleHeading: string;
     themeFooter: string;
+    themeName: Record<string, string>;
     themeCaption: Record<string, string>;
     reviewTitle: string;
     reviewLabelApiKey: string;
@@ -382,6 +383,7 @@ export interface TranslationSchema {
   themePicker: {
     header: string;
     footer: string;
+    autoLabel: string;
     currentPref: string;
     activeNow: string;
     autoDesc: string;

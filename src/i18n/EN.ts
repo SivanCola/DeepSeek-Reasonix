@@ -271,7 +271,7 @@ export const EN: TranslationSchema = {
     models: { description: "list available models fetched from DeepSeek /models" },
     theme: {
       description: "show or persist the terminal theme preference. Bare opens picker.",
-      argsHint: "[auto|dark|light|midnight|deep-blue|high-contrast]",
+      argsHint: "[auto|graphite|ember|aurora|sandstone|porcelain|linen|glacier|midnight]",
     },
     language: {
       description: "switch the runtime language",
@@ -283,6 +283,11 @@ export const EN: TranslationSchema = {
       description:
         "session USD cap — warns at 80%, refuses next turn at 100%. Off by default. /budget alone shows status",
       argsHint: "[usd|off]",
+    },
+    "max-tokens": {
+      description:
+        "cap output tokens per turn — limits runaway reasoning. Off by default. Bare shows status.",
+      argsHint: "[N|off]",
     },
     diff: {
       description:
@@ -460,12 +465,33 @@ export const EN: TranslationSchema = {
     themeSubtitle: "Preview updates live as you navigate. Change later with /theme.",
     themeSampleHeading: "Sample",
     themeFooter: "[↑↓] navigate · [Enter] confirm · [Esc] cancel",
+    themeName: {
+      graphite: "Graphite",
+      ember: "Ember",
+      aurora: "Aurora",
+      sandstone: "Sandstone",
+      porcelain: "Porcelain",
+      linen: "Linen",
+      glacier: "Glacier",
+      midnight: "Midnight",
+      dark: "Dark",
+      light: "Light",
+      "deep-blue": "Deep Blue",
+      "high-contrast": "High Contrast",
+    },
     themeCaption: {
-      dark: "Cool dark tones (default)",
-      light: "Clean light mode",
-      midnight: "Tokyo Night palette",
-      "deep-blue": "Deep blue on black",
-      "high-contrast": "Accessibility",
+      graphite: "Original dark palette with neutral graphite panels",
+      ember: "Warm dark palette with stronger Reasonix orange accents",
+      aurora: "Teal-green dark palette for a softer low-light workspace",
+      sandstone: "Original warm light palette",
+      porcelain: "Clean light palette with quiet contrast",
+      linen: "Editorial warm light palette with paper-like surfaces",
+      glacier: "Cool light palette with crisp blue accents",
+      midnight: "Navy dark palette with cool blue surfaces",
+      dark: "Cool dark tones (legacy alias)",
+      light: "Clean light mode (legacy alias)",
+      "deep-blue": "Deep blue on black (legacy alias)",
+      "high-contrast": "Accessibility (legacy alias)",
     },
     reviewLabelTheme: "Theme",
     mcpTitle: "Which MCP servers should Reasonix wire up for you?",
@@ -501,6 +527,7 @@ export const EN: TranslationSchema = {
   themePicker: {
     header: "Theme",
     footer: "↑↓ pick · ⏎ confirm · esc cancel",
+    autoLabel: "Auto",
     currentPref: "current preference",
     activeNow: "active now",
     autoDesc: "use REASONIX_THEME or default",
@@ -917,6 +944,10 @@ export const EN: TranslationSchema = {
       missingBotToken: "Telegram bot token is required. Run `/telegram connect` to configure.",
       accessRequired:
         "Telegram requires access control before it can start. Set `telegram.ownerUserId` or `telegram.allowlist` in config.",
+      rateLimited:
+        "Telegram rate-limited authorized user {userId}: more than 5 messages in {seconds}s.",
+      rateLimitedReply:
+        "Telegram is receiving messages too quickly. Please wait {seconds}s before sending more.",
     },
     admin: {
       doctorNeedsTui: "/doctor needs a TUI context (postDoctor wired).",
@@ -1029,6 +1060,12 @@ export const EN: TranslationSchema = {
         "▲ budget → ${cap} but already spent ${spent}. Next turn will be refused — bump the cap higher to keep going, or end the session.",
       budgetSet:
         "budget → ${cap}  (so far: ${spent} · warns at 80%, refuses next turn at 100% · /budget off to clear)",
+      maxTokensNoCap: "max-tokens → no cap  (server default applies · /max-tokens <N> to set)",
+      maxTokensStatus: "max-tokens → {n} tokens per turn  (/max-tokens off to clear)",
+      maxTokensSet: "max-tokens → {n}  (next turn capped at {n} output tokens)",
+      maxTokensOff: "max-tokens → off (no cap, server default applies)",
+      maxTokensUsage:
+        "usage: /max-tokens <positive integer>   e.g. /max-tokens 4096  ·  /max-tokens off",
     },
     diff: {
       diffStatus: "diff display → {current}",

@@ -700,10 +700,17 @@ describe("handleSlash", () => {
     // Case-insensitive.
     expect(suggestSlashCommands("HE").map((s) => s.cmd)).toEqual(["help"]);
     // Empty prefix returns the full non-advanced release list, including code commands.
-    expect(suggestSlashCommands("", true)).toHaveLength(45);
+    expect(suggestSlashCommands("", true)).toHaveLength(46);
     expect(suggestSlashCommands("", true).map((s) => s.cmd)).toContain("logs");
     expect(suggestSlashCommands("", true).map((s) => s.cmd)).toContain("language");
     expect(suggestSlashCommands("lan").map((s) => s.cmd)).toContain("language");
+  });
+
+  it("resolves Telegram-safe slash aliases", () => {
+    expect(parseSlash("/search_engine bing")).toEqual({
+      cmd: "search-engine",
+      args: ["bing"],
+    });
   });
 
   describe("/btw — issue #725", () => {
@@ -1632,7 +1639,7 @@ describe("handleSlash", () => {
 
     it("persists auto so env can resolve the active theme", () => {
       const r = handleSlash("theme", ["auto"], makeLoop());
-      expect(r.info).toMatch(/active on next launch: dark/);
+      expect(r.info).toMatch(/active on next launch: graphite/);
       expect(loadTheme()).toBe("auto");
     });
 

@@ -420,12 +420,18 @@ function plainTextRejectedReason(name: string, result: string): string | null {
     return "edit-gate";
   }
   if (
-    (name === "edit_file" || name === "write_file" || name === "multi_edit") &&
+    (name === "edit_file" ||
+      name === "write_file" ||
+      name === "multi_edit" ||
+      name === "delete_range") &&
     /queued \d+ edits? for review/i.test(result)
   ) {
     return "edit-gate";
   }
-  if ((name === "edit_file" || name === "multi_edit") && /read_file first/i.test(result)) {
+  if (
+    (name === "edit_file" || name === "multi_edit" || name === "delete_range") &&
+    /read_file first/i.test(result)
+  ) {
     return "read-before-edit";
   }
   if ((name === "run_command" || name === "run_background") && /\buser denied:/i.test(result)) {
