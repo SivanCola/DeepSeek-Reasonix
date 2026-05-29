@@ -1,16 +1,14 @@
 use std::fs;
-#[cfg(target_os = "macos")]
+#[cfg(unix)]
 use std::fs::OpenOptions;
-#[cfg(target_os = "macos")]
+#[cfg(unix)]
 use std::io::ErrorKind;
-#[cfg(target_os = "macos")]
+#[cfg(unix)]
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-#[cfg(target_os = "macos")]
-use std::os::unix::fs::OpenOptionsExt;
 #[cfg(unix)]
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 
 use serde::Serialize;
 use tauri::AppHandle;
@@ -79,12 +77,50 @@ fn resource_cli_path(app: &AppHandle) -> Result<PathBuf, String> {
 #[cfg(unix)]
 fn write_atomic(path: &Path, content: &str, mode: u32) -> Result<(), String> {
     let parent = path.parent().unwrap_or_else(|| Path::new("/"));
-    let tmp = parent.join(".reasonix.tmp");
-    fs::write(&tmp, content).map_err(|e| format!("write tmp: {e}"))?;
-    fs::set_permissions(&tmp, fs::Permissions::from_mode(mode))
-        .map_err(|e| format!("chmod: {e}"))?;
-    fs::rename(&tmp, path).map_err(|e| format!("rename: {e}"))?;
-    Ok(())
+    for attempt in 0..16 {
+        let tmp = unique_install_temp_path(parent, attempt);
+        let mut file = match OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&tmp)
+        {
+            Ok(file) => file,
+            Err(e) if e.kind() == ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(format!("create tmp: {e}")),
+        };
+
+        let result = (|| -> Result<(), String> {
+            file.write_all(content.as_bytes())
+                .map_err(|e| format!("write tmp: {e}"))?;
+            file.sync_all().map_err(|e| format!("sync tmp: {e}"))?;
+            fs::set_permissions(&tmp, fs::Permissions::from_mode(mode))
+                .map_err(|e| format!("chmod: {e}"))?;
+            fs::rename(&tmp, path).map_err(|e| format!("rename: {e}"))?;
+            Ok(())
+        })();
+
+        if let Err(e) = result {
+            let _ = fs::remove_file(&tmp);
+            return Err(e);
+        }
+
+        return Ok(());
+    }
+
+    Err("could not create an exclusive temp file".to_string())
+}
+
+#[cfg(unix)]
+fn unique_install_temp_path(parent: &Path, attempt: u32) -> PathBuf {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    parent.join(format!(
+        ".reasonix.{}.{now}.{attempt}.tmp",
+        std::process::id()
+    ))
 }
 
 #[cfg(target_os = "macos")]
@@ -102,7 +138,7 @@ fn build_admin_install_shell_script(tmp: &Path, target: &str) -> String {
          if [ -e {target} ] && ! grep -Fxq {marker} {target}; then \
          echo 'target exists and was not installed by Reasonix Desktop' >&2; exit 77; \
          fi && \
-         cp {tmp} {target} && chmod 755 {target}",
+         rm -f {target} && install -m 755 {tmp} {target}",
         tmp = tmp_s,
         target = target_s,
         marker = marker_s,
@@ -396,7 +432,47 @@ mod tests {
         assert!(script.contains("grep -Fxq"));
         assert!(script.contains(MANAGED_MARKER));
         assert!(script.contains("target exists and was not installed by Reasonix Desktop"));
-        assert!(script.contains("cp '/tmp/reasonix shim' '/usr/local/bin/reasonix'"));
+        assert!(script.contains("rm -f '/usr/local/bin/reasonix'"));
+        assert!(script.contains("install -m 755 '/tmp/reasonix shim' '/usr/local/bin/reasonix'"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn write_atomic_uses_exclusive_temp_file_and_ignores_fixed_symlink() {
+        let dir = unique_test_dir();
+        fs::create_dir(&dir).unwrap();
+        let fixed_tmp = dir.join(".reasonix.tmp");
+        let target = dir.join("reasonix");
+        let victim = dir.join("victim");
+        fs::write(&victim, "do not touch").unwrap();
+        std::os::unix::fs::symlink(&victim, &fixed_tmp).unwrap();
+
+        write_atomic(&target, "safe shim", 0o755).unwrap();
+
+        assert_eq!(fs::read_to_string(&victim).unwrap(), "do not touch");
+        assert_eq!(fs::read_to_string(&target).unwrap(), "safe shim");
+        assert!(fs::symlink_metadata(&fixed_tmp)
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        assert_eq!(
+            target.metadata().unwrap().permissions().mode() & 0o777,
+            0o755
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    fn unique_test_dir() -> PathBuf {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "reasonix-install-test-{}-{now}",
+            std::process::id()
+        ))
     }
 
     #[cfg(target_os = "macos")]
