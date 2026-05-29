@@ -33,6 +33,9 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
+      - name: Cache guard
+        run: npm run cache:guard
+
       - name: Build (tsup + dashboard)
         run: npm run build
 
