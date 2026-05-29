@@ -383,6 +383,12 @@ export const ja: typeof en = {
     shortcutSwitchTab: "タブ切替",
     shortcutAbort: "ストリーミング中断",
     shortcutSettings: "設定",
+    // Connection test
+    testConnection: "テスト",
+    testingConnection: "テスト中…",
+    connectionOk: "接続完了 · {latencyMs}ms",
+    connectionFailed: "接続失敗",
+    connectionPaidHint: "最小限のテストリクエストがプロバイダに送信されます",
   },
   modal: {
     ...en.modal,
