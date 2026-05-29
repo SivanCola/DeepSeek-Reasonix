@@ -218,18 +218,6 @@ export type PendingRevision = {
   summary?: string;
 };
 
-export type ReasonixCommandState =
-  | "missing"
-  | "installed"
-  | "needsUpdate"
-  | "foreign"
-  | "unsupported";
-
-export type ReasonixCommandStatus = {
-  path: string;
-  state: ReasonixCommandState;
-};
-
 export type UsageStats = {
   totalCostUsd: number;
   totalPromptTokens: number;
@@ -1374,10 +1362,6 @@ interface TabRuntimeProps {
   onToggleCurrency: () => void;
   onCheckForUpdates: () => void;
   isCheckingForUpdates: boolean;
-  onInstallReasonixCommand: () => void;
-  isInstallingReasonixCommand: boolean;
-  reasonixCommandStatus: ReasonixCommandStatus | null;
-  onRefreshReasonixCommandStatus: () => void;
   hasUpdateAvailable: boolean;
   tabsList: { id: string; workspaceDir?: string }[];
   activeTabId: string;
@@ -1415,10 +1399,6 @@ function TabRuntime({
   onToggleCurrency,
   onCheckForUpdates,
   isCheckingForUpdates,
-  onInstallReasonixCommand,
-  isInstallingReasonixCommand,
-  reasonixCommandStatus,
-  onRefreshReasonixCommandStatus,
   hasUpdateAvailable,
   tabsList,
   activeTabId,
@@ -1496,11 +1476,6 @@ function TabRuntime({
   const [aboutOpen, setAboutOpen] = useState(false);
   const [contextPanelTab, setContextPanelTab] = useState<ContextPanelTab>("files");
   const [contextPanelTabNonce, setContextPanelTabNonce] = useState(0);
-
-  useEffect(() => {
-    if (settingsOpen) onRefreshReasonixCommandStatus();
-  }, [onRefreshReasonixCommandStatus, settingsOpen]);
-
   const previousApprovalSnapshotRef = useRef<ApprovalSnapshot>({
     confirms: [],
     pathAccess: [],
@@ -2816,9 +2791,6 @@ function TabRuntime({
             }
             onCheckForUpdates={onCheckForUpdates}
             isCheckingForUpdates={isCheckingForUpdates}
-            onInstallReasonixCommand={onInstallReasonixCommand}
-            isInstallingReasonixCommand={isInstallingReasonixCommand}
-            reasonixCommandStatus={reasonixCommandStatus}
             hasUpdateAvailable={hasUpdateAvailable}
             onPickWorkspace={pickWorkspace}
             onImportCcSwitchMcp={importCcSwitchMcp}
@@ -3504,11 +3476,7 @@ export function App() {
   } | null>(null);
   const [menuToast, setMenuToast] = useState<{ msg: string } | null>(null);
   const checkingUpdateRef = useRef(false);
-  const installingCommandRef = useRef(false);
   const [isCheckingForUpdates, setIsCheckingForUpdates] = useState(false);
-  const [isInstallingReasonixCommand, setIsInstallingReasonixCommand] = useState(false);
-  const [reasonixCommandStatus, setReasonixCommandStatus] =
-    useState<ReasonixCommandStatus | null>(null);
   const [currency, setCurrency] = useState<"CNY" | "USD">(() => {
     const v = localStorage.getItem("reasonix.currency");
     return v === "USD" ? "USD" : "CNY";
@@ -3706,44 +3674,6 @@ export function App() {
       });
   }, []);
 
-  const refreshReasonixCommandStatus = useCallback(() => {
-    void invoke<ReasonixCommandStatus>("reasonix_command_status")
-      .then(setReasonixCommandStatus)
-      .catch(() => {
-        setReasonixCommandStatus(null);
-      });
-  }, []);
-
-  useEffect(() => {
-    refreshReasonixCommandStatus();
-  }, [refreshReasonixCommandStatus]);
-
-  const installReasonixCommand = useCallback(() => {
-    if (installingCommandRef.current) return;
-    installingCommandRef.current = true;
-    setIsInstallingReasonixCommand(true);
-    void invoke<{ path: string; action: string; usedAdmin: boolean }>(
-      "install_reasonix_command",
-    )
-      .then((result) => {
-        if (result.action === "installed") {
-          setMenuToast({ msg: `Installed reasonix command at ${result.path}` });
-        } else {
-          setMenuToast({ msg: `Updated reasonix command at ${result.path}` });
-        }
-        refreshReasonixCommandStatus();
-        window.setTimeout(() => setMenuToast(null), 3000);
-      })
-      .catch((err) => {
-        setMenuToast({ msg: String(err) });
-        window.setTimeout(() => setMenuToast(null), 5000);
-      })
-      .finally(() => {
-        installingCommandRef.current = false;
-        setIsInstallingReasonixCommand(false);
-      });
-  }, [refreshReasonixCommandStatus]);
-
   // Manual update check triggered from macOS App menu
   useEffect(() => {
     let unlisten: (() => void) | undefined;
@@ -3756,19 +3686,6 @@ export function App() {
       unlisten?.();
     };
   }, [runManualUpdateCheck]);
-
-  // macOS App menu: Install 'reasonix' Command...
-  useEffect(() => {
-    let unlisten: (() => void) | undefined;
-    listen("reasonix-menu-install-command", () => {
-      installReasonixCommand();
-    }).then((fn) => {
-      unlisten = fn;
-    });
-    return () => {
-      unlisten?.();
-    };
-  }, [installReasonixCommand]);
 
   const installUpdate = useCallback(async () => {
     if (!pendingUpdate) return;
@@ -4075,10 +3992,6 @@ export function App() {
           onToggleCurrency={onToggleCurrency}
           onCheckForUpdates={runManualUpdateCheck}
           isCheckingForUpdates={isCheckingForUpdates}
-          onInstallReasonixCommand={installReasonixCommand}
-          isInstallingReasonixCommand={isInstallingReasonixCommand}
-          reasonixCommandStatus={reasonixCommandStatus}
-          onRefreshReasonixCommandStatus={refreshReasonixCommandStatus}
           hasUpdateAvailable={Boolean(pendingUpdate)}
           tabsList={tabs}
           activeTabId={activeTabId}

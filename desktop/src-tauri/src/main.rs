@@ -1,18 +1,16 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod cc_switch;
-mod install;
 mod rpc;
 
 use cc_switch::import_cc_switch_mcp;
-use install::{install_reasonix_command, reasonix_command_status};
 use rpc::{rpc_kill, rpc_send, rpc_spawn, RpcState};
 use serde::Serialize;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use tauri::menu::MenuBuilder;
 #[cfg(target_os = "macos")]
 use tauri::menu::{MenuItemBuilder, PredefinedMenuItem, SubmenuBuilder};
+use tauri::menu::MenuBuilder;
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::Manager;
 
@@ -377,12 +375,12 @@ fn main() {
         .on_menu_event(|app, event| {
             use tauri::Emitter;
             let id = event.id().0.as_str();
-            if id == "about" || id == "check_updates" || id == "install_reasonix_command" {
+            if id == "about" || id == "check_updates" {
                 if let Some(window) = app.get_webview_window("main") {
-                    let event_name = match id {
-                        "about" => "reasonix-menu-about",
-                        "check_updates" => "reasonix-menu-check-updates",
-                        _ => "reasonix-menu-install-command",
+                    let event_name = if id == "about" {
+                        "reasonix-menu-about"
+                    } else {
+                        "reasonix-menu-check-updates"
                     };
                     let _ = window.emit(event_name, ());
                 }
@@ -405,8 +403,6 @@ fn main() {
             rpc_send,
             rpc_kill,
             import_cc_switch_mcp,
-            install_reasonix_command,
-            reasonix_command_status,
             open_in_editor,
             list_workspace_tree,
             git_status,
@@ -453,17 +449,10 @@ fn main() {
                     MenuItemBuilder::with_id("check_updates", "Check for Updates...")
                         .build(app)
                         .expect("check updates menu item");
-                let install_cmd_item = MenuItemBuilder::with_id(
-                    "install_reasonix_command",
-                    "Install 'reasonix' Command...",
-                )
-                .build(app)
-                .expect("install command menu item");
 
                 let app_submenu = SubmenuBuilder::new(app, "Reasonix")
                     .item(&about_item)
                     .item(&check_updates_item)
-                    .item(&install_cmd_item)
                     .separator()
                     .item(
                         &PredefinedMenuItem::services(app, None)
