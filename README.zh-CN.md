@@ -40,9 +40,3 @@ https://github.com/esengine/DeepSeek-Reasonix/pulls?q=is%3Apr+is%3Aclosed+author
 ## 分支用途
 
 这个分支适合作为我的 fork 的默认落地页。常规开发分支可以继续贴近 upstream，而这个分支让访问者第一眼看到我已经合入官方仓库的具体贡献。
-
-## 链接
-
-- 官方上游仓库：https://github.com/esengine/DeepSeek-Reasonix
-- 我的 fork：https://github.com/SivanCola/DeepSeek-Reasonix
-- 数据源：https://github.com/esengine/DeepSeek-Reasonix/pulls?q=is%3Apr+is%3Aclosed+author%3ASivanCola

@@ -42,9 +42,3 @@ Merged total from the upstream PR metadata above: 8 PRs, 118 changed-file entrie
 This branch is designed as the landing page for my fork. The regular development
 branch can stay close to upstream, while this branch gives visitors a quick, readable
 view of the concrete contributions that landed in the official repository.
-
-## Links
-
-- Upstream repository: https://github.com/esengine/DeepSeek-Reasonix
-- My fork: https://github.com/SivanCola/DeepSeek-Reasonix
-- Source query: https://github.com/esengine/DeepSeek-Reasonix/pulls?q=is%3Apr+is%3Aclosed+author%3ASivanCola
