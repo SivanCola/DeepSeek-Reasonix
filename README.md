@@ -1,6 +1,6 @@
 # My Contributions to DeepSeek-Reasonix
 
-[Chinese version](README.zh-CN.md) | [Upstream project](https://github.com/esengine/DeepSeek-Reasonix)
+[中文](README.zh-CN.md)
 
 This fork is a contribution showcase for my work on
 [esengine/DeepSeek-Reasonix](https://github.com/esengine/DeepSeek-Reasonix).
