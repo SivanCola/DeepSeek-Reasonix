@@ -1,7 +1,7 @@
 /** Library reads only DEEPSEEK_API_KEY from env; the CLI bridges config.json → env var. */
 
 import { randomBytes } from "node:crypto";
-import { mkdirSync, readFileSync } from "node:fs";
+import { closeSync, fstatSync, mkdirSync, openSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { z } from "zod";
@@ -15,6 +15,7 @@ import {
 } from "./index/config.js";
 import { type McpServerSpec, parseMcpSpec } from "./mcp/spec.js";
 import { normalizeQQAllowlist, normalizeQQOpenId } from "./qq/access.js";
+import { normalizeTelegramAllowlist, normalizeTelegramUserId } from "./telegram/access.js";
 import {
   type NormalizedToolRateLimitConfig,
   type ToolRateLimitConfig,
@@ -23,6 +24,7 @@ import {
 
 /** Single trust dial: review queues edits + gates shell; auto applies + gates shell; yolo skips both gates; plan blocks every non-readonly tool (write_file / edit_file / multi_edit / run_command) at dispatch. */
 export type EditMode = "review" | "auto" | "yolo" | "plan";
+export type DesktopCloseBehavior = "closeToTray" | "closeToQuit";
 
 export const DEFAULT_MODEL = "deepseek-v4-flash";
 
@@ -43,6 +45,7 @@ export function isReasoningEffort(value: unknown): value is ReasoningEffort {
 
 export type EngineeringLifecycleMode = "off" | "strict";
 export type HistoryScrollMode = "auto" | "native" | "app";
+export type DiffDisplay = "summary" | "full" | "none";
 
 export type EmbeddingProvider = "ollama" | "openai-compat";
 
@@ -107,6 +110,7 @@ export interface McpServerConfig {
   command?: string;
   args?: string[];
   env?: Record<string, string>;
+  cwd?: string;
   transport?: "stdio" | "sse" | "streamable-http";
   /** Claude `.mcp.json` alias for `transport`; `"http"` is treated as `"streamable-http"`. */
   type?: "stdio" | "sse" | "streamable-http" | "http";
@@ -123,6 +127,13 @@ export interface QQBotConfig {
   sandbox?: boolean;
   enabled?: boolean;
   ownerOpenId?: string;
+  allowlist?: string[];
+}
+
+export interface TelegramBotConfig {
+  botToken?: string;
+  enabled?: boolean;
+  ownerUserId?: string;
   allowlist?: string[];
 }
 
@@ -160,12 +171,16 @@ export interface ReasonixConfig {
   /** When false, skip the boot splash animation and show the main UI immediately. Default true. */
   banner?: boolean;
   reasoningEffort?: ReasoningEffort;
+  /** Per-turn output token cap sent as `max_tokens` in the API request (#2196). Null = no cap. */
+  maxOutputTokens?: number | null;
   /** Default workspace root for the desktop client. CLI uses cwd. */
   workspaceDir?: string;
   /** Last N workspace paths the desktop client has opened, most recent first. */
   recentWorkspaces?: string[];
   /** Desktop only — open tabs in tab order, each with its workspace dir, loaded session and focus, persisted so restart restores every tab and its conversation (issues #933, #1244). Empty/absent → boot with a single default tab. */
   desktopOpenTabs?: DesktopOpenTab[];
+  /** Desktop only — window close behavior. "closeToTray" hides the window and keeps sessions running; "closeToQuit" exits Reasonix. Default closeToQuit. */
+  desktopCloseBehavior?: DesktopCloseBehavior;
   /** Desktop only — `openWith` value for clicking file links. Empty/undefined = OS default app. Examples: "code", "cursor", "C:\\path\\to\\editor.exe". */
   editor?: string;
   /** Desktop prompt-history entries, most-recent-first, capped at 100 (#2051). */
@@ -217,6 +232,8 @@ export interface ReasonixConfig {
   mouseWheelRows?: number;
   /** Chat-history scrolling: "native" leaves terminal scrollback in charge; "app" captures wheel/PgUp/PgDn/End inside the TUI; "auto" enables app mode for terminals with known jumpy native scrollback. */
   historyScrollMode?: HistoryScrollMode;
+  /** Diff display mode for edit_file / write_file / multi_edit results in CLI. */
+  diffDisplay?: DiffDisplay;
   dashboard?: {
     /** Whether the embedded dashboard auto-starts on launch. Default true. Set false to disable without passing --no-dashboard each time. */
     enabled?: boolean;
@@ -296,6 +313,7 @@ export interface ReasonixConfig {
   };
   /** QQ Bot configuration */
   qq?: QQBotConfig;
+  telegram?: TelegramBotConfig;
 }
 
 export interface CustomMemoryTypeConfig {
@@ -477,25 +495,52 @@ function sanitizeStringArrayField(
   parent[leaf] = filtered;
 }
 
+/** Mtime-keyed cache for readConfig (shared, read-only — callers must not mutate).
+ *  Caveat: mtime resolution ~1 s; external edits may be missed within that window. */
+const _configCache = new Map<string, { mtimeMs: number; cfg: ReasonixConfig }>();
+
 export function readConfig(path: string = defaultConfigPath()): ReasonixConfig {
+  let fd: number | undefined;
   try {
+    // Open the file descriptor first, then fstat + read from the same fd.
+    // This eliminates the TOCTOU race where statSync sees one mtime but
+    // readFileSync reads a different version of the file (CodeQL flagged).
+    fd = openSync(path, "r");
+    const st = fstatSync(fd);
+    const cached = _configCache.get(path);
+    if (cached && cached.mtimeMs === st.mtimeMs) {
+      closeSync(fd);
+      return cached.cfg;
+    }
     // Strip the UTF-8 BOM if a foreign writer left one in — Windows
     // PowerShell 5's `Set-Content -Encoding UTF8` and several text
     // editors emit `EF BB BF` at the head of the file. `JSON.parse`
     // refuses BOM-prefixed input and throws, which used to fall
     // through to `return {}` and silently nuke every saved field on
     // the next read-modify-write.
-    const raw = readFileSync(path, "utf8").replace(/^\uFEFF/, "");
+    const raw = readFileSync(fd, "utf8").replace(/^\uFEFF/, "");
+    closeSync(fd);
+    fd = undefined;
     const parsed = JSON.parse(raw);
     if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
       const cfg = parsed as Record<string, unknown>;
       for (const segments of STRING_ARRAY_FIELDS) {
         sanitizeStringArrayField(cfg, segments, path);
       }
-      return cfg as ReasonixConfig;
+      const result = cfg as ReasonixConfig;
+      _configCache.set(path, { mtimeMs: st.mtimeMs, cfg: result });
+      return result;
     }
   } catch {
     /* missing or malformed → empty config */
+  } finally {
+    if (fd !== undefined) {
+      try {
+        closeSync(fd);
+      } catch {
+        /* already closed */
+      }
+    }
   }
   return {};
 }
@@ -547,8 +592,9 @@ export function writeConfig(cfg: ReasonixConfig, path: string = defaultConfigPat
   // config.json, which readConfig would then parse as `{}` and the next
   // saveX would silently overwrite every other field with that empty
   // baseline (issue #1535).
-  const tmp = `${path}.${process.pid}.tmp`;
+  const tmp = `${path}.${randomBytes(8).toString("hex")}.tmp`;
   atomicWriteSync(path, JSON.stringify(cfg, null, 2), tmp);
+  _configCache.delete(path);
 }
 
 /** Resolve the language from config file. */
@@ -630,6 +676,7 @@ export function normalizeMcpConfig(cfg: ReasonixConfig, extraLegacy?: string[]):
         command: (serverCfg as McpServerConfig).command ?? "",
         args: (serverCfg as McpServerConfig).args ?? [],
         env,
+        cwd: (serverCfg as McpServerConfig).cwd,
         disabled,
         requestTimeoutMs: (serverCfg as McpServerConfig).requestTimeoutMs,
       };
@@ -798,6 +845,18 @@ export function loadMouseWheelRows(path: string = defaultConfigPath()): number |
 export function loadHistoryScrollMode(path: string = defaultConfigPath()): HistoryScrollMode {
   const raw = readConfig(path).historyScrollMode;
   return raw === "native" || raw === "app" || raw === "auto" ? raw : "auto";
+}
+
+export function loadDiffDisplay(path: string = defaultConfigPath()): DiffDisplay {
+  const raw = readConfig(path).diffDisplay;
+  if (raw === "full" || raw === "none") return raw;
+  return "summary";
+}
+
+export function saveDiffDisplay(mode: DiffDisplay, path: string = defaultConfigPath()): void {
+  const cfg = readConfig(path);
+  cfg.diffDisplay = mode;
+  writeConfig(cfg, path);
 }
 
 export function loadToolRateLimit(
@@ -1243,7 +1302,7 @@ export function resolveThemePreference(
   configTheme: ThemeName | "auto" | undefined,
   envTheme?: string | null,
 ): ThemeName {
-  if (configTheme && configTheme !== "auto") return configTheme;
+  if (configTheme && configTheme !== "auto") return resolveThemeName(configTheme);
   return resolveThemeName(envTheme);
 }
 
@@ -1260,6 +1319,22 @@ export function saveReasoningEffort(
 ): void {
   const cfg = readConfig(path);
   cfg.reasoningEffort = effort;
+  writeConfig(cfg, path);
+}
+
+/** Returns undefined when no cap is set (caller passes nothing to the API, server default applies). */
+export function loadMaxOutputTokens(path: string = defaultConfigPath()): number | undefined {
+  const v = readConfig(path).maxOutputTokens;
+  if (typeof v === "number" && Number.isInteger(v) && v > 0) return v;
+  return undefined;
+}
+
+export function saveMaxOutputTokens(
+  tokens: number | null,
+  path: string = defaultConfigPath(),
+): void {
+  const cfg = readConfig(path);
+  cfg.maxOutputTokens = tokens ?? undefined;
   writeConfig(cfg, path);
 }
 
@@ -1305,6 +1380,19 @@ export function saveEditor(editor: string, path: string = defaultConfigPath()): 
   const trimmed = editor.trim();
   if (trimmed) cfg.editor = trimmed;
   else cfg.editor = undefined;
+  writeConfig(cfg, path);
+}
+
+export function loadDesktopCloseBehavior(path: string = defaultConfigPath()): DesktopCloseBehavior {
+  return readConfig(path).desktopCloseBehavior === "closeToTray" ? "closeToTray" : "closeToQuit";
+}
+
+export function saveDesktopCloseBehavior(
+  behavior: DesktopCloseBehavior,
+  path: string = defaultConfigPath(),
+): void {
+  const cfg = readConfig(path);
+  cfg.desktopCloseBehavior = behavior;
   writeConfig(cfg, path);
 }
 
@@ -1602,6 +1690,51 @@ export function saveQQConfig(cfg: LoadedQQConfig, path: string = defaultConfigPa
     sandbox: cfg.sandbox,
     enabled: cfg.enabled,
     ownerOpenId,
+    allowlist,
+  };
+  writeConfig(rootCfg, path);
+}
+
+export interface LoadedTelegramConfig {
+  botToken?: string;
+  enabled?: boolean;
+  ownerUserId?: string;
+  allowlist?: string[];
+}
+
+export function loadTelegramConfig(path: string = defaultConfigPath()): LoadedTelegramConfig {
+  const envAllowlist = normalizeTelegramAllowlist(process.env.TELEGRAM_ALLOWLIST);
+  const fromEnv = {
+    botToken: process.env.TELEGRAM_BOT_TOKEN,
+    ownerUserId: normalizeTelegramUserId(process.env.TELEGRAM_OWNER_USER_ID),
+    allowlist: envAllowlist,
+  };
+  const fromCfg = readConfig(path).telegram ?? {};
+  const ownerUserId = fromEnv.ownerUserId ?? normalizeTelegramUserId(fromCfg.ownerUserId);
+  const allowlist = normalizeTelegramAllowlist(fromEnv.allowlist ?? fromCfg.allowlist)?.filter(
+    (userId) => userId !== ownerUserId,
+  );
+  return {
+    botToken: fromEnv.botToken ?? fromCfg.botToken,
+    enabled: fromCfg.enabled === true,
+    ownerUserId,
+    allowlist,
+  };
+}
+
+export function saveTelegramConfig(
+  cfg: LoadedTelegramConfig,
+  path: string = defaultConfigPath(),
+): void {
+  const rootCfg = readConfig(path);
+  const ownerUserId = normalizeTelegramUserId(cfg.ownerUserId);
+  const allowlist = normalizeTelegramAllowlist(cfg.allowlist)?.filter(
+    (userId) => userId !== ownerUserId,
+  );
+  rootCfg.telegram = {
+    botToken: cfg.botToken,
+    enabled: cfg.enabled,
+    ownerUserId,
     allowlist,
   };
   writeConfig(rootCfg, path);

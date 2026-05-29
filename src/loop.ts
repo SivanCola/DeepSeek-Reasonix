@@ -56,6 +56,11 @@ import {
   sessionPath,
 } from "./memory/session.js";
 import { type RepairReport, ToolCallRepair } from "./repair/index.js";
+import {
+  appendCacheDiagnostic,
+  buildCacheDiagnostic,
+  latestCacheDiagnostic,
+} from "./telemetry/cache-diagnostics.js";
 import { SessionStats, type TurnStats } from "./telemetry/stats.js";
 import { ToolRegistry } from "./tools.js";
 import { ReadTracker } from "./tools/read-tracker.js";
@@ -91,6 +96,8 @@ export interface CacheFirstLoopOptions {
   model?: string;
   stream?: boolean;
   reasoningEffort?: ReasoningEffort;
+  /** Per-turn output token cap passed as `max_tokens`. Undefined = no cap (server default). */
+  maxOutputTokens?: number;
   /** Soft USD cap — warns at 80%, refuses next turn at 100%. Opt-in (default no cap). */
   budgetUsd?: number;
   /** Maximum tool-call iterations per turn. Overrides config/env. Default 50. */
@@ -111,6 +118,8 @@ export interface ReconfigurableOptions {
   stream?: boolean;
   /** V4 thinking mode only; deepseek-chat ignores. */
   reasoningEffort?: ReasoningEffort;
+  /** Per-turn output token cap. Pass null to clear. */
+  maxOutputTokens?: number | null;
 }
 
 export interface LoopAbortOptions {
@@ -145,6 +154,7 @@ export class CacheFirstLoop {
   model: string;
   stream: boolean;
   reasoningEffort: ReasoningEffort;
+  maxOutputTokens: number | undefined;
   budgetUsd: number | null;
   /** Maximum tool-call iterations per turn. Config > env > default (50). */
   maxIterPerTurn: number;
@@ -216,6 +226,7 @@ export class CacheFirstLoop {
     });
     this.model = opts.model ?? "deepseek-v4-flash";
     this.reasoningEffort = opts.reasoningEffort ?? "high";
+    this.maxOutputTokens = opts.maxOutputTokens;
     this.budgetUsd =
       typeof opts.budgetUsd === "number" && opts.budgetUsd > 0 ? opts.budgetUsd : null;
 
@@ -415,6 +426,9 @@ export class CacheFirstLoop {
       this.stream = opts.stream;
     }
     if (opts.reasoningEffort !== undefined) this.reasoningEffort = opts.reasoningEffort;
+    if (opts.maxOutputTokens !== undefined) {
+      this.maxOutputTokens = opts.maxOutputTokens ?? undefined;
+    }
   }
 
   /** `null` disables the cap; any change re-arms the 80% warning. */
@@ -524,12 +538,23 @@ export class CacheFirstLoop {
   }
   private _inflightCounter = 0;
 
+  // Cached result from the last healActiveLogBeforeSend() pass.
+  // Invalidated when the log version changes (append/compactInPlace).
+  private _healedCache: ChatMessage[] | null = null;
+  private _healedVersion = -1;
+
   private buildMessages(): ChatMessage[] {
     const healedMessages = this.healActiveLogBeforeSend();
     return [...this.prefix.toMessages(), ...healedMessages];
   }
 
   private healActiveLogBeforeSend(): ChatMessage[] {
+    // Skip the expensive 4-pass healing pipeline when the log hasn't
+    // changed since the last call — the common case between iterations
+    // where no new messages were appended.
+    if (this._healedCache && this._healedVersion === this.log.version) {
+      return this._healedCache;
+    }
     const current = this.log.toFullHistory();
     const healed = healLoadedMessages(current, DEFAULT_MAX_RESULT_CHARS);
     const argsShrunk = shrinkOversizedToolCallArgsByTokens(
@@ -538,9 +563,13 @@ export class CacheFirstLoop {
     );
     const pruned = stripDroppableReasoningContent(argsShrunk.messages);
     if (healed.healedCount === 0 && argsShrunk.healedCount === 0 && pruned.prunedCount === 0) {
+      this._healedCache = current;
+      this._healedVersion = this.log.version;
       return current;
     }
     this.log.compactInPlace(pruned.messages);
+    this._healedCache = pruned.messages;
+    this._healedVersion = this.log.version;
     if (this.sessionName) {
       try {
         rewriteSession(this.sessionName, pruned.messages);
@@ -828,6 +857,10 @@ export class CacheFirstLoop {
       let toolCalls: ToolCall[] = [];
       let usage: TurnStats["usage"] | null = null;
 
+      // Snapshot prefix evidence from the same turn-start tool list sent
+      // to the API so MCP hot-adds during the turn don't rewrite history.
+      const prefixEvidence = this.prefix.diagnosticHashes(toolSpecs);
+
       try {
         if (this.stream) {
           const result = yield* streamModelResponse({
@@ -837,6 +870,7 @@ export class CacheFirstLoop {
             toolSpecs,
             signal,
             reasoningEffort: this.reasoningEffort,
+            maxTokens: this.maxOutputTokens,
             turn: this._turn,
           });
           assistantContent = result.assistantContent;
@@ -852,6 +886,7 @@ export class CacheFirstLoop {
             signal,
             thinking: thinkingModeForModel(callModel),
             reasoningEffort: this.reasoningEffort,
+            maxTokens: this.maxOutputTokens,
           });
           assistantContent = resp.content;
           reasoningContent = resp.reasoningContent ?? "";
@@ -911,10 +946,27 @@ export class CacheFirstLoop {
       // Attribute under the actual model used (escalated → pro, else
       // this.model) so cost/usage logs reflect reality.
       const turnStats = this.stats.record(this._turn, this.model, usage ?? new Usage());
+      let cacheDiagnostic = buildCacheDiagnostic({
+        turn: this._turn,
+        model: this.model,
+        usage: turnStats.usage,
+        estimatedCostUsd: turnStats.cost,
+        prefix: prefixEvidence,
+        previous: latestCacheDiagnostic(this.stats.cacheDiagnostics),
+      });
 
       // Carry cumulative stats across app restarts.
       if (this.sessionName) {
         try {
+          const meta = loadSessionMeta(this.sessionName);
+          cacheDiagnostic = buildCacheDiagnostic({
+            turn: this._turn,
+            model: this.model,
+            usage: turnStats.usage,
+            estimatedCostUsd: turnStats.cost,
+            prefix: prefixEvidence,
+            previous: latestCacheDiagnostic(meta.cacheDiagnostics),
+          });
           const last =
             this.stats.turns.length > 0 ? this.stats.turns[this.stats.turns.length - 1] : null;
           patchSessionMeta(this.sessionName, {
@@ -923,11 +975,16 @@ export class CacheFirstLoop {
             cacheMissTokens: this.stats.cumulativeCacheMissTokens,
             totalCompletionTokens: this.stats.cumulativeCompletionTokens,
             lastPromptTokens: last?.usage.promptTokens,
+            cacheDiagnostics: appendCacheDiagnostic(meta.cacheDiagnostics, cacheDiagnostic),
           });
         } catch {
           // Best-effort; don't crash the turn loop on a write failure.
         }
       }
+
+      // Store the per-turn cache diagnostic so the live /cache-miss-report
+      // replays the prefix hashes that were actually in effect at turn time.
+      this.stats.addCacheDiagnostic(cacheDiagnostic);
 
       this.scratch.reasoning = reasoningContent || null;
 
@@ -946,6 +1003,7 @@ export class CacheFirstLoop {
         role: "assistant_final",
         content: assistantContent,
         stats: turnStats,
+        cacheDiagnostic,
         repair: report,
       };
 
@@ -1081,6 +1139,7 @@ export class CacheFirstLoop {
       recordStats: (model, usage) => this.stats.record(this._turn, model, usage),
       turn: this._turn,
       model: this.model,
+      maxOutputTokens: this.maxOutputTokens,
     };
   }
 
