@@ -15,6 +15,7 @@ describe("review edit gate tool matching", () => {
     expect(isReviewGatedEditTool("write_file")).toBe(true);
     expect(isReviewGatedEditTool("multi_edit")).toBe(true);
     expect(isReviewGatedEditTool("delete_range")).toBe(true);
+    expect(isReviewGatedEditTool("delete_symbol")).toBe(true);
     expect(isReviewGatedEditTool("read_file")).toBe(false);
   });
 });
@@ -80,6 +81,40 @@ describe("buildEditToolBlocks", () => {
 
     expect(blocks).toEqual([
       { path: "range.ts", search: "START\nremove\nEND\n", replace: "", offset: 0 },
+    ]);
+  });
+
+  it("turns delete_symbol args into a reviewable deletion block", async () => {
+    writeFileSync(
+      join(root, "symbols.ts"),
+      [
+        "export function keep() {",
+        "  return 1;",
+        "}",
+        "",
+        "/** Remove this class. */",
+        "@sealed",
+        "export class RemoveMe {",
+        "  value = 2;",
+        "}",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+
+    const blocks = await buildEditToolBlocksForReview(
+      "delete_symbol",
+      { path: "symbols.ts", name: "RemoveMe", kind: "class" },
+      root,
+    );
+
+    expect(blocks).toEqual([
+      {
+        path: "symbols.ts",
+        search: "/** Remove this class. */\n@sealed\nexport class RemoveMe {\n  value = 2;\n}\n",
+        replace: "",
+        offset: 0,
+      },
     ]);
   });
 });

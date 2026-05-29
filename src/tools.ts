@@ -423,13 +423,17 @@ function plainTextRejectedReason(name: string, result: string): string | null {
     (name === "edit_file" ||
       name === "write_file" ||
       name === "multi_edit" ||
-      name === "delete_range") &&
+      name === "delete_range" ||
+      name === "delete_symbol") &&
     /queued \d+ edits? for review/i.test(result)
   ) {
     return "edit-gate";
   }
   if (
-    (name === "edit_file" || name === "multi_edit" || name === "delete_range") &&
+    (name === "edit_file" ||
+      name === "multi_edit" ||
+      name === "delete_range" ||
+      name === "delete_symbol") &&
     /read_file first/i.test(result)
   ) {
     return "read-before-edit";

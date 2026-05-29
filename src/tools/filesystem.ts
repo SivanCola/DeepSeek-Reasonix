@@ -3,6 +3,8 @@
 import { promises as fs } from "node:fs";
 import * as pathMod from "node:path";
 import picomatch from "picomatch";
+import { grammarForPath } from "../code-query/grammar-map.js";
+import type { SymbolKind } from "../code-query/symbols.js";
 import { type AutoGitRollbackConfig, prepareAutoGitRollback } from "../code/auto-git-rollback.js";
 import { decodeFileBuffer, encodeFile } from "../code/file-encoding.js";
 import { addProjectPathAllowed, loadProjectPathAllowed } from "../config.js";
@@ -16,7 +18,14 @@ import {
   readSubdirMemoryContent,
 } from "../memory/subdir.js";
 import type { ToolCallContext, ToolRegistry } from "../tools.js";
-import { applyDeleteRange, applyEdit, applyMultiEdit, generateWriteDiff } from "./fs/edit.js";
+import {
+  applyDeleteLineRange,
+  applyDeleteRange,
+  applyEdit,
+  applyMultiEdit,
+  expandSymbolDeletionStartLine,
+  generateWriteDiff,
+} from "./fs/edit.js";
 import { globFiles } from "./fs/glob.js";
 import { extractOutline, formatOutline } from "./fs/outline.js";
 import { searchContent, searchFiles } from "./fs/search.js";
@@ -56,6 +65,13 @@ const SKIP_DIR_NAMES: ReadonlySet<string> = new Set(
 
 /** First line of binary defense; NUL-byte sniff is the second (catches mislabeled `.txt`). */
 const BINARY_EXTENSIONS: ReadonlySet<string> = new Set(DEFAULT_INDEX_EXCLUDES.exts);
+const DELETE_SYMBOL_KINDS: ReadonlySet<SymbolKind> = new Set([
+  "function",
+  "class",
+  "method",
+  "interface",
+  "type",
+]);
 
 export function displayRel(rootDir: string, full: string): string {
   return pathMod.relative(rootDir, full).replaceAll("\\", "/");
@@ -822,6 +838,117 @@ export function registerFilesystemTools(
         abs,
         args,
         ctx?.readTracker ? (abs) => ctx.readTracker!.hasRead(abs) : undefined,
+      );
+    },
+  });
+
+  registry.register({
+    name: "delete_symbol",
+    description:
+      "Delete one function/class/method/interface/type by exact symbol name using tree-sitter. Supports TS/TSX/JS/JSX/Python/Go/Rust/Java. Call read_file first. If the symbol is missing or ambiguous, no file is changed and candidates are returned.",
+    parameters: {
+      type: "object",
+      properties: {
+        path: { type: "string" },
+        name: { type: "string", description: "Exact symbol name to delete." },
+        kind: {
+          type: "string",
+          enum: ["function", "class", "method", "interface", "type"],
+          description: "Optional symbol kind filter.",
+        },
+        parent: {
+          type: "string",
+          description: "Optional parent class/namespace name filter.",
+        },
+      },
+      required: ["path", "name"],
+    },
+    fn: async (
+      args: {
+        path: string;
+        name: string;
+        kind?: "function" | "class" | "method" | "interface" | "type";
+        parent?: string;
+      },
+      ctx?: ToolCallContext,
+    ) => {
+      const abs = await safePath(args.path, "delete_symbol", ctx, "write");
+      const guard = prepareAutoGitRollback({
+        rootDir,
+        toolName: "delete_symbol",
+        absPaths: [abs],
+        autoGitRollback,
+      });
+      if (guard) return guard;
+      if (ctx?.readTracker && !ctx.readTracker.hasRead(abs)) {
+        throw new Error(
+          `delete_symbol: ${displayRel(rootDir, abs)} was not read this session — read_file first so the AST deletion matches the bytes on disk.`,
+        );
+      }
+      if (!grammarForPath(abs)) {
+        return JSON.stringify({
+          path: args.path,
+          error:
+            "language not supported (TS/TSX/JS/JSX/Python/Go/Rust/Java); use edit_file instead",
+        });
+      }
+      if (typeof args.name !== "string" || args.name.trim().length === 0) {
+        return JSON.stringify({ path: args.path, error: "name must be a non-empty string" });
+      }
+      const { text } = decodeFileBuffer(await fs.readFile(abs));
+      const { extractSymbols } = await import("../code-query/symbols.js");
+      const wantedKind = args.kind;
+      const wantedParent = args.parent;
+      const candidates = (await extractSymbols(abs, text)).filter(
+        (symbol) =>
+          symbol.name === args.name &&
+          DELETE_SYMBOL_KINDS.has(symbol.kind) &&
+          (!wantedKind || symbol.kind === wantedKind) &&
+          (!wantedParent || symbol.parent === wantedParent),
+      );
+      if (candidates.length === 0) {
+        return JSON.stringify({
+          path: args.path,
+          error: `delete_symbol: no matching symbol ${JSON.stringify(args.name)}`,
+        });
+      }
+      if (candidates.length > 1) {
+        return JSON.stringify({
+          path: args.path,
+          error: `delete_symbol: multiple symbols named ${JSON.stringify(args.name)}; pass kind/parent to disambiguate`,
+          candidates: candidates.map((symbol) => ({
+            name: symbol.name,
+            kind: symbol.kind,
+            line: symbol.line,
+            endLine: symbol.endLine,
+            parent: symbol.parent,
+          })),
+        });
+      }
+      const symbol = candidates[0]!;
+      const lines = text.split(/\r?\n/);
+
+      if (symbol.line === symbol.endLine) {
+        const line = lines[symbol.line - 1] ?? "";
+        const before = line.slice(0, symbol.column - 1).trim();
+        const after = line.slice(symbol.endColumn - 1).trim();
+        if (before.length > 0 || (after.length > 0 && !after.startsWith("//"))) {
+          return JSON.stringify({
+            path: args.path,
+            error:
+              "delete_symbol: target symbol shares a line with other code; use edit_file for precise removal",
+          });
+        }
+      }
+
+      const startLine = expandSymbolDeletionStartLine(lines, symbol.line);
+      return applyDeleteLineRange(
+        rootDir,
+        abs,
+        startLine,
+        symbol.endLine,
+        "delete_symbol",
+        ctx?.readTracker ? (p) => ctx.readTracker!.hasRead(p) : undefined,
       );
     },
   });

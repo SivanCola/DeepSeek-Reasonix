@@ -109,6 +109,35 @@ export function computeDeleteRangePatchFromText(text: string, args: DeleteRangeA
   };
 }
 
+export function computeDeleteLineRangePatchFromText(
+  text: string,
+  startLine: number,
+  endLine: number,
+): DeletePatch {
+  if (!Number.isInteger(startLine) || !Number.isInteger(endLine)) {
+    return noDeletePatch("line range must be integer lines");
+  }
+  if (startLine < 1 || endLine < startLine) {
+    return noDeletePatch("line range is invalid");
+  }
+  const starts = lineStartOffsets(text);
+  if (startLine > starts.length) {
+    return noDeletePatch(`start line ${startLine} is outside the file`);
+  }
+  const startIdx = starts[startLine - 1]!;
+  const endIdx = starts[endLine] ?? text.length;
+  if (startIdx >= endIdx) return noDeletePatch("line range is empty");
+  const search = text.slice(startIdx, endIdx);
+  return {
+    search,
+    replace: "",
+    startIndex: startIdx,
+    endIndex: endIdx,
+    startLine,
+    deletedChars: search.length,
+  };
+}
+
 export async function applyDeleteRange(
   rootDir: string,
   abs: string,
@@ -135,6 +164,40 @@ export async function applyDeleteRange(
   return `delete_range: deleted ${patch.deletedChars} chars from ${rel}\n${renderEditDiff(patch.search, patch.replace, patch.startLine)}`;
 }
 
+export async function applyDeleteLineRange(
+  rootDir: string,
+  abs: string,
+  startLine: number,
+  endLine: number,
+  toolName: string,
+  hasRead?: (abs: string) => boolean,
+): Promise<string> {
+  if (hasRead && !hasRead(abs)) {
+    throw new Error(
+      `${toolName}: ${displayRel(rootDir, abs)} was not read this session — ${READ_BEFORE_EDIT_MARKER} so deletion matches the bytes on disk.`,
+    );
+  }
+  const beforeBuf = await fs.readFile(abs);
+  const { text: before, encoding } = decodeFileBuffer(beforeBuf);
+  const patch = computeDeleteLineRangePatchFromText(before, startLine, endLine);
+  const rel = displayRel(rootDir, abs);
+  if (patch.noopReason) return `${toolName}: no-op for ${rel} — ${patch.noopReason}`;
+  const after = `${before.slice(0, patch.startIndex)}${patch.replace}${before.slice(patch.endIndex)}`;
+  await fs.writeFile(abs, encodeFile(after, encoding));
+  return `${toolName}: deleted lines ${startLine}-${endLine} from ${rel}\n${renderEditDiff(patch.search, patch.replace, patch.startLine)}`;
+}
+
+export function expandSymbolDeletionStartLine(
+  lines: readonly string[],
+  symbolLine: number,
+): number {
+  let startLine = symbolLine;
+
+  startLine = expandDecoratorStartLine(lines, startLine);
+  startLine = expandDocCommentStartLine(lines, startLine);
+  return expandDecoratorStartLine(lines, startLine);
+}
+
 function noDeletePatch(reason: string): DeletePatch {
   return {
     search: "",
@@ -155,6 +218,59 @@ function allOccurrences(haystack: string, needle: string): number[] {
     idx = haystack.indexOf(needle, idx + Math.max(1, needle.length));
   }
   return out;
+}
+
+function lineStartOffsets(text: string): number[] {
+  const starts = [0];
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] === "\n" && i + 1 < text.length) starts.push(i + 1);
+  }
+  return starts;
+}
+
+function expandDecoratorStartLine(lines: readonly string[], startLine: number): number {
+  let nextStart = startLine;
+  while (nextStart > 1) {
+    const previous = (lines[nextStart - 2] ?? "").trim();
+    if (previous.startsWith("@")) {
+      nextStart--;
+      continue;
+    }
+    if (looksLikeDecoratorContinuation(previous)) {
+      const decoratorStart = findDecoratorStartAbove(lines, nextStart - 1);
+      if (decoratorStart !== null) {
+        nextStart = decoratorStart;
+        continue;
+      }
+    }
+    break;
+  }
+  return nextStart;
+}
+
+function looksLikeDecoratorContinuation(trimmed: string): boolean {
+  return /^[)\]}]/.test(trimmed);
+}
+
+function findDecoratorStartAbove(lines: readonly string[], lastLine: number): number | null {
+  for (let line = lastLine; line >= 1; line--) {
+    const trimmed = (lines[line - 1] ?? "").trim();
+    if (trimmed.length === 0) return null;
+    if (trimmed.startsWith("@")) return line;
+  }
+  return null;
+}
+
+function expandDocCommentStartLine(lines: readonly string[], startLine: number): number {
+  if (startLine <= 1) return startLine;
+  const previous = (lines[startLine - 2] ?? "").trim();
+  if (!previous.endsWith("*/")) return startLine;
+  for (let line = startLine - 1; line >= 1; line--) {
+    const trimmed = (lines[line - 1] ?? "").trim();
+    if (trimmed.startsWith("/**")) return line;
+    if (!trimmed.startsWith("*") && trimmed.length > 0) return startLine;
+  }
+  return startLine;
 }
 
 export interface MultiEditEntry {
