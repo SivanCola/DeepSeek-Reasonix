@@ -1544,7 +1544,7 @@ export const JA: TranslationSchema = {
     denyFooter:
       "コンテキストを入力  \u00b7  \u23ce 理由を添えて送信  \u00b7  esc スキップ（理由なしで拒否）",
     pickFooter:
-      "\u2191\u2193 選択  \u00b7  \u23ce 確定  \u00b7  Tab コンテキスト追加  \u00b7  esc キャンセル",
+      "\u2191\u2193 選択  \u00b7  1-3 クイック選択  \u00b7  \u23ce 確定  \u00b7  Tab コンテキスト追加  \u00b7  esc キャンセル",
     allowOnce: "一度だけ許可",
     allowOnceDesc: "このアクセスを許可; このセッションの残りでディレクトリを記憶",
     allowAlways: "常に許可",
@@ -1573,7 +1573,7 @@ export const JA: TranslationSchema = {
       "コンテキストを入力  \u00b7  \u23ce 理由を添えて送信  \u00b7  esc スキップ（理由なしで拒否）",
     awaiting: "待機中",
     pickFooter:
-      "\u2191\u2193 選択  \u00b7  \u23ce 確定  \u00b7  Tab コンテキスト追加  \u00b7  esc キャンセル",
+      "\u2191\u2193 選択  \u00b7  1-3 クイック選択  \u00b7  \u23ce 確定  \u00b7  Tab コンテキスト追加  \u00b7  esc キャンセル",
     allowOnce: "一度だけ許可",
     allowOnceDesc: "このコマンドを実行、次回は再確認",
     allowAlways: "常に許可",

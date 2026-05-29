@@ -1517,7 +1517,7 @@ export const EN: TranslationSchema = {
     denyFooter:
       "type context  \u00b7  \u23ce submit with reason  \u00b7  esc skip (deny without reason)",
     pickFooter:
-      "\u2191\u2193 pick  \u00b7  \u23ce confirm  \u00b7  Tab add context  \u00b7  esc cancel",
+      "\u2191\u2193 pick  \u00b7  1-3 quick pick  \u00b7  \u23ce confirm  \u00b7  Tab add context  \u00b7  esc cancel",
     allowOnce: "allow once",
     allowOnceDesc: "permit this access; remember the directory for the rest of this session",
     allowAlways: "allow always",
@@ -1545,7 +1545,7 @@ export const EN: TranslationSchema = {
       "type context  \u00b7  \u23ce submit with reason  \u00b7  esc skip (deny without reason)",
     awaiting: "awaiting",
     pickFooter:
-      "\u2191\u2193 pick  \u00b7  \u23ce confirm  \u00b7  Tab add context  \u00b7  esc cancel",
+      "\u2191\u2193 pick  \u00b7  1-3 quick pick  \u00b7  \u23ce confirm  \u00b7  Tab add context  \u00b7  esc cancel",
     allowOnce: "allow once",
     allowOnceDesc: "run this command, ask again next time",
     allowAlways: "allow always",

@@ -27,6 +27,8 @@ export interface SingleSelectProps<V extends string> {
   footer?: string;
   /** Render item hints on the same row as the label instead of a second row. */
   inlineHints?: boolean;
+  /** When enabled, pressing 1-9 immediately submits the matching row. */
+  numericShortcuts?: boolean;
   /** Ignore matching keystrokes so an enclosing component can own them. */
   ignoreKey?: (ev: KeyEvent) => boolean;
 }
@@ -39,6 +41,7 @@ export function SingleSelect<V extends string>({
   onCancel,
   footer,
   inlineHints = false,
+  numericShortcuts = false,
   ignoreKey,
 }: SingleSelectProps<V>) {
   const color = useColor();
@@ -57,6 +60,10 @@ export function SingleSelect<V extends string>({
     } else if (ev.return) {
       const chosen = items[index];
       if (chosen && !chosen.disabled) onSubmit(chosen.value);
+    } else if (numericShortcuts && /^[1-9]$/.test(ev.input)) {
+      const shortcutIndex = Number.parseInt(ev.input, 10) - 1;
+      const chosen = items[shortcutIndex];
+      if (chosen && !chosen.disabled) onSubmit(chosen.value);
     } else if (ev.tab) {
       const chosen = items[index];
       if (chosen && !chosen.disabled) onTab?.(chosen.value);
@@ -72,7 +79,9 @@ export function SingleSelect<V extends string>({
           key={item.value}
           item={item}
           active={i === index}
-          marker={i === index ? "▸" : " "}
+          marker={
+            numericShortcuts ? `${i === index ? "▸ " : "  "}${i + 1}.` : i === index ? "▸" : " "
+          }
           color={color}
           inlineHint={inlineHints}
         />

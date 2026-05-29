@@ -1457,7 +1457,8 @@ export const de: TranslationSchema = {
     optional: "optional",
     denyFooter:
       "Kontext eingeben  ·  ⏎ mit Grund absenden  ·  Esc überspringen (ohne Grund ablehnen)",
-    pickFooter: "↑↓ auswählen  ·  ⏎ bestätigen  ·  Tab Kontext hinzufügen  ·  Esc abbrechen",
+    pickFooter:
+      "↑↓ auswählen  ·  1-3 Schnellauswahl  ·  ⏎ bestätigen  ·  Tab Kontext hinzufügen  ·  Esc abbrechen",
     allowOnce: "Einmal erlauben",
     allowOnceDesc: "Diesen Zugriff erlauben; das Verzeichnis für den Rest dieser Sitzung merken",
     allowAlways: "Immer erlauben",
@@ -1486,7 +1487,8 @@ export const de: TranslationSchema = {
     denyFooter:
       "Kontext eingeben  ·  ⏎ mit Grund absenden  ·  Esc überspringen (ohne Grund ablehnen)",
     awaiting: "wartet",
-    pickFooter: "↑↓ auswählen  ·  ⏎ bestätigen  ·  Tab Kontext hinzufügen  ·  Esc abbrechen",
+    pickFooter:
+      "↑↓ auswählen  ·  1-3 Schnellauswahl  ·  ⏎ bestätigen  ·  Tab Kontext hinzufügen  ·  Esc abbrechen",
     allowOnce: "Einmal erlauben",
     allowOnceDesc: "Diesen Befehl ausführen, beim nächsten Mal erneut fragen",
     allowAlways: "Immer erlauben",

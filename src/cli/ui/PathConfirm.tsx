@@ -66,6 +66,7 @@ export function PathConfirm({ prompt, onChoose }: PathConfirmProps) {
       <SingleSelect
         initialValue={prompt.actions[0]?.id ?? "run_once"}
         items={prompt.actions.map((a) => ({ value: a.id, label: localActionLabel(a.id, a.label) }))}
+        numericShortcuts
         onSubmit={(v) => {
           const action = prompt.actions.find((a) => a.id === v);
           if (action?.secondaryInput) {

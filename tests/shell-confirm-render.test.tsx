@@ -1,5 +1,5 @@
 import React from "react";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ShellConfirm } from "../src/cli/ui/ShellConfirm.js";
 import { setLanguageRuntime } from "../src/i18n/index.js";
 import { render } from "./helpers/ink-test.js";
@@ -40,7 +40,20 @@ describe("ShellConfirm — renders with ApprovalPrompt", () => {
     expect(out).toContain("Run once");
     expect(out).toContain("Always allow");
     expect(out).toContain("Deny");
+    expect(out).toContain("1. Run once");
+    expect(out).toContain("2. Always allow");
+    expect(out).toContain("3. Deny");
     expect(out).toContain("echo hello");
+  });
+
+  it("submits numbered approval shortcuts", () => {
+    const onChoose = vi.fn();
+    const { stdin, unmount } = render(
+      <ShellConfirm prompt={makeShellPrompt("npm test")} onChoose={onChoose} />,
+    );
+    stdin.write("2");
+    unmount();
+    expect(onChoose).toHaveBeenCalledWith("always_allow");
   });
 
   it("triggers deny phase when a secondary-input action is submitted", () => {
