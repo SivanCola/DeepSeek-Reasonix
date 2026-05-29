@@ -8,13 +8,7 @@ project; installation, releases, and canonical documentation belong there.
 
 ## Data Source
 
-The contribution list is sourced from the upstream repository's closed pull
-requests:
-
-https://github.com/esengine/DeepSeek-Reasonix/pulls?q=is%3Apr+is%3Aclosed
-
-For this personal showcase, the list is filtered to PRs authored by
-`SivanCola`:
+Closed upstream PRs authored by `SivanCola`:
 
 https://github.com/esengine/DeepSeek-Reasonix/pulls?q=is%3Apr+is%3Aclosed+author%3ASivanCola
 
@@ -64,4 +58,4 @@ view of the concrete contributions that landed in the official repository.
 
 - Upstream repository: https://github.com/esengine/DeepSeek-Reasonix
 - My fork: https://github.com/SivanCola/DeepSeek-Reasonix
-- Source query: https://github.com/esengine/DeepSeek-Reasonix/pulls?q=is%3Apr+is%3Aclosed
+- Source query: https://github.com/esengine/DeepSeek-Reasonix/pulls?q=is%3Apr+is%3Aclosed+author%3ASivanCola

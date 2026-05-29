@@ -8,11 +8,7 @@
 
 ## 数据源
 
-贡献列表来自官方上游仓库的 closed pull requests：
-
-https://github.com/esengine/DeepSeek-Reasonix/pulls?q=is%3Apr+is%3Aclosed
-
-作为个人贡献展示，这里进一步筛选 `SivanCola` 创建的 PR：
+官方上游仓库中由 `SivanCola` 创建的 closed PR：
 
 https://github.com/esengine/DeepSeek-Reasonix/pulls?q=is%3Apr+is%3Aclosed+author%3ASivanCola
 
@@ -59,4 +55,4 @@ https://github.com/esengine/DeepSeek-Reasonix/pulls?q=is%3Apr+is%3Aclosed+author
 
 - 官方上游仓库：https://github.com/esengine/DeepSeek-Reasonix
 - 我的 fork：https://github.com/SivanCola/DeepSeek-Reasonix
-- 数据源：https://github.com/esengine/DeepSeek-Reasonix/pulls?q=is%3Apr+is%3Aclosed
+- 数据源：https://github.com/esengine/DeepSeek-Reasonix/pulls?q=is%3Apr+is%3Aclosed+author%3ASivanCola
