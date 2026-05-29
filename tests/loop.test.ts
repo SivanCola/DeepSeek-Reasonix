@@ -238,6 +238,7 @@ describe("CacheFirstLoop (non-streaming)", () => {
         ],
       },
       { content: "done" },
+      { content: "next done" },
     ]);
 
     const tools = new ToolRegistry();
@@ -268,6 +269,14 @@ describe("CacheFirstLoop (non-streaming)", () => {
     expect(loop.stats.cacheDiagnostics[0]?.toolNames).toEqual(["probe"]);
     expect(loop.stats.cacheDiagnostics[1]?.toolNames).toEqual(["probe"]);
     expect(loop.stats.cacheDiagnostics[1]?.missReason).not.toBe("mcp-tool-hot-add");
+    expect(loop.stats.turns[1]?.cacheDiagnostics?.prefixChangeReasons).toEqual([]);
+
+    await loop.run("next");
+
+    expect(loop.stats.turns[2]?.cacheDiagnostics?.prefixChangeReasons).toContain("tools");
+    expect(loop.stats.summary().lastPrefixChangeReasons).toContain("tools");
+    expect(loop.stats.cacheDiagnostics[2]?.toolNames).toEqual(["mcp_dynamic_tool", "probe"]);
+    expect(loop.stats.cacheDiagnostics[2]?.missReason).toBe("mcp-tool-hot-add");
   });
 
   it("yields tool_start before each tool dispatch so the TUI can show 'running…'", async () => {

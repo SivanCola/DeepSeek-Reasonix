@@ -57,6 +57,7 @@ import {
 } from "./memory/session.js";
 import { type RepairReport, ToolCallRepair } from "./repair/index.js";
 import {
+  type PrefixDiagnosticHashes,
   appendCacheDiagnostic,
   buildCacheDiagnostic,
   latestCacheDiagnostic,
@@ -565,13 +566,15 @@ export class CacheFirstLoop {
     return [...this.prefix.toMessages(), ...healedMessages];
   }
 
-  private cacheShapeForRequest(toolSpecs: readonly ToolSpec[]): CacheShapeSnapshot {
-    const hashes = this.prefix.componentHashes;
+  private cacheShapeForRequest(
+    prefixEvidence: PrefixDiagnosticHashes,
+    toolSpecs: readonly ToolSpec[],
+  ): CacheShapeSnapshot {
     return {
-      systemHash: hashes.system,
-      toolsHash: hashes.tools,
-      fewShotsHash: hashes.fewShots,
-      prefixHash: hashes.full,
+      systemHash: prefixEvidence.systemHash,
+      toolsHash: prefixEvidence.toolSpecsHash,
+      fewShotsHash: prefixEvidence.fewShotsHash,
+      prefixHash: prefixEvidence.prefixHash,
       logRewriteVersion: this.log.rewriteVersion,
       toolSchemaTokens: countTokensBounded(JSON.stringify(toolSpecs)),
     };
@@ -943,7 +946,7 @@ export class CacheFirstLoop {
       // Snapshot prefix evidence from the same turn-start tool list sent
       // to the API so MCP hot-adds during the turn don't rewrite history.
       const prefixEvidence = this.prefix.diagnosticHashes(toolSpecs);
-      const cacheShape = this.cacheShapeForRequest(toolSpecs);
+      const cacheShape = this.cacheShapeForRequest(prefixEvidence, toolSpecs);
 
       try {
         callModel = this.model;
