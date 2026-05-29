@@ -522,6 +522,18 @@ export type KernelErrorEvent = {
   recoverable: boolean;
 };
 
+export type ConnectionTestTarget = "deepseek" | "webSearch";
+
+export type ConnectionTestResultEvent = {
+  type: "$connection_test_result";
+  target: ConnectionTestTarget;
+  ok: boolean;
+  message: string;
+  latencyMs: number;
+  status?: number;
+  detail?: string;
+};
+
 export type IncomingEvent = { tabId?: string } & (
   | ReadyEvent
   | ProtocolErrorEvent
@@ -565,6 +577,7 @@ export type IncomingEvent = { tabId?: string } & (
   | KernelErrorEvent
   | RetryResultEvent
   | BtwResultEvent
+  | ConnectionTestResultEvent
 );
 
 export type OutgoingCommand = { tabId?: string } & (
@@ -611,4 +624,13 @@ export type OutgoingCommand = { tabId?: string } & (
   | { cmd: "compact_history" }
   | { cmd: "retry" }
   | { cmd: "btw"; text: string }
+  | {
+      cmd: "settings_test_connection";
+      target: ConnectionTestTarget;
+      apiKey?: string;
+      baseUrl?: string | null;
+      engine?: string;
+      endpoint?: string | null;
+      apiKeys?: Record<string, string>;
+    }
 );

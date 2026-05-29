@@ -134,6 +134,7 @@ import {
 import { SkillStore } from "../../skills.js";
 import { countTokensBounded } from "../../tokenizer.js";
 import type { ChoiceOption } from "../../tools/choice.js";
+import { webSearch } from "../../tools/web.js";
 import type { ChatMessage } from "../../types.js";
 import { VERSION } from "../../version.js";
 import { type McpRuntime, createMcpRuntime } from "./mcp-runtime.js";
@@ -234,6 +235,15 @@ type InMessage = { tabId?: string } & (
   | { cmd: "retry" }
   | { cmd: "btw"; text: string }
   | { cmd: "desktop_resync" }
+  | {
+      cmd: "settings_test_connection";
+      target: "deepseek" | "webSearch";
+      apiKey?: string;
+      baseUrl?: string | null;
+      engine?: string;
+      endpoint?: string | null;
+      apiKeys?: Record<string, string>;
+    }
 );
 
 interface NeedsSetupEvent {
@@ -579,6 +589,16 @@ interface BtwResultEvent {
   answer: string;
 }
 
+interface ConnectionTestResultEvent {
+  type: "$connection_test_result";
+  target: "deepseek" | "webSearch";
+  ok: boolean;
+  message: string;
+  latencyMs: number;
+  status?: number;
+  detail?: string;
+}
+
 /** Direct fd write — bypasses Node's stream layer (and its piped-output
  *  block buffering) so every JSON line reaches Rust the moment it's
  *  produced, not whenever the next 8 KB flushes. */
@@ -615,7 +635,8 @@ type EmittableEvent =
   | CtxBreakdownEvent
   | MemoryEvent
   | MemoryDetailEvent
-  | JobsEvent;
+  | JobsEvent
+  | ConnectionTestResultEvent;
 
 const STDOUT_BACKPRESSURE_WAIT = new Int32Array(new SharedArrayBuffer(4));
 
@@ -3508,6 +3529,245 @@ export async function desktopCommand(opts: DesktopOptions): Promise<void> {
       const question = msg.text.trim();
       if (!question) return;
       runBtwOnTab(tab, question);
+      return;
+    }
+    if (msg.cmd === "settings_test_connection") {
+      void (async () => {
+        try {
+          if (msg.target === "deepseek") {
+            const ep = loadEndpoint();
+            const apiKey = msg.apiKey ?? ep.apiKey;
+            const baseUrl = ((msg.baseUrl ?? ep.baseUrl) || "https://api.deepseek.com").replace(
+              /\/+$/,
+              "",
+            );
+            if (!apiKey) {
+              emit(
+                {
+                  type: "$connection_test_result",
+                  target: "deepseek",
+                  ok: false,
+                  message: "No API key configured",
+                  latencyMs: 0,
+                },
+                tab.id,
+              );
+              return;
+            }
+            const started = Date.now();
+            const abort = new AbortController();
+            const timeout = setTimeout(() => abort.abort(), 10_000);
+            try {
+              const resp = await fetch(`${baseUrl}/models`, {
+                headers: { Authorization: `Bearer ${apiKey}` },
+                signal: abort.signal,
+              });
+              clearTimeout(timeout);
+              const latencyMs = Date.now() - started;
+              if (resp.ok) {
+                emit(
+                  {
+                    type: "$connection_test_result",
+                    target: "deepseek",
+                    ok: true,
+                    message: "Connected",
+                    latencyMs,
+                  },
+                  tab.id,
+                );
+              } else if (resp.status === 401 || resp.status === 403) {
+                emit(
+                  {
+                    type: "$connection_test_result",
+                    target: "deepseek",
+                    ok: false,
+                    message: "Authentication failed",
+                    latencyMs,
+                    status: resp.status,
+                  },
+                  tab.id,
+                );
+              } else if (resp.status === 429) {
+                emit(
+                  {
+                    type: "$connection_test_result",
+                    target: "deepseek",
+                    ok: false,
+                    message: "Rate limited",
+                    latencyMs,
+                    status: 429,
+                  },
+                  tab.id,
+                );
+              } else {
+                emit(
+                  {
+                    type: "$connection_test_result",
+                    target: "deepseek",
+                    ok: false,
+                    message: "Upstream service error",
+                    latencyMs,
+                    status: resp.status,
+                    detail: `HTTP ${resp.status}`,
+                  },
+                  tab.id,
+                );
+              }
+            } catch (err) {
+              clearTimeout(timeout);
+              const latencyMs = Date.now() - started;
+              if (abort.signal.aborted) {
+                emit(
+                  {
+                    type: "$connection_test_result",
+                    target: "deepseek",
+                    ok: false,
+                    message: "Request timed out",
+                    latencyMs,
+                  },
+                  tab.id,
+                );
+              } else {
+                emit(
+                  {
+                    type: "$connection_test_result",
+                    target: "deepseek",
+                    ok: false,
+                    message: "Connection failed",
+                    latencyMs,
+                    detail: (err as Error).message,
+                  },
+                  tab.id,
+                );
+              }
+            }
+            return;
+          }
+
+          if (msg.target === "webSearch") {
+            const engine = (msg.engine ?? readWebSearchEngine()) as
+              | "bing"
+              | "bing-intl"
+              | "searxng"
+              | "metaso"
+              | "baidu"
+              | "tavily"
+              | "perplexity"
+              | "exa"
+              | "brave"
+              | "ollama";
+            if (!engine) {
+              emit(
+                {
+                  type: "$connection_test_result",
+                  target: "webSearch",
+                  ok: false,
+                  message: "No search engine selected",
+                  latencyMs: 0,
+                },
+                tab.id,
+              );
+              return;
+            }
+
+            // Pass draft key directly via opts.apiKey so it takes priority over
+            // both saved config and env vars. Only the key for the selected
+            // engine matters — apiKeys maps engine name → key value.
+            const draftKey: string | undefined =
+              msg.apiKeys && engine ? msg.apiKeys[engine] : undefined;
+
+            const isPaidEngine = ["tavily", "perplexity", "exa"].includes(engine);
+            const abort = new AbortController();
+            const timeout = setTimeout(() => abort.abort(), 10_000);
+            const started = Date.now();
+            try {
+              const results = await webSearch("reasonix connectivity test", {
+                engine,
+                topK: 1,
+                signal: abort.signal,
+                ...(draftKey ? { apiKey: draftKey } : {}),
+                ...(msg.endpoint !== undefined ? { endpoint: msg.endpoint ?? undefined } : {}),
+              });
+              clearTimeout(timeout);
+              const latencyMs = Date.now() - started;
+              emit(
+                {
+                  type: "$connection_test_result",
+                  target: "webSearch",
+                  ok: true,
+                  message: `Connected · ${results.length} result(s)`,
+                  latencyMs,
+                  ...(isPaidEngine ? { detail: "A minimal test request was sent" } : {}),
+                },
+                tab.id,
+              );
+            } catch (err) {
+              clearTimeout(timeout);
+              const latencyMs = Date.now() - started;
+              const errMsg = (err as Error).message ?? String(err);
+              if (abort.signal.aborted) {
+                emit(
+                  {
+                    type: "$connection_test_result",
+                    target: "webSearch",
+                    ok: false,
+                    message: "Request timed out",
+                    latencyMs,
+                  },
+                  tab.id,
+                );
+              } else if (/401|403|unauthorized|invalid.*key/i.test(errMsg)) {
+                emit(
+                  {
+                    type: "$connection_test_result",
+                    target: "webSearch",
+                    ok: false,
+                    message: "Authentication failed",
+                    latencyMs,
+                    detail: errMsg,
+                  },
+                  tab.id,
+                );
+              } else if (/429|rate.limit/i.test(errMsg)) {
+                emit(
+                  {
+                    type: "$connection_test_result",
+                    target: "webSearch",
+                    ok: false,
+                    message: "Rate limited",
+                    latencyMs,
+                    detail: errMsg,
+                  },
+                  tab.id,
+                );
+              } else {
+                emit(
+                  {
+                    type: "$connection_test_result",
+                    target: "webSearch",
+                    ok: false,
+                    message: "Connection failed",
+                    latencyMs,
+                    detail: errMsg,
+                  },
+                  tab.id,
+                );
+              }
+            }
+          }
+        } catch (err) {
+          emit(
+            {
+              type: "$connection_test_result",
+              target: msg.target,
+              ok: false,
+              message: `Test failed: ${(err as Error).message}`,
+              latencyMs: 0,
+            },
+            tab.id,
+          );
+        }
+      })();
       return;
     }
     if (msg.cmd === "user_input") {

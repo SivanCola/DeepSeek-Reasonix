@@ -45,6 +45,8 @@ import type {
   CheckpointVerdict,
   ChoiceVerdict,
   ConfirmationChoice,
+  ConnectionTestResultEvent,
+  ConnectionTestTarget,
   ExternalSessionApp,
   ExternalSessionSource,
   ImportedMcpServer,
@@ -218,6 +220,11 @@ export type PendingRevision = {
   summary?: string;
 };
 
+export type ConnectionTestState = {
+  deepseek?: ConnectionTestResultEvent;
+  webSearch?: ConnectionTestResultEvent;
+};
+
 export type ReasonixCommandState =
   | "missing"
   | "installed"
@@ -375,6 +382,8 @@ type State = {
   /** Populated by $retry_result — component useEffect reads and sets composer draft. */
   retryText?: string;
   retryNonce: number;
+  /** Per-target connection test results from settings page. */
+  connectionTests: ConnectionTestState;
 };
 
 export type SessionFile = {
@@ -410,6 +419,7 @@ type Action =
   | { t: "dequeue_send"; index: number }
   | { t: "shift_queued_send" }
   | { t: "settings_patch"; patch: SettingsPatch }
+  | { t: "connection_test_result"; result: ConnectionTestResultEvent }
   | { t: "push_status"; text: string };
 
 function sanitizeSettingsPatch(patch: SettingsPatch): Partial<Settings> {
@@ -639,6 +649,14 @@ function reduceRaw(state: State, action: Action): State {
       };
     case "shift_queued_send":
       return { ...state, queuedSends: state.queuedSends.slice(1) };
+    case "connection_test_result":
+      return {
+        ...state,
+        connectionTests: {
+          ...state.connectionTests,
+          [action.result.target]: action.result,
+        },
+      };
     case "push_status":
       return { ...state, messages: [...state.messages, { kind: "status", text: action.text }] };
   }
@@ -1272,6 +1290,14 @@ function applyIncomingRaw(state: State, ev: IncomingEvent): State {
     }
     case "$retry_result":
       return { ...state, retryText: ev.text, retryNonce: state.retryNonce + 1 };
+    case "$connection_test_result":
+      return {
+        ...state,
+        connectionTests: {
+          ...state.connectionTests,
+          [ev.target]: ev,
+        },
+      };
     case "$btw_result":
       return {
         ...state,
@@ -1454,6 +1480,7 @@ function TabRuntime({
     activeSkill: null,
     queuedSends: [],
     retryNonce: 0,
+    connectionTests: {},
   });
   useLang();
   useDisableTextAssist();
@@ -1484,6 +1511,7 @@ function TabRuntime({
   >(undefined);
   const composerRef = useRef<HTMLTextAreaElement>(null);
   const threadRef = useRef<HTMLDivElement>(null);
+
   const virtuosoRef = useRef<VirtuosoHandle>(null);
   const virtScrollerRef = useRef<HTMLDivElement | null>(null);
   const atBottomRef = useRef(true);
@@ -1500,7 +1528,6 @@ function TabRuntime({
   useEffect(() => {
     if (settingsOpen) onRefreshReasonixCommandStatus();
   }, [onRefreshReasonixCommandStatus, settingsOpen]);
-
   const previousApprovalSnapshotRef = useRef<ApprovalSnapshot>({
     confirms: [],
     pathAccess: [],
@@ -1582,6 +1609,28 @@ function TabRuntime({
   );
   const saveApiKey = useCallback(
     (key: string) => sendRpc({ cmd: "setup_save_key", key }),
+    [sendRpc],
+  );
+  const testConnection = useCallback(
+    (target: ConnectionTestTarget, opts?: {
+      apiKey?: string;
+      baseUrl?: string | null;
+      engine?: string;
+      endpoint?: string | null;
+      apiKeys?: Record<string, string>;
+    }) => {
+      dispatch({
+        t: "connection_test_result",
+        result: {
+          type: "$connection_test_result",
+          target,
+          ok: false,
+          message: "",
+          latencyMs: -1,
+        },
+      });
+      sendRpc({ cmd: "settings_test_connection", target, ...opts });
+    },
     [sendRpc],
   );
   const addMcpSpec = useCallback(
@@ -2804,6 +2853,8 @@ function TabRuntime({
             memory={state.memory}
             memoryDetail={state.memoryDetail}
             qq={state.qq}
+            connectionTests={state.connectionTests}
+            onTestConnection={testConnection}
             onClose={() => setSettingsOpen(false)}
             onSave={saveSettings}
             onSaveApiKey={saveApiKey}

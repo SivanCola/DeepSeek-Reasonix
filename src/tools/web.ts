@@ -62,6 +62,8 @@ export interface WebSearchOptions {
     | "ollama";
   /** Base URL for SearXNG. Default http://localhost:8080. */
   endpoint?: string;
+  /** Explicit API key — bypasses config and env when set. Used by connectivity tests. */
+  apiKey?: string;
 }
 
 const DEFAULT_FETCH_MAX_CHARS = 32_000;
@@ -381,7 +383,7 @@ interface MetasoSearchResponse {
 
 async function searchMetaso(query: string, opts: WebSearchOptions = {}): Promise<SearchResult[]> {
   const topK = Math.max(1, Math.min(100, opts.topK ?? DEFAULT_TOPK));
-  const apiKey = loadMetasoApiKey(opts.configPath);
+  const apiKey = opts.apiKey ?? loadMetasoApiKey(opts.configPath);
   if (!apiKey) throw new Error(t("webErrors.metasoMissingKey"));
 
   let resp: Response;
@@ -462,7 +464,7 @@ interface BaiduSearchResponse {
 
 async function searchBaidu(query: string, opts: WebSearchOptions = {}): Promise<SearchResult[]> {
   const topK = Math.max(1, Math.min(10, opts.topK ?? DEFAULT_TOPK));
-  const apiKey = loadBaiduApiKey(opts.configPath);
+  const apiKey = opts.apiKey ?? loadBaiduApiKey(opts.configPath);
   if (!apiKey) throw new Error(t("webErrors.baiduMissingKey"));
 
   let resp: Response;
@@ -527,7 +529,7 @@ interface TavilySearchResponse {
 
 async function searchTavily(query: string, opts: WebSearchOptions = {}): Promise<SearchResult[]> {
   const topK = Math.max(1, Math.min(20, opts.topK ?? DEFAULT_TOPK));
-  const apiKey = loadTavilyApiKey();
+  const apiKey = opts.apiKey ?? loadTavilyApiKey(opts.configPath);
   if (!apiKey) throw new Error(t("webErrors.tavilyMissingKey"));
 
   let resp: Response;
@@ -593,7 +595,7 @@ async function searchPerplexity(
   opts: WebSearchOptions = {},
 ): Promise<SearchResult[]> {
   const topK = Math.max(1, Math.min(20, opts.topK ?? DEFAULT_TOPK));
-  const apiKey = loadPerplexityApiKey();
+  const apiKey = opts.apiKey ?? loadPerplexityApiKey(opts.configPath);
   if (!apiKey) throw new Error(t("webErrors.perplexityMissingKey"));
 
   let resp: Response;
@@ -681,7 +683,7 @@ interface ExaAnswerResponse {
 
 async function searchExa(query: string, opts: WebSearchOptions = {}): Promise<SearchResult[]> {
   const topK = Math.max(1, Math.min(20, opts.topK ?? DEFAULT_TOPK));
-  const apiKey = loadExaApiKey();
+  const apiKey = opts.apiKey ?? loadExaApiKey(opts.configPath);
   if (!apiKey) throw new Error(t("webErrors.exaMissingKey"));
 
   let resp: Response;
@@ -754,7 +756,7 @@ interface OllamaSearchResponse {
 
 async function searchOllama(query: string, opts: WebSearchOptions = {}): Promise<SearchResult[]> {
   const topK = Math.max(1, Math.min(10, opts.topK ?? DEFAULT_TOPK));
-  const apiKey = loadOllamaApiKey(opts.configPath);
+  const apiKey = opts.apiKey ?? loadOllamaApiKey(opts.configPath);
   if (!apiKey) {
     throw new Error(t("webErrors.ollamaMissingKey"));
   }
@@ -820,7 +822,7 @@ interface BraveSearchResponse {
 
 async function searchBrave(query: string, opts: WebSearchOptions = {}): Promise<SearchResult[]> {
   const topK = Math.max(1, Math.min(20, opts.topK ?? DEFAULT_TOPK));
-  const apiKey = loadBraveApiKey(opts.configPath);
+  const apiKey = opts.apiKey ?? loadBraveApiKey(opts.configPath);
   if (!apiKey) throw new Error(t("webErrors.braveMissingKey"));
 
   const url = `${BRAVE_ENDPOINT}?q=${encodeURIComponent(query)}&count=${topK}`;
