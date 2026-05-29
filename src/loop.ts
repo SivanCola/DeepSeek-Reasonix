@@ -833,10 +833,9 @@ export class CacheFirstLoop {
       let toolCalls: ToolCall[] = [];
       let usage: TurnStats["usage"] | null = null;
 
-      // Snapshot prefix evidence before the API call so MCP hot-add /
-      // dashboard mutations that fire during the await don't corrupt
-      // the per-turn diagnostic hashes.
-      const prefixEvidence = this.prefix.diagnosticHashes();
+      // Snapshot prefix evidence from the same turn-start tool list sent
+      // to the API so MCP hot-adds during the turn don't rewrite history.
+      const prefixEvidence = this.prefix.diagnosticHashes(toolSpecs);
 
       try {
         if (this.stream) {

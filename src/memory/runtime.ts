@@ -83,10 +83,10 @@ export class ImmutablePrefix {
     return this._fingerprintCache;
   }
 
-  diagnosticHashes(): PrefixDiagnosticHashes {
+  diagnosticHashes(toolSpecs: readonly ToolSpec[] = this._toolSpecs): PrefixDiagnosticHashes {
     return prefixDiagnosticHashes({
       system: this.system,
-      toolSpecs: this._toolSpecs,
+      toolSpecs,
       fewShots: this.fewShots,
     });
   }
