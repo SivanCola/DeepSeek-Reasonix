@@ -6228,9 +6228,8 @@ html:not([data-platform="macos"]) .cmdk-row .kb .shortcut kbd[data-key="mod"] {
 
 .update-overlay {
   position: fixed;
-  top: 16px;
-  left: 50%;
-  transform: translateX(-50%);
+  right: 24px;
+  bottom: 24px;
   z-index: 1000;
   pointer-events: none;
   animation: rise 0.18s ease-out;
@@ -6242,6 +6241,19 @@ html:not([data-platform="macos"]) .cmdk-row .kb .shortcut kbd[data-key="mod"] {
   box-shadow: var(--shadow-lg);
   min-width: 360px;
   max-width: min(560px, calc(100vw - 32px));
+}
+
+@media (max-width: 640px) {
+  .update-overlay {
+    right: 16px;
+    bottom: 16px;
+    left: 16px;
+  }
+
+  .update-overlay-card {
+    min-width: 0;
+    width: 100%;
+  }
 }
 
 /* ============================================================
