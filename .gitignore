@@ -53,5 +53,3 @@ desktop/src-tauri/binaries/
 *.cpuprofile
 
 .probe-snapshots/
-.deepseek-forge/
-AGENTS.md

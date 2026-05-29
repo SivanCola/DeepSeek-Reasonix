@@ -1375,9 +1375,6 @@ interface TabRuntimeProps {
   onToggleSide: () => void;
   onToggleCtx: () => void;
   onToggleCurrency: () => void;
-  onCheckForUpdates: () => void;
-  isCheckingForUpdates: boolean;
-  hasUpdateAvailable: boolean;
   tabsList: { id: string; workspaceDir?: string; busy?: boolean }[];
   activeTabId: string;
   setActiveTabId: (id: string) => void;
@@ -1413,9 +1410,6 @@ function TabRuntime({
   onToggleSide,
   onToggleCtx,
   onToggleCurrency,
-  onCheckForUpdates,
-  isCheckingForUpdates,
-  hasUpdateAvailable,
   tabsList,
   activeTabId,
   setActiveTabId,
@@ -2596,6 +2590,7 @@ function TabRuntime({
           onOpenSettings={() => openSettingsAt("general")}
           onOpenRules={() => openSettingsAt("rules")}
           onOpenCommands={() => palette.setOpen(true)}
+          onOpenAbout={() => setAboutOpen(true)}
         />
 
         {!sideCollapsed ? (
@@ -2908,9 +2903,6 @@ function TabRuntime({
             onOpenQQApplyLink={() =>
               openUrl("https://q.qq.com/qqbot/openclaw/login.html").catch(() => undefined)
             }
-            onCheckForUpdates={onCheckForUpdates}
-            isCheckingForUpdates={isCheckingForUpdates}
-            hasUpdateAvailable={hasUpdateAvailable}
             onPickWorkspace={pickWorkspace}
             onImportCcSwitchMcp={importCcSwitchMcp}
             onAddMcpSpec={addMcpSpec}
@@ -3596,7 +3588,6 @@ export function App() {
   } | null>(null);
   const [menuToast, setMenuToast] = useState<{ msg: string } | null>(null);
   const checkingUpdateRef = useRef(false);
-  const [isCheckingForUpdates, setIsCheckingForUpdates] = useState(false);
   const [currency, setCurrency] = useState<"CNY" | "USD">(() => {
     const v = localStorage.getItem("reasonix.currency");
     return v === "USD" ? "USD" : "CNY";
@@ -3770,7 +3761,6 @@ export function App() {
   const runManualUpdateCheck = useCallback(() => {
     if (checkingUpdateRef.current) return;
     checkingUpdateRef.current = true;
-    setIsCheckingForUpdates(true);
     setMenuToast({ msg: t("app.update.checkingForUpdates") });
     void check()
       .then((update) => {
@@ -3790,7 +3780,6 @@ export function App() {
       })
       .finally(() => {
         checkingUpdateRef.current = false;
-        setIsCheckingForUpdates(false);
       });
   }, []);
 
@@ -4115,9 +4104,6 @@ export function App() {
           onToggleSide={onToggleSide}
           onToggleCtx={onToggleCtx}
           onToggleCurrency={onToggleCurrency}
-          onCheckForUpdates={runManualUpdateCheck}
-          isCheckingForUpdates={isCheckingForUpdates}
-          hasUpdateAvailable={Boolean(pendingUpdate)}
           tabsList={tabs}
           activeTabId={activeTabId}
           setActiveTabId={setActiveTabId}

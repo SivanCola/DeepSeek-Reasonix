@@ -1,17 +1,9 @@
 /** Library reads only DEEPSEEK_API_KEY from env; the CLI bridges config.json → env var. */
 
 import { randomBytes } from "node:crypto";
-import {
-  closeSync,
-  fstatSync,
-  mkdirSync,
-  mkdtempSync,
-  openSync,
-  readFileSync,
-  rmSync,
-} from "node:fs";
+import { closeSync, fstatSync, mkdirSync, openSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, dirname, isAbsolute, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import { z } from "zod";
 import { type ThemeName, isThemeName, resolveThemeName } from "./cli/ui/theme/tokens.js";
 import { atomicWriteSync } from "./core/atomic-write.js";
@@ -597,18 +589,16 @@ export function clearDashboardToken(path: string = defaultConfigPath()): void {
 }
 
 export function writeConfig(cfg: ReasonixConfig, path: string = defaultConfigPath()): void {
-  const configDir = dirname(path);
-  mkdirSync(configDir, { recursive: true });
-  // Atomic: write through a private sibling temp directory so the final rename
-  // stays on the same filesystem without creating a public temp file.
-  const tmpDir = mkdtempSync(join(configDir, ".reasonix-config-"));
-  try {
-    const tmp = join(tmpDir, `${basename(path)}.tmp`);
-    atomicWriteSync(path, JSON.stringify(cfg, null, 2), tmp);
-    _configCache.delete(path);
-  } finally {
-    rmSync(tmpDir, { recursive: true, force: true });
-  }
+  mkdirSync(dirname(path), { recursive: true });
+  // Atomic — write to a sibling tmp then rename. A torn write (process
+  // killed mid-write, or another reader catching the file before
+  // writeFileSync finished) used to leave a 0-byte or truncated
+  // config.json, which readConfig would then parse as `{}` and the next
+  // saveX would silently overwrite every other field with that empty
+  // baseline (issue #1535).
+  const tmp = `${path}.${randomBytes(8).toString("hex")}.tmp`;
+  atomicWriteSync(path, JSON.stringify(cfg, null, 2), tmp);
+  _configCache.delete(path);
 }
 
 /** Resolve the language from config file. */

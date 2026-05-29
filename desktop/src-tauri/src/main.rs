@@ -8,9 +8,9 @@ use rpc::{rpc_kill, rpc_send, rpc_spawn, RpcState};
 use serde::Serialize;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use tauri::menu::MenuBuilder;
 #[cfg(target_os = "macos")]
 use tauri::menu::{MenuItemBuilder, PredefinedMenuItem, SubmenuBuilder};
-use tauri::menu::MenuBuilder;
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::Manager;
 
@@ -454,28 +454,15 @@ fn main() {
                     .item(&about_item)
                     .item(&check_updates_item)
                     .separator()
-                    .item(
-                        &PredefinedMenuItem::services(app, None)
-                            .expect("services menu item"),
-                    )
+                    .item(&PredefinedMenuItem::services(app, None).expect("services menu item"))
                     .separator()
+                    .item(&PredefinedMenuItem::hide(app, None).expect("hide menu item"))
                     .item(
-                        &PredefinedMenuItem::hide(app, None)
-                            .expect("hide menu item"),
+                        &PredefinedMenuItem::hide_others(app, None).expect("hide others menu item"),
                     )
-                    .item(
-                        &PredefinedMenuItem::hide_others(app, None)
-                            .expect("hide others menu item"),
-                    )
-                    .item(
-                        &PredefinedMenuItem::show_all(app, None)
-                            .expect("show all menu item"),
-                    )
+                    .item(&PredefinedMenuItem::show_all(app, None).expect("show all menu item"))
                     .separator()
-                    .item(
-                        &PredefinedMenuItem::quit(app, None)
-                            .expect("quit menu item"),
-                    )
+                    .item(&PredefinedMenuItem::quit(app, None).expect("quit menu item"))
                     .build()
                     .expect("app submenu");
 
@@ -488,51 +475,24 @@ fn main() {
                     .expect("file submenu");
 
                 let edit_submenu = SubmenuBuilder::new(app, "Edit")
-                    .item(
-                        &PredefinedMenuItem::undo(app, None)
-                            .expect("undo menu item"),
-                    )
-                    .item(
-                        &PredefinedMenuItem::redo(app, None)
-                            .expect("redo menu item"),
-                    )
+                    .item(&PredefinedMenuItem::undo(app, None).expect("undo menu item"))
+                    .item(&PredefinedMenuItem::redo(app, None).expect("redo menu item"))
                     .separator()
-                    .item(
-                        &PredefinedMenuItem::cut(app, None)
-                            .expect("cut menu item"),
-                    )
-                    .item(
-                        &PredefinedMenuItem::copy(app, None)
-                            .expect("copy menu item"),
-                    )
-                    .item(
-                        &PredefinedMenuItem::paste(app, None)
-                            .expect("paste menu item"),
-                    )
-                    .item(
-                        &PredefinedMenuItem::select_all(app, None)
-                            .expect("select all menu item"),
-                    )
+                    .item(&PredefinedMenuItem::cut(app, None).expect("cut menu item"))
+                    .item(&PredefinedMenuItem::copy(app, None).expect("copy menu item"))
+                    .item(&PredefinedMenuItem::paste(app, None).expect("paste menu item"))
+                    .item(&PredefinedMenuItem::select_all(app, None).expect("select all menu item"))
                     .build()
                     .expect("edit submenu");
 
                 let view_submenu = SubmenuBuilder::new(app, "View")
-                    .item(
-                        &PredefinedMenuItem::fullscreen(app, None)
-                            .expect("fullscreen menu item"),
-                    )
+                    .item(&PredefinedMenuItem::fullscreen(app, None).expect("fullscreen menu item"))
                     .build()
                     .expect("view submenu");
 
                 let window_submenu = SubmenuBuilder::new(app, "Window")
-                    .item(
-                        &PredefinedMenuItem::minimize(app, None)
-                            .expect("minimize menu item"),
-                    )
-                    .item(
-                        &PredefinedMenuItem::maximize(app, None)
-                            .expect("maximize menu item"),
-                    )
+                    .item(&PredefinedMenuItem::minimize(app, None).expect("minimize menu item"))
+                    .item(&PredefinedMenuItem::maximize(app, None).expect("maximize menu item"))
                     .build()
                     .expect("window submenu");
 

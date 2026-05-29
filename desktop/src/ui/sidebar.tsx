@@ -64,6 +64,7 @@ export function Sidebar({
   onOpenSettings,
   onOpenRules,
   onOpenCommands,
+  onOpenAbout,
 }: {
   sessions: SessionInfo[];
   importSources: ExternalSessionApp[];
@@ -80,6 +81,7 @@ export function Sidebar({
   onOpenSettings: () => void;
   onOpenRules: () => void;
   onOpenCommands: () => void;
+  onOpenAbout: () => void;
 }) {
   useLang();
   const [query, setQuery] = useState("");
@@ -342,6 +344,12 @@ export function Sidebar({
             <I.shield size={13} />
           </span>
           <span>{t("sidebarPanel.approvalRules")}</span>
+        </div>
+        <div className="row" onClick={onOpenAbout}>
+          <span className="ico">
+            <I.help size={13} />
+          </span>
+          <span>{t("about.sidebarLabel")}</span>
         </div>
         <div className="row" onClick={onOpenSettings}>
           <span className="ico">
