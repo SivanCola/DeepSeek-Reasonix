@@ -7296,6 +7296,17 @@ html[data-platform="macos"] .splash {
   animation: toast-rise 0.25s ease-out;
 }
 
+.global-toast {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 9999;
+}
+.global-toast .toast {
+  position: static;
+}
+
 @keyframes toast-fall {
   from { opacity: 1; transform: translateY(0); }
   to { opacity: 0; transform: translateY(12px); }
@@ -7405,57 +7416,6 @@ html[data-platform="macos"] .splash {
 }
 .about-link:hover {
   background: var(--accent-soft);
-}
-.about-actions {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  margin-top: 18px;
-}
-.about-check {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  padding: 8px 12px;
-  border: 1px solid var(--border-strong);
-  border-radius: 6px;
-  background: var(--panel);
-  color: var(--fg);
-  font-family: inherit;
-  font-size: 13px;
-  cursor: pointer;
-  transition: background 0.12s, border-color 0.12s;
-}
-.about-check:hover:not(:disabled) {
-  background: var(--card);
-  border-color: var(--accent);
-}
-.about-check:disabled {
-  opacity: 0.6;
-  cursor: default;
-}
-.about-status {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 10px;
-  border-radius: 6px;
-  font-size: 12px;
-}
-.about-status.ok {
-  background: var(--accent-soft);
-  color: var(--fg);
-}
-.about-status.warn {
-  background: var(--panel);
-  color: var(--fg);
-  border: 1px solid var(--accent);
-  justify-content: space-between;
-}
-.about-status.err {
-  background: var(--panel);
-  color: var(--muted);
 }
 .muted-card {
   padding: 16px;

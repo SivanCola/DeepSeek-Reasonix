@@ -1414,6 +1414,24 @@ function TabRuntime({
   });
   useLang();
   useDisableTextAssist();
+
+  // Listen for macOS App menu "About Reasonix" event
+  const activeRef = useRef(active);
+  useEffect(() => {
+    activeRef.current = active;
+  }, [active]);
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    listen("reasonix-menu-about", () => {
+      if (activeRef.current) setAboutOpen(true);
+    }).then((fn) => {
+      unlisten = fn;
+    });
+    return () => {
+      unlisten?.();
+    };
+  }, []);
+
   const [draft, setDraft] = useState("");
   const [toast, setToast] = useState<{ msg: string; yolo?: boolean } | null>(null);
   const [splashOn, setSplashOn] = useState<boolean>(() => shouldShowSplash());
@@ -2311,7 +2329,6 @@ function TabRuntime({
           onOpenSettings={() => openSettingsAt("general")}
           onOpenRules={() => openSettingsAt("rules")}
           onOpenCommands={() => palette.setOpen(true)}
-          onOpenAbout={() => setAboutOpen(true)}
         />
 
         {!sideCollapsed ? (
@@ -3265,6 +3282,8 @@ export function App() {
     downloaded: number;
     total: number | null;
   } | null>(null);
+  const [menuToast, setMenuToast] = useState<{ msg: string } | null>(null);
+  const checkingUpdateRef = useRef(false);
   const [currency, setCurrency] = useState<"CNY" | "USD">(() => {
     const v = localStorage.getItem("reasonix.currency");
     return v === "USD" ? "USD" : "CNY";
@@ -3432,6 +3451,40 @@ export function App() {
     })();
     return () => {
       cancelled = true;
+    };
+  }, []);
+
+  // Manual update check triggered from macOS App menu
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    listen("reasonix-menu-check-updates", () => {
+      if (checkingUpdateRef.current) return;
+      checkingUpdateRef.current = true;
+      setMenuToast({ msg: t("app.update.checkingForUpdates") });
+      check()
+        .then((update) => {
+          if (update) {
+            setPendingUpdate(update);
+            setMenuToast(null);
+          } else {
+            setMenuToast({ msg: t("app.update.alreadyUpToDate") });
+            window.setTimeout(() => setMenuToast(null), 2000);
+          }
+        })
+        .catch((err) => {
+          setMenuToast({
+            msg: t("app.update.checkFailedToast", { message: String(err) }),
+          });
+          window.setTimeout(() => setMenuToast(null), 3000);
+        })
+        .finally(() => {
+          checkingUpdateRef.current = false;
+        });
+    }).then((fn) => {
+      unlisten = fn;
+    });
+    return () => {
+      unlisten?.();
     };
   }, []);
 
@@ -3752,6 +3805,11 @@ export function App() {
           onInstall={installUpdate}
           onDismiss={() => setPendingUpdate(null)}
         />
+      ) : null}
+      {menuToast ? (
+        <div className="global-toast">
+          <Toast message={menuToast} />
+        </div>
       ) : null}
     </>
   );

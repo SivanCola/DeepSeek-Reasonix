@@ -6,6 +6,8 @@ use rpc::{RpcState, rpc_kill, rpc_send, rpc_spawn};
 use serde::Serialize;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+#[cfg(target_os = "macos")]
+use tauri::menu::{MenuBuilder, MenuItemBuilder, PredefinedMenuItem, SubmenuBuilder};
 
 fn pasted_images_dir() -> PathBuf {
     std::env::temp_dir().join("reasonix-pasted-images")
@@ -264,6 +266,20 @@ fn main() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_window_state::Builder::default().build())
+        .on_menu_event(|app, event| {
+            use tauri::{Emitter, Manager};
+            let id = event.id().0.as_str();
+            if id == "about" || id == "check_updates" {
+                if let Some(window) = app.get_webview_window("main") {
+                    let event_name = if id == "about" {
+                        "reasonix-menu-about"
+                    } else {
+                        "reasonix-menu-check-updates"
+                    };
+                    let _ = window.emit(event_name, ());
+                }
+            }
+        })
         .manage(RpcState::default())
         .invoke_handler(tauri::generate_handler![
             rpc_spawn,
@@ -305,6 +321,115 @@ fn main() {
                     w.open_devtools();
                 }
             }
+
+            #[cfg(target_os = "macos")]
+            {
+                let about_item = MenuItemBuilder::with_id("about", "About Reasonix")
+                    .build(app)
+                    .expect("about menu item");
+                let check_updates_item =
+                    MenuItemBuilder::with_id("check_updates", "Check for Updates...")
+                        .build(app)
+                        .expect("check updates menu item");
+
+                let app_submenu = SubmenuBuilder::new(app, "Reasonix")
+                    .item(&about_item)
+                    .item(&check_updates_item)
+                    .separator()
+                    .item(
+                        &PredefinedMenuItem::services(app, None)
+                            .expect("services menu item"),
+                    )
+                    .separator()
+                    .item(
+                        &PredefinedMenuItem::hide(app, None)
+                            .expect("hide menu item"),
+                    )
+                    .item(
+                        &PredefinedMenuItem::hide_others(app, None)
+                            .expect("hide others menu item"),
+                    )
+                    .item(
+                        &PredefinedMenuItem::show_all(app, None)
+                            .expect("show all menu item"),
+                    )
+                    .separator()
+                    .item(
+                        &PredefinedMenuItem::quit(app, None)
+                            .expect("quit menu item"),
+                    )
+                    .build()
+                    .expect("app submenu");
+
+                let file_submenu = SubmenuBuilder::new(app, "File")
+                    .item(
+                        &PredefinedMenuItem::close_window(app, None)
+                            .expect("close window menu item"),
+                    )
+                    .build()
+                    .expect("file submenu");
+
+                let edit_submenu = SubmenuBuilder::new(app, "Edit")
+                    .item(
+                        &PredefinedMenuItem::undo(app, None)
+                            .expect("undo menu item"),
+                    )
+                    .item(
+                        &PredefinedMenuItem::redo(app, None)
+                            .expect("redo menu item"),
+                    )
+                    .separator()
+                    .item(
+                        &PredefinedMenuItem::cut(app, None)
+                            .expect("cut menu item"),
+                    )
+                    .item(
+                        &PredefinedMenuItem::copy(app, None)
+                            .expect("copy menu item"),
+                    )
+                    .item(
+                        &PredefinedMenuItem::paste(app, None)
+                            .expect("paste menu item"),
+                    )
+                    .item(
+                        &PredefinedMenuItem::select_all(app, None)
+                            .expect("select all menu item"),
+                    )
+                    .build()
+                    .expect("edit submenu");
+
+                let view_submenu = SubmenuBuilder::new(app, "View")
+                    .item(
+                        &PredefinedMenuItem::fullscreen(app, None)
+                            .expect("fullscreen menu item"),
+                    )
+                    .build()
+                    .expect("view submenu");
+
+                let window_submenu = SubmenuBuilder::new(app, "Window")
+                    .item(
+                        &PredefinedMenuItem::minimize(app, None)
+                            .expect("minimize menu item"),
+                    )
+                    .item(
+                        &PredefinedMenuItem::maximize(app, None)
+                            .expect("maximize menu item"),
+                    )
+                    .build()
+                    .expect("window submenu");
+
+                let menu = MenuBuilder::new(app)
+                    .item(&app_submenu)
+                    .item(&file_submenu)
+                    .item(&edit_submenu)
+                    .item(&view_submenu)
+                    .item(&window_submenu)
+                    .build()
+                    .expect("main menu");
+
+                app.set_menu(menu).expect("set menu");
+            }
+
             Ok(())
         })
         .build(tauri::generate_context!())
