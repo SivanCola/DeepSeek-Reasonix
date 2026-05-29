@@ -4631,7 +4631,7 @@ html:not([data-platform="macos"]) .cmdk-row .kb .shortcut kbd[data-key="mod"] {
 }
 .style-card[data-style="porcelain"] .style-swatches span:nth-child(3),
 .theme-pop-item[data-style="porcelain"] .style-swatches span:nth-child(3) {
-  background: oklch(58% 0.18 36);
+  background: oklch(56% 0.12 285);
 }
 .style-card[data-style="linen"] .style-swatches span:nth-child(1),
 .theme-pop-item[data-style="linen"] .style-swatches span:nth-child(1) {
