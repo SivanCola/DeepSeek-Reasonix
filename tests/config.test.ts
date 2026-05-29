@@ -1,6 +1,6 @@
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   type DesktopOpenTab,
@@ -116,10 +116,10 @@ describe("config", () => {
     expect(readConfig(path).apiKey).toBe("sk-test123abcdefghijkl");
   });
 
-  it("writeConfig leaves no `.tmp` sibling behind on success", () => {
+  it("writeConfig leaves no temporary config directory behind on success", () => {
     writeConfig({ apiKey: "sk-test123abcdefghijkl", reasoningEffort: "high" }, path);
-    const tmp = `${path}.${process.pid}.tmp`;
-    expect(existsSync(tmp)).toBe(false);
+    const entries = readdirSync(dirname(path));
+    expect(entries.filter((entry) => entry.startsWith(".reasonix-config-"))).toHaveLength(0);
     expect(existsSync(path)).toBe(true);
   });
 
