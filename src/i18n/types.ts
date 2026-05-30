@@ -77,6 +77,8 @@ export interface TranslationSchema {
     resumedSession: string;
     newSession: string;
     ephemeralSession: string;
+    systemPromptChanged: string;
+    systemPromptChangedDetail: string;
     restoredEdits: string;
     resumedPlan: string;
     tipEditBindings: {
@@ -359,6 +361,7 @@ export interface TranslationSchema {
     themeSubtitle: string;
     themeSampleHeading: string;
     themeFooter: string;
+    themeName: Record<string, string>;
     themeCaption: Record<string, string>;
     reviewTitle: string;
     reviewLabelApiKey: string;
@@ -382,6 +385,7 @@ export interface TranslationSchema {
   themePicker: {
     header: string;
     footer: string;
+    autoLabel: string;
     currentPref: string;
     activeNow: string;
     autoDesc: string;
@@ -681,6 +685,7 @@ export interface TranslationSchema {
     title: string;
     compactHint: string;
     topTools: string;
+    topToolSchemas: string;
     msg: string;
     turnLabel: string;
   };

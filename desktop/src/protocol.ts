@@ -149,6 +149,20 @@ export type MentionPreviewEvent = {
   totalLines: number;
 };
 
+export type PromptHistoryCursor = {
+  sessionName: string;
+  messageIndex: number;
+};
+
+export type PromptHistoryResultEvent = {
+  type: "$prompt_history_result";
+  nonce: number;
+  entry: {
+    value: string;
+    cursor: PromptHistoryCursor;
+  } | null;
+};
+
 export type TabOpenedEvent = {
   type: "$tab_opened";
   workspaceDir: string;
@@ -167,16 +181,38 @@ export type McpSpecInfo = {
   name: string | null;
   transport: "stdio" | "sse" | "streamable-http";
   summary: string;
+  config?: ImportedMcpServer;
   parseError?: string;
   status: McpSpecStatus;
+  statusHint?: "auth" | "missing-token" | "command" | "network" | "unknown";
   statusReason?: string;
   toolCount?: number;
+  tools?: McpToolInfo[];
+};
+
+export type McpToolInfo = {
+  name: string;
+  registeredName: string;
+  description?: string;
 };
 
 export type McpSpecsEvent = {
   type: "$mcp_specs";
   specs: McpSpecInfo[];
   bridged: boolean;
+};
+
+export type ImportedMcpServer = {
+  name: string;
+  transport: "stdio" | "sse" | "streamable-http";
+  command?: string;
+  args?: string[];
+  env?: Record<string, string>;
+  cwd?: string;
+  url?: string;
+  headers?: Record<string, string>;
+  disabled?: boolean;
+  requestTimeoutMs?: number;
 };
 
 export type SkillScope = "project" | "global" | "builtin";
@@ -319,6 +355,7 @@ export type SettingsEvent = {
   recentWorkspaces: string[];
   model: string;
   editor?: string;
+  desktopCloseBehavior?: "closeToTray" | "closeToQuit";
   webSearchEngine?: WebSearchEngineName;
   webSearchEndpoint?: string;
   webSearchApiKeys?: {
@@ -332,8 +369,6 @@ export type SettingsEvent = {
   };
   subagentModels?: Record<string, "flash" | "pro">;
   showSystemEvents?: boolean;
-  /** Desktop prompt-history entries seeded on tab load, most-recent-first (#2051). */
-  promptHistory?: string[];
   version: string;
 };
 
@@ -374,6 +409,7 @@ export type SettingsPatch = {
   recentWorkspaces?: string[];
   model?: string;
   editor?: string;
+  desktopCloseBehavior?: "closeToTray" | "closeToQuit";
   webSearchEngine?: WebSearchEngineName;
   webSearchEndpoint?: string | null;
   metasoApiKey?: string | null;
@@ -387,8 +423,6 @@ export type SettingsPatch = {
   /** Per-model context-window override (tokens). Keys are model ids; values are the prompt-side token cap. */
   contextTokens?: Record<string, number>;
   showSystemEvents?: boolean;
-  /** Persisted prompt-history entries to update on each send (#2051). */
-  promptHistory?: string[];
 };
 
 export type QQConfigPatch = {
@@ -521,6 +555,7 @@ export type IncomingEvent = { tabId?: string } & (
   | PlanClearedEvent
   | MentionResultsEvent
   | MentionPreviewEvent
+  | PromptHistoryResultEvent
   | TabOpenedEvent
   | TabClosedEvent
   | McpSpecsEvent
@@ -570,12 +605,23 @@ export type OutgoingCommand = { tabId?: string } & (
   | { cmd: "mention_query"; query: string; nonce: number }
   | { cmd: "mention_preview"; path: string; nonce: number }
   | { cmd: "mention_picked"; path: string }
+  | {
+      cmd: "prompt_history_step";
+      nonce: number;
+      direction: "older" | "newer";
+      cursor?: PromptHistoryCursor | null;
+      startSessionName?: string;
+      stopSessionName?: string;
+    }
   | { cmd: "tab_open"; workspaceDir?: string }
   | { cmd: "tab_close" }
   | { cmd: "tab_activate"; tabId: string }
   | { cmd: "mcp_specs_get" }
   | { cmd: "mcp_specs_add"; spec: string }
   | { cmd: "mcp_specs_remove"; spec: string }
+  | { cmd: "mcp_import_servers"; servers: ImportedMcpServer[] }
+  | { cmd: "mcp_specs_update"; raw: string; server: ImportedMcpServer }
+  | { cmd: "mcp_specs_retry"; raw: string }
   | { cmd: "skills_get" }
   | { cmd: "skill_run"; name: string; args?: string }
   | { cmd: "jobs_list" }

@@ -7,6 +7,7 @@ import { resolveContextTokens } from "../../telemetry/stats.js";
 import { countTokensBounded } from "../../tokenizer.js";
 import { formatTokens } from "./primitives.js";
 import { COLOR } from "./theme.js";
+import { FG } from "./theme/tokens.js";
 
 export interface CtxBreakdownData {
   systemTokens: number;
@@ -17,6 +18,7 @@ export interface CtxBreakdownData {
   toolsCount: number;
   logMessages: number;
   topTools: Array<{ name: string; tokens: number; turn: number }>;
+  topToolSchemas: Array<{ name: string; tokens: number }>;
 }
 
 /**
@@ -53,6 +55,14 @@ export function computeCtxBreakdown(loop: CacheFirstLoop): CtxBreakdownData {
   const logTokens = userTokens + assistantTokens + toolResultTokens + toolCallTokens;
   const ctxMax = resolveContextTokens(loop.model);
   const topTools = [...toolBreakdown].sort((a, b) => b.tokens - a.tokens).slice(0, 5);
+  const schemaCosts =
+    typeof loop.tools?.schemaTokenCosts === "function"
+      ? loop.tools.schemaTokenCosts()
+      : loop.prefix.toolSpecs.map((spec) => ({
+          name: spec.function.name,
+          tokens: countTokensBounded(JSON.stringify(spec)),
+        }));
+  const topToolSchemas = [...schemaCosts].sort((a, b) => b.tokens - a.tokens).slice(0, 5);
   return {
     systemTokens,
     toolsTokens,
@@ -62,6 +72,7 @@ export function computeCtxBreakdown(loop: CacheFirstLoop): CtxBreakdownData {
     toolsCount: loop.prefix.toolSpecs.length,
     logMessages: entries.length,
     topTools,
+    topToolSchemas,
   };
 }
 
@@ -98,8 +109,8 @@ export function CtxBreakdownBlock({ data }: { data: CtxBreakdownData }): React.R
         <Text color={COLOR.brand} bold>
           {t("ctxBreakdown.title")}
         </Text>
-        <Text dim>{`  ${formatTokens(total)} of ${formatTokens(data.ctxMax)}`}</Text>
-        <Text dim>{"  ·  "}</Text>
+        <Text color={FG.faint}>{`  ${formatTokens(total)} of ${formatTokens(data.ctxMax)}`}</Text>
+        <Text color={FG.faint}>{"  ·  "}</Text>
         <Text color={sevColor} bold>
           {`${winPct}%`}
         </Text>
@@ -114,41 +125,58 @@ export function CtxBreakdownBlock({ data }: { data: CtxBreakdownData }): React.R
         <Text color={COLOR.accent}>{"█".repeat(toolsCells)}</Text>
         <Text color={COLOR.primary}>{"█".repeat(logCells)}</Text>
         <Text color={COLOR.tool}>{"█".repeat(inputCells)}</Text>
-        <Text color={COLOR.info} dim>
-          {"░".repeat(freeCells)}
-        </Text>
+        <Text color={FG.faint}>{"░".repeat(freeCells)}</Text>
       </Box>
       <Box>
         <Text color={COLOR.brand}>■</Text>
-        <Text dim>{` ${t("cardLabels.system")} ${formatTokens(data.systemTokens)}`}</Text>
+        <Text
+          color={FG.faint}
+        >{` ${t("cardLabels.system")} ${formatTokens(data.systemTokens)}`}</Text>
         <Text>{"   "}</Text>
         <Text color={COLOR.accent}>■</Text>
-        <Text dim>{` ${t("cardLabels.tools")} ${formatTokens(data.toolsTokens)}`}</Text>
-        <Text dim>{` (${data.toolsCount})`}</Text>
+        <Text
+          color={FG.faint}
+        >{` ${t("cardLabels.tools")} ${formatTokens(data.toolsTokens)}`}</Text>
+        <Text color={FG.faint}>{` (${data.toolsCount})`}</Text>
         <Text>{"   "}</Text>
         <Text color={COLOR.primary}>■</Text>
-        <Text dim>{` ${t("cardLabels.log")} ${formatTokens(data.logTokens)}`}</Text>
-        <Text dim>{` (${data.logMessages} ${t("ctxBreakdown.msg")})`}</Text>
+        <Text color={FG.faint}>{` ${t("cardLabels.log")} ${formatTokens(data.logTokens)}`}</Text>
+        <Text color={FG.faint}>{` (${data.logMessages} ${t("ctxBreakdown.msg")})`}</Text>
         <Text>{"   "}</Text>
         <Text color={COLOR.tool}>■</Text>
-        <Text dim>{` ${t("cardLabels.input")} ${formatTokens(data.inputTokens)}`}</Text>
+        <Text
+          color={FG.faint}
+        >{` ${t("cardLabels.input")} ${formatTokens(data.inputTokens)}`}</Text>
       </Box>
       {data.topTools.length > 0 ? (
         <Box marginTop={1} flexDirection="column">
-          <Text dim>{t("ctxBreakdown.topTools", { count: data.topTools.length })}</Text>
+          <Text color={FG.faint}>
+            {t("ctxBreakdown.topTools", { count: data.topTools.length })}
+          </Text>
           {data.topTools.map((tool) => (
             <Box key={`${tool.turn}-${tool.name}`}>
               <Text
-                dim
+                color={FG.faint}
               >{`    ${t("ctxBreakdown.turnLabel")} ${String(tool.turn).padStart(3)}  `}</Text>
               <Text color={COLOR.info}>{tool.name.padEnd(22)}</Text>
+              <Text color={FG.faint}>{`  ${formatTokens(tool.tokens).padStart(8)}`}</Text>
+            </Box>
+          ))}
+        </Box>
+      ) : null}
+      {data.topToolSchemas.length > 0 ? (
+        <Box marginTop={1} flexDirection="column">
+          <Text dim>{t("ctxBreakdown.topToolSchemas", { count: data.topToolSchemas.length })}</Text>
+          {data.topToolSchemas.map((tool) => (
+            <Box key={tool.name}>
+              <Text color={COLOR.info}>{`    ${tool.name.padEnd(28)}`}</Text>
               <Text dim>{`  ${formatTokens(tool.tokens).padStart(8)}`}</Text>
             </Box>
           ))}
         </Box>
       ) : null}
       <Box marginTop={1}>
-        <Text dim>{t("ctxBreakdown.compactHint")}</Text>
+        <Text color={FG.faint}>{t("ctxBreakdown.compactHint")}</Text>
       </Box>
     </Box>
   );

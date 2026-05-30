@@ -76,6 +76,7 @@ export function healLoadedMessages(
 export function stampMissingReasoningForThinkingMode(
   messages: ChatMessage[],
   model: string,
+  options: { toolCallsOnly?: boolean } = {},
 ): { messages: ChatMessage[]; stampedCount: number } {
   if (!isThinkingModeModel(model)) {
     return { messages, stampedCount: 0 };
@@ -83,6 +84,9 @@ export function stampMissingReasoningForThinkingMode(
   let stampedCount = 0;
   const out = messages.map((msg) => {
     if (msg.role !== "assistant") return msg;
+    if (options.toolCallsOnly && (!Array.isArray(msg.tool_calls) || msg.tool_calls.length === 0)) {
+      return msg;
+    }
     if (Object.hasOwn(msg, "reasoning_content")) return msg;
     stampedCount += 1;
     return { ...msg, reasoning_content: "" };

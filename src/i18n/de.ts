@@ -208,6 +208,11 @@ export const de: TranslationSchema = {
       description:
         "Session-USD-Grenze — warnt bei 80 %, verweigert nächsten Turn bei 100 %. Standardmäßig aus. /budget allein zeigt Status.",
     },
+    "max-tokens": {
+      ...EN.slash["max-tokens"],
+      description:
+        "Ausgabe-Token pro Turn begrenzen — verhindert ausufernde Reasoning-Schleifen. Standardmäßig aus. Allein zeigt Status.",
+    },
     mcp: { ...EN.slash.mcp, description: "MCP-Server + Tools dieser Sitzung auflisten" },
     resource: {
       ...EN.slash.resource,
@@ -266,6 +271,10 @@ export const de: TranslationSchema = {
     doctor: {
       ...EN.slash.doctor,
       description: "Gesundheitscheck (API / Config / API-Reichweite / Index / Hooks / Projekt)",
+    },
+    "cache-miss-report": {
+      ...EN.slash["cache-miss-report"],
+      description: "Erklärt jüngste Prompt-Cache-Misses anhand lokaler Prefix-Evidenz",
     },
     context: {
       ...EN.slash.context,
@@ -419,7 +428,7 @@ export const de: TranslationSchema = {
     },
     theme: {
       ...EN.slash.theme,
-      argsHint: "[auto|dunkel|hell|mitternachtsblau|tiefblau|hoher Kontrast]",
+      argsHint: "[auto|graphite|ember|aurora|sandstone|porcelain|linen|glacier|midnight]",
       description: "Terminal-Theme anzeigen oder speichern. Ohne Argument öffnet die Auswahl.",
     },
     exit: { ...EN.slash.exit, description: "TUI beenden" },
@@ -446,13 +455,35 @@ export const de: TranslationSchema = {
     themeSubtitle: "Die Vorschau aktualisiert sich beim Navigieren. Später mit /theme änderbar.",
     themeSampleHeading: "Beispiel",
     themeFooter: "[↑↓] navigieren · [Enter] bestätigen · [Esc] abbrechen",
+    themeName: {
+      ...EN.wizard.themeName,
+      graphite: "Graphit",
+      ember: "Glut",
+      aurora: "Aurora",
+      sandstone: "Sandstein",
+      porcelain: "Porzellan",
+      linen: "Leinen",
+      glacier: "Gletscher",
+      midnight: "Mitternacht",
+      dark: "Dunkel",
+      light: "Hell",
+      "deep-blue": "Tiefblau",
+      "high-contrast": "Hoher Kontrast",
+    },
     themeCaption: {
       ...EN.wizard.themeCaption,
-      dark: "Kühle dunkle Töne (Standard)",
-      light: "Helle klare Ansicht",
-      midnight: "Tokyo-Night-Palette",
-      "deep-blue": "Tiefblau auf Schwarz",
-      "high-contrast": "Barrierefreiheit",
+      graphite: "Originale dunkle Palette mit neutralen Graphit-Flächen",
+      ember: "Warmes dunkles Theme mit stärkerem Reasonix-Orange",
+      aurora: "Türkisgrünes dunkles Theme für weicheres Arbeiten bei wenig Licht",
+      sandstone: "Originale warme helle Palette",
+      porcelain: "Klares helles Theme mit ruhigem Kontrast",
+      linen: "Redaktionelles warmes helles Theme mit papierartigen Flächen",
+      glacier: "Kühles helles Theme mit klaren blauen Akzenten",
+      midnight: "Marineblaues dunkles Theme mit kühlen blauen Flächen",
+      dark: "Kühle dunkle Töne (Legacy-Alias)",
+      light: "Helle klare Ansicht (Legacy-Alias)",
+      "deep-blue": "Tiefblau auf Schwarz (Legacy-Alias)",
+      "high-contrast": "Barrierefreiheit (Legacy-Alias)",
     },
     mcpTitle: "Welche MCP-Server soll Reasonix für dich einrichten?",
     mcpUserArgsHint: "(du wirst {arg} bereitstellen)",
@@ -488,6 +519,7 @@ export const de: TranslationSchema = {
     ...EN.themePicker,
     header: "Theme",
     footer: "↑↓ auswählen · ⏎ bestätigen · Esc abbrechen",
+    autoLabel: "Automatisch",
     currentPref: "Aktuelle Einstellung",
     activeNow: "Jetzt aktiv",
     autoDesc: "REASONIX_THEME oder Standard verwenden",
@@ -1053,6 +1085,13 @@ export const de: TranslationSchema = {
       projectNone2: "   oder `/permissions add <präfix>` direkt.)",
       projectNoRoot:
         "Projekt-Allowlist — (kein Projekt-Root; Chat-Modus zeigt nur Builtin-Einträge)",
+      globalHeader: "Globale Allowlist ({count}) — gilt für alle Projekte",
+      globalNone: "  (keine — mit `/permissions add --global <prefix>` hinzufügen.)",
+      addGlobalInfo:
+        "▸ zur globalen Allowlist hinzugefügt: {prefix}\n  → der nächste Aufruf von `{prefix}` läuft in jedem Projekt ohne Rückfrage.",
+      removeGlobalEmpty: "▸ keine Einträge in der globalen Allowlist zum Entfernen.",
+      clearGlobalConfirm:
+        "{count} Einträge der globalen Allowlist werden entfernt. Mit dem Wort 'confirm' erneut ausführen: /permissions clear --global confirm",
       builtinHeader: "Builtin-Allowlist ({count}) — schreibgeschützt, fest eincompiliert",
       subcommands:
         "Unterbefehle: /permissions add <präfix> · /permissions remove <präfix-oder-N> · /permissions clear confirm",
@@ -1612,6 +1651,7 @@ export const de: TranslationSchema = {
     title: "▣ Kontext",
     compactHint: "  /compact faltet (automatisch bei 50 %) · /new löscht Log",
     topTools: "  Top-Tool-Ergebnisse nach Kosten ({count}):",
+    topToolSchemas: "  Top-Tool-Schemas nach Prompt-Kosten ({count}):",
     msg: "Nachr",
     turnLabel: "Turn",
   },

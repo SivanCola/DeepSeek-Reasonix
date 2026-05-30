@@ -1,6 +1,8 @@
 import type { PauseGate } from "./core/pause-gate.js";
 import { truncateForModel, truncateForModelByTokens } from "./mcp/registry.js";
+import { sortToolSpecs } from "./memory/runtime.js";
 import { analyzeSchema, flattenSchema, nestArguments } from "./repair/flatten.js";
+import { countTokensBounded } from "./tokenizer.js";
 import {
   type NormalizedToolRateLimitConfig,
   type ToolRateLimitOption,
@@ -172,13 +174,22 @@ export class ToolRegistry {
   }
 
   specs(): ToolSpec[] {
-    return [...this._tools.values()].map((t) => ({
-      type: "function",
-      function: {
-        name: t.name,
-        description: t.description ?? "",
-        parameters: t.flatSchema ?? t.parameters ?? { type: "object", properties: {} },
-      },
+    return sortToolSpecs(
+      [...this._tools.values()].map((t) => ({
+        type: "function",
+        function: {
+          name: t.name,
+          description: t.description ?? "",
+          parameters: t.flatSchema ?? t.parameters ?? { type: "object", properties: {} },
+        },
+      })),
+    );
+  }
+
+  schemaTokenCosts(): Array<{ name: string; tokens: number }> {
+    return this.specs().map((spec) => ({
+      name: spec.function.name,
+      tokens: countTokensBounded(JSON.stringify(spec)),
     }));
   }
 
@@ -420,12 +431,22 @@ function plainTextRejectedReason(name: string, result: string): string | null {
     return "edit-gate";
   }
   if (
-    (name === "edit_file" || name === "write_file" || name === "multi_edit") &&
+    (name === "edit_file" ||
+      name === "write_file" ||
+      name === "multi_edit" ||
+      name === "delete_range" ||
+      name === "delete_symbol") &&
     /queued \d+ edits? for review/i.test(result)
   ) {
     return "edit-gate";
   }
-  if ((name === "edit_file" || name === "multi_edit") && /read_file first/i.test(result)) {
+  if (
+    (name === "edit_file" ||
+      name === "multi_edit" ||
+      name === "delete_range" ||
+      name === "delete_symbol") &&
+    /read_file first/i.test(result)
+  ) {
     return "read-before-edit";
   }
   if ((name === "run_command" || name === "run_background") && /\buser denied:/i.test(result)) {
@@ -446,6 +467,8 @@ function rejectionRecoveryHint(reason: string): string {
       return "Switch to read-only exploration, submit or revise the plan, or choose a different tool call.";
     case "engineering-lifecycle-evidence":
       return "Submit completion evidence or revise/checkpoint the plan before marking the step complete.";
+    case "auto-git-rollback":
+      return "Resolve the git checkpoint blocker before retrying the same edit.";
     default:
       return "Choose a different tool call or ask the user how to proceed.";
   }

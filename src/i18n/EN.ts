@@ -87,6 +87,9 @@ export const EN: TranslationSchema = {
       '▸ resumed session "{name}" with {count} prior messages · /new to start fresh · /sessions to manage',
     newSession: '▸ session "{name}" (new) — auto-saved as you chat · /sessions to rename or delete',
     ephemeralSession: "▸ ephemeral chat (no session persistence) — drop --no-session to enable",
+    systemPromptChanged: "▸ system prompt changed since last session",
+    systemPromptChangedDetail:
+      "REASONIX.md or a memory file changed — the first turn will be a full cache miss. Use /new to start fresh with the updated context.",
     restoredEdits:
       "▸ restored {count} pending edit block(s) from an interrupted prior run — /apply to commit or /discard to drop.",
     resumedPlan: "Resumed plan · {when}{summary}",
@@ -271,7 +274,7 @@ export const EN: TranslationSchema = {
     models: { description: "list available models fetched from DeepSeek /models" },
     theme: {
       description: "show or persist the terminal theme preference. Bare opens picker.",
-      argsHint: "[auto|dark|light|midnight|deep-blue|high-contrast]",
+      argsHint: "[auto|graphite|ember|aurora|sandstone|porcelain|linen|glacier|midnight]",
     },
     language: {
       description: "switch the runtime language",
@@ -283,6 +286,16 @@ export const EN: TranslationSchema = {
       description:
         "session USD cap — warns at 80%, refuses next turn at 100%. Off by default. /budget alone shows status",
       argsHint: "[usd|off]",
+    },
+    "max-tokens": {
+      description:
+        "cap output tokens per turn — limits runaway reasoning. Off by default. Bare shows status.",
+      argsHint: "[N|off]",
+    },
+    diff: {
+      description:
+        "configure how edit_file / write_file diffs are displayed: summary (path +stats, default) · full (unified diff) · none (checkmark only)",
+      argsHint: "[summary|full|none]",
     },
     mcp: { description: "list MCP servers + tools attached to this session" },
     resource: {
@@ -325,6 +338,9 @@ export const EN: TranslationSchema = {
       argsHint: "[text]",
     },
     doctor: { description: "health check (api / config / api-reach / index / hooks / project)" },
+    "cache-miss-report": {
+      description: "explain recent prompt-cache misses from local prefix evidence",
+    },
     context: { description: "show context-window breakdown (system / tools / log / input)" },
     retry: { description: "truncate & resend your last message (fresh sample)" },
     compact: {
@@ -347,11 +363,26 @@ export const EN: TranslationSchema = {
       argsHint: "[N]",
     },
     sessions: { description: "list saved sessions (current marked with ▸)" },
+    "session-persist": {
+      description:
+        "toggle whether reasonix resumes the last session on launch. /session-persist off = always start fresh",
+      argsHint: "<on|off>",
+    },
     title: { description: "ask the model to rename this session from the conversation" },
     qq: {
       description:
         "connect, inspect, or disconnect the QQ channel for this session (first connect guides App ID / App Secret setup)",
       argsHint: "[connect [appId appSecret [sandbox]]|status|disconnect]",
+    },
+    telegram: {
+      description:
+        "connect, inspect, or disconnect the Telegram channel for this session (first connect guides bot token setup)",
+      argsHint: "[connect [botToken]|status|disconnect]",
+    },
+    weixin: {
+      description:
+        "connect, inspect, or disconnect the Weixin channel for this session (first connect uses iLink QR login)",
+      argsHint: "[connect [manual token accountId [baseUrl]]|status|disconnect]",
     },
     setup: { description: "reminds you to exit and run `reasonix setup`" },
     semantic: {
@@ -447,12 +478,33 @@ export const EN: TranslationSchema = {
     themeSubtitle: "Preview updates live as you navigate. Change later with /theme.",
     themeSampleHeading: "Sample",
     themeFooter: "[↑↓] navigate · [Enter] confirm · [Esc] cancel",
+    themeName: {
+      graphite: "Graphite",
+      ember: "Ember",
+      aurora: "Aurora",
+      sandstone: "Sandstone",
+      porcelain: "Porcelain",
+      linen: "Linen",
+      glacier: "Glacier",
+      midnight: "Midnight",
+      dark: "Dark",
+      light: "Light",
+      "deep-blue": "Deep Blue",
+      "high-contrast": "High Contrast",
+    },
     themeCaption: {
-      dark: "Cool dark tones (default)",
-      light: "Clean light mode",
-      midnight: "Tokyo Night palette",
-      "deep-blue": "Deep blue on black",
-      "high-contrast": "Accessibility",
+      graphite: "Original dark palette with neutral graphite panels",
+      ember: "Warm dark palette with stronger Reasonix orange accents",
+      aurora: "Teal-green dark palette for a softer low-light workspace",
+      sandstone: "Original warm light palette",
+      porcelain: "Clean light palette with quiet contrast",
+      linen: "Editorial warm light palette with paper-like surfaces",
+      glacier: "Cool light palette with crisp blue accents",
+      midnight: "Navy dark palette with cool blue surfaces",
+      dark: "Cool dark tones (legacy alias)",
+      light: "Clean light mode (legacy alias)",
+      "deep-blue": "Deep blue on black (legacy alias)",
+      "high-contrast": "Accessibility (legacy alias)",
     },
     reviewLabelTheme: "Theme",
     mcpTitle: "Which MCP servers should Reasonix wire up for you?",
@@ -488,6 +540,7 @@ export const EN: TranslationSchema = {
   themePicker: {
     header: "Theme",
     footer: "↑↓ pick · ⏎ confirm · esc cancel",
+    autoLabel: "Auto",
     currentPref: "current preference",
     activeNow: "active now",
     autoDesc: "use REASONIX_THEME or default",
@@ -811,6 +864,13 @@ export const EN: TranslationSchema = {
       unknownCommandShort: "unknown command: /{cmd}  (try /help)",
     },
     sessions: {
+      persistOn: "▸ session-persist → on  (next launch will resume the last session)",
+      persistOff: "▸ session-persist → off  (next launch will start a fresh session)",
+      persistSetOn:
+        "▸ session-persist set to on — next `reasonix code/chat` will resume the last session.",
+      persistSetOff:
+        "▸ session-persist set to off — next launch starts fresh. Use -c/--continue to resume.",
+      persistUsage: "usage: /session-persist <on|off>",
       titleUnavailable: "/title is only available in an active persisted TUI session.",
       titleStarted: "▸ naming session…",
       titleFailed: "▸ session title failed: {reason}",
@@ -857,11 +917,103 @@ export const EN: TranslationSchema = {
       unauthorizedMessage:
         "QQ ignored message from unauthorized openid {openid}. Current access: {access}.",
       runtimeBound:
-        "QQ temporarily bound this run to first sender {openid}. Set `qq.ownerOpenId` in config to persist access.",
+        "QQ temporarily bound this run to first sender {openid}. If you want this account to stay fixed, set it in QQ settings.",
       missingAppId: "QQ App ID is required. Run `/qq connect` to configure.",
       missingAppSecret: "QQ App Secret is required. Run `/qq connect` to configure.",
       authFailed: "QQ bot authentication failed — check your App ID and App Secret.",
       readyTimeout: "QQ bot did not receive READY within 15s — check your App ID and App Secret.",
+    },
+    telegram: {
+      unavailable: "/telegram is not available in this session.",
+      connecting: "Telegram: connecting...",
+      connectFailed: "Telegram connect failed: {reason}",
+      disconnecting: "Telegram: disconnecting...",
+      disconnectFailed: "Telegram disconnect failed: {reason}",
+      usage: "Usage: /telegram connect [botToken] | /telegram status | /telegram disconnect",
+      promptBotToken:
+        "Telegram setup: enter your bot token from BotFather, then press Enter. Type /cancel to abort.",
+      setupWaitingBotToken: "waiting for bot token",
+      setupCancelled: "Telegram setup cancelled.",
+      credentialsRequired: "Telegram bot token is required.",
+      connected: "Telegram connected in {mode} mode. It will auto-start on future launches.",
+      alreadyConnected: "Telegram is already connected in {mode} mode. Auto-start is enabled.",
+      disconnected: "Telegram disconnected. Auto-start is disabled.",
+      status:
+        "Telegram: {connected}, auto-start {enabled}, token {configured}, botToken {botToken}, access {access}, current mode {mode}.",
+      statusSetup: "Telegram: setup in progress - {step}",
+      stateConnected: "connected",
+      stateDisconnected: "disconnected",
+      stateEnabled: "enabled",
+      stateDisabled: "disabled",
+      stateConfigured: "configured",
+      stateNotConfigured: "not configured",
+      none: "none",
+      modeChat: "chat",
+      modeCode: "code",
+      accessOwner: "owner {owner}",
+      accessOwnerWithAllowlist: "owner {owner}, allowlist {count}",
+      accessAllowlist: "allowlist {count}",
+      accessRuntime: "first-sender (runtime only, {owner})",
+      accessRequiredShort: "access control required",
+      lockAlreadyRunning:
+        "Telegram channel is already running in process {pid}. Stop that process before starting another Telegram channel.",
+      unauthorizedMessage:
+        "Telegram ignored message from unauthorized user {userId}. Current access: {access}.",
+      runtimeBound:
+        "Telegram temporarily bound this run to first sender {userId}. Set `telegram.ownerUserId` in config to persist access.",
+      missingBotToken: "Telegram bot token is required. Run `/telegram connect` to configure.",
+      accessRequired:
+        "Telegram requires access control before it can start. Set `telegram.ownerUserId` or `telegram.allowlist` in config.",
+      rateLimited:
+        "Telegram rate-limited authorized user {userId}: more than 5 messages in {seconds}s.",
+      rateLimitedReply:
+        "Telegram is receiving messages too quickly. Please wait {seconds}s before sending more.",
+    },
+    weixin: {
+      unavailable: "/weixin is not available in this session.",
+      connecting: "Weixin: connecting...",
+      connectFailed: "Weixin connect failed: {reason}",
+      disconnecting: "Weixin: disconnecting...",
+      disconnectFailed: "Weixin disconnect failed: {reason}",
+      usage:
+        "Usage: /weixin connect | /weixin connect manual [token accountId [baseUrl]] | /weixin status | /weixin disconnect",
+      promptCredentials:
+        "Weixin manual setup: enter iLink token and account id separated by a space, then press Enter. Type /cancel to abort.",
+      setupWaitingCredentials: "waiting for iLink token and account id",
+      setupCancelled: "Weixin setup cancelled.",
+      credentialsRequired: "Weixin token and account id are required.",
+      connected: "Weixin connected in {mode} mode. It will auto-start on future launches.",
+      alreadyConnected: "Weixin is already connected in {mode} mode. Auto-start is enabled.",
+      disconnected: "Weixin disconnected. Auto-start is disabled.",
+      status:
+        "Weixin: {connected}, auto-start {enabled}, credentials {configured}, token {token}, account {accountId}, access {access}, current mode {mode}.",
+      statusSetup: "Weixin: setup in progress - {step}",
+      stateConnected: "connected",
+      stateDisconnected: "disconnected",
+      stateEnabled: "enabled",
+      stateDisabled: "disabled",
+      stateConfigured: "configured",
+      stateNotConfigured: "not configured",
+      none: "none",
+      modeChat: "chat",
+      modeCode: "code",
+      accessOwner: "owner {owner}",
+      accessOwnerWithAllowlist: "owner {owner}, allowlist {count}",
+      accessAllowlist: "allowlist {count}",
+      accessRuntime: "first-sender (runtime only, {owner})",
+      accessRequiredShort: "access control required",
+      lockAlreadyRunning:
+        "Weixin channel is already running in process {pid}. Stop that process before starting another Weixin channel.",
+      unauthorizedMessage:
+        "Weixin ignored message from unauthorized user {userId}. Current access: {access}.",
+      runtimeBound:
+        "Weixin temporarily bound this run to first sender {userId}. Set `weixin.ownerUserId` in config to persist access.",
+      missingToken: "Weixin iLink token is required. Run `/weixin connect` to configure.",
+      missingAccountId: "Weixin account id is required. Run `/weixin connect` to configure.",
+      accessRequired:
+        "Weixin requires access control before it can start. Set `weixin.ownerUserId` or `weixin.allowlist` in config.",
+      rateLimited:
+        "Weixin rate-limited authorized user {userId}: more than 5 messages in {seconds}s.",
     },
     admin: {
       doctorNeedsTui: "/doctor needs a TUI context (postDoctor wired).",
@@ -974,6 +1126,17 @@ export const EN: TranslationSchema = {
         "▲ budget → ${cap} but already spent ${spent}. Next turn will be refused — bump the cap higher to keep going, or end the session.",
       budgetSet:
         "budget → ${cap}  (so far: ${spent} · warns at 80%, refuses next turn at 100% · /budget off to clear)",
+      maxTokensNoCap: "max-tokens → no cap  (server default applies · /max-tokens <N> to set)",
+      maxTokensStatus: "max-tokens → {n} tokens per turn  (/max-tokens off to clear)",
+      maxTokensSet: "max-tokens → {n}  (next turn capped at {n} output tokens)",
+      maxTokensOff: "max-tokens → off (no cap, server default applies)",
+      maxTokensUsage:
+        "usage: /max-tokens <positive integer>   e.g. /max-tokens 4096  ·  /max-tokens off",
+    },
+    diff: {
+      diffStatus: "diff display → {current}",
+      diffSet: "diff display → {mode}",
+      diffInvalid: "unknown mode: {mode}\navailable: {choices}",
     },
     permissions: {
       mutateCodeOnly:
@@ -1012,6 +1175,13 @@ export const EN: TranslationSchema = {
       projectNone1: '  (none — pick "always allow" on a ShellConfirm prompt to add one,',
       projectNone2: "   or `/permissions add <prefix>` directly.)",
       projectNoRoot: "Project allowlist — (no project root; chat mode shows builtin entries only)",
+      globalHeader: "Global allowlist ({count}) — applies to every project",
+      globalNone: "  (none — add with `/permissions add --global <prefix>`.)",
+      addGlobalInfo:
+        "▸ added to global allowlist: {prefix}\n  → next `{prefix}` invocation runs without prompting in every project.",
+      removeGlobalEmpty: "▸ no global allowlist entries to remove.",
+      clearGlobalConfirm:
+        "about to drop {count} global allowlist entr{plural}. Re-run with the word 'confirm': /permissions clear --global confirm",
       builtinHeader: "Builtin allowlist ({count}) — read-only, baked in",
       subcommands:
         "Subcommands: /permissions add <prefix> · /permissions remove <prefix-or-N> · /permissions clear confirm",
@@ -1054,6 +1224,8 @@ export const EN: TranslationSchema = {
       statusCtxNone: "  ctx     no turns yet",
       statusCost: "  cost    ${cost} · cache {bar} {pct}% · turns {turns}",
       statusCostCold: "  cost    ${cost} · turns {turns} (cache warming up)",
+      statusCacheDetail: "  cache   miss {miss} total · last {last} · schemas {schemas}{churn}",
+      statusCacheChurn: " · churn {reasons}",
       statusBudget: "  budget  ${spent} / ${cap} ({pct}%){tag}",
       statusSession: '  session "{name}" · {count} messages in log (resumed {resumed})',
       statusSessionEphemeral: "  session (ephemeral — no persistence)",
@@ -1529,6 +1701,7 @@ export const EN: TranslationSchema = {
     title: "\u25a3 context",
     compactHint: "  /compact folds (auto at 50%) \u00b7 /new wipes log",
     topTools: "  top tool results by cost ({count}):",
+    topToolSchemas: "  top tool schemas by prompt cost ({count}):",
     msg: "msg",
     turnLabel: "turn",
   },

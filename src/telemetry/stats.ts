@@ -1,5 +1,6 @@
 import type { Usage } from "../client.js";
 import { loadContextTokens, loadPricingOverride } from "../config.js";
+import type { CacheDiagnosticEntry } from "./cache-diagnostics.js";
 
 /** USD per 1M tokens; display currency conversion happens at the UI boundary. */
 export const DEEPSEEK_PRICING: Record<
@@ -105,6 +106,22 @@ export interface TurnStats {
   usage: Usage;
   cost: number;
   cacheHitRatio: number;
+  cacheDiagnostics?: CacheDiagnostics;
+}
+
+export type CacheChurnReason = "system" | "tools" | "few_shots" | "log_rewrite";
+
+export interface CacheDiagnostics {
+  prefixHash: string;
+  prefixChanged: boolean;
+  prefixChangeReasons: CacheChurnReason[];
+  systemHash: string;
+  toolsHash: string;
+  fewShotsHash: string;
+  logRewriteVersion: number;
+  toolSchemaTokens: number;
+  promptCacheMissTokens: number;
+  promptCacheHitTokens: number;
 }
 
 export interface SessionSummary {
@@ -121,6 +138,12 @@ export interface SessionSummary {
   /** Floor estimate for next call — actual cost = this + user delta + new tool outputs. */
   lastPromptTokens: number;
   lastTurnCostUsd: number;
+  totalCacheHitTokens: number;
+  totalCacheMissTokens: number;
+  lastCacheMissTokens: number;
+  lastToolSchemaTokens: number;
+  lastPrefixChanged: boolean;
+  lastPrefixChangeReasons: CacheChurnReason[];
 }
 
 export class SessionStats {
@@ -134,6 +157,10 @@ export class SessionStats {
   private _carryoverCompletion = 0;
   /** Last turn's promptTokens before exit — surfaced via summary() until the next live turn lands. */
   private _carryoverLastPromptTokens = 0;
+  /** Per-turn cache diagnostics stored as each turn completes, so the live
+   *  /cache-miss-report can replay accurate prefix hashes per historical turn
+   *  rather than computing them all from the current prefix. */
+  private _cacheDiagnostics: CacheDiagnosticEntry[] = [];
 
   /** Seed totals from a resumed session's persisted meta — only call once at construction. */
   seedCarryover(opts: {
@@ -193,9 +220,15 @@ export class SessionStats {
     this._carryoverCacheMiss = 0;
     this._carryoverCompletion = 0;
     this._carryoverLastPromptTokens = 0;
+    this._cacheDiagnostics = [];
   }
 
-  record(turn: number, model: string, usage: Usage): TurnStats {
+  record(
+    turn: number,
+    model: string,
+    usage: Usage,
+    cacheDiagnostics?: CacheDiagnostics,
+  ): TurnStats {
     const cost = costUsd(model, usage);
     const stats: TurnStats = {
       turn,
@@ -203,6 +236,7 @@ export class SessionStats {
       usage,
       cost,
       cacheHitRatio: usage.cacheHitRatio,
+      cacheDiagnostics,
     };
     this.turns.push(stats);
     this.trimOldTurns();
@@ -215,6 +249,17 @@ export class SessionStats {
     this._carryoverCacheHit += usage.promptCacheHitTokens;
     this._carryoverCacheMiss += usage.promptCacheMissTokens;
     this._carryoverCompletion += usage.completionTokens;
+  }
+
+  /** Store a cache diagnostic entry per turn so the live /cache-miss-report
+   *  replays the prefix hashes that were actually in effect at turn time. */
+  addCacheDiagnostic(entry: CacheDiagnosticEntry): void {
+    this._cacheDiagnostics.push(entry);
+  }
+
+  /** Per-turn cache diagnostics stored in-memory for the current process. */
+  get cacheDiagnostics(): readonly CacheDiagnosticEntry[] {
+    return this._cacheDiagnostics;
   }
 
   /** Drop oldest turns beyond MAX_TURNS, folding their costs into carryover so
@@ -276,6 +321,12 @@ export class SessionStats {
       cacheHitRatio: round(this.aggregateCacheHitRatio, 4),
       lastPromptTokens: last?.usage.promptTokens ?? this._carryoverLastPromptTokens,
       lastTurnCostUsd: round(last?.cost ?? 0, 6),
+      totalCacheHitTokens: this.cumulativeCacheHitTokens,
+      totalCacheMissTokens: this.cumulativeCacheMissTokens,
+      lastCacheMissTokens: last?.usage.promptCacheMissTokens ?? 0,
+      lastToolSchemaTokens: last?.cacheDiagnostics?.toolSchemaTokens ?? 0,
+      lastPrefixChanged: last?.cacheDiagnostics?.prefixChanged ?? false,
+      lastPrefixChangeReasons: last?.cacheDiagnostics?.prefixChangeReasons ?? [],
     };
   }
 }

@@ -59,8 +59,9 @@ hit rates:
 3. **`VolatileScratch`** — chain-of-thought / per-turn scratch lives outside
    the cached prefix so it never poisons the next hit.
 4. **Auto-compact** — when context approaches the cap, older turns fold into
-   a summary message *appended* to the prefix; the prefix itself isn't
-   rewritten, so the cache survives the fold.
+   a summary message. The summary request is shaped to reuse the main agent's
+   already-cached system/tool/history prefix; the following main-agent request
+   still pays a cold miss for the newly synthesized summary segment.
 
 DeepSeek gave us cacheable bytes. The four mechanisms above are how we keep
 the bytes cacheable.

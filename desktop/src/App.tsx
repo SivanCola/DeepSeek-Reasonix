@@ -38,6 +38,7 @@ import type {
   ConfirmationChoice,
   ExternalSessionApp,
   ExternalSessionSource,
+  ImportedMcpServer,
   IncomingEvent,
   JobInfo,
   McpSpecInfo,
@@ -45,6 +46,7 @@ import type {
   MemoryEntryInfo,
   OutgoingCommand,
   PlanVerdict,
+  PromptHistoryCursor,
   RevisionVerdict,
   SettingsPatch,
   SkillInfo,
@@ -75,7 +77,7 @@ import {
 import { AboutModal } from "./ui/about";
 import { parseEditResult } from "./ui/cards";
 import { Composer, type SlashCmd } from "./ui/composer";
-import { ContextPanel } from "./ui/context-panel";
+import { ContextPanel, type ContextPanelTab } from "./ui/context-panel";
 import { JobsPop } from "./ui/jobs-pop";
 import { JumpBar, type JumpBarItem } from "./ui/jump-bar";
 import { useElapsed } from "./ui/live";
@@ -253,6 +255,12 @@ export type UsageStats = {
   liveLogTokens: number;
 };
 
+type CcSwitchImportResult = {
+  source: "db" | "config";
+  path: string;
+  servers: ImportedMcpServer[];
+};
+
 type WindowControls = Pick<
   ReturnType<typeof getCurrentWindow>,
   "isFullscreen" | "isMaximized" | "setFullscreen" | "toggleMaximize"
@@ -289,6 +297,7 @@ export type Settings = {
   recentWorkspaces: string[];
   model: string;
   editor?: string;
+  desktopCloseBehavior?: "closeToTray" | "closeToQuit";
   webSearchEngine?:
     | "bing"
     | "bing-intl"
@@ -314,7 +323,6 @@ export type Settings = {
   /** Per-model context-window override (tokens). */
   contextTokens?: Record<string, number>;
   showSystemEvents?: boolean;
-  promptHistory?: string[];
   version: string;
 };
 
@@ -340,6 +348,13 @@ type MentionPreviewState = {
   totalLines: number;
 };
 
+type PromptHistoryNavState = {
+  mode: "idle" | "browsing";
+  draft: string;
+  cursor: PromptHistoryCursor | null;
+  originSessionName: string | null;
+};
+
 type State = {
   ready: boolean;
   needsSetup: boolean;
@@ -362,6 +377,10 @@ type State = {
   balance: Balance | null;
   mentionResults: MentionResults | null;
   mentionPreview: MentionPreviewState | null;
+  promptHistoryResult: {
+    nonce: number;
+    entry: { value: string; cursor: PromptHistoryCursor } | null;
+  } | null;
   mcpSpecs: McpSpecInfo[];
   mcpBridged: boolean;
   skills: SkillInfo[];
@@ -1043,12 +1062,12 @@ function applyIncomingRaw(state: State, ev: IncomingEvent): State {
           recentWorkspaces: ev.recentWorkspaces,
           model: ev.model,
           editor: ev.editor,
+          desktopCloseBehavior: ev.desktopCloseBehavior,
           webSearchEngine: ev.webSearchEngine,
           webSearchEndpoint: ev.webSearchEndpoint,
           webSearchApiKeys: ev.webSearchApiKeys,
           subagentModels: ev.subagentModels,
           showSystemEvents: ev.showSystemEvents,
-          promptHistory: ev.promptHistory,
           version: ev.version,
         },
       };
@@ -1129,6 +1148,11 @@ function applyIncomingRaw(state: State, ev: IncomingEvent): State {
         ],
       };
     }
+    case "$prompt_history_result":
+      return {
+        ...state,
+        promptHistoryResult: { nonce: ev.nonce, entry: ev.entry },
+      };
     case "$error":
     case "error": {
       // Kernel-level errors carry a `recoverable` flag — true for
@@ -1396,9 +1420,10 @@ interface TabRuntimeProps {
   onToggleSide: () => void;
   onToggleCtx: () => void;
   onToggleCurrency: () => void;
-  tabsList: { id: string; workspaceDir?: string }[];
+  tabsList: { id: string; workspaceDir?: string; busy?: boolean }[];
   activeTabId: string;
   setActiveTabId: (id: string) => void;
+  onBusyChange?: (tabId: string, busy: boolean) => void;
 }
 
 function TabRuntime({
@@ -1433,6 +1458,7 @@ function TabRuntime({
   tabsList,
   activeTabId,
   setActiveTabId,
+  onBusyChange,
 }: TabRuntimeProps) {
   const [state, dispatch] = useReducer(reduce, {
     ready: false,
@@ -1454,6 +1480,7 @@ function TabRuntime({
     balance: null,
     mentionResults: null,
     mentionPreview: null,
+    promptHistoryResult: null,
     mcpSpecs: [],
     mcpBridged: false,
     skills: [],
@@ -1468,6 +1495,22 @@ function TabRuntime({
   useLang();
   useDisableTextAssist();
   const [draft, setDraft] = useState("");
+  const draftRef = useRef(draft);
+  draftRef.current = draft;
+  const [promptHistoryNav, setPromptHistoryNav] = useState<PromptHistoryNavState>({
+    mode: "idle",
+    draft: "",
+    cursor: null,
+    originSessionName: null,
+  });
+  const promptHistoryNavRef = useRef(promptHistoryNav);
+  promptHistoryNavRef.current = promptHistoryNav;
+  const promptHistoryRequestRef = useRef<{
+    nonce: number;
+    direction: "older" | "newer";
+    draft: string;
+  } | null>(null);
+  const promptHistoryNonceRef = useRef(0);
   const [toast, setToast] = useState<{ msg: string; yolo?: boolean } | null>(null);
   const [splashOn, setSplashOn] = useState<boolean>(() => shouldShowSplash());
   const [wdOpen, setWdOpen] = useState(false);
@@ -1485,9 +1528,12 @@ function TabRuntime({
   const restoredScrollSessionRef = useRef<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsPage, setSettingsPage] = useState<SettingsPageId>("general");
+  const [mcpEditTarget, setMcpEditTarget] = useState<{ raw: string; nonce: number } | null>(null);
   const [jobsOpen, setJobsOpen] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
   const [approvalTrayExpanded, setApprovalTrayExpanded] = useState(false);
+  const [contextPanelTab, setContextPanelTab] = useState<ContextPanelTab>("files");
+  const [contextPanelTabNonce, setContextPanelTabNonce] = useState(0);
   const previousApprovalSnapshotRef = useRef<ApprovalSnapshot>({
     confirms: [],
     pathAccess: [],
@@ -1511,6 +1557,12 @@ function TabRuntime({
   }, []);
   const openSettingsAt = useCallback((page: SettingsPageId = "general") => {
     setSettingsPage(page);
+    setMcpEditTarget(null);
+    setSettingsOpen(true);
+  }, []);
+  const openMcpEditor = useCallback((spec: McpSpecInfo) => {
+    setSettingsPage("mcp");
+    setMcpEditTarget((prev) => ({ raw: spec.raw, nonce: (prev?.nonce ?? 0) + 1 }));
     setSettingsOpen(true);
   }, []);
   const palette = useCommandPalette(active);
@@ -1540,6 +1592,10 @@ function TabRuntime({
     return () => registerDispatch(tabId, null);
   }, [tabId, registerDispatch]);
 
+  useEffect(() => {
+    onBusyChange?.(tabId, state.busy);
+  }, [tabId, state.busy, onBusyChange]);
+
   const sendRpc = useCallback(
     (cmd: OutgoingCommand) => {
       const payload = { tabId, ...cmd };
@@ -1548,6 +1604,35 @@ function TabRuntime({
       );
     },
     [tabId],
+  );
+
+  const resetPromptHistoryNav = useCallback(() => {
+    promptHistoryRequestRef.current = null;
+    setPromptHistoryNav({
+      mode: "idle",
+      draft: "",
+      cursor: null,
+      originSessionName: null,
+    });
+  }, []);
+
+  const requestPromptHistoryNavigation = useCallback(
+    (direction: "older" | "newer", currentDraft: string) => {
+      const nav = promptHistoryNavRef.current;
+      if (direction === "newer" && nav.mode === "idle") return false;
+      const nonce = ++promptHistoryNonceRef.current;
+      promptHistoryRequestRef.current = { nonce, direction, draft: currentDraft };
+      sendRpc({
+        cmd: "prompt_history_step",
+        nonce,
+        direction,
+        cursor: nav.mode === "browsing" ? nav.cursor : null,
+        startSessionName: nav.mode === "idle" ? state.currentSession : undefined,
+        stopSessionName: nav.originSessionName ?? undefined,
+      });
+      return true;
+    },
+    [sendRpc, state.currentSession],
   );
 
   const queryMentions = useCallback(
@@ -1593,11 +1678,20 @@ function TabRuntime({
     (spec: string) => sendRpc({ cmd: "mcp_specs_remove", spec }),
     [sendRpc],
   );
+  const updateMcpSpec = useCallback(
+    (raw: string, server: ImportedMcpServer) => sendRpc({ cmd: "mcp_specs_update", raw, server }),
+    [sendRpc],
+  );
+  const retryMcpSpec = useCallback(
+    (raw: string) => sendRpc({ cmd: "mcp_specs_retry", raw }),
+    [sendRpc],
+  );
   const newChat = useCallback(() => {
     clearAbortDraft();
+    resetPromptHistoryNav();
     sendRpc({ cmd: "new_chat" });
     dispatch({ t: "clear" });
-  }, [clearAbortDraft, sendRpc]);
+  }, [clearAbortDraft, resetPromptHistoryNav, sendRpc]);
 
   const pickWorkspace = useCallback(async () => {
     try {
@@ -1620,6 +1714,77 @@ function TabRuntime({
     setToast({ msg, yolo: opts?.yolo });
     window.setTimeout(() => setToast(null), opts?.duration ?? 1600);
   }, []);
+
+  const importCcSwitchMcp = useCallback(async () => {
+    try {
+      const result = await invoke<CcSwitchImportResult>("import_cc_switch_mcp");
+      const existingNames = new Set(
+        state.mcpSpecs
+          .map((spec) => spec.name)
+          .filter((name): name is string => typeof name === "string" && name.length > 0),
+      );
+      const pending = result.servers.filter((server) => !existingNames.has(server.name));
+      const skipped = result.servers.length - pending.length;
+      if (pending.length === 0) {
+        flashToast(t("toast.mcpImportNone"));
+        return;
+      }
+      await invoke("rpc_send", {
+        line: JSON.stringify({ tabId, cmd: "mcp_import_servers", servers: pending }),
+      });
+      flashToast(
+        skipped > 0
+          ? t("toast.mcpImportedWithSkipped", { imported: pending.length, skipped })
+          : t("toast.mcpImported", { imported: pending.length }),
+        { duration: 2600 },
+      );
+    } catch (err) {
+      flashToast(t("toast.mcpImportFailed", { error: String(err) }), { duration: 3200 });
+      throw err;
+    }
+  }, [flashToast, state.mcpSpecs, tabId]);
+
+  const openMcpStatus = useCallback(() => {
+    setContextPanelTab("tools");
+    setContextPanelTabNonce((nonce) => nonce + 1);
+    if (ctxCollapsed) onToggleCtx();
+    flashToast(t("toast.mcpStatusOpened"));
+  }, [ctxCollapsed, flashToast, onToggleCtx]);
+
+  const retryFailedMcpSpecs = useCallback(() => {
+    const failed = state.mcpSpecs.filter((spec) => spec.status === "failed");
+    if (failed.length === 0) {
+      flashToast(t("toast.mcpRetryNone"));
+      return;
+    }
+    for (const spec of failed) retryMcpSpec(spec.raw);
+    flashToast(t("toast.mcpRetryQueued", { count: failed.length }), { duration: 2200 });
+  }, [flashToast, retryMcpSpec, state.mcpSpecs]);
+
+  const runMcpSlashCommand = useCallback(
+    (arg?: string) => {
+      const subcommand = arg?.trim().toLowerCase() ?? "";
+      if (!subcommand || subcommand === "settings" || subcommand === "config") {
+        openSettingsAt("mcp");
+        return true;
+      }
+      if (subcommand === "status" || subcommand === "list" || subcommand === "ls") {
+        openMcpStatus();
+        return true;
+      }
+      if (subcommand === "retry" || subcommand === "reconnect") {
+        retryFailedMcpSpecs();
+        return true;
+      }
+      if (subcommand === "import" || subcommand === "cc-switch" || subcommand === "ccswitch") {
+        openSettingsAt("mcp");
+        void importCcSwitchMcp().catch(() => undefined);
+        return true;
+      }
+      return false;
+    },
+    [importCcSwitchMcp, openMcpStatus, openSettingsAt, retryFailedMcpSpecs],
+  );
 
   const applyReasoningEffort = useCallback(
     (reasoningEffort: Settings["reasoningEffort"]) => {
@@ -1717,6 +1882,7 @@ function TabRuntime({
     (override?: string) => {
       const text = (override ?? draft).trim();
       if (!text || !state.ready || state.busy) return;
+      resetPromptHistoryNav();
 
       const settingsCommand = parseSlashSettingsCommand(text);
       if (settingsCommand) {
@@ -1755,6 +1921,12 @@ function TabRuntime({
           if (!override) setDraft("");
           return;
         }
+        if (name === "mcp") {
+          if (runMcpSlashCommand(args?.trim())) {
+            if (!override) setDraft("");
+            return;
+          }
+        }
         if (name === "skill" || name === "skills") {
           openSettingsAt("skills");
           if (!override) setDraft("");
@@ -1791,6 +1963,8 @@ function TabRuntime({
       recordAbortDraft,
       applySlashSettingsCommand,
       openSettingsAt,
+      resetPromptHistoryNav,
+      runMcpSlashCommand,
     ],
   );
 
@@ -1810,8 +1984,9 @@ function TabRuntime({
 
   const clearConversation = useCallback(() => {
     clearAbortDraft();
+    resetPromptHistoryNav();
     dispatch({ t: "clear" });
-  }, [clearAbortDraft]);
+  }, [clearAbortDraft, resetPromptHistoryNav]);
 
   // When /retry returns the last user text, set it as the composer draft
   const retryTextRef = useRef(state.retryText);
@@ -1819,16 +1994,21 @@ function TabRuntime({
   useEffect(() => {
     const retryText = retryTextRef.current;
     if (state.retryNonce > 0 && retryText) {
+      resetPromptHistoryNav();
       setDraft(retryText);
       composerRef.current?.focus();
     }
     // Only fire when retryNonce changes — retryText alone would re-fire on re-renders
-  }, [state.retryNonce]);
+  }, [resetPromptHistoryNav, state.retryNonce]);
 
-  const onEditUserMsg = useCallback((t: string) => {
-    setDraft(t);
-    composerRef.current?.focus();
-  }, []);
+  const onEditUserMsg = useCallback(
+    (t: string) => {
+      resetPromptHistoryNav();
+      setDraft(t);
+      composerRef.current?.focus();
+    },
+    [resetPromptHistoryNav],
+  );
 
   useEffect(() => {
     if (state.busy || !state.ready || state.queuedSends.length === 0) return;
@@ -1837,6 +2017,51 @@ function TabRuntime({
     dispatch({ t: "shift_queued_send" });
     send(next);
   }, [state.busy, state.ready, state.queuedSends, send]);
+
+  useEffect(() => {
+    const result = state.promptHistoryResult;
+    const request = promptHistoryRequestRef.current;
+    if (!result || !request || result.nonce !== request.nonce) return;
+    promptHistoryRequestRef.current = null;
+
+    const nav = promptHistoryNavRef.current;
+    if (!result.entry) {
+      if (request.direction === "newer" && nav.mode === "browsing") {
+        const restored = nav.draft;
+        setDraft(restored);
+        setPromptHistoryNav({
+          mode: "idle",
+          draft: "",
+          cursor: null,
+          originSessionName: null,
+        });
+        requestAnimationFrame(() => {
+          composerRef.current?.focus();
+          composerRef.current?.setSelectionRange(restored.length, restored.length);
+        });
+      }
+      return;
+    }
+
+    const value = result.entry.value;
+    setDraft(value);
+    setPromptHistoryNav((prev) => ({
+      mode: "browsing",
+      draft: prev.mode === "idle" ? request.draft : prev.draft,
+      cursor: result.entry?.cursor ?? null,
+      originSessionName:
+        prev.mode === "idle" ? (state.currentSession ?? null) : prev.originSessionName,
+    }));
+    requestAnimationFrame(() => {
+      composerRef.current?.focus();
+      composerRef.current?.setSelectionRange(value.length, value.length);
+    });
+  }, [state.promptHistoryResult, state.currentSession]);
+
+  useEffect(() => {
+    void state.currentSession;
+    resetPromptHistoryNav();
+  }, [resetPromptHistoryNav, state.currentSession]);
 
   useEffect(() => {
     const currentSnapshot: ApprovalSnapshot = {
@@ -2429,6 +2654,17 @@ function TabRuntime({
       },
     },
     { cmd: "/model", desc: t("app.cmd.switchModel"), run: () => openSettingsAt("models") },
+    { cmd: "/mcp", desc: t("app.cmd.mcp"), run: () => openSettingsAt("mcp") },
+    { cmd: "/mcp status", desc: t("app.cmd.mcpStatus"), run: openMcpStatus },
+    { cmd: "/mcp retry", desc: t("app.cmd.mcpRetry"), run: retryFailedMcpSpecs },
+    {
+      cmd: "/mcp import",
+      desc: t("app.cmd.mcpImport"),
+      run: () => {
+        openSettingsAt("mcp");
+        void importCcSwitchMcp().catch(() => undefined);
+      },
+    },
     {
       cmd: "/search-engine",
       desc: t("app.cmd.searchEngine"),
@@ -2644,7 +2880,11 @@ function TabRuntime({
 
   return (
     <WorkspaceProvider
-      value={{ dir: state.settings?.workspaceDir, editor: state.settings?.editor }}
+      value={{
+        dir: state.settings?.workspaceDir,
+        editor: state.settings?.editor,
+        sessionFiles: state.sessionFiles,
+      }}
     >
       <div
         className="app"
@@ -2773,7 +3013,8 @@ function TabRuntime({
                 ) : (
                   <Virtuoso
                     ref={virtuosoRef}
-                    style={{ height: "100%" }}
+                    style={{ height: "90%" }}
+                    className="virtuoso-scroll"
                     totalCount={messageItems.length}
                     alignToBottom
                     followOutput={followOutput}
@@ -2826,6 +3067,58 @@ function TabRuntime({
                           </div>
                         );
                       }
+                      if (m.kind === "error") {
+                        const toneVar = m.recoverable ? "var(--tone-warn)" : "var(--tone-err)";
+                        const bgVar = m.recoverable
+                          ? "var(--warn-soft, var(--danger-soft))"
+                          : "var(--danger-soft)";
+                        const labelKey = m.recoverable ? "app.warningLabel" : "app.errorLabel";
+                        return (
+                          <div
+                            key={m.id}
+                            className="warn-card"
+                            style={{
+                              borderColor: toneVar,
+                              background: bgVar,
+                              position: "relative",
+                            }}
+                          >
+                            <span className="ico" style={{ color: toneVar }}>
+                              <I.warning size={16} />
+                            </span>
+                            <div style={{ flex: 1 }}>
+                              <div className="tt">{t(labelKey)}</div>
+                              <div className="ds">{m.message}</div>
+                            </div>
+                            <button
+                              type="button"
+                              className="warn-card-dismiss"
+                              title={t("app.dismissError")}
+                              onClick={() => dispatch({ t: "dismiss_error", id: m.id })}
+                              style={{
+                                background: "transparent",
+                                border: "none",
+                                color: toneVar,
+                                cursor: "pointer",
+                                padding: "4px",
+                                alignSelf: "flex-start",
+                              }}
+                            >
+                              <I.x size={14} />
+                            </button>
+                          </div>
+                        );
+                      }
+                      if (m.kind === "warning") {
+                        if (state.settings?.showSystemEvents === false) return null;
+                        return (
+                          <div key={m.id} className="sys-event-row" title={m.text}>
+                            <span className="line" />
+                            <span className="label">{m.text}</span>
+                            <span className="line" />
+                          </div>
+                        );
+                      }
                       return null;
                     }}
                   />
@@ -2834,7 +3127,7 @@ function TabRuntime({
                   <button
                     type="button"
                     className="thread-jump-bottom"
-                    onClick={() => scrollToBottom(true)}
+                    onClick={() => scrollToBottom()}
                     title={t("app.jumpToBottom") ?? "Jump to bottom"}
                     aria-label={t("app.jumpToBottom") ?? "Jump to bottom"}
                   >
@@ -2894,6 +3187,11 @@ function TabRuntime({
               <Composer
                 draft={draft}
                 setDraft={setDraft}
+                onDraftUserEdit={resetPromptHistoryNav}
+                promptHistoryBrowsing={promptHistoryNav.mode === "browsing"}
+                onPromptHistoryNavigate={(direction) =>
+                  requestPromptHistoryNavigation(direction, draftRef.current)
+                }
                 onSend={() => send()}
                 onAbort={abort}
                 disabled={!state.ready}
@@ -2924,19 +3222,11 @@ function TabRuntime({
                 mentionResults={state.mentionResults}
                 queuedSends={state.queuedSends}
                 onQueueWhileBusy={(text) => {
+                  resetPromptHistoryNav();
                   dispatch({ t: "enqueue_send", text });
                   setDraft("");
                 }}
                 onDequeueSend={(index) => dispatch({ t: "dequeue_send", index })}
-                initialHistory={state.settings?.promptHistory}
-                onHistoryPush={(entry) => {
-                  // Use saveSettings (RPC only, no local state patch) so the
-                  // sentinel [entry] is never written into state.settings and
-                  // historyRef is not transiently reset. The backend merges
-                  // against the freshly-loaded persisted list and re-emits
-                  // $settings with the merged result (#2051).
-                  saveSettings({ promptHistory: [entry] });
-                }}
               />
             </>
           )}
@@ -2958,7 +3248,12 @@ function TabRuntime({
           sessionFiles={state.sessionFiles}
           memory={state.memory}
           memoryDetail={state.memoryDetail}
+          activeTab={contextPanelTab}
+          activeTabNonce={contextPanelTabNonce}
           onReadMemory={(path) => sendRpc({ cmd: "memory_read", path })}
+          onOpenMcpSettings={() => openSettingsAt("mcp")}
+          onEditMcpSpec={openMcpEditor}
+          onRetryMcpSpec={retryMcpSpec}
         />
 
         <StatusBar
@@ -3024,6 +3319,8 @@ function TabRuntime({
             customFontFamily={customFontFamily}
             onSetCustomFontFamily={onSetCustomFontFamily}
             initialPage={settingsPage}
+            initialMcpEditRaw={mcpEditTarget?.raw}
+            initialMcpEditNonce={mcpEditTarget?.nonce ?? 0}
             mcpSpecs={state.mcpSpecs}
             mcpBridged={state.mcpBridged}
             skills={state.skills}
@@ -3041,8 +3338,11 @@ function TabRuntime({
               openUrl("https://q.qq.com/qqbot/openclaw/login.html").catch(() => undefined)
             }
             onPickWorkspace={pickWorkspace}
+            onImportCcSwitchMcp={importCcSwitchMcp}
             onAddMcpSpec={addMcpSpec}
             onRemoveMcpSpec={removeMcpSpec}
+            onUpdateMcpSpec={updateMcpSpec}
+            onRetryMcpSpec={retryMcpSpec}
             onReadMemory={(path) => sendRpc({ cmd: "memory_read", path })}
           />
         ) : null}
@@ -3455,7 +3755,7 @@ function TabBar({
   onNew,
   singleTab,
 }: {
-  tabs: { id: string; workspaceDir?: string }[];
+  tabs: { id: string; workspaceDir?: string; busy?: boolean }[];
   activeId: string;
   setActive: (id: string) => void;
   onClose: (id: string) => void;
@@ -3476,7 +3776,7 @@ function TabBar({
         return (
           <div key={t.id} className="tab" data-active={t.id === activeId} title={ws || label}>
             <button type="button" className="tab-main" onClick={() => setActive(t.id)}>
-              <span className="dot" data-state="running" />
+              <span className="dot" data-state={t.busy ? "running" : "idle"} />
               <span className="label">{label}</span>
             </button>
             {!singleTab ? (
@@ -3826,6 +4126,7 @@ export function App() {
   const [activeTabId, setActiveTabId] = useState<string>("");
   const [startupFailure, setStartupFailure] = useState<StartupFailureState | null>(null);
   const [startupRetryNonce, setStartupRetryNonce] = useState(0);
+  const tabBusyRef = useRef<Map<string, boolean>>(new Map());
   const dispatchersRef = useRef<Map<string, TabDispatcher>>(new Map());
   const pendingEventsRef = useRef<Map<string, TabAction[]>>(new Map());
   const pendingDeltasRef = useRef<Map<string, DeltaBatchItem[]>>(new Map());
@@ -4278,6 +4579,11 @@ export function App() {
     });
   }, []);
 
+  const onTabBusyChange = useCallback((tabId: string, busy: boolean) => {
+    tabBusyRef.current.set(tabId, busy);
+    setTabs((prev) => prev.map((t) => (t.id === tabId ? { ...t, busy } : t)));
+  }, []);
+
   if (startupFailure && tabs.length === 0) {
     return <StartupFailure details={startupFailure.details} onRetry={retryStartup} />;
   }
@@ -4318,6 +4624,7 @@ export function App() {
           tabsList={tabs}
           activeTabId={activeTabId}
           setActiveTabId={setActiveTabId}
+          onBusyChange={onTabBusyChange}
         />
       ))}
       {pendingUpdate ? (
