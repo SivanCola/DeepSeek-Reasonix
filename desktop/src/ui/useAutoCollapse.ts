@@ -11,9 +11,7 @@ export function useAutoCollapse(persistKey: string): {
   requireCollapsed: () => void;
   releaseCollapsed: () => void;
 } {
-  const [collapsed, setCollapsed] = useState(
-    () => localStorage.getItem(persistKey) === "1",
-  );
+  const [collapsed, setCollapsed] = useState(() => localStorage.getItem(persistKey) === "1");
   const sourceRef = useRef<"user" | "auto">("user");
 
   const toggle = useCallback(() => {

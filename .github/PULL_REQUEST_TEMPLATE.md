@@ -15,6 +15,8 @@
 ## Checklist
 
 - [ ] `npm run verify` passes locally (lint + typecheck + tests + comment-policy gate)
+- [ ] If desktop UI changed: `npm run verify:desktop` passes
+- [ ] If desktop UI changed: buttons, popovers, sidebars, and chat auto-scroll were checked at narrow desktop widths
 - [ ] No `Co-Authored-By: Claude` trailer in commits
 - [ ] Comments follow CONTRIBUTING.md (no module-essay headers, no incident history)
 - [ ] No edits to `CHANGELOG.md` — release notes are maintainer-written at release time

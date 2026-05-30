@@ -11,10 +11,10 @@ import type {
   SkillInfo,
 } from "../protocol";
 import {
+  type QQDesktopSettingsState,
   describeQQRowSummary,
   getQQConnectIntent,
   getQQStatusLabel,
-  type QQDesktopSettingsState,
 } from "../qq-settings";
 import {
   FONT_FAMILY,
@@ -133,12 +133,18 @@ export function SettingsModal({
   }, [onClose]);
   const currentMeta = PAGE_META.find((p) => p.id === page) ?? PAGE_META[0]!;
   return (
-    <div className="settings-mask" onClick={onClose}>
-      <div className="settings" onClick={(e) => e.stopPropagation()}>
+    <div
+      className="settings-mask"
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
+      <div className="settings">
         <nav className="settings-side">
           <div className="sg">{t("settings.title")}</div>
           {PAGE_META.map((p) => (
-            <div
+            <button
+              type="button"
               key={p.id}
               className="row"
               data-active={page === p.id}
@@ -146,7 +152,7 @@ export function SettingsModal({
             >
               <span className="ico">{I[p.icon]({ size: 13 })}</span>
               <span>{t(`settings.page${p.id[0]!.toUpperCase()}${p.id.slice(1)}Label` as any)}</span>
-            </div>
+            </button>
           ))}
         </nav>
         <div className="settings-main">
@@ -282,7 +288,7 @@ export function QQChannelSection({
     setAppId(current.appId ?? "");
     setAppSecret(current.appSecret ?? "");
     setSandbox(current.sandbox ?? true);
-  }, [current.appId, current.appSecret, current.sandbox, configureOpen]);
+  }, [current.appId, current.appSecret, current.sandbox]);
 
   const savePatch = { appId, appSecret, sandbox };
 
@@ -607,7 +613,12 @@ function PageGeneral({
           </div>
           <div className="seg-ctrl">
             {getSupportedLangs().map((code) => (
-              <button type="button" key={code} data-on={lang === code} onClick={() => setLang(code)}>
+              <button
+                type="button"
+                key={code}
+                data-on={lang === code}
+                onClick={() => setLang(code)}
+              >
                 {getLangLabel(code)}
               </button>
             ))}
@@ -990,6 +1001,33 @@ const KNOWN_MODELS = ["deepseek-v4-flash", "deepseek-v4-pro"] as const;
 const EFFORT_VALUES = ["low", "medium", "high", "max"] as const;
 type EffortValue = (typeof EFFORT_VALUES)[number];
 
+function McpSpecFormatHint() {
+  const raw = t("settings.mcpSpecFormat");
+  const nodes: ReactNode[] = [];
+  let inCode = false;
+  let key = 0;
+  for (const part of raw.split(/(<code>|<\/code>)/)) {
+    if (part === "<code>") {
+      inCode = true;
+      continue;
+    }
+    if (part === "</code>") {
+      inCode = false;
+      continue;
+    }
+    if (!part) continue;
+    key += 1;
+    nodes.push(
+      inCode ? (
+        <code key={`${key}-${part}`}>{part}</code>
+      ) : (
+        <span key={`${key}-${part}`}>{part}</span>
+      ),
+    );
+  }
+  return <div className="h">{nodes}</div>;
+}
+
 function PageModels({
   settings,
   onSave,
@@ -1006,14 +1044,15 @@ function PageModels({
         <div className="stitle">{t("settings.defaultModelCurrent", { model: settings.model })}</div>
         <div className="model-grid">
           {KNOWN_MODELS.map((id) => (
-            <div
+            <button
+              type="button"
               key={id}
               className="mcard"
               data-on={settings.model === id}
               onClick={() => onSave({ model: id })}
             >
               <div className="nm">{id}</div>
-            </div>
+            </button>
           ))}
         </div>
         <div className="setting-row" style={{ marginTop: 12 }}>
@@ -1056,7 +1095,7 @@ function PageModels({
               value={settings.contextTokens?.[settings.model] ?? ""}
               onChange={(e) => {
                 const raw = e.target.value.trim();
-                const num = raw ? parseInt(raw, 10) : 0;
+                const num = raw ? Number.parseInt(raw, 10) : 0;
                 const next = { ...(settings.contextTokens ?? {}) };
                 if (num > 0 && Number.isFinite(num)) {
                   next[settings.model] = num;
@@ -1177,7 +1216,7 @@ function PageMCP({
         <div className="setting-row">
           <div className="l">
             <div className="n">{t("settings.mcpSpecLabel")}</div>
-            <div className="h" dangerouslySetInnerHTML={{ __html: t("settings.mcpSpecFormat") }} />
+            <McpSpecFormatHint />
           </div>
           <div style={{ display: "flex", gap: 6 }}>
             <input
@@ -1255,9 +1294,7 @@ function PageSkills({
                   className="field"
                   style={{ marginLeft: "auto", minWidth: 96 }}
                   value={subagentModels[s.name] ?? "flash"}
-                  onChange={(e) =>
-                    setSubagentModel(s.name, e.target.value as "flash" | "pro")
-                  }
+                  onChange={(e) => setSubagentModel(s.name, e.target.value as "flash" | "pro")}
                   title={t("settings.subagentModelHint")}
                 >
                   <option value="flash">{t("settings.subagentModelFlash")}</option>
@@ -1314,9 +1351,7 @@ function PageMemory({
               </button>
             ))}
           </div>
-          <pre className="memory-detail">
-            {detail ? detail.body : t("settings.memoryDesc")}
-          </pre>
+          <pre className="memory-detail">{detail ? detail.body : t("settings.memoryDesc")}</pre>
         </div>
       )}
     </section>
@@ -1435,8 +1470,8 @@ function PageShortcuts() {
   return (
     <section className="section">
       <div className="kbd-grid">
-        {rows.map((s, i) => (
-          <SectionRow key={i} nm={s.nm} keys={s.keys} />
+        {rows.map((s) => (
+          <SectionRow key={s.nm} nm={s.nm} keys={s.keys} />
         ))}
       </div>
     </section>

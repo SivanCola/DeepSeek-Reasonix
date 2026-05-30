@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import { I } from "../icons";
 import { t, useLang } from "../i18n";
+import { I } from "../icons";
 import type { JobInfo } from "../protocol";
 import { Shortcut } from "./shortcut";
 
@@ -42,8 +42,13 @@ export function JobsPop({
   if (!open) return null;
 
   return (
-    <div className="jobs-mask" onClick={onClose}>
-      <div className="jobs-pop" onClick={(e) => e.stopPropagation()}>
+    <div
+      className="jobs-mask"
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
+      <div className="jobs-pop">
         <div className="jobs-head">
           <span className="ico">
             <I.cpu size={13} />
@@ -97,8 +102,8 @@ export function JobsPop({
             </span>
             <span className="grow" />
             <span>
-              <Shortcut keys={["mod", "J"]} /> {t("jobs.kbToggle")} ·{" "}
-              <Shortcut keys={["esc"]} /> {t("jobs.kbClose")}
+              <Shortcut keys={["mod", "J"]} /> {t("jobs.kbToggle")} · <Shortcut keys={["esc"]} />{" "}
+              {t("jobs.kbClose")}
             </span>
           </div>
         </div>
@@ -130,33 +135,36 @@ function JobRow({
   const liveMs = job.running ? Date.now() - job.startedAt : elapsedMs;
   // tick is referenced so the row re-renders for the running clock
   void tick;
+  const toggleExpanded = () => setExp((v) => !v);
   return (
     <div className="job-row" data-status={job.running ? "running" : "exited"}>
-      <div className="jr-main" onClick={() => setExp((v) => !v)}>
-        <span className="jr-state">
-          {job.running ? (
-            <span className="spin" />
-          ) : (
-            <I.history size={11} style={{ color: "var(--muted-2)" }} />
-          )}
-        </span>
-        <span className="jr-kind">
-          <I.terminal size={11} />
-          <span>shell</span>
-        </span>
-        <div className="jr-body">
-          <div className="nm" title={job.command}>
-            {job.command}
-          </div>
-          <div className="sub">
-            <span className="ses">{job.sessionLabel}</span>
-            {job.spawnError ? <span className="rk">· {job.spawnError}</span> : null}
-            {!job.running && job.exitCode !== null && job.exitCode !== 0 ? (
-              <span className="rk">· exit {job.exitCode}</span>
-            ) : null}
-          </div>
-        </div>
-        <div className="jr-time">{formatElapsed(liveMs)}</div>
+      <div className="jr-line">
+        <button type="button" className="jr-main" aria-expanded={exp} onClick={toggleExpanded}>
+          <span className="jr-state">
+            {job.running ? (
+              <span className="spin" />
+            ) : (
+              <I.history size={11} style={{ color: "var(--muted-2)" }} />
+            )}
+          </span>
+          <span className="jr-kind">
+            <I.terminal size={11} />
+            <span>shell</span>
+          </span>
+          <span className="jr-body">
+            <span className="nm" title={job.command}>
+              {job.command}
+            </span>
+            <span className="sub">
+              <span className="ses">{job.sessionLabel}</span>
+              {job.spawnError ? <span className="rk">· {job.spawnError}</span> : null}
+              {!job.running && job.exitCode !== null && job.exitCode !== 0 ? (
+                <span className="rk">· exit {job.exitCode}</span>
+              ) : null}
+            </span>
+          </span>
+          <span className="jr-time">{formatElapsed(liveMs)}</span>
+        </button>
         <div className="jr-act">
           {job.running ? (
             <button

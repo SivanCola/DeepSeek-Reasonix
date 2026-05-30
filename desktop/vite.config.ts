@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import react from "@vitejs/plugin-react";
 import { type Plugin, defineConfig } from "vite";
 
@@ -45,8 +45,14 @@ export default defineConfig({
   },
   resolve: {
     alias: {
-      "@reasonix/core-utils/compaction": resolve(__dirname, "../packages/core-utils/src/compaction.ts"),
-      "@reasonix/core-utils/derive-prefix": resolve(__dirname, "../packages/core-utils/src/derive-prefix.ts"),
+      "@reasonix/core-utils/compaction": resolve(
+        __dirname,
+        "../packages/core-utils/src/compaction.ts",
+      ),
+      "@reasonix/core-utils/derive-prefix": resolve(
+        __dirname,
+        "../packages/core-utils/src/derive-prefix.ts",
+      ),
       "@reasonix/core-utils": resolve(__dirname, "../packages/core-utils/src/index.ts"),
     },
   },
@@ -54,5 +60,29 @@ export default defineConfig({
     target: "es2022",
     minify: "esbuild",
     sourcemap: true,
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (!id.includes("node_modules")) return undefined;
+          if (id.includes("/react/") || id.includes("/react-dom/")) return "vendor-react";
+          if (id.includes("/@tauri-apps/")) return "vendor-tauri";
+          if (id.includes("/lucide-react/") || id.includes("/react-virtuoso/")) return "vendor-ui";
+          if (id.includes("/prism-react-renderer/")) return "vendor-code";
+          if (
+            id.includes("/react-markdown/") ||
+            id.includes("/remark-") ||
+            id.includes("/rehype-") ||
+            id.includes("/katex/") ||
+            id.includes("/unified/") ||
+            id.includes("/mdast-") ||
+            id.includes("/hast-") ||
+            id.includes("/micromark")
+          ) {
+            return "vendor-markdown";
+          }
+          return undefined;
+        },
+      },
+    },
   },
 });

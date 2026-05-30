@@ -44,21 +44,26 @@ export function ContextPanel({
   const usedPct = Math.min(100, (used / CONTEXT_MAX_TOKENS) * 100);
   const cachedPct = Math.min(100, (cached / CONTEXT_MAX_TOKENS) * 100);
   const free = Math.max(0, CONTEXT_MAX_TOKENS - reserved - used - cached);
+  const tabs: { id: Tab; label: string }[] = [
+    { id: "files", label: t("contextPanel.filesTab") },
+    { id: "tools", label: t("contextPanel.toolsTab") },
+    { id: "memory", label: t("contextPanel.memoryTab") },
+    { id: "rules", label: t("contextPanel.rulesTab") },
+  ];
   return (
     <aside className="ctx">
       <div className="ctx-tabs">
-        <div className="ctx-tab" data-active={tab === "files"} onClick={() => setTab("files")}>
-          {t("contextPanel.filesTab")}
-        </div>
-        <div className="ctx-tab" data-active={tab === "tools"} onClick={() => setTab("tools")}>
-          {t("contextPanel.toolsTab")}
-        </div>
-        <div className="ctx-tab" data-active={tab === "memory"} onClick={() => setTab("memory")}>
-          {t("contextPanel.memoryTab")}
-        </div>
-        <div className="ctx-tab" data-active={tab === "rules"} onClick={() => setTab("rules")}>
-          {t("contextPanel.rulesTab")}
-        </div>
+        {tabs.map((item) => (
+          <button
+            type="button"
+            className="ctx-tab"
+            data-active={tab === item.id}
+            key={item.id}
+            onClick={() => setTab(item.id)}
+          >
+            {item.label}
+          </button>
+        ))}
       </div>
 
       <div className="ctx-body">
@@ -66,8 +71,7 @@ export function ContextPanel({
           <div className="h">
             <span>{t("contextPanel.contextTokens")}</span>
             <span className="right">
-              {(reserved + used + cached).toLocaleString()} /{" "}
-              {CONTEXT_MAX_TOKENS.toLocaleString()}
+              {(reserved + used + cached).toLocaleString()} / {CONTEXT_MAX_TOKENS.toLocaleString()}
             </span>
           </div>
           <div className="meter">
@@ -210,7 +214,11 @@ function CtxFiles({ files, settings }: { files: SessionFile[]; settings: Setting
                 <span
                   className="dot"
                   data-s={n.status}
-                  title={n.status === "m" ? t("contextPanel.fileModified") : t("contextPanel.fileInContext")}
+                  title={
+                    n.status === "m"
+                      ? t("contextPanel.fileModified")
+                      : t("contextPanel.fileInContext")
+                  }
                 />
                 <button
                   type="button"
@@ -307,7 +315,10 @@ function CtxMemory({
   onRead: (path: string) => void;
 }) {
   return (
-    <div className="ctx-block" style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}>
+    <div
+      className="ctx-block"
+      style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}
+    >
       <div className="h">
         <span>{t("contextPanel.memoryTitle")}</span>
         <span className="right">
@@ -317,7 +328,10 @@ function CtxMemory({
       {entries.length === 0 ? (
         <div className="ctx-empty">{t("contextPanel.noMemoriesMsg")}</div>
       ) : (
-        <div className="mem" style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}>
+        <div
+          className="mem"
+          style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}
+        >
           <div style={{ flexShrink: 0 }}>
             {entries.map((m) => (
               <button
@@ -328,7 +342,9 @@ function CtxMemory({
                 onClick={() => onRead(m.path)}
               >
                 <span className="scope" data-s={m.scope}>
-                  {m.scope === "project" ? t("contextPanel.scopeProject") : t("contextPanel.scopeGlobal")}
+                  {m.scope === "project"
+                    ? t("contextPanel.scopeProject")
+                    : t("contextPanel.scopeGlobal")}
                 </span>
                 <span className="txt">{m.description || m.name}</span>
               </button>
@@ -352,13 +368,23 @@ function CtxRules({ settings }: { settings: Settings | null }) {
       ? [{ p: "*", allow: true, desc: t("contextPanel.ruleYolo") }]
       : editMode === "auto"
         ? [
-            { p: "read_file, list_directory, search_files, *", allow: true, desc: t("contextPanel.ruleReadOnly") },
-            { p: "run_command (allowlist)", allow: true, desc: t("contextPanel.ruleShellAllowlist") },
-            { p: "edit_file, write_file, run_command (other)", allow: false, desc: t("contextPanel.ruleWritesAsk") },
+            {
+              p: "read_file, list_directory, search_files, *",
+              allow: true,
+              desc: t("contextPanel.ruleReadOnly"),
+            },
+            {
+              p: "run_command (allowlist)",
+              allow: true,
+              desc: t("contextPanel.ruleShellAllowlist"),
+            },
+            {
+              p: "edit_file, write_file, run_command (other)",
+              allow: false,
+              desc: t("contextPanel.ruleWritesAsk"),
+            },
           ]
-        : [
-            { p: "*", allow: false, desc: t("contextPanel.ruleReview") },
-          ];
+        : [{ p: "*", allow: false, desc: t("contextPanel.ruleReview") }];
   return (
     <div className="ctx-block">
       <div className="h">

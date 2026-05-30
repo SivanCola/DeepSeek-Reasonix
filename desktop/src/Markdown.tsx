@@ -3,11 +3,11 @@ import { openPath, openUrl } from "@tauri-apps/plugin-opener";
 import { Check, Copy, ExternalLink, FileText } from "lucide-react";
 import {
   Children,
+  type ReactNode,
   cloneElement,
   createContext,
   isValidElement,
   memo,
-  type ReactNode,
   useContext,
   useState,
 } from "react";
@@ -24,7 +24,7 @@ async function openWithEditor(
   abs: string,
   line?: number,
 ): Promise<void> {
-  if (editor && editor.trim()) {
+  if (editor?.trim()) {
     await invoke("open_in_editor", { command: editor, path: abs, line: line ?? null });
     return;
   }
@@ -145,20 +145,13 @@ function FilePill({ path, line }: { path: string; line?: string }) {
     }
   };
   return (
-    <span
+    <button
+      type="button"
       className={`file-pill ${done ? "done" : ""}`}
-      role="button"
-      tabIndex={0}
       onClick={openInEditor}
       onContextMenu={(e) => {
         e.preventDefault();
         void copyOnly(e);
-      }}
-      onKeyDown={(e) => {
-        if (e.key === "Enter" || e.key === " ") {
-          e.preventDefault();
-          void openInEditor();
-        }
       }}
       title={t("markdown.filePillTitle")}
     >
@@ -166,7 +159,7 @@ function FilePill({ path, line }: { path: string; line?: string }) {
       <span className="file-pill-path">{path}</span>
       {line && <span className="file-pill-line">:{line}</span>}
       {done && <Check size={10} className="file-pill-check" />}
-    </span>
+    </button>
   );
 }
 
@@ -230,16 +223,18 @@ function normalizeMathDelimiters(source: string): string {
     .replace(/\\\(/g, "$$")
     .replace(/\\\)/g, "$$");
   // Restore protected sequences
-  result = result.replace(/\x00LB\x00/g, "\\\\[");
+  result = result.split(LB).join("\\\\[");
 
   // Replace | with \vert inside math to prevent GFM table column splitting.
   // \vert renders identically to | in KaTeX — it's the same vertical-bar
   // glyph — but the markdown parser won't mistake it for a table separator.
-  result = result.replace(/\$\$([\s\S]*?)\$\$/g, (_: string, m: string) =>
-    "$$" + m.replace(/\|/g, "\\vert ") + "$$",
+  result = result.replace(
+    /\$\$([\s\S]*?)\$\$/g,
+    (_: string, m: string) => `\$\$${m.replace(/\|/g, "\\vert ")}\$\$`,
   );
-  result = result.replace(/\$([^$\n]+)\$/g, (_: string, m: string) =>
-    "$" + m.replace(/\|/g, "\\vert ") + "$",
+  result = result.replace(
+    /\$([^$\n]+)\$/g,
+    (_: string, m: string) => `\$${m.replace(/\|/g, "\\vert ")}\$`,
   );
 
   return result;
@@ -349,7 +344,8 @@ export function extractFencedLang(children: ReactNode): string {
 function flattenChildText(node: ReactNode): string {
   if (typeof node === "string" || typeof node === "number") return String(node);
   if (Array.isArray(node)) return node.map(flattenChildText).join("");
-  if (isValidElement(node)) return flattenChildText((node.props as { children?: ReactNode }).children);
+  if (isValidElement(node))
+    return flattenChildText((node.props as { children?: ReactNode }).children);
   return "";
 }
 

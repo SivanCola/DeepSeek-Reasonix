@@ -51,6 +51,7 @@ export const ja = {
     searchPlaceholder: "最近のパスを検索…",
     empty: "最近のワークスペースはありません",
     browse: "ローカルを参照…",
+    removeRecent: "最近の一覧から削除",
   },
   sidebar: {
     newChat: "新しいチャット",
@@ -273,7 +274,8 @@ export const ja = {
     modelCustomHint: "エンドポイントが提供するOpenAI互換ID (vLLM, Ollama, Together, …)。",
     modelCustomActive: "現在カスタムIDで実行中: {model}",
     contextTokensLabel: "コンテキストウィンドウサイズ",
-    contextTokensHint: "現在のモデルのプロンプト側トークン上限を上書きします（例: 1000000 で 1M）。空欄なら既定値を使用。",
+    contextTokensHint:
+      "現在のモデルのプロンプト側トークン上限を上書きします（例: 1000000 で 1M）。空欄なら既定値を使用。",
     contextTokensPlaceholder: "自動",
     effortSection: "推論努力",
     ctxWindow: "コンテキスト",

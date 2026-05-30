@@ -186,7 +186,8 @@ export const de: typeof en = {
     webSearchEngineTavily: "tavily — 1000/Monat kostenlos (TAVILY_API_KEY setzen)",
     webSearchEnginePerplexity: "perplexity — AI-native (PERPLEXITY_API_KEY setzen)",
     webSearchEngineExa: "exa — AI-native 1000/Monat kostenlos (EXA_API_KEY setzen)",
-    webSearchEngineBrave: "brave — unabhängiger Index, 2000/Monat kostenlos (BRAVE_SEARCH_API_KEY setzen)",
+    webSearchEngineBrave:
+      "brave — unabhängiger Index, 2000/Monat kostenlos (BRAVE_SEARCH_API_KEY setzen)",
     webSearchEngineOllama: "ollama — Ollama Cloud-Websuche (OLLAMA_API_KEY setzen)",
     webSearchEngineNote: "gilt für den nächsten web_search-Aufruf",
     webSearchEndpoint: "SearXNG-Endpunkt",
@@ -288,7 +289,8 @@ export const de: typeof en = {
       "Jede OpenAI-kompatible ID, die dein Endpunkt bereitstellt (vLLM, Ollama, Together, …).",
     modelCustomActive: "Läuft aktuell auf benutzerdefinierter ID: {model}",
     contextTokensLabel: "Kontextfenstergröße",
-    contextTokensHint: "Überschreiben Sie die Prompt-seitige Token-Obergrenze für das aktuelle Modell (z. B. 1000000 für 1M). Leer lassen für den eingebauten Standard.",
+    contextTokensHint:
+      "Überschreiben Sie die Prompt-seitige Token-Obergrenze für das aktuelle Modell (z. B. 1000000 für 1M). Leer lassen für den eingebauten Standard.",
     contextTokensPlaceholder: "Automatisch",
     effortSection: "Reasoning-Effort",
     ctxWindow: "Kontext",
@@ -699,7 +701,8 @@ export const de: typeof en = {
     importSessionCount: "{count} Sitzungen · importiert alle",
     importNotFound: "Keine lokalen Sitzungen gefunden",
     importPrivacyHint: "Bestehende App-Einstellungen bleiben unverändert.",
-    importResult: "{imported} Sitzung(en) importiert, {skipped} übersprungen, {failed} fehlgeschlagen.",
+    importResult:
+      "{imported} Sitzung(en) importiert, {skipped} übersprungen, {failed} fehlgeschlagen.",
     continue: "Weiter",
     refresh: "Aktualisieren",
     importSource: "Quelle",

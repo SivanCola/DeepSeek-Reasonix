@@ -1,3 +1,5 @@
+import { invoke } from "@tauri-apps/api/core";
+import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
 import {
   type ChangeEvent,
   type KeyboardEvent,
@@ -9,14 +11,9 @@ import {
   useState,
 } from "react";
 import type React from "react";
-import { invoke } from "@tauri-apps/api/core";
-import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
-import { t, type TKey } from "../i18n";
+import { type TKey, t } from "../i18n";
 import { I } from "../icons";
-import {
-  DEFAULT_COMPOSER_ROWS,
-  applyComposerTextareaAutosize,
-} from "./composer-sizing";
+import { DEFAULT_COMPOSER_ROWS, applyComposerTextareaAutosize } from "./composer-sizing";
 import { fmtElapsed } from "./live";
 import { Shortcut } from "./shortcut";
 
@@ -29,7 +26,12 @@ const EFFORTS: readonly ReasoningEffort[] = ["low", "medium", "high", "max"];
 
 const MODE_INFO: ModeEntry[] = [
   { k: "plan", label: "editMode.plan", icon: <I.list size={11} />, hint: "editMode.planHint" },
-  { k: "review", label: "editMode.review", icon: <I.shield size={11} />, hint: "editMode.reviewHint" },
+  {
+    k: "review",
+    label: "editMode.review",
+    icon: <I.shield size={11} />,
+    hint: "editMode.reviewHint",
+  },
   { k: "auto", label: "editMode.auto", icon: <I.zap size={11} />, hint: "editMode.autoHint" },
   { k: "yolo", label: "editMode.yolo", icon: <I.warn size={11} />, hint: "editMode.yoloHint" },
 ];
@@ -74,14 +76,9 @@ export type MentionItem = {
   desc?: string;
 };
 
-export type Chip =
-  | { kind: "at"; label: string }
-  | { kind: "slash"; label: string };
+export type Chip = { kind: "at"; label: string } | { kind: "slash"; label: string };
 
-type Popup =
-  | { kind: "slash"; query: string }
-  | { kind: "at"; query: string; nonce: number }
-  | null;
+type Popup = { kind: "slash"; query: string } | { kind: "at"; query: string; nonce: number } | null;
 
 function slashIcon(cmd: string) {
   const m: Record<string, React.ReactNode> = {
@@ -193,8 +190,10 @@ export function Composer({
   const [popup, setPopup] = useState<Popup>(null);
   const [activeIdx, setActiveIdx] = useState(0);
   const [modelMenuOpen, setModelMenuOpen] = useState(false);
+  const [toolsMenuOpen, setToolsMenuOpen] = useState(false);
   const nonceRef = useRef(0);
   const modelWrapRef = useRef<HTMLDivElement>(null);
+  const toolsWrapRef = useRef<HTMLDivElement>(null);
   // macOS Chinese IME fires compositionend BEFORE the confirm keydown.
   const composingRef = useRef(false);
   const compositionEndedAtRef = useRef(0);
@@ -203,6 +202,23 @@ export function Composer({
   const historyRef = useRef<string[]>(initialHistory ? [...initialHistory].reverse() : []);
   const [browseIdx, setBrowseIdx] = useState(-1);
   const savedDraftRef = useRef("");
+  const queuedSendRows = useMemo(() => {
+    const seen = new Map<string, number>();
+    return (queuedSends ?? []).map((text, index) => {
+      const occurrence = seen.get(text) ?? 0;
+      seen.set(text, occurrence + 1);
+      return { key: `${text}-${occurrence}`, text, index };
+    });
+  }, [queuedSends]);
+  const chipRows = useMemo(() => {
+    const seen = new Map<string, number>();
+    return chips.map((chip, index) => {
+      const base = `${chip.kind}-${chip.label}`;
+      const occurrence = seen.get(base) ?? 0;
+      seen.set(base, occurrence + 1);
+      return { key: `${base}-${occurrence}`, chip, index };
+    });
+  }, [chips]);
 
   // `initialHistory` arrives asynchronously (settings load after mount).
   // Sync historyRef when it first becomes available and the user hasn't
@@ -218,9 +234,7 @@ export function Composer({
       workspaceDir && picked.startsWith(workspaceDir)
         ? picked.slice(workspaceDir.length).replace(/^[\\/]+/, "")
         : picked;
-    setDraft((current) =>
-      current ? `${current.replace(/\s+$/, "")} @${rel} ` : `@${rel} `,
-    );
+    setDraft((current) => (current ? `${current.replace(/\s+$/, "")} @${rel} ` : `@${rel} `));
     setChips((c) => [...c, { kind: "at", label: rel }]);
     onMentionPicked?.(rel);
     textareaRef.current?.focus();
@@ -245,16 +259,24 @@ export function Composer({
   useEffect(() => {
     if (!modelMenuOpen) return;
     const onDown = (e: MouseEvent) => {
-      if (
-        modelWrapRef.current &&
-        !modelWrapRef.current.contains(e.target as Node)
-      ) {
+      if (modelWrapRef.current && !modelWrapRef.current.contains(e.target as Node)) {
         setModelMenuOpen(false);
       }
     };
     window.addEventListener("mousedown", onDown);
     return () => window.removeEventListener("mousedown", onDown);
   }, [modelMenuOpen]);
+
+  useEffect(() => {
+    if (!toolsMenuOpen) return;
+    const onDown = (e: MouseEvent) => {
+      if (toolsWrapRef.current && !toolsWrapRef.current.contains(e.target as Node)) {
+        setToolsMenuOpen(false);
+      }
+    };
+    window.addEventListener("mousedown", onDown);
+    return () => window.removeEventListener("mousedown", onDown);
+  }, [toolsMenuOpen]);
 
   const attachFile = async (filter?: "image") => {
     try {
@@ -325,12 +347,14 @@ export function Composer({
     return base;
   }, [popup, mentionResults]);
 
-  const items =
-    popup?.kind === "slash" ? slashItems : popup?.kind === "at" ? atItems : [];
+  const popupKind = popup?.kind;
+  const items = popupKind === "slash" ? slashItems : popupKind === "at" ? atItems : [];
 
   useEffect(() => {
-    setActiveIdx(0);
-  }, [popup?.kind]);
+    if (!popupKind || popupKind === "slash" || popupKind === "at") {
+      setActiveIdx(0);
+    }
+  }, [popupKind]);
 
   useEffect(() => {
     setActiveIdx((i) => (items.length ? Math.min(i, items.length - 1) : 0));
@@ -360,6 +384,19 @@ export function Composer({
   };
 
   const dismiss = () => setPopup(null);
+
+  const openSlashPopup = () => {
+    setToolsMenuOpen(false);
+    setModelMenuOpen(false);
+    setPopup({ kind: "slash", query: "" });
+  };
+
+  const openMentionPopup = () => {
+    setToolsMenuOpen(false);
+    setModelMenuOpen(false);
+    const nonce = ++nonceRef.current;
+    setPopup({ kind: "at", query: "", nonce });
+  };
 
   const pickItem = (idx: number) => {
     const it = items[idx];
@@ -436,9 +473,7 @@ export function Composer({
       }
       if (e.key === "ArrowUp") {
         e.preventDefault();
-        setActiveIdx((i) =>
-          items.length ? (i - 1 + items.length) % items.length : 0,
-        );
+        setActiveIdx((i) => (items.length ? (i - 1 + items.length) % items.length : 0));
         return;
       }
       if (e.key === "Escape") {
@@ -513,18 +548,23 @@ export function Composer({
   return (
     <div className="composer-wrap">
       <div className="composer-inner">
-        {queuedSends && queuedSends.length > 0 ? (
+        {queuedSendRows.length > 0 ? (
           <div className="composer-queued">
             <span className="composer-queued-label">
-              {t("composer.queueCount", { n: queuedSends.length })}
+              {t("composer.queueCount", { n: queuedSendRows.length })}
             </span>
-            {queuedSends.map((text, i) => (
-              <span key={i} className="composer-queue-chip" title={text}>
-                <span className="text">{text}</span>
+            {queuedSendRows.map((row) => (
+              <span key={row.key} className="composer-queue-chip" title={row.text}>
+                <span className="text">{row.text}</span>
                 {onDequeueSend ? (
-                  <span className="x" onClick={() => onDequeueSend(i)}>
+                  <button
+                    type="button"
+                    className="x"
+                    onClick={() => onDequeueSend(row.index)}
+                    title={t("composer.close")}
+                  >
                     <I.x size={10} />
-                  </span>
+                  </button>
                 ) : null}
               </span>
             ))}
@@ -537,9 +577,7 @@ export function Composer({
               <span className="composer-busy-status">
                 <span className="composer-busy-pip" />
                 <span className="composer-busy-label">{busyLabel}</span>
-                <span className="composer-busy-time">
-                  {fmtElapsed(busyElapsedMs ?? 0)}
-                </span>
+                <span className="composer-busy-time">{fmtElapsed(busyElapsedMs ?? 0)}</span>
               </span>
               <span className="grow" />
               <ModeSwitch mode={editMode} onChange={onEditModeChange} />
@@ -568,24 +606,20 @@ export function Composer({
         </div>
 
         <div className="composer">
-          {chips.length > 0 ? (
+          {chipRows.length > 0 ? (
             <div className="composer-tags">
-              {chips.map((c, i) => (
-                <span key={i} className={`chip ${c.kind}`}>
-                  {c.kind === "slash" ? (
-                    <I.slash size={11} />
-                  ) : (
-                    <I.at size={11} />
-                  )}
-                  <span>{c.label}</span>
-                  <span
+              {chipRows.map((row) => (
+                <span key={row.key} className={`chip ${row.chip.kind}`}>
+                  {row.chip.kind === "slash" ? <I.slash size={11} /> : <I.at size={11} />}
+                  <span>{row.chip.label}</span>
+                  <button
+                    type="button"
                     className="x"
-                    onClick={() =>
-                      setChips((cs) => cs.filter((_, j) => j !== i))
-                    }
+                    onClick={() => setChips((cs) => cs.filter((_, j) => j !== row.index))}
+                    title={t("composer.close")}
                   >
                     <I.x size={10} />
-                  </span>
+                  </button>
                 </span>
               ))}
             </div>
@@ -598,7 +632,9 @@ export function Composer({
             onChange={handleChange}
             onPaste={(e) => void handlePaste(e)}
             onKeyDown={handleKeyDown}
-            onCompositionStart={() => { composingRef.current = true; }}
+            onCompositionStart={() => {
+              composingRef.current = true;
+            }}
             onCompositionEnd={() => {
               composingRef.current = false;
               compositionEndedAtRef.current = Date.now();
@@ -630,8 +666,8 @@ export function Composer({
             </button>
             <button
               type="button"
-              className="cf-btn"
-              onClick={() => setPopup({ kind: "slash", query: "" })}
+              className="cf-btn composer-secondary-action"
+              onClick={openSlashPopup}
             >
               <span className="ico">
                 <I.slash size={14} />
@@ -640,11 +676,8 @@ export function Composer({
             </button>
             <button
               type="button"
-              className="cf-btn"
-              onClick={() => {
-                const nonce = ++nonceRef.current;
-                setPopup({ kind: "at", query: "", nonce });
-              }}
+              className="cf-btn composer-secondary-action"
+              onClick={openMentionPopup}
             >
               <span className="ico">
                 <I.at size={14} />
@@ -654,11 +687,14 @@ export function Composer({
 
             <span className="grow" />
 
-            <div ref={modelWrapRef} style={{ position: "relative" }}>
+            <div ref={modelWrapRef} className="composer-model-direct">
               <button
                 type="button"
                 className="model-pill"
-                onClick={() => setModelMenuOpen((v) => !v)}
+                onClick={() => {
+                  setToolsMenuOpen(false);
+                  setModelMenuOpen((v) => !v);
+                }}
                 title={t("composer.switchModel")}
               >
                 <I.brain size={12} />
@@ -679,6 +715,62 @@ export function Composer({
                     setModelMenuOpen(false);
                   }}
                 />
+              ) : null}
+            </div>
+            <div ref={toolsWrapRef} className="composer-tools-more">
+              <button
+                type="button"
+                className="cf-btn composer-more-btn"
+                onClick={() => {
+                  setModelMenuOpen(false);
+                  setToolsMenuOpen((v) => !v);
+                }}
+                title={t("app.titlebar.more")}
+                aria-label={t("app.titlebar.more")}
+              >
+                <span className="ico">
+                  <I.more size={14} />
+                </span>
+              </button>
+              {toolsMenuOpen ? (
+                <div className="popup composer-tools-menu">
+                  <div className="ph">
+                    <span className="tok">...</span>
+                    <span>{t("app.titlebar.more")}</span>
+                  </div>
+                  <div className="popup-list composer-tools-actions">
+                    <button type="button" className="popup-item" onClick={openSlashPopup}>
+                      <span className="ico">
+                        <I.slash size={12} />
+                      </span>
+                      <div className="nm">
+                        <span className="cmd">{t("composer.commandsLabel")}</span>
+                        <span className="desc">{t("composer.slashHeader")}</span>
+                      </div>
+                    </button>
+                    <button type="button" className="popup-item" onClick={openMentionPopup}>
+                      <span className="ico">
+                        <I.at size={12} />
+                      </span>
+                      <div className="nm">
+                        <span className="cmd">{t("composer.mentionLabel")}</span>
+                        <span className="desc">{t("composer.atHeader")}</span>
+                      </div>
+                    </button>
+                  </div>
+                  <ModelEffortContent
+                    modelLabel={modelLabel}
+                    currentEffort={reasoningEffort}
+                    onPickModel={(m) => {
+                      onModelChange(m);
+                      setToolsMenuOpen(false);
+                    }}
+                    onPickEffort={(e) => {
+                      onEffortChange(e);
+                      setToolsMenuOpen(false);
+                    }}
+                  />
+                </div>
               ) : null}
             </div>
             {busy ? (
@@ -750,7 +842,7 @@ function Popup({
 
   useEffect(() => {
     requestAnimationFrame(() => {
-      const el = listRef.current?.querySelector<HTMLElement>(`[data-active="true"]`);
+      const el = listRef.current?.querySelector<HTMLElement>(`[data-index="${activeIdx}"]`);
       el?.scrollIntoView?.({ block: "nearest", inline: "nearest" });
     });
   }, [activeIdx]);
@@ -759,15 +851,17 @@ function Popup({
     <div className="popup" onMouseDown={(e) => e.preventDefault()}>
       <div className="ph">
         <span className="tok">{kind === "slash" ? "/" : "@"}</span>
-        <span>
-          {kind === "slash"
-            ? t("composer.slashHeader")
-            : t("composer.atHeader")}
-        </span>
+        <span>{kind === "slash" ? t("composer.slashHeader") : t("composer.atHeader")}</span>
         <span className="grow" />
-        <span style={{ cursor: "pointer" }} onClick={onClose}>
+        <button
+          type="button"
+          className="popup-close"
+          onClick={onClose}
+          title={t("composer.close")}
+          aria-label={t("composer.close")}
+        >
           <I.x size={11} />
-        </span>
+        </button>
       </div>
       <div className={kind === "at" ? "popup-list at-popup-list" : "popup-list"} ref={listRef}>
         {items.length === 0 ? (
@@ -783,9 +877,15 @@ function Popup({
           </div>
         ) : null}
         {items.map((it, i) => (
-          <div
-            key={i}
+          <button
+            type="button"
+            key={
+              kind === "slash"
+                ? (it as SlashCmd).cmd
+                : `${(it as MentionItem).kind}-${(it as MentionItem).name}`
+            }
             className="popup-item"
+            data-index={i}
             data-active={i === activeIdx}
             onClick={() => onPick(i)}
             onMouseEnter={() => onHover(i, it)}
@@ -810,10 +910,8 @@ function Popup({
                 </>
               )}
             </div>
-            <span className="kb">
-              {kind === "slash" ? ((it as SlashCmd).kb ?? "") : ""}
-            </span>
-          </div>
+            <span className="kb">{kind === "slash" ? ((it as SlashCmd).kb ?? "") : ""}</span>
+          </button>
         ))}
       </div>
       <div className="popup-foot">
@@ -844,7 +942,6 @@ function ModelEffortMenu({
   onPickModel: (model: string) => void;
   onPickEffort: (effort: ReasoningEffort) => void;
 }) {
-  const [draft, setDraft] = useState(modelLabel);
   return (
     <div
       className="popup"
@@ -856,13 +953,38 @@ function ModelEffortMenu({
         position: "absolute",
       }}
     >
+      <ModelEffortContent
+        modelLabel={modelLabel}
+        currentEffort={currentEffort}
+        onPickModel={onPickModel}
+        onPickEffort={onPickEffort}
+      />
+    </div>
+  );
+}
+
+function ModelEffortContent({
+  modelLabel,
+  currentEffort,
+  onPickModel,
+  onPickEffort,
+}: {
+  modelLabel: string;
+  currentEffort: ReasoningEffort;
+  onPickModel: (model: string) => void;
+  onPickEffort: (effort: ReasoningEffort) => void;
+}) {
+  const [draft, setDraft] = useState(modelLabel);
+  return (
+    <>
       <div className="ph">
         <span className="tok">M</span>
         <span>{t("composer.switchModel")}</span>
       </div>
       <div className="popup-list">
         {KNOWN_MODELS.map((m) => (
-          <div
+          <button
+            type="button"
             key={m}
             className="popup-item"
             data-active={m === modelLabel}
@@ -874,7 +996,7 @@ function ModelEffortMenu({
             <div className="nm">
               <span className="cmd">{m}</span>
             </div>
-          </div>
+          </button>
         ))}
         <div style={{ padding: "6px 8px", display: "flex", gap: 6 }}>
           <input
@@ -900,7 +1022,8 @@ function ModelEffortMenu({
       </div>
       <div className="popup-list">
         {EFFORTS.map((e) => (
-          <div
+          <button
+            type="button"
             key={e}
             className="popup-item"
             data-active={e === currentEffort}
@@ -913,9 +1036,9 @@ function ModelEffortMenu({
               <span className="cmd">{e}</span>
               <div className="desc">{t(`effort.${e}Desc` as TKey)}</div>
             </div>
-          </div>
+          </button>
         ))}
       </div>
-    </div>
+    </>
   );
 }

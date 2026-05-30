@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { I } from "../icons";
 import { t, useLang } from "../i18n";
+import { I } from "../icons";
 import { Shortcut } from "./shortcut";
 
 type Anchor = { top?: number; bottom?: number; left: number };
@@ -101,22 +101,23 @@ export function WorkdirPop({
             const isCurrent = p === current;
             const name = p.split(/[\\/]/).filter(Boolean).pop() ?? p;
             return (
-              <div
-                key={p}
-                className="wd-row"
-                onClick={() => {
-                  if (!isCurrent) onPick(p);
-                  onClose();
-                }}
-                title={p}
-              >
-                <span className="ic">
-                  <I.folder size={12} />
-                </span>
-                <div className="b">
-                  <div className="p">{name}</div>
-                  <div className="br">{p}</div>
-                </div>
+              <div key={p} className="wd-row" title={p}>
+                <button
+                  type="button"
+                  className="wd-row-main"
+                  onClick={() => {
+                    if (!isCurrent) onPick(p);
+                    onClose();
+                  }}
+                >
+                  <span className="ic">
+                    <I.folder size={12} />
+                  </span>
+                  <span className="b">
+                    <span className="p">{name}</span>
+                    <span className="br">{p}</span>
+                  </span>
+                </button>
                 {isCurrent ? (
                   <span className="pin">
                     <I.check size={11} />
@@ -125,7 +126,6 @@ export function WorkdirPop({
                   <button
                     type="button"
                     className="wd-del"
-                    onMouseDown={(e) => e.stopPropagation()}
                     onClick={(e) => {
                       e.stopPropagation();
                       onRemoveRecent(p);

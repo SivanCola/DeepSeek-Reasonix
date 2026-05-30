@@ -1,8 +1,34 @@
 import type { ReactNode } from "react";
-import { I } from "../icons";
 import { t, useLang } from "../i18n";
+import { I } from "../icons";
 
 export type ApprovalTone = "ok" | "warn" | "danger" | "info" | "brand" | "ghost";
+
+function hashString(value: string): string {
+  let hash = 0;
+  for (let i = 0; i < value.length; i++) {
+    hash = (hash * 31 + value.charCodeAt(i)) | 0;
+  }
+  return `${value.length}-${(hash >>> 0).toString(36)}`;
+}
+
+function keyed<T>(items: readonly T[], keyFor: (item: T) => string): { item: T; key: string }[] {
+  const seen = new Map<string, number>();
+  return items.map((item) => {
+    const base = keyFor(item);
+    const count = seen.get(base) ?? 0;
+    seen.set(base, count + 1);
+    return { item, key: count === 0 ? base : `${base}-${count}` };
+  });
+}
+
+function reactNodeKey(node: ReactNode): string {
+  if (typeof node === "string" || typeof node === "number") return hashString(String(node));
+  if (node && typeof node === "object" && "key" in node && node.key != null) {
+    return String(node.key);
+  }
+  return hashString(String(node));
+}
 
 export function ApprovalCard({
   kind,
@@ -167,11 +193,11 @@ export function TipCard({
         <span className="grow" />
         {command ? <span className="pill">{command}</span> : null}
       </div>
-      {sections.map((sec, i) => (
-        <div className="sec" key={i}>
+      {keyed(sections, (sec) => sec.title).map(({ item: sec, key }) => (
+        <div className="sec" key={key}>
           <div className="stt">{sec.title}</div>
-          {sec.rows.map((r, j) => (
-            <div className="row" key={j}>
+          {keyed(sec.rows, reactNodeKey).map(({ item: r, key: rowKey }) => (
+            <div className="row" key={rowKey}>
               {r}
             </div>
           ))}
@@ -184,7 +210,10 @@ export function TipCard({
 
 export type DoctorRow = { s: "ok" | "warn" | "fail"; nm: string; sub: string; v: string };
 
-export function DoctorCard({ rows, headerSubtitle }: { rows: DoctorRow[]; headerSubtitle?: string }) {
+export function DoctorCard({
+  rows,
+  headerSubtitle,
+}: { rows: DoctorRow[]; headerSubtitle?: string }) {
   useLang();
   const c = { ok: 0, warn: 0, fail: 0 };
   for (const r of rows) c[r.s]++;
@@ -222,8 +251,8 @@ export function DoctorCard({ rows, headerSubtitle }: { rows: DoctorRow[]; header
           </span>
         </div>
       </div>
-      {rows.map((r, i) => (
-        <div className="doctor-row" key={i} data-s={r.s}>
+      {keyed(rows, (r) => `${r.s}-${r.nm}-${r.sub}-${r.v}`).map(({ item: r, key }) => (
+        <div className="doctor-row" key={key} data-s={r.s}>
           <span className="ic" data-mark={r.s === "ok" ? "✓" : r.s === "warn" ? "!" : "✕"} />
           <div className="body">
             <div className="nm">{r.nm}</div>
@@ -330,7 +359,12 @@ export function UsageFull({
 
 // ---- Context window breakdown ----
 
-export type CtxPart = { k: "system" | "tools" | "log" | "input"; label: string; value: string; widthPct: number };
+export type CtxPart = {
+  k: "system" | "tools" | "log" | "input";
+  label: string;
+  value: string;
+  widthPct: number;
+};
 export type CtxTopRow = { name: string; widthPct: number; value: string };
 
 export function CtxCard({
@@ -377,15 +411,17 @@ export function CtxCard({
       {topTools.length > 0 ? (
         <div className="ttop">
           <div className="stt">{t("extraCards.topToolsUsage")}</div>
-          {topTools.map((t, i) => (
-            <div className="row" key={i}>
-              <span className="n">{t.name}</span>
-              <div className="bbar">
-                <span style={{ width: `${t.widthPct}%` }} />
+          {keyed(topTools, (tool) => `${tool.name}-${tool.value}-${tool.widthPct}`).map(
+            ({ item: t, key }) => (
+              <div className="row" key={key}>
+                <span className="n">{t.name}</span>
+                <div className="bbar">
+                  <span style={{ width: `${t.widthPct}%` }} />
+                </div>
+                <span className="v">{t.value}</span>
               </div>
-              <span className="v">{t.value}</span>
-            </div>
-          ))}
+            ),
+          )}
         </div>
       ) : null}
     </div>
@@ -421,8 +457,8 @@ export function MemoryGroups({ data }: { data: MemGroups }) {
               <span className="grow" />
               <span className="cnt">{rows.length}</span>
             </div>
-            {rows.map((r, i) => (
-              <div className="mrow" key={i}>
+            {keyed(rows, (r) => `${r.text}-${r.meta ?? ""}`).map(({ item: r, key }) => (
+              <div className="mrow" key={key}>
                 <span className="b">·</span>
                 <div className="t">{r.text}</div>
                 {r.meta ? <span className="meta">{r.meta}</span> : null}
@@ -437,7 +473,10 @@ export function MemoryGroups({ data }: { data: MemGroups }) {
 
 // ---- Fallback ----
 
-export function FallbackCard({ kindLabel, payload }: { kindLabel: string; payload: Record<string, string> }) {
+export function FallbackCard({
+  kindLabel,
+  payload,
+}: { kindLabel: string; payload: Record<string, string> }) {
   useLang();
   return (
     <div className="fallback-card">

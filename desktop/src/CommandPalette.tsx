@@ -28,7 +28,7 @@ export type Command = {
   run: () => void;
 };
 
-export function useCommandPalette(active: boolean = true) {
+export function useCommandPalette(active = true) {
   const [open, setOpen] = useState(false);
   useEffect(() => {
     // Skip in background tabs — each TabRuntime calls this hook, so without the gate Cmd+K toggles every tab's palette at once.
@@ -181,10 +181,14 @@ const GROUP_ORDER: CommandGroup[] = ["nav", "action", "workspace", "settings"];
 
 function groupLabel(g: CommandGroup): string {
   switch (g) {
-    case "nav": return t("palette.groupNav");
-    case "action": return t("palette.groupAction");
-    case "workspace": return t("palette.groupWorkspace");
-    case "settings": return t("palette.groupSettings");
+    case "nav":
+      return t("palette.groupNav");
+    case "action":
+      return t("palette.groupAction");
+    case "workspace":
+      return t("palette.groupWorkspace");
+    case "settings":
+      return t("palette.groupSettings");
   }
 }
 
@@ -235,9 +239,9 @@ export function CommandPalette({
       arr.push(c);
       byGroup.set(c.group, arr);
     }
-    return GROUP_ORDER
-      .map((g) => ({ group: g, items: byGroup.get(g) ?? [] }))
-      .filter((s) => s.items.length > 0);
+    return GROUP_ORDER.map((g) => ({ group: g, items: byGroup.get(g) ?? [] })).filter(
+      (s) => s.items.length > 0,
+    );
   }, [filtered]);
 
   if (!open) return null;
@@ -276,16 +280,15 @@ export function CommandPalette({
           </span>
         </div>
         <div className="cmdk-body" ref={listRef}>
-          {filtered.length === 0 ? (
-            <div className="cmdk-empty">{t("palette.empty")}</div>
-          ) : null}
+          {filtered.length === 0 ? <div className="cmdk-empty">{t("palette.empty")}</div> : null}
           {grouped.map((section) => (
             <div className="cmdk-group" key={section.group}>
               <div className="cmdk-gh">{groupLabel(section.group)}</div>
               {section.items.map((c) => {
                 const i = filtered.indexOf(c);
                 return (
-                  <div
+                  <button
+                    type="button"
                     key={c.id}
                     data-idx={i}
                     className="cmdk-row"
@@ -303,7 +306,7 @@ export function CommandPalette({
                     ) : (
                       <span className="kb-empty" />
                     )}
-                  </div>
+                  </button>
                 );
               })}
             </div>

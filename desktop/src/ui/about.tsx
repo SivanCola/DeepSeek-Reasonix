@@ -49,9 +49,19 @@ export function AboutModal({ onClose }: { onClose: () => void }) {
   }, []);
 
   return (
-    <div className="about-mask" onClick={onClose}>
-      <div className="about-modal" onClick={(e) => e.stopPropagation()}>
-        <button type="button" className="about-close" onClick={onClose} aria-label={t("about.close")}>
+    <div
+      className="about-mask"
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
+      <div className="about-modal">
+        <button
+          type="button"
+          className="about-close"
+          onClick={onClose}
+          aria-label={t("about.close")}
+        >
           <I.x size={14} />
         </button>
         <div className="about-brand">
@@ -88,10 +98,7 @@ export function AboutModal({ onClose }: { onClose: () => void }) {
   );
 }
 
-function CheckStatus({
-  check,
-  onOpenReleases,
-}: { check: CheckState; onOpenReleases: () => void }) {
+function CheckStatus({ check, onOpenReleases }: { check: CheckState; onOpenReleases: () => void }) {
   if (check.kind === "idle" || check.kind === "checking") return null;
   if (check.kind === "up-to-date") {
     return (

@@ -395,14 +395,14 @@ describe("desktop thread layout", () => {
     const side = 244;
     const ctx = 320;
 
-    expect(
-      getThreadMaxWidth({ viewportWidth: 1000, visibleSide: side, visibleCtx: ctx }),
-    ).toBe(580);
-    expect(
-      getThreadMaxWidth({ viewportWidth: 1400, visibleSide: side, visibleCtx: ctx }),
-    ).toBe(756);
-    expect(
-      getThreadMaxWidth({ viewportWidth: 1800, visibleSide: side, visibleCtx: ctx }),
-    ).toBe(1120);
+    expect(getThreadMaxWidth({ viewportWidth: 1000, visibleSide: side, visibleCtx: ctx })).toBe(
+      580,
+    );
+    expect(getThreadMaxWidth({ viewportWidth: 1400, visibleSide: side, visibleCtx: ctx })).toBe(
+      756,
+    );
+    expect(getThreadMaxWidth({ viewportWidth: 1800, visibleSide: side, visibleCtx: ctx })).toBe(
+      1120,
+    );
   });
 });

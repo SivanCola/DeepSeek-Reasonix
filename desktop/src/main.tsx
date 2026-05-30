@@ -12,12 +12,7 @@ import "@fontsource/inter/700.css";
 import "katex/dist/katex.min.css";
 import { createRoot } from "react-dom/client";
 import { App } from "./App";
-import {
-  defaultStyleForTheme,
-  isTheme,
-  isThemeStyle,
-  themeForStyle,
-} from "./theme";
+import { defaultStyleForTheme, isTheme, isThemeStyle, themeForStyle } from "./theme";
 
 const stored = localStorage.getItem("reasonix.theme");
 const storedStyle = localStorage.getItem("reasonix.themeStyle");

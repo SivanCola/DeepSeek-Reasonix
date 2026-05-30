@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import { I } from "../icons";
-import { t } from "../i18n";
 import type { Balance, Settings, UsageStats } from "../App";
+import { t } from "../i18n";
+import { I } from "../icons";
 import type { JobInfo } from "../protocol";
 import { THEME, THEME_STYLES, type Theme, type ThemeStyle, themeForStyle } from "../theme";
 import { localizeShortcutText } from "./shortcut";
@@ -81,7 +81,7 @@ export function StatusBar({
   const connState = !ready ? "off" : busy ? "running" : "online";
   const [themeOpen, setThemeOpen] = useState(false);
   const themePopRef = useRef<HTMLDivElement | null>(null);
-  const themeButtonRef = useRef<HTMLSpanElement | null>(null);
+  const themeButtonRef = useRef<HTMLButtonElement | null>(null);
 
   useEffect(() => {
     if (!themeOpen) return;
@@ -102,7 +102,9 @@ export function StatusBar({
           style={connState === "off" ? { background: "var(--danger)" } : undefined}
         />
         <span>{settings?.baseUrl?.replace(/^https?:\/\//, "") ?? "api.deepseek.com"}</span>
-        <span className="v">{!ready ? t("statusbar.offline") : busy ? t("statusbar.busy") : t("statusbar.online")}</span>
+        <span className="v">
+          {!ready ? t("statusbar.offline") : busy ? t("statusbar.busy") : t("statusbar.online")}
+        </span>
       </span>
       <span className="seg" title={cacheHitDetail || t("statusbar.cacheHit")}>
         <I.zap size={11} style={{ color: "var(--accent)" }} />
@@ -122,7 +124,8 @@ export function StatusBar({
 
       <span className="grow" />
 
-      <span
+      <button
+        type="button"
         className={`seg jobs ${jobsOpen ? "active" : ""}`}
         onClick={onToggleJobs}
         title={localizeShortcutText(t("statusbar.jobsTip"))}
@@ -130,24 +133,26 @@ export function StatusBar({
         <I.cpu size={11} />
         <span>{t("statusbar.jobs")}</span>
         <span className={runningJobs > 0 ? "v acc" : "v"}>{runningJobs}</span>
-      </span>
+      </button>
 
       {settings?.workspaceDir ? (
-        <span
+        <button
+          type="button"
           className="seg"
           title={t("statusbar.switchWorkspace", { workspace: settings.workspaceDir })}
-          style={onOpenWorkdir ? { cursor: "pointer" } : undefined}
+          disabled={!onOpenWorkdir}
           onClick={(e) => {
             if (!onOpenWorkdir) return;
-            const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+            const r = e.currentTarget.getBoundingClientRect();
             onOpenWorkdir({ bottom: window.innerHeight - r.top + 6, left: r.left });
           }}
         >
           <I.folder size={11} />
           <span className="v">{settings.workspaceDir.split(/[\\/]/).pop() || "ws"}</span>
-        </span>
+        </button>
       ) : null}
-      <span
+      <button
+        type="button"
         className="seg"
         title={`model · effort ${settings?.reasoningEffort ?? "high"}`}
         onClick={onOpenSettings}
@@ -155,8 +160,9 @@ export function StatusBar({
         <I.brain size={11} style={{ color: "var(--violet)" }} />
         <span className="v vio">{settings?.model ?? "—"}</span>
         <span className="v">{settings?.reasoningEffort ?? "high"}</span>
-      </span>
-      <span
+      </button>
+      <button
+        type="button"
         className="seg"
         title={t("statusbar.switchCurrency")}
         onClick={onToggleCurrency}
@@ -170,8 +176,9 @@ export function StatusBar({
                 .join(" / ")
             : balanceLabel}
         </span>
-      </span>
-      <span
+      </button>
+      <button
+        type="button"
         ref={themeButtonRef}
         className={`seg theme-trigger ${themeOpen ? "active" : ""}`}
         title={t("statusbar.switchTheme")}
@@ -181,9 +188,14 @@ export function StatusBar({
         <span className="v">
           {t(`statusbar.themeStyle${themeStyle[0]!.toUpperCase()}${themeStyle.slice(1)}` as any)}
         </span>
-      </span>
+      </button>
       {themeOpen ? (
-        <div ref={themePopRef} className="theme-pop" role="menu" aria-label={t("settings.themeStyle")}>
+        <div
+          ref={themePopRef}
+          className="theme-pop"
+          role="menu"
+          aria-label={t("settings.themeStyle")}
+        >
           <div className="theme-pop-head">
             <div className="tt">{t("settings.themeStyle")}</div>
             <div className="ss">{t("statusbar.switchTheme")}</div>
