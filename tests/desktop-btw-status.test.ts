@@ -58,6 +58,7 @@ function makeState(): AppState {
     activePlan: null,
     usage: {
       totalCostUsd: 0,
+      turnCostUsd: 0,
       totalPromptTokens: 0,
       totalCompletionTokens: 0,
       cacheHitTokens: 0,

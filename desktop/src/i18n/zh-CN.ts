@@ -439,6 +439,7 @@ export const zhCN: typeof en = {
     cache: "缓存",
     tokens: "tokens",
     thisTurn: "本次",
+    session: "会话",
     switchWorkspace: "切换工作区 · {workspace}",
     switchCurrency: "切换货币 (CNY / USD)",
     balance: "余额",

@@ -166,6 +166,7 @@ export type PendingRevision = {
 
 export type UsageStats = {
   totalCostUsd: number;
+  turnCostUsd: number;
   totalPromptTokens: number;
   totalCompletionTokens: number;
   cacheHitTokens: number;
@@ -319,6 +320,13 @@ function nextMessageTurn(messages: ChatMessage[]): number {
   return lastTurn + 1;
 }
 
+function isIncomingUserNewTurn(state: State, turn: number): boolean {
+  return (
+    !state.busy ||
+    !state.messages.some((m) => (m.kind === "user" || m.kind === "assistant") && m.turn === turn)
+  );
+}
+
 function reduce(state: State, action: Action): State {
   return withElidedTranscript(reduceRaw(state, action));
 }
@@ -329,6 +337,7 @@ function reduceRaw(state: State, action: Action): State {
       return {
         ...state,
         busy: true,
+        usage: { ...state.usage, turnCostUsd: 0 },
         messages: [
           ...state.messages,
           { kind: "user", text: action.text, clientId: action.clientId, turn: nextMessageTurn(state.messages) },
@@ -341,6 +350,7 @@ function reduceRaw(state: State, action: Action): State {
         ...state,
         busy: true,
         activeSkill: action.skill,
+        usage: { ...state.usage, turnCostUsd: 0 },
         messages: [
           ...state.messages,
           {
@@ -548,6 +558,7 @@ function mergeSessionFiles(existing: SessionFile[], adds: SessionFile[]): Sessio
 function zeroUsage(): UsageStats {
   return {
     totalCostUsd: 0,
+    turnCostUsd: 0,
     totalPromptTokens: 0,
     totalCompletionTokens: 0,
     cacheHitTokens: 0,
@@ -581,16 +592,20 @@ function applyIncomingRaw(state: State, ev: IncomingEvent): State {
       if (state.busy && last?.kind === "user" && last.text === ev.text) {
         return state;
       }
+      const turn = ev.turn > 0 ? ev.turn : nextMessageTurn(state.messages);
       return {
         ...state,
         busy: true,
+        usage: isIncomingUserNewTurn(state, turn)
+          ? { ...state.usage, turnCostUsd: 0 }
+          : state.usage,
         messages: [
           ...state.messages,
           {
             kind: "user",
             text: ev.text,
             clientId: `remote-${ev.id}`,
-            turn: ev.turn > 0 ? ev.turn : nextMessageTurn(state.messages),
+            turn,
           },
         ],
       };
@@ -751,6 +766,7 @@ function applyIncomingRaw(state: State, ev: IncomingEvent): State {
           totalCompletionTokens: ev.totalCompletionTokens,
           cacheHitTokens: ev.cacheHitTokens,
           cacheMissTokens: ev.cacheMissTokens,
+          turnCostUsd: empty ? 0 : state.usage.turnCostUsd,
           lastCallCacheHit: empty ? null : state.usage.lastCallCacheHit,
           lastCallCacheMiss: empty ? null : state.usage.lastCallCacheMiss,
         },
@@ -956,6 +972,7 @@ function applyIncomingRaw(state: State, ev: IncomingEvent): State {
       const hasCall = callHit > 0 || callMiss > 0;
       const usage: UsageStats = {
         totalCostUsd: state.usage.totalCostUsd + (ev.costUsd ?? 0),
+        turnCostUsd: state.usage.turnCostUsd + (ev.costUsd ?? 0),
         totalPromptTokens: state.usage.totalPromptTokens + (u?.prompt_tokens ?? 0),
         totalCompletionTokens: state.usage.totalCompletionTokens + (u?.completion_tokens ?? 0),
         cacheHitTokens: state.usage.cacheHitTokens + callHit,

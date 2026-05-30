@@ -224,4 +224,82 @@ describe("loop persists user message at step entry (issue #943)", () => {
     expect(secondRequestUsers).toEqual(["请按这次要求完整重写，不要局部微调"]);
     expect(loadSessionMessages(sessionName).filter((m) => m.role === "user")).toHaveLength(1);
   });
+
+  it("discarding an aborted turn preserves history outside the in-memory window", async () => {
+    const requestMessages: ChatMessage[][] = [];
+    let callCount = 0;
+    let markFirstRequestStarted!: () => void;
+    const firstRequestStarted = new Promise<void>((resolve) => {
+      markFirstRequestStarted = resolve;
+    });
+    const client = new DeepSeekClient({
+      apiKey: "sk-test",
+      fetch: vi.fn(
+        async (_url: unknown, init: { body?: string; signal?: AbortSignal } | undefined) => {
+          const body = init?.body ? JSON.parse(init.body) : {};
+          requestMessages.push(body.messages as ChatMessage[]);
+          if (callCount++ === 0) {
+            markFirstRequestStarted();
+            return new Promise<Response>((_resolve, reject) => {
+              init?.signal?.addEventListener("abort", () =>
+                reject(new DOMException("This operation was aborted", "AbortError")),
+              );
+            });
+          }
+          return new Response(
+            JSON.stringify({
+              choices: [
+                {
+                  index: 0,
+                  message: { role: "assistant", content: "ok" },
+                  finish_reason: "stop",
+                },
+              ],
+              usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          );
+        },
+      ) as unknown as typeof fetch,
+      retry: { maxAttempts: 1 },
+    });
+
+    const sessionName = "bug2287-discard-window-history";
+    const loop = new CacheFirstLoop({
+      client,
+      prefix: new ImmutablePrefix({ system: "s" }),
+      stream: false,
+      session: sessionName,
+      model: "deepseek-chat",
+    });
+
+    for (let i = 0; i < 105; i++) {
+      loop.appendAndPersist({ role: "user", content: `prior q ${i}` });
+      loop.appendAndPersist({ role: "assistant", content: `prior a ${i}` });
+    }
+    expect(loop.log.totalLength).toBeGreaterThan(loop.log.length);
+
+    const interrupted = (async () => {
+      for await (const ev of loop.step("aborted current prompt")) {
+        if (ev.role === "done") break;
+      }
+    })();
+
+    await firstRequestStarted;
+    loop.abort({ discardCurrentTurn: true });
+    await interrupted;
+
+    await loop.run("next prompt");
+
+    const secondRequestContents = requestMessages[1]!.map((m) => m.content);
+    expect(secondRequestContents).toContain("prior q 104");
+    expect(secondRequestContents).toContain("prior a 104");
+    expect(secondRequestContents).not.toContain("aborted current prompt");
+    expect(secondRequestContents).toContain("next prompt");
+
+    const persistedContents = loadSessionMessages(sessionName).map((m) => m.content);
+    expect(persistedContents).toContain("prior q 104");
+    expect(persistedContents).toContain("prior a 104");
+    expect(persistedContents).not.toContain("aborted current prompt");
+  });
 });

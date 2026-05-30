@@ -70,7 +70,8 @@ export function StatusBar({
       ? `${usage.cacheHitTokens.toLocaleString()} / ${totalTokens.toLocaleString()} tokens (${cacheHitPctDisplay}%)`
       : "";
   const runningJobs = jobs.filter((j) => j.running).length;
-  const spent = formatMoney(usage.totalCostUsd, currency);
+  const turnSpent = formatMoney(usage.turnCostUsd, currency);
+  const sessionSpent = formatMoney(usage.totalCostUsd, currency);
   const balanceLabel = balance
     ? `${balance.currency === "USD" ? "$" : "¥"} ${balance.total.toFixed(2)}`
     : "—";
@@ -113,7 +114,12 @@ export function StatusBar({
       <span className="seg">
         <I.coin size={11} />
         <span>{t("statusbar.thisTurn")}</span>
-        <span className="v ok">{spent}</span>
+        <span className="v ok">{turnSpent}</span>
+      </span>
+      <span className="seg">
+        <I.coin size={11} />
+        <span>{t("statusbar.session")}</span>
+        <span className="v ok">{sessionSpent}</span>
       </span>
 
       <span className="grow" />

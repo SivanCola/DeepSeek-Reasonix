@@ -667,6 +667,7 @@ export const de: typeof en = {
     cache: "Cache",
     tokens: "Tokens",
     thisTurn: "dieser Turn",
+    session: "Sitzung",
     switchWorkspace: "Arbeitsbereich wechseln · {workspace}",
     switchCurrency: "Währung wechseln (CNY / USD)",
     balance: "Guthaben",

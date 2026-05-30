@@ -638,6 +638,7 @@ export const en = {
     cache: "cache",
     tokens: "tokens",
     thisTurn: "this turn",
+    session: "session",
     switchWorkspace: "Switch workspace · {workspace}",
     switchCurrency: "Switch currency (CNY / USD)",
     balance: "balance",
