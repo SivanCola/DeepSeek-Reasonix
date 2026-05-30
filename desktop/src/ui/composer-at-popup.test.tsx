@@ -253,4 +253,96 @@ describe("desktop Composer @ popup", () => {
     expect(typeof draftUpdate).toBe("function");
     expect((draftUpdate as (current: string) => string)("@foo")).toBe("@src/very/deep/foo.ts ");
   });
+
+  it("removes the matching @ token when closing a picked mention chip", async () => {
+    const setDraft = vi.fn();
+    const { container, rerender, onMentionQuery } = renderComposer({
+      draft: "",
+      setDraft,
+    });
+    const textarea = container.querySelector("textarea");
+    if (!textarea) throw new Error("missing textarea");
+
+    fireEvent.change(textarea, {
+      target: {
+        value: "inspect @foo before send",
+        selectionStart: "inspect @foo".length,
+        selectionEnd: "inspect @foo".length,
+      },
+    });
+    await waitFor(() => expect(onMentionQuery).toHaveBeenCalled());
+    const nonce = onMentionQuery.mock.calls[0]?.[1] as number;
+
+    rerender(
+      <Composer
+        draft="inspect @foo before send"
+        setDraft={setDraft}
+        onSend={vi.fn()}
+        onAbort={vi.fn()}
+        disabled={false}
+        busy={false}
+        modelLabel="deepseek-v4-flash"
+        reasoningEffort="high"
+        onModelChange={vi.fn()}
+        onEffortChange={vi.fn()}
+        editMode="review"
+        onEditModeChange={vi.fn()}
+        textareaRef={createRef<HTMLTextAreaElement>()}
+        slashCommands={[]}
+        onMentionQuery={onMentionQuery}
+        onMentionPreview={vi.fn()}
+        onMentionPicked={vi.fn()}
+        mentionResults={{ nonce, query: "foo", results: ["src/very/deep/foo.ts"] }}
+        workspaceDir="/repo"
+      />,
+    );
+
+    const row = await waitFor(() => {
+      const item = container.querySelector(".popup-item");
+      expect(item).not.toBeNull();
+      return item as HTMLElement;
+    });
+
+    fireEvent.click(row);
+    const pickDraftUpdate = setDraft.mock.calls.at(-1)?.[0];
+    expect(typeof pickDraftUpdate).toBe("function");
+    const pickedDraft = (pickDraftUpdate as (current: string) => string)(
+      "inspect @foo before send",
+    );
+    expect(pickedDraft).toBe("inspect @src/very/deep/foo.ts before send");
+
+    rerender(
+      <Composer
+        draft={pickedDraft}
+        setDraft={setDraft}
+        onSend={vi.fn()}
+        onAbort={vi.fn()}
+        disabled={false}
+        busy={false}
+        modelLabel="deepseek-v4-flash"
+        reasoningEffort="high"
+        onModelChange={vi.fn()}
+        onEffortChange={vi.fn()}
+        editMode="review"
+        onEditModeChange={vi.fn()}
+        textareaRef={createRef<HTMLTextAreaElement>()}
+        slashCommands={[]}
+        onMentionQuery={onMentionQuery}
+        onMentionPreview={vi.fn()}
+        onMentionPicked={vi.fn()}
+        mentionResults={null}
+        workspaceDir="/repo"
+      />,
+    );
+
+    const close = container.querySelector(".composer-tags .x");
+    expect(close).not.toBeNull();
+    fireEvent.click(close!);
+
+    const closeDraftUpdate = setDraft.mock.calls.at(-1)?.[0];
+    expect(typeof closeDraftUpdate).toBe("function");
+    expect((closeDraftUpdate as (current: string) => string)(pickedDraft)).toBe(
+      "inspect before send",
+    );
+  });
 });

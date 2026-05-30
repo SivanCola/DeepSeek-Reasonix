@@ -79,6 +79,10 @@ export type MentionItem = {
 
 export type Chip = { kind: "at"; label: string } | { kind: "slash"; label: string };
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 /** For long paths show only the filename; truncate filename if it's still too long. */
 function chipLabel(label: string, maxLen = 32): string {
   if (label.length <= maxLen) return label;
@@ -130,6 +134,20 @@ function highlightTokens(text: string): React.ReactNode {
     parts.push(text.slice(lastIdx));
   }
   return parts.length > 0 ? parts : text;
+}
+
+function removeAtTokenFromDraft(text: string, label: string): string {
+  const re = new RegExp(`(^|\\s+)@${escapeRegExp(label)}(\\s+|$)`, "g");
+  let next = text;
+  let prev = "";
+  while (next !== prev) {
+    prev = next;
+    next = next.replace(re, (_match, leading: string, trailing: string) => {
+      if (!leading || !trailing) return "";
+      return " ";
+    });
+  }
+  return next;
 }
 
 function slashIcon(cmd: string) {
@@ -258,7 +276,7 @@ export function Composer({
     const result: Chip[] = [];
     for (const [label, kind] of pickedChips) {
       const sigil = kind === "at" ? "@" : "/";
-      const escaped = sigil + label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const escaped = sigil + escapeRegExp(label);
       const re = new RegExp(`(?:^|\\s)${escaped}(?:\\s|$)`);
       if (re.test(draft)) {
         result.push({ kind, label });
@@ -737,13 +755,16 @@ export function Composer({
                   <button
                     type="button"
                     className="x"
-                    onClick={() =>
+                    onClick={() => {
                       setPickedChips((prev) => {
                         const next = new Map(prev);
                         next.delete(row.chip.label);
                         return next;
-                      })
-                    }
+                      });
+                      if (row.chip.kind === "at") {
+                        setDraft((current) => removeAtTokenFromDraft(current, row.chip.label));
+                      }
+                    }}
                     title={t("composer.close")}
                     aria-label={t("composer.close")}
                   >
