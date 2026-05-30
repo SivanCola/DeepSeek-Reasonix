@@ -20,7 +20,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { type ScrollerProps, Virtuoso, type VirtuosoHandle } from "react-virtuoso";
+import { type ListRange, type ScrollerProps, Virtuoso, type VirtuosoHandle } from "react-virtuoso";
 import { CommandPalette, Toast, buildCommands, useCommandPalette } from "./CommandPalette";
 import { WorkspaceProvider } from "./Markdown";
 import { type AbortDraftSource, nextAbortDraftCandidate, restoreAbortedDraft } from "./abort-draft";
@@ -77,7 +77,7 @@ import { parseEditResult } from "./ui/cards";
 import { Composer, type SlashCmd } from "./ui/composer";
 import { ContextPanel } from "./ui/context-panel";
 import { JobsPop } from "./ui/jobs-pop";
-import { JumpBar } from "./ui/jump-bar";
+import { JumpBar, type JumpBarItem } from "./ui/jump-bar";
 import { useElapsed } from "./ui/live";
 import { SettingsModal, type PageId as SettingsPageId } from "./ui/settings";
 import { Shortcut, localizeShortcutText, shortcutText } from "./ui/shortcut";
@@ -1475,7 +1475,6 @@ function TabRuntime({
     { top?: number; bottom?: number; left: number } | undefined
   >(undefined);
   const composerRef = useRef<HTMLTextAreaElement>(null);
-  const threadRef = useRef<HTMLDivElement>(null);
   const virtuosoRef = useRef<VirtuosoHandle>(null);
   const virtuosoScrollerRef = useRef<HTMLDivElement | null>(null);
   const [virtuosoScroller, setVirtuosoScroller] = useState<HTMLDivElement | null>(null);
@@ -1987,6 +1986,28 @@ function TabRuntime({
   const currentSessionRef = useRef(state.currentSession);
   currentSessionRef.current = state.currentSession;
   const messageItems = state.messages;
+  const [activeJumpTurn, setActiveJumpTurn] = useState<number | null>(null);
+  const jumpItems = useMemo<JumpBarItem[]>(
+    () =>
+      messageItems.flatMap((message, index) =>
+        message.kind === "user"
+          ? [{ index, turn: message.turn, text: message.text.slice(0, 80) }]
+          : [],
+      ),
+    [messageItems],
+  );
+
+  useEffect(() => {
+    if (jumpItems.length === 0) {
+      setActiveJumpTurn(null);
+      return;
+    }
+    setActiveJumpTurn((current) =>
+      current !== null && jumpItems.some((item) => item.turn === current)
+        ? current
+        : jumpItems[jumpItems.length - 1]!.turn,
+    );
+  }, [jumpItems]);
 
   const restoreScrollTop = useCallback(() => {
     const session = currentSessionRef.current;
@@ -2004,6 +2025,50 @@ function TabRuntime({
       userDetachedScrollRef.current && hasScrollableOverflow(el) && !isElementAtBottom(el),
     );
   }, []);
+  const handleJumpBarJump = useCallback(
+    (item: JumpBarItem) => {
+      setActiveJumpTurn(item.turn);
+      autoFollowRef.current = false;
+      userDetachedScrollRef.current = true;
+      setShowJumpButton(item.index < messageItems.length - 1);
+      virtuosoRef.current?.scrollToIndex({
+        index: item.index,
+        align: "start",
+        behavior: "smooth",
+      });
+      window.requestAnimationFrame(refreshJumpButton);
+    },
+    [messageItems.length, refreshJumpButton],
+  );
+  const handleThreadRangeChanged = useCallback(
+    (range: ListRange) => {
+      if (messageItems.length === 0) {
+        setActiveJumpTurn(null);
+        return;
+      }
+
+      let nextTurn: number | null = null;
+      const startIndex = Math.max(0, Math.min(range.startIndex, messageItems.length - 1));
+      for (let index = startIndex; index >= 0; index--) {
+        const message = messageItems[index];
+        if (message?.kind === "user") {
+          nextTurn = message.turn;
+          break;
+        }
+      }
+      if (nextTurn === null) {
+        for (let index = startIndex + 1; index <= range.endIndex; index++) {
+          const message = messageItems[index];
+          if (message?.kind === "user") {
+            nextTurn = message.turn;
+            break;
+          }
+        }
+      }
+      setActiveJumpTurn((current) => (current === nextTurn ? current : nextTurn));
+    },
+    [messageItems],
+  );
 
   const scrollToBottom = useCallback(
     (smooth = true) => {
@@ -2662,7 +2727,6 @@ function TabRuntime({
         ) : null}
 
         <main className="main" style={{ position: "relative" }}>
-          <JumpBar messages={state.messages} threadEl={threadRef.current} />
           {state.needsSetup ? (
             <NeedsSetupView
               workspaceDir={state.settings?.workspaceDir}
@@ -2686,7 +2750,8 @@ function TabRuntime({
                   setWdOpen(true);
                 }}
               />
-              <div className="thread" ref={threadRef}>
+              <div className="thread">
+                <JumpBar activeTurn={activeJumpTurn} items={jumpItems} onJump={handleJumpBarJump} />
                 {state.messages.length === 0 ? (
                   <div className="thread-inner thread-inner--standalone">
                     <EmptyState
@@ -2712,6 +2777,7 @@ function TabRuntime({
                     totalCount={messageItems.length}
                     alignToBottom
                     followOutput={followOutput}
+                    rangeChanged={handleThreadRangeChanged}
                     atBottomThreshold={THREAD_BOTTOM_THRESHOLD}
                     atBottomStateChange={handleAtBottomStateChange}
                     increaseViewportBy={{ top: 360, bottom: 720 }}

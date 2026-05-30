@@ -1,37 +1,28 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
-interface JumpBarProps {
-  messages: { kind: string; text?: string; turn?: number }[];
-  threadEl: HTMLElement | null;
+export interface JumpBarItem {
+  index: number;
+  turn: number;
+  text: string;
 }
 
-export function JumpBar({ messages, threadEl }: JumpBarProps) {
+interface JumpBarProps {
+  activeTurn: number | null;
+  items: JumpBarItem[];
+  onJump: (item: JumpBarItem) => void;
+}
+
+export function JumpBar({ activeTurn, items, onJump }: JumpBarProps) {
   const [hovered, setHovered] = useState<number | null>(null);
-  const [active, setActive] = useState<number | null>(null);
   const barRef = useRef<HTMLDivElement>(null);
   const previewTop = useRef(0);
   const [showPreview, setShowPreview] = useState(false);
 
-  const items = useMemo(
-    () =>
-      messages
-        .filter(
-          (m): m is { kind: "user"; text: string; turn: number } =>
-            m.kind === "user" && typeof m.text === "string" && typeof m.turn === "number",
-        )
-        .map((m) => ({ turn: m.turn, text: m.text.slice(0, 80) })),
-    [messages],
-  );
-
   useEffect(() => {
-    if (items.length > 0) setActive(items[items.length - 1]!.turn);
-  }, [items]);
-
-  useEffect(() => {
-    if (active === null) return;
-    const el = barRef.current?.querySelector(`[data-turn="${active}"]`);
+    if (activeTurn === null) return;
+    const el = barRef.current?.querySelector(`[data-turn="${activeTurn}"]`);
     el?.scrollIntoView({ block: "nearest" });
-  }, [active]);
+  }, [activeTurn]);
 
   if (items.length < 2) return null;
 
@@ -64,18 +55,11 @@ export function JumpBar({ messages, threadEl }: JumpBarProps) {
     }
   };
 
-  const scrollTo = (turn: number) => {
-    setActive(turn);
-    threadEl
-      ?.querySelector(`[data-turn="${turn}"]`)
-      ?.scrollIntoView({ behavior: "smooth", block: "start" });
-  };
-
   const dotProps = (
     idx: number,
     turn: number,
   ): { style: React.CSSProperties; "data-d"?: string } => {
-    const isActive = active === turn;
+    const isActive = activeTurn === turn;
     if (hoverIdx < 0) {
       return {
         style: { width: isActive ? 18 : 12, background: isActive ? "var(--accent)" : undefined },
@@ -107,8 +91,9 @@ export function JumpBar({ messages, threadEl }: JumpBarProps) {
             className="jump-item"
             key={item.turn}
             data-turn={item.turn}
-            onClick={() => scrollTo(item.turn)}
+            onClick={() => onJump(item)}
             title={item.text}
+            aria-label={`Jump to turn ${item.turn}: ${item.text}`}
           >
             <span className="jump-dot" {...dotProps(idx, item.turn)} />
           </button>

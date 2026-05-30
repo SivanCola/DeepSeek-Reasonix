@@ -2068,14 +2068,21 @@ html:not([data-platform="macos"]) .shortcut kbd[data-key="mod"] {
 
 .jump-bar {
   position: absolute;
-  right: 13px;
+  right: 12px;
   top: 50%;
   transform: translateY(-50%);
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: 0 12px;
+  padding: 6px 10px;
   z-index: 20;
+  opacity: 0.18;
+  transition: opacity 150ms ease, transform 150ms ease;
+}
+.thread:hover .jump-bar,
+.jump-bar:focus-within,
+.jump-bar:hover {
+  opacity: 0.9;
 }
 .jump-scroll {
   display: flex;
@@ -2083,7 +2090,7 @@ html:not([data-platform="macos"]) .shortcut kbd[data-key="mod"] {
   align-items: center;
   gap: 6px;
   padding: 8px 0;
-  max-height: 240px;
+  max-height: min(220px, calc(100vh - 360px));
   overflow-y: auto;
   scrollbar-width: none;
   -webkit-mask-image: linear-gradient(
@@ -2110,6 +2117,12 @@ html:not([data-platform="macos"]) .shortcut kbd[data-key="mod"] {
   background: transparent;
   cursor: pointer;
   flex-shrink: 0;
+  opacity: 0.78;
+  transition: opacity 120ms ease;
+}
+.jump-item:hover,
+.jump-item:focus-visible {
+  opacity: 1;
 }
 .jump-item:focus-visible {
   outline: 1px solid var(--accent);
