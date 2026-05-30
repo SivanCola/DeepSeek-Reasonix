@@ -33,7 +33,12 @@ async function openWithEditor(
 
 type TrackedFile = { path: string; status: string };
 
-type WorkspaceCtx = { dir?: string; editor?: string; sessionFiles?: TrackedFile[]; currentToolPaths?: string[] };
+type WorkspaceCtx = {
+  dir?: string;
+  editor?: string;
+  sessionFiles?: TrackedFile[];
+  currentToolPaths?: string[];
+};
 const WorkspaceContext = createContext<WorkspaceCtx>({});
 export const WorkspaceProvider = WorkspaceContext.Provider;
 
@@ -41,9 +46,16 @@ export const WorkspaceProvider = WorkspaceContext.Provider;
  * Wrap children with a WorkspaceProvider that merges currentToolPaths
  * into the existing context (preserving dir/editor/sessionFiles).
  */
-export function WithToolPaths({ toolPaths, children }: { toolPaths: string[]; children: React.ReactNode }) {
+export function WithToolPaths({
+  toolPaths,
+  children,
+}: { toolPaths: string[]; children: React.ReactNode }) {
   const ctx = useContext(WorkspaceContext);
-  return <WorkspaceProvider value={{ ...ctx, currentToolPaths: toolPaths }}>{children}</WorkspaceProvider>;
+  return (
+    <WorkspaceProvider value={{ ...ctx, currentToolPaths: toolPaths }}>
+      {children}
+    </WorkspaceProvider>
+  );
 }
 
 /**
@@ -56,11 +68,7 @@ export function WithToolPaths({ toolPaths, children }: { toolPaths: string[]; ch
  * Try to match displayPath against a list of paths (exact → suffix).
  * Returns the best matching path, or null if none match.
  */
-function matchPathList(
-  displayPath: string,
-  paths: string[],
-  matchIndex: number = 0,
-): string | null {
+function matchPathList(displayPath: string, paths: string[], matchIndex = 0): string | null {
   if (!paths || paths.length === 0) return null;
   const normalizedDisplay = displayPath.replace(/\\/g, "/");
   let exact: string | null = null;
@@ -68,8 +76,11 @@ function matchPathList(
 
   for (const raw of paths) {
     const n = raw.replace(/\\/g, "/");
-    if (n === normalizedDisplay) { exact = raw; continue; }
-    if (n.endsWith("/" + normalizedDisplay) || n.endsWith("\\" + normalizedDisplay)) {
+    if (n === normalizedDisplay) {
+      exact = raw;
+      continue;
+    }
+    if (n.endsWith(`/${normalizedDisplay}`) || n.endsWith(`\\${normalizedDisplay}`)) {
       suffixMatches.push(raw);
     }
   }
@@ -94,7 +105,7 @@ function resolveBySessionFiles(
   displayPath: string,
   sessionFiles: TrackedFile[] | undefined,
   currentToolPaths?: string[],
-  matchIndex: number = 0,
+  matchIndex = 0,
 ): string | null {
   // Step 1: Try the current message's tool paths first (most specific context)
   if (currentToolPaths && currentToolPaths.length > 0) {
@@ -113,7 +124,7 @@ function resolveAgainstWorkspace(
   ws: string | undefined,
   sessionFiles?: TrackedFile[],
   currentToolPaths?: string[],
-  matchIndex: number = 0,
+  matchIndex = 0,
 ): string {
   // Step 1: Try suffix matching against tracked session files.
   // If found, use the tracked path as the base instead of the display text.
@@ -205,7 +216,13 @@ function FilePill({ path, line, matchIndex }: { path: string; line?: string; mat
   const ctx = useContext(WorkspaceContext);
   const [done, setDone] = useState<"open" | "copy" | null>(null);
   const display = line ? `${path}:${line}` : path;
-  const abs = resolveAgainstWorkspace(path, ctx.dir, ctx.sessionFiles, ctx.currentToolPaths, matchIndex);
+  const abs = resolveAgainstWorkspace(
+    path,
+    ctx.dir,
+    ctx.sessionFiles,
+    ctx.currentToolPaths,
+    matchIndex,
+  );
   const openInEditor = async () => {
     try {
       await openWithEditor(ctx.editor, abs, firstLine(line));
@@ -232,20 +249,13 @@ function FilePill({ path, line, matchIndex }: { path: string; line?: string; mat
     }
   };
   return (
-    <span
+    <button
+      type="button"
       className={`file-pill ${done ? "done" : ""}`}
-      role="button"
-      tabIndex={0}
       onClick={openInEditor}
       onContextMenu={(e) => {
         e.preventDefault();
         void copyOnly(e);
-      }}
-      onKeyDown={(e) => {
-        if (e.key === "Enter" || e.key === " ") {
-          e.preventDefault();
-          void openInEditor();
-        }
       }}
       title={t("markdown.filePillTitle")}
     >
@@ -253,7 +263,7 @@ function FilePill({ path, line, matchIndex }: { path: string; line?: string; mat
       <span className="file-pill-path">{path}</span>
       {line && <span className="file-pill-line">:{line}</span>}
       {done && <Check size={10} className="file-pill-check" />}
-    </span>
+    </button>
   );
 }
 
@@ -268,7 +278,9 @@ function splitFilePaths(text: string): ReactNode[] | string {
     const line = m[3];
     const pillStart = m.index + prefix.length;
     if (pillStart > last) out.push(text.slice(last, pillStart));
-    out.push(<FilePill key={`fp-${pillStart}`} path={path} line={line} matchIndex={_filePillIndex} />);
+    out.push(
+      <FilePill key={`fp-${pillStart}`} path={path} line={line} matchIndex={_filePillIndex} />,
+    );
     _filePillIndex++;
     last = pillStart + path.length + (line ? line.length + 1 : 0);
     m = FILE_PATH_RE.exec(text);
@@ -318,7 +330,7 @@ function normalizeMathDelimiters(source: string): string {
     .replace(/\\\(/g, "$$")
     .replace(/\\\)/g, "$$");
   // Restore protected sequences
-  result = result.replace(/\x00LB\x00/g, "\\\\[");
+  result = result.split(LB).join("\\\\[");
 
   // Replace | with \vert inside math to prevent GFM table column splitting.
   // \vert renders identically to | in KaTeX — it's the same vertical-bar
@@ -353,7 +365,10 @@ export const Markdown = memo(function Markdown({ source }: { source: string }) {
           code: ({ className, children }) => {
             const text = String(children ?? "");
             const parsed = !className ? parseFileRef(text.trim()) : null;
-            if (parsed) return <FilePill path={parsed.path} line={parsed.line} matchIndex={_filePillIndex++} />;
+            if (parsed)
+              return (
+                <FilePill path={parsed.path} line={parsed.line} matchIndex={_filePillIndex++} />
+              );
             return <code className={className}>{children}</code>;
           },
           a: ({ href, children }) => <SafeLink href={href}>{children}</SafeLink>,
@@ -393,7 +408,13 @@ function SafeLink({ href, children }: { href?: string; children: ReactNode }) {
     try {
       const parsed = parseFileHref(href);
       const target = parsed ?? { path: decodeMaybeUri(stripFileScheme(href)) };
-      const abs = resolveAgainstWorkspace(target.path, ctx.dir, ctx.sessionFiles, ctx.currentToolPaths, 0);
+      const abs = resolveAgainstWorkspace(
+        target.path,
+        ctx.dir,
+        ctx.sessionFiles,
+        ctx.currentToolPaths,
+        0,
+      );
       await openWithEditor(ctx.editor, abs, firstLine(target.line));
     } catch {
       try {

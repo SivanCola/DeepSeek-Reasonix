@@ -7,40 +7,31 @@ import {
   requestPermission as requestNotificationPermission,
   sendNotification,
 } from "@tauri-apps/plugin-notification";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { type Update, check } from "@tauri-apps/plugin-updater";
-import { useCallback, useEffect, useReducer, useRef, useState } from "react";
+import {
+  type ReactNode,
+  forwardRef,
+  useCallback,
+  useEffect,
+  useMemo,
+  useReducer,
+  useRef,
+  useState,
+} from "react";
+import { type ListRange, type ScrollerProps, Virtuoso, type VirtuosoHandle } from "react-virtuoso";
 import { CommandPalette, Toast, buildCommands, useCommandPalette } from "./CommandPalette";
 import { WorkspaceProvider } from "./Markdown";
-import {
-  nextAbortDraftCandidate,
-  restoreAbortedDraft,
-  type AbortDraftSource,
-} from "./abort-draft";
+import { type AbortDraftSource, nextAbortDraftCandidate, restoreAbortedDraft } from "./abort-draft";
 import { getLang, getLangLabel, getSupportedLangs, setLang, t, useLang } from "./i18n";
 import { I } from "./icons";
 import {
-  buildSlashSettingsDescriptors,
-  parseSlashSettingsCommand,
-  type SlashSettingsCommand,
-} from "./slash-settings";
-import {
-  FONT_FAMILY,
-  FONT_FAMILY_STACK,
-  FONT_SCALE,
-  FONT_SCALE_ZOOM,
-  type FontFamily,
-  type FontScale,
-  THEME,
-  type Theme,
-  type ThemeStyle,
-  defaultStyleForTheme,
-  isFontFamily,
-  isFontScale,
-  isTheme,
-  isThemeStyle,
-  themeForStyle,
-} from "./theme";
+  type ApprovalSnapshot,
+  deriveDesktopNotifications,
+  dispatchDesktopNotifications,
+  shouldShowCompletionToast,
+} from "./notifications";
 import type {
   CheckpointVerdict,
   ChoiceVerdict,
@@ -60,31 +51,46 @@ import type {
   SettingsPatch,
   SkillInfo,
 } from "./protocol";
-import { type QQDesktopSettingsState } from "./qq-settings";
+import type { QQDesktopSettingsState } from "./qq-settings";
+import {
+  type SlashSettingsCommand,
+  buildSlashSettingsDescriptors,
+  parseSlashSettingsCommand,
+} from "./slash-settings";
+import {
+  FONT_FAMILY,
+  FONT_FAMILY_STACK,
+  FONT_SCALE,
+  FONT_SCALE_ZOOM,
+  type FontFamily,
+  type FontScale,
+  THEME,
+  type Theme,
+  type ThemeStyle,
+  defaultStyleForTheme,
+  isFontFamily,
+  isFontScale,
+  isTheme,
+  isThemeStyle,
+  themeForStyle,
+} from "./theme";
+import { AboutModal } from "./ui/about";
+import { parseEditResult } from "./ui/cards";
 import { Composer, type SlashCmd } from "./ui/composer";
 import { ContextPanel, type ContextPanelTab } from "./ui/context-panel";
 import { JobsPop } from "./ui/jobs-pop";
+import { JumpBar, type JumpBarItem } from "./ui/jump-bar";
 import { useElapsed } from "./ui/live";
-import { AboutModal } from "./ui/about";
 import { SettingsModal, type PageId as SettingsPageId } from "./ui/settings";
-import { JumpBar } from "./ui/jump-bar";
-import { Virtuoso, type VirtuosoHandle } from "react-virtuoso";
-
-import { Sidebar } from "./ui/sidebar";
 import { Shortcut, localizeShortcutText, shortcutText } from "./ui/shortcut";
+import { Sidebar } from "./ui/sidebar";
 import { Splash, shouldShowSplash } from "./ui/splash";
-import { StatusBar } from "./ui/statusbar";
 import {
   StartupFailure,
-  coerceStartupFailure,
   type StartupFailureState,
+  coerceStartupFailure,
 } from "./ui/startup-failure";
-import {
-  dispatchDesktopNotifications,
-  deriveDesktopNotifications,
-  shouldShowCompletionToast,
-  type ApprovalSnapshot,
-} from "./notifications";
+import { StatusBar } from "./ui/statusbar";
 import {
   ActivePlanTaskCard,
   AssistantMsg,
@@ -98,18 +104,16 @@ import {
   TurnDivider,
   UserMsg,
 } from "./ui/thread";
-import { WorkdirPop } from "./ui/workdir-pop";
-import { parseEditResult } from "./ui/cards";
-import { useAutoCollapse } from "./ui/useAutoCollapse";
-import { useResizable } from "./ui/useResizable";
-// Auto-scroll handled by Virtuoso followOutput + scrollToIndex (useAutoScroll replaced).
-import { useDisableTextAssist } from "./ui/useDisableTextAssist";
 import { getThreadMaxWidth } from "./ui/thread-layout";
 import { elideTranscriptMessages } from "./ui/transcript-elision";
-import { openUrl } from "@tauri-apps/plugin-opener";
+import { useAutoCollapse } from "./ui/useAutoCollapse";
+import { useDisableTextAssist } from "./ui/useDisableTextAssist";
+import { useResizable } from "./ui/useResizable";
+import { WorkdirPop } from "./ui/workdir-pop";
 
 const RIGHT_SIDEBAR_COLLAPSE_WIDTH = 1120;
 const LEFT_SIDEBAR_COLLAPSE_WIDTH = 760;
+const THREAD_BOTTOM_THRESHOLD = 80;
 
 const RESPONSIVE_STAGE = {
   WIDE: "wide",
@@ -119,10 +123,28 @@ const RESPONSIVE_STAGE = {
 
 type ResponsiveStage = (typeof RESPONSIVE_STAGE)[keyof typeof RESPONSIVE_STAGE];
 
+type ApprovalQueueItem = {
+  key: string;
+  label: string;
+  node: ReactNode;
+};
+
 function responsiveStage(width: number): ResponsiveStage {
   if (width < LEFT_SIDEBAR_COLLAPSE_WIDTH) return RESPONSIVE_STAGE.NARROW;
   if (width < RIGHT_SIDEBAR_COLLAPSE_WIDTH) return RESPONSIVE_STAGE.COMPACT;
   return RESPONSIVE_STAGE.WIDE;
+}
+
+function ThreadTail() {
+  return <div className="thread-tail" />;
+}
+
+function hasScrollableOverflow(el: HTMLElement): boolean {
+  return el.scrollHeight > el.clientHeight + THREAD_BOTTOM_THRESHOLD;
+}
+
+function isElementAtBottom(el: HTMLElement): boolean {
+  return el.scrollTop + el.clientHeight >= el.scrollHeight - THREAD_BOTTOM_THRESHOLD;
 }
 
 export type AssistantSegment =
@@ -438,9 +460,7 @@ function fallbackSkillDesc(skill: SkillInfo): string {
         ? t("app.skill.scope.global")
         : t("app.skill.scope.project");
   const runAs =
-    skill.runAs === "subagent"
-      ? t("app.skill.runAs.subagent")
-      : t("app.skill.runAs.inline");
+    skill.runAs === "subagent" ? t("app.skill.runAs.subagent") : t("app.skill.runAs.inline");
   return t("app.skill.generic", { scope, runAs });
 }
 
@@ -478,7 +498,12 @@ function reduceRaw(state: State, action: Action): State {
         usage: { ...state.usage, turnCostUsd: 0 },
         messages: [
           ...state.messages,
-          { kind: "user", text: action.text, clientId: action.clientId, turn: nextMessageTurn(state.messages) },
+          {
+            kind: "user",
+            text: action.text,
+            clientId: action.clientId,
+            turn: nextMessageTurn(state.messages),
+          },
         ],
       };
     }
@@ -631,9 +656,7 @@ function reduceRaw(state: State, action: Action): State {
     case "dismiss_error":
       return {
         ...state,
-        messages: state.messages.filter(
-          (m) => !(m.kind === "error" && m.id === action.id),
-        ),
+        messages: state.messages.filter((m) => !(m.kind === "error" && m.id === action.id)),
       };
     case "mention_results":
       return { ...state, mentionResults: action.results };
@@ -708,16 +731,13 @@ function DiffStats({ stats }: { stats: FileStats }) {
   const total = stats.entries.length;
   return (
     <div className="diff-stats">
-      <button
-        type="button"
-        className="diff-stats-head"
-        onClick={() => setOpen((v) => !v)}
-      >
+      <button type="button" className="diff-stats-head" onClick={() => setOpen((v) => !v)}>
         <span className="ico">
           <I.diff size={11} />
         </span>
         <span>
-          {total} {total === 1 ? "file" : "files"} changed · +{stats.totalAdded} / −{stats.totalRemoved} {stats.totalRemoved === 1 ? "line" : "lines"}
+          {total} {total === 1 ? "file" : "files"} changed · +{stats.totalAdded} / −
+          {stats.totalRemoved} {stats.totalRemoved === 1 ? "line" : "lines"}
         </span>
         <span className="chev">{open ? <I.chev size={10} /> : <I.chevR size={10} />}</span>
       </button>
@@ -1137,10 +1157,7 @@ function applyIncomingRaw(state: State, ev: IncomingEvent): State {
           ...state.messages,
           {
             kind: "error",
-            message:
-              `Session "${ev.name}" loaded with no messages (${sizeNote}). ` +
-              `The file ~/.reasonix/sessions/${ev.name}.jsonl exists but couldn't be parsed — ` +
-              `start a new chat or restore from .jsonl.bak if you have one.`,
+            message: `Session "${ev.name}" loaded with no messages (${sizeNote}). The file ~/.reasonix/sessions/${ev.name}.jsonl exists but couldn't be parsed — start a new chat or restore from .jsonl.bak if you have one.`,
             id: nextErrorId(),
           },
         ],
@@ -1194,8 +1211,10 @@ function applyIncomingRaw(state: State, ev: IncomingEvent): State {
         const m = state.messages[i]!;
         if (m.kind !== "assistant" || m.turn !== ev.turn) continue;
         let updated = m;
-        if (ev.channel === "content") updated = { ...m, segments: appendTextSegment(m.segments, "text", ev.text) };
-        else if (ev.channel === "reasoning") updated = { ...m, segments: appendTextSegment(m.segments, "reasoning", ev.text) };
+        if (ev.channel === "content")
+          updated = { ...m, segments: appendTextSegment(m.segments, "text", ev.text) };
+        else if (ev.channel === "reasoning")
+          updated = { ...m, segments: appendTextSegment(m.segments, "reasoning", ev.text) };
         const next = [...state.messages];
         next[i] = updated;
         return { ...state, messages: next };
@@ -1205,8 +1224,7 @@ function applyIncomingRaw(state: State, ev: IncomingEvent): State {
     case "model.final": {
       const u = ev.usage;
       const promptTokens =
-        u?.prompt_tokens ??
-        (u?.prompt_cache_hit_tokens ?? 0) + (u?.prompt_cache_miss_tokens ?? 0);
+        u?.prompt_tokens ?? (u?.prompt_cache_hit_tokens ?? 0) + (u?.prompt_cache_miss_tokens ?? 0);
       const callHit = u?.prompt_cache_hit_tokens ?? 0;
       const callMiss = u?.prompt_cache_miss_tokens ?? Math.max(0, promptTokens - callHit);
       const hasCall = promptTokens > 0 || callHit > 0 || callMiss > 0;
@@ -1224,18 +1242,19 @@ function applyIncomingRaw(state: State, ev: IncomingEvent): State {
       };
       // Walk backwards to clear pending flag on the matching assistant
       let settledPending = false;
+      let messages = state.messages;
       for (let i = state.messages.length - 1; i >= 0; i--) {
         const m = state.messages[i]!;
         if (m.kind !== "assistant" || m.turn !== ev.turn) continue;
         if (m.pending) {
           const s = [...state.messages];
           s[i] = { ...m, pending: false };
-          state = { ...state, messages: s };
+          messages = s;
         }
         settledPending = true;
         break;
       }
-      return settledPending ? { ...state, usage } : { ...state, usage };
+      return settledPending ? { ...state, messages, usage } : { ...state, usage };
     }
     case "tool.preparing": {
       for (let i = state.messages.length - 1; i >= 0; i--) {
@@ -1243,7 +1262,19 @@ function applyIncomingRaw(state: State, ev: IncomingEvent): State {
         if (m.kind !== "assistant" || m.turn !== ev.turn) continue;
         if (m.segments.some((s) => s.kind === "tool" && s.callId === ev.callId)) return state;
         const next = [...state.messages];
-        next[i] = { ...m, segments: [...m.segments, { kind: "tool" as const, callId: ev.callId, name: ev.name, args: "", startedAt: Date.now() }] };
+        next[i] = {
+          ...m,
+          segments: [
+            ...m.segments,
+            {
+              kind: "tool" as const,
+              callId: ev.callId,
+              name: ev.name,
+              args: "",
+              startedAt: Date.now(),
+            },
+          ],
+        };
         return { ...state, messages: next };
       }
       return state;
@@ -1257,13 +1288,26 @@ function applyIncomingRaw(state: State, ev: IncomingEvent): State {
         const idx = m.segments.findIndex((s) => s.kind === "tool" && s.callId === ev.callId);
         if (idx >= 0) {
           const segs = [...m.segments];
-          if (segs[idx]?.kind === "tool") segs[idx] = { ...(segs[idx] as AssistantSegment & { kind: "tool" }), args: ev.args };
+          if (segs[idx]?.kind === "tool")
+            segs[idx] = { ...(segs[idx] as AssistantSegment & { kind: "tool" }), args: ev.args };
           const msgs = [...nextState.messages];
           msgs[i] = { ...m, segments: segs };
           nextState = { ...nextState, messages: msgs };
         } else {
           const msgs = [...nextState.messages];
-          msgs[i] = { ...m, segments: [...m.segments, { kind: "tool" as const, callId: ev.callId, name: ev.name, args: ev.args, startedAt: Date.now() }] };
+          msgs[i] = {
+            ...m,
+            segments: [
+              ...m.segments,
+              {
+                kind: "tool" as const,
+                callId: ev.callId,
+                name: ev.name,
+                args: ev.args,
+                startedAt: Date.now(),
+              },
+            ],
+          };
           nextState = { ...nextState, messages: msgs };
         }
         break;
@@ -1295,10 +1339,7 @@ function applyIncomingRaw(state: State, ev: IncomingEvent): State {
       return {
         ...state,
         busy: false,
-        messages: [
-          ...state.messages,
-          { kind: "status", text: `≫ btw\n${ev.answer}` },
-        ],
+        messages: [...state.messages, { kind: "status", text: `≫ btw\n${ev.answer}` }],
       };
     case "status":
       return state;
@@ -1351,7 +1392,11 @@ function formatConversationMarkdown(messages: ChatMessage[], userLabel: string):
 }
 
 function sanitizeFilename(name: string): string {
-  return name.replace(/[<>:"/\\|?*\x00-\x1f]/g, "_").replace(/^\.+/, "").slice(0, 200) || "session";
+  const cleaned = Array.from(name, (ch) => {
+    const code = ch.charCodeAt(0);
+    return code < 32 || '<>:"/\\|?*'.includes(ch) ? "_" : ch;
+  }).join("");
+  return cleaned.replace(/^\.+/, "").slice(0, 200) || "session";
 }
 
 function defaultExportFilename(session: string): string {
@@ -1489,17 +1534,20 @@ function TabRuntime({
     { top?: number; bottom?: number; left: number } | undefined
   >(undefined);
   const composerRef = useRef<HTMLTextAreaElement>(null);
-  const threadRef = useRef<HTMLDivElement>(null);
   const virtuosoRef = useRef<VirtuosoHandle>(null);
-  const virtScrollerRef = useRef<HTMLDivElement | null>(null);
-  const atBottomRef = useRef(true);
+  const virtuosoScrollerRef = useRef<HTMLDivElement | null>(null);
+  const [virtuosoScroller, setVirtuosoScroller] = useState<HTMLDivElement | null>(null);
+  const autoFollowRef = useRef(true);
+  const userDetachedScrollRef = useRef(false);
+  const scrollFrameRef = useRef<number>(0);
+  const scrollBusyRef = useRef(false);
+  const restoredScrollSessionRef = useRef<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsPage, setSettingsPage] = useState<SettingsPageId>("general");
-  const [mcpEditTarget, setMcpEditTarget] = useState<{ raw: string; nonce: number } | null>(
-    null,
-  );
+  const [mcpEditTarget, setMcpEditTarget] = useState<{ raw: string; nonce: number } | null>(null);
   const [jobsOpen, setJobsOpen] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
+  const [approvalTrayExpanded, setApprovalTrayExpanded] = useState(false);
   const [contextPanelTab, setContextPanelTab] = useState<ContextPanelTab>("files");
   const [contextPanelTabNonce, setContextPanelTabNonce] = useState(0);
   const previousApprovalSnapshotRef = useRef<ApprovalSnapshot>({
@@ -1534,6 +1582,26 @@ function TabRuntime({
     setSettingsOpen(true);
   }, []);
   const palette = useCommandPalette(active);
+  const VirtuosoScroller = useMemo(
+    () =>
+      forwardRef<HTMLDivElement, ScrollerProps>(function VirtuosoScroller(props, ref) {
+        const setScrollerRef = useCallback(
+          (node: HTMLDivElement | null) => {
+            virtuosoScrollerRef.current = node;
+            setVirtuosoScroller(node);
+            if (typeof ref === "function") {
+              ref(node);
+            } else if (ref) {
+              ref.current = node;
+            }
+          },
+          [ref],
+        );
+
+        return <div {...props} className="thread-scroller" ref={setScrollerRef} />;
+      }),
+    [],
+  );
 
   useEffect(() => {
     registerDispatch(tabId, dispatch);
@@ -1658,13 +1726,10 @@ function TabRuntime({
     }
   }, [clearAbortDraft, saveSettings, state.settings?.workspaceDir]);
 
-  const flashToast = useCallback(
-    (msg: string, opts?: { yolo?: boolean; duration?: number }) => {
-      setToast({ msg, yolo: opts?.yolo });
-      window.setTimeout(() => setToast(null), opts?.duration ?? 1600);
-    },
-    [],
-  );
+  const flashToast = useCallback((msg: string, opts?: { yolo?: boolean; duration?: number }) => {
+    setToast({ msg, yolo: opts?.yolo });
+    window.setTimeout(() => setToast(null), opts?.duration ?? 1600);
+  }, []);
 
   const importCcSwitchMcp = useCallback(async () => {
     try {
@@ -1787,10 +1852,7 @@ function TabRuntime({
         const handle = await webview.onDragDropEvent((event) => {
           if (!dropActiveRef.current) return;
           if (event.payload.type === "enter") {
-            document.body.style.setProperty(
-              "--drop-overlay-label",
-              `"${t("dragDrop.overlay")}"`,
-            );
+            document.body.style.setProperty("--drop-overlay-label", `"${t("dragDrop.overlay")}"`);
             document.body.dataset.dragOver = "1";
             return;
           }
@@ -1891,7 +1953,12 @@ function TabRuntime({
           const clientId = `skill-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
           const trimmedArgs = args?.trim() ?? "";
           recordAbortDraft("skill_run", text);
-          dispatch({ t: "start_skill", skill: { name: skill.name, runAs: skill.runAs }, args: trimmedArgs, clientId });
+          dispatch({
+            t: "start_skill",
+            skill: { name: skill.name, runAs: skill.runAs },
+            args: trimmedArgs,
+            clientId,
+          });
           sendRpc({ cmd: "skill_run", name: skill.name, args: trimmedArgs || undefined });
           if (!override) setDraft("");
           return;
@@ -1938,21 +2005,26 @@ function TabRuntime({
   }, [clearAbortDraft, resetPromptHistoryNav]);
 
   // When /retry returns the last user text, set it as the composer draft
+  const retryTextRef = useRef(state.retryText);
+  retryTextRef.current = state.retryText;
   useEffect(() => {
-    if (state.retryNonce > 0 && state.retryText) {
+    const retryText = retryTextRef.current;
+    if (state.retryNonce > 0 && retryText) {
       resetPromptHistoryNav();
-      setDraft(state.retryText);
+      setDraft(retryText);
       composerRef.current?.focus();
     }
     // Only fire when retryNonce changes — retryText alone would re-fire on re-renders
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [state.retryNonce]);
+  }, [resetPromptHistoryNav, state.retryNonce]);
 
-  const onEditUserMsg = useCallback((t: string) => {
-    resetPromptHistoryNav();
-    setDraft(t);
-    composerRef.current?.focus();
-  }, [resetPromptHistoryNav]);
+  const onEditUserMsg = useCallback(
+    (t: string) => {
+      resetPromptHistoryNav();
+      setDraft(t);
+      composerRef.current?.focus();
+    },
+    [resetPromptHistoryNav],
+  );
 
   useEffect(() => {
     if (state.busy || !state.ready || state.queuedSends.length === 0) return;
@@ -1993,7 +2065,8 @@ function TabRuntime({
       mode: "browsing",
       draft: prev.mode === "idle" ? request.draft : prev.draft,
       cursor: result.entry?.cursor ?? null,
-      originSessionName: prev.mode === "idle" ? (state.currentSession ?? null) : prev.originSessionName,
+      originSessionName:
+        prev.mode === "idle" ? (state.currentSession ?? null) : prev.originSessionName,
     }));
     requestAnimationFrame(() => {
       composerRef.current?.focus();
@@ -2002,23 +2075,37 @@ function TabRuntime({
   }, [state.promptHistoryResult, state.currentSession]);
 
   useEffect(() => {
+    void state.currentSession;
     resetPromptHistoryNav();
   }, [resetPromptHistoryNav, state.currentSession]);
 
   useEffect(() => {
     const currentSnapshot: ApprovalSnapshot = {
       confirms: state.pendingConfirms.map((c) => ({ id: c.id, command: c.command })),
-      pathAccess: state.pendingPathAccess.map((p) => ({ id: p.id, path: p.path, intent: p.intent })),
+      pathAccess: state.pendingPathAccess.map((p) => ({
+        id: p.id,
+        path: p.path,
+        intent: p.intent,
+      })),
       choices: state.pendingChoices.map((c) => ({ id: c.id, question: c.question })),
       plans: state.pendingPlans.map((p) => ({ id: p.id, summary: p.summary, plan: p.plan })),
-      checkpoints: state.pendingCheckpoints.map((c) => ({ id: c.id, title: c.title, result: c.result })),
-      revisions: state.pendingRevisions.map((r) => ({ id: r.id, summary: r.summary, reason: r.reason })),
+      checkpoints: state.pendingCheckpoints.map((c) => ({
+        id: c.id,
+        title: c.title,
+        result: c.result,
+      })),
+      revisions: state.pendingRevisions.map((r) => ({
+        id: r.id,
+        summary: r.summary,
+        reason: r.reason,
+      })),
     };
     const previousSnapshot = previousApprovalSnapshotRef.current;
     const wasBusy = wasBusyRef.current;
-    const busyDurationMs = wasBusy && !state.busy && busyStartedAtRef.current
-      ? Date.now() - busyStartedAtRef.current
-      : 0;
+    const busyDurationMs =
+      wasBusy && !state.busy && busyStartedAtRef.current
+        ? Date.now() - busyStartedAtRef.current
+        : 0;
 
     if (state.busy && busyStartedAtRef.current === null) {
       busyStartedAtRef.current = Date.now();
@@ -2068,6 +2155,18 @@ function TabRuntime({
     state.pendingPlans,
     state.pendingRevisions,
   ]);
+
+  const pendingApprovalCount =
+    state.pendingPlans.length +
+    state.pendingCheckpoints.length +
+    state.pendingRevisions.length +
+    state.pendingConfirms.length +
+    state.pendingPathAccess.length +
+    state.pendingChoices.length;
+
+  useEffect(() => {
+    if (pendingApprovalCount <= 1) setApprovalTrayExpanded(false);
+  }, [pendingApprovalCount]);
 
   const resolveConfirm = useCallback(
     (id: number, response: ConfirmationChoice) => {
@@ -2124,50 +2223,249 @@ function TabRuntime({
     [sendRpc],
   );
 
+  // Read the latest session inside the stable restore callback below.
+  const currentSessionRef = useRef(state.currentSession);
+  currentSessionRef.current = state.currentSession;
   const messageItems = state.messages;
+  const [activeJumpTurn, setActiveJumpTurn] = useState<number | null>(null);
+  const jumpItems = useMemo<JumpBarItem[]>(
+    () =>
+      messageItems.flatMap((message, index) =>
+        message.kind === "user"
+          ? [{ index, turn: message.turn, text: message.text.slice(0, 80) }]
+          : [],
+      ),
+    [messageItems],
+  );
+
+  useEffect(() => {
+    if (jumpItems.length === 0) {
+      setActiveJumpTurn(null);
+      return;
+    }
+    setActiveJumpTurn((current) =>
+      current !== null && jumpItems.some((item) => item.turn === current)
+        ? current
+        : jumpItems[jumpItems.length - 1]!.turn,
+    );
+  }, [jumpItems]);
+
+  const restoreScrollTop = useCallback(() => {
+    const session = currentSessionRef.current;
+    if (!session) return null;
+    const raw = localStorage.getItem(`reasonix.scroll.${session}`);
+    const n = raw ? Number(raw) : Number.NaN;
+    return Number.isFinite(n) ? n : null;
+  }, []);
 
   const [showJumpButton, setShowJumpButton] = useState(false);
-
-  // Reserve scroll to bottom when busy becomes true (message just sent).
-  const busyPrevRef = useRef(state.busy);
-  useEffect(() => {
-    if (state.busy && !busyPrevRef.current) {
-      atBottomRef.current = true;
-      setShowJumpButton(false);
-    }
-    busyPrevRef.current = state.busy;
-  }, [state.busy]);
-
-  const scrollToBottom = useCallback(() => {
-    const len = messageItems.length;
-    if (len > 0) {
-      const scroller = virtScrollerRef.current;
-      if (scroller) {
-        scroller.scrollTop = scroller.scrollHeight;
-      } else {
-        virtuosoRef.current?.scrollToIndex({ index: len - 1, behavior: "auto" });
+  const refreshJumpButton = useCallback(() => {
+    const el = virtuosoScrollerRef.current;
+    if (!el) return;
+    setShowJumpButton(
+      userDetachedScrollRef.current && hasScrollableOverflow(el) && !isElementAtBottom(el),
+    );
+  }, []);
+  const handleJumpBarJump = useCallback(
+    (item: JumpBarItem) => {
+      setActiveJumpTurn(item.turn);
+      autoFollowRef.current = false;
+      userDetachedScrollRef.current = true;
+      setShowJumpButton(item.index < messageItems.length - 1);
+      virtuosoRef.current?.scrollToIndex({
+        index: item.index,
+        align: "start",
+        behavior: "smooth",
+      });
+      window.requestAnimationFrame(refreshJumpButton);
+    },
+    [messageItems.length, refreshJumpButton],
+  );
+  const handleThreadRangeChanged = useCallback(
+    (range: ListRange) => {
+      if (messageItems.length === 0) {
+        setActiveJumpTurn(null);
+        return;
       }
-    }
-  }, [messageItems.length]);
 
-  // Follow the bottom while the assistant is streaming and the user hasn't
-  // scrolled up. The dependency on messageItems.length covers new messages;
-  // atBottomRef guards against re-pinning when the user intentionally scrolled
-  // up to read earlier content (#2159).
+      let nextTurn: number | null = null;
+      const startIndex = Math.max(0, Math.min(range.startIndex, messageItems.length - 1));
+      for (let index = startIndex; index >= 0; index--) {
+        const message = messageItems[index];
+        if (message?.kind === "user") {
+          nextTurn = message.turn;
+          break;
+        }
+      }
+      if (nextTurn === null) {
+        for (let index = startIndex + 1; index <= range.endIndex; index++) {
+          const message = messageItems[index];
+          if (message?.kind === "user") {
+            nextTurn = message.turn;
+            break;
+          }
+        }
+      }
+      setActiveJumpTurn((current) => (current === nextTurn ? current : nextTurn));
+    },
+    [messageItems],
+  );
+
+  const scrollToBottom = useCallback(
+    (smooth = true) => {
+      autoFollowRef.current = true;
+      userDetachedScrollRef.current = false;
+      setShowJumpButton(false);
+
+      const lastIndex = messageItems.length - 1;
+      if (lastIndex >= 0) {
+        virtuosoRef.current?.scrollToIndex({
+          index: lastIndex,
+          align: "end",
+          behavior: smooth ? "smooth" : "auto",
+        });
+      }
+
+      const el = virtuosoScrollerRef.current;
+      if (el) {
+        el.scrollTo({
+          top: el.scrollHeight,
+          behavior: smooth ? "smooth" : "auto",
+        });
+      }
+    },
+    [messageItems.length],
+  );
+
+  const scheduleScrollToBottom = useCallback(
+    (smooth = false) => {
+      if (scrollFrameRef.current) cancelAnimationFrame(scrollFrameRef.current);
+      scrollFrameRef.current = requestAnimationFrame(() => {
+        scrollFrameRef.current = 0;
+        scrollToBottom(smooth);
+      });
+    },
+    [scrollToBottom],
+  );
+
+  const handleAtBottomStateChange = useCallback(
+    (atBottom: boolean) => {
+      if (atBottom) {
+        autoFollowRef.current = true;
+        userDetachedScrollRef.current = false;
+        setShowJumpButton(false);
+        return;
+      }
+      refreshJumpButton();
+    },
+    [refreshJumpButton],
+  );
+
+  const followOutput = useCallback((isAtBottom: boolean) => {
+    return isAtBottom || autoFollowRef.current ? "auto" : false;
+  }, []);
+
   useEffect(() => {
-    const s = virtScrollerRef.current;
-    if (!s || messageItems.length === 0) return;
-    if (!atBottomRef.current) return;
-    const id = requestAnimationFrame(() => {
-      if (atBottomRef.current) s.scrollTop = s.scrollHeight;
-    });
-    return () => cancelAnimationFrame(id);
-  }, [messageItems]);
+    const el = virtuosoScroller;
+    if (!el) return;
+
+    let pendingFrame = 0;
+    const markUserScrollIntent = () => {
+      if (pendingFrame) cancelAnimationFrame(pendingFrame);
+      pendingFrame = requestAnimationFrame(() => {
+        pendingFrame = 0;
+        const atBottom = isElementAtBottom(el);
+        autoFollowRef.current = atBottom;
+        userDetachedScrollRef.current = !atBottom;
+        refreshJumpButton();
+      });
+    };
+
+    let draggingScrollbar = false;
+    const onPointerDown = () => {
+      draggingScrollbar = true;
+      markUserScrollIntent();
+      el.addEventListener("scroll", markUserScrollIntent, { passive: true });
+    };
+    const onPointerEnd = () => {
+      if (!draggingScrollbar) return;
+      draggingScrollbar = false;
+      el.removeEventListener("scroll", markUserScrollIntent);
+      markUserScrollIntent();
+    };
+
+    el.addEventListener("wheel", markUserScrollIntent, { passive: true });
+    el.addEventListener("touchmove", markUserScrollIntent, { passive: true });
+    el.addEventListener("keydown", markUserScrollIntent);
+    el.addEventListener("pointerdown", onPointerDown);
+    window.addEventListener("pointerup", onPointerEnd);
+    window.addEventListener("pointercancel", onPointerEnd);
+
+    return () => {
+      if (pendingFrame) cancelAnimationFrame(pendingFrame);
+      el.removeEventListener("wheel", markUserScrollIntent);
+      el.removeEventListener("touchmove", markUserScrollIntent);
+      el.removeEventListener("keydown", markUserScrollIntent);
+      el.removeEventListener("pointerdown", onPointerDown);
+      el.removeEventListener("scroll", markUserScrollIntent);
+      window.removeEventListener("pointerup", onPointerEnd);
+      window.removeEventListener("pointercancel", onPointerEnd);
+    };
+  }, [refreshJumpButton, virtuosoScroller]);
+
+  useEffect(() => {
+    if (scrollBusyRef.current !== state.busy) {
+      if (state.busy || !userDetachedScrollRef.current) {
+        scheduleScrollToBottom(state.busy);
+      }
+      scrollBusyRef.current = state.busy;
+    }
+  }, [scheduleScrollToBottom, state.busy]);
+
+  useEffect(() => {
+    if (messageItems.length === 0) return;
+    if (!autoFollowRef.current) {
+      refreshJumpButton();
+      return;
+    }
+    scheduleScrollToBottom(false);
+  }, [messageItems, refreshJumpButton, scheduleScrollToBottom]);
+
+  useEffect(() => {
+    return () => {
+      if (scrollFrameRef.current) cancelAnimationFrame(scrollFrameRef.current);
+    };
+  }, []);
+
+  useEffect(() => {
+    const el = virtuosoScroller;
+    const sessionKey = state.currentSession ?? "__new__";
+    if (!el || restoredScrollSessionRef.current === sessionKey) return;
+    restoredScrollSessionRef.current = sessionKey;
+    const id = window.setTimeout(() => {
+      const restore = restoreScrollTop();
+      if (restore != null && restore > THREAD_BOTTOM_THRESHOLD) {
+        autoFollowRef.current = false;
+        userDetachedScrollRef.current = true;
+        el.scrollTop = restore;
+        refreshJumpButton();
+        return;
+      }
+      scheduleScrollToBottom(false);
+    }, 80);
+    return () => window.clearTimeout(id);
+  }, [
+    refreshJumpButton,
+    restoreScrollTop,
+    scheduleScrollToBottom,
+    state.currentSession,
+    virtuosoScroller,
+  ]);
 
   // Persist the transcript scroll offset per session so a restart reopens
   // the conversation where the user left it (#1244).
   useEffect(() => {
-    const el = virtScrollerRef.current;
+    const el = virtuosoScroller;
     const session = state.currentSession;
     if (!el || !session) return;
     const key = `reasonix.scroll.${session}`;
@@ -2185,7 +2483,7 @@ function TabRuntime({
       el.removeEventListener("scroll", onScroll);
       clearTimeout(timer);
     };
-  }, [state.currentSession]);
+  }, [state.currentSession, virtuosoScroller]);
 
   useEffect(() => {
     if (!active) return;
@@ -2346,7 +2644,12 @@ function TabRuntime({
         composerRef.current?.focus();
       },
     },
-    { cmd: "/new", desc: t("app.cmd.newSession"), run: () => newChat(), kb: shortcutText(["mod", "N"]) },
+    {
+      cmd: "/new",
+      desc: t("app.cmd.newSession"),
+      run: () => newChat(),
+      kb: shortcutText(["mod", "N"]),
+    },
     { cmd: "/clear", desc: t("app.cmd.clearChat"), run: () => clearConversation() },
     { cmd: "/abort", desc: t("app.cmd.abort"), run: () => abort(), kb: "esc" },
     {
@@ -2516,9 +2819,88 @@ function TabRuntime({
     flashToast(t("app.toast.copiedMd"));
   }, [state.messages, flashToast]);
 
+  const approvalItems: ApprovalQueueItem[] = [
+    ...state.pendingPlans.map((p) => ({
+      key: `pp-${p.id}`,
+      label: t("thread.planConfirmationKind"),
+      node: (
+        <PlanApprovalCard
+          p={p}
+          onApprove={() => resolvePlan(p.id, { type: "approve" })}
+          onRefine={() => resolvePlan(p.id, { type: "refine" })}
+          onCancel={() => resolvePlan(p.id, { type: "cancel" })}
+        />
+      ),
+    })),
+    ...state.pendingCheckpoints.map((c) => ({
+      key: `cp-${c.id}`,
+      label: t("thread.checkpointKind"),
+      node: (
+        <CheckpointApprovalCard
+          c={c}
+          onContinue={() => resolveCheckpoint(c.id, { type: "continue" })}
+          onRevise={() => resolveCheckpoint(c.id, { type: "revise" })}
+          onStop={() => resolveCheckpoint(c.id, { type: "stop" })}
+        />
+      ),
+    })),
+    ...state.pendingRevisions.map((r) => ({
+      key: `rv-${r.id}`,
+      label: t("thread.planRevisionKind"),
+      node: (
+        <RevisionApprovalCard
+          r={r}
+          onAccept={() => resolveRevision(r.id, { type: "accepted" })}
+          onReject={() => resolveRevision(r.id, { type: "rejected" })}
+        />
+      ),
+    })),
+    ...state.pendingConfirms.map((c) => ({
+      key: `cc-${c.id}`,
+      label: t("thread.shellConfirmationKind"),
+      node: (
+        <ConfirmApprovalCard
+          prompt={c.prompt}
+          onAllow={() => resolveConfirm(c.id, { type: "run_once" })}
+          onAlwaysAllow={(prefix) => resolveConfirm(c.id, { type: "always_allow", prefix })}
+          onDeny={() => resolveConfirm(c.id, { type: "deny" })}
+        />
+      ),
+    })),
+    ...state.pendingPathAccess.map((p) => ({
+      key: `pa-${p.id}`,
+      label: t("thread.pathAccessKind"),
+      node: (
+        <PathAccessApprovalCard
+          prompt={p.prompt}
+          onAllow={() => resolvePathAccess(p.id, { type: "run_once" })}
+          onAlwaysAllow={(prefix) => resolvePathAccess(p.id, { type: "always_allow", prefix })}
+          onDeny={() => resolvePathAccess(p.id, { type: "deny" })}
+        />
+      ),
+    })),
+    ...state.pendingChoices.map((c) => ({
+      key: `ch-${c.id}`,
+      label: t("thread.userChoiceKind"),
+      node: (
+        <ChoiceApprovalCard
+          c={c}
+          onPick={(optionId) => resolveChoice(c.id, { type: "pick", optionId })}
+          onCancel={() => resolveChoice(c.id, { type: "cancel" })}
+        />
+      ),
+    })),
+  ];
+  const visibleApprovalItems = approvalTrayExpanded ? approvalItems : approvalItems.slice(0, 1);
+  const hiddenApprovalCount = Math.max(approvalItems.length - visibleApprovalItems.length, 0);
+
   return (
     <WorkspaceProvider
-      value={{ dir: state.settings?.workspaceDir, editor: state.settings?.editor, sessionFiles: state.sessionFiles }}
+      value={{
+        dir: state.settings?.workspaceDir,
+        editor: state.settings?.editor,
+        sessionFiles: state.sessionFiles,
+      }}
     >
       <div
         className="app"
@@ -2601,10 +2983,6 @@ function TabRuntime({
         ) : null}
 
         <main className="main" style={{ position: "relative" }}>
-          <JumpBar messages={state.messages} threadEl={threadRef.current} onScrollToTurn={(turn) => {
-            const idx = state.messages.findIndex((m) => (m.kind === "user" || m.kind === "assistant") && m.turn === turn);
-            if (idx >= 0) virtuosoRef.current?.scrollToIndex(idx);
-          }} />
           {state.needsSetup ? (
             <NeedsSetupView
               workspaceDir={state.settings?.workspaceDir}
@@ -2628,7 +3006,8 @@ function TabRuntime({
                   setWdOpen(true);
                 }}
               />
-              <div className="thread" ref={threadRef}>
+              <div className="thread">
+                <JumpBar activeTurn={activeJumpTurn} items={jumpItems} onJump={handleJumpBarJump} />
                 {state.messages.length === 0 ? (
                   <div className="thread-inner thread-inner--standalone">
                     <EmptyState
@@ -2637,7 +3016,10 @@ function TabRuntime({
                         if (trimmed.startsWith("/")) {
                           const cmd = trimmed.split(/\s+/)[0] ?? "";
                           const match = slashCommands.find((s) => s.cmd === cmd);
-                          if (match) { match.run(); return; }
+                          if (match) {
+                            match.run();
+                            return;
+                          }
                         }
                         send(text);
                       }}
@@ -2650,31 +3032,29 @@ function TabRuntime({
                     style={{ height: "90%" }}
                     className="virtuoso-scroll"
                     totalCount={messageItems.length}
-                    followOutput={"auto"}
-                    initialTopMostItemIndex={messageItems.length > 0 ? messageItems.length - 1 : undefined}
-                    scrollerRef={(ref) => { virtScrollerRef.current = ref as HTMLDivElement | null; }}
-                    atBottomStateChange={(atBottom) => { atBottomRef.current = atBottom; setShowJumpButton(!atBottom); }}
+                    alignToBottom
+                    followOutput={followOutput}
+                    rangeChanged={handleThreadRangeChanged}
+                    atBottomThreshold={THREAD_BOTTOM_THRESHOLD}
+                    atBottomStateChange={handleAtBottomStateChange}
+                    increaseViewportBy={{ top: 360, bottom: 720 }}
+                    overscan={{ main: 240, reverse: 240 }}
                     components={{
-                      Header: state.activePlan ? () => (
-                        <div className="thread-inner">
-                          <PlanBanner
-                            plan={state.activePlan!}
-                            onDismiss={state.busy ? undefined : () => dispatch({ t: "dismiss_plan" })}
-                          />
-                          <ActivePlanTaskCard plan={state.activePlan!} />
-                        </div>
-                      ) : undefined,
-                      Footer: () => (
-                        <div className="thread-inner">
-                          {state.pendingPlans.map((p) => <PlanApprovalCard key={`pp-${p.id}`} p={p} onApprove={() => resolvePlan(p.id, { type: "approve" })} onRefine={() => resolvePlan(p.id, { type: "refine" })} onCancel={() => resolvePlan(p.id, { type: "cancel" })} />)}
-                          {state.pendingCheckpoints.map((c) => <CheckpointApprovalCard key={`cp-${c.id}`} c={c} onContinue={() => resolveCheckpoint(c.id, { type: "continue" })} onRevise={() => resolveCheckpoint(c.id, { type: "revise" })} onStop={() => resolveCheckpoint(c.id, { type: "stop" })} />)}
-                          {state.pendingRevisions.map((r) => <RevisionApprovalCard key={`rv-${r.id}`} r={r} onAccept={() => resolveRevision(r.id, { type: "accepted" })} onReject={() => resolveRevision(r.id, { type: "rejected" })} />)}
-                          {state.pendingConfirms.map((c) => <ConfirmApprovalCard key={`cc-${c.id}`} prompt={c.prompt} onAllow={() => resolveConfirm(c.id, { type: "run_once" })} onAlwaysAllow={(prefix) => resolveConfirm(c.id, { type: "always_allow", prefix })} onDeny={() => resolveConfirm(c.id, { type: "deny" })} />)}
-                          {state.pendingPathAccess.map((p) => <PathAccessApprovalCard key={`pa-${p.id}`} prompt={p.prompt} onAllow={() => resolvePathAccess(p.id, { type: "run_once" })} onAlwaysAllow={(prefix) => resolvePathAccess(p.id, { type: "always_allow", prefix })} onDeny={() => resolvePathAccess(p.id, { type: "deny" })} />)}
-                          {state.pendingChoices.map((c) => <ChoiceApprovalCard key={`ch-${c.id}`} c={c} onPick={(optionId) => resolveChoice(c.id, { type: "pick", optionId })} onCancel={() => resolveChoice(c.id, { type: "cancel" })} />)}
-                          {!state.ready ? <div style={{ padding: 12, color: "var(--muted)", fontFamily: "Geist Mono, monospace", fontSize: 11 }}>{t("app.connecting")}</div> : null}
-                        </div>
-                      ),
+                      Scroller: VirtuosoScroller,
+                      Footer: ThreadTail,
+                      Header: state.activePlan
+                        ? () => (
+                            <div className="thread-inner">
+                              <PlanBanner
+                                plan={state.activePlan!}
+                                onDismiss={
+                                  state.busy ? undefined : () => dispatch({ t: "dismiss_plan" })
+                                }
+                              />
+                              <ActivePlanTaskCard plan={state.activePlan!} />
+                            </div>
+                          )
+                        : undefined,
                     }}
                     itemContent={(index) => {
                       const m = state.messages[index]!;
@@ -2705,18 +3085,41 @@ function TabRuntime({
                       }
                       if (m.kind === "error") {
                         const toneVar = m.recoverable ? "var(--tone-warn)" : "var(--tone-err)";
-                        const bgVar = m.recoverable ? "var(--warn-soft, var(--danger-soft))" : "var(--danger-soft)";
+                        const bgVar = m.recoverable
+                          ? "var(--warn-soft, var(--danger-soft))"
+                          : "var(--danger-soft)";
                         const labelKey = m.recoverable ? "app.warningLabel" : "app.errorLabel";
                         return (
-                          <div key={m.id} className="warn-card" style={{ borderColor: toneVar, background: bgVar, position: "relative" }}>
-                            <span className="ico" style={{ color: toneVar }}><I.warning size={16} /></span>
+                          <div
+                            key={m.id}
+                            className="warn-card"
+                            style={{
+                              borderColor: toneVar,
+                              background: bgVar,
+                              position: "relative",
+                            }}
+                          >
+                            <span className="ico" style={{ color: toneVar }}>
+                              <I.warning size={16} />
+                            </span>
                             <div style={{ flex: 1 }}>
                               <div className="tt">{t(labelKey)}</div>
                               <div className="ds">{m.message}</div>
                             </div>
-                            <button type="button" className="warn-card-dismiss" title={t("app.dismissError")}
+                            <button
+                              type="button"
+                              className="warn-card-dismiss"
+                              title={t("app.dismissError")}
                               onClick={() => dispatch({ t: "dismiss_error", id: m.id })}
-                              style={{ background: "transparent", border: "none", color: toneVar, cursor: "pointer", padding: "4px", alignSelf: "flex-start" }}>
+                              style={{
+                                background: "transparent",
+                                border: "none",
+                                color: toneVar,
+                                cursor: "pointer",
+                                padding: "4px",
+                                alignSelf: "flex-start",
+                              }}
+                            >
                               <I.x size={14} />
                             </button>
                           </div>
@@ -2738,8 +3141,9 @@ function TabRuntime({
                 )}
                 {showJumpButton ? (
                   <button
+                    type="button"
                     className="thread-jump-bottom"
-                    onClick={() => { atBottomRef.current = true; setShowJumpButton(false); scrollToBottom(); }}
+                    onClick={() => scrollToBottom()}
                     title={t("app.jumpToBottom") ?? "Jump to bottom"}
                     aria-label={t("app.jumpToBottom") ?? "Jump to bottom"}
                   >
@@ -2747,6 +3151,54 @@ function TabRuntime({
                   </button>
                 ) : null}
               </div>
+
+              {approvalItems.length > 0 || !state.ready ? (
+                <div className="approval-tray" data-expanded={approvalTrayExpanded}>
+                  <div className="approval-tray-head">
+                    <span className="approval-tray-title">
+                      <I.shield size={13} />
+                      <span>{approvalItems[0]?.label ?? t("app.connecting")}</span>
+                    </span>
+                    {pendingApprovalCount > 1 ? (
+                      <span className="approval-tray-count">{pendingApprovalCount}</span>
+                    ) : null}
+                    <span className="grow" />
+                    {approvalItems.length > 1 ? (
+                      <button
+                        type="button"
+                        className="approval-tray-toggle"
+                        onClick={() => setApprovalTrayExpanded((v) => !v)}
+                      >
+                        {approvalTrayExpanded
+                          ? t("thread.collapse")
+                          : `${t("app.titlebar.more")} ${hiddenApprovalCount}`}
+                      </button>
+                    ) : null}
+                  </div>
+                  <div className="approval-stack">
+                    {visibleApprovalItems.map((item) => (
+                      <div className="approval-slot" key={item.key}>
+                        {item.node}
+                      </div>
+                    ))}
+                    {!approvalTrayExpanded && hiddenApprovalCount > 0 ? (
+                      <button
+                        type="button"
+                        className="approval-queue-more"
+                        onClick={() => setApprovalTrayExpanded(true)}
+                      >
+                        <I.more size={13} />
+                        <span>
+                          {t("app.titlebar.more")} · {hiddenApprovalCount}
+                        </span>
+                      </button>
+                    ) : null}
+                    {!state.ready ? (
+                      <div className="approval-connecting">{t("app.connecting")}</div>
+                    ) : null}
+                  </div>
+                </div>
+              ) : null}
 
               <Composer
                 draft={draft}
@@ -2930,6 +3382,7 @@ function TabRuntime({
 function WinMinimize() {
   return (
     <svg width="10" height="1" viewBox="0 0 10 1" aria-hidden>
+      <title>Minimize</title>
       <rect width="10" height="1" fill="currentColor" />
     </svg>
   );
@@ -2937,23 +3390,66 @@ function WinMinimize() {
 function WinMaximize() {
   return (
     <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden>
-      <rect x="0.5" y="0.5" width="9" height="9" fill="none" stroke="currentColor" strokeWidth="1" />
+      <title>Maximize</title>
+      <rect
+        x="0.5"
+        y="0.5"
+        width="9"
+        height="9"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1"
+      />
     </svg>
   );
 }
 function WinRestore() {
   return (
     <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden>
-      <rect x="2.5" y="0.5" width="7" height="7" fill="none" stroke="currentColor" strokeWidth="1" />
-      <rect x="0.5" y="2.5" width="7" height="7" fill="var(--bg-2, #eee)" stroke="currentColor" strokeWidth="1" />
+      <title>Restore</title>
+      <rect
+        x="2.5"
+        y="0.5"
+        width="7"
+        height="7"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1"
+      />
+      <rect
+        x="0.5"
+        y="2.5"
+        width="7"
+        height="7"
+        fill="var(--bg-2, #eee)"
+        stroke="currentColor"
+        strokeWidth="1"
+      />
     </svg>
   );
 }
 function WinClose() {
   return (
     <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden>
-      <line x1="0.5" y1="0.5" x2="9.5" y2="9.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
-      <line x1="9.5" y1="0.5" x2="0.5" y2="9.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+      <title>Close</title>
+      <line
+        x1="0.5"
+        y1="0.5"
+        x2="9.5"
+        y2="9.5"
+        stroke="currentColor"
+        strokeWidth="1.2"
+        strokeLinecap="round"
+      />
+      <line
+        x1="9.5"
+        y1="0.5"
+        x2="0.5"
+        y2="9.5"
+        stroke="currentColor"
+        strokeWidth="1.2"
+        strokeLinecap="round"
+      />
     </svg>
   );
 }
@@ -2998,13 +3494,21 @@ function TitleBar({
     };
     void syncWindowState();
     let unlisten: (() => void) | undefined;
-    win.listen("tauri://resize", async () => {
-      await syncWindowState();
-    }).then((fn) => { unlisten = fn; });
+    win
+      .listen("tauri://resize", async () => {
+        await syncWindowState();
+      })
+      .then((fn) => {
+        unlisten = fn;
+      });
     let fullscreenUnlisten: (() => void) | undefined;
-    win.listen("tauri://fullscreen", async () => {
-      await syncWindowState();
-    }).then((fn) => { fullscreenUnlisten = fn; });
+    win
+      .listen("tauri://fullscreen", async () => {
+        await syncWindowState();
+      })
+      .then((fn) => {
+        fullscreenUnlisten = fn;
+      });
     return () => {
       unlisten?.();
       fullscreenUnlisten?.();
@@ -3117,43 +3621,100 @@ function TitleBar({
           {menuOpen ? (
             <div
               className="popup"
-              style={{ top: "calc(100% + 6px)", right: 0, left: "auto", bottom: "auto", width: 220 }}
+              style={{
+                top: "calc(100% + 6px)",
+                right: 0,
+                left: "auto",
+                bottom: "auto",
+                width: 220,
+              }}
             >
               <div className="popup-list">
-                <div className="popup-item" onClick={() => { onOpenCommands(); setMenuOpen(false); }}>
-                  <span className="ico"><I.search size={12} /></span>
-                  <div className="nm"><span>{t("app.titlebar.commandPalette")}</span></div>
+                <button
+                  type="button"
+                  className="popup-item"
+                  onClick={() => {
+                    onOpenCommands();
+                    setMenuOpen(false);
+                  }}
+                >
+                  <span className="ico">
+                    <I.search size={12} />
+                  </span>
+                  <div className="nm">
+                    <span>{t("app.titlebar.commandPalette")}</span>
+                  </div>
                   <span className="kb">
                     <Shortcut keys={["mod", "K"]} />
                   </span>
-                </div>
-                <div
+                </button>
+                <button
+                  type="button"
                   className="popup-item"
-                  onClick={() => { if (hasMessages) onCopy(); setMenuOpen(false); }}
+                  aria-disabled={!hasMessages}
+                  onClick={() => {
+                    if (hasMessages) onCopy();
+                    setMenuOpen(false);
+                  }}
                   style={{ opacity: hasMessages ? 1 : 0.5 }}
                 >
-                  <span className="ico"><I.copy size={12} /></span>
-                  <div className="nm"><span>{t("app.titlebar.copyMd")}</span></div>
-                </div>
-                <div
+                  <span className="ico">
+                    <I.copy size={12} />
+                  </span>
+                  <div className="nm">
+                    <span>{t("app.titlebar.copyMd")}</span>
+                  </div>
+                </button>
+                <button
+                  type="button"
                   className="popup-item"
-                  onClick={() => { if (hasMessages) onExport(); setMenuOpen(false); }}
+                  aria-disabled={!hasMessages}
+                  onClick={() => {
+                    if (hasMessages) onExport();
+                    setMenuOpen(false);
+                  }}
                   style={{ opacity: hasMessages ? 1 : 0.5 }}
                 >
-                  <span className="ico"><I.download size={12} /></span>
-                  <div className="nm"><span>{t("app.titlebar.exportMd")}</span></div>
-                </div>
-                <div className="popup-item" onClick={() => { onClear(); setMenuOpen(false); }}>
-                  <span className="ico"><I.x size={12} /></span>
-                  <div className="nm"><span>{t("app.titlebar.clearChat")}</span></div>
-                </div>
-                <div className="popup-item" onClick={() => { onOpenSettings(); setMenuOpen(false); }}>
-                  <span className="ico"><I.cog size={12} /></span>
-                  <div className="nm"><span>{t("app.titlebar.settings")}</span></div>
+                  <span className="ico">
+                    <I.download size={12} />
+                  </span>
+                  <div className="nm">
+                    <span>{t("app.titlebar.exportMd")}</span>
+                  </div>
+                </button>
+                <button
+                  type="button"
+                  className="popup-item"
+                  onClick={() => {
+                    onClear();
+                    setMenuOpen(false);
+                  }}
+                >
+                  <span className="ico">
+                    <I.x size={12} />
+                  </span>
+                  <div className="nm">
+                    <span>{t("app.titlebar.clearChat")}</span>
+                  </div>
+                </button>
+                <button
+                  type="button"
+                  className="popup-item"
+                  onClick={() => {
+                    onOpenSettings();
+                    setMenuOpen(false);
+                  }}
+                >
+                  <span className="ico">
+                    <I.cog size={12} />
+                  </span>
+                  <div className="nm">
+                    <span>{t("app.titlebar.settings")}</span>
+                  </div>
                   <span className="kb">
                     <Shortcut keys={["mod", ","]} />
                   </span>
-                </div>
+                </button>
               </div>
             </div>
           ) : null}
@@ -3166,7 +3727,10 @@ function TitleBar({
               type="button"
               className="win-ctrl"
               title={t("app.titlebar.minimize")}
-              onMouseDown={(e) => { e.stopPropagation(); win.minimize(); }}
+              onMouseDown={(e) => {
+                e.stopPropagation();
+                win.minimize();
+              }}
             >
               <WinMinimize />
             </button>
@@ -3174,7 +3738,10 @@ function TitleBar({
               type="button"
               className="win-ctrl"
               title={isMaximized ? t("app.titlebar.restore") : t("app.titlebar.maximize")}
-              onMouseDown={(e) => { e.stopPropagation(); void toggleWindowExpanded(win, false, isMaximized); }}
+              onMouseDown={(e) => {
+                e.stopPropagation();
+                void toggleWindowExpanded(win, false, isMaximized);
+              }}
             >
               {isMaximized ? <WinRestore /> : <WinMaximize />}
             </button>
@@ -3182,7 +3749,10 @@ function TitleBar({
               type="button"
               className="win-ctrl close"
               title={t("app.titlebar.close")}
-              onMouseDown={(e) => { e.stopPropagation(); win.close(); }}
+              onMouseDown={(e) => {
+                e.stopPropagation();
+                win.close();
+              }}
             >
               <WinClose />
             </button>
@@ -3209,6 +3779,7 @@ function TabBar({
   singleTab?: boolean;
 }) {
   useLang();
+  const closeLabel = t("app.titlebar.close");
   return (
     <div className="tabbar">
       {tabs.map((t) => {
@@ -3219,33 +3790,37 @@ function TabBar({
             .split(/[\\/]/)
             .pop() || "workspace";
         return (
-          <div
-            key={t.id}
-            className="tab"
-            data-active={t.id === activeId}
-            onClick={() => setActive(t.id)}
-            title={ws || label}
-          >
-            <span className="dot" data-state={t.busy ? "running" : "idle"} />
-            <span className="label">{label}</span>
+          <div key={t.id} className="tab" data-active={t.id === activeId} title={ws || label}>
+            <button type="button" className="tab-main" onClick={() => setActive(t.id)}>
+              <span className="dot" data-state={t.busy ? "running" : "idle"} />
+              <span className="label">{label}</span>
+            </button>
             {!singleTab ? (
-              <span
+              <button
+                type="button"
                 className="close"
                 onClick={(e) => {
                   e.stopPropagation();
                   onClose(t.id);
                 }}
+                title={closeLabel}
+                aria-label={closeLabel}
               >
                 <I.x size={11} />
-              </span>
+              </button>
             ) : null}
           </div>
         );
       })}
-      <div className="tab newtab" title={localizeShortcutText(t("app.tab.newTabTitle"))} onClick={onNew}>
+      <button
+        type="button"
+        className="tab newtab"
+        title={localizeShortcutText(t("app.tab.newTabTitle"))}
+        onClick={onNew}
+      >
         <I.plus size={12} />
         <span style={{ fontSize: 11, marginLeft: 4 }}>{t("app.tab.newTab")}</span>
-      </div>
+      </button>
     </div>
   );
 }
@@ -3290,17 +3865,17 @@ function MainHead({
           ) : null}
         </h1>
         <div className="sub">
-          <span
+          <button
+            type="button"
             className="ws-crumb"
             onClick={(e) => {
               const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
               onOpenWorkdir({ top: r.bottom + 6, left: r.left });
             }}
-            style={{ cursor: "pointer" }}
             title={workspaceDir ?? t("app.header.clickToSelect")}
           >
             <I.folder size={10} /> {wsLabel}
-          </span>
+          </button>
           {model ? (
             <span className="pill">
               <I.brain size={10} /> {model}
@@ -3504,7 +4079,7 @@ function UpdateOverlay({
 }) {
   useLang();
   const ratio =
-    progress && progress.total && progress.total > 0
+    progress?.total && progress.total > 0
       ? Math.min(1, progress.downloaded / progress.total)
       : null;
   const statusText =
@@ -3696,7 +4271,7 @@ export function App() {
     const stack =
       fontFamily === FONT_FAMILY.CUSTOM && custom
         ? custom
-        : FONT_FAMILY_STACK[fontFamily] ?? FONT_FAMILY_STACK.sans;
+        : (FONT_FAMILY_STACK[fontFamily] ?? FONT_FAMILY_STACK.sans);
     document.documentElement.style.setProperty("--font-sans", stack);
     localStorage.setItem("reasonix.fontFamily", fontFamily);
     localStorage.setItem("reasonix.customFontFamily", customFontFamily);
@@ -3802,7 +4377,7 @@ export function App() {
       }
     };
 
-    const setup = async () => {
+    const setup = async (_retryAttempt: number) => {
       startupStderrRef.current = [];
       setStartupFailure(null);
       const subs = await Promise.all([
@@ -3936,7 +4511,7 @@ export function App() {
         }
       }
     };
-    void setup();
+    void setup(startupRetryNonce);
     return () => {
       cancelled = true;
       for (const c of cleanups) c();

@@ -1,10 +1,54 @@
-import { memo, useState, type ReactNode } from "react";
-import { I } from "../icons";
+import { type ReactNode, memo, useState } from "react";
 import { Markdown } from "../Markdown";
 import { t, useLang } from "../i18n";
+import { I } from "../icons";
 import { Shortcut } from "./shortcut";
 
 type Tone = "default" | "success" | "warning" | "danger" | "accent" | "violet";
+
+function hashString(value: string): string {
+  let hash = 0;
+  for (let i = 0; i < value.length; i++) {
+    hash = (hash * 31 + value.charCodeAt(i)) | 0;
+  }
+  return `${value.length}-${(hash >>> 0).toString(36)}`;
+}
+
+function keyed<T>(items: readonly T[], keyFor: (item: T) => string): { item: T; key: string }[] {
+  const seen = new Map<string, number>();
+  return items.map((item) => {
+    const base = keyFor(item);
+    const count = seen.get(base) ?? 0;
+    seen.set(base, count + 1);
+    return { item, key: count === 0 ? base : `${base}-${count}` };
+  });
+}
+
+function renderReasoningInline(text: string): ReactNode[] {
+  const out: ReactNode[] = [];
+  const re = /`([^`]+)`|\*\*([^*]+)\*\*/g;
+  let last = 0;
+  let match: RegExpExecArray | null = re.exec(text);
+  while (match) {
+    if (match.index > last) out.push(text.slice(last, match.index));
+    const code = match[1];
+    const strong = match[2];
+    const raw = match[0];
+    if (code !== undefined) {
+      out.push(
+        <span className="hl" key={`code-${hashString(raw)}-${out.length}`}>
+          {code}
+        </span>,
+      );
+    } else if (strong !== undefined) {
+      out.push(<strong key={`strong-${hashString(raw)}-${out.length}`}>{strong}</strong>);
+    }
+    last = match.index + raw.length;
+    match = re.exec(text);
+  }
+  if (last < text.length) out.push(text.slice(last));
+  return out;
+}
 
 export function Card({
   tone = "default",
@@ -70,15 +114,25 @@ export type PlanItem = {
   note?: string;
 };
 
-function derivePlanBadge(items: PlanItem[]): { state: "running" | "done" | "failed" | "waiting" | "blocked"; label: string } {
-  if (items.some((x) => x.status === "failed")) return { state: "failed", label: t("planBadge.failed") };
-  if (items.some((x) => x.status === "blocked")) return { state: "blocked", label: t("planBadge.blocked") };
-  if (items.some((x) => x.status === "active")) return { state: "running", label: t("planBadge.running") };
-  if (items.length > 0 && items.every((x) => x.status === "done")) return { state: "done", label: t("planBadge.done") };
+function derivePlanBadge(items: PlanItem[]): {
+  state: "running" | "done" | "failed" | "waiting" | "blocked";
+  label: string;
+} {
+  if (items.some((x) => x.status === "failed"))
+    return { state: "failed", label: t("planBadge.failed") };
+  if (items.some((x) => x.status === "blocked"))
+    return { state: "blocked", label: t("planBadge.blocked") };
+  if (items.some((x) => x.status === "active"))
+    return { state: "running", label: t("planBadge.running") };
+  if (items.length > 0 && items.every((x) => x.status === "done"))
+    return { state: "done", label: t("planBadge.done") };
   return { state: "waiting", label: t("planBadge.pending") };
 }
 
-function StatusIcon({ state, label }: { state: "running" | "done" | "failed" | "waiting" | "blocked"; label: string }) {
+function StatusIcon({
+  state,
+  label,
+}: { state: "running" | "done" | "failed" | "waiting" | "blocked"; label: string }) {
   switch (state) {
     case "running":
       return <span className="spin-meta" role="img" aria-label={label} title={label} />;
@@ -127,7 +181,9 @@ export function PlanCardView({ items, title }: { items: PlanItem[]; title?: stri
                 </div>
               ) : null}
             </div>
-            <span className="stat">{it.status === "active" ? <span className="spin" /> : null}</span>
+            <span className="stat">
+              {it.status === "active" ? <span className="spin" /> : null}
+            </span>
           </li>
         ))}
       </ul>
@@ -151,6 +207,7 @@ export function ReasoningCard({
   model?: string;
 }) {
   useLang();
+  const paragraphs = keyed(text.split(/\n\n+/), hashString);
   return (
     <Card
       tone="violet"
@@ -178,15 +235,8 @@ export function ReasoningCard({
     >
       <div className="reason">
         <div className="stream">
-          {text.split(/\n\n+/).map((para, i) => (
-            <p
-              key={i}
-              dangerouslySetInnerHTML={{
-                __html: para
-                  .replace(/`([^`]+)`/g, '<span class="hl">$1</span>')
-                  .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>"),
-              }}
-            />
+          {paragraphs.map(({ item: para, key }) => (
+            <p key={key}>{renderReasoningInline(para)}</p>
           ))}
         </div>
         {model || tokens !== undefined ? (
@@ -231,6 +281,7 @@ export function ShellCard({
 }) {
   useLang();
   const tone: Tone = state === "failed" ? "danger" : state === "done" ? "success" : "warning";
+  const outputLines = output ? keyed(output.split("\n"), hashString) : [];
   return (
     <Card
       tone={tone}
@@ -263,20 +314,20 @@ export function ShellCard({
         </div>
         {output ? (
           <pre className="out">
-            {output.split("\n").map((ln, i) => {
+            {outputLines.map(({ item: ln, key }) => {
               if (ln.startsWith(" ✓") || ln.startsWith("✓"))
                 return (
-                  <div key={i}>
+                  <div key={key}>
                     <span className="ok">{ln}</span>
                   </div>
                 );
               if (ln.startsWith(" ✗") || ln.startsWith("✗") || /error/i.test(ln))
                 return (
-                  <div key={i}>
+                  <div key={key}>
                     <span className="err">{ln}</span>
                   </div>
                 );
-              return <div key={i}>{ln}</div>;
+              return <div key={key}>{ln}</div>;
             })}
           </pre>
         ) : null}
@@ -484,6 +535,7 @@ export function DiffCard({
   useLang();
   const adds = lines.filter((x) => x.t === "add").length;
   const rms = lines.filter((x) => x.t === "rm").length;
+  const keyedLines = keyed(lines, (line) => hashString(JSON.stringify(line)));
   return (
     <Card
       tone={applied ? "success" : "accent"}
@@ -504,10 +556,10 @@ export function DiffCard({
     >
       <div className="diff">
         <div className="lines">
-          {lines.map((ln, i) => {
+          {keyedLines.map(({ item: ln, key }) => {
             if (ln.t === "hunk")
               return (
-                <div key={i} className="ln hunk">
+                <div key={key} className="ln hunk">
                   <span className="code">{ln.s}</span>
                 </div>
               );
@@ -515,7 +567,7 @@ export function DiffCard({
             const l = ln.t === "ctx" ? ln.l : ln.t === "rm" ? ln.l : undefined;
             const r = ln.t === "ctx" ? ln.r : ln.t === "add" ? ln.r : undefined;
             return (
-              <div key={i} className={`ln ${cls}`}>
+              <div key={key} className={`ln ${cls}`}>
                 <span className="num">{l ?? ""}</span>
                 <span className="num">{r ?? ""}</span>
                 <span className="code">
@@ -552,7 +604,11 @@ export function DiffCard({
 
 // ---- Error ----
 
-export function ErrorCard({ message, hint, code }: { message: string; hint?: ReactNode; code?: string }) {
+export function ErrorCard({
+  message,
+  hint,
+  code,
+}: { message: string; hint?: ReactNode; code?: string }) {
   useLang();
   return (
     <Card
@@ -576,6 +632,10 @@ export type SearchHit = { url: string; title: string; snippet: string };
 
 export function WebSearchCard({ query, results }: { query: string; results: SearchHit[] }) {
   useLang();
+  const keyedResults = keyed(
+    results,
+    (r) => `${hashString(r.url)}-${hashString(r.title)}-${hashString(r.snippet)}`,
+  );
   return (
     <Card
       tone="default"
@@ -585,13 +645,15 @@ export function WebSearchCard({ query, results }: { query: string; results: Sear
       meta={
         <>
           <span>"{query}"</span>
-          <span className="pill-tag ok">{results.length} {t("cards.hits")}</span>
+          <span className="pill-tag ok">
+            {results.length} {t("cards.hits")}
+          </span>
         </>
       }
     >
       <div className="search-results">
-        {results.map((r, i) => (
-          <div className="search-result" key={i}>
+        {keyedResults.map(({ item: r, key }) => (
+          <div className="search-result" key={key}>
             <div className="url">
               <span className="favicon" />
               <span>{r.url}</span>
@@ -625,6 +687,10 @@ export function SubagentCard({
 }) {
   useLang();
   const done = children.filter((c) => c.status === "done").length;
+  const keyedChildren = keyed(
+    children,
+    (child) => `${child.avatar}-${child.what}-${child.role}-${child.status}`,
+  );
   return (
     <Card
       tone="violet"
@@ -647,8 +713,8 @@ export function SubagentCard({
       }
     >
       <div className="sub-card">
-        {children.map((c, i) => (
-          <div className="sub-row" key={i}>
+        {keyedChildren.map(({ item: c, key }) => (
+          <div className="sub-row" key={key}>
             <span className="av">{c.avatar}</span>
             <div className="what">
               <div>{c.what}</div>
@@ -674,17 +740,22 @@ export type MemRow = { scope: string; txt: string };
 
 export function MemoryCard({ rows }: { rows: MemRow[] }) {
   useLang();
+  const keyedRows = keyed(rows, (m) => `${m.scope}-${m.txt}`);
   return (
     <Card
       tone="violet"
       icon={<I.bookmark size={12} />}
       kind="memory"
       name={t("cards.memoryName")}
-      meta={<span>+ {rows.length} {t("cards.memoryCountSuffix")}</span>}
+      meta={
+        <span>
+          + {rows.length} {t("cards.memoryCountSuffix")}
+        </span>
+      }
     >
       <div className="mem">
-        {rows.map((m, i) => (
-          <div className="mem-row" key={i}>
+        {keyedRows.map(({ item: m, key }) => (
+          <div className="mem-row" key={key}>
             <span className="scope">{m.scope}</span>
             <span className="txt">{m.txt}</span>
           </div>

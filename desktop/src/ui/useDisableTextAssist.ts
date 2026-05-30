@@ -57,11 +57,11 @@ export function useDisableTextAssist() {
 
     const observer = new MutationObserver((mutations) => {
       for (const mutation of mutations) {
-        mutation.addedNodes.forEach((node) => {
+        for (const node of mutation.addedNodes) {
           if (node instanceof Element) {
             applyWithin(node);
           }
-        });
+        }
       }
     });
 

@@ -40,6 +40,16 @@ export function localizeShortcutText(text: string): string {
   return text.replace(/⌘/g, keyLabel("mod", isMacPlatform()));
 }
 
+function keyedShortcutKeys(keys: readonly ShortcutKey[]): { key: ShortcutKey; id: string }[] {
+  const seen = new Map<string, number>();
+  return keys.map((key) => {
+    const raw = String(key);
+    const count = seen.get(raw) ?? 0;
+    seen.set(raw, count + 1);
+    return { key, id: count === 0 ? raw : `${raw}-${count}` };
+  });
+}
+
 export function Shortcut({
   keys,
   className,
@@ -50,8 +60,8 @@ export function Shortcut({
   const mac = isMacPlatform();
   return (
     <span className={["shortcut", className].filter(Boolean).join(" ")}>
-      {keys.map((key, index) => (
-        <kbd key={`${key}-${index}`} data-key={key}>
+      {keyedShortcutKeys(keys).map(({ key, id }) => (
+        <kbd key={id} data-key={key}>
           {keyLabel(key, mac)}
         </kbd>
       ))}

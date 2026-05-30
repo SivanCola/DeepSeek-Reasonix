@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { setLang } from "./i18n";
 import {
+  type ApprovalSnapshot,
   COMPLETION_NOTIFY_MIN_MS,
   deriveDesktopNotifications,
-  type ApprovalSnapshot,
 } from "./notifications";
 
 function emptySnapshot(): ApprovalSnapshot {

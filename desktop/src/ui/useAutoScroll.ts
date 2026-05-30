@@ -32,9 +32,7 @@ export function useAutoScroll(
   const refreshJumpButton = useCallback(() => {
     const el = containerRef.current;
     if (!el) return;
-    setShowJumpButton(
-      !isPinnedRef.current && el.scrollHeight > el.clientHeight + PIN_THRESHOLD,
-    );
+    setShowJumpButton(!isPinnedRef.current && el.scrollHeight > el.clientHeight + PIN_THRESHOLD);
   }, [containerRef]);
 
   const scrollToBottom = useCallback(

@@ -251,8 +251,6 @@ describe("desktop Composer @ popup", () => {
     expect(onMentionPicked).toHaveBeenCalledWith("src/very/deep/foo.ts");
     const draftUpdate = setDraft.mock.calls.at(-1)?.[0];
     expect(typeof draftUpdate).toBe("function");
-    expect((draftUpdate as (current: string) => string)("@foo")).toBe(
-      "@src/very/deep/foo.ts ",
-    );
+    expect((draftUpdate as (current: string) => string)("@foo")).toBe("@src/very/deep/foo.ts ");
   });
 });

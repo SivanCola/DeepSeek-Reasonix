@@ -52,7 +52,7 @@ export function Splash({ onDone }: { onDone: () => void }) {
   };
 
   return (
-    <div className="splash" data-leaving={leaving} onClick={skipClick}>
+    <div className="splash" data-leaving={leaving} onPointerDown={skipClick}>
       <div className="splash-card">
         <div className="splash-mark" />
         <div className="splash-name">Reasonix</div>

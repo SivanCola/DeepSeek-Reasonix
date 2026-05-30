@@ -1,5 +1,5 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { SessionInfo } from "../App";
 import { t, useLang } from "../i18n";
 import { I } from "../icons";
@@ -23,7 +23,7 @@ type PendingImport = {
 type ImportSource = ExternalSessionSource;
 
 function prettyName(s: SessionInfo): string {
-  if (s.summary && s.summary.trim()) return s.summary.trim();
+  if (s.summary?.trim()) return s.summary.trim();
   const m = s.name.match(/^desktop-(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(?:-(\d+))?$/);
   if (m) {
     const [, , month, day, hh, mm, tab] = m;
@@ -89,15 +89,14 @@ export function Sidebar({
   const [pendingImport, setPendingImport] = useState<PendingImport | null>(null);
   const [editingName, setEditingName] = useState<string | null>(null);
   const [editValue, setEditValue] = useState("");
+  const editInputRef = useRef<HTMLInputElement>(null);
   const workspaceLabel = workspaceDir
     ? workspaceDir.split(/[\\/]/).pop() || workspaceDir
     : t("sidebarPanel.noWorkspace");
   const filtered = query
     ? sessions.filter((s) => {
         const q = query.toLowerCase();
-        return (
-          prettyName(s).toLowerCase().includes(q) || s.name.toLowerCase().includes(q)
-        );
+        return prettyName(s).toLowerCase().includes(q) || s.name.toLowerCase().includes(q);
       })
     : sessions;
 
@@ -119,6 +118,10 @@ export function Sidebar({
       window.removeEventListener("keydown", onKey);
     };
   }, [pendingDelete, pendingImport]);
+
+  useEffect(() => {
+    if (editingName) editInputRef.current?.focus();
+  }, [editingName]);
 
   return (
     <aside className="sidebar">
@@ -259,8 +262,8 @@ export function Sidebar({
                 <div className="body">
                   {editing ? (
                     <input
+                      ref={editInputRef}
                       className="title-edit"
-                      autoFocus
                       value={editValue}
                       maxLength={RENAME_MAX_CHARS}
                       placeholder={t("sidebarPanel.renamePlaceholder")}
@@ -339,19 +342,19 @@ export function Sidebar({
       </div>
 
       <div className="side-foot">
-        <div className="row" onClick={onOpenRules}>
+        <button type="button" className="row" onClick={onOpenRules}>
           <span className="ico">
             <I.shield size={13} />
           </span>
           <span>{t("sidebarPanel.approvalRules")}</span>
-        </div>
-        <div className="row" onClick={onOpenAbout}>
+        </button>
+        <button type="button" className="row" onClick={onOpenAbout}>
           <span className="ico">
             <I.help size={13} />
           </span>
           <span>{t("about.sidebarLabel")}</span>
-        </div>
-        <div className="row" onClick={onOpenSettings}>
+        </button>
+        <button type="button" className="row" onClick={onOpenSettings}>
           <span className="ico">
             <I.cog size={13} />
           </span>
@@ -359,7 +362,7 @@ export function Sidebar({
           <span className="right">
             <Shortcut keys={["mod", ","]} />
           </span>
-        </div>
+        </button>
       </div>
 
       {pendingDelete ? (
@@ -401,7 +404,7 @@ function SessionDeletePopover({
   onCancel: () => void;
   onConfirm: () => void;
 }) {
-  const ref = useRef<HTMLDivElement>(null);
+  const ref = useRef<HTMLDialogElement>(null);
   const cancelRef = useRef<HTMLButtonElement>(null);
   const [pos, setPos] = useState<{ left: number; top: number }>({
     left: target.x,
@@ -424,10 +427,10 @@ function SessionDeletePopover({
   }, [target.x, target.y, pos.left, pos.top]);
 
   return (
-    <div
+    <dialog
+      open
       ref={ref}
       className="session-delete-popover"
-      role="dialog"
       aria-modal="true"
       style={{ left: pos.left, top: pos.top }}
     >
@@ -444,7 +447,7 @@ function SessionDeletePopover({
           {t("sidebarPanel.delete")}
         </button>
       </div>
-    </div>
+    </dialog>
   );
 }
 
@@ -463,7 +466,7 @@ function SessionImportPopover({
   onImportDetected: (sources: ImportSource[]) => void;
   onImport: (payload: { source: ImportSource; path: string; name?: string }) => void;
 }) {
-  const ref = useRef<HTMLDivElement>(null);
+  const ref = useRef<HTMLDialogElement>(null);
   const firstInputRef = useRef<HTMLInputElement>(null);
   const [pos, setPos] = useState<{ left: number; top: number }>({
     left: target.x,
@@ -534,16 +537,21 @@ function SessionImportPopover({
   };
 
   return (
-    <div
+    <dialog
+      open
       ref={ref}
       className="session-import-popover"
-      role="dialog"
       aria-modal="true"
       style={{ left: pos.left, top: pos.top }}
     >
       <div className="head">
         <span>{t("sidebarPanel.importSessions")}</span>
-        <button type="button" className="close" onClick={onCancel} aria-label={t("sidebarPanel.cancel")}>
+        <button
+          type="button"
+          className="close"
+          onClick={onCancel}
+          aria-label={t("sidebarPanel.cancel")}
+        >
           <I.x size={12} />
         </button>
       </div>
@@ -614,56 +622,60 @@ function SessionImportPopover({
         </>
       ) : (
         <>
-      <div className="field">
-        <span className="label">{t("sidebarPanel.importSource")}</span>
-        <div className="seg">
-          <button type="button" data-on={source === "claude"} onClick={() => setSource("claude")}>
-            {t("sidebarPanel.importFromClaude")}
-          </button>
-          <button type="button" data-on={source === "codex"} onClick={() => setSource("codex")}>
-            {t("sidebarPanel.importFromCodex")}
-          </button>
-        </div>
-      </div>
-      <div className="field">
-        <span className="label">{t("sidebarPanel.importPath")}</span>
-        <div className="path-row">
-          <input
-            ref={firstInputRef}
-            value={path}
-            placeholder={t("sidebarPanel.importPath")}
-            onChange={(e) => setPath(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && path.trim()) submit();
-            }}
-          />
-          <button type="button" onClick={() => void browse()}>
-            {t("sidebarPanel.browse")}
-          </button>
-        </div>
-      </div>
-      <div className="field">
-        <span className="label">{t("sidebarPanel.importName")}</span>
-        <input
-          value={name}
-          placeholder={t("sidebarPanel.importNamePlaceholder")}
-          onChange={(e) => setName(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && path.trim()) submit();
-          }}
-        />
-      </div>
-      <div className="actions">
-        <button type="button" className="cancel" onClick={onCancel}>
-          {t("sidebarPanel.cancel")}
-        </button>
-        <button type="button" className="confirm" disabled={!path.trim()} onClick={submit}>
-          <I.upload size={11} />
-          {t("sidebarPanel.importConfirm")}
-        </button>
-      </div>
+          <div className="field">
+            <span className="label">{t("sidebarPanel.importSource")}</span>
+            <div className="seg">
+              <button
+                type="button"
+                data-on={source === "claude"}
+                onClick={() => setSource("claude")}
+              >
+                {t("sidebarPanel.importFromClaude")}
+              </button>
+              <button type="button" data-on={source === "codex"} onClick={() => setSource("codex")}>
+                {t("sidebarPanel.importFromCodex")}
+              </button>
+            </div>
+          </div>
+          <div className="field">
+            <span className="label">{t("sidebarPanel.importPath")}</span>
+            <div className="path-row">
+              <input
+                ref={firstInputRef}
+                value={path}
+                placeholder={t("sidebarPanel.importPath")}
+                onChange={(e) => setPath(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && path.trim()) submit();
+                }}
+              />
+              <button type="button" onClick={() => void browse()}>
+                {t("sidebarPanel.browse")}
+              </button>
+            </div>
+          </div>
+          <div className="field">
+            <span className="label">{t("sidebarPanel.importName")}</span>
+            <input
+              value={name}
+              placeholder={t("sidebarPanel.importNamePlaceholder")}
+              onChange={(e) => setName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && path.trim()) submit();
+              }}
+            />
+          </div>
+          <div className="actions">
+            <button type="button" className="cancel" onClick={onCancel}>
+              {t("sidebarPanel.cancel")}
+            </button>
+            <button type="button" className="confirm" disabled={!path.trim()} onClick={submit}>
+              <I.upload size={11} />
+              {t("sidebarPanel.importConfirm")}
+            </button>
+          </div>
         </>
       )}
-    </div>
+    </dialog>
   );
 }

@@ -130,16 +130,20 @@ export function McpServerCard({
       {toolsOpen ? (
         <div className="mcp-tools-detail">
           <div className="mcp-tools-detail-title">
-            {hasTools
-              ? t("mcpCard.availableTools", { count: tools.length })
-              : t("mcpCard.noTools")}
+            {hasTools ? t("mcpCard.availableTools", { count: tools.length }) : t("mcpCard.noTools")}
           </div>
           {hasTools ? (
             <div className="mcp-tools-grid">
               {tools.map((tool) => (
-                <div className="mcp-tool-chip" key={tool.registeredName} title={tool.description ?? tool.registeredName}>
+                <div
+                  className="mcp-tool-chip"
+                  key={tool.registeredName}
+                  title={tool.description ?? tool.registeredName}
+                >
                   <span className="mcp-tool-name">{tool.registeredName}</span>
-                  {tool.description ? <span className="mcp-tool-desc">{tool.description}</span> : null}
+                  {tool.description ? (
+                    <span className="mcp-tool-desc">{tool.description}</span>
+                  ) : null}
                 </div>
               ))}
             </div>

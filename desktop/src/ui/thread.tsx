@@ -103,21 +103,30 @@ export const UserMsg = memo(function UserMsg({
   );
 });
 
-function ToolGroupShell({ segs, renderTool: rt }: {
+function ToolGroupShell({
+  segs,
+  renderTool: rt,
+}: {
   segs: (AssistantSegment & { kind: "tool" })[];
-  renderTool: (s: AssistantSegment & { kind: "tool" }, idx: number, expanded?: boolean) => ReactNode;
+  renderTool: (
+    s: AssistantSegment & { kind: "tool" },
+    idx: number,
+    expanded?: boolean,
+  ) => ReactNode;
 }) {
   const [open, setOpen] = useState(false);
   return (
     <div className="tool-group">
-      <button className="tool-group-header" onClick={() => setOpen((o) => !o)}>
-        <span>{segs.length > 1 ? t("thread.toolCalls", { count: segs.length }) : t("thread.oneToolCall")}</span>
+      <button type="button" className="tool-group-header" onClick={() => setOpen((o) => !o)}>
+        <span>
+          {segs.length > 1
+            ? t("thread.toolCalls", { count: segs.length })
+            : t("thread.oneToolCall")}
+        </span>
         <span className={`chevron ${open ? "open" : ""}`}>{I.chev({ size: 12 })}</span>
       </button>
       {open && (
-        <div className="tool-group-body">
-          {segs.map((ts) => rt(ts, segs.indexOf(ts), true))}
-        </div>
+        <div className="tool-group-body">{segs.map((ts) => rt(ts, segs.indexOf(ts), true))}</div>
       )}
     </div>
   );
@@ -164,7 +173,9 @@ export const AssistantMsg = memo(function AssistantMsg({
       try {
         const path = JSON.parse(s.args)?.path;
         if (typeof path === "string") currentToolPaths.push(path);
-      } catch { /* skip */ }
+      } catch {
+        /* skip */
+      }
     } else if (s.name === "multi_edit") {
       try {
         const edits = JSON.parse(s.args)?.edits;
@@ -173,7 +184,9 @@ export const AssistantMsg = memo(function AssistantMsg({
             if (typeof e?.path === "string") currentToolPaths.push(e.path);
           }
         }
-      } catch { /* skip */ }
+      } catch {
+        /* skip */
+      }
     }
   }
 
@@ -181,7 +194,8 @@ export const AssistantMsg = memo(function AssistantMsg({
   const rendered: ReactNode[] = [];
 
   let firstReasoningShown = false;
-  let toolGroup: { segments: (AssistantSegment & { kind: "tool" })[]; indices: number[] } | null = null;
+  let toolGroup: { segments: (AssistantSegment & { kind: "tool" })[]; indices: number[] } | null =
+    null;
 
   function flushToolGroup(): void {
     if (!toolGroup) return;
@@ -190,12 +204,18 @@ export const AssistantMsg = memo(function AssistantMsg({
     if (tSegs.length === 1) {
       rendered.push(renderTool(tSegs[0]!, groupKey));
     } else {
-      rendered.push(<ToolGroupShell key={`tool-group-${groupKey}`} segs={tSegs} renderTool={renderTool} />);
+      rendered.push(
+        <ToolGroupShell key={`tool-group-${groupKey}`} segs={tSegs} renderTool={renderTool} />,
+      );
     }
     toolGroup = null;
   }
 
-  function renderTool(s: AssistantSegment & { kind: "tool" }, idx: number, expanded?: boolean): ReactNode {
+  function renderTool(
+    s: AssistantSegment & { kind: "tool" },
+    idx: number,
+    expanded?: boolean,
+  ): ReactNode {
     const pendingConfirm =
       (s.name === "run_command" || s.name === "run_background") && s.result === undefined
         ? pendingConfirms.find((c) => c.command === extractCommand(s.args))
@@ -230,20 +250,44 @@ export const AssistantMsg = memo(function AssistantMsg({
         />
       );
     }
-    if (s.result && (s.name === "edit_file" || s.name === "multi_edit" || s.name === "write_file")) {
+    if (
+      s.result &&
+      (s.name === "edit_file" || s.name === "multi_edit" || s.name === "write_file")
+    ) {
       const files = parseEditResult(s.result);
       return files.length > 0 ? (
         <>
-          {files.map((f, fi) => (
-            <DiffCard key={`${idx}-${fi}`} filename={f.filename} lines={f.lines} applied={s.ok !== false} />
+          {files.map((f) => (
+            <DiffCard
+              key={`${idx}-${f.filename}-${f.lines.length}-${f.lines[0] ?? ""}-${f.lines.at(-1) ?? ""}`}
+              filename={f.filename}
+              lines={f.lines}
+              applied={s.ok !== false}
+            />
           ))}
         </>
       ) : (
-        <ToolCard key={idx} name={s.name} args={s.args} result={s.result} ok={s.ok} durationMs={s.durationMs} defaultOpen={expanded} />
+        <ToolCard
+          key={idx}
+          name={s.name}
+          args={s.args}
+          result={s.result}
+          ok={s.ok}
+          durationMs={s.durationMs}
+          defaultOpen={expanded}
+        />
       );
     }
     return (
-      <ToolCard key={idx} name={s.name} args={s.args} result={s.result} ok={s.ok} durationMs={s.durationMs} defaultOpen={expanded} />
+      <ToolCard
+        key={idx}
+        name={s.name}
+        args={s.args}
+        result={s.result}
+        ok={s.ok}
+        durationMs={s.durationMs}
+        defaultOpen={expanded}
+      />
     );
   }
 
@@ -268,7 +312,11 @@ export const AssistantMsg = memo(function AssistantMsg({
       if (!firstReasoningShown) {
         firstReasoningShown = true;
         rendered.push(
-          <ReasoningCard key={`r-${i}`} text={s.text} streaming={pending && i === segments.length - 1} />,
+          <ReasoningCard
+            key={`r-${i}`}
+            text={s.text}
+            streaming={pending && i === segments.length - 1}
+          />,
         );
       }
       // Subsequent reasoning segments are intermediate tool-calling thought — hidden

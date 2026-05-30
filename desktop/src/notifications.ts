@@ -115,10 +115,7 @@ export function shouldShowCompletionToast(args: {
   focused: boolean;
 }): boolean {
   return (
-    args.focused &&
-    args.wasBusy &&
-    !args.isBusy &&
-    args.busyDurationMs >= COMPLETION_NOTIFY_MIN_MS
+    args.focused && args.wasBusy && !args.isBusy && args.busyDurationMs >= COMPLETION_NOTIFY_MIN_MS
   );
 }
 

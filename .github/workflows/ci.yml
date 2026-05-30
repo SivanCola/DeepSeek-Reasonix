@@ -23,9 +23,15 @@ jobs:
         with:
           node-version: ${{ matrix.node }}
           cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            desktop/package-lock.json
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Install desktop dependencies
+        run: npm ci --prefix desktop
 
       - name: Lint (biome)
         run: npm run lint
@@ -38,6 +44,9 @@ jobs:
 
       - name: Build (tsup + dashboard)
         run: npm run build
+
+      - name: Build desktop
+        run: npm run build:desktop
 
       - name: Test (vitest + coverage)
         run: npm run test:coverage
