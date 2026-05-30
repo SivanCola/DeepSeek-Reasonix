@@ -302,7 +302,7 @@
                 </tr>
                 <tr>
                   <td><code>--no-mouse</code></td>
-                  <td>Disable DECSET 1007 (alternate-scroll); wheel reverts to native terminal scroll</td>
+                  <td>Disable app-managed mouse tracking; wheel reverts to native terminal scroll</td>
                 </tr>
               </tbody>
             </table>
@@ -345,8 +345,8 @@
                   <td>Abort the current model turn (typed alternative to Esc)</td>
                 </tr>
                 <tr>
-                  <td><code>/copy</code></td>
-                  <td>Open vim/tmux-style copy mode — <code>j</code>/<code>k</code> navigate, <code>v</code> select, <code>y</code> yank to clipboard. The right answer for SSH / mosh / tmux where drag-select can't extend past the viewport</td>
+                  <td><code>/copy [all|last|assistant|N]</code></td>
+                  <td>Copy the latest assistant response by default; <code>all</code> copies the whole chat and <code>N</code> copies the last N items</td>
                 </tr>
               </tbody>
             </table>
@@ -685,9 +685,9 @@
               </tbody>
             </table>
             <p data-i18n="ms.body">
-              Reasonix sets DECSET 1007 (alternate-scroll) only — wheel events translate to
-              ↑/↓ keypresses for the app, but native click/drag selection is left untouched.
-              Pass <code>--no-mouse</code> to opt out entirely.
+              In auto/app scroll mode, Reasonix captures mouse-wheel reports so chat history can
+              scroll inside terminals whose native scrollback does not move TUI content. Pass
+              <code>--no-mouse</code> to opt out entirely.
             </p>
           </section>
 
@@ -732,10 +732,10 @@
             </p>
             <ol>
               <li data-i18n="cp.fix1">
-                <strong><code>/copy</code></strong> — open vim/tmux-style copy mode in-app.
-                Snapshots the current chat to a navigable buffer; <code>y</code> yanks to
-                clipboard via OSC 52 (with a temp-file fallback for terminals that don't
-                support it).
+                <strong><code>/copy</code></strong> — copy the latest assistant response through
+                OSC 52. Use <code>/copy all</code> for the full chat or <code>/copy N</code>
+                for the last N serialized chat items. Oversized content falls back to a temp
+                file path.
               </li>
               <li data-i18n="cp.fix2">
                 <strong><code>--no-alt-screen</code></strong> — render to shell scrollback
@@ -744,52 +744,6 @@
                 resize.
               </li>
             </ol>
-
-            <h3 data-i18n="cp.h.copymode"><code>/copy</code> — copy mode keys</h3>
-            <table class="cmd-table">
-              <thead>
-                <tr>
-                  <th data-i18n="th.key">Key</th>
-                  <th data-i18n="th.what">What it does</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr>
-                  <td><code>j</code> / <code>↓</code></td>
-                  <td>Cursor down one line</td>
-                </tr>
-                <tr>
-                  <td><code>k</code> / <code>↑</code></td>
-                  <td>Cursor up one line</td>
-                </tr>
-                <tr>
-                  <td><code>PgUp</code> / <code>PgDn</code></td>
-                  <td>Page up / down</td>
-                </tr>
-                <tr>
-                  <td><code>g</code> / <code>G</code></td>
-                  <td>Jump to top / bottom</td>
-                </tr>
-                <tr>
-                  <td><code>v</code></td>
-                  <td>Start (or cancel) selection at the cursor</td>
-                </tr>
-                <tr>
-                  <td><code>y</code> / <code>Enter</code></td>
-                  <td>Yank selection to clipboard, exit</td>
-                </tr>
-                <tr>
-                  <td><code>q</code> / <code>Esc</code></td>
-                  <td>Quit without yanking</td>
-                </tr>
-              </tbody>
-            </table>
-            <p data-i18n="cp.body.osc">
-              <code>y</code> with no active selection yanks just the current line. The yank
-              goes through OSC 52 first (works through SSH, mosh, tmux with
-              <code>set -g set-clipboard on</code>); content larger than 75 KB falls back to
-              a temp file whose path is printed on exit.
-            </p>
           </section>
         </article>
       </div>

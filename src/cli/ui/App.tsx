@@ -196,6 +196,7 @@ import {
   type PlanModeToggleSource,
   handleSlash,
   parseSlash,
+  shouldExposeTuiCardsToSlash,
   suggestSlashCommands,
 } from "./slash.js";
 import { TurnTranslator } from "./state/TurnTranslator.js";
@@ -488,6 +489,7 @@ function AppInner({
   markPhase("app_inner_start");
   const log = useScrollback();
   const agentStore = useAgentStore();
+  const getCardsForSlash = useCallback(() => agentStore.getState().cards, [agentStore]);
   const hasConversation = useAgentState((s) =>
     s.cards.some((c) => c.kind === "user" || c.kind === "streaming"),
   );
@@ -3014,6 +3016,11 @@ function AppInner({
       if (slash) {
         const sink = eventSinkRef.current;
         const eventizer = eventizerRef.current;
+        const exposeTuiCards = shouldExposeTuiCardsToSlash({
+          fromQQ,
+          fromTelegram,
+          fromWeixin,
+        });
         if (sink && eventizer) {
           sink.append(
             eventizer.emitSlashInvoked(loop.currentTurn, slash.cmd, slash.args.join(" ")),
@@ -3089,6 +3096,7 @@ function AppInner({
               footer: args.footer,
               oneTime: false,
             }),
+          getCards: exposeTuiCards ? getCardsForSlash : undefined,
           dispatch: agentStore.dispatch,
           markPlanStepDone: (stepId: string) => {
             const steps = planStepsRef.current;
@@ -3684,6 +3692,7 @@ function AppInner({
       startDashboard,
       stopDashboard,
       getDashboardUrl,
+      getCardsForSlash,
       broadcastDashboardEvent,
       touchedPaths,
       model,

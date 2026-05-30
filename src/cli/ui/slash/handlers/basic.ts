@@ -1,6 +1,8 @@
 import { wrapToCells } from "@/cli/ui/text-width.js";
 import { t, tObj } from "@/i18n/index.js";
 import { VERSION } from "@/version.js";
+import { writeClipboard } from "../../clipboard.js";
+import { parseCopyHistoryArgs, selectCopyHistory } from "../../copy-history.js";
 import { formatDuration, formatLoopStatus, parseLoopCommand } from "../../loop.js";
 import { SLASH_COMMANDS, SLASH_GROUP_ORDER, orderSlashCommandsByGroup } from "../commands.js";
 import type { SlashHandler } from "../dispatch.js";
@@ -151,6 +153,27 @@ const keys: SlashHandler = (_args, _loop, ctx) => {
   return {};
 };
 
+const copy: SlashHandler = (args, _loop, ctx) => {
+  if (!ctx.getCards) return { info: t("handlers.basic.copyNeedsTui") };
+  const mode = parseCopyHistoryArgs(args);
+  if ("error" in mode) return { info: t("handlers.basic.copyUsage") };
+  const selection = selectCopyHistory(ctx.getCards(), mode);
+  if (!selection) return { info: t("handlers.basic.copyNothing") };
+  const result = writeClipboard(selection.text);
+  if (!result.osc52 && result.filePath) {
+    return {
+      info: t("handlers.basic.copySavedFile", {
+        label: selection.label,
+        chars: result.size,
+        path: result.filePath,
+      }),
+    };
+  }
+  return {
+    info: t("handlers.basic.copyDone", { label: selection.label, chars: result.size }),
+  };
+};
+
 const about: SlashHandler = () => {
   const lines = [
     t("handlers.basic.aboutHeader", { version: VERSION }),
@@ -169,5 +192,6 @@ export const handlers: Record<string, SlashHandler> = {
   retry,
   loop,
   keys,
+  copy,
   about,
 };

@@ -14,6 +14,7 @@ export {
   suggestSlashCommands,
 } from "./slash/commands.js";
 export { handleSlash } from "./slash/dispatch.js";
+export { shouldExposeTuiCardsToSlash } from "./slash/submit-origin.js";
 export type { SlashHandler } from "./slash/dispatch.js";
 export type {
   McpServerSummary,

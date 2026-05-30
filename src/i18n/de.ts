@@ -1890,7 +1890,7 @@ export const de: TranslationSchema = {
     scrollAbovePlural: " ↑ {scroll} / {max} Zeilen darüber",
     scrollMore: " — {remaining} weitere",
     scrollPgUp: " · Bild↑ / Mausrad",
-    scrollCopy: " · /copy aktiviert Kopiermodus",
+    scrollCopy: " · /copy kopiert Antwort",
   },
   slashArgPicker: {
     ...EN.slashArgPicker,

@@ -8,6 +8,7 @@ import {
   detectSlashArgContext,
   handleSlash,
   parseSlash,
+  shouldExposeTuiCardsToSlash,
   suggestSlashCommands,
 } from "../src/cli/ui/slash.js";
 import { DeepSeekClient, Usage } from "../src/client.js";
@@ -520,6 +521,66 @@ describe("handleSlash", () => {
     expect(r.info).toMatch(/\/retry/);
   });
 
+  it("/copy copies the latest assistant response through OSC 52", () => {
+    const write = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    try {
+      const r = handleSlash("copy", [], makeLoop(), {
+        getCards: () => [
+          { kind: "user", id: "u1", ts: 1, text: "hello" },
+          { kind: "streaming", id: "a1", ts: 2, text: "copy me", done: true },
+        ],
+      });
+
+      expect(r.info).toContain("copied");
+      const expectedB64 = Buffer.from("copy me", "utf8").toString("base64");
+      expect(write).toHaveBeenCalledWith(`\x1b]52;c;${expectedB64}\x1b\\`);
+    } finally {
+      write.mockRestore();
+    }
+  });
+
+  it("/copy all serializes the conversation", () => {
+    const write = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    try {
+      const r = handleSlash("copy", ["all"], makeLoop(), {
+        getCards: () => [
+          { kind: "user", id: "u1", ts: 1, text: "hello" },
+          { kind: "streaming", id: "a1", ts: 2, text: "hi back", done: true },
+        ],
+      });
+
+      expect(r.info).toContain("copied");
+      const expected = "User:\nhello\n\nAssistant:\nhi back";
+      const expectedB64 = Buffer.from(expected, "utf8").toString("base64");
+      expect(write).toHaveBeenCalledWith(`\x1b]52;c;${expectedB64}\x1b\\`);
+    } finally {
+      write.mockRestore();
+    }
+  });
+
+  it("/copy requires TUI cards", () => {
+    const r = handleSlash("copy", [], makeLoop());
+    expect(r.info).toMatch(/interactive TUI/);
+  });
+
+  it("only exposes TUI card history to local slash submissions", () => {
+    expect(
+      shouldExposeTuiCardsToSlash({
+        fromQQ: false,
+        fromTelegram: false,
+        fromWeixin: false,
+      }),
+    ).toBe(true);
+
+    for (const origin of [
+      { fromQQ: true, fromTelegram: false, fromWeixin: false },
+      { fromQQ: false, fromTelegram: true, fromWeixin: false },
+      { fromQQ: false, fromTelegram: false, fromWeixin: true },
+    ]) {
+      expect(shouldExposeTuiCardsToSlash(origin)).toBe(false);
+    }
+  });
+
   describe("detectSlashArgContext", () => {
     it("returns null before the user commits to a slash name", () => {
       expect(detectSlashArgContext("/pr")).toBeNull();
@@ -684,6 +745,7 @@ describe("handleSlash", () => {
       "compact",
       "sessions",
       "new",
+      "copy",
       "exit",
       "apply",
       "discard",
@@ -700,7 +762,7 @@ describe("handleSlash", () => {
     // Case-insensitive.
     expect(suggestSlashCommands("HE").map((s) => s.cmd)).toEqual(["help"]);
     // Empty prefix returns the full non-advanced release list, including code commands.
-    expect(suggestSlashCommands("", true)).toHaveLength(48);
+    expect(suggestSlashCommands("", true)).toHaveLength(49);
     expect(suggestSlashCommands("", true).map((s) => s.cmd)).toContain("logs");
     expect(suggestSlashCommands("", true).map((s) => s.cmd)).toContain("language");
     expect(suggestSlashCommands("", true).map((s) => s.cmd)).toContain("weixin");

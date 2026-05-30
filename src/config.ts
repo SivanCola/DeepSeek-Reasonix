@@ -238,11 +238,11 @@ export interface ReasonixConfig {
   /** Brave Search API key. Falls back to BRAVE_SEARCH_API_KEY env var. Free 2000/mo signup at https://brave.com/search/api/ */
   braveApiKey?: string;
 
-  /** TUI mouse-wheel scrolling via SGR mouse tracking. Default true. Set false to fall back to native terminal drag-select for copy (then wheel is terminal-dependent — most terminals translate wheel→arrow in alt-screen, some don't). */
+  /** TUI mouse-wheel scrolling via app-managed mouse tracking when historyScrollMode resolves to "app". Default true. Set false to leave the wheel entirely to the terminal. */
   mouseTracking?: boolean;
   /** Rows scrolled per single SGR mouse-wheel report. Default 1 — most terminals emit 2-5 reports per physical notch, so 1 already produces 2-5 rows per notch (#1419). Bump to 3-5 only if your terminal emits one report per notch and scrolling feels slow (#1494). Clamped to [1, 10]. */
   mouseWheelRows?: number;
-  /** Chat-history scrolling: "native" leaves terminal scrollback in charge; "app" captures wheel/PgUp/PgDn/End inside the TUI; "auto" enables app mode for terminals with known jumpy native scrollback. */
+  /** Chat-history scrolling: "native" leaves terminal scrollback in charge; "app" captures wheel/PgUp/PgDn/End inside the TUI; "auto" prefers app mode except terminals where native scrollback is safer. */
   historyScrollMode?: HistoryScrollMode;
   /** Diff display mode for edit_file / write_file / multi_edit results in CLI. */
   diffDisplay?: DiffDisplay;

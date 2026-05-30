@@ -121,6 +121,10 @@ export const EN: TranslationSchema = {
             },
             { key: "wheel", text: "scrolls chat history (works on web/cloud/SSH terminals too)" },
             {
+              key: "/copy",
+              text: "copy the latest assistant response; `/copy all` copies the chat",
+            },
+            {
               key: "↑ / ↓",
               text: "prompt history (or per-line cursor in a multi-line draft) — Ctrl+P / Ctrl+N alias",
             },
@@ -176,6 +180,10 @@ export const EN: TranslationSchema = {
             },
             { key: "paste", text: "Ctrl+V or Ctrl+Shift+V (Win/Linux) · Cmd+V (macOS)" },
             {
+              key: "/copy",
+              text: "copy latest assistant response · `/copy all` for the full chat · `/copy N` for last N items",
+            },
+            {
               key: "bracketed paste",
               text: "multi-line pastes stay one block — no auto-submit on intermediate newlines",
             },
@@ -191,7 +199,7 @@ export const EN: TranslationSchema = {
         },
       ],
       footer:
-        "Wheel scrolls chat on most terminals (web/cloud/SSH included) — SGR mouse tracking is on by default and stays out of the way of native drag-select and right-click. Pass --no-mouse to opt out.",
+        "Wheel scrolls chat on most terminals (web/cloud/SSH included). If your terminal traps selection while mouse tracking is active, use /copy or pass --no-mouse.",
     },
     tipShownOnce: "shown once",
     modelOverride: "override the default model",
@@ -357,6 +365,11 @@ export const EN: TranslationSchema = {
     feedback: { description: "open a GitHub issue with diagnostic info copied to clipboard" },
     about: { description: "project info — version, website, repo, license" },
     keys: { description: "keyboard + mouse + copy/paste reference" },
+    copy: {
+      description:
+        "copy the latest assistant response, the whole conversation (`all`), or the last N items",
+      argsHint: "[all|last|assistant|N]",
+    },
     plans: { description: "list this session's active + archived plans, newest first" },
     replay: {
       description: "load an archived plan as a read-only Time Travel snapshot (default: newest)",
@@ -856,6 +869,11 @@ export const EN: TranslationSchema = {
       loopStarted:
         '▸ loop started — re-submitting "{prompt}" every {duration}. Type anything (or /loop stop) to cancel.',
       keysNeedsTui: "/keys needs a TUI context (postKeys wired).",
+      copyNeedsTui: "/copy is only available in the interactive TUI.",
+      copyUsage: "usage: /copy [all|last|assistant|N]",
+      copyNothing: "nothing to copy yet.",
+      copyDone: "▸ copied {label} to clipboard ({chars} chars).",
+      copySavedFile: "▸ {label} is too large for terminal clipboard; saved {chars} chars to {path}",
       aboutHeader: "Reasonix v{version} — a cache-first DeepSeek coding agent",
       aboutWebsiteLabel: "Website",
       aboutRepoLabel: "GitHub ",
@@ -1940,7 +1958,7 @@ export const EN: TranslationSchema = {
     scrollAbovePlural: " \u2191 {scroll} / {max} rows above",
     scrollMore: " \u2014 {remaining} more",
     scrollPgUp: " \u00b7 PgUp / wheel",
-    scrollCopy: " \u00b7 /copy enters copy mode",
+    scrollCopy: " \u00b7 /copy copies reply",
   },
   slashArgPicker: {
     noMatch: 'no match for "{partial}"',
