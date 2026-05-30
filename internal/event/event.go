@@ -54,6 +54,10 @@ const (
 	// nil also for a user cancellation, which is not an error). Always the
 	// last event of a turn.
 	TurnDone
+	// CompactProgress reports compaction progress to the UI (Text = phase
+	// label; Progress = 0.0→1.0; Tip = rotating hint). Emitted by compact()
+	// as it moves through bounds→archive→summarize→rebuild→done.
+	CompactProgress
 )
 
 // Level classifies a Notice so sinks can style or filter it.
@@ -122,19 +126,39 @@ type AskAnswer struct {
 	Selected   []string
 }
 
+// CacheDiagnostics describes whether and why the cacheable prefix changed since
+// the last turn. It rides on the Usage event so every frontend can show
+// cache-churn attribution.
+type CacheDiagnostics struct {
+	PrefixHash          string
+	PrefixChanged       bool
+	PrefixChangeReasons []string // "system", "tools", "log_rewrite"
+	SystemHash          string
+	ToolsHash           string
+	LogRewriteVersion   int
+	ToolSchemaTokens    int
+	CacheMissTokens     int
+	CacheHitTokens      int
+}
+
 // Event is one increment in a turn's event stream. Read the field(s) documented
 // for Kind; the others are zero.
 type Event struct {
-	Kind      Kind
-	Text      string            // Reasoning / Text / Message / Notice / Phase
-	Reasoning string            // Message: the full reasoning chain
-	Tool      Tool              // ToolDispatch / ToolResult
-	Usage     *provider.Usage   // Usage
-	Pricing   *provider.Pricing // Usage: for cost display (nil = omit cost)
-	Level     Level             // Notice
-	Approval  Approval          // ApprovalRequest
-	Ask       Ask               // AskRequest
-	Err       error             // TurnDone: non-nil on failure
+	Kind             Kind
+	Text             string            // Reasoning / Text / Message / Notice / Phase
+	Reasoning        string            // Message: the full reasoning chain
+	Tool             Tool              // ToolDispatch / ToolResult
+	Usage            *provider.Usage   // Usage
+	Pricing          *provider.Pricing // Usage: for cost display (nil = omit cost)
+	CacheDiagnostics *CacheDiagnostics // Usage: cache-churn attribution (nil = N/A)
+	CumulativeTokens int               // Usage: cumulative tokens across all turns
+	TurnCount        int               // Usage: current turn number
+	Level            Level             // Notice
+	Approval         Approval          // ApprovalRequest
+	Ask              Ask               // AskRequest
+	Err              error             // TurnDone: non-nil on failure
+	Progress         float64           // CompactProgress: 0.0 → 1.0
+	Tip              string            // CompactProgress: rotating hint for the user
 }
 
 // Sink consumes a turn's events. The agent calls Emit serially from its run
