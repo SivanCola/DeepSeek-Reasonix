@@ -113,6 +113,11 @@ jobs:
           test -f dist/index.html
           ls dist/assets/*.js >/dev/null
 
+      - name: Disable updater artifacts for unsigned Windows beta
+        shell: bash
+        run: |
+          node -e "const fs=require('fs'); const p='desktop/src-tauri/tauri.conf.json'; const c=JSON.parse(fs.readFileSync(p,'utf8')); c.bundle.createUpdaterArtifacts=false; fs.writeFileSync(p, JSON.stringify(c, null, 2) + '\n');"
+
       - name: Build Tauri bundle (Windows, unsigned)
         working-directory: desktop
         run: npm run tauri -- build --target ${{ matrix.target.tauri }}
