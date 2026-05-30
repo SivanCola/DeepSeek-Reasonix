@@ -26,9 +26,6 @@ jobs:
         target:
           # macOS now ships two single-arch shards so Apple Silicon and Intel
           # users get separate DMGs. `rust` and `tauri` stay aligned per shard.
-          - { os: ubuntu-22.04, label: "linux-x64", rust: "x86_64-unknown-linux-gnu", tauri: "x86_64-unknown-linux-gnu" }
-          - { os: macos-15-intel, label: "macos-x64", rust: "x86_64-apple-darwin", tauri: "x86_64-apple-darwin" }
-          - { os: macos-14, label: "macos-arm64", rust: "aarch64-apple-darwin", tauri: "aarch64-apple-darwin" }
           - { os: windows-latest, label: "windows-x64", rust: "x86_64-pc-windows-msvc", tauri: "x86_64-pc-windows-msvc" }
     runs-on: ${{ matrix.target.os }}
     # secrets.* isn't accessible from step-level if:, so expose presence as a
@@ -116,27 +113,14 @@ jobs:
           test -f dist/index.html
           ls dist/assets/*.js >/dev/null
 
-      # tauri-action signs OS bundles whenever the corresponding env vars are
-      # defined — including when they're defined to the empty string, which is
-      # what `secrets.UNSET` evaluates to. Gate each signing block on its
-      # certificate being non-empty so unsigned prereleases don't trip
-      # `security import` / `signtool` on missing certs.
-      - name: Build Tauri bundle (unsigned)
-        if: >-
-          (matrix.target.os != 'windows-latest' || env.HAS_WIN_CERT != 'true')
-          && (!startsWith(matrix.target.os, 'macos-') || env.HAS_APPLE_CERT != 'true')
-        uses: tauri-apps/tauri-action@v0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        with:
-          projectPath: desktop
-          tagName: ${{ steps.tag.outputs.name }}
-          releaseName: Reasonix ${{ steps.tag.outputs.name }}
-          releaseDraft: true
-          prerelease: false
-          args: --target ${{ matrix.target.tauri }}
+      - name: Disable updater artifacts for unsigned Windows beta
+        shell: bash
+        run: |
+          node -e "const fs=require('fs'); const p='desktop/src-tauri/tauri.conf.json'; const c=JSON.parse(fs.readFileSync(p,'utf8')); c.bundle.createUpdaterArtifacts=false; fs.writeFileSync(p, JSON.stringify(c, null, 2) + '\n');"
+
+      - name: Build Tauri bundle (Windows, unsigned)
+        working-directory: desktop
+        run: npm run tauri -- build --target ${{ matrix.target.tauri }}
 
       - name: Build Tauri bundle (Windows, signed)
         if: matrix.target.os == 'windows-latest' && env.HAS_WIN_CERT == 'true'
@@ -154,6 +138,26 @@ jobs:
           releaseDraft: true
           prerelease: false
           args: --target ${{ matrix.target.tauri }}
+
+      - name: Upload Windows bundle artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: reasonix-windows-x64-${{ steps.tag.outputs.name }}
+          path: |
+            desktop/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/msi/*.msi
+            desktop/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe
+
+      - name: Upload Windows bundle to draft release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.name }}
+          name: Reasonix ${{ steps.tag.outputs.name }}
+          target_commitish: ${{ github.sha }}
+          draft: true
+          prerelease: true
+          files: |
+            desktop/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/msi/*.msi
+            desktop/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe
 
       - name: Build Tauri bundle (macOS, signed + notarized)
         if: startsWith(matrix.target.os, 'macos-') && env.HAS_APPLE_CERT == 'true'
