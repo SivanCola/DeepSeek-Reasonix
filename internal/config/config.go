@@ -12,6 +12,7 @@ import (
 
 	"github.com/BurntSushi/toml"
 
+	"reasonix/internal/agent"
 	"reasonix/internal/provider"
 )
 
@@ -88,7 +89,27 @@ type AgentConfig struct {
 	SystemPromptFile string  `toml:"system_prompt_file"`
 	MaxSteps         int     `toml:"max_steps"` // tool-call rounds per turn; 0 = unlimited
 	Temperature      float64 `toml:"temperature"`
-	PlannerModel     string  `toml:"planner_model"`
+	PlannerModel     string   `toml:"planner_model"`
+	Keep             []string `toml:"keep"`
+	CompactRatio     float64  `toml:"compact_ratio"`
+	RecentKeep       int      `toml:"recent_keep"`
+}
+
+// KeepPolicy converts the keep list to an agent.KeepPolicy bitmask.
+func (a *AgentConfig) KeepPolicy() agent.KeepPolicy {
+	if a.Keep == nil {
+		return agent.KeepErrors
+	}
+	var p agent.KeepPolicy
+	for _, k := range a.Keep {
+		switch k {
+		case "errors":
+			p |= agent.KeepErrors
+		case "user_marked":
+			p |= agent.KeepUserMarked
+		}
+	}
+	return p
 }
 
 // ProviderEntry declares a model provider instance. ContextWindow is the model's

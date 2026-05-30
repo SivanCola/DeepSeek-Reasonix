@@ -41,6 +41,21 @@ func RenderTOML(c *Config) string {
 	} else {
 		b.WriteString("# planner_model = \"mimo\"   # optional: enable two-model collaboration\n")
 	}
+	if len(c.Agent.Keep) > 0 {
+		fmt.Fprintf(&b, "keep          = %s\n", renderStringArray(c.Agent.Keep))
+	} else {
+		b.WriteString("# keep          = [\"system\"]   # compaction keep policy\n")
+	}
+	if c.Agent.CompactRatio > 0 {
+		fmt.Fprintf(&b, "compact_ratio = %s\n", formatFloat(c.Agent.CompactRatio))
+	} else {
+		b.WriteString("# compact_ratio = 0.8\n")
+	}
+	if c.Agent.RecentKeep > 0 {
+		fmt.Fprintf(&b, "recent_keep   = %d\n", c.Agent.RecentKeep)
+	} else {
+		b.WriteString("# recent_keep   = 8\n")
+	}
 	b.WriteString("\n")
 
 	for _, p := range c.Providers {

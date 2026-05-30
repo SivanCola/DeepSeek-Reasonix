@@ -121,7 +121,17 @@ type Agent struct {
 	compactRatio  float64
 	recentKeep    int
 	archiveDir    string
+	keepPolicy    KeepPolicy
 }
+
+// KeepPolicy is a bitmask controlling which messages are preserved beyond the
+// recent tail during compaction.
+type KeepPolicy int
+
+const (
+	KeepErrors KeepPolicy = 1 << iota
+	KeepUserMarked
+)
 
 // SetPlanMode flips the read-only gate. While true, executeOne refuses any
 // non-ReadOnly tool the model calls and returns a "blocked" result instead of
