@@ -33,8 +33,8 @@ var Chinese = Messages{
 	ChatStatusIdle:         "Tab 切换 plan · Enter 发送 · Esc 退出当前状态 · PgUp/PgDn 滚动 · Ctrl-D 退出",
 	ChatStatusPlanApproval: "Enter 同意 · 输入文本反馈以让 AI 修改 · Esc 撤掉横幅 · PgUp/PgDn 滚动",
 	PlanApprovalPrompt:     "计划已生成（看上方）— 回车通过，或输入修改建议",
-	ChatStatusToolApproval: "y 同意一次 · a 本会话允许 · n 拒绝 · Ctrl-C 取消本轮",
-	ToolApprovalPromptFmt:  "允许 %s%s？— [y] 本次 · [a] 本会话 · [n] 拒绝",
+	ChatStatusToolApproval: "1 同意一次 · 2 本会话允许 · 3 拒绝 · Ctrl-C 取消本轮",
+	ToolApprovalPromptFmt:  "允许 %s%s？— [1] 本次 · [2] 本会话 · [3] 拒绝",
 
 	SlashCompactDone:   "已压缩 — 旧的中段换成一段摘要，最近几轮保留原样",
 	SlashCompactFailed: "压缩失败",
@@ -42,7 +42,7 @@ var Chinese = Messages{
 	SlashNewFailed:     "新建会话失败",
 	SlashUnavailable:   "当前构建不支持该命令",
 	SlashUnknown:       "未知命令",
-	SlashHelp:          "命令：/compact（手动压缩上下文）· /new（开新会话）· /mcp（MCP 服务器）· /help",
+	SlashHelp:          "命令：/compact · /new · /mcp · /copy · /goal · /cache · /lang · /help",
 	SlashPromptEmpty:   "该 MCP prompt 没有返回可发送的内容",
 	SlashMCPNone:       "没有配置 MCP 服务器 — 在 reasonix.toml 加一个 [[plugins]] 条目",
 	CompHintSlash:      "↑/↓ 移动 · Tab/Enter 选中 · Esc 关闭",
@@ -68,6 +68,25 @@ var Chinese = Messages{
 
 	SelectOneHint:  "(↑/↓ · Enter · q 取消)",
 	SelectManyHint: "(↑/↓ · Space · Enter · q)",
+
+	SessionCostFmt: "第 %d 轮 · 本轮 %s · 累计: %s",
+
+	CacheReportTitle:   "缓存诊断报告",
+	CacheReportTurnFmt: "第 %d 轮: 命中=%d 未命中=%d",
+	CacheReportChurn:   "变化原因: %v",
+	CacheReportStable:  "缓存前缀稳定",
+	CacheDoctorHeader:  "缓存健康检查",
+
+	SlashCopyDone:    "已复制到剪贴板",
+	SlashCopyFailed:  "剪贴板复制失败: %v",
+	SlashCopyNoFile:  "没有可复制的消息",
+	SlashCopyWritten: "剪贴板不可用 — 已写入 %s",
+
+	GoalStartedFmt:   "目标已设定: %s — /goal status 查看进度, /goal cancel 取消",
+	GoalStatusFmt:    "目标: %s\n状态: %s\n尝试次数: %d",
+	GoalCancelled:    "目标已取消。",
+	GoalCompletedFmt: "目标已完成: %s",
+	GoalNoGoal:       "没有活跃的目标 — 使用 /goal <描述> 来设定",
 
 	UsageBody: `reasonix — 由配置和插件驱动的 coding agent（多模型）
 

@@ -37,7 +37,7 @@ func runTool(t *testing.T, tl tool.Tool, m map[string]any) string {
 }
 
 func TestBuiltinsRegistered(t *testing.T) {
-	want := []string{"bash", "edit_file", "glob", "grep", "ls", "multi_edit", "read_file", "web_fetch", "write_file"}
+	want := []string{"bash", "delete_range", "delete_symbol", "edit_file", "glob", "grep", "ls", "multi_edit", "read_file", "web_fetch", "write_file"}
 	for _, name := range want {
 		if _, ok := tool.LookupBuiltin(name); !ok {
 			t.Errorf("built-in %q not registered", name)
@@ -53,7 +53,7 @@ func TestBuiltinsRegistered(t *testing.T) {
 func TestBuiltinReadOnlyClassification(t *testing.T) {
 	readOnly := map[string]bool{
 		"read_file": true, "ls": true, "glob": true, "grep": true, "web_fetch": true,
-		"write_file": false, "edit_file": false, "multi_edit": false, "bash": false,
+		"write_file": false, "edit_file": false, "multi_edit": false, "delete_range": false, "delete_symbol": false, "bash": false,
 	}
 	for name, want := range readOnly {
 		tl, ok := tool.LookupBuiltin(name)

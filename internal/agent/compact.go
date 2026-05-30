@@ -23,6 +23,15 @@ const (
 	minCompactMessages  = 2   // skip compaction below this many compactable messages
 )
 
+// Fold economics: normal-band compaction should only run when the expected
+// multi-turn savings justify the immediate cost of a cold summary segment.
+const (
+	foldEconHorizonTurns       = 3
+	foldEconMinSavingsFraction = 0.15
+	foldEconMinSavingsUSD      = 0.002
+	foldSummaryReserveTokens   = 4096
+)
+
 // summarySystemPrompt steers the executor to distill older history into a
 // briefing it can keep relying on after the originals are dropped.
 const summarySystemPrompt = `You are compacting the earlier part of a coding agent's conversation to save context.
@@ -34,6 +43,40 @@ Summarize the messages below into a compact briefing the agent can rely on to co
 - what is still pending or in progress
 Omit small talk and redundant detail. Use terse bullet points. Do not invent information.`
 
+// foldEconomics estimates whether compacting is cheaper than carrying the
+// current input cost. It models the cost of a fold: one summary call
+// (input-cold for the full prompt), plus the post-fold cold miss for the
+// next real turn, plus (horizon-1) warm turns on the smaller prefix —
+// and compares it against carrying the current cost for horizon turns.
+func foldEconomics(u *provider.Usage, pricing *provider.Pricing, ctxWindow int) (savings float64, worthwhile bool) {
+	if pricing == nil || u == nil || u.PromptTokens == 0 {
+		return 0, true // no pricing data: let the fold proceed
+	}
+	horizonTurns := foldEconHorizonTurns
+	// Carrying current input cost for horizon turns (all warm after first).
+	carryCost := (float64(u.CacheMissTokens)*pricing.Input +
+		float64(u.CacheHitTokens)*pricing.CacheHit) / 1e6 * float64(horizonTurns)
+
+	// Fold: one summary call (all-input-cold) + post-fold cold + (horizon-1) warm.
+	summaryCost := float64(u.PromptTokens) * pricing.Input / 1e6
+	postFoldTokens := float64(u.PromptTokens)
+	tailBudget := float64(ctxWindow) * 0.3 // HISTORY_FOLD_TAIL_FRACTION = 0.3
+	if postFoldTokens > tailBudget+foldSummaryReserveTokens {
+		postFoldTokens = tailBudget + foldSummaryReserveTokens
+	}
+	postFoldCold := postFoldTokens * pricing.Input / 1e6
+	postFoldWarm := postFoldTokens * pricing.CacheHit / 1e6 * float64(horizonTurns-1)
+	foldCost := summaryCost + postFoldCold + postFoldWarm
+
+	savings = carryCost - foldCost
+	fraction := 0.0
+	if carryCost > 0 {
+		fraction = savings / carryCost
+	}
+	worthwhile = savings >= foldEconMinSavingsUSD && fraction >= foldEconMinSavingsFraction
+	return savings, worthwhile
+}
+
 // maybeCompact compacts the session when the last turn's prompt has grown to the
 // configured fraction of the context window. It is a no-op when compaction is
 // disabled (no window) or usage is unavailable.
@@ -41,7 +84,18 @@ func (a *Agent) maybeCompact(ctx context.Context, u *provider.Usage) {
 	if a.contextWindow <= 0 || u == nil || u.PromptTokens == 0 {
 		return
 	}
-	if u.PromptTokens < int(float64(a.contextWindow)*a.compactRatio) {
+	ratio := float64(u.PromptTokens) / float64(a.contextWindow)
+	// Aggressive threshold: always compact to protect the context window.
+	if ratio >= 0.9 {
+		_ = a.compact(ctx)
+		return
+	}
+	// Normal band: only compact if economics say it's worth it.
+	if ratio < a.compactRatio {
+		return
+	}
+	_, worthwhile := foldEconomics(u, a.pricing, a.contextWindow)
+	if !worthwhile {
 		return
 	}
 	if err := a.compact(ctx); err != nil {
@@ -82,6 +136,7 @@ func (a *Agent) compact(ctx context.Context) error {
 	})
 	compacted = append(compacted, msgs[start:]...)
 	a.session.Messages = compacted
+	a.session.IncrementRewrite()
 
 	note := fmt.Sprintf("compacted %d messages → summary", len(region))
 	if archived != "" {

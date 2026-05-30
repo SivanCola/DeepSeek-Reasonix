@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"image/color"
+	"os"
+	"os/exec"
 	"strings"
 	"time"
 
@@ -14,6 +16,8 @@ import (
 	"charm.land/lipgloss/v2"
 
 	"reasonix/internal/agent"
+	"reasonix/internal/agent/goal"
+	"reasonix/internal/config"
 	"reasonix/internal/command"
 	"reasonix/internal/control"
 	"reasonix/internal/event"
@@ -205,6 +209,13 @@ func (m chatTUI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.history = nil
 			}
 			m.commitLine(strings.TrimRight(b.String(), "\n"))
+		}
+
+	case tea.MouseMsg:
+		switch mouse := msg.Mouse(); mouse.Button {
+		case tea.MouseWheelUp, tea.MouseWheelDown:
+			// In normal-buffer mode the terminal's native scrollback handles
+			// wheel events for committed output; we let the event pass through.
 		}
 
 	case tea.KeyPressMsg:
@@ -516,11 +527,11 @@ func (m chatTUI) handleApprovalKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return answer(false, false)
 	}
 	switch strings.ToLower(msg.String()) {
-	case "y":
+	case "y", "1":
 		return answer(true, false)
-	case "a":
+	case "a", "2":
 		return answer(true, true)
-	case "n":
+	case "n", "3":
 		return answer(false, false)
 	}
 	return m, nil // ignore anything else while awaiting a decision
@@ -744,7 +755,7 @@ func (m *chatTUI) ingestEvent(e event.Event) {
 		}
 
 	case event.Usage:
-		if line := agent.FormatUsageLine(e.Usage, e.Pricing); line != "" {
+		if line := agent.FormatUsageLine(e.Usage, e.Pricing, e.CacheDiagnostics); line != "" {
 			m.finalizeStreamed()
 			m.commitLine(line)
 		}
@@ -833,6 +844,14 @@ func (m *chatTUI) runSlashCommand(input string) tea.Cmd {
 		m.notice(i18n.M.SlashNewDone)
 	case "/mcp":
 		m.showMCPStatus()
+	case "/copy":
+		m.runCopy(input)
+	case "/goal":
+		m.runGoal(input)
+	case "/cache-report", "/cache":
+		m.showCacheReport()
+	case "/lang", "/language":
+		m.runLang(input)
 	case "/help":
 		m.notice(i18n.M.SlashHelp)
 		if names := m.commandNames(); names != "" {
@@ -890,6 +909,159 @@ func (m *chatTUI) showMCPStatus() {
 func (m *chatTUI) notice(note string) {
 	m.commitLine(dim("  · " + note))
 }
+
+// runCopy handles /copy: copies the last assistant response to clipboard.
+func (m *chatTUI) runCopy(input string) {
+	history := m.ctrl.History()
+	kind := strings.TrimSpace(strings.TrimPrefix(input, "/copy"))
+
+	var text string
+	switch kind {
+	case "", "last":
+		for i := len(history) - 1; i >= 0; i-- {
+			if history[i].Role == provider.RoleAssistant {
+				text = history[i].Content
+				break
+			}
+		}
+		if text == "" {
+			m.notice(i18n.M.SlashCopyNoFile)
+			return
+		}
+	case "all":
+		var b strings.Builder
+		for _, msg := range history {
+			switch msg.Role {
+			case provider.RoleUser:
+				b.WriteString("## User\n\n" + msg.Content + "\n\n")
+			case provider.RoleAssistant:
+				if msg.Content != "" {
+					b.WriteString("## Assistant\n\n" + msg.Content + "\n\n")
+				}
+			}
+		}
+		text = b.String()
+		if text == "" {
+			m.notice(i18n.M.SlashCopyNoFile)
+			return
+		}
+	default:
+		m.notice(fmt.Sprintf("%s: /copy [last|all]", i18n.M.SlashUnknown))
+		return
+	}
+
+	if tmp, err := copyToClipboard(text); err != nil {
+		m.notice(fmt.Sprintf(i18n.M.SlashCopyFailed, err))
+	} else if tmp != "" {
+		m.notice(fmt.Sprintf(i18n.M.SlashCopyWritten, tmp))
+	} else {
+		m.notice(i18n.M.SlashCopyDone)
+	}
+}
+
+// copyToClipboard writes text to the system clipboard. Returns the temp file
+// path when no clipboard tool is available (non-nil path means fallback file).
+func copyToClipboard(text string) (tempPath string, err error) {
+	if _, e := exec.LookPath("pbcopy"); e == nil {
+		cmd := exec.Command("pbcopy")
+		cmd.Stdin = strings.NewReader(text)
+		return "", cmd.Run()
+	}
+	if _, e := exec.LookPath("xclip"); e == nil {
+		cmd := exec.Command("xclip", "-selection", "clipboard")
+		cmd.Stdin = strings.NewReader(text)
+		return "", cmd.Run()
+	}
+	if _, e := exec.LookPath("wl-copy"); e == nil {
+		cmd := exec.Command("wl-copy")
+		cmd.Stdin = strings.NewReader(text)
+		return "", cmd.Run()
+	}
+	f, err := os.CreateTemp("", "reasonix-copy-*.txt")
+	if err != nil {
+		return "", err
+	}
+	if _, err := f.WriteString(text); err != nil {
+		f.Close()
+		return "", err
+	}
+	return f.Name(), f.Close()
+}
+
+// runGoal handles /goal slash commands.
+func (m *chatTUI) runGoal(input string) {
+	rest := strings.TrimSpace(strings.TrimPrefix(input, "/goal"))
+	ws, _ := os.Getwd()
+
+	switch {
+	case rest == "" || rest == "status":
+		s, err := goal.Load(goal.Dir(ws))
+		if err != nil || s == nil {
+			m.notice(i18n.M.GoalNoGoal)
+			return
+		}
+		lines := strings.Split(fmt.Sprintf(i18n.M.GoalStatusFmt, s.Goal, s.Status, s.Attempts), "\n")
+		for _, line := range lines {
+			m.notice(line)
+		}
+	case rest == "cancel":
+		goal.Delete(goal.Dir(ws))
+		m.notice(i18n.M.GoalCancelled)
+	default:
+		s := &goal.State{Goal: rest, Status: goal.StatusActive, Attempts: 1}
+		s.Save(goal.Dir(ws))
+		m.notice(fmt.Sprintf(i18n.M.GoalStartedFmt, rest))
+	}
+}
+
+// showCacheReport prints cache diagnostic history.
+func (m *chatTUI) showCacheReport() {
+	entries := m.ctrl.CacheReport()
+	if len(entries) == 0 {
+		m.notice("no cache diagnostics recorded yet")
+		return
+	}
+	var b strings.Builder
+	b.WriteString(dim("  · " + i18n.M.CacheReportTitle) + "\n")
+	stableTurns := 0
+	for i, d := range entries {
+		if d.PrefixChanged {
+			b.WriteString(fmt.Sprintf("    "+i18n.M.CacheReportTurnFmt, i+1, d.CacheHitTokens, d.CacheMissTokens))
+			if len(d.PrefixChangeReasons) > 0 {
+				b.WriteString(fmt.Sprintf(" · "+i18n.M.CacheReportChurn, d.PrefixChangeReasons))
+			}
+			b.WriteByte('\n')
+		} else {
+			stableTurns++
+		}
+	}
+	if stableTurns > 0 {
+		b.WriteString(dim(fmt.Sprintf("    "+i18n.M.CacheReportStable+" (%d turns)", stableTurns)))
+	}
+	m.commitLine(strings.TrimRight(b.String(), "\n"))
+}
+// runLang handles /lang and /language for runtime language switching.
+func (m *chatTUI) runLang(input string) {
+	tag := strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(input, "/lang"), "/language"))
+	if tag == "" {
+		m.notice(fmt.Sprintf("current language: %s — /lang en | zh", i18n.CurrentLanguage()))
+		return
+	}
+	resolved := i18n.SwitchLanguage(tag)
+	m.notice(fmt.Sprintf("language: %s", resolved))
+
+	// Persist to config.
+	cfg, err := config.Load()
+	if err != nil {
+		return
+	}
+	cfg.Language = resolved
+	src := config.SourcePath()
+	if src != "" {
+		_ = cfg.WriteFile(src)
+	}
+}
+
 
 // resolveRefs resolves a line's @references off the event loop via the
 // controller, delivering a refsResolvedMsg with the tagged context block.

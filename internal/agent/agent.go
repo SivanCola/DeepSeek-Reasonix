@@ -60,6 +60,14 @@ type Agent struct {
 	// usage line out of the output writer.
 	lastUsage *provider.Usage
 
+	// lastShape caches the prefix snapshot from the previous turn so we can
+	// detect cache-prefix churn (system/tools/log_rewrite) turn-over-turn.
+	lastShape *PrefixShape
+
+	// diagHistory keeps the last ~50 cache diagnostic entries for
+	// /cache-report inspection.
+	diagHistory []event.CacheDiagnostics
+
 	// planMode, when true, refuses any tool call whose ReadOnly() is false.
 	// The system prompt and tool list never change with the toggle so the
 	// prompt-cache prefix stays valid; the gating happens at execute time
@@ -116,6 +124,9 @@ func (a *Agent) ContextWindow() int { return a.contextWindow }
 // naturally fills up.
 func (a *Agent) CompactNow(ctx context.Context) error { return a.compact(ctx) }
 
+// CacheReport returns recent cache diagnostic entries for /cache-report.
+func (a *Agent) CacheReport() []event.CacheDiagnostics { return a.diagHistory }
+
 // Options configures an Agent.
 type Options struct {
 	MaxSteps    int
@@ -168,6 +179,7 @@ func New(prov provider.Provider, tools *tool.Registry, session *Session, opts Op
 // tools or maxSteps is reached.
 func (a *Agent) Run(ctx context.Context, input string) error {
 	a.sink.Emit(event.Event{Kind: event.TurnStarted})
+	a.session.IncrementTurn()
 	a.session.Add(provider.Message{Role: provider.RoleUser, Content: input})
 
 	for step := 0; step < a.maxSteps; step++ {
@@ -176,7 +188,34 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 			return err
 		}
 		if usage != nil && usage.TotalTokens > 0 {
-			a.sink.Emit(event.Event{Kind: event.Usage, Usage: usage, Pricing: a.pricing})
+			sysPrompt := ""
+			if len(a.session.Messages) > 0 && a.session.Messages[0].Role == provider.RoleSystem {
+				sysPrompt = a.session.Messages[0].Content
+			}
+			schemas := a.tools.Schemas()
+			cur := CaptureShape(sysPrompt, schemas, a.session.RewriteVersion())
+			diag := &CacheDiagnostics{}
+			hadPrev := a.lastShape != nil
+			if hadPrev {
+				d := CompareShape(*a.lastShape, cur, usage)
+				diag = &d
+			}
+			a.lastShape = &cur
+			a.session.AddTokens(usage.TotalTokens)
+			if hadPrev {
+				a.diagHistory = append(a.diagHistory, *diag)
+			}
+			if len(a.diagHistory) > 50 {
+				a.diagHistory = a.diagHistory[len(a.diagHistory)-50:]
+			}
+			a.sink.Emit(event.Event{
+				Kind:             event.Usage,
+				Usage:            usage,
+				Pricing:          a.pricing,
+				CacheDiagnostics: diag,
+				CumulativeTokens: a.session.CumulativeTokens(),
+				TurnCount:        a.session.TurnCount(),
+			})
 		}
 		if msg, ok := finishReasonMessage(usage); ok {
 			a.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelWarn, Text: msg})

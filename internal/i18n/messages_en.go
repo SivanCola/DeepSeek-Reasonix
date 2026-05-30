@@ -32,8 +32,8 @@ var English = Messages{
 	ChatStatusIdle:         "Tab toggles plan · Enter sends · Esc clears/exits state · PgUp/PgDn scrolls · Ctrl-D quits",
 	ChatStatusPlanApproval: "Enter approves · type to revise · Esc dismisses · PgUp/PgDn scrolls",
 	PlanApprovalPrompt:     "Plan ready above — Enter to approve, or type to revise",
-	ChatStatusToolApproval: "y approve once · a allow this session · n deny · Ctrl-C cancels turn",
-	ToolApprovalPromptFmt:  "Allow %s%s? — [y] once · [a] this session · [n] no",
+	ChatStatusToolApproval: "1 approve once · 2 allow this session · 3 deny · Ctrl-C cancels turn",
+	ToolApprovalPromptFmt:  "Allow %s%s? — [1] once · [2] this session · [3] no",
 
 	SlashCompactDone:   "session compacted — older middle replaced by a summary, recent turns kept",
 	SlashCompactFailed: "compaction failed",
@@ -41,7 +41,7 @@ var English = Messages{
 	SlashNewFailed:     "could not start a new session",
 	SlashUnavailable:   "command unavailable in this build",
 	SlashUnknown:       "unknown command",
-	SlashHelp:          "commands: /compact (manual context compaction) · /new (fork a fresh session) · /mcp (MCP servers) · /help",
+	SlashHelp:          "commands: /compact · /new · /mcp · /copy · /goal · /cache · /lang · /help",
 	SlashPromptEmpty:   "the MCP prompt returned no content to send",
 	SlashMCPNone:       "no MCP servers configured — add a [[plugins]] entry in reasonix.toml",
 	CompHintSlash:      "↑/↓ move · Tab/Enter select · Esc close",
@@ -67,6 +67,25 @@ var English = Messages{
 
 	SelectOneHint:  "(↑/↓ · Enter · q to cancel)",
 	SelectManyHint: "(↑/↓ · Space · Enter · q)",
+
+	SessionCostFmt: "Turn %d · %s this turn · session: %s total",
+
+	CacheReportTitle:   "Cache Diagnostics Report",
+	CacheReportTurnFmt: "Turn %d: hit=%d miss=%d",
+	CacheReportChurn:   "CHURN: %v",
+	CacheReportStable:  "cache prefix stable",
+	CacheDoctorHeader:  "Cache Health Check",
+
+	SlashCopyDone:    "copied to clipboard",
+	SlashCopyFailed:  "clipboard copy failed: %v",
+	SlashCopyNoFile:  "nothing to copy",
+	SlashCopyWritten: "clipboard unavailable — wrote to %s",
+
+	GoalStartedFmt:   "Goal set: %s — /goal status to check, /goal cancel to abort",
+	GoalStatusFmt:    "Goal: %s\nStatus: %s\nAttempts: %d",
+	GoalCancelled:    "Goal cancelled.",
+	GoalCompletedFmt: "Goal completed: %s",
+	GoalNoGoal:       "No active goal — use /goal <description> to set one",
 
 	UsageBody: `reasonix — a config- and plugin-driven coding agent (multi-model)
 

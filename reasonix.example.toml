@@ -4,6 +4,7 @@
 
 default_model = "deepseek-flash"
 # language      = "zh"   # ui language; empty = auto-detect from $LANG / $REASONIX_LANG
+# theme         = "copper"  # CLI color theme: copper, ocean, forest, monokai, dracula
 
 [agent]
 system_prompt = """

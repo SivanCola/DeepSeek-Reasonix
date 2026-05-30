@@ -359,6 +359,14 @@ func (c *Controller) Commands() []command.Command { return c.commands }
 // Label returns the human-readable model label, e.g. "deepseek-flash".
 func (c *Controller) Label() string { return c.label }
 
+// CacheReport returns recent cache diagnostic entries for /cache-report.
+func (c *Controller) CacheReport() []event.CacheDiagnostics {
+	if c.executor == nil {
+		return nil
+	}
+	return c.executor.CacheReport()
+}
+
 // Close stops plugin subprocesses and releases resources.
 func (c *Controller) Close() {
 	if c.cleanup != nil {

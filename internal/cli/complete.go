@@ -55,6 +55,10 @@ func (m *chatTUI) slashItems() []compItem {
 		{label: "/compact", insert: "/compact ", hint: "compact context"},
 		{label: "/new", insert: "/new ", hint: "fork a fresh session"},
 		{label: "/mcp", insert: "/mcp ", hint: "MCP servers"},
+		{label: "/copy", insert: "/copy ", hint: "copy last response", descend: true},
+		{label: "/goal", insert: "/goal ", hint: "set persistent goal", descend: true},
+		{label: "/cache", insert: "/cache-report ", hint: "cache diagnostics", descend: true},
+		{label: "/lang", insert: "/lang ", hint: "switch language (en|zh)", descend: true},
 		{label: "/help", insert: "/help ", hint: "list commands"},
 	}
 	for _, c := range m.commands {
@@ -67,15 +71,34 @@ func (m *chatTUI) slashItems() []compItem {
 }
 
 // updateCompletion recomputes the menu from the current input: a slash menu
-// while the line is a single "/word" token, or an @-reference menu while the
-// token under the cursor is "@…".
+// while the line is a single "/word" token, argument completions for known
+// commands, or an @-reference menu while the token under the cursor is "@…".
 func (m *chatTUI) updateCompletion() {
 	val := m.input.Value()
 
+	// Phase 1: slash command name completion (single /word, no spaces).
 	if strings.HasPrefix(val, "/") && !strings.ContainsAny(val, " \t\n") {
 		if items := filterByPrefix(m.slashItems(), val); len(items) > 0 {
 			m.setCompletion(compSlash, items, 0)
 			return
+		}
+	}
+
+	// Phase 2: argument completion for known commands ("/lang en|zh").
+	if strings.HasPrefix(val, "/") {
+		parts := strings.SplitN(val, " ", 2)
+		if len(parts) == 2 {
+			argPrefix := parts[1]
+			if items := m.slashArgItems(parts[0]); len(items) > 0 {
+				if filtered := filterByPrefix(items, argPrefix); len(filtered) > 0 {
+					replaceFrom := len(parts[0]) + 1 // replace everything after "/cmd "
+					m.setCompletion(compSlash, filtered, replaceFrom)
+					return
+				}
+				// Show all options when arg prefix matches none.
+				m.setCompletion(compSlash, items, len(parts[0])+1)
+				return
+			}
 		}
 	}
 
@@ -87,6 +110,28 @@ func (m *chatTUI) updateCompletion() {
 	}
 
 	m.completion = completion{}
+}
+
+// slashArgItems returns argument completions for a slash command, or nil.
+func (m *chatTUI) slashArgItems(cmd string) []compItem {
+	switch cmd {
+	case "/lang", "/language":
+		return []compItem{
+			{label: "en", insert: "en", hint: "English"},
+			{label: "zh", insert: "zh", hint: "中文"},
+		}
+	case "/goal":
+		return []compItem{
+			{label: "status", insert: "status", hint: "show current goal"},
+			{label: "cancel", insert: "cancel", hint: "cancel current goal"},
+		}
+	case "/copy":
+		return []compItem{
+			{label: "last", insert: "last", hint: "copy last assistant response"},
+			{label: "all", insert: "all", hint: "copy full transcript"},
+		}
+	}
+	return nil
 }
 
 // setCompletion installs items, preserving the selection index only while the

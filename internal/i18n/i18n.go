@@ -96,6 +96,29 @@ type Messages struct {
 	SelectOneHint  string // "(↑/↓ · Enter · q to cancel)"
 	SelectManyHint string // "(↑/↓ · Space · Enter · q)"
 
+	// session cost
+	SessionCostFmt string // "Turn X · Y this turn · session: Z total"
+
+	// cache diagnostics
+	CacheReportTitle   string // header for /cache-report
+	CacheReportTurnFmt string // per-turn line
+	CacheReportChurn   string // churn reason label
+	CacheReportStable  string // stable prefix marker
+	CacheDoctorHeader  string // doctor --cache header
+
+	// /copy command
+	SlashCopyDone    string // copied to clipboard
+	SlashCopyFailed  string // clipboard error (format, gets %v)
+	SlashCopyNoFile  string // nothing to copy
+	SlashCopyWritten string // wrote to temp file (format, gets %s)
+
+	// /goal mode
+	GoalStartedFmt   string // goal set confirmation (format, gets description)
+	GoalStatusFmt    string // goal status display (format, gets description, status, attempts)
+	GoalCancelled    string // goal cancelled
+	GoalCompletedFmt string // goal completed (format, gets description)
+	GoalNoGoal       string // no active goal
+
 	// usage / help
 	UsageBody string // full multi-line help text
 }
@@ -137,6 +160,22 @@ func setLanguage(tag string) string {
 		return "en"
 	}
 }
+
+// SupportedLanguages returns the language tags this build ships.
+func SupportedLanguages() []string { return []string{"en", "zh"} }
+
+// CurrentLanguage returns the currently active language tag ("en" or "zh").
+func CurrentLanguage() string {
+	if &M == &Chinese {
+		return "zh"
+	}
+	return "en"
+}
+
+// SwitchLanguage sets the active language by tag and returns the resolved tag.
+// Unlike DetectLanguage, it does not fall back to env vars — an unrecognised
+// tag results in "en".
+func SwitchLanguage(tag string) string { return setLanguage(normalize(tag)) }
 
 // normalize maps a locale string (e.g. "zh_CN.UTF-8", "zh-Hans-CN", "Chinese
 // (China)") to a short tag this package knows about. Returns "" for empty or

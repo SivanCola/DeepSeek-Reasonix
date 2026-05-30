@@ -19,6 +19,7 @@ import (
 type Config struct {
 	DefaultModel string            `toml:"default_model"`
 	Language     string            `toml:"language"` // ui language tag (e.g. "zh"); empty = auto-detect from $LANG / $REASONIX_LANG
+	Theme        string            `toml:"theme"`    // CLI color theme: copper, ocean, forest, monokai, dracula
 	Agent        AgentConfig       `toml:"agent"`
 	Providers    []ProviderEntry   `toml:"providers"`
 	Tools        ToolsConfig       `toml:"tools"`

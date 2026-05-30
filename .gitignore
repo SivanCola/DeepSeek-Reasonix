@@ -1,18 +1,20 @@
-# Build artifacts
 /bin/
 /dist/
 /reasonix
-
-# Environment / local config (reasonix.example.toml is the shared template)
 .env
 .env.local
 /reasonix.toml
-
-# Editor / OS
 .DS_Store
 .idea/
 .vscode/
-
-# Go
+AGENTS.md
 *.test
 *.out
+/node_modules/
+.reasonix/
+.claude/settings.local.json
+.cursor/
+.windsurf/
+.copilot/
+.roo/
+.gemini/
