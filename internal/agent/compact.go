@@ -23,16 +23,36 @@ const (
 	minCompactMessages  = 2   // skip compaction below this many compactable messages
 )
 
+// summaryTag wraps the compaction summary so the model can distinguish it from
+// live user input and the agent can later strip or skip it when reasoning about
+// the current turn.
+const (
+	summaryTagOpen  = "<compaction-summary>"
+	summaryTagClose = "</compaction-summary>"
+)
+
 // summarySystemPrompt steers the executor to distill older history into a
-// briefing it can keep relying on after the originals are dropped.
+// structured briefing with Goal / Decisions / Files / Commands / Pending
+// sections so the compacted summary remains scannable and reliable.
 const summarySystemPrompt = `You are compacting the earlier part of a coding agent's conversation to save context.
-Summarize the messages below into a compact briefing the agent can rely on to continue the task. Preserve:
-- the user's goal and any explicit requirements or constraints
-- key decisions made and their rationale
-- files read or modified and the important facts learned about them
-- commands run and their relevant outcomes
-- what is still pending or in progress
-Omit small talk and redundant detail. Use terse bullet points. Do not invent information.`
+Summarize the messages below into a structured briefing using these five sections exactly:
+
+## Goal
+- The user's original request, explicit requirements, and constraints.
+
+## Decisions
+- Key architectural and implementation decisions made, with rationale.
+
+## Files
+- Files examined, created, or modified, with important facts learned.
+
+## Commands
+- Commands executed and their relevant outcomes.
+
+## Pending
+- Tasks still in progress, unresolved issues, and next steps.
+
+Be concise. Use bullet points. Do not invent information not present in the transcript.`
 
 // maybeCompact compacts the session when the last turn's prompt has grown to the
 // configured fraction of the context window. It is a no-op when compaction is
@@ -49,6 +69,21 @@ func (a *Agent) maybeCompact(ctx context.Context, u *provider.Usage) {
 	}
 }
 
+// foldEconomics estimates whether compacting the given region saves enough
+// tokens to justify the summarization API call. It returns false when the
+// region is too small for the savings to outweigh the extra round-trip cost
+// and latency of calling the summarizer.
+//
+// Economic model: the summarizer call itself consumes roughly region (input) +
+// summary (output) tokens, and each future turn saves roughly region - summary
+// tokens. A region below ~400 estimated tokens rarely breaks even across the
+// handful of turns that typically follow a compaction.
+func foldEconomics(region []provider.Message) bool {
+	const avgTokensPerMessage = 100
+	const minFoldTokens = 400
+	return len(region)*avgTokensPerMessage >= minFoldTokens
+}
+
 // compact summarizes the older middle of the session and replaces it in place:
 // the session becomes system + summary + recent tail. The dropped originals are
 // archived first, so the full history stays traceable.
@@ -59,6 +94,12 @@ func (a *Agent) compact(ctx context.Context) error {
 		return nil // recent tail already covers everything worth keeping
 	}
 	region := msgs[head:start]
+
+	// Economic check: skip if the region is too small to justify the
+	// summarizer call.
+	if !foldEconomics(region) {
+		return nil
+	}
 
 	archived := ""
 	if a.archiveDir != "" {
@@ -77,8 +118,11 @@ func (a *Agent) compact(ctx context.Context) error {
 	compacted := make([]provider.Message, 0, head+1+len(msgs)-start)
 	compacted = append(compacted, msgs[:head]...)
 	compacted = append(compacted, provider.Message{
-		Role:    provider.RoleUser,
-		Content: "Summary of earlier conversation (older messages were compacted to save context):\n" + summary,
+		Role: provider.RoleUser,
+		Content: summaryTagOpen + "\n" +
+			"Summary of earlier conversation (older messages were compacted to save context):\n" +
+			summary + "\n" +
+			summaryTagClose,
 	})
 	compacted = append(compacted, msgs[start:]...)
 	a.session.Messages = compacted
