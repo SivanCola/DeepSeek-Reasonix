@@ -47,6 +47,7 @@ type Agent struct {
 	session     *Session
 	maxSteps    int
 	temperature float64
+	effort      provider.Effort
 	pricing     *provider.Pricing
 
 	// sink receives the turn's typed event stream (reasoning/text deltas, tool
@@ -86,13 +87,34 @@ type Agent struct {
 	compactRatio  float64
 	recentKeep    int
 	archiveDir    string
+	keepPolicy    KeepPolicy
 }
+
+// KeepPolicy is a bitmask controlling which messages are preserved beyond the
+// recent tail during compaction.
+type KeepPolicy int
+
+const (
+	// KeepErrors preserves tool-result messages whose content indicates a
+	// non-zero exit or execution failure (content starts with "error:" or
+	// "exit status").
+	KeepErrors KeepPolicy = 1 << iota
+	// KeepUserMarked preserves messages whose user content begins with
+	// the sentinel "[keep]" (case-insensitive).
+	KeepUserMarked
+)
 
 // SetPlanMode flips the read-only gate. While true, executeOne refuses any
 // non-ReadOnly tool the model calls and returns a "blocked" result instead of
 // running it. The cache-friendly bits — system prompt, tools schema, message
 // history — are left untouched, so the toggle costs nothing in cache hits.
 func (a *Agent) SetPlanMode(v bool) { a.planMode = v }
+
+// SetEffort sets the thinking effort for subsequent turns.
+func (a *Agent) SetEffort(e provider.Effort) { a.effort = e }
+
+// Effort returns the current thinking effort.
+func (a *Agent) Effort() provider.Effort { return a.effort }
 
 // SetGate installs the per-call permission gate. Used by `reasonix chat` to swap the
 // headless gate built in setup for an interactive one that prompts the user;
@@ -127,10 +149,23 @@ func (a *Agent) CompactNow(ctx context.Context) error { return a.compact(ctx) }
 // CacheReport returns recent cache diagnostic entries for /cache-report.
 func (a *Agent) CacheReport() []event.CacheDiagnostics { return a.diagHistory }
 
+// Pricing returns the configured pricing model, nil when unavailable.
+func (a *Agent) Pricing() *provider.Pricing { return a.pricing }
+
+// AddTools registers tools into the agent's tool registry at runtime, so
+// newly-connected MCP servers can contribute tools without restarting the
+// session. Callers should ensure this is not called concurrently with Run.
+func (a *Agent) AddTools(ts ...tool.Tool) {
+	for _, t := range ts {
+		a.tools.Add(t)
+	}
+}
+
 // Options configures an Agent.
 type Options struct {
 	MaxSteps    int
 	Temperature float64
+	Effort      provider.Effort // thinking effort: auto / high / fast; empty = provider default
 	Pricing     *provider.Pricing // optional, for per-turn cost display
 
 	// Gate is the per-call permission gate. nil disables gating.
@@ -142,6 +177,12 @@ type Options struct {
 	CompactRatio  float64
 	RecentKeep    int
 	ArchiveDir    string
+
+	// KeepPolicy controls which messages are preserved in the recent tail
+	// during compaction, specified as a bitmask of Keep flags (KeepErrors,
+	// KeepUserMarked). Zero means only RecentKeep counts — all messages
+	// above the tail are eligible for summarization.
+	KeepPolicy KeepPolicy
 }
 
 // New constructs an Agent. MaxSteps <= 0 defaults to 25. A nil sink is replaced
@@ -165,6 +206,7 @@ func New(prov provider.Provider, tools *tool.Registry, session *Session, opts Op
 		session:       session,
 		maxSteps:      opts.MaxSteps,
 		temperature:   opts.Temperature,
+		effort:        opts.Effort,
 		pricing:       opts.Pricing,
 		sink:          sink,
 		gate:          opts.Gate,
@@ -172,6 +214,7 @@ func New(prov provider.Provider, tools *tool.Registry, session *Session, opts Op
 		compactRatio:  opts.CompactRatio,
 		recentKeep:    opts.RecentKeep,
 		archiveDir:    opts.ArchiveDir,
+		keepPolicy:    opts.KeepPolicy,
 	}
 }
 
@@ -261,6 +304,7 @@ func (a *Agent) stream(ctx context.Context) (string, string, []provider.ToolCall
 		Messages:    a.session.Messages,
 		Tools:       a.tools.Schemas(),
 		Temperature: a.temperature,
+		Effort:      a.effort,
 	})
 	if err != nil {
 		return "", "", nil, nil, err

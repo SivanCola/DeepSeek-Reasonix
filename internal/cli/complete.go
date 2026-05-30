@@ -52,20 +52,42 @@ const (
 // slashItems is the full set of slash commands offered for completion.
 func (m *chatTUI) slashItems() []compItem {
 	items := []compItem{
+		// Session management
 		{label: "/compact", insert: "/compact ", hint: "compact context"},
 		{label: "/new", insert: "/new ", hint: "fork a fresh session"},
-		{label: "/mcp", insert: "/mcp ", hint: "MCP servers"},
+		{label: "/clear", insert: "/clear ", hint: "clear context, keep config"},
+		{label: "/branch", insert: "/branch ", hint: "fork session branch"},
+		{label: "/tree", insert: "/tree ", hint: "show session tree"},
+		{label: "/switch", insert: "/switch ", hint: "switch branch", descend: true},
+		{label: "/resume", insert: "/resume ", hint: "switch to saved session"},
+		// Tools & plugins
+		{label: "/btw", insert: "/btw ", hint: "ask without saving to history"},
+		{label: "/mcp", insert: "/mcp ", hint: "MCP servers", descend: true},
 		{label: "/copy", insert: "/copy ", hint: "copy last response", descend: true},
 		{label: "/goal", insert: "/goal ", hint: "set persistent goal", descend: true},
-		{label: "/cache", insert: "/cache-report ", hint: "cache diagnostics", descend: true},
+		// Diagnostics & config
+		{label: "/doctor", insert: "/doctor ", hint: "diagnostics report", descend: true},
+		{label: "/config", insert: "/config ", hint: "view configuration", descend: true},
+		{label: "/init", insert: "/init ", hint: "analyze project"},
+		{label: "/commands", insert: "/commands ", hint: "manage custom commands", descend: true},
+		// Settings
+		{label: "/effort", insert: "/effort ", hint: "thinking effort (auto|high|fast)", descend: true},
 		{label: "/lang", insert: "/lang ", hint: "switch language (en|zh)", descend: true},
 		{label: "/help", insert: "/help ", hint: "list commands"},
 	}
 	for _, c := range m.commands {
-		items = append(items, compItem{label: "/" + c.Name, insert: "/" + c.Name + " ", hint: c.Description})
+		desc := c.Description
+		if desc == "" {
+			desc = "custom command"
+		}
+		items = append(items, compItem{label: "/" + c.Name, insert: "/" + c.Name + " ", hint: desc})
 	}
 	for _, p := range m.prompts() {
-		items = append(items, compItem{label: "/" + p.Name, insert: "/" + p.Name + " ", hint: p.Description})
+		desc := p.Description
+		if desc == "" {
+			desc = "MCP prompt"
+		}
+		items = append(items, compItem{label: "/" + p.Name, insert: "/" + p.Name + " ", hint: desc})
 	}
 	return items
 }
@@ -77,8 +99,9 @@ func (m *chatTUI) updateCompletion() {
 	val := m.input.Value()
 
 	// Phase 1: slash command name completion (single /word, no spaces).
+	// Uses fuzzy matching with frequency weighting so commonly-used commands surface first.
 	if strings.HasPrefix(val, "/") && !strings.ContainsAny(val, " \t\n") {
-		if items := filterByPrefix(m.slashItems(), val); len(items) > 0 {
+		if items := filterByFuzzy(m.slashItems(), val, m.slashFreq); len(items) > 0 {
 			m.setCompletion(compSlash, items, 0)
 			return
 		}
@@ -130,8 +153,65 @@ func (m *chatTUI) slashArgItems(cmd string) []compItem {
 			{label: "last", insert: "last", hint: "copy last assistant response"},
 			{label: "all", insert: "all", hint: "copy full transcript"},
 		}
+	case "/switch":
+		return m.switchArgItems()
+	case "/mcp":
+		return []compItem{
+			{label: "status", insert: "status", hint: "show connected MCP servers"},
+			{label: "prompts", insert: "prompts", hint: "list available MCP prompts"},
+			{label: "resources", insert: "resources", hint: "list available MCP resources"},
+			{label: "tools", insert: "tools", hint: "list available MCP tools"},
+			{label: "import from cc-switch", insert: "import from cc-switch", hint: "import MCP servers from cc-switch"},
+		}
+	case "/commands":
+		return []compItem{
+			{label: "list", insert: "list", hint: "list custom commands"},
+			{label: "create", insert: "create ", hint: "create a new command"},
+			{label: "delete", insert: "delete ", hint: "delete a command"},
+		}
+	case "/config":
+		return []compItem{
+			{label: "show", insert: "show", hint: "show current configuration"},
+		}
+	case "/effort":
+		return []compItem{
+			{label: "auto", insert: "auto", hint: "model decides thinking depth (default)"},
+			{label: "high", insert: "high", hint: "maximum thinking for complex tasks"},
+			{label: "fast", insert: "fast", hint: "no thinking — direct answers"},
+		}
+	case "/doctor":
+		return []compItem{
+			{label: "all", insert: "all", hint: "run all diagnostics"},
+			{label: "key", insert: "key", hint: "check API keys only"},
+			{label: "network", insert: "network", hint: "check network only"},
+			{label: "cache", insert: "cache", hint: "show cache hit-rate report"},
+		}
+	}
+	// Auto-generate from custom command argument-hint.
+	name := strings.TrimPrefix(cmd, "/")
+	for _, c := range m.commands {
+		if c.Name == name && c.ArgHint != "" {
+			return []compItem{{label: c.ArgHint, insert: "", hint: c.Description}}
+		}
 	}
 	return nil
+}
+
+// switchArgItems returns tree node completions for /switch.
+func (m *chatTUI) switchArgItems() []compItem {
+	nodes, labels, _ := m.ctrl.TreeInfo()
+	if nodes == nil {
+		return nil
+	}
+	var items []compItem
+	for _, id := range nodes {
+		label := labels[id]
+		if label == "" {
+			label = id
+		}
+		items = append(items, compItem{label: id, insert: id, hint: label})
+	}
+	return items
 }
 
 // setCompletion installs items, preserving the selection index only while the
@@ -144,7 +224,110 @@ func (m *chatTUI) setCompletion(kind compKind, items []compItem, replaceFrom int
 	m.completion = completion{active: true, kind: kind, items: items, sel: sel, replaceFrom: replaceFrom}
 }
 
+// fuzzyItem pairs a compItem with its match score for ranking.
+type fuzzyItem struct {
+	item  compItem
+	score int
+}
+
+// filterByFuzzy returns items that match prefix via a multi-strategy fuzzy
+// algorithm. Exact prefix matches come first; within the same match quality,
+// frequently-used commands (freq) rank higher. For prefixes of 4+ chars,
+// subsequence matching kicks in as a fallback.
+func filterByFuzzy(items []compItem, prefix string, freq map[string]int) []compItem {
+	lower := strings.ToLower(prefix)
+	if lower == "" {
+		return items
+	}
+
+	// freqBonus returns a per-command boost based on usage count. The
+	// multiplier is tuned so frequently-used commands surface above
+	// equally-matched peers but never beat a better-typed prefix.
+	freqBonus := func(label string) int { return freq[label] * 3 }
+
+	var prefixMatches []fuzzyItem
+	var subseqMatches []fuzzyItem
+
+	for _, it := range items {
+		label := strings.ToLower(it.label)
+		if strings.HasPrefix(label, lower) {
+			score := -len(label) + freqBonus(it.label)
+			prefixMatches = append(prefixMatches, fuzzyItem{it, score})
+			continue
+		}
+		if len(lower) >= 4 {
+			if s := subseqScore(label, lower); s > 0 {
+				subseqMatches = append(subseqMatches, fuzzyItem{it, s + freqBonus(it.label)})
+			}
+		}
+	}
+
+	sortFuzzyDesc(prefixMatches)
+	sortFuzzyDesc(subseqMatches)
+
+	out := make([]compItem, 0, len(prefixMatches)+len(subseqMatches))
+	for _, fi := range prefixMatches {
+		out = append(out, fi.item)
+	}
+	for _, fi := range subseqMatches {
+		out = append(out, fi.item)
+	}
+	return out
+}
+
+// freqMultiplier converts usage count to sort weight. Each use adds this many
+// relative points — enough to float a favourite above unused peers of the
+// same label length but not enough to beat a more-specific prefix match.
+const freqMultiplier = 3
+
+// subseqScore rates how well prefix matches label as a character subsequence.
+// Returns 0 when not all prefix chars appear in order. The score rewards:
+// contiguous runs, early first match, and tight spacing between chars.
+func subseqScore(label, prefix string) int {
+	runes := []rune(label)
+	prev := -1
+	score := 0
+	consecutive := 0
+
+	for _, pc := range prefix {
+		found := -1
+		for j := prev + 1; j < len(runes); j++ {
+			if runes[j] == pc {
+				found = j
+				break
+			}
+		}
+		// Also try from the start (allow restart — handles transpositions).
+		if found < 0 {
+			for j := 0; j <= prev && j < len(runes); j++ {
+				if runes[j] == pc {
+					found = j
+					break
+				}
+			}
+		}
+		if found < 0 {
+			return 0 // can't match this prefix char at all
+		}
+
+		if found == prev+1 {
+			consecutive++
+		} else {
+			consecutive = 1
+		}
+		score += consecutive*10 + (len(runes) - found)
+		prev = found
+	}
+	return score
+}
+
+// sortFuzzyDesc sorts items by score descending (higher score = better match).
+func sortFuzzyDesc(items []fuzzyItem) {
+	sort.Slice(items, func(i, j int) bool { return items[i].score > items[j].score })
+}
+
 // filterByPrefix keeps items whose label starts with prefix (case-insensitive).
+// Kept for @-completion where fuzzy matching is undesirable (exact file paths).
 func filterByPrefix(items []compItem, prefix string) []compItem {
 	lp := strings.ToLower(prefix)
 	var out []compItem
@@ -294,6 +477,19 @@ func (m *chatTUI) moveCompletion(delta int) {
 	m.completion.sel = ((m.completion.sel+delta)%n + n) % n
 }
 
+// moveCompletionPage advances the selection by delta half-pages.
+func (m *chatTUI) moveCompletionPage(delta int) {
+	n := len(m.completion.items)
+	if n == 0 {
+		return
+	}
+	step := maxCompRows / 2
+	if step < 1 {
+		step = 1
+	}
+	m.completion.sel = ((m.completion.sel+delta*step)%n + n) % n
+}
+
 // acceptCompletion applies the selected item to the input. A directory descends
 // (the input is filled and the menu re-opens one level deeper); anything else
 // completes and closes the menu.
@@ -319,8 +515,16 @@ func (m *chatTUI) acceptCompletion() {
 
 var compSelStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("173")).Bold(true)
 
+// compBg is the completion menu background, theme-adaptive via COLORFGBG.
+var compBg = lipgloss.NewStyle().Background(lipgloss.Color(CompMenuBg()))
+
+// compBgDim is the background used when an approval banner is active.
+var compBgDim = lipgloss.NewStyle().Background(lipgloss.Color(CompMenuBg())).Faint(true)
+
 // renderCompletion draws the menu above the input box: matching items, windowed
-// around the selection, the current row highlighted, hints dimmed.
+// around the selection, the current row highlighted, hints dimmed. When
+// pendingApproval is non-nil the menu uses a dimmer background so the approval
+// banner dominates.
 func (m chatTUI) renderCompletion() string {
 	if !m.completion.active || len(m.completion.items) == 0 {
 		return ""
@@ -361,5 +565,9 @@ func (m chatTUI) renderCompletion() string {
 		hint = i18n.M.CompHintFile
 	}
 	b.WriteString(dim(hint))
-	return b.String()
+	bg := compBg
+	if m.pendingApproval != nil {
+		bg = compBgDim
+	}
+	return bg.Width(m.width - 4).Render(b.String())
 }

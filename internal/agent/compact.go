@@ -33,15 +33,31 @@ const (
 )
 
 // summarySystemPrompt steers the executor to distill older history into a
-// briefing it can keep relying on after the originals are dropped.
+// structured briefing it can keep relying on after the originals are dropped.
 const summarySystemPrompt = `You are compacting the earlier part of a coding agent's conversation to save context.
-Summarize the messages below into a compact briefing the agent can rely on to continue the task. Preserve:
-- the user's goal and any explicit requirements or constraints
-- key decisions made and their rationale
-- files read or modified and the important facts learned about them
-- commands run and their relevant outcomes
-- what is still pending or in progress
-Omit small talk and redundant detail. Use terse bullet points. Do not invent information.`
+Summarize the messages below into a compact briefing the agent can rely on to continue the task.
+Structure the summary with these sections, each as a terse bullet list:
+
+## Goal
+The user's original task and any explicit requirements or constraints.
+
+## Decisions
+Key decisions made and their rationale (why, not just what).
+
+## Files
+Files read or modified, with the important facts learned about each.
+
+## Commands
+Commands run and their relevant outcomes (especially errors or unexpected results).
+
+## Pending
+What is still in progress or not yet done.
+
+Omit small talk and redundant detail. Do not invent information.`
+
+// summaryTag marks a compacted summary message so tools and diagnostics can
+// distinguish it from an ordinary user message.
+const summaryTag = "[compacted]"
 
 // foldEconomics estimates whether compacting is cheaper than carrying the
 // current input cost. It models the cost of a fold: one summary call
@@ -104,39 +120,60 @@ func (a *Agent) maybeCompact(ctx context.Context, u *provider.Usage) {
 }
 
 // compact summarizes the older middle of the session and replaces it in place:
-// the session becomes system + summary + recent tail. The dropped originals are
-// archived first, so the full history stays traceable.
-func (a *Agent) compact(ctx context.Context) error {
+// the session becomes system + [summary] + recent tail. The dropped originals
+// are archived first, so the full history stays traceable. The summary message
+// is tagged with summaryTag so diagnostics and tools can distinguish it.
+func (a *Agent) compact(ctx context.Context) (err error) {
+	emit := func(phase string, progress float64) {
+		a.sink.Emit(event.Event{Kind: event.CompactProgress, Text: phase, Progress: progress})
+	}
+
+	emit("start", 0.0)
+	defer func() {
+		if err != nil {
+			emit("done", 1.0)
+		}
+	}()
+
 	msgs := a.session.Messages
-	head, start, ok := compactBounds(msgs, a.recentKeep, minCompactMessages)
+	head, start, ok := compactBounds(msgs, a.recentKeep, minCompactMessages, a.keepPolicy)
 	if !ok {
+		emit("done", 1.0)
 		return nil // recent tail already covers everything worth keeping
 	}
 	region := msgs[head:start]
 
+	emit("archive", 0.1)
+
 	archived := ""
 	if a.archiveDir != "" {
-		path, err := archiveMessages(a.archiveDir, region)
-		if err != nil {
-			return fmt.Errorf("archive: %w", err)
+		path, e := archiveMessages(a.archiveDir, region)
+		if e != nil {
+			return fmt.Errorf("archive: %w", e)
 		}
 		archived = path
 	}
 
-	summary, err := a.summarize(ctx, region)
-	if err != nil {
-		return err
+	emit("summarize", 0.2)
+
+	summary, e := a.summarize(ctx, region)
+	if e != nil {
+		return e
 	}
+
+	emit("rebuild", 0.85)
 
 	compacted := make([]provider.Message, 0, head+1+len(msgs)-start)
 	compacted = append(compacted, msgs[:head]...)
 	compacted = append(compacted, provider.Message{
 		Role:    provider.RoleUser,
-		Content: "Summary of earlier conversation (older messages were compacted to save context):\n" + summary,
+		Content: summaryTag + "\n" + summary,
 	})
 	compacted = append(compacted, msgs[start:]...)
 	a.session.Messages = compacted
 	a.session.IncrementRewrite()
+
+	emit("done", 1.0)
 
 	note := fmt.Sprintf("compacted %d messages → summary", len(region))
 	if archived != "" {
@@ -150,9 +187,15 @@ func (a *Agent) compact(ctx context.Context) error {
 // messages preserved verbatim (the system prompt, if any); start is where the
 // preserved recent tail begins, so msgs[head:start] is compacted. The boundary
 // is aligned backward off any tool result so the recent tail never begins with
-// an orphan tool message whose assistant tool_calls were summarized away. ok is
-// false when there is too little to compact.
-func compactBounds(msgs []provider.Message, recentKeep, minCompact int) (head, start int, ok bool) {
+// an orphan tool message whose assistant tool_calls were summarized away.
+//
+// keepPolicy extends the recent tail: KeepErrors moves tool results with
+// non-zero exit status into the tail; KeepUserMarked moves user messages
+// whose content starts with "[keep]" into the tail. The tail is still bounded
+// by head+minCompact to avoid degenerate compactions.
+//
+// ok is false when there is too little to compact.
+func compactBounds(msgs []provider.Message, recentKeep, minCompact int, keepPolicy KeepPolicy) (head, start int, ok bool) {
 	if len(msgs) > 0 && msgs[0].Role == provider.RoleSystem {
 		head = 1
 	}
@@ -163,10 +206,33 @@ func compactBounds(msgs []provider.Message, recentKeep, minCompact int) (head, s
 	for start > head && msgs[start].Role == provider.RoleTool {
 		start--
 	}
+	// KeepPolicy: extend tail to preserve error results and marked messages.
+	extra := 0
+	for i := head; i < start; i++ {
+		m := msgs[i]
+		if keepPolicy&KeepErrors != 0 && m.Role == provider.RoleTool && isErrorResult(m.Content) {
+			extra++
+		}
+		if keepPolicy&KeepUserMarked != 0 && m.Role == provider.RoleUser && strings.HasPrefix(strings.ToLower(strings.TrimSpace(m.Content)), "[keep]") {
+			extra++
+		}
+	}
+	start -= extra
+	if start <= head {
+		start = head + 1
+	}
 	if start-head < minCompact {
 		return head, start, false
 	}
 	return head, start, true
+}
+
+// isErrorResult returns true when tool output looks like an execution failure.
+func isErrorResult(content string) bool {
+	s := strings.TrimSpace(content)
+	return strings.HasPrefix(s, "error:") ||
+		strings.HasPrefix(s, "exit status") ||
+		strings.Contains(s, "\nexit status")
 }
 
 // summarize asks the executor's own provider (no tools) to distill the region

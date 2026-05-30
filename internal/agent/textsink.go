@@ -136,25 +136,22 @@ func (s *TextSink) closeTextStream(text, reasoning string) {
 
 // usageLine writes the one-line token/cache summary; no-op when usage is unset.
 func (s *TextSink) usageLine(u *provider.Usage, p *provider.Pricing, diag *event.CacheDiagnostics) {
-	if line := FormatUsageLine(u, p, diag); line != "" {
+	if line := FormatUsageLine(u, p, diag, false); line != "" {
 		fmt.Fprintln(s.out, line)
 		s.wroteAnything = true
 	}
 }
 
-// FormatUsageLine renders the per-turn token/cache summary — the key signal for
-// the cache-first design — as a single line (no trailing newline), or "" when
-// usage is unset or empty. Cache is reported as absolute "(N cached / M new)"
-// so a turn that adds a lot of fresh content doesn't read as "cache broke" the
-// way a falling percentage would; the cached prefix is still hitting, the
-// denominator just grew. Reasoning tokens (a subset of completion) show the
-// chain-of-thought cost. Shared by TextSink and the chat TUI so both frontends
-// render the line identically.
-func FormatUsageLine(u *provider.Usage, p *provider.Pricing, diag *event.CacheDiagnostics) string {
+// FormatUsageLine renders the per-turn token/cache summary as a compact footer
+// line (no trailing newline), or "" when usage is unset. Frontends apply color
+// to the whole line according to cache health, so the text itself stays plain.
+//
+//	· 2700 token · cache 88% · ¥0.0014
+func FormatUsageLine(u *provider.Usage, p *provider.Pricing, diag *event.CacheDiagnostics, _ bool) string {
 	if u == nil || u.TotalTokens == 0 {
 		return ""
 	}
-	cacheCol := ""
+	cache := ""
 	if u.PromptTokens > 0 {
 		cached := u.CacheHitTokens
 		fresh := u.CacheMissTokens
@@ -163,11 +160,11 @@ func FormatUsageLine(u *provider.Usage, p *provider.Pricing, diag *event.CacheDi
 				fresh = d
 			}
 		}
-		cacheCol = fmt.Sprintf(" (%d cached / %d new)", cached, fresh)
-	}
-	reasoning := ""
-	if u.ReasoningTokens > 0 {
-		reasoning = fmt.Sprintf(" (%d reasoning)", u.ReasoningTokens)
+		if cached+fresh > 0 {
+			pct := cached * 100 / (cached + fresh)
+			label := fmt.Sprintf("cache %d%%", pct)
+			cache = " · " + label
+		}
 	}
 	cost := ""
 	if p != nil {
@@ -175,10 +172,9 @@ func FormatUsageLine(u *provider.Usage, p *provider.Pricing, diag *event.CacheDi
 	}
 	churn := ""
 	if diag != nil && diag.PrefixChanged && len(diag.PrefixChangeReasons) > 0 {
-		churn = fmt.Sprintf(" · churn %s", strings.Join(diag.PrefixChangeReasons, ","))
+		churn = fmt.Sprintf(" · cache churn: %s", strings.Join(diag.PrefixChangeReasons, ","))
 	}
-	return fmt.Sprintf("  · %d tok · in %d%s · out %d%s%s%s",
-		u.TotalTokens, u.PromptTokens, cacheCol, u.CompletionTokens, reasoning, cost, churn)
+	return fmt.Sprintf("  · %d token%s%s%s", u.TotalTokens, cache, cost, churn)
 }
 
 // dimText wraps s in the ANSI dim SGR sequence so reasoning streams visually

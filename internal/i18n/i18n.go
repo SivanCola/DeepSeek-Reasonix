@@ -53,7 +53,8 @@ type Messages struct {
 
 	// chat TUI status line / approval banner.
 	ChatStatusThinkingFmt  string // "%s thinking… (%ds · <cancel hint>)" — %s = spinner, %d = elapsed s
-	ChatStatusIdle         string // shortcuts hint when idle
+	ChatStatusIdle         string // shortcuts hint when idle (long form for wide terminals)
+	ChatStatusIdleCompact  string // shortcuts hint when idle (short form for status bar)
 	ChatStatusPlanApproval string // shortcuts hint while a plan is pending
 	PlanApprovalPrompt     string // one-line "plan above is ready" banner shown above the input
 	ChatStatusToolApproval string // shortcuts hint while a tool call awaits approval
@@ -69,8 +70,65 @@ type Messages struct {
 	SlashHelp          string // listed commands
 	SlashPromptEmpty   string // an MCP prompt returned no text to send
 	SlashMCPNone       string // /mcp when no MCP servers are connected
+	SlashMCPImportDone   string // /mcp import: "%d servers imported"
+	SlashMCPImportSkipped string // /mcp import: "%d skipped (already present)"
+	SlashMCPImportEmpty   string // /mcp import: no servers found
 	CompHintSlash      string // key hint footer under the slash-command menu
 	CompHintFile       string // key hint footer under the @ file/resource menu
+
+	// live preview
+	LivePreviewLabel string // "Live" label shown above the streaming preview pane
+
+	// /clear command
+	SlashClearDone    string // "/clear" succeeded
+	SlashClearRunning string // "/clear" refused because a turn is running
+
+	// /doctor command
+	SlashDoctorHeader    string // header for /doctor output
+	SlashDoctorKeyOK     string // API key is set for a provider
+	SlashDoctorKeyMissing string // API key is missing for a provider
+	SlashDoctorNetOK     string // network check passed
+	SlashDoctorNetFail   string // network check failed
+	SlashDoctorConfigOK  string // config file found
+	SlashDoctorConfigMiss string // no config file found
+	SlashDoctorSummary   string // overall status line
+
+	// /config command
+	SlashConfigHeader   string // header for /config output
+	SlashConfigDefaultModel string // default model line
+	SlashConfigMaxSteps string // max steps line
+	SlashConfigLang     string // language line
+	SlashConfigCompact  string // compaction line
+
+	// /init command
+	SlashInitTitle   string // header for /init command
+	SlashInitLangHint string // detected language hint
+	SlashInitFrameHint string // detected framework hint
+	SlashInitFileHint string // suggestion to generate CLAUDE.md
+	SlashInitDone    string // init completed
+	SlashInitNoProject string // no project directory detected
+
+	// /commands — custom command management
+	SlashCommandsTitle   string // header for /commands list
+	SlashCommandsCreate  string // /commands create hint
+	SlashCommandsCreated string // created confirmation
+	SlashCommandsDelete  string // /commands delete hint
+	SlashCommandsDeleted string // deleted confirmation
+	SlashCommandsNotFound string // named command not found for delete
+	SlashCommandsNoDir   string // commands dir not found for creation
+	SlashCommandsEmpty   string // no custom commands loaded
+
+	// /img command
+	SlashImgNoImage string // no image on clipboard
+	SlashImgSaved   string // image saved to temp file (format: path)
+	SlashImgMCPHint string // hint that MCP vision tools are available
+
+	// /btw command
+	SlashBtwUsage string // "/btw <message>" — ask without saving
+
+	// /effort command
+	SlashEffortSetFmt string // "/effort auto|high|fast" succeeded
+	SlashEffortUsage  string // "/effort" with no arg, shows current + options
 
 	// init wizard
 	SelectProvidersLabel  string // multi-select label
@@ -101,10 +159,34 @@ type Messages struct {
 
 	// cache diagnostics
 	CacheReportTitle   string // header for /cache-report
-	CacheReportTurnFmt string // per-turn line
+	CacheReportTurnFmt string // per-turn line with ratio
 	CacheReportChurn   string // churn reason label
 	CacheReportStable  string // stable prefix marker
+	CacheReportSummary string // summary line (format: total hit, saved)
+	CacheReportNoData  string // no diagnostics yet
 	CacheDoctorHeader  string // doctor --cache header
+
+	// /branch /tree /switch commands
+	SlashBranchDone    string // branch created (format, gets label)
+	SlashTreeTitle     string // header for /tree
+	SlashTreeDisabled  string // tree mode not enabled
+	SlashSwitchDone    string // switched to node (format, gets id)
+	SlashSwitchUsage   string // missing node id hint
+
+	// compaction progress bar
+	CompactProgressTitle string // "Compacting conversation…"
+	CompactTips          string // newline-separated tips rotated during progress bar
+
+	// /resume command
+	ResumeStatusFmt string // status line during session picker (format, gets min, max)
+	ResumeListTitle string // header above the session list
+	ResumePickerHint string // "Enter a number to switch (%d-%d), Esc to cancel"
+	ResumeNoDir     string // session persistence not configured
+	ResumeFailed    string // resume failed prefix
+	ResumeEmpty     string // no saved sessions
+	ResumeOutOfRange string // "pick %d-%d"
+	ResumeSwitched  string // switched to session (format, gets preview)
+	ResumeCancelled string // picker cancelled
 
 	// /copy command
 	SlashCopyDone    string // copied to clipboard

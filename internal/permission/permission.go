@@ -229,7 +229,17 @@ func NewGate(p Policy, a Approver) *Gate { return &Gate{Policy: p, Approver: a} 
 // Check decides whether a tool call may run. It is the method the agent's Gate
 // interface expects. A denied or refused call returns allow=false with a short
 // reason the agent feeds back to the model.
+//
+// Bash commands that are known read-only (ls, cat, grep, git log, etc.) are
+// promoted to readOnly=true so they skip the interactive gate — matching the
+// "readers always allow" contract.
 func (g *Gate) Check(ctx context.Context, toolName string, args json.RawMessage, readOnly bool) (bool, string, error) {
+	if toolName == "bash" && !readOnly {
+		subject := Subject(args)
+		if isReadOnlyBashSubject(subject) {
+			readOnly = true
+		}
+	}
 	switch g.Policy.Decide(toolName, readOnly, args) {
 	case Deny:
 		return false, "denied by permission policy — this tool/command is on the deny list. Do not retry it; choose another approach or stop and explain.", nil

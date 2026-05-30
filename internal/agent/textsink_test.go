@@ -34,7 +34,7 @@ func TestTextSinkReproducesInlineOutput(t *testing.T) {
 		"\n" + // reasoning→answer separator
 		"Hello" + // answer delta
 		"\n" + // Message close (no renderer)
-		"  · 1200 tok · in 1000 (900 cached / 100 new) · out 200\n" + // usage
+		"  · 1200 token · cache 90%\n" + // usage
 		"  -> read_file {\"path\":\"a\"}\n" + // tool dispatch
 		// successful read_file result is silent
 		"  ⊘ bash blocked by permission policy\n" + // blocked result

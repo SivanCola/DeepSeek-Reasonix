@@ -42,6 +42,23 @@ func RenderTOML(c *Config) string {
 		b.WriteString("# planner_model = \"mimo\"   # optional: enable two-model collaboration\n")
 	}
 	b.WriteString("\n")
+	if c.Agent.Keep == nil {
+		b.WriteString("# keep = [\"errors\"]   # default — keep failed tool results during compaction; set [] to disable\n")
+	} else if len(c.Agent.Keep) == 0 {
+		b.WriteString("keep = []   # all compaction keep policies disabled\n")
+	} else {
+		fmt.Fprintf(&b, "keep = %#v\n", c.Agent.Keep)
+	}
+	if c.Agent.CompactRatio > 0 {
+		fmt.Fprintf(&b, "# compact_ratio = %s   # trigger compaction at this fraction of context window (0 = disable normal band)\n", formatFloat(c.Agent.CompactRatio))
+	} else {
+		b.WriteString("# compact_ratio = 0.8   # trigger compaction at this fraction of context window\n")
+	}
+	if c.Agent.RecentKeep > 0 {
+		fmt.Fprintf(&b, "# recent_keep = %d   # messages kept verbatim during compaction\n", c.Agent.RecentKeep)
+	} else {
+		b.WriteString("# recent_keep = 8   # messages kept verbatim during compaction\n")
+	}
 
 	for _, p := range c.Providers {
 		b.WriteString("[[providers]]\n")

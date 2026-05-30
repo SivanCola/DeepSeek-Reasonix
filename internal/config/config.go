@@ -12,6 +12,7 @@ import (
 
 	"github.com/BurntSushi/toml"
 
+	"reasonix/internal/agent"
 	"reasonix/internal/provider"
 )
 
@@ -85,11 +86,47 @@ func (c *Config) BashMode() string {
 // planner handles low-frequency planning in its own session (kept separate so
 // each model's prompt prefix stays cache-stable).
 type AgentConfig struct {
-	SystemPrompt     string  `toml:"system_prompt"`
-	SystemPromptFile string  `toml:"system_prompt_file"`
-	MaxSteps         int     `toml:"max_steps"`
-	Temperature      float64 `toml:"temperature"`
-	PlannerModel     string  `toml:"planner_model"`
+	SystemPrompt     string   `toml:"system_prompt"`
+	SystemPromptFile string   `toml:"system_prompt_file"`
+	MaxSteps         int      `toml:"max_steps"`
+	Temperature      float64  `toml:"temperature"`
+	Effort           string   `toml:"effort"` // thinking effort: "" (default), "auto", "high", "fast"
+	PlannerModel     string   `toml:"planner_model"`
+
+	// Keep controls which messages survive compaction. Values map to
+	// agent.KeepPolicy flags: "errors" → KeepErrors, "user_marked" → KeepUserMarked.
+	// Omitted (nil) defaults to ["errors"]; set to [] to disable.
+	Keep []string `toml:"keep"`
+
+	// CompactRatio is the prompt-tokens / context-window fraction at which
+	// the agent runs compaction (default 0.8). Set to 0 to disable normal-
+	// band compaction; the aggressive threshold at 0.9 always fires.
+	CompactRatio float64 `toml:"compact_ratio"`
+
+	// RecentKeep is the minimum number of recent messages preserved verbatim
+	// during compaction (default 8). Messages above this count are eligible
+	// for summarization.
+	RecentKeep int `toml:"recent_keep"`
+}
+
+// KeepPolicy converts the keep list to an agent.KeepPolicy bitmask. When
+// keep is omitted from config (nil slice), it defaults to KeepErrors —
+// preserving tool failures so the model can see the raw error output rather
+// than relying solely on a summary. Set keep = [] to disable entirely.
+func (a AgentConfig) KeepPolicy() agent.KeepPolicy {
+	if a.Keep == nil {
+		return agent.KeepErrors
+	}
+	var p agent.KeepPolicy
+	for _, k := range a.Keep {
+		switch k {
+		case "errors":
+			p |= agent.KeepErrors
+		case "user_marked":
+			p |= agent.KeepUserMarked
+		}
+	}
+	return p
 }
 
 // ProviderEntry declares a model provider instance. ContextWindow is the model's

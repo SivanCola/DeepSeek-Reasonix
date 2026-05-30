@@ -120,6 +120,34 @@ func StartAll(ctx context.Context, specs []Spec) (*Host, []tool.Tool, error) {
 	return h, tools, nil
 }
 
+// Start connects a single MCP server, performs the handshake, discovers its tools
+// / prompts / resources, and appends it to the running Host. Returns the
+// namespaced tools. On failure the Host is unchanged.
+func (h *Host) Start(ctx context.Context, s Spec) ([]tool.Tool, error) {
+	c, err := start(ctx, s)
+	if err != nil {
+		return nil, fmt.Errorf("start plugin %q: %w", s.Name, err)
+	}
+	ts, err := c.listTools(ctx)
+	if err != nil {
+		c.close()
+		return nil, fmt.Errorf("list tools from %q: %w", s.Name, err)
+	}
+	h.clients = append(h.clients, c)
+	c.toolCount = len(ts)
+	if c.hasPrompts {
+		if ps, perr := c.listPrompts(ctx); perr == nil {
+			h.prompts = append(h.prompts, ps...)
+		}
+	}
+	if c.hasResources {
+		if rs, rerr := c.listResources(ctx); rerr == nil {
+			h.resources = append(h.resources, rs...)
+		}
+	}
+	return ts, nil
+}
+
 // Close terminates all plugin connections.
 func (h *Host) Close() {
 	for _, c := range h.clients {

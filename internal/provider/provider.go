@@ -45,12 +45,25 @@ type ToolSchema struct {
 	Parameters  json.RawMessage `json:"parameters"`
 }
 
+// Effort controls the thinking depth for thinking-capable models (DeepSeek).
+// Empty means not set (provider default). The OpenAI provider maps these to the
+// thinking wire field: auto→enabled (model decides), high→enabled+max tokens,
+// fast→disabled. Other providers ignore unrecognised values.
+type Effort string
+
+const (
+	EffortAuto Effort = "auto"
+	EffortHigh Effort = "high"
+	EffortFast Effort = "fast"
+)
+
 // Request is a single completion request.
 type Request struct {
 	Messages    []Message
 	Tools       []ToolSchema
 	Temperature float64
 	MaxTokens   int
+	Effort      Effort // thinking effort: "" (default), "auto", "high", "fast"
 }
 
 // ChunkType identifies the kind of a streamed increment.

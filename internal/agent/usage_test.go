@@ -25,8 +25,8 @@ func TestUsageLine(t *testing.T) {
 		CacheMissTokens:  100,
 	}
 
-	if out := renderUsage(u, nil); !strings.Contains(out, "1200 tok") || !strings.Contains(out, "900 cached / 100 new") {
-		t.Errorf("usage line = %q (want 1200 tok and 900 cached / 100 new)", out)
+	if out := renderUsage(u, nil); !strings.Contains(out, "1200 token") || !strings.Contains(out, "cache 90%") {
+		t.Errorf("usage line = %q (want 1200 token and cache 90%%)", out)
 	}
 
 	// With pricing: 900*0.02 + 100*1 + 200*2 = 518 per 1M = 0.000518 -> "¥0.0005".
@@ -51,7 +51,7 @@ func TestUsageLineDerivesMissFromHit(t *testing.T) {
 		CacheHitTokens:   1133,
 		// CacheMissTokens deliberately 0 — provider only reported the hit
 	}
-	if out := renderUsage(u, nil); !strings.Contains(out, "1133 cached / 2407 new") {
-		t.Errorf("usage line = %q (want 1133 cached / 2407 new)", out)
+	if out := renderUsage(u, nil); !strings.Contains(out, "cache 32%") {
+		t.Errorf("usage line = %q (want cache 32%%)", out)
 	}
 }

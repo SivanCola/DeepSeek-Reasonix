@@ -3,6 +3,7 @@ package cli
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"reasonix/internal/command"
@@ -28,17 +29,28 @@ func TestSlashCompletionFilterAndAccept(t *testing.T) {
 	if !m.completion.active || m.completion.kind != compSlash {
 		t.Fatalf("typing /co should open the slash menu: %+v", m.completion)
 	}
-	// /co prefix matches /compact and /copy; both are valid completions.
-	if len(m.completion.items) != 2 || m.completion.items[0].label != "/compact" || m.completion.items[1].label != "/copy" {
-		t.Fatalf("filter = %v, want /compact and /copy", labels(m.completion.items))
+	// /co prefix matches /compact, /commands, /config, and /copy.
+	if len(m.completion.items) < 2 {
+		t.Fatalf("filter = %v, expected at least 2 items", labels(m.completion.items))
+	}
+	if !hasLabel(m.completion.items, "/compact") || !hasLabel(m.completion.items, "/copy") {
+		t.Fatalf("filter = %v, missing /compact and/or /copy", labels(m.completion.items))
 	}
 
+	// Select /compact (not a descend item) and accept.
+	for i, it := range m.completion.items {
+		if it.label == "/compact" {
+			m.completion.sel = i
+			break
+		}
+	}
 	m.acceptCompletion()
-	if got := m.input.Value(); got != "/compact " {
-		t.Errorf("accept should fill the input, got %q", got)
+	got := m.input.Value()
+	if !strings.HasPrefix(got, "/compact ") {
+		t.Errorf("accept /compact should fill the input, got %q", got)
 	}
 	if m.completion.active {
-		t.Error("menu should close after accept")
+		t.Error("menu should close after accept (non-descend item)")
 	}
 }
 

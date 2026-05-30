@@ -99,7 +99,7 @@ func ListSessions(dir string) ([]SessionInfo, error) {
 	}
 	var out []SessionInfo
 	for _, e := range entries {
-		if e.IsDir() || filepath.Ext(e.Name()) != ".jsonl" {
+		if e.IsDir() || filepath.Ext(e.Name()) != ".jsonl" || strings.Contains(e.Name(), ".tree.") {
 			continue
 		}
 		info, err := e.Info()

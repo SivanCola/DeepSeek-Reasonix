@@ -10,6 +10,8 @@
 AGENTS.md
 *.test
 *.out
+/tests/
+__debug_bin*
 /node_modules/
 .reasonix/
 .claude/settings.local.json

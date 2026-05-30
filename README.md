@@ -189,8 +189,8 @@ calls (bounded retry on 429/5xx), nine built-in tools (read_file, write_file,
 edit_file, multi_edit, bash, ls, glob, grep, web_fetch), TOML config, an
 interactive `reasonix init` wizard, two-model collaboration (executor + planner in
 separate, cache-stable sessions), low-frequency context compaction, sub-agents
-(`task`), a bubbletea chat TUI (markdown, plan mode, context gauge, `/compact`
-`/new`), session persistence + resume, per-call **permissions** (allow/ask/deny
+(`task`), a bubbletea chat TUI (markdown, plan mode with cache-safe Tab toggle,
+`/compact` `/new` `/branch` `/tree`), session persistence + resume, per-call
 rules; chat prompts before writers, deny rules hard-block everywhere), a
 **workspace sandbox** confining file-writers to the project (symlink/`..`-safe),
 stdio (MCP) client — **stdio + Streamable HTTP** transports, tools (`mcp__server__tool`,

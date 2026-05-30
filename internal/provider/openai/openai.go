@@ -176,7 +176,7 @@ func (c *client) buildRequest(req provider.Request) chatRequest {
 		})
 	}
 
-	return chatRequest{
+	cr := chatRequest{
 		Model:         c.model,
 		Messages:      msgs,
 		Tools:         tools,
@@ -185,6 +185,15 @@ func (c *client) buildRequest(req provider.Request) chatRequest {
 		Temperature:   req.Temperature,
 		MaxTokens:     req.MaxTokens,
 	}
+	switch req.Effort {
+	case provider.EffortAuto:
+		cr.Thinking = &thinkingConfig{Type: "enabled"}
+	case provider.EffortHigh:
+		cr.Thinking = &thinkingConfig{Type: "enabled", ThinkingTokens: 32768}
+	case provider.EffortFast:
+		cr.Thinking = &thinkingConfig{Type: "disabled"}
+	}
+	return cr
 }
 
 // readStream parses the SSE stream, emits text deltas live, accumulates tool-call
@@ -297,14 +306,20 @@ func normaliseUsage(u *wireUsage) *provider.Usage {
 
 // --- OpenAI-compatible wire protocol ---
 
+type thinkingConfig struct {
+	Type           string `json:"type"`                      // "enabled" or "disabled"
+	ThinkingTokens int    `json:"thinking_tokens,omitempty"` // max tokens for thinking (high effort)
+}
+
 type chatRequest struct {
-	Model         string         `json:"model"`
-	Messages      []chatMessage  `json:"messages"`
-	Tools         []chatTool     `json:"tools,omitempty"`
-	Stream        bool           `json:"stream"`
-	StreamOptions *streamOptions `json:"stream_options,omitempty"`
-	Temperature   float64        `json:"temperature,omitempty"`
-	MaxTokens     int            `json:"max_tokens,omitempty"`
+	Model         string          `json:"model"`
+	Messages      []chatMessage   `json:"messages"`
+	Tools         []chatTool      `json:"tools,omitempty"`
+	Stream        bool            `json:"stream"`
+	StreamOptions *streamOptions  `json:"stream_options,omitempty"`
+	Temperature   float64         `json:"temperature,omitempty"`
+	MaxTokens     int             `json:"max_tokens,omitempty"`
+	Thinking      *thinkingConfig `json:"thinking,omitempty"`
 }
 
 type streamOptions struct {

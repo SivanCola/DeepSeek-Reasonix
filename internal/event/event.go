@@ -50,6 +50,10 @@ const (
 	// nil also for a user cancellation, which is not an error). Always the
 	// last event of a turn.
 	TurnDone
+	// CompactProgress reports compaction progress to the UI (Text = phase
+	// label; Progress = 0.0→1.0; Tip = rotating hint). Emitted by compact()
+	// as it moves through bounds→archive→summarize→rebuild→done.
+	CompactProgress
 )
 
 // Level classifies a Notice so sinks can style or filter it.
@@ -110,7 +114,9 @@ type Event struct {
 	TurnCount        int               // Usage: current turn number
 	Level            Level             // Notice
 	Approval         Approval          // ApprovalRequest
-	Err              error             // TurnDone: non-nil on failure
+	Err      error  // TurnDone: non-nil on failure
+	Progress float64 // CompactProgress: 0.0 → 1.0
+	Tip      string  // CompactProgress: rotating hint for the user
 }
 
 // Sink consumes a turn's events. The agent calls Emit serially from its run

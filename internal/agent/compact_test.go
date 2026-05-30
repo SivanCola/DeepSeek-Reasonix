@@ -55,7 +55,7 @@ func TestCompactBounds(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			head, start, ok := compactBounds(tc.msgs, tc.keep, minCompactMessages)
+			head, start, ok := compactBounds(tc.msgs, tc.keep, minCompactMessages, 0)
 			if ok != tc.wantOK {
 				t.Fatalf("ok = %v, want %v", ok, tc.wantOK)
 			}
@@ -99,7 +99,7 @@ func TestCompactReplacesHistory(t *testing.T) {
 		t.Errorf("message 0 = %s, want system", sess.Messages[0].Role)
 	}
 	summary := sess.Messages[1]
-	if summary.Role != provider.RoleUser || !strings.Contains(summary.Content, "Summary of earlier") || !strings.Contains(summary.Content, "do X") {
+	if summary.Role != provider.RoleUser || !strings.Contains(summary.Content, summaryTag) || !strings.Contains(summary.Content, "do X") {
 		t.Errorf("summary message = %+v", summary)
 	}
 	if sess.Messages[2].Content != "next" || sess.Messages[3].Content != "ok" {
@@ -158,5 +158,67 @@ func TestMaybeCompactThreshold(t *testing.T) {
 	a.maybeCompact(context.Background(), &provider.Usage{PromptTokens: 1 << 30})
 	if len(sess.Messages) != 7 {
 		t.Errorf("no window should disable compaction, len = %d", len(sess.Messages))
+	}
+}
+
+func TestCompactBoundsKeepErrors(t *testing.T) {
+	sys := provider.Message{Role: provider.RoleSystem, Content: "sys"}
+	u := provider.Message{Role: provider.RoleUser, Content: "task"}
+	a := provider.Message{Role: provider.RoleAssistant, Content: "ok"}
+	terr := provider.Message{Role: provider.RoleTool, Content: "error: permission denied", ToolCallID: "1", Name: "bash"}
+	tok := provider.Message{Role: provider.RoleTool, Content: "stdout", ToolCallID: "2", Name: "bash"}
+
+	msgs := []provider.Message{sys, u, a, terr, u, a, tok, u, a}
+	_, startNoPolicy, ok := compactBounds(msgs, 2, minCompactMessages, 0)
+	if !ok {
+		t.Fatal("should be compactable")
+	}
+	if startNoPolicy != 7 {
+		t.Fatalf("without KeepErrors: start=%d, want 7", startNoPolicy)
+	}
+
+	_, startWithPolicy, ok := compactBounds(msgs, 2, minCompactMessages, KeepErrors)
+	if !ok {
+		t.Fatal("should still be compactable")
+	}
+	if startWithPolicy >= startNoPolicy {
+		t.Errorf("KeepErrors should extend tail: start=%d < %d", startWithPolicy, startNoPolicy)
+	}
+}
+
+func TestCompactBoundsKeepUserMarked(t *testing.T) {
+	sys := provider.Message{Role: provider.RoleSystem, Content: "sys"}
+	marked := provider.Message{Role: provider.RoleUser, Content: "[keep] this is important"}
+	plain := provider.Message{Role: provider.RoleUser, Content: "do something"}
+	a := provider.Message{Role: provider.RoleAssistant, Content: "ok"}
+
+	msgs := []provider.Message{sys, marked, a, plain, a, plain, a}
+	_, startNoPolicy, ok := compactBounds(msgs, 1, minCompactMessages, 0)
+	if !ok {
+		t.Fatal("should be compactable")
+	}
+
+	_, startWithPolicy, ok := compactBounds(msgs, 1, minCompactMessages, KeepUserMarked)
+	if !ok {
+		t.Fatal("should still be compactable")
+	}
+	if startWithPolicy >= startNoPolicy {
+		t.Errorf("KeepUserMarked should extend tail: start=%d < %d", startWithPolicy, startNoPolicy)
+	}
+}
+
+func TestIsErrorResult(t *testing.T) {
+	cases := map[string]bool{
+		"error: permission denied": true,
+		"exit status 1":            true,
+		"something\nexit status 2": true,
+		"stdout\nstderr":           false,
+		"SUCCESS":                  false,
+		"":                         false,
+	}
+	for content, want := range cases {
+		if got := isErrorResult(content); got != want {
+			t.Errorf("isErrorResult(%q) = %v, want %v", content, got, want)
+		}
 	}
 }

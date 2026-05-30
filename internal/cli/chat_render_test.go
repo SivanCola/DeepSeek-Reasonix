@@ -14,6 +14,7 @@ import (
 func newTestChatTUI() chatTUI {
 	commit := []string{}
 	ti := textarea.New()
+	configureChatTextarea(&ti)
 	ti.SetWidth(80)
 	return chatTUI{
 		input:           ti,
@@ -25,21 +26,20 @@ func newTestChatTUI() chatTUI {
 	}
 }
 
-// TestIngestSeparatesReasoningFromAnswer proves the print-above model commits
-// the reasoning block and the answer as distinct scrollback entries (joined
-// with a newline downstream), so the answer never butts up against the last
-// line of thinking — and that the answer stays live until it's flushed.
-func TestIngestSeparatesReasoningFromAnswer(t *testing.T) {
+// TestIngestHidesReasoningAndKeepsAnswerLive proves the TUI consumes reasoning
+// without committing it to scrollback, while the visible answer remains live
+// until it is flushed.
+func TestIngestHidesReasoningAndKeepsAnswerLive(t *testing.T) {
 	m := newTestChatTUI()
 
-	m.ingestEvent(event.Event{Kind: event.Reasoning, Text: "…reasoning…"}) // header + fragment → live buffer
+	m.ingestEvent(event.Event{Kind: event.Reasoning, Text: "...reasoning..."})
 	if len(*m.pendingCommit) != 0 {
-		t.Fatalf("reasoning should stay live until the answer begins, committed=%v", *m.pendingCommit)
+		t.Fatalf("reasoning should not commit, committed=%v", *m.pendingCommit)
 	}
 
-	m.ingestEvent(event.Event{Kind: event.Text, Text: "Hello answer"}) // answer begins → reasoning finalizes
-	if n := len(*m.pendingCommit); n != 1 || !strings.Contains((*m.pendingCommit)[0], "thinking") {
-		t.Fatalf("reasoning should commit when the answer begins, committed=%v", *m.pendingCommit)
+	m.ingestEvent(event.Event{Kind: event.Text, Text: "Hello answer"})
+	if n := len(*m.pendingCommit); n != 0 {
+		t.Fatalf("reasoning should stay hidden when the answer begins, committed=%v", *m.pendingCommit)
 	}
 	if m.pending.String() != "Hello answer" {
 		t.Errorf("answer should be live in pending, got %q", m.pending.String())
@@ -49,8 +49,24 @@ func TestIngestSeparatesReasoningFromAnswer(t *testing.T) {
 	}
 
 	m.commitPending() // turn end
-	if n := len(*m.pendingCommit); n != 2 || !strings.Contains((*m.pendingCommit)[1], "Hello") {
-		t.Fatalf("answer should commit on flush as a separate entry, committed=%v", *m.pendingCommit)
+	if n := len(*m.pendingCommit); n != 1 || !strings.Contains((*m.pendingCommit)[0], "Hello") {
+		t.Fatalf("answer should commit on flush, committed=%v", *m.pendingCommit)
+	}
+}
+
+func TestIngestHidesReasoningByDefault(t *testing.T) {
+	m := newTestChatTUI()
+
+	m.ingestEvent(event.Event{Kind: event.Reasoning, Text: "internal chain of thought"})
+	m.ingestEvent(event.Event{Kind: event.Text, Text: "Visible answer"})
+	m.commitPending()
+
+	joined := strings.Join(*m.pendingCommit, "\n")
+	if strings.Contains(joined, "internal chain of thought") || strings.Contains(joined, "thinking") {
+		t.Fatalf("reasoning should be hidden from TUI scrollback, got %q", joined)
+	}
+	if !strings.Contains(joined, "Visible answer") {
+		t.Fatalf("visible answer should still render, got %q", joined)
 	}
 }
 

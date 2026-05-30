@@ -150,10 +150,14 @@ func setup(ctx context.Context, modelName string, maxStepsOverride int, requireK
 	executor := agent.New(execProv, reg, execSess, agent.Options{
 		MaxSteps:      maxSteps,
 		Temperature:   cfg.Agent.Temperature,
+		Effort:        provider.Effort(cfg.Agent.Effort),
 		Pricing:       entry.Price,
 		Gate:          headlessGate,
 		ContextWindow: entry.ContextWindow,
+		CompactRatio:  cfg.Agent.CompactRatio,
+		RecentKeep:    cfg.Agent.RecentKeep,
 		ArchiveDir:    config.ArchiveDir(),
+		KeepPolicy:    cfg.Agent.KeepPolicy(),
 	}, sink)
 
 	// Custom slash commands (.reasonix/commands + user dir). Best-effort: a malformed
@@ -383,19 +387,34 @@ func chatREPL(args []string) int {
 	// task tool) keep their headless gate from setup — no UI to prompt through.
 	ctrl.EnableInteractiveApproval()
 
+	// Enable session tree for /branch /tree /switch commands. When a session
+	// file is pinned, derive the tree path and load any previously-saved tree.
+	treePath := ""
+	if sp := ctrl.SessionPath(); sp != "" {
+		treePath = strings.TrimSuffix(sp, ".jsonl") + ".tree.jsonl"
+	}
+	ctrl.EnableSessionTree("", treePath)
+
 	m := newChatTUI(ctrl, missing, eventCh, termW)
 	// No alt-screen: finalized transcript lines are committed to the terminal's
 	// normal buffer (via tea.Println) so native scrollback, the wheel, and copy
 	// all work — the bubbletea-managed region is just the bottom input/status.
 	p := tea.NewProgram(m)
-	if _, err := p.Run(); err != nil {
-		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
+	_, runErr := p.Run()
+
+	// Save the session tree so branch structure survives restarts.
+	if treePath != "" {
+		_ = ctrl.SaveSessionTree(treePath)
+	}
+
+	if runErr != nil {
+		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, runErr)
 		return 1
 	}
 	return 0
-}
 
 // addBuiltins adds enabled built-in tools to reg. An empty list means all of
+}
 // them. writeRoots confines the file-writing built-ins to the workspace: after
 // the (unconfined) defaults are added, each enabled writer is replaced by an
 // instance bound to writeRoots (preserving registry order).

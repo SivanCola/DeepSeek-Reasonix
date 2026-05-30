@@ -13,6 +13,7 @@ package control
 import (
 	"context"
 	"encoding/json"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -39,6 +40,11 @@ type Controller struct {
 	host         *plugin.Host
 	commands     []command.Command
 	cleanup      func()
+
+	// sessionTree tracks session branches so the user can fork and
+	// switch between paths. Initialised by New when SessionTree is
+	// provided; nil when tree mode is off (headless runs, ACP).
+	sessionTree *agent.SessionTree
 
 	// promptMu serialises approval prompts so at most one is outstanding at a
 	// time (parallel read-only tool calls don't normally gate, writers run
@@ -78,6 +84,12 @@ type Options struct {
 	Host         *plugin.Host
 	Commands     []command.Command
 	Cleanup      func()
+
+	// SessionTree, when set, enables branching in chat mode. The
+	// controller records every NewSession into the tree and exposes
+	// Branch / SwitchTo / Tree for the /branch / /switch / /tree
+	// slash commands. Omit for headless runs and ACP.
+	SessionTree *agent.SessionTree
 }
 
 // New builds a Controller. A nil Sink is replaced with event.Discard.
@@ -98,6 +110,7 @@ func New(opts Options) *Controller {
 		host:         opts.Host,
 		commands:     opts.Commands,
 		cleanup:      opts.Cleanup,
+		sessionTree:  opts.SessionTree,
 		approvals:    map[string]chan approvalReply{},
 		granted:      map[string]bool{},
 	}
@@ -135,6 +148,21 @@ func (c *Controller) runGuarded(body func(ctx context.Context) error) {
 // those itself for live UI feedback.
 func (c *Controller) Send(input string) {
 	c.runGuarded(func(ctx context.Context) error { return c.runner.Run(ctx, input) })
+}
+
+// SendEphemeral starts a turn whose messages are NOT persisted to the session.
+// The model answers (using tools if needed) and the user sees the response, but
+// after the turn completes the exchange is popped from history — as though it
+// never happened. The prompt-cache prefix stays intact because the pop only
+// removes the tail (prepend-only guarantee).
+func (c *Controller) SendEphemeral(input string) {
+	c.runGuarded(func(ctx context.Context) error {
+		sess := c.executor.Session()
+		before := len(sess.Messages)
+		err := c.runner.Run(ctx, input)
+		sess.Messages = sess.Messages[:before]
+		return err
+	})
 }
 
 // Submit is the one-call entry for a simple frontend: it takes raw user input
@@ -265,6 +293,13 @@ func (c *Controller) SetPlanMode(v bool) {
 	}
 }
 
+// SetEffort sets the thinking effort for the executor's subsequent turns.
+func (c *Controller) SetEffort(e string) {
+	if c.executor != nil {
+		c.executor.SetEffort(provider.Effort(e))
+	}
+}
+
 // Compact runs one compaction pass on the executor's session on demand.
 func (c *Controller) Compact(ctx context.Context) error {
 	if c.executor == nil {
@@ -291,6 +326,95 @@ func (c *Controller) NewSession() error {
 	return nil
 }
 
+// ClearSession snapshots the current conversation and resets the executor to a
+// clean session, keeping the same session file so future saves stay in place.
+// Unlike NewSession, it does NOT rotate to a new file path.
+func (c *Controller) ClearSession() error {
+	if c.executor == nil {
+		return nil
+	}
+	if err := c.Snapshot(); err != nil {
+		return err
+	}
+	c.executor.SetSession(agent.NewSession(c.systemPrompt))
+	return nil
+}
+
+// Branch creates a named branch from the current conversation and resets to a
+// fresh session carrying the same system prompt. The parent's messages are
+// snapshotted automatically. Requires SessionTree to be initialised.
+func (c *Controller) Branch(label string) error {
+	if c.sessionTree == nil || c.executor == nil {
+		return nil
+	}
+	// Sync current executor state into the active tree node.
+	c.syncTree()
+
+	// Fork a fresh branch.
+	c.sessionTree.Branch(label)
+	sess := c.sessionTree.ToSession()
+	c.executor.SetSession(sess)
+
+	if c.sessionDir != "" {
+		c.mu.Lock()
+		c.sessionPath = agent.NewSessionPath(c.sessionDir, c.label)
+		c.mu.Unlock()
+	}
+	return nil
+}
+
+// SwitchTo navigates to an existing session-tree node by id. The current
+// node is synced (so in-flight messages are not lost) before switching.
+func (c *Controller) SwitchTo(id string) error {
+	if c.sessionTree == nil || c.executor == nil {
+		return nil
+	}
+	c.syncTree()
+	if err := c.sessionTree.SwitchTo(id); err != nil {
+		return err
+	}
+	c.executor.SetSession(c.sessionTree.ToSession())
+	return nil
+}
+
+// TreeInfo returns the tree structure for display: node ids in BFS order,
+// labels, and the current node id. The first return value is nil when
+// SessionTree is not enabled.
+func (c *Controller) TreeInfo() (nodes []string, labels map[string]string, current string) {
+	if c.sessionTree == nil {
+		return nil, nil, ""
+	}
+	c.syncTree()
+	nodes = c.sessionTree.Nodes()
+	labels = map[string]string{}
+	for _, id := range nodes {
+		n := c.sessionTree.Node(id)
+		if n == nil {
+			continue
+		}
+		label := n.Metadata["label"]
+		if label == "" {
+			label = id
+		}
+		labels[id] = label
+	}
+	current = c.sessionTree.Current().ID
+	return
+}
+
+// syncTree copies the executor's current session state into the active tree
+// node so Branch/SwitchTo/TreeInfo see up-to-date messages and counters.
+func (c *Controller) syncTree() {
+	if c.sessionTree == nil || c.executor == nil {
+		return
+	}
+	sess := c.executor.Session()
+	if sess == nil {
+		return
+	}
+	c.sessionTree.SyncFrom(sess)
+}
+
 // Resume seeds the session from a loaded transcript and pins the active file to
 // its path so auto-save keeps appending there.
 func (c *Controller) Resume(s *agent.Session, path string) {
@@ -300,6 +424,31 @@ func (c *Controller) Resume(s *agent.Session, path string) {
 	c.mu.Lock()
 	c.sessionPath = path
 	c.mu.Unlock()
+}
+
+// ResumeSession snapshots the current session, loads a saved transcript from
+// path, seeds the executor, and re-initialises the session tree for the loaded
+// file. Used by the /resume slash command to switch conversations mid-chat.
+func (c *Controller) ResumeSession(path string) error {
+	if c.executor == nil {
+		return nil
+	}
+	// Snapshot current state before switching.
+	if err := c.Snapshot(); err != nil {
+		return err
+	}
+	loaded, err := agent.LoadSession(path)
+	if err != nil {
+		return err
+	}
+	c.executor.SetSession(loaded)
+	c.mu.Lock()
+	c.sessionPath = path
+	c.mu.Unlock()
+	// Reset session tree for the loaded session.
+	treePath := strings.TrimSuffix(path, ".jsonl") + ".tree.jsonl"
+	c.EnableSessionTree("", treePath)
+	return nil
 }
 
 // Snapshot writes the executor's conversation to the active session file. No-op
@@ -321,6 +470,49 @@ func (c *Controller) SetSessionPath(p string) {
 	c.mu.Lock()
 	c.sessionPath = p
 	c.mu.Unlock()
+}
+
+// EnableSessionTree initialises session branching and records the initial
+// root node. Call once after New (before any turns) to turn on /branch, etc.
+// When treePath points to an existing .tree.jsonl file, the tree is loaded
+// from disk and the current node is resumed; otherwise a fresh tree is
+// created. treePath is the file that SaveSessionTree writes to.
+func (c *Controller) EnableSessionTree(system string, treePath string) {
+	c.sessionTree = nil
+	if treePath != "" {
+		if f, err := os.Open(treePath); err == nil {
+			if t, err := agent.LoadTree(f); err == nil {
+				c.sessionTree = t
+				f.Close()
+				return
+			}
+			f.Close()
+		}
+	}
+	c.sessionTree = agent.NewSessionTree(system)
+}
+
+// SaveSessionTree writes the session tree to disk. Called before the TUI
+// exits so branch structure survives restarts. No-op when the tree or its
+// path are unavailable.
+func (c *Controller) SaveSessionTree(treePath string) error {
+	if c.sessionTree == nil || treePath == "" {
+		return nil
+	}
+	c.syncTree()
+	f, err := os.Create(treePath)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	return c.sessionTree.Save(f)
+}
+
+// SessionPath returns the active session file path ("" when unset).
+func (c *Controller) SessionPath() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.sessionPath
 }
 
 // SessionDir reports the directory new session files land in ("" disables
@@ -353,6 +545,36 @@ func (c *Controller) ContextSnapshot() (int, int) {
 // list servers / resolve MCP prompts.
 func (c *Controller) Host() *plugin.Host { return c.host }
 
+// HotReloadMCPServers starts the given MCP specs and registers their tools into
+// the running executor without restarting the session. Already-connected servers
+// (by name) are skipped. Returns the names of successfully-started servers.
+// Note: new tool schemas appear in the next turn's API call, which will alter
+// the cache prefix for that turn only — an acceptable trade-off for a
+// user-initiated action.
+func (c *Controller) HotReloadMCPServers(ctx context.Context, specs []plugin.Spec) []string {
+	if c.host == nil || c.executor == nil {
+		return nil
+	}
+	connected := map[string]bool{}
+	for _, n := range c.host.ServerNames() {
+		connected[n] = true
+	}
+	var started []string
+	for _, s := range specs {
+		if connected[s.Name] {
+			continue
+		}
+		ts, err := c.host.Start(ctx, s)
+		if err != nil {
+			c.notice("MCP " + s.Name + ": " + err.Error())
+			continue
+		}
+		c.executor.AddTools(ts...)
+		started = append(started, s.Name)
+	}
+	return started
+}
+
 // Commands returns the loaded custom slash commands.
 func (c *Controller) Commands() []command.Command { return c.commands }
 
@@ -361,10 +583,19 @@ func (c *Controller) Label() string { return c.label }
 
 // CacheReport returns recent cache diagnostic entries for /cache-report.
 func (c *Controller) CacheReport() []event.CacheDiagnostics {
+
 	if c.executor == nil {
 		return nil
 	}
 	return c.executor.CacheReport()
+}
+
+// Pricing returns the executor's pricing model for /cache-report cost display.
+func (c *Controller) Pricing() *provider.Pricing {
+	if c.executor == nil {
+		return nil
+	}
+	return c.executor.Pricing()
 }
 
 // Close stops plugin subprocesses and releases resources.
