@@ -34,6 +34,10 @@ export interface WireUsage {
   cacheHitTokens: number;
   cacheMissTokens: number;
   reasoningTokens?: number;
+  // Session-cumulative cache tokens — the status bar shows the aggregate
+  // hit-rate (Σhit/Σ(hit+miss)), steadier than the single-turn cacheHitTokens.
+  sessionCacheHitTokens: number;
+  sessionCacheMissTokens: number;
   costUsd?: number;
 }
 
@@ -85,6 +89,14 @@ export interface HistoryMessage {
   content: string;
 }
 
+// CheckpointMeta is one rewind point (a user turn) for the rewind UI.
+export interface CheckpointMeta {
+  turn: number;
+  prompt: string;
+  files: string[];
+  time: number; // unix ms
+}
+
 // SessionMeta is one saved session for the history panel.
 export interface SessionMeta {
   path: string;
@@ -106,13 +118,18 @@ export interface Meta {
   startupErr?: string;
   eventChannel: string;
   cwd: string;
+  bypass?: boolean; // YOLO mode on (auto-approve every tool call)
 }
+
+// Mode is the input mode cycled by Shift+Tab: normal → plan (read-only) → yolo
+// (auto-approve every tool call; deny rules still apply).
+export type Mode = "normal" | "plan" | "yolo";
 
 export interface CommandInfo {
   name: string; // without the leading slash
   description: string;
   hint?: string;
-  kind: "builtin" | "custom" | "mcp";
+  kind: "builtin" | "custom" | "mcp" | "skill";
 }
 
 export interface DirEntry {
@@ -125,6 +142,19 @@ export interface ModelInfo {
   provider: string;
   model: string;
   current: boolean;
+}
+
+// Slash sub-command / argument completion (desktop/app.go SlashArgs). Mirrors the
+// CLI's arg hints so the composer can suggest e.g. /skill → list/show/new/paths.
+export interface SlashArgItem {
+  label: string;
+  insert: string; // token to place at the current position
+  hint: string;
+  descend: boolean; // re-open the menu one level deeper after accepting
+}
+export interface SlashArgsResult {
+  items: SlashArgItem[];
+  from: number; // byte offset where the current token begins
 }
 
 // Memory panel payloads (desktop/app.go MemoryView).
@@ -176,6 +206,15 @@ export interface BalanceInfo {
   err?: string;
 }
 
+// JobView is one running background job (desktop/app.go Jobs) for the status bar.
+export interface JobView {
+  id: string;
+  kind: string; // "bash" | "task"
+  label: string;
+  status: string; // "running"
+  startedAt: number; // unix milliseconds
+}
+
 export interface PermissionsView {
   mode: string; // "ask" | "allow" | "deny"
   allow: string[];
@@ -206,4 +245,5 @@ export interface SettingsView {
   language: string;
   configPath: string;
   providerKinds: string[]; // provider implementations the kernel registered (for the kind picker)
+  bypass: boolean; // live YOLO state (runtime-only) — whether approvals are skipped this session
 }

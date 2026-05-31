@@ -3,24 +3,25 @@ import type { KeyboardEvent } from "react";
 import { ArrowUp, Square } from "lucide-react";
 import { app } from "../lib/bridge";
 import { useT } from "../lib/i18n";
-import type { CommandInfo, DirEntry } from "../lib/types";
+import type { CommandInfo, DirEntry, Mode, SlashArgItem, SlashArgsResult } from "../lib/types";
 import { SlashMenu } from "./SlashMenu";
+import { ArgMenu } from "./ArgMenu";
 import { FileMenu } from "./FileMenu";
 
 export function Composer({
   running,
-  plan,
+  mode,
   onSend,
   onCancel,
-  onTogglePlan,
+  onCycleMode,
 }: {
   running: boolean;
-  plan: boolean;
+  mode: Mode;
   onSend: (text: string) => void;
   // Returns the un-sent text when cancelling before the server replied (so it can
   // be restored to the input); undefined for a normal cancel.
   onCancel: () => string | undefined;
-  onTogglePlan: () => void;
+  onCycleMode: () => void;
 }) {
   const t = useT();
   const [text, setText] = useState("");
@@ -42,6 +43,37 @@ export function Composer({
     () => (slashQuery === null ? [] : commands.filter((c) => c.name.toLowerCase().includes(slashQuery)).slice(0, 8)),
     [slashQuery, commands],
   );
+
+  // --- slash argument completion ("/cmd <args>") --- mirrors the CLI: once past
+  // the command word, the backend suggests sub-commands (/skill → list/show/…,
+  // /mcp → add/remove, /model → refs). Fetched from app.SlashArgs.
+  const [argRes, setArgRes] = useState<SlashArgsResult | null>(null);
+  useEffect(() => {
+    if (!text.startsWith("/") || !/\s/.test(text)) {
+      setArgRes(null);
+      return;
+    }
+    let live = true;
+    app
+      .SlashArgs(text)
+      .then((r) => {
+        if (!live) return;
+        // Drop suggestions that wouldn't change the input — the token is already
+        // fully typed (e.g. "/skill list" offering "list"). Otherwise the menu
+        // lingers on a complete command and Enter keeps "accepting" a no-op
+        // instead of sending. (Defense-in-depth: the backend filters these too.)
+        // r.items can arrive as null (an empty Go slice serializes to JSON null),
+        // so guard before filtering — otherwise the throw is swallowed and the
+        // stale menu from the previous keystroke lingers (the /skill list bug).
+        const useful = (r.items ?? []).filter((it) => text.slice(0, r.from) + it.insert !== text);
+        setArgRes(useful.length > 0 ? { items: useful, from: r.from } : null);
+        setActive(0);
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [text]);
 
   // --- @ file references (token at the end of the text) ---
   // atRaw is everything after a trailing "@token"; atDir is its path up to the
@@ -90,10 +122,24 @@ export function Composer({
     [atRaw, atFrag, entries],
   );
 
-  // --- which menu (if any) is open --- (slash wins; they're rarely both valid)
-  const mode: "slash" | "at" | null =
-    slashMatches.length > 0 && !dismissed ? "slash" : atMatches.length > 0 && !dismissed ? "at" : null;
-  const count = mode === "slash" ? slashMatches.length : mode === "at" ? atMatches.length : 0;
+  // --- which menu (if any) is open --- (slash command names win; then slash
+  // arguments; then @-refs — they're rarely valid at once)
+  const menuMode: "slash" | "slasharg" | "at" | null =
+    slashMatches.length > 0 && !dismissed
+      ? "slash"
+      : argRes && argRes.items.length > 0 && !dismissed
+        ? "slasharg"
+        : atMatches.length > 0 && !dismissed
+          ? "at"
+          : null;
+  const count =
+    menuMode === "slash"
+      ? slashMatches.length
+      : menuMode === "slasharg"
+        ? argRes!.items.length
+        : menuMode === "at"
+          ? atMatches.length
+          : 0;
 
   // Reset highlight + un-dismiss whenever the active query changes.
   useEffect(() => {
@@ -135,23 +181,32 @@ export function Composer({
     setTextCaretEnd(prefix + "@" + atDir + e.name + (e.isDir ? "/" : " "));
   };
 
+  // pickArg replaces just the current token with the suggestion. A "descend" item
+  // (e.g. "/skill show ") ends with a space, so the effect re-fetches the next
+  // level; a terminal item leaves the menu (next fetch returns nothing).
+  const pickArg = (it: SlashArgItem) => {
+    if (!argRes) return;
+    setTextCaretEnd(text.slice(0, argRes.from) + it.insert);
+  };
+
   const pickActive = () => {
-    if (mode === "slash") pickCommand(slashMatches[active]);
-    else if (mode === "at") pickEntry(atMatches[active]);
+    if (menuMode === "slash") pickCommand(slashMatches[active]);
+    else if (menuMode === "slasharg" && argRes) pickArg(argRes.items[active]);
+    else if (menuMode === "at") pickEntry(atMatches[active]);
   };
 
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     const composing = e.nativeEvent.isComposing;
 
-    // Shift+Tab cycles the input mode. Only plan/normal exist today, so it's a
-    // toggle. Handled before the menus so it works even while one is open.
+    // Shift+Tab cycles the input mode (normal → plan → YOLO → normal). Handled
+    // before the menus so it works even while one is open.
     if (e.key === "Tab" && e.shiftKey && !composing) {
       e.preventDefault();
-      onTogglePlan();
+      onCycleMode();
       return;
     }
 
-    if (mode && !composing) {
+    if (menuMode && !composing) {
       if (e.key === "ArrowDown") {
         e.preventDefault();
         setActive((i) => (i + 1) % count);
@@ -189,18 +244,21 @@ export function Composer({
 
   return (
     <div className="composer-wrap">
-      {mode === "slash" && (
+      {menuMode === "slash" && (
         <SlashMenu items={slashMatches} activeIndex={active} onPick={pickCommand} onHover={setActive} />
       )}
-      {mode === "at" && <FileMenu items={atMatches} activeIndex={active} onPick={pickEntry} onHover={setActive} />}
+      {menuMode === "slasharg" && argRes && (
+        <ArgMenu items={argRes.items} activeIndex={active} onPick={pickArg} onHover={setActive} />
+      )}
+      {menuMode === "at" && <FileMenu items={atMatches} activeIndex={active} onPick={pickEntry} onHover={setActive} />}
       <button
-        className={`composer__mode ${plan ? "composer__mode--on" : ""}`}
-        onClick={onTogglePlan}
-        title={plan ? t("composer.exitPlanTitle") : t("composer.enterPlanTitle")}
+        className={`composer__mode composer__mode--${mode}`}
+        onClick={onCycleMode}
+        title={t("composer.modeTitle")}
       >
         <span className="composer__mode-dot" />
-        {plan ? t("composer.planModeOn") : t("composer.planMode")}
-        <span className="composer__mode-hint">{plan ? t("composer.planHintExit") : t("composer.planHint")}</span>
+        {mode === "yolo" ? t("composer.modeYolo") : mode === "plan" ? t("composer.modePlan") : t("composer.modeNormal")}
+        <span className="composer__mode-hint">{t("composer.modeHint")}</span>
       </button>
       <div className="composer">
         <span className="composer__caret">›</span>

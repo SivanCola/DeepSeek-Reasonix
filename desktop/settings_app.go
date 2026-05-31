@@ -8,6 +8,7 @@ import (
 	"reasonix/internal/agent"
 	"reasonix/internal/boot"
 	"reasonix/internal/config"
+	"reasonix/internal/i18n"
 	"reasonix/internal/provider"
 )
 
@@ -66,6 +67,9 @@ type SettingsView struct {
 	// registered (provider.Kinds()), so the editor's "kind" picker offers only
 	// kinds that resolve — selecting an unregistered one would fail the rebuild.
 	ProviderKinds []string `json:"providerKinds"`
+	// Bypass is the live YOLO state (runtime-only, not from config), so the panel's
+	// toggle reflects whether approvals are currently being skipped this session.
+	Bypass bool `json:"bypass"`
 }
 
 func nonNil(s []string) []string {
@@ -103,6 +107,7 @@ func (a *App) Settings() SettingsView {
 		Language:      cfg.Language,
 		ConfigPath:    config.SourcePath(),
 		ProviderKinds: provider.Kinds(),
+		Bypass:        a.ctrl != nil && a.ctrl.Bypass(),
 	}
 	for i := range cfg.Providers {
 		p := &cfg.Providers[i]
@@ -302,6 +307,9 @@ func (a *App) SetLanguage(lang string) error {
 		return err
 	}
 	cfg.Language = strings.TrimSpace(lang)
+	// Keep the Go-side catalogue in sync so backend-provided slash UI re-localizes
+	// on the next fetch (matches the frontend's language switch).
+	i18n.DetectLanguage(cfg.Language)
 	return cfg.Save()
 }
 

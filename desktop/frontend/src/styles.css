@@ -292,6 +292,48 @@ body {
   align-items: baseline;
   color: var(--fg);
 }
+/* Rewind affordance on a user message: a ⟲ button hidden until hover, expanding
+   into a scope menu. margin-left:auto pushes it to the right of the flex row. */
+.rewind__btn {
+  margin-left: auto;
+  flex-shrink: 0;
+  opacity: 0;
+  background: none;
+  border: none;
+  color: var(--fg-dim);
+  cursor: pointer;
+  font-size: 13px;
+  padding: 0 4px;
+}
+.msg--user:hover .rewind__btn {
+  opacity: 0.7;
+}
+.rewind__btn:hover {
+  opacity: 1;
+  color: var(--accent);
+}
+.rewind__menu {
+  margin-left: auto;
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+.rewind__menu button {
+  background: var(--bg-soft);
+  border: 1px solid var(--border);
+  color: var(--fg-dim);
+  border-radius: 6px;
+  font-size: 11px;
+  padding: 2px 8px;
+  cursor: pointer;
+}
+.rewind__menu button:hover {
+  color: var(--fg);
+  border-color: var(--accent);
+}
+.rewind__cancel {
+  color: var(--fg-faint);
+}
 .msg__caret {
   color: var(--accent);
   font-family: var(--mono);
@@ -699,6 +741,11 @@ body {
   color: var(--fg-dim);
   padding: 5px 11px;
   border-left: 2px solid var(--border);
+  /* Listings (/skill, /hooks, /mcp, /memory, /model) are multi-line with leading
+     spaces; preserve them so the output isn't crammed onto one line. Monospace
+     keeps the indented entries aligned, like the CLI. */
+  white-space: pre-wrap;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
 }
 .notice--warn {
   color: var(--warn);
@@ -864,6 +911,17 @@ body {
   font-family: var(--mono);
   font-size: 11px;
   color: var(--fg-faint);
+  /* One line, always: without this a narrow window squeezes the flex items and
+     CJK text breaks one character per line. The metric chips keep their width
+     (flex-shrink: 0) and only the model label ellipsizes to absorb the squeeze. */
+  white-space: nowrap;
+}
+.statusbar > * {
+  flex-shrink: 0;
+}
+.statusbar .modelsw {
+  flex-shrink: 1;
+  min-width: 0;
 }
 .statusbar__dot {
   width: 6px;
@@ -899,6 +957,58 @@ body {
   gap: 4px;
   color: var(--fg-dim);
 }
+.statusbar__jobswrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+.statusbar__jobs {
+  --wails-draggable: no-drag;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--accent);
+  cursor: pointer;
+}
+.statusbar__jobs:hover {
+  color: var(--fg);
+}
+/* Jobs popover: reuses .modelsw__menu's elevated box; only the rows differ. */
+.jobsmenu {
+  min-width: 220px;
+}
+.jobsmenu__head {
+  padding: 2px 9px 6px;
+  font-size: 11px;
+  color: var(--fg-faint);
+}
+.jobsmenu__item {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 4px 9px;
+  font-size: 12px;
+}
+.jobsmenu__id {
+  color: var(--accent);
+  flex-shrink: 0;
+}
+.jobsmenu__label {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--fg-dim);
+}
+.jobsmenu__status {
+  color: var(--fg-faint);
+  flex-shrink: 0;
+}
 .statusbar__cwd {
   --wails-draggable: no-drag;
   display: inline-flex;
@@ -933,6 +1043,14 @@ body {
   color: var(--accent);
   letter-spacing: 0.6px;
 }
+.statusbar__yolo {
+  color: #fff;
+  background: var(--danger, #e5484d);
+  font-weight: 700;
+  letter-spacing: 0.6px;
+  padding: 1px 6px;
+  border-radius: 5px;
+}
 
 /* model switcher (bottom-of-window popover) */
 .modelsw {
@@ -952,6 +1070,16 @@ body {
   cursor: pointer;
   padding: 0;
   white-space: nowrap;
+  min-width: 0; /* let the label ellipsize when the status bar is tight */
+}
+.modelsw__trigger svg {
+  flex-shrink: 0;
+}
+.modelsw__label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
 }
 .modelsw__trigger:hover {
   color: var(--fg);
@@ -1841,14 +1969,25 @@ body {
   color: var(--fg-dim);
   border-color: var(--fg-faint);
 }
-/* engaged state — the prominent accent pill */
-.composer__mode--on {
+/* plan: the prominent accent pill */
+.composer__mode--plan {
   background: var(--accent-soft);
   border-color: transparent;
   color: var(--accent);
 }
-.composer__mode--on:hover {
+.composer__mode--plan:hover {
   color: var(--accent);
+  border-color: transparent;
+}
+/* yolo: an alarming red pill — every approval is being skipped */
+.composer__mode--yolo {
+  background: var(--danger, #e5484d);
+  border-color: transparent;
+  color: #fff;
+  font-weight: 700;
+}
+.composer__mode--yolo:hover {
+  color: #fff;
   border-color: transparent;
 }
 .composer__mode-dot {
@@ -1858,10 +1997,16 @@ body {
   background: var(--fg-faint);
   flex-shrink: 0;
 }
-.composer__mode--on .composer__mode-dot {
+.composer__mode--plan .composer__mode-dot {
   background: var(--accent);
+}
+.composer__mode--yolo .composer__mode-dot {
+  background: #fff;
 }
 .composer__mode-hint {
   color: var(--fg-faint);
   font-size: 11px;
+}
+.composer__mode--yolo .composer__mode-hint {
+  color: rgba(255, 255, 255, 0.8);
 }

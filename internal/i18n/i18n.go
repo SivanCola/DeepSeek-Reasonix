@@ -37,12 +37,15 @@ type Messages struct {
 	NoKey           string // status dot — no API key set
 	Ready           string // status dot — provider ready
 	GetStarted      string // section title above numbered steps
-	StepScaffold    string // step 1 desc — reasonix init
+	StepScaffold    string // step 1 desc — reasonix setup
 	StepSetKey      string // step 2 command label
-	StepSetKeyHint  string // step 2 desc — env var hint
-	StepChatDesc    string // reasonix chat step desc
-	StepRunDesc     string // reasonix run step desc
-	HelpFooter      string // dim footer linking to reasonix help
+
+	// `reasonix init` — points to the in-session /init skill + setup
+	InitHint       string
+	StepSetKeyHint string // step 2 desc — env var hint
+	StepChatDesc   string // reasonix chat step desc
+	StepRunDesc    string // reasonix run step desc
+	HelpFooter     string // dim footer linking to reasonix help
 
 	// chat REPL
 	ChatTip           string // tip line under the chat banner
@@ -78,6 +81,42 @@ type Messages struct {
 	SlashMCPNone       string // /mcp when no MCP servers are connected
 	CompHintSlash      string // key hint footer under the slash-command menu
 	CompHintFile       string // key hint footer under the @ file/resource menu
+
+	// slash command + sub-command descriptions shown in the menu (CLI and desktop
+	// share these via i18n.M, so both frontends localize identically).
+	CmdNew          string // /new
+	CmdCompact      string // /compact
+	CmdRewind       string // /rewind
+	CmdModel        string // /model
+	CmdMemory       string // /memory
+	CmdMcp          string // /mcp
+	CmdHooks        string // /hooks
+	CmdSkill        string // /skill
+	CmdHelp         string // /help
+	CmdTodo         string // /todo
+	ArgSkillList    string // /skill list
+	ArgSkillShow    string // /skill show
+	ArgSkillNew     string // /skill new
+	ArgSkillPaths   string // /skill paths
+	ArgMcpAdd       string // /mcp add
+	ArgMcpRemove    string // /mcp remove
+	ArgMcpList      string // /mcp list
+	ArgMcpConnected string // /mcp remove <server> tag
+	ArgHooksList    string // /hooks list
+	ArgHooksTrust   string // /hooks trust
+	ArgModelCurrent string // /model <ref> active tag
+
+	// management listing notices (the Submit path: desktop / HTTP frontends)
+	ListModelsHeaderFmt string // "models (active: %s)"
+	ListModelsHint      string // how to switch
+	ListMemoryHeader    string // "memory files"
+	ListMemoryNone      string // no memory docs
+	ListSkillsHeaderFmt string // "skills (%d)"
+	ListSkillsNone      string // no skills
+	ListHooksHeaderFmt  string // "hooks (%d active)"
+	ListHooksNone       string // no hooks
+	ListMcpHeader       string // "mcp servers"
+	ListMcpNone         string // no mcp servers
 
 	// init wizard
 	SelectProvidersLabel  string // multi-select label

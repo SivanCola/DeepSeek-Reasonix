@@ -388,7 +388,7 @@ args    = []
 # headers = { Authorization = "Bearer ${STRIPE_KEY}" }   # ${VAR} / ${VAR:-default} expanded
 ```
 
-`reasonix init` writes this default config so the CLI is usable out of the box.
+`reasonix setup` writes this default config so the CLI is usable out of the box.
 
 MCP servers may also be declared in a project-root `.mcp.json` using Claude
 Code's exact `mcpServers` schema (`command`/`args`/`env`, `type`/`url`/`headers`,
