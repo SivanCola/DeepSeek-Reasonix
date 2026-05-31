@@ -76,7 +76,7 @@ func (c *Controller) detectRefs(line string) []ref {
 			known[n] = true
 		}
 	}
-	exists := func(p string) bool { _, err := os.Stat(p); return err == nil }
+	exists := func(p string) bool { _, err := os.Stat(c.workspacePath(p)); return err == nil }
 
 	var refs []ref
 	for _, tok := range parseRefTokens(line) {
@@ -109,7 +109,7 @@ func (c *Controller) ResolveRefs(ctx context.Context, line string) (block string
 			}
 			appendRefBlock(&b, "resource", `ref="@`+r.raw+`"`, text)
 		case refFile:
-			text, isDir, err := readFileRef(r.path)
+			text, isDir, err := readFileRef(c.workspacePath(r.path))
 			if err != nil {
 				errs = append(errs, "@"+r.raw+" — "+err.Error())
 				continue
@@ -122,6 +122,13 @@ func (c *Controller) ResolveRefs(ctx context.Context, line string) (block string
 		}
 	}
 	return b.String(), errs
+}
+
+func (c *Controller) workspacePath(path string) string {
+	if filepath.IsAbs(path) || c == nil || strings.TrimSpace(c.workspaceRoot) == "" {
+		return path
+	}
+	return filepath.Join(c.workspaceRoot, path)
 }
 
 func appendRefBlock(b *strings.Builder, tag, attr, body string) {

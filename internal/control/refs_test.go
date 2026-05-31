@@ -1,6 +1,7 @@
 package control
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -56,6 +57,30 @@ func TestClassifyRef(t *testing.T) {
 		if ok && r.kind != c.wantKnd {
 			t.Errorf("classifyRef(%q) kind = %v, want %v", c.token, r.kind, c.wantKnd)
 		}
+	}
+}
+
+func TestResolveRefsUsesWorkspaceRoot(t *testing.T) {
+	launch := t.TempDir()
+	workspace := t.TempDir()
+	if err := os.WriteFile(filepath.Join(launch, "README.md"), []byte("launch readme\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, "README.md"), []byte("workspace readme\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(launch)
+
+	c := New(Options{WorkspaceRoot: workspace})
+	if !c.HasRefs("open @README.md") {
+		t.Fatal("expected @README.md to resolve from the workspace")
+	}
+	block, errs := c.ResolveRefs(context.Background(), "open @README.md")
+	if len(errs) != 0 {
+		t.Fatalf("ResolveRefs errors = %v", errs)
+	}
+	if !strings.Contains(block, "workspace readme") || strings.Contains(block, "launch readme") {
+		t.Fatalf("ResolveRefs block resolved against the wrong directory:\n%s", block)
 	}
 }
 

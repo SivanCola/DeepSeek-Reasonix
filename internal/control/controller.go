@@ -44,16 +44,17 @@ type Controller struct {
 	sink     event.Sink
 	policy   permission.Policy
 
-	label        string
-	systemPrompt string
-	sessionDir   string
-	host         *plugin.Host
-	commands     []command.Command
-	skills       []skill.Skill
-	hooks        *hook.Runner // session hook runner; nil-safe (no hooks configured)
-	mem          *memory.Set
-	cleanup      func()
-	startedOnce  bool // guards the one-shot SessionStart hook on first turn
+	label         string
+	systemPrompt  string
+	sessionDir    string
+	host          *plugin.Host
+	commands      []command.Command
+	skills        []skill.Skill
+	hooks         *hook.Runner // session hook runner; nil-safe (no hooks configured)
+	mem           *memory.Set
+	workspaceRoot string
+	cleanup       func()
+	startedOnce   bool // guards the one-shot SessionStart hook on first turn
 
 	// balanceURL/balanceKey target the active provider's optional wallet-balance
 	// endpoint (empty when the provider declares none). Captured at build so a
@@ -177,29 +178,30 @@ func New(opts Options) *Controller {
 		pluginCtx = context.Background()
 	}
 	c := &Controller{
-		runner:       opts.Runner,
-		executor:     opts.Executor,
-		sink:         sink,
-		policy:       opts.Policy,
-		label:        opts.Label,
-		systemPrompt: opts.SystemPrompt,
-		sessionDir:   opts.SessionDir,
-		sessionPath:  opts.SessionPath,
-		host:         opts.Host,
-		commands:     opts.Commands,
-		skills:       opts.Skills,
-		hooks:        opts.Hooks,
-		mem:          opts.Memory,
-		cleanup:      opts.Cleanup,
-		balanceURL:   opts.BalanceURL,
-		balanceKey:   opts.BalanceKey,
-		jobs:         opts.Jobs,
-		reg:          opts.Registry,
-		pluginCtx:    pluginCtx,
-		cpRoot:       opts.WorkspaceRoot,
-		approvals:    map[string]chan approvalReply{},
-		asks:         map[string]chan []event.AskAnswer{},
-		granted:      map[string]bool{},
+		runner:        opts.Runner,
+		executor:      opts.Executor,
+		sink:          sink,
+		policy:        opts.Policy,
+		label:         opts.Label,
+		systemPrompt:  opts.SystemPrompt,
+		sessionDir:    opts.SessionDir,
+		sessionPath:   opts.SessionPath,
+		host:          opts.Host,
+		commands:      opts.Commands,
+		skills:        opts.Skills,
+		hooks:         opts.Hooks,
+		mem:           opts.Memory,
+		workspaceRoot: opts.WorkspaceRoot,
+		cleanup:       opts.Cleanup,
+		balanceURL:    opts.BalanceURL,
+		balanceKey:    opts.BalanceKey,
+		jobs:          opts.Jobs,
+		reg:           opts.Registry,
+		pluginCtx:     pluginCtx,
+		cpRoot:        opts.WorkspaceRoot,
+		approvals:     map[string]chan approvalReply{},
+		asks:          map[string]chan []event.AskAnswer{},
+		granted:       map[string]bool{},
 	}
 	// Checkpoints: bind a store to the session and route writer pre-edits into it.
 	c.rebindCheckpoints(opts.SessionPath)
@@ -211,6 +213,20 @@ func New(opts Options) *Controller {
 		})
 	}
 	return c
+}
+
+func (c *Controller) loadConfig() (*config.Config, error) {
+	if c != nil && strings.TrimSpace(c.workspaceRoot) != "" {
+		return config.LoadAt(c.workspaceRoot)
+	}
+	return config.Load()
+}
+
+func (c *Controller) saveConfig(cfg *config.Config) error {
+	if c != nil && strings.TrimSpace(c.workspaceRoot) != "" {
+		return cfg.SaveAt(c.workspaceRoot)
+	}
+	return cfg.Save()
 }
 
 // ckptDir derives a session's checkpoint directory from its file path
@@ -940,14 +956,14 @@ func (c *Controller) AddMCPServer(e config.PluginEntry) (int, error) {
 		c.recordMCPFailure(e, err)
 		return 0, err
 	}
-	cfg, lerr := config.Load()
+	cfg, lerr := c.loadConfig()
 	if lerr != nil {
 		return n, fmt.Errorf("connected, but reloading config to save failed: %w", lerr)
 	}
 	if err := cfg.UpsertPlugin(e); err != nil {
 		return n, fmt.Errorf("connected, but config rejected the entry: %w", err)
 	}
-	if err := cfg.Save(); err != nil {
+	if err := c.saveConfig(cfg); err != nil {
 		return n, fmt.Errorf("connected, but saving config failed: %w", err)
 	}
 	return n, nil
@@ -960,7 +976,7 @@ func (c *Controller) UpsertMCPServer(oldName string, e config.PluginEntry, conne
 	if oldName == "" {
 		oldName = e.Name
 	}
-	cfg, err := config.Load()
+	cfg, err := c.loadConfig()
 	if err != nil {
 		return 0, err
 	}
@@ -970,7 +986,7 @@ func (c *Controller) UpsertMCPServer(oldName string, e config.PluginEntry, conne
 	if err := cfg.UpsertPlugin(e); err != nil {
 		return 0, err
 	}
-	if err := cfg.Save(); err != nil {
+	if err := c.saveConfig(cfg); err != nil {
 		return 0, err
 	}
 	if oldName != e.Name {
@@ -992,7 +1008,7 @@ func (c *Controller) UpsertMCPServer(oldName string, e config.PluginEntry, conne
 // RetryMCPServer reconnects a configured MCP server after a startup/runtime
 // failure. It does not edit persisted config.
 func (c *Controller) RetryMCPServer(name string) (int, error) {
-	cfg, err := config.Load()
+	cfg, err := c.loadConfig()
 	if err != nil {
 		return 0, err
 	}
@@ -1013,7 +1029,7 @@ func (c *Controller) RetryMCPServer(name string) (int, error) {
 // ConnectConfiguredMCPServer starts a server already present in config without
 // changing its auto_start setting.
 func (c *Controller) ConnectConfiguredMCPServer(name string) (int, error) {
-	cfg, err := config.Load()
+	cfg, err := c.loadConfig()
 	if err != nil {
 		return 0, err
 	}
@@ -1027,7 +1043,7 @@ func (c *Controller) ConnectConfiguredMCPServer(name string) (int, error) {
 
 // ConfiguredMCPNames returns all configured plugin names, sorted by config order.
 func (c *Controller) ConfiguredMCPNames() []string {
-	cfg, err := config.Load()
+	cfg, err := c.loadConfig()
 	if err != nil {
 		return nil
 	}
@@ -1039,7 +1055,7 @@ func (c *Controller) ConfiguredMCPNames() []string {
 }
 
 func (c *Controller) DisconnectedMCPNames() []string {
-	cfg, err := config.Load()
+	cfg, err := c.loadConfig()
 	if err != nil {
 		return nil
 	}
@@ -1069,7 +1085,7 @@ func (c *Controller) ImportCCSwitchMCPServers() (total, added, updated, connecte
 }
 
 func (c *Controller) ImportMCPEntries(entries []config.PluginEntry) (total, added, updated, connected, failed, skipped int, err error) {
-	cfg, err := config.Load()
+	cfg, err := c.loadConfig()
 	if err != nil {
 		return 0, 0, 0, 0, 0, 0, err
 	}
@@ -1091,7 +1107,7 @@ func (c *Controller) ImportMCPEntries(entries []config.PluginEntry) (total, adde
 		}
 		existing[e.Name] = e
 	}
-	if err := cfg.Save(); err != nil {
+	if err := c.saveConfig(cfg); err != nil {
 		return 0, 0, 0, 0, 0, 0, err
 	}
 	if c.host == nil {
@@ -1154,13 +1170,13 @@ func (c *Controller) connectMCPServer(e config.PluginEntry) (int, error) {
 // session but returns on the next start, since that file isn't ours to edit.
 func (c *Controller) RemoveMCPServer(name string) (disconnected bool, err error) {
 	disconnected, _ = c.disconnectMCPServer(name)
-	cfg, lerr := config.Load()
+	cfg, lerr := c.loadConfig()
 	if lerr != nil {
 		return disconnected, lerr
 	}
 	inConfig := cfg.RemovePlugin(name)
 	if inConfig {
-		if serr := cfg.Save(); serr != nil {
+		if serr := c.saveConfig(cfg); serr != nil {
 			return disconnected, serr
 		}
 	}

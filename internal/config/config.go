@@ -123,6 +123,9 @@ func (c *Config) WriteRootsAt(cwd string) []string {
 	if root == "" {
 		root = "."
 	}
+	if !filepath.IsAbs(root) && cwd != "" {
+		root = filepath.Join(cwd, root)
+	}
 	roots := []string{root}
 	for _, d := range c.Sandbox.AllowWrite {
 		if d = ExpandVars(d); d != "" {

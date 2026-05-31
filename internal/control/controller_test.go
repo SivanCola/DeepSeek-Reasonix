@@ -2,8 +2,11 @@ package control
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 
+	"reasonix/internal/config"
 	"reasonix/internal/event"
 )
 
@@ -75,5 +78,37 @@ func TestApprovalCtxCancel(t *testing.T) {
 	allow, _, err := gateApprover{c}.Approve(ctx, "bash", "x", nil)
 	if err == nil || allow {
 		t.Fatalf("Approve on cancelled ctx = (%v,%v), want (false, error)", allow, err)
+	}
+}
+
+func TestMCPSettingsUseWorkspaceRoot(t *testing.T) {
+	launch := t.TempDir()
+	workspace := t.TempDir()
+	if err := os.WriteFile(filepath.Join(launch, "reasonix.toml"), []byte("default_model = \"launch\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, "reasonix.toml"), []byte("default_model = \"workspace\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(launch)
+
+	c := New(Options{WorkspaceRoot: workspace})
+	if _, err := c.UpsertMCPServer("", config.PluginEntry{Name: "workspace-mcp", Command: "reasonix-plugin-example"}, false); err != nil {
+		t.Fatalf("UpsertMCPServer: %v", err)
+	}
+
+	wcfg, err := config.LoadAt(workspace)
+	if err != nil {
+		t.Fatalf("LoadAt(workspace): %v", err)
+	}
+	if len(wcfg.Plugins) != 1 || wcfg.Plugins[0].Name != "workspace-mcp" {
+		t.Fatalf("workspace plugins = %+v, want workspace-mcp", wcfg.Plugins)
+	}
+	lcfg, err := config.LoadAt(launch)
+	if err != nil {
+		t.Fatalf("LoadAt(launch): %v", err)
+	}
+	if len(lcfg.Plugins) != 0 {
+		t.Fatalf("launch plugins = %+v, want none", lcfg.Plugins)
 	}
 }

@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"strings"
 
-	"reasonix/internal/config"
 	"reasonix/internal/i18n"
 	"reasonix/internal/plugin"
 	"reasonix/internal/skill"
@@ -224,7 +223,7 @@ func (c *Controller) mcpImportText() string {
 }
 
 func (c *Controller) modelListText() string {
-	cfg, err := config.Load()
+	cfg, err := c.loadConfig()
 	if err != nil {
 		return "model: " + err.Error()
 	}

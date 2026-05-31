@@ -174,6 +174,28 @@ func TestPluginMutators(t *testing.T) {
 	}
 }
 
+func TestWriteRootsAtAnchorsRelativeWorkspaceRoot(t *testing.T) {
+	c := Default()
+	c.Sandbox.WorkspaceRoot = "."
+	c.Sandbox.AllowWrite = []string{"tmp", "/var/shared"}
+	cwd := filepath.Join(t.TempDir(), "workspace")
+
+	got := c.WriteRootsAt(cwd)
+	want := []string{
+		filepath.Join(cwd, "."),
+		filepath.Join(cwd, "tmp"),
+		"/var/shared",
+	}
+	if len(got) != len(want) {
+		t.Fatalf("WriteRootsAt length = %d, want %d: %v", len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("WriteRootsAt[%d] = %q, want %q (all roots: %v)", i, got[i], want[i], got)
+		}
+	}
+}
+
 // TestSaveToRoundTrips stages several mutations, persists atomically, and
 // re-decodes the file to confirm the changes survived a write/read cycle.
 func TestSaveToRoundTrips(t *testing.T) {
