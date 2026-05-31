@@ -293,11 +293,12 @@ body {
   color: var(--fg);
 }
 /* Rewind affordance on a user message: a ⟲ button hidden until hover, expanding
-   into a scope menu. margin-left:auto pushes it to the right of the flex row. */
+   into a scope menu. margin-left:auto pushes it to the right of the flex row.
+   Always visible (dim) so it's discoverable, brightening on hover. */
 .rewind__btn {
   margin-left: auto;
   flex-shrink: 0;
-  opacity: 0;
+  opacity: 0.4;
   background: none;
   border: none;
   color: var(--fg-dim);

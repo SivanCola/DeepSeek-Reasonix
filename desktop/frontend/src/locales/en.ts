@@ -175,6 +175,9 @@ export const en = {
   "rewind.both": "Code + conversation",
   "rewind.conversation": "Conversation only",
   "rewind.code": "Code only",
+  "rewind.fork": "Fork (new branch)",
+  "rewind.summFrom": "Summarize from here",
+  "rewind.summUpto": "Summarize up to here",
   "msg.copied": "Copied",
 
   // tool card summaries

@@ -184,6 +184,68 @@ func toolCallIDs(m provider.Message) map[string]bool {
 	return ids
 }
 
+// SummarizeFrom replaces the messages from fromIdx onward with a single summary,
+// keeping everything before it verbatim ("summarize from here"). fromIdx is a turn
+// boundary (a user message), so the split never severs a tool_call/result pair —
+// those live within one turn. A no-op when the region is empty.
+func (a *Agent) SummarizeFrom(ctx context.Context, fromIdx int) error {
+	msgs := a.session.Messages
+	if fromIdx < 0 || fromIdx >= len(msgs) {
+		return nil
+	}
+	region := msgs[fromIdx:]
+	if a.archiveDir != "" {
+		_, _ = archiveMessages(a.archiveDir, region) // best-effort traceability
+	}
+	summary, err := a.summarize(ctx, region)
+	if err != nil {
+		return err
+	}
+	next := make([]provider.Message, 0, fromIdx+1)
+	next = append(next, msgs[:fromIdx]...)
+	next = append(next, provider.Message{
+		Role:    provider.RoleUser,
+		Content: "Summary of the later conversation (compacted from here on):\n" + summary,
+	})
+	a.session.Messages = next
+	a.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo,
+		Text: fmt.Sprintf("summarized %d later messages → summary", len(region))})
+	return nil
+}
+
+// SummarizeUpTo replaces the messages before toIdx (after the system prompt) with
+// a single summary, keeping toIdx onward verbatim ("summarize up to here"). toIdx
+// is a turn boundary, so no tool pair is split. A no-op when the region is empty.
+func (a *Agent) SummarizeUpTo(ctx context.Context, toIdx int) error {
+	msgs := a.session.Messages
+	head := 0
+	if len(msgs) > 0 && msgs[0].Role == provider.RoleSystem {
+		head = 1
+	}
+	if toIdx <= head || toIdx > len(msgs) {
+		return nil
+	}
+	region := msgs[head:toIdx]
+	if a.archiveDir != "" {
+		_, _ = archiveMessages(a.archiveDir, region)
+	}
+	summary, err := a.summarize(ctx, region)
+	if err != nil {
+		return err
+	}
+	next := make([]provider.Message, 0, head+1+len(msgs)-toIdx)
+	next = append(next, msgs[:head]...)
+	next = append(next, provider.Message{
+		Role:    provider.RoleUser,
+		Content: "Summary of earlier conversation (compacted up to here):\n" + summary,
+	})
+	next = append(next, msgs[toIdx:]...)
+	a.session.Messages = next
+	a.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo,
+		Text: fmt.Sprintf("summarized %d earlier messages → summary", len(region))})
+	return nil
+}
+
 // compactBounds locates the region to summarize. head is the count of leading
 // messages preserved verbatim (the system prompt, if any); start is where the
 // preserved recent tail begins, so msgs[head:start] is compacted. The boundary

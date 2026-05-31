@@ -530,7 +530,17 @@ export function useController() {
   // history so the view reflects the rewound state (unlike the CLI, the desktop
   // can re-render).
   const rewind = useCallback(async (turn: number, scope: string) => {
-    await app.Rewind(turn, scope).catch(() => {});
+    // "fork" branches into a new session; "summ-*" compress the log; the rest
+    // restore in place. All keep code intact (except the code/both restores).
+    if (scope === "fork") {
+      await app.Fork(turn).catch(() => {});
+    } else if (scope === "summ-from") {
+      await app.SummarizeFrom(turn).catch(() => {});
+    } else if (scope === "summ-upto") {
+      await app.SummarizeUpTo(turn).catch(() => {});
+    } else {
+      await app.Rewind(turn, scope).catch(() => {});
+    }
     const messages = await app.History().catch(() => [] as HistoryMessage[]);
     dispatch({ type: "reset" });
     if (messages.length) dispatch({ type: "history", messages });

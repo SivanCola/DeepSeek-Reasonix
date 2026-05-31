@@ -73,13 +73,16 @@ type Controller struct {
 
 	// Checkpoints (snapshot-based rewind). cp is the per-session store rebound when
 	// the session path changes; cpRoot is the workspace root used to guard restore
-	// writes; cpMsgLen[turn] records len(Session.Messages) at that turn's start, the
-	// truncation boundary for a conversation rewind (live-session only — not
-	// persisted, so a resumed session can rewind code but not conversation for
-	// pre-resume turns).
-	cp       *checkpoint.Store
-	cpRoot   string
-	cpMsgLen []int
+	// writes. cpTurn is the monotonic turn counter (decoupled from the store so it
+	// never collides after a restructure); cpBound[turn] records len(Session.Messages)
+	// at that turn's start — the truncation boundary for a conversation rewind/fork.
+	// Boundaries are live-session only (not persisted) and dropped when a summarize
+	// restructures the log, so those operations report "unavailable" rather than
+	// mis-truncating; code rewind (file-based) is unaffected.
+	cp      *checkpoint.Store
+	cpRoot  string
+	cpTurn  int
+	cpBound map[int]int
 
 	// promptMu serialises approval prompts so at most one is outstanding at a
 	// time (parallel read-only tool calls don't normally gate, writers run
@@ -223,7 +226,8 @@ func (c *Controller) rebindCheckpoints(sessionPath string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.cp = checkpoint.New(ckptDir(sessionPath), c.cpRoot)
-	c.cpMsgLen = nil
+	c.cpTurn = c.cp.NextTurn() // continue numbering past any checkpoints on disk
+	c.cpBound = map[int]int{}
 }
 
 // beginCheckpoint opens a checkpoint for the turn about to run, recording the
@@ -234,8 +238,9 @@ func (c *Controller) beginCheckpoint(input string) {
 		return
 	}
 	c.mu.Lock()
-	turn := len(c.cpMsgLen)
-	c.cpMsgLen = append(c.cpMsgLen, len(c.executor.Session().Messages))
+	turn := c.cpTurn
+	c.cpTurn++
+	c.cpBound[turn] = len(c.executor.Session().Messages)
 	c.mu.Unlock()
 	c.cp.Begin(turn, input)
 }
@@ -618,10 +623,7 @@ func (c *Controller) Rewind(turn int, scope RewindScope) error {
 	}
 	c.mu.Lock()
 	running := c.running
-	boundary := -1
-	if turn >= 0 && turn < len(c.cpMsgLen) {
-		boundary = c.cpMsgLen[turn]
-	}
+	boundary, hasBound := c.cpBound[turn]
 	c.mu.Unlock()
 	if running {
 		return fmt.Errorf("cannot rewind while a turn is running")
@@ -636,20 +638,118 @@ func (c *Controller) Rewind(turn int, scope RewindScope) error {
 			Text: fmt.Sprintf("rewound code to turn %d — %d file(s) restored, %d removed", turn, len(written), len(deleted))})
 	}
 	if scope == RewindConversation || scope == RewindBoth {
-		if boundary < 0 {
+		if !hasBound {
 			return fmt.Errorf("conversation rewind unavailable for turn %d (resumed session)", turn)
 		}
 		s := c.executor.Session()
 		if boundary <= len(s.Messages) {
 			s.Messages = s.Messages[:boundary]
 			c.mu.Lock()
-			c.cpMsgLen = c.cpMsgLen[:turn] // later turns are gone
+			c.cpTurn = turn // renumber future turns from here; later turns are gone
+			for k := range c.cpBound {
+				if k >= turn {
+					delete(c.cpBound, k)
+				}
+			}
 			c.mu.Unlock()
 			_ = c.Snapshot()
 		}
 		c.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo,
 			Text: fmt.Sprintf("rewound conversation to turn %d", turn)})
 	}
+	return nil
+}
+
+// Fork branches the conversation at the start of turn into a NEW session file,
+// preserving the current one as the branch point, and switches to the branch. Code
+// is untouched (it's a conversation operation). Like a conversation rewind it needs
+// the live boundary, so it is unavailable for resumed-session turns and refused
+// while a turn runs. Returns the new session path.
+func (c *Controller) Fork(turn int) (string, error) {
+	if c.executor == nil {
+		return "", fmt.Errorf("checkpoints unavailable")
+	}
+	if c.sessionDir == "" {
+		return "", fmt.Errorf("fork needs session persistence, which is disabled")
+	}
+	c.mu.Lock()
+	running := c.running
+	boundary, hasBound := c.cpBound[turn]
+	c.mu.Unlock()
+	if running {
+		return "", fmt.Errorf("cannot fork while a turn is running")
+	}
+	if !hasBound {
+		return "", fmt.Errorf("fork unavailable for turn %d (resumed session)", turn)
+	}
+
+	// Persist the current conversation first so the branch point survives, then
+	// seed a fresh session with the messages up to the fork and switch to it.
+	_ = c.Snapshot()
+	src := c.executor.Session().Messages
+	if boundary > len(src) {
+		boundary = len(src)
+	}
+	forked := append([]provider.Message(nil), src[:boundary]...)
+	sess := agent.NewSession("")
+	sess.Messages = forked
+
+	newPath := agent.NewSessionPath(c.sessionDir, c.label)
+	c.executor.SetSession(sess)
+	c.mu.Lock()
+	c.sessionPath = newPath
+	c.mu.Unlock()
+	c.rebindCheckpoints(newPath)
+	_ = c.Snapshot()
+	c.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo,
+		Text: fmt.Sprintf("forked conversation at turn %d into a new session", turn)})
+	return newPath, nil
+}
+
+// SummarizeFrom compresses the conversation from turn onward into one summary;
+// SummarizeUpTo compresses everything before it. Both are Claude Code's "summarize
+// from/up to here" — they restructure the message log (keeping code untouched), so
+// afterwards the per-turn boundaries no longer map and conversation rewind/fork
+// report "unavailable" until new turns rebuild them (code rewind, file-based, is
+// unaffected). Refused while a turn runs; need the live boundary.
+func (c *Controller) SummarizeFrom(ctx context.Context, turn int) error {
+	return c.summarizeAt(ctx, turn, true)
+}
+
+func (c *Controller) SummarizeUpTo(ctx context.Context, turn int) error {
+	return c.summarizeAt(ctx, turn, false)
+}
+
+func (c *Controller) summarizeAt(ctx context.Context, turn int, from bool) error {
+	if c.executor == nil {
+		return fmt.Errorf("checkpoints unavailable")
+	}
+	c.mu.Lock()
+	running := c.running
+	boundary, hasBound := c.cpBound[turn]
+	c.mu.Unlock()
+	if running {
+		return fmt.Errorf("cannot summarize while a turn is running")
+	}
+	if !hasBound {
+		return fmt.Errorf("summarize unavailable for turn %d (resumed session)", turn)
+	}
+	var err error
+	if from {
+		err = c.executor.SummarizeFrom(ctx, boundary)
+	} else {
+		err = c.executor.SummarizeUpTo(ctx, boundary)
+	}
+	if err != nil {
+		return err
+	}
+	// The log was restructured; existing boundaries no longer map. Drop them (keep
+	// cpTurn monotonic so new turns don't collide with the store) — conversation
+	// rewind degrades to "unavailable" until fresh turns rebuild boundaries.
+	c.mu.Lock()
+	c.cpBound = map[int]int{}
+	c.mu.Unlock()
+	_ = c.Snapshot()
 	return nil
 }
 
