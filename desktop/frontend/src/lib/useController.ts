@@ -11,6 +11,7 @@ import type {
   BalanceInfo,
   ContextInfo,
   HistoryMessage,
+  JobView,
   MemoryView,
   Meta,
   QuestionAnswer,
@@ -44,6 +45,12 @@ export type Item =
 interface State {
   items: Item[];
   running: boolean;
+  // turnActive is true only while a real model turn is in flight (between
+  // turn_started and turn_done). `running` may be set optimistically on send for
+  // immediate feedback; turnActive distinguishes that from an actual turn, so a
+  // local command that only emits a Notice (e.g. /skill, /compact) clears the
+  // optimistic spinner instead of leaving it stuck forever.
+  turnActive: boolean;
   approval?: WireApproval;
   ask?: WireAsk;
   usage?: WireUsage;
@@ -52,6 +59,9 @@ interface State {
   // balance is the active provider's wallet readout, refreshed on mount and after
   // each turn; undefined until first fetched, available:false when not configured.
   balance?: BalanceInfo;
+  // jobs are the running background jobs, refreshed on mount, turn end, and on
+  // each notice (job start/finish emit notices).
+  jobs: JobView[];
   // currentAssistant tracks the in-flight assistant item that text/reasoning
   // deltas accumulate into; cleared at turn boundaries.
   currentAssistant?: string;
@@ -76,7 +86,9 @@ interface State {
 const initialState: State = {
   items: [],
   running: false,
+  turnActive: false,
   context: { used: 0, window: 0 },
+  jobs: [],
   turnStartAt: 0,
   turnTokens: 0,
   seq: 0,
@@ -89,6 +101,7 @@ type Action =
   | { type: "meta"; meta: Meta }
   | { type: "context"; context: ContextInfo }
   | { type: "balance"; balance: BalanceInfo }
+  | { type: "jobs"; jobs: JobView[] }
   | { type: "history"; messages: HistoryMessage[] }
   | { type: "clearApproval" }
   | { type: "clearAsk" }
@@ -124,7 +137,7 @@ function applyEvent(s: State, e: WireEvent): State {
   // After an un-send, swallow the cancelled turn's still-buffered events so no
   // orphan assistant/tool bubble appears; its turn_done clears the discard.
   if (s.discardTurn) {
-    if (e.kind === "turn_done") return { ...s, discardTurn: false, running: false, currentAssistant: undefined };
+    if (e.kind === "turn_done") return { ...s, discardTurn: false, running: false, turnActive: false, currentAssistant: undefined };
     return s;
   }
   // The first real packet means the server replied — commit the deferred user
@@ -135,7 +148,7 @@ function applyEvent(s: State, e: WireEvent): State {
   }
   switch (e.kind) {
     case "turn_started":
-      return { ...s, running: true, currentAssistant: undefined, turnStartAt: Date.now(), turnTokens: 0 };
+      return { ...s, running: true, turnActive: true, currentAssistant: undefined, turnStartAt: Date.now(), turnTokens: 0 };
 
     case "text":
     case "reasoning": {
@@ -229,8 +242,12 @@ function applyEvent(s: State, e: WireEvent): State {
     }
 
     case "notice":
+      // A Notice with no real turn in flight means a local command (e.g. /skill,
+      // /compact) produced output without starting a turn — clear the optimistic
+      // spinner so it doesn't read seconds forever. Mid-turn notices keep running.
       return {
         ...s,
+        running: s.turnActive ? s.running : false,
         seq: s.seq + 1,
         items: [...s.items, { kind: "notice", id: `n${s.seq}`, level: e.level ?? "info", text: e.text ?? "" }],
       };
@@ -264,7 +281,7 @@ function applyEvent(s: State, e: WireEvent): State {
       const items: Item[] = e.err
         ? [...finalized, { kind: "notice", id: `e${s.seq}`, level: "warn", text: e.err }]
         : finalized;
-      return { ...s, items, running: false, currentAssistant: undefined, approval: undefined, ask: undefined, seq: s.seq + 1 };
+      return { ...s, items, running: false, turnActive: false, currentAssistant: undefined, approval: undefined, ask: undefined, seq: s.seq + 1 };
     }
   }
 }
@@ -293,6 +310,8 @@ function reducer(s: State, a: Action): State {
       return { ...s, context: a.context };
     case "balance":
       return { ...s, balance: a.balance };
+    case "jobs":
+      return { ...s, jobs: a.jobs };
     case "history": {
       // Only user/assistant turns with visible text — never the system prompt or
       // tool-result messages, and not the empty content of a tool-call-only turn.
@@ -311,7 +330,9 @@ function reducer(s: State, a: Action): State {
     case "clearAsk":
       return { ...s, ask: undefined };
     case "reset":
-      return { ...initialState, meta: s.meta, context: { ...s.context, used: 0 } };
+      // Background jobs and the balance are session-scoped (the controller and its
+      // job manager survive a new-session rotation), so carry them across a reset.
+      return { ...initialState, meta: s.meta, context: { ...s.context, used: 0 }, balance: s.balance, jobs: s.jobs };
     case "event":
       return applyEvent(s, a.e);
   }
@@ -340,6 +361,14 @@ export function useController() {
           .then((balance) => dispatch({ type: "balance", balance }))
           .catch(() => {});
       }
+      // Background jobs start/finish via notices and bound around a turn, so
+      // refresh the running set on both — keeps the status-bar count live.
+      if (e.kind === "turn_done" || e.kind === "notice") {
+        app
+          .Jobs()
+          .then((jobs) => dispatch({ type: "jobs", jobs }))
+          .catch(() => {});
+      }
     });
 
     void (async () => {
@@ -359,6 +388,10 @@ export function useController() {
     app
       .Balance()
       .then((balance) => dispatch({ type: "balance", balance }))
+      .catch(() => {});
+    app
+      .Jobs()
+      .then((jobs) => dispatch({ type: "jobs", jobs }))
       .catch(() => {});
 
     return off;
@@ -397,6 +430,11 @@ export function useController() {
 
   const setPlan = useCallback((on: boolean) => {
     app.SetPlanMode(on).catch(() => {});
+  }, []);
+
+  // setBypass toggles YOLO mode (auto-approve every tool call this session).
+  const setBypass = useCallback((on: boolean) => {
+    app.SetBypass(on).catch(() => {});
   }, []);
 
   const newSession = useCallback(async () => {
@@ -494,6 +532,7 @@ export function useController() {
     approve,
     answerQuestion,
     setPlan,
+    setBypass,
     newSession,
     listSessions,
     resumeSession,

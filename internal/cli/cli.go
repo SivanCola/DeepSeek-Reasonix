@@ -19,6 +19,7 @@ import (
 	"reasonix/internal/control"
 	"reasonix/internal/event"
 	"reasonix/internal/i18n"
+	"reasonix/internal/provider"
 	"reasonix/internal/serve"
 
 	tea "charm.land/bubbletea/v2"
@@ -47,12 +48,19 @@ func Run(args []string, version string) int {
 		return chatREPL(rest)
 	case "serve":
 		return runServe(rest)
+	case "setup":
+		return setupConfig(rest)
 	case "init":
-		return initConfig(rest)
+		// Project memory (AGENTS.md) is model-generated in-session — `/init` runs
+		// the codebase analysis. This CLI entry just points there (and to `setup`
+		// for config), so `reasonix init` isn't a dead end.
+		return initHint()
 	case "acp":
 		return acpCommand(rest, version)
 	case "mcp":
 		return mcpCommand(rest)
+	case "codegraph":
+		return codegraphCommand(rest)
 	case "version", "--version", "-v":
 		fmt.Println("reasonix", version)
 		return 0
@@ -181,6 +189,8 @@ func chatREPL(args []string) int {
 	cont := fs.Bool("continue", false, "resume the most recent saved session")
 	fs.BoolVar(cont, "c", false, "shorthand for --continue")
 	resume := fs.Bool("resume", false, "list saved sessions and pick one to resume")
+	yolo := fs.Bool("dangerously-skip-permissions", false, "YOLO: auto-approve every tool call this session (deny rules still apply)")
+	fs.BoolVar(yolo, "yolo", false, "alias for --dangerously-skip-permissions")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -216,12 +226,12 @@ func chatREPL(args []string) int {
 	// agent goroutine.
 	eventCh := make(chan event.Event, 1024)
 
-	ctrl, err := setup(ctx, *model, *maxSteps, false, &eventSink{ch: eventCh})
+	sink := &eventSink{ch: eventCh}
+	ctrl, err := setup(ctx, *model, *maxSteps, false, sink)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
 		return 1
 	}
-	defer ctrl.Close()
 
 	// Decide where this conversation's auto-save lands. A resume reuses the
 	// file so closing/reopening keeps appending to the same history; a fresh
@@ -261,20 +271,71 @@ func chatREPL(args []string) int {
 	// event and blocks until the user answers via ctrl.Approve. Sub-agents (the
 	// task tool) keep their headless gate from setup — no UI to prompt through.
 	ctrl.EnableInteractiveApproval()
+	// YOLO: skip every approval prompt for the session (deny rules still apply).
+	if *yolo {
+		ctrl.SetBypass(true)
+	}
 
 	m := newChatTUI(ctrl, missing, eventCh, termW)
+
+	// /model support: a pure builder the TUI calls to rebuild on a different
+	// model (carrying the conversation). It must NOT touch the running model —
+	// runModelSubcommand performs the swap on the live copy. The same stable sink
+	// feeds the new controller, so events keep flowing to this TUI.
+	m.buildController = func(ref string, carry []provider.Message) (*control.Controller, error) {
+		c, err := setup(ctx, ref, *maxSteps, false, sink)
+		if err != nil {
+			return nil, err
+		}
+		path := ""
+		if dir := c.SessionDir(); dir != "" {
+			path = agent.NewSessionPath(dir, c.Label())
+		}
+		if len(carry) > 0 {
+			c.Resume(&agent.Session{Messages: carry}, path)
+		} else if path != "" {
+			c.SetSessionPath(path)
+		}
+		c.EnableInteractiveApproval()
+		if *yolo {
+			c.SetBypass(true)
+		}
+		return c, nil
+	}
+	if cfg, e := config.Load(); e == nil {
+		name := *model
+		if name == "" {
+			name = cfg.DefaultModel
+		}
+		if entry, ok := cfg.ResolveModel(name); ok {
+			m.modelRef = entry.Name + "/" + entry.Model
+		}
+	}
+
 	// No alt-screen: finalized transcript lines are committed to the terminal's
 	// normal buffer (via tea.Println) so native scrollback, the wheel, and copy
 	// all work — the bubbletea-managed region is just the bottom input/status.
 	p := tea.NewProgram(m)
-	if _, err := p.Run(); err != nil {
-		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
+	final, runErr := p.Run()
+	// Close the controller that's active at exit — /model may have swapped it
+	// (each prior controller was already closed at switch time), so close the
+	// final one here rather than the initial handle.
+	if fm, ok := final.(chatTUI); ok && fm.ctrl != nil {
+		fm.ctrl.Close()
+	} else {
+		ctrl.Close()
+	}
+	if runErr != nil {
+		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, runErr)
 		return 1
 	}
 	return 0
 }
 
-func initConfig(args []string) int {
+// setupConfig runs the configuration wizard (the `reasonix setup` command),
+// writing reasonix.toml (+ .env). Project memory is a separate concern — the
+// in-session `/init` skill generates AGENTS.md (see initHint).
+func setupConfig(args []string) int {
 	path := "reasonix.toml"
 	if len(args) > 0 {
 		path = args[0]
@@ -295,7 +356,7 @@ func initConfig(args []string) int {
 
 	// Interactive wizard on a TTY; fall back to the annotated default when piped.
 	if isInteractive() {
-		rc := interactiveInit(path)
+		rc := interactiveSetup(path)
 		if rc == 0 {
 			fmt.Printf(i18n.M.TryHintFmt+"\n", bold("reasonix chat"))
 		}
@@ -314,13 +375,22 @@ func writeDefaultConfig(path string) int {
 	return 0
 }
 
-// interactiveInit runs the setup wizard, then writes reasonix.toml (plus .env for any
+// initHint handles `reasonix init`. Unlike a config scaffold, project memory is
+// model-generated by analyzing the codebase, so it lives as the in-session
+// `/init` skill rather than a CLI command. This entry just points the user there
+// (and to `reasonix setup` for config) so the verb isn't a dead end.
+func initHint() int {
+	fmt.Println(i18n.M.InitHint)
+	return 0
+}
+
+// interactiveSetup runs the setup wizard, then writes reasonix.toml (plus .env for any
 // keys entered). The wizard is intentionally minimal: pick language, pick
 // provider, enter API keys. Language is asked first so every subsequent prompt
 // is already in the user's language even when env auto-detection got it wrong.
 // Two-model collaboration is left as a manual config edit (planner_model) so
 // first-run never confronts newcomers with advanced choices.
-func interactiveInit(path string) int {
+func interactiveSetup(path string) int {
 	// Seed from the existing config when reconfiguring, so a re-run to fix a key
 	// preserves the user's providers / agent settings instead of resetting to
 	// defaults. First run (no file) falls back to the built-in defaults.
@@ -591,7 +661,7 @@ func isTTY(f *os.File) bool {
 
 // appendEnv merges KEY=value lines into a .env file. Existing assignments of
 // any key that's about to be written are dropped first, then the new values
-// are appended — so re-running `reasonix init` with a corrected key replaces the
+// are appended — so re-running `reasonix setup` with a corrected key replaces the
 // stale one instead of stacking duplicates (loadDotEnv is first-wins, so a
 // naive append would leave the old key in effect). The new values are also
 // pinned into the current process env so a chat session started right after
@@ -654,11 +724,11 @@ func welcome(version string) int {
 	src := config.SourcePath()
 
 	// First run on an interactive terminal: actively guide setup rather than
-	// printing a static screen and exiting. interactiveInit owns the language
+	// printing a static screen and exiting. interactiveSetup owns the language
 	// prompt and welcome banner so every prompt the user sees is already
 	// localized to their choice.
 	if src == "" && isInteractive() {
-		if rc := interactiveInit("reasonix.toml"); rc != 0 {
+		if rc := interactiveSetup("reasonix.toml"); rc != 0 {
 			return rc
 		}
 		// Config just written; reload so .env (and any pinned language) is
@@ -727,7 +797,7 @@ func welcome(version string) int {
 		n++
 	}
 	if src == "" {
-		step("reasonix init", i18n.M.StepScaffold)
+		step("reasonix setup", i18n.M.StepScaffold)
 	}
 	if ready == 0 {
 		step(i18n.M.StepSetKey, i18n.M.StepSetKeyHint)

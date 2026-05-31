@@ -6,9 +6,9 @@ import "reasonix/internal/provider"
 
 // Session holds the conversation history for one task.
 type Session struct {
-	Messages        []provider.Message
-	rewriteVersion  int // bumped each time the log is rewritten (compact/fold)
-	turnCount       int // number of turns completed
+	Messages         []provider.Message
+	rewriteVersion   int // bumped each time the log is rewritten (compact/fold)
+	turnCount        int // number of turns completed
 	cumulativeTokens int // total tokens across all turns
 }
 
@@ -43,3 +43,15 @@ func (s *Session) CumulativeTokens() int { return s.cumulativeTokens }
 
 // AddTokens adds n tokens to the cumulative total.
 func (s *Session) AddTokens(n int) { s.cumulativeTokens += n }
+
+// HasContent returns true when the session carries at least one user,
+// assistant, or tool message — i.e. more than just a system prompt. An
+// "empty" conversation that has never been used should not be persisted.
+func (s *Session) HasContent() bool {
+	for _, m := range s.Messages {
+		if m.Role != provider.RoleSystem {
+			return true
+		}
+	}
+	return false
+}

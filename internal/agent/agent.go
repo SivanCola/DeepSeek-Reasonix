@@ -9,6 +9,7 @@ import (
 	"unicode/utf8"
 
 	"reasonix/internal/event"
+	"reasonix/internal/jobs"
 	"reasonix/internal/provider"
 	"reasonix/internal/tool"
 )
@@ -78,6 +79,16 @@ type Gate interface {
 	Check(ctx context.Context, toolName string, args json.RawMessage, readOnly bool) (allow bool, reason string, err error)
 }
 
+// ToolHooks fires user-configured shell hooks around each tool call. PreToolUse
+// runs before the call and may block it (block=true; message is the reason fed
+// back to the model); PostToolUse runs after and only surfaces output to the
+// user (it can't block). It is interface-shaped so the agent stays independent
+// of the hook package — a nil hooks field disables hook firing entirely.
+type ToolHooks interface {
+	PreToolUse(ctx context.Context, name string, args json.RawMessage) (block bool, message string)
+	PostToolUse(ctx context.Context, name string, args json.RawMessage, result string)
+}
+
 // Agent drives a single task: a Provider, a tool Registry, and a Session wired
 // into the main loop.
 type Agent struct {
@@ -99,6 +110,14 @@ type Agent struct {
 	// usage line out of the output writer.
 	lastUsage *provider.Usage
 
+	// sessCacheHit/sessCacheMiss accumulate cache tokens across every API call
+	// this session, so frontends can show the aggregate hit-rate (Σhit/Σ(hit+miss))
+	// — a steadier, cost-oriented number than the single-turn rate. They are NOT
+	// reset on compaction (compaction only rewrites session.Messages), so the
+	// aggregate never craters when the prefix is summarized away.
+	sessCacheHit  int
+	sessCacheMiss int
+
 	// planMode, when true, refuses any tool call whose ReadOnly() is false.
 	// The system prompt and tool list never change with the toggle so the
 	// prompt-cache prefix stays valid; the gating happens at execute time
@@ -110,9 +129,19 @@ type Agent struct {
 	// plan-mode check. nil disables gating entirely.
 	gate Gate
 
+	// hooks, when non-nil, fires PreToolUse / PostToolUse shell hooks around each
+	// tool call. nil disables hook firing.
+	hooks ToolHooks
+
 	// asker, when non-nil, lets the `ask` tool put questions to the user. nil in
 	// headless runs (no interactive user). Set via SetAsker.
 	asker Asker
+
+	// jobs, when non-nil, is the session's background-job manager. executeOne
+	// stamps it onto each tool call's context so the background tools (bash
+	// run_in_background, task run_in_background, bash_output/kill_shell/wait) can
+	// reach it. nil leaves those tools to degrade gracefully.
+	jobs *jobs.Manager
 
 	// Context management: when a turn's prompt nears contextWindow, the older
 	// middle of the session is summarized away, keeping recentKeep messages
@@ -153,6 +182,10 @@ func (a *Agent) SetSession(s *Session) { a.session = s }
 // maybeCompact.
 func (a *Agent) LastUsage() *provider.Usage { return a.lastUsage }
 
+// SessionCache returns the cumulative cache hit/miss prompt tokens across every
+// API call this session — the basis for the status line's aggregate hit-rate.
+func (a *Agent) SessionCache() (hit, miss int) { return a.sessCacheHit, a.sessCacheMiss }
+
 // ContextWindow returns the configured context-window size in tokens. 0
 // means compaction is disabled for this agent.
 func (a *Agent) ContextWindow() int { return a.contextWindow }
@@ -171,6 +204,13 @@ type Options struct {
 
 	// Gate is the per-call permission gate. nil disables gating.
 	Gate Gate
+
+	// Hooks fires PreToolUse / PostToolUse shell hooks around tool calls. nil
+	// disables hook firing.
+	Hooks ToolHooks
+
+	// Jobs is the session's background-job manager (nil disables background tools).
+	Jobs *jobs.Manager
 
 	// Context management. ContextWindow <= 0 disables compaction. CompactRatio
 	// and RecentKeep fall back to defaults when unset.
@@ -203,6 +243,8 @@ func New(prov provider.Provider, tools *tool.Registry, session *Session, opts Op
 		pricing:       opts.Pricing,
 		sink:          sink,
 		gate:          opts.Gate,
+		hooks:         opts.Hooks,
+		jobs:          opts.Jobs,
 		contextWindow: opts.ContextWindow,
 		compactRatio:  opts.CompactRatio,
 		recentKeep:    opts.RecentKeep,
@@ -226,14 +268,17 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 			return err
 		}
 		if usage != nil && usage.TotalTokens > 0 {
-			a.sink.Emit(event.Event{Kind: event.Usage, Usage: usage, Pricing: a.pricing})
+			a.sink.Emit(event.Event{Kind: event.Usage, Usage: usage, Pricing: a.pricing,
+				SessionHit: a.sessCacheHit, SessionMiss: a.sessCacheMiss})
 		}
 		if msg, ok := finishReasonMessage(usage); ok {
 			a.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelWarn, Text: msg})
 		}
 
-		// Round-trip reasoning_content on the assistant turn so multi-turn
-		// thinking chains stay coherent (MiMo / DeepSeek-reasoner ask for this).
+		// Keep reasoning_content on the assistant turn for display and session
+		// archive. It is NOT re-uploaded to the API: the openai provider drops it
+		// when building the request, since DeepSeek bills re-sent reasoning as
+		// ordinary prompt input (~500 tok/turn) for no cache or coherence gain.
 		a.session.Add(provider.Message{
 			Role:             provider.RoleAssistant,
 			Content:          text,
@@ -306,6 +351,8 @@ func (a *Agent) stream(ctx context.Context) (string, string, []provider.ToolCall
 		case provider.ChunkUsage:
 			usage = chunk.Usage
 			a.lastUsage = chunk.Usage
+			a.sessCacheHit += chunk.Usage.CacheHitTokens
+			a.sessCacheMiss += chunk.Usage.CacheMissTokens
 		case provider.ChunkError:
 			return "", "", nil, nil, chunk.Err
 		}
@@ -433,7 +480,30 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 			}
 		}
 	}
-	result, err := t.Execute(withCallContext(ctx, call.ID, a.sink, a.asker), json.RawMessage(call.Arguments))
+	// PreToolUse hooks run after permission is granted but before the call: a
+	// gating hook (exit 2) refuses it, surfaced to the model like a gate denial.
+	if a.hooks != nil {
+		if block, msg := a.hooks.PreToolUse(ctx, call.Name, json.RawMessage(call.Arguments)); block {
+			if msg == "" {
+				msg = "blocked by a PreToolUse hook"
+			}
+			return toolOutcome{
+				output:  "blocked: " + msg,
+				blocked: true,
+				errMsg:  "blocked by PreToolUse hook",
+			}
+		}
+	}
+	cctx := withCallContext(ctx, call.ID, a.sink, a.asker)
+	if a.jobs != nil {
+		cctx = jobs.WithManager(cctx, a.jobs)
+	}
+	result, err := t.Execute(cctx, json.RawMessage(call.Arguments))
+	// PostToolUse hooks observe the result (they can't block); fired whether the
+	// call succeeded or errored, since the tool did run.
+	if a.hooks != nil {
+		a.hooks.PostToolUse(ctx, call.Name, json.RawMessage(call.Arguments), result)
+	}
 	if err != nil {
 		body, truncMsg := truncateToolOutput(fmt.Sprintf("error: %v\n%s", err, result))
 		return toolOutcome{output: body, errMsg: firstLine(err.Error()), truncated: truncMsg != "", truncMsg: truncMsg}

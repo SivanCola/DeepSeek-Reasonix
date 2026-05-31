@@ -153,12 +153,18 @@ type Event struct {
 	CacheDiagnostics *CacheDiagnostics // Usage: cache-churn attribution (nil = N/A)
 	CumulativeTokens int               // Usage: cumulative tokens across all turns
 	TurnCount        int               // Usage: current turn number
-	Level            Level             // Notice
-	Approval         Approval          // ApprovalRequest
-	Ask              Ask               // AskRequest
-	Err              error             // TurnDone: non-nil on failure
-	Progress         float64           // CompactProgress: 0.0 → 1.0
-	Tip              string            // CompactProgress: rotating hint for the user
+	// SessionHit/SessionMiss carry cumulative cache tokens across the whole
+	// session (Usage events only), so a frontend can show the aggregate hit-rate
+	// — which doesn't crater on a short turn or after compaction — alongside
+	// Usage's single-turn numbers.
+	SessionHit  int      // Usage: cumulative cache-hit prompt tokens this session
+	SessionMiss int      // Usage: cumulative cache-miss prompt tokens this session
+	Level       Level    // Notice
+	Approval    Approval // ApprovalRequest
+	Ask         Ask      // AskRequest
+	Err         error    // TurnDone: non-nil on failure
+	Progress    float64  // CompactProgress: 0.0 → 1.0
+	Tip         string   // CompactProgress: rotating hint for the user
 }
 
 // Sink consumes a turn's events. The agent calls Emit serially from its run

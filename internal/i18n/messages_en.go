@@ -17,10 +17,12 @@ var English = Messages{
 	GetStarted:      "Get started",
 	StepScaffold:    "scaffold reasonix.toml",
 	StepSetKey:      "set API key",
-	StepSetKeyHint:  "export DEEPSEEK_API_KEY=… or add to .env",
-	StepChatDesc:    "interactive session",
-	StepRunDesc:     "one-shot task",
-	HelpFooter:      "reasonix help · all commands",
+
+	InitHint:       "Project memory (AGENTS.md) is generated in-session: run `reasonix chat`, then `/init` — the model analyzes the codebase and writes it. For configuration, use `reasonix setup`.",
+	StepSetKeyHint: "export DEEPSEEK_API_KEY=… or add to .env",
+	StepChatDesc:   "interactive session",
+	StepRunDesc:    "one-shot task",
+	HelpFooter:     "reasonix help · all commands",
 
 	ChatTip:           "Context is kept across turns. Type 'exit' or Ctrl-D to quit.",
 	TurnCancelled:     "cancelled — back to prompt",
@@ -46,11 +48,43 @@ var English = Messages{
 	SlashUnavailable:   "command unavailable in this build",
 	SlashUnknown:       "unknown command",
 	SlashTodoCleared:   "task list dismissed",
-	SlashHelp:          "commands: /compact (manual context compaction) · /new (fork a fresh session) · /todo (dismiss the task list) · /mcp (MCP servers) · /memory · /help",
+	SlashHelp:          "commands: /compact · /new · /todo · /model (switch model) · /mcp · /skill · /hooks · /memory · /help · plus skills (/init, /explore, …)",
 	SlashPromptEmpty:   "the MCP prompt returned no content to send",
 	SlashMCPNone:       "no MCP servers configured — add a [[plugins]] entry in reasonix.toml",
 	CompHintSlash:      "↑/↓ move · Tab/Enter select · Esc close",
 	CompHintFile:       "↑/↓ move · Tab/Enter open folder or pick file · Esc close",
+
+	CmdNew:          "fork a fresh session",
+	CmdCompact:      "compact context",
+	CmdModel:        "switch model",
+	CmdMemory:       "show memory files",
+	CmdMcp:          "MCP servers",
+	CmdHooks:        "manage hooks",
+	CmdSkill:        "manage skills",
+	CmdHelp:         "list commands",
+	CmdTodo:         "dismiss the task list",
+	ArgSkillList:    "list skills",
+	ArgSkillShow:    "show a skill's body",
+	ArgSkillNew:     "scaffold a new skill",
+	ArgSkillPaths:   "show discovery paths",
+	ArgMcpAdd:       "connect a server",
+	ArgMcpRemove:    "disconnect a server",
+	ArgMcpList:      "show configured servers",
+	ArgMcpConnected: "connected",
+	ArgHooksList:    "list active hooks",
+	ArgHooksTrust:   "trust this project's hooks",
+	ArgModelCurrent: "current",
+
+	ListModelsHeaderFmt: "models (active: %s)",
+	ListModelsHint:      "switch with the model switcher, or type /model <provider/model>",
+	ListMemoryHeader:    "memory files",
+	ListMemoryNone:      "memory: none — add with “#<note>” or run /init to generate AGENTS.md",
+	ListSkillsHeaderFmt: "skills (%d)",
+	ListSkillsNone:      "skills: none defined — invoke a built-in like /init, or author one with install_skill",
+	ListHooksHeaderFmt:  "hooks (%d active)",
+	ListHooksNone:       "hooks: none active — configure in .reasonix/settings.json (project, after trust) or ~/.reasonix/settings.json (global)",
+	ListMcpHeader:       "mcp servers",
+	ListMcpNone:         "mcp: no servers connected — add one in reasonix.toml ([[plugins]]) or a project .mcp.json",
 
 	SelectProvidersLabel:  "Select providers to enable",
 	EnterAPIKeysHeader:    "Enter API keys (Enter to skip and set later in .env):",
@@ -79,7 +113,7 @@ Usage:
   reasonix chat [--model NAME]                          interactive session (multi-turn)
   reasonix run  [--model NAME] [--max-steps N] <task>   run one task and exit
   reasonix serve [--model NAME] [--addr HOST:PORT]      serve the session over HTTP+SSE (browser client at /)
-  reasonix init [path]                                  interactive setup; writes reasonix.toml (+ .env)
+  reasonix setup [path]                                 interactive config wizard; writes reasonix.toml (+ .env)
   reasonix mcp <add|remove|list>                        manage MCP servers in reasonix.toml
   reasonix version
   reasonix help
@@ -93,6 +127,6 @@ Examples:
 Configuration:
   Resolution: flag > ./reasonix.toml > ~/.config/reasonix/config.toml > built-in defaults
   Secrets come from the environment via api_key_env (e.g. DEEPSEEK_API_KEY).
-  Run 'reasonix init' to scaffold a config; see docs/SPEC.md.
+  Run 'reasonix setup' to scaffold a config; see docs/SPEC.md.
 `,
 }

@@ -23,10 +23,13 @@ import (
 	"reasonix/internal/command"
 	"reasonix/internal/config"
 	"reasonix/internal/event"
+	"reasonix/internal/hook"
+	"reasonix/internal/jobs"
 	"reasonix/internal/memory"
 	"reasonix/internal/permission"
 	"reasonix/internal/plugin"
 	"reasonix/internal/provider"
+	"reasonix/internal/skill"
 	"reasonix/internal/tool"
 )
 
@@ -43,6 +46,8 @@ type Controller struct {
 	sessionDir   string
 	host         *plugin.Host
 	commands     []command.Command
+	skills       []skill.Skill
+	hooks        *hook.Runner // session hook runner; nil-safe (no hooks configured)
 	mem          *memory.Set
 	cleanup      func()
 
@@ -51,6 +56,11 @@ type Controller struct {
 	// model/key switch — which rebuilds the controller — refreshes them.
 	balanceURL string
 	balanceKey string
+
+	// jobs is the session-scoped background-job manager. The agent's background
+	// tools spawn into it; Compose drains its completion notes into the next turn;
+	// Close cancels its still-running jobs.
+	jobs *jobs.Manager
 
 	// reg is the live tool registry the executor reads each turn; pluginCtx is the
 	// session-scoped context a hot-added stdio server binds its subprocess to.
@@ -76,12 +86,21 @@ type Controller struct {
 	asks        map[string]chan []event.AskAnswer
 	granted     map[string]bool
 	nextID      int
+	// turn counts model turns this session, passed to hooks in their payload.
+	turn int
 	// autoApprove auto-allows writer tool calls without prompting. Set only while
 	// executing a just-approved plan: approving the plan is the go-ahead, so the
 	// model shouldn't re-prompt for every write of the work it just got cleared to
 	// do. Deny rules still bite (those never reach the approver). Reset when the
 	// execution turn returns.
 	autoApprove bool
+
+	// bypass is "YOLO" mode: while set, every approval prompt is auto-allowed for
+	// the rest of the session (writers and bash run without asking). It is a
+	// deliberate, session-scoped opt-in (the --dangerously-skip-permissions flag or
+	// a runtime toggle), never persisted. Deny rules are unaffected — they're
+	// resolved before the approver, so a denied tool is still blocked in YOLO mode.
+	bypass bool
 
 	// pendingMemory holds memory notes added mid-session (via "#" quick-add or a
 	// memory edit) that haven't yet been folded into a turn. Compose drains it
@@ -110,12 +129,16 @@ type Options struct {
 	SessionPath  string
 	Host         *plugin.Host
 	Commands     []command.Command
+	Skills       []skill.Skill
+	Hooks        *hook.Runner
 	Memory       *memory.Set
 	Cleanup      func()
 	// BalanceURL/BalanceKey wire the active provider's optional wallet-balance
 	// endpoint and bearer key; empty when the provider declares no balance_url.
 	BalanceURL string
 	BalanceKey string
+	// Jobs is the session-scoped background-job manager (nil disables background jobs).
+	Jobs *jobs.Manager
 	// Registry is the executor's live tool set, and PluginCtx the session-scoped
 	// context; both are needed for hot-adding MCP servers via AddMCPServer.
 	Registry  *tool.Registry
@@ -143,10 +166,13 @@ func New(opts Options) *Controller {
 		sessionPath:  opts.SessionPath,
 		host:         opts.Host,
 		commands:     opts.Commands,
+		skills:       opts.Skills,
+		hooks:        opts.Hooks,
 		mem:          opts.Memory,
 		cleanup:      opts.Cleanup,
 		balanceURL:   opts.BalanceURL,
 		balanceKey:   opts.BalanceKey,
+		jobs:         opts.Jobs,
 		reg:          opts.Registry,
 		pluginCtx:    pluginCtx,
 		approvals:    map[string]chan approvalReply{},
@@ -196,7 +222,7 @@ const planApprovalTool = "exit_plan_mode"
 
 // planApprovedMessage is the follow-up turn sent once the user approves a plan —
 // the in-context nudge to execute and keep the (already-seeded) task list honest.
-const planApprovedMessage = "Plan approved — plan mode is off; you're cleared to make the changes without asking again. Implement the plan now, and keep the task list current with todo_write: mark the step you start as in_progress and flip it to completed the moment it's done (one in_progress at a time)."
+const planApprovedMessage = "Plan approved — plan mode is off; you're cleared to make the changes without asking again. Implement the plan now. Keep the task list current with todo_write (mark the step you start as in_progress; one in_progress at a time), and sign off each finished step with complete_step, attaching the evidence it's done — the verification you ran, the diff/files you changed, or a manual check. Don't claim a step is done without evidence."
 
 // runTurn runs one model turn, then applies the plan-approval gate. This is the
 // single, frontend-agnostic plan flow: in plan mode the model just researches
@@ -208,6 +234,19 @@ const planApprovedMessage = "Plan approved — plan mode is off; you're cleared 
 // next turn can revise. Plan mode is only ever set interactively, so the headless
 // `Run` path (which doesn't call this) never blocks on a prompt.
 func (c *Controller) runTurn(ctx context.Context, input string) error {
+	// UserPromptSubmit / Stop hooks bracket the whole turn (incl. the plan
+	// research + approved-execution sub-turns below): a gating UserPromptSubmit
+	// aborts before any model call; Stop fires once when the turn returns.
+	if c.hooks.Enabled() {
+		c.mu.Lock()
+		c.turn++
+		turn := c.turn
+		c.mu.Unlock()
+		if block, _ := c.hooks.PromptSubmit(ctx, input, turn); block {
+			return nil // the hook's notify callback already surfaced the reason
+		}
+		defer func() { c.hooks.Stop(ctx, lastAssistantText(c.History()), turn) }()
+	}
 	if err := c.runner.Run(ctx, input); err != nil {
 		return err
 	}
@@ -312,9 +351,23 @@ func (c *Controller) Submit(input string) {
 			return c.runner.Run(ctx, c.Compose(sent))
 		})
 	case strings.HasPrefix(trimmed, "/"):
+		// Read-only management verbs (/model /memory /skill /hooks /mcp) emit a
+		// listing Notice, so Submit-based frontends (desktop, HTTP) get them with
+		// no extra wiring. (The chat TUI handles these itself with richer output.)
+		if c.managementNotice(trimmed) {
+			return
+		}
+		// A custom command wins over a skill of the same name; both resolve to a
+		// turn. (Built-in slash verbs like /compact are handled above.)
 		if sent, ok := c.CustomCommand(trimmed); ok {
 			c.runGuarded(func(ctx context.Context) error {
-				return c.runner.Run(ctx, c.Compose(sent))
+				return c.runTurn(ctx, c.Compose(sent))
+			})
+			return
+		}
+		if sent, ok := c.RunSkill(trimmed); ok {
+			c.runGuarded(func(ctx context.Context) error {
+				return c.runTurn(ctx, c.Compose(sent))
 			})
 			return
 		}
@@ -343,6 +396,13 @@ func (c *Controller) notice(text string) {
 // headless `reasonix run` path, where the Sink renders to stdout and the caller
 // just needs the exit status — no TurnDone event, no cancel bookkeeping.
 func (c *Controller) Run(ctx context.Context, input string) error {
+	if c.hooks.Enabled() {
+		c.turn++
+		if block, _ := c.hooks.PromptSubmit(ctx, input, c.turn); block {
+			return nil
+		}
+		defer func() { c.hooks.Stop(ctx, lastAssistantText(c.History()), c.turn) }()
+	}
 	return c.runner.Run(ctx, input)
 }
 
@@ -478,8 +538,9 @@ func (c *Controller) Resume(s *agent.Session, path string) {
 }
 
 // Snapshot writes the executor's conversation to the active session file. No-op
-// when persistence is unavailable. Called after every turn so a crash loses at
-// most one in-flight prompt.
+// when persistence is unavailable or the session has never been used (no user
+// interaction). Called after every turn so a crash loses at most one in-flight
+// prompt.
 func (c *Controller) Snapshot() error {
 	c.mu.Lock()
 	path := c.sessionPath
@@ -487,7 +548,11 @@ func (c *Controller) Snapshot() error {
 	if c.executor == nil || path == "" {
 		return nil
 	}
-	return c.executor.Session().Save(path)
+	s := c.executor.Session()
+	if !s.HasContent() {
+		return nil
+	}
+	return s.Save(path)
 }
 
 // SetSessionPath pins where auto-save lands (a fresh session file minted by the
@@ -541,6 +606,16 @@ func (c *Controller) LastUsage() *provider.Usage {
 	return c.executor.LastUsage()
 }
 
+// SessionCache returns cumulative cache hit/miss prompt tokens for the session,
+// so a frontend can render the aggregate (session-wide) cache-hit rate — steadier
+// than the single-turn rate and unaffected by compaction.
+func (c *Controller) SessionCache() (hit, miss int) {
+	if c.executor == nil {
+		return 0, 0
+	}
+	return c.executor.SessionCache()
+}
+
 // Balance queries the active provider's wallet balance, or (nil, nil) when the
 // provider declares no balance_url — so a caller treats "not configured" and
 // "fetched" the same and just omits the readout when nil.
@@ -557,6 +632,13 @@ func (c *Controller) Host() *plugin.Host { return c.host }
 
 // Commands returns the loaded custom slash commands.
 func (c *Controller) Commands() []command.Command { return c.commands }
+
+// Skills returns the discoverable skills (for the slash menu and `/skill`).
+func (c *Controller) Skills() []skill.Skill { return c.skills }
+
+// HookRunner returns the session's hook runner (nil-safe; may hold zero hooks),
+// so a frontend can list the active hooks via `/hooks`.
+func (c *Controller) HookRunner() *hook.Runner { return c.hooks }
 
 // AddMCPServer connects an MCP server live and persists it to the config file. Its
 // tools are registered immediately and become available on the next turn (the
@@ -634,9 +716,37 @@ func (c *Controller) Label() string { return c.label }
 
 // Close stops plugin subprocesses and releases resources.
 func (c *Controller) Close() {
+	if c.jobs != nil {
+		c.jobs.Close() // cancel any still-running background jobs
+	}
 	if c.cleanup != nil {
 		c.cleanup()
 	}
+}
+
+// Jobs returns the still-running background jobs for the status bar (nil when
+// background jobs are disabled).
+func (c *Controller) Jobs() []jobs.View {
+	if c.jobs == nil {
+		return nil
+	}
+	return c.jobs.Running()
+}
+
+// SetBypass turns YOLO/bypass mode on or off for the session: while on, every
+// approval prompt is auto-allowed (writers and bash run without asking). Deny
+// rules still block. Runtime-only — never written to config.
+func (c *Controller) SetBypass(on bool) {
+	c.mu.Lock()
+	c.bypass = on
+	c.mu.Unlock()
+}
+
+// Bypass reports whether YOLO/bypass mode is on, for the status-bar indicator.
+func (c *Controller) Bypass() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.bypass
 }
 
 // --- memory ---
@@ -715,10 +825,11 @@ func (c *Controller) refreshMemoryLocked() {
 type gateApprover struct{ c *Controller }
 
 func (g gateApprover) Approve(ctx context.Context, tool, subject string, args json.RawMessage) (bool, bool, error) {
-	// While executing a just-approved plan, writers are pre-cleared — the plan was
-	// the approval — so don't prompt again.
+	// Auto-allow without prompting while executing a just-approved plan (the plan
+	// was the approval) or while YOLO/bypass mode is on. Deny rules already bit
+	// before this point, so they still block.
 	g.c.mu.Lock()
-	auto := g.c.autoApprove
+	auto := g.c.autoApprove || g.c.bypass
 	g.c.mu.Unlock()
 	if auto {
 		return true, false, nil

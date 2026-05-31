@@ -14,6 +14,7 @@ import (
 	"reasonix/internal/config"
 	"reasonix/internal/control"
 	"reasonix/internal/event"
+	"reasonix/internal/i18n"
 	"reasonix/internal/memory"
 	"reasonix/internal/provider"
 )
@@ -54,9 +55,18 @@ func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
 	a.sink.ctx = ctx
 
+	// A GUI launch starts in "/" (read-only); move into a real, writable working
+	// folder (the remembered one, else home) before anything reads/writes config,
+	// .env, memory, or skills relative to cwd.
+	ensureWorkspace()
+
 	// Resolve the active model to its canonical "provider/model" ref up front so
 	// the switcher can mark it current.
 	if cfg, err := config.Load(); err == nil {
+		// Drive the Go-side catalogue (i18n.M) from the configured language so the
+		// backend-provided slash UI — command descriptions, sub-command hints,
+		// listing notices — comes through localized, matching the frontend.
+		i18n.DetectLanguage(cfg.Language)
 		a.model = cfg.DefaultModel
 		if e, ok := cfg.ResolveModel(cfg.DefaultModel); ok {
 			a.model = e.Name + "/" + e.Model
@@ -253,6 +263,7 @@ func (a *App) PickWorkspace() (string, error) {
 	if err := os.Chdir(dir); err != nil {
 		return "", err
 	}
+	saveWorkspace(dir) // remember it so the next launch reopens here
 	// Resolve the new folder's default model from its own config.
 	model := ""
 	if cfg, cerr := config.Load(); cerr == nil {
@@ -346,6 +357,29 @@ func (a *App) Balance() BalanceInfo {
 	return BalanceInfo{Available: true, Display: b.Display()}
 }
 
+// JobView is one running background job (bash/task started with
+// run_in_background) for the status-bar indicator.
+type JobView struct {
+	ID        string `json:"id"`
+	Kind      string `json:"kind"`
+	Label     string `json:"label"`
+	Status    string `json:"status"`
+	StartedAt int64  `json:"startedAt"`
+}
+
+// Jobs returns the still-running background jobs for the status bar. It refreshes
+// on demand (mount, turn end, and on each notice the frontend receives).
+func (a *App) Jobs() []JobView {
+	out := []JobView{}
+	if a.ctrl == nil {
+		return out
+	}
+	for _, v := range a.ctrl.Jobs() {
+		out = append(out, JobView{ID: v.ID, Kind: v.Kind, Label: v.Label, Status: v.Status, StartedAt: v.StartedAt})
+	}
+	return out
+}
+
 // Meta describes the session for the frontend's header and status line.
 type Meta struct {
 	Label        string `json:"label"`
@@ -353,6 +387,7 @@ type Meta struct {
 	StartupErr   string `json:"startupErr,omitempty"`
 	EventChannel string `json:"eventChannel"`
 	Cwd          string `json:"cwd"`
+	Bypass       bool   `json:"bypass"` // YOLO mode on (auto-approve every tool call)
 }
 
 // Meta reports the model label, readiness, any startup error, the working
@@ -366,6 +401,16 @@ func (a *App) Meta() Meta {
 		StartupErr:   a.startupErr,
 		EventChannel: eventChannel,
 		Cwd:          cwd,
+		Bypass:       a.ctrl != nil && a.ctrl.Bypass(),
+	}
+}
+
+// SetBypass toggles YOLO mode for the session: auto-approve every tool call
+// (writers and bash run without asking). Deny rules still apply. Runtime-only —
+// not written to config, so it resets on relaunch.
+func (a *App) SetBypass(on bool) {
+	if a.ctrl != nil {
+		a.ctrl.SetBypass(on)
 	}
 }
 
@@ -382,11 +427,23 @@ type CommandInfo struct {
 // autocomplete menu.
 func (a *App) Commands() []CommandInfo {
 	out := []CommandInfo{
-		{Name: "new", Description: "Start a new session", Kind: "builtin"},
-		{Name: "compact", Description: "Summarize older history to free up context", Kind: "builtin"},
+		{Name: "new", Description: i18n.M.CmdNew, Kind: "builtin"},
+		{Name: "compact", Description: i18n.M.CmdCompact, Kind: "builtin"},
+		{Name: "model", Description: i18n.M.CmdModel, Kind: "builtin"},
+		{Name: "memory", Description: i18n.M.CmdMemory, Kind: "builtin"},
+		{Name: "mcp", Description: i18n.M.CmdMcp, Kind: "builtin"},
+		{Name: "hooks", Description: i18n.M.CmdHooks, Kind: "builtin"},
+		{Name: "skill", Description: i18n.M.CmdSkill, Kind: "builtin"},
 	}
 	if a.ctrl == nil {
 		return out
+	}
+	// Skills are invocable as /<name> (the model runs inline ones; subagent ones
+	// run isolated). Listing them here is what surfaces /init, /explore, … in the
+	// composer's slash menu; selecting one submits "/<name>", which the controller
+	// resolves via RunSkill.
+	for _, s := range a.ctrl.Skills() {
+		out = append(out, CommandInfo{Name: s.Name, Description: s.Description, Kind: "skill"})
 	}
 	for _, c := range a.ctrl.Commands() {
 		out = append(out, CommandInfo{Name: c.Name, Description: c.Description, Hint: c.ArgHint, Kind: "custom"})
@@ -395,6 +452,50 @@ func (a *App) Commands() []CommandInfo {
 		for _, p := range h.Prompts() {
 			out = append(out, CommandInfo{Name: p.Name, Description: p.Description, Kind: "mcp"})
 		}
+	}
+	return out
+}
+
+// SlashArgItem is one sub-command / argument suggestion for the composer's slash
+// menu (the part after the command word). Mirrors the CLI's arg completion via
+// the shared control.SlashArgItems, so desktop and CLI offer the same hints.
+type SlashArgItem struct {
+	Label   string `json:"label"`
+	Insert  string `json:"insert"`
+	Hint    string `json:"hint"`
+	Descend bool   `json:"descend"`
+}
+
+// SlashArgsResult carries the suggestions plus the byte offset in the input where
+// the current token begins, so the composer replaces just that token.
+type SlashArgsResult struct {
+	Items []SlashArgItem `json:"items"`
+	From  int            `json:"from"`
+}
+
+// SlashArgs completes the arguments of a management slash command (/mcp, /model,
+// /skill, /hooks) for the composer — the same logic the chat TUI uses. Empty
+// Items means the input has no structured arguments to complete.
+func (a *App) SlashArgs(input string) SlashArgsResult {
+	if a.ctrl == nil {
+		return SlashArgsResult{}
+	}
+	data := control.ArgData{
+		Skills:       a.ctrl.Skills(),
+		CurrentModel: a.model,
+	}
+	for _, m := range a.Models() {
+		data.ModelRefs = append(data.ModelRefs, m.Ref)
+	}
+	if h := a.ctrl.Host(); h != nil {
+		data.ServerNames = h.ServerNames()
+	}
+	items, from := control.SlashArgItems(input, data)
+	// Non-nil so it serializes as a JSON array, never null — the frontend filters
+	// over it directly.
+	out := SlashArgsResult{Items: []SlashArgItem{}, From: from}
+	for _, it := range items {
+		out.Items = append(out.Items, SlashArgItem{Label: it.Label, Insert: it.Insert, Hint: it.Hint, Descend: it.Descend})
 	}
 	return out
 }
