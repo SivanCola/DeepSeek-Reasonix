@@ -21,6 +21,8 @@ func TestRenderTOMLRoundTrips(t *testing.T) {
 		{Name: "example", Command: "reasonix-plugin-example"},
 		{Name: "stripe", Type: "http", URL: "https://mcp.stripe.com", Headers: map[string]string{"Authorization": "Bearer x"}},
 	}
+	disabled := false
+	orig.Plugins[1].AutoStart = &disabled
 	mm, _ := orig.Provider("mimo-pro")
 	mm.BaseURL = "http://localhost:8000/v1"
 
@@ -70,5 +72,8 @@ func TestRenderTOMLRoundTrips(t *testing.T) {
 	}
 	if stripe.Headers["Authorization"] != "Bearer x" {
 		t.Errorf("plugin headers not preserved: %v", stripe.Headers)
+	}
+	if stripe.AutoStart == nil || *stripe.AutoStart {
+		t.Errorf("plugin auto_start not preserved: %+v", stripe.AutoStart)
 	}
 }

@@ -111,6 +111,7 @@ func RenderTOML(c *Config) string {
 	b.WriteString("\n")
 
 	b.WriteString("# External MCP servers. type: \"stdio\" (default, a subprocess) | \"http\" | \"sse\".\n")
+	b.WriteString("# Set auto_start = false to keep a server configured but skip it during chat startup; use /mcp connect <name> to start it manually.\n")
 	b.WriteString("# ${VAR} / ${VAR:-default} are expanded from the environment in command/args/env/url/headers.\n")
 	if len(c.Plugins) == 0 {
 		b.WriteString("# [[plugins]]\n")
@@ -127,6 +128,9 @@ func RenderTOML(c *Config) string {
 			fmt.Fprintf(&b, "name    = %q\n", pl.Name)
 			if pl.Type != "" {
 				fmt.Fprintf(&b, "type    = %q\n", pl.Type)
+			}
+			if pl.AutoStart != nil {
+				fmt.Fprintf(&b, "auto_start = %v\n", *pl.AutoStart)
 			}
 			if pl.Command != "" {
 				fmt.Fprintf(&b, "command = %q\n", pl.Command)

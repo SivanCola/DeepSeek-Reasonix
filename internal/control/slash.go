@@ -6,6 +6,7 @@ import (
 
 	"reasonix/internal/config"
 	"reasonix/internal/i18n"
+	"reasonix/internal/plugin"
 	"reasonix/internal/skill"
 )
 
@@ -25,10 +26,12 @@ type SlashItem struct {
 // chat TUI (controller-free, from its cached lists) and the desktop (from the
 // controller). This keeps the CLI and desktop sub-command hints identical.
 type ArgData struct {
-	Skills       []skill.Skill
-	ServerNames  []string
-	ModelRefs    []string
-	CurrentModel string
+	Skills          []skill.Skill
+	ServerNames     []string
+	ConfiguredMCP   []string
+	DisconnectedMCP []string
+	ModelRefs       []string
+	CurrentModel    string
 }
 
 // SlashArgItems completes the arguments of a management slash command
@@ -64,11 +67,26 @@ func mcpArgItems(prior []string, cur string, d ArgData) []SlashItem {
 	if len(prior) <= 1 {
 		return []SlashItem{
 			{Label: "add", Insert: "add ", Hint: i18n.M.ArgMcpAdd, Descend: true},
+			{Label: "connect", Insert: "connect ", Hint: i18n.M.ArgMcpConnect, Descend: true},
 			{Label: "remove", Insert: "remove ", Hint: i18n.M.ArgMcpRemove, Descend: true},
 			{Label: "list", Insert: "list", Hint: i18n.M.ArgMcpList},
+			{Label: "import", Insert: "import", Hint: i18n.M.ArgMcpImport},
 		}
 	}
 	switch prior[1] {
+	case "connect":
+		if len(prior) != 2 {
+			return nil
+		}
+		names := d.DisconnectedMCP
+		if len(names) == 0 {
+			names = d.ConfiguredMCP
+		}
+		var items []SlashItem
+		for _, name := range names {
+			items = append(items, SlashItem{Label: name, Insert: name, Hint: i18n.M.ArgMcpConfigured})
+		}
+		return items
 	case "remove", "rm":
 		if len(prior) != 2 { // the single name arg is already placed
 			return nil
@@ -176,11 +194,33 @@ func (c *Controller) managementNotice(trimmed string) bool {
 	case "/hooks":
 		c.notice(c.hookListText())
 	case "/mcp":
-		c.notice(c.mcpListText())
+		if len(fields) >= 2 && fields[1] == "import" {
+			c.notice(c.mcpImportText())
+		} else if len(fields) >= 3 && fields[1] == "connect" {
+			c.notice(c.mcpConnectText(fields[2]))
+		} else {
+			c.notice(c.mcpListText())
+		}
 	default:
 		return false
 	}
 	return true
+}
+
+func (c *Controller) mcpConnectText(name string) string {
+	n, err := c.ConnectConfiguredMCPServer(name)
+	if err != nil {
+		return "mcp connect: " + err.Error()
+	}
+	return fmt.Sprintf("connected %s — %d tools (available next message)", name, n)
+}
+
+func (c *Controller) mcpImportText() string {
+	total, added, updated, connected, failed, skipped, err := c.ImportCCSwitchMCPServers()
+	if err != nil {
+		return "mcp import: " + err.Error()
+	}
+	return fmt.Sprintf("imported %d MCP servers from cc-switch (%d added, %d updated, %d connected, %d failed, %d skipped)", total, added, updated, connected, failed, skipped)
 }
 
 func (c *Controller) modelListText() string {
@@ -246,13 +286,34 @@ func (c *Controller) hookListText() string {
 }
 
 func (c *Controller) mcpListText() string {
-	if c.host == nil || len(c.host.ServerNames()) == 0 {
+	configuredNames := c.ConfiguredMCPNames()
+	var servers []plugin.ServerStatus
+	var failures []plugin.Failure
+	if c.host != nil {
+		servers = c.host.Servers()
+		failures = c.host.Failures()
+	}
+	if len(servers) == 0 && len(failures) == 0 && len(configuredNames) == 0 {
 		return i18n.M.ListMcpNone
+	}
+	configured := map[string]bool{}
+	for _, name := range configuredNames {
+		configured[name] = true
 	}
 	var b strings.Builder
 	b.WriteString(i18n.M.ListMcpHeader + "\n")
-	for _, name := range c.host.ServerNames() {
-		fmt.Fprintf(&b, "  %s\n", name)
+	for _, s := range servers {
+		fmt.Fprintf(&b, "  ✓ %s (%s) — %d tools · %d prompts · %d resources\n", s.Name, s.Transport, s.Tools, s.Prompts, s.Resources)
+		delete(configured, s.Name)
+	}
+	for _, f := range failures {
+		fmt.Fprintf(&b, "  × %s (%s) — %s\n", f.Name, f.Transport, f.Error)
+		delete(configured, f.Name)
+	}
+	for _, name := range configuredNames {
+		if configured[name] {
+			fmt.Fprintf(&b, "  ○ %s — configured, not started\n", name)
+		}
 	}
 	return strings.TrimRight(b.String(), "\n")
 }

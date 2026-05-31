@@ -130,6 +130,10 @@ func (m *chatTUI) slashArgItems(val string) ([]compItem, int, bool) {
 		ModelRefs:    modelRefs(),
 		CurrentModel: m.modelRef,
 	}
+	if m.ctrl != nil {
+		data.ConfiguredMCP = m.ctrl.ConfiguredMCPNames()
+		data.DisconnectedMCP = m.ctrl.DisconnectedMCPNames()
+	}
 	if m.host != nil {
 		data.ServerNames = m.host.ServerNames()
 	}

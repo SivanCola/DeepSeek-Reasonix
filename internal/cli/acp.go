@@ -113,12 +113,9 @@ func (f *acpFactory) NewSession(ctx context.Context, p acp.SessionParams) (*cont
 	// session/new, all connected for the session's lifetime.
 	cleanup := func() {}
 	var host *plugin.Host
-	specs := append(boot.PluginSpecs(cfg.Plugins), p.MCPServers...)
+	specs := append(boot.PluginSpecs(cfg.AutoStartPlugins()), p.MCPServers...)
 	if len(specs) > 0 {
-		h, ptools, err := plugin.StartAll(ctx, specs)
-		if err != nil {
-			return nil, fmt.Errorf("plugin: %w", err)
-		}
+		h, ptools := plugin.StartAvailable(ctx, specs)
 		host = h
 		cleanup = h.Close
 		for _, t := range ptools {

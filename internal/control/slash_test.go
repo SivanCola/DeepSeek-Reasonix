@@ -47,6 +47,12 @@ func TestSlashArgItems(t *testing.T) {
 		t.Errorf("/skill show should list skill names; got %v", labelsOf(items))
 	}
 	// /mcp subcommands + filtering
+	items, _ = SlashArgItems("/mcp ", data)
+	for _, want := range []string{"connect", "import"} {
+		if !has(items, want) {
+			t.Errorf("/mcp should offer %q; got %v", want, labelsOf(items))
+		}
+	}
 	items, _ = SlashArgItems("/mcp re", data)
 	if len(items) != 1 || items[0].Label != "remove" {
 		t.Errorf("/mcp re should filter to remove; got %v", labelsOf(items))

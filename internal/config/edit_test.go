@@ -225,3 +225,17 @@ func TestSaveToRoundTrips(t *testing.T) {
 		t.Errorf("plugins = %+v", got.Plugins)
 	}
 }
+
+func TestAutoStartPlugins(t *testing.T) {
+	off := false
+	on := true
+	c := &Config{Plugins: []PluginEntry{
+		{Name: "default", Command: "a"},
+		{Name: "off", Command: "b", AutoStart: &off},
+		{Name: "on", Command: "c", AutoStart: &on},
+	}}
+	got := c.AutoStartPlugins()
+	if len(got) != 2 || got[0].Name != "default" || got[1].Name != "on" {
+		t.Fatalf("AutoStartPlugins = %+v", got)
+	}
+}

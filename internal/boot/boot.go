@@ -115,7 +115,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	// Always construct a host, even with no plugins configured, so the controller's
 	// host pointer is stable for the session and `/mcp add` can hot-add into it.
 	pluginHost := plugin.NewHost()
-	specs := PluginSpecs(cfg.Plugins)
+	specs := PluginSpecs(cfg.AutoStartPlugins())
 	// CodeGraph is a built-in MCP server fetched on first use. When it resolves,
 	// inject it as one more stdio plugin pinned to the project root (it is
 	// cwd-aware); EnsureInit only creates .codegraph/ (fast, size-independent),
@@ -149,13 +149,25 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		}
 	}
 	if len(specs) > 0 {
-		host, ptools, err := plugin.StartAll(ctx, specs)
-		if err != nil {
-			return nil, fmt.Errorf("plugin: %w", err)
-		}
+		host, ptools := plugin.StartAvailable(ctx, specs)
 		pluginHost = host
 		for _, t := range ptools {
 			reg.Add(t)
+		}
+		if failures := host.Failures(); len(failures) > 0 {
+			names := make([]string, 0, min(len(failures), 3))
+			for i, f := range failures {
+				if i >= 3 {
+					break
+				}
+				names = append(names, f.Name)
+			}
+			more := ""
+			if len(failures) > len(names) {
+				more = fmt.Sprintf(" (+%d more)", len(failures)-len(names))
+			}
+			sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelWarn,
+				Text: fmt.Sprintf("%d MCP server(s) failed to start: %s%s — run /mcp for details", len(failures), strings.Join(names, ", "), more)})
 		}
 	}
 	cleanup := pluginHost.Close

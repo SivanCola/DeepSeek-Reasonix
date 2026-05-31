@@ -113,6 +113,9 @@ type chatTUI struct {
 	// run goroutine is blocked awaiting ctrl.AnswerQuestion and keys drive the card.
 	chooser *chooser
 
+	// mcpImport holds the interactive cc-switch MCP import picker.
+	mcpImport *mcpImportPicker
+
 	// rewind holds the Esc-Esc / "/rewind" picker (nil when closed); while set,
 	// keys drive it and it renders as an overlay. lastEsc times the double-Esc
 	// gesture that opens it on an empty composer.
@@ -326,6 +329,9 @@ func (m chatTUI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, finalize(m, cmds)
 			}
 			return m.handleChooserKey(msg)
+		}
+		if m.mcpImport != nil {
+			return m.handleMCPImportKey(msg)
 		}
 		// The rewind picker is modal while open: keys navigate it.
 		if m.rewind != nil {
@@ -729,6 +735,8 @@ func (m chatTUI) View() tea.View {
 		status = "  " + modeTag + " · ⟲ rewind"
 	case m.chooser != nil:
 		status = "  " + modeTag + " · " + i18n.M.ChatStatusQuestion
+	case m.mcpImport != nil:
+		status = "  " + modeTag + " · ↑/↓ 选 · 空格勾选 · Enter 导入 · Esc 取消"
 	case m.pendingApproval != nil && m.pendingApproval.Tool == planApprovalTool:
 		status = "  " + modeTag + " · " + i18n.M.ChatStatusPlanApproval
 	case m.pendingApproval != nil:
@@ -784,6 +792,10 @@ func (m chatTUI) View() tea.View {
 		rowsAboveBox += strings.Count(banner, "\n") + 1
 	}
 	if card := m.renderChooser(); card != "" {
+		parts = append(parts, card)
+		rowsAboveBox += strings.Count(card, "\n") + 1
+	}
+	if card := m.renderMCPImport(); card != "" {
 		parts = append(parts, card)
 		rowsAboveBox += strings.Count(card, "\n") + 1
 	}
@@ -1325,6 +1337,19 @@ func (m *chatTUI) runMCPSubcommand(input string) {
 			return
 		}
 		m.notice(fmt.Sprintf("connected %s — %d tools, saved to config (available next message)", entry.Name, n))
+	case "connect":
+		if len(args) < 3 {
+			m.notice("usage: /mcp connect <name>")
+			return
+		}
+		n, err := m.ctrl.ConnectConfiguredMCPServer(args[2])
+		if err != nil {
+			m.notice("mcp connect: " + err.Error())
+			return
+		}
+		m.notice(fmt.Sprintf("connected %s — %d tools (available next message)", args[2], n))
+	case "import":
+		m.openMCPImportPicker()
 	case "remove", "rm":
 		if len(args) < 3 {
 			m.notice("usage: /mcp remove <name>")
@@ -1342,23 +1367,44 @@ func (m *chatTUI) runMCPSubcommand(input string) {
 			m.notice("removed " + name + " from config")
 		}
 	default:
-		m.notice("unknown /mcp subcommand " + args[1] + " — try: /mcp, /mcp add, /mcp remove")
+		m.notice("unknown /mcp subcommand " + args[1] + " — try: /mcp, /mcp add, /mcp connect, /mcp import, /mcp remove")
 	}
 }
 
 // showMCPStatus queues the connected MCP servers, their counts, and the prompt
 // commands / resource refs they expose — the discovery surface for /mcp.
 func (m *chatTUI) showMCPStatus() {
-	if m.host == nil || len(m.host.Servers()) == 0 {
+	configured := m.ctrl.ConfiguredMCPNames()
+	var servers []plugin.ServerStatus
+	var failures []plugin.Failure
+	if m.host != nil {
+		servers = m.host.Servers()
+		failures = m.host.Failures()
+	}
+	if len(servers) == 0 && len(failures) == 0 && len(configured) == 0 {
 		m.notice(i18n.M.SlashMCPNone)
 		return
 	}
-	servers := m.host.Servers()
 	var b strings.Builder
-	fmt.Fprintf(&b, "%s\n", dim(fmt.Sprintf("  · MCP servers (%d)", len(servers))))
+	fmt.Fprintf(&b, "%s\n", dim(fmt.Sprintf("  · MCP servers (%d connected, %d failed)", len(servers), len(failures))))
 	for _, s := range servers {
 		fmt.Fprintf(&b, "    %s %s %s\n", accent("✓"), bold(s.Name),
 			dim(fmt.Sprintf("(%s) — %d tools · %d prompts · %d resources", s.Transport, s.Tools, s.Prompts, s.Resources)))
+	}
+	for _, f := range failures {
+		fmt.Fprintf(&b, "    %s %s %s\n", "×", bold(f.Name), dim(fmt.Sprintf("(%s) — %s", f.Transport, f.Error)))
+	}
+	shown := map[string]bool{}
+	for _, s := range servers {
+		shown[s.Name] = true
+	}
+	for _, f := range failures {
+		shown[f.Name] = true
+	}
+	for _, name := range configured {
+		if !shown[name] {
+			fmt.Fprintf(&b, "    %s %s %s\n", "○", bold(name), dim("configured, not started"))
+		}
 	}
 	for _, p := range m.host.Prompts() {
 		fmt.Fprintf(&b, "      %s  %s\n", "/"+p.Name, dim(p.Description))

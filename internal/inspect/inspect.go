@@ -167,6 +167,7 @@ type ServerInfo struct {
 	Tools     int    `json:"tools"`
 	Prompts   int    `json:"prompts"`
 	Resources int    `json:"resources"`
+	Error     string `json:"error,omitempty"`
 }
 
 // Servers projects the connected MCP servers. Returns nil when host is nil.
@@ -184,6 +185,9 @@ func Servers(host *plugin.Host) []ServerInfo {
 			Prompts:   s.Prompts,
 			Resources: s.Resources,
 		})
+	}
+	for _, f := range host.Failures() {
+		out = append(out, ServerInfo{Name: f.Name, Transport: f.Transport, Error: f.Error})
 	}
 	return out
 }

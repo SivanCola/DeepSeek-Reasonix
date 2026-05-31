@@ -36,6 +36,7 @@ func ExpandVars(s string) string {
 // also expands. The entry itself is left untouched.
 func (e PluginEntry) ExpandedPlugin() PluginEntry {
 	out := e
+	out.AutoStart = e.AutoStart
 	out.Command = ExpandVars(e.Command)
 	out.URL = ExpandVars(e.URL)
 	if len(e.Args) > 0 {

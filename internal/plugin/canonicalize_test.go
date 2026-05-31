@@ -3,6 +3,8 @@ package plugin
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"strings"
 	"testing"
 
 	"reasonix/internal/tool"
@@ -90,6 +92,26 @@ func TestSortToolsByName(t *testing.T) {
 	// Original should be unchanged
 	if tools[0].Name() != "zulu" {
 		t.Error("original slice was mutated")
+	}
+}
+
+func TestNormalizeNameForToolNames(t *testing.T) {
+	cases := map[string]string{
+		"@modelcontextprotocol/server-memory": "modelcontextprotocol_server-memory",
+		"mcp server/fetch":                    "mcp_server_fetch",
+		"   ":                                 "unnamed",
+	}
+	for in, want := range cases {
+		if got := normalizeName(in); got != want {
+			t.Errorf("normalizeName(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestSummarizeFailureErrorSingleLine(t *testing.T) {
+	got := summarizeFailureError(errors.New("npm error code ENOTEMPTY\nnpm error path /tmp/x"))
+	if strings.Contains(got, "\n") || !strings.Contains(got, "ENOTEMPTY") {
+		t.Fatalf("summary = %q", got)
 	}
 }
 

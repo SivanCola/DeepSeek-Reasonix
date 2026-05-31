@@ -556,6 +556,8 @@ func (a *App) SlashArgs(input string) SlashArgsResult {
 	if h := a.ctrl.Host(); h != nil {
 		data.ServerNames = h.ServerNames()
 	}
+	data.ConfiguredMCP = a.ctrl.ConfiguredMCPNames()
+	data.DisconnectedMCP = a.ctrl.DisconnectedMCPNames()
 	items, from := control.SlashArgItems(input, data)
 	// Non-nil so it serializes as a JSON array, never null — the frontend filters
 	// over it directly.

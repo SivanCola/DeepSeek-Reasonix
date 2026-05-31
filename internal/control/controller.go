@@ -894,6 +894,139 @@ func (c *Controller) HookRunner() *hook.Runner { return c.hooks }
 // of tools the server exposed. A save failure after a successful connect is
 // reported but non-fatal: the server still works this session.
 func (c *Controller) AddMCPServer(e config.PluginEntry) (int, error) {
+	n, err := c.connectMCPServer(e)
+	if err != nil {
+		return 0, err
+	}
+	cfg, lerr := config.Load()
+	if lerr != nil {
+		return n, fmt.Errorf("connected, but reloading config to save failed: %w", lerr)
+	}
+	if err := cfg.UpsertPlugin(e); err != nil {
+		return n, fmt.Errorf("connected, but config rejected the entry: %w", err)
+	}
+	if err := cfg.Save(); err != nil {
+		return n, fmt.Errorf("connected, but saving config failed: %w", err)
+	}
+	return n, nil
+}
+
+// ConnectConfiguredMCPServer starts a server already present in config without
+// changing its auto_start setting.
+func (c *Controller) ConnectConfiguredMCPServer(name string) (int, error) {
+	cfg, err := config.Load()
+	if err != nil {
+		return 0, err
+	}
+	for _, p := range cfg.Plugins {
+		if p.Name == name {
+			return c.connectMCPServer(p)
+		}
+	}
+	return 0, fmt.Errorf("no MCP server named %q in config", name)
+}
+
+// ConfiguredMCPNames returns all configured plugin names, sorted by config order.
+func (c *Controller) ConfiguredMCPNames() []string {
+	cfg, err := config.Load()
+	if err != nil {
+		return nil
+	}
+	names := make([]string, len(cfg.Plugins))
+	for i, p := range cfg.Plugins {
+		names[i] = p.Name
+	}
+	return names
+}
+
+func (c *Controller) DisconnectedMCPNames() []string {
+	cfg, err := config.Load()
+	if err != nil {
+		return nil
+	}
+	live := map[string]bool{}
+	if c.host != nil {
+		for _, name := range c.host.ServerNames() {
+			live[name] = true
+		}
+	}
+	var names []string
+	for _, p := range cfg.Plugins {
+		if !live[p.Name] {
+			names = append(names, p.Name)
+		}
+	}
+	return names
+}
+
+// ImportCCSwitchMCPServers imports cc-switch's Codex-enabled MCP servers into
+// config, then hot-connects any not already connected in this session.
+func (c *Controller) ImportCCSwitchMCPServers() (total, added, updated, connected, failed, skipped int, err error) {
+	entries, err := config.LoadCCSwitchMCP()
+	if err != nil {
+		return 0, 0, 0, 0, 0, 0, err
+	}
+	return c.ImportMCPEntries(entries)
+}
+
+func (c *Controller) ImportMCPEntries(entries []config.PluginEntry) (total, added, updated, connected, failed, skipped int, err error) {
+	cfg, err := config.Load()
+	if err != nil {
+		return 0, 0, 0, 0, 0, 0, err
+	}
+	existing := make(map[string]config.PluginEntry, len(cfg.Plugins))
+	for _, p := range cfg.Plugins {
+		existing[p.Name] = p
+	}
+	for _, e := range entries {
+		if prev, ok := existing[e.Name]; ok {
+			updated++
+			if prev.AutoStart != nil {
+				e.AutoStart = prev.AutoStart
+			}
+		} else {
+			added++
+		}
+		if err := cfg.UpsertPlugin(e); err != nil {
+			return 0, 0, 0, 0, 0, 0, err
+		}
+		existing[e.Name] = e
+	}
+	if err := cfg.Save(); err != nil {
+		return 0, 0, 0, 0, 0, 0, err
+	}
+	if c.host == nil {
+		c.host = plugin.NewHost()
+	}
+	live := map[string]bool{}
+	for _, name := range c.host.ServerNames() {
+		live[name] = true
+	}
+	for _, e := range entries {
+		if live[e.Name] {
+			continue
+		}
+		if !e.ShouldAutoStart() {
+			skipped++
+			continue
+		}
+		if _, err := c.connectMCPServer(e); err != nil {
+			c.host.RecordFailure(plugin.Spec{
+				Name:    e.Name,
+				Type:    e.Type,
+				Command: e.Command,
+				URL:     e.URL,
+			}, err)
+			failed++
+			continue
+		}
+		connected++
+		live[e.Name] = true
+	}
+	return len(entries), added, updated, connected, failed, skipped, nil
+}
+
+func (c *Controller) connectMCPServer(e config.PluginEntry) (int, error) {
 	if c.host == nil {
 		c.host = plugin.NewHost()
 	}
@@ -914,16 +1047,6 @@ func (c *Controller) AddMCPServer(e config.PluginEntry) (int, error) {
 		for _, t := range tools {
 			c.reg.Add(t)
 		}
-	}
-	cfg, lerr := config.Load()
-	if lerr != nil {
-		return len(tools), fmt.Errorf("connected, but reloading config to save failed: %w", lerr)
-	}
-	if err := cfg.UpsertPlugin(e); err != nil {
-		return len(tools), fmt.Errorf("connected, but config rejected the entry: %w", err)
-	}
-	if err := cfg.Save(); err != nil {
-		return len(tools), fmt.Errorf("connected, but saving config failed: %w", err)
 	}
 	return len(tools), nil
 }

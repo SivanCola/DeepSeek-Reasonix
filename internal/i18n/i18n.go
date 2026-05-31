@@ -84,27 +84,30 @@ type Messages struct {
 
 	// slash command + sub-command descriptions shown in the menu (CLI and desktop
 	// share these via i18n.M, so both frontends localize identically).
-	CmdNew          string // /new
-	CmdCompact      string // /compact
-	CmdRewind       string // /rewind
-	CmdModel        string // /model
-	CmdMemory       string // /memory
-	CmdMcp          string // /mcp
-	CmdHooks        string // /hooks
-	CmdSkill        string // /skill
-	CmdHelp         string // /help
-	CmdTodo         string // /todo
-	ArgSkillList    string // /skill list
-	ArgSkillShow    string // /skill show
-	ArgSkillNew     string // /skill new
-	ArgSkillPaths   string // /skill paths
-	ArgMcpAdd       string // /mcp add
-	ArgMcpRemove    string // /mcp remove
-	ArgMcpList      string // /mcp list
-	ArgMcpConnected string // /mcp remove <server> tag
-	ArgHooksList    string // /hooks list
-	ArgHooksTrust   string // /hooks trust
-	ArgModelCurrent string // /model <ref> active tag
+	CmdNew           string // /new
+	CmdCompact       string // /compact
+	CmdRewind        string // /rewind
+	CmdModel         string // /model
+	CmdMemory        string // /memory
+	CmdMcp           string // /mcp
+	CmdHooks         string // /hooks
+	CmdSkill         string // /skill
+	CmdHelp          string // /help
+	CmdTodo          string // /todo
+	ArgSkillList     string // /skill list
+	ArgSkillShow     string // /skill show
+	ArgSkillNew      string // /skill new
+	ArgSkillPaths    string // /skill paths
+	ArgMcpAdd        string // /mcp add
+	ArgMcpConnect    string // /mcp connect
+	ArgMcpRemove     string // /mcp remove
+	ArgMcpList       string // /mcp list
+	ArgMcpImport     string // /mcp import
+	ArgMcpConnected  string // /mcp remove <server> tag
+	ArgMcpConfigured string // /mcp connect <server> tag
+	ArgHooksList     string // /hooks list
+	ArgHooksTrust    string // /hooks trust
+	ArgModelCurrent  string // /model <ref> active tag
 
 	// management listing notices (the Submit path: desktop / HTTP frontends)
 	ListModelsHeaderFmt string // "models (active: %s)"

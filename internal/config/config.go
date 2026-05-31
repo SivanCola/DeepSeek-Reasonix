@@ -204,13 +204,30 @@ type PermissionsConfig struct {
 // fields mirror Claude Code's mcpServers spec, so entries can come from either
 // reasonix.toml's [[plugins]] or a project-root .mcp.json (see loadMCPJSON).
 type PluginEntry struct {
-	Name    string            `toml:"name"`
-	Type    string            `toml:"type"` // "stdio" (default) | "http" | "sse"
-	Command string            `toml:"command"`
-	Args    []string          `toml:"args"`
-	Env     map[string]string `toml:"env"`
-	URL     string            `toml:"url"`
-	Headers map[string]string `toml:"headers"`
+	Name      string            `toml:"name"`
+	Type      string            `toml:"type"` // "stdio" (default) | "http" | "sse"
+	Command   string            `toml:"command"`
+	Args      []string          `toml:"args"`
+	Env       map[string]string `toml:"env"`
+	URL       string            `toml:"url"`
+	Headers   map[string]string `toml:"headers"`
+	AutoStart *bool             `toml:"auto_start"`
+}
+
+// ShouldAutoStart returns whether a plugin should connect during session boot.
+// Omitted auto_start preserves the historical behavior: configured plugins start.
+func (e PluginEntry) ShouldAutoStart() bool {
+	return e.AutoStart == nil || *e.AutoStart
+}
+
+func (c *Config) AutoStartPlugins() []PluginEntry {
+	out := make([]PluginEntry, 0, len(c.Plugins))
+	for _, p := range c.Plugins {
+		if p.ShouldAutoStart() {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 // DefaultSystemPrompt is used when config provides none.

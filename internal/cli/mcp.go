@@ -163,6 +163,8 @@ func mcpCommand(args []string) int {
 		return mcpAddCLI(args[1:])
 	case "remove", "rm":
 		return mcpRemoveCLI(args[1:])
+	case "import":
+		return mcpImportCLI()
 	case "help", "-h", "--help":
 		mcpUsage()
 		return 0
@@ -171,6 +173,16 @@ func mcpCommand(args []string) int {
 		mcpUsage()
 		return 2
 	}
+}
+
+func mcpImportCLI() int {
+	total, added, updated, disabled, err := config.ImportCCSwitchMCP()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	fmt.Printf("imported %d MCP servers from cc-switch (%d added, %d updated, %d auto_start=false) — auto-start servers load on the next session\n", total, added, updated, disabled)
+	return 0
 }
 
 func mcpList() int {
@@ -197,11 +209,15 @@ func mcpList() int {
 		if typ == "" {
 			typ = "stdio"
 		}
+		auto := ""
+		if !p.ShouldAutoStart() {
+			auto = " [auto_start=false]"
+		}
 		if typ == "stdio" {
 			line := strings.TrimSpace(p.Command + " " + strings.Join(p.Args, " "))
-			fmt.Printf("%-16s (stdio)  %s\n", p.Name, line)
+			fmt.Printf("%-16s (stdio)%s  %s\n", p.Name, auto, line)
 		} else {
-			fmt.Printf("%-16s (%s)  %s\n", p.Name, typ, p.URL)
+			fmt.Printf("%-16s (%s)%s  %s\n", p.Name, typ, auto, p.URL)
 		}
 		listed++
 	}
@@ -265,6 +281,7 @@ Usage:
   reasonix mcp add <name> <command> [args...]        stdio server
   reasonix mcp add <name> --http <url> [--header K=V] remote (Streamable HTTP)
   reasonix mcp add <name> --sse  <url>               remote (legacy SSE)
+  reasonix mcp import                                import Codex-enabled servers from cc-switch
   reasonix mcp remove <name>
 
 Flags for add:
