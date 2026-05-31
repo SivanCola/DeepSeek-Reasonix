@@ -33,7 +33,14 @@ func normalizeAutoPlan(mode string) string {
 	}
 }
 
-func (c *Controller) shouldAutoPlan(input string) bool {
+func (c *Controller) maybeAutoPlan(ctx context.Context, input string) {
+	if c.shouldAutoPlan(ctx, input) {
+		c.SetPlanMode(true)
+		c.notice("auto plan: task looks multi-step; drafting a plan first")
+	}
+}
+
+func (c *Controller) shouldAutoPlan(ctx context.Context, input string) bool {
 	c.mu.Lock()
 	mode := c.autoPlan
 	plan := c.planMode
@@ -47,7 +54,7 @@ func (c *Controller) shouldAutoPlan(input string) bool {
 		return false
 	}
 	if classifier != nil && score <= 2 {
-		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 		defer cancel()
 		needsPlan, reason, err := classifier.NeedsPlan(ctx, input, score)
 		if err == nil {

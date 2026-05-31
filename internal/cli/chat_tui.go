@@ -453,9 +453,7 @@ func (m chatTUI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, finalize(m, cmds)
 			}
 
-			sent := m.ctrl.Compose(line)
-			m.planMode = m.ctrl.PlanMode()
-			cmds = append(cmds, m.startTurn(sent, line))
+			cmds = append(cmds, m.startTurn(line, line))
 			return m, finalize(m, cmds)
 		}
 
@@ -477,9 +475,7 @@ func (m chatTUI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case strings.TrimSpace(msg.sent) == "":
 			m.notice(i18n.M.SlashPromptEmpty)
 		default:
-			sent := m.ctrl.Compose(msg.sent)
-			m.planMode = m.ctrl.PlanMode()
-			cmds = append(cmds, m.startTurn(sent, msg.display))
+			cmds = append(cmds, m.startTurn(msg.sent, msg.display))
 		}
 
 	case refsResolvedMsg:
@@ -490,9 +486,7 @@ func (m chatTUI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.block != "" {
 			sent = "Referenced context:\n\n" + msg.block + "\n\n" + msg.line
 		}
-		sent = m.ctrl.Compose(sent)
-		m.planMode = m.ctrl.PlanMode()
-		cmds = append(cmds, m.startTurn(sent, msg.line))
+		cmds = append(cmds, m.startTurnWithRaw(sent, msg.line, msg.line))
 
 	case elapsedTickMsg:
 		if m.state == tuiRunning {
@@ -1036,9 +1030,14 @@ func (m *chatTUI) cycleMode() {
 }
 
 // startTurn commits the user bubble to scrollback, resets the turn accumulator,
-// and kicks off runner.Run. `sent` goes to the model (may carry a plan-mode
-// marker); `displayed` is what the transcript shows.
+// and kicks off runner.Run. `sent` is the model input before controller framing
+// (plan marker, memory, background-job notes); `displayed` is what the transcript
+// shows.
 func (m *chatTUI) startTurn(sent, displayed string) tea.Cmd {
+	return m.startTurnWithRaw(sent, displayed, sent)
+}
+
+func (m *chatTUI) startTurnWithRaw(sent, displayed, raw string) tea.Cmd {
 	// Flush any half-streamed leftover before the new turn (defensive).
 	m.commitReasoning()
 	m.commitPending()
@@ -1056,7 +1055,7 @@ func (m *chatTUI) startTurn(sent, displayed string) tea.Cmd {
 	m.turnTokens = 0
 	// The controller owns the run goroutine, its context, and cancellation; it
 	// streams events to eventCh and emits TurnDone when the turn settles.
-	m.ctrl.Send(sent)
+	m.ctrl.SendWithRaw(sent, raw)
 	return tea.Batch(m.spinner.Tick, elapsedTick())
 }
 
@@ -1282,13 +1281,9 @@ func (m *chatTUI) runSlashCommand(input string) tea.Cmd {
 	default:
 		// A custom command wins over a skill of the same name; both resolve to a turn.
 		if sent, ok := m.ctrl.CustomCommand(input); ok {
-			sent = m.ctrl.Compose(sent)
-			m.planMode = m.ctrl.PlanMode()
 			return m.startTurn(sent, input)
 		}
 		if sent, ok := m.ctrl.RunSkill(input); ok {
-			sent = m.ctrl.Compose(sent)
-			m.planMode = m.ctrl.PlanMode()
 			return m.startTurn(sent, input)
 		}
 		m.notice(fmt.Sprintf("%s: %s", i18n.M.SlashUnknown, cmd))

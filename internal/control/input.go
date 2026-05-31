@@ -22,11 +22,6 @@ func (c *Controller) Compose(text string) string {
 	c.pendingMemory = nil
 	c.mu.Unlock()
 
-	if !plan && c.shouldAutoPlan(text) {
-		c.SetPlanMode(true)
-		c.notice("auto plan: task looks multi-step; drafting a plan first")
-		plan = true
-	}
 	if plan {
 		text = PlanModeMarker + "\n\n" + text
 	}

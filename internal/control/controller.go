@@ -283,11 +283,19 @@ func (c *Controller) runGuarded(body func(ctx context.Context) error) {
 	}()
 }
 
-// Send starts a turn with an already-composed message (the caller applied any
-// plan-mode marker and @-ref expansion). Used by the chat TUI, which resolves
-// those itself for live UI feedback.
+// Send starts a turn with an uncomposed message. The controller applies
+// auto-plan, plan-mode, memory, and background-job framing inside the async turn
+// path so frontends do not block on classifier I/O.
 func (c *Controller) Send(input string) {
-	c.runGuarded(func(ctx context.Context) error { return c.runTurn(ctx, input) })
+	c.SendWithRaw(input, input)
+}
+
+// SendWithRaw starts a turn with separate model input and raw prompt text. The
+// raw prompt is used only for auto-plan scoring; it deliberately excludes
+// resolved @-reference payloads so referenced file contents cannot inflate the
+// complexity score.
+func (c *Controller) SendWithRaw(input, raw string) {
+	c.runGuarded(func(ctx context.Context) error { return c.runTurnWithRaw(ctx, input, raw) })
 }
 
 // planApprovalTool is the Tool name on the ApprovalRequest the controller emits
@@ -309,6 +317,12 @@ const planApprovedMessage = "Plan approved — plan mode is off; you're cleared 
 // next turn can revise. Plan mode is only ever set interactively, so the headless
 // `Run` path (which doesn't call this) never blocks on a prompt.
 func (c *Controller) runTurn(ctx context.Context, input string) error {
+	return c.runTurnWithRaw(ctx, input, input)
+}
+
+func (c *Controller) runTurnWithRaw(ctx context.Context, input, raw string) error {
+	c.maybeAutoPlan(ctx, raw)
+	input = c.Compose(input)
 	// Open a checkpoint for this turn before the user message is appended, so the
 	// recorded message boundary precedes it and pre-edit snapshots land here.
 	c.beginCheckpoint(input)
@@ -426,7 +440,7 @@ func (c *Controller) Submit(input string) {
 				c.notice("unknown command: " + trimmed)
 				return nil
 			}
-			return c.runTurn(ctx, c.Compose(sent))
+			return c.runTurnWithRaw(ctx, sent, sent)
 		})
 	case strings.HasPrefix(trimmed, "/"):
 		// Read-only management verbs (/model /memory /skill /hooks /mcp) emit a
@@ -439,13 +453,13 @@ func (c *Controller) Submit(input string) {
 		// turn. (Built-in slash verbs like /compact are handled above.)
 		if sent, ok := c.CustomCommand(trimmed); ok {
 			c.runGuarded(func(ctx context.Context) error {
-				return c.runTurn(ctx, c.Compose(sent))
+				return c.runTurnWithRaw(ctx, sent, sent)
 			})
 			return
 		}
 		if sent, ok := c.RunSkill(trimmed); ok {
 			c.runGuarded(func(ctx context.Context) error {
-				return c.runTurn(ctx, c.Compose(sent))
+				return c.runTurnWithRaw(ctx, sent, sent)
 			})
 			return
 		}
@@ -460,7 +474,7 @@ func (c *Controller) Submit(input string) {
 			if block != "" {
 				sent = "Referenced context:\n\n" + block + "\n\n" + input
 			}
-			return c.runTurn(ctx, c.Compose(sent))
+			return c.runTurnWithRaw(ctx, sent, input)
 		})
 	}
 }
