@@ -43,6 +43,15 @@ func TestRenderTOMLRoundTrips(t *testing.T) {
 	if got.Agent.Temperature != orig.Agent.Temperature {
 		t.Errorf("temperature = %v, want %v", got.Agent.Temperature, orig.Agent.Temperature)
 	}
+	if got.Agent.SoftCompactRatio != orig.Agent.SoftCompactRatio {
+		t.Errorf("soft_compact_ratio = %v, want %v", got.Agent.SoftCompactRatio, orig.Agent.SoftCompactRatio)
+	}
+	if got.Agent.CompactRatio != orig.Agent.CompactRatio {
+		t.Errorf("compact_ratio = %v, want %v", got.Agent.CompactRatio, orig.Agent.CompactRatio)
+	}
+	if got.Agent.CompactForceRatio != orig.Agent.CompactForceRatio {
+		t.Errorf("compact_force_ratio = %v, want %v", got.Agent.CompactForceRatio, orig.Agent.CompactForceRatio)
+	}
 	if got.Agent.SystemPrompt != orig.Agent.SystemPrompt {
 		t.Errorf("system_prompt mismatch:\n got %q\nwant %q", got.Agent.SystemPrompt, orig.Agent.SystemPrompt)
 	}
