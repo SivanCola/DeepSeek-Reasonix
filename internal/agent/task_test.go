@@ -457,11 +457,13 @@ func initGitRepo(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
 	runGit(t, dir, "init")
+	runGit(t, dir, "config", "user.name", "Reasonix Test")
+	runGit(t, dir, "config", "user.email", "test@example.com")
 	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("hello\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	runGit(t, dir, "add", "README.md")
-	runGit(t, dir, "-c", "user.name=Reasonix Test", "-c", "user.email=test@example.com", "commit", "-m", "init")
+	runGit(t, dir, "commit", "-m", "init")
 	return dir
 }
 
