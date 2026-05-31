@@ -174,8 +174,11 @@ sources are merged; on a name collision `reasonix.toml` wins.
 
 ### Slash commands
 
-In `reasonix chat`, built-in commands (`/compact`, `/new`, `/todo`, `/mcp`,
-`/memory`, `/help`) run locally. **Custom commands** are Markdown files under
+In `reasonix chat`, built-in commands (`/compact`, `/new`, `/rewind`, `/tree`,
+`/branch`, `/switch`, `/todo`, `/model`, `/mcp`, `/memory`, `/help`) run locally.
+`/tree` shows saved conversation branches, `/branch [name]` forks the current
+conversation tip, `/branch <turn> [name]` forks from an earlier checkpointed turn,
+and `/switch <id|name>` loads another branch. **Custom commands** are Markdown files under
 `.reasonix/commands/` (project) or `~/.config/reasonix/commands/` (user) —
 `review.md` becomes `/review`, a subdirectory namespaces it (`git/commit.md` →
 `/git:commit`). The body is a prompt template; invoking the command sends it as a
@@ -236,7 +239,7 @@ TOML config, an interactive `reasonix setup` wizard, two-model collaboration
 (executor + planner in separate, cache-stable sessions), low-frequency context
 compaction, sub-agents (`task`), a bubbletea chat TUI (markdown, plan mode with
 controller-driven approval, live token/activity readout, pinned task list,
-`ask` question chooser, `/compact` `/new` `/todo`), session persistence + resume,
+`ask` question chooser, `/compact` `/new` `/tree` `/branch` `/switch` `/todo`), session persistence + resume,
 per-call **permissions** (allow/ask/deny rules; chat prompts before writers, deny
 rules hard-block everywhere), a **workspace sandbox** confining file-writers to
 the project (symlink/`..`-safe), an MCP client — **stdio + Streamable HTTP**

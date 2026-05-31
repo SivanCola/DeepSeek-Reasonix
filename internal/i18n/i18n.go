@@ -87,6 +87,9 @@ type Messages struct {
 	CmdNew          string // /new
 	CmdCompact      string // /compact
 	CmdRewind       string // /rewind
+	CmdTree         string // /tree
+	CmdBranch       string // /branch
+	CmdSwitchBranch string // /switch
 	CmdModel        string // /model
 	CmdMemory       string // /memory
 	CmdMcp          string // /mcp

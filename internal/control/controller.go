@@ -426,6 +426,20 @@ func (c *Controller) Submit(input string) {
 		// Read-only management verbs (/model /memory /skill /hooks /mcp) emit a
 		// listing Notice, so Submit-based frontends (desktop, HTTP) get them with
 		// no extra wiring. (The chat TUI handles these itself with richer output.)
+		fields := strings.Fields(trimmed)
+		switch fields[0] {
+		case "/tree":
+			c.notice(c.BranchTreeText())
+			return
+		case "/branch":
+			name := strings.TrimSpace(strings.TrimPrefix(trimmed, fields[0]))
+			_, _ = c.Branch(name)
+			return
+		case "/switch":
+			ref := strings.TrimSpace(strings.TrimPrefix(trimmed, fields[0]))
+			_, _ = c.SwitchBranch(ref)
+			return
+		}
 		if c.managementNotice(trimmed) {
 			return
 		}
@@ -679,6 +693,10 @@ func (c *Controller) Rewind(turn int, scope RewindScope) error {
 // the live boundary, so it is unavailable for resumed-session turns and refused
 // while a turn runs. Returns the new session path.
 func (c *Controller) Fork(turn int) (string, error) {
+	return c.ForkNamed(turn, "")
+}
+
+func (c *Controller) ForkNamed(turn int, name string) (string, error) {
 	if c.executor == nil {
 		return "", c.rewindFail(fmt.Errorf("checkpoints unavailable"))
 	}
@@ -699,6 +717,8 @@ func (c *Controller) Fork(turn int) (string, error) {
 	// Persist the current conversation first so the branch point survives, then
 	// seed a fresh session with the messages up to the fork and switch to it.
 	_ = c.Snapshot()
+	parentPath := c.SessionPath()
+	parentID := agent.BranchID(parentPath)
 	src := c.executor.Session().Messages
 	if boundary > len(src) {
 		boundary = len(src)
@@ -708,15 +728,153 @@ func (c *Controller) Fork(turn int) (string, error) {
 	sess.Messages = forked
 
 	newPath := agent.NewSessionPath(c.sessionDir, c.label)
+	if err := sess.Save(newPath); err != nil {
+		return "", c.rewindFail(err)
+	}
+	if err := agent.SaveBranchMeta(newPath, agent.BranchMeta{
+		Name:             strings.TrimSpace(name),
+		ParentID:         parentID,
+		ForkTurn:         turn,
+		ForkMessageIndex: boundary,
+	}); err != nil {
+		return "", c.rewindFail(err)
+	}
 	c.executor.SetSession(sess)
 	c.mu.Lock()
 	c.sessionPath = newPath
 	c.mu.Unlock()
 	c.rebindCheckpoints(newPath)
-	_ = c.Snapshot()
 	c.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo,
 		Text: fmt.Sprintf("forked conversation at turn %d into a new session", turn)})
 	return newPath, nil
+}
+
+// Branch copies the current conversation into a child branch and switches to it.
+// Unlike Fork, it branches at the current tip and does not require a checkpoint.
+func (c *Controller) Branch(name string) (string, error) {
+	if c.executor == nil {
+		return "", c.rewindFail(fmt.Errorf("branch unavailable"))
+	}
+	if c.sessionDir == "" {
+		return "", c.rewindFail(fmt.Errorf("branch needs session persistence, which is disabled"))
+	}
+	c.mu.Lock()
+	running := c.running
+	c.mu.Unlock()
+	if running {
+		return "", c.rewindFail(fmt.Errorf("cannot branch while a turn is running"))
+	}
+	if !c.executor.Session().HasContent() {
+		return "", c.rewindFail(fmt.Errorf("nothing to branch yet"))
+	}
+	if err := c.Snapshot(); err != nil {
+		return "", c.rewindFail(err)
+	}
+	parentPath := c.SessionPath()
+	parentID := agent.BranchID(parentPath)
+	src := c.executor.Session().Messages
+	branched := append([]provider.Message(nil), src...)
+	sess := agent.NewSession("")
+	sess.Messages = branched
+
+	newPath := agent.NewSessionPath(c.sessionDir, c.label)
+	if err := sess.Save(newPath); err != nil {
+		return "", c.rewindFail(err)
+	}
+	if err := agent.SaveBranchMeta(newPath, agent.BranchMeta{
+		Name:             strings.TrimSpace(name),
+		ParentID:         parentID,
+		ForkTurn:         -1,
+		ForkMessageIndex: len(branched),
+	}); err != nil {
+		return "", c.rewindFail(err)
+	}
+	c.executor.SetSession(sess)
+	c.mu.Lock()
+	c.sessionPath = newPath
+	c.mu.Unlock()
+	c.rebindCheckpoints(newPath)
+	c.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo,
+		Text: fmt.Sprintf("created branch %s", agent.BranchID(newPath))})
+	return newPath, nil
+}
+
+// Branches lists saved conversation branches in this controller's session dir.
+func (c *Controller) Branches() ([]agent.BranchInfo, error) {
+	if c.sessionDir == "" {
+		return nil, fmt.Errorf("session persistence is disabled")
+	}
+	if err := c.Snapshot(); err != nil {
+		return nil, err
+	}
+	return agent.ListBranches(c.sessionDir)
+}
+
+func (c *Controller) SwitchBranch(ref string) (agent.BranchInfo, error) {
+	ref = strings.TrimSpace(ref)
+	if ref == "" {
+		return agent.BranchInfo{}, c.rewindFail(fmt.Errorf("usage: /switch <branch id|name>"))
+	}
+	c.mu.Lock()
+	running := c.running
+	c.mu.Unlock()
+	if running {
+		return agent.BranchInfo{}, c.rewindFail(fmt.Errorf("cannot switch branches while a turn is running"))
+	}
+	branches, err := c.Branches()
+	if err != nil {
+		return agent.BranchInfo{}, c.rewindFail(err)
+	}
+	match, err := resolveBranch(branches, ref)
+	if err != nil {
+		return agent.BranchInfo{}, c.rewindFail(err)
+	}
+	loaded, err := agent.LoadSession(match.Path)
+	if err != nil {
+		return agent.BranchInfo{}, c.rewindFail(err)
+	}
+	if c.executor != nil {
+		c.executor.SetSession(loaded)
+	}
+	c.mu.Lock()
+	c.sessionPath = match.Path
+	c.mu.Unlock()
+	c.rebindCheckpoints(match.Path)
+	c.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo,
+		Text: fmt.Sprintf("switched to branch %s", branchDisplayName(match))})
+	return match, nil
+}
+
+func resolveBranch(branches []agent.BranchInfo, ref string) (agent.BranchInfo, error) {
+	refLower := strings.ToLower(ref)
+	var matches []agent.BranchInfo
+	for _, b := range branches {
+		nameLower := strings.ToLower(strings.TrimSpace(b.Name))
+		switch {
+		case b.ID == ref || strings.EqualFold(b.ID, ref):
+			return b, nil
+		case b.Name != "" && nameLower == refLower:
+			matches = append(matches, b)
+		case strings.HasPrefix(strings.ToLower(b.ID), refLower):
+			matches = append(matches, b)
+		case b.Path == ref:
+			return b, nil
+		}
+	}
+	if len(matches) == 1 {
+		return matches[0], nil
+	}
+	if len(matches) > 1 {
+		return agent.BranchInfo{}, fmt.Errorf("branch %q is ambiguous", ref)
+	}
+	return agent.BranchInfo{}, fmt.Errorf("branch %q not found", ref)
+}
+
+func branchDisplayName(b agent.BranchInfo) string {
+	if strings.TrimSpace(b.Name) != "" {
+		return fmt.Sprintf("%s (%s)", b.Name, b.ID)
+	}
+	return b.ID
 }
 
 // SummarizeFrom compresses the conversation from turn onward into one summary;
@@ -793,7 +951,10 @@ func (c *Controller) Snapshot() error {
 	if !s.HasContent() {
 		return nil
 	}
-	return s.Save(path)
+	if err := s.Save(path); err != nil {
+		return err
+	}
+	return agent.TouchBranchMeta(path)
 }
 
 // SetSessionPath pins where auto-save lands (a fresh session file minted by the

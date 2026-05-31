@@ -1258,6 +1258,12 @@ func (m *chatTUI) runSlashCommand(input string) tea.Cmd {
 		m.notice(i18n.M.SlashTodoCleared)
 	case "/rewind":
 		m.openRewind()
+	case "/tree":
+		m.showBranchTree()
+	case "/branch":
+		m.runBranchCommand(input)
+	case "/switch":
+		m.runSwitchCommand(input)
 	case "/mcp":
 		m.runMCPSubcommand(input)
 	case "/model":
