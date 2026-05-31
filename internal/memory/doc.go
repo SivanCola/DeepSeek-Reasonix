@@ -33,13 +33,23 @@ const (
 )
 
 // docNames are the recognized memory filenames at each level, in load order.
-// REASONIX.md is canonical; AGENTS.md is the cross-tool fallback. When both
-// exist in one directory, both load (each labeled with its source path), so a
-// repo already carrying an AGENTS.md is picked up without renaming.
-var docNames = []string{"REASONIX.md", "AGENTS.md"}
+// REASONIX.md is ours; AGENTS.md and CLAUDE.md are the cross-tool conventions.
+// When several exist in one directory, all load (each labeled with its source
+// path), so a repo already carrying an AGENTS.md / CLAUDE.md is picked up without
+// renaming. New docs are created as AGENTS.md (the universal convention) — see
+// defaultDocName / Set.DocPath.
+var docNames = []string{"REASONIX.md", "AGENTS.md", "CLAUDE.md"}
 
 // localNames are the personal, git-ignored overrides, highest precedence.
-var localNames = []string{"REASONIX.local.md", "AGENTS.local.md"}
+var localNames = []string{"REASONIX.local.md", "AGENTS.local.md", "CLAUDE.local.md"}
+
+// defaultDocName / defaultLocalName are the filenames a fresh doc is created as
+// when a directory has none yet: AGENTS.md is the widely-shared convention, so a
+// new project's memory is portable to other agent tools out of the box.
+const (
+	defaultDocName   = "AGENTS.md"
+	defaultLocalName = "AGENTS.local.md"
+)
 
 // maxImportDepth bounds "@path" import recursion (matches Claude Code's limit).
 const maxImportDepth = 5

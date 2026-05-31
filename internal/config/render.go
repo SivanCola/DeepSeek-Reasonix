@@ -7,7 +7,7 @@ import (
 	"strings"
 )
 
-// RenderTOML renders the config as annotated TOML in the `reasonix init` house style:
+// RenderTOML renders the config as annotated TOML in the `reasonix setup` house style:
 // comments preserved, system_prompt as a multi-line string, helpful hints. The
 // output round-trips back through Load (see render_test.go).
 func RenderTOML(c *Config) string {
@@ -184,7 +184,7 @@ func renderStringMap(m map[string]string) string {
 }
 
 // renderRuleList emits a permission rule list. A populated list renders as an
-// active TOML array; an empty one renders as a commented example so `reasonix init`
+// active TOML array; an empty one renders as a commented example so `reasonix setup`
 // scaffolds discoverable guidance without imposing surprising rules.
 func renderRuleList(key string, rules []string, example string) string {
 	if len(rules) == 0 {

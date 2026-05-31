@@ -25,6 +25,43 @@ type Config struct {
 	Permissions  PermissionsConfig `toml:"permissions"`
 	Sandbox      SandboxConfig     `toml:"sandbox"`
 	Plugins      []PluginEntry     `toml:"plugins"`
+	Skills       SkillsConfig      `toml:"skills"`
+	Codegraph    CodegraphConfig   `toml:"codegraph"`
+}
+
+// CodegraphConfig governs the built-in CodeGraph MCP server — symbol/call-graph
+// code intelligence (tree-sitter + SQLite) that gives the agent codegraph_*
+// search / context / explore / trace / node tools. Enabled defaults to true; set
+// enabled = false to drop those tools and fall back to grep/glob. AutoInstall
+// (default true) lets reasonix fetch the CodeGraph runtime into its cache on first
+// use; set false to require an explicit `reasonix codegraph install` (e.g. for
+// air-gapped or headless runs). Path overrides binary resolution; empty resolves
+// the cache, then a `codegraph` on PATH, then a bundle beside the executable.
+type CodegraphConfig struct {
+	Enabled     bool   `toml:"enabled"`
+	AutoInstall bool   `toml:"auto_install"`
+	Path        string `toml:"path"`
+}
+
+// SkillsConfig configures skill discovery. Paths adds extra "custom"-scope skill
+// roots — each a directory of SKILL.md / <name>.md playbooks — scanned between
+// the project roots (.reasonix/.agents/.claude under the workspace) and the
+// global roots (the same three under the home dir). ~ and relative paths and
+// ${VAR} expansion are supported.
+type SkillsConfig struct {
+	Paths []string `toml:"paths"`
+}
+
+// SkillCustomPaths returns the configured custom skill roots with ${VAR}
+// expanded; empty entries are dropped.
+func (c *Config) SkillCustomPaths() []string {
+	var out []string
+	for _, p := range c.Skills.Paths {
+		if p = ExpandVars(p); strings.TrimSpace(p) != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 // SandboxConfig bounds the blast radius of tool calls (Phase 0: file-writer
@@ -191,6 +228,16 @@ In plan mode the harness blocks writer tools: do read-only research, then write 
 concise plan as your reply and stop. The user is asked to approve before anything
 is changed; once approved, work through the steps, updating the task list as you go.`
 
+// LanguagePolicy is appended to every system prompt (in boot assembly) so the
+// model mirrors the user's language per message instead of the harness pinning
+// one — the UI `language` setting governs only the interface, never the model.
+// It is static English text, so it stays part of the cache-stable prefix and
+// keeps model behaviour language-stable while still adapting the reply language.
+const LanguagePolicy = `Reply in the same language the user is using in their most recent message: ` +
+	`if they write in Chinese answer in Chinese, in English answer in English, and switch ` +
+	`whenever they switch. Let this also guide the language you think in. Always keep code, ` +
+	`identifiers, file paths, shell commands, and technical terms in their original form — never translate them.`
+
 // Default returns the built-in default configuration (DeepSeek + MiMo presets).
 func Default() *Config {
 	return &Config{
@@ -212,6 +259,11 @@ func Default() *Config {
 		// so an absent [sandbox] in a user's file keeps egress (zero value would
 		// wrongly deny it).
 		Sandbox: SandboxConfig{Bash: "enforce", Network: true},
+		// CodeGraph code-intelligence on by default: when it resolves it is injected
+		// as a built-in MCP server, and AutoInstall fetches it into the cache on
+		// first use. Set enabled = false to opt out, or auto_install = false to
+		// require an explicit `reasonix codegraph install`.
+		Codegraph: CodegraphConfig{Enabled: true, AutoInstall: true},
 		Providers: []ProviderEntry{
 			{Name: "deepseek-flash", Kind: "openai", BaseURL: "https://api.deepseek.com", Model: "deepseek-v4-flash", APIKeyEnv: "DEEPSEEK_API_KEY", BalanceURL: "https://api.deepseek.com/user/balance", ContextWindow: 1_000_000, Price: &provider.Pricing{CacheHit: 0.02, Input: 1, Output: 2, Currency: "¥"}},
 			{Name: "deepseek-pro", Kind: "openai", BaseURL: "https://api.deepseek.com", Model: "deepseek-v4-pro", APIKeyEnv: "DEEPSEEK_API_KEY", BalanceURL: "https://api.deepseek.com/user/balance", ContextWindow: 1_000_000, Price: &provider.Pricing{CacheHit: 0.025, Input: 3, Output: 6, Currency: "¥"}},
@@ -247,7 +299,7 @@ func Load() (*Config, error) {
 	return cfg, nil
 }
 
-// LoadForEdit returns a config to seed the `reasonix init` wizard when reconfiguring:
+// LoadForEdit returns a config to seed the `reasonix setup` wizard when reconfiguring:
 // the built-in defaults with the file at path (if present) decoded on top, so a
 // reconfigure preserves the user's existing providers and agent settings instead
 // of resetting to defaults. .env is loaded so api_key_env resolution works while
@@ -311,15 +363,42 @@ func MemoryUserDir() string {
 	return filepath.Join(dir, "reasonix")
 }
 
+// ConventionDirs are the parent directories scanned for agent assets (skills,
+// commands), in canonical-first order. .reasonix is ours; .agents / .agent /
+// .claude let users drop in assets authored for other agent tools without moving
+// files. Shared so skills (internal/skill) and commands (CommandDirs) discover
+// the same set. Note: hooks are NOT scanned across these — a .claude/settings.json
+// uses a different hook schema that can't be parsed as ours, so hooks stay in
+// .reasonix/settings.json (see internal/hook).
+var ConventionDirs = []string{".reasonix", ".agents", ".agent", ".claude"}
+
+// conventionSubdirsAsc joins sub under each ConventionDir of base, in ascending
+// priority (reverse of ConventionDirs) so the canonical .reasonix ends up the
+// highest-priority entry — command.Load lets a later directory win on a clash.
+func conventionSubdirsAsc(base, sub string) []string {
+	out := make([]string, 0, len(ConventionDirs))
+	for i := len(ConventionDirs) - 1; i >= 0; i-- {
+		out = append(out, filepath.Join(base, ConventionDirs[i], sub))
+	}
+	return out
+}
+
 // CommandDirs returns the directories scanned for custom slash commands, lowest
-// priority first: the user dir (~/.config/reasonix/commands) then the project dir
-// (.reasonix/commands), so a project command overrides a user one with the same name.
+// priority first, so a later (more specific) directory overrides an earlier one
+// on a name clash. Order: home-dir convention dirs (~/.claude/commands … ~/.reasonix/commands),
+// the legacy XDG user dir (~/.config/reasonix/commands), then the project's
+// convention dirs (.claude/commands … .reasonix/commands). Scanning the .claude /
+// .agents / .agent dirs lets commands authored for other agent tools (same .md +
+// frontmatter format) work here unchanged.
 func CommandDirs() []string {
 	var dirs []string
-	if dir, err := os.UserConfigDir(); err == nil {
-		dirs = append(dirs, filepath.Join(dir, "reasonix", "commands"))
+	if home, err := os.UserHomeDir(); err == nil {
+		dirs = append(dirs, conventionSubdirsAsc(home, "commands")...)
 	}
-	dirs = append(dirs, filepath.Join(".reasonix", "commands"))
+	if dir, err := os.UserConfigDir(); err == nil {
+		dirs = append(dirs, filepath.Join(dir, "reasonix", "commands")) // legacy XDG user dir
+	}
+	dirs = append(dirs, conventionSubdirsAsc(".", "commands")...)
 	return dirs
 }
 

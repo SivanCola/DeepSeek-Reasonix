@@ -18,10 +18,12 @@ var Chinese = Messages{
 	GetStarted:      "开始使用",
 	StepScaffold:    "生成 reasonix.toml",
 	StepSetKey:      "设置 API key",
-	StepSetKeyHint:  "执行 export DEEPSEEK_API_KEY=… 或写入 .env",
-	StepChatDesc:    "交互式会话",
-	StepRunDesc:     "执行单次任务",
-	HelpFooter:      "reasonix help · 查看全部命令",
+
+	InitHint:       "项目记忆（AGENTS.md）在会话内由模型生成：运行 `reasonix chat`，然后 `/init` —— 模型会分析代码库并写入。配置请用 `reasonix setup`。",
+	StepSetKeyHint: "执行 export DEEPSEEK_API_KEY=… 或写入 .env",
+	StepChatDesc:   "交互式会话",
+	StepRunDesc:    "执行单次任务",
+	HelpFooter:     "reasonix help · 查看全部命令",
 
 	ChatTip:           "对话上下文将跨轮保留。输入 'exit' 或按 Ctrl-D 退出。",
 	TurnCancelled:     "已取消 — 回到提示符",
@@ -47,11 +49,44 @@ var Chinese = Messages{
 	SlashUnavailable:   "当前构建不支持该命令",
 	SlashUnknown:       "未知命令",
 	SlashTodoCleared:   "已清除任务清单",
-	SlashHelp:          "命令：/compact（手动压缩上下文）· /new（开新会话）· /todo（清除任务清单）· /mcp（MCP 服务器）· /memory · /help",
+	SlashHelp:          "命令：/compact · /new · /todo · /model（切换模型）· /mcp · /skill · /hooks · /memory · /help · 以及 skills（/init、/explore …）",
 	SlashPromptEmpty:   "该 MCP prompt 没有返回可发送的内容",
 	SlashMCPNone:       "没有配置 MCP 服务器 — 在 reasonix.toml 加一个 [[plugins]] 条目",
 	CompHintSlash:      "↑/↓ 移动 · Tab/Enter 选中 · Esc 关闭",
 	CompHintFile:       "↑/↓ 移动 · Tab/Enter 进入文件夹或选中文件 · Esc 关闭",
+
+	CmdNew:          "开启新会话",
+	CmdCompact:      "压缩上下文",
+	CmdRewind:       "回滚到更早的一轮",
+	CmdModel:        "切换模型",
+	CmdMemory:       "查看记忆文件",
+	CmdMcp:          "MCP 服务器",
+	CmdHooks:        "管理 hooks",
+	CmdSkill:        "管理 skills",
+	CmdHelp:         "查看命令列表",
+	CmdTodo:         "清除任务清单",
+	ArgSkillList:    "列出 skills",
+	ArgSkillShow:    "查看 skill 内容",
+	ArgSkillNew:     "新建一个 skill",
+	ArgSkillPaths:   "显示发现路径",
+	ArgMcpAdd:       "连接一个服务器",
+	ArgMcpRemove:    "断开一个服务器",
+	ArgMcpList:      "显示已配置的服务器",
+	ArgMcpConnected: "已连接",
+	ArgHooksList:    "列出生效的 hooks",
+	ArgHooksTrust:   "信任本项目的 hooks",
+	ArgModelCurrent: "当前",
+
+	ListModelsHeaderFmt: "模型（当前：%s）",
+	ListModelsHint:      "用底部的模型切换器，或输入 /model <provider/model>",
+	ListMemoryHeader:    "记忆文件",
+	ListMemoryNone:      "暂无记忆 — 用 “#<内容>” 添加，或运行 /init 生成 AGENTS.md",
+	ListSkillsHeaderFmt: "skills（%d 个）",
+	ListSkillsNone:      "暂无 skill — 调用内置的（如 /init），或用 install_skill 创建一个",
+	ListHooksHeaderFmt:  "hooks（生效 %d 个）",
+	ListHooksNone:       "无生效 hooks — 在 .reasonix/settings.json（项目，需信任后）或 ~/.reasonix/settings.json（全局）配置",
+	ListMcpHeader:       "MCP 服务器",
+	ListMcpNone:         "未连接 MCP 服务器 — 在 reasonix.toml（[[plugins]]）或项目 .mcp.json 中添加",
 
 	SelectProvidersLabel:  "选择要启用的 provider",
 	EnterAPIKeysHeader:    "输入 API key（回车跳过、稍后写入 .env）：",
@@ -80,7 +115,7 @@ var Chinese = Messages{
   reasonix chat [--model NAME]                          交互式会话（多轮）
   reasonix run  [--model NAME] [--max-steps N] <task>   执行单次任务后退出
   reasonix serve [--model NAME] [--addr HOST:PORT]      通过 HTTP+SSE 提供会话（浏览器客户端在 /）
-  reasonix init [path]                                  交互式设置；生成 reasonix.toml（及 .env）
+  reasonix setup [path]                                 交互式配置向导；生成 reasonix.toml（及 .env）
   reasonix mcp <add|remove|list>                        管理 reasonix.toml 里的 MCP 服务器
   reasonix version
   reasonix help
@@ -94,6 +129,6 @@ var Chinese = Messages{
 配置：
   优先级：flag > ./reasonix.toml > ~/.config/reasonix/config.toml > 内置默认值
   密钥通过 api_key_env 从环境变量注入（如 DEEPSEEK_API_KEY）。
-  运行 'reasonix init' 生成配置；详见 docs/SPEC.md。
+  运行 'reasonix setup' 生成配置；详见 docs/SPEC.md。
 `,
 }

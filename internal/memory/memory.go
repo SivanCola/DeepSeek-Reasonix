@@ -2,6 +2,7 @@ package memory
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 )
@@ -45,22 +46,31 @@ func Load(opts Options) *Set {
 	}
 }
 
-// DocPath returns the doc-memory file a given scope writes to: ScopeUser →
-// <userDir>/REASONIX.md, ScopeLocal → <cwd>/REASONIX.local.md, anything else →
-// <cwd>/REASONIX.md (the shared, committed project file). Returns "" for
-// ScopeUser when no user dir is configured.
+// DocPath returns the doc-memory file a given scope writes to. To avoid splitting
+// a project's memory across conventions, it prefers a file that already exists
+// (REASONIX.md / AGENTS.md / CLAUDE.md, in that order); when none exists it
+// creates the universal default (AGENTS.md / AGENTS.local.md). ScopeUser →
+// <userDir>, ScopeLocal → <cwd> with the *.local.md names, anything else → <cwd>.
+// Returns "" for ScopeUser when no user dir is configured.
 func (s *Set) DocPath(scope Scope) string {
+	dir := s.CWD
+	names, def := docNames, defaultDocName
 	switch scope {
 	case ScopeUser:
 		if s.UserDir == "" {
 			return ""
 		}
-		return filepath.Join(s.UserDir, "REASONIX.md")
+		dir = s.UserDir
 	case ScopeLocal:
-		return filepath.Join(s.CWD, "REASONIX.local.md")
-	default:
-		return filepath.Join(s.CWD, "REASONIX.md")
+		names, def = localNames, defaultLocalName
 	}
+	for _, n := range names {
+		p := filepath.Join(dir, n)
+		if _, err := os.Stat(p); err == nil {
+			return p // append to the doc already in use
+		}
+	}
+	return filepath.Join(dir, def)
 }
 
 // Empty reports whether the set carries nothing to inject, so Compose can leave

@@ -15,15 +15,19 @@ import (
 	"strings"
 
 	"reasonix/internal/agent"
+	"reasonix/internal/codegraph"
 	"reasonix/internal/command"
 	"reasonix/internal/config"
 	"reasonix/internal/control"
 	"reasonix/internal/event"
+	"reasonix/internal/hook"
+	"reasonix/internal/jobs"
 	"reasonix/internal/memory"
 	"reasonix/internal/permission"
 	"reasonix/internal/plugin"
 	"reasonix/internal/provider"
 	"reasonix/internal/sandbox"
+	"reasonix/internal/skill"
 	"reasonix/internal/tool"
 	"reasonix/internal/tool/builtin"
 )
@@ -64,6 +68,13 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		}
 	}
 
+	// Serialize the frontend's sink once: background jobs (below) emit from their
+	// own goroutines, which can overlap a running turn's emission, so every emitter
+	// shares this synchronized sink. The job manager is session-scoped — its jobs
+	// outlive a turn and are cancelled by Controller.Close.
+	sink := event.Sync(opts.Sink)
+	jm := jobs.NewManager(sink)
+
 	execProv, err := NewProvider(entry)
 	if err != nil {
 		return nil, err
@@ -73,6 +84,10 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Append the language policy so the model answers in the user's own language
+	// (the UI `language` setting governs only the interface). Static text, so it
+	// stays in the cache-stable prefix and costs nothing per turn.
+	sysPrompt += "\n\n" + config.LanguagePolicy
 
 	// Persistent memory (REASONIX.md / AGENTS.md hierarchy + auto-memory index)
 	// folds into the system prompt exactly here, once: it becomes part of the
@@ -81,6 +96,15 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	// controller's transient turn-injection and fold in on the next session.
 	mem := memory.Load(memory.Options{CWD: ".", UserDir: config.MemoryUserDir()})
 	sysPrompt = memory.Compose(sysPrompt, mem)
+
+	// Skills: discover playbooks (built-in + project/custom/global) and fold their
+	// one-liner index into the same cache-stable prefix — names + descriptions
+	// only; bodies load on demand via run_skill or "/<name>". Bodies never enter
+	// the prefix, so the index costs a fixed, small amount per turn.
+	cwd, _ := os.Getwd()
+	skillStore := skill.New(skill.Options{ProjectRoot: cwd, CustomPaths: cfg.SkillCustomPaths()})
+	skills := skillStore.List()
+	sysPrompt = skill.ApplyIndex(sysPrompt, skills)
 
 	reg := tool.NewRegistry()
 	bashSpec := sandbox.Spec{Mode: cfg.BashMode(), WriteRoots: cfg.WriteRoots(), Network: cfg.Sandbox.Network}
@@ -91,8 +115,41 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	// Always construct a host, even with no plugins configured, so the controller's
 	// host pointer is stable for the session and `/mcp add` can hot-add into it.
 	pluginHost := plugin.NewHost()
-	if len(cfg.Plugins) > 0 {
-		host, ptools, err := plugin.StartAll(ctx, PluginSpecs(cfg.Plugins))
+	specs := PluginSpecs(cfg.Plugins)
+	// CodeGraph is a built-in MCP server fetched on first use. When it resolves,
+	// inject it as one more stdio plugin pinned to the project root (it is
+	// cwd-aware); EnsureInit only creates .codegraph/ (fast, size-independent),
+	// serve's daemon then indexes in the background, so startup never blocks even
+	// on a large repo. When it is not yet installed, fetch it in the background
+	// (one-time, ~45MB) if auto_install is on — startup still never blocks, the
+	// tools come online next session — otherwise point the user at the explicit
+	// install command. A failed init or fetch is a notice, not fatal.
+	if cfg.Codegraph.Enabled {
+		bin, ok := codegraph.Resolve(cfg.Codegraph.Path)
+		switch {
+		case ok:
+			if err := codegraph.EnsureInit(ctx, bin, cwd); err != nil {
+				sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelWarn,
+					Text: "codegraph: init failed (" + err.Error() + ") — symbol-graph tools disabled this session"})
+			}
+			specs = append(specs, plugin.Spec{Name: "codegraph", Command: bin, Args: []string{"serve", "--mcp"}, Dir: cwd})
+		case cfg.Codegraph.AutoInstall:
+			notify := func(msg string) { sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo, Text: msg}) }
+			notify("codegraph: fetching code-intelligence runtime in the background (one-time) — symbol-graph tools available next session")
+			go func() {
+				if _, err := codegraph.Install(ctx, nil); err != nil {
+					notify("codegraph: install failed (" + err.Error() + ") — using grep/glob; retries next session")
+				} else {
+					notify("codegraph: installed — symbol-graph tools available next session")
+				}
+			}()
+		default:
+			sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo,
+				Text: "codegraph: not installed — run `reasonix codegraph install` to enable symbol-graph tools"})
+		}
+	}
+	if len(specs) > 0 {
+		host, ptools, err := plugin.StartAll(ctx, specs)
 		if err != nil {
 			return nil, fmt.Errorf("plugin: %w", err)
 		}
@@ -117,6 +174,22 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	policy := permission.New(cfg.Permissions.Mode, cfg.Permissions.Allow, cfg.Permissions.Ask, cfg.Permissions.Deny)
 	headlessGate := permission.NewGate(policy, nil)
 
+	// Hooks: load the global settings.json plus the project's (only when trusted —
+	// project hooks run arbitrary shell commands, so cloning a repo must not
+	// silently execute them). Non-blocking hook output is surfaced to the user as
+	// a Notice through the shared sink. The runner fires PreToolUse/PostToolUse in
+	// the agent loop and UserPromptSubmit/Stop at the controller's turn boundary.
+	hooksTrusted := hook.IsTrusted(cwd, "")
+	hookRunner := hook.NewRunner(
+		hook.Load(hook.LoadOptions{ProjectRoot: cwd, Trusted: hooksTrusted}),
+		cwd, nil,
+		func(msg string) { sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelWarn, Text: msg}) },
+	)
+	if hook.ProjectDefinesHooks(cwd) && !hooksTrusted {
+		sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo,
+			Text: "this project defines hooks but they are not trusted — run /hooks trust to enable them"})
+	}
+
 	// The `task` tool spawns sub-agents that reuse the parent's provider and
 	// tool registry. Wired here after the built-ins / plugins are loaded so
 	// sub-agents inherit the full tool set (minus `task` itself, to keep
@@ -135,15 +208,55 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	// has none, so ask resolves to "decide for yourself".
 	reg.Add(agent.NewAskTool())
 
+	// Skill tools: run_skill / install_skill plus the dedicated subagent wrappers
+	// (explore / research / review / security_review). A subagent skill reuses the
+	// sub-agent machinery via this runner — an isolated loop with the skill body
+	// as system prompt, a tool set scoped to the skill's allowed-tools (minus the
+	// task/skill meta-tools, to bar recursion), and an optional per-skill model.
+	// Its tool activity nests under the invoking call, like `task`.
+	skillRunner := func(sctx context.Context, sk skill.Skill, task string) (string, error) {
+		prov, price, ctxWin := execProv, entry.Price, entry.ContextWindow
+		if sk.Model != "" {
+			if me, ok := cfg.ResolveModel(sk.Model); ok {
+				if p, err := NewProvider(me); err == nil {
+					prov, price, ctxWin = p, me.Price, me.ContextWindow
+				}
+			}
+		}
+		subReg := agent.FilterRegistry(reg, sk.AllowedTools,
+			"task", "run_skill", "install_skill", "explore", "research", "review", "security_review")
+		steps := maxSteps
+		if steps > 0 {
+			if steps /= 2; steps < 5 {
+				steps = 5
+			}
+		}
+		return agent.RunSubAgent(sctx, prov, subReg, sk.Body, task, agent.Options{
+			MaxSteps:      steps,
+			Temperature:   cfg.Agent.Temperature,
+			Pricing:       price,
+			Gate:          headlessGate,
+			ContextWindow: ctxWin,
+			ArchiveDir:    config.ArchiveDir(),
+		}, agent.NestedSink(sctx, event.Discard))
+	}
+	reg.Add(skill.NewRunSkillTool(skillStore, skillRunner))
+	reg.Add(skill.NewInstallSkillTool(skillStore, nil))
+	for _, t := range skill.BuiltinSubagentTools(skillStore, skillRunner) {
+		reg.Add(t)
+	}
+
 	execSess := agent.NewSession(sysPrompt)
 	executor := agent.New(execProv, reg, execSess, agent.Options{
 		MaxSteps:      maxSteps,
 		Temperature:   cfg.Agent.Temperature,
 		Pricing:       entry.Price,
 		Gate:          headlessGate,
+		Hooks:         hookRunner,
+		Jobs:          jm,
 		ContextWindow: entry.ContextWindow,
 		ArchiveDir:    config.ArchiveDir(),
-	}, opts.Sink)
+	}, sink)
 
 	// Custom slash commands (.reasonix/commands + user dir). Best-effort: a malformed
 	// file is skipped, and a load error never blocks the session.
@@ -165,27 +278,31 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 				return nil, fmt.Errorf("planner %q: %w", pm, err)
 			}
 			plannerSess := agent.NewSession(agent.DefaultPlannerPrompt)
-			runner = agent.NewCoordinator(plannerProv, plannerSess, pe.Price, executor, cfg.Agent.Temperature, opts.Sink)
+			runner = agent.NewCoordinator(plannerProv, plannerSess, pe.Price, executor, cfg.Agent.Temperature, sink)
 			label = entry.Model + " + planner " + pe.Model
 		}
 	}
 
 	return control.New(control.Options{
-		Runner:       runner,
-		Executor:     executor,
-		Sink:         opts.Sink,
-		Policy:       policy,
-		Label:        label,
-		SystemPrompt: sysPrompt,
-		SessionDir:   config.SessionDir(),
-		Host:         pluginHost,
-		Commands:     cmds,
-		Memory:       mem,
-		Cleanup:      cleanup,
-		BalanceURL:   entry.BalanceURL,
-		BalanceKey:   entry.APIKey(),
-		Registry:     reg,
-		PluginCtx:    ctx,
+		Runner:        runner,
+		Executor:      executor,
+		Sink:          sink,
+		Policy:        policy,
+		Label:         label,
+		SystemPrompt:  sysPrompt,
+		SessionDir:    config.SessionDir(),
+		Host:          pluginHost,
+		Commands:      cmds,
+		Skills:        skills,
+		Hooks:         hookRunner,
+		Memory:        mem,
+		Cleanup:       cleanup,
+		BalanceURL:    entry.BalanceURL,
+		BalanceKey:    entry.APIKey(),
+		Jobs:          jm,
+		Registry:      reg,
+		PluginCtx:     ctx,
+		WorkspaceRoot: cwd,
 	}), nil
 }
 

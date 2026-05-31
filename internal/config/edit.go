@@ -12,7 +12,7 @@ import (
 // edit.go is the programmatic mutation surface a settings UI drives: change the
 // default model, add/remove a provider, set the planner, edit permission rules,
 // add/remove an MCP server — each validated, then persisted with SaveTo. It is
-// separate from the `reasonix init` wizard (cli) so a GUI can apply one setting at a
+// separate from the `reasonix setup` wizard (cli) so a GUI can apply one setting at a
 // time without replaying the whole interactive flow. Every mutator works on the
 // in-memory *Config; nothing writes to disk until SaveTo/Save is called, so a UI
 // can stage several changes and commit once. Mutations round-trip through

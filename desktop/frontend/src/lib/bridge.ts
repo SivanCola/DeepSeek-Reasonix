@@ -7,10 +7,12 @@
 
 import type {
   BalanceInfo,
+  CheckpointMeta,
   CommandInfo,
   ContextInfo,
   DirEntry,
   HistoryMessage,
+  JobView,
   MemoryView,
   Meta,
   ModelInfo,
@@ -18,6 +20,7 @@ import type {
   QuestionAnswer,
   SessionMeta,
   SettingsView,
+  SlashArgsResult,
   WireEvent,
 } from "./types";
 
@@ -32,6 +35,10 @@ export interface AppBindings {
   Compact(): Promise<void>;
   NewSession(): Promise<void>;
   History(): Promise<HistoryMessage[]>;
+  // Checkpoints lists the session's rewind points; Rewind restores one (scope
+  // "code" | "conversation" | "both"), after which the caller re-reads History.
+  Checkpoints(): Promise<CheckpointMeta[]>;
+  Rewind(turn: number, scope: string): Promise<void>;
   // Session history: list saved sessions, resume one (returns its transcript),
   // delete one, or give one a custom display name ("" clears it).
   ListSessions(): Promise<SessionMeta[]>;
@@ -45,8 +52,12 @@ export interface AppBindings {
   // Balance queries the active provider's wallet balance (a network call);
   // returns an unavailable readout when no balance_url is configured or it fails.
   Balance(): Promise<BalanceInfo>;
+  // Jobs lists the running background jobs (bash/task started in the background)
+  // for the status-bar indicator.
+  Jobs(): Promise<JobView[]>;
   Meta(): Promise<Meta>;
   Commands(): Promise<CommandInfo[]>;
+  SlashArgs(input: string): Promise<SlashArgsResult>;
   ListDir(rel: string): Promise<DirEntry[]>;
   Models(): Promise<ModelInfo[]>;
   SetModel(name: string): Promise<void>;
@@ -70,6 +81,9 @@ export interface AppBindings {
   SetSandbox(bash: string, network: boolean, workspaceRoot: string, allowWrite: string[]): Promise<void>;
   SetAgentParams(temperature: number, maxSteps: number, systemPrompt: string): Promise<void>;
   SetLanguage(lang: string): Promise<void>;
+  // SetBypass toggles YOLO mode (auto-approve every tool call this session; deny
+  // rules still apply). Runtime-only — not written to config.
+  SetBypass(on: boolean): Promise<void>;
 }
 
 interface WailsRuntime {
@@ -175,6 +189,7 @@ function makeMockApp(): AppBindings {
     language: "",
     configPath: "~/projects/reasonix/reasonix.toml",
     providerKinds: ["openai"],
+    bypass: false,
   };
   return {
     async Submit(input) {
@@ -218,6 +233,8 @@ function makeMockApp(): AppBindings {
           totalTokens: 1344,
           cacheHitTokens: 1024,
           cacheMissTokens: 256,
+          sessionCacheHitTokens: 1024,
+          sessionCacheMissTokens: 256,
         },
       });
       emit({ kind: "turn_done" });
@@ -231,6 +248,10 @@ function makeMockApp(): AppBindings {
     async SetPlanMode() {},
     async Compact() {},
     async NewSession() {},
+    async Checkpoints() {
+      return [];
+    },
+    async Rewind() {},
     async History() {
       return [];
     },
@@ -266,20 +287,53 @@ function makeMockApp(): AppBindings {
       if (!p?.balanceUrl) return { available: false, display: "" };
       return { available: true, display: "¥128.50" };
     },
+    async Jobs() {
+      return []; // browser dev mock has no background jobs
+    },
     async Meta() {
       return {
         label: "mock model · browser dev",
         ready: true,
         eventChannel: EVENT_CHANNEL,
         cwd,
+        bypass: settings.bypass,
       };
     },
     async Commands() {
       return [
         { name: "new", description: "Start a new session", kind: "builtin" as const },
         { name: "compact", description: "Summarize older history to free up context", kind: "builtin" as const },
+        { name: "model", description: "Switch model", kind: "builtin" as const },
+        { name: "skill", description: "List skills", kind: "builtin" as const },
+        { name: "explore", description: "Investigate the codebase in an isolated subagent", kind: "skill" as const },
         { name: "review", description: "Review the staged diff", hint: "[focus]", kind: "custom" as const },
       ];
+    },
+    async SlashArgs(input: string) {
+      // Mirror a slice of the real arg hints so the menu is exercisable in browser dev.
+      const from = input.lastIndexOf(" ") + 1;
+      const cur = input.slice(from);
+      const cmd = input.slice(0, input.indexOf(" ") < 0 ? input.length : input.indexOf(" "));
+      const subs: Record<string, { label: string; insert: string; hint: string; descend?: boolean }[]> = {
+        "/skill": [
+          { label: "list", insert: "list", hint: "list skills" },
+          { label: "show", insert: "show ", hint: "show a skill's body", descend: true },
+          { label: "new", insert: "new ", hint: "scaffold a new skill" },
+          { label: "paths", insert: "paths", hint: "show discovery paths" },
+        ],
+        "/hooks": [
+          { label: "list", insert: "list", hint: "list active hooks" },
+          { label: "trust", insert: "trust", hint: "trust this project's hooks" },
+        ],
+        "/model": [
+          { label: "deepseek/deepseek-v4-flash", insert: "deepseek/deepseek-v4-flash", hint: "current" },
+          { label: "deepseek/deepseek-v4-pro", insert: "deepseek/deepseek-v4-pro", hint: "" },
+        ],
+      };
+      const items = (subs[cmd] ?? [])
+        .filter((it) => it.label.toLowerCase().startsWith(cur.toLowerCase()))
+        .map((it) => ({ label: it.label, insert: it.insert, hint: it.hint, descend: it.descend ?? false }));
+      return { items, from };
     },
     async ListDir(rel: string) {
       // A tiny fake tree so the @ menu is navigable in browser dev.
@@ -387,6 +441,9 @@ function makeMockApp(): AppBindings {
     },
     async SetLanguage(lang: string) {
       settings.language = lang;
+    },
+    async SetBypass(on: boolean) {
+      settings.bypass = on;
     },
   };
 }

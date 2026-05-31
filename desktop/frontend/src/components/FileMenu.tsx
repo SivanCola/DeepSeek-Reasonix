@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import { Folder, FileText } from "lucide-react";
 import type { DirEntry } from "../lib/types";
 
@@ -15,11 +16,17 @@ export function FileMenu({
   onPick: (e: DirEntry) => void;
   onHover: (i: number) => void;
 }) {
+  // Keep the keyboard-selected item in view (the list overflows at 280px).
+  const activeRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    activeRef.current?.scrollIntoView({ block: "nearest" });
+  }, [activeIndex]);
   return (
     <div className="slashmenu" role="listbox">
       {items.map((e, i) => (
         <button
           key={(e.isDir ? "d:" : "f:") + e.name}
+          ref={i === activeIndex ? activeRef : undefined}
           role="option"
           aria-selected={i === activeIndex}
           className={`slashmenu__item ${i === activeIndex ? "slashmenu__item--active" : ""}`}
