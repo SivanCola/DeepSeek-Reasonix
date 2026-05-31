@@ -19,9 +19,10 @@ import (
 // context window, then we compact once — summarizing the older history and
 // archiving the originals — so a long task can keep going.
 const (
-	defaultCompactRatio = 0.8 // compact when prompt_tokens reach this fraction of the window
-	defaultRecentKeep   = 8   // recent messages kept verbatim, never summarized
-	minCompactMessages  = 2   // skip compaction below this many compactable messages
+	defaultCompactRatio      = 0.5 // try compacting when prompt_tokens reach this fraction of the window
+	defaultCompactForceRatio = 0.8 // force compaction at this high-water mark even for low-value folds
+	defaultRecentKeep        = 8   // recent messages kept verbatim, never summarized
+	minCompactMessages       = 2   // skip compaction below this many compactable messages
 )
 
 // summaryTag wraps the compaction summary so the model can distinguish it from
@@ -62,10 +63,11 @@ func (a *Agent) maybeCompact(ctx context.Context, u *provider.Usage) {
 	if a.contextWindow <= 0 || u == nil || u.PromptTokens == 0 {
 		return
 	}
-	if u.PromptTokens < int(float64(a.contextWindow)*a.compactRatio) {
+	force := u.PromptTokens >= int(float64(a.contextWindow)*defaultCompactForceRatio)
+	if !force && u.PromptTokens < int(float64(a.contextWindow)*a.compactRatio) {
 		return
 	}
-	if err := a.compact(ctx); err != nil {
+	if err := a.compact(ctx, force); err != nil {
 		a.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo, Text: fmt.Sprintf("compaction skipped: %v", err)})
 	}
 }
@@ -115,7 +117,7 @@ func estimateTextTokens(s string) int {
 // compact summarizes the older middle of the session and replaces it in place:
 // the session becomes system + summary + recent tail. The dropped originals are
 // archived first, so the full history stays traceable.
-func (a *Agent) compact(ctx context.Context) error {
+func (a *Agent) compact(ctx context.Context, force bool) error {
 	msgs := a.session.Messages
 	head, start, ok := compactBounds(msgs, a.recentKeep, minCompactMessages)
 	if !ok {
@@ -130,8 +132,8 @@ func (a *Agent) compact(ctx context.Context) error {
 	region := msgs[head:start]
 
 	// Economic check: skip if the region is too small to justify the
-	// summarizer call.
-	if !foldEconomics(region) {
+	// summarizer call, unless the prompt has reached the force ceiling.
+	if !force && !foldEconomics(region) {
 		return nil
 	}
 
