@@ -44,7 +44,7 @@ func RenderTOML(c *Config) string {
 	if len(c.Agent.Keep) > 0 {
 		fmt.Fprintf(&b, "keep          = %s\n", renderStringArray(c.Agent.Keep))
 	} else {
-		b.WriteString("# keep          = [\"system\"]   # compaction keep policy\n")
+		b.WriteString("# keep          = [\"errors\"]   # compaction keep policy\n")
 	}
 	if c.Agent.CompactRatio > 0 {
 		fmt.Fprintf(&b, "compact_ratio = %s\n", formatFloat(c.Agent.CompactRatio))

@@ -123,7 +123,8 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	// nesting out of the picture). It registers into the same reg the
 	// executor uses, so the model surfaces it like any other tool.
 	reg.Add(agent.NewTaskTool(execProv, entry.Price, reg, maxSteps,
-		entry.ContextWindow, cfg.Agent.Temperature, config.ArchiveDir(), "", headlessGate))
+		entry.ContextWindow, cfg.Agent.CompactRatio, cfg.Agent.RecentKeep,
+		cfg.Agent.Temperature, config.ArchiveDir(), "", headlessGate, cfg.Agent.KeepPolicy()))
 
 	// The `remember` tool lets the model persist durable facts to the project's
 	// auto-memory store; the saved index loads into the prefix on the next session.
@@ -142,7 +143,10 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		Pricing:       entry.Price,
 		Gate:          headlessGate,
 		ContextWindow: entry.ContextWindow,
+		CompactRatio:  cfg.Agent.CompactRatio,
+		RecentKeep:    cfg.Agent.RecentKeep,
 		ArchiveDir:    config.ArchiveDir(),
+		KeepPolicy:    cfg.Agent.KeepPolicy(),
 	}, opts.Sink)
 
 	// Custom slash commands (.reasonix/commands + user dir). Best-effort: a malformed

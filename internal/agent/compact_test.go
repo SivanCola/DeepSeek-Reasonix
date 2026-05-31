@@ -123,6 +123,63 @@ func TestCompactReplacesHistory(t *testing.T) {
 	}
 }
 
+func TestCompactKeepsErrorMessages(t *testing.T) {
+	prov := &fakeProvider{reply: "- normal work summarized"}
+	sess := &Session{Messages: []provider.Message{
+		{Role: provider.RoleSystem, Content: "sys"},
+		{Role: provider.RoleUser, Content: "task"},
+		{Role: provider.RoleAssistant, ToolCalls: []provider.ToolCall{{ID: "1", Name: "bash", Arguments: `{"cmd":"bad"}`}}},
+		{Role: provider.RoleTool, ToolCallID: "1", Name: "bash", Content: "error: command failed"},
+		{Role: provider.RoleUser, Content: "continue"},
+		{Role: provider.RoleAssistant, Content: "continued"},
+		{Role: provider.RoleUser, Content: "next"},
+		{Role: provider.RoleAssistant, Content: "ok"},
+	}}
+	a := New(prov, tool.NewRegistry(), sess, Options{RecentKeep: 2, ArchiveDir: t.TempDir(), KeepPolicy: KeepErrors}, event.Discard)
+
+	if err := a.compact(context.Background()); err != nil {
+		t.Fatalf("compact: %v", err)
+	}
+	if got := len(sess.Messages); got != 6 {
+		t.Fatalf("len = %d, want 6: %+v", got, sess.Messages)
+	}
+	if sess.Messages[2].Role != provider.RoleAssistant || len(sess.Messages[2].ToolCalls) != 1 {
+		t.Fatalf("kept error lost its assistant tool call: %+v", sess.Messages)
+	}
+	if sess.Messages[3].Role != provider.RoleTool || sess.Messages[3].Content != "error: command failed" {
+		t.Fatalf("error tool result not kept verbatim: %+v", sess.Messages)
+	}
+	if strings.Contains(prov.got[1].Content, "error: command failed") {
+		t.Fatalf("kept error was still folded into summary input:\n%s", prov.got[1].Content)
+	}
+}
+
+func TestCompactKeepsUserMarkedMessages(t *testing.T) {
+	prov := &fakeProvider{reply: "- unmarked work summarized"}
+	sess := &Session{Messages: []provider.Message{
+		{Role: provider.RoleSystem, Content: "sys"},
+		{Role: provider.RoleUser, Content: "task"},
+		{Role: provider.RoleUser, Content: "[[keep]] exact requirement"},
+		{Role: provider.RoleAssistant, Content: "worked"},
+		{Role: provider.RoleUser, Content: "next"},
+		{Role: provider.RoleAssistant, Content: "ok"},
+	}}
+	a := New(prov, tool.NewRegistry(), sess, Options{RecentKeep: 2, ArchiveDir: t.TempDir(), KeepPolicy: KeepUserMarked}, event.Discard)
+
+	if err := a.compact(context.Background()); err != nil {
+		t.Fatalf("compact: %v", err)
+	}
+	if got := len(sess.Messages); got != 5 {
+		t.Fatalf("len = %d, want 5: %+v", got, sess.Messages)
+	}
+	if sess.Messages[2].Content != "[[keep]] exact requirement" {
+		t.Fatalf("marked message not kept verbatim: %+v", sess.Messages)
+	}
+	if strings.Contains(prov.got[1].Content, "exact requirement") {
+		t.Fatalf("marked message was still folded into summary input:\n%s", prov.got[1].Content)
+	}
+}
+
 func TestMaybeCompactThreshold(t *testing.T) {
 	newSess := func() *Session {
 		return &Session{Messages: []provider.Message{

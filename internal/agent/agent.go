@@ -188,6 +188,7 @@ type Options struct {
 	CompactRatio  float64
 	RecentKeep    int
 	ArchiveDir    string
+	KeepPolicy    KeepPolicy
 }
 
 // New constructs an Agent. MaxSteps <= 0 means no cap — the run loop continues
@@ -217,6 +218,7 @@ func New(prov provider.Provider, tools *tool.Registry, session *Session, opts Op
 		compactRatio:  opts.CompactRatio,
 		recentKeep:    opts.RecentKeep,
 		archiveDir:    opts.ArchiveDir,
+		keepPolicy:    opts.KeepPolicy,
 	}
 }
 

@@ -59,36 +59,129 @@ func (a *Agent) compact(ctx context.Context) error {
 		return nil // recent tail already covers everything worth keeping
 	}
 	region := msgs[head:start]
+	foldRegion, kept := splitKeepPolicy(region, a.keepPolicy)
+	if len(foldRegion) == 0 {
+		return nil
+	}
 
 	archived := ""
 	if a.archiveDir != "" {
-		path, err := archiveMessages(a.archiveDir, region)
+		path, err := archiveMessages(a.archiveDir, foldRegion)
 		if err != nil {
 			return fmt.Errorf("archive: %w", err)
 		}
 		archived = path
 	}
 
-	summary, err := a.summarize(ctx, region)
+	summary, err := a.summarize(ctx, foldRegion)
 	if err != nil {
 		return err
 	}
 
-	compacted := make([]provider.Message, 0, head+1+len(msgs)-start)
+	compacted := make([]provider.Message, 0, head+1+len(kept)+len(msgs)-start)
 	compacted = append(compacted, msgs[:head]...)
 	compacted = append(compacted, provider.Message{
 		Role:    provider.RoleUser,
 		Content: "Summary of earlier conversation (older messages were compacted to save context):\n" + summary,
 	})
+	compacted = append(compacted, kept...)
 	compacted = append(compacted, msgs[start:]...)
 	a.session.Messages = compacted
 
-	note := fmt.Sprintf("compacted %d messages → summary", len(region))
+	note := fmt.Sprintf("compacted %d messages → summary", len(foldRegion))
 	if archived != "" {
 		note += " (archived " + archived + ")"
 	}
 	a.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo, Text: note})
 	return nil
+}
+
+func splitKeepPolicy(region []provider.Message, policy KeepPolicy) (fold []provider.Message, kept []provider.Message) {
+	keep := keepIndexes(region, policy)
+	for i, m := range region {
+		if keep[i] {
+			kept = append(kept, m)
+		} else {
+			fold = append(fold, m)
+		}
+	}
+	return fold, kept
+}
+
+func keepIndexes(region []provider.Message, policy KeepPolicy) []bool {
+	keep := make([]bool, len(region))
+	for i, m := range region {
+		if shouldKeepMessage(m, policy) {
+			keep[i] = true
+		}
+	}
+	for i, m := range region {
+		if !keep[i] {
+			continue
+		}
+		switch m.Role {
+		case provider.RoleTool:
+			if j := findToolCaller(region, i, m.ToolCallID); j >= 0 {
+				keep[j] = true
+			}
+		case provider.RoleAssistant:
+			ids := toolCallIDs(m)
+			for j := i + 1; j < len(region) && region[j].Role == provider.RoleTool; j++ {
+				if ids[region[j].ToolCallID] {
+					keep[j] = true
+				}
+			}
+		}
+	}
+	return keep
+}
+
+func shouldKeepMessage(m provider.Message, policy KeepPolicy) bool {
+	if policy&KeepErrors != 0 && isErrorMessage(m) {
+		return true
+	}
+	if policy&KeepUserMarked != 0 && isUserMarked(m) {
+		return true
+	}
+	return false
+}
+
+func isErrorMessage(m provider.Message) bool {
+	if m.Role != provider.RoleTool {
+		return false
+	}
+	s := strings.TrimSpace(strings.ToLower(m.Content))
+	return strings.HasPrefix(s, "error:") || strings.HasPrefix(s, "blocked:")
+}
+
+func isUserMarked(m provider.Message) bool {
+	content := strings.ToLower(m.Content)
+	return strings.Contains(content, "[[keep]]") ||
+		strings.Contains(content, "[keep]") ||
+		strings.Contains(content, "<keep>") ||
+		strings.Contains(content, "<!-- keep -->")
+}
+
+func findToolCaller(region []provider.Message, toolIndex int, id string) int {
+	for i := toolIndex - 1; i >= 0; i-- {
+		if region[i].Role != provider.RoleAssistant {
+			continue
+		}
+		for _, tc := range region[i].ToolCalls {
+			if tc.ID == id {
+				return i
+			}
+		}
+	}
+	return -1
+}
+
+func toolCallIDs(m provider.Message) map[string]bool {
+	ids := make(map[string]bool, len(m.ToolCalls))
+	for _, tc := range m.ToolCalls {
+		ids[tc.ID] = true
+	}
+	return ids
 }
 
 // compactBounds locates the region to summarize. head is the count of leading

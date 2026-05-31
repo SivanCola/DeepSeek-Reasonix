@@ -32,10 +32,13 @@ type TaskTool struct {
 	parentReg     *tool.Registry
 	maxSteps      int
 	contextWindow int
+	compactRatio  float64
+	recentKeep    int
 	temperature   float64
 	archiveDir    string
 	sysPrompt     string
 	gate          Gate
+	keepPolicy    KeepPolicy
 }
 
 // NewTaskTool wires a task tool to the parent agent's environment so its
@@ -45,7 +48,8 @@ type TaskTool struct {
 // deny rules still bite while autonomous sub-agents are never blocked on an
 // interactive prompt (there is no UI to answer one).
 func NewTaskTool(prov provider.Provider, pricing *provider.Pricing, parentReg *tool.Registry,
-	maxSteps, contextWindow int, temperature float64, archiveDir, sysPrompt string, gate Gate) *TaskTool {
+	maxSteps, contextWindow int, compactRatio float64, recentKeep int, temperature float64,
+	archiveDir, sysPrompt string, gate Gate, keepPolicy KeepPolicy) *TaskTool {
 	if sysPrompt == "" {
 		sysPrompt = DefaultTaskSystemPrompt
 	}
@@ -55,10 +59,13 @@ func NewTaskTool(prov provider.Provider, pricing *provider.Pricing, parentReg *t
 		parentReg:     parentReg,
 		maxSteps:      maxSteps,
 		contextWindow: contextWindow,
+		compactRatio:  compactRatio,
+		recentKeep:    recentKeep,
 		temperature:   temperature,
 		archiveDir:    archiveDir,
 		sysPrompt:     sysPrompt,
 		gate:          gate,
+		keepPolicy:    keepPolicy,
 	}
 }
 
@@ -147,7 +154,10 @@ func (t *TaskTool) Execute(ctx context.Context, args json.RawMessage) (string, e
 		Pricing:       t.pricing,
 		Gate:          t.gate,
 		ContextWindow: t.contextWindow,
+		CompactRatio:  t.compactRatio,
+		RecentKeep:    t.recentKeep,
 		ArchiveDir:    t.archiveDir,
+		KeepPolicy:    t.keepPolicy,
 	}, subSink(ctx))
 
 	if err := subAgent.Run(ctx, p.Prompt); err != nil {

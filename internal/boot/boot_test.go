@@ -14,6 +14,43 @@ import (
 	_ "reasonix/internal/tool/builtin"
 )
 
+var lastCompactConfigProvider *compactConfigProvider
+
+func init() {
+	provider.Register("compact-config-test", func(provider.Config) (provider.Provider, error) {
+		lastCompactConfigProvider = &compactConfigProvider{}
+		return lastCompactConfigProvider, nil
+	})
+}
+
+type compactConfigProvider struct {
+	mainCalls int
+}
+
+func (p *compactConfigProvider) Name() string { return "compact-config-test" }
+
+func (p *compactConfigProvider) Stream(_ context.Context, req provider.Request) (<-chan provider.Chunk, error) {
+	ch := make(chan provider.Chunk, 3)
+	if len(req.Messages) > 0 && strings.Contains(req.Messages[0].Content, "compacting the earlier part") {
+		ch <- provider.Chunk{Type: provider.ChunkText, Text: "summary from configured compaction"}
+		ch <- provider.Chunk{Type: provider.ChunkDone}
+		close(ch)
+		return ch, nil
+	}
+	p.mainCalls++
+	if p.mainCalls <= 2 {
+		ch <- provider.Chunk{Type: provider.ChunkToolCall, ToolCall: &provider.ToolCall{ID: "call", Name: "missing_tool", Arguments: "{}"}}
+		ch <- provider.Chunk{Type: provider.ChunkUsage, Usage: &provider.Usage{PromptTokens: 60, TotalTokens: 60}}
+		ch <- provider.Chunk{Type: provider.ChunkDone}
+		close(ch)
+		return ch, nil
+	}
+	ch <- provider.Chunk{Type: provider.ChunkText, Text: "done"}
+	ch <- provider.Chunk{Type: provider.ChunkDone}
+	close(ch)
+	return ch, nil
+}
+
 // TestBuildFoldsProjectMemoryIntoSystemPrompt is the end-to-end proof of the
 // cache-first wiring: a project REASONIX.md is discovered at boot and folded
 // into the session's system message (the cached prefix), and the `remember`
@@ -97,6 +134,47 @@ api_key_env = "REASONIX_TEST_KEY_UNSET"
 	}
 }
 
+func TestBuildPassesAgentCompactionConfig(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	writeFile(t, dir, "reasonix.toml", `
+default_model = "test-model"
+
+[agent]
+system_prompt = "SYS"
+compact_ratio = 0.5
+recent_keep = 1
+keep = ["errors"]
+
+[[providers]]
+name = "test-model"
+kind = "compact-config-test"
+base_url = "https://example.invalid"
+model = "x"
+context_window = 100
+`)
+
+	ctrl, err := Build(context.Background(), Options{})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	defer ctrl.Close()
+
+	if err := ctrl.Run(context.Background(), "start"); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	history := ctrl.History()
+	if !historyContains(history, "summary from configured compaction") {
+		t.Fatalf("compact_ratio/recent_keep were not applied; history: %+v", history)
+	}
+	if !historyContains(history, `error: unknown tool "missing_tool"`) {
+		t.Fatalf("keep policy from config did not preserve the tool error; history: %+v", history)
+	}
+	if lastCompactConfigProvider == nil || lastCompactConfigProvider.mainCalls != 3 {
+		t.Fatalf("provider calls = %#v, want 3 main calls", lastCompactConfigProvider)
+	}
+}
+
 func systemMessage(msgs []provider.Message) string {
 	for _, m := range msgs {
 		if m.Role == provider.RoleSystem {
@@ -104,6 +182,15 @@ func systemMessage(msgs []provider.Message) string {
 		}
 	}
 	return ""
+}
+
+func historyContains(msgs []provider.Message, needle string) bool {
+	for _, m := range msgs {
+		if strings.Contains(m.Content, needle) {
+			return true
+		}
+	}
+	return false
 }
 
 func writeFile(t *testing.T, dir, name, body string) {
