@@ -111,6 +111,16 @@ func (a *App) Submit(input string) {
 	}
 }
 
+// SavePastedImage persists an image pasted into the desktop composer and returns
+// a workspace-relative @-reference path the frontend can insert into the prompt.
+func (a *App) SavePastedImage(dataURL string) (string, error) {
+	return control.SaveImageDataURL(dataURL)
+}
+
+func (a *App) AttachmentDataURL(path string) (string, error) {
+	return control.ImageDataURL(path)
+}
+
 // Cancel aborts the in-flight turn.
 func (a *App) Cancel() {
 	if a.ctrl != nil {

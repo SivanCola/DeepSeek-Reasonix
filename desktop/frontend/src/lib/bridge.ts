@@ -30,6 +30,8 @@ import type {
 // (or regenerate with `wails generate module` and import wailsjs instead).
 export interface AppBindings {
   Submit(input: string): Promise<void>;
+  SavePastedImage(dataUrl: string): Promise<string>;
+  AttachmentDataURL(path: string): Promise<string>;
   Cancel(): Promise<void>;
   Approve(id: string, allow: boolean, session: boolean): Promise<void>;
   AnswerQuestion(id: string, answers: QuestionAnswer[]): Promise<void>;
@@ -271,6 +273,12 @@ function makeMockApp(): AppBindings {
         },
       });
       emit({ kind: "turn_done" });
+    },
+    async SavePastedImage() {
+      return ".reasonix/attachments/clipboard-dev.png";
+    },
+    async AttachmentDataURL() {
+      return "data:image/png;base64,iVBORw0KGgo=";
     },
     async Cancel() {
       cancelled = true;

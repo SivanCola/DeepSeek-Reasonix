@@ -1,11 +1,67 @@
-import { useState } from "react";
-import { ChevronRight } from "lucide-react";
+import { useEffect, useState } from "react";
+import { ChevronRight, Image as ImageIcon } from "lucide-react";
 import { Markdown } from "./Markdown";
 import { CopyButton } from "./CopyButton";
 import { useT } from "../lib/i18n";
 import type { Item } from "../lib/useController";
+import { app } from "../lib/bridge";
+import { ImagePreview } from "./ImagePreview";
 
 type AssistantItem = Extract<Item, { kind: "assistant" }>;
+
+interface ImageRef {
+  path: string;
+  time: string;
+}
+
+const imageRefRe = /(?:^|\s)@(\.reasonix\/attachments\/clipboard-\d{8}-(\d{2})(\d{2})(\d{2})\.\d+\.(?:png|jpg|jpeg|gif|webp|tiff))/gi;
+
+function splitImageRefs(text: string): { body: string; images: ImageRef[] } {
+  const images: ImageRef[] = [];
+  const body = text
+    .replace(imageRefRe, (_match, path: string, hh: string, mm: string, ss: string) => {
+      images.push({ path, time: `${hh}:${mm}:${ss}` });
+      return " ";
+    })
+    .replace(/[ \t]{2,}/g, " ")
+    .trim();
+  return { body, images };
+}
+
+function UserImageAttachment({ img }: { img: ImageRef }) {
+  const t = useT();
+  const [src, setSrc] = useState("");
+  const [preview, setPreview] = useState(false);
+
+  useEffect(() => {
+    let live = true;
+    app
+      .AttachmentDataURL(img.path)
+      .then((data) => {
+        if (live) setSrc(data);
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [img.path]);
+
+  const label = `${t("composer.attachmentImage")}${img.time ? ` · ${img.time}` : ""}`;
+  return (
+    <>
+      <button
+        className="msg__attachment"
+        type="button"
+        title={img.path}
+        onClick={() => src && setPreview(true)}
+      >
+        {src ? <img className="msg__attachment-thumb" src={src} alt="" /> : <ImageIcon size={15} />}
+        <span className="msg__attachment-label">{label}</span>
+      </button>
+      {preview && src && <ImagePreview src={src} label={img.path} onClose={() => setPreview(false)} />}
+    </>
+  );
+}
 
 export function UserMessage({
   text,
@@ -23,10 +79,20 @@ export function UserMessage({
   const t = useT();
   const canRewind = onRewind != null && turn != null;
   const rewind = (scope: string) => onRewind?.(turn as number, scope);
+  const { body, images } = splitImageRefs(text);
   return (
     <div className="msg msg--user">
       <span className="msg__caret">›</span>
-      <div className="msg__text">{text}</div>
+      <div className="msg__userbody">
+        {body && <div className="msg__text">{body}</div>}
+        {images.length > 0 && (
+          <div className="msg__attachments">
+            {images.map((img) => (
+              <UserImageAttachment img={img} key={img.path} />
+            ))}
+          </div>
+        )}
+      </div>
       {canRewind && (
         <div className="rewind">
           <button className="rewind__btn" title={t("rewind.label")} onClick={onToggle}>

@@ -32,7 +32,7 @@ var Chinese = Messages{
 	PickSessionLabel:  "恢复哪个会话？",
 
 	ChatStatusThinkingFmt:  "%s 思考中… (%d 秒 · Esc 取消)",
-	ChatStatusIdle:         "Tab 切换 plan · Enter 发送 · Esc 退出当前状态 · PgUp/PgDn 滚动 · Ctrl-D 退出",
+	ChatStatusIdle:         "Tab 切换 plan · Ctrl-V 粘贴图片 · Enter 发送 · Esc 退出当前状态 · PgUp/PgDn 滚动 · Ctrl-D 退出",
 	ChatStatusPlanApproval: "Enter/y 批准并执行 · n/Esc 继续规划 · PgUp/PgDn 滚动",
 	PlanApprovalPrompt:     "计划已生成（见上方）— Enter/y 批准执行,n/Esc 继续规划",
 	ChatStatusToolApproval: "y 同意一次 · a 本会话允许 · n 拒绝 · Ctrl-C 取消本轮",
@@ -49,7 +49,7 @@ var Chinese = Messages{
 	SlashUnavailable:   "当前构建不支持该命令",
 	SlashUnknown:       "未知命令",
 	SlashTodoCleared:   "已清除任务清单",
-	SlashHelp:          "命令：/compact · /new · /todo · /model（切换模型）· /mcp · /skill · /hooks · /memory · /help · 以及 skills（/init、/explore …）",
+	SlashHelp:          "命令：/compact · /new · /todo · /paste-image · /model（切换模型）· /mcp · /skill · /hooks · /memory · /help · 以及 skills（/init、/explore …）",
 	SlashPromptEmpty:   "该 MCP prompt 没有返回可发送的内容",
 	SlashMCPNone:       "没有配置 MCP 服务器 — 在 reasonix.toml 加一个 [[plugins]] 条目",
 	CompHintSlash:      "↑/↓ 移动 · Tab/Enter 选中 · Esc 关闭",

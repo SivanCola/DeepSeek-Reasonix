@@ -31,7 +31,7 @@ var English = Messages{
 	PickSessionLabel:  "Resume which session?",
 
 	ChatStatusThinkingFmt:  "%s thinking… (%ds · Esc cancels)",
-	ChatStatusIdle:         "Tab toggles plan · Enter sends · Esc clears/exits state · PgUp/PgDn scrolls · Ctrl-D quits",
+	ChatStatusIdle:         "Tab toggles plan · Ctrl-V pastes image · Enter sends · Esc clears/exits state · PgUp/PgDn scrolls · Ctrl-D quits",
 	ChatStatusPlanApproval: "Enter/y approves & executes · n/Esc keeps planning · PgUp/PgDn scrolls",
 	PlanApprovalPrompt:     "Plan ready above — Enter/y to approve & execute, n/Esc to keep planning",
 	ChatStatusToolApproval: "y approve once · a allow this session · n deny · Ctrl-C cancels turn",
@@ -48,7 +48,7 @@ var English = Messages{
 	SlashUnavailable:   "command unavailable in this build",
 	SlashUnknown:       "unknown command",
 	SlashTodoCleared:   "task list dismissed",
-	SlashHelp:          "commands: /compact · /new · /todo · /model (switch model) · /mcp · /skill · /hooks · /memory · /help · plus skills (/init, /explore, …)",
+	SlashHelp:          "commands: /compact · /new · /todo · /paste-image · /model (switch model) · /mcp · /skill · /hooks · /memory · /help · plus skills (/init, /explore, …)",
 	SlashPromptEmpty:   "the MCP prompt returned no content to send",
 	SlashMCPNone:       "no MCP servers configured — add a [[plugins]] entry in reasonix.toml",
 	CompHintSlash:      "↑/↓ move · Tab/Enter select · Esc close",

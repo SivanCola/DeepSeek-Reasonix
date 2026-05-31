@@ -197,6 +197,11 @@ type refsResolvedMsg struct {
 	errs  []string
 }
 
+type clipboardImageMsg struct {
+	path string
+	err  error
+}
+
 // newChatTUI assembles the initial model. The controller has already been wired
 // with an event sink that feeds eventCh; the TUI issues commands to it and
 // renders the events it emits. Label, history, host, and commands are read from
@@ -399,6 +404,12 @@ func (m chatTUI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		case "ctrl+d":
 			return m, tea.Quit
+		case "ctrl+v", "ctrl+y":
+			if m.state == tuiRunning {
+				return m, nil
+			}
+			cmds = append(cmds, pasteClipboardImage())
+			return m, finalize(m, cmds)
 		case "tab":
 			if m.state == tuiRunning {
 				break
@@ -487,6 +498,13 @@ func (m chatTUI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			sent = "Referenced context:\n\n" + msg.block + "\n\n" + msg.line
 		}
 		cmds = append(cmds, m.startTurn(m.ctrl.Compose(sent), msg.line))
+
+	case clipboardImageMsg:
+		if msg.err != nil {
+			m.notice("paste image: " + msg.err.Error())
+			break
+		}
+		m.insertInputRef("@" + msg.path)
 
 	case elapsedTickMsg:
 		if m.state == tuiRunning {
@@ -1011,6 +1029,25 @@ func (m *chatTUI) growInputToFit() {
 	}
 }
 
+func (m *chatTUI) insertInputRef(ref string) {
+	val := m.input.Value()
+	leftPad := ""
+	if val != "" && !strings.HasSuffix(val, " ") && !strings.HasSuffix(val, "\n") && !strings.HasSuffix(val, "\t") {
+		leftPad = " "
+	}
+	next := val + leftPad + ref
+	m.input.SetValue(next)
+	m.growInputToFit()
+	m.updateCompletion()
+}
+
+func pasteClipboardImage() tea.Cmd {
+	return func() tea.Msg {
+		path, err := control.SaveClipboardImage()
+		return clipboardImageMsg{path: path, err: err}
+	}
+}
+
 // cycleMode advances the input mode normal → plan → YOLO → normal (Tab),
 // mirroring the desktop composer's Shift+Tab. plan is read-only; YOLO
 // auto-approves every tool call for the session (deny rules still apply). The
@@ -1258,6 +1295,8 @@ func (m *chatTUI) runSlashCommand(input string) tea.Cmd {
 		m.notice(i18n.M.SlashTodoCleared)
 	case "/rewind":
 		m.openRewind()
+	case "/paste-image":
+		return pasteClipboardImage()
 	case "/mcp":
 		m.runMCPSubcommand(input)
 	case "/model":

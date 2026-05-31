@@ -70,6 +70,10 @@ func TestReadFileRef(t *testing.T) {
 	if err := os.WriteFile(binPath, []byte{'a', 0x00, 'b'}, 0o644); err != nil {
 		t.Fatal(err)
 	}
+	imgPath := filepath.Join(dir, "shot.png")
+	if err := os.WriteFile(imgPath, []byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n', 0x00, 0x00, 0x00, '\r', 'I', 'H', 'D', 'R'}, 0o644); err != nil {
+		t.Fatal(err)
+	}
 	bigPath := filepath.Join(dir, "big.txt")
 	if err := os.WriteFile(bigPath, []byte(strings.Repeat("a", maxFileRefBytes+100)), 0o644); err != nil {
 		t.Fatal(err)
@@ -83,6 +87,12 @@ func TestReadFileRef(t *testing.T) {
 	// Binary file: noted, not dumped.
 	if got, _, err := readFileRef(binPath); err != nil || !strings.Contains(got, "binary file") {
 		t.Errorf("binary file = (%q, %v), want a binary note", got, err)
+	}
+
+	// Image file: noted as image-specific context so MCP vision/OCR tools can use
+	// the path, but the bytes are not dumped into the prompt.
+	if got, _, err := readFileRef(imgPath); err != nil || !strings.Contains(got, "image file") || !strings.Contains(got, "MCP image/OCR/vision tool") {
+		t.Errorf("image file = (%q, %v), want an MCP-friendly image note", got, err)
 	}
 
 	// Large file: truncated with a marker.

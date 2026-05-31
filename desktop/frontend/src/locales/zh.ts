@@ -45,6 +45,9 @@ export const zh: Record<DictKey, string> = {
   "composer.modeTitle": "切换模式（shift+tab）：普通 → 计划 → YOLO（全部自动批准）",
   "composer.enterPlanTitle": "进入计划模式（shift+tab）—— 只读；先给出计划再动手",
   "composer.exitPlanTitle": "退出计划模式（shift+tab）",
+  "composer.attachmentImage": "图片",
+  "composer.attachmentRemove": "移除图片",
+  "composer.attachmentPreview": "预览图片",
   "composer.send": "发送（Enter）",
   "composer.stop": "停止（Esc）",
 
