@@ -12,6 +12,8 @@ func TestRenderTOMLRoundTrips(t *testing.T) {
 	orig := Default()
 	orig.DefaultModel = "mimo-pro"
 	orig.Language = "zh"
+	orig.Agent.SubagentModel = "mimo-pro"
+	orig.Agent.SubagentModels = map[string]string{"review": "deepseek-pro"}
 	orig.Permissions = PermissionsConfig{
 		Mode:  "deny",
 		Deny:  []string{"bash(rm -rf*)"},
@@ -47,6 +49,12 @@ func TestRenderTOMLRoundTrips(t *testing.T) {
 	}
 	if got.Agent.SystemPrompt != orig.Agent.SystemPrompt {
 		t.Errorf("system_prompt mismatch:\n got %q\nwant %q", got.Agent.SystemPrompt, orig.Agent.SystemPrompt)
+	}
+	if got.Agent.SubagentModel != "mimo-pro" {
+		t.Errorf("subagent_model = %q, want mimo-pro", got.Agent.SubagentModel)
+	}
+	if got.Agent.SubagentModels["review"] != "deepseek-pro" {
+		t.Errorf("subagent_models.review = %q, want deepseek-pro", got.Agent.SubagentModels["review"])
 	}
 	if g, _ := got.Provider("mimo-pro"); g == nil || g.BaseURL != "http://localhost:8000/v1" {
 		t.Errorf("mimo-pro base_url not preserved: %+v", g)

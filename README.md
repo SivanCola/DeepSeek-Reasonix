@@ -89,6 +89,11 @@ never stored in config files.
 default_model = "deepseek-flash"   # executor; set [agent].planner_model to add a planner
 # language    = "zh"               # ui language; empty = auto-detect from $LANG / $REASONIX_LANG
 
+[agent]
+# planner_model = "mimo-pro"          # optional low-frequency planner
+# subagent_model = "deepseek-pro"     # optional default for runAs=subagent skills
+# subagent_models = { review = "deepseek-pro", security_review = "deepseek-pro" }
+
 [[providers]]
 name        = "deepseek-flash"
 kind        = "openai"
@@ -213,6 +218,10 @@ separate cache-stable sessions) is a one-line edit afterwards — set
 [agent]
 planner_model = "deepseek-pro"   # used as the low-frequency planner
 ```
+
+Subagent skills inherit the executor model by default. Set `subagent_model` to
+run them on another configured model, or use `subagent_models` to override only
+specific skills such as `review` or `security_review`.
 
 ## Architecture
 

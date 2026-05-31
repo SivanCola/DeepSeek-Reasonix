@@ -45,6 +45,16 @@ var Chinese = Messages{
 	ToolApprovalBuiltIn:    "内置工具",
 	ToolApprovalImageUse:   "将读取提供的图片用于图像理解。",
 
+	OutputStyleNone:   "没有可用的输出风格",
+	OutputStyleHeader: "输出风格：",
+	OutputStyleHint:   "在 reasonix.toml 设置 agent.output_style 即可启用（下次会话生效）",
+
+	CompactionWorking: "正在压缩对话…",
+	CompactionTitle:   "上下文已压缩",
+	CompactionUnit:    "条消息",
+	CompactionAuto:    "自动",
+	CompactionManual:  "手动",
+
 	SlashCompactDone:   "已压缩 — 旧的中段换成一段摘要，最近几轮保留原样",
 	SlashCompactFailed: "压缩失败",
 	SlashNewDone:       "已新建会话 — 之前的对话已存档",
@@ -65,6 +75,7 @@ var Chinese = Messages{
 	CmdMemory:        "查看记忆文件",
 	CmdMcp:           "MCP 服务器",
 	CmdHooks:         "管理 hooks",
+	CmdOutputStyle:   "列出输出风格",
 	CmdSkill:         "管理 skills",
 	CmdHelp:          "查看命令列表",
 	CmdTodo:          "清除任务清单",

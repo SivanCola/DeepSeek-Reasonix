@@ -44,6 +44,16 @@ var English = Messages{
 	ToolApprovalBuiltIn:    "built-in tool",
 	ToolApprovalImageUse:   "It will read provided image input for image understanding.",
 
+	OutputStyleNone:   "no output styles available",
+	OutputStyleHeader: "output styles:",
+	OutputStyleHint:   "set agent.output_style in reasonix.toml to apply one (takes effect next session)",
+
+	CompactionWorking: "compacting conversation…",
+	CompactionTitle:   "Context compacted",
+	CompactionUnit:    "messages",
+	CompactionAuto:    "auto",
+	CompactionManual:  "manual",
+
 	SlashCompactDone:   "session compacted — older middle replaced by a summary, recent turns kept",
 	SlashCompactFailed: "compaction failed",
 	SlashNewDone:       "fresh session started — previous transcript saved",
@@ -64,6 +74,7 @@ var English = Messages{
 	CmdMemory:        "show memory files",
 	CmdMcp:           "MCP servers",
 	CmdHooks:         "manage hooks",
+	CmdOutputStyle:   "list output styles",
 	CmdSkill:         "manage skills",
 	CmdHelp:          "list commands",
 	CmdTodo:          "dismiss the task list",

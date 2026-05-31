@@ -37,8 +37,13 @@ func newStdioTransport(ctx context.Context, s Spec) (*stdioTransport, error) {
 	if s.Dir != "" {
 		cmd.Dir = s.Dir // pin cwd-aware servers (e.g. CodeGraph) to the project root
 	}
-	stderr := &tailBuffer{limit: 16 * 1024}
-	cmd.Stderr = stderr
+	var stderr *tailBuffer
+	if s.Stderr != nil {
+		cmd.Stderr = s.Stderr
+	} else {
+		stderr = &tailBuffer{limit: 16 * 1024}
+		cmd.Stderr = stderr
+	}
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {

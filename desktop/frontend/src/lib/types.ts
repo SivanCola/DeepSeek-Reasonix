@@ -14,7 +14,16 @@ export type EventKind =
   | "approval_request"
   | "ask_request"
   | "turn_done"
-  | "tab_ready";
+  | "tab_ready"
+  | "compaction_started"
+  | "compaction_done";
+
+export interface WireCompaction {
+  trigger?: string; // "auto" | "manual"
+  messages?: number; // done: how many messages were folded into the summary
+  summary?: string; // done: the briefing (empty on an aborted pass)
+  archive?: string; // done: archive path, if any
+}
 
 export interface WireTool {
   id?: string;
@@ -82,6 +91,7 @@ export interface WireEvent {
   usage?: WireUsage;
   approval?: WireApproval;
   ask?: WireAsk;
+  compaction?: WireCompaction;
   err?: string;
 }
 

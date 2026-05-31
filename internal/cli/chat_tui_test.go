@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"reasonix/internal/control"
 	"reasonix/internal/event"
 	"reasonix/internal/provider"
 )
@@ -123,5 +124,24 @@ func TestAnswerTextStartingWithBracketStaysInAnswer(t *testing.T) {
 		if m.pending.String() != txt {
 			t.Errorf("answer text should buffer verbatim, got %q want %q", m.pending.String(), txt)
 		}
+	}
+}
+
+// TestInsertNewlineKeyBinding verifies newChatTUI actually wires shift+enter
+// into the textarea's InsertNewline binding (plain Enter submits, so a newline
+// needs a modifier). It exercises the real constructor, not a hand-built binding.
+func TestInsertNewlineKeyBinding(t *testing.T) {
+	ctrl := control.New(control.Options{})
+	m := newChatTUI(ctrl, "", make(chan event.Event, 1), 80)
+	keys := m.input.KeyMap.InsertNewline.Keys()
+	found := false
+	for _, k := range keys {
+		if k == "shift+enter" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("newChatTUI InsertNewline should include shift+enter, got %v", keys)
 	}
 }

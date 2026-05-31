@@ -25,8 +25,10 @@ import (
 	"reasonix/internal/command"
 	"reasonix/internal/control"
 	"reasonix/internal/event"
+	"reasonix/internal/hook"
 	"reasonix/internal/i18n"
 	"reasonix/internal/memory"
+	"reasonix/internal/outputstyle"
 	"reasonix/internal/plugin"
 	"reasonix/internal/provider"
 	"reasonix/internal/skill"
@@ -153,6 +155,22 @@ type chatTUI struct {
 	buildController func(ref string, carry []provider.Message) (*control.Controller, error)
 	modelRef        string
 
+	// outputStyle is the active output-style name (config agent.output_style),
+	// shown as the current entry in the /output-style listing. "" = default.
+	outputStyle string
+
+	// statuslineCmd is the user's custom status-line command (config
+	// [statusline].command); "" disables it. statuslineOut caches its latest
+	// one-line stdout, refreshed at startup and after each turn and rendered in
+	// place of the built-in data row.
+	statuslineCmd string
+	statuslineOut string
+
+	// modelSwitchPending is true while an async /model build is in flight.
+	modelSwitchPending bool
+	// pendingModelSwitch holds the tea.Cmd that triggers the async build.
+	pendingModelSwitch tea.Cmd
+
 	// completion is the live autocomplete menu (slash commands; @-refs later).
 	completion completion
 }
@@ -167,6 +185,11 @@ const (
 // agentEventMsg is one typed event from the agent's run loop.
 type agentEventMsg event.Event
 
+// compactDoneMsg reports that an async /compact pass returned. The card was
+// already drawn from the CompactionDone event; this only surfaces a failure and
+// snapshots on success.
+type compactDoneMsg struct{ err error }
+
 // elapsedTickMsg fires once a second while a turn runs, driving the "thinking
 // Ns" counter in the status line.
 type elapsedTickMsg struct{}
@@ -180,6 +203,57 @@ type forceRepaintMsg struct{}
 // balanceMsg carries the result of an async wallet-balance fetch; text is the
 // formatted readout ("" when none/failed).
 type balanceMsg struct{ text string }
+
+// statuslineMsg carries the latest custom status-line output (one line, ""
+// when none/failed).
+type statuslineMsg struct{ out string }
+
+// runStatusline runs the user's custom status-line command off the event loop,
+// feeding it a small JSON context on stdin and returning its first stdout line.
+// A no-op (nil) when no command is configured. Tight timeout so a slow script
+// can't stall the UI; failures collapse to an empty line rather than an error.
+func (m chatTUI) runStatusline() tea.Cmd {
+	cmd := m.statuslineCmd
+	if cmd == "" {
+		return nil
+	}
+	used, window := m.ctrl.ContextSnapshot()
+	payload, _ := json.Marshal(map[string]any{
+		"model":         m.label,
+		"contextUsed":   used,
+		"contextWindow": window,
+	})
+	return func() tea.Msg { return statuslineMsg{out: runStatuslineCmd(cmd, string(payload))} }
+}
+
+// runStatuslineCmd runs a status-line command with the JSON context on stdin and
+// returns its first stdout line (status lines are a single row). A tight timeout
+// keeps a slow script from stalling the UI; any failure collapses to "".
+func runStatuslineCmd(cmd, stdinPayload string) string {
+	res := hook.DefaultSpawner(context.Background(), hook.SpawnInput{
+		Command: cmd,
+		Stdin:   stdinPayload + "\n",
+		Timeout: 2 * time.Second,
+	})
+	out := strings.TrimSpace(res.Stdout)
+	if i := strings.IndexByte(out, '\n'); i >= 0 {
+		out = out[:i]
+	}
+	return out
+}
+
+// modelSwitchMsg carries the result of an async /model switch. A nil err means
+// the new controller is ready in ctrl; label/commands/skills/host mirror the
+// fields that runModelSubcommand used to set synchronously.
+type modelSwitchMsg struct {
+	ref      string
+	ctrl     *control.Controller
+	label    string
+	commands []command.Command
+	skills   []skill.Skill
+	host     *plugin.Host
+	err      error
+}
 
 // fetchBalance queries the provider's wallet balance off the event loop. It's a
 // no-op readout ("") when the provider declares no balance_url or the fetch
@@ -242,8 +316,8 @@ func newChatTUI(ctrl *control.Controller, missing string, eventCh chan event.Eve
 	// it at the insertion point and IME candidate windows anchor to the input.
 	ti.SetVirtualCursor(false)
 	// Plain Enter submits (the chatTUI handler intercepts it), so the textarea's
-	// own InsertNewline binding moves to Alt+Enter / Ctrl+J.
-	ti.KeyMap.InsertNewline = key.NewBinding(key.WithKeys("alt+enter", "ctrl+j"))
+	// own InsertNewline binding moves to Alt+Enter / Ctrl+J / Shift+Enter.
+	ti.KeyMap.InsertNewline = key.NewBinding(key.WithKeys("alt+enter", "ctrl+j", "shift+enter"))
 	ti.Focus()
 
 	sp := spinner.New()
@@ -282,6 +356,7 @@ func (m chatTUI) Init() tea.Cmd {
 		textarea.Blink,
 		waitForAgentEvent(m.eventCh),
 		fetchBalance(m.ctrl),
+		m.runStatusline(), // nil (no-op) unless a custom status line is configured
 	)
 }
 
@@ -462,6 +537,9 @@ func (m chatTUI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.state == tuiRunning {
 				return m, nil // ignore Enter while a turn is in flight
 			}
+			if m.modelSwitchPending {
+				return m, nil // ignore Enter while /model switch is building
+			}
 			line := strings.TrimSpace(m.input.Value())
 
 			if line == "" && len(m.attachments) == 0 {
@@ -517,13 +595,45 @@ func (m chatTUI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case agentEventMsg:
 		m.ingestEvent(event.Event(msg))
 		cmds = append(cmds, waitForAgentEvent(m.eventCh))
-		// A turn just spent tokens (and money) — refresh the balance readout.
+		// A turn just spent tokens (and money) — refresh the balance readout and
+		// the custom status line (its context/cost inputs just changed).
 		if event.Event(msg).Kind == event.TurnDone {
 			cmds = append(cmds, fetchBalance(m.ctrl))
+			if c := m.runStatusline(); c != nil {
+				cmds = append(cmds, c)
+			}
 		}
 
 	case balanceMsg:
 		m.balance = msg.text
+
+	case statuslineMsg:
+		m.statuslineOut = msg.out
+
+	case compactDoneMsg:
+		if msg.err != nil {
+			m.notice(fmt.Sprintf("%s: %v", i18n.M.SlashCompactFailed, msg.err))
+		} else {
+			_ = m.ctrl.Snapshot()
+		}
+
+	case modelSwitchMsg:
+		m.modelSwitchPending = false
+		m.pendingModelSwitch = nil
+		if msg.err != nil {
+			m.notice("model: " + msg.err.Error())
+		} else {
+			m.ctrl = msg.ctrl
+			m.label = msg.label
+			m.commands = msg.commands
+			m.skills = msg.skills
+			m.host = msg.host
+			m.modelRef = msg.ref
+			m.notice(fmt.Sprintf("switched to %s (conversation carried over; prompt cache resets)", m.label))
+			cmds = append(cmds, fetchBalance(m.ctrl))
+			// Re-issue waitForAgentEvent to keep the event loop alive.
+			cmds = append(cmds, waitForAgentEvent(m.eventCh))
+		}
 
 	case promptResolvedMsg:
 		switch {
@@ -841,6 +951,10 @@ func (m chatTUI) View() tea.View {
 		data = append(data, dim(m.balance))
 	}
 	dataLine := "  " + strings.Join(data, " · ")
+	// A configured custom status line replaces the built-in data row entirely.
+	if m.statuslineCmd != "" && m.statuslineOut != "" {
+		dataLine = "  " + m.statuslineOut
+	}
 
 	// The bottom region must stay a stable height: bubbletea's non-alt-screen
 	// renderer commits scrollback via tea.Println by clearing the previous
@@ -908,18 +1022,63 @@ func (m chatTUI) View() tea.View {
 	return v
 }
 
-// contextTag renders the prompt-vs-context-window gauge for the status line.
+// compactionCardLines renders a finished compaction as a titled card: a header
+// with the message count and trigger, then the structured summary under a dim
+// gutter so it reads as one block in scrollback. The summary is also the new
+// context base, so this card is the user's window into exactly what was kept.
+func compactionCardLines(c event.Compaction) []string {
+	trigger := c.Trigger
+	switch c.Trigger {
+	case "auto":
+		trigger = i18n.M.CompactionAuto
+	case "manual":
+		trigger = i18n.M.CompactionManual
+	}
+	header := fmt.Sprintf("%s · %d %s · %s", i18n.M.CompactionTitle, c.Messages, i18n.M.CompactionUnit, trigger)
+	lines := []string{accent("◆ " + header)}
+	for _, ln := range strings.Split(strings.TrimRight(c.Summary, "\n"), "\n") {
+		lines = append(lines, dim("  │ "+ln))
+	}
+	if c.Archive != "" {
+		lines = append(lines, dim("  │ archived "+c.Archive))
+	}
+	return lines
+}
+
+// contextTag renders the prompt-vs-context-window gauge for the status line,
+// framed around the auto-compaction threshold: it shows how much headroom is
+// left until the next compaction, and colours by proximity to that point rather
+// than the raw window. Falls back to a plain percentage when compaction is disabled.
 func (m chatTUI) contextTag() string {
 	used, window := m.ctrl.ContextSnapshot()
 	if used == 0 || window == 0 {
 		return ""
 	}
 	pct := used * 100 / window
-	body := fmt.Sprintf("%s / %s ctx (%d%%)", shortTokens(used), shortTokens(window), pct)
+	ratio := m.ctrl.CompactRatio()
+	if ratio <= 0 || ratio >= 1 {
+		// Compaction disabled: just the raw gauge, coloured on window fill.
+		body := fmt.Sprintf("%s / %s ctx (%d%%)", shortTokens(used), shortTokens(window), pct)
+		switch {
+		case pct >= 85:
+			return lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Render(body)
+		case pct >= 60:
+			return lipgloss.NewStyle().Foreground(lipgloss.Color("220")).Render(body)
+		default:
+			return dim(body)
+		}
+	}
+	threshold := int(ratio * 100)
+	// Headroom to the compaction point, as a percentage of the window (clamped at 0).
+	left := threshold - pct
+	if left < 0 {
+		left = 0
+	}
+	body := fmt.Sprintf("%s ctx (%d%%) · %d%% to compact", shortTokens(used), pct, left)
 	switch {
-	case pct >= 85:
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Render(body)
-	case pct >= 60:
+	case pct >= threshold:
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Render(fmt.Sprintf("%s ctx (%d%%) · compacting soon", shortTokens(used), pct))
+	case left <= 10:
 		return lipgloss.NewStyle().Foreground(lipgloss.Color("220")).Render(body)
 	default:
 		return dim(body)
@@ -1490,6 +1649,21 @@ func (m *chatTUI) ingestEvent(e event.Event) {
 		m.finalizeStreamed()
 		m.commitLine(fmt.Sprintf("  %s %s", glyph, e.Text))
 
+	case event.CompactionStarted:
+		m.finalizeStreamed()
+		m.commitLine(dim("  ⋯ " + i18n.M.CompactionWorking))
+
+	case event.CompactionDone:
+		// An aborted pass carries no summary; the accompanying Notice (auto) or
+		// compactDoneMsg error (manual) explains why, so don't draw an empty card.
+		if e.Compaction.Summary == "" {
+			break
+		}
+		m.finalizeStreamed()
+		for _, ln := range compactionCardLines(e.Compaction) {
+			m.commitLine(ln)
+		}
+
 	case event.Phase:
 		m.finalizeStreamed()
 		m.commitLine(fmt.Sprintf("[%s]", e.Text))
@@ -1561,12 +1735,13 @@ func (m *chatTUI) runSlashCommand(input string) tea.Cmd {
 
 	switch cmd {
 	case "/compact":
-		if err := m.ctrl.Compact(context.Background()); err != nil {
-			m.notice(fmt.Sprintf("%s: %v", i18n.M.SlashCompactFailed, err))
-			return nil
-		}
-		m.notice(i18n.M.SlashCompactDone)
-		_ = m.ctrl.Snapshot()
+		// Compaction makes a (network) summarizer call; run it off the Update loop
+		// so the TUI doesn't freeze. The CompactionStarted/Done events render the
+		// card as they arrive; compactDoneMsg only handles the terminal error /
+		// snapshot once the pass returns. Any text after "/compact" is focus
+		// guidance steering what the summary keeps.
+		focus := strings.TrimSpace(strings.TrimPrefix(input, cmd))
+		return func() tea.Msg { return compactDoneMsg{err: m.ctrl.Compact(context.Background(), focus)} }
 	case "/new":
 		if err := m.ctrl.NewSession(); err != nil {
 			m.notice(fmt.Sprintf("%s: %v", i18n.M.SlashNewFailed, err))
@@ -1593,10 +1768,20 @@ func (m *chatTUI) runSlashCommand(input string) tea.Cmd {
 		m.runMCPSubcommand(input)
 	case "/model":
 		m.runModelSubcommand(input)
+		if m.pendingModelSwitch != nil {
+			return m.pendingModelSwitch
+		}
 	case "/skill", "/skills":
 		m.runSkillSubcommand(input)
 	case "/hooks":
 		m.runHooksSubcommand(input)
+	case "/output-style", "/output-styles":
+		styles := outputstyle.List(outputstyle.Dirs())
+		if len(styles) == 0 {
+			m.notice(i18n.M.OutputStyleNone)
+		} else {
+			m.notice(i18n.M.OutputStyleHeader + "\n" + outputstyle.DescribeList(styles, m.outputStyle) + "\n" + i18n.M.OutputStyleHint)
+		}
 	case "/help":
 		m.notice(i18n.M.SlashHelp)
 		if names := m.commandNames(); names != "" {

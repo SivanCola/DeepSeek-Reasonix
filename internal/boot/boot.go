@@ -11,6 +11,7 @@ package boot
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -24,6 +25,7 @@ import (
 	"reasonix/internal/hook"
 	"reasonix/internal/jobs"
 	"reasonix/internal/memory"
+	"reasonix/internal/outputstyle"
 	"reasonix/internal/permission"
 	"reasonix/internal/plugin"
 	"reasonix/internal/provider"
@@ -44,7 +46,12 @@ type Options struct {
 	MaxSteps   int
 	RequireKey bool
 	Sink       event.Sink
-	CWD        string
+	CWD string
+	// Stderr is the writer for diagnostic warnings and plugin subprocess
+	// stderr output. When nil, defaults to os.Stderr. Set to io.Discard
+	// during model switch inside a bubbletea session to prevent any output
+	// from corrupting the TUI's terminal raw mode.
+	Stderr io.Writer
 }
 
 // Build loads config, resolves the model(s), and returns a Controller wrapping a
@@ -67,6 +74,10 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		}
 	}
 
+	stderr := opts.Stderr
+	if stderr == nil {
+		stderr = os.Stderr
+	}
 	cfg, err := config.LoadAt(cwd)
 	if err != nil {
 		return nil, err
@@ -101,6 +112,12 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Output style: fold the selected persona/tone block into the base prompt
+	// before language/memory/skills append, so a "replace" style (keep-coding
+	// false) still keeps those. Applied once, into the cache-stable prefix.
+	if st, ok := outputstyle.Resolve(cfg.Agent.OutputStyle, outputstyle.Dirs()); ok {
+		sysPrompt = outputstyle.Apply(sysPrompt, st)
+	}
 	// Append the language policy so the model answers in the user's own language
 	// (the UI `language` setting governs only the interface). Static text, so it
 	// stays in the cache-stable prefix and costs nothing per turn.
@@ -118,7 +135,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	// one-liner index into the same cache-stable prefix — names + descriptions
 	// only; bodies load on demand via run_skill or "/<name>". Bodies never enter
 	// the prefix, so the index costs a fixed, small amount per turn.
-	skillStore := skill.New(skill.Options{ProjectRoot: cwd, CustomPaths: cfg.SkillCustomPaths()})
+	skillStore := skill.New(skill.Options{ProjectRoot: cwd, CustomPaths: cfg.SkillCustomPaths(), Stderr: opts.Stderr})
 	skills := skillStore.List()
 	sysPrompt = skill.ApplyIndex(sysPrompt, skills)
 
@@ -126,9 +143,9 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	writeRoots := cfg.WriteRootsAt(cwd)
 	bashSpec := sandbox.Spec{Mode: cfg.BashMode(), WriteRoots: writeRoots, Network: cfg.Sandbox.Network}
 	if bashSpec.Mode == "enforce" && !sandbox.Available() {
-		fmt.Fprintln(os.Stderr, "warning: bash sandbox requested but unavailable on this platform; running bash unconfined")
+		fmt.Fprintln(stderr, "warning: bash sandbox requested but unavailable on this platform; running bash unconfined")
 	}
-	addBuiltins(reg, cfg.Tools.Enabled, cwd, writeRoots, bashSpec)
+	addBuiltins(reg, cfg.Tools.Enabled, cwd, writeRoots, bashSpec, stderr)
 	// Always construct a host, even with no plugins configured, so the controller's
 	// host pointer is stable for the session and `/mcp add` can hot-add into it.
 	pluginHost := plugin.NewHost()
@@ -166,6 +183,12 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		}
 	}
 	if len(specs) > 0 {
+		// Apply caller-supplied stderr override to all plugin specs.
+		if opts.Stderr != nil {
+			for i := range specs {
+				specs[i].Stderr = opts.Stderr
+			}
+		}
 		host, ptools := plugin.StartAvailable(ctx, specs)
 		pluginHost = host
 		for _, t := range ptools {
@@ -245,8 +268,8 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	// Its tool activity nests under the invoking call, like `task`.
 	skillRunner := func(sctx context.Context, sk skill.Skill, task string) (string, error) {
 		prov, price, ctxWin := execProv, entry.Price, entry.ContextWindow
-		if sk.Model != "" {
-			if me, ok := cfg.ResolveModel(sk.Model); ok {
+		if modelRef := subagentModelRef(cfg, sk); modelRef != "" {
+			if me, ok := cfg.ResolveModel(modelRef); ok {
 				if p, err := NewProvider(me); err == nil {
 					prov, price, ctxWin = p, me.Price, me.ContextWindow
 				}
@@ -334,6 +357,50 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	}), nil
 }
 
+func subagentModelRef(cfg *config.Config, sk skill.Skill) string {
+	if cfg != nil {
+		for _, key := range subagentModelKeys(sk.Name) {
+			if m := strings.TrimSpace(cfg.Agent.SubagentModels[key]); m != "" {
+				return m
+			}
+		}
+	}
+	if m := strings.TrimSpace(sk.Model); m != "" {
+		return m
+	}
+	if cfg == nil {
+		return ""
+	}
+	return strings.TrimSpace(cfg.Agent.SubagentModel)
+}
+
+func subagentModelKeys(name string) []string {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return nil
+	}
+	keys := []string{name}
+	for _, alias := range []string{
+		strings.ReplaceAll(name, "-", "_"),
+		strings.ReplaceAll(name, "_", "-"),
+	} {
+		if alias == "" {
+			continue
+		}
+		seen := false
+		for _, key := range keys {
+			if key == alias {
+				seen = true
+				break
+			}
+		}
+		if !seen {
+			keys = append(keys, alias)
+		}
+	}
+	return keys
+}
+
 // NewProvider builds a provider.Provider from a configured entry. Exported so
 // custom assemblers (e.g. the ACP per-session factory) can reuse it without
 // going through the full Build.
@@ -358,13 +425,13 @@ func NewProvider(e *config.ProviderEntry) (provider.Provider, error) {
 // them. writeRoots confines the file-writing built-ins to the workspace: after
 // the (unconfined) defaults are added, each enabled writer is replaced by an
 // instance bound to writeRoots (preserving registry order).
-func addBuiltins(reg *tool.Registry, enabled []string, cwd string, writeRoots []string, bashSpec sandbox.Spec) {
+func addBuiltins(reg *tool.Registry, enabled []string, cwd string, writeRoots []string, bashSpec sandbox.Spec, stderr io.Writer) {
 	for _, t := range (builtin.Workspace{Dir: cwd, WriteRoots: writeRoots, Bash: bashSpec}).Tools(enabled...) {
 		reg.Add(t)
 	}
 	for _, name := range enabled {
 		if _, ok := reg.Get(name); !ok {
-			fmt.Fprintf(os.Stderr, "warning: unknown built-in tool %q\n", name)
+			fmt.Fprintf(stderr, "warning: unknown built-in tool %q\n", name)
 		}
 	}
 }

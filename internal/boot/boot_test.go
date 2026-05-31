@@ -2,11 +2,14 @@ package boot
 
 import (
 	"context"
+	"encoding/json"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"reasonix/internal/config"
 	"reasonix/internal/provider"
+	"reasonix/internal/tool"
 
 	// Blank imports register the provider kind and built-in tools the same way
 	// cmd/reasonix's main does; without them Build sees an empty provider
@@ -61,6 +64,75 @@ api_key_env = "REASONIX_TEST_KEY_UNSET"
 	if mem := ctrl.Memory(); mem == nil || len(mem.Docs) == 0 {
 		t.Fatal("controller memory set is empty after discovering REASONIX.md")
 	}
+}
+
+func TestBuildCWDScopesBuiltinsAndMemory(t *testing.T) {
+	base := t.TempDir()
+	process := t.TempDir()
+	t.Chdir(process)
+	a := filepath.Join(base, "a")
+	b := filepath.Join(base, "b")
+	writeFile(t, a, "reasonix.toml", testConfig("a-model"))
+	writeFile(t, b, "reasonix.toml", testConfig("b-model"))
+	writeFile(t, a, "REASONIX.md", "workspace A rule")
+	writeFile(t, b, "REASONIX.md", "workspace B rule")
+	writeFile(t, a, "same.txt", "from A")
+	writeFile(t, b, "same.txt", "from B")
+
+	ctrlA, err := Build(context.Background(), Options{CWD: a})
+	if err != nil {
+		t.Fatalf("Build A: %v", err)
+	}
+	defer ctrlA.Close()
+	ctrlB, err := Build(context.Background(), Options{CWD: b})
+	if err != nil {
+		t.Fatalf("Build B: %v", err)
+	}
+	defer ctrlB.Close()
+
+	if sys := systemMessage(ctrlA.History()); !strings.Contains(sys, "workspace A rule") || strings.Contains(sys, "workspace B rule") {
+		t.Fatalf("A memory not isolated:\n%s", sys)
+	}
+	if sys := systemMessage(ctrlB.History()); !strings.Contains(sys, "workspace B rule") || strings.Contains(sys, "workspace A rule") {
+		t.Fatalf("B memory not isolated:\n%s", sys)
+	}
+	outA := executeReadFile(t, ctrlA, "same.txt")
+	outB := executeReadFile(t, ctrlB, "same.txt")
+	if !strings.Contains(outA, "from A") || !strings.Contains(outB, "from B") {
+		t.Fatalf("workspace reads not isolated: A=%q B=%q", outA, outB)
+	}
+}
+
+func testConfig(model string) string {
+	return `
+default_model = "` + model + `"
+
+[[providers]]
+name = "` + model + `"
+kind = "openai"
+base_url = "https://example.invalid"
+model = "x"
+api_key_env = "REASONIX_TEST_KEY_UNSET"
+`
+}
+
+func executeReadFile(t *testing.T, ctrl interface {
+	Tool(string) (tool.Tool, bool)
+}, path string) string {
+	t.Helper()
+	read, ok := ctrl.Tool("read_file")
+	if !ok {
+		t.Fatal("read_file tool missing")
+	}
+	args, err := json.Marshal(map[string]string{"path": path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := read.Execute(context.Background(), args)
+	if err != nil {
+		t.Fatalf("read_file %s: %v", path, err)
+	}
+	return out
 }
 
 // TestBuildDiscoversSkills proves the skill wiring end-to-end: a project skill

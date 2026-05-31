@@ -71,6 +71,18 @@ type Messages struct {
 	AskChatInstead     string // the "don't pick, just chat" option label
 	ChatStatusQuestion string // shortcuts hint while a question card is open
 
+	// output style listing (/output-style).
+	OutputStyleNone   string // no styles available
+	OutputStyleHeader string // header above the listing
+	OutputStyleHint   string // how to select one
+
+	// context compaction card (CompactionStarted / CompactionDone events).
+	CompactionWorking string // shown while the summarizer runs
+	CompactionTitle   string // card header before "· N messages · <trigger>"
+	CompactionUnit    string // the noun counted, e.g. "messages"
+	CompactionAuto    string // trigger label: reached the window threshold
+	CompactionManual  string // trigger label: user ran /compact
+
 	// chat TUI slash commands.
 	SlashCompactDone   string // "/compact" succeeded
 	SlashCompactFailed string // "/compact" errored, prefixed before the underlying error
@@ -94,6 +106,7 @@ type Messages struct {
 	CmdMemory        string // /memory
 	CmdMcp           string // /mcp
 	CmdHooks         string // /hooks
+	CmdOutputStyle   string // /output-style
 	CmdSkill         string // /skill
 	CmdHelp          string // /help
 	CmdTodo          string // /todo

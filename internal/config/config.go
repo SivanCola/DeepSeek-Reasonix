@@ -28,6 +28,14 @@ type Config struct {
 	Plugins      []PluginEntry     `toml:"plugins"`
 	Skills       SkillsConfig      `toml:"skills"`
 	Codegraph    CodegraphConfig   `toml:"codegraph"`
+	Statusline   StatuslineConfig  `toml:"statusline"`
+}
+
+// StatuslineConfig configures a custom status line. Command, when set, is run at
+// startup and after each turn; its first line of stdout replaces the built-in
+// status data row. A JSON payload (model, context tokens, cwd) is fed on stdin.
+type StatuslineConfig struct {
+	Command string `toml:"command"`
 }
 
 // CodegraphConfig governs the built-in CodeGraph MCP server — symbol/call-graph
@@ -140,13 +148,20 @@ func (c *Config) BashMode() string {
 // AgentConfig configures the harness loop. PlannerModel is optional: when set
 // to another provider's name it enables two-model collaboration, where the
 // planner handles low-frequency planning in its own session (kept separate so
-// each model's prompt prefix stays cache-stable).
+// each model's prompt prefix stays cache-stable). SubagentModel is the optional
+// default for runAs=subagent skills; SubagentModels overrides it per skill name.
 type AgentConfig struct {
-	SystemPrompt     string  `toml:"system_prompt"`
-	SystemPromptFile string  `toml:"system_prompt_file"`
-	MaxSteps         int     `toml:"max_steps"` // tool-call rounds per turn; 0 = unlimited
-	Temperature      float64 `toml:"temperature"`
-	PlannerModel     string  `toml:"planner_model"`
+	SystemPrompt     string            `toml:"system_prompt"`
+	SystemPromptFile string            `toml:"system_prompt_file"`
+	MaxSteps         int               `toml:"max_steps"` // tool-call rounds per turn; 0 = unlimited
+	Temperature      float64           `toml:"temperature"`
+	PlannerModel     string            `toml:"planner_model"`
+	SubagentModel    string            `toml:"subagent_model"`
+	SubagentModels   map[string]string `toml:"subagent_models"`
+	// OutputStyle selects a persona/tone block folded into the system prompt at
+	// startup (a built-in like "explanatory"/"learning"/"concise", or a custom
+	// .reasonix/output-styles/<name>.md). Empty = the unmodified prompt.
+	OutputStyle string `toml:"output_style"`
 }
 
 // ProviderEntry declares a model provider instance. ContextWindow is the model's

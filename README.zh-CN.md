@@ -85,6 +85,11 @@ echo "解释这段代码" | reasonix run
 default_model = "deepseek-flash"   # 执行器；设 [agent].planner_model 可加规划器
 # language    = "zh"               # 界面语言；为空则按 $LANG / $REASONIX_LANG 自动检测
 
+[agent]
+# planner_model = "mimo-pro"          # 可选的低频规划器
+# subagent_model = "deepseek-pro"     # runAs=subagent skill 的默认模型
+# subagent_models = { review = "deepseek-pro", security_review = "deepseek-pro" }
+
 [[providers]]
 name        = "deepseek-flash"
 kind        = "openai"
@@ -196,6 +201,9 @@ session），向导后手动在 `reasonix.toml` 加一行即可：
 [agent]
 planner_model = "deepseek-pro"   # 作为低频规划器
 ```
+
+Subagent skills 默认继承执行器模型。设置 `subagent_model` 可让它们统一走另一个已配置
+模型；设置 `subagent_models` 则只覆盖 `review`、`security_review` 等指定 skill。
 
 ## 架构
 
