@@ -46,7 +46,7 @@ type Options struct {
 	MaxSteps   int
 	RequireKey bool
 	Sink       event.Sink
-	CWD string
+	CWD        string
 	// Stderr is the writer for diagnostic warnings and plugin subprocess
 	// stderr output. When nil, defaults to os.Stderr. Set to io.Discard
 	// during model switch inside a bubbletea session to prevent any output

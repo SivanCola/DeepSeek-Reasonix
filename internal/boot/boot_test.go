@@ -23,6 +23,7 @@ import (
 // into the session's system message (the cached prefix), and the `remember`
 // tool is registered. It builds a real Controller from a throwaway project dir.
 func TestBuildFoldsProjectMemoryIntoSystemPrompt(t *testing.T) {
+	isolateUserHome(t)
 	dir := t.TempDir()
 	t.Chdir(dir)
 
@@ -67,6 +68,7 @@ api_key_env = "REASONIX_TEST_KEY_UNSET"
 }
 
 func TestBuildCWDScopesBuiltinsAndMemory(t *testing.T) {
+	isolateUserHome(t)
 	base := t.TempDir()
 	process := t.TempDir()
 	t.Chdir(process)
@@ -139,6 +141,7 @@ func executeReadFile(t *testing.T, ctrl interface {
 // is discovered at boot, surfaced via Controller.Skills(), and its name folds
 // into the cache-stable system prompt's "# Skills" index alongside a built-in.
 func TestBuildDiscoversSkills(t *testing.T) {
+	isolateUserHome(t)
 	dir := t.TempDir()
 	t.Chdir(dir)
 	writeFile(t, dir, "reasonix.toml", `
@@ -188,6 +191,7 @@ api_key_env = "REASONIX_TEST_KEY_UNSET"
 // memory files, the system prompt is exactly the configured base — the cache
 // prefix is untouched by the memory feature.
 func TestBuildWithoutMemoryLeavesPromptUnchanged(t *testing.T) {
+	isolateUserHome(t)
 	dir := t.TempDir()
 	t.Chdir(dir)
 	writeFile(t, dir, "reasonix.toml", `
@@ -242,4 +246,11 @@ func writeFile(t *testing.T, dir, name, body string) {
 	if err := writeFileRaw(dir, name, body); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func isolateUserHome(t *testing.T) {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
 }
