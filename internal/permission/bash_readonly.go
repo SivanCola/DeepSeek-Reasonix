@@ -67,27 +67,76 @@ func isReadOnlyBashSubject(subject string) bool {
 	if cmd == "" {
 		return false
 	}
-	if strings.ContainsAny(cmd, ";|&\n") {
+	if containsShellSyntax(cmd) {
 		return false
 	}
-	// Split the first word of the command (before space, ;, |, &, or newline).
-	first := strings.FieldsFunc(cmd, func(r rune) bool {
-		return r == ' ' || r == '\t' || r == ';' || r == '|' || r == '&' || r == '\n'
-	})
-	if len(first) == 0 {
+	fields := strings.Fields(cmd)
+	if len(fields) == 0 {
 		return false
 	}
-	base := strings.ToLower(first[0])
+	base := strings.ToLower(fields[0])
 
 	// Check single-word read-only commands.
 	if readOnlyBashCommands[base] {
+		if hasUnsafeReadOnlyArgs(base, fields[1:]) {
+			return false
+		}
 		return true
 	}
 
 	// Check prefix commands (git log, go vet, etc.).
-	if len(first) > 1 {
+	if len(fields) > 1 {
 		if sub, ok := readOnlyBashPrefixes[base]; ok {
-			return sub[strings.ToLower(first[1])]
+			return sub[strings.ToLower(fields[1])]
+		}
+	}
+	return false
+}
+
+func containsShellSyntax(cmd string) bool {
+	return strings.ContainsAny(cmd, ";|&<>\n`") || strings.Contains(cmd, "$(")
+}
+
+func hasUnsafeReadOnlyArgs(base string, args []string) bool {
+	switch base {
+	case "find":
+		return hasAnyArg(args, "-exec", "-execdir", "-delete")
+	case "sed":
+		for _, arg := range args {
+			if strings.HasPrefix(arg, "-i") || strings.HasPrefix(arg, "--in-place") {
+				return true
+			}
+		}
+	case "sort":
+		return hasShortOptionWithValue(args, "-o") || hasAnyArg(args, "--output") || hasLongOptionWithValue(args, "--output=")
+	}
+	return false
+}
+
+func hasShortOptionWithValue(args []string, prefix string) bool {
+	for _, arg := range args {
+		if strings.HasPrefix(arg, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasAnyArg(args []string, unsafe ...string) bool {
+	for _, arg := range args {
+		for _, candidate := range unsafe {
+			if arg == candidate {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func hasLongOptionWithValue(args []string, prefix string) bool {
+	for _, arg := range args {
+		if strings.HasPrefix(arg, prefix) {
+			return true
 		}
 	}
 	return false
