@@ -52,11 +52,18 @@ func LoadCCSwitchMCP() ([]PluginEntry, error) {
 	if err != nil {
 		return nil, fmt.Errorf("cc-switch import: resolve home: %w", err)
 	}
-	root := filepath.Join(home, ccSwitchDir)
-	if entries, err := loadCCSwitchMCPDB(filepath.Join(root, "cc-switch.db")); err == nil && len(entries) > 0 {
+	return loadCCSwitchMCPFromRoot(filepath.Join(home, ccSwitchDir))
+}
+
+func loadCCSwitchMCPFromRoot(root string) ([]PluginEntry, error) {
+	dbPath := filepath.Join(root, "cc-switch.db")
+	if _, err := os.Stat(dbPath); err == nil {
+		entries, err := loadCCSwitchMCPDB(dbPath)
+		if err != nil {
+			return nil, err
+		}
 		return entries, nil
-	} else if err != nil && !os.IsNotExist(err) {
-		// Fall through to the legacy JSON files only when the database is absent.
+	} else if !os.IsNotExist(err) {
 		// A present but unreadable/corrupt database should be visible to the user.
 		return nil, err
 	}
@@ -134,6 +141,9 @@ func loadCCSwitchMCPDB(path string) ([]PluginEntry, error) {
 	out, err := exec.Command(sqlite, "-readonly", "-json", path, query).Output()
 	if err != nil {
 		return nil, fmt.Errorf("cc-switch import: read %s: %w", path, err)
+	}
+	if strings.TrimSpace(string(out)) == "" {
+		return nil, nil
 	}
 	var rows []ccSwitchMCPRow
 	if err := json.Unmarshal(out, &rows); err != nil {

@@ -2,6 +2,7 @@ package config
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"testing"
@@ -78,5 +79,32 @@ func TestLoadCCSwitchLegacyConfig(t *testing.T) {
 	}
 	if got[0].Name != "@modelcontextprotocol/server-time" || got[0].Command != "uvx" {
 		t.Fatalf("entry = %+v", got[0])
+	}
+}
+
+func TestLoadCCSwitchMCPEmptyDBDoesNotReadLegacyBackups(t *testing.T) {
+	if _, err := exec.LookPath("sqlite3"); err != nil {
+		t.Skip("sqlite3 not available")
+	}
+	root := t.TempDir()
+	dbPath := filepath.Join(root, "cc-switch.db")
+	if out, err := exec.Command("sqlite3", dbPath, `CREATE TABLE mcp_servers (
+		id TEXT PRIMARY KEY,
+		name TEXT NOT NULL,
+		server_config TEXT NOT NULL,
+		enabled_codex BOOLEAN NOT NULL DEFAULT 0
+	);`).CombinedOutput(); err != nil {
+		t.Fatalf("create sqlite db: %v\n%s", err, out)
+	}
+	stale := `{"mcp":{"servers":{"stale":{"name":"stale","server":{"command":"node","args":["stale.js"]},"apps":{"codex":true}}}}}`
+	if err := os.WriteFile(filepath.Join(root, "config.json.migrated"), []byte(stale), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := loadCCSwitchMCPFromRoot(root)
+	if err != nil {
+		t.Fatalf("loadCCSwitchMCPFromRoot: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("empty sqlite db should be authoritative, got legacy entries: %+v", got)
 	}
 }
