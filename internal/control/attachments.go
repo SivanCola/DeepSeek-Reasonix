@@ -3,6 +3,7 @@ package control
 import (
 	"encoding/base64"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
@@ -88,14 +89,14 @@ func ImageDataURL(path string) (string, error) {
 	if clean == "." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) || !strings.HasPrefix(clean, prefix+string(filepath.Separator)) {
 		return "", fmt.Errorf("attachment path is outside .reasonix/attachments")
 	}
-	info, err := os.Stat(clean)
+	info, err := lstatAttachmentNoSymlinks(clean)
 	if err != nil {
 		return "", err
 	}
 	if info.IsDir() || info.Size() <= 0 || info.Size() > maxImageAttachmentBytes {
 		return "", fmt.Errorf("attachment image must be between 1 byte and 10 MB")
 	}
-	raw, err := os.ReadFile(clean)
+	raw, err := readVerifiedAttachment(clean, info)
 	if err != nil {
 		return "", err
 	}
@@ -109,6 +110,54 @@ func ImageDataURL(path string) (string, error) {
 		return "", fmt.Errorf("attachment is not an image")
 	}
 	return "data:" + mime + ";base64," + base64.StdEncoding.EncodeToString(raw), nil
+}
+
+func lstatAttachmentNoSymlinks(path string) (os.FileInfo, error) {
+	clean := filepath.Clean(path)
+	var info os.FileInfo
+	cur := ""
+	for _, part := range strings.Split(clean, string(filepath.Separator)) {
+		if part == "" || part == "." {
+			continue
+		}
+		cur = filepath.Join(cur, part)
+		fi, err := os.Lstat(cur)
+		if err != nil {
+			return nil, err
+		}
+		if fi.Mode()&os.ModeSymlink != 0 {
+			return nil, fmt.Errorf("attachment path must not contain symlinks")
+		}
+		info = fi
+	}
+	if info == nil {
+		return nil, fmt.Errorf("invalid attachment path")
+	}
+	return info, nil
+}
+
+func readVerifiedAttachment(path string, expected os.FileInfo) ([]byte, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	opened, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !os.SameFile(expected, opened) {
+		return nil, fmt.Errorf("attachment changed while opening")
+	}
+	raw, err := io.ReadAll(io.LimitReader(f, maxImageAttachmentBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(raw) == 0 || len(raw) > maxImageAttachmentBytes {
+		return nil, fmt.Errorf("attachment image must be between 1 byte and 10 MB")
+	}
+	return raw, nil
 }
 
 func saveDarwinClipboardImage() (string, error) {

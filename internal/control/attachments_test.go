@@ -67,3 +67,39 @@ func TestImageDataURLRejectsOutsideAttachmentDir(t *testing.T) {
 		t.Fatal("outside attachment dir should fail")
 	}
 }
+
+func TestImageDataURLRejectsSymlinkAttachment(t *testing.T) {
+	t.Chdir(t.TempDir())
+	if err := os.MkdirAll(".reasonix/attachments", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile("secret.txt", []byte("not actually an image"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	link := ".reasonix/attachments/clipboard-20260601-120000.123456.png"
+	if err := os.Symlink("../../secret.txt", link); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	if _, err := ImageDataURL(link); err == nil {
+		t.Fatal("symlink attachment should fail")
+	}
+}
+
+func TestImageDataURLRejectsSymlinkedAttachmentDir(t *testing.T) {
+	t.Chdir(t.TempDir())
+	if err := os.MkdirAll(".reasonix", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll("outside", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile("outside/clipboard-20260601-120000.123456.png", []byte("\x89PNG\r\n\x1a\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("../outside", ".reasonix/attachments"); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	if _, err := ImageDataURL(".reasonix/attachments/clipboard-20260601-120000.123456.png"); err == nil {
+		t.Fatal("symlinked attachment directory should fail")
+	}
+}
