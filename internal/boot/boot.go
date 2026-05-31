@@ -227,10 +227,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		spec := bashSpec
 		spec.WriteRoots = []string{dir}
 		ws := builtin.Workspace{Dir: dir, WriteRoots: []string{dir}, Bash: spec}
-		for _, tl := range ws.Tools(names...) {
-			if !write && !tl.ReadOnly() {
-				continue
-			}
+		for _, tl := range workspaceBuiltinsForParent(reg, ws, write, names) {
 			sub.Add(tl)
 		}
 		cleanup := func() {}
@@ -433,6 +430,29 @@ func pluginSpecsForWorktree(ctx context.Context, specs []plugin.Spec, dir string
 			s.Stderr = stderr
 		}
 		out = append(out, s)
+	}
+	return out
+}
+
+func workspaceBuiltinsForParent(parent *tool.Registry, ws builtin.Workspace, write bool, names []string) []tool.Tool {
+	if parent == nil {
+		return nil
+	}
+	enabled := names
+	if len(enabled) == 0 {
+		enabled = parent.Names()
+	}
+	candidates := ws.Tools(enabled...)
+	out := make([]tool.Tool, 0, len(candidates))
+	for _, tl := range candidates {
+		parentTool, ok := parent.Get(tl.Name())
+		if !ok {
+			continue
+		}
+		if !write && (!tl.ReadOnly() || !parentTool.ReadOnly()) {
+			continue
+		}
+		out = append(out, tl)
 	}
 	return out
 }

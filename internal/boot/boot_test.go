@@ -10,12 +10,13 @@ import (
 	"reasonix/internal/event"
 	"reasonix/internal/plugin"
 	"reasonix/internal/provider"
+	"reasonix/internal/tool"
+	"reasonix/internal/tool/builtin"
 
 	// Blank imports register the provider kind and built-in tools the same way
 	// cmd/reasonix's main does; without them Build sees an empty provider
 	// registry and a bare tool set.
 	_ "reasonix/internal/provider/openai"
-	_ "reasonix/internal/tool/builtin"
 )
 
 // TestBuildFoldsProjectMemoryIntoSystemPrompt is the end-to-end proof of the
@@ -201,6 +202,43 @@ func TestPluginSpecsForWorktreeSkipsPluginsWithoutExplicitToolNames(t *testing.T
 	}
 }
 
+func TestWorkspaceBuiltinsForParentHonorsParentEnabledTools(t *testing.T) {
+	parent := tool.NewRegistry()
+	readFile, ok := tool.LookupBuiltin("read_file")
+	if !ok {
+		t.Fatal("read_file builtin missing")
+	}
+	parent.Add(readFile)
+	ws := builtin.Workspace{Dir: t.TempDir()}
+
+	got := toolNames(workspaceBuiltinsForParent(parent, ws, true, nil))
+	if len(got) != 1 || !got["read_file"] {
+		t.Fatalf("default worktree builtins = %v, want only read_file", got)
+	}
+
+	got = toolNames(workspaceBuiltinsForParent(parent, ws, true, []string{"bash", "read_file"}))
+	if len(got) != 1 || !got["read_file"] {
+		t.Fatalf("explicit worktree builtins = %v, want disabled bash filtered out", got)
+	}
+}
+
+func TestWorkspaceBuiltinsForParentFiltersWritersInReadOnlyMode(t *testing.T) {
+	parent := tool.NewRegistry()
+	for _, name := range []string{"read_file", "write_file"} {
+		tl, ok := tool.LookupBuiltin(name)
+		if !ok {
+			t.Fatalf("%s builtin missing", name)
+		}
+		parent.Add(tl)
+	}
+	ws := builtin.Workspace{Dir: t.TempDir()}
+
+	got := toolNames(workspaceBuiltinsForParent(parent, ws, false, nil))
+	if len(got) != 1 || !got["read_file"] || got["write_file"] {
+		t.Fatalf("read-only worktree builtins = %v, want only read_file", got)
+	}
+}
+
 func systemMessage(msgs []provider.Message) string {
 	for _, m := range msgs {
 		if m.Role == provider.RoleSystem {
@@ -208,6 +246,14 @@ func systemMessage(msgs []provider.Message) string {
 		}
 	}
 	return ""
+}
+
+func toolNames(tools []tool.Tool) map[string]bool {
+	out := make(map[string]bool, len(tools))
+	for _, tl := range tools {
+		out[tl.Name()] = true
+	}
+	return out
 }
 
 func writeFile(t *testing.T, dir, name, body string) {
