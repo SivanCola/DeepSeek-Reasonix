@@ -30,12 +30,10 @@ var readOnlyBashCommands = map[string]bool{
 var readOnlyBashPrefixes = map[string]map[string]bool{
 	"git": {
 		"log": true, "status": true, "diff": true, "show": true,
-		"tag": true, "remote": true,
+		"tag":   true,
 		"blame": true, "grep": true, "ls-files": true, "ls-tree": true,
-		"rev-parse": true, "rev-list": true, "describe": true,
-		"config": true, "stash": true, "reflog": true,
+		"rev-parse": true, "rev-list": true, "describe": true, "reflog": true,
 		"shortlog": true, "whatchanged": true, "cherry": true,
-		"archive": true, "bundle": true,
 		"cat-file": true, "for-each-ref": true, "name-rev": true,
 	},
 	"go": {
@@ -87,7 +85,8 @@ func isReadOnlyBashSubject(subject string) bool {
 	// Check prefix commands (git log, go vet, etc.).
 	if len(fields) > 1 {
 		if sub, ok := readOnlyBashPrefixes[base]; ok {
-			return sub[strings.ToLower(fields[1])]
+			subcmd := strings.ToLower(fields[1])
+			return sub[subcmd] && !hasUnsafePrefixArgs(base, subcmd, fields[2:])
 		}
 	}
 	return false
@@ -109,6 +108,21 @@ func hasUnsafeReadOnlyArgs(base string, args []string) bool {
 		}
 	case "sort":
 		return hasShortOptionWithValue(args, "-o") || hasAnyArg(args, "--output") || hasLongOptionWithValue(args, "--output=")
+	}
+	return false
+}
+
+func hasUnsafePrefixArgs(base, subcmd string, args []string) bool {
+	switch base {
+	case "git":
+		switch subcmd {
+		case "diff", "show", "log":
+			return hasAnyArg(args, "--output") || hasLongOptionWithValue(args, "--output=")
+		}
+	case "go":
+		if subcmd == "env" {
+			return hasAnyArg(args, "-w", "-u")
+		}
 	}
 	return false
 }

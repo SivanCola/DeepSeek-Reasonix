@@ -29,11 +29,22 @@ func TestIsReadOnlyBashSubject(t *testing.T) {
 		{"git diff", true},
 		{"git show HEAD", true},
 		{"git blame main.go", true},
+		{"git remote", false},
+		{"git remote add origin git@example.com:x/y", false},
+		{"git config --global user.name Xinwei", false},
+		{"git stash", false},
+		{"git stash push", false},
+		{"git archive --output repo.tar HEAD", false},
+		{"git bundle create repo.bundle HEAD", false},
+		{"git diff --output changes.patch", false},
+		{"git show --output=changes.patch HEAD", false},
 
 		// Go read-only
 		{"go vet ./...", true},
 		{"go doc fmt", true},
 		{"go list ./...", true},
+		{"go env -w GOPROXY=https://proxy.golang.org,direct", false},
+		{"go env -u GOPROXY", false},
 
 		// Not read-only
 		{"rm file.txt", false},
