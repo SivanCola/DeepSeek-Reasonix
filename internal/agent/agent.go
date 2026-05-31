@@ -118,6 +118,11 @@ type Agent struct {
 	sessCacheHit  int
 	sessCacheMiss int
 
+	// lastPrefixShape records the previous provider request's cacheable prefix
+	// so usage events can explain prefix churn on the next request.
+	lastPrefixShape     PrefixShape
+	haveLastPrefixShape bool
+
 	// planMode, when true, refuses any tool call whose ReadOnly() is false.
 	// The system prompt and tool list never change with the toggle so the
 	// prompt-cache prefix stays valid; the gating happens at execute time
@@ -263,13 +268,24 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 	a.session.Add(provider.Message{Role: provider.RoleUser, Content: input})
 
 	for step := 0; a.maxSteps <= 0 || step < a.maxSteps; step++ {
-		text, reasoning, calls, usage, err := a.stream(ctx)
+		schemas := a.tools.Schemas()
+		prefixShape := a.capturePrefixShape(schemas)
+		prevPrefixShape := a.lastPrefixShape
+		if !a.haveLastPrefixShape {
+			prevPrefixShape = prefixShape
+		}
+
+		text, reasoning, calls, usage, err := a.stream(ctx, schemas)
 		if err != nil {
 			return err
 		}
+		cacheDiagnostics := CompareShape(prevPrefixShape, prefixShape, usage)
+		a.lastPrefixShape = prefixShape
+		a.haveLastPrefixShape = true
 		if usage != nil && usage.TotalTokens > 0 {
 			a.sink.Emit(event.Event{Kind: event.Usage, Usage: usage, Pricing: a.pricing,
-				SessionHit: a.sessCacheHit, SessionMiss: a.sessCacheMiss})
+				CacheDiagnostics: &cacheDiagnostics,
+				SessionHit:       a.sessCacheHit, SessionMiss: a.sessCacheMiss})
 		}
 		if msg, ok := finishReasonMessage(usage); ok {
 			a.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelWarn, Text: msg})
@@ -315,10 +331,10 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 // stream so a sink can re-render the streamed raw text as styled markdown. The
 // accumulated text and reasoning are also returned so the caller can round-trip
 // reasoning on the next turn.
-func (a *Agent) stream(ctx context.Context) (string, string, []provider.ToolCall, *provider.Usage, error) {
+func (a *Agent) stream(ctx context.Context, schemas []provider.ToolSchema) (string, string, []provider.ToolCall, *provider.Usage, error) {
 	ch, err := a.prov.Stream(ctx, provider.Request{
 		Messages:    a.session.Messages,
-		Tools:       a.tools.Schemas(),
+		Tools:       schemas,
 		Temperature: a.temperature,
 	})
 	if err != nil {
@@ -364,6 +380,24 @@ func (a *Agent) stream(ctx context.Context) (string, string, []provider.ToolCall
 		a.sink.Emit(event.Event{Kind: event.Message, Text: text.String(), Reasoning: reasoning.String()})
 	}
 	return text.String(), reasoning.String(), calls, usage, nil
+}
+
+func (a *Agent) capturePrefixShape(schemas []provider.ToolSchema) PrefixShape {
+	return CaptureShape(a.systemPrompt(), schemas, a.session.RewiteVersion())
+}
+
+func (a *Agent) systemPrompt() string {
+	var b strings.Builder
+	for _, m := range a.session.Messages {
+		if m.Role != provider.RoleSystem {
+			continue
+		}
+		if b.Len() > 0 {
+			b.WriteByte('\n')
+		}
+		b.WriteString(m.Content)
+	}
+	return b.String()
 }
 
 // executeBatch dispatches one model turn's tool calls. A ToolDispatch event is
