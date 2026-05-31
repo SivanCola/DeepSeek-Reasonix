@@ -271,8 +271,9 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 // accumulated text and reasoning are also returned so the caller can round-trip
 // reasoning on the next turn.
 func (a *Agent) stream(ctx context.Context) (string, string, []provider.ToolCall, *provider.Usage, error) {
+	msgs, _ := stripStaleReasoning(a.session.Messages)
 	ch, err := a.prov.Stream(ctx, provider.Request{
-		Messages:    a.session.Messages,
+		Messages:    msgs,
 		Tools:       a.tools.Schemas(),
 		Temperature: a.temperature,
 	})
