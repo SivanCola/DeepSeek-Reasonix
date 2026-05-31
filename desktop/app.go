@@ -217,6 +217,23 @@ func (a *App) Fork(turn int) error {
 	return err
 }
 
+// SummarizeFrom / SummarizeUpTo compress the conversation from / up to the start
+// of turn into one summary (Claude Code's "summarize from/up to here"), keeping
+// code intact. The frontend re-reads History after this resolves.
+func (a *App) SummarizeFrom(turn int) error {
+	if a.ctrl == nil {
+		return nil
+	}
+	return a.ctrl.SummarizeFrom(a.ctx, turn)
+}
+
+func (a *App) SummarizeUpTo(turn int) error {
+	if a.ctrl == nil {
+		return nil
+	}
+	return a.ctrl.SummarizeUpTo(a.ctx, turn)
+}
+
 // SessionMeta summarises one saved session for the history panel.
 type SessionMeta struct {
 	Path    string `json:"path"`

@@ -40,6 +40,8 @@ export interface AppBindings {
   Checkpoints(): Promise<CheckpointMeta[]>;
   Rewind(turn: number, scope: string): Promise<void>;
   Fork(turn: number): Promise<void>;
+  SummarizeFrom(turn: number): Promise<void>;
+  SummarizeUpTo(turn: number): Promise<void>;
   // Session history: list saved sessions, resume one (returns its transcript),
   // delete one, or give one a custom display name ("" clears it).
   ListSessions(): Promise<SessionMeta[]>;
@@ -254,6 +256,8 @@ function makeMockApp(): AppBindings {
     },
     async Rewind() {},
     async Fork() {},
+    async SummarizeFrom() {},
+    async SummarizeUpTo() {},
     async History() {
       return [];
     },

@@ -177,6 +177,8 @@ export const zh: Record<DictKey, string> = {
   "rewind.conversation": "仅对话",
   "rewind.code": "仅代码",
   "rewind.fork": "分叉(新分支)",
+  "rewind.summFrom": "从这里起摘要",
+  "rewind.summUpto": "摘要到这里",
   "msg.copied": "已复制",
 
   // 工具卡片摘要

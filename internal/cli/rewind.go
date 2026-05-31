@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -24,13 +25,15 @@ type rewindPicker struct {
 
 var rewindActions = []struct {
 	label string
+	kind  string // "scope" | "fork" | "summ-from" | "summ-upto"
 	scope control.RewindScope
-	fork  bool
 }{
-	{"Code + conversation", control.RewindBoth, false},
-	{"Conversation only", control.RewindConversation, false},
-	{"Code only", control.RewindCode, false},
-	{"Fork (new branch, keep code)", 0, true},
+	{"Code + conversation", "scope", control.RewindBoth},
+	{"Conversation only", "scope", control.RewindConversation},
+	{"Code only", "scope", control.RewindCode},
+	{"Fork (new branch, keep code)", "fork", 0},
+	{"Summarize from here", "summ-from", 0},
+	{"Summarize up to here", "summ-upto", 0},
 }
 
 // openRewind populates the picker from the session's checkpoints, selecting the
@@ -95,6 +98,16 @@ func (m chatTUI) handleRewindKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			r.scope = 3
 			return m.applyRewind()
 		}
+	case "s":
+		if r.stage == 1 {
+			r.scope = 4
+			return m.applyRewind()
+		}
+	case "u":
+		if r.stage == 1 {
+			r.scope = 5
+			return m.applyRewind()
+		}
 	}
 	return m, nil
 }
@@ -104,11 +117,22 @@ func (m chatTUI) applyRewind() (tea.Model, tea.Cmd) {
 	meta := r.metas[r.sel]
 	act := rewindActions[r.scope]
 	m.rewind = nil
-	if act.fork {
+	switch act.kind {
+	case "fork":
 		if _, err := m.ctrl.Fork(meta.Turn); err != nil {
 			m.notice("fork: " + err.Error())
 		}
 		return m, nil // controller notices; the branch is a new session
+	case "summ-from":
+		if err := m.ctrl.SummarizeFrom(context.Background(), meta.Turn); err != nil {
+			m.notice("summarize: " + err.Error())
+		}
+		return m, nil
+	case "summ-upto":
+		if err := m.ctrl.SummarizeUpTo(context.Background(), meta.Turn); err != nil {
+			m.notice("summarize: " + err.Error())
+		}
+		return m, nil
 	}
 	if err := m.ctrl.Rewind(meta.Turn, act.scope); err != nil {
 		m.notice("rewind: " + err.Error())
@@ -146,7 +170,7 @@ func (m chatTUI) renderRewind() string {
 	for i, s := range rewindActions {
 		b.WriteString(rowLine(i == r.scope, i+1, "", s.label, false) + "\n")
 	}
-	b.WriteString(dim("↑/↓ · Enter apply · b/c/d/f quick · Esc back"))
+	b.WriteString(dim("↑/↓ · Enter apply · Esc back"))
 	return choicePanelStyle.Width(w).Render(b.String())
 }
 

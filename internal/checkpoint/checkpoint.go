@@ -136,6 +136,24 @@ func (s *Store) persist(c *Checkpoint) {
 	_ = os.WriteFile(filepath.Join(s.dir, fmt.Sprintf("turn-%d.json", c.Turn)), b, 0o644)
 }
 
+// NextTurn returns the turn number a new checkpoint should take: one past the
+// highest existing turn (0 when empty), so a resumed session keeps numbering
+// without colliding with checkpoints loaded from disk.
+func (s *Store) NextTurn() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	next := 0
+	for _, c := range s.done {
+		if c.Turn >= next {
+			next = c.Turn + 1
+		}
+	}
+	if s.cur != nil && s.cur.Turn >= next {
+		next = s.cur.Turn + 1
+	}
+	return next
+}
+
 // List returns every checkpoint's metadata, oldest turn first.
 func (s *Store) List() []Meta {
 	s.mu.Lock()

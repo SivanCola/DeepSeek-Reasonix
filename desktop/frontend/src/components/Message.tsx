@@ -34,6 +34,8 @@ export function UserMessage({
             <button onClick={() => rewind("conversation")}>{t("rewind.conversation")}</button>
             <button onClick={() => rewind("code")}>{t("rewind.code")}</button>
             <button onClick={() => rewind("fork")}>{t("rewind.fork")}</button>
+            <button onClick={() => rewind("summ-from")}>{t("rewind.summFrom")}</button>
+            <button onClick={() => rewind("summ-upto")}>{t("rewind.summUpto")}</button>
             <button className="rewind__cancel" onClick={() => setMenu(false)}>
               ✕
             </button>
