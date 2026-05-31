@@ -89,6 +89,10 @@ never stored in config files.
 default_model = "deepseek-flash"   # executor; set [agent].planner_model to add a planner
 # language    = "zh"               # ui language; empty = auto-detect from $LANG / $REASONIX_LANG
 
+[agent]
+auto_plan = "ask"                  # off|ask|on; complex chat tasks start in plan mode
+# auto_plan_classifier = "deepseek-flash"   # optional; only borderline tasks call it
+
 [[providers]]
 name        = "deepseek-flash"
 kind        = "openai"
@@ -213,6 +217,12 @@ separate cache-stable sessions) is a one-line edit afterwards — set
 [agent]
 planner_model = "deepseek-pro"   # used as the low-frequency planner
 ```
+
+For interactive frontends, `agent.auto_plan = "ask"` makes complex-looking tasks
+enter plan mode automatically: Reasonix first drafts a read-only plan, then waits
+for approval before editing or running side-effecting commands. `auto_plan_classifier`
+can name a cheap provider such as `deepseek-flash`; it is only called for
+borderline inputs and falls back to the heuristic if classification fails.
 
 ## Architecture
 

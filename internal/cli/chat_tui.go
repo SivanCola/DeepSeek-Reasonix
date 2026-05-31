@@ -453,7 +453,9 @@ func (m chatTUI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, finalize(m, cmds)
 			}
 
-			cmds = append(cmds, m.startTurn(m.ctrl.Compose(line), line))
+			sent := m.ctrl.Compose(line)
+			m.planMode = m.ctrl.PlanMode()
+			cmds = append(cmds, m.startTurn(sent, line))
 			return m, finalize(m, cmds)
 		}
 
@@ -475,7 +477,9 @@ func (m chatTUI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case strings.TrimSpace(msg.sent) == "":
 			m.notice(i18n.M.SlashPromptEmpty)
 		default:
-			cmds = append(cmds, m.startTurn(m.ctrl.Compose(msg.sent), msg.display))
+			sent := m.ctrl.Compose(msg.sent)
+			m.planMode = m.ctrl.PlanMode()
+			cmds = append(cmds, m.startTurn(sent, msg.display))
 		}
 
 	case refsResolvedMsg:
@@ -486,7 +490,9 @@ func (m chatTUI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.block != "" {
 			sent = "Referenced context:\n\n" + msg.block + "\n\n" + msg.line
 		}
-		cmds = append(cmds, m.startTurn(m.ctrl.Compose(sent), msg.line))
+		sent = m.ctrl.Compose(sent)
+		m.planMode = m.ctrl.PlanMode()
+		cmds = append(cmds, m.startTurn(sent, msg.line))
 
 	case elapsedTickMsg:
 		if m.state == tuiRunning {
@@ -1276,10 +1282,14 @@ func (m *chatTUI) runSlashCommand(input string) tea.Cmd {
 	default:
 		// A custom command wins over a skill of the same name; both resolve to a turn.
 		if sent, ok := m.ctrl.CustomCommand(input); ok {
-			return m.startTurn(m.ctrl.Compose(sent), input)
+			sent = m.ctrl.Compose(sent)
+			m.planMode = m.ctrl.PlanMode()
+			return m.startTurn(sent, input)
 		}
 		if sent, ok := m.ctrl.RunSkill(input); ok {
-			return m.startTurn(m.ctrl.Compose(sent), input)
+			sent = m.ctrl.Compose(sent)
+			m.planMode = m.ctrl.PlanMode()
+			return m.startTurn(sent, input)
 		}
 		m.notice(fmt.Sprintf("%s: %s", i18n.M.SlashUnknown, cmd))
 	}

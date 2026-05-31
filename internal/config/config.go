@@ -126,6 +126,12 @@ type AgentConfig struct {
 	MaxSteps         int     `toml:"max_steps"` // tool-call rounds per turn; 0 = unlimited
 	Temperature      float64 `toml:"temperature"`
 	PlannerModel     string  `toml:"planner_model"`
+	// AutoPlan controls whether interactive turns that look multi-step start in
+	// plan mode automatically: "off" disables it, "ask"/"on" enable the gate.
+	AutoPlan string `toml:"auto_plan"`
+	// AutoPlanClassifier optionally names a provider/model used to classify
+	// borderline auto-plan decisions. Empty keeps the zero-cost heuristic path.
+	AutoPlanClassifier string `toml:"auto_plan_classifier"`
 }
 
 // ProviderEntry declares a model provider instance. ContextWindow is the model's
@@ -249,6 +255,7 @@ func Default() *Config {
 			// compaction, not by a round count. Set a positive agent.max_steps only
 			// if you want a hard guard against runaway.
 			MaxSteps: 0,
+			AutoPlan: "ask",
 		},
 		// Mode "ask" with no rules keeps `reasonix run` autonomous (no TTY → ask
 		// resolves to allow) while `reasonix chat` prompts before writers. Users add

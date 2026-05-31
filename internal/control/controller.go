@@ -52,6 +52,8 @@ type Controller struct {
 	hooks        *hook.Runner // session hook runner; nil-safe (no hooks configured)
 	mem          *memory.Set
 	cleanup      func()
+	autoPlan     string
+	classifier   autoPlanClassifier
 
 	// balanceURL/balanceKey target the active provider's optional wallet-balance
 	// endpoint (empty when the provider declares none). Captured at build so a
@@ -162,6 +164,8 @@ type Options struct {
 	// WorkspaceRoot is the project root checkpoint restores are confined to ("" =
 	// no confinement). Frontends pass the cwd they launched the session in.
 	WorkspaceRoot string
+	AutoPlan      string
+	Classifier    autoPlanClassifier
 }
 
 // New builds a Controller. A nil Sink is replaced with event.Discard.
@@ -189,6 +193,8 @@ func New(opts Options) *Controller {
 		hooks:        opts.Hooks,
 		mem:          opts.Memory,
 		cleanup:      opts.Cleanup,
+		autoPlan:     normalizeAutoPlan(opts.AutoPlan),
+		classifier:   opts.Classifier,
 		balanceURL:   opts.BalanceURL,
 		balanceKey:   opts.BalanceKey,
 		jobs:         opts.Jobs,
@@ -420,7 +426,7 @@ func (c *Controller) Submit(input string) {
 				c.notice("unknown command: " + trimmed)
 				return nil
 			}
-			return c.runner.Run(ctx, c.Compose(sent))
+			return c.runTurn(ctx, c.Compose(sent))
 		})
 	case strings.HasPrefix(trimmed, "/"):
 		// Read-only management verbs (/model /memory /skill /hooks /mcp) emit a
@@ -570,6 +576,14 @@ func (c *Controller) SetPlanMode(v bool) {
 	if c.executor != nil {
 		c.executor.SetPlanMode(v)
 	}
+}
+
+// PlanMode reports whether outgoing turns currently receive the plan-mode
+// marker. Frontends use it after Compose because auto-plan may flip the mode.
+func (c *Controller) PlanMode() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.planMode
 }
 
 // Compact runs one compaction pass on the executor's session on demand.

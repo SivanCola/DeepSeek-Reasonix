@@ -85,6 +85,10 @@ echo "解释这段代码" | reasonix run
 default_model = "deepseek-flash"   # 执行器；设 [agent].planner_model 可加规划器
 # language    = "zh"               # 界面语言；为空则按 $LANG / $REASONIX_LANG 自动检测
 
+[agent]
+auto_plan = "ask"                  # off|ask|on；复杂聊天任务自动进入计划模式
+# auto_plan_classifier = "deepseek-flash"   # 可选；只在边界任务上调用
+
 [[providers]]
 name        = "deepseek-flash"
 kind        = "openai"
@@ -196,6 +200,10 @@ session），向导后手动在 `reasonix.toml` 加一行即可：
 [agent]
 planner_model = "deepseek-pro"   # 作为低频规划器
 ```
+
+交互式前端中，`agent.auto_plan = "ask"` 会让看起来复杂的任务自动进入 plan
+mode：Reasonix 先只读生成计划，待用户批准后才编辑文件或执行有副作用的命令。
+`auto_plan_classifier` 可以指定便宜的 provider，例如 `deepseek-flash`；它只在边界输入上调用，分类失败会回退到启发式规则。
 
 ## 架构
 
