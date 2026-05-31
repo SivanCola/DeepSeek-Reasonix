@@ -62,6 +62,21 @@ func TestCanonicalizeSchemaNested(t *testing.T) {
 	}
 }
 
+func TestCanonicalizeSchemaEquivalentOrderingMatches(t *testing.T) {
+	first := canonicalizeSchema(json.RawMessage(`{"type":"object","required":["b","a"],"properties":{"b":{"description":"bee","type":"string"},"a":{"type":"integer"}}}`))
+	second := canonicalizeSchema(json.RawMessage(`{"properties":{"a":{"type":"integer"},"b":{"type":"string","description":"bee"}},"required":["a","b"],"type":"object"}`))
+	if string(first) != string(second) {
+		t.Fatalf("equivalent schemas canonicalized differently:\n  first:  %s\n  second: %s", first, second)
+	}
+}
+
+func TestRemoteToolSchemaCanonicalizesOnReturn(t *testing.T) {
+	rt := &remoteTool{schema: json.RawMessage(`{"type":"object","required":["z","a"],"properties":{"z":{"type":"string"},"a":{"type":"string"}}}`)}
+	if got, want := string(rt.Schema()), `{"properties":{"a":{"type":"string"},"z":{"type":"string"}},"required":["a","z"],"type":"object"}`; got != want {
+		t.Fatalf("Schema() = %s, want %s", got, want)
+	}
+}
+
 func TestSortToolsByName(t *testing.T) {
 	tools := []tool.Tool{
 		testTool{name: "zulu"},

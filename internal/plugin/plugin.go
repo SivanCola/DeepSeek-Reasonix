@@ -419,7 +419,7 @@ func (t *remoteTool) Schema() json.RawMessage {
 	if len(t.schema) == 0 {
 		return json.RawMessage(`{"type":"object"}`)
 	}
-	return t.schema
+	return canonicalizeSchema(t.schema)
 }
 
 func (t *remoteTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {

@@ -87,3 +87,23 @@ func TestRegistrySchemasStableAndCanonical(t *testing.T) {
 		t.Fatalf("zeta schema = %s, want %s", got, want)
 	}
 }
+
+func TestRegistrySchemasCanonicalizesEquivalentOrdering(t *testing.T) {
+	first := NewRegistry()
+	first.Add(stubTool{
+		name:   "same",
+		schema: json.RawMessage(`{"type":"object","required":["b","a"],"properties":{"b":{"description":"bee","type":"string"},"a":{"type":"integer"}}}`),
+	})
+
+	second := NewRegistry()
+	second.Add(stubTool{
+		name:   "same",
+		schema: json.RawMessage(`{"properties":{"a":{"type":"integer"},"b":{"type":"string","description":"bee"}},"required":["a","b"],"type":"object"}`),
+	})
+
+	firstSchemas := first.Schemas()
+	secondSchemas := second.Schemas()
+	if got, want := string(firstSchemas[0].Parameters), string(secondSchemas[0].Parameters); got != want {
+		t.Fatalf("equivalent schemas canonicalized differently:\n  first:  %s\n  second: %s", got, want)
+	}
+}
