@@ -22,7 +22,6 @@ var readOnlyBashCommands = map[string]bool{
 	"man": true, "info": true, "help": true,
 	"true": true, "false": true, "test": true, "[": true,
 	"basename": true, "dirname": true, "realpath": true, "readlink": true,
-	"xargs": true, "tee": true,
 }
 
 // readOnlyBashPrefixes are command prefixes where the second word
@@ -31,7 +30,7 @@ var readOnlyBashCommands = map[string]bool{
 var readOnlyBashPrefixes = map[string]map[string]bool{
 	"git": {
 		"log": true, "status": true, "diff": true, "show": true,
-		"branch": true, "tag": true, "remote": true,
+		"tag": true, "remote": true,
 		"blame": true, "grep": true, "ls-files": true, "ls-tree": true,
 		"rev-parse": true, "rev-list": true, "describe": true,
 		"config": true, "stash": true, "reflog": true,
@@ -40,7 +39,7 @@ var readOnlyBashPrefixes = map[string]map[string]bool{
 		"cat-file": true, "for-each-ref": true, "name-rev": true,
 	},
 	"go": {
-		"vet": true, "fmt": true, "doc": true, "list": true,
+		"vet": true, "doc": true, "list": true,
 		"version": true, "env": true,
 	},
 	"npm": {
@@ -66,6 +65,9 @@ var readOnlyBashPrefixes = map[string]map[string]bool{
 func isReadOnlyBashSubject(subject string) bool {
 	cmd := strings.TrimSpace(subject)
 	if cmd == "" {
+		return false
+	}
+	if strings.ContainsAny(cmd, ";|&\n") {
 		return false
 	}
 	// Split the first word of the command (before space, ;, |, &, or newline).
