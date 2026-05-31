@@ -123,7 +123,8 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	// nesting out of the picture). It registers into the same reg the
 	// executor uses, so the model surfaces it like any other tool.
 	reg.Add(agent.NewTaskTool(execProv, entry.Price, reg, maxSteps,
-		entry.ContextWindow, cfg.Agent.Temperature, config.ArchiveDir(), "", headlessGate))
+		entry.ContextWindow, cfg.Agent.SoftCompactRatio, cfg.Agent.CompactRatio, cfg.Agent.CompactForceRatio,
+		cfg.Agent.Temperature, config.ArchiveDir(), "", headlessGate))
 
 	// The `remember` tool lets the model persist durable facts to the project's
 	// auto-memory store; the saved index loads into the prefix on the next session.
@@ -137,12 +138,15 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 
 	execSess := agent.NewSession(sysPrompt)
 	executor := agent.New(execProv, reg, execSess, agent.Options{
-		MaxSteps:      maxSteps,
-		Temperature:   cfg.Agent.Temperature,
-		Pricing:       entry.Price,
-		Gate:          headlessGate,
-		ContextWindow: entry.ContextWindow,
-		ArchiveDir:    config.ArchiveDir(),
+		MaxSteps:          maxSteps,
+		Temperature:       cfg.Agent.Temperature,
+		Pricing:           entry.Price,
+		Gate:              headlessGate,
+		ContextWindow:     entry.ContextWindow,
+		SoftCompactRatio:  cfg.Agent.SoftCompactRatio,
+		CompactRatio:      cfg.Agent.CompactRatio,
+		CompactForceRatio: cfg.Agent.CompactForceRatio,
+		ArchiveDir:        config.ArchiveDir(),
 	}, opts.Sink)
 
 	// Custom slash commands (.reasonix/commands + user dir). Best-effort: a malformed

@@ -84,11 +84,14 @@ func (c *Config) BashMode() string {
 // planner handles low-frequency planning in its own session (kept separate so
 // each model's prompt prefix stays cache-stable).
 type AgentConfig struct {
-	SystemPrompt     string  `toml:"system_prompt"`
-	SystemPromptFile string  `toml:"system_prompt_file"`
-	MaxSteps         int     `toml:"max_steps"` // tool-call rounds per turn; 0 = unlimited
-	Temperature      float64 `toml:"temperature"`
-	PlannerModel     string  `toml:"planner_model"`
+	SystemPrompt      string  `toml:"system_prompt"`
+	SystemPromptFile  string  `toml:"system_prompt_file"`
+	MaxSteps          int     `toml:"max_steps"` // tool-call rounds per turn; 0 = unlimited
+	Temperature       float64 `toml:"temperature"`
+	PlannerModel      string  `toml:"planner_model"`
+	SoftCompactRatio  float64 `toml:"soft_compact_ratio"`
+	CompactRatio      float64 `toml:"compact_ratio"`
+	CompactForceRatio float64 `toml:"compact_force_ratio"`
 }
 
 // ProviderEntry declares a model provider instance. ContextWindow is the model's
@@ -201,7 +204,10 @@ func Default() *Config {
 			// the user cancels, or the provider errors. Context stays bounded by
 			// compaction, not by a round count. Set a positive agent.max_steps only
 			// if you want a hard guard against runaway.
-			MaxSteps: 0,
+			MaxSteps:          0,
+			SoftCompactRatio:  0.5,
+			CompactRatio:      0.8,
+			CompactForceRatio: 0.9,
 		},
 		// Mode "ask" with no rules keeps `reasonix run` autonomous (no TTY → ask
 		// resolves to allow) while `reasonix chat` prompts before writers. Users add

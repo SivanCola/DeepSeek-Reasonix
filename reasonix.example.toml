@@ -14,6 +14,9 @@ guessing; keep changes minimal and correct; briefly summarize what you did."""
 # system_prompt_file = "prompts/system.md"   # overrides system_prompt when set
 max_steps   = 25
 temperature = 0.0
+soft_compact_ratio  = 0.5   # notice only; keeps the cache-first prefix intact
+compact_ratio       = 0.8   # try compacting when prompt reaches this fraction
+compact_force_ratio = 0.9   # force compacting at this high-water mark
 # planner_model = "mimo-pro"   # optional: enable two-model collaboration
 
 # A provider is a vendor endpoint (one base_url + key) that offers one or more
