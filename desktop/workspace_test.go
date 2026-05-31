@@ -2,8 +2,12 @@ package main
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"reasonix/internal/config"
 )
 
 // --- workspaceStatePath ---
@@ -58,6 +62,89 @@ func TestCwdWritableInTempDir(t *testing.T) {
 	os.Chdir(dir)
 	if !cwdWritable() {
 		t.Error("temp dir should be writable")
+	}
+}
+
+func TestAllowedOpenPathRestrictsToSafeRoots(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	workspace := t.TempDir()
+	t.Chdir(workspace)
+
+	insideDir := filepath.Join(workspace, "inside")
+	if err := os.Mkdir(insideDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := allowedOpenPath(insideDir); err != nil || got == "" {
+		t.Fatalf("workspace directory should be allowed, got %q err=%v", got, err)
+	}
+	appBundle := filepath.Join(workspace, "Tool.app")
+	if err := os.Mkdir(appBundle, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := allowedOpenPath(appBundle); err == nil {
+		t.Fatal("application bundles should not be opened")
+	}
+
+	insideFile := filepath.Join(workspace, "file.txt")
+	if err := os.WriteFile(insideFile, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := allowedOpenPath(insideFile); err == nil {
+		t.Fatal("workspace file should not be opened directly")
+	}
+
+	outsideDir := t.TempDir()
+	if _, err := allowedOpenPath(outsideDir); err == nil {
+		t.Fatal("directory outside safe roots should be rejected")
+	}
+
+	logDir := config.ManagerRunDir()
+	if err := os.MkdirAll(logDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	logPath := filepath.Join(logDir, "run.jsonl")
+	if err := os.WriteFile(logPath, []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := allowedOpenPath(logPath); err != nil || got == "" {
+		t.Fatalf("manager run log should be allowed, got %q err=%v", got, err)
+	}
+}
+
+func TestAllowedOpenPathAllowsRegisteredGitWorktree(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is required")
+	}
+	parent := t.TempDir()
+	repo := filepath.Join(parent, "repo")
+	if err := os.Mkdir(repo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	runGitDesktop(t, repo, "init")
+	readme := filepath.Join(repo, "README.md")
+	if err := os.WriteFile(readme, []byte("hello\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGitDesktop(t, repo, "add", "README.md")
+	runGitDesktop(t, repo, "-c", "user.name=Reasonix Test", "-c", "user.email=test@example.com", "commit", "-m", "init")
+	wt := filepath.Join(parent, "wt-feature")
+	runGitDesktop(t, repo, "worktree", "add", "-b", "feature/open-path", wt)
+	t.Chdir(repo)
+
+	if got, err := allowedOpenPath(wt); err != nil || got == "" {
+		t.Fatalf("registered git worktree should be allowed, got %q err=%v", got, err)
+	}
+	if _, err := allowedOpenPath(filepath.Join(wt, "README.md")); err == nil {
+		t.Fatal("worktree files should not be opened directly")
+	}
+}
+
+func runGitDesktop(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, out)
 	}
 }
 

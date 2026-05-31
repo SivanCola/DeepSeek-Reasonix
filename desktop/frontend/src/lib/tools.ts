@@ -42,7 +42,10 @@ export function subjectOf(name: string, args: string): string {
     case "web_fetch":
       return str(a, "url");
     case "task":
+    case "agent":
       return str(a, "description") || str(a, "prompt");
+    case "agents":
+      return Array.isArray(a.agents) ? countOf(a.agents.length, "tool.agentOne", "tool.agentOther") : "";
     case "remember":
       return str(a, "name") || str(a, "description");
     case "todo_write":

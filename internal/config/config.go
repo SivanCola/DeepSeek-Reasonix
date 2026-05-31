@@ -376,6 +376,16 @@ func SessionDir() string {
 	return filepath.Join(dir, "reasonix", "sessions")
 }
 
+// ManagerRunDir is where `agents` manager DAG runs are persisted as append-only
+// JSONL logs. Empty disables persistence when the user config dir is unavailable.
+func ManagerRunDir() string {
+	dir, err := os.UserConfigDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(dir, "reasonix", "manager-runs")
+}
+
 // MemoryUserDir returns the reasonix user config root (…/reasonix), under which
 // the user-global REASONIX.md and the per-project auto-memory store live. Empty
 // when the user config dir can't be resolved, which disables user-scoped memory.

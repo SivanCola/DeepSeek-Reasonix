@@ -7,6 +7,7 @@ import {
   FileText,
   FolderOpen,
   Globe,
+  Bot,
   Loader2,
   ListTree,
   Search,
@@ -17,6 +18,7 @@ import {
 } from "lucide-react";
 import { CodeViewer } from "./CodeViewer";
 import { DiffView } from "./DiffView";
+import { app } from "../lib/bridge";
 import { useT } from "../lib/i18n";
 import { diffsFor, subjectOf, summarize } from "../lib/tools";
 import type { Item } from "../lib/useController";
@@ -34,6 +36,8 @@ const ICONS: Record<string, LucideIcon> = {
   grep: Search,
   web_fetch: Globe,
   task: ListTree,
+  agents: ListTree,
+  agent: Bot,
 };
 
 function pretty(json: string): string {
@@ -42,6 +46,18 @@ function pretty(json: string): string {
   } catch {
     return json;
   }
+}
+
+function parseRecord(json: string): Record<string, unknown> {
+  try {
+    return JSON.parse(json) as Record<string, unknown>;
+  } catch {
+    return {};
+  }
+}
+
+function shortLine(s?: string): string {
+  return (s ?? "").trim().split(/\r?\n/, 1)[0].slice(0, 120);
 }
 
 function StatusGlyph({ status }: { status: ToolItem["status"] }) {
@@ -54,7 +70,15 @@ function StatusGlyph({ status }: { status: ToolItem["status"] }) {
 // ToolCard renders one tool call. `subcalls` are sub-agent calls nested under a
 // `task` card (their ParentID points at this call); they render inline, live, so
 // the sub-agent's work is visible as it happens.
-export function ToolCard({ item, subcalls }: { item: ToolItem; subcalls?: ToolItem[] }) {
+export function ToolCard({
+  item,
+  subcalls,
+  subcallsFor,
+}: {
+  item: ToolItem;
+  subcalls?: ToolItem[];
+  subcallsFor?: (id: string) => ToolItem[] | undefined;
+}) {
   const t = useT();
   const diffs = diffsFor(item.name, item.args);
   const subject = subjectOf(item.name, item.args);
@@ -111,10 +135,12 @@ export function ToolCard({ item, subcalls }: { item: ToolItem; subcalls?: ToolIt
         </div>
       ))}
 
+      {item.name === "agents" && hasNested && <AgentPanel agents={nested} />}
+
       {hasNested && (
         <div className="tool__nested">
           {nested.map((c) => (
-            <ToolCard key={c.id} item={c} />
+            <ToolCard key={c.id} item={c} subcalls={subcallsFor?.(c.id)} subcallsFor={subcallsFor} />
           ))}
         </div>
       )}
@@ -132,6 +158,54 @@ export function ToolCard({ item, subcalls }: { item: ToolItem; subcalls?: ToolIt
       )}
 
       {item.error && <div className="tool__err">{item.error}</div>}
+    </div>
+  );
+}
+
+function AgentPanel({ agents }: { agents: ToolItem[] }) {
+  const t = useT();
+  const rows = agents.filter((a) => a.name === "agent");
+  if (rows.length === 0) return null;
+  return (
+    <div className="agentpanel">
+      {rows.map((a) => {
+        const meta = parseRecord(a.args);
+        const title = String(meta.description || meta.id || "agent");
+        const branch = String(meta.branch || "");
+        const isolation = String(meta.isolation || "");
+        const mode = String(meta.mode || "");
+        const worktree = String(meta.worktree || "");
+        const line = a.error || shortLine(a.output);
+        return (
+          <div className={`agentpanel__row agentpanel__row--${a.status}`} key={a.id}>
+            <span className="agentpanel__status">
+              <StatusGlyph status={a.status} />
+            </span>
+            <span className="agentpanel__main">
+              <span className="agentpanel__title">{title}</span>
+              {line && <span className="agentpanel__line">{line}</span>}
+            </span>
+            {(branch || isolation || mode) && (
+              <span className="agentpanel__meta">
+                {[branch, isolation, mode].filter(Boolean).join(" · ")}
+              </span>
+            )}
+            {worktree && (
+              <button
+                className="agentpanel__open"
+                title={`${t("tool.openWorktree")}: ${worktree}`}
+                aria-label={t("tool.openWorktree")}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  void app.OpenPath(worktree).catch(() => {});
+                }}
+              >
+                <FolderOpen size={12} />
+              </button>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }

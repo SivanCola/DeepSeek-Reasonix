@@ -68,14 +68,14 @@ func (s *TextSink) Emit(e event.Event) {
 		s.closeTextStream(e.Text, e.Reasoning)
 
 	case event.ToolDispatch:
-		fmt.Fprintf(s.out, "  -> %s %s\n", e.Tool.Name, CompactArgs(e.Tool.Args))
+		fmt.Fprintf(s.out, "%s-> %s %s\n", toolIndent(e.Tool.ParentID), e.Tool.Name, CompactArgs(e.Tool.Args))
 		s.wroteAnything = true
 
 	case event.ToolResult:
 		// A successful result is silent (it only feeds the model); a blocked
 		// call surfaces the same "⊘ name <reason>" line the agent used to print.
 		if e.Tool.Err != "" {
-			fmt.Fprintf(s.out, "  ⊘ %s %s\n", e.Tool.Name, e.Tool.Err)
+			fmt.Fprintf(s.out, "%s⊘ %s %s\n", toolIndent(e.Tool.ParentID), e.Tool.Name, e.Tool.Err)
 			s.wroteAnything = true
 		}
 
@@ -205,4 +205,15 @@ func CompactArgs(s string) string {
 		return string(r[:120]) + "..."
 	}
 	return s
+}
+
+func toolIndent(parentID string) string {
+	if parentID == "" {
+		return "  "
+	}
+	depth := strings.Count(parentID, "/") + 1
+	if depth > 4 {
+		depth = 4
+	}
+	return strings.Repeat("  ", depth+1)
 }

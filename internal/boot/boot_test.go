@@ -2,10 +2,13 @@ package boot
 
 import (
 	"context"
+	"io"
 	"strings"
 	"testing"
 
 	"reasonix/internal/config"
+	"reasonix/internal/event"
+	"reasonix/internal/plugin"
 	"reasonix/internal/provider"
 
 	// Blank imports register the provider kind and built-in tools the same way
@@ -153,6 +156,48 @@ api_key_env = "REASONIX_TEST_KEY_UNSET"
 	base = strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(base), config.LanguagePolicy))
 	if base != "JUST THE BASE" {
 		t.Fatalf("expected untouched base prompt, got:\n%s", sys)
+	}
+}
+
+func TestPluginSpecsForWorktreeRebindsStdioAndFiltersByToolNames(t *testing.T) {
+	specs := []plugin.Spec{{
+		Name:    "fs tools",
+		Command: "mcp-fs",
+		Args:    []string{"serve"},
+		Env:     map[string]string{"A": "B"},
+	}, {
+		Name: "remote",
+		Type: "http",
+		URL:  "https://example.invalid/mcp",
+	}}
+	names := []string{plugin.ToolPrefix("fs tools") + "read_file"}
+
+	got := pluginSpecsForWorktree(context.Background(), specs, "/tmp/wt", names, io.Discard, event.Discard)
+	if len(got) != 1 {
+		t.Fatalf("specs len = %d, want 1", len(got))
+	}
+	if got[0].Name != "fs tools" || got[0].Dir != "/tmp/wt" {
+		t.Fatalf("stdio spec was not rebound to worktree: %+v", got[0])
+	}
+	if got[0].Stderr == nil {
+		t.Fatal("stderr override should be propagated")
+	}
+	got[0].Env["A"] = "mutated"
+	if specs[0].Env["A"] != "B" {
+		t.Fatalf("pluginSpecsForWorktree should not mutate input specs: %+v", specs[0].Env)
+	}
+}
+
+func TestPluginSpecsForWorktreeSkipsPluginsWithoutExplicitToolNames(t *testing.T) {
+	specs := []plugin.Spec{{
+		Name:    "fs tools",
+		Command: "mcp-fs",
+		Args:    []string{"serve"},
+	}}
+
+	got := pluginSpecsForWorktree(context.Background(), specs, "/tmp/wt", nil, io.Discard, event.Discard)
+	if len(got) != 0 {
+		t.Fatalf("specs len = %d, want 0", len(got))
 	}
 }
 

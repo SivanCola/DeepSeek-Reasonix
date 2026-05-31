@@ -194,6 +194,9 @@ export const en = {
   "tool.entryOther": "{n} entries",
   "tool.editOne": "{n} edit",
   "tool.editOther": "{n} edits",
+  "tool.agentOne": "{n} agent",
+  "tool.agentOther": "{n} agents",
+  "tool.openWorktree": "Open worktree",
   "tool.emptyFile": "empty file",
   "tool.noOutput": "no output",
 

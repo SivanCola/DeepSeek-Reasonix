@@ -195,6 +195,9 @@ export const zh: Record<DictKey, string> = {
   "tool.entryOther": "{n} 项",
   "tool.editOne": "{n} 处编辑",
   "tool.editOther": "{n} 处编辑",
+  "tool.agentOne": "{n} 个智能体",
+  "tool.agentOther": "{n} 个智能体",
+  "tool.openWorktree": "打开 worktree",
   "tool.emptyFile": "空文件",
   "tool.noOutput": "无输出",
 

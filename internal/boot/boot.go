@@ -218,8 +218,45 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	// sub-agents inherit the full tool set (minus `task` itself, to keep
 	// nesting out of the picture). It registers into the same reg the
 	// executor uses, so the model surfaces it like any other tool.
-	reg.Add(agent.NewTaskTool(execProv, entry.Price, reg, maxSteps,
-		entry.ContextWindow, cfg.Agent.Temperature, config.ArchiveDir(), "", headlessGate))
+	taskTool := agent.NewTaskTool(execProv, entry.Price, reg, maxSteps,
+		entry.ContextWindow, cfg.Agent.Temperature, config.ArchiveDir(), "", headlessGate)
+	reg.Add(taskTool)
+	agentsTool := agent.NewAgentsTool(taskTool)
+	agentsTool.SetWorktreeTools(func(dir string, write bool, names []string) (*tool.Registry, func(), error) {
+		sub := tool.NewRegistry()
+		spec := bashSpec
+		spec.WriteRoots = []string{dir}
+		ws := builtin.Workspace{Dir: dir, WriteRoots: []string{dir}, Bash: spec}
+		for _, tl := range ws.Tools(names...) {
+			if !write && !tl.ReadOnly() {
+				continue
+			}
+			sub.Add(tl)
+		}
+		cleanup := func() {}
+		pspecs := pluginSpecsForWorktree(ctx, pluginHost.Specs(), dir, names, stderr, sink)
+		if len(pspecs) == 0 {
+			return sub, cleanup, nil
+		}
+		host, ptools, err := plugin.StartAll(ctx, pspecs)
+		if err != nil {
+			return nil, nil, fmt.Errorf("worktree plugins: %w", err)
+		}
+		cleanup = host.Close
+		for _, tl := range ptools {
+			if !toolRequested(tl.Name(), names) {
+				continue
+			}
+			if !write && !tl.ReadOnly() {
+				cleanup()
+				return nil, nil, fmt.Errorf("%q is not read-only; use mode write with worktree isolation for writer tools", tl.Name())
+			}
+			sub.Add(tl)
+		}
+		return sub, cleanup, nil
+	})
+	agentsTool.SetRunStore(config.ManagerRunDir())
+	reg.Add(agentsTool)
 
 	// The `remember` tool lets the model persist durable facts to the project's
 	// auto-memory store; the saved index loads into the prefix on the next session.
@@ -370,6 +407,85 @@ func subagentModelKeys(name string) []string {
 		}
 	}
 	return keys
+}
+
+func pluginSpecsForWorktree(ctx context.Context, specs []plugin.Spec, dir string, names []string, stderr io.Writer, sink event.Sink) []plugin.Spec {
+	if !wantsPluginTools(names) {
+		return nil
+	}
+	out := make([]plugin.Spec, 0, len(specs))
+	for _, s := range specs {
+		s = copyPluginSpec(s)
+		if !pluginServerRequested(s, names) {
+			continue
+		}
+		tt := strings.ToLower(strings.TrimSpace(s.Type))
+		if tt == "" || tt == "stdio" {
+			s.Dir = dir
+			if s.Name == "codegraph" && s.Command != "" {
+				if err := codegraph.EnsureInit(ctx, s.Command, dir); err != nil && sink != nil {
+					sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelWarn,
+						Text: "codegraph: worktree init failed (" + err.Error() + ") — symbol-graph tools may be degraded for " + dir})
+				}
+			}
+		}
+		if stderr != nil {
+			s.Stderr = stderr
+		}
+		out = append(out, s)
+	}
+	return out
+}
+
+func copyPluginSpec(s plugin.Spec) plugin.Spec {
+	out := s
+	if s.Args != nil {
+		out.Args = append([]string(nil), s.Args...)
+	}
+	if s.Env != nil {
+		out.Env = make(map[string]string, len(s.Env))
+		for k, v := range s.Env {
+			out.Env[k] = v
+		}
+	}
+	if s.Headers != nil {
+		out.Headers = make(map[string]string, len(s.Headers))
+		for k, v := range s.Headers {
+			out.Headers[k] = v
+		}
+	}
+	return out
+}
+
+func wantsPluginTools(names []string) bool {
+	for _, name := range names {
+		if strings.HasPrefix(name, "mcp__") {
+			return true
+		}
+	}
+	return false
+}
+
+func pluginServerRequested(s plugin.Spec, names []string) bool {
+	prefix := plugin.ToolPrefix(s.Name)
+	for _, name := range names {
+		if strings.HasPrefix(name, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func toolRequested(name string, names []string) bool {
+	if len(names) == 0 {
+		return true
+	}
+	for _, want := range names {
+		if want == name {
+			return true
+		}
+	}
+	return false
 }
 
 // NewProvider builds a provider.Provider from a configured entry. Exported so

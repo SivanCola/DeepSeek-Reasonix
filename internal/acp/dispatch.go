@@ -76,7 +76,7 @@ func (s *updateSink) Emit(e event.Event) {
 		s.send(toolCall{
 			SessionUpdate: "tool_call",
 			ToolCallID:    e.Tool.ID,
-			Title:         e.Tool.Name,
+			Title:         toolTitle(e.Tool),
 			Kind:          toolKindFor(e.Tool.Name),
 			Status:        "pending",
 			RawInput:      rawJSON(e.Tool.Args),
@@ -122,6 +122,13 @@ func (s *updateSink) Emit(e event.Event) {
 		// (the agent emits serially); the answer unblocks the loop.
 		go s.requestPermission(e.Approval)
 	}
+}
+
+func toolTitle(t event.Tool) string {
+	if t.ParentID == "" {
+		return t.Name
+	}
+	return "↳ " + t.Name
 }
 
 func (s *updateSink) send(update any) {

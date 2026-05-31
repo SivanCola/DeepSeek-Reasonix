@@ -31,6 +31,7 @@ import type {
 export interface AppBindings {
   Submit(input: string): Promise<void>;
   Cancel(): Promise<void>;
+  OpenPath(path: string): Promise<void>;
   Approve(id: string, allow: boolean, session: boolean): Promise<void>;
   AnswerQuestion(id: string, answers: QuestionAnswer[]): Promise<void>;
   SetPlanMode(on: boolean): Promise<void>;
@@ -275,6 +276,11 @@ function makeMockApp(): AppBindings {
     async Cancel() {
       cancelled = true;
       emit({ kind: "turn_done" });
+    },
+    async OpenPath(path: string) {
+      // Browser dev cannot reveal a local folder; log so the click remains
+      // observable while the real Wails shell opens it through desktop/app.go.
+      console.info("OpenPath", path);
     },
     async Approve() {},
     async AnswerQuestion() {},

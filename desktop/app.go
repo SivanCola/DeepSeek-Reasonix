@@ -2,8 +2,11 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	goruntime "runtime"
 	"sort"
 	"strings"
 
@@ -116,6 +119,106 @@ func (a *App) Cancel() {
 	if a.ctrl != nil {
 		a.ctrl.Cancel()
 	}
+}
+
+// OpenPath reveals a local file or folder in the OS shell. The frontend uses it
+// for worktree agent results; it is explicit user action, not model-driven IO.
+func (a *App) OpenPath(path string) error {
+	abs, err := allowedOpenPath(path)
+	if err != nil {
+		return err
+	}
+	var cmd *exec.Cmd
+	switch goruntime.GOOS {
+	case "darwin":
+		cmd = exec.Command("open", abs)
+	case "windows":
+		cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", abs)
+	default:
+		cmd = exec.Command("xdg-open", abs)
+	}
+	return cmd.Start()
+}
+
+func allowedOpenPath(path string) (string, error) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return "", fmt.Errorf("path is required")
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	info, err := os.Stat(abs)
+	if err != nil {
+		return "", err
+	}
+	real, err := filepath.EvalSymlinks(abs)
+	if err != nil {
+		return "", err
+	}
+	for _, root := range allowedOpenRoots() {
+		if root == "" {
+			continue
+		}
+		if pathAllowedUnder(root, real) {
+			if !info.IsDir() && !pathAllowedUnder(config.ManagerRunDir(), real) {
+				return "", fmt.Errorf("only directories and manager run logs can be opened")
+			}
+			if info.IsDir() && strings.EqualFold(filepath.Ext(real), ".app") {
+				return "", fmt.Errorf("application bundles cannot be opened from desktop results")
+			}
+			return real, nil
+		}
+	}
+	return "", fmt.Errorf("path is outside allowed desktop open roots")
+}
+
+func allowedOpenRoots() []string {
+	var roots []string
+	if cwd, err := os.Getwd(); err == nil {
+		roots = append(roots, cwd)
+		roots = append(roots, gitWorktreeRoots(cwd)...)
+	}
+	if dir := config.ManagerRunDir(); dir != "" {
+		roots = append(roots, dir)
+	}
+	return roots
+}
+
+func gitWorktreeRoots(cwd string) []string {
+	cmd := exec.Command("git", "-C", cwd, "worktree", "list", "--porcelain")
+	out, err := cmd.Output()
+	if err != nil {
+		return nil
+	}
+	var roots []string
+	for _, line := range strings.Split(string(out), "\n") {
+		path, ok := strings.CutPrefix(line, "worktree ")
+		if ok && strings.TrimSpace(path) != "" {
+			roots = append(roots, strings.TrimSpace(path))
+		}
+	}
+	return roots
+}
+
+func pathAllowedUnder(root, path string) bool {
+	root = strings.TrimSpace(root)
+	if root == "" {
+		return false
+	}
+	rootAbs, err := filepath.Abs(root)
+	if err != nil {
+		return false
+	}
+	if realRoot, err := filepath.EvalSymlinks(rootAbs); err == nil {
+		rootAbs = realRoot
+	}
+	rel, err := filepath.Rel(rootAbs, path)
+	if err != nil {
+		return false
+	}
+	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator)))
 }
 
 // Approve answers a pending approval_request by ID: allow runs the call, session

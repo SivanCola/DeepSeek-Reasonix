@@ -144,6 +144,19 @@ func TestUpdateSinkMapsEvents(t *testing.T) {
 	}
 }
 
+func TestUpdateSinkMarksNestedToolTitle(t *testing.T) {
+	fn := &fakeNotifier{}
+	sink := newUpdateSink(fn, "sess-1")
+
+	sink.Emit(event.Event{Kind: event.ToolDispatch, Tool: event.Tool{
+		ID: "parent/child", Name: "read_file", Args: `{"path":"a.go"}`, ParentID: "parent",
+	}})
+	u := fn.updateMap(t, 0)
+	if u["title"] != "↳ read_file" {
+		t.Fatalf("nested title = %v, want prefixed title", u["title"])
+	}
+}
+
 func TestUpdateSinkDropsAndWarns(t *testing.T) {
 	fn := &fakeNotifier{}
 	sink := newUpdateSink(fn, "sess-1")

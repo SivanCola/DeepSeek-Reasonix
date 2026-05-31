@@ -1293,7 +1293,7 @@ func (m *chatTUI) ingestEvent(e event.Event) {
 		case planApprovalTool:
 			// No longer a tool, but guard anyway: the plan is the assistant's reply.
 		default:
-			m.commitLine(fmt.Sprintf("  -> %s %s", e.Tool.Name, compactArgs(e.Tool.Args)))
+			m.commitLine(fmt.Sprintf("%s-> %s %s", toolIndent(e.Tool.ParentID), e.Tool.Name, compactArgs(e.Tool.Args)))
 		}
 
 	case event.ToolResult:
@@ -1301,7 +1301,7 @@ func (m *chatTUI) ingestEvent(e event.Event) {
 		// surfaces a "⊘ name <reason>" line.
 		if e.Tool.Err != "" {
 			m.finalizeStreamed()
-			m.commitLine(fmt.Sprintf("  ⊘ %s %s", e.Tool.Name, e.Tool.Err))
+			m.commitLine(fmt.Sprintf("%s⊘ %s %s", toolIndent(e.Tool.ParentID), e.Tool.Name, e.Tool.Err))
 		}
 
 	case event.Usage:
@@ -1665,3 +1665,14 @@ func (s *eventSink) Emit(e event.Event) { s.ch <- e }
 // compactArgs delegates to agent.CompactArgs so the CLI and headless rendering
 // stay identical.
 func compactArgs(s string) string { return agent.CompactArgs(s) }
+
+func toolIndent(parentID string) string {
+	if parentID == "" {
+		return "  "
+	}
+	depth := strings.Count(parentID, "/") + 1
+	if depth > 4 {
+		depth = 4
+	}
+	return strings.Repeat("  ", depth+1)
+}

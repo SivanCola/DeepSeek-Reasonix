@@ -59,6 +59,7 @@ type transport interface {
 // chat UI surfaces (prompts as slash commands, resources as @-references).
 type Host struct {
 	clients   []*Client
+	specs     []Spec
 	prompts   []Prompt
 	resources []Resource
 }
@@ -76,6 +77,17 @@ func (h *Host) ServerNames() []string {
 		names[i] = c.name
 	}
 	return names
+}
+
+// Specs returns the specs for connected servers, in connection order. The result
+// is a deep copy so callers can rebind fields like Dir without mutating the live
+// Host.
+func (h *Host) Specs() []Spec {
+	out := make([]Spec, len(h.specs))
+	for i, s := range h.specs {
+		out[i] = copySpec(s)
+	}
+	return out
 }
 
 // ReadResource reads a resource uri from the named server. It is how the chat
@@ -106,6 +118,7 @@ func StartAll(ctx context.Context, specs []Spec) (*Host, []tool.Tool, error) {
 			return nil, nil, fmt.Errorf("start plugin %q: %w", s.Name, err)
 		}
 		h.clients = append(h.clients, c)
+		h.specs = append(h.specs, copySpec(s))
 
 		ts, err := c.listTools(ctx)
 		if err != nil {
@@ -220,6 +233,7 @@ func (h *Host) Add(ctx context.Context, s Spec) ([]tool.Tool, error) {
 	}
 	c.toolCount = len(ts)
 	h.clients = append(h.clients, c)
+	h.specs = append(h.specs, copySpec(s))
 	if c.hasPrompts {
 		if ps, perr := c.listPrompts(ctx); perr == nil {
 			h.prompts = append(h.prompts, ps...)
@@ -253,6 +267,7 @@ func (h *Host) Remove(name string) (toolPrefix string, found bool) {
 	}
 	h.clients[idx].close()
 	h.clients = append(h.clients[:idx], h.clients[idx+1:]...)
+	h.specs = append(h.specs[:idx], h.specs[idx+1:]...)
 
 	keptP := h.prompts[:0]
 	for _, p := range h.prompts {
@@ -270,7 +285,30 @@ func (h *Host) Remove(name string) (toolPrefix string, found bool) {
 	}
 	h.resources = keptR
 
-	return "mcp__" + normalizeName(name) + "__", true
+	return ToolPrefix(name), true
+}
+
+// ToolPrefix is the model-visible prefix for tools from server.
+func ToolPrefix(server string) string { return "mcp__" + normalizeName(server) + "__" }
+
+func copySpec(s Spec) Spec {
+	out := s
+	if s.Args != nil {
+		out.Args = append([]string(nil), s.Args...)
+	}
+	if s.Env != nil {
+		out.Env = make(map[string]string, len(s.Env))
+		for k, v := range s.Env {
+			out.Env[k] = v
+		}
+	}
+	if s.Headers != nil {
+		out.Headers = make(map[string]string, len(s.Headers))
+		for k, v := range s.Headers {
+			out.Headers[k] = v
+		}
+	}
+	return out
 }
 
 func start(ctx context.Context, s Spec) (*Client, error) {
@@ -385,7 +423,7 @@ func (c *Client) listTools(ctx context.Context) ([]tool.Tool, error) {
 // matching Claude Code. Spaces in either part are normalised to underscores so
 // the name is a clean identifier the model can call.
 func toolName(server, raw string) string {
-	return "mcp__" + normalizeName(server) + "__" + normalizeName(raw)
+	return ToolPrefix(server) + normalizeName(raw)
 }
 
 func normalizeName(s string) string { return strings.ReplaceAll(s, " ", "_") }
