@@ -85,10 +85,10 @@ func (c *Config) BashMode() string {
 // planner handles low-frequency planning in its own session (kept separate so
 // each model's prompt prefix stays cache-stable).
 type AgentConfig struct {
-	SystemPrompt     string  `toml:"system_prompt"`
-	SystemPromptFile string  `toml:"system_prompt_file"`
-	MaxSteps         int     `toml:"max_steps"` // tool-call rounds per turn; 0 = unlimited
-	Temperature      float64 `toml:"temperature"`
+	SystemPrompt     string   `toml:"system_prompt"`
+	SystemPromptFile string   `toml:"system_prompt_file"`
+	MaxSteps         int      `toml:"max_steps"` // tool-call rounds per turn; 0 = unlimited
+	Temperature      float64  `toml:"temperature"`
 	PlannerModel     string   `toml:"planner_model"`
 	Keep             []string `toml:"keep"`
 	CompactRatio     float64  `toml:"compact_ratio"`
