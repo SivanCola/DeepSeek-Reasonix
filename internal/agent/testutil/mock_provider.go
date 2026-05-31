@@ -42,11 +42,11 @@ type Turn struct {
 //	        len(req.Messages), len(req.Tools))
 //	}
 type MockProvider struct {
-	mu      sync.Mutex
-	name    string
-	script  []Turn
-	seen    int
-	reqs    []provider.Request
+	mu     sync.Mutex
+	name   string
+	script []Turn
+	seen   int
+	reqs   []provider.Request
 }
 
 // NewMock creates a MockProvider. The turns argument is the script; each
