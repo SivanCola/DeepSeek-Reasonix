@@ -75,9 +75,10 @@ func TestCompactBounds(t *testing.T) {
 
 func TestCompactReplacesHistory(t *testing.T) {
 	prov := &fakeProvider{reply: "- goal: do X\n- changed file Y"}
+	bigStep := strings.Repeat("important implementation detail ", 80)
 	sess := &Session{Messages: []provider.Message{
 		{Role: provider.RoleSystem, Content: "sys"},
-		{Role: provider.RoleUser, Content: "task"},
+		{Role: provider.RoleUser, Content: "task " + bigStep},
 		{Role: provider.RoleAssistant, ToolCalls: []provider.ToolCall{{ID: "1", Name: "read_file", Arguments: "{}"}}},
 		{Role: provider.RoleTool, ToolCallID: "1", Name: "read_file", Content: "file contents"},
 		{Role: provider.RoleAssistant, Content: "did a step"},
@@ -123,11 +124,56 @@ func TestCompactReplacesHistory(t *testing.T) {
 	}
 }
 
+func TestCompactFoldsSingleLargeMessage(t *testing.T) {
+	prov := &fakeProvider{reply: "- captured the large file contents"}
+	sess := &Session{Messages: []provider.Message{
+		{Role: provider.RoleSystem, Content: "sys"},
+		{Role: provider.RoleTool, ToolCallID: "1", Name: "read_file", Content: strings.Repeat("large output line\n", 500)},
+		{Role: provider.RoleUser, Content: "next"},
+		{Role: provider.RoleAssistant, Content: "ok"},
+	}}
+	a := New(prov, tool.NewRegistry(), sess, Options{RecentKeep: 2, ArchiveDir: t.TempDir()}, event.Discard)
+
+	if err := a.compact(context.Background()); err != nil {
+		t.Fatalf("compact: %v", err)
+	}
+	if got := len(sess.Messages); got != 4 {
+		t.Fatalf("len = %d, want 4: %+v", got, sess.Messages)
+	}
+	if !strings.Contains(sess.Messages[1].Content, "large file contents") {
+		t.Fatalf("single large message was not summarized: %+v", sess.Messages)
+	}
+	if len(prov.got) == 0 || !strings.Contains(prov.got[1].Content, "large output line") {
+		t.Fatalf("summarizer did not receive the large message: %+v", prov.got)
+	}
+}
+
+func TestCompactSkipsSingleSmallMessage(t *testing.T) {
+	prov := &fakeProvider{reply: "- should not be called"}
+	sess := &Session{Messages: []provider.Message{
+		{Role: provider.RoleSystem, Content: "sys"},
+		{Role: provider.RoleUser, Content: "tiny"},
+		{Role: provider.RoleUser, Content: "next"},
+		{Role: provider.RoleAssistant, Content: "ok"},
+	}}
+	a := New(prov, tool.NewRegistry(), sess, Options{RecentKeep: 2, ArchiveDir: t.TempDir()}, event.Discard)
+
+	if err := a.compact(context.Background()); err != nil {
+		t.Fatalf("compact: %v", err)
+	}
+	if got := len(sess.Messages); got != 4 {
+		t.Fatalf("small single message should not compact, len = %d", got)
+	}
+	if len(prov.got) != 0 {
+		t.Fatalf("summarizer was called for tiny region: %+v", prov.got)
+	}
+}
+
 func TestMaybeCompactThreshold(t *testing.T) {
 	newSess := func() *Session {
 		return &Session{Messages: []provider.Message{
 			{Role: provider.RoleSystem, Content: "sys"},
-			{Role: provider.RoleUser, Content: "a"},
+			{Role: provider.RoleUser, Content: strings.Repeat("a ", 500)},
 			{Role: provider.RoleAssistant, Content: "b"},
 			{Role: provider.RoleUser, Content: "c"},
 			{Role: provider.RoleAssistant, Content: "d"},
@@ -158,5 +204,23 @@ func TestMaybeCompactThreshold(t *testing.T) {
 	a.maybeCompact(context.Background(), &provider.Usage{PromptTokens: 1 << 30})
 	if len(sess.Messages) != 7 {
 		t.Errorf("no window should disable compaction, len = %d", len(sess.Messages))
+	}
+}
+
+func TestMaybeCompactFoldsSingleLargeMessageAtThreshold(t *testing.T) {
+	sess := &Session{Messages: []provider.Message{
+		{Role: provider.RoleSystem, Content: "sys"},
+		{Role: provider.RoleUser, Content: strings.Repeat("large prompt chunk ", 500)},
+		{Role: provider.RoleUser, Content: "next"},
+		{Role: provider.RoleAssistant, Content: "ok"},
+	}}
+	a := New(&fakeProvider{reply: "single large summary"}, tool.NewRegistry(), sess, Options{ContextWindow: 100, RecentKeep: 2, ArchiveDir: t.TempDir()}, event.Discard)
+
+	a.maybeCompact(context.Background(), &provider.Usage{PromptTokens: 90})
+	if got := len(sess.Messages); got != 4 {
+		t.Fatalf("len = %d, want 4: %+v", got, sess.Messages)
+	}
+	if !strings.Contains(sess.Messages[1].Content, "single large summary") {
+		t.Fatalf("single large message was not compacted at threshold: %+v", sess.Messages)
 	}
 }

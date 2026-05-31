@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"reasonix/internal/event"
 	"reasonix/internal/provider"
@@ -73,15 +74,42 @@ func (a *Agent) maybeCompact(ctx context.Context, u *provider.Usage) {
 // tokens to justify the summarization API call. It returns false when the
 // region is too small for the savings to outweigh the extra round-trip cost
 // and latency of calling the summarizer.
-//
-// Economic model: the summarizer call itself consumes roughly region (input) +
-// summary (output) tokens, and each future turn saves roughly region - summary
-// tokens. A region below ~400 estimated tokens rarely breaks even across the
-// handful of turns that typically follow a compaction.
 func foldEconomics(region []provider.Message) bool {
-	const avgTokensPerMessage = 100
 	const minFoldTokens = 400
-	return len(region)*avgTokensPerMessage >= minFoldTokens
+	return estimateMessagesTokens(region) >= minFoldTokens
+}
+
+func estimateMessagesTokens(msgs []provider.Message) int {
+	total := 0
+	for _, m := range msgs {
+		total += 4 // chat-message framing overhead
+		total += estimateTextTokens(m.Content)
+		total += estimateTextTokens(m.ReasoningContent)
+		total += estimateTextTokens(m.Name)
+		total += estimateTextTokens(m.ToolCallID)
+		for _, tc := range m.ToolCalls {
+			total += 8
+			total += estimateTextTokens(tc.ID)
+			total += estimateTextTokens(tc.Name)
+			total += estimateTextTokens(tc.Arguments)
+		}
+	}
+	return total
+}
+
+func estimateTextTokens(s string) int {
+	if s == "" {
+		return 0
+	}
+	// A conservative cross-language approximation: English-ish text trends near
+	// four bytes per token, while CJK-heavy text is closer to one rune per token.
+	bytes := len(s)
+	runes := utf8.RuneCountInString(s)
+	byBytes := (bytes + 3) / 4
+	if runes > byBytes {
+		return runes
+	}
+	return byBytes
 }
 
 // compact summarizes the older middle of the session and replaces it in place:
@@ -90,6 +118,12 @@ func foldEconomics(region []provider.Message) bool {
 func (a *Agent) compact(ctx context.Context) error {
 	msgs := a.session.Messages
 	head, start, ok := compactBounds(msgs, a.recentKeep, minCompactMessages)
+	if !ok {
+		// A single huge message can still be worth folding. Keep the normal
+		// message-count guard for small histories, but let content size decide
+		// whether a one-message region has real compaction value.
+		head, start, ok = compactBounds(msgs, a.recentKeep, 1)
+	}
 	if !ok {
 		return nil // recent tail already covers everything worth keeping
 	}
