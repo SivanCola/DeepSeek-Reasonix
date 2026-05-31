@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"sort"
 
 	"reasonix/internal/event"
 	"reasonix/internal/provider"
@@ -33,7 +34,8 @@ func shortHash(v interface{}) string {
 
 // CaptureShape takes a snapshot of the current prefix state.
 func CaptureShape(systemPrompt string, schemas []provider.ToolSchema, rewriteVersion int) PrefixShape {
-	toolsJSON, _ := json.Marshal(schemas)
+	normalizedSchemas := normalizeToolSchemas(schemas)
+	toolsJSON, _ := json.Marshal(normalizedSchemas)
 	return PrefixShape{
 		SystemHash: shortHash(systemPrompt),
 		ToolsHash:  shortHash(string(toolsJSON)),
@@ -44,6 +46,21 @@ func CaptureShape(systemPrompt string, schemas []provider.ToolSchema, rewriteVer
 		LogRewriteVersion: rewriteVersion,
 		ToolSchemaTokens:  estimateTokens(string(toolsJSON)),
 	}
+}
+
+func normalizeToolSchemas(schemas []provider.ToolSchema) []provider.ToolSchema {
+	out := make([]provider.ToolSchema, len(schemas))
+	copy(out, schemas)
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Name != out[j].Name {
+			return out[i].Name < out[j].Name
+		}
+		if out[i].Description != out[j].Description {
+			return out[i].Description < out[j].Description
+		}
+		return string(out[i].Parameters) < string(out[j].Parameters)
+	})
+	return out
 }
 
 // CompareShape returns diagnostics describing what changed between two shapes.
