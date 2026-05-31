@@ -7,11 +7,19 @@ import (
 )
 
 // stubTool is a minimal Tool for registry tests.
-type stubTool struct{ name string }
+type stubTool struct {
+	name   string
+	schema json.RawMessage
+}
 
-func (s stubTool) Name() string                                             { return s.name }
-func (s stubTool) Description() string                                      { return s.name + " desc" }
-func (s stubTool) Schema() json.RawMessage                                  { return json.RawMessage(`{"type":"object"}`) }
+func (s stubTool) Name() string        { return s.name }
+func (s stubTool) Description() string { return s.name + " desc" }
+func (s stubTool) Schema() json.RawMessage {
+	if len(s.schema) > 0 {
+		return s.schema
+	}
+	return json.RawMessage(`{"type":"object"}`)
+}
 func (s stubTool) Execute(context.Context, json.RawMessage) (string, error) { return "", nil }
 func (s stubTool) ReadOnly() bool                                           { return true }
 
@@ -20,10 +28,10 @@ func (s stubTool) ReadOnly() bool                                           { re
 // insertion order — intact.
 func TestRegistryRemovePrefix(t *testing.T) {
 	r := NewRegistry()
-	r.Add(stubTool{"bash"})
-	r.Add(stubTool{"mcp__fs__read"})
-	r.Add(stubTool{"mcp__fs__write"})
-	r.Add(stubTool{"mcp__stripe__charge"})
+	r.Add(stubTool{name: "bash"})
+	r.Add(stubTool{name: "mcp__fs__read"})
+	r.Add(stubTool{name: "mcp__fs__write"})
+	r.Add(stubTool{name: "mcp__stripe__charge"})
 
 	if got := r.RemovePrefix("mcp__fs__"); got != 2 {
 		t.Fatalf("RemovePrefix returned %d, want 2", got)
@@ -51,5 +59,31 @@ func TestRegistryRemovePrefix(t *testing.T) {
 	// Removing a prefix that matches nothing is a no-op.
 	if got := r.RemovePrefix("mcp__nope__"); got != 0 {
 		t.Errorf("RemovePrefix on absent prefix returned %d, want 0", got)
+	}
+}
+
+func TestRegistrySchemasStableAndCanonical(t *testing.T) {
+	r := NewRegistry()
+	r.Add(stubTool{
+		name:   "zeta",
+		schema: json.RawMessage(`{"type":"object","required":["b","a"],"properties":{"b":{"type":"string"},"a":{"type":"string"}}}`),
+	})
+	r.Add(stubTool{
+		name:   "alpha",
+		schema: json.RawMessage(`{"required":["y","x"],"type":"object"}`),
+	})
+
+	schemas := r.Schemas()
+	if len(schemas) != 2 {
+		t.Fatalf("Schemas returned %d entries, want 2", len(schemas))
+	}
+	if schemas[0].Name != "alpha" || schemas[1].Name != "zeta" {
+		t.Fatalf("Schemas order = %q, %q; want alpha, zeta", schemas[0].Name, schemas[1].Name)
+	}
+	if got, want := string(schemas[0].Parameters), `{"required":["x","y"],"type":"object"}`; got != want {
+		t.Fatalf("alpha schema = %s, want %s", got, want)
+	}
+	if got, want := string(schemas[1].Parameters), `{"properties":{"a":{"type":"string"},"b":{"type":"string"}},"required":["a","b"],"type":"object"}`; got != want {
+		t.Fatalf("zeta schema = %s, want %s", got, want)
 	}
 }

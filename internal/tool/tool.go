@@ -131,15 +131,17 @@ func (r *Registry) Names() []string {
 	return out
 }
 
-// Schemas exports tool definitions in insertion order for the provider.
+// Schemas exports tool definitions in stable name order for the provider.
 func (r *Registry) Schemas() []provider.ToolSchema {
-	out := make([]provider.ToolSchema, 0, len(r.order))
-	for _, name := range r.order {
+	names := r.Names()
+	sort.Strings(names)
+	out := make([]provider.ToolSchema, 0, len(names))
+	for _, name := range names {
 		t := r.tools[name]
 		out = append(out, provider.ToolSchema{
 			Name:        t.Name(),
 			Description: t.Description(),
-			Parameters:  t.Schema(),
+			Parameters:  provider.CanonicalizeSchema(t.Schema()),
 		})
 	}
 	return out

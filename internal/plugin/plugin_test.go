@@ -30,11 +30,14 @@ func TestStdioEndToEnd(t *testing.T) {
 	}
 	defer host.Close()
 
-	if len(tools) != 1 {
-		t.Fatalf("want 1 tool, got %d", len(tools))
+	if len(tools) != 2 {
+		t.Fatalf("want 2 tools, got %d", len(tools))
 	}
 	if got := tools[0].Name(); got != "mcp__mock__echo" {
 		t.Fatalf("tool name: want mcp__mock__echo, got %q", got)
+	}
+	if got, want := string(tools[0].Schema()), `{"properties":{"msg":{"type":"string"}},"required":["msg","z"],"type":"object"}`; got != want {
+		t.Fatalf("tool schema = %s, want %s", got, want)
 	}
 
 	out, err := tools[0].Execute(ctx, json.RawMessage(`{"msg":"hi"}`))
@@ -87,11 +90,16 @@ func TestHelperProcess(t *testing.T) {
 			}
 		case "tools/list":
 			result = map[string]any{"tools": []map[string]any{{
+				"name":        "zed",
+				"description": "Sorted after echo.",
+				"inputSchema": map[string]any{"type": "object"},
+			}, {
 				"name":        "echo",
 				"description": "Echo back the message.",
 				"inputSchema": map[string]any{
 					"type":       "object",
 					"properties": map[string]any{"msg": map[string]any{"type": "string"}},
+					"required":   []string{"z", "msg"},
 				},
 			}}}
 		case "tools/call":

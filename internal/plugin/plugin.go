@@ -356,11 +356,11 @@ func (c *Client) listTools(ctx context.Context) ([]tool.Tool, error) {
 			name:     toolName(c.name, t.Name),
 			rawName:  t.Name,
 			desc:     t.Description,
-			schema:   t.InputSchema,
+			schema:   canonicalizeSchema(t.InputSchema),
 			readOnly: t.Annotations != nil && t.Annotations.ReadOnlyHint,
 		})
 	}
-	return tools, nil
+	return sortToolsByName(tools), nil
 }
 
 // toolName builds the model-visible namespaced name "mcp__<server>__<tool>",
