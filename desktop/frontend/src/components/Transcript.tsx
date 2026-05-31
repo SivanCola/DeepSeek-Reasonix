@@ -13,7 +13,7 @@ function scrollVersion(items: Item[]): string {
         case "assistant":
           return `${it.id}:a:${it.text.length}:${it.reasoning.length}:${it.streaming ? 1 : 0}`;
         case "tool":
-          return `${it.id}:t:${it.status}:${it.output?.length ?? 0}:${it.error?.length ?? 0}:${it.truncated ? 1 : 0}`;
+          return `${it.id}:t:${it.name}:${it.status}:${it.args.length}:${it.output?.length ?? 0}:${it.error?.length ?? 0}:${it.truncated ? 1 : 0}`;
         default:
           return `${it.id}:${it.kind}`;
       }
