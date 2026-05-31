@@ -26,6 +26,7 @@ import (
 	"reasonix/internal/plugin"
 	"reasonix/internal/provider"
 	"reasonix/internal/skill"
+	"reasonix/internal/tool"
 )
 
 // chatTUI is a bubbletea Model that runs a chat session in the terminal's
@@ -1078,28 +1079,15 @@ func (m chatTUI) renderApprovalBanner() string {
 // MCP tools are advertised as mcp__<server>__<tool>; showing the short tool name
 // first keeps the approval prompt readable while preserving the source.
 func approvalToolDetails(toolName string) (name, detail string) {
-	if server, tool, ok := splitMCPToolName(toolName); ok {
+	if server, short, ok := tool.SplitMCPName(toolName); ok {
 		lines := []string{}
-		if strings.EqualFold(tool, "understand_image") {
+		if strings.EqualFold(short, "understand_image") {
 			lines = append(lines, i18n.M.ToolApprovalImageUse)
 		}
 		lines = append(lines, fmt.Sprintf(i18n.M.ToolApprovalSourceFmt, server))
-		return tool, strings.Join(lines, "\n")
+		return short, strings.Join(lines, "\n")
 	}
 	return toolName, fmt.Sprintf(i18n.M.ToolApprovalSourceFmt, i18n.M.ToolApprovalBuiltIn)
-}
-
-func splitMCPToolName(name string) (server, tool string, ok bool) {
-	const prefix = "mcp__"
-	if !strings.HasPrefix(name, prefix) {
-		return "", "", false
-	}
-	rest := strings.TrimPrefix(name, prefix)
-	parts := strings.SplitN(rest, "__", 2)
-	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
-		return "", "", false
-	}
-	return parts[0], parts[1], true
 }
 
 // todoPanelMaxRows caps how many task lines the pinned panel shows; a long list
