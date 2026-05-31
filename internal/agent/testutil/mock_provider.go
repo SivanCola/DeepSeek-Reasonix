@@ -62,7 +62,11 @@ func (p *MockProvider) Name() string { return p.name }
 // Stream replays the next scripted turn. It records the request, then
 // sends chunks in order (reasoning → text → tool calls → usage → done).
 // If the Turn has StreamError set it is returned immediately.
-func (p *MockProvider) Stream(_ context.Context, req provider.Request) (<-chan provider.Chunk, error) {
+func (p *MockProvider) Stream(ctx context.Context, req provider.Request) (<-chan provider.Chunk, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
 	p.mu.Lock()
 	p.reqs = append(p.reqs, req)
 	if p.seen >= len(p.script) {
@@ -93,11 +97,22 @@ func (p *MockProvider) Stream(_ context.Context, req provider.Request) (<-chan p
 	}
 	chunks = append(chunks, provider.Chunk{Type: provider.ChunkDone})
 
-	ch := make(chan provider.Chunk, len(chunks))
-	for _, c := range chunks {
-		ch <- c
-	}
-	close(ch)
+	ch := make(chan provider.Chunk)
+	go func() {
+		defer close(ch)
+		for _, c := range chunks {
+			if err := ctx.Err(); err != nil {
+				ch <- provider.Chunk{Type: provider.ChunkError, Err: err}
+				return
+			}
+			select {
+			case <-ctx.Done():
+				ch <- provider.Chunk{Type: provider.ChunkError, Err: ctx.Err()}
+				return
+			case ch <- c:
+			}
+		}
+	}()
 	return ch, nil
 }
 
