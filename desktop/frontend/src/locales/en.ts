@@ -37,6 +37,11 @@ export const en = {
   "composer.planModeOn": "plan mode on",
   "composer.planHint": "shift+tab",
   "composer.planHintExit": "shift+tab to exit",
+  "composer.modeNormal": "normal",
+  "composer.modePlan": "plan mode",
+  "composer.modeYolo": "YOLO",
+  "composer.modeHint": "shift+tab",
+  "composer.modeTitle": "Cycle mode (shift+tab): normal → plan → YOLO (auto-approve everything)",
   "composer.enterPlanTitle": "Enter plan mode (shift+tab) — read-only; propose a plan before writing",
   "composer.exitPlanTitle": "Exit plan mode (shift+tab)",
   "composer.send": "Send (Enter)",
@@ -51,7 +56,12 @@ export const en = {
   "status.switchFolder": "{cwd}\nClick to switch project folder",
   "status.tokens": "tokens",
   "status.cache": "cache {pct}%",
+  "status.cacheAvg": "avg {pct}%",
   "status.balanceTitle": "Wallet balance",
+  "status.jobs": "{n} running",
+  "status.jobsTitle": "Background jobs",
+  "status.yolo": "YOLO",
+  "status.yoloTitle": "YOLO — approvals are being skipped this session",
 
   // approval modal
   "approval.planTitle": "Ready to start coding?",
@@ -124,6 +134,8 @@ export const en = {
   "settings.modeAllow": "allow (auto-run writers)",
   "settings.modeDeny": "deny (block writers)",
   "settings.ruleForm": "Rule form: ToolName or ToolName(glob). Precedence: deny > ask > allow.",
+  "settings.yolo": "YOLO — skip all approvals (this session)",
+  "settings.yoloHint": "Auto-runs every tool call (writers, bash) without asking. Deny rules still block. Runtime-only — resets on relaunch.",
   "settings.addRule": "add {list} rule…",
   "settings.sandboxTitle": "Sandbox & workspace",
   "settings.bashSandbox": "Bash sandbox",
@@ -154,10 +166,16 @@ export const en = {
   // slash menu tags
   "slash.project": "project",
   "slash.mcp": "mcp",
+  "slash.skill": "skill",
 
   // assistant message
   "msg.thinking": "thinking",
   "msg.copy": "Copy",
+  "rewind.label": "Rewind to here",
+  "rewind.both": "Code + conversation",
+  "rewind.conversation": "Conversation only",
+  "rewind.code": "Code only",
+  "rewind.fork": "Fork (new branch)",
   "msg.copied": "Copied",
 
   // tool card summaries

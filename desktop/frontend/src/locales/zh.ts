@@ -38,6 +38,11 @@ export const zh: Record<DictKey, string> = {
   "composer.planModeOn": "计划模式已开",
   "composer.planHint": "shift+tab",
   "composer.planHintExit": "shift+tab 退出",
+  "composer.modeNormal": "普通",
+  "composer.modePlan": "计划模式",
+  "composer.modeYolo": "YOLO",
+  "composer.modeHint": "shift+tab",
+  "composer.modeTitle": "切换模式（shift+tab）：普通 → 计划 → YOLO（全部自动批准）",
   "composer.enterPlanTitle": "进入计划模式（shift+tab）—— 只读；先给出计划再动手",
   "composer.exitPlanTitle": "退出计划模式（shift+tab）",
   "composer.send": "发送（Enter）",
@@ -52,7 +57,12 @@ export const zh: Record<DictKey, string> = {
   "status.switchFolder": "{cwd}\n点击切换项目目录",
   "status.tokens": "tokens",
   "status.cache": "缓存 {pct}%",
+  "status.cacheAvg": "平均 {pct}%",
   "status.balanceTitle": "钱包余额",
+  "status.jobs": "{n} 个运行中",
+  "status.jobsTitle": "后台作业",
+  "status.yolo": "YOLO",
+  "status.yoloTitle": "YOLO —— 本会话正在跳过所有批准",
 
   // 审批弹窗
   "approval.planTitle": "可以开始写代码了吗？",
@@ -125,6 +135,8 @@ export const zh: Record<DictKey, string> = {
   "settings.modeAllow": "allow（自动执行写操作）",
   "settings.modeDeny": "deny（阻止写操作）",
   "settings.ruleForm": "规则格式：ToolName 或 ToolName(glob)。优先级：deny > ask > allow。",
+  "settings.yolo": "YOLO —— 跳过所有批准（仅本会话）",
+  "settings.yoloHint": "所有工具调用（写文件、bash）自动执行、不再询问。deny 规则仍会拦截。仅运行时生效，重启后失效。",
   "settings.addRule": "添加 {list} 规则…",
   "settings.sandboxTitle": "沙箱与工作区",
   "settings.bashSandbox": "Bash 沙箱",
@@ -155,10 +167,16 @@ export const zh: Record<DictKey, string> = {
   // 斜杠菜单标签
   "slash.project": "项目",
   "slash.mcp": "mcp",
+  "slash.skill": "skill",
 
   // 助手消息
   "msg.thinking": "思考过程",
   "msg.copy": "复制",
+  "rewind.label": "回滚到这里",
+  "rewind.both": "代码 + 对话",
+  "rewind.conversation": "仅对话",
+  "rewind.code": "仅代码",
+  "rewind.fork": "分叉(新分支)",
   "msg.copied": "已复制",
 
   // 工具卡片摘要

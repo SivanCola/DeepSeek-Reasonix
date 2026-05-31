@@ -7,7 +7,9 @@ import (
 
 	"charm.land/lipgloss/v2"
 
+	"reasonix/internal/control"
 	"reasonix/internal/i18n"
+	"reasonix/internal/skill"
 )
 
 // compKind distinguishes the two completion menus.
@@ -50,17 +52,29 @@ const (
 	maxCompItems = 200
 )
 
-// slashItems is the full set of slash commands offered for completion.
+// slashItems is the full set of slash commands offered for completion: the
+// built-in verbs, custom commands, skills (each as "/<name>"), and MCP prompts.
 func (m *chatTUI) slashItems() []compItem {
 	items := []compItem{
-		{label: "/compact", insert: "/compact ", hint: "compact context"},
-		{label: "/new", insert: "/new ", hint: "fork a fresh session"},
-		{label: "/mcp", insert: "/mcp ", hint: "MCP servers", descend: true},
-		{label: "/help", insert: "/help ", hint: "list commands"},
-		{label: "/memory", insert: "/memory ", hint: "show memory files"},
+		{label: "/compact", insert: "/compact ", hint: i18n.M.CmdCompact},
+		{label: "/new", insert: "/new ", hint: i18n.M.CmdNew},
+		{label: "/rewind", insert: "/rewind", hint: i18n.M.CmdRewind},
+		{label: "/mcp", insert: "/mcp ", hint: i18n.M.CmdMcp, descend: true},
+		{label: "/model", insert: "/model ", hint: i18n.M.CmdModel, descend: true},
+		{label: "/skill", insert: "/skill ", hint: i18n.M.CmdSkill, descend: true},
+		{label: "/hooks", insert: "/hooks ", hint: i18n.M.CmdHooks, descend: true},
+		{label: "/help", insert: "/help ", hint: i18n.M.CmdHelp},
+		{label: "/memory", insert: "/memory ", hint: i18n.M.CmdMemory},
 	}
 	for _, c := range m.commands {
 		items = append(items, compItem{label: "/" + c.Name, insert: "/" + c.Name + " ", hint: c.Description})
+	}
+	for _, s := range m.skills {
+		hint := s.Description
+		if s.RunAs == skill.RunSubagent {
+			hint = "🧬 " + hint
+		}
+		items = append(items, compItem{label: "/" + s.Name, insert: "/" + s.Name + " ", hint: hint})
 	}
 	for _, p := range m.prompts() {
 		items = append(items, compItem{label: "/" + p.Name, insert: "/" + p.Name + " ", hint: p.Description})
@@ -107,57 +121,27 @@ func (m *chatTUI) updateCompletion() {
 // currently /mcp; custom commands and MCP prompts take free-form template args,
 // so they yield nothing.
 func (m *chatTUI) slashArgItems(val string) ([]compItem, int, bool) {
-	cmdEnd := strings.IndexAny(val, " \t")
-	if cmdEnd < 0 {
+	// Delegate to the shared completion logic so the chat TUI and the desktop
+	// offer identical sub-command hints. We supply the data from the TUI's own
+	// cached lists (no live controller needed), build the items, and adapt them
+	// to compItem.
+	data := control.ArgData{
+		Skills:       m.skills,
+		ModelRefs:    modelRefs(),
+		CurrentModel: m.modelRef,
+	}
+	if m.host != nil {
+		data.ServerNames = m.host.ServerNames()
+	}
+	items, from := control.SlashArgItems(val, data)
+	if len(items) == 0 {
 		return nil, 0, false
 	}
-	from := strings.LastIndexAny(val, " \t") + 1
-	cur := val[from:]
-	switch val[:cmdEnd] {
-	case "/mcp":
-		return m.mcpArgItems(val, cur, from)
+	out := make([]compItem, len(items))
+	for i, it := range items {
+		out[i] = compItem{label: it.Label, insert: it.Insert, hint: it.Hint, descend: it.Descend}
 	}
-	return nil, 0, false
-}
-
-// mcpArgItems completes /mcp arguments: the subcommand (add/remove/list); then,
-// for "remove", the names of connected servers; and for "add", the transport
-// flags once the current token starts with "-". `cur` is the token being typed
-// and `from` its start offset.
-func (m *chatTUI) mcpArgItems(val, cur string, from int) ([]compItem, int, bool) {
-	prior := strings.Fields(val[:from]) // already-committed tokens, including "/mcp"
-	if len(prior) <= 1 {
-		subs := []compItem{
-			{label: "add", insert: "add ", hint: "connect a server", descend: true},
-			{label: "remove", insert: "remove ", hint: "disconnect a server", descend: true},
-			{label: "list", insert: "list", hint: "show configured servers"},
-		}
-		return filterByPrefix(subs, cur), from, true
-	}
-	switch prior[1] {
-	case "remove", "rm":
-		if len(prior) != 2 { // the single name arg is already placed
-			return nil, 0, false
-		}
-		var items []compItem
-		if m.host != nil {
-			for _, name := range m.host.ServerNames() {
-				items = append(items, compItem{label: name, insert: name, hint: "connected"})
-			}
-		}
-		return filterByPrefix(items, cur), from, true
-	case "add":
-		if strings.HasPrefix(cur, "-") {
-			flags := []compItem{
-				{label: "--http", insert: "--http ", hint: "Streamable HTTP URL"},
-				{label: "--sse", insert: "--sse ", hint: "legacy SSE URL"},
-				{label: "--env", insert: "--env ", hint: "KEY=VALUE (stdio)"},
-				{label: "--header", insert: "--header ", hint: "KEY=VALUE (remote)"},
-			}
-			return filterByPrefix(flags, cur), from, true
-		}
-	}
-	return nil, 0, false
+	return out, from, true
 }
 
 // setCompletion installs items, preserving the selection index only while the

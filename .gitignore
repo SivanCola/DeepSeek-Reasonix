@@ -16,3 +16,7 @@
 # Go
 *.test
 *.out
+
+# CodeGraph per-project index (rebuilt locally; never committed)
+.codegraph/
+/stage/

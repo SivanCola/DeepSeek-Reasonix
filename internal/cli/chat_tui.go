@@ -13,6 +13,7 @@ import (
 	"charm.land/bubbles/v2/textarea"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"reasonix/internal/agent"
 	"reasonix/internal/command"
@@ -22,6 +23,7 @@ import (
 	"reasonix/internal/memory"
 	"reasonix/internal/plugin"
 	"reasonix/internal/provider"
+	"reasonix/internal/skill"
 )
 
 // chatTUI is a bubbletea Model that runs a chat session in the terminal's
@@ -42,6 +44,11 @@ type chatTUI struct {
 
 	width  int
 	height int
+	// repaintToggle flips on each resize-triggered forceRepaintMsg so the View
+	// differs byte-for-byte, defeating the renderer's "unchanged view → skip
+	// render" optimization and forcing the one extra repaint that clears the
+	// resize ghost (the same repaint a keystroke would have triggered).
+	repaintToggle bool
 
 	input   textarea.Model
 	spinner spinner.Model
@@ -106,6 +113,12 @@ type chatTUI struct {
 	// run goroutine is blocked awaiting ctrl.AnswerQuestion and keys drive the card.
 	chooser *chooser
 
+	// rewind holds the Esc-Esc / "/rewind" picker (nil when closed); while set,
+	// keys drive it and it renders as an overlay. lastEsc times the double-Esc
+	// gesture that opens it on an empty composer.
+	rewind  *rewindPicker
+	lastEsc time.Time
+
 	// host is the running MCP servers (nil when no plugins). The TUI reads
 	// prompts (slash commands), resources (@-references), and server status
 	// (/mcp) from it.
@@ -114,6 +127,17 @@ type chatTUI struct {
 	// commands are custom slash commands loaded from .reasonix/commands; each renders
 	// its template with the typed args and sends the result as a turn.
 	commands []command.Command
+
+	// skills are the discoverable skills (built-in + user/project); each is offered
+	// in the slash menu as "/<name>" and managed via /skill.
+	skills []skill.Skill
+
+	// buildController builds a fresh controller on a model ref, carrying prior
+	// history across (set by chatREPL; it must NOT touch this model — the swap
+	// happens in runModelSubcommand on the running copy). nil disables /model.
+	// modelRef is the active "provider/model" ref, marked current in the picker.
+	buildController func(ref string, carry []provider.Message) (*control.Controller, error)
+	modelRef        string
 
 	// completion is the live autocomplete menu (slash commands; @-refs later).
 	completion completion
@@ -132,6 +156,12 @@ type agentEventMsg event.Event
 // elapsedTickMsg fires once a second while a turn runs, driving the "thinking
 // Ns" counter in the status line.
 type elapsedTickMsg struct{}
+
+// forceRepaintMsg is queued after a real terminal resize to trigger one extra
+// render. In inline mode bubbletea's resize redraw can leave the prior frame's
+// border on screen until the next normal render (typing clears it); this fires
+// that render automatically so the user doesn't have to.
+type forceRepaintMsg struct{}
 
 // balanceMsg carries the result of an async wallet-balance fetch; text is the
 // formatted readout ("" when none/failed).
@@ -204,6 +234,7 @@ func newChatTUI(ctrl *control.Controller, missing string, eventCh chan event.Eve
 		history:       ctrl.History(),
 		host:          ctrl.Host(),
 		commands:      ctrl.Commands(),
+		skills:        ctrl.Skills(),
 	}
 }
 
@@ -228,6 +259,14 @@ func (m chatTUI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
+		// bubbletea already resizes+redraws the renderer on a size change, but in
+		// inline mode that single redraw can strand the prior frame's border until
+		// the next normal render (a keystroke clears it). We must NOT use
+		// tea.ClearScreen: inline-mode clearScreen does MoveTo(0,0) into the
+		// scrollback region and repaints there, doubling the frame. Instead, after
+		// an actual size change we queue one forceRepaintMsg — an automatic "nudge"
+		// that fires exactly that extra render and wipes the ghost.
+		resized := m.started && (m.width != msg.Width || m.height != msg.Height)
 		m.width = msg.Width
 		m.height = msg.Height
 		m.input.SetWidth(msg.Width - 4)
@@ -247,6 +286,14 @@ func (m chatTUI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.commitLine(strings.TrimRight(b.String(), "\n"))
 		}
+		if resized {
+			cmds = append(cmds, func() tea.Msg { return forceRepaintMsg{} })
+		}
+
+	case forceRepaintMsg:
+		// Flip the toggle so the next View differs (a zero-width char in the
+		// status line) and the renderer can't skip it — repainting over the ghost.
+		m.repaintToggle = !m.repaintToggle
 
 	case tea.KeyPressMsg:
 		// A question card is modal: keys drive it. In its free-text ("Type
@@ -279,6 +326,10 @@ func (m chatTUI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, finalize(m, cmds)
 			}
 			return m.handleChooserKey(msg)
+		}
+		// The rewind picker is modal while open: keys navigate it.
+		if m.rewind != nil {
+			return m.handleRewindKey(msg)
 		}
 		// A pending tool approval is modal: keystrokes answer it (y/a/n, Enter,
 		// Esc) rather than reaching the input.
@@ -315,11 +366,25 @@ func (m chatTUI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.unsendPending()
 			case m.state == tuiRunning:
 				m.ctrl.Cancel()
+			case m.ctrl.Bypass():
+				m.ctrl.SetBypass(false) // back out of YOLO
 			case m.planMode:
 				m.planMode = false
 				m.ctrl.SetPlanMode(false)
 			default:
-				m.input.Reset()
+				// Idle with nothing to back out: a double-Esc on an empty composer
+				// opens the rewind picker (Claude Code's gesture); a first Esc just
+				// arms it. Non-empty input clears as before.
+				if strings.TrimSpace(m.input.Value()) == "" {
+					if !m.lastEsc.IsZero() && time.Since(m.lastEsc) < 600*time.Millisecond {
+						m.lastEsc = time.Time{}
+						m.openRewind()
+					} else {
+						m.lastEsc = time.Now()
+					}
+				} else {
+					m.input.Reset()
+				}
 			}
 			return m, nil
 		case "ctrl+c":
@@ -338,8 +403,7 @@ func (m chatTUI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.state == tuiRunning {
 				break
 			}
-			m.planMode = !m.planMode
-			m.ctrl.SetPlanMode(m.planMode)
+			m.cycleMode()
 			return m, nil
 		case "enter":
 			if m.state == tuiRunning {
@@ -520,18 +584,10 @@ func clampWidth(s string, width int) string {
 	if width <= 0 {
 		return s
 	}
-	var b strings.Builder
-	for i, line := range strings.Split(s, "\n") {
-		if i > 0 {
-			b.WriteByte('\n')
-		}
-		if visibleWidth(line) > width {
-			b.WriteString(strings.Join(chunkByWidth(line, width), "\n"))
-		} else {
-			b.WriteString(line)
-		}
-	}
-	return b.String()
+	// ansi.Hardwrap breaks any line over `width` visible cols on grapheme
+	// boundaries, preserving ANSI and counting wide chars — exactly what we want,
+	// and lines already within width pass through unchanged.
+	return ansi.Hardwrap(s, width, false)
 }
 
 // commitLine queues one finalized block for the next scrollback flush.
@@ -657,15 +713,20 @@ func (m chatTUI) View() tea.View {
 	box := inputBoxStyle.Width(boxW).Render(m.input.View())
 
 	var modeTag string
-	if m.planMode {
+	switch {
+	case m.ctrl.Bypass():
+		modeTag = lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Bold(true).Render("[YOLO]")
+	case m.planMode:
 		modeTag = yellow("[plan]")
-	} else {
+	default:
 		modeTag = dim("[auto]")
 	}
 
 	ctxTag := m.contextTag()
 	var status string
 	switch {
+	case m.rewind != nil:
+		status = "  " + modeTag + " · ⟲ rewind"
 	case m.chooser != nil:
 		status = "  " + modeTag + " · " + i18n.M.ChatStatusQuestion
 	case m.pendingApproval != nil && m.pendingApproval.Tool == planApprovalTool:
@@ -680,15 +741,25 @@ func (m chatTUI) View() tea.View {
 	default:
 		status = "  " + modeTag + " · " + i18n.M.ChatStatusIdle
 	}
+	// Second status row: the live data (context gauge, cache rates, jobs,
+	// balance). It lives on its own fixed row so it's always shown in full rather
+	// than being truncated off the end of the keybinding hints on line 1. Two
+	// rows is a fixed height, so unlike a wrap-when-long status it doesn't
+	// reintroduce resize ghosting.
+	var data []string
 	if ctxTag != "" {
-		status += " · " + ctxTag
+		data = append(data, ctxTag)
 	}
 	if cache := m.cacheTag(); cache != "" {
-		status += " · " + cache
+		data = append(data, cache)
+	}
+	if jt := m.jobsTag(); jt != "" {
+		data = append(data, jt)
 	}
 	if m.balance != "" {
-		status += " · " + dim(m.balance)
+		data = append(data, dim(m.balance))
 	}
+	dataLine := "  " + strings.Join(data, " · ")
 
 	// The bottom region must stay a stable height: bubbletea's non-alt-screen
 	// renderer commits scrollback via tea.Println by clearing the previous
@@ -716,11 +787,24 @@ func (m chatTUI) View() tea.View {
 		parts = append(parts, card)
 		rowsAboveBox += strings.Count(card, "\n") + 1
 	}
+	if card := m.renderRewind(); card != "" {
+		parts = append(parts, card)
+		rowsAboveBox += strings.Count(card, "\n") + 1
+	}
 	if menu := m.renderCompletion(); menu != "" {
 		parts = append(parts, menu)
 		rowsAboveBox += strings.Count(menu, "\n") + 1
 	}
-	parts = append(parts, box, statusStyle.Render(status))
+	if m.repaintToggle {
+		// Zero-width space at the front (survives clampStatusLine, which only trims
+		// the tail) so a post-resize repaint produces a byte-different View and
+		// isn't skipped by the renderer. Invisible: width 0, no glyph.
+		dataLine = "​" + dataLine
+	}
+	// Fixed two-row status: line 1 = mode + keybinding/state hints, line 2 = live
+	// data. Each row is clamped to width independently so neither wraps.
+	statusBlock := clampStatusLine(status, boxW) + "\n" + clampStatusLine(dataLine, boxW)
+	parts = append(parts, box, statusStyle.Render(statusBlock))
 
 	v := tea.NewView(strings.Join(parts, "\n"))
 	// Anchor the real terminal cursor at the textarea's insertion point so IME
@@ -753,22 +837,46 @@ func (m chatTUI) contextTag() string {
 	}
 }
 
-// cacheTag renders the prompt cache-hit rate for the status line from the last
-// turn's usage — "cache 82%". "" before any turn or when no prompt tokens were
-// reported. Falls back to prompt-token-relative when only hits are reported.
+// cacheTag renders both prompt cache-hit rates for the status line —
+// "cache 88% · avg 78%": the single-turn rate (latest turn, the higher/steeper
+// number on a non-compacting DeepSeek session) and the session-aggregate rate
+// Σhit/Σ(hit+miss) (the steadier, cost-oriented number that matches the legacy
+// dashboard). "" before any cache tokens have been reported.
 func (m chatTUI) cacheTag() string {
-	u := m.ctrl.LastUsage()
-	if u == nil {
+	now := ""
+	if u := m.ctrl.LastUsage(); u != nil {
+		d := u.CacheHitTokens + u.CacheMissTokens
+		if d == 0 {
+			d = u.PromptTokens
+		}
+		if d > 0 {
+			now = fmt.Sprintf("cache %d%%", u.CacheHitTokens*100/d)
+		}
+	}
+	avg := ""
+	if hit, miss := m.ctrl.SessionCache(); hit+miss > 0 {
+		avg = fmt.Sprintf("avg %d%%", hit*100/(hit+miss))
+	}
+	switch {
+	case now != "" && avg != "":
+		return dim(now + " · " + avg)
+	case now != "":
+		return dim(now)
+	case avg != "":
+		return dim(avg)
+	}
+	return ""
+}
+
+// jobsTag shows the count of running background jobs in the status line. Job
+// start/finish emit Notices that arrive on eventCh and re-render the frame, so
+// the count stays current without a dedicated tick.
+func (m chatTUI) jobsTag() string {
+	n := len(m.ctrl.Jobs())
+	if n == 0 {
 		return ""
 	}
-	denom := u.CacheHitTokens + u.CacheMissTokens
-	if denom == 0 {
-		denom = u.PromptTokens
-	}
-	if denom == 0 {
-		return ""
-	}
-	return dim(fmt.Sprintf("cache %d%%", u.CacheHitTokens*100/denom))
+	return dim(fmt.Sprintf("⚙ %d", n))
 }
 
 // shortTokens prints token counts compactly: 142_000 → "142K", 1_000_000 → "1M".
@@ -874,6 +982,18 @@ func truncateSubject(s string, width int) string {
 	return s
 }
 
+// clampStatusLine truncates a status line to `width` visible columns, ANSI-aware,
+// appending an ellipsis and a reset. The bottom region must stay a fixed height —
+// the non-alt-screen renderer commits scrollback by clearing the prior frame's
+// lines, so a status that wraps to a second row strands input-box borders in
+// history. Truncating (not wrapping) keeps it one row regardless of how many tags
+// (ctx · cache · avg · jobs · balance) it carries on a narrow terminal.
+func clampStatusLine(s string, width int) string {
+	// ansi.Truncate is ANSI-aware, counts wide chars, and appends the tail when
+	// it actually clips — one row regardless of how many tags the status carries.
+	return ansi.Truncate(s, width, "…")
+}
+
 // growInputToFit resizes the textarea to the number of lines its value spans,
 // capped at maxInputRows so a long paste doesn't crowd the screen.
 const maxInputRows = 5
@@ -888,6 +1008,24 @@ func (m *chatTUI) growInputToFit() {
 	}
 	if lines != m.input.Height() {
 		m.input.SetHeight(lines)
+	}
+}
+
+// cycleMode advances the input mode normal → plan → YOLO → normal (Tab),
+// mirroring the desktop composer's Shift+Tab. plan is read-only; YOLO
+// auto-approves every tool call for the session (deny rules still apply). The
+// status line's mode tag ([auto]/[plan]/[YOLO]) reflects the result.
+func (m *chatTUI) cycleMode() {
+	switch {
+	case m.ctrl.Bypass():
+		m.ctrl.SetBypass(false) // YOLO → normal
+	case m.planMode:
+		m.planMode = false
+		m.ctrl.SetPlanMode(false)
+		m.ctrl.SetBypass(true) // plan → YOLO
+	default:
+		m.planMode = true
+		m.ctrl.SetPlanMode(true) // normal → plan
 	}
 }
 
@@ -1118,8 +1256,16 @@ func (m *chatTUI) runSlashCommand(input string) tea.Cmd {
 		// Dismiss the pinned task list; a later todo_write brings it back.
 		m.todoArgs = ""
 		m.notice(i18n.M.SlashTodoCleared)
+	case "/rewind":
+		m.openRewind()
 	case "/mcp":
 		m.runMCPSubcommand(input)
+	case "/model":
+		m.runModelSubcommand(input)
+	case "/skill", "/skills":
+		m.runSkillSubcommand(input)
+	case "/hooks":
+		m.runHooksSubcommand(input)
 	case "/help":
 		m.notice(i18n.M.SlashHelp)
 		if names := m.commandNames(); names != "" {
@@ -1128,7 +1274,11 @@ func (m *chatTUI) runSlashCommand(input string) tea.Cmd {
 	case "/memory":
 		m.showMemory()
 	default:
+		// A custom command wins over a skill of the same name; both resolve to a turn.
 		if sent, ok := m.ctrl.CustomCommand(input); ok {
+			return m.startTurn(m.ctrl.Compose(sent), input)
+		}
+		if sent, ok := m.ctrl.RunSkill(input); ok {
 			return m.startTurn(m.ctrl.Compose(sent), input)
 		}
 		m.notice(fmt.Sprintf("%s: %s", i18n.M.SlashUnknown, cmd))
@@ -1159,6 +1309,10 @@ func (m *chatTUI) runMCPSubcommand(input string) {
 		return
 	}
 	switch args[1] {
+	case "list", "ls":
+		// The completion menu offers "list"; treat it as the status view (same as
+		// a bare /mcp) rather than an unknown subcommand.
+		m.showMCPStatus()
 	case "add":
 		entry, err := parseMCPAdd(args[2:])
 		if err != nil {

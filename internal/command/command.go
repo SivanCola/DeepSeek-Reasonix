@@ -7,7 +7,6 @@ package command
 
 import (
 	"fmt"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -60,20 +59,22 @@ func Load(dirs ...string) ([]Command, error) {
 		if err != nil {
 			continue
 		}
-		_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, werr error) error {
-			if werr != nil {
-				return nil // missing dir / unreadable entry: skip, don't abort
-			}
-			if d.IsDir() || !strings.EqualFold(filepath.Ext(d.Name()), ".md") {
-				return nil
-			}
+		// A symlink-following walk (filepath.WalkDir does not follow links), so a
+		// symlinked command directory or a symlinked <name>.md is picked up like a
+		// real one. visited (keyed by resolved path) guards against symlink cycles.
+		visited := map[string]bool{}
+		if real, err := filepath.EvalSymlinks(root); err == nil {
+			visited[real] = true
+		} else {
+			visited[root] = true
+		}
+		walkCommands(root, root, visited, func(path string) {
 			c, perr := parseFile(root, path)
 			if perr != nil {
 				errs = append(errs, perr.Error())
-				return nil
+				return
 			}
 			byName[c.Name] = c
-			return nil
 		})
 	}
 	cmds := make([]Command, 0, len(byName))
@@ -85,6 +86,44 @@ func Load(dirs ...string) ([]Command, error) {
 		return cmds, fmt.Errorf("command load: %s", strings.Join(errs, "; "))
 	}
 	return cmds, nil
+}
+
+// walkCommands recursively visits dir, following symlinks, and calls fn with the
+// path of every *.md file (including symlinked files and files under symlinked
+// directories). visited (resolved-path set) prevents infinite recursion through
+// a symlink cycle. Unreadable directories are skipped, never fatal.
+func walkCommands(root, dir string, visited map[string]bool, fn func(path string)) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		full := filepath.Join(dir, e.Name())
+		isDir := e.IsDir()
+		isFile := e.Type().IsRegular()
+		if e.Type()&os.ModeSymlink != 0 {
+			info, serr := os.Stat(full) // follow the link
+			if serr != nil {
+				continue // broken link
+			}
+			isDir = info.IsDir()
+			isFile = info.Mode().IsRegular()
+		}
+		switch {
+		case isDir:
+			real, rerr := filepath.EvalSymlinks(full)
+			if rerr != nil {
+				real = full
+			}
+			if visited[real] {
+				continue
+			}
+			visited[real] = true
+			walkCommands(root, full, visited, fn)
+		case isFile && strings.EqualFold(filepath.Ext(e.Name()), ".md"):
+			fn(full)
+		}
+	}
 }
 
 // parseFile reads one command file and derives its name from the path relative
