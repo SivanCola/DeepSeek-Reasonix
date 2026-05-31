@@ -758,10 +758,10 @@ func (m *chatTUI) commitPending() {
 const planApprovalTool = "exit_plan_mode"
 
 // handleApprovalKey resolves a pending approval from a keystroke and re-arms the
-// listener. y/Enter allows once, a allows for the rest of the session, n/Esc
-// denies. Ctrl-C cancels the whole turn via the run context. For a plan approval
-// (planApprovalTool), allowing also drops the local [plan] tag — the controller
-// turns plan mode off on its side.
+// listener. y/1/Enter allows once, a/2 allows for the rest of the session,
+// n/3/Esc denies. Ctrl-C cancels the whole turn via the run context. For a plan
+// approval (planApprovalTool), allowing also drops the local [plan] tag — the
+// controller turns plan mode off on its side.
 func (m chatTUI) handleApprovalKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	answer := func(allow, session bool) (tea.Model, tea.Cmd) {
 		if allow && m.pendingApproval.Tool == planApprovalTool {
@@ -781,11 +781,11 @@ func (m chatTUI) handleApprovalKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return answer(false, false)
 	}
 	switch strings.ToLower(msg.String()) {
-	case "y":
+	case "y", "1":
 		return answer(true, false)
-	case "a":
+	case "a", "2":
 		return answer(true, true)
-	case "n":
+	case "n", "3":
 		return answer(false, false)
 	}
 	return m, nil // ignore anything else while awaiting a decision
@@ -1065,12 +1065,41 @@ func (m chatTUI) renderApprovalBanner() string {
 	if m.pendingApproval.Tool == planApprovalTool {
 		return approvalBannerStyle.Width(w).Render("⏸ " + i18n.M.PlanApprovalPrompt)
 	}
+	name, detail := approvalToolDetails(m.pendingApproval.Tool)
 	subj := strings.TrimSpace(m.pendingApproval.Subject)
 	if subj != "" {
 		subj = " " + truncateSubject(subj, w)
 	}
-	text := fmt.Sprintf(i18n.M.ToolApprovalPromptFmt, m.pendingApproval.Tool, subj)
+	text := fmt.Sprintf(i18n.M.ToolApprovalPromptFmt, name, subj, detail)
 	return approvalBannerStyle.Width(w).Render("⏸ " + text)
+}
+
+// approvalToolDetails turns provider-visible tool IDs into user-facing labels.
+// MCP tools are advertised as mcp__<server>__<tool>; showing the short tool name
+// first keeps the approval prompt readable while preserving the source.
+func approvalToolDetails(toolName string) (name, detail string) {
+	if server, tool, ok := splitMCPToolName(toolName); ok {
+		lines := []string{}
+		if strings.EqualFold(tool, "understand_image") {
+			lines = append(lines, i18n.M.ToolApprovalImageUse)
+		}
+		lines = append(lines, fmt.Sprintf(i18n.M.ToolApprovalSourceFmt, server))
+		return tool, strings.Join(lines, "\n")
+	}
+	return toolName, fmt.Sprintf(i18n.M.ToolApprovalSourceFmt, i18n.M.ToolApprovalBuiltIn)
+}
+
+func splitMCPToolName(name string) (server, tool string, ok bool) {
+	const prefix = "mcp__"
+	if !strings.HasPrefix(name, prefix) {
+		return "", "", false
+	}
+	rest := strings.TrimPrefix(name, prefix)
+	parts := strings.SplitN(rest, "__", 2)
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		return "", "", false
+	}
+	return parts[0], parts[1], true
 }
 
 // todoPanelMaxRows caps how many task lines the pinned panel shows; a long list

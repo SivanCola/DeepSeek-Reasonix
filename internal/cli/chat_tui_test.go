@@ -145,3 +145,20 @@ func TestInsertNewlineKeyBinding(t *testing.T) {
 		t.Errorf("newChatTUI InsertNewline should include shift+enter, got %v", keys)
 	}
 }
+
+func TestApprovalToolDetailsShortensMCPNames(t *testing.T) {
+	name, detail := approvalToolDetails("mcp__minimax-coding-plan-mcp__understand_image")
+	if name != "understand_image" {
+		t.Fatalf("name = %q, want understand_image", name)
+	}
+	for _, want := range []string{"provided image input", "minimax-coding-plan-mcp"} {
+		if !strings.Contains(detail, want) {
+			t.Errorf("detail = %q, want it to contain %q", detail, want)
+		}
+	}
+
+	name, detail = approvalToolDetails("bash")
+	if name != "bash" || !strings.Contains(detail, "built-in") {
+		t.Errorf("built-in details = (%q, %q), want bash + built-in source", name, detail)
+	}
+}
