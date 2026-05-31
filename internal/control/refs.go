@@ -196,6 +196,8 @@ func imageMime(data []byte, path string) string {
 		return "image/gif"
 	case ".webp":
 		return "image/webp"
+	case ".tiff", ".tif":
+		return "image/tiff"
 	}
 	return ""
 }

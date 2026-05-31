@@ -51,6 +51,28 @@ func SaveImageBytes(mime string, raw []byte) (string, error) {
 	return filepath.ToSlash(rel), nil
 }
 
+func SaveImageFile(path string) (string, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return "", err
+	}
+	if info.IsDir() {
+		return "", fmt.Errorf("pasted image path is a directory")
+	}
+	if info.Size() <= 0 || info.Size() > maxImageAttachmentBytes {
+		return "", fmt.Errorf("pasted image must be between 1 byte and 10 MB")
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	mime := imageMime(raw, path)
+	if mime == "" {
+		return "", fmt.Errorf("unsupported image file: %s", path)
+	}
+	return SaveImageBytes(mime, raw)
+}
+
 func SaveClipboardImage() (string, error) {
 	switch runtime.GOOS {
 	case "darwin":
@@ -90,7 +112,24 @@ func ImageDataURL(path string) (string, error) {
 }
 
 func saveDarwinClipboardImage() (string, error) {
-	rel := attachmentPath(".png")
+	for _, format := range []struct {
+		class string
+		ext   string
+	}{
+		{class: "PNGf", ext: ".png"},
+		{class: "JPEG", ext: ".jpg"},
+		{class: "TIFF", ext: ".tiff"},
+	} {
+		rel, err := saveDarwinClipboardClass(format.class, format.ext)
+		if err == nil {
+			return rel, nil
+		}
+	}
+	return "", fmt.Errorf("clipboard does not contain a supported image")
+}
+
+func saveDarwinClipboardClass(class, ext string) (string, error) {
+	rel := attachmentPath(ext)
 	if err := os.MkdirAll(filepath.Dir(rel), 0o755); err != nil {
 		return "", err
 	}
@@ -101,9 +140,9 @@ func saveDarwinClipboardImage() (string, error) {
 	script := fmt.Sprintf(`
 set outPath to POSIX file %q
 try
-	set img to the clipboard as «class PNGf»
+	set img to the clipboard as «class %s»
 on error
-	error "clipboard does not contain a PNG-compatible image"
+	error "clipboard does not contain this image type"
 end try
 set f to open for access outPath with write permission
 try
@@ -116,7 +155,7 @@ on error errMsg
 	end try
 	error errMsg
 end try
-`, abs)
+`, abs, class)
 	if out, err := exec.Command("osascript", "-e", script).CombinedOutput(); err != nil {
 		_ = os.Remove(rel)
 		return "", fmt.Errorf("read clipboard image: %s", strings.TrimSpace(string(out)))
@@ -160,7 +199,7 @@ func imageMimeFromExt(ext string) string {
 		return "image/gif"
 	case ".webp":
 		return "image/webp"
-	case ".tiff":
+	case ".tiff", ".tif":
 		return "image/tiff"
 	}
 	return ""

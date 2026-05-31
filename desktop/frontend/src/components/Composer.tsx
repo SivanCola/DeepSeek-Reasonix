@@ -32,10 +32,12 @@ export function Composer({
   const t = useT();
   const [text, setText] = useState("");
   const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const [pendingPastes, setPendingPastes] = useState(0);
   const [preview, setPreview] = useState<Attachment | null>(null);
   const [active, setActive] = useState(0);
   const [dismissed, setDismissed] = useState(false);
   const taRef = useRef<HTMLTextAreaElement>(null);
+  const pendingPastesRef = useRef(0);
 
   // --- slash commands (whole-input "/token") ---
   const [commands, setCommands] = useState<CommandInfo[]>([]);
@@ -166,13 +168,21 @@ export function Composer({
     });
   };
 
+  const canSubmit = !running && pendingPastes === 0 && (text.trim().length > 0 || attachments.length > 0);
+
   const submit = () => {
+    if (running || pendingPastesRef.current > 0) return;
     const t = text.trim();
     if (!t && attachments.length === 0) return;
     const refs = attachments.map((a) => `@${a.path}`).join(" ");
     onSend([t, refs].filter(Boolean).join(t && refs ? " " : ""));
     setText("");
     setAttachments([]);
+  };
+
+  const updatePendingPastes = (delta: number) => {
+    pendingPastesRef.current = Math.max(0, pendingPastesRef.current + delta);
+    setPendingPastes(pendingPastesRef.current);
   };
 
   const insertAtCaret = (insert: string) => {
@@ -277,15 +287,24 @@ export function Composer({
     const file = item.getAsFile();
     if (!file) return;
     e.preventDefault();
+    updatePendingPastes(1);
 
     const reader = new FileReader();
     reader.onload = () => {
       const dataUrl = typeof reader.result === "string" ? reader.result : "";
-      if (!dataUrl) return;
+      if (!dataUrl) {
+        updatePendingPastes(-1);
+        return;
+      }
       app
         .SavePastedImage(dataUrl)
         .then((path) => setAttachments((items) => [...items, { path, previewUrl: dataUrl }]))
-        .catch((err) => insertAtCaret(`[pasted image failed: ${err instanceof Error ? err.message : String(err)}]`));
+        .catch((err) => insertAtCaret(`[pasted image failed: ${err instanceof Error ? err.message : String(err)}]`))
+        .finally(() => updatePendingPastes(-1));
+    };
+    reader.onerror = () => {
+      updatePendingPastes(-1);
+      insertAtCaret("[pasted image failed]");
     };
     reader.readAsDataURL(file);
   };
@@ -354,8 +373,8 @@ export function Composer({
           <button
             className="composer__btn composer__btn--send"
             onClick={submit}
-            disabled={!text.trim() && attachments.length === 0}
-            title={t("composer.send")}
+            disabled={!canSubmit}
+            title={pendingPastes > 0 ? t("composer.savingImage") : t("composer.send")}
           >
             <ArrowUp size={16} />
           </button>

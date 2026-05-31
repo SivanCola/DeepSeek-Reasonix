@@ -48,6 +48,7 @@ export const en = {
   "composer.attachmentRemove": "Remove image",
   "composer.attachmentPreview": "Preview image",
   "composer.send": "Send (Enter)",
+  "composer.savingImage": "Saving pasted image…",
   "composer.stop": "Stop (Esc)",
 
   // status bar

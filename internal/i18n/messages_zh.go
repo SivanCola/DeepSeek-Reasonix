@@ -32,7 +32,7 @@ var Chinese = Messages{
 	PickSessionLabel:  "恢复哪个会话？",
 
 	ChatStatusThinkingFmt:  "%s 思考中… (%d 秒 · Esc 取消)",
-	ChatStatusIdle:         "Tab 切换 plan · Ctrl-V 粘贴图片 · Enter 发送 · Esc 退出当前状态 · PgUp/PgDn 滚动 · Ctrl-D 退出",
+	ChatStatusIdle:         "Tab 切换 plan · Ctrl-V/⌘V 粘贴 · Ctrl-Y 粘贴图片 · Enter 发送 · Esc 退出当前状态 · PgUp/PgDn 滚动 · Ctrl-D 退出",
 	ChatStatusPlanApproval: "Enter/y 批准并执行 · n/Esc 继续规划 · PgUp/PgDn 滚动",
 	PlanApprovalPrompt:     "计划已生成（见上方）— Enter/y 批准执行,n/Esc 继续规划",
 	ChatStatusToolApproval: "y 同意一次 · a 本会话允许 · n 拒绝 · Ctrl-C 取消本轮",

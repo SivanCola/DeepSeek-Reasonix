@@ -31,7 +31,7 @@ var English = Messages{
 	PickSessionLabel:  "Resume which session?",
 
 	ChatStatusThinkingFmt:  "%s thinking… (%ds · Esc cancels)",
-	ChatStatusIdle:         "Tab toggles plan · Ctrl-V pastes image · Enter sends · Esc clears/exits state · PgUp/PgDn scrolls · Ctrl-D quits",
+	ChatStatusIdle:         "Tab toggles plan · Ctrl-V/⌘V pastes · Ctrl-Y pastes image · Enter sends · Esc clears/exits state · PgUp/PgDn scrolls · Ctrl-D quits",
 	ChatStatusPlanApproval: "Enter/y approves & executes · n/Esc keeps planning · PgUp/PgDn scrolls",
 	PlanApprovalPrompt:     "Plan ready above — Enter/y to approve & execute, n/Esc to keep planning",
 	ChatStatusToolApproval: "y approve once · a allow this session · n deny · Ctrl-C cancels turn",

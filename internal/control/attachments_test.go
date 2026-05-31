@@ -29,6 +29,20 @@ func TestSaveImageDataURLRejectsUnsupportedMime(t *testing.T) {
 	}
 }
 
+func TestSaveImageFile(t *testing.T) {
+	t.Chdir(t.TempDir())
+	if err := os.WriteFile("shot.png", []byte("\x89PNG\r\n\x1a\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := SaveImageFile("shot.png")
+	if err != nil {
+		t.Fatalf("SaveImageFile: %v", err)
+	}
+	if !strings.HasPrefix(got, ".reasonix/attachments/clipboard-") || !strings.HasSuffix(got, ".png") {
+		t.Fatalf("path = %q, want attachment png path", got)
+	}
+}
+
 func TestImageDataURL(t *testing.T) {
 	t.Chdir(t.TempDir())
 	path, err := SaveImageDataURL("data:image/png;base64,iVBORw0KGgo=")

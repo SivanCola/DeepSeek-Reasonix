@@ -49,6 +49,7 @@ export const zh: Record<DictKey, string> = {
   "composer.attachmentRemove": "移除图片",
   "composer.attachmentPreview": "预览图片",
   "composer.send": "发送（Enter）",
+  "composer.savingImage": "正在保存粘贴图片…",
   "composer.stop": "停止（Esc）",
 
   // 状态栏
