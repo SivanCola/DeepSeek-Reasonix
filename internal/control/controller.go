@@ -432,8 +432,14 @@ func (c *Controller) Submit(input string) {
 			c.notice(c.BranchTreeText())
 			return
 		case "/branch":
-			name := strings.TrimSpace(strings.TrimPrefix(trimmed, fields[0]))
-			_, _ = c.Branch(name)
+			args := strings.TrimSpace(strings.TrimPrefix(trimmed, fields[0]))
+			if turn, name, fromTurn, err := ParseBranchTarget(args); err != nil {
+				c.notice(err.Error())
+			} else if fromTurn {
+				_, _ = c.ForkNamed(turn-1, name)
+			} else {
+				_, _ = c.Branch(name)
+			}
 			return
 		case "/switch":
 			ref := strings.TrimSpace(strings.TrimPrefix(trimmed, fields[0]))

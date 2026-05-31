@@ -49,6 +49,54 @@ func TestBranchAndSwitch(t *testing.T) {
 	}
 }
 
+func TestSubmitBranchHonorsNumericTurnTarget(t *testing.T) {
+	dir := t.TempDir()
+	sess := agent.NewSession("sys")
+	sess.Add(provider.Message{Role: provider.RoleUser, Content: "first prompt"})
+	sess.Add(provider.Message{Role: provider.RoleAssistant, Content: "first answer"})
+	sess.Add(provider.Message{Role: provider.RoleUser, Content: "second prompt"})
+	exec := agent.New(nil, nil, sess, agent.Options{}, event.Discard)
+	c := New(Options{Executor: exec, SessionDir: dir, Label: "test"})
+	c.SetSessionPath(agent.NewSessionPath(dir, "test"))
+	if err := c.Snapshot(); err != nil {
+		t.Fatal(err)
+	}
+	rootPath := c.SessionPath()
+
+	c.mu.Lock()
+	c.cpBound[1] = 3 // displayed turn 2 starts before "second prompt"
+	c.mu.Unlock()
+
+	c.Submit("/branch 2 experiment")
+	if c.SessionPath() == rootPath {
+		t.Fatal("Submit /branch <turn> should switch to a forked session")
+	}
+	meta, ok, err := agent.LoadBranchMeta(c.SessionPath())
+	if err != nil || !ok {
+		t.Fatalf("load branch meta ok=%v err=%v", ok, err)
+	}
+	if meta.ForkTurn != 1 || meta.ForkMessageIndex != 3 || meta.Name != "experiment" {
+		t.Fatalf("meta = %+v, want turn 1, msg index 3, name experiment", meta)
+	}
+	if got := len(c.History()); got != 3 {
+		t.Fatalf("forked history length = %d, want 3", got)
+	}
+}
+
+func TestParseBranchTarget(t *testing.T) {
+	turn, name, fromTurn, err := ParseBranchTarget("3 experiment")
+	if err != nil || !fromTurn || turn != 3 || name != "experiment" {
+		t.Fatalf("ParseBranchTarget numeric = (%d,%q,%v,%v)", turn, name, fromTurn, err)
+	}
+	turn, name, fromTurn, err = ParseBranchTarget("experiment")
+	if err != nil || fromTurn || turn != 0 || name != "experiment" {
+		t.Fatalf("ParseBranchTarget name = (%d,%q,%v,%v)", turn, name, fromTurn, err)
+	}
+	if _, _, _, err = ParseBranchTarget("0 bad"); err == nil {
+		t.Fatal("ParseBranchTarget should reject non-positive turns")
+	}
+}
+
 func TestFormatBranchTreeMarksCurrent(t *testing.T) {
 	branches := []agent.BranchInfo{
 		{BranchMeta: agent.BranchMeta{ID: "root"}, Preview: "root", Turns: 1},

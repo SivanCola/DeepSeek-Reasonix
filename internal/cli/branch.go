@@ -2,7 +2,6 @@ package cli
 
 import (
 	"fmt"
-	"strconv"
 	"strings"
 
 	"github.com/charmbracelet/x/ansi"
@@ -22,31 +21,24 @@ func (m *chatTUI) showBranchTree() {
 }
 
 func (m *chatTUI) runBranchCommand(input string) {
-	args := strings.Fields(input)
-	name := ""
-	if len(args) > 1 {
-		name = strings.TrimSpace(strings.TrimPrefix(input, args[0]))
-	}
+	cmd := strings.Fields(input)[0]
+	args := strings.TrimSpace(strings.TrimPrefix(input, cmd))
 
 	// /branch 3 optional-name branches from displayed turn 3. Plain /branch
 	// branches from the current tip.
-	if len(args) > 1 {
-		if n, err := strconv.Atoi(args[1]); err == nil {
-			if n <= 0 {
-				m.notice("usage: /branch [turn] [name]")
-				return
-			}
-			name = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(strings.TrimPrefix(input, args[0])), args[1]))
-			if _, err := m.ctrl.ForkNamed(n-1, name); err != nil {
-				return
-			}
-			m.replayActiveBranch(fmt.Sprintf("branched from turn %d", n))
+	if n, name, fromTurn, err := control.ParseBranchTarget(args); err != nil {
+		m.notice(err.Error())
+		return
+	} else if fromTurn {
+		if _, err := m.ctrl.ForkNamed(n-1, name); err != nil {
 			return
 		}
-	}
-
-	if _, err := m.ctrl.Branch(name); err != nil {
+		m.replayActiveBranch(fmt.Sprintf("branched from turn %d", n))
 		return
+	} else {
+		if _, err := m.ctrl.Branch(name); err != nil {
+			return
+		}
 	}
 	m.showBranchTree()
 }

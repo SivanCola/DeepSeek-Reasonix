@@ -2,10 +2,31 @@ package control
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	"reasonix/internal/agent"
 )
+
+// ParseBranchTarget parses the arguments after "/branch". A leading positive
+// integer means "branch from displayed turn N"; otherwise the whole argument is
+// the optional branch name for a tip branch.
+func ParseBranchTarget(args string) (turn int, name string, fromTurn bool, err error) {
+	args = strings.TrimSpace(args)
+	fields := strings.Fields(args)
+	if len(fields) == 0 {
+		return 0, "", false, nil
+	}
+	n, convErr := strconv.Atoi(fields[0])
+	if convErr != nil {
+		return 0, args, false, nil
+	}
+	if n <= 0 {
+		return 0, "", false, fmt.Errorf("usage: /branch [turn] [name]")
+	}
+	name = strings.TrimSpace(strings.TrimPrefix(args, fields[0]))
+	return n, name, true, nil
+}
 
 func (c *Controller) BranchTreeText() string {
 	branches, err := c.Branches()
