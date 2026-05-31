@@ -127,7 +127,7 @@ func (d deleteRange) preview(args json.RawMessage) (diff.Change, error) {
 	}
 	newContent := strings.Join(keep, lineSep)
 	// Preserve trailing newline if original had one.
-	if strings.HasSuffix(original, lineSep) && !strings.HasSuffix(newContent, lineSep) {
+	if newContent != "" && strings.HasSuffix(original, lineSep) && !strings.HasSuffix(newContent, lineSep) {
 		newContent += lineSep
 	}
 

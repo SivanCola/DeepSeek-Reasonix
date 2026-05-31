@@ -118,6 +118,19 @@ func TestDeleteRangeCRLF(t *testing.T) {
 	}
 }
 
+func TestDeleteRangeWholeNewlineTerminatedFile(t *testing.T) {
+	f := filepath.Join(t.TempDir(), "whole.txt")
+	os.WriteFile(f, []byte("line1\n"), 0o644)
+
+	runTool(t, deleteRange{}, map[string]any{
+		"path": f, "start_anchor": "line1", "end_anchor": "line1",
+	})
+	got, _ := os.ReadFile(f)
+	if string(got) != "" {
+		t.Errorf("whole-file delete left content %q, want empty", got)
+	}
+}
+
 func TestDeleteRangePreview(t *testing.T) {
 	f := filepath.Join(t.TempDir(), "preview.txt")
 	body := "line1\nline2\nline3\nline4\nline5\n"

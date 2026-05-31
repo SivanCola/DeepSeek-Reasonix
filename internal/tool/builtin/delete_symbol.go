@@ -23,12 +23,13 @@ type deleteSymbol struct {
 }
 
 type symbolMatch struct {
-	name   string
-	kind   string
-	parent string
-	line   int
-	start  token.Pos
-	end    token.Pos
+	name     string
+	kind     string
+	parent   string
+	line     int
+	start    token.Pos
+	end      token.Pos
+	siblings []string
 }
 
 func (deleteSymbol) Name() string { return "delete_symbol" }
@@ -197,6 +198,10 @@ func (d deleteSymbol) findSymbol(path, name, kind, parent string) (symbolMatch, 
 		return symbolMatch{}, nil, fmt.Errorf("%s", b.String())
 	}
 
+	if len(filtered[0].siblings) > 1 {
+		return symbolMatch{}, nil, fmt.Errorf("%s %q is declared in a multi-name %s spec with %s; delete_symbol refuses to remove it because that would also delete sibling symbols", filtered[0].kind, name, filtered[0].kind, strings.Join(filtered[0].siblings, ", "))
+	}
+
 	return filtered[0], fset, nil
 }
 
@@ -245,13 +250,18 @@ func collectSymbols(fset *token.FileSet, f *ast.File) []symbolMatch {
 					if d.Tok == token.CONST {
 						kind = "const"
 					}
+					names := make([]string, 0, len(s.Names))
+					for _, ident := range s.Names {
+						names = append(names, ident.Name)
+					}
 					for _, ident := range s.Names {
 						matches = append(matches, symbolMatch{
-							name:  ident.Name,
-							kind:  kind,
-							start: ident.Pos(),
-							end:   ident.End(),
-							line:  fset.Position(ident.Pos()).Line,
+							name:     ident.Name,
+							kind:     kind,
+							start:    ident.Pos(),
+							end:      ident.End(),
+							line:     fset.Position(ident.Pos()).Line,
+							siblings: names,
 						})
 					}
 				}

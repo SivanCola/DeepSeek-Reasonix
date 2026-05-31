@@ -77,6 +77,30 @@ func TestDeleteSymbolMultiMatch(t *testing.T) {
 	}
 }
 
+func TestDeleteSymbolRejectsMultiNameValueSpec(t *testing.T) {
+	dir := t.TempDir()
+	f := filepath.Join(dir, "example.go")
+	src := "package example\n\nvar A, B = 1, 2\nconst C, D = 3, 4\n"
+	os.WriteFile(f, []byte(src), 0o644)
+
+	_, err := deleteSymbol{}.Execute(context.Background(), argsJSON(t, map[string]any{
+		"path": f, "name": "A", "kind": "var",
+	}))
+	if err == nil || !strings.Contains(err.Error(), "multi-name") {
+		t.Fatalf("expected multi-name var error, got %v", err)
+	}
+	_, err = deleteSymbol{}.Execute(context.Background(), argsJSON(t, map[string]any{
+		"path": f, "name": "C", "kind": "const",
+	}))
+	if err == nil || !strings.Contains(err.Error(), "multi-name") {
+		t.Fatalf("expected multi-name const error, got %v", err)
+	}
+	got, _ := os.ReadFile(f)
+	if string(got) != src {
+		t.Errorf("file modified despite rejected delete:\n got %q\nwant %q", got, src)
+	}
+}
+
 func TestDeleteSymbolNotFound(t *testing.T) {
 	dir := t.TempDir()
 	f := filepath.Join(dir, "example.go")
