@@ -117,10 +117,13 @@ type Agent struct {
 	// Context management: when a turn's prompt nears contextWindow, the older
 	// middle of the session is summarized away, keeping recentKeep messages
 	// verbatim and archiving the originals under archiveDir.
-	contextWindow int
-	compactRatio  float64
-	recentKeep    int
-	archiveDir    string
+	contextWindow      int
+	softCompactRatio   float64
+	compactRatio       float64
+	compactForceRatio  float64
+	softCompactNoticed bool
+	recentKeep         int
+	archiveDir         string
 }
 
 // SetPlanMode flips the read-only gate. While true, executeOne refuses any
@@ -172,12 +175,14 @@ type Options struct {
 	// Gate is the per-call permission gate. nil disables gating.
 	Gate Gate
 
-	// Context management. ContextWindow <= 0 disables compaction. CompactRatio
-	// and RecentKeep fall back to defaults when unset.
-	ContextWindow int
-	CompactRatio  float64
-	RecentKeep    int
-	ArchiveDir    string
+	// Context management. ContextWindow <= 0 disables compaction. Ratios and
+	// RecentKeep fall back to defaults when unset.
+	ContextWindow     int
+	SoftCompactRatio  float64
+	CompactRatio      float64
+	CompactForceRatio float64
+	RecentKeep        int
+	ArchiveDir        string
 }
 
 // New constructs an Agent. MaxSteps <= 0 means no cap — the run loop continues
@@ -185,8 +190,14 @@ type Options struct {
 // provider errors (compaction keeps the context bounded). A nil sink is replaced
 // with event.Discard so the agent can always emit unconditionally.
 func New(prov provider.Provider, tools *tool.Registry, session *Session, opts Options, sink event.Sink) *Agent {
+	if opts.SoftCompactRatio <= 0 {
+		opts.SoftCompactRatio = defaultSoftCompactRatio
+	}
 	if opts.CompactRatio <= 0 {
 		opts.CompactRatio = defaultCompactRatio
+	}
+	if opts.CompactForceRatio <= 0 {
+		opts.CompactForceRatio = defaultCompactForceRatio
 	}
 	if opts.RecentKeep <= 0 {
 		opts.RecentKeep = defaultRecentKeep
@@ -195,18 +206,20 @@ func New(prov provider.Provider, tools *tool.Registry, session *Session, opts Op
 		sink = event.Discard
 	}
 	return &Agent{
-		prov:          prov,
-		tools:         tools,
-		session:       session,
-		maxSteps:      opts.MaxSteps,
-		temperature:   opts.Temperature,
-		pricing:       opts.Pricing,
-		sink:          sink,
-		gate:          opts.Gate,
-		contextWindow: opts.ContextWindow,
-		compactRatio:  opts.CompactRatio,
-		recentKeep:    opts.RecentKeep,
-		archiveDir:    opts.ArchiveDir,
+		prov:              prov,
+		tools:             tools,
+		session:           session,
+		maxSteps:          opts.MaxSteps,
+		temperature:       opts.Temperature,
+		pricing:           opts.Pricing,
+		sink:              sink,
+		gate:              opts.Gate,
+		contextWindow:     opts.ContextWindow,
+		softCompactRatio:  opts.SoftCompactRatio,
+		compactRatio:      opts.CompactRatio,
+		compactForceRatio: opts.CompactForceRatio,
+		recentKeep:        opts.RecentKeep,
+		archiveDir:        opts.ArchiveDir,
 	}
 }
 

@@ -19,8 +19,9 @@ import (
 // context window, then we compact once — summarizing the older history and
 // archiving the originals — so a long task can keep going.
 const (
-	defaultCompactRatio      = 0.5 // try compacting when prompt_tokens reach this fraction of the window
-	defaultCompactForceRatio = 0.8 // force compaction at this high-water mark even for low-value folds
+	defaultSoftCompactRatio  = 0.5 // report growing context here, but keep the cache-stable prefix intact
+	defaultCompactRatio      = 0.8 // try compacting when prompt_tokens reach this fraction of the window
+	defaultCompactForceRatio = 0.9 // force compaction at this high-water mark even for low-value folds
 	defaultRecentKeep        = 8   // recent messages kept verbatim, never summarized
 	minCompactMessages       = 2   // skip compaction below this many compactable messages
 )
@@ -63,7 +64,14 @@ func (a *Agent) maybeCompact(ctx context.Context, u *provider.Usage) {
 	if a.contextWindow <= 0 || u == nil || u.PromptTokens == 0 {
 		return
 	}
-	force := u.PromptTokens >= int(float64(a.contextWindow)*defaultCompactForceRatio)
+	if u.PromptTokens >= int(float64(a.contextWindow)*a.softCompactRatio) &&
+		u.PromptTokens < int(float64(a.contextWindow)*a.compactRatio) &&
+		!a.softCompactNoticed {
+		a.softCompactNoticed = true
+		a.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo, Text: fmt.Sprintf("context reached %.0f%% of window; keeping cache-first prefix until compact threshold %.0f%%", a.softCompactRatio*100, a.compactRatio*100)})
+		return
+	}
+	force := u.PromptTokens >= int(float64(a.contextWindow)*a.compactForceRatio)
 	if !force && u.PromptTokens < int(float64(a.contextWindow)*a.compactRatio) {
 		return
 	}

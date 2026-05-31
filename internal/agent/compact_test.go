@@ -190,12 +190,36 @@ func TestMaybeCompactThreshold(t *testing.T) {
 		t.Errorf("below threshold should not compact, len = %d", len(sess.Messages))
 	}
 
-	// At/above 50%: compacts when the fold is economically worthwhile.
+	// At/above 50% only emits a soft notice; it does not rewrite the cache prefix.
+	sess = newSess()
+	prov := &fakeProvider{reply: "s"}
+	var notices []event.Event
+	a = New(prov, tool.NewRegistry(), sess, Options{ContextWindow: 100, RecentKeep: 2, ArchiveDir: t.TempDir()}, event.FuncSink(func(e event.Event) {
+		if e.Kind == event.Notice {
+			notices = append(notices, e)
+		}
+	}))
+	a.maybeCompact(context.Background(), &provider.Usage{PromptTokens: 50})
+	if len(sess.Messages) != 7 {
+		t.Errorf("soft threshold should not compact, len = %d", len(sess.Messages))
+	}
+	if len(prov.got) != 0 {
+		t.Fatalf("soft threshold called summarizer: %+v", prov.got)
+	}
+	if len(notices) != 1 || !strings.Contains(notices[0].Text, "context reached 50%") {
+		t.Fatalf("soft threshold notice = %+v", notices)
+	}
+	a.maybeCompact(context.Background(), &provider.Usage{PromptTokens: 60})
+	if len(notices) != 1 {
+		t.Fatalf("soft threshold notice should only emit once, got %d", len(notices))
+	}
+
+	// At/above 80%: compacts when the fold is economically worthwhile.
 	sess = newSess()
 	a = New(&fakeProvider{reply: "s"}, tool.NewRegistry(), sess, Options{ContextWindow: 100, RecentKeep: 2, ArchiveDir: t.TempDir()}, event.Discard)
-	a.maybeCompact(context.Background(), &provider.Usage{PromptTokens: 50})
+	a.maybeCompact(context.Background(), &provider.Usage{PromptTokens: 80})
 	if len(sess.Messages) >= 7 {
-		t.Errorf("above threshold should compact, len = %d", len(sess.Messages))
+		t.Errorf("compact threshold should compact, len = %d", len(sess.Messages))
 	}
 
 	// No context window: compaction disabled.
@@ -218,7 +242,7 @@ func TestMaybeCompactForceCeilingBypassesEconomics(t *testing.T) {
 	prov := &fakeProvider{reply: "forced summary"}
 	a := New(prov, tool.NewRegistry(), sess, Options{ContextWindow: 100, RecentKeep: 2, ArchiveDir: t.TempDir()}, event.Discard)
 
-	a.maybeCompact(context.Background(), &provider.Usage{PromptTokens: 80})
+	a.maybeCompact(context.Background(), &provider.Usage{PromptTokens: 90})
 	if got := len(sess.Messages); got != 4 {
 		t.Fatalf("len = %d, want 4 after forced compact: %+v", got, sess.Messages)
 	}
@@ -241,7 +265,7 @@ func TestMaybeCompactSkipsLowValueRegionBeforeForceCeiling(t *testing.T) {
 	prov := &fakeProvider{reply: "should not summarize"}
 	a := New(prov, tool.NewRegistry(), sess, Options{ContextWindow: 100, RecentKeep: 2, ArchiveDir: t.TempDir()}, event.Discard)
 
-	a.maybeCompact(context.Background(), &provider.Usage{PromptTokens: 50})
+	a.maybeCompact(context.Background(), &provider.Usage{PromptTokens: 80})
 	if got := len(sess.Messages); got != 5 {
 		t.Fatalf("low-value region should not compact before force ceiling, len = %d", got)
 	}
@@ -259,7 +283,7 @@ func TestMaybeCompactFoldsSingleLargeMessageAtThreshold(t *testing.T) {
 	}}
 	a := New(&fakeProvider{reply: "single large summary"}, tool.NewRegistry(), sess, Options{ContextWindow: 100, RecentKeep: 2, ArchiveDir: t.TempDir()}, event.Discard)
 
-	a.maybeCompact(context.Background(), &provider.Usage{PromptTokens: 90})
+	a.maybeCompact(context.Background(), &provider.Usage{PromptTokens: 80})
 	if got := len(sess.Messages); got != 4 {
 		t.Fatalf("len = %d, want 4: %+v", got, sess.Messages)
 	}
