@@ -383,7 +383,7 @@ func (a *Agent) stream(ctx context.Context, schemas []provider.ToolSchema) (stri
 }
 
 func (a *Agent) capturePrefixShape(schemas []provider.ToolSchema) PrefixShape {
-	return CaptureShape(a.systemPrompt(), schemas, a.session.RewiteVersion())
+	return CaptureShape(a.systemPrompt(), schemas, a.session.RewriteVersion())
 }
 
 func (a *Agent) systemPrompt() string {

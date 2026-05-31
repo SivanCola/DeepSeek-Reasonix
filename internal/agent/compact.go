@@ -82,6 +82,7 @@ func (a *Agent) compact(ctx context.Context) error {
 	})
 	compacted = append(compacted, msgs[start:]...)
 	a.session.Messages = compacted
+	a.session.IncrementRewrite()
 
 	note := fmt.Sprintf("compacted %d messages → summary", len(region))
 	if archived != "" {

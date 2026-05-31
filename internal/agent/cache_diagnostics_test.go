@@ -52,7 +52,7 @@ func TestRunPopulatesCacheDiagnosticsOnUsageEvents(t *testing.T) {
 		}
 	})
 	session := NewSession("stable system")
-	session.IncrementRewite()
+	session.IncrementRewrite()
 	a := New(prov, reg, session, Options{}, sink)
 
 	if err := a.Run(context.Background(), "one"); err != nil {

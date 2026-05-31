@@ -90,6 +90,9 @@ func TestCompactReplacesHistory(t *testing.T) {
 	if err := a.compact(context.Background()); err != nil {
 		t.Fatalf("compact: %v", err)
 	}
+	if got := sess.RewriteVersion(); got != 1 {
+		t.Fatalf("rewrite version = %d, want 1", got)
+	}
 
 	// system + summary + last 2 verbatim.
 	if got := len(sess.Messages); got != 4 {
@@ -120,6 +123,34 @@ func TestCompactReplacesHistory(t *testing.T) {
 	}
 	if !strings.HasSuffix(entries[0].Name(), ".jsonl") {
 		t.Errorf("archive name = %q, want .jsonl", entries[0].Name())
+	}
+}
+
+func TestCompactRewriteVersionFeedsCacheDiagnostics(t *testing.T) {
+	prov := &fakeProvider{reply: "- summary"}
+	sess := &Session{Messages: []provider.Message{
+		{Role: provider.RoleSystem, Content: "sys"},
+		{Role: provider.RoleUser, Content: "a"},
+		{Role: provider.RoleAssistant, Content: "b"},
+		{Role: provider.RoleUser, Content: "c"},
+		{Role: provider.RoleAssistant, Content: "d"},
+		{Role: provider.RoleUser, Content: "e"},
+		{Role: provider.RoleAssistant, Content: "f"},
+	}}
+	a := New(prov, tool.NewRegistry(), sess, Options{RecentKeep: 2}, event.Discard)
+	before := CaptureShape("sys", nil, sess.RewriteVersion())
+
+	if err := a.compact(context.Background()); err != nil {
+		t.Fatalf("compact: %v", err)
+	}
+
+	after := CaptureShape("sys", nil, sess.RewriteVersion())
+	diag := CompareShape(before, after, &provider.Usage{CacheMissTokens: 10})
+	if !diag.PrefixChanged {
+		t.Fatalf("diagnostics should report prefix change: %+v", diag)
+	}
+	if len(diag.PrefixChangeReasons) != 1 || diag.PrefixChangeReasons[0] != "log_rewrite" {
+		t.Fatalf("change reasons = %v, want [log_rewrite]", diag.PrefixChangeReasons)
 	}
 }
 
