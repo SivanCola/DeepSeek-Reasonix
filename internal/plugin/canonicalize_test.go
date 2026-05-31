@@ -80,11 +80,11 @@ func TestSortToolsByName(t *testing.T) {
 
 type testTool struct{ name string }
 
-func (t testTool) Name() string                          { return t.name }
-func (t testTool) Description() string                   { return "" }
-func (t testTool) Schema() json.RawMessage               { return nil }
+func (t testTool) Name() string                                                      { return t.name }
+func (t testTool) Description() string                                               { return "" }
+func (t testTool) Schema() json.RawMessage                                           { return nil }
 func (t testTool) Execute(ctx context.Context, args json.RawMessage) (string, error) { return "", nil }
-func (t testTool) ReadOnly() bool                        { return true }
+func (t testTool) ReadOnly() bool                                                    { return true }
 
 func toolNames(ts []tool.Tool) []string {
 	names := make([]string, len(ts))

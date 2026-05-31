@@ -39,21 +39,21 @@ func canonicalizeSchema(raw json.RawMessage) json.RawMessage {
 // setLikeArrays lists the JSON Schema property names whose arrays are sets
 // (order does not affect validation meaning).
 var setLikeArrays = map[string]bool{
-	"required":           true,
+	"required":          true,
 	"dependentRequired": true,
 }
 
 // orderedArrays lists the JSON Schema property names whose arrays have
 // position-dependent meaning — their original order must be preserved.
 var orderedArrays = map[string]bool{
-	"enum":    true,
-	"oneOf":   true,
-	"anyOf":   true,
-	"allOf":   true,
-	"any_of":  true,
-	"one_of":  true,
-	"all_of":  true,
-	"type":    true,
+	"enum":   true,
+	"oneOf":  true,
+	"anyOf":  true,
+	"allOf":  true,
+	"any_of": true,
+	"one_of": true,
+	"all_of": true,
+	"type":   true,
 }
 
 func canonicalizeValue(v any) any {
