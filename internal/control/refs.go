@@ -5,7 +5,9 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 )
@@ -168,6 +170,9 @@ func readFileRef(path string) (content string, isDir bool, err error) {
 	}
 	data := buf[:n]
 
+	if mime := imageMime(data, path); mime != "" {
+		return fmt.Sprintf("[image file %s, mime=%s, %d bytes — image bytes are not inlined. Use an available MCP image/OCR/vision tool with this path when visual understanding is needed.]", path, mime, info.Size()), false, nil
+	}
 	if bytes.IndexByte(data[:min(n, 8192)], 0) >= 0 {
 		return fmt.Sprintf("[binary file %s, %d bytes — not shown]", path, info.Size()), false, nil
 	}
@@ -175,4 +180,24 @@ func readFileRef(path string) (content string, isDir bool, err error) {
 		return string(data[:maxFileRefBytes]) + fmt.Sprintf("\n…[truncated; file is %d bytes]…", info.Size()), false, nil
 	}
 	return string(data), false, nil
+}
+
+func imageMime(data []byte, path string) string {
+	mime := http.DetectContentType(data[:min(len(data), 512)])
+	if strings.HasPrefix(mime, "image/") {
+		return mime
+	}
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".png":
+		return "image/png"
+	case ".jpg", ".jpeg":
+		return "image/jpeg"
+	case ".gif":
+		return "image/gif"
+	case ".webp":
+		return "image/webp"
+	case ".tiff", ".tif":
+		return "image/tiff"
+	}
+	return ""
 }

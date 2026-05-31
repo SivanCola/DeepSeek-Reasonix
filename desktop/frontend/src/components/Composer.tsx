@@ -1,12 +1,18 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { KeyboardEvent } from "react";
-import { ArrowUp, Square } from "lucide-react";
+import type { ClipboardEvent, KeyboardEvent } from "react";
+import { ArrowUp, Square, X } from "lucide-react";
 import { app } from "../lib/bridge";
 import { useT } from "../lib/i18n";
 import type { CommandInfo, DirEntry, Mode, SlashArgItem, SlashArgsResult } from "../lib/types";
 import { SlashMenu } from "./SlashMenu";
 import { ArgMenu } from "./ArgMenu";
 import { FileMenu } from "./FileMenu";
+import { ImagePreview } from "./ImagePreview";
+
+interface Attachment {
+  path: string;
+  previewUrl: string;
+}
 
 export function Composer({
   running,
@@ -25,6 +31,8 @@ export function Composer({
 }) {
   const t = useT();
   const [text, setText] = useState("");
+  const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const [preview, setPreview] = useState<Attachment | null>(null);
   const [active, setActive] = useState(0);
   const [dismissed, setDismissed] = useState(false);
   const taRef = useRef<HTMLTextAreaElement>(null);
@@ -160,9 +168,30 @@ export function Composer({
 
   const submit = () => {
     const t = text.trim();
-    if (!t) return;
-    onSend(t);
+    if (!t && attachments.length === 0) return;
+    const refs = attachments.map((a) => `@${a.path}`).join(" ");
+    onSend([t, refs].filter(Boolean).join(t && refs ? " " : ""));
     setText("");
+    setAttachments([]);
+  };
+
+  const insertAtCaret = (insert: string) => {
+    const ta = taRef.current;
+    const start = ta?.selectionStart ?? text.length;
+    const end = ta?.selectionEnd ?? text.length;
+    const before = text.slice(0, start);
+    const after = text.slice(end);
+    const leftPad = before === "" || /\s$/.test(before) ? "" : " ";
+    const rightPad = after === "" || /^\s/.test(after) ? "" : " ";
+    const next = before + leftPad + insert + rightPad + after;
+    const caret = before.length + leftPad.length + insert.length + rightPad.length;
+    setText(next);
+    requestAnimationFrame(() => {
+      const el = taRef.current;
+      if (!el) return;
+      el.focus();
+      el.selectionStart = el.selectionEnd = caret;
+    });
   };
 
   // handleCancel stops the in-flight turn; if it was cancelled before the server
@@ -242,6 +271,25 @@ export function Composer({
     }
   };
 
+  const onPaste = (e: ClipboardEvent<HTMLTextAreaElement>) => {
+    const item = Array.from(e.clipboardData.items).find((it) => it.kind === "file" && it.type.startsWith("image/"));
+    if (!item) return;
+    const file = item.getAsFile();
+    if (!file) return;
+    e.preventDefault();
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = typeof reader.result === "string" ? reader.result : "";
+      if (!dataUrl) return;
+      app
+        .SavePastedImage(dataUrl)
+        .then((path) => setAttachments((items) => [...items, { path, previewUrl: dataUrl }]))
+        .catch((err) => insertAtCaret(`[pasted image failed: ${err instanceof Error ? err.message : String(err)}]`));
+    };
+    reader.readAsDataURL(file);
+  };
+
   return (
     <div className="composer-wrap">
       {menuMode === "slash" && (
@@ -262,15 +310,42 @@ export function Composer({
       </button>
       <div className="composer">
         <span className="composer__caret">›</span>
-        <textarea
-          ref={taRef}
-          className="composer__input"
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          onKeyDown={onKeyDown}
-          placeholder={t("composer.placeholder")}
-          rows={1}
-        />
+        <div className="composer__body">
+          {attachments.length > 0 && (
+            <div className="composer__attachments">
+              {attachments.map((a) => (
+                <div className="composer__attachment" key={a.path} title={a.path}>
+                  <button
+                    className="composer__attachment-preview"
+                    type="button"
+                    onClick={() => setPreview(a)}
+                    title={t("composer.attachmentPreview")}
+                  >
+                    <img className="composer__attachment-thumb" src={a.previewUrl} alt="" />
+                  </button>
+                  <button
+                    className="composer__attachment-remove"
+                    type="button"
+                    onClick={() => setAttachments((items) => items.filter((it) => it.path !== a.path))}
+                    title={t("composer.attachmentRemove")}
+                  >
+                    <X size={13} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+          <textarea
+            ref={taRef}
+            className="composer__input"
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            onKeyDown={onKeyDown}
+            onPaste={onPaste}
+            placeholder={attachments.length > 0 ? "" : t("composer.placeholder")}
+            rows={1}
+          />
+        </div>
         {running ? (
           <button className="composer__btn composer__btn--stop" onClick={handleCancel} title={t("composer.stop")}>
             <Square size={14} fill="currentColor" />
@@ -279,13 +354,20 @@ export function Composer({
           <button
             className="composer__btn composer__btn--send"
             onClick={submit}
-            disabled={!text.trim()}
+            disabled={!text.trim() && attachments.length === 0}
             title={t("composer.send")}
           >
             <ArrowUp size={16} />
           </button>
         )}
       </div>
+      {preview && (
+        <ImagePreview
+          src={preview.previewUrl}
+          label={preview.path}
+          onClose={() => setPreview(null)}
+        />
+      )}
     </div>
   );
 }

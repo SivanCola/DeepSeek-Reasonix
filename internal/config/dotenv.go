@@ -15,7 +15,14 @@ import (
 // picks up that same key instead of needing a copy in every project's .env.
 // Existing environment variables always win over both files.
 func loadDotEnv() {
-	loadDotEnvFile(".env")
+	loadDotEnvAt(".")
+}
+
+func loadDotEnvAt(cwd string) {
+	if cwd == "" {
+		cwd = "."
+	}
+	loadDotEnvFile(filepath.Join(cwd, ".env"))
 	if home, err := os.UserHomeDir(); err == nil {
 		loadDotEnvFile(filepath.Join(home, ".env"))
 	}

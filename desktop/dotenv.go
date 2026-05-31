@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -13,12 +14,20 @@ const dotEnvPath = ".env"
 // appending), and applies it to the running process so a rebuild picks it up
 // without a restart. Comments and unrelated lines are preserved.
 func upsertDotEnv(key, value string) error {
+	return upsertDotEnvAt(".", key, value)
+}
+
+func upsertDotEnvAt(cwd, key, value string) error {
+	if cwd == "" {
+		cwd = "."
+	}
+	path := filepath.Join(cwd, dotEnvPath)
 	key = strings.TrimSpace(key)
 	if key == "" {
 		return nil
 	}
 	var lines []string
-	if b, err := os.ReadFile(dotEnvPath); err == nil {
+	if b, err := os.ReadFile(path); err == nil {
 		lines = strings.Split(strings.TrimRight(string(b), "\n"), "\n")
 	}
 	replaced := false
@@ -38,7 +47,10 @@ func upsertDotEnv(key, value string) error {
 	}
 	out := strings.Join(lines, "\n") + "\n"
 
-	tmp, err := os.CreateTemp(".", ".env.*.tmp")
+	if err := os.MkdirAll(cwd, 0o755); err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(cwd, ".env.*.tmp")
 	if err != nil {
 		return err
 	}
@@ -52,7 +64,7 @@ func upsertDotEnv(key, value string) error {
 		os.Remove(tmpPath)
 		return err
 	}
-	if err := os.Rename(tmpPath, dotEnvPath); err != nil {
+	if err := os.Rename(tmpPath, path); err != nil {
 		os.Remove(tmpPath)
 		return err
 	}

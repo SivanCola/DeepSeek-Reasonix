@@ -13,7 +13,8 @@ export type EventKind =
   | "phase"
   | "approval_request"
   | "ask_request"
-  | "turn_done";
+  | "turn_done"
+  | "tab_ready";
 
 export interface WireTool {
   id?: string;
@@ -73,6 +74,7 @@ export interface QuestionAnswer {
 
 export interface WireEvent {
   kind: EventKind;
+  tabId?: string;
   text?: string;
   reasoning?: string;
   level?: "info" | "warn";
@@ -119,6 +121,14 @@ export interface Meta {
   eventChannel: string;
   cwd: string;
   bypass?: boolean; // YOLO mode on (auto-approve every tool call)
+  tabId?: string;
+  opening?: boolean;
+}
+
+export interface TabInfo {
+  id: string;
+  workspaceDir: string;
+  active: boolean;
 }
 
 // Mode is the input mode cycled by Shift+Tab: normal → plan (read-only) → yolo
@@ -246,6 +256,68 @@ export interface SettingsView {
   configPath: string;
   providerKinds: string[]; // provider implementations the kernel registered (for the kind picker)
   bypass: boolean; // live YOLO state (runtime-only) — whether approvals are skipped this session
+}
+
+export type ReasonixCommandState = "missing" | "installed" | "needsUpdate" | "foreign" | "unsupported";
+
+export interface ReasonixCommandStatus {
+  path: string;
+  state: ReasonixCommandState;
+}
+
+export interface InstallReasonixCommandResult {
+  path: string;
+  action: string;
+  usedAdmin: boolean;
+}
+
+export type MCPTransport = "stdio" | "sse" | "streamable-http";
+export type MCPStatus = "configured" | "handshake" | "connected" | "failed" | "disabled";
+
+export interface MCPToolInfo {
+  name: string;
+  registeredName: string;
+  description?: string;
+}
+
+export interface ImportedMCPServer {
+  name: string;
+  transport: MCPTransport;
+  command?: string;
+  args?: string[];
+  env?: Record<string, string>;
+  cwd?: string;
+  url?: string;
+  headers?: Record<string, string>;
+  disabled?: boolean;
+  requestTimeoutMs?: number;
+}
+
+export interface MCPSpecInfo {
+  raw: string;
+  name?: string;
+  transport: MCPTransport;
+  summary: string;
+  config?: ImportedMCPServer;
+  status: MCPStatus;
+  statusHint?: "auth" | "missing-token" | "command" | "network" | "unknown";
+  statusReason?: string;
+  toolCount?: number;
+  tools?: MCPToolInfo[];
+}
+
+export interface MCPSpecsResult {
+  specs: MCPSpecInfo[];
+  bridged: boolean;
+}
+
+export interface MCPImportResult {
+  total: number;
+  added: number;
+  updated: number;
+  connected: number;
+  failed: number;
+  skipped: number;
 }
 
 // Auto-updater payloads (desktop/updater.go). UpdateInfo drives the update banner;

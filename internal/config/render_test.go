@@ -19,7 +19,7 @@ func TestRenderTOMLRoundTrips(t *testing.T) {
 	}
 	orig.Plugins = []PluginEntry{
 		{Name: "example", Command: "reasonix-plugin-example"},
-		{Name: "stripe", Type: "http", URL: "https://mcp.stripe.com", Headers: map[string]string{"Authorization": "Bearer x"}},
+		{Name: "stripe", Type: "http", URL: "https://mcp.stripe.com", Headers: map[string]string{"Authorization": "Bearer x"}, RequestTimeoutMs: 12000},
 	}
 	disabled := false
 	orig.Plugins[1].AutoStart = &disabled
@@ -75,5 +75,8 @@ func TestRenderTOMLRoundTrips(t *testing.T) {
 	}
 	if stripe.AutoStart == nil || *stripe.AutoStart {
 		t.Errorf("plugin auto_start not preserved: %+v", stripe.AutoStart)
+	}
+	if stripe.RequestTimeoutMs != 12000 {
+		t.Errorf("plugin request_timeout_ms = %d, want 12000", stripe.RequestTimeoutMs)
 	}
 }

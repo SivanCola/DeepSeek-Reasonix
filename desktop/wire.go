@@ -13,6 +13,7 @@ import "reasonix/internal/event"
 // shared event.ToWire.)
 type wireEvent struct {
 	Kind      string        `json:"kind"`
+	TabID     string        `json:"tabId,omitempty"`
 	Text      string        `json:"text,omitempty"`
 	Reasoning string        `json:"reasoning,omitempty"`
 	Level     string        `json:"level,omitempty"`

@@ -12,15 +12,21 @@ import type {
   ContextInfo,
   DirEntry,
   HistoryMessage,
+  InstallReasonixCommandResult,
   JobView,
+  MCPImportResult,
+  MCPSpecsResult,
+  ImportedMCPServer,
   MemoryView,
   Meta,
   ModelInfo,
   ProviderView,
   QuestionAnswer,
+  ReasonixCommandStatus,
   SessionMeta,
   SettingsView,
   SlashArgsResult,
+  TabInfo,
   UpdateInfo,
   UpdateProgress,
   WireEvent,
@@ -30,12 +36,18 @@ import type {
 // (or regenerate with `wails generate module` and import wailsjs instead).
 export interface AppBindings {
   Submit(input: string): Promise<void>;
+  SavePastedImage(dataUrl: string): Promise<string>;
+  AttachmentDataURL(path: string): Promise<string>;
   Cancel(): Promise<void>;
   Approve(id: string, allow: boolean, session: boolean): Promise<void>;
   AnswerQuestion(id: string, answers: QuestionAnswer[]): Promise<void>;
   SetPlanMode(on: boolean): Promise<void>;
   Compact(): Promise<void>;
   NewSession(): Promise<void>;
+  Tabs(): Promise<TabInfo[]>;
+  OpenTab(): Promise<TabInfo>;
+  ActivateTab(id: string): Promise<TabInfo[]>;
+  CloseTab(id: string): Promise<TabInfo[]>;
   History(): Promise<HistoryMessage[]>;
   // Checkpoints lists the session's rewind points; Rewind restores one (scope
   // "code" | "conversation" | "both"), after which the caller re-reads History.
@@ -53,6 +65,9 @@ export interface AppBindings {
   // Workspace: open a folder chooser and switch to that project (fresh session);
   // returns the chosen path, or "" if cancelled.
   PickWorkspace(): Promise<string>;
+  PickFile(filters?: { name: string; extensions: string[] }[], defaultPath?: string): Promise<string>;
+  OpenPath(path: string): Promise<void>;
+  OpenInEditor(command: string, path: string, line: number): Promise<void>;
   ContextUsage(): Promise<ContextInfo>;
   // Balance queries the active provider's wallet balance (a network call);
   // returns an unavailable readout when no balance_url is configured or it fails.
@@ -89,6 +104,12 @@ export interface AppBindings {
   // SetBypass toggles YOLO mode (auto-approve every tool call this session; deny
   // rules still apply). Runtime-only — not written to config.
   SetBypass(on: boolean): Promise<void>;
+  MCPSpecs(): Promise<MCPSpecsResult>;
+  ImportCcSwitchMCP(): Promise<MCPImportResult>;
+  AddMCPServer(raw: string): Promise<number>;
+  RemoveMCPServer(raw: string): Promise<boolean>;
+  UpdateMCPServer(raw: string, server: ImportedMCPServer): Promise<number>;
+  RetryMCPServer(raw: string): Promise<number>;
   // Auto-updater (desktop/updater_app.go): the injected build version, a manifest
   // check, applying an update (win/linux self-update; macOS opens the download
   // page), and opening that page directly. Progress streams on "updater:progress".
@@ -96,6 +117,8 @@ export interface AppBindings {
   CheckUpdate(): Promise<UpdateInfo | null>;
   ApplyUpdate(): Promise<void>;
   OpenDownloadPage(): Promise<void>;
+  ReasonixCommandStatus(): Promise<ReasonixCommandStatus>;
+  InstallReasonixCommand(): Promise<InstallReasonixCommandResult>;
 }
 
 interface WailsRuntime {
@@ -199,6 +222,8 @@ function delay(ms: number): Promise<void> {
 function makeMockApp(): AppBindings {
   let cancelled = false;
   let cwd = "~/projects/reasonix"; // mutable so PickWorkspace is visible in dev
+  let activeTabId = "mock-tab-1";
+  const tabs: TabInfo[] = [{ id: activeTabId, workspaceDir: cwd, active: true }];
   const day = 86_400_000;
   const t0 = Date.now();
   // Mutable so delete/rename are observable in browser dev.
@@ -272,6 +297,12 @@ function makeMockApp(): AppBindings {
       });
       emit({ kind: "turn_done" });
     },
+    async SavePastedImage() {
+      return ".reasonix/attachments/clipboard-dev.png";
+    },
+    async AttachmentDataURL() {
+      return "data:image/png;base64,iVBORw0KGgo=";
+    },
     async Cancel() {
       cancelled = true;
       emit({ kind: "turn_done" });
@@ -281,6 +312,30 @@ function makeMockApp(): AppBindings {
     async SetPlanMode() {},
     async Compact() {},
     async NewSession() {},
+    async Tabs() {
+      return tabs.map((tab) => ({ ...tab, active: tab.id === activeTabId }));
+    },
+    async OpenTab() {
+      const tab = { id: `mock-tab-${tabs.length + 1}`, workspaceDir: cwd, active: true };
+      activeTabId = tab.id;
+      tabs.forEach((t) => (t.active = false));
+      tabs.push(tab);
+      return { ...tab };
+    },
+    async ActivateTab(id: string) {
+      if (tabs.some((tab) => tab.id === id)) activeTabId = id;
+      tabs.forEach((tab) => (tab.active = tab.id === activeTabId));
+      return tabs.map((tab) => ({ ...tab }));
+    },
+    async CloseTab(id: string) {
+      if (tabs.length > 1) {
+        const i = tabs.findIndex((tab) => tab.id === id);
+        if (i >= 0) tabs.splice(i, 1);
+        if (activeTabId === id) activeTabId = tabs[0]?.id ?? "";
+      }
+      tabs.forEach((tab) => (tab.active = tab.id === activeTabId));
+      return tabs.map((tab) => ({ ...tab }));
+    },
     async Checkpoints() {
       return [];
     },
@@ -312,7 +367,19 @@ function makeMockApp(): AppBindings {
       // Browser dev has no native dialog; simulate picking a folder and re-root so
       // the topbar folder chip visibly changes.
       cwd = cwd.endsWith("another-project") ? "~/projects/reasonix" : "~/projects/another-project";
+      const tab = tabs.find((t) => t.id === activeTabId);
+      if (tab) tab.workspaceDir = cwd;
       return cwd;
+    },
+    async PickFile(filters?: { name: string; extensions: string[] }[], defaultPath?: string) {
+      const ext = filters?.[0]?.extensions?.[0] ?? "md";
+      return `${defaultPath || cwd}/mock-selected.${ext}`;
+    },
+    async OpenPath(path: string) {
+      console.info("mock OpenPath", path);
+    },
+    async OpenInEditor(command: string, path: string, line: number) {
+      console.info("mock OpenInEditor", command, path, line);
     },
     async ContextUsage() {
       return { used: 1280, window: 1_000_000 };
@@ -333,6 +400,7 @@ function makeMockApp(): AppBindings {
         eventChannel: EVENT_CHANNEL,
         cwd,
         bypass: settings.bypass,
+        tabId: activeTabId,
       };
     },
     async Commands() {
@@ -481,6 +549,44 @@ function makeMockApp(): AppBindings {
     async SetBypass(on: boolean) {
       settings.bypass = on;
     },
+    async MCPSpecs() {
+      return {
+        bridged: true,
+        specs: [
+          {
+            raw: "context7",
+            name: "context7",
+            transport: "stdio",
+            summary: "npx -y @upstash/context7-mcp",
+            status: "connected",
+            toolCount: 1,
+            tools: [{ name: "resolve-library-id", registeredName: "mcp__context7__resolve-library-id" }],
+            config: {
+              name: "context7",
+              transport: "stdio",
+              command: "npx",
+              args: ["-y", "@upstash/context7-mcp"],
+            },
+          },
+        ],
+      };
+    },
+    async ImportCcSwitchMCP() {
+      emit({ kind: "notice", level: "info", text: "mock imported MCP servers from cc-switch" });
+      return { total: 1, added: 1, updated: 0, connected: 1, failed: 0, skipped: 0 };
+    },
+    async AddMCPServer() {
+      return 0;
+    },
+    async RemoveMCPServer() {
+      return true;
+    },
+    async UpdateMCPServer() {
+      return 0;
+    },
+    async RetryMCPServer() {
+      return 0;
+    },
     async Version() {
       return "v1.0.0 (browser dev)";
     },
@@ -514,6 +620,12 @@ function makeMockApp(): AppBindings {
       if (typeof window !== "undefined") {
         window.open("https://github.com/esengine/reasonix/releases/latest", "_blank", "noopener");
       }
+    },
+    async ReasonixCommandStatus() {
+      return { path: "/usr/local/bin/reasonix", state: "missing" as const };
+    },
+    async InstallReasonixCommand() {
+      return { path: "/usr/local/bin/reasonix", action: "installed", usedAdmin: false };
     },
   };
 }

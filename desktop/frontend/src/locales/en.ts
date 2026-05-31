@@ -44,6 +44,9 @@ export const en = {
   "composer.modeTitle": "Cycle mode (shift+tab): normal → plan → YOLO (auto-approve everything)",
   "composer.enterPlanTitle": "Enter plan mode (shift+tab) — read-only; propose a plan before writing",
   "composer.exitPlanTitle": "Exit plan mode (shift+tab)",
+  "composer.attachmentImage": "Image",
+  "composer.attachmentRemove": "Remove image",
+  "composer.attachmentPreview": "Preview image",
   "composer.send": "Send (Enter)",
   "composer.stop": "Stop (Esc)",
 

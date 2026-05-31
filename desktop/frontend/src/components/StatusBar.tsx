@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Cpu, FolderGit2, Wallet } from "lucide-react";
+import { CircleDollarSign, Cpu, FolderGit2, Gauge, Moon, Wallet, Zap } from "lucide-react";
 import { ModelSwitcher } from "./ModelSwitcher";
 import { SPINNER_WORDS, useI18n } from "../lib/i18n";
 import type { BalanceInfo, ContextInfo, JobView, Meta, Mode, WireUsage } from "../lib/types";
@@ -76,6 +76,18 @@ function fmtElapsed(ms: number): string {
   return `${Math.floor(s / 60)}m ${s % 60}s`;
 }
 
+function endpointFor(label?: string): string {
+  const l = (label ?? "").toLowerCase();
+  if (l.includes("deepseek")) return "api.deepseek.com";
+  if (l.includes("mimo")) return "api.xiaomimimo.com";
+  return "provider";
+}
+
+function fmtMoney(n?: number): string {
+  if (!n || n <= 0) return "¥0.0000";
+  return `¥${n.toFixed(4)}`;
+}
+
 // useTick re-renders once a second while `on`, so the elapsed clock advances.
 function useTick(on: boolean): number {
   const [, setN] = useState(0);
@@ -132,47 +144,36 @@ export function StatusBar({
   return (
     <div className="statusbar">
       <span className={`statusbar__dot ${running ? "statusbar__dot--busy" : ""}`} />
-      <ModelSwitcher label={meta?.label ?? t("status.connecting")} onPick={onSwitchModel} />
+      <span className="statusbar__endpoint">{endpointFor(meta?.label)}</span>
+      <span className={meta?.ready ? "statusbar__online" : "statusbar__offline"}>{meta?.ready ? "在线" : "离线"}</span>
       {activity ? (
         <>
           <span className="statusbar__sep">·</span>
           <span className="statusbar__activity">{activity}</span>
         </>
       ) : (
-        pct !== null && (
-          <>
-            <span className="statusbar__sep">·</span>
-            <span className="statusbar__ctx">{t("status.ctx", { pct })}</span>
-          </>
-        )
-      )}
-      {nowPct !== null && (
         <>
           <span className="statusbar__sep">·</span>
-          <span className="statusbar__cache">{t("status.cache", { pct: nowPct })}</span>
+          <span className="statusbar__ctx">{t("status.ctx", { pct: pct ?? 0 })}</span>
         </>
       )}
-      {avgPct !== null && (
-        <>
-          <span className="statusbar__sep">·</span>
-          <span className="statusbar__cache">{t("status.cacheAvg", { pct: avgPct })}</span>
-        </>
-      )}
-      {jobs && jobs.length > 0 && (
-        <>
-          <span className="statusbar__sep">·</span>
-          <JobsChip jobs={jobs} />
-        </>
-      )}
-      {balance?.available && balance.display && (
-        <>
-          <span className="statusbar__sep">·</span>
-          <span className="statusbar__balance" title={t("status.balanceTitle")}>
-            <Wallet size={11} />
-            {balance.display}
-          </span>
-        </>
-      )}
+      <span className="statusbar__sep">·</span>
+      <span className="statusbar__cache">
+        <Zap size={11} />
+        缓存 {nowPct ?? avgPct ?? 0}%
+      </span>
+      <span className="statusbar__sep">·</span>
+      <span className="statusbar__tokens">
+        <Gauge size={11} />
+        tokens {usage?.totalTokens ?? 0}
+      </span>
+      <span className="statusbar__sep">·</span>
+      <span className="statusbar__cost">
+        <CircleDollarSign size={11} />
+        本次 {fmtMoney(usage?.costUsd)}
+      </span>
+      <span className="statusbar__sep">·</span>
+      {jobs && jobs.length > 0 ? <JobsChip jobs={jobs} /> : <span className="statusbar__jobsline"><Cpu size={11} />任务 0</span>}
       {meta?.cwd && (
         <>
           <span className="statusbar__sep">·</span>
@@ -188,6 +189,18 @@ export function StatusBar({
         </>
       )}
       <span className="statusbar__spacer" />
+      <ModelSwitcher label={meta?.label ?? t("status.connecting")} onPick={onSwitchModel} />
+      <span className="statusbar__effort">high</span>
+      <span className="statusbar__sep">·</span>
+      <span className="statusbar__balance" title={t("status.balanceTitle")}>
+        <Wallet size={11} />
+        余额 {balance?.available && balance.display ? balance.display : "—"}
+      </span>
+      <span className="statusbar__sep">·</span>
+      <span className="statusbar__theme">
+        <Moon size={11} />
+        Graphite
+      </span>
       {mode === "yolo" && (
         <span className="statusbar__yolo" title={t("status.yoloTitle")}>
           {t("status.yolo")}

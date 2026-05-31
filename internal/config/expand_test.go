@@ -28,6 +28,7 @@ func TestExpandedPlugin(t *testing.T) {
 		Name:    "x",
 		Type:    "http",
 		URL:     "https://api/${REASONIX_TEST_MISSING:-v1}",
+		CWD:     "/tmp/${REASONIX_TEST_KEY}",
 		Args:    []string{"--token", "${REASONIX_TEST_KEY}"},
 		Env:     map[string]string{"K": "${REASONIX_TEST_KEY}"},
 		Headers: map[string]string{"Authorization": "Bearer ${REASONIX_TEST_KEY}"},
@@ -35,6 +36,9 @@ func TestExpandedPlugin(t *testing.T) {
 	out := e.ExpandedPlugin()
 	if out.URL != "https://api/v1" {
 		t.Errorf("URL = %q", out.URL)
+	}
+	if out.CWD != "/tmp/secret" {
+		t.Errorf("CWD = %q", out.CWD)
 	}
 	if out.Args[1] != "secret" {
 		t.Errorf("Args = %v", out.Args)

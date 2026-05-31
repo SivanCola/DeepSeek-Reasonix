@@ -2,10 +2,15 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	goruntime "runtime"
 	"sort"
+	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 
@@ -16,6 +21,7 @@ import (
 	"reasonix/internal/event"
 	"reasonix/internal/i18n"
 	"reasonix/internal/memory"
+	"reasonix/internal/plugin"
 	"reasonix/internal/provider"
 )
 
@@ -39,11 +45,31 @@ type App struct {
 	startupErr string
 	label      string
 	model      string // active provider name (for the bottom model switcher)
+
+	mu          sync.Mutex
+	tabs        map[string]*tabState
+	activeTabID string
+	nextTab     int
 }
 
 // NewApp constructs the bound object. The controller is built later, in startup,
 // once the Wails context exists.
-func NewApp() *App { return &App{sink: &eventSink{}} }
+func NewApp() *App { return &App{sink: &eventSink{}, tabs: map[string]*tabState{}} }
+
+type tabState struct {
+	ID           string
+	Controller   *control.Controller
+	Label        string
+	Model        string
+	WorkspaceDir string
+	Err          string
+}
+
+type TabInfo struct {
+	ID           string `json:"id"`
+	WorkspaceDir string `json:"workspaceDir"`
+	Active       bool   `json:"active"`
+}
 
 // startup runs once the webview process is up, before the frontend can issue any
 // bound call. It captures the Wails context (needed for EventsEmit), points the
@@ -59,10 +85,11 @@ func (a *App) startup(ctx context.Context) {
 	// folder (the remembered one, else home) before anything reads/writes config,
 	// .env, memory, or skills relative to cwd.
 	ensureWorkspace()
+	cwd, _ := os.Getwd()
 
 	// Resolve the active model to its canonical "provider/model" ref up front so
 	// the switcher can mark it current.
-	if cfg, err := config.Load(); err == nil {
+	if cfg, err := config.LoadAt(cwd); err == nil {
 		// Drive the Go-side catalogue (i18n.M) from the configured language so the
 		// backend-provided slash UI — command descriptions, sub-command hints,
 		// listing notices — comes through localized, matching the frontend.
@@ -73,7 +100,8 @@ func (a *App) startup(ctx context.Context) {
 		}
 	}
 
-	ctrl, err := boot.Build(ctx, boot.Options{Model: a.model, RequireKey: false, Sink: a.sink})
+	tabID := a.newTabID()
+	ctrl, err := boot.Build(ctx, boot.Options{Model: a.model, RequireKey: false, Sink: &eventSink{ctx: ctx, tabID: tabID}, CWD: cwd})
 	if err != nil {
 		a.startupErr = err.Error()
 		return
@@ -89,14 +117,156 @@ func (a *App) startup(ctx context.Context) {
 	if dir := ctrl.SessionDir(); dir != "" {
 		ctrl.SetSessionPath(agent.NewSessionPath(dir, ctrl.Label()))
 	}
+	a.tabs[tabID] = &tabState{ID: tabID, Controller: ctrl, Label: a.label, Model: a.model, WorkspaceDir: cwd}
+	a.activeTabID = tabID
 }
 
 // shutdown snapshots the conversation and stops plugin subprocesses on close.
 func (a *App) shutdown(context.Context) {
-	if a.ctrl != nil {
-		_ = a.ctrl.Snapshot()
-		a.ctrl.Close()
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	for _, tab := range a.tabs {
+		if tab.Controller != nil {
+			_ = tab.Controller.Snapshot()
+			tab.Controller.Close()
+		}
 	}
+}
+
+func (a *App) newTabID() string {
+	a.nextTab++
+	return fmt.Sprintf("tab-%d", a.nextTab)
+}
+
+func (a *App) syncActiveLocked(tab *tabState) {
+	if tab == nil {
+		a.activeTabID = ""
+		a.ctrl = nil
+		a.label = ""
+		return
+	}
+	a.activeTabID = tab.ID
+	a.ctrl = tab.Controller
+	a.label = tab.Label
+	a.model = tab.Model
+	a.startupErr = tab.Err
+}
+
+func (a *App) tabInfosLocked() []TabInfo {
+	out := make([]TabInfo, 0, len(a.tabs))
+	for _, tab := range a.tabs {
+		out = append(out, TabInfo{ID: tab.ID, WorkspaceDir: tab.WorkspaceDir, Active: tab.ID == a.activeTabID})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out
+}
+
+func (a *App) Tabs() []TabInfo {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.tabInfosLocked()
+}
+
+func (a *App) OpenTab() (TabInfo, error) {
+	a.mu.Lock()
+	tabID := a.newTabID()
+	model := a.model
+	label := a.label
+	cwd := a.activeWorkspaceDirLocked()
+	tab := &tabState{ID: tabID, Label: label, Model: model, WorkspaceDir: cwd}
+	a.tabs[tabID] = tab
+	a.syncActiveLocked(tab)
+	info := TabInfo{ID: tab.ID, WorkspaceDir: tab.WorkspaceDir, Active: true}
+	a.mu.Unlock()
+
+	go a.buildTab(tabID, model, cwd)
+	return info, nil
+}
+
+func (a *App) activeWorkspaceDirLocked() string {
+	if tab := a.tabs[a.activeTabID]; tab != nil && tab.WorkspaceDir != "" {
+		return tab.WorkspaceDir
+	}
+	cwd, _ := os.Getwd()
+	return cwd
+}
+
+func (a *App) buildTab(tabID, model, cwd string) {
+	ctrl, err := boot.Build(a.ctx, boot.Options{Model: model, RequireKey: false, Sink: &eventSink{ctx: a.ctx, tabID: tabID}, CWD: cwd})
+	a.mu.Lock()
+	tab := a.tabs[tabID]
+	if tab == nil {
+		a.mu.Unlock()
+		if ctrl != nil {
+			ctrl.Close()
+		}
+		return
+	}
+	if err != nil {
+		tab.Err = err.Error()
+		if a.activeTabID == tabID {
+			a.syncActiveLocked(tab)
+		}
+		a.mu.Unlock()
+		a.emitTabReady(tabID, err.Error())
+		return
+	}
+	ctrl.EnableInteractiveApproval()
+	if dir := ctrl.SessionDir(); dir != "" {
+		ctrl.SetSessionPath(agent.NewSessionPath(dir, ctrl.Label()))
+	}
+	tab.Controller = ctrl
+	tab.Label = ctrl.Label()
+	tab.Model = model
+	tab.WorkspaceDir = cwd
+	tab.Err = ""
+	if a.activeTabID == tabID {
+		a.syncActiveLocked(tab)
+	}
+	a.mu.Unlock()
+	a.emitTabReady(tabID, "")
+}
+
+func (a *App) ActivateTab(id string) []TabInfo {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if tab := a.tabs[id]; tab != nil {
+		a.syncActiveLocked(tab)
+	}
+	return a.tabInfosLocked()
+}
+
+func (a *App) CloseTab(id string) []TabInfo {
+	a.mu.Lock()
+	if len(a.tabs) <= 1 {
+		out := a.tabInfosLocked()
+		a.mu.Unlock()
+		return out
+	}
+	tab := a.tabs[id]
+	if tab == nil {
+		out := a.tabInfosLocked()
+		a.mu.Unlock()
+		return out
+	}
+	delete(a.tabs, id)
+	wasActive := a.activeTabID == id
+	var next *tabState
+	if wasActive {
+		for _, candidate := range a.tabs {
+			next = candidate
+			break
+		}
+		a.syncActiveLocked(next)
+	}
+	out := a.tabInfosLocked()
+	a.mu.Unlock()
+
+	if tab.Controller != nil {
+		_ = tab.Controller.Snapshot()
+		tab.Controller.Close()
+	}
+	return out
 }
 
 // --- bound command surface (frontend → controller) ---
@@ -109,6 +279,16 @@ func (a *App) Submit(input string) {
 	if a.ctrl != nil {
 		a.ctrl.Submit(input)
 	}
+}
+
+// SavePastedImage persists an image pasted into the desktop composer and returns
+// a workspace-relative @-reference path the frontend can insert into the prompt.
+func (a *App) SavePastedImage(dataURL string) (string, error) {
+	return control.SaveImageDataURL(dataURL)
+}
+
+func (a *App) AttachmentDataURL(path string) (string, error) {
+	return control.ImageDataURL(path)
 }
 
 // Cancel aborts the in-flight turn.
@@ -244,6 +424,11 @@ type SessionMeta struct {
 	Current bool   `json:"current"`
 }
 
+type PickFileFilter struct {
+	Name       string   `json:"name"`
+	Extensions []string `json:"extensions"`
+}
+
 // ListSessions returns the saved sessions newest-first for the history panel,
 // marking the one the current conversation is writing to and attaching any
 // user-chosen titles.
@@ -305,17 +490,17 @@ func (a *App) ResumeSession(path string) ([]HistoryMessage, error) {
 	return a.History(), nil
 }
 
-// PickWorkspace opens a folder chooser and, on a pick, switches the agent to that
-// project: it re-roots the process there, rebuilds the controller from that
-// folder's reasonix.toml + REASONIX.md, and starts a fresh session — the desktop
-// analogue of opening a different project. The new controller is built before the
-// old one is torn down, so a folder whose config can't load leaves the current
-// session untouched. Returns the chosen path ("" if cancelled).
+// PickWorkspace opens a folder chooser and, on a pick, switches only the active
+// tab to that project. Other tabs keep their controllers and workspace roots.
 func (a *App) PickWorkspace() (string, error) {
 	if a.ctx == nil {
 		return "", nil
 	}
-	cur, _ := os.Getwd()
+	a.mu.Lock()
+	cur := a.activeWorkspaceDirLocked()
+	tabID := a.activeTabID
+	old := a.tabs[tabID]
+	a.mu.Unlock()
 	dir, err := runtime.OpenDirectoryDialog(a.ctx, runtime.OpenDialogOptions{
 		Title:            "Choose working folder",
 		DefaultDirectory: cur,
@@ -326,29 +511,25 @@ func (a *App) PickWorkspace() (string, error) {
 	if dir == cur {
 		return dir, nil
 	}
-	if err := os.Chdir(dir); err != nil {
-		return "", err
-	}
 	saveWorkspace(dir) // remember it so the next launch reopens here
+
 	// Resolve the new folder's default model from its own config.
 	model := ""
-	if cfg, cerr := config.Load(); cerr == nil {
+	if cfg, cerr := config.LoadAt(dir); cerr == nil {
 		model = cfg.DefaultModel
 		if e, ok := cfg.ResolveModel(cfg.DefaultModel); ok {
 			model = e.Name + "/" + e.Model
 		}
 	}
-	ctrl, err := boot.Build(a.ctx, boot.Options{Model: model, RequireKey: false, Sink: a.sink})
+	ctrl, err := boot.Build(a.ctx, boot.Options{Model: model, RequireKey: false, Sink: &eventSink{ctx: a.ctx, tabID: tabID}, CWD: dir})
 	if err != nil {
-		_ = os.Chdir(cur) // roll back; the current session stays intact
 		return "", err
 	}
-	// Commit the switch: save and tear down the old session, then swap in the new
-	// project's controller with a fresh session file.
-	if a.ctrl != nil {
-		_ = a.ctrl.Snapshot()
-		a.ctrl.Close()
+	if old != nil && old.Controller != nil {
+		_ = old.Controller.Snapshot()
+		old.Controller.Close()
 	}
+	a.mu.Lock()
 	a.ctrl = ctrl
 	a.model = model
 	a.label = ctrl.Label()
@@ -357,7 +538,98 @@ func (a *App) PickWorkspace() (string, error) {
 	if d := ctrl.SessionDir(); d != "" {
 		ctrl.SetSessionPath(agent.NewSessionPath(d, ctrl.Label()))
 	}
+	if tab := a.tabs[tabID]; tab != nil {
+		tab.Controller = ctrl
+		tab.Label = a.label
+		tab.Model = a.model
+		tab.WorkspaceDir = dir
+		tab.Err = ""
+	}
+	a.mu.Unlock()
 	return dir, nil
+}
+
+func (a *App) PickFile(filters []PickFileFilter, defaultPath string) (string, error) {
+	if a.ctx == nil {
+		return "", nil
+	}
+	a.mu.Lock()
+	cur := a.activeWorkspaceDirLocked()
+	a.mu.Unlock()
+	if defaultPath = strings.TrimSpace(defaultPath); defaultPath != "" {
+		if info, err := os.Stat(defaultPath); err == nil && info.IsDir() {
+			cur = defaultPath
+		} else if dir := filepath.Dir(defaultPath); dir != "." {
+			if info, err := os.Stat(dir); err == nil && info.IsDir() {
+				cur = dir
+			}
+		}
+	}
+	return runtime.OpenFileDialog(a.ctx, runtime.OpenDialogOptions{
+		Title:            "Choose file",
+		DefaultDirectory: cur,
+		Filters:          toDialogFilters(filters),
+	})
+}
+
+func toDialogFilters(filters []PickFileFilter) []runtime.FileFilter {
+	out := make([]runtime.FileFilter, 0, len(filters))
+	for _, f := range filters {
+		patterns := make([]string, 0, len(f.Extensions))
+		for _, ext := range f.Extensions {
+			ext = strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(ext, "*"), "."))
+			if ext == "" {
+				continue
+			}
+			patterns = append(patterns, "*."+ext)
+		}
+		if len(patterns) == 0 {
+			continue
+		}
+		name := strings.TrimSpace(f.Name)
+		if name == "" {
+			name = "Files"
+		}
+		out = append(out, runtime.FileFilter{DisplayName: name, Pattern: strings.Join(patterns, ";")})
+	}
+	return out
+}
+
+func (a *App) OpenPath(path string) error {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return nil
+	}
+	var cmd *exec.Cmd
+	switch goruntime.GOOS {
+	case "darwin":
+		cmd = exec.Command("open", path)
+	case "windows":
+		cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", path)
+	default:
+		cmd = exec.Command("xdg-open", path)
+	}
+	return cmd.Start()
+}
+
+func (a *App) OpenInEditor(command, path string, line int) error {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return nil
+	}
+	fields := strings.Fields(strings.TrimSpace(command))
+	if len(fields) == 0 {
+		return a.OpenPath(path)
+	}
+	args := append([]string{}, fields[1:]...)
+	target := path
+	name := strings.ToLower(filepath.Base(fields[0]))
+	if line > 0 && (name == "code" || name == "cursor" || name == "windsurf" || name == "subl") {
+		args = append(args, "-g")
+		target = path + ":" + strconv.Itoa(line)
+	}
+	args = append(args, target)
+	return exec.Command(fields[0], args...).Start()
 }
 
 // HistoryMessage is one prior turn, for the frontend to repopulate its transcript
@@ -454,20 +726,32 @@ type Meta struct {
 	EventChannel string `json:"eventChannel"`
 	Cwd          string `json:"cwd"`
 	Bypass       bool   `json:"bypass"` // YOLO mode on (auto-approve every tool call)
+	TabID        string `json:"tabId,omitempty"`
+	Opening      bool   `json:"opening,omitempty"`
 }
 
 // Meta reports the model label, readiness, any startup error, the working
 // directory (for the status line), and the runtime event channel the frontend
 // subscribes to.
 func (a *App) Meta() Meta {
-	cwd, _ := os.Getwd()
+	a.mu.Lock()
+	cwd := a.activeWorkspaceDirLocked()
+	opening := a.activeTabID != "" && a.ctrl == nil && a.startupErr == ""
+	tabID := a.activeTabID
+	label := a.label
+	ready := a.ctrl != nil
+	startupErr := a.startupErr
+	bypass := a.ctrl != nil && a.ctrl.Bypass()
+	a.mu.Unlock()
 	return Meta{
-		Label:        a.label,
-		Ready:        a.ctrl != nil,
-		StartupErr:   a.startupErr,
+		Label:        label,
+		Ready:        ready,
+		StartupErr:   startupErr,
 		EventChannel: eventChannel,
 		Cwd:          cwd,
-		Bypass:       a.ctrl != nil && a.ctrl.Bypass(),
+		Bypass:       bypass,
+		TabID:        tabID,
+		Opening:      opening,
 	}
 }
 
@@ -568,6 +852,353 @@ func (a *App) SlashArgs(input string) SlashArgsResult {
 	return out
 }
 
+// MCPToolInfo describes one tool exposed by a connected MCP server.
+type MCPToolInfo struct {
+	Name           string `json:"name"`
+	RegisteredName string `json:"registeredName"`
+	Description    string `json:"description,omitempty"`
+}
+
+// ImportedMCPServer mirrors the settings UI's editable MCP server shape.
+type ImportedMCPServer struct {
+	Name             string            `json:"name"`
+	Transport        string            `json:"transport"`
+	Command          string            `json:"command,omitempty"`
+	Args             []string          `json:"args,omitempty"`
+	Env              map[string]string `json:"env,omitempty"`
+	CWD              string            `json:"cwd,omitempty"`
+	URL              string            `json:"url,omitempty"`
+	Headers          map[string]string `json:"headers,omitempty"`
+	Disabled         bool              `json:"disabled,omitempty"`
+	RequestTimeoutMs int               `json:"requestTimeoutMs,omitempty"`
+}
+
+// MCPSpecInfo is the desktop settings/context-panel view of one MCP server.
+type MCPSpecInfo struct {
+	Raw          string             `json:"raw"`
+	Name         string             `json:"name,omitempty"`
+	Transport    string             `json:"transport"`
+	Summary      string             `json:"summary"`
+	Config       *ImportedMCPServer `json:"config,omitempty"`
+	Status       string             `json:"status"`
+	StatusHint   string             `json:"statusHint,omitempty"`
+	StatusReason string             `json:"statusReason,omitempty"`
+	ToolCount    int                `json:"toolCount,omitempty"`
+	Tools        []MCPToolInfo      `json:"tools,omitempty"`
+}
+
+type MCPSpecsResult struct {
+	Specs   []MCPSpecInfo `json:"specs"`
+	Bridged bool          `json:"bridged"`
+}
+
+type MCPImportResult struct {
+	Total     int `json:"total"`
+	Added     int `json:"added"`
+	Updated   int `json:"updated"`
+	Connected int `json:"connected"`
+	Failed    int `json:"failed"`
+	Skipped   int `json:"skipped"`
+}
+
+func (a *App) MCPSpecs() MCPSpecsResult {
+	a.mu.Lock()
+	cwd := a.activeWorkspaceDirLocked()
+	ctrl := a.ctrl
+	a.mu.Unlock()
+	cfg, err := config.LoadAt(cwd)
+	if err != nil {
+		return MCPSpecsResult{Specs: []MCPSpecInfo{}, Bridged: true}
+	}
+	live := map[string]plugin.ServerStatus{}
+	failed := map[string]plugin.Failure{}
+	if ctrl != nil && ctrl.Host() != nil {
+		for _, s := range ctrl.Host().Servers() {
+			live[s.Name] = s
+		}
+		for _, f := range ctrl.Host().Failures() {
+			failed[f.Name] = f
+		}
+	}
+	out := make([]MCPSpecInfo, 0, len(cfg.Plugins)+len(live)+len(failed))
+	seen := map[string]bool{}
+	for _, entry := range cfg.Plugins {
+		spec := mcpSpecFromEntry(entry)
+		if s, ok := live[entry.Name]; ok {
+			applyLiveMCPStatus(&spec, s)
+		} else if f, ok := failed[entry.Name]; ok {
+			applyFailedMCPStatus(&spec, f)
+		} else if !entry.ShouldAutoStart() {
+			spec.Status = "disabled"
+		}
+		out = append(out, spec)
+		seen[entry.Name] = true
+	}
+	for _, s := range live {
+		if seen[s.Name] {
+			continue
+		}
+		spec := MCPSpecInfo{Raw: s.Name, Name: s.Name, Transport: uiTransport(s.Transport), Summary: s.Transport, Status: "connected"}
+		applyLiveMCPStatus(&spec, s)
+		out = append(out, spec)
+		seen[s.Name] = true
+	}
+	for _, f := range failed {
+		if seen[f.Name] {
+			continue
+		}
+		spec := MCPSpecInfo{Raw: f.Name, Name: f.Name, Transport: uiTransport(f.Transport), Summary: f.Transport}
+		applyFailedMCPStatus(&spec, f)
+		out = append(out, spec)
+	}
+	return MCPSpecsResult{Specs: out, Bridged: true}
+}
+
+func (a *App) ImportCcSwitchMCP() (MCPImportResult, error) {
+	if a.ctrl == nil {
+		return MCPImportResult{}, nil
+	}
+	total, added, updated, connected, failed, skipped, err := a.ctrl.ImportCCSwitchMCPServers()
+	return MCPImportResult{Total: total, Added: added, Updated: updated, Connected: connected, Failed: failed, Skipped: skipped}, err
+}
+
+func (a *App) AddMCPServer(raw string) (int, error) {
+	if a.ctrl == nil {
+		return 0, nil
+	}
+	entry, err := parseRawMCPServer(raw)
+	if err != nil {
+		return 0, err
+	}
+	return a.ctrl.AddMCPServer(entry)
+}
+
+func (a *App) RemoveMCPServer(raw string) (bool, error) {
+	if a.ctrl == nil {
+		return false, nil
+	}
+	return a.ctrl.RemoveMCPServer(mcpNameFromRaw(raw))
+}
+
+func (a *App) UpdateMCPServer(raw string, server ImportedMCPServer) (int, error) {
+	if a.ctrl == nil {
+		return 0, nil
+	}
+	entry := pluginEntryFromImported(server)
+	return a.ctrl.UpsertMCPServer(mcpNameFromRaw(raw), entry, !server.Disabled)
+}
+
+func (a *App) RetryMCPServer(raw string) (int, error) {
+	if a.ctrl == nil {
+		return 0, nil
+	}
+	return a.ctrl.RetryMCPServer(mcpNameFromRaw(raw))
+}
+
+func mcpSpecFromEntry(entry config.PluginEntry) MCPSpecInfo {
+	server := importedFromPluginEntry(entry)
+	return MCPSpecInfo{
+		Raw:       entry.Name,
+		Name:      entry.Name,
+		Transport: server.Transport,
+		Summary:   mcpSummary(entry),
+		Config:    &server,
+		Status:    "configured",
+	}
+}
+
+func applyLiveMCPStatus(spec *MCPSpecInfo, s plugin.ServerStatus) {
+	spec.Status = "connected"
+	spec.Transport = uiTransport(s.Transport)
+	spec.ToolCount = s.Tools
+	spec.Tools = make([]MCPToolInfo, 0, len(s.ToolInfos))
+	for _, t := range s.ToolInfos {
+		spec.Tools = append(spec.Tools, MCPToolInfo{Name: t.Name, RegisteredName: t.RegisteredName, Description: t.Description})
+	}
+}
+
+func applyFailedMCPStatus(spec *MCPSpecInfo, f plugin.Failure) {
+	spec.Status = "failed"
+	spec.Transport = uiTransport(f.Transport)
+	spec.StatusReason = f.Error
+	spec.StatusHint = mcpStatusHint(f.Error)
+}
+
+func importedFromPluginEntry(entry config.PluginEntry) ImportedMCPServer {
+	transport := uiTransport(entry.Type)
+	server := ImportedMCPServer{
+		Name:             entry.Name,
+		Transport:        transport,
+		Command:          entry.Command,
+		Args:             append([]string(nil), entry.Args...),
+		Env:              cloneStringMap(entry.Env),
+		CWD:              entry.CWD,
+		URL:              entry.URL,
+		Headers:          cloneStringMap(entry.Headers),
+		Disabled:         !entry.ShouldAutoStart(),
+		RequestTimeoutMs: entry.RequestTimeoutMs,
+	}
+	return server
+}
+
+func pluginEntryFromImported(server ImportedMCPServer) config.PluginEntry {
+	autoStart := !server.Disabled
+	return config.PluginEntry{
+		Name:             strings.TrimSpace(server.Name),
+		Type:             configTransport(server.Transport),
+		Command:          strings.TrimSpace(server.Command),
+		Args:             append([]string(nil), server.Args...),
+		Env:              cloneStringMap(server.Env),
+		CWD:              strings.TrimSpace(server.CWD),
+		URL:              strings.TrimSpace(server.URL),
+		Headers:          cloneStringMap(server.Headers),
+		AutoStart:        &autoStart,
+		RequestTimeoutMs: server.RequestTimeoutMs,
+	}
+}
+
+func parseRawMCPServer(raw string) (config.PluginEntry, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return config.PluginEntry{}, fmt.Errorf("empty MCP spec")
+	}
+	name, body, ok := strings.Cut(raw, "=")
+	if !ok || strings.TrimSpace(name) == "" || strings.TrimSpace(body) == "" {
+		return config.PluginEntry{}, fmt.Errorf("MCP spec must be name=command or name=url")
+	}
+	name = strings.TrimSpace(name)
+	body = strings.TrimSpace(body)
+	if strings.HasPrefix(strings.ToLower(body), "streamable+") {
+		return config.PluginEntry{Name: name, Type: "http", URL: body[len("streamable+"):], AutoStart: boolPtr(true)}, nil
+	}
+	if strings.HasPrefix(body, "http://") || strings.HasPrefix(body, "https://") {
+		return config.PluginEntry{Name: name, Type: "sse", URL: body, AutoStart: boolPtr(true)}, nil
+	}
+	argv, err := splitShellLike(body)
+	if err != nil {
+		return config.PluginEntry{}, err
+	}
+	if len(argv) == 0 {
+		return config.PluginEntry{}, fmt.Errorf("MCP stdio spec needs a command")
+	}
+	return config.PluginEntry{Name: name, Command: argv[0], Args: argv[1:], AutoStart: boolPtr(true)}, nil
+}
+
+func splitShellLike(s string) ([]string, error) {
+	var out []string
+	var b strings.Builder
+	var quote rune
+	escaping := false
+	for _, r := range s {
+		if escaping {
+			b.WriteRune(r)
+			escaping = false
+			continue
+		}
+		if r == '\\' {
+			escaping = true
+			continue
+		}
+		if quote != 0 {
+			if r == quote {
+				quote = 0
+			} else {
+				b.WriteRune(r)
+			}
+			continue
+		}
+		if r == '\'' || r == '"' {
+			quote = r
+			continue
+		}
+		if r == ' ' || r == '\t' || r == '\n' {
+			if b.Len() > 0 {
+				out = append(out, b.String())
+				b.Reset()
+			}
+			continue
+		}
+		b.WriteRune(r)
+	}
+	if escaping {
+		b.WriteRune('\\')
+	}
+	if quote != 0 {
+		return nil, fmt.Errorf("unterminated quote in MCP spec")
+	}
+	if b.Len() > 0 {
+		out = append(out, b.String())
+	}
+	return out, nil
+}
+
+func mcpNameFromRaw(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if name, _, ok := strings.Cut(raw, "="); ok {
+		return strings.TrimSpace(name)
+	}
+	return raw
+}
+
+func mcpSummary(entry config.PluginEntry) string {
+	if entry.URL != "" {
+		return entry.URL
+	}
+	parts := append([]string{entry.Command}, entry.Args...)
+	return strings.TrimSpace(strings.Join(parts, " "))
+}
+
+func uiTransport(t string) string {
+	switch strings.ToLower(strings.TrimSpace(t)) {
+	case "http", "streamable-http", "streamable_http":
+		return "streamable-http"
+	case "sse":
+		return "sse"
+	default:
+		return "stdio"
+	}
+}
+
+func configTransport(t string) string {
+	switch strings.ToLower(strings.TrimSpace(t)) {
+	case "streamable-http", "streamable_http", "http":
+		return "http"
+	case "sse":
+		return "sse"
+	default:
+		return ""
+	}
+}
+
+func mcpStatusHint(msg string) string {
+	lower := strings.ToLower(msg)
+	switch {
+	case strings.Contains(lower, "token") || strings.Contains(lower, "api key") || strings.Contains(lower, "apikey"):
+		return "missing-token"
+	case strings.Contains(lower, "unauthorized") || strings.Contains(lower, "forbidden") || strings.Contains(lower, "401") || strings.Contains(lower, "403"):
+		return "auth"
+	case strings.Contains(lower, "executable file not found") || strings.Contains(lower, "no such file") || strings.Contains(lower, "command"):
+		return "command"
+	case strings.Contains(lower, "timeout") || strings.Contains(lower, "connection") || strings.Contains(lower, "network"):
+		return "network"
+	default:
+		return "unknown"
+	}
+}
+
+func cloneStringMap(in map[string]string) map[string]string {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(in))
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
+}
+
+func boolPtr(v bool) *bool { return &v }
+
 // ModelInfo is one (provider, model) the bottom switcher can pick. Ref ("provider/
 // model") is what SetModel takes; Provider/Model are for display.
 type ModelInfo struct {
@@ -581,7 +1212,10 @@ type ModelInfo struct {
 // the switcher's options — marking the active one. A vendor with a `models` list
 // yields one entry per model, all sharing the same endpoint/key.
 func (a *App) Models() []ModelInfo {
-	cfg, err := config.Load()
+	a.mu.Lock()
+	cwd := a.activeWorkspaceDirLocked()
+	a.mu.Unlock()
+	cfg, err := config.LoadAt(cwd)
 	if err != nil {
 		return nil
 	}
@@ -606,13 +1240,17 @@ func (a *App) SetModel(name string) error {
 	}
 
 	var carried []provider.Message
+	a.mu.Lock()
+	tabID := a.activeTabID
+	cwd := a.activeWorkspaceDirLocked()
+	a.mu.Unlock()
 	if a.ctrl != nil {
 		_ = a.ctrl.Snapshot()
 		carried = a.ctrl.History()
 		a.ctrl.Close()
 	}
 
-	ctrl, err := boot.Build(a.ctx, boot.Options{Model: name, RequireKey: false, Sink: a.sink})
+	ctrl, err := boot.Build(a.ctx, boot.Options{Model: name, RequireKey: false, Sink: &eventSink{ctx: a.ctx, tabID: tabID}, CWD: cwd})
 	if err != nil {
 		return err
 	}
@@ -632,6 +1270,14 @@ func (a *App) SetModel(name string) error {
 	} else if path != "" {
 		ctrl.SetSessionPath(path)
 	}
+	a.mu.Lock()
+	if tab := a.tabs[tabID]; tab != nil {
+		tab.Controller = ctrl
+		tab.Label = a.label
+		tab.Model = a.model
+		tab.Err = ""
+	}
+	a.mu.Unlock()
 	return nil
 }
 
@@ -649,10 +1295,9 @@ var atSkip = map[string]bool{".git": true, "node_modules": true, ".DS_Store": tr
 // cwd; "" lists the cwd. The menu navigates one level at a time, never
 // recursively — bounded for huge trees.
 func (a *App) ListDir(rel string) []DirEntry {
-	base, err := os.Getwd()
-	if err != nil {
-		return nil
-	}
+	a.mu.Lock()
+	base := a.activeWorkspaceDirLocked()
+	a.mu.Unlock()
 	dir := base
 	if rel != "" {
 		if filepath.IsAbs(rel) {
@@ -787,11 +1432,23 @@ func parseScope(s string) memory.Scope {
 // — Emit must not be exposed to JS. Emit runs on the agent goroutine;
 // runtime.EventsEmit is goroutine-safe, and the ctx guard covers the brief window
 // before startup assigns it.
-type eventSink struct{ ctx context.Context }
+type eventSink struct {
+	ctx   context.Context
+	tabID string
+}
 
 func (s *eventSink) Emit(e event.Event) {
 	if s.ctx == nil {
 		return
 	}
-	runtime.EventsEmit(s.ctx, eventChannel, toWire(e))
+	w := toWire(e)
+	w.TabID = s.tabID
+	runtime.EventsEmit(s.ctx, eventChannel, w)
+}
+
+func (a *App) emitTabReady(tabID, errText string) {
+	if a.ctx == nil {
+		return
+	}
+	runtime.EventsEmit(a.ctx, eventChannel, wireEvent{Kind: "tab_ready", TabID: tabID, Text: errText})
 }

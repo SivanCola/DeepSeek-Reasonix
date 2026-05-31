@@ -60,7 +60,10 @@ type Messages struct {
 	ChatStatusPlanApproval string // shortcuts hint while a plan is pending
 	PlanApprovalPrompt     string // one-line "plan above is ready" banner shown above the input
 	ChatStatusToolApproval string // shortcuts hint while a tool call awaits approval
-	ToolApprovalPromptFmt  string // "Allow %s%s?" banner — %s = tool name, %s = subject (leading space, or empty)
+	ToolApprovalPromptFmt  string // approval banner — tool, subject suffix, and source/intent detail
+	ToolApprovalSourceFmt  string // "Source: %s" / "来源: %s"
+	ToolApprovalBuiltIn    string // built-in tool source label
+	ToolApprovalImageUse   string // image-understanding detail for understand_image-style tools
 
 	// `ask` tool question card.
 	AskTypeSomething   string // the "type your own answer" option label

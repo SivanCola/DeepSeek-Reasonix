@@ -12,6 +12,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"reasonix/internal/agent"
@@ -43,6 +44,7 @@ type Options struct {
 	MaxSteps   int
 	RequireKey bool
 	Sink       event.Sink
+	CWD        string
 }
 
 // Build loads config, resolves the model(s), and returns a Controller wrapping a
@@ -50,7 +52,22 @@ type Options struct {
 // returned controller owns plugin subprocesses; call Close (via Controller.Close)
 // to release them.
 func Build(ctx context.Context, opts Options) (*control.Controller, error) {
-	cfg, err := config.Load()
+	cwd := opts.CWD
+	if cwd == "" {
+		var err error
+		cwd, err = os.Getwd()
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		var err error
+		cwd, err = filepath.Abs(cwd)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	cfg, err := config.LoadAt(cwd)
 	if err != nil {
 		return nil, err
 	}
@@ -94,24 +111,24 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	// durable, cache-stable prefix every turn reuses, so memory costs nothing per
 	// turn. Mid-session changes never touch this prefix — they ride the
 	// controller's transient turn-injection and fold in on the next session.
-	mem := memory.Load(memory.Options{CWD: ".", UserDir: config.MemoryUserDir()})
+	mem := memory.Load(memory.Options{CWD: cwd, UserDir: config.MemoryUserDir()})
 	sysPrompt = memory.Compose(sysPrompt, mem)
 
 	// Skills: discover playbooks (built-in + project/custom/global) and fold their
 	// one-liner index into the same cache-stable prefix — names + descriptions
 	// only; bodies load on demand via run_skill or "/<name>". Bodies never enter
 	// the prefix, so the index costs a fixed, small amount per turn.
-	cwd, _ := os.Getwd()
 	skillStore := skill.New(skill.Options{ProjectRoot: cwd, CustomPaths: cfg.SkillCustomPaths()})
 	skills := skillStore.List()
 	sysPrompt = skill.ApplyIndex(sysPrompt, skills)
 
 	reg := tool.NewRegistry()
-	bashSpec := sandbox.Spec{Mode: cfg.BashMode(), WriteRoots: cfg.WriteRoots(), Network: cfg.Sandbox.Network}
+	writeRoots := cfg.WriteRootsAt(cwd)
+	bashSpec := sandbox.Spec{Mode: cfg.BashMode(), WriteRoots: writeRoots, Network: cfg.Sandbox.Network}
 	if bashSpec.Mode == "enforce" && !sandbox.Available() {
 		fmt.Fprintln(os.Stderr, "warning: bash sandbox requested but unavailable on this platform; running bash unconfined")
 	}
-	addBuiltins(reg, cfg.Tools.Enabled, cfg.WriteRoots(), bashSpec)
+	addBuiltins(reg, cfg.Tools.Enabled, cwd, writeRoots, bashSpec)
 	// Always construct a host, even with no plugins configured, so the controller's
 	// host pointer is stable for the session and `/mcp add` can hot-add into it.
 	pluginHost := plugin.NewHost()
@@ -341,27 +358,13 @@ func NewProvider(e *config.ProviderEntry) (provider.Provider, error) {
 // them. writeRoots confines the file-writing built-ins to the workspace: after
 // the (unconfined) defaults are added, each enabled writer is replaced by an
 // instance bound to writeRoots (preserving registry order).
-func addBuiltins(reg *tool.Registry, enabled, writeRoots []string, bashSpec sandbox.Spec) {
-	if len(enabled) == 0 {
-		for _, t := range tool.Builtins() {
-			reg.Add(t)
-		}
-	} else {
-		for _, name := range enabled {
-			if t, ok := tool.LookupBuiltin(name); ok {
-				reg.Add(t)
-			} else {
-				fmt.Fprintf(os.Stderr, "warning: unknown built-in tool %q\n", name)
-			}
-		}
+func addBuiltins(reg *tool.Registry, enabled []string, cwd string, writeRoots []string, bashSpec sandbox.Spec) {
+	for _, t := range (builtin.Workspace{Dir: cwd, WriteRoots: writeRoots, Bash: bashSpec}).Tools(enabled...) {
+		reg.Add(t)
 	}
-	// Replace the unconfined defaults with confined instances (registry order is
-	// preserved on replace): file-writers bound to the workspace, bash to the OS
-	// sandbox. Only replace tools actually enabled/present.
-	confined := append(builtin.ConfineWriters(writeRoots), builtin.ConfineBash(bashSpec))
-	for _, t := range confined {
-		if _, ok := reg.Get(t.Name()); ok {
-			reg.Add(t)
+	for _, name := range enabled {
+		if _, ok := reg.Get(name); !ok {
+			fmt.Fprintf(os.Stderr, "warning: unknown built-in tool %q\n", name)
 		}
 	}
 }
@@ -374,13 +377,15 @@ func PluginSpecs(entries []config.PluginEntry) []plugin.Spec {
 	for i, e := range entries {
 		e = e.ExpandedPlugin() // resolve ${VAR} / ${VAR:-default} from the environment
 		specs[i] = plugin.Spec{
-			Name:    e.Name,
-			Type:    e.Type,
-			Command: e.Command,
-			Args:    e.Args,
-			Env:     e.Env,
-			URL:     e.URL,
-			Headers: e.Headers,
+			Name:             e.Name,
+			Type:             e.Type,
+			Command:          e.Command,
+			Args:             e.Args,
+			Env:              e.Env,
+			Dir:              e.CWD,
+			URL:              e.URL,
+			Headers:          e.Headers,
+			RequestTimeoutMs: e.RequestTimeoutMs,
 		}
 	}
 	return specs

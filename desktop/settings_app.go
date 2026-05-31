@@ -81,7 +81,11 @@ func nonNil(s []string) []string {
 
 // Settings returns the current configuration for the Settings panel.
 func (a *App) Settings() SettingsView {
-	cfg, err := config.Load()
+	a.mu.Lock()
+	cwd := a.activeWorkspaceDirLocked()
+	ctrl := a.ctrl
+	a.mu.Unlock()
+	cfg, err := config.LoadAt(cwd)
 	if err != nil {
 		return SettingsView{Providers: []ProviderView{}}
 	}
@@ -105,9 +109,9 @@ func (a *App) Settings() SettingsView {
 		},
 		Agent:         AgentView{Temperature: cfg.Agent.Temperature, MaxSteps: cfg.Agent.MaxSteps, SystemPrompt: cfg.Agent.SystemPrompt},
 		Language:      cfg.Language,
-		ConfigPath:    config.SourcePath(),
+		ConfigPath:    config.SourcePathAt(cwd),
 		ProviderKinds: provider.Kinds(),
-		Bypass:        a.ctrl != nil && a.ctrl.Bypass(),
+		Bypass:        ctrl != nil && ctrl.Bypass(),
 	}
 	for i := range cfg.Providers {
 		p := &cfg.Providers[i]
@@ -135,14 +139,17 @@ func orDefault(s, def string) string {
 // applyConfigChange loads the config, applies mutate, saves it, and rebuilds the
 // controller so the change takes effect this session.
 func (a *App) applyConfigChange(mutate func(*config.Config) error) error {
-	cfg, err := config.Load()
+	a.mu.Lock()
+	cwd := a.activeWorkspaceDirLocked()
+	a.mu.Unlock()
+	cfg, err := config.LoadAt(cwd)
 	if err != nil {
 		return err
 	}
 	if err := mutate(cfg); err != nil {
 		return err
 	}
-	if err := cfg.Save(); err != nil {
+	if err := cfg.SaveAt(cwd); err != nil {
 		return err
 	}
 	return a.rebuild()
@@ -156,13 +163,17 @@ func (a *App) rebuild() error {
 		return nil
 	}
 	var carried []provider.Message
+	a.mu.Lock()
+	tabID := a.activeTabID
+	cwd := a.activeWorkspaceDirLocked()
+	a.mu.Unlock()
 	if a.ctrl != nil {
 		_ = a.ctrl.Snapshot()
 		carried = a.ctrl.History()
 		a.ctrl.Close()
 	}
 	model := a.model
-	if cfg, err := config.Load(); err == nil {
+	if cfg, err := config.LoadAt(cwd); err == nil {
 		if _, ok := cfg.ResolveModel(model); !ok {
 			model = cfg.DefaultModel
 			if e, ok := cfg.ResolveModel(model); ok {
@@ -170,12 +181,13 @@ func (a *App) rebuild() error {
 			}
 		}
 	}
-	ctrl, err := boot.Build(a.ctx, boot.Options{Model: model, RequireKey: false, Sink: a.sink})
+	ctrl, err := boot.Build(a.ctx, boot.Options{Model: model, RequireKey: false, Sink: &eventSink{ctx: a.ctx, tabID: tabID}, CWD: cwd})
 	if err != nil {
 		a.ctrl = nil
 		a.startupErr = err.Error()
 		return err
 	}
+	a.mu.Lock()
 	a.ctrl = ctrl
 	a.model = model
 	a.label = ctrl.Label()
@@ -190,6 +202,14 @@ func (a *App) rebuild() error {
 	} else if path != "" {
 		ctrl.SetSessionPath(path)
 	}
+	if tab := a.tabs[tabID]; tab != nil {
+		tab.Controller = ctrl
+		tab.Label = a.label
+		tab.Model = a.model
+		tab.WorkspaceDir = cwd
+		tab.Err = ""
+	}
+	a.mu.Unlock()
 	return nil
 }
 
@@ -253,7 +273,10 @@ func (a *App) SetProviderKey(apiKeyEnv, value string) error {
 	if strings.TrimSpace(apiKeyEnv) == "" {
 		return fmt.Errorf("this provider has no api_key_env set")
 	}
-	if err := upsertDotEnv(apiKeyEnv, value); err != nil {
+	a.mu.Lock()
+	cwd := a.activeWorkspaceDirLocked()
+	a.mu.Unlock()
+	if err := upsertDotEnvAt(cwd, apiKeyEnv, value); err != nil {
 		return err
 	}
 	return a.rebuild()
@@ -302,7 +325,10 @@ func (a *App) SetAgentParams(temperature float64, maxSteps int, systemPrompt str
 // SetLanguage sets the UI language tag ("zh" | "en" | "" for auto). It only
 // rewrites config — no controller rebuild needed.
 func (a *App) SetLanguage(lang string) error {
-	cfg, err := config.Load()
+	a.mu.Lock()
+	cwd := a.activeWorkspaceDirLocked()
+	a.mu.Unlock()
+	cfg, err := config.LoadAt(cwd)
 	if err != nil {
 		return err
 	}
@@ -310,7 +336,7 @@ func (a *App) SetLanguage(lang string) error {
 	// Keep the Go-side catalogue in sync so backend-provided slash UI re-localizes
 	// on the next fetch (matches the frontend's language switch).
 	i18n.DetectLanguage(cfg.Language)
-	return cfg.Save()
+	return cfg.SaveAt(cwd)
 }
 
 // trimList drops blank entries from a string slice (and returns a non-nil slice).

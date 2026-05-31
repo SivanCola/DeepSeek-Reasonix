@@ -1,0 +1,188 @@
+.rx-v1-shell .titlebar,
+.rx-v1-shell .titlebar .tb-meta,
+.rx-v1-shell .titlebar .brand,
+.rx-v1-shell .titlebar .crumbs,
+.rx-v1-shell .titlebar .grow {
+  --wails-draggable: drag;
+}
+
+html[data-platform="macos"] .rx-v1-shell .titlebar .tb-left {
+  padding-left: 82px;
+}
+
+.rx-v1-shell .titlebar .tb-left {
+  flex: 0 1 auto;
+}
+
+.rx-v1-shell .titlebar .tb-right {
+  flex: 0 0 auto;
+  gap: 0;
+}
+
+.rx-v1-shell .titlebar .tb-meta {
+  flex: 0 1 auto;
+}
+
+.rx-v1-shell .tabbar {
+  --wails-draggable: no-drag;
+}
+
+.rx-v1-shell button,
+.rx-v1-shell input,
+.rx-v1-shell textarea,
+.rx-v1-shell select,
+.rx-v1-shell .tab,
+.rx-v1-shell .sidebar,
+.rx-v1-shell .main,
+.rx-v1-shell .statusbar,
+.rx-v1-shell .composer-wrap,
+.rx-v1-shell .wd-pop,
+.rx-v1-shell .drawer,
+.rx-v1-shell .modal,
+.rx-v1-shell .about-modal {
+  --wails-draggable: no-drag;
+}
+
+.rx-v1-shell .composer-wrap {
+  width: auto;
+  max-width: none;
+  margin: 0;
+  align-self: stretch;
+}
+
+.rx-v1-shell .composer {
+  display: block;
+  gap: normal;
+  align-items: stretch;
+  padding: 0;
+  transition: none;
+}
+
+.rx-v1-shell .statusbar {
+  width: auto;
+  max-width: none;
+  min-height: 26px;
+  margin: 0;
+  font-family: inherit;
+  font-size: 14px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  white-space: nowrap;
+}
+
+.rx-v1-shell .statusbar::-webkit-scrollbar {
+  display: none;
+}
+
+.rx-v1-shell .statusbar > * {
+  flex-shrink: 0;
+}
+
+.rx-v1-shell .statusbar .grow {
+  flex: 1 1 auto;
+  min-width: 12px;
+}
+
+.rx-v1-shell .thread {
+  overflow: hidden;
+}
+
+.rx-v1-shell .search-row {
+  display: block;
+  grid-template-columns: none;
+  gap: 0;
+  min-height: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+}
+
+.rx-v1-shell .search-row .input {
+  height: 34px;
+  box-sizing: border-box;
+}
+
+.rx-v1-shell .session-list {
+  min-height: 0;
+  padding: 4px 6px 12px;
+}
+
+.rx-v1-shell .session-item {
+  grid-template-columns: none;
+  width: auto;
+  min-height: 0;
+  border: 0;
+  font: inherit;
+  text-align: left;
+}
+
+.rx-v1-shell .session-item[data-active] {
+  font-weight: inherit;
+}
+
+.rx-v1-shell .session-item[data-active="true"] {
+  background: var(--panel);
+  color: var(--fg);
+}
+
+.rx-v1-shell .side-section .count {
+  min-width: 0;
+  height: auto;
+  display: inline-flex;
+  align-items: center;
+}
+
+.rx-v1-shell .session-item .body .meta .count {
+  min-width: 0;
+  height: auto;
+  display: inline;
+  place-items: normal;
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+  font-family: inherit;
+  line-height: inherit;
+}
+
+.rx-v1-shell .shortcut kbd,
+.rx-v1-shell .search-row kbd,
+.rx-v1-shell .new-btn kbd {
+  height: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1.25;
+}
+
+.rx-v1-shell .side-foot {
+  margin: 0;
+  align-content: start;
+}
+
+.rx-v1-shell .side-foot .row {
+  min-height: 28px;
+  box-sizing: border-box;
+}
+
+.rx-v1-shell .side-foot .row .ico {
+  width: 16px;
+  align-items: center;
+  justify-content: center;
+}
+
+.rx-v1-shell .side-foot .row .right {
+  display: inline-flex;
+  align-items: center;
+}
+
+.rx-v1-shell .btn.btn--primary {
+  border-color: transparent;
+  background: var(--accent);
+  color: var(--accent-fg);
+}
+
+.rx-v1-shell .btn.btn--primary:hover:not(:disabled) {
+  background: var(--accent-strong);
+}

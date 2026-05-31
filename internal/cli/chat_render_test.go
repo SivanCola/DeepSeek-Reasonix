@@ -1,10 +1,12 @@
 package cli
 
 import (
+	"os"
 	"strings"
 	"testing"
 
 	"charm.land/bubbles/v2/textarea"
+	tea "charm.land/bubbletea/v2"
 
 	"reasonix/internal/event"
 )
@@ -15,6 +17,7 @@ func newTestChatTUI() chatTUI {
 	commit := []string{}
 	ti := textarea.New()
 	ti.SetWidth(80)
+	ti.Focus()
 	return chatTUI{
 		input:         ti,
 		reasoning:     &strings.Builder{},
@@ -70,5 +73,54 @@ func TestIngestEventFlushesAnswer(t *testing.T) {
 	}
 	if m.pending.Len() != 0 {
 		t.Errorf("answer buffer should be drained after the event line")
+	}
+}
+
+func TestAttachmentRefsStayOutOfComposerText(t *testing.T) {
+	attachments := []chatAttachment{{Path: ".reasonix/attachments/clipboard-20260601-120000.123456.png"}}
+
+	if got := withAttachmentLabels("what is this", attachments); got != "what is this\n[image1]" {
+		t.Fatalf("display line = %q", got)
+	}
+	if got := withAttachmentRefs("what is this", attachments); got != "what is this @.reasonix/attachments/clipboard-20260601-120000.123456.png" {
+		t.Fatalf("sent line = %q", got)
+	}
+}
+
+func TestRenderUserBubbleHidesAttachmentPaths(t *testing.T) {
+	got := renderUserBubble("what is this @.reasonix/attachments/clipboard-20260601-120000.123456.png", 80, false)
+	if strings.Contains(got, ".reasonix/attachments") {
+		t.Fatalf("user bubble leaked attachment path: %q", got)
+	}
+	if !strings.Contains(got, "[image1]") {
+		t.Fatalf("user bubble should show image label, got %q", got)
+	}
+}
+
+func TestPastedImagePathBecomesAttachment(t *testing.T) {
+	t.Chdir(t.TempDir())
+	if err := os.WriteFile("shot.png", []byte("\x89PNG\r\n\x1a\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	m := newTestChatTUI()
+	next, _ := m.Update(tea.PasteMsg{Content: "shot.png"})
+	got := next.(chatTUI)
+	if got.input.Value() != "" {
+		t.Fatalf("image paste should not insert raw text, input=%q", got.input.Value())
+	}
+	if len(got.attachments) != 1 || !strings.HasPrefix(got.attachments[0].Path, ".reasonix/attachments/clipboard-") {
+		t.Fatalf("attachments = %#v", got.attachments)
+	}
+}
+
+func TestPastedTextStaysInComposer(t *testing.T) {
+	m := newTestChatTUI()
+	next, _ := m.Update(tea.PasteMsg{Content: "hello"})
+	got := next.(chatTUI)
+	if got.input.Value() != "hello" {
+		t.Fatalf("text paste should stay in composer, got %q", got.input.Value())
+	}
+	if len(got.attachments) != 0 {
+		t.Fatalf("text paste should not create attachments: %#v", got.attachments)
 	}
 }

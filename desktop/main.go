@@ -7,15 +7,21 @@
 package main
 
 import (
+	"context"
 	"embed"
+	"os"
+	stdruntime "runtime"
 
 	"github.com/wailsapp/wails/v2"
+	"github.com/wailsapp/wails/v2/pkg/menu"
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
 	"github.com/wailsapp/wails/v2/pkg/options/linux"
 	"github.com/wailsapp/wails/v2/pkg/options/mac"
 	"github.com/wailsapp/wails/v2/pkg/options/windows"
+	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 
+	"reasonix/internal/cli"
 	// Blank imports wire compile-time built-ins into their registries, exactly as
 	// cmd/reasonix does — boot.Build resolves providers/tools from these registries.
 	_ "reasonix/internal/provider/anthropic"
@@ -37,7 +43,20 @@ var assets embed.FS
 var version = "dev"
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "--cli" {
+		os.Exit(cli.Run(os.Args[2:], version))
+	}
+
 	app := NewApp()
+	var appMenu *menu.Menu
+	if stdruntime.GOOS == "darwin" {
+		reasonixMenu := menu.NewMenuFromItems(menu.Text("Install 'reasonix' Command...", nil, func(_ *menu.CallbackData) {
+			if app.ctx != nil {
+				wailsruntime.EventsEmit(app.ctx, "reasonix-menu-install-command")
+			}
+		}), menu.Separator(), menu.AppMenu())
+		appMenu = menu.NewMenuFromItems(menu.SubMenu("Reasonix", reasonixMenu), menu.EditMenu(), menu.WindowMenu())
+	}
 
 	err := wails.Run(&options.App{
 		Title:     "Reasonix",
@@ -49,15 +68,18 @@ func main() {
 		// white — particularly visible on WebKitGTK.
 		BackgroundColour: &options.RGBA{R: 16, G: 17, B: 20, A: 255},
 		AssetServer:      &assetserver.Options{Assets: assets},
+		Menu:             appMenu,
 		OnStartup:        app.startup,
-		OnShutdown:       app.shutdown,
-		Bind:             []any{app},
+		OnDomReady: func(context.Context) {
+			adjustNativeTrafficLights()
+		},
+		OnShutdown: app.shutdown,
+		Bind:       []any{app},
 
 		// --- per-platform adaptation (see desktop/README.md for the rationale) ---
 		Mac: &mac.Options{
-			// Inset traffic-lights over a frameless-feeling header; the frontend
-			// leaves a drag region at the top (CSS --wails-draggable).
-			TitleBar:   mac.TitleBarHiddenInset(),
+			// 保留 macOS 原生三色按钮，具体位置在 DOM ready 后用原生 frame 微调。
+			TitleBar:   mac.TitleBarHidden(),
 			Appearance: mac.NSAppearanceNameDarkAqua,
 		},
 		Windows: &windows.Options{

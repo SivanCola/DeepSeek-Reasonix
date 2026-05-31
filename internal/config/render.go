@@ -138,6 +138,9 @@ func RenderTOML(c *Config) string {
 			if len(pl.Args) > 0 {
 				fmt.Fprintf(&b, "args    = %s\n", renderStringArray(pl.Args))
 			}
+			if pl.CWD != "" {
+				fmt.Fprintf(&b, "cwd     = %q\n", pl.CWD)
+			}
 			if pl.URL != "" {
 				fmt.Fprintf(&b, "url     = %q\n", pl.URL)
 			}
@@ -146,6 +149,9 @@ func RenderTOML(c *Config) string {
 			}
 			if len(pl.Env) > 0 {
 				fmt.Fprintf(&b, "env     = %s\n", renderStringMap(pl.Env))
+			}
+			if pl.RequestTimeoutMs > 0 {
+				fmt.Fprintf(&b, "request_timeout_ms = %d\n", pl.RequestTimeoutMs)
 			}
 		}
 	}

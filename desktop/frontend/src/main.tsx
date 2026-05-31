@@ -4,6 +4,8 @@ import App from "./App";
 import { LocaleProvider } from "./lib/i18n";
 import { initTheme } from "./lib/theme";
 import "./styles.css";
+import "./v1/styles.css";
+import "./v1-compat.css";
 
 // Apply the saved appearance (auto/light/dark) before the first paint.
 initTheme();

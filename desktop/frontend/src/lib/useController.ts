@@ -283,6 +283,9 @@ function applyEvent(s: State, e: WireEvent): State {
         : finalized;
       return { ...s, items, running: false, turnActive: false, currentAssistant: undefined, approval: undefined, ask: undefined, seq: s.seq + 1 };
     }
+
+    case "tab_ready":
+      return s;
   }
 }
 
@@ -344,9 +347,33 @@ export function useController() {
   // pinned to the first render); cancel() reads it to decide un-send vs. cancel.
   const stateRef = useRef(state);
   stateRef.current = state;
+  const activeTabIdRef = useRef<string>("");
+
+  const loadActiveState = useCallback(async () => {
+    const meta = await app.Meta();
+    activeTabIdRef.current = meta.tabId ?? "";
+    dispatch({ type: "meta", meta });
+    dispatch({ type: "context", context: await app.ContextUsage() });
+    const history = await app.History();
+    if (history && history.length) dispatch({ type: "history", messages: history });
+    app
+      .Balance()
+      .then((balance) => dispatch({ type: "balance", balance }))
+      .catch(() => {});
+    app
+      .Jobs()
+      .then((jobs) => dispatch({ type: "jobs", jobs }))
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     const off = onEvent((e) => {
+      const activeTabId = activeTabIdRef.current;
+      if (e.kind === "tab_ready") {
+        if (!e.tabId || !activeTabId || e.tabId === activeTabId) void loadActiveState().catch(() => {});
+        return;
+      }
+      if (e.tabId && activeTabId && e.tabId !== activeTabId) return;
       dispatch({ type: "event", e });
       // The gauge's denominator (window) and post-turn prompt size come from the
       // kernel, not the stream — refresh once a turn settles. The wallet balance
@@ -373,10 +400,7 @@ export function useController() {
 
     void (async () => {
       try {
-        dispatch({ type: "meta", meta: await app.Meta() });
-        dispatch({ type: "context", context: await app.ContextUsage() });
-        const history = await app.History();
-        if (history && history.length) dispatch({ type: "history", messages: history });
+        await loadActiveState();
       } catch {
         // Bound methods unavailable (pre-startup / build error) — ignore; Meta's
         // startupErr surfaces the reason once it's reachable.
@@ -395,7 +419,7 @@ export function useController() {
       .catch(() => {});
 
     return off;
-  }, []);
+  }, [loadActiveState]);
 
   const send = useCallback((text: string) => {
     dispatch({ type: "user", text });
@@ -441,6 +465,15 @@ export function useController() {
     await app.NewSession().catch(() => {});
     dispatch({ type: "reset" });
   }, []);
+
+  const activateTab = useCallback(
+    async (id: string) => {
+      await app.ActivateTab(id).catch(() => []);
+      dispatch({ type: "reset" });
+      await loadActiveState().catch(() => {});
+    },
+    [loadActiveState],
+  );
 
   // Session history: list saved sessions (the panel fetches on open), and resume
   // one — the model/folder are unchanged, only the transcript is swapped.
@@ -559,6 +592,7 @@ export function useController() {
     setPlan,
     setBypass,
     newSession,
+    activateTab,
     listSessions,
     resumeSession,
     deleteSession,

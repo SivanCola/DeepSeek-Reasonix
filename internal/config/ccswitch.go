@@ -137,7 +137,32 @@ func loadCCSwitchMCPDB(path string) ([]PluginEntry, error) {
 	if err != nil {
 		return nil, fmt.Errorf("cc-switch import: sqlite3 not found to read %s", path)
 	}
-	query := `SELECT name, server_config FROM mcp_servers WHERE enabled_codex = 1 ORDER BY name`
+	columns, err := readSQLiteColumns(sqlite, path, "mcp_servers")
+	if err != nil {
+		return nil, fmt.Errorf("cc-switch import: inspect %s: %w", path, err)
+	}
+	configColumn := ""
+	switch {
+	case columns["server"]:
+		configColumn = "server"
+	case columns["server_config"]:
+		configColumn = "server_config"
+	default:
+		return nil, fmt.Errorf("cc-switch import: mcp_servers table has no server or server_config column")
+	}
+	nameColumn := "id"
+	if columns["name"] {
+		nameColumn = "name"
+	}
+	where := ""
+	if columns["enabled_codex"] {
+		where = " WHERE enabled_codex = 1"
+	}
+	order := nameColumn
+	if nameColumn == "name" && columns["id"] {
+		order = "name, id"
+	}
+	query := fmt.Sprintf(`SELECT %s AS name, %s AS server_config FROM mcp_servers%s ORDER BY %s`, nameColumn, configColumn, where, order)
 	out, err := exec.Command(sqlite, "-readonly", "-json", path, query).Output()
 	if err != nil {
 		return nil, fmt.Errorf("cc-switch import: read %s: %w", path, err)
@@ -150,6 +175,24 @@ func loadCCSwitchMCPDB(path string) ([]PluginEntry, error) {
 		return nil, fmt.Errorf("cc-switch import: parse sqlite output: %w", err)
 	}
 	return ccSwitchRowsToPlugins(rows)
+}
+
+func readSQLiteColumns(sqlite, path, table string) (map[string]bool, error) {
+	out, err := exec.Command(sqlite, "-readonly", "-json", path, "PRAGMA table_info("+table+")").Output()
+	if err != nil {
+		return nil, err
+	}
+	var rows []struct {
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal(out, &rows); err != nil {
+		return nil, err
+	}
+	columns := map[string]bool{}
+	for _, row := range rows {
+		columns[row.Name] = true
+	}
+	return columns, nil
 }
 
 func ccSwitchRowsToPlugins(rows []ccSwitchMCPRow) ([]PluginEntry, error) {
@@ -212,14 +255,16 @@ func loadCCSwitchLegacyConfig(path string) ([]PluginEntry, error) {
 
 func pluginFromMCPServerSpec(name string, s mcpServerSpec) PluginEntry {
 	return PluginEntry{
-		Name:      name,
-		Type:      s.Type,
-		Command:   s.Command,
-		Args:      s.Args,
-		Env:       s.Env,
-		URL:       s.URL,
-		Headers:   s.Headers,
-		AutoStart: s.AutoStart,
+		Name:             name,
+		Type:             s.Type,
+		Command:          s.Command,
+		Args:             s.Args,
+		Env:              s.Env,
+		CWD:              s.CWD,
+		URL:              s.URL,
+		Headers:          s.Headers,
+		AutoStart:        s.AutoStart,
+		RequestTimeoutMs: s.RequestTimeoutMs,
 	}
 }
 

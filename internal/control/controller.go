@@ -877,6 +877,13 @@ func (c *Controller) Balance(ctx context.Context) (*billing.Balance, error) {
 // list servers / resolve MCP prompts.
 func (c *Controller) Host() *plugin.Host { return c.host }
 
+func (c *Controller) Tool(name string) (tool.Tool, bool) {
+	if c == nil || c.reg == nil {
+		return nil, false
+	}
+	return c.reg.Get(name)
+}
+
 // Commands returns the loaded custom slash commands.
 func (c *Controller) Commands() []command.Command { return c.commands }
 
@@ -896,6 +903,7 @@ func (c *Controller) HookRunner() *hook.Runner { return c.hooks }
 func (c *Controller) AddMCPServer(e config.PluginEntry) (int, error) {
 	n, err := c.connectMCPServer(e)
 	if err != nil {
+		c.recordMCPFailure(e, err)
 		return 0, err
 	}
 	cfg, lerr := config.Load()
@@ -909,6 +917,63 @@ func (c *Controller) AddMCPServer(e config.PluginEntry) (int, error) {
 		return n, fmt.Errorf("connected, but saving config failed: %w", err)
 	}
 	return n, nil
+}
+
+// UpsertMCPServer persists an MCP server edited by a settings UI. When connect is
+// true it reconnects the server immediately; when false it leaves the server
+// configured but disconnected for this session.
+func (c *Controller) UpsertMCPServer(oldName string, e config.PluginEntry, connect bool) (int, error) {
+	if oldName == "" {
+		oldName = e.Name
+	}
+	cfg, err := config.Load()
+	if err != nil {
+		return 0, err
+	}
+	if oldName != e.Name {
+		cfg.RemovePlugin(oldName)
+	}
+	if err := cfg.UpsertPlugin(e); err != nil {
+		return 0, err
+	}
+	if err := cfg.Save(); err != nil {
+		return 0, err
+	}
+	if oldName != e.Name {
+		_, _ = c.disconnectMCPServer(oldName)
+	} else {
+		_, _ = c.disconnectMCPServer(e.Name)
+	}
+	if !connect {
+		return 0, nil
+	}
+	n, err := c.connectMCPServer(e)
+	if err != nil {
+		c.recordMCPFailure(e, err)
+		return 0, err
+	}
+	return n, nil
+}
+
+// RetryMCPServer reconnects a configured MCP server after a startup/runtime
+// failure. It does not edit persisted config.
+func (c *Controller) RetryMCPServer(name string) (int, error) {
+	cfg, err := config.Load()
+	if err != nil {
+		return 0, err
+	}
+	for _, p := range cfg.Plugins {
+		if p.Name == name {
+			_, _ = c.disconnectMCPServer(name)
+			n, err := c.connectMCPServer(p)
+			if err != nil {
+				c.recordMCPFailure(p, err)
+				return 0, err
+			}
+			return n, nil
+		}
+	}
+	return 0, fmt.Errorf("no MCP server named %q in config", name)
 }
 
 // ConnectConfiguredMCPServer starts a server already present in config without
@@ -1011,12 +1076,7 @@ func (c *Controller) ImportMCPEntries(entries []config.PluginEntry) (total, adde
 			continue
 		}
 		if _, err := c.connectMCPServer(e); err != nil {
-			c.host.RecordFailure(plugin.Spec{
-				Name:    e.Name,
-				Type:    e.Type,
-				Command: e.Command,
-				URL:     e.URL,
-			}, err)
+			c.recordMCPFailure(e, err)
 			failed++
 			continue
 		}
@@ -1032,13 +1092,15 @@ func (c *Controller) connectMCPServer(e config.PluginEntry) (int, error) {
 	}
 	exp := e.ExpandedPlugin()
 	tools, err := c.host.Add(c.pluginCtx, plugin.Spec{
-		Name:    exp.Name,
-		Type:    exp.Type,
-		Command: exp.Command,
-		Args:    exp.Args,
-		Env:     exp.Env,
-		URL:     exp.URL,
-		Headers: exp.Headers,
+		Name:             exp.Name,
+		Type:             exp.Type,
+		Command:          exp.Command,
+		Args:             exp.Args,
+		Env:              exp.Env,
+		Dir:              exp.CWD,
+		URL:              exp.URL,
+		Headers:          exp.Headers,
+		RequestTimeoutMs: exp.RequestTimeoutMs,
 	})
 	if err != nil {
 		return 0, err
@@ -1057,14 +1119,7 @@ func (c *Controller) connectMCPServer(e config.PluginEntry) (int, error) {
 // the config save fails). A server declared in .mcp.json disconnects for this
 // session but returns on the next start, since that file isn't ours to edit.
 func (c *Controller) RemoveMCPServer(name string) (disconnected bool, err error) {
-	if c.host != nil {
-		if prefix, ok := c.host.Remove(name); ok {
-			disconnected = true
-			if c.reg != nil {
-				c.reg.RemovePrefix(prefix)
-			}
-		}
-	}
+	disconnected, _ = c.disconnectMCPServer(name)
 	cfg, lerr := config.Load()
 	if lerr != nil {
 		return disconnected, lerr
@@ -1079,6 +1134,31 @@ func (c *Controller) RemoveMCPServer(name string) (disconnected bool, err error)
 		return false, fmt.Errorf("no MCP server named %q", name)
 	}
 	return disconnected, nil
+}
+
+func (c *Controller) disconnectMCPServer(name string) (bool, string) {
+	if c.host == nil {
+		return false, ""
+	}
+	prefix, ok := c.host.Remove(name)
+	if ok && c.reg != nil {
+		c.reg.RemovePrefix(prefix)
+	}
+	return ok, prefix
+}
+
+func (c *Controller) recordMCPFailure(e config.PluginEntry, err error) {
+	if c.host == nil {
+		c.host = plugin.NewHost()
+	}
+	exp := e.ExpandedPlugin()
+	c.host.RecordFailure(plugin.Spec{
+		Name:             exp.Name,
+		Type:             exp.Type,
+		Command:          exp.Command,
+		URL:              exp.URL,
+		RequestTimeoutMs: exp.RequestTimeoutMs,
+	}, err)
 }
 
 // Label returns the human-readable model label, e.g. "deepseek-flash".

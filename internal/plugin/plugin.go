@@ -24,13 +24,14 @@ const protocolVersion = "2024-11-05"
 // (default) runs Command/Args/Env as a subprocess; "http" / "streamable-http"
 // and "sse" connect to URL with optional static Headers.
 type Spec struct {
-	Name    string
-	Type    string
-	Command string
-	Args    []string
-	Env     map[string]string
-	URL     string
-	Headers map[string]string
+	Name             string
+	Type             string
+	Command          string
+	Args             []string
+	Env              map[string]string
+	URL              string
+	Headers          map[string]string
+	RequestTimeoutMs int
 	// Dir, when set, is the working directory of a stdio subprocess. Empty means
 	// inherit reasonix's cwd (the default for user-configured plugins). It exists
 	// for cwd-aware servers like CodeGraph, which detect the project from the
@@ -143,8 +144,9 @@ type Client struct {
 	hasPrompts   bool
 	hasResources bool
 
-	toolCount int    // tools discovered, for /mcp status
-	transport string // declared transport type, for /mcp status ("stdio"/"http")
+	toolCount int        // tools discovered, for /mcp status
+	toolInfos []ToolInfo // tool details for desktop status/settings UIs
+	transport string     // declared transport type, for /mcp status ("stdio"/"http")
 }
 
 // ServerStatus summarises one connected server for the /mcp command.
@@ -154,6 +156,15 @@ type ServerStatus struct {
 	Tools     int
 	Prompts   int
 	Resources int
+	ToolInfos []ToolInfo
+}
+
+// ToolInfo describes one MCP tool for status/settings UIs. RegisteredName is the
+// provider-visible namespaced tool name.
+type ToolInfo struct {
+	Name           string
+	RegisteredName string
+	Description    string
 }
 
 // Failure records one MCP server that was configured but could not connect.
@@ -168,6 +179,7 @@ func (h *Host) Servers() []ServerStatus {
 	out := make([]ServerStatus, 0, len(h.clients))
 	for _, c := range h.clients {
 		s := ServerStatus{Name: c.name, Transport: c.transport, Tools: c.toolCount}
+		s.ToolInfos = append([]ToolInfo(nil), c.toolInfos...)
 		for _, p := range h.prompts {
 			if p.Server == c.name {
 				s.Prompts++
@@ -405,14 +417,21 @@ func (c *Client) listTools(ctx context.Context) ([]tool.Tool, error) {
 	}
 
 	tools := make([]tool.Tool, 0, len(out.Tools))
+	c.toolInfos = c.toolInfos[:0]
 	for _, t := range out.Tools {
+		registeredName := toolName(c.name, t.Name)
 		tools = append(tools, &remoteTool{
 			client:   c,
-			name:     toolName(c.name, t.Name),
+			name:     registeredName,
 			rawName:  t.Name,
 			desc:     t.Description,
 			schema:   canonicalizeSchema(t.InputSchema),
 			readOnly: t.Annotations != nil && t.Annotations.ReadOnlyHint,
+		})
+		c.toolInfos = append(c.toolInfos, ToolInfo{
+			Name:           t.Name,
+			RegisteredName: registeredName,
+			Description:    t.Description,
 		})
 	}
 	return sortToolsByName(tools), nil

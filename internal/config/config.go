@@ -107,6 +107,26 @@ func (c *Config) WriteRoots() []string {
 	return roots
 }
 
+func (c *Config) WriteRootsAt(cwd string) []string {
+	root := ExpandVars(c.Sandbox.WorkspaceRoot)
+	if root == "" {
+		root = cwd
+	}
+	if root == "" {
+		root = "."
+	}
+	roots := []string{root}
+	for _, d := range c.Sandbox.AllowWrite {
+		if d = ExpandVars(d); d != "" {
+			if !filepath.IsAbs(d) && cwd != "" {
+				d = filepath.Join(cwd, d)
+			}
+			roots = append(roots, d)
+		}
+	}
+	return roots
+}
+
 // BashMode normalises the bash-sandbox mode: only an explicit "off" disables
 // it; empty or any other value resolves to "enforce", so the sandbox is on by
 // default and fails safe.
@@ -215,9 +235,14 @@ type PluginEntry struct {
 	Command   string            `toml:"command"`
 	Args      []string          `toml:"args"`
 	Env       map[string]string `toml:"env"`
+	CWD       string            `toml:"cwd"`
 	URL       string            `toml:"url"`
 	Headers   map[string]string `toml:"headers"`
 	AutoStart *bool             `toml:"auto_start"`
+	// RequestTimeoutMs bounds HTTP MCP requests. It is persisted for stdio
+	// entries too so imported/editor state round-trips, though stdio subprocess
+	// lifecycle remains session-context bound.
+	RequestTimeoutMs int `toml:"request_timeout_ms"`
 }
 
 // ShouldAutoStart returns whether a plugin should connect during session boot.
@@ -301,7 +326,15 @@ func Default() *Config {
 // config, then any MCP servers from Claude Code's .mcp.json. A .env in the
 // working directory is loaded first so api_key_env can resolve.
 func Load() (*Config, error) {
-	loadDotEnv()
+	cwd, _ := os.Getwd()
+	return LoadAt(cwd)
+}
+
+func LoadAt(cwd string) (*Config, error) {
+	if cwd == "" {
+		cwd = "."
+	}
+	loadDotEnvAt(cwd)
 	cfg := Default()
 
 	if uc := userConfigPath(); uc != "" {
@@ -309,13 +342,13 @@ func Load() (*Config, error) {
 			return nil, err
 		}
 	}
-	if err := mergeFile(cfg, "reasonix.toml"); err != nil {
+	if err := mergeFile(cfg, filepath.Join(cwd, "reasonix.toml")); err != nil {
 		return nil, err
 	}
 	// Claude Code's .mcp.json (project root) is read last and merged into
 	// [[plugins]], so a server configured for Claude works here unchanged.
 	// reasonix.toml wins on a name collision (see mergeMCPJSON).
-	entries, err := loadMCPJSON(mcpJSONFile)
+	entries, err := loadMCPJSON(filepath.Join(cwd, mcpJSONFile))
 	if err != nil {
 		return nil, err
 	}
@@ -439,6 +472,30 @@ func SourcePath() string {
 		}
 	}
 	return ""
+}
+
+func SourcePathAt(cwd string) string {
+	if cwd == "" {
+		cwd = "."
+	}
+	project := filepath.Join(cwd, "reasonix.toml")
+	if _, err := os.Stat(project); err == nil {
+		return project
+	}
+	if uc := userConfigPath(); uc != "" {
+		if _, err := os.Stat(uc); err == nil {
+			return uc
+		}
+	}
+	return ""
+}
+
+func (c *Config) SaveAt(cwd string) error {
+	path := SourcePathAt(cwd)
+	if path == "" {
+		path = filepath.Join(cwd, "reasonix.toml")
+	}
+	return c.SaveTo(path)
 }
 
 // WriteFile writes the configuration to path as annotated TOML.

@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 )
 
 // maxHTTPBody caps how much of a JSON / SSE response body we read, so a
@@ -41,11 +42,15 @@ func newHTTPTransport(s Spec) (*httpTransport, error) {
 	if s.URL == "" {
 		return nil, fmt.Errorf("http plugin %q: url is required", s.Name)
 	}
+	client := &http.Client{}
+	if s.RequestTimeoutMs > 0 {
+		client.Timeout = time.Duration(s.RequestTimeoutMs) * time.Millisecond
+	}
 	return &httpTransport{
 		name:    s.Name,
 		url:     s.URL,
 		headers: s.Headers,
-		client:  &http.Client{},
+		client:  client,
 	}, nil
 }
 

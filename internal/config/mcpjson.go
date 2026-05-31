@@ -16,13 +16,15 @@ const mcpJSONFile = ".mcp.json"
 // names and semantics match PluginEntry (and Claude): command/args/env describe
 // a local stdio server; type/url/headers describe a remote one.
 type mcpServerSpec struct {
-	Type      string            `json:"type"`
-	Command   string            `json:"command"`
-	Args      []string          `json:"args"`
-	Env       map[string]string `json:"env"`
-	URL       string            `json:"url"`
-	Headers   map[string]string `json:"headers"`
-	AutoStart *bool             `json:"auto_start"`
+	Type             string            `json:"type"`
+	Command          string            `json:"command"`
+	Args             []string          `json:"args"`
+	Env              map[string]string `json:"env"`
+	CWD              string            `json:"cwd"`
+	URL              string            `json:"url"`
+	Headers          map[string]string `json:"headers"`
+	AutoStart        *bool             `json:"auto_start"`
+	RequestTimeoutMs int               `json:"requestTimeoutMs"`
 }
 
 // loadMCPJSON reads path (Claude Code's .mcp.json) and returns its servers as

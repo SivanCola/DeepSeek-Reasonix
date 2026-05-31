@@ -38,6 +38,7 @@ func (e PluginEntry) ExpandedPlugin() PluginEntry {
 	out := e
 	out.AutoStart = e.AutoStart
 	out.Command = ExpandVars(e.Command)
+	out.CWD = ExpandVars(e.CWD)
 	out.URL = ExpandVars(e.URL)
 	if len(e.Args) > 0 {
 		out.Args = make([]string, len(e.Args))
