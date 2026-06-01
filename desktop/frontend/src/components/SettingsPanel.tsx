@@ -577,20 +577,36 @@ function AgentSection({ s, busy, apply }: SectionProps) {
 
 function AppearanceSection({ theme, onTheme }: { theme: Theme; onTheme: (t: Theme) => void }) {
   const { t, pref, setPref } = useI18n();
-  const themeLabel: Record<Theme, string> = {
-    auto: t("settings.themeAuto"),
-    light: t("settings.themeLight"),
-    dark: t("settings.themeDark"),
-  };
+  const themeOptions: Array<{ value: Theme; swatches: string[] }> = [
+    { value: "auto", swatches: ["#faf9f7", "#0e0e10", "#c2613f"] },
+    { value: "light", swatches: ["#faf9f7", "#eee9e2", "#c2613f"] },
+    { value: "dark", swatches: ["#0e0e10", "#202024", "#d97757"] },
+    { value: "focus", swatches: ["#f6f8fb", "#e8eef6", "#2563eb"] },
+    { value: "forest", swatches: ["#f6f8f3", "#e6eddf", "#4f7f52"] },
+    { value: "midnight", swatches: ["#11131a", "#1d2230", "#d6a451"] },
+    { value: "contrast", swatches: ["#08090b", "#f4f0e7", "#2dd4bf"] },
+  ];
   return (
     <section className="mem-section">
       <div className="mem-section__title">{t("settings.appearance")}</div>
       <div className="set-row">
         <label className="set-label">{t("settings.theme")}</label>
-        <div className="set-seg">
-          {(["auto", "light", "dark"] as const).map((opt) => (
-            <button key={opt} className={`set-seg__btn ${theme === opt ? "set-seg__btn--on" : ""}`} onClick={() => onTheme(opt)}>
-              {themeLabel[opt]}
+        <div className="theme-grid">
+          {themeOptions.map((opt) => (
+            <button
+              key={opt.value}
+              className={`theme-choice${theme === opt.value ? " theme-choice--on" : ""}`}
+              onClick={() => onTheme(opt.value)}
+            >
+              <span className="theme-choice__swatches" aria-hidden="true">
+                {opt.swatches.map((color) => (
+                  <span key={color} style={{ background: color }} />
+                ))}
+              </span>
+              <span className="theme-choice__text">
+                <strong>{themeName(opt.value, t)}</strong>
+                <small>{themeDescription(opt.value, t)}</small>
+              </span>
             </button>
           ))}
         </div>
@@ -605,6 +621,44 @@ function AppearanceSection({ theme, onTheme }: { theme: Theme; onTheme: (t: Them
       </div>
     </section>
   );
+}
+
+function themeName(theme: Theme, t: ReturnType<typeof useT>): string {
+  switch (theme) {
+    case "auto":
+      return t("settings.theme.auto");
+    case "light":
+      return t("settings.theme.light");
+    case "dark":
+      return t("settings.theme.dark");
+    case "focus":
+      return t("settings.theme.focus");
+    case "forest":
+      return t("settings.theme.forest");
+    case "midnight":
+      return t("settings.theme.midnight");
+    case "contrast":
+      return t("settings.theme.contrast");
+  }
+}
+
+function themeDescription(theme: Theme, t: ReturnType<typeof useT>): string {
+  switch (theme) {
+    case "auto":
+      return t("settings.theme.auto.desc");
+    case "light":
+      return t("settings.theme.light.desc");
+    case "dark":
+      return t("settings.theme.dark.desc");
+    case "focus":
+      return t("settings.theme.focus.desc");
+    case "forest":
+      return t("settings.theme.forest.desc");
+    case "midnight":
+      return t("settings.theme.midnight.desc");
+    case "contrast":
+      return t("settings.theme.contrast.desc");
+  }
 }
 
 const MB = 1024 * 1024;

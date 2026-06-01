@@ -1,15 +1,16 @@
 // theme.ts manages the appearance override. The stylesheet is dark by default and
 // follows the OS via prefers-color-scheme; this lets the user force a theme by
-// setting data-theme on <html> ("dark" / "light"), or "auto" to remove it and
-// follow the OS again. The choice persists in localStorage and is applied on load.
+// setting data-theme on <html>, or "auto" to remove it and follow the OS again.
+// The choice persists in localStorage and is applied on load.
 
-export type Theme = "auto" | "light" | "dark";
+export type Theme = "auto" | "light" | "dark" | "focus" | "forest" | "midnight" | "contrast";
 
 const KEY = "reasonix-theme";
+const THEMES: Theme[] = ["auto", "light", "dark", "focus", "forest", "midnight", "contrast"];
 
 export function getTheme(): Theme {
   const v = typeof localStorage !== "undefined" ? localStorage.getItem(KEY) : null;
-  return v === "light" || v === "dark" ? v : "auto";
+  return THEMES.includes(v as Theme) ? (v as Theme) : "auto";
 }
 
 export function applyTheme(theme: Theme): void {

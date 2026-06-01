@@ -58,7 +58,7 @@
 }
 
 @media (prefers-color-scheme: light) {
-  :root:not([data-theme="dark"]) {
+  :root:not([data-theme]) {
     --bg: #faf9f7;
     --bg-soft: #f3f1ee;
     --bg-elev: #ffffff;
@@ -91,6 +91,98 @@
   --fg-faint: #8c8980;
   --accent: #c2613f;
   --accent-fg: #fff;
+}
+
+/* Focus — crisp cool light palette for long daytime work sessions. */
+:root[data-theme="focus"] {
+  --bg: #f6f8fb;
+  --bg-soft: #edf2f8;
+  --bg-elev: #ffffff;
+  --bg-elev-2: #e8eef6;
+  --sidebar-bg: #e9eef5;
+  --sidebar-hover: #dfe7f0;
+  --sidebar-active: rgba(37, 99, 235, 0.12);
+  --border: #d5dde8;
+  --border-soft: #e3e9f2;
+  --fg: #172033;
+  --fg-dim: #526070;
+  --fg-faint: #8793a2;
+  --accent: #2563eb;
+  --accent-fg: #ffffff;
+  --accent-soft: rgba(37, 99, 235, 0.12);
+  --ok: #248060;
+  --warn: #b57912;
+  --err: #cf4f54;
+}
+
+/* Forest — low-glare natural tones for reading-heavy planning and review. */
+:root[data-theme="forest"] {
+  --bg: #f6f8f3;
+  --bg-soft: #edf2e8;
+  --bg-elev: #fffefa;
+  --bg-elev-2: #e6eddf;
+  --sidebar-bg: #e7eee0;
+  --sidebar-hover: #dde7d5;
+  --sidebar-active: rgba(79, 127, 82, 0.14);
+  --border: #d7dfcf;
+  --border-soft: #e2e8dc;
+  --fg: #20251d;
+  --fg-dim: #5a6553;
+  --fg-faint: #89927f;
+  --accent: #4f7f52;
+  --accent-fg: #ffffff;
+  --accent-soft: rgba(79, 127, 82, 0.14);
+  --ok: #4f8b57;
+  --warn: #b07a2d;
+  --err: #c95f5b;
+}
+
+/* Midnight — dim, balanced dark palette for late-night coding. */
+:root[data-theme="midnight"] {
+  --bg: #11131a;
+  --bg-soft: #171b25;
+  --bg-elev: #1c2130;
+  --bg-elev-2: #242b3a;
+  --sidebar-bg: #141823;
+  --sidebar-hover: #1d2431;
+  --sidebar-active: rgba(214, 164, 81, 0.13);
+  --border: #2d3544;
+  --border-soft: #232a37;
+  --fg: #e9edf4;
+  --fg-dim: #a9b2c1;
+  --fg-faint: #717b8d;
+  --accent: #d6a451;
+  --accent-fg: #181105;
+  --accent-soft: rgba(214, 164, 81, 0.15);
+  --ok: #78b986;
+  --warn: #d6a451;
+  --err: #e07878;
+  --add-bg: rgba(120, 185, 134, 0.13);
+  --del-bg: rgba(224, 120, 120, 0.13);
+}
+
+/* Contrast — high-separation dark palette for dense terminal-like work. */
+:root[data-theme="contrast"] {
+  --bg: #08090b;
+  --bg-soft: #111418;
+  --bg-elev: #171b20;
+  --bg-elev-2: #222831;
+  --sidebar-bg: #0d1014;
+  --sidebar-hover: #171c22;
+  --sidebar-active: rgba(45, 212, 191, 0.14);
+  --border: #303741;
+  --border-soft: #1f252d;
+  --fg: #f4f0e7;
+  --fg-dim: #b8b2a6;
+  --fg-faint: #777f88;
+  --accent: #2dd4bf;
+  --accent-fg: #06110f;
+  --accent-soft: rgba(45, 212, 191, 0.14);
+  --ok: #6ee7a7;
+  --warn: #f2c96d;
+  --err: #fb7185;
+  --add-bg: rgba(110, 231, 167, 0.13);
+  --del-bg: rgba(251, 113, 133, 0.13);
 }
 
 * {
@@ -2999,6 +3091,69 @@ body {
   background: var(--accent-soft);
   color: var(--accent);
 }
+.theme-grid {
+  flex: 1;
+  min-width: 280px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+.theme-choice {
+  --wails-draggable: no-drag;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 9px;
+  align-items: center;
+  min-width: 0;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-soft);
+  color: var(--fg-dim);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.theme-choice:hover {
+  color: var(--fg);
+  border-color: var(--fg-faint);
+}
+.theme-choice--on {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--fg);
+}
+.theme-choice__swatches {
+  display: inline-flex;
+  overflow: hidden;
+  width: 42px;
+  height: 26px;
+  border: 1px solid var(--border-soft);
+  border-radius: 7px;
+  background: var(--bg);
+}
+.theme-choice__swatches span {
+  flex: 1;
+}
+.theme-choice__text {
+  min-width: 0;
+}
+.theme-choice__text strong,
+.theme-choice__text small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.theme-choice__text strong {
+  color: var(--fg);
+  font-size: 12px;
+  font-weight: 600;
+}
+.theme-choice__text small {
+  color: var(--fg-faint);
+  font-size: 10.5px;
+}
 .settings-config-path {
   margin-top: 18px;
 }
@@ -3025,6 +3180,7 @@ body {
   }
   .set-rules-grid,
   .settings-model-card,
+  .theme-grid,
   .settings-summary-grid {
     grid-template-columns: 1fr;
   }
