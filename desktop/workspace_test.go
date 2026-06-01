@@ -1,8 +1,10 @@
 package main
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -58,6 +60,58 @@ func TestCwdWritableInTempDir(t *testing.T) {
 	os.Chdir(dir)
 	if !cwdWritable() {
 		t.Error("temp dir should be writable")
+	}
+}
+
+func TestReadFileTrimsPartialUTF8RuneAtPreviewBoundary(t *testing.T) {
+	orig, _ := os.Getwd()
+	defer os.Chdir(orig)
+
+	dir := t.TempDir()
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+
+	prefix := strings.Repeat("a", filePreviewLimit-1)
+	if err := os.WriteFile("large.md", []byte(prefix+"你tail"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	preview := (&App{}).ReadFile("large.md")
+	if preview.Err != "" {
+		t.Fatalf("ReadFile err = %q", preview.Err)
+	}
+	if preview.Binary {
+		t.Fatal("ReadFile marked valid truncated UTF-8 text as binary")
+	}
+	if !preview.Truncated {
+		t.Fatal("ReadFile did not mark oversized file as truncated")
+	}
+	if preview.Body != prefix {
+		t.Fatalf("ReadFile body len = %d, want %d", len(preview.Body), len(prefix))
+	}
+}
+
+func TestReadFileKeepsInvalidUTF8Binary(t *testing.T) {
+	orig, _ := os.Getwd()
+	defer os.Chdir(orig)
+
+	dir := t.TempDir()
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+
+	data := append(bytes.Repeat([]byte("a"), filePreviewLimit-1), 0xff, 'x', 'y')
+	if err := os.WriteFile("invalid.txt", data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	preview := (&App{}).ReadFile("invalid.txt")
+	if preview.Err != "" {
+		t.Fatalf("ReadFile err = %q", preview.Err)
+	}
+	if !preview.Binary {
+		t.Fatal("ReadFile should keep invalid UTF-8 preview classified as binary")
 	}
 }
 

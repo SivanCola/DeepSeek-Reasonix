@@ -681,6 +681,22 @@ var atSkip = map[string]bool{".git": true, "node_modules": true, ".DS_Store": tr
 
 const filePreviewLimit = 256 * 1024
 
+func trimUTF8PartialSuffix(data []byte) []byte {
+	if utf8.Valid(data) {
+		return data
+	}
+	for i := len(data) - 1; i >= 0 && len(data)-i <= utf8.UTFMax; i-- {
+		if !utf8.RuneStart(data[i]) {
+			continue
+		}
+		if !utf8.Valid(data[:i]) || utf8.FullRune(data[i:]) {
+			return data
+		}
+		return data[:i]
+	}
+	return data
+}
+
 func workspacePath(rel string) (string, bool, error) {
 	base, err := os.Getwd()
 	if err != nil {
@@ -777,6 +793,7 @@ func (a *App) ReadFile(rel string) FilePreview {
 	if len(data) > filePreviewLimit {
 		data = data[:filePreviewLimit]
 		out.Truncated = true
+		data = trimUTF8PartialSuffix(data)
 	}
 	if bytes.Contains(data, []byte{0}) || !utf8.Valid(data) {
 		out.Binary = true
