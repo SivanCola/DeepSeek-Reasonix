@@ -129,6 +129,11 @@ export const en = {
   "composer.addProject": "Add new project",
   "composer.send": "Send (Enter)",
   "composer.stop": "Stop (Esc)",
+  "composer.pastedLabel": "[Pasted text #{id} · {lines} lines]",
+  "composer.pastedShowPreview": "Preview pasted text",
+  "composer.pastedHidePreview": "Hide pasted text preview",
+  "composer.pastedExpand": "Expand",
+  "composer.pastedRemove": "Remove pasted text",
 
   // status bar
   "status.connecting": "connecting…",

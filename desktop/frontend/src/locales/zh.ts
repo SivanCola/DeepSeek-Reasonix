@@ -130,6 +130,11 @@ export const zh: Record<DictKey, string> = {
   "composer.addProject": "添加新项目",
   "composer.send": "发送（Enter）",
   "composer.stop": "停止（Esc）",
+  "composer.pastedLabel": "[已粘贴文本 #{id} · {lines} 行]",
+  "composer.pastedShowPreview": "预览粘贴文本",
+  "composer.pastedHidePreview": "收起粘贴文本预览",
+  "composer.pastedExpand": "展开",
+  "composer.pastedRemove": "删除粘贴文本",
 
   // 状态栏
   "status.connecting": "连接中…",

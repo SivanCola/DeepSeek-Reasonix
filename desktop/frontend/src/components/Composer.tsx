@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, ClipboardEvent, DragEvent, KeyboardEvent, PointerEvent as ReactPointerEvent } from "react";
-import { ArrowUp, Check, ChevronDown, FolderGit2, FolderPlus, Search, Square, X } from "lucide-react";
+import { ArrowUp, Check, ChevronDown, Eye, FileText, FolderGit2, FolderPlus, Search, Square, Trash2, X } from "lucide-react";
 import { app } from "../lib/bridge";
 import { useT } from "../lib/i18n";
 import { clearLayoutSize, loadOptionalLayoutSize, saveLayoutSize } from "../lib/layoutPreferences";
@@ -14,8 +14,8 @@ interface Attachment {
   previewUrl: string;
 }
 
-const LONG_PASTE_MIN_CHARS = 1000;
-const LONG_PASTE_MIN_LINES = 5;
+const LONG_PASTE_MIN_CHARS = 2000;
+const LONG_PASTE_MIN_LINES = 20;
 const COMPOSER_MIN_HEIGHT = 86;
 const COMPOSER_MAX_HEIGHT = 360;
 const COMPOSER_MAX_VIEWPORT_RATIO = 0.4;
@@ -23,6 +23,7 @@ const COMPOSER_MAX_VIEWPORT_RATIO = 0.4;
 type PastedBlock = {
   label: string;
   text: string;
+  lines: number;
 };
 
 function lineCount(s: string): number {
@@ -75,6 +76,8 @@ export function Composer({
   const t = useT();
   const [text, setText] = useState("");
   const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const [pastedBlocks, setPastedBlocks] = useState<PastedBlock[]>([]);
+  const [openPastedLabels, setOpenPastedLabels] = useState<string[]>([]);
   const [pendingPaste, setPendingPaste] = useState(0);
   const pastedBlocksRef = useRef<PastedBlock[]>([]);
   const nextPasteId = useRef(1);
@@ -95,6 +98,8 @@ export function Composer({
   useEffect(() => {
     if (wasRunning.current && !running && text.trim() === "") {
       pastedBlocksRef.current = [];
+      setPastedBlocks([]);
+      setOpenPastedLabels([]);
     }
     wasRunning.current = running;
   }, [running, text]);
@@ -290,11 +295,12 @@ export function Composer({
     const end = ta.selectionEnd ?? text.length;
     const id = nextPasteId.current++;
     const lines = lineCount(pasted);
-    const label = `[Pasted text #${id} · ${lines} lines]`;
-    const block: PastedBlock = { label, text: pasted };
+    const label = t("composer.pastedLabel", { id, lines });
+    const block: PastedBlock = { label, text: pasted, lines };
     const next = text.slice(0, start) + label + text.slice(end);
 
     pastedBlocksRef.current = [...pastedBlocksRef.current, block];
+    setPastedBlocks((prev) => [...prev, block]);
     setText(next);
     requestAnimationFrame(() => {
       const node = taRef.current;
@@ -329,6 +335,28 @@ export function Composer({
   };
 
   const pickCommand = (c: CommandInfo) => setTextCaretEnd("/" + c.name + " ");
+
+  const activePastedBlocks = pastedBlocks.filter((block) => text.includes(block.label));
+
+  const togglePastedPreview = (label: string) => {
+    setOpenPastedLabels((prev) => (prev.includes(label) ? prev.filter((x) => x !== label) : [...prev, label]));
+  };
+
+  const removePastedBlock = (block: PastedBlock) => {
+    const next = text.split(block.label).join("");
+    pastedBlocksRef.current = pastedBlocksRef.current.filter((x) => x.label !== block.label);
+    setPastedBlocks((prev) => prev.filter((x) => x.label !== block.label));
+    setOpenPastedLabels((prev) => prev.filter((x) => x !== block.label));
+    setTextCaretEnd(next);
+  };
+
+  const expandPastedBlock = (block: PastedBlock) => {
+    const next = text.split(block.label).join(block.text);
+    pastedBlocksRef.current = pastedBlocksRef.current.filter((x) => x.label !== block.label);
+    setPastedBlocks((prev) => prev.filter((x) => x.label !== block.label));
+    setOpenPastedLabels((prev) => prev.filter((x) => x !== block.label));
+    setTextCaretEnd(next);
+  };
 
   const workspaceName = useMemo(() => {
     if (!cwd) return "";
@@ -553,6 +581,31 @@ export function Composer({
               </button>
             </div>
           ))}
+        </div>
+      )}
+      {activePastedBlocks.length > 0 && (
+        <div className="composer__pasted">
+          {activePastedBlocks.map((block) => {
+            const open = openPastedLabels.includes(block.label);
+            return (
+              <div className="composer__pasted-block" key={block.label}>
+                <div className="composer__pasted-head">
+                  <FileText size={15} />
+                  <span>{block.label}</span>
+                  <button type="button" title={t(open ? "composer.pastedHidePreview" : "composer.pastedShowPreview")} onClick={() => togglePastedPreview(block.label)}>
+                    <Eye size={14} />
+                  </button>
+                  <button type="button" title={t("composer.pastedExpand")} onClick={() => expandPastedBlock(block)}>
+                    {t("composer.pastedExpand")}
+                  </button>
+                  <button type="button" title={t("composer.pastedRemove")} onClick={() => removePastedBlock(block)}>
+                    <Trash2 size={14} />
+                  </button>
+                </div>
+                {open && <pre className="composer__pasted-preview">{block.text}</pre>}
+              </div>
+            );
+          })}
         </div>
       )}
       <div
