@@ -23,6 +23,7 @@ import (
 	"reasonix/internal/event"
 	"reasonix/internal/i18n"
 	"reasonix/internal/memory"
+	"reasonix/internal/plugin"
 	"reasonix/internal/provider"
 )
 
@@ -791,13 +792,19 @@ type CapabilitiesView struct {
 // ServerView is one MCP server for the drawer. Status is "connected" (with
 // tool/prompt/resource counts) or "failed" (with the connection error).
 type ServerView struct {
-	Name      string `json:"name"`
-	Transport string `json:"transport"`
-	Status    string `json:"status"`
-	Tools     int    `json:"tools"`
-	Prompts   int    `json:"prompts"`
-	Resources int    `json:"resources"`
-	Error     string `json:"error,omitempty"`
+	Name      string     `json:"name"`
+	Transport string     `json:"transport"`
+	Status    string     `json:"status"`
+	Tools     int        `json:"tools"`
+	Prompts   int        `json:"prompts"`
+	Resources int        `json:"resources"`
+	Error     string     `json:"error,omitempty"`
+	ToolList  []ToolView `json:"toolList,omitempty"`
+}
+
+type ToolView struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
 }
 
 // SkillView is one discoverable skill for the drawer.
@@ -834,6 +841,7 @@ func (a *App) Capabilities() CapabilitiesView {
 			out.Servers = append(out.Servers, ServerView{
 				Name: s.Name, Transport: s.Transport, Status: "connected",
 				Tools: s.Tools, Prompts: s.Prompts, Resources: s.Resources,
+				ToolList: pluginToolsToView(s.ToolList),
 			})
 		}
 		for _, f := range h.Failures() {
@@ -992,6 +1000,7 @@ func findMCPServerView(ctrl *control.Controller, name string) (ServerView, bool)
 			return ServerView{
 				Name: s.Name, Transport: s.Transport, Status: "connected",
 				Tools: s.Tools, Prompts: s.Prompts, Resources: s.Resources,
+				ToolList: pluginToolsToView(s.ToolList),
 			}, true
 		}
 	}
@@ -1001,6 +1010,17 @@ func findMCPServerView(ctrl *control.Controller, name string) (ServerView, bool)
 		}
 	}
 	return ServerView{}, false
+}
+
+func pluginToolsToView(tools []plugin.ToolInfo) []ToolView {
+	if len(tools) == 0 {
+		return nil
+	}
+	out := make([]ToolView, 0, len(tools))
+	for _, t := range tools {
+		out = append(out, ToolView{Name: t.Name, Description: t.Description})
+	}
+	return out
 }
 
 func orderServerViews(servers []ServerView, order []string) []ServerView {
