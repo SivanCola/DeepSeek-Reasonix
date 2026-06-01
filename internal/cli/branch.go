@@ -33,17 +33,19 @@ func renderBranchTreeLine(line string) string {
 	if line == "branches:" {
 		return accent(line)
 	}
-	parts := strings.SplitN(line, "  ", 3)
+	joint := strings.LastIndex(line, "├─ ")
+	if alt := strings.LastIndex(line, "└─ "); alt > joint {
+		joint = alt
+	}
+	if joint < 0 {
+		return line
+	}
+	treePrefix := line[:joint+len("├─ ")]
+	parts := strings.SplitN(line[joint+len("├─ "):], "  ", 3)
 	if len(parts) < 3 {
 		return line
 	}
-	left, title, meta := parts[0], parts[1], parts[2]
-	idx := strings.LastIndex(left, " ")
-	if idx < 0 {
-		return line
-	}
-	treePrefix := left[:idx+1]
-	id := left[idx+1:]
+	id, title, meta := parts[0], parts[1], parts[2]
 
 	turns := meta
 	current := ""
