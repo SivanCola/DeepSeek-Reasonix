@@ -24,8 +24,9 @@ type stdioTransport struct {
 	stdout *bufio.Reader
 	stderr *tailBuffer
 
-	mu     sync.Mutex
-	nextID int
+	mu       sync.Mutex
+	nextID   int
+	waitOnce sync.Once
 }
 
 func newStdioTransport(ctx context.Context, s Spec) (*stdioTransport, error) {
@@ -123,11 +124,22 @@ func (t *stdioTransport) withStderr(err error) error {
 	if t.stderr == nil {
 		return err
 	}
+	t.wait() // reap the exited child so its stderr copy goroutine has flushed the tail
 	msg := t.stderr.String()
 	if msg == "" {
 		return err
 	}
 	return fmt.Errorf("%w: stderr: %s", err, msg)
+}
+
+// wait reaps the child exactly once; cmd.Wait blocks until the stderr-copy
+// goroutine completes, so the tail buffer is settled before anyone reads it.
+func (t *stdioTransport) wait() {
+	t.waitOnce.Do(func() {
+		if t.cmd != nil && t.cmd.Process != nil {
+			_ = t.cmd.Wait()
+		}
+	})
 }
 
 func (t *stdioTransport) close() {
@@ -136,7 +148,7 @@ func (t *stdioTransport) close() {
 	}
 	if t.cmd != nil && t.cmd.Process != nil {
 		_ = t.cmd.Process.Kill()
-		_ = t.cmd.Wait()
+		t.wait()
 	}
 }
 
