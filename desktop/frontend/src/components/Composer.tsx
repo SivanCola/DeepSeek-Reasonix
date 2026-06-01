@@ -3,6 +3,7 @@ import type { CSSProperties, ClipboardEvent, DragEvent, KeyboardEvent, PointerEv
 import { ArrowUp, Check, ChevronDown, FolderGit2, FolderPlus, FolderX, Search, Square, X } from "lucide-react";
 import { app } from "../lib/bridge";
 import { useT } from "../lib/i18n";
+import { clearLayoutSize, loadOptionalLayoutSize, saveLayoutSize } from "../lib/layoutPreferences";
 import type { CommandInfo, DirEntry, Mode, SlashArgItem, SlashArgsResult, WorkspaceView } from "../lib/types";
 import { SlashMenu } from "./SlashMenu";
 import { ArgMenu } from "./ArgMenu";
@@ -15,7 +16,6 @@ interface Attachment {
 
 const LONG_PASTE_MIN_CHARS = 1000;
 const LONG_PASTE_MIN_LINES = 5;
-const COMPOSER_HEIGHT_STORAGE_KEY = "reasonix.composerHeight";
 const COMPOSER_MIN_HEIGHT = 86;
 const COMPOSER_MAX_HEIGHT = 360;
 const COMPOSER_MAX_VIEWPORT_RATIO = 0.4;
@@ -48,15 +48,7 @@ function clampComposerHeight(height: number): number {
 }
 
 function loadComposerHeight(): number | null {
-  if (typeof window === "undefined") return null;
-  try {
-    const raw = window.localStorage.getItem(COMPOSER_HEIGHT_STORAGE_KEY);
-    if (!raw) return null;
-    const parsed = Number(raw);
-    return Number.isFinite(parsed) ? clampComposerHeight(parsed) : null;
-  } catch {
-    return null;
-  }
+  return loadOptionalLayoutSize("composerHeight", clampComposerHeight);
 }
 
 export function Composer({
@@ -384,20 +376,12 @@ export function Composer({
   }, []);
 
   const saveComposerHeight = (height: number) => {
-    try {
-      window.localStorage.setItem(COMPOSER_HEIGHT_STORAGE_KEY, String(height));
-    } catch {
-      // localStorage can be unavailable in restricted WebViews; resizing still works for this session.
-    }
+    saveLayoutSize("composerHeight", height, clampComposerHeight);
   };
 
   const resetComposerHeight = () => {
     setComposerHeight(null);
-    try {
-      window.localStorage.removeItem(COMPOSER_HEIGHT_STORAGE_KEY);
-    } catch {
-      // Ignore storage errors; the visual reset already happened.
-    }
+    clearLayoutSize("composerHeight");
   };
 
   const onComposerResizeStart = (e: ReactPointerEvent<HTMLDivElement>) => {

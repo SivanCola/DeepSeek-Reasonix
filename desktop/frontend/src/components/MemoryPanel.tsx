@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useT } from "../lib/i18n";
 import type { MemoryView } from "../lib/types";
+import { ResizableDrawer } from "./ResizableDrawer";
 
 // MemoryPanel is the desktop memory manager: a right-side drawer over the loaded
 // REASONIX.md hierarchy and saved auto-memories. Unlike Claude Code's /memory
@@ -60,8 +61,7 @@ export function MemoryPanel({
   };
 
   return (
-    <div className="drawer-backdrop" onClick={onClose}>
-      <aside className="drawer" onClick={(e) => e.stopPropagation()}>
+    <ResizableDrawer onClose={onClose}>
         <header className="drawer__head">
           <div className="drawer__title">{t("memory.title")}</div>
           <button className="chip" onClick={onClose} title={t("common.close")}>
@@ -192,7 +192,6 @@ export function MemoryPanel({
             </section>
           </div>
         )}
-      </aside>
-    </div>
+    </ResizableDrawer>
   );
 }

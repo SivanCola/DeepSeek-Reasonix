@@ -2528,7 +2528,8 @@ body {
   background: rgba(0, 0, 0, 0.16);
 }
 .drawer {
-  width: min(440px, 92vw);
+  position: relative;
+  width: min(var(--drawer-width, 440px), 92vw);
   height: 100%;
   background: var(--bg-elev);
   border-left: 1px solid var(--border);
@@ -2536,6 +2537,44 @@ body {
   display: flex;
   flex-direction: column;
   animation: drawer-in 0.14s ease;
+}
+.drawer--wide {
+  width: min(var(--drawer-width, 720px), 94vw);
+}
+.drawer-resizer {
+  --wails-draggable: no-drag;
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -4px;
+  z-index: 4;
+  width: 8px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: col-resize;
+}
+.drawer-resizer::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 1px;
+  transform: translateX(-50%);
+  background: transparent;
+  transition: background 0.12s, box-shadow 0.12s;
+}
+.drawer-resizer:hover::after,
+.drawer-resizer:focus-visible::after,
+.drawer--resizing .drawer-resizer::after {
+  background: var(--accent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 24%, transparent);
+}
+.drawer--resizing,
+.drawer--resizing * {
+  cursor: col-resize !important;
+  user-select: none;
 }
 @keyframes drawer-in {
   from {
@@ -3102,9 +3141,6 @@ body {
 }
 
 /* ── settings drawer ───────────────────────────────────────────────────────── */
-.drawer--wide {
-  width: min(720px, 94vw);
-}
 .drawer__body--settings {
   flex: 1;
   min-height: 0;

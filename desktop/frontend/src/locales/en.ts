@@ -36,6 +36,7 @@ export const en = {
   "sidebar.collapse": "Collapse sidebar",
   "sidebar.expand": "Expand sidebar",
   "sidebar.resize": "Resize sidebar",
+  "drawer.resize": "Resize drawer",
 
   // workspace panel
   "workspace.title": "Workspace",
