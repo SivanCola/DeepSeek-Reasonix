@@ -682,7 +682,7 @@ export default function App() {
               onCancel={cancel}
               onCycleMode={cycleMode}
               onPickFolder={switchFolder}
-              disabled={state.meta?.ready === false}
+              disabled={state.meta?.ready === false || state.approval !== null}
             />
             <StatusBar
               meta={state.meta}
