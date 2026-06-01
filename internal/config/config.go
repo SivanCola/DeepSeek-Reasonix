@@ -307,25 +307,6 @@ const LanguagePolicy = `Reply in the same language the user is using in their mo
 	`whenever they switch. Let this also guide the language you think in. Always keep code, ` +
 	`identifiers, file paths, shell commands, and technical terms in their original form — never translate them.`
 
-const chineseLanguagePolicy = `Reply in Chinese. When the provider exposes visible reasoning, status text, or thought summaries, keep those in Chinese as well. Always keep code, identifiers, file paths, shell commands, and technical terms in their original form — never translate them.`
-
-const englishLanguagePolicy = `Reply in English. When the provider exposes visible reasoning, status text, or thought summaries, keep those in English as well. Always keep code, identifiers, file paths, shell commands, and technical terms in their original form — never translate them.`
-
-// LanguagePolicyFor returns the cache-stable language instruction for the
-// resolved UI language. It is folded into the system prompt once at controller
-// build time; changing language rebuilds the session prefix rather than adding a
-// dynamic instruction to every user turn.
-func LanguagePolicyFor(tag string) string {
-	switch strings.ToLower(strings.TrimSpace(tag)) {
-	case "zh":
-		return chineseLanguagePolicy
-	case "en":
-		return englishLanguagePolicy
-	default:
-		return LanguagePolicy
-	}
-}
-
 // Default returns the built-in default configuration (DeepSeek + MiMo presets).
 func Default() *Config {
 	return &Config{

@@ -22,7 +22,6 @@ import (
 	"reasonix/internal/control"
 	"reasonix/internal/event"
 	"reasonix/internal/hook"
-	"reasonix/internal/i18n"
 	"reasonix/internal/jobs"
 	"reasonix/internal/lsp"
 	"reasonix/internal/memory"
@@ -67,7 +66,6 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	if err != nil {
 		return nil, err
 	}
-	resolvedLanguage := i18n.DetectLanguage(cfg.Language)
 	modelName := opts.Model
 	if modelName == "" {
 		modelName = cfg.DefaultModel
@@ -104,10 +102,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	if st, ok := outputstyle.Resolve(cfg.Agent.OutputStyle, outputstyle.Dirs()); ok {
 		sysPrompt = outputstyle.Apply(sysPrompt, st)
 	}
-	// Append the language policy once so the model, including provider-exposed
-	// visible reasoning, follows the selected UI language without per-turn prompt
-	// injection. Static within a session, so it stays in the cache-stable prefix.
-	sysPrompt += "\n\n" + config.LanguagePolicyFor(resolvedLanguage)
+	sysPrompt += "\n\n" + config.LanguagePolicy
 
 	// Persistent memory (REASONIX.md / AGENTS.md hierarchy + auto-memory index)
 	// folds into the system prompt exactly here, once: it becomes part of the
