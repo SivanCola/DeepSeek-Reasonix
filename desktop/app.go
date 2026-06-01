@@ -825,6 +825,8 @@ func (a *App) Capabilities() CapabilitiesView {
 	}
 	seen := map[string]bool{}
 	connected := map[string]bool{}
+	retainedDisabled := map[string]ServerView{}
+	codegraphConfigured := false
 	if h := ctrl.Host(); h != nil {
 		for _, s := range h.Servers() {
 			seen[s.Name] = true
@@ -844,6 +846,7 @@ func (a *App) Capabilities() CapabilitiesView {
 	// Configured servers that are neither connected nor failed are toggled off
 	// (disconnected this session, or auto_start=false) — shown with an off switch.
 	if cfg, err := config.Load(); err == nil {
+		codegraphConfigured = cfg.Codegraph.Enabled
 		for _, p := range cfg.Plugins {
 			if seen[p.Name] {
 				continue
@@ -852,26 +855,39 @@ func (a *App) Capabilities() CapabilitiesView {
 			if tt == "" {
 				tt = "stdio"
 			}
+			if s, ok := disabled[p.Name]; ok {
+				s.Status = "disabled"
+				s.Transport = tt
+				s.Error = ""
+				out.Servers = append(out.Servers, s)
+				retainedDisabled[p.Name] = s
+				seen[p.Name] = true
+				delete(disabled, p.Name)
+				continue
+			}
 			out.Servers = append(out.Servers, ServerView{Name: p.Name, Transport: tt, Status: "disabled"})
+			seen[p.Name] = true
 		}
 	}
 	for name, s := range disabled {
 		if seen[name] {
 			continue
 		}
+		if name != "codegraph" || !codegraphConfigured {
+			continue
+		}
 		s.Status = "disabled"
 		s.Error = ""
 		out.Servers = append(out.Servers, s)
+		retainedDisabled[name] = s
 	}
 	out.Servers = orderServerViews(out.Servers, order)
 
 	a.mu.Lock()
-	if a.disabledMCP == nil {
-		a.disabledMCP = map[string]ServerView{}
-	}
 	for name := range connected {
-		delete(a.disabledMCP, name)
+		delete(retainedDisabled, name)
 	}
+	a.disabledMCP = retainedDisabled
 	a.mcpOrder = mergeServerOrder(a.mcpOrder, out.Servers)
 	a.mu.Unlock()
 
@@ -917,6 +933,12 @@ func (a *App) RemoveMCPServer(name string) error {
 		return fmt.Errorf("no active session")
 	}
 	_, err := a.ctrl.RemoveMCPServer(name)
+	if err == nil {
+		a.mu.Lock()
+		delete(a.disabledMCP, name)
+		a.mcpOrder = removeServerOrder(a.mcpOrder, name)
+		a.mu.Unlock()
+	}
 	return err
 }
 
@@ -1019,6 +1041,19 @@ func mergeServerOrder(order []string, servers []ServerView) []string {
 		}
 		seen[s.Name] = true
 		next = append(next, s.Name)
+	}
+	return next
+}
+
+func removeServerOrder(order []string, name string) []string {
+	if name == "" || len(order) == 0 {
+		return order
+	}
+	next := order[:0]
+	for _, n := range order {
+		if n != name {
+			next = append(next, n)
+		}
 	}
 	return next
 }
