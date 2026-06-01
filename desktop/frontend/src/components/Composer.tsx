@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, ClipboardEvent, DragEvent, KeyboardEvent, PointerEvent as ReactPointerEvent } from "react";
-import { ArrowUp, Check, ChevronDown, FolderGit2, FolderPlus, FolderX, Search, Square, X } from "lucide-react";
+import { ArrowUp, Check, ChevronDown, FolderGit2, FolderPlus, Search, Square, X } from "lucide-react";
 import { app } from "../lib/bridge";
 import { useT } from "../lib/i18n";
 import { clearLayoutSize, loadOptionalLayoutSize, saveLayoutSize } from "../lib/layoutPreferences";
@@ -527,10 +527,6 @@ export function Composer({
             <button onClick={() => void chooseWorkspace()}>
               <FolderPlus size={15} />
               <span>{t("composer.addProject")}</span>
-            </button>
-            <button onClick={() => void chooseWorkspace("")}>
-              <FolderX size={15} />
-              <span>{t("composer.noProject")}</span>
             </button>
           </div>
         </div>
