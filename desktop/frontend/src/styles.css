@@ -1928,6 +1928,27 @@ body {
   max-width: var(--maxw);
   margin: 0 auto 10px;
 }
+.layout > .plan-approval-dock {
+  position: absolute;
+  left: calc(var(--sidebar-width) + 32px);
+  right: 32px;
+  bottom: 192px;
+  z-index: 80;
+  max-width: none;
+  margin: 0;
+  pointer-events: none;
+}
+.layout--workspace-open > .plan-approval-dock {
+  right: calc(var(--workspace-width) + 32px);
+}
+.layout--workspace-maximized > .plan-approval-dock {
+  right: 32px;
+}
+.layout > .plan-approval-dock .plan-approval-card {
+  max-width: var(--maxw);
+  margin: 0 auto;
+  pointer-events: auto;
+}
 .plan-approval-card {
   border: 1px solid var(--border);
   border-radius: 10px;
@@ -3952,6 +3973,9 @@ body {
   .layout--workspace-open {
     grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
   }
+  .layout--workspace-open > .plan-approval-dock {
+    right: 32px;
+  }
   .workspace-panel,
   .workspace-panel-resizer,
   .topbar__workspace-toggle {
@@ -3986,6 +4010,11 @@ body {
   }
   .footer {
     padding: 10px 16px 8px;
+  }
+  .layout > .plan-approval-dock {
+    left: 16px;
+    right: 16px;
+    bottom: 176px;
   }
   .welcome__hints {
     flex-wrap: wrap;
