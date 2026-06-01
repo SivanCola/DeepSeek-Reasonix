@@ -37,8 +37,8 @@ const SIDEBAR_DEFAULT_WIDTH = 264;
 const SIDEBAR_MIN_WIDTH = 228;
 const SIDEBAR_MAX_WIDTH = 420;
 const CHAT_MIN_WIDTH = 420;
-const WORKSPACE_PANEL_DEFAULT_WIDTH = 680;
 const WORKSPACE_PANEL_MIN_WIDTH = 640;
+const WORKSPACE_PANEL_DEFAULT_WIDTH = WORKSPACE_PANEL_MIN_WIDTH;
 const WORKSPACE_PANEL_MAX_WIDTH = 820;
 const WORKSPACE_PANEL_MAX_RATIO = 0.54;
 const WORKSPACE_FILE_TREE_PANEL_DEFAULT_WIDTH = 360;
@@ -518,6 +518,13 @@ export default function App() {
     [saveDoc, fetchMemory],
   );
 
+  const sidebarExpandBlocked = sidebarCollapsed && workspacePreviewModeActive;
+  const sidebarToggleTitle = sidebarExpandBlocked
+    ? t("sidebar.expandBlocked")
+    : sidebarCollapsed
+      ? t("sidebar.expand")
+      : t("sidebar.collapse");
+
   return (
     <div className="app">
       <div
@@ -538,10 +545,11 @@ export default function App() {
             <img src={logo} alt="" className="sidebar__logo" />
             <span>Reasonix</span>
             <button
-              className="sidebar__toggle"
-              onClick={toggleSidebar}
-              title={sidebarCollapsed ? t("sidebar.expand") : t("sidebar.collapse")}
-              aria-label={sidebarCollapsed ? t("sidebar.expand") : t("sidebar.collapse")}
+              className={`sidebar__toggle${sidebarExpandBlocked ? " sidebar__toggle--blocked" : ""}`}
+              onClick={sidebarExpandBlocked ? undefined : toggleSidebar}
+              title={sidebarToggleTitle}
+              aria-label={sidebarToggleTitle}
+              aria-disabled={sidebarExpandBlocked}
             >
               {sidebarCollapsed ? <PanelLeftOpen size={15} /> : <PanelLeftClose size={15} />}
             </button>

@@ -36,6 +36,7 @@ export const en = {
   "sidebar.changeWorkspace": "Change",
   "sidebar.collapse": "Collapse sidebar",
   "sidebar.expand": "Expand sidebar",
+  "sidebar.expandBlocked": "Close the right file panel before expanding the sidebar",
   "sidebar.resize": "Resize sidebar",
   "drawer.resize": "Resize drawer",
 
@@ -58,12 +59,6 @@ export const en = {
   "workspace.loading": "Loading file…",
   "workspace.binary": "Binary file preview is not available.",
   "workspace.truncated": "Preview truncated to the first 256 KB.",
-  "workspace.more": "More actions",
-  "workspace.refresh": "Refresh",
-  "workspace.copyPath": "Copy path",
-  "workspace.closeOtherTabs": "Close other tabs",
-  "workspace.openExternal": "Open externally",
-  "workspace.reveal": "Reveal in file manager",
 
   // mcp & skills drawer
   "caps.title": "MCP & Skills",

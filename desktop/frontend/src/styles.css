@@ -198,6 +198,13 @@ body {
   color: var(--fg);
   background: var(--sidebar-hover);
 }
+.sidebar__toggle--blocked,
+.sidebar__toggle--blocked:hover {
+  color: var(--fg-faint);
+  background: transparent;
+  cursor: not-allowed;
+  opacity: 0.55;
+}
 .sidebar__new,
 .sidebar__navitem,
 .sidebar-session {
@@ -2519,49 +2526,6 @@ body {
   gap: 4px;
   padding: 7px 8px 3px;
 }
-.workspace-menu-wrap {
-  position: relative;
-  display: inline-flex;
-}
-.workspace-menu {
-  position: absolute;
-  top: calc(100% + 4px);
-  right: 0;
-  z-index: 35;
-  min-width: 168px;
-  padding: 5px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--bg-elev);
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.36);
-}
-.workspace-menu button {
-  width: 100%;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  border: none;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--fg-dim);
-  font: inherit;
-  font-size: 12px;
-  text-align: left;
-  padding: 6px 8px;
-  cursor: pointer;
-}
-.workspace-menu button:hover {
-  background: var(--bg-soft);
-  color: var(--fg);
-}
-.workspace-menu button:disabled {
-  opacity: 0.45;
-  cursor: default;
-}
-.workspace-menu button:disabled:hover {
-  background: transparent;
-  color: var(--fg-dim);
-}
 .workspace-search {
   flex: 0 0 auto;
   display: flex;
@@ -4039,7 +4003,7 @@ body {
   background: var(--hover);
 }
 
-@media (max-width: 1240px) {
+@media (max-width: 1239px) {
   .layout--workspace-open {
     grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
   }

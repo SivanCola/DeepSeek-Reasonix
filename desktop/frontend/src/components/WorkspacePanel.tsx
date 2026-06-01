@@ -4,18 +4,13 @@ import {
   ChevronDown,
   ChevronRight,
   Columns2,
-  Copy,
-  ExternalLink,
   FileText,
   Folder,
-  FolderOpen,
   Maximize2,
   Minus,
   Minimize2,
-  MoreHorizontal,
   PanelRightClose,
   Plus,
-  RefreshCw,
   Search,
   X,
 } from "lucide-react";
@@ -26,8 +21,8 @@ import type { DirEntry, FilePreview } from "../lib/types";
 import { CodeViewer } from "./CodeViewer";
 import { Markdown } from "./Markdown";
 
-const WORKSPACE_TREE_DEFAULT_WIDTH = 280;
 const WORKSPACE_TREE_MIN_WIDTH = 220;
+const WORKSPACE_TREE_DEFAULT_WIDTH = WORKSPACE_TREE_MIN_WIDTH;
 const WORKSPACE_TREE_MAX_WIDTH = 420;
 const WORKSPACE_PREVIEW_MIN_WIDTH = 420;
 
@@ -141,7 +136,6 @@ export function WorkspacePanel({
   const [treeVisible, setTreeVisible] = useState(true);
   const [treeWidth, setTreeWidth] = useState(loadWorkspaceTreeWidth);
   const [treeResizing, setTreeResizing] = useState(false);
-  const [menuOpen, setMenuOpen] = useState(false);
 
   const loadDir = useCallback(async (dir: string) => {
     const entries = await app.ListDir(dir).catch(() => []);
@@ -208,11 +202,6 @@ export function WorkspacePanel({
     return refreshSelected();
   }, [open, refreshSelected, selectedPath]);
 
-  const refreshTree = useCallback(() => {
-    Object.keys(entriesByDir).forEach((dir) => void loadDir(dir));
-    refreshSelected();
-  }, [entriesByDir, loadDir, refreshSelected]);
-
   const toggleDir = useCallback(
     (dir: string) => {
       setOpenDirs((prev) => {
@@ -252,21 +241,6 @@ export function WorkspacePanel({
     });
   };
 
-  const revealSelected = () => {
-    if (!selectedPath) return;
-    void app.RevealWorkspacePath(selectedPath);
-  };
-
-  const openSelectedExternal = () => {
-    if (!selectedPath) return;
-    void app.OpenWorkspacePath(selectedPath);
-  };
-
-  const copySelectedPath = () => {
-    if (!selectedPath) return;
-    void navigator.clipboard?.writeText(selectedPath);
-  };
-
   const breadcrumbDirs = selectedPath ? parentDirs(selectedPath) : [""];
   const pathParts = selectedPath?.split("/").filter(Boolean) ?? [];
   const flattened = useMemo(() => {
@@ -295,6 +269,18 @@ export function WorkspacePanel({
   useEffect(() => {
     onPreviewModeChange?.(previewModeActive);
   }, [onPreviewModeChange, previewModeActive]);
+
+  useEffect(() => {
+    if (open && !treeVisible && !previewVisible) onClose();
+  }, [onClose, open, previewVisible, treeVisible]);
+
+  const hideTreeOrClosePanel = useCallback(() => {
+    if (previewVisible) {
+      setTreeVisible(false);
+    } else {
+      onClose();
+    }
+  }, [onClose, previewVisible]);
 
   const setSavedTreeWidth = useCallback(
     (width: number) => {
@@ -532,64 +518,11 @@ export function WorkspacePanel({
 
       <section className="workspace-files">
         <div className="workspace-files__tools">
-          <div className="workspace-menu-wrap">
-            <button className="workspace-iconbtn" onClick={() => setMenuOpen((value) => !value)} title={t("workspace.more")}>
-              <MoreHorizontal size={15} />
-            </button>
-            {menuOpen && (
-              <div className="workspace-menu">
-                <button
-                  onClick={() => {
-                    refreshTree();
-                    setMenuOpen(false);
-                  }}
-                >
-                  <RefreshCw size={13} />
-                  {t("workspace.refresh")}
-                </button>
-                <button
-                  onClick={() => {
-                    copySelectedPath();
-                    setMenuOpen(false);
-                  }}
-                  disabled={!selectedPath}
-                >
-                  <Copy size={13} />
-                  {t("workspace.copyPath")}
-                </button>
-                <button
-                  onClick={() => {
-                    openSelectedExternal();
-                    setMenuOpen(false);
-                  }}
-                  disabled={!selectedPath}
-                >
-                  <ExternalLink size={13} />
-                  {t("workspace.openExternal")}
-                </button>
-                <button
-                  onClick={() => {
-                    revealSelected();
-                    setMenuOpen(false);
-                  }}
-                  disabled={!selectedPath}
-                >
-                  <FolderOpen size={13} />
-                  {t("workspace.reveal")}
-                </button>
-                <button
-                  onClick={() => {
-                    setOpenTabs(selectedPath ? [selectedPath] : []);
-                    setMenuOpen(false);
-                  }}
-                >
-                  <X size={13} />
-                  {t("workspace.closeOtherTabs")}
-                </button>
-              </div>
-            )}
-          </div>
-          <button className="workspace-iconbtn workspace-iconbtn--on" onClick={() => setTreeVisible(false)} title={t("workspace.hideTree")}>
+          <button
+            className="workspace-iconbtn workspace-iconbtn--on"
+            onClick={hideTreeOrClosePanel}
+            title={previewVisible ? t("workspace.hideTree") : t("workspace.close")}
+          >
             <PanelRightClose size={15} />
           </button>
         </div>

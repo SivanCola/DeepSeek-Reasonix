@@ -37,6 +37,7 @@ export const zh: Record<DictKey, string> = {
   "sidebar.changeWorkspace": "更改",
   "sidebar.collapse": "收起侧边栏",
   "sidebar.expand": "展开侧边栏",
+  "sidebar.expandBlocked": "关闭右侧文件面板后可展开侧边栏",
   "sidebar.resize": "调整侧边栏宽度",
   "drawer.resize": "调整抽屉宽度",
 
@@ -59,12 +60,6 @@ export const zh: Record<DictKey, string> = {
   "workspace.loading": "正在加载文件…",
   "workspace.binary": "暂不支持预览二进制文件。",
   "workspace.truncated": "预览已截断到前 256 KB。",
-  "workspace.more": "更多操作",
-  "workspace.refresh": "刷新",
-  "workspace.copyPath": "复制路径",
-  "workspace.closeOtherTabs": "关闭其他标签",
-  "workspace.openExternal": "外部打开",
-  "workspace.reveal": "在文件管理器中定位",
 
   // MCP 与技能抽屉
   "caps.title": "MCP 与技能",
