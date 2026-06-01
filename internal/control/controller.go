@@ -1129,6 +1129,51 @@ func (c *Controller) AddMCPServer(e config.PluginEntry) (int, error) {
 	return len(tools), nil
 }
 
+func (c *Controller) ConfiguredMCPNames() []string {
+	cfg, err := config.Load()
+	if err != nil {
+		return nil
+	}
+	names := make([]string, 0, len(cfg.Plugins))
+	for _, p := range cfg.Plugins {
+		names = append(names, p.Name)
+	}
+	return names
+}
+
+func (c *Controller) DisconnectedMCPNames() []string {
+	cfg, err := config.Load()
+	if err != nil {
+		return nil
+	}
+	connected := map[string]bool{}
+	if c.host != nil {
+		for _, name := range c.host.ServerNames() {
+			connected[name] = true
+		}
+	}
+	var names []string
+	for _, p := range cfg.Plugins {
+		if !connected[p.Name] {
+			names = append(names, p.Name)
+		}
+	}
+	return names
+}
+
+func (c *Controller) ConnectConfiguredMCPServer(name string) (int, error) {
+	cfg, err := config.Load()
+	if err != nil {
+		return 0, err
+	}
+	for _, p := range cfg.Plugins {
+		if p.Name == name {
+			return c.AddMCPServer(p)
+		}
+	}
+	return 0, fmt.Errorf("no configured MCP server named %q", name)
+}
+
 // RemoveMCPServer disconnects a live MCP server — its tools vanish from the next
 // turn — and removes it from the config file. It reports whether a live server was
 // disconnected; an error only when the name is neither connected nor in config (or
