@@ -34,6 +34,7 @@ export const zh: Record<DictKey, string> = {
   "sidebar.collapse": "收起侧边栏",
   "sidebar.expand": "展开侧边栏",
   "sidebar.resize": "调整侧边栏宽度",
+  "drawer.resize": "调整抽屉宽度",
 
   // 工作区面板
   "workspace.title": "工作区",

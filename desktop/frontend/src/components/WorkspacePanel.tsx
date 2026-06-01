@@ -21,12 +21,12 @@ import {
 } from "lucide-react";
 import { app } from "../lib/bridge";
 import { useT } from "../lib/i18n";
+import { loadLayoutSize, saveLayoutSize } from "../lib/layoutPreferences";
 import type { DirEntry, FilePreview } from "../lib/types";
 import { CodeViewer } from "./CodeViewer";
 import { Markdown } from "./Markdown";
 
 const preferredFiles = ["WORKSPACE.md", "README.md", "REASONIX.md", "package.json", "go.mod"];
-const WORKSPACE_TREE_WIDTH_KEY = "reasonix.workspaceTree.width";
 const WORKSPACE_TREE_DEFAULT_WIDTH = 280;
 const WORKSPACE_TREE_MIN_WIDTH = 220;
 const WORKSPACE_TREE_MAX_WIDTH = 420;
@@ -42,22 +42,11 @@ function clampWorkspaceTreeWidth(width: number, panelWidth?: number): number {
 }
 
 function loadWorkspaceTreeWidth(): number {
-  if (typeof window === "undefined") return WORKSPACE_TREE_DEFAULT_WIDTH;
-  try {
-    const raw = Number(window.localStorage.getItem(WORKSPACE_TREE_WIDTH_KEY));
-    return Number.isFinite(raw) && raw > 0 ? clampWorkspaceTreeWidth(raw) : WORKSPACE_TREE_DEFAULT_WIDTH;
-  } catch {
-    return WORKSPACE_TREE_DEFAULT_WIDTH;
-  }
+  return loadLayoutSize("workspaceTreeWidth", WORKSPACE_TREE_DEFAULT_WIDTH, clampWorkspaceTreeWidth);
 }
 
 function saveWorkspaceTreeWidth(width: number): void {
-  if (typeof window === "undefined") return;
-  try {
-    window.localStorage.setItem(WORKSPACE_TREE_WIDTH_KEY, String(Math.round(width)));
-  } catch {
-    /* ignore storage failures */
-  }
+  saveLayoutSize("workspaceTreeWidth", width);
 }
 
 function entryPath(dir: string, entry: DirEntry): string {

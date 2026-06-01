@@ -4,6 +4,7 @@ import { useI18n, useT } from "../lib/i18n";
 import { useUpdater } from "../lib/useUpdater";
 import { applyTheme, getTheme, type Theme } from "../lib/theme";
 import type { ProviderView, SettingsView } from "../lib/types";
+import { ResizableDrawer } from "./ResizableDrawer";
 
 type SettingsTab = "models" | "providers" | "permissions" | "sandbox" | "agent" | "appearance" | "updates";
 
@@ -43,8 +44,7 @@ export function SettingsPanel({ onClose, onChanged }: { onClose: () => void; onC
   };
 
   return (
-    <div className="drawer-backdrop" onClick={onClose}>
-      <aside className="drawer drawer--wide" onClick={(e) => e.stopPropagation()}>
+    <ResizableDrawer onClose={onClose} wide>
         <header className="drawer__head">
           <div className="drawer__title">{t("settings.title")}</div>
           <button className="chip" onClick={onClose} title={t("common.close")}>
@@ -90,8 +90,7 @@ export function SettingsPanel({ onClose, onChanged }: { onClose: () => void; onC
             </div>
           </div>
         )}
-      </aside>
-    </div>
+    </ResizableDrawer>
   );
 }
 

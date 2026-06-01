@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { app } from "../lib/bridge";
 import { useT } from "../lib/i18n";
 import type { CapabilitiesView, MCPServerInput, ServerView, SkillView } from "../lib/types";
+import { ResizableDrawer } from "./ResizableDrawer";
 
 // CapabilitiesPanel is the desktop MCP & Skills drawer — the GUI counterpart to
 // the CLI's /mcp + /skill, aligning with Claude Code's Customize → Connectors:
@@ -76,8 +77,7 @@ export function CapabilitiesPanel({
   }, []);
 
   return (
-    <div className="drawer-backdrop drawer-backdrop--subtle" onClick={onClose}>
-      <aside className="drawer" onClick={(e) => e.stopPropagation()}>
+    <ResizableDrawer onClose={onClose} subtle>
         <header className="drawer__head">
           <div>
             <div className="drawer__title">{t("caps.title")}</div>
@@ -171,8 +171,7 @@ export function CapabilitiesPanel({
             )}
           </div>
         )}
-      </aside>
-    </div>
+    </ResizableDrawer>
   );
 }
 

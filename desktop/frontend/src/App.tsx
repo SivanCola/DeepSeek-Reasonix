@@ -29,11 +29,10 @@ import { UpdateBanner } from "./components/UpdateBanner";
 import { WorkspacePanel } from "./components/WorkspacePanel";
 import { parseTodos } from "./lib/tools";
 import type { MemoryView, Mode, SessionMeta } from "./lib/types";
+import { loadLayoutSize, saveLayoutSize } from "./lib/layoutPreferences";
 
 const SIDEBAR_COLLAPSED_KEY = "reasonix.sidebar.collapsed";
-const SIDEBAR_WIDTH_KEY = "reasonix.sidebar.width";
 const WORKSPACE_PANEL_OPEN_KEY = "reasonix.workspacePanel.open";
-const WORKSPACE_PANEL_WIDTH_KEY = "reasonix.workspacePanel.width";
 const SIDEBAR_COLLAPSED_WIDTH = 68;
 const SIDEBAR_DEFAULT_WIDTH = 264;
 const SIDEBAR_MIN_WIDTH = 228;
@@ -74,22 +73,11 @@ function saveSidebarCollapsed(collapsed: boolean): void {
 }
 
 function loadSidebarWidth(): number {
-  if (typeof window === "undefined") return SIDEBAR_DEFAULT_WIDTH;
-  try {
-    const raw = Number(window.localStorage.getItem(SIDEBAR_WIDTH_KEY));
-    return Number.isFinite(raw) && raw > 0 ? clampSidebarWidth(raw) : SIDEBAR_DEFAULT_WIDTH;
-  } catch {
-    return SIDEBAR_DEFAULT_WIDTH;
-  }
+  return loadLayoutSize("sidebarWidth", SIDEBAR_DEFAULT_WIDTH, clampSidebarWidth);
 }
 
 function saveSidebarWidth(width: number): void {
-  if (typeof window === "undefined") return;
-  try {
-    window.localStorage.setItem(SIDEBAR_WIDTH_KEY, String(clampSidebarWidth(width)));
-  } catch {
-    /* ignore storage failures */
-  }
+  saveLayoutSize("sidebarWidth", width, clampSidebarWidth);
 }
 
 function loadWorkspacePanelOpen(): boolean {
@@ -111,22 +99,11 @@ function saveWorkspacePanelOpen(open: boolean): void {
 }
 
 function loadWorkspacePanelWidth(): number {
-  if (typeof window === "undefined") return WORKSPACE_PANEL_DEFAULT_WIDTH;
-  try {
-    const raw = Number(window.localStorage.getItem(WORKSPACE_PANEL_WIDTH_KEY));
-    return Number.isFinite(raw) && raw > 0 ? clampWorkspacePanelWidth(raw) : WORKSPACE_PANEL_DEFAULT_WIDTH;
-  } catch {
-    return WORKSPACE_PANEL_DEFAULT_WIDTH;
-  }
+  return loadLayoutSize("workspacePanelWidth", WORKSPACE_PANEL_DEFAULT_WIDTH, clampWorkspacePanelWidth);
 }
 
 function saveWorkspacePanelWidth(width: number): void {
-  if (typeof window === "undefined") return;
-  try {
-    window.localStorage.setItem(WORKSPACE_PANEL_WIDTH_KEY, String(Math.round(width)));
-  } catch {
-    /* ignore storage failures */
-  }
+  saveLayoutSize("workspacePanelWidth", width);
 }
 
 function sessionTitle(session: SessionMeta, fallback: string): string {
