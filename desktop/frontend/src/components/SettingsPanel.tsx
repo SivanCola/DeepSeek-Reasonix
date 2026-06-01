@@ -1,8 +1,8 @@
-import { useEffect, useState, type CSSProperties } from "react";
+import { useEffect, useState } from "react";
 import { app } from "../lib/bridge";
 import { useI18n, useT } from "../lib/i18n";
 import { useUpdater } from "../lib/useUpdater";
-import { applyTheme, getTheme, type Theme, type ThemeMode, type ThemeScheme } from "../lib/theme";
+import { applyTheme, getTheme, type Theme } from "../lib/theme";
 import type { ProviderView, SettingsView } from "../lib/types";
 
 type SettingsTab = "models" | "providers" | "permissions" | "sandbox" | "agent" | "appearance" | "updates";
@@ -577,62 +577,20 @@ function AgentSection({ s, busy, apply }: SectionProps) {
 
 function AppearanceSection({ theme, onTheme }: { theme: Theme; onTheme: (t: Theme) => void }) {
   const { t, pref, setPref } = useI18n();
-  const modeOptions: ThemeMode[] = ["auto", "light", "dark"];
-  const schemeOptions: Array<{ value: ThemeScheme; accent: string; soft: string }> = [
-    { value: "clay", accent: "#c2613f", soft: "rgba(194, 97, 63, 0.15)" },
-    { value: "blue", accent: "#2563eb", soft: "rgba(37, 99, 235, 0.14)" },
-    { value: "forest", accent: "#4f7f52", soft: "rgba(79, 127, 82, 0.15)" },
-    { value: "amber", accent: "#b86a26", soft: "rgba(184, 106, 38, 0.15)" },
-    { value: "teal", accent: "#0f766e", soft: "rgba(15, 118, 110, 0.15)" },
-  ];
-  const setMode = (mode: ThemeMode) => onTheme({ ...theme, mode });
-  const setScheme = (scheme: ThemeScheme) => onTheme({ ...theme, scheme });
+  const themeOptions: Theme[] = ["auto", "light", "dark"];
   return (
     <section className="mem-section">
       <div className="mem-section__title">{t("settings.appearance")}</div>
       <div className="set-row">
-        <label className="set-label">{t("settings.themeMode")}</label>
+        <label className="set-label">{t("settings.theme")}</label>
         <div className="set-seg">
-          {modeOptions.map((mode) => (
+          {themeOptions.map((opt) => (
             <button
-              key={mode}
-              className={`set-seg__btn${theme.mode === mode ? " set-seg__btn--on" : ""}`}
-              onClick={() => setMode(mode)}
+              key={opt}
+              className={`set-seg__btn${theme === opt ? " set-seg__btn--on" : ""}`}
+              onClick={() => onTheme(opt)}
             >
-              {themeModeName(mode, t)}
-            </button>
-          ))}
-        </div>
-      </div>
-      <div className="set-row">
-        <label className="set-label">{t("settings.themeScheme")}</label>
-        <div className="theme-grid">
-          {schemeOptions.map((opt) => (
-            <button
-              key={opt.value}
-              className={`theme-choice${theme.scheme === opt.value ? " theme-choice--on" : ""}`}
-              style={
-                {
-                  "--preview-accent": opt.accent,
-                  "--preview-accent-soft": opt.soft,
-                } as CSSProperties
-              }
-              onClick={() => setScheme(opt.value)}
-            >
-              <span className="theme-preview" aria-hidden="true">
-                <span className="theme-preview__sidebar">
-                  <span />
-                  <span />
-                </span>
-                <span className="theme-preview__main">
-                  <span />
-                  <span />
-                </span>
-              </span>
-              <span className="theme-choice__text">
-                <strong>{themeSchemeName(opt.value, t)}</strong>
-                <small>{themeSchemeDescription(opt.value, t)}</small>
-              </span>
+              {themeName(opt, t)}
             </button>
           ))}
         </div>
@@ -649,44 +607,14 @@ function AppearanceSection({ theme, onTheme }: { theme: Theme; onTheme: (t: Them
   );
 }
 
-function themeModeName(mode: ThemeMode, t: ReturnType<typeof useT>): string {
-  switch (mode) {
+function themeName(theme: Theme, t: ReturnType<typeof useT>): string {
+  switch (theme) {
     case "auto":
-      return t("settings.themeMode.auto");
+      return t("settings.themeAuto");
     case "light":
-      return t("settings.themeMode.light");
+      return t("settings.themeLight");
     case "dark":
-      return t("settings.themeMode.dark");
-  }
-}
-
-function themeSchemeName(scheme: ThemeScheme, t: ReturnType<typeof useT>): string {
-  switch (scheme) {
-    case "clay":
-      return t("settings.themeScheme.clay");
-    case "blue":
-      return t("settings.themeScheme.blue");
-    case "forest":
-      return t("settings.themeScheme.forest");
-    case "amber":
-      return t("settings.themeScheme.amber");
-    case "teal":
-      return t("settings.themeScheme.teal");
-  }
-}
-
-function themeSchemeDescription(scheme: ThemeScheme, t: ReturnType<typeof useT>): string {
-  switch (scheme) {
-    case "clay":
-      return t("settings.themeScheme.clay.desc");
-    case "blue":
-      return t("settings.themeScheme.blue.desc");
-    case "forest":
-      return t("settings.themeScheme.forest.desc");
-    case "amber":
-      return t("settings.themeScheme.amber.desc");
-    case "teal":
-      return t("settings.themeScheme.teal.desc");
+      return t("settings.themeDark");
   }
 }
 
