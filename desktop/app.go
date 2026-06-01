@@ -385,12 +385,12 @@ func (a *App) History() []HistoryMessage {
 		return nil
 	}
 	msgs := a.ctrl.History()
-	sessionPath := a.ctrl.SessionPath()
+	resolve := sessionDisplayResolver(config.SessionDir(), a.ctrl.SessionPath())
 	out := make([]HistoryMessage, 0, len(msgs))
 	for _, m := range msgs {
 		content := m.Content
 		if m.Role == provider.RoleUser {
-			content = resolveSessionDisplay(config.SessionDir(), sessionPath, m.Content)
+			content = resolve(m.Content)
 		}
 		out = append(out, HistoryMessage{Role: string(m.Role), Content: content})
 	}

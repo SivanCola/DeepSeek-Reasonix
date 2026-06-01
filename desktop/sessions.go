@@ -151,12 +151,20 @@ func recordSessionDisplay(dir, sessionPath, content, display string) error {
 	return saveSessionDisplays(dir, m)
 }
 
-func resolveSessionDisplay(dir, sessionPath, content string) string {
-	m := loadSessionDisplays(dir)
-	if byHash := m[filepath.Base(sessionPath)]; byHash != nil {
-		if display := byHash[messageDisplayKey(content)]; strings.TrimSpace(display) != "" {
-			return display
+// sessionDisplayResolver loads the sidecar once and returns a per-message
+// resolver, so a transcript of N messages doesn't re-read .display.json N times.
+func sessionDisplayResolver(dir, sessionPath string) func(content string) string {
+	byHash := loadSessionDisplays(dir)[filepath.Base(sessionPath)]
+	return func(content string) string {
+		if byHash != nil {
+			if display := byHash[messageDisplayKey(content)]; strings.TrimSpace(display) != "" {
+				return display
+			}
 		}
+		return content
 	}
-	return content
+}
+
+func resolveSessionDisplay(dir, sessionPath, content string) string {
+	return sessionDisplayResolver(dir, sessionPath)(content)
 }
