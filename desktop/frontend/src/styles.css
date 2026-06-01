@@ -2178,6 +2178,9 @@ body {
   justify-content: flex-end;
   z-index: 90;
 }
+.drawer-backdrop--subtle {
+  background: rgba(0, 0, 0, 0.16);
+}
 .drawer {
   width: min(440px, 92vw);
   height: 100%;
@@ -2204,6 +2207,11 @@ body {
 .drawer__title {
   font-size: 15px;
   font-weight: 650;
+}
+.drawer__summary {
+  margin-top: 3px;
+  color: var(--fg-faint);
+  font-size: 11px;
 }
 .drawer__body {
   overflow-y: auto;
@@ -2422,6 +2430,37 @@ body {
   padding: 8px 0;
   border-bottom: 1px solid var(--border-soft);
 }
+.cap-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 3px;
+  padding: 3px;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  background: var(--bg-soft);
+}
+.cap-tab {
+  --wails-draggable: no-drag;
+  height: 28px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fg-dim);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.cap-tab:hover {
+  color: var(--fg);
+}
+.cap-tab--active {
+  background: var(--bg-elev);
+  color: var(--fg);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+}
+.cap-search {
+  margin-bottom: 8px;
+}
 .cap-dot {
   flex-shrink: 0;
   width: 7px;
@@ -2471,6 +2510,12 @@ body {
   display: flex;
   align-items: center;
   gap: 6px;
+}
+.cap-row--skill {
+  align-items: center;
+}
+.cap-row--skill .cap-row__actions {
+  align-self: center;
 }
 .cap-switch {
   --wails-draggable: no-drag;

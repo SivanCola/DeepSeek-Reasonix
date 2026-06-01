@@ -1,19 +1,31 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { app } from "../lib/bridge";
 import { useT } from "../lib/i18n";
-import type { CapabilitiesView, MCPServerInput, ServerView } from "../lib/types";
+import type { CapabilitiesView, MCPServerInput, ServerView, SkillView } from "../lib/types";
 
 // CapabilitiesPanel is the desktop MCP & Skills drawer — the GUI counterpart to
 // the CLI's /mcp + /skill, aligning with Claude Code's Customize → Connectors:
 // each server shows a connected/failed dot, transport, and tool/prompt/resource
 // counts, with add / remove / retry; skills list their scope and run mode.
-export function CapabilitiesPanel({ onClose }: { onClose: () => void }) {
+type CapTab = "servers" | "skills";
+
+export function CapabilitiesPanel({
+  onClose,
+  onInsertSkill,
+  onRunSkill,
+}: {
+  onClose: () => void;
+  onInsertSkill: (name: string) => void;
+  onRunSkill: (name: string) => void;
+}) {
   const t = useT();
   const [view, setView] = useState<CapabilitiesView | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
   const [confirming, setConfirming] = useState<string | null>(null);
+  const [tab, setTab] = useState<CapTab>("servers");
+  const [skillQuery, setSkillQuery] = useState("");
 
   const reload = async () =>
     setView(await app.Capabilities().catch(() => ({ servers: [], skills: [] })));
@@ -38,11 +50,33 @@ export function CapabilitiesPanel({ onClose }: { onClose: () => void }) {
     }
   };
 
+  const summary = useMemo(() => {
+    if (!view) return "";
+    return t("caps.summary", {
+      connected: view.servers.filter((s) => s.status === "connected").length,
+      failed: view.servers.filter((s) => s.status === "failed").length,
+      skills: view.skills.length,
+    });
+  }, [view, t]);
+
+  const filteredSkills = useMemo(() => {
+    if (!view) return [];
+    const q = skillQuery.trim().toLowerCase();
+    if (!q) return view.skills;
+    return view.skills.filter((sk) => {
+      const text = [sk.name, sk.description, sk.scope, sk.runAs].join(" ").toLowerCase();
+      return text.includes(q);
+    });
+  }, [view, skillQuery]);
+
   return (
-    <div className="drawer-backdrop" onClick={onClose}>
+    <div className="drawer-backdrop drawer-backdrop--subtle" onClick={onClose}>
       <aside className="drawer" onClick={(e) => e.stopPropagation()}>
         <header className="drawer__head">
-          <div className="drawer__title">{t("caps.title")}</div>
+          <div>
+            <div className="drawer__title">{t("caps.title")}</div>
+            {view && <div className="drawer__summary">{summary}</div>}
+          </div>
           <button className="chip" onClick={onClose} title={t("common.close")}>
             ✕
           </button>
@@ -54,53 +88,79 @@ export function CapabilitiesPanel({ onClose }: { onClose: () => void }) {
           <div className="drawer__body">
             {err && <div className="banner banner--error">{err}</div>}
 
-            <section className="mem-section">
-              <div className="mem-section__title">{t("caps.servers")}</div>
-              {view.servers.length === 0 && !adding && (
-                <div className="mem-empty">{t("caps.noServers")}</div>
-              )}
-              {view.servers.map((s) => (
-                <ServerRow
-                  key={s.name}
-                  s={s}
-                  busy={busy}
-                  confirming={confirming === s.name}
-                  onConfirm={() => setConfirming(s.name)}
-                  onCancelConfirm={() => setConfirming(null)}
-                  onRemove={() => mutate(() => app.RemoveMCPServer(s.name)).then(() => setConfirming(null))}
-                  onRetry={() => void mutate(() => app.RetryMCPServer(s.name))}
-                  onToggle={(on) => void mutate(() => app.SetMCPServerEnabled(s.name, on))}
-                />
-              ))}
-              {adding ? (
-                <AddServerForm busy={busy} onCancel={() => setAdding(false)} onAdd={async (input) => (await mutate(() => app.AddMCPServer(input))) && setAdding(false)} />
-              ) : (
-                <button className="btn btn--small" disabled={busy} onClick={() => setAdding(true)}>
-                  {t("caps.addServer")}
-                </button>
-              )}
-            </section>
+            <div className="cap-tabs" role="tablist" aria-label={t("caps.title")}>
+              <button
+                className={`cap-tab${tab === "servers" ? " cap-tab--active" : ""}`}
+                role="tab"
+                aria-selected={tab === "servers"}
+                onClick={() => setTab("servers")}
+              >
+                {t("caps.connectorsTab")}
+              </button>
+              <button
+                className={`cap-tab${tab === "skills" ? " cap-tab--active" : ""}`}
+                role="tab"
+                aria-selected={tab === "skills"}
+                onClick={() => setTab("skills")}
+              >
+                {t("caps.skillsTab")}
+              </button>
+            </div>
 
-            <section className="mem-section">
-              <div className="mem-section__title">{t("caps.skills")}</div>
-              {view.skills.length === 0 ? (
-                <div className="mem-empty">{t("caps.noSkills")}</div>
-              ) : (
-                view.skills.map((sk) => (
-                  <div className="cap-row" key={sk.name}>
-                    <span className="cap-slash">/</span>
-                    <div className="cap-row__text">
-                      <div className="cap-row__head">
-                        <span className="cap-row__name">{sk.name}</span>
-                        <span className={`badge badge--${sk.scope}`}>{sk.scope}</span>
-                        {sk.runAs === "subagent" && <span className="badge">{t("caps.subagent")}</span>}
-                      </div>
-                      <div className="cap-row__sub">{sk.description}</div>
-                    </div>
-                  </div>
-                ))
-              )}
-            </section>
+            {tab === "servers" ? (
+              <section className="mem-section">
+                <div className="mem-section__title">{t("caps.servers")}</div>
+                {view.servers.length === 0 && !adding && (
+                  <div className="mem-empty">{t("caps.noServers")}</div>
+                )}
+                {view.servers.map((s) => (
+                  <ServerRow
+                    key={s.name}
+                    s={s}
+                    busy={busy}
+                    confirming={confirming === s.name}
+                    onConfirm={() => setConfirming(s.name)}
+                    onCancelConfirm={() => setConfirming(null)}
+                    onRemove={() => mutate(() => app.RemoveMCPServer(s.name)).then(() => setConfirming(null))}
+                    onRetry={() => void mutate(() => app.RetryMCPServer(s.name))}
+                    onToggle={(on) => void mutate(() => app.SetMCPServerEnabled(s.name, on))}
+                  />
+                ))}
+                {adding ? (
+                  <AddServerForm busy={busy} onCancel={() => setAdding(false)} onAdd={async (input) => (await mutate(() => app.AddMCPServer(input))) && setAdding(false)} />
+                ) : (
+                  <button className="btn btn--small" disabled={busy} onClick={() => setAdding(true)}>
+                    {t("caps.addServer")}
+                  </button>
+                )}
+              </section>
+            ) : (
+              <section className="mem-section">
+                <div className="cap-search">
+                  <input
+                    className="mem-input"
+                    type="search"
+                    placeholder={t("caps.searchSkills")}
+                    value={skillQuery}
+                    onChange={(e) => setSkillQuery(e.target.value)}
+                  />
+                </div>
+                {view.skills.length === 0 ? (
+                  <div className="mem-empty">{t("caps.noSkills")}</div>
+                ) : filteredSkills.length === 0 ? (
+                  <div className="mem-empty">{t("caps.noSkillMatches")}</div>
+                ) : (
+                  filteredSkills.map((sk) => (
+                    <SkillRow
+                      key={sk.name}
+                      skill={sk}
+                      onInsert={() => onInsertSkill(sk.name)}
+                      onRun={() => onRunSkill(sk.name)}
+                    />
+                  ))
+                )}
+              </section>
+            )}
           </div>
         )}
       </aside>
@@ -128,6 +188,7 @@ function ServerRow({
   onToggle: (on: boolean) => void;
 }) {
   const t = useT();
+  const actionLabel = serverActionLabel(s, t);
   const sub =
     s.status === "failed"
       ? s.error || t("caps.failed")
@@ -158,7 +219,7 @@ function ServerRow({
           <>
             {s.status === "failed" ? (
               <button className="btn btn--small" disabled={busy} onClick={onRetry}>
-                {t("caps.retry")}
+                {actionLabel}
               </button>
             ) : (
               <label className="cap-switch" title={s.status === "connected" ? t("caps.disable") : t("caps.enable")}>
@@ -176,6 +237,53 @@ function ServerRow({
             </button>
           </>
         )}
+      </div>
+    </div>
+  );
+}
+
+function serverActionLabel(s: ServerView, t: ReturnType<typeof useT>): string {
+  const err = (s.error || "").toLowerCase();
+  if (err.includes("401") || err.includes("unauthorized")) return t("caps.reauthorize");
+  if (
+    err.includes("command not found") ||
+    err.includes("executable file not found") ||
+    err.includes("no such file") ||
+    err.includes("enoent")
+  ) {
+    return t("caps.checkCommand");
+  }
+  return t("caps.retry");
+}
+
+function SkillRow({
+  skill,
+  onInsert,
+  onRun,
+}: {
+  skill: SkillView;
+  onInsert: () => void;
+  onRun: () => void;
+}) {
+  const t = useT();
+  return (
+    <div className="cap-row cap-row--skill">
+      <span className="cap-slash">/</span>
+      <div className="cap-row__text">
+        <div className="cap-row__head">
+          <span className="cap-row__name">{skill.name}</span>
+          <span className={`badge badge--${skill.scope}`}>{skill.scope}</span>
+          {skill.runAs === "subagent" && <span className="badge">{t("caps.subagent")}</span>}
+        </div>
+        <div className="cap-row__sub">{skill.description}</div>
+      </div>
+      <div className="cap-row__actions">
+        <button className="btn btn--small" onClick={onInsert}>
+          {t("caps.insert")}
+        </button>
+        <button className="btn btn--primary btn--small" onClick={onRun}>
+          {t("caps.run")}
+        </button>
       </div>
     </div>
   );

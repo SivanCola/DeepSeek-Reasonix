@@ -37,12 +37,16 @@ function renderPastedBlock(block: PastedBlock): string {
 export function Composer({
   running,
   mode,
+  draftText,
+  onDraftApplied,
   onSend,
   onCancel,
   onCycleMode,
 }: {
   running: boolean;
   mode: Mode;
+  draftText?: string | null;
+  onDraftApplied?: () => void;
   onSend: (displayText: string, submitText?: string) => void;
   // Returns the un-sent text when cancelling before the server replied (so it can
   // be restored to the input); undefined for a normal cancel.
@@ -196,6 +200,13 @@ export function Composer({
       }
     });
   };
+
+  useEffect(() => {
+    if (draftText === undefined || draftText === null) return;
+    setDismissed(false);
+    setTextCaretEnd(draftText);
+    onDraftApplied?.();
+  }, [draftText]);
 
   const expandPastedBlocks = (displayText: string): string => {
     let expanded = displayText;

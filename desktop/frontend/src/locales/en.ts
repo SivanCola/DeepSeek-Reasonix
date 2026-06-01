@@ -59,6 +59,9 @@ export const en = {
   // mcp & skills drawer
   "caps.title": "MCP & Skills",
   "caps.loading": "Loading…",
+  "caps.summary": "{connected} connected · {failed} issues · {skills} skills",
+  "caps.connectorsTab": "Connectors",
+  "caps.skillsTab": "Skills",
   "caps.servers": "MCP servers",
   "caps.noServers": "No MCP servers configured. Add one with /mcp add.",
   "caps.counts": "{tools} tools · {prompts} prompts · {resources} resources",
@@ -77,9 +80,15 @@ export const en = {
   "caps.remove": "Remove server",
   "caps.confirmRemove": "Confirm remove",
   "caps.retry": "Retry",
+  "caps.reauthorize": "Reauthorize",
+  "caps.checkCommand": "Check command",
   "caps.disabled": "disabled (off this session)",
   "caps.enable": "Enable for this session",
   "caps.disable": "Disable for this session",
+  "caps.searchSkills": "Search skills…",
+  "caps.noSkillMatches": "No matching skills.",
+  "caps.insert": "Insert",
+  "caps.run": "Run",
 
   // welcome / empty state
   "welcome.tagline": "A coding agent — describe a task or ask anything.",

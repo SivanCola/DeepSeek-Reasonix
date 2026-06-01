@@ -60,6 +60,9 @@ export const zh: Record<DictKey, string> = {
   // MCP 与技能抽屉
   "caps.title": "MCP 与技能",
   "caps.loading": "加载中…",
+  "caps.summary": "{connected} 个已连接 · {failed} 个异常 · {skills} 个技能",
+  "caps.connectorsTab": "连接器",
+  "caps.skillsTab": "技能",
   "caps.servers": "MCP 服务器",
   "caps.noServers": "未配置 MCP 服务器。用 /mcp add 添加。",
   "caps.counts": "{tools} 工具 · {prompts} 提示 · {resources} 资源",
@@ -78,9 +81,15 @@ export const zh: Record<DictKey, string> = {
   "caps.remove": "删除服务器",
   "caps.confirmRemove": "确认删除",
   "caps.retry": "重试",
+  "caps.reauthorize": "重新授权",
+  "caps.checkCommand": "检查命令",
   "caps.disabled": "已停用（本次会话）",
   "caps.enable": "本次会话启用",
   "caps.disable": "本次会话停用",
+  "caps.searchSkills": "搜索技能…",
+  "caps.noSkillMatches": "没有匹配的技能。",
+  "caps.insert": "插入",
+  "caps.run": "运行",
 
   // 欢迎 / 空状态
   "welcome.tagline": "一个编码智能体 —— 描述任务或随便问点什么。",
