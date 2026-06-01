@@ -297,7 +297,6 @@ export interface SettingsView {
   permissions: PermissionsView;
   sandbox: SandboxView;
   agent: AgentView;
-  language: string;
   configPath: string;
   providerKinds: string[]; // provider implementations the kernel registered (for the kind picker)
   bypass: boolean; // live YOLO state (runtime-only) — whether approvals are skipped this session
