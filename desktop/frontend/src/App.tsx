@@ -92,6 +92,7 @@ export default function App() {
     renameSession,
     refreshMeta,
     pickWorkspace,
+    switchWorkspace,
     rewind,
     setModel,
     fetchMemory,
@@ -262,10 +263,11 @@ export default function App() {
   // Workspace: open the folder chooser and switch projects. The hook resets the
   // transcript and refreshes meta on a pick; refresh the sidebar sessions too so
   // the recent list belongs to the newly selected workspace. A cancel is a no-op.
-  const switchFolder = useCallback(async () => {
-    const path = await pickWorkspace();
-    if (path) await refreshSessions();
-  }, [pickWorkspace, refreshSessions]);
+  const switchFolder = useCallback(async (path?: string) => {
+    const picked = path === undefined ? await pickWorkspace() : await switchWorkspace(path);
+    if (picked) await refreshSessions();
+    return picked;
+  }, [pickWorkspace, switchWorkspace, refreshSessions]);
 
   const onRemember = useCallback(
     async (scope: string, note: string) => {
@@ -454,7 +456,7 @@ export default function App() {
               onSend={handleSend}
               onCancel={cancel}
               onCycleMode={cycleMode}
-              onPickFolder={() => void switchFolder()}
+              onPickFolder={switchFolder}
             />
             <StatusBar
               meta={state.meta}

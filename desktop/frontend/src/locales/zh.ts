@@ -112,6 +112,10 @@ export const zh: Record<DictKey, string> = {
   "composer.modeTitle": "切换模式（shift+tab）：普通 → 计划 → YOLO（全部自动批准）",
   "composer.enterPlanTitle": "进入计划模式（shift+tab）—— 只读；先给出计划再动手",
   "composer.exitPlanTitle": "退出计划模式（shift+tab）",
+  "composer.searchProjects": "搜索项目",
+  "composer.noProjectMatches": "没有匹配的项目",
+  "composer.addProject": "添加新项目",
+  "composer.noProject": "不使用项目",
   "composer.send": "发送（Enter）",
   "composer.stop": "停止（Esc）",
 

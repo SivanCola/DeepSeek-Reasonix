@@ -117,6 +117,12 @@ export interface SessionMeta {
   current: boolean;
 }
 
+export interface WorkspaceView {
+  path: string;
+  name: string;
+  current: boolean;
+}
+
 export interface ContextInfo {
   used: number;
   window: number;

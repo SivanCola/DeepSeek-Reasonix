@@ -43,6 +43,24 @@ func TestSaveLoadWorkspaceRoundTrip(t *testing.T) {
 	}
 }
 
+func TestSaveWorkspaceRemembersRecentWorkspaces(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	first := t.TempDir()
+	second := t.TempDir()
+
+	saveWorkspace(first)
+	saveWorkspace(second)
+	saveWorkspace(first)
+
+	got := loadWorkspaces()
+	if len(got) < 2 {
+		t.Fatalf("loadWorkspaces len = %d, want at least 2", len(got))
+	}
+	if got[0] != first || got[1] != second {
+		t.Fatalf("loadWorkspaces = %v, want first two %q, %q", got, first, second)
+	}
+}
+
 // --- cwdWritable ---
 
 func TestCwdWritable(t *testing.T) {

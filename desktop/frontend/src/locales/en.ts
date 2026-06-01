@@ -111,6 +111,10 @@ export const en = {
   "composer.modeTitle": "Cycle mode (shift+tab): normal → plan → YOLO (auto-approve everything)",
   "composer.enterPlanTitle": "Enter plan mode (shift+tab) — read-only; propose a plan before writing",
   "composer.exitPlanTitle": "Exit plan mode (shift+tab)",
+  "composer.searchProjects": "Search projects",
+  "composer.noProjectMatches": "No matching projects",
+  "composer.addProject": "Add new project",
+  "composer.noProject": "No project",
   "composer.send": "Send (Enter)",
   "composer.stop": "Stop (Esc)",
 

@@ -29,6 +29,7 @@ import type {
   UpdateInfo,
   UpdateProgress,
   WireEvent,
+  WorkspaceView,
 } from "./types";
 
 // AppBindings mirrors desktop/app.go's exported method set. Keep in sync by hand
@@ -58,7 +59,9 @@ export interface AppBindings {
   RenameSession(path: string, title: string): Promise<void>;
   // Workspace: open a folder chooser and switch to that project (fresh session);
   // returns the chosen path, or "" if cancelled.
+  ListWorkspaces(): Promise<WorkspaceView[]>;
   PickWorkspace(): Promise<string>;
+  SwitchWorkspace(path: string): Promise<string>;
   ContextUsage(): Promise<ContextInfo>;
   // Balance queries the active provider's wallet balance (a network call);
   // returns an unavailable readout when no balance_url is configured or it fails.
@@ -220,6 +223,7 @@ function delay(ms: number): Promise<void> {
 function makeMockApp(): AppBindings {
   let cancelled = false;
   let cwd = "~/projects/reasonix"; // mutable so PickWorkspace is visible in dev
+  let workspaces = ["~/projects/reasonix", "~/projects/blade", "~/projects/deepseek-forge", "~/projects/cc-switch-light", "~/projects/SuperRig"];
   const day = 86_400_000;
   const t0 = Date.now();
   // Mutable so MCP add/remove/retry are observable in browser dev.
@@ -234,6 +238,11 @@ function makeMockApp(): AppBindings {
     { name: "review", description: "Review the staged diff", scope: "project", runAs: "inline" },
     { name: "init", description: "Scaffold a REASONIX.md for this repo", scope: "builtin", runAs: "inline" },
   ];
+  const mockSwitchWorkspace = async (path: string) => {
+    cwd = path || "~";
+    workspaces = [cwd, ...workspaces.filter((p) => p !== cwd)].slice(0, 12);
+    return cwd;
+  };
   // Mutable so delete/rename are observable in browser dev.
   const sessions: SessionMeta[] = [
     { path: "/mock/sessions/a.jsonl", preview: "fix the login bug in auth.go", turns: 12, modTime: t0 - 3_600_000, current: true },
@@ -344,11 +353,20 @@ function makeMockApp(): AppBindings {
       const s = sessions.find((x) => x.path === path);
       if (s) s.title = title.trim() || undefined;
     },
+    async ListWorkspaces() {
+      return workspaces.map((path) => ({
+        path,
+        name: path.split("/").filter(Boolean).pop() ?? path,
+        current: path === cwd,
+      }));
+    },
     async PickWorkspace() {
       // Browser dev has no native dialog; simulate picking a folder and re-root so
       // the topbar folder chip visibly changes.
-      cwd = cwd.endsWith("another-project") ? "~/projects/reasonix" : "~/projects/another-project";
-      return cwd;
+      return mockSwitchWorkspace(cwd.endsWith("another-project") ? "~/projects/reasonix" : "~/projects/another-project");
+    },
+    async SwitchWorkspace(path: string) {
+      return mockSwitchWorkspace(path);
     },
     async ContextUsage() {
       return { used: 1280, window: 1_000_000 };

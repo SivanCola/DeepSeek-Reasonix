@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ClipboardEvent, DragEvent, KeyboardEvent } from "react";
-import { ArrowUp, ChevronDown, FolderGit2, Square, X } from "lucide-react";
+import { ArrowUp, Check, ChevronDown, FolderGit2, FolderPlus, FolderX, Search, Square, X } from "lucide-react";
 import { app } from "../lib/bridge";
 import { useT } from "../lib/i18n";
-import type { CommandInfo, DirEntry, Mode, SlashArgItem, SlashArgsResult } from "../lib/types";
+import type { CommandInfo, DirEntry, Mode, SlashArgItem, SlashArgsResult, WorkspaceView } from "../lib/types";
 import { SlashMenu } from "./SlashMenu";
 import { ArgMenu } from "./ArgMenu";
 import { FileMenu } from "./FileMenu";
@@ -51,7 +51,7 @@ export function Composer({
   // be restored to the input); undefined for a normal cancel.
   onCancel: () => string | undefined;
   onCycleMode: () => void;
-  onPickFolder: () => void;
+  onPickFolder: (path?: string) => Promise<string>;
 }) {
   const t = useT();
   const [text, setText] = useState("");
@@ -62,7 +62,11 @@ export function Composer({
   const [active, setActive] = useState(0);
   const [dismissed, setDismissed] = useState(false);
   const [dragOver, setDragOver] = useState(false);
+  const [workspaceMenuOpen, setWorkspaceMenuOpen] = useState(false);
+  const [workspaceQuery, setWorkspaceQuery] = useState("");
+  const [workspaces, setWorkspaces] = useState<WorkspaceView[]>([]);
   const taRef = useRef<HTMLTextAreaElement>(null);
+  const workspaceMenuRef = useRef<HTMLDivElement>(null);
   const wasRunning = useRef(running);
 
   useEffect(() => {
@@ -308,6 +312,37 @@ export function Composer({
     return parts.length > 0 ? parts[parts.length - 1] : cwd;
   }, [cwd]);
 
+  const loadWorkspaces = () => {
+    app.ListWorkspaces().then(setWorkspaces).catch(() => setWorkspaces([]));
+  };
+
+  useEffect(() => {
+    if (workspaceMenuOpen) loadWorkspaces();
+  }, [workspaceMenuOpen, cwd]);
+
+  useEffect(() => {
+    if (!workspaceMenuOpen) return;
+    const close = (e: MouseEvent) => {
+      if (!workspaceMenuRef.current?.contains(e.target as Node)) setWorkspaceMenuOpen(false);
+    };
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, [workspaceMenuOpen]);
+
+  const filteredWorkspaces = useMemo(() => {
+    const q = workspaceQuery.trim().toLowerCase();
+    if (!q) return workspaces;
+    return workspaces.filter((w) => `${w.name} ${w.path}`.toLowerCase().includes(q));
+  }, [workspaceQuery, workspaces]);
+
+  const chooseWorkspace = async (path?: string) => {
+    const next = await onPickFolder(path);
+    if (next) {
+      setWorkspaceMenuOpen(false);
+      setWorkspaceQuery("");
+    }
+  };
+
   const pickEntry = (e: DirEntry) => {
     const atPos = text.length - (atRaw?.length ?? 0) - 1; // index of '@'
     const prefix = text.slice(0, atPos);
@@ -437,16 +472,67 @@ export function Composer({
         </div>
         <div className="composer-meta">
           {cwd && (
-            <button
-              className="composer__workspace"
-              onClick={onPickFolder}
-              disabled={running}
-              title={running ? t("common.busyHint") : t("status.switchFolder", { cwd })}
-            >
-              <FolderGit2 size={13} />
-              <span>{workspaceName}</span>
-              <ChevronDown size={12} />
-            </button>
+            <div className="composer-workspace-wrap" ref={workspaceMenuRef}>
+              <button
+                className={`composer__workspace${workspaceMenuOpen ? " composer__workspace--open" : ""}`}
+                onClick={() => {
+                  if (!running) setWorkspaceMenuOpen((open) => !open);
+                }}
+                disabled={running}
+                title={running ? t("common.busyHint") : t("status.switchFolder", { cwd })}
+              >
+                <FolderGit2 size={13} />
+                <span>{workspaceName}</span>
+                <ChevronDown size={12} />
+              </button>
+              {workspaceMenuOpen && (
+                <div className="workspace-switcher">
+                  <label className="workspace-switcher__search">
+                    <Search size={14} />
+                    <input
+                      autoFocus
+                      value={workspaceQuery}
+                      onChange={(e) => setWorkspaceQuery(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Escape") setWorkspaceMenuOpen(false);
+                      }}
+                      placeholder={t("composer.searchProjects")}
+                    />
+                  </label>
+                  <div className="workspace-switcher__list">
+                    {filteredWorkspaces.map((w) => (
+                      <button
+                        key={w.path}
+                        className="workspace-switcher__item"
+                        onClick={() => {
+                          if (w.current) {
+                            setWorkspaceMenuOpen(false);
+                            return;
+                          }
+                          void chooseWorkspace(w.path);
+                        }}
+                        title={w.path}
+                      >
+                        <FolderGit2 size={15} />
+                        <span>{w.name}</span>
+                        {w.current && <Check size={15} />}
+                      </button>
+                    ))}
+                    {filteredWorkspaces.length === 0 && <div className="workspace-switcher__empty">{t("composer.noProjectMatches")}</div>}
+                  </div>
+                  <div className="workspace-switcher__actions">
+                    <button onClick={() => void chooseWorkspace()}>
+                      <FolderPlus size={15} />
+                      <span>{t("composer.addProject")}</span>
+                    </button>
+                    <button onClick={() => void chooseWorkspace("")}>
+                      <FolderX size={15} />
+                      <span>{t("composer.noProject")}</span>
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
           )}
           <button
             className={`composer__mode composer__mode--${mode}`}

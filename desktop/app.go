@@ -262,6 +262,12 @@ type SessionMeta struct {
 	Current bool   `json:"current"`
 }
 
+type WorkspaceMeta struct {
+	Path    string `json:"path"`
+	Name    string `json:"name"`
+	Current bool   `json:"current"`
+}
+
 // ListSessions returns the saved sessions newest-first for the history panel,
 // marking the one the current conversation is writing to and attaching any
 // user-chosen titles.
@@ -341,13 +347,79 @@ func (a *App) PickWorkspace() (string, error) {
 	if err != nil || dir == "" {
 		return "", err // cancelled or error → no change
 	}
+	return a.SwitchWorkspace(dir)
+}
+
+func (a *App) ListWorkspaces() []WorkspaceMeta {
+	cur, _ := os.Getwd()
+	seen := map[string]bool{}
+	paths := make([]string, 0, 8)
+	add := func(path string) {
+		path = strings.TrimSpace(path)
+		if path == "" {
+			return
+		}
+		if abs, err := filepath.Abs(path); err == nil {
+			path = abs
+		}
+		if seen[path] {
+			return
+		}
+		if info, err := os.Stat(path); err != nil || !info.IsDir() {
+			return
+		}
+		seen[path] = true
+		paths = append(paths, path)
+	}
+	add(cur)
+	for _, path := range loadWorkspaces() {
+		add(path)
+	}
+	out := make([]WorkspaceMeta, 0, len(paths))
+	for _, path := range paths {
+		out = append(out, WorkspaceMeta{
+			Path:    path,
+			Name:    workspaceName(path),
+			Current: path == cur,
+		})
+	}
+	return out
+}
+
+func workspaceName(path string) string {
+	name := filepath.Base(path)
+	if name == "." || name == string(filepath.Separator) || name == "" {
+		return path
+	}
+	return name
+}
+
+func (a *App) SwitchWorkspace(dir string) (string, error) {
+	if dir == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", err
+		}
+		dir = home
+	}
+	if abs, err := filepath.Abs(dir); err == nil {
+		dir = abs
+	}
+	info, err := os.Stat(dir)
+	if err != nil {
+		return "", err
+	}
+	if !info.IsDir() {
+		return "", fmt.Errorf("%s is not a directory", dir)
+	}
+	cur, _ := os.Getwd()
 	if dir == cur {
+		saveWorkspace(dir)
 		return dir, nil
 	}
 	if err := os.Chdir(dir); err != nil {
 		return "", err
 	}
-	saveWorkspace(dir) // remember it so the next launch reopens here
 	// Resolve the new folder's default model from its own config.
 	model := ""
 	if cfg, cerr := config.Load(); cerr == nil {
@@ -361,6 +433,7 @@ func (a *App) PickWorkspace() (string, error) {
 		_ = os.Chdir(cur) // roll back; the current session stays intact
 		return "", err
 	}
+	saveWorkspace(dir) // remember it so the next launch reopens here
 	// Commit the switch: save and tear down the old session, then swap in the new
 	// project's controller with a fresh session file.
 	if a.ctrl != nil {
