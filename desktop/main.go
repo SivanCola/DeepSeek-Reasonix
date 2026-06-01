@@ -41,8 +41,8 @@ func main() {
 
 	err := wails.Run(&options.App{
 		Title:     "Reasonix",
-		Width:     1100,
-		Height:    760,
+		Width:     1240,
+		Height:    720,
 		MinWidth:  760,
 		MinHeight: 480,
 		// Match the dark UI shell so first paint (before CSS loads) doesn't flash

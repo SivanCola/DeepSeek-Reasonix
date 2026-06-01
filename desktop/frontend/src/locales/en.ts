@@ -32,6 +32,7 @@ export const en = {
   "sidebar.changeWorkspace": "Change",
   "sidebar.collapse": "Collapse sidebar",
   "sidebar.expand": "Expand sidebar",
+  "sidebar.resize": "Resize sidebar",
 
   // workspace panel
   "workspace.title": "Workspace",
@@ -40,8 +41,10 @@ export const en = {
   "workspace.minimize": "Minimize workspace panel",
   "workspace.maximize": "Maximize workspace panel",
   "workspace.restore": "Restore workspace panel",
+  "workspace.resizePanel": "Resize workspace panel",
   "workspace.hideTree": "Hide file tree",
   "workspace.showTree": "Show file tree",
+  "workspace.resizeTree": "Resize file tree",
   "workspace.newTab": "Open another file",
   "workspace.closeTab": "Close tab",
   "workspace.filter": "Filter files…",

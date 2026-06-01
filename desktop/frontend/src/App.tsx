@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import type { CSSProperties, KeyboardEvent, PointerEvent as ReactPointerEvent } from "react";
 import {
   SquarePen,
   Brain,
@@ -30,7 +31,29 @@ import { parseTodos } from "./lib/tools";
 import type { MemoryView, Mode, SessionMeta } from "./lib/types";
 
 const SIDEBAR_COLLAPSED_KEY = "reasonix.sidebar.collapsed";
+const SIDEBAR_WIDTH_KEY = "reasonix.sidebar.width";
 const WORKSPACE_PANEL_OPEN_KEY = "reasonix.workspacePanel.open";
+const WORKSPACE_PANEL_WIDTH_KEY = "reasonix.workspacePanel.width";
+const SIDEBAR_COLLAPSED_WIDTH = 68;
+const SIDEBAR_DEFAULT_WIDTH = 264;
+const SIDEBAR_MIN_WIDTH = 228;
+const SIDEBAR_MAX_WIDTH = 420;
+const CHAT_MIN_WIDTH = 420;
+const WORKSPACE_PANEL_DEFAULT_WIDTH = 760;
+const WORKSPACE_PANEL_MIN_WIDTH = 420;
+const WORKSPACE_PANEL_MAX_WIDTH = 980;
+const WORKSPACE_PANEL_MAX_RATIO = 0.68;
+
+function clampSidebarWidth(width: number): number {
+  return Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, Math.round(width)));
+}
+
+function clampWorkspacePanelWidth(width: number, sidebarWidth = SIDEBAR_DEFAULT_WIDTH, viewportWidth = 1440): number {
+  const maxByRatio = Math.floor(viewportWidth * WORKSPACE_PANEL_MAX_RATIO);
+  const maxByChat = Math.floor(viewportWidth - sidebarWidth - CHAT_MIN_WIDTH);
+  const max = Math.max(WORKSPACE_PANEL_MIN_WIDTH, Math.min(WORKSPACE_PANEL_MAX_WIDTH, maxByRatio, maxByChat));
+  return Math.min(max, Math.max(WORKSPACE_PANEL_MIN_WIDTH, Math.round(width)));
+}
 
 function loadSidebarCollapsed(): boolean {
   if (typeof window === "undefined") return false;
@@ -50,6 +73,25 @@ function saveSidebarCollapsed(collapsed: boolean): void {
   }
 }
 
+function loadSidebarWidth(): number {
+  if (typeof window === "undefined") return SIDEBAR_DEFAULT_WIDTH;
+  try {
+    const raw = Number(window.localStorage.getItem(SIDEBAR_WIDTH_KEY));
+    return Number.isFinite(raw) && raw > 0 ? clampSidebarWidth(raw) : SIDEBAR_DEFAULT_WIDTH;
+  } catch {
+    return SIDEBAR_DEFAULT_WIDTH;
+  }
+}
+
+function saveSidebarWidth(width: number): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(SIDEBAR_WIDTH_KEY, String(clampSidebarWidth(width)));
+  } catch {
+    /* ignore storage failures */
+  }
+}
+
 function loadWorkspacePanelOpen(): boolean {
   if (typeof window === "undefined") return true;
   try {
@@ -63,6 +105,25 @@ function saveWorkspacePanelOpen(open: boolean): void {
   if (typeof window === "undefined") return;
   try {
     window.localStorage.setItem(WORKSPACE_PANEL_OPEN_KEY, open ? "1" : "0");
+  } catch {
+    /* ignore storage failures */
+  }
+}
+
+function loadWorkspacePanelWidth(): number {
+  if (typeof window === "undefined") return WORKSPACE_PANEL_DEFAULT_WIDTH;
+  try {
+    const raw = Number(window.localStorage.getItem(WORKSPACE_PANEL_WIDTH_KEY));
+    return Number.isFinite(raw) && raw > 0 ? clampWorkspacePanelWidth(raw) : WORKSPACE_PANEL_DEFAULT_WIDTH;
+  } catch {
+    return WORKSPACE_PANEL_DEFAULT_WIDTH;
+  }
+}
+
+function saveWorkspacePanelWidth(width: number): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(WORKSPACE_PANEL_WIDTH_KEY, String(Math.round(width)));
   } catch {
     /* ignore storage failures */
   }
@@ -105,10 +166,20 @@ export default function App() {
   const [histView, setHistView] = useState<SessionMeta[] | null>(null);
   const [sidebarSessions, setSidebarSessions] = useState<SessionMeta[]>([]);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(loadSidebarCollapsed);
+  const [sidebarWidth, setSidebarWidth] = useState(loadSidebarWidth);
+  const [sidebarResizing, setSidebarResizing] = useState(false);
   const [workspacePanelOpen, setWorkspacePanelOpen] = useState(loadWorkspacePanelOpen);
+  const [workspacePanelWidth, setWorkspacePanelWidth] = useState(loadWorkspacePanelWidth);
+  const [workspacePanelResizing, setWorkspacePanelResizing] = useState(false);
   const [workspacePanelMaximized, setWorkspacePanelMaximized] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [capsOpen, setCapsOpen] = useState(false);
+  const [viewportWidth, setViewportWidth] = useState(() => (typeof window === "undefined" ? 1440 : window.innerWidth));
+  const effectiveSidebarWidth = sidebarCollapsed ? SIDEBAR_COLLAPSED_WIDTH : sidebarWidth;
+  const effectiveWorkspacePanelWidth = useMemo(
+    () => clampWorkspacePanelWidth(workspacePanelWidth, effectiveSidebarWidth, viewportWidth),
+    [effectiveSidebarWidth, viewportWidth, workspacePanelWidth],
+  );
 
   // applyMode is the single source of truth for the input mode: it updates the
   // local pill and pushes the matching gate state to the controller (plan = read
@@ -200,6 +271,12 @@ export default function App() {
   }, [refreshSessions]);
 
   useEffect(() => {
+    const onResize = () => setViewportWidth(window.innerWidth);
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+
+  useEffect(() => {
     if (!state.running && state.items.length > 0) void refreshSessions();
   }, [state.running, state.items.length, refreshSessions]);
 
@@ -215,6 +292,120 @@ export default function App() {
       return next;
     });
   }, []);
+
+  const setExpandedSidebarWidth = useCallback((width: number) => {
+    const next = clampSidebarWidth(width);
+    setSidebarWidth(next);
+    saveSidebarWidth(next);
+  }, []);
+
+  const startSidebarResize = useCallback(
+    (event: ReactPointerEvent<HTMLButtonElement>) => {
+      if (sidebarCollapsed) return;
+      event.preventDefault();
+      setSidebarResizing(true);
+      let nextWidth = sidebarWidth;
+      const onMove = (moveEvent: PointerEvent) => {
+        nextWidth = clampSidebarWidth(moveEvent.clientX);
+        setSidebarWidth(nextWidth);
+      };
+      const onDone = () => {
+        setSidebarWidth(nextWidth);
+        saveSidebarWidth(nextWidth);
+        setSidebarResizing(false);
+        window.removeEventListener("pointermove", onMove);
+        window.removeEventListener("pointerup", onDone);
+        window.removeEventListener("pointercancel", onDone);
+        document.body.style.cursor = "";
+        document.body.style.userSelect = "";
+      };
+      document.body.style.cursor = "col-resize";
+      document.body.style.userSelect = "none";
+      window.addEventListener("pointermove", onMove);
+      window.addEventListener("pointerup", onDone);
+      window.addEventListener("pointercancel", onDone);
+    },
+    [sidebarCollapsed, sidebarWidth],
+  );
+
+  const resizeSidebarWithKeyboard = useCallback(
+    (event: KeyboardEvent<HTMLButtonElement>) => {
+      if (sidebarCollapsed) return;
+      if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+        event.preventDefault();
+        setExpandedSidebarWidth(sidebarWidth + (event.key === "ArrowRight" ? 16 : -16));
+      } else if (event.key === "Home") {
+        event.preventDefault();
+        setExpandedSidebarWidth(SIDEBAR_MIN_WIDTH);
+      } else if (event.key === "End") {
+        event.preventDefault();
+        setExpandedSidebarWidth(SIDEBAR_MAX_WIDTH);
+      }
+    },
+    [setExpandedSidebarWidth, sidebarCollapsed, sidebarWidth],
+  );
+
+  const setSavedWorkspacePanelWidth = useCallback(
+    (width: number) => {
+      const next = clampWorkspacePanelWidth(width, effectiveSidebarWidth, viewportWidth);
+      setWorkspacePanelWidth(next);
+      saveWorkspacePanelWidth(next);
+    },
+    [effectiveSidebarWidth, viewportWidth],
+  );
+
+  const startWorkspacePanelResize = useCallback(
+    (event: ReactPointerEvent<HTMLButtonElement>) => {
+      if (!workspacePanelOpen || workspacePanelMaximized) return;
+      event.preventDefault();
+      setWorkspacePanelResizing(true);
+      const onMove = (moveEvent: PointerEvent) => {
+        setWorkspacePanelWidth(clampWorkspacePanelWidth(window.innerWidth - moveEvent.clientX, effectiveSidebarWidth, window.innerWidth));
+      };
+      const onDone = (doneEvent: PointerEvent) => {
+        const next = clampWorkspacePanelWidth(window.innerWidth - doneEvent.clientX, effectiveSidebarWidth, window.innerWidth);
+        setWorkspacePanelWidth(next);
+        saveWorkspacePanelWidth(next);
+        setWorkspacePanelResizing(false);
+        window.removeEventListener("pointermove", onMove);
+        window.removeEventListener("pointerup", onDone);
+        window.removeEventListener("pointercancel", onDone);
+        document.body.style.cursor = "";
+        document.body.style.userSelect = "";
+      };
+      document.body.style.cursor = "col-resize";
+      document.body.style.userSelect = "none";
+      window.addEventListener("pointermove", onMove);
+      window.addEventListener("pointerup", onDone);
+      window.addEventListener("pointercancel", onDone);
+    },
+    [effectiveSidebarWidth, workspacePanelMaximized, workspacePanelOpen],
+  );
+
+  const resizeWorkspacePanelWithKeyboard = useCallback(
+    (event: KeyboardEvent<HTMLButtonElement>) => {
+      if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+        event.preventDefault();
+        setSavedWorkspacePanelWidth(effectiveWorkspacePanelWidth + (event.key === "ArrowLeft" ? 16 : -16));
+      } else if (event.key === "Home") {
+        event.preventDefault();
+        setSavedWorkspacePanelWidth(WORKSPACE_PANEL_MIN_WIDTH);
+      } else if (event.key === "End") {
+        event.preventDefault();
+        setSavedWorkspacePanelWidth(WORKSPACE_PANEL_MAX_WIDTH);
+      }
+    },
+    [effectiveWorkspacePanelWidth, setSavedWorkspacePanelWidth],
+  );
+
+  const layoutStyle = useMemo(
+    () =>
+      ({
+        "--sidebar-expanded-width": `${sidebarWidth}px`,
+        "--workspace-width": `${effectiveWorkspacePanelWidth}px`,
+      }) as CSSProperties,
+    [effectiveWorkspacePanelWidth, sidebarWidth],
+  );
 
   const setWorkspacePanel = useCallback((open: boolean) => {
     setWorkspacePanelOpen(open);
@@ -291,11 +482,14 @@ export default function App() {
         className={[
           "layout",
           sidebarCollapsed ? "layout--sidebar-collapsed" : "",
+          sidebarResizing ? "layout--resizing layout--sidebar-resizing" : "",
           workspacePanelOpen ? "layout--workspace-open" : "",
+          workspacePanelResizing ? "layout--resizing layout--workspace-resizing" : "",
           workspacePanelOpen && workspacePanelMaximized ? "layout--workspace-maximized" : "",
         ]
           .filter(Boolean)
           .join(" ")}
+        style={layoutStyle}
       >
         <aside className={`sidebar${sidebarCollapsed ? " sidebar--collapsed" : ""}`} aria-label="Reasonix navigation">
           <div className="sidebar__brand">
@@ -388,6 +582,20 @@ export default function App() {
           </nav>
 
         </aside>
+        <button
+          className="sidebar-resizer"
+          type="button"
+          role="separator"
+          aria-orientation="vertical"
+          aria-label={t("sidebar.resize")}
+          aria-valuemin={SIDEBAR_MIN_WIDTH}
+          aria-valuemax={SIDEBAR_MAX_WIDTH}
+          aria-valuenow={sidebarWidth}
+          onPointerDown={startSidebarResize}
+          onKeyDown={resizeSidebarWithKeyboard}
+          onDoubleClick={() => setExpandedSidebarWidth(SIDEBAR_DEFAULT_WIDTH)}
+          title={t("sidebar.resize")}
+        />
 
         <section className="chat-pane">
           <header className="topbar">
@@ -473,10 +681,28 @@ export default function App() {
           </footer>
         </section>
 
+        {workspacePanelOpen && !workspacePanelMaximized && (
+          <button
+            className="workspace-panel-resizer"
+            type="button"
+            role="separator"
+            aria-orientation="vertical"
+            aria-label={t("workspace.resizePanel")}
+            aria-valuemin={WORKSPACE_PANEL_MIN_WIDTH}
+            aria-valuemax={WORKSPACE_PANEL_MAX_WIDTH}
+            aria-valuenow={effectiveWorkspacePanelWidth}
+            onPointerDown={startWorkspacePanelResize}
+            onKeyDown={resizeWorkspacePanelWithKeyboard}
+            onDoubleClick={() => setSavedWorkspacePanelWidth(WORKSPACE_PANEL_DEFAULT_WIDTH)}
+            title={t("workspace.resizePanel")}
+          />
+        )}
+
         <WorkspacePanel
           open={workspacePanelOpen}
           cwd={state.meta?.cwd}
           maximized={workspacePanelMaximized}
+          panelWidth={workspacePanelMaximized ? viewportWidth - effectiveSidebarWidth : effectiveWorkspacePanelWidth}
           onClose={() => setWorkspacePanel(false)}
           onToggleMaximized={() => setWorkspacePanelMaximized((value) => !value)}
         />

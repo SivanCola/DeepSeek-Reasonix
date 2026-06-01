@@ -33,6 +33,7 @@ export const zh: Record<DictKey, string> = {
   "sidebar.changeWorkspace": "更改",
   "sidebar.collapse": "收起侧边栏",
   "sidebar.expand": "展开侧边栏",
+  "sidebar.resize": "调整侧边栏宽度",
 
   // 工作区面板
   "workspace.title": "工作区",
@@ -41,8 +42,10 @@ export const zh: Record<DictKey, string> = {
   "workspace.minimize": "最小化工作区面板",
   "workspace.maximize": "最大化工作区面板",
   "workspace.restore": "还原工作区面板",
+  "workspace.resizePanel": "调整工作区面板宽度",
   "workspace.hideTree": "隐藏文件树",
   "workspace.showTree": "显示文件树",
+  "workspace.resizeTree": "调整文件树宽度",
   "workspace.newTab": "打开其他文件",
   "workspace.closeTab": "关闭标签",
   "workspace.filter": "筛选文件…",

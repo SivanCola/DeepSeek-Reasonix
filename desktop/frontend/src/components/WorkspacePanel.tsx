@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { CSSProperties, KeyboardEvent, PointerEvent as ReactPointerEvent } from "react";
 import {
   ChevronDown,
   ChevronRight,
@@ -25,6 +26,39 @@ import { CodeViewer } from "./CodeViewer";
 import { Markdown } from "./Markdown";
 
 const preferredFiles = ["WORKSPACE.md", "README.md", "REASONIX.md", "package.json", "go.mod"];
+const WORKSPACE_TREE_WIDTH_KEY = "reasonix.workspaceTree.width";
+const WORKSPACE_TREE_DEFAULT_WIDTH = 280;
+const WORKSPACE_TREE_MIN_WIDTH = 220;
+const WORKSPACE_TREE_MAX_WIDTH = 420;
+const WORKSPACE_PREVIEW_MIN_WIDTH = 360;
+
+function clampWorkspaceTreeWidth(width: number, panelWidth?: number): number {
+  const maxForPanel =
+    typeof panelWidth === "number" && Number.isFinite(panelWidth)
+      ? Math.max(WORKSPACE_TREE_MIN_WIDTH, panelWidth - WORKSPACE_PREVIEW_MIN_WIDTH)
+      : WORKSPACE_TREE_MAX_WIDTH;
+  const max = Math.min(WORKSPACE_TREE_MAX_WIDTH, maxForPanel);
+  return Math.min(max, Math.max(WORKSPACE_TREE_MIN_WIDTH, Math.round(width)));
+}
+
+function loadWorkspaceTreeWidth(): number {
+  if (typeof window === "undefined") return WORKSPACE_TREE_DEFAULT_WIDTH;
+  try {
+    const raw = Number(window.localStorage.getItem(WORKSPACE_TREE_WIDTH_KEY));
+    return Number.isFinite(raw) && raw > 0 ? clampWorkspaceTreeWidth(raw) : WORKSPACE_TREE_DEFAULT_WIDTH;
+  } catch {
+    return WORKSPACE_TREE_DEFAULT_WIDTH;
+  }
+}
+
+function saveWorkspaceTreeWidth(width: number): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(WORKSPACE_TREE_WIDTH_KEY, String(Math.round(width)));
+  } catch {
+    /* ignore storage failures */
+  }
+}
 
 function entryPath(dir: string, entry: DirEntry): string {
   const prefix = dir === "" || dir.endsWith("/") ? dir : dir + "/";
@@ -93,16 +127,19 @@ export function WorkspacePanel({
   open,
   cwd,
   maximized,
+  panelWidth,
   onClose,
   onToggleMaximized,
 }: {
   open: boolean;
   cwd?: string;
   maximized: boolean;
+  panelWidth?: number;
   onClose: () => void;
   onToggleMaximized: () => void;
 }) {
   const t = useT();
+  const panelRef = useRef<HTMLElement>(null);
   const filterRef = useRef<HTMLInputElement>(null);
   const [entriesByDir, setEntriesByDir] = useState<Record<string, DirEntry[]>>({});
   const [openDirs, setOpenDirs] = useState<Set<string>>(() => new Set([""]));
@@ -112,6 +149,8 @@ export function WorkspacePanel({
   const [loadingPreview, setLoadingPreview] = useState(false);
   const [filter, setFilter] = useState("");
   const [treeVisible, setTreeVisible] = useState(true);
+  const [treeWidth, setTreeWidth] = useState(loadWorkspaceTreeWidth);
+  const [treeResizing, setTreeResizing] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
 
   const loadDir = useCallback(async (dir: string) => {
@@ -260,6 +299,68 @@ export function WorkspacePanel({
       .sort((a, b) => a.path.localeCompare(b.path));
   }, [entriesByDir, filter]);
 
+  const effectiveTreeWidth = useMemo(() => clampWorkspaceTreeWidth(treeWidth, panelWidth), [panelWidth, treeWidth]);
+
+  const panelStyle = useMemo(
+    () => ({ "--workspace-tree-width": `${effectiveTreeWidth}px` }) as CSSProperties,
+    [effectiveTreeWidth],
+  );
+
+  const setSavedTreeWidth = useCallback(
+    (width: number) => {
+      const next = clampWorkspaceTreeWidth(width, panelWidth);
+      setTreeWidth(next);
+      saveWorkspaceTreeWidth(next);
+    },
+    [panelWidth],
+  );
+
+  const startTreeResize = useCallback(
+    (event: ReactPointerEvent<HTMLButtonElement>) => {
+      if (!treeVisible) return;
+      const rect = panelRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      event.preventDefault();
+      setTreeResizing(true);
+      const onMove = (moveEvent: PointerEvent) => {
+        setTreeWidth(clampWorkspaceTreeWidth(rect.right - moveEvent.clientX, rect.width));
+      };
+      const onDone = (doneEvent: PointerEvent) => {
+        const next = clampWorkspaceTreeWidth(rect.right - doneEvent.clientX, rect.width);
+        setTreeWidth(next);
+        saveWorkspaceTreeWidth(next);
+        setTreeResizing(false);
+        window.removeEventListener("pointermove", onMove);
+        window.removeEventListener("pointerup", onDone);
+        window.removeEventListener("pointercancel", onDone);
+        document.body.style.cursor = "";
+        document.body.style.userSelect = "";
+      };
+      document.body.style.cursor = "col-resize";
+      document.body.style.userSelect = "none";
+      window.addEventListener("pointermove", onMove);
+      window.addEventListener("pointerup", onDone);
+      window.addEventListener("pointercancel", onDone);
+    },
+    [treeVisible],
+  );
+
+  const resizeTreeWithKeyboard = useCallback(
+    (event: KeyboardEvent<HTMLButtonElement>) => {
+      if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+        event.preventDefault();
+        setSavedTreeWidth(effectiveTreeWidth + (event.key === "ArrowLeft" ? 16 : -16));
+      } else if (event.key === "Home") {
+        event.preventDefault();
+        setSavedTreeWidth(WORKSPACE_TREE_MIN_WIDTH);
+      } else if (event.key === "End") {
+        event.preventDefault();
+        setSavedTreeWidth(WORKSPACE_TREE_MAX_WIDTH);
+      }
+    },
+    [effectiveTreeWidth, setSavedTreeWidth],
+  );
+
   if (!open) return null;
 
   const renderRows = (dir: string, depth: number): JSX.Element[] => {
@@ -301,7 +402,12 @@ export function WorkspacePanel({
   const isMarkdown = selectedPath?.toLowerCase().endsWith(".md") ?? false;
 
   return (
-    <aside className={`workspace-panel${treeVisible ? "" : " workspace-panel--tree-hidden"}`} aria-label={t("workspace.title")}>
+    <aside
+      ref={panelRef}
+      className={`workspace-panel${treeVisible ? "" : " workspace-panel--tree-hidden"}${treeResizing ? " workspace-panel--tree-resizing" : ""}`}
+      aria-label={t("workspace.title")}
+      style={panelStyle}
+    >
       <section className="workspace-preview">
         <header className="workspace-preview__head">
           <div className="workspace-tabs">
@@ -415,6 +521,23 @@ export function WorkspacePanel({
           ) : null}
         </div>
       </section>
+
+      {treeVisible && (
+        <button
+          className="workspace-tree-resizer"
+          type="button"
+          role="separator"
+          aria-orientation="vertical"
+          aria-label={t("workspace.resizeTree")}
+          aria-valuemin={WORKSPACE_TREE_MIN_WIDTH}
+          aria-valuemax={WORKSPACE_TREE_MAX_WIDTH}
+          aria-valuenow={effectiveTreeWidth}
+          onPointerDown={startTreeResize}
+          onKeyDown={resizeTreeWithKeyboard}
+          onDoubleClick={() => setSavedTreeWidth(WORKSPACE_TREE_DEFAULT_WIDTH)}
+          title={t("workspace.resizeTree")}
+        />
+      )}
 
       <section className="workspace-files">
         <div className="workspace-files__tools">

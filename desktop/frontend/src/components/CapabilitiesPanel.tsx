@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { app } from "../lib/bridge";
 import { useT } from "../lib/i18n";
 import type { CapabilitiesView, MCPServerInput, ServerView, SkillView } from "../lib/types";
@@ -22,6 +22,7 @@ export function CapabilitiesPanel({
   const [confirming, setConfirming] = useState<string | null>(null);
   const [tab, setTab] = useState<CapTab>("servers");
   const [skillQuery, setSkillQuery] = useState("");
+  const [expandedSkills, setExpandedSkills] = useState<Set<string>>(() => new Set());
 
   const reload = async () =>
     setView(await app.Capabilities().catch(() => ({ servers: [], skills: [] })));
@@ -64,6 +65,15 @@ export function CapabilitiesPanel({
       return text.includes(q);
     });
   }, [view, skillQuery]);
+
+  const toggleSkill = useCallback((name: string) => {
+    setExpandedSkills((prev) => {
+      const next = new Set(prev);
+      if (next.has(name)) next.delete(name);
+      else next.add(name);
+      return next;
+    });
+  }, []);
 
   return (
     <div className="drawer-backdrop drawer-backdrop--subtle" onClick={onClose}>
@@ -146,9 +156,16 @@ export function CapabilitiesPanel({
                 ) : filteredSkills.length === 0 ? (
                   <div className="mem-empty">{t("caps.noSkillMatches")}</div>
                 ) : (
-                  filteredSkills.map((sk) => (
-                    <SkillRow key={sk.name} skill={sk} />
-                  ))
+                  <div className="cap-skills">
+                    {filteredSkills.map((sk) => (
+                      <SkillRow
+                        key={sk.name}
+                        skill={sk}
+                        expanded={expandedSkills.has(sk.name)}
+                        onToggle={() => toggleSkill(sk.name)}
+                      />
+                    ))}
+                  </div>
                 )}
               </section>
             )}
@@ -247,20 +264,36 @@ function serverActionLabel(s: ServerView, t: ReturnType<typeof useT>): string {
   return t("caps.retry");
 }
 
-function SkillRow({ skill }: { skill: SkillView }) {
+function SkillRow({
+  skill,
+  expanded,
+  onToggle,
+}: {
+  skill: SkillView;
+  expanded: boolean;
+  onToggle: () => void;
+}) {
   const t = useT();
   return (
-    <div className="cap-row cap-row--skill">
-      <span className="cap-slash">/</span>
-      <div className="cap-row__text">
-        <div className="cap-row__head">
-          <span className="cap-row__name">{skill.name}</span>
+    <button
+      className={`cap-skill-card${expanded ? " cap-skill-card--expanded" : ""}`}
+      type="button"
+      onClick={onToggle}
+      aria-expanded={expanded}
+      title={skill.description}
+    >
+      <div className="cap-skill-card__head">
+        <span className="cap-skill-card__command">
+          <span className="cap-skill-card__slash">/</span>
+          {skill.name}
+        </span>
+        <span className="cap-skill-card__badges">
           <span className={`badge badge--${skill.scope}`}>{skill.scope}</span>
           {skill.runAs === "subagent" && <span className="badge">{t("caps.subagent")}</span>}
-        </div>
-        <div className="cap-row__sub">{skill.description}</div>
+        </span>
       </div>
-    </div>
+      <div className="cap-skill-card__desc">{skill.description}</div>
+    </button>
   );
 }
 
