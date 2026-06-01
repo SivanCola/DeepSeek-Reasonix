@@ -1448,9 +1448,9 @@ body {
 .workspace-switcher {
   --wails-draggable: no-drag;
   position: absolute;
-  left: 0;
-  bottom: calc(100% + 8px);
-  z-index: 30;
+  left: 10px;
+  bottom: 44px;
+  z-index: 40;
   width: min(320px, 82vw);
   padding: 10px;
   border: 1px solid var(--border);

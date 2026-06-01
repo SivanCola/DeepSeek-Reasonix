@@ -66,6 +66,7 @@ export function Composer({
   const [workspaceQuery, setWorkspaceQuery] = useState("");
   const [workspaces, setWorkspaces] = useState<WorkspaceView[]>([]);
   const taRef = useRef<HTMLTextAreaElement>(null);
+  const workspaceAnchorRef = useRef<HTMLDivElement>(null);
   const workspaceMenuRef = useRef<HTMLDivElement>(null);
   const wasRunning = useRef(running);
 
@@ -323,7 +324,9 @@ export function Composer({
   useEffect(() => {
     if (!workspaceMenuOpen) return;
     const close = (e: MouseEvent) => {
-      if (!workspaceMenuRef.current?.contains(e.target as Node)) setWorkspaceMenuOpen(false);
+      const target = e.target as Node;
+      if (workspaceAnchorRef.current?.contains(target) || workspaceMenuRef.current?.contains(target)) return;
+      setWorkspaceMenuOpen(false);
     };
     document.addEventListener("mousedown", close);
     return () => document.removeEventListener("mousedown", close);
@@ -413,6 +416,53 @@ export function Composer({
 
   return (
     <div className="composer-wrap">
+      {workspaceMenuOpen && cwd && (
+        <div className="workspace-switcher" ref={workspaceMenuRef}>
+          <label className="workspace-switcher__search">
+            <Search size={14} />
+            <input
+              autoFocus
+              value={workspaceQuery}
+              onChange={(e) => setWorkspaceQuery(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Escape") setWorkspaceMenuOpen(false);
+              }}
+              placeholder={t("composer.searchProjects")}
+            />
+          </label>
+          <div className="workspace-switcher__list">
+            {filteredWorkspaces.map((w) => (
+              <button
+                key={w.path}
+                className="workspace-switcher__item"
+                onClick={() => {
+                  if (w.current) {
+                    setWorkspaceMenuOpen(false);
+                    return;
+                  }
+                  void chooseWorkspace(w.path);
+                }}
+                title={w.path}
+              >
+                <FolderGit2 size={15} />
+                <span>{w.name}</span>
+                {w.current && <Check size={15} />}
+              </button>
+            ))}
+            {filteredWorkspaces.length === 0 && <div className="workspace-switcher__empty">{t("composer.noProjectMatches")}</div>}
+          </div>
+          <div className="workspace-switcher__actions">
+            <button onClick={() => void chooseWorkspace()}>
+              <FolderPlus size={15} />
+              <span>{t("composer.addProject")}</span>
+            </button>
+            <button onClick={() => void chooseWorkspace("")}>
+              <FolderX size={15} />
+              <span>{t("composer.noProject")}</span>
+            </button>
+          </div>
+        </div>
+      )}
       {menuMode === "slash" && (
         <SlashMenu items={slashMatches} activeIndex={active} onPick={pickCommand} onHover={setActive} />
       )}
@@ -472,7 +522,7 @@ export function Composer({
         </div>
         <div className="composer-meta">
           {cwd && (
-            <div className="composer-workspace-wrap" ref={workspaceMenuRef}>
+            <div className="composer-workspace-wrap" ref={workspaceAnchorRef}>
               <button
                 className={`composer__workspace${workspaceMenuOpen ? " composer__workspace--open" : ""}`}
                 onClick={() => {
@@ -485,53 +535,6 @@ export function Composer({
                 <span>{workspaceName}</span>
                 <ChevronDown size={12} />
               </button>
-              {workspaceMenuOpen && (
-                <div className="workspace-switcher">
-                  <label className="workspace-switcher__search">
-                    <Search size={14} />
-                    <input
-                      autoFocus
-                      value={workspaceQuery}
-                      onChange={(e) => setWorkspaceQuery(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Escape") setWorkspaceMenuOpen(false);
-                      }}
-                      placeholder={t("composer.searchProjects")}
-                    />
-                  </label>
-                  <div className="workspace-switcher__list">
-                    {filteredWorkspaces.map((w) => (
-                      <button
-                        key={w.path}
-                        className="workspace-switcher__item"
-                        onClick={() => {
-                          if (w.current) {
-                            setWorkspaceMenuOpen(false);
-                            return;
-                          }
-                          void chooseWorkspace(w.path);
-                        }}
-                        title={w.path}
-                      >
-                        <FolderGit2 size={15} />
-                        <span>{w.name}</span>
-                        {w.current && <Check size={15} />}
-                      </button>
-                    ))}
-                    {filteredWorkspaces.length === 0 && <div className="workspace-switcher__empty">{t("composer.noProjectMatches")}</div>}
-                  </div>
-                  <div className="workspace-switcher__actions">
-                    <button onClick={() => void chooseWorkspace()}>
-                      <FolderPlus size={15} />
-                      <span>{t("composer.addProject")}</span>
-                    </button>
-                    <button onClick={() => void chooseWorkspace("")}>
-                      <FolderX size={15} />
-                      <span>{t("composer.noProject")}</span>
-                    </button>
-                  </div>
-                </div>
-              )}
             </div>
           )}
           <button
