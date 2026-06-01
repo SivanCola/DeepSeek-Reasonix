@@ -24,6 +24,7 @@ export function CapabilitiesPanel({
   const [tab, setTab] = useState<CapTab>("servers");
   const [skillQuery, setSkillQuery] = useState("");
   const [expandedSkills, setExpandedSkills] = useState<Set<string>>(() => new Set());
+  const [expandedErrors, setExpandedErrors] = useState<Set<string>>(() => new Set());
 
   const reload = async () =>
     setView(await app.Capabilities().catch(() => ({ servers: [], skills: [] })));
@@ -67,8 +68,26 @@ export function CapabilitiesPanel({
     });
   }, [view, skillQuery]);
 
+  const serverGroups = useMemo(() => {
+    const servers = view?.servers ?? [];
+    return {
+      failed: servers.filter((s) => s.status === "failed"),
+      connected: servers.filter((s) => s.status === "connected"),
+      disabled: servers.filter((s) => s.status === "disabled"),
+    };
+  }, [view]);
+
   const toggleSkill = useCallback((name: string) => {
     setExpandedSkills((prev) => {
+      const next = new Set(prev);
+      if (next.has(name)) next.delete(name);
+      else next.add(name);
+      return next;
+    });
+  }, []);
+
+  const toggleError = useCallback((name: string) => {
+    setExpandedErrors((prev) => {
       const next = new Set(prev);
       if (next.has(name)) next.delete(name);
       else next.add(name);
@@ -115,23 +134,52 @@ export function CapabilitiesPanel({
 
             {tab === "servers" ? (
               <section className="mem-section">
-                <div className="mem-section__title">{t("caps.servers")}</div>
+                {serverGroups.failed.length > 0 && (
+                  <FailedServersNotice
+                    servers={serverGroups.failed}
+                    expanded={expandedErrors}
+                    onToggle={toggleError}
+                    onRetry={(name) => void mutate(() => app.RetryMCPServer(name))}
+                    onDisable={(name) => void mutate(() => app.SetMCPServerEnabled(name, false))}
+                    busy={busy}
+                  />
+                )}
                 {view.servers.length === 0 && !adding && (
                   <div className="mem-empty">{t("caps.noServers")}</div>
                 )}
-                {view.servers.map((s) => (
-                  <ServerRow
-                    key={s.name}
-                    s={s}
-                    busy={busy}
-                    confirming={confirming === s.name}
-                    onConfirm={() => setConfirming(s.name)}
-                    onCancelConfirm={() => setConfirming(null)}
-                    onRemove={() => mutate(() => app.RemoveMCPServer(s.name)).then(() => setConfirming(null))}
-                    onRetry={() => void mutate(() => app.RetryMCPServer(s.name))}
-                    onToggle={(on) => void mutate(() => app.SetMCPServerEnabled(s.name, on))}
-                  />
-                ))}
+                <ServerGroup
+                  title={t("caps.failedGroup")}
+                  servers={serverGroups.failed}
+                  busy={busy}
+                  confirming={confirming}
+                  onConfirm={setConfirming}
+                  onCancelConfirm={() => setConfirming(null)}
+                  onRemove={(name) => mutate(() => app.RemoveMCPServer(name)).then(() => setConfirming(null))}
+                  onRetry={(name) => void mutate(() => app.RetryMCPServer(name))}
+                  onToggle={(name, on) => void mutate(() => app.SetMCPServerEnabled(name, on))}
+                />
+                <ServerGroup
+                  title={t("caps.connectedGroup")}
+                  servers={serverGroups.connected}
+                  busy={busy}
+                  confirming={confirming}
+                  onConfirm={setConfirming}
+                  onCancelConfirm={() => setConfirming(null)}
+                  onRemove={(name) => mutate(() => app.RemoveMCPServer(name)).then(() => setConfirming(null))}
+                  onRetry={(name) => void mutate(() => app.RetryMCPServer(name))}
+                  onToggle={(name, on) => void mutate(() => app.SetMCPServerEnabled(name, on))}
+                />
+                <ServerGroup
+                  title={t("caps.disabledGroup")}
+                  servers={serverGroups.disabled}
+                  busy={busy}
+                  confirming={confirming}
+                  onConfirm={setConfirming}
+                  onCancelConfirm={() => setConfirming(null)}
+                  onRemove={(name) => mutate(() => app.RemoveMCPServer(name)).then(() => setConfirming(null))}
+                  onRetry={(name) => void mutate(() => app.RetryMCPServer(name))}
+                  onToggle={(name, on) => void mutate(() => app.SetMCPServerEnabled(name, on))}
+                />
                 {adding ? (
                   <AddServerForm busy={busy} onCancel={() => setAdding(false)} onAdd={async (input) => (await mutate(() => app.AddMCPServer(input))) && setAdding(false)} />
                 ) : (
@@ -172,6 +220,111 @@ export function CapabilitiesPanel({
           </div>
         )}
     </ResizableDrawer>
+  );
+}
+
+function ServerGroup({
+  title,
+  servers,
+  busy,
+  confirming,
+  onConfirm,
+  onCancelConfirm,
+  onRemove,
+  onRetry,
+  onToggle,
+}: {
+  title: string;
+  servers: ServerView[];
+  busy: boolean;
+  confirming: string | null;
+  onConfirm: (name: string) => void;
+  onCancelConfirm: () => void;
+  onRemove: (name: string) => void;
+  onRetry: (name: string) => void;
+  onToggle: (name: string, on: boolean) => void;
+}) {
+  if (servers.length === 0) return null;
+  return (
+    <div className="cap-server-group">
+      <div className="cap-server-group__title">
+        <span>{title}</span>
+        <span>{servers.length}</span>
+      </div>
+      {servers.map((s) => (
+        <ServerRow
+          key={s.name}
+          s={s}
+          busy={busy}
+          confirming={confirming === s.name}
+          onConfirm={() => onConfirm(s.name)}
+          onCancelConfirm={onCancelConfirm}
+          onRemove={() => onRemove(s.name)}
+          onRetry={() => onRetry(s.name)}
+          onToggle={(on) => onToggle(s.name, on)}
+        />
+      ))}
+    </div>
+  );
+}
+
+function FailedServersNotice({
+  servers,
+  expanded,
+  busy,
+  onToggle,
+  onRetry,
+  onDisable,
+}: {
+  servers: ServerView[];
+  expanded: Set<string>;
+  busy: boolean;
+  onToggle: (name: string) => void;
+  onRetry: (name: string) => void;
+  onDisable: (name: string) => void;
+}) {
+  const t = useT();
+  return (
+    <div className="cap-failures" role="status">
+      <div className="cap-failures__head">
+        <div>
+          <div className="cap-failures__title">{t("caps.failureTitle", { failed: servers.length })}</div>
+          <div className="cap-failures__hint">{t("caps.failureHint")}</div>
+        </div>
+      </div>
+      <div className="cap-failures__list">
+        {servers.map((s) => {
+          const open = expanded.has(s.name);
+          const error = s.error || t("caps.failed");
+          return (
+            <div className="cap-failure" key={s.name}>
+              <div className="cap-failure__main">
+                <span className="cap-dot cap-dot--failed" />
+                <div className="cap-failure__text">
+                  <div className="cap-failure__name">{s.name}</div>
+                  <div className="cap-failure__summary">{summarizeServerError(error)}</div>
+                </div>
+              </div>
+              <div className="cap-failure__actions">
+                <button className="btn btn--small" disabled={busy} onClick={() => onRetry(s.name)}>
+                  {t("caps.retry")}
+                </button>
+                <button className="btn btn--small" disabled={busy} onClick={() => onDisable(s.name)}>
+                  {t("caps.disable")}
+                </button>
+                <button className="btn btn--small" onClick={() => void navigator.clipboard?.writeText(error)}>
+                  {t("common.copy")}
+                </button>
+                <button className="btn btn--small" onClick={() => onToggle(s.name)} aria-expanded={open}>
+                  {open ? t("common.collapse") : t("caps.showLog")}
+                </button>
+              </div>
+              {open && <pre className="cap-failure__log">{error}</pre>}
+            </div>
+          );
+        })}
+      </div>
+    </div>
   );
 }
 
@@ -247,6 +400,18 @@ function ServerRow({
       </div>
     </div>
   );
+}
+
+function summarizeServerError(error: string): string {
+  const normalized = error.replace(/\s+/g, " ").trim();
+  const plugin = normalized.match(/plugin "([^"]+)"/i)?.[1];
+  const npmCode = normalized.match(/\bnpm error code ([A-Z0-9_]+)/i)?.[1];
+  const errno = normalized.match(/\berrno (-?\d+)/i)?.[1];
+  const reason = npmCode
+    ? `npm ${npmCode}${errno ? ` (${errno})` : ""}`
+    : normalized.split(/(?:\.\s+|\n)/)[0];
+  const summary = plugin ? `${plugin}: ${reason}` : reason;
+  return summary.length > 180 ? `${summary.slice(0, 176).trim()}…` : summary;
 }
 
 function serverActionLabel(s: ServerView, t: ReturnType<typeof useT>): string {
