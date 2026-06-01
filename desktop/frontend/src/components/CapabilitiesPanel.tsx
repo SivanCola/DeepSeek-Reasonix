@@ -72,8 +72,7 @@ export function CapabilitiesPanel({
     const servers = view?.servers ?? [];
     return {
       failed: servers.filter((s) => s.status === "failed"),
-      connected: servers.filter((s) => s.status === "connected"),
-      disabled: servers.filter((s) => s.status === "disabled"),
+      active: servers.filter((s) => s.status !== "failed"),
     };
   }, [view]);
 
@@ -134,6 +133,13 @@ export function CapabilitiesPanel({
 
             {tab === "servers" ? (
               <section className="mem-section">
+                <div className="mem-section__actions">
+                  {!adding && (
+                    <button className="btn btn--small" disabled={busy} onClick={() => setAdding(true)}>
+                      {t("caps.addServer")}
+                    </button>
+                  )}
+                </div>
                 {serverGroups.failed.length > 0 && (
                   <FailedServersNotice
                     servers={serverGroups.failed}
@@ -151,20 +157,8 @@ export function CapabilitiesPanel({
                   <div className="mem-empty">{t("caps.noServers")}</div>
                 )}
                 <ServerGroup
-                  title={t("caps.connectedGroup")}
-                  servers={serverGroups.connected}
                   busy={busy}
-                  confirming={confirming}
-                  onConfirm={setConfirming}
-                  onCancelConfirm={() => setConfirming(null)}
-                  onRemove={(name) => mutate(() => app.RemoveMCPServer(name)).then(() => setConfirming(null))}
-                  onRetry={(name) => void mutate(() => app.RetryMCPServer(name))}
-                  onToggle={(name, on) => void mutate(() => app.SetMCPServerEnabled(name, on))}
-                />
-                <ServerGroup
-                  title={t("caps.disabledGroup")}
-                  servers={serverGroups.disabled}
-                  busy={busy}
+                  servers={serverGroups.active}
                   confirming={confirming}
                   onConfirm={setConfirming}
                   onCancelConfirm={() => setConfirming(null)}
@@ -174,11 +168,7 @@ export function CapabilitiesPanel({
                 />
                 {adding ? (
                   <AddServerForm busy={busy} onCancel={() => setAdding(false)} onAdd={async (input) => (await mutate(() => app.AddMCPServer(input))) && setAdding(false)} />
-                ) : (
-                  <button className="btn btn--small" disabled={busy} onClick={() => setAdding(true)}>
-                    {t("caps.addServer")}
-                  </button>
-                )}
+                ) : null}
               </section>
             ) : (
               <section className="mem-section">
@@ -226,7 +216,6 @@ function ServerGroup({
   onRetry,
   onToggle,
 }: {
-  title: string;
   servers: ServerView[];
   busy: boolean;
   confirming: string | null;
@@ -239,10 +228,6 @@ function ServerGroup({
   if (servers.length === 0) return null;
   return (
     <div className="cap-server-group">
-      <div className="cap-server-group__title">
-        <span>{title}</span>
-        <span>{servers.length}</span>
-      </div>
       {servers.map((s) => (
         <ServerRow
           key={s.name}
@@ -367,7 +352,7 @@ function ServerRow({
         ? t("caps.disabled")
         : t("caps.counts", { tools: s.tools, prompts: s.prompts, resources: s.resources });
   return (
-    <div className="cap-row" title={s.error || undefined}>
+    <div className={`cap-row${s.status === "disabled" ? " cap-row--disabled" : ""}`} title={s.error || undefined}>
       <span className={`cap-dot cap-dot--${s.status}`} />
       <div className="cap-row__text">
         <div className="cap-row__head">

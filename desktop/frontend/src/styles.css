@@ -3542,6 +3542,11 @@ body {
 .mem-section__head .mem-section__title {
   margin-bottom: 0;
 }
+.mem-section__actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 10px;
+}
 .settings-summary-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
