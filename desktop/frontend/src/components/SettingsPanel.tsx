@@ -1,8 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type CSSProperties } from "react";
 import { app } from "../lib/bridge";
 import { useI18n, useT } from "../lib/i18n";
 import { useUpdater } from "../lib/useUpdater";
-import { applyTheme, getTheme, type Theme } from "../lib/theme";
+import { applyTheme, getTheme, type Theme, type ThemeMode, type ThemeScheme } from "../lib/theme";
 import type { ProviderView, SettingsView } from "../lib/types";
 
 type SettingsTab = "models" | "providers" | "permissions" | "sandbox" | "agent" | "appearance" | "updates";
@@ -577,35 +577,61 @@ function AgentSection({ s, busy, apply }: SectionProps) {
 
 function AppearanceSection({ theme, onTheme }: { theme: Theme; onTheme: (t: Theme) => void }) {
   const { t, pref, setPref } = useI18n();
-  const themeOptions: Array<{ value: Theme; swatches: string[] }> = [
-    { value: "auto", swatches: ["#faf9f7", "#0e0e10", "#c2613f"] },
-    { value: "light", swatches: ["#faf9f7", "#eee9e2", "#c2613f"] },
-    { value: "dark", swatches: ["#0e0e10", "#202024", "#d97757"] },
-    { value: "focus", swatches: ["#f6f8fb", "#e8eef6", "#2563eb"] },
-    { value: "forest", swatches: ["#f6f8f3", "#e6eddf", "#4f7f52"] },
-    { value: "midnight", swatches: ["#11131a", "#1d2230", "#d6a451"] },
-    { value: "contrast", swatches: ["#08090b", "#f4f0e7", "#2dd4bf"] },
+  const modeOptions: ThemeMode[] = ["auto", "light", "dark"];
+  const schemeOptions: Array<{ value: ThemeScheme; accent: string; soft: string }> = [
+    { value: "clay", accent: "#c2613f", soft: "rgba(194, 97, 63, 0.15)" },
+    { value: "blue", accent: "#2563eb", soft: "rgba(37, 99, 235, 0.14)" },
+    { value: "forest", accent: "#4f7f52", soft: "rgba(79, 127, 82, 0.15)" },
+    { value: "amber", accent: "#b86a26", soft: "rgba(184, 106, 38, 0.15)" },
+    { value: "teal", accent: "#0f766e", soft: "rgba(15, 118, 110, 0.15)" },
   ];
+  const setMode = (mode: ThemeMode) => onTheme({ ...theme, mode });
+  const setScheme = (scheme: ThemeScheme) => onTheme({ ...theme, scheme });
   return (
     <section className="mem-section">
       <div className="mem-section__title">{t("settings.appearance")}</div>
       <div className="set-row">
-        <label className="set-label">{t("settings.theme")}</label>
+        <label className="set-label">{t("settings.themeMode")}</label>
+        <div className="set-seg">
+          {modeOptions.map((mode) => (
+            <button
+              key={mode}
+              className={`set-seg__btn${theme.mode === mode ? " set-seg__btn--on" : ""}`}
+              onClick={() => setMode(mode)}
+            >
+              {themeModeName(mode, t)}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="set-row">
+        <label className="set-label">{t("settings.themeScheme")}</label>
         <div className="theme-grid">
-          {themeOptions.map((opt) => (
+          {schemeOptions.map((opt) => (
             <button
               key={opt.value}
-              className={`theme-choice${theme === opt.value ? " theme-choice--on" : ""}`}
-              onClick={() => onTheme(opt.value)}
+              className={`theme-choice${theme.scheme === opt.value ? " theme-choice--on" : ""}`}
+              style={
+                {
+                  "--preview-accent": opt.accent,
+                  "--preview-accent-soft": opt.soft,
+                } as CSSProperties
+              }
+              onClick={() => setScheme(opt.value)}
             >
-              <span className="theme-choice__swatches" aria-hidden="true">
-                {opt.swatches.map((color) => (
-                  <span key={color} style={{ background: color }} />
-                ))}
+              <span className="theme-preview" aria-hidden="true">
+                <span className="theme-preview__sidebar">
+                  <span />
+                  <span />
+                </span>
+                <span className="theme-preview__main">
+                  <span />
+                  <span />
+                </span>
               </span>
               <span className="theme-choice__text">
-                <strong>{themeName(opt.value, t)}</strong>
-                <small>{themeDescription(opt.value, t)}</small>
+                <strong>{themeSchemeName(opt.value, t)}</strong>
+                <small>{themeSchemeDescription(opt.value, t)}</small>
               </span>
             </button>
           ))}
@@ -623,41 +649,44 @@ function AppearanceSection({ theme, onTheme }: { theme: Theme; onTheme: (t: Them
   );
 }
 
-function themeName(theme: Theme, t: ReturnType<typeof useT>): string {
-  switch (theme) {
+function themeModeName(mode: ThemeMode, t: ReturnType<typeof useT>): string {
+  switch (mode) {
     case "auto":
-      return t("settings.theme.auto");
+      return t("settings.themeMode.auto");
     case "light":
-      return t("settings.theme.light");
+      return t("settings.themeMode.light");
     case "dark":
-      return t("settings.theme.dark");
-    case "focus":
-      return t("settings.theme.focus");
-    case "forest":
-      return t("settings.theme.forest");
-    case "midnight":
-      return t("settings.theme.midnight");
-    case "contrast":
-      return t("settings.theme.contrast");
+      return t("settings.themeMode.dark");
   }
 }
 
-function themeDescription(theme: Theme, t: ReturnType<typeof useT>): string {
-  switch (theme) {
-    case "auto":
-      return t("settings.theme.auto.desc");
-    case "light":
-      return t("settings.theme.light.desc");
-    case "dark":
-      return t("settings.theme.dark.desc");
-    case "focus":
-      return t("settings.theme.focus.desc");
+function themeSchemeName(scheme: ThemeScheme, t: ReturnType<typeof useT>): string {
+  switch (scheme) {
+    case "clay":
+      return t("settings.themeScheme.clay");
+    case "blue":
+      return t("settings.themeScheme.blue");
     case "forest":
-      return t("settings.theme.forest.desc");
-    case "midnight":
-      return t("settings.theme.midnight.desc");
-    case "contrast":
-      return t("settings.theme.contrast.desc");
+      return t("settings.themeScheme.forest");
+    case "amber":
+      return t("settings.themeScheme.amber");
+    case "teal":
+      return t("settings.themeScheme.teal");
+  }
+}
+
+function themeSchemeDescription(scheme: ThemeScheme, t: ReturnType<typeof useT>): string {
+  switch (scheme) {
+    case "clay":
+      return t("settings.themeScheme.clay.desc");
+    case "blue":
+      return t("settings.themeScheme.blue.desc");
+    case "forest":
+      return t("settings.themeScheme.forest.desc");
+    case "amber":
+      return t("settings.themeScheme.amber.desc");
+    case "teal":
+      return t("settings.themeScheme.teal.desc");
   }
 }
 
