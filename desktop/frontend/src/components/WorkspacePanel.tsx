@@ -118,7 +118,7 @@ export function WorkspacePanel({
   panelWidth,
   onClose,
   onToggleMaximized,
-  onTwoPaneChange,
+  onPreviewModeChange,
 }: {
   open: boolean;
   cwd?: string;
@@ -126,7 +126,7 @@ export function WorkspacePanel({
   panelWidth?: number;
   onClose: () => void;
   onToggleMaximized: () => void;
-  onTwoPaneChange?: (twoPane: boolean) => void;
+  onPreviewModeChange?: (active: boolean) => void;
 }) {
   const t = useT();
   const panelRef = useRef<HTMLElement>(null);
@@ -285,7 +285,7 @@ export function WorkspacePanel({
 
   const effectiveTreeWidth = useMemo(() => clampWorkspaceTreeWidth(treeWidth, panelWidth), [panelWidth, treeWidth]);
   const previewVisible = openTabs.length > 0 || selectedPath !== null;
-  const twoPaneVisible = open && treeVisible && previewVisible;
+  const previewModeActive = open && previewVisible;
 
   const panelStyle = useMemo(
     () => ({ "--workspace-tree-width": `${effectiveTreeWidth}px` }) as CSSProperties,
@@ -293,8 +293,8 @@ export function WorkspacePanel({
   );
 
   useEffect(() => {
-    onTwoPaneChange?.(twoPaneVisible);
-  }, [onTwoPaneChange, twoPaneVisible]);
+    onPreviewModeChange?.(previewModeActive);
+  }, [onPreviewModeChange, previewModeActive]);
 
   const setSavedTreeWidth = useCallback(
     (width: number) => {

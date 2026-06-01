@@ -158,19 +158,19 @@ export default function App() {
   const [workspaceFileTreePanelWidth, setWorkspaceFileTreePanelWidth] = useState(loadWorkspaceFileTreePanelWidth);
   const [workspacePanelResizing, setWorkspacePanelResizing] = useState(false);
   const [workspacePanelMaximized, setWorkspacePanelMaximized] = useState(false);
-  const [workspaceTwoPaneVisible, setWorkspaceTwoPaneVisible] = useState(false);
+  const [workspacePreviewModeActive, setWorkspacePreviewModeActive] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [capsOpen, setCapsOpen] = useState(false);
   const [pendingPlanRevision, setPendingPlanRevision] = useState<string | null>(null);
   const [viewportWidth, setViewportWidth] = useState(() => (typeof window === "undefined" ? 1440 : window.innerWidth));
-  const sidebarBeforeWorkspaceTwoPaneRef = useRef<boolean | null>(null);
+  const sidebarBeforeWorkspacePreviewRef = useRef<boolean | null>(null);
   const effectiveSidebarWidth = sidebarCollapsed ? SIDEBAR_COLLAPSED_WIDTH : sidebarWidth;
   const effectiveWorkspacePanelWidth = useMemo(
     () =>
-      workspaceTwoPaneVisible
+      workspacePreviewModeActive
         ? clampWorkspacePanelWidth(workspacePanelWidth, effectiveSidebarWidth, viewportWidth)
         : clampWorkspaceFileTreePanelWidth(workspaceFileTreePanelWidth, effectiveSidebarWidth, viewportWidth),
-    [effectiveSidebarWidth, viewportWidth, workspaceFileTreePanelWidth, workspacePanelWidth, workspaceTwoPaneVisible],
+    [effectiveSidebarWidth, viewportWidth, workspaceFileTreePanelWidth, workspacePanelWidth, workspacePreviewModeActive],
   );
 
   // applyMode is the single source of truth for the input mode: it updates the
@@ -285,7 +285,7 @@ export default function App() {
   }, [newSession, refreshSessions]);
 
   const toggleSidebar = useCallback(() => {
-    sidebarBeforeWorkspaceTwoPaneRef.current = null;
+    sidebarBeforeWorkspacePreviewRef.current = null;
     setSidebarCollapsed((collapsed) => {
       const next = !collapsed;
       saveSidebarCollapsed(next);
@@ -293,17 +293,17 @@ export default function App() {
     });
   }, []);
 
-  const handleWorkspaceTwoPaneChange = useCallback((twoPane: boolean) => {
-    setWorkspaceTwoPaneVisible(twoPane);
-    if (twoPane) {
-      if (sidebarBeforeWorkspaceTwoPaneRef.current === null) {
-        sidebarBeforeWorkspaceTwoPaneRef.current = sidebarCollapsed;
+  const handleWorkspacePreviewModeChange = useCallback((active: boolean) => {
+    setWorkspacePreviewModeActive(active);
+    if (active) {
+      if (sidebarBeforeWorkspacePreviewRef.current === null) {
+        sidebarBeforeWorkspacePreviewRef.current = sidebarCollapsed;
       }
       if (!sidebarCollapsed) setSidebarCollapsed(true);
       return;
     }
-    const restoreCollapsed = sidebarBeforeWorkspaceTwoPaneRef.current;
-    sidebarBeforeWorkspaceTwoPaneRef.current = null;
+    const restoreCollapsed = sidebarBeforeWorkspacePreviewRef.current;
+    sidebarBeforeWorkspacePreviewRef.current = null;
     if (restoreCollapsed !== null && restoreCollapsed !== sidebarCollapsed) {
       setSidebarCollapsed(restoreCollapsed);
     }
@@ -363,7 +363,7 @@ export default function App() {
 
   const setSavedWorkspacePanelWidth = useCallback(
     (width: number) => {
-      if (workspaceTwoPaneVisible) {
+      if (workspacePreviewModeActive) {
         const next = clampWorkspacePanelWidth(width, effectiveSidebarWidth, viewportWidth);
         setWorkspacePanelWidth(next);
         saveWorkspacePanelWidth(next);
@@ -373,7 +373,7 @@ export default function App() {
         saveWorkspaceFileTreePanelWidth(next);
       }
     },
-    [effectiveSidebarWidth, viewportWidth, workspaceTwoPaneVisible],
+    [effectiveSidebarWidth, viewportWidth, workspacePreviewModeActive],
   );
 
   const startWorkspacePanelResize = useCallback(
@@ -382,17 +382,17 @@ export default function App() {
       event.preventDefault();
       setWorkspacePanelResizing(true);
       let nextWidth = effectiveWorkspacePanelWidth;
-      const clampWidth = workspaceTwoPaneVisible ? clampWorkspacePanelWidth : clampWorkspaceFileTreePanelWidth;
+      const clampWidth = workspacePreviewModeActive ? clampWorkspacePanelWidth : clampWorkspaceFileTreePanelWidth;
       const onMove = (moveEvent: PointerEvent) => {
         nextWidth = clampWidth(window.innerWidth - moveEvent.clientX, effectiveSidebarWidth, window.innerWidth);
-        if (workspaceTwoPaneVisible) {
+        if (workspacePreviewModeActive) {
           setWorkspacePanelWidth(nextWidth);
         } else {
           setWorkspaceFileTreePanelWidth(nextWidth);
         }
       };
       const onDone = () => {
-        if (workspaceTwoPaneVisible) {
+        if (workspacePreviewModeActive) {
           setWorkspacePanelWidth(nextWidth);
           saveWorkspacePanelWidth(nextWidth);
         } else {
@@ -412,7 +412,7 @@ export default function App() {
       window.addEventListener("pointerup", onDone);
       window.addEventListener("pointercancel", onDone);
     },
-    [effectiveSidebarWidth, effectiveWorkspacePanelWidth, workspacePanelMaximized, workspacePanelOpen, workspaceTwoPaneVisible],
+    [effectiveSidebarWidth, effectiveWorkspacePanelWidth, workspacePanelMaximized, workspacePanelOpen, workspacePreviewModeActive],
   );
 
   const resizeWorkspacePanelWithKeyboard = useCallback(
@@ -422,13 +422,13 @@ export default function App() {
         setSavedWorkspacePanelWidth(effectiveWorkspacePanelWidth + (event.key === "ArrowLeft" ? 16 : -16));
       } else if (event.key === "Home") {
         event.preventDefault();
-        setSavedWorkspacePanelWidth(workspaceTwoPaneVisible ? WORKSPACE_PANEL_MIN_WIDTH : WORKSPACE_FILE_TREE_PANEL_MIN_WIDTH);
+        setSavedWorkspacePanelWidth(workspacePreviewModeActive ? WORKSPACE_PANEL_MIN_WIDTH : WORKSPACE_FILE_TREE_PANEL_MIN_WIDTH);
       } else if (event.key === "End") {
         event.preventDefault();
-        setSavedWorkspacePanelWidth(workspaceTwoPaneVisible ? WORKSPACE_PANEL_MAX_WIDTH : WORKSPACE_FILE_TREE_PANEL_MAX_WIDTH);
+        setSavedWorkspacePanelWidth(workspacePreviewModeActive ? WORKSPACE_PANEL_MAX_WIDTH : WORKSPACE_FILE_TREE_PANEL_MAX_WIDTH);
       }
     },
-    [effectiveWorkspacePanelWidth, setSavedWorkspacePanelWidth, workspaceTwoPaneVisible],
+    [effectiveWorkspacePanelWidth, setSavedWorkspacePanelWidth, workspacePreviewModeActive],
   );
 
   const layoutStyle = useMemo(
@@ -444,7 +444,7 @@ export default function App() {
     setWorkspacePanelOpen(open);
     if (!open) {
       setWorkspacePanelMaximized(false);
-      setWorkspaceTwoPaneVisible(false);
+      setWorkspacePreviewModeActive(false);
     }
   }, []);
 
@@ -739,14 +739,14 @@ export default function App() {
             role="separator"
             aria-orientation="vertical"
             aria-label={t("workspace.resizePanel")}
-            aria-valuemin={workspaceTwoPaneVisible ? WORKSPACE_PANEL_MIN_WIDTH : WORKSPACE_FILE_TREE_PANEL_MIN_WIDTH}
-            aria-valuemax={workspaceTwoPaneVisible ? WORKSPACE_PANEL_MAX_WIDTH : WORKSPACE_FILE_TREE_PANEL_MAX_WIDTH}
+            aria-valuemin={workspacePreviewModeActive ? WORKSPACE_PANEL_MIN_WIDTH : WORKSPACE_FILE_TREE_PANEL_MIN_WIDTH}
+            aria-valuemax={workspacePreviewModeActive ? WORKSPACE_PANEL_MAX_WIDTH : WORKSPACE_FILE_TREE_PANEL_MAX_WIDTH}
             aria-valuenow={effectiveWorkspacePanelWidth}
             onPointerDown={startWorkspacePanelResize}
             onKeyDown={resizeWorkspacePanelWithKeyboard}
             onDoubleClick={() =>
               setSavedWorkspacePanelWidth(
-                workspaceTwoPaneVisible ? WORKSPACE_PANEL_DEFAULT_WIDTH : WORKSPACE_FILE_TREE_PANEL_DEFAULT_WIDTH,
+                workspacePreviewModeActive ? WORKSPACE_PANEL_DEFAULT_WIDTH : WORKSPACE_FILE_TREE_PANEL_DEFAULT_WIDTH,
               )
             }
             title={t("workspace.resizePanel")}
@@ -760,7 +760,7 @@ export default function App() {
           panelWidth={workspacePanelMaximized ? viewportWidth - effectiveSidebarWidth : effectiveWorkspacePanelWidth}
           onClose={() => setWorkspacePanel(false)}
           onToggleMaximized={() => setWorkspacePanelMaximized((value) => !value)}
-          onTwoPaneChange={handleWorkspaceTwoPaneChange}
+          onPreviewModeChange={handleWorkspacePreviewModeChange}
         />
 
         {state.approval && (
