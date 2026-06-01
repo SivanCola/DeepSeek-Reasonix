@@ -1,4 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import type { CSSProperties } from "react";
+import { Check, ChevronDown } from "lucide-react";
 import { app } from "../lib/bridge";
 import { useI18n, useT } from "../lib/i18n";
 import { useUpdater } from "../lib/useUpdater";
@@ -175,35 +177,23 @@ function ModelsSection({ s, busy, apply, onManageProviders }: SectionProps & { o
 
       <div className="set-row">
         <label className="set-label">{t("settings.defaultModel")}</label>
-        <select
-          className="mem-select set-grow"
+        <ModelSelect
           value={toRef(s.defaultModel, s)}
+          options={refs}
           disabled={busy}
-          onChange={(e) => void apply(() => app.SetDefaultModel(e.target.value))}
-        >
-          {refs.map((r) => (
-            <option key={r} value={r}>
-              {r}
-            </option>
-          ))}
-        </select>
+          onChange={(value) => void apply(() => app.SetDefaultModel(value))}
+        />
       </div>
 
       <div className="set-row">
         <label className="set-label">{t("settings.plannerModel")}</label>
-        <select
-          className="mem-select set-grow"
+        <ModelSelect
           value={toRef(s.plannerModel, s)}
+          options={refs}
+          emptyLabel={t("settings.plannerNone")}
           disabled={busy}
-          onChange={(e) => void apply(() => app.SetPlannerModel(e.target.value))}
-        >
-          <option value="">{t("settings.plannerNone")}</option>
-          {refs.map((r) => (
-            <option key={r} value={r}>
-              {r}
-            </option>
-          ))}
-        </select>
+          onChange={(value) => void apply(() => app.SetPlannerModel(value))}
+        />
       </div>
 
       <div className="settings-model-card">
@@ -230,6 +220,93 @@ function ModelsSection({ s, busy, apply, onManageProviders }: SectionProps & { o
         </div>
       </div>
     </section>
+  );
+}
+
+function ModelSelect({
+  value,
+  options,
+  emptyLabel,
+  disabled,
+  onChange,
+}: {
+  value: string;
+  options: string[];
+  emptyLabel?: string;
+  disabled: boolean;
+  onChange: (value: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [menuStyle, setMenuStyle] = useState<CSSProperties>({});
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
+  const selectedLabel = value || emptyLabel || "";
+  const items = emptyLabel ? ["", ...options] : options;
+
+  useLayoutEffect(() => {
+    if (!open) return;
+    const place = () => {
+      const rect = triggerRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      const margin = 8;
+      const width = Math.min(Math.max(rect.width, 220), window.innerWidth - margin * 2);
+      const spaceBelow = window.innerHeight - rect.bottom - margin;
+      const spaceAbove = rect.top - margin;
+      const openUp = spaceBelow < 180 && spaceAbove > spaceBelow;
+      setMenuStyle({
+        left: Math.min(Math.max(margin, rect.left), window.innerWidth - width - margin),
+        top: openUp ? undefined : rect.bottom + 4,
+        bottom: openUp ? window.innerHeight - rect.top + 4 : undefined,
+        width,
+        maxHeight: Math.max(140, Math.min(280, openUp ? spaceAbove : spaceBelow)),
+      });
+    };
+    place();
+    window.addEventListener("resize", place);
+    window.addEventListener("scroll", place, true);
+    return () => {
+      window.removeEventListener("resize", place);
+      window.removeEventListener("scroll", place, true);
+    };
+  }, [open]);
+
+  const choose = (next: string) => {
+    setOpen(false);
+    if (next !== value) onChange(next);
+  };
+
+  return (
+    <div className="model-select set-grow">
+      <button
+        ref={triggerRef}
+        className="model-select__trigger"
+        type="button"
+        disabled={disabled}
+        onClick={() => setOpen((v) => !v)}
+      >
+        <span>{selectedLabel}</span>
+        <ChevronDown size={14} />
+      </button>
+      {open && (
+        <>
+          <div className="model-select__backdrop" onClick={() => setOpen(false)} />
+          <div className="model-select__menu" style={menuStyle} role="listbox">
+            {items.map((item) => (
+              <button
+                key={item || "__empty__"}
+                type="button"
+                role="option"
+                aria-selected={item === value}
+                className={`model-select__item${item === value ? " model-select__item--selected" : ""}`}
+                onClick={() => choose(item)}
+              >
+                <span>{item || emptyLabel}</span>
+                {item === value && <Check size={13} />}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
   );
 }
 
@@ -386,7 +463,19 @@ function ProviderEditor({
 function KeyField({ apiKeyEnv, busy, onSet }: { apiKeyEnv: string; busy: boolean; onSet: (v: string) => Promise<void> }) {
   const t = useT();
   const [val, setVal] = useState("");
+  const [saving, setSaving] = useState(false);
   if (!apiKeyEnv) return null;
+  const save = async () => {
+    const next = val.trim();
+    if (!next || saving) return;
+    setSaving(true);
+    try {
+      await onSet(next);
+      setVal("");
+    } finally {
+      setSaving(false);
+    }
+  };
   return (
     <div className="set-key">
       <input
@@ -395,14 +484,12 @@ function KeyField({ apiKeyEnv, busy, onSet }: { apiKeyEnv: string; busy: boolean
         placeholder={t("settings.setKey", { env: apiKeyEnv })}
         value={val}
         onChange={(e) => setVal(e.target.value)}
+        disabled={busy || saving}
       />
       <button
         className="btn btn--small"
-        disabled={busy || !val.trim()}
-        onClick={() => {
-          void onSet(val.trim());
-          setVal("");
-        }}
+        disabled={busy || saving || !val.trim()}
+        onClick={() => void save()}
       >
         {t("settings.saveKey")}
       </button>
