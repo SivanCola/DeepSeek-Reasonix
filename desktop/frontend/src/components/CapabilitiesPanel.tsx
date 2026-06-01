@@ -140,7 +140,6 @@ export function CapabilitiesPanel({
                     expanded={expandedErrors}
                     onToggle={toggleError}
                     onRetry={(name) => void mutate(() => app.RetryMCPServer(name))}
-                    onDisable={(name) => void mutate(() => app.SetMCPServerEnabled(name, false))}
                     busy={busy}
                   />
                 )}
@@ -274,14 +273,12 @@ function FailedServersNotice({
   busy,
   onToggle,
   onRetry,
-  onDisable,
 }: {
   servers: ServerView[];
   expanded: Set<string>;
   busy: boolean;
   onToggle: (name: string) => void;
   onRetry: (name: string) => void;
-  onDisable: (name: string) => void;
 }) {
   const t = useT();
   return (
@@ -308,9 +305,6 @@ function FailedServersNotice({
               <div className="cap-failure__actions">
                 <button className="btn btn--small" disabled={busy} onClick={() => onRetry(s.name)}>
                   {t("caps.retry")}
-                </button>
-                <button className="btn btn--small" disabled={busy} onClick={() => onDisable(s.name)}>
-                  {t("caps.disable")}
                 </button>
                 <button className="btn btn--small" onClick={() => void navigator.clipboard?.writeText(error)}>
                   {t("common.copy")}
