@@ -11,12 +11,8 @@ type CapTab = "servers" | "skills";
 
 export function CapabilitiesPanel({
   onClose,
-  onInsertSkill,
-  onRunSkill,
 }: {
   onClose: () => void;
-  onInsertSkill: (name: string) => void;
-  onRunSkill: (name: string) => void;
 }) {
   const t = useT();
   const [view, setView] = useState<CapabilitiesView | null>(null);
@@ -151,12 +147,7 @@ export function CapabilitiesPanel({
                   <div className="mem-empty">{t("caps.noSkillMatches")}</div>
                 ) : (
                   filteredSkills.map((sk) => (
-                    <SkillRow
-                      key={sk.name}
-                      skill={sk}
-                      onInsert={() => onInsertSkill(sk.name)}
-                      onRun={() => onRunSkill(sk.name)}
-                    />
+                    <SkillRow key={sk.name} skill={sk} />
                   ))
                 )}
               </section>
@@ -256,15 +247,7 @@ function serverActionLabel(s: ServerView, t: ReturnType<typeof useT>): string {
   return t("caps.retry");
 }
 
-function SkillRow({
-  skill,
-  onInsert,
-  onRun,
-}: {
-  skill: SkillView;
-  onInsert: () => void;
-  onRun: () => void;
-}) {
+function SkillRow({ skill }: { skill: SkillView }) {
   const t = useT();
   return (
     <div className="cap-row cap-row--skill">
@@ -276,14 +259,6 @@ function SkillRow({
           {skill.runAs === "subagent" && <span className="badge">{t("caps.subagent")}</span>}
         </div>
         <div className="cap-row__sub">{skill.description}</div>
-      </div>
-      <div className="cap-row__actions">
-        <button className="btn btn--small" onClick={onInsert}>
-          {t("caps.insert")}
-        </button>
-        <button className="btn btn--primary btn--small" onClick={onRun}>
-          {t("caps.run")}
-        </button>
       </div>
     </div>
   );

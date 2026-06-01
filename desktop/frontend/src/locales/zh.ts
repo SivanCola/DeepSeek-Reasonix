@@ -88,8 +88,6 @@ export const zh: Record<DictKey, string> = {
   "caps.disable": "本次会话停用",
   "caps.searchSkills": "搜索技能…",
   "caps.noSkillMatches": "没有匹配的技能。",
-  "caps.insert": "插入",
-  "caps.run": "运行",
 
   // 欢迎 / 空状态
   "welcome.tagline": "一个编码智能体 —— 描述任务或随便问点什么。",

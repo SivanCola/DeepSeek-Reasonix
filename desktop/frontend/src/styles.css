@@ -2514,9 +2514,6 @@ body {
 .cap-row--skill {
   align-items: center;
 }
-.cap-row--skill .cap-row__actions {
-  align-self: center;
-}
 .cap-switch {
   --wails-draggable: no-drag;
   display: inline-flex;

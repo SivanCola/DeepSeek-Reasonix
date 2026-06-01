@@ -87,8 +87,6 @@ export const en = {
   "caps.disable": "Disable for this session",
   "caps.searchSkills": "Search skills…",
   "caps.noSkillMatches": "No matching skills.",
-  "caps.insert": "Insert",
-  "caps.run": "Run",
 
   // welcome / empty state
   "welcome.tagline": "A coding agent — describe a task or ask anything.",

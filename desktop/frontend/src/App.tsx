@@ -116,7 +116,6 @@ export default function App() {
   const [workspacePanelMaximized, setWorkspacePanelMaximized] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [capsOpen, setCapsOpen] = useState(false);
-  const [composerDraft, setComposerDraft] = useState<string | null>(null);
 
   // applyMode is the single source of truth for the input mode: it updates the
   // local pill and pushes the matching gate state to the controller (plan = read
@@ -195,19 +194,6 @@ export default function App() {
       send(t, submitText.trim());
     },
     [switchModel, openMemory, send],
-  );
-
-  const useSkill = useCallback(
-    (name: string, run: boolean) => {
-      const command = `/${name}`;
-      setCapsOpen(false);
-      if (run) {
-        handleSend(command);
-        return;
-      }
-      setComposerDraft(command + " ");
-    },
-    [handleSend],
   );
 
   const refreshSessions = useCallback(async () => {
@@ -485,8 +471,6 @@ export default function App() {
             <Composer
               running={state.running}
               mode={mode}
-              draftText={composerDraft}
-              onDraftApplied={() => setComposerDraft(null)}
               onSend={handleSend}
               onCancel={cancel}
               onCycleMode={cycleMode}
@@ -557,13 +541,7 @@ export default function App() {
 
       {settingsOpen && <SettingsPanel onClose={() => setSettingsOpen(false)} onChanged={() => void refreshMeta()} />}
 
-      {capsOpen && (
-        <CapabilitiesPanel
-          onClose={() => setCapsOpen(false)}
-          onInsertSkill={(name) => useSkill(name, false)}
-          onRunSkill={(name) => useSkill(name, true)}
-        />
-      )}
+      {capsOpen && <CapabilitiesPanel onClose={() => setCapsOpen(false)} />}
     </div>
   );
 }
