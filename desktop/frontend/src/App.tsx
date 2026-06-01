@@ -336,13 +336,14 @@ export default function App() {
       if (!workspacePanelOpen || workspacePanelMaximized) return;
       event.preventDefault();
       setWorkspacePanelResizing(true);
+      let nextWidth = effectiveWorkspacePanelWidth;
       const onMove = (moveEvent: PointerEvent) => {
-        setWorkspacePanelWidth(clampWorkspacePanelWidth(window.innerWidth - moveEvent.clientX, effectiveSidebarWidth, window.innerWidth));
+        nextWidth = clampWorkspacePanelWidth(window.innerWidth - moveEvent.clientX, effectiveSidebarWidth, window.innerWidth);
+        setWorkspacePanelWidth(nextWidth);
       };
-      const onDone = (doneEvent: PointerEvent) => {
-        const next = clampWorkspacePanelWidth(window.innerWidth - doneEvent.clientX, effectiveSidebarWidth, window.innerWidth);
-        setWorkspacePanelWidth(next);
-        saveWorkspacePanelWidth(next);
+      const onDone = () => {
+        setWorkspacePanelWidth(nextWidth);
+        saveWorkspacePanelWidth(nextWidth);
         setWorkspacePanelResizing(false);
         window.removeEventListener("pointermove", onMove);
         window.removeEventListener("pointerup", onDone);
@@ -356,7 +357,7 @@ export default function App() {
       window.addEventListener("pointerup", onDone);
       window.addEventListener("pointercancel", onDone);
     },
-    [effectiveSidebarWidth, workspacePanelMaximized, workspacePanelOpen],
+    [effectiveSidebarWidth, effectiveWorkspacePanelWidth, workspacePanelMaximized, workspacePanelOpen],
   );
 
   const resizeWorkspacePanelWithKeyboard = useCallback(

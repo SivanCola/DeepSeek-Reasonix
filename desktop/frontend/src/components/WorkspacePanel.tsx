@@ -26,7 +26,6 @@ import type { DirEntry, FilePreview } from "../lib/types";
 import { CodeViewer } from "./CodeViewer";
 import { Markdown } from "./Markdown";
 
-const preferredFiles = ["WORKSPACE.md", "README.md", "REASONIX.md", "package.json", "go.mod"];
 const WORKSPACE_TREE_DEFAULT_WIDTH = 280;
 const WORKSPACE_TREE_MIN_WIDTH = 220;
 const WORKSPACE_TREE_MAX_WIDTH = 420;
@@ -141,7 +140,6 @@ export function WorkspacePanel({
   const [treeWidth, setTreeWidth] = useState(loadWorkspaceTreeWidth);
   const [treeResizing, setTreeResizing] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
-  const [autoPreviewDismissed, setAutoPreviewDismissed] = useState(false);
 
   const loadDir = useCallback(async (dir: string) => {
     const entries = await app.ListDir(dir).catch(() => []);
@@ -152,7 +150,6 @@ export function WorkspacePanel({
     (path: string) => {
       setSelectedPath(path);
       setFilter("");
-      setAutoPreviewDismissed(false);
       setOpenTabs((tabs) => (tabs.includes(path) ? tabs : [...tabs, path]));
       const dirs = parentDirs(path);
       setOpenDirs((prev) => new Set([...Array.from(prev), ...dirs]));
@@ -171,19 +168,9 @@ export function WorkspacePanel({
     setOpenTabs([]);
     setPreview(null);
     setFilter("");
-    setAutoPreviewDismissed(false);
+    setTreeVisible(true);
     void loadDir("");
   }, [cwd, loadDir, open]);
-
-  const rootEntries = entriesByDir[""];
-  useEffect(() => {
-    if (!open || selectedPath || !rootEntries || autoPreviewDismissed) return;
-    const file =
-      preferredFiles
-        .map((name) => rootEntries.find((entry) => !entry.isDir && entry.name === name))
-        .find(Boolean) ?? rootEntries.find((entry) => !entry.isDir);
-    if (file) selectFile(file.name);
-  }, [autoPreviewDismissed, open, rootEntries, selectFile, selectedPath]);
 
   const refreshSelected = useCallback(() => {
     if (!selectedPath) return;
@@ -257,7 +244,6 @@ export function WorkspacePanel({
         if (!replacement) {
           setPreview(null);
           setTreeVisible(true);
-          setAutoPreviewDismissed(true);
         }
       }
       return next;
@@ -319,13 +305,14 @@ export function WorkspacePanel({
       if (!rect) return;
       event.preventDefault();
       setTreeResizing(true);
+      let nextWidth = effectiveTreeWidth;
       const onMove = (moveEvent: PointerEvent) => {
-        setTreeWidth(clampWorkspaceTreeWidth(rect.right - moveEvent.clientX, rect.width));
+        nextWidth = clampWorkspaceTreeWidth(rect.right - moveEvent.clientX, rect.width);
+        setTreeWidth(nextWidth);
       };
-      const onDone = (doneEvent: PointerEvent) => {
-        const next = clampWorkspaceTreeWidth(rect.right - doneEvent.clientX, rect.width);
-        setTreeWidth(next);
-        saveWorkspaceTreeWidth(next);
+      const onDone = () => {
+        setTreeWidth(nextWidth);
+        saveWorkspaceTreeWidth(nextWidth);
         setTreeResizing(false);
         window.removeEventListener("pointermove", onMove);
         window.removeEventListener("pointerup", onDone);
@@ -339,7 +326,7 @@ export function WorkspacePanel({
       window.addEventListener("pointerup", onDone);
       window.addEventListener("pointercancel", onDone);
     },
-    [treeVisible],
+    [effectiveTreeWidth, treeVisible],
   );
 
   const resizeTreeWithKeyboard = useCallback(
