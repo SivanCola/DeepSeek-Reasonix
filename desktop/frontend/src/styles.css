@@ -2689,7 +2689,7 @@ body {
 
 /* ── settings drawer ───────────────────────────────────────────────────────── */
 .drawer--wide {
-  width: min(780px, 94vw);
+  width: min(720px, 94vw);
 }
 .drawer__body--settings {
   flex: 1;
