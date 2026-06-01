@@ -29,7 +29,7 @@ import { Markdown } from "./Markdown";
 const WORKSPACE_TREE_DEFAULT_WIDTH = 280;
 const WORKSPACE_TREE_MIN_WIDTH = 220;
 const WORKSPACE_TREE_MAX_WIDTH = 420;
-const WORKSPACE_PREVIEW_MIN_WIDTH = 360;
+const WORKSPACE_PREVIEW_MIN_WIDTH = 420;
 
 function clampWorkspaceTreeWidth(width: number, panelWidth?: number): number {
   const maxForPanel =
@@ -118,6 +118,7 @@ export function WorkspacePanel({
   panelWidth,
   onClose,
   onToggleMaximized,
+  onTwoPaneChange,
 }: {
   open: boolean;
   cwd?: string;
@@ -125,6 +126,7 @@ export function WorkspacePanel({
   panelWidth?: number;
   onClose: () => void;
   onToggleMaximized: () => void;
+  onTwoPaneChange?: (twoPane: boolean) => void;
 }) {
   const t = useT();
   const panelRef = useRef<HTMLElement>(null);
@@ -283,11 +285,16 @@ export function WorkspacePanel({
 
   const effectiveTreeWidth = useMemo(() => clampWorkspaceTreeWidth(treeWidth, panelWidth), [panelWidth, treeWidth]);
   const previewVisible = openTabs.length > 0 || selectedPath !== null;
+  const twoPaneVisible = open && treeVisible && previewVisible;
 
   const panelStyle = useMemo(
     () => ({ "--workspace-tree-width": `${effectiveTreeWidth}px` }) as CSSProperties,
     [effectiveTreeWidth],
   );
+
+  useEffect(() => {
+    onTwoPaneChange?.(twoPaneVisible);
+  }, [onTwoPaneChange, twoPaneVisible]);
 
   const setSavedTreeWidth = useCallback(
     (width: number) => {

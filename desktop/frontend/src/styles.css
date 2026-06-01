@@ -2282,11 +2282,12 @@ body {
 /* ── workspace side panel ────────────────────────────────────────────────── */
 .workspace-panel {
   --workspace-tree-width: 280px;
+  --workspace-preview-min-width: 420px;
   position: relative;
   min-width: 0;
   min-height: 0;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) var(--workspace-tree-width);
+  grid-template-columns: minmax(var(--workspace-preview-min-width), 1fr) var(--workspace-tree-width);
   height: 100%;
   background: var(--bg);
   border-left: 1px solid var(--border-soft);
@@ -4065,7 +4066,7 @@ body {
   background: var(--hover);
 }
 
-@media (max-width: 1180px) {
+@media (max-width: 1240px) {
   .layout--workspace-open {
     grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
   }
