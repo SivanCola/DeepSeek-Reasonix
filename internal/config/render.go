@@ -19,9 +19,9 @@ func RenderTOML(c *Config) string {
 
 	fmt.Fprintf(&b, "default_model = %q\n", c.DefaultModel)
 	if c.Language != "" {
-		fmt.Fprintf(&b, "language      = %q   # ui language; empty = auto-detect from $LANG / $REASONIX_LANG\n", c.Language)
+		fmt.Fprintf(&b, "language      = %q   # ui/model language; empty = auto-detect from $LANG / $REASONIX_LANG\n", c.Language)
 	} else {
-		b.WriteString("# language      = \"zh\"   # ui language; empty = auto-detect from $LANG / $REASONIX_LANG\n")
+		b.WriteString("# language      = \"zh\"   # ui/model language; empty = auto-detect from $LANG / $REASONIX_LANG\n")
 	}
 	b.WriteString("\n")
 

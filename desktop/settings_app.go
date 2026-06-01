@@ -189,11 +189,40 @@ func (a *App) rebuild() error {
 		path = agent.NewSessionPath(dir, ctrl.Label())
 	}
 	if len(carried) > 0 {
+		carried = withFreshSystemPrompt(carried, systemPromptFrom(ctrl.History()))
 		ctrl.Resume(&agent.Session{Messages: carried}, path)
 	} else if path != "" {
 		ctrl.SetSessionPath(path)
 	}
 	return nil
+}
+
+func systemPromptFrom(messages []provider.Message) string {
+	for _, m := range messages {
+		if m.Role == provider.RoleSystem {
+			return m.Content
+		}
+	}
+	return ""
+}
+
+func withFreshSystemPrompt(messages []provider.Message, system string) []provider.Message {
+	if strings.TrimSpace(system) == "" {
+		return messages
+	}
+	out := append([]provider.Message(nil), messages...)
+	for i := range out {
+		if out[i].Role == provider.RoleSystem {
+			out[i].Content = system
+			out[i].ReasoningContent = ""
+			out[i].ReasoningSignature = ""
+			out[i].ToolCalls = nil
+			out[i].ToolCallID = ""
+			out[i].Name = ""
+			return out
+		}
+	}
+	return append([]provider.Message{{Role: provider.RoleSystem, Content: system}}, out...)
 }
 
 // SetDefaultModel sets the config default and switches the live model to it.
@@ -302,18 +331,17 @@ func (a *App) SetAgentParams(temperature float64, maxSteps int, systemPrompt str
 	})
 }
 
-// SetLanguage sets the UI language tag ("zh" | "en" | "" for auto). It only
-// rewrites config — no controller rebuild needed.
+// SetLanguage sets the UI/model language tag ("zh" | "en" | "" for auto). The
+// controller rebuild folds the resolved policy into the cache-stable system
+// prefix once, instead of injecting language text on every turn.
 func (a *App) SetLanguage(lang string) error {
-	cfg, err := config.Load()
-	if err != nil {
-		return err
-	}
-	cfg.Language = strings.TrimSpace(lang)
-	// Keep the Go-side catalogue in sync so backend-provided slash UI re-localizes
-	// on the next fetch (matches the frontend's language switch).
-	i18n.DetectLanguage(cfg.Language)
-	return cfg.Save()
+	return a.applyConfigChange(func(c *config.Config) error {
+		c.Language = strings.TrimSpace(lang)
+		// Keep the Go-side catalogue in sync so backend-provided slash UI
+		// re-localizes on the next fetch while rebuild updates the model policy.
+		i18n.DetectLanguage(c.Language)
+		return nil
+	})
 }
 
 // trimList drops blank entries from a string slice (and returns a non-nil slice).
