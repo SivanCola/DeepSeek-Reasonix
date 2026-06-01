@@ -1043,8 +1043,8 @@ func flushableMarkdownPrefix(buf string) string {
 const planApprovalTool = "exit_plan_mode"
 
 // handleApprovalKey resolves a pending approval from a keystroke and re-arms the
-// listener. y/1/Enter allows once, a/2 allows for the rest of the session,
-// n/3/Esc denies. Ctrl-C cancels the whole turn via the run context. For a plan
+// listener. 1/y/Enter allows once, 2/a allows for the rest of the session,
+// 3/n/Esc denies. Ctrl-C cancels the whole turn via the run context. For a plan
 // approval (planApprovalTool), allowing also drops the local [plan] tag — the
 // controller turns plan mode off on its side.
 func (m chatTUI) handleApprovalKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {

@@ -118,7 +118,7 @@ command = "reasonix-plugin-example"
 ```
 
 权限逐次调用把关：`deny` > `ask` > `allow` > 兜底（只读工具永远 allow，writer 落到
-`mode`）。`reasonix chat` 会在 writer 调用前征求同意（`y` 本次 · `a` 本会话 · `n` 拒绝）；
+`mode`）。`reasonix chat` 会在 writer 调用前征求同意（`1` 本次 · `2` 本会话 · `3` 拒绝，兼容 `y/a/n`）；
 `reasonix run` 保持自主运行但仍然遵守 `deny`。完整 schema 与契约见
 [`docs/SPEC.md`](docs/SPEC.md)。
 
