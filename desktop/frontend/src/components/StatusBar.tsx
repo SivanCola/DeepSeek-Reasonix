@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Cpu, FolderGit2, Wallet } from "lucide-react";
+import { Cpu, Wallet } from "lucide-react";
 import { ModelSwitcher } from "./ModelSwitcher";
 import { SPINNER_WORDS, useI18n } from "../lib/i18n";
 import type { BalanceInfo, ContextInfo, JobView, Meta, Mode, WireUsage } from "../lib/types";
@@ -68,11 +68,6 @@ function fmtElapsed(ms: number): string {
   return `${Math.floor(s / 60)}m ${s % 60}s`;
 }
 
-function basename(path: string): string {
-  const parts = path.split(/[/\\]/).filter(Boolean);
-  return parts[parts.length - 1] || path;
-}
-
 // useTick re-renders once a second while `on`, so the elapsed clock advances.
 function useTick(on: boolean): number {
   const [, setN] = useState(0);
@@ -95,7 +90,6 @@ export function StatusBar({
   turnStartAt,
   turnTokens,
   onSwitchModel,
-  onPickFolder,
 }: {
   meta?: Meta;
   context: ContextInfo;
@@ -107,7 +101,6 @@ export function StatusBar({
   turnStartAt: number;
   turnTokens: number;
   onSwitchModel: (name: string) => void;
-  onPickFolder?: () => void;
 }) {
   const { t, locale } = useI18n();
   const now = useTick(running);
@@ -168,21 +161,6 @@ export function StatusBar({
             <Wallet size={11} />
             {balance.display}
           </span>
-        </>
-      )}
-      {meta?.cwd && onPickFolder && (
-        <>
-          <span className="statusbar__sep">·</span>
-          <button
-            className="statusbar__workspace"
-            type="button"
-            onClick={onPickFolder}
-            disabled={running}
-            title={running ? t("common.busyHint") : t("status.switchFolder", { cwd: meta.cwd })}
-          >
-            <FolderGit2 size={11} />
-            <span>{basename(meta.cwd)}</span>
-          </button>
         </>
       )}
       <span className="statusbar__spacer" />

@@ -1672,33 +1672,6 @@ body {
   gap: 4px;
   color: var(--fg-dim);
 }
-.statusbar__workspace {
-  --wails-draggable: no-drag;
-  min-width: 0;
-  max-width: 150px;
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 0;
-  border: none;
-  background: transparent;
-  color: var(--fg-dim);
-  font: inherit;
-  font-family: var(--mono);
-  font-size: 11px;
-  cursor: pointer;
-}
-.statusbar__workspace span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.statusbar__workspace:hover {
-  color: var(--fg);
-}
-.statusbar__workspace:disabled {
-  cursor: default;
-  opacity: 0.55;
-}
 .statusbar__jobswrap {
   position: relative;
   display: inline-flex;

@@ -727,7 +727,6 @@ export default function App() {
               turnStartAt={state.turnStartAt}
               turnTokens={state.turnTokens}
               onSwitchModel={switchModel}
-              onPickFolder={() => void switchFolder()}
             />
           </footer>
         </section>
