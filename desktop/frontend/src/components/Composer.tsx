@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ClipboardEvent, DragEvent, KeyboardEvent } from "react";
-import { ArrowUp, Square, X } from "lucide-react";
+import { ArrowUp, ChevronDown, FolderGit2, Square, X } from "lucide-react";
 import { app } from "../lib/bridge";
 import { useT } from "../lib/i18n";
 import type { CommandInfo, DirEntry, Mode, SlashArgItem, SlashArgsResult } from "../lib/types";
@@ -37,17 +37,21 @@ function renderPastedBlock(block: PastedBlock): string {
 export function Composer({
   running,
   mode,
+  cwd,
   onSend,
   onCancel,
   onCycleMode,
+  onPickFolder,
 }: {
   running: boolean;
   mode: Mode;
+  cwd?: string;
   onSend: (displayText: string, submitText?: string) => void;
   // Returns the un-sent text when cancelling before the server replied (so it can
   // be restored to the input); undefined for a normal cancel.
   onCancel: () => string | undefined;
   onCycleMode: () => void;
+  onPickFolder: () => void;
 }) {
   const t = useT();
   const [text, setText] = useState("");
@@ -298,6 +302,12 @@ export function Composer({
 
   const pickCommand = (c: CommandInfo) => setTextCaretEnd("/" + c.name + " ");
 
+  const workspaceName = useMemo(() => {
+    if (!cwd) return "";
+    const parts = cwd.split(/[/\\]/).filter(Boolean);
+    return parts.length > 0 ? parts[parts.length - 1] : cwd;
+  }, [cwd]);
+
   const pickEntry = (e: DirEntry) => {
     const atPos = text.length - (atRaw?.length ?? 0) - 1; // index of '@'
     const prefix = text.slice(0, atPos);
@@ -392,46 +402,62 @@ export function Composer({
           ))}
         </div>
       )}
-      <button
-        className={`composer__mode composer__mode--${mode}`}
-        onClick={onCycleMode}
-        title={t("composer.modeTitle")}
-      >
-        <span className="composer__mode-dot" />
-        {mode === "yolo" ? t("composer.modeYolo") : mode === "plan" ? t("composer.modePlan") : t("composer.modeNormal")}
-        <span className="composer__mode-hint">{t("composer.modeHint")}</span>
-      </button>
-      <div
-        className={`composer${dragOver ? " composer--dragover" : ""}`}
-        onDrop={onDrop}
-        onDragOver={onDragOver}
-        onDragLeave={onDragLeave}
-      >
-        <span className="composer__caret">›</span>
-        <textarea
-          ref={taRef}
-          className="composer__input"
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          onPaste={onPaste}
-          onKeyDown={onKeyDown}
-          placeholder={t("composer.placeholder")}
-          rows={1}
-        />
-        {running ? (
-          <button className="composer__btn composer__btn--stop" onClick={handleCancel} title={t("composer.stop")}>
-            <Square size={14} fill="currentColor" />
-          </button>
-        ) : (
+      <div className="composer-card">
+        <div
+          className={`composer${dragOver ? " composer--dragover" : ""}`}
+          onDrop={onDrop}
+          onDragOver={onDragOver}
+          onDragLeave={onDragLeave}
+        >
+          <span className="composer__caret">›</span>
+          <textarea
+            ref={taRef}
+            className="composer__input"
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            onPaste={onPaste}
+            onKeyDown={onKeyDown}
+            placeholder={t("composer.placeholder")}
+            rows={1}
+          />
+          {running ? (
+            <button className="composer__btn composer__btn--stop" onClick={handleCancel} title={t("composer.stop")}>
+              <Square size={14} fill="currentColor" />
+            </button>
+          ) : (
+            <button
+              className="composer__btn composer__btn--send"
+              onClick={submit}
+              disabled={pendingPaste > 0 || (!text.trim() && attachments.length === 0)}
+              title={t("composer.send")}
+            >
+              <ArrowUp size={16} />
+            </button>
+          )}
+        </div>
+        <div className="composer-meta">
+          {cwd && (
+            <button
+              className="composer__workspace"
+              onClick={onPickFolder}
+              disabled={running}
+              title={running ? t("common.busyHint") : t("status.switchFolder", { cwd })}
+            >
+              <FolderGit2 size={13} />
+              <span>{workspaceName}</span>
+              <ChevronDown size={12} />
+            </button>
+          )}
           <button
-            className="composer__btn composer__btn--send"
-            onClick={submit}
-            disabled={pendingPaste > 0 || (!text.trim() && attachments.length === 0)}
-            title={t("composer.send")}
+            className={`composer__mode composer__mode--${mode}`}
+            onClick={onCycleMode}
+            title={t("composer.modeTitle")}
           >
-            <ArrowUp size={16} />
+            <span className="composer__mode-dot" />
+            {mode === "yolo" ? t("composer.modeYolo") : mode === "plan" ? t("composer.modePlan") : t("composer.modeNormal")}
+            <span className="composer__mode-hint">{t("composer.modeHint")}</span>
           </button>
-        )}
+        </div>
       </div>
     </div>
   );

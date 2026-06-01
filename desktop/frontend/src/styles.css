@@ -283,7 +283,6 @@ body {
 }
 .sidebar__new,
 .sidebar__navitem,
-.sidebar__workspace-change,
 .sidebar-session {
   width: 100%;
   min-width: 0;
@@ -310,21 +309,18 @@ body {
 }
 .sidebar__new:hover,
 .sidebar__navitem:hover,
-.sidebar__workspace-change:hover,
 .sidebar-session:hover {
   background: var(--sidebar-hover);
   color: var(--fg);
 }
 .sidebar__new:disabled,
 .sidebar__navitem:disabled,
-.sidebar__workspace-change:disabled,
 .sidebar-session:disabled {
   opacity: 0.55;
   cursor: default;
 }
 .sidebar__new:disabled:hover,
 .sidebar__navitem:disabled:hover,
-.sidebar__workspace-change:disabled:hover,
 .sidebar-session:disabled:hover {
   background: transparent;
   color: var(--fg-dim);
@@ -446,58 +442,6 @@ body {
 .sidebar-session--current svg {
   color: var(--accent);
 }
-.sidebar__workspace {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 8px;
-  padding: 8px;
-  margin-top: 12px;
-  border-radius: 10px;
-  border: 1px solid var(--border-soft);
-  background: rgba(255, 255, 255, 0.035);
-}
-.sidebar__workspace-main {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  padding: 0;
-  min-width: 0;
-  color: var(--fg-dim);
-}
-.sidebar__workspace-main > span {
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-}
-.sidebar__workspace-change {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 5px;
-  width: auto;
-  align-self: center;
-  padding: 5px 7px;
-  border: 1px solid var(--border-soft);
-  border-radius: 7px;
-  color: var(--fg-dim);
-  background: var(--bg-elev);
-  font-size: 11px;
-  white-space: nowrap;
-}
-.sidebar__workspace-kicker {
-  color: var(--fg-faint);
-  font-size: 10.5px;
-  line-height: 1.2;
-}
-.sidebar__workspace-path {
-  color: var(--fg-dim);
-  font-family: var(--mono);
-  font-size: 11.5px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .sidebar--collapsed {
   align-items: center;
   padding-left: 8px;
@@ -541,27 +485,6 @@ body {
 .sidebar--collapsed .sidebar__section {
   display: none;
 }
-.sidebar--collapsed .sidebar__workspace {
-  grid-template-columns: 1fr;
-  justify-content: center;
-  width: 40px;
-  height: 40px;
-  padding: 0;
-  margin-top: auto;
-}
-.sidebar--collapsed .sidebar__workspace-main,
-.sidebar--collapsed .sidebar__workspace-change span {
-  display: none;
-}
-.sidebar--collapsed .sidebar__workspace-change {
-  display: inline-flex;
-  width: 100%;
-  height: 100%;
-  padding: 0;
-  border: none;
-  background: transparent;
-}
-
 .chat-pane {
   display: flex;
   flex-direction: column;
@@ -1344,6 +1267,17 @@ body {
   max-width: var(--maxw);
   margin: 0 auto;
 }
+.composer-card {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--bg-elev);
+  overflow: hidden;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.08);
+  transition: border-color 0.12s;
+}
+.composer-card:focus-within {
+  border-color: var(--fg-faint);
+}
 .slashmenu {
   position: absolute;
   bottom: calc(100% + 6px);
@@ -1417,18 +1351,15 @@ body {
   display: flex;
   gap: 8px;
   align-items: center;
-  background: var(--bg-elev);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 9px 9px 9px 13px;
-  transition: border-color 0.12s;
-}
-.composer:focus-within {
-  border-color: var(--fg-faint);
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid var(--border-soft);
+  border-radius: 0;
+  padding: 10px 10px 9px 13px;
 }
 .composer--dragover {
-  border-color: var(--accent);
-  border-style: dashed;
+  outline: 1px dashed var(--accent);
+  outline-offset: -4px;
 }
 .composer__caret {
   color: var(--accent);
@@ -1476,6 +1407,46 @@ body {
 .composer__btn--stop {
   background: var(--bg-elev-2);
   color: var(--err);
+}
+.composer-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 6px 8px 7px 10px;
+}
+.composer__workspace {
+  --wails-draggable: no-drag;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 240px;
+  padding: 5px 8px;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--fg-dim);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.composer__workspace:hover {
+  color: var(--fg);
+  background: var(--bg-soft);
+}
+.composer__workspace:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+.composer__workspace:disabled:hover {
+  color: var(--fg-dim);
+  background: transparent;
+}
+.composer__workspace span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .statusbar {
@@ -1584,33 +1555,6 @@ body {
 .jobsmenu__status {
   color: var(--fg-faint);
   flex-shrink: 0;
-}
-.statusbar__cwd {
-  --wails-draggable: no-drag;
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 2px 6px;
-  margin: 0 -2px;
-  border: none;
-  border-radius: 6px;
-  background: transparent;
-  color: inherit;
-  font: inherit;
-  cursor: pointer;
-  transition: color 0.12s, background 0.12s;
-}
-.statusbar__cwd:hover {
-  color: var(--fg-dim);
-  background: var(--bg-soft);
-}
-.statusbar__cwd:disabled {
-  cursor: default;
-  opacity: 0.6;
-}
-.statusbar__cwd:disabled:hover {
-  color: inherit;
-  background: transparent;
 }
 .statusbar__spacer {
   flex: 1;
@@ -3334,13 +3278,12 @@ body {
   padding-left: 20px;
 }
 
-/* ── composer mode indicator (pinned above the input) ─────────────────────── */
+/* ── composer mode indicator ──────────────────────────────────────────────── */
 .composer__mode {
   --wails-draggable: no-drag;
   display: inline-flex;
   align-items: center;
   gap: 7px;
-  margin-bottom: 8px;
   padding: 4px 10px;
   background: transparent;
   border: 1px solid var(--border);

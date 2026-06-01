@@ -5,8 +5,6 @@ import {
   Blocks,
   History,
   Settings as SettingsIcon,
-  FolderGit2,
-  FolderOpen,
   MessageSquare,
   PanelLeftClose,
   PanelLeftOpen,
@@ -68,13 +66,6 @@ function saveWorkspacePanelOpen(open: boolean): void {
   } catch {
     /* ignore storage failures */
   }
-}
-
-function shortCwd(cwd?: string): string {
-  if (!cwd) return "";
-  const parts = cwd.split("/").filter(Boolean);
-  if (parts.length <= 2) return cwd;
-  return "…/" + parts.slice(-2).join("/");
 }
 
 function sessionTitle(session: SessionMeta, fallback: string): string {
@@ -394,26 +385,6 @@ export default function App() {
             </button>
           </nav>
 
-          {state.meta?.cwd && (
-            <div className="sidebar__workspace" title={state.meta.cwd}>
-              <div className="sidebar__workspace-main">
-                <FolderGit2 size={14} />
-                <span>
-                  <span className="sidebar__workspace-kicker">{t("sidebar.workspace")}</span>
-                  <span className="sidebar__workspace-path">{shortCwd(state.meta.cwd)}</span>
-                </span>
-              </div>
-              <button
-                className="sidebar__workspace-change"
-                onClick={() => void switchFolder()}
-                disabled={state.running}
-                title={state.running ? t("common.busyHint") : t("sidebar.changeWorkspace")}
-              >
-                <FolderOpen size={13} />
-                <span>{t("sidebar.changeWorkspace")}</span>
-              </button>
-            </div>
-          )}
         </aside>
 
         <section className="chat-pane">
@@ -479,9 +450,11 @@ export default function App() {
             <Composer
               running={state.running}
               mode={mode}
+              cwd={state.meta?.cwd}
               onSend={handleSend}
               onCancel={cancel}
               onCycleMode={cycleMode}
+              onPickFolder={() => void switchFolder()}
             />
             <StatusBar
               meta={state.meta}
@@ -494,7 +467,6 @@ export default function App() {
               turnStartAt={state.turnStartAt}
               turnTokens={state.turnTokens}
               onSwitchModel={switchModel}
-              onPickFolder={() => void switchFolder()}
             />
           </footer>
         </section>
