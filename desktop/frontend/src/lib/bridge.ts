@@ -7,20 +7,26 @@
 
 import type {
   BalanceInfo,
+  CapabilitiesView,
   CheckpointMeta,
   CommandInfo,
   ContextInfo,
   DirEntry,
   HistoryMessage,
   JobView,
+  MCPServerInput,
   MemoryView,
   Meta,
   ModelInfo,
   ProviderView,
   QuestionAnswer,
+  ServerView,
   SessionMeta,
   SettingsView,
+  SkillView,
   SlashArgsResult,
+  UpdateInfo,
+  UpdateProgress,
   WireEvent,
 } from "./types";
 
@@ -28,6 +34,7 @@ import type {
 // (or regenerate with `wails generate module` and import wailsjs instead).
 export interface AppBindings {
   Submit(input: string): Promise<void>;
+  SubmitDisplay(display: string, input: string): Promise<void>;
   Cancel(): Promise<void>;
   Approve(id: string, allow: boolean, session: boolean): Promise<void>;
   AnswerQuestion(id: string, answers: QuestionAnswer[]): Promise<void>;
@@ -60,8 +67,20 @@ export interface AppBindings {
   Jobs(): Promise<JobView[]>;
   Meta(): Promise<Meta>;
   Commands(): Promise<CommandInfo[]>;
+  // Capabilities feeds the MCP & Skills drawer: connected/failed servers + skills.
+  // Add connects + persists a server; Remove disconnects + drops it from config;
+  // Retry reconnects a configured server that failed (config untouched).
+  Capabilities(): Promise<CapabilitiesView>;
+  AddMCPServer(input: MCPServerInput): Promise<number>;
+  RemoveMCPServer(name: string): Promise<void>;
+  RetryMCPServer(name: string): Promise<void>;
+  // SetMCPServerEnabled is the per-session connector toggle (on reconnects, off
+  // disconnects; config untouched).
+  SetMCPServerEnabled(name: string, enabled: boolean): Promise<void>;
   SlashArgs(input: string): Promise<SlashArgsResult>;
   ListDir(rel: string): Promise<DirEntry[]>;
+  SavePastedImage(dataUrl: string): Promise<string>;
+  AttachmentDataURL(path: string): Promise<string>;
   Models(): Promise<ModelInfo[]>;
   SetModel(name: string): Promise<void>;
   // Memory panel: read the loaded REASONIX.md hierarchy + saved auto-memories,
@@ -87,6 +106,13 @@ export interface AppBindings {
   // SetBypass toggles YOLO mode (auto-approve every tool call this session; deny
   // rules still apply). Runtime-only — not written to config.
   SetBypass(on: boolean): Promise<void>;
+  // Auto-updater (desktop/updater_app.go): the injected build version, a manifest
+  // check, applying an update (win/linux self-update; macOS opens the download
+  // page), and opening that page directly. Progress streams on "updater:progress".
+  Version(): Promise<string>;
+  CheckUpdate(): Promise<UpdateInfo | null>;
+  ApplyUpdate(): Promise<void>;
+  OpenDownloadPage(): Promise<void>;
 }
 
 interface WailsRuntime {
@@ -126,6 +152,19 @@ export function onEvent(cb: (e: WireEvent) => void): () => void {
   return mockSubscribe(cb);
 }
 
+// onUpdaterProgress subscribes to the auto-updater's progress events (a separate
+// channel from the agent stream); returns an unsubscribe. Must match the event
+// name emitted in desktop/updater_app.go.
+export function onUpdaterProgress(cb: (p: UpdateProgress) => void): () => void {
+  if (realApp() && typeof window !== "undefined" && window.runtime) {
+    return window.runtime.EventsOn("updater:progress", (p) => cb(p as UpdateProgress));
+  }
+  updaterListeners.add(cb);
+  return () => {
+    updaterListeners.delete(cb);
+  };
+}
+
 // app proxies each call to the live binding (or the dev mock only when truly
 // outside the shell), so a late-injected window.go is picked up transparently.
 export const app: AppBindings = new Proxy({} as AppBindings, {
@@ -162,6 +201,14 @@ function emit(e: WireEvent) {
   listeners.forEach((l) => l(e));
 }
 
+// Updater progress has its own listener set so the browser dev mock's ApplyUpdate
+// can stream a fake download through onUpdaterProgress.
+const updaterListeners = new Set<(p: UpdateProgress) => void>();
+
+function emitUpdater(p: UpdateProgress) {
+  updaterListeners.forEach((l) => l(p));
+}
+
 function delay(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
@@ -171,6 +218,18 @@ function makeMockApp(): AppBindings {
   let cwd = "~/projects/reasonix"; // mutable so PickWorkspace is visible in dev
   const day = 86_400_000;
   const t0 = Date.now();
+  // Mutable so MCP add/remove/retry are observable in browser dev.
+  let capServers: ServerView[] = [
+    { name: "codegraph", transport: "stdio", status: "connected", tools: 4, prompts: 0, resources: 1 },
+    { name: "github", transport: "stdio", status: "connected", tools: 12, prompts: 2, resources: 0 },
+    { name: "linear", transport: "http", status: "connected", tools: 8, prompts: 0, resources: 0 },
+    { name: "figma", transport: "http", status: "failed", tools: 0, prompts: 0, resources: 0, error: "connect: 401 unauthorized" },
+  ];
+  const capSkills: SkillView[] = [
+    { name: "explore", description: "Investigate the codebase in an isolated subagent", scope: "builtin", runAs: "subagent" },
+    { name: "review", description: "Review the staged diff", scope: "project", runAs: "inline" },
+    { name: "init", description: "Scaffold a REASONIX.md for this repo", scope: "builtin", runAs: "inline" },
+  ];
   // Mutable so delete/rename are observable in browser dev.
   const sessions: SessionMeta[] = [
     { path: "/mock/sessions/a.jsonl", preview: "fix the login bug in auth.go", turns: 12, modTime: t0 - 3_600_000, current: true },
@@ -241,6 +300,9 @@ function makeMockApp(): AppBindings {
         },
       });
       emit({ kind: "turn_done" });
+    },
+    async SubmitDisplay(_display, input) {
+      await this.Submit(input);
     },
     async Cancel() {
       cancelled = true;
@@ -315,6 +377,29 @@ function makeMockApp(): AppBindings {
         { name: "review", description: "Review the staged diff", hint: "[focus]", kind: "custom" as const },
       ];
     },
+    async Capabilities() {
+      return { servers: capServers.map((s) => ({ ...s })), skills: capSkills.map((s) => ({ ...s })) };
+    },
+    async AddMCPServer(input: MCPServerInput) {
+      const tools = input.transport === "stdio" ? 3 : 5;
+      capServers.push({ name: input.name, transport: input.transport, status: "connected", tools, prompts: 0, resources: 0 });
+      return tools;
+    },
+    async RemoveMCPServer(name: string) {
+      capServers = capServers.filter((s) => s.name !== name);
+    },
+    async RetryMCPServer(name: string) {
+      capServers = capServers.map((s) =>
+        s.name === name ? { ...s, status: "connected", tools: s.tools || 4, error: undefined } : s,
+      );
+    },
+    async SetMCPServerEnabled(name: string, enabled: boolean) {
+      capServers = capServers.map((s) =>
+        s.name === name
+          ? { ...s, status: enabled ? "connected" : "disabled", tools: enabled ? s.tools || 4 : 0, error: undefined }
+          : s,
+      );
+    },
     async SlashArgs(input: string) {
       // Mirror a slice of the real arg hints so the menu is exercisable in browser dev.
       const from = input.lastIndexOf(" ") + 1;
@@ -359,6 +444,12 @@ function makeMockApp(): AppBindings {
         ];
       }
       return [{ name: "file.go", isDir: false }];
+    },
+    async SavePastedImage(_dataUrl: string) {
+      return ".reasonix/attachments/mock.png";
+    },
+    async AttachmentDataURL(_path: string) {
+      return "data:image/png;base64,iVBORw0KGgo=";
     },
     async Models() {
       return [
@@ -450,6 +541,40 @@ function makeMockApp(): AppBindings {
     },
     async SetBypass(on: boolean) {
       settings.bypass = on;
+    },
+    async Version() {
+      return "v1.0.0 (browser dev)";
+    },
+    async CheckUpdate() {
+      // Dev mock advertises an update so the banner and apply flow are exercisable
+      // in the browser without a real release behind it.
+      return {
+        available: true,
+        current: "v1.0.0",
+        latest: "v1.1.0",
+        notes: "- Mock release notes\n- The **Update now** button streams a fake download here.",
+        canSelfUpdate: true,
+        downloadUrl: "https://github.com/esengine/reasonix/releases/latest",
+        assetSize: 12_345_678,
+      };
+    },
+    async ApplyUpdate() {
+      const total = 12_345_678;
+      for (let r = 0; r <= total; r += 1_800_000) {
+        emitUpdater({ phase: "downloading", received: Math.min(r, total), total });
+        await delay(120);
+      }
+      emitUpdater({ phase: "verifying", received: total, total });
+      await delay(500);
+      emitUpdater({ phase: "applying", received: total, total });
+      await delay(500);
+      emitUpdater({ phase: "done", received: total, total });
+      // The real shell relaunches here; the mock just stops.
+    },
+    async OpenDownloadPage() {
+      if (typeof window !== "undefined") {
+        window.open("https://github.com/esengine/reasonix/releases/latest", "_blank", "noopener");
+      }
     },
   };
 }

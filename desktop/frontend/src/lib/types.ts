@@ -13,7 +13,16 @@ export type EventKind =
   | "phase"
   | "approval_request"
   | "ask_request"
-  | "turn_done";
+  | "turn_done"
+  | "compaction_started"
+  | "compaction_done";
+
+export interface WireCompaction {
+  trigger?: string; // "auto" | "manual"
+  messages?: number; // done: how many messages were folded into the summary
+  summary?: string; // done: the briefing (empty on an aborted pass)
+  archive?: string; // done: archive path, if any
+}
 
 export interface WireTool {
   id?: string;
@@ -80,6 +89,7 @@ export interface WireEvent {
   usage?: WireUsage;
   approval?: WireApproval;
   ask?: WireAsk;
+  compaction?: WireCompaction;
   err?: string;
 }
 
@@ -135,6 +145,36 @@ export interface CommandInfo {
 export interface DirEntry {
   name: string;
   isDir: boolean;
+}
+
+// MCP & Skills drawer (desktop/app.go Capabilities) — the GUI counterpart to
+// /mcp + /skill: connected/failed servers and discoverable skills.
+export interface ServerView {
+  name: string;
+  transport: string;
+  status: "connected" | "failed" | "disabled";
+  tools: number;
+  prompts: number;
+  resources: number;
+  error?: string;
+}
+export interface SkillView {
+  name: string;
+  description: string;
+  scope: string;
+  runAs: string;
+}
+export interface CapabilitiesView {
+  servers: ServerView[];
+  skills: SkillView[];
+}
+export interface MCPServerInput {
+  name: string;
+  transport: string; // stdio | http | sse
+  command: string;
+  args: string[];
+  url: string;
+  env: Record<string, string>;
 }
 
 export interface ModelInfo {
@@ -246,4 +286,24 @@ export interface SettingsView {
   configPath: string;
   providerKinds: string[]; // provider implementations the kernel registered (for the kind picker)
   bypass: boolean; // live YOLO state (runtime-only) — whether approvals are skipped this session
+}
+
+// Auto-updater payloads (desktop/updater.go). UpdateInfo drives the update banner;
+// UpdateProgress streams on the "updater:progress" event during ApplyUpdate.
+export interface UpdateInfo {
+  available: boolean;
+  current: string;
+  latest: string;
+  notes: string;
+  canSelfUpdate: boolean; // win/linux true; macOS false (no cert → manual download)
+  downloadUrl: string; // human-facing releases page (macOS path / fallback link)
+  assetSize: number; // running platform's artifact size, for the progress bar
+  err?: string; // set when the check itself failed (both endpoints down)
+}
+
+export interface UpdateProgress {
+  phase: "downloading" | "verifying" | "applying" | "done" | "error";
+  received: number;
+  total: number;
+  err?: string;
 }

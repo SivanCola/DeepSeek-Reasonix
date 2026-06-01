@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -120,6 +121,87 @@ func TestBuildRequestAlwaysSerializesContent(t *testing.T) {
 	}
 }
 
+// TestStreamRepairsDanglingToolCalls reproduces and guards the DeepSeek 400
+// "An assistant message with 'tool_calls' must be followed by tool messages
+// responding to each 'tool_call_id'". A resumed/interrupted session can carry an
+// assistant tool_calls turn whose tool results never landed; the server here
+// mimics DeepSeek and rejects any unpaired tool_call with that exact 400, so the
+// request must be repaired before it is sent.
+func TestStreamRepairsDanglingToolCalls(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Messages []struct {
+				Role      string `json:"role"`
+				ToolCalls []struct {
+					ID string `json:"id"`
+				} `json:"tool_calls"`
+				ToolCallID string `json:"tool_call_id"`
+			} `json:"messages"`
+		}
+		body, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(body, &req)
+		answered := map[string]bool{}
+		for _, m := range req.Messages {
+			if m.Role == "tool" {
+				answered[m.ToolCallID] = true
+			}
+		}
+		for _, m := range req.Messages {
+			if m.Role != "assistant" {
+				continue
+			}
+			for _, tc := range m.ToolCalls {
+				if !answered[tc.ID] {
+					w.WriteHeader(http.StatusBadRequest)
+					_, _ = w.Write([]byte(`{"error":{"message":"An assistant message with 'tool_calls' must be followed by tool messages responding to each 'tool_call_id'. (insufficient tool messages following tool_calls message)","type":"invalid_request_error","param":null,"code":"invalid_request_error"}}`))
+					return
+				}
+			}
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "data: {\"choices\":[{\"delta\":{\"content\":\"done\"}}]}\n\n")
+		_, _ = io.WriteString(w, "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":5,\"completion_tokens\":1,\"total_tokens\":6}}\n\n")
+		_, _ = io.WriteString(w, "data: [DONE]\n\n")
+	}))
+	defer srv.Close()
+
+	p, err := New(provider.Config{Name: "deepseek-flash", BaseURL: srv.URL, Model: "deepseek-v4", APIKey: "k"})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	// An assistant tool_calls turn whose tool result never landed (an interrupted
+	// turn), followed by a fresh user message — the exact shape that 400s.
+	ch, err := p.Stream(context.Background(), provider.Request{
+		Messages: []provider.Message{
+			{Role: provider.RoleUser, Content: "list the files"},
+			{Role: provider.RoleAssistant, ToolCalls: []provider.ToolCall{
+				{ID: "call_1", Name: "ls", Arguments: `{"path":"."}`},
+			}},
+			{Role: provider.RoleUser, Content: "never mind, what time is it?"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Stream sent a dangling tool_calls to the API: %v", err)
+	}
+	var streamErr error
+	var text strings.Builder
+	for chunk := range ch {
+		switch chunk.Type {
+		case provider.ChunkText:
+			text.WriteString(chunk.Text)
+		case provider.ChunkError:
+			streamErr = chunk.Err
+		}
+	}
+	if streamErr != nil {
+		t.Fatalf("stream errored: %v", streamErr)
+	}
+	if text.String() != "done" {
+		t.Fatalf("completion text = %q, want \"done\"", text.String())
+	}
+}
+
 // TestNormaliseUsageDeepSeekShape covers DeepSeek's top-level cache fields.
 func TestNormaliseUsageDeepSeekShape(t *testing.T) {
 	u := normaliseUsage(&wireUsage{
@@ -184,5 +266,35 @@ func TestBuildRequestDropsReasoningContent(t *testing.T) {
 	// The visible answer must survive — we only drop reasoning, not content.
 	if !strings.Contains(string(b), "the answer") {
 		t.Errorf("assistant content was dropped along with reasoning: %s", b)
+	}
+}
+
+func TestBuildRequestForwardsReasoningEffort(t *testing.T) {
+	c := &client{model: "mimo-v2", effort: "high"}
+	if got := c.buildRequest(provider.Request{}).ReasoningEffort; got != "high" {
+		t.Errorf("ReasoningEffort = %q, want high", got)
+	}
+
+	b, err := json.Marshal((&client{model: "deepseek-v4"}).buildRequest(provider.Request{}))
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if strings.Contains(string(b), "reasoning_effort") {
+		t.Errorf("empty effort must be omitted from the payload: %s", b)
+	}
+}
+
+func TestNewReadsEffortFromConfig(t *testing.T) {
+	p, err := New(provider.Config{
+		Name:    "mimo",
+		BaseURL: "https://api.example.com",
+		Model:   "mimo-v2",
+		Extra:   map[string]any{"effort": "medium"},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if got := p.(*client).effort; got != "medium" {
+		t.Errorf("effort = %q, want medium", got)
 	}
 }

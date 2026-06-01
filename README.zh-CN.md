@@ -86,6 +86,9 @@ default_model = "deepseek-flash"   # 执行器；设 [agent].planner_model 可�
 # language    = "zh"               # 界面语言；为空则按 $LANG / $REASONIX_LANG 自动检测
 
 [agent]
+# planner_model = "mimo-pro"          # 可选的低频规划器
+# subagent_model = "deepseek-pro"     # runAs=subagent skill 的默认模型
+# subagent_models = { review = "deepseek-pro", security_review = "deepseek-pro" }
 auto_plan = "ask"                  # off|ask|on；复杂聊天任务自动进入计划模式
 # auto_plan_classifier = "deepseek-flash"   # 可选；只在边界任务上调用
 
@@ -167,7 +170,9 @@ headers = { Authorization = "Bearer ${STRIPE_KEY}" }
 
 ### 斜杠命令
 
-`reasonix chat` 里,内置命令(`/compact`、`/new`、`/mcp`、`/help`)在本地执行。**自定义命令**
+`reasonix chat` 里,内置命令(`/compact`、`/new`、`/rewind`、`/tree`、`/branch`、`/switch`、`/todo`、`/model`、`/mcp`、`/help`)在本地执行。
+`/tree` 查看已保存的对话分支,`/branch [name]` 从当前对话末端分支,`/branch <turn> [name]`
+从较早的 checkpoint 轮次分支,`/switch <id|name>` 切换到另一个分支。**自定义命令**
 是放在 `.reasonix/commands/`(项目)或 `~/.config/reasonix/commands/`(用户)下的 Markdown 文件——
 `review.md` 即 `/review`,子目录构成命名空间(`git/commit.md` → `/git:commit`)。文件正文
 是 prompt 模板,调用即作为一轮对话发出。
@@ -201,6 +206,9 @@ session），向导后手动在 `reasonix.toml` 加一行即可：
 planner_model = "deepseek-pro"   # 作为低频规划器
 ```
 
+Subagent skills 默认继承执行器模型。设置 `subagent_model` 可让它们统一走另一个已配置
+模型；设置 `subagent_models` 则只覆盖 `review`、`security_review` 等指定 skill。
+
 交互式前端中，`agent.auto_plan = "ask"` 会让看起来复杂的任务自动进入 plan
 mode：Reasonix 先只读生成计划，待用户批准后才编辑文件或执行有副作用的命令。
 `auto_plan_classifier` 可以指定便宜的 provider，例如 `deepseek-flash`；它只在边界输入上调用，分类失败会回退到启发式规则。
@@ -222,7 +230,7 @@ mode：Reasonix 先只读生成计划，待用户批准后才编辑文件或执�
 试）、九个内置工具（read_file、write_file、edit_file、multi_edit、bash、ls、glob、
 grep、web_fetch）、TOML 配置、交互式 `reasonix setup` 向导、双模型协同（执行器 + 规划器，
 各自独立、缓存稳定的 session）、低频上下文压缩、子 agent（`task`）、bubbletea 聊天
-TUI（markdown、plan mode、上下文仪表盘、`/compact` `/new`）、会话持久化 + 恢复、
+TUI（markdown、plan mode、上下文仪表盘、`/compact` `/new` `/tree` `/branch` `/switch`）、会话持久化 + 恢复、
 逐次调用**权限**（allow/ask/deny 规则；chat 在 writer 前询问，deny 在各模式硬阻断）、
 **工作区沙盒**（把文件写工具限制在项目内，符号链接/`..` 安全）、
 MCP 客户端——**stdio + Streamable HTTP** 传输、工具（`mcp__server__tool`,支持

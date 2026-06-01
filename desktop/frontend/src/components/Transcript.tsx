@@ -6,6 +6,21 @@ import { Welcome } from "./Welcome";
 
 type ToolItem = Extract<Item, { kind: "tool" }>;
 
+function scrollVersion(items: Item[]): string {
+  return items
+    .map((it) => {
+      switch (it.kind) {
+        case "assistant":
+          return `${it.id}:a:${it.text.length}:${it.reasoning.length}:${it.streaming ? 1 : 0}`;
+        case "tool":
+          return `${it.id}:t:${it.name}:${it.status}:${it.args.length}:${it.output?.length ?? 0}:${it.error?.length ?? 0}:${it.truncated ? 1 : 0}`;
+        default:
+          return `${it.id}:${it.kind}`;
+      }
+    })
+    .join("|");
+}
+
 export function Transcript({
   items,
   onPrompt,
@@ -27,7 +42,10 @@ export function Transcript({
 
   // Follow new content by setting scrollTop directly (no scrollIntoView fighting
   // the browser's scroll anchoring), and inside rAF so layout has settled first —
-  // together with plain-text streaming this keeps the view from jittering.
+  // together with plain-text streaming this keeps the view from jittering. The
+  // dependency tracks rendered content, not just array identity, so streaming
+  // still follows the bottom if a reducer reuses the items array.
+  const contentVersion = scrollVersion(items);
   useEffect(() => {
     if (!stick.current) return;
     const el = scrollRef.current;
@@ -36,7 +54,7 @@ export function Transcript({
       el.scrollTop = el.scrollHeight;
     });
     return () => cancelAnimationFrame(id);
-  }, [items]);
+  }, [contentVersion]);
 
   // Sub-agent calls carry a parentId; collect them under their parent `task`
   // call so the parent card can render them nested, and skip them at top level.
@@ -111,8 +129,40 @@ export function Transcript({
                 {it.text}
               </div>
             );
+          case "compaction":
+            return <CompactionCard key={it.id} item={it} />;
         }
       })}
+    </div>
+  );
+}
+
+type CompactionItem = Extract<Item, { kind: "compaction" }>;
+
+// CompactionCard marks a context-compaction boundary in the transcript. While
+// the pass runs it shows a "compacting…" placeholder; once done it shows the
+// message count and trigger with the summary collapsed behind a toggle (the
+// summary is the new context base, so it's available but doesn't flood the view).
+function CompactionCard({ item }: { item: CompactionItem }) {
+  const [open, setOpen] = useState(false);
+  if (item.pending) {
+    return (
+      <div className="compaction compaction--pending">
+        <span className="compaction__spinner">⋯</span> Compacting conversation…
+      </div>
+    );
+  }
+  return (
+    <div className="compaction">
+      <button className="compaction__head" onClick={() => setOpen((v) => !v)}>
+        <span className="compaction__icon">◆</span>
+        <span className="compaction__title">Context compacted</span>
+        <span className="compaction__meta">
+          {item.messages} messages · {item.trigger}
+        </span>
+        <span className="compaction__toggle">{open ? "hide summary" : "show summary"}</span>
+      </button>
+      {open && <pre className="compaction__summary">{item.summary}</pre>}
     </div>
   );
 }

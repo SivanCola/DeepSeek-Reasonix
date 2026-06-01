@@ -279,7 +279,8 @@ resolved and prepended to the message as a tagged block the model can read.
   actually exists on disk. This existence gate is the disambiguator: an ordinary
   `@mention` or an email address resolves to no file and stays literal text. A
   file is wrapped `<file path="…">…</file>` (size-capped, binary files noted not
-  dumped); a directory becomes a one-level listing.
+  dumped); a directory becomes a recursive listing (depth-first, skipping common
+  noise like `.git` and `node_modules`).
 - Resolution is asynchronous (off the TUI event loop); a fetch failure surfaces
   as a notice but doesn't block the turn. Reads are user-initiated and read-only
   — they do **not** pass the permission gate (§3.7).
@@ -336,6 +337,8 @@ system_prompt = "You are Reasonix, a coding agent..."  # or system_prompt_file =
 max_steps     = 25
 temperature   = 0.0
 # planner_model = "mimo"   # optional: two-model collaboration (low-frequency planner)
+# subagent_model = "deepseek-pro"   # optional default for runAs=subagent skills
+# subagent_models = { review = "deepseek-pro", security_review = "deepseek-pro" }
 
 # A vendor endpoint exposing several models under one base_url/key.
 [[providers]]

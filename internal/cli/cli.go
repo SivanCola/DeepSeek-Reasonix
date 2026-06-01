@@ -91,10 +91,24 @@ func setup(ctx context.Context, modelName string, maxStepsOverride int, requireK
 	})
 }
 
+// setupQuiet is like setup but suppresses plugin subprocess stderr output.
+// Used during model switch inside a bubbletea session to prevent plugin logs
+// from corrupting the TUI's terminal raw mode.
+func setupQuiet(ctx context.Context, modelName string, maxStepsOverride int, requireKey bool, sink event.Sink) (*control.Controller, error) {
+	return boot.Build(ctx, boot.Options{
+		Model:      modelName,
+		MaxSteps:   maxStepsOverride,
+		RequireKey: requireKey,
+		Sink:       sink,
+		Stderr:     io.Discard,
+	})
+}
+
 func runAgent(args []string) int {
 	fs := flag.NewFlagSet("run", flag.ContinueOnError)
 	model := fs.String("model", "", "provider name (default: config default_model)")
 	maxSteps := fs.Int("max-steps", 0, "max tool-call rounds (0 = use config/default)")
+	showThinking := fs.Bool("show-thinking", false, "show thinking text instead of the collapsed thinking marker")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -122,7 +136,9 @@ func runAgent(args []string) int {
 		}
 		renderer = newMarkdownRenderer(termW)
 	}
-	ctrl, err := setup(ctx, *model, *maxSteps, true, agent.NewTextSink(os.Stdout, renderer, termW))
+	sink := agent.NewTextSink(os.Stdout, renderer, termW)
+	sink.SetShowReasoning(*showThinking)
+	ctrl, err := setup(ctx, *model, *maxSteps, true, sink)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
 		return 1
@@ -172,7 +188,10 @@ func runServe(args []string) int {
 	}
 
 	fmt.Printf("reasonix serve — %s on http://%s\n", ctrl.Label(), *addr)
-	if err := serve.New(ctrl, bc).Run(*addr); err != nil {
+	// Use graceful shutdown so SIGINT/SIGTERM drain active connections.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+	if err := serve.New(ctrl, bc).RunGraceful(ctx, *addr); err != nil {
 		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
 		return 1
 	}
@@ -277,13 +296,17 @@ func chatREPL(args []string) int {
 	}
 
 	m := newChatTUI(ctrl, missing, eventCh, termW)
+	if cfg, err := config.Load(); err == nil {
+		m.outputStyle = cfg.Agent.OutputStyle    // shown as the active entry in /output-style
+		m.statuslineCmd = cfg.Statusline.Command // custom status-line command, "" = built-in row
+	}
 
 	// /model support: a pure builder the TUI calls to rebuild on a different
 	// model (carrying the conversation). It must NOT touch the running model —
 	// runModelSubcommand performs the swap on the live copy. The same stable sink
 	// feeds the new controller, so events keep flowing to this TUI.
 	m.buildController = func(ref string, carry []provider.Message) (*control.Controller, error) {
-		c, err := setup(ctx, ref, *maxSteps, false, sink)
+		c, err := setupQuiet(ctx, ref, *maxSteps, false, sink)
 		if err != nil {
 			return nil, err
 		}
@@ -317,11 +340,20 @@ func chatREPL(args []string) int {
 	// all work — the bubbletea-managed region is just the bottom input/status.
 	p := tea.NewProgram(m)
 	final, runErr := p.Run()
-	// Close the controller that's active at exit — /model may have swapped it
-	// (each prior controller was already closed at switch time), so close the
-	// final one here rather than the initial handle.
-	if fm, ok := final.(chatTUI); ok && fm.ctrl != nil {
-		fm.ctrl.Close()
+	// Close the active controller plus any retired ones from /model switches.
+	// Retired controllers were stashed rather than closed at switch time
+	// because Controller.Close() runs SessionEnd hooks and kills plugin
+	// subprocesses — operations that corrupt bubbletea's terminal raw mode
+	// when executed while the TUI is alive.
+	if fm, ok := final.(chatTUI); ok {
+		for _, oc := range fm.oldControllers {
+			oc.Close()
+		}
+		if fm.ctrl != nil {
+			fm.ctrl.Close()
+		} else {
+			ctrl.Close()
+		}
 	} else {
 		ctrl.Close()
 	}

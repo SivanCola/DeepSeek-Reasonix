@@ -18,6 +18,7 @@ import (
 
 	// Blank imports wire compile-time built-ins into their registries, exactly as
 	// cmd/reasonix does — boot.Build resolves providers/tools from these registries.
+	_ "reasonix/internal/provider/anthropic"
 	_ "reasonix/internal/provider/openai"
 	_ "reasonix/internal/tool/builtin"
 )
@@ -28,6 +29,12 @@ import (
 //
 //go:embed all:frontend/dist
 var assets embed.FS
+
+// version is injected at build time via `wails build -ldflags "-X main.version=..."`,
+// mirroring cmd/reasonix/main.go. The auto-updater reads it (App.Version) to compare
+// against the published manifest; an un-injected dev build stays "dev" and never
+// prompts to update.
+var version = "dev"
 
 func main() {
 	app := NewApp()

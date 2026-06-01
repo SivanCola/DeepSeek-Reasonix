@@ -12,6 +12,7 @@ package skill
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -19,6 +20,7 @@ import (
 	"strings"
 
 	"reasonix/internal/config"
+	"reasonix/internal/frontmatter"
 )
 
 // Scope records where a skill was loaded from. Higher-priority scopes win on a
@@ -77,6 +79,10 @@ type Options struct {
 	ProjectRoot     string
 	CustomPaths     []string
 	DisableBuiltins bool // suppress shipped built-ins (test-only knob)
+	// Stderr is the writer for diagnostic warnings. When nil, defaults to
+	// os.Stderr. Set to io.Discard to suppress output (e.g. during model
+	// switch inside a bubbletea session).
+	Stderr io.Writer
 }
 
 // Store resolves skills across the configured roots.
@@ -85,6 +91,7 @@ type Store struct {
 	projectRoot     string
 	customPaths     []string
 	disableBuiltins bool
+	stderr          io.Writer
 }
 
 // New builds a Store. Relative custom paths and a relative project root are made
@@ -109,11 +116,16 @@ func New(opts Options) *Store {
 		}
 	}
 	custom := dedupePaths(resolveCustomPaths(opts.CustomPaths, base, home))
+	stderr := opts.Stderr
+	if stderr == nil {
+		stderr = os.Stderr
+	}
 	return &Store{
 		homeDir:         home,
 		projectRoot:     root,
 		customPaths:     custom,
 		disableBuiltins: opts.DisableBuiltins,
+		stderr:          stderr,
 	}
 }
 
@@ -310,7 +322,7 @@ func (s *Store) parse(path, stem string, scope Scope) (Skill, bool) {
 	}
 	desc := strings.TrimSpace(fm["description"])
 	if desc == "" {
-		fmt.Fprintf(os.Stderr, "warning: skill %q at %s has no description: — it will load but won't appear in the skills index\n", name, path)
+		fmt.Fprintf(s.stderr, "warning: skill %q at %s has no description: — it will load but won't appear in the skills index\n", name, path)
 	}
 	return Skill{
 		Name:         name,
@@ -491,26 +503,8 @@ func dedupePaths(paths []string) []string {
 	return out
 }
 
-// splitFrontmatter separates an optional leading ---fenced block of simple
-// "key: value" lines from the body, returning lowercased keys and the body. With
-// no opening/closing fence the whole input is the body. Mirrors the dependency-
-// free parser in internal/command (copied to avoid coupling the two packages).
+// splitFrontmatter is a thin wrapper kept for internal use; the real parser
+// lives in internal/frontmatter.
 func splitFrontmatter(s string) (map[string]string, string) {
-	fm := map[string]string{}
-	lines := strings.Split(s, "\n")
-	if len(lines) == 0 || strings.TrimSpace(lines[0]) != "---" {
-		return fm, s
-	}
-	for i := 1; i < len(lines); i++ {
-		if strings.TrimSpace(lines[i]) != "---" {
-			continue
-		}
-		for _, l := range lines[1:i] {
-			if k, v, ok := strings.Cut(l, ":"); ok {
-				fm[strings.ToLower(strings.TrimSpace(k))] = strings.Trim(strings.TrimSpace(v), `"'`)
-			}
-		}
-		return fm, strings.Join(lines[i+1:], "\n")
-	}
-	return fm, s // opened but never closed: treat all as body
+	return frontmatter.Split(s)
 }

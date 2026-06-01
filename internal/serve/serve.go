@@ -6,10 +6,13 @@
 package serve
 
 import (
+	"context"
 	_ "embed"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
+	"time"
 
 	"reasonix/internal/control"
 )
@@ -31,7 +34,20 @@ func New(ctrl *control.Controller, bc *Broadcaster) *Server {
 
 // Handler returns the HTTP routes: GET / (a minimal browser client), GET /events
 // (SSE), GET /history, GET /context, and POST command endpoints.
+// CORS is NOT applied by default — same-origin policy protects the unauthenticated
+// agent endpoints. Call HandlerWithCORS to opt in for local development.
 func (s *Server) Handler() http.Handler {
+	return s.handler()
+}
+
+// HandlerWithCORS returns the same routes as Handler but adds permissive CORS
+// headers so a dev frontend on a different origin (e.g. Vite on :5173) can
+// reach the server. Do NOT use in production — the server has no auth.
+func (s *Server) HandlerWithCORS(origin string) http.Handler {
+	return corsMiddleware(s.handler(), origin)
+}
+
+func (s *Server) handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /", s.index)
 	mux.HandleFunc("GET /events", s.events)
@@ -43,7 +59,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /plan", s.plan)
 	mux.HandleFunc("POST /compact", s.compact)
 	mux.HandleFunc("POST /new", s.newSession)
-	return mux
+	return logMiddleware(mux)
 }
 
 // Run serves until the process is killed. Interactive approval is enabled so
@@ -51,6 +67,35 @@ func (s *Server) Handler() http.Handler {
 func (s *Server) Run(addr string) error {
 	s.ctrl.EnableInteractiveApproval()
 	return http.ListenAndServe(addr, s.Handler())
+}
+
+// RunGraceful serves with graceful shutdown. It listens for SIGINT/SIGTERM on
+// the provided context and drains active connections for up to 10 seconds
+// before returning.
+func (s *Server) RunGraceful(ctx context.Context, addr string) error {
+	s.ctrl.EnableInteractiveApproval()
+	srv := &http.Server{
+		Addr:              addr,
+		Handler:           s.Handler(),
+		ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout:       120 * time.Second,
+	}
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- srv.ListenAndServe()
+	}()
+	select {
+	case err := <-errCh:
+		return err
+	case <-ctx.Done():
+		slog.Info("serve: shutting down gracefully")
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := srv.Shutdown(shutdownCtx); err != nil {
+			slog.Warn("serve: graceful shutdown failed", "err", err)
+		}
+		return <-errCh
+	}
 }
 
 func (s *Server) index(w http.ResponseWriter, _ *http.Request) {
@@ -136,7 +181,7 @@ func (s *Server) plan(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) compact(w http.ResponseWriter, r *http.Request) {
-	if err := s.ctrl.Compact(r.Context()); err != nil {
+	if err := s.ctrl.Compact(r.Context(), ""); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -173,5 +218,53 @@ func (s *Server) context(w http.ResponseWriter, _ *http.Request) {
 
 func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(v)
+	if err := json.NewEncoder(w).Encode(v); err != nil {
+		slog.Warn("serve: writeJSON encode failed", "err", err)
+	}
+}
+
+// corsMiddleware adds CORS headers for a specific allowed origin. Only use for
+// local development — the server has no auth, so broad CORS would let any site
+// drive the agent. origin is the exact origin to allow (e.g.
+// "http://localhost:5173"); empty origin skips CORS entirely.
+func corsMiddleware(next http.Handler, origin string) http.Handler {
+	if origin == "" {
+		return next
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", origin)
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// logMiddleware logs each request's method, path, and status.
+func logMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		rw := &responseWriter{ResponseWriter: w, status: http.StatusOK}
+		next.ServeHTTP(rw, r)
+		slog.Info("serve: request",
+			"method", r.Method,
+			"path", r.URL.Path,
+			"status", rw.status,
+			"duration", time.Since(start).String(),
+		)
+	})
+}
+
+// responseWriter captures the status code for logging.
+type responseWriter struct {
+	http.ResponseWriter
+	status int
+}
+
+func (rw *responseWriter) WriteHeader(code int) {
+	rw.status = code
+	rw.ResponseWriter.WriteHeader(code)
 }

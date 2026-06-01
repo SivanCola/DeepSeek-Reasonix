@@ -23,12 +23,18 @@ const (
 
 // Message is a single conversation message.
 type Message struct {
-	Role             Role       `json:"role"`
-	Content          string     `json:"content,omitempty"`
-	ReasoningContent string     `json:"reasoning_content,omitempty"` // assistant: thinking-mode chain-of-thought, round-tripped on multi-turn
-	ToolCalls        []ToolCall `json:"tool_calls,omitempty"`        // set by assistant
-	ToolCallID       string     `json:"tool_call_id,omitempty"`      // links a tool result to its call
-	Name             string     `json:"name,omitempty"`              // tool message: tool name
+	Role             Role   `json:"role"`
+	Content          string `json:"content,omitempty"`
+	ReasoningContent string `json:"reasoning_content,omitempty"` // assistant: thinking-mode chain-of-thought, round-tripped on multi-turn
+	// ReasoningSignature is an opaque, provider-issued proof that ReasoningContent
+	// is genuine model output. Anthropic requires the signed thinking block be
+	// replayed on the next turn when a tool call followed thinking; providers
+	// without signed reasoning (e.g. the openai-compatible ones) leave it empty.
+	// Round-tripped alongside ReasoningContent.
+	ReasoningSignature string     `json:"reasoning_signature,omitempty"`
+	ToolCalls          []ToolCall `json:"tool_calls,omitempty"`   // set by assistant
+	ToolCallID         string     `json:"tool_call_id,omitempty"` // links a tool result to its call
+	Name               string     `json:"name,omitempty"`         // tool message: tool name
 }
 
 // ToolCall is a tool invocation requested by the model. Arguments is raw JSON.
@@ -51,6 +57,52 @@ type Request struct {
 	Tools       []ToolSchema
 	Temperature float64
 	MaxTokens   int
+}
+
+// interruptedToolResult stands in for a tool result that never landed — an
+// assistant tool_calls turn whose execution was cut short (interrupt, crash) and
+// later resumed. Sending such a turn unanswered trips the OpenAI/DeepSeek 400
+// "An assistant message with 'tool_calls' must be followed by tool messages
+// responding to each 'tool_call_id'".
+const interruptedToolResult = "[no result: the previous turn was interrupted before this tool call completed]"
+
+// SanitizeToolPairing repairs a history so it satisfies the tool-call contract the
+// OpenAI-compatible and Anthropic APIs enforce: every assistant tool_calls entry
+// must be answered by a following tool message for its id, and a tool message must
+// follow such a call. It backfills a placeholder result for any unanswered call
+// (so the turn stays intact) and drops orphan tool messages. Well-formed histories
+// pass through unchanged (results stay in call order). Callers send the result;
+// the stored session keeps the original.
+func SanitizeToolPairing(msgs []Message) []Message {
+	out := make([]Message, 0, len(msgs))
+	for i := 0; i < len(msgs); {
+		m := msgs[i]
+		if m.Role == RoleAssistant && len(m.ToolCalls) > 0 {
+			results := map[string]Message{}
+			j := i + 1
+			for j < len(msgs) && msgs[j].Role == RoleTool {
+				results[msgs[j].ToolCallID] = msgs[j]
+				j++
+			}
+			out = append(out, m)
+			for _, tc := range m.ToolCalls {
+				if r, ok := results[tc.ID]; ok {
+					out = append(out, r)
+				} else {
+					out = append(out, Message{Role: RoleTool, ToolCallID: tc.ID, Name: tc.Name, Content: interruptedToolResult})
+				}
+			}
+			i = j // tool messages consumed here; any non-matching ones are orphans, dropped
+			continue
+		}
+		if m.Role == RoleTool {
+			i++ // orphan tool message (no preceding assistant tool_calls) — drop
+			continue
+		}
+		out = append(out, m)
+		i++
+	}
+	return out
 }
 
 // ChunkType identifies the kind of a streamed increment.
@@ -112,11 +164,12 @@ func (p *Pricing) Symbol() string {
 
 // Chunk is a single streamed event. Read the field matching Type.
 type Chunk struct {
-	Type     ChunkType
-	Text     string    // ChunkText, ChunkReasoning
-	ToolCall *ToolCall // ChunkToolCallStart (ID+Name only), ChunkToolCall (complete)
-	Usage    *Usage    // ChunkUsage
-	Err      error     // ChunkError
+	Type      ChunkType
+	Text      string    // ChunkText, ChunkReasoning
+	Signature string    // ChunkReasoning: opaque proof for the reasoning (Anthropic thinking signature), when issued
+	ToolCall  *ToolCall // ChunkToolCallStart (ID+Name only), ChunkToolCall (complete)
+	Usage     *Usage    // ChunkUsage
+	Err       error     // ChunkError
 }
 
 // Provider is a chat-capable model backend.
