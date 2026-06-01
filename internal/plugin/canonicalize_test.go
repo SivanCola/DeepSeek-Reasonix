@@ -96,15 +96,29 @@ func TestSortToolsByName(t *testing.T) {
 }
 
 func TestNormalizeNameForToolNames(t *testing.T) {
-	cases := map[string]string{
-		"@modelcontextprotocol/server-memory": "modelcontextprotocol_server-memory",
-		"mcp server/fetch":                    "mcp_server_fetch",
-		"   ":                                 "unnamed",
+	if got := normalizeName("valid_name-1"); got != "valid_name-1" {
+		t.Fatalf("valid name changed: %q", got)
 	}
-	for in, want := range cases {
-		if got := normalizeName(in); got != want {
-			t.Errorf("normalizeName(%q) = %q, want %q", in, got, want)
+	cases := []string{"@modelcontextprotocol/server-memory", "mcp server/fetch", "   "}
+	for _, in := range cases {
+		got := normalizeName(in)
+		if got == "" || strings.ContainsAny(got, " @/") {
+			t.Errorf("normalizeName(%q) = %q, want non-empty safe identifier", in, got)
 		}
+	}
+}
+
+func TestNormalizeNameAvoidsSanitizedCollisions(t *testing.T) {
+	a := normalizeName("search/code")
+	b := normalizeName("search_code")
+	if a == b {
+		t.Fatalf("normalized names collided: %q", a)
+	}
+	if b != "search_code" {
+		t.Fatalf("valid identifier should stay stable, got %q", b)
+	}
+	if normalizeName("@foo") == normalizeName("foo") {
+		t.Fatal("trimmed invalid prefix should not collapse onto valid name")
 	}
 }
 

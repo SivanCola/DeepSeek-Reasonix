@@ -10,6 +10,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"hash/fnv"
 	"io"
 	"log/slog"
 	"regexp"
@@ -433,11 +434,21 @@ func toolName(server, raw string) string {
 var invalidNameChars = regexp.MustCompile(`[^a-zA-Z0-9_-]+`)
 
 func normalizeName(s string) string {
+	raw := s
 	s = strings.Trim(invalidNameChars.ReplaceAllString(s, "_"), "_")
 	if s == "" {
-		return "unnamed"
+		s = "unnamed"
+	}
+	if s != raw {
+		s += "_" + shortNameHash(raw)
 	}
 	return s
+}
+
+func shortNameHash(s string) string {
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(s))
+	return fmt.Sprintf("%08x", h.Sum32())[:6]
 }
 
 func summarizeFailureError(err error) string {
