@@ -6,6 +6,7 @@ import {
   History,
   Settings as SettingsIcon,
   FolderGit2,
+  FolderOpen,
   MessageSquare,
   PanelLeftClose,
   PanelLeftOpen,
@@ -267,12 +268,13 @@ export default function App() {
     [renameSession, refreshSessions],
   );
 
-  // Workspace: open the folder chooser and switch projects (from the status bar's
-  // folder button). The hook resets the transcript and refreshes meta on a pick; a
-  // cancel is a no-op.
+  // Workspace: open the folder chooser and switch projects. The hook resets the
+  // transcript and refreshes meta on a pick; refresh the sidebar sessions too so
+  // the recent list belongs to the newly selected workspace. A cancel is a no-op.
   const switchFolder = useCallback(async () => {
-    await pickWorkspace();
-  }, [pickWorkspace]);
+    const path = await pickWorkspace();
+    if (path) await refreshSessions();
+  }, [pickWorkspace, refreshSessions]);
 
   const onRemember = useCallback(
     async (scope: string, note: string) => {
@@ -393,18 +395,24 @@ export default function App() {
           </nav>
 
           {state.meta?.cwd && (
-            <button
-              className="sidebar__workspace"
-              onClick={() => void switchFolder()}
-              disabled={state.running}
-              title={state.running ? t("common.busyHint") : t("status.switchFolder", { cwd: state.meta.cwd })}
-            >
-              <FolderGit2 size={14} />
-              <span>
-                <span className="sidebar__workspace-kicker">{t("sidebar.workspace")}</span>
-                <span className="sidebar__workspace-path">{shortCwd(state.meta.cwd)}</span>
-              </span>
-            </button>
+            <div className="sidebar__workspace" title={state.meta.cwd}>
+              <div className="sidebar__workspace-main">
+                <FolderGit2 size={14} />
+                <span>
+                  <span className="sidebar__workspace-kicker">{t("sidebar.workspace")}</span>
+                  <span className="sidebar__workspace-path">{shortCwd(state.meta.cwd)}</span>
+                </span>
+              </div>
+              <button
+                className="sidebar__workspace-change"
+                onClick={() => void switchFolder()}
+                disabled={state.running}
+                title={state.running ? t("common.busyHint") : t("sidebar.changeWorkspace")}
+              >
+                <FolderOpen size={13} />
+                <span>{t("sidebar.changeWorkspace")}</span>
+              </button>
+            </div>
           )}
         </aside>
 

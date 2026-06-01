@@ -29,6 +29,7 @@ export const en = {
   "sidebar.viewAll": "All",
   "sidebar.noRecent": "No recent chats",
   "sidebar.workspace": "Workspace",
+  "sidebar.changeWorkspace": "Change",
   "sidebar.collapse": "Collapse sidebar",
   "sidebar.expand": "Expand sidebar",
 

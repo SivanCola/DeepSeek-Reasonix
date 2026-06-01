@@ -30,6 +30,7 @@ export const zh: Record<DictKey, string> = {
   "sidebar.viewAll": "全部",
   "sidebar.noRecent": "还没有最近会话",
   "sidebar.workspace": "工作区",
+  "sidebar.changeWorkspace": "更改",
   "sidebar.collapse": "收起侧边栏",
   "sidebar.expand": "展开侧边栏",
 

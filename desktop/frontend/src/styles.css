@@ -191,7 +191,7 @@ body {
 }
 .sidebar__new,
 .sidebar__navitem,
-.sidebar__workspace,
+.sidebar__workspace-change,
 .sidebar-session {
   width: 100%;
   min-width: 0;
@@ -218,21 +218,21 @@ body {
 }
 .sidebar__new:hover,
 .sidebar__navitem:hover,
-.sidebar__workspace:hover,
+.sidebar__workspace-change:hover,
 .sidebar-session:hover {
   background: var(--sidebar-hover);
   color: var(--fg);
 }
 .sidebar__new:disabled,
 .sidebar__navitem:disabled,
-.sidebar__workspace:disabled,
+.sidebar__workspace-change:disabled,
 .sidebar-session:disabled {
   opacity: 0.55;
   cursor: default;
 }
 .sidebar__new:disabled:hover,
 .sidebar__navitem:disabled:hover,
-.sidebar__workspace:disabled:hover,
+.sidebar__workspace-change:disabled:hover,
 .sidebar-session:disabled:hover {
   background: transparent;
   color: var(--fg-dim);
@@ -355,18 +355,42 @@ body {
   color: var(--accent);
 }
 .sidebar__workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  padding: 8px;
+  margin-top: 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border-soft);
+  background: rgba(255, 255, 255, 0.035);
+}
+.sidebar__workspace-main {
   display: flex;
   align-items: center;
   gap: 9px;
-  padding: 9px 10px;
-  margin-top: 12px;
-  border: 1px solid var(--border-soft);
-  background: rgba(255, 255, 255, 0.02);
+  padding: 0;
+  min-width: 0;
+  color: var(--fg-dim);
 }
-.sidebar__workspace > span {
+.sidebar__workspace-main > span {
   min-width: 0;
   display: flex;
   flex-direction: column;
+}
+.sidebar__workspace-change {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  width: auto;
+  align-self: center;
+  padding: 5px 7px;
+  border: 1px solid var(--border-soft);
+  border-radius: 7px;
+  color: var(--fg-dim);
+  background: var(--bg-elev);
+  font-size: 11px;
+  white-space: nowrap;
 }
 .sidebar__workspace-kicker {
   color: var(--fg-faint);
@@ -426,14 +450,24 @@ body {
   display: none;
 }
 .sidebar--collapsed .sidebar__workspace {
+  grid-template-columns: 1fr;
   justify-content: center;
   width: 40px;
   height: 40px;
   padding: 0;
   margin-top: auto;
 }
-.sidebar--collapsed .sidebar__workspace > span {
+.sidebar--collapsed .sidebar__workspace-main,
+.sidebar--collapsed .sidebar__workspace-change span {
   display: none;
+}
+.sidebar--collapsed .sidebar__workspace-change {
+  display: inline-flex;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: none;
+  background: transparent;
 }
 
 .chat-pane {
