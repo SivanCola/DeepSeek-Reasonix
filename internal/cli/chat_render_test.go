@@ -25,9 +25,9 @@ func newTestChatTUI() chatTUI {
 }
 
 // TestIngestSeparatesReasoningFromAnswer proves the print-above model commits
-// the reasoning block and the answer as distinct scrollback entries (joined
-// with a newline downstream), so the answer never butts up against the last
-// line of thinking — and that the answer stays live until it's flushed.
+// the collapsed reasoning marker and the answer as distinct scrollback entries
+// (joined with a newline downstream), so the answer never butts up against the
+// thinking marker — and that the answer stays live until it's flushed.
 func TestIngestSeparatesReasoningFromAnswer(t *testing.T) {
 	m := newTestChatTUI()
 
@@ -39,6 +39,9 @@ func TestIngestSeparatesReasoningFromAnswer(t *testing.T) {
 	m.ingestEvent(event.Event{Kind: event.Text, Text: "Hello answer"}) // answer begins → reasoning finalizes
 	if n := len(*m.pendingCommit); n != 1 || !strings.Contains((*m.pendingCommit)[0], "thinking") {
 		t.Fatalf("reasoning should commit when the answer begins, committed=%v", *m.pendingCommit)
+	}
+	if strings.Contains((*m.pendingCommit)[0], "…reasoning…") {
+		t.Fatalf("reasoning text should stay collapsed by default, committed=%v", *m.pendingCommit)
 	}
 	if m.pending.String() != "Hello answer" {
 		t.Errorf("answer should be live in pending, got %q", m.pending.String())

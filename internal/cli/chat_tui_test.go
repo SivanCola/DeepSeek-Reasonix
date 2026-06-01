@@ -10,18 +10,22 @@ import (
 )
 
 // TestIngestEventRoutesByKind proves each event Kind lands in the right place:
-// reasoning accumulates in its live buffer (uncommitted), while tool dispatch,
-// blocked results, usage, notices, and coordinator phases each commit as their
-// own scrollback line. Routing is by Kind, not by sniffing line prefixes.
+// reasoning accumulates as a collapsed live marker (uncommitted), while tool
+// dispatch, blocked results, usage, notices, and coordinator phases each commit
+// as their own scrollback line. Routing is by Kind, not by sniffing line
+// prefixes.
 func TestIngestEventRoutesByKind(t *testing.T) {
-	// Reasoning stays live (dim), not committed.
+	// Reasoning stays live as a collapsed marker, not committed.
 	m := newTestChatTUI()
 	m.ingestEvent(event.Event{Kind: event.Reasoning, Text: "weighing options"})
 	if len(*m.pendingCommit) != 0 {
 		t.Errorf("reasoning should stay live, committed=%v", *m.pendingCommit)
 	}
-	if !strings.Contains(m.reasoning.String(), "weighing options") {
-		t.Errorf("reasoning should buffer the text, got %q", m.reasoning.String())
+	if !strings.Contains(m.reasoning.String(), "thinking") {
+		t.Errorf("reasoning should buffer the collapsed marker, got %q", m.reasoning.String())
+	}
+	if strings.Contains(m.reasoning.String(), "weighing options") {
+		t.Errorf("reasoning text should stay hidden by default, got %q", m.reasoning.String())
 	}
 
 	for _, tc := range []struct {
@@ -49,6 +53,16 @@ func TestIngestEventRoutesByKind(t *testing.T) {
 	m.ingestEvent(event.Event{Kind: event.ToolResult, Tool: event.Tool{Name: "read_file", Output: "contents"}})
 	if len(*m.pendingCommit) != 0 {
 		t.Errorf("successful tool result should be silent, committed=%v", *m.pendingCommit)
+	}
+}
+
+func TestIngestEventShowsReasoningInVerboseMode(t *testing.T) {
+	m := newTestChatTUI()
+	m.showReasoning = true
+
+	m.ingestEvent(event.Event{Kind: event.Reasoning, Text: "weighing options"})
+	if !strings.Contains(m.reasoning.String(), "weighing options") {
+		t.Errorf("verbose reasoning should buffer the text, got %q", m.reasoning.String())
 	}
 }
 

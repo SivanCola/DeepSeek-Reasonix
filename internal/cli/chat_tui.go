@@ -91,7 +91,7 @@ type chatTUI struct {
 
 	// reasoning accumulates the in-progress thinking stream (dim); pending
 	// accumulates the in-progress answer (raw markdown). They are committed to
-	// scrollback (reasoning verbatim, answer markdown-rendered) when they
+	// scrollback (reasoning collapsed by default, answer markdown-rendered) when they
 	// finalize — at a tool/usage boundary or turn end — not previewed live, so
 	// the bottom region stays a stable height. pendingCommit queues finalized
 	// lines so a single Update emits exactly one ordered tea.Println.
@@ -99,6 +99,7 @@ type chatTUI struct {
 	pending       *strings.Builder
 	pendingCommit *[]string
 	renderer      *mdRenderer
+	showReasoning bool // Ctrl+O / /verbose: show raw thinking text in the CLI
 	eventCh       chan event.Event
 	started       bool // banner + resumed history committed once
 
@@ -532,6 +533,9 @@ func (m chatTUI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			cmds = append(cmds, pasteClipboardImage())
+			return m, finalize(m, cmds)
+		case "ctrl+o":
+			m.toggleVerboseReasoning(m.state != tuiRunning)
 			return m, finalize(m, cmds)
 		case "tab":
 			if m.state == tuiRunning {
@@ -1515,6 +1519,18 @@ func (m *chatTUI) cycleMode() {
 	}
 }
 
+func (m *chatTUI) toggleVerboseReasoning(notify bool) {
+	m.showReasoning = !m.showReasoning
+	if !notify {
+		return
+	}
+	if m.showReasoning {
+		m.notice("verbose on — thinking text will be shown")
+	} else {
+		m.notice("verbose off — thinking text will stay collapsed")
+	}
+}
+
 // startTurn commits the user bubble to scrollback, resets the turn accumulator,
 // and kicks off runner.Run. `sent` goes to the model (may carry a plan-mode
 // marker); `displayed` is what the transcript shows.
@@ -1598,7 +1614,9 @@ func (m *chatTUI) ingestEvent(e event.Event) {
 		if m.reasoning.Len() == 0 {
 			m.reasoning.WriteString(dim("  ▎ thinking") + "\n")
 		}
-		m.reasoning.WriteString(dim(e.Text))
+		if m.showReasoning {
+			m.reasoning.WriteString(dim(e.Text))
+		}
 
 	case event.Text:
 		m.commitReasoning() // reasoning ends as the answer begins
@@ -1763,6 +1781,8 @@ func (m *chatTUI) runSlashCommand(input string) tea.Cmd {
 		// Dismiss the pinned task list; a later todo_write brings it back.
 		m.todoArgs = ""
 		m.notice(i18n.M.SlashTodoCleared)
+	case "/verbose":
+		m.toggleVerboseReasoning(true)
 	case "/rewind":
 		m.openRewind()
 	case "/tree":

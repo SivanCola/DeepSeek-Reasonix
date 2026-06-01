@@ -112,6 +112,7 @@ type Messages struct {
 	CmdPasteImage   string // /paste-image
 	CmdOutputStyle  string // /output-style
 	CmdSkill        string // /skill
+	CmdVerbose      string // /verbose
 	CmdHelp         string // /help
 	CmdTodo         string // /todo
 	ArgSkillList    string // /skill list
