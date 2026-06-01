@@ -10,10 +10,15 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
 const maxImageAttachmentBytes = 10 * 1024 * 1024
+const maxAttachmentCreateAttempts = 1000
+
+var attachmentPathSeq atomic.Uint64
+var attachmentNow = time.Now
 
 func SaveImageDataURL(dataURL string) (string, error) {
 	const prefix = "data:"
@@ -48,8 +53,21 @@ func SaveImageBytes(declaredMime string, raw []byte) (string, error) {
 	if err := ensureAttachmentRoot(); err != nil {
 		return "", err
 	}
-	rel := attachmentPath(ext)
-	if err := os.WriteFile(rel, raw, 0o644); err != nil {
+	rel, f, err := createAttachmentFile(ext)
+	if err != nil {
+		return "", err
+	}
+	if n, err := f.Write(raw); err != nil {
+		_ = f.Close()
+		_ = os.Remove(rel)
+		return "", err
+	} else if n != len(raw) {
+		_ = f.Close()
+		_ = os.Remove(rel)
+		return "", io.ErrShortWrite
+	}
+	if err := f.Close(); err != nil {
+		_ = os.Remove(rel)
 		return "", err
 	}
 	return filepath.ToSlash(rel), nil
@@ -230,9 +248,17 @@ func saveDarwinClipboardClass(class string) (string, error) {
 	if err := ensureAttachmentRoot(); err != nil {
 		return "", err
 	}
-	rel := attachmentPath(".bin")
+	rel, f, err := createAttachmentFile(".bin")
+	if err != nil {
+		return "", err
+	}
+	if err := f.Close(); err != nil {
+		_ = os.Remove(rel)
+		return "", err
+	}
 	abs, err := filepath.Abs(rel)
 	if err != nil {
+		_ = os.Remove(rel)
 		return "", err
 	}
 	script := fmt.Sprintf(`
@@ -266,8 +292,25 @@ end try
 	return SaveImageBytes("", raw)
 }
 
+func createAttachmentFile(ext string) (string, *os.File, error) {
+	for range maxAttachmentCreateAttempts {
+		rel := attachmentPath(ext)
+		f, err := os.OpenFile(rel, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+		if os.IsExist(err) {
+			continue
+		}
+		if err != nil {
+			return "", nil, err
+		}
+		return rel, f, nil
+	}
+	return "", nil, fmt.Errorf("create unique attachment path")
+}
+
 func attachmentPath(ext string) string {
-	return filepath.Join(".reasonix", "attachments", "clipboard-"+time.Now().Format("20060102-150405.000000")+ext)
+	seq := attachmentPathSeq.Add(1)
+	name := fmt.Sprintf("clipboard-%s-%06d%s", attachmentNow().Format("20060102-150405.000000"), seq, ext)
+	return filepath.Join(".reasonix", "attachments", name)
 }
 
 func detectedImageMime(raw []byte) string {
