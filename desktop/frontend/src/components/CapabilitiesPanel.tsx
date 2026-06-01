@@ -140,23 +140,16 @@ export function CapabilitiesPanel({
                     expanded={expandedErrors}
                     onToggle={toggleError}
                     onRetry={(name) => void mutate(() => app.RetryMCPServer(name))}
+                    confirming={confirming}
+                    onConfirm={setConfirming}
+                    onCancelConfirm={() => setConfirming(null)}
+                    onRemove={(name) => mutate(() => app.RemoveMCPServer(name)).then(() => setConfirming(null))}
                     busy={busy}
                   />
                 )}
                 {view.servers.length === 0 && !adding && (
                   <div className="mem-empty">{t("caps.noServers")}</div>
                 )}
-                <ServerGroup
-                  title={t("caps.failedGroup")}
-                  servers={serverGroups.failed}
-                  busy={busy}
-                  confirming={confirming}
-                  onConfirm={setConfirming}
-                  onCancelConfirm={() => setConfirming(null)}
-                  onRemove={(name) => mutate(() => app.RemoveMCPServer(name)).then(() => setConfirming(null))}
-                  onRetry={(name) => void mutate(() => app.RetryMCPServer(name))}
-                  onToggle={(name, on) => void mutate(() => app.SetMCPServerEnabled(name, on))}
-                />
                 <ServerGroup
                   title={t("caps.connectedGroup")}
                   servers={serverGroups.connected}
@@ -271,14 +264,22 @@ function FailedServersNotice({
   servers,
   expanded,
   busy,
+  confirming,
   onToggle,
   onRetry,
+  onConfirm,
+  onCancelConfirm,
+  onRemove,
 }: {
   servers: ServerView[];
   expanded: Set<string>;
   busy: boolean;
+  confirming: string | null;
   onToggle: (name: string) => void;
   onRetry: (name: string) => void;
+  onConfirm: (name: string) => void;
+  onCancelConfirm: () => void;
+  onRemove: (name: string) => void;
 }) {
   const t = useT();
   return (
@@ -303,15 +304,31 @@ function FailedServersNotice({
                 </div>
               </div>
               <div className="cap-failure__actions">
-                <button className="btn btn--small" disabled={busy} onClick={() => onRetry(s.name)}>
-                  {t("caps.retry")}
-                </button>
-                <button className="btn btn--small" onClick={() => void navigator.clipboard?.writeText(error)}>
-                  {t("common.copy")}
-                </button>
-                <button className="btn btn--small" onClick={() => onToggle(s.name)} aria-expanded={open}>
-                  {open ? t("common.collapse") : t("caps.showLog")}
-                </button>
+                {confirming === s.name ? (
+                  <>
+                    <button className="btn btn--small" disabled={busy} onClick={() => onRemove(s.name)}>
+                      {t("caps.confirmRemove")}
+                    </button>
+                    <button className="btn btn--small" disabled={busy} onClick={onCancelConfirm}>
+                      {t("common.cancel")}
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <button className="btn btn--small" disabled={busy} onClick={() => onRetry(s.name)}>
+                      {t("caps.retry")}
+                    </button>
+                    <button className="btn btn--small" onClick={() => void navigator.clipboard?.writeText(error)}>
+                      {t("common.copy")}
+                    </button>
+                    <button className="btn btn--small" onClick={() => onToggle(s.name)} aria-expanded={open}>
+                      {open ? t("common.collapse") : t("caps.showLog")}
+                    </button>
+                    <button className="btn btn--small" disabled={busy} onClick={() => onConfirm(s.name)} title={t("caps.remove")}>
+                      ✕
+                    </button>
+                  </>
+                )}
               </div>
               {open && <pre className="cap-failure__log">{error}</pre>}
             </div>

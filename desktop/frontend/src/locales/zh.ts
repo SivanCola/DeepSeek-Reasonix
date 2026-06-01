@@ -74,7 +74,6 @@ export const zh: Record<DictKey, string> = {
   "caps.skillsTab": "Agent 技能",
   "caps.servers": "MCP 服务器",
   "caps.noServers": "未配置 MCP 服务器。用 /mcp add 添加。",
-  "caps.failedGroup": "异常",
   "caps.connectedGroup": "已连接",
   "caps.disabledGroup": "已停用",
   "caps.failureTitle": "{failed} 个 MCP 启动异常",

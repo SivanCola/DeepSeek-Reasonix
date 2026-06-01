@@ -73,7 +73,6 @@ export const en = {
   "caps.skillsTab": "Agent skills",
   "caps.servers": "MCP servers",
   "caps.noServers": "No MCP servers configured. Add one with /mcp add.",
-  "caps.failedGroup": "Issues",
   "caps.connectedGroup": "Connected",
   "caps.disabledGroup": "Disabled",
   "caps.failureTitle": "{failed} MCP startup issues",
