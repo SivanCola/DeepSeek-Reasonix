@@ -62,6 +62,8 @@ type Messages struct {
 	ResumedTitle        string // banner title after a /resume switch
 
 	// chat TUI status line / approval banner.
+	ChatThinking           string // live reasoning marker label, e.g. "thinking…"
+	ChatThoughtForFmt      string // collapsed reasoning summary, "%d" = elapsed s
 	ChatStatusThinkingFmt  string // "%s thinking… (%ds · <cancel hint>)" — %s = spinner, %d = elapsed s
 	ChatStatusIdle         string // shortcuts hint when idle
 	ChatStatusPlanApproval string // shortcuts hint while a plan is pending
@@ -120,6 +122,7 @@ type Messages struct {
 	CmdPasteImage   string // /paste-image
 	CmdOutputStyle  string // /output-style
 	CmdSkill        string // /skill
+	CmdVerbose      string // /verbose
 	CmdHelp         string // /help
 	CmdTodo         string // /todo
 	ArgSkillList    string // /skill list

@@ -23,6 +23,7 @@ import (
 	"reasonix/internal/event"
 	"reasonix/internal/hook"
 	"reasonix/internal/jobs"
+	"reasonix/internal/lsp"
 	"reasonix/internal/memory"
 	"reasonix/internal/outputstyle"
 	"reasonix/internal/permission"
@@ -185,6 +186,19 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		}
 	}
 	cleanup := pluginHost.Close
+
+	// LSP tools resolve their servers on PATH and spawn lazily on first query, so
+	// registering them is cheap even when no server is installed (a query then
+	// returns an install hint). The manager is session-scoped; chain its shutdown
+	// into the controller's cleanup so servers stop with the session, not the turn.
+	if cfg.LSP.Enabled {
+		lspMgr := lsp.NewManager(cwd, LSPSpecs(cfg.LSP))
+		for _, t := range lsp.Tools(lspMgr) {
+			reg.Add(t)
+		}
+		prev := cleanup
+		cleanup = func() { prev(); lspMgr.Close() }
+	}
 
 	maxSteps := cfg.Agent.MaxSteps
 	if opts.MaxSteps > 0 {
@@ -487,6 +501,39 @@ func MCPStartupNotice(failures []plugin.Failure) (text string, ok bool) {
 	}
 	return fmt.Sprintf("%d MCP server(s) failed to start: %s%s — run /mcp for details",
 		len(failures), strings.Join(names, ", "), more), true
+}
+
+// LSPSpecs returns the language → server map: the built-in defaults overlaid with
+// any user overrides. A user entry may set only the fields it wants to change;
+// empty fields keep the default for that language.
+func LSPSpecs(cfg config.LSPConfig) map[string]lsp.ServerSpec {
+	specs := lsp.DefaultSpecs()
+	for lang, s := range cfg.Servers {
+		spec := specs[lang]
+		if s.Command != "" {
+			spec.Command = s.Command
+		}
+		if s.Args != nil {
+			spec.Args = s.Args
+		}
+		if s.Env != nil {
+			spec.Env = s.Env
+		}
+		if s.LanguageID != "" {
+			spec.LanguageID = s.LanguageID
+		}
+		if s.Extensions != nil {
+			spec.Extensions = s.Extensions
+		}
+		if s.InstallHint != "" {
+			spec.InstallHint = s.InstallHint
+		}
+		if spec.LanguageID == "" {
+			spec.LanguageID = lang
+		}
+		specs[lang] = spec
+	}
+	return specs
 }
 
 func providerNames(cfg *config.Config) string {

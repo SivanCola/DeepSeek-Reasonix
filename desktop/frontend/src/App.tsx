@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   SquarePen,
   Brain,
+  Blocks,
   History,
   Settings as SettingsIcon,
   FolderGit2,
@@ -23,6 +24,7 @@ import { StatusBar } from "./components/StatusBar";
 import { MemoryPanel } from "./components/MemoryPanel";
 import { HistoryPanel } from "./components/HistoryPanel";
 import { SettingsPanel } from "./components/SettingsPanel";
+import { CapabilitiesPanel } from "./components/CapabilitiesPanel";
 import { UpdateBanner } from "./components/UpdateBanner";
 import { WorkspacePanel } from "./components/WorkspacePanel";
 import { parseTodos } from "./lib/tools";
@@ -113,6 +115,7 @@ export default function App() {
   const [workspacePanelOpen, setWorkspacePanelOpen] = useState(loadWorkspacePanelOpen);
   const [workspacePanelMaximized, setWorkspacePanelMaximized] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [capsOpen, setCapsOpen] = useState(false);
 
   // applyMode is the single source of truth for the input mode: it updates the
   // local pill and pushes the matching gate state to the controller (plan = read
@@ -374,6 +377,10 @@ export default function App() {
               <Brain size={15} />
               <span>{t("topbar.memory")}</span>
             </button>
+            <button className="sidebar__navitem" onClick={() => setCapsOpen(true)} title={t("caps.title")}>
+              <Blocks size={15} />
+              <span>{t("caps.title")}</span>
+            </button>
             <button
               className="sidebar__navitem"
               onClick={() => setSettingsOpen(true)}
@@ -426,6 +433,9 @@ export default function App() {
               </button>
               <button className="chip chip--icon" onClick={() => void openMemory()} title={t("topbar.memory")}>
                 <Brain size={13} />
+              </button>
+              <button className="chip chip--icon" onClick={() => setCapsOpen(true)} title={t("caps.title")}>
+                <Blocks size={13} />
               </button>
               <button
                 className="chip chip--icon"
@@ -524,6 +534,8 @@ export default function App() {
       )}
 
       {settingsOpen && <SettingsPanel onClose={() => setSettingsOpen(false)} onChanged={() => void refreshMeta()} />}
+
+      {capsOpen && <CapabilitiesPanel onClose={() => setCapsOpen(false)} />}
     </div>
   );
 }

@@ -90,7 +90,7 @@ type chatTUI struct {
 
 	// reasoning accumulates the in-progress thinking stream (dim); pending
 	// accumulates the in-progress answer (raw markdown). They are committed to
-	// scrollback (reasoning verbatim, answer markdown-rendered) when they
+	// scrollback (reasoning collapsed by default, answer markdown-rendered) when they
 	// finalize — at a tool/usage boundary or turn end — not previewed live, so
 	// the bottom region stays a stable height. pendingCommit queues finalized
 	// lines so a single Update emits exactly one ordered tea.Println.
@@ -98,8 +98,16 @@ type chatTUI struct {
 	pending       *strings.Builder
 	pendingCommit *[]string
 	renderer      *mdRenderer
-	eventCh       chan event.Event
-	started       bool // banner + resumed history committed once
+	showReasoning bool // Ctrl+O / /verbose: show raw thinking text in the CLI
+	// reasoningLineIdx is the transcript index of the live "▎ thinking…" marker
+	// while a reasoning block streams; it's rewritten to "▎ thought for Ns" when
+	// the block closes. -1 when no block is open. transcriptDirty forces a
+	// viewport re-feed after that in-place rewrite (length is unchanged).
+	reasoningLineIdx int
+	thinkStart       time.Time
+	transcriptDirty  bool
+	eventCh          chan event.Event
+	started          bool // banner + resumed history committed once
 
 	// transcript holds every finalized line commitLine emits; the viewport
 	// renders a scrollable window of it (alt-screen owns the grid, so there's no
@@ -343,22 +351,23 @@ func newChatTUI(ctrl *control.Controller, missing string, eventCh chan event.Eve
 
 	commitBuf := []string{}
 	return chatTUI{
-		ctrl:          ctrl,
-		label:         ctrl.Label(),
-		missing:       missing,
-		input:         ti,
-		spinner:       sp,
-		nextPasteID:   1,
-		reasoning:     &strings.Builder{},
-		pending:       &strings.Builder{},
-		pendingCommit: &commitBuf,
-		renderer:      newMarkdownRenderer(termW),
-		eventCh:       eventCh,
-		history:       ctrl.History(),
-		host:          ctrl.Host(),
-		commands:      ctrl.Commands(),
-		skills:        ctrl.Skills(),
-		viewport:      viewport.New(viewport.WithWidth(termW)),
+		ctrl:             ctrl,
+		label:            ctrl.Label(),
+		missing:          missing,
+		input:            ti,
+		spinner:          sp,
+		nextPasteID:      1,
+		reasoningLineIdx: -1,
+		reasoning:        &strings.Builder{},
+		pending:          &strings.Builder{},
+		pendingCommit:    &commitBuf,
+		renderer:         newMarkdownRenderer(termW),
+		eventCh:          eventCh,
+		history:          ctrl.History(),
+		host:             ctrl.Host(),
+		commands:         ctrl.Commands(),
+		skills:           ctrl.Skills(),
+		viewport:         viewport.New(viewport.WithWidth(termW)),
 	}
 }
 
@@ -396,7 +405,7 @@ func (m chatTUI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	cm.viewport.SetHeight(cm.transcriptHeight())
 	// Re-feed only when the content grew or the width changed (re-wrapping is
 	// the expensive part); a bare scroll or spinner tick keeps the offset.
-	if len(cm.transcript) != prevLines || cm.width != prevWidth {
+	if len(cm.transcript) != prevLines || cm.width != prevWidth || cm.transcriptDirty {
 		wrapped := wrapTranscript(strings.Join(cm.transcript, "\n"), contentW)
 		cm.viewport.SetContent(wrapped)
 		cm.wrappedLines = strings.Split(wrapped, "\n")
@@ -404,6 +413,7 @@ func (m chatTUI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cm.viewport.GotoBottom() // tail-follow: stay pinned to newest output
 		}
 	}
+	cm.transcriptDirty = false
 	// Any viewport scroll (wheel, PgUp/PgDn, edge auto-scroll, or tail-follow to
 	// newest output) shifts the whole window. Some terminals (Warp) mishandle
 	// the renderer's scroll/insert-line optimization and strand stale rows, so
@@ -451,7 +461,13 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.MouseClickMsg:
-		// Left-press in the transcript region begins a text selection.
+		// Right-click copies the active selection (Windows Terminal convention);
+		// left-press in the transcript region begins a text selection.
+		if msg.Button == tea.MouseRight && m.sel.active && !m.sel.empty() {
+			text := m.selectedText()
+			m.sel = selection{}
+			return m, tea.Batch(copyToClipboard(text), finalize(m, cmds))
+		}
 		if msg.Button == tea.MouseLeft && msg.Y < m.viewport.Height() {
 			at := m.transcriptCaret(msg.X, msg.Y)
 			m.sel = selection{active: true, anchor: at, head: at}
@@ -499,8 +515,8 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.MouseReleaseMsg:
 		// Release finalizes the selection; the highlight stays on as the visual
-		// "what's selected" cue and Ctrl+C copies it. A plain click (no drag)
-		// clears any prior selection.
+		// "what's selected" cue and a right-click copies it. A plain click (no
+		// drag) clears any prior selection.
 		m.autoScroll = 0 // stop edge auto-scroll
 		if msg.Button == tea.MouseLeft && m.sel.active && m.sel.empty() {
 			m.sel = selection{}
@@ -519,14 +535,7 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case tea.KeyPressMsg:
-		// Ctrl+C copies the active selection (terminal convention: copy when
-		// something is selected, otherwise interrupt/quit below).
-		if msg.String() == "ctrl+c" && m.sel.active && !m.sel.empty() {
-			text := m.selectedText()
-			m.sel = selection{}
-			return m, tea.Batch(copyToClipboard(text), finalize(m, cmds))
-		}
-		// Any other keystroke dismisses a finished selection.
+		// Any keystroke dismisses a finished selection (copy is a right-click).
 		m.sel = selection{}
 		// Transcript scroll keys work in any state (PgUp/PgDn are never text).
 		switch msg.String() {
@@ -654,6 +663,9 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			cmds = append(cmds, pasteClipboardImage())
+			return m, finalize(m, cmds)
+		case "ctrl+o":
+			m.toggleVerboseReasoning(m.state != tuiRunning)
 			return m, finalize(m, cmds)
 		case "tab":
 			if m.state == tuiRunning {
@@ -909,34 +921,25 @@ func (m chatTUI) transcriptHeight() int {
 	return 1
 }
 
-// commitReasoning freezes the accumulated thinking stream (verbatim, already
-// dim) into scrollback and clears the live buffer.
+// commitReasoning closes the live thinking block: the "▎ thinking…" marker is
+// rewritten in place to a dim "▎ thought for Ns" summary, and in verbose mode the
+// accumulated reasoning text is inserted beneath it. The viewport re-wraps from
+// m.transcript, so the in-place rewrite is flagged via transcriptDirty.
 func (m *chatTUI) commitReasoning() {
-	if m.reasoning.Len() == 0 {
+	if m.reasoningLineIdx < 0 {
 		return
 	}
-	// Wrap to the viewport width before committing. bubbletea's non-alt-screen
-	// Println adds an erase-to-end only for message lines *narrower* than the
-	// terminal and never truncates them, so an over-wide reasoning line wraps
-	// and its short final row leaves the old input-box border (the live region
-	// it printed over) bleeding through on the right — the "ghost ────". The
-	// rendered answer is already wrapped, which is why only reasoning stranded.
-	// Wrap each over-long line; keep short ones (the "▎ thinking" header)
-	// verbatim so their indent survives.
-	raw := strings.TrimRight(m.reasoning.String(), "\n")
-	var b strings.Builder
-	for i, line := range strings.Split(raw, "\n") {
-		if i > 0 {
-			b.WriteByte('\n')
-		}
-		if m.width > 0 && visibleWidth(line) > m.width {
-			b.WriteString(wrapAnsi(line, m.width))
-		} else {
-			b.WriteString(line) // width unknown (pre-sizing) or already fits: verbatim
-		}
+	secs := int(time.Since(m.thinkStart).Seconds())
+	m.transcript[m.reasoningLineIdx] = dim(fmt.Sprintf("  ▎ "+i18n.M.ChatThoughtForFmt, secs))
+	if m.showReasoning && m.reasoning.Len() > 0 {
+		raw := strings.TrimRight(m.reasoning.String(), "\n")
+		at := m.reasoningLineIdx + 1
+		lines := strings.Split(raw, "\n")
+		m.transcript = append(m.transcript[:at], append(lines, m.transcript[at:]...)...)
 	}
-	m.commitLine(b.String())
+	m.transcriptDirty = true
 	m.reasoning.Reset()
+	m.reasoningLineIdx = -1
 }
 
 // commitPending renders the accumulated answer as markdown and freezes it into
@@ -1699,6 +1702,18 @@ func (m *chatTUI) cycleMode() {
 	}
 }
 
+func (m *chatTUI) toggleVerboseReasoning(notify bool) {
+	m.showReasoning = !m.showReasoning
+	if !notify {
+		return
+	}
+	if m.showReasoning {
+		m.notice("verbose on — thinking text will be shown")
+	} else {
+		m.notice("verbose off — thinking text will stay collapsed")
+	}
+}
+
 // startTurn commits the user bubble to scrollback, resets the turn accumulator,
 // and kicks off runner.Run. `sent` goes to the model (may carry a plan-mode
 // marker), `displayed` is what the transcript shows, and `restore` is what Esc
@@ -1785,10 +1800,16 @@ func (m *chatTUI) ingestEvent(e event.Event) {
 	}
 	switch e.Kind {
 	case event.Reasoning:
-		if m.reasoning.Len() == 0 {
-			m.reasoning.WriteString(dim("  ▎ thinking") + "\n")
+		if m.reasoningLineIdx < 0 {
+			// Show the marker the moment thinking starts so the user sees the model
+			// working; it's rewritten to "thought for Ns" when the block closes.
+			m.thinkStart = time.Now()
+			m.reasoningLineIdx = len(m.transcript)
+			m.commitLine(dim("  ▎ " + i18n.M.ChatThinking))
 		}
-		m.reasoning.WriteString(dim(e.Text))
+		if m.showReasoning {
+			m.reasoning.WriteString(dim(e.Text))
+		}
 
 	case event.Text:
 		m.commitReasoning() // reasoning ends as the answer begins
@@ -1958,6 +1979,8 @@ func (m *chatTUI) runSlashCommand(input string) tea.Cmd {
 		// Dismiss the pinned task list; a later todo_write brings it back.
 		m.todoArgs = ""
 		m.notice(i18n.M.SlashTodoCleared)
+	case "/verbose":
+		m.toggleVerboseReasoning(true)
 	case "/rewind":
 		m.openRewind()
 	case "/tree":
