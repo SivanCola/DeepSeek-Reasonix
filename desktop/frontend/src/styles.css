@@ -1178,6 +1178,7 @@ body {
   margin: 0 auto;
 }
 .composer-card {
+  position: relative;
   border: 1px solid var(--border);
   border-radius: 12px;
   background: var(--bg-elev);
@@ -1185,8 +1186,44 @@ body {
   box-shadow: 0 10px 28px rgba(0, 0, 0, 0.08);
   transition: border-color 0.12s;
 }
+.composer-card--resized {
+  height: var(--composer-height);
+  display: flex;
+  flex-direction: column;
+}
 .composer-card:focus-within {
   border-color: var(--fg-faint);
+}
+.composer-resize-handle {
+  --wails-draggable: no-drag;
+  position: absolute;
+  top: 0;
+  left: 14px;
+  right: 14px;
+  z-index: 5;
+  height: 8px;
+  cursor: ns-resize;
+  touch-action: none;
+}
+.composer-resize-handle::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  border-radius: 999px;
+  background: transparent;
+  transition: background 0.12s;
+}
+.composer-card:hover .composer-resize-handle::before,
+.composer-card--resizing .composer-resize-handle::before {
+  background: var(--border);
+}
+.composer-resizing,
+.composer-resizing * {
+  cursor: ns-resize !important;
+  user-select: none;
 }
 .slashmenu {
   position: absolute;
@@ -1261,11 +1298,16 @@ body {
   display: flex;
   gap: 8px;
   align-items: center;
+  min-height: 0;
   background: transparent;
   border: none;
   border-bottom: 1px solid var(--border-soft);
   border-radius: 0;
   padding: 10px 10px 9px 13px;
+}
+.composer-card--resized .composer {
+  flex: 1;
+  align-items: flex-start;
 }
 .composer--dragover {
   outline: 1px dashed var(--accent);
@@ -1289,6 +1331,11 @@ body {
   max-height: 200px;
   outline: none;
   field-sizing: content;
+}
+.composer-card--resized .composer__input {
+  height: 100%;
+  max-height: none;
+  overflow-y: auto;
 }
 .composer__input::placeholder {
   color: var(--fg-faint);

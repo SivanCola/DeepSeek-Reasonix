@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { ClipboardEvent, DragEvent, KeyboardEvent } from "react";
+import type { CSSProperties, ClipboardEvent, DragEvent, KeyboardEvent, PointerEvent as ReactPointerEvent } from "react";
 import { ArrowUp, Check, ChevronDown, FolderGit2, FolderPlus, FolderX, Search, Square, X } from "lucide-react";
 import { app } from "../lib/bridge";
 import { useT } from "../lib/i18n";
@@ -15,6 +15,10 @@ interface Attachment {
 
 const LONG_PASTE_MIN_CHARS = 1000;
 const LONG_PASTE_MIN_LINES = 5;
+const COMPOSER_HEIGHT_STORAGE_KEY = "reasonix.composerHeight";
+const COMPOSER_MIN_HEIGHT = 86;
+const COMPOSER_MAX_HEIGHT = 360;
+const COMPOSER_MAX_VIEWPORT_RATIO = 0.4;
 
 type PastedBlock = {
   label: string;
@@ -32,6 +36,27 @@ function shouldFoldPaste(s: string): boolean {
 
 function renderPastedBlock(block: PastedBlock): string {
   return `${block.label}\n\n--- Begin ${block.label} ---\n${block.text}\n--- End ${block.label} ---`;
+}
+
+function composerMaxHeight(): number {
+  if (typeof window === "undefined") return COMPOSER_MAX_HEIGHT;
+  return Math.max(COMPOSER_MIN_HEIGHT, Math.min(COMPOSER_MAX_HEIGHT, Math.floor(window.innerHeight * COMPOSER_MAX_VIEWPORT_RATIO)));
+}
+
+function clampComposerHeight(height: number): number {
+  return Math.min(Math.max(Math.round(height), COMPOSER_MIN_HEIGHT), composerMaxHeight());
+}
+
+function loadComposerHeight(): number | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem(COMPOSER_HEIGHT_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = Number(raw);
+    return Number.isFinite(parsed) ? clampComposerHeight(parsed) : null;
+  } catch {
+    return null;
+  }
 }
 
 export function Composer({
@@ -65,7 +90,10 @@ export function Composer({
   const [workspaceMenuOpen, setWorkspaceMenuOpen] = useState(false);
   const [workspaceQuery, setWorkspaceQuery] = useState("");
   const [workspaces, setWorkspaces] = useState<WorkspaceView[]>([]);
+  const [composerHeight, setComposerHeight] = useState<number | null>(loadComposerHeight);
+  const [composerResizing, setComposerResizing] = useState(false);
   const taRef = useRef<HTMLTextAreaElement>(null);
+  const composerCardRef = useRef<HTMLDivElement>(null);
   const workspaceAnchorRef = useRef<HTMLDivElement>(null);
   const workspaceMenuRef = useRef<HTMLDivElement>(null);
   const wasRunning = useRef(running);
@@ -346,6 +374,61 @@ export function Composer({
     }
   };
 
+  useEffect(() => {
+    const onResize = () => setComposerHeight((height) => (height === null ? null : clampComposerHeight(height)));
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+
+  const saveComposerHeight = (height: number) => {
+    try {
+      window.localStorage.setItem(COMPOSER_HEIGHT_STORAGE_KEY, String(height));
+    } catch {
+      // localStorage can be unavailable in restricted WebViews; resizing still works for this session.
+    }
+  };
+
+  const resetComposerHeight = () => {
+    setComposerHeight(null);
+    try {
+      window.localStorage.removeItem(COMPOSER_HEIGHT_STORAGE_KEY);
+    } catch {
+      // Ignore storage errors; the visual reset already happened.
+    }
+  };
+
+  const onComposerResizeStart = (e: ReactPointerEvent<HTMLDivElement>) => {
+    if (e.button !== 0) return;
+    const card = composerCardRef.current;
+    if (!card) return;
+
+    e.preventDefault();
+    const startY = e.clientY;
+    const startHeight = composerHeight ?? card.getBoundingClientRect().height;
+    let nextHeight = clampComposerHeight(startHeight);
+    let moved = false;
+    setComposerResizing(true);
+    document.body.classList.add("composer-resizing");
+
+    const onMove = (event: PointerEvent) => {
+      moved = true;
+      nextHeight = clampComposerHeight(startHeight + startY - event.clientY);
+      setComposerHeight(nextHeight);
+    };
+    const onUp = () => {
+      setComposerResizing(false);
+      document.body.classList.remove("composer-resizing");
+      if (moved) saveComposerHeight(nextHeight);
+      document.removeEventListener("pointermove", onMove);
+      document.removeEventListener("pointerup", onUp);
+      document.removeEventListener("pointercancel", onUp);
+    };
+
+    document.addEventListener("pointermove", onMove);
+    document.addEventListener("pointerup", onUp);
+    document.addEventListener("pointercancel", onUp);
+  };
+
   const pickEntry = (e: DirEntry) => {
     const atPos = text.length - (atRaw?.length ?? 0) - 1; // index of '@'
     const prefix = text.slice(0, atPos);
@@ -413,6 +496,8 @@ export function Composer({
       handleCancel();
     }
   };
+
+  const composerCardStyle = composerHeight === null ? undefined : ({ "--composer-height": `${composerHeight}px` } as CSSProperties);
 
   return (
     <div className="composer-wrap">
@@ -487,7 +572,16 @@ export function Composer({
           ))}
         </div>
       )}
-      <div className="composer-card">
+      <div
+        className={`composer-card${composerHeight !== null ? " composer-card--resized" : ""}${composerResizing ? " composer-card--resizing" : ""}`}
+        ref={composerCardRef}
+        style={composerCardStyle}
+      >
+        <div
+          className="composer-resize-handle"
+          onPointerDown={onComposerResizeStart}
+          onDoubleClick={resetComposerHeight}
+        />
         <div
           className={`composer${dragOver ? " composer--dragover" : ""}`}
           onDrop={onDrop}
