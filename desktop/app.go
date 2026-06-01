@@ -111,6 +111,16 @@ func (a *App) Submit(input string) {
 	}
 }
 
+// SubmitDisplay runs input as a turn while recording a shorter UI-only display
+// string for the saved desktop transcript. The model still receives input.
+func (a *App) SubmitDisplay(display, input string) {
+	if a.ctrl == nil {
+		return
+	}
+	_ = recordSessionDisplay(config.SessionDir(), a.ctrl.SessionPath(), input, display)
+	a.ctrl.Submit(input)
+}
+
 // Cancel aborts the in-flight turn.
 func (a *App) Cancel() {
 	if a.ctrl != nil {
@@ -375,9 +385,14 @@ func (a *App) History() []HistoryMessage {
 		return nil
 	}
 	msgs := a.ctrl.History()
+	sessionPath := a.ctrl.SessionPath()
 	out := make([]HistoryMessage, 0, len(msgs))
 	for _, m := range msgs {
-		out = append(out, HistoryMessage{Role: string(m.Role), Content: m.Content})
+		content := m.Content
+		if m.Role == provider.RoleUser {
+			content = resolveSessionDisplay(config.SessionDir(), sessionPath, m.Content)
+		}
+		out = append(out, HistoryMessage{Role: string(m.Role), Content: content})
 	}
 	return out
 }

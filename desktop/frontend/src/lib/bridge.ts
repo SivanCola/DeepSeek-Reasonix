@@ -30,6 +30,7 @@ import type {
 // (or regenerate with `wails generate module` and import wailsjs instead).
 export interface AppBindings {
   Submit(input: string): Promise<void>;
+  SubmitDisplay(display: string, input: string): Promise<void>;
   Cancel(): Promise<void>;
   Approve(id: string, allow: boolean, session: boolean): Promise<void>;
   AnswerQuestion(id: string, answers: QuestionAnswer[]): Promise<void>;
@@ -273,6 +274,9 @@ function makeMockApp(): AppBindings {
         },
       });
       emit({ kind: "turn_done" });
+    },
+    async SubmitDisplay(_display, input) {
+      await this.Submit(input);
     },
     async Cancel() {
       cancelled = true;

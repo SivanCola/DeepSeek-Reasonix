@@ -239,6 +239,61 @@ func TestTranscriptTailFollow(t *testing.T) {
 	}
 }
 
+func TestFoldedPasteUsesPlaceholderAndExpandsOnSend(t *testing.T) {
+	m := newTestChatTUI()
+	pasted := "{\n  \"a\": 1,\n  \"b\": 2,\n  \"c\": 3,\n  \"d\": 4\n}"
+	if !shouldFoldPastedText(pasted) {
+		t.Fatal("five-line paste should fold")
+	}
+
+	m.insertFoldedPaste(pasted)
+	display := m.input.Value()
+	if display != "[Pasted text #1 · 6 lines] " {
+		t.Fatalf("display = %q", display)
+	}
+
+	sent := m.expandPastedBlocks(display)
+	for _, want := range []string{
+		"--- Begin [Pasted text #1 · 6 lines] ---",
+		`"d": 4`,
+		"--- End [Pasted text #1 · 6 lines] ---",
+	} {
+		if !strings.Contains(sent, want) {
+			t.Fatalf("expanded paste missing %q in:\n%s", want, sent)
+		}
+	}
+}
+
+func TestPasteMsgFoldsBeforeTextareaConsumesNewlines(t *testing.T) {
+	m := newTestChatTUI()
+	model, _ := m.Update(tea.PasteMsg{Content: "1\n2\n3\n4\n5"})
+	got := model.(chatTUI)
+	if got.input.Value() != "[Pasted text #1 · 5 lines] " {
+		t.Fatalf("input = %q", got.input.Value())
+	}
+	if got.input.Height() != 1 {
+		t.Fatalf("folded paste should keep one input row, got %d", got.input.Height())
+	}
+}
+
+func TestUnsendRestoresFoldedPastePlaceholder(t *testing.T) {
+	m := newTestChatTUI()
+	m.ctrl = control.New(control.Options{})
+	m.pendingBubble = "expanded JSON"
+	m.pendingRestore = "[Pasted text #1 · 5 lines] 这是什么?"
+	m.bubblePending = true
+	m.state = tuiRunning
+
+	m.unsendPending()
+
+	if got := m.input.Value(); got != "[Pasted text #1 · 5 lines] 这是什么?" {
+		t.Fatalf("restored input = %q", got)
+	}
+	if m.pendingBubble != "" || m.pendingRestore != "" || m.bubblePending {
+		t.Fatalf("pending state not cleared: bubble=%q restore=%q pending=%v", m.pendingBubble, m.pendingRestore, m.bubblePending)
+	}
+}
+
 func TestApprovalToolDetailsShortensMCPNames(t *testing.T) {
 	name, detail := approvalToolDetails("mcp__minimax-coding-plan-mcp__understand_image")
 	if name != "understand_image" {

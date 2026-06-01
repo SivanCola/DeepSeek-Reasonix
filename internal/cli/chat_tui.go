@@ -58,6 +58,9 @@ type chatTUI struct {
 	input   textarea.Model
 	spinner spinner.Model
 
+	pastedBlocks []pastedBlock
+	nextPasteID  int
+
 	state    tuiState
 	runStart time.Time
 	elapsed  int
@@ -117,9 +120,11 @@ type chatTUI struct {
 	// reaches scrollback. bubblePending is true from startTurn until the bubble
 	// commits or is un-sent; turnDiscarded then swallows the turn's already-buffered
 	// events until its TurnDone settles.
-	pendingBubble string
-	bubblePending bool
-	turnDiscarded bool
+	pendingBubble  string
+	pendingRestore string
+	pendingPastes  []string
+	bubblePending  bool
+	turnDiscarded  bool
 	// attachments are image refs queued for the next user turn. They render as a
 	// tray above the input and are appended to the provider-facing prompt as
 	// @-references only when the turn is sent.
@@ -293,6 +298,7 @@ type promptResolvedMsg struct {
 type refsResolvedMsg struct {
 	sent        string
 	display     string
+	restore     string
 	attachments []chatAttachment
 	block       string
 	errs        []string
@@ -342,6 +348,7 @@ func newChatTUI(ctrl *control.Controller, missing string, eventCh chan event.Eve
 		missing:       missing,
 		input:         ti,
 		spinner:       sp,
+		nextPasteID:   1,
 		reasoning:     &strings.Builder{},
 		pending:       &strings.Builder{},
 		pendingCommit: &commitBuf,
@@ -504,6 +511,12 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.state != tuiRunning && m.attachPastedImages(msg.Content) {
 			return m, finalize(m, cmds)
 		}
+		if !m.chooserTyping() && m.pendingApproval == nil && m.rewind == nil && m.shouldFoldPaste(msg.Content) {
+			m.insertFoldedPaste(msg.Content)
+			m.growInputToFit()
+			m.updateCompletion()
+			return m, finalize(m, cmds)
+		}
 
 	case tea.KeyPressMsg:
 		// Ctrl+C copies the active selection (terminal convention: copy when
@@ -614,6 +627,7 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 				} else {
 					m.input.Reset()
+					m.pastedBlocks = nil
 				}
 			}
 			return m, nil
@@ -668,6 +682,7 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if strings.HasPrefix(line, "#") {
 				m.input.Reset()
 				m.input.SetHeight(1)
+				m.pastedBlocks = nil
 				note := strings.TrimSpace(strings.TrimPrefix(line, "#"))
 				if note == "" {
 					m.notice("nothing to remember")
@@ -684,13 +699,15 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if strings.HasPrefix(line, "/") && len(m.attachments) == 0 {
 				m.input.Reset()
 				m.input.SetHeight(1)
+				m.pastedBlocks = nil
 				cmds = append(cmds, m.runSlashCommand(line))
 				return m, finalize(m, cmds)
 			}
 
 			attachments := cloneAttachments(m.attachments)
-			sentLine := withAttachmentRefs(line, attachments)
-			displayLine := withAttachmentLabels(line, attachments)
+			sentText := m.expandPastedBlocks(line)
+			sentLine := withAttachmentRefs(sentText, attachments)
+			displayLine := withAttachmentLabels(sentText, attachments)
 			m.input.Reset()
 			m.input.SetHeight(1)
 			m.attachments = nil
@@ -699,11 +716,11 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// loop by the controller; the turn starts when they resolve
 			// (refsResolvedMsg).
 			if m.ctrl.HasRefs(sentLine) {
-				cmds = append(cmds, m.resolveRefs(sentLine, displayLine, attachments))
+				cmds = append(cmds, m.resolveRefs(sentLine, displayLine, line, attachments))
 				return m, finalize(m, cmds)
 			}
 
-			cmds = append(cmds, m.startTurn(m.ctrl.Compose(sentLine), displayLine, attachments))
+			cmds = append(cmds, m.startTurn(m.ctrl.Compose(sentLine), displayLine, line, attachments))
 			return m, finalize(m, cmds)
 		}
 
@@ -768,7 +785,7 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case strings.TrimSpace(msg.sent) == "":
 			m.notice(i18n.M.SlashPromptEmpty)
 		default:
-			cmds = append(cmds, m.startTurn(m.ctrl.Compose(msg.sent), msg.display, nil))
+			cmds = append(cmds, m.startTurn(m.ctrl.Compose(msg.sent), msg.display, msg.display, nil))
 		}
 
 	case refsResolvedMsg:
@@ -779,7 +796,7 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.block != "" {
 			sent = "Referenced context:\n\n" + msg.block + "\n\n" + msg.sent
 		}
-		cmds = append(cmds, m.startTurn(m.ctrl.Compose(sent), msg.display, msg.attachments))
+		cmds = append(cmds, m.startTurn(m.ctrl.Compose(sent), msg.display, msg.restore, msg.attachments))
 
 	case clipboardImageMsg:
 		if msg.err != nil {
@@ -796,7 +813,11 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.attachments = append(m.attachments, chatAttachment{Path: msg.path})
 		case msg.text != "":
 			if !m.attachPastedImages(msg.text) {
-				m.input.InsertString(msg.text)
+				if m.shouldFoldPaste(msg.text) {
+					m.insertFoldedPaste(msg.text)
+				} else {
+					m.input.InsertString(msg.text)
+				}
 				m.growInputToFit()
 				m.updateCompletion()
 				return m, finalize(m, cmds)
@@ -1361,6 +1382,85 @@ func clampStatusLine(s string, width int) string {
 // growInputToFit resizes the textarea to the number of lines its value spans,
 // capped at maxInputRows so a long paste doesn't crowd the screen.
 const maxInputRows = 5
+const foldedPasteMinChars = 1000
+const foldedPasteMinLines = 5
+
+type pastedBlock struct {
+	label string
+	text  string
+}
+
+func pastedLineCount(s string) int {
+	if s == "" {
+		return 0
+	}
+	return strings.Count(strings.ReplaceAll(strings.ReplaceAll(s, "\r\n", "\n"), "\r", "\n"), "\n") + 1
+}
+
+func foldedPasteLabel(id, lines int) string {
+	return fmt.Sprintf("[Pasted text #%d · %d lines]", id, lines)
+}
+
+func renderFoldedPasteBlock(block pastedBlock) string {
+	return fmt.Sprintf("%s\n\n--- Begin %s ---\n%s\n--- End %s ---", block.label, block.label, block.text, block.label)
+}
+
+func shouldFoldPastedText(s string) bool {
+	return len([]rune(s)) >= foldedPasteMinChars || pastedLineCount(s) >= foldedPasteMinLines
+}
+
+func (m *chatTUI) chooserTyping() bool {
+	return m.chooser != nil && m.chooser.typing
+}
+
+func (m *chatTUI) shouldFoldPaste(s string) bool {
+	return shouldFoldPastedText(s)
+}
+
+func (m *chatTUI) insertFoldedPaste(s string) {
+	label := foldedPasteLabel(m.nextPasteID, pastedLineCount(s))
+	m.nextPasteID++
+	m.pastedBlocks = append(m.pastedBlocks, pastedBlock{label: label, text: s})
+	m.input.InsertString(label + " ")
+}
+
+func (m *chatTUI) expandPastedBlocks(displayed string) string {
+	sent := displayed
+	for _, block := range m.pastedBlocks {
+		if strings.Contains(sent, block.label) {
+			sent = strings.ReplaceAll(sent, block.label, renderFoldedPasteBlock(block))
+		}
+	}
+	return sent
+}
+
+func (m *chatTUI) pasteLabelsIn(s string) []string {
+	var labels []string
+	for _, block := range m.pastedBlocks {
+		if strings.Contains(s, block.label) {
+			labels = append(labels, block.label)
+		}
+	}
+	return labels
+}
+
+func (m *chatTUI) clearSubmittedPastes() {
+	if len(m.pendingPastes) == 0 {
+		return
+	}
+	submitted := make(map[string]bool, len(m.pendingPastes))
+	for _, label := range m.pendingPastes {
+		submitted[label] = true
+	}
+	kept := m.pastedBlocks[:0]
+	for _, block := range m.pastedBlocks {
+		if !submitted[block.label] {
+			kept = append(kept, block)
+		}
+	}
+	m.pastedBlocks = kept
+	m.pendingPastes = nil
+}
 
 func (m *chatTUI) growInputToFit() {
 	lines := strings.Count(m.input.Value(), "\n") + 1
@@ -1596,8 +1696,9 @@ func (m *chatTUI) cycleMode() {
 
 // startTurn commits the user bubble to scrollback, resets the turn accumulator,
 // and kicks off runner.Run. `sent` goes to the model (may carry a plan-mode
-// marker); `displayed` is what the transcript shows.
-func (m *chatTUI) startTurn(sent, displayed string, attachments []chatAttachment) tea.Cmd {
+// marker), `displayed` is what the transcript shows, and `restore` is what Esc
+// puts back into the input while the bubble is still deferred.
+func (m *chatTUI) startTurn(sent, displayed, restore string, attachments []chatAttachment) tea.Cmd {
 	// Flush any half-streamed leftover before the new turn (defensive).
 	m.commitReasoning()
 	m.commitPending()
@@ -1606,6 +1707,8 @@ func (m *chatTUI) startTurn(sent, displayed string, attachments []chatAttachment
 	// pressing Esc before the server replies un-sends the message, restoring its
 	// text to the input box with nothing stranded in scrollback.
 	m.pendingBubble = displayed
+	m.pendingRestore = restore
+	m.pendingPastes = m.pasteLabelsIn(restore)
 	m.pendingAttachments = cloneAttachments(attachments)
 	m.bubblePending = true
 	m.turnDiscarded = false
@@ -1632,6 +1735,7 @@ func (m *chatTUI) commitPendingBubble() {
 	m.commitLine("") // blank line separating turns
 	m.commitLine(renderUserBubble(m.pendingBubble, m.width, m.planMode))
 	m.pendingBubble = ""
+	m.pendingRestore = ""
 	m.pendingAttachments = nil
 }
 
@@ -1641,12 +1745,14 @@ func (m *chatTUI) commitPendingBubble() {
 // already-buffered events reach nothing. Once a packet has arrived the bubble is
 // committed and this path isn't taken (Esc cancels normally instead).
 func (m *chatTUI) unsendPending() {
-	m.input.SetValue(m.pendingBubble)
+	m.input.SetValue(m.pendingRestore)
 	m.growInputToFit()
 	m.attachments = cloneAttachments(m.pendingAttachments)
 	m.pendingAttachments = nil
 	m.bubblePending = false
 	m.pendingBubble = ""
+	m.pendingRestore = ""
+	m.pendingPastes = nil
 	m.turnDiscarded = true
 	m.ctrl.Cancel()
 }
@@ -1779,8 +1885,11 @@ func (m *chatTUI) ingestEvent(e event.Event) {
 			m.bubblePending = false
 			m.pendingBubble = ""
 			m.pendingAttachments = nil
+			m.pendingRestore = ""
+			m.pendingPastes = nil
 		}
 		m.state = tuiIdle
+		m.clearSubmittedPastes()
 		_ = m.ctrl.Snapshot() // best-effort; never the user's problem mid-chat
 		if e.Err != nil && e.Err.Error() != "" && !strings.Contains(e.Err.Error(), "context canceled") {
 			m.commitLine(wrapForViewport(i18n.M.ErrorPrefix+" "+e.Err.Error(), m.width, lipgloss.Color("3")))
@@ -1880,10 +1989,10 @@ func (m *chatTUI) runSlashCommand(input string) tea.Cmd {
 	default:
 		// A custom command wins over a skill of the same name; both resolve to a turn.
 		if sent, ok := m.ctrl.CustomCommand(input); ok {
-			return m.startTurn(m.ctrl.Compose(sent), input, nil)
+			return m.startTurn(m.ctrl.Compose(sent), input, input, nil)
 		}
 		if sent, ok := m.ctrl.RunSkill(input); ok {
-			return m.startTurn(m.ctrl.Compose(sent), input, nil)
+			return m.startTurn(m.ctrl.Compose(sent), input, input, nil)
 		}
 		m.notice(fmt.Sprintf("%s: %s", i18n.M.SlashUnknown, cmd))
 	}
@@ -1984,10 +2093,10 @@ func (m *chatTUI) notice(note string) {
 
 // resolveRefs resolves a line's @references off the event loop via the
 // controller, delivering a refsResolvedMsg with the tagged context block.
-func (m *chatTUI) resolveRefs(sent, display string, attachments []chatAttachment) tea.Cmd {
+func (m *chatTUI) resolveRefs(sent, display, restore string, attachments []chatAttachment) tea.Cmd {
 	return func() tea.Msg {
 		block, errs := m.ctrl.ResolveRefs(context.Background(), sent)
-		return refsResolvedMsg{sent: sent, display: display, attachments: attachments, block: block, errs: errs}
+		return refsResolvedMsg{sent: sent, display: display, restore: restore, attachments: attachments, block: block, errs: errs}
 	}
 }
 
