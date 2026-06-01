@@ -107,7 +107,7 @@ func hasUnsafeReadOnlyArgs(base string, args []string) bool {
 			}
 		}
 	case "sort":
-		return hasShortOptionWithValue(args, "-o") || hasAnyArg(args, "--output") || hasLongOptionWithValue(args, "--output=")
+		return hasArgWithPrefix(args, "-o") || hasAnyArg(args, "--output") || hasArgWithPrefix(args, "--output=")
 	}
 	return false
 }
@@ -117,7 +117,7 @@ func hasUnsafePrefixArgs(base, subcmd string, args []string) bool {
 	case "git":
 		switch subcmd {
 		case "diff", "show", "log":
-			return hasAnyArg(args, "--output") || hasLongOptionWithValue(args, "--output=")
+			return hasAnyArg(args, "--output") || hasArgWithPrefix(args, "--output=")
 		}
 	case "go":
 		if subcmd == "env" {
@@ -127,7 +127,7 @@ func hasUnsafePrefixArgs(base, subcmd string, args []string) bool {
 	return false
 }
 
-func hasShortOptionWithValue(args []string, prefix string) bool {
+func hasArgWithPrefix(args []string, prefix string) bool {
 	for _, arg := range args {
 		if strings.HasPrefix(arg, prefix) {
 			return true
@@ -142,15 +142,6 @@ func hasAnyArg(args []string, unsafe ...string) bool {
 			if arg == candidate {
 				return true
 			}
-		}
-	}
-	return false
-}
-
-func hasLongOptionWithValue(args []string, prefix string) bool {
-	for _, arg := range args {
-		if strings.HasPrefix(arg, prefix) {
-			return true
 		}
 	}
 	return false
