@@ -122,6 +122,11 @@ type chatTUI struct {
 	rewind  *rewindPicker
 	lastEsc time.Time
 
+	// mcpImport holds the interactive cc-switch MCP import picker (nil when
+	// closed). It writes selected servers to config and hot-connects the ones that
+	// can start successfully.
+	mcpImport *mcpImportPicker
+
 	// host is the running MCP servers (nil when no plugins). The TUI reads
 	// prompts (slash commands), resources (@-references), and server status
 	// (/mcp) from it.
@@ -417,6 +422,10 @@ func (m chatTUI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// The rewind picker is modal while open: keys navigate it.
 		if m.rewind != nil {
 			return m.handleRewindKey(msg)
+		}
+		// The MCP import picker is modal while open: keys select candidates.
+		if m.mcpImport != nil {
+			return m.handleMCPImportKey(msg)
 		}
 		// A pending tool approval is modal: keystrokes answer it (y/a/n, Enter,
 		// Esc) rather than reaching the input.
@@ -925,6 +934,10 @@ func (m chatTUI) View() tea.View {
 		rowsAboveBox += strings.Count(card, "\n") + 1
 	}
 	if card := m.renderRewind(); card != "" {
+		parts = append(parts, card)
+		rowsAboveBox += strings.Count(card, "\n") + 1
+	}
+	if card := m.renderMCPImport(); card != "" {
 		parts = append(parts, card)
 		rowsAboveBox += strings.Count(card, "\n") + 1
 	}
@@ -1571,8 +1584,10 @@ func (m *chatTUI) runMCPSubcommand(input string) {
 		} else {
 			m.notice("removed " + name + " from config")
 		}
+	case "import":
+		m.openMCPImportPicker()
 	default:
-		m.notice("unknown /mcp subcommand " + args[1] + " — try: /mcp, /mcp add, /mcp remove")
+		m.notice("unknown /mcp subcommand " + args[1] + " — try: /mcp, /mcp add, /mcp import, /mcp remove")
 	}
 }
 

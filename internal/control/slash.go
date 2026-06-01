@@ -66,6 +66,7 @@ func mcpArgItems(prior []string, cur string, d ArgData) []SlashItem {
 			{Label: "add", Insert: "add ", Hint: i18n.M.ArgMcpAdd, Descend: true},
 			{Label: "remove", Insert: "remove ", Hint: i18n.M.ArgMcpRemove, Descend: true},
 			{Label: "list", Insert: "list", Hint: i18n.M.ArgMcpList},
+			{Label: "import", Insert: "import", Hint: "import Codex-enabled servers from cc-switch"},
 		}
 	}
 	switch prior[1] {
