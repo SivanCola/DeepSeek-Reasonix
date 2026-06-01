@@ -2228,6 +2228,16 @@ body {
   background: var(--sidebar-active);
   color: var(--accent);
 }
+.workspace-tree__row--search {
+  height: auto;
+  min-height: 38px;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+}
+.workspace-tree__row--search.workspace-tree__row--active {
+  color: var(--fg);
+}
 .workspace-tree__chev {
   width: 13px;
   height: 13px;
@@ -2246,6 +2256,33 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.workspace-tree__result {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  line-height: 1.15;
+}
+.workspace-tree__result-name,
+.workspace-tree__result-dir {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.workspace-tree__result-name {
+  color: var(--fg);
+}
+.workspace-tree__result-dir {
+  color: var(--fg-faint);
+  font-size: 10.5px;
+  font-family: var(--mono);
+}
+.workspace-tree__row--search:hover .workspace-tree__result-name,
+.workspace-tree__row--search.workspace-tree__row--active .workspace-tree__result-name {
+  color: var(--accent);
 }
 
 /* ── memory drawer ───────────────────────────────────────────────────────── */

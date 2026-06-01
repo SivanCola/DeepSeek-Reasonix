@@ -36,6 +36,12 @@ function basename(path: string): string {
   return parts[parts.length - 1] ?? "";
 }
 
+function parentPath(path: string): string {
+  const clean = path.replace(/\/$/, "");
+  const parts = clean.split("/").filter(Boolean);
+  return parts.slice(0, -1).join("/");
+}
+
 function parentDirs(path: string): string[] {
   const parts = path.split("/").filter(Boolean);
   const dirs: string[] = [""];
@@ -241,11 +247,10 @@ export function WorkspacePanel({
   const breadcrumbDirs = selectedPath ? parentDirs(selectedPath) : [""];
   const pathParts = selectedPath?.split("/").filter(Boolean) ?? [];
   const flattened = useMemo(() => {
-    const rows: { path: string; entry: DirEntry; depth: number }[] = [];
+    const rows: { path: string; entry: DirEntry }[] = [];
     for (const [dir, entries] of Object.entries(entriesByDir)) {
-      const depth = dir === "" ? 0 : dir.split("/").filter(Boolean).length;
       for (const entry of entries) {
-        rows.push({ path: entryPath(dir, entry), entry, depth });
+        rows.push({ path: entryPath(dir, entry), entry });
       }
     }
     const q = filter.trim().toLowerCase();
@@ -464,23 +469,28 @@ export function WorkspacePanel({
         </div>
         <div className="workspace-tree">
           {flattened
-            ? flattened.map(({ path, entry, depth }) => (
-                <button
-                  className={`workspace-tree__row${selectedPath === path ? " workspace-tree__row--active" : ""}`}
-                  key={path}
-                  onClick={() => (entry.isDir ? toggleDir(path) : selectFile(path))}
-                  title={path}
-                  style={{ paddingLeft: 8 + Math.min(depth, 4) * 14 }}
-                >
-                  <span className="workspace-tree__chev" />
-                  {entry.isDir ? (
-                    <Folder size={14} className="workspace-tree__icon workspace-tree__icon--dir" />
-                  ) : (
-                    <FileText size={14} className="workspace-tree__icon" />
-                  )}
-                  <span className="workspace-tree__name">{path.replace(/\/$/, "")}</span>
-                </button>
-              ))
+            ? flattened.map(({ path, entry }) => {
+                const cleanPath = path.replace(/\/$/, "");
+                const dir = parentPath(path);
+                return (
+                  <button
+                    className={`workspace-tree__row workspace-tree__row--search${selectedPath === path ? " workspace-tree__row--active" : ""}`}
+                    key={path}
+                    onClick={() => (entry.isDir ? toggleDir(path) : selectFile(path))}
+                    title={cleanPath}
+                  >
+                    {entry.isDir ? (
+                      <Folder size={14} className="workspace-tree__icon workspace-tree__icon--dir" />
+                    ) : (
+                      <FileText size={14} className="workspace-tree__icon" />
+                    )}
+                    <span className="workspace-tree__result">
+                      <span className="workspace-tree__result-name">{basename(path)}</span>
+                      {dir && <span className="workspace-tree__result-dir">{dir}</span>}
+                    </span>
+                  </button>
+                );
+              })
             : renderRows("", 0)}
         </div>
       </section>
