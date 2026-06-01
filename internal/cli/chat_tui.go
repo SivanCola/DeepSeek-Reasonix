@@ -1305,6 +1305,7 @@ func (m chatTUI) renderTodoPanel() string {
 			Content    string `json:"content"`
 			Status     string `json:"status"`
 			ActiveForm string `json:"activeForm"`
+			Level      int    `json:"level"`
 		} `json:"todos"`
 	}
 	if err := json.Unmarshal([]byte(m.todoArgs), &p); err != nil || len(p.Todos) == 0 {
@@ -1329,17 +1330,21 @@ func (m chatTUI) renderTodoPanel() string {
 			break
 		}
 		shown++
+		indent := "  "
+		if t.Level >= 1 {
+			indent = "      " // sub-steps sit under their phase
+		}
 		switch t.Status {
 		case "completed":
-			b.WriteString("  " + green("✔") + " " + dim(t.Content) + "\n")
+			b.WriteString(indent + green("✔") + " " + dim(t.Content) + "\n")
 		case "in_progress":
 			label := t.Content
 			if t.ActiveForm != "" {
 				label = t.ActiveForm
 			}
-			b.WriteString("  " + yellow("▶ "+label) + "\n")
+			b.WriteString(indent + yellow("▶ "+label) + "\n")
 		default:
-			b.WriteString("  " + dim("○ "+t.Content) + "\n")
+			b.WriteString(indent + dim("○ "+t.Content) + "\n")
 		}
 	}
 	return todoPanelStyle.Width(max(m.width, 10)).Render(strings.TrimRight(b.String(), "\n"))
@@ -1947,6 +1952,8 @@ func (m *chatTUI) runSlashCommand(input string) tea.Cmd {
 		m.commitLine("")
 		m.commitLine(strings.TrimRight(renderTUIBanner(m.label, "", m.width), "\n"))
 		m.notice(i18n.M.SlashNewDone)
+	case "/resume":
+		m.runResumeCommand(input)
 	case "/todo":
 		// Dismiss the pinned task list; a later todo_write brings it back.
 		m.todoArgs = ""
@@ -2038,6 +2045,18 @@ func (m *chatTUI) runMCPSubcommand(input string) {
 			return
 		}
 		m.notice(fmt.Sprintf("connected %s — %d tools, saved to config (available next message)", entry.Name, n))
+	case "connect":
+		if len(args) < 3 {
+			m.notice("usage: /mcp connect <name>")
+			return
+		}
+		n, err := m.ctrl.ConnectConfiguredMCPServer(args[2])
+		if err != nil {
+			m.notice("mcp connect: " + err.Error())
+			return
+		}
+		m.host = m.ctrl.Host()
+		m.notice(fmt.Sprintf("connected %s — %d tools (available next message)", args[2], n))
 	case "remove", "rm":
 		if len(args) < 3 {
 			m.notice("usage: /mcp remove <name>")
@@ -2055,14 +2074,14 @@ func (m *chatTUI) runMCPSubcommand(input string) {
 			m.notice("removed " + name + " from config")
 		}
 	default:
-		m.notice("unknown /mcp subcommand " + args[1] + " — try: /mcp, /mcp add, /mcp remove")
+		m.notice("unknown /mcp subcommand " + args[1] + " — try: /mcp, /mcp add, /mcp connect, /mcp remove")
 	}
 }
 
 // showMCPStatus queues the connected MCP servers, their counts, and the prompt
 // commands / resource refs they expose — the discovery surface for /mcp.
 func (m *chatTUI) showMCPStatus() {
-	if m.host == nil || len(m.host.Servers()) == 0 {
+	if m.host == nil || (len(m.host.Servers()) == 0 && len(m.host.Failures()) == 0) {
 		m.notice(i18n.M.SlashMCPNone)
 		return
 	}
@@ -2082,6 +2101,9 @@ func (m *chatTUI) showMCPStatus() {
 			label = r.Description
 		}
 		fmt.Fprintf(&b, "      %s  %s\n", "@"+r.Server+":"+r.URI, dim(label))
+	}
+	for _, f := range m.host.Failures() {
+		fmt.Fprintf(&b, "    %s %s %s\n", yellow("!"), bold(f.Name), dim(fmt.Sprintf("(%s) — %s", f.Transport, f.Error)))
 	}
 	m.commitLine(strings.TrimRight(b.String(), "\n"))
 }
