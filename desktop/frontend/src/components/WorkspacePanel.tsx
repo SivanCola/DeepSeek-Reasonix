@@ -559,6 +559,26 @@ export function WorkspacePanel({
                 </button>
                 <button
                   onClick={() => {
+                    openSelectedExternal();
+                    setMenuOpen(false);
+                  }}
+                  disabled={!selectedPath}
+                >
+                  <ExternalLink size={13} />
+                  {t("workspace.openExternal")}
+                </button>
+                <button
+                  onClick={() => {
+                    revealSelected();
+                    setMenuOpen(false);
+                  }}
+                  disabled={!selectedPath}
+                >
+                  <FolderOpen size={13} />
+                  {t("workspace.reveal")}
+                </button>
+                <button
+                  onClick={() => {
                     setOpenTabs(selectedPath ? [selectedPath] : []);
                     setMenuOpen(false);
                   }}
@@ -569,11 +589,8 @@ export function WorkspacePanel({
               </div>
             )}
           </div>
-          <button className="workspace-iconbtn" onClick={openSelectedExternal} disabled={!selectedPath} title={t("workspace.openExternal")}>
-            <ExternalLink size={15} />
-          </button>
-          <button className="workspace-iconbtn" onClick={revealSelected} disabled={!selectedPath} title={t("workspace.reveal")}>
-            <FolderOpen size={15} />
+          <button className="workspace-iconbtn workspace-iconbtn--on" onClick={() => setTreeVisible(false)} title={t("workspace.hideTree")}>
+            <PanelRightClose size={15} />
           </button>
         </div>
 
