@@ -60,7 +60,7 @@ export function CapabilitiesPanel({
     const q = skillQuery.trim().toLowerCase();
     if (!q) return view.skills;
     return view.skills.filter((sk) => {
-      const text = [sk.name, sk.description, sk.scope, sk.runAs].join(" ").toLowerCase();
+      const text = [sk.name, `/${sk.name}`, sk.description, sk.scope, sk.runAs].join(" ").toLowerCase();
       return text.includes(q);
     });
   }, [view, skillQuery]);
