@@ -186,11 +186,6 @@ export function StatusBar({
         </>
       )}
       <span className="statusbar__spacer" />
-      {mode === "yolo" && (
-        <span className="statusbar__yolo" title={t("status.yoloTitle")}>
-          {t("status.yolo")}
-        </span>
-      )}
       {mode === "plan" && <span className="statusbar__plan">{t("status.plan")}</span>}
     </div>
   );
