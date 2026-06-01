@@ -2345,14 +2345,20 @@ body {
   display: flex;
   align-items: center;
   gap: 6px;
-  overflow: hidden;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+.workspace-tabs::-webkit-scrollbar {
+  display: none;
 }
 .workspace-tab {
   --wails-draggable: no-drag;
+  flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
   gap: 7px;
-  min-width: 0;
+  min-width: 112px;
   max-width: 180px;
   height: 30px;
   padding: 0 10px;
@@ -2373,7 +2379,11 @@ body {
   background: var(--bg-elev);
   color: var(--fg);
 }
-.workspace-tab span {
+.workspace-tab__icon {
+  flex: 0 0 auto;
+}
+.workspace-tab__name {
+  flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2381,6 +2391,7 @@ body {
 }
 .workspace-tab--new {
   flex: 0 0 auto;
+  min-width: 30px;
   width: 30px;
   padding: 0;
   justify-content: center;

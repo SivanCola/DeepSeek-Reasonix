@@ -395,8 +395,8 @@ export function WorkspacePanel({
                 onClick={() => setSelectedPath(tab)}
                 title={tab}
               >
-                <FileText size={14} />
-                <span>{basename(tab)}</span>
+                <FileText size={14} className="workspace-tab__icon" />
+                <span className="workspace-tab__name">{basename(tab)}</span>
                 <span
                   className="workspace-tab__close"
                   role="button"
