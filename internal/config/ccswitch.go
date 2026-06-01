@@ -13,6 +13,7 @@ import (
 const ccSwitchDir = ".cc-switch"
 
 type ccSwitchMCPRow struct {
+	ID           string `json:"id"`
 	Name         string `json:"name"`
 	ServerConfig string `json:"server_config"`
 }
@@ -132,7 +133,7 @@ func loadCCSwitchMCPDB(path string) ([]PluginEntry, error) {
 	if err != nil {
 		return nil, fmt.Errorf("cc-switch import: sqlite3 not found to read %s", path)
 	}
-	query := `SELECT name, server_config FROM mcp_servers WHERE enabled_codex = 1 ORDER BY name`
+	query := `SELECT id, name, server_config FROM mcp_servers WHERE enabled_codex = 1 ORDER BY name, id`
 	out, err := exec.Command(sqlite, "-readonly", "-json", path, query).Output()
 	if err != nil {
 		return nil, fmt.Errorf("cc-switch import: read %s: %w", path, err)
@@ -154,7 +155,11 @@ func ccSwitchRowsToPlugins(rows []ccSwitchMCPRow) ([]PluginEntry, error) {
 		if err := json.Unmarshal([]byte(row.ServerConfig), &s); err != nil {
 			return nil, fmt.Errorf("cc-switch import: server %q config: %w", row.Name, err)
 		}
-		e := pluginFromMCPServerSpec(row.Name, s)
+		name := strings.TrimSpace(row.ID)
+		if name == "" {
+			name = row.Name
+		}
+		e := pluginFromMCPServerSpec(name, s)
 		if err := validatePlugin(e); err != nil {
 			return nil, fmt.Errorf("cc-switch import: %w", err)
 		}

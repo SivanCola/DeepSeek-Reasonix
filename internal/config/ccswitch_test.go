@@ -10,14 +10,14 @@ import (
 
 func TestCCSwitchRowsToPlugins(t *testing.T) {
 	rows := []ccSwitchMCPRow{
-		{Name: "docs", ServerConfig: `{"type":"http","url":"https://mcp.example.test","headers":{"Authorization":"Bearer ${TOKEN}"}}`},
+		{ID: "docs-id", Name: "docs", ServerConfig: `{"type":"http","url":"https://mcp.example.test","headers":{"Authorization":"Bearer ${TOKEN}"}}`},
 		{Name: "fs", ServerConfig: `{"command":"npx","args":["-y","@modelcontextprotocol/server-filesystem","."]}`},
 	}
 	got, err := ccSwitchRowsToPlugins(rows)
 	if err != nil {
 		t.Fatalf("ccSwitchRowsToPlugins: %v", err)
 	}
-	if got[0].Name != "docs" || got[0].Type != "http" || got[0].URL != "https://mcp.example.test" {
+	if got[0].Name != "docs-id" || got[0].Type != "http" || got[0].URL != "https://mcp.example.test" {
 		t.Fatalf("http entry = %+v", got[0])
 	}
 	if got[0].Headers["Authorization"] != "Bearer ${TOKEN}" {
@@ -26,6 +26,20 @@ func TestCCSwitchRowsToPlugins(t *testing.T) {
 	if got[1].Name != "fs" || got[1].Command != "npx" ||
 		!reflect.DeepEqual(got[1].Args, []string{"-y", "@modelcontextprotocol/server-filesystem", "."}) {
 		t.Fatalf("stdio entry = %+v", got[1])
+	}
+}
+
+func TestCCSwitchRowsPreferIDForDuplicateDisplayNames(t *testing.T) {
+	rows := []ccSwitchMCPRow{
+		{ID: "search-code", Name: "search", ServerConfig: `{"command":"node","args":["code.js"]}`},
+		{ID: "search-docs", Name: "search", ServerConfig: `{"command":"node","args":["docs.js"]}`},
+	}
+	got, err := ccSwitchRowsToPlugins(rows)
+	if err != nil {
+		t.Fatalf("ccSwitchRowsToPlugins: %v", err)
+	}
+	if got[0].Name != "search-code" || got[1].Name != "search-docs" {
+		t.Fatalf("names = %q, %q; want stable ids", got[0].Name, got[1].Name)
 	}
 }
 
