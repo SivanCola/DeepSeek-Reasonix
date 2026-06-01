@@ -3,7 +3,6 @@ package cli
 import (
 	"fmt"
 	"log/slog"
-	"strings"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -80,20 +79,14 @@ func (m *chatTUI) showModels() {
 		m.notice("model: " + err.Error())
 		return
 	}
-	var b strings.Builder
-	b.WriteString(dim("  · models (/model <provider/model> to switch)\n"))
+	var refs []string
 	for i := range cfg.Providers {
 		p := &cfg.Providers[i]
 		for _, model := range p.ModelList() {
-			ref := p.Name + "/" + model
-			marker := "  "
-			if ref == m.modelRef {
-				marker = accent("› ")
-			}
-			fmt.Fprintf(&b, "%s%s\n", marker, ref)
+			refs = append(refs, p.Name+"/"+model)
 		}
 	}
-	m.notice(strings.TrimRight(b.String(), "\n"))
+	m.commitLine(renderModels(m.width, refs, m.modelRef))
 }
 
 // modelRefs returns the configured provider/model refs for slash completion.

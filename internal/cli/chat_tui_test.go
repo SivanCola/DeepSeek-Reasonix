@@ -146,6 +146,17 @@ func TestInsertNewlineKeyBinding(t *testing.T) {
 	}
 }
 
+func TestEchoLocalCommandAddsTranscriptMarker(t *testing.T) {
+	m := newTestChatTUI()
+	m.echoLocalCommand("  /tree  ")
+	if len(*m.pendingCommit) != 1 {
+		t.Fatalf("pending commits = %d, want 1", len(*m.pendingCommit))
+	}
+	if got := (*m.pendingCommit)[0]; !strings.Contains(got, "› /tree") {
+		t.Fatalf("command echo = %q, want /tree marker", got)
+	}
+}
+
 func TestApprovalToolDetailsShortensMCPNames(t *testing.T) {
 	name, detail := approvalToolDetails("mcp__minimax-coding-plan-mcp__understand_image")
 	if name != "understand_image" {

@@ -17,7 +17,45 @@ func (m *chatTUI) showBranchTree() {
 		return
 	}
 	current := agent.BranchID(m.ctrl.SessionPath())
-	m.commitLine(ansi.Hardwrap(control.FormatBranchTree(branches, current), max(m.width, 20), false))
+	tree := renderBranchTree(control.FormatBranchTree(branches, current))
+	m.commitLine(ansi.Hardwrap(tree, max(m.width, 20), false))
+}
+
+func renderBranchTree(tree string) string {
+	lines := strings.Split(tree, "\n")
+	for i, line := range lines {
+		lines[i] = renderBranchTreeLine(line)
+	}
+	return strings.Join(lines, "\n")
+}
+
+func renderBranchTreeLine(line string) string {
+	if line == "branches:" {
+		return accent(line)
+	}
+	parts := strings.SplitN(line, "  ", 3)
+	if len(parts) < 3 {
+		return line
+	}
+	left, title, meta := parts[0], parts[1], parts[2]
+	idx := strings.LastIndex(left, " ")
+	if idx < 0 {
+		return line
+	}
+	treePrefix := left[:idx+1]
+	id := left[idx+1:]
+
+	turns := meta
+	current := ""
+	if before, after, ok := strings.Cut(meta, "  "); ok {
+		turns = before
+		if strings.TrimSpace(after) == "current" {
+			current = "  " + accent("current")
+		} else if strings.TrimSpace(after) != "" {
+			current = "  " + after
+		}
+	}
+	return dim(treePrefix) + dim(id) + "  " + title + "  " + dim(turns) + current
 }
 
 func (m *chatTUI) runBranchCommand(input string) {
