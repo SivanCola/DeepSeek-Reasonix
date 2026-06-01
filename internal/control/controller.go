@@ -1095,6 +1095,24 @@ func (c *Controller) HookRunner() *hook.Runner { return c.hooks }
 // of tools the server exposed. A save failure after a successful connect is
 // reported but non-fatal: the server still works this session.
 func (c *Controller) AddMCPServer(e config.PluginEntry) (int, error) {
+	n, err := c.connectMCPServer(e)
+	if err != nil {
+		return 0, err
+	}
+	cfg, lerr := config.Load()
+	if lerr != nil {
+		return n, fmt.Errorf("connected, but reloading config to save failed: %w", lerr)
+	}
+	if err := cfg.UpsertPlugin(e); err != nil {
+		return n, fmt.Errorf("connected, but config rejected the entry: %w", err)
+	}
+	if err := cfg.Save(); err != nil {
+		return n, fmt.Errorf("connected, but saving config failed: %w", err)
+	}
+	return n, nil
+}
+
+func (c *Controller) connectMCPServer(e config.PluginEntry) (int, error) {
 	if c.host == nil {
 		c.host = plugin.NewHost()
 	}
@@ -1115,16 +1133,6 @@ func (c *Controller) AddMCPServer(e config.PluginEntry) (int, error) {
 		for _, t := range tools {
 			c.reg.Add(t)
 		}
-	}
-	cfg, lerr := config.Load()
-	if lerr != nil {
-		return len(tools), fmt.Errorf("connected, but reloading config to save failed: %w", lerr)
-	}
-	if err := cfg.UpsertPlugin(e); err != nil {
-		return len(tools), fmt.Errorf("connected, but config rejected the entry: %w", err)
-	}
-	if err := cfg.Save(); err != nil {
-		return len(tools), fmt.Errorf("connected, but saving config failed: %w", err)
 	}
 	return len(tools), nil
 }
@@ -1168,7 +1176,7 @@ func (c *Controller) ConnectConfiguredMCPServer(name string) (int, error) {
 	}
 	for _, p := range cfg.Plugins {
 		if p.Name == name {
-			return c.AddMCPServer(p)
+			return c.connectMCPServer(p)
 		}
 	}
 	return 0, fmt.Errorf("no configured MCP server named %q", name)

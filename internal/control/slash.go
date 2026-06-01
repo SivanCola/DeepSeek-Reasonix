@@ -188,6 +188,15 @@ func (c *Controller) managementNotice(trimmed string) bool {
 	case "/hooks":
 		c.notice(c.hookListText())
 	case "/mcp":
+		if len(fields) >= 3 && fields[1] == "connect" {
+			n, err := c.ConnectConfiguredMCPServer(fields[2])
+			if err != nil {
+				c.notice("mcp connect: " + err.Error())
+			} else {
+				c.notice(fmt.Sprintf("connected %s — %d tools", fields[2], n))
+			}
+			return true
+		}
 		c.notice(c.mcpListText())
 	default:
 		return false
