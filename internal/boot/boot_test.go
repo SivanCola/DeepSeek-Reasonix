@@ -217,12 +217,11 @@ api_key_env = "REASONIX_TEST_KEY_UNSET"
 	}
 }
 
-func TestBuildLanguagePolicyFollowsConfiguredLanguage(t *testing.T) {
+func TestBuildLanguagePolicyIsAppended(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
 	writeFile(t, dir, "reasonix.toml", `
 default_model = "test-model"
-language = "zh"
 
 [codegraph]
 enabled = false
@@ -245,11 +244,8 @@ api_key_env = "REASONIX_TEST_KEY_UNSET"
 	defer ctrl.Close()
 
 	sys := systemMessage(ctrl.History())
-	if !strings.Contains(sys, "Reply in Chinese") {
-		t.Fatalf("configured Chinese language policy missing from system prompt:\n%s", sys)
-	}
-	if !strings.Contains(sys, "visible reasoning") {
-		t.Fatalf("language policy should cover provider-visible reasoning:\n%s", sys)
+	if !strings.Contains(sys, config.LanguagePolicy) {
+		t.Fatalf("language policy missing from system prompt:\n%s", sys)
 	}
 }
 
@@ -265,8 +261,6 @@ func systemMessage(msgs []provider.Message) string {
 func stripLanguagePolicy(s string) string {
 	s = strings.TrimSpace(s)
 	for _, policy := range []string{
-		config.LanguagePolicyFor("zh"),
-		config.LanguagePolicyFor("en"),
 		config.LanguagePolicy,
 	} {
 		s = strings.TrimSpace(strings.TrimSuffix(s, policy))
