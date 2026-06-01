@@ -101,6 +101,26 @@ func TestImageDataURLRejectsSymlinkAttachmentDir(t *testing.T) {
 	}
 }
 
+func TestImageDataURLRejectsSymlinkSubdirectory(t *testing.T) {
+	t.Chdir(t.TempDir())
+	if err := ensureAttachmentRoot(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir("outside", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join("outside", "x.png"), mustBase64(t, tinyPNG), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(".reasonix", "attachments", "link")
+	if err := os.Symlink(filepath.Join("..", "..", "outside"), link); err != nil {
+		t.Skipf("symlink unsupported: %v", err)
+	}
+	if _, err := ImageDataURL(filepath.Join(link, "x.png")); err == nil {
+		t.Fatal("symlink attachment subdirectory should fail")
+	}
+}
+
 func mustBase64(t *testing.T, s string) []byte {
 	t.Helper()
 	raw, err := base64.StdEncoding.DecodeString(s)

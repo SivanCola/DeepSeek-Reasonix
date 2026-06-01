@@ -160,7 +160,35 @@ func cleanAttachmentPath(path string) (string, error) {
 	if err := ensureAttachmentRoot(); err != nil {
 		return "", err
 	}
+	if err := rejectSymlinkComponents(clean, root); err != nil {
+		return "", err
+	}
 	return clean, nil
+}
+
+func rejectSymlinkComponents(path, root string) error {
+	rel, err := filepath.Rel(root, path)
+	if err != nil {
+		return err
+	}
+	if rel == "." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || rel == ".." {
+		return fmt.Errorf("attachment path is outside .reasonix/attachments")
+	}
+	cur := root
+	for _, part := range strings.Split(rel, string(filepath.Separator)) {
+		if part == "" || part == "." {
+			continue
+		}
+		cur = filepath.Join(cur, part)
+		info, err := os.Lstat(cur)
+		if err != nil {
+			return err
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("attachment path must not contain symlinks")
+		}
+	}
+	return nil
 }
 
 func ensureAttachmentRoot() error {
