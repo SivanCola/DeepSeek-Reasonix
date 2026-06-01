@@ -12,8 +12,11 @@ export const en = {
   "common.delete": "Delete",
   "common.add": "Add",
   "common.submit": "Submit",
+  "common.expand": "Expand",
+  "common.collapse": "Collapse",
   "common.none": "none",
   "common.busyHint": "Finish or stop the current turn first",
+  "common.loading": "Loading…",
 
   // top bar
   "topbar.history": "History",

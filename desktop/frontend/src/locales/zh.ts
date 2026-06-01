@@ -13,8 +13,11 @@ export const zh: Record<DictKey, string> = {
   "common.delete": "删除",
   "common.add": "添加",
   "common.submit": "提交",
+  "common.expand": "展开",
+  "common.collapse": "收起",
   "common.none": "无",
   "common.busyHint": "请先完成或停止当前回合",
+  "common.loading": "加载中…",
 
   // 顶栏
   "topbar.history": "历史",

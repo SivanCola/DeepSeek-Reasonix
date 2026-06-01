@@ -92,22 +92,90 @@ func (h *Host) ReadResource(ctx context.Context, server, uri string) (string, er
 	return "", fmt.Errorf("no MCP server named %q", server)
 }
 
-// StartAll connects every plugin, performs the MCP handshake, and returns the
-// union of their tools (namespaced "mcp__<server>__<tool>"). On any failure it
-// tears down everything started so far. The caller must Close the Host.
+// StartAll connects every plugin in parallel, performs the MCP handshake, and
+// returns the union of their tools (namespaced "mcp__<server>__<tool>"). On any
+// failure it tears down everything started so far. The caller must Close the Host.
 //
 // For stdio plugins, subprocess lifetime is bound to ctx (via
 // exec.CommandContext): cancelling ctx kills the children and unblocks reads.
 func StartAll(ctx context.Context, specs []Spec) (*Host, []tool.Tool, error) {
+	if len(specs) == 0 {
+		return &Host{}, nil, nil
+	}
+
+	type result struct {
+		idx    int
+		client *Client
+		tools  []tool.Tool
+		err    error
+	}
+
+	// Start all plugins in parallel — each is an independent subprocess or
+	// HTTP connection with no cross-dependencies.
+	ch := make(chan result, len(specs))
+	for i, s := range specs {
+		go func(idx int, spec Spec) {
+			c, err := start(ctx, spec)
+			if err != nil {
+				ch <- result{idx: idx, err: fmt.Errorf("start plugin %q: %w", spec.Name, err)}
+				return
+			}
+
+			ts, err := c.listTools(ctx)
+			if err != nil {
+				c.close()
+				ch <- result{idx: idx, err: fmt.Errorf("list tools from %q: %w", spec.Name, err)}
+				return
+			}
+			c.toolCount = len(ts)
+
+			// Prompts and resources are auxiliary: only fetched when the server
+			// advertised the capability, and a listing error is tolerated (skipped)
+			// rather than failing the whole session over a non-essential surface.
+			if c.hasPrompts {
+				if ps, perr := c.listPrompts(ctx); perr == nil {
+					c.prompts = ps
+				}
+			}
+			if c.hasResources {
+				if rs, rerr := c.listResources(ctx); rerr == nil {
+					c.resources = rs
+				}
+			}
+
+			ch <- result{idx: idx, client: c, tools: ts}
+		}(i, s)
+	}
+
+	// Collect results in index order so the Host.clients slice matches the
+	// original specs order (stable for /mcp status display).
+	results := make([]result, len(specs))
+	for range specs {
+		r := <-ch
+		results[r.idx] = r
+	}
+
+	// Collect every started client into the Host first, so that if any plugin
+	// failed, h.Close() tears down all of them — including ones whose index sits
+	// after the failure (parallel start means they're already running).
 	h := &Host{}
 	var tools []tool.Tool
-	for _, s := range specs {
-		ts, err := h.addConnected(ctx, s)
-		if err != nil {
-			h.Close()
-			return nil, nil, fmt.Errorf("start plugin %q: %w", s.Name, err)
+	var firstErr error
+	for _, r := range results {
+		if r.err != nil {
+			if firstErr == nil {
+				firstErr = r.err
+			}
+			continue
 		}
-		tools = append(tools, ts...)
+		h.clients = append(h.clients, r.client)
+		tools = append(tools, r.tools...)
+		h.prompts = append(h.prompts, r.client.prompts...)
+		h.resources = append(h.resources, r.client.resources...)
+	}
+	if firstErr != nil {
+		h.Close()
+		return nil, nil, firstErr
 	}
 	return h, tools, nil
 }
@@ -151,6 +219,11 @@ type Client struct {
 
 	toolCount int    // tools discovered, for /mcp status
 	transport string // declared transport type, for /mcp status ("stdio"/"http")
+
+	// Prompts and resources discovered during StartAll, stored here so the
+	// parallel startup can collect them per-client before merging into Host.
+	prompts   []Prompt
+	resources []Resource
 }
 
 // ServerStatus summarises one connected server for the /mcp command.

@@ -67,6 +67,7 @@ export function Composer({
   onCancel,
   onCycleMode,
   onPickFolder,
+  disabled,
 }: {
   running: boolean;
   mode: Mode;
@@ -77,6 +78,7 @@ export function Composer({
   onCancel: () => string | undefined;
   onCycleMode: () => void;
   onPickFolder: (path?: string) => Promise<string>;
+  disabled?: boolean;
 }) {
   const t = useT();
   const [text, setText] = useState("");
@@ -245,6 +247,7 @@ export function Composer({
   };
 
   const submit = () => {
+    if (disabled) return;
     const t = text.trim();
     if ((!t && attachments.length === 0) || pendingPaste > 0) return;
     const refs = attachments.map((a) => `@${a.path}`).join(" ");
@@ -583,7 +586,7 @@ export function Composer({
           onDoubleClick={resetComposerHeight}
         />
         <div
-          className={`composer${dragOver ? " composer--dragover" : ""}`}
+          className={`composer${dragOver ? " composer--dragover" : ""}${disabled ? " composer--disabled" : ""}`}
           onDrop={onDrop}
           onDragOver={onDragOver}
           onDragLeave={onDragLeave}
@@ -596,8 +599,9 @@ export function Composer({
             onChange={(e) => setText(e.target.value)}
             onPaste={onPaste}
             onKeyDown={onKeyDown}
-            placeholder={t("composer.placeholder")}
+            placeholder={disabled ? t("common.loading") : t("composer.placeholder")}
             rows={1}
+            disabled={disabled}
           />
           {running ? (
             <button className="composer__btn composer__btn--stop" onClick={handleCancel} title={t("composer.stop")}>
@@ -607,7 +611,7 @@ export function Composer({
             <button
               className="composer__btn composer__btn--send"
               onClick={submit}
-              disabled={pendingPaste > 0 || (!text.trim() && attachments.length === 0)}
+              disabled={pendingPaste > 0 || (!text.trim() && attachments.length === 0) || disabled}
               title={t("composer.send")}
             >
               <ArrowUp size={16} />

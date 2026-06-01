@@ -274,27 +274,38 @@ function SkillRow({
   onToggle: () => void;
 }) {
   const t = useT();
+  const summary = summarizeSkillDescription(skill.description);
+  const canExpand = summary !== skill.description;
   return (
     <button
-      className={`cap-skill-card${expanded ? " cap-skill-card--expanded" : ""}`}
+      className={`cap-skill-card${expanded ? " cap-skill-card--expanded" : ""}${canExpand ? " cap-skill-card--expandable" : ""}`}
       type="button"
       onClick={onToggle}
       aria-expanded={expanded}
       title={skill.description}
     >
       <div className="cap-skill-card__head">
-        <span className="cap-skill-card__command">
-          <span className="cap-skill-card__slash">/</span>
-          {skill.name}
-        </span>
-        <span className="cap-skill-card__badges">
-          <span className={`badge badge--${skill.scope}`}>{skill.scope}</span>
-          {skill.runAs === "subagent" && <span className="badge">{t("caps.subagent")}</span>}
+        <span className="cap-skill-card__icon">/</span>
+        <span className="cap-skill-card__main">
+          <span className="cap-skill-card__command">{skill.name}</span>
+          <span className="cap-skill-card__badges">
+            <span className={`badge badge--${skill.scope}`}>{skill.scope}</span>
+            {skill.runAs === "subagent" && <span className="badge">{t("caps.subagent")}</span>}
+          </span>
         </span>
       </div>
-      <div className="cap-skill-card__desc">{skill.description}</div>
+      <div className="cap-skill-card__desc">{expanded ? skill.description : summary}</div>
+      {canExpand && <div className="cap-skill-card__more">{expanded ? t("common.collapse") : t("common.expand")}</div>}
     </button>
   );
+}
+
+function summarizeSkillDescription(description: string): string {
+  const normalized = description.replace(/\s+/g, " ").trim();
+  if (normalized.length <= 132) return normalized;
+  const sentence = normalized.match(/^.{48,132}?[。.!?；;，,]/u)?.[0]?.trim();
+  if (sentence && sentence.length >= 48) return sentence.replace(/[。.!?；;，,]$/u, "");
+  return `${normalized.slice(0, 128).trim()}…`;
 }
 
 function AddServerForm({

@@ -329,6 +329,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 
 	var runner agent.Runner = executor
 	label := entry.Model
+	var classifier *control.ProviderAutoPlanClassifier
 
 	// Two-model collaboration: a distinct planner_model wraps the executor in a
 	// Coordinator with its own session, kept separate for cache stability.
@@ -346,6 +347,18 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 			runner = agent.NewCoordinator(plannerProv, plannerSess, pe.Price, executor, cfg.Agent.Temperature, sink)
 			label = entry.Model + " + planner " + pe.Model
 		}
+	}
+	if !strings.EqualFold(strings.TrimSpace(cfg.Agent.AutoPlan), "off") && cfg.Agent.AutoPlanClassifier != "" {
+		cm := cfg.Agent.AutoPlanClassifier
+		ce, ok := cfg.ResolveModel(cm)
+		if !ok {
+			return nil, fmt.Errorf("auto_plan_classifier %q is not a configured provider", cm)
+		}
+		classifierProv, err := NewProvider(ce)
+		if err != nil {
+			return nil, fmt.Errorf("auto_plan_classifier %q: %w", cm, err)
+		}
+		classifier = control.NewProviderAutoPlanClassifier(classifierProv)
 	}
 
 	return control.New(control.Options{
@@ -368,6 +381,8 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		Registry:      reg,
 		PluginCtx:     ctx,
 		WorkspaceRoot: cwd,
+		AutoPlan:      cfg.Agent.AutoPlan,
+		Classifier:    classifier,
 	}), nil
 }
 

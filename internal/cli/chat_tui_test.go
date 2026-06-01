@@ -3,6 +3,7 @@ package cli
 import (
 	"strings"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -106,37 +107,37 @@ func TestIngestEventShowsReasoningInVerboseMode(t *testing.T) {
 	}
 }
 
-// TestDeferredUserBubble proves the user bubble is held back until the server's
-// first real packet: a local TurnStarted must not commit it (that would shrink
-// the un-send window to nothing), while the first Reasoning/Text/etc. flushes it
-// — a blank separator then the bubble — just before rendering that packet.
-func TestDeferredUserBubble(t *testing.T) {
+// TestUserBubbleEchoedImmediately proves the user bubble is committed to scrollback
+// the moment the turn starts, not deferred to the server's first packet. The first
+// real packet only confirms the send (closing the un-send window); a local
+// TurnStarted must not, so Esc can still un-send until the server actually replies.
+func TestUserBubbleEchoedImmediately(t *testing.T) {
 	m := newTestChatTUI()
-	// Stand in for startTurn's deferral (no controller in the unit harness).
-	m.pendingBubble = "hello world"
+	// Stand in for startTurn's immediate echo (no controller in the unit harness).
+	m.bubbleStartIdx = len(m.transcript)
+	m.commitLine("")
+	m.commitLine(renderUserBubble("hello world", m.width, m.planMode))
 	m.bubblePending = true
 	m.state = tuiRunning
 
-	// TurnStarted is emitted locally before the request — it must not flush.
-	m.ingestEvent(event.Event{Kind: event.TurnStarted})
-	if !m.bubblePending || len(*m.pendingCommit) != 0 {
-		t.Fatalf("TurnStarted should not commit the deferred bubble, pending=%v committed=%v", m.bubblePending, *m.pendingCommit)
+	if !strings.Contains(strings.Join(m.transcript, "\n"), "hello world") {
+		t.Fatalf("bubble should be echoed to scrollback immediately, got %v", m.transcript)
 	}
 
-	// The first real packet commits the bubble (blank + bubble) ahead of itself;
-	// a reasoning packet then also shows its live thinking marker.
+	// TurnStarted is emitted locally before the request — it must not confirm.
+	m.ingestEvent(event.Event{Kind: event.TurnStarted})
+	if !m.bubblePending {
+		t.Fatalf("TurnStarted should leave the send un-sendable, pending=%v", m.bubblePending)
+	}
+
+	// The first real packet confirms the send; a reasoning packet also shows its
+	// live thinking marker.
 	m.ingestEvent(event.Event{Kind: event.Reasoning, Text: "thinking…"})
 	if m.bubblePending {
-		t.Fatalf("first packet should commit the deferred bubble")
+		t.Fatalf("first packet should confirm the send")
 	}
-	if n := len(*m.pendingCommit); n != 3 {
-		t.Fatalf("expected blank + bubble + thinking marker, got %d: %v", n, *m.pendingCommit)
-	}
-	if !strings.Contains((*m.pendingCommit)[1], "hello world") {
-		t.Errorf("committed bubble should carry the user text, got %q", (*m.pendingCommit)[1])
-	}
-	if !strings.Contains((*m.pendingCommit)[2], "thinking") {
-		t.Errorf("reasoning packet should show the thinking marker, got %q", (*m.pendingCommit)[2])
+	if !strings.Contains(strings.Join(m.transcript, "\n"), "thinking") {
+		t.Errorf("reasoning packet should show the thinking marker, got %v", m.transcript)
 	}
 }
 
@@ -293,7 +294,9 @@ func TestPasteMsgFoldsBeforeTextareaConsumesNewlines(t *testing.T) {
 func TestUnsendRestoresFoldedPastePlaceholder(t *testing.T) {
 	m := newTestChatTUI()
 	m.ctrl = control.New(control.Options{})
-	m.pendingBubble = "expanded JSON"
+	m.bubbleStartIdx = len(m.transcript)
+	m.commitLine("")
+	m.commitLine(renderUserBubble("expanded JSON", m.width, m.planMode))
 	m.pendingRestore = "[Pasted text #1 · 5 lines] 这是什么?"
 	m.bubblePending = true
 	m.state = tuiRunning
@@ -303,8 +306,11 @@ func TestUnsendRestoresFoldedPastePlaceholder(t *testing.T) {
 	if got := m.input.Value(); got != "[Pasted text #1 · 5 lines] 这是什么?" {
 		t.Fatalf("restored input = %q", got)
 	}
-	if m.pendingBubble != "" || m.pendingRestore != "" || m.bubblePending {
-		t.Fatalf("pending state not cleared: bubble=%q restore=%q pending=%v", m.pendingBubble, m.pendingRestore, m.bubblePending)
+	if len(m.transcript) != m.bubbleStartIdx {
+		t.Fatalf("un-send should pop the echoed bubble, transcript=%v", m.transcript)
+	}
+	if m.pendingRestore != "" || m.bubblePending {
+		t.Fatalf("pending state not cleared: restore=%q pending=%v", m.pendingRestore, m.bubblePending)
 	}
 }
 
@@ -322,5 +328,67 @@ func TestApprovalToolDetailsShortensMCPNames(t *testing.T) {
 	name, detail = approvalToolDetails("bash")
 	if name != "bash" || !strings.Contains(detail, "built-in") {
 		t.Errorf("built-in details = (%q, %q), want bash + built-in source", name, detail)
+	}
+}
+
+// TestSlashQuitExit verifies that /quit and /exit slash commands return tea.Quit,
+// providing an alternative to Ctrl+D and the bare "quit"/"exit" text commands.
+func TestSlashQuitExit(t *testing.T) {
+	m := newTestChatTUI()
+	for _, cmd := range []string{"/quit", "/exit"} {
+		got := m.runSlashCommand(cmd)
+		if got == nil {
+			t.Errorf("%s should return a quit cmd, got nil", cmd)
+			continue
+		}
+		msg := got()
+		if _, ok := msg.(tea.QuitMsg); !ok {
+			t.Errorf("%s cmd should produce QuitMsg, got %T", cmd, msg)
+		}
+	}
+}
+
+// TestDoubleCtrlCQuit verifies that Ctrl+C while idle requires a double-press
+// within the 1.5s window to actually quit. A single press shows a hint; a
+// second press within the window returns tea.Quit.
+func TestDoubleCtrlCQuit(t *testing.T) {
+	ctrl := control.New(control.Options{})
+	m := newChatTUI(ctrl, "", make(chan event.Event, 1), 80)
+	ctrlC := tea.KeyPressMsg{Code: 'c', Mod: 4} // 4 = ModCtrl
+
+	// First Ctrl+C while idle: arms quit, flushes hint via finalize cmd.
+	out, cmd := m.Update(ctrlC)
+	if cmd == nil {
+		t.Error("first Ctrl+C should return a finalize cmd to flush the hint")
+	}
+	m2, ok := out.(chatTUI)
+	if !ok {
+		t.Fatalf("Update returned %T, want chatTUI", out)
+	}
+	if m2.lastCtrlCAt.IsZero() {
+		t.Error("first Ctrl+C should set lastCtrlCAt")
+	}
+
+	// Second Ctrl+C within window: returns tea.Quit.
+	out2, cmd2 := m2.Update(ctrlC)
+	if cmd2 == nil {
+		t.Error("second Ctrl+C within window should return a quit cmd")
+	}
+	_ = out2
+
+	// Window expired: re-arms instead of quitting (still flushes hint via finalize).
+	m3 := m2
+	m3.lastCtrlCAt = time.Now().Add(-2 * time.Second)
+	out4, cmd4 := m3.Update(ctrlC)
+	if cmd4 == nil {
+		t.Error("expired Ctrl+C should return a finalize cmd to flush the re-armed hint")
+	}
+	m4, ok := out4.(chatTUI)
+	if !ok {
+		t.Fatalf("Update returned %T, want chatTUI", out4)
+	}
+	// lastCtrlCAt should be refreshed to now.
+	if time.Since(m4.lastCtrlCAt) > time.Second {
+		t.Error("expired Ctrl+C should refresh lastCtrlCAt")
 	}
 }

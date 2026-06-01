@@ -152,6 +152,7 @@ export function WorkspacePanel({
   const [treeWidth, setTreeWidth] = useState(loadWorkspaceTreeWidth);
   const [treeResizing, setTreeResizing] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [autoPreviewDismissed, setAutoPreviewDismissed] = useState(false);
 
   const loadDir = useCallback(async (dir: string) => {
     const entries = await app.ListDir(dir).catch(() => []);
@@ -162,6 +163,7 @@ export function WorkspacePanel({
     (path: string) => {
       setSelectedPath(path);
       setFilter("");
+      setAutoPreviewDismissed(false);
       setOpenTabs((tabs) => (tabs.includes(path) ? tabs : [...tabs, path]));
       const dirs = parentDirs(path);
       setOpenDirs((prev) => new Set([...Array.from(prev), ...dirs]));
@@ -180,18 +182,19 @@ export function WorkspacePanel({
     setOpenTabs([]);
     setPreview(null);
     setFilter("");
+    setAutoPreviewDismissed(false);
     void loadDir("");
   }, [cwd, loadDir, open]);
 
   const rootEntries = entriesByDir[""];
   useEffect(() => {
-    if (!open || selectedPath || !rootEntries) return;
+    if (!open || selectedPath || !rootEntries || autoPreviewDismissed) return;
     const file =
       preferredFiles
         .map((name) => rootEntries.find((entry) => !entry.isDir && entry.name === name))
         .find(Boolean) ?? rootEntries.find((entry) => !entry.isDir);
     if (file) selectFile(file.name);
-  }, [open, rootEntries, selectFile, selectedPath]);
+  }, [autoPreviewDismissed, open, rootEntries, selectFile, selectedPath]);
 
   const refreshSelected = useCallback(() => {
     if (!selectedPath) return;
@@ -262,7 +265,11 @@ export function WorkspacePanel({
       if (selectedPath === path) {
         const replacement = next[next.length - 1] ?? null;
         setSelectedPath(replacement);
-        if (!replacement) setPreview(null);
+        if (!replacement) {
+          setPreview(null);
+          setTreeVisible(true);
+          setAutoPreviewDismissed(true);
+        }
       }
       return next;
     });
@@ -300,6 +307,7 @@ export function WorkspacePanel({
   }, [entriesByDir, filter]);
 
   const effectiveTreeWidth = useMemo(() => clampWorkspaceTreeWidth(treeWidth, panelWidth), [panelWidth, treeWidth]);
+  const previewVisible = openTabs.length > 0 || selectedPath !== null;
 
   const panelStyle = useMemo(
     () => ({ "--workspace-tree-width": `${effectiveTreeWidth}px` }) as CSSProperties,
@@ -404,11 +412,11 @@ export function WorkspacePanel({
   return (
     <aside
       ref={panelRef}
-      className={`workspace-panel${treeVisible ? "" : " workspace-panel--tree-hidden"}${treeResizing ? " workspace-panel--tree-resizing" : ""}`}
+      className={`workspace-panel${treeVisible ? "" : " workspace-panel--tree-hidden"}${previewVisible ? "" : " workspace-panel--preview-hidden"}${treeResizing ? " workspace-panel--tree-resizing" : ""}`}
       aria-label={t("workspace.title")}
       style={panelStyle}
     >
-      <section className="workspace-preview">
+      {previewVisible && <section className="workspace-preview">
         <header className="workspace-preview__head">
           <div className="workspace-tabs">
             {openTabs.map((tab) => (
@@ -520,9 +528,9 @@ export function WorkspacePanel({
             </>
           ) : null}
         </div>
-      </section>
+      </section>}
 
-      {treeVisible && (
+      {treeVisible && previewVisible && (
         <button
           className="workspace-tree-resizer"
           type="button"

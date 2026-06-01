@@ -167,6 +167,12 @@ type AgentConfig struct {
 	// startup (a built-in like "explanatory"/"learning"/"concise", or a custom
 	// .reasonix/output-styles/<name>.md). Empty = the unmodified prompt.
 	OutputStyle string `toml:"output_style"`
+	// AutoPlan controls whether interactive turns that look multi-step start in
+	// plan mode automatically: "off" disables it, "ask"/"on" enable the gate.
+	AutoPlan string `toml:"auto_plan"`
+	// AutoPlanClassifier optionally names a provider/model used to classify
+	// borderline auto-plan decisions. Empty keeps the zero-cost heuristic path.
+	AutoPlanClassifier string `toml:"auto_plan_classifier"`
 }
 
 // ProviderEntry declares a model provider instance. ContextWindow is the model's
@@ -331,6 +337,7 @@ func Default() *Config {
 			// compaction, not by a round count. Set a positive agent.max_steps only
 			// if you want a hard guard against runaway.
 			MaxSteps: 0,
+			AutoPlan: "ask",
 		},
 		// Mode "ask" with no rules keeps `reasonix run` autonomous (no TTY → ask
 		// resolves to allow) while `reasonix chat` prompts before writers. Users add

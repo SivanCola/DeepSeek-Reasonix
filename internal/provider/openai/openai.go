@@ -169,8 +169,12 @@ func isTransientErr(err error) bool {
 }
 
 func (c *client) buildRequest(req provider.Request) chatRequest {
-	msgs := make([]chatMessage, len(req.Messages))
-	for i, m := range req.Messages {
+	// Repair tool-call pairing before sending: an interrupted/resumed history can
+	// carry an assistant tool_calls turn whose results never landed, which DeepSeek
+	// rejects with a 400 ("must be followed by tool messages …").
+	src := provider.SanitizeToolPairing(req.Messages)
+	msgs := make([]chatMessage, len(src))
+	for i, m := range src {
 		// reasoning_content is deliberately NOT sent back: it's a response-only
 		// field. DeepSeek accepts it but counts it as ordinary prompt input
 		// (measured ~500 extra tokens per turn on a reasoner chain), and the
@@ -319,7 +323,14 @@ func (c *client) readStream(ctx context.Context, resp *http.Response, out chan<-
 
 	sort.Ints(order)
 	for _, idx := range order {
-		out <- provider.Chunk{Type: provider.ChunkToolCall, ToolCall: acc[idx]}
+		tc := acc[idx]
+		if tc.ID == "" {
+			// Some OpenAI-compatible gateways stream tool calls by index with no id.
+			// Synthesize a stable one so the result can be paired back to its call —
+			// an empty tool_call_id collapses multi-tool turns downstream.
+			tc.ID = fmt.Sprintf("call_%d", idx)
+		}
+		out <- provider.Chunk{Type: provider.ChunkToolCall, ToolCall: tc}
 	}
 	out <- provider.Chunk{Type: provider.ChunkDone}
 }

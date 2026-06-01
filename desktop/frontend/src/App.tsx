@@ -652,7 +652,14 @@ export default function App() {
           <UpdateBanner />
 
           <main className="main">
-            <Transcript items={state.items} onPrompt={send} onRewind={rewind} />
+            {state.meta?.ready === false && !state.meta?.startupErr ? (
+              <div className="loading-screen">
+                <div className="loading-screen__spinner" />
+                <span className="loading-screen__text">{t("common.loading")}</span>
+              </div>
+            ) : (
+              <Transcript items={state.items} onPrompt={send} onRewind={rewind} />
+            )}
           </main>
 
           <footer className="footer">
@@ -665,6 +672,7 @@ export default function App() {
               onCancel={cancel}
               onCycleMode={cycleMode}
               onPickFolder={switchFolder}
+              disabled={state.meta?.ready === false}
             />
             <StatusBar
               meta={state.meta}
@@ -677,6 +685,7 @@ export default function App() {
               turnStartAt={state.turnStartAt}
               turnTokens={state.turnTokens}
               onSwitchModel={switchModel}
+              onPickFolder={() => void switchFolder()}
             />
           </footer>
         </section>
