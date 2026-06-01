@@ -71,7 +71,7 @@ export function SettingsPanel({ onClose, onChanged }: { onClose: () => void; onC
               </nav>
               <main className="settings-content">
                 {err && <div className="banner banner--error">{err}</div>}
-                {tab === "models" && <ModelsSection s={s} busy={busy} apply={apply} />}
+                {tab === "models" && <ModelsSection s={s} busy={busy} apply={apply} onManageProviders={() => setTab("providers")} />}
                 {tab === "providers" && <ProvidersSection s={s} busy={busy} apply={apply} />}
                 {tab === "permissions" && <PermissionsSection s={s} busy={busy} apply={apply} />}
                 {tab === "sandbox" && <SandboxSection s={s} busy={busy} apply={apply} />}
@@ -158,13 +158,21 @@ function toRef(model: string, s: SettingsView): string {
   return model;
 }
 
-function ModelsSection({ s, busy, apply }: SectionProps) {
+function ModelsSection({ s, busy, apply, onManageProviders }: SectionProps & { onManageProviders: () => void }) {
   const t = useT();
   const refs = allRefs(s);
+  const defaultRef = toRef(s.defaultModel, s);
+  const plannerRef = toRef(s.plannerModel, s);
+  const [defaultProvider, defaultModel] = defaultRef.split("/");
 
   return (
     <section className="mem-section">
-      <div className="mem-section__title">{t("settings.tab.models")}</div>
+      <div className="mem-section__head">
+        <div className="mem-section__title">{t("settings.tab.models")}</div>
+        <button className="btn btn--small" onClick={onManageProviders}>
+          {t("settings.manageProviders")}
+        </button>
+      </div>
 
       <div className="set-row">
         <label className="set-label">{t("settings.defaultModel")}</label>
@@ -197,6 +205,19 @@ function ModelsSection({ s, busy, apply }: SectionProps) {
             </option>
           ))}
         </select>
+      </div>
+
+      <div className="settings-model-card">
+        <div>
+          <span>{t("settings.activeProvider")}</span>
+          <strong>{defaultProvider || t("common.none")}</strong>
+          <small>{defaultModel || defaultRef || t("common.none")}</small>
+        </div>
+        <div>
+          <span>{t("settings.plannerStatus")}</span>
+          <strong>{plannerRef ? t("settings.plannerEnabled") : t("settings.plannerDisabled")}</strong>
+          <small>{plannerRef || t("settings.plannerNone")}</small>
+        </div>
       </div>
 
       <div className="settings-summary-grid">

@@ -2689,7 +2689,7 @@ body {
 
 /* ── settings drawer ───────────────────────────────────────────────────────── */
 .drawer--wide {
-  width: min(820px, 94vw);
+  width: min(780px, 94vw);
 }
 .drawer__body--settings {
   flex: 1;
@@ -2711,6 +2711,7 @@ body {
 }
 .settings-nav__item {
   --wails-draggable: no-drag;
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -2726,13 +2727,23 @@ body {
   cursor: pointer;
 }
 .settings-nav__item:hover {
-  background: var(--sidebar-hover);
+  background: rgba(127, 118, 106, 0.07);
   color: var(--fg);
 }
 .settings-nav__item--active {
   background: var(--bg-elev);
   color: var(--fg);
   box-shadow: inset 0 0 0 1px var(--border-soft);
+}
+.settings-nav__item--active::before {
+  content: "";
+  position: absolute;
+  top: 9px;
+  bottom: 9px;
+  left: 0;
+  width: 3px;
+  border-radius: 999px;
+  background: var(--accent);
 }
 .settings-nav__item span,
 .settings-nav__item small {
@@ -2768,7 +2779,47 @@ body {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
+  margin-top: 10px;
+}
+.settings-model-card {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 2px;
+}
+.settings-model-card > div {
+  min-width: 0;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  background: var(--bg-soft);
+  padding: 10px;
+}
+.settings-model-card span,
+.settings-model-card small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.settings-model-card span {
+  color: var(--fg-faint);
+  font-size: 11px;
+  margin-bottom: 5px;
+}
+.settings-model-card strong {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+  font-weight: 650;
+}
+.settings-model-card small {
   margin-top: 4px;
+  color: var(--fg-faint);
+  font-family: var(--mono);
+  font-size: 10.5px;
 }
 .settings-summary {
   border: 1px solid var(--border-soft);
@@ -2973,6 +3024,7 @@ body {
     flex: 0 0 auto;
   }
   .set-rules-grid,
+  .settings-model-card,
   .settings-summary-grid {
     grid-template-columns: 1fr;
   }
