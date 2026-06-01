@@ -47,7 +47,7 @@ var English = Messages{
 	AskTypingHint:          "type below, Enter to confirm",
 	AskChatInstead:         "None — just chat",
 	ChatStatusQuestion:     "↑/↓ move · number to pick · space multi · Enter confirm · ←/→ switch · Esc cancel",
-	ToolApprovalPromptFmt:  "Confirmation required\n\nWill call tool %s%s.\n%s\n1. Allow once\n2. Allow similar calls this session\n3. Deny\nChoose [1/2/3] (y/a/n also work)",
+	ToolApprovalPromptFmt:  "Permission required\n\nWill call tool %s%s.\n%s\n1. Allow once\n2. Allow similar calls this session\n3. Deny\nChoose [1/2/3] (y/a/n also work)",
 	ToolApprovalSourceFmt:  "Source: %s",
 	ToolApprovalBuiltIn:    "built-in tool",
 	ToolApprovalImageUse:   "It will read provided image input for image understanding.",
