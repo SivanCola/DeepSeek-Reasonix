@@ -18,7 +18,7 @@ func TestWithAttachmentRefs(t *testing.T) {
 }
 
 func TestDisplayLineForImageRefs(t *testing.T) {
-	got := displayLineForImageRefs("describe @.reasonix/attachments/clipboard-20260601-010203.000001.png @.reasonix/attachments/clipboard-20260601-010204.000002.jpg")
+	got := displayLineForImageRefs("describe @.reasonix/attachments/clipboard-20260601-010203.000001.png @.reasonix/attachments/clipboard-20260601-010204.000002-000002.jpg")
 	want := "describe [image1] [image2]"
 	if got != want {
 		t.Fatalf("displayLineForImageRefs = %q, want %q", got, want)
