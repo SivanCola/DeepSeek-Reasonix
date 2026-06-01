@@ -117,6 +117,12 @@ export interface SessionMeta {
   current: boolean;
 }
 
+export interface WorkspaceView {
+  path: string;
+  name: string;
+  current: boolean;
+}
+
 export interface ContextInfo {
   used: number;
   window: number;
@@ -145,6 +151,15 @@ export interface CommandInfo {
 export interface DirEntry {
   name: string;
   isDir: boolean;
+}
+
+export interface FilePreview {
+  path: string;
+  body: string;
+  size: number;
+  truncated: boolean;
+  binary: boolean;
+  err?: string;
 }
 
 // MCP & Skills drawer (desktop/app.go Capabilities) — the GUI counterpart to
@@ -282,7 +297,6 @@ export interface SettingsView {
   permissions: PermissionsView;
   sandbox: SandboxView;
   agent: AgentView;
-  language: string;
   configPath: string;
   providerKinds: string[]; // provider implementations the kernel registered (for the kind picker)
   bypass: boolean; // live YOLO state (runtime-only) — whether approvals are skipped this session

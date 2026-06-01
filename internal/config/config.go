@@ -19,7 +19,7 @@ import (
 // Config is Reasonix's runtime configuration.
 type Config struct {
 	DefaultModel string            `toml:"default_model"`
-	Language     string            `toml:"language"` // ui language tag (e.g. "zh"); empty = auto-detect from $LANG / $REASONIX_LANG
+	Language     string            `toml:"language"` // ui/model language tag (e.g. "zh"); empty = auto-detect from $LANG / $REASONIX_LANG
 	Agent        AgentConfig       `toml:"agent"`
 	Providers    []ProviderEntry   `toml:"providers"`
 	Tools        ToolsConfig       `toml:"tools"`
@@ -299,15 +299,32 @@ In plan mode the harness blocks writer tools: do read-only research, then write 
 concise plan as your reply and stop. The user is asked to approve before anything
 is changed; once approved, work through the steps, updating the task list as you go.`
 
-// LanguagePolicy is appended to every system prompt (in boot assembly) so the
-// model mirrors the user's language per message instead of the harness pinning
-// one — the UI `language` setting governs only the interface, never the model.
-// It is static English text, so it stays part of the cache-stable prefix and
-// keeps model behaviour language-stable while still adapting the reply language.
+// LanguagePolicy is the auto fallback appended to the system prompt when no
+// concrete UI language is resolved. It is static English text, so it stays part
+// of the cache-stable prefix and avoids per-turn language injection.
 const LanguagePolicy = `Reply in the same language the user is using in their most recent message: ` +
 	`if they write in Chinese answer in Chinese, in English answer in English, and switch ` +
 	`whenever they switch. Let this also guide the language you think in. Always keep code, ` +
 	`identifiers, file paths, shell commands, and technical terms in their original form — never translate them.`
+
+const chineseLanguagePolicy = `Reply in Chinese. When the provider exposes visible reasoning, status text, or thought summaries, keep those in Chinese as well. Always keep code, identifiers, file paths, shell commands, and technical terms in their original form — never translate them.`
+
+const englishLanguagePolicy = `Reply in English. When the provider exposes visible reasoning, status text, or thought summaries, keep those in English as well. Always keep code, identifiers, file paths, shell commands, and technical terms in their original form — never translate them.`
+
+// LanguagePolicyFor returns the cache-stable language instruction for the
+// resolved UI language. It is folded into the system prompt once at controller
+// build time; changing language rebuilds the session prefix rather than adding a
+// dynamic instruction to every user turn.
+func LanguagePolicyFor(tag string) string {
+	switch strings.ToLower(strings.TrimSpace(tag)) {
+	case "zh":
+		return chineseLanguagePolicy
+	case "en":
+		return englishLanguagePolicy
+	default:
+		return LanguagePolicy
+	}
+}
 
 // Default returns the built-in default configuration (DeepSeek + MiMo presets).
 func Default() *Config {

@@ -12,6 +12,7 @@ import type {
   CommandInfo,
   ContextInfo,
   DirEntry,
+  FilePreview,
   HistoryMessage,
   JobView,
   MCPServerInput,
@@ -28,6 +29,7 @@ import type {
   UpdateInfo,
   UpdateProgress,
   WireEvent,
+  WorkspaceView,
 } from "./types";
 
 // AppBindings mirrors desktop/app.go's exported method set. Keep in sync by hand
@@ -57,7 +59,9 @@ export interface AppBindings {
   RenameSession(path: string, title: string): Promise<void>;
   // Workspace: open a folder chooser and switch to that project (fresh session);
   // returns the chosen path, or "" if cancelled.
+  ListWorkspaces(): Promise<WorkspaceView[]>;
   PickWorkspace(): Promise<string>;
+  SwitchWorkspace(path: string): Promise<string>;
   ContextUsage(): Promise<ContextInfo>;
   // Balance queries the active provider's wallet balance (a network call);
   // returns an unavailable readout when no balance_url is configured or it fails.
@@ -79,6 +83,9 @@ export interface AppBindings {
   SetMCPServerEnabled(name: string, enabled: boolean): Promise<void>;
   SlashArgs(input: string): Promise<SlashArgsResult>;
   ListDir(rel: string): Promise<DirEntry[]>;
+  ReadFile(rel: string): Promise<FilePreview>;
+  OpenWorkspacePath(rel: string): Promise<void>;
+  RevealWorkspacePath(rel: string): Promise<void>;
   SavePastedImage(dataUrl: string): Promise<string>;
   AttachmentDataURL(path: string): Promise<string>;
   Models(): Promise<ModelInfo[]>;
@@ -102,7 +109,6 @@ export interface AppBindings {
   RemovePermissionRule(list: string, rule: string): Promise<void>;
   SetSandbox(bash: string, network: boolean, workspaceRoot: string, allowWrite: string[]): Promise<void>;
   SetAgentParams(temperature: number, maxSteps: number, systemPrompt: string): Promise<void>;
-  SetLanguage(lang: string): Promise<void>;
   // SetBypass toggles YOLO mode (auto-approve every tool call this session; deny
   // rules still apply). Runtime-only — not written to config.
   SetBypass(on: boolean): Promise<void>;
@@ -227,6 +233,7 @@ function delay(ms: number): Promise<void> {
 function makeMockApp(): AppBindings {
   let cancelled = false;
   let cwd = "~/projects/reasonix"; // mutable so PickWorkspace is visible in dev
+  let workspaces = ["~/projects/reasonix", "~/projects/blade", "~/projects/deepseek-forge", "~/projects/cc-switch-light", "~/projects/SuperRig"];
   const day = 86_400_000;
   const t0 = Date.now();
   // Mutable so MCP add/remove/retry are observable in browser dev.
@@ -241,6 +248,11 @@ function makeMockApp(): AppBindings {
     { name: "review", description: "Review the staged diff", scope: "project", runAs: "inline" },
     { name: "init", description: "Scaffold a REASONIX.md for this repo", scope: "builtin", runAs: "inline" },
   ];
+  const mockSwitchWorkspace = async (path: string) => {
+    cwd = path || "~";
+    workspaces = [cwd, ...workspaces.filter((p) => p !== cwd)].slice(0, 12);
+    return cwd;
+  };
   // Mutable so delete/rename are observable in browser dev.
   const sessions: SessionMeta[] = [
     { path: "/mock/sessions/a.jsonl", preview: "fix the login bug in auth.go", turns: 12, modTime: t0 - 3_600_000, current: true },
@@ -259,7 +271,6 @@ function makeMockApp(): AppBindings {
     permissions: { mode: "ask", allow: ["ls", "read_file"], ask: [], deny: ["bash(rm *)"] },
     sandbox: { bash: "enforce", network: true, workspaceRoot: "", allowWrite: [] },
     agent: { temperature: 0.2, maxSteps: 0, systemPrompt: "You are Reasonix, a coding agent." },
-    language: "",
     configPath: "~/projects/reasonix/reasonix.toml",
     providerKinds: ["openai"],
     bypass: false,
@@ -351,11 +362,20 @@ function makeMockApp(): AppBindings {
       const s = sessions.find((x) => x.path === path);
       if (s) s.title = title.trim() || undefined;
     },
+    async ListWorkspaces() {
+      return workspaces.map((path) => ({
+        path,
+        name: path.split("/").filter(Boolean).pop() ?? path,
+        current: path === cwd,
+      }));
+    },
     async PickWorkspace() {
       // Browser dev has no native dialog; simulate picking a folder and re-root so
       // the topbar folder chip visibly changes.
-      cwd = cwd.endsWith("another-project") ? "~/projects/reasonix" : "~/projects/another-project";
-      return cwd;
+      return mockSwitchWorkspace(cwd.endsWith("another-project") ? "~/projects/reasonix" : "~/projects/another-project");
+    },
+    async SwitchWorkspace(path: string) {
+      return mockSwitchWorkspace(path);
     },
     async ContextUsage() {
       return { used: 1280, window: 1_000_000 };
@@ -456,6 +476,27 @@ function makeMockApp(): AppBindings {
       }
       return [{ name: "file.go", isDir: false }];
     },
+    async ReadFile(rel: string) {
+      const samples: Record<string, string> = {
+        "README.md": "# Reasonix\n\nBrowser-dev workspace preview.\n\n- Chat in the center\n- Browse files on the right\n- Keep sessions on the left\n",
+        "go.mod": "module reasonix\n\ngo 1.23\n",
+        "desktop/file.go": "package desktop\n\nfunc main() {\n\tprintln(\"workspace preview\")\n}\n",
+        "internal/event.go": "package internal\n\n// mock file used by the browser dev seam\n",
+      };
+      return {
+        path: rel,
+        body: samples[rel] ?? `// ${rel}\n\nMock file body from browser dev.`,
+        size: samples[rel]?.length ?? 42,
+        truncated: false,
+        binary: false,
+      };
+    },
+    async OpenWorkspacePath(rel: string) {
+      console.info("mock OpenWorkspacePath", rel);
+    },
+    async RevealWorkspacePath(rel: string) {
+      console.info("mock RevealWorkspacePath", rel);
+    },
     async SavePastedImage(_dataUrl: string) {
       return ".reasonix/attachments/mock.png";
     },
@@ -546,9 +587,6 @@ function makeMockApp(): AppBindings {
     },
     async SetAgentParams(temperature: number, maxSteps: number, systemPrompt: string) {
       settings.agent = { temperature, maxSteps, systemPrompt };
-    },
-    async SetLanguage(lang: string) {
-      settings.language = lang;
     },
     async SetBypass(on: boolean) {
       settings.bypass = on;

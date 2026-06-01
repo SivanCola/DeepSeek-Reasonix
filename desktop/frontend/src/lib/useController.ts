@@ -554,11 +554,7 @@ export function useController() {
     }
   }, []);
 
-  // Workspace: open a folder chooser and switch to that project. On a pick the
-  // backend rebuilds the controller (new model/config) with a fresh session, so
-  // reset and refresh meta/context. Returns the chosen path ("" if cancelled).
-  const pickWorkspace = useCallback(async (): Promise<string> => {
-    const path = await app.PickWorkspace().catch(() => "");
+  const refreshWorkspaceState = useCallback(async (path: string): Promise<string> => {
     if (path) {
       dispatch({ type: "reset" });
       try {
@@ -570,6 +566,19 @@ export function useController() {
     }
     return path;
   }, []);
+
+  // Workspace: open a folder chooser and switch to that project. On a pick the
+  // backend rebuilds the controller (new model/config) with a fresh session, so
+  // reset and refresh meta/context. Returns the chosen path ("" if cancelled).
+  const pickWorkspace = useCallback(async (): Promise<string> => {
+    const path = await app.PickWorkspace().catch(() => "");
+    return refreshWorkspaceState(path);
+  }, [refreshWorkspaceState]);
+
+  const switchWorkspace = useCallback(async (path: string): Promise<string> => {
+    const next = await app.SwitchWorkspace(path).catch(() => "");
+    return refreshWorkspaceState(next);
+  }, [refreshWorkspaceState]);
 
   const compact = useCallback(() => {
     app.Compact().catch(() => {});
@@ -643,6 +652,7 @@ export function useController() {
     renameSession,
     refreshMeta,
     pickWorkspace,
+    switchWorkspace,
     compact,
     rewind,
     setModel,
