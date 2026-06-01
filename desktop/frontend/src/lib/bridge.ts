@@ -11,6 +11,7 @@ import type {
   CommandInfo,
   ContextInfo,
   DirEntry,
+  FilePreview,
   HistoryMessage,
   JobView,
   MemoryView,
@@ -65,6 +66,9 @@ export interface AppBindings {
   Commands(): Promise<CommandInfo[]>;
   SlashArgs(input: string): Promise<SlashArgsResult>;
   ListDir(rel: string): Promise<DirEntry[]>;
+  ReadFile(rel: string): Promise<FilePreview>;
+  OpenWorkspacePath(rel: string): Promise<void>;
+  RevealWorkspacePath(rel: string): Promise<void>;
   SavePastedImage(dataUrl: string): Promise<string>;
   AttachmentDataURL(path: string): Promise<string>;
   Models(): Promise<ModelInfo[]>;
@@ -395,6 +399,27 @@ function makeMockApp(): AppBindings {
         ];
       }
       return [{ name: "file.go", isDir: false }];
+    },
+    async ReadFile(rel: string) {
+      const samples: Record<string, string> = {
+        "README.md": "# Reasonix\n\nBrowser-dev workspace preview.\n\n- Chat in the center\n- Browse files on the right\n- Keep sessions on the left\n",
+        "go.mod": "module reasonix\n\ngo 1.23\n",
+        "desktop/file.go": "package desktop\n\nfunc main() {\n\tprintln(\"workspace preview\")\n}\n",
+        "internal/event.go": "package internal\n\n// mock file used by the browser dev seam\n",
+      };
+      return {
+        path: rel,
+        body: samples[rel] ?? `// ${rel}\n\nMock file body from browser dev.`,
+        size: samples[rel]?.length ?? 42,
+        truncated: false,
+        binary: false,
+      };
+    },
+    async OpenWorkspacePath(rel: string) {
+      console.info("mock OpenWorkspacePath", rel);
+    },
+    async RevealWorkspacePath(rel: string) {
+      console.info("mock RevealWorkspacePath", rel);
     },
     async SavePastedImage(_dataUrl: string) {
       return ".reasonix/attachments/mock.png";

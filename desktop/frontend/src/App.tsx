@@ -1,5 +1,17 @@
-import { useCallback, useMemo, useState } from "react";
-import { SquarePen, Brain, History, Settings as SettingsIcon } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  SquarePen,
+  Brain,
+  History,
+  Settings as SettingsIcon,
+  FolderGit2,
+  MessageSquare,
+  PanelLeftClose,
+  PanelLeftOpen,
+  PanelRightClose,
+  PanelRightOpen,
+} from "lucide-react";
+import logo from "./assets/logo.svg";
 import { useT } from "./lib/i18n";
 import { useController } from "./lib/useController";
 import { Transcript } from "./components/Transcript";
@@ -12,8 +24,63 @@ import { MemoryPanel } from "./components/MemoryPanel";
 import { HistoryPanel } from "./components/HistoryPanel";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { UpdateBanner } from "./components/UpdateBanner";
+import { WorkspacePanel } from "./components/WorkspacePanel";
 import { parseTodos } from "./lib/tools";
 import type { MemoryView, Mode, SessionMeta } from "./lib/types";
+
+const SIDEBAR_COLLAPSED_KEY = "reasonix.sidebar.collapsed";
+const WORKSPACE_PANEL_OPEN_KEY = "reasonix.workspacePanel.open";
+
+function loadSidebarCollapsed(): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    return window.localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function saveSidebarCollapsed(collapsed: boolean): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(SIDEBAR_COLLAPSED_KEY, collapsed ? "1" : "0");
+  } catch {
+    /* ignore storage failures */
+  }
+}
+
+function loadWorkspacePanelOpen(): boolean {
+  if (typeof window === "undefined") return true;
+  try {
+    return window.localStorage.getItem(WORKSPACE_PANEL_OPEN_KEY) !== "0";
+  } catch {
+    return true;
+  }
+}
+
+function saveWorkspacePanelOpen(open: boolean): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(WORKSPACE_PANEL_OPEN_KEY, open ? "1" : "0");
+  } catch {
+    /* ignore storage failures */
+  }
+}
+
+function shortCwd(cwd?: string): string {
+  if (!cwd) return "";
+  const parts = cwd.split("/").filter(Boolean);
+  if (parts.length <= 2) return cwd;
+  return "…/" + parts.slice(-2).join("/");
+}
+
+function sessionTitle(session: SessionMeta, fallback: string): string {
+  return session.title || session.preview || fallback;
+}
+
+function sessionTime(ms: number): string {
+  return new Date(ms).toLocaleDateString([], { month: "short", day: "numeric" });
+}
 
 export default function App() {
   const {
@@ -41,6 +108,10 @@ export default function App() {
   const [mode, setMode] = useState<Mode>("normal");
   const [memView, setMemView] = useState<MemoryView | null>(null);
   const [histView, setHistView] = useState<SessionMeta[] | null>(null);
+  const [sidebarSessions, setSidebarSessions] = useState<SessionMeta[]>([]);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(loadSidebarCollapsed);
+  const [workspacePanelOpen, setWorkspacePanelOpen] = useState(loadWorkspacePanelOpen);
+  const [workspacePanelMaximized, setWorkspacePanelMaximized] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
 
   // applyMode is the single source of truth for the input mode: it updates the
@@ -122,33 +193,75 @@ export default function App() {
     [switchModel, openMemory, send],
   );
 
+  const refreshSessions = useCallback(async () => {
+    const sessions = await listSessions();
+    setSidebarSessions(sessions.slice(0, 10));
+    return sessions;
+  }, [listSessions]);
+
+  useEffect(() => {
+    void refreshSessions();
+  }, [refreshSessions]);
+
+  useEffect(() => {
+    if (!state.running && state.items.length > 0) void refreshSessions();
+  }, [state.running, state.items.length, refreshSessions]);
+
+  const startNewSession = useCallback(async () => {
+    await newSession();
+    await refreshSessions();
+  }, [newSession, refreshSessions]);
+
+  const toggleSidebar = useCallback(() => {
+    setSidebarCollapsed((collapsed) => {
+      const next = !collapsed;
+      saveSidebarCollapsed(next);
+      return next;
+    });
+  }, []);
+
+  const setWorkspacePanel = useCallback((open: boolean) => {
+    setWorkspacePanelOpen(open);
+    if (!open) setWorkspacePanelMaximized(false);
+    saveWorkspacePanelOpen(open);
+  }, []);
+
+  const toggleWorkspacePanel = useCallback(() => {
+    setWorkspacePanelOpen((open) => {
+      const next = !open;
+      saveWorkspacePanelOpen(next);
+      return next;
+    });
+  }, []);
+
   // History drawer: opening fetches the saved-session list; picking one resumes it
   // (the transcript swaps in; the model/folder are unchanged).
   const openHistory = useCallback(async () => {
-    setHistView(await listSessions());
-  }, [listSessions]);
+    setHistView(await refreshSessions());
+  }, [refreshSessions]);
   const closeHistory = useCallback(() => setHistView(null), []);
   const onResumeSession = useCallback(
     async (path: string) => {
       setHistView(null);
       await resumeSession(path);
+      await refreshSessions();
     },
-    [resumeSession],
+    [resumeSession, refreshSessions],
   );
   // Delete / rename act on disk, then re-fetch so the panel reflects the change.
   const onDeleteSession = useCallback(
     async (path: string) => {
       await deleteSession(path);
-      setHistView(await listSessions());
+      setHistView(await refreshSessions());
     },
-    [deleteSession, listSessions],
+    [deleteSession, refreshSessions],
   );
   const onRenameSession = useCallback(
     async (path: string, title: string) => {
       await renameSession(path, title);
-      setHistView(await listSessions());
+      setHistView(await refreshSessions());
     },
-    [renameSession, listSessions],
+    [renameSession, refreshSessions],
   );
 
   // Workspace: open the folder chooser and switch projects (from the status bar's
@@ -176,60 +289,200 @@ export default function App() {
 
   return (
     <div className="app">
-      <header className="topbar">
-        <span className="topbar__model">{state.meta?.label ?? "…"}</span>
-        <div className="topbar__spacer" />
-        <button
-          className="chip chip--icon"
-          onClick={() => void openHistory()}
-          disabled={state.running}
-          title={state.running ? t("common.busyHint") : t("topbar.history")}
-        >
-          <History size={13} />
-        </button>
-        <button className="chip chip--icon" onClick={() => void openMemory()} title={t("topbar.memory")}>
-          <Brain size={13} />
-        </button>
-        <button
-          className="chip chip--icon"
-          onClick={() => setSettingsOpen(true)}
-          disabled={state.running}
-          title={state.running ? t("common.busyHint") : t("topbar.settings")}
-        >
-          <SettingsIcon size={13} />
-        </button>
-        <button className="chip chip--icon" onClick={newSession} title={t("topbar.newSession")}>
-          <SquarePen size={13} />
-        </button>
-      </header>
+      <div
+        className={[
+          "layout",
+          sidebarCollapsed ? "layout--sidebar-collapsed" : "",
+          workspacePanelOpen ? "layout--workspace-open" : "",
+          workspacePanelOpen && workspacePanelMaximized ? "layout--workspace-maximized" : "",
+        ]
+          .filter(Boolean)
+          .join(" ")}
+      >
+        <aside className={`sidebar${sidebarCollapsed ? " sidebar--collapsed" : ""}`} aria-label="Reasonix navigation">
+          <div className="sidebar__brand">
+            <img src={logo} alt="" className="sidebar__logo" />
+            <span>Reasonix</span>
+            <button
+              className="sidebar__toggle"
+              onClick={toggleSidebar}
+              title={sidebarCollapsed ? t("sidebar.expand") : t("sidebar.collapse")}
+              aria-label={sidebarCollapsed ? t("sidebar.expand") : t("sidebar.collapse")}
+            >
+              {sidebarCollapsed ? <PanelLeftOpen size={15} /> : <PanelLeftClose size={15} />}
+            </button>
+          </div>
 
-      {state.meta?.startupErr && (
-        <div className="banner banner--error">{t("topbar.startupError", { msg: state.meta.startupErr })}</div>
-      )}
+          <button
+            className="sidebar__new"
+            onClick={() => void startNewSession()}
+            disabled={state.running}
+            title={state.running ? t("common.busyHint") : t("topbar.newSession")}
+          >
+            <SquarePen size={15} />
+            <span>{t("topbar.newSession")}</span>
+          </button>
 
-      <UpdateBanner />
+          <section className="sidebar__section">
+            <div className="sidebar__section-head">
+              <div className="sidebar__section-title">{t("sidebar.conversations")}</div>
+              <button
+                className="sidebar__view-all"
+                onClick={() => void openHistory()}
+                disabled={state.running}
+                title={state.running ? t("common.busyHint") : t("topbar.history")}
+              >
+                {t("sidebar.viewAll")}
+              </button>
+            </div>
+            <div className="sidebar__sessions">
+              {sidebarSessions.length === 0 ? (
+                <div className="sidebar__empty">{t("sidebar.noRecent")}</div>
+              ) : (
+                sidebarSessions.map((session) => (
+                  <button
+                    className={`sidebar-session${session.current ? " sidebar-session--current" : ""}`}
+                    key={session.path}
+                    onClick={() => void onResumeSession(session.path)}
+                    disabled={state.running || session.current}
+                    title={session.path}
+                  >
+                    <MessageSquare size={14} />
+                    <span className="sidebar-session__body">
+                      <span className="sidebar-session__title">{sessionTitle(session, t("history.emptySession"))}</span>
+                      <span className="sidebar-session__meta">
+                        {session.current ? t("history.current") : sessionTime(session.modTime)}
+                      </span>
+                    </span>
+                  </button>
+                ))
+              )}
+            </div>
+          </section>
 
-      <main className="main">
-        <Transcript items={state.items} onPrompt={send} onRewind={rewind} />
-      </main>
+          <nav className="sidebar__nav">
+            <button
+              className="sidebar__navitem sidebar__navitem--sessions"
+              onClick={() => void openHistory()}
+              disabled={state.running}
+              title={state.running ? t("common.busyHint") : t("topbar.history")}
+            >
+              <History size={15} />
+              <span>{t("topbar.history")}</span>
+            </button>
+            <button className="sidebar__navitem" onClick={() => void openMemory()} title={t("topbar.memory")}>
+              <Brain size={15} />
+              <span>{t("topbar.memory")}</span>
+            </button>
+            <button
+              className="sidebar__navitem"
+              onClick={() => setSettingsOpen(true)}
+              disabled={state.running}
+              title={state.running ? t("common.busyHint") : t("topbar.settings")}
+            >
+              <SettingsIcon size={15} />
+              <span>{t("topbar.settings")}</span>
+            </button>
+          </nav>
 
-      <footer className="footer">
-        {showTodos && <TodoPanel todos={todos} onDismiss={() => setDismissedTodo(todoItem!.id)} />}
-        <Composer running={state.running} mode={mode} onSend={handleSend} onCancel={cancel} onCycleMode={cycleMode} />
-        <StatusBar
-          meta={state.meta}
-          context={state.context}
-          usage={state.usage}
-          balance={state.balance}
-          jobs={state.jobs}
-          running={state.running}
-          mode={mode}
-          turnStartAt={state.turnStartAt}
-          turnTokens={state.turnTokens}
-          onSwitchModel={switchModel}
-          onPickFolder={() => void switchFolder()}
+          {state.meta?.cwd && (
+            <button
+              className="sidebar__workspace"
+              onClick={() => void switchFolder()}
+              disabled={state.running}
+              title={state.running ? t("common.busyHint") : t("status.switchFolder", { cwd: state.meta.cwd })}
+            >
+              <FolderGit2 size={14} />
+              <span>
+                <span className="sidebar__workspace-kicker">{t("sidebar.workspace")}</span>
+                <span className="sidebar__workspace-path">{shortCwd(state.meta.cwd)}</span>
+              </span>
+            </button>
+          )}
+        </aside>
+
+        <section className="chat-pane">
+          <header className="topbar">
+            <div className="topbar__identity">
+              <span className="topbar__title">Reasonix</span>
+              <span className="topbar__model">{state.meta?.label ?? "…"}</span>
+            </div>
+            <div className="topbar__spacer" />
+            <button
+              className="chip chip--icon topbar__workspace-toggle"
+              onClick={toggleWorkspacePanel}
+              title={workspacePanelOpen ? t("workspace.close") : t("workspace.open")}
+            >
+              {workspacePanelOpen ? <PanelRightClose size={13} /> : <PanelRightOpen size={13} />}
+            </button>
+            <div className="topbar__actions">
+              <button
+                className="chip chip--icon"
+                onClick={() => void openHistory()}
+                disabled={state.running}
+                title={state.running ? t("common.busyHint") : t("topbar.history")}
+              >
+                <History size={13} />
+              </button>
+              <button className="chip chip--icon" onClick={() => void openMemory()} title={t("topbar.memory")}>
+                <Brain size={13} />
+              </button>
+              <button
+                className="chip chip--icon"
+                onClick={() => setSettingsOpen(true)}
+                disabled={state.running}
+                title={state.running ? t("common.busyHint") : t("topbar.settings")}
+              >
+                <SettingsIcon size={13} />
+              </button>
+              <button
+                className="chip chip--icon"
+                onClick={() => void startNewSession()}
+                disabled={state.running}
+                title={state.running ? t("common.busyHint") : t("topbar.newSession")}
+              >
+                <SquarePen size={13} />
+              </button>
+            </div>
+          </header>
+
+          {state.meta?.startupErr && (
+            <div className="banner banner--error">{t("topbar.startupError", { msg: state.meta.startupErr })}</div>
+          )}
+
+          <UpdateBanner />
+
+          <main className="main">
+            <Transcript items={state.items} onPrompt={send} onRewind={rewind} />
+          </main>
+
+          <footer className="footer">
+            {showTodos && <TodoPanel todos={todos} onDismiss={() => setDismissedTodo(todoItem!.id)} />}
+            <Composer running={state.running} mode={mode} onSend={handleSend} onCancel={cancel} onCycleMode={cycleMode} />
+            <StatusBar
+              meta={state.meta}
+              context={state.context}
+              usage={state.usage}
+              balance={state.balance}
+              jobs={state.jobs}
+              running={state.running}
+              mode={mode}
+              turnStartAt={state.turnStartAt}
+              turnTokens={state.turnTokens}
+              onSwitchModel={switchModel}
+              onPickFolder={() => void switchFolder()}
+            />
+          </footer>
+        </section>
+
+        <WorkspacePanel
+          open={workspacePanelOpen}
+          cwd={state.meta?.cwd}
+          maximized={workspacePanelMaximized}
+          onClose={() => setWorkspacePanel(false)}
+          onToggleMaximized={() => setWorkspacePanelMaximized((value) => !value)}
         />
-      </footer>
+      </div>
 
       {state.approval && (
         <ApprovalModal

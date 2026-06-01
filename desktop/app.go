@@ -1,11 +1,16 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
+	goruntime "runtime"
 	"sort"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 
@@ -661,8 +666,43 @@ type DirEntry struct {
 	IsDir bool   `json:"isDir"`
 }
 
+// FilePreview is a bounded, read-only file payload for the workspace side panel.
+type FilePreview struct {
+	Path      string `json:"path"`
+	Body      string `json:"body"`
+	Size      int64  `json:"size"`
+	Truncated bool   `json:"truncated"`
+	Binary    bool   `json:"binary"`
+	Err       string `json:"err,omitempty"`
+}
+
 // atSkip are entries the "@" menu hides as noise.
 var atSkip = map[string]bool{".git": true, "node_modules": true, ".DS_Store": true}
+
+const filePreviewLimit = 256 * 1024
+
+func workspacePath(rel string) (string, bool, error) {
+	base, err := os.Getwd()
+	if err != nil {
+		return "", false, err
+	}
+	if rel == "" {
+		return "", false, os.ErrInvalid
+	}
+	path := rel
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(base, rel)
+	}
+	path = filepath.Clean(path)
+	r, err := filepath.Rel(base, path)
+	if err != nil {
+		return "", false, err
+	}
+	if r == ".." || strings.HasPrefix(r, ".."+string(os.PathSeparator)) {
+		return "", false, os.ErrPermission
+	}
+	return path, true, nil
+}
 
 // ListDir lists one directory level (directories first, then files, each
 // alphabetical) for the "@" file-reference menu. rel resolves against the process
@@ -700,6 +740,86 @@ func (a *App) ListDir(rel string) []DirEntry {
 	sort.Slice(dirs, func(i, j int) bool { return strings.ToLower(dirs[i].Name) < strings.ToLower(dirs[j].Name) })
 	sort.Slice(files, func(i, j int) bool { return strings.ToLower(files[i].Name) < strings.ToLower(files[j].Name) })
 	return append(dirs, files...)
+}
+
+// ReadFile returns a small text preview for a file under the current workspace.
+func (a *App) ReadFile(rel string) FilePreview {
+	out := FilePreview{Path: rel}
+	path, ok, err := workspacePath(rel)
+	if err != nil || !ok {
+		out.Err = "invalid path"
+		return out
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		out.Err = err.Error()
+		return out
+	}
+	if info.IsDir() {
+		out.Err = "path is a directory"
+		return out
+	}
+	out.Size = info.Size()
+	f, err := os.Open(path)
+	if err != nil {
+		out.Err = err.Error()
+		return out
+	}
+	defer f.Close()
+
+	buf := make([]byte, filePreviewLimit+1)
+	n, err := f.Read(buf)
+	if err != nil && err != io.EOF {
+		out.Err = err.Error()
+		return out
+	}
+	data := buf[:n]
+	if len(data) > filePreviewLimit {
+		data = data[:filePreviewLimit]
+		out.Truncated = true
+	}
+	if bytes.Contains(data, []byte{0}) || !utf8.Valid(data) {
+		out.Binary = true
+		return out
+	}
+	out.Body = string(data)
+	return out
+}
+
+// OpenWorkspacePath opens a file or folder from the workspace in the OS default app.
+func (a *App) OpenWorkspacePath(rel string) error {
+	path, ok, err := workspacePath(rel)
+	if err != nil || !ok {
+		return os.ErrInvalid
+	}
+	switch goruntime.GOOS {
+	case "darwin":
+		return exec.Command("open", path).Start()
+	case "windows":
+		return exec.Command("cmd", "/c", "start", "", path).Start()
+	default:
+		return exec.Command("xdg-open", path).Start()
+	}
+}
+
+// RevealWorkspacePath shows a workspace file in the native file manager.
+func (a *App) RevealWorkspacePath(rel string) error {
+	path, ok, err := workspacePath(rel)
+	if err != nil || !ok {
+		return os.ErrInvalid
+	}
+	switch goruntime.GOOS {
+	case "darwin":
+		return exec.Command("open", "-R", path).Start()
+	case "windows":
+		return exec.Command("explorer", "/select,", path).Start()
+	default:
+		dir := path
+		if info, err := os.Stat(path); err == nil && !info.IsDir() {
+			dir = filepath.Dir(path)
+		}
+		return exec.Command("xdg-open", dir).Start()
+	}
 }
 
 // SavePastedImage stores a browser clipboard image data URL under

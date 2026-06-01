@@ -147,6 +147,15 @@ export interface DirEntry {
   isDir: boolean;
 }
 
+export interface FilePreview {
+  path: string;
+  body: string;
+  size: number;
+  truncated: boolean;
+  binary: boolean;
+  err?: string;
+}
+
 export interface ModelInfo {
   ref: string; // "provider/model" — pass to SetModel
   provider: string;
