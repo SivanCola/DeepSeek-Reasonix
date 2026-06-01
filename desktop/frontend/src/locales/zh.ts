@@ -61,7 +61,7 @@ export const zh: Record<DictKey, string> = {
   "caps.title": "MCP 与技能",
   "caps.loading": "加载中…",
   "caps.summary": "{connected} 个已连接 · {failed} 个异常 · {skills} 个技能",
-  "caps.connectorsTab": "连接器",
+  "caps.connectorsTab": "MCP",
   "caps.skillsTab": "技能",
   "caps.servers": "MCP 服务器",
   "caps.noServers": "未配置 MCP 服务器。用 /mcp add 添加。",

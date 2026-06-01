@@ -60,7 +60,7 @@ export const en = {
   "caps.title": "MCP & Skills",
   "caps.loading": "Loading…",
   "caps.summary": "{connected} connected · {failed} issues · {skills} skills",
-  "caps.connectorsTab": "Connectors",
+  "caps.connectorsTab": "MCP",
   "caps.skillsTab": "Skills",
   "caps.servers": "MCP servers",
   "caps.noServers": "No MCP servers configured. Add one with /mcp add.",
