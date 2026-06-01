@@ -5,6 +5,10 @@ import { useUpdater } from "../lib/useUpdater";
 import { applyTheme, getTheme, type Theme } from "../lib/theme";
 import type { ProviderView, SettingsView } from "../lib/types";
 
+type SettingsTab = "models" | "providers" | "permissions" | "sandbox" | "agent" | "appearance" | "updates";
+
+const SETTINGS_TABS: SettingsTab[] = ["models", "providers", "permissions", "sandbox", "agent", "appearance", "updates"];
+
 // SettingsPanel is the desktop settings surface, aligning with Claude Code's
 // settings: model & providers (incl. API keys), permissions, sandbox, agent
 // params, and appearance. Every change writes reasonix.toml (or .env for keys)
@@ -15,6 +19,7 @@ export function SettingsPanel({ onClose, onChanged }: { onClose: () => void; onC
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [theme, setThemeState] = useState<Theme>(getTheme());
+  const [tab, setTab] = useState<SettingsTab>("models");
 
   const reload = async () => setS(await app.Settings().catch(() => null));
   useEffect(() => {
@@ -50,25 +55,39 @@ export function SettingsPanel({ onClose, onChanged }: { onClose: () => void; onC
         {!s ? (
           <div className="empty">{t("settings.loading")}</div>
         ) : (
-          <div className="drawer__body">
-            {err && <div className="banner banner--error">{err}</div>}
-            <ModelsSection s={s} busy={busy} apply={apply} />
-            <PermissionsSection s={s} busy={busy} apply={apply} />
-            <SandboxSection s={s} busy={busy} apply={apply} />
-            <AgentSection s={s} busy={busy} apply={apply} />
-            <AppearanceSection
-              theme={theme}
-              onTheme={(t) => {
-                applyTheme(t);
-                setThemeState(t);
-              }}
-            />
-            <UpdatesSection />
-            {s.configPath && (
-              <div className="mem-hint" title={s.configPath}>
-                {t("settings.config", { path: s.configPath })}
-              </div>
-            )}
+          <div className="drawer__body drawer__body--settings">
+            <div className="settings-shell">
+              <nav className="settings-nav" aria-label={t("settings.title")}>
+                {SETTINGS_TABS.map((id) => (
+                  <button
+                    key={id}
+                    className={`settings-nav__item${tab === id ? " settings-nav__item--active" : ""}`}
+                    onClick={() => setTab(id)}
+                  >
+                    <span>{settingsTabLabel(id, t)}</span>
+                    <small>{settingsTabMeta(id, s, t)}</small>
+                  </button>
+                ))}
+              </nav>
+              <main className="settings-content">
+                {err && <div className="banner banner--error">{err}</div>}
+                {tab === "models" && <ModelsSection s={s} busy={busy} apply={apply} />}
+                {tab === "providers" && <ProvidersSection s={s} busy={busy} apply={apply} />}
+                {tab === "permissions" && <PermissionsSection s={s} busy={busy} apply={apply} />}
+                {tab === "sandbox" && <SandboxSection s={s} busy={busy} apply={apply} />}
+                {tab === "agent" && <AgentSection s={s} busy={busy} apply={apply} />}
+                {tab === "appearance" && (
+                  <AppearanceSection
+                    theme={theme}
+                    onTheme={(t) => {
+                      applyTheme(t);
+                      setThemeState(t);
+                    }}
+                  />
+                )}
+                {tab === "updates" && <UpdatesSection configPath={s.configPath} />}
+              </main>
+            </div>
           </div>
         )}
       </aside>
@@ -81,6 +100,44 @@ type SectionProps = {
   busy: boolean;
   apply: (fn: () => Promise<void>) => Promise<void>;
 };
+
+function settingsTabLabel(id: SettingsTab, t: ReturnType<typeof useT>): string {
+  switch (id) {
+    case "models":
+      return t("settings.tab.models");
+    case "providers":
+      return t("settings.tab.providers");
+    case "permissions":
+      return t("settings.tab.permissions");
+    case "sandbox":
+      return t("settings.tab.sandbox");
+    case "agent":
+      return t("settings.tab.agent");
+    case "appearance":
+      return t("settings.tab.appearance");
+    case "updates":
+      return t("settings.tab.updates");
+  }
+}
+
+function settingsTabMeta(id: SettingsTab, s: SettingsView, t: ReturnType<typeof useT>): string {
+  switch (id) {
+    case "models":
+      return toRef(s.defaultModel, s) || t("common.none");
+    case "providers":
+      return t("settings.providerCount", { n: s.providers.length });
+    case "permissions":
+      return s.permissions.mode;
+    case "sandbox":
+      return s.sandbox.bash;
+    case "agent":
+      return t("settings.agentMeta", { temp: s.agent.temperature, steps: s.agent.maxSteps || "∞" });
+    case "appearance":
+      return t("settings.appearanceMeta");
+    case "updates":
+      return t("settings.updatesMeta");
+  }
+}
 
 // allRefs flattens providers into "provider/model" refs for the model selectors.
 function allRefs(s: SettingsView): string[] {
@@ -104,14 +161,10 @@ function toRef(model: string, s: SettingsView): string {
 function ModelsSection({ s, busy, apply }: SectionProps) {
   const t = useT();
   const refs = allRefs(s);
-  // The provider backing the default model — can't be deleted (would dangle the
-  // default). default_model may be a provider name or a "provider/model" ref.
-  const defaultProvider = toRef(s.defaultModel, s).split("/")[0];
-  const [editing, setEditing] = useState<string | null>(null); // provider name, or "__new__"
 
   return (
     <section className="mem-section">
-      <div className="mem-section__title">{t("settings.modelsProviders")}</div>
+      <div className="mem-section__title">{t("settings.tab.models")}</div>
 
       <div className="set-row">
         <label className="set-label">{t("settings.defaultModel")}</label>
@@ -146,55 +199,87 @@ function ModelsSection({ s, busy, apply }: SectionProps) {
         </select>
       </div>
 
-      {s.providers.map((p) =>
-        editing === p.name ? (
-          <ProviderEditor
-            key={p.name}
-            initial={p}
-            kinds={s.providerKinds}
-            busy={busy}
-            onCancel={() => setEditing(null)}
-            onSave={(pv) => apply(() => app.SaveProvider(pv)).then(() => setEditing(null))}
-          />
-        ) : (
-          <div className="prov-card" key={p.name}>
-            <div className="prov-card__head">
-              <span className="prov-card__name">{p.name}</span>
-              <span className={`badge ${p.keySet ? "badge--project" : "badge--feedback"}`}>
-                {p.keySet ? t("settings.keySet") : t("settings.noKey")}
-              </span>
-              <span className="prov-card__spacer" />
-              <button className="btn btn--small" disabled={busy} onClick={() => setEditing(p.name)}>
-                {t("common.edit")}
-              </button>
-              <button
-                className="btn btn--small"
-                disabled={busy || defaultProvider === p.name}
-                title={defaultProvider === p.name ? t("settings.cantDeleteDefault") : t("settings.deleteProvider")}
-                onClick={() => void apply(() => app.DeleteProvider(p.name))}
-              >
-                {t("common.delete")}
-              </button>
-            </div>
-            <div className="prov-card__meta">
-              {p.kind} · {p.baseUrl} · {p.models.join(", ")}
-            </div>
-            <KeyField apiKeyEnv={p.apiKeyEnv} busy={busy} onSet={(v) => apply(() => app.SetProviderKey(p.apiKeyEnv, v))} />
-          </div>
-        ),
-      )}
+      <div className="settings-summary-grid">
+        <div className="settings-summary">
+          <span>{t("settings.providers")}</span>
+          <strong>{s.providers.length}</strong>
+        </div>
+        <div className="settings-summary">
+          <span>{t("settings.availableModels")}</span>
+          <strong>{refs.length}</strong>
+        </div>
+      </div>
+    </section>
+  );
+}
 
-      {editing === "__new__" ? (
+function ProvidersSection({ s, busy, apply }: SectionProps) {
+  const t = useT();
+  // The provider backing the default model — can't be deleted (would dangle the
+  // default). default_model may be a provider name or a "provider/model" ref.
+  const defaultProvider = toRef(s.defaultModel, s).split("/")[0];
+  const [editing, setEditing] = useState<string | null>(null); // provider name, or "__new__"
+
+  return (
+    <section className="mem-section">
+      <div className="mem-section__head">
+        <div className="mem-section__title">{t("settings.tab.providers")}</div>
+        {editing !== "__new__" && (
+          <button className="btn btn--small" disabled={busy} onClick={() => setEditing("__new__")}>
+            {t("settings.addProvider")}
+          </button>
+        )}
+      </div>
+
+      <div className="provider-list">
+        {s.providers.map((p) =>
+          editing === p.name ? (
+            <ProviderEditor
+              key={p.name}
+              initial={p}
+              kinds={s.providerKinds}
+              busy={busy}
+              onCancel={() => setEditing(null)}
+              onSave={(pv) => apply(() => app.SaveProvider(pv)).then(() => setEditing(null))}
+            />
+          ) : (
+            <div className="prov-card" key={p.name}>
+              <div className="prov-card__head">
+                <span className="prov-card__name">{p.name}</span>
+                <span className={`badge ${p.keySet ? "badge--project" : "badge--feedback"}`}>
+                  {p.keySet ? t("settings.keySet") : t("settings.noKey")}
+                </span>
+                <span className="prov-card__spacer" />
+                <button className="btn btn--small" disabled={busy} onClick={() => setEditing(p.name)}>
+                  {t("common.edit")}
+                </button>
+                <button
+                  className="btn btn--small"
+                  disabled={busy || defaultProvider === p.name}
+                  title={defaultProvider === p.name ? t("settings.cantDeleteDefault") : t("settings.deleteProvider")}
+                  onClick={() => void apply(() => app.DeleteProvider(p.name))}
+                >
+                  {t("common.delete")}
+                </button>
+              </div>
+              <div className="prov-card__meta">
+                <span>{p.kind}</span>
+                <span>{p.baseUrl}</span>
+                <span>{p.models.join(", ")}</span>
+              </div>
+              <KeyField apiKeyEnv={p.apiKeyEnv} busy={busy} onSet={(v) => apply(() => app.SetProviderKey(p.apiKeyEnv, v))} />
+            </div>
+          ),
+        )}
+      </div>
+
+      {editing === "__new__" && (
         <ProviderEditor
           kinds={s.providerKinds}
           busy={busy}
           onCancel={() => setEditing(null)}
           onSave={(pv) => apply(() => app.SaveProvider(pv)).then(() => setEditing(null))}
         />
-      ) : (
-        <button className="btn btn--small" disabled={busy} onClick={() => setEditing("__new__")}>
-          {t("settings.addProvider")}
-        </button>
       )}
     </section>
   );
@@ -323,16 +408,18 @@ function PermissionsSection({ s, busy, apply }: SectionProps) {
           <option value="deny">{t("settings.modeDeny")}</option>
         </select>
       </div>
-      {(["deny", "ask", "allow"] as const).map((list) => (
-        <RuleList
-          key={list}
-          list={list}
-          rules={s.permissions[list]}
-          busy={busy}
-          onAdd={(rule) => apply(() => app.AddPermissionRule(list, rule))}
-          onRemove={(rule) => apply(() => app.RemovePermissionRule(list, rule))}
-        />
-      ))}
+      <div className="set-rules-grid">
+        {(["deny", "ask", "allow"] as const).map((list) => (
+          <RuleList
+            key={list}
+            list={list}
+            rules={s.permissions[list]}
+            busy={busy}
+            onAdd={(rule) => apply(() => app.AddPermissionRule(list, rule))}
+            onRemove={(rule) => apply(() => app.RemovePermissionRule(list, rule))}
+          />
+        ))}
+      </div>
       <div className="mem-hint">{t("settings.ruleForm")}</div>
     </section>
   );
@@ -505,7 +592,7 @@ const mb = (n: number) => (n / MB).toFixed(1);
 // UpdatesSection is the manual side of the auto-updater: it shows the running
 // version and a Check button, then the same state machine the top banner uses
 // (useUpdater) — available → install/download, with progress and errors inline.
-function UpdatesSection() {
+function UpdatesSection({ configPath }: { configPath: string }) {
   const t = useT();
   const { status, check, apply } = useUpdater();
   const [version, setVersion] = useState("");
@@ -552,6 +639,11 @@ function UpdatesSection() {
       {status.kind === "applying" && <div className="mem-hint">{t("updater.applying")}</div>}
       {status.kind === "done" && <div className="mem-hint">{t("updater.done")}</div>}
       {status.kind === "error" && <div className="banner banner--error">{t("updater.failed", { msg: status.message })}</div>}
+      {configPath && (
+        <div className="mem-hint settings-config-path" title={configPath}>
+          {t("settings.config", { path: configPath })}
+        </div>
+      )}
     </section>
   );
 }
