@@ -1154,14 +1154,7 @@ func (a *App) OpenWorkspacePath(rel string) error {
 	if err != nil || !ok {
 		return os.ErrInvalid
 	}
-	switch goruntime.GOOS {
-	case "darwin":
-		return exec.Command("open", path).Start()
-	case "windows":
-		return exec.Command("cmd", "/c", "start", "", path).Start()
-	default:
-		return exec.Command("xdg-open", path).Start()
-	}
+	return openWorkspacePath(path)
 }
 
 // RevealWorkspacePath shows a workspace file in the native file manager.

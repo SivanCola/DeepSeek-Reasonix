@@ -133,6 +133,20 @@ func TestReadFileKeepsInvalidUTF8Binary(t *testing.T) {
 	}
 }
 
+func TestWindowsOpenWorkspacePathAvoidsCmdShell(t *testing.T) {
+	src, err := os.ReadFile("open_workspace_windows.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(src)
+	if !strings.Contains(body, "ShellExecute") {
+		t.Fatal("Windows workspace opener should use ShellExecute")
+	}
+	if strings.Contains(body, "cmd") || strings.Contains(body, "/c") {
+		t.Fatal("Windows workspace opener must not route paths through cmd.exe")
+	}
+}
+
 // --- settings_app.go helpers ---
 // These are unexported but in the same package, so we can test them.
 
