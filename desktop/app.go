@@ -1086,9 +1086,13 @@ func (a *App) ListDir(rel string) []DirEntry {
 		}
 		if e.IsDir() {
 			dirs = append(dirs, DirEntry{Name: name, IsDir: true})
-		} else {
-			files = append(files, DirEntry{Name: name, IsDir: false})
+			continue
 		}
+		info, err := e.Info()
+		if err != nil || !info.Mode().IsRegular() {
+			continue
+		}
+		files = append(files, DirEntry{Name: name, IsDir: false})
 	}
 	sort.Slice(dirs, func(i, j int) bool { return strings.ToLower(dirs[i].Name) < strings.ToLower(dirs[j].Name) })
 	sort.Slice(files, func(i, j int) bool { return strings.ToLower(files[i].Name) < strings.ToLower(files[j].Name) })
@@ -1110,6 +1114,10 @@ func (a *App) ReadFile(rel string) FilePreview {
 	}
 	if info.IsDir() {
 		out.Err = "path is a directory"
+		return out
+	}
+	if !info.Mode().IsRegular() {
+		out.Err = "path is not a regular file"
 		return out
 	}
 	out.Size = info.Size()
