@@ -206,7 +206,6 @@ export function CapabilitiesPanel({
 }
 
 function ServerGroup({
-  title,
   servers,
   busy,
   confirming,

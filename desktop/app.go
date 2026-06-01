@@ -46,16 +46,18 @@ type App struct {
 	// mu protects ctrl, label, model, startupErr, and ready during the async
 	// boot sequence. startup() spawns a goroutine for boot.Build(); all methods
 	// that touch the controller acquire the lock.
-	mu         sync.RWMutex
-	startupErr string
-	label      string
-	model      string // active provider name (for the bottom model switcher)
-	ready      bool   // true once boot.Build completes (success or failure)
+	mu          sync.RWMutex
+	startupErr  string
+	label       string
+	model       string // active provider name (for the bottom model switcher)
+	ready       bool   // true once boot.Build completes (success or failure)
+	disabledMCP map[string]ServerView
+	mcpOrder    []string
 }
 
 // NewApp constructs the bound object. The controller is built later, in startup,
 // once the Wails context exists.
-func NewApp() *App { return &App{sink: &eventSink{}} }
+func NewApp() *App { return &App{sink: &eventSink{}, disabledMCP: map[string]ServerView{}} }
 
 // startup runs once the webview process is up, before the frontend can issue any
 // bound call. It captures the Wails context (needed for EventsEmit), points the
@@ -810,13 +812,23 @@ type SkillView struct {
 // for the MCP & Skills drawer. Non-nil slices so the frontend can map over them.
 func (a *App) Capabilities() CapabilitiesView {
 	out := CapabilitiesView{Servers: []ServerView{}, Skills: []SkillView{}}
-	if a.ctrl == nil {
+	a.mu.RLock()
+	ctrl := a.ctrl
+	disabled := make(map[string]ServerView, len(a.disabledMCP))
+	for name, s := range a.disabledMCP {
+		disabled[name] = s
+	}
+	order := append([]string(nil), a.mcpOrder...)
+	a.mu.RUnlock()
+	if ctrl == nil {
 		return out
 	}
 	seen := map[string]bool{}
-	if h := a.ctrl.Host(); h != nil {
+	connected := map[string]bool{}
+	if h := ctrl.Host(); h != nil {
 		for _, s := range h.Servers() {
 			seen[s.Name] = true
+			connected[s.Name] = true
 			out.Servers = append(out.Servers, ServerView{
 				Name: s.Name, Transport: s.Transport, Status: "connected",
 				Tools: s.Tools, Prompts: s.Prompts, Resources: s.Resources,
@@ -843,7 +855,27 @@ func (a *App) Capabilities() CapabilitiesView {
 			out.Servers = append(out.Servers, ServerView{Name: p.Name, Transport: tt, Status: "disabled"})
 		}
 	}
-	for _, s := range a.ctrl.Skills() {
+	for name, s := range disabled {
+		if seen[name] {
+			continue
+		}
+		s.Status = "disabled"
+		s.Error = ""
+		out.Servers = append(out.Servers, s)
+	}
+	out.Servers = orderServerViews(out.Servers, order)
+
+	a.mu.Lock()
+	if a.disabledMCP == nil {
+		a.disabledMCP = map[string]ServerView{}
+	}
+	for name := range connected {
+		delete(a.disabledMCP, name)
+	}
+	a.mcpOrder = mergeServerOrder(a.mcpOrder, out.Servers)
+	a.mu.Unlock()
+
+	for _, s := range ctrl.Skills() {
 		out.Skills = append(out.Skills, SkillView{
 			Name: s.Name, Description: s.Description,
 			Scope: string(s.Scope), RunAs: string(s.RunAs),
@@ -907,10 +939,88 @@ func (a *App) SetMCPServerEnabled(name string, enabled bool) error {
 	}
 	if enabled {
 		_, err := a.ctrl.ConnectConfiguredMCPServer(name)
+		if err == nil {
+			a.mu.Lock()
+			delete(a.disabledMCP, name)
+			a.mu.Unlock()
+		}
 		return err
+	}
+	if s, ok := findMCPServerView(a.ctrl, name); ok {
+		s.Status = "disabled"
+		s.Error = ""
+		a.mu.Lock()
+		if a.disabledMCP == nil {
+			a.disabledMCP = map[string]ServerView{}
+		}
+		a.disabledMCP[name] = s
+		a.mcpOrder = mergeServerOrder(a.mcpOrder, []ServerView{s})
+		a.mu.Unlock()
 	}
 	a.ctrl.DisconnectMCPServer(name)
 	return nil
+}
+
+func findMCPServerView(ctrl *control.Controller, name string) (ServerView, bool) {
+	if ctrl == nil || ctrl.Host() == nil {
+		return ServerView{}, false
+	}
+	for _, s := range ctrl.Host().Servers() {
+		if s.Name == name {
+			return ServerView{
+				Name: s.Name, Transport: s.Transport, Status: "connected",
+				Tools: s.Tools, Prompts: s.Prompts, Resources: s.Resources,
+			}, true
+		}
+	}
+	for _, f := range ctrl.Host().Failures() {
+		if f.Name == name {
+			return ServerView{Name: f.Name, Transport: f.Transport, Status: "failed", Error: f.Error}, true
+		}
+	}
+	return ServerView{}, false
+}
+
+func orderServerViews(servers []ServerView, order []string) []ServerView {
+	pos := make(map[string]int, len(order))
+	for i, name := range order {
+		pos[name] = i
+	}
+	sort.SliceStable(servers, func(i, j int) bool {
+		pi, iok := pos[servers[i].Name]
+		pj, jok := pos[servers[j].Name]
+		switch {
+		case iok && jok:
+			return pi < pj
+		case iok:
+			return true
+		case jok:
+			return false
+		default:
+			return false
+		}
+	})
+	return servers
+}
+
+func mergeServerOrder(order []string, servers []ServerView) []string {
+	seen := make(map[string]bool, len(order)+len(servers))
+	next := make([]string, 0, len(order)+len(servers))
+	for _, name := range order {
+		if name == "" || seen[name] {
+			continue
+		}
+		seen[name] = true
+		next = append(next, name)
+	}
+	for _, s := range servers {
+		if s.Name == "" || seen[s.Name] {
+			continue
+		}
+		seen[s.Name] = true
+		next = append(next, s.Name)
+	}
+	return next
 }
 
 // ModelInfo is one (provider, model) the bottom switcher can pick. Ref ("provider/

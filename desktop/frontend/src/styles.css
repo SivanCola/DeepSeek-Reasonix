@@ -3045,6 +3045,14 @@ body {
   padding: 8px 0;
   border-bottom: 1px solid var(--border-soft);
 }
+.cap-row--disabled .cap-dot {
+  background: var(--fg-faint);
+  opacity: 0.72;
+}
+.cap-row--disabled .cap-row__name,
+.cap-row--disabled .cap-row__sub {
+  color: var(--fg-faint);
+}
 .cap-server-group {
   display: flex;
   flex-direction: column;
