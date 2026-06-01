@@ -79,14 +79,29 @@ export function MemoryPanel({
     [facts, normalizedQuery, typeFilter],
   );
 
-  // jumpTo scrolls a [[name]] target into view and flashes it, so cross-links
-  // between saved memories are navigable inside the panel.
-  const jumpTo = (name: string) => {
+  const scrollToFact = (name: string) => {
     const el = factRefs.current[name];
     if (!el) return;
     el.scrollIntoView({ block: "center", behavior: "smooth" });
     setHighlight(name);
     window.setTimeout(() => setHighlight((h) => (h === name ? null : h)), 1200);
+  };
+
+  // jumpTo scrolls a [[name]] target into view and flashes it, so cross-links
+  // between saved memories are navigable inside the panel. If filters hide the
+  // target, clear them first so an existing link never becomes a silent no-op.
+  const jumpTo = (name: string) => {
+    if (!factNames.has(name)) return;
+    const visible = filteredFacts.some((f) => f.name === name);
+    setExpanded(name);
+    setConfirmForget(null);
+    if (!visible) {
+      setQuery("");
+      setTypeFilter("all");
+      window.setTimeout(() => scrollToFact(name), 0);
+      return;
+    }
+    scrollToFact(name);
   };
 
   // renderWithLinks turns [[name]] tokens into in-panel jumps; a token with no
