@@ -26,6 +26,9 @@ func NewProviderAutoPlanClassifier(prov provider.Provider) *ProviderAutoPlanClas
 }
 
 func (c *ProviderAutoPlanClassifier) NeedsPlan(ctx context.Context, input string, score int) (bool, string, error) {
+	if c == nil || c.prov == nil {
+		return false, "", fmt.Errorf("auto plan classifier is not initialized")
+	}
 	ch, err := c.prov.Stream(ctx, provider.Request{
 		Messages: []provider.Message{
 			{Role: provider.RoleSystem, Content: autoPlanClassifierPrompt},
