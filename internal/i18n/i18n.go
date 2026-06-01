@@ -75,6 +75,10 @@ type Messages struct {
 	OutputStyleNone   string // no styles available
 	OutputStyleHeader string // header above the listing
 	OutputStyleHint   string // how to select one
+	ThemeHeader       string // header above the /theme listing
+	ThemeHint         string // how to select a theme
+	ThemeChangedFmt   string // "/theme <name>" succeeded
+	ThemeUnknownFmt   string // "/theme <name>" unknown
 
 	// context compaction card (CompactionStarted / CompactionDone events).
 	CompactionWorking string // shown while the summarizer runs
@@ -110,6 +114,7 @@ type Messages struct {
 	CmdMcp          string // /mcp
 	CmdHooks        string // /hooks
 	CmdOutputStyle  string // /output-style
+	CmdTheme        string // /theme
 	CmdSkill        string // /skill
 	CmdHelp         string // /help
 	CmdTodo         string // /todo
@@ -124,6 +129,7 @@ type Messages struct {
 	ArgHooksList    string // /hooks list
 	ArgHooksTrust   string // /hooks trust
 	ArgModelCurrent string // /model <ref> active tag
+	ArgThemeCurrent string // /theme <style> active tag
 
 	// management listing notices (the Submit path: desktop / HTTP frontends)
 	ListModelsHeaderFmt string // "models (active: %s)"

@@ -303,7 +303,7 @@ func newChatTUI(ctrl *control.Controller, missing string, eventCh chan event.Eve
 
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
-	sp.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("173"))
+	sp.Style = lipgloss.NewStyle().Foreground(cliThemeColor())
 
 	commitBuf := []string{}
 	return chatTUI{
@@ -1496,6 +1496,8 @@ func (m *chatTUI) runSlashCommand(input string) tea.Cmd {
 		} else {
 			m.notice(i18n.M.OutputStyleHeader + "\n" + outputstyle.DescribeList(styles, m.outputStyle) + "\n" + i18n.M.OutputStyleHint)
 		}
+	case "/theme":
+		m.runThemeSubcommand(input)
 	case "/help":
 		m.notice(i18n.M.SlashHelp)
 		if names := m.commandNames(); names != "" {
