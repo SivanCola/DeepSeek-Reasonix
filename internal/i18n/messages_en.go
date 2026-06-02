@@ -44,7 +44,7 @@ var English = Messages{
 	ChatToolWorkingFmt:     "%s working · %ds",
 	ChatStatusIdle:         "ready",
 	ChatStatusYoloIdle:     "approvals skipped",
-	ChatStatusCycleHint:    "Shift+Tab to cycle",
+	ChatStatusCycleHint:    "shift+tab to cycle",
 	ChatStatusPlanApproval: "Enter/y approves & executes · n/Esc keeps planning · PgUp/PgDn scrolls",
 	PlanApprovalPrompt:     "Plan ready above — Enter/y to approve & execute, n/Esc to keep planning",
 	ChatStatusToolApproval: "1 approve once · 2 allow this session · 3 deny · y/a/n also work · Ctrl-C cancels turn",

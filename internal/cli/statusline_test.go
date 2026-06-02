@@ -43,10 +43,10 @@ func TestIdleStatuslineIsCompact(t *testing.T) {
 
 	content := renderStatuslineView(t, false)
 	plain := bottomStatusPlain(content)
-	if !strings.Contains(plain, "Auto · ready") {
+	if !strings.Contains(plain, "Auto") || !strings.Contains(plain, "ready") {
 		t.Fatalf("idle status line missing mode status:\n%s", plain)
 	}
-	if !strings.Contains(plain, "Shift+Tab to cycle") {
+	if !strings.Contains(plain, "(shift+tab to cycle)") {
 		t.Fatalf("idle status line missing mode-cycle hint:\n%s", plain)
 	}
 	for _, old := range []string{"Shift-Tab", "Ctrl-O", "Ctrl-D", "Enter sends", "Esc clears/exits state", "PgUp/PgDn"} {
@@ -55,7 +55,10 @@ func TestIdleStatuslineIsCompact(t *testing.T) {
 		}
 	}
 	if strings.Contains(plain, "[auto]") {
-		t.Fatalf("idle status line should use Auto label, not bracketed tag:\n%s", plain)
+		t.Fatalf("idle status line should use pill label, not bracketed tag:\n%s", plain)
+	}
+	if !strings.Contains(content, "\x1b[48;2;245;158;11m") {
+		t.Fatalf("Auto status line should use amber pill background, got:\n%q", content)
 	}
 }
 
@@ -64,14 +67,14 @@ func TestYoloStatuslineUsesDangerPill(t *testing.T) {
 
 	content := renderStatuslineView(t, true)
 	plain := bottomStatusPlain(content)
-	if !strings.Contains(plain, "YOLO") || !strings.Contains(plain, "approvals skipped") || !strings.Contains(plain, "Shift+Tab to cycle") {
+	if !strings.Contains(plain, "YOLO") || !strings.Contains(plain, "approvals skipped") || !strings.Contains(plain, "(shift+tab to cycle)") {
 		t.Fatalf("YOLO status line missing warning text:\n%s", plain)
 	}
 	if strings.Contains(plain, "[YOLO]") {
 		t.Fatalf("YOLO status line should use a pill label, not bracketed tag:\n%s", plain)
 	}
 	if !strings.Contains(content, "\x1b[48;2;229;72;77m") {
-		t.Fatalf("YOLO status line should use desktop danger red background, got:\n%q", content)
+		t.Fatalf("YOLO status line should use danger pill background, got:\n%q", content)
 	}
 }
 
@@ -80,11 +83,11 @@ func TestPlanStatuslineUsesBluePill(t *testing.T) {
 
 	content := renderPlanStatuslineView(t)
 	plain := bottomStatusPlain(content)
-	if !strings.Contains(plain, "Plan") || !strings.Contains(plain, "ready") || !strings.Contains(plain, "Shift+Tab to cycle") {
+	if !strings.Contains(plain, "Plan") || !strings.Contains(plain, "ready") || !strings.Contains(plain, "(shift+tab to cycle)") {
 		t.Fatalf("plan status line missing mode status:\n%s", plain)
 	}
 	if !strings.Contains(content, "\x1b[48;2;37;99;235m") {
-		t.Fatalf("Plan status line should use blue background, got:\n%q", content)
+		t.Fatalf("Plan status line should use blue pill background, got:\n%q", content)
 	}
 }
 
@@ -94,10 +97,10 @@ func TestStatuslineCycleHintFollowsLanguage(t *testing.T) {
 
 	content := renderStatuslineView(t, false)
 	plain := bottomStatusPlain(content)
-	if !strings.Contains(plain, "Shift+Tab 循环切换") {
+	if !strings.Contains(plain, "Auto") || !strings.Contains(plain, "就绪") || !strings.Contains(plain, "(shift+tab 循环切换)") {
 		t.Fatalf("localized mode-cycle hint missing:\n%s", plain)
 	}
-	if strings.Contains(plain, "Shift+Tab to cycle") {
+	if strings.Contains(plain, "ready") || strings.Contains(plain, "shift+tab to cycle") {
 		t.Fatalf("localized status line should not fall back to English:\n%s", plain)
 	}
 }

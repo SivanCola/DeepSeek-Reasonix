@@ -1440,7 +1440,12 @@ func (m chatTUI) View() tea.View {
 			Padding(0, 1).
 			Render("Plan")
 	default:
-		modeTag = dim("Auto")
+		modeTag = lipgloss.NewStyle().
+			Background(lipgloss.Color("#f59e0b")).
+			Foreground(lipgloss.Color("#111827")).
+			Bold(true).
+			Padding(0, 1).
+			Render("Auto")
 	}
 
 	ctxTag := m.contextTag()
@@ -1457,9 +1462,9 @@ func (m chatTUI) View() tea.View {
 	case m.pendingApproval != nil:
 		status = "  " + modeTag + " · " + i18n.M.ChatStatusToolApproval
 	case m.ctrl.Bypass():
-		status = "  " + modeTag + " · " + i18n.M.ChatStatusYoloIdle + " · " + i18n.M.ChatStatusCycleHint
+		status = "  " + modeTag + " · " + i18n.M.ChatStatusYoloIdle + " " + dim("("+i18n.M.ChatStatusCycleHint+")")
 	default:
-		status = "  " + modeTag + " · " + i18n.M.ChatStatusIdle + " · " + i18n.M.ChatStatusCycleHint
+		status = "  " + modeTag + " · " + i18n.M.ChatStatusIdle + " " + dim("("+i18n.M.ChatStatusCycleHint+")")
 	}
 	// The spinning "thinking…" indicator is its own line ABOVE the input box (shown
 	// only while a turn runs); the status/data rows stay below. This mirrors Claude
