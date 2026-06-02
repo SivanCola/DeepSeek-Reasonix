@@ -328,6 +328,16 @@ func TestStartPolicyPerPluginTimeout(t *testing.T) {
 		t.Fatalf("Start should not return err in record-failure mode: %v", err)
 	}
 	defer host.Close()
+	// Regression: the per-plugin timeout context must NOT bound the long-lived
+	// stdio child. If transport was bound to cctx instead of the parent ctx, the
+	// goroutine's deferred cancel would kill `fast`'s subprocess at handshake
+	// success and this Execute would fail. We invoke it explicitly here so any
+	// future re-introduction of the bug breaks loudly.
+	if len(tools) > 0 {
+		if _, callErr := tools[0].Execute(ctx, json.RawMessage(`{"msg":"hi"}`)); callErr != nil {
+			t.Fatalf("fast plugin's subprocess was killed by deferred timeout cancel: %v", callErr)
+		}
+	}
 	if len(tools) != 2 { // fast contributes 2 tools
 		t.Fatalf("want only fast's 2 tools, got %d", len(tools))
 	}

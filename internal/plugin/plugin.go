@@ -219,7 +219,13 @@ func Start(ctx context.Context, specs []Spec, p StartPolicy) (*Host, []tool.Tool
 				defer cancel()
 			}
 
-			c, err := start(cctx, spec)
+			// Transport on the parent ctx, handshake on the timed cctx: the
+			// per-plugin timeout caps initialize+listTools, but the long-lived
+			// stdio child must outlive this goroutine — otherwise the deferred
+			// cancel() at the end of the goroutine would kill the subprocess
+			// (started via exec.CommandContext) and the freshly-registered
+			// tools would crash on first call.
+			c, err := start(ctx, cctx, spec)
 			if err != nil {
 				ch <- result{idx: idx, spec: spec, err: fmt.Errorf("start plugin %q: %w", spec.Name, err)}
 				return
@@ -437,7 +443,7 @@ func (h *Host) Add(ctx context.Context, s Spec) ([]tool.Tool, error) {
 }
 
 func (h *Host) addConnected(ctx context.Context, s Spec) ([]tool.Tool, error) {
-	c, err := start(ctx, s)
+	c, err := start(ctx, ctx, s)
 	if err != nil {
 		return nil, err
 	}
@@ -516,8 +522,15 @@ func (h *Host) Remove(name string) (toolPrefix string, found bool) {
 	return "mcp__" + normalizeName(name) + "__", true
 }
 
-func start(ctx context.Context, s Spec) (*Client, error) {
-	t, err := newTransport(ctx, s)
+// start opens the transport on lifeCtx (whose cancellation later closes the
+// subprocess) and uses callCtx for the initialize round-trip (whose cancellation
+// only bounds the handshake). Splitting the two lets a per-plugin timeout cap
+// handshake latency without killing the long-lived stdio child when it elapses:
+// after a successful handshake the goroutine's `defer cancel()` would otherwise
+// tear down the freshly-registered server. Callers that don't care pass the
+// same ctx for both.
+func start(lifeCtx, callCtx context.Context, s Spec) (*Client, error) {
+	t, err := newTransport(lifeCtx, s)
 	if err != nil {
 		return nil, err
 	}
@@ -526,7 +539,7 @@ func start(ctx context.Context, s Spec) (*Client, error) {
 		tt = "stdio"
 	}
 	c := &Client{name: s.Name, t: t, transport: tt}
-	if err := c.initialize(ctx); err != nil {
+	if err := c.initialize(callCtx); err != nil {
 		c.close()
 		return nil, err
 	}
