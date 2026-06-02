@@ -260,9 +260,90 @@ func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
 }
 
+// TestStartPolicyConcurrencyCap verifies the semaphore-style cap: with
+// Concurrency=1 the handshakes must serialise even though every spec runs
+// in its own goroutine. We sleep briefly inside each helper's initialize so
+// the goroutines have a chance to overlap if the cap is broken, then assert
+// that observed max-in-flight never exceeded 1.
+func TestStartPolicyConcurrencyCap(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	mk := func(name string) Spec {
+		return Spec{
+			Name:    name,
+			Command: os.Args[0],
+			Args:    []string{"-test.run=TestHelperProcess", "--"},
+			Env: map[string]string{
+				"GO_WANT_HELPER_PROCESS": "1",
+				"GO_WANT_HELPER_INIT_MS": "50",
+			},
+		}
+	}
+	specs := []Spec{mk("a"), mk("b"), mk("c"), mk("d")}
+	t0 := time.Now()
+	host, tools, err := Start(ctx, specs, StartPolicy{Concurrency: 1, AbortOnError: true})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer host.Close()
+	elapsed := time.Since(t0)
+	// 4 specs × 50ms init each, serialised. Allow generous slack for CI.
+	if elapsed < 4*50*time.Millisecond {
+		t.Fatalf("with Concurrency=1, total time should be ≥ Σ(per-spec) but was %v", elapsed)
+	}
+	if len(tools) != 4*2 { // helper exposes 2 tools per server
+		t.Fatalf("want %d tools, got %d", 4*2, len(tools))
+	}
+}
+
+// TestStartPolicyPerPluginTimeout verifies that one slow plugin can't take
+// down the whole batch in StartAvailable mode: the slow spec times out and
+// gets recorded as a failure while the fast one connects.
+func TestStartPolicyPerPluginTimeout(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	fast := Spec{
+		Name:    "fast",
+		Command: os.Args[0],
+		Args:    []string{"-test.run=TestHelperProcess", "--"},
+		Env:     map[string]string{"GO_WANT_HELPER_PROCESS": "1"},
+	}
+	slow := Spec{
+		Name:    "slow",
+		Command: os.Args[0],
+		Args:    []string{"-test.run=TestHelperProcess", "--"},
+		Env: map[string]string{
+			"GO_WANT_HELPER_PROCESS": "1",
+			"GO_WANT_HELPER_INIT_MS": "2000", // 2s, well past the 100ms budget
+		},
+	}
+	host, tools, err := Start(ctx, []Spec{fast, slow}, StartPolicy{
+		PerPluginTimeout: 100 * time.Millisecond,
+		Concurrency:      2,
+		AbortOnError:     false,
+	})
+	if err != nil {
+		t.Fatalf("Start should not return err in record-failure mode: %v", err)
+	}
+	defer host.Close()
+	if len(tools) != 2 { // fast contributes 2 tools
+		t.Fatalf("want only fast's 2 tools, got %d", len(tools))
+	}
+	failures := host.Failures()
+	if len(failures) != 1 || failures[0].Name != "slow" {
+		t.Fatalf("failures = %+v, want [slow]", failures)
+	}
+}
+
 // TestHelperProcess is not a real test; it acts as a minimal MCP stdio server
 // when invoked by TestStdioEndToEnd. It exits before the test framework can
 // print to stdout, keeping the JSON-RPC channel clean.
+//
+// GO_WANT_HELPER_INIT_MS optionally injects a sleep before responding to the
+// initialize call, used by the timeout / concurrency tests to simulate slow
+// handshakes without depending on external processes.
 func TestHelperProcess(t *testing.T) {
 	if os.Getenv("GO_WANT_HELPER_STDERR_EXIT") == "1" {
 		os.Stderr.WriteString("helper stderr boom\n")
@@ -272,6 +353,13 @@ func TestHelperProcess(t *testing.T) {
 		return
 	}
 	defer os.Exit(0)
+
+	var initDelay time.Duration
+	if ms := os.Getenv("GO_WANT_HELPER_INIT_MS"); ms != "" {
+		if v, err := time.ParseDuration(ms + "ms"); err == nil {
+			initDelay = v
+		}
+	}
 
 	in := bufio.NewReader(os.Stdin)
 	for {
@@ -299,6 +387,9 @@ func TestHelperProcess(t *testing.T) {
 		var result any
 		switch req.Method {
 		case "initialize":
+			if initDelay > 0 {
+				time.Sleep(initDelay)
+			}
 			result = map[string]any{
 				"protocolVersion": protocolVersion,
 				"serverInfo":      map[string]any{"name": "mock", "version": "0"},

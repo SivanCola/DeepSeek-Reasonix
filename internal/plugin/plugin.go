@@ -17,6 +17,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"reasonix/internal/tool"
 )
@@ -115,6 +116,39 @@ func (h *Host) ReadResource(ctx context.Context, server, uri string) (string, er
 	return target.readResource(ctx, uri) // network call: outside the lock
 }
 
+// StartPolicy tunes batch plugin startup. The zero value disables every safeguard,
+// so most call sites should use the StartAll / StartAvailable wrappers, which
+// fill in production defaults.
+type StartPolicy struct {
+	// PerPluginTimeout caps how long a single plugin's handshake (start +
+	// initialize + listTools + listPrompts/Resources) may take. Zero disables.
+	// Exceeded plugins are recorded as failures and, when AbortOnError is set,
+	// tear down the whole batch with the timeout as the cause.
+	PerPluginTimeout time.Duration
+
+	// Concurrency caps how many handshakes run at once. Zero or negative means
+	// no cap (every plugin gets a goroutine immediately). A small cap prevents
+	// process storms / FD exhaustion when many MCP servers are configured.
+	Concurrency int
+
+	// AbortOnError makes any single failure tear down the partial batch and
+	// return an error (StartAll semantics). When false, failures are recorded
+	// on the host and other plugins keep going (StartAvailable semantics).
+	AbortOnError bool
+}
+
+// defaultStartConcurrency caps parallel handshakes for the batch-start wrappers.
+// Eight is the standard "process storm" guardrail (Bazel's --jobs=auto, most LSP
+// managers) — large enough to mask single-plugin latency, small enough to spare
+// a workstation with 20+ configured MCP servers from fork-bombing itself.
+const defaultStartConcurrency = 8
+
+// defaultStartTimeout is the per-plugin budget used by StartAvailable. Five
+// seconds covers a healthy stdio MCP spawning under a slow npm/node loader; past
+// that, an interactive user is better served by recording the failure and moving
+// on than by stalling the whole session.
+const defaultStartTimeout = 5 * time.Second
+
 // StartAll connects every plugin in parallel, performs the MCP handshake, and
 // returns the union of their tools (namespaced "mcp__<server>__<tool>"). On any
 // failure it tears down everything started so far. The caller must Close the Host.
@@ -122,72 +156,120 @@ func (h *Host) ReadResource(ctx context.Context, server, uri string) (string, er
 // For stdio plugins, subprocess lifetime is bound to ctx (via
 // exec.CommandContext): cancelling ctx kills the children and unblocks reads.
 func StartAll(ctx context.Context, specs []Spec) (*Host, []tool.Tool, error) {
+	return Start(ctx, specs, StartPolicy{
+		Concurrency:  defaultStartConcurrency,
+		AbortOnError: true,
+	})
+}
+
+// StartAvailable connects every plugin it can and records failures on the host
+// instead of aborting the whole session. The returned tools are the union of the
+// successfully connected servers.
+func StartAvailable(ctx context.Context, specs []Spec) (*Host, []tool.Tool) {
+	h, tools, _ := Start(ctx, specs, StartPolicy{
+		PerPluginTimeout: defaultStartTimeout,
+		Concurrency:      defaultStartConcurrency,
+		// AbortOnError stays false: a misconfigured plugin must not bring down
+		// the whole session at boot.
+	})
+	return h, tools
+}
+
+// Start is the unified batch-startup primitive behind StartAll / StartAvailable.
+// It fans out handshakes in parallel under the policy's concurrency cap, gives
+// each plugin its own per-plugin timeout, and either aborts the batch on first
+// failure (AbortOnError=true) or records failures on the host and keeps going.
+//
+// Result ordering matches specs (stable for /mcp status). For stdio plugins the
+// subprocess is bound to the per-plugin timeout context, so a timeout kills the
+// child and unblocks its readers — the goroutine returns promptly either way.
+func Start(ctx context.Context, specs []Spec, p StartPolicy) (*Host, []tool.Tool, error) {
 	if len(specs) == 0 {
 		return &Host{}, nil, nil
 	}
 
 	type result struct {
 		idx    int
+		spec   Spec
 		client *Client
 		tools  []tool.Tool
 		err    error
 	}
 
-	// Start all plugins in parallel — each is an independent subprocess or
-	// HTTP connection with no cross-dependencies.
+	// A buffered channel acts as a counting semaphore. Capacity 0/negative
+	// means no cap — we still launch one goroutine per spec, but they all run
+	// immediately. Capped, the extra goroutines block on the semaphore until a
+	// slot frees up; collection order is still by idx so /mcp status is stable.
+	concurrency := p.Concurrency
+	if concurrency <= 0 || concurrency > len(specs) {
+		concurrency = len(specs)
+	}
+	sem := make(chan struct{}, concurrency)
 	ch := make(chan result, len(specs))
+
 	for i, s := range specs {
 		go func(idx int, spec Spec) {
-			c, err := start(ctx, spec)
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			cctx := ctx
+			if p.PerPluginTimeout > 0 {
+				var cancel context.CancelFunc
+				cctx, cancel = context.WithTimeout(ctx, p.PerPluginTimeout)
+				defer cancel()
+			}
+
+			c, err := start(cctx, spec)
 			if err != nil {
-				ch <- result{idx: idx, err: fmt.Errorf("start plugin %q: %w", spec.Name, err)}
+				ch <- result{idx: idx, spec: spec, err: fmt.Errorf("start plugin %q: %w", spec.Name, err)}
 				return
 			}
 
-			ts, err := c.listTools(ctx)
+			ts, err := c.listTools(cctx)
 			if err != nil {
 				c.close()
-				ch <- result{idx: idx, err: fmt.Errorf("list tools from %q: %w", spec.Name, err)}
+				ch <- result{idx: idx, spec: spec, err: fmt.Errorf("list tools from %q: %w", spec.Name, err)}
 				return
 			}
 			c.toolCount = len(ts)
 
 			// Prompts and resources are auxiliary: only fetched when the server
-			// advertised the capability, and a listing error is tolerated (skipped)
-			// rather than failing the whole session over a non-essential surface.
+			// advertised the capability, and a listing error is tolerated rather
+			// than failing the whole session over a non-essential surface.
 			if c.hasPrompts {
-				if ps, perr := c.listPrompts(ctx); perr == nil {
+				if ps, perr := c.listPrompts(cctx); perr == nil {
 					c.prompts = ps
 				}
 			}
 			if c.hasResources {
-				if rs, rerr := c.listResources(ctx); rerr == nil {
+				if rs, rerr := c.listResources(cctx); rerr == nil {
 					c.resources = rs
 				}
 			}
 
-			ch <- result{idx: idx, client: c, tools: ts}
+			ch <- result{idx: idx, spec: spec, client: c, tools: ts}
 		}(i, s)
 	}
 
-	// Collect results in index order so the Host.clients slice matches the
-	// original specs order (stable for /mcp status display).
+	// Wait for every goroutine even on abort: started clients sit beyond a
+	// failing index, so we need them all back to tear them down in Close().
 	results := make([]result, len(specs))
 	for range specs {
 		r := <-ch
 		results[r.idx] = r
 	}
 
-	// Collect every started client into the Host first, so that if any plugin
-	// failed, h.Close() tears down all of them — including ones whose index sits
-	// after the failure (parallel start means they're already running).
 	h := &Host{}
 	var tools []tool.Tool
 	var firstErr error
 	for _, r := range results {
 		if r.err != nil {
-			if firstErr == nil {
-				firstErr = r.err
+			if p.AbortOnError {
+				if firstErr == nil {
+					firstErr = r.err
+				}
+			} else {
+				h.RecordFailure(r.spec, r.err)
 			}
 			continue
 		}
@@ -201,23 +283,6 @@ func StartAll(ctx context.Context, specs []Spec) (*Host, []tool.Tool, error) {
 		return nil, nil, firstErr
 	}
 	return h, tools, nil
-}
-
-// StartAvailable connects every plugin it can and records failures on the host
-// instead of aborting the whole session. The returned tools are the union of the
-// successfully connected servers.
-func StartAvailable(ctx context.Context, specs []Spec) (*Host, []tool.Tool) {
-	h := &Host{}
-	var tools []tool.Tool
-	for _, s := range specs {
-		ts, err := h.addConnected(ctx, s)
-		if err != nil {
-			h.RecordFailure(s, err)
-			continue
-		}
-		tools = append(tools, ts...)
-	}
-	return h, tools
 }
 
 // Close terminates all plugin connections.
