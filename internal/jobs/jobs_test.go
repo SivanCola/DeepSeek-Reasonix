@@ -98,6 +98,34 @@ func TestKill(t *testing.T) {
 	}
 }
 
+func TestKillIsObservableBeforeRunReturns(t *testing.T) {
+	m := NewManager(event.Discard)
+	defer m.Close()
+
+	release := make(chan struct{})
+	j := m.Start("bash", "", func(ctx context.Context, _ io.Writer) (string, error) {
+		<-ctx.Done()
+		<-release
+		return "", ctx.Err()
+	})
+	if !m.Kill(j.ID) {
+		t.Fatal("Kill on a running job returned false")
+	}
+
+	res := m.Wait(context.Background(), []string{j.ID}, 1)
+	if len(res) != 1 || res[0].Status != Killed {
+		t.Fatalf("want Killed before run returns, got %+v", res)
+	}
+	if running := m.Running(); len(running) != 0 {
+		t.Fatalf("killed job should not remain in Running(), got %+v", running)
+	}
+	if m.Kill(j.ID) {
+		t.Fatal("second Kill should be a no-op once status is killed")
+	}
+	close(release)
+	m.Wait(context.Background(), []string{j.ID}, 5)
+}
+
 // Close cancels every still-running job.
 func TestCloseCancels(t *testing.T) {
 	m := NewManager(event.Discard)

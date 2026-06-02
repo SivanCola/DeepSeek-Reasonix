@@ -206,6 +206,9 @@ func (m *Manager) Kill(id string) bool {
 	}
 	j.mu.Lock()
 	running := j.status == Running
+	if running {
+		j.status = Killed
+	}
 	j.mu.Unlock()
 	if !running {
 		return false
@@ -230,6 +233,12 @@ func (m *Manager) Wait(ctx context.Context, ids []string, timeoutSec int) []Resu
 		timeout = t.C
 	}
 	for _, j := range targets {
+		j.mu.Lock()
+		done := j.status != Running
+		j.mu.Unlock()
+		if done {
+			continue
+		}
 		select {
 		case <-j.done:
 		case <-ctx.Done():
