@@ -15,7 +15,10 @@ import (
 	"reasonix/internal/tool"
 )
 
-const bashTimeout = 120 * time.Second
+const (
+	bashTimeout   = 120 * time.Second
+	bashWaitDelay = 5 * time.Second
+)
 
 func init() { tool.RegisterBuiltin(bash{}) }
 
@@ -104,7 +107,7 @@ func (b bash) Execute(ctx context.Context, args json.RawMessage) (string, error)
 			cmd := exec.CommandContext(jobCtx, argv[0], argv[1:]...)
 			cmd.Dir = workDir
 			setKillTree(cmd)
-			cmd.WaitDelay = 5 * time.Second
+			cmd.WaitDelay = bashWaitDelay
 			cmd.Stdout = out
 			cmd.Stderr = out
 			return "", cmd.Run()
@@ -118,7 +121,7 @@ func (b bash) Execute(ctx context.Context, args json.RawMessage) (string, error)
 	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
 	cmd.Dir = b.workDir // "" lets exec use the process working directory
 	setKillTree(cmd)
-	cmd.WaitDelay = 5 * time.Second
+	cmd.WaitDelay = bashWaitDelay
 	var buf bytes.Buffer
 	w := io.Writer(&buf)
 	if emit, ok := tool.ProgressFrom(ctx); ok {

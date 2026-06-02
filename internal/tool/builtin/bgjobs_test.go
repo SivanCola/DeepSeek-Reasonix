@@ -69,7 +69,9 @@ func TestBackgroundKill(t *testing.T) {
 	if !strings.Contains(kout, "Killed") {
 		t.Errorf("kill_shell = %q, want it to report Killed", kout)
 	}
-	res := m.Wait(ctx, []string{id}, 5)
+	// Windows exec can spend up to bashWaitDelay returning from a cancelled
+	// process tree while it tears down descendants and pipes.
+	res := m.Wait(ctx, []string{id}, int(bashWaitDelay.Seconds())+5)
 	if len(res) != 1 || res[0].Status != jobs.Killed {
 		t.Fatalf("want killed, got %+v", res)
 	}
