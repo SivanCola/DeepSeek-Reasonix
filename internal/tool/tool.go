@@ -41,6 +41,24 @@ type Previewer interface {
 	Preview(args json.RawMessage) (diff.Change, error)
 }
 
+// PreviewChange returns the change a writer tool would make for args, or ok=false
+// when there's nothing renderable: t is read-only, doesn't implement Previewer,
+// the preview errored (the edit will likely fail too), or the file is binary.
+func PreviewChange(t Tool, args json.RawMessage) (diff.Change, bool) {
+	if t == nil || t.ReadOnly() {
+		return diff.Change{}, false
+	}
+	pv, ok := t.(Previewer)
+	if !ok {
+		return diff.Change{}, false
+	}
+	ch, err := pv.Preview(args)
+	if err != nil || ch.Binary {
+		return diff.Change{}, false
+	}
+	return ch, true
+}
+
 // --- process-global built-in set (populated by builtin subpackage init) ---
 
 var builtins = map[string]Tool{}

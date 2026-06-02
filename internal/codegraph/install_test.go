@@ -156,7 +156,7 @@ func TestHTTPGetDetachedCtxSurvivesParentCancel(t *testing.T) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		got, gotErr = httpGet(context.WithoutCancel(ctx), srv.URL)
+		got, gotErr = httpGet(context.WithoutCancel(ctx), http.DefaultClient, srv.URL)
 	}()
 
 	<-started
@@ -185,7 +185,7 @@ func TestHTTPGetPlainCtxAbortsOnParentCancel(t *testing.T) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		_, gotErr = httpGet(ctx, srv.URL)
+		_, gotErr = httpGet(ctx, http.DefaultClient, srv.URL)
 	}()
 
 	<-started

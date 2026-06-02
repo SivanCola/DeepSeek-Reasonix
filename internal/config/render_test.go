@@ -20,12 +20,26 @@ func TestRenderTOMLRoundTrips(t *testing.T) {
 		Deny:  []string{"bash(rm -rf*)"},
 		Allow: []string{"bash(go test*)", "read_file"},
 	}
+	orig.Network = NetworkConfig{
+		ProxyMode: "custom",
+		NoProxy:   "localhost,127.0.0.1",
+		Proxy: NetworkProxyConfig{
+			Type:     "socks5",
+			Server:   "127.0.0.1",
+			Port:     7890,
+			Username: "user",
+			Password: "${REASONIX_PROXY_PASSWORD}",
+		},
+	}
+	orig.Skills.Paths = []string{"~/my-skills", "../shared/skills"}
 	orig.Plugins = []PluginEntry{
 		{Name: "example", Command: "reasonix-plugin-example"},
 		{Name: "stripe", Type: "http", URL: "https://mcp.stripe.com", Headers: map[string]string{"Authorization": "Bearer x"}, AutoStart: boolPtr(false)},
 	}
 	mm, _ := orig.Provider("mimo-pro")
 	mm.BaseURL = "http://localhost:8000/v1"
+	ds, _ := orig.Provider("deepseek-flash")
+	ds.Effort = "max"
 
 	rendered := RenderTOML(orig)
 
@@ -64,6 +78,9 @@ func TestRenderTOMLRoundTrips(t *testing.T) {
 	if g, _ := got.Provider("mimo-pro"); g == nil || g.BaseURL != "http://localhost:8000/v1" {
 		t.Errorf("mimo-pro base_url not preserved: %+v", g)
 	}
+	if g, _ := got.Provider("deepseek-flash"); g == nil || g.Effort != "max" {
+		t.Errorf("deepseek-flash effort not preserved: %+v", g)
+	}
 	if len(got.Providers) != len(orig.Providers) {
 		t.Errorf("providers count = %d, want %d", len(got.Providers), len(orig.Providers))
 	}
@@ -75,6 +92,12 @@ func TestRenderTOMLRoundTrips(t *testing.T) {
 	}
 	if len(got.Permissions.Allow) != 2 {
 		t.Errorf("permissions.allow = %v, want 2 entries", got.Permissions.Allow)
+	}
+	if got.Network.ProxyMode != "custom" || got.Network.Proxy.Type != "socks5" || got.Network.Proxy.Port != 7890 {
+		t.Errorf("network proxy not preserved: %+v", got.Network)
+	}
+	if len(got.Skills.Paths) != 2 || got.Skills.Paths[0] != "~/my-skills" {
+		t.Errorf("skills.paths = %v", got.Skills.Paths)
 	}
 	if len(got.Plugins) != 2 {
 		t.Fatalf("plugins count = %d, want 2", len(got.Plugins))

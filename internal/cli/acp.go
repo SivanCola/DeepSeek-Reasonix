@@ -86,7 +86,8 @@ func (f *acpFactory) NewSession(ctx context.Context, p acp.SessionParams) (*cont
 	if !ok {
 		return nil, fmt.Errorf("unknown model %q", f.model)
 	}
-	execProv, err := boot.NewProvider(entry)
+	proxySpec := cfg.NetworkProxySpec()
+	execProv, err := boot.NewProviderWithProxy(entry, proxySpec)
 	if err != nil {
 		return nil, err
 	}
@@ -105,7 +106,7 @@ func (f *acpFactory) NewSession(ctx context.Context, p acp.SessionParams) (*cont
 		writeRoots = []string{p.Cwd}
 	}
 	bashSpec := sandbox.Spec{Mode: cfg.BashMode(), WriteRoots: writeRoots, Network: cfg.Sandbox.Network}
-	ws := builtin.Workspace{Dir: p.Cwd, WriteRoots: writeRoots, Bash: bashSpec}
+	ws := builtin.Workspace{Dir: p.Cwd, WriteRoots: writeRoots, Bash: bashSpec, Search: builtin.ResolveSearch(cfg.Tools.Search.Engine, cfg.Tools.Search.RgPath, nil)}
 	for _, t := range ws.Tools(cfg.Tools.Enabled...) {
 		reg.Add(t)
 	}
@@ -122,6 +123,12 @@ func (f *acpFactory) NewSession(ctx context.Context, p acp.SessionParams) (*cont
 		for _, t := range ptools {
 			reg.Add(t)
 		}
+		// Mirror boot.Build: phase B (prompts + resources) is deferred to a
+		// background goroutine on the session ctx so the ACP path also sees
+		// non-empty Host.Prompts()/Resources() once the auxiliary surfaces
+		// stream in. Without this, MCPPrompt and @-ref consumers would stay
+		// empty for the session.
+		go h.StartPhaseB(ctx, p.Sink)
 		if text, ok := boot.MCPStartupNotice(h.Failures()); ok {
 			p.Sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelWarn, Text: text})
 		}
@@ -153,7 +160,7 @@ func (f *acpFactory) NewSession(ctx context.Context, p acp.SessionParams) (*cont
 			return nil, fmt.Errorf("planner_model %q is not a configured provider", pm)
 		}
 		if pe.Model != entry.Model {
-			plannerProv, err := boot.NewProvider(pe)
+			plannerProv, err := boot.NewProviderWithProxy(pe, proxySpec)
 			if err != nil {
 				cleanup()
 				return nil, fmt.Errorf("planner %q: %w", pm, err)

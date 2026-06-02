@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, ClipboardEvent, DragEvent, KeyboardEvent, PointerEvent as ReactPointerEvent } from "react";
-import { ArrowUp, Check, ChevronDown, FolderGit2, FolderPlus, Search, Square, X } from "lucide-react";
+import { ArrowUp, Check, ChevronDown, Eye, FileText, FolderGit2, FolderPlus, Search, Square, Trash2, X } from "lucide-react";
 import { app } from "../lib/bridge";
 import { useT } from "../lib/i18n";
 import { clearLayoutSize, loadOptionalLayoutSize, saveLayoutSize } from "../lib/layoutPreferences";
@@ -11,14 +11,18 @@ import { FileMenu } from "./FileMenu";
 
 interface Attachment {
   path: string;
-  previewUrl: string;
+  previewUrl?: string;
 }
 
-const LONG_PASTE_MIN_CHARS = 1000;
-const LONG_PASTE_MIN_LINES = 5;
+const LONG_PASTE_MIN_CHARS = 2000;
+const LONG_PASTE_MIN_LINES = 20;
 const COMPOSER_MIN_HEIGHT = 86;
 const COMPOSER_MAX_HEIGHT = 360;
 const COMPOSER_MAX_VIEWPORT_RATIO = 0.4;
+// Grace after compositionend to swallow a confirm-Enter that lands just after
+// it; the real gap is a few ms, so keep it short or a deliberate quick second
+// Enter (submit) gets eaten too.
+const IME_CONFIRM_GRACE_MS = 100;
 
 type PastedBlock = {
   label: string;
@@ -51,6 +55,23 @@ function loadComposerHeight(): number | null {
   return loadOptionalLayoutSize("composerHeight", clampComposerHeight);
 }
 
+function isImeKeyEvent(
+  e: KeyboardEvent<HTMLTextAreaElement>,
+  composing: boolean,
+  lastCompositionEndAt: number,
+): boolean {
+  const native = e.nativeEvent as globalThis.KeyboardEvent & {
+    isComposing?: boolean;
+    keyCode?: number;
+  };
+  return (
+    composing ||
+    native.isComposing === true ||
+    native.keyCode === 229 ||
+    Date.now() - lastCompositionEndAt < IME_CONFIRM_GRACE_MS
+  );
+}
+
 export function Composer({
   running,
   mode,
@@ -75,6 +96,8 @@ export function Composer({
   const t = useT();
   const [text, setText] = useState("");
   const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const [pastedBlocks, setPastedBlocks] = useState<PastedBlock[]>([]);
+  const [openPastedLabels, setOpenPastedLabels] = useState<string[]>([]);
   const [pendingPaste, setPendingPaste] = useState(0);
   const pastedBlocksRef = useRef<PastedBlock[]>([]);
   const nextPasteId = useRef(1);
@@ -91,10 +114,14 @@ export function Composer({
   const workspaceAnchorRef = useRef<HTMLDivElement>(null);
   const workspaceMenuRef = useRef<HTMLDivElement>(null);
   const wasRunning = useRef(running);
+  const composingRef = useRef(false);
+  const lastCompositionEndAt = useRef(0);
 
   useEffect(() => {
     if (wasRunning.current && !running && text.trim() === "") {
       pastedBlocksRef.current = [];
+      setPastedBlocks([]);
+      setOpenPastedLabels([]);
     }
     wasRunning.current = running;
   }, [running, text]);
@@ -250,18 +277,21 @@ export function Composer({
     setAttachments([]);
   };
 
+  const readFileAsDataURL = (file: File) =>
+    new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result));
+      reader.onerror = () => reject(reader.error);
+      reader.readAsDataURL(file);
+    });
+
   const attachImageFiles = async (files: File[]) => {
     const images = files.filter((f) => f.type.startsWith("image/"));
     if (images.length === 0) return;
     for (const file of images) {
       setPendingPaste((n) => n + 1);
       try {
-        const dataUrl = await new Promise<string>((resolve, reject) => {
-          const reader = new FileReader();
-          reader.onload = () => resolve(String(reader.result));
-          reader.onerror = () => reject(reader.error);
-          reader.readAsDataURL(file);
-        });
+        const dataUrl = await readFileAsDataURL(file);
         const path = await app.SavePastedImage(dataUrl);
         const previewUrl = await app.AttachmentDataURL(path);
         setAttachments((prev) => [...prev, { path, previewUrl }]);
@@ -273,11 +303,35 @@ export function Composer({
     }
   };
 
+  // Non-image drops (PDFs, docs): the browser hands us bytes, not a path, so the
+  // kernel stores them and we reference the saved path — attached, not ignored.
+  const attachOtherFiles = async (files: File[]) => {
+    const others = files.filter((f) => !f.type.startsWith("image/"));
+    if (others.length === 0) return;
+    for (const file of others) {
+      setPendingPaste((n) => n + 1);
+      try {
+        const dataUrl = await readFileAsDataURL(file);
+        const path = await app.SavePastedFile(file.name, dataUrl);
+        setAttachments((prev) => [...prev, { path }]);
+      } catch {
+        // non-fatal: a failed attach must not block normal text input
+      } finally {
+        setPendingPaste((n) => Math.max(0, n - 1));
+      }
+    }
+  };
+
+  const attachFiles = (files: File[]) => {
+    void attachImageFiles(files);
+    void attachOtherFiles(files);
+  };
+
   const onPaste = (e: ClipboardEvent<HTMLTextAreaElement>) => {
-    const files = Array.from(e.clipboardData.files).filter((f) => f.type.startsWith("image/"));
+    const files = Array.from(e.clipboardData.files);
     if (files.length > 0) {
       e.preventDefault();
-      void attachImageFiles(files);
+      attachFiles(files);
       return;
     }
 
@@ -290,11 +344,12 @@ export function Composer({
     const end = ta.selectionEnd ?? text.length;
     const id = nextPasteId.current++;
     const lines = lineCount(pasted);
-    const label = `[Pasted text #${id} · ${lines} lines]`;
+    const label = t("composer.pastedLabel", { id, lines });
     const block: PastedBlock = { label, text: pasted };
     const next = text.slice(0, start) + label + text.slice(end);
 
     pastedBlocksRef.current = [...pastedBlocksRef.current, block];
+    setPastedBlocks((prev) => [...prev, block]);
     setText(next);
     requestAnimationFrame(() => {
       const node = taRef.current;
@@ -307,10 +362,10 @@ export function Composer({
 
   const onDrop = (e: DragEvent<HTMLDivElement>) => {
     const files = Array.from(e.dataTransfer.files);
-    if (!files.some((f) => f.type.startsWith("image/"))) return;
+    if (files.length === 0) return;
     e.preventDefault();
     setDragOver(false);
-    void attachImageFiles(files);
+    attachFiles(files);
   };
 
   const onDragOver = (e: DragEvent<HTMLDivElement>) => {
@@ -329,6 +384,28 @@ export function Composer({
   };
 
   const pickCommand = (c: CommandInfo) => setTextCaretEnd("/" + c.name + " ");
+
+  const activePastedBlocks = pastedBlocks.filter((block) => text.includes(block.label));
+
+  const togglePastedPreview = (label: string) => {
+    setOpenPastedLabels((prev) => (prev.includes(label) ? prev.filter((x) => x !== label) : [...prev, label]));
+  };
+
+  const removePastedBlock = (block: PastedBlock) => {
+    const next = text.split(block.label).join("");
+    pastedBlocksRef.current = pastedBlocksRef.current.filter((x) => x.label !== block.label);
+    setPastedBlocks((prev) => prev.filter((x) => x.label !== block.label));
+    setOpenPastedLabels((prev) => prev.filter((x) => x !== block.label));
+    setTextCaretEnd(next);
+  };
+
+  const expandPastedBlock = (block: PastedBlock) => {
+    const next = text.split(block.label).join(block.text);
+    pastedBlocksRef.current = pastedBlocksRef.current.filter((x) => x.label !== block.label);
+    setPastedBlocks((prev) => prev.filter((x) => x.label !== block.label));
+    setOpenPastedLabels((prev) => prev.filter((x) => x !== block.label));
+    setTextCaretEnd(next);
+  };
 
   const workspaceName = useMemo(() => {
     if (!cwd) return "";
@@ -438,7 +515,8 @@ export function Composer({
   };
 
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
-    const composing = e.nativeEvent.isComposing;
+    const composing = isImeKeyEvent(e, composingRef.current, lastCompositionEndAt.current);
+    if (e.key === "Enter" && composing) return;
 
     // Shift+Tab cycles the input mode (normal → plan → YOLO → normal). Handled
     // before the menus so it works even while one is open.
@@ -471,7 +549,7 @@ export function Composer({
       }
     }
 
-    // Enter sends; Shift+Enter newline. isComposing guards IME (pinyin) confirms.
+    // Enter sends; Shift+Enter newline. `composing` guards IME confirms.
     if (e.key === "Enter" && !e.shiftKey && !composing) {
       e.preventDefault();
       submit();
@@ -542,17 +620,42 @@ export function Composer({
         <div className="composer__attachments">
           {attachments.map((a) => (
             <div className="composer__attachment" key={a.path}>
-              <img src={a.previewUrl} alt="" />
+              {a.previewUrl ? <img src={a.previewUrl} alt="" /> : <FileText size={16} />}
               <span>{a.path.split("/").pop()}</span>
               <button
                 type="button"
-                title="Remove image"
+                title={t("composer.removeImage")}
                 onClick={() => setAttachments((prev) => prev.filter((x) => x.path !== a.path))}
               >
                 <X size={14} />
               </button>
             </div>
           ))}
+        </div>
+      )}
+      {activePastedBlocks.length > 0 && (
+        <div className="composer__pasted">
+          {activePastedBlocks.map((block) => {
+            const open = openPastedLabels.includes(block.label);
+            return (
+              <div className="composer__pasted-block" key={block.label}>
+                <div className="composer__pasted-head">
+                  <FileText size={15} />
+                  <span>{block.label}</span>
+                  <button type="button" title={t(open ? "composer.pastedHidePreview" : "composer.pastedShowPreview")} onClick={() => togglePastedPreview(block.label)}>
+                    <Eye size={14} />
+                  </button>
+                  <button type="button" title={t("composer.pastedExpand")} onClick={() => expandPastedBlock(block)}>
+                    {t("composer.pastedExpand")}
+                  </button>
+                  <button type="button" title={t("composer.pastedRemove")} onClick={() => removePastedBlock(block)}>
+                    <Trash2 size={14} />
+                  </button>
+                </div>
+                {open && <pre className="composer__pasted-preview">{block.text}</pre>}
+              </div>
+            );
+          })}
         </div>
       )}
       <div
@@ -579,6 +682,13 @@ export function Composer({
             onChange={(e) => setText(e.target.value)}
             onPaste={onPaste}
             onKeyDown={onKeyDown}
+            onCompositionStart={() => {
+              composingRef.current = true;
+            }}
+            onCompositionEnd={() => {
+              composingRef.current = false;
+              lastCompositionEndAt.current = Date.now();
+            }}
             placeholder={disabled ? t("common.loading") : t("composer.placeholder")}
             rows={1}
             disabled={disabled}

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, KeyboardEvent, PointerEvent as ReactPointerEvent } from "react";
 import {
   SquarePen,
@@ -28,20 +28,24 @@ import { CapabilitiesPanel } from "./components/CapabilitiesPanel";
 import { UpdateBanner } from "./components/UpdateBanner";
 import { WorkspacePanel } from "./components/WorkspacePanel";
 import { parseTodos } from "./lib/tools";
+import { sessionActivityTime } from "./lib/session";
 import type { MemoryView, Mode, SessionMeta } from "./lib/types";
 import { loadLayoutSize, saveLayoutSize } from "./lib/layoutPreferences";
 
 const SIDEBAR_COLLAPSED_KEY = "reasonix.sidebar.collapsed";
-const WORKSPACE_PANEL_OPEN_KEY = "reasonix.workspacePanel.open";
 const SIDEBAR_COLLAPSED_WIDTH = 68;
 const SIDEBAR_DEFAULT_WIDTH = 264;
 const SIDEBAR_MIN_WIDTH = 228;
 const SIDEBAR_MAX_WIDTH = 420;
 const CHAT_MIN_WIDTH = 420;
-const WORKSPACE_PANEL_DEFAULT_WIDTH = 760;
-const WORKSPACE_PANEL_MIN_WIDTH = 420;
-const WORKSPACE_PANEL_MAX_WIDTH = 980;
-const WORKSPACE_PANEL_MAX_RATIO = 0.68;
+const WORKSPACE_PANEL_MIN_WIDTH = 640;
+const WORKSPACE_PANEL_DEFAULT_WIDTH = WORKSPACE_PANEL_MIN_WIDTH;
+const WORKSPACE_PANEL_MAX_WIDTH = 820;
+const WORKSPACE_PANEL_MAX_RATIO = 0.54;
+const WORKSPACE_FILE_TREE_PANEL_DEFAULT_WIDTH = 360;
+const WORKSPACE_FILE_TREE_PANEL_MIN_WIDTH = 320;
+const WORKSPACE_FILE_TREE_PANEL_MAX_WIDTH = 480;
+const WORKSPACE_FILE_TREE_PANEL_MAX_RATIO = 0.32;
 
 function clampSidebarWidth(width: number): number {
   return Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, Math.round(width)));
@@ -52,6 +56,16 @@ function clampWorkspacePanelWidth(width: number, sidebarWidth = SIDEBAR_DEFAULT_
   const maxByChat = Math.floor(viewportWidth - sidebarWidth - CHAT_MIN_WIDTH);
   const max = Math.max(WORKSPACE_PANEL_MIN_WIDTH, Math.min(WORKSPACE_PANEL_MAX_WIDTH, maxByRatio, maxByChat));
   return Math.min(max, Math.max(WORKSPACE_PANEL_MIN_WIDTH, Math.round(width)));
+}
+
+function clampWorkspaceFileTreePanelWidth(width: number, sidebarWidth = SIDEBAR_DEFAULT_WIDTH, viewportWidth = 1440): number {
+  const maxByRatio = Math.floor(viewportWidth * WORKSPACE_FILE_TREE_PANEL_MAX_RATIO);
+  const maxByChat = Math.floor(viewportWidth - sidebarWidth - CHAT_MIN_WIDTH);
+  const max = Math.max(
+    WORKSPACE_FILE_TREE_PANEL_MIN_WIDTH,
+    Math.min(WORKSPACE_FILE_TREE_PANEL_MAX_WIDTH, maxByRatio, maxByChat),
+  );
+  return Math.min(max, Math.max(WORKSPACE_FILE_TREE_PANEL_MIN_WIDTH, Math.round(width)));
 }
 
 function loadSidebarCollapsed(): boolean {
@@ -80,30 +94,24 @@ function saveSidebarWidth(width: number): void {
   saveLayoutSize("sidebarWidth", width, clampSidebarWidth);
 }
 
-function loadWorkspacePanelOpen(): boolean {
-  if (typeof window === "undefined") return true;
-  try {
-    return window.localStorage.getItem(WORKSPACE_PANEL_OPEN_KEY) !== "0";
-  } catch {
-    return true;
-  }
-}
-
-function saveWorkspacePanelOpen(open: boolean): void {
-  if (typeof window === "undefined") return;
-  try {
-    window.localStorage.setItem(WORKSPACE_PANEL_OPEN_KEY, open ? "1" : "0");
-  } catch {
-    /* ignore storage failures */
-  }
-}
-
 function loadWorkspacePanelWidth(): number {
   return loadLayoutSize("workspacePanelWidth", WORKSPACE_PANEL_DEFAULT_WIDTH, clampWorkspacePanelWidth);
 }
 
 function saveWorkspacePanelWidth(width: number): void {
   saveLayoutSize("workspacePanelWidth", width);
+}
+
+function loadWorkspaceFileTreePanelWidth(): number {
+  return loadLayoutSize(
+    "workspaceFileTreePanelWidth",
+    WORKSPACE_FILE_TREE_PANEL_DEFAULT_WIDTH,
+    clampWorkspaceFileTreePanelWidth,
+  );
+}
+
+function saveWorkspaceFileTreePanelWidth(width: number): void {
+  saveLayoutSize("workspaceFileTreePanelWidth", width);
 }
 
 function sessionTitle(session: SessionMeta, fallback: string): string {
@@ -146,18 +154,26 @@ export default function App() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(loadSidebarCollapsed);
   const [sidebarWidth, setSidebarWidth] = useState(loadSidebarWidth);
   const [sidebarResizing, setSidebarResizing] = useState(false);
-  const [workspacePanelOpen, setWorkspacePanelOpen] = useState(loadWorkspacePanelOpen);
+  const [workspacePanelOpen, setWorkspacePanelOpen] = useState(false);
   const [workspacePanelWidth, setWorkspacePanelWidth] = useState(loadWorkspacePanelWidth);
+  const [workspaceFileTreePanelWidth, setWorkspaceFileTreePanelWidth] = useState(loadWorkspaceFileTreePanelWidth);
   const [workspacePanelResizing, setWorkspacePanelResizing] = useState(false);
   const [workspacePanelMaximized, setWorkspacePanelMaximized] = useState(false);
+  const [workspacePreviewModeActive, setWorkspacePreviewModeActive] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [capsOpen, setCapsOpen] = useState(false);
   const [pendingPlanRevision, setPendingPlanRevision] = useState<string | null>(null);
   const [viewportWidth, setViewportWidth] = useState(() => (typeof window === "undefined" ? 1440 : window.innerWidth));
+  const [footerHeight, setFooterHeight] = useState(0);
+  const footerRef = useRef<HTMLElement>(null);
+  const sidebarBeforeWorkspacePreviewRef = useRef<boolean | null>(null);
   const effectiveSidebarWidth = sidebarCollapsed ? SIDEBAR_COLLAPSED_WIDTH : sidebarWidth;
   const effectiveWorkspacePanelWidth = useMemo(
-    () => clampWorkspacePanelWidth(workspacePanelWidth, effectiveSidebarWidth, viewportWidth),
-    [effectiveSidebarWidth, viewportWidth, workspacePanelWidth],
+    () =>
+      workspacePreviewModeActive
+        ? clampWorkspacePanelWidth(workspacePanelWidth, effectiveSidebarWidth, viewportWidth)
+        : clampWorkspaceFileTreePanelWidth(workspaceFileTreePanelWidth, effectiveSidebarWidth, viewportWidth),
+    [effectiveSidebarWidth, viewportWidth, workspaceFileTreePanelWidth, workspacePanelWidth, workspacePreviewModeActive],
   );
 
   // applyMode is the single source of truth for the input mode: it updates the
@@ -263,6 +279,16 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    const el = footerRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const update = () => setFooterHeight(Math.round(el.getBoundingClientRect().height));
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
     if (!state.running && state.items.length > 0) void refreshSessions();
   }, [state.running, state.items.length, refreshSessions]);
 
@@ -272,12 +298,29 @@ export default function App() {
   }, [newSession, refreshSessions]);
 
   const toggleSidebar = useCallback(() => {
+    sidebarBeforeWorkspacePreviewRef.current = null;
     setSidebarCollapsed((collapsed) => {
       const next = !collapsed;
       saveSidebarCollapsed(next);
       return next;
     });
   }, []);
+
+  const handleWorkspacePreviewModeChange = useCallback((active: boolean) => {
+    setWorkspacePreviewModeActive(active);
+    if (active) {
+      if (sidebarBeforeWorkspacePreviewRef.current === null) {
+        sidebarBeforeWorkspacePreviewRef.current = sidebarCollapsed;
+      }
+      if (!sidebarCollapsed) setSidebarCollapsed(true);
+      return;
+    }
+    const restoreCollapsed = sidebarBeforeWorkspacePreviewRef.current;
+    sidebarBeforeWorkspacePreviewRef.current = null;
+    if (restoreCollapsed !== null && restoreCollapsed !== sidebarCollapsed) {
+      setSidebarCollapsed(restoreCollapsed);
+    }
+  }, [sidebarCollapsed]);
 
   const setExpandedSidebarWidth = useCallback((width: number) => {
     const next = clampSidebarWidth(width);
@@ -333,11 +376,17 @@ export default function App() {
 
   const setSavedWorkspacePanelWidth = useCallback(
     (width: number) => {
-      const next = clampWorkspacePanelWidth(width, effectiveSidebarWidth, viewportWidth);
-      setWorkspacePanelWidth(next);
-      saveWorkspacePanelWidth(next);
+      if (workspacePreviewModeActive) {
+        const next = clampWorkspacePanelWidth(width, effectiveSidebarWidth, viewportWidth);
+        setWorkspacePanelWidth(next);
+        saveWorkspacePanelWidth(next);
+      } else {
+        const next = clampWorkspaceFileTreePanelWidth(width, effectiveSidebarWidth, viewportWidth);
+        setWorkspaceFileTreePanelWidth(next);
+        saveWorkspaceFileTreePanelWidth(next);
+      }
     },
-    [effectiveSidebarWidth, viewportWidth],
+    [effectiveSidebarWidth, viewportWidth, workspacePreviewModeActive],
   );
 
   const startWorkspacePanelResize = useCallback(
@@ -346,13 +395,23 @@ export default function App() {
       event.preventDefault();
       setWorkspacePanelResizing(true);
       let nextWidth = effectiveWorkspacePanelWidth;
+      const clampWidth = workspacePreviewModeActive ? clampWorkspacePanelWidth : clampWorkspaceFileTreePanelWidth;
       const onMove = (moveEvent: PointerEvent) => {
-        nextWidth = clampWorkspacePanelWidth(window.innerWidth - moveEvent.clientX, effectiveSidebarWidth, window.innerWidth);
-        setWorkspacePanelWidth(nextWidth);
+        nextWidth = clampWidth(window.innerWidth - moveEvent.clientX, effectiveSidebarWidth, window.innerWidth);
+        if (workspacePreviewModeActive) {
+          setWorkspacePanelWidth(nextWidth);
+        } else {
+          setWorkspaceFileTreePanelWidth(nextWidth);
+        }
       };
       const onDone = () => {
-        setWorkspacePanelWidth(nextWidth);
-        saveWorkspacePanelWidth(nextWidth);
+        if (workspacePreviewModeActive) {
+          setWorkspacePanelWidth(nextWidth);
+          saveWorkspacePanelWidth(nextWidth);
+        } else {
+          setWorkspaceFileTreePanelWidth(nextWidth);
+          saveWorkspaceFileTreePanelWidth(nextWidth);
+        }
         setWorkspacePanelResizing(false);
         window.removeEventListener("pointermove", onMove);
         window.removeEventListener("pointerup", onDone);
@@ -366,7 +425,7 @@ export default function App() {
       window.addEventListener("pointerup", onDone);
       window.addEventListener("pointercancel", onDone);
     },
-    [effectiveSidebarWidth, effectiveWorkspacePanelWidth, workspacePanelMaximized, workspacePanelOpen],
+    [effectiveSidebarWidth, effectiveWorkspacePanelWidth, workspacePanelMaximized, workspacePanelOpen, workspacePreviewModeActive],
   );
 
   const resizeWorkspacePanelWithKeyboard = useCallback(
@@ -376,13 +435,13 @@ export default function App() {
         setSavedWorkspacePanelWidth(effectiveWorkspacePanelWidth + (event.key === "ArrowLeft" ? 16 : -16));
       } else if (event.key === "Home") {
         event.preventDefault();
-        setSavedWorkspacePanelWidth(WORKSPACE_PANEL_MIN_WIDTH);
+        setSavedWorkspacePanelWidth(workspacePreviewModeActive ? WORKSPACE_PANEL_MIN_WIDTH : WORKSPACE_FILE_TREE_PANEL_MIN_WIDTH);
       } else if (event.key === "End") {
         event.preventDefault();
-        setSavedWorkspacePanelWidth(WORKSPACE_PANEL_MAX_WIDTH);
+        setSavedWorkspacePanelWidth(workspacePreviewModeActive ? WORKSPACE_PANEL_MAX_WIDTH : WORKSPACE_FILE_TREE_PANEL_MAX_WIDTH);
       }
     },
-    [effectiveWorkspacePanelWidth, setSavedWorkspacePanelWidth],
+    [effectiveWorkspacePanelWidth, setSavedWorkspacePanelWidth, workspacePreviewModeActive],
   );
 
   const layoutStyle = useMemo(
@@ -396,14 +455,15 @@ export default function App() {
 
   const setWorkspacePanel = useCallback((open: boolean) => {
     setWorkspacePanelOpen(open);
-    if (!open) setWorkspacePanelMaximized(false);
-    saveWorkspacePanelOpen(open);
+    if (!open) {
+      setWorkspacePanelMaximized(false);
+      setWorkspacePreviewModeActive(false);
+    }
   }, []);
 
   const toggleWorkspacePanel = useCallback(() => {
     setWorkspacePanelOpen((open) => {
       const next = !open;
-      saveWorkspacePanelOpen(next);
       return next;
     });
   }, []);
@@ -471,6 +531,13 @@ export default function App() {
     [saveDoc, fetchMemory],
   );
 
+  const sidebarExpandBlocked = sidebarCollapsed && workspacePreviewModeActive;
+  const sidebarToggleTitle = sidebarExpandBlocked
+    ? t("sidebar.expandBlocked")
+    : sidebarCollapsed
+      ? t("sidebar.expand")
+      : t("sidebar.collapse");
+
   return (
     <div className="app">
       <div
@@ -486,15 +553,16 @@ export default function App() {
           .join(" ")}
         style={layoutStyle}
       >
-        <aside className={`sidebar${sidebarCollapsed ? " sidebar--collapsed" : ""}`} aria-label="Reasonix navigation">
+        <aside className={`sidebar${sidebarCollapsed ? " sidebar--collapsed" : ""}`} aria-label={t("sidebar.navigation")}>
           <div className="sidebar__brand">
             <img src={logo} alt="" className="sidebar__logo" />
             <span>Reasonix</span>
             <button
-              className="sidebar__toggle"
-              onClick={toggleSidebar}
-              title={sidebarCollapsed ? t("sidebar.expand") : t("sidebar.collapse")}
-              aria-label={sidebarCollapsed ? t("sidebar.expand") : t("sidebar.collapse")}
+              className={`sidebar__toggle${sidebarExpandBlocked ? " sidebar__toggle--blocked" : ""}`}
+              onClick={sidebarExpandBlocked ? undefined : toggleSidebar}
+              title={sidebarToggleTitle}
+              aria-label={sidebarToggleTitle}
+              aria-disabled={sidebarExpandBlocked}
             >
               {sidebarCollapsed ? <PanelLeftOpen size={15} /> : <PanelLeftClose size={15} />}
             </button>
@@ -538,7 +606,7 @@ export default function App() {
                     <span className="sidebar-session__body">
                       <span className="sidebar-session__title">{sessionTitle(session, t("history.emptySession"))}</span>
                       <span className="sidebar-session__meta">
-                        {session.current ? t("history.current") : sessionTime(session.modTime)}
+                        {session.current ? t("history.current") : sessionTime(sessionActivityTime(session))}
                       </span>
                     </span>
                   </button>
@@ -653,12 +721,32 @@ export default function App() {
                 <span className="loading-screen__text">{t("common.loading")}</span>
               </div>
             ) : (
-              <Transcript items={state.items} onPrompt={send} onRewind={rewind} />
+              <Transcript items={state.items} footerHeight={footerHeight} onPrompt={send} onRewind={rewind} />
             )}
           </main>
 
-          <footer className="footer">
+          <footer className="footer" ref={footerRef}>
             {showTodos && <TodoPanel todos={todos} onDismiss={() => setDismissedTodo(todoItem!.id)} />}
+            {state.approval && (
+              <ApprovalModal
+                approval={state.approval}
+                onAnswer={(allow, session) => {
+                  // Approving an exit_plan_mode plan leaves plan mode (the controller
+                  // flips the executor; mirror it here for the indicator).
+                  if (state.approval!.tool === "exit_plan_mode" && allow) setMode("normal");
+                  approve(state.approval!.id, allow, session);
+                }}
+                onRevisePlan={(text) => {
+                  setPendingPlanRevision(text);
+                  approve(state.approval!.id, false, false);
+                }}
+                onExitPlan={() => {
+                  setMode("normal");
+                  setPlan(false);
+                  approve(state.approval!.id, false, false);
+                }}
+              />
+            )}
             <Composer
               running={state.running}
               mode={mode}
@@ -680,7 +768,6 @@ export default function App() {
               turnStartAt={state.turnStartAt}
               turnTokens={state.turnTokens}
               onSwitchModel={switchModel}
-              onPickFolder={() => void switchFolder()}
             />
           </footer>
         </section>
@@ -692,12 +779,16 @@ export default function App() {
             role="separator"
             aria-orientation="vertical"
             aria-label={t("workspace.resizePanel")}
-            aria-valuemin={WORKSPACE_PANEL_MIN_WIDTH}
-            aria-valuemax={WORKSPACE_PANEL_MAX_WIDTH}
+            aria-valuemin={workspacePreviewModeActive ? WORKSPACE_PANEL_MIN_WIDTH : WORKSPACE_FILE_TREE_PANEL_MIN_WIDTH}
+            aria-valuemax={workspacePreviewModeActive ? WORKSPACE_PANEL_MAX_WIDTH : WORKSPACE_FILE_TREE_PANEL_MAX_WIDTH}
             aria-valuenow={effectiveWorkspacePanelWidth}
             onPointerDown={startWorkspacePanelResize}
             onKeyDown={resizeWorkspacePanelWithKeyboard}
-            onDoubleClick={() => setSavedWorkspacePanelWidth(WORKSPACE_PANEL_DEFAULT_WIDTH)}
+            onDoubleClick={() =>
+              setSavedWorkspacePanelWidth(
+                workspacePreviewModeActive ? WORKSPACE_PANEL_DEFAULT_WIDTH : WORKSPACE_FILE_TREE_PANEL_DEFAULT_WIDTH,
+              )
+            }
             title={t("workspace.resizePanel")}
           />
         )}
@@ -709,23 +800,8 @@ export default function App() {
           panelWidth={workspacePanelMaximized ? viewportWidth - effectiveSidebarWidth : effectiveWorkspacePanelWidth}
           onClose={() => setWorkspacePanel(false)}
           onToggleMaximized={() => setWorkspacePanelMaximized((value) => !value)}
+          onPreviewModeChange={handleWorkspacePreviewModeChange}
         />
-
-        {state.approval && (
-          <ApprovalModal
-            approval={state.approval}
-            onAnswer={(allow, session) => {
-              // Approving an exit_plan_mode plan leaves plan mode (the controller
-              // flips the executor; mirror it here for the indicator).
-              if (state.approval!.tool === "exit_plan_mode" && allow) setMode("normal");
-              approve(state.approval!.id, allow, session);
-            }}
-            onRevisePlan={(text) => {
-              setPendingPlanRevision(text);
-              approve(state.approval!.id, false, false);
-            }}
-          />
-        )}
       </div>
 
       {state.ask && (

@@ -29,6 +29,7 @@ import (
 	"strings"
 	"time"
 
+	"reasonix/internal/netclient"
 	"reasonix/internal/provider"
 )
 
@@ -65,6 +66,10 @@ func New(cfg provider.Config) (provider.Provider, error) {
 	keyEnv, _ := cfg.Extra["api_key_env"].(string) // for actionable auth errors
 	thinking, _ := cfg.Extra["thinking"].(string)
 	effort, _ := cfg.Extra["effort"].(string)
+	httpClient, err := newHTTPClient(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("anthropic: network: %w", err)
+	}
 	return &client{
 		name:     name,
 		apiKey:   cfg.APIKey,
@@ -73,8 +78,13 @@ func New(cfg provider.Config) (provider.Provider, error) {
 		model:    cfg.Model,
 		thinking: thinking,
 		effort:   effort,
-		http:     &http.Client{}, // no overall timeout; lifecycle is ctx-driven
+		http:     httpClient, // no overall timeout; lifecycle is ctx-driven
 	}, nil
+}
+
+func newHTTPClient(cfg provider.Config) (*http.Client, error) {
+	spec, _ := cfg.Extra["proxy_spec"].(netclient.ProxySpec)
+	return netclient.NewHTTPClient(spec, 0, netclient.TransportOptions{})
 }
 
 type client struct {

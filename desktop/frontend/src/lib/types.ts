@@ -8,6 +8,7 @@ export type EventKind =
   | "message"
   | "tool_dispatch"
   | "tool_result"
+  | "tool_progress"
   | "usage"
   | "notice"
   | "phase"
@@ -113,7 +114,9 @@ export interface SessionMeta {
   preview: string;
   title?: string; // user-chosen name; falls back to preview when empty
   turns: number;
-  modTime: number; // unix milliseconds
+  createdAt?: number; // unix milliseconds
+  lastActivityAt?: number; // unix milliseconds
+  modTime: number; // compatibility alias for lastActivityAt
   current: boolean;
 }
 
@@ -172,6 +175,11 @@ export interface ServerView {
   prompts: number;
   resources: number;
   error?: string;
+  toolList?: MCPToolView[];
+}
+export interface MCPToolView {
+  name: string;
+  description: string;
 }
 export interface SkillView {
   name: string;
@@ -179,9 +187,19 @@ export interface SkillView {
   scope: string;
   runAs: string;
 }
+export interface SkillRootView {
+  dir: string;
+  scope: string;
+  priority: number;
+  status: string;
+  configured: boolean;
+  skills: number;
+  warning?: string;
+}
 export interface CapabilitiesView {
   servers: ServerView[];
   skills: SkillView[];
+  skillRoots: SkillRootView[];
 }
 export interface MCPServerInput {
   name: string;
@@ -285,6 +303,21 @@ export interface SandboxView {
   allowWrite: string[];
 }
 
+export interface NetworkProxyView {
+  type: string;
+  server: string;
+  port: number;
+  username: string;
+  password: string;
+}
+
+export interface NetworkView {
+  proxyMode: string; // "auto" | "custom" | "off" (backend may still return legacy "env")
+  proxyUrl: string;
+  noProxy: string;
+  proxy: NetworkProxyView;
+}
+
 export interface AgentView {
   temperature: number;
   maxSteps: number;
@@ -297,6 +330,7 @@ export interface SettingsView {
   providers: ProviderView[];
   permissions: PermissionsView;
   sandbox: SandboxView;
+  network: NetworkView;
   agent: AgentView;
   configPath: string;
   providerKinds: string[]; // provider implementations the kernel registered (for the kind picker)

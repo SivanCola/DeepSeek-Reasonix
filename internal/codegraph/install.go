@@ -81,6 +81,15 @@ func assetName() string {
 // atomically renamed into place, so a cancelled or failed run leaves no partial
 // install behind.
 func Install(ctx context.Context, log func(string)) (string, error) {
+	return InstallWithClient(ctx, http.DefaultClient, log)
+}
+
+// InstallWithClient is Install with an explicit HTTP client, used when Reasonix
+// network proxy settings should apply.
+func InstallWithClient(ctx context.Context, client *http.Client, log func(string)) (string, error) {
+	if client == nil {
+		client = http.DefaultClient
+	}
 	if p, ok := cached(); ok {
 		return p, nil
 	}
@@ -92,7 +101,7 @@ func Install(ctx context.Context, log func(string)) (string, error) {
 	logf(log, "codegraph: downloading %s (%s, one-time)…", asset, Version)
 
 	base := fmt.Sprintf("https://github.com/%s/releases/download/%s", cgRepo, Version)
-	sums, err := httpGet(ctx, base+"/SHA256SUMS")
+	sums, err := httpGet(ctx, client, base+"/SHA256SUMS")
 	if err != nil {
 		return "", fmt.Errorf("codegraph: fetch checksums: %w", err)
 	}
@@ -100,7 +109,7 @@ func Install(ctx context.Context, log func(string)) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	data, err := httpGet(ctx, base+"/"+asset)
+	data, err := httpGet(ctx, client, base+"/"+asset)
 	if err != nil {
 		return "", fmt.Errorf("codegraph: download %s: %w", asset, err)
 	}
@@ -147,12 +156,12 @@ func Install(ctx context.Context, log func(string)) (string, error) {
 	return p, nil
 }
 
-func httpGet(ctx context.Context, url string) ([]byte, error) {
+func httpGet(ctx context.Context, client *http.Client, url string) ([]byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
 	}

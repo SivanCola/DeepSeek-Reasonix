@@ -39,7 +39,7 @@ var English = Messages{
 	ChatThinking:           "thinking…",
 	ChatThoughtForFmt:      "thought for %ds",
 	ChatStatusThinkingFmt:  "%s thinking… (%ds · Esc cancels)",
-	ChatStatusIdle:         "Tab toggles plan · Ctrl-O toggles verbose thinking · Enter sends · Esc clears/exits state · PgUp/PgDn scrolls · Ctrl-D quits",
+	ChatStatusIdle:         "Shift-Tab cycles auto/plan/YOLO · Ctrl-O toggles verbose thinking · Enter sends · Esc clears/exits state · PgUp/PgDn scrolls · Ctrl-D quits",
 	ChatStatusPlanApproval: "Enter/y approves & executes · n/Esc keeps planning · PgUp/PgDn scrolls",
 	PlanApprovalPrompt:     "Plan ready above — Enter/y to approve & execute, n/Esc to keep planning",
 	ChatStatusToolApproval: "1 approve once · 2 allow this session · 3 deny · y/a/n also work · Ctrl-C cancels turn",
@@ -47,10 +47,14 @@ var English = Messages{
 	AskTypingHint:          "type below, Enter to confirm",
 	AskChatInstead:         "None — just chat",
 	ChatStatusQuestion:     "↑/↓ move · number to pick · space multi · Enter confirm · ←/→ switch · Esc cancel",
+	AskSubmitTitle:         "Submit answers",
+	AskUnanswered:          "(unanswered)",
+	AskSubmitHint:          "Enter submits · ← returns to edit",
 	ToolApprovalPromptFmt:  "Permission required\n\nWill call tool %s%s.\n%s\n1. Allow once\n2. Allow similar calls this session\n3. Deny\nChoose [1/2/3] (y/a/n also work)",
 	ToolApprovalSourceFmt:  "Source: %s",
 	ToolApprovalBuiltIn:    "built-in tool",
 	ToolApprovalImageUse:   "It will read provided image input for image understanding.",
+	DiffFoldedFmt:          "… +%d more lines",
 
 	OutputStyleNone:   "no output styles available",
 	OutputStyleHeader: "output styles:",
@@ -92,6 +96,7 @@ var English = Messages{
 	CmdOutputStyle:  "list output styles",
 	CmdSkill:        "manage skills",
 	CmdVerbose:      "toggle thinking text",
+	CmdThinking:     "set DeepSeek thinking effort",
 	CmdHelp:         "list commands",
 	CmdTodo:         "dismiss the task list",
 	CmdQuit:         "exit the session",
@@ -106,6 +111,9 @@ var English = Messages{
 	ArgHooksList:    "list active hooks",
 	ArgHooksTrust:   "trust this project's hooks",
 	ArgModelCurrent: "current",
+	ArgThinkingHigh: "normal DeepSeek thinking effort",
+	ArgThinkingMax:  "maximum DeepSeek thinking effort",
+	ArgThinkingOff:  "disable DeepSeek thinking",
 
 	ListModelsHeaderFmt: "models (active: %s)",
 	ListModelsHint:      "switch with the model switcher, or type /model <provider/model>",
@@ -117,6 +125,34 @@ var English = Messages{
 	ListHooksNone:       "hooks: none active — configure in .reasonix/settings.json (project, after trust) or ~/.reasonix/settings.json (global)",
 	ListMcpHeader:       "mcp servers",
 	ListMcpNone:         "mcp: no servers connected — add one in reasonix.toml ([[plugins]]) or a project .mcp.json",
+
+	MemoryNone:             "memory: none — add with “#<note>” or create REASONIX.md in the project root",
+	MemoryLoaded:           "memory loaded:",
+	MemorySavedHeader:      "  saved memories (delete with “/forget <name>”):",
+	MemoryStoredUnderFmt:   "  stored under %s",
+	MemoryEditHint:         "edit doc files or use “#<note>”; doc edits apply next session",
+	ForgetUsage:            "usage: /forget <name> — the slug shown under “saved memories” in /memory",
+	ForgetDoneFmt:          "forgot memory: %s",
+	QuickRememberEmpty:     "nothing to remember",
+	QuickRememberDoneFmt:   "remembered → %s",
+	ModelSwitchUnavailable: "model switching is unavailable in this session",
+	ModelSwitchBusy:        "finish or cancel the current turn before switching models",
+	ModelAlreadyOnFmt:      "already on %s",
+	ModelSwitchingFmt:      "switching to %s…",
+	ModelSwitchedFmt:       "switched to %s (conversation carried over; prompt cache resets)",
+	ModelListHeader:        "models (/model <provider/model> to switch)",
+	RewindNone:             "nothing to rewind yet",
+	RewindCodeConversation: "Code + conversation",
+	RewindConversationOnly: "Conversation only",
+	RewindCodeOnly:         "Code only",
+	RewindFork:             "Fork (new branch, keep code)",
+	RewindSummarizeFrom:    "Summarize from here",
+	RewindSummarizeUpto:    "Summarize up to here",
+	RewindPickTitle:        "⟲ Rewind — pick a turn",
+	RewindPickHint:         "↑/↓ move · Enter choose · Esc close",
+	RewindRestoreTitleFmt:  "⟲ Restore to turn %d ",
+	RewindApplyHint:        "↑/↓ · Enter apply · Esc back",
+	RewindEmpty:            "(empty)",
 
 	SelectProvidersLabel:  "Select providers to enable",
 	EnterAPIKeysHeader:    "Enter API keys (Enter to skip and set later in .env):",
@@ -147,6 +183,7 @@ Usage:
   reasonix serve [--model NAME] [--addr HOST:PORT]      serve the session over HTTP+SSE (browser client at /)
   reasonix setup [path]                                 interactive config wizard; writes reasonix.toml (+ .env)
   reasonix mcp <add|remove|list>                        manage MCP servers in reasonix.toml
+  reasonix doctor [--json]                              print redacted local diagnostics
   reasonix version
   reasonix help
 

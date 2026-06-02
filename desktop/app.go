@@ -21,9 +21,12 @@ import (
 	"reasonix/internal/config"
 	"reasonix/internal/control"
 	"reasonix/internal/event"
+	fileenc "reasonix/internal/fileutil/encoding"
 	"reasonix/internal/i18n"
 	"reasonix/internal/memory"
+	"reasonix/internal/plugin"
 	"reasonix/internal/provider"
+	"reasonix/internal/skill"
 )
 
 // eventChannel is the Wails runtime event name the frontend subscribes to for the
@@ -46,16 +49,18 @@ type App struct {
 	// mu protects ctrl, label, model, startupErr, and ready during the async
 	// boot sequence. startup() spawns a goroutine for boot.Build(); all methods
 	// that touch the controller acquire the lock.
-	mu         sync.RWMutex
-	startupErr string
-	label      string
-	model      string // active provider name (for the bottom model switcher)
-	ready      bool   // true once boot.Build completes (success or failure)
+	mu          sync.RWMutex
+	startupErr  string
+	label       string
+	model       string // active provider name (for the bottom model switcher)
+	ready       bool   // true once boot.Build completes (success or failure)
+	disabledMCP map[string]ServerView
+	mcpOrder    []string
 }
 
 // NewApp constructs the bound object. The controller is built later, in startup,
 // once the Wails context exists.
-func NewApp() *App { return &App{sink: &eventSink{}} }
+func NewApp() *App { return &App{sink: &eventSink{}, disabledMCP: map[string]ServerView{}} }
 
 // startup runs once the webview process is up, before the frontend can issue any
 // bound call. It captures the Wails context (needed for EventsEmit), points the
@@ -332,12 +337,14 @@ func (a *App) SummarizeUpTo(turn int) error {
 
 // SessionMeta summarises one saved session for the history panel.
 type SessionMeta struct {
-	Path    string `json:"path"`
-	Preview string `json:"preview"`         // first user message
-	Title   string `json:"title,omitempty"` // user-chosen name, when set (overrides preview)
-	Turns   int    `json:"turns"`
-	ModTime int64  `json:"modTime"` // unix milliseconds, for the frontend to group/format
-	Current bool   `json:"current"`
+	Path           string `json:"path"`
+	Preview        string `json:"preview"`         // first user message
+	Title          string `json:"title,omitempty"` // user-chosen name, when set (overrides preview)
+	Turns          int    `json:"turns"`
+	CreatedAt      int64  `json:"createdAt"`      // unix milliseconds
+	LastActivityAt int64  `json:"lastActivityAt"` // unix milliseconds
+	ModTime        int64  `json:"modTime"`        // compatibility alias for lastActivityAt
+	Current        bool   `json:"current"`
 }
 
 type WorkspaceMeta struct {
@@ -366,12 +373,14 @@ func (a *App) ListSessions() []SessionMeta {
 	out := make([]SessionMeta, 0, len(infos))
 	for _, s := range infos {
 		out = append(out, SessionMeta{
-			Path:    s.Path,
-			Preview: s.Preview,
-			Title:   titles[filepath.Base(s.Path)],
-			Turns:   s.Turns,
-			ModTime: s.ModTime.UnixMilli(),
-			Current: s.Path == cur,
+			Path:           s.Path,
+			Preview:        s.Preview,
+			Title:          titles[filepath.Base(s.Path)],
+			Turns:          s.Turns,
+			CreatedAt:      s.CreatedAt.UnixMilli(),
+			LastActivityAt: s.LastActivityAt.UnixMilli(),
+			ModTime:        s.LastActivityAt.UnixMilli(),
+			Current:        s.Path == cur,
 		})
 	}
 	return out
@@ -782,20 +791,27 @@ func (a *App) SlashArgs(input string) SlashArgsResult {
 // CapabilitiesView is the MCP & Skills drawer's data: connected/failed MCP
 // servers and the discoverable skills, the GUI counterpart to `/mcp` + `/skill`.
 type CapabilitiesView struct {
-	Servers []ServerView `json:"servers"`
-	Skills  []SkillView  `json:"skills"`
+	Servers    []ServerView    `json:"servers"`
+	Skills     []SkillView     `json:"skills"`
+	SkillRoots []SkillRootView `json:"skillRoots"`
 }
 
 // ServerView is one MCP server for the drawer. Status is "connected" (with
 // tool/prompt/resource counts) or "failed" (with the connection error).
 type ServerView struct {
-	Name      string `json:"name"`
-	Transport string `json:"transport"`
-	Status    string `json:"status"`
-	Tools     int    `json:"tools"`
-	Prompts   int    `json:"prompts"`
-	Resources int    `json:"resources"`
-	Error     string `json:"error,omitempty"`
+	Name      string     `json:"name"`
+	Transport string     `json:"transport"`
+	Status    string     `json:"status"`
+	Tools     int        `json:"tools"`
+	Prompts   int        `json:"prompts"`
+	Resources int        `json:"resources"`
+	Error     string     `json:"error,omitempty"`
+	ToolList  []ToolView `json:"toolList,omitempty"`
+}
+
+type ToolView struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
 }
 
 // SkillView is one discoverable skill for the drawer.
@@ -806,20 +822,44 @@ type SkillView struct {
 	RunAs       string `json:"runAs"`
 }
 
+// SkillRootView is one skill discovery root for the drawer's Sources section.
+type SkillRootView struct {
+	Dir        string `json:"dir"`
+	Scope      string `json:"scope"`
+	Priority   int    `json:"priority"`
+	Status     string `json:"status"`
+	Configured bool   `json:"configured"`
+	Skills     int    `json:"skills"`
+	Warning    string `json:"warning,omitempty"`
+}
+
 // Capabilities projects the session's MCP servers (connected + failed) and skills
 // for the MCP & Skills drawer. Non-nil slices so the frontend can map over them.
 func (a *App) Capabilities() CapabilitiesView {
-	out := CapabilitiesView{Servers: []ServerView{}, Skills: []SkillView{}}
-	if a.ctrl == nil {
+	out := CapabilitiesView{Servers: []ServerView{}, Skills: []SkillView{}, SkillRoots: []SkillRootView{}}
+	a.mu.RLock()
+	ctrl := a.ctrl
+	disabled := make(map[string]ServerView, len(a.disabledMCP))
+	for name, s := range a.disabledMCP {
+		disabled[name] = s
+	}
+	order := append([]string(nil), a.mcpOrder...)
+	a.mu.RUnlock()
+	if ctrl == nil {
 		return out
 	}
 	seen := map[string]bool{}
-	if h := a.ctrl.Host(); h != nil {
+	connected := map[string]bool{}
+	retainedDisabled := map[string]ServerView{}
+	codegraphConfigured := false
+	if h := ctrl.Host(); h != nil {
 		for _, s := range h.Servers() {
 			seen[s.Name] = true
+			connected[s.Name] = true
 			out.Servers = append(out.Servers, ServerView{
 				Name: s.Name, Transport: s.Transport, Status: "connected",
 				Tools: s.Tools, Prompts: s.Prompts, Resources: s.Resources,
+				ToolList: pluginToolsToView(s.ToolList),
 			})
 		}
 		for _, f := range h.Failures() {
@@ -832,6 +872,7 @@ func (a *App) Capabilities() CapabilitiesView {
 	// Configured servers that are neither connected nor failed are toggled off
 	// (disconnected this session, or auto_start=false) — shown with an off switch.
 	if cfg, err := config.Load(); err == nil {
+		codegraphConfigured = cfg.Codegraph.Enabled
 		for _, p := range cfg.Plugins {
 			if seen[p.Name] {
 				continue
@@ -840,16 +881,192 @@ func (a *App) Capabilities() CapabilitiesView {
 			if tt == "" {
 				tt = "stdio"
 			}
+			if s, ok := disabled[p.Name]; ok {
+				s.Status = "disabled"
+				s.Transport = tt
+				s.Error = ""
+				out.Servers = append(out.Servers, s)
+				retainedDisabled[p.Name] = s
+				seen[p.Name] = true
+				delete(disabled, p.Name)
+				continue
+			}
 			out.Servers = append(out.Servers, ServerView{Name: p.Name, Transport: tt, Status: "disabled"})
+			seen[p.Name] = true
 		}
 	}
-	for _, s := range a.ctrl.Skills() {
+	for name, s := range disabled {
+		if seen[name] {
+			continue
+		}
+		if name != "codegraph" || !codegraphConfigured {
+			continue
+		}
+		s.Status = "disabled"
+		s.Error = ""
+		out.Servers = append(out.Servers, s)
+		retainedDisabled[name] = s
+	}
+	out.Servers = orderServerViews(out.Servers, order)
+
+	a.mu.Lock()
+	for name := range connected {
+		delete(retainedDisabled, name)
+	}
+	a.disabledMCP = retainedDisabled
+	a.mcpOrder = mergeServerOrder(a.mcpOrder, out.Servers)
+	a.mu.Unlock()
+
+	for _, s := range ctrl.Skills() {
 		out.Skills = append(out.Skills, SkillView{
 			Name: s.Name, Description: s.Description,
 			Scope: string(s.Scope), RunAs: string(s.RunAs),
 		})
 	}
+	out.SkillRoots = skillRootsView()
 	return out
+}
+
+func skillRootsView() []SkillRootView {
+	cwd, _ := os.Getwd()
+	cfg, _ := config.Load()
+	userCfg := config.LoadForEdit(config.UserConfigPath())
+	var custom []string
+	if cfg != nil {
+		custom = cfg.SkillCustomPaths()
+	}
+	st := skill.New(skill.Options{ProjectRoot: cwd, CustomPaths: custom, DisableBuiltins: true, Stderr: io.Discard})
+	counts := map[string]int{}
+	for _, sk := range st.List() {
+		counts[config.CanonicalSkillPath(filepath.Dir(skillRootPath(sk.Path)))]++
+	}
+	userConfigured := map[string]bool{}
+	if userCfg != nil {
+		for _, p := range userCfg.Skills.Paths {
+			userConfigured[config.CanonicalSkillPath(p)] = true
+		}
+	}
+	var out []SkillRootView
+	for _, r := range st.Roots() {
+		dir := config.CanonicalSkillPath(r.Dir)
+		view := SkillRootView{
+			Dir:        r.Dir,
+			Scope:      string(r.Scope),
+			Priority:   r.Priority + 1,
+			Status:     string(r.Status),
+			Configured: r.Scope == skill.ScopeCustom && userConfigured[dir],
+			Skills:     counts[dir],
+		}
+		out = append(out, view)
+	}
+	if userCfg != nil {
+		for _, p := range userCfg.Skills.Paths {
+			if rootActive(out, p) {
+				continue
+			}
+			out = append(out, SkillRootView{
+				Dir:        p,
+				Scope:      string(skill.ScopeCustom),
+				Status:     "inactive",
+				Configured: true,
+				Warning:    "configured in user config but not active in this workspace; project [skills].paths may override it",
+			})
+		}
+	}
+	return out
+}
+
+func rootActive(roots []SkillRootView, path string) bool {
+	want := config.CanonicalSkillPath(path)
+	for _, r := range roots {
+		if r.Scope == string(skill.ScopeCustom) && config.CanonicalSkillPath(r.Dir) == want {
+			return true
+		}
+	}
+	return false
+}
+
+// PickSkillFolder opens a directory picker for adding custom skill roots. It only
+// returns a path; AddSkillPath performs normalization and writes config.
+func (a *App) PickSkillFolder() (string, error) {
+	if a.ctx == nil {
+		return "", nil
+	}
+	cur, _ := os.Getwd()
+	dir, err := runtime.OpenDirectoryDialog(a.ctx, runtime.OpenDialogOptions{
+		Title:            "Choose skills folder",
+		DefaultDirectory: cur,
+	})
+	if err != nil || dir == "" {
+		return "", err
+	}
+	return normalizeSkillPath(dir), nil
+}
+
+// AddSkillPath adds a custom skill root to the user config and rebuilds the
+// controller so the skills index and slash menu reflect it immediately.
+func (a *App) AddSkillPath(path string) error {
+	path = normalizeSkillPath(path)
+	return a.applyConfigChange(func(c *config.Config) error {
+		return c.AddSkillPath(path)
+	})
+}
+
+// RemoveSkillPath removes a custom skill root from the user config and rebuilds.
+func (a *App) RemoveSkillPath(path string) error {
+	path = normalizeSkillPath(path)
+	return a.applyConfigChange(func(c *config.Config) error {
+		_, err := c.RemoveSkillPath(path)
+		return err
+	})
+}
+
+// RefreshSkills rebuilds the controller without changing config, reloading skill
+// discovery, the system prompt index, and slash completions.
+func (a *App) RefreshSkills() error {
+	return a.rebuild()
+}
+
+func normalizeSkillPath(path string) string {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return ""
+	}
+	if path == "~" || strings.HasPrefix(path, "~/") || strings.HasPrefix(path, `~\`) {
+		if home, err := os.UserHomeDir(); err == nil {
+			if path == "~" {
+				path = home
+			} else {
+				path = filepath.Join(home, path[2:])
+			}
+		}
+	}
+	if abs, err := filepath.Abs(path); err == nil {
+		path = abs
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return filepath.Clean(path)
+	}
+	if info.Mode().IsRegular() {
+		if filepath.Base(path) == skill.SkillFile {
+			return filepath.Clean(filepath.Dir(filepath.Dir(path)))
+		}
+		return filepath.Clean(filepath.Dir(path))
+	}
+	if info.IsDir() {
+		if _, err := os.Stat(filepath.Join(path, skill.SkillFile)); err == nil {
+			return filepath.Clean(filepath.Dir(path))
+		}
+	}
+	return filepath.Clean(path)
+}
+
+func skillRootPath(path string) string {
+	if filepath.Base(path) == skill.SkillFile {
+		return filepath.Dir(path)
+	}
+	return path
 }
 
 // MCPServerInput is the drawer's "add server" form. Transport is "stdio" (Command
@@ -885,6 +1102,12 @@ func (a *App) RemoveMCPServer(name string) error {
 		return fmt.Errorf("no active session")
 	}
 	_, err := a.ctrl.RemoveMCPServer(name)
+	if err == nil {
+		a.mu.Lock()
+		delete(a.disabledMCP, name)
+		a.mcpOrder = removeServerOrder(a.mcpOrder, name)
+		a.mu.Unlock()
+	}
 	return err
 }
 
@@ -907,10 +1130,113 @@ func (a *App) SetMCPServerEnabled(name string, enabled bool) error {
 	}
 	if enabled {
 		_, err := a.ctrl.ConnectConfiguredMCPServer(name)
+		if err == nil {
+			a.mu.Lock()
+			delete(a.disabledMCP, name)
+			a.mu.Unlock()
+		}
 		return err
+	}
+	if s, ok := findMCPServerView(a.ctrl, name); ok {
+		s.Status = "disabled"
+		s.Error = ""
+		a.mu.Lock()
+		if a.disabledMCP == nil {
+			a.disabledMCP = map[string]ServerView{}
+		}
+		a.disabledMCP[name] = s
+		a.mcpOrder = mergeServerOrder(a.mcpOrder, []ServerView{s})
+		a.mu.Unlock()
 	}
 	a.ctrl.DisconnectMCPServer(name)
 	return nil
+}
+
+func findMCPServerView(ctrl *control.Controller, name string) (ServerView, bool) {
+	if ctrl == nil || ctrl.Host() == nil {
+		return ServerView{}, false
+	}
+	for _, s := range ctrl.Host().Servers() {
+		if s.Name == name {
+			return ServerView{
+				Name: s.Name, Transport: s.Transport, Status: "connected",
+				Tools: s.Tools, Prompts: s.Prompts, Resources: s.Resources,
+				ToolList: pluginToolsToView(s.ToolList),
+			}, true
+		}
+	}
+	for _, f := range ctrl.Host().Failures() {
+		if f.Name == name {
+			return ServerView{Name: f.Name, Transport: f.Transport, Status: "failed", Error: f.Error}, true
+		}
+	}
+	return ServerView{}, false
+}
+
+func pluginToolsToView(tools []plugin.ToolInfo) []ToolView {
+	if len(tools) == 0 {
+		return nil
+	}
+	out := make([]ToolView, 0, len(tools))
+	for _, t := range tools {
+		out = append(out, ToolView{Name: t.Name, Description: t.Description})
+	}
+	return out
+}
+
+func orderServerViews(servers []ServerView, order []string) []ServerView {
+	pos := make(map[string]int, len(order))
+	for i, name := range order {
+		pos[name] = i
+	}
+	sort.SliceStable(servers, func(i, j int) bool {
+		pi, iok := pos[servers[i].Name]
+		pj, jok := pos[servers[j].Name]
+		switch {
+		case iok && jok:
+			return pi < pj
+		case iok:
+			return true
+		case jok:
+			return false
+		default:
+			return false
+		}
+	})
+	return servers
+}
+
+func mergeServerOrder(order []string, servers []ServerView) []string {
+	seen := make(map[string]bool, len(order)+len(servers))
+	next := make([]string, 0, len(order)+len(servers))
+	for _, name := range order {
+		if name == "" || seen[name] {
+			continue
+		}
+		seen[name] = true
+		next = append(next, name)
+	}
+	for _, s := range servers {
+		if s.Name == "" || seen[s.Name] {
+			continue
+		}
+		seen[s.Name] = true
+		next = append(next, s.Name)
+	}
+	return next
+}
+
+func removeServerOrder(order []string, name string) []string {
+	if name == "" || len(order) == 0 {
+		return order
+	}
+	next := order[:0]
+	for _, n := range order {
+		if n != name {
+			next = append(next, n)
+		}
+	}
+	return next
 }
 
 // ModelInfo is one (provider, model) the bottom switcher can pick. Ref ("provider/
@@ -1138,13 +1464,42 @@ func (a *App) ReadFile(rel string) FilePreview {
 	if len(data) > filePreviewLimit {
 		data = data[:filePreviewLimit]
 		out.Truncated = true
-		data = trimUTF8PartialSuffix(data)
 	}
-	if bytes.Contains(data, []byte{0}) || !utf8.Valid(data) {
+
+	// Check for BOM first (just the first 2-3 bytes — always complete
+	// even at a truncation boundary). BOM-prefixed files skip the NUL
+	// check since UTF-16 normally contains 0x00 for ASCII characters.
+	bomKind := fileenc.DetectQuick(data)
+	if bomKind != fileenc.UTF8 {
+		enc, _ := fileenc.Detect(data)
+		if enc == fileenc.LossyUTF8 {
+			out.Binary = true
+			return out
+		}
+		decoded := fileenc.Decode(data, enc)
+		out.Body = string(decoded)
+		return out
+	}
+
+	// No BOM — NUL in raw bytes is a binary signal.
+	if bytes.Contains(data, []byte{0}) {
 		out.Binary = true
 		return out
 	}
-	out.Body = string(data)
+
+	// Trim any partial multi-byte rune at the truncation boundary BEFORE
+	// encoding detection. Without this, a large UTF-8 file truncated
+	// mid-character would fail utf8.Valid and be misdetected as GB18030
+	// or LossyUTF8, producing mojibake or a false binary classification.
+	if out.Truncated {
+		data = trimUTF8PartialSuffix(data)
+	}
+	enc, _ := fileenc.Detect(data)
+	if enc == fileenc.LossyUTF8 {
+		out.Binary = true
+		return out
+	}
+	out.Body = string(fileenc.Decode(data, enc))
 	return out
 }
 
@@ -1181,6 +1536,13 @@ func (a *App) RevealWorkspacePath(rel string) error {
 // .reasonix/attachments and returns the relative @-reference path.
 func (a *App) SavePastedImage(dataURL string) (string, error) {
 	return control.SaveImageDataURL(dataURL)
+}
+
+// SavePastedFile stores a dropped non-image file (the browser exposes its bytes
+// as a data URL but not a real path) under .reasonix/attachments and returns the
+// relative @-reference path.
+func (a *App) SavePastedFile(name, dataURL string) (string, error) {
+	return control.SaveAttachmentDataURL(name, dataURL)
 }
 
 // AttachmentDataURL returns a safe data URL for a stored image attachment.

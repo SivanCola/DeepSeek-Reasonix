@@ -2,6 +2,7 @@ package boot
 
 import (
 	"context"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -72,6 +73,9 @@ api_key_env = "REASONIX_TEST_KEY_UNSET"
 // into the cache-stable system prompt's "# Skills" index alongside a built-in.
 func TestBuildDiscoversSkills(t *testing.T) {
 	dir := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
 	t.Chdir(dir)
 	writeFile(t, dir, "reasonix.toml", `
 default_model = "test-model"

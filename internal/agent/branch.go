@@ -8,6 +8,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"reasonix/internal/fileutil"
 )
 
 // BranchMeta is the small sidecar record that turns flat session files into a
@@ -74,6 +76,10 @@ func LoadBranchMeta(sessionPath string) (BranchMeta, bool, error) {
 }
 
 func SaveBranchMeta(sessionPath string, m BranchMeta) error {
+	return saveBranchMeta(sessionPath, m, true)
+}
+
+func saveBranchMeta(sessionPath string, m BranchMeta, touchUpdated bool) error {
 	metaPath := BranchMetaPath(sessionPath)
 	if metaPath == "" {
 		return fmt.Errorf("empty session path")
@@ -85,7 +91,9 @@ func SaveBranchMeta(sessionPath string, m BranchMeta) error {
 	if m.CreatedAt.IsZero() {
 		m.CreatedAt = now
 	}
-	m.UpdatedAt = now
+	if touchUpdated || m.UpdatedAt.IsZero() {
+		m.UpdatedAt = now
+	}
 	if err := os.MkdirAll(filepath.Dir(metaPath), 0o755); err != nil {
 		return err
 	}
@@ -108,7 +116,7 @@ func SaveBranchMeta(sessionPath string, m BranchMeta) error {
 		os.Remove(tmpPath)
 		return err
 	}
-	return os.Rename(tmpPath, metaPath)
+	return fileutil.ReplaceFile(tmpPath, metaPath)
 }
 
 func EnsureBranchMeta(sessionPath string) (BranchMeta, error) {
@@ -118,13 +126,16 @@ func EnsureBranchMeta(sessionPath string) (BranchMeta, error) {
 	if m, ok, err := LoadBranchMeta(sessionPath); err != nil || ok {
 		return m, err
 	}
-	now := time.Now().UTC()
+	when := time.Now().UTC()
+	if info, err := os.Stat(sessionPath); err == nil {
+		when = info.ModTime().UTC()
+	}
 	m := BranchMeta{
 		ID:        BranchID(sessionPath),
-		CreatedAt: now,
-		UpdatedAt: now,
+		CreatedAt: when,
+		UpdatedAt: when,
 	}
-	return m, SaveBranchMeta(sessionPath, m)
+	return m, saveBranchMeta(sessionPath, m, false)
 }
 
 func TouchBranchMeta(sessionPath string) error {
@@ -132,7 +143,8 @@ func TouchBranchMeta(sessionPath string) error {
 	if err != nil {
 		return err
 	}
-	return SaveBranchMeta(sessionPath, m)
+	m.UpdatedAt = time.Now().UTC()
+	return saveBranchMeta(sessionPath, m, false)
 }
 
 func ListBranches(dir string) ([]BranchInfo, error) {

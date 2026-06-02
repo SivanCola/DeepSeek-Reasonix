@@ -16,14 +16,16 @@ import type {
   HistoryMessage,
   JobView,
   MCPServerInput,
-  MemoryView,
-  Meta,
-  ModelInfo,
-  ProviderView,
+	  MemoryView,
+	  Meta,
+	  ModelInfo,
+	  NetworkView,
+	  ProviderView,
   QuestionAnswer,
   ServerView,
   SessionMeta,
   SettingsView,
+  SkillRootView,
   SkillView,
   SlashArgsResult,
   UpdateInfo,
@@ -78,6 +80,10 @@ export interface AppBindings {
   AddMCPServer(input: MCPServerInput): Promise<number>;
   RemoveMCPServer(name: string): Promise<void>;
   RetryMCPServer(name: string): Promise<void>;
+  PickSkillFolder(): Promise<string>;
+  AddSkillPath(path: string): Promise<void>;
+  RemoveSkillPath(path: string): Promise<void>;
+  RefreshSkills(): Promise<void>;
   // SetMCPServerEnabled is the per-session connector toggle (on reconnects, off
   // disconnects; config untouched).
   SetMCPServerEnabled(name: string, enabled: boolean): Promise<void>;
@@ -87,6 +93,7 @@ export interface AppBindings {
   OpenWorkspacePath(rel: string): Promise<void>;
   RevealWorkspacePath(rel: string): Promise<void>;
   SavePastedImage(dataUrl: string): Promise<string>;
+  SavePastedFile(name: string, dataUrl: string): Promise<string>;
   AttachmentDataURL(path: string): Promise<string>;
   Models(): Promise<ModelInfo[]>;
   SetModel(name: string): Promise<void>;
@@ -107,9 +114,10 @@ export interface AppBindings {
   SetProviderKey(apiKeyEnv: string, value: string): Promise<void>;
   SetPermissionMode(mode: string): Promise<void>;
   AddPermissionRule(list: string, rule: string): Promise<void>;
-  RemovePermissionRule(list: string, rule: string): Promise<void>;
-  SetSandbox(bash: string, network: boolean, workspaceRoot: string, allowWrite: string[]): Promise<void>;
-  SetAgentParams(temperature: number, maxSteps: number, systemPrompt: string): Promise<void>;
+	  RemovePermissionRule(list: string, rule: string): Promise<void>;
+	  SetSandbox(bash: string, network: boolean, workspaceRoot: string, allowWrite: string[]): Promise<void>;
+	  SetNetwork(n: NetworkView): Promise<void>;
+	  SetAgentParams(temperature: number, maxSteps: number, systemPrompt: string): Promise<void>;
   // SetBypass toggles YOLO mode (auto-approve every tool call this session; deny
   // rules still apply). Runtime-only — not written to config.
   SetBypass(on: boolean): Promise<void>;
@@ -239,7 +247,20 @@ function makeMockApp(): AppBindings {
   const t0 = Date.now();
   // Mutable so MCP add/remove/retry are observable in browser dev.
   let capServers: ServerView[] = [
-    { name: "codegraph", transport: "stdio", status: "connected", tools: 4, prompts: 0, resources: 1 },
+    {
+      name: "codegraph",
+      transport: "stdio",
+      status: "connected",
+      tools: 4,
+      prompts: 0,
+      resources: 1,
+      toolList: [
+        { name: "search", description: "Search symbols, files, and text in the workspace." },
+        { name: "context", description: "Fetch surrounding source context for a symbol or file." },
+        { name: "trace", description: "Follow callers and callees across the code graph." },
+        { name: "node", description: "Inspect a specific graph node." },
+      ],
+    },
     { name: "github", transport: "stdio", status: "connected", tools: 12, prompts: 2, resources: 0 },
     { name: "linear", transport: "http", status: "connected", tools: 8, prompts: 0, resources: 0 },
     { name: "figma", transport: "http", status: "failed", tools: 0, prompts: 0, resources: 0, error: "connect: 401 unauthorized" },
@@ -249,6 +270,11 @@ function makeMockApp(): AppBindings {
     { name: "review", description: "Review the staged diff", scope: "project", runAs: "inline" },
     { name: "init", description: "Scaffold a REASONIX.md for this repo", scope: "builtin", runAs: "inline" },
   ];
+  let capSkillRoots: SkillRootView[] = [
+    { dir: "~/projects/reasonix/.reasonix/skills", scope: "project", priority: 1, status: "missing", configured: false, skills: 0 },
+    { dir: "~/my-skills", scope: "custom", priority: 5, status: "ok", configured: true, skills: 1 },
+    { dir: "~/.reasonix/skills", scope: "global", priority: 6, status: "ok", configured: false, skills: 2 },
+  ];
   const mockSwitchWorkspace = async (path: string) => {
     cwd = path || "~";
     workspaces = [cwd, ...workspaces.filter((p) => p !== cwd)].slice(0, 12);
@@ -256,10 +282,10 @@ function makeMockApp(): AppBindings {
   };
   // Mutable so delete/rename are observable in browser dev.
   const sessions: SessionMeta[] = [
-    { path: "/mock/sessions/a.jsonl", preview: "fix the login bug in auth.go", turns: 12, modTime: t0 - 3_600_000, current: true },
-    { path: "/mock/sessions/b.jsonl", preview: "refactor the payment module", turns: 5, modTime: t0 - 6 * 3_600_000, current: false },
-    { path: "/mock/sessions/c.jsonl", preview: "write the README and badges", turns: 8, modTime: t0 - day - 3_600_000, current: false },
-    { path: "/mock/sessions/d.jsonl", preview: "explain the plugin host design", turns: 3, modTime: t0 - 4 * day, current: false },
+    { path: "/mock/sessions/a.jsonl", preview: "fix the login bug in auth.go", turns: 12, createdAt: t0 - 2 * day, lastActivityAt: t0 - 3_600_000, modTime: t0 - 3_600_000, current: true },
+    { path: "/mock/sessions/b.jsonl", preview: "refactor the payment module", turns: 5, createdAt: t0 - 3 * day, lastActivityAt: t0 - 6 * 3_600_000, modTime: t0 - 6 * 3_600_000, current: false },
+    { path: "/mock/sessions/c.jsonl", preview: "write the README and badges", turns: 8, createdAt: t0 - 4 * day, lastActivityAt: t0 - day - 3_600_000, modTime: t0 - day - 3_600_000, current: false },
+    { path: "/mock/sessions/d.jsonl", preview: "explain the plugin host design", turns: 3, createdAt: t0 - 5 * day, lastActivityAt: t0 - 4 * day, modTime: t0 - 4 * day, current: false },
   ];
   // Mutable settings so the Settings panel's edits are observable in browser dev.
   const settings: SettingsView = {
@@ -269,9 +295,15 @@ function makeMockApp(): AppBindings {
       { name: "deepseek-flash", kind: "openai", baseUrl: "https://api.deepseek.com", models: ["deepseek-v4-flash"], default: "deepseek-v4-flash", apiKeyEnv: "DEEPSEEK_API_KEY", keySet: true, balanceUrl: "https://api.deepseek.com/user/balance", contextWindow: 1_000_000 },
       { name: "mimo-pro", kind: "openai", baseUrl: "https://api.xiaomimimo.com/v1", models: ["mimo-v2.5-pro"], default: "mimo-v2.5-pro", apiKeyEnv: "MIMO_API_KEY", keySet: false, balanceUrl: "", contextWindow: 1_000_000 },
     ],
-    permissions: { mode: "ask", allow: ["ls", "read_file"], ask: [], deny: ["bash(rm *)"] },
-    sandbox: { bash: "enforce", network: true, workspaceRoot: "", allowWrite: [] },
-    agent: { temperature: 0.2, maxSteps: 0, systemPrompt: "You are Reasonix, a coding agent." },
+	    permissions: { mode: "ask", allow: ["ls", "read_file"], ask: [], deny: ["bash(rm *)"] },
+	    sandbox: { bash: "enforce", network: true, workspaceRoot: "", allowWrite: [] },
+	    network: {
+	      proxyMode: "auto",
+	      proxyUrl: "",
+	      noProxy: "",
+	      proxy: { type: "socks5", server: "127.0.0.1", port: 7890, username: "", password: "" },
+	    },
+	    agent: { temperature: 0.2, maxSteps: 0, systemPrompt: "You are Reasonix, a coding agent." },
     configPath: "~/projects/reasonix/reasonix.toml",
     providerKinds: ["openai"],
     bypass: false,
@@ -350,6 +382,9 @@ function makeMockApp(): AppBindings {
       return sessions.map((s) => ({ ...s }));
     },
     async ResumeSession(path: string) {
+      sessions.forEach((s) => {
+        s.current = s.path === path;
+      });
       return [
         { role: "user", content: `(mock) resumed ${path}` },
         { role: "assistant", content: "This is a mock resumed transcript — the real one comes from the kernel." },
@@ -410,11 +445,26 @@ function makeMockApp(): AppBindings {
       ];
     },
     async Capabilities() {
-      return { servers: capServers.map((s) => ({ ...s })), skills: capSkills.map((s) => ({ ...s })) };
+      return {
+        servers: capServers.map((s) => ({ ...s })),
+        skills: capSkills.map((s) => ({ ...s })),
+        skillRoots: capSkillRoots.map((s) => ({ ...s })),
+      };
     },
     async AddMCPServer(input: MCPServerInput) {
       const tools = input.transport === "stdio" ? 3 : 5;
-      capServers.push({ name: input.name, transport: input.transport, status: "connected", tools, prompts: 0, resources: 0 });
+      capServers.push({
+        name: input.name,
+        transport: input.transport,
+        status: "connected",
+        tools,
+        prompts: 0,
+        resources: 0,
+        toolList: Array.from({ length: tools }, (_, i) => ({
+          name: `${input.name}_tool_${i + 1}`,
+          description: `Mock tool ${i + 1} exposed by ${input.name}.`,
+        })),
+      });
       return tools;
     },
     async RemoveMCPServer(name: string) {
@@ -425,6 +475,26 @@ function makeMockApp(): AppBindings {
         s.name === name ? { ...s, status: "connected", tools: s.tools || 4, error: undefined } : s,
       );
     },
+    async PickSkillFolder() {
+      return "~/my-skills";
+    },
+    async AddSkillPath(path: string) {
+      const dir = path.trim() || "~/my-skills";
+      if (!capSkillRoots.some((r) => r.scope === "custom" && r.dir === dir)) {
+        capSkillRoots.push({ dir, scope: "custom", priority: capSkillRoots.length + 1, status: "ok", configured: true, skills: 1 });
+      }
+      if (!capSkills.some((s) => s.name === "local-dev")) {
+        capSkills.push({ name: "local-dev", description: "Local custom development workflow", scope: "custom", runAs: "inline" });
+      }
+    },
+    async RemoveSkillPath(path: string) {
+      capSkillRoots = capSkillRoots.filter((r) => !(r.scope === "custom" && r.dir === path));
+      if (!capSkillRoots.some((r) => r.scope === "custom")) {
+        const idx = capSkills.findIndex((s) => s.name === "local-dev");
+        if (idx >= 0) capSkills.splice(idx, 1);
+      }
+    },
+    async RefreshSkills() {},
     async SetMCPServerEnabled(name: string, enabled: boolean) {
       capServers = capServers.map((s) =>
         s.name === name
@@ -500,6 +570,9 @@ function makeMockApp(): AppBindings {
     },
     async SavePastedImage(_dataUrl: string) {
       return ".reasonix/attachments/mock.png";
+    },
+    async SavePastedFile(name: string, _dataUrl: string) {
+      return `.reasonix/attachments/mock-${name}`;
     },
     async AttachmentDataURL(_path: string) {
       return "data:image/png;base64,iVBORw0KGgo=";
@@ -586,9 +659,12 @@ function makeMockApp(): AppBindings {
       const k = list as "allow" | "ask" | "deny";
       settings.permissions[k] = settings.permissions[k].filter((r) => r !== rule);
     },
-    async SetSandbox(bash: string, network: boolean, workspaceRoot: string, allowWrite: string[]) {
-      settings.sandbox = { bash, network, workspaceRoot, allowWrite };
-    },
+	    async SetSandbox(bash: string, network: boolean, workspaceRoot: string, allowWrite: string[]) {
+	      settings.sandbox = { bash, network, workspaceRoot, allowWrite };
+	    },
+	    async SetNetwork(n: NetworkView) {
+	      settings.network = n;
+	    },
     async SetAgentParams(temperature: number, maxSteps: number, systemPrompt: string) {
       settings.agent = { temperature, maxSteps, systemPrompt };
     },

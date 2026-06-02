@@ -4,8 +4,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
+	"reasonix/internal/fileutil"
+	"reasonix/internal/netclient"
 	"reasonix/internal/permission"
 )
 
@@ -66,6 +69,31 @@ func (c *Config) UpsertProvider(e ProviderEntry) error {
 	}
 	c.Providers = append(c.Providers, e)
 	return nil
+}
+
+// SetProviderEffort updates a provider's provider-specific thinking effort knob.
+func (c *Config) SetProviderEffort(name, effort string) error {
+	for i := range c.Providers {
+		if c.Providers[i].Name == name {
+			c.Providers[i].Effort = strings.ToLower(strings.TrimSpace(effort))
+			return nil
+		}
+	}
+	return fmt.Errorf("set provider effort: no provider %q", name)
+}
+
+// SetNetwork updates ordinary outbound network proxy settings. Invalid custom
+// proxy settings are rejected here so the desktop panel cannot save a config that
+// would break provider startup.
+func (c *Config) SetNetwork(n NetworkConfig) error {
+	n.ProxyMode = netclient.NormalizeMode(n.ProxyMode)
+	n.ProxyURL = strings.TrimSpace(n.ProxyURL)
+	n.NoProxy = strings.TrimSpace(n.NoProxy)
+	n.Proxy.Type = strings.ToLower(strings.TrimSpace(n.Proxy.Type))
+	n.Proxy.Server = strings.TrimSpace(n.Proxy.Server)
+	n.Proxy.Username = strings.TrimSpace(n.Proxy.Username)
+	c.Network = n
+	return netclient.Validate(c.NetworkProxySpec())
 }
 
 // RemoveProvider deletes the named provider. It refuses to remove the current
@@ -174,6 +202,64 @@ func (c *Config) ruleList(list string) (*[]string, error) {
 	}
 }
 
+// AddSkillPath appends a custom skill root, deduping by its expanded absolute
+// path while preserving the caller's original spelling in the config file.
+func (c *Config) AddSkillPath(path string) error {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return fmt.Errorf("skill path: empty path")
+	}
+	want := CanonicalSkillPath(path)
+	for _, existing := range c.Skills.Paths {
+		if CanonicalSkillPath(existing) == want {
+			return nil
+		}
+	}
+	c.Skills.Paths = append(c.Skills.Paths, path)
+	return nil
+}
+
+// RemoveSkillPath removes the first custom skill root matching path after
+// expansion and path cleaning. It reports whether anything changed.
+func (c *Config) RemoveSkillPath(path string) (bool, error) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return false, fmt.Errorf("skill path: empty path")
+	}
+	want := CanonicalSkillPath(path)
+	for i, existing := range c.Skills.Paths {
+		if CanonicalSkillPath(existing) == want {
+			c.Skills.Paths = append(c.Skills.Paths[:i], c.Skills.Paths[i+1:]...)
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// CanonicalSkillPath expands env vars, ~ and relative segments to an absolute
+// cleaned path for comparing skill roots. On Windows it folds case so paths that
+// differ only in casing dedupe. Use only for comparison, never as stored config.
+func CanonicalSkillPath(path string) string {
+	path = ExpandVars(strings.TrimSpace(path))
+	if strings.HasPrefix(path, "~/") || strings.HasPrefix(path, `~\`) {
+		if home, err := os.UserHomeDir(); err == nil {
+			path = filepath.Join(home, path[2:])
+		}
+	} else if path == "~" {
+		if home, err := os.UserHomeDir(); err == nil {
+			path = home
+		}
+	}
+	if abs, err := filepath.Abs(path); err == nil {
+		path = abs
+	}
+	path = filepath.Clean(path)
+	if runtime.GOOS == "windows" {
+		return strings.ToLower(path)
+	}
+	return path
+}
+
 // UpsertPlugin adds e, or replaces an MCP server with the same name (preserving
 // position). The transport-specific required fields are validated: stdio needs
 // a command, http/sse need a url.
@@ -248,7 +334,7 @@ func (c *Config) SaveTo(path string) error {
 		os.Remove(tmpPath)
 		return fmt.Errorf("save: close temp: %w", err)
 	}
-	return os.Rename(tmpPath, path)
+	return fileutil.ReplaceFile(tmpPath, path)
 }
 
 // Save writes the configuration back to the file it was loaded from

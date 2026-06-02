@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Pencil, Trash2, Check, X } from "lucide-react";
 import { t, useT } from "../lib/i18n";
+import { sessionActivityTime } from "../lib/session";
 import type { SessionMeta } from "../lib/types";
 import { ResizableDrawer } from "./ResizableDrawer";
 
@@ -41,7 +42,7 @@ export function HistoryPanel({
   // (Today / Yesterday / a date) while preserving that order.
   const groups: { label: string; items: SessionMeta[] }[] = [];
   for (const s of sessions) {
-    const label = dayLabel(s.modTime);
+    const label = dayLabel(sessionActivityTime(s));
     const last = groups[groups.length - 1];
     if (last && last.label === label) last.items.push(s);
     else groups.push({ label, items: [s] });
@@ -85,7 +86,7 @@ export function HistoryPanel({
                           {s.current && <span className="hist-item__badge">{tr("history.current")}</span>}
                           <span>{tr(s.turns === 1 ? "history.turnOne" : "history.turnOther", { n: s.turns })}</span>
                           <span>·</span>
-                          <span>{timeLabel(s.modTime)}</span>
+                          <span>{timeLabel(sessionActivityTime(s))}</span>
                         </div>
                       </button>
                     )}

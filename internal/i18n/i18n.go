@@ -73,12 +73,16 @@ type Messages struct {
 	ToolApprovalSourceFmt  string // "Source: %s" / "来源: %s"
 	ToolApprovalBuiltIn    string // built-in tool source label
 	ToolApprovalImageUse   string // image-understanding detail for understand_image-style tools
+	DiffFoldedFmt          string // "… +%d more lines" footer when a writer diff is folded
 
 	// `ask` tool question card.
 	AskTypeSomething   string // the "type your own answer" option label
 	AskTypingHint      string // shown on that row while entering free text
 	AskChatInstead     string // the "don't pick, just chat" option label
 	ChatStatusQuestion string // shortcuts hint while a question card is open
+	AskSubmitTitle     string // submit-tab title in the ask tool question card
+	AskUnanswered      string // placeholder for an unanswered ask question
+	AskSubmitHint      string // submit-tab keyboard hint
 
 	// output style listing (/output-style).
 	OutputStyleNone   string // no styles available
@@ -125,6 +129,7 @@ type Messages struct {
 	CmdOutputStyle  string // /output-style
 	CmdSkill        string // /skill
 	CmdVerbose      string // /verbose
+	CmdThinking     string // /thinking
 	CmdHelp         string // /help
 	CmdTodo         string // /todo
 	CmdQuit         string // /quit (also accepts /exit as hidden alias)
@@ -139,6 +144,9 @@ type Messages struct {
 	ArgHooksList    string // /hooks list
 	ArgHooksTrust   string // /hooks trust
 	ArgModelCurrent string // /model <ref> active tag
+	ArgThinkingHigh string // /thinking high
+	ArgThinkingMax  string // /thinking max
+	ArgThinkingOff  string // /thinking off
 
 	// management listing notices (the Submit path: desktop / HTTP frontends)
 	ListModelsHeaderFmt string // "models (active: %s)"
@@ -151,6 +159,35 @@ type Messages struct {
 	ListHooksNone       string // no hooks
 	ListMcpHeader       string // "mcp servers"
 	ListMcpNone         string // no mcp servers
+
+	// in-chat memory/model/rewind notices.
+	MemoryNone             string
+	MemoryLoaded           string
+	MemorySavedHeader      string
+	MemoryStoredUnderFmt   string
+	MemoryEditHint         string
+	ForgetUsage            string
+	ForgetDoneFmt          string
+	QuickRememberEmpty     string
+	QuickRememberDoneFmt   string
+	ModelSwitchUnavailable string
+	ModelSwitchBusy        string
+	ModelAlreadyOnFmt      string
+	ModelSwitchingFmt      string
+	ModelSwitchedFmt       string
+	ModelListHeader        string
+	RewindNone             string
+	RewindCodeConversation string
+	RewindConversationOnly string
+	RewindCodeOnly         string
+	RewindFork             string
+	RewindSummarizeFrom    string
+	RewindSummarizeUpto    string
+	RewindPickTitle        string
+	RewindPickHint         string
+	RewindRestoreTitleFmt  string
+	RewindApplyHint        string
+	RewindEmpty            string
 
 	// init wizard
 	SelectProvidersLabel  string // multi-select label

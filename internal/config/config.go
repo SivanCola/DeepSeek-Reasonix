@@ -13,6 +13,7 @@ import (
 
 	"github.com/BurntSushi/toml"
 
+	"reasonix/internal/netclient"
 	"reasonix/internal/provider"
 )
 
@@ -25,6 +26,7 @@ type Config struct {
 	Tools        ToolsConfig       `toml:"tools"`
 	Permissions  PermissionsConfig `toml:"permissions"`
 	Sandbox      SandboxConfig     `toml:"sandbox"`
+	Network      NetworkConfig     `toml:"network"`
 	Plugins      []PluginEntry     `toml:"plugins"`
 	Skills       SkillsConfig      `toml:"skills"`
 	Codegraph    CodegraphConfig   `toml:"codegraph"`
@@ -75,6 +77,52 @@ type CodegraphConfig struct {
 	Enabled     bool   `toml:"enabled"`
 	AutoInstall bool   `toml:"auto_install"`
 	Path        string `toml:"path"`
+}
+
+// NetworkConfig controls ordinary outbound HTTP traffic such as model providers,
+// wallet-balance lookups, updater checks, and CodeGraph downloads. It intentionally
+// does not apply to web_fetch, which keeps its own SSRF-guarded dialer.
+type NetworkConfig struct {
+	// ProxyMode is "auto" (default; environment proxy for now), "env", "custom",
+	// or "off". auto leaves room for OS proxy detection later without changing the
+	// config shape.
+	ProxyMode string `toml:"proxy_mode"`
+	// ProxyURL is an advanced custom override such as "socks5://127.0.0.1:7890".
+	// When set and proxy_mode = "custom", it wins over the structured proxy table.
+	ProxyURL string `toml:"proxy_url"`
+	// NoProxy is honored for custom proxies. Env/auto modes use NO_PROXY from the
+	// process environment instead.
+	NoProxy string             `toml:"no_proxy"`
+	Proxy   NetworkProxyConfig `toml:"proxy"`
+}
+
+// NetworkProxyConfig is the structured custom-proxy editor shape. Password is
+// optional and supports ${VAR} expansion, so users can avoid storing it literally.
+type NetworkProxyConfig struct {
+	Type     string `toml:"type"` // http|https|socks5|socks5h
+	Server   string `toml:"server"`
+	Port     int    `toml:"port"`
+	Username string `toml:"username"`
+	Password string `toml:"password"`
+}
+
+// NetworkProxySpec returns the expanded proxy settings used by netclient.
+func (c *Config) NetworkProxySpec() netclient.ProxySpec {
+	return netclient.ProxySpec{
+		Mode:     c.Network.ProxyMode,
+		URL:      ExpandVars(c.Network.ProxyURL),
+		NoProxy:  ExpandVars(c.Network.NoProxy),
+		Type:     c.Network.Proxy.Type,
+		Server:   ExpandVars(c.Network.Proxy.Server),
+		Port:     c.Network.Proxy.Port,
+		Username: ExpandVars(c.Network.Proxy.Username),
+		Password: ExpandVars(c.Network.Proxy.Password),
+	}
+}
+
+// NetworkProxyMode normalizes network.proxy_mode to a known value.
+func (c *Config) NetworkProxyMode() string {
+	return netclient.NormalizeMode(c.Network.ProxyMode)
 }
 
 // SkillsConfig configures skill discovery. Paths adds extra "custom"-scope skill
@@ -193,7 +241,8 @@ type ProviderEntry struct {
 	// via Config.Extra. The anthropic provider reads Thinking="adaptive" to enable
 	// extended thinking and Effort ("low".."max") to tune depth. The
 	// openai-compatible provider forwards Effort as reasoning_effort for
-	// thinking-capable models (e.g. MiMo) and ignores Thinking. Empty = provider default.
+	// thinking-capable models; DeepSeek accepts high|max and off disables thinking.
+	// Empty = provider default.
 	Thinking string `toml:"thinking"`
 	Effort   string `toml:"effort"`
 }
@@ -234,7 +283,17 @@ func (e *ProviderEntry) HasModel(m string) bool {
 
 // ToolsConfig selects which built-in tools are enabled. Empty means all of them.
 type ToolsConfig struct {
-	Enabled []string `toml:"enabled"`
+	Enabled []string     `toml:"enabled"`
+	Search  SearchConfig `toml:"search"`
+}
+
+// SearchConfig tunes the grep tool's engine. Engine is "auto" (default — use
+// ripgrep when it's on PATH, else the native Go scanner), "native" (always Go),
+// or "rg" (require ripgrep; warn at startup and fall back to native if absent).
+// RgPath optionally points at a specific ripgrep binary instead of a PATH lookup.
+type SearchConfig struct {
+	Engine string `toml:"engine"`
+	RgPath string `toml:"rg_path"`
 }
 
 // PermissionsConfig declares the per-call permission policy (see
@@ -336,10 +395,11 @@ func Default() *Config {
 		Codegraph: CodegraphConfig{Enabled: true, AutoInstall: true},
 		// LSP tools on by default, but dormant until a language server is on PATH;
 		// a missing server yields an install hint rather than an error.
-		LSP: LSPConfig{Enabled: true},
+		LSP:     LSPConfig{Enabled: true},
+		Network: NetworkConfig{ProxyMode: netclient.ModeAuto},
 		Providers: []ProviderEntry{
-			{Name: "deepseek-flash", Kind: "openai", BaseURL: "https://api.deepseek.com", Model: "deepseek-v4-flash", APIKeyEnv: "DEEPSEEK_API_KEY", BalanceURL: "https://api.deepseek.com/user/balance", ContextWindow: 1_000_000, Price: &provider.Pricing{CacheHit: 0.02, Input: 1, Output: 2, Currency: "¥"}},
-			{Name: "deepseek-pro", Kind: "openai", BaseURL: "https://api.deepseek.com", Model: "deepseek-v4-pro", APIKeyEnv: "DEEPSEEK_API_KEY", BalanceURL: "https://api.deepseek.com/user/balance", ContextWindow: 1_000_000, Price: &provider.Pricing{CacheHit: 0.025, Input: 3, Output: 6, Currency: "¥"}},
+			{Name: "deepseek-flash", Kind: "openai", BaseURL: "https://api.deepseek.com", Model: "deepseek-v4-flash", APIKeyEnv: "DEEPSEEK_API_KEY", BalanceURL: "https://api.deepseek.com/user/balance", ContextWindow: 1_000_000, Price: &provider.Pricing{CacheHit: 0.02, Input: 1, Output: 2, Currency: "¥"}, Effort: "high"},
+			{Name: "deepseek-pro", Kind: "openai", BaseURL: "https://api.deepseek.com", Model: "deepseek-v4-pro", APIKeyEnv: "DEEPSEEK_API_KEY", BalanceURL: "https://api.deepseek.com/user/balance", ContextWindow: 1_000_000, Price: &provider.Pricing{CacheHit: 0.025, Input: 3, Output: 6, Currency: "¥"}, Effort: "high"},
 			{Name: "mimo-pro", Kind: "openai", BaseURL: "https://token-plan-cn.xiaomimimo.com/v1", Model: "mimo-v2.5-pro", APIKeyEnv: "MIMO_API_KEY", ContextWindow: 1_000_000, Price: &provider.Pricing{CacheHit: 0.025, Input: 3, Output: 6, Currency: "¥"}},
 			{Name: "mimo-flash", Kind: "openai", BaseURL: "https://token-plan-cn.xiaomimimo.com/v1", Model: "mimo-v2.5", APIKeyEnv: "MIMO_API_KEY", ContextWindow: 1_000_000, Price: &provider.Pricing{CacheHit: 0.02, Input: 1, Output: 2, Currency: "¥"}},
 		},
@@ -353,14 +413,25 @@ func Load() (*Config, error) {
 	loadDotEnv()
 	cfg := Default()
 
+	var tomlSources []string
 	if uc := userConfigPath(); uc != "" {
-		if err := mergeFile(cfg, uc); err != nil {
+		tomlSources = append(tomlSources, uc)
+	}
+	tomlSources = append(tomlSources, "reasonix.toml")
+	for _, path := range tomlSources {
+		if err := mergeFile(cfg, path); err != nil {
 			return nil, err
 		}
 	}
-	if err := mergeFile(cfg, "reasonix.toml"); err != nil {
+	// toml.DecodeFile replaces [[plugins]] wholesale, so cfg.Plugins now holds
+	// only the last file's. Re-merge by name across all sources (later wins) so a
+	// project reasonix.toml doesn't drop the global config's MCP servers.
+	plugins, err := mergeTOMLPlugins(tomlSources)
+	if err != nil {
 		return nil, err
 	}
+	cfg.Plugins = plugins
+
 	// Claude Code's .mcp.json (project root) is read last and merged into
 	// [[plugins]], so a server configured for Claude works here unchanged.
 	// reasonix.toml wins on a name collision (see mergeMCPJSON).
@@ -370,6 +441,30 @@ func Load() (*Config, error) {
 	}
 	cfg.mergeMCPJSON(entries)
 	return cfg, nil
+}
+
+// mergeTOMLPlugins merges [[plugins]] across TOML sources by name (later source wins).
+func mergeTOMLPlugins(paths []string) ([]PluginEntry, error) {
+	var merged []PluginEntry
+	index := map[string]int{}
+	for _, path := range paths {
+		if _, err := os.Stat(path); err != nil {
+			continue
+		}
+		var f Config
+		if _, err := toml.DecodeFile(path, &f); err != nil {
+			return nil, fmt.Errorf("config %s: %w", path, err)
+		}
+		for _, p := range f.Plugins {
+			if i, ok := index[p.Name]; ok {
+				merged[i] = p
+				continue
+			}
+			index[p.Name] = len(merged)
+			merged = append(merged, p)
+		}
+	}
+	return merged, nil
 }
 
 // LoadForEdit returns a config to seed the `reasonix setup` wizard when reconfiguring:
@@ -429,6 +524,19 @@ func SessionDir() string {
 		return ""
 	}
 	return filepath.Join(dir, "reasonix", "sessions")
+}
+
+// CacheDir is the per-user cache root for derived/regenerable artefacts: MCP
+// handshake snapshots, plugin startup-latency telemetry. Lives beside the
+// existing dirs (UserConfigDir/reasonix/...) so the whole reasonix state tree
+// shares one root the user can wipe in a single rm. Empty when the OS dir is
+// unavailable — callers must tolerate that (caching is best-effort).
+func CacheDir() string {
+	dir, err := os.UserConfigDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(dir, "reasonix", "cache")
 }
 
 // MemoryUserDir returns the reasonix user config root (…/reasonix), under which

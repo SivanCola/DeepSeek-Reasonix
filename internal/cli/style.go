@@ -26,7 +26,11 @@ const (
 	ansiBold    = "\033[1m"
 	ansiDim     = "\033[2m"
 	ansiGreen   = "\033[32m"
+	ansiRed     = "\033[31m"
 	ansiYellow  = "\033[33m"
+	ansiBlue    = "\033[38;5;39m"
+	ansiCyan    = "\033[38;5;44m"
+	ansiMagenta = "\033[38;5;176m"
 	ansiReverse = "\033[7m"
 	// ansiAccent is reasonix's brand colour: a warm copper (xterm-256 #173) chosen
 	// to read on both dark and light terminals. It marks titles, prompts, and
@@ -44,6 +48,7 @@ func sgr(code, s string) string {
 func bold(s string) string    { return sgr(ansiBold, s) }
 func dim(s string) string     { return sgr(ansiDim, s) }
 func green(s string) string   { return sgr(ansiGreen, s) }
+func red(s string) string     { return sgr(ansiRed, s) }
 func yellow(s string) string  { return sgr(ansiYellow, s) }
 func accent(s string) string  { return sgr(ansiAccent, s) }
 func reverse(s string) string { return sgr(ansiReverse, s) }
