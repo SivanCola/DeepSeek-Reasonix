@@ -1,6 +1,10 @@
 package cli
 
-import "fmt"
+import (
+	"fmt"
+
+	"reasonix/internal/i18n"
+)
 
 // showMemory reports what memory is loaded and where it lives — the TUI analog
 // of Claude Code's /memory. It surfaces the doc files and the auto-memory store
@@ -9,7 +13,7 @@ import "fmt"
 func (m *chatTUI) showMemory() {
 	set := m.ctrl.Memory()
 	if set == nil || set.Empty() {
-		m.notice("memory: none — add with “#<note>” or create REASONIX.md in the project root")
+		m.notice(i18n.M.MemoryNone)
 		return
 	}
 	m.commitLine(renderMemory(m.width, set))
@@ -19,12 +23,12 @@ func (m *chatTUI) showMemory() {
 // It is the manual counterpart to the model's `forget` tool.
 func (m *chatTUI) forgetMemory(name string) {
 	if name == "" {
-		m.notice("usage: /forget <name> — the slug shown under “saved memories” in /memory")
+		m.notice(i18n.M.ForgetUsage)
 		return
 	}
 	if err := m.ctrl.ForgetMemory(name); err != nil {
 		m.notice(fmt.Sprintf("forget: %v", err))
 		return
 	}
-	m.notice("forgot memory: " + name)
+	m.notice(fmt.Sprintf(i18n.M.ForgetDoneFmt, name))
 }

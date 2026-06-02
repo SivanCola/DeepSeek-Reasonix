@@ -7,6 +7,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"reasonix/internal/config"
+	"reasonix/internal/i18n"
 )
 
 // runModelSubcommand handles "/model": with no argument it lists the configured
@@ -21,22 +22,22 @@ func (m *chatTUI) runModelSubcommand(input string) {
 	}
 	ref := args[1]
 	if m.buildController == nil {
-		m.notice("model switching is unavailable in this session")
+		m.notice(i18n.M.ModelSwitchUnavailable)
 		return
 	}
 	if m.ctrl.Running() {
-		m.notice("finish or cancel the current turn before switching models")
+		m.notice(i18n.M.ModelSwitchBusy)
 		return
 	}
 	if ref == m.modelRef {
-		m.notice("already on " + ref)
+		m.notice(fmt.Sprintf(i18n.M.ModelAlreadyOnFmt, ref))
 		return
 	}
 	carried := m.ctrl.History()
 	if err := m.ctrl.Snapshot(); err != nil {
 		slog.Warn("model switch: snapshot failed", "err", err)
 	}
-	m.notice(fmt.Sprintf("switching to %s…", ref))
+	m.notice(fmt.Sprintf(i18n.M.ModelSwitchingFmt, ref))
 
 	// Capture old controller for cleanup after the async build succeeds.
 	oldCtrl := m.ctrl

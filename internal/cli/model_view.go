@@ -3,11 +3,13 @@ package cli
 import (
 	"fmt"
 	"strings"
+
+	"reasonix/internal/i18n"
 )
 
 func renderModels(width int, refs []string, active string) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "%s\n", viewHeader("models"))
+	fmt.Fprintf(&b, "%s\n", viewHeader("%s", i18n.M.ModelListHeader))
 	for _, ref := range refs {
 		status := ""
 		if ref == active {
