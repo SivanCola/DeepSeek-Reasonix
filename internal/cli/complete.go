@@ -74,6 +74,7 @@ func (m *chatTUI) slashItems() []compItem {
 		{label: "/thinking", insert: "/thinking ", hint: i18n.M.CmdThinking, descend: true},
 		{label: "/help", insert: "/help ", hint: i18n.M.CmdHelp},
 		{label: "/memory", insert: "/memory ", hint: i18n.M.CmdMemory},
+		{label: "/remember", insert: "/remember ", hint: i18n.M.CmdRemember},
 		{label: "/forget", insert: "/forget ", hint: i18n.M.CmdForget},
 		{label: "/quit", insert: "/quit", hint: i18n.M.CmdQuit},
 	}

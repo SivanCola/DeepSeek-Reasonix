@@ -724,13 +724,12 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, tea.Quit
 			}
 
-			// "#<note>" quick-adds a memory line locally, no model turn —
-			// mirroring Claude Code's "#" memory shortcut.
-			if strings.HasPrefix(line, "#") {
+			// "# <note>" quick-adds a memory line locally, no model turn. The
+			// space keeps "#7" / "#issue" prompts from being swallowed.
+			if note, ok := control.MemoryQuickAddNote(line); ok {
 				m.input.Reset()
 				m.input.SetHeight(1)
 				m.pastedBlocks = nil
-				note := strings.TrimSpace(strings.TrimPrefix(line, "#"))
 				if note == "" {
 					m.notice("nothing to remember")
 				} else if path, err := m.ctrl.QuickAdd(memory.ScopeProject, note); err != nil {
@@ -2274,6 +2273,15 @@ func (m *chatTUI) runSlashCommand(input string) tea.Cmd {
 		}
 	case "/memory":
 		m.showMemory()
+	case "/remember":
+		note := strings.TrimSpace(strings.TrimPrefix(input, cmd))
+		if note == "" {
+			m.notice("nothing to remember")
+		} else if path, err := m.ctrl.QuickAdd(memory.ScopeProject, note); err != nil {
+			m.notice("memory: " + err.Error())
+		} else {
+			m.notice("remembered → " + path)
+		}
 	case "/quit", "/exit":
 		return tea.Quit
 	case "/forget":

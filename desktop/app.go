@@ -707,6 +707,7 @@ func (a *App) Commands() []CommandInfo {
 		{Name: "compact", Description: i18n.M.CmdCompact, Kind: "builtin"},
 		{Name: "model", Description: i18n.M.CmdModel, Kind: "builtin"},
 		{Name: "memory", Description: i18n.M.CmdMemory, Kind: "builtin"},
+		{Name: "remember", Description: i18n.M.CmdRemember, Kind: "builtin"},
 		{Name: "mcp", Description: i18n.M.CmdMcp, Kind: "builtin"},
 		{Name: "hooks", Description: i18n.M.CmdHooks, Kind: "builtin"},
 		{Name: "skill", Description: i18n.M.CmdSkill, Kind: "builtin"},
@@ -1463,8 +1464,8 @@ func (a *App) Memory() MemoryView {
 }
 
 // Remember quick-adds a one-line note to the doc-memory file for scope — the
-// panel's explicit "remember" action, equivalent to typing "#<note>". An unknown
-// scope falls back to project. Returns the file written.
+// panel's explicit "remember" action, equivalent to typing "/remember <note>".
+// An unknown scope falls back to project. Returns the file written.
 func (a *App) Remember(scope, note string) (string, error) {
 	a.mu.RLock()
 	ctrl := a.ctrl

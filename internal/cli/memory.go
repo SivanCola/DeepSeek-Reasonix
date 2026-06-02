@@ -9,7 +9,7 @@ import "fmt"
 func (m *chatTUI) showMemory() {
 	set := m.ctrl.Memory()
 	if set == nil || set.Empty() {
-		m.notice("memory: none — add with “#<note>” or create REASONIX.md in the project root")
+		m.notice("memory: none — add with “/remember <note>” or create REASONIX.md in the project root")
 		return
 	}
 	m.notice("memory loaded:")
@@ -27,7 +27,7 @@ func (m *chatTUI) showMemory() {
 		}
 		m.notice("  stored under " + set.Store.Dir)
 	}
-	m.notice("edit doc files or use “#<note>”; doc edits apply next session")
+	m.notice("edit doc files or use “/remember <note>”; doc edits apply next session")
 }
 
 // forgetMemory deletes a saved auto-memory by name (the slug shown in /memory).
