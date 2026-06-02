@@ -112,12 +112,14 @@ func TestHTTPClientProxyModesAffectRequests(t *testing.T) {
 	}))
 	t.Cleanup(customProxy.Close)
 
-	t.Setenv("HTTP_PROXY", envProxy.URL)
+	// Windows env vars are case-insensitive, so HTTP_PROXY and http_proxy are the
+	// same var — set the intended value last or the empty clear wipes it.
 	t.Setenv("http_proxy", "")
 	t.Setenv("HTTPS_PROXY", "")
 	t.Setenv("https_proxy", "")
 	t.Setenv("NO_PROXY", "")
 	t.Setenv("no_proxy", "")
+	t.Setenv("HTTP_PROXY", envProxy.URL)
 
 	tests := []struct {
 		name           string
@@ -285,12 +287,13 @@ func TestHTTPSRequestsRespectProxyModes(t *testing.T) {
 	proxy := newConnectProxy(t, targetAddr, &proxyHits)
 	t.Cleanup(proxy.Close)
 
+	// Set HTTPS_PROXY last: on Windows it and https_proxy are the same var.
 	t.Setenv("HTTP_PROXY", "")
 	t.Setenv("http_proxy", "")
-	t.Setenv("HTTPS_PROXY", proxy.URL)
 	t.Setenv("https_proxy", "")
 	t.Setenv("NO_PROXY", "")
 	t.Setenv("no_proxy", "")
+	t.Setenv("HTTPS_PROXY", proxy.URL)
 
 	tests := []struct {
 		name          string
