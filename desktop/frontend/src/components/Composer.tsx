@@ -1,10 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, ClipboardEvent, DragEvent, KeyboardEvent, PointerEvent as ReactPointerEvent } from "react";
-import { ArrowUp, Check, ChevronDown, Eye, FileText, FolderGit2, FolderPlus, Search, Square, Trash2, X } from "lucide-react";
+import { ArrowUp, Check, ChevronDown, Eye, FileText, Folder, FolderGit2, FolderPlus, Search, Square, Trash2, X } from "lucide-react";
 import { app } from "../lib/bridge";
 import { useT } from "../lib/i18n";
 import { clearLayoutSize, loadOptionalLayoutSize, saveLayoutSize } from "../lib/layoutPreferences";
 import type { CommandInfo, ComposerInsertRequest, DirEntry, Mode, SlashArgItem, SlashArgsResult, WorkspaceView } from "../lib/types";
+import {
+  formatWorkspaceReference,
+  parseWorkspaceReference,
+  readWorkspaceReferenceDrag,
+  WORKSPACE_REF_DRAG_TYPE,
+} from "../lib/workspaceDrag";
 import { SlashMenu } from "./SlashMenu";
 import { ArgMenu } from "./ArgMenu";
 import { FileMenu } from "./FileMenu";
@@ -12,6 +18,11 @@ import { FileMenu } from "./FileMenu";
 interface Attachment {
   path: string;
   previewUrl?: string;
+}
+
+interface WorkspaceReference {
+  path: string;
+  isDir?: boolean;
 }
 
 const LONG_PASTE_MIN_CHARS = 2000;
@@ -40,6 +51,15 @@ function shouldFoldPaste(s: string): boolean {
 
 function renderPastedBlock(block: PastedBlock): string {
   return `${block.label}\n\n--- Begin ${block.label} ---\n${block.text}\n--- End ${block.label} ---`;
+}
+
+function baseName(path: string): string {
+  const clean = path.replace(/\/$/, "");
+  return clean.split("/").filter(Boolean).pop() ?? path;
+}
+
+function workspaceReferenceKey(ref: WorkspaceReference): string {
+  return `${ref.isDir ? "dir" : "file"}:${ref.path}`;
 }
 
 function composerMaxHeight(): number {
@@ -98,6 +118,7 @@ export function Composer({
   const t = useT();
   const [text, setText] = useState("");
   const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const [workspaceRefs, setWorkspaceRefs] = useState<WorkspaceReference[]>([]);
   const [pastedBlocks, setPastedBlocks] = useState<PastedBlock[]>([]);
   const [openPastedLabels, setOpenPastedLabels] = useState<string[]>([]);
   const [pendingPaste, setPendingPaste] = useState(0);
@@ -287,9 +308,23 @@ export function Composer({
     });
   };
 
+  const addWorkspaceReference = (ref: WorkspaceReference) => {
+    setWorkspaceRefs((prev) => {
+      const key = workspaceReferenceKey(ref);
+      if (prev.some((item) => workspaceReferenceKey(item) === key)) return prev;
+      return [...prev, ref];
+    });
+    requestAnimationFrame(() => taRef.current?.focus());
+  };
+
   useEffect(() => {
     if (!insertRequest || insertRequest.id === consumedInsertIdRef.current) return;
     consumedInsertIdRef.current = insertRequest.id;
+    const ref = parseWorkspaceReference(insertRequest.text);
+    if (ref) {
+      addWorkspaceReference(ref);
+      return;
+    }
     insertTextAtCaret(insertRequest.text);
   }, [insertRequest]);
 
@@ -306,13 +341,17 @@ export function Composer({
   const submit = () => {
     if (disabled) return;
     const t = text.trim();
-    if ((!t && attachments.length === 0) || pendingPaste > 0) return;
-    const refs = attachments.map((a) => `@${a.path}`).join(" ");
+    if ((!t && attachments.length === 0 && workspaceRefs.length === 0) || pendingPaste > 0) return;
+    const refs = [
+      ...workspaceRefs.map((ref) => formatWorkspaceReference(ref.path, ref.isDir)),
+      ...attachments.map((a) => `@${a.path}`),
+    ].join(" ");
     const displayText = [t, refs].filter(Boolean).join(t && refs ? " " : "");
     const submitText = [expandPastedBlocks(t), refs].filter(Boolean).join(t && refs ? " " : "");
     onSend(displayText, submitText);
     setText("");
     setAttachments([]);
+    setWorkspaceRefs([]);
   };
 
   const readFileAsDataURL = (file: File) =>
@@ -398,7 +437,21 @@ export function Composer({
     });
   };
 
+  const hasWorkspaceReferenceDrag = (dataTransfer: DataTransfer): boolean =>
+    Array.from(dataTransfer.types).includes(WORKSPACE_REF_DRAG_TYPE);
+
+  const hasFileDrag = (dataTransfer: DataTransfer): boolean =>
+    Array.from(dataTransfer.items).some((it) => it.kind === "file") || dataTransfer.files.length > 0;
+
   const onDrop = (e: DragEvent<HTMLDivElement>) => {
+    const droppedWorkspaceRef = readWorkspaceReferenceDrag(e.dataTransfer);
+    if (droppedWorkspaceRef) {
+      e.preventDefault();
+      setDragOver(false);
+      addWorkspaceReference(droppedWorkspaceRef);
+      return;
+    }
+
     const files = Array.from(e.dataTransfer.files);
     if (files.length === 0) return;
     e.preventDefault();
@@ -407,8 +460,9 @@ export function Composer({
   };
 
   const onDragOver = (e: DragEvent<HTMLDivElement>) => {
-    if (!Array.from(e.dataTransfer.items).some((it) => it.kind === "file")) return;
+    if (!hasWorkspaceReferenceDrag(e.dataTransfer) && !hasFileDrag(e.dataTransfer)) return;
     e.preventDefault(); // required for the drop event to fire
+    e.dataTransfer.dropEffect = "copy";
     setDragOver(true);
   };
 
@@ -424,6 +478,12 @@ export function Composer({
   const pickCommand = (c: CommandInfo) => setTextCaretEnd("/" + c.name + " ");
 
   const activePastedBlocks = pastedBlocks.filter((block) => text.includes(block.label));
+
+  const removeWorkspaceReference = (target: WorkspaceReference) => {
+    const key = workspaceReferenceKey(target);
+    setWorkspaceRefs((prev) => prev.filter((ref) => workspaceReferenceKey(ref) !== key));
+    requestAnimationFrame(() => taRef.current?.focus());
+  };
 
   const togglePastedPreview = (label: string) => {
     setOpenPastedLabels((prev) => (prev.includes(label) ? prev.filter((x) => x !== label) : [...prev, label]));
@@ -654,11 +714,15 @@ export function Composer({
         <ArgMenu items={argRes.items} activeIndex={active} onPick={pickArg} onHover={setActive} />
       )}
       {menuMode === "at" && <FileMenu items={atMatches} activeIndex={active} onPick={pickEntry} onHover={setActive} />}
-      {attachments.length > 0 && (
-        <div className="composer__attachments">
+      {(attachments.length > 0 || workspaceRefs.length > 0) && (
+        <div className="composer-context" aria-label={t("composer.contextItems")}>
           {attachments.map((a) => (
-            <div className="composer__attachment" key={a.path}>
-              {a.previewUrl ? <img src={a.previewUrl} alt="" /> : <FileText size={16} />}
+            <div
+              className={`composer-context__item${a.previewUrl ? " composer-context__item--image" : " composer-context__item--attachment"}`}
+              key={a.path}
+              title={a.path}
+            >
+              {a.previewUrl ? <img src={a.previewUrl} alt="" /> : <FileText size={15} />}
               <span>{a.path.split("/").pop()}</span>
               <button
                 type="button"
@@ -666,6 +730,23 @@ export function Composer({
                 onClick={() => setAttachments((prev) => prev.filter((x) => x.path !== a.path))}
               >
                 <X size={14} />
+              </button>
+            </div>
+          ))}
+          {workspaceRefs.map((ref) => (
+            <div
+              className={`composer-context__item composer-context__item--workspace${ref.isDir ? " composer-context__item--folder" : " composer-context__item--file"}`}
+              key={workspaceReferenceKey(ref)}
+              title={formatWorkspaceReference(ref.path, ref.isDir)}
+            >
+              {ref.isDir ? <Folder size={15} /> : <FileText size={15} />}
+              <span>{ref.isDir ? `${baseName(ref.path)}/` : baseName(ref.path)}</span>
+              <button
+                type="button"
+                title={t("composer.removeReference")}
+                onClick={() => removeWorkspaceReference(ref)}
+              >
+                <X size={13} />
               </button>
             </div>
           ))}
@@ -743,7 +824,7 @@ export function Composer({
             <button
               className="composer__btn composer__btn--send"
               onClick={submit}
-              disabled={pendingPaste > 0 || (!text.trim() && attachments.length === 0) || disabled}
+              disabled={pendingPaste > 0 || (!text.trim() && attachments.length === 0 && workspaceRefs.length === 0) || disabled}
               title={t("composer.send")}
             >
               <ArrowUp size={16} />

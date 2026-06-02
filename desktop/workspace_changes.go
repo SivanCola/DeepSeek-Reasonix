@@ -100,7 +100,7 @@ func (a *App) WorkspaceChanges() WorkspaceChangesView {
 }
 
 func workspaceGitStatus(base string) ([]gitStatusEntry, error) {
-	cmd := exec.Command("git", "-C", base, "status", "--porcelain=v1", "-z", "--untracked-files=normal")
+	cmd := exec.Command("git", "-C", base, "status", "--porcelain=v1", "-z", "--untracked-files=all")
 	raw, err := cmd.Output()
 	if err != nil {
 		return nil, err

@@ -62,6 +62,9 @@ export const zh: Record<DictKey, string> = {
   "workspace.binary": "暂不支持预览二进制文件。",
   "workspace.truncated": "预览已截断到前 256 KB。",
   "workspace.addSelectionToChat": "添加到聊天",
+  "workspace.addFileReferenceToChat": "添加文件引用",
+  "workspace.addFolderReferenceToChat": "添加文件夹引用",
+  "workspace.addFileContentToChat": "添加文件内容",
   "workspace.viewMode": "工作区视图",
   "workspace.filesTab": "文件",
   "workspace.changedTab": "改动",
@@ -71,6 +74,7 @@ export const zh: Record<DictKey, string> = {
   "workspace.gitUnavailable": "当前工作区不可读取 Git 状态。",
   "workspace.sourceSession": "会话",
   "workspace.sourceGit": "Git",
+  "workspace.deleted": "已删除",
 
   // MCP 与技能抽屉
   "caps.title": "MCP 与技能",
@@ -161,6 +165,9 @@ export const zh: Record<DictKey, string> = {
   "composer.pastedExpand": "展开",
   "composer.pastedRemove": "删除粘贴文本",
   "composer.removeImage": "移除图片",
+  "composer.contextItems": "上下文项目",
+  "composer.workspaceReferences": "工作区引用",
+  "composer.removeReference": "移除引用",
 
   // 状态栏
   "status.connecting": "连接中…",

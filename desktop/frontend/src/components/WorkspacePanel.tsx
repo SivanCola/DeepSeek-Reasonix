@@ -1,5 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { CSSProperties, KeyboardEvent, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from "react";
+import type {
+  CSSProperties,
+  DragEvent as ReactDragEvent,
+  KeyboardEvent,
+  MouseEvent as ReactMouseEvent,
+  PointerEvent as ReactPointerEvent,
+} from "react";
 import {
   ChevronDown,
   ChevronRight,
@@ -21,13 +27,17 @@ import { app } from "../lib/bridge";
 import { useT } from "../lib/i18n";
 import { loadLayoutSize, saveLayoutSize } from "../lib/layoutPreferences";
 import type { DirEntry, FilePreview, WorkspaceChangeView, WorkspaceChangesView } from "../lib/types";
+import { formatWorkspaceReference, WORKSPACE_REF_DRAG_TYPE } from "../lib/workspaceDrag";
 import { CodeViewer } from "./CodeViewer";
+import { FloatingMenu, FloatingMenuItems } from "./FloatingMenu";
 import { Markdown } from "./Markdown";
 
 const WORKSPACE_TREE_MIN_WIDTH = 220;
 const WORKSPACE_TREE_DEFAULT_WIDTH = WORKSPACE_TREE_MIN_WIDTH;
 const WORKSPACE_TREE_MAX_WIDTH = 420;
 const WORKSPACE_PREVIEW_MIN_WIDTH = 420;
+const WORKSPACE_CONTEXT_MENU_FILE_HEIGHT = 92;
+const WORKSPACE_CONTEXT_MENU_REF_HEIGHT = 48;
 
 function clampWorkspaceTreeWidth(width: number, panelWidth?: number): number {
   const maxForPanel =
@@ -124,6 +134,17 @@ function formatBytes(n: number): string {
   return `${n} B`;
 }
 
+function isDeletedChange(row: WorkspaceChangeView): boolean {
+  return !!row.gitStatus && row.gitStatus.includes("D");
+}
+
+function changeDetail(row: WorkspaceChangeView): string {
+  if (row.latestPrompt) return row.latestPrompt;
+  if (row.oldPath) return `← ${row.oldPath}`;
+  if (row.turns && row.turns.length > 0) return `#${row.turns.join(", #")}`;
+  return row.path;
+}
+
 export function WorkspacePanel({
   open,
   cwd,
@@ -159,6 +180,8 @@ export function WorkspacePanel({
   const [changes, setChanges] = useState<WorkspaceChangesView | null>(null);
   const [loadingChanges, setLoadingChanges] = useState(false);
   const [selectionMenu, setSelectionMenu] = useState<{ x: number; y: number; text: string; path: string } | null>(null);
+  const [treeMenu, setTreeMenu] = useState<{ x: number; y: number; path: string; isDir: boolean } | null>(null);
+  const changesRequestRef = useRef(0);
   const [filter, setFilter] = useState("");
   const [treeVisible, setTreeVisible] = useState(true);
   const [treeWidth, setTreeWidth] = useState(loadWorkspaceTreeWidth);
@@ -170,13 +193,18 @@ export function WorkspacePanel({
   }, []);
 
   const loadChanges = useCallback(async () => {
+    const requestId = changesRequestRef.current + 1;
+    changesRequestRef.current = requestId;
     setLoadingChanges(true);
     try {
-      setChanges(await app.WorkspaceChanges());
+      const next = await app.WorkspaceChanges();
+      if (changesRequestRef.current === requestId) setChanges(next);
     } catch (err) {
-      setChanges({ files: [], gitAvailable: false, gitErr: String((err as Error)?.message ?? err) });
+      if (changesRequestRef.current === requestId) {
+        setChanges({ files: [], gitAvailable: false, gitErr: String((err as Error)?.message ?? err) });
+      }
     } finally {
-      setLoadingChanges(false);
+      if (changesRequestRef.current === requestId) setLoadingChanges(false);
     }
   }, []);
 
@@ -203,11 +231,11 @@ export function WorkspacePanel({
     setPreview(null);
     setChanges(null);
     setSelectionMenu(null);
+    setTreeMenu(null);
     setFilter("");
     setTreeVisible(true);
     void loadDir("");
-    void loadChanges();
-  }, [cwd, loadChanges, loadDir, open]);
+  }, [cwd, loadDir, open]);
 
   useEffect(() => {
     if (!open) return;
@@ -215,8 +243,11 @@ export function WorkspacePanel({
   }, [changesRefreshKey, cwd, loadChanges, open]);
 
   useEffect(() => {
-    if (!selectionMenu) return;
-    const close = () => setSelectionMenu(null);
+    if (!selectionMenu && !treeMenu) return;
+    const close = () => {
+      setSelectionMenu(null);
+      setTreeMenu(null);
+    };
     const onKey = (event: globalThis.KeyboardEvent) => {
       if (event.key === "Escape") close();
     };
@@ -228,7 +259,7 @@ export function WorkspacePanel({
       window.removeEventListener("resize", close);
       window.removeEventListener("keydown", onKey);
     };
-  }, [selectionMenu]);
+  }, [selectionMenu, treeMenu]);
 
   const refreshSelected = useCallback(() => {
     if (!selectedPath) return;
@@ -285,6 +316,7 @@ export function WorkspacePanel({
     setPreview(null);
     setFilter("");
     setSelectionMenu(null);
+    setTreeMenu(null);
     setTreeVisible(true);
     requestAnimationFrame(() => filterRef.current?.focus());
   };
@@ -300,6 +332,7 @@ export function WorkspacePanel({
           setTreeVisible(true);
         }
         setSelectionMenu(null);
+        setTreeMenu(null);
       }
       return next;
     });
@@ -437,29 +470,77 @@ export function WorkspacePanel({
     setSelectionMenu(null);
   };
 
+  const openTreeMenu = (event: ReactMouseEvent<HTMLElement>, path: string, isDir: boolean) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setSelectionMenu(null);
+    setTreeMenu({ x: event.clientX, y: event.clientY, path, isDir });
+  };
+
+  const startTreeDrag = (event: ReactDragEvent<HTMLElement>, path: string, isDir: boolean) => {
+    const ref = formatWorkspaceReference(path, isDir);
+    event.dataTransfer.effectAllowed = "copy";
+    event.dataTransfer.setData(WORKSPACE_REF_DRAG_TYPE, JSON.stringify({ path, isDir }));
+    event.dataTransfer.setData("text/plain", ref);
+  };
+
+  const addTreeReferenceToChat = () => {
+    if (!treeMenu) return;
+    onAddToChat?.(formatWorkspaceReference(treeMenu.path, treeMenu.isDir));
+    setTreeMenu(null);
+  };
+
+  const addTreeFileToChat = async () => {
+    if (!treeMenu || treeMenu.isDir) return;
+    const target = treeMenu;
+    setTreeMenu(null);
+    try {
+      const file = await app.ReadFile(target.path);
+      if (file.err || file.binary) {
+        onAddToChat?.(formatWorkspaceReference(target.path, false));
+        return;
+      }
+      const suffix = file.truncated ? `\n\n${t("workspace.truncated")}` : "";
+      onAddToChat?.(formatSelectionReference(target.path, file.body) + suffix);
+    } catch {
+      onAddToChat?.(formatWorkspaceReference(target.path, false));
+    }
+  };
+
   const renderChangedRows = () => {
     if (loadingChanges) return <div className="workspace-empty">{t("workspace.loadingChanges")}</div>;
     if (!changes) return null;
     if (changedRows.length === 0) return <div className="workspace-empty">{t("workspace.noChanges")}</div>;
-    return changedRows.map((row) => (
-      <button
-        className={`workspace-change${selectedPath === row.path ? " workspace-change--active" : ""}`}
-        key={`${row.path}-${row.sources.join("-")}`}
-        onClick={() => selectFile(row.path)}
-        title={changeTitle(row)}
-      >
-        <FileText size={14} className="workspace-tree__icon" />
-        <span className="workspace-change__body">
-          <span className="workspace-change__name">{basename(row.path)}</span>
-          <span className="workspace-change__path">{row.path}</span>
-        </span>
-        <span className="workspace-change__meta">
-          {row.gitStatus && <span className="workspace-change__badge workspace-change__badge--git">{row.gitStatus}</span>}
-          {row.sources.includes("session") && <span className="workspace-change__badge">{t("workspace.sourceSession")}</span>}
-          {row.sources.includes("git") && <span className="workspace-change__badge">{t("workspace.sourceGit")}</span>}
-        </span>
-      </button>
-    ));
+    return changedRows.map((row) => {
+      const deleted = isDeletedChange(row);
+      return (
+        <button
+          className={`workspace-change${selectedPath === row.path ? " workspace-change--active" : ""}${deleted ? " workspace-change--disabled" : ""}`}
+          key={`${row.path}-${row.sources.join("-")}`}
+          draggable
+          onDragStart={(event) => startTreeDrag(event, row.path, false)}
+          onContextMenu={(event) => openTreeMenu(event, row.path, false)}
+          onClick={() => {
+            if (!deleted) selectFile(row.path);
+          }}
+          title={changeTitle(row)}
+          type="button"
+        >
+          <FileText size={14} className="workspace-tree__icon" />
+          <span className="workspace-change__body">
+            <span className="workspace-change__name">{basename(row.path)}</span>
+            <span className="workspace-change__path">{row.path}</span>
+            <span className="workspace-change__detail">{changeDetail(row)}</span>
+          </span>
+          <span className="workspace-change__meta">
+            {row.gitStatus && <span className="workspace-change__badge workspace-change__badge--git">{row.gitStatus}</span>}
+            {deleted && <span className="workspace-change__badge">{t("workspace.deleted")}</span>}
+            {row.sources.includes("session") && <span className="workspace-change__badge">{t("workspace.sourceSession")}</span>}
+            {row.sources.includes("git") && <span className="workspace-change__badge">{t("workspace.sourceGit")}</span>}
+          </span>
+        </button>
+      );
+    });
   };
 
   const renderRows = (dir: string, depth: number): JSX.Element[] => {
@@ -472,7 +553,10 @@ export function WorkspacePanel({
         <button
           className={`workspace-tree__row${active ? " workspace-tree__row--active" : ""}`}
           key={path}
+          draggable
+          onDragStart={(event) => startTreeDrag(event, path, entry.isDir)}
           onClick={() => (entry.isDir ? toggleDir(path) : selectFile(path))}
+          onContextMenu={(event) => openTreeMenu(event, path, entry.isDir)}
           title={path}
           style={{ paddingLeft: 8 + depth * 14 }}
         >
@@ -619,20 +703,17 @@ export function WorkspacePanel({
             </>
           ) : null}
           {selectionMenu && (
-            <div
-              className="workspace-selection-menu"
-              style={{ left: selectionMenu.x, top: selectionMenu.y }}
-              onMouseDown={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
-              }}
-              onClick={(e) => e.stopPropagation()}
-            >
-              <button type="button" onClick={addSelectionToChat}>
-                <MessageSquarePlus size={14} />
-                <span>{t("workspace.addSelectionToChat")}</span>
-              </button>
-            </div>
+            <FloatingMenu x={selectionMenu.x} y={selectionMenu.y} estimatedHeight={WORKSPACE_CONTEXT_MENU_REF_HEIGHT}>
+              <FloatingMenuItems
+                items={[
+                  {
+                    icon: <MessageSquarePlus size={14} />,
+                    label: t("workspace.addSelectionToChat"),
+                    onSelect: addSelectionToChat,
+                  },
+                ]}
+              />
+            </FloatingMenu>
           )}
         </div>
       </section>}
@@ -704,7 +785,10 @@ export function WorkspacePanel({
                   <button
                     className={`workspace-tree__row workspace-tree__row--search${selectedPath === path ? " workspace-tree__row--active" : ""}`}
                     key={path}
+                    draggable
+                    onDragStart={(event) => startTreeDrag(event, path, entry.isDir)}
                     onClick={() => (entry.isDir ? toggleDir(path) : selectFile(path))}
+                    onContextMenu={(event) => openTreeMenu(event, path, entry.isDir)}
                     title={cleanPath}
                   >
                     {entry.isDir ? (
@@ -722,6 +806,33 @@ export function WorkspacePanel({
             : renderRows("", 0)}
         </div>
       </section>
+      {treeMenu && (
+        <FloatingMenu
+          x={treeMenu.x}
+          y={treeMenu.y}
+          estimatedHeight={treeMenu.isDir ? WORKSPACE_CONTEXT_MENU_REF_HEIGHT : WORKSPACE_CONTEXT_MENU_FILE_HEIGHT}
+          className="workspace-tree-menu"
+        >
+          <FloatingMenuItems
+            items={[
+              {
+                icon: <MessageSquarePlus size={14} />,
+                label: treeMenu.isDir ? t("workspace.addFolderReferenceToChat") : t("workspace.addFileReferenceToChat"),
+                onSelect: addTreeReferenceToChat,
+              },
+              ...(treeMenu.isDir
+                ? []
+                : [
+                    {
+                      icon: <FileText size={14} />,
+                      label: t("workspace.addFileContentToChat"),
+                      onSelect: () => void addTreeFileToChat(),
+                    },
+                  ]),
+            ]}
+          />
+        </FloatingMenu>
+      )}
     </aside>
   );
 }

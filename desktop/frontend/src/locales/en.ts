@@ -61,6 +61,9 @@ export const en = {
   "workspace.binary": "Binary file preview is not available.",
   "workspace.truncated": "Preview truncated to the first 256 KB.",
   "workspace.addSelectionToChat": "Add to Chat",
+  "workspace.addFileReferenceToChat": "Add file reference",
+  "workspace.addFolderReferenceToChat": "Add folder reference",
+  "workspace.addFileContentToChat": "Add file contents",
   "workspace.viewMode": "Workspace view",
   "workspace.filesTab": "Files",
   "workspace.changedTab": "Changed",
@@ -70,6 +73,7 @@ export const en = {
   "workspace.gitUnavailable": "Git status is unavailable for this workspace.",
   "workspace.sourceSession": "Session",
   "workspace.sourceGit": "Git",
+  "workspace.deleted": "Deleted",
 
   // mcp & skills drawer
   "caps.title": "MCP & Skills",
@@ -160,6 +164,9 @@ export const en = {
   "composer.pastedExpand": "Expand",
   "composer.pastedRemove": "Remove pasted text",
   "composer.removeImage": "Remove image",
+  "composer.contextItems": "Context items",
+  "composer.workspaceReferences": "Workspace references",
+  "composer.removeReference": "Remove reference",
 
   // status bar
   "status.connecting": "connecting…",

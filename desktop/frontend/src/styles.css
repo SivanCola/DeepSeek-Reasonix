@@ -2659,7 +2659,7 @@ body {
   padding: 6px 8px;
   font-size: 11.5px;
 }
-.workspace-selection-menu {
+.floating-menu {
   --wails-draggable: no-drag;
   position: fixed;
   z-index: 110;
@@ -2670,7 +2670,7 @@ body {
   background: var(--bg-elev);
   box-shadow: 0 12px 30px rgba(0, 0, 0, 0.36);
 }
-.workspace-selection-menu button {
+.floating-menu button {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -2684,7 +2684,7 @@ body {
   font-size: 12.5px;
   cursor: pointer;
 }
-.workspace-selection-menu button:hover {
+.floating-menu button:hover {
   background: var(--bg-soft);
 }
 .workspace-empty {
@@ -2846,6 +2846,13 @@ body {
   background: var(--tree-row-hover-bg);
   color: var(--fg);
 }
+.workspace-change--disabled {
+  cursor: default;
+}
+.workspace-change--disabled:hover {
+  background: transparent;
+  color: var(--fg-dim);
+}
 .workspace-change--active {
   background: var(--tree-row-current-bg);
   color: var(--tree-row-current-fg);
@@ -2858,7 +2865,8 @@ body {
   gap: 2px;
 }
 .workspace-change__name,
-.workspace-change__path {
+.workspace-change__path,
+.workspace-change__detail {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -2869,6 +2877,10 @@ body {
   font-weight: 560;
 }
 .workspace-change__path {
+  color: var(--fg-faint);
+  font-size: 11px;
+}
+.workspace-change__detail {
   color: var(--fg-faint);
   font-size: 11px;
 }
@@ -4716,37 +4728,53 @@ body {
   color: color-mix(in srgb, var(--danger-fg) 72%, transparent);
 }
 
-.composer__attachments {
+.composer-context {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
   margin-bottom: 8px;
 }
-.composer__attachment {
+.composer-context__item {
   display: inline-flex;
   align-items: center;
   gap: 7px;
-  max-width: 220px;
-  padding: 4px 6px;
+  max-width: 240px;
+  height: 32px;
+  padding: 0 6px 0 9px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: 8px;
   background: var(--panel);
   color: var(--fg-dim);
-  font-size: 12px;
+  font-size: 12.5px;
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--bg-elev) 70%, transparent);
 }
-.composer__attachment img {
-  width: 28px;
-  height: 28px;
+.composer-context__item--workspace {
+  border-color: color-mix(in srgb, var(--accent) 24%, var(--border));
+  background: color-mix(in srgb, var(--accent) 7%, var(--panel));
+}
+.composer-context__item > svg {
+  flex-shrink: 0;
+  color: var(--fg-faint);
+}
+.composer-context__item--workspace > svg {
+  color: var(--accent);
+}
+.composer-context__item img {
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
   object-fit: cover;
   border-radius: 4px;
+  border: 1px solid var(--border);
+  background: var(--bg-soft);
 }
-.composer__attachment span {
+.composer-context__item span {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.composer__attachment button {
+.composer-context__item button {
   --wails-draggable: no-drag;
   display: inline-flex;
   align-items: center;
@@ -4754,12 +4782,12 @@ body {
   width: 22px;
   height: 22px;
   border: 0;
-  border-radius: 4px;
+  border-radius: 6px;
   background: transparent;
   color: var(--fg-faint);
   cursor: pointer;
 }
-.composer__attachment button:hover {
+.composer-context__item button:hover {
   color: var(--fg);
   background: var(--hover);
 }

@@ -258,6 +258,38 @@ func TestWorkspaceChangesGitStatus(t *testing.T) {
 	}
 }
 
+func TestWorkspaceChangesUntrackedDirectoryListsFiles(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	orig, _ := os.Getwd()
+	defer os.Chdir(orig)
+
+	dir := t.TempDir()
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, "init")
+	if err := os.MkdirAll(filepath.Join("newdir", "nested"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join("newdir", "nested", "file.txt"), []byte("new\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got := (&App{}).WorkspaceChanges()
+	byPath := map[string]WorkspaceChangeView{}
+	for _, file := range got.Files {
+		byPath[file.Path] = file
+	}
+	if byPath["newdir/"].GitStatus != "" {
+		t.Fatalf("directory should not be listed as a changed file: %+v", got.Files)
+	}
+	if byPath["newdir/nested/file.txt"].GitStatus != "??" {
+		t.Fatalf("untracked file missing from directory: %+v", got.Files)
+	}
+}
+
 func runGit(t *testing.T, args ...string) {
 	t.Helper()
 	cmd := exec.Command("git", args...)
