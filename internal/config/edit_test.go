@@ -169,6 +169,33 @@ func TestPermissionMutators(t *testing.T) {
 	}
 }
 
+func TestSkillPathMutators(t *testing.T) {
+	c := Default()
+	root := t.TempDir()
+	if err := c.AddSkillPath(root); err != nil {
+		t.Fatalf("add skill path: %v", err)
+	}
+	if err := c.AddSkillPath(filepath.Join(root, ".")); err != nil {
+		t.Fatalf("duplicate skill path: %v", err)
+	}
+	if len(c.Skills.Paths) != 1 {
+		t.Fatalf("paths = %v, want one deduped entry", c.Skills.Paths)
+	}
+	if err := c.AddSkillPath(" "); err == nil {
+		t.Fatal("empty skill path should error")
+	}
+	removed, err := c.RemoveSkillPath(filepath.Join(root, "."))
+	if err != nil || !removed {
+		t.Fatalf("remove skill path: removed=%v err=%v", removed, err)
+	}
+	if len(c.Skills.Paths) != 0 {
+		t.Fatalf("paths after remove = %v", c.Skills.Paths)
+	}
+	if removed, err := c.RemoveSkillPath(root); err != nil || removed {
+		t.Fatalf("remove absent: removed=%v err=%v", removed, err)
+	}
+}
+
 func TestPluginMutators(t *testing.T) {
 	c := Default()
 

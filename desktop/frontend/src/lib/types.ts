@@ -184,9 +184,19 @@ export interface SkillView {
   scope: string;
   runAs: string;
 }
+export interface SkillRootView {
+  dir: string;
+  scope: string;
+  priority: number;
+  status: string;
+  configured: boolean;
+  skills: number;
+  warning?: string;
+}
 export interface CapabilitiesView {
   servers: ServerView[];
   skills: SkillView[];
+  skillRoots: SkillRootView[];
 }
 export interface MCPServerInput {
   name: string;

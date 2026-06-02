@@ -24,6 +24,7 @@ import type {
   ServerView,
   SessionMeta,
   SettingsView,
+  SkillRootView,
   SkillView,
   SlashArgsResult,
   UpdateInfo,
@@ -78,6 +79,10 @@ export interface AppBindings {
   AddMCPServer(input: MCPServerInput): Promise<number>;
   RemoveMCPServer(name: string): Promise<void>;
   RetryMCPServer(name: string): Promise<void>;
+  PickSkillFolder(): Promise<string>;
+  AddSkillPath(path: string): Promise<void>;
+  RemoveSkillPath(path: string): Promise<void>;
+  RefreshSkills(): Promise<void>;
   // SetMCPServerEnabled is the per-session connector toggle (on reconnects, off
   // disconnects; config untouched).
   SetMCPServerEnabled(name: string, enabled: boolean): Promise<void>;
@@ -263,6 +268,11 @@ function makeMockApp(): AppBindings {
     { name: "review", description: "Review the staged diff", scope: "project", runAs: "inline" },
     { name: "init", description: "Scaffold a REASONIX.md for this repo", scope: "builtin", runAs: "inline" },
   ];
+  let capSkillRoots: SkillRootView[] = [
+    { dir: "~/projects/reasonix/.reasonix/skills", scope: "project", priority: 1, status: "missing", configured: false, skills: 0 },
+    { dir: "~/my-skills", scope: "custom", priority: 5, status: "ok", configured: true, skills: 1 },
+    { dir: "~/.reasonix/skills", scope: "global", priority: 6, status: "ok", configured: false, skills: 2 },
+  ];
   const mockSwitchWorkspace = async (path: string) => {
     cwd = path || "~";
     workspaces = [cwd, ...workspaces.filter((p) => p !== cwd)].slice(0, 12);
@@ -424,7 +434,11 @@ function makeMockApp(): AppBindings {
       ];
     },
     async Capabilities() {
-      return { servers: capServers.map((s) => ({ ...s })), skills: capSkills.map((s) => ({ ...s })) };
+      return {
+        servers: capServers.map((s) => ({ ...s })),
+        skills: capSkills.map((s) => ({ ...s })),
+        skillRoots: capSkillRoots.map((s) => ({ ...s })),
+      };
     },
     async AddMCPServer(input: MCPServerInput) {
       const tools = input.transport === "stdio" ? 3 : 5;
@@ -450,6 +464,26 @@ function makeMockApp(): AppBindings {
         s.name === name ? { ...s, status: "connected", tools: s.tools || 4, error: undefined } : s,
       );
     },
+    async PickSkillFolder() {
+      return "~/my-skills";
+    },
+    async AddSkillPath(path: string) {
+      const dir = path.trim() || "~/my-skills";
+      if (!capSkillRoots.some((r) => r.scope === "custom" && r.dir === dir)) {
+        capSkillRoots.push({ dir, scope: "custom", priority: capSkillRoots.length + 1, status: "ok", configured: true, skills: 1 });
+      }
+      if (!capSkills.some((s) => s.name === "local-dev")) {
+        capSkills.push({ name: "local-dev", description: "Local custom development workflow", scope: "custom", runAs: "inline" });
+      }
+    },
+    async RemoveSkillPath(path: string) {
+      capSkillRoots = capSkillRoots.filter((r) => !(r.scope === "custom" && r.dir === path));
+      if (!capSkillRoots.some((r) => r.scope === "custom")) {
+        const idx = capSkills.findIndex((s) => s.name === "local-dev");
+        if (idx >= 0) capSkills.splice(idx, 1);
+      }
+    },
+    async RefreshSkills() {},
     async SetMCPServerEnabled(name: string, enabled: boolean) {
       capServers = capServers.map((s) =>
         s.name === name

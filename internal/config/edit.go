@@ -185,6 +185,57 @@ func (c *Config) ruleList(list string) (*[]string, error) {
 	}
 }
 
+// AddSkillPath appends a custom skill root, deduping by its expanded absolute
+// path while preserving the caller's original spelling in the config file.
+func (c *Config) AddSkillPath(path string) error {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return fmt.Errorf("skill path: empty path")
+	}
+	want := canonicalSkillPath(path)
+	for _, existing := range c.Skills.Paths {
+		if canonicalSkillPath(existing) == want {
+			return nil
+		}
+	}
+	c.Skills.Paths = append(c.Skills.Paths, path)
+	return nil
+}
+
+// RemoveSkillPath removes the first custom skill root matching path after
+// expansion and path cleaning. It reports whether anything changed.
+func (c *Config) RemoveSkillPath(path string) (bool, error) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return false, fmt.Errorf("skill path: empty path")
+	}
+	want := canonicalSkillPath(path)
+	for i, existing := range c.Skills.Paths {
+		if canonicalSkillPath(existing) == want {
+			c.Skills.Paths = append(c.Skills.Paths[:i], c.Skills.Paths[i+1:]...)
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func canonicalSkillPath(path string) string {
+	path = ExpandVars(strings.TrimSpace(path))
+	if strings.HasPrefix(path, "~/") || strings.HasPrefix(path, `~\`) {
+		if home, err := os.UserHomeDir(); err == nil {
+			path = filepath.Join(home, path[2:])
+		}
+	} else if path == "~" {
+		if home, err := os.UserHomeDir(); err == nil {
+			path = home
+		}
+	}
+	if abs, err := filepath.Abs(path); err == nil {
+		path = abs
+	}
+	return filepath.Clean(path)
+}
+
 // UpsertPlugin adds e, or replaces an MCP server with the same name (preserving
 // position). The transport-specific required fields are validated: stdio needs
 // a command, http/sse need a url.

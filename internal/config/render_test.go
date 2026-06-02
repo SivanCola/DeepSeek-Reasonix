@@ -20,6 +20,7 @@ func TestRenderTOMLRoundTrips(t *testing.T) {
 		Deny:  []string{"bash(rm -rf*)"},
 		Allow: []string{"bash(go test*)", "read_file"},
 	}
+	orig.Skills.Paths = []string{"~/my-skills", "../shared/skills"}
 	orig.Plugins = []PluginEntry{
 		{Name: "example", Command: "reasonix-plugin-example"},
 		{Name: "stripe", Type: "http", URL: "https://mcp.stripe.com", Headers: map[string]string{"Authorization": "Bearer x"}, AutoStart: boolPtr(false)},
@@ -80,6 +81,9 @@ func TestRenderTOMLRoundTrips(t *testing.T) {
 	}
 	if len(got.Permissions.Allow) != 2 {
 		t.Errorf("permissions.allow = %v, want 2 entries", got.Permissions.Allow)
+	}
+	if len(got.Skills.Paths) != 2 || got.Skills.Paths[0] != "~/my-skills" {
+		t.Errorf("skills.paths = %v", got.Skills.Paths)
 	}
 	if len(got.Plugins) != 2 {
 		t.Fatalf("plugins count = %d, want 2", len(got.Plugins))

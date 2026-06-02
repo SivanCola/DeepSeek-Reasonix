@@ -115,6 +115,13 @@ func RenderTOML(c *Config) string {
 		b.WriteString("]\n\n")
 	}
 
+	b.WriteString("[skills]\n")
+	if len(c.Skills.Paths) > 0 {
+		fmt.Fprintf(&b, "paths = %s   # extra custom skill roots\n\n", renderStringArray(c.Skills.Paths))
+	} else {
+		b.WriteString("# paths = [\"~/my-skills\", \"../shared/skills\"]   # extra custom skill roots\n\n")
+	}
+
 	b.WriteString("[permissions]\n")
 	b.WriteString("# Per-call gating. mode = writer fallback when no rule matches: ask|allow|deny.\n")
 	b.WriteString("# Readers always default to allow. Precedence: deny > ask > allow > fallback.\n")
