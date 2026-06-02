@@ -11,6 +11,34 @@ import (
 	"reasonix/internal/config"
 )
 
+func TestMetadataCommandsDoNotProbeTerminalTheme(t *testing.T) {
+	defer func(prev func() (terminalRGB, bool)) {
+		queryTerminalBackgroundForTheme = prev
+	}(queryTerminalBackgroundForTheme)
+	queryTerminalBackgroundForTheme = func() (terminalRGB, bool) {
+		t.Fatal("metadata command should not query terminal background")
+		return terminalRGB{}, false
+	}
+
+	out := captureStdout(t, func() {
+		if rc := Run([]string{"version"}, "test-version"); rc != 0 {
+			t.Fatalf("version rc = %d, want 0", rc)
+		}
+	})
+	if !strings.Contains(out, "reasonix test-version") {
+		t.Fatalf("version output = %q", out)
+	}
+
+	out = captureStdout(t, func() {
+		if rc := Run([]string{"help"}, "test-version"); rc != 0 {
+			t.Fatalf("help rc = %d, want 0", rc)
+		}
+	})
+	if !strings.Contains(out, "Usage:") {
+		t.Fatalf("help output missing usage:\n%s", out)
+	}
+}
+
 // TestConfigureKeys verifies that a shared api_key_env (each vendor's SKUs use
 // the same env var) is asked only once, and entered keys become env lines.
 func TestConfigureKeys(t *testing.T) {

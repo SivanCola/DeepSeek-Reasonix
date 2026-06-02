@@ -36,12 +36,10 @@ func Run(args []string, version string) int {
 		if cfg.Language != "" {
 			i18n.DetectLanguage(cfg.Language)
 		}
-		configureCLIThemeWithStyle(cfg.UITheme(), cfg.UIThemeStyle())
-	} else {
-		configureCLITheme("auto")
 	}
 
 	if len(args) == 0 {
+		configureCLIThemeFromConfigForTTYOutput()
 		return welcome(version)
 	}
 
@@ -54,19 +52,25 @@ func Run(args []string, version string) int {
 	case "serve":
 		return runServe(rest)
 	case "setup":
+		configureCLIThemeFromConfigForTTYOutput()
 		return setupConfig(rest)
 	case "init":
 		// Project memory (AGENTS.md) is model-generated in-session — `/init` runs
 		// the codebase analysis. This CLI entry just points there (and to `setup`
 		// for config), so `reasonix init` isn't a dead end.
+		configureCLIThemeFromConfigNoProbe()
 		return initHint()
 	case "acp":
+		configureCLIThemeFromConfigNoProbe()
 		return acpCommand(rest, version)
 	case "mcp":
+		configureCLIThemeFromConfigNoProbe()
 		return mcpCommand(rest)
 	case "codegraph":
+		configureCLIThemeFromConfigNoProbe()
 		return codegraphCommand(rest)
 	case "doctor":
+		configureCLIThemeFromConfigNoProbe()
 		return doctorCommand(rest, version)
 	case "version", "--version", "-v":
 		fmt.Println("reasonix", version)
@@ -79,6 +83,29 @@ func Run(args []string, version string) int {
 		usage()
 		return 2
 	}
+}
+
+func configureCLIThemeFromConfig() {
+	if cfg, err := config.Load(); err == nil {
+		configureCLIThemeWithStyle(cfg.UITheme(), cfg.UIThemeStyle())
+	} else {
+		configureCLITheme("auto")
+	}
+}
+
+func configureCLIThemeFromConfigForTTYOutput() {
+	if isTTY(os.Stdout) {
+		configureCLIThemeFromConfig()
+		return
+	}
+	configureCLIThemeFromConfigNoProbe()
+}
+
+func configureCLIThemeFromConfigNoProbe() {
+	prev := queryTerminalBackgroundForTheme
+	queryTerminalBackgroundForTheme = func() (terminalRGB, bool) { return terminalRGB{}, false }
+	defer func() { queryTerminalBackgroundForTheme = prev }()
+	configureCLIThemeFromConfig()
 }
 
 // setup builds a ready-to-drive Controller from config via boot.Build. It is a
@@ -120,9 +147,7 @@ func runAgent(args []string) int {
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
-	if cfg, err := config.Load(); err == nil {
-		configureCLIThemeWithStyle(cfg.UITheme(), cfg.UIThemeStyle())
-	}
+	configureCLIThemeFromConfigForTTYOutput()
 
 	prompt := strings.TrimSpace(strings.Join(fs.Args(), " "))
 	if prompt == "" {
