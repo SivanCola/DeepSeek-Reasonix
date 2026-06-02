@@ -334,6 +334,8 @@ func (c *Controller) runTurnWithRaw(ctx context.Context, input, raw string) erro
 	c.maybeSessionStart(ctx)
 	c.maybeAutoPlan(ctx, raw)
 	input = c.Compose(input)
+	startMessages := c.messageCount()
+	defer c.snapshotActivityIfChanged(startMessages)
 	// Open a checkpoint for this turn before the user message is appended, so the
 	// recorded message boundary precedes it and pre-edit snapshots land here.
 	c.beginCheckpoint(input)
@@ -539,6 +541,8 @@ func (c *Controller) notice(text string) {
 // just needs the exit status — no TurnDone event, no cancel bookkeeping.
 func (c *Controller) Run(ctx context.Context, input string) error {
 	c.maybeSessionStart(ctx)
+	startMessages := c.messageCount()
+	defer c.snapshotActivityIfChanged(startMessages)
 	if c.hooks.Enabled() {
 		c.turn++
 		if block, _ := c.hooks.PromptSubmit(ctx, input, c.turn); block {
@@ -1033,6 +1037,18 @@ func (c *Controller) Resume(s *agent.Session, path string) {
 // interaction). Called after every turn so a crash loses at most one in-flight
 // prompt.
 func (c *Controller) Snapshot() error {
+	return c.snapshot(false)
+}
+
+// SnapshotActivity writes the active conversation and marks the session as
+// recently active. Use it only after a real user/model turn changes the
+// transcript; switch/close snapshots should call Snapshot so they do not reorder
+// recent-session pickers.
+func (c *Controller) SnapshotActivity() error {
+	return c.snapshot(true)
+}
+
+func (c *Controller) snapshot(markActivity bool) error {
 	c.mu.Lock()
 	path := c.sessionPath
 	c.mu.Unlock()
@@ -1043,10 +1059,34 @@ func (c *Controller) Snapshot() error {
 	if !s.HasContent() {
 		return nil
 	}
+	if !markActivity {
+		if _, err := agent.EnsureBranchMeta(path); err != nil {
+			return err
+		}
+	}
 	if err := s.Save(path); err != nil {
 		return err
 	}
-	return agent.TouchBranchMeta(path)
+	if markActivity {
+		return agent.TouchBranchMeta(path)
+	}
+	return nil
+}
+
+func (c *Controller) messageCount() int {
+	if c.executor == nil {
+		return 0
+	}
+	return len(c.executor.Session().Snapshot())
+}
+
+func (c *Controller) snapshotActivityIfChanged(startMessages int) {
+	if c.messageCount() <= startMessages {
+		return
+	}
+	if err := c.SnapshotActivity(); err != nil {
+		slog.Warn("controller: activity snapshot", "err", err)
+	}
 }
 
 // SetSessionPath pins where auto-save lands (a fresh session file minted by the
