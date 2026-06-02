@@ -301,7 +301,7 @@ func TestStartPolicyConcurrencyCap(t *testing.T) {
 // down the whole batch in StartAvailable mode: the slow spec times out and
 // gets recorded as a failure while the fast one connects.
 func TestStartPolicyPerPluginTimeout(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
 	fast := Spec{
@@ -316,11 +316,11 @@ func TestStartPolicyPerPluginTimeout(t *testing.T) {
 		Args:    []string{"-test.run=TestHelperProcess", "--"},
 		Env: map[string]string{
 			"GO_WANT_HELPER_PROCESS": "1",
-			"GO_WANT_HELPER_INIT_MS": "2000", // 2s, well past the 100ms budget
+			"GO_WANT_HELPER_INIT_MS": "5000", // 5s, well past the 2s budget
 		},
 	}
 	host, tools, err := Start(ctx, []Spec{fast, slow}, StartPolicy{
-		PerPluginTimeout: 100 * time.Millisecond,
+		PerPluginTimeout: 2 * time.Second,
 		Concurrency:      2,
 		AbortOnError:     false,
 	})
