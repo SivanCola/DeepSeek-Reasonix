@@ -10,6 +10,7 @@ import { app, onEvent, onReady } from "./bridge";
 import type {
   BalanceInfo,
   ContextInfo,
+  EffortInfo,
   HistoryMessage,
   JobView,
   MemoryView,
@@ -68,6 +69,7 @@ interface State {
   // balance is the active provider's wallet readout, refreshed on mount and after
   // each turn; undefined until first fetched, available:false when not configured.
   balance?: BalanceInfo;
+  effort?: EffortInfo;
   // jobs are the running background jobs, refreshed on mount, turn end, and on
   // each notice (job start/finish emit notices).
   jobs: JobView[];
@@ -110,6 +112,7 @@ type Action =
   | { type: "meta"; meta: Meta }
   | { type: "context"; context: ContextInfo }
   | { type: "balance"; balance: BalanceInfo }
+  | { type: "effort"; effort: EffortInfo }
   | { type: "jobs"; jobs: JobView[] }
   | { type: "history"; messages: HistoryMessage[] }
   | { type: "clearApproval" }
@@ -377,6 +380,8 @@ function reducer(s: State, a: Action): State {
       return { ...s, context: a.context };
     case "balance":
       return { ...s, balance: a.balance };
+    case "effort":
+      return { ...s, effort: a.effort };
     case "jobs":
       return { ...s, jobs: a.jobs };
     case "history": {
@@ -399,7 +404,7 @@ function reducer(s: State, a: Action): State {
     case "reset":
       // Background jobs and the balance are session-scoped (the controller and its
       // job manager survive a new-session rotation), so carry them across a reset.
-      return { ...initialState, meta: s.meta, context: { ...s.context, used: 0 }, balance: s.balance, jobs: s.jobs };
+      return { ...initialState, meta: s.meta, context: { ...s.context, used: 0 }, balance: s.balance, effort: s.effort, jobs: s.jobs };
     case "event":
       return applyEvent(s, a.e);
     default:
@@ -420,6 +425,7 @@ export function useController() {
     try {
       dispatch({ type: "meta", meta: await app.Meta() });
       dispatch({ type: "context", context: await app.ContextUsage() });
+      dispatch({ type: "effort", effort: await app.Effort() });
       const history = await app.History();
       if (history && history.length) dispatch({ type: "history", messages: history });
     } catch {
@@ -442,6 +448,10 @@ export function useController() {
         app
           .Balance()
           .then((balance) => dispatch({ type: "balance", balance }))
+          .catch(() => {});
+        app
+          .Effort()
+          .then((effort) => dispatch({ type: "effort", effort }))
           .catch(() => {});
       }
       // Background jobs start/finish via notices and bound around a turn, so
@@ -466,6 +476,10 @@ export function useController() {
         .Jobs()
         .then((jobs) => dispatch({ type: "jobs", jobs }))
         .catch(() => {});
+      app
+        .Effort()
+        .then((effort) => dispatch({ type: "effort", effort }))
+        .catch(() => {});
     });
 
     // Initial load — picks up the pre-build Meta (ready=false) and, if the
@@ -477,6 +491,10 @@ export function useController() {
     app
       .Balance()
       .then((balance) => dispatch({ type: "balance", balance }))
+      .catch(() => {});
+    app
+      .Effort()
+      .then((effort) => dispatch({ type: "effort", effort }))
       .catch(() => {});
     app
       .Jobs()
@@ -566,6 +584,7 @@ export function useController() {
     try {
       dispatch({ type: "meta", meta: await app.Meta() });
       dispatch({ type: "context", context: await app.ContextUsage() });
+      dispatch({ type: "effort", effort: await app.Effort() });
     } catch {
       /* ignore */
     }
@@ -577,6 +596,7 @@ export function useController() {
       try {
         dispatch({ type: "meta", meta: await app.Meta() });
         dispatch({ type: "context", context: await app.ContextUsage() });
+        dispatch({ type: "effort", effort: await app.Effort() });
       } catch {
         /* ignore */
       }
@@ -608,6 +628,18 @@ export function useController() {
     try {
       dispatch({ type: "meta", meta: await app.Meta() });
       dispatch({ type: "context", context: await app.ContextUsage() });
+      dispatch({ type: "effort", effort: await app.Effort() });
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  const setEffort = useCallback(async (level: string) => {
+    await app.SetEffort(level).catch(() => {});
+    try {
+      dispatch({ type: "meta", meta: await app.Meta() });
+      dispatch({ type: "context", context: await app.ContextUsage() });
+      dispatch({ type: "effort", effort: await app.Effort() });
     } catch {
       /* ignore */
     }
@@ -677,6 +709,7 @@ export function useController() {
     compact,
     rewind,
     setModel,
+    setEffort,
     fetchMemory,
     remember,
     forget,
