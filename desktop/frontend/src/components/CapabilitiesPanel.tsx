@@ -296,9 +296,7 @@ function SkillSources({
                   <span className={`cap-dot cap-dot--${skillRootDot(root)}`} />
                   <div className="cap-source__text">
                     <div className="cap-source__label">{skillRootLabel(root, t)}</div>
-                    <Tooltip label={root.dir} fill className="cap-source__path">
-                      {root.dir}
-                    </Tooltip>
+                    <div className="cap-source__path">{root.dir}</div>
                     <div className="cap-source__meta">
                       <span>{skillRootStatus(root, t)}</span>
                       <span>{t("caps.skillRootCount", { skills: root.skills })}</span>
@@ -627,27 +625,25 @@ function SkillRow({
   const summary = summarizeSkillDescription(skill.description);
   const canExpand = summary !== skill.description;
   return (
-    <Tooltip label={skill.description} fill>
-      <button
-        className={`cap-skill-card${expanded ? " cap-skill-card--expanded" : ""}${canExpand ? " cap-skill-card--expandable" : ""}`}
-        type="button"
-        onClick={onToggle}
-        aria-expanded={expanded}
-      >
-        <div className="cap-skill-card__head">
-          <span className="cap-skill-card__icon">/</span>
-          <span className="cap-skill-card__main">
-            <span className="cap-skill-card__command">{skill.name}</span>
-            <span className="cap-skill-card__badges">
-              <span className={`cap-skill-badge cap-skill-badge--${skill.scope}`}>{skillScopeLabel(skill.scope, t)}</span>
-              {skill.runAs === "subagent" && <span className="cap-skill-badge cap-skill-badge--run">{t("caps.subagent")}</span>}
-            </span>
+    <button
+      className={`cap-skill-card${expanded ? " cap-skill-card--expanded" : ""}${canExpand ? " cap-skill-card--expandable" : ""}`}
+      type="button"
+      onClick={onToggle}
+      aria-expanded={expanded}
+    >
+      <div className="cap-skill-card__head">
+        <span className="cap-skill-card__icon">/</span>
+        <span className="cap-skill-card__main">
+          <span className="cap-skill-card__command">{skill.name}</span>
+          <span className="cap-skill-card__badges">
+            <span className={`cap-skill-badge cap-skill-badge--${skill.scope}`}>{skillScopeLabel(skill.scope, t)}</span>
+            {skill.runAs === "subagent" && <span className="cap-skill-badge cap-skill-badge--run">{t("caps.subagent")}</span>}
           </span>
-        </div>
-        <div className="cap-skill-card__desc">{expanded ? skill.description : summary}</div>
-        {canExpand && <div className="cap-skill-card__more">{expanded ? t("common.collapse") : t("common.expand")}</div>}
-      </button>
-    </Tooltip>
+        </span>
+      </div>
+      <div className="cap-skill-card__desc">{expanded ? skill.description : summary}</div>
+      {canExpand && <div className="cap-skill-card__more">{expanded ? t("common.collapse") : t("common.expand")}</div>}
+    </button>
   );
 }
 

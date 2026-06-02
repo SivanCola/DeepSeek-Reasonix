@@ -515,31 +515,30 @@ export function WorkspacePanel({
     return changedRows.map((row) => {
       const deleted = isDeletedChange(row);
       return (
-        <Tooltip key={`${row.path}-${row.sources.join("-")}`} label={changeTitle(row)} fill>
-          <button
-            className={`workspace-change${selectedPath === row.path ? " workspace-change--active" : ""}${deleted ? " workspace-change--disabled" : ""}`}
-            draggable
-            onDragStart={(event) => startTreeDrag(event, row.path, false)}
-            onContextMenu={(event) => openTreeMenu(event, row.path, false)}
-            onClick={() => {
-              if (!deleted) selectFile(row.path);
-            }}
-            type="button"
-          >
-            <FileText size={14} className="workspace-tree__icon" />
-            <span className="workspace-change__body">
-              <span className="workspace-change__name">{basename(row.path)}</span>
-              <span className="workspace-change__path">{row.path}</span>
-              <span className="workspace-change__detail">{changeDetail(row)}</span>
-            </span>
-            <span className="workspace-change__meta">
-              {row.gitStatus && <span className="workspace-change__badge workspace-change__badge--git">{row.gitStatus}</span>}
-              {deleted && <span className="workspace-change__badge">{t("workspace.deleted")}</span>}
-              {row.sources.includes("session") && <span className="workspace-change__badge">{t("workspace.sourceSession")}</span>}
-              {row.sources.includes("git") && <span className="workspace-change__badge">{t("workspace.sourceGit")}</span>}
-            </span>
-          </button>
-        </Tooltip>
+        <button
+          key={`${row.path}-${row.sources.join("-")}`}
+          className={`workspace-change${selectedPath === row.path ? " workspace-change--active" : ""}${deleted ? " workspace-change--disabled" : ""}`}
+          draggable
+          onDragStart={(event) => startTreeDrag(event, row.path, false)}
+          onContextMenu={(event) => openTreeMenu(event, row.path, false)}
+          onClick={() => {
+            if (!deleted) selectFile(row.path);
+          }}
+          type="button"
+        >
+          <FileText size={14} className="workspace-tree__icon" />
+          <span className="workspace-change__body">
+            <span className="workspace-change__name">{basename(row.path)}</span>
+            <span className="workspace-change__path">{row.path}</span>
+            <span className="workspace-change__detail">{changeDetail(row)}</span>
+          </span>
+          <span className="workspace-change__meta">
+            {row.gitStatus && <span className="workspace-change__badge workspace-change__badge--git">{row.gitStatus}</span>}
+            {deleted && <span className="workspace-change__badge">{t("workspace.deleted")}</span>}
+            {row.sources.includes("session") && <span className="workspace-change__badge">{t("workspace.sourceSession")}</span>}
+            {row.sources.includes("git") && <span className="workspace-change__badge">{t("workspace.sourceGit")}</span>}
+          </span>
+        </button>
       );
     });
   };
@@ -551,32 +550,31 @@ export function WorkspacePanel({
       const isOpen = openDirs.has(path);
       const active = selectedPath === path;
       const row = (
-        <Tooltip key={path} label={path} fill>
-          <button
-            className={`workspace-tree__row${active ? " workspace-tree__row--active" : ""}`}
-            draggable
-            onDragStart={(event) => startTreeDrag(event, path, entry.isDir)}
-            onClick={() => (entry.isDir ? toggleDir(path) : selectFile(path))}
-            onContextMenu={(event) => openTreeMenu(event, path, entry.isDir)}
-            style={{ paddingLeft: 8 + depth * 14 }}
-          >
-            {entry.isDir ? (
-              isOpen ? (
-                <ChevronDown size={13} className="workspace-tree__chev" />
-              ) : (
-                <ChevronRight size={13} className="workspace-tree__chev" />
-              )
+        <button
+          key={path}
+          className={`workspace-tree__row${active ? " workspace-tree__row--active" : ""}`}
+          draggable
+          onDragStart={(event) => startTreeDrag(event, path, entry.isDir)}
+          onClick={() => (entry.isDir ? toggleDir(path) : selectFile(path))}
+          onContextMenu={(event) => openTreeMenu(event, path, entry.isDir)}
+          style={{ paddingLeft: 8 + depth * 14 }}
+        >
+          {entry.isDir ? (
+            isOpen ? (
+              <ChevronDown size={13} className="workspace-tree__chev" />
             ) : (
-              <span className="workspace-tree__chev" />
-            )}
-            {entry.isDir ? (
-              <Folder size={14} className="workspace-tree__icon workspace-tree__icon--dir" />
-            ) : (
-              <FileText size={14} className="workspace-tree__icon" />
-            )}
-            <span className="workspace-tree__name">{entry.name}</span>
-          </button>
-        </Tooltip>
+              <ChevronRight size={13} className="workspace-tree__chev" />
+            )
+          ) : (
+            <span className="workspace-tree__chev" />
+          )}
+          {entry.isDir ? (
+            <Folder size={14} className="workspace-tree__icon workspace-tree__icon--dir" />
+          ) : (
+            <FileText size={14} className="workspace-tree__icon" />
+          )}
+          <span className="workspace-tree__name">{entry.name}</span>
+        </button>
       );
       if (!entry.isDir || !isOpen) return [row];
       return [row, ...renderRows(path, depth + 1)];
@@ -791,28 +789,26 @@ export function WorkspacePanel({
             ? renderChangedRows()
             : flattened
             ? flattened.map(({ path, entry }) => {
-                const cleanPath = path.replace(/\/$/, "");
                 const dir = parentPath(path);
                 return (
-                  <Tooltip key={path} label={cleanPath} fill>
-                    <button
-                      className={`workspace-tree__row workspace-tree__row--search${selectedPath === path ? " workspace-tree__row--active" : ""}`}
-                      draggable
-                      onDragStart={(event) => startTreeDrag(event, path, entry.isDir)}
-                      onClick={() => (entry.isDir ? toggleDir(path) : selectFile(path))}
-                      onContextMenu={(event) => openTreeMenu(event, path, entry.isDir)}
-                    >
-                      {entry.isDir ? (
-                        <Folder size={14} className="workspace-tree__icon workspace-tree__icon--dir" />
-                      ) : (
-                        <FileText size={14} className="workspace-tree__icon" />
-                      )}
-                      <span className="workspace-tree__result">
-                        <span className="workspace-tree__result-name">{basename(path)}</span>
-                        {dir && <span className="workspace-tree__result-dir">{dir}</span>}
-                      </span>
-                    </button>
-                  </Tooltip>
+                  <button
+                    key={path}
+                    className={`workspace-tree__row workspace-tree__row--search${selectedPath === path ? " workspace-tree__row--active" : ""}`}
+                    draggable
+                    onDragStart={(event) => startTreeDrag(event, path, entry.isDir)}
+                    onClick={() => (entry.isDir ? toggleDir(path) : selectFile(path))}
+                    onContextMenu={(event) => openTreeMenu(event, path, entry.isDir)}
+                  >
+                    {entry.isDir ? (
+                      <Folder size={14} className="workspace-tree__icon workspace-tree__icon--dir" />
+                    ) : (
+                      <FileText size={14} className="workspace-tree__icon" />
+                    )}
+                    <span className="workspace-tree__result">
+                      <span className="workspace-tree__result-name">{basename(path)}</span>
+                      {dir && <span className="workspace-tree__result-dir">{dir}</span>}
+                    </span>
+                  </button>
                 );
               })
             : renderRows("", 0)}
@@ -847,12 +843,4 @@ export function WorkspacePanel({
       )}
     </aside>
   );
-}
-
-function changeTitle(row: WorkspaceChangeView): string {
-  const parts = [row.path];
-  if (row.oldPath) parts.push(`from ${row.oldPath}`);
-  if (row.gitStatus) parts.push(`git ${row.gitStatus}`);
-  if (row.turns && row.turns.length > 0) parts.push(`turns ${row.turns.join(", ")}`);
-  return parts.join(" · ");
 }

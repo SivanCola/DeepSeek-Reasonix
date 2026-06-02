@@ -678,40 +678,34 @@ export default function App() {
           <div className="sidebar__brand">
             <img src={logo} alt="" className="sidebar__logo" />
             <span>Reasonix</span>
-            <Tooltip label={sidebarToggleTitle}>
-              <button
-                className={`sidebar__toggle${sidebarExpandBlocked ? " sidebar__toggle--blocked" : ""}`}
-                onClick={sidebarExpandBlocked ? undefined : toggleSidebar}
-                aria-label={sidebarToggleTitle}
-                aria-disabled={sidebarExpandBlocked}
-              >
-                {sidebarCollapsed ? <PanelLeftOpen size={15} /> : <PanelLeftClose size={15} />}
-              </button>
-            </Tooltip>
+            <button
+              className={`sidebar__toggle${sidebarExpandBlocked ? " sidebar__toggle--blocked" : ""}`}
+              onClick={sidebarExpandBlocked ? undefined : toggleSidebar}
+              aria-label={sidebarToggleTitle}
+              aria-disabled={sidebarExpandBlocked}
+            >
+              {sidebarCollapsed ? <PanelLeftOpen size={15} /> : <PanelLeftClose size={15} />}
+            </button>
           </div>
 
-          <Tooltip label={state.running ? t("common.busyHint") : t("topbar.newSession")} fill>
-            <button
-              className="sidebar__new"
-              onClick={() => void startNewSession()}
-              disabled={state.running}
-            >
-              <SquarePen size={15} />
-              <span>{t("topbar.newSession")}</span>
-            </button>
-          </Tooltip>
+          <button
+            className="sidebar__new"
+            onClick={() => void startNewSession()}
+            disabled={state.running}
+          >
+            <SquarePen size={15} />
+            <span>{t("topbar.newSession")}</span>
+          </button>
 
           <section className="sidebar__section">
             <div className="sidebar__section-head">
               <div className="sidebar__section-title">{t("sidebar.conversations")}</div>
-              <Tooltip label={t("topbar.history")}>
-                <button
-                  className="sidebar__view-all"
-                  onClick={() => void openHistory()}
-                >
-                  {t("sidebar.viewAll")}
-                </button>
-              </Tooltip>
+              <button
+                className="sidebar__view-all"
+                onClick={() => void openHistory()}
+              >
+                {t("sidebar.viewAll")}
+              </button>
             </div>
             <div className="sidebar__sessions">
               {sidebarSessions.length === 0 ? (
@@ -746,7 +740,7 @@ export default function App() {
                         >
                           <MessageSquare size={14} />
                           <span className="sidebar-session__body">
-                            <Tooltip className="sidebar-session__title" label={title}>{title}</Tooltip>
+                            <span className="sidebar-session__title">{title}</span>
                             <span className="sidebar-session__meta">
                               {meta}
                             </span>
@@ -809,7 +803,7 @@ export default function App() {
           </section>
 
           <nav className="sidebar__nav">
-            <Tooltip label={t("topbar.history")} fill>
+            <Tooltip label={t("topbar.history")} fill disabled={!sidebarCollapsed}>
               <button
                 className="sidebar__navitem sidebar__navitem--sessions"
                 onClick={() => void openHistory()}
@@ -818,19 +812,19 @@ export default function App() {
                 <span>{t("topbar.history")}</span>
               </button>
             </Tooltip>
-            <Tooltip label={t("topbar.memory")} fill>
+            <Tooltip label={t("topbar.memory")} fill disabled={!sidebarCollapsed}>
               <button className="sidebar__navitem" onClick={() => void openMemory()}>
                 <Brain size={15} />
                 <span>{t("topbar.memory")}</span>
               </button>
             </Tooltip>
-            <Tooltip label={t("caps.title")} fill>
+            <Tooltip label={t("caps.title")} fill disabled={!sidebarCollapsed}>
               <button className="sidebar__navitem" onClick={() => setCapsOpen(true)}>
                 <Blocks size={15} />
                 <span>{t("caps.title")}</span>
               </button>
             </Tooltip>
-            <Tooltip label={state.running ? t("common.busyHint") : t("topbar.settings")} fill>
+            <Tooltip label={state.running ? t("common.busyHint") : t("topbar.settings")} fill disabled={!sidebarCollapsed && !state.running}>
               <button
                 className="sidebar__navitem"
                 onClick={() => setSettingsOpen(true)}
@@ -864,14 +858,13 @@ export default function App() {
               <span className="topbar__model">{state.meta?.label ?? "…"}</span>
             </div>
             <div className="topbar__spacer" />
-            <Tooltip label={workspacePanelOpen ? t("workspace.close") : t("workspace.open")}>
-              <button
-                className="chip chip--icon topbar__workspace-toggle"
-                onClick={toggleWorkspacePanel}
-              >
-                {workspacePanelOpen ? <PanelRightClose size={13} /> : <PanelRightOpen size={13} />}
-              </button>
-            </Tooltip>
+            <button
+              className="chip chip--icon topbar__workspace-toggle"
+              onClick={toggleWorkspacePanel}
+              aria-label={workspacePanelOpen ? t("workspace.close") : t("workspace.open")}
+            >
+              {workspacePanelOpen ? <PanelRightClose size={13} /> : <PanelRightOpen size={13} />}
+            </button>
             <div className="topbar__actions">
               <Tooltip label={t("topbar.history")}>
                 <button
