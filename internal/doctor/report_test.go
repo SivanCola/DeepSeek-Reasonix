@@ -50,6 +50,16 @@ func TestCollectReportRedactsSecrets(t *testing.T) {
 		URL:     "https://mcp.example.com/path?api_key=secret-query",
 		Headers: map[string]string{"Authorization": "Bearer sk-live-secret"},
 	}}
+	cfg.Network = config.NetworkConfig{
+		ProxyMode: "custom",
+		Proxy: config.NetworkProxyConfig{
+			Type:     "socks5",
+			Server:   "proxy.example.com",
+			Port:     1080,
+			Username: "proxy-user",
+			Password: "proxy-secret",
+		},
+	}
 
 	report := Collect(Options{Version: "test-version", Config: cfg})
 	text := RenderText(report)
@@ -59,7 +69,7 @@ func TestCollectReportRedactsSecrets(t *testing.T) {
 	}
 	combined := text + "\n" + string(raw)
 
-	for _, secret := range []string{"sk-live-secret", "secret-query", "Authorization"} {
+	for _, secret := range []string{"sk-live-secret", "secret-query", "Authorization", "proxy-secret"} {
 		if strings.Contains(combined, secret) {
 			t.Fatalf("doctor report leaked %q:\n%s", secret, combined)
 		}

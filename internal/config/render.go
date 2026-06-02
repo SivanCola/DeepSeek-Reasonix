@@ -25,6 +25,46 @@ func RenderTOML(c *Config) string {
 	}
 	b.WriteString("\n")
 
+	b.WriteString("[network]\n")
+	fmt.Fprintf(&b, "proxy_mode = %q   # auto|env|custom|off; auto currently uses env proxy\n", c.NetworkProxyMode())
+	if c.Network.ProxyURL != "" {
+		fmt.Fprintf(&b, "proxy_url  = %q   # custom override, e.g. socks5://127.0.0.1:7890\n", c.Network.ProxyURL)
+	} else {
+		b.WriteString("# proxy_url  = \"socks5://127.0.0.1:7890\"   # optional custom override\n")
+	}
+	if c.Network.NoProxy != "" {
+		fmt.Fprintf(&b, "no_proxy   = %q   # honored for proxy_mode = \"custom\"\n", c.Network.NoProxy)
+	} else {
+		b.WriteString("# no_proxy   = \"localhost,127.0.0.1,.local\"   # honored for proxy_mode = \"custom\"\n")
+	}
+	b.WriteString("\n[network.proxy]\n")
+	proxyType := c.Network.Proxy.Type
+	if proxyType == "" {
+		proxyType = "socks5"
+	}
+	fmt.Fprintf(&b, "type = %q   # http|https|socks5|socks5h\n", proxyType)
+	if c.Network.Proxy.Server != "" {
+		fmt.Fprintf(&b, "server = %q\n", c.Network.Proxy.Server)
+	} else {
+		b.WriteString("# server = \"127.0.0.1\"\n")
+	}
+	if c.Network.Proxy.Port > 0 {
+		fmt.Fprintf(&b, "port = %d\n", c.Network.Proxy.Port)
+	} else {
+		b.WriteString("# port = 7890\n")
+	}
+	if c.Network.Proxy.Username != "" {
+		fmt.Fprintf(&b, "username = %q\n", c.Network.Proxy.Username)
+	} else {
+		b.WriteString("# username = \"\"\n")
+	}
+	if c.Network.Proxy.Password != "" {
+		fmt.Fprintf(&b, "password = %q   # supports ${VAR} expansion\n", c.Network.Proxy.Password)
+	} else {
+		b.WriteString("# password = \"${REASONIX_PROXY_PASSWORD}\"   # optional; supports ${VAR} expansion\n")
+	}
+	b.WriteString("\n")
+
 	b.WriteString("[agent]\n")
 	b.WriteString("system_prompt = \"\"\"\n")
 	b.WriteString(c.Agent.SystemPrompt)

@@ -15,6 +15,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"strconv"
 	"strings"
@@ -63,8 +64,9 @@ type Controller struct {
 	// balanceURL/balanceKey target the active provider's optional wallet-balance
 	// endpoint (empty when the provider declares none). Captured at build so a
 	// model/key switch — which rebuilds the controller — refreshes them.
-	balanceURL string
-	balanceKey string
+	balanceURL    string
+	balanceKey    string
+	balanceClient *http.Client
 
 	// jobs is the session-scoped background-job manager. The agent's background
 	// tools spawn into it; Compose drains its completion notes into the next turn;
@@ -158,8 +160,9 @@ type Options struct {
 	Cleanup      func()
 	// BalanceURL/BalanceKey wire the active provider's optional wallet-balance
 	// endpoint and bearer key; empty when the provider declares no balance_url.
-	BalanceURL string
-	BalanceKey string
+	BalanceURL    string
+	BalanceKey    string
+	BalanceClient *http.Client
 	// Jobs is the session-scoped background-job manager (nil disables background jobs).
 	Jobs *jobs.Manager
 	// Registry is the executor's live tool set, and PluginCtx the session-scoped
@@ -188,31 +191,32 @@ func New(opts Options) *Controller {
 		pluginCtx = context.Background()
 	}
 	c := &Controller{
-		runner:       opts.Runner,
-		executor:     opts.Executor,
-		sink:         sink,
-		policy:       opts.Policy,
-		label:        opts.Label,
-		systemPrompt: opts.SystemPrompt,
-		sessionDir:   opts.SessionDir,
-		sessionPath:  opts.SessionPath,
-		host:         opts.Host,
-		commands:     opts.Commands,
-		skills:       opts.Skills,
-		hooks:        opts.Hooks,
-		mem:          opts.Memory,
-		cleanup:      opts.Cleanup,
-		autoPlan:     normalizeAutoPlan(opts.AutoPlan),
-		classifier:   classifier,
-		balanceURL:   opts.BalanceURL,
-		balanceKey:   opts.BalanceKey,
-		jobs:         opts.Jobs,
-		reg:          opts.Registry,
-		pluginCtx:    pluginCtx,
-		cpRoot:       opts.WorkspaceRoot,
-		approvals:    map[string]chan approvalReply{},
-		asks:         map[string]chan []event.AskAnswer{},
-		granted:      map[string]bool{},
+		runner:        opts.Runner,
+		executor:      opts.Executor,
+		sink:          sink,
+		policy:        opts.Policy,
+		label:         opts.Label,
+		systemPrompt:  opts.SystemPrompt,
+		sessionDir:    opts.SessionDir,
+		sessionPath:   opts.SessionPath,
+		host:          opts.Host,
+		commands:      opts.Commands,
+		skills:        opts.Skills,
+		hooks:         opts.Hooks,
+		mem:           opts.Memory,
+		cleanup:       opts.Cleanup,
+		autoPlan:      normalizeAutoPlan(opts.AutoPlan),
+		classifier:    classifier,
+		balanceURL:    opts.BalanceURL,
+		balanceKey:    opts.BalanceKey,
+		balanceClient: opts.BalanceClient,
+		jobs:          opts.Jobs,
+		reg:           opts.Registry,
+		pluginCtx:     pluginCtx,
+		cpRoot:        opts.WorkspaceRoot,
+		approvals:     map[string]chan approvalReply{},
+		asks:          map[string]chan []event.AskAnswer{},
+		granted:       map[string]bool{},
 	}
 	// Checkpoints: bind a store to the session and route writer pre-edits into it.
 	c.rebindCheckpoints(opts.SessionPath)
@@ -1127,7 +1131,7 @@ func (c *Controller) Balance(ctx context.Context) (*billing.Balance, error) {
 	if strings.TrimSpace(c.balanceURL) == "" {
 		return nil, nil
 	}
-	return billing.Fetch(ctx, c.balanceURL, c.balanceKey)
+	return billing.FetchWithClient(ctx, c.balanceClient, c.balanceURL, c.balanceKey)
 }
 
 // Host returns the running MCP host (nil when no plugins), for frontends that

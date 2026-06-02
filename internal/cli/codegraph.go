@@ -7,6 +7,7 @@ import (
 
 	"reasonix/internal/codegraph"
 	"reasonix/internal/config"
+	"reasonix/internal/netclient"
 )
 
 // codegraphCommand backs `reasonix codegraph` — managing the CodeGraph
@@ -32,7 +33,17 @@ func codegraphCommand(args []string) int {
 }
 
 func codegraphInstall() int {
-	p, err := codegraph.Install(context.Background(), func(m string) { fmt.Println(m) })
+	cfg, err := config.Load()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	client, err := netclient.NewHTTPClient(cfg.NetworkProxySpec(), 0, netclient.TransportOptions{})
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	p, err := codegraph.InstallWithClient(context.Background(), client, func(m string) { fmt.Println(m) })
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1

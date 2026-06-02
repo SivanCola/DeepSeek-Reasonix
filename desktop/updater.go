@@ -21,6 +21,8 @@ import (
 	"golang.org/x/mod/semver"
 
 	"reasonix/desktop/internal/update"
+	"reasonix/internal/config"
+	"reasonix/internal/netclient"
 )
 
 // updater.go is the transport-free core of the desktop auto-updater: manifest
@@ -58,7 +60,13 @@ type updateProgress struct {
 	Err      string `json:"err,omitempty"`
 }
 
-func httpClient() *http.Client { return &http.Client{Timeout: httpTimeout} }
+func httpClient() (*http.Client, error) {
+	cfg, err := config.Load()
+	if err != nil {
+		return nil, err
+	}
+	return netclient.NewHTTPClient(cfg.NetworkProxySpec(), httpTimeout, netclient.TransportOptions{})
+}
 
 // canSelfUpdate reports whether in-place update is possible. macOS is excluded:
 // without a Developer ID signature + notarization, swapping the .app and relaunching

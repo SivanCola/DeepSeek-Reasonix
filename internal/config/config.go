@@ -13,6 +13,7 @@ import (
 
 	"github.com/BurntSushi/toml"
 
+	"reasonix/internal/netclient"
 	"reasonix/internal/provider"
 )
 
@@ -25,6 +26,7 @@ type Config struct {
 	Tools        ToolsConfig       `toml:"tools"`
 	Permissions  PermissionsConfig `toml:"permissions"`
 	Sandbox      SandboxConfig     `toml:"sandbox"`
+	Network      NetworkConfig     `toml:"network"`
 	Plugins      []PluginEntry     `toml:"plugins"`
 	Skills       SkillsConfig      `toml:"skills"`
 	Codegraph    CodegraphConfig   `toml:"codegraph"`
@@ -75,6 +77,52 @@ type CodegraphConfig struct {
 	Enabled     bool   `toml:"enabled"`
 	AutoInstall bool   `toml:"auto_install"`
 	Path        string `toml:"path"`
+}
+
+// NetworkConfig controls ordinary outbound HTTP traffic such as model providers,
+// wallet-balance lookups, updater checks, and CodeGraph downloads. It intentionally
+// does not apply to web_fetch, which keeps its own SSRF-guarded dialer.
+type NetworkConfig struct {
+	// ProxyMode is "auto" (default; environment proxy for now), "env", "custom",
+	// or "off". auto leaves room for OS proxy detection later without changing the
+	// config shape.
+	ProxyMode string `toml:"proxy_mode"`
+	// ProxyURL is an advanced custom override such as "socks5://127.0.0.1:7890".
+	// When set and proxy_mode = "custom", it wins over the structured proxy table.
+	ProxyURL string `toml:"proxy_url"`
+	// NoProxy is honored for custom proxies. Env/auto modes use NO_PROXY from the
+	// process environment instead.
+	NoProxy string             `toml:"no_proxy"`
+	Proxy   NetworkProxyConfig `toml:"proxy"`
+}
+
+// NetworkProxyConfig is the structured custom-proxy editor shape. Password is
+// optional and supports ${VAR} expansion, so users can avoid storing it literally.
+type NetworkProxyConfig struct {
+	Type     string `toml:"type"` // http|https|socks5|socks5h
+	Server   string `toml:"server"`
+	Port     int    `toml:"port"`
+	Username string `toml:"username"`
+	Password string `toml:"password"`
+}
+
+// NetworkProxySpec returns the expanded proxy settings used by netclient.
+func (c *Config) NetworkProxySpec() netclient.ProxySpec {
+	return netclient.ProxySpec{
+		Mode:     c.Network.ProxyMode,
+		URL:      ExpandVars(c.Network.ProxyURL),
+		NoProxy:  ExpandVars(c.Network.NoProxy),
+		Type:     c.Network.Proxy.Type,
+		Server:   ExpandVars(c.Network.Proxy.Server),
+		Port:     c.Network.Proxy.Port,
+		Username: ExpandVars(c.Network.Proxy.Username),
+		Password: ExpandVars(c.Network.Proxy.Password),
+	}
+}
+
+// NetworkProxyMode normalizes network.proxy_mode to a known value.
+func (c *Config) NetworkProxyMode() string {
+	return netclient.NormalizeMode(c.Network.ProxyMode)
 }
 
 // SkillsConfig configures skill discovery. Paths adds extra "custom"-scope skill
@@ -347,7 +395,8 @@ func Default() *Config {
 		Codegraph: CodegraphConfig{Enabled: true, AutoInstall: true},
 		// LSP tools on by default, but dormant until a language server is on PATH;
 		// a missing server yields an install hint rather than an error.
-		LSP: LSPConfig{Enabled: true},
+		LSP:     LSPConfig{Enabled: true},
+		Network: NetworkConfig{ProxyMode: netclient.ModeAuto},
 		Providers: []ProviderEntry{
 			{Name: "deepseek-flash", Kind: "openai", BaseURL: "https://api.deepseek.com", Model: "deepseek-v4-flash", APIKeyEnv: "DEEPSEEK_API_KEY", BalanceURL: "https://api.deepseek.com/user/balance", ContextWindow: 1_000_000, Price: &provider.Pricing{CacheHit: 0.02, Input: 1, Output: 2, Currency: "¥"}, Effort: "high"},
 			{Name: "deepseek-pro", Kind: "openai", BaseURL: "https://api.deepseek.com", Model: "deepseek-v4-pro", APIKeyEnv: "DEEPSEEK_API_KEY", BalanceURL: "https://api.deepseek.com/user/balance", ContextWindow: 1_000_000, Price: &provider.Pricing{CacheHit: 0.025, Input: 3, Output: 6, Currency: "¥"}, Effort: "high"},

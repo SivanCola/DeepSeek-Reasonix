@@ -12,6 +12,7 @@ import (
 	"reasonix/internal/agent"
 	"reasonix/internal/codegraph"
 	"reasonix/internal/config"
+	"reasonix/internal/netclient"
 )
 
 type Options struct {
@@ -31,6 +32,7 @@ type Report struct {
 	LSP        LSPReport        `json:"lsp"`
 	Sessions   SessionsReport   `json:"sessions"`
 	Sandbox    SandboxReport    `json:"sandbox"`
+	Network    NetworkReport    `json:"network"`
 	Permission PermissionReport `json:"permission"`
 	Warnings   []string         `json:"warnings,omitempty"`
 }
@@ -87,6 +89,12 @@ type SandboxReport struct {
 	WriteRoots []string `json:"write_roots,omitempty"`
 }
 
+type NetworkReport struct {
+	ProxyMode string `json:"proxy_mode"`
+	Proxy     string `json:"proxy"`
+	NoProxy   bool   `json:"no_proxy"`
+}
+
 type PermissionReport struct {
 	Mode       string `json:"mode"`
 	AllowRules int    `json:"allow_rules"`
@@ -131,6 +139,11 @@ func Collect(opts Options) Report {
 			Bash:       cfg.BashMode(),
 			Network:    cfg.Sandbox.Network,
 			WriteRoots: redactHomeAll(cfg.WriteRoots()),
+		},
+		Network: NetworkReport{
+			ProxyMode: cfg.NetworkProxyMode(),
+			Proxy:     netclient.Summary(cfg.NetworkProxySpec()),
+			NoProxy:   strings.TrimSpace(cfg.Network.NoProxy) != "",
 		},
 		Permission: PermissionReport{
 			Mode:       cfg.Permissions.Mode,
@@ -234,6 +247,11 @@ func RenderText(r Report) string {
 	fmt.Fprintf(&b, "  bash         %s\n", r.Sandbox.Bash)
 	fmt.Fprintf(&b, "  network      %v\n", r.Sandbox.Network)
 	fmt.Fprintf(&b, "  write_roots  %s\n", strings.Join(r.Sandbox.WriteRoots, ", "))
+
+	fmt.Fprintf(&b, "\nnetwork\n")
+	fmt.Fprintf(&b, "  proxy_mode   %s\n", r.Network.ProxyMode)
+	fmt.Fprintf(&b, "  proxy        %s\n", r.Network.Proxy)
+	fmt.Fprintf(&b, "  no_proxy     %v\n", r.Network.NoProxy)
 
 	fmt.Fprintf(&b, "\npermissions\n")
 	fmt.Fprintf(&b, "  mode         %s\n", valueOr(r.Permission.Mode, "ask"))

@@ -12,13 +12,13 @@ import (
 	"fmt"
 	"io"
 	"math/rand"
-	"net"
 	"net/http"
 	"net/url"
 	"sort"
 	"strings"
 	"time"
 
+	"reasonix/internal/netclient"
 	"reasonix/internal/provider"
 )
 
@@ -51,6 +51,10 @@ func New(cfg provider.Config) (provider.Provider, error) {
 			return nil, fmt.Errorf("openai: provider %q uses DeepSeek thinking; effort must be high, max, or off", name)
 		}
 	}
+	httpClient, err := newHTTPClient(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("openai: network: %w", err)
+	}
 	return &client{
 		name:     name,
 		apiKey:   cfg.APIKey,
@@ -59,17 +63,18 @@ func New(cfg provider.Config) (provider.Provider, error) {
 		model:    cfg.Model,
 		deepseek: deepseek,
 		effort:   effort,
-		http: &http.Client{
-			Transport: &http.Transport{
-				DialContext: (&net.Dialer{
-					Timeout:   30 * time.Second,
-					KeepAlive: 30 * time.Second,
-				}).DialContext,
-				TLSHandshakeTimeout:   15 * time.Second,
-				ResponseHeaderTimeout: 120 * time.Second, // models can think for a while before the first token
-			},
-		},
+		http:     httpClient,
 	}, nil
+}
+
+func newHTTPClient(cfg provider.Config) (*http.Client, error) {
+	spec, _ := cfg.Extra["proxy_spec"].(netclient.ProxySpec)
+	return netclient.NewHTTPClient(spec, 0, netclient.TransportOptions{
+		DialTimeout:           30 * time.Second,
+		KeepAlive:             30 * time.Second,
+		TLSHandshakeTimeout:   15 * time.Second,
+		ResponseHeaderTimeout: 120 * time.Second, // models can think for a while before the first token
+	})
 }
 
 type client struct {

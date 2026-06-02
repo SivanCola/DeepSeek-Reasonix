@@ -14,6 +14,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"time"
 
 	"reasonix/internal/agent"
 	"reasonix/internal/codegraph"
@@ -25,6 +26,7 @@ import (
 	"reasonix/internal/jobs"
 	"reasonix/internal/lsp"
 	"reasonix/internal/memory"
+	"reasonix/internal/netclient"
 	"reasonix/internal/outputstyle"
 	"reasonix/internal/permission"
 	"reasonix/internal/plugin"
@@ -87,7 +89,16 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	sink := event.Sync(opts.Sink)
 	jm := jobs.NewManager(sink)
 
-	execProv, err := NewProvider(entry)
+	proxySpec := cfg.NetworkProxySpec()
+	if err := netclient.Validate(proxySpec); err != nil {
+		return nil, err
+	}
+	balanceClient, err := netclient.NewHTTPClient(proxySpec, 12*time.Second, netclient.TransportOptions{})
+	if err != nil {
+		return nil, err
+	}
+
+	execProv, err := NewProviderWithProxy(entry, proxySpec)
 	if err != nil {
 		return nil, err
 	}
@@ -155,13 +166,18 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		case cfg.Codegraph.AutoInstall:
 			notify := func(msg string) { sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo, Text: msg}) }
 			notify("codegraph: fetching code-intelligence runtime in the background (one-time) — symbol-graph tools available next session")
-			go func() {
-				if _, err := codegraph.Install(context.WithoutCancel(ctx), nil); err != nil {
-					notify("codegraph: install failed (" + err.Error() + ") — using grep/glob; retries next session")
-				} else {
-					notify("codegraph: installed — symbol-graph tools available next session")
-				}
-			}()
+			codegraphClient, err := netclient.NewHTTPClient(proxySpec, 0, netclient.TransportOptions{})
+			if err != nil {
+				notify("codegraph: install skipped (" + err.Error() + ")")
+			} else {
+				go func() {
+					if _, err := codegraph.InstallWithClient(context.WithoutCancel(ctx), codegraphClient, nil); err != nil {
+						notify("codegraph: install failed (" + err.Error() + ") — using grep/glob; retries next session")
+					} else {
+						notify("codegraph: installed — symbol-graph tools available next session")
+					}
+				}()
+			}
 		default:
 			sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo,
 				Text: "codegraph: not installed — run `reasonix codegraph install` to enable symbol-graph tools"})
@@ -258,7 +274,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		prov, price, ctxWin := execProv, entry.Price, entry.ContextWindow
 		if modelRef := subagentModelRef(cfg, sk); modelRef != "" {
 			if me, ok := cfg.ResolveModel(modelRef); ok {
-				if p, err := NewProvider(me); err == nil {
+				if p, err := NewProviderWithProxy(me, proxySpec); err == nil {
 					prov, price, ctxWin = p, me.Price, me.ContextWindow
 				}
 			}
@@ -337,7 +353,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 			return nil, fmt.Errorf("planner_model %q is not a configured provider", pm)
 		}
 		if pe.Model != entry.Model {
-			plannerProv, err := NewProvider(pe)
+			plannerProv, err := NewProviderWithProxy(pe, proxySpec)
 			if err != nil {
 				return nil, fmt.Errorf("planner %q: %w", pm, err)
 			}
@@ -352,7 +368,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		if !ok {
 			return nil, fmt.Errorf("auto_plan_classifier %q is not a configured provider", cm)
 		}
-		classifierProv, err := NewProvider(ce)
+		classifierProv, err := NewProviderWithProxy(ce, proxySpec)
 		if err != nil {
 			return nil, fmt.Errorf("auto_plan_classifier %q: %w", cm, err)
 		}
@@ -375,6 +391,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		Cleanup:       cleanup,
 		BalanceURL:    entry.BalanceURL,
 		BalanceKey:    entry.APIKey(),
+		BalanceClient: balanceClient,
 		Jobs:          jm,
 		Registry:      reg,
 		PluginCtx:     ctx,
@@ -435,6 +452,12 @@ func subagentModelKeys(name string) []string {
 // custom assemblers (e.g. the ACP per-session factory) can reuse it without
 // going through the full Build.
 func NewProvider(e *config.ProviderEntry) (provider.Provider, error) {
+	return NewProviderWithProxy(e, netclient.ProxySpec{Mode: netclient.ModeAuto})
+}
+
+// NewProviderWithProxy builds a provider.Provider with the configured ordinary
+// network proxy settings.
+func NewProviderWithProxy(e *config.ProviderEntry, proxy netclient.ProxySpec) (provider.Provider, error) {
 	return provider.New(e.Kind, provider.Config{
 		Name:    e.Name,
 		BaseURL: e.BaseURL,
@@ -447,6 +470,7 @@ func NewProvider(e *config.ProviderEntry) (provider.Provider, error) {
 			"api_key_env": e.APIKeyEnv,
 			"thinking":    e.Thinking,
 			"effort":      e.Effort,
+			"proxy_spec":  proxy,
 		},
 	})
 }

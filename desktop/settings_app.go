@@ -46,6 +46,21 @@ type SandboxView struct {
 	AllowWrite    []string `json:"allowWrite"`
 }
 
+type NetworkProxyView struct {
+	Type     string `json:"type"`
+	Server   string `json:"server"`
+	Port     int    `json:"port"`
+	Username string `json:"username"`
+	Password string `json:"password"`
+}
+
+type NetworkView struct {
+	ProxyMode string           `json:"proxyMode"`
+	ProxyURL  string           `json:"proxyUrl"`
+	NoProxy   string           `json:"noProxy"`
+	Proxy     NetworkProxyView `json:"proxy"`
+}
+
 type AgentView struct {
 	Temperature  float64 `json:"temperature"`
 	MaxSteps     int     `json:"maxSteps"`
@@ -59,6 +74,7 @@ type SettingsView struct {
 	Providers    []ProviderView  `json:"providers"`
 	Permissions  PermissionsView `json:"permissions"`
 	Sandbox      SandboxView     `json:"sandbox"`
+	Network      NetworkView     `json:"network"`
 	Agent        AgentView       `json:"agent"`
 	ConfigPath   string          `json:"configPath"`
 	// ProviderKinds lists the provider implementations the kernel actually
@@ -100,6 +116,18 @@ func (a *App) Settings() SettingsView {
 		Sandbox: SandboxView{
 			Bash: bash, Network: cfg.Sandbox.Network,
 			WorkspaceRoot: cfg.Sandbox.WorkspaceRoot, AllowWrite: nonNil(cfg.Sandbox.AllowWrite),
+		},
+		Network: NetworkView{
+			ProxyMode: cfg.NetworkProxyMode(),
+			ProxyURL:  cfg.Network.ProxyURL,
+			NoProxy:   cfg.Network.NoProxy,
+			Proxy: NetworkProxyView{
+				Type:     orDefault(cfg.Network.Proxy.Type, "socks5"),
+				Server:   cfg.Network.Proxy.Server,
+				Port:     cfg.Network.Proxy.Port,
+				Username: cfg.Network.Proxy.Username,
+				Password: cfg.Network.Proxy.Password,
+			},
 		},
 		Agent:         AgentView{Temperature: cfg.Agent.Temperature, MaxSteps: cfg.Agent.MaxSteps, SystemPrompt: cfg.Agent.SystemPrompt},
 		ConfigPath:    config.SourcePath(),
@@ -314,6 +342,24 @@ func (a *App) SetSandbox(bash string, network bool, workspaceRoot string, allowW
 		c.Sandbox.WorkspaceRoot = strings.TrimSpace(workspaceRoot)
 		c.Sandbox.AllowWrite = trimList(allowWrite)
 		return nil
+	})
+}
+
+// SetNetwork updates ordinary outbound proxy settings.
+func (a *App) SetNetwork(n NetworkView) error {
+	return a.applyConfigChange(func(c *config.Config) error {
+		return c.SetNetwork(config.NetworkConfig{
+			ProxyMode: n.ProxyMode,
+			ProxyURL:  n.ProxyURL,
+			NoProxy:   n.NoProxy,
+			Proxy: config.NetworkProxyConfig{
+				Type:     n.Proxy.Type,
+				Server:   n.Proxy.Server,
+				Port:     n.Proxy.Port,
+				Username: n.Proxy.Username,
+				Password: n.Proxy.Password,
+			},
+		})
 	})
 }
 

@@ -243,6 +243,16 @@ func TestSaveToRoundTrips(t *testing.T) {
 	if err := c.AddPermissionRule("allow", "bash(go test*)"); err != nil {
 		t.Fatal(err)
 	}
+	if err := c.SetNetwork(NetworkConfig{
+		ProxyMode: "custom",
+		Proxy: NetworkProxyConfig{
+			Type:   "socks5",
+			Server: "127.0.0.1",
+			Port:   7890,
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
 	autoStart := false
 	if err := c.UpsertPlugin(PluginEntry{Name: "stripe", Type: "http", URL: "https://mcp.stripe.com", AutoStart: &autoStart}); err != nil {
 		t.Fatal(err)
@@ -272,10 +282,20 @@ func TestSaveToRoundTrips(t *testing.T) {
 	if len(got.Permissions.Allow) != 1 || got.Permissions.Allow[0] != "bash(go test*)" {
 		t.Errorf("allow list = %v", got.Permissions.Allow)
 	}
+	if got.Network.ProxyMode != "custom" || got.Network.Proxy.Server != "127.0.0.1" || got.Network.Proxy.Port != 7890 {
+		t.Errorf("network = %+v", got.Network)
+	}
 	if len(got.Plugins) != 1 || got.Plugins[0].Name != "stripe" {
 		t.Errorf("plugins = %+v", got.Plugins)
 	}
 	if got.Plugins[0].AutoStart == nil || *got.Plugins[0].AutoStart {
 		t.Errorf("auto_start should round-trip false, got %+v", got.Plugins[0].AutoStart)
+	}
+}
+
+func TestSetNetworkRejectsIncompleteCustomProxy(t *testing.T) {
+	c := Default()
+	if err := c.SetNetwork(NetworkConfig{ProxyMode: "custom"}); err == nil {
+		t.Fatal("custom proxy without server/port should be rejected")
 	}
 }

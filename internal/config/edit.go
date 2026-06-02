@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"reasonix/internal/netclient"
 	"reasonix/internal/permission"
 )
 
@@ -77,6 +78,20 @@ func (c *Config) SetProviderEffort(name, effort string) error {
 		}
 	}
 	return fmt.Errorf("set provider effort: no provider %q", name)
+}
+
+// SetNetwork updates ordinary outbound network proxy settings. Invalid custom
+// proxy settings are rejected here so the desktop panel cannot save a config that
+// would break provider startup.
+func (c *Config) SetNetwork(n NetworkConfig) error {
+	n.ProxyMode = netclient.NormalizeMode(n.ProxyMode)
+	n.ProxyURL = strings.TrimSpace(n.ProxyURL)
+	n.NoProxy = strings.TrimSpace(n.NoProxy)
+	n.Proxy.Type = strings.ToLower(strings.TrimSpace(n.Proxy.Type))
+	n.Proxy.Server = strings.TrimSpace(n.Proxy.Server)
+	n.Proxy.Username = strings.TrimSpace(n.Proxy.Username)
+	c.Network = n
+	return netclient.Validate(c.NetworkProxySpec())
 }
 
 // RemoveProvider deletes the named provider. It refuses to remove the current

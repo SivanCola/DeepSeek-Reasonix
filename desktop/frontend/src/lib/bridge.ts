@@ -16,10 +16,11 @@ import type {
   HistoryMessage,
   JobView,
   MCPServerInput,
-  MemoryView,
-  Meta,
-  ModelInfo,
-  ProviderView,
+	  MemoryView,
+	  Meta,
+	  ModelInfo,
+	  NetworkView,
+	  ProviderView,
   QuestionAnswer,
   ServerView,
   SessionMeta,
@@ -108,9 +109,10 @@ export interface AppBindings {
   SetProviderKey(apiKeyEnv: string, value: string): Promise<void>;
   SetPermissionMode(mode: string): Promise<void>;
   AddPermissionRule(list: string, rule: string): Promise<void>;
-  RemovePermissionRule(list: string, rule: string): Promise<void>;
-  SetSandbox(bash: string, network: boolean, workspaceRoot: string, allowWrite: string[]): Promise<void>;
-  SetAgentParams(temperature: number, maxSteps: number, systemPrompt: string): Promise<void>;
+	  RemovePermissionRule(list: string, rule: string): Promise<void>;
+	  SetSandbox(bash: string, network: boolean, workspaceRoot: string, allowWrite: string[]): Promise<void>;
+	  SetNetwork(n: NetworkView): Promise<void>;
+	  SetAgentParams(temperature: number, maxSteps: number, systemPrompt: string): Promise<void>;
   // SetBypass toggles YOLO mode (auto-approve every tool call this session; deny
   // rules still apply). Runtime-only — not written to config.
   SetBypass(on: boolean): Promise<void>;
@@ -283,9 +285,15 @@ function makeMockApp(): AppBindings {
       { name: "deepseek-flash", kind: "openai", baseUrl: "https://api.deepseek.com", models: ["deepseek-v4-flash"], default: "deepseek-v4-flash", apiKeyEnv: "DEEPSEEK_API_KEY", keySet: true, balanceUrl: "https://api.deepseek.com/user/balance", contextWindow: 1_000_000 },
       { name: "mimo-pro", kind: "openai", baseUrl: "https://api.xiaomimimo.com/v1", models: ["mimo-v2.5-pro"], default: "mimo-v2.5-pro", apiKeyEnv: "MIMO_API_KEY", keySet: false, balanceUrl: "", contextWindow: 1_000_000 },
     ],
-    permissions: { mode: "ask", allow: ["ls", "read_file"], ask: [], deny: ["bash(rm *)"] },
-    sandbox: { bash: "enforce", network: true, workspaceRoot: "", allowWrite: [] },
-    agent: { temperature: 0.2, maxSteps: 0, systemPrompt: "You are Reasonix, a coding agent." },
+	    permissions: { mode: "ask", allow: ["ls", "read_file"], ask: [], deny: ["bash(rm *)"] },
+	    sandbox: { bash: "enforce", network: true, workspaceRoot: "", allowWrite: [] },
+	    network: {
+	      proxyMode: "auto",
+	      proxyUrl: "",
+	      noProxy: "",
+	      proxy: { type: "socks5", server: "127.0.0.1", port: 7890, username: "", password: "" },
+	    },
+	    agent: { temperature: 0.2, maxSteps: 0, systemPrompt: "You are Reasonix, a coding agent." },
     configPath: "~/projects/reasonix/reasonix.toml",
     providerKinds: ["openai"],
     bypass: false,
@@ -614,9 +622,12 @@ function makeMockApp(): AppBindings {
       const k = list as "allow" | "ask" | "deny";
       settings.permissions[k] = settings.permissions[k].filter((r) => r !== rule);
     },
-    async SetSandbox(bash: string, network: boolean, workspaceRoot: string, allowWrite: string[]) {
-      settings.sandbox = { bash, network, workspaceRoot, allowWrite };
-    },
+	    async SetSandbox(bash: string, network: boolean, workspaceRoot: string, allowWrite: string[]) {
+	      settings.sandbox = { bash, network, workspaceRoot, allowWrite };
+	    },
+	    async SetNetwork(n: NetworkView) {
+	      settings.network = n;
+	    },
     async SetAgentParams(temperature: number, maxSteps: number, systemPrompt: string) {
       settings.agent = { temperature, maxSteps, systemPrompt };
     },
