@@ -26,6 +26,7 @@ import (
 	"reasonix/internal/memory"
 	"reasonix/internal/plugin"
 	"reasonix/internal/provider"
+	"reasonix/internal/skill"
 )
 
 // eventChannel is the Wails runtime event name the frontend subscribes to for the
@@ -786,8 +787,9 @@ func (a *App) SlashArgs(input string) SlashArgsResult {
 // CapabilitiesView is the MCP & Skills drawer's data: connected/failed MCP
 // servers and the discoverable skills, the GUI counterpart to `/mcp` + `/skill`.
 type CapabilitiesView struct {
-	Servers []ServerView `json:"servers"`
-	Skills  []SkillView  `json:"skills"`
+	Servers    []ServerView    `json:"servers"`
+	Skills     []SkillView     `json:"skills"`
+	SkillRoots []SkillRootView `json:"skillRoots"`
 }
 
 // ServerView is one MCP server for the drawer. Status is "connected" (with
@@ -816,10 +818,21 @@ type SkillView struct {
 	RunAs       string `json:"runAs"`
 }
 
+// SkillRootView is one skill discovery root for the drawer's Sources section.
+type SkillRootView struct {
+	Dir        string `json:"dir"`
+	Scope      string `json:"scope"`
+	Priority   int    `json:"priority"`
+	Status     string `json:"status"`
+	Configured bool   `json:"configured"`
+	Skills     int    `json:"skills"`
+	Warning    string `json:"warning,omitempty"`
+}
+
 // Capabilities projects the session's MCP servers (connected + failed) and skills
 // for the MCP & Skills drawer. Non-nil slices so the frontend can map over them.
 func (a *App) Capabilities() CapabilitiesView {
-	out := CapabilitiesView{Servers: []ServerView{}, Skills: []SkillView{}}
+	out := CapabilitiesView{Servers: []ServerView{}, Skills: []SkillView{}, SkillRoots: []SkillRootView{}}
 	a.mu.RLock()
 	ctrl := a.ctrl
 	disabled := make(map[string]ServerView, len(a.disabledMCP))
@@ -906,7 +919,167 @@ func (a *App) Capabilities() CapabilitiesView {
 			Scope: string(s.Scope), RunAs: string(s.RunAs),
 		})
 	}
+	out.SkillRoots = skillRootsView()
 	return out
+}
+
+func skillRootsView() []SkillRootView {
+	cwd, _ := os.Getwd()
+	cfg, _ := config.Load()
+	userCfg := config.LoadForEdit(config.UserConfigPath())
+	var custom []string
+	if cfg != nil {
+		custom = cfg.SkillCustomPaths()
+	}
+	st := skill.New(skill.Options{ProjectRoot: cwd, CustomPaths: custom, DisableBuiltins: true, Stderr: io.Discard})
+	counts := map[string]int{}
+	for _, sk := range st.List() {
+		counts[cleanAbsPath(filepath.Dir(skillRootPath(sk.Path)))]++
+	}
+	userConfigured := map[string]bool{}
+	if userCfg != nil {
+		for _, p := range userCfg.Skills.Paths {
+			userConfigured[cleanAbsPath(p)] = true
+		}
+	}
+	var out []SkillRootView
+	for _, r := range st.Roots() {
+		dir := cleanAbsPath(r.Dir)
+		view := SkillRootView{
+			Dir:        r.Dir,
+			Scope:      string(r.Scope),
+			Priority:   r.Priority + 1,
+			Status:     string(r.Status),
+			Configured: r.Scope == skill.ScopeCustom && userConfigured[dir],
+			Skills:     counts[dir],
+		}
+		out = append(out, view)
+	}
+	if userCfg != nil {
+		for _, p := range userCfg.Skills.Paths {
+			if rootActive(out, p) {
+				continue
+			}
+			out = append(out, SkillRootView{
+				Dir:        p,
+				Scope:      string(skill.ScopeCustom),
+				Status:     "inactive",
+				Configured: true,
+				Warning:    "configured in user config but not active in this workspace; project [skills].paths may override it",
+			})
+		}
+	}
+	return out
+}
+
+func rootActive(roots []SkillRootView, path string) bool {
+	want := cleanAbsPath(path)
+	for _, r := range roots {
+		if r.Scope == string(skill.ScopeCustom) && cleanAbsPath(r.Dir) == want {
+			return true
+		}
+	}
+	return false
+}
+
+// PickSkillFolder opens a directory picker for adding custom skill roots. It only
+// returns a path; AddSkillPath performs normalization and writes config.
+func (a *App) PickSkillFolder() (string, error) {
+	if a.ctx == nil {
+		return "", nil
+	}
+	cur, _ := os.Getwd()
+	dir, err := runtime.OpenDirectoryDialog(a.ctx, runtime.OpenDialogOptions{
+		Title:            "Choose skills folder",
+		DefaultDirectory: cur,
+	})
+	if err != nil || dir == "" {
+		return "", err
+	}
+	return normalizeSkillPath(dir), nil
+}
+
+// AddSkillPath adds a custom skill root to the user config and rebuilds the
+// controller so the skills index and slash menu reflect it immediately.
+func (a *App) AddSkillPath(path string) error {
+	path = normalizeSkillPath(path)
+	return a.applyConfigChange(func(c *config.Config) error {
+		return c.AddSkillPath(path)
+	})
+}
+
+// RemoveSkillPath removes a custom skill root from the user config and rebuilds.
+func (a *App) RemoveSkillPath(path string) error {
+	path = normalizeSkillPath(path)
+	return a.applyConfigChange(func(c *config.Config) error {
+		_, err := c.RemoveSkillPath(path)
+		return err
+	})
+}
+
+// RefreshSkills rebuilds the controller without changing config, reloading skill
+// discovery, the system prompt index, and slash completions.
+func (a *App) RefreshSkills() error {
+	return a.rebuild()
+}
+
+func normalizeSkillPath(path string) string {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return ""
+	}
+	if path == "~" || strings.HasPrefix(path, "~/") || strings.HasPrefix(path, `~\`) {
+		if home, err := os.UserHomeDir(); err == nil {
+			if path == "~" {
+				path = home
+			} else {
+				path = filepath.Join(home, path[2:])
+			}
+		}
+	}
+	if abs, err := filepath.Abs(path); err == nil {
+		path = abs
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return filepath.Clean(path)
+	}
+	if info.Mode().IsRegular() {
+		if filepath.Base(path) == skill.SkillFile {
+			return filepath.Clean(filepath.Dir(filepath.Dir(path)))
+		}
+		return filepath.Clean(filepath.Dir(path))
+	}
+	if info.IsDir() {
+		if _, err := os.Stat(filepath.Join(path, skill.SkillFile)); err == nil {
+			return filepath.Clean(filepath.Dir(path))
+		}
+	}
+	return filepath.Clean(path)
+}
+
+func skillRootPath(path string) string {
+	if filepath.Base(path) == skill.SkillFile {
+		return filepath.Dir(path)
+	}
+	return path
+}
+
+func cleanAbsPath(path string) string {
+	path = config.ExpandVars(strings.TrimSpace(path))
+	if path == "~" || strings.HasPrefix(path, "~/") || strings.HasPrefix(path, `~\`) {
+		if home, err := os.UserHomeDir(); err == nil {
+			if path == "~" {
+				path = home
+			} else {
+				path = filepath.Join(home, path[2:])
+			}
+		}
+	}
+	if abs, err := filepath.Abs(path); err == nil {
+		path = abs
+	}
+	return filepath.Clean(path)
 }
 
 // MCPServerInput is the drawer's "add server" form. Transport is "stdio" (Command

@@ -31,6 +31,7 @@ func TestRenderTOMLRoundTrips(t *testing.T) {
 			Password: "${REASONIX_PROXY_PASSWORD}",
 		},
 	}
+	orig.Skills.Paths = []string{"~/my-skills", "../shared/skills"}
 	orig.Plugins = []PluginEntry{
 		{Name: "example", Command: "reasonix-plugin-example"},
 		{Name: "stripe", Type: "http", URL: "https://mcp.stripe.com", Headers: map[string]string{"Authorization": "Bearer x"}, AutoStart: boolPtr(false)},
@@ -94,6 +95,9 @@ func TestRenderTOMLRoundTrips(t *testing.T) {
 	}
 	if got.Network.ProxyMode != "custom" || got.Network.Proxy.Type != "socks5" || got.Network.Proxy.Port != 7890 {
 		t.Errorf("network proxy not preserved: %+v", got.Network)
+	}
+	if len(got.Skills.Paths) != 2 || got.Skills.Paths[0] != "~/my-skills" {
+		t.Errorf("skills.paths = %v", got.Skills.Paths)
 	}
 	if len(got.Plugins) != 2 {
 		t.Fatalf("plugins count = %d, want 2", len(got.Plugins))
