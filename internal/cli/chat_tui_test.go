@@ -368,6 +368,44 @@ func TestLanguageCommandAutoClearsPinnedLanguage(t *testing.T) {
 	}
 }
 
+func TestLanguageCommandAutoClearsLowerPriorityUserOverride(t *testing.T) {
+	isolateUserConfig(t)
+	t.Setenv("REASONIX_LANG", "")
+	t.Setenv("LC_ALL", "")
+	t.Setenv("LC_MESSAGES", "")
+	t.Setenv("LANG", "")
+	i18n.DetectLanguage("en")
+	t.Cleanup(func() { i18n.DetectLanguage("en") })
+
+	userPath := config.UserConfigPath()
+	userCfg := config.LoadForEdit(userPath)
+	if err := userCfg.SetLanguage("zh"); err != nil {
+		t.Fatalf("set user language: %v", err)
+	}
+	if err := userCfg.SaveTo(userPath); err != nil {
+		t.Fatalf("save user config: %v", err)
+	}
+	projectCfg := config.Default()
+	if err := projectCfg.SaveTo("reasonix.toml"); err != nil {
+		t.Fatalf("save project config: %v", err)
+	}
+
+	m := newTestChatTUI()
+	m.runLanguageSubcommand("/language auto")
+
+	userCfg = config.LoadForEdit(userPath)
+	if userCfg.Language != "" {
+		t.Fatalf("/language auto should clear lower-priority user override, got %q", userCfg.Language)
+	}
+	loaded, err := config.Load()
+	if err != nil {
+		t.Fatalf("load merged config: %v", err)
+	}
+	if loaded.Language != "" {
+		t.Fatalf("merged config should be auto-detect after clearing overrides, got %q", loaded.Language)
+	}
+}
+
 func providerSection(body, name string) string {
 	needle := `name        = "` + name + `"`
 	start := strings.Index(body, needle)

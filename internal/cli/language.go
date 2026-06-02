@@ -2,6 +2,8 @@ package cli
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"reasonix/internal/config"
@@ -48,9 +50,48 @@ func (m *chatTUI) runLanguageSubcommand(input string) {
 		m.notice("language: " + err.Error())
 		return
 	}
+	if lang == "" {
+		if err := clearUserLanguageOverride(path); err != nil {
+			m.notice("language: " + err.Error())
+			return
+		}
+	}
 
 	resolved := i18n.DetectLanguage(lang)
 	m.notice(fmt.Sprintf(i18n.M.LanguageChangedFmt, languageDisplay(lang), resolved))
+}
+
+func clearUserLanguageOverride(primaryPath string) error {
+	userPath := config.UserConfigPath()
+	if userPath == "" || sameConfigPath(primaryPath, userPath) {
+		return nil
+	}
+	if _, err := os.Stat(userPath); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	edit := config.LoadForEdit(userPath)
+	if strings.TrimSpace(edit.Language) == "" {
+		return nil
+	}
+	if err := edit.SetLanguage(""); err != nil {
+		return err
+	}
+	return edit.SaveTo(userPath)
+}
+
+func sameConfigPath(a, b string) bool {
+	aa, errA := filepath.Abs(a)
+	bb, errB := filepath.Abs(b)
+	if errA == nil {
+		a = aa
+	}
+	if errB == nil {
+		b = bb
+	}
+	return filepath.Clean(a) == filepath.Clean(b)
 }
 
 func normalizeLanguageArg(s string) (string, error) {
