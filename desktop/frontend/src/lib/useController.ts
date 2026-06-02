@@ -115,6 +115,7 @@ type Action =
   | { type: "effort"; effort: EffortInfo }
   | { type: "jobs"; jobs: JobView[] }
   | { type: "history"; messages: HistoryMessage[] }
+  | { type: "local_notice"; level: "info" | "warn"; text: string }
   | { type: "clearApproval" }
   | { type: "clearAsk" }
   | { type: "reset" };
@@ -399,6 +400,14 @@ function reducer(s: State, a: Action): State {
       );
       return { ...s, items, seq: s.seq + visible.length };
     }
+    case "local_notice":
+      return {
+        ...s,
+        running: false,
+        turnActive: false,
+        seq: s.seq + 1,
+        items: [...s.items, { kind: "notice", id: `n${s.seq}`, level: a.level, text: a.text }],
+      };
     case "clearApproval":
       return { ...s, approval: undefined };
     case "clearAsk":
@@ -515,6 +524,10 @@ export function useController() {
     const submit = submitText.trim();
     const call = display !== submit ? app.SubmitDisplay(display, submit) : app.Submit(submit);
     call.catch(() => {});
+  }, []);
+
+  const notice = useCallback((text: string, level: "info" | "warn" = "info") => {
+    dispatch({ type: "local_notice", level, text });
   }, []);
 
   // cancel aborts the in-flight turn. If the server hasn't replied yet (the user
@@ -699,6 +712,7 @@ export function useController() {
   return {
     state,
     send,
+    notice,
     cancel,
     approve,
     answerQuestion,

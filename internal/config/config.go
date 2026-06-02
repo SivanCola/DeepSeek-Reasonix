@@ -21,6 +21,7 @@ import (
 type Config struct {
 	DefaultModel string            `toml:"default_model"`
 	Language     string            `toml:"language"` // ui/model language tag (e.g. "zh"); empty = auto-detect from $LANG / $REASONIX_LANG
+	UI           UIConfig          `toml:"ui"`
 	Agent        AgentConfig       `toml:"agent"`
 	Providers    []ProviderEntry   `toml:"providers"`
 	Tools        ToolsConfig       `toml:"tools"`
@@ -32,6 +33,36 @@ type Config struct {
 	Codegraph    CodegraphConfig   `toml:"codegraph"`
 	Statusline   StatuslineConfig  `toml:"statusline"`
 	LSP          LSPConfig         `toml:"lsp"`
+}
+
+// UIConfig controls presentation-only settings. Theme affects CLI rendering; the
+// desktop frontend keeps its own browser-local theme setting.
+type UIConfig struct {
+	Theme      string `toml:"theme"`       // auto|dark|light; empty resolves to auto
+	ThemeStyle string `toml:"theme_style"` // graphite|ember|aurora|midnight|sandstone|porcelain|linen|glacier
+}
+
+// UITheme normalizes ui.theme to a supported value.
+func (c *Config) UITheme() string {
+	switch strings.ToLower(strings.TrimSpace(c.UI.Theme)) {
+	case "dark":
+		return "dark"
+	case "light":
+		return "light"
+	default:
+		return "auto"
+	}
+}
+
+// UIThemeStyle normalizes ui.theme_style. Empty means "pick the default style
+// for the resolved light/dark shell".
+func (c *Config) UIThemeStyle() string {
+	switch strings.ToLower(strings.TrimSpace(c.UI.ThemeStyle)) {
+	case "graphite", "ember", "aurora", "midnight", "sandstone", "porcelain", "linen", "glacier":
+		return strings.ToLower(strings.TrimSpace(c.UI.ThemeStyle))
+	default:
+		return ""
+	}
 }
 
 // LSPConfig governs the optional Language Server Protocol tools (lsp_definition,
@@ -394,6 +425,7 @@ const LanguagePolicy = `Reply in the same language the user is using in their mo
 func Default() *Config {
 	return &Config{
 		DefaultModel: "deepseek-flash",
+		UI:           UIConfig{Theme: "auto"},
 		Agent: AgentConfig{
 			SystemPrompt: DefaultSystemPrompt,
 			// 0 = no step cap: the agent loops until the model gives a final answer,

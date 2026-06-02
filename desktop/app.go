@@ -742,6 +742,7 @@ func (a *App) Commands() []CommandInfo {
 		{Name: "memory", Description: i18n.M.CmdMemory, Kind: "builtin"},
 		{Name: "mcp", Description: i18n.M.CmdMcp, Kind: "builtin"},
 		{Name: "hooks", Description: i18n.M.CmdHooks, Kind: "builtin"},
+		{Name: "theme", Description: i18n.M.CmdTheme, Kind: "builtin"},
 		{Name: "skill", Description: i18n.M.CmdSkill, Kind: "builtin"},
 	}
 	a.mu.RLock()

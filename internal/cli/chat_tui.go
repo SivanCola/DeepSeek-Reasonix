@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"image/color"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -368,6 +367,7 @@ func newChatTUI(ctrl *control.Controller, missing string, eventCh chan event.Eve
 	ti.CharLimit = 16384
 	ti.SetHeight(1)
 	ti.ShowLineNumbers = false
+	applyTextareaTheme(&ti)
 	// Use the real terminal cursor (not a styled virtual one) so View can place
 	// it at the insertion point and IME candidate windows anchor to the input.
 	ti.SetVirtualCursor(false)
@@ -378,7 +378,7 @@ func newChatTUI(ctrl *control.Controller, missing string, eventCh chan event.Eve
 
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
-	sp.Style = lipgloss.NewStyle().Foreground(cliThemeColor())
+	sp.Style = themeStyle(activeCLITheme.accent)
 
 	commitBuf := []string{}
 	return chatTUI{
@@ -942,7 +942,7 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case promptResolvedMsg:
 		switch {
 		case msg.err != nil:
-			m.commitLine(wrapForViewport(i18n.M.ErrorPrefix+" "+msg.err.Error(), m.width, lipgloss.Color("3")))
+			m.commitLine(wrapForViewport(i18n.M.ErrorPrefix+" "+msg.err.Error(), m.width, activeCLITheme.warn))
 		case strings.TrimSpace(msg.sent) == "":
 			m.notice(i18n.M.SlashPromptEmpty)
 		default:
@@ -1352,28 +1352,13 @@ func (m chatTUI) handleApprovalKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 }
 
 var (
-	// Input box: only top + bottom borders, no sides.
-	inputBoxStyle = lipgloss.NewStyle().
-			Border(lipgloss.NormalBorder(), true, false, true, false).
-			BorderForeground(lipgloss.Color("173")).
-			PaddingLeft(1)
-
-	// Approval banner: same frame as the input box, recoloured yellow.
-	approvalBannerStyle = lipgloss.NewStyle().
-				Border(lipgloss.NormalBorder(), true, false, true, false).
-				BorderForeground(lipgloss.Color("220")).
-				Foreground(lipgloss.Color("220")).
-				Bold(true).
-				PaddingLeft(1)
-
-	// Task panel: a top-bordered block pinned above the input.
-	todoPanelStyle = lipgloss.NewStyle().
-			Border(lipgloss.NormalBorder(), true, false, false, false).
-			BorderForeground(lipgloss.Color("240")).
-			PaddingLeft(1)
-
-	statusBlockStyle = lipgloss.NewStyle()
-	workingStyle     = lipgloss.NewStyle().Faint(true)
+	// Input box: only top + bottom borders, no sides. The concrete colors are
+	// refreshed from the active CLI theme during startup.
+	inputBoxStyle       lipgloss.Style
+	approvalBannerStyle lipgloss.Style
+	todoPanelStyle      lipgloss.Style
+	statusBlockStyle    lipgloss.Style
+	workingStyle        lipgloss.Style
 )
 
 func (m chatTUI) View() tea.View {
@@ -1558,9 +1543,9 @@ func (m chatTUI) contextTag() string {
 		body := fmt.Sprintf("%s / %s ctx (%d%%)", shortTokens(used), shortTokens(window), pct)
 		switch {
 		case pct >= 85:
-			return lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Render(body)
+			return themeStyle(activeCLITheme.danger).Render(body)
 		case pct >= 60:
-			return lipgloss.NewStyle().Foreground(lipgloss.Color("220")).Render(body)
+			return themeStyle(activeCLITheme.warn).Render(body)
 		default:
 			return dim(body)
 		}
@@ -1574,9 +1559,9 @@ func (m chatTUI) contextTag() string {
 	body := fmt.Sprintf("%s ctx (%d%%) · %d%% to compact", shortTokens(used), pct, left)
 	switch {
 	case pct >= threshold:
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Render(fmt.Sprintf("%s ctx (%d%%) · compacting soon", shortTokens(used), pct))
+		return themeStyle(activeCLITheme.danger).Render(fmt.Sprintf("%s ctx (%d%%) · compacting soon", shortTokens(used), pct))
 	case left <= 10:
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("220")).Render(body)
+		return themeStyle(activeCLITheme.warn).Render(body)
 	default:
 		return dim(body)
 	}
@@ -2310,7 +2295,7 @@ func (m *chatTUI) ingestEvent(e event.Event) {
 		m.state = tuiIdle
 		m.clearSubmittedPastes()
 		if e.Err != nil && e.Err.Error() != "" && !strings.Contains(e.Err.Error(), "context canceled") {
-			m.commitLine(wrapForViewport(i18n.M.ErrorPrefix+" "+e.Err.Error(), m.width, lipgloss.Color("3")))
+			m.commitLine(wrapForViewport(i18n.M.ErrorPrefix+" "+e.Err.Error(), m.width, activeCLITheme.warn))
 		}
 		// Plan-mode approval is now driven by the controller (it emits an
 		// ApprovalRequest when a plan-mode turn produces a proposal), so there's
@@ -2417,6 +2402,7 @@ func (m *chatTUI) runSlashCommand(input string) tea.Cmd {
 			m.commitLine(renderOutputStyles(m.width, styles, m.outputStyle))
 		}
 	case "/theme":
+		m.echoLocalCommand(input)
 		m.runThemeSubcommand(input)
 	case "/help":
 		m.echoLocalCommand(input)
@@ -2590,20 +2576,17 @@ func renderTUIBanner(label, missing string, width int) string {
 	b.WriteString(accent("◆") + " " + bold("reasonix chat") + "  " + dim("· "+label) + "\n")
 	b.WriteString(dim("  "+i18n.M.ChatTip) + "\n")
 	if missing != "" {
-		b.WriteString(wrapForViewport("  ! "+missing, width, lipgloss.Color("3")) + "\n")
+		b.WriteString(wrapForViewport("  ! "+missing, width, activeCLITheme.warn) + "\n")
 	}
 	return b.String()
 }
 
 // wrapForViewport hard-wraps text to fit width columns and colours every line.
-func wrapForViewport(text string, width int, fg color.Color) string {
+func wrapForViewport(text string, width int, fg cliColor) string {
 	if width <= 0 {
 		width = 80
 	}
-	return lipgloss.NewStyle().
-		Foreground(fg).
-		Width(width).
-		Render(text)
+	return themeStyle(fg).Width(width).Render(text)
 }
 
 // renderUserBubble styles the just-submitted line with a filled dim background.
@@ -2620,10 +2603,7 @@ func renderUserBubble(line string, width int, planMode bool) string {
 	if w < 10 {
 		w = 10
 	}
-	bubble := lipgloss.NewStyle().
-		Background(lipgloss.Color("236")).
-		Width(w).
-		Padding(0, 1)
+	bubble := themeBGStyle(activeCLITheme.userBubbleBG).Width(w).Padding(0, 1)
 	return bubble.Render(prefix + line)
 }
 

@@ -25,6 +25,15 @@ func RenderTOML(c *Config) string {
 	}
 	b.WriteString("\n")
 
+	b.WriteString("[ui]\n")
+	fmt.Fprintf(&b, "theme = %q   # auto|dark|light; CLI colors only; REASONIX_THEME can override per run\n", c.UITheme())
+	if style := c.UIThemeStyle(); style != "" {
+		fmt.Fprintf(&b, "theme_style = %q   # accent palette; REASONIX_THEME_STYLE can override per run\n", style)
+	} else {
+		b.WriteString("# theme_style = \"graphite\"   # graphite|ember|aurora|midnight|sandstone|porcelain|linen|glacier\n")
+	}
+	b.WriteString("\n")
+
 	b.WriteString("[network]\n")
 	fmt.Fprintf(&b, "proxy_mode = %q   # auto|env|custom|off; auto currently uses env proxy\n", c.NetworkProxyMode())
 	if c.Network.ProxyURL != "" {

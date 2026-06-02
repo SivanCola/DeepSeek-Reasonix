@@ -395,7 +395,7 @@ func (m *chatTUI) acceptCompletion() {
 	}
 }
 
-var compSelStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("173")).Bold(true)
+var compSelStyle lipgloss.Style
 
 // renderCompletion draws the menu above the input box: matching items, windowed
 // around the selection, the current row highlighted, hints dimmed.

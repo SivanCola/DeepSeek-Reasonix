@@ -32,8 +32,13 @@ func Run(args []string, version string) int {
 	// welcome banner) come through localized. Env-only first; if a config
 	// exists and pins a language, that wins.
 	i18n.DetectLanguage("")
-	if cfg, err := config.Load(); err == nil && cfg.Language != "" {
-		i18n.DetectLanguage(cfg.Language)
+	if cfg, err := config.Load(); err == nil {
+		if cfg.Language != "" {
+			i18n.DetectLanguage(cfg.Language)
+		}
+		configureCLIThemeWithStyle(cfg.UITheme(), cfg.UIThemeStyle())
+	} else {
+		configureCLITheme("auto")
 	}
 
 	if len(args) == 0 {
@@ -114,6 +119,9 @@ func runAgent(args []string) int {
 	metricsPath := fs.String("metrics", "", "write a JSON token/cache/cost summary of the run to this path")
 	if err := fs.Parse(args); err != nil {
 		return 2
+	}
+	if cfg, err := config.Load(); err == nil {
+		configureCLIThemeWithStyle(cfg.UITheme(), cfg.UIThemeStyle())
 	}
 
 	prompt := strings.TrimSpace(strings.Join(fs.Args(), " "))
@@ -227,6 +235,9 @@ func chatREPL(args []string) int {
 	fs.BoolVar(yolo, "yolo", false, "alias for --dangerously-skip-permissions")
 	if err := fs.Parse(args); err != nil {
 		return 2
+	}
+	if cfg, err := config.Load(); err == nil {
+		configureCLIThemeWithStyle(cfg.UITheme(), cfg.UIThemeStyle())
 	}
 
 	// Decide whether we're starting fresh or resuming. --resume opens an

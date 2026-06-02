@@ -20,6 +20,43 @@ func TestSetDefaultModel(t *testing.T) {
 	}
 }
 
+func TestUIThemeNormalizes(t *testing.T) {
+	c := Default()
+	for _, tt := range []struct {
+		in   string
+		want string
+	}{
+		{"", "auto"},
+		{"AUTO", "auto"},
+		{"dark", "dark"},
+		{" light ", "light"},
+		{"unknown", "auto"},
+	} {
+		c.UI.Theme = tt.in
+		if got := c.UITheme(); got != tt.want {
+			t.Errorf("UITheme(%q) = %q, want %q", tt.in, got, tt.want)
+		}
+	}
+}
+
+func TestUIThemeStyleNormalizes(t *testing.T) {
+	c := Default()
+	for _, tt := range []struct {
+		in   string
+		want string
+	}{
+		{"", ""},
+		{"AURORA", "aurora"},
+		{" glacier ", "glacier"},
+		{"unknown", ""},
+	} {
+		c.UI.ThemeStyle = tt.in
+		if got := c.UIThemeStyle(); got != tt.want {
+			t.Errorf("UIThemeStyle(%q) = %q, want %q", tt.in, got, tt.want)
+		}
+	}
+}
+
 func TestSetPlannerModel(t *testing.T) {
 	c := Default()
 	if err := c.SetPlannerModel("deepseek-pro"); err != nil {

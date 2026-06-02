@@ -82,6 +82,11 @@ func TestSlashArgItems(t *testing.T) {
 	if !has(items, "auto") || !has(items, "high") || !has(items, "max") || has(items, "off") {
 		t.Errorf("/effort should offer auto/high/max only; got %v", labelsOf(items))
 	}
+	// /theme
+	items, _ = SlashArgItems("/theme ", data)
+	if !has(items, "auto") || !has(items, "light") || !has(items, "graphite") || !has(items, "glacier") {
+		t.Errorf("/theme should offer modes and styles; got %v", labelsOf(items))
+	}
 	// a non-structured command yields nothing
 	if items, _ := SlashArgItems("/help ", data); len(items) != 0 {
 		t.Errorf("/help should have no arg items; got %v", labelsOf(items))

@@ -2,7 +2,17 @@ import { useEffect, useState } from "react";
 import { app } from "../lib/bridge";
 import { useI18n, useT } from "../lib/i18n";
 import { useUpdater } from "../lib/useUpdater";
-import { applyTheme, getTheme, type Theme } from "../lib/theme";
+import {
+  THEME_STYLES,
+  applyTheme,
+  defaultStyleForTheme,
+  getResolvedTheme,
+  getTheme,
+  getThemeStyle,
+  themeForStyle,
+  type Theme,
+  type ThemeStyle,
+} from "../lib/theme";
 import type { NetworkView, ProviderView, SettingsView } from "../lib/types";
 import { ResizableDrawer } from "./ResizableDrawer";
 
@@ -20,6 +30,7 @@ export function SettingsPanel({ onClose, onChanged }: { onClose: () => void; onC
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [theme, setThemeState] = useState<Theme>(getTheme());
+  const [themeStyle, setThemeStyleState] = useState<ThemeStyle>(() => getThemeStyle(getTheme()));
   const [tab, setTab] = useState<SettingsTab>("models");
 
   const reload = async () => setS(await app.Settings().catch(() => null));
@@ -80,9 +91,18 @@ export function SettingsPanel({ onClose, onChanged }: { onClose: () => void; onC
                 {tab === "appearance" && (
                   <AppearanceSection
                     theme={theme}
+                    themeStyle={themeStyle}
                     onTheme={(t) => {
-                      applyTheme(t);
+                      const nextStyle = themeForStyle(themeStyle) === getResolvedTheme(t) ? themeStyle : defaultStyleForTheme(t);
+                      applyTheme(t, nextStyle);
                       setThemeState(t);
+                      setThemeStyleState(nextStyle);
+                    }}
+                    onThemeStyle={(style) => {
+                      const nextTheme = themeForStyle(style);
+                      applyTheme(nextTheme, style);
+                      setThemeState(nextTheme);
+                      setThemeStyleState(style);
                     }}
                   />
                 )}
@@ -731,7 +751,17 @@ function AgentSection({ s, busy, apply }: SectionProps) {
   );
 }
 
-function AppearanceSection({ theme, onTheme }: { theme: Theme; onTheme: (t: Theme) => void }) {
+function AppearanceSection({
+  theme,
+  themeStyle,
+  onTheme,
+  onThemeStyle,
+}: {
+  theme: Theme;
+  themeStyle: ThemeStyle;
+  onTheme: (t: Theme) => void;
+  onThemeStyle: (style: ThemeStyle) => void;
+}) {
   const { t, pref, setPref } = useI18n();
   const themeOptions: Theme[] = ["auto", "light", "dark"];
   return (
@@ -747,6 +777,21 @@ function AppearanceSection({ theme, onTheme }: { theme: Theme; onTheme: (t: Them
               onClick={() => onTheme(opt)}
             >
               {themeName(opt, t)}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="set-row set-row--stack">
+        <label className="set-label">{t("settings.themeStyle")}</label>
+        <div className="theme-style-grid">
+          {THEME_STYLES.map((opt) => (
+            <button
+              key={opt}
+              className={`theme-style-btn${themeStyle === opt ? " theme-style-btn--on" : ""}`}
+              onClick={() => onThemeStyle(opt)}
+            >
+              <span className="theme-style-swatch" data-theme-style-swatch={opt} />
+              <span>{opt}</span>
             </button>
           ))}
         </div>

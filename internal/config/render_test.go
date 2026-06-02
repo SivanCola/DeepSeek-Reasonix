@@ -12,6 +12,8 @@ func TestRenderTOMLRoundTrips(t *testing.T) {
 	orig := Default()
 	orig.DefaultModel = "mimo-pro"
 	orig.Language = "zh"
+	orig.UI.Theme = "light"
+	orig.UI.ThemeStyle = "glacier"
 	orig.Agent.AutoPlanClassifier = "deepseek-flash"
 	orig.Agent.SubagentModel = "mimo-pro"
 	orig.Agent.SubagentModels = map[string]string{"review": "deepseek-pro"}
@@ -53,6 +55,12 @@ func TestRenderTOMLRoundTrips(t *testing.T) {
 	}
 	if got.Language != "zh" {
 		t.Errorf("language = %q, want zh", got.Language)
+	}
+	if got.UI.Theme != "light" {
+		t.Errorf("ui.theme = %q, want light", got.UI.Theme)
+	}
+	if got.UI.ThemeStyle != "glacier" {
+		t.Errorf("ui.theme_style = %q, want glacier", got.UI.ThemeStyle)
 	}
 	if got.Agent.MaxSteps != orig.Agent.MaxSteps {
 		t.Errorf("max_steps = %d, want %d", got.Agent.MaxSteps, orig.Agent.MaxSteps)

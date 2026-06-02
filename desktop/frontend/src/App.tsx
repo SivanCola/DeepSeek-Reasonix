@@ -31,6 +31,7 @@ import { parseTodos } from "./lib/tools";
 import { sessionActivityTime } from "./lib/session";
 import type { MemoryView, Mode, SessionMeta } from "./lib/types";
 import { loadLayoutSize, saveLayoutSize } from "./lib/layoutPreferences";
+import { applyTheme, getTheme, getThemeStyle, isThemeStyle, themeForStyle, type Theme } from "./lib/theme";
 
 const SIDEBAR_COLLAPSED_KEY = "reasonix.sidebar.collapsed";
 const SIDEBAR_COLLAPSED_WIDTH = 68;
@@ -38,6 +39,10 @@ const SIDEBAR_DEFAULT_WIDTH = 264;
 const SIDEBAR_MIN_WIDTH = 228;
 const SIDEBAR_MAX_WIDTH = 420;
 const CHAT_MIN_WIDTH = 420;
+
+function isThemeMode(value: string): value is Theme {
+  return value === "auto" || value === "light" || value === "dark";
+}
 const WORKSPACE_PANEL_MIN_WIDTH = 640;
 const WORKSPACE_PANEL_DEFAULT_WIDTH = WORKSPACE_PANEL_MIN_WIDTH;
 const WORKSPACE_PANEL_MAX_WIDTH = 820;
@@ -126,6 +131,7 @@ export default function App() {
   const {
     state,
     send,
+    notice,
     cancel,
     approve,
     answerQuestion,
@@ -249,19 +255,43 @@ export default function App() {
   // resolves (a turn, or a listing Notice).
   const handleSend = useCallback(
     (displayText: string, submitText = displayText) => {
-      const t = displayText.trim();
-      const model = /^\/model\s+(\S+)$/.exec(t);
+      const trimmed = displayText.trim();
+      const model = /^\/model\s+(\S+)$/.exec(trimmed);
       if (model) {
         void switchModel(model[1]);
         return;
       }
-      if (t === "/memory") {
+      if (trimmed === "/memory") {
         void openMemory();
         return;
       }
-      send(t, submitText.trim());
+      const theme = /^\/theme(?:\s+(\S+))?$/.exec(trimmed);
+      if (theme) {
+        const arg = theme[1]?.toLowerCase();
+        if (!arg) {
+          const cur = getTheme();
+          notice(t("settings.themeCurrent", { theme: cur, style: getThemeStyle(cur) }));
+          return;
+        }
+        if (isThemeMode(arg)) {
+          const next = arg;
+          const style = getThemeStyle(next);
+          applyTheme(next, style);
+          notice(t("settings.themeChanged", { theme: next, style }));
+          return;
+        }
+        if (isThemeStyle(arg)) {
+          const next = themeForStyle(arg);
+          applyTheme(next, arg);
+          notice(t("settings.themeChanged", { theme: next, style: arg }));
+          return;
+        }
+        notice(t("settings.themeUnknown", { name: arg }), "warn");
+        return;
+      }
+      send(trimmed, submitText.trim());
     },
-    [switchModel, openMemory, send],
+    [switchModel, openMemory, send, notice, t],
   );
 
   const refreshSessions = useCallback(async () => {

@@ -37,6 +37,7 @@
   --accent: #d97757;
   --accent-fg: #1a0f0a;
   --accent-soft: rgba(217, 119, 87, 0.14);
+  --accent-strong: #e58a6b;
   --ok: #74b87a;
   --warn: #d9a441;
   --err: #e0696a;
@@ -129,8 +130,8 @@
     --workspace-files-bg: #f3eee6;
     --workspace-files-hover: #ebe3d8;
     --workspace-selection-bg: #eaf1ff;
-    --workspace-selection-fg: #2f5fa8;
-    --workspace-selection-bar: #6f91d9;
+    --workspace-selection-fg: var(--accent);
+    --workspace-selection-bar: var(--accent);
     --border: #ded4c6;
     --border-soft: #e9dfd3;
     --fg: #1f1d1a;
@@ -139,6 +140,7 @@
     --accent: #2f5fa8;
     --accent-fg: #fff;
     --accent-soft: rgba(47, 95, 168, 0.12);
+    --accent-strong: #244f91;
     --ok: #5d9b66;
     --list-row-title: #4f4942;
     --list-row-meta: #8a8075;
@@ -166,8 +168,8 @@
   --workspace-files-bg: #f3eee6;
   --workspace-files-hover: #ebe3d8;
   --workspace-selection-bg: #eaf1ff;
-  --workspace-selection-fg: #2f5fa8;
-  --workspace-selection-bar: #6f91d9;
+  --workspace-selection-fg: var(--accent);
+  --workspace-selection-bar: var(--accent);
   --border: #ded4c6;
   --border-soft: #e9dfd3;
   --fg: #1f1d1a;
@@ -176,6 +178,7 @@
   --accent: #2f5fa8;
   --accent-fg: #fff;
   --accent-soft: rgba(47, 95, 168, 0.12);
+  --accent-strong: #244f91;
   --ok: #5d9b66;
   --list-row-title: #4f4942;
   --list-row-meta: #8a8075;
@@ -4458,6 +4461,73 @@ body {
   background: var(--accent-soft);
   color: var(--accent);
   font-weight: 650;
+}
+.set-row--stack {
+  align-items: flex-start;
+  flex-direction: column;
+}
+.theme-style-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
+  gap: 8px;
+  width: 100%;
+}
+.theme-style-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--bg);
+  color: var(--fg-dim);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1;
+  padding: 6px 10px;
+  text-align: left;
+}
+.theme-style-btn:hover {
+  border-color: var(--button-border-hover);
+  background: var(--button-bg-hover);
+}
+.theme-style-btn--on {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 650;
+}
+.theme-style-swatch {
+  width: 14px;
+  height: 14px;
+  border-radius: 999px;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--fg-faint) 42%, transparent);
+  flex: 0 0 auto;
+}
+.theme-style-swatch[data-theme-style-swatch="graphite"] {
+  background: #d97757;
+}
+.theme-style-swatch[data-theme-style-swatch="ember"] {
+  background: #f06d38;
+}
+.theme-style-swatch[data-theme-style-swatch="aurora"] {
+  background: #34c3a6;
+}
+.theme-style-swatch[data-theme-style-swatch="midnight"] {
+  background: #b18cff;
+}
+.theme-style-swatch[data-theme-style-swatch="sandstone"] {
+  background: #c2613f;
+}
+.theme-style-swatch[data-theme-style-swatch="porcelain"] {
+  background: #7d63c8;
+}
+.theme-style-swatch[data-theme-style-swatch="linen"] {
+  background: #bd5d4d;
+}
+.theme-style-swatch[data-theme-style-swatch="glacier"] {
+  background: #357fa8;
 }
 .settings-config-path {
   margin-top: 18px;

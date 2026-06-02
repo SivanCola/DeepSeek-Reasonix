@@ -321,7 +321,4 @@ func headerOr(q event.AskQuestion, i int) string {
 
 // choicePanelStyle frames the question card, matching the input box's top/bottom
 // rule but in the accent colour.
-var choicePanelStyle = lipgloss.NewStyle().
-	Border(lipgloss.NormalBorder(), true, false, true, false).
-	BorderForeground(lipgloss.Color("173")).
-	PaddingLeft(1)
+var choicePanelStyle lipgloss.Style

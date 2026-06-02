@@ -1,8 +1,6 @@
-// theme.ts manages the appearance override. The stylesheet is dark by default and
-// follows the OS via prefers-color-scheme; this lets the user force a theme by
-// setting data-theme on <html> ("dark" / "light"), or "auto" to remove it and
-// follow the OS again. A separate data-theme-style attribute changes only accent
-// tokens so palette switching does not repaint the neutral shell.
+// theme.ts manages the appearance override. The stylesheet follows the OS via
+// prefers-color-scheme unless data-theme forces "dark" or "light". A separate
+// data-theme-style attribute changes only accent tokens.
 
 export type Theme = "auto" | "light" | "dark";
 export type ResolvedTheme = Exclude<Theme, "auto">;
@@ -60,6 +58,10 @@ function normalizeTheme(value: unknown): Theme | null {
   }
 }
 
+export function isThemeStyle(value: unknown): value is ThemeStyle {
+  return typeof value === "string" && (THEME_STYLES as readonly string[]).includes(value);
+}
+
 export function getTheme(): Theme {
   const v = typeof localStorage !== "undefined" ? localStorage.getItem(THEME_KEY) : null;
   if (!v) return "auto";
@@ -69,10 +71,6 @@ export function getTheme(): Theme {
   } catch {
     return normalizeTheme(v) ?? "auto";
   }
-}
-
-export function isThemeStyle(value: unknown): value is ThemeStyle {
-  return typeof value === "string" && (THEME_STYLES as readonly string[]).includes(value);
 }
 
 export function getResolvedTheme(theme: Theme = getTheme()): ResolvedTheme {
@@ -102,17 +100,18 @@ export function applyTheme(theme: Theme, style: ThemeStyle = getThemeStyle(theme
   root.removeAttribute("data-theme-scheme");
   if (theme === "auto") root.removeAttribute("data-theme");
   else root.setAttribute("data-theme", theme);
-  const nextStyle = themeForStyle(style) === getResolvedTheme(theme) ? style : defaultStyleForTheme(theme);
+
+  const resolved = getResolvedTheme(theme);
+  const nextStyle = themeForStyle(style) === resolved ? style : DEFAULT_THEME_STYLE[resolved];
   root.setAttribute("data-theme-style", nextStyle);
   try {
     localStorage.setItem(THEME_KEY, theme);
     localStorage.setItem(STYLE_KEY, nextStyle);
   } catch {
-    /* private mode / no storage — the in-DOM attribute still applies */
+    /* private mode / no storage — the in-DOM attributes still apply */
   }
 }
 
-// initTheme applies the saved choice once at startup (before React renders).
 export function initTheme(): void {
   const theme = getTheme();
   applyTheme(theme, getThemeStyle(theme));

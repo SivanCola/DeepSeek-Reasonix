@@ -86,8 +86,8 @@ func (s selection) empty() bool { return s.anchor == s.head }
 
 var (
 	selStyle         = lipgloss.NewStyle().Reverse(true)
-	scrollThumbStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("173"))
-	scrollTrackStyle = lipgloss.NewStyle().Faint(true)
+	scrollThumbStyle lipgloss.Style
+	scrollTrackStyle lipgloss.Style
 )
 
 // renderTranscript draws the viewport's visible window with a scrollbar in the

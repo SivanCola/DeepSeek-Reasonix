@@ -5,6 +5,10 @@
 default_model = "deepseek"   # a provider name (→ its default model) or "provider/model"
 # language      = "zh"   # ui language; empty = auto-detect from $LANG / $REASONIX_LANG
 
+[ui]
+theme = "auto"   # auto|dark|light; controls CLI colors only; REASONIX_THEME can override per run
+# theme_style = "graphite"   # graphite|ember|aurora|midnight|sandstone|porcelain|linen|glacier
+
 [agent]
 system_prompt = """
 You are Reasonix, a coding agent focused on executing code tasks.

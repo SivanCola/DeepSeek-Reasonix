@@ -76,20 +76,20 @@ var toolArgKey = map[string]string{
 // can tell reads (cyan) from writes (green), shell (yellow), process control
 // (magenta), and everything else (copper) at a glance.
 func toolDot(name string) string {
-	var code string
+	var c cliColor
 	switch toolCategory[name] {
 	case "read":
-		code = ansiCyan
+		c = activeCLITheme.toolRead
 	case "write":
-		code = ansiGreen
+		c = activeCLITheme.success
 	case "exec":
-		code = ansiYellow
+		c = activeCLITheme.warn
 	case "proc":
-		code = ansiMagenta
+		c = activeCLITheme.toolProc
 	default:
-		code = ansiAccent
+		c = activeCLITheme.accent
 	}
-	return sgr(code, "●")
+	return themeFg(c, "●")
 }
 
 var toolCategory = map[string]string{

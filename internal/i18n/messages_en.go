@@ -64,8 +64,8 @@ var English = Messages{
 	OutputStyleHeader: "output styles:",
 	OutputStyleHint:   "set agent.output_style in reasonix.toml to apply one (takes effect next session)",
 	ThemeHeader:       "themes:",
-	ThemeHint:         "switch with /theme <style>",
-	ThemeChangedFmt:   "theme switched to %s",
+	ThemeHint:         "switch with /theme <auto|light|dark|style>",
+	ThemeChangedFmt:   "theme switched to %s / %s",
 	ThemeUnknownFmt:   "unknown theme %q",
 
 	CompactionWorking: "compacting conversation…",

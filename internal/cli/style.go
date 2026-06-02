@@ -32,11 +32,11 @@ const (
 	ansiCyan    = "\033[38;5;44m"
 	ansiMagenta = "\033[38;5;176m"
 	ansiReverse = "\033[7m"
+	// ansiAccent is the dark theme fallback for Reasonix's warm copper brand
+	// colour. accent() uses the active CLI theme, but tests and legacy callers can
+	// still refer to this concrete escape sequence.
+	ansiAccent = "\033[38;5;173m"
 )
-
-// ansiAccent is reasonix's current accent colour. The CLI /theme command updates
-// it at runtime so titles, prompts, and box borders switch together.
-var ansiAccent = "\033[38;5;173m"
 
 func sgr(code, s string) string {
 	if !colorEnabled {
@@ -46,9 +46,9 @@ func sgr(code, s string) string {
 }
 
 func bold(s string) string    { return sgr(ansiBold, s) }
-func dim(s string) string     { return sgr(ansiDim, s) }
-func green(s string) string   { return sgr(ansiGreen, s) }
-func red(s string) string     { return sgr(ansiRed, s) }
-func yellow(s string) string  { return sgr(ansiYellow, s) }
-func accent(s string) string  { return sgr(ansiAccent, s) }
+func dim(s string) string     { return themeFg(activeCLITheme.faint, s) }
+func green(s string) string   { return themeFg(activeCLITheme.success, s) }
+func red(s string) string     { return themeFg(activeCLITheme.err, s) }
+func yellow(s string) string  { return themeFg(activeCLITheme.warn, s) }
+func accent(s string) string  { return themeFg(activeCLITheme.accent, s) }
 func reverse(s string) string { return sgr(ansiReverse, s) }

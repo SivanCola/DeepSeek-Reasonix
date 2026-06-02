@@ -65,8 +65,8 @@ var Chinese = Messages{
 	OutputStyleHeader: "输出风格：",
 	OutputStyleHint:   "在 reasonix.toml 设置 agent.output_style 即可启用（下次会话生效）",
 	ThemeHeader:       "主题：",
-	ThemeHint:         "使用 /theme <style> 切换",
-	ThemeChangedFmt:   "已切换主题为 %s",
+	ThemeHint:         "使用 /theme <auto|light|dark|style> 切换",
+	ThemeChangedFmt:   "已切换主题为 %s / %s",
 	ThemeUnknownFmt:   "未知主题 %q",
 
 	CompactionWorking: "正在压缩对话…",

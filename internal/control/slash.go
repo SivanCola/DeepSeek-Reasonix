@@ -37,7 +37,7 @@ type ArgData struct {
 // (everything after the command word). It returns the suggestions filtered by
 // the token being typed and the byte offset where that token begins, so a caller
 // replaces just that token. Only structured commands participate (/mcp /model
-// /skill /hooks /effort); others yield nil. Single source of truth for CLI +
+// /skill /hooks /effort /theme); others yield nil. Single source of truth for CLI +
 // desktop.
 func SlashArgItems(line string, d ArgData) ([]SlashItem, int) {
 	cmdEnd := strings.IndexAny(line, " \t")
@@ -59,10 +59,40 @@ func SlashArgItems(line string, d ArgData) ([]SlashItem, int) {
 		raw = hooksArgItems(prior)
 	case "/effort":
 		raw = effortArgItems(prior, d)
+	case "/theme":
+		raw = themeArgItems(prior)
 	default:
 		return nil, from
 	}
 	return filterSlash(raw, line, from, cur), from
+}
+
+func themeArgItems(prior []string) []SlashItem {
+	if len(prior) > 1 {
+		return nil
+	}
+	items := []SlashItem{
+		{Label: "auto", Insert: "auto", Hint: "mode · detect system or terminal background"},
+		{Label: "light", Insert: "light", Hint: "mode · force light shell"},
+		{Label: "dark", Insert: "dark", Hint: "mode · force dark shell"},
+	}
+	for _, st := range []struct {
+		name string
+		mode string
+		desc string
+	}{
+		{"graphite", "dark", "warm clay accent"},
+		{"ember", "dark", "hot orange accent"},
+		{"aurora", "dark", "cool teal accent"},
+		{"midnight", "dark", "quiet violet accent"},
+		{"sandstone", "light", "default warm light accent"},
+		{"porcelain", "light", "soft violet light accent"},
+		{"linen", "light", "muted coral light accent"},
+		{"glacier", "light", "cool blue accent"},
+	} {
+		items = append(items, SlashItem{Label: st.name, Insert: st.name, Hint: st.mode + " · " + st.desc})
+	}
+	return items
 }
 
 func effortArgItems(prior []string, d ArgData) []SlashItem {
