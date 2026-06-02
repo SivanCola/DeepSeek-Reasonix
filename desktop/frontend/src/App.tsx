@@ -163,6 +163,8 @@ export default function App() {
   const [capsOpen, setCapsOpen] = useState(false);
   const [pendingPlanRevision, setPendingPlanRevision] = useState<string | null>(null);
   const [viewportWidth, setViewportWidth] = useState(() => (typeof window === "undefined" ? 1440 : window.innerWidth));
+  const [footerHeight, setFooterHeight] = useState(0);
+  const footerRef = useRef<HTMLElement>(null);
   const sidebarBeforeWorkspacePreviewRef = useRef<boolean | null>(null);
   const effectiveSidebarWidth = sidebarCollapsed ? SIDEBAR_COLLAPSED_WIDTH : sidebarWidth;
   const effectiveWorkspacePanelWidth = useMemo(
@@ -273,6 +275,16 @@ export default function App() {
     const onResize = () => setViewportWidth(window.innerWidth);
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
+  }, []);
+
+  useEffect(() => {
+    const el = footerRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const update = () => setFooterHeight(Math.round(el.getBoundingClientRect().height));
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(el);
+    return () => observer.disconnect();
   }, []);
 
   useEffect(() => {
@@ -708,11 +720,11 @@ export default function App() {
                 <span className="loading-screen__text">{t("common.loading")}</span>
               </div>
             ) : (
-              <Transcript items={state.items} onPrompt={send} onRewind={rewind} />
+              <Transcript items={state.items} footerHeight={footerHeight} onPrompt={send} onRewind={rewind} />
             )}
           </main>
 
-          <footer className="footer">
+          <footer className="footer" ref={footerRef}>
             {showTodos && <TodoPanel todos={todos} onDismiss={() => setDismissedTodo(todoItem!.id)} />}
             {state.approval && (
               <ApprovalModal
