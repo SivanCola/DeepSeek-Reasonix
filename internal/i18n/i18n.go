@@ -70,6 +70,7 @@ type Messages struct {
 	ChatToolWorkingFmt     string // "%s working · %ds" under a running tool — %s = spinner, %d = elapsed s
 	ChatStatusIdle         string // shortcuts hint when idle
 	ChatStatusYoloIdle     string // shortcuts hint when idle in YOLO/bypass mode
+	ChatStatusCycleHint    string // mode-cycle shortcut hint shown when no modal prompt owns the status row
 	ChatStatusPlanApproval string // shortcuts hint while a plan is pending
 	PlanApprovalPrompt     string // one-line "plan above is ready" banner shown above the input
 	ChatStatusToolApproval string // shortcuts hint while a tool call awaits approval
@@ -90,13 +91,16 @@ type Messages struct {
 	AskSubmitHint      string // submit-tab keyboard hint
 
 	// output style listing (/output-style).
-	OutputStyleNone   string // no styles available
-	OutputStyleHeader string // header above the listing
-	OutputStyleHint   string // how to select one
-	ThemeHeader       string // header above the /theme listing
-	ThemeHint         string // how to select a theme
-	ThemeChangedFmt   string // "/theme <name>" succeeded
-	ThemeUnknownFmt   string // "/theme <name>" unknown
+	OutputStyleNone    string // no styles available
+	OutputStyleHeader  string // header above the listing
+	OutputStyleHint    string // how to select one
+	ThemeHeader        string // header above the /theme listing
+	ThemeHint          string // how to select a theme
+	ThemeChangedFmt    string // "/theme <name>" succeeded
+	ThemeUnknownFmt    string // "/theme <name>" unknown
+	LanguageHeader     string // header above the /language listing
+	LanguageHint       string // how to select a language
+	LanguageChangedFmt string // "/language <tag>" succeeded, %s = saved tag, %s = resolved tag
 
 	// context compaction card (CompactionStarted / CompactionDone events).
 	CompactionWorking string // shown while the summarizer runs
@@ -137,6 +141,7 @@ type Messages struct {
 	CmdPasteImage   string // /paste-image
 	CmdOutputStyle  string // /output-style
 	CmdTheme        string // /theme
+	CmdLanguage     string // /language
 	CmdSkill        string // /skill
 	CmdVerbose      string // /verbose
 	CmdEffort       string // /effort
@@ -161,6 +166,9 @@ type Messages struct {
 	ArgEffortXHigh  string // /effort xhigh
 	ArgEffortMax    string // /effort max
 	ArgThemeCurrent string // /theme <style> active tag
+	ArgLanguageAuto string // /language auto
+	ArgLanguageEn   string // /language en
+	ArgLanguageZh   string // /language zh
 
 	// management listing notices (the Submit path: desktop / HTTP frontends)
 	ListModelsHeaderFmt string // "models (active: %s)"

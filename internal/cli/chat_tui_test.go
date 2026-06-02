@@ -13,6 +13,7 @@ import (
 	"reasonix/internal/config"
 	"reasonix/internal/control"
 	"reasonix/internal/event"
+	"reasonix/internal/i18n"
 	"reasonix/internal/provider"
 )
 
@@ -329,6 +330,41 @@ func TestEffortCommandAutoClearsProviderEffort(t *testing.T) {
 	section := providerSection(string(body), "deepseek-flash")
 	if strings.Contains(section, `effort      = "`) {
 		t.Fatalf("auto should clear saved deepseek-flash effort:\n%s", section)
+	}
+}
+
+func TestLanguageCommandSwitchesImmediatelyAndPersists(t *testing.T) {
+	isolateUserConfig(t)
+	i18n.DetectLanguage("en")
+	t.Cleanup(func() { i18n.DetectLanguage("en") })
+
+	m := newTestChatTUI()
+	m.runLanguageSubcommand("/language zh")
+
+	if i18n.M.ChatStatusIdle != "就绪" {
+		t.Fatalf("/language zh did not switch active catalogue, idle=%q", i18n.M.ChatStatusIdle)
+	}
+	body, err := os.ReadFile(config.UserConfigPath())
+	if err != nil {
+		t.Fatalf("read saved config: %v", err)
+	}
+	if !strings.Contains(string(body), `language      = "zh"`) {
+		t.Fatalf("saved config missing language=zh:\n%s", body)
+	}
+}
+
+func TestLanguageCommandAutoClearsPinnedLanguage(t *testing.T) {
+	isolateUserConfig(t)
+	i18n.DetectLanguage("en")
+	t.Cleanup(func() { i18n.DetectLanguage("en") })
+
+	m := newTestChatTUI()
+	m.runLanguageSubcommand("/language zh")
+	m.runLanguageSubcommand("/language auto")
+
+	cfg := config.LoadForEdit(config.UserConfigPath())
+	if cfg.Language != "" {
+		t.Fatalf("auto should clear saved language override, got %q", cfg.Language)
 	}
 }
 

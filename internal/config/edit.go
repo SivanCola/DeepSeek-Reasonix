@@ -82,6 +82,23 @@ func (c *Config) SetProviderEffort(name, effort string) error {
 	return fmt.Errorf("set provider effort: no provider %q", name)
 }
 
+// SetLanguage pins the CLI UI language. Empty clears the override so runtime
+// detection falls back to REASONIX_LANG / locale env. Only short supported tags
+// are stored to keep config round-trips predictable.
+func (c *Config) SetLanguage(lang string) error {
+	switch strings.ToLower(strings.TrimSpace(lang)) {
+	case "", "auto":
+		c.Language = ""
+	case "en":
+		c.Language = "en"
+	case "zh":
+		c.Language = "zh"
+	default:
+		return fmt.Errorf("language %q: must be auto|en|zh", lang)
+	}
+	return nil
+}
+
 // SetProviderThinking updates a provider's provider-specific thinking mode knob.
 func (c *Config) SetProviderThinking(name, thinking string) error {
 	for i := range c.Providers {

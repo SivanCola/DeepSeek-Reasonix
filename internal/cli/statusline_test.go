@@ -46,6 +46,9 @@ func TestIdleStatuslineIsCompact(t *testing.T) {
 	if !strings.Contains(plain, "Auto · ready") {
 		t.Fatalf("idle status line missing mode status:\n%s", plain)
 	}
+	if !strings.Contains(plain, "Shift+Tab to cycle") {
+		t.Fatalf("idle status line missing mode-cycle hint:\n%s", plain)
+	}
 	for _, old := range []string{"Shift-Tab", "Ctrl-O", "Ctrl-D", "Enter sends", "Esc clears/exits state", "PgUp/PgDn"} {
 		if strings.Contains(plain, old) {
 			t.Fatalf("idle status line should not contain %q:\n%s", old, plain)
@@ -61,7 +64,7 @@ func TestYoloStatuslineUsesDangerPill(t *testing.T) {
 
 	content := renderStatuslineView(t, true)
 	plain := bottomStatusPlain(content)
-	if !strings.Contains(plain, "YOLO") || !strings.Contains(plain, "approvals skipped") {
+	if !strings.Contains(plain, "YOLO") || !strings.Contains(plain, "approvals skipped") || !strings.Contains(plain, "Shift+Tab to cycle") {
 		t.Fatalf("YOLO status line missing warning text:\n%s", plain)
 	}
 	if strings.Contains(plain, "[YOLO]") {
@@ -77,11 +80,25 @@ func TestPlanStatuslineUsesBluePill(t *testing.T) {
 
 	content := renderPlanStatuslineView(t)
 	plain := bottomStatusPlain(content)
-	if !strings.Contains(plain, "Plan") || !strings.Contains(plain, "ready") {
+	if !strings.Contains(plain, "Plan") || !strings.Contains(plain, "ready") || !strings.Contains(plain, "Shift+Tab to cycle") {
 		t.Fatalf("plan status line missing mode status:\n%s", plain)
 	}
 	if !strings.Contains(content, "\x1b[48;2;37;99;235m") {
 		t.Fatalf("Plan status line should use blue background, got:\n%q", content)
+	}
+}
+
+func TestStatuslineCycleHintFollowsLanguage(t *testing.T) {
+	i18n.DetectLanguage("zh")
+	t.Cleanup(func() { i18n.DetectLanguage("en") })
+
+	content := renderStatuslineView(t, false)
+	plain := bottomStatusPlain(content)
+	if !strings.Contains(plain, "Shift+Tab 循环切换") {
+		t.Fatalf("localized mode-cycle hint missing:\n%s", plain)
+	}
+	if strings.Contains(plain, "Shift+Tab to cycle") {
+		t.Fatalf("localized status line should not fall back to English:\n%s", plain)
 	}
 }
 

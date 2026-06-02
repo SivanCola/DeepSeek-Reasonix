@@ -82,7 +82,7 @@ type chatTUI struct {
 	// Persists across turns until the work completes or a new session starts.
 	todoArgs string
 
-	// planMode mirrors the agent's read-only gate (Tab toggles it). The marker
+	// planMode mirrors the agent's read-only gate (Shift+Tab cycles it). The marker
 	// rides in outgoing user messages so the cache-stable prompt prefix is left
 	// untouched.
 	planMode bool
@@ -1457,9 +1457,9 @@ func (m chatTUI) View() tea.View {
 	case m.pendingApproval != nil:
 		status = "  " + modeTag + " · " + i18n.M.ChatStatusToolApproval
 	case m.ctrl.Bypass():
-		status = "  " + modeTag + " · " + i18n.M.ChatStatusYoloIdle
+		status = "  " + modeTag + " · " + i18n.M.ChatStatusYoloIdle + " · " + i18n.M.ChatStatusCycleHint
 	default:
-		status = "  " + modeTag + " · " + i18n.M.ChatStatusIdle
+		status = "  " + modeTag + " · " + i18n.M.ChatStatusIdle + " · " + i18n.M.ChatStatusCycleHint
 	}
 	// The spinning "thinking…" indicator is its own line ABOVE the input box (shown
 	// only while a turn runs); the status/data rows stay below. This mirrors Claude
@@ -2460,6 +2460,9 @@ func (m *chatTUI) runSlashCommand(input string) tea.Cmd {
 	case "/theme":
 		m.echoLocalCommand(input)
 		m.runThemeSubcommand(input)
+	case "/language":
+		m.echoLocalCommand(input)
+		m.runLanguageSubcommand(input)
 	case "/help":
 		m.echoLocalCommand(input)
 		m.showHelp()

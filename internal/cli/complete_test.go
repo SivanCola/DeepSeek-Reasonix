@@ -280,6 +280,20 @@ func TestSlashArgCompletionSwitchBranches(t *testing.T) {
 	}
 }
 
+func TestSlashArgCompletionLanguage(t *testing.T) {
+	m := newTestChatTUI()
+	m.input.SetValue("/language ")
+	m.updateCompletion()
+	if !m.completion.active || m.completion.kind != compSlashArg {
+		t.Fatalf("/language should open arg completion: %+v", m.completion)
+	}
+	for _, want := range []string{"auto", "en", "zh"} {
+		if !hasLabel(m.completion.items, want) {
+			t.Fatalf("/language completion missing %q: %v", want, labels(m.completion.items))
+		}
+	}
+}
+
 func labels(items []compItem) []string {
 	out := make([]string, len(items))
 	for i, it := range items {

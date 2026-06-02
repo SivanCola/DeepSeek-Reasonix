@@ -37,7 +37,7 @@ type ArgData struct {
 // (everything after the command word). It returns the suggestions filtered by
 // the token being typed and the byte offset where that token begins, so a caller
 // replaces just that token. Only structured commands participate (/mcp /model
-// /skill /hooks /effort /theme); others yield nil. Single source of truth for CLI +
+// /skill /hooks /effort /theme /language); others yield nil. Single source of truth for CLI +
 // desktop.
 func SlashArgItems(line string, d ArgData) ([]SlashItem, int) {
 	cmdEnd := strings.IndexAny(line, " \t")
@@ -61,10 +61,23 @@ func SlashArgItems(line string, d ArgData) ([]SlashItem, int) {
 		raw = effortArgItems(prior, d)
 	case "/theme":
 		raw = themeArgItems(prior)
+	case "/language":
+		raw = languageArgItems(prior)
 	default:
 		return nil, from
 	}
 	return filterSlash(raw, line, from, cur), from
+}
+
+func languageArgItems(prior []string) []SlashItem {
+	if len(prior) > 1 {
+		return nil
+	}
+	return []SlashItem{
+		{Label: "auto", Insert: "auto", Hint: i18n.M.ArgLanguageAuto},
+		{Label: "en", Insert: "en", Hint: i18n.M.ArgLanguageEn},
+		{Label: "zh", Insert: "zh", Hint: i18n.M.ArgLanguageZh},
+	}
 }
 
 func themeArgItems(prior []string) []SlashItem {
