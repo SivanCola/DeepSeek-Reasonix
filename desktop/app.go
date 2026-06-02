@@ -1066,6 +1066,7 @@ func skillRootPath(path string) string {
 }
 
 func cleanAbsPath(path string) string {
+	path = config.ExpandVars(strings.TrimSpace(path))
 	if path == "~" || strings.HasPrefix(path, "~/") || strings.HasPrefix(path, `~\`) {
 		if home, err := os.UserHomeDir(); err == nil {
 			if path == "~" {
