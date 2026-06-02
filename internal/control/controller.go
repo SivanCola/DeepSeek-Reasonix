@@ -955,6 +955,8 @@ func resolveBranch(branches []agent.BranchInfo, ref string) (agent.BranchInfo, e
 			matches = append(matches, b)
 		case strings.HasPrefix(strings.ToLower(b.ID), refLower):
 			matches = append(matches, b)
+		case strings.HasPrefix(strings.ToLower(shortBranchID(b.ID)), refLower):
+			matches = append(matches, b)
 		case b.Path == ref:
 			return b, nil
 		}

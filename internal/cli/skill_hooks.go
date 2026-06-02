@@ -55,34 +55,13 @@ func (m *chatTUI) skillList() {
 		m.notice("no skills found. Add SKILL.md / <name>.md under .reasonix/skills (project) or ~/.reasonix/skills (global); .agents/.agent/.claude skills dirs also work. Invoke with /<name> or run_skill.")
 		return
 	}
-	var b strings.Builder
-	fmt.Fprintf(&b, "%s\n", dim(fmt.Sprintf("  · skills (%d)", len(skills))))
-	for _, s := range skills {
-		tag := ""
-		if s.RunAs == skill.RunSubagent {
-			tag = " 🧬"
-		}
-		desc := s.Description
-		if len([]rune(desc)) > 70 {
-			desc = string([]rune(desc)[:69]) + "…"
-		}
-		fmt.Fprintf(&b, "  %-16s %-9s %s%s\n", "/"+s.Name, "("+string(s.Scope)+")", desc, tag)
-	}
-	b.WriteString(dim("  invoke: /<name> [args] · author: install_skill (model) or /skill new <name>"))
-	m.notice(b.String())
+	m.commitLine(renderSkillList(m.width, skills))
 }
 
 func (m *chatTUI) skillShow(name string) {
 	for _, s := range m.skills {
 		if s.Name == name {
-			var b strings.Builder
-			fmt.Fprintf(&b, "▸ %s  (%s)\n", s.Name, s.Scope)
-			if s.Description != "" {
-				b.WriteString("  " + s.Description + "\n")
-			}
-			b.WriteString(dim("  " + s.Path + "\n\n"))
-			b.WriteString(s.Body)
-			m.notice(b.String())
+			m.commitLine(renderSkillShow(m.width, s))
 			return
 		}
 	}
@@ -105,13 +84,7 @@ func (m *chatTUI) skillNew(name string, global bool) {
 
 func (m *chatTUI) skillPaths() {
 	st := m.skillStore()
-	var b strings.Builder
-	b.WriteString(dim("  · skill discovery paths (highest priority first)\n"))
-	for _, r := range st.Roots() {
-		fmt.Fprintf(&b, "  %2d. %-9s %-13s %s\n", r.Priority+1, r.Scope, r.Status, r.Dir)
-	}
-	b.WriteString(dim("  project > custom > global > builtin; add custom roots via [skills] paths in reasonix.toml"))
-	m.notice(b.String())
+	m.commitLine(renderSkillPaths(m.width, st.Roots()))
 }
 
 // skillStore builds a Store reflecting this session's project root + configured
@@ -149,31 +122,9 @@ func (m *chatTUI) runHooksSubcommand(input string) {
 }
 
 func (m *chatTUI) hooksList(cwd string) {
-	var b strings.Builder
 	active := m.ctrl.HookRunner().Hooks()
-	fmt.Fprintf(&b, "%s\n", dim(fmt.Sprintf("  · hooks (%d active this session)", len(active))))
-	for _, h := range active {
-		match := h.Match
-		if h.Event == hook.PreToolUse || h.Event == hook.PostToolUse {
-			if match == "" {
-				match = "*"
-			}
-		} else {
-			match = "-"
-		}
-		cmd := h.Command
-		if len([]rune(cmd)) > 50 {
-			cmd = string([]rune(cmd)[:49]) + "…"
-		}
-		fmt.Fprintf(&b, "  %-16s %-8s %-8s %s\n", h.Event, h.Scope, match, cmd)
-	}
 	trusted := hook.IsTrusted(cwd, "")
-	if hook.ProjectDefinesHooks(cwd) && !trusted {
-		b.WriteString(dim("  this project defines hooks but is NOT trusted — run /hooks trust to enable them (security: project hooks run shell commands)"))
-	} else {
-		fmt.Fprintf(&b, "%s", dim(fmt.Sprintf("  project trusted: %v · config: project .reasonix/settings.json + global ~/.reasonix/settings.json", trusted)))
-	}
-	m.notice(b.String())
+	m.commitLine(renderHooks(m.width, active, trusted, hook.ProjectDefinesHooks(cwd)))
 }
 
 // containsArg reports whether flag appears in args.

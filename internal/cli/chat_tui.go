@@ -2275,6 +2275,7 @@ func (m *chatTUI) runSlashCommand(input string) tea.Cmd {
 
 	switch cmd {
 	case "/compact":
+		m.echoLocalCommand(input)
 		// Compaction makes a (network) summarizer call; run it off the Update loop
 		// so the TUI doesn't freeze. The CompactionStarted/Done events render the
 		// card as they arrive; compactDoneMsg only handles the terminal error /
@@ -2283,6 +2284,7 @@ func (m *chatTUI) runSlashCommand(input string) tea.Cmd {
 		focus := strings.TrimSpace(strings.TrimPrefix(input, cmd))
 		return func() tea.Msg { return compactDoneMsg{err: m.ctrl.Compact(context.Background(), focus)} }
 	case "/new":
+		m.echoLocalCommand(input)
 		if err := m.ctrl.NewSession(); err != nil {
 			m.notice(fmt.Sprintf("%s: %v", i18n.M.SlashNewFailed, err))
 			return nil
@@ -2299,6 +2301,7 @@ func (m *chatTUI) runSlashCommand(input string) tea.Cmd {
 	case "/resume":
 		m.runResumeCommand(input)
 	case "/todo":
+		m.echoLocalCommand(input)
 		// Dismiss the pinned task list; a later todo_write brings it back.
 		m.todoArgs = ""
 		m.notice(i18n.M.SlashTodoCleared)
@@ -2307,39 +2310,47 @@ func (m *chatTUI) runSlashCommand(input string) tea.Cmd {
 	case "/thinking":
 		return m.runThinkingCommand(input)
 	case "/rewind":
+		m.echoLocalCommand(input)
 		m.openRewind()
 	case "/tree":
+		m.echoLocalCommand(input)
 		m.showBranchTree()
 	case "/branch":
+		m.echoLocalCommand(input)
 		m.runBranchCommand(input)
 	case "/switch":
+		m.echoLocalCommand(input)
 		m.runSwitchCommand(input)
 	case "/mcp":
+		m.echoLocalCommand(input)
 		m.runMCPSubcommand(input)
 	case "/model":
+		m.echoLocalCommand(input)
 		m.runModelSubcommand(input)
 		if m.pendingModelSwitch != nil {
 			return m.pendingModelSwitch
 		}
 	case "/skill", "/skills":
+		m.echoLocalCommand(input)
 		m.runSkillSubcommand(input)
 	case "/hooks":
+		m.echoLocalCommand(input)
 		m.runHooksSubcommand(input)
 	case "/paste-image":
 		return pasteClipboardImage()
 	case "/output-style", "/output-styles":
+		m.echoLocalCommand(input)
 		styles := outputstyle.List(outputstyle.Dirs())
 		if len(styles) == 0 {
 			m.notice(i18n.M.OutputStyleNone)
 		} else {
-			m.notice(i18n.M.OutputStyleHeader + "\n" + outputstyle.DescribeList(styles, m.outputStyle) + "\n" + i18n.M.OutputStyleHint)
+			m.commitLine(renderOutputStyles(m.width, styles, m.outputStyle))
 		}
 	case "/help":
-		m.notice(i18n.M.SlashHelp)
-		if names := m.commandNames(); names != "" {
-			m.notice("custom: " + names)
-		}
+		m.echoLocalCommand(input)
+		m.showHelp()
 	case "/memory":
+		m.echoLocalCommand(input)
 		m.showMemory()
 	case "/quit", "/exit":
 		return tea.Quit
@@ -2356,6 +2367,14 @@ func (m *chatTUI) runSlashCommand(input string) tea.Cmd {
 		m.notice(fmt.Sprintf("%s: %s", i18n.M.SlashUnknown, cmd))
 	}
 	return nil
+}
+
+func (m *chatTUI) echoLocalCommand(input string) {
+	input = strings.TrimSpace(input)
+	if input == "" {
+		return
+	}
+	m.commitLine(dim("  › " + input))
 }
 
 // commandNames renders the custom command list for /help, "" when there are none.
@@ -2437,27 +2456,7 @@ func (m *chatTUI) showMCPStatus() {
 		m.notice(i18n.M.SlashMCPNone)
 		return
 	}
-	servers := m.host.Servers()
-	var b strings.Builder
-	fmt.Fprintf(&b, "%s\n", dim(fmt.Sprintf("  · MCP servers (%d)", len(servers))))
-	for _, s := range servers {
-		fmt.Fprintf(&b, "    %s %s %s\n", accent("✓"), bold(s.Name),
-			dim(fmt.Sprintf("(%s) — %d tools · %d prompts · %d resources", s.Transport, s.Tools, s.Prompts, s.Resources)))
-	}
-	for _, p := range m.host.Prompts() {
-		fmt.Fprintf(&b, "      %s  %s\n", "/"+p.Name, dim(p.Description))
-	}
-	for _, r := range m.host.Resources() {
-		label := r.Name
-		if label == "" {
-			label = r.Description
-		}
-		fmt.Fprintf(&b, "      %s  %s\n", "@"+r.Server+":"+r.URI, dim(label))
-	}
-	for _, f := range m.host.Failures() {
-		fmt.Fprintf(&b, "    %s %s %s\n", yellow("!"), bold(f.Name), dim(fmt.Sprintf("(%s) — %s", f.Transport, f.Error)))
-	}
-	m.commitLine(strings.TrimRight(b.String(), "\n"))
+	m.commitLine(renderMCPStatus(m.width, m.host.Servers(), m.host.Prompts(), m.host.Resources(), m.host.Failures()))
 }
 
 // notice queues a dim informational line to scrollback.
