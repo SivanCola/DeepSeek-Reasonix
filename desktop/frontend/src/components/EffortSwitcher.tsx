@@ -26,7 +26,7 @@ export function EffortSwitcher({
 
   return (
     <div className="modelsw effortsw">
-      <Tooltip label={title}>
+      <Tooltip label={title} disabled={open}>
         <button
           className={`modelsw__trigger effortsw__trigger ${current !== "auto" ? "effortsw__trigger--explicit" : ""}`}
           disabled={disabled}

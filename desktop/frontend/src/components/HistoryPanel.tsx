@@ -140,6 +140,7 @@ export function HistoryPanel({
                 <div className="mem-section__title">{g.label}</div>
                 {g.items.map((s) => {
                   const selected = preview?.path === s.path;
+                  const title = sessionDisplayTitle(s, tr("history.emptySession"));
                   return (
                     <div
                       className={`hist-item${s.current ? " hist-item--current" : ""}${selected ? " hist-item--selected" : ""}`}
@@ -159,7 +160,7 @@ export function HistoryPanel({
                           placeholder={tr("history.namePlaceholder")}
                         />
                       ) : (
-                        <Tooltip label={s.path} fill>
+                        <Tooltip label={title} fill>
                           <button
                             className="hist-item__main"
                             onClick={() => {
@@ -167,7 +168,7 @@ export function HistoryPanel({
                               else onResume(s.path);
                             }}
                           >
-                            <div className="hist-item__preview">{sessionDisplayTitle(s, tr("history.emptySession"))}</div>
+                            <div className="hist-item__preview">{title}</div>
                             <div className="hist-item__meta">
                               {s.current && <span className="hist-item__badge">{tr("history.current")}</span>}
                               <span>{tr(s.turns === 1 ? "history.turnOne" : "history.turnOther", { n: s.turns })}</span>

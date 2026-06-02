@@ -15,7 +15,7 @@ function JobsChip({ jobs }: { jobs: JobView[] }) {
   const [open, setOpen] = useState(false);
   return (
     <div className="statusbar__jobswrap">
-      <Tooltip label={t("status.jobsTitle")}>
+      <Tooltip label={t("status.jobsTitle")} disabled={open}>
         <button className="statusbar__jobs" onClick={() => setOpen((v) => !v)}>
           <Cpu size={11} />
           {t("status.jobs", { n: jobs.length })}

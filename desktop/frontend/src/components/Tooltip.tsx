@@ -44,6 +44,8 @@ export function Tooltip({
   const [open, setOpen] = useState(false);
   const [position, setPosition] = useState({ left: 0, top: 0, side, arrowX: 0, arrowY: 0 });
   const active = !disabled && label !== undefined && label !== null && label !== "";
+  const activeRef = useRef(active);
+  activeRef.current = active;
 
   const clearTimer = () => {
     if (showTimerRef.current === null) return;
@@ -54,7 +56,9 @@ export function Tooltip({
   const show = (delay = 180) => {
     if (!active) return;
     clearTimer();
-    showTimerRef.current = window.setTimeout(() => setOpen(true), delay);
+    showTimerRef.current = window.setTimeout(() => {
+      if (activeRef.current) setOpen(true);
+    }, delay);
   };
 
   const hide = () => {
@@ -124,6 +128,12 @@ export function Tooltip({
       window.removeEventListener("scroll", updatePosition, true);
     };
   }, [open]);
+
+  useLayoutEffect(() => {
+    if (active) return;
+    clearTimer();
+    setOpen(false);
+  }, [active]);
 
   useEffect(() => () => clearTimer(), []);
 
