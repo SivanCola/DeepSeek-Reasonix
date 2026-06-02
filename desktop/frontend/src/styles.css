@@ -476,19 +476,42 @@ body {
 .sidebar-session {
   display: flex;
   align-items: center;
-  gap: var(--list-row-gap);
   width: 100%;
   min-width: 0;
+  gap: 4px;
   height: var(--list-row-height);
-  padding: 0 var(--list-row-px);
+  padding: 0 4px 0 var(--list-row-px);
   margin-bottom: 2px;
   border-radius: var(--list-row-radius);
+  cursor: default;
 }
 .sidebar-session:hover {
   background: var(--list-row-hover-bg);
 }
 .sidebar-session svg {
   display: none;
+}
+.sidebar-session__main {
+  --wails-draggable: no-drag;
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  gap: var(--list-row-gap);
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.sidebar-session__main:disabled {
+  cursor: default;
+}
+.sidebar-session__main:disabled:hover {
+  color: inherit;
 }
 .sidebar-session__body {
   display: grid;
@@ -518,6 +541,65 @@ body {
   font-size: 11px;
   line-height: 1.2;
   font-variant-numeric: tabular-nums;
+}
+.sidebar-session__actions {
+  --wails-draggable: no-drag;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+.sidebar-session:hover .sidebar-session__actions,
+.sidebar-session:focus-within .sidebar-session__actions {
+  opacity: 1;
+}
+.sidebar-session__act {
+  --wails-draggable: no-drag;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fg-faint);
+  cursor: pointer;
+}
+.sidebar-session__act svg {
+  display: block;
+}
+.sidebar-session__act:hover {
+  color: var(--fg);
+  background: var(--bg);
+}
+.sidebar-session__act:disabled {
+  opacity: 0.42;
+  cursor: not-allowed;
+}
+.sidebar-session__act:disabled:hover {
+  color: var(--fg-faint);
+  background: transparent;
+}
+.sidebar-session__act--danger,
+.sidebar-session__act--danger:hover {
+  color: #e5534b;
+}
+.sidebar-session__rename {
+  --wails-draggable: no-drag;
+  flex: 1;
+  min-width: 0;
+  height: 26px;
+  padding: 0 8px;
+  border: 1px solid var(--accent-soft);
+  border-radius: 7px;
+  background: var(--bg-elev);
+  color: var(--fg);
+  font: inherit;
+  font-size: 13px;
+  outline: none;
 }
 .sidebar-session--current {
   background: var(--list-row-current-bg);
@@ -5234,4 +5316,175 @@ body {
   background: #2a2a40;
   color: inherit;
   cursor: pointer;
+}
+
+/* onboarding — first-run gate covering the whole window. Sits above every
+   other layer; the card is centered, terminal-styled, with a faint scanline
+   accent so it reads as "stop and paste a key" rather than a generic modal. */
+.onboarding {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: radial-gradient(
+      ellipse at top,
+      rgba(217, 119, 87, 0.06) 0%,
+      transparent 60%
+    ),
+    rgba(7, 8, 10, 0.92);
+  backdrop-filter: none;
+  --wails-draggable: drag;
+}
+.onboarding__card {
+  --wails-draggable: no-drag;
+  width: min(440px, calc(100vw - 48px));
+  padding: 32px 32px 28px;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(217, 119, 87, 0.04);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.onboarding__logo {
+  width: 36px;
+  height: 36px;
+  align-self: flex-start;
+  margin-bottom: 4px;
+}
+.onboarding__title {
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+  color: var(--fg);
+}
+.onboarding__tag {
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--fg-dim);
+  margin-bottom: 6px;
+}
+.onboarding__label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--fg-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+}
+.onboarding__input {
+  font-family: var(--mono);
+  font-size: 13px;
+  padding: 10px 12px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--fg);
+  outline: none;
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+.onboarding__input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(217, 119, 87, 0.18);
+}
+.onboarding__input:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+.onboarding__error {
+  font-size: 12px;
+  line-height: 1.5;
+  color: #ff8b7a;
+  background: rgba(255, 70, 70, 0.08);
+  border: 1px solid rgba(255, 70, 70, 0.25);
+  border-radius: 6px;
+  padding: 8px 10px;
+}
+.onboarding__submit {
+  margin-top: 4px;
+  padding: 10px 14px;
+  background: var(--accent);
+  color: #1a0e08;
+  border: none;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  transition: background 120ms ease, transform 80ms ease;
+}
+.onboarding__submit:hover:not(:disabled) {
+  background: #e08868;
+}
+.onboarding__submit:active:not(:disabled) {
+  transform: translateY(1px);
+}
+.onboarding__submit:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+.onboarding__spinner {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border: 2px solid rgba(26, 14, 8, 0.3);
+  border-top-color: #1a0e08;
+  border-radius: 50%;
+  animation: onboarding-spin 0.7s linear infinite;
+}
+@keyframes onboarding-spin {
+  to { transform: rotate(360deg); }
+}
+.onboarding__links {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--fg-dim);
+  margin-top: 4px;
+}
+.onboarding__link {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--accent);
+  font: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.onboarding__link:hover {
+  color: #e08868;
+}
+.onboarding__sep {
+  opacity: 0.5;
+}
+.onboarding__privacy {
+  opacity: 0.8;
+}
+.onboarding__skip {
+  background: none;
+  border: none;
+  padding: 4px 0;
+  margin-top: 2px;
+  color: var(--fg-dim);
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+  text-align: center;
+  transition: color 120ms ease;
+}
+.onboarding__skip:hover:not(:disabled) {
+  color: var(--fg);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.onboarding__skip:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }

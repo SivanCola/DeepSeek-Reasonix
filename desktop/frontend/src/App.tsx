@@ -7,14 +7,19 @@ import {
   History,
   Settings as SettingsIcon,
   MessageSquare,
+  Pencil,
   PanelLeftClose,
   PanelLeftOpen,
   PanelRightClose,
   PanelRightOpen,
+  Check,
+  Trash2,
+  X,
 } from "lucide-react";
 import logo from "./assets/logo.svg";
 import { useT } from "./lib/i18n";
 import { useController } from "./lib/useController";
+import { app } from "./lib/bridge";
 import { Transcript } from "./components/Transcript";
 import { Composer } from "./components/Composer";
 import { TodoPanel } from "./components/TodoPanel";
@@ -28,6 +33,7 @@ import { CapabilitiesPanel } from "./components/CapabilitiesPanel";
 import { UpdateBanner } from "./components/UpdateBanner";
 import { WorkspacePanel } from "./components/WorkspacePanel";
 import { Tooltip } from "./components/Tooltip";
+import { OnboardingOverlay } from "./components/OnboardingOverlay";
 import { parseTodos } from "./lib/tools";
 import { sessionActivityTime } from "./lib/session";
 import type { ComposerInsertRequest, MemoryView, Mode, SessionMeta } from "./lib/types";
@@ -157,9 +163,17 @@ export default function App() {
   } = useController();
   const t = useT();
   const [mode, setMode] = useState<Mode>("normal");
+  // Onboarding gate. null = not yet checked (show the regular loading screen),
+  // true = show the overlay, false = past onboarding, render the main UI.
+  // Probed exactly once on mount; the user clearing their key mid-session
+  // won't re-trigger the overlay (that's what the Settings panel is for).
+  const [needsOnboarding, setNeedsOnboarding] = useState<boolean | null>(null);
   const [memView, setMemView] = useState<MemoryView | null>(null);
   const [histView, setHistView] = useState<SessionMeta[] | null>(null);
   const [sidebarSessions, setSidebarSessions] = useState<SessionMeta[]>([]);
+  const [sidebarEditing, setSidebarEditing] = useState<string | null>(null);
+  const [sidebarDraft, setSidebarDraft] = useState("");
+  const [sidebarConfirming, setSidebarConfirming] = useState<string | null>(null);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(loadSidebarCollapsed);
   const [sidebarWidth, setSidebarWidth] = useState(loadSidebarWidth);
   const [sidebarResizing, setSidebarResizing] = useState(false);
@@ -318,6 +332,30 @@ export default function App() {
   useEffect(() => {
     void refreshSessions();
   }, [refreshSessions]);
+
+  // Probe the Go side for missing API key exactly once. We don't re-probe on
+  // meta changes because the only path that "adds a key" is the Settings
+  // panel, which calls SetProviderKey and a rebuild — the kernel then emits
+  // agent:ready and the regular UI is already mounted.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const needs = await app.NeedsOnboarding();
+        if (!cancelled) setNeedsOnboarding(needs);
+      } catch {
+        // Bridge unavailable (browser dev mock missing the method, or
+        // pre-startup) — fall through to the regular UI; if the kernel
+        // can't load it, the existing topbar.startupError banner surfaces
+        // the reason. Treat as "no onboarding" so the user can still poke
+        // at the Settings panel.
+        if (!cancelled) setNeedsOnboarding(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     const onResize = () => setViewportWidth(window.innerWidth);
@@ -537,7 +575,8 @@ export default function App() {
     async (path: string) => {
       if (state.running) return;
       await deleteSession(path);
-      setHistView(await refreshSessions());
+      const sessions = await refreshSessions();
+      setHistView((cur) => (cur === null ? null : sessions));
     },
     [state.running, deleteSession, refreshSessions],
   );
@@ -545,9 +584,36 @@ export default function App() {
     async (path: string, title: string) => {
       if (state.running) return;
       await renameSession(path, title);
-      setHistView(await refreshSessions());
+      const sessions = await refreshSessions();
+      setHistView((cur) => (cur === null ? null : sessions));
     },
     [state.running, renameSession, refreshSessions],
+  );
+
+  const startSidebarRename = useCallback((session: SessionMeta) => {
+    if (state.running) return;
+    setSidebarConfirming(null);
+    setSidebarEditing(session.path);
+    setSidebarDraft(session.title || session.preview || "");
+  }, [state.running]);
+
+  const commitSidebarRename = useCallback(
+    async (path: string) => {
+      if (state.running) return;
+      const title = sidebarDraft.trim();
+      setSidebarEditing(null);
+      await onRenameSession(path, title);
+    },
+    [onRenameSession, sidebarDraft, state.running],
+  );
+
+  const confirmSidebarDelete = useCallback(
+    async (path: string) => {
+      if (state.running) return;
+      setSidebarConfirming(null);
+      await onDeleteSession(path);
+    },
+    [onDeleteSession, state.running],
   );
 
   // Workspace: open the folder chooser and switch projects. The hook resets the
@@ -654,20 +720,87 @@ export default function App() {
                 sidebarSessions.map((session) => {
                   const title = sessionTitle(session, t("history.emptySession"));
                   return (
-                    <button
+                    <div
                       className={`sidebar-session${session.current ? " sidebar-session--current" : ""}`}
                       key={session.path}
-                      onClick={() => void onResumeSession(session.path)}
-                      disabled={state.running || session.current}
                     >
-                      <MessageSquare size={14} />
-                      <span className="sidebar-session__body">
-                        <Tooltip className="sidebar-session__title" label={`${title}\n${session.path}`}>{title}</Tooltip>
-                        <span className="sidebar-session__meta">
-                          {session.current ? t("history.current") : sessionTime(sessionActivityTime(session))}
+                      {sidebarEditing === session.path ? (
+                        <input
+                          className="sidebar-session__rename"
+                          autoFocus
+                          value={sidebarDraft}
+                          onChange={(e) => setSidebarDraft(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") void commitSidebarRename(session.path);
+                            if (e.key === "Escape") setSidebarEditing(null);
+                          }}
+                          onBlur={() => void commitSidebarRename(session.path)}
+                          placeholder={t("history.namePlaceholder")}
+                        />
+                      ) : (
+                        <button
+                          className="sidebar-session__main"
+                          onClick={() => void onResumeSession(session.path)}
+                          disabled={state.running || session.current}
+                        >
+                          <MessageSquare size={14} />
+                          <span className="sidebar-session__body">
+                            <Tooltip className="sidebar-session__title" label={`${title}\n${session.path}`}>{title}</Tooltip>
+                            <span className="sidebar-session__meta">
+                              {session.current ? t("history.current") : sessionTime(sessionActivityTime(session))}
+                            </span>
+                          </span>
+                        </button>
+                      )}
+                      {sidebarEditing !== session.path && (
+                        <span className="sidebar-session__actions">
+                          {sidebarConfirming === session.path ? (
+                            <>
+                              <Tooltip label={t("history.confirmDelete")}>
+                                <button
+                                  className="sidebar-session__act sidebar-session__act--danger"
+                                  disabled={state.running}
+                                  onClick={() => void confirmSidebarDelete(session.path)}
+                                >
+                                  <Check size={13} />
+                                </button>
+                              </Tooltip>
+                              <Tooltip label={t("common.cancel")}>
+                                <button
+                                  className="sidebar-session__act"
+                                  onClick={() => setSidebarConfirming(null)}
+                                >
+                                  <X size={13} />
+                                </button>
+                              </Tooltip>
+                            </>
+                          ) : (
+                            <>
+                              <Tooltip label={t("history.rename")}>
+                                <button
+                                  className="sidebar-session__act"
+                                  disabled={state.running}
+                                  onClick={() => startSidebarRename(session)}
+                                >
+                                  <Pencil size={12} />
+                                </button>
+                              </Tooltip>
+                              {!session.current && (
+                                <Tooltip label={t("common.delete")}>
+                                  <button
+                                    className="sidebar-session__act"
+                                    disabled={state.running}
+                                    onClick={() => setSidebarConfirming(session.path)}
+                                  >
+                                    <Trash2 size={12} />
+                                  </button>
+                                </Tooltip>
+                              )}
+                            </>
+                          )}
                         </span>
-                      </span>
-                    </button>
+                      )}
+                    </div>
                   );
                 })
               )}
@@ -911,6 +1044,12 @@ export default function App() {
       {settingsOpen && <SettingsPanel onClose={() => setSettingsOpen(false)} onChanged={() => void refreshMeta()} />}
 
       {capsOpen && <CapabilitiesPanel onClose={() => setCapsOpen(false)} />}
+
+      {/* First-run gate: covers the whole app until the default provider's API
+          key is in place. onComplete fires after ConnectKey succeeds; the
+          kernel is already rebuilding in the background and will emit
+          agent:ready once the new controller is up. */}
+      {needsOnboarding && <OnboardingOverlay onComplete={() => setNeedsOnboarding(false)} />}
     </div>
   );
 }
