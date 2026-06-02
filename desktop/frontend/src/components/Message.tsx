@@ -2,6 +2,7 @@ import { useState } from "react";
 import { ChevronRight } from "lucide-react";
 import { Markdown } from "./Markdown";
 import { CopyButton } from "./CopyButton";
+import { Tooltip } from "./Tooltip";
 import { useT } from "../lib/i18n";
 import type { Item } from "../lib/useController";
 
@@ -30,9 +31,11 @@ export function UserMessage({
       <div className="msg__text">{displayText}</div>
       {canRewind && (
         <div className="rewind">
-          <button className="rewind__btn" title={t("rewind.label")} onClick={onToggle}>
-            ⟲
-          </button>
+          <Tooltip label={t("rewind.label")}>
+            <button className="rewind__btn" onClick={onToggle}>
+              ⟲
+            </button>
+          </Tooltip>
           {open && (
             <div className="rewind__menu">
               <button onClick={() => rewind("both")}>{t("rewind.both")}</button>

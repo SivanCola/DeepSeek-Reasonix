@@ -27,6 +27,7 @@ import { SettingsPanel } from "./components/SettingsPanel";
 import { CapabilitiesPanel } from "./components/CapabilitiesPanel";
 import { UpdateBanner } from "./components/UpdateBanner";
 import { WorkspacePanel } from "./components/WorkspacePanel";
+import { Tooltip } from "./components/Tooltip";
 import { parseTodos } from "./lib/tools";
 import { sessionActivityTime } from "./lib/session";
 import type { ComposerInsertRequest, MemoryView, Mode, SessionMeta } from "./lib/types";
@@ -576,91 +577,102 @@ export default function App() {
           <div className="sidebar__brand">
             <img src={logo} alt="" className="sidebar__logo" />
             <span>Reasonix</span>
-            <button
-              className={`sidebar__toggle${sidebarExpandBlocked ? " sidebar__toggle--blocked" : ""}`}
-              onClick={sidebarExpandBlocked ? undefined : toggleSidebar}
-              title={sidebarToggleTitle}
-              aria-label={sidebarToggleTitle}
-              aria-disabled={sidebarExpandBlocked}
-            >
-              {sidebarCollapsed ? <PanelLeftOpen size={15} /> : <PanelLeftClose size={15} />}
-            </button>
+            <Tooltip label={sidebarToggleTitle}>
+              <button
+                className={`sidebar__toggle${sidebarExpandBlocked ? " sidebar__toggle--blocked" : ""}`}
+                onClick={sidebarExpandBlocked ? undefined : toggleSidebar}
+                aria-label={sidebarToggleTitle}
+                aria-disabled={sidebarExpandBlocked}
+              >
+                {sidebarCollapsed ? <PanelLeftOpen size={15} /> : <PanelLeftClose size={15} />}
+              </button>
+            </Tooltip>
           </div>
 
-          <button
-            className="sidebar__new"
-            onClick={() => void startNewSession()}
-            disabled={state.running}
-            title={state.running ? t("common.busyHint") : t("topbar.newSession")}
-          >
-            <SquarePen size={15} />
-            <span>{t("topbar.newSession")}</span>
-          </button>
+          <Tooltip label={state.running ? t("common.busyHint") : t("topbar.newSession")} fill>
+            <button
+              className="sidebar__new"
+              onClick={() => void startNewSession()}
+              disabled={state.running}
+            >
+              <SquarePen size={15} />
+              <span>{t("topbar.newSession")}</span>
+            </button>
+          </Tooltip>
 
           <section className="sidebar__section">
             <div className="sidebar__section-head">
               <div className="sidebar__section-title">{t("sidebar.conversations")}</div>
-              <button
-                className="sidebar__view-all"
-                onClick={() => void openHistory()}
-                disabled={state.running}
-                title={state.running ? t("common.busyHint") : t("topbar.history")}
-              >
-                {t("sidebar.viewAll")}
-              </button>
+              <Tooltip label={state.running ? t("common.busyHint") : t("topbar.history")}>
+                <button
+                  className="sidebar__view-all"
+                  onClick={() => void openHistory()}
+                  disabled={state.running}
+                >
+                  {t("sidebar.viewAll")}
+                </button>
+              </Tooltip>
             </div>
             <div className="sidebar__sessions">
               {sidebarSessions.length === 0 ? (
                 <div className="sidebar__empty">{t("sidebar.noRecent")}</div>
               ) : (
-                sidebarSessions.map((session) => (
-                  <button
-                    className={`sidebar-session${session.current ? " sidebar-session--current" : ""}`}
-                    key={session.path}
-                    onClick={() => void onResumeSession(session.path)}
-                    disabled={state.running || session.current}
-                    title={session.path}
-                  >
-                    <MessageSquare size={14} />
-                    <span className="sidebar-session__body">
-                      <span className="sidebar-session__title">{sessionTitle(session, t("history.emptySession"))}</span>
-                      <span className="sidebar-session__meta">
-                        {session.current ? t("history.current") : sessionTime(sessionActivityTime(session))}
+                sidebarSessions.map((session) => {
+                  const title = sessionTitle(session, t("history.emptySession"));
+                  return (
+                    <button
+                      className={`sidebar-session${session.current ? " sidebar-session--current" : ""}`}
+                      key={session.path}
+                      onClick={() => void onResumeSession(session.path)}
+                      disabled={state.running || session.current}
+                    >
+                      <MessageSquare size={14} />
+                      <span className="sidebar-session__body">
+                        <Tooltip className="sidebar-session__title" label={`${title}\n${session.path}`}>{title}</Tooltip>
+                        <span className="sidebar-session__meta">
+                          {session.current ? t("history.current") : sessionTime(sessionActivityTime(session))}
+                        </span>
                       </span>
-                    </span>
-                  </button>
-                ))
+                    </button>
+                  );
+                })
               )}
             </div>
           </section>
 
           <nav className="sidebar__nav">
-            <button
-              className="sidebar__navitem sidebar__navitem--sessions"
-              onClick={() => void openHistory()}
-              disabled={state.running}
-              title={state.running ? t("common.busyHint") : t("topbar.history")}
-            >
-              <History size={15} />
-              <span>{t("topbar.history")}</span>
-            </button>
-            <button className="sidebar__navitem" onClick={() => void openMemory()} title={t("topbar.memory")}>
-              <Brain size={15} />
-              <span>{t("topbar.memory")}</span>
-            </button>
-            <button className="sidebar__navitem" onClick={() => setCapsOpen(true)} title={t("caps.title")}>
-              <Blocks size={15} />
-              <span>{t("caps.title")}</span>
-            </button>
-            <button
-              className="sidebar__navitem"
-              onClick={() => setSettingsOpen(true)}
-              disabled={state.running}
-              title={state.running ? t("common.busyHint") : t("topbar.settings")}
-            >
-              <SettingsIcon size={15} />
-              <span>{t("topbar.settings")}</span>
-            </button>
+            <Tooltip label={state.running ? t("common.busyHint") : t("topbar.history")} fill>
+              <button
+                className="sidebar__navitem sidebar__navitem--sessions"
+                onClick={() => void openHistory()}
+                disabled={state.running}
+              >
+                <History size={15} />
+                <span>{t("topbar.history")}</span>
+              </button>
+            </Tooltip>
+            <Tooltip label={t("topbar.memory")} fill>
+              <button className="sidebar__navitem" onClick={() => void openMemory()}>
+                <Brain size={15} />
+                <span>{t("topbar.memory")}</span>
+              </button>
+            </Tooltip>
+            <Tooltip label={t("caps.title")} fill>
+              <button className="sidebar__navitem" onClick={() => setCapsOpen(true)}>
+                <Blocks size={15} />
+                <span>{t("caps.title")}</span>
+              </button>
+            </Tooltip>
+            <Tooltip label={state.running ? t("common.busyHint") : t("topbar.settings")} fill>
+              <button
+                className="sidebar__navitem"
+                onClick={() => setSettingsOpen(true)}
+                disabled={state.running}
+              >
+                <SettingsIcon size={15} />
+                <span>{t("topbar.settings")}</span>
+              </button>
+            </Tooltip>
           </nav>
 
         </aside>
@@ -686,44 +698,52 @@ export default function App() {
               <span className="topbar__model">{state.meta?.label ?? "…"}</span>
             </div>
             <div className="topbar__spacer" />
-            <button
-              className="chip chip--icon topbar__workspace-toggle"
-              onClick={toggleWorkspacePanel}
-              title={workspacePanelOpen ? t("workspace.close") : t("workspace.open")}
-            >
-              {workspacePanelOpen ? <PanelRightClose size={13} /> : <PanelRightOpen size={13} />}
-            </button>
+            <Tooltip label={workspacePanelOpen ? t("workspace.close") : t("workspace.open")}>
+              <button
+                className="chip chip--icon topbar__workspace-toggle"
+                onClick={toggleWorkspacePanel}
+              >
+                {workspacePanelOpen ? <PanelRightClose size={13} /> : <PanelRightOpen size={13} />}
+              </button>
+            </Tooltip>
             <div className="topbar__actions">
-              <button
-                className="chip chip--icon"
-                onClick={() => void openHistory()}
-                disabled={state.running}
-                title={state.running ? t("common.busyHint") : t("topbar.history")}
-              >
-                <History size={13} />
-              </button>
-              <button className="chip chip--icon" onClick={() => void openMemory()} title={t("topbar.memory")}>
-                <Brain size={13} />
-              </button>
-              <button className="chip chip--icon" onClick={() => setCapsOpen(true)} title={t("caps.title")}>
-                <Blocks size={13} />
-              </button>
-              <button
-                className="chip chip--icon"
-                onClick={() => setSettingsOpen(true)}
-                disabled={state.running}
-                title={state.running ? t("common.busyHint") : t("topbar.settings")}
-              >
-                <SettingsIcon size={13} />
-              </button>
-              <button
-                className="chip chip--icon"
-                onClick={() => void startNewSession()}
-                disabled={state.running}
-                title={state.running ? t("common.busyHint") : t("topbar.newSession")}
-              >
-                <SquarePen size={13} />
-              </button>
+              <Tooltip label={state.running ? t("common.busyHint") : t("topbar.history")}>
+                <button
+                  className="chip chip--icon"
+                  onClick={() => void openHistory()}
+                  disabled={state.running}
+                >
+                  <History size={13} />
+                </button>
+              </Tooltip>
+              <Tooltip label={t("topbar.memory")}>
+                <button className="chip chip--icon" onClick={() => void openMemory()}>
+                  <Brain size={13} />
+                </button>
+              </Tooltip>
+              <Tooltip label={t("caps.title")}>
+                <button className="chip chip--icon" onClick={() => setCapsOpen(true)}>
+                  <Blocks size={13} />
+                </button>
+              </Tooltip>
+              <Tooltip label={state.running ? t("common.busyHint") : t("topbar.settings")}>
+                <button
+                  className="chip chip--icon"
+                  onClick={() => setSettingsOpen(true)}
+                  disabled={state.running}
+                >
+                  <SettingsIcon size={13} />
+                </button>
+              </Tooltip>
+              <Tooltip label={state.running ? t("common.busyHint") : t("topbar.newSession")}>
+                <button
+                  className="chip chip--icon"
+                  onClick={() => void startNewSession()}
+                  disabled={state.running}
+                >
+                  <SquarePen size={13} />
+                </button>
+              </Tooltip>
             </div>
           </header>
 

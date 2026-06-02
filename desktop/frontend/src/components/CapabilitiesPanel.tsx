@@ -3,6 +3,7 @@ import { app } from "../lib/bridge";
 import { useT } from "../lib/i18n";
 import type { CapabilitiesView, MCPServerInput, ServerView, SkillRootView, SkillView } from "../lib/types";
 import { ResizableDrawer } from "./ResizableDrawer";
+import { Tooltip } from "./Tooltip";
 
 // CapabilitiesPanel is the desktop MCP & Skills drawer — the GUI counterpart to
 // the CLI's /mcp + /skill, aligning with Claude Code's Customize → Connectors:
@@ -111,9 +112,11 @@ export function CapabilitiesPanel({
             <div className="drawer__title">{t("caps.title")}</div>
             {view && <div className="drawer__summary">{summary}</div>}
           </div>
-          <button className="chip" onClick={onClose} title={t("common.close")}>
-            ✕
-          </button>
+          <Tooltip label={t("common.close")}>
+            <button className="chip" onClick={onClose}>
+              ✕
+            </button>
+          </Tooltip>
         </header>
 
         {!view ? (
@@ -302,9 +305,11 @@ function SkillSources({
                     {root.warning && <div className="cap-source__warning">{root.warning}</div>}
                   </div>
                   {root.scope === "custom" && root.configured && (
-                    <button className="btn btn--small" disabled={busy} onClick={() => onRemove(root.dir)} title={t("caps.skillRootRemove")}>
-                      ✕
-                    </button>
+                    <Tooltip label={t("caps.skillRootRemove")}>
+                      <button className="btn btn--small" disabled={busy} onClick={() => onRemove(root.dir)}>
+                        ✕
+                      </button>
+                    </Tooltip>
                   )}
                 </div>
               ))}
@@ -455,9 +460,11 @@ function FailedServersNotice({
                     <button className="btn btn--small" onClick={() => onToggle(s.name)} aria-expanded={open}>
                       {open ? t("common.collapse") : t("caps.showLog")}
                     </button>
-                    <button className="btn btn--small" disabled={busy} onClick={() => onConfirm(s.name)} title={t("caps.remove")}>
-                      ✕
-                    </button>
+                    <Tooltip label={t("caps.remove")}>
+                      <button className="btn btn--small" disabled={busy} onClick={() => onConfirm(s.name)}>
+                        ✕
+                      </button>
+                    </Tooltip>
                   </>
                 )}
               </div>
@@ -506,15 +513,16 @@ function ServerRow({
   return (
     <div className={`cap-server-entry${s.status === "disabled" ? " cap-server-entry--disabled" : ""}`}>
       <div className={`cap-row${s.status === "disabled" ? " cap-row--disabled" : ""}`} title={s.error || undefined}>
-        <button
-          className="cap-disclosure"
-          disabled={!hasTools}
-          aria-expanded={hasTools ? expanded : undefined}
-          onClick={onToggleDetails}
-          title={hasTools ? (expanded ? t("caps.collapseTools") : t("caps.expandTools")) : t("caps.noToolDetails")}
-        >
-          {hasTools ? (expanded ? "⌄" : "›") : ""}
-        </button>
+        <Tooltip label={hasTools ? (expanded ? t("caps.collapseTools") : t("caps.expandTools")) : t("caps.noToolDetails")}>
+          <button
+            className="cap-disclosure"
+            disabled={!hasTools}
+            aria-expanded={hasTools ? expanded : undefined}
+            onClick={onToggleDetails}
+          >
+            {hasTools ? (expanded ? "⌄" : "›") : ""}
+          </button>
+        </Tooltip>
         <span className={`cap-dot cap-dot--${s.status}`} />
         <div className="cap-row__text">
           <div className="cap-row__head">
@@ -540,19 +548,23 @@ function ServerRow({
                   {actionLabel}
                 </button>
               ) : (
-                <label className="cap-switch" title={s.status === "connected" ? t("caps.disable") : t("caps.enable")}>
-                  <input
-                    type="checkbox"
-                    checked={s.status === "connected"}
-                    disabled={busy}
-                    onChange={(e) => onToggle(e.target.checked)}
-                  />
-                  <span className="cap-switch__track" />
-                </label>
+                <Tooltip label={s.status === "connected" ? t("caps.disable") : t("caps.enable")}>
+                  <label className="cap-switch">
+                    <input
+                      type="checkbox"
+                      checked={s.status === "connected"}
+                      disabled={busy}
+                      onChange={(e) => onToggle(e.target.checked)}
+                    />
+                    <span className="cap-switch__track" />
+                  </label>
+                </Tooltip>
               )}
-              <button className="btn btn--small" disabled={busy} onClick={onConfirm} title={t("caps.remove")}>
-                ✕
-              </button>
+              <Tooltip label={t("caps.remove")}>
+                <button className="btn btn--small" disabled={busy} onClick={onConfirm}>
+                  ✕
+                </button>
+              </Tooltip>
             </>
           )}
         </div>

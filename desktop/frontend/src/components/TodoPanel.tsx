@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Check, ChevronDown, ChevronRight, Circle, CircleDot, X } from "lucide-react";
 import { useT } from "../lib/i18n";
 import type { Todo } from "../lib/tools";
+import { Tooltip } from "./Tooltip";
 
 // TodoPanel is the live task list pinned just above the composer — the kernel's
 // latest todo_write call drives it, and it updates in place as the agent flips
@@ -31,9 +32,11 @@ export function TodoPanel({ todos, onDismiss }: { todos: Todo[]; onDismiss: () =
             <span className="todobar__current">{current.activeForm || current.content}</span>
           )}
         </button>
-        <button className="todobar__close" onClick={onDismiss} title={t("todo.dismiss")}>
-          <X size={13} />
-        </button>
+        <Tooltip label={t("todo.dismiss")}>
+          <button className="todobar__close" onClick={onDismiss}>
+            <X size={13} />
+          </button>
+        </Tooltip>
       </div>
 
       {open && (

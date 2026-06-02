@@ -3,6 +3,7 @@ import { useMemo, useRef, useState, type ReactNode } from "react";
 import { useT } from "../lib/i18n";
 import type { MemoryFact, MemoryView } from "../lib/types";
 import { ResizableDrawer } from "./ResizableDrawer";
+import { Tooltip } from "./Tooltip";
 
 type LinkInfo = {
   name: string;
@@ -190,9 +191,11 @@ export function MemoryPanel({
               </div>
             )}
           </div>
-          <button className="chip" onClick={onClose} title={t("common.close")}>
-            ✕
-          </button>
+          <Tooltip label={t("common.close")}>
+            <button className="chip" onClick={onClose}>
+              ✕
+            </button>
+          </Tooltip>
         </header>
 
         {!view?.available ? (

@@ -425,6 +425,8 @@ body {
   display: flex;
   align-items: center;
   gap: var(--list-row-gap);
+  width: 100%;
+  min-width: 0;
   height: var(--list-row-height);
   padding: 0 var(--list-row-px);
   margin-bottom: 2px;
@@ -437,28 +439,33 @@ body {
   display: none;
 }
 .sidebar-session__body {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 52px;
   align-items: center;
   min-width: 0;
   flex: 1;
-  gap: 10px;
+  gap: 8px;
 }
 .sidebar-session__title {
-  flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--list-row-title);
   font-size: 13px;
-  line-height: 1;
+  line-height: 1.25;
   font-weight: 500;
 }
 .sidebar-session__meta {
-  flex: 0 0 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   color: var(--list-row-meta);
   font-size: 11px;
-  line-height: 1;
+  line-height: 1.2;
+  font-variant-numeric: tabular-nums;
 }
 .sidebar-session--current {
   background: var(--list-row-current-bg);
@@ -2687,6 +2694,69 @@ body {
 .floating-menu button:hover {
   background: var(--bg-soft);
 }
+.tooltip-trigger {
+  display: inline-flex;
+  min-width: 0;
+}
+.tooltip-trigger--fill {
+  display: flex;
+  width: 100%;
+}
+.tooltip-trigger.sidebar-session__title {
+  display: block;
+}
+.tooltip {
+  --wails-draggable: no-drag;
+  --tooltip-arrow-x: 50%;
+  --tooltip-arrow-y: 50%;
+  position: fixed;
+  z-index: 300;
+  max-width: min(320px, calc(100vw - 16px));
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--bg-elev);
+  color: var(--fg);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.28);
+  font-size: 12px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+  pointer-events: none;
+  white-space: pre-line;
+}
+.tooltip::before {
+  content: "";
+  position: absolute;
+  width: 8px;
+  height: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg-elev);
+  transform: rotate(45deg);
+}
+.tooltip--top::before {
+  left: calc(var(--tooltip-arrow-x) - 4px);
+  bottom: -5px;
+  border-left: 0;
+  border-top: 0;
+}
+.tooltip--bottom::before {
+  left: calc(var(--tooltip-arrow-x) - 4px);
+  top: -5px;
+  border-right: 0;
+  border-bottom: 0;
+}
+.tooltip--left::before {
+  right: -5px;
+  top: calc(var(--tooltip-arrow-y) - 4px);
+  border-left: 0;
+  border-bottom: 0;
+}
+.tooltip--right::before {
+  left: -5px;
+  top: calc(var(--tooltip-arrow-y) - 4px);
+  border-right: 0;
+  border-top: 0;
+}
 .workspace-empty {
   padding: 18px 0;
   color: var(--fg-faint);
@@ -4752,14 +4822,20 @@ body {
   border-color: color-mix(in srgb, var(--accent) 24%, var(--border));
   background: color-mix(in srgb, var(--accent) 7%, var(--panel));
 }
-.composer-context__item > svg {
+.composer-context__label {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+.composer-context__label > svg {
   flex-shrink: 0;
   color: var(--fg-faint);
 }
-.composer-context__item--workspace > svg {
+.composer-context__item--workspace .composer-context__label > svg {
   color: var(--accent);
 }
-.composer-context__item img {
+.composer-context__label img {
   flex-shrink: 0;
   width: 24px;
   height: 24px;
@@ -4768,7 +4844,7 @@ body {
   border: 1px solid var(--border);
   background: var(--bg-soft);
 }
-.composer-context__item span {
+.composer-context__label span {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;

@@ -31,6 +31,7 @@ import { formatWorkspaceReference, WORKSPACE_REF_DRAG_TYPE } from "../lib/worksp
 import { CodeViewer } from "./CodeViewer";
 import { FloatingMenu, FloatingMenuItems } from "./FloatingMenu";
 import { Markdown } from "./Markdown";
+import { Tooltip } from "./Tooltip";
 
 const WORKSPACE_TREE_MIN_WIDTH = 220;
 const WORKSPACE_TREE_DEFAULT_WIDTH = WORKSPACE_TREE_MIN_WIDTH;
@@ -624,25 +625,32 @@ export function WorkspacePanel({
                 </span>
               </button>
             ))}
-            <button className="workspace-tab workspace-tab--new" onClick={openPickerTab} title={t("workspace.newTab")}>
-              <Plus size={14} />
-            </button>
+            <Tooltip label={t("workspace.newTab")}>
+              <button className="workspace-tab workspace-tab--new" onClick={openPickerTab}>
+                <Plus size={14} />
+              </button>
+            </Tooltip>
           </div>
 
           <div className="workspace-preview__window-actions">
-            <button className="workspace-iconbtn" onClick={onToggleMaximized} title={maximized ? t("workspace.restore") : t("workspace.maximize")}>
-              {maximized ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
-            </button>
-            <button className="workspace-iconbtn" onClick={onClose} title={t("workspace.minimize")}>
-              <Minus size={15} />
-            </button>
-            <button
-              className="workspace-iconbtn workspace-iconbtn--on"
-              onClick={() => setTreeVisible((value) => !value)}
-              title={treeVisible ? t("workspace.hideTree") : t("workspace.showTree")}
-            >
-              {treeVisible ? <PanelRightClose size={15} /> : <Columns2 size={15} />}
-            </button>
+            <Tooltip label={maximized ? t("workspace.restore") : t("workspace.maximize")}>
+              <button className="workspace-iconbtn" onClick={onToggleMaximized}>
+                {maximized ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
+              </button>
+            </Tooltip>
+            <Tooltip label={t("workspace.minimize")}>
+              <button className="workspace-iconbtn" onClick={onClose}>
+                <Minus size={15} />
+              </button>
+            </Tooltip>
+            <Tooltip label={treeVisible ? t("workspace.hideTree") : t("workspace.showTree")}>
+              <button
+                className="workspace-iconbtn workspace-iconbtn--on"
+                onClick={() => setTreeVisible((value) => !value)}
+              >
+                {treeVisible ? <PanelRightClose size={15} /> : <Columns2 size={15} />}
+              </button>
+            </Tooltip>
           </div>
         </header>
 
@@ -737,13 +745,14 @@ export function WorkspacePanel({
 
       <section className="workspace-files">
         <div className="workspace-files__tools">
-          <button
-            className="workspace-iconbtn workspace-iconbtn--on"
-            onClick={hideTreeOrClosePanel}
-            title={previewVisible ? t("workspace.hideTree") : t("workspace.close")}
-          >
-            <PanelRightClose size={15} />
-          </button>
+          <Tooltip label={previewVisible ? t("workspace.hideTree") : t("workspace.close")}>
+            <button
+              className="workspace-iconbtn workspace-iconbtn--on"
+              onClick={hideTreeOrClosePanel}
+            >
+              <PanelRightClose size={15} />
+            </button>
+          </Tooltip>
           <div className="workspace-files__tabs" role="tablist" aria-label={t("workspace.viewMode")}>
             <button
               className={viewMode === "files" ? "workspace-files__tab workspace-files__tab--active" : "workspace-files__tab"}
@@ -762,9 +771,11 @@ export function WorkspacePanel({
               {t("workspace.changedTab")}
             </button>
           </div>
-          <button className="workspace-iconbtn" onClick={() => void loadChanges()} title={t("workspace.refreshChanges")}>
-            <RefreshCw size={14} />
-          </button>
+          <Tooltip label={t("workspace.refreshChanges")}>
+            <button className="workspace-iconbtn" onClick={() => void loadChanges()}>
+              <RefreshCw size={14} />
+            </button>
+          </Tooltip>
         </div>
 
         <div className="workspace-search">

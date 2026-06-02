@@ -14,6 +14,7 @@ import {
 import { SlashMenu } from "./SlashMenu";
 import { ArgMenu } from "./ArgMenu";
 import { FileMenu } from "./FileMenu";
+import { Tooltip } from "./Tooltip";
 
 interface Attachment {
   path: string;
@@ -720,34 +721,42 @@ export function Composer({
             <div
               className={`composer-context__item${a.previewUrl ? " composer-context__item--image" : " composer-context__item--attachment"}`}
               key={a.path}
-              title={a.path}
             >
-              {a.previewUrl ? <img src={a.previewUrl} alt="" /> : <FileText size={15} />}
-              <span>{a.path.split("/").pop()}</span>
-              <button
-                type="button"
-                title={t("composer.removeImage")}
-                onClick={() => setAttachments((prev) => prev.filter((x) => x.path !== a.path))}
-              >
-                <X size={14} />
-              </button>
+              <Tooltip label={a.path}>
+                <span className="composer-context__label">
+                  {a.previewUrl ? <img src={a.previewUrl} alt="" /> : <FileText size={15} />}
+                  <span>{a.path.split("/").pop()}</span>
+                </span>
+              </Tooltip>
+              <Tooltip label={t("composer.removeImage")}>
+                <button
+                  type="button"
+                  onClick={() => setAttachments((prev) => prev.filter((x) => x.path !== a.path))}
+                >
+                  <X size={14} />
+                </button>
+              </Tooltip>
             </div>
           ))}
           {workspaceRefs.map((ref) => (
             <div
               className={`composer-context__item composer-context__item--workspace${ref.isDir ? " composer-context__item--folder" : " composer-context__item--file"}`}
               key={workspaceReferenceKey(ref)}
-              title={formatWorkspaceReference(ref.path, ref.isDir)}
             >
-              {ref.isDir ? <Folder size={15} /> : <FileText size={15} />}
-              <span>{ref.isDir ? `${baseName(ref.path)}/` : baseName(ref.path)}</span>
-              <button
-                type="button"
-                title={t("composer.removeReference")}
-                onClick={() => removeWorkspaceReference(ref)}
-              >
-                <X size={13} />
-              </button>
+              <Tooltip label={formatWorkspaceReference(ref.path, ref.isDir)}>
+                <span className="composer-context__label">
+                  {ref.isDir ? <Folder size={15} /> : <FileText size={15} />}
+                  <span>{ref.isDir ? `${baseName(ref.path)}/` : baseName(ref.path)}</span>
+                </span>
+              </Tooltip>
+              <Tooltip label={t("composer.removeReference")}>
+                <button
+                  type="button"
+                  onClick={() => removeWorkspaceReference(ref)}
+                >
+                  <X size={13} />
+                </button>
+              </Tooltip>
             </div>
           ))}
         </div>
@@ -761,15 +770,21 @@ export function Composer({
                 <div className="composer__pasted-head">
                   <FileText size={15} />
                   <span>{block.label}</span>
-                  <button type="button" title={t(open ? "composer.pastedHidePreview" : "composer.pastedShowPreview")} onClick={() => togglePastedPreview(block.label)}>
-                    <Eye size={14} />
-                  </button>
-                  <button type="button" title={t("composer.pastedExpand")} onClick={() => expandPastedBlock(block)}>
-                    {t("composer.pastedExpand")}
-                  </button>
-                  <button type="button" title={t("composer.pastedRemove")} onClick={() => removePastedBlock(block)}>
-                    <Trash2 size={14} />
-                  </button>
+                  <Tooltip label={t(open ? "composer.pastedHidePreview" : "composer.pastedShowPreview")}>
+                    <button type="button" onClick={() => togglePastedPreview(block.label)}>
+                      <Eye size={14} />
+                    </button>
+                  </Tooltip>
+                  <Tooltip label={t("composer.pastedExpand")}>
+                    <button type="button" onClick={() => expandPastedBlock(block)}>
+                      {t("composer.pastedExpand")}
+                    </button>
+                  </Tooltip>
+                  <Tooltip label={t("composer.pastedRemove")}>
+                    <button type="button" onClick={() => removePastedBlock(block)}>
+                      <Trash2 size={14} />
+                    </button>
+                  </Tooltip>
                 </div>
                 {open && <pre className="composer__pasted-preview">{block.text}</pre>}
               </div>
@@ -817,46 +832,51 @@ export function Composer({
             disabled={disabled}
           />
           {running ? (
-            <button className="composer__btn composer__btn--stop" onClick={handleCancel} title={t("composer.stop")}>
-              <Square size={14} fill="currentColor" />
-            </button>
+            <Tooltip label={t("composer.stop")}>
+              <button className="composer__btn composer__btn--stop" onClick={handleCancel}>
+                <Square size={14} fill="currentColor" />
+              </button>
+            </Tooltip>
           ) : (
-            <button
-              className="composer__btn composer__btn--send"
-              onClick={submit}
-              disabled={pendingPaste > 0 || (!text.trim() && attachments.length === 0 && workspaceRefs.length === 0) || disabled}
-              title={t("composer.send")}
-            >
-              <ArrowUp size={16} />
-            </button>
+            <Tooltip label={t("composer.send")}>
+              <button
+                className="composer__btn composer__btn--send"
+                onClick={submit}
+                disabled={pendingPaste > 0 || (!text.trim() && attachments.length === 0 && workspaceRefs.length === 0) || disabled}
+              >
+                <ArrowUp size={16} />
+              </button>
+            </Tooltip>
           )}
         </div>
         <div className="composer-meta">
           {cwd && (
             <div className="composer-workspace-wrap" ref={workspaceAnchorRef}>
-              <button
-                className={`composer__workspace${workspaceMenuOpen ? " composer__workspace--open" : ""}`}
-                onClick={() => {
-                  if (!running) setWorkspaceMenuOpen((open) => !open);
-                }}
-                disabled={running}
-                title={running ? t("common.busyHint") : t("status.switchFolder", { cwd })}
-              >
-                <FolderGit2 size={13} />
-                <span>{workspaceName}</span>
-                <ChevronDown size={12} />
-              </button>
+              <Tooltip label={running ? t("common.busyHint") : t("status.switchFolder", { cwd })}>
+                <button
+                  className={`composer__workspace${workspaceMenuOpen ? " composer__workspace--open" : ""}`}
+                  onClick={() => {
+                    if (!running) setWorkspaceMenuOpen((open) => !open);
+                  }}
+                  disabled={running}
+                >
+                  <FolderGit2 size={13} />
+                  <span>{workspaceName}</span>
+                  <ChevronDown size={12} />
+                </button>
+              </Tooltip>
             </div>
           )}
-          <button
-            className={`composer__mode composer__mode--${mode}`}
-            onClick={onCycleMode}
-            title={t("composer.modeTitle")}
-          >
-            <span className="composer__mode-dot" />
-            {mode === "yolo" ? t("composer.modeYolo") : mode === "plan" ? t("composer.modePlan") : t("composer.modeNormal")}
-            <span className="composer__mode-hint">{t("composer.modeHint")}</span>
-          </button>
+          <Tooltip label={t("composer.modeTitle")}>
+            <button
+              className={`composer__mode composer__mode--${mode}`}
+              onClick={onCycleMode}
+            >
+              <span className="composer__mode-dot" />
+              {mode === "yolo" ? t("composer.modeYolo") : mode === "plan" ? t("composer.modePlan") : t("composer.modeNormal")}
+              <span className="composer__mode-hint">{t("composer.modeHint")}</span>
+            </button>
+          </Tooltip>
         </div>
       </div>
     </div>
