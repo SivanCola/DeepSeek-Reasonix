@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -180,6 +181,89 @@ func TestWindowsOpenWorkspacePathAvoidsCmdShell(t *testing.T) {
 	}
 	if strings.Contains(body, "cmd") || strings.Contains(body, "/c") {
 		t.Fatal("Windows workspace opener must not route paths through cmd.exe")
+	}
+}
+
+func TestParseGitStatusPorcelainZ(t *testing.T) {
+	raw := []byte(" M changed.go\x00?? new.txt\x00R  renamed.go\x00old.go\x00")
+	got := parseGitStatusPorcelainZ(raw)
+	if len(got) != 3 {
+		t.Fatalf("entries = %d, want 3: %+v", len(got), got)
+	}
+	if got[0].Path != "changed.go" || got[0].Status != "M" {
+		t.Fatalf("modified entry = %+v", got[0])
+	}
+	if got[1].Path != "new.txt" || got[1].Status != "??" {
+		t.Fatalf("untracked entry = %+v", got[1])
+	}
+	if got[2].Path != "renamed.go" || got[2].OldPath != "old.go" || got[2].Status != "R" {
+		t.Fatalf("rename entry = %+v", got[2])
+	}
+}
+
+func TestWorkspaceChangesNonGitDirectory(t *testing.T) {
+	orig, _ := os.Getwd()
+	defer os.Chdir(orig)
+
+	dir := t.TempDir()
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+
+	got := (&App{}).WorkspaceChanges()
+	if got.GitAvailable {
+		t.Fatal("non-git directory should mark git unavailable")
+	}
+	if len(got.Files) != 0 {
+		t.Fatalf("files = %+v, want none", got.Files)
+	}
+}
+
+func TestWorkspaceChangesGitStatus(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	orig, _ := os.Getwd()
+	defer os.Chdir(orig)
+
+	dir := t.TempDir()
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, "init")
+	if err := os.WriteFile("tracked.txt", []byte("v1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, "add", "tracked.txt")
+	if err := os.WriteFile("tracked.txt", []byte("v2\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile("untracked.txt", []byte("new\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got := (&App{}).WorkspaceChanges()
+	if !got.GitAvailable {
+		t.Fatalf("git unavailable: %s", got.GitErr)
+	}
+	byPath := map[string]WorkspaceChangeView{}
+	for _, file := range got.Files {
+		byPath[file.Path] = file
+	}
+	if byPath["tracked.txt"].GitStatus == "" {
+		t.Fatalf("tracked.txt missing git status: %+v", got.Files)
+	}
+	if byPath["untracked.txt"].GitStatus != "??" {
+		t.Fatalf("untracked.txt = %+v", byPath["untracked.txt"])
+	}
+}
+
+func runGit(t *testing.T, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %v: %v\n%s", args, err, out)
 	}
 }
 

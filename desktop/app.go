@@ -1347,6 +1347,22 @@ type FilePreview struct {
 	Err       string `json:"err,omitempty"`
 }
 
+type WorkspaceChangeView struct {
+	Path         string   `json:"path"`
+	OldPath      string   `json:"oldPath,omitempty"`
+	Sources      []string `json:"sources"`
+	GitStatus    string   `json:"gitStatus,omitempty"`
+	Turns        []int    `json:"turns,omitempty"`
+	LatestPrompt string   `json:"latestPrompt,omitempty"`
+	LatestTime   int64    `json:"latestTime,omitempty"`
+}
+
+type WorkspaceChangesView struct {
+	Files        []WorkspaceChangeView `json:"files"`
+	GitAvailable bool                  `json:"gitAvailable"`
+	GitErr       string                `json:"gitErr,omitempty"`
+}
+
 // atSkip are entries the "@" menu hides as noise.
 var atSkip = map[string]bool{".git": true, "node_modules": true, ".DS_Store": true}
 

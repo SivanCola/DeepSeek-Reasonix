@@ -61,6 +61,16 @@ export const zh: Record<DictKey, string> = {
   "workspace.loading": "正在加载文件…",
   "workspace.binary": "暂不支持预览二进制文件。",
   "workspace.truncated": "预览已截断到前 256 KB。",
+  "workspace.addSelectionToChat": "添加到聊天",
+  "workspace.viewMode": "工作区视图",
+  "workspace.filesTab": "文件",
+  "workspace.changedTab": "改动",
+  "workspace.refreshChanges": "刷新改动文件",
+  "workspace.loadingChanges": "正在加载改动…",
+  "workspace.noChanges": "暂无改动文件",
+  "workspace.gitUnavailable": "当前工作区不可读取 Git 状态。",
+  "workspace.sourceSession": "会话",
+  "workspace.sourceGit": "Git",
 
   // MCP 与技能抽屉
   "caps.title": "MCP 与技能",

@@ -60,6 +60,16 @@ export const en = {
   "workspace.loading": "Loading file…",
   "workspace.binary": "Binary file preview is not available.",
   "workspace.truncated": "Preview truncated to the first 256 KB.",
+  "workspace.addSelectionToChat": "Add to Chat",
+  "workspace.viewMode": "Workspace view",
+  "workspace.filesTab": "Files",
+  "workspace.changedTab": "Changed",
+  "workspace.refreshChanges": "Refresh changes",
+  "workspace.loadingChanges": "Loading changes…",
+  "workspace.noChanges": "No changed files",
+  "workspace.gitUnavailable": "Git status is unavailable for this workspace.",
+  "workspace.sourceSession": "Session",
+  "workspace.sourceGit": "Git",
 
   // mcp & skills drawer
   "caps.title": "MCP & Skills",

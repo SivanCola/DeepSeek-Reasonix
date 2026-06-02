@@ -1,23 +1,26 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { CSSProperties, KeyboardEvent, PointerEvent as ReactPointerEvent } from "react";
+import type { CSSProperties, KeyboardEvent, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from "react";
 import {
   ChevronDown,
   ChevronRight,
   Columns2,
   FileText,
   Folder,
+  GitBranch,
   Maximize2,
+  MessageSquarePlus,
   Minus,
   Minimize2,
   PanelRightClose,
   Plus,
+  RefreshCw,
   Search,
   X,
 } from "lucide-react";
 import { app } from "../lib/bridge";
 import { useT } from "../lib/i18n";
 import { loadLayoutSize, saveLayoutSize } from "../lib/layoutPreferences";
-import type { DirEntry, FilePreview } from "../lib/types";
+import type { DirEntry, FilePreview, WorkspaceChangeView, WorkspaceChangesView } from "../lib/types";
 import { CodeViewer } from "./CodeViewer";
 import { Markdown } from "./Markdown";
 
@@ -93,6 +96,21 @@ function languageFor(path: string): string | undefined {
   return byExt[ext];
 }
 
+function fenceFor(text: string): string {
+  let longest = 0;
+  for (const match of text.matchAll(/`+/g)) {
+    longest = Math.max(longest, match[0].length);
+  }
+  return "`".repeat(Math.max(3, longest + 1));
+}
+
+function formatSelectionReference(path: string, text: string): string {
+  const body = text.replace(/\r\n|\r/g, "\n").trimEnd();
+  const fence = fenceFor(body);
+  const lang = languageFor(path);
+  return `From \`${path}\`:\n\n${fence}${lang ?? ""}\n${body}\n${fence}`;
+}
+
 function shortCwd(cwd?: string): string {
   if (!cwd) return "";
   const parts = cwd.split("/").filter(Boolean);
@@ -114,6 +132,8 @@ export function WorkspacePanel({
   onClose,
   onToggleMaximized,
   onPreviewModeChange,
+  onAddToChat,
+  changesRefreshKey,
 }: {
   open: boolean;
   cwd?: string;
@@ -122,16 +142,23 @@ export function WorkspacePanel({
   onClose: () => void;
   onToggleMaximized: () => void;
   onPreviewModeChange?: (active: boolean) => void;
+  onAddToChat?: (text: string) => void;
+  changesRefreshKey?: number;
 }) {
   const t = useT();
   const panelRef = useRef<HTMLElement>(null);
   const filterRef = useRef<HTMLInputElement>(null);
+  const previewBodyRef = useRef<HTMLDivElement>(null);
   const [entriesByDir, setEntriesByDir] = useState<Record<string, DirEntry[]>>({});
   const [openDirs, setOpenDirs] = useState<Set<string>>(() => new Set([""]));
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const [openTabs, setOpenTabs] = useState<string[]>([]);
   const [preview, setPreview] = useState<FilePreview | null>(null);
   const [loadingPreview, setLoadingPreview] = useState(false);
+  const [viewMode, setViewMode] = useState<"files" | "changed">("files");
+  const [changes, setChanges] = useState<WorkspaceChangesView | null>(null);
+  const [loadingChanges, setLoadingChanges] = useState(false);
+  const [selectionMenu, setSelectionMenu] = useState<{ x: number; y: number; text: string; path: string } | null>(null);
   const [filter, setFilter] = useState("");
   const [treeVisible, setTreeVisible] = useState(true);
   const [treeWidth, setTreeWidth] = useState(loadWorkspaceTreeWidth);
@@ -140,6 +167,17 @@ export function WorkspacePanel({
   const loadDir = useCallback(async (dir: string) => {
     const entries = await app.ListDir(dir).catch(() => []);
     setEntriesByDir((prev) => ({ ...prev, [dir]: entries ?? [] }));
+  }, []);
+
+  const loadChanges = useCallback(async () => {
+    setLoadingChanges(true);
+    try {
+      setChanges(await app.WorkspaceChanges());
+    } catch (err) {
+      setChanges({ files: [], gitAvailable: false, gitErr: String((err as Error)?.message ?? err) });
+    } finally {
+      setLoadingChanges(false);
+    }
   }, []);
 
   const selectFile = useCallback(
@@ -163,10 +201,34 @@ export function WorkspacePanel({
     setSelectedPath(null);
     setOpenTabs([]);
     setPreview(null);
+    setChanges(null);
+    setSelectionMenu(null);
     setFilter("");
     setTreeVisible(true);
     void loadDir("");
-  }, [cwd, loadDir, open]);
+    void loadChanges();
+  }, [cwd, loadChanges, loadDir, open]);
+
+  useEffect(() => {
+    if (!open) return;
+    void loadChanges();
+  }, [changesRefreshKey, cwd, loadChanges, open]);
+
+  useEffect(() => {
+    if (!selectionMenu) return;
+    const close = () => setSelectionMenu(null);
+    const onKey = (event: globalThis.KeyboardEvent) => {
+      if (event.key === "Escape") close();
+    };
+    window.addEventListener("click", close);
+    window.addEventListener("resize", close);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("click", close);
+      window.removeEventListener("resize", close);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [selectionMenu]);
 
   const refreshSelected = useCallback(() => {
     if (!selectedPath) return;
@@ -222,6 +284,7 @@ export function WorkspacePanel({
     setSelectedPath(null);
     setPreview(null);
     setFilter("");
+    setSelectionMenu(null);
     setTreeVisible(true);
     requestAnimationFrame(() => filterRef.current?.focus());
   };
@@ -236,6 +299,7 @@ export function WorkspacePanel({
           setPreview(null);
           setTreeVisible(true);
         }
+        setSelectionMenu(null);
       }
       return next;
     });
@@ -256,6 +320,13 @@ export function WorkspacePanel({
       .filter((row) => row.path.toLowerCase().includes(q))
       .sort((a, b) => a.path.localeCompare(b.path));
   }, [entriesByDir, filter]);
+
+  const changedRows = useMemo(() => {
+    const rows = changes?.files ?? [];
+    const q = filter.trim().toLowerCase();
+    if (!q) return rows;
+    return rows.filter((row) => `${row.path} ${row.oldPath ?? ""} ${row.gitStatus ?? ""}`.toLowerCase().includes(q));
+  }, [changes?.files, filter]);
 
   const effectiveTreeWidth = useMemo(() => clampWorkspaceTreeWidth(treeWidth, panelWidth), [panelWidth, treeWidth]);
   const previewVisible = openTabs.length > 0 || selectedPath !== null;
@@ -339,6 +410,57 @@ export function WorkspacePanel({
   );
 
   if (!open) return null;
+
+  const selectedTextFromPreview = (): string => {
+    const root = previewBodyRef.current;
+    const selection = typeof window === "undefined" ? null : window.getSelection();
+    if (!root || !selection || selection.rangeCount === 0) return "";
+    const range = selection.getRangeAt(0);
+    const container = range.commonAncestorContainer;
+    const node = container instanceof Element ? container : container.parentElement;
+    if (!node || !root.contains(node)) return "";
+    return selection.toString();
+  };
+
+  const openSelectionMenu = (event: ReactMouseEvent<HTMLDivElement>) => {
+    if (!selectedPath || loadingPreview || preview?.err || preview?.binary) return;
+    const text = selectedTextFromPreview();
+    if (text.trim() === "") return;
+    event.preventDefault();
+    event.stopPropagation();
+    setSelectionMenu({ x: event.clientX, y: event.clientY, text, path: selectedPath });
+  };
+
+  const addSelectionToChat = () => {
+    if (!selectionMenu) return;
+    onAddToChat?.(formatSelectionReference(selectionMenu.path, selectionMenu.text));
+    setSelectionMenu(null);
+  };
+
+  const renderChangedRows = () => {
+    if (loadingChanges) return <div className="workspace-empty">{t("workspace.loadingChanges")}</div>;
+    if (!changes) return null;
+    if (changedRows.length === 0) return <div className="workspace-empty">{t("workspace.noChanges")}</div>;
+    return changedRows.map((row) => (
+      <button
+        className={`workspace-change${selectedPath === row.path ? " workspace-change--active" : ""}`}
+        key={`${row.path}-${row.sources.join("-")}`}
+        onClick={() => selectFile(row.path)}
+        title={changeTitle(row)}
+      >
+        <FileText size={14} className="workspace-tree__icon" />
+        <span className="workspace-change__body">
+          <span className="workspace-change__name">{basename(row.path)}</span>
+          <span className="workspace-change__path">{row.path}</span>
+        </span>
+        <span className="workspace-change__meta">
+          {row.gitStatus && <span className="workspace-change__badge workspace-change__badge--git">{row.gitStatus}</span>}
+          {row.sources.includes("session") && <span className="workspace-change__badge">{t("workspace.sourceSession")}</span>}
+          {row.sources.includes("git") && <span className="workspace-change__badge">{t("workspace.sourceGit")}</span>}
+        </span>
+      </button>
+    ));
+  };
 
   const renderRows = (dir: string, depth: number): JSX.Element[] => {
     const entries = entriesByDir[dir] ?? [];
@@ -477,7 +599,7 @@ export function WorkspacePanel({
           {preview && preview.size > 0 && <span className="workspace-preview__size">{formatBytes(preview.size)}</span>}
         </div>
 
-        <div className="workspace-preview__body">
+        <div className="workspace-preview__body" ref={previewBodyRef} onContextMenu={openSelectionMenu}>
           {!selectedPath ? (
             <div className="workspace-empty">{t("workspace.pickFile")}</div>
           ) : loadingPreview ? (
@@ -496,6 +618,22 @@ export function WorkspacePanel({
               )}
             </>
           ) : null}
+          {selectionMenu && (
+            <div
+              className="workspace-selection-menu"
+              style={{ left: selectionMenu.x, top: selectionMenu.y }}
+              onMouseDown={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+              }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <button type="button" onClick={addSelectionToChat}>
+                <MessageSquarePlus size={14} />
+                <span>{t("workspace.addSelectionToChat")}</span>
+              </button>
+            </div>
+          )}
         </div>
       </section>}
 
@@ -525,14 +663,40 @@ export function WorkspacePanel({
           >
             <PanelRightClose size={15} />
           </button>
+          <div className="workspace-files__tabs" role="tablist" aria-label={t("workspace.viewMode")}>
+            <button
+              className={viewMode === "files" ? "workspace-files__tab workspace-files__tab--active" : "workspace-files__tab"}
+              onClick={() => setViewMode("files")}
+            >
+              {t("workspace.filesTab")}
+            </button>
+            <button
+              className={viewMode === "changed" ? "workspace-files__tab workspace-files__tab--active" : "workspace-files__tab"}
+              onClick={() => {
+                setViewMode("changed");
+                void loadChanges();
+              }}
+            >
+              <GitBranch size={13} />
+              {t("workspace.changedTab")}
+            </button>
+          </div>
+          <button className="workspace-iconbtn" onClick={() => void loadChanges()} title={t("workspace.refreshChanges")}>
+            <RefreshCw size={14} />
+          </button>
         </div>
 
         <div className="workspace-search">
           <Search size={14} />
           <input ref={filterRef} value={filter} onChange={(e) => setFilter(e.target.value)} placeholder={t("workspace.filter")} />
         </div>
+        {viewMode === "changed" && changes && !changes.gitAvailable && changes.gitErr && (
+          <div className="workspace-note workspace-note--compact">{t("workspace.gitUnavailable")}</div>
+        )}
         <div className="workspace-tree">
-          {flattened
+          {viewMode === "changed"
+            ? renderChangedRows()
+            : flattened
             ? flattened.map(({ path, entry }) => {
                 const cleanPath = path.replace(/\/$/, "");
                 const dir = parentPath(path);
@@ -560,4 +724,12 @@ export function WorkspacePanel({
       </section>
     </aside>
   );
+}
+
+function changeTitle(row: WorkspaceChangeView): string {
+  const parts = [row.path];
+  if (row.oldPath) parts.push(`from ${row.oldPath}`);
+  if (row.gitStatus) parts.push(`git ${row.gitStatus}`);
+  if (row.turns && row.turns.length > 0) parts.push(`turns ${row.turns.join(", ")}`);
+  return parts.join(" · ");
 }

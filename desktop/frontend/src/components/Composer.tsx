@@ -4,7 +4,7 @@ import { ArrowUp, Check, ChevronDown, Eye, FileText, FolderGit2, FolderPlus, Sea
 import { app } from "../lib/bridge";
 import { useT } from "../lib/i18n";
 import { clearLayoutSize, loadOptionalLayoutSize, saveLayoutSize } from "../lib/layoutPreferences";
-import type { CommandInfo, DirEntry, Mode, SlashArgItem, SlashArgsResult, WorkspaceView } from "../lib/types";
+import type { CommandInfo, ComposerInsertRequest, DirEntry, Mode, SlashArgItem, SlashArgsResult, WorkspaceView } from "../lib/types";
 import { SlashMenu } from "./SlashMenu";
 import { ArgMenu } from "./ArgMenu";
 import { FileMenu } from "./FileMenu";
@@ -80,6 +80,7 @@ export function Composer({
   onCancel,
   onCycleMode,
   onPickFolder,
+  insertRequest,
   disabled,
 }: {
   running: boolean;
@@ -91,6 +92,7 @@ export function Composer({
   onCancel: () => string | undefined;
   onCycleMode: () => void;
   onPickFolder: (path?: string) => Promise<string>;
+  insertRequest?: ComposerInsertRequest | null;
   disabled?: boolean;
 }) {
   const t = useT();
@@ -116,6 +118,8 @@ export function Composer({
   const wasRunning = useRef(running);
   const composingRef = useRef(false);
   const lastCompositionEndAt = useRef(0);
+  const lastSelectionRef = useRef({ start: 0, end: 0 });
+  const consumedInsertIdRef = useRef(0);
 
   useEffect(() => {
     if (wasRunning.current && !running && text.trim() === "") {
@@ -254,6 +258,40 @@ export function Composer({
       }
     });
   };
+
+  const rememberCaret = () => {
+    const ta = taRef.current;
+    if (!ta) return;
+    lastSelectionRef.current = { start: ta.selectionStart ?? text.length, end: ta.selectionEnd ?? text.length };
+  };
+
+  const insertTextAtCaret = (snippet: string) => {
+    const ta = taRef.current;
+    const start = ta ? (ta.selectionStart ?? text.length) : Math.min(lastSelectionRef.current.start, text.length);
+    const end = ta ? (ta.selectionEnd ?? start) : Math.min(lastSelectionRef.current.end, text.length);
+    const before = text.slice(0, start);
+    const after = text.slice(end);
+    const leading = before.length === 0 || before.endsWith("\n\n") ? "" : before.endsWith("\n") ? "\n" : "\n\n";
+    const body = snippet.trimEnd();
+    const trailing = after.length === 0 ? "\n" : after.startsWith("\n") ? "" : "\n\n";
+    const inserted = leading + body + trailing;
+    const next = before + inserted + after;
+    const pos = before.length + inserted.length;
+    setText(next);
+    requestAnimationFrame(() => {
+      const node = taRef.current;
+      if (!node) return;
+      node.focus();
+      node.selectionStart = node.selectionEnd = pos;
+      lastSelectionRef.current = { start: pos, end: pos };
+    });
+  };
+
+  useEffect(() => {
+    if (!insertRequest || insertRequest.id === consumedInsertIdRef.current) return;
+    consumedInsertIdRef.current = insertRequest.id;
+    insertTextAtCaret(insertRequest.text);
+  }, [insertRequest]);
 
   const expandPastedBlocks = (displayText: string): string => {
     let expanded = displayText;
@@ -680,6 +718,10 @@ export function Composer({
             className="composer__input"
             value={text}
             onChange={(e) => setText(e.target.value)}
+            onSelect={rememberCaret}
+            onClick={rememberCaret}
+            onKeyUp={rememberCaret}
+            onFocus={rememberCaret}
             onPaste={onPaste}
             onKeyDown={onKeyDown}
             onCompositionStart={() => {

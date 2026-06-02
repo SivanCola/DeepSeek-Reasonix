@@ -166,6 +166,27 @@ export interface FilePreview {
   err?: string;
 }
 
+export interface WorkspaceChangeView {
+  path: string;
+  oldPath?: string;
+  sources: string[];
+  gitStatus?: string;
+  turns?: number[];
+  latestPrompt?: string;
+  latestTime?: number;
+}
+
+export interface WorkspaceChangesView {
+  files: WorkspaceChangeView[];
+  gitAvailable: boolean;
+  gitErr?: string;
+}
+
+export interface ComposerInsertRequest {
+  id: number;
+  text: string;
+}
+
 // MCP & Skills drawer (desktop/app.go Capabilities) — the GUI counterpart to
 // /mcp + /skill: connected/failed servers and discoverable skills.
 export interface ServerView {

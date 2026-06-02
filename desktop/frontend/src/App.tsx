@@ -29,7 +29,7 @@ import { UpdateBanner } from "./components/UpdateBanner";
 import { WorkspacePanel } from "./components/WorkspacePanel";
 import { parseTodos } from "./lib/tools";
 import { sessionActivityTime } from "./lib/session";
-import type { MemoryView, Mode, SessionMeta } from "./lib/types";
+import type { ComposerInsertRequest, MemoryView, Mode, SessionMeta } from "./lib/types";
 import { loadLayoutSize, saveLayoutSize } from "./lib/layoutPreferences";
 
 const SIDEBAR_COLLAPSED_KEY = "reasonix.sidebar.collapsed";
@@ -160,13 +160,16 @@ export default function App() {
   const [workspacePanelResizing, setWorkspacePanelResizing] = useState(false);
   const [workspacePanelMaximized, setWorkspacePanelMaximized] = useState(false);
   const [workspacePreviewModeActive, setWorkspacePreviewModeActive] = useState(false);
+  const [workspaceChangesRefreshKey, setWorkspaceChangesRefreshKey] = useState(0);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [capsOpen, setCapsOpen] = useState(false);
+  const [composerInsertRequest, setComposerInsertRequest] = useState<ComposerInsertRequest | null>(null);
   const [pendingPlanRevision, setPendingPlanRevision] = useState<string | null>(null);
   const [viewportWidth, setViewportWidth] = useState(() => (typeof window === "undefined" ? 1440 : window.innerWidth));
   const [footerHeight, setFooterHeight] = useState(0);
   const footerRef = useRef<HTMLElement>(null);
   const sidebarBeforeWorkspacePreviewRef = useRef<boolean | null>(null);
+  const wasRunningForWorkspaceChangesRef = useRef(false);
   const effectiveSidebarWidth = sidebarCollapsed ? SIDEBAR_COLLAPSED_WIDTH : sidebarWidth;
   const effectiveWorkspacePanelWidth = useMemo(
     () =>
@@ -231,6 +234,13 @@ export default function App() {
     send(text);
   }, [pendingPlanRevision, send, state.running]);
 
+  useEffect(() => {
+    if (wasRunningForWorkspaceChangesRef.current && !state.running) {
+      setWorkspaceChangesRefreshKey((key) => key + 1);
+    }
+    wasRunningForWorkspaceChangesRef.current = state.running;
+  }, [state.running]);
+
   // Memory drawer: opening fetches a fresh snapshot; writes re-fetch so the
   // panel reflects what landed on disk.
   const openMemory = useCallback(async () => {
@@ -261,6 +271,10 @@ export default function App() {
     },
     [switchModel, openMemory, send],
   );
+
+  const addToChat = useCallback((text: string) => {
+    setComposerInsertRequest((prev) => ({ id: (prev?.id ?? 0) + 1, text }));
+  }, []);
 
   const refreshSessions = useCallback(async () => {
     const sessions = await listSessions();
@@ -295,6 +309,7 @@ export default function App() {
   const startNewSession = useCallback(async () => {
     await newSession();
     await refreshSessions();
+    setWorkspaceChangesRefreshKey((key) => key + 1);
   }, [newSession, refreshSessions]);
 
   const toggleSidebar = useCallback(() => {
@@ -479,6 +494,7 @@ export default function App() {
       setHistView(null);
       await resumeSession(path);
       await refreshSessions();
+      setWorkspaceChangesRefreshKey((key) => key + 1);
     },
     [resumeSession, refreshSessions],
   );
@@ -503,7 +519,10 @@ export default function App() {
   // the recent list belongs to the newly selected workspace. A cancel is a no-op.
   const switchFolder = useCallback(async (path?: string) => {
     const picked = path === undefined ? await pickWorkspace() : await switchWorkspace(path);
-    if (picked) await refreshSessions();
+    if (picked) {
+      await refreshSessions();
+      setWorkspaceChangesRefreshKey((key) => key + 1);
+    }
     return picked;
   }, [pickWorkspace, switchWorkspace, refreshSessions]);
 
@@ -755,6 +774,7 @@ export default function App() {
               onCancel={cancel}
               onCycleMode={cycleMode}
               onPickFolder={switchFolder}
+              insertRequest={composerInsertRequest}
               disabled={state.meta?.ready === false || state.approval != null}
             />
             <StatusBar
@@ -801,6 +821,8 @@ export default function App() {
           onClose={() => setWorkspacePanel(false)}
           onToggleMaximized={() => setWorkspacePanelMaximized((value) => !value)}
           onPreviewModeChange={handleWorkspacePreviewModeChange}
+          onAddToChat={addToChat}
+          changesRefreshKey={workspaceChangesRefreshKey}
         />
       </div>
 

@@ -31,6 +31,7 @@ import type {
   UpdateInfo,
   UpdateProgress,
   WireEvent,
+  WorkspaceChangesView,
   WorkspaceView,
 } from "./types";
 
@@ -90,6 +91,7 @@ export interface AppBindings {
   SlashArgs(input: string): Promise<SlashArgsResult>;
   ListDir(rel: string): Promise<DirEntry[]>;
   ReadFile(rel: string): Promise<FilePreview>;
+  WorkspaceChanges(): Promise<WorkspaceChangesView>;
   OpenWorkspacePath(rel: string): Promise<void>;
   RevealWorkspacePath(rel: string): Promise<void>;
   SavePastedImage(dataUrl: string): Promise<string>;
@@ -560,6 +562,23 @@ function makeMockApp(): AppBindings {
         size: samples[rel]?.length ?? 42,
         truncated: false,
         binary: false,
+      };
+    },
+    async WorkspaceChanges() {
+      return {
+        gitAvailable: true,
+        files: [
+          {
+            path: "desktop/frontend/src/components/WorkspacePanel.tsx",
+            sources: ["session", "git"],
+            gitStatus: "M",
+            turns: [0, 2],
+            latestPrompt: "Mock session edited the workspace panel.",
+            latestTime: Date.now() - 60_000,
+          },
+          { path: "README.md", sources: ["git"], gitStatus: "??" },
+          { path: "internal/control/controller.go", sources: ["session"], turns: [1], latestTime: Date.now() - 120_000 },
+        ],
       };
     },
     async OpenWorkspacePath(rel: string) {
