@@ -181,8 +181,9 @@ func StartAvailable(ctx context.Context, specs []Spec) (*Host, []tool.Tool) {
 // failure (AbortOnError=true) or records failures on the host and keeps going.
 //
 // Result ordering matches specs (stable for /mcp status). For stdio plugins the
-// subprocess is bound to the per-plugin timeout context, so a timeout kills the
-// child and unblocks its readers — the goroutine returns promptly either way.
+// subprocess is bound to the parent ctx, not the per-plugin startup timeout:
+// successful servers stay alive after startup, while failed/time-limited starts
+// are closed explicitly before the goroutine returns.
 func Start(ctx context.Context, specs []Spec, p StartPolicy) (*Host, []tool.Tool, error) {
 	if len(specs) == 0 {
 		return &Host{}, nil, nil
@@ -212,27 +213,27 @@ func Start(ctx context.Context, specs []Spec, p StartPolicy) (*Host, []tool.Tool
 			sem <- struct{}{}
 			defer func() { <-sem }()
 
-			cctx := ctx
+			callCtx := ctx
+			cancelStartup := func() {}
 			if p.PerPluginTimeout > 0 {
 				var cancel context.CancelFunc
-				cctx, cancel = context.WithTimeout(ctx, p.PerPluginTimeout)
-				defer cancel()
+				callCtx, cancel = context.WithTimeout(ctx, p.PerPluginTimeout)
+				cancelStartup = cancel
 			}
 
-			// Transport on the parent ctx, handshake on the timed cctx: the
+			// Transport on the parent ctx, startup RPCs on the timed callCtx: the
 			// per-plugin timeout caps initialize+listTools, but the long-lived
-			// stdio child must outlive this goroutine — otherwise the deferred
-			// cancel() at the end of the goroutine would kill the subprocess
-			// (started via exec.CommandContext) and the freshly-registered
-			// tools would crash on first call.
-			c, err := start(ctx, cctx, spec)
+			// stdio child must outlive the startup scope.
+			c, err := start(ctx, callCtx, spec)
 			if err != nil {
+				cancelStartup()
 				ch <- result{idx: idx, spec: spec, err: fmt.Errorf("start plugin %q: %w", spec.Name, err)}
 				return
 			}
 
-			ts, err := c.listTools(cctx)
+			ts, err := c.listTools(callCtx)
 			if err != nil {
+				cancelStartup()
 				c.close()
 				ch <- result{idx: idx, spec: spec, err: fmt.Errorf("list tools from %q: %w", spec.Name, err)}
 				return
@@ -243,15 +244,16 @@ func Start(ctx context.Context, specs []Spec, p StartPolicy) (*Host, []tool.Tool
 			// advertised the capability, and a listing error is tolerated rather
 			// than failing the whole session over a non-essential surface.
 			if c.hasPrompts {
-				if ps, perr := c.listPrompts(cctx); perr == nil {
+				if ps, perr := c.listPrompts(callCtx); perr == nil {
 					c.prompts = ps
 				}
 			}
 			if c.hasResources {
-				if rs, rerr := c.listResources(cctx); rerr == nil {
+				if rs, rerr := c.listResources(callCtx); rerr == nil {
 					c.resources = rs
 				}
 			}
+			cancelStartup()
 
 			ch <- result{idx: idx, spec: spec, client: c, tools: ts}
 		}(i, s)
@@ -524,11 +526,9 @@ func (h *Host) Remove(name string) (toolPrefix string, found bool) {
 
 // start opens the transport on lifeCtx (whose cancellation later closes the
 // subprocess) and uses callCtx for the initialize round-trip (whose cancellation
-// only bounds the handshake). Splitting the two lets a per-plugin timeout cap
-// handshake latency without killing the long-lived stdio child when it elapses:
-// after a successful handshake the goroutine's `defer cancel()` would otherwise
-// tear down the freshly-registered server. Callers that don't care pass the
-// same ctx for both.
+// only bounds startup RPCs). Splitting the two lets a per-plugin timeout cap
+// handshake latency without making the timeout context own a successfully
+// registered stdio server. Callers that don't care pass the same ctx for both.
 func start(lifeCtx, callCtx context.Context, s Spec) (*Client, error) {
 	t, err := newTransport(lifeCtx, s)
 	if err != nil {
