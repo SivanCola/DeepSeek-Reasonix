@@ -679,14 +679,17 @@ export default function App() {
             </button>
           </div>
 
-          <button
-            className="sidebar__new"
-            onClick={() => void startNewSession()}
-            disabled={state.running}
-          >
-            <SquarePen size={15} />
-            <span>{t("topbar.newSession")}</span>
-          </button>
+          <Tooltip label={state.running ? t("common.busyHint") : t("topbar.newSession")} fill disabled={!sidebarCollapsed && !state.running}>
+            <button
+              className="sidebar__new"
+              onClick={() => void startNewSession()}
+              disabled={state.running}
+              aria-label={state.running ? t("common.busyHint") : t("topbar.newSession")}
+            >
+              <SquarePen size={15} />
+              <span>{t("topbar.newSession")}</span>
+            </button>
+          </Tooltip>
 
           <section className="sidebar__section">
             <div className="sidebar__section-head">
