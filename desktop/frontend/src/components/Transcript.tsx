@@ -67,11 +67,11 @@ export function Transcript({
     lastClientHeight.current = el.clientHeight;
     const observer = new ResizeObserver(() => {
       const previousHeight = lastClientHeight.current ?? el.clientHeight;
-      const heightDelta = Math.abs(el.clientHeight - previousHeight);
+      const heightDelta = el.clientHeight - previousHeight;
       lastClientHeight.current = el.clientHeight;
       const bottomDistance = el.scrollHeight - el.scrollTop - el.clientHeight;
-      const stillPinnedByResize = bottomDistance < heightDelta + 80;
-      if (!stick.current && !stillPinnedByResize) return;
+      const wasPinnedBeforeResize = bottomDistance + heightDelta < 80;
+      if (!stick.current && !wasPinnedBeforeResize) return;
       stick.current = true;
       if (resizeFrame.current !== null) cancelAnimationFrame(resizeFrame.current);
       resizeFrame.current = requestAnimationFrame(() => {
@@ -93,11 +93,11 @@ export function Transcript({
     const el = scrollRef.current;
     if (!el) return;
     const previousHeight = lastFooterHeight.current ?? footerHeight;
-    const heightDelta = Math.abs(footerHeight - previousHeight);
+    const heightDelta = footerHeight - previousHeight;
     lastFooterHeight.current = footerHeight;
     const bottomDistance = el.scrollHeight - el.scrollTop - el.clientHeight;
-    const stillPinnedByFooterResize = bottomDistance < heightDelta + 80;
-    if (!stick.current && !stillPinnedByFooterResize) return;
+    const wasPinnedBeforeFooterResize = bottomDistance - heightDelta < 80;
+    if (!stick.current && !wasPinnedBeforeFooterResize) return;
     stick.current = true;
     const id = requestAnimationFrame(() => {
       if (stick.current) el.scrollTop = el.scrollHeight;
