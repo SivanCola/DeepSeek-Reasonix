@@ -218,6 +218,29 @@ func TestStdioCommandNotFoundSuggestsPATHFix(t *testing.T) {
 	}
 }
 
+func TestStdioIgnoresRelativePATHEntries(t *testing.T) {
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "bin")
+	if err := os.Mkdir(bin, 0o755); err != nil {
+		t.Fatalf("mkdir bin: %v", err)
+	}
+	name := "mock-mcp"
+	target := filepath.Join(bin, name)
+	env := []string{"PATH=bin"}
+	if runtime.GOOS == "windows" {
+		target += ".cmd"
+		env = append(env, "PATHEXT=.CMD")
+	}
+	if err := os.WriteFile(target, []byte(""), 0o755); err != nil {
+		t.Fatalf("write fake executable: %v", err)
+	}
+	t.Chdir(dir)
+
+	if exe, ok := lookPathInEnv(name, env); ok {
+		t.Fatalf("relative PATH entry resolved to %q; want no match", exe)
+	}
+}
+
 func helperLauncher(t *testing.T, name string) (dir, command string) {
 	t.Helper()
 	if runtime.GOOS == "windows" {

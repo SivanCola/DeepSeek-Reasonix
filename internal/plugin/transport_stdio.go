@@ -118,7 +118,7 @@ func lookPathInEnv(command string, env []string) (string, bool) {
 	path, _ := envValue(env, "PATH")
 	pathext, _ := envValue(env, "PATHEXT")
 	for _, dir := range filepath.SplitList(path) {
-		if dir == "" {
+		if dir == "" || !filepath.IsAbs(dir) {
 			continue
 		}
 		for _, name := range executableNames(command, pathext) {
