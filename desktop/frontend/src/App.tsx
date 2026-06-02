@@ -719,6 +719,7 @@ export default function App() {
               ) : (
                 sidebarSessions.map((session) => {
                   const title = sessionTitle(session, t("history.emptySession"));
+                  const meta = session.current ? t("history.current") : sessionTime(sessionActivityTime(session));
                   return (
                     <div
                       className={`sidebar-session${session.current ? " sidebar-session--current" : ""}`}
@@ -745,9 +746,9 @@ export default function App() {
                         >
                           <MessageSquare size={14} />
                           <span className="sidebar-session__body">
-                            <Tooltip className="sidebar-session__title" label={`${title}\n${session.path}`}>{title}</Tooltip>
+                            <Tooltip className="sidebar-session__title" label={`${title}\n${meta}`}>{title}</Tooltip>
                             <span className="sidebar-session__meta">
-                              {session.current ? t("history.current") : sessionTime(sessionActivityTime(session))}
+                              {meta}
                             </span>
                           </span>
                         </button>
