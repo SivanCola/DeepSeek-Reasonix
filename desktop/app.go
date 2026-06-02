@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -56,11 +57,21 @@ type App struct {
 	ready       bool   // true once boot.Build completes (success or failure)
 	disabledMCP map[string]ServerView
 	mcpOrder    []string
+
+	// Per-turn autosave runs off the event goroutine so disk I/O never delays
+	// event delivery; overlapping requests coalesce into one trailing write.
+	saveMu    sync.Mutex
+	saving    bool
+	saveAgain bool
 }
 
 // NewApp constructs the bound object. The controller is built later, in startup,
 // once the Wails context exists.
-func NewApp() *App { return &App{sink: &eventSink{}, disabledMCP: map[string]ServerView{}} }
+func NewApp() *App {
+	a := &App{sink: &eventSink{}, disabledMCP: map[string]ServerView{}}
+	a.sink.app = a
+	return a
+}
 
 // startup runs once the webview process is up, before the frontend can issue any
 // bound call. It captures the Wails context (needed for EventsEmit), points the
@@ -159,6 +170,11 @@ func (a *App) shutdown(context.Context) {
 // Submit runs raw user input as a turn; slash commands and @-references are
 // resolved by the controller. Output arrives asynchronously on eventChannel.
 func (a *App) Submit(input string) {
+	trimmed := strings.TrimSpace(input)
+	if trimmed == "/effort" || strings.HasPrefix(trimmed, "/effort ") {
+		a.runEffortCommand(trimmed)
+		return
+	}
 	a.mu.RLock()
 	ctrl := a.ctrl
 	a.mu.RUnlock()
@@ -425,6 +441,12 @@ func (a *App) ResumeSession(path string) ([]HistoryMessage, error) {
 	return a.History(), nil
 }
 
+// PreviewSession reads a saved session for display only. It does not snapshot or
+// swap the active controller, so the history drawer can call it while a turn runs.
+func (a *App) PreviewSession(path string) ([]HistoryMessage, error) {
+	return previewSessionMessages(config.SessionDir(), path)
+}
+
 // PickWorkspace opens a folder chooser and, on a pick, switches the agent to that
 // project: it re-roots the process there, rebuilds the controller from that
 // folder's reasonix.toml + REASONIX.md, and starts a fresh session — the desktop
@@ -585,6 +607,14 @@ func historyMessages(msgs []provider.Message, resolveUserContent func(string) st
 	return out
 }
 
+func previewSessionMessages(sessionDir, path string) ([]HistoryMessage, error) {
+	loaded, err := agent.LoadSession(path)
+	if err != nil {
+		return nil, err
+	}
+	return historyMessages(loaded.Snapshot(), sessionDisplayResolver(sessionDir, path)), nil
+}
+
 // ContextInfo is the prompt-vs-window gauge payload. Both zero means no data yet.
 type ContextInfo struct {
 	Used   int `json:"used"`
@@ -719,9 +749,11 @@ func (a *App) Commands() []CommandInfo {
 		{Name: "new", Description: i18n.M.CmdNew, Kind: "builtin"},
 		{Name: "compact", Description: i18n.M.CmdCompact, Kind: "builtin"},
 		{Name: "model", Description: i18n.M.CmdModel, Kind: "builtin"},
+		{Name: "effort", Description: i18n.M.CmdEffort, Kind: "builtin"},
 		{Name: "memory", Description: i18n.M.CmdMemory, Kind: "builtin"},
 		{Name: "mcp", Description: i18n.M.CmdMcp, Kind: "builtin"},
 		{Name: "hooks", Description: i18n.M.CmdHooks, Kind: "builtin"},
+		{Name: "theme", Description: i18n.M.CmdTheme, Kind: "builtin"},
 		{Name: "skill", Description: i18n.M.CmdSkill, Kind: "builtin"},
 	}
 	a.mu.RLock()
@@ -1256,6 +1288,13 @@ type ModelInfo struct {
 	Current  bool   `json:"current"`
 }
 
+type EffortInfo struct {
+	Supported bool     `json:"supported"`
+	Current   string   `json:"current"`
+	Default   string   `json:"default"`
+	Levels    []string `json:"levels"`
+}
+
 // Models flattens the configured providers into their (provider, model) pairs —
 // the switcher's options — marking the active one. A vendor with a `models` list
 // yields one entry per model, all sharing the same endpoint/key. Unconfigured
@@ -1329,6 +1368,48 @@ func (a *App) SetModel(name string) error {
 		newCtrl.SetSessionPath(path)
 	}
 	return nil
+}
+
+func (a *App) Effort() EffortInfo {
+	entry, err := a.currentProviderEntry()
+	if err != nil {
+		return EffortInfo{Current: "auto", Levels: []string{}}
+	}
+	cap := config.EffortCapabilityForEntry(entry)
+	if !cap.Supported {
+		return EffortInfo{Supported: false, Current: "auto", Default: cap.Default, Levels: []string{}}
+	}
+	return EffortInfo{Supported: true, Current: config.EffortDisplay(entry), Default: cap.Default, Levels: cap.Levels}
+}
+
+func (a *App) SetEffort(level string) error {
+	a.mu.RLock()
+	ctrl := a.ctrl
+	a.mu.RUnlock()
+	if ctrl != nil && ctrl.Running() {
+		return fmt.Errorf("finish or cancel the current turn before changing effort")
+	}
+	entry, err := a.currentProviderEntry()
+	if err != nil {
+		return err
+	}
+	effort, err := config.NormalizeEffort(entry, level)
+	if err != nil {
+		return err
+	}
+	return a.applyConfigChange(func(cfg *config.Config) error {
+		if _, ok := cfg.Provider(entry.Name); !ok {
+			if err := cfg.UpsertProvider(*entry); err != nil {
+				return err
+			}
+		}
+		if entry.Kind == "anthropic" && effort != "" && entry.Thinking == "" {
+			if err := cfg.SetProviderThinking(entry.Name, "adaptive"); err != nil {
+				return err
+			}
+		}
+		return cfg.SetProviderEffort(entry.Name, effort)
+	})
 }
 
 // DirEntry is one entry in the "@" file-reference menu.
@@ -1556,6 +1637,66 @@ func (a *App) RevealWorkspacePath(rel string) error {
 	}
 }
 
+func (a *App) notice(text string) {
+	if a.sink != nil {
+		a.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo, Text: text})
+	}
+}
+
+func (a *App) runEffortCommand(input string) {
+	entry, err := a.currentProviderEntry()
+	if err != nil {
+		a.notice("effort: " + err.Error())
+		return
+	}
+	cap := config.EffortCapabilityForEntry(entry)
+	if !cap.Supported {
+		a.notice(fmt.Sprintf("effort is not configurable for %s", entry.Name))
+		return
+	}
+	args := strings.Fields(input)
+	if len(args) < 2 {
+		a.notice(fmt.Sprintf("effort for %s: %s (default: %s; options: %s)", entry.Name, config.EffortDisplay(entry), cap.Default, strings.Join(cap.Levels, "|")))
+		return
+	}
+	if len(args) > 2 {
+		a.notice("usage: /effort " + strings.Join(cap.Levels, "|"))
+		return
+	}
+	effort, err := config.NormalizeEffort(entry, args[1])
+	if err != nil {
+		a.notice(err.Error())
+		return
+	}
+	if err := a.SetEffort(args[1]); err != nil {
+		a.notice("effort: " + err.Error())
+		return
+	}
+	display := effort
+	if display == "" {
+		display = "auto"
+	}
+	a.notice(fmt.Sprintf("effort for %s set to %s", entry.Name, display))
+}
+
+func (a *App) currentProviderEntry() (*config.ProviderEntry, error) {
+	cfg, err := config.Load()
+	if err != nil {
+		return nil, err
+	}
+	a.mu.RLock()
+	ref := a.model
+	a.mu.RUnlock()
+	if strings.TrimSpace(ref) == "" {
+		ref = cfg.DefaultModel
+	}
+	entry, ok := cfg.ResolveModel(ref)
+	if !ok {
+		return nil, fmt.Errorf("unknown model %q", ref)
+	}
+	return entry, nil
+}
+
 // SavePastedImage stores a browser clipboard image data URL under
 // .reasonix/attachments and returns the relative @-reference path.
 func (a *App) SavePastedImage(dataURL string) (string, error) {
@@ -1701,11 +1842,54 @@ func parseScope(s string) memory.Scope {
 // — Emit must not be exposed to JS. Emit runs on the agent goroutine;
 // runtime.EventsEmit is goroutine-safe, and the ctx guard covers the brief window
 // before startup assigns it.
-type eventSink struct{ ctx context.Context }
+type eventSink struct {
+	ctx context.Context
+	app *App
+}
 
 func (s *eventSink) Emit(e event.Event) {
-	if s.ctx == nil {
+	if s.ctx != nil {
+		runtime.EventsEmit(s.ctx, eventChannel, toWire(e))
+	}
+	// Persist after each turn so a force-kill of a long session loses at most the
+	// in-flight prompt, not every turn back to the last workspace switch.
+	if e.Kind == event.TurnDone && s.app != nil {
+		s.app.scheduleSnapshot()
+	}
+}
+
+// scheduleSnapshot kicks a single-flight background save of the active session;
+// a request arriving while one runs sets a trailing pass so the final state lands.
+func (a *App) scheduleSnapshot() {
+	a.saveMu.Lock()
+	if a.saving {
+		a.saveAgain = true
+		a.saveMu.Unlock()
 		return
 	}
-	runtime.EventsEmit(s.ctx, eventChannel, toWire(e))
+	a.saving = true
+	a.saveMu.Unlock()
+	go a.snapshotLoop()
+}
+
+func (a *App) snapshotLoop() {
+	for {
+		a.mu.RLock()
+		ctrl := a.ctrl
+		a.mu.RUnlock()
+		if ctrl != nil {
+			if err := ctrl.Snapshot(); err != nil {
+				slog.Warn("desktop: per-turn snapshot", "err", err)
+			}
+		}
+		a.saveMu.Lock()
+		if a.saveAgain {
+			a.saveAgain = false
+			a.saveMu.Unlock()
+			continue
+		}
+		a.saving = false
+		a.saveMu.Unlock()
+		return
+	}
 }

@@ -296,7 +296,9 @@ function SkillSources({
                   <span className={`cap-dot cap-dot--${skillRootDot(root)}`} />
                   <div className="cap-source__text">
                     <div className="cap-source__label">{skillRootLabel(root, t)}</div>
-                    <div className="cap-source__path" title={root.dir}>{root.dir}</div>
+                    <Tooltip label={root.dir} fill className="cap-source__path">
+                      {root.dir}
+                    </Tooltip>
                     <div className="cap-source__meta">
                       <span>{skillRootStatus(root, t)}</span>
                       <span>{t("caps.skillRootCount", { skills: root.skills })}</span>
@@ -512,63 +514,65 @@ function ServerRow({
         : t("caps.counts", { tools: s.tools, prompts: s.prompts, resources: s.resources });
   return (
     <div className={`cap-server-entry${s.status === "disabled" ? " cap-server-entry--disabled" : ""}`}>
-      <div className={`cap-row${s.status === "disabled" ? " cap-row--disabled" : ""}`} title={s.error || undefined}>
-        <Tooltip label={hasTools ? (expanded ? t("caps.collapseTools") : t("caps.expandTools")) : t("caps.noToolDetails")}>
-          <button
-            className="cap-disclosure"
-            disabled={!hasTools}
-            aria-expanded={hasTools ? expanded : undefined}
-            onClick={onToggleDetails}
-          >
-            {hasTools ? (expanded ? "⌄" : "›") : ""}
-          </button>
-        </Tooltip>
-        <span className={`cap-dot cap-dot--${s.status}`} />
-        <div className="cap-row__text">
-          <div className="cap-row__head">
-            <span className="cap-row__name">{s.name}</span>
-            <span className="cap-row__transport">{s.transport}</span>
+      <Tooltip label={s.error} disabled={!s.error} fill block>
+        <div className={`cap-row${s.status === "disabled" ? " cap-row--disabled" : ""}`}>
+          <Tooltip label={hasTools ? (expanded ? t("caps.collapseTools") : t("caps.expandTools")) : t("caps.noToolDetails")}>
+            <button
+              className="cap-disclosure"
+              disabled={!hasTools}
+              aria-expanded={hasTools ? expanded : undefined}
+              onClick={onToggleDetails}
+            >
+              {hasTools ? (expanded ? "⌄" : "›") : ""}
+            </button>
+          </Tooltip>
+          <span className={`cap-dot cap-dot--${s.status}`} />
+          <div className="cap-row__text">
+            <div className="cap-row__head">
+              <span className="cap-row__name">{s.name}</span>
+              <span className="cap-row__transport">{s.transport}</span>
+            </div>
+            <div className="cap-row__sub">{sub}</div>
           </div>
-          <div className="cap-row__sub">{sub}</div>
-        </div>
-        <div className="cap-row__actions">
-          {confirming ? (
-            <>
-              <button className="btn btn--small" disabled={busy} onClick={onRemove}>
-                {t("caps.confirmRemove")}
-              </button>
-              <button className="btn btn--small" disabled={busy} onClick={onCancelConfirm}>
-                {t("common.cancel")}
-              </button>
-            </>
-          ) : (
-            <>
-              {s.status === "failed" ? (
-                <button className="btn btn--small" disabled={busy} onClick={onRetry}>
-                  {actionLabel}
+          <div className="cap-row__actions">
+            {confirming ? (
+              <>
+                <button className="btn btn--small" disabled={busy} onClick={onRemove}>
+                  {t("caps.confirmRemove")}
                 </button>
-              ) : (
-                <Tooltip label={s.status === "connected" ? t("caps.disable") : t("caps.enable")}>
-                  <label className="cap-switch">
-                    <input
-                      type="checkbox"
-                      checked={s.status === "connected"}
-                      disabled={busy}
-                      onChange={(e) => onToggle(e.target.checked)}
-                    />
-                    <span className="cap-switch__track" />
-                  </label>
+                <button className="btn btn--small" disabled={busy} onClick={onCancelConfirm}>
+                  {t("common.cancel")}
+                </button>
+              </>
+            ) : (
+              <>
+                {s.status === "failed" ? (
+                  <button className="btn btn--small" disabled={busy} onClick={onRetry}>
+                    {actionLabel}
+                  </button>
+                ) : (
+                  <Tooltip label={s.status === "connected" ? t("caps.disable") : t("caps.enable")}>
+                    <label className="cap-switch">
+                      <input
+                        type="checkbox"
+                        checked={s.status === "connected"}
+                        disabled={busy}
+                        onChange={(e) => onToggle(e.target.checked)}
+                      />
+                      <span className="cap-switch__track" />
+                    </label>
+                  </Tooltip>
+                )}
+                <Tooltip label={t("caps.remove")}>
+                  <button className="btn btn--small" disabled={busy} onClick={onConfirm}>
+                    ✕
+                  </button>
                 </Tooltip>
-              )}
-              <Tooltip label={t("caps.remove")}>
-                <button className="btn btn--small" disabled={busy} onClick={onConfirm}>
-                  ✕
-                </button>
-              </Tooltip>
-            </>
-          )}
+              </>
+            )}
+          </div>
         </div>
-      </div>
+      </Tooltip>
       {hasTools && expanded && (
         <div className="cap-tool-list">
           <div className="cap-tool-list__title">{t("caps.tools")}</div>
@@ -623,26 +627,27 @@ function SkillRow({
   const summary = summarizeSkillDescription(skill.description);
   const canExpand = summary !== skill.description;
   return (
-    <button
-      className={`cap-skill-card${expanded ? " cap-skill-card--expanded" : ""}${canExpand ? " cap-skill-card--expandable" : ""}`}
-      type="button"
-      onClick={onToggle}
-      aria-expanded={expanded}
-      title={skill.description}
-    >
-      <div className="cap-skill-card__head">
-        <span className="cap-skill-card__icon">/</span>
-        <span className="cap-skill-card__main">
-          <span className="cap-skill-card__command">{skill.name}</span>
-          <span className="cap-skill-card__badges">
-            <span className={`cap-skill-badge cap-skill-badge--${skill.scope}`}>{skillScopeLabel(skill.scope, t)}</span>
-            {skill.runAs === "subagent" && <span className="cap-skill-badge cap-skill-badge--run">{t("caps.subagent")}</span>}
+    <Tooltip label={skill.description} fill>
+      <button
+        className={`cap-skill-card${expanded ? " cap-skill-card--expanded" : ""}${canExpand ? " cap-skill-card--expandable" : ""}`}
+        type="button"
+        onClick={onToggle}
+        aria-expanded={expanded}
+      >
+        <div className="cap-skill-card__head">
+          <span className="cap-skill-card__icon">/</span>
+          <span className="cap-skill-card__main">
+            <span className="cap-skill-card__command">{skill.name}</span>
+            <span className="cap-skill-card__badges">
+              <span className={`cap-skill-badge cap-skill-badge--${skill.scope}`}>{skillScopeLabel(skill.scope, t)}</span>
+              {skill.runAs === "subagent" && <span className="cap-skill-badge cap-skill-badge--run">{t("caps.subagent")}</span>}
+            </span>
           </span>
-        </span>
-      </div>
-      <div className="cap-skill-card__desc">{expanded ? skill.description : summary}</div>
-      {canExpand && <div className="cap-skill-card__more">{expanded ? t("common.collapse") : t("common.expand")}</div>}
-    </button>
+        </div>
+        <div className="cap-skill-card__desc">{expanded ? skill.description : summary}</div>
+        {canExpand && <div className="cap-skill-card__more">{expanded ? t("common.collapse") : t("common.expand")}</div>}
+      </button>
+    </Tooltip>
   );
 }
 

@@ -21,6 +21,7 @@ import (
 type Config struct {
 	DefaultModel string            `toml:"default_model"`
 	Language     string            `toml:"language"` // ui/model language tag (e.g. "zh"); empty = auto-detect from $LANG / $REASONIX_LANG
+	UI           UIConfig          `toml:"ui"`
 	Agent        AgentConfig       `toml:"agent"`
 	Providers    []ProviderEntry   `toml:"providers"`
 	Tools        ToolsConfig       `toml:"tools"`
@@ -32,6 +33,36 @@ type Config struct {
 	Codegraph    CodegraphConfig   `toml:"codegraph"`
 	Statusline   StatuslineConfig  `toml:"statusline"`
 	LSP          LSPConfig         `toml:"lsp"`
+}
+
+// UIConfig controls presentation-only settings. Theme affects CLI rendering; the
+// desktop frontend keeps its own browser-local theme setting.
+type UIConfig struct {
+	Theme      string `toml:"theme"`       // auto|dark|light; empty resolves to auto
+	ThemeStyle string `toml:"theme_style"` // graphite|ember|aurora|midnight|sandstone|porcelain|linen|glacier
+}
+
+// UITheme normalizes ui.theme to a supported value.
+func (c *Config) UITheme() string {
+	switch strings.ToLower(strings.TrimSpace(c.UI.Theme)) {
+	case "dark":
+		return "dark"
+	case "light":
+		return "light"
+	default:
+		return "auto"
+	}
+}
+
+// UIThemeStyle normalizes ui.theme_style. Empty means "pick the default style
+// for the resolved light/dark shell".
+func (c *Config) UIThemeStyle() string {
+	switch strings.ToLower(strings.TrimSpace(c.UI.ThemeStyle)) {
+	case "graphite", "ember", "aurora", "midnight", "sandstone", "porcelain", "linen", "glacier":
+		return strings.ToLower(strings.TrimSpace(c.UI.ThemeStyle))
+	default:
+		return ""
+	}
 }
 
 // LSPConfig governs the optional Language Server Protocol tools (lsp_definition,
@@ -230,9 +261,10 @@ type ProviderEntry struct {
 	Name          string            `toml:"name"`
 	Kind          string            `toml:"kind"`
 	BaseURL       string            `toml:"base_url"`
-	Model         string            `toml:"model"`   // a single model (back-compat)
-	Models        []string          `toml:"models"`  // a vendor's model list (one base_url/key, many models)
-	Default       string            `toml:"default"` // default model when Models is set (else Models[0])
+	Model         string            `toml:"model"`      // a single model (back-compat)
+	Models        []string          `toml:"models"`     // a vendor's model list (one base_url/key, many models)
+	ModelsURL     string            `toml:"models_url"` // auto-fetch models from this URL on startup
+	Default       string            `toml:"default"`    // default model when Models is set (else Models[0])
 	APIKeyEnv     string            `toml:"api_key_env"`
 	BalanceURL    string            `toml:"balance_url"` // optional; a provider-specific wallet-balance endpoint (DeepSeek: https://api.deepseek.com/user/balance). Empty = no balance readout.
 	ContextWindow int               `toml:"context_window"`
@@ -241,7 +273,7 @@ type ProviderEntry struct {
 	// via Config.Extra. The anthropic provider reads Thinking="adaptive" to enable
 	// extended thinking and Effort ("low".."max") to tune depth. The
 	// openai-compatible provider forwards Effort as reasoning_effort for
-	// thinking-capable models; DeepSeek accepts high|max and off disables thinking.
+	// thinking-capable models; DeepSeek accepts high|max.
 	// Empty = provider default.
 	Thinking string `toml:"thinking"`
 	Effort   string `toml:"effort"`
@@ -394,6 +426,7 @@ const LanguagePolicy = `Reply in the same language the user is using in their mo
 func Default() *Config {
 	return &Config{
 		DefaultModel: "deepseek-flash",
+		UI:           UIConfig{Theme: "auto"},
 		Agent: AgentConfig{
 			SystemPrompt: DefaultSystemPrompt,
 			// 0 = no step cap: the agent loops until the model gives a final answer,
@@ -422,8 +455,8 @@ func Default() *Config {
 		LSP:     LSPConfig{Enabled: true},
 		Network: NetworkConfig{ProxyMode: netclient.ModeAuto},
 		Providers: []ProviderEntry{
-			{Name: "deepseek-flash", Kind: "openai", BaseURL: "https://api.deepseek.com", Model: "deepseek-v4-flash", APIKeyEnv: "DEEPSEEK_API_KEY", BalanceURL: "https://api.deepseek.com/user/balance", ContextWindow: 1_000_000, Price: &provider.Pricing{CacheHit: 0.02, Input: 1, Output: 2, Currency: "¥"}, Effort: "high"},
-			{Name: "deepseek-pro", Kind: "openai", BaseURL: "https://api.deepseek.com", Model: "deepseek-v4-pro", APIKeyEnv: "DEEPSEEK_API_KEY", BalanceURL: "https://api.deepseek.com/user/balance", ContextWindow: 1_000_000, Price: &provider.Pricing{CacheHit: 0.025, Input: 3, Output: 6, Currency: "¥"}, Effort: "high"},
+			{Name: "deepseek-flash", Kind: "openai", BaseURL: "https://api.deepseek.com", Model: "deepseek-v4-flash", APIKeyEnv: "DEEPSEEK_API_KEY", BalanceURL: "https://api.deepseek.com/user/balance", ContextWindow: 1_000_000, Price: &provider.Pricing{CacheHit: 0.02, Input: 1, Output: 2, Currency: "¥"}},
+			{Name: "deepseek-pro", Kind: "openai", BaseURL: "https://api.deepseek.com", Model: "deepseek-v4-pro", APIKeyEnv: "DEEPSEEK_API_KEY", BalanceURL: "https://api.deepseek.com/user/balance", ContextWindow: 1_000_000, Price: &provider.Pricing{CacheHit: 0.025, Input: 3, Output: 6, Currency: "¥"}},
 			{Name: "mimo-pro", Kind: "openai", BaseURL: "https://token-plan-cn.xiaomimimo.com/v1", Model: "mimo-v2.5-pro", APIKeyEnv: "MIMO_API_KEY", ContextWindow: 1_000_000, Price: &provider.Pricing{CacheHit: 0.025, Input: 3, Output: 6, Currency: "¥"}},
 			{Name: "mimo-flash", Kind: "openai", BaseURL: "https://token-plan-cn.xiaomimimo.com/v1", Model: "mimo-v2.5", APIKeyEnv: "MIMO_API_KEY", ContextWindow: 1_000_000, Price: &provider.Pricing{CacheHit: 0.02, Input: 1, Output: 2, Currency: "¥"}},
 		},
@@ -464,7 +497,20 @@ func Load() (*Config, error) {
 		return nil, err
 	}
 	cfg.mergeMCPJSON(entries)
+	normalizeLegacyEffort(cfg)
 	return cfg, nil
+}
+
+// normalizeLegacyEffort migrates the retired DeepSeek effort="off" (the old
+// /thinking off that disabled thinking) to the provider default, so a config
+// written by an older version keeps loading instead of erroring on a value the
+// provider no longer accepts.
+func normalizeLegacyEffort(c *Config) {
+	for i := range c.Providers {
+		if strings.EqualFold(strings.TrimSpace(c.Providers[i].Effort), "off") {
+			c.Providers[i].Effort = ""
+		}
+	}
 }
 
 // mergeTOMLPlugins merges [[plugins]] across TOML sources by name (later source wins).

@@ -32,6 +32,7 @@ import { parseTodos } from "./lib/tools";
 import { sessionActivityTime } from "./lib/session";
 import type { ComposerInsertRequest, MemoryView, Mode, SessionMeta } from "./lib/types";
 import { loadLayoutSize, saveLayoutSize } from "./lib/layoutPreferences";
+import { applyTheme, getTheme, getThemeStyle, isThemeStyle, themeForStyle, type Theme } from "./lib/theme";
 
 const SIDEBAR_COLLAPSED_KEY = "reasonix.sidebar.collapsed";
 const SIDEBAR_COLLAPSED_WIDTH = 68;
@@ -39,6 +40,10 @@ const SIDEBAR_DEFAULT_WIDTH = 264;
 const SIDEBAR_MIN_WIDTH = 228;
 const SIDEBAR_MAX_WIDTH = 420;
 const CHAT_MIN_WIDTH = 420;
+
+function isThemeMode(value: string): value is Theme {
+  return value === "auto" || value === "light" || value === "dark";
+}
 const WORKSPACE_PANEL_MIN_WIDTH = 640;
 const WORKSPACE_PANEL_DEFAULT_WIDTH = WORKSPACE_PANEL_MIN_WIDTH;
 const WORKSPACE_PANEL_MAX_WIDTH = 820;
@@ -127,6 +132,7 @@ export default function App() {
   const {
     state,
     send,
+    notice,
     cancel,
     approve,
     answerQuestion,
@@ -135,13 +141,15 @@ export default function App() {
     newSession,
     listSessions,
     resumeSession,
+    previewSession,
     deleteSession,
     renameSession,
     refreshMeta,
     pickWorkspace,
     switchWorkspace,
     rewind,
-    setModel,
+	setModel,
+	setEffort,
     fetchMemory,
     remember,
     forget,
@@ -258,19 +266,43 @@ export default function App() {
   // resolves (a turn, or a listing Notice).
   const handleSend = useCallback(
     (displayText: string, submitText = displayText) => {
-      const t = displayText.trim();
-      const model = /^\/model\s+(\S+)$/.exec(t);
+      const trimmed = displayText.trim();
+      const model = /^\/model\s+(\S+)$/.exec(trimmed);
       if (model) {
         void switchModel(model[1]);
         return;
       }
-      if (t === "/memory") {
+      if (trimmed === "/memory") {
         void openMemory();
         return;
       }
-      send(t, submitText.trim());
+      const theme = /^\/theme(?:\s+(\S+))?$/.exec(trimmed);
+      if (theme) {
+        const arg = theme[1]?.toLowerCase();
+        if (!arg) {
+          const cur = getTheme();
+          notice(t("settings.themeCurrent", { theme: cur, style: getThemeStyle(cur) }));
+          return;
+        }
+        if (isThemeMode(arg)) {
+          const next = arg;
+          const style = getThemeStyle(next);
+          applyTheme(next, style);
+          notice(t("settings.themeChanged", { theme: next, style }));
+          return;
+        }
+        if (isThemeStyle(arg)) {
+          const next = themeForStyle(arg);
+          applyTheme(next, arg);
+          notice(t("settings.themeChanged", { theme: next, style: arg }));
+          return;
+        }
+        notice(t("settings.themeUnknown", { name: arg }), "warn");
+        return;
+      }
+      send(trimmed, submitText.trim());
     },
-    [switchModel, openMemory, send],
+    [switchModel, openMemory, send, notice, t],
   );
 
   const addToChat = useCallback((text: string) => {
@@ -484,35 +516,38 @@ export default function App() {
     });
   }, []);
 
-  // History drawer: opening fetches the saved-session list; picking one resumes it
-  // (the transcript swaps in; the model/folder are unchanged).
+  // History drawer: opening fetches the saved-session list. Idle row clicks resume;
+  // running row clicks only preview through PreviewSession.
   const openHistory = useCallback(async () => {
     setHistView(await refreshSessions());
   }, [refreshSessions]);
   const closeHistory = useCallback(() => setHistView(null), []);
   const onResumeSession = useCallback(
     async (path: string) => {
+      if (state.running) return;
       setHistView(null);
       await resumeSession(path);
       await refreshSessions();
       setWorkspaceChangesRefreshKey((key) => key + 1);
     },
-    [resumeSession, refreshSessions],
+    [state.running, resumeSession, refreshSessions],
   );
   // Delete / rename act on disk, then re-fetch so the panel reflects the change.
   const onDeleteSession = useCallback(
     async (path: string) => {
+      if (state.running) return;
       await deleteSession(path);
       setHistView(await refreshSessions());
     },
-    [deleteSession, refreshSessions],
+    [state.running, deleteSession, refreshSessions],
   );
   const onRenameSession = useCallback(
     async (path: string, title: string) => {
+      if (state.running) return;
       await renameSession(path, title);
       setHistView(await refreshSessions());
     },
-    [renameSession, refreshSessions],
+    [state.running, renameSession, refreshSessions],
   );
 
   // Workspace: open the folder chooser and switch projects. The hook resets the
@@ -603,11 +638,10 @@ export default function App() {
           <section className="sidebar__section">
             <div className="sidebar__section-head">
               <div className="sidebar__section-title">{t("sidebar.conversations")}</div>
-              <Tooltip label={state.running ? t("common.busyHint") : t("topbar.history")}>
+              <Tooltip label={t("topbar.history")}>
                 <button
                   className="sidebar__view-all"
                   onClick={() => void openHistory()}
-                  disabled={state.running}
                 >
                   {t("sidebar.viewAll")}
                 </button>
@@ -641,11 +675,10 @@ export default function App() {
           </section>
 
           <nav className="sidebar__nav">
-            <Tooltip label={state.running ? t("common.busyHint") : t("topbar.history")} fill>
+            <Tooltip label={t("topbar.history")} fill>
               <button
                 className="sidebar__navitem sidebar__navitem--sessions"
                 onClick={() => void openHistory()}
-                disabled={state.running}
               >
                 <History size={15} />
                 <span>{t("topbar.history")}</span>
@@ -688,7 +721,6 @@ export default function App() {
           onPointerDown={startSidebarResize}
           onKeyDown={resizeSidebarWithKeyboard}
           onDoubleClick={() => setExpandedSidebarWidth(SIDEBAR_DEFAULT_WIDTH)}
-          title={t("sidebar.resize")}
         />
 
         <section className="chat-pane">
@@ -707,11 +739,10 @@ export default function App() {
               </button>
             </Tooltip>
             <div className="topbar__actions">
-              <Tooltip label={state.running ? t("common.busyHint") : t("topbar.history")}>
+              <Tooltip label={t("topbar.history")}>
                 <button
                   className="chip chip--icon"
                   onClick={() => void openHistory()}
-                  disabled={state.running}
                 >
                   <History size={13} />
                 </button>
@@ -760,7 +791,7 @@ export default function App() {
                 <span className="loading-screen__text">{t("common.loading")}</span>
               </div>
             ) : (
-              <Transcript items={state.items} footerHeight={footerHeight} onPrompt={send} onRewind={rewind} />
+              <Transcript items={state.items} live={state.live} footerHeight={footerHeight} onPrompt={send} onRewind={rewind} />
             )}
           </main>
 
@@ -800,15 +831,17 @@ export default function App() {
             <StatusBar
               meta={state.meta}
               context={state.context}
-              usage={state.usage}
-              balance={state.balance}
-              jobs={state.jobs}
+	      usage={state.usage}
+	      balance={state.balance}
+	      effort={state.effort}
+	      jobs={state.jobs}
               running={state.running}
               mode={mode}
               turnStartAt={state.turnStartAt}
-              turnTokens={state.turnTokens}
-              onSwitchModel={switchModel}
-            />
+	      turnTokens={state.turnTokens}
+	      onSwitchModel={switchModel}
+	      onSetEffort={setEffort}
+	    />
           </footer>
         </section>
 
@@ -829,7 +862,6 @@ export default function App() {
                 workspacePreviewModeActive ? WORKSPACE_PANEL_DEFAULT_WIDTH : WORKSPACE_FILE_TREE_PANEL_DEFAULT_WIDTH,
               )
             }
-            title={t("workspace.resizePanel")}
           />
         )}
 
@@ -867,7 +899,9 @@ export default function App() {
       {histView !== null && (
         <HistoryPanel
           sessions={histView}
+          running={state.running}
           onResume={onResumeSession}
+          onPreview={previewSession}
           onDelete={onDeleteSession}
           onRename={onRenameSession}
           onClose={closeHistory}

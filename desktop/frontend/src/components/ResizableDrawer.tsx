@@ -137,7 +137,6 @@ export function ResizableDrawer({
           onPointerDown={startResize}
           onKeyDown={onKeyDown}
           onDoubleClick={() => saveWidth(config.defaultWidth)}
-          title={t("drawer.resize")}
         />
         {children}
       </aside>

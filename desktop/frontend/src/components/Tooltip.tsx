@@ -1,5 +1,5 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
-import type { CSSProperties, ReactNode } from "react";
+import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent, ReactNode } from "react";
 import { createPortal } from "react-dom";
 
 type TooltipSide = "top" | "bottom" | "left" | "right";
@@ -25,6 +25,7 @@ export function Tooltip({
   children,
   side = "top",
   fill = false,
+  block = false,
   disabled = false,
   className,
 }: {
@@ -32,11 +33,12 @@ export function Tooltip({
   children: ReactNode;
   side?: TooltipSide;
   fill?: boolean;
+  block?: boolean;
   disabled?: boolean;
   className?: string;
 }) {
   const id = useId();
-  const triggerRef = useRef<HTMLSpanElement>(null);
+  const triggerRef = useRef<HTMLElement | null>(null);
   const tooltipRef = useRef<HTMLDivElement>(null);
   const showTimerRef = useRef<number | null>(null);
   const [open, setOpen] = useState(false);
@@ -125,22 +127,25 @@ export function Tooltip({
 
   useEffect(() => () => clearTimer(), []);
 
+  const triggerClass = `tooltip-trigger${fill ? " tooltip-trigger--fill" : ""}${block ? " tooltip-trigger--block" : ""}${className ? ` ${className}` : ""}`;
+  const setTriggerRef = (node: HTMLElement | null) => {
+    triggerRef.current = node;
+  };
+  const triggerProps = {
+    className: triggerClass,
+    "aria-describedby": open ? id : undefined,
+    onMouseEnter: () => show(),
+    onMouseLeave: hide,
+    onFocus: () => show(0),
+    onBlur: hide,
+    onKeyDown: (event: ReactKeyboardEvent<HTMLElement>) => {
+      if (event.key === "Escape") hide();
+    },
+  };
+
   return (
     <>
-      <span
-        ref={triggerRef}
-        className={`tooltip-trigger${fill ? " tooltip-trigger--fill" : ""}${className ? ` ${className}` : ""}`}
-        aria-describedby={open ? id : undefined}
-        onMouseEnter={() => show()}
-        onMouseLeave={hide}
-        onFocus={() => show(0)}
-        onBlur={hide}
-        onKeyDown={(event) => {
-          if (event.key === "Escape") hide();
-        }}
-      >
-        {children}
-      </span>
+      {block ? <div ref={setTriggerRef} {...triggerProps}>{children}</div> : <span ref={setTriggerRef} {...triggerProps}>{children}</span>}
       {open &&
         active &&
         createPortal(

@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,6 +15,40 @@ import (
 	"reasonix/internal/event"
 	"reasonix/internal/provider"
 )
+
+type blockingTurnRunner struct{ started chan struct{} }
+
+func (r *blockingTurnRunner) Run(ctx context.Context, _ string) error {
+	close(r.started)
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+// TestEscCancelsRunningTurnWithCompletionOpen reproduces the report that Esc
+// (unlike Ctrl+C) did not stop a running turn: an active completion menu
+// captured Esc to close itself and returned before reaching the running-turn
+// cancel branch, while Ctrl+C — not in the completion switch — fell through.
+func TestEscCancelsRunningTurnWithCompletionOpen(t *testing.T) {
+	r := &blockingTurnRunner{started: make(chan struct{})}
+	ctrl := control.New(control.Options{Runner: r, Sink: event.Discard, SessionDir: t.TempDir(), Label: "test"})
+	ctrl.Send("hi")
+	<-r.started // the turn is in flight and cancellable
+
+	m := newTestChatTUI()
+	m.ctrl = ctrl
+	m.state = tuiRunning
+	m.completion.active = true // e.g. a "/" typed into the composer while waiting
+
+	_, _ = m.update(tea.KeyPressMsg{Code: tea.KeyEscape})
+
+	deadline := time.Now().Add(2 * time.Second)
+	for ctrl.Running() {
+		if time.Now().After(deadline) {
+			t.Fatal("Esc did not cancel the running turn (completion menu swallowed it)")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
 
 // TestTranscriptMirrorsCommits proves the alt-screen migration's foundation:
 // every line commitLine sends to native scrollback is also captured in the
@@ -228,7 +263,7 @@ func isolateUserConfig(t *testing.T) {
 	t.Chdir(root)
 }
 
-func TestThinkingCommandWritesCurrentDeepSeekProvider(t *testing.T) {
+func TestEffortCommandWritesCurrentDeepSeekProvider(t *testing.T) {
 	isolateUserConfig(t)
 
 	m := newTestChatTUI()
@@ -238,9 +273,9 @@ func TestThinkingCommandWritesCurrentDeepSeekProvider(t *testing.T) {
 		return control.New(control.Options{Label: "deepseek-flash"}), nil
 	}
 
-	cmd := m.runThinkingCommand("/thinking max")
+	cmd := m.runEffortCommand("/effort max")
 	if cmd == nil {
-		t.Fatal("/thinking max should return a rebuild command")
+		t.Fatal("/effort max should return a rebuild command")
 	}
 
 	configPath := config.UserConfigPath()
@@ -253,7 +288,7 @@ func TestThinkingCommandWritesCurrentDeepSeekProvider(t *testing.T) {
 	}
 }
 
-func TestThinkingCommandRejectsNonDeepSeekProvider(t *testing.T) {
+func TestEffortCommandRejectsUnsupportedProvider(t *testing.T) {
 	isolateUserConfig(t)
 
 	m := newTestChatTUI()
@@ -263,12 +298,51 @@ func TestThinkingCommandRejectsNonDeepSeekProvider(t *testing.T) {
 		return control.New(control.Options{Label: "mimo-pro"}), nil
 	}
 
-	if cmd := m.runThinkingCommand("/thinking max"); cmd != nil {
-		t.Fatal("non-DeepSeek provider should not rebuild")
+	if cmd := m.runEffortCommand("/effort max"); cmd != nil {
+		t.Fatal("unsupported provider should not rebuild")
 	}
 	if _, err := os.Stat(config.UserConfigPath()); !os.IsNotExist(err) {
-		t.Fatalf("non-DeepSeek provider should not write config, stat err=%v", err)
+		t.Fatalf("unsupported provider should not write config, stat err=%v", err)
 	}
+}
+
+func TestEffortCommandAutoClearsProviderEffort(t *testing.T) {
+	isolateUserConfig(t)
+
+	m := newTestChatTUI()
+	m.ctrl = control.New(control.Options{Label: "deepseek-flash"})
+	m.modelRef = "deepseek-flash/deepseek-v4-flash"
+	m.buildController = func(_ string, _ []provider.Message) (*control.Controller, error) {
+		return control.New(control.Options{Label: "deepseek-flash"}), nil
+	}
+
+	if cmd := m.runEffortCommand("/effort max"); cmd == nil {
+		t.Fatal("/effort max should return a rebuild command")
+	}
+	if cmd := m.runEffortCommand("/effort auto"); cmd == nil {
+		t.Fatal("/effort auto should return a rebuild command")
+	}
+	body, err := os.ReadFile(config.UserConfigPath())
+	if err != nil {
+		t.Fatalf("read saved config: %v", err)
+	}
+	section := providerSection(string(body), "deepseek-flash")
+	if strings.Contains(section, `effort      = "`) {
+		t.Fatalf("auto should clear saved deepseek-flash effort:\n%s", section)
+	}
+}
+
+func providerSection(body, name string) string {
+	needle := `name        = "` + name + `"`
+	start := strings.Index(body, needle)
+	if start < 0 {
+		return ""
+	}
+	end := strings.Index(body[start+len(needle):], "\n[[providers]]")
+	if end < 0 {
+		return body[start:]
+	}
+	return body[start : start+len(needle)+end]
 }
 
 func TestSubmittedInputRecallWithArrowKeys(t *testing.T) {

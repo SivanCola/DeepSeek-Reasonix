@@ -120,13 +120,9 @@ export function MemoryPanel({
             {target}
           </button>
         ) : (
-          <span
-            key={k++}
-            className="mem-link mem-link--dead"
-            title={t("memory.deadLink", { name: target })}
-          >
-            {target}
-          </span>
+          <Tooltip key={k++} label={t("memory.deadLink", { name: target })}>
+            <span className="mem-link mem-link--dead">{target}</span>
+          </Tooltip>
         ),
       );
       last = re.lastIndex;
@@ -301,13 +297,9 @@ export function MemoryPanel({
                                   [[{link.name}]]
                                 </button>
                               ) : (
-                                <span
-                                  className="mem-link-chip mem-link-chip--dead"
-                                  key={link.name}
-                                  title={t("memory.deadLink", { name: link.name })}
-                                >
-                                  [[{link.name}]]
-                                </span>
+                                <Tooltip key={link.name} label={t("memory.deadLink", { name: link.name })}>
+                                  <span className="mem-link-chip mem-link-chip--dead">[[{link.name}]]</span>
+                                </Tooltip>
                               ),
                             )}
                           </div>
@@ -367,9 +359,9 @@ export function MemoryPanel({
                 </div>
               )}
               {view.storeDir && (
-                <div className="mem-hint" title={view.storeDir}>
+                <Tooltip label={view.storeDir} fill block className="mem-hint">
                   {t("memory.storedUnder", { dir: view.storeDir })}
-                </div>
+                </Tooltip>
               )}
             </section>
 
@@ -377,18 +369,19 @@ export function MemoryPanel({
             <section className="mem-section">
               <div className="mem-section__title">{t("memory.quickAdd")}</div>
               <div className="mem-add">
-                <select
-                  className="mem-select"
-                  value={activeScope}
-                  onChange={(e) => setScope(e.target.value)}
-                  title={t("memory.whereToSave")}
-                >
-                  {scopes.map((s) => (
-                    <option key={s.scope} value={s.scope}>
-                      {s.scope}
-                    </option>
-                  ))}
-                </select>
+                <Tooltip label={t("memory.whereToSave")}>
+                  <select
+                    className="mem-select"
+                    value={activeScope}
+                    onChange={(e) => setScope(e.target.value)}
+                  >
+                    {scopes.map((s) => (
+                      <option key={s.scope} value={s.scope}>
+                        {s.scope}
+                      </option>
+                    ))}
+                  </select>
+                </Tooltip>
                 <input
                   className="mem-input"
                   placeholder={t("memory.notePlaceholder")}
@@ -423,9 +416,9 @@ export function MemoryPanel({
                   <div className="mem-doc" key={d.path}>
                     <div className="mem-doc__head">
                       <span className={`badge badge--${d.scope}`}>{d.scope}</span>
-                      <span className="mem-doc__path" title={d.path}>
-                        {d.path}
-                      </span>
+                      <Tooltip label={d.path}>
+                        <span className="mem-doc__path">{d.path}</span>
+                      </Tooltip>
                       {!editing && (
                         <button
                           className="btn btn--small"

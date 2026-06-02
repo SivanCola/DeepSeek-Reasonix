@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"image/color"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -128,11 +127,16 @@ type chatTUI struct {
 	// complete lines (toolTail) plus the in-progress one (toolPartial) — so a
 	// high-output command can't balloon memory or cost O(n²) re-splitting;
 	// toolLineCount feeds the collapse summary.
-	toolStreamIdx   int
-	toolStreamID    string
-	toolTail        []string
-	toolPartial     string
-	toolLineCount   int
+	toolStreamIdx int
+	toolStreamID  string
+	toolTail      []string
+	toolPartial   string
+	toolLineCount int
+	// toolStreamStart / toolStreamFrame drive the "⎿ working · Ns" line shown
+	// under a dispatched tool that hasn't produced output yet, so a slow tool
+	// (e.g. codegraph_context) reads as making progress rather than frozen.
+	toolStreamStart time.Time
+	toolStreamFrame int
 	transcriptDirty bool
 	eventCh         chan event.Event
 	started         bool // banner + resumed history committed once
@@ -174,8 +178,11 @@ type chatTUI struct {
 	// rewind holds the Esc-Esc / "/rewind" picker (nil when closed); while set,
 	// keys drive it and it renders as an overlay. lastEsc times the double-Esc
 	// gesture that opens it on an empty composer.
-	rewind  *rewindPicker
-	lastEsc time.Time
+	rewind *rewindPicker
+	// resumePick is the interactive "/resume" session picker overlay. Non-nil
+	// while the user browses saved sessions with ↑/↓ and confirms with Enter.
+	resumePick *resumePicker
+	lastEsc    time.Time
 
 	// lastCtrlCAt records when Ctrl+C was pressed while idle on an empty
 	// composer, enabling a "press again to quit" confirmation pattern (1.5s
@@ -201,6 +208,7 @@ type chatTUI struct {
 	// modelRef is the active "provider/model" ref, marked current in the picker.
 	buildController func(ref string, carry []provider.Message) (*control.Controller, error)
 	modelRef        string
+	effortLevel     string // "" when the current provider/model has no configurable effort
 
 	// outputStyle is the active output-style name (config agent.output_style),
 	// shown as the current entry in the /output-style listing. "" = default.
@@ -364,6 +372,7 @@ func newChatTUI(ctrl *control.Controller, missing string, eventCh chan event.Eve
 	ti.CharLimit = 16384
 	ti.SetHeight(1)
 	ti.ShowLineNumbers = false
+	applyTextareaTheme(&ti)
 	// Use the real terminal cursor (not a styled virtual one) so View can place
 	// it at the insertion point and IME candidate windows anchor to the input.
 	ti.SetVirtualCursor(false)
@@ -374,7 +383,7 @@ func newChatTUI(ctrl *control.Controller, missing string, eventCh chan event.Eve
 
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
-	sp.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("173"))
+	sp.Style = themeStyle(activeCLITheme.accent)
 
 	commitBuf := []string{}
 	return chatTUI{
@@ -667,6 +676,10 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.rewind != nil {
 			return m.handleRewindKey(msg)
 		}
+		// The resume picker is modal while open: keys navigate it.
+		if m.resumePick != nil {
+			return m.handleResumePickerKey(msg)
+		}
 		// A pending tool approval is modal: keystrokes answer it (y/a/n, Enter,
 		// Esc) rather than reaching the input.
 		if m.pendingApproval != nil {
@@ -684,10 +697,23 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.moveCompletion(1)
 				return m, nil
 			case "tab", "enter":
+				// When Enter is pressed and the completion has exactly one item
+				// already fully present in the input, close the menu and let Enter
+				// fall through to submit the command (/resume 3 → resume session 3).
+				if msg.String() == "enter" && len(m.completion.items) == 1 {
+					tok := m.input.Value()[m.completion.replaceFrom:]
+					if tok == m.completion.items[0].insert {
+						m.completion = completion{}
+						break // fall through to regular Enter
+					}
+				}
 				m.acceptCompletion()
 				return m, nil
 			case "esc":
 				m.completion = completion{}
+				if m.state == tuiRunning {
+					break // a turn is running — also cancel it via the main Esc handler
+				}
 				return m, nil
 			}
 		}
@@ -904,6 +930,7 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.skills = msg.skills
 			m.host = msg.host
 			m.modelRef = msg.ref
+			m.refreshEffortStatus()
 			// Stash the old controller for cleanup at exit. It cannot be
 			// closed here or in the build goroutine — Close() runs
 			// SessionEnd hooks and kills plugin subprocesses, both of
@@ -923,7 +950,7 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case promptResolvedMsg:
 		switch {
 		case msg.err != nil:
-			m.commitLine(wrapForViewport(i18n.M.ErrorPrefix+" "+msg.err.Error(), m.width, lipgloss.Color("3")))
+			m.commitLine(wrapForViewport(i18n.M.ErrorPrefix+" "+msg.err.Error(), m.width, activeCLITheme.warn))
 		case strings.TrimSpace(msg.sent) == "":
 			m.notice(i18n.M.SlashPromptEmpty)
 		default:
@@ -972,6 +999,7 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case elapsedTickMsg:
 		if m.state == tuiRunning {
 			m.elapsed = int(time.Since(m.runStart).Seconds())
+			m.tickToolRunning()
 			cmds = append(cmds, elapsedTick())
 		}
 
@@ -1182,13 +1210,59 @@ func (m *chatTUI) collapseToolOutput(id string) {
 	if m.toolPartial != "" {
 		n++
 	}
-	m.transcript[m.toolStreamIdx] = connectorBlock([]string{dim(fmt.Sprintf("%d lines", n))})
+	if n == 0 {
+		// The tool produced no streamed output (e.g. an MCP call like
+		// codegraph_context) — drop the "working" placeholder so only the card
+		// remains, rather than leaving a "0 lines" summary.
+		if m.toolStreamIdx == len(m.transcript)-1 {
+			m.transcript = m.transcript[:m.toolStreamIdx]
+		} else {
+			m.transcript[m.toolStreamIdx] = ""
+		}
+	} else {
+		m.transcript[m.toolStreamIdx] = connectorBlock([]string{dim(fmt.Sprintf("%d lines", n))})
+	}
 	m.transcriptDirty = true
 	m.toolStreamIdx = -1
 	m.toolStreamID = ""
 	m.toolTail = m.toolTail[:0]
 	m.toolPartial = ""
 	m.toolLineCount = 0
+}
+
+// toolWorkingFrames is the braille spinner cycled once per second on the
+// "⎿ working · Ns" line of a tool that hasn't streamed output yet.
+var toolWorkingFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+
+// beginToolRunning opens an empty live block under a just-dispatched tool card,
+// keyed by the call id. tickToolRunning fills it with a "working · Ns" line each
+// second; if the tool later streams output, streamToolOutput reuses the same
+// block; collapseToolOutput closes it on the result.
+func (m *chatTUI) beginToolRunning(id string) {
+	if id == "" {
+		return
+	}
+	m.toolStreamID = id
+	m.toolTail = m.toolTail[:0]
+	m.toolPartial = ""
+	m.toolLineCount = 0
+	m.toolStreamStart = time.Now()
+	m.toolStreamFrame = 0
+	m.toolStreamIdx = len(m.transcript)
+	m.commitLine(connectorBlock([]string{dim(fmt.Sprintf(i18n.M.ChatToolWorkingFmt, toolWorkingFrames[0], 0))}))
+}
+
+// tickToolRunning re-renders the working line of a tool that's dispatched but
+// hasn't produced output yet. A no-op once output streams in or no tool runs.
+func (m *chatTUI) tickToolRunning() {
+	if m.toolStreamIdx < 0 || m.toolLineCount != 0 || m.toolPartial != "" {
+		return
+	}
+	m.toolStreamFrame++
+	frame := toolWorkingFrames[m.toolStreamFrame%len(toolWorkingFrames)]
+	secs := int(time.Since(m.toolStreamStart).Seconds())
+	m.transcript[m.toolStreamIdx] = connectorBlock([]string{dim(fmt.Sprintf(i18n.M.ChatToolWorkingFmt, frame, secs))})
+	m.transcriptDirty = true
 }
 
 // commitReasoning closes the live thinking block: the "▎ thinking…" marker is
@@ -1333,27 +1407,13 @@ func (m chatTUI) handleApprovalKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 }
 
 var (
-	// Input box: only top + bottom borders, no sides.
-	inputBoxStyle = lipgloss.NewStyle().
-			Border(lipgloss.NormalBorder(), true, false, true, false).
-			BorderForeground(lipgloss.Color("173")).
-			PaddingLeft(1)
-
-	// Approval banner: same frame as the input box, recoloured yellow.
-	approvalBannerStyle = lipgloss.NewStyle().
-				Border(lipgloss.NormalBorder(), true, false, true, false).
-				BorderForeground(lipgloss.Color("220")).
-				Foreground(lipgloss.Color("220")).
-				Bold(true).
-				PaddingLeft(1)
-
-	// Task panel: a top-bordered block pinned above the input.
-	todoPanelStyle = lipgloss.NewStyle().
-			Border(lipgloss.NormalBorder(), true, false, false, false).
-			BorderForeground(lipgloss.Color("240")).
-			PaddingLeft(1)
-
-	statusStyle = lipgloss.NewStyle().Faint(true)
+	// Input box: only top + bottom borders, no sides. The concrete colors are
+	// refreshed from the active CLI theme during startup.
+	inputBoxStyle       lipgloss.Style
+	approvalBannerStyle lipgloss.Style
+	todoPanelStyle      lipgloss.Style
+	statusBlockStyle    lipgloss.Style
+	workingStyle        lipgloss.Style
 )
 
 func (m chatTUI) View() tea.View {
@@ -1366,11 +1426,21 @@ func (m chatTUI) View() tea.View {
 	var modeTag string
 	switch {
 	case m.ctrl.Bypass():
-		modeTag = lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Bold(true).Render("[YOLO]")
+		modeTag = lipgloss.NewStyle().
+			Background(lipgloss.Color("#e5484d")).
+			Foreground(lipgloss.Color("#ffffff")).
+			Bold(true).
+			Padding(0, 1).
+			Render("YOLO")
 	case m.planMode:
-		modeTag = yellow("[plan]")
+		modeTag = lipgloss.NewStyle().
+			Background(lipgloss.Color("#2563eb")).
+			Foreground(lipgloss.Color("#ffffff")).
+			Bold(true).
+			Padding(0, 1).
+			Render("Plan")
 	default:
-		modeTag = dim("[auto]")
+		modeTag = dim("Auto")
 	}
 
 	ctxTag := m.contextTag()
@@ -1378,12 +1448,16 @@ func (m chatTUI) View() tea.View {
 	switch {
 	case m.rewind != nil:
 		status = "  " + modeTag + " · ⟲ rewind"
+	case m.resumePick != nil:
+		status = "  " + modeTag + " · " + i18n.M.StatusResumePicker
 	case m.chooser != nil:
 		status = "  " + modeTag + " · " + i18n.M.ChatStatusQuestion
 	case m.pendingApproval != nil && m.pendingApproval.Tool == planApprovalTool:
 		status = "  " + modeTag + " · " + i18n.M.ChatStatusPlanApproval
 	case m.pendingApproval != nil:
 		status = "  " + modeTag + " · " + i18n.M.ChatStatusToolApproval
+	case m.ctrl.Bypass():
+		status = "  " + modeTag + " · " + i18n.M.ChatStatusYoloIdle
 	default:
 		status = "  " + modeTag + " · " + i18n.M.ChatStatusIdle
 	}
@@ -1397,12 +1471,18 @@ func (m chatTUI) View() tea.View {
 			working += " · ↓" + shortTokens(m.turnTokens)
 		}
 	}
-	// Second status row: the live data (context gauge, cache rates, jobs,
-	// balance). It lives on its own fixed row so it's always shown in full rather
-	// than being truncated off the end of the keybinding hints on line 1. Two
-	// rows is a fixed height, so unlike a wrap-when-long status it doesn't
-	// reintroduce resize ghosting.
+	// Second status row: the live data (model, effort, context gauge, cache rates,
+	// jobs, balance). It lives on its own fixed row so it's always shown in full
+	// rather than being truncated off the end of the status line. Two rows is a
+	// fixed height, so unlike a wrap-when-long status it doesn't reintroduce
+	// resize ghosting.
 	var data []string
+	if mt := m.modelTag(); mt != "" {
+		data = append(data, mt)
+	}
+	if et := m.effortTag(); et != "" {
+		data = append(data, et)
+	}
 	if ctxTag != "" {
 		data = append(data, ctxTag)
 	}
@@ -1442,6 +1522,10 @@ func (m chatTUI) View() tea.View {
 		parts = append(parts, card)
 		rowsAboveBox += strings.Count(card, "\n") + 1
 	}
+	if card := m.renderResumePicker(); card != "" {
+		parts = append(parts, card)
+		rowsAboveBox += strings.Count(card, "\n") + 1
+	}
 	if menu := m.renderCompletion(); menu != "" {
 		parts = append(parts, menu)
 		rowsAboveBox += strings.Count(menu, "\n") + 1
@@ -1451,11 +1535,11 @@ func (m chatTUI) View() tea.View {
 	// Each row is clamped to width independently so neither wraps; padding to full
 	// width keeps a short row from leaving stale cells from the prior frame.
 	if working != "" {
-		parts = append(parts, statusStyle.Width(boxW).MaxWidth(boxW).Render(clampStatusLine(working, boxW)))
+		parts = append(parts, workingStyle.Width(boxW).MaxWidth(boxW).Render(clampStatusLine(working, boxW)))
 		rowsAboveBox++
 	}
 	statusBlock := clampStatusLine(status, boxW) + "\n" + clampStatusLine(dataLine, boxW)
-	parts = append(parts, box, statusStyle.Width(boxW).MaxWidth(boxW).Render(statusBlock))
+	parts = append(parts, box, statusBlockStyle.Width(boxW).MaxWidth(boxW).Render(statusBlock))
 
 	// Full-screen frame: the transcript viewport on top (it pads to exactly its
 	// height), the pinned bottom region beneath. Alt-screen owns the grid, so
@@ -1514,9 +1598,9 @@ func (m chatTUI) contextTag() string {
 		body := fmt.Sprintf("%s / %s ctx (%d%%)", shortTokens(used), shortTokens(window), pct)
 		switch {
 		case pct >= 85:
-			return lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Render(body)
+			return themeStyle(activeCLITheme.danger).Render(body)
 		case pct >= 60:
-			return lipgloss.NewStyle().Foreground(lipgloss.Color("220")).Render(body)
+			return themeStyle(activeCLITheme.warn).Render(body)
 		default:
 			return dim(body)
 		}
@@ -1530,9 +1614,9 @@ func (m chatTUI) contextTag() string {
 	body := fmt.Sprintf("%s ctx (%d%%) · %d%% to compact", shortTokens(used), pct, left)
 	switch {
 	case pct >= threshold:
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Render(fmt.Sprintf("%s ctx (%d%%) · compacting soon", shortTokens(used), pct))
+		return themeStyle(activeCLITheme.danger).Render(fmt.Sprintf("%s ctx (%d%%) · compacting soon", shortTokens(used), pct))
 	case left <= 10:
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("220")).Render(body)
+		return themeStyle(activeCLITheme.warn).Render(body)
 	default:
 		return dim(body)
 	}
@@ -1578,6 +1662,24 @@ func (m chatTUI) jobsTag() string {
 		return ""
 	}
 	return dim(fmt.Sprintf("⚙ %d", n))
+}
+
+func (m chatTUI) modelTag() string {
+	if strings.TrimSpace(m.label) == "" {
+		return ""
+	}
+	return dim(m.label)
+}
+
+func (m chatTUI) effortTag() string {
+	if m.effortLevel == "" {
+		return ""
+	}
+	body := "effort " + m.effortLevel
+	if m.effortLevel != "auto" {
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("#2563eb")).Bold(true).Render(body)
+	}
+	return dim(body)
 }
 
 // shortTokens prints token counts compactly: 142_000 → "142K", 1_000_000 → "1M".
@@ -2169,6 +2271,7 @@ func (m *chatTUI) ingestEvent(e event.Event) {
 				break
 			}
 			m.commitLine(toolCard(e.Tool.Name, e.Tool.Args, m.width))
+			m.beginToolRunning(e.Tool.ID)
 		}
 
 	case event.ToolProgress:
@@ -2248,7 +2351,7 @@ func (m *chatTUI) ingestEvent(e event.Event) {
 		m.state = tuiIdle
 		m.clearSubmittedPastes()
 		if e.Err != nil && e.Err.Error() != "" && !strings.Contains(e.Err.Error(), "context canceled") {
-			m.commitLine(wrapForViewport(i18n.M.ErrorPrefix+" "+e.Err.Error(), m.width, lipgloss.Color("3")))
+			m.commitLine(wrapForViewport(i18n.M.ErrorPrefix+" "+e.Err.Error(), m.width, activeCLITheme.warn))
 		}
 		// Plan-mode approval is now driven by the controller (it emits an
 		// ApprovalRequest when a plan-mode turn produces a proposal), so there's
@@ -2315,8 +2418,8 @@ func (m *chatTUI) runSlashCommand(input string) tea.Cmd {
 		m.notice(i18n.M.SlashTodoCleared)
 	case "/verbose":
 		m.toggleVerboseReasoning(true)
-	case "/thinking":
-		return m.runThinkingCommand(input)
+	case "/effort":
+		return m.runEffortCommand(input)
 	case "/rewind":
 		m.echoLocalCommand(input)
 		m.openRewind()
@@ -2354,6 +2457,9 @@ func (m *chatTUI) runSlashCommand(input string) tea.Cmd {
 		} else {
 			m.commitLine(renderOutputStyles(m.width, styles, m.outputStyle))
 		}
+	case "/theme":
+		m.echoLocalCommand(input)
+		m.runThemeSubcommand(input)
 	case "/help":
 		m.echoLocalCommand(input)
 		m.showHelp()
@@ -2526,20 +2632,17 @@ func renderTUIBanner(label, missing string, width int) string {
 	b.WriteString(accent("◆") + " " + bold("reasonix chat") + "  " + dim("· "+label) + "\n")
 	b.WriteString(dim("  "+i18n.M.ChatTip) + "\n")
 	if missing != "" {
-		b.WriteString(wrapForViewport("  ! "+missing, width, lipgloss.Color("3")) + "\n")
+		b.WriteString(wrapForViewport("  ! "+missing, width, activeCLITheme.warn) + "\n")
 	}
 	return b.String()
 }
 
 // wrapForViewport hard-wraps text to fit width columns and colours every line.
-func wrapForViewport(text string, width int, fg color.Color) string {
+func wrapForViewport(text string, width int, fg cliColor) string {
 	if width <= 0 {
 		width = 80
 	}
-	return lipgloss.NewStyle().
-		Foreground(fg).
-		Width(width).
-		Render(text)
+	return themeStyle(fg).Width(width).Render(text)
 }
 
 // renderUserBubble styles the just-submitted line with a filled dim background.
@@ -2556,10 +2659,7 @@ func renderUserBubble(line string, width int, planMode bool) string {
 	if w < 10 {
 		w = 10
 	}
-	bubble := lipgloss.NewStyle().
-		Background(lipgloss.Color("236")).
-		Width(w).
-		Padding(0, 1)
+	bubble := themeBGStyle(activeCLITheme.userBubbleBG).Width(w).Padding(0, 1)
 	return bubble.Render(prefix + line)
 }
 

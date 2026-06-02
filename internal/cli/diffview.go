@@ -101,10 +101,10 @@ func diffBody(d event.FileDiff, path string, width, maxLines int) []string {
 			}
 			hunks++
 		case '+':
-			rows = append(rows, diffBar('+', ln[1:], path, width, bgDiffAdd, fgDiffAdd, newNo, gw))
+			rows = append(rows, diffBar('+', ln[1:], path, width, bgSGR(activeCLITheme.diffAddBG), fgSGR(activeCLITheme.success), newNo, gw))
 			newNo++
 		case '-':
-			rows = append(rows, diffBar('-', ln[1:], path, width, bgDiffDel, fgDiffDel, oldNo, gw))
+			rows = append(rows, diffBar('-', ln[1:], path, width, bgSGR(activeCLITheme.diffDelBG), fgSGR(activeCLITheme.err), oldNo, gw))
 			oldNo++
 		case '\\':
 			rows = append(rows, "  "+dim(clampPlain(ln, width-2)))

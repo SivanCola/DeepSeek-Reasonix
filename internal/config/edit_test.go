@@ -20,6 +20,43 @@ func TestSetDefaultModel(t *testing.T) {
 	}
 }
 
+func TestUIThemeNormalizes(t *testing.T) {
+	c := Default()
+	for _, tt := range []struct {
+		in   string
+		want string
+	}{
+		{"", "auto"},
+		{"AUTO", "auto"},
+		{"dark", "dark"},
+		{" light ", "light"},
+		{"unknown", "auto"},
+	} {
+		c.UI.Theme = tt.in
+		if got := c.UITheme(); got != tt.want {
+			t.Errorf("UITheme(%q) = %q, want %q", tt.in, got, tt.want)
+		}
+	}
+}
+
+func TestUIThemeStyleNormalizes(t *testing.T) {
+	c := Default()
+	for _, tt := range []struct {
+		in   string
+		want string
+	}{
+		{"", ""},
+		{"AURORA", "aurora"},
+		{" glacier ", "glacier"},
+		{"unknown", ""},
+	} {
+		c.UI.ThemeStyle = tt.in
+		if got := c.UIThemeStyle(); got != tt.want {
+			t.Errorf("UIThemeStyle(%q) = %q, want %q", tt.in, got, tt.want)
+		}
+	}
+}
+
 func TestSetPlannerModel(t *testing.T) {
 	c := Default()
 	if err := c.SetPlannerModel("deepseek-pro"); err != nil {
@@ -84,6 +121,56 @@ func TestSetProviderEffort(t *testing.T) {
 	}
 	if err := c.SetProviderEffort("missing", "high"); err == nil {
 		t.Fatal("SetProviderEffort should reject unknown provider")
+	}
+}
+
+func TestNormalizeEffortDeepSeek(t *testing.T) {
+	e := &ProviderEntry{Name: "deepseek", Kind: "openai", BaseURL: "https://api.deepseek.com", Model: "deepseek-v4"}
+	cap := EffortCapabilityForEntry(e)
+	if !cap.Supported || len(cap.Levels) != 3 || cap.Levels[0] != "auto" || cap.Levels[1] != "high" || cap.Levels[2] != "max" {
+		t.Fatalf("DeepSeek levels = %+v, want auto/high/max", cap)
+	}
+	for in, want := range map[string]string{"auto": "", "high": "high", "max": "max", "low": "high", "medium": "high", "xhigh": "max"} {
+		got, err := NormalizeEffort(e, in)
+		if err != nil || got != want {
+			t.Fatalf("NormalizeEffort(%q) = %q/%v, want %q/nil", in, got, err, want)
+		}
+	}
+	if _, err := NormalizeEffort(e, "off"); err == nil {
+		t.Fatal("DeepSeek /effort must reject off")
+	}
+}
+
+func TestNormalizeLegacyEffortMigratesOff(t *testing.T) {
+	c := &Config{Providers: []ProviderEntry{
+		{Name: "deepseek", Effort: "off"},
+		{Name: "deepseek-upper", Effort: "OFF"},
+		{Name: "keep", Effort: "high"},
+	}}
+	normalizeLegacyEffort(c)
+	if c.Providers[0].Effort != "" || c.Providers[1].Effort != "" {
+		t.Fatalf("legacy off should migrate to empty, got %q/%q", c.Providers[0].Effort, c.Providers[1].Effort)
+	}
+	if c.Providers[2].Effort != "high" {
+		t.Fatalf("non-legacy effort changed: %q", c.Providers[2].Effort)
+	}
+}
+
+func TestNormalizeEffortAnthropic(t *testing.T) {
+	e := &ProviderEntry{Name: "claude", Kind: "anthropic", Model: "claude-opus-4-8"}
+	cap := EffortCapabilityForEntry(e)
+	if !cap.Supported || len(cap.Levels) != 6 {
+		t.Fatalf("Anthropic levels = %+v, want auto plus five levels", cap)
+	}
+	for _, level := range []string{"low", "medium", "high", "xhigh", "max"} {
+		got, err := NormalizeEffort(e, level)
+		if err != nil || got != level {
+			t.Fatalf("NormalizeEffort(%q) = %q/%v, want %q/nil", level, got, err, level)
+		}
+	}
+	got, err := NormalizeEffort(e, "auto")
+	if err != nil || got != "" {
+		t.Fatalf("NormalizeEffort(auto) = %q/%v, want empty/nil", got, err)
 	}
 }
 

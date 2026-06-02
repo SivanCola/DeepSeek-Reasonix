@@ -71,7 +71,8 @@ func (m *chatTUI) slashItems() []compItem {
 		{label: "/paste-image", insert: "/paste-image", hint: i18n.M.CmdPasteImage},
 		{label: "/output-style", insert: "/output-style", hint: i18n.M.CmdOutputStyle},
 		{label: "/verbose", insert: "/verbose", hint: i18n.M.CmdVerbose},
-		{label: "/thinking", insert: "/thinking ", hint: i18n.M.CmdThinking, descend: true},
+		{label: "/effort", insert: "/effort ", hint: i18n.M.CmdEffort, descend: true},
+		{label: "/theme", insert: "/theme ", hint: i18n.M.CmdTheme, descend: true},
 		{label: "/help", insert: "/help ", hint: i18n.M.CmdHelp},
 		{label: "/memory", insert: "/memory ", hint: i18n.M.CmdMemory},
 		{label: "/forget", insert: "/forget ", hint: i18n.M.CmdForget},
@@ -136,6 +137,9 @@ func (m *chatTUI) slashArgItems(val string) ([]compItem, int, bool) {
 		return items, from, len(items) > 0
 	}
 	if items, from, ok := m.resumeArgItems(val); ok {
+		return items, from, len(items) > 0
+	}
+	if items, from, ok := m.themeArgItems(val); ok {
 		return items, from, len(items) > 0
 	}
 	// Delegate to the shared completion logic so the chat TUI and the desktop
@@ -359,9 +363,9 @@ func (m *chatTUI) moveCompletion(delta int) {
 	m.completion.sel = ((m.completion.sel+delta)%n + n) % n
 }
 
-// acceptCompletion applies the selected item to the input. A directory descends
-// (the input is filled and the menu re-opens one level deeper); anything else
-// completes and closes the menu.
+// acceptCompletion applies the selected item to the input, then recomputes the
+// menu from the new value: it re-opens one level deeper (a descended directory
+// or a freshly completed command's arguments) or closes when nothing applies.
 func (m *chatTUI) acceptCompletion() {
 	if m.completion.sel >= len(m.completion.items) {
 		m.completion = completion{}
@@ -375,14 +379,23 @@ func (m *chatTUI) acceptCompletion() {
 	}
 	m.input.SetValue(val[:rf] + it.insert)
 	m.input.CursorEnd()
-	if it.descend {
-		m.updateCompletion() // re-list the directory we just descended into
+	if it.descend || strings.HasSuffix(it.insert, " ") {
+		m.updateCompletion()
 		return
 	}
-	m.completion = completion{}
+	m.updateCompletion() // re-filter for arg completion (e.g. /resume → numbered sessions)
+	// If the completion re-opened with the same single item the user just
+	// selected (i.e. the token was already typed), close it so the next Enter
+	// submits the command rather than being captured again by acceptCompletion.
+	if m.completion.active && len(m.completion.items) == 1 {
+		tok := m.input.Value()[m.completion.replaceFrom:]
+		if tok == m.completion.items[0].insert {
+			m.completion = completion{}
+		}
+	}
 }
 
-var compSelStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("173")).Bold(true)
+var compSelStyle lipgloss.Style
 
 // renderCompletion draws the menu above the input box: matching items, windowed
 // around the selection, the current row highlighted, hints dimmed.

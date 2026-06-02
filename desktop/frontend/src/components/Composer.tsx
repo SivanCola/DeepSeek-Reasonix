@@ -681,22 +681,22 @@ export function Composer({
           </label>
           <div className="workspace-switcher__list">
             {filteredWorkspaces.map((w) => (
-              <button
-                key={w.path}
-                className="workspace-switcher__item"
-                onClick={() => {
-                  if (w.current) {
-                    setWorkspaceMenuOpen(false);
-                    return;
-                  }
-                  void chooseWorkspace(w.path);
-                }}
-                title={w.path}
-              >
-                <FolderGit2 size={15} />
-                <span>{w.name}</span>
-                {w.current && <Check size={15} />}
-              </button>
+              <Tooltip key={w.path} label={w.path} fill>
+                <button
+                  className="workspace-switcher__item"
+                  onClick={() => {
+                    if (w.current) {
+                      setWorkspaceMenuOpen(false);
+                      return;
+                    }
+                    void chooseWorkspace(w.path);
+                  }}
+                >
+                  <FolderGit2 size={15} />
+                  <span>{w.name}</span>
+                  {w.current && <Check size={15} />}
+                </button>
+              </Tooltip>
             ))}
             {filteredWorkspaces.length === 0 && <div className="workspace-switcher__empty">{t("composer.noProjectMatches")}</div>}
           </div>
