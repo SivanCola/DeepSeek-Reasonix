@@ -380,15 +380,17 @@ function reducer(s: State, a: Action): State {
     case "jobs":
       return { ...s, jobs: a.jobs };
     case "history": {
-      // Only user/assistant turns with visible text — never the system prompt or
-      // tool-result messages, and not the empty content of a tool-call-only turn.
+      // Only user/assistant turns with visible text or assistant reasoning — never
+      // the system prompt or tool-result messages.
       const visible = a.messages.filter(
-        (m) => (m.role === "user" || m.role === "assistant") && m.content.trim() !== "",
+        (m) =>
+          (m.role === "user" && m.content.trim() !== "") ||
+          (m.role === "assistant" && (m.content.trim() !== "" || (m.reasoning ?? "").trim() !== "")),
       );
       const items: Item[] = visible.map((m, i) =>
         m.role === "user"
           ? { kind: "user", id: `h${i}`, text: m.content }
-          : { kind: "assistant", id: `h${i}`, text: m.content, reasoning: "", streaming: false },
+          : { kind: "assistant", id: `h${i}`, text: m.content, reasoning: m.reasoning ?? "", streaming: false },
       );
       return { ...s, items, seq: s.seq + visible.length };
     }

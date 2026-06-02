@@ -552,8 +552,9 @@ func (a *App) SwitchWorkspace(dir string) (string, error) {
 // HistoryMessage is one prior turn, for the frontend to repopulate its transcript
 // after a reload.
 type HistoryMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role      string `json:"role"`
+	Content   string `json:"content"`
+	Reasoning string `json:"reasoning,omitempty"`
 }
 
 // History returns the session's message log.
@@ -565,14 +566,21 @@ func (a *App) History() []HistoryMessage {
 		return nil
 	}
 	msgs := ctrl.History()
-	resolve := sessionDisplayResolver(config.SessionDir(), ctrl.SessionPath())
+	return historyMessages(msgs, sessionDisplayResolver(config.SessionDir(), ctrl.SessionPath()))
+}
+
+func historyMessages(msgs []provider.Message, resolveUserContent func(string) string) []HistoryMessage {
 	out := make([]HistoryMessage, 0, len(msgs))
 	for _, m := range msgs {
 		content := m.Content
 		if m.Role == provider.RoleUser {
-			content = resolve(m.Content)
+			content = resolveUserContent(m.Content)
 		}
-		out = append(out, HistoryMessage{Role: string(m.Role), Content: content})
+		reasoning := ""
+		if m.Role == provider.RoleAssistant {
+			reasoning = m.ReasoningContent
+		}
+		out = append(out, HistoryMessage{Role: string(m.Role), Content: content, Reasoning: reasoning})
 	}
 	return out
 }
