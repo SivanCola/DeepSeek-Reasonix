@@ -2,7 +2,10 @@ package cli
 
 import (
 	"reflect"
+	"strings"
 	"testing"
+
+	"reasonix/internal/plugin"
 )
 
 func TestParseMCPAddStdio(t *testing.T) {
@@ -88,5 +91,62 @@ func TestTokenizeArgs(t *testing.T) {
 	// Single quotes work too, and surrounding whitespace collapses.
 	if got := tokenizeArgs("  a  'b c'  d "); !reflect.DeepEqual(got, []string{"a", "b c", "d"}) {
 		t.Fatalf("tokenizeArgs single-quote = %v", got)
+	}
+}
+
+func TestRenderMCPStatusGroupsAndCompactsResources(t *testing.T) {
+	longURI := "file:///Users/example/project/docs/really/deep/path/with/a/very/long/resource-name.md"
+	got := renderMCPStatus(110,
+		[]plugin.ServerStatus{{Name: "docs", Transport: "stdio", Tools: 2}},
+		[]plugin.Prompt{{Server: "docs", Name: "mcp__docs__summarize", Description: "Summarize a selected document for review"}},
+		[]plugin.Resource{{Server: "docs", URI: longURI, Name: "Resource manual", MimeType: "text/markdown"}},
+		nil,
+	)
+	for _, want := range []string{
+		"MCP servers (1)",
+		"docs",
+		"prompts",
+		"/mcp__docs__summarize",
+		"resources",
+		"@docs:file:///",
+		"…",
+		"Resource manual [text/markdown]",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("rendered MCP status missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, longURI) {
+		t.Fatalf("long resource URI should be compacted:\n%s", got)
+	}
+}
+
+func TestRenderMCPStatusCapsLongSections(t *testing.T) {
+	var resources []plugin.Resource
+	for i := 0; i < mcpMaxItemsPerSection+2; i++ {
+		resources = append(resources, plugin.Resource{Server: "fs", URI: "file:///tmp/resource.md"})
+	}
+	got := renderMCPStatus(80,
+		[]plugin.ServerStatus{{Name: "fs", Transport: "stdio"}},
+		nil,
+		resources,
+		nil,
+	)
+	if !strings.Contains(got, "+2 more resources") {
+		t.Fatalf("rendered MCP status should cap long resource sections:\n%s", got)
+	}
+}
+
+func TestRenderMCPStatusShowsFailures(t *testing.T) {
+	got := renderMCPStatus(90,
+		nil,
+		nil,
+		nil,
+		[]plugin.Failure{{Name: "broken", Transport: "stdio", Error: "npm error ENOENT"}},
+	)
+	for _, want := range []string{"MCP servers (0)", "broken", "npm error ENOENT"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("rendered MCP status missing %q:\n%s", want, got)
+		}
 	}
 }

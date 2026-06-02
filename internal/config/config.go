@@ -326,10 +326,34 @@ type PluginEntry struct {
 	// AutoStart controls whether the server connects during session startup.
 	// Nil preserves historical behavior: configured servers start automatically.
 	AutoStart *bool `toml:"auto_start"`
+	// Tier selects how aggressively the server is connected at boot:
+	//   "eager"      — blocks startup until the handshake completes; required for
+	//                  servers whose tools the system prompt depends on.
+	//   "lazy"       — registers placeholder tools immediately (from on-disk
+	//                  schema cache when available) and only spawns the real
+	//                  subprocess on first model use. Default for user plugins.
+	//   "background" — placeholder + spawn fired at boot but not waited on;
+	//                  swap happens once the spawn finishes.
+	// Empty defaults to "lazy" so adding a plugin never slows the next launch.
+	Tier string `toml:"tier"`
 }
 
 func (e PluginEntry) ShouldAutoStart() bool {
 	return e.AutoStart == nil || *e.AutoStart
+}
+
+// ResolvedTier returns the normalized tier ("eager"|"lazy"|"background") with
+// the project default applied. Unknown values fall back to "lazy" so a typo
+// never forces a slow boot.
+func (e PluginEntry) ResolvedTier() string {
+	switch strings.ToLower(strings.TrimSpace(e.Tier)) {
+	case "eager":
+		return "eager"
+	case "background":
+		return "background"
+	default:
+		return "lazy"
+	}
 }
 
 func (c *Config) AutoStartPlugins() []PluginEntry {
@@ -524,6 +548,19 @@ func SessionDir() string {
 		return ""
 	}
 	return filepath.Join(dir, "reasonix", "sessions")
+}
+
+// CacheDir is the per-user cache root for derived/regenerable artefacts: MCP
+// handshake snapshots, plugin startup-latency telemetry. Lives beside the
+// existing dirs (UserConfigDir/reasonix/...) so the whole reasonix state tree
+// shares one root the user can wipe in a single rm. Empty when the OS dir is
+// unavailable — callers must tolerate that (caching is best-effort).
+func CacheDir() string {
+	dir, err := os.UserConfigDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(dir, "reasonix", "cache")
 }
 
 // MemoryUserDir returns the reasonix user config root (…/reasonix), under which

@@ -16,22 +16,7 @@ func (m *chatTUI) showMemory() {
 		m.notice(i18n.M.MemoryNone)
 		return
 	}
-	m.notice(i18n.M.MemoryLoaded)
-	for _, d := range set.Docs {
-		m.notice(fmt.Sprintf("  • %s (%s)", d.Path, d.Scope))
-	}
-	if facts := set.Store.List(); len(facts) > 0 {
-		m.notice(i18n.M.MemorySavedHeader)
-		for _, f := range facts {
-			label := f.Title
-			if label == "" {
-				label = f.Description
-			}
-			m.notice(fmt.Sprintf("    • %s — %s", f.Name, label))
-		}
-		m.notice(fmt.Sprintf(i18n.M.MemoryStoredUnderFmt, set.Store.Dir))
-	}
-	m.notice(i18n.M.MemoryEditHint)
+	m.commitLine(renderMemory(m.width, set))
 }
 
 // forgetMemory deletes a saved auto-memory by name (the slug shown in /memory).

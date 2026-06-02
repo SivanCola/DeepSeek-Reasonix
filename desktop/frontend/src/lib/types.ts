@@ -98,6 +98,7 @@ export interface WireEvent {
 export interface HistoryMessage {
   role: string;
   content: string;
+  reasoning?: string;
 }
 
 // CheckpointMeta is one rewind point (a user turn) for the rewind UI.

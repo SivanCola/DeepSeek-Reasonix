@@ -222,26 +222,47 @@ func Start(ctx context.Context, specs []Spec, p StartPolicy) (*Host, []tool.Tool
 				cancelStartup = cancel
 			}
 
+			phaseAStart := time.Now()
+
 			// Transport on the parent ctx, startup RPCs on the timed callCtx: the
 			// per-plugin timeout caps initialize+listTools, but the long-lived
 			// stdio child must outlive the startup scope and later phase-B calls.
 			c, err := start(ctx, callCtx, spec)
 			if err != nil {
+				phaseADur := time.Since(phaseAStart)
 				cancelStartup()
+				go func() { _ = RecordStartup(spec.Name, phaseADur) }()
 				ch <- result{idx: idx, spec: spec, err: fmt.Errorf("start plugin %q: %w", spec.Name, err)}
 				return
 			}
 
 			ts, err := c.listTools(callCtx)
 			if err != nil {
+				phaseADur := time.Since(phaseAStart)
 				cancelStartup()
+				go func() { _ = RecordStartup(spec.Name, phaseADur) }()
 				c.close()
 				ch <- result{idx: idx, spec: spec, err: fmt.Errorf("list tools from %q: %w", spec.Name, err)}
 				return
 			}
 			c.toolCount = len(ts)
 
+			// Persist for next launch on the side: a slow stats/cache write
+			// must not delay tools coming online, and either failure is
+			// recoverable (we just re-handshake or skip auto-demote).
+			phaseADur := time.Since(phaseAStart)
 			cancelStartup()
+			go func() {
+				_ = RecordStartup(spec.Name, phaseADur)
+				_ = SaveCachedSchema(spec.Name, CachedSchema{
+					SpecHash: SpecFingerprint(spec),
+					Capabilities: map[string]bool{
+						"prompts":   c.hasPrompts,
+						"resources": c.hasResources,
+					},
+					Tools: cacheableToolsOf(ts),
+				})
+			}()
 
 			// Prompts and resources are deferred to StartPhaseB so the boot path
 			// can return as soon as tools are ready — the slow-to-list surfaces
@@ -715,7 +736,12 @@ func (c *Client) listTools(ctx context.Context) ([]tool.Tool, error) {
 // matching Claude Code. Spaces in either part are normalised to underscores so
 // the name is a clean identifier the model can call.
 func toolName(server, raw string) string {
-	return "mcp__" + normalizeName(server) + "__" + normalizeName(raw)
+	return ToolPrefix(server) + normalizeName(raw)
+}
+
+// ToolPrefix is the model-visible namespace prefix for every tool from server.
+func ToolPrefix(server string) string {
+	return "mcp__" + normalizeName(server) + "__"
 }
 
 var invalidNameChars = regexp.MustCompile(`[^a-zA-Z0-9_-]+`)

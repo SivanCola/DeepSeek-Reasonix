@@ -208,6 +208,17 @@ func TestInsertNewlineKeyBinding(t *testing.T) {
 	}
 }
 
+func TestEchoLocalCommandAddsTranscriptMarker(t *testing.T) {
+	m := newTestChatTUI()
+	m.echoLocalCommand("  /tree  ")
+	if len(*m.pendingCommit) != 1 {
+		t.Fatalf("pending commits = %d, want 1", len(*m.pendingCommit))
+	}
+	if got := (*m.pendingCommit)[0]; !strings.Contains(got, "› /tree") {
+		t.Fatalf("command echo = %q, want /tree marker", got)
+	}
+}
+
 func isolateUserConfig(t *testing.T) {
 	t.Helper()
 	root := t.TempDir()
@@ -519,6 +530,53 @@ func TestDoubleCtrlCQuit(t *testing.T) {
 	if time.Since(m4.lastCtrlCAt) > time.Second {
 		t.Error("expired Ctrl+C should refresh lastCtrlCAt")
 	}
+}
+
+// TestCtrlCClearsInput verifies that a single Ctrl+C while idle with non-empty
+// input clears the composer without arming the double-press quit gesture.
+func TestCtrlCClearsInput(t *testing.T) {
+	m := newTestChatTUI()
+	m.input.SetValue("hello world")
+	ctrlC := tea.KeyPressMsg{Code: 'c', Mod: 4}
+
+	out, _ := m.Update(ctrlC)
+	m2 := out.(chatTUI)
+
+	if strings.TrimSpace(m2.input.Value()) != "" {
+		t.Errorf("Ctrl+C should clear non-empty input, got %q", m2.input.Value())
+	}
+	if !m2.lastCtrlCAt.IsZero() {
+		t.Error("Ctrl+C on non-empty input should not arm the quit gesture")
+	}
+}
+
+// TestCtrlCClearsThenDoublePressQuits verifies the full user flow: Ctrl+C on
+// non-empty input clears it, then two more presses on the empty composer quit.
+func TestCtrlCClearsThenDoublePressQuits(t *testing.T) {
+	m := newTestChatTUI()
+	m.input.SetValue("draft text")
+	ctrlC := tea.KeyPressMsg{Code: 'c', Mod: 4}
+
+	// First press: clear input.
+	out, _ := m.Update(ctrlC)
+	m2 := out.(chatTUI)
+	if strings.TrimSpace(m2.input.Value()) != "" {
+		t.Fatal("first Ctrl+C should clear input")
+	}
+
+	// Second press (on empty): arm quit.
+	out2, _ := m2.Update(ctrlC)
+	m3 := out2.(chatTUI)
+	if m3.lastCtrlCAt.IsZero() {
+		t.Error("Ctrl+C on empty input should arm quit")
+	}
+
+	// Third press (within window): quit.
+	out3, cmd := m3.Update(ctrlC)
+	if cmd == nil {
+		t.Error("double Ctrl+C on empty input should quit")
+	}
+	_ = out3
 }
 
 // TestAgentEventCoalescesBurst proves one update drains the buffered event burst

@@ -13,6 +13,7 @@ import (
 	"reasonix/internal/codegraph"
 	"reasonix/internal/config"
 	"reasonix/internal/netclient"
+	"reasonix/internal/sandbox"
 )
 
 type Options struct {
@@ -87,6 +88,10 @@ type SandboxReport struct {
 	Bash       string   `json:"bash"`
 	Network    bool     `json:"network"`
 	WriteRoots []string `json:"write_roots,omitempty"`
+	// Available is whether an OS sandbox actually backs an "enforce" request on
+	// this host (bwrap/seatbelt present). Without it "enforce" runs unconfined —
+	// e.g. always on Windows, where there is no OS sandbox.
+	Available bool `json:"available"`
 }
 
 type NetworkReport struct {
@@ -139,6 +144,7 @@ func Collect(opts Options) Report {
 			Bash:       cfg.BashMode(),
 			Network:    cfg.Sandbox.Network,
 			WriteRoots: redactHomeAll(cfg.WriteRoots()),
+			Available:  sandbox.Available(),
 		},
 		Network: NetworkReport{
 			ProxyMode: cfg.NetworkProxyMode(),
@@ -199,6 +205,12 @@ func RenderText(r Report) string {
 	fmt.Fprintf(&b, "  user config  %s\n", valueOr(r.Config.UserPath, "unavailable"))
 	fmt.Fprintf(&b, "  model        %s\n", valueOr(r.Config.DefaultModel, "(none)"))
 
+	// Warnings (e.g. a config that failed to parse and fell back to defaults) go
+	// up top, not buried under the full report where they read as "all fine".
+	for _, w := range r.Warnings {
+		fmt.Fprintf(&b, "  warning: %s\n", w)
+	}
+
 	fmt.Fprintf(&b, "\nproviders\n")
 	for _, p := range r.Providers {
 		key := "missing"
@@ -244,7 +256,11 @@ func RenderText(r Report) string {
 	}
 
 	fmt.Fprintf(&b, "\nsandbox\n")
-	fmt.Fprintf(&b, "  bash         %s\n", r.Sandbox.Bash)
+	bashLine := r.Sandbox.Bash
+	if r.Sandbox.Bash == "enforce" && !r.Sandbox.Available {
+		bashLine += " (inactive: no OS sandbox on this host — bash runs unconfined)"
+	}
+	fmt.Fprintf(&b, "  bash         %s\n", bashLine)
 	fmt.Fprintf(&b, "  network      %v\n", r.Sandbox.Network)
 	fmt.Fprintf(&b, "  write_roots  %s\n", strings.Join(r.Sandbox.WriteRoots, ", "))
 
@@ -256,9 +272,6 @@ func RenderText(r Report) string {
 	fmt.Fprintf(&b, "\npermissions\n")
 	fmt.Fprintf(&b, "  mode         %s\n", valueOr(r.Permission.Mode, "ask"))
 	fmt.Fprintf(&b, "  rules        allow:%d ask:%d deny:%d\n", r.Permission.AllowRules, r.Permission.AskRules, r.Permission.DenyRules)
-	for _, w := range r.Warnings {
-		fmt.Fprintf(&b, "\nwarning: %s\n", w)
-	}
 	return b.String()
 }
 

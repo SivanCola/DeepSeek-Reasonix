@@ -2,13 +2,17 @@ package control
 
 import (
 	"context"
+	"encoding/json"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
 	"reasonix/internal/agent"
 	"reasonix/internal/event"
+	"reasonix/internal/plugin"
 	"reasonix/internal/provider"
+	"reasonix/internal/tool"
 )
 
 type typedNilControllerSink struct{}
@@ -23,6 +27,20 @@ func (r appendingRunner) Run(_ context.Context, input string) error {
 	r.session.Add(provider.Message{Role: provider.RoleUser, Content: input})
 	return nil
 }
+
+type fakeControlTool struct{ name string }
+
+func (t fakeControlTool) Name() string { return t.name }
+func (fakeControlTool) Description() string {
+	return "fake"
+}
+func (fakeControlTool) Schema() json.RawMessage {
+	return json.RawMessage(`{"type":"object"}`)
+}
+func (fakeControlTool) Execute(context.Context, json.RawMessage) (string, error) {
+	return "", nil
+}
+func (fakeControlTool) ReadOnly() bool { return true }
 
 func TestNewTreatsTypedNilSinkAsDiscard(t *testing.T) {
 	var sink *typedNilControllerSink
@@ -118,6 +136,50 @@ func TestSnapshotActivityRefreshesSessionActivity(t *testing.T) {
 	}
 }
 
+func TestDisconnectMCPServerRemovesLazyPlaceholder(t *testing.T) {
+	reg := tool.NewRegistry()
+	reg.Add(fakeControlTool{name: "mcp__mock__connect"})
+	c := New(Options{Host: plugin.NewHost(), Registry: reg})
+
+	if ok := c.DisconnectMCPServer("mock"); !ok {
+		t.Fatal("DisconnectMCPServer returned false for a registered lazy placeholder")
+	}
+	if _, found := reg.Get("mcp__mock__connect"); found {
+		t.Fatalf("lazy placeholder still registered after disconnect; names=%v", reg.Names())
+	}
+}
+
+func TestRemoveMCPServerRemovesUnconnectedLazyPlaceholder(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	if err := os.WriteFile("reasonix.toml", []byte(`
+[[plugins]]
+name = "mock"
+command = "mock-mcp"
+tier = "lazy"
+`), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	reg := tool.NewRegistry()
+	reg.Add(fakeControlTool{name: "mcp__mock__connect"})
+	c := New(Options{Host: plugin.NewHost(), Registry: reg})
+
+	disconnected, err := c.RemoveMCPServer("mock")
+	if err != nil {
+		t.Fatalf("RemoveMCPServer: %v", err)
+	}
+	if disconnected {
+		t.Fatal("RemoveMCPServer reported a live disconnect for an unconnected lazy placeholder")
+	}
+	if _, found := reg.Get("mcp__mock__connect"); found {
+		t.Fatalf("lazy placeholder still registered after remove; names=%v", reg.Names())
+	}
+	if names := c.ConfiguredMCPNames(); len(names) != 0 {
+		t.Fatalf("ConfiguredMCPNames() = %v, want empty after remove", names)
+	}
+}
+
 // approvalIDs returns a Controller whose Sink forwards each ApprovalRequest's ID
 // onto the channel, plus a counter of how many requests it emitted.
 func approvalIDs() (*Controller, chan string, *int) {
@@ -159,11 +221,10 @@ func TestApprovalDeny(t *testing.T) {
 // later prompts for the same tool+subject: only the first reaches the frontend.
 func TestApprovalSessionGrant(t *testing.T) {
 	c, ids, prompts := approvalIDs()
-	go func() {
-		for id := range ids {
-			c.Approve(id, true, true)
-		}
-	}()
+	// Only the first call reaches the frontend (the session grant short-circuits
+	// the rest), so a single approval is all this needs — ranging would block on
+	// a second ID that never arrives.
+	go func() { c.Approve(<-ids, true, true) }()
 
 	for i := 0; i < 3; i++ {
 		allow, _, err := gateApprover{c}.Approve(context.Background(), "bash", "go build", nil)
