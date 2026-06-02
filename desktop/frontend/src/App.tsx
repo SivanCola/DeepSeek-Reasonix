@@ -746,7 +746,7 @@ export default function App() {
                         >
                           <MessageSquare size={14} />
                           <span className="sidebar-session__body">
-                            <Tooltip className="sidebar-session__title" label={`${title}\n${meta}`}>{title}</Tooltip>
+                            <Tooltip className="sidebar-session__title" label={title}>{title}</Tooltip>
                             <span className="sidebar-session__meta">
                               {meta}
                             </span>
