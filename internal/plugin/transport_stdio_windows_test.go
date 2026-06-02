@@ -6,6 +6,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -23,7 +24,7 @@ func TestResolveStdioExecutableWindowsPathAndPATHEXT(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolveStdioExecutable: %v", err)
 	}
-	if exe != npx {
+	if !strings.EqualFold(exe, npx) {
 		t.Fatalf("resolved executable = %q, want %q", exe, npx)
 	}
 	if got, ok := envValue(env, "PATH"); !ok || got != dir {
