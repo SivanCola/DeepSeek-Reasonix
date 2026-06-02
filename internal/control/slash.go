@@ -25,17 +25,20 @@ type SlashItem struct {
 // chat TUI (controller-free, from its cached lists) and the desktop (from the
 // controller). This keeps the CLI and desktop sub-command hints identical.
 type ArgData struct {
-	Skills       []skill.Skill
-	ServerNames  []string
-	ModelRefs    []string
-	CurrentModel string
+	Skills          []skill.Skill
+	ServerNames     []string
+	ConfiguredMCP   []string
+	DisconnectedMCP []string
+	ModelRefs       []string
+	CurrentModel    string
 }
 
 // SlashArgItems completes the arguments of a management slash command
 // (everything after the command word). It returns the suggestions filtered by
 // the token being typed and the byte offset where that token begins, so a caller
 // replaces just that token. Only structured commands participate (/mcp /model
-// /skill /hooks); others yield nil. Single source of truth for CLI + desktop.
+// /skill /hooks /thinking); others yield nil. Single source of truth for CLI +
+// desktop.
 func SlashArgItems(line string, d ArgData) ([]SlashItem, int) {
 	cmdEnd := strings.IndexAny(line, " \t")
 	if cmdEnd < 0 {
@@ -54,16 +57,30 @@ func SlashArgItems(line string, d ArgData) ([]SlashItem, int) {
 		raw = skillArgItems(prior, d)
 	case "/hooks":
 		raw = hooksArgItems(prior)
+	case "/thinking":
+		raw = thinkingArgItems(prior)
 	default:
 		return nil, from
 	}
 	return filterSlash(raw, line, from, cur), from
 }
 
+func thinkingArgItems(prior []string) []SlashItem {
+	if len(prior) <= 1 {
+		return []SlashItem{
+			{Label: "high", Insert: "high", Hint: i18n.M.ArgThinkingHigh},
+			{Label: "max", Insert: "max", Hint: i18n.M.ArgThinkingMax},
+			{Label: "off", Insert: "off", Hint: i18n.M.ArgThinkingOff},
+		}
+	}
+	return nil
+}
+
 func mcpArgItems(prior []string, cur string, d ArgData) []SlashItem {
 	if len(prior) <= 1 {
 		return []SlashItem{
 			{Label: "add", Insert: "add ", Hint: i18n.M.ArgMcpAdd, Descend: true},
+			{Label: "connect", Insert: "connect ", Hint: "connect a configured MCP server", Descend: true},
 			{Label: "remove", Insert: "remove ", Hint: i18n.M.ArgMcpRemove, Descend: true},
 			{Label: "list", Insert: "list", Hint: i18n.M.ArgMcpList},
 		}
@@ -76,6 +93,15 @@ func mcpArgItems(prior []string, cur string, d ArgData) []SlashItem {
 		var items []SlashItem
 		for _, name := range d.ServerNames {
 			items = append(items, SlashItem{Label: name, Insert: name, Hint: i18n.M.ArgMcpConnected})
+		}
+		return items
+	case "connect":
+		if len(prior) != 2 {
+			return nil
+		}
+		var items []SlashItem
+		for _, name := range d.DisconnectedMCP {
+			items = append(items, SlashItem{Label: name, Insert: name, Hint: "configured"})
 		}
 		return items
 	case "add":
@@ -176,6 +202,15 @@ func (c *Controller) managementNotice(trimmed string) bool {
 	case "/hooks":
 		c.notice(c.hookListText())
 	case "/mcp":
+		if len(fields) >= 3 && fields[1] == "connect" {
+			n, err := c.ConnectConfiguredMCPServer(fields[2])
+			if err != nil {
+				c.notice("mcp connect: " + err.Error())
+			} else {
+				c.notice(fmt.Sprintf("connected %s — %d tools", fields[2], n))
+			}
+			return true
+		}
 		c.notice(c.mcpListText())
 	default:
 		return false
@@ -192,6 +227,9 @@ func (c *Controller) modelListText() string {
 	fmt.Fprintf(&b, i18n.M.ListModelsHeaderFmt+"\n", c.label)
 	for i := range cfg.Providers {
 		p := &cfg.Providers[i]
+		if !p.Configured() {
+			continue
+		}
 		for _, m := range p.ModelList() {
 			fmt.Fprintf(&b, "  %s/%s\n", p.Name, m)
 		}
@@ -246,13 +284,24 @@ func (c *Controller) hookListText() string {
 }
 
 func (c *Controller) mcpListText() string {
-	if c.host == nil || len(c.host.ServerNames()) == 0 {
+	if c.host == nil || (len(c.host.ServerNames()) == 0 && len(c.host.Failures()) == 0) {
 		return i18n.M.ListMcpNone
 	}
 	var b strings.Builder
-	b.WriteString(i18n.M.ListMcpHeader + "\n")
-	for _, name := range c.host.ServerNames() {
-		fmt.Fprintf(&b, "  %s\n", name)
+	if len(c.host.ServerNames()) > 0 {
+		b.WriteString(i18n.M.ListMcpHeader + "\n")
+		for _, name := range c.host.ServerNames() {
+			fmt.Fprintf(&b, "  %s\n", name)
+		}
+	}
+	if failures := c.host.Failures(); len(failures) > 0 {
+		if b.Len() > 0 {
+			b.WriteString("\n")
+		}
+		b.WriteString("MCP startup failures:\n")
+		for _, f := range failures {
+			fmt.Fprintf(&b, "  %s (%s): %s\n", f.Name, f.Transport, f.Error)
+		}
 	}
 	return strings.TrimRight(b.String(), "\n")
 }

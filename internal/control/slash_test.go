@@ -25,10 +25,11 @@ func has(items []SlashItem, label string) bool {
 
 func TestSlashArgItems(t *testing.T) {
 	data := ArgData{
-		Skills:       []skill.Skill{{Name: "explore", Scope: skill.ScopeBuiltin}, {Name: "review", Scope: skill.ScopeBuiltin}},
-		ServerNames:  []string{"fs", "git"},
-		ModelRefs:    []string{"deepseek/deepseek-v4-flash", "deepseek/deepseek-v4-pro"},
-		CurrentModel: "deepseek/deepseek-v4-flash",
+		Skills:          []skill.Skill{{Name: "explore", Scope: skill.ScopeBuiltin}, {Name: "review", Scope: skill.ScopeBuiltin}},
+		ServerNames:     []string{"fs", "git"},
+		DisconnectedMCP: []string{"optional"},
+		ModelRefs:       []string{"deepseek/deepseek-v4-flash", "deepseek/deepseek-v4-pro"},
+		CurrentModel:    "deepseek/deepseek-v4-flash",
 	}
 
 	// /skill subcommands
@@ -56,6 +57,11 @@ func TestSlashArgItems(t *testing.T) {
 	if !has(items, "fs") || !has(items, "git") {
 		t.Errorf("/mcp remove should list servers; got %v", labelsOf(items))
 	}
+	// /mcp connect -> disconnected configured server names
+	items, _ = SlashArgItems("/mcp connect ", data)
+	if !has(items, "optional") {
+		t.Errorf("/mcp connect should list disconnected configured servers; got %v", labelsOf(items))
+	}
 	// /model → refs, current marked
 	items, _ = SlashArgItems("/model ", data)
 	if !has(items, "deepseek/deepseek-v4-pro") {
@@ -70,6 +76,11 @@ func TestSlashArgItems(t *testing.T) {
 	items, _ = SlashArgItems("/hooks ", data)
 	if !has(items, "list") || !has(items, "trust") {
 		t.Errorf("/hooks should offer list/trust; got %v", labelsOf(items))
+	}
+	// /thinking
+	items, _ = SlashArgItems("/thinking ", data)
+	if !has(items, "high") || !has(items, "max") || !has(items, "off") {
+		t.Errorf("/thinking should offer high/max/off; got %v", labelsOf(items))
 	}
 	// a non-structured command yields nothing
 	if items, _ := SlashArgItems("/help ", data); len(items) != 0 {

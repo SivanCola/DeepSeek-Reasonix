@@ -6,11 +6,15 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"unicode/utf8"
 
 	"reasonix/internal/diff"
 	"reasonix/internal/event"
+	"reasonix/internal/evidence"
 	"reasonix/internal/jobs"
+	"reasonix/internal/memory"
+	"reasonix/internal/nilutil"
 	"reasonix/internal/provider"
 	"reasonix/internal/tool"
 )
@@ -88,6 +92,13 @@ type Gate interface {
 type ToolHooks interface {
 	PreToolUse(ctx context.Context, name string, args json.RawMessage) (block bool, message string)
 	PostToolUse(ctx context.Context, name string, args json.RawMessage, result string)
+	// PostLLMCall fires after each model turn completes (streaming finishes)
+	// but before reasoning_content is stored. It returns the (possibly
+	// translated) reasoning string — the original when no hook is configured.
+	// HasPostLLMCall reports whether such a hook exists, so the agent keeps
+	// streaming reasoning live when none is wired up.
+	PostLLMCall(ctx context.Context, reasoning string, turn int) string
+	HasPostLLMCall() bool
 	// SubagentStop fires when a `task` sub-agent finishes (foreground). PreCompact
 	// fires just before a compaction pass and returns extra summary guidance (its
 	// hooks' stdout) to fold into the summary prompt; "" when no hook contributes.
@@ -101,6 +112,7 @@ type Agent struct {
 	prov        provider.Provider
 	tools       *tool.Registry
 	session     *Session
+	sessMu      sync.Mutex // guards the session pointer for external Session()/SetSession
 	maxSteps    int
 	temperature float64
 	pricing     *provider.Pricing
@@ -111,25 +123,26 @@ type Agent struct {
 	// it to event.Discard.
 	sink event.Sink
 
-	// lastUsage caches the most recent per-turn telemetry the provider
-	// reported so the CLI can expose a context gauge without re-scraping the
-	// usage line out of the output writer.
-	lastUsage *provider.Usage
+	// lastUsage caches the most recent per-turn telemetry the provider reported so
+	// the CLI can expose a context gauge without re-scraping the usage line. The
+	// run loop writes it while a frontend's status line reads it, so it is atomic.
+	lastUsage atomic.Pointer[provider.Usage]
 
 	// sessCacheHit/sessCacheMiss accumulate cache tokens across every API call
 	// this session, so frontends can show the aggregate hit-rate (Σhit/Σ(hit+miss))
 	// — a steadier, cost-oriented number than the single-turn rate. They are NOT
 	// reset on compaction (compaction only rewrites session.Messages), so the
-	// aggregate never craters when the prefix is summarized away.
-	sessCacheHit  int
-	sessCacheMiss int
+	// aggregate never craters when the prefix is summarized away. Atomic: the run
+	// loop accumulates them while the status line reads them.
+	sessCacheHit  atomic.Int64
+	sessCacheMiss atomic.Int64
 
 	// planMode, when true, refuses any tool call whose ReadOnly() is false.
 	// The system prompt and tool list never change with the toggle so the
 	// prompt-cache prefix stays valid; the gating happens at execute time
 	// and the model sees a "blocked" result it can adapt to. Toggled from
 	// the outside via SetPlanMode.
-	planMode bool
+	planMode atomic.Bool
 
 	// gate, when non-nil, is the per-call permission gate consulted after the
 	// plan-mode check. nil disables gating entirely.
@@ -156,23 +169,37 @@ type Agent struct {
 	// reach it. nil leaves those tools to degrade gracefully.
 	jobs *jobs.Manager
 
-	// Context management: when a turn's prompt nears contextWindow, the older
-	// middle of the session is summarized away, keeping recentKeep messages
-	// verbatim and archiving the originals under archiveDir.
-	contextWindow int
-	compactRatio  float64
-	recentKeep    int
-	archiveDir    string
+	// evidence is a per-user-turn ledger of host-observed tool receipts. It lets
+	// complete_step validate that cited evidence happened before the claim.
+	evidence *evidence.Ledger
 
-	// stormSig / stormCount track a run of tool calls that keep failing the same
-	// way so the loop can break a death-spiral. The signature is (tool, error),
-	// NOT (tool, args): a stuck model reliably reworks the arguments cosmetically
-	// (a re-worded essay, a reordered object) while the call fails identically
-	// every time — keying on args misses the loop entirely (observed live against
-	// truncated tool-call arguments). Because errors that embed their subject
-	// (e.g. "file not found: /x") differ per target, genuine varied probing does
-	// not collapse to one signature. Reset whenever a turn does anything else
-	// (a different failure, more than one call, or any success). See applyStormBreaker.
+	// memQueue, when non-nil, lets the remember/forget tools fold a turn-tail note
+	// about a just-made memory change into the next turn, so it applies this
+	// session without touching the cache-stable prefix. Set via SetMemoryQueue.
+	memQueue memory.Queue
+
+	// Context management: when a turn's prompt nears contextWindow, the older
+	// middle of the session is summarized away, keeping a token-bounded recent
+	// tail verbatim (recentKeep is the message floor) and archiving the originals
+	// under archiveDir. compactStuck latches when compaction can't get the prompt
+	// under the window (consecutiveCompacts crosses the limit), so auto-compaction
+	// pauses instead of looping.
+	contextWindow       int
+	compactRatio        float64
+	recentKeep          int
+	archiveDir          string
+	compactStuck        bool
+	consecutiveCompacts int
+
+	// stormSig / stormCount track a run of turns that keep failing the same way so
+	// the loop can break a death-spiral. The signature is each call's (tool, error)
+	// in order, NOT (tool, args): a stuck model reliably reworks the arguments
+	// cosmetically (a re-worded essay, a reordered object) while the call fails
+	// identically every time — keying on args misses the loop entirely (observed
+	// live against truncated tool-call arguments). Because errors that embed their
+	// subject (e.g. "file not found: /x") differ per target, genuine varied probing
+	// does not collapse to one signature. Reset whenever a turn does anything else
+	// (a different failure shape, or any success). See applyStormBreaker.
 	stormSig   string
 	stormCount int
 }
@@ -181,39 +208,62 @@ type Agent struct {
 // non-ReadOnly tool the model calls and returns a "blocked" result instead of
 // running it. The cache-friendly bits — system prompt, tools schema, message
 // history — are left untouched, so the toggle costs nothing in cache hits.
-func (a *Agent) SetPlanMode(v bool) { a.planMode = v }
+func (a *Agent) SetPlanMode(v bool) { a.planMode.Store(v) }
 
 // SetGate installs the per-call permission gate. Used by `reasonix chat` to swap the
 // headless gate built in setup for an interactive one that prompts the user;
 // nil disables gating. Safe to call before the run loop starts.
-func (a *Agent) SetGate(g Gate) { a.gate = g }
+func (a *Agent) SetGate(g Gate) {
+	if nilutil.IsNil(g) {
+		g = nil
+	}
+	a.gate = g
+}
 
 // SetAsker installs the asker the `ask` tool uses to question the user.
 // Interactive frontends wire one in; headless runs leave it nil.
 func (a *Agent) SetAsker(as Asker) { a.asker = as }
+
+// SetMemoryQueue installs the sink the remember/forget tools use to apply a
+// memory change in the current session. The controller wires itself in.
+func (a *Agent) SetMemoryQueue(q memory.Queue) { a.memQueue = q }
 
 // SetPreEditHook installs the pre-edit snapshot hook (see onPreEdit). The
 // controller wires it to its per-session checkpoint store; nil disables capture.
 func (a *Agent) SetPreEditHook(fn func(diff.Change)) { a.onPreEdit = fn }
 
 // Session returns the agent's current conversation, useful for persistence
-// hooks that need to read the message log between turns.
-func (a *Agent) Session() *Session { return a.session }
+// hooks that need to read the message log between turns. sessMu serialises this
+// pointer read against SetSession, so a frontend (serve's concurrent /history and
+// /new handlers) can't race the swap. The run loop touches a.session directly and
+// only swaps it via SetSession while idle, so its reads need no lock.
+func (a *Agent) Session() *Session {
+	a.sessMu.Lock()
+	defer a.sessMu.Unlock()
+	return a.session
+}
 
 // SetSession replaces the agent's conversation wholesale. Used by
 // `reasonix chat --resume` to load a saved JSONL transcript before the first turn,
-// so the model picks up exactly where it left off.
-func (a *Agent) SetSession(s *Session) { a.session = s }
+// so the model picks up exactly where it left off. Callers serialise it against a
+// running turn (it only fires while idle); sessMu guards the pointer swap itself.
+func (a *Agent) SetSession(s *Session) {
+	a.sessMu.Lock()
+	defer a.sessMu.Unlock()
+	a.session = s
+}
 
 // LastUsage returns the most recent per-turn token telemetry the provider
 // reported (nil if no turn has run yet). The TUI uses it to show a context
 // gauge alongside the prompt; the actual cache decisions still live inside
 // maybeCompact.
-func (a *Agent) LastUsage() *provider.Usage { return a.lastUsage }
+func (a *Agent) LastUsage() *provider.Usage { return a.lastUsage.Load() }
 
 // SessionCache returns the cumulative cache hit/miss prompt tokens across every
 // API call this session — the basis for the status line's aggregate hit-rate.
-func (a *Agent) SessionCache() (hit, miss int) { return a.sessCacheHit, a.sessCacheMiss }
+func (a *Agent) SessionCache() (hit, miss int) {
+	return int(a.sessCacheHit.Load()), int(a.sessCacheMiss.Load())
+}
 
 // ContextWindow returns the configured context-window size in tokens. 0
 // means compaction is disabled for this agent.
@@ -248,7 +298,8 @@ type Options struct {
 	Jobs *jobs.Manager
 
 	// Context management. ContextWindow <= 0 disables compaction. CompactRatio
-	// and RecentKeep fall back to defaults when unset.
+	// is the trigger fraction; RecentKeep is the minimum recent messages kept
+	// verbatim (the tail is otherwise token-bounded). Both fall back to defaults.
 	ContextWindow int
 	CompactRatio  float64
 	RecentKeep    int
@@ -264,10 +315,18 @@ func New(prov provider.Provider, tools *tool.Registry, session *Session, opts Op
 		opts.CompactRatio = defaultCompactRatio
 	}
 	if opts.RecentKeep <= 0 {
-		opts.RecentKeep = defaultRecentKeep
+		opts.RecentKeep = minRecentKeep
 	}
-	if sink == nil {
+	if nilutil.IsNil(sink) {
 		sink = event.Discard
+	}
+	gate := opts.Gate
+	if nilutil.IsNil(gate) {
+		gate = nil
+	}
+	hooks := opts.Hooks
+	if nilutil.IsNil(hooks) {
+		hooks = nil
 	}
 	return &Agent{
 		prov:          prov,
@@ -277,9 +336,10 @@ func New(prov provider.Provider, tools *tool.Registry, session *Session, opts Op
 		temperature:   opts.Temperature,
 		pricing:       opts.Pricing,
 		sink:          sink,
-		gate:          opts.Gate,
-		hooks:         opts.Hooks,
+		gate:          gate,
+		hooks:         hooks,
 		jobs:          opts.Jobs,
+		evidence:      evidence.NewLedger(),
 		contextWindow: opts.ContextWindow,
 		compactRatio:  opts.CompactRatio,
 		recentKeep:    opts.RecentKeep,
@@ -294,17 +354,20 @@ func New(prov provider.Provider, tools *tool.Registry, session *Session, opts Op
 // a round count. A positive maxSteps imposes an optional hard guard, surfaced as
 // a resumable notice when hit.
 func (a *Agent) Run(ctx context.Context, input string) error {
+	if a.evidence != nil {
+		a.evidence.Reset()
+	}
 	a.sink.Emit(event.Event{Kind: event.TurnStarted})
 	a.session.Add(provider.Message{Role: provider.RoleUser, Content: input})
 
 	for step := 0; a.maxSteps <= 0 || step < a.maxSteps; step++ {
-		text, reasoning, signature, calls, usage, err := a.stream(ctx)
+		text, reasoning, signature, calls, usage, err := a.stream(ctx, step+1)
 		if err != nil {
 			return err
 		}
 		if usage != nil && usage.TotalTokens > 0 {
 			a.sink.Emit(event.Event{Kind: event.Usage, Usage: usage, Pricing: a.pricing,
-				SessionHit: a.sessCacheHit, SessionMiss: a.sessCacheMiss})
+				SessionHit: int(a.sessCacheHit.Load()), SessionMiss: int(a.sessCacheMiss.Load())})
 		}
 		if msg, ok := finishReasonMessage(usage); ok {
 			a.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelWarn, Text: msg})
@@ -312,8 +375,8 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 
 		// Keep reasoning_content on the assistant turn for display and session
 		// archive. It is NOT re-uploaded to the API: the openai provider drops it
-		// when building the request, since DeepSeek bills re-sent reasoning as
-		// ordinary prompt input (~500 tok/turn) for no cache or coherence gain.
+		// when building the request, since re-sent reasoning is billable prompt
+		// input for no cache or coherence gain.
 		a.session.Add(provider.Message{
 			Role:               provider.RoleAssistant,
 			Content:            text,
@@ -351,7 +414,7 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 // stream so a sink can re-render the streamed raw text as styled markdown. The
 // accumulated text and reasoning are also returned so the caller can round-trip
 // reasoning on the next turn.
-func (a *Agent) stream(ctx context.Context) (string, string, string, []provider.ToolCall, *provider.Usage, error) {
+func (a *Agent) stream(ctx context.Context, turn int) (string, string, string, []provider.ToolCall, *provider.Usage, error) {
 	ch, err := a.prov.Stream(ctx, provider.Request{
 		Messages:    a.session.Messages,
 		Tools:       a.tools.Schemas(),
@@ -360,6 +423,12 @@ func (a *Agent) stream(ctx context.Context) (string, string, string, []provider.
 	if err != nil {
 		return "", "", "", nil, nil, err
 	}
+
+	// A PostLLMCall hook rewrites the whole reasoning block, so when one is wired
+	// up we buffer reasoning silently and emit the transformed text once after the
+	// stream. With no such hook the reasoning streams live, chunk by chunk, as
+	// before — the common case must not lose its live "thinking…" display.
+	transformReasoning := a.hooks != nil && a.hooks.HasPostLLMCall()
 
 	var text, reasoning strings.Builder
 	var signature string // provider-issued proof for the reasoning (Anthropic thinking)
@@ -372,7 +441,7 @@ func (a *Agent) stream(ctx context.Context) (string, string, string, []provider.
 			if chunk.Signature != "" {
 				signature = chunk.Signature
 			}
-			if chunk.Text != "" {
+			if chunk.Text != "" && !transformReasoning {
 				a.sink.Emit(event.Event{Kind: event.Reasoning, Text: chunk.Text})
 			}
 		case provider.ChunkText:
@@ -392,38 +461,59 @@ func (a *Agent) stream(ctx context.Context) (string, string, string, []provider.
 			calls = append(calls, *chunk.ToolCall)
 		case provider.ChunkUsage:
 			usage = chunk.Usage
-			a.lastUsage = chunk.Usage
-			a.sessCacheHit += chunk.Usage.CacheHitTokens
-			a.sessCacheMiss += chunk.Usage.CacheMissTokens
+			a.lastUsage.Store(chunk.Usage)
+			a.sessCacheHit.Add(int64(chunk.Usage.CacheHitTokens))
+			a.sessCacheMiss.Add(int64(chunk.Usage.CacheMissTokens))
 		case provider.ChunkError:
 			return "", "", "", nil, nil, chunk.Err
 		}
 	}
+	// With a PostLLMCall hook, the live stream was suppressed above; transform the
+	// full reasoning now and emit it once so the sink never sees the untranslated
+	// text. Without a hook this is skipped — the chunk-by-chunk events already fired.
+	original := reasoning.String()
+	display := original
+	if transformReasoning && original != "" {
+		display = a.hooks.PostLLMCall(ctx, original, turn)
+		if display != "" {
+			a.sink.Emit(event.Event{Kind: event.Reasoning, Text: display})
+		}
+	}
+	// Store the transformed reasoning — except when a provider signature pins it to
+	// the original text (Anthropic extended thinking). That signed thinking block is
+	// replayed verbatim on the next tool-call turn; re-uploading transformed text
+	// under the original signature is rejected, so keep the original for storage
+	// while the user still sees the transformed version live.
+	stored := display
+	if signature != "" {
+		stored = original
+	}
 	// Close the text stream: a sink may re-render the streamed raw text as
 	// styled markdown now that it is complete. Reasoning rides along so the sink
 	// has the full chain if it wants it.
-	if text.Len() > 0 || reasoning.Len() > 0 {
-		a.sink.Emit(event.Event{Kind: event.Message, Text: text.String(), Reasoning: reasoning.String()})
+	if text.Len() > 0 || display != "" {
+		a.sink.Emit(event.Event{Kind: event.Message, Text: text.String(), Reasoning: display})
 	}
-	return text.String(), reasoning.String(), signature, calls, usage, nil
+	return text.String(), stored, signature, calls, usage, nil
 }
 
 // executeBatch dispatches one model turn's tool calls. A ToolDispatch event is
 // emitted for every call up front, in call order, so a frontend can show the
-// timeline chronologically. Calls fan out across goroutines only when every
-// call's tool is ReadOnly (canParallelise); a single non-ReadOnly call drops
-// the whole batch back to sequential to preserve write/read ordering. ToolResult
-// events are emitted after the batch in call order, so emission stays serial
-// even when execution parallelised.
+// timeline chronologically. Contiguous known ReadOnly calls fan out across
+// goroutines; unknown and writer calls run as single-call serial segments so
+// write/read ordering stays provider-ordered. ToolResult events are emitted
+// after the batch in call order, so emission stays serial even when execution
+// parallelised.
 func (a *Agent) executeBatch(ctx context.Context, calls []provider.ToolCall) []string {
 	for _, c := range calls {
 		t, ok := a.tools.Get(c.Name)
-		a.sink.Emit(event.Event{Kind: event.ToolDispatch, Tool: event.Tool{
-			ID:       c.ID,
-			Name:     c.Name,
-			Args:     c.Arguments,
-			ReadOnly: ok && t.ReadOnly(),
-		}})
+		ev := event.Tool{ID: c.ID, Name: c.Name, Args: c.Arguments, ReadOnly: ok && t.ReadOnly()}
+		if ok {
+			if ch, ok := tool.PreviewChange(t, json.RawMessage(c.Arguments)); ok {
+				ev.FileDiff = event.FileDiff{Diff: ch.Diff, Added: ch.Added, Removed: ch.Removed}
+			}
+		}
+		a.sink.Emit(event.Event{Kind: event.ToolDispatch, Tool: ev})
 	}
 
 	results := make([]string, len(calls))
@@ -433,23 +523,12 @@ func (a *Agent) executeBatch(ctx context.Context, calls []provider.ToolCall) []s
 		results[i] = outcomes[i].output
 	}
 
-	if canParallelise(a.tools, calls) && len(calls) > 1 {
-		const maxParallel = 8
-		sem := make(chan struct{}, maxParallel)
-		var wg sync.WaitGroup
-		for i := range calls {
-			i := i
-			sem <- struct{}{}
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				defer func() { <-sem }()
-				run(i)
-			}()
+	for _, batch := range partitionToolCalls(a.tools, calls) {
+		if batch.parallel && batch.end-batch.start > 1 {
+			runParallel(batch.start, batch.end, run)
+			continue
 		}
-		wg.Wait()
-	} else {
-		for i := range calls {
+		for i := batch.start; i < batch.end; i++ {
 			run(i)
 		}
 	}
@@ -474,6 +553,61 @@ func (a *Agent) executeBatch(ctx context.Context, calls []provider.ToolCall) []s
 	return results
 }
 
+type toolCallBatch struct {
+	start    int
+	end      int
+	parallel bool
+}
+
+// partitionToolCalls keeps provider order while letting contiguous known
+// read-only tools run together. Unknown and writer tools are single-call serial
+// batches so they cannot reorder around reads or produce surprising errors.
+// complete_step and todo_write are read-only but never join a parallel run: they
+// read the turn's evidence ledger, so every prior call's receipt must be recorded
+// before they run.
+func partitionToolCalls(r *tool.Registry, calls []provider.ToolCall) []toolCallBatch {
+	var batches []toolCallBatch
+	for i := 0; i < len(calls); {
+		if parallelisable(r, calls[i].Name) {
+			start := i
+			i++
+			for i < len(calls) && parallelisable(r, calls[i].Name) {
+				i++
+			}
+			batches = append(batches, toolCallBatch{start: start, end: i, parallel: true})
+			continue
+		}
+		batches = append(batches, toolCallBatch{start: i, end: i + 1})
+		i++
+	}
+	return batches
+}
+
+func parallelisable(r *tool.Registry, name string) bool {
+	if name == "complete_step" || name == "todo_write" {
+		return false
+	}
+	t, ok := r.Get(name)
+	return ok && t.ReadOnly()
+}
+
+func runParallel(start, end int, run func(int)) {
+	const maxParallel = 8
+	sem := make(chan struct{}, maxParallel)
+	var wg sync.WaitGroup
+	for i := start; i < end; i++ {
+		i := i
+		sem <- struct{}{}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			defer func() { <-sem }()
+			run(i)
+		}()
+	}
+	wg.Wait()
+}
+
 // stormBreakThreshold is how many times in a row the same tool may fail the same
 // way before the loop stops echoing the raw error back and instead returns a
 // directive to change approach. Two natural self-corrections are healthy; the
@@ -482,22 +616,23 @@ func (a *Agent) executeBatch(ctx context.Context, calls []provider.ToolCall) []s
 // re-emits (re-worded but still over-long), truncating the same way again.
 const stormBreakThreshold = 3
 
-// applyStormBreaker detects a run of same-tool, same-error failures and, past the
+// applyStormBreaker detects a run of identically-failing turns and, past the
 // threshold, rewrites the model-facing result (results[0]) into a directive to
-// change approach. It keys on (tool, error) rather than (tool, args) because a
-// stuck model reworks the arguments cosmetically while failing identically — see
-// the stormSig field doc. It targets only the single-call fixation that produces
-// the loop: a turn with exactly one call that errored (and was not merely blocked
-// by plan mode / permissions, which already carry a clear, distinct message). Any
-// other shape — multiple calls, or any success — is varied work, so it resets the
-// counter. The hard maxSteps guard remains the ultimate backstop; this just keeps
-// the loop from burning that whole budget bouncing off the same failure.
+// change approach. It keys on each call's (tool, error) — not its args — because a
+// stuck model reworks the arguments cosmetically while failing identically (see
+// the stormSig field doc). A turn is a fixation candidate only when every one of
+// its calls errored and none was merely blocked by plan mode / permissions (those
+// carry a clear, distinct message the model can already act on). Any success, any
+// block, or a different batch shape is varied work, so it resets the counter. This
+// covers both the single-call spiral and a repeated multi-call batch. The hard
+// maxSteps guard remains the ultimate backstop; this just keeps the loop from
+// burning that whole budget bouncing off the same failure.
 func (a *Agent) applyStormBreaker(calls []provider.ToolCall, outcomes []toolOutcome, results []string) {
-	if len(calls) != 1 || outcomes[0].errMsg == "" || outcomes[0].blocked {
+	sig, ok := batchStormSignature(calls, outcomes)
+	if !ok {
 		a.stormSig, a.stormCount = "", 0
 		return
 	}
-	sig := calls[0].Name + "\x00" + outcomes[0].errMsg
 	if sig != a.stormSig {
 		a.stormSig, a.stormCount = sig, 1
 		return
@@ -506,12 +641,41 @@ func (a *Agent) applyStormBreaker(calls []provider.ToolCall, outcomes []toolOutc
 	if a.stormCount < stormBreakThreshold {
 		return
 	}
+	subject := fmt.Sprintf("%q", calls[0].Name)
+	short := calls[0].Name
+	if len(calls) > 1 {
+		subject = fmt.Sprintf("this batch of %d tool calls", len(calls))
+		short = fmt.Sprintf("a batch of %d calls", len(calls))
+	}
 	results[0] = outcomes[0].output + fmt.Sprintf(
-		"\n\n[loop guard] %q has now failed %d times in a row with the same error. Re-sending it — even with the wording changed — will not help: the call keeps failing the same way. Change approach: if an argument is being truncated, write less in one call and split the work into several smaller calls; otherwise fix the argument, use a different tool, or explain the blocker in your final answer.",
-		calls[0].Name, a.stormCount)
+		"\n\n[loop guard] %s has now failed %d times in a row with the same error. Re-sending it — even with the wording changed — will not help: the calls keep failing the same way. Change approach: if an argument is being truncated, write less in one call and split the work into several smaller calls; otherwise fix the arguments, use a different tool, or explain the blocker in your final answer.",
+		subject, a.stormCount)
 	a.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelWarn, Text: fmt.Sprintf(
 		"loop guard: %s failed %d× the same way — nudging the model to change approach",
-		calls[0].Name, a.stormCount)})
+		short, a.stormCount)})
+}
+
+// batchStormSignature returns a per-turn fixation signature — each call's
+// (name, error) in order — and ok=true only when every call errored and none was
+// merely blocked. ok=false (any success or block) means the turn made varied
+// progress, so the caller resets the counter. Keying on the error rather than the
+// args is deliberate: a stuck model reworks the arguments while failing the same
+// way, so identical-args matching would miss the loop.
+func batchStormSignature(calls []provider.ToolCall, outcomes []toolOutcome) (string, bool) {
+	if len(calls) == 0 {
+		return "", false
+	}
+	var sb strings.Builder
+	for i := range calls {
+		if outcomes[i].errMsg == "" || outcomes[i].blocked {
+			return "", false
+		}
+		sb.WriteString(calls[i].Name)
+		sb.WriteByte(0)
+		sb.WriteString(outcomes[i].errMsg)
+		sb.WriteByte(0)
+	}
+	return sb.String(), true
 }
 
 // toolOutcome is one tool call's result, split into the model-facing output and
@@ -539,7 +703,7 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 			errMsg: fmt.Sprintf("unknown tool %q", call.Name),
 		}
 	}
-	if a.planMode && !t.ReadOnly() {
+	if a.planMode.Load() && !t.ReadOnly() {
 		return toolOutcome{
 			output:  fmt.Sprintf("blocked: %q is a writer tool and plan mode is read-only. Keep exploring with read-only tools, then write your plan as your reply — the user will be asked to approve it before any changes are made.", call.Name),
 			blocked: true,
@@ -589,10 +753,29 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 		}
 	}
 	cctx := withCallContext(ctx, call.ID, a.sink, a.asker)
+	if a.evidence != nil {
+		cctx = evidence.WithLedger(cctx, a.evidence)
+	}
 	if a.jobs != nil {
 		cctx = jobs.WithManager(cctx, a.jobs)
 	}
+	if a.memQueue != nil {
+		cctx = memory.WithQueue(cctx, a.memQueue)
+	}
+	callID := call.ID
+	cctx = tool.WithProgress(cctx, func(chunk string) {
+		a.sink.Emit(event.Event{Kind: event.ToolProgress, Tool: event.Tool{ID: callID, Output: chunk}})
+	})
 	result, err := t.Execute(cctx, json.RawMessage(call.Arguments))
+	if a.evidence != nil {
+		if call.Name == "complete_step" {
+			if err == nil {
+				a.evidence.Record(evidence.ReceiptFromToolCall(call.Name, json.RawMessage(call.Arguments), true, t.ReadOnly()))
+			}
+		} else {
+			a.evidence.Record(evidence.ReceiptFromToolCall(call.Name, json.RawMessage(call.Arguments), err == nil, t.ReadOnly()))
+		}
+	}
 	// PostToolUse hooks observe the result (they can't block); fired whether the
 	// call succeeded or errored, since the tool did run.
 	if a.hooks != nil {
@@ -636,19 +819,6 @@ func firstLine(s string) string {
 		return s[:i]
 	}
 	return s
-}
-
-// canParallelise returns true iff every call targets a known, ReadOnly tool.
-// Any unknown tool name (let the sequential path produce a clean error) or any
-// non-ReadOnly tool (preserve write ordering) forces serial execution.
-func canParallelise(r *tool.Registry, calls []provider.ToolCall) bool {
-	for _, c := range calls {
-		t, ok := r.Get(c.Name)
-		if !ok || !t.ReadOnly() {
-			return false
-		}
-	}
-	return true
 }
 
 // truncateToolOutput head+tails s when it exceeds maxToolOutputBytes, slicing

@@ -12,12 +12,13 @@ import (
 	"fmt"
 	"io"
 	"math/rand"
-	"net"
 	"net/http"
+	"net/url"
 	"sort"
 	"strings"
 	"time"
 
+	"reasonix/internal/netclient"
 	"reasonix/internal/provider"
 )
 
@@ -39,37 +40,64 @@ func New(cfg provider.Config) (provider.Provider, error) {
 	}
 	keyEnv, _ := cfg.Extra["api_key_env"].(string) // for actionable auth errors
 	effort, _ := cfg.Extra["effort"].(string)
+	deepseek := isDeepSeekBaseURL(cfg.BaseURL)
+	if deepseek {
+		effort = strings.ToLower(strings.TrimSpace(effort))
+		switch effort {
+		case "":
+			effort = "high"
+		case "high", "max", "off":
+		default:
+			return nil, fmt.Errorf("openai: provider %q uses DeepSeek thinking; effort must be high, max, or off", name)
+		}
+	}
+	httpClient, err := newHTTPClient(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("openai: network: %w", err)
+	}
 	return &client{
-		name:    name,
-		apiKey:  cfg.APIKey,
-		keyEnv:  keyEnv,
-		baseURL: strings.TrimRight(cfg.BaseURL, "/"),
-		model:   cfg.Model,
-		effort:  effort,
-		http: &http.Client{
-			Transport: &http.Transport{
-				DialContext: (&net.Dialer{
-					Timeout:   30 * time.Second,
-					KeepAlive: 30 * time.Second,
-				}).DialContext,
-				TLSHandshakeTimeout:   15 * time.Second,
-				ResponseHeaderTimeout: 120 * time.Second, // models can think for a while before the first token
-			},
-		},
+		name:     name,
+		apiKey:   cfg.APIKey,
+		keyEnv:   keyEnv,
+		baseURL:  strings.TrimRight(cfg.BaseURL, "/"),
+		model:    cfg.Model,
+		deepseek: deepseek,
+		effort:   effort,
+		http:     httpClient,
 	}, nil
 }
 
+func newHTTPClient(cfg provider.Config) (*http.Client, error) {
+	spec, _ := cfg.Extra["proxy_spec"].(netclient.ProxySpec)
+	return netclient.NewHTTPClient(spec, 0, netclient.TransportOptions{
+		DialTimeout:           30 * time.Second,
+		KeepAlive:             30 * time.Second,
+		TLSHandshakeTimeout:   15 * time.Second,
+		ResponseHeaderTimeout: 120 * time.Second, // models can think for a while before the first token
+	})
+}
+
 type client struct {
-	name    string
-	apiKey  string
-	keyEnv  string // api_key_env name, surfaced in auth errors
-	baseURL string
-	model   string
-	http    *http.Client
-	effort  string // reasoning_effort forwarded to thinking-capable models; "" = omit
+	name     string
+	apiKey   string
+	keyEnv   string // api_key_env name, surfaced in auth errors
+	baseURL  string
+	model    string
+	http     *http.Client
+	deepseek bool
+	effort   string // reasoning_effort forwarded to thinking-capable models; "" = omit
 }
 
 func (c *client) Name() string { return c.name }
+
+func isDeepSeekBaseURL(baseURL string) bool {
+	u, err := url.Parse(baseURL)
+	if err != nil {
+		return false
+	}
+	host := strings.ToLower(u.Hostname())
+	return host == "api.deepseek.com" || strings.HasSuffix(host, ".deepseek.com")
+}
 
 func (c *client) Stream(ctx context.Context, req provider.Request) (<-chan provider.Chunk, error) {
 	body, err := json.Marshal(c.buildRequest(req))
@@ -169,13 +197,18 @@ func isTransientErr(err error) bool {
 }
 
 func (c *client) buildRequest(req provider.Request) chatRequest {
-	msgs := make([]chatMessage, len(req.Messages))
-	for i, m := range req.Messages {
+	// Repair tool-call pairing before sending: an interrupted/resumed history can
+	// carry an assistant tool_calls turn whose results never landed, which DeepSeek
+	// rejects with a 400 ("must be followed by tool messages …").
+	src := provider.SanitizeToolPairing(req.Messages)
+	msgs := make([]chatMessage, len(src))
+	for i, m := range src {
 		// reasoning_content is deliberately NOT sent back: it's a response-only
-		// field. DeepSeek accepts it but counts it as ordinary prompt input
-		// (measured ~500 extra tokens per turn on a reasoner chain), and the
-		// OpenAI-compatible convention is not to echo it. The session still keeps
-		// it (for display/archive); we just don't pay to re-upload it every turn.
+		// field. DeepSeek counts re-sent reasoning as billable prompt input
+		// (measured ~500 extra tokens per turn on a reasoner chain); MiMo accepts
+		// it but does not require it (verified empirically: multi-turn tool-call
+		// sessions work fine without it, saving ~18 tokens/turn). The session
+		// still keeps it (for display/archive); we just don't pay to re-upload it.
 		cm := chatMessage{
 			Role:       string(m.Role),
 			Content:    m.Content,
@@ -199,7 +232,7 @@ func (c *client) buildRequest(req provider.Request) chatRequest {
 		})
 	}
 
-	return chatRequest{
+	out := chatRequest{
 		Model:           c.model,
 		Messages:        msgs,
 		Tools:           tools,
@@ -209,6 +242,14 @@ func (c *client) buildRequest(req provider.Request) chatRequest {
 		MaxTokens:       req.MaxTokens,
 		ReasoningEffort: c.effort,
 	}
+	if c.deepseek {
+		out.Thinking = &thinkingMode{Type: "enabled"}
+		if c.effort == "off" {
+			out.Thinking.Type = "disabled"
+			out.ReasoningEffort = ""
+		}
+	}
+	return out
 }
 
 // readStream parses the SSE stream, emits text deltas live, accumulates tool-call
@@ -230,6 +271,7 @@ func (c *client) readStream(ctx context.Context, resp *http.Response, out chan<-
 	started := map[int]bool{}
 	var order []int
 	var lastFinishReason string
+	var think thinkSplitter
 
 	scanner := bufio.NewScanner(resp.Body)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
@@ -270,7 +312,13 @@ func (c *client) readStream(ctx context.Context, resp *http.Response, out chan<-
 			out <- provider.Chunk{Type: provider.ChunkReasoning, Text: delta.ReasoningContent}
 		}
 		if delta.Content != "" {
-			out <- provider.Chunk{Type: provider.ChunkText, Text: delta.Content}
+			r, txt := think.push(delta.Content)
+			if r != "" {
+				out <- provider.Chunk{Type: provider.ChunkReasoning, Text: r}
+			}
+			if txt != "" {
+				out <- provider.Chunk{Type: provider.ChunkText, Text: txt}
+			}
 		}
 		for _, tc := range delta.ToolCalls {
 			cur, ok := acc[tc.Index]
@@ -301,9 +349,25 @@ func (c *client) readStream(ctx context.Context, resp *http.Response, out chan<-
 		return
 	}
 
+	if r, txt := think.flush(); r != "" || txt != "" {
+		if r != "" {
+			out <- provider.Chunk{Type: provider.ChunkReasoning, Text: r}
+		}
+		if txt != "" {
+			out <- provider.Chunk{Type: provider.ChunkText, Text: txt}
+		}
+	}
+
 	sort.Ints(order)
 	for _, idx := range order {
-		out <- provider.Chunk{Type: provider.ChunkToolCall, ToolCall: acc[idx]}
+		tc := acc[idx]
+		if tc.ID == "" {
+			// Some OpenAI-compatible gateways stream tool calls by index with no id.
+			// Synthesize a stable one so the result can be paired back to its call —
+			// an empty tool_call_id collapses multi-tool turns downstream.
+			tc.ID = fmt.Sprintf("call_%d", idx)
+		}
+		out <- provider.Chunk{Type: provider.ChunkToolCall, ToolCall: tc}
 	}
 	out <- provider.Chunk{Type: provider.ChunkDone}
 }
@@ -347,6 +411,11 @@ type chatRequest struct {
 	Temperature     float64        `json:"temperature,omitempty"`
 	MaxTokens       int            `json:"max_tokens,omitempty"`
 	ReasoningEffort string         `json:"reasoning_effort,omitempty"`
+	Thinking        *thinkingMode  `json:"thinking,omitempty"`
+}
+
+type thinkingMode struct {
+	Type string `json:"type"`
 }
 
 type streamOptions struct {
@@ -366,7 +435,7 @@ type chatMessage struct {
 	ToolCallID string         `json:"tool_call_id,omitempty"`
 	Name       string         `json:"name,omitempty"`
 	// no reasoning_content field: it is a response-only signal and is never sent
-	// back upstream (see buildRequest) — re-uploading it is paid prompt input.
+	// back upstream — re-uploading it is paid prompt input.
 }
 
 type chatTool struct {

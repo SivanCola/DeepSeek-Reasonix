@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"reasonix/internal/evidence"
 	"reasonix/internal/tool"
 )
 
@@ -21,12 +22,13 @@ type todoItem struct {
 	Content    string `json:"content"`
 	Status     string `json:"status"`
 	ActiveForm string `json:"activeForm,omitempty"`
+	Level      int    `json:"level,omitempty"`
 }
 
 func (todoWrite) Name() string { return "todo_write" }
 
 func (todoWrite) Description() string {
-	return "Record and update a structured task list for the current work. Send the COMPLETE list every call — it replaces the previous one. Use it to plan multi-step work and show progress: keep exactly one item in_progress at a time, and flip an item to completed the moment it's done (don't batch completions). Skip it for trivial single-step tasks. Each item has `content` (imperative, e.g. \"Add the parser\"), `status` (pending|in_progress|completed), and `activeForm` (present-continuous shown while in progress, e.g. \"Adding the parser\")."
+	return "Record and update a structured task list for the current work. Send the COMPLETE list every call — it replaces the previous one. Use it to plan multi-step work and show progress: keep exactly one item in_progress at a time, and flip an item to completed the moment it's done (don't batch completions). Skip it for trivial single-step tasks. The list is two-level: a `level` 0 item is a PHASE (a milestone) and the `level` 1 items after it are its concrete sub-steps; omit `level` (0) for a flat list. Each item has `content` (imperative, e.g. \"Add the parser\"), `status` (pending|in_progress|completed), `activeForm` (present-continuous shown while in progress, e.g. \"Adding the parser\"), and optional `level` (0 phase | 1 sub-step)."
 }
 
 func (todoWrite) Schema() json.RawMessage {
@@ -41,7 +43,8 @@ func (todoWrite) Schema() json.RawMessage {
       "properties":{
         "content":{"type":"string","description":"Imperative description of the task."},
         "status":{"type":"string","enum":["pending","in_progress","completed"],"description":"Task state. Keep at most one in_progress."},
-        "activeForm":{"type":"string","description":"Present-continuous form shown while the task is in progress (e.g. \"Running tests\")."}
+        "activeForm":{"type":"string","description":"Present-continuous form shown while the task is in progress (e.g. \"Running tests\")."},
+        "level":{"type":"integer","enum":[0,1],"description":"Nesting level: 0 = phase/milestone, 1 = a sub-step of the phase above it. Omit for a flat list."}
       },
       "required":["content","status"]
     }
@@ -68,6 +71,9 @@ func (todoWrite) Execute(ctx context.Context, args json.RawMessage) (string, err
 		if t.Content == "" {
 			return "", fmt.Errorf("todo %d: content is required", i+1)
 		}
+		if t.Level < 0 || t.Level > 1 {
+			return "", fmt.Errorf("todo %d: invalid level %d (want 0 phase | 1 sub-step)", i+1, t.Level)
+		}
 		switch t.Status {
 		case "completed":
 			done++
@@ -79,6 +85,38 @@ func (todoWrite) Execute(ctx context.Context, args json.RawMessage) (string, err
 			return "", fmt.Errorf("todo %d: invalid status %q (want pending|in_progress|completed)", i+1, t.Status)
 		}
 	}
+	if err := verifyTodoCompletionTransitions(ctx, p.Todos); err != nil {
+		return "", err
+	}
 	return fmt.Sprintf("Todos updated: %d total — %d completed, %d in progress, %d pending.",
 		len(p.Todos), done, active, pending), nil
+}
+
+func verifyTodoCompletionTransitions(ctx context.Context, todos []todoItem) error {
+	ledger, ok := evidence.FromContext(ctx)
+	if !ok {
+		return nil
+	}
+	missing, hasBaseline := ledger.UnverifiedCompletedTodos(toEvidenceTodos(todos))
+	if !hasBaseline || len(missing) == 0 {
+		return nil
+	}
+	if len(missing) == 1 {
+		m := missing[0]
+		return fmt.Errorf("todo %d %q is newly completed but has no matching successful complete_step receipt in this turn", m.Index, m.Content)
+	}
+	return fmt.Errorf("%d todos are newly completed but have no matching successful complete_step receipts in this turn", len(missing))
+}
+
+func toEvidenceTodos(todos []todoItem) []evidence.TodoItem {
+	out := make([]evidence.TodoItem, 0, len(todos))
+	for _, t := range todos {
+		out = append(out, evidence.TodoItem{
+			Content:    t.Content,
+			Status:     t.Status,
+			ActiveForm: t.ActiveForm,
+			Level:      t.Level,
+		})
+	}
+	return out
 }

@@ -6,7 +6,7 @@
 // update loop — same controller, different renderer.
 
 import { useCallback, useEffect, useReducer, useRef } from "react";
-import { app, onEvent } from "./bridge";
+import { app, onEvent, onReady } from "./bridge";
 import type {
   BalanceInfo,
   ContextInfo,
@@ -242,6 +242,17 @@ function applyEvent(s: State, e: WireEvent): State {
       return { ...s, items: next };
     }
 
+    case "tool_progress": {
+      const t = e.tool;
+      if (!t?.id) return s;
+      const idx = s.items.findIndex((it) => it.kind === "tool" && it.id === t.id);
+      if (idx < 0) return s;
+      const next = [...s.items];
+      const it = next[idx];
+      if (it.kind === "tool") next[idx] = { ...it, output: (it.output ?? "") + (t.output ?? "") };
+      return { ...s, items: next };
+    }
+
     case "usage": {
       const used = e.usage && s.context.window ? e.usage.promptTokens : s.context.used;
       // Usage arrives once per model step; sum the output across steps for the
@@ -335,6 +346,10 @@ function applyEvent(s: State, e: WireEvent): State {
         : finalized;
       return { ...s, items, running: false, turnActive: false, currentAssistant: undefined, approval: undefined, ask: undefined, seq: s.seq + 1 };
     }
+    // An unrecognized event kind (e.g. one the kernel added but this build's wire
+    // map doesn't name yet) must not collapse state to undefined — ignore it.
+    default:
+      return s;
   }
 }
 
@@ -387,6 +402,8 @@ function reducer(s: State, a: Action): State {
       return { ...initialState, meta: s.meta, context: { ...s.context, used: 0 }, balance: s.balance, jobs: s.jobs };
     case "event":
       return applyEvent(s, a.e);
+    default:
+      return s;
   }
 }
 
@@ -396,6 +413,20 @@ export function useController() {
   // pinned to the first render); cancel() reads it to decide un-send vs. cancel.
   const stateRef = useRef(state);
   stateRef.current = state;
+
+  // loadSessionData fetches Meta, ContextUsage, and History — called on mount
+  // and again when agent:ready fires (boot.Build completed in the background).
+  const loadSessionData = useCallback(async () => {
+    try {
+      dispatch({ type: "meta", meta: await app.Meta() });
+      dispatch({ type: "context", context: await app.ContextUsage() });
+      const history = await app.History();
+      if (history && history.length) dispatch({ type: "history", messages: history });
+    } catch {
+      // Bound methods unavailable (pre-startup / build error) — ignore; Meta's
+      // startupErr surfaces the reason once it's reachable.
+    }
+  }, []);
 
   useEffect(() => {
     const off = onEvent((e) => {
@@ -423,17 +454,23 @@ export function useController() {
       }
     });
 
-    void (async () => {
-      try {
-        dispatch({ type: "meta", meta: await app.Meta() });
-        dispatch({ type: "context", context: await app.ContextUsage() });
-        const history = await app.History();
-        if (history && history.length) dispatch({ type: "history", messages: history });
-      } catch {
-        // Bound methods unavailable (pre-startup / build error) — ignore; Meta's
-        // startupErr surfaces the reason once it's reachable.
-      }
-    })();
+    // When boot.Build completes asynchronously, the Go side emits agent:ready.
+    // Re-fetch session data so the UI reflects the now-available controller.
+    const offReady = onReady(() => {
+      void loadSessionData();
+      app
+        .Balance()
+        .then((balance) => dispatch({ type: "balance", balance }))
+        .catch(() => {});
+      app
+        .Jobs()
+        .then((jobs) => dispatch({ type: "jobs", jobs }))
+        .catch(() => {});
+    });
+
+    // Initial load — picks up the pre-build Meta (ready=false) and, if the
+    // build already finished, the full session.
+    void loadSessionData();
 
     // Wallet balance is a network call — fetch it independently so it never delays
     // the transcript/meta load (and is a no-op readout when not configured).
@@ -446,12 +483,18 @@ export function useController() {
       .then((jobs) => dispatch({ type: "jobs", jobs }))
       .catch(() => {});
 
-    return off;
-  }, []);
+    return () => {
+      off();
+      offReady();
+    };
+  }, [loadSessionData]);
 
-  const send = useCallback((text: string) => {
-    dispatch({ type: "user", text });
-    app.Submit(text).catch(() => {});
+  const send = useCallback((displayText: string, submitText = displayText) => {
+    dispatch({ type: "user", text: displayText });
+    const display = displayText.trim();
+    const submit = submitText.trim();
+    const call = display !== submit ? app.SubmitDisplay(display, submit) : app.Submit(submit);
+    call.catch(() => {});
   }, []);
 
   // cancel aborts the in-flight turn. If the server hasn't replied yet (the user
@@ -528,11 +571,7 @@ export function useController() {
     }
   }, []);
 
-  // Workspace: open a folder chooser and switch to that project. On a pick the
-  // backend rebuilds the controller (new model/config) with a fresh session, so
-  // reset and refresh meta/context. Returns the chosen path ("" if cancelled).
-  const pickWorkspace = useCallback(async (): Promise<string> => {
-    const path = await app.PickWorkspace().catch(() => "");
+  const refreshWorkspaceState = useCallback(async (path: string): Promise<string> => {
     if (path) {
       dispatch({ type: "reset" });
       try {
@@ -544,6 +583,19 @@ export function useController() {
     }
     return path;
   }, []);
+
+  // Workspace: open a folder chooser and switch to that project. On a pick the
+  // backend rebuilds the controller (new model/config) with a fresh session, so
+  // reset and refresh meta/context. Returns the chosen path ("" if cancelled).
+  const pickWorkspace = useCallback(async (): Promise<string> => {
+    const path = await app.PickWorkspace().catch(() => "");
+    return refreshWorkspaceState(path);
+  }, [refreshWorkspaceState]);
+
+  const switchWorkspace = useCallback(async (path: string): Promise<string> => {
+    const next = await app.SwitchWorkspace(path).catch(() => "");
+    return refreshWorkspaceState(next);
+  }, [refreshWorkspaceState]);
 
   const compact = useCallback(() => {
     app.Compact().catch(() => {});
@@ -571,6 +623,10 @@ export function useController() {
 
   const remember = useCallback(async (scope: string, note: string) => {
     await app.Remember(scope, note).catch(() => {});
+  }, []);
+
+  const forget = useCallback(async (name: string) => {
+    await app.Forget(name).catch(() => {});
   }, []);
 
   const saveDoc = useCallback(async (path: string, body: string) => {
@@ -617,11 +673,13 @@ export function useController() {
     renameSession,
     refreshMeta,
     pickWorkspace,
+    switchWorkspace,
     compact,
     rewind,
     setModel,
     fetchMemory,
     remember,
+    forget,
     saveDoc,
   };
 }

@@ -8,6 +8,7 @@ export type EventKind =
   | "message"
   | "tool_dispatch"
   | "tool_result"
+  | "tool_progress"
   | "usage"
   | "notice"
   | "phase"
@@ -113,7 +114,15 @@ export interface SessionMeta {
   preview: string;
   title?: string; // user-chosen name; falls back to preview when empty
   turns: number;
-  modTime: number; // unix milliseconds
+  createdAt?: number; // unix milliseconds
+  lastActivityAt?: number; // unix milliseconds
+  modTime: number; // compatibility alias for lastActivityAt
+  current: boolean;
+}
+
+export interface WorkspaceView {
+  path: string;
+  name: string;
   current: boolean;
 }
 
@@ -147,6 +156,60 @@ export interface DirEntry {
   isDir: boolean;
 }
 
+export interface FilePreview {
+  path: string;
+  body: string;
+  size: number;
+  truncated: boolean;
+  binary: boolean;
+  err?: string;
+}
+
+// MCP & Skills drawer (desktop/app.go Capabilities) — the GUI counterpart to
+// /mcp + /skill: connected/failed servers and discoverable skills.
+export interface ServerView {
+  name: string;
+  transport: string;
+  status: "connected" | "failed" | "disabled";
+  tools: number;
+  prompts: number;
+  resources: number;
+  error?: string;
+  toolList?: MCPToolView[];
+}
+export interface MCPToolView {
+  name: string;
+  description: string;
+}
+export interface SkillView {
+  name: string;
+  description: string;
+  scope: string;
+  runAs: string;
+}
+export interface SkillRootView {
+  dir: string;
+  scope: string;
+  priority: number;
+  status: string;
+  configured: boolean;
+  skills: number;
+  warning?: string;
+}
+export interface CapabilitiesView {
+  servers: ServerView[];
+  skills: SkillView[];
+  skillRoots: SkillRootView[];
+}
+export interface MCPServerInput {
+  name: string;
+  transport: string; // stdio | http | sse
+  command: string;
+  args: string[];
+  url: string;
+  env: Record<string, string>;
+}
+
 export interface ModelInfo {
   ref: string; // "provider/model" — pass to SetModel
   provider: string;
@@ -176,6 +239,7 @@ export interface MemoryDoc {
 
 export interface MemoryFact {
   name: string;
+  title?: string;
   description: string;
   type: string; // "user" | "feedback" | "project" | "reference"
   body: string;
@@ -239,6 +303,21 @@ export interface SandboxView {
   allowWrite: string[];
 }
 
+export interface NetworkProxyView {
+  type: string;
+  server: string;
+  port: number;
+  username: string;
+  password: string;
+}
+
+export interface NetworkView {
+  proxyMode: string; // "auto" | "custom" | "off" (backend may still return legacy "env")
+  proxyUrl: string;
+  noProxy: string;
+  proxy: NetworkProxyView;
+}
+
 export interface AgentView {
   temperature: number;
   maxSteps: number;
@@ -251,8 +330,8 @@ export interface SettingsView {
   providers: ProviderView[];
   permissions: PermissionsView;
   sandbox: SandboxView;
+  network: NetworkView;
   agent: AgentView;
-  language: string;
   configPath: string;
   providerKinds: string[]; // provider implementations the kernel registered (for the kind picker)
   bypass: boolean; // live YOLO state (runtime-only) — whether approvals are skipped this session

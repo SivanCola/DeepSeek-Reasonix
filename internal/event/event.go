@@ -63,6 +63,16 @@ const (
 	// Summary so the placeholder still resolves. Replaces the older plain Notice
 	// so a sink can render a distinct, expandable card.
 	CompactionDone
+	// ToolProgress streams a chunk of a still-running tool's combined output
+	// (Tool: ID + Output = the new chunk). Emitted between ToolDispatch and
+	// ToolResult for long tools like bash so a frontend can show live progress.
+	// Appended last to keep the Kind values before it wire-stable.
+	ToolProgress
+	// MCPSurfaceReady fires once per server when its background-loaded surface
+	// (prompts or resources) finishes after startup. Lets UIs refresh /mcp
+	// status without polling. Text carries "<server>: <surface> ready (<count>
+	// items)". Appended last to keep the Kind values before it wire-stable.
+	MCPSurfaceReady
 )
 
 // Level classifies a Notice so sinks can style or filter it.
@@ -92,6 +102,17 @@ type Tool struct {
 	// sub-agent's calls carry the parent `task` call's ID so a frontend can nest
 	// them under it. Empty for top-level calls.
 	ParentID string
+	FileDiff
+}
+
+// FileDiff is a previewed change carried on a writer tool's full ToolDispatch
+// and on its ApprovalRequest, so a frontend can render +/- lines before the
+// call runs. Diff is the unified diff (empty for read-only tools, binary files,
+// or no-op changes); Added/Removed are its line tallies.
+type FileDiff struct {
+	Diff    string
+	Added   int
+	Removed int
 }
 
 // Approval identifies a pending tool-call approval for an ApprovalRequest
@@ -178,7 +199,11 @@ type Sink interface {
 type FuncSink func(Event)
 
 // Emit calls the wrapped function.
-func (f FuncSink) Emit(e Event) { f(e) }
+func (f FuncSink) Emit(e Event) {
+	if f != nil {
+		f(e)
+	}
+}
 
 // Discard is a Sink that drops every event. Useful in tests and for runs that
 // only care about the final session state.

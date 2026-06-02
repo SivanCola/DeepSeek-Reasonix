@@ -54,7 +54,16 @@ type Messages struct {
 	ResumeRequiresTTY string // shown when --resume runs piped instead of on a terminal
 	PickSessionLabel  string // header on the --resume picker
 
+	// in-chat /resume command
+	ResumeListHeader    string // header above the /resume session list
+	ResumeBusy          string // shown when /resume is used mid-turn
+	ResumeBadIndexFmt   string // shown when /resume gets an out-of-range index (one %d)
+	ResumeAlreadyActive string // shown when /resume targets the current session
+	ResumedTitle        string // banner title after a /resume switch
+
 	// chat TUI status line / approval banner.
+	ChatThinking           string // live reasoning marker label, e.g. "thinking…"
+	ChatThoughtForFmt      string // collapsed reasoning summary, "%d" = elapsed s
 	ChatStatusThinkingFmt  string // "%s thinking… (%ds · <cancel hint>)" — %s = spinner, %d = elapsed s
 	ChatStatusIdle         string // shortcuts hint when idle
 	ChatStatusPlanApproval string // shortcuts hint while a plan is pending
@@ -64,6 +73,7 @@ type Messages struct {
 	ToolApprovalSourceFmt  string // "Source: %s" / "来源: %s"
 	ToolApprovalBuiltIn    string // built-in tool source label
 	ToolApprovalImageUse   string // image-understanding detail for understand_image-style tools
+	DiffFoldedFmt          string // "… +%d more lines" footer when a writer diff is folded
 
 	// `ask` tool question card.
 	AskTypeSomething   string // the "type your own answer" option label
@@ -94,6 +104,7 @@ type Messages struct {
 	SlashHelp          string // listed commands
 	SlashPromptEmpty   string // an MCP prompt returned no text to send
 	SlashMCPNone       string // /mcp when no MCP servers are connected
+	CtrlCQuitHint      string // shown on first Ctrl+C while idle; second press exits
 	CompHintSlash      string // key hint footer under the slash-command menu
 	CompHintFile       string // key hint footer under the @ file/resource menu
 
@@ -105,14 +116,20 @@ type Messages struct {
 	CmdTree         string // /tree
 	CmdBranch       string // /branch
 	CmdSwitchBranch string // /switch
+	CmdResume       string // /resume
 	CmdModel        string // /model
 	CmdMemory       string // /memory
+	CmdForget       string // /forget
 	CmdMcp          string // /mcp
 	CmdHooks        string // /hooks
+	CmdPasteImage   string // /paste-image
 	CmdOutputStyle  string // /output-style
 	CmdSkill        string // /skill
+	CmdVerbose      string // /verbose
+	CmdThinking     string // /thinking
 	CmdHelp         string // /help
 	CmdTodo         string // /todo
+	CmdQuit         string // /quit (also accepts /exit as hidden alias)
 	ArgSkillList    string // /skill list
 	ArgSkillShow    string // /skill show
 	ArgSkillNew     string // /skill new
@@ -124,6 +141,9 @@ type Messages struct {
 	ArgHooksList    string // /hooks list
 	ArgHooksTrust   string // /hooks trust
 	ArgModelCurrent string // /model <ref> active tag
+	ArgThinkingHigh string // /thinking high
+	ArgThinkingMax  string // /thinking max
+	ArgThinkingOff  string // /thinking off
 
 	// management listing notices (the Submit path: desktop / HTTP frontends)
 	ListModelsHeaderFmt string // "models (active: %s)"

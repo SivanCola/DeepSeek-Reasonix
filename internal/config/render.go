@@ -19,9 +19,49 @@ func RenderTOML(c *Config) string {
 
 	fmt.Fprintf(&b, "default_model = %q\n", c.DefaultModel)
 	if c.Language != "" {
-		fmt.Fprintf(&b, "language      = %q   # ui language; empty = auto-detect from $LANG / $REASONIX_LANG\n", c.Language)
+		fmt.Fprintf(&b, "language      = %q   # ui/model language; empty = auto-detect from $LANG / $REASONIX_LANG\n", c.Language)
 	} else {
-		b.WriteString("# language      = \"zh\"   # ui language; empty = auto-detect from $LANG / $REASONIX_LANG\n")
+		b.WriteString("# language      = \"zh\"   # ui/model language; empty = auto-detect from $LANG / $REASONIX_LANG\n")
+	}
+	b.WriteString("\n")
+
+	b.WriteString("[network]\n")
+	fmt.Fprintf(&b, "proxy_mode = %q   # auto|env|custom|off; auto currently uses env proxy\n", c.NetworkProxyMode())
+	if c.Network.ProxyURL != "" {
+		fmt.Fprintf(&b, "proxy_url  = %q   # custom override, e.g. socks5://127.0.0.1:7890\n", c.Network.ProxyURL)
+	} else {
+		b.WriteString("# proxy_url  = \"socks5://127.0.0.1:7890\"   # optional custom override\n")
+	}
+	if c.Network.NoProxy != "" {
+		fmt.Fprintf(&b, "no_proxy   = %q   # honored for proxy_mode = \"custom\"\n", c.Network.NoProxy)
+	} else {
+		b.WriteString("# no_proxy   = \"localhost,127.0.0.1,.local\"   # honored for proxy_mode = \"custom\"\n")
+	}
+	b.WriteString("\n[network.proxy]\n")
+	proxyType := c.Network.Proxy.Type
+	if proxyType == "" {
+		proxyType = "socks5"
+	}
+	fmt.Fprintf(&b, "type = %q   # http|https|socks5|socks5h\n", proxyType)
+	if c.Network.Proxy.Server != "" {
+		fmt.Fprintf(&b, "server = %q\n", c.Network.Proxy.Server)
+	} else {
+		b.WriteString("# server = \"127.0.0.1\"\n")
+	}
+	if c.Network.Proxy.Port > 0 {
+		fmt.Fprintf(&b, "port = %d\n", c.Network.Proxy.Port)
+	} else {
+		b.WriteString("# port = 7890\n")
+	}
+	if c.Network.Proxy.Username != "" {
+		fmt.Fprintf(&b, "username = %q\n", c.Network.Proxy.Username)
+	} else {
+		b.WriteString("# username = \"\"\n")
+	}
+	if c.Network.Proxy.Password != "" {
+		fmt.Fprintf(&b, "password = %q   # supports ${VAR} expansion\n", c.Network.Proxy.Password)
+	} else {
+		b.WriteString("# password = \"${REASONIX_PROXY_PASSWORD}\"   # optional; supports ${VAR} expansion\n")
 	}
 	b.WriteString("\n")
 
@@ -36,6 +76,16 @@ func RenderTOML(c *Config) string {
 	}
 	fmt.Fprintf(&b, "max_steps   = %d\n", c.Agent.MaxSteps)
 	fmt.Fprintf(&b, "temperature = %s\n", formatFloat(c.Agent.Temperature))
+	autoPlan := c.Agent.AutoPlan
+	if autoPlan == "" {
+		autoPlan = "ask"
+	}
+	fmt.Fprintf(&b, "auto_plan   = %q   # off|ask|on; ask/on auto-enter plan mode for complex tasks\n", autoPlan)
+	if c.Agent.AutoPlanClassifier != "" {
+		fmt.Fprintf(&b, "auto_plan_classifier = %q   # optional provider/model for borderline auto-plan decisions\n", c.Agent.AutoPlanClassifier)
+	} else {
+		b.WriteString("# auto_plan_classifier = \"deepseek-flash\"   # optional; only used for borderline tasks\n")
+	}
 	if c.Agent.PlannerModel != "" {
 		fmt.Fprintf(&b, "planner_model = %q   # low-frequency planner (two-model collaboration)\n", c.Agent.PlannerModel)
 	} else {
@@ -63,7 +113,14 @@ func RenderTOML(c *Config) string {
 		fmt.Fprintf(&b, "name        = %q\n", p.Name)
 		fmt.Fprintf(&b, "kind        = %q\n", p.Kind)
 		fmt.Fprintf(&b, "base_url    = %q\n", p.BaseURL)
-		fmt.Fprintf(&b, "model       = %q\n", p.Model)
+		if len(p.Models) > 0 {
+			fmt.Fprintf(&b, "models      = %s\n", renderStringArray(p.Models))
+			if p.Default != "" {
+				fmt.Fprintf(&b, "default     = %q\n", p.Default)
+			}
+		} else if p.Model != "" {
+			fmt.Fprintf(&b, "model       = %q\n", p.Model)
+		}
 		fmt.Fprintf(&b, "api_key_env = %q\n", p.APIKeyEnv)
 		if p.BalanceURL != "" {
 			fmt.Fprintf(&b, "balance_url = %q   # optional; wallet-balance endpoint shown in the status bar\n", p.BalanceURL)
@@ -74,6 +131,12 @@ func RenderTOML(c *Config) string {
 		if p.Price != nil {
 			fmt.Fprintf(&b, "price       = { cache_hit = %v, input = %v, output = %v, currency = %q }   # per 1M tokens\n",
 				p.Price.CacheHit, p.Price.Input, p.Price.Output, p.Price.Symbol())
+		}
+		if p.Thinking != "" {
+			fmt.Fprintf(&b, "thinking    = %q\n", p.Thinking)
+		}
+		if p.Effort != "" {
+			fmt.Fprintf(&b, "effort      = %q\n", p.Effort)
 		}
 		b.WriteString("\n")
 	}
@@ -90,6 +153,13 @@ func RenderTOML(c *Config) string {
 			fmt.Fprintf(&b, "%q", t)
 		}
 		b.WriteString("]\n\n")
+	}
+
+	b.WriteString("[skills]\n")
+	if len(c.Skills.Paths) > 0 {
+		fmt.Fprintf(&b, "paths = %s   # extra custom skill roots\n\n", renderStringArray(c.Skills.Paths))
+	} else {
+		b.WriteString("# paths = [\"~/my-skills\", \"../shared/skills\"]   # extra custom skill roots\n\n")
 	}
 
 	b.WriteString("[permissions]\n")
@@ -167,6 +237,9 @@ func RenderTOML(c *Config) string {
 			}
 			if len(pl.Env) > 0 {
 				fmt.Fprintf(&b, "env     = %s\n", renderStringMap(pl.Env))
+			}
+			if pl.AutoStart != nil {
+				fmt.Fprintf(&b, "auto_start = %v\n", *pl.AutoStart)
 			}
 		}
 	}

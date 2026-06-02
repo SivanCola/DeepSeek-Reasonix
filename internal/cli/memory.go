@@ -1,5 +1,7 @@
 package cli
 
+import "fmt"
+
 // showMemory reports what memory is loaded and where it lives — the TUI analog
 // of Claude Code's /memory. It surfaces the doc files and the auto-memory store
 // path so the user can open and edit them directly, since the in-terminal UI
@@ -11,4 +13,18 @@ func (m *chatTUI) showMemory() {
 		return
 	}
 	m.commitLine(renderMemory(m.width, set))
+}
+
+// forgetMemory deletes a saved auto-memory by name (the slug shown in /memory).
+// It is the manual counterpart to the model's `forget` tool.
+func (m *chatTUI) forgetMemory(name string) {
+	if name == "" {
+		m.notice("usage: /forget <name> — the slug shown under “saved memories” in /memory")
+		return
+	}
+	if err := m.ctrl.ForgetMemory(name); err != nil {
+		m.notice(fmt.Sprintf("forget: %v", err))
+		return
+	}
+	m.notice("forgot memory: " + name)
 }

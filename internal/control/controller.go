@@ -15,6 +15,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -22,6 +24,7 @@ import (
 	"reasonix/internal/agent"
 	"reasonix/internal/billing"
 	"reasonix/internal/checkpoint"
+	"reasonix/internal/codegraph"
 	"reasonix/internal/command"
 	"reasonix/internal/config"
 	"reasonix/internal/diff"
@@ -29,6 +32,7 @@ import (
 	"reasonix/internal/hook"
 	"reasonix/internal/jobs"
 	"reasonix/internal/memory"
+	"reasonix/internal/nilutil"
 	"reasonix/internal/permission"
 	"reasonix/internal/plugin"
 	"reasonix/internal/provider"
@@ -53,13 +57,16 @@ type Controller struct {
 	hooks        *hook.Runner // session hook runner; nil-safe (no hooks configured)
 	mem          *memory.Set
 	cleanup      func()
+	autoPlan     string
+	classifier   autoPlanClassifier
 	startedOnce  bool // guards the one-shot SessionStart hook on first turn
 
 	// balanceURL/balanceKey target the active provider's optional wallet-balance
 	// endpoint (empty when the provider declares none). Captured at build so a
 	// model/key switch — which rebuilds the controller — refreshes them.
-	balanceURL string
-	balanceKey string
+	balanceURL    string
+	balanceKey    string
+	balanceClient *http.Client
 
 	// jobs is the session-scoped background-job manager. The agent's background
 	// tools spawn into it; Compose drains its completion notes into the next turn;
@@ -153,8 +160,9 @@ type Options struct {
 	Cleanup      func()
 	// BalanceURL/BalanceKey wire the active provider's optional wallet-balance
 	// endpoint and bearer key; empty when the provider declares no balance_url.
-	BalanceURL string
-	BalanceKey string
+	BalanceURL    string
+	BalanceKey    string
+	BalanceClient *http.Client
 	// Jobs is the session-scoped background-job manager (nil disables background jobs).
 	Jobs *jobs.Manager
 	// Registry is the executor's live tool set, and PluginCtx the session-scoped
@@ -164,42 +172,51 @@ type Options struct {
 	// WorkspaceRoot is the project root checkpoint restores are confined to ("" =
 	// no confinement). Frontends pass the cwd they launched the session in.
 	WorkspaceRoot string
+	AutoPlan      string
+	Classifier    autoPlanClassifier
 }
 
 // New builds a Controller. A nil Sink is replaced with event.Discard.
 func New(opts Options) *Controller {
 	sink := opts.Sink
-	if sink == nil {
+	if nilutil.IsNil(sink) {
 		sink = event.Discard
+	}
+	classifier := opts.Classifier
+	if nilutil.IsNil(classifier) {
+		classifier = nil
 	}
 	pluginCtx := opts.PluginCtx
 	if pluginCtx == nil {
 		pluginCtx = context.Background()
 	}
 	c := &Controller{
-		runner:       opts.Runner,
-		executor:     opts.Executor,
-		sink:         sink,
-		policy:       opts.Policy,
-		label:        opts.Label,
-		systemPrompt: opts.SystemPrompt,
-		sessionDir:   opts.SessionDir,
-		sessionPath:  opts.SessionPath,
-		host:         opts.Host,
-		commands:     opts.Commands,
-		skills:       opts.Skills,
-		hooks:        opts.Hooks,
-		mem:          opts.Memory,
-		cleanup:      opts.Cleanup,
-		balanceURL:   opts.BalanceURL,
-		balanceKey:   opts.BalanceKey,
-		jobs:         opts.Jobs,
-		reg:          opts.Registry,
-		pluginCtx:    pluginCtx,
-		cpRoot:       opts.WorkspaceRoot,
-		approvals:    map[string]chan approvalReply{},
-		asks:         map[string]chan []event.AskAnswer{},
-		granted:      map[string]bool{},
+		runner:        opts.Runner,
+		executor:      opts.Executor,
+		sink:          sink,
+		policy:        opts.Policy,
+		label:         opts.Label,
+		systemPrompt:  opts.SystemPrompt,
+		sessionDir:    opts.SessionDir,
+		sessionPath:   opts.SessionPath,
+		host:          opts.Host,
+		commands:      opts.Commands,
+		skills:        opts.Skills,
+		hooks:         opts.Hooks,
+		mem:           opts.Memory,
+		cleanup:       opts.Cleanup,
+		autoPlan:      normalizeAutoPlan(opts.AutoPlan),
+		classifier:    classifier,
+		balanceURL:    opts.BalanceURL,
+		balanceKey:    opts.BalanceKey,
+		balanceClient: opts.BalanceClient,
+		jobs:          opts.Jobs,
+		reg:           opts.Registry,
+		pluginCtx:     pluginCtx,
+		cpRoot:        opts.WorkspaceRoot,
+		approvals:     map[string]chan approvalReply{},
+		asks:          map[string]chan []event.AskAnswer{},
+		granted:       map[string]bool{},
 	}
 	// Checkpoints: bind a store to the session and route writer pre-edits into it.
 	c.rebindCheckpoints(opts.SessionPath)
@@ -209,6 +226,7 @@ func New(opts Options) *Controller {
 				c.cp.Snapshot(ch)
 			}
 		})
+		c.executor.SetMemoryQueue(c)
 	}
 	return c
 }
@@ -279,11 +297,19 @@ func (c *Controller) runGuarded(body func(ctx context.Context) error) {
 	}()
 }
 
-// Send starts a turn with an already-composed message (the caller applied any
-// plan-mode marker and @-ref expansion). Used by the chat TUI, which resolves
-// those itself for live UI feedback.
+// Send starts a turn with an uncomposed message. The controller applies
+// auto-plan, plan-mode, memory, and background-job framing inside the async turn
+// path so frontends do not block on classifier I/O.
 func (c *Controller) Send(input string) {
-	c.runGuarded(func(ctx context.Context) error { return c.runTurn(ctx, input) })
+	c.SendWithRaw(input, input)
+}
+
+// SendWithRaw starts a turn with separate model input and raw prompt text. The
+// raw prompt is used only for auto-plan scoring; it deliberately excludes
+// resolved @-reference payloads so referenced file contents cannot inflate the
+// complexity score.
+func (c *Controller) SendWithRaw(input, raw string) {
+	c.runGuarded(func(ctx context.Context) error { return c.runTurnWithRaw(ctx, input, raw) })
 }
 
 // planApprovalTool is the Tool name on the ApprovalRequest the controller emits
@@ -293,7 +319,7 @@ const planApprovalTool = "exit_plan_mode"
 
 // planApprovedMessage is the follow-up turn sent once the user approves a plan —
 // the in-context nudge to execute and keep the (already-seeded) task list honest.
-const planApprovedMessage = "Plan approved — plan mode is off; you're cleared to make the changes without asking again. Implement the plan now. Keep the task list current with todo_write (mark the step you start as in_progress; one in_progress at a time), and sign off each finished step with complete_step, attaching the evidence it's done — the verification you ran, the diff/files you changed, or a manual check. Don't claim a step is done without evidence."
+const planApprovedMessage = "Plan approved — plan mode is off; you're cleared to make the changes without asking again. Implement the plan now. Keep the task list current with todo_write, preserving its two-level shape (phases at level 0, their sub-steps at level 1): mark the sub-step you start as in_progress, one in_progress at a time. Sign off each finished sub-step with complete_step, attaching the evidence it's done — the verification you ran, the diff/files you changed, or a manual check. Don't claim a step is done without evidence."
 
 // runTurn runs one model turn, then applies the plan-approval gate. This is the
 // single, frontend-agnostic plan flow: in plan mode the model just researches
@@ -305,7 +331,15 @@ const planApprovedMessage = "Plan approved — plan mode is off; you're cleared 
 // next turn can revise. Plan mode is only ever set interactively, so the headless
 // `Run` path (which doesn't call this) never blocks on a prompt.
 func (c *Controller) runTurn(ctx context.Context, input string) error {
+	return c.runTurnWithRaw(ctx, input, input)
+}
+
+func (c *Controller) runTurnWithRaw(ctx context.Context, input, raw string) error {
 	c.maybeSessionStart(ctx)
+	c.maybeAutoPlan(ctx, raw)
+	input = c.Compose(input)
+	startMessages := c.messageCount()
+	defer c.snapshotActivityIfChanged(startMessages)
 	// Open a checkpoint for this turn before the user message is appended, so the
 	// recorded message boundary precedes it and pre-edit snapshots land here.
 	c.beginCheckpoint(input)
@@ -426,9 +460,13 @@ func (c *Controller) Submit(input string) {
 				c.notice("unknown command: " + trimmed)
 				return nil
 			}
-			return c.runner.Run(ctx, c.Compose(sent))
+			return c.runTurnWithRaw(ctx, sent, sent)
 		})
 	case strings.HasPrefix(trimmed, "/"):
+		if ref, ok := FileRefLine(trimmed); ok {
+			c.runRefTurn(ref)
+			return
+		}
 		// Read-only management verbs (/model /memory /skill /hooks /mcp) emit a
 		// listing Notice, so Submit-based frontends (desktop, HTTP) get them with
 		// no extra wiring. (The chat TUI handles these itself with richer output.)
@@ -442,14 +480,20 @@ func (c *Controller) Submit(input string) {
 			if turn, name, fromTurn, err := ParseBranchTarget(args); err != nil {
 				c.notice(err.Error())
 			} else if fromTurn {
-				_, _ = c.ForkNamed(turn-1, name)
+				if _, err := c.ForkNamed(turn-1, name); err != nil {
+					c.notice(err.Error())
+				}
 			} else {
-				_, _ = c.Branch(name)
+				if _, err := c.Branch(name); err != nil {
+					c.notice(err.Error())
+				}
 			}
 			return
 		case "/switch":
 			ref := strings.TrimSpace(strings.TrimPrefix(trimmed, fields[0]))
-			_, _ = c.SwitchBranch(ref)
+			if _, err := c.SwitchBranch(ref); err != nil {
+				c.notice(err.Error())
+			}
 			return
 		}
 		if c.managementNotice(trimmed) {
@@ -459,30 +503,36 @@ func (c *Controller) Submit(input string) {
 		// turn. (Built-in slash verbs like /compact are handled above.)
 		if sent, ok := c.CustomCommand(trimmed); ok {
 			c.runGuarded(func(ctx context.Context) error {
-				return c.runTurn(ctx, c.Compose(sent))
+				return c.runTurnWithRaw(ctx, sent, sent)
 			})
 			return
 		}
 		if sent, ok := c.RunSkill(trimmed); ok {
 			c.runGuarded(func(ctx context.Context) error {
-				return c.runTurn(ctx, c.Compose(sent))
+				return c.runTurnWithRaw(ctx, sent, sent)
 			})
 			return
 		}
 		c.notice("unknown command: " + trimmed)
 	default:
-		c.runGuarded(func(ctx context.Context) error {
-			block, errs := c.ResolveRefs(ctx, input)
-			for _, e := range errs {
-				c.notice(e)
-			}
-			sent := input
-			if block != "" {
-				sent = "Referenced context:\n\n" + block + "\n\n" + input
-			}
-			return c.runTurn(ctx, c.Compose(sent))
-		})
+		c.runRefTurn(input)
 	}
+}
+
+// runRefTurn resolves a line's @references into a context block and starts a
+// turn with it prepended (or the raw line when nothing resolved).
+func (c *Controller) runRefTurn(input string) {
+	c.runGuarded(func(ctx context.Context) error {
+		block, errs := c.ResolveRefs(ctx, input)
+		for _, e := range errs {
+			c.notice(e)
+		}
+		sent := input
+		if block != "" {
+			sent = "Referenced context:\n\n" + block + "\n\n" + input
+		}
+		return c.runTurnWithRaw(ctx, sent, input)
+	})
 }
 
 // notice emits an informational Notice event.
@@ -495,6 +545,8 @@ func (c *Controller) notice(text string) {
 // just needs the exit status — no TurnDone event, no cancel bookkeeping.
 func (c *Controller) Run(ctx context.Context, input string) error {
 	c.maybeSessionStart(ctx)
+	startMessages := c.messageCount()
+	defer c.snapshotActivityIfChanged(startMessages)
 	if c.hooks.Enabled() {
 		c.turn++
 		if block, _ := c.hooks.PromptSubmit(ctx, input, c.turn); block {
@@ -597,6 +649,14 @@ func (c *Controller) SetPlanMode(v bool) {
 	if c.executor != nil {
 		c.executor.SetPlanMode(v)
 	}
+}
+
+// PlanMode reports whether outgoing turns currently receive the plan-mode
+// marker. Frontends use it after Compose because auto-plan may flip the mode.
+func (c *Controller) PlanMode() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.planMode
 }
 
 // Compact runs one compaction pass on the executor's session on demand.
@@ -752,10 +812,12 @@ func (c *Controller) ForkNamed(turn int, name string) (string, error) {
 
 	// Persist the current conversation first so the branch point survives, then
 	// seed a fresh session with the messages up to the fork and switch to it.
-	_ = c.Snapshot()
+	if err := c.Snapshot(); err != nil {
+		slog.Warn("controller: pre-fork snapshot", "err", err)
+	}
 	parentPath := c.SessionPath()
 	parentID := agent.BranchID(parentPath)
-	src := c.executor.Session().Messages
+	src := c.executor.Session().Snapshot()
 	if boundary > len(src) {
 		boundary = len(src)
 	}
@@ -808,7 +870,7 @@ func (c *Controller) Branch(name string) (string, error) {
 	}
 	parentPath := c.SessionPath()
 	parentID := agent.BranchID(parentPath)
-	src := c.executor.Session().Messages
+	src := c.executor.Session().Snapshot()
 	branched := append([]provider.Message(nil), src...)
 	sess := agent.NewSession("")
 	sess.Messages = branched
@@ -958,7 +1020,9 @@ func (c *Controller) summarizeAt(ctx context.Context, turn int, from bool) error
 	c.mu.Lock()
 	c.cpBound = map[int]int{}
 	c.mu.Unlock()
-	_ = c.Snapshot()
+	if err := c.Snapshot(); err != nil {
+		slog.Warn("controller: post-summarize snapshot", "err", err)
+	}
 	return nil
 }
 
@@ -979,6 +1043,18 @@ func (c *Controller) Resume(s *agent.Session, path string) {
 // interaction). Called after every turn so a crash loses at most one in-flight
 // prompt.
 func (c *Controller) Snapshot() error {
+	return c.snapshot(false)
+}
+
+// SnapshotActivity writes the active conversation and marks the session as
+// recently active. Use it only after a real user/model turn changes the
+// transcript; switch/close snapshots should call Snapshot so they do not reorder
+// recent-session pickers.
+func (c *Controller) SnapshotActivity() error {
+	return c.snapshot(true)
+}
+
+func (c *Controller) snapshot(markActivity bool) error {
 	c.mu.Lock()
 	path := c.sessionPath
 	c.mu.Unlock()
@@ -989,10 +1065,34 @@ func (c *Controller) Snapshot() error {
 	if !s.HasContent() {
 		return nil
 	}
+	if !markActivity {
+		if _, err := agent.EnsureBranchMeta(path); err != nil {
+			return err
+		}
+	}
 	if err := s.Save(path); err != nil {
 		return err
 	}
-	return agent.TouchBranchMeta(path)
+	if markActivity {
+		return agent.TouchBranchMeta(path)
+	}
+	return nil
+}
+
+func (c *Controller) messageCount() int {
+	if c.executor == nil {
+		return 0
+	}
+	return len(c.executor.Session().Snapshot())
+}
+
+func (c *Controller) snapshotActivityIfChanged(startMessages int) {
+	if c.messageCount() <= startMessages {
+		return
+	}
+	if err := c.SnapshotActivity(); err != nil {
+		slog.Warn("controller: activity snapshot", "err", err)
+	}
 }
 
 // SetSessionPath pins where auto-save lands (a fresh session file minted by the
@@ -1022,7 +1122,7 @@ func (c *Controller) History() []provider.Message {
 	if c.executor == nil {
 		return nil
 	}
-	return c.executor.Session().Messages
+	return c.executor.Session().Snapshot() // copy — a turn may be appending concurrently
 }
 
 // ContextSnapshot returns (promptTokens, contextWindow) from the most recent
@@ -1073,7 +1173,7 @@ func (c *Controller) Balance(ctx context.Context) (*billing.Balance, error) {
 	if strings.TrimSpace(c.balanceURL) == "" {
 		return nil, nil
 	}
-	return billing.Fetch(ctx, c.balanceURL, c.balanceKey)
+	return billing.FetchWithClient(ctx, c.balanceClient, c.balanceURL, c.balanceKey)
 }
 
 // Host returns the running MCP host (nil when no plugins), for frontends that
@@ -1097,11 +1197,26 @@ func (c *Controller) HookRunner() *hook.Runner { return c.hooks }
 // of tools the server exposed. A save failure after a successful connect is
 // reported but non-fatal: the server still works this session.
 func (c *Controller) AddMCPServer(e config.PluginEntry) (int, error) {
-	if c.host == nil {
-		c.host = plugin.NewHost()
+	n, err := c.connectMCPServer(e)
+	if err != nil {
+		return 0, err
 	}
+	cfg, lerr := config.Load()
+	if lerr != nil {
+		return n, fmt.Errorf("connected, but reloading config to save failed: %w", lerr)
+	}
+	if err := cfg.UpsertPlugin(e); err != nil {
+		return n, fmt.Errorf("connected, but config rejected the entry: %w", err)
+	}
+	if err := cfg.Save(); err != nil {
+		return n, fmt.Errorf("connected, but saving config failed: %w", err)
+	}
+	return n, nil
+}
+
+func (c *Controller) connectMCPServer(e config.PluginEntry) (int, error) {
 	exp := e.ExpandedPlugin()
-	tools, err := c.host.Add(c.pluginCtx, plugin.Spec{
+	return c.connectMCPSpec(plugin.Spec{
 		Name:    exp.Name,
 		Type:    exp.Type,
 		Command: exp.Command,
@@ -1110,6 +1225,13 @@ func (c *Controller) AddMCPServer(e config.PluginEntry) (int, error) {
 		URL:     exp.URL,
 		Headers: exp.Headers,
 	})
+}
+
+func (c *Controller) connectMCPSpec(s plugin.Spec) (int, error) {
+	if c.host == nil {
+		c.host = plugin.NewHost()
+	}
+	tools, err := c.host.Add(c.pluginCtx, s)
 	if err != nil {
 		return 0, err
 	}
@@ -1118,17 +1240,73 @@ func (c *Controller) AddMCPServer(e config.PluginEntry) (int, error) {
 			c.reg.Add(t)
 		}
 	}
-	cfg, lerr := config.Load()
-	if lerr != nil {
-		return len(tools), fmt.Errorf("connected, but reloading config to save failed: %w", lerr)
-	}
-	if err := cfg.UpsertPlugin(e); err != nil {
-		return len(tools), fmt.Errorf("connected, but config rejected the entry: %w", err)
-	}
-	if err := cfg.Save(); err != nil {
-		return len(tools), fmt.Errorf("connected, but saving config failed: %w", err)
-	}
 	return len(tools), nil
+}
+
+func (c *Controller) ConfiguredMCPNames() []string {
+	cfg, err := config.Load()
+	if err != nil {
+		return nil
+	}
+	names := make([]string, 0, len(cfg.Plugins))
+	for _, p := range cfg.Plugins {
+		names = append(names, p.Name)
+	}
+	return names
+}
+
+func (c *Controller) DisconnectedMCPNames() []string {
+	cfg, err := config.Load()
+	if err != nil {
+		return nil
+	}
+	connected := map[string]bool{}
+	if c.host != nil {
+		for _, name := range c.host.ServerNames() {
+			connected[name] = true
+		}
+	}
+	var names []string
+	for _, p := range cfg.Plugins {
+		if !connected[p.Name] {
+			names = append(names, p.Name)
+		}
+	}
+	return names
+}
+
+func (c *Controller) ConnectConfiguredMCPServer(name string) (int, error) {
+	cfg, err := config.Load()
+	if err != nil {
+		return 0, err
+	}
+	for _, p := range cfg.Plugins {
+		if p.Name == name {
+			return c.connectMCPServer(p)
+		}
+	}
+	if name == "codegraph" {
+		return c.connectCodegraphMCPServer(cfg)
+	}
+	return 0, fmt.Errorf("no configured MCP server named %q", name)
+}
+
+func (c *Controller) connectCodegraphMCPServer(cfg *config.Config) (int, error) {
+	if !cfg.Codegraph.Enabled {
+		return 0, fmt.Errorf("codegraph is disabled in config")
+	}
+	bin, ok := codegraph.Resolve(cfg.Codegraph.Path)
+	if !ok {
+		return 0, fmt.Errorf("codegraph is not installed")
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return 0, err
+	}
+	if err := codegraph.EnsureInit(c.pluginCtx, bin, cwd); err != nil {
+		return 0, fmt.Errorf("codegraph init: %w", err)
+	}
+	return c.connectMCPSpec(plugin.Spec{Name: "codegraph", Command: bin, Args: []string{"serve", "--mcp"}, Dir: cwd})
 }
 
 // RemoveMCPServer disconnects a live MCP server — its tools vanish from the next
@@ -1159,6 +1337,21 @@ func (c *Controller) RemoveMCPServer(name string) (disconnected bool, err error)
 		return false, fmt.Errorf("no MCP server named %q", name)
 	}
 	return disconnected, nil
+}
+
+// DisconnectMCPServer disconnects a live server for this session without touching
+// config — the connector toggle's "off". Its tools vanish next turn; it reconnects
+// on the next session start, or now via ConnectConfiguredMCPServer (the "on").
+// Reports whether a live server was actually disconnected.
+func (c *Controller) DisconnectMCPServer(name string) bool {
+	if c.host == nil {
+		return false
+	}
+	prefix, ok := c.host.Remove(name)
+	if ok && c.reg != nil {
+		c.reg.RemovePrefix(prefix)
+	}
+	return ok
 }
 
 // Label returns the human-readable model label, e.g. "deepseek-flash".
@@ -1257,6 +1450,36 @@ func (c *Controller) SaveDoc(path, body string) (string, error) {
 	return written, nil
 }
 
+// ForgetMemory deletes a saved auto-memory by name — the panel/TUI delete action,
+// the manual counterpart to the model's `forget` tool. It queues a turn-tail note
+// so the deletion applies this session (the cached prefix still lists the fact
+// until the next session re-folds the index).
+func (c *Controller) ForgetMemory(name string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.mem == nil {
+		return nil
+	}
+	if err := c.mem.Store.Delete(name); err != nil {
+		return err
+	}
+	c.pendingMemory = append(c.pendingMemory,
+		"Deleted memory \""+name+"\" — disregard its line still shown in the saved-memories index until next session.")
+	c.refreshMemoryLocked()
+	return nil
+}
+
+// QueueMemory implements memory.Queue: when the model runs the remember/forget
+// tool, the tool calls this with a note that rides the next turn so the change
+// applies this session without touching the cache-stable prefix. It also
+// refreshes the snapshot a memory panel reads.
+func (c *Controller) QueueMemory(note string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.pendingMemory = append(c.pendingMemory, note)
+	c.refreshMemoryLocked()
+}
+
 // Memory returns the loaded memory snapshot (nil when memory is disabled), for
 // frontends that surface a memory panel or the /memory command. The returned
 // *Set is immutable — mutations go through QuickAdd / SaveDoc.
@@ -1297,6 +1520,7 @@ func (g gateApprover) Approve(ctx context.Context, tool, subject string, args js
 type seedTodo struct {
 	Content string `json:"content"`
 	Status  string `json:"status"`
+	Level   int    `json:"level,omitempty"`
 }
 
 // seedPlanTodos turns an approved plan into a starter task list and emits it as a
@@ -1343,15 +1567,15 @@ func PlanTodosJSON(plan string) string {
 func parsePlanTodos(plan string) []seedTodo {
 	var todos []seedTodo
 	for _, raw := range strings.Split(plan, "\n") {
-		item := listItemContent(raw)
-		if item == "" {
+		item, level, ok := listItem(raw)
+		if !ok {
 			continue
 		}
 		status := "pending"
 		if len(todos) == 0 {
 			status = "in_progress"
 		}
-		todos = append(todos, seedTodo{Content: item, Status: status})
+		todos = append(todos, seedTodo{Content: item, Status: status, Level: level})
 		if len(todos) >= 20 {
 			break
 		}
@@ -1359,13 +1583,33 @@ func parsePlanTodos(plan string) []seedTodo {
 	return todos
 }
 
-// listItemContent returns the task text of a markdown list line ("- x", "* x",
-// "1. x", "2) x"), or "" if the line isn't a list item. Light inline-markdown
+// listItem parses a markdown list line ("- x", "* x", "1. x", "2) x") into its
+// task text and a nesting level derived from leading indentation (0 for a
+// top-level item, 1 for an indented sub-step — capped at 1 since the plan is
+// two-level). ok is false when the line isn't a list item. Light inline-markdown
 // stripping keeps the checklist readable.
-func listItemContent(line string) string {
-	s := strings.TrimSpace(line)
-	if s == "" {
-		return ""
+func listItem(line string) (content string, level int, ok bool) {
+	trimmed := strings.TrimLeft(line, " \t")
+	if trimmed == "" {
+		return "", 0, false
+	}
+	indent := 0
+	for _, c := range line[:len(line)-len(trimmed)] {
+		if c == '\t' {
+			indent += 4
+		} else {
+			indent++
+		}
+	}
+	s := trimmed
+	// A numbered markdown heading ("### 1. Add the loader") is how models often
+	// write a phase even when asked for a list; strip the heading marker and
+	// treat it as a top-level phase. A heading without a number (a section
+	// title like "## Plan") falls through and is ignored.
+	heading := false
+	if h := strings.TrimLeft(s, "#"); h != s && strings.HasPrefix(h, " ") {
+		heading = true
+		s = strings.TrimSpace(h)
 	}
 	switch {
 	case strings.HasPrefix(s, "- "), strings.HasPrefix(s, "* "), strings.HasPrefix(s, "+ "):
@@ -1377,7 +1621,7 @@ func listItemContent(line string) string {
 			i++
 		}
 		if i == 0 || i+1 >= len(s) || (s[i] != '.' && s[i] != ')') || s[i+1] != ' ' {
-			return ""
+			return "", 0, false
 		}
 		s = s[i+2:]
 	}
@@ -1386,7 +1630,17 @@ func listItemContent(line string) string {
 	s = strings.TrimPrefix(s, "[x] ")
 	s = strings.ReplaceAll(s, "`", "")
 	s = strings.ReplaceAll(s, "**", "")
-	return strings.TrimSpace(s)
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return "", 0, false
+	}
+	if heading {
+		return s, 0, true // a heading is always a top-level phase
+	}
+	if indent >= 2 {
+		return s, 1, true
+	}
+	return s, 0, true
 }
 
 // requestApproval emits an ApprovalRequest and blocks until Approve(ID, …)

@@ -2,10 +2,12 @@ package boot
 
 import (
 	"context"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"reasonix/internal/config"
+	"reasonix/internal/event"
 	"reasonix/internal/provider"
 
 	// Blank imports register the provider kind and built-in tools the same way
@@ -71,6 +73,9 @@ api_key_env = "REASONIX_TEST_KEY_UNSET"
 // into the cache-stable system prompt's "# Skills" index alongside a built-in.
 func TestBuildDiscoversSkills(t *testing.T) {
 	dir := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
 	t.Chdir(dir)
 	writeFile(t, dir, "reasonix.toml", `
 default_model = "test-model"
@@ -118,6 +123,57 @@ api_key_env = "REASONIX_TEST_KEY_UNSET"
 	}
 }
 
+func TestBuildRecordsMCPStartupFailure(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	writeFile(t, dir, "reasonix.toml", `
+default_model = "test-model"
+
+[codegraph]
+enabled = false
+
+[agent]
+system_prompt = "BASE"
+
+[[providers]]
+name = "test-model"
+kind = "openai"
+base_url = "https://example.invalid"
+model = "x"
+api_key_env = "REASONIX_TEST_KEY_UNSET"
+
+[[plugins]]
+name = "missing"
+command = "reasonix-missing-mcp-binary"
+`)
+	var notices []event.Event
+	ctrl, err := Build(context.Background(), Options{
+		Sink: event.FuncSink(func(e event.Event) {
+			if e.Kind == event.Notice {
+				notices = append(notices, e)
+			}
+		}),
+	})
+	if err != nil {
+		t.Fatalf("Build should not fail when an MCP server is unavailable: %v", err)
+	}
+	defer ctrl.Close()
+	failures := ctrl.Host().Failures()
+	if len(failures) != 1 || failures[0].Name != "missing" {
+		t.Fatalf("failures = %+v, want missing", failures)
+	}
+	foundNotice := false
+	for _, n := range notices {
+		if strings.Contains(n.Text, "failed to start") {
+			foundNotice = true
+			break
+		}
+	}
+	if !foundNotice {
+		t.Fatalf("missing startup warning notice: %+v", notices)
+	}
+}
+
 // TestBuildWithoutMemoryLeavesPromptUnchanged is the inverse invariant: with no
 // memory files, the system prompt is exactly the configured base — the cache
 // prefix is untouched by the memory feature.
@@ -159,9 +215,41 @@ api_key_env = "REASONIX_TEST_KEY_UNSET"
 	}
 	// The language policy is always appended at boot; strip it so this assertion
 	// is purely about whether project/ancestor memory leaked into the base.
-	base = strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(base), config.LanguagePolicy))
+	base = stripLanguagePolicy(base)
 	if base != "JUST THE BASE" {
 		t.Fatalf("expected untouched base prompt, got:\n%s", sys)
+	}
+}
+
+func TestBuildLanguagePolicyIsAppended(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	writeFile(t, dir, "reasonix.toml", `
+default_model = "test-model"
+
+[codegraph]
+enabled = false
+
+[agent]
+system_prompt = "BASE"
+
+[[providers]]
+name = "test-model"
+kind = "openai"
+base_url = "https://example.invalid"
+model = "x"
+api_key_env = "REASONIX_TEST_KEY_UNSET"
+`)
+
+	ctrl, err := Build(context.Background(), Options{})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	defer ctrl.Close()
+
+	sys := systemMessage(ctrl.History())
+	if !strings.Contains(sys, config.LanguagePolicy) {
+		t.Fatalf("language policy missing from system prompt:\n%s", sys)
 	}
 }
 
@@ -172,6 +260,16 @@ func systemMessage(msgs []provider.Message) string {
 		}
 	}
 	return ""
+}
+
+func stripLanguagePolicy(s string) string {
+	s = strings.TrimSpace(s)
+	for _, policy := range []string{
+		config.LanguagePolicy,
+	} {
+		s = strings.TrimSpace(strings.TrimSuffix(s, policy))
+	}
+	return s
 }
 
 func writeFile(t *testing.T, dir, name, body string) {

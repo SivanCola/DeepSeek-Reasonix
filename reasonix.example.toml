@@ -14,6 +14,8 @@ guessing; keep changes minimal and correct; briefly summarize what you did."""
 # system_prompt_file = "prompts/system.md"   # overrides system_prompt when set
 max_steps   = 25
 temperature = 0.0
+auto_plan   = "ask"   # off|ask|on; ask/on auto-enter plan mode for complex tasks
+# auto_plan_classifier = "deepseek-flash"   # optional; only used for borderline tasks
 # planner_model = "mimo-pro"   # optional: enable two-model collaboration
 # subagent_model = "deepseek-pro"   # optional default for runAs=subagent skills
 # subagent_models = { review = "deepseek-pro", security_review = "deepseek-pro" }   # per-skill overrides
@@ -32,6 +34,8 @@ default     = "deepseek-v4-flash"   # optional; defaults to the first of `models
 api_key_env = "DEEPSEEK_API_KEY"
 context_window = 1000000
 price       = { cache_hit = 0.02, input = 1, output = 2, currency = "¥" }   # per 1M tokens
+# DeepSeek thinking mode is enabled by default; effort: high | max | off.
+effort      = "high"
 
 # A single-model provider still works (use `model = "..."`) — pick this form when a
 # model needs its own base_url / context_window / price (e.g. the two MiMo SKUs

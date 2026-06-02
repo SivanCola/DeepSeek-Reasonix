@@ -61,6 +61,8 @@ func Run(args []string, version string) int {
 		return mcpCommand(rest)
 	case "codegraph":
 		return codegraphCommand(rest)
+	case "doctor":
+		return doctorCommand(rest, version)
 	case "version", "--version", "-v":
 		fmt.Println("reasonix", version)
 		return 0
@@ -108,6 +110,8 @@ func runAgent(args []string) int {
 	fs := flag.NewFlagSet("run", flag.ContinueOnError)
 	model := fs.String("model", "", "provider name (default: config default_model)")
 	maxSteps := fs.Int("max-steps", 0, "max tool-call rounds (0 = use config/default)")
+	showThinking := fs.Bool("show-thinking", false, "show thinking text instead of the collapsed thinking marker")
+	metricsPath := fs.String("metrics", "", "write a JSON token/cache/cost summary of the run to this path")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -135,15 +139,29 @@ func runAgent(args []string) int {
 		}
 		renderer = newMarkdownRenderer(termW)
 	}
-	ctrl, err := setup(ctx, *model, *maxSteps, true, agent.NewTextSink(os.Stdout, renderer, termW))
+	textSink := agent.NewTextSink(os.Stdout, renderer, termW)
+	textSink.SetShowReasoning(*showThinking)
+	var sink event.Sink = textSink
+	var metrics *metricsSink
+	if *metricsPath != "" {
+		metrics = &metricsSink{inner: textSink}
+		sink = metrics
+	}
+	ctrl, err := setup(ctx, *model, *maxSteps, true, sink)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
 		return 1
 	}
 	defer ctrl.Close()
 
-	if err := ctrl.Run(ctx, prompt); err != nil {
-		fmt.Fprintln(os.Stderr, "\n"+i18n.M.ErrorPrefix, err)
+	runErr := ctrl.Run(ctx, prompt)
+	if metrics != nil {
+		if err := writeMetrics(*metricsPath, metrics.m); err != nil {
+			fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
+		}
+	}
+	if runErr != nil {
+		fmt.Fprintln(os.Stderr, "\n"+i18n.M.ErrorPrefix, runErr)
 		return 1
 	}
 	return 0

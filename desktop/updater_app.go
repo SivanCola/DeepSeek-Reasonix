@@ -25,7 +25,16 @@ func (a *App) Version() string { return version }
 // build is available for this platform. Safe to call on startup: a network error
 // surfaces in UpdateInfo.Err rather than failing, so the UI can stay quiet.
 func (a *App) CheckUpdate() (*UpdateInfo, error) {
-	m, err := fetchManifest(a.reqCtx(), httpClient())
+	c, err := httpClient()
+	if err != nil {
+		return &UpdateInfo{
+			Current:       version,
+			CanSelfUpdate: canSelfUpdate(),
+			DownloadURL:   defaultDownloadPage,
+			Err:           err.Error(),
+		}, nil
+	}
+	m, err := fetchManifest(a.reqCtx(), c)
 	if err != nil {
 		return &UpdateInfo{
 			Current:       version,
@@ -42,8 +51,10 @@ func (a *App) CheckUpdate() (*UpdateInfo, error) {
 // path and a fallback link elsewhere.
 func (a *App) OpenDownloadPage() {
 	page := defaultDownloadPage
-	if m, err := fetchManifest(a.reqCtx(), httpClient()); err == nil && m.DownloadPage != "" {
-		page = m.DownloadPage
+	if c, err := httpClient(); err == nil {
+		if m, err := fetchManifest(a.reqCtx(), c); err == nil && m.DownloadPage != "" {
+			page = m.DownloadPage
+		}
 	}
 	if a.ctx != nil {
 		wruntime.BrowserOpenURL(a.ctx, page)
@@ -58,7 +69,11 @@ func (a *App) ApplyUpdate() error {
 		a.OpenDownloadPage()
 		return nil
 	}
-	m, err := fetchManifest(a.reqCtx(), httpClient())
+	c, err := httpClient()
+	if err != nil {
+		return a.failUpdate(err)
+	}
+	m, err := fetchManifest(a.reqCtx(), c)
 	if err != nil {
 		return a.failUpdate(err)
 	}
@@ -102,14 +117,18 @@ func (a *App) ApplyUpdate() error {
 // signature against the embedded public key, then its sha256. It returns the
 // verified bytes and never touches disk on a bad signature.
 func (a *App) downloadVerify(asset update.Asset) ([]byte, error) {
-	data, err := download(a.reqCtx(), httpClient(), asset.URL, asset.Size, func(rcv, total int64) {
+	c, err := httpClient()
+	if err != nil {
+		return nil, err
+	}
+	data, err := download(a.reqCtx(), c, asset.URL, asset.Size, func(rcv, total int64) {
 		a.emitProgress("downloading", rcv, total, "")
 	})
 	if err != nil {
 		return nil, err
 	}
 	a.emitProgress("verifying", asset.Size, asset.Size, "")
-	sig, err := fetchBytes(a.reqCtx(), httpClient(), asset.Sig)
+	sig, err := fetchBytes(a.reqCtx(), c, asset.Sig)
 	if err != nil {
 		return nil, err
 	}

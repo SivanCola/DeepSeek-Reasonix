@@ -100,6 +100,7 @@ func TestRenderMCPStatusGroupsAndCompactsResources(t *testing.T) {
 		[]plugin.ServerStatus{{Name: "docs", Transport: "stdio", Tools: 2}},
 		[]plugin.Prompt{{Server: "docs", Name: "mcp__docs__summarize", Description: "Summarize a selected document for review"}},
 		[]plugin.Resource{{Server: "docs", URI: longURI, Name: "Resource manual", MimeType: "text/markdown"}},
+		nil,
 	)
 	for _, want := range []string{
 		"MCP servers (1)",
@@ -129,8 +130,23 @@ func TestRenderMCPStatusCapsLongSections(t *testing.T) {
 		[]plugin.ServerStatus{{Name: "fs", Transport: "stdio"}},
 		nil,
 		resources,
+		nil,
 	)
 	if !strings.Contains(got, "+2 more resources") {
 		t.Fatalf("rendered MCP status should cap long resource sections:\n%s", got)
+	}
+}
+
+func TestRenderMCPStatusShowsFailures(t *testing.T) {
+	got := renderMCPStatus(90,
+		nil,
+		nil,
+		nil,
+		[]plugin.Failure{{Name: "broken", Transport: "stdio", Error: "npm error ENOENT"}},
+	)
+	for _, want := range []string{"MCP servers (0)", "broken", "npm error ENOENT"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("rendered MCP status missing %q:\n%s", want, got)
+		}
 	}
 }

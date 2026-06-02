@@ -13,22 +13,49 @@ import (
 
 	"github.com/BurntSushi/toml"
 
+	"reasonix/internal/netclient"
 	"reasonix/internal/provider"
 )
 
 // Config is Reasonix's runtime configuration.
 type Config struct {
 	DefaultModel string            `toml:"default_model"`
-	Language     string            `toml:"language"` // ui language tag (e.g. "zh"); empty = auto-detect from $LANG / $REASONIX_LANG
+	Language     string            `toml:"language"` // ui/model language tag (e.g. "zh"); empty = auto-detect from $LANG / $REASONIX_LANG
 	Agent        AgentConfig       `toml:"agent"`
 	Providers    []ProviderEntry   `toml:"providers"`
 	Tools        ToolsConfig       `toml:"tools"`
 	Permissions  PermissionsConfig `toml:"permissions"`
 	Sandbox      SandboxConfig     `toml:"sandbox"`
+	Network      NetworkConfig     `toml:"network"`
 	Plugins      []PluginEntry     `toml:"plugins"`
 	Skills       SkillsConfig      `toml:"skills"`
 	Codegraph    CodegraphConfig   `toml:"codegraph"`
 	Statusline   StatuslineConfig  `toml:"statusline"`
+	LSP          LSPConfig         `toml:"lsp"`
+}
+
+// LSPConfig governs the optional Language Server Protocol tools (lsp_definition,
+// lsp_references, lsp_hover, lsp_diagnostics). Enabled defaults to true; the
+// servers themselves are never bundled — each resolves on PATH and the tool
+// returns an install hint when it is missing, so the capability is dormant until
+// the user installs a server. Servers overrides or extends the built-in language
+// → server map, keyed by language id (e.g. "go", "rust", "python").
+type LSPConfig struct {
+	Enabled bool                 `toml:"enabled"`
+	Servers map[string]LSPServer `toml:"servers"`
+}
+
+// LSPServer overrides a built-in language's server or, when keyed by a new
+// language, adds one. An empty field falls back to the built-in default for that
+// language; Extensions is required when adding a language the built-ins don't
+// cover (e.g. ".ex" for Elixir) so files route to it.
+type LSPServer struct {
+	Command     string            `toml:"command"`
+	Args        []string          `toml:"args"`
+	Env         map[string]string `toml:"env"`
+	LanguageID  string            `toml:"language_id"`
+	Extensions  []string          `toml:"extensions"`
+	InstallHint string            `toml:"install_hint"`
 }
 
 // StatuslineConfig configures a custom status line. Command, when set, is run at
@@ -50,6 +77,52 @@ type CodegraphConfig struct {
 	Enabled     bool   `toml:"enabled"`
 	AutoInstall bool   `toml:"auto_install"`
 	Path        string `toml:"path"`
+}
+
+// NetworkConfig controls ordinary outbound HTTP traffic such as model providers,
+// wallet-balance lookups, updater checks, and CodeGraph downloads. It intentionally
+// does not apply to web_fetch, which keeps its own SSRF-guarded dialer.
+type NetworkConfig struct {
+	// ProxyMode is "auto" (default; environment proxy for now), "env", "custom",
+	// or "off". auto leaves room for OS proxy detection later without changing the
+	// config shape.
+	ProxyMode string `toml:"proxy_mode"`
+	// ProxyURL is an advanced custom override such as "socks5://127.0.0.1:7890".
+	// When set and proxy_mode = "custom", it wins over the structured proxy table.
+	ProxyURL string `toml:"proxy_url"`
+	// NoProxy is honored for custom proxies. Env/auto modes use NO_PROXY from the
+	// process environment instead.
+	NoProxy string             `toml:"no_proxy"`
+	Proxy   NetworkProxyConfig `toml:"proxy"`
+}
+
+// NetworkProxyConfig is the structured custom-proxy editor shape. Password is
+// optional and supports ${VAR} expansion, so users can avoid storing it literally.
+type NetworkProxyConfig struct {
+	Type     string `toml:"type"` // http|https|socks5|socks5h
+	Server   string `toml:"server"`
+	Port     int    `toml:"port"`
+	Username string `toml:"username"`
+	Password string `toml:"password"`
+}
+
+// NetworkProxySpec returns the expanded proxy settings used by netclient.
+func (c *Config) NetworkProxySpec() netclient.ProxySpec {
+	return netclient.ProxySpec{
+		Mode:     c.Network.ProxyMode,
+		URL:      ExpandVars(c.Network.ProxyURL),
+		NoProxy:  ExpandVars(c.Network.NoProxy),
+		Type:     c.Network.Proxy.Type,
+		Server:   ExpandVars(c.Network.Proxy.Server),
+		Port:     c.Network.Proxy.Port,
+		Username: ExpandVars(c.Network.Proxy.Username),
+		Password: ExpandVars(c.Network.Proxy.Password),
+	}
+}
+
+// NetworkProxyMode normalizes network.proxy_mode to a known value.
+func (c *Config) NetworkProxyMode() string {
+	return netclient.NormalizeMode(c.Network.ProxyMode)
 }
 
 // SkillsConfig configures skill discovery. Paths adds extra "custom"-scope skill
@@ -142,6 +215,12 @@ type AgentConfig struct {
 	// startup (a built-in like "explanatory"/"learning"/"concise", or a custom
 	// .reasonix/output-styles/<name>.md). Empty = the unmodified prompt.
 	OutputStyle string `toml:"output_style"`
+	// AutoPlan controls whether interactive turns that look multi-step start in
+	// plan mode automatically: "off" disables it, "ask"/"on" enable the gate.
+	AutoPlan string `toml:"auto_plan"`
+	// AutoPlanClassifier optionally names a provider/model used to classify
+	// borderline auto-plan decisions. Empty keeps the zero-cost heuristic path.
+	AutoPlanClassifier string `toml:"auto_plan_classifier"`
 }
 
 // ProviderEntry declares a model provider instance. ContextWindow is the model's
@@ -162,7 +241,8 @@ type ProviderEntry struct {
 	// via Config.Extra. The anthropic provider reads Thinking="adaptive" to enable
 	// extended thinking and Effort ("low".."max") to tune depth. The
 	// openai-compatible provider forwards Effort as reasoning_effort for
-	// thinking-capable models (e.g. MiMo) and ignores Thinking. Empty = provider default.
+	// thinking-capable models; DeepSeek accepts high|max and off disables thinking.
+	// Empty = provider default.
 	Thinking string `toml:"thinking"`
 	Effort   string `toml:"effort"`
 }
@@ -203,7 +283,17 @@ func (e *ProviderEntry) HasModel(m string) bool {
 
 // ToolsConfig selects which built-in tools are enabled. Empty means all of them.
 type ToolsConfig struct {
-	Enabled []string `toml:"enabled"`
+	Enabled []string     `toml:"enabled"`
+	Search  SearchConfig `toml:"search"`
+}
+
+// SearchConfig tunes the grep tool's engine. Engine is "auto" (default — use
+// ripgrep when it's on PATH, else the native Go scanner), "native" (always Go),
+// or "rg" (require ripgrep; warn at startup and fall back to native if absent).
+// RgPath optionally points at a specific ripgrep binary instead of a PATH lookup.
+type SearchConfig struct {
+	Engine string `toml:"engine"`
+	RgPath string `toml:"rg_path"`
 }
 
 // PermissionsConfig declares the per-call permission policy (see
@@ -233,6 +323,23 @@ type PluginEntry struct {
 	Env     map[string]string `toml:"env"`
 	URL     string            `toml:"url"`
 	Headers map[string]string `toml:"headers"`
+	// AutoStart controls whether the server connects during session startup.
+	// Nil preserves historical behavior: configured servers start automatically.
+	AutoStart *bool `toml:"auto_start"`
+}
+
+func (e PluginEntry) ShouldAutoStart() bool {
+	return e.AutoStart == nil || *e.AutoStart
+}
+
+func (c *Config) AutoStartPlugins() []PluginEntry {
+	out := make([]PluginEntry, 0, len(c.Plugins))
+	for _, p := range c.Plugins {
+		if p.ShouldAutoStart() {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 // DefaultSystemPrompt is used when config provides none.
@@ -251,11 +358,9 @@ In plan mode the harness blocks writer tools: do read-only research, then write 
 concise plan as your reply and stop. The user is asked to approve before anything
 is changed; once approved, work through the steps, updating the task list as you go.`
 
-// LanguagePolicy is appended to every system prompt (in boot assembly) so the
-// model mirrors the user's language per message instead of the harness pinning
-// one — the UI `language` setting governs only the interface, never the model.
-// It is static English text, so it stays part of the cache-stable prefix and
-// keeps model behaviour language-stable while still adapting the reply language.
+// LanguagePolicy is the auto fallback appended to the system prompt when no
+// concrete UI language is resolved. It is static English text, so it stays part
+// of the cache-stable prefix and avoids per-turn language injection.
 const LanguagePolicy = `Reply in the same language the user is using in their most recent message: ` +
 	`if they write in Chinese answer in Chinese, in English answer in English, and switch ` +
 	`whenever they switch. Let this also guide the language you think in. Always keep code, ` +
@@ -272,6 +377,7 @@ func Default() *Config {
 			// compaction, not by a round count. Set a positive agent.max_steps only
 			// if you want a hard guard against runaway.
 			MaxSteps: 0,
+			AutoPlan: "ask",
 		},
 		// Mode "ask" with no rules keeps `reasonix run` autonomous (no TTY → ask
 		// resolves to allow) while `reasonix chat` prompts before writers. Users add
@@ -287,11 +393,15 @@ func Default() *Config {
 		// first use. Set enabled = false to opt out, or auto_install = false to
 		// require an explicit `reasonix codegraph install`.
 		Codegraph: CodegraphConfig{Enabled: true, AutoInstall: true},
+		// LSP tools on by default, but dormant until a language server is on PATH;
+		// a missing server yields an install hint rather than an error.
+		LSP:     LSPConfig{Enabled: true},
+		Network: NetworkConfig{ProxyMode: netclient.ModeAuto},
 		Providers: []ProviderEntry{
-			{Name: "deepseek-flash", Kind: "openai", BaseURL: "https://api.deepseek.com", Model: "deepseek-v4-flash", APIKeyEnv: "DEEPSEEK_API_KEY", BalanceURL: "https://api.deepseek.com/user/balance", ContextWindow: 1_000_000, Price: &provider.Pricing{CacheHit: 0.02, Input: 1, Output: 2, Currency: "¥"}},
-			{Name: "deepseek-pro", Kind: "openai", BaseURL: "https://api.deepseek.com", Model: "deepseek-v4-pro", APIKeyEnv: "DEEPSEEK_API_KEY", BalanceURL: "https://api.deepseek.com/user/balance", ContextWindow: 1_000_000, Price: &provider.Pricing{CacheHit: 0.025, Input: 3, Output: 6, Currency: "¥"}},
-			{Name: "mimo-pro", Kind: "openai", BaseURL: "https://api.xiaomimimo.com/v1", Model: "mimo-v2.5-pro", APIKeyEnv: "MIMO_API_KEY", ContextWindow: 1_000_000},
-			{Name: "mimo-flash", Kind: "openai", BaseURL: "https://api.xiaomimimo.com/v1", Model: "mimo-v2-flash", APIKeyEnv: "MIMO_API_KEY", ContextWindow: 65_536},
+			{Name: "deepseek-flash", Kind: "openai", BaseURL: "https://api.deepseek.com", Model: "deepseek-v4-flash", APIKeyEnv: "DEEPSEEK_API_KEY", BalanceURL: "https://api.deepseek.com/user/balance", ContextWindow: 1_000_000, Price: &provider.Pricing{CacheHit: 0.02, Input: 1, Output: 2, Currency: "¥"}, Effort: "high"},
+			{Name: "deepseek-pro", Kind: "openai", BaseURL: "https://api.deepseek.com", Model: "deepseek-v4-pro", APIKeyEnv: "DEEPSEEK_API_KEY", BalanceURL: "https://api.deepseek.com/user/balance", ContextWindow: 1_000_000, Price: &provider.Pricing{CacheHit: 0.025, Input: 3, Output: 6, Currency: "¥"}, Effort: "high"},
+			{Name: "mimo-pro", Kind: "openai", BaseURL: "https://token-plan-cn.xiaomimimo.com/v1", Model: "mimo-v2.5-pro", APIKeyEnv: "MIMO_API_KEY", ContextWindow: 1_000_000, Price: &provider.Pricing{CacheHit: 0.025, Input: 3, Output: 6, Currency: "¥"}},
+			{Name: "mimo-flash", Kind: "openai", BaseURL: "https://token-plan-cn.xiaomimimo.com/v1", Model: "mimo-v2.5", APIKeyEnv: "MIMO_API_KEY", ContextWindow: 1_000_000, Price: &provider.Pricing{CacheHit: 0.02, Input: 1, Output: 2, Currency: "¥"}},
 		},
 	}
 }
@@ -303,14 +413,25 @@ func Load() (*Config, error) {
 	loadDotEnv()
 	cfg := Default()
 
+	var tomlSources []string
 	if uc := userConfigPath(); uc != "" {
-		if err := mergeFile(cfg, uc); err != nil {
+		tomlSources = append(tomlSources, uc)
+	}
+	tomlSources = append(tomlSources, "reasonix.toml")
+	for _, path := range tomlSources {
+		if err := mergeFile(cfg, path); err != nil {
 			return nil, err
 		}
 	}
-	if err := mergeFile(cfg, "reasonix.toml"); err != nil {
+	// toml.DecodeFile replaces [[plugins]] wholesale, so cfg.Plugins now holds
+	// only the last file's. Re-merge by name across all sources (later wins) so a
+	// project reasonix.toml doesn't drop the global config's MCP servers.
+	plugins, err := mergeTOMLPlugins(tomlSources)
+	if err != nil {
 		return nil, err
 	}
+	cfg.Plugins = plugins
+
 	// Claude Code's .mcp.json (project root) is read last and merged into
 	// [[plugins]], so a server configured for Claude works here unchanged.
 	// reasonix.toml wins on a name collision (see mergeMCPJSON).
@@ -320,6 +441,30 @@ func Load() (*Config, error) {
 	}
 	cfg.mergeMCPJSON(entries)
 	return cfg, nil
+}
+
+// mergeTOMLPlugins merges [[plugins]] across TOML sources by name (later source wins).
+func mergeTOMLPlugins(paths []string) ([]PluginEntry, error) {
+	var merged []PluginEntry
+	index := map[string]int{}
+	for _, path := range paths {
+		if _, err := os.Stat(path); err != nil {
+			continue
+		}
+		var f Config
+		if _, err := toml.DecodeFile(path, &f); err != nil {
+			return nil, fmt.Errorf("config %s: %w", path, err)
+		}
+		for _, p := range f.Plugins {
+			if i, ok := index[p.Name]; ok {
+				merged[i] = p
+				continue
+			}
+			index[p.Name] = len(merged)
+			merged = append(merged, p)
+		}
+	}
+	return merged, nil
 }
 
 // LoadForEdit returns a config to seed the `reasonix setup` wizard when reconfiguring:
@@ -354,6 +499,10 @@ func userConfigPath() string {
 	}
 	return filepath.Join(dir, "reasonix", "config.toml")
 }
+
+// UserConfigPath is the user-global config file (~/.config/reasonix/config.toml),
+// or "" when the user config dir can't be resolved.
+func UserConfigPath() string { return userConfigPath() }
 
 // ArchiveDir is where compacted conversation history is archived for
 // traceability (one timestamped .jsonl per compaction). Empty if the user config
@@ -500,6 +649,12 @@ func (e *ProviderEntry) APIKey() string {
 		return ""
 	}
 	return os.Getenv(e.APIKeyEnv)
+}
+
+// Configured reports whether the provider's api_key_env is set — the same check
+// Validate enforces, so pickers can filter on it.
+func (e *ProviderEntry) Configured() bool {
+	return e.APIKey() != ""
 }
 
 // ResolveSystemPrompt returns the system prompt, reading system_prompt_file if set.

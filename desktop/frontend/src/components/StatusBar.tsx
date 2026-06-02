@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Cpu, FolderGit2, Wallet } from "lucide-react";
+import { Cpu, Wallet } from "lucide-react";
 import { ModelSwitcher } from "./ModelSwitcher";
 import { SPINNER_WORDS, useI18n } from "../lib/i18n";
 import type { BalanceInfo, ContextInfo, JobView, Meta, Mode, WireUsage } from "../lib/types";
@@ -57,14 +57,6 @@ function avgRate(u?: WireUsage): number | null {
   return Math.round((u.sessionCacheHitTokens / denom) * 100);
 }
 
-// shortCwd trims a path to its last two segments so the status line stays compact
-// (e.g. /Users/x/projects/reasonix → …/projects/reasonix).
-function shortCwd(cwd: string): string {
-  const parts = cwd.split("/").filter(Boolean);
-  if (parts.length <= 2) return cwd;
-  return "…/" + parts.slice(-2).join("/");
-}
-
 function fmtTokens(n: number): string {
   if (n >= 1000) return (n / 1000).toFixed(1).replace(/\.0$/, "") + "k";
   return String(n);
@@ -98,7 +90,6 @@ export function StatusBar({
   turnStartAt,
   turnTokens,
   onSwitchModel,
-  onPickFolder,
 }: {
   meta?: Meta;
   context: ContextInfo;
@@ -110,7 +101,6 @@ export function StatusBar({
   turnStartAt: number;
   turnTokens: number;
   onSwitchModel: (name: string) => void;
-  onPickFolder: () => void;
 }) {
   const { t, locale } = useI18n();
   const now = useTick(running);
@@ -171,20 +161,6 @@ export function StatusBar({
             <Wallet size={11} />
             {balance.display}
           </span>
-        </>
-      )}
-      {meta?.cwd && (
-        <>
-          <span className="statusbar__sep">·</span>
-          <button
-            className="statusbar__cwd"
-            onClick={onPickFolder}
-            disabled={running}
-            title={running ? t("common.busyHint") : t("status.switchFolder", { cwd: meta.cwd })}
-          >
-            <FolderGit2 size={11} />
-            {shortCwd(meta.cwd)}
-          </button>
         </>
       )}
       <span className="statusbar__spacer" />

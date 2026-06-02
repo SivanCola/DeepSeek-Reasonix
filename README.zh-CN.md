@@ -89,6 +89,8 @@ default_model = "deepseek-flash"   # 执行器；设 [agent].planner_model 可�
 # planner_model = "mimo-pro"          # 可选的低频规划器
 # subagent_model = "deepseek-pro"     # runAs=subagent skill 的默认模型
 # subagent_models = { review = "deepseek-pro", security_review = "deepseek-pro" }
+auto_plan = "ask"                  # off|ask|on；复杂聊天任务自动进入计划模式
+# auto_plan_classifier = "deepseek-flash"   # 可选；只在边界任务上调用
 
 [[providers]]
 name        = "deepseek-flash"
@@ -116,7 +118,7 @@ command = "reasonix-plugin-example"
 ```
 
 权限逐次调用把关：`deny` > `ask` > `allow` > 兜底（只读工具永远 allow，writer 落到
-`mode`）。`reasonix chat` 会在 writer 调用前征求同意（`y` 本次 · `a` 本会话 · `n` 拒绝）；
+`mode`）。`reasonix chat` 会在 writer 调用前征求同意（`1` 本次 · `2` 本会话 · `3` 拒绝，兼容 `y/a/n`）；
 `reasonix run` 保持自主运行但仍然遵守 `deny`。完整 schema 与契约见
 [`docs/SPEC.md`](docs/SPEC.md)。
 
@@ -206,6 +208,10 @@ planner_model = "deepseek-pro"   # 作为低频规划器
 
 Subagent skills 默认继承执行器模型。设置 `subagent_model` 可让它们统一走另一个已配置
 模型；设置 `subagent_models` 则只覆盖 `review`、`security_review` 等指定 skill。
+
+交互式前端中，`agent.auto_plan = "ask"` 会让看起来复杂的任务自动进入 plan
+mode：Reasonix 先只读生成计划，待用户批准后才编辑文件或执行有副作用的命令。
+`auto_plan_classifier` 可以指定便宜的 provider，例如 `deepseek-flash`；它只在边界输入上调用，分类失败会回退到启发式规则。
 
 ## 架构
 

@@ -57,12 +57,12 @@ input.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefau
 
 function showApproval(a) {
   approval.style.display = 'block';
-  approval.textContent = `approve ${a.tool} — ${a.subject || ''}?  [y] allow  [a] session  [n] deny`;
+  approval.textContent = `approve ${a.tool} — ${a.subject || ''}?  1 allow once  2 allow session  3 deny  (y/a/n also work)`;
   const answer = (allow, session) => { post('/approve', { id: a.id, allow, session }); approval.style.display = 'none'; document.removeEventListener('keydown', onkey); };
   const onkey = e => {
-    if (e.key === 'y') answer(true, false);
-    else if (e.key === 'a') answer(true, true);
-    else if (e.key === 'n') answer(false, false);
+    if (e.key === '1' || e.key === 'y') answer(true, false);
+    else if (e.key === '2' || e.key === 'a') answer(true, true);
+    else if (e.key === '3' || e.key === 'n') answer(false, false);
   };
   document.addEventListener('keydown', onkey);
 }
