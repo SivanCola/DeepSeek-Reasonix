@@ -258,6 +258,60 @@ func TestWorkspaceChangesGitStatus(t *testing.T) {
 	}
 }
 
+func TestWorkspaceChangesGitStatusFromRepoSubdirectory(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	orig, _ := os.Getwd()
+	defer os.Chdir(orig)
+
+	repo := t.TempDir()
+	if err := os.Chdir(repo); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, "init")
+	if err := os.MkdirAll("sub", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join("sub", "tracked.txt"), []byte("v1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, "add", filepath.Join("sub", "tracked.txt"))
+	if err := os.WriteFile(filepath.Join("sub", "tracked.txt"), []byte("v2\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join("sub", "untracked.txt"), []byte("new\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile("outside.txt", []byte("outside\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(filepath.Join(repo, "sub")); err != nil {
+		t.Fatal(err)
+	}
+
+	got := (&App{}).WorkspaceChanges()
+	if !got.GitAvailable {
+		t.Fatalf("git unavailable: %s", got.GitErr)
+	}
+	byPath := map[string]WorkspaceChangeView{}
+	for _, file := range got.Files {
+		byPath[file.Path] = file
+	}
+	if byPath["tracked.txt"].GitStatus == "" {
+		t.Fatalf("tracked.txt missing git status: %+v", got.Files)
+	}
+	if byPath["untracked.txt"].GitStatus != "??" {
+		t.Fatalf("untracked.txt = %+v", byPath["untracked.txt"])
+	}
+	if _, ok := byPath["sub/tracked.txt"]; ok {
+		t.Fatalf("git status path should be workspace-relative, got %+v", got.Files)
+	}
+	if _, ok := byPath["outside.txt"]; ok {
+		t.Fatalf("changes outside the opened workspace should be hidden: %+v", got.Files)
+	}
+}
+
 func TestWorkspaceChangesUntrackedDirectoryListsFiles(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not installed")

@@ -105,7 +105,25 @@ func workspaceGitStatus(base string) ([]gitStatusEntry, error) {
 	if err != nil {
 		return nil, err
 	}
-	return parseGitStatusPorcelainZ(raw), nil
+	entries := parseGitStatusPorcelainZ(raw)
+	topRaw, err := exec.Command("git", "-C", base, "rev-parse", "--show-toplevel").Output()
+	if err != nil {
+		return nil, err
+	}
+	repoRoot := strings.TrimSpace(string(topRaw))
+	if repoRoot == "" {
+		return entries, nil
+	}
+	out := make([]gitStatusEntry, 0, len(entries))
+	for _, entry := range entries {
+		entry.Path = workspaceRelPathFromGitStatus(repoRoot, base, entry.Path)
+		if entry.Path == "" {
+			continue
+		}
+		entry.OldPath = workspaceRelPathFromGitStatus(repoRoot, base, entry.OldPath)
+		out = append(out, entry)
+	}
+	return out, nil
 }
 
 func parseGitStatusPorcelainZ(raw []byte) []gitStatusEntry {
@@ -143,4 +161,15 @@ func normalizeWorkspaceRelPath(base, path string) string {
 		return ""
 	}
 	return filepath.ToSlash(path)
+}
+
+func workspaceRelPathFromGitStatus(repoRoot, base, path string) string {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return ""
+	}
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(repoRoot, filepath.FromSlash(path))
+	}
+	return normalizeWorkspaceRelPath(base, path)
 }
