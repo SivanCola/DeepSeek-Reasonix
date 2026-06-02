@@ -359,9 +359,7 @@ export function MemoryPanel({
                 </div>
               )}
               {view.storeDir && (
-                <Tooltip label={view.storeDir} fill block className="mem-hint">
-                  {t("memory.storedUnder", { dir: view.storeDir })}
-                </Tooltip>
+                <div className="mem-hint">{t("memory.storedUnder", { dir: view.storeDir })}</div>
               )}
             </section>
 
@@ -416,9 +414,7 @@ export function MemoryPanel({
                   <div className="mem-doc" key={d.path}>
                     <div className="mem-doc__head">
                       <span className={`badge badge--${d.scope}`}>{d.scope}</span>
-                      <Tooltip label={d.path}>
-                        <span className="mem-doc__path">{d.path}</span>
-                      </Tooltip>
+                      <span className="mem-doc__path">{d.path}</span>
                       {!editing && (
                         <button
                           className="btn btn--small"

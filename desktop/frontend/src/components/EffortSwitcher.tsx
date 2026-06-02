@@ -2,7 +2,6 @@ import { useState } from "react";
 import { Check, ChevronsUpDown } from "lucide-react";
 import { useT } from "../lib/i18n";
 import type { EffortInfo } from "../lib/types";
-import { Tooltip } from "./Tooltip";
 
 export function EffortSwitcher({
   effort,
@@ -18,7 +17,6 @@ export function EffortSwitcher({
   if (!effort?.supported || effort.levels.length === 0) return null;
 
   const current = effort.current || "auto";
-  const title = current === "auto" ? t("status.effortAutoTitle", { def: effort.default || "auto" }) : t("status.effortTitle");
   const pick = (level: string) => {
     setOpen(false);
     if (level !== current) onPick(level);
@@ -26,16 +24,14 @@ export function EffortSwitcher({
 
   return (
     <div className="modelsw effortsw">
-      <Tooltip label={title}>
-        <button
-          className={`modelsw__trigger effortsw__trigger ${current !== "auto" ? "effortsw__trigger--explicit" : ""}`}
-          disabled={disabled}
-          onClick={() => setOpen((v) => !v)}
-        >
-          <span className="modelsw__label">{t("status.effort", { level: current })}</span>
-          <ChevronsUpDown size={11} />
-        </button>
-      </Tooltip>
+      <button
+        className={`modelsw__trigger effortsw__trigger ${current !== "auto" ? "effortsw__trigger--explicit" : ""}`}
+        disabled={disabled}
+        onClick={() => setOpen((v) => !v)}
+      >
+        <span className="modelsw__label">{t("status.effort", { level: current })}</span>
+        <ChevronsUpDown size={11} />
+      </button>
       {open && !disabled && (
         <>
           <div className="modelsw__backdrop" onClick={() => setOpen(false)} />

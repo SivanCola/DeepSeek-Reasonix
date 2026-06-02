@@ -171,12 +171,10 @@ export function StatusBar({
       {balance?.available && balance.display && (
         <>
           <span className="statusbar__sep">·</span>
-          <Tooltip label={t("status.balanceTitle")}>
-            <span className="statusbar__balance">
-              <Wallet size={11} />
-              {balance.display}
-            </span>
-          </Tooltip>
+          <span className="statusbar__balance">
+            <Wallet size={11} />
+            {balance.display}
+          </span>
         </>
       )}
       <span className="statusbar__spacer" />

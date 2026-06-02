@@ -775,11 +775,9 @@ export function Composer({
                       <Eye size={14} />
                     </button>
                   </Tooltip>
-                  <Tooltip label={t("composer.pastedExpand")}>
-                    <button type="button" onClick={() => expandPastedBlock(block)}>
-                      {t("composer.pastedExpand")}
-                    </button>
-                  </Tooltip>
+                  <button type="button" onClick={() => expandPastedBlock(block)}>
+                    {t("composer.pastedExpand")}
+                  </button>
                   <Tooltip label={t("composer.pastedRemove")}>
                     <button type="button" onClick={() => removePastedBlock(block)}>
                       <Trash2 size={14} />
@@ -867,16 +865,14 @@ export function Composer({
               </Tooltip>
             </div>
           )}
-          <Tooltip label={t("composer.modeTitle")}>
-            <button
-              className={`composer__mode composer__mode--${mode}`}
-              onClick={onCycleMode}
-            >
-              <span className="composer__mode-dot" />
-              {mode === "yolo" ? t("composer.modeYolo") : mode === "plan" ? t("composer.modePlan") : t("composer.modeNormal")}
-              <span className="composer__mode-hint">{t("composer.modeHint")}</span>
-            </button>
-          </Tooltip>
+          <button
+            className={`composer__mode composer__mode--${mode}`}
+            onClick={onCycleMode}
+          >
+            <span className="composer__mode-dot" />
+            {mode === "yolo" ? t("composer.modeYolo") : mode === "plan" ? t("composer.modePlan") : t("composer.modeNormal")}
+            <span className="composer__mode-hint">{t("composer.modeHint")}</span>
+          </button>
         </div>
       </div>
     </div>

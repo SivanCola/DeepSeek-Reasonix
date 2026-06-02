@@ -3,7 +3,6 @@ import { Check, ChevronsUpDown } from "lucide-react";
 import { app } from "../lib/bridge";
 import { useT } from "../lib/i18n";
 import type { ModelInfo } from "../lib/types";
-import { Tooltip } from "./Tooltip";
 
 // ModelSwitcher is the bottom-of-window model picker: the status line's model
 // label becomes a button that opens a popover (upward) listing configured
@@ -26,12 +25,10 @@ export function ModelSwitcher({ label, onPick }: { label: string; onPick: (name:
 
   return (
     <div className="modelsw">
-      <Tooltip label={t("status.switchModel")}>
-        <button className="modelsw__trigger" onClick={() => setOpen((v) => !v)}>
-          <span className="modelsw__label">{label}</span>
-          <ChevronsUpDown size={11} />
-        </button>
-      </Tooltip>
+      <button className="modelsw__trigger" onClick={() => setOpen((v) => !v)}>
+        <span className="modelsw__label">{label}</span>
+        <ChevronsUpDown size={11} />
+      </button>
       {open && (
         <>
           <div className="modelsw__backdrop" onClick={() => setOpen(false)} />

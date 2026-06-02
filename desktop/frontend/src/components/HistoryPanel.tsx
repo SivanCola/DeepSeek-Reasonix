@@ -159,29 +159,27 @@ export function HistoryPanel({
                           placeholder={tr("history.namePlaceholder")}
                         />
                       ) : (
-                        <Tooltip label={s.path} fill>
-                          <button
-                            className="hist-item__main"
-                            onClick={() => {
-                              if (running) void loadPreview(s);
-                              else onResume(s.path);
-                            }}
-                          >
-                            <div className="hist-item__preview">{sessionDisplayTitle(s, tr("history.emptySession"))}</div>
-                            <div className="hist-item__meta">
-                              {s.current && <span className="hist-item__badge">{tr("history.current")}</span>}
-                              <span>{tr(s.turns === 1 ? "history.turnOne" : "history.turnOther", { n: s.turns })}</span>
-                              <span>·</span>
-                              <span>{timeLabel(sessionActivityTime(s))}</span>
-                              {running && (
-                                <>
-                                  <span>·</span>
-                                  <span>{tr("history.preview")}</span>
-                                </>
-                              )}
-                            </div>
-                          </button>
-                        </Tooltip>
+                        <button
+                          className="hist-item__main"
+                          onClick={() => {
+                            if (running) void loadPreview(s);
+                            else onResume(s.path);
+                          }}
+                        >
+                          <div className="hist-item__preview">{sessionDisplayTitle(s, tr("history.emptySession"))}</div>
+                          <div className="hist-item__meta">
+                            {s.current && <span className="hist-item__badge">{tr("history.current")}</span>}
+                            <span>{tr(s.turns === 1 ? "history.turnOne" : "history.turnOther", { n: s.turns })}</span>
+                            <span>·</span>
+                            <span>{timeLabel(sessionActivityTime(s))}</span>
+                            {running && (
+                              <>
+                                <span>·</span>
+                                <span>{tr("history.preview")}</span>
+                              </>
+                            )}
+                          </div>
+                        </button>
                       )}
 
                       {editing !== s.path && (
