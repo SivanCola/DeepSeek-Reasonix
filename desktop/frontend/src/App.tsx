@@ -714,6 +714,26 @@ export default function App() {
 
           <footer className="footer">
             {showTodos && <TodoPanel todos={todos} onDismiss={() => setDismissedTodo(todoItem!.id)} />}
+            {state.approval && (
+              <ApprovalModal
+                approval={state.approval}
+                onAnswer={(allow, session) => {
+                  // Approving an exit_plan_mode plan leaves plan mode (the controller
+                  // flips the executor; mirror it here for the indicator).
+                  if (state.approval!.tool === "exit_plan_mode" && allow) setMode("normal");
+                  approve(state.approval!.id, allow, session);
+                }}
+                onRevisePlan={(text) => {
+                  setPendingPlanRevision(text);
+                  approve(state.approval!.id, false, false);
+                }}
+                onExitPlan={() => {
+                  setMode("normal");
+                  setPlan(false);
+                  approve(state.approval!.id, false, false);
+                }}
+              />
+            )}
             <Composer
               running={state.running}
               mode={mode}
@@ -769,22 +789,6 @@ export default function App() {
           onToggleMaximized={() => setWorkspacePanelMaximized((value) => !value)}
           onPreviewModeChange={handleWorkspacePreviewModeChange}
         />
-
-        {state.approval && (
-          <ApprovalModal
-            approval={state.approval}
-            onAnswer={(allow, session) => {
-              // Approving an exit_plan_mode plan leaves plan mode (the controller
-              // flips the executor; mirror it here for the indicator).
-              if (state.approval!.tool === "exit_plan_mode" && allow) setMode("normal");
-              approve(state.approval!.id, allow, session);
-            }}
-            onRevisePlan={(text) => {
-              setPendingPlanRevision(text);
-              approve(state.approval!.id, false, false);
-            }}
-          />
-        )}
       </div>
 
       {state.ask && (

@@ -155,6 +155,8 @@ export const zh: Record<DictKey, string> = {
 
   // 审批弹窗
   "approval.planTitle": "可以开始写代码了吗？",
+  "approval.planReady": "计划已就绪",
+  "approval.planReadyHint": "查看上方方案",
   "approval.planNote": "查看上面的计划。批准将退出计划模式并开始动手。",
   "approval.keepPlanning": "继续规划",
   "approval.keepPlanningHint": "保持计划模式，继续完善方案",
@@ -164,10 +166,14 @@ export const zh: Record<DictKey, string> = {
   "approval.revisePlanHint": "告诉我需要更新什么内容",
   "approval.revisePlanPlaceholder": "告诉我这份计划还需要改哪里...",
   "approval.sendRevision": "发送修改意见",
+  "approval.exitPlan": "退出计划",
   "approval.proceed": "继续",
   "approval.toolTitle": "允许这次工具调用吗？",
+  "approval.toolPending": "允许工具调用",
   "approval.toolNote": "先确认模型申请的工具调用，再决定是否放行。",
   "approval.toolLabel": "工具",
+  "approval.details": "详情",
+  "approval.hideDetails": "收起",
   "approval.deny": "拒绝",
   "approval.denyHint": "不执行这次工具调用",
   "approval.allowOnce": "允许一次",

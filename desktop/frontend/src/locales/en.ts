@@ -154,6 +154,8 @@ export const en = {
 
   // approval modal
   "approval.planTitle": "Ready to start coding?",
+  "approval.planReady": "Plan ready",
+  "approval.planReadyHint": "Review the plan above",
   "approval.planNote": "Review the plan above. Approving exits plan mode and starts the work.",
   "approval.keepPlanning": "Keep planning",
   "approval.keepPlanningHint": "Stay in plan mode and refine the proposal",
@@ -163,10 +165,14 @@ export const en = {
   "approval.revisePlanHint": "Tell me what needs to change",
   "approval.revisePlanPlaceholder": "Tell me what should be updated in the plan...",
   "approval.sendRevision": "Send update",
+  "approval.exitPlan": "Exit plan",
   "approval.proceed": "Proceed",
   "approval.toolTitle": "Allow this tool call?",
+  "approval.toolPending": "Allow tool call",
   "approval.toolNote": "Review the requested tool before letting it run.",
   "approval.toolLabel": "Tool",
+  "approval.details": "Details",
+  "approval.hideDetails": "Hide",
   "approval.deny": "Deny",
   "approval.denyHint": "Do not run this tool call",
   "approval.allowOnce": "Allow once",

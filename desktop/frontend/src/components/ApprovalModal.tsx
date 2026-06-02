@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { ChevronDown, ChevronUp, PauseCircle } from "lucide-react";
 import { useT } from "../lib/i18n";
 import type { WireApproval } from "../lib/types";
 
@@ -6,33 +7,39 @@ export function ApprovalModal({
   approval,
   onAnswer,
   onRevisePlan,
+  onExitPlan,
 }: {
   approval: WireApproval;
   onAnswer: (allow: boolean, session: boolean) => void;
   onRevisePlan?: (text: string) => void;
+  onExitPlan?: () => void;
 }) {
   const t = useT();
   const [revisionOpen, setRevisionOpen] = useState(false);
   const [revisionText, setRevisionText] = useState("");
+  const [detailsOpen, setDetailsOpen] = useState(false);
   const cardRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const isPlanApproval = approval.tool === "exit_plan_mode";
+  const subject = approval.subject.trim();
 
   const choosePlanAction = (key: string) => {
-    if (key === "1") onAnswer(false, false);
+    if (key === "1") setRevisionOpen((open) => !open);
     else if (key === "2") onAnswer(true, false);
-    else if (key === "3") setRevisionOpen((open) => !open);
-    else if (key === "Escape") onAnswer(false, false);
+    else if (key === "3" || key === "Escape") (onExitPlan ?? (() => onAnswer(false, false)))();
   };
 
   const chooseToolAction = (key: string) => {
-    if (key === "1" || key === "Escape") onAnswer(false, false);
-    else if (key === "2") onAnswer(true, false);
-    else if (key === "3") onAnswer(true, true);
+    if (key === "1") onAnswer(true, false);
+    else if (key === "2") onAnswer(true, true);
+    else if (key === "3" || key === "Escape") onAnswer(false, false);
   };
 
   useEffect(() => {
     cardRef.current?.focus();
+    setRevisionOpen(false);
+    setRevisionText("");
+    setDetailsOpen(false);
   }, [approval.id]);
 
   useEffect(() => {
@@ -47,7 +54,7 @@ export function ApprovalModal({
     };
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
-  }, [isPlanApproval, onAnswer]);
+  }, [isPlanApproval, onAnswer, onExitPlan]);
 
   useEffect(() => {
     if (revisionOpen) inputRef.current?.focus();
@@ -62,125 +69,107 @@ export function ApprovalModal({
     onRevisePlan?.(text);
   };
 
+  const choice = (key: string, label: string, onClick: () => void, primary = false) => (
+    <button className={`approval-action${primary ? " approval-action--primary" : ""}`} onClick={onClick}>
+      <span className="approval-action__key">{key}</span>
+      <span className="approval-action__label">{label}</span>
+    </button>
+  );
+
   // The plan is already shown above as the assistant's reply; this is just the gate.
   if (isPlanApproval) {
     return (
-      <div className="plan-approval-dock" aria-live="polite">
+      <div className="approval-shelf" aria-live="polite">
         <div
           ref={cardRef}
-          className="plan-approval-card"
+          className="approval-shelf__bar"
           role="dialog"
           aria-modal="false"
           aria-labelledby="plan-approval-title"
           tabIndex={-1}
         >
-          <div className="plan-approval-card__header">
-            <div>
-              <div id="plan-approval-title" className="plan-approval-card__title">
-                {t("approval.planTitle")}
+          <div className="approval-shelf__summary">
+            <PauseCircle size={16} aria-hidden="true" />
+            <div className="approval-shelf__copy">
+              <div id="plan-approval-title" className="approval-shelf__title">
+                {t("approval.planReady")}
               </div>
-              <div className="plan-approval-card__note">{t("approval.planNote")}</div>
+              <div className="approval-shelf__meta">{t("approval.planReadyHint")}</div>
             </div>
           </div>
-          <div className="plan-approval-card__choices">
-            <button className="plan-choice" onClick={() => onAnswer(false, false)}>
-              <span className="plan-choice__key">1</span>
-              <span className="plan-choice__copy">
-                <span className="plan-choice__label">{t("approval.keepPlanning")}</span>
-                <span className="plan-choice__hint">{t("approval.keepPlanningHint")}</span>
-              </span>
-            </button>
-            <button className="plan-choice plan-choice--primary" onClick={() => onAnswer(true, false)}>
-              <span className="plan-choice__key">2</span>
-              <span className="plan-choice__copy">
-                <span className="plan-choice__label">{t("approval.startExecution")}</span>
-                <span className="plan-choice__hint">{t("approval.startExecutionHint")}</span>
-              </span>
-            </button>
-            <button className="plan-choice" onClick={() => setRevisionOpen((open) => !open)}>
-              <span className="plan-choice__key">3</span>
-              <span className="plan-choice__copy">
-                <span className="plan-choice__label">{t("approval.revisePlan")}</span>
-                <span className="plan-choice__hint">{t("approval.revisePlanHint")}</span>
-              </span>
-            </button>
+          <div className="approval-shelf__actions">
+            {choice("1", t("approval.revisePlan"), () => setRevisionOpen((open) => !open))}
+            {choice("2", t("approval.startExecution"), () => onAnswer(true, false), true)}
+            {choice("3", t("approval.exitPlan"), () => (onExitPlan ?? (() => onAnswer(false, false)))())}
           </div>
-          {revisionOpen && (
-            <div className="plan-revision">
-              <textarea
-                ref={inputRef}
-                className="plan-revision__input"
-                value={revisionText}
-                rows={3}
-                placeholder={t("approval.revisePlanPlaceholder")}
-                onChange={(event) => setRevisionText(event.target.value)}
-                onKeyDown={(event) => {
-                  if ((event.metaKey || event.ctrlKey) && event.key === "Enter") submitRevision();
-                  event.stopPropagation();
-                }}
-              />
-              <div className="plan-revision__actions">
-                <button className="btn" onClick={() => setRevisionOpen(false)}>
-                  {t("common.cancel")}
-                </button>
-                <button className="btn btn--primary" onClick={submitRevision}>
-                  {t("approval.sendRevision")}
-                </button>
-              </div>
-            </div>
-          )}
         </div>
+        {revisionOpen && (
+          <div className="approval-shelf__panel plan-revision">
+            <textarea
+              ref={inputRef}
+              className="plan-revision__input"
+              value={revisionText}
+              rows={3}
+              placeholder={t("approval.revisePlanPlaceholder")}
+              onChange={(event) => setRevisionText(event.target.value)}
+              onKeyDown={(event) => {
+                if ((event.metaKey || event.ctrlKey) && event.key === "Enter") submitRevision();
+                event.stopPropagation();
+              }}
+            />
+            <div className="plan-revision__actions">
+              <button className="btn" onClick={() => setRevisionOpen(false)}>
+                {t("common.cancel")}
+              </button>
+              <button className="btn btn--primary" onClick={submitRevision}>
+                {t("approval.sendRevision")}
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     );
   }
 
   return (
-    <div className="plan-approval-dock" aria-live="polite">
+    <div className="approval-shelf" aria-live="polite">
       <div
         ref={cardRef}
-        className="plan-approval-card"
+        className="approval-shelf__bar"
         role="dialog"
         aria-modal="false"
         aria-labelledby="tool-approval-title"
         tabIndex={-1}
       >
-        <div className="plan-approval-card__header">
-          <div>
-            <div id="tool-approval-title" className="plan-approval-card__title">
-              {t("approval.toolTitle")}
+        <div className="approval-shelf__summary">
+          <PauseCircle size={16} aria-hidden="true" />
+          <div className="approval-shelf__copy">
+            <div id="tool-approval-title" className="approval-shelf__title">
+              {t("approval.toolPending")}
             </div>
-            <div className="plan-approval-card__note">{t("approval.toolNote")}</div>
+            <div className="approval-shelf__meta">
+              <span className="tool__name">{approval.tool}</span>
+              {subject && <span className="approval-shelf__subject"> · {subject}</span>}
+            </div>
           </div>
         </div>
-        <div className="approval-tool">
-          <span className="approval-tool__label">{t("approval.toolLabel")}</span>
-          <span className="tool__name">{approval.tool}</span>
-        </div>
-        {approval.subject && <pre className="approval-subject">{approval.subject}</pre>}
-        <div className="plan-approval-card__choices">
-          <button className="plan-choice" onClick={() => onAnswer(false, false)}>
-            <span className="plan-choice__key">1</span>
-            <span className="plan-choice__copy">
-              <span className="plan-choice__label">{t("approval.deny")}</span>
-              <span className="plan-choice__hint">{t("approval.denyHint")}</span>
-            </span>
-          </button>
-          <button className="plan-choice plan-choice--primary" onClick={() => onAnswer(true, false)}>
-            <span className="plan-choice__key">2</span>
-            <span className="plan-choice__copy">
-              <span className="plan-choice__label">{t("approval.allowOnce")}</span>
-              <span className="plan-choice__hint">{t("approval.allowOnceHint")}</span>
-            </span>
-          </button>
-          <button className="plan-choice" onClick={() => onAnswer(true, true)}>
-            <span className="plan-choice__key">3</span>
-            <span className="plan-choice__copy">
-              <span className="plan-choice__label">{t("approval.allowSession")}</span>
-              <span className="plan-choice__hint">{t("approval.allowSessionHint")}</span>
-            </span>
-          </button>
+        <div className="approval-shelf__actions">
+          {subject && (
+            <button className="approval-detail-toggle" onClick={() => setDetailsOpen((open) => !open)}>
+              <span>{detailsOpen ? t("approval.hideDetails") : t("approval.details")}</span>
+              {detailsOpen ? <ChevronUp size={14} aria-hidden="true" /> : <ChevronDown size={14} aria-hidden="true" />}
+            </button>
+          )}
+          {choice("1", t("approval.allowOnce"), () => onAnswer(true, false), true)}
+          {choice("2", t("approval.allowSession"), () => onAnswer(true, true))}
+          {choice("3", t("approval.deny"), () => onAnswer(false, false))}
         </div>
       </div>
+      {detailsOpen && subject && (
+        <div className="approval-shelf__panel">
+          <pre className="approval-subject">{subject}</pre>
+        </div>
+      )}
     </div>
   );
 }
