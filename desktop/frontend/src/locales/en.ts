@@ -204,6 +204,12 @@ export const en = {
   "approval.allowSession": "Allow for session",
 
   // ask card
+  "ask.title": "Need your decision",
+  "ask.questionProgress": "Question {progress}",
+  "ask.details": "Details",
+  "ask.hideDetails": "Hide",
+  "ask.back": "Back",
+  "ask.next": "Next",
   "ask.customPlaceholder": "Type your own answer…",
   "ask.justChat": "Just chat",
 

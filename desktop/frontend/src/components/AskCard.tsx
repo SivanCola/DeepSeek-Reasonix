@@ -149,11 +149,11 @@ export function AskCard({
     <PromptShelf
       barRef={shelfRef}
       titleId="ask-shelf-title"
-      title="需要你决定"
+      title={t("ask.title")}
       badges={
         <>
           {q.header && <PromptBadge>{q.header}</PromptBadge>}
-          {hasMultipleQuestions && <PromptBadge>问题 {progress}</PromptBadge>}
+          {hasMultipleQuestions && <PromptBadge>{t("ask.questionProgress", { progress })}</PromptBadge>}
         </>
       }
       meta={q.prompt}
@@ -171,7 +171,12 @@ export function AskCard({
               />
             );
           })}
-          <PromptDetailToggle open={detailsOpen} label="详情" onClick={() => setDetailsOpen((open) => !open)} />
+          <PromptDetailToggle
+            open={detailsOpen}
+            label={t("ask.details")}
+            openLabel={t("ask.hideDetails")}
+            onClick={() => setDetailsOpen((open) => !open)}
+          />
         </>
       }
       crumbs={
@@ -190,7 +195,7 @@ export function AskCard({
           <div className="ask-shelf__quick-actions">
             {active > 0 && (
               <button className="btn" onClick={goBack}>
-                返回
+                {t("ask.back")}
               </button>
             )}
             <button className="btn" onClick={onDismiss}>
@@ -198,7 +203,7 @@ export function AskCard({
             </button>
             {q.multi && (
               <button className="btn btn--primary" onClick={() => finishOrAdvance()} disabled={!currentAnswered}>
-                {isLast ? t("common.submit") : "下一步"}
+                {isLast ? t("common.submit") : t("ask.next")}
               </button>
             )}
           </div>
@@ -229,7 +234,7 @@ export function AskCard({
             <div className="ask-shelf__panel-actions">
               {active > 0 && (
                 <button className="btn" onClick={goBack}>
-                  返回
+                  {t("ask.back")}
                 </button>
               )}
               <button className="btn" onClick={onDismiss}>
@@ -237,7 +242,7 @@ export function AskCard({
               </button>
               {(q.multi || custom[q.id]?.trim()) && (
                 <button className="btn btn--primary" onClick={() => finishOrAdvance()} disabled={!currentAnswered}>
-                  {isLast ? t("common.submit") : "下一步"}
+                  {isLast ? t("common.submit") : t("ask.next")}
                 </button>
               )}
             </div>

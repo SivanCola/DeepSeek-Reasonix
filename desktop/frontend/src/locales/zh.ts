@@ -205,6 +205,12 @@ export const zh: Record<DictKey, string> = {
   "approval.allowSession": "本会话内允许",
 
   // 提问卡片
+  "ask.title": "需要你决定",
+  "ask.questionProgress": "问题 {progress}",
+  "ask.details": "详情",
+  "ask.hideDetails": "收起",
+  "ask.back": "返回",
+  "ask.next": "下一步",
   "ask.customPlaceholder": "输入你自己的答案…",
   "ask.justChat": "只是聊聊",
 
