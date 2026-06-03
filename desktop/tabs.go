@@ -393,6 +393,7 @@ func (a *App) buildTabController(tab *WorkspaceTab) {
 		tab.StartupErr = err.Error()
 		tab.Ready = true
 		a.mu.Unlock()
+		a.emitAgentReady(ctx)
 		return
 	}
 
@@ -421,6 +422,7 @@ func (a *App) buildTabController(tab *WorkspaceTab) {
 		tab.StartupErr = err.Error()
 		tab.Ready = true
 		a.mu.Unlock()
+		a.emitAgentReady(ctx)
 		return
 	}
 
@@ -467,6 +469,17 @@ func (a *App) buildTabController(tab *WorkspaceTab) {
 	tab.Ready = true
 	tab.StartupErr = ""
 	a.mu.Unlock()
+	a.emitAgentReady(ctx)
+}
+
+func (a *App) emitAgentReady(ctx context.Context) {
+	if a.readyHook != nil {
+		a.readyHook()
+		return
+	}
+	if ctx != nil {
+		runtime.EventsEmit(ctx, "agent:ready")
+	}
 }
 
 // --- active tab helpers -----------------------------------------------------

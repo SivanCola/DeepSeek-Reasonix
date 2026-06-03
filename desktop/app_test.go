@@ -147,6 +147,124 @@ func TestGlobalWorkspaceRootUsesUserConfigDir(t *testing.T) {
 	}
 }
 
+func TestBuildTabControllerEmitsReadyAfterTabReady(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+
+	workspace := t.TempDir()
+	if err := os.WriteFile(filepath.Join(workspace, "reasonix.toml"), []byte(`
+default_model = "test-model"
+
+[codegraph]
+enabled = false
+
+[[providers]]
+name = "test-model"
+kind = "openai"
+base_url = "https://example.invalid"
+model = "x"
+api_key_env = "REASONIX_TEST_KEY_UNSET"
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	app := NewApp()
+	tab := app.createTabEntryWithID("project", workspace, "", "tab_ready")
+	app.tabs[tab.ID] = tab
+	app.activeTabID = tab.ID
+	var readyEvents int
+	var readyAtEmit bool
+	app.readyHook = func() {
+		readyEvents++
+		app.mu.RLock()
+		readyAtEmit = tab.Ready
+		app.mu.RUnlock()
+	}
+
+	app.buildTabController(tab)
+	defer func() {
+		if tab.Ctrl != nil {
+			tab.Ctrl.Close()
+		}
+	}()
+
+	if !tab.Ready {
+		t.Fatal("tab should be ready after build")
+	}
+	if readyEvents != 1 {
+		t.Fatalf("ready events = %d, want 1", readyEvents)
+	}
+	if !readyAtEmit {
+		t.Fatal("ready event should be emitted after tab.Ready is true")
+	}
+}
+
+func TestModelsLoadActiveTabWorkspaceConfig(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	t.Setenv("CWD_MODEL_KEY", "cwd-key")
+	t.Setenv("WORKSPACE_MODEL_KEY", "workspace-key")
+
+	cwd := t.TempDir()
+	workspace := t.TempDir()
+	if err := os.WriteFile(filepath.Join(cwd, "reasonix.toml"), []byte(`
+default_model = "cwd-provider"
+
+[codegraph]
+enabled = false
+
+[[providers]]
+name = "cwd-provider"
+kind = "openai"
+base_url = "https://cwd.invalid"
+model = "cwd-model"
+api_key_env = "CWD_MODEL_KEY"
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, "reasonix.toml"), []byte(`
+default_model = "workspace-provider"
+
+[codegraph]
+enabled = false
+
+[[providers]]
+name = "workspace-provider"
+kind = "openai"
+base_url = "https://workspace.invalid"
+model = "workspace-model"
+api_key_env = "WORKSPACE_MODEL_KEY"
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(cwd)
+
+	app := NewApp()
+	tab := app.createTabEntryWithID("project", workspace, "", "tab_models")
+	tab.model = "workspace-provider/workspace-model"
+	app.tabs[tab.ID] = tab
+	app.activeTabID = tab.ID
+
+	models := app.Models()
+	if !hasModelRef(models, "workspace-provider/workspace-model") {
+		t.Fatalf("Models() should include active workspace provider, got %+v", models)
+	}
+	if hasModelRef(models, "cwd-provider/cwd-model") {
+		t.Fatalf("Models() should not load provider from process cwd, got %+v", models)
+	}
+}
+
+func hasModelRef(models []ModelInfo, ref string) bool {
+	for _, m := range models {
+		if m.Ref == ref {
+			return true
+		}
+	}
+	return false
+}
+
 func TestSearchFileRefsFindsNestedBasename(t *testing.T) {
 	orig, _ := os.Getwd()
 	defer os.Chdir(orig)

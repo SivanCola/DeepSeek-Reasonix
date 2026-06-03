@@ -53,6 +53,7 @@ type App struct {
 	mu          sync.RWMutex
 	tabs        map[string]*WorkspaceTab
 	activeTabID string
+	readyHook   func()
 }
 
 // NewApp constructs the bound object. Tabs are restored in startup from the
@@ -106,7 +107,6 @@ func (a *App) restoreOrBuildTabs() {
 			}
 		}
 		a.mu.Unlock()
-		runtime.EventsEmit(ctx, "agent:ready")
 		return
 	}
 
@@ -119,7 +119,6 @@ func (a *App) restoreOrBuildTabs() {
 	a.activeTabID = tab.ID
 	a.mu.Unlock()
 	go a.buildTabController(tab)
-	runtime.EventsEmit(ctx, "agent:ready")
 }
 
 func (a *App) createTabEntry(scope, workspaceRoot, topicID string) *WorkspaceTab {
@@ -1718,11 +1717,13 @@ type EffortInfo struct {
 func (a *App) Models() []ModelInfo {
 	a.mu.RLock()
 	curModel := ""
+	workspaceRoot := ""
 	if tab := a.activeTabLocked(); tab != nil {
 		curModel = tab.model
+		workspaceRoot = tab.WorkspaceRoot
 	}
 	a.mu.RUnlock()
-	cfg, err := config.Load()
+	cfg, err := config.LoadForRoot(workspaceRoot)
 	if err != nil {
 		return []ModelInfo{}
 	}
