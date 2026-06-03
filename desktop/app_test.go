@@ -441,6 +441,50 @@ tier = "lazy"
 	t.Fatalf("broken MCP missing from Capabilities: %+v", view.Servers)
 }
 
+func TestCapabilitiesKeepsFailedMCPConfiguredTierAfterRestart(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	dir := t.TempDir()
+	t.Chdir(dir)
+	if err := os.WriteFile(filepath.Join(dir, "reasonix.toml"), []byte(`
+[codegraph]
+enabled = false
+
+[[plugins]]
+name = "broken"
+command = "reasonix-missing-mcp-binary"
+tier = "eager"
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	app := NewApp()
+	app.ctrl = control.New(control.Options{Host: plugin.NewHost()})
+	defer app.ctrl.Close()
+	recordMCPFailure(app.ctrl, config.PluginEntry{
+		Name:    "broken",
+		Command: "reasonix-missing-mcp-binary",
+		Tier:    "eager",
+	}, errors.New("connect: missing binary"))
+
+	view := app.Capabilities()
+	for _, s := range view.Servers {
+		if s.Name == "broken" {
+			if s.Status != "failed" {
+				t.Fatalf("server status = %q, want failed; server = %+v", s.Status, s)
+			}
+			if s.Tier != "eager" {
+				t.Fatalf("server tier = %q, want eager so failed UI preserves the configured selection", s.Tier)
+			}
+			if !s.Configured {
+				t.Fatalf("server configured = false, want true; server = %+v", s)
+			}
+			return
+		}
+	}
+	t.Fatalf("broken MCP missing from Capabilities: %+v", view.Servers)
+}
+
 type blockingRunner struct {
 	started chan struct{}
 	release chan struct{}
