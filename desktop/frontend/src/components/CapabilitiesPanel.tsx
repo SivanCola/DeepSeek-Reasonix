@@ -22,6 +22,7 @@ export function CapabilitiesPanel({
   const [err, setErr] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
   const [confirming, setConfirming] = useState<string | null>(null);
+  const [confirmingClearAuth, setConfirmingClearAuth] = useState<string | null>(null);
   const [editing, setEditing] = useState<string | null>(null);
   const [tab, setTab] = useState<CapTab>("servers");
   const [skillQuery, setSkillQuery] = useState("");
@@ -181,8 +182,23 @@ export function CapabilitiesPanel({
                     expanded={expandedErrors}
                     onToggle={toggleError}
                     onRetry={(name) => void mutate(() => app.RetryMCPServer(name))}
+                    confirmingClearAuth={confirmingClearAuth}
+                    onConfirmClearAuth={(name) => {
+                      setConfirmingClearAuth(name);
+                      setConfirming(null);
+                    }}
+                    onCancelClearAuth={() => setConfirmingClearAuth(null)}
+                    onClearAuth={(name) =>
+                      void mutate(() => app.ClearMCPServerAuthentication(name)).then((ok) => {
+                        if (ok) setConfirmingClearAuth(null);
+                      })
+                    }
+                    onSetTier={(name, tier) => void mutate(() => app.SetMCPServerTier(name, tier))}
                     confirming={confirming}
-                    onConfirm={setConfirming}
+                    onConfirm={(name) => {
+                      setConfirming(name);
+                      setConfirmingClearAuth(null);
+                    }}
                     onCancelConfirm={() => setConfirming(null)}
                     onRemove={(name) => mutate(() => app.RemoveMCPServer(name)).then(() => setConfirming(null))}
                     busy={busy}
@@ -197,16 +213,31 @@ export function CapabilitiesPanel({
                   expanded={expandedServers}
                   expandedTools={expandedServerTools}
                   confirming={confirming}
+                  confirmingClearAuth={confirmingClearAuth}
                   editing={editing}
-                  onConfirm={setConfirming}
+                  onConfirm={(name) => {
+                    setConfirming(name);
+                    setConfirmingClearAuth(null);
+                  }}
                   onCancelConfirm={() => setConfirming(null)}
                   onEdit={(name) => {
                     setEditing(name);
                     setConfirming(null);
+                    setConfirmingClearAuth(null);
                   }}
                   onCancelEdit={() => setEditing(null)}
                   onRemove={(name) => mutate(() => app.RemoveMCPServer(name)).then(() => setConfirming(null))}
                   onRetry={(name) => void mutate(() => app.RetryMCPServer(name))}
+                  onConfirmClearAuth={(name) => {
+                    setConfirmingClearAuth(name);
+                    setConfirming(null);
+                  }}
+                  onCancelClearAuth={() => setConfirmingClearAuth(null)}
+                  onClearAuth={(name) =>
+                    void mutate(() => app.ClearMCPServerAuthentication(name)).then((ok) => {
+                      if (ok) setConfirmingClearAuth(null);
+                    })
+                  }
                   onToggle={(name, on) => void mutate(() => app.SetMCPServerEnabled(name, on))}
                   onSetTier={(name, tier) => void mutate(() => app.SetMCPServerTier(name, tier))}
                   onUpdate={(name, input) =>
@@ -258,8 +289,10 @@ export function CapabilitiesPanel({
                       <SkillRow
                         key={sk.name}
                         skill={sk}
+                        busy={busy}
                         expanded={expandedSkills.has(sk.name)}
                         onToggle={() => toggleSkill(sk.name)}
+                        onToggleEnabled={(enabled) => void mutate(() => app.SetSkillEnabled(sk.name, enabled))}
                       />
                     ))}
                   </div>
@@ -578,6 +611,7 @@ function ServerGroup({
   expandedTools,
   busy,
   confirming,
+  confirmingClearAuth,
   editing,
   onConfirm,
   onCancelConfirm,
@@ -585,6 +619,9 @@ function ServerGroup({
   onCancelEdit,
   onRemove,
   onRetry,
+  onConfirmClearAuth,
+  onCancelClearAuth,
+  onClearAuth,
   onToggle,
   onSetTier,
   onUpdate,
@@ -596,6 +633,7 @@ function ServerGroup({
   expandedTools: Set<string>;
   busy: boolean;
   confirming: string | null;
+  confirmingClearAuth: string | null;
   editing: string | null;
   onConfirm: (name: string) => void;
   onCancelConfirm: () => void;
@@ -603,6 +641,9 @@ function ServerGroup({
   onCancelEdit: () => void;
   onRemove: (name: string) => void;
   onRetry: (name: string) => void;
+  onConfirmClearAuth: (name: string) => void;
+  onCancelClearAuth: () => void;
+  onClearAuth: (name: string) => void;
   onToggle: (name: string, on: boolean) => void;
   onSetTier: (name: string, tier: string) => void;
   onUpdate: (name: string, input: MCPServerInput) => void;
@@ -620,6 +661,7 @@ function ServerGroup({
           toolsExpanded={expandedTools.has(s.name)}
           busy={busy}
           confirming={confirming === s.name}
+          confirmingClearAuth={confirmingClearAuth === s.name}
           editing={editing === s.name}
           onConfirm={() => onConfirm(s.name)}
           onCancelConfirm={onCancelConfirm}
@@ -627,6 +669,9 @@ function ServerGroup({
           onCancelEdit={onCancelEdit}
           onRemove={() => onRemove(s.name)}
           onRetry={() => onRetry(s.name)}
+          onConfirmClearAuth={() => onConfirmClearAuth(s.name)}
+          onCancelClearAuth={onCancelClearAuth}
+          onClearAuth={() => onClearAuth(s.name)}
           onToggle={(on) => onToggle(s.name, on)}
           onSetTier={(tier) => onSetTier(s.name, tier)}
           onUpdate={(input) => onUpdate(s.name, input)}
@@ -643,8 +688,13 @@ function FailedServersNotice({
   expanded,
   busy,
   confirming,
+  confirmingClearAuth,
   onToggle,
   onRetry,
+  onConfirmClearAuth,
+  onCancelClearAuth,
+  onClearAuth,
+  onSetTier,
   onConfirm,
   onCancelConfirm,
   onRemove,
@@ -653,8 +703,13 @@ function FailedServersNotice({
   expanded: Set<string>;
   busy: boolean;
   confirming: string | null;
+  confirmingClearAuth: string | null;
   onToggle: (name: string) => void;
   onRetry: (name: string) => void;
+  onConfirmClearAuth: (name: string) => void;
+  onCancelClearAuth: () => void;
+  onClearAuth: (name: string) => void;
+  onSetTier: (name: string, tier: string) => void;
   onConfirm: (name: string) => void;
   onCancelConfirm: () => void;
   onRemove: (name: string) => void;
@@ -673,10 +728,10 @@ function FailedServersNotice({
           const open = expanded.has(s.name);
           const error = s.error || t("caps.failed");
           const actionLabel = serverActionLabel(s, t);
-          const authURL = authURLForServer(s);
+          const canConfigure = s.configured;
           const handlePrimaryAction = () => {
-            if (isAuthFailure(error) && authURL) {
-              openExternal(authURL);
+            if (shouldOpenAuth(s)) {
+              openExternal((s.authUrl || "").trim());
               return;
             }
             onRetry(s.name);
@@ -687,11 +742,21 @@ function FailedServersNotice({
                 <span className="cap-dot cap-dot--failed" />
                 <div className="cap-failure__text">
                   <div className="cap-failure__name">{s.name}</div>
-                  <div className="cap-failure__summary">{summarizeServerError(error, t)}</div>
+                  <div className="cap-failure__summary">{s.authStatus === "required" ? t("caps.authRequiredSummary") : summarizeServerError(error, t)}</div>
                 </div>
               </div>
               <div className="cap-failure__actions">
-                {confirming === s.name ? (
+                {confirmingClearAuth === s.name ? (
+                  <>
+                    <button className="btn btn--small" disabled={busy} onClick={() => onClearAuth(s.name)}>
+                      {t("caps.confirmClearAuth")}
+                    </button>
+                    <button className="btn btn--small" disabled={busy} onClick={onCancelClearAuth}>
+                      {t("common.cancel")}
+                    </button>
+                    <div className="cap-confirm-hint">{t("caps.clearAuthHint")}</div>
+                  </>
+                ) : confirming === s.name ? (
                   <>
                     <button className="btn btn--small" disabled={busy} onClick={() => onRemove(s.name)}>
                       {t("caps.confirmRemove")}
@@ -706,6 +771,11 @@ function FailedServersNotice({
                     <button className="btn btn--small" disabled={busy} onClick={handlePrimaryAction}>
                       {actionLabel}
                     </button>
+                    {canClearAuth(s) && (
+                      <button className="btn btn--small" disabled={busy} onClick={() => onConfirmClearAuth(s.name)}>
+                        {t("caps.clearAuth")}
+                      </button>
+                    )}
                     <button className="btn btn--small" onClick={() => onToggle(s.name)} aria-expanded={open}>
                       {open ? t("common.collapse") : t("caps.showLog")}
                     </button>
@@ -717,6 +787,11 @@ function FailedServersNotice({
                   </>
                 )}
               </div>
+              {canConfigure && (
+                <div className="cap-failure__mode">
+                  <AutoConnectControls tier={s.tier || "lazy"} busy={busy} onTierChange={(tier) => onSetTier(s.name, tier)} />
+                </div>
+              )}
               {open && (
                 <div className="cap-failure__logbox">
                   <div className="cap-failure__logbar">
@@ -742,6 +817,7 @@ function ServerRow({
   toolsExpanded,
   busy,
   confirming,
+  confirmingClearAuth,
   editing,
   onConfirm,
   onCancelConfirm,
@@ -749,6 +825,9 @@ function ServerRow({
   onCancelEdit,
   onRemove,
   onRetry,
+  onConfirmClearAuth,
+  onCancelClearAuth,
+  onClearAuth,
   onToggle,
   onSetTier,
   onUpdate,
@@ -760,6 +839,7 @@ function ServerRow({
   toolsExpanded: boolean;
   busy: boolean;
   confirming: boolean;
+  confirmingClearAuth: boolean;
   editing: boolean;
   onConfirm: () => void;
   onCancelConfirm: () => void;
@@ -767,6 +847,9 @@ function ServerRow({
   onCancelEdit: () => void;
   onRemove: () => void;
   onRetry: () => void;
+  onConfirmClearAuth: () => void;
+  onCancelClearAuth: () => void;
+  onClearAuth: () => void;
   onToggle: (on: boolean) => void;
   onSetTier: (tier: string) => void;
   onUpdate: (input: MCPServerInput) => void;
@@ -776,7 +859,7 @@ function ServerRow({
   const t = useT();
   const actionLabel = serverActionLabel(s, t);
   const tools = s.toolList ?? [];
-  const sub =
+  let sub =
     s.status === "failed"
       ? s.error || t("caps.failed")
       : s.status === "initializing"
@@ -788,7 +871,17 @@ function ServerRow({
           ? t("caps.disabledAutoStart")
           : t("caps.disabled")
         : t("caps.counts", { tools: s.tools, prompts: s.prompts, resources: s.resources });
+  if (s.authStatus === "possible" && s.status !== "failed") {
+    sub = `${sub} · ${t("caps.authPossibleShort")}`;
+  }
   const enabled = s.status === "connected" || s.status === "deferred" || s.status === "initializing";
+  const handlePrimaryAction = () => {
+    if (shouldOpenAuth(s)) {
+      openExternal((s.authUrl || "").trim());
+      return;
+    }
+    onRetry();
+  };
   return (
     <div className={`cap-server-entry${s.status === "disabled" ? " cap-server-entry--disabled" : ""}`}>
       <Tooltip label={s.error} disabled={!s.error} fill block>
@@ -807,6 +900,7 @@ function ServerRow({
             <div className="cap-row__head">
               <span className="cap-row__name">{s.name}</span>
               <span className="cap-row__transport">{s.transport}</span>
+              {s.builtIn && <span className="cap-row__builtin">{t("caps.builtIn")}</span>}
             </div>
             <div className="cap-row__sub">{sub}</div>
           </div>
@@ -823,19 +917,11 @@ function ServerRow({
             ) : (
               <>
                 {s.status === "failed" ? (
-                  <button className="btn btn--small" disabled={busy} onClick={onRetry}>
+                  <button className="btn btn--small" disabled={busy} onClick={handlePrimaryAction}>
                     {actionLabel}
                   </button>
                 ) : s.status === "initializing" ? (
                   <span className="cap-row__pending">{t("caps.initializingShort")}</span>
-                ) : s.builtIn ? (
-                  s.status === "disabled" ? (
-                    <button className="btn btn--small" disabled={busy} onClick={() => onToggle(true)}>
-                      {t("caps.enable")}
-                    </button>
-                  ) : (
-                    <span className="cap-row__builtin">{t("caps.builtIn")}</span>
-                  )
                 ) : (
                   <Tooltip label={enabled ? t("caps.disable") : t("caps.enable")}>
                     <label className="cap-switch">
@@ -860,10 +946,14 @@ function ServerRow({
           tools={tools}
           busy={busy}
           confirming={confirming}
+          confirmingClearAuth={confirmingClearAuth}
           onConfirm={onConfirm}
           onCancelConfirm={onCancelConfirm}
           onRemove={onRemove}
           onConnectNow={onRetry}
+          onConfirmClearAuth={onConfirmClearAuth}
+          onCancelClearAuth={onCancelClearAuth}
+          onClearAuth={onClearAuth}
           onSetTier={onSetTier}
           toolsExpanded={toolsExpanded}
           editing={editing}
@@ -882,10 +972,14 @@ function ServerDetails({
   tools,
   busy,
   confirming,
+  confirmingClearAuth,
   onConfirm,
   onCancelConfirm,
   onRemove,
   onConnectNow,
+  onConfirmClearAuth,
+  onCancelClearAuth,
+  onClearAuth,
   onSetTier,
   toolsExpanded,
   editing,
@@ -898,10 +992,14 @@ function ServerDetails({
   tools: ServerView["toolList"];
   busy: boolean;
   confirming: boolean;
+  confirmingClearAuth: boolean;
   onConfirm: () => void;
   onCancelConfirm: () => void;
   onRemove: () => void;
   onConnectNow: () => void;
+  onConfirmClearAuth: () => void;
+  onCancelClearAuth: () => void;
+  onClearAuth: () => void;
   onSetTier: (tier: string) => void;
   toolsExpanded: boolean;
   editing: boolean;
@@ -912,10 +1010,13 @@ function ServerDetails({
 }) {
   const t = useT();
   const command = serverCommand(s);
-  const canConfigure = s.configured && !s.builtIn;
-  const canConnectNow = !s.builtIn && (s.status === "deferred" || s.status === "disabled");
+  const canConfigure = s.configured;
+  const canEditConfig = s.configured && !s.builtIn;
+  const canConnectNow = s.status === "deferred" || s.status === "disabled";
   const canShowTools = (s.tools ?? 0) > 0 || (tools?.length ?? 0) > 0;
-  if (editing && canConfigure) {
+  const showClearAuth = canClearAuth(s);
+  const authLabel = serverAuthLabel(s, t);
+  if (editing && canEditConfig) {
     return (
       <div className="cap-server-details">
         <EditServerForm s={s} busy={busy} onCancel={onCancelEdit} onSave={onUpdate} />
@@ -933,6 +1034,12 @@ function ServerDetails({
           <span className="cap-detail__label">{t("caps.transport")}</span>
           <span className="cap-detail__value">{s.transport}</span>
         </div>
+        {authLabel && (
+          <div className="cap-detail">
+            <span className="cap-detail__label">{t("caps.auth")}</span>
+            <span className="cap-detail__value">{authLabel}</span>
+          </div>
+        )}
         {canConfigure && (
           <AutoConnectControls tier={s.tier || "lazy"} busy={busy} onTierChange={onSetTier} />
         )}
@@ -950,37 +1057,56 @@ function ServerDetails({
         )}
       </div>
       <div className="cap-detail-actions">
-        {canConnectNow && (
-          <button className="btn btn--small" disabled={busy} onClick={onConnectNow}>
-            {t("caps.connectNow")}
-          </button>
-        )}
-        {canShowTools && (
-          <button className="btn btn--small" disabled={busy} onClick={onToggleTools} aria-expanded={toolsExpanded}>
-            {toolsExpanded ? t("caps.hideTools") : t("caps.showTools")}
-          </button>
-        )}
-        {canConfigure && (
-          <button className="btn btn--small" disabled={busy} onClick={onEdit}>
-            {t("caps.editConfig")}
-          </button>
-        )}
-        {canConfigure &&
-          (confirming ? (
-            <>
-              <button className="btn btn--small" disabled={busy} onClick={onRemove}>
-                {t("caps.confirmRemove")}
-              </button>
-              <button className="btn btn--small" disabled={busy} onClick={onCancelConfirm}>
-                {t("common.cancel")}
-              </button>
-              <div className="cap-confirm-hint">{t("caps.removeHint")}</div>
-            </>
-          ) : (
-            <button className="btn btn--small" disabled={busy} onClick={onConfirm}>
-              {t("caps.remove")}
+        {confirmingClearAuth ? (
+          <>
+            <button className="btn btn--small" disabled={busy} onClick={onClearAuth}>
+              {t("caps.confirmClearAuth")}
             </button>
-          ))}
+            <button className="btn btn--small" disabled={busy} onClick={onCancelClearAuth}>
+              {t("common.cancel")}
+            </button>
+            <div className="cap-confirm-hint">{t("caps.clearAuthHint")}</div>
+          </>
+        ) : (
+          <>
+            {canConnectNow && (
+              <button className="btn btn--small" disabled={busy} onClick={onConnectNow}>
+                {t("caps.connectNow")}
+              </button>
+            )}
+            {canShowTools && (
+              <button className="btn btn--small" disabled={busy} onClick={onToggleTools} aria-expanded={toolsExpanded}>
+                {toolsExpanded ? t("caps.hideTools") : t("caps.showTools")}
+              </button>
+            )}
+            {showClearAuth && (
+              <button className="btn btn--small" disabled={busy} onClick={onConfirmClearAuth}>
+                {t("caps.clearAuth")}
+              </button>
+            )}
+            {canEditConfig && (
+              <button className="btn btn--small" disabled={busy} onClick={onEdit}>
+                {t("caps.editConfig")}
+              </button>
+            )}
+            {canEditConfig &&
+              (confirming ? (
+                <>
+                  <button className="btn btn--small" disabled={busy} onClick={onRemove}>
+                    {t("caps.confirmRemove")}
+                  </button>
+                  <button className="btn btn--small" disabled={busy} onClick={onCancelConfirm}>
+                    {t("common.cancel")}
+                  </button>
+                  <div className="cap-confirm-hint">{t("caps.removeHint")}</div>
+                </>
+              ) : (
+                <button className="btn btn--small" disabled={busy} onClick={onConfirm}>
+                  {t("caps.remove")}
+                </button>
+              ))}
+          </>
+        )}
       </div>
       {toolsExpanded && (
         tools && tools.length > 0 ? (
@@ -1165,6 +1291,7 @@ function serverStatusLabel(s: ServerView, t: ReturnType<typeof useT>): string {
     case "disabled":
       return s.configured && !s.autoStart ? t("caps.disabledAutoStart") : t("caps.disabled");
     case "failed":
+      if (s.authStatus === "required") return t("caps.authRequired");
       return t("caps.failed");
     default:
       return s.status;
@@ -1186,21 +1313,9 @@ function summarizeServerError(error: string, t: ReturnType<typeof useT>): string
   return summary.length > 180 ? `${summary.slice(0, 176).trim()}…` : summary;
 }
 
-function isAuthFailure(error: string): boolean {
-  const err = error.toLowerCase();
-  return err.includes("401") || err.includes("403") || err.includes("unauthorized") || err.includes("forbidden") || err.includes("invalid token") || err.includes("login required");
-}
-
-function authURLForServer(s: ServerView): string {
-  if (!isAuthFailure(s.error || "")) return "";
-  if (s.transport !== "http" && s.transport !== "sse") return "";
-  const url = (s.url || "").trim();
-  return /^https?:\/\//i.test(url) ? url : "";
-}
-
 function serverActionLabel(s: ServerView, t: ReturnType<typeof useT>): string {
   const err = (s.error || "").toLowerCase();
-  if (isAuthFailure(err)) return t("caps.reauthorize");
+  if (shouldOpenAuth(s)) return t("caps.reauthorize");
   if (
     err.includes("command not found") ||
     err.includes("executable file not found") ||
@@ -1212,38 +1327,76 @@ function serverActionLabel(s: ServerView, t: ReturnType<typeof useT>): string {
   return t("caps.retry");
 }
 
+function serverAuthLabel(s: ServerView, t: ReturnType<typeof useT>): string {
+  if (s.authStatus === "required") return t("caps.authRequired");
+  if (s.authStatus === "possible") return t("caps.authPossible");
+  return "";
+}
+
+function shouldOpenAuth(s: ServerView): boolean {
+  const url = (s.authUrl || "").trim();
+  return s.authStatus === "required" && /^https?:\/\//i.test(url);
+}
+
+function canClearAuth(s: ServerView): boolean {
+  if (!s.configured || s.builtIn) return false;
+  return Boolean(s.authConfigured || s.authStatus === "required" || s.authStatus === "possible" || isRemoteTransport(s.transport));
+}
+
+function isRemoteTransport(transport?: string): boolean {
+  const value = (transport || "").trim().toLowerCase();
+  return value === "http" || value === "streamable-http" || value === "sse";
+}
+
 function SkillRow({
   skill,
+  busy,
   expanded,
   onToggle,
+  onToggleEnabled,
 }: {
   skill: SkillView;
+  busy: boolean;
   expanded: boolean;
   onToggle: () => void;
+  onToggleEnabled: (enabled: boolean) => void;
 }) {
   const t = useT();
   const summary = summarizeSkillDescription(skill.description);
   const canExpand = summary !== skill.description;
   return (
-    <button
-      className={`cap-skill-card${expanded ? " cap-skill-card--expanded" : ""}${canExpand ? " cap-skill-card--expandable" : ""}`}
-      type="button"
-      onClick={onToggle}
-      aria-expanded={expanded}
+    <div
+      className={`cap-skill-card${expanded ? " cap-skill-card--expanded" : ""}${canExpand ? " cap-skill-card--expandable" : ""}${!skill.enabled ? " cap-skill-card--disabled" : ""}`}
     >
-      <div className="cap-skill-card__head">
-        <span className="cap-skill-card__icon">/</span>
-        <span className="cap-skill-card__main">
-          <span className="cap-skill-card__command">{skill.name}</span>
-          <span className="cap-skill-card__badges">
-            <span className={`cap-skill-badge cap-skill-badge--${skill.scope}`}>{skillScopeLabel(skill.scope, t)}</span>
-            {skill.runAs === "subagent" && <span className="cap-skill-badge cap-skill-badge--run">{t("caps.subagent")}</span>}
+      <div className="cap-skill-card__top">
+        <button className="cap-skill-card__toggle" type="button" onClick={onToggle} aria-expanded={expanded}>
+          <span className="cap-skill-card__head">
+            <span className="cap-skill-card__icon">/</span>
+            <span className="cap-skill-card__main">
+              <span className="cap-skill-card__command">{skill.name}</span>
+              <span className="cap-skill-card__badges">
+                <span className={`cap-skill-badge cap-skill-badge--${skill.scope}`}>{skillScopeLabel(skill.scope, t)}</span>
+                {skill.runAs === "subagent" && <span className="cap-skill-badge cap-skill-badge--run">{t("caps.subagent")}</span>}
+                {!skill.enabled && <span className="cap-skill-badge cap-skill-badge--off">{t("caps.skillDisabled")}</span>}
+              </span>
+            </span>
           </span>
-        </span>
+        </button>
+        <Tooltip label={skill.enabled ? t("caps.disableSkill") : t("caps.enableSkill")}>
+          <label className="cap-switch">
+            <input
+              type="checkbox"
+              checked={skill.enabled}
+              disabled={busy}
+              onChange={(e) => onToggleEnabled(e.target.checked)}
+            />
+            <span className="cap-switch__track" />
+          </label>
+        </Tooltip>
       </div>
       <div className="cap-skill-card__desc">{expanded ? skill.description : summary}</div>
       {canExpand && <div className="cap-skill-card__more">{expanded ? t("common.collapse") : t("common.expand")}</div>}
-    </button>
+    </div>
   );
 }
 
