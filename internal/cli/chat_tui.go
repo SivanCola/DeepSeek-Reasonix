@@ -250,6 +250,9 @@ type chatTUI struct {
 
 	// completion is the live autocomplete menu (slash commands; @-refs later).
 	completion completion
+	// fileSearchCache memoizes fileref.Search by query so the bounded walk runs
+	// once per @token fragment, not on every keystroke that re-renders the menu.
+	fileSearchCache map[string][]string
 }
 
 type tuiState int
@@ -2387,9 +2390,8 @@ func (m *chatTUI) ingestEvent(e event.Event) {
 		m.finalizeStreamed()
 		switch e.Tool.Name {
 		case "todo_write":
-			// Drive the pinned task list above the input (renderTodoPanel) rather
-			// than printing a tool line; it updates in place as the list evolves.
-			m.todoArgs = e.Tool.Args
+			// The result decides whether this list becomes canonical; dispatch only
+			// means the model asked for an update.
 		case planApprovalTool:
 			// No longer a tool, but guard anyway: the plan is the assistant's reply.
 		default:
@@ -2412,6 +2414,9 @@ func (m *chatTUI) ingestEvent(e event.Event) {
 		// call surfaces a red "⏺ Verb ⊘ <reason>" card. A live-output block (bash)
 		// collapses to a one-line "⎿ N lines" summary first.
 		m.collapseToolOutput(e.Tool.ID)
+		if e.Tool.Name == "todo_write" && e.Tool.Err == "" {
+			m.todoArgs = e.Tool.Args
+		}
 		if e.Tool.Err != "" {
 			m.finalizeStreamed()
 			m.commitLine("  " + red("●") + " " + bold(toolDisplayName(e.Tool.Name)) + " " + red("⊘ "+e.Tool.Err))
