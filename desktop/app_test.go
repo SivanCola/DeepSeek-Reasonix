@@ -413,9 +413,15 @@ tier = "lazy"
 	app.ctrl = control.New(control.Options{Host: plugin.NewHost()})
 	defer app.ctrl.Close()
 
-	err := app.SetMCPServerTier("broken", "background")
-	if err == nil || !strings.Contains(err.Error(), "connect failed") {
-		t.Fatalf("SetMCPServerTier error = %v, want connect failure", err)
+	if err := app.SetMCPServerTier("broken", "background"); err != nil {
+		t.Fatalf("SetMCPServerTier should persist tier even when immediate connect fails: %v", err)
+	}
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.Plugins[0].Tier; got != "background" {
+		t.Fatalf("saved tier = %q, want background", got)
 	}
 	if !mcpFailed(app.ctrl, "broken") {
 		t.Fatalf("Host.Failures() = %+v, want broken failure recorded", app.ctrl.Host().Failures())
@@ -425,6 +431,9 @@ tier = "lazy"
 		if s.Name == "broken" {
 			if s.Status != "failed" {
 				t.Fatalf("server status = %q, want failed; server = %+v", s.Status, s)
+			}
+			if s.Tier != "background" {
+				t.Fatalf("server tier = %q, want background so radio selection does not jump back", s.Tier)
 			}
 			return
 		}

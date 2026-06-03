@@ -1431,7 +1431,7 @@ func (a *App) SetMCPServerTier(name, tier string) error {
 	if tier != "lazy" && a.ctrl != nil && !mcpConnected(a.ctrl, name) {
 		if _, err := a.ctrl.ConnectConfiguredMCPServer(name); err != nil {
 			recordMCPFailure(a.ctrl, updated, err)
-			return fmt.Errorf("saved launch mode, but connect failed: %w", err)
+			return nil
 		}
 		a.mu.Lock()
 		delete(a.disabledMCP, name)
