@@ -232,6 +232,7 @@ type chatTUI struct {
 	// place of the built-in data row.
 	statuslineCmd string
 	statuslineOut string
+	gitStatus     gitStatus
 
 	// modelSwitchPending is true while an async /model build is in flight.
 	modelSwitchPending bool
@@ -279,6 +280,10 @@ type balanceMsg struct{ text string }
 // when none/failed).
 type statuslineMsg struct{ out string }
 
+// gitStatusMsg carries the latest lightweight git readout for the built-in
+// status line. Empty means "not a git worktree" or "git unavailable".
+type gitStatusMsg struct{ status gitStatus }
+
 // runStatusline runs the user's custom status-line command off the event loop,
 // feeding it a small JSON context on stdin and returning its first stdout line.
 // A no-op (nil) when no command is configured. Tight timeout so a slow script
@@ -289,10 +294,12 @@ func (m chatTUI) runStatusline() tea.Cmd {
 		return nil
 	}
 	used, window := m.ctrl.ContextSnapshot()
+	cwd, _ := os.Getwd()
 	payload, _ := json.Marshal(map[string]any{
 		"model":         m.label,
 		"contextUsed":   used,
 		"contextWindow": window,
+		"cwd":           cwd,
 	})
 	return func() tea.Msg { return statuslineMsg{out: runStatuslineCmd(cmd, string(payload))} }
 }
@@ -311,6 +318,13 @@ func runStatuslineCmd(cmd, stdinPayload string) string {
 		out = strings.TrimSpace(out[:i])
 	}
 	return out
+}
+
+func (m chatTUI) refreshGitStatus() tea.Cmd {
+	if m.statuslineCmd != "" {
+		return nil
+	}
+	return fetchGitStatus()
 }
 
 // modelSwitchMsg carries the result of an async /model switch. A nil err means
@@ -486,6 +500,7 @@ func (m chatTUI) Init() tea.Cmd {
 		waitForAgentEvent(m.eventCh),
 		fetchBalance(m.ctrl),
 		m.runStatusline(), // nil (no-op) unless a custom status line is configured
+		m.refreshGitStatus(),
 	)
 }
 
@@ -895,6 +910,7 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		e := event.Event(msg)
 		m.ingestEvent(e)
 		turnDone := e.Kind == event.TurnDone
+		gitMaybeChanged := e.Kind == event.ToolResult && !e.Tool.ReadOnly
 		// Coalesce a burst: the goroutine that produced this event has already
 		// exited (a Cmd reads the channel once), so it's safe to drain the events
 		// already buffered and ingest them now. One re-wrap then covers the whole
@@ -909,6 +925,9 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if e2.Kind == event.TurnDone {
 					turnDone = true
 				}
+				if e2.Kind == event.ToolResult && !e2.Tool.ReadOnly {
+					gitMaybeChanged = true
+				}
 			default:
 				break drain
 			}
@@ -922,12 +941,20 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				cmds = append(cmds, c)
 			}
 		}
+		if turnDone || gitMaybeChanged {
+			if c := m.refreshGitStatus(); c != nil {
+				cmds = append(cmds, c)
+			}
+		}
 
 	case balanceMsg:
 		m.balance = msg.text
 
 	case statuslineMsg:
 		m.statuslineOut = msg.out
+
+	case gitStatusMsg:
+		m.gitStatus = msg.status
 
 	case compactDoneMsg:
 		if msg.err != nil {
@@ -1536,14 +1563,17 @@ func (m chatTUI) View() tea.View {
 			}
 		}
 	}
-	// Second status row: the live data (model, effort, context gauge, cache rates,
-	// jobs, balance). It lives on its own fixed row so it's always shown in full
-	// rather than being truncated off the end of the status line. Two rows is a
-	// fixed height, so unlike a wrap-when-long status it doesn't reintroduce
+	// Second status row: the live data (model, git, effort, context gauge, cache
+	// rates, jobs, balance). It lives on its own fixed row so it's always shown in
+	// full rather than being truncated off the end of the status line. Two rows is
+	// a fixed height, so unlike a wrap-when-long status it doesn't reintroduce
 	// resize ghosting.
 	var data []string
 	if mt := m.modelTag(); mt != "" {
 		data = append(data, mt)
+	}
+	if gt := m.gitTag(); gt != "" {
+		data = append(data, gt)
 	}
 	if et := m.effortTag(); et != "" {
 		data = append(data, et)

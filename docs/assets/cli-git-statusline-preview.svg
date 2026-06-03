@@ -1,0 +1,25 @@
+<svg width="1320" height="310" viewBox="0 0 1320 310" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">Reasonix CLI git status line preview</title>
+  <desc id="desc">Terminal preview showing the built-in Reasonix status line with repository, branch, changed line counts, and untracked file count.</desc>
+  <rect width="1320" height="310" rx="18" fill="#1f2430"/>
+  <rect x="22" y="22" width="1276" height="266" rx="12" fill="#272b38" stroke="#3f4558"/>
+  <line x1="22" y1="96" x2="1298" y2="96" stroke="#666b7d"/>
+  <line x1="22" y1="184" x2="1298" y2="184" stroke="#666b7d"/>
+  <text x="48" y="66" fill="#c8d3ff" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="32">&gt; </text>
+  <rect x="86" y="39" width="13" height="38" rx="2" fill="#c8d3ff"/>
+  <text x="48" y="148" fill="#e5e7eb" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="28">Implement default git status in the built-in CLI status line</text>
+  <text x="48" y="238" fill="#1596ff" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="26">deepseek-v4-pro[1m]</text>
+  <text x="322" y="238" fill="#8b90a0" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="26">|</text>
+  <rect x="350" y="205" width="606" height="52" rx="8" fill="#202637" stroke="#f97316" stroke-width="3"/>
+  <text x="372" y="238" fill="#1aa3a3" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="26">DeepSeek-Reasonix</text>
+  <text x="630" y="238" fill="#8b90a0" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="26">@</text>
+  <text x="648" y="238" fill="#22c55e" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="26">main-v2</text>
+  <text x="760" y="238" fill="#8b90a0" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="26"> (</text>
+  <text x="795" y="238" fill="#22c55e" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="26">+15</text>
+  <text x="852" y="238" fill="#ef4444" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="26">-0</text>
+  <text x="897" y="238" fill="#f59e0b" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="26">?1</text>
+  <text x="932" y="238" fill="#8b90a0" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="26">)</text>
+  <text x="980" y="238" fill="#8b90a0" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="26">| effort: max | 5h - | 7d -</text>
+  <text x="48" y="274" fill="#ff6b8a" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="24">Auto ready</text>
+  <text x="184" y="274" fill="#8b90a0" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="24">(shift+tab to cycle)</text>
+</svg>

@@ -1,0 +1,147 @@
+package cli
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"os/exec"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"time"
+
+	tea "charm.land/bubbletea/v2"
+)
+
+const gitStatusTimeout = 700 * time.Millisecond
+
+type gitStatus struct {
+	Repo      string
+	Branch    string
+	Detached  bool
+	Added     int
+	Removed   int
+	Untracked int
+}
+
+func fetchGitStatus() tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), gitStatusTimeout)
+		defer cancel()
+		status, err := loadGitStatus(ctx, "")
+		if err != nil {
+			return gitStatusMsg{}
+		}
+		return gitStatusMsg{status: status}
+	}
+}
+
+func loadGitStatus(ctx context.Context, cwd string) (gitStatus, error) {
+	root, err := runGit(ctx, cwd, "rev-parse", "--show-toplevel")
+	if err != nil {
+		return gitStatus{}, err
+	}
+	root = strings.TrimSpace(root)
+	if root == "" {
+		return gitStatus{}, errors.New("empty git root")
+	}
+
+	status := gitStatus{Repo: filepath.Base(root)}
+	if branch, err := runGit(ctx, root, "symbolic-ref", "--quiet", "--short", "HEAD"); err == nil && strings.TrimSpace(branch) != "" {
+		status.Branch = strings.TrimSpace(branch)
+	} else if sha, err := runGit(ctx, root, "rev-parse", "--short", "HEAD"); err == nil && strings.TrimSpace(sha) != "" {
+		status.Branch = strings.TrimSpace(sha)
+		status.Detached = true
+	} else if ref, err := runGit(ctx, root, "symbolic-ref", "--short", "HEAD"); err == nil && strings.TrimSpace(ref) != "" {
+		status.Branch = strings.TrimSpace(ref)
+	}
+	if status.Branch == "" {
+		status.Branch = "HEAD"
+		status.Detached = true
+	}
+
+	if out, err := runGit(ctx, root, "diff", "--numstat", "HEAD", "--"); err == nil {
+		status.Added, status.Removed = parseGitNumstat(out)
+	}
+	if out, err := runGit(ctx, root, "status", "--porcelain=v1", "--untracked-files=normal"); err == nil {
+		status.Untracked = countUntracked(out)
+	}
+	return status, nil
+}
+
+func runGit(ctx context.Context, cwd string, args ...string) (string, error) {
+	cmd := exec.CommandContext(ctx, "git", args...)
+	if cwd != "" {
+		cmd.Dir = cwd
+	}
+	out, err := cmd.Output()
+	if err != nil {
+		return "", err
+	}
+	return string(out), nil
+}
+
+func parseGitNumstat(out string) (added int, removed int) {
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		if line == "" {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+		if fields[0] != "-" {
+			if n, err := strconv.Atoi(fields[0]); err == nil {
+				added += n
+			}
+		}
+		if fields[1] != "-" {
+			if n, err := strconv.Atoi(fields[1]); err == nil {
+				removed += n
+			}
+		}
+	}
+	return added, removed
+}
+
+func countUntracked(out string) int {
+	n := 0
+	for _, line := range strings.Split(strings.TrimRight(out, "\n"), "\n") {
+		if strings.HasPrefix(line, "?? ") {
+			n++
+		}
+	}
+	return n
+}
+
+func (m chatTUI) gitTag() string {
+	return m.gitStatus.Render()
+}
+
+func (s gitStatus) Render() string {
+	if strings.TrimSpace(s.Repo) == "" || strings.TrimSpace(s.Branch) == "" {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString(accent(s.Repo))
+	b.WriteString(dim("@"))
+	if s.Detached {
+		b.WriteString(yellow(s.Branch))
+	} else {
+		b.WriteString(green(s.Branch))
+	}
+
+	var parts []string
+	if s.Added > 0 || s.Removed > 0 {
+		parts = append(parts, green(fmt.Sprintf("+%d", s.Added)), red(fmt.Sprintf("-%d", s.Removed)))
+	}
+	if s.Untracked > 0 {
+		parts = append(parts, yellow(fmt.Sprintf("?%d", s.Untracked)))
+	}
+	if len(parts) > 0 {
+		b.WriteString(dim(" ("))
+		b.WriteString(strings.Join(parts, " "))
+		b.WriteString(dim(")"))
+	}
+	return b.String()
+}

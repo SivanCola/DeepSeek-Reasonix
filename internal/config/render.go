@@ -212,7 +212,7 @@ func RenderTOML(c *Config) string {
 
 	b.WriteString("[statusline]\n")
 	b.WriteString("# A custom status line: a command whose first stdout line replaces the built-in\n")
-	b.WriteString("# data row. It receives {\"model\",\"contextUsed\",\"contextWindow\"} as JSON on stdin.\n")
+	b.WriteString("# data row. It receives {\"model\",\"contextUsed\",\"contextWindow\",\"cwd\"} as JSON on stdin.\n")
 	if c.Statusline.Command != "" {
 		fmt.Fprintf(&b, "command = %q\n", c.Statusline.Command)
 	} else {
