@@ -1147,6 +1147,9 @@ func (m chatTUI) bottomRows() int {
 	if m.state == tuiRunning {
 		rows++ // the working spinner line above the box
 	}
+	if footer := m.renderMainManagerFooter(); footer != "" {
+		rows += strings.Count(footer, "\n") + 1
+	}
 	if !m.hideComposer() {
 		rows += m.input.Height() + 2
 	}
@@ -1186,6 +1189,33 @@ func (m chatTUI) renderMainManager() string {
 		return card
 	}
 	return m.renderSkillPicker()
+}
+
+func managerContentPanelStyle(width int) lipgloss.Style {
+	return choicePanelStyle.
+		Border(lipgloss.NormalBorder(), true, false, false, false).
+		Width(width)
+}
+
+func managerFooterPanelStyle(width int) lipgloss.Style {
+	return choicePanelStyle.
+		Border(lipgloss.NormalBorder(), false, false, true, false).
+		Width(width)
+}
+
+func (m chatTUI) renderMainManagerFooter() string {
+	hint := ""
+	switch {
+	case m.mcp != nil:
+		hint = m.mcp.footerHint()
+	case m.skillPick != nil:
+		hint = m.skillPickerFooterHint()
+	}
+	if strings.TrimSpace(hint) == "" {
+		return ""
+	}
+	w := max(viewWidth(m.width), 40)
+	return managerFooterPanelStyle(w).Render(dim(hint))
 }
 
 func (m chatTUI) renderTranscriptWithMainManager(card string) string {
@@ -1692,6 +1722,10 @@ func (m chatTUI) View() tea.View {
 	if working != "" {
 		parts = append(parts, workingStyle.Width(boxW).MaxWidth(boxW).Render(clampStatusLine(working, boxW)))
 		rowsAboveBox++
+	}
+	if footer := m.renderMainManagerFooter(); footer != "" {
+		parts = append(parts, footer)
+		rowsAboveBox += strings.Count(footer, "\n") + 1
 	}
 	statusBlock := clampStatusLine(status, boxW) + "\n" + clampStatusLine(dataLine, boxW)
 	if !hideComposer {

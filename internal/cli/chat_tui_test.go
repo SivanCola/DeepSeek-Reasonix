@@ -106,8 +106,9 @@ func TestMCPManagerHidesComposerBox(t *testing.T) {
 	m0, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	m = m0.(chatTUI)
 
-	if got, want := m.bottomRows(), 2; got != want {
-		t.Fatalf("bottomRows with MCP manager = %d, want %d (status rows only; manager renders in main area)", got, want)
+	footerRows := strings.Count(m.renderMainManagerFooter(), "\n") + 1
+	if got, want := m.bottomRows(), footerRows+2; got != want {
+		t.Fatalf("bottomRows with MCP manager = %d, want %d (footer + status rows; manager content renders in main area)", got, want)
 	}
 	if !m.hideComposer() {
 		t.Fatal("MCP manager should hide the composer")
@@ -115,6 +116,9 @@ func TestMCPManagerHidesComposerBox(t *testing.T) {
 	content := ansi.Strip(m.View().Content)
 	if !strings.Contains(content, "Manage MCP servers") {
 		t.Fatalf("MCP manager missing from view:\n%s", content)
+	}
+	if !strings.Contains(content, "Enter for details") {
+		t.Fatalf("MCP footer hint missing from view:\n%s", content)
 	}
 	if !strings.Contains(content, "· MCP") {
 		t.Fatalf("MCP status line missing from view:\n%s", content)

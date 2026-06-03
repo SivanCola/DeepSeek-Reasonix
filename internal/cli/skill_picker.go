@@ -612,17 +612,37 @@ func (m chatTUI) renderSkillPicker() string {
 	w := max(viewWidth(m.width), 40)
 	switch p.mode {
 	case pickerSkills:
-		return choicePanelStyle.Width(w).Render(m.renderSkillPickerSkills())
+		return managerContentPanelStyle(w).Render(m.renderSkillPickerSkills())
 	case pickerSources:
-		return choicePanelStyle.Width(w).Render(m.renderSkillPickerSources())
+		return managerContentPanelStyle(w).Render(m.renderSkillPickerSources())
 	case pickerSourceSkills:
-		return choicePanelStyle.Width(w).Render(m.renderSkillPickerSourceSkills())
+		return managerContentPanelStyle(w).Render(m.renderSkillPickerSourceSkills())
 	case pickerDetail:
-		return choicePanelStyle.Width(w).Render(m.renderSkillPickerDetail())
+		return managerContentPanelStyle(w).Render(m.renderSkillPickerDetail())
 	case pickerConfirmDelete:
-		return choicePanelStyle.Width(w).Render(m.renderSkillPickerConfirmDelete())
+		return managerContentPanelStyle(w).Render(m.renderSkillPickerConfirmDelete())
 	}
 	return ""
+}
+
+func (m chatTUI) skillPickerFooterHint() string {
+	if m.skillPick == nil {
+		return ""
+	}
+	switch m.skillPick.mode {
+	case pickerSkills:
+		return i18n.M.SkillPickerHint
+	case pickerSources:
+		return i18n.M.SkillPickerSourceHint
+	case pickerSourceSkills:
+		return i18n.M.SkillPickerSourceSkillsHint
+	case pickerDetail:
+		return i18n.M.SkillPickerDetailHint
+	case pickerConfirmDelete:
+		return i18n.M.SkillPickerDeleteHint
+	default:
+		return ""
+	}
 }
 
 func (m chatTUI) renderSkillPickerSkills() string {
@@ -671,7 +691,6 @@ func (m chatTUI) renderSkillPickerSkills() string {
 		}
 	}
 
-	b.WriteString("\n" + dim(i18n.M.SkillPickerHint))
 	return strings.TrimRight(b.String(), "\n")
 }
 
@@ -747,8 +766,6 @@ func (m chatTUI) renderSkillPickerSources() string {
 	} else {
 		b.WriteString(dim("  " + i18n.M.SkillPickerDiagHidden))
 	}
-	b.WriteByte('\n')
-	b.WriteString(dim(i18n.M.SkillPickerSourceHint))
 	return b.String()
 }
 
@@ -763,8 +780,6 @@ func (m chatTUI) renderSkillPickerSourceSkills() string {
 	skills := p.selectedRootSkills()
 	b.WriteString(accent(i18n.M.SkillPickerSourceTitle))
 	b.WriteString("  " + dim(viewCompactPath(root.dir, max(8, m.width-18))))
-	b.WriteByte('\n')
-	b.WriteString(dim(i18n.M.SkillPickerSourceSkillsHint))
 	b.WriteByte('\n')
 	b.WriteByte('\n')
 	if len(skills) == 0 {
@@ -826,8 +841,6 @@ func (m chatTUI) renderSkillPickerConfirmDelete() string {
 	b.WriteString(rowLine(p.confirm == 0, 1, "", i18n.M.SkillPickerDeleteConfirm, false))
 	b.WriteByte('\n')
 	b.WriteString(rowLine(p.confirm == 1, 2, "", i18n.M.SkillPickerDeleteCancel, false))
-	b.WriteByte('\n')
-	b.WriteString(dim(i18n.M.SkillPickerDeleteHint))
 	return b.String()
 }
 
@@ -981,7 +994,6 @@ func renderSkillDetailHeader(s skill.Skill, w int) string {
 		b.WriteByte('\n')
 	}
 
-	b.WriteString(dim(i18n.M.SkillPickerDetailHint))
 	return b.String()
 }
 

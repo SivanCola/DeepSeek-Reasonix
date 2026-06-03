@@ -165,8 +165,11 @@ func TestSkillPickerSearch(t *testing.T) {
 	if out == "" {
 		t.Fatal("renderSkillPicker returned empty string")
 	}
-	if !strings.Contains(out, "search") && !strings.Contains(out, "搜索") {
-		t.Fatalf("search mode missing prompt:\n%s", out)
+	if !strings.Contains(out, "rev") {
+		t.Fatalf("search mode missing query:\n%s", out)
+	}
+	if footer := m.renderMainManagerFooter(); !strings.Contains(footer, "search") && !strings.Contains(footer, "搜索") {
+		t.Fatalf("search mode missing footer hint:\n%s", footer)
 	}
 	if !strings.Contains(out, "review") {
 		t.Fatalf("search filter should include review:\n%s", out)
@@ -746,8 +749,9 @@ func TestSkillPickerRendersInMainArea(t *testing.T) {
 	}
 
 	rows := m.bottomRows()
-	if rows != 2 {
-		t.Fatalf("bottomRows with skill picker open got %d, want status rows only", rows)
+	footerRows := strings.Count(m.renderMainManagerFooter(), "\n") + 1
+	if want := footerRows + 2; rows != want {
+		t.Fatalf("bottomRows with skill picker open got %d, want %d (footer + status rows)", rows, want)
 	}
 	if !m.hideComposer() {
 		t.Fatal("skill picker should hide the composer")
