@@ -605,6 +605,7 @@ default_model = "test-model"
 [codegraph]
 enabled = true
 path = %q
+tier = "background"
 
 [agent]
 system_prompt = "BASE"
@@ -654,6 +655,43 @@ api_key_env = "REASONIX_TEST_KEY_UNSET"
 	}
 	if !foundNotice {
 		t.Fatalf("missing background warmup notice; got %+v", notices)
+	}
+}
+
+func TestBuildDefaultDoesNotStartCodegraph(t *testing.T) {
+	isolateConfigHome(t)
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	writeFile(t, dir, "reasonix.toml", `
+default_model = "test-model"
+
+[agent]
+system_prompt = "BASE"
+
+[[providers]]
+name = "test-model"
+kind = "openai"
+base_url = "https://example.invalid"
+model = "x"
+api_key_env = "REASONIX_TEST_KEY_UNSET"
+`)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	ctrl, err := Build(ctx, Options{})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	defer ctrl.Close()
+
+	for _, name := range ctrl.Host().ServerNames() {
+		if name == "codegraph" {
+			t.Fatalf("default config started codegraph; servers=%v", ctrl.Host().ServerNames())
+		}
+	}
+	if got := ctrl.Host().Failures(); len(got) != 0 {
+		t.Fatalf("Host.Failures() = %+v, want empty with codegraph disabled by default", got)
 	}
 }
 

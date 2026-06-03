@@ -379,6 +379,19 @@ func TestAutoStartPlugins(t *testing.T) {
 	}
 }
 
+func TestCodegraphDefaultsDisabledLazy(t *testing.T) {
+	c := Default()
+	if c.Codegraph.Enabled {
+		t.Fatal("default codegraph enabled = true, want false")
+	}
+	if !c.Codegraph.AutoInstall {
+		t.Fatal("default codegraph auto_install = false, want true")
+	}
+	if got := c.Codegraph.ResolvedTier(); got != "lazy" {
+		t.Fatalf("default codegraph tier = %q, want lazy", got)
+	}
+}
+
 func TestPluginResolvedTierDefaultsToLazy(t *testing.T) {
 	for _, tc := range []struct {
 		name string

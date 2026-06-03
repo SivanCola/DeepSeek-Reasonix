@@ -219,10 +219,10 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	// tools come online next session — otherwise point the user at the explicit
 	// install command. A failed init or fetch is a notice, not fatal.
 	//
-	// Warm CodeGraph projects stay eager because the agent benefits from seeing
-	// symbol-graph tools on the first turn. Cold projects start in the background:
-	// the first .codegraph/ creation and daemon warmup should not be reported as
-	// a startup failure just because they exceeded the generic MCP budget.
+	// CodeGraph now follows the same user-selectable tier model as ordinary MCP
+	// servers. EnsureInit only creates .codegraph/ (fast, size-independent);
+	// lazy still avoids connecting until first use, background starts without
+	// blocking chat, and eager waits for the MCP handshake.
 	if cfg.Codegraph.Enabled {
 		bin, ok := codegraph.Resolve(cfg.Codegraph.Path)
 		switch {
@@ -234,12 +234,17 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 					Text: "codegraph: init failed (" + err.Error() + ") — symbol-graph tools disabled this session"})
 				break
 			}
-			if warm {
+			switch cfg.Codegraph.ResolvedTier() {
+			case "eager":
 				eagerSpecs = append(eagerSpecs, spec)
-			} else {
+			case "background":
 				bgSpecs = append(bgSpecs, spec)
-				sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo,
-					Text: "codegraph: preparing code-intelligence tools in the background — tools will appear when ready"})
+				if !warm {
+					sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo,
+						Text: "codegraph: preparing code-intelligence tools in the background — tools will appear when ready"})
+				}
+			default:
+				lazySpecs = append(lazySpecs, spec)
 			}
 		case cfg.Codegraph.AutoInstall:
 			notify := func(msg string) { sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo, Text: msg}) }

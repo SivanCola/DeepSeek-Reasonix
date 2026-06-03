@@ -118,16 +118,27 @@ type StatuslineConfig struct {
 
 // CodegraphConfig governs the built-in CodeGraph MCP server — symbol/call-graph
 // code intelligence (tree-sitter + SQLite) that gives the agent codegraph_*
-// search / context / explore / trace / node tools. Enabled defaults to true; set
-// enabled = false to drop those tools and fall back to grep/glob. AutoInstall
-// (default true) lets reasonix fetch the CodeGraph runtime into its cache on first
-// use; set false to require an explicit `reasonix codegraph install` (e.g. for
-// air-gapped or headless runs). Path overrides binary resolution; empty resolves
-// the cache, then a `codegraph` on PATH, then a bundle beside the executable.
+// search / context / explore / trace / node tools. Enabled defaults to false so
+// first-run sessions do not start CodeGraph until the user opts in. AutoInstall
+// (default true) lets reasonix fetch the CodeGraph runtime into its cache when
+// CodeGraph is enabled but missing; set false to require an explicit
+// `reasonix codegraph install` (e.g. for air-gapped or headless runs). Path
+// overrides binary resolution; empty resolves the cache, then a `codegraph` on
+// PATH, then a bundle beside the executable. Tier matches ordinary MCP servers:
+// lazy, background, or eager.
 type CodegraphConfig struct {
 	Enabled     bool   `toml:"enabled"`
 	AutoInstall bool   `toml:"auto_install"`
 	Path        string `toml:"path"`
+	Tier        string `toml:"tier"`
+}
+
+func (c CodegraphConfig) ShouldAutoStart() bool {
+	return c.Enabled
+}
+
+func (c CodegraphConfig) ResolvedTier() string {
+	return resolvedMCPTier(c.Tier)
 }
 
 // NetworkConfig controls ordinary outbound HTTP traffic such as model providers,
@@ -459,7 +470,11 @@ func (e PluginEntry) ShouldAutoStart() bool {
 // the project default applied. Unknown values fall back to "lazy" so a typo
 // never forces a slow boot.
 func (e PluginEntry) ResolvedTier() string {
-	switch strings.ToLower(strings.TrimSpace(e.Tier)) {
+	return resolvedMCPTier(e.Tier)
+}
+
+func resolvedMCPTier(tier string) string {
+	switch strings.ToLower(strings.TrimSpace(tier)) {
 	case "eager":
 		return "eager"
 	case "background":
@@ -526,11 +541,10 @@ func Default() *Config {
 		// so an absent [sandbox] in a user's file keeps egress (zero value would
 		// wrongly deny it).
 		Sandbox: SandboxConfig{Bash: "enforce", Network: true},
-		// CodeGraph code-intelligence on by default: when it resolves it is injected
-		// as a built-in MCP server, and AutoInstall fetches it into the cache on
-		// first use. Set enabled = false to opt out, or auto_install = false to
-		// require an explicit `reasonix codegraph install`.
-		Codegraph: CodegraphConfig{Enabled: true, AutoInstall: true},
+		// CodeGraph code-intelligence is available as a built-in MCP server, but
+		// first-run sessions keep it off until the user enables it. AutoInstall
+		// fetches it into the cache once enabled and missing.
+		Codegraph: CodegraphConfig{Enabled: false, AutoInstall: true},
 		// LSP tools on by default, but dormant until a language server is on PATH;
 		// a missing server yields an install hint rather than an error.
 		LSP:     LSPConfig{Enabled: true},
