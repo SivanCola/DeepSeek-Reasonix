@@ -112,6 +112,35 @@ func rememberWorkspace(dir string) {
 	}
 }
 
+func forgetWorkspace(dir string) {
+	dir = strings.TrimSpace(dir)
+	if dir == "" {
+		return
+	}
+	if abs, err := filepath.Abs(dir); err == nil {
+		dir = abs
+	}
+	paths := make([]string, 0, len(loadWorkspaces()))
+	for _, path := range loadWorkspaces() {
+		if abs, err := filepath.Abs(path); err == nil {
+			path = abs
+		}
+		if path != dir {
+			paths = append(paths, path)
+		}
+	}
+	p := workspaceListPath()
+	if p == "" {
+		return
+	}
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		return
+	}
+	if b, err := json.MarshalIndent(paths, "", "  "); err == nil {
+		_ = os.WriteFile(p, b, 0o644)
+	}
+}
+
 // ensureWorkspace establishes a writable working directory at startup: the
 // remembered folder if it's still a directory, else the home directory when the
 // current cwd isn't writable (the Finder/`open` "/" case). A writable cwd with no

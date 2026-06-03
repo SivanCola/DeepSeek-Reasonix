@@ -17,6 +17,7 @@ func TestBoundArrayPayloadsAreNonNilBeforeStartup(t *testing.T) {
 	}{
 		{"Checkpoints", app.Checkpoints()},
 		{"ListSessions", app.ListSessions()},
+		{"ListTrashedSessions", app.ListTrashedSessions()},
 		{"ListWorkspaces", app.ListWorkspaces()},
 		{"History", app.History()},
 		{"Jobs", app.Jobs()},

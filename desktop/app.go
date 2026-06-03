@@ -360,6 +360,7 @@ type SessionMeta struct {
 	CreatedAt      int64  `json:"createdAt"`      // unix milliseconds
 	LastActivityAt int64  `json:"lastActivityAt"` // unix milliseconds
 	ModTime        int64  `json:"modTime"`        // compatibility alias for lastActivityAt
+	DeletedAt      int64  `json:"deletedAt,omitempty"`
 	Current        bool   `json:"current"`
 	Scope          string `json:"scope,omitempty"`
 	WorkspaceRoot  string `json:"workspaceRoot,omitempty"`
@@ -392,25 +393,57 @@ func (a *App) ListSessions() []SessionMeta {
 	}
 	out := make([]SessionMeta, 0, len(infos))
 	for _, s := range infos {
-		out = append(out, SessionMeta{
-			Path:           s.Path,
-			Preview:        s.Preview,
-			Title:          titles[filepath.Base(s.Path)],
-			Turns:          s.Turns,
-			CreatedAt:      s.CreatedAt.UnixMilli(),
-			LastActivityAt: s.LastActivityAt.UnixMilli(),
-			ModTime:        s.LastActivityAt.UnixMilli(),
-			Current:        s.Path == cur,
-			Scope:          s.Scope,
-			WorkspaceRoot:  s.WorkspaceRoot,
-			TopicID:        s.TopicID,
-			TopicTitle:     s.TopicTitle,
-		})
+		out = append(out, sessionMetaFromInfo(s, titles[filepath.Base(s.Path)], s.Path == cur, 0))
 	}
 	return out
 }
 
-// DeleteSession removes a saved session (and its title). It refuses the active
+// ListTrashedSessions returns sessions that were moved to the local trash,
+// newest-deleted first. These can be previewed, restored, or permanently purged.
+func (a *App) ListTrashedSessions() []SessionMeta {
+	dir := config.SessionDir()
+	paths, err := listTrashedSessionFiles(dir)
+	if err != nil {
+		return []SessionMeta{}
+	}
+	titles := loadSessionTitles(dir)
+	out := make([]SessionMeta, 0, len(paths))
+	for _, path := range paths {
+		infos, err := agent.ListSessions(filepath.Dir(path))
+		if err != nil || len(infos) == 0 {
+			continue
+		}
+		deletedAt := trashedSessionDeletedAt(path)
+		out = append(out, sessionMetaFromInfo(infos[0], titles[filepath.Base(path)], false, deletedAt))
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].DeletedAt == out[j].DeletedAt {
+			return out[i].LastActivityAt > out[j].LastActivityAt
+		}
+		return out[i].DeletedAt > out[j].DeletedAt
+	})
+	return out
+}
+
+func sessionMetaFromInfo(s agent.SessionInfo, title string, current bool, deletedAt int64) SessionMeta {
+	return SessionMeta{
+		Path:           s.Path,
+		Preview:        s.Preview,
+		Title:          title,
+		Turns:          s.Turns,
+		CreatedAt:      s.CreatedAt.UnixMilli(),
+		LastActivityAt: s.LastActivityAt.UnixMilli(),
+		ModTime:        s.LastActivityAt.UnixMilli(),
+		DeletedAt:      deletedAt,
+		Current:        current,
+		Scope:          s.Scope,
+		WorkspaceRoot:  s.WorkspaceRoot,
+		TopicID:        s.TopicID,
+		TopicTitle:     s.TopicTitle,
+	}
+}
+
+// DeleteSession moves a saved session to the local trash. It refuses the active
 // session — that's the conversation on screen, and auto-save would recreate the
 // file on the next turn; start a new session first to retire it.
 func (a *App) DeleteSession(path string) error {
@@ -426,7 +459,18 @@ func (a *App) DeleteSession(path string) error {
 			return errActiveSession
 		}
 	}
-	return removeSessionArtifacts(dir, sessionPath, key)
+	return trashSessionArtifacts(dir, sessionPath, key)
+}
+
+// RestoreSession moves a trashed session back into the saved-session list.
+func (a *App) RestoreSession(path string) error {
+	return restoreTrashedSessionFile(config.SessionDir(), path)
+}
+
+// PurgeTrashedSession permanently removes a trashed session and its title/display
+// sidecars.
+func (a *App) PurgeTrashedSession(path string) error {
+	return purgeTrashedSessionFile(config.SessionDir(), path)
 }
 
 // RenameSession sets a custom display name for a session (empty clears it back to
@@ -518,10 +562,33 @@ func (a *App) ListWorkspaces() []WorkspaceMeta {
 		out = append(out, WorkspaceMeta{
 			Path:    path,
 			Name:    workspaceName(path),
-			Current: false,
+			Current: path == cur,
 		})
 	}
 	return out
+}
+
+func (a *App) RemoveWorkspace(dir string) error {
+	if dir == "" {
+		return fmt.Errorf("workspace path is required")
+	}
+	if abs, err := filepath.Abs(dir); err == nil {
+		dir = abs
+	}
+	cur, _ := os.Getwd()
+	a.mu.RLock()
+	if tab := a.activeTabLocked(); tab != nil && tab.WorkspaceRoot != "" {
+		cur = tab.WorkspaceRoot
+	}
+	a.mu.RUnlock()
+	if abs, err := filepath.Abs(cur); err == nil {
+		cur = abs
+	}
+	if dir == cur {
+		return fmt.Errorf("cannot remove current workspace")
+	}
+	forgetWorkspace(dir)
+	return removeProject(dir)
 }
 
 func workspaceName(path string) string {
@@ -607,8 +674,9 @@ func previewSessionMessages(sessionDir, path string) ([]HistoryMessage, error) {
 
 // ContextInfo is the prompt-vs-window gauge payload. Both zero means no data yet.
 type ContextInfo struct {
-	Used   int `json:"used"`
-	Window int `json:"window"`
+	Used         int     `json:"used"`
+	Window       int     `json:"window"`
+	CompactRatio float64 `json:"compactRatio,omitempty"`
 }
 
 // ContextUsage returns the latest context-window gauge numbers.
@@ -620,7 +688,7 @@ func (a *App) ContextUsage() ContextInfo {
 		return ContextInfo{}
 	}
 	used, window := ctrl.ContextSnapshot()
-	return ContextInfo{Used: used, Window: window}
+	return ContextInfo{Used: used, Window: window, CompactRatio: ctrl.CompactRatio()}
 }
 
 // BalanceInfo is the wallet-balance readout for the status bar. Available is true

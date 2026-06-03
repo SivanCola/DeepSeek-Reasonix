@@ -156,7 +156,9 @@ export function WorkspacePanel({
   onToggleMaximized,
   onPreviewModeChange,
   onAddToChat,
-  changesRefreshKey,
+  refreshKey,
+  initialViewMode = "files",
+  showViewTabs = true,
 }: {
   open: boolean;
   cwd?: string;
@@ -166,7 +168,9 @@ export function WorkspacePanel({
   onToggleMaximized: () => void;
   onPreviewModeChange?: (active: boolean) => void;
   onAddToChat?: (text: string) => void;
-  changesRefreshKey?: number;
+  refreshKey?: number;
+  initialViewMode?: "files" | "changed";
+  showViewTabs?: boolean;
 }) {
   const t = useT();
   const panelRef = useRef<HTMLElement>(null);
@@ -178,7 +182,7 @@ export function WorkspacePanel({
   const [openTabs, setOpenTabs] = useState<string[]>([]);
   const [preview, setPreview] = useState<FilePreview | null>(null);
   const [loadingPreview, setLoadingPreview] = useState(false);
-  const [viewMode, setViewMode] = useState<"files" | "changed">("files");
+  const [viewMode, setViewMode] = useState<"files" | "changed">(initialViewMode);
   const [changes, setChanges] = useState<WorkspaceChangesView | null>(null);
   const [loadingChanges, setLoadingChanges] = useState(false);
   const [selectionMenu, setSelectionMenu] = useState<{ x: number; y: number; text: string; path: string } | null>(null);
@@ -188,6 +192,11 @@ export function WorkspacePanel({
   const [treeVisible, setTreeVisible] = useState(true);
   const [treeWidth, setTreeWidth] = useState(loadWorkspaceTreeWidth);
   const [treeResizing, setTreeResizing] = useState(false);
+  const openDirsRef = useRef(openDirs);
+
+  useEffect(() => {
+    openDirsRef.current = openDirs;
+  }, [openDirs]);
 
   const loadDir = useCallback(async (dir: string) => {
     const entries = await app.ListDir(dir).catch(() => []);
@@ -236,13 +245,26 @@ export function WorkspacePanel({
     setTreeMenu(null);
     setFilter("");
     setTreeVisible(true);
+    setViewMode(initialViewMode);
     void loadDir("");
-  }, [cwd, loadDir, open]);
+  }, [cwd, initialViewMode, loadDir, open]);
+
+  useEffect(() => {
+    if (!open) return;
+    setViewMode(initialViewMode);
+    if (initialViewMode === "changed") void loadChanges();
+  }, [initialViewMode, loadChanges, open]);
 
   useEffect(() => {
     if (!open) return;
     void loadChanges();
-  }, [changesRefreshKey, cwd, loadChanges, open]);
+  }, [cwd, loadChanges, open]);
+
+  useEffect(() => {
+    if (!open || !refreshKey) return;
+    void loadChanges();
+    openDirsRef.current.forEach((dir) => void loadDir(dir));
+  }, [loadChanges, loadDir, open, refreshKey]);
 
   useEffect(() => {
     if (!selectionMenu && !treeMenu) return;
@@ -362,10 +384,13 @@ export function WorkspacePanel({
     if (!q) return rows;
     return rows.filter((row) => `${row.path} ${row.oldPath ?? ""} ${row.gitStatus ?? ""}`.toLowerCase().includes(q));
   }, [changes?.files, filter]);
+  const searchPlaceholder = viewMode === "changed" ? t("workspace.filterChanges") : t("workspace.filter");
 
   const effectiveTreeWidth = useMemo(() => clampWorkspaceTreeWidth(treeWidth, panelWidth), [panelWidth, treeWidth]);
   const previewVisible = openTabs.length > 0 || selectedPath !== null;
   const previewModeActive = open && previewVisible;
+  const embeddedDockMode = !showViewTabs;
+  const showFileTools = showViewTabs || previewVisible;
 
   const panelStyle = useMemo(
     () => ({ "--workspace-tree-width": `${effectiveTreeWidth}px` }) as CSSProperties,
@@ -588,7 +613,7 @@ export function WorkspacePanel({
   return (
     <aside
       ref={panelRef}
-      className={`workspace-panel${treeVisible ? "" : " workspace-panel--tree-hidden"}${previewVisible ? "" : " workspace-panel--preview-hidden"}${treeResizing ? " workspace-panel--tree-resizing" : ""}`}
+      className={`workspace-panel${embeddedDockMode ? " workspace-panel--embedded" : ""}${treeVisible ? "" : " workspace-panel--tree-hidden"}${previewVisible ? "" : " workspace-panel--preview-hidden"}${treeResizing ? " workspace-panel--tree-resizing" : ""}`}
       aria-label={t("workspace.title")}
       style={panelStyle}
     >
@@ -745,43 +770,49 @@ export function WorkspacePanel({
       )}
 
       <section className="workspace-files">
-        <div className="workspace-files__tools">
-          <Tooltip label={previewVisible ? t("workspace.hideTree") : t("workspace.close")}>
-            <button
-              className="workspace-iconbtn workspace-iconbtn--on"
-              onClick={hideTreeOrClosePanel}
-            >
-              <PanelRightClose size={15} />
-            </button>
-          </Tooltip>
-          <div className="workspace-files__tabs" role="tablist" aria-label={t("workspace.viewMode")}>
-            <button
-              className={viewMode === "files" ? "workspace-files__tab workspace-files__tab--active" : "workspace-files__tab"}
-              onClick={() => setViewMode("files")}
-            >
-              {t("workspace.filesTab")}
-            </button>
-            <button
-              className={viewMode === "changed" ? "workspace-files__tab workspace-files__tab--active" : "workspace-files__tab"}
-              onClick={() => {
-                setViewMode("changed");
-                void loadChanges();
-              }}
-            >
-              <GitBranch size={13} />
-              {t("workspace.changedTab")}
-            </button>
+        {showFileTools && (
+          <div className={`workspace-files__tools${embeddedDockMode ? " workspace-files__tools--embedded" : ""}`}>
+            <Tooltip label={previewVisible ? t("workspace.hideTree") : t("workspace.close")}>
+              <button
+                className="workspace-iconbtn workspace-iconbtn--on"
+                onClick={hideTreeOrClosePanel}
+              >
+                <PanelRightClose size={15} />
+              </button>
+            </Tooltip>
+            {showViewTabs && (
+              <div className="workspace-files__tabs" role="tablist" aria-label={t("workspace.viewMode")}>
+                <button
+                  className={viewMode === "files" ? "workspace-files__tab workspace-files__tab--active" : "workspace-files__tab"}
+                  onClick={() => setViewMode("files")}
+                >
+                  {t("workspace.filesTab")}
+                </button>
+                <button
+                  className={viewMode === "changed" ? "workspace-files__tab workspace-files__tab--active" : "workspace-files__tab"}
+                  onClick={() => {
+                    setViewMode("changed");
+                    void loadChanges();
+                  }}
+                >
+                  <GitBranch size={13} />
+                  {t("workspace.changedTab")}
+                </button>
+              </div>
+            )}
+            {showViewTabs && (
+              <Tooltip label={t("workspace.refreshChanges")}>
+                <button className="workspace-iconbtn" onClick={() => void loadChanges()}>
+                  <RefreshCw size={14} />
+                </button>
+              </Tooltip>
+            )}
           </div>
-          <Tooltip label={t("workspace.refreshChanges")}>
-            <button className="workspace-iconbtn" onClick={() => void loadChanges()}>
-              <RefreshCw size={14} />
-            </button>
-          </Tooltip>
-        </div>
+        )}
 
         <div className="workspace-search">
           <Search size={14} />
-          <input ref={filterRef} value={filter} onChange={(e) => setFilter(e.target.value)} placeholder={t("workspace.filter")} />
+          <input ref={filterRef} value={filter} onChange={(e) => setFilter(e.target.value)} placeholder={searchPlaceholder} />
         </div>
         {viewMode === "changed" && changes && !changes.gitAvailable && changes.gitErr && (
           <div className="workspace-note workspace-note--compact">{t("workspace.gitUnavailable")}</div>

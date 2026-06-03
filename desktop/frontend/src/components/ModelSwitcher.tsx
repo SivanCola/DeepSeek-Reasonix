@@ -1,15 +1,12 @@
 import { useEffect, useState } from "react";
-import { Check, ChevronsUpDown } from "lucide-react";
+import { Brain, Check, ChevronsUpDown } from "lucide-react";
 import { asArray } from "../lib/array";
 import { app } from "../lib/bridge";
 import { useT } from "../lib/i18n";
 import type { ModelInfo } from "../lib/types";
 
-// ModelSwitcher is the bottom-of-window model picker: the status line's model
-// label becomes a button that opens a popover (upward) listing configured
-// providers. Selecting one switches the active model; the conversation is carried
-// over by the backend, so the chat continues. Mirrors the "switch model, keep the
-// session" behavior of comparable coding agents.
+// ModelSwitcher opens an upward popover listing configured providers. Selecting
+// one switches the active model while the current conversation continues.
 export function ModelSwitcher({ label, onPick }: { label: string; onPick: (name: string) => void }) {
   const t = useT();
   const [open, setOpen] = useState(false);
@@ -27,6 +24,7 @@ export function ModelSwitcher({ label, onPick }: { label: string; onPick: (name:
   return (
     <div className="modelsw">
       <button className="modelsw__trigger" onClick={() => setOpen((v) => !v)}>
+        <Brain size={13} className="modelsw__kind" />
         <span className="modelsw__label">{label}</span>
         <ChevronsUpDown size={11} />
       </button>

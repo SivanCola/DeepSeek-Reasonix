@@ -66,15 +66,19 @@ export interface AppBindings {
   // Session history: list saved sessions, resume one (returns its transcript),
   // preview one read-only, delete one, or give one a custom display name ("" clears it).
   ListSessions(): Promise<SessionMeta[]>;
+  ListTrashedSessions(): Promise<SessionMeta[]>;
   ResumeSession(path: string): Promise<HistoryMessage[]>;
   PreviewSession(path: string): Promise<HistoryMessage[]>;
   DeleteSession(path: string): Promise<void>;
+  RestoreSession(path: string): Promise<void>;
+  PurgeTrashedSession(path: string): Promise<void>;
   RenameSession(path: string, title: string): Promise<void>;
   // Workspace: open a folder chooser and switch to that project (fresh session);
   // returns the chosen path, or "" if cancelled.
   ListWorkspaces(): Promise<WorkspaceView[]>;
   PickWorkspace(): Promise<string>;
   SwitchWorkspace(path: string): Promise<string>;
+  RemoveWorkspace(path: string): Promise<void>;
   ContextUsage(): Promise<ContextInfo>;
   // Balance queries the active provider's wallet balance (a network call);
   // returns an unavailable readout when no balance_url is configured or it fails.
@@ -165,6 +169,7 @@ export interface AppBindings {
   CreateTopic(scope: string, workspaceRoot: string, title: string): Promise<TopicMeta>;
   RenameTopic(topicID: string, title: string): Promise<void>;
   DeleteTopic(topicID: string): Promise<void>;
+  TrashTopic(topicID: string): Promise<void>;
   // Context panel (desktop/tabs.go).
   ContextPanel(tabID: string): Promise<ContextPanelInfo>;
 }
@@ -391,6 +396,7 @@ function makeMockApp(): AppBindings {
     { path: "/mock/sessions/c.jsonl", preview: "write the README and badges", turns: 8, createdAt: t0 - 4 * day, lastActivityAt: t0 - day - 3_600_000, modTime: t0 - day - 3_600_000, current: false },
     { path: "/mock/sessions/d.jsonl", preview: "explain the plugin host design", turns: 3, createdAt: t0 - 5 * day, lastActivityAt: t0 - 4 * day, modTime: t0 - 4 * day, current: false },
   ];
+  const trashedSessions: SessionMeta[] = [];
   // Mutable settings so the Settings panel's edits are observable in browser dev.
   const settings: SettingsView = {
     defaultModel: "deepseek-flash",
@@ -411,6 +417,56 @@ function makeMockApp(): AppBindings {
     configPath: "~/projects/reasonix/reasonix.toml",
     providerKinds: ["openai"],
     bypass: false,
+  };
+  const mockProjectTree: ProjectNode[] = [
+    {
+      key: "project_~/projects/joyquant-db",
+      kind: "project",
+      label: "joyquant-db",
+      root: "~/projects/joyquant-db",
+      children: [
+        { key: "topic_dev_standard", kind: "topic", label: "● 00 制定项目开发规范", root: "~/projects/joyquant-db", topicId: "topic_dev_standard" },
+        { key: "topic_db_maint", kind: "topic", label: "01 JoyQuant DB项目维护", root: "~/projects/joyquant-db", topicId: "topic_db_maint" },
+        { key: "topic_env", kind: "topic", label: "项目环境uv和Python运行问题", root: "~/projects/joyquant-db", topicId: "topic_env" },
+      ],
+    },
+    {
+      key: "project_~/projects/joyquant-sys",
+      kind: "project",
+      label: "joyquant-sys",
+      root: "~/projects/joyquant-sys",
+      children: [
+        { key: "topic_p3b_pd", kind: "topic", label: "● 20260523 p3b P&D", root: "~/projects/joyquant-sys", topicId: "topic_p3b_pd" },
+        { key: "topic_p3a_pd", kind: "topic", label: "20260521 p3a P&D", root: "~/projects/joyquant-sys", topicId: "topic_p3a_pd" },
+        { key: "topic_hotfix", kind: "topic", label: "20260522 post-p3-hotfix P&D", root: "~/projects/joyquant-sys", topicId: "topic_hotfix" },
+        { key: "topic_sys_coord", kind: "topic", label: "01 JoyQuant-SYS 项目总协调", root: "~/projects/joyquant-sys", topicId: "topic_sys_coord" },
+        { key: "topic_sys_standard", kind: "topic", label: "00 制定项目开发规范", root: "~/projects/joyquant-sys", topicId: "topic_sys_standard" },
+      ],
+    },
+    {
+      key: "global_folder",
+      kind: "global_folder",
+      label: "Global",
+      children: [
+        { key: "global_topic_product", kind: "global_topic", label: "产品通用规范", topicId: "topic_product" },
+        { key: "global_topic_ai", kind: "global_topic", label: "AI 工程化最佳实践", topicId: "topic_ai" },
+        { key: "global_topic_lab", kind: "global_topic", label: "临时探索与实验", topicId: "topic_lab" },
+      ],
+    },
+  ];
+  const cloneProjectTree = () => JSON.parse(JSON.stringify(mockProjectTree)) as ProjectNode[];
+  const projectChildren = (node: ProjectNode): ProjectNode[] => Array.isArray(node.children) ? node.children : [];
+  const findMockTopic = (topicId: string): ProjectNode | null => {
+    for (const parent of mockProjectTree) {
+      const found = projectChildren(parent).find((child) => child.topicId === topicId);
+      if (found) return found;
+    }
+    return null;
+  };
+  const deleteMockTopic = (topicId: string) => {
+    for (const parent of mockProjectTree) {
+      parent.children = projectChildren(parent).filter((child) => child.topicId !== topicId);
+    }
   };
   return {
     async Submit(input) {
@@ -570,6 +626,9 @@ function makeMockApp(): AppBindings {
     async ListSessions() {
       return sessions.map((s) => ({ ...s }));
     },
+    async ListTrashedSessions() {
+      return trashedSessions.map((s) => ({ ...s }));
+    },
     async ResumeSession(path: string) {
       sessions.forEach((s) => {
         s.current = s.path === path;
@@ -592,7 +651,30 @@ function makeMockApp(): AppBindings {
     },
     async DeleteSession(path: string) {
       const i = sessions.findIndex((s) => s.path === path);
-      if (i >= 0) sessions.splice(i, 1);
+      if (i >= 0) {
+        const [s] = sessions.splice(i, 1);
+        trashedSessions.unshift({
+          ...s,
+          current: false,
+          path: s.path.replace("/mock/sessions/", "/mock/sessions/.trash/"),
+          deletedAt: Date.now(),
+        });
+      }
+    },
+    async RestoreSession(path: string) {
+      const i = trashedSessions.findIndex((s) => s.path === path);
+      if (i >= 0) {
+        const [s] = trashedSessions.splice(i, 1);
+        sessions.unshift({
+          ...s,
+          path: s.path.replace("/mock/sessions/.trash/", "/mock/sessions/"),
+          deletedAt: undefined,
+        });
+      }
+    },
+    async PurgeTrashedSession(path: string) {
+      const i = trashedSessions.findIndex((s) => s.path === path);
+      if (i >= 0) trashedSessions.splice(i, 1);
     },
     async RenameSession(path: string, title: string) {
       const s = sessions.find((x) => x.path === path);
@@ -613,8 +695,13 @@ function makeMockApp(): AppBindings {
     async SwitchWorkspace(path: string) {
       return mockSwitchWorkspace(path);
     },
+    async RemoveWorkspace(path: string) {
+      workspaces = workspaces.filter((p) => p !== path);
+      const index = mockProjectTree.findIndex((node) => node.root === path);
+      if (index >= 0) mockProjectTree.splice(index, 1);
+    },
     async ContextUsage() {
-      return { used: 42124, window: 128000 };
+      return { used: 42124, window: 128000, compactRatio: 0.8 };
     },
     async Balance() {
       // Mirror the active mock provider: deepseek-flash carries a balance_url.
@@ -1106,48 +1193,35 @@ function makeMockApp(): AppBindings {
     async SetActiveTab(_tabID: string) {},
     async CloseTab(_tabID: string) {},
     async ListProjectTree() {
-      return [
-        {
-          key: "project_~/projects/joyquant-db",
-          kind: "project" as const,
-          label: "joyquant-db",
-          root: "~/projects/joyquant-db",
-          children: [
-            { key: "topic_dev_standard", kind: "topic" as const, label: "● 00 制定项目开发规范", root: "~/projects/joyquant-db", topicId: "topic_dev_standard" },
-            { key: "topic_db_maint", kind: "topic" as const, label: "01 JoyQuant DB项目维护", root: "~/projects/joyquant-db", topicId: "topic_db_maint" },
-            { key: "topic_env", kind: "topic" as const, label: "项目环境uv和Python运行问题", root: "~/projects/joyquant-db", topicId: "topic_env" },
-          ],
-        },
-        {
-          key: "project_~/projects/joyquant-sys",
-          kind: "project" as const,
-          label: "joyquant-sys",
-          root: "~/projects/joyquant-sys",
-          children: [
-            { key: "topic_p3b_pd", kind: "topic" as const, label: "● 20260523 p3b P&D", root: "~/projects/joyquant-sys", topicId: "topic_p3b_pd" },
-            { key: "topic_p3a_pd", kind: "topic" as const, label: "20260521 p3a P&D", root: "~/projects/joyquant-sys", topicId: "topic_p3a_pd" },
-            { key: "topic_hotfix", kind: "topic" as const, label: "20260522 post-p3-hotfix P&D", root: "~/projects/joyquant-sys", topicId: "topic_hotfix" },
-            { key: "topic_sys_coord", kind: "topic" as const, label: "01 JoyQuant-SYS 项目总协调", root: "~/projects/joyquant-sys", topicId: "topic_sys_coord" },
-            { key: "topic_sys_standard", kind: "topic" as const, label: "00 制定项目开发规范", root: "~/projects/joyquant-sys", topicId: "topic_sys_standard" },
-          ],
-        },
-        {
-          key: "global_folder",
-          kind: "global_folder" as const,
-          label: "Global",
-          children: [
-            { key: "global_topic_product", kind: "global_topic" as const, label: "产品通用规范", topicId: "topic_product" },
-            { key: "global_topic_ai", kind: "global_topic" as const, label: "AI 工程化最佳实践", topicId: "topic_ai" },
-            { key: "global_topic_lab", kind: "global_topic" as const, label: "临时探索与实验", topicId: "topic_lab" },
-          ],
-        },
-      ];
+      return cloneProjectTree();
     },
     async CreateTopic(_scope: string, _workspaceRoot: string, title: string) {
-      return { id: "topic_" + Date.now(), title, createdAt: Date.now() };
+      const id = "topic_" + Date.now();
+      const parent = _scope === "global"
+        ? mockProjectTree.find((node) => node.kind === "global_folder")
+        : mockProjectTree.find((node) => node.root === _workspaceRoot);
+      if (parent) {
+        const global = parent.kind === "global_folder";
+        parent.children = [...projectChildren(parent), {
+          key: parent.kind === "global_folder" ? "global_topic_" + id : "topic_" + id,
+          kind: global ? "global_topic" : "topic",
+          label: title,
+          root: parent.root,
+          topicId: id,
+        }];
+      }
+      return { id, title, createdAt: Date.now() };
     },
-    async RenameTopic(_topicID: string, _title: string) {},
-    async DeleteTopic(_topicID: string) {},
+    async RenameTopic(topicID: string, title: string) {
+      const topic = findMockTopic(topicID);
+      if (topic) topic.label = title.trim() || topic.label;
+    },
+    async DeleteTopic(topicID: string) {
+      deleteMockTopic(topicID);
+    },
+    async TrashTopic(topicID: string) {
+      deleteMockTopic(topicID);
+    },
     async ContextPanel(_tabID: string) {
       const now = Date.now();
       return {

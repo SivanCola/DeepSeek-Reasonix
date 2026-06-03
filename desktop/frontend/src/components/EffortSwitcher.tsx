@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Check, ChevronsUpDown } from "lucide-react";
+import { Check, ChevronsUpDown, Gauge } from "lucide-react";
 import { asArray } from "../lib/array";
 import { useT } from "../lib/i18n";
 import type { EffortInfo } from "../lib/types";
@@ -31,6 +31,7 @@ export function EffortSwitcher({
         disabled={disabled}
         onClick={() => setOpen((v) => !v)}
       >
+        <Gauge size={13} className="modelsw__kind" />
         <span className="modelsw__label">{t("status.effort", { level: current })}</span>
         <ChevronsUpDown size={11} />
       </button>

@@ -700,6 +700,18 @@ func addProject(root, title string) error {
 	return saveProjectsFile(f)
 }
 
+func removeProject(root string) error {
+	f := loadProjectsFile()
+	projects := make([]desktopProject, 0, len(f.Projects))
+	for _, p := range f.Projects {
+		if p.Root != root {
+			projects = append(projects, p)
+		}
+	}
+	f.Projects = projects
+	return saveProjectsFile(f)
+}
+
 func projectTitle(root string) string {
 	for _, p := range loadProjectsFile().Projects {
 		if p.Root == root {
@@ -813,12 +825,16 @@ func loadTelemetry(path string) []readFileRecord {
 // ProjectNode is one node in the sidebar project tree (a project folder or a
 // topic leaf).
 type ProjectNode struct {
-	Key      string        `json:"key"`  // stable key for React
-	Kind     string        `json:"kind"` // "project" | "topic" | "global_folder" | "global_topic"
-	Label    string        `json:"label"`
-	Root     string        `json:"root,omitempty"` // project workspace root
-	TopicID  string        `json:"topicId,omitempty"`
-	Children []ProjectNode `json:"children,omitempty"`
+	Key            string        `json:"key"`  // stable key for React
+	Kind           string        `json:"kind"` // "project" | "topic" | "global_folder" | "global_topic"
+	Label          string        `json:"label"`
+	Root           string        `json:"root,omitempty"` // project workspace root
+	TopicID        string        `json:"topicId,omitempty"`
+	Turns          int           `json:"turns,omitempty"`
+	LastActivityAt int64         `json:"lastActivityAt,omitempty"`
+	Open           bool          `json:"open,omitempty"`
+	Running        bool          `json:"running,omitempty"`
+	Children       []ProjectNode `json:"children,omitempty"`
 }
 
 // TopicMeta describes a topic for the project tree.
@@ -860,20 +876,42 @@ func (a *App) CreateTopic(scope, workspaceRoot, title string) (TopicMeta, error)
 
 // RenameTopic updates a topic's display title.
 func (a *App) RenameTopic(topicID, title string) error {
+	trimmed := strings.TrimSpace(title)
 	// Find which workspace this topic belongs to by scanning all project topic titles.
 	f := loadProjectsFile()
 	for _, p := range f.Projects {
 		m := loadTopicTitles(p.Root)
 		if _, ok := m[topicID]; ok {
-			return setTopicTitle(p.Root, topicID, title)
+			if err := setTopicTitle(p.Root, topicID, trimmed); err != nil {
+				return err
+			}
+			a.updateOpenTopicTitle(topicID, trimmed)
+			return nil
 		}
 	}
 	// Check global.
 	m := loadTopicTitles("")
 	if _, ok := m[topicID]; ok {
-		return setTopicTitle("", topicID, title)
+		if err := setTopicTitle("", topicID, trimmed); err != nil {
+			return err
+		}
+		a.updateOpenTopicTitle(topicID, trimmed)
+		return nil
 	}
 	return fmt.Errorf("topic %q not found", topicID)
+}
+
+func (a *App) updateOpenTopicTitle(topicID, title string) {
+	if strings.TrimSpace(topicID) == "" || strings.TrimSpace(title) == "" {
+		return
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	for _, tab := range a.tabs {
+		if tab != nil && tab.TopicID == topicID {
+			tab.TopicTitle = title
+		}
+	}
 }
 
 // DeleteTopic removes a topic and its title metadata.
@@ -913,22 +951,110 @@ func (a *App) DeleteTopic(topicID string) error {
 	return nil
 }
 
+// TrashTopic removes a topic from the project tree and moves its saved session
+// records into the session trash. The active controller's current autosave file
+// is left in place because it would be recreated by the next autosave.
+func (a *App) TrashTopic(topicID string) error {
+	if strings.TrimSpace(topicID) == "" {
+		return fmt.Errorf("topicID is required")
+	}
+	dir := config.SessionDir()
+	infos, err := agent.ListSessions(dir)
+	if err != nil {
+		return err
+	}
+	activePaths := map[string]bool{}
+	a.mu.RLock()
+	for _, tab := range a.tabs {
+		if tab == nil || tab.Ctrl == nil {
+			continue
+		}
+		if path := tab.Ctrl.SessionPath(); path != "" {
+			if abs, err := filepath.Abs(path); err == nil {
+				activePaths[abs] = true
+			}
+		}
+	}
+	a.mu.RUnlock()
+
+	for _, info := range infos {
+		if info.TopicID != topicID {
+			continue
+		}
+		sessionPath, _, err := validateSessionPath(dir, info.Path)
+		if err != nil {
+			return err
+		}
+		if activePaths[sessionPath] {
+			continue
+		}
+		if err := deleteSessionFile(dir, sessionPath); err != nil {
+			return err
+		}
+	}
+	return a.DeleteTopic(topicID)
+}
+
 // ListProjectTree builds the sidebar tree: project folders each containing
 // their topics, plus a Global section.
 func (a *App) ListProjectTree() []ProjectNode {
 	f := loadProjectsFile()
 	out := []ProjectNode{}
+	type topicSummary struct {
+		turns          int
+		lastActivityAt int64
+	}
+	topicSummaries := map[string]topicSummary{}
+	if infos, err := agent.ListSessions(config.SessionDir()); err == nil {
+		for _, info := range infos {
+			if strings.TrimSpace(info.TopicID) == "" {
+				continue
+			}
+			key := topicSummaryKey(info.Scope, info.WorkspaceRoot, info.TopicID)
+			summary := topicSummaries[key]
+			summary.turns += info.Turns
+			lastActivityAt := info.LastActivityAt.UnixMilli()
+			if lastActivityAt > summary.lastActivityAt {
+				summary.lastActivityAt = lastActivityAt
+			}
+			topicSummaries[key] = summary
+		}
+	}
+	openTopics := map[string]struct {
+		open    bool
+		running bool
+	}{}
+	a.mu.RLock()
+	for _, tab := range a.tabs {
+		if tab == nil || strings.TrimSpace(tab.TopicID) == "" {
+			continue
+		}
+		key := topicSummaryKey(tab.Scope, tab.WorkspaceRoot, tab.TopicID)
+		status := openTopics[key]
+		status.open = true
+		if tab.Ctrl != nil && tab.Ctrl.Running() {
+			status.running = true
+		}
+		openTopics[key] = status
+	}
+	a.mu.RUnlock()
 
 	// Global section.
 	globalTopics := loadTopicTitles("")
 	if len(globalTopics) > 0 {
 		children := make([]ProjectNode, 0, len(globalTopics))
 		for id, title := range globalTopics {
+			summary := topicSummaries[topicSummaryKey("global", "", id)]
+			status := openTopics[topicSummaryKey("global", "", id)]
 			children = append(children, ProjectNode{
-				Key:     "global_topic_" + id,
-				Kind:    "global_topic",
-				Label:   title,
-				TopicID: id,
+				Key:            "global_topic_" + id,
+				Kind:           "global_topic",
+				Label:          title,
+				TopicID:        id,
+				Turns:          summary.turns,
+				LastActivityAt: summary.lastActivityAt,
+				Open:           status.open,
+				Running:        status.running,
 			})
 		}
 		sort.Slice(children, func(i, j int) bool {
@@ -978,26 +1104,18 @@ func (a *App) ListProjectTree() []ProjectNode {
 			if topicTitle == "" {
 				topicTitle = tid
 			}
-			// Check if this topic is already open in a tab.
-			opened := false
-			a.mu.RLock()
-			for _, tab := range a.tabs {
-				if tab.TopicID == tid && tab.WorkspaceRoot == p.Root {
-					opened = true
-					break
-				}
-			}
-			a.mu.RUnlock()
-			label := topicTitle
-			if opened {
-				label = "● " + topicTitle
-			}
+			summary := topicSummaries[topicSummaryKey("project", p.Root, tid)]
+			status := openTopics[topicSummaryKey("project", p.Root, tid)]
 			children = append(children, ProjectNode{
-				Key:     "topic_" + tid,
-				Kind:    "topic",
-				Label:   label,
-				Root:    p.Root,
-				TopicID: tid,
+				Key:            "topic_" + tid,
+				Kind:           "topic",
+				Label:          topicTitle,
+				Root:           p.Root,
+				TopicID:        tid,
+				Turns:          summary.turns,
+				LastActivityAt: summary.lastActivityAt,
+				Open:           status.open,
+				Running:        status.running,
 			})
 		}
 		node.Label = title
@@ -1026,11 +1144,15 @@ func (a *App) ListProjectTree() []ProjectNode {
 				Root:  tab.WorkspaceRoot,
 				Label: workspaceName(tab.WorkspaceRoot),
 				Children: []ProjectNode{{
-					Key:     "topic_" + tab.TopicID,
-					Kind:    "topic",
-					Label:   "● " + tab.TopicTitle,
-					Root:    tab.WorkspaceRoot,
-					TopicID: tab.TopicID,
+					Key:            "topic_" + tab.TopicID,
+					Kind:           "topic",
+					Label:          tab.TopicTitle,
+					Root:           tab.WorkspaceRoot,
+					TopicID:        tab.TopicID,
+					Open:           true,
+					Running:        tab.Ctrl != nil && tab.Ctrl.Running(),
+					Turns:          topicSummaries[topicSummaryKey("project", tab.WorkspaceRoot, tab.TopicID)].turns,
+					LastActivityAt: topicSummaries[topicSummaryKey("project", tab.WorkspaceRoot, tab.TopicID)].lastActivityAt,
 				}},
 			})
 		}
@@ -1038,6 +1160,13 @@ func (a *App) ListProjectTree() []ProjectNode {
 	a.mu.RUnlock()
 
 	return out
+}
+
+func topicSummaryKey(scope, workspaceRoot, topicID string) string {
+	if scope == "global" {
+		return "global::" + topicID
+	}
+	return "project:" + workspaceRoot + ":" + topicID
 }
 
 // ContextPanelInfo is the right-side panel's data for one tab.

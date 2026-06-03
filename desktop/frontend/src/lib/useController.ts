@@ -344,8 +344,8 @@ export function useController() {
       dispatchTo(targetTabId, { type: "event", e });
       if (e.kind === "turn_done") {
         app
-          .ContextPanel(targetTabId)
-          .then((info) => dispatchTo(targetTabId, { type: "context", context: { used: info.usedTokens, window: info.windowTokens } }))
+          .ContextUsage()
+          .then((context) => dispatchTo(targetTabId, { type: "context", context }))
           .catch(() => {});
         app.Balance().then((balance) => dispatchTo(targetTabId, { type: "balance", balance })).catch(() => {});
         app.Effort().then((effort) => dispatchTo(targetTabId, { type: "effort", effort })).catch(() => {});
@@ -420,6 +420,7 @@ export function useController() {
   }, [activeTabId, dispatchTo]);
 
   const listSessions = useCallback(async (): Promise<SessionMeta[]> => asArray<SessionMeta>(await app.ListSessions().catch(() => [])), []);
+  const listTrashedSessions = useCallback(async (): Promise<SessionMeta[]> => asArray<SessionMeta>(await app.ListTrashedSessions().catch(() => [])), []);
   const resumeSession = useCallback(async (path: string) => {
     const messages = asArray(await app.ResumeSession(path).catch(() => [] as HistoryMessage[]));
     if (activeTabId) {
@@ -430,6 +431,8 @@ export function useController() {
   }, [activeTabId, dispatchTo]);
   const previewSession = useCallback(async (path: string): Promise<HistoryMessage[]> => asArray<HistoryMessage>(await app.PreviewSession(path).catch(() => [])), []);
   const deleteSession = useCallback((path: string) => app.DeleteSession(path).catch(() => {}), []);
+  const restoreSession = useCallback((path: string) => app.RestoreSession(path).catch(() => {}), []);
+  const purgeTrashedSession = useCallback((path: string) => app.PurgeTrashedSession(path).catch(() => {}), []);
   const renameSession = useCallback((path: string, title: string) => app.RenameSession(path, title).catch(() => {}), []);
 
   const refreshMeta = useCallback(async () => {
@@ -537,7 +540,7 @@ export function useController() {
     state: activeState,
     activeTabId,
     send, notice, cancel, approve, answerQuestion, setControllerMode,
-    newSession, listSessions, resumeSession, previewSession, deleteSession, renameSession,
+    newSession, listSessions, listTrashedSessions, resumeSession, previewSession, deleteSession, restoreSession, purgeTrashedSession, renameSession,
     refreshMeta, pickWorkspace, switchWorkspace, compact, rewind, setModel, setEffort,
     fetchMemory, remember, forget, saveDoc,
     switchTab, openProjectTab, openGlobalTab, closeTab,

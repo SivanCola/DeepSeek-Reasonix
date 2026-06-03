@@ -79,7 +79,7 @@ export function getLocale(): Locale {
   return currentLocale;
 }
 
-type Translator = (key: DictKey, vars?: Record<string, string | number>) => string;
+export type Translator = (key: DictKey, vars?: Record<string, string | number>) => string;
 
 interface I18nValue {
   locale: Locale;

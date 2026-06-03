@@ -125,6 +125,10 @@ export interface ProjectNode {
   label: string;
   root?: string;
   topicId?: string;
+  turns?: number;
+  lastActivityAt?: number;
+  open?: boolean;
+  running?: boolean;
   children?: ProjectNode[];
 }
 
@@ -190,6 +194,7 @@ export interface SessionMeta {
   createdAt?: number; // unix milliseconds
   lastActivityAt?: number; // unix milliseconds
   modTime: number; // compatibility alias for lastActivityAt
+  deletedAt?: number; // unix milliseconds, present for trashed sessions
   current: boolean;
   scope?: string;       // "project" | "global"; empty for legacy → treated as "global"
   workspaceRoot?: string;
@@ -206,6 +211,7 @@ export interface WorkspaceView {
 export interface ContextInfo {
   used: number;
   window: number;
+  compactRatio?: number;
 }
 
 export interface Meta {
@@ -217,8 +223,8 @@ export interface Meta {
   bypass?: boolean; // YOLO mode on (auto-approve every tool call)
 }
 
-// Mode is the input mode cycled by Shift+Tab: normal → plan (read-only) → yolo
-// (auto-approve every tool call; deny rules still apply).
+// Mode is the input mode cycled by Shift+Tab: normal (shown as auto) → plan
+// (read-only) → yolo (auto-approve every tool call; deny rules still apply).
 export type Mode = "normal" | "plan" | "yolo";
 
 export interface CommandInfo {

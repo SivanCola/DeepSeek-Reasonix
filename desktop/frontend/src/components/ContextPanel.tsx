@@ -2,7 +2,7 @@
 // and workspace changes. It replaces/extend the right-hand workspace panel's
 // metadata view.
 import { useCallback, useEffect, useState } from "react";
-import { FileText, X } from "lucide-react";
+import { ArrowLeft, FileText, Search } from "lucide-react";
 import { asArray } from "../lib/array";
 import { app } from "../lib/bridge";
 import type { ContextInfo, ContextPanelInfo, WireUsage } from "../lib/types";
@@ -13,10 +13,10 @@ interface ContextPanelProps {
   usage?: WireUsage;
   sessionCostUsd?: number;
   scopeLabel?: string;
-  onClose?: () => void;
+  refreshKey?: number;
 }
 
-type ContextTab = "usage" | "read" | "changed";
+type ContextDetail = "read" | "changed";
 
 function fmtTokens(n: number): string {
   if (n >= 1000) return `${Math.round(n / 1000)}k`;
@@ -37,9 +37,39 @@ function fmtDuration(ms: number): string {
   return `${minutes}m ${seconds}s`;
 }
 
-export function ContextPanel({ tabId, context, usage, sessionCostUsd, scopeLabel, onClose }: ContextPanelProps) {
+function contextHealth(usagePct: number, cachePct: number, readCount: number) {
+  if (usagePct >= 85) {
+    return {
+      tone: "warn",
+      label: "上下文接近上限",
+      body: `已使用 ${usagePct}%，优先保留关键依据并考虑压缩。`,
+    };
+  }
+  if (readCount >= 8) {
+    return {
+      tone: "notice",
+      label: "依据文件较多",
+      body: `已读取 ${readCount} 条文件记录，可查看依据文件确认是否仍相关。`,
+    };
+  }
+  if (cachePct > 0 && cachePct < 50) {
+    return {
+      tone: "notice",
+      label: "缓存命中偏低",
+      body: `当前缓存命中 ${cachePct}%，后续长任务可关注上下文稳定性。`,
+    };
+  }
+  return {
+    tone: "good",
+    label: "上下文状态正常",
+    body: "用量、依据文件和本主题变更保持可追踪。",
+  };
+}
+
+export function ContextPanel({ tabId, context, usage, sessionCostUsd, scopeLabel, refreshKey }: ContextPanelProps) {
   const [info, setInfo] = useState<ContextPanelInfo | null>(null);
-  const [tab, setTab] = useState<ContextTab>("usage");
+  const [detailView, setDetailView] = useState<ContextDetail | null>(null);
+  const [query, setQuery] = useState("");
 
   const refresh = useCallback(async () => {
     if (!tabId) return;
@@ -51,10 +81,13 @@ export function ContextPanel({ tabId, context, usage, sessionCostUsd, scopeLabel
   }, [tabId]);
 
   useEffect(() => {
-    void refresh();
     const id = window.setInterval(() => void refresh(), 2000);
     return () => window.clearInterval(id);
   }, [refresh]);
+
+  useEffect(() => {
+    void refresh();
+  }, [refresh, refreshKey]);
 
   const usedTokens = context?.used && context.used > 0 ? context.used : info?.usedTokens ?? 0;
   const windowTokens = context?.window && context.window > 0 ? context.window : info?.windowTokens ?? 0;
@@ -100,85 +133,121 @@ export function ContextPanel({ tabId, context, usage, sessionCostUsd, scopeLabel
     time: fmtTime(f.latestTime),
     detail: asArray(f.turns).length > 0 ? `T${asArray(f.turns).join(",")}` : "",
   }));
+  const normalizedQuery = query.trim().toLowerCase();
+  const filterRows = (rows: typeof readRows) => {
+    if (!normalizedQuery) return rows;
+    return rows.filter((row) =>
+      `${row.path} ${row.meta} ${row.time} ${row.detail}`.toLowerCase().includes(normalizedQuery)
+    );
+  };
+  const filteredReadRows = filterRows(readRows);
+  const filteredChangedRows = filterRows(changedRows);
+  const health = contextHealth(usagePct, cachePct, readRows.length);
+  const detailRows = detailView === "changed" ? filteredChangedRows : filteredReadRows;
+  const detailTitle = detailView === "changed" ? "本主题变更" : "依据文件";
+  const detailCount = detailView === "changed" ? changedRows.length : readRows.length;
+  const detailEmpty = detailView === "changed" ? "当前主题还没有变更文件" : "当前主题还没有读取文件";
+  const detailPlaceholder = detailView === "changed" ? "筛选本主题变更文件..." : "筛选依据文件...";
+  const detailNote = detailView === "changed"
+    ? `当前主题关联 ${detailCount} 条变更记录`
+    : `当前主题读取过 ${detailCount} 条文件记录`;
+
+  const openDetail = (next: ContextDetail) => {
+    setDetailView(next);
+    setQuery("");
+  };
+
+  const closeDetail = () => {
+    setDetailView(null);
+    setQuery("");
+  };
 
   return (
     <div className="context-panel">
-      <header className="context-panel__head">
-        <div className="context-panel__title">当前主题上下文</div>
-        {onClose && (
-          <button className="context-panel__close" onClick={onClose} aria-label="关闭上下文面板">
-            <X size={15} />
+      <div className="context-panel__summary-head">
+        <div className="context-panel__heading-main">
+          <span>{detailView ? detailTitle : "当前主题概览"}</span>
+          <strong>{scopeLabel || "范围：全局"}</strong>
+        </div>
+        {detailView && (
+          <button className="context-panel__back" type="button" onClick={closeDetail}>
+            <ArrowLeft size={13} />
+            概览
           </button>
         )}
-      </header>
-
-      <div className="context-panel__tabs" role="tablist" aria-label="当前主题上下文">
-        <button className={`context-panel__tab${tab === "usage" ? " context-panel__tab--active" : ""}`} onClick={() => setTab("usage")}>Usage</button>
-        <button className={`context-panel__tab${tab === "read" ? " context-panel__tab--active" : ""}`} onClick={() => setTab("read")}>Read Files</button>
-        <button className={`context-panel__tab${tab === "changed" ? " context-panel__tab--active" : ""}`} onClick={() => setTab("changed")}>Changed</button>
       </div>
 
+      {detailView && (
+        <label className="context-panel__search">
+          <Search size={14} />
+          <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={detailPlaceholder} />
+        </label>
+      )}
+
       <div className="context-panel__body">
-        {tab === "usage" && (
-          <section className="context-panel__usage">
-            <div className="context-panel__donut" style={donutStyle}>
-              <div className="context-panel__donut-core">
-                <strong>{fmtTokens(usedTokens)}</strong>
-                <span>/ {fmtTokens(windowTokens)} tokens</span>
-              </div>
-            </div>
-            <div className="context-panel__percent">{usagePct}%</div>
-            <div className="context-panel__breakdown">
-              <TokenLegend label="Prompt" value={promptTokens} color="prompt" />
-              <TokenLegend label="Completion" value={completionTokens} color="completion" />
-              <TokenLegend label="Reasoning" value={reasoningTokens} color="reasoning" />
-              <TokenLegend label="Other" value={otherTokens} color="other" />
-              <div className="context-panel__total">
-                <span>Total</span>
-                <strong>{usedTokens.toLocaleString()} / {windowTokens.toLocaleString()}</strong>
-              </div>
-            </div>
-            <div className="context-panel__stats">
-              <MetricCard label="Cache hit" value={cachePct > 0 ? `${cachePct}%` : "-"} tone="accent" />
-              <MetricCard label="Session cost" value={cost > 0 ? `¥${cost < 1 ? cost.toFixed(3) : cost.toFixed(2)}` : "-"} />
-              <MetricCard label="Requests" value={requestCount > 0 ? String(requestCount) : "-"} />
-              <MetricCard label="Time" value={fmtDuration(elapsed)} />
-            </div>
-            <PreviewSection
-              title="Read Files"
-              action="View all"
-              onAction={() => setTab("read")}
-              rows={readRows.slice(0, 4)}
-              empty="还没有读取文件"
-            />
-            <PreviewSection
-              title={`Changed Files${changedFiles.length > 0 ? ` (${changedFiles.length})` : ""}`}
-              action="View all"
-              onAction={() => setTab("changed")}
-              rows={changedRows.slice(0, 3)}
-              empty="还没有变更文件"
+        {detailView ? (
+          <section className="context-panel__detail">
+            <div className="context-panel__detail-note">{detailNote}</div>
+            <FileTable
+              empty={detailEmpty}
+              rows={detailRows}
             />
           </section>
-        )}
-
-        {tab === "read" && (
-          <FileTable
-            empty="还没有读取文件"
-            rows={readRows}
-          />
-        )}
-
-        {tab === "changed" && (
-          <FileTable
-            empty="还没有变更文件"
-            rows={changedRows}
-          />
+        ) : (
+          <section className="context-panel__overview">
+            <section className="context-panel__usage">
+              <div className="context-panel__donut" style={donutStyle}>
+                <div className="context-panel__donut-core">
+                  <strong>{fmtTokens(usedTokens)}</strong>
+                  <span>/ {fmtTokens(windowTokens)} tokens</span>
+                </div>
+              </div>
+              <div className="context-panel__percent">{usagePct}%</div>
+              <div className="context-panel__breakdown">
+                <TokenLegend label="Prompt" value={promptTokens} color="prompt" />
+                <TokenLegend label="Completion" value={completionTokens} color="completion" />
+                <TokenLegend label="Reasoning" value={reasoningTokens} color="reasoning" />
+                <TokenLegend label="Other" value={otherTokens} color="other" />
+                <div className="context-panel__total">
+                  <span>Total</span>
+                  <strong>{usedTokens.toLocaleString()} / {windowTokens.toLocaleString()}</strong>
+                </div>
+              </div>
+              <div className="context-panel__stats">
+                <MetricCard label="Cache hit" value={cachePct > 0 ? `${cachePct}%` : "-"} tone="accent" />
+                <MetricCard label="Session cost" value={cost > 0 ? `¥${cost < 1 ? cost.toFixed(3) : cost.toFixed(2)}` : "-"} />
+                <MetricCard label="Requests" value={requestCount > 0 ? String(requestCount) : "-"} />
+                <MetricCard label="Time" value={fmtDuration(elapsed)} />
+              </div>
+            </section>
+            <div className={`context-panel__health context-panel__health--${health.tone}`}>
+              <span>上下文状态</span>
+              <strong>{health.label}</strong>
+              <small>{health.body}</small>
+            </div>
+            <PreviewSection
+              title="依据文件"
+              meta={`${readRows.length} 条读取记录`}
+              action="查看全部"
+              onAction={() => openDetail("read")}
+              rows={readRows.slice(0, 3)}
+              empty="当前主题还没有读取文件"
+            />
+            <PreviewSection
+              title="本主题变更"
+              meta={`${changedRows.length} 条变更记录`}
+              action="查看全部"
+              onAction={() => openDetail("changed")}
+              rows={changedRows.slice(0, 3)}
+              empty="当前主题还没有变更文件"
+            />
+          </section>
         )}
       </div>
 
       <footer className="context-panel__scope">
         <FileText size={14} />
-        <span>{scopeLabel || "Scope: Global"}</span>
+        <span>{scopeLabel || "范围：全局"}</span>
       </footer>
     </div>
   );
@@ -186,12 +255,14 @@ export function ContextPanel({ tabId, context, usage, sessionCostUsd, scopeLabel
 
 function PreviewSection({
   title,
+  meta,
   action,
   onAction,
   rows,
   empty,
 }: {
   title: string;
+  meta?: string;
   action: string;
   onAction: () => void;
   rows: Array<{ key: string; path: string; meta: string; time: string; detail: string }>;
@@ -201,7 +272,8 @@ function PreviewSection({
     <section className="context-panel__preview">
       <header className="context-panel__preview-head">
         <h3>{title}</h3>
-        {rows.length > 0 && <button onClick={onAction}>{action}</button>}
+        {meta && <span>{meta}</span>}
+        {rows.length > 0 && <button type="button" onClick={onAction}>{action}</button>}
       </header>
       <FileTable rows={rows} empty={empty} compact />
     </section>
@@ -238,21 +310,20 @@ function FileTable({
 }) {
   if (rows.length === 0) return <div className="context-panel__empty">{empty}</div>;
   return (
-    <div className={`context-panel__table${compact ? " context-panel__table--compact" : ""}`}>
-      <div className="context-panel__table-head">
-        <span>文件</span>
-        <span>Turn</span>
-        <span>时间</span>
-      </div>
+    <div className={`context-panel__file-list${compact ? " context-panel__file-list--compact" : ""}`}>
       {rows.map((row) => (
-        <div className="context-panel__table-row" key={row.key}>
-          <span className="context-panel__table-file">
+        <div className="context-panel__file-row" key={row.key}>
+          <span className="context-panel__file-main">
             <FileText size={14} />
-            <span>{row.path}</span>
-            {row.detail && <small>{row.detail}</small>}
+            <span className="context-panel__file-copy">
+              <span>{row.path}</span>
+              {row.detail && <small>{row.detail}</small>}
+            </span>
           </span>
-          <span>{row.meta}</span>
-          <span>{row.time}</span>
+          <span className="context-panel__file-meta">
+            <span className="context-panel__file-turn">{row.meta}</span>
+            {row.time && <span>{row.time}</span>}
+          </span>
         </div>
       ))}
     </div>

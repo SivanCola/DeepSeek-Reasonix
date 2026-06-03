@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Pencil, Search, Trash2, Check, X } from "lucide-react";
+import { Pencil, Search, Trash2, Check, X, RotateCcw } from "lucide-react";
 import { t, useT } from "../lib/i18n";
 import { sessionActivityTime } from "../lib/session";
 import type { HistoryMessage, SessionMeta } from "../lib/types";
@@ -12,23 +12,30 @@ import { Transcript } from "./Transcript";
 // running clicks load a read-only preview so the active stream keeps writing to
 // the current controller/session.
 export function HistoryPanel({
+  kind = "history",
   sessions,
   running,
   onResume,
   onPreview,
   onDelete,
   onRename,
+  onRestore,
+  onPurge,
   onClose,
 }: {
+  kind?: "history" | "trash";
   sessions: SessionMeta[];
   running: boolean;
   onResume: (path: string) => void;
   onPreview: (path: string) => Promise<HistoryMessage[]>;
   onDelete: (path: string) => void;
   onRename: (path: string, title: string) => void;
+  onRestore?: (path: string) => void;
+  onPurge?: (path: string) => void;
   onClose: () => void;
 }) {
   const tr = useT();
+  const isTrash = kind === "trash";
   const [editing, setEditing] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
   const [confirming, setConfirming] = useState<string | null>(null);
@@ -61,7 +68,7 @@ export function HistoryPanel({
       setPreview({
         path: s.path,
         title: sessionDisplayTitle(s, tr("history.emptySession")),
-        meta: sessionMetaLine(s, tr),
+        meta: sessionMetaLine(s, tr, isTrash),
         messages: [],
         loading: true,
       });
@@ -70,7 +77,7 @@ export function HistoryPanel({
         setPreview((cur) => (cur?.path === s.path ? { ...cur, messages, loading: false } : cur));
       }
     },
-    [onPreview, tr],
+    [isTrash, onPreview, tr],
   );
 
   const filteredSessions = useMemo(() => {
@@ -85,7 +92,7 @@ export function HistoryPanel({
   // (Today / Yesterday / a date) while preserving that order.
   const groups: { label: string; items: SessionMeta[] }[] = [];
   for (const s of filteredSessions) {
-    const label = dayLabel(sessionActivityTime(s));
+    const label = dayLabel(isTrash ? s.deletedAt || sessionActivityTime(s) : sessionActivityTime(s));
     const last = groups[groups.length - 1];
     if (last && last.label === label) last.items.push(s);
     else groups.push({ label, items: [s] });
@@ -112,8 +119,12 @@ export function HistoryPanel({
     <ResizableDrawer onClose={onClose} wide={showPreview || running}>
       <header className="drawer__head">
         <div>
-          <div className="drawer__title">{tr("history.title")}</div>
-          {running && <div className="drawer__summary">{tr("history.readOnlyHint")}</div>}
+          <div className="drawer__title">{tr(isTrash ? "history.trashTitle" : "history.title")}</div>
+          {isTrash ? (
+            <div className="drawer__summary">{tr("history.trashHint")}</div>
+          ) : (
+            running && <div className="drawer__summary">{tr("history.readOnlyHint")}</div>
+          )}
         </div>
         <Tooltip label={tr("common.close")}>
           <button className="chip" onClick={onClose}>
@@ -131,7 +142,7 @@ export function HistoryPanel({
             </label>
           )}
           {sessions.length === 0 ? (
-            <div className="mem-empty">{tr("history.empty")}</div>
+            <div className="mem-empty">{tr(isTrash ? "history.trashEmpty" : "history.empty")}</div>
           ) : filteredSessions.length === 0 ? (
             <div className="mem-empty">{tr("history.noResults")}</div>
           ) : (
@@ -162,17 +173,23 @@ export function HistoryPanel({
                         <button
                           className="hist-item__main"
                           onClick={() => {
-                            if (running) void loadPreview(s);
+                            if (isTrash || running) void loadPreview(s);
                             else onResume(s.path);
                           }}
                         >
                           <div className="hist-item__preview">{sessionDisplayTitle(s, tr("history.emptySession"))}</div>
                           <div className="hist-item__meta">
-                            {s.current && <span className="hist-item__badge">{tr("history.current")}</span>}
+                            {!isTrash && s.current && <span className="hist-item__badge">{tr("history.current")}</span>}
                             <span>{tr(s.turns === 1 ? "history.turnOne" : "history.turnOther", { n: s.turns })}</span>
                             <span>·</span>
-                            <span>{timeLabel(sessionActivityTime(s))}</span>
-                            {running && (
+                            <span>{timeLabel(isTrash ? s.deletedAt || sessionActivityTime(s) : sessionActivityTime(s))}</span>
+                            {isTrash && s.deletedAt && (
+                              <>
+                                <span>·</span>
+                                <span>{tr("history.deleted")}</span>
+                              </>
+                            )}
+                            {!isTrash && running && (
                               <>
                                 <span>·</span>
                                 <span>{tr("history.preview")}</span>
@@ -186,13 +203,14 @@ export function HistoryPanel({
                         <div className="hist-item__actions">
                           {confirming === s.path ? (
                             <>
-                              <Tooltip label={tr("history.confirmDelete")}>
+                              <Tooltip label={tr(isTrash ? "history.confirmPurge" : "history.confirmDelete")}>
                                 <button
                                   className="hist-act hist-act--danger"
-                                  disabled={running}
+                                  disabled={!isTrash && running}
                                   onClick={() => {
-                                    if (running) return;
-                                    onDelete(s.path);
+                                    if (!isTrash && running) return;
+                                    if (isTrash) onPurge?.(s.path);
+                                    else onDelete(s.path);
                                     setConfirming(null);
                                   }}
                                 >
@@ -206,28 +224,43 @@ export function HistoryPanel({
                               </Tooltip>
                             </>
                           ) : (
-                            <>
-                              <Tooltip label={tr("history.rename")}>
-                                <button
-                                  className="hist-act"
-                                  disabled={running}
-                                  onClick={() => startRename(s)}
-                                >
-                                  <Pencil size={13} />
-                                </button>
-                              </Tooltip>
-                              {!s.current && (
-                                <Tooltip label={tr("common.delete")}>
-                                  <button
-                                    className="hist-act"
-                                    disabled={running}
-                                    onClick={() => setConfirming(s.path)}
-                                  >
+                            isTrash ? (
+                              <>
+                                <Tooltip label={tr("history.restore")}>
+                                  <button className="hist-act hist-act--restore" onClick={() => onRestore?.(s.path)}>
+                                    <RotateCcw size={13} />
+                                  </button>
+                                </Tooltip>
+                                <Tooltip label={tr("history.purge")}>
+                                  <button className="hist-act" onClick={() => setConfirming(s.path)}>
                                     <Trash2 size={13} />
                                   </button>
                                 </Tooltip>
-                              )}
-                            </>
+                              </>
+                            ) : (
+                              <>
+                                <Tooltip label={tr("history.rename")}>
+                                  <button
+                                    className="hist-act"
+                                    disabled={running}
+                                    onClick={() => startRename(s)}
+                                  >
+                                    <Pencil size={13} />
+                                  </button>
+                                </Tooltip>
+                                {!s.current && (
+                                  <Tooltip label={tr("common.delete")}>
+                                    <button
+                                      className="hist-act"
+                                      disabled={running}
+                                      onClick={() => setConfirming(s.path)}
+                                    >
+                                      <Trash2 size={13} />
+                                    </button>
+                                  </Tooltip>
+                                )}
+                              </>
+                            )
                           )}
                         </div>
                       )}
@@ -280,8 +313,10 @@ function sessionDisplayTitle(s: SessionMeta, fallback: string): string {
   return s.title || s.preview || fallback;
 }
 
-function sessionMetaLine(s: SessionMeta, tr: ReturnType<typeof useT>): string {
-  return `${tr(s.turns === 1 ? "history.turnOne" : "history.turnOther", { n: s.turns })} · ${timeLabel(sessionActivityTime(s))}`;
+function sessionMetaLine(s: SessionMeta, tr: ReturnType<typeof useT>, isTrash = false): string {
+  const time = timeLabel(isTrash ? s.deletedAt || sessionActivityTime(s) : sessionActivityTime(s));
+  const suffix = isTrash && s.deletedAt ? ` · ${tr("history.deleted")}` : "";
+  return `${tr(s.turns === 1 ? "history.turnOne" : "history.turnOther", { n: s.turns })} · ${time}${suffix}`;
 }
 
 function previewMessagesToItems(messages: HistoryMessage[]): Item[] {

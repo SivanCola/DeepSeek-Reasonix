@@ -4,9 +4,11 @@ import {
   SquarePen,
   Brain,
   Blocks,
+  CircleGauge,
+  FileText,
+  GitBranch,
   History,
   Settings as SettingsIcon,
-  MessageSquare,
   Pencil,
   Pin,
   MoreHorizontal,
@@ -14,9 +16,8 @@ import {
   PanelLeftOpen,
   PanelRightClose,
   PanelRightOpen,
-  Check,
+  RefreshCw,
   Trash2,
-  X,
 } from "lucide-react";
 import logo from "./assets/logo.svg";
 import { asArray } from "./lib/array";
@@ -35,13 +36,13 @@ import { SettingsPanel } from "./components/SettingsPanel";
 import { CapabilitiesPanel } from "./components/CapabilitiesPanel";
 import { UpdateBanner } from "./components/UpdateBanner";
 import { ContextPanel } from "./components/ContextPanel";
+import { WorkspacePanel } from "./components/WorkspacePanel";
 import { Tooltip } from "./components/Tooltip";
 import { OnboardingOverlay } from "./components/OnboardingOverlay";
 import { TabBar } from "./components/TabBar";
 import { ProjectTree } from "./components/ProjectTree";
 import { parseTodos } from "./lib/tools";
-import { sessionActivityTime } from "./lib/session";
-import type { MemoryView, Mode, SessionMeta, TabMeta } from "./lib/types";
+import type { ComposerInsertRequest, MemoryView, Mode, SessionMeta, TabMeta } from "./lib/types";
 import { loadLayoutSize, saveLayoutSize } from "./lib/layoutPreferences";
 import { applyTheme, getTheme, getThemeStyle, isThemeStyle, themeForStyle, type Theme } from "./lib/theme";
 
@@ -56,10 +57,14 @@ function isThemeMode(value: string): value is Theme {
   return value === "auto" || value === "light" || value === "dark";
 }
 const CONTEXT_PANEL_MIN_WIDTH = 340;
+const CONTEXT_PANEL_MAX_WIDTH = 420;
 const WORKSPACE_PANEL_MIN_WIDTH = CONTEXT_PANEL_MIN_WIDTH;
 const WORKSPACE_PANEL_DEFAULT_WIDTH = 380;
-const WORKSPACE_PANEL_MAX_WIDTH = 460;
-const WORKSPACE_PANEL_MAX_RATIO = 0.34;
+const WORKSPACE_PANEL_FILES_DEFAULT_WIDTH = 760;
+const WORKSPACE_PANEL_MAX_WIDTH = 920;
+const WORKSPACE_PANEL_MAX_RATIO = 0.58;
+
+type RightDockMode = "context" | "files" | "changed";
 
 function clampSidebarWidth(width: number): number {
   return Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, Math.round(width)));
@@ -106,14 +111,6 @@ function saveWorkspacePanelWidth(width: number): void {
   saveLayoutSize("workspacePanelWidth", width);
 }
 
-function sessionTitle(session: SessionMeta, fallback: string): string {
-  return session.title || session.preview || fallback;
-}
-
-function sessionTime(ms: number): string {
-  return new Date(ms).toLocaleDateString([], { month: "short", day: "numeric" });
-}
-
 function topicTitle(tab?: TabMeta): string {
   if (!tab) return "Global";
   if (tab.scope === "global") return tab.topicTitle || "Global";
@@ -121,8 +118,14 @@ function topicTitle(tab?: TabMeta): string {
 }
 
 function topicScopeLabel(tab?: TabMeta): string {
-  if (!tab || tab.scope === "global") return "Scope: Global";
-  return `Scope: Project · ${tab.workspaceName || tab.workspaceRoot || "Project"}`;
+  if (!tab || tab.scope === "global") return "范围：全局";
+  return `项目 · ${tab.workspaceName || tab.workspaceRoot || "Project"}`;
+}
+
+function workspaceDisplayName(path?: string): string {
+  if (!path) return "";
+  const parts = path.split(/[/\\]/).filter(Boolean);
+  return parts.length > 0 ? parts[parts.length - 1] : path;
 }
 
 function formatContextWindow(tokens: number): string {
@@ -144,9 +147,12 @@ export default function App() {
     setControllerMode,
     newSession,
     listSessions,
+    listTrashedSessions,
     resumeSession,
     previewSession,
     deleteSession,
+    restoreSession,
+    purgeTrashedSession,
     renameSession,
     refreshMeta,
     pickWorkspace,
@@ -170,17 +176,17 @@ export default function App() {
   // clearing the key mid-session is the Settings panel's job, not the gate's.
   const [needsOnboarding, setNeedsOnboarding] = useState<boolean | null>(null);
   const [memView, setMemView] = useState<MemoryView | null>(null);
-  const [histView, setHistView] = useState<SessionMeta[] | null>(null);
-  const [sidebarSessions, setSidebarSessions] = useState<SessionMeta[]>([]);
-  const [sidebarEditing, setSidebarEditing] = useState<string | null>(null);
-  const [sidebarDraft, setSidebarDraft] = useState("");
-  const [sidebarConfirming, setSidebarConfirming] = useState<string | null>(null);
+  const [histView, setHistView] = useState<{ kind: "history" | "trash"; sessions: SessionMeta[] } | null>(null);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(loadSidebarCollapsed);
   const [sidebarWidth, setSidebarWidth] = useState(loadSidebarWidth);
   const [sidebarResizing, setSidebarResizing] = useState(false);
   const [workspacePanelOpen, setWorkspacePanelOpen] = useState(true);
   const [workspacePanelWidth, setWorkspacePanelWidth] = useState(loadWorkspacePanelWidth);
   const [workspacePanelResizing, setWorkspacePanelResizing] = useState(false);
+  const [workspacePanelMaximized, setWorkspacePanelMaximized] = useState(false);
+  const [rightDockMode, setRightDockMode] = useState<RightDockMode>("context");
+  const [dockRefreshKey, setDockRefreshKey] = useState(0);
+  const [composerInsertRequest, setComposerInsertRequest] = useState<ComposerInsertRequest | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [capsOpen, setCapsOpen] = useState(false);
   const [pendingPlanRevision, setPendingPlanRevision] = useState<string | null>(null);
@@ -189,8 +195,12 @@ export default function App() {
   const footerRef = useRef<HTMLElement>(null);
   const effectiveSidebarWidth = sidebarCollapsed ? SIDEBAR_COLLAPSED_WIDTH : sidebarWidth;
   const effectiveWorkspacePanelWidth = useMemo(
-    () => clampWorkspacePanelWidth(workspacePanelWidth, effectiveSidebarWidth, viewportWidth),
-    [effectiveSidebarWidth, viewportWidth, workspacePanelWidth],
+    () => {
+      const width = clampWorkspacePanelWidth(workspacePanelWidth, effectiveSidebarWidth, viewportWidth);
+      if (rightDockMode === "context") return Math.min(CONTEXT_PANEL_MAX_WIDTH, width);
+      return width;
+    },
+    [effectiveSidebarWidth, rightDockMode, viewportWidth, workspacePanelWidth],
   );
   const activeTab = useMemo(
     () => tabMetas.find((tab) => tab.id === activeTabId) ?? tabMetas.find((tab) => tab.active),
@@ -209,7 +219,7 @@ export default function App() {
     },
     [syncModeToController],
   );
-  // Shift+Tab cycles normal → plan → yolo → normal.
+  // Shift+Tab cycles auto(normal) → plan → yolo → auto.
   const cycleMode = useCallback(() => {
     applyMode(mode === "normal" ? "plan" : mode === "plan" ? "yolo" : "normal");
   }, [mode, applyMode]);
@@ -318,19 +328,9 @@ export default function App() {
     [switchModel, openMemory, syncModeToController, mode, send, notice, t],
   );
 
-  const refreshSessions = useCallback(async () => {
-    const sessions = await listSessions();
-    setSidebarSessions(sessions.slice(0, 10));
-    return sessions;
-  }, [listSessions]);
-
   const refreshTabMetas = useCallback(async () => {
     setTabMetas(asArray(await app.ListTabs().catch(() => [] as TabMeta[])));
   }, []);
-
-  useEffect(() => {
-    void refreshSessions();
-  }, [refreshSessions]);
 
   useEffect(() => {
     void refreshTabMetas();
@@ -371,14 +371,9 @@ export default function App() {
     return () => observer.disconnect();
   }, []);
 
-  useEffect(() => {
-    if (!state.running && state.items.length > 0) void refreshSessions();
-  }, [state.running, state.items.length, refreshSessions]);
-
   const startNewSession = useCallback(async () => {
     await newSession();
-    await refreshSessions();
-  }, [newSession, refreshSessions]);
+  }, [newSession]);
 
   const toggleSidebar = useCallback(() => {
     setSidebarCollapsed((collapsed) => {
@@ -494,6 +489,19 @@ export default function App() {
     [effectiveWorkspacePanelWidth, setSavedWorkspacePanelWidth],
   );
 
+  const openRightDockMode = useCallback(
+    (mode: RightDockMode) => {
+      setRightDockMode(mode);
+      setWorkspacePanelOpen(true);
+      if (mode !== "context") {
+        setSavedWorkspacePanelWidth(Math.max(effectiveWorkspacePanelWidth, WORKSPACE_PANEL_FILES_DEFAULT_WIDTH));
+      } else {
+        setWorkspacePanelMaximized(false);
+      }
+    },
+    [effectiveWorkspacePanelWidth, setSavedWorkspacePanelWidth],
+  );
+
   const layoutStyle = useMemo(
     () =>
       ({
@@ -512,6 +520,10 @@ export default function App() {
       const next = !open;
       return next;
     });
+  }, []);
+
+  const addWorkspaceTextToComposer = useCallback((text: string) => {
+    setComposerInsertRequest({ id: Date.now(), text });
   }, []);
 
   const handleTabChange = useCallback(async (id: string) => {
@@ -541,75 +553,70 @@ export default function App() {
   // History drawer: opening fetches the saved-session list. Idle row clicks resume;
   // running row clicks only preview through PreviewSession.
   const openHistory = useCallback(async () => {
-    setHistView(await refreshSessions());
-  }, [refreshSessions]);
+    setHistView({ kind: "history", sessions: await listSessions() });
+  }, [listSessions]);
+  const openTrash = useCallback(async () => {
+    setHistView({ kind: "trash", sessions: await listTrashedSessions() });
+  }, [listTrashedSessions]);
   const closeHistory = useCallback(() => setHistView(null), []);
   const onResumeSession = useCallback(
     async (path: string) => {
       if (state.running) return;
       setHistView(null);
       await resumeSession(path);
-      await refreshSessions();
     },
-    [state.running, resumeSession, refreshSessions],
+    [state.running, resumeSession],
   );
   // Delete / rename act on disk, then re-fetch so the panel reflects the change.
   const onDeleteSession = useCallback(
     async (path: string) => {
       if (state.running) return;
       await deleteSession(path);
-      const sessions = await refreshSessions();
-      setHistView((cur) => (cur === null ? null : sessions));
+      const sessions = await listSessions();
+      setHistView((cur) => (cur === null ? null : cur.kind === "history" ? { ...cur, sessions } : cur));
     },
-    [state.running, deleteSession, refreshSessions],
+    [state.running, deleteSession, listSessions],
   );
   const onRenameSession = useCallback(
     async (path: string, title: string) => {
       if (state.running) return;
       await renameSession(path, title);
-      const sessions = await refreshSessions();
-      setHistView((cur) => (cur === null ? null : sessions));
+      const sessions = await listSessions();
+      setHistView((cur) => (cur === null ? null : cur.kind === "history" ? { ...cur, sessions } : cur));
     },
-    [state.running, renameSession, refreshSessions],
+    [state.running, renameSession, listSessions],
   );
-
-  const startSidebarRename = useCallback((session: SessionMeta) => {
-    if (state.running) return;
-    setSidebarConfirming(null);
-    setSidebarEditing(session.path);
-    setSidebarDraft(session.title || session.preview || "");
-  }, [state.running]);
-
-  const commitSidebarRename = useCallback(
+  const onRestoreTrashedSession = useCallback(
     async (path: string) => {
-      if (state.running) return;
-      const title = sidebarDraft.trim();
-      setSidebarEditing(null);
-      await onRenameSession(path, title);
+      await restoreSession(path);
+      const trashed = await listTrashedSessions();
+      setHistView((cur) => (cur === null ? null : { kind: "trash", sessions: trashed }));
     },
-    [onRenameSession, sidebarDraft, state.running],
+    [restoreSession, listTrashedSessions],
   );
-
-  const confirmSidebarDelete = useCallback(
+  const onPurgeTrashedSession = useCallback(
     async (path: string) => {
-      if (state.running) return;
-      setSidebarConfirming(null);
-      await onDeleteSession(path);
+      await purgeTrashedSession(path);
+      const trashed = await listTrashedSessions();
+      setHistView((cur) => (cur === null ? null : { kind: "trash", sessions: trashed }));
     },
-    [onDeleteSession, state.running],
+    [purgeTrashedSession, listTrashedSessions],
   );
 
   // Workspace: open the folder chooser and switch projects. The hook resets the
-  // transcript and refreshes meta on a pick; refresh the sidebar sessions too so
-  // the recent list belongs to the newly selected workspace. A cancel is a no-op.
+  // transcript and refreshes meta on a pick. A cancel is a no-op.
   const switchFolder = useCallback(async (path?: string) => {
     const picked = path === undefined ? await pickWorkspace() : await switchWorkspace(path);
     if (picked) {
-      await refreshSessions();
       await refreshTabMetas();
     }
     return picked;
-  }, [pickWorkspace, switchWorkspace, refreshSessions, refreshTabMetas]);
+  }, [pickWorkspace, switchWorkspace, refreshTabMetas]);
+
+  const removeWorkspace = useCallback(async (path: string) => {
+    await app.RemoveWorkspace(path);
+    await refreshTabMetas();
+  }, [refreshTabMetas]);
 
   const onRemember = useCallback(
     async (scope: string, note: string) => {
@@ -648,6 +655,7 @@ export default function App() {
           sidebarCollapsed ? "layout--sidebar-collapsed" : "",
           sidebarResizing ? "layout--resizing layout--sidebar-resizing" : "",
           workspacePanelOpen ? "layout--workspace-open" : "",
+          workspacePanelOpen && workspacePanelMaximized ? "layout--workspace-maximized" : "",
           workspacePanelResizing ? "layout--resizing layout--workspace-resizing" : "",
         ]
           .filter(Boolean)
@@ -688,124 +696,25 @@ export default function App() {
               activeScope={activeTab?.scope}
               activeWorkspaceRoot={activeTab?.workspaceRoot}
               activeTopicId={activeTab?.topicId}
+              currentWorkspaceName={workspaceDisplayName(state.meta?.cwd)}
               onOpenTopic={(scope, workspaceRoot, topicId) => void handleOpenTopic(scope, workspaceRoot, topicId)}
+              onAddProject={async () => {
+                await switchFolder();
+              }}
+              onUseCurrentProject={state.meta?.cwd ? async () => {
+                await switchFolder(state.meta?.cwd);
+              } : undefined}
             />
           </section>
 
-          <section className="sidebar__section sidebar__section--recent">
-            <div className="sidebar__section-head">
-              <div className="sidebar__section-title">{t("sidebar.conversations")}</div>
-              <Tooltip label={t("topbar.history")}>
-                <button
-                  className="sidebar__view-all"
-                  onClick={() => void openHistory()}
-                >
-                  {t("sidebar.viewAll")}
-                </button>
-              </Tooltip>
-            </div>
-            <div className="sidebar__sessions">
-              {sidebarSessions.length === 0 ? (
-                <div className="sidebar__empty">{t("sidebar.noRecent")}</div>
-              ) : (
-                sidebarSessions.map((session) => {
-                  const title = sessionTitle(session, t("history.emptySession"));
-                  return (
-                    <div
-                      className={`sidebar-session${session.current ? " sidebar-session--current" : ""}`}
-                      key={session.path}
-                    >
-                      {sidebarEditing === session.path ? (
-                        <input
-                          className="sidebar-session__rename"
-                          autoFocus
-                          value={sidebarDraft}
-                          onChange={(e) => setSidebarDraft(e.target.value)}
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter") void commitSidebarRename(session.path);
-                            if (e.key === "Escape") setSidebarEditing(null);
-                          }}
-                          onBlur={() => void commitSidebarRename(session.path)}
-                          placeholder={t("history.namePlaceholder")}
-                        />
-                      ) : (
-                        <button
-                          className="sidebar-session__main"
-                          onClick={() => void onResumeSession(session.path)}
-                          disabled={state.running || session.current}
-                        >
-                          <MessageSquare size={14} />
-                          <span className="sidebar-session__body">
-                            <Tooltip className="sidebar-session__title" label={`${title}\n${session.path}`}>{title}</Tooltip>
-                            <span className="sidebar-session__meta">
-                              {session.current ? t("history.current") : sessionTime(sessionActivityTime(session))}
-                            </span>
-                          </span>
-                        </button>
-                      )}
-                      {sidebarEditing !== session.path && (
-                        <span className="sidebar-session__actions">
-                          {sidebarConfirming === session.path ? (
-                            <>
-                              <Tooltip label={t("history.confirmDelete")}>
-                                <button
-                                  className="sidebar-session__act sidebar-session__act--danger"
-                                  disabled={state.running}
-                                  onClick={() => void confirmSidebarDelete(session.path)}
-                                >
-                                  <Check size={13} />
-                                </button>
-                              </Tooltip>
-                              <Tooltip label={t("common.cancel")}>
-                                <button
-                                  className="sidebar-session__act"
-                                  onClick={() => setSidebarConfirming(null)}
-                                >
-                                  <X size={13} />
-                                </button>
-                              </Tooltip>
-                            </>
-                          ) : (
-                            <>
-                              <Tooltip label={t("history.rename")}>
-                                <button
-                                  className="sidebar-session__act"
-                                  disabled={state.running}
-                                  onClick={() => startSidebarRename(session)}
-                                >
-                                  <Pencil size={12} />
-                                </button>
-                              </Tooltip>
-                              {!session.current && (
-                                <Tooltip label={t("common.delete")}>
-                                  <button
-                                    className="sidebar-session__act"
-                                    disabled={state.running}
-                                    onClick={() => setSidebarConfirming(session.path)}
-                                  >
-                                    <Trash2 size={12} />
-                                  </button>
-                                </Tooltip>
-                              )}
-                            </>
-                          )}
-                        </span>
-                      )}
-                    </div>
-                  );
-                })
-              )}
-            </div>
-          </section>
-
           <nav className="sidebar__nav">
-            <Tooltip label={t("topbar.history")} fill>
+            <Tooltip label={t("sidebar.trash")} fill>
               <button
-                className="sidebar__navitem sidebar__navitem--sessions"
-                onClick={() => void openHistory()}
+                className="sidebar__navitem"
+                onClick={() => void openTrash()}
               >
-                <History size={15} />
-                <span>{t("topbar.history")}</span>
+                <Trash2 size={15} />
+                <span>{t("sidebar.trash")}</span>
               </button>
             </Tooltip>
             <Tooltip label={t("topbar.memory")} fill>
@@ -847,7 +756,20 @@ export default function App() {
         />
 
         <section className="chat-pane">
-          <header className="workspace-tabs-bar">
+          <header className={`workspace-tabs-bar${sidebarCollapsed ? " workspace-tabs-bar--sidebar-collapsed" : ""}`}>
+            {sidebarCollapsed && (
+              <Tooltip label={sidebarToggleTitle} block>
+                <button
+                  className={`workspace-tabs-bar__sidebar-toggle${sidebarExpandBlocked ? " workspace-tabs-bar__sidebar-toggle--blocked" : ""}`}
+                  type="button"
+                  onClick={sidebarExpandBlocked ? undefined : toggleSidebar}
+                  aria-label={sidebarToggleTitle}
+                  aria-disabled={sidebarExpandBlocked}
+                >
+                  <PanelLeftOpen size={14} />
+                </button>
+              </Tooltip>
+            )}
             <TabBar
               tabs={tabMetas}
               activeTabId={activeTabId}
@@ -855,6 +777,21 @@ export default function App() {
               onTabClose={(id) => void handleTabClose(id)}
               onNewTab={() => void handleNewTab()}
             />
+            {!workspacePanelOpen && (
+              <div className="workspace-tabs-bar__right-actions">
+                <Tooltip label="打开右侧工作台">
+                  <button
+                    className="workspace-tabs-bar__right-toggle"
+                    type="button"
+                    onClick={toggleWorkspacePanel}
+                    aria-label="打开右侧工作台"
+                    aria-pressed={false}
+                  >
+                    <PanelRightOpen size={15} />
+                  </button>
+                </Tooltip>
+              </div>
+            )}
           </header>
 
           <header className="topicbar">
@@ -890,14 +827,6 @@ export default function App() {
                 </button>
               </Tooltip>
             </div>
-            <Tooltip label={workspacePanelOpen ? "关闭上下文面板" : "打开上下文面板"}>
-              <button
-                className="chip chip--icon topicbar__workspace-toggle"
-                onClick={toggleWorkspacePanel}
-              >
-                {workspacePanelOpen ? <PanelRightClose size={13} /> : <PanelRightOpen size={13} />}
-              </button>
-            </Tooltip>
           </header>
 
           {state.meta?.startupErr && (
@@ -949,40 +878,42 @@ export default function App() {
               running={state.running}
               mode={mode}
               cwd={state.meta?.cwd}
+              modelLabel={state.meta?.label ?? t("status.connecting")}
+              effort={state.effort}
               onSend={handleSend}
               onCancel={cancel}
               onCycleMode={cycleMode}
+              onSetMode={applyMode}
+              onSwitchModel={switchModel}
+              onSetEffort={setEffort}
               onPickFolder={switchFolder}
-              insertRequest={null}
+              onRemoveWorkspace={removeWorkspace}
+              insertRequest={composerInsertRequest}
               disabled={state.meta?.ready === false || state.approval != null || state.ask != null}
               ready={state.meta?.ready === true}
+              turnStartAt={state.turnStartAt}
+              turnTokens={state.turnTokens}
+              retry={state.retry}
             />
             <StatusBar
-              meta={state.meta}
               context={state.context}
-	      usage={state.usage}
-	      balance={state.balance}
-	      effort={state.effort}
-	      jobs={state.jobs}
+              usage={state.usage}
+              balance={state.balance}
+              jobs={state.jobs}
               running={state.running}
               mode={mode}
-              turnStartAt={state.turnStartAt}
               cost={state.sessionCostUsd}
-	      turnTokens={state.turnTokens}
-	      retry={state.retry}
-	      onSwitchModel={switchModel}
-	      onSetEffort={setEffort}
-	    />
+            />
           </footer>
         </section>
 
-        {workspacePanelOpen && (
+        {workspacePanelOpen && !workspacePanelMaximized && (
           <button
             className="workspace-panel-resizer"
             type="button"
             role="separator"
             aria-orientation="vertical"
-            aria-label="调整上下文面板宽度"
+            aria-label="调整右侧面板宽度"
             aria-valuemin={WORKSPACE_PANEL_MIN_WIDTH}
             aria-valuemax={WORKSPACE_PANEL_MAX_WIDTH}
             aria-valuenow={effectiveWorkspacePanelWidth}
@@ -993,15 +924,88 @@ export default function App() {
         )}
 
         {workspacePanelOpen && (
-          <aside className="context-inspector" aria-label="当前主题上下文">
-            <ContextPanel
-              tabId={activeTabId}
-              context={state.context}
-              usage={state.usage}
-              sessionCostUsd={state.sessionCostUsd}
-              scopeLabel={topicScopeLabel(activeTab)}
-              onClose={() => setWorkspacePanel(false)}
-            />
+          <aside className={`workbench-dock workbench-dock--${rightDockMode}`} aria-label="右侧工作台">
+            <div className="workbench-dock__chrome">
+              <Tooltip label="关闭右侧工作台">
+                <button
+                  className="workbench-dock__toggle"
+                  type="button"
+                  onClick={toggleWorkspacePanel}
+                  aria-label="关闭右侧工作台"
+                  aria-pressed={true}
+                >
+                  <PanelRightClose size={15} />
+                </button>
+              </Tooltip>
+            </div>
+            <div className="workbench-dock__tools">
+              <div className="workbench-dock__tabs" role="tablist" aria-label="右侧工作台视图">
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={rightDockMode === "context"}
+                  className={`workbench-dock__tab${rightDockMode === "context" ? " workbench-dock__tab--active" : ""}`}
+                  onClick={() => openRightDockMode("context")}
+                >
+                  <CircleGauge size={13} />
+                  概览
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={rightDockMode === "files"}
+                  className={`workbench-dock__tab${rightDockMode === "files" ? " workbench-dock__tab--active" : ""}`}
+                  onClick={() => openRightDockMode("files")}
+                >
+                  <FileText size={13} />
+                  {t("workspace.filesTab")}
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={rightDockMode === "changed"}
+                  className={`workbench-dock__tab${rightDockMode === "changed" ? " workbench-dock__tab--active" : ""}`}
+                  onClick={() => openRightDockMode("changed")}
+                >
+                  <GitBranch size={13} />
+                  {t("workspace.changedTab")}
+                </button>
+              </div>
+              <Tooltip label="刷新右侧视图">
+                <button
+                  className="workspace-iconbtn"
+                  type="button"
+                  onClick={() => setDockRefreshKey((key) => key + 1)}
+                >
+                  <RefreshCw size={14} />
+                </button>
+              </Tooltip>
+            </div>
+            <div className="workbench-dock__body">
+              {rightDockMode === "context" ? (
+                <ContextPanel
+                  tabId={activeTabId}
+                  context={state.context}
+                  usage={state.usage}
+                  sessionCostUsd={state.sessionCostUsd}
+                  scopeLabel={topicScopeLabel(activeTab)}
+                  refreshKey={dockRefreshKey}
+                />
+              ) : (
+                <WorkspacePanel
+                  open={workspacePanelOpen}
+                  cwd={state.meta?.cwd}
+                  maximized={workspacePanelMaximized}
+                  panelWidth={effectiveWorkspacePanelWidth}
+                  onClose={() => setWorkspacePanel(false)}
+                  onToggleMaximized={() => setWorkspacePanelMaximized((value) => !value)}
+                  onAddToChat={addWorkspaceTextToComposer}
+                  refreshKey={dockRefreshKey}
+                  initialViewMode={rightDockMode === "changed" ? "changed" : "files"}
+                  showViewTabs={false}
+                />
+              )}
+            </div>
           </aside>
         )}
       </div>
@@ -1018,12 +1022,15 @@ export default function App() {
 
       {histView !== null && (
         <HistoryPanel
-          sessions={histView}
+          kind={histView.kind}
+          sessions={histView.sessions}
           running={state.running}
           onResume={onResumeSession}
           onPreview={previewSession}
           onDelete={onDeleteSession}
           onRename={onRenameSession}
+          onRestore={onRestoreTrashedSession}
+          onPurge={onPurgeTrashedSession}
           onClose={closeHistory}
         />
       )}

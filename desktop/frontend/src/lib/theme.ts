@@ -33,6 +33,7 @@ const DEFAULT_THEME_STYLE: Record<ResolvedTheme, ThemeStyle> = {
   dark: "graphite",
   light: "glacier",
 };
+const DEFAULT_THEME: Theme = "dark";
 
 const THEME_KEY = "reasonix-theme";
 const STYLE_KEY = "reasonix-theme-style";
@@ -64,12 +65,12 @@ export function isThemeStyle(value: unknown): value is ThemeStyle {
 
 export function getTheme(): Theme {
   const v = typeof localStorage !== "undefined" ? localStorage.getItem(THEME_KEY) : null;
-  if (!v) return "auto";
+  if (!v) return DEFAULT_THEME;
   try {
     const parsed = JSON.parse(v) as unknown;
-    return normalizeTheme(parsed) ?? normalizeTheme(v) ?? "auto";
+    return normalizeTheme(parsed) ?? normalizeTheme(v) ?? DEFAULT_THEME;
   } catch {
-    return normalizeTheme(v) ?? "auto";
+    return normalizeTheme(v) ?? DEFAULT_THEME;
   }
 }
 
@@ -93,7 +94,7 @@ export function getThemeStyle(theme: Theme = getTheme()): ThemeStyle {
   return defaultStyleForTheme(theme);
 }
 
-export function applyTheme(theme: Theme, style: ThemeStyle = getThemeStyle(theme)): void {
+export function applyTheme(theme: Theme, style: ThemeStyle = getThemeStyle(theme), options: { persist?: boolean } = {}): void {
   if (typeof document === "undefined") return;
   const root = document.documentElement;
   root.removeAttribute("data-theme-mode");
@@ -104,6 +105,7 @@ export function applyTheme(theme: Theme, style: ThemeStyle = getThemeStyle(theme
   const resolved = getResolvedTheme(theme);
   const nextStyle = themeForStyle(style) === resolved ? style : DEFAULT_THEME_STYLE[resolved];
   root.setAttribute("data-theme-style", nextStyle);
+  if (options.persist === false) return;
   try {
     localStorage.setItem(THEME_KEY, theme);
     localStorage.setItem(STYLE_KEY, nextStyle);
@@ -114,5 +116,5 @@ export function applyTheme(theme: Theme, style: ThemeStyle = getThemeStyle(theme
 
 export function initTheme(): void {
   const theme = getTheme();
-  applyTheme(theme, getThemeStyle(theme));
+  applyTheme(theme, getThemeStyle(theme), { persist: false });
 }
