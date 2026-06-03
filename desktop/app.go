@@ -26,6 +26,7 @@ import (
 	"reasonix/internal/event"
 	fileenc "reasonix/internal/fileutil/encoding"
 	"reasonix/internal/i18n"
+	"reasonix/internal/mcpdiag"
 	"reasonix/internal/memory"
 	"reasonix/internal/plugin"
 	"reasonix/internal/provider"
@@ -840,8 +841,10 @@ func (a *App) SlashArgs(input string) SlashArgsResult {
 		return SlashArgsResult{}
 	}
 	data := control.ArgData{
-		Skills:       ctrl.Skills(),
-		CurrentModel: model,
+		Skills:          ctrl.Skills(),
+		ConfiguredMCP:   ctrl.ConfiguredMCPNames(),
+		DisconnectedMCP: ctrl.DisconnectedMCPNames(),
+		CurrentModel:    model,
 	}
 	for _, m := range a.Models() {
 		data.ModelRefs = append(data.ModelRefs, m.Ref)
@@ -872,22 +875,25 @@ type CapabilitiesView struct {
 // "failed" (with the connection error), "initializing" (background startup in
 // progress), or "disabled".
 type ServerView struct {
-	Name       string     `json:"name"`
-	Transport  string     `json:"transport"`
-	Status     string     `json:"status"`
-	BuiltIn    bool       `json:"builtIn,omitempty"`
-	Configured bool       `json:"configured,omitempty"`
-	AutoStart  bool       `json:"autoStart"`
-	Tier       string     `json:"tier,omitempty"`
-	Command    string     `json:"command,omitempty"`
-	Args       []string   `json:"args,omitempty"`
-	URL        string     `json:"url,omitempty"`
-	EnvKeys    []string   `json:"envKeys,omitempty"`
-	Tools      int        `json:"tools"`
-	Prompts    int        `json:"prompts"`
-	Resources  int        `json:"resources"`
-	Error      string     `json:"error,omitempty"`
-	ToolList   []ToolView `json:"toolList,omitempty"`
+	Name           string     `json:"name"`
+	Transport      string     `json:"transport"`
+	Status         string     `json:"status"`
+	BuiltIn        bool       `json:"builtIn,omitempty"`
+	Configured     bool       `json:"configured,omitempty"`
+	AutoStart      bool       `json:"autoStart"`
+	Tier           string     `json:"tier,omitempty"`
+	Command        string     `json:"command,omitempty"`
+	Args           []string   `json:"args,omitempty"`
+	URL            string     `json:"url,omitempty"`
+	EnvKeys        []string   `json:"envKeys,omitempty"`
+	Tools          int        `json:"tools"`
+	Prompts        int        `json:"prompts"`
+	Resources      int        `json:"resources"`
+	Error          string     `json:"error,omitempty"`
+	ToolList       []ToolView `json:"toolList,omitempty"`
+	AuthStatus     string     `json:"authStatus,omitempty"`
+	AuthURL        string     `json:"authUrl,omitempty"`
+	AuthConfigured bool       `json:"authConfigured,omitempty"`
 }
 
 type ToolView struct {
@@ -1052,6 +1058,7 @@ func withPluginConfig(v ServerView, p config.PluginEntry) ServerView {
 	v.Command = p.Command
 	v.Args = append([]string(nil), p.Args...)
 	v.URL = p.URL
+	v.AuthConfigured = mcpdiag.HasAuthConfig(p.Headers, p.Env, p.URL)
 	if len(p.Env) > 0 {
 		v.EnvKeys = make([]string, 0, len(p.Env))
 		for k := range p.Env {
@@ -1059,6 +1066,9 @@ func withPluginConfig(v ServerView, p config.PluginEntry) ServerView {
 		}
 		sort.Strings(v.EnvKeys)
 	}
+	auth := mcpdiag.DiagnoseAuth(v.Transport, v.Status, v.Error, v.URL, v.AuthConfigured)
+	v.AuthStatus = auth.Status
+	v.AuthURL = auth.URL
 	return v
 }
 
@@ -1337,6 +1347,26 @@ func (a *App) RetryMCPServer(name string) error {
 	}
 	_, err := a.ctrl.ConnectConfiguredMCPServer(name)
 	return err
+}
+
+// ClearMCPServerAuthentication removes local auth-like config for one MCP and
+// clears the current session's cached connection failure. It does not remove the
+// server itself or try to sign the user out of the third-party browser session.
+func (a *App) ClearMCPServerAuthentication(name string) error {
+	if name == "codegraph" {
+		return fmt.Errorf("codegraph is built in; it has no stored MCP authentication")
+	}
+	if a.ctrl == nil {
+		return fmt.Errorf("no active session")
+	}
+	if _, _, _, err := config.ClearPluginAuthenticationInSource(name); err != nil {
+		return err
+	}
+	a.ctrl.DisconnectMCPServer(name)
+	if h := a.ctrl.Host(); h != nil {
+		h.ClearFailure(name)
+	}
+	return nil
 }
 
 // SetMCPServerEnabled is the connector toggle: on reconnects a configured server

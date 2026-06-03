@@ -36,7 +36,7 @@ func TestRenderTOMLRoundTrips(t *testing.T) {
 	orig.Skills.Paths = []string{"~/my-skills", "../shared/skills"}
 	orig.Plugins = []PluginEntry{
 		{Name: "example", Command: "reasonix-plugin-example"},
-		{Name: "stripe", Type: "http", URL: "https://mcp.stripe.com", Headers: map[string]string{"Authorization": "Bearer x"}, AutoStart: boolPtr(false)},
+		{Name: "stripe", Type: "http", URL: "https://mcp.stripe.com", Headers: map[string]string{"Authorization": "Bearer x"}, AutoStart: boolPtr(false), Tier: "background"},
 	}
 	mm, _ := orig.Provider("mimo-pro")
 	mm.BaseURL = "http://localhost:8000/v1"
@@ -119,6 +119,9 @@ func TestRenderTOMLRoundTrips(t *testing.T) {
 	}
 	if stripe.AutoStart == nil || *stripe.AutoStart {
 		t.Errorf("auto_start should render and parse as false, got %+v", stripe.AutoStart)
+	}
+	if stripe.Tier != "background" {
+		t.Errorf("plugin tier should render and parse as background, got %q", stripe.Tier)
 	}
 }
 

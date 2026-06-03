@@ -216,6 +216,9 @@ export interface ServerView {
   resources: number;
   error?: string;
   toolList?: MCPToolView[];
+  authStatus?: "none" | "possible" | "required" | string;
+  authUrl?: string;
+  authConfigured?: boolean;
 }
 export interface MCPToolView {
   name: string;
