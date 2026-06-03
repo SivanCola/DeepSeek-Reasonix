@@ -212,17 +212,28 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	// tools come online next session — otherwise point the user at the explicit
 	// install command. A failed init or fetch is a notice, not fatal.
 	//
-	// Codegraph stays eager regardless of user tier — symbol-graph tools land
-	// in the system prompt, so the agent must see them on first turn.
+	// Warm CodeGraph projects stay eager because the agent benefits from seeing
+	// symbol-graph tools on the first turn. Cold projects start in the background:
+	// the first .codegraph/ creation and daemon warmup should not be reported as
+	// a startup failure just because they exceeded the generic MCP budget.
 	if cfg.Codegraph.Enabled {
 		bin, ok := codegraph.Resolve(cfg.Codegraph.Path)
 		switch {
 		case ok:
+			spec := plugin.Spec{Name: "codegraph", Command: bin, Args: []string{"serve", "--mcp"}, Dir: cwd}
+			warm := codegraph.Initialized(cwd)
 			if err := codegraph.EnsureInit(ctx, bin, cwd); err != nil {
 				sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelWarn,
 					Text: "codegraph: init failed (" + err.Error() + ") — symbol-graph tools disabled this session"})
+				break
 			}
-			eagerSpecs = append(eagerSpecs, plugin.Spec{Name: "codegraph", Command: bin, Args: []string{"serve", "--mcp"}, Dir: cwd})
+			if warm {
+				eagerSpecs = append(eagerSpecs, spec)
+			} else {
+				bgSpecs = append(bgSpecs, spec)
+				sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo,
+					Text: "codegraph: preparing code-intelligence tools in the background — tools will appear when ready"})
+			}
 		case cfg.Codegraph.AutoInstall:
 			notify := func(msg string) { sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo, Text: msg}) }
 			notify("codegraph: fetching code-intelligence runtime in the background (one-time) — symbol-graph tools available next session")

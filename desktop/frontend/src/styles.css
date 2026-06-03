@@ -3755,6 +3755,7 @@ body {
 }
 
 .cap-row {
+  width: 100%;
   display: flex;
   gap: 9px;
   align-items: flex-start;
@@ -3829,6 +3830,148 @@ body {
 .cap-server-entry--disabled .cap-tool__name,
 .cap-server-entry--disabled .cap-tool__desc {
   color: var(--fg-faint);
+}
+.cap-server-details {
+  margin: 0 0 10px 31px;
+  padding: 7px 0 2px 12px;
+  border-left: 1px solid var(--border-soft);
+}
+.cap-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 12px;
+}
+.cap-detail {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.cap-detail--wide {
+  grid-column: 1 / -1;
+}
+.cap-detail--select .mem-select {
+  height: 30px;
+  font-size: 12px;
+}
+.cap-detail__label {
+  color: var(--fg-faint);
+  font-size: 10px;
+  font-weight: 650;
+  line-height: 1.2;
+  text-transform: uppercase;
+}
+.cap-detail__value,
+.cap-detail__code {
+  min-width: 0;
+  color: var(--fg-dim);
+  font-size: 11.5px;
+  line-height: 1.35;
+}
+.cap-detail__code {
+  font-family: var(--mono);
+  overflow-wrap: anywhere;
+}
+.cap-detail-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-top: 10px;
+}
+.cap-confirm-hint {
+  flex-basis: 100%;
+  color: var(--fg-faint);
+  font-size: 11px;
+  line-height: 1.35;
+}
+.cap-connection-mode {
+  min-width: 0;
+  border: 0;
+  padding: 0;
+  margin: 0;
+}
+.cap-connection-options {
+  margin-top: 4px;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--bg);
+}
+.cap-connection-option {
+  --wails-draggable: no-drag;
+  display: grid;
+  grid-template-columns: 17px minmax(0, 1fr);
+  gap: 9px;
+  padding: 8px 10px;
+  border-top: 1px solid var(--border-soft);
+  cursor: pointer;
+}
+.cap-connection-option:first-child {
+  border-top: 0;
+}
+.cap-connection-option:hover {
+  background: var(--bg-soft);
+}
+.cap-connection-option--selected {
+  box-shadow: inset 3px 0 0 var(--ok);
+  background: var(--bg-soft);
+}
+.cap-connection-option input {
+  margin: 2px 0 0;
+  accent-color: var(--ok);
+}
+.cap-connection-option--disabled {
+  cursor: default;
+  opacity: 0.68;
+}
+.cap-connection-option__text {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.cap-connection-option__label {
+  color: var(--fg);
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.3;
+}
+.cap-connection-option__hint {
+  color: var(--fg-faint);
+  font-size: 11px;
+  line-height: 1.35;
+}
+.cap-config-edit {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.cap-config-edit .mem-input,
+.cap-config-edit .mem-select {
+  width: 100%;
+}
+.cap-config-edit__env {
+  min-height: 82px;
+  max-height: 160px;
+}
+.cap-edit-hint {
+  color: var(--fg-faint);
+  font-size: 11px;
+  line-height: 1.35;
+}
+.cap-server-details .cap-tool-list {
+  margin: 10px 0 0;
+  padding: 9px 0 0;
+  border-top: 1px solid var(--border-soft);
+  border-left: 0;
+}
+.cap-tool-empty {
+  margin: 10px 0 0;
+  padding: 9px 0 0;
+  border-top: 1px solid var(--border-soft);
+  color: var(--fg-faint);
+  font-size: 11.5px;
+  line-height: 1.4;
 }
 .cap-server-group {
   display: flex;
@@ -4058,14 +4201,31 @@ body {
   gap: 6px;
   margin-top: 8px;
 }
-.cap-failure__log {
-  max-height: 180px;
+.cap-failure__logbox {
   margin: 8px 0 0;
-  padding: 9px;
-  overflow: auto;
   border: 1px solid var(--border-soft);
   border-radius: 7px;
   background: var(--bg);
+  overflow: hidden;
+}
+.cap-failure__logbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border-soft);
+  color: var(--fg-faint);
+  font-size: 10px;
+  font-weight: 650;
+  line-height: 1.2;
+  text-transform: uppercase;
+}
+.cap-failure__log {
+  max-height: 180px;
+  margin: 0;
+  padding: 9px;
+  overflow: auto;
   color: var(--err);
   font-family: var(--mono);
   font-size: 11px;
@@ -4196,6 +4356,13 @@ body {
 .cap-dot--connected {
   background: var(--ok);
 }
+.cap-dot--deferred {
+  background: var(--ok);
+  opacity: 0.78;
+}
+.cap-dot--initializing {
+  background: var(--accent);
+}
 .cap-dot--failed {
   background: var(--err);
 }
@@ -4230,10 +4397,21 @@ body {
   word-break: break-word;
 }
 .cap-row__actions {
+  margin-left: auto;
   flex-shrink: 0;
   display: flex;
   align-items: center;
   gap: 6px;
+}
+.cap-row__pending {
+  font-size: 11px;
+  font-weight: 650;
+  color: var(--fg-faint);
+}
+.cap-row__builtin {
+  font-size: 11px;
+  font-weight: 650;
+  color: var(--fg-faint);
 }
 .cap-row--skill {
   align-items: center;

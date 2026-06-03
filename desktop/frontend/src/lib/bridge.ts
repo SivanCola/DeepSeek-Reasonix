@@ -81,6 +81,7 @@ export interface AppBindings {
   // Retry reconnects a configured server that failed (config untouched).
   Capabilities(): Promise<CapabilitiesView>;
   AddMCPServer(input: MCPServerInput): Promise<number>;
+  UpdateMCPServer(name: string, input: MCPServerInput): Promise<void>;
   RemoveMCPServer(name: string): Promise<void>;
   RetryMCPServer(name: string): Promise<void>;
   PickSkillFolder(): Promise<string>;
@@ -90,6 +91,7 @@ export interface AppBindings {
   // SetMCPServerEnabled is the per-session connector toggle (on reconnects, off
   // disconnects; config untouched).
   SetMCPServerEnabled(name: string, enabled: boolean): Promise<void>;
+  SetMCPServerTier(name: string, tier: string): Promise<void>;
   SlashArgs(input: string): Promise<SlashArgsResult>;
   ListDir(rel: string): Promise<DirEntry[]>;
   ReadFile(rel: string): Promise<FilePreview>;
@@ -264,6 +266,10 @@ function makeMockApp(): AppBindings {
       name: "codegraph",
       transport: "stdio",
       status: "connected",
+      builtIn: true,
+      configured: true,
+      autoStart: true,
+      tier: "background",
       tools: 4,
       prompts: 0,
       resources: 1,
@@ -274,9 +280,30 @@ function makeMockApp(): AppBindings {
         { name: "node", description: "Inspect a specific graph node." },
       ],
     },
-    { name: "github", transport: "stdio", status: "connected", tools: 12, prompts: 2, resources: 0 },
-    { name: "linear", transport: "http", status: "connected", tools: 8, prompts: 0, resources: 0 },
-    { name: "figma", transport: "http", status: "failed", tools: 0, prompts: 0, resources: 0, error: "connect: 401 unauthorized" },
+    { name: "github", transport: "stdio", status: "connected", configured: true, autoStart: true, tier: "lazy", command: "npx", args: ["-y", "@modelcontextprotocol/server-github"], tools: 12, prompts: 2, resources: 0 },
+    {
+      name: "linear",
+      transport: "http",
+      status: "deferred",
+      configured: true,
+      autoStart: true,
+      tier: "lazy",
+      url: "https://mcp.linear.app/mcp",
+      tools: 8,
+      prompts: 0,
+      resources: 0,
+      toolList: [
+        { name: "list_issues", description: "List and filter Linear issues." },
+        { name: "get_issue", description: "Fetch a Linear issue by id or key." },
+        { name: "create_issue", description: "Create a Linear issue." },
+        { name: "update_issue", description: "Update status, assignee, priority, or labels." },
+        { name: "list_projects", description: "List Linear projects." },
+        { name: "get_project", description: "Fetch project details." },
+        { name: "list_teams", description: "List Linear teams." },
+        { name: "search", description: "Search Linear workspace objects." },
+      ],
+    },
+    { name: "figma", transport: "http", status: "failed", configured: true, autoStart: true, tier: "lazy", url: "https://mcp.figma.com/mcp", tools: 0, prompts: 0, resources: 0, error: "connect: 401 unauthorized" },
   ];
   const capSkills: SkillView[] = [
     { name: "explore", description: "Investigate the codebase in an isolated subagent", scope: "builtin", runAs: "subagent" },
@@ -565,6 +592,12 @@ function makeMockApp(): AppBindings {
         name: input.name,
         transport: input.transport,
         status: "connected",
+        configured: true,
+        autoStart: true,
+        tier: input.tier || "lazy",
+        command: input.command,
+        args: input.args,
+        url: input.url,
         tools,
         prompts: 0,
         resources: 0,
@@ -574,6 +607,26 @@ function makeMockApp(): AppBindings {
         })),
       });
       return tools;
+    },
+    async UpdateMCPServer(name: string, input: MCPServerInput) {
+      capServers = capServers.map((s) => {
+        if (s.name !== name) return s;
+        const connected = s.status === "connected" || s.status === "failed" || input.tier !== "lazy";
+        const nextStatus = s.status === "disabled" ? "disabled" : connected ? "connected" : "deferred";
+        const nextTools = nextStatus === "connected" ? s.tools || (input.transport === "stdio" ? 3 : 5) : 0;
+        return {
+          ...s,
+          transport: input.transport,
+          status: nextStatus,
+          tier: input.tier || "lazy",
+          command: input.transport === "stdio" ? input.command : "",
+          args: input.transport === "stdio" ? input.args : [],
+          url: input.transport === "stdio" ? "" : input.url,
+          envKeys: input.env ? Object.keys(input.env).sort() : s.envKeys,
+          tools: nextTools,
+          error: undefined,
+        };
+      });
     },
     async RemoveMCPServer(name: string) {
       capServers = capServers.filter((s) => s.name !== name);
@@ -609,6 +662,14 @@ function makeMockApp(): AppBindings {
           ? { ...s, status: enabled ? "connected" : "disabled", tools: enabled ? s.tools || 4 : 0, error: undefined }
           : s,
       );
+    },
+    async SetMCPServerTier(name: string, tier: string) {
+      capServers = capServers.map((s) => {
+        if (s.name !== name) return s;
+        if (tier === "lazy") return { ...s, tier };
+        const tools = s.tools || (s.transport === "stdio" ? 3 : 5);
+        return { ...s, tier, status: "connected", tools, error: undefined };
+      });
     },
     async SlashArgs(input: string) {
       // Mirror a slice of the real arg hints so the menu is exercisable in browser dev.

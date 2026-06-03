@@ -848,16 +848,26 @@ type CapabilitiesView struct {
 }
 
 // ServerView is one MCP server for the drawer. Status is "connected" (with
-// tool/prompt/resource counts) or "failed" (with the connection error).
+// tool/prompt/resource counts), "deferred" (lazy/on-demand startup enabled),
+// "failed" (with the connection error), "initializing" (background startup in
+// progress), or "disabled".
 type ServerView struct {
-	Name      string     `json:"name"`
-	Transport string     `json:"transport"`
-	Status    string     `json:"status"`
-	Tools     int        `json:"tools"`
-	Prompts   int        `json:"prompts"`
-	Resources int        `json:"resources"`
-	Error     string     `json:"error,omitempty"`
-	ToolList  []ToolView `json:"toolList,omitempty"`
+	Name       string     `json:"name"`
+	Transport  string     `json:"transport"`
+	Status     string     `json:"status"`
+	BuiltIn    bool       `json:"builtIn,omitempty"`
+	Configured bool       `json:"configured,omitempty"`
+	AutoStart  bool       `json:"autoStart"`
+	Tier       string     `json:"tier,omitempty"`
+	Command    string     `json:"command,omitempty"`
+	Args       []string   `json:"args,omitempty"`
+	URL        string     `json:"url,omitempty"`
+	EnvKeys    []string   `json:"envKeys,omitempty"`
+	Tools      int        `json:"tools"`
+	Prompts    int        `json:"prompts"`
+	Resources  int        `json:"resources"`
+	Error      string     `json:"error,omitempty"`
+	ToolList   []ToolView `json:"toolList,omitempty"`
 }
 
 type ToolView struct {
@@ -903,38 +913,51 @@ func (a *App) Capabilities() CapabilitiesView {
 	connected := map[string]bool{}
 	retainedDisabled := map[string]ServerView{}
 	codegraphConfigured := false
+	configured := map[string]config.PluginEntry{}
+	var configuredEntries []config.PluginEntry
+	if cfg, err := config.Load(); err == nil {
+		codegraphConfigured = cfg.Codegraph.Enabled
+		configuredEntries = append(configuredEntries, cfg.Plugins...)
+		for _, p := range configuredEntries {
+			configured[p.Name] = p
+		}
+	}
 	if h := ctrl.Host(); h != nil {
 		for _, s := range h.Servers() {
 			seen[s.Name] = true
 			connected[s.Name] = true
-			out.Servers = append(out.Servers, ServerView{
+			view := ServerView{
 				Name: s.Name, Transport: s.Transport, Status: "connected",
-				Tools: s.Tools, Prompts: s.Prompts, Resources: s.Resources,
+				BuiltIn: s.Name == "codegraph",
+				Tools:   s.Tools, Prompts: s.Prompts, Resources: s.Resources,
 				ToolList: pluginToolsToView(s.ToolList),
-			})
+			}
+			if p, ok := configured[s.Name]; ok {
+				view = withPluginConfig(view, p)
+			}
+			out.Servers = append(out.Servers, view)
 		}
 		for _, f := range h.Failures() {
 			seen[f.Name] = true
-			out.Servers = append(out.Servers, ServerView{
-				Name: f.Name, Transport: f.Transport, Status: "failed", Error: f.Error,
-			})
+			view := ServerView{
+				Name: f.Name, Transport: f.Transport, Status: "failed", BuiltIn: f.Name == "codegraph", Error: f.Error,
+			}
+			if p, ok := configured[f.Name]; ok {
+				view = withPluginConfig(view, p)
+			}
+			out.Servers = append(out.Servers, view)
 		}
 	}
-	// Configured servers that are neither connected nor failed are toggled off
-	// (disconnected this session, or auto_start=false) — shown with an off switch.
-	if cfg, err := config.Load(); err == nil {
-		codegraphConfigured = cfg.Codegraph.Enabled
-		for _, p := range cfg.Plugins {
+	// Configured servers that are neither connected nor failed are either lazy
+	// (deferred), background/eager (initializing), or toggled off this session.
+	if len(configuredEntries) > 0 || codegraphConfigured {
+		for _, p := range configuredEntries {
 			if seen[p.Name] {
 				continue
 			}
-			tt := p.Type
-			if tt == "" {
-				tt = "stdio"
-			}
 			if s, ok := disabled[p.Name]; ok {
 				s.Status = "disabled"
-				s.Transport = tt
+				s = withPluginConfig(s, p)
 				s.Error = ""
 				out.Servers = append(out.Servers, s)
 				retainedDisabled[p.Name] = s
@@ -942,8 +965,31 @@ func (a *App) Capabilities() CapabilitiesView {
 				delete(disabled, p.Name)
 				continue
 			}
-			out.Servers = append(out.Servers, ServerView{Name: p.Name, Transport: tt, Status: "disabled"})
+			status := "disabled"
+			if p.ShouldAutoStart() {
+				switch p.ResolvedTier() {
+				case "background", "eager":
+					status = "initializing"
+				default:
+					status = "deferred"
+				}
+			}
+			out.Servers = append(out.Servers, withPluginConfig(ServerView{Name: p.Name, Status: status}, p))
 			seen[p.Name] = true
+		}
+		if codegraphConfigured && !seen["codegraph"] {
+			if s, ok := disabled["codegraph"]; ok {
+				s.Status = "disabled"
+				s.Transport = "stdio"
+				s.BuiltIn = true
+				s.Error = ""
+				out.Servers = append(out.Servers, s)
+				retainedDisabled["codegraph"] = s
+				delete(disabled, "codegraph")
+			} else {
+				out.Servers = append(out.Servers, ServerView{Name: "codegraph", Transport: "stdio", Status: "initializing", BuiltIn: true})
+			}
+			seen["codegraph"] = true
 		}
 	}
 	for name, s := range disabled {
@@ -954,6 +1000,7 @@ func (a *App) Capabilities() CapabilitiesView {
 			continue
 		}
 		s.Status = "disabled"
+		s.BuiltIn = true
 		s.Error = ""
 		out.Servers = append(out.Servers, s)
 		retainedDisabled[name] = s
@@ -976,6 +1023,28 @@ func (a *App) Capabilities() CapabilitiesView {
 	}
 	out.SkillRoots = skillRootsView()
 	return out
+}
+
+func withPluginConfig(v ServerView, p config.PluginEntry) ServerView {
+	tt := p.Type
+	if tt == "" {
+		tt = "stdio"
+	}
+	v.Transport = tt
+	v.Configured = true
+	v.AutoStart = p.ShouldAutoStart()
+	v.Tier = p.ResolvedTier()
+	v.Command = p.Command
+	v.Args = append([]string(nil), p.Args...)
+	v.URL = p.URL
+	if len(p.Env) > 0 {
+		v.EnvKeys = make([]string, 0, len(p.Env))
+		for k := range p.Env {
+			v.EnvKeys = append(v.EnvKeys, k)
+		}
+		sort.Strings(v.EnvKeys)
+	}
+	return v
 }
 
 func skillRootsView() []SkillRootView {
@@ -1129,6 +1198,7 @@ type MCPServerInput struct {
 	Args      []string          `json:"args"`
 	URL       string            `json:"url"`
 	Env       map[string]string `json:"env"`
+	Tier      string            `json:"tier"`
 }
 
 // AddMCPServer connects a server live and persists it to config (Customize → MCP →
@@ -1139,12 +1209,80 @@ func (a *App) AddMCPServer(in MCPServerInput) (int, error) {
 	}
 	return a.ctrl.AddMCPServer(config.PluginEntry{
 		Name:    in.Name,
-		Type:    in.Transport,
+		Type:    normalizeMCPTransport(in.Transport),
 		Command: in.Command,
 		Args:    in.Args,
 		URL:     in.URL,
 		Env:     in.Env,
+		Tier:    normalizeMCPTier(in.Tier),
 	})
+}
+
+// UpdateMCPServer edits a persisted external MCP server. The name is the stable
+// identity; callers must remove + add if they want to rename a server.
+func (a *App) UpdateMCPServer(name string, in MCPServerInput) error {
+	if name == "codegraph" {
+		return fmt.Errorf("codegraph is built in; configure it with [codegraph]")
+	}
+	if a.ctrl == nil {
+		return fmt.Errorf("no active session")
+	}
+	if strings.TrimSpace(in.Name) != "" && strings.TrimSpace(in.Name) != name {
+		return fmt.Errorf("renaming MCP servers is not supported; remove and add a new server")
+	}
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+	found := false
+	var updated config.PluginEntry
+	for _, p := range cfg.Plugins {
+		if p.Name != name {
+			continue
+		}
+		updated = p
+		updated.Type = normalizeMCPTransport(in.Transport)
+		updated.Command = strings.TrimSpace(in.Command)
+		updated.Args = append([]string(nil), in.Args...)
+		updated.URL = strings.TrimSpace(in.URL)
+		updated.Tier = normalizeMCPTier(in.Tier)
+		if in.Env != nil {
+			updated.Env = in.Env
+		}
+		if updated.Type == "stdio" {
+			updated.URL = ""
+		} else {
+			updated.Command = ""
+			updated.Args = nil
+		}
+		found = true
+		break
+	}
+	if !found {
+		return fmt.Errorf("no configured MCP server named %q", name)
+	}
+	if err := cfg.UpsertPlugin(updated); err != nil {
+		return err
+	}
+	if err := cfg.Save(); err != nil {
+		return err
+	}
+
+	a.mu.RLock()
+	_, sessionDisabled := a.disabledMCP[name]
+	a.mu.RUnlock()
+	wasConnected := mcpConnected(a.ctrl, name)
+	wasFailed := mcpFailed(a.ctrl, name)
+	if wasConnected {
+		a.ctrl.DisconnectMCPServer(name)
+	}
+	if !sessionDisabled && (wasConnected || wasFailed || updated.ResolvedTier() != "lazy") {
+		if _, err := a.ctrl.ConnectConfiguredMCPServer(name); err != nil {
+			recordMCPFailure(a.ctrl, updated, err)
+			return fmt.Errorf("saved config, but reconnect failed: %w", err)
+		}
+	}
+	return nil
 }
 
 // RemoveMCPServer disconnects a live server and drops it from config (the row's ✕).
@@ -1201,6 +1339,108 @@ func (a *App) SetMCPServerEnabled(name string, enabled bool) error {
 	}
 	a.ctrl.DisconnectMCPServer(name)
 	return nil
+}
+
+// SetMCPServerTier persists how a configured MCP server should start on future
+// sessions. It does not tear down a connected server; the per-session toggle and
+// "connect now" remain separate controls.
+func (a *App) SetMCPServerTier(name, tier string) error {
+	if name == "codegraph" {
+		return fmt.Errorf("codegraph is built in; configure it with [codegraph]")
+	}
+	tier = normalizeMCPTier(tier)
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+	found := false
+	var updated config.PluginEntry
+	for i := range cfg.Plugins {
+		if cfg.Plugins[i].Name == name {
+			cfg.Plugins[i].Tier = tier
+			updated = cfg.Plugins[i]
+			found = true
+			break
+		}
+	}
+	if !found {
+		return fmt.Errorf("no configured MCP server named %q", name)
+	}
+	if err := cfg.Save(); err != nil {
+		return err
+	}
+	if tier != "lazy" && a.ctrl != nil && !mcpConnected(a.ctrl, name) {
+		if _, err := a.ctrl.ConnectConfiguredMCPServer(name); err != nil {
+			recordMCPFailure(a.ctrl, updated, err)
+			return fmt.Errorf("saved launch mode, but connect failed: %w", err)
+		}
+		a.mu.Lock()
+		delete(a.disabledMCP, name)
+		a.mu.Unlock()
+	}
+	return nil
+}
+
+func normalizeMCPTier(tier string) string {
+	switch strings.ToLower(strings.TrimSpace(tier)) {
+	case "eager":
+		return "eager"
+	case "background":
+		return "background"
+	default:
+		return "lazy"
+	}
+}
+
+func normalizeMCPTransport(transport string) string {
+	switch strings.ToLower(strings.TrimSpace(transport)) {
+	case "http", "streamable-http":
+		return "http"
+	case "sse":
+		return "sse"
+	default:
+		return "stdio"
+	}
+}
+
+func mcpConnected(ctrl *control.Controller, name string) bool {
+	if ctrl == nil || ctrl.Host() == nil {
+		return false
+	}
+	for _, s := range ctrl.Host().Servers() {
+		if s.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+func mcpFailed(ctrl *control.Controller, name string) bool {
+	if ctrl == nil || ctrl.Host() == nil {
+		return false
+	}
+	for _, f := range ctrl.Host().Failures() {
+		if f.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+func recordMCPFailure(ctrl *control.Controller, e config.PluginEntry, err error) {
+	if ctrl == nil || ctrl.Host() == nil || err == nil {
+		return
+	}
+	exp := e.ExpandedPlugin()
+	ctrl.Host().RecordFailure(plugin.Spec{
+		Name:    exp.Name,
+		Type:    exp.Type,
+		Command: exp.Command,
+		Args:    exp.Args,
+		Env:     exp.Env,
+		URL:     exp.URL,
+		Headers: exp.Headers,
+	}, err)
 }
 
 func findMCPServerView(ctrl *control.Controller, name string) (ServerView, bool) {

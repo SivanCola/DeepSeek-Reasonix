@@ -7,7 +7,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -537,6 +539,71 @@ env = { GO_WANT_HELPER_PROCESS = "1" }
 	}
 }
 
+func TestBuildColdCodegraphStartsInBackground(t *testing.T) {
+	isolateConfigHome(t)
+	dir := t.TempDir()
+	t.Chdir(dir)
+	launcher := writeCodegraphHelper(t, dir)
+	t.Setenv("GO_WANT_HELPER_PROCESS", "1")
+
+	writeFile(t, dir, "reasonix.toml", fmt.Sprintf(`
+default_model = "test-model"
+
+[codegraph]
+enabled = true
+path = %q
+
+[agent]
+system_prompt = "BASE"
+
+[[providers]]
+name = "test-model"
+kind = "openai"
+base_url = "https://example.invalid"
+model = "x"
+api_key_env = "REASONIX_TEST_KEY_UNSET"
+`, launcher))
+
+	var notices []event.Event
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	ctrl, err := Build(ctx, Options{
+		Sink: event.FuncSink(func(e event.Event) {
+			if e.Kind == event.Notice {
+				notices = append(notices, e)
+			}
+		}),
+	})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	defer ctrl.Close()
+
+	if got := ctrl.Host().Failures(); len(got) != 0 {
+		t.Fatalf("Host.Failures() = %+v, want empty for cold built-in codegraph background startup", got)
+	}
+	codegraphDir := filepath.Join(dir, ".codegraph")
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if _, err := os.Stat(codegraphDir); err == nil {
+			break
+		} else if time.Now().After(deadline) {
+			t.Fatalf("cold codegraph init did not create .codegraph/: %v", err)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	foundNotice := false
+	for _, n := range notices {
+		if strings.Contains(n.Text, "preparing code-intelligence tools in the background") {
+			foundNotice = true
+			break
+		}
+	}
+	if !foundNotice {
+		t.Fatalf("missing background warmup notice; got %+v", notices)
+	}
+}
+
 // TestBuildAutoDemoteFromStats proves the Phase 5 telemetry → Phase 4 tier
 // bridge: three consecutive over-budget startup samples must demote an
 // eager-tier plugin to lazy at the *next* boot, so the user pays for a slow
@@ -682,4 +749,78 @@ func TestHelperProcess(t *testing.T) {
 		b, _ := json.Marshal(resp)
 		os.Stdout.Write(append(b, '\n'))
 	}
+}
+
+func writeCodegraphHelper(t *testing.T, dir string) string {
+	t.Helper()
+	path := filepath.Join(dir, "codegraph-helper")
+	if runtime.GOOS == "windows" {
+		path += ".exe"
+	}
+	src := filepath.Join(dir, "codegraph-helper.go")
+	if err := os.WriteFile(src, []byte(`package main
+
+import (
+	"bufio"
+	"bytes"
+	"encoding/json"
+	"os"
+	"path/filepath"
+)
+
+func main() {
+	if len(os.Args) >= 3 && os.Args[1] == "init" {
+		_ = os.MkdirAll(filepath.Join(os.Args[2], ".codegraph"), 0o755)
+		return
+	}
+
+	in := bufio.NewReader(os.Stdin)
+	for {
+		line, err := in.ReadBytes('\n')
+		if err != nil {
+			return
+		}
+		line = bytes.TrimSpace(line)
+		if len(line) == 0 {
+			continue
+		}
+
+		var req struct {
+			ID     *int            `+"`json:\"id\"`"+`
+			Method string          `+"`json:\"method\"`"+`
+			Params json.RawMessage `+"`json:\"params\"`"+`
+		}
+		if err := json.Unmarshal(line, &req); err != nil || req.ID == nil {
+			continue
+		}
+
+		var result any
+		switch req.Method {
+		case "initialize":
+			result = map[string]any{
+				"protocolVersion": "2024-11-05",
+				"serverInfo":      map[string]any{"name": "codegraph", "version": "0"},
+				"capabilities":    map[string]any{},
+			}
+		case "tools/list":
+			result = map[string]any{"tools": []map[string]any{{
+				"name":        "search",
+				"description": "Search symbols.",
+				"inputSchema": map[string]any{"type": "object"},
+			}}}
+		}
+
+		resp := map[string]any{"jsonrpc": "2.0", "id": *req.ID, "result": result}
+		b, _ := json.Marshal(resp)
+		_, _ = os.Stdout.Write(append(b, '\n'))
+	}
+}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("go", "build", "-o", path, src)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("build codegraph helper: %v\n%s", err, out)
+	}
+	return path
 }

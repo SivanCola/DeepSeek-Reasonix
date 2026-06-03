@@ -354,6 +354,27 @@ func TestAutoStartPlugins(t *testing.T) {
 	}
 }
 
+func TestPluginResolvedTierDefaultsToLazy(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		tier string
+		want string
+	}{
+		{name: "empty", tier: "", want: "lazy"},
+		{name: "explicit lazy", tier: "lazy", want: "lazy"},
+		{name: "background", tier: "background", want: "background"},
+		{name: "eager", tier: "eager", want: "eager"},
+		{name: "unknown", tier: "startup", want: "lazy"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := (PluginEntry{Name: "mcp", Command: "mcp-server", Tier: tc.tier}).ResolvedTier()
+			if got != tc.want {
+				t.Fatalf("ResolvedTier(%q) = %q, want %q", tc.tier, got, tc.want)
+			}
+		})
+	}
+}
+
 // TestSaveToRoundTrips stages several mutations, persists atomically, and
 // re-decodes the file to confirm the changes survived a write/read cycle.
 func TestSaveToRoundTrips(t *testing.T) {

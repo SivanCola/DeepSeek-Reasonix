@@ -10,6 +10,7 @@ import (
 
 	"reasonix/internal/config"
 	"reasonix/internal/control"
+	"reasonix/internal/plugin"
 )
 
 func TestCommandsIncludesEffortNotThinking(t *testing.T) {
@@ -130,6 +131,135 @@ func TestDeleteSessionRejectsActiveRelativePath(t *testing.T) {
 	if _, err := os.Stat(path); err != nil {
 		t.Fatalf("active session should remain: %v", err)
 	}
+}
+
+func TestCapabilitiesShowsLazyMCPAsDeferredNotDisabled(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	dir := t.TempDir()
+	t.Chdir(dir)
+	if err := os.WriteFile(filepath.Join(dir, "reasonix.toml"), []byte(`
+[codegraph]
+enabled = false
+
+[[plugins]]
+name = "playwright"
+command = "npx"
+args = ["-y", "@playwright/mcp"]
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	app := NewApp()
+	app.ctrl = control.New(control.Options{Host: plugin.NewHost()})
+	defer app.ctrl.Close()
+
+	view := app.Capabilities()
+	for _, s := range view.Servers {
+		if s.Name == "playwright" {
+			if s.Status != "deferred" {
+				t.Fatalf("lazy MCP status = %q, want deferred; server = %+v", s.Status, s)
+			}
+			return
+		}
+	}
+	t.Fatalf("playwright MCP missing from Capabilities: %+v", view.Servers)
+}
+
+func TestUpdateMCPServerKeepsLazyMCPDeferred(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	dir := t.TempDir()
+	t.Chdir(dir)
+	if err := os.WriteFile(filepath.Join(dir, "reasonix.toml"), []byte(`
+[codegraph]
+enabled = false
+
+[[plugins]]
+name = "playwright"
+command = "npx"
+args = ["-y", "@playwright/mcp"]
+env = { TOKEN = "${PLAYWRIGHT_TOKEN}" }
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	app := NewApp()
+	app.ctrl = control.New(control.Options{Host: plugin.NewHost()})
+	defer app.ctrl.Close()
+
+	if err := app.UpdateMCPServer("playwright", MCPServerInput{
+		Name:      "playwright",
+		Transport: "stdio",
+		Command:   "node",
+		Args:      []string{"server.js"},
+		Tier:      "lazy",
+	}); err != nil {
+		t.Fatalf("UpdateMCPServer: %v", err)
+	}
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.Plugins[0].Command; got != "node" {
+		t.Fatalf("updated command = %q, want node", got)
+	}
+	if got := cfg.Plugins[0].Env["TOKEN"]; got != "${PLAYWRIGHT_TOKEN}" {
+		t.Fatalf("env TOKEN = %q, want preserved env", got)
+	}
+	view := app.Capabilities()
+	for _, s := range view.Servers {
+		if s.Name == "playwright" {
+			if s.Status != "deferred" {
+				t.Fatalf("updated lazy MCP status = %q, want deferred; server = %+v", s.Status, s)
+			}
+			if s.Command != "node" || len(s.Args) != 1 || s.Args[0] != "server.js" {
+				t.Fatalf("server command not refreshed: %+v", s)
+			}
+			return
+		}
+	}
+	t.Fatalf("playwright MCP missing from Capabilities: %+v", view.Servers)
+}
+
+func TestSetMCPServerTierRecordsConnectFailure(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	dir := t.TempDir()
+	t.Chdir(dir)
+	if err := os.WriteFile(filepath.Join(dir, "reasonix.toml"), []byte(`
+[codegraph]
+enabled = false
+
+[[plugins]]
+name = "broken"
+command = "reasonix-missing-mcp-binary"
+tier = "lazy"
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	app := NewApp()
+	app.ctrl = control.New(control.Options{Host: plugin.NewHost()})
+	defer app.ctrl.Close()
+
+	err := app.SetMCPServerTier("broken", "background")
+	if err == nil || !strings.Contains(err.Error(), "connect failed") {
+		t.Fatalf("SetMCPServerTier error = %v, want connect failure", err)
+	}
+	if !mcpFailed(app.ctrl, "broken") {
+		t.Fatalf("Host.Failures() = %+v, want broken failure recorded", app.ctrl.Host().Failures())
+	}
+	view := app.Capabilities()
+	for _, s := range view.Servers {
+		if s.Name == "broken" {
+			if s.Status != "failed" {
+				t.Fatalf("server status = %q, want failed; server = %+v", s.Status, s)
+			}
+			return
+		}
+	}
+	t.Fatalf("broken MCP missing from Capabilities: %+v", view.Servers)
 }
 
 type blockingRunner struct {

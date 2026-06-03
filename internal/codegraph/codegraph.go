@@ -109,7 +109,7 @@ func EnsureInit(ctx context.Context, bin, root string) error {
 	if root == "" {
 		return nil
 	}
-	if fi, err := os.Stat(filepath.Join(root, ".codegraph")); err == nil && fi.IsDir() {
+	if Initialized(root) {
 		return nil // already initialised — serve re-syncs and the watcher keeps it fresh
 	}
 	cmd := exec.CommandContext(ctx, bin, "init", root)
@@ -119,6 +119,17 @@ func EnsureInit(ctx context.Context, bin, root string) error {
 		return fmt.Errorf("codegraph init: %w: %s", err, strings.TrimSpace(string(out)))
 	}
 	return nil
+}
+
+// Initialized reports whether root already has CodeGraph's project state. Boot
+// uses this to keep warm projects eager while moving first-time project setup to
+// background startup, avoiding a cold MCP handshake on the app's critical path.
+func Initialized(root string) bool {
+	if root == "" {
+		return false
+	}
+	fi, err := os.Stat(filepath.Join(root, ".codegraph"))
+	return err == nil && fi.IsDir()
 }
 
 func expand(p string) string {

@@ -195,7 +195,15 @@ export interface ComposerInsertRequest {
 export interface ServerView {
   name: string;
   transport: string;
-  status: "connected" | "failed" | "disabled";
+  status: "connected" | "deferred" | "failed" | "initializing" | "disabled";
+  builtIn?: boolean;
+  configured?: boolean;
+  autoStart: boolean;
+  tier?: "lazy" | "background" | "eager" | string;
+  command?: string;
+  args?: string[];
+  url?: string;
+  envKeys?: string[];
   tools: number;
   prompts: number;
   resources: number;
@@ -232,7 +240,8 @@ export interface MCPServerInput {
   command: string;
   args: string[];
   url: string;
-  env: Record<string, string>;
+  env?: Record<string, string> | null;
+  tier: string;
 }
 
 export interface ModelInfo {
