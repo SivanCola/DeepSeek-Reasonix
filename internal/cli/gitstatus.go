@@ -117,15 +117,36 @@ func countUntracked(out string) int {
 }
 
 func (m chatTUI) gitTag() string {
-	return m.gitStatus.Render()
+	return m.gitStatus.RenderRepo(themeFg(m.statusModeColor(), m.gitStatus.Repo))
+}
+
+var (
+	statusAutoColor = cliColor{"#f59e0b", 214}
+	statusPlanColor = cliColor{"#2563eb", 27}
+	statusYoloColor = cliColor{"#e5484d", 167}
+)
+
+func (m chatTUI) statusModeColor() cliColor {
+	switch {
+	case m.ctrl != nil && m.ctrl.Bypass():
+		return statusYoloColor
+	case m.planMode:
+		return statusPlanColor
+	default:
+		return statusAutoColor
+	}
 }
 
 func (s gitStatus) Render() string {
+	return s.RenderRepo(accent(s.Repo))
+}
+
+func (s gitStatus) RenderRepo(repo string) string {
 	if strings.TrimSpace(s.Repo) == "" || strings.TrimSpace(s.Branch) == "" {
 		return ""
 	}
 	var b strings.Builder
-	b.WriteString(accent(s.Repo))
+	b.WriteString(repo)
 	b.WriteString(dim("@"))
 	if s.Detached {
 		b.WriteString(yellow(s.Branch))

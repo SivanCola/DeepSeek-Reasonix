@@ -11,7 +11,7 @@
   <text x="48" y="238" fill="#1596ff" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="26">deepseek-v4-pro[1m]</text>
   <text x="322" y="238" fill="#8b90a0" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="26">|</text>
   <rect x="350" y="205" width="606" height="52" rx="8" fill="#202637" stroke="#f97316" stroke-width="3"/>
-  <text x="372" y="238" fill="#1aa3a3" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="26">DeepSeek-Reasonix</text>
+  <text x="372" y="238" fill="#f59e0b" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="26">DeepSeek-Reasonix</text>
   <text x="630" y="238" fill="#8b90a0" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="26">@</text>
   <text x="648" y="238" fill="#22c55e" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="26">main-v2</text>
   <text x="760" y="238" fill="#8b90a0" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="26"> (</text>

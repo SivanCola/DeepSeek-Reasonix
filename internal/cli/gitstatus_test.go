@@ -39,6 +39,13 @@ func TestGitStatusRender(t *testing.T) {
 	}
 }
 
+func TestGitStatusRenderRepoUsesSuppliedRepoStyle(t *testing.T) {
+	got := ansi.Strip(gitStatus{Repo: "repo", Branch: "main"}.RenderRepo("[repo]"))
+	if got != "[repo]@main" {
+		t.Fatalf("RenderRepo = %q, want styled repo name only", got)
+	}
+}
+
 func TestLoadGitStatus(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not found")

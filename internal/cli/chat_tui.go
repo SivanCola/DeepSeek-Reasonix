@@ -1508,21 +1508,21 @@ func (m chatTUI) View() tea.View {
 	switch {
 	case m.ctrl.Bypass():
 		modeTag = lipgloss.NewStyle().
-			Background(lipgloss.Color("#e5484d")).
+			Background(lipgloss.Color(statusYoloColor.hex)).
 			Foreground(lipgloss.Color("#ffffff")).
 			Bold(true).
 			Padding(0, 1).
 			Render("YOLO")
 	case m.planMode:
 		modeTag = lipgloss.NewStyle().
-			Background(lipgloss.Color("#2563eb")).
+			Background(lipgloss.Color(statusPlanColor.hex)).
 			Foreground(lipgloss.Color("#ffffff")).
 			Bold(true).
 			Padding(0, 1).
 			Render("Plan")
 	default:
 		modeTag = lipgloss.NewStyle().
-			Background(lipgloss.Color("#f59e0b")).
+			Background(lipgloss.Color(statusAutoColor.hex)).
 			Foreground(lipgloss.Color("#111827")).
 			Bold(true).
 			Padding(0, 1).
