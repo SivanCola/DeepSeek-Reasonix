@@ -38,7 +38,7 @@ type ArgData struct {
 // (everything after the command word). It returns the suggestions filtered by
 // the token being typed and the byte offset where that token begins, so a caller
 // replaces just that token. Only structured commands participate (/mcp /model
-// /skill /hooks /effort /theme /language); others yield nil. Single source of truth for CLI +
+// /skills /hooks /effort /theme /language); others yield nil. Single source of truth for CLI +
 // desktop.
 func SlashArgItems(line string, d ArgData) ([]SlashItem, int) {
 	cmdEnd := strings.IndexAny(line, " \t")
@@ -278,7 +278,7 @@ func hooksArgItems(prior []string) []SlashItem {
 
 // filterSlash keeps items whose label starts with the typed token (case-
 // insensitive) and drops no-op suggestions — ones whose insert wouldn't change
-// the line because the token is already fully typed (e.g. "/skill list" offering
+// the line because the token is already fully typed (e.g. "/skills list" offering
 // "list"). Without this the menu lingers on a complete command and Enter keeps
 // "accepting" the no-op instead of sending.
 func filterSlash(items []SlashItem, line string, from int, cur string) []SlashItem {

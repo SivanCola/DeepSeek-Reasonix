@@ -209,8 +209,11 @@ type chatTUI struct {
 	commands []command.Command
 
 	// skills are the discoverable skills (built-in + user/project); each is offered
-	// in the slash menu as "/<name>" and managed via /skill.
+	// in the slash menu as "/<name>" and managed via /skills.
 	skills []skill.Skill
+
+	// skillPick is the interactive skill picker overlay for /skills. nil when closed.
+	skillPick *skillPicker
 
 	// buildController builds a fresh controller on a model ref, carrying prior
 	// history across and pinning auto-save to resumePath so the continued
@@ -649,7 +652,7 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.updateCompletion()
 			return m, finalize(m, cmds)
 		}
-		if !m.chooserTyping() && m.pendingApproval == nil && m.rewind == nil && m.resumePick == nil && m.mcp == nil && m.shouldFoldPaste(msg.Content) {
+		if !m.chooserTyping() && m.pendingApproval == nil && m.rewind == nil && m.resumePick == nil && m.mcp == nil && m.skillPick == nil && m.shouldFoldPaste(msg.Content) {
 			m.insertFoldedPaste(msg.Content)
 			m.growInputToFit()
 			m.updateCompletion()
@@ -711,6 +714,10 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.mcp != nil {
 			return m.handleMCPManagerKey(msg)
 		}
+		// The skill picker is modal while open: keys navigate it.
+		if m.skillPick != nil {
+			return m.handleSkillPickerKey(msg)
+		}
 		// A pending tool approval is modal: keystrokes answer it (y/a/n, Enter,
 		// Esc) rather than reaching the input.
 		if m.pendingApproval != nil {
@@ -728,9 +735,9 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.moveCompletion(1)
 				return m, nil
 			case "tab", "enter":
-				if msg.String() == "enter" && strings.TrimSpace(m.input.Value()) == "/mcp" {
+				if msg.String() == "enter" && (m.completionExactLabel() || m.completionBareOverlayCommand()) {
 					m.completion = completion{}
-					break
+					break // fall through to regular Enter and submit the command
 				}
 				// When Enter is pressed and the completion has exactly one item
 				// already fully present in the input, close the menu and let Enter
@@ -1128,6 +1135,7 @@ func (m chatTUI) bottomRows() int {
 		m.renderRewind(),
 		m.renderResumePicker(),
 		m.renderMCPManager(),
+		m.renderSkillPicker(),
 		m.renderCompletion(),
 	} {
 		if s != "" {
@@ -1156,7 +1164,7 @@ func (m chatTUI) bottomRows() int {
 // reserve rows for a composer that cannot receive input, leaving a confusing
 // blank/bordered area at the bottom of the TUI.
 func (m chatTUI) hideComposer() bool {
-	if m.mcp != nil || m.resumePick != nil || m.rewind != nil || m.pendingApproval != nil {
+	if m.mcp != nil || m.skillPick != nil || m.resumePick != nil || m.rewind != nil || m.pendingApproval != nil {
 		return true
 	}
 	return m.chooser != nil && !m.chooser.typing
@@ -1541,6 +1549,8 @@ func (m chatTUI) View() tea.View {
 		status = "  " + modeTag + " · " + i18n.M.StatusResumePicker
 	case m.mcp != nil:
 		status = "  " + modeTag + " · MCP"
+	case m.skillPick != nil:
+		status = "  " + modeTag + " · " + i18n.M.SkillPickerStatusLabel
 	case m.chooser != nil:
 		status = "  " + modeTag + " · " + i18n.M.ChatStatusQuestion
 	case m.pendingApproval != nil && m.pendingApproval.Tool == planApprovalTool:
@@ -1625,6 +1635,10 @@ func (m chatTUI) View() tea.View {
 		rowsAboveBox += strings.Count(card, "\n") + 1
 	}
 	if card := m.renderMCPManager(); card != "" {
+		parts = append(parts, card)
+		rowsAboveBox += strings.Count(card, "\n") + 1
+	}
+	if card := m.renderSkillPicker(); card != "" {
 		parts = append(parts, card)
 		rowsAboveBox += strings.Count(card, "\n") + 1
 	}

@@ -34,20 +34,25 @@ func TestSlashArgItems(t *testing.T) {
 		CurrentModel:    "deepseek-flash/deepseek-v4-flash",
 	}
 
-	// /skill subcommands
-	items, from := SlashArgItems("/skill ", data)
-	if from != len("/skill ") {
-		t.Errorf("from = %d, want %d", from, len("/skill "))
+	// /skills subcommands
+	items, from := SlashArgItems("/skills ", data)
+	if from != len("/skills ") {
+		t.Errorf("from = %d, want %d", from, len("/skills "))
 	}
 	for _, w := range []string{"list", "show", "enable", "disable", "new", "paths"} {
 		if !has(items, w) {
-			t.Errorf("/skill missing subcommand %q; got %v", w, labelsOf(items))
+			t.Errorf("/skills missing subcommand %q; got %v", w, labelsOf(items))
 		}
 	}
-	// /skill show → skill names
+	// /skills show → skill names
+	items, _ = SlashArgItems("/skills show ", data)
+	if !has(items, "explore") || !has(items, "review") {
+		t.Errorf("/skills show should list skill names; got %v", labelsOf(items))
+	}
+	// Legacy /skill still works as an alias.
 	items, _ = SlashArgItems("/skill show ", data)
 	if !has(items, "explore") || !has(items, "review") {
-		t.Errorf("/skill show should list skill names; got %v", labelsOf(items))
+		t.Errorf("/skill show alias should list skill names; got %v", labelsOf(items))
 	}
 	items, _ = SlashArgItems("/skill disable ", data)
 	if !has(items, "explore") || has(items, "security-review") {
@@ -111,12 +116,12 @@ func TestSlashArgItems(t *testing.T) {
 		t.Errorf("/help should have no arg items; got %v", labelsOf(items))
 	}
 	// a fully-typed terminal subcommand offers nothing (no lingering no-op) so the
-	// caller can submit instead of "accepting" a no-op — the /skill list bug.
-	if items, _ := SlashArgItems("/skill list", data); len(items) != 0 {
-		t.Errorf("/skill list (token complete) should offer no suggestion; got %v", labelsOf(items))
+	// caller can submit instead of "accepting" a no-op — the /skills list bug.
+	if items, _ := SlashArgItems("/skills list", data); len(items) != 0 {
+		t.Errorf("/skills list (token complete) should offer no suggestion; got %v", labelsOf(items))
 	}
 	// but a partial token still completes.
-	if items, _ := SlashArgItems("/skill li", data); !has(items, "list") {
-		t.Errorf("/skill li should still complete to list; got %v", labelsOf(items))
+	if items, _ := SlashArgItems("/skills li", data); !has(items, "list") {
+		t.Errorf("/skills li should still complete to list; got %v", labelsOf(items))
 	}
 }

@@ -69,7 +69,7 @@ func (m *chatTUI) slashItems() []compItem {
 		{label: "/switch", insert: "/switch ", hint: i18n.M.CmdSwitchBranch},
 		{label: "/mcp", insert: "/mcp ", hint: i18n.M.CmdMcp, descend: true},
 		{label: "/model", insert: "/model ", hint: i18n.M.CmdModel, descend: true},
-		{label: "/skill", insert: "/skill ", hint: i18n.M.CmdSkill, descend: true},
+		{label: "/skills", insert: "/skills ", hint: i18n.M.CmdSkill, descend: true},
 		{label: "/hooks", insert: "/hooks ", hint: i18n.M.CmdHooks, descend: true},
 		{label: "/paste-image", insert: "/paste-image", hint: i18n.M.CmdPasteImage},
 		{label: "/output-style", insert: "/output-style", hint: i18n.M.CmdOutputStyle},
@@ -384,6 +384,23 @@ func (m *chatTUI) moveCompletion(delta int) {
 		return
 	}
 	m.completion.sel = ((m.completion.sel+delta)%n + n) % n
+}
+
+func (m *chatTUI) completionExactLabel() bool {
+	if !m.completion.active || m.completion.sel >= len(m.completion.items) {
+		return false
+	}
+	val := strings.TrimSpace(m.input.Value())
+	return val == m.completion.items[m.completion.sel].label
+}
+
+func (m *chatTUI) completionBareOverlayCommand() bool {
+	switch strings.TrimSpace(m.input.Value()) {
+	case "/mcp", "/skills":
+		return true
+	default:
+		return false
+	}
 }
 
 // acceptCompletion applies the selected item to the input, then recomputes the
