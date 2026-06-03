@@ -861,6 +861,9 @@ func TestPathBoundaryMatching(t *testing.T) {
 }
 
 func TestSourceRowLabelUsesI18n(t *testing.T) {
+	i18n.DetectLanguage("zh")
+	t.Cleanup(func() { i18n.DetectLanguage("en") })
+
 	r := skillRootLine{
 		dir:    "/proj/.reasonix/skills",
 		scope:  skill.ScopeProject,
@@ -868,10 +871,8 @@ func TestSourceRowLabelUsesI18n(t *testing.T) {
 		skills: 3,
 	}
 	label := sourceRowLabel(r, 80)
-	// Should contain i18n scope label, not raw "project"
-	if strings.Contains(label, "project") && !strings.Contains(label, "项目") {
-		// If it contains "project" AND the i18n scope IS "project" (English), that's fine
-		// The test just checks the label isn't the raw scope string when scope would be in Chinese
+	if !strings.Contains(label, "项目") || strings.Contains(label, "project") {
+		t.Fatalf("source row should use localized scope label, got %q", label)
 	}
 	// Check that skills unit is used
 	if !strings.Contains(label, "skills") && !strings.Contains(label, "skill") {
