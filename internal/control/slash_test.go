@@ -39,10 +39,16 @@ func TestSlashArgItems(t *testing.T) {
 	if from != len("/skills ") {
 		t.Errorf("from = %d, want %d", from, len("/skills "))
 	}
-	for _, w := range []string{"list", "manage", "show", "enable", "disable", "new", "paths"} {
+	for _, w := range []string{"show", "enable", "disable", "new", "paths"} {
 		if !has(items, w) {
 			t.Errorf("/skills missing subcommand %q; got %v", w, labelsOf(items))
 		}
+	}
+	if has(items, "manage") {
+		t.Errorf("/skills should hide redundant manage subcommand; got %v", labelsOf(items))
+	}
+	if has(items, "list") {
+		t.Errorf("/skills should hide redundant list subcommand; got %v", labelsOf(items))
 	}
 	// /skills show → skill names
 	items, _ = SlashArgItems("/skills show ", data)
@@ -63,6 +69,10 @@ func TestSlashArgItems(t *testing.T) {
 		t.Errorf("/skill enable should list disabled skills only; got %v", labelsOf(items))
 	}
 	// /mcp subcommands + filtering
+	items, _ = SlashArgItems("/mcp ", data)
+	if has(items, "list") {
+		t.Errorf("/mcp should hide redundant list subcommand; got %v", labelsOf(items))
+	}
 	items, _ = SlashArgItems("/mcp re", data)
 	if len(items) != 1 || items[0].Label != "remove" {
 		t.Errorf("/mcp re should filter to remove; got %v", labelsOf(items))
@@ -120,8 +130,9 @@ func TestSlashArgItems(t *testing.T) {
 	if items, _ := SlashArgItems("/skills list", data); len(items) != 0 {
 		t.Errorf("/skills list (token complete) should offer no suggestion; got %v", labelsOf(items))
 	}
-	// but a partial token still completes.
-	if items, _ := SlashArgItems("/skills li", data); !has(items, "list") {
-		t.Errorf("/skills li should still complete to list; got %v", labelsOf(items))
+	// and hidden menu commands stay hidden while direct typed execution remains
+	// handled by runSkillSubcommand.
+	if items, _ := SlashArgItems("/skills li", data); len(items) != 0 {
+		t.Errorf("/skills li should not offer hidden list suggestion; got %v", labelsOf(items))
 	}
 }

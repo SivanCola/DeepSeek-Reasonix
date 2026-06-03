@@ -77,21 +77,14 @@ func TestSkillPickerEnterClosesWithoutChanges(t *testing.T) {
 	}
 }
 
-func TestSkillsBareRendersList(t *testing.T) {
+func TestSkillsBareOpensPicker(t *testing.T) {
 	m := newTestChatTUI()
 	m.width = 80
 	m.skills = makeTestSkills()
 
 	m.runSkillSubcommand("/skills")
-	if m.skillPick != nil {
-		t.Fatal("bare /skills should render a static list, not open the picker")
-	}
-	if len(m.transcript) == 0 {
-		t.Fatal("bare /skills should commit a list to scrollback")
-	}
-	got := strings.Join(m.transcript, "\n")
-	if !strings.Contains(got, "skills") || !strings.Contains(got, "/review") {
-		t.Fatalf("bare /skills output missing expected content:\n%s", got)
+	if m.skillPick == nil {
+		t.Fatal("bare /skills should open the interactive picker")
 	}
 }
 
@@ -103,6 +96,31 @@ func TestSkillsManageOpensPicker(t *testing.T) {
 	m.runSkillSubcommand("/skills manage")
 	if m.skillPick == nil {
 		t.Fatal("/skills manage should open the interactive picker")
+	}
+}
+
+func TestSkillsQuestionOpensSubcommandCompletion(t *testing.T) {
+	m := newTestChatTUI()
+	m.width = 80
+	m.skills = makeTestSkills()
+	m.input.SetValue("/skills?")
+	m.updateCompletion()
+	if !m.completion.active || m.completion.kind != compSlashArg {
+		t.Fatalf("/skills? should open subcommand completion: %+v", m.completion)
+	}
+	if hasLabel(m.completion.items, "manage") {
+		t.Fatalf("redundant manage subcommand should be hidden from /skills? menu: %+v", m.completion.items)
+	}
+	if hasLabel(m.completion.items, "list") {
+		t.Fatalf("redundant list subcommand should be hidden from /skills? menu: %+v", m.completion.items)
+	}
+	if !hasLabel(m.completion.items, "show") {
+		t.Fatalf("/skills? should include useful subcommands: %+v", m.completion.items)
+	}
+	m.input.SetValue("/skills ")
+	m.updateCompletion()
+	if m.completion.active {
+		t.Fatalf("/skills <space> should not open subcommand completion: %+v", m.completion)
 	}
 }
 
@@ -121,14 +139,11 @@ func TestSkillsEnterSubmitsExactSlashCommand(t *testing.T) {
 
 	next, _ := m.update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	cm := next.(chatTUI)
-	if cm.skillPick != nil {
-		t.Fatal("Enter on exact /skills should submit the static list, not open the picker")
+	if cm.skillPick == nil {
+		t.Fatal("Enter on exact /skills should open the interactive picker")
 	}
 	if got := cm.input.Value(); got != "" {
 		t.Fatalf("input after submitting /skills = %q, want empty", got)
-	}
-	if len(cm.transcript) == 0 {
-		t.Fatal("Enter on exact /skills should commit a list to scrollback")
 	}
 }
 
@@ -209,6 +224,9 @@ func TestSkillPickerRenderDialogStyle(t *testing.T) {
 	out := m.renderSkillPicker()
 	if !strings.Contains(out, "Search skills") {
 		t.Fatalf("dialog render missing search box:\n%s", out)
+	}
+	if !strings.Contains(out, "/ Search skills") {
+		t.Fatalf("dialog render should use slash search prompt, not a tiny glyph:\n%s", out)
 	}
 	if !strings.Contains(out, "more below") {
 		t.Fatalf("dialog render missing overflow indicator:\n%s", out)

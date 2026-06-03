@@ -727,9 +727,9 @@ func skillListWindow(sel, total, limit int) (int, int) {
 func renderSkillSearchBox(query string, active bool, w int) string {
 	boxWidth := max(8, w-4)
 	innerWidth := max(1, boxWidth-4)
-	text := "⌕ " + i18n.M.SkillPickerSearchPlaceholder
+	text := "/ " + i18n.M.SkillPickerSearchPlaceholder
 	if active || query != "" {
-		text = "⌕ " + query
+		text = "/ " + query
 	}
 	text = padRight(viewCompactText(text, innerWidth), innerWidth)
 	var b strings.Builder

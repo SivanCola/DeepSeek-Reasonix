@@ -26,7 +26,9 @@ func (m *chatTUI) runSkillSubcommand(input string) {
 		sub = strings.ToLower(args[1])
 	}
 	switch sub {
-	case "", "list", "ls":
+	case "":
+		m.openSkillPicker()
+	case "list", "ls":
 		m.skillList()
 	case "manage", "picker":
 		m.openSkillPicker()

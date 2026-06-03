@@ -157,7 +157,6 @@ func mcpArgItems(prior []string, cur string, d ArgData) []SlashItem {
 			{Label: "show", Insert: "show ", Hint: "show MCP server details", Descend: true},
 			{Label: "tools", Insert: "tools ", Hint: "show MCP server tools", Descend: true},
 			{Label: "remove", Insert: "remove ", Hint: i18n.M.ArgMcpRemove, Descend: true},
-			{Label: "list", Insert: "list", Hint: i18n.M.ArgMcpList},
 		}
 	}
 	switch prior[1] {
@@ -234,8 +233,6 @@ func modelArgItems(prior []string, d ArgData) []SlashItem {
 func skillArgItems(prior []string, d ArgData) []SlashItem {
 	if len(prior) <= 1 {
 		return []SlashItem{
-			{Label: "list", Insert: "list", Hint: i18n.M.ArgSkillList},
-			{Label: "manage", Insert: "manage", Hint: "open the interactive skill manager"},
 			{Label: "show", Insert: "show ", Hint: i18n.M.ArgSkillShow, Descend: true},
 			{Label: "enable", Insert: "enable ", Hint: "enable a disabled skill", Descend: true},
 			{Label: "disable", Insert: "disable ", Hint: "disable an enabled skill", Descend: true},
