@@ -227,6 +227,12 @@ export interface SkillView {
   scope: string;
   runAs: string;
 }
+export interface SkillRootSkillView {
+  name: string;
+  description: string;
+  scope: string;
+  runAs: string;
+}
 export interface SkillRootView {
   dir: string;
   scope: string;
@@ -234,6 +240,7 @@ export interface SkillRootView {
   status: string;
   configured: boolean;
   skills: number;
+  skillItems?: SkillRootSkillView[];
   warning?: string;
 }
 export interface CapabilitiesView {

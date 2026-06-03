@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useId, useMemo, useState } from "react";
 import { app, openExternal } from "../lib/bridge";
 import { useT } from "../lib/i18n";
-import type { CapabilitiesView, MCPServerInput, ServerView, SkillRootView, SkillView } from "../lib/types";
+import type { CapabilitiesView, MCPServerInput, ServerView, SkillRootSkillView, SkillRootView, SkillView } from "../lib/types";
 import { ResizableDrawer } from "./ResizableDrawer";
 import { Tooltip } from "./Tooltip";
 
@@ -78,6 +78,10 @@ export function CapabilitiesPanel({
       return text.includes(q);
     });
   }, [view, skillQuery]);
+  const skillSummary = useMemo(() => {
+    if (!view) return "";
+    return skillListSummary(view.skills, filteredSkills, skillQuery.trim().length > 0, t);
+  }, [filteredSkills, skillQuery, t, view]);
 
   const serverGroups = useMemo(() => {
     const servers = view?.servers ?? [];
@@ -238,6 +242,12 @@ export function CapabilitiesPanel({
                   onRefresh={() => mutate(() => app.RefreshSkills())}
                   onRemove={(path) => mutate(() => app.RemoveSkillPath(path))}
                 />
+                <div className="cap-skills-head">
+                  <div className="cap-skills-head__copy">
+                    <div className="cap-skills-head__title">{t("caps.skills")}</div>
+                    <div className="cap-skills-head__summary">{skillSummary}</div>
+                  </div>
+                </div>
                 {view.skills.length === 0 ? (
                   <div className="mem-empty">{t("caps.noSkills")}</div>
                 ) : filteredSkills.length === 0 ? (
@@ -262,6 +272,42 @@ export function CapabilitiesPanel({
   );
 }
 
+function skillListSummary(skills: SkillView[], filtered: SkillView[], searching: boolean, t: ReturnType<typeof useT>): string {
+  if (searching) {
+    return t("caps.skillsSummaryMatches", { matched: filtered.length, total: skills.length });
+  }
+  const parts = [t("caps.skillsSummaryAvailable", { skills: skills.length })];
+  const scopes = ["project", "custom", "global", "builtin"];
+  for (const scope of scopes) {
+    const count = skills.filter((skill) => skill.scope === scope).length;
+    if (count > 0) parts.push(skillScopeSummary(scope, count, t));
+  }
+  return parts.join(" · ");
+}
+
+function skillScopeSummary(scope: string, count: number, t: ReturnType<typeof useT>): string {
+  switch (scope) {
+    case "builtin":
+      return t("caps.skillsSummaryBuiltin", { count });
+    case "project":
+      return t("caps.skillsSummaryProject", { count });
+    case "custom":
+      return t("caps.skillsSummaryCustom", { count });
+    case "global":
+      return t("caps.skillsSummaryGlobal", { count });
+    default:
+      return `${count} ${scope}`;
+  }
+}
+
+function skillSourceSummary(active: number, missing: number, empty: number, t: ReturnType<typeof useT>): string {
+  const parts: string[] = [];
+  if (active > 0) parts.push(t("caps.sourcesSummaryActive", { active }));
+  if (missing > 0) parts.push(t("caps.sourcesSummaryMissing", { missing }));
+  if (empty > 0) parts.push(t("caps.sourcesSummaryEmpty", { empty }));
+  return parts.length > 0 ? parts.join(" · ") : t("caps.sourcesSummaryNone");
+}
+
 function SkillSources({
   roots,
   busy,
@@ -278,84 +324,216 @@ function SkillSources({
   const t = useT();
   const [expanded, setExpanded] = useState(false);
   const [showDiagnostics, setShowDiagnostics] = useState(false);
-  const visibleRoots = roots.filter((root) => root.skills > 0 || root.configured || Boolean(root.warning));
-  const hiddenRoots = roots.filter((root) => !visibleRoots.includes(root));
-  const shownRoots = showDiagnostics ? roots : visibleRoots;
-  const active = roots.filter((root) => root.skills > 0).length;
-  const missing = roots.filter((root) => root.status === "missing").length;
-  const empty = roots.filter((root) => root.status === "ok" && root.skills === 0).length;
+  const [confirmingRoot, setConfirmingRoot] = useState<string | null>(null);
+  const [expandedRootSkills, setExpandedRootSkills] = useState<Set<string>>(() => new Set());
+  const [fullRootSkills, setFullRootSkills] = useState<Set<string>>(() => new Set());
+  const primaryRoots = roots.filter(isPrimarySkillRoot);
+  const diagnosticRoots = roots.filter((root) => !isPrimarySkillRoot(root));
+  const diagnosticsVisible = expanded && showDiagnostics;
+  const shownRoots = diagnosticsVisible ? [...primaryRoots, ...diagnosticRoots] : primaryRoots;
+  const summaryRoots = diagnosticsVisible ? roots : primaryRoots;
+  const active = summaryRoots.filter((root) => root.skills > 0).length;
+  const missing = summaryRoots.filter((root) => root.status === "missing").length;
+  const empty = summaryRoots.filter((root) => root.status === "ok" && root.skills === 0).length;
+  useEffect(() => {
+    if (!confirmingRoot) return;
+    const stillRemovable = roots.some((root) => root.dir === confirmingRoot && root.scope === "custom" && root.configured);
+    if (!stillRemovable) setConfirmingRoot(null);
+  }, [confirmingRoot, roots]);
+  const toggleRootSkills = (key: string) => {
+    setExpandedRootSkills((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
+  const toggleRootSkillFull = (key: string) => {
+    setFullRootSkills((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
   return (
     <div className={`cap-sources${expanded ? " cap-sources--expanded" : ""}`}>
       <div className="cap-sources__head">
         <div className="cap-sources__copy">
           <div className="cap-sources__title">{t("caps.sources")}</div>
-          <div className="cap-sources__summary">{t("caps.sourcesSummary", { active, missing, empty })}</div>
+          <div className="cap-sources__summary">{skillSourceSummary(active, missing, empty, t)}</div>
         </div>
-        <div className="cap-sources__actions">
-          <button className="btn btn--small" type="button" onClick={() => setExpanded((v) => !v)} aria-expanded={expanded}>
-            {expanded ? t("common.collapse") : t("caps.manageSkillSources")}
-          </button>
-        </div>
+        {!expanded && (
+          <div className="cap-sources__actions">
+            <button className="btn btn--small" type="button" onClick={() => setExpanded(true)} aria-expanded={expanded}>
+              {t("caps.manageSkillSources")}
+            </button>
+          </div>
+        )}
       </div>
-      {!expanded && hiddenRoots.length > 0 && (
-        <button
-          className="cap-diagnostics cap-diagnostics--compact"
-          type="button"
-          onClick={() => {
-            setExpanded(true);
-            setShowDiagnostics(true);
-          }}
-        >
-          {t("caps.showDiagnostics", { count: hiddenRoots.length })}
-        </button>
-      )}
       {expanded && (
         <>
           <div className="cap-sources__manage">
-            <button className="btn btn--small" disabled={busy} onClick={onRefresh}>
-              {t("caps.refreshSkills")}
-            </button>
-            <button className="btn btn--small" disabled={busy} onClick={onAdd}>
-              {t("caps.addSkillFolder")}
+            <div className="cap-sources__manage-actions">
+              <button className="btn btn--small" disabled={busy} onClick={onRefresh}>
+                {t("caps.refreshSkills")}
+              </button>
+              <button className="btn btn--small" disabled={busy} onClick={onAdd}>
+                {t("caps.addSkillFolder")}
+              </button>
+            </div>
+            <button
+              className="btn btn--small"
+              type="button"
+              onClick={() => {
+                setShowDiagnostics(false);
+                setExpanded(false);
+              }}
+              aria-expanded={expanded}
+            >
+              {t("common.collapse")}
             </button>
           </div>
           {shownRoots.length === 0 ? (
             <div className="mem-empty">{t("caps.noSkillRoots")}</div>
           ) : (
             <div className="cap-source-list">
-              {shownRoots.map((root) => (
-                <div className={`cap-source cap-source--${skillRootTone(root)}`} key={`${root.scope}:${root.priority}:${root.dir}`}>
-                  <span className={`cap-dot cap-dot--${skillRootDot(root)}`} />
-                  <div className="cap-source__text">
-                    <div className="cap-source__label">{skillRootLabel(root, t)}</div>
-                    <div className="cap-source__path">{root.dir}</div>
-                    <div className="cap-source__meta">
-                      <span>{skillRootStatus(root, t)}</span>
-                      <span>{t("caps.skillRootCount", { skills: root.skills })}</span>
-                      {root.configured && <span>{t("caps.skillRootConfigured")}</span>}
+              {shownRoots.map((root) => {
+                const key = skillRootKey(root);
+                const rootSkills = root.skillItems ?? [];
+                const rootSkillsExpanded = expandedRootSkills.has(key);
+                const rootSkillsFull = fullRootSkills.has(key);
+                const canShowRootSkills = rootSkills.length > 0;
+                const canRemoveRoot = root.scope === "custom" && root.configured;
+                return (
+                  <div className={`cap-source cap-source--${skillRootTone(root)}`} key={key}>
+                    <span className={`cap-dot cap-dot--${skillRootDot(root)}`} />
+                    <div className="cap-source__text">
+                      <div className="cap-source__head">
+                        <div className="cap-source__label" title={root.dir}>
+                          {skillRootLabel(root)}
+                        </div>
+                      </div>
+                      <div className="cap-source__meta">
+                        <span>{skillRootStatus(root, t)}</span>
+                        <span>{t("caps.skillRootCount", { skills: root.skills })}</span>
+                        {root.configured && <span>{t("caps.skillRootConfigured")}</span>}
+                      </div>
+                      {(canShowRootSkills || canRemoveRoot) && (
+                        <div className="cap-source-actions">
+                          {confirmingRoot === root.dir && canRemoveRoot ? (
+                            <>
+                              <button
+                                className="btn btn--small"
+                                disabled={busy}
+                                onClick={() => {
+                                  onRemove(root.dir);
+                                  setConfirmingRoot(null);
+                                }}
+                              >
+                                {t("caps.skillRootConfirmRemove")}
+                              </button>
+                              <button className="btn btn--small" disabled={busy} onClick={() => setConfirmingRoot(null)}>
+                                {t("common.cancel")}
+                              </button>
+                              <div className="cap-confirm-hint">{t("caps.skillRootRemoveHint")}</div>
+                            </>
+                          ) : (
+                            <>
+                              {canShowRootSkills && (
+                                <button
+                                  className="btn btn--small"
+                                  disabled={busy}
+                                  type="button"
+                                  aria-expanded={rootSkillsExpanded}
+                                  onClick={() => toggleRootSkills(key)}
+                                >
+                                  {rootSkillsExpanded ? t("caps.hideSkills") : t("caps.showSkills")}
+                                </button>
+                              )}
+                              {canRemoveRoot && (
+                                <button className="btn btn--small" disabled={busy} onClick={() => setConfirmingRoot(root.dir)}>
+                                  {t("caps.skillRootRemove")}
+                                </button>
+                              )}
+                            </>
+                          )}
+                        </div>
+                      )}
+                      {rootSkillsExpanded && rootSkills.length > 0 && (
+                        <SkillRootSkillsList
+                          skills={rootSkills}
+                          showAll={rootSkillsFull}
+                          onToggleAll={() => toggleRootSkillFull(key)}
+                        />
+                      )}
+                      {root.warning && <div className="cap-source__warning">{root.warning}</div>}
                     </div>
-                    {root.warning && <div className="cap-source__warning">{root.warning}</div>}
+                    <div className="cap-source__badges">
+                      {skillRootBadges(root, t).map((badge) => (
+                        <span className={`cap-source-badge cap-source-badge--${badge.tone}`} key={badge.label}>
+                          {badge.label}
+                        </span>
+                      ))}
+                    </div>
                   </div>
-                  {root.scope === "custom" && root.configured && (
-                    <Tooltip label={t("caps.skillRootRemove")}>
-                      <button className="btn btn--small" disabled={busy} onClick={() => onRemove(root.dir)}>
-                        ✕
-                      </button>
-                    </Tooltip>
-                  )}
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
-          {hiddenRoots.length > 0 && (
+          {diagnosticRoots.length > 0 && (
             <button className="cap-diagnostics" type="button" onClick={() => setShowDiagnostics((v) => !v)}>
-              {showDiagnostics ? t("caps.hideDiagnostics") : t("caps.showDiagnostics", { count: hiddenRoots.length })}
+              {diagnosticsVisible ? t("caps.hideDiagnostics") : t("caps.showDiagnostics", { count: diagnosticRoots.length })}
             </button>
           )}
         </>
       )}
     </div>
   );
+}
+
+const skillRootPreviewLimit = 5;
+
+function SkillRootSkillsList({
+  skills,
+  showAll,
+  onToggleAll,
+}: {
+  skills: SkillRootSkillView[];
+  showAll: boolean;
+  onToggleAll: () => void;
+}) {
+  const t = useT();
+  const visible = showAll ? skills : skills.slice(0, skillRootPreviewLimit);
+  return (
+    <div className="cap-source-skills">
+      {visible.map((skill) => (
+        <div className="cap-source-skill" key={`${skill.scope}:${skill.name}`}>
+          <div className="cap-source-skill__head">
+            <span className="cap-source-skill__name">/{skill.name}</span>
+            <span className="cap-source-skill__badges">
+              <span className={`cap-skill-badge cap-skill-badge--${skill.scope}`}>{skillScopeLabel(skill.scope, t)}</span>
+              {skill.runAs === "subagent" && <span className="cap-skill-badge cap-skill-badge--run">{t("caps.subagent")}</span>}
+            </span>
+          </div>
+          {skill.description && <div className="cap-source-skill__desc">{skill.description}</div>}
+        </div>
+      ))}
+      {skills.length > skillRootPreviewLimit && (
+        <button className="cap-source-skills__more" type="button" onClick={onToggleAll}>
+          {showAll ? t("common.collapse") : t("caps.skillRootShowAllSkills", { count: skills.length })}
+        </button>
+      )}
+    </div>
+  );
+}
+
+function skillRootKey(root: SkillRootView): string {
+  return `${root.scope}:${root.priority}:${root.dir}`;
+}
+
+function isPrimarySkillRoot(root: SkillRootView): boolean {
+  return root.skills > 0 || root.configured || Boolean(root.warning);
 }
 
 function skillRootTone(root: SkillRootView): "active" | "empty" | "problem" {
@@ -377,10 +555,21 @@ function skillRootStatus(root: SkillRootView, t: ReturnType<typeof useT>): strin
   return root.status;
 }
 
-function skillRootLabel(root: SkillRootView, t: ReturnType<typeof useT>): string {
-  const parts = root.dir.split(/[\\/]/).filter(Boolean);
-  const shortPath = parts.length >= 2 ? `${parts[parts.length - 2]}/${parts[parts.length - 1]}` : root.dir;
-  return `${skillScopeLabel(root.scope, t)} · ${shortPath}`;
+function skillRootLabel(root: SkillRootView): string {
+  return root.dir;
+}
+
+function skillRootBadges(root: SkillRootView, t: ReturnType<typeof useT>): Array<{ label: string; tone: "scope" | "builtin" | "configured" | "missing" }> {
+  const badges: Array<{ label: string; tone: "scope" | "builtin" | "configured" | "missing" }> = [
+    { label: skillScopeLabel(root.scope, t), tone: "scope" },
+    root.scope === "custom"
+      ? { label: root.configured ? t("caps.skillRootUserConfigured") : t("caps.skillRootConfiguredPath"), tone: "configured" }
+      : { label: t("caps.skillRootBuiltinPath"), tone: "builtin" },
+  ];
+  if (root.status === "missing") {
+    badges.push({ label: t("caps.skillRootMissing"), tone: "missing" });
+  }
+  return badges;
 }
 
 function ServerGroup({

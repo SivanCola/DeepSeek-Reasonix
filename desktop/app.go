@@ -903,15 +903,23 @@ type SkillView struct {
 	RunAs       string `json:"runAs"`
 }
 
+type SkillRootSkillView struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Scope       string `json:"scope"`
+	RunAs       string `json:"runAs"`
+}
+
 // SkillRootView is one skill discovery root for the drawer's Sources section.
 type SkillRootView struct {
-	Dir        string `json:"dir"`
-	Scope      string `json:"scope"`
-	Priority   int    `json:"priority"`
-	Status     string `json:"status"`
-	Configured bool   `json:"configured"`
-	Skills     int    `json:"skills"`
-	Warning    string `json:"warning,omitempty"`
+	Dir        string               `json:"dir"`
+	Scope      string               `json:"scope"`
+	Priority   int                  `json:"priority"`
+	Status     string               `json:"status"`
+	Configured bool                 `json:"configured"`
+	Skills     int                  `json:"skills"`
+	SkillItems []SkillRootSkillView `json:"skillItems,omitempty"`
+	Warning    string               `json:"warning,omitempty"`
 }
 
 // Capabilities projects the session's MCP servers (connected + failed) and skills
@@ -1064,8 +1072,21 @@ func skillRootsView() []SkillRootView {
 	}
 	st := skill.New(skill.Options{ProjectRoot: cwd, CustomPaths: custom, DisableBuiltins: true, Stderr: io.Discard})
 	counts := map[string]int{}
+	skillItems := map[string][]SkillRootSkillView{}
 	for _, sk := range st.List() {
-		counts[config.CanonicalSkillPath(filepath.Dir(skillRootPath(sk.Path)))]++
+		root := config.CanonicalSkillPath(filepath.Dir(skillRootPath(sk.Path)))
+		counts[root]++
+		skillItems[root] = append(skillItems[root], SkillRootSkillView{
+			Name:        sk.Name,
+			Description: sk.Description,
+			Scope:       string(sk.Scope),
+			RunAs:       string(sk.RunAs),
+		})
+	}
+	for root := range skillItems {
+		sort.Slice(skillItems[root], func(i, j int) bool {
+			return skillItems[root][i].Name < skillItems[root][j].Name
+		})
 	}
 	userConfigured := map[string]bool{}
 	if userCfg != nil {
@@ -1083,6 +1104,7 @@ func skillRootsView() []SkillRootView {
 			Status:     string(r.Status),
 			Configured: r.Scope == skill.ScopeCustom && userConfigured[dir],
 			Skills:     counts[dir],
+			SkillItems: skillItems[dir],
 		}
 		out = append(out, view)
 	}

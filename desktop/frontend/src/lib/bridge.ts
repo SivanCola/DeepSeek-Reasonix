@@ -335,8 +335,27 @@ function makeMockApp(): AppBindings {
   ];
   let capSkillRoots: SkillRootView[] = [
     { dir: "~/projects/reasonix/.reasonix/skills", scope: "project", priority: 1, status: "missing", configured: false, skills: 0 },
-    { dir: "~/my-skills", scope: "custom", priority: 5, status: "ok", configured: true, skills: 1 },
-    { dir: "~/.reasonix/skills", scope: "global", priority: 6, status: "ok", configured: false, skills: 2 },
+    {
+      dir: "~/my-skills",
+      scope: "custom",
+      priority: 5,
+      status: "ok",
+      configured: true,
+      skills: 1,
+      skillItems: [{ name: "review", description: "Review the staged diff", scope: "custom", runAs: "inline" }],
+    },
+    {
+      dir: "~/.reasonix/skills",
+      scope: "global",
+      priority: 6,
+      status: "ok",
+      configured: false,
+      skills: 2,
+      skillItems: [
+        { name: "explore", description: "Investigate the codebase in an isolated subagent", scope: "global", runAs: "subagent" },
+        { name: "init", description: "Scaffold a REASONIX.md for this repo", scope: "global", runAs: "inline" },
+      ],
+    },
   ];
   const mockSwitchWorkspace = async (path: string) => {
     cwd = path || "~";
@@ -666,7 +685,15 @@ function makeMockApp(): AppBindings {
     async AddSkillPath(path: string) {
       const dir = path.trim() || "~/my-skills";
       if (!capSkillRoots.some((r) => r.scope === "custom" && r.dir === dir)) {
-        capSkillRoots.push({ dir, scope: "custom", priority: capSkillRoots.length + 1, status: "ok", configured: true, skills: 1 });
+        capSkillRoots.push({
+          dir,
+          scope: "custom",
+          priority: capSkillRoots.length + 1,
+          status: "ok",
+          configured: true,
+          skills: 1,
+          skillItems: [{ name: "local-dev", description: "Local custom development workflow", scope: "custom", runAs: "inline" }],
+        });
       }
       if (!capSkills.some((s) => s.name === "local-dev")) {
         capSkills.push({ name: "local-dev", description: "Local custom development workflow", scope: "custom", runAs: "inline" });
