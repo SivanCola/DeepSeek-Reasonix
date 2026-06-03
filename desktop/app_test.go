@@ -126,6 +126,27 @@ func TestSetEffortRejectsRunningTurn(t *testing.T) {
 	waitNotRunning(t, app.activeCtrl())
 }
 
+func TestGlobalWorkspaceRootUsesUserConfigDir(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	root, err := ensureGlobalWorkspaceRoot()
+	if err != nil {
+		t.Fatalf("ensure global workspace root: %v", err)
+	}
+	userConfig, err := os.UserConfigDir()
+	if err != nil {
+		t.Fatalf("user config dir: %v", err)
+	}
+	want := filepath.Join(userConfig, "reasonix", "global-workspace")
+	if root != want {
+		t.Fatalf("global workspace root = %q, want %q", root, want)
+	}
+	if info, err := os.Stat(root); err != nil || !info.IsDir() {
+		t.Fatalf("global workspace root should be an existing directory, info=%v err=%v", info, err)
+	}
+}
+
 func TestSearchFileRefsFindsNestedBasename(t *testing.T) {
 	orig, _ := os.Getwd()
 	defer os.Chdir(orig)

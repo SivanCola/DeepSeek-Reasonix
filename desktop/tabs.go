@@ -279,8 +279,8 @@ func (a *App) OpenProjectTab(workspaceRoot, topicID string) (TabMeta, error) {
 // OpenGlobalTab opens a new global-scope tab (no project root). The global
 // workspace root is the reasonix user config directory.
 func (a *App) OpenGlobalTab(topicID string) (TabMeta, error) {
-	globalRoot := globalWorkspaceRoot()
-	if err := os.MkdirAll(globalRoot, 0o755); err != nil {
+	globalRoot, err := ensureGlobalWorkspaceRoot()
+	if err != nil {
 		return TabMeta{}, fmt.Errorf("create global workspace: %w", err)
 	}
 
@@ -1128,6 +1128,22 @@ func globalWorkspaceRoot() string {
 		return filepath.Join(home, ".reasonix", "global-workspace")
 	}
 	return filepath.Join(dir, "reasonix", "global-workspace")
+}
+
+func ensureGlobalWorkspaceRoot() (string, error) {
+	root := globalWorkspaceRoot()
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		return "", err
+	}
+	return root, nil
+}
+
+func globalTabWorkspaceRoot() string {
+	root, err := ensureGlobalWorkspaceRoot()
+	if err != nil {
+		return globalWorkspaceRoot()
+	}
+	return root
 }
 
 // findTopicSession scans the session directory for a .jsonl file whose .meta

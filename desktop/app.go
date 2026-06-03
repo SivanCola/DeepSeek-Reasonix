@@ -88,7 +88,7 @@ func (a *App) restoreOrBuildTabs() {
 			if entry.Scope == "project" {
 				tab = a.createTabEntryWithID(entry.Scope, entry.WorkspaceRoot, entry.TopicID, entry.ID)
 			} else {
-				tab = a.createTabEntryWithID("global", "", entry.TopicID, entry.ID)
+				tab = a.createTabEntryWithID("global", globalTabWorkspaceRoot(), entry.TopicID, entry.ID)
 			}
 			tab.sink = &tabEventSink{tabID: tab.ID, app: a, ctx: ctx}
 			a.mu.Lock()
@@ -111,7 +111,7 @@ func (a *App) restoreOrBuildTabs() {
 	}
 
 	// First launch: create a default Global tab.
-	tab := a.createTabEntry("global", "", "")
+	tab := a.createTabEntry("global", globalTabWorkspaceRoot(), "")
 	tab.sink = &tabEventSink{tabID: tab.ID, app: a, ctx: ctx}
 	tab.TopicTitle = "Global"
 	a.mu.Lock()
