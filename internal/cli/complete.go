@@ -69,7 +69,7 @@ func (m *chatTUI) slashItems() []compItem {
 		{label: "/switch", insert: "/switch ", hint: i18n.M.CmdSwitchBranch},
 		{label: "/mcp", insert: "/mcp ", hint: i18n.M.CmdMcp, descend: true},
 		{label: "/model", insert: "/model ", hint: i18n.M.CmdModel, descend: true},
-		{label: "/skills", insert: "/skills ", hint: i18n.M.CmdSkill, descend: true},
+		{label: "/skills", insert: "/skills", hint: i18n.M.CmdSkill},
 		{label: "/hooks", insert: "/hooks ", hint: i18n.M.CmdHooks, descend: true},
 		{label: "/paste-image", insert: "/paste-image", hint: i18n.M.CmdPasteImage},
 		{label: "/output-style", insert: "/output-style", hint: i18n.M.CmdOutputStyle},

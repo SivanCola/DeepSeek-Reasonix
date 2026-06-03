@@ -115,6 +115,9 @@ func TestSkillsEnterSubmitsExactSlashCommand(t *testing.T) {
 	if !m.completion.active {
 		t.Fatal("typing /skills should show slash completion before Enter")
 	}
+	if m.completion.kind == compSlashArg {
+		t.Fatalf("typing exact /skills should not open subcommand completion: %+v", m.completion)
+	}
 
 	next, _ := m.update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	cm := next.(chatTUI)
