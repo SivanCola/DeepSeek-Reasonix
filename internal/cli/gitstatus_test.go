@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -72,6 +73,30 @@ func TestLoadGitStatus(t *testing.T) {
 	}
 	if plain := ansi.Strip(status.Render()); !strings.Contains(plain, filepath.Base(root)+"@main") || !strings.Contains(plain, "+2 -1 ?1") {
 		t.Fatalf("rendered status = %q", plain)
+	}
+}
+
+func TestRunGitDisablesOptionalLocks(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses a POSIX shell script fake git")
+	}
+
+	bin := filepath.Join(t.TempDir(), "bin")
+	if err := os.Mkdir(bin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	fakeGit := filepath.Join(bin, "git")
+	if err := os.WriteFile(fakeGit, []byte("#!/bin/sh\nprintf '%s' \"$GIT_OPTIONAL_LOCKS\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	out, err := runGit(context.Background(), "", "status")
+	if err != nil {
+		t.Fatalf("runGit: %v", err)
+	}
+	if out != "0" {
+		t.Fatalf("GIT_OPTIONAL_LOCKS = %q, want 0", out)
 	}
 }
 

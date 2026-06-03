@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
@@ -74,6 +75,7 @@ func runGit(ctx context.Context, cwd string, args ...string) (string, error) {
 	if cwd != "" {
 		cmd.Dir = cwd
 	}
+	cmd.Env = append(os.Environ(), "GIT_OPTIONAL_LOCKS=0")
 	out, err := cmd.Output()
 	if err != nil {
 		return "", err
