@@ -545,24 +545,37 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		WorkspaceRoot: root,
 		AutoPlan:      cfg.Agent.AutoPlan,
 		OnRemember: func(rule string) {
-			path := config.SourcePath()
-			if path == "" {
-				path = "reasonix.toml" // match Config.Save() fallback
-			}
-			edit := config.LoadForEdit(path)
-			if err := edit.AddPermissionRule("allow", rule); err != nil {
-				slog.Warn("persist permission rule", "rule", rule, "err", err)
-				return
-			}
-			if err := edit.Save(); err != nil {
-				slog.Warn("save config after permission rule", "err", err)
-			}
+			rememberPermissionRule(opts.WorkspaceRoot, rule)
 		},
 	}
 	if classifier != nil {
 		ctrlOpts.Classifier = classifier
 	}
 	return control.New(ctrlOpts), nil
+}
+
+func rememberPermissionRule(workspaceRoot, rule string) {
+	path := rememberPermissionConfigPath(workspaceRoot)
+	edit := config.LoadForEdit(path)
+	if err := edit.AddPermissionRule("allow", rule); err != nil {
+		slog.Warn("persist permission rule", "rule", rule, "err", err)
+		return
+	}
+	if err := edit.SaveTo(path); err != nil {
+		slog.Warn("save config after permission rule", "err", err)
+	}
+}
+
+func rememberPermissionConfigPath(workspaceRoot string) string {
+	workspaceRoot = strings.TrimSpace(workspaceRoot)
+	if workspaceRoot != "" {
+		return filepath.Join(workspaceRoot, "reasonix.toml")
+	}
+	path := config.SourcePath()
+	if path == "" {
+		path = "reasonix.toml" // match Config.Save() fallback
+	}
+	return path
 }
 
 func subagentModelRef(cfg *config.Config, sk skill.Skill) string {
