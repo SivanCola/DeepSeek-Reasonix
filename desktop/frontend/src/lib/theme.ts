@@ -31,7 +31,7 @@ export const THEME_STYLE_THEME: Record<ThemeStyle, ResolvedTheme> = {
 
 const DEFAULT_THEME_STYLE: Record<ResolvedTheme, ThemeStyle> = {
   dark: "graphite",
-  light: "sandstone",
+  light: "glacier",
 };
 
 const THEME_KEY = "reasonix-theme";

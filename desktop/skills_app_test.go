@@ -107,7 +107,8 @@ func TestSkillRootsViewMarksEnvConfiguredCustomRoot(t *testing.T) {
 }
 
 func TestCapabilitiesIncludesDisabledSkills(t *testing.T) {
-	a := &App{ctrl: control.New(control.Options{
+	a := NewApp()
+	a.setTestCtrl(control.New(control.Options{
 		Skills: []skill.Skill{
 			{Name: "explore", Description: "enabled", Scope: skill.ScopeBuiltin, RunAs: skill.RunSubagent},
 		},
@@ -115,7 +116,8 @@ func TestCapabilitiesIncludesDisabledSkills(t *testing.T) {
 			{Name: "explore", Description: "enabled", Scope: skill.ScopeBuiltin, RunAs: skill.RunSubagent},
 			{Name: "review", Description: "disabled", Scope: skill.ScopeBuiltin, RunAs: skill.RunSubagent},
 		},
-	})}
+	}), "")
+	defer a.activeCtrl().Close()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))

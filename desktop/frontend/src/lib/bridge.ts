@@ -11,6 +11,7 @@ import type {
   CheckpointMeta,
   CommandInfo,
   ContextInfo,
+  ContextPanelInfo,
   DirEntry,
   DroppedItem,
   EffortInfo,
@@ -22,6 +23,7 @@ import type {
   Meta,
   ModelInfo,
   NetworkView,
+  ProjectNode,
   ProviderView,
   QuestionAnswer,
   ServerView,
@@ -30,6 +32,8 @@ import type {
   SkillRootView,
   SkillView,
   SlashArgsResult,
+  TabMeta,
+  TopicMeta,
   UpdateInfo,
   UpdateProgress,
   WireEvent,
@@ -150,6 +154,19 @@ export interface AppBindings {
   // unset; ConnectKey validates, persists to ./.env, and rebuilds the controller.
   NeedsOnboarding(): Promise<boolean>;
   ConnectKey(apiKey: string): Promise<void>;
+  // Tab management (desktop/tabs.go).
+  ListTabs(): Promise<TabMeta[]>;
+  OpenProjectTab(workspaceRoot: string, topicID: string): Promise<TabMeta>;
+  OpenGlobalTab(topicID: string): Promise<TabMeta>;
+  SetActiveTab(tabID: string): Promise<void>;
+  CloseTab(tabID: string): Promise<void>;
+  // Project tree (desktop/tabs.go).
+  ListProjectTree(): Promise<ProjectNode[]>;
+  CreateTopic(scope: string, workspaceRoot: string, title: string): Promise<TopicMeta>;
+  RenameTopic(topicID: string, title: string): Promise<void>;
+  DeleteTopic(topicID: string): Promise<void>;
+  // Context panel (desktop/tabs.go).
+  ContextPanel(tabID: string): Promise<ContextPanelInfo>;
 }
 
 interface WailsRuntime {
@@ -281,8 +298,8 @@ function makeMockApp(): AppBindings {
   let cancelled = false;
   let pendingAskPreview = false;
   let pendingApprovalPreview = false;
-  let cwd = "~/projects/reasonix"; // mutable so PickWorkspace is visible in dev
-  let workspaces = ["~/projects/reasonix", "~/projects/blade", "~/projects/deepseek-forge", "~/projects/cc-switch-light", "~/projects/SuperRig"];
+  let cwd = "~/projects/joyquant-db"; // mutable so PickWorkspace is visible in dev
+  let workspaces = ["~/projects/joyquant-db", "~/projects/joyquant-sys", "~/projects/reasonix", "~/projects/blade"];
   let mockEffort = "auto";
   const day = 86_400_000;
   const t0 = Date.now();
@@ -597,7 +614,7 @@ function makeMockApp(): AppBindings {
       return mockSwitchWorkspace(path);
     },
     async ContextUsage() {
-      return { used: 1280, window: 1_000_000 };
+      return { used: 42124, window: 128000 };
     },
     async Balance() {
       // Mirror the active mock provider: deepseek-flash carries a balance_url.
@@ -610,7 +627,7 @@ function makeMockApp(): AppBindings {
     },
     async Meta() {
       return {
-        label: "mock model · browser dev",
+        label: "DeepSeek-R1",
         ready: true,
         eventChannel: EVENT_CHANNEL,
         cwd,
@@ -970,16 +987,16 @@ function makeMockApp(): AppBindings {
       return "v1.0.0 (browser dev)";
     },
     async CheckUpdate() {
-      // Dev mock advertises an update so the banner and apply flow are exercisable
-      // in the browser without a real release behind it.
+      // Keep the default browser preview focused on the primary product surface.
+      // ApplyUpdate remains mocked for explicit updater-flow tests.
       return {
-        available: true,
+        available: false,
         current: "v1.0.0",
-        latest: "v1.1.0",
-        notes: "- Mock release notes\n- The **Update now** button streams a fake download here.",
-        canSelfUpdate: true,
-        downloadUrl: "https://github.com/esengine/reasonix/releases/latest",
-        assetSize: 12_345_678,
+        latest: "v1.0.0",
+        notes: "",
+        canSelfUpdate: false,
+        downloadUrl: "",
+        assetSize: 0,
       };
     },
     async ApplyUpdate() {
@@ -1011,6 +1028,148 @@ function makeMockApp(): AppBindings {
         if (p.apiKeyEnv === "DEEPSEEK_API_KEY") p.keySet = true;
       });
       await delay(300);
+    },
+    // Tab management mocks.
+    async ListTabs() {
+      return [
+        {
+          id: "tab_joyquant_db",
+          scope: "project",
+          workspaceRoot: "~/projects/joyquant-db",
+          workspaceName: "joyquant-db",
+          topicId: "topic_dev_standard",
+          topicTitle: "00 制定项目开发规范",
+          label: "DeepSeek-R1",
+          ready: true,
+          running: false,
+          active: true,
+          cwd: "~/projects/joyquant-db",
+        },
+        {
+          id: "tab_joyquant_sys",
+          scope: "project",
+          workspaceRoot: "~/projects/joyquant-sys",
+          workspaceName: "joyquant-sys",
+          topicId: "topic_p3b_pd",
+          topicTitle: "p3b P&D",
+          label: "DeepSeek-R1",
+          ready: true,
+          running: false,
+          active: false,
+          cwd: "~/projects/joyquant-sys",
+        },
+        {
+          id: "tab_global",
+          scope: "global",
+          workspaceRoot: "",
+          workspaceName: "Global",
+          topicId: "topic_global",
+          topicTitle: "Global",
+          label: "DeepSeek-R1",
+          ready: true,
+          running: false,
+          active: false,
+          cwd: "~/projects/joyquant-db",
+        },
+      ];
+    },
+    async OpenProjectTab(workspaceRoot: string, _topicID: string) {
+      return {
+        id: "tab_" + Date.now(),
+        scope: "project",
+        workspaceRoot,
+        workspaceName: workspaceRoot.split("/").filter(Boolean).pop() ?? workspaceRoot,
+        topicId: _topicID,
+        topicTitle: "New topic",
+        label: "deepseek-v4-flash",
+        ready: true,
+        running: false,
+        active: true,
+        cwd: workspaceRoot,
+      };
+    },
+    async OpenGlobalTab(_topicID: string) {
+      return {
+        id: "tab_" + Date.now(),
+        scope: "global",
+        workspaceRoot: "",
+        workspaceName: "Global",
+        topicId: _topicID,
+        topicTitle: "Global",
+        label: "deepseek-v4-flash",
+        ready: true,
+        running: false,
+        active: true,
+        cwd: "",
+      };
+    },
+    async SetActiveTab(_tabID: string) {},
+    async CloseTab(_tabID: string) {},
+    async ListProjectTree() {
+      return [
+        {
+          key: "project_~/projects/joyquant-db",
+          kind: "project" as const,
+          label: "joyquant-db",
+          root: "~/projects/joyquant-db",
+          children: [
+            { key: "topic_dev_standard", kind: "topic" as const, label: "● 00 制定项目开发规范", root: "~/projects/joyquant-db", topicId: "topic_dev_standard" },
+            { key: "topic_db_maint", kind: "topic" as const, label: "01 JoyQuant DB项目维护", root: "~/projects/joyquant-db", topicId: "topic_db_maint" },
+            { key: "topic_env", kind: "topic" as const, label: "项目环境uv和Python运行问题", root: "~/projects/joyquant-db", topicId: "topic_env" },
+          ],
+        },
+        {
+          key: "project_~/projects/joyquant-sys",
+          kind: "project" as const,
+          label: "joyquant-sys",
+          root: "~/projects/joyquant-sys",
+          children: [
+            { key: "topic_p3b_pd", kind: "topic" as const, label: "● 20260523 p3b P&D", root: "~/projects/joyquant-sys", topicId: "topic_p3b_pd" },
+            { key: "topic_p3a_pd", kind: "topic" as const, label: "20260521 p3a P&D", root: "~/projects/joyquant-sys", topicId: "topic_p3a_pd" },
+            { key: "topic_hotfix", kind: "topic" as const, label: "20260522 post-p3-hotfix P&D", root: "~/projects/joyquant-sys", topicId: "topic_hotfix" },
+            { key: "topic_sys_coord", kind: "topic" as const, label: "01 JoyQuant-SYS 项目总协调", root: "~/projects/joyquant-sys", topicId: "topic_sys_coord" },
+            { key: "topic_sys_standard", kind: "topic" as const, label: "00 制定项目开发规范", root: "~/projects/joyquant-sys", topicId: "topic_sys_standard" },
+          ],
+        },
+        {
+          key: "global_folder",
+          kind: "global_folder" as const,
+          label: "Global",
+          children: [
+            { key: "global_topic_product", kind: "global_topic" as const, label: "产品通用规范", topicId: "topic_product" },
+            { key: "global_topic_ai", kind: "global_topic" as const, label: "AI 工程化最佳实践", topicId: "topic_ai" },
+            { key: "global_topic_lab", kind: "global_topic" as const, label: "临时探索与实验", topicId: "topic_lab" },
+          ],
+        },
+      ];
+    },
+    async CreateTopic(_scope: string, _workspaceRoot: string, title: string) {
+      return { id: "topic_" + Date.now(), title, createdAt: Date.now() };
+    },
+    async RenameTopic(_topicID: string, _title: string) {},
+    async DeleteTopic(_topicID: string) {},
+    async ContextPanel(_tabID: string) {
+      const now = Date.now();
+      return {
+        usedTokens: 42124,
+        windowTokens: 128000,
+        promptTokens: 22134,
+        completionTokens: 12345,
+        reasoningTokens: 7521,
+        cacheHitTokens: 87000,
+        cacheMissTokens: 13000,
+        sessionCostUsd: 0.018,
+        readFiles: [
+          { path: "REASONIX.md", turn: 2, time: now - 34 * 60 * 1000 },
+          { path: "pyproject.toml", turn: 3, time: now - 30 * 60 * 1000 },
+          { path: "docs/dev-standard.md", turn: 5, time: now - 13 * 60 * 1000, offset: 0, limit: 180 },
+          { path: "scripts/db_migrate.sh", turn: 6, time: now - 4 * 60 * 1000, offset: 120, limit: 80, truncated: true },
+        ],
+        changedFiles: [
+          { path: "docs/dev-standard.md", sources: ["session"], gitStatus: "modified", turns: [5, 6], latestPrompt: "更新规范草案 v0.3", latestTime: now - 2 * 60 * 1000 },
+          { path: ".reasonix/project.md", sources: ["session"], gitStatus: "added", turns: [6], latestPrompt: "记录项目上下文", latestTime: now - 60 * 1000 },
+        ],
+      };
     },
   };
 }

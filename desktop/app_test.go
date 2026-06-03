@@ -14,6 +14,24 @@ import (
 	"reasonix/internal/plugin"
 )
 
+// setTestCtrl creates a minimal workspace tab (if needed) and sets its
+// controller, so tests don't depend on the old App.ctrl field.
+func (a *App) setTestCtrl(ctrl *control.Controller, model string) {
+	if len(a.tabs) == 0 {
+		tab := &WorkspaceTab{
+			ID:          "test",
+			Scope:       "global",
+			Ready:       true,
+			disabledMCP: map[string]ServerView{},
+		}
+		a.tabs = map[string]*WorkspaceTab{"test": tab}
+		a.activeTabID = "test"
+	}
+	tab := a.tabs["test"]
+	tab.Ctrl = ctrl
+	tab.model = model
+}
+
 func TestCommandsIncludesEffortNotThinking(t *testing.T) {
 	app := NewApp()
 	cmds := app.Commands()
@@ -67,22 +85,21 @@ func TestSetEffortRebuildsController(t *testing.T) {
 
 	app := NewApp()
 	app.ctx = context.Background()
-	app.model = "deepseek-flash/deepseek-v4-flash"
 	old := control.New(control.Options{Label: "old-controller"})
-	app.ctrl = old
+	app.setTestCtrl(old, "deepseek-flash/deepseek-v4-flash")
 	defer func() {
-		if app.ctrl != nil {
-			app.ctrl.Close()
+		if c := app.activeCtrl(); c != nil {
+			c.Close()
 		}
 	}()
 
 	if err := app.SetEffort("max"); err != nil {
 		t.Fatalf("SetEffort(max): %v", err)
 	}
-	if app.ctrl == nil {
+	if c := app.activeCtrl(); c == nil {
 		t.Fatal("SetEffort should leave a rebuilt controller")
 	}
-	if app.ctrl == old {
+	if c := app.activeCtrl(); c == old {
 		t.Fatal("SetEffort should rebuild the active controller so the provider sees the new effort")
 	}
 	if got := app.Effort().Current; got != "max" {
@@ -96,8 +113,8 @@ func TestSetEffortRejectsRunningTurn(t *testing.T) {
 
 	runner := &blockingRunner{started: make(chan struct{}), release: make(chan struct{})}
 	app := NewApp()
-	app.ctrl = control.New(control.Options{Runner: runner})
-	app.ctrl.Submit("work")
+	app.setTestCtrl(control.New(control.Options{Runner: runner}), "")
+	app.activeCtrl().Submit("work")
 	<-runner.started
 
 	err := app.SetEffort("max")
@@ -106,7 +123,7 @@ func TestSetEffortRejectsRunningTurn(t *testing.T) {
 	}
 
 	close(runner.release)
-	waitNotRunning(t, app.ctrl)
+	waitNotRunning(t, app.activeCtrl())
 }
 
 func TestSearchFileRefsFindsNestedBasename(t *testing.T) {
@@ -153,8 +170,12 @@ func TestDeleteSessionRejectsActiveRelativePath(t *testing.T) {
 	}
 
 	app := NewApp()
-	app.ctrl = control.New(control.Options{SessionDir: dir, SessionPath: path, Label: "test"})
-	defer app.ctrl.Close()
+	app.setTestCtrl(control.New(control.Options{SessionDir: dir, SessionPath: path, Label: "test"}), "")
+	defer func() {
+		if c := app.activeCtrl(); c != nil {
+			c.Close()
+		}
+	}()
 
 	if err := app.DeleteSession(filepath.Base(path)); err != errActiveSession {
 		t.Fatalf("DeleteSession(active basename) error = %v, want errActiveSession", err)
@@ -182,8 +203,12 @@ args = ["-y", "@playwright/mcp"]
 	}
 
 	app := NewApp()
-	app.ctrl = control.New(control.Options{Host: plugin.NewHost()})
-	defer app.ctrl.Close()
+	app.setTestCtrl(control.New(control.Options{Host: plugin.NewHost()}), "")
+	defer func() {
+		if c := app.activeCtrl(); c != nil {
+			c.Close()
+		}
+	}()
 
 	view := app.Capabilities()
 	for _, s := range view.Servers {
@@ -206,8 +231,8 @@ func TestCapabilitiesShowsDefaultCodegraphDisabled(t *testing.T) {
 	t.Chdir(dir)
 
 	app := NewApp()
-	app.ctrl = control.New(control.Options{Host: plugin.NewHost()})
-	defer app.ctrl.Close()
+	app.setTestCtrl(control.New(control.Options{Host: plugin.NewHost()}), "")
+	defer app.activeCtrl().Close()
 
 	view := app.Capabilities()
 	for _, s := range view.Servers {
@@ -249,8 +274,8 @@ tier = "lazy"
 	}
 
 	app := NewApp()
-	app.ctrl = control.New(control.Options{Host: plugin.NewHost()})
-	defer app.ctrl.Close()
+	app.setTestCtrl(control.New(control.Options{Host: plugin.NewHost()}), "")
+	defer app.activeCtrl().Close()
 
 	view := app.Capabilities()
 	for _, s := range view.Servers {
@@ -284,8 +309,8 @@ tier = "lazy"
 	}
 
 	app := NewApp()
-	app.ctrl = control.New(control.Options{Host: plugin.NewHost()})
-	defer app.ctrl.Close()
+	app.setTestCtrl(control.New(control.Options{Host: plugin.NewHost()}), "")
+	defer app.activeCtrl().Close()
 
 	view := app.Capabilities()
 	for _, s := range view.Servers {
@@ -320,8 +345,8 @@ tier = "lazy"
 	host := plugin.NewHost()
 	host.RecordFailure(plugin.Spec{Name: "figma", Type: "http", URL: "https://mcp.figma.com/mcp"}, errors.New("connect: 401 unauthorized"))
 	app := NewApp()
-	app.ctrl = control.New(control.Options{Host: host})
-	defer app.ctrl.Close()
+	app.setTestCtrl(control.New(control.Options{Host: host}), "")
+	defer app.activeCtrl().Close()
 
 	view := app.Capabilities()
 	for _, s := range view.Servers {
@@ -358,8 +383,8 @@ tier = "lazy"
 	host := plugin.NewHost()
 	host.RecordFailure(plugin.Spec{Name: "figma", Type: "http", URL: "https://mcp.figma.com/mcp"}, errors.New("connect: 401 unauthorized"))
 	app := NewApp()
-	app.ctrl = control.New(control.Options{Host: host})
-	defer app.ctrl.Close()
+	app.setTestCtrl(control.New(control.Options{Host: host}), "")
+	defer app.activeCtrl().Close()
 
 	if err := app.ClearMCPServerAuthentication("figma"); err != nil {
 		t.Fatalf("ClearMCPServerAuthentication: %v", err)
@@ -418,8 +443,12 @@ env = { TOKEN = "${PLAYWRIGHT_TOKEN}" }
 	}
 
 	app := NewApp()
-	app.ctrl = control.New(control.Options{Host: plugin.NewHost()})
-	defer app.ctrl.Close()
+	app.setTestCtrl(control.New(control.Options{Host: plugin.NewHost()}), "")
+	defer func() {
+		if c := app.activeCtrl(); c != nil {
+			c.Close()
+		}
+	}()
 
 	if err := app.UpdateMCPServer("playwright", MCPServerInput{
 		Name:      "playwright",
@@ -473,8 +502,8 @@ tier = "lazy"
 	}
 
 	app := NewApp()
-	app.ctrl = control.New(control.Options{Host: plugin.NewHost()})
-	defer app.ctrl.Close()
+	app.setTestCtrl(control.New(control.Options{Host: plugin.NewHost()}), "")
+	defer app.activeCtrl().Close()
 
 	if err := app.UpdateMCPServer("broken", MCPServerInput{
 		Name:      "broken",
@@ -494,8 +523,8 @@ tier = "lazy"
 	if got := cfg.Plugins[0].Tier; got != "background" {
 		t.Fatalf("updated tier = %q, want background", got)
 	}
-	if !mcpFailed(app.ctrl, "broken") {
-		t.Fatalf("Host.Failures() = %+v, want broken failure recorded", app.ctrl.Host().Failures())
+	if !mcpFailed(app.activeCtrl(), "broken") {
+		t.Fatalf("Host.Failures() = %+v, want broken failure recorded", app.activeCtrl().Host().Failures())
 	}
 	view := app.Capabilities()
 	for _, s := range view.Servers {
@@ -530,8 +559,12 @@ tier = "lazy"
 	}
 
 	app := NewApp()
-	app.ctrl = control.New(control.Options{Host: plugin.NewHost()})
-	defer app.ctrl.Close()
+	app.setTestCtrl(control.New(control.Options{Host: plugin.NewHost()}), "")
+	defer func() {
+		if c := app.activeCtrl(); c != nil {
+			c.Close()
+		}
+	}()
 
 	if err := app.SetMCPServerTier("broken", "background"); err != nil {
 		t.Fatalf("SetMCPServerTier should persist tier even when immediate connect fails: %v", err)
@@ -543,8 +576,8 @@ tier = "lazy"
 	if got := cfg.Plugins[0].Tier; got != "background" {
 		t.Fatalf("saved tier = %q, want background", got)
 	}
-	if !mcpFailed(app.ctrl, "broken") {
-		t.Fatalf("Host.Failures() = %+v, want broken failure recorded", app.ctrl.Host().Failures())
+	if !mcpFailed(app.activeCtrl(), "broken") {
+		t.Fatalf("Host.Failures() = %+v, want broken failure recorded", app.activeCtrl().Host().Failures())
 	}
 	view := app.Capabilities()
 	for _, s := range view.Servers {
@@ -579,8 +612,8 @@ auto_install = true
 	}
 
 	app := NewApp()
-	app.ctrl = control.New(control.Options{Host: plugin.NewHost()})
-	defer app.ctrl.Close()
+	app.setTestCtrl(control.New(control.Options{Host: plugin.NewHost()}), "")
+	defer app.activeCtrl().Close()
 
 	if err := app.SetMCPServerTier("codegraph", "background"); err != nil {
 		t.Fatalf("SetMCPServerTier(codegraph): %v", err)
@@ -595,8 +628,8 @@ auto_install = true
 	if got := cfg.Codegraph.Tier; got != "background" {
 		t.Fatalf("codegraph tier = %q, want background", got)
 	}
-	if !mcpFailed(app.ctrl, "codegraph") {
-		t.Fatalf("Host.Failures() = %+v, want codegraph failure recorded for missing runtime", app.ctrl.Host().Failures())
+	if !mcpFailed(app.activeCtrl(), "codegraph") {
+		t.Fatalf("Host.Failures() = %+v, want codegraph failure recorded for missing runtime", app.activeCtrl().Host().Failures())
 	}
 	view := app.Capabilities()
 	for _, s := range view.Servers {
@@ -627,8 +660,8 @@ tier = "lazy"
 	}
 
 	app := NewApp()
-	app.ctrl = control.New(control.Options{Host: plugin.NewHost()})
-	defer app.ctrl.Close()
+	app.setTestCtrl(control.New(control.Options{Host: plugin.NewHost()}), "")
+	defer app.activeCtrl().Close()
 
 	if err := app.SetMCPServerEnabled("codegraph", false); err != nil {
 		t.Fatalf("SetMCPServerEnabled(codegraph,false): %v", err)
@@ -670,9 +703,9 @@ tier = "eager"
 	}
 
 	app := NewApp()
-	app.ctrl = control.New(control.Options{Host: plugin.NewHost()})
-	defer app.ctrl.Close()
-	recordMCPFailure(app.ctrl, config.PluginEntry{
+	app.setTestCtrl(control.New(control.Options{Host: plugin.NewHost()}), "")
+	defer app.activeCtrl().Close()
+	recordMCPFailure(app.activeCtrl(), config.PluginEntry{
 		Name:    "broken",
 		Command: "reasonix-missing-mcp-binary",
 		Tier:    "eager",

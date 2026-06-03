@@ -592,6 +592,13 @@ func (c *Controller) Running() bool {
 	return c.running
 }
 
+// Turn returns the current turn number (0 before the first submit).
+func (c *Controller) Turn() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.turn
+}
+
 // Approve answers a pending ApprovalRequest by ID: allow runs the call, session
 // also remembers a grant for the rest of the session so the same tool+subject
 // isn't re-prompted. Unknown/expired IDs are ignored.
