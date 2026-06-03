@@ -1127,8 +1127,9 @@ func (m *chatTUI) commitSpacer() {
 }
 
 // bottomRows is the terminal-row height of the pinned bottom region: any open
-// panels (todo / approval / chooser / rewind / MCP / completion), the composer
-// when visible, and the two fixed status rows.
+// bottom panels (todo / approval / chooser / rewind / completion), the composer
+// when visible, and the two fixed status rows. Full-screen managers such as MCP
+// and skills render inside the main transcript area instead of the bottom rail.
 func (m chatTUI) bottomRows() int {
 	rows := 0
 	for _, s := range []string{
@@ -1137,8 +1138,6 @@ func (m chatTUI) bottomRows() int {
 		m.renderChooser(),
 		m.renderRewind(),
 		m.renderResumePicker(),
-		m.renderMCPManager(),
-		m.renderSkillPicker(),
 		m.renderCompletion(),
 	} {
 		if s != "" {
@@ -1180,6 +1179,51 @@ func (m chatTUI) transcriptHeight() int {
 		return h
 	}
 	return 1
+}
+
+func (m chatTUI) renderMainManager() string {
+	if card := m.renderMCPManager(); card != "" {
+		return card
+	}
+	return m.renderSkillPicker()
+}
+
+func (m chatTUI) renderTranscriptWithMainManager(card string) string {
+	h := m.viewport.Height()
+	if h <= 0 {
+		return ""
+	}
+	cw := m.viewport.Width()
+	if cw <= 0 {
+		cw = max(m.width-1, 1)
+	}
+
+	cardLines := strings.Split(strings.TrimRight(card, "\n"), "\n")
+	if len(cardLines) > h {
+		cardLines = cardLines[:h]
+	}
+	maxTranscriptRows := h - len(cardLines)
+	if maxTranscriptRows > 0 && len(cardLines) > 0 && len(m.wrappedLines) > 0 {
+		maxTranscriptRows--
+	}
+
+	var rows []string
+	if maxTranscriptRows > 0 {
+		lines := m.wrappedLines
+		start := max(0, len(lines)-maxTranscriptRows)
+		rows = append(rows, lines[start:]...)
+	}
+	if len(rows) > 0 && len(cardLines) > 0 {
+		rows = append(rows, "")
+	}
+	rows = append(rows, cardLines...)
+	for len(rows) < h {
+		rows = append(rows, "")
+	}
+	for i, row := range rows {
+		rows[i] = padRight(ansi.Cut(row, 0, cw), cw)
+	}
+	return strings.Join(rows, "\n")
 }
 
 // reasoningViewMax bounds the live thinking buffer the streamed block renders
@@ -1637,14 +1681,6 @@ func (m chatTUI) View() tea.View {
 		parts = append(parts, card)
 		rowsAboveBox += strings.Count(card, "\n") + 1
 	}
-	if card := m.renderMCPManager(); card != "" {
-		parts = append(parts, card)
-		rowsAboveBox += strings.Count(card, "\n") + 1
-	}
-	if card := m.renderSkillPicker(); card != "" {
-		parts = append(parts, card)
-		rowsAboveBox += strings.Count(card, "\n") + 1
-	}
 	if menu := m.renderCompletion(); menu != "" {
 		parts = append(parts, menu)
 		rowsAboveBox += strings.Count(menu, "\n") + 1
@@ -1666,7 +1702,11 @@ func (m chatTUI) View() tea.View {
 	// Full-screen frame: the transcript viewport on top (it pads to exactly its
 	// height), the pinned bottom region beneath. Alt-screen owns the grid, so
 	// resize repaints cleanly — no scrollback reflow, no ghost borders.
-	v := tea.NewView(m.renderTranscript() + "\n" + strings.Join(parts, "\n"))
+	mainArea := m.renderTranscript()
+	if card := m.renderMainManager(); card != "" {
+		mainArea = m.renderTranscriptWithMainManager(card)
+	}
+	v := tea.NewView(mainArea + "\n" + strings.Join(parts, "\n"))
 	v.AltScreen = true
 	v.MouseMode = tea.MouseModeCellMotion // wheel scrolls the transcript
 	// Anchor the real terminal cursor at the textarea's insertion point only when

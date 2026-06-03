@@ -33,9 +33,9 @@ const (
 	pickerConfirmDelete skillPickerMode = "confirm-delete"
 )
 
-// skillPicker is the in-chat overlay for /skills. It lists discoverable skills
-// with search, detail, and source views, following the same modal pattern as
-// rewindPicker and resumePicker.
+// skillPicker is the in-chat overlay for /skills manage. It lists discoverable
+// skills with search, detail, and source views, following the same modal pattern
+// as rewindPicker and resumePicker.
 type skillPicker struct {
 	mode            skillPickerMode
 	skills          []skill.Skill
@@ -600,7 +600,6 @@ func skillRootLines(st *skill.Store, skills []skill.Skill) []skillRootLine {
 // -- rendering --
 
 const (
-	skillDialogNameCol = 28
 	skillDialogMinRows = 8
 	skillDialogMaxRows = 18
 )
@@ -610,7 +609,7 @@ func (m chatTUI) renderSkillPicker() string {
 	if p == nil {
 		return ""
 	}
-	w := max(m.width, 10)
+	w := max(viewWidth(m.width), 40)
 	switch p.mode {
 	case pickerSkills:
 		return choicePanelStyle.Width(w).Render(m.renderSkillPickerSkills())
@@ -628,17 +627,13 @@ func (m chatTUI) renderSkillPicker() string {
 
 func (m chatTUI) renderSkillPickerSkills() string {
 	p := m.skillPick
-	w := max(m.width, 10)
+	w := max(viewWidth(m.width), 40)
 	var b strings.Builder
 
-	b.WriteString(accent(i18n.M.SkillPickerTitle))
-	summary := skillPickerSummary(p)
-	if summary != "" {
-		b.WriteString("  " + dim(summary))
+	fmt.Fprintf(&b, "%s\n", viewHeader("Manage skills"))
+	if summary := skillPickerSummary(p); summary != "" {
+		fmt.Fprintf(&b, "%s\n", viewMeta(summary))
 	}
-	b.WriteByte('\n')
-	b.WriteString(dim(i18n.M.SkillPickerHint))
-	b.WriteByte('\n')
 	b.WriteByte('\n')
 	b.WriteString(renderSkillSearchBox(p.query, p.searchActive, w))
 	b.WriteByte('\n')
@@ -649,25 +644,35 @@ func (m chatTUI) renderSkillPickerSkills() string {
 	}
 
 	if len(skills) == 0 {
-		b.WriteString(dim("  " + i18n.M.SkillPickerSearchEmpty))
+		b.WriteString(viewMeta(i18n.M.SkillPickerSearchEmpty))
 		b.WriteByte('\n')
 	} else {
 		start, end := skillListWindow(p.sel, len(skills), m.skillPickerVisibleRows())
 		if start > 0 {
-			b.WriteString(dim("  " + fmt.Sprintf(i18n.M.SkillPickerMoreAboveFmt, start)))
+			b.WriteString(viewMeta(fmt.Sprintf(i18n.M.SkillPickerMoreAboveFmt, start)))
 			b.WriteByte('\n')
 		}
+		lastGroup := ""
 		for i := start; i < end; i++ {
+			group := skillGroupLabel(skills[i].Scope)
+			if group != lastGroup {
+				if lastGroup != "" {
+					b.WriteByte('\n')
+				}
+				fmt.Fprintf(&b, "  %s\n", bold(group))
+				lastGroup = group
+			}
 			b.WriteString(renderSkillRow(i+1, i == p.sel, skills[i], p.skillEnabled(skills[i].Name), w))
 			b.WriteByte('\n')
 		}
 		if end < len(skills) {
-			b.WriteString(dim("  " + fmt.Sprintf(i18n.M.SkillPickerMoreBelowFmt, len(skills)-end)))
+			b.WriteString(viewMeta(fmt.Sprintf(i18n.M.SkillPickerMoreBelowFmt, len(skills)-end)))
 			b.WriteByte('\n')
 		}
 	}
 
-	return b.String()
+	b.WriteString("\n" + dim(i18n.M.SkillPickerHint))
+	return strings.TrimRight(b.String(), "\n")
 }
 
 func (m chatTUI) skillPickerVisibleRows() int {
@@ -834,30 +839,35 @@ func (m chatTUI) renderSkillPickerConfirmDelete() string {
 func renderSkillRow(num int, selected bool, s skill.Skill, enabled bool, w int) string {
 	prefix := "    "
 	if selected {
-		prefix = "  ❯ "
+		prefix = accent("  › ")
 	}
-	mark := "✓"
-	label := i18n.M.SkillPickerAvailableLabel
-	if !enabled {
-		mark = "○"
-		label = i18n.M.SkillPickerDisabledLabel
+	nameWidth := min(30, max(14, w/3))
+	name := compactMiddle(s.Name, nameWidth)
+	if selected {
+		name = bold(name)
 	}
-	status := mark + " " + label
-	statusCol := padRight(status, 6)
-	number := fmt.Sprintf("%d. ", num)
+	name = padRight(name, nameWidth)
+	status := "✓ " + i18n.M.SkillPickerAvailableLabel
+	if enabled {
+		status = viewStatus(status)
+	} else {
+		status = viewMeta("○ " + i18n.M.SkillPickerDisabledLabel)
+	}
 	meta := skillRowMeta(s)
-	fixedWidth := visibleWidth(prefix) + visibleWidth(number) + visibleWidth(statusCol) + visibleWidth("  ") + visibleWidth(" · "+meta)
-	nameWidth := min(skillDialogNameCol, max(1, w-fixedWidth))
-	name := padRight(viewCompactText(s.Name, nameWidth), nameWidth)
-	line := prefix + number + statusCol + "  " + name + " · " + meta
+	number := fmt.Sprintf("%2d. ", num)
+	line := fmt.Sprintf("%s%s%s · %s · %s", prefix, number, name, status, viewMeta(meta))
 	if visibleWidth(line) > w {
 		line = viewCompactText(line, w)
 	}
 
 	if selected {
-		return reverse(line)
+		return reverse(padRight(line, w))
 	}
-	return dim(line)
+	return line
+}
+
+func skillGroupLabel(sc skill.Scope) string {
+	return titleText(scopeLabel(sc)) + " skills"
 }
 
 func skillRowMeta(s skill.Skill) string {

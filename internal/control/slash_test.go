@@ -39,7 +39,7 @@ func TestSlashArgItems(t *testing.T) {
 	if from != len("/skills ") {
 		t.Errorf("from = %d, want %d", from, len("/skills "))
 	}
-	for _, w := range []string{"list", "show", "enable", "disable", "new", "paths"} {
+	for _, w := range []string{"list", "manage", "show", "enable", "disable", "new", "paths"} {
 		if !has(items, w) {
 			t.Errorf("/skills missing subcommand %q; got %v", w, labelsOf(items))
 		}

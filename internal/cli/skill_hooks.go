@@ -14,8 +14,8 @@ import (
 )
 
 // runSkillSubcommand handles "/skills" (and the legacy "/skill" alias): list
-// the discoverable skills, show one's body, scaffold a new one, or inspect the
-// discovery paths.
+// the discoverable skills, open the manager, show one's body, scaffold a new
+// one, or inspect the discovery paths.
 // "/skills <name> [args]" with no recognised subcommand falls through to invoking
 // the skill (handled by runSlashCommand's default branch), so this only owns the
 // management verbs.
@@ -26,10 +26,10 @@ func (m *chatTUI) runSkillSubcommand(input string) {
 		sub = strings.ToLower(args[1])
 	}
 	switch sub {
-	case "":
-		m.openSkillPicker()
-	case "list", "ls":
+	case "", "list", "ls":
 		m.skillList()
+	case "manage", "picker":
+		m.openSkillPicker()
 	case "show", "cat":
 		if len(args) < 3 {
 			m.notice("usage: /skills show <name>")
@@ -57,7 +57,7 @@ func (m *chatTUI) runSkillSubcommand(input string) {
 		if _, ok := m.ctrl.RunSkill("/" + args[1]); ok {
 			hint = " (to run it, type /" + args[1] + ")"
 		}
-		m.notice("unknown /skills subcommand " + args[1] + hint + " — try: /skills, /skills show <name>, /skills enable <name>, /skills disable <name>, /skills new <name>, /skills paths")
+		m.notice("unknown /skills subcommand " + args[1] + hint + " — try: /skills, /skills manage, /skills show <name>, /skills enable <name>, /skills disable <name>, /skills new <name>, /skills paths")
 	}
 }
 

@@ -36,7 +36,7 @@ func TestSkillPickerRenderSmoke(t *testing.T) {
 	if out == "" {
 		t.Fatal("renderSkillPicker returned empty string")
 	}
-	if !strings.Contains(out, "Skills") {
+	if !strings.Contains(out, "Manage skills") {
 		t.Fatalf("render missing title:\n%s", out)
 	}
 	if !strings.Contains(out, "review") {
@@ -77,14 +77,32 @@ func TestSkillPickerEnterClosesWithoutChanges(t *testing.T) {
 	}
 }
 
-func TestSkillsBareOpensPicker(t *testing.T) {
+func TestSkillsBareRendersList(t *testing.T) {
 	m := newTestChatTUI()
 	m.width = 80
 	m.skills = makeTestSkills()
 
 	m.runSkillSubcommand("/skills")
+	if m.skillPick != nil {
+		t.Fatal("bare /skills should render a static list, not open the picker")
+	}
+	if len(m.transcript) == 0 {
+		t.Fatal("bare /skills should commit a list to scrollback")
+	}
+	got := strings.Join(m.transcript, "\n")
+	if !strings.Contains(got, "skills") || !strings.Contains(got, "/review") {
+		t.Fatalf("bare /skills output missing expected content:\n%s", got)
+	}
+}
+
+func TestSkillsManageOpensPicker(t *testing.T) {
+	m := newTestChatTUI()
+	m.width = 80
+	m.skills = makeTestSkills()
+
+	m.runSkillSubcommand("/skills manage")
 	if m.skillPick == nil {
-		t.Fatal("bare /skills should open the interactive picker")
+		t.Fatal("/skills manage should open the interactive picker")
 	}
 }
 
@@ -100,11 +118,14 @@ func TestSkillsEnterSubmitsExactSlashCommand(t *testing.T) {
 
 	next, _ := m.update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	cm := next.(chatTUI)
-	if cm.skillPick == nil {
-		t.Fatal("Enter on exact /skills should submit and open the interactive picker")
+	if cm.skillPick != nil {
+		t.Fatal("Enter on exact /skills should submit the static list, not open the picker")
 	}
 	if got := cm.input.Value(); got != "" {
 		t.Fatalf("input after submitting /skills = %q, want empty", got)
+	}
+	if len(cm.transcript) == 0 {
+		t.Fatal("Enter on exact /skills should commit a list to scrollback")
 	}
 }
 
@@ -641,7 +662,7 @@ func TestSkillRowLabelHasSubagentTag(t *testing.T) {
 func TestRenderSkillRowSelected(t *testing.T) {
 	s := skill.Skill{Name: "test", Description: "A test skill", Scope: skill.ScopeGlobal, RunAs: skill.RunInline}
 	row := renderSkillRow(5, true, s, true, 80)
-	if !strings.Contains(row, "❯") {
+	if !strings.Contains(row, "›") {
 		t.Fatalf("selected row missing arrow: %q", row)
 	}
 	// Selected row differs from unselected: has arrow, no dim prefix.
@@ -711,7 +732,7 @@ func TestSortedSkills(t *testing.T) {
 	}
 }
 
-func TestBottomRowsIncludesSkillPicker(t *testing.T) {
+func TestSkillPickerRendersInMainArea(t *testing.T) {
 	m := newTestChatTUI()
 	m.width = 80
 	m.height = 40
@@ -725,15 +746,14 @@ func TestBottomRowsIncludesSkillPicker(t *testing.T) {
 	}
 
 	rows := m.bottomRows()
-	if rows < 3 {
-		t.Fatalf("bottomRows with skill picker open got %d, expected more for picker panel", rows)
+	if rows != 2 {
+		t.Fatalf("bottomRows with skill picker open got %d, want status rows only", rows)
 	}
-
-	// Closing the picker should reduce bottomRows.
-	m.skillPick = nil
-	rowsWithout := m.bottomRows()
-	if rowsWithout >= rows {
-		t.Fatalf("bottomRows without picker (%d) should be less than with picker (%d)", rowsWithout, rows)
+	if !m.hideComposer() {
+		t.Fatal("skill picker should hide the composer")
+	}
+	if out := m.renderMainManager(); !strings.Contains(out, "Manage skills") {
+		t.Fatalf("skill picker should render as a main manager:\n%s", out)
 	}
 }
 
@@ -911,7 +931,7 @@ func TestSkillPickerRenderWidthNarrow(t *testing.T) {
 	if out == "" {
 		t.Fatal("narrow render returned empty")
 	}
-	if !strings.Contains(out, "Skills") {
+	if !strings.Contains(out, "Manage skills") {
 		t.Fatalf("narrow render missing title:\n%s", out)
 	}
 }
