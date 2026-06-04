@@ -312,6 +312,59 @@ func TestCreateTopicDefaultsToAutoNewSessionTitle(t *testing.T) {
 	}
 }
 
+func TestCreateTopicAppearsFirstInProjectTree(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+
+	projectRoot := t.TempDir()
+	app := NewApp()
+	first, err := app.CreateTopic("project", projectRoot, "")
+	if err != nil {
+		t.Fatalf("create first topic: %v", err)
+	}
+	second, err := app.CreateTopic("project", projectRoot, "")
+	if err != nil {
+		t.Fatalf("create second topic: %v", err)
+	}
+
+	nodes := app.ListProjectTree()
+	if len(nodes) != 1 || len(nodes[0].Children) != 2 {
+		t.Fatalf("project tree = %#v, want one project with two topics", nodes)
+	}
+	if got := nodes[0].Children[0].TopicID; got != second.ID {
+		t.Fatalf("first visible topic = %q, want newest %q", got, second.ID)
+	}
+	if got := nodes[0].Children[1].TopicID; got != first.ID {
+		t.Fatalf("second visible topic = %q, want older %q", got, first.ID)
+	}
+}
+
+func TestCreateGlobalTopicAppearsFirstInProjectTree(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+
+	app := NewApp()
+	first, err := app.CreateTopic("global", "", "")
+	if err != nil {
+		t.Fatalf("create first global topic: %v", err)
+	}
+	second, err := app.CreateTopic("global", "", "")
+	if err != nil {
+		t.Fatalf("create second global topic: %v", err)
+	}
+
+	nodes := app.ListProjectTree()
+	if len(nodes) != 1 || nodes[0].Kind != "global_folder" || len(nodes[0].Children) != 2 {
+		t.Fatalf("project tree = %#v, want Global with two topics", nodes)
+	}
+	if got := nodes[0].Children[0].TopicID; got != second.ID {
+		t.Fatalf("first visible global topic = %q, want newest %q", got, second.ID)
+	}
+	if got := nodes[0].Children[1].TopicID; got != first.ID {
+		t.Fatalf("second visible global topic = %q, want older %q", got, first.ID)
+	}
+}
+
 func TestRenameTopicLocksTitleManual(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())

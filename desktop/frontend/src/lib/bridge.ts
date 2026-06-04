@@ -5,6 +5,8 @@
 // that streams a canned turn through the same contract — letting the whole UI be
 // developed and laid out without rebuilding the Go side.
 
+import type * as GeneratedApp from "../../wailsjs/go/main/App";
+
 import type {
   BalanceInfo,
   CapabilitiesView,
@@ -41,30 +43,53 @@ import type {
   WorkspaceView,
 } from "./types";
 
-// AppBindings mirrors desktop/app.go's exported method set. Keep in sync by hand
-// (or regenerate with `wails generate module` and import wailsjs instead).
+// AppBindings is derived from the Wails-generated Go → TS method signatures, so
+// the compiler catches drift between the Go binding surface and the frontend mock.
+// Run `wails generate module` after adding/renaming a bound method on App, then
+// `pnpm typecheck` to verify the mock still satisfies the contract.
+//
+// Types for the new native-feel bindings — kept inline since they are
+// bridge-specific and only used in AppBindings / the dev mock.
+interface NativeConfirmRequest {
+  title: string;
+  message: string;
+  detail: string;
+  confirmLabel: string;
+  cancelLabel: string;
+  destructive: boolean;
+}
+
+interface DesktopWindowState {
+  width: number;
+  height: number;
+  x: number;
+  y: number;
+  maximised: boolean;
+}
+
+// AppBindings is the hand-written contract between the React app and the Go
+// kernel. It uses local types (types.ts) so components don't import generated
+// model classes. _CheckGeneratedBindings catches drift: when a Go method is
+// added or renamed, the generated types shift, and a key present in GeneratedApp
+// but missing from AppBindings causes a type error here. Fix: add the new method
+// to AppBindings, then run `pnpm typecheck` to verify.
 export interface AppBindings {
+  Platform(): Promise<string>;
   Submit(input: string): Promise<void>;
   SubmitDisplay(display: string, input: string): Promise<void>;
   Cancel(): Promise<void>;
   Approve(id: string, allow: boolean, session: boolean, persist: boolean): Promise<void>;
   AnswerQuestion(id: string, answers: QuestionAnswer[]): Promise<void>;
   SetPlanMode(on: boolean): Promise<void>;
-  // SetMode applies plan/yolo/normal gating atomically (one IPC, no half-applied
-  // window); prefer it over sequencing SetPlanMode + SetBypass from the UI.
   SetMode(mode: string): Promise<void>;
   Compact(): Promise<void>;
   NewSession(): Promise<void>;
   History(): Promise<HistoryMessage[]>;
-  // Checkpoints lists the session's rewind points; Rewind restores one (scope
-  // "code" | "conversation" | "both"), after which the caller re-reads History.
   Checkpoints(): Promise<CheckpointMeta[]>;
   Rewind(turn: number, scope: string): Promise<void>;
   Fork(turn: number): Promise<void>;
   SummarizeFrom(turn: number): Promise<void>;
   SummarizeUpTo(turn: number): Promise<void>;
-  // Session history: list saved sessions, resume one (returns its transcript),
-  // preview one read-only, delete one, or give one a custom display name ("" clears it).
   ListSessions(): Promise<SessionMeta[]>;
   ListTrashedSessions(): Promise<SessionMeta[]>;
   ResumeSession(path: string): Promise<HistoryMessage[]>;
@@ -73,24 +98,15 @@ export interface AppBindings {
   RestoreSession(path: string): Promise<void>;
   PurgeTrashedSession(path: string): Promise<void>;
   RenameSession(path: string, title: string): Promise<void>;
-  // Workspace: open a folder chooser and switch to that project (fresh session);
-  // returns the chosen path, or "" if cancelled.
   ListWorkspaces(): Promise<WorkspaceView[]>;
   PickWorkspace(): Promise<string>;
   SwitchWorkspace(path: string): Promise<string>;
   RemoveWorkspace(path: string): Promise<void>;
   ContextUsage(): Promise<ContextInfo>;
-  // Balance queries the active provider's wallet balance (a network call);
-  // returns an unavailable readout when no balance_url is configured or it fails.
   Balance(): Promise<BalanceInfo>;
-  // Jobs lists the running background jobs (bash/task started in the background)
-  // for the status-bar indicator.
   Jobs(): Promise<JobView[]>;
   Meta(): Promise<Meta>;
   Commands(): Promise<CommandInfo[]>;
-  // Capabilities feeds the MCP & Skills drawer: connected/failed servers + skills.
-  // Add connects + persists a server; Remove disconnects + drops it from config;
-  // Retry reconnects a configured server that failed (config untouched).
   Capabilities(): Promise<CapabilitiesView>;
   AddMCPServer(input: MCPServerInput): Promise<number>;
   UpdateMCPServer(name: string, input: MCPServerInput): Promise<void>;
@@ -102,8 +118,6 @@ export interface AppBindings {
   RemoveSkillPath(path: string): Promise<void>;
   RefreshSkills(): Promise<void>;
   SetSkillEnabled(name: string, enabled: boolean): Promise<void>;
-  // SetMCPServerEnabled is the per-session connector toggle (on reconnects, off
-  // disconnects; config untouched).
   SetMCPServerEnabled(name: string, enabled: boolean): Promise<void>;
   SetMCPServerTier(name: string, tier: string): Promise<void>;
   SlashArgs(input: string): Promise<SlashArgsResult>;
@@ -116,23 +130,16 @@ export interface AppBindings {
   RevealPath(path: string): Promise<void>;
   SavePastedImage(dataUrl: string): Promise<string>;
   SavePastedFile(name: string, dataUrl: string): Promise<string>;
-  // AttachDropped resolves an OS-dropped absolute path (from the native file-drop
-  // bridge) into a composer context entry — a workspace ref or a stored attachment.
   AttachDropped(path: string): Promise<DroppedItem>;
   AttachmentDataURL(path: string): Promise<string>;
   Models(): Promise<ModelInfo[]>;
   SetModel(name: string): Promise<void>;
   Effort(): Promise<EffortInfo>;
   SetEffort(level: string): Promise<void>;
-  // Memory panel: read the loaded REASONIX.md hierarchy + saved auto-memories,
-  // quick-add a note to a scope's REASONIX.md (≡ "#<note>"), and overwrite a doc
-  // from the in-place editor.
   Memory(): Promise<MemoryView>;
   Remember(scope: string, note: string): Promise<string>;
   Forget(name: string): Promise<void>;
   SaveDoc(path: string, body: string): Promise<string>;
-  // Settings panel: read the resolved config and apply edits (each writes config
-  // and rebuilds the controller live). Secrets go through SetProviderKey (→ .env).
   Settings(): Promise<SettingsView>;
   SetDefaultModel(ref: string): Promise<void>;
   SetPlannerModel(ref: string): Promise<void>;
@@ -145,28 +152,19 @@ export interface AppBindings {
   SetSandbox(bash: string, network: boolean, workspaceRoot: string, allowWrite: string[]): Promise<void>;
   SetNetwork(n: NetworkView): Promise<void>;
   SetAgentParams(temperature: number, maxSteps: number, systemPrompt: string): Promise<void>;
-  // SetBypass toggles YOLO mode (auto-approve every tool call this session; deny
-  // rules still apply). Runtime-only — not written to config.
   SetBypass(on: boolean): Promise<void>;
-  // Auto-updater (desktop/updater_app.go): the injected build version, a manifest
-  // check, applying an update (win/linux self-update; macOS opens the download
-  // page), and opening that page directly. Progress streams on "updater:progress".
   Version(): Promise<string>;
   CheckUpdate(): Promise<UpdateInfo | null>;
   ApplyUpdate(): Promise<void>;
   OpenDownloadPage(): Promise<void>;
-  // First-run overlay: NeedsOnboarding is true when the default provider key is
-  // unset; ConnectKey validates, persists to ./.env, and rebuilds the controller.
   NeedsOnboarding(): Promise<boolean>;
   ConnectKey(apiKey: string): Promise<void>;
-  // Tab management (desktop/tabs.go).
   ListTabs(): Promise<TabMeta[]>;
   OpenProjectTab(workspaceRoot: string, topicID: string): Promise<TabMeta>;
   OpenGlobalTab(topicID: string): Promise<TabMeta>;
   SetActiveTab(tabID: string): Promise<void>;
   ReorderTabs(tabIDs: string[]): Promise<void>;
   CloseTab(tabID: string): Promise<void>;
-  // Project tree (desktop/tabs.go).
   ListProjectTree(): Promise<ProjectNode[]>;
   RenameProject(workspaceRoot: string, title: string): Promise<void>;
   SetProjectColor(workspaceRoot: string, color: string): Promise<void>;
@@ -175,9 +173,25 @@ export interface AppBindings {
   RenameTopic(topicID: string, title: string): Promise<void>;
   DeleteTopic(topicID: string): Promise<void>;
   TrashTopic(topicID: string): Promise<void>;
-  // Context panel (desktop/tabs.go).
   ContextPanel(tabID: string): Promise<ContextPanelInfo>;
+  // New native-feel bindings (added with the desktop native-feel plan).
+  ConfirmAction(req: NativeConfirmRequest): Promise<boolean>;
+  SaveWindowState(state: DesktopWindowState): Promise<void>;
 }
+
+// Bidirectional compile-time drift checks. Exclude<A, B> extracts keys in A that
+// are missing from B. If that set is non-empty, AssertNever<non-never> fails with
+// "Type 'X' does not satisfy the constraint 'never'". In other words:
+//   _CheckGenToApp errors → a Go method has no TS counterpart (add it to AppBindings)
+//   _CheckAppToGen errors → a TS method has no Go counterpart (stale / removed)
+// These compare method *names* only; full signature checking isn't possible here
+// because local types (types.ts) use plain interfaces while generated types
+// (models.ts) use classes with a convertValues prototype method. The structural
+// mismatch would produce false positives. Method-arity and parameter-order drift
+// are caught at the call sites by tsc when components invoke app.<method>(...).
+type AssertNever<T extends never> = T;
+export type _CheckGenToApp = AssertNever<Exclude<keyof typeof GeneratedApp, keyof AppBindings>>;
+export type _CheckAppToGen = AssertNever<Exclude<keyof AppBindings, keyof typeof GeneratedApp>>;
 
 interface WailsRuntime {
   EventsOn(name: string, cb: (...data: unknown[]) => void): () => void;
@@ -320,6 +334,7 @@ function makeMockApp(): AppBindings {
   let pendingAskPreview = false;
   let pendingApprovalPreview = false;
   let cwd = "~/projects/joyquant-db"; // mutable so PickWorkspace is visible in dev
+  const globalWorkspaceRoot = "~/Library/Application Support/reasonix/global-workspace";
   let workspaces = ["~/projects/joyquant-db", "~/projects/joyquant-sys", "~/projects/reasonix", "~/projects/blade"];
   let mockEffort = "auto";
   const day = 86_400_000;
@@ -421,7 +436,52 @@ function makeMockApp(): AppBindings {
     { path: "/mock/sessions/c.jsonl", preview: "write the README and badges", turns: 8, createdAt: t0 - 4 * day, lastActivityAt: t0 - day - 3_600_000, modTime: t0 - day - 3_600_000, current: false },
     { path: "/mock/sessions/d.jsonl", preview: "explain the plugin host design", turns: 3, createdAt: t0 - 5 * day, lastActivityAt: t0 - 4 * day, modTime: t0 - 4 * day, current: false },
   ];
-  const trashedSessions: SessionMeta[] = [];
+  const trashedSessions: SessionMeta[] = [
+    {
+      path: "/mock/sessions/.trash/trash-dev-standard.jsonl",
+      title: "00 制定项目开发规范",
+      preview: "整理项目开发规范，包含目录结构、分支约定和提交要求。",
+      turns: 4,
+      createdAt: t0 - 8 * day,
+      lastActivityAt: t0 - 7 * day,
+      modTime: t0 - 7 * day,
+      deletedAt: t0 - 20 * 60_000,
+      current: false,
+      scope: "project",
+      workspaceRoot: "~/projects/joyquant-db",
+      topicId: "topic_dev_standard",
+      topicTitle: "00 制定项目开发规范",
+    },
+    {
+      path: "/mock/sessions/.trash/trash-p3a-review.jsonl",
+      title: "20260521 p3a P&D",
+      preview: "复盘 p3a P&D 需求范围，记录遗留风险和下轮处理建议。",
+      turns: 7,
+      createdAt: t0 - 6 * day,
+      lastActivityAt: t0 - 5 * day,
+      modTime: t0 - 5 * day,
+      deletedAt: t0 - 2 * 3_600_000,
+      current: false,
+      scope: "project",
+      workspaceRoot: "~/projects/joyquant-sys",
+      topicId: "topic_p3a_pd",
+      topicTitle: "20260521 p3a P&D",
+    },
+    {
+      path: "/mock/sessions/.trash/trash-global-product.jsonl",
+      title: "产品通用规范",
+      preview: "沉淀跨项目通用产品规则，包含验收、灰度和异常处理。",
+      turns: 2,
+      createdAt: t0 - 4 * day,
+      lastActivityAt: t0 - 3 * day,
+      modTime: t0 - 3 * day,
+      deletedAt: t0 - day,
+      current: false,
+      scope: "global",
+      topicId: "topic_product",
+      topicTitle: "产品通用规范",
+    },
+  ];
   // Mutable settings so the Settings panel's edits are observable in browser dev.
   const settings: SettingsView = {
     defaultModel: "deepseek-flash",
@@ -474,6 +534,7 @@ function makeMockApp(): AppBindings {
       key: "global_folder",
       kind: "global_folder",
       label: "Global",
+      root: globalWorkspaceRoot,
       children: [
         { key: "global_topic_product", kind: "global_topic", label: "产品通用规范", topicId: "topic_product" },
         { key: "global_topic_ai", kind: "global_topic", label: "AI 工程化最佳实践", topicId: "topic_ai" },
@@ -495,7 +556,61 @@ function makeMockApp(): AppBindings {
       parent.children = projectChildren(parent).filter((child) => child.topicId !== topicId);
     }
   };
+  const topicLabel = (topicId: string, fallback: string) => (findMockTopic(topicId)?.label || fallback).replace(/^●\s*/, "");
+  const setMockActiveTab = (tabId: string) => {
+    mockTabs = mockTabs.map((tab) => ({ ...tab, active: tab.id === tabId }));
+  };
+  let mockTabs: TabMeta[] = [
+    {
+      id: "tab_joyquant_db",
+      scope: "project",
+      workspaceRoot: "~/projects/joyquant-db",
+      workspaceName: "joyquant-db",
+      topicId: "topic_dev_standard",
+      topicTitle: "00 制定项目开发规范",
+      projectColor: "blue",
+      label: "DeepSeek-R1",
+      ready: true,
+      running: false,
+      active: true,
+      cwd: "~/projects/joyquant-db",
+    },
+    {
+      id: "tab_joyquant_sys",
+      scope: "project",
+      workspaceRoot: "~/projects/joyquant-sys",
+      workspaceName: "joyquant-sys",
+      topicId: "topic_p3b_pd",
+      topicTitle: "p3b P&D",
+      projectColor: "purple",
+      label: "DeepSeek-R1",
+      ready: true,
+      running: false,
+      active: false,
+      cwd: "~/projects/joyquant-sys",
+    },
+    {
+      id: "tab_global",
+      scope: "global",
+      workspaceRoot: "",
+      workspaceName: "Global",
+      topicId: "topic_global",
+      topicTitle: "Global",
+      label: "DeepSeek-R1",
+      ready: true,
+      running: false,
+      active: false,
+      cwd: "~/projects/joyquant-db",
+    },
+  ];
   return {
+    async Platform() {
+      // Mirror the OS the browser dev mock runs on.
+      const ua = typeof navigator !== "undefined" ? navigator.userAgent : "";
+      if (/Win/i.test(ua)) return "windows";
+      if (/Mac/i.test(ua)) return "darwin";
+      return "linux";
+    },
     async Submit(input) {
       cancelled = false;
       emit({ kind: "turn_started" });
@@ -564,6 +679,44 @@ function makeMockApp(): AppBindings {
             ],
           },
         });
+        return;
+      }
+      if (trimmedInput === "/todo-preview" || trimmedInput === "todo preview" || trimmedInput === "todo预览") {
+        await delay(250);
+        if (cancelled) return;
+        emit({
+          kind: "tool_dispatch",
+          tool: {
+            id: "mock-todo-preview",
+            name: "todo_write",
+            args: JSON.stringify({
+              todos: [
+                { content: "梳理当前前端结构", status: "completed" },
+                { content: "优化审批与 Ask 决策条布局", activeForm: "正在调整决策条布局", status: "in_progress" },
+                { content: "验证三种预览状态", status: "pending" },
+              ],
+            }),
+            readOnly: false,
+          },
+        });
+        await delay(150);
+        emit({
+          kind: "tool_result",
+          tool: {
+            id: "mock-todo-preview",
+            name: "todo_write",
+            args: JSON.stringify({
+              todos: [
+                { content: "梳理当前前端结构", status: "completed" },
+                { content: "优化审批与 Ask 决策条布局", activeForm: "正在调整决策条布局", status: "in_progress" },
+                { content: "验证三种预览状态", status: "pending" },
+              ],
+            }),
+            output: "todo list updated",
+            readOnly: false,
+          },
+        });
+        emit({ kind: "turn_done" });
         return;
       }
       // Simulate the server's pre-first-token latency so the deferred user bubble
@@ -636,6 +789,10 @@ function makeMockApp(): AppBindings {
       emit({ kind: "message", text: `ask preview answered:\n\n${summary}` });
       emit({ kind: "turn_done" });
     },
+    async ConfirmAction(req) {
+      void req;
+      return false;
+    },
     async SetPlanMode() {},
     async SetMode() {},
     async Compact() {},
@@ -666,7 +823,7 @@ function makeMockApp(): AppBindings {
       ];
     },
     async PreviewSession(path: string) {
-      const s = sessions.find((x) => x.path === path);
+      const s = sessions.find((x) => x.path === path) ?? trashedSessions.find((x) => x.path === path);
       return [
         { role: "user", content: s?.preview || `(mock) preview ${path}` },
         {
@@ -1150,59 +1307,21 @@ function makeMockApp(): AppBindings {
     },
     // Tab management mocks.
     async ListTabs() {
-      return [
-        {
-          id: "tab_joyquant_db",
-          scope: "project",
-          workspaceRoot: "~/projects/joyquant-db",
-          workspaceName: "joyquant-db",
-          topicId: "topic_dev_standard",
-          topicTitle: "00 制定项目开发规范",
-          projectColor: "blue",
-          label: "DeepSeek-R1",
-          ready: true,
-          running: false,
-          active: true,
-          cwd: "~/projects/joyquant-db",
-        },
-        {
-          id: "tab_joyquant_sys",
-          scope: "project",
-          workspaceRoot: "~/projects/joyquant-sys",
-          workspaceName: "joyquant-sys",
-          topicId: "topic_p3b_pd",
-          topicTitle: "p3b P&D",
-          projectColor: "purple",
-          label: "DeepSeek-R1",
-          ready: true,
-          running: false,
-          active: false,
-          cwd: "~/projects/joyquant-sys",
-        },
-        {
-          id: "tab_global",
-          scope: "global",
-          workspaceRoot: "",
-          workspaceName: "Global",
-          topicId: "topic_global",
-          topicTitle: "Global",
-          label: "DeepSeek-R1",
-          ready: true,
-          running: false,
-          active: false,
-          cwd: "~/projects/joyquant-db",
-        },
-      ];
+      return mockTabs.map((tab) => ({ ...tab }));
     },
     async OpenProjectTab(workspaceRoot: string, _topicID: string) {
-      const topic = findMockTopic(_topicID);
-      return {
+      const existing = mockTabs.find((tab) => tab.scope === "project" && tab.workspaceRoot === workspaceRoot && tab.topicId === _topicID);
+      if (existing) {
+        setMockActiveTab(existing.id);
+        return { ...existing, active: true };
+      }
+      const tab: TabMeta = {
         id: "tab_" + Date.now(),
         scope: "project",
         workspaceRoot,
         workspaceName: workspaceRoot.split("/").filter(Boolean).pop() ?? workspaceRoot,
         topicId: _topicID,
-        topicTitle: topic?.label || "新的会话",
+        topicTitle: topicLabel(_topicID, "新的会话"),
         projectColor: mockProjectTree.find((node) => node.root === workspaceRoot)?.projectColor,
         label: "deepseek-v4-flash",
         ready: true,
@@ -1210,25 +1329,47 @@ function makeMockApp(): AppBindings {
         active: true,
         cwd: workspaceRoot,
       };
+      mockTabs = [...mockTabs.map((item) => ({ ...item, active: false })), tab];
+      return { ...tab };
     },
     async OpenGlobalTab(_topicID: string) {
-      return {
+      const existing = mockTabs.find((tab) => tab.scope === "global" && tab.topicId === _topicID);
+      if (existing) {
+        setMockActiveTab(existing.id);
+        return { ...existing, active: true };
+      }
+      const tab: TabMeta = {
         id: "tab_" + Date.now(),
         scope: "global",
         workspaceRoot: "",
         workspaceName: "Global",
         topicId: _topicID,
-        topicTitle: "Global",
+        topicTitle: topicLabel(_topicID, "Global"),
         label: "deepseek-v4-flash",
         ready: true,
         running: false,
         active: true,
         cwd: "",
       };
+      mockTabs = [...mockTabs.map((item) => ({ ...item, active: false })), tab];
+      return { ...tab };
     },
-    async SetActiveTab(_tabID: string) {},
-    async ReorderTabs(_tabIDs: string[]) {},
-    async CloseTab(_tabID: string) {},
+    async SetActiveTab(_tabID: string) {
+      setMockActiveTab(_tabID);
+    },
+    async ReorderTabs(_tabIDs: string[]) {
+      const byId = new Map(mockTabs.map((tab) => [tab.id, tab]));
+      const ordered = _tabIDs.map((id) => byId.get(id)).filter((tab): tab is TabMeta => Boolean(tab));
+      if (ordered.length === mockTabs.length) mockTabs = ordered;
+    },
+    async CloseTab(_tabID: string) {
+      if (mockTabs.length <= 1) return;
+      const wasActive = mockTabs.some((tab) => tab.id === _tabID && tab.active);
+      mockTabs = mockTabs.filter((tab) => tab.id !== _tabID);
+      if (wasActive && mockTabs.length > 0 && !mockTabs.some((tab) => tab.active)) {
+        mockTabs[mockTabs.length - 1] = { ...mockTabs[mockTabs.length - 1], active: true };
+      }
+    },
     async ListProjectTree() {
       return cloneProjectTree();
     },
@@ -1239,10 +1380,17 @@ function makeMockApp(): AppBindings {
       if (node) node.label = title.trim() || (node.kind === "global_folder" ? "Global" : node.label);
     },
     async SetProjectColor(workspaceRoot: string, color: string) {
-      const node = mockProjectTree.find((item) => item.root === workspaceRoot);
+      const node = workspaceRoot
+        ? mockProjectTree.find((item) => item.root === workspaceRoot)
+        : mockProjectTree.find((item) => item.kind === "global_folder");
       if (!node) return;
       node.projectColor = color || undefined;
       for (const child of projectChildren(node)) child.projectColor = node.projectColor;
+      mockTabs = mockTabs.map((tab) =>
+        (workspaceRoot ? tab.workspaceRoot === workspaceRoot : tab.scope === "global")
+          ? { ...tab, projectColor: node.projectColor }
+          : tab,
+      );
     },
     async ReorderProjects(workspaceRoots: string[]) {
       const projects = mockProjectTree.filter((node) => node.kind === "project");
@@ -1261,14 +1409,14 @@ function makeMockApp(): AppBindings {
         : mockProjectTree.find((node) => node.root === _workspaceRoot);
       if (parent) {
         const global = parent.kind === "global_folder";
-        parent.children = [...projectChildren(parent), {
+        parent.children = [{
           key: parent.kind === "global_folder" ? "global_topic_" + id : "topic_" + id,
           kind: global ? "global_topic" : "topic",
           label: topicTitle,
           root: parent.root,
           topicId: id,
           projectColor: parent.projectColor,
-        }];
+        }, ...projectChildren(parent)];
       }
       return { id, title: topicTitle, createdAt: Date.now() };
     },
@@ -1281,6 +1429,9 @@ function makeMockApp(): AppBindings {
     },
     async TrashTopic(topicID: string) {
       deleteMockTopic(topicID);
+    },
+    async SaveWindowState(_state) {
+      // no-op in browser dev — no real window geometry to persist
     },
     async ContextPanel(_tabID: string) {
       const now = Date.now();

@@ -15,6 +15,7 @@ import {
   type ThemeStyle,
 } from "../lib/theme";
 import type { NetworkView, ProviderView, SettingsView } from "../lib/types";
+import { InlineConfirmButton } from "./InlineConfirmButton";
 import { ResizableDrawer } from "./ResizableDrawer";
 import { Tooltip } from "./Tooltip";
 
@@ -487,15 +488,22 @@ function ProvidersSection({ s, busy, apply }: SectionProps) {
                 <button className="btn btn--small" disabled={busy} onClick={() => setEditing(p.name)}>
                   {t("common.edit")}
                 </button>
-                <Tooltip label={defaultProvider === p.name ? t("settings.cantDeleteDefault") : t("settings.deleteProvider")}>
-                  <button
-                    className="btn btn--small"
-                    disabled={busy || defaultProvider === p.name}
-                    onClick={() => void apply(() => app.DeleteProvider(p.name))}
-                  >
-                    {t("common.delete")}
-                  </button>
-                </Tooltip>
+                {defaultProvider === p.name ? (
+                  <Tooltip label={t("settings.cantDeleteDefault")}>
+                    <button className="btn btn--small" disabled>
+                      {t("common.delete")}
+                    </button>
+                  </Tooltip>
+                ) : (
+                  <InlineConfirmButton
+                    label={t("common.delete")}
+                    confirmLabel={t("settings.confirmDeleteProvider")}
+                    cancelLabel={t("common.cancel")}
+                    disabled={busy}
+                    danger
+                    onConfirm={() => apply(() => app.DeleteProvider(p.name))}
+                  />
+                )}
               </div>
               <div className="prov-card__meta">
                 <span>{p.kind}</span>

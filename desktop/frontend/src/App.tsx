@@ -15,7 +15,6 @@ import {
   PanelLeftOpen,
   PanelRightClose,
   PanelRightOpen,
-  RefreshCw,
   Trash2,
 } from "lucide-react";
 import logo from "./assets/logo.svg";
@@ -36,7 +35,6 @@ import { CapabilitiesPanel } from "./components/CapabilitiesPanel";
 import { UpdateBanner } from "./components/UpdateBanner";
 import { ContextPanel } from "./components/ContextPanel";
 import { WorkspacePanel } from "./components/WorkspacePanel";
-import { FileTabPane } from "./components/FileTabPane";
 import { Tooltip } from "./components/Tooltip";
 import { OnboardingOverlay } from "./components/OnboardingOverlay";
 import { TabBar } from "./components/TabBar";
@@ -45,6 +43,7 @@ import { parseTodos } from "./lib/tools";
 import type { ComposerInsertRequest, MemoryView, Meta, Mode, SessionMeta, TabMeta } from "./lib/types";
 import { loadLayoutSize, saveLayoutSize } from "./lib/layoutPreferences";
 import { applyTheme, getTheme, getThemeStyle, isThemeStyle, themeForStyle, type Theme } from "./lib/theme";
+import { useWindowStatePersistence } from "./lib/windowState";
 import {
   ScreenGetAll,
   WindowGetPosition,
@@ -155,20 +154,6 @@ function appChromeScopeLabel(tab?: TabMeta, meta?: Meta): string {
   return workspaceDisplayName(meta?.cwd) || meta?.label || "Global";
 }
 
-type FileTabMeta = TabMeta & {
-  tabType: "file";
-  scope: "file";
-  filePath: string;
-};
-
-function fileTabId(workspaceRoot: string, path: string): string {
-  return `file:${workspaceRoot || "global"}:${path}`;
-}
-
-function fileName(path: string): string {
-  return path.split("/").filter(Boolean).pop() || path;
-}
-
 function sessionsForScope(sessions: SessionMeta[], filter: HistoryScopeFilter): SessionMeta[] {
   if (filter.scope === "project") {
     return sessions.filter((session) => session.scope === "project" && session.workspaceRoot === filter.workspaceRoot);
@@ -227,8 +212,6 @@ export default function App() {
   const t = useT();
   const [mode, setMode] = useState<Mode>("normal");
   const [tabMetas, setTabMetas] = useState<TabMeta[]>([]);
-  const [fileTabs, setFileTabs] = useState<FileTabMeta[]>([]);
-  const [activeFileTabId, setActiveFileTabId] = useState<string | null>(null);
   const [tabOrderIds, setTabOrderIds] = useState<string[]>([]);
   const [tabRevealSignal, setTabRevealSignal] = useState(0);
   // null until the mount probe resolves; true shows the overlay. Probed once —
@@ -244,11 +227,22 @@ export default function App() {
   const [workspacePanelResizing, setWorkspacePanelResizing] = useState(false);
   const [workspacePanelMaximized, setWorkspacePanelMaximized] = useState(false);
   const [rightDockMode, setRightDockMode] = useState<RightDockMode>("files");
-  const [dockRefreshKey, setDockRefreshKey] = useState(0);
+  const dockRefreshKey = 0;
   const [projectRevision, setProjectRevision] = useState(0);
   const [composerInsertRequest, setComposerInsertRequest] = useState<ComposerInsertRequest | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [capsOpen, setCapsOpen] = useState(false);
+
+  // Persist window geometry across launches.
+  useWindowStatePersistence();
+
+  // Open settings when the native menu item (CmdOrCtrl+,) is activated.
+  useEffect(() => {
+    if (typeof window === "undefined" || !window.runtime) return;
+    return window.runtime.EventsOn("app:open-settings", () => {
+      setSettingsOpen(true);
+    });
+  }, []);
   const [pendingPlanRevision, setPendingPlanRevision] = useState<string | null>(null);
   const [footerHeight, setFooterHeight] = useState(0);
   const footerRef = useRef<HTMLElement>(null);
@@ -265,24 +259,19 @@ export default function App() {
     () => tabMetas.find((tab) => tab.id === activeTabId) ?? tabMetas.find((tab) => tab.active),
     [activeTabId, tabMetas],
   );
-  const activeFileTab = useMemo(
-    () => fileTabs.find((tab) => tab.id === activeFileTabId),
-    [activeFileTabId, fileTabs],
-  );
-  const visibleTabId = activeFileTabId ?? activeTabId;
+  const visibleTabId = activeTabId;
   const visibleTabs = useMemo(() => {
-    const source = [...tabMetas, ...fileTabs];
-    const byId = new Map(source.map((tab) => [tab.id, tab]));
+    const byId = new Map(tabMetas.map((tab) => [tab.id, tab]));
     const ordered = tabOrderIds.map((id) => byId.get(id)).filter((tab): tab is TabMeta => Boolean(tab));
-    const missing = source.filter((tab) => !tabOrderIds.includes(tab.id));
+    const missing = tabMetas.filter((tab) => !tabOrderIds.includes(tab.id));
     return [...ordered, ...missing].map((tab) => ({
       ...tab,
       active: tab.id === visibleTabId,
     }));
-  }, [activeFileTabId, activeTabId, fileTabs, tabMetas, tabOrderIds, visibleTabId]);
+  }, [tabMetas, tabOrderIds, visibleTabId]);
 
   useEffect(() => {
-    const ids = [...tabMetas.map((tab) => tab.id), ...fileTabs.map((tab) => tab.id)];
+    const ids = tabMetas.map((tab) => tab.id);
     setTabOrderIds((current) => {
       const next = current.filter((id) => ids.includes(id));
       for (const id of ids) {
@@ -290,13 +279,7 @@ export default function App() {
       }
       return next.join("\u0000") === current.join("\u0000") ? current : next;
     });
-  }, [fileTabs, tabMetas]);
-
-  useEffect(() => {
-    if (activeFileTabId && !fileTabs.some((tab) => tab.id === activeFileTabId)) {
-      setActiveFileTabId(null);
-    }
-  }, [activeFileTabId, fileTabs]);
+  }, [tabMetas]);
 
   const syncModeToController = useCallback((m: Mode) => setControllerMode(m), [setControllerMode]);
 
@@ -341,13 +324,16 @@ export default function App() {
   // clears itself once every item is completed, and can be dismissed by the user
   // (the ✕). A dismissal is keyed to that list's id, so a fresh accepted
   // todo_write brings the panel back.
-  const todoItem = useMemo(() => {
+  const todoEntry = useMemo(() => {
     for (let i = state.items.length - 1; i >= 0; i--) {
       const it = state.items[i];
-      if (it.kind === "tool" && it.name === "todo_write" && !it.parentId && it.status === "done" && !it.error) return it;
+      if (it.kind === "tool" && it.name === "todo_write" && !it.parentId && it.status === "done" && !it.error) {
+        return { item: it, index: i };
+      }
     }
     return null;
   }, [state.items]);
+  const todoItem = todoEntry?.item ?? null;
   const todos = useMemo(() => (todoItem ? parseTodos(todoItem.args) : []), [todoItem]);
   const [dismissedTodo, setDismissedTodo] = useState<string | null>(null);
   const showTodos =
@@ -355,6 +341,39 @@ export default function App() {
     todoItem.id !== dismissedTodo &&
     todos.length > 0 &&
     todos.some((t) => t.status !== "completed");
+  const [todoNow, setTodoNow] = useState(() => Date.now());
+  const todoSeenRef = useRef<{ id: string; at: number } | null>(null);
+
+  useEffect(() => {
+    if (!todoItem) {
+      todoSeenRef.current = null;
+      return;
+    }
+    if (todoSeenRef.current?.id !== todoItem.id) {
+      todoSeenRef.current = { id: todoItem.id, at: Date.now() };
+      setTodoNow(Date.now());
+    }
+  }, [todoItem]);
+
+  useEffect(() => {
+    if (!showTodos) return;
+    const id = window.setInterval(() => setTodoNow(Date.now()), 15000);
+    return () => window.clearInterval(id);
+  }, [showTodos]);
+
+  const todoStale = useMemo(() => {
+    if (!showTodos || !todoEntry) return false;
+    const after = state.items.slice(todoEntry.index + 1);
+    const completedToolsAfter = after.filter(
+      (it) => it.kind === "tool" && it.name !== "todo_write" && !it.parentId && (it.status === "done" || it.status === "error"),
+    ).length;
+    const finalAssistantAfter = after.some((it) => it.kind === "assistant" && !it.streaming && it.text.trim() !== "");
+    const readinessNoticeAfter = after.some(
+      (it) => it.kind === "notice" && /final-answer readiness|todo_write|complete_step/i.test(it.text),
+    );
+    const staleByTime = state.running && todoSeenRef.current?.id === todoEntry.item.id && todoNow - todoSeenRef.current.at > 90_000;
+    return completedToolsAfter >= 2 || finalAssistantAfter || readinessNoticeAfter || staleByTime;
+  }, [showTodos, state.items, state.running, todoEntry, todoNow]);
 
   useEffect(() => {
     if (!pendingPlanRevision || state.running) return;
@@ -500,7 +519,6 @@ export default function App() {
   }, [chatWidth, measureChatWidth, workspacePanelMaximized]);
 
   const startNewSession = useCallback(async () => {
-    setActiveFileTabId(null);
     await newSession();
   }, [newSession]);
 
@@ -774,82 +792,17 @@ export default function App() {
     }
   }, [closeWorkspacePanel, openWorkspacePanel]);
 
-  const toggleWorkspacePanel = useCallback(() => {
-    if (workspacePanelOpen) {
-      closeWorkspacePanel();
-      return;
-    }
-    openWorkspacePanel();
-  }, [closeWorkspacePanel, openWorkspacePanel, workspacePanelOpen]);
-
   const addWorkspaceTextToComposer = useCallback((text: string) => {
-    setActiveFileTabId(null);
     setComposerInsertRequest({ id: Date.now(), text });
   }, []);
 
-  const openWorkspaceFileTab = useCallback((path: string) => {
-    const workspaceRoot = state.meta?.cwd ?? "";
-    const workspaceName = workspaceDisplayName(workspaceRoot) || "Project";
-    const id = fileTabId(workspaceRoot, path);
-    setFileTabs((current) => {
-      if (current.some((tab) => tab.id === id)) return current;
-      return [
-        ...current,
-        {
-          id,
-          tabType: "file",
-          scope: "file",
-          workspaceRoot,
-          workspaceName,
-          topicId: "",
-          topicTitle: fileName(path),
-          filePath: path,
-          label: "File",
-          ready: true,
-          running: false,
-          active: false,
-          cwd: workspaceRoot,
-        },
-      ];
-    });
-    setTabOrderIds((current) => (current.includes(id) ? current : [...current, id]));
-    setActiveFileTabId(id);
-    setTabRevealSignal((signal) => signal + 1);
-  }, [state.meta?.cwd]);
-
   const handleTabChange = useCallback(async (id: string) => {
-    if (fileTabs.some((tab) => tab.id === id)) {
-      setActiveFileTabId(id);
-      setTabRevealSignal((signal) => signal + 1);
-      return;
-    }
-    setActiveFileTabId(null);
     await switchTab(id);
     await refreshTabMetas();
     setTabRevealSignal((signal) => signal + 1);
-  }, [fileTabs, refreshTabMetas, switchTab]);
+  }, [refreshTabMetas, switchTab]);
 
   const handleTabClose = useCallback(async (id: string) => {
-    const closingFileTab = fileTabs.find((tab) => tab.id === id);
-    if (closingFileTab) {
-      const currentTabs = visibleTabs;
-      const closingIndex = currentTabs.findIndex((tab) => tab.id === id);
-      const remaining = currentTabs.filter((tab) => tab.id !== id);
-      setFileTabs((current) => current.filter((tab) => tab.id !== id));
-      setTabOrderIds((current) => current.filter((tabId) => tabId !== id));
-      if (activeFileTabId === id) {
-        const nextIndex = Math.min(Math.max(closingIndex, 0), remaining.length - 1);
-        const nextTab = remaining[nextIndex];
-        if (nextTab?.tabType === "file" || nextTab?.scope === "file") {
-          setActiveFileTabId(nextTab.id);
-        } else {
-          setActiveFileTabId(null);
-          if (nextTab?.id) await switchTab(nextTab.id);
-        }
-      }
-      setTabRevealSignal((signal) => signal + 1);
-      return;
-    }
     setTabMetas((current) => {
       if (current.length <= 1) return current;
       const closingIndex = current.findIndex((tab) => tab.id === id);
@@ -861,11 +814,24 @@ export default function App() {
       const nextActiveId = remaining[nextIndex]?.id;
       return remaining.map((tab) => ({ ...tab, active: tab.id === nextActiveId }));
     });
-    if (activeFileTabId === id) setActiveFileTabId(null);
     await closeTab(id);
     await refreshTabMetas();
     setTabRevealSignal((signal) => signal + 1);
-  }, [activeFileTabId, activeTabId, closeTab, fileTabs, refreshTabMetas, switchTab, visibleTabs]);
+  }, [activeTabId, closeTab, refreshTabMetas]);
+
+  const handleTabsClose = useCallback(async (ids: string[], nextActiveTabId?: string) => {
+    const currentIds = tabMetas.map((tab) => tab.id);
+    const targets = ids.filter((id, index) => currentIds.includes(id) && ids.indexOf(id) === index);
+    if (targets.length === 0) return;
+    for (const id of targets) {
+      await closeTab(id);
+    }
+    if (nextActiveTabId && currentIds.includes(nextActiveTabId)) {
+      await switchTab(nextActiveTabId);
+    }
+    await refreshTabMetas();
+    setTabRevealSignal((signal) => signal + 1);
+  }, [closeTab, refreshTabMetas, switchTab, tabMetas]);
 
   const handleTabsReorder = useCallback(async (ids: string[]) => {
     setTabOrderIds(ids);
@@ -874,26 +840,27 @@ export default function App() {
       const ordered = ids.map((id) => byId.get(id)).filter((tab): tab is TabMeta => Boolean(tab));
       return ordered.length === current.length ? ordered : current;
     });
-    setFileTabs((current) => {
-      const byId = new Map(current.map((tab) => [tab.id, tab]));
-      const ordered = ids.map((id) => byId.get(id)).filter((tab): tab is FileTabMeta => Boolean(tab));
-      return ordered.length === current.length ? ordered : current;
-    });
-    const sessionIds = ids.filter((id) => tabMetas.some((tab) => tab.id === id));
-    await reorderTabs(sessionIds);
+    await reorderTabs(ids);
     await refreshTabMetas();
     setTabRevealSignal((signal) => signal + 1);
-  }, [refreshTabMetas, reorderTabs, tabMetas]);
+  }, [refreshTabMetas, reorderTabs]);
 
   const handleNewTab = useCallback(async () => {
-    setActiveFileTabId(null);
-    await pickWorkspace();
+    const activeWorkspaceRoot = activeTab?.workspaceRoot || state.meta?.cwd || "";
+    const targetScope = activeTab?.scope === "global" || !activeWorkspaceRoot ? "global" : "project";
+    const workspaceRoot = targetScope === "project" ? activeWorkspaceRoot : "";
+    const topic = await app.CreateTopic(targetScope, workspaceRoot, "");
+    if (targetScope === "global" || !workspaceRoot) {
+      await openGlobalTab(topic.id);
+    } else {
+      await openProjectTab(workspaceRoot, topic.id);
+    }
+    setProjectRevision((value) => value + 1);
     await refreshTabMetas();
     setTabRevealSignal((signal) => signal + 1);
-  }, [pickWorkspace, refreshTabMetas]);
+  }, [activeTab?.scope, activeTab?.workspaceRoot, openGlobalTab, openProjectTab, refreshTabMetas, state.meta?.cwd]);
 
   const handleOpenTopic = useCallback(async (scope: string, workspaceRoot: string, topicId: string) => {
-    setActiveFileTabId(null);
     if (scope === "global") {
       await openGlobalTab(topicId);
     } else {
@@ -971,6 +938,17 @@ export default function App() {
     },
     [purgeTrashedSession, listTrashedSessions],
   );
+  const onPurgeAllTrashedSessions = useCallback(
+    async (paths: string[]) => {
+      const uniquePaths = Array.from(new Set(paths));
+      for (const path of uniquePaths) {
+        await purgeTrashedSession(path);
+      }
+      const trashed = await listTrashedSessions();
+      setHistView((cur) => (cur === null ? null : { kind: "trash", sessions: trashed }));
+    },
+    [purgeTrashedSession, listTrashedSessions],
+  );
 
   // Workspace: open the folder chooser and switch projects. The hook resets the
   // transcript and refreshes meta on a pick. A cancel is a no-op.
@@ -1022,6 +1000,7 @@ export default function App() {
   const sidebarToggleTitle = sidebarCollapsed
       ? t("sidebar.expand")
       : t("sidebar.collapse");
+  const sidebarNavTooltipDisabled = !sidebarCollapsed;
   const workspacePanelResetWidth = rightDockMode === "context" ? RIGHT_DOCK_CONTEXT_WIDTH : RIGHT_DOCK_DEFAULT_WIDTH;
 
   return (
@@ -1062,15 +1041,6 @@ export default function App() {
             <span className="app-chrome__scope">{appChromeScopeLabel(activeTab, state.meta)}</span>
           </div>
           <div className="app-chrome__spacer" />
-          <button
-            className={`app-chrome__panel-toggle app-chrome__panel-toggle--right${workspacePanelOpen ? " app-chrome__panel-toggle--active" : ""}`}
-            type="button"
-            onClick={toggleWorkspacePanel}
-            aria-label={workspacePanelOpen ? "关闭右侧工作台" : "打开右侧工作台"}
-            aria-pressed={workspacePanelOpen}
-          >
-            {workspacePanelOpen ? <PanelRightClose size={15} /> : <PanelRightOpen size={15} />}
-          </button>
         </header>
 
         <aside className={`sidebar${sidebarCollapsed ? " sidebar--collapsed" : ""}`} aria-label={t("sidebar.navigation")}>
@@ -1107,7 +1077,7 @@ export default function App() {
           </section>
 
           <nav className="sidebar__nav">
-            <Tooltip label={t("sidebar.allHistory")} fill>
+            <Tooltip label={t("sidebar.allHistory")} fill side="right" disabled={sidebarNavTooltipDisabled}>
               <button
                 className="sidebar__navitem"
                 onClick={() => void openAllHistory()}
@@ -1116,7 +1086,7 @@ export default function App() {
                 <span>{t("sidebar.allHistory")}</span>
               </button>
             </Tooltip>
-            <Tooltip label={t("sidebar.trash")} fill>
+            <Tooltip label={t("sidebar.trash")} fill side="right" disabled={sidebarNavTooltipDisabled}>
               <button
                 className="sidebar__navitem"
                 onClick={() => void openTrash()}
@@ -1125,19 +1095,19 @@ export default function App() {
                 <span>{t("sidebar.trash")}</span>
               </button>
             </Tooltip>
-            <Tooltip label={t("topbar.memory")} fill>
+            <Tooltip label={t("topbar.memory")} fill side="right" disabled={sidebarNavTooltipDisabled}>
               <button className="sidebar__navitem" onClick={() => void openMemory()}>
                 <Brain size={15} />
                 <span>{t("topbar.memory")}</span>
               </button>
             </Tooltip>
-            <Tooltip label={t("caps.title")} fill>
+            <Tooltip label={t("caps.title")} fill side="right" disabled={sidebarNavTooltipDisabled}>
               <button className="sidebar__navitem" onClick={() => setCapsOpen(true)}>
                 <Blocks size={15} />
                 <span>{t("caps.title")}</span>
               </button>
             </Tooltip>
-            <Tooltip label={t("topbar.settings")} fill>
+            <Tooltip label={t("topbar.settings")} fill side="right" disabled={sidebarNavTooltipDisabled}>
               <button
                 className="sidebar__navitem"
                 onClick={() => setSettingsOpen(true)}
@@ -1171,18 +1141,12 @@ export default function App() {
               revealActiveSignal={tabRevealSignal}
               onTabChange={(id) => void handleTabChange(id)}
               onTabClose={(id) => void handleTabClose(id)}
+              onTabsClose={(ids, nextActiveTabId) => void handleTabsClose(ids, nextActiveTabId)}
               onTabsReorder={(ids) => void handleTabsReorder(ids)}
               onNewTab={() => void handleNewTab()}
             />
           </header>
 
-          {activeFileTab ? (
-            <FileTabPane
-              path={activeFileTab.filePath}
-              workspaceName={activeFileTab.workspaceName}
-              onAddToChat={addWorkspaceTextToComposer}
-            />
-          ) : (
           <>
           <header className="topicbar">
             <div className="topicbar__identity">
@@ -1227,7 +1191,7 @@ export default function App() {
           </main>
 
           <footer className="footer" ref={footerRef}>
-            {showTodos && <TodoPanel todos={todos} onDismiss={() => setDismissedTodo(todoItem!.id)} />}
+            {showTodos && <TodoPanel todos={todos} stale={todoStale} onDismiss={() => setDismissedTodo(todoItem!.id)} />}
             {state.approval && (
               <ApprovalModal
                 approval={state.approval}
@@ -1270,6 +1234,7 @@ export default function App() {
               onRemoveWorkspace={removeWorkspace}
               insertRequest={composerInsertRequest}
               disabled={state.meta?.ready === false || state.approval != null || state.ask != null}
+              decisionPending={state.approval != null || state.ask != null}
               ready={state.meta?.ready === true}
               turnStartAt={state.turnStartAt}
               turnTokens={state.turnTokens}
@@ -1287,7 +1252,6 @@ export default function App() {
             />
           </footer>
           </>
-          )}
         </section>
 
         {workspacePanelOpen && !workspacePanelMaximized && (
@@ -1304,6 +1268,20 @@ export default function App() {
             onKeyDown={resizeWorkspacePanelWithKeyboard}
             onDoubleClick={() => setSavedWorkspacePanelWidth(workspacePanelResetWidth)}
           />
+        )}
+
+        {!workspacePanelOpen && !workspacePanelMaximized && (
+          <Tooltip label="展开右侧工作区" className="workspace-dock-peek">
+            <button
+              className="workspace-iconbtn workspace-dock-peek__button"
+              type="button"
+              onClick={() => openWorkspacePanel("files")}
+              aria-label="展开右侧工作区"
+              aria-pressed={false}
+            >
+              <PanelRightOpen size={14} />
+            </button>
+          </Tooltip>
         )}
 
         {workspacePanelOpen && (
@@ -1350,13 +1328,14 @@ export default function App() {
                   {t("workspace.changedTab")}
                 </button>
               </div>
-              <Tooltip label="刷新右侧视图">
+              <Tooltip label="收起右侧工作区">
                 <button
                   className="workspace-iconbtn"
                   type="button"
-                  onClick={() => setDockRefreshKey((key) => key + 1)}
+                  aria-label="收起右侧工作区"
+                  onClick={closeWorkspacePanel}
                 >
-                  <RefreshCw size={14} />
+                  <PanelRightClose size={14} />
                 </button>
               </Tooltip>
             </div>
@@ -1379,7 +1358,6 @@ export default function App() {
                   onClose={() => setWorkspacePanel(false)}
                   onToggleMaximized={() => setWorkspacePanelMaximized((value) => !value)}
                   onAddToChat={addWorkspaceTextToComposer}
-                  onOpenFileTab={openWorkspaceFileTab}
                   onRequestPanelWidth={ensureWorkspacePanelWidth}
                   refreshKey={dockRefreshKey}
                   initialViewMode={rightDockMode === "changed" ? "changed" : "files"}
@@ -1412,6 +1390,7 @@ export default function App() {
           onRename={onRenameSession}
           onRestore={onRestoreTrashedSession}
           onPurge={onPurgeTrashedSession}
+          onPurgeAll={onPurgeAllTrashedSessions}
           onClose={closeHistory}
         />
       )}

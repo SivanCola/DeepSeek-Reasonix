@@ -11,12 +11,14 @@ type AssistantItem = Extract<Item, { kind: "assistant" }>;
 export function UserMessage({
   text,
   turn,
+  anchorId,
   open,
   onToggle,
   onRewind,
 }: {
   text: string;
   turn?: number;
+  anchorId?: string;
   open?: boolean; // whether this message's rewind menu is the open one (lifted to Transcript)
   onToggle?: () => void;
   onRewind?: (turn: number, scope: string) => void;
@@ -26,7 +28,7 @@ export function UserMessage({
   const rewind = (scope: string) => onRewind?.(turn as number, scope);
   const displayText = text.replace(/@\.reasonix\/attachments\/[^\s]+/g, "[image]");
   return (
-    <div className="msg msg--user">
+    <div className="msg msg--user" id={anchorId} data-question-anchor={anchorId}>
       <span className="msg__caret">›</span>
       <div className="msg__text">{displayText}</div>
       {canRewind && (

@@ -1,6 +1,16 @@
 // theme.ts manages the appearance override. The stylesheet follows the OS via
 // prefers-color-scheme unless data-theme forces "dark" or "light". A separate
 // data-theme-style attribute changes only accent tokens.
+//
+// When running inside the Wails shell, applyTheme also syncs the native window
+// theme (title bar, traffic lights, etc.) so the OS chrome matches the webview.
+
+import {
+  WindowSetDarkTheme,
+  WindowSetLightTheme,
+  WindowSetSystemDefaultTheme,
+  WindowSetBackgroundColour,
+} from "../../wailsjs/runtime/runtime";
 
 export type Theme = "auto" | "light" | "dark";
 export type ResolvedTheme = Exclude<Theme, "auto">;
@@ -33,7 +43,9 @@ const DEFAULT_THEME_STYLE: Record<ResolvedTheme, ThemeStyle> = {
   dark: "graphite",
   light: "glacier",
 };
-const DEFAULT_THEME: Theme = "dark";
+// New users default to "auto" so the app follows the OS preference. Existing users
+// with an explicit light/dark stored in localStorage keep their choice unchanged.
+const DEFAULT_THEME: Theme = "auto";
 
 const THEME_KEY = "reasonix-theme";
 const STYLE_KEY = "reasonix-theme-style";
@@ -105,6 +117,18 @@ export function applyTheme(theme: Theme, style: ThemeStyle = getThemeStyle(theme
   const resolved = getResolvedTheme(theme);
   const nextStyle = themeForStyle(style) === resolved ? style : DEFAULT_THEME_STYLE[resolved];
   root.setAttribute("data-theme-style", nextStyle);
+
+  // Sync the native window theme (title bar, traffic lights) to match.
+  if (typeof window !== "undefined" && window.runtime) {
+    if (theme === "auto") {
+      WindowSetSystemDefaultTheme();
+    } else if (theme === "light") {
+      WindowSetLightTheme();
+    } else if (theme === "dark") {
+      WindowSetDarkTheme();
+    }
+  }
+
   if (options.persist === false) return;
   try {
     localStorage.setItem(THEME_KEY, theme);
@@ -114,7 +138,21 @@ export function applyTheme(theme: Theme, style: ThemeStyle = getThemeStyle(theme
   }
 }
 
+// initTheme runs before React mounts. It applies the saved theme to the DOM and
+// sets the native window background colour to match the resolved theme, avoiding
+// a white (or wrong-colour) flash while the webview paints its first frame.
 export function initTheme(): void {
   const theme = getTheme();
   applyTheme(theme, getThemeStyle(theme), { persist: false });
+
+  if (typeof window !== "undefined" && window.runtime) {
+    const resolved = getResolvedTheme(theme);
+    if (resolved === "light") {
+      // Light shell: matches :root[data-theme="light"] --bg (#f7f8fb).
+      WindowSetBackgroundColour(247, 248, 251, 255);
+    } else {
+      // Dark shell: matches :root --bg (#090a0c).
+      WindowSetBackgroundColour(9, 10, 12, 255);
+    }
+  }
 }

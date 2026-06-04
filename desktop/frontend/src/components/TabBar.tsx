@@ -1,17 +1,19 @@
 // TabBar renders the browser-like workspace tab strip. Each tab represents one
 // open project/global topic, so switching tabs switches the active conversation.
 import { useEffect, useRef, useState } from "react";
-import type { CSSProperties, DragEvent } from "react";
+import type { CSSProperties, DragEvent, KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent } from "react";
 import { FileText, Plus, X } from "lucide-react";
 import type { TabMeta } from "../lib/types";
 import { projectColorValue } from "../lib/projectColors";
 import { Tooltip } from "./Tooltip";
+import { ContextMenu, contextMenuPointFromEvent, type ContextMenuItem, type ContextMenuPoint } from "./ContextMenu";
 
 interface TabBarProps {
   tabs: TabMeta[];
   activeTabId?: string;
   onTabChange: (tabId: string) => void;
   onTabClose: (tabId: string) => void;
+  onTabsClose: (tabIds: string[], nextActiveTabId?: string) => void;
   onTabsReorder: (tabIds: string[]) => void;
   onNewTab: () => void;
   revealActiveSignal?: number;
@@ -39,9 +41,11 @@ function projectAccentStyle(color?: string): CSSProperties | undefined {
   return { "--project-accent": value } as CSSProperties;
 }
 
-export function TabBar({ tabs, activeTabId, onTabChange, onTabClose, onTabsReorder, onNewTab, revealActiveSignal = 0 }: TabBarProps) {
+export function TabBar({ tabs, activeTabId, onTabChange, onTabClose, onTabsClose, onTabsReorder, onNewTab, revealActiveSignal = 0 }: TabBarProps) {
   const [draggingTabId, setDraggingTabId] = useState<string | null>(null);
   const [dropTarget, setDropTarget] = useState<{ id: string; side: DropSide } | null>(null);
+  const [menuTabId, setMenuTabId] = useState<string | null>(null);
+  const [menuPoint, setMenuPoint] = useState<ContextMenuPoint | null>(null);
   const suppressClickRef = useRef(false);
   const tabRefs = useRef(new Map<string, HTMLButtonElement>());
   const backendActiveTabId = tabs.find((tab) => tab.active)?.id;
@@ -121,6 +125,51 @@ export function TabBar({ tabs, activeTabId, onTabChange, onTabClose, onTabsReord
     onTabChange(tabId);
   };
 
+  const openTabMenu = (event: ReactMouseEvent<HTMLButtonElement> | ReactKeyboardEvent<HTMLButtonElement>, tabId: string) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setMenuTabId(tabId);
+    setMenuPoint(contextMenuPointFromEvent(event));
+  };
+
+  const closeTabMenu = () => {
+    setMenuTabId(null);
+    setMenuPoint(null);
+  };
+
+  const closeTabsFromMenu = (tabIds: string[], nextActiveTabId?: string) => {
+    closeTabMenu();
+    onTabsClose(tabIds, nextActiveTabId);
+  };
+
+  const menuTabIndex = menuTabId ? tabs.findIndex((tab) => tab.id === menuTabId) : -1;
+  const tabMenuItems: ContextMenuItem[] = menuTabId && menuTabIndex >= 0
+    ? [
+        {
+          key: "close-current",
+          label: "关闭标签页",
+          disabled: tabs.length <= 1,
+          onSelect: () => closeTabsFromMenu([menuTabId]),
+        },
+        {
+          key: "close-other",
+          label: "关闭其他标签页",
+          disabled: tabs.length <= 1,
+          onSelect: () => closeTabsFromMenu(tabs.filter((tab) => tab.id !== menuTabId).map((tab) => tab.id), menuTabId),
+        },
+        {
+          key: "close-right",
+          label: "关闭右侧标签页",
+          disabled: menuTabIndex >= tabs.length - 1,
+          onSelect: () => {
+            const rightTabIds = tabs.slice(menuTabIndex + 1).map((tab) => tab.id);
+            const nextActiveTabId = resolvedActiveTabId && rightTabIds.includes(resolvedActiveTabId) ? menuTabId : undefined;
+            closeTabsFromMenu(rightTabIds, nextActiveTabId);
+          },
+        },
+      ]
+    : [];
+
   return (
     <div className="tabbar">
       <div className="tabbar__tabs">
@@ -148,6 +197,12 @@ export function TabBar({ tabs, activeTabId, onTabChange, onTabClose, onTabsReord
               aria-label={fullTitle}
               style={projectAccentStyle(tab.projectColor)}
               onClick={() => handleTabClick(tab.id)}
+              onContextMenu={(event) => openTabMenu(event, tab.id)}
+              onKeyDown={(event) => {
+                if (event.key === "ContextMenu" || (event.shiftKey && event.key === "F10")) {
+                  openTabMenu(event, tab.id);
+                }
+              }}
               onDragStart={(event) => handleDragStart(event, tab.id)}
               onDragOver={(event) => handleDragOver(event, tab.id)}
               onDrop={(event) => handleDrop(event, tab.id)}
@@ -177,6 +232,14 @@ export function TabBar({ tabs, activeTabId, onTabChange, onTabClose, onTabsReord
           <Plus size={13} />
         </button>
       </Tooltip>
+      <ContextMenu
+        open={Boolean(menuTabId)}
+        point={menuPoint}
+        items={tabMenuItems}
+        minWidth={170}
+        ariaLabel="标签页操作"
+        onClose={closeTabMenu}
+      />
     </div>
   );
 }

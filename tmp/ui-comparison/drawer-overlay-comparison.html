@@ -1,0 +1,472 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Reasonix Drawer Overlay Comparison</title>
+  <style>
+    :root {
+      color-scheme: light;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #eef2f7;
+      color: #111827;
+    }
+    * {
+      box-sizing: border-box;
+    }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      padding: 32px;
+      background:
+        linear-gradient(180deg, rgba(255,255,255,0.72), rgba(255,255,255,0)),
+        #eef2f7;
+    }
+    .sheet {
+      width: min(1480px, 100%);
+      background: #ffffff;
+      border: 1px solid #d9e1ec;
+      border-radius: 18px;
+      box-shadow: 0 24px 70px rgba(30, 41, 59, 0.18);
+      overflow: hidden;
+    }
+    .headline {
+      padding: 24px 28px 20px;
+      border-bottom: 1px solid #e2e8f0;
+      background: #fbfdff;
+    }
+    h1 {
+      margin: 0;
+      font-size: 25px;
+      line-height: 1.2;
+      letter-spacing: 0;
+    }
+    .headline p {
+      margin: 8px 0 0;
+      color: #64748b;
+      font-size: 14px;
+    }
+    .compare {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0;
+    }
+    .panel {
+      padding: 22px;
+      border-right: 1px solid #e2e8f0;
+    }
+    .panel:last-child {
+      border-right: 0;
+    }
+    .label {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      gap: 16px;
+      margin-bottom: 14px;
+    }
+    .label h2 {
+      margin: 0;
+      font-size: 17px;
+      line-height: 1.25;
+      letter-spacing: 0;
+    }
+    .label span {
+      color: #64748b;
+      font-size: 13px;
+      white-space: nowrap;
+    }
+    .viewport {
+      position: relative;
+      height: 820px;
+      overflow: hidden;
+      border: 1px solid #d8e1ec;
+      border-radius: 13px;
+      background: #f6f8fb;
+    }
+    .appbar {
+      height: 58px;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      padding: 0 24px;
+      background: #eaf1f7;
+      border-bottom: 1px solid #d9e2ec;
+      font-weight: 700;
+      font-size: 18px;
+    }
+    .logo {
+      width: 28px;
+      height: 28px;
+      border-radius: 8px;
+      background: #ffffff;
+      border: 1px solid #d7e0eb;
+      display: grid;
+      place-items: center;
+      color: #2b83b8;
+      font-weight: 800;
+      font-size: 13px;
+    }
+    .layout {
+      display: grid;
+      grid-template-columns: 234px 1fr;
+      height: calc(100% - 58px);
+    }
+    .sidebar {
+      background: #f1f5f9;
+      border-right: 1px solid #d9e2ec;
+      padding: 18px 16px;
+    }
+    .search {
+      height: 38px;
+      border: 1px solid #cfd9e7;
+      border-radius: 10px;
+      background: #fff;
+      color: #94a3b8;
+      display: flex;
+      align-items: center;
+      padding: 0 12px;
+      margin-bottom: 24px;
+      font-size: 13px;
+    }
+    .section-title {
+      font-size: 14px;
+      font-weight: 700;
+      color: #475569;
+      margin-bottom: 16px;
+    }
+    .project {
+      margin-bottom: 20px;
+    }
+    .project-head {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      height: 34px;
+      font-weight: 700;
+      color: #334155;
+    }
+    .dot {
+      width: 11px;
+      height: 11px;
+      border-radius: 999px;
+      background: #3b82f6;
+      box-shadow: 0 0 0 5px rgba(59, 130, 246, 0.1);
+    }
+    .topic {
+      margin-left: 28px;
+      padding: 9px 10px;
+      border-radius: 9px;
+      color: #475569;
+      font-size: 14px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .topic.active {
+      background: #e4edf9;
+      color: #111827;
+      border-left: 3px solid #3b82f6;
+    }
+    .main {
+      padding: 34px 42px;
+      background: #ffffff;
+    }
+    .tabs {
+      display: flex;
+      height: 48px;
+      margin: -34px -42px 28px;
+      background: #edf3f8;
+      border-bottom: 1px solid #d9e2ec;
+    }
+    .tab {
+      width: 180px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 0 18px;
+      border-right: 1px solid #d9e2ec;
+      color: #475569;
+      font-weight: 700;
+      font-size: 14px;
+    }
+    .tab::before {
+      content: "";
+      width: 10px;
+      height: 10px;
+      border-radius: 999px;
+      background: #3b82f6;
+    }
+    .content-title {
+      font-size: 26px;
+      line-height: 1.25;
+      font-weight: 800;
+      margin-bottom: 22px;
+    }
+    .message {
+      width: 76%;
+      padding: 18px 20px;
+      margin-bottom: 16px;
+      border: 1px solid #d8e2ed;
+      border-radius: 13px;
+      background: #f8fafc;
+      color: #334155;
+      font-size: 15px;
+      line-height: 1.65;
+    }
+    .drawer-backdrop {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      justify-content: flex-end;
+      pointer-events: none;
+    }
+    .before .drawer-backdrop {
+      background: rgba(15, 23, 42, 0.4);
+    }
+    .after .drawer-backdrop {
+      background: transparent;
+    }
+    .drawer {
+      width: 380px;
+      height: 100%;
+      background: #ffffff;
+      border-left: 1px solid #d5dfeb;
+      box-shadow: -18px 0 46px rgba(30, 41, 59, 0.22);
+      display: flex;
+      flex-direction: column;
+    }
+    .after .drawer {
+      box-shadow: -12px 0 34px rgba(30, 41, 59, 0.12);
+    }
+    .drawer-head {
+      padding: 24px;
+      border-bottom: 1px solid #dde6f0;
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 18px;
+    }
+    .drawer-title {
+      font-size: 21px;
+      font-weight: 800;
+      margin-bottom: 6px;
+    }
+    .drawer-sub {
+      color: #8391a7;
+      font-size: 13px;
+      line-height: 1.5;
+    }
+    .close {
+      width: 42px;
+      height: 42px;
+      border-radius: 11px;
+      border: 1px solid #cfd9e7;
+      background: #f4f7fb;
+      color: #475569;
+      display: grid;
+      place-items: center;
+      font-size: 22px;
+    }
+    .drawer-body {
+      padding: 22px;
+      overflow: hidden;
+    }
+    .drawer-search {
+      height: 42px;
+      border: 1px solid #cfd9e7;
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      padding: 0 13px;
+      color: #94a3b8;
+      font-size: 14px;
+      margin-bottom: 22px;
+    }
+    .group {
+      font-weight: 800;
+      color: #475569;
+      font-size: 14px;
+      margin: 18px 0 10px;
+    }
+    .history-item {
+      border: 1px solid #d7e0eb;
+      background: #eef3f8;
+      border-radius: 11px;
+      padding: 14px 16px;
+      margin-bottom: 10px;
+    }
+    .history-item.selected {
+      border-color: #3b82f6;
+      box-shadow: inset 3px 0 0 #3b82f6;
+    }
+    .item-title {
+      font-size: 16px;
+      line-height: 1.35;
+      font-weight: 650;
+      color: #111827;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .item-meta {
+      margin-top: 6px;
+      color: #8391a7;
+      font-size: 13px;
+    }
+    .callout {
+      margin-top: 14px;
+      min-height: 56px;
+      padding: 12px 14px;
+      border-radius: 11px;
+      font-size: 13px;
+      line-height: 1.5;
+    }
+    .before .callout {
+      color: #7f1d1d;
+      background: #fff1f2;
+      border: 1px solid #fecdd3;
+    }
+    .after .callout {
+      color: #0f5132;
+      background: #ecfdf5;
+      border: 1px solid #bbf7d0;
+    }
+  </style>
+</head>
+<body>
+  <main class="sheet">
+    <header class="headline">
+      <h1>右侧抽屉遮罩改造前后对比</h1>
+      <p>目标：保留抽屉层级和点击外部关闭能力，同时减少“整个项目被遮住”的压迫感。</p>
+    </header>
+    <section class="compare">
+      <article class="panel before">
+        <div class="label">
+          <h2>改动前：深色全屏遮罩</h2>
+          <span>背景被压暗，像模态弹窗</span>
+        </div>
+        <div class="viewport">
+          <div class="appbar"><div class="logo">R</div>Reasonix / joyquant-db</div>
+          <div class="layout">
+            <aside class="sidebar">
+              <div class="search">搜索项目或会话</div>
+              <div class="section-title">项目工作区</div>
+              <div class="project">
+                <div class="project-head"><span>⌄</span><span>▢</span><span class="dot"></span>joyquant-db</div>
+                <div class="topic active">00 制定项目开发规范</div>
+                <div class="topic">01 JoyQuant DB项目维护</div>
+                <div class="topic">项目环境uv和Python运行问题</div>
+              </div>
+              <div class="project">
+                <div class="project-head"><span>⌄</span><span>▢</span><span class="dot" style="background:#8b5cf6"></span>joyquant-sys</div>
+                <div class="topic">20260523 p3b P&D</div>
+                <div class="topic">20260521 p3a P&D</div>
+              </div>
+            </aside>
+            <section class="main">
+              <div class="tabs"><div class="tab">00 制定项...</div><div class="tab">Global</div></div>
+              <div class="content-title">joyquant-db / 00 制定项目开发规范</div>
+              <div class="message">沉淀跨项目通用产品规则、约定和异常处理。</div>
+              <div class="message">This is a read-only mock preview. The active conversation is unchanged.</div>
+            </section>
+          </div>
+          <div class="drawer-backdrop">
+            <aside class="drawer">
+              <div class="drawer-head">
+                <div>
+                  <div class="drawer-title">回收站</div>
+                  <div class="drawer-sub">删除的会话会先放在这里，可恢复或彻底删除。</div>
+                </div>
+                <div class="close">×</div>
+              </div>
+              <div class="drawer-body">
+                <div class="drawer-search">搜索会话...</div>
+                <div class="group">今天</div>
+                <div class="history-item selected">
+                  <div class="item-title">00 制定项目开发规范</div>
+                  <div class="item-meta">4 轮 · 21:43 · 已删除</div>
+                </div>
+                <div class="history-item">
+                  <div class="item-title">20260521 p3a P&D</div>
+                  <div class="item-meta">7 轮 · 20:03 · 已删除</div>
+                </div>
+                <div class="group">昨天</div>
+                <div class="history-item">
+                  <div class="item-title">产品通用规范</div>
+                  <div class="item-meta">2 轮 · 22:03 · 已删除</div>
+                </div>
+                <div class="callout">问题：抽屉之外被整体压暗，用户会感觉进入了强制模态流程。</div>
+              </div>
+            </aside>
+          </div>
+        </div>
+      </article>
+
+      <article class="panel after">
+        <div class="label">
+          <h2>改动后：轻量侧边面板</h2>
+          <span>背景保持可读，抽屉仍有层级</span>
+        </div>
+        <div class="viewport">
+          <div class="appbar"><div class="logo">R</div>Reasonix / joyquant-db</div>
+          <div class="layout">
+            <aside class="sidebar">
+              <div class="search">搜索项目或会话</div>
+              <div class="section-title">项目工作区</div>
+              <div class="project">
+                <div class="project-head"><span>⌄</span><span>▢</span><span class="dot"></span>joyquant-db</div>
+                <div class="topic active">00 制定项目开发规范</div>
+                <div class="topic">01 JoyQuant DB项目维护</div>
+                <div class="topic">项目环境uv和Python运行问题</div>
+              </div>
+              <div class="project">
+                <div class="project-head"><span>⌄</span><span>▢</span><span class="dot" style="background:#8b5cf6"></span>joyquant-sys</div>
+                <div class="topic">20260523 p3b P&D</div>
+                <div class="topic">20260521 p3a P&D</div>
+              </div>
+            </aside>
+            <section class="main">
+              <div class="tabs"><div class="tab">00 制定项...</div><div class="tab">Global</div></div>
+              <div class="content-title">joyquant-db / 00 制定项目开发规范</div>
+              <div class="message">沉淀跨项目通用产品规则、约定和异常处理。</div>
+              <div class="message">This is a read-only mock preview. The active conversation is unchanged.</div>
+            </section>
+          </div>
+          <div class="drawer-backdrop">
+            <aside class="drawer">
+              <div class="drawer-head">
+                <div>
+                  <div class="drawer-title">回收站</div>
+                  <div class="drawer-sub">删除的会话会先放在这里，可恢复或彻底删除。</div>
+                </div>
+                <div class="close">×</div>
+              </div>
+              <div class="drawer-body">
+                <div class="drawer-search">搜索会话...</div>
+                <div class="group">今天</div>
+                <div class="history-item selected">
+                  <div class="item-title">00 制定项目开发规范</div>
+                  <div class="item-meta">4 轮 · 21:43 · 已删除</div>
+                </div>
+                <div class="history-item">
+                  <div class="item-title">20260521 p3a P&D</div>
+                  <div class="item-meta">7 轮 · 20:03 · 已删除</div>
+                </div>
+                <div class="group">昨天</div>
+                <div class="history-item">
+                  <div class="item-title">产品通用规范</div>
+                  <div class="item-meta">2 轮 · 22:03 · 已删除</div>
+                </div>
+                <div class="callout">效果：主界面没有被遮暗，抽屉依靠边框和阴影表达层级。</div>
+              </div>
+            </aside>
+          </div>
+        </div>
+      </article>
+    </section>
+  </main>
+</body>
+</html>

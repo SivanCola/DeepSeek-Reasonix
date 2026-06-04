@@ -224,7 +224,9 @@ func (a *App) tabMeta(tab *WorkspaceTab, active bool) TabMeta {
 		Active:        active,
 		Cwd:           tab.WorkspaceRoot,
 	}
-	if tab.Scope == "project" {
+	if tab.Scope == "global" {
+		m.ProjectColor = globalProjectColor()
+	} else if tab.Scope == "project" {
 		m.ProjectColor = projectColor(tab.WorkspaceRoot)
 	}
 	if tab.Ctrl != nil {
@@ -744,8 +746,10 @@ type desktopProject struct {
 }
 
 type desktopProjectFile struct {
-	GlobalTitle string           `json:"globalTitle,omitempty"`
-	Projects    []desktopProject `json:"projects"`
+	GlobalTitle  string           `json:"globalTitle,omitempty"`
+	GlobalColor  string           `json:"globalColor,omitempty"`
+	GlobalTopics []string         `json:"globalTopics,omitempty"`
+	Projects     []desktopProject `json:"projects"`
 }
 
 type desktopTabEntry struct {
@@ -874,7 +878,11 @@ func normalizeProjectRoot(root string) string {
 }
 
 func normalizeProjectsFile(f desktopProjectFile) desktopProjectFile {
-	out := desktopProjectFile{GlobalTitle: strings.TrimSpace(f.GlobalTitle)}
+	out := desktopProjectFile{
+		GlobalTitle:  strings.TrimSpace(f.GlobalTitle),
+		GlobalColor:  normalizeProjectColor(f.GlobalColor),
+		GlobalTopics: uniqueStrings(f.GlobalTopics),
+	}
 	index := map[string]int{}
 	for _, p := range f.Projects {
 		root := normalizeProjectRoot(p.Root)
@@ -915,6 +923,49 @@ func uniqueStrings(values []string) []string {
 	return out
 }
 
+func prependUniqueString(values []string, value string) []string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return uniqueStrings(values)
+	}
+	return uniqueStrings(append([]string{value}, values...))
+}
+
+func removeString(values []string, value string) []string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return uniqueStrings(values)
+	}
+	out := make([]string, 0, len(values))
+	for _, item := range uniqueStrings(values) {
+		if item != value {
+			out = append(out, item)
+		}
+	}
+	return out
+}
+
+func orderedTopicIDs(explicit []string, titleMap map[string]string) []string {
+	seen := map[string]bool{}
+	out := make([]string, 0, len(explicit)+len(titleMap))
+	for _, tid := range explicit {
+		tid = strings.TrimSpace(tid)
+		if tid == "" || seen[tid] {
+			continue
+		}
+		seen[tid] = true
+		out = append(out, tid)
+	}
+	var remaining []string
+	for tid := range titleMap {
+		if !seen[tid] {
+			remaining = append(remaining, tid)
+		}
+	}
+	sort.Strings(remaining)
+	return append(out, remaining...)
+}
+
 func projectDisplayName(p desktopProject) string {
 	if title := strings.TrimSpace(p.Title); title != "" {
 		return title
@@ -934,7 +985,7 @@ func normalizeProjectColor(color string) string {
 func projectColor(root string) string {
 	root = normalizeProjectRoot(root)
 	if root == "" {
-		return ""
+		return globalProjectColor()
 	}
 	for _, p := range loadProjectsFile().Projects {
 		if p.Root == root {
@@ -942,6 +993,10 @@ func projectColor(root string) string {
 		}
 	}
 	return ""
+}
+
+func globalProjectColor() string {
+	return normalizeProjectColor(loadProjectsFile().GlobalColor)
 }
 
 func addProject(root, title string) error {
@@ -983,10 +1038,12 @@ func renameProject(root, title string) error {
 
 func setProjectColor(root, color string) error {
 	root = normalizeProjectRoot(root)
-	if root == "" {
-		return fmt.Errorf("project root is required")
-	}
 	color = normalizeProjectColor(color)
+	if root == "" {
+		f := loadProjectsFile()
+		f.GlobalColor = color
+		return saveProjectsFile(f)
+	}
 	f := loadProjectsFile()
 	for i, p := range f.Projects {
 		if p.Root == root {
@@ -1244,13 +1301,19 @@ func (a *App) CreateTopic(scope, workspaceRoot, title string) (TopicMeta, error)
 	if err := setTopicTitleWithSource(workspaceRoot, topicID, trimmedTitle, titleSource); err != nil {
 		return TopicMeta{}, err
 	}
-	// Append to project's topic list.
+	// New topics should appear first in their project/global group so the item
+	// just created is immediately visible and selected in the sidebar.
 	f := loadProjectsFile()
-	for i, p := range f.Projects {
-		if p.Root == workspaceRoot {
-			f.Projects[i].Topics = append(f.Projects[i].Topics, topicID)
-			_ = saveProjectsFile(f)
-			break
+	if workspaceRoot == "" {
+		f.GlobalTopics = prependUniqueString(f.GlobalTopics, topicID)
+		_ = saveProjectsFile(f)
+	} else {
+		for i, p := range f.Projects {
+			if p.Root == workspaceRoot {
+				f.Projects[i].Topics = prependUniqueString(p.Topics, topicID)
+				_ = saveProjectsFile(f)
+				break
+			}
 		}
 	}
 	return TopicMeta{ID: topicID, Title: trimmedTitle, CreatedAt: time.Now().UnixMilli()}, nil
@@ -1395,6 +1458,7 @@ func (a *App) DeleteTopic(topicID string) error {
 			sources := loadTopicTitleSources("")
 			delete(sources, topicID)
 			_ = saveTopicTitleSources("", sources)
+			f.GlobalTopics = removeString(f.GlobalTopics, topicID)
 			found = true
 		}
 	}
@@ -1503,14 +1567,17 @@ func (a *App) ListProjectTree() []ProjectNode {
 	a.mu.RUnlock()
 
 	// Global section.
-	globalTopics := loadTopicTitles("")
-	if len(globalTopics) > 0 {
+	globalTitleMap := loadTopicTitles("")
+	if len(globalTitleMap) > 0 {
 		globalTitle := strings.TrimSpace(f.GlobalTitle)
 		if globalTitle == "" {
 			globalTitle = "Global"
 		}
-		children := make([]ProjectNode, 0, len(globalTopics))
-		for id, title := range globalTopics {
+		globalColor := normalizeProjectColor(f.GlobalColor)
+		globalTopicIDs := orderedTopicIDs(f.GlobalTopics, globalTitleMap)
+		children := make([]ProjectNode, 0, len(globalTopicIDs))
+		for _, id := range globalTopicIDs {
+			title := globalTitleMap[id]
 			summary := topicSummaries[topicSummaryKey("global", "", id)]
 			status := openTopics[topicSummaryKey("global", "", id)]
 			children = append(children, ProjectNode{
@@ -1518,21 +1585,20 @@ func (a *App) ListProjectTree() []ProjectNode {
 				Kind:           "global_topic",
 				Label:          title,
 				TopicID:        id,
+				ProjectColor:   globalColor,
 				Turns:          summary.turns,
 				LastActivityAt: summary.lastActivityAt,
 				Open:           status.open,
 				Running:        status.running,
 			})
 		}
-		sort.Slice(children, func(i, j int) bool {
-			return children[i].Label < children[j].Label
-		})
 		out = append(out, ProjectNode{
-			Key:      "global_folder",
-			Kind:     "global_folder",
-			Label:    globalTitle,
-			Root:     globalWorkspaceRoot(),
-			Children: children,
+			Key:          "global_folder",
+			Kind:         "global_folder",
+			Label:        globalTitle,
+			Root:         globalWorkspaceRoot(),
+			ProjectColor: globalColor,
+			Children:     children,
 		})
 	}
 
@@ -1550,21 +1616,7 @@ func (a *App) ListProjectTree() []ProjectNode {
 
 		// Gather topics: explicit topic list + all known topic titles.
 		titleMap := loadTopicTitles(p.Root)
-		seen := map[string]bool{}
-		var topicIDs []string
-		for _, tid := range p.Topics {
-			if !seen[tid] {
-				seen[tid] = true
-				topicIDs = append(topicIDs, tid)
-			}
-		}
-		for tid := range titleMap {
-			if !seen[tid] {
-				seen[tid] = true
-				topicIDs = append(topicIDs, tid)
-			}
-		}
-		sort.Strings(topicIDs)
+		topicIDs := orderedTopicIDs(p.Topics, titleMap)
 
 		children := make([]ProjectNode, 0, len(topicIDs))
 		for _, tid := range topicIDs {

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { type CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Item, LiveStream } from "../lib/useController";
 import { useT } from "../lib/i18n";
 import { AssistantMessage, UserMessage } from "./Message";
@@ -6,6 +6,19 @@ import { ToolCard } from "./ToolCard";
 import { Welcome } from "./Welcome";
 
 type ToolItem = Extract<Item, { kind: "tool" }>;
+type QuestionAnchor = { id: string; text: string; turn: number };
+
+const QUESTION_NAV_MIN_COUNT = 4;
+
+function questionAnchorId(id: string): string {
+  return `question-anchor-${id}`;
+}
+
+function compactQuestionText(text: string): string {
+  const cleaned = text.replace(/@\.reasonix\/attachments\/[^\s]+/g, "[image]").replace(/\s+/g, " ").trim();
+  if (cleaned.length <= 58) return cleaned;
+  return `${cleaned.slice(0, 57)}…`;
+}
 
 function scrollVersion(items: Item[]): string {
   return items
@@ -45,24 +58,65 @@ export function Transcript({
   footerHeight = 0,
   onPrompt,
   onRewind,
+  questionNavigator = true,
 }: {
   items: Item[];
   live?: LiveStream;
   footerHeight?: number;
   onPrompt: (text: string) => void;
   onRewind?: (turn: number, scope: string) => void;
+  questionNavigator?: boolean;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   // stick tracks whether the view is pinned to the bottom; once the user scrolls
   // up to read, we stop yanking them back down.
   const stick = useRef(true);
   const resizeFrame = useRef<number | null>(null);
+  const questionNavFrame = useRef<number | null>(null);
   const lastClientHeight = useRef<number | null>(null);
   const lastFooterHeight = useRef<number | null>(null);
+
+  const questions = useMemo<QuestionAnchor[]>(() => {
+    const anchors: QuestionAnchor[] = [];
+    let turn = 0;
+    for (const it of items) {
+      if (it.kind !== "user") continue;
+      anchors.push({ id: it.id, text: compactQuestionText(it.text), turn });
+      turn += 1;
+    }
+    return anchors;
+  }, [items]);
+  const showQuestionNav = questionNavigator && questions.length >= QUESTION_NAV_MIN_COUNT;
+  const [activeQuestionId, setActiveQuestionId] = useState<string | null>(null);
+
+  const updateQuestionNav = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el || !showQuestionNav) {
+      setActiveQuestionId((cur) => (cur === null ? cur : null));
+      return;
+    }
+    const activeLine = el.scrollTop + Math.min(el.clientHeight * 0.3, 220);
+    let nextActiveId = questions[0]?.id ?? null;
+    for (const question of questions) {
+      const node = document.getElementById(questionAnchorId(question.id));
+      if (!node) continue;
+      if (node.offsetTop <= activeLine) nextActiveId = question.id;
+    }
+    setActiveQuestionId((cur) => (cur === nextActiveId ? cur : nextActiveId));
+  }, [questions, showQuestionNav]);
+
+  const requestQuestionNavUpdate = useCallback(() => {
+    if (questionNavFrame.current !== null) return;
+    questionNavFrame.current = requestAnimationFrame(() => {
+      questionNavFrame.current = null;
+      updateQuestionNav();
+    });
+  }, [updateQuestionNav]);
 
   const onScroll = () => {
     const el = scrollRef.current;
     if (el) stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+    requestQuestionNavUpdate();
   };
 
   // Follow new content by setting scrollTop directly (no scrollIntoView fighting
@@ -85,6 +139,10 @@ export function Transcript({
   }, [contentVersion, live?.text.length, live?.reasoning.length]);
 
   useEffect(() => {
+    requestQuestionNavUpdate();
+  }, [contentVersion, footerHeight, live?.text.length, live?.reasoning.length, requestQuestionNavUpdate]);
+
+  useEffect(() => {
     const el = scrollRef.current;
     if (!el || typeof ResizeObserver === "undefined") return;
     lastClientHeight.current = el.clientHeight;
@@ -92,6 +150,7 @@ export function Transcript({
       const previous = lastClientHeight.current ?? el.clientHeight;
       lastClientHeight.current = el.clientHeight;
       repinIfWasPinned(el, stick, resizeFrame, el.clientHeight - previous);
+      requestQuestionNavUpdate();
     });
     observer.observe(el);
     return () => {
@@ -101,7 +160,17 @@ export function Transcript({
         resizeFrame.current = null;
       }
     };
-  }, []);
+  }, [requestQuestionNavUpdate]);
+
+  useEffect(
+    () => () => {
+      if (questionNavFrame.current !== null) {
+        cancelAnimationFrame(questionNavFrame.current);
+        questionNavFrame.current = null;
+      }
+    },
+    [],
+  );
 
   useEffect(() => {
     const el = scrollRef.current;
@@ -148,17 +217,21 @@ export function Transcript({
 
   // Each user message's turn = its ordinal among user messages, so a rewind
   // targets the matching checkpoint.
-  const userTurn = new Map<string, number>();
-  let nt = 0;
-  for (const it of items) {
-    if (it.kind === "user") userTurn.set(it.id, nt++);
-  }
+  const userTurn = useMemo(() => new Map(questions.map((question) => [question.id, question.turn])), [questions]);
 
   const empty = items.length === 0;
 
   return (
-    <div className={`transcript${empty ? " transcript--empty" : ""}`} ref={scrollRef} onScroll={onScroll}>
+    <div
+      className={`transcript${empty ? " transcript--empty" : ""}${showQuestionNav ? " transcript--with-question-nav" : ""}`}
+      ref={scrollRef}
+      onScroll={onScroll}
+    >
       {empty && <Welcome onPrompt={onPrompt} />}
+
+      {!empty && showQuestionNav && (
+        <QuestionNavigator questions={questions} activeId={activeQuestionId} />
+      )}
 
       {items.map((it) => {
         switch (it.kind) {
@@ -169,6 +242,7 @@ export function Transcript({
                 key={it.id}
                 text={it.text}
                 turn={tn}
+                anchorId={questionAnchorId(it.id)}
                 open={tn != null && openTurn === tn}
                 onToggle={() => setOpenTurn((cur) => (cur === tn ? null : (tn ?? null)))}
                 onRewind={(turn, scope) => {
@@ -206,6 +280,50 @@ export function Transcript({
         }
       })}
     </div>
+  );
+}
+
+function QuestionNavigator({
+  questions,
+  activeId,
+}: {
+  questions: QuestionAnchor[];
+  activeId: string | null;
+}) {
+  const t = useT();
+  const fallbackStep = questions.length > 1 ? 90 / (questions.length - 1) : 0;
+  const jumpToQuestion = (id: string) => {
+    const node = document.getElementById(questionAnchorId(id));
+    node?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+  return (
+    <nav className="question-nav" aria-label={t("questionNav.label")}>
+      <div className="question-nav__track">
+        {questions.map((question, index) => {
+          const top = 5 + index * fallbackStep;
+          const active = question.id === activeId;
+          return (
+            <button
+              key={question.id}
+              type="button"
+              className={`question-nav__mark${active ? " question-nav__mark--active" : ""}`}
+              style={{ "--question-nav-top": `${top}%` } as CSSProperties}
+              aria-label={t("questionNav.jump", { n: question.turn + 1 })}
+              onClick={() => jumpToQuestion(question.id)}
+            >
+              <span className="question-nav__line" />
+              <span className="question-nav__tip" role="tooltip">
+                <span className="question-nav__tip-kicker">
+                  {t("questionNav.progress", { current: question.turn + 1, total: questions.length })}
+                </span>
+                <span className="question-nav__tip-title">{question.text}</span>
+                <span className="question-nav__tip-meta">{t("questionNav.hint")}</span>
+              </span>
+            </button>
+          );
+        })}
+      </div>
+    </nav>
   );
 }
 

@@ -134,6 +134,7 @@ export function Composer({
   onRemoveWorkspace,
   insertRequest,
   disabled,
+  decisionPending = false,
   ready,
   turnStartAt,
   turnTokens,
@@ -157,6 +158,7 @@ export function Composer({
   onRemoveWorkspace: (path: string) => Promise<void>;
   insertRequest?: ComposerInsertRequest | null;
   disabled?: boolean;
+  decisionPending?: boolean;
   // ready/cwd re-trigger the command fetch: Commands() returns only built-ins
   // until boot.Build finishes (the controller, hence skills/custom/MCP, is nil
   // before then), and the available set changes when the workspace switches.
@@ -758,7 +760,7 @@ export function Composer({
     }
     // Esc interrupts the in-flight turn (matches the Stop button's hint), and
     // restores the text if the server hadn't replied yet.
-    if (e.key === "Escape" && running) {
+    if (e.key === "Escape" && running && !decisionPending) {
       e.preventDefault();
       handleCancel();
     }
@@ -781,9 +783,19 @@ export function Composer({
           return `${word}… ${fmtElapsed(elapsedMs)}${tok}`;
         })()
       : null;
+  const hasWorkspace = Boolean(cwd);
+  const hasEffort = Boolean(effort?.supported);
+  const composerMetaClass = [
+    "composer-meta",
+    hasWorkspace ? "composer-meta--has-workspace" : "composer-meta--no-workspace",
+    hasEffort ? "composer-meta--has-effort" : "composer-meta--no-effort",
+  ].join(" ");
 
   return (
-    <div className="composer-wrap" style={{ "--wails-drop-target": "drop" } as CSSProperties}>
+    <div
+      className={`composer-wrap${decisionPending ? " composer-wrap--decision-pending" : ""}`}
+      style={{ "--wails-drop-target": "drop" } as CSSProperties}
+    >
       <AnchoredPopover
         open={workspaceMenuOpen && !!cwd}
         anchorRef={workspaceAnchorRef}
@@ -872,7 +884,7 @@ export function Composer({
             <span className="composer-runstatus__dot" />
             <span className="composer-runstatus__text">{runActivity}</span>
             <Tooltip label={t("composer.stop")}>
-              <button className="composer-runstatus__stop" type="button" onClick={handleCancel}>
+              <button className="composer-runstatus__stop" type="button" onClick={handleCancel} disabled={decisionPending}>
                 <Square size={10} fill="currentColor" />
                 <span>{t("composer.stopShort")}</span>
               </button>
@@ -1008,9 +1020,9 @@ export function Composer({
             </Tooltip>
           )}
         </div>
-        <div className="composer-meta">
+        <div className={composerMetaClass}>
           {cwd && (
-            <div className="composer-workspace-wrap" ref={workspaceAnchorRef}>
+            <div className="composer-meta__control composer-meta__control--workspace composer-workspace-wrap" ref={workspaceAnchorRef}>
               <button
                 className={`composer__workspace${workspaceMenuOpen ? " composer__workspace--open" : ""}`}
                 onClick={() => {
@@ -1024,18 +1036,16 @@ export function Composer({
               </button>
             </div>
           )}
-          {cwd && <span className="composer-meta__sep">·</span>}
-          <div className="composer-meta__model">
-            <ModelSwitcher label={modelLabel} onPick={onSwitchModel} />
-          </div>
-          {effort?.supported && (
-            <>
-              <span className="composer-meta__sep">·</span>
-              <div className="composer-meta__effort">
+          <div className="composer-meta__params">
+            <div className="composer-meta__control composer-meta__control--model">
+              <ModelSwitcher label={modelLabel} onPick={onSwitchModel} />
+            </div>
+            {effort?.supported && (
+              <div className="composer-meta__control composer-meta__control--effort">
                 <EffortSwitcher effort={effort} disabled={running} onPick={onSetEffort} />
               </div>
-            </>
-          )}
+            )}
+          </div>
         </div>
       </div>
     </div>

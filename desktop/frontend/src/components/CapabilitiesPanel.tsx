@@ -3,6 +3,7 @@ import { asArray } from "../lib/array";
 import { app, openExternal } from "../lib/bridge";
 import { useT } from "../lib/i18n";
 import type { CapabilitiesView, MCPServerInput, ServerView, SkillRootSkillView, SkillRootView, SkillView } from "../lib/types";
+import { InlineConfirmButton } from "./InlineConfirmButton";
 import { ResizableDrawer } from "./ResizableDrawer";
 import { Tooltip } from "./Tooltip";
 
@@ -22,8 +23,6 @@ export function CapabilitiesPanel({
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
-  const [confirming, setConfirming] = useState<string | null>(null);
-  const [confirmingClearAuth, setConfirmingClearAuth] = useState<string | null>(null);
   const [editing, setEditing] = useState<string | null>(null);
   const [tab, setTab] = useState<CapTab>("servers");
   const [skillQuery, setSkillQuery] = useState("");
@@ -86,7 +85,7 @@ export function CapabilitiesPanel({
   }, [filteredSkills, skillQuery, t, view]);
 
   const serverGroups = useMemo(() => {
-    const servers = view?.servers ?? [];
+    const servers = sortServersForDisplay(view?.servers ?? []);
     return {
       failed: servers.filter((s) => s.status === "failed"),
       active: servers.filter((s) => s.status !== "failed"),
@@ -183,25 +182,9 @@ export function CapabilitiesPanel({
                     expanded={expandedErrors}
                     onToggle={toggleError}
                     onRetry={(name) => void mutate(() => app.RetryMCPServer(name))}
-                    confirmingClearAuth={confirmingClearAuth}
-                    onConfirmClearAuth={(name) => {
-                      setConfirmingClearAuth(name);
-                      setConfirming(null);
-                    }}
-                    onCancelClearAuth={() => setConfirmingClearAuth(null)}
-                    onClearAuth={(name) =>
-                      void mutate(() => app.ClearMCPServerAuthentication(name)).then((ok) => {
-                        if (ok) setConfirmingClearAuth(null);
-                      })
-                    }
+                    onConfirmClearAuth={(name) => void mutate(() => app.ClearMCPServerAuthentication(name))}
                     onSetTier={(name, tier) => void mutate(() => app.SetMCPServerTier(name, tier))}
-                    confirming={confirming}
-                    onConfirm={(name) => {
-                      setConfirming(name);
-                      setConfirmingClearAuth(null);
-                    }}
-                    onCancelConfirm={() => setConfirming(null)}
-                    onRemove={(name) => mutate(() => app.RemoveMCPServer(name)).then(() => setConfirming(null))}
+                    onConfirm={(name) => void mutate(() => app.RemoveMCPServer(name))}
                     busy={busy}
                   />
                 )}
@@ -213,32 +196,14 @@ export function CapabilitiesPanel({
                   servers={serverGroups.active}
                   expanded={expandedServers}
                   expandedTools={expandedServerTools}
-                  confirming={confirming}
-                  confirmingClearAuth={confirmingClearAuth}
                   editing={editing}
-                  onConfirm={(name) => {
-                    setConfirming(name);
-                    setConfirmingClearAuth(null);
-                  }}
-                  onCancelConfirm={() => setConfirming(null)}
+                  onConfirm={(name) => void mutate(() => app.RemoveMCPServer(name))}
                   onEdit={(name) => {
                     setEditing(name);
-                    setConfirming(null);
-                    setConfirmingClearAuth(null);
                   }}
                   onCancelEdit={() => setEditing(null)}
-                  onRemove={(name) => mutate(() => app.RemoveMCPServer(name)).then(() => setConfirming(null))}
                   onRetry={(name) => void mutate(() => app.RetryMCPServer(name))}
-                  onConfirmClearAuth={(name) => {
-                    setConfirmingClearAuth(name);
-                    setConfirming(null);
-                  }}
-                  onCancelClearAuth={() => setConfirmingClearAuth(null)}
-                  onClearAuth={(name) =>
-                    void mutate(() => app.ClearMCPServerAuthentication(name)).then((ok) => {
-                      if (ok) setConfirmingClearAuth(null);
-                    })
-                  }
+                  onConfirmClearAuth={(name) => void mutate(() => app.ClearMCPServerAuthentication(name))}
                   onToggle={(name, on) => void mutate(() => app.SetMCPServerEnabled(name, on))}
                   onSetTier={(name, tier) => void mutate(() => app.SetMCPServerTier(name, tier))}
                   onUpdate={(name, input) =>
@@ -308,18 +273,35 @@ export function CapabilitiesPanel({
 
 function normalizeCapabilitiesView(view: CapabilitiesView | null | undefined): CapabilitiesView {
   return {
-    servers: asArray(view?.servers).map((server) => ({
-      ...server,
-      args: asArray(server.args),
-      envKeys: asArray(server.envKeys),
-      toolList: asArray(server.toolList),
-    })),
+    servers: sortServersForDisplay(
+      asArray(view?.servers).map((server) => ({
+        ...server,
+        args: asArray(server.args),
+        envKeys: asArray(server.envKeys),
+        toolList: asArray(server.toolList),
+      })),
+    ),
     skills: asArray(view?.skills),
     skillRoots: asArray(view?.skillRoots).map((root) => ({
       ...root,
       skillItems: asArray(root.skillItems),
     })),
   };
+}
+
+function sortServersForDisplay(servers: ServerView[]): ServerView[] {
+  return [...servers].sort((a, b) => {
+    const priority = serverDisplayPriority(a) - serverDisplayPriority(b);
+    if (priority !== 0) return priority;
+    return a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
+  });
+}
+
+function serverDisplayPriority(server: ServerView): number {
+  if (server.status === "failed" || server.authStatus === "required") return 0;
+  if (server.builtIn) return 1;
+  if (server.status !== "disabled") return 2;
+  return 3;
 }
 
 function skillListSummary(skills: SkillView[], filtered: SkillView[], searching: boolean, t: ReturnType<typeof useT>): string {
@@ -374,7 +356,6 @@ function SkillSources({
   const t = useT();
   const [expanded, setExpanded] = useState(false);
   const [showDiagnostics, setShowDiagnostics] = useState(false);
-  const [confirmingRoot, setConfirmingRoot] = useState<string | null>(null);
   const [expandedRootSkills, setExpandedRootSkills] = useState<Set<string>>(() => new Set());
   const [fullRootSkills, setFullRootSkills] = useState<Set<string>>(() => new Set());
   const primaryRoots = roots.filter(isPrimarySkillRoot);
@@ -385,11 +366,6 @@ function SkillSources({
   const active = summaryRoots.filter((root) => root.skills > 0).length;
   const missing = summaryRoots.filter((root) => root.status === "missing").length;
   const empty = summaryRoots.filter((root) => root.status === "ok" && root.skills === 0).length;
-  useEffect(() => {
-    if (!confirmingRoot) return;
-    const stillRemovable = roots.some((root) => root.dir === confirmingRoot && root.scope === "custom" && root.configured);
-    if (!stillRemovable) setConfirmingRoot(null);
-  }, [confirmingRoot, roots]);
   const toggleRootSkills = (key: string) => {
     setExpandedRootSkills((prev) => {
       const next = new Set(prev);
@@ -471,43 +447,29 @@ function SkillSources({
                       </div>
                       {(canShowRootSkills || canRemoveRoot) && (
                         <div className="cap-source-actions">
-                          {confirmingRoot === root.dir && canRemoveRoot ? (
-                            <>
+                          <>
+                            {canShowRootSkills && (
                               <button
                                 className="btn btn--small"
                                 disabled={busy}
-                                onClick={() => {
-                                  onRemove(root.dir);
-                                  setConfirmingRoot(null);
-                                }}
+                                type="button"
+                                aria-expanded={rootSkillsExpanded}
+                                onClick={() => toggleRootSkills(key)}
                               >
-                                {t("caps.skillRootConfirmRemove")}
+                                {rootSkillsExpanded ? t("caps.hideSkills") : t("caps.showSkills")}
                               </button>
-                              <button className="btn btn--small" disabled={busy} onClick={() => setConfirmingRoot(null)}>
-                                {t("common.cancel")}
-                              </button>
-                              <div className="cap-confirm-hint">{t("caps.skillRootRemoveHint")}</div>
-                            </>
-                          ) : (
-                            <>
-                              {canShowRootSkills && (
-                                <button
-                                  className="btn btn--small"
-                                  disabled={busy}
-                                  type="button"
-                                  aria-expanded={rootSkillsExpanded}
-                                  onClick={() => toggleRootSkills(key)}
-                                >
-                                  {rootSkillsExpanded ? t("caps.hideSkills") : t("caps.showSkills")}
-                                </button>
                               )}
                               {canRemoveRoot && (
-                                <button className="btn btn--small" disabled={busy} onClick={() => setConfirmingRoot(root.dir)}>
-                                  {t("caps.skillRootRemove")}
-                                </button>
+                                <InlineConfirmButton
+                                  label={t("caps.skillRootRemove")}
+                                  confirmLabel={t("caps.skillRootConfirmRemove")}
+                                  cancelLabel={t("common.cancel")}
+                                  disabled={busy}
+                                  danger
+                                  onConfirm={() => onRemove(root.dir)}
+                                />
                               )}
                             </>
-                          )}
                         </div>
                       )}
                       {rootSkillsExpanded && rootSkills.length > 0 && (
@@ -627,18 +589,12 @@ function ServerGroup({
   expanded,
   expandedTools,
   busy,
-  confirming,
-  confirmingClearAuth,
   editing,
   onConfirm,
-  onCancelConfirm,
   onEdit,
   onCancelEdit,
-  onRemove,
   onRetry,
   onConfirmClearAuth,
-  onCancelClearAuth,
-  onClearAuth,
   onToggle,
   onSetTier,
   onUpdate,
@@ -649,18 +605,12 @@ function ServerGroup({
   expanded: Set<string>;
   expandedTools: Set<string>;
   busy: boolean;
-  confirming: string | null;
-  confirmingClearAuth: string | null;
   editing: string | null;
   onConfirm: (name: string) => void;
-  onCancelConfirm: () => void;
   onEdit: (name: string) => void;
   onCancelEdit: () => void;
-  onRemove: (name: string) => void;
   onRetry: (name: string) => void;
   onConfirmClearAuth: (name: string) => void;
-  onCancelClearAuth: () => void;
-  onClearAuth: (name: string) => void;
   onToggle: (name: string, on: boolean) => void;
   onSetTier: (name: string, tier: string) => void;
   onUpdate: (name: string, input: MCPServerInput) => void;
@@ -677,18 +627,12 @@ function ServerGroup({
           expanded={expanded.has(s.name)}
           toolsExpanded={expandedTools.has(s.name)}
           busy={busy}
-          confirming={confirming === s.name}
-          confirmingClearAuth={confirmingClearAuth === s.name}
           editing={editing === s.name}
           onConfirm={() => onConfirm(s.name)}
-          onCancelConfirm={onCancelConfirm}
           onEdit={() => onEdit(s.name)}
           onCancelEdit={onCancelEdit}
-          onRemove={() => onRemove(s.name)}
           onRetry={() => onRetry(s.name)}
           onConfirmClearAuth={() => onConfirmClearAuth(s.name)}
-          onCancelClearAuth={onCancelClearAuth}
-          onClearAuth={() => onClearAuth(s.name)}
           onToggle={(on) => onToggle(s.name, on)}
           onSetTier={(tier) => onSetTier(s.name, tier)}
           onUpdate={(input) => onUpdate(s.name, input)}
@@ -704,32 +648,20 @@ function FailedServersNotice({
   servers,
   expanded,
   busy,
-  confirming,
-  confirmingClearAuth,
   onToggle,
   onRetry,
   onConfirmClearAuth,
-  onCancelClearAuth,
-  onClearAuth,
   onSetTier,
   onConfirm,
-  onCancelConfirm,
-  onRemove,
 }: {
   servers: ServerView[];
   expanded: Set<string>;
   busy: boolean;
-  confirming: string | null;
-  confirmingClearAuth: string | null;
   onToggle: (name: string) => void;
   onRetry: (name: string) => void;
   onConfirmClearAuth: (name: string) => void;
-  onCancelClearAuth: () => void;
-  onClearAuth: (name: string) => void;
   onSetTier: (name: string, tier: string) => void;
   onConfirm: (name: string) => void;
-  onCancelConfirm: () => void;
-  onRemove: (name: string) => void;
 }) {
   const t = useT();
   return (
@@ -763,45 +695,30 @@ function FailedServersNotice({
                 </div>
               </div>
               <div className="cap-failure__actions">
-                {confirmingClearAuth === s.name ? (
-                  <>
-                    <button className="btn btn--small" disabled={busy} onClick={() => onClearAuth(s.name)}>
-                      {t("caps.confirmClearAuth")}
-                    </button>
-                    <button className="btn btn--small" disabled={busy} onClick={onCancelClearAuth}>
-                      {t("common.cancel")}
-                    </button>
-                    <div className="cap-confirm-hint">{t("caps.clearAuthHint")}</div>
-                  </>
-                ) : confirming === s.name ? (
-                  <>
-                    <button className="btn btn--small" disabled={busy} onClick={() => onRemove(s.name)}>
-                      {t("caps.confirmRemove")}
-                    </button>
-                    <button className="btn btn--small" disabled={busy} onClick={onCancelConfirm}>
-                      {t("common.cancel")}
-                    </button>
-                    <div className="cap-confirm-hint">{t("caps.removeHint")}</div>
-                  </>
-                ) : (
-                  <>
-                    <button className="btn btn--small" disabled={busy} onClick={handlePrimaryAction}>
-                      {actionLabel}
-                    </button>
-                    {canClearAuth(s) && (
-                      <button className="btn btn--small" disabled={busy} onClick={() => onConfirmClearAuth(s.name)}>
-                        {t("caps.clearAuth")}
-                      </button>
-                    )}
-                    <button className="btn btn--small" onClick={() => onToggle(s.name)} aria-expanded={open}>
-                      {open ? t("common.collapse") : t("caps.showLog")}
-                    </button>
-                    {!s.builtIn && (
-                      <button className="btn btn--small" disabled={busy} onClick={() => onConfirm(s.name)}>
-                        {t("caps.remove")}
-                      </button>
-                    )}
-                  </>
+                <button className="btn btn--small" disabled={busy} onClick={handlePrimaryAction}>
+                  {actionLabel}
+                </button>
+                {canClearAuth(s) && (
+                  <InlineConfirmButton
+                    label={t("caps.clearAuth")}
+                    confirmLabel={t("caps.confirmClearAuth")}
+                    cancelLabel={t("common.cancel")}
+                    disabled={busy}
+                    onConfirm={() => onConfirmClearAuth(s.name)}
+                  />
+                )}
+                <button className="btn btn--small" onClick={() => onToggle(s.name)} aria-expanded={open}>
+                  {open ? t("common.collapse") : t("caps.showLog")}
+                </button>
+                {!s.builtIn && (
+                  <InlineConfirmButton
+                    label={t("caps.remove")}
+                    confirmLabel={t("caps.confirmRemove")}
+                    cancelLabel={t("common.cancel")}
+                    disabled={busy}
+                    danger
+                    onConfirm={() => onConfirm(s.name)}
+                  />
                 )}
               </div>
               {canConfigure && (
@@ -833,18 +750,12 @@ function ServerRow({
   expanded,
   toolsExpanded,
   busy,
-  confirming,
-  confirmingClearAuth,
   editing,
   onConfirm,
-  onCancelConfirm,
   onEdit,
   onCancelEdit,
-  onRemove,
   onRetry,
   onConfirmClearAuth,
-  onCancelClearAuth,
-  onClearAuth,
   onToggle,
   onSetTier,
   onUpdate,
@@ -855,18 +766,12 @@ function ServerRow({
   expanded: boolean;
   toolsExpanded: boolean;
   busy: boolean;
-  confirming: boolean;
-  confirmingClearAuth: boolean;
   editing: boolean;
   onConfirm: () => void;
-  onCancelConfirm: () => void;
   onEdit: () => void;
   onCancelEdit: () => void;
-  onRemove: () => void;
   onRetry: () => void;
   onConfirmClearAuth: () => void;
-  onCancelClearAuth: () => void;
-  onClearAuth: () => void;
   onToggle: (on: boolean) => void;
   onSetTier: (tier: string) => void;
   onUpdate: (input: MCPServerInput) => void;
@@ -922,37 +827,24 @@ function ServerRow({
             <div className="cap-row__sub">{sub}</div>
           </div>
           <div className="cap-row__actions">
-            {confirming ? (
-              <>
-                <button className="btn btn--small" disabled={busy} onClick={onRemove}>
-                  {t("caps.confirmRemove")}
-                </button>
-                <button className="btn btn--small" disabled={busy} onClick={onCancelConfirm}>
-                  {t("common.cancel")}
-                </button>
-              </>
+            {s.status === "failed" ? (
+              <button className="btn btn--small" disabled={busy} onClick={handlePrimaryAction}>
+                {actionLabel}
+              </button>
+            ) : s.status === "initializing" ? (
+              <span className="cap-row__pending">{t("caps.initializingShort")}</span>
             ) : (
-              <>
-                {s.status === "failed" ? (
-                  <button className="btn btn--small" disabled={busy} onClick={handlePrimaryAction}>
-                    {actionLabel}
-                  </button>
-                ) : s.status === "initializing" ? (
-                  <span className="cap-row__pending">{t("caps.initializingShort")}</span>
-                ) : (
-                  <Tooltip label={enabled ? t("caps.disable") : t("caps.enable")}>
-                    <label className="cap-switch">
-                      <input
-                        type="checkbox"
-                        checked={enabled}
-                        disabled={busy}
-                        onChange={(e) => onToggle(e.target.checked)}
-                      />
-                      <span className="cap-switch__track" />
-                    </label>
-                  </Tooltip>
-                )}
-              </>
+              <Tooltip label={enabled ? t("caps.disable") : t("caps.enable")}>
+                <label className="cap-switch">
+                  <input
+                    type="checkbox"
+                    checked={enabled}
+                    disabled={busy}
+                    onChange={(e) => onToggle(e.target.checked)}
+                  />
+                  <span className="cap-switch__track" />
+                </label>
+              </Tooltip>
             )}
           </div>
         </div>
@@ -962,15 +854,9 @@ function ServerRow({
           s={s}
           tools={tools}
           busy={busy}
-          confirming={confirming}
-          confirmingClearAuth={confirmingClearAuth}
           onConfirm={onConfirm}
-          onCancelConfirm={onCancelConfirm}
-          onRemove={onRemove}
           onConnectNow={onRetry}
           onConfirmClearAuth={onConfirmClearAuth}
-          onCancelClearAuth={onCancelClearAuth}
-          onClearAuth={onClearAuth}
           onSetTier={onSetTier}
           toolsExpanded={toolsExpanded}
           editing={editing}
@@ -988,15 +874,9 @@ function ServerDetails({
   s,
   tools,
   busy,
-  confirming,
-  confirmingClearAuth,
   onConfirm,
-  onCancelConfirm,
-  onRemove,
   onConnectNow,
   onConfirmClearAuth,
-  onCancelClearAuth,
-  onClearAuth,
   onSetTier,
   toolsExpanded,
   editing,
@@ -1008,15 +888,9 @@ function ServerDetails({
   s: ServerView;
   tools: ServerView["toolList"];
   busy: boolean;
-  confirming: boolean;
-  confirmingClearAuth: boolean;
   onConfirm: () => void;
-  onCancelConfirm: () => void;
-  onRemove: () => void;
   onConnectNow: () => void;
   onConfirmClearAuth: () => void;
-  onCancelClearAuth: () => void;
-  onClearAuth: () => void;
   onSetTier: (tier: string) => void;
   toolsExpanded: boolean;
   editing: boolean;
@@ -1074,54 +948,38 @@ function ServerDetails({
         )}
       </div>
       <div className="cap-detail-actions">
-        {confirmingClearAuth ? (
+        {canConnectNow && (
+          <button className="btn btn--small" disabled={busy} onClick={onConnectNow}>
+            {t("caps.connectNow")}
+          </button>
+        )}
+        {canShowTools && (
+          <button className="btn btn--small" disabled={busy} onClick={onToggleTools} aria-expanded={toolsExpanded}>
+            {toolsExpanded ? t("caps.hideTools") : t("caps.showTools")}
+          </button>
+        )}
+        {showClearAuth && (
+          <InlineConfirmButton
+            label={t("caps.clearAuth")}
+            confirmLabel={t("caps.confirmClearAuth")}
+            cancelLabel={t("common.cancel")}
+            disabled={busy}
+            onConfirm={onConfirmClearAuth}
+          />
+        )}
+        {canEditConfig && (
           <>
-            <button className="btn btn--small" disabled={busy} onClick={onClearAuth}>
-              {t("caps.confirmClearAuth")}
+            <button className="btn btn--small" disabled={busy} onClick={onEdit}>
+              {t("caps.editConfig")}
             </button>
-            <button className="btn btn--small" disabled={busy} onClick={onCancelClearAuth}>
-              {t("common.cancel")}
-            </button>
-            <div className="cap-confirm-hint">{t("caps.clearAuthHint")}</div>
-          </>
-        ) : (
-          <>
-            {canConnectNow && (
-              <button className="btn btn--small" disabled={busy} onClick={onConnectNow}>
-                {t("caps.connectNow")}
-              </button>
-            )}
-            {canShowTools && (
-              <button className="btn btn--small" disabled={busy} onClick={onToggleTools} aria-expanded={toolsExpanded}>
-                {toolsExpanded ? t("caps.hideTools") : t("caps.showTools")}
-              </button>
-            )}
-            {showClearAuth && (
-              <button className="btn btn--small" disabled={busy} onClick={onConfirmClearAuth}>
-                {t("caps.clearAuth")}
-              </button>
-            )}
-            {canEditConfig && (
-              <button className="btn btn--small" disabled={busy} onClick={onEdit}>
-                {t("caps.editConfig")}
-              </button>
-            )}
-            {canEditConfig &&
-              (confirming ? (
-                <>
-                  <button className="btn btn--small" disabled={busy} onClick={onRemove}>
-                    {t("caps.confirmRemove")}
-                  </button>
-                  <button className="btn btn--small" disabled={busy} onClick={onCancelConfirm}>
-                    {t("common.cancel")}
-                  </button>
-                  <div className="cap-confirm-hint">{t("caps.removeHint")}</div>
-                </>
-              ) : (
-                <button className="btn btn--small" disabled={busy} onClick={onConfirm}>
-                  {t("caps.remove")}
-                </button>
-              ))}
+            <InlineConfirmButton
+              label={t("caps.remove")}
+              confirmLabel={t("caps.confirmRemove")}
+              cancelLabel={t("common.cancel")}
+              disabled={busy}
+              danger
+              onConfirm={onConfirm}
+            />
           </>
         )}
       </div>

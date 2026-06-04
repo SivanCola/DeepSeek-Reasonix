@@ -145,8 +145,12 @@ func (a *App) createTabEntryWithID(scope, workspaceRoot, topicID, id string) *Wo
 	}
 }
 
-// shutdown snapshots all tabs and closes them.
+// shutdown snapshots all tabs, saves the final window geometry, and closes tabs.
 func (a *App) shutdown(context.Context) {
+	// Save window geometry synchronously from Go so it's persisted even if the
+	// frontend's beforeunload promise hasn't resolved yet.
+	a.saveWindowStateSync()
+
 	a.mu.RLock()
 	tabs := make([]*WorkspaceTab, 0, len(a.tabs))
 	for _, t := range a.tabs {
@@ -159,6 +163,52 @@ func (a *App) shutdown(context.Context) {
 			t.Ctrl.Close()
 		}
 	}
+}
+
+// domReady is called (via OnDomReady) after the webview finishes loading its DOM
+// but before the window is shown (StartHidden). It restores the saved window
+// position and size, then calls WindowShow so the user never sees the default
+// size/position flash.
+func (a *App) domReady(_ context.Context) {
+	state, ok := loadWindowState()
+	if ok {
+		// Validate saved position against current screens. Wails v2 doesn't
+		// expose per-screen origin (x,y offsets) so we can only do a basic
+		// sanity check: ensure the window origin falls within a generous
+		// estimate of the screen area. If the user unplugged an external
+		// display, negative or out-of-bounds coordinates are caught here.
+		valid := state.X >= 0 && state.Y >= 0
+		if valid {
+			screens, err := runtime.ScreenGetAll(a.ctx)
+			if err == nil && len(screens) > 0 {
+				maxW, maxH := 0, 0
+				for _, sc := range screens {
+					if sc.Size.Width > maxW {
+						maxW = sc.Size.Width
+					}
+					if sc.Size.Height > maxH {
+						maxH = sc.Size.Height
+					}
+				}
+				if state.X > maxW*2 || state.Y > maxH*2 {
+					valid = false
+				}
+			}
+		}
+		if valid {
+			runtime.WindowSetPosition(a.ctx, state.X, state.Y)
+		} else {
+			runtime.WindowCenter(a.ctx)
+		}
+	} else {
+		runtime.WindowCenter(a.ctx)
+	}
+
+	if ok && state.Maximised {
+		runtime.WindowMaximise(a.ctx)
+	}
+
+	runtime.WindowShow(a.ctx)
 }
 
 // --- bound command surface (frontend → controller) ---
@@ -2433,6 +2483,68 @@ const onboardingKeyEnv = "DEEPSEEK_API_KEY"
 // onboardingBalanceURL doubles as a zero-token connectivity + auth probe:
 // billing.FetchWithClient surfaces 401/403 for a bad key.
 const onboardingBalanceURL = "https://api.deepseek.com/user/balance"
+
+// NativeConfirmRequest is the payload for ConfirmAction — a native OS confirmation
+// dialog that replaces web-style confirm() for destructive or important actions.
+type NativeConfirmRequest struct {
+	Title        string `json:"title"`
+	Message      string `json:"message"`
+	Detail       string `json:"detail"`
+	ConfirmLabel string `json:"confirmLabel"`
+	CancelLabel  string `json:"cancelLabel"`
+	Destructive  bool   `json:"destructive"`
+}
+
+// ConfirmAction shows a native confirmation dialog and returns true when the user
+// clicks the confirm button. For destructive actions the dialog type is Warning so
+// the platform can apply its danger styling (red tint on macOS, etc.).
+func (a *App) ConfirmAction(req NativeConfirmRequest) (bool, error) {
+	if a.ctx == nil {
+		return false, nil
+	}
+	dialogType := runtime.QuestionDialog
+	if req.Destructive {
+		dialogType = runtime.WarningDialog
+	}
+	confirm := req.ConfirmLabel
+	if confirm == "" {
+		confirm = "OK"
+	}
+	cancel := req.CancelLabel
+	if cancel == "" {
+		cancel = "Cancel"
+	}
+	title := req.Title
+	if title == "" {
+		title = req.Message
+	}
+	body := req.Message
+	if req.Detail != "" {
+		if body != "" {
+			body += "\n\n" + req.Detail
+		} else {
+			body = req.Detail
+		}
+	}
+	defaultBtn := confirm
+	if req.Destructive {
+		// On destructive actions, make cancel the default so Enter / Space
+		// does NOT accidentally confirm. ESC always maps to CancelButton.
+		defaultBtn = cancel
+	}
+	result, err := runtime.MessageDialog(a.ctx, runtime.MessageDialogOptions{
+		Type:          dialogType,
+		Title:         title,
+		Message:       body,
+		Buttons:       []string{confirm, cancel},
+		DefaultButton: defaultBtn,
+		CancelButton:  cancel,
+	})
+	if err != nil {
+		return false, err
+	}
+	return result == confirm, nil
+}
 
 func (a *App) NeedsOnboarding() bool {
 	return strings.TrimSpace(os.Getenv(onboardingKeyEnv)) == ""

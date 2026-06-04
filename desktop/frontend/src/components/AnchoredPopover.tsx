@@ -23,12 +23,15 @@ function calculatePosition(
   menu: DOMRect,
   align: "start" | "end",
   offset: number,
+  placement: "auto" | "bottom",
 ): PopoverPosition {
   const viewportWidth = window.innerWidth;
   const viewportHeight = window.innerHeight;
   const preferredTop = anchor.top - menu.height - offset;
   const fallbackTop = anchor.bottom + offset;
-  const top = preferredTop >= EDGE_GAP
+  const top = placement === "bottom"
+    ? Math.min(fallbackTop, Math.max(EDGE_GAP, viewportHeight - menu.height - EDGE_GAP))
+    : preferredTop >= EDGE_GAP
     ? preferredTop
     : Math.min(fallbackTop, Math.max(EDGE_GAP, viewportHeight - menu.height - EDGE_GAP));
   const rawLeft = align === "end" ? anchor.right - menu.width : anchor.left;
@@ -44,6 +47,7 @@ export function AnchoredPopover({
   children,
   align = "start",
   offset = DEFAULT_OFFSET,
+  placement = "auto",
   style,
 }: {
   open: boolean;
@@ -53,6 +57,7 @@ export function AnchoredPopover({
   children: ReactNode;
   align?: "start" | "end";
   offset?: number;
+  placement?: "auto" | "bottom";
   style?: CSSProperties;
 }) {
   const [position, setPosition] = useState<PopoverPosition | null>(null);
@@ -65,7 +70,7 @@ export function AnchoredPopover({
     const anchor = anchorRef.current?.getBoundingClientRect();
     const menu = document.querySelector<HTMLElement>("[data-anchored-popover='active']")?.getBoundingClientRect();
     if (!anchor || !menu) return;
-    const next = calculatePosition(anchor, menu, align, offset);
+    const next = calculatePosition(anchor, menu, align, offset, placement);
     setPosition((current) => (samePosition(current, next) ? current : next));
   });
 
