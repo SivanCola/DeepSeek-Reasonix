@@ -1259,6 +1259,22 @@ func globalWorkspaceRoot() string {
 	return filepath.Join(dir, "reasonix", "global-workspace")
 }
 
+func ensureGlobalWorkspaceRoot() (string, error) {
+	root := globalWorkspaceRoot()
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		return "", err
+	}
+	return root, nil
+}
+
+func globalTabWorkspaceRoot() string {
+	root, err := ensureGlobalWorkspaceRoot()
+	if err != nil {
+		return globalWorkspaceRoot()
+	}
+	return root
+}
+
 // findTopicSession scans the session directory for a .jsonl file whose .meta
 // carries the given topicID. Returns the most recently updated match, or ""
 // if no session exists for this topic.

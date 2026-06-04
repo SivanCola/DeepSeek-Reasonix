@@ -53,12 +53,19 @@ type App struct {
 	mu          sync.RWMutex
 	tabs        map[string]*WorkspaceTab
 	activeTabID string
+	readyHook   func()
 }
 
 // NewApp constructs the bound object. Tabs are restored in startup from the
 // last session's desktop-tabs.json.
 func NewApp() *App {
 	return &App{tabs: map[string]*WorkspaceTab{}}
+}
+
+// Platform exposes the native OS to the frontend so chrome/layout affordances can
+// stay platform-scoped instead of relying on browser user-agent guesses.
+func (a *App) Platform() string {
+	return goruntime.GOOS
 }
 
 // startup runs once the webview process is up, before the frontend can issue any
@@ -88,7 +95,7 @@ func (a *App) restoreOrBuildTabs() {
 			if entry.Scope == "project" {
 				tab = a.createTabEntryWithID(entry.Scope, entry.WorkspaceRoot, entry.TopicID, entry.ID)
 			} else {
-				tab = a.createTabEntryWithID("global", "", entry.TopicID, entry.ID)
+				tab = a.createTabEntryWithID("global", globalTabWorkspaceRoot(), entry.TopicID, entry.ID)
 			}
 			tab.sink = &tabEventSink{tabID: tab.ID, app: a, ctx: ctx}
 			a.mu.Lock()
@@ -106,12 +113,11 @@ func (a *App) restoreOrBuildTabs() {
 			}
 		}
 		a.mu.Unlock()
-		runtime.EventsEmit(ctx, "agent:ready")
 		return
 	}
 
 	// First launch: create a default Global tab.
-	tab := a.createTabEntry("global", "", "")
+	tab := a.createTabEntry("global", globalTabWorkspaceRoot(), "")
 	tab.sink = &tabEventSink{tabID: tab.ID, app: a, ctx: ctx}
 	tab.TopicTitle = "Global"
 	a.mu.Lock()
@@ -119,7 +125,6 @@ func (a *App) restoreOrBuildTabs() {
 	a.activeTabID = tab.ID
 	a.mu.Unlock()
 	go a.buildTabController(tab)
-	runtime.EventsEmit(ctx, "agent:ready")
 }
 
 func (a *App) createTabEntry(scope, workspaceRoot, topicID string) *WorkspaceTab {
@@ -562,7 +567,7 @@ func (a *App) ListWorkspaces() []WorkspaceMeta {
 		out = append(out, WorkspaceMeta{
 			Path:    path,
 			Name:    workspaceName(path),
-			Current: path == cur,
+			Current: false,
 		})
 	}
 	return out
@@ -1786,11 +1791,13 @@ type EffortInfo struct {
 func (a *App) Models() []ModelInfo {
 	a.mu.RLock()
 	curModel := ""
+	workspaceRoot := ""
 	if tab := a.activeTabLocked(); tab != nil {
 		curModel = tab.model
+		workspaceRoot = tab.WorkspaceRoot
 	}
 	a.mu.RUnlock()
-	cfg, err := config.Load()
+	cfg, err := config.LoadForRoot(workspaceRoot)
 	if err != nil {
 		return []ModelInfo{}
 	}
