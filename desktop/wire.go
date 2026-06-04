@@ -77,7 +77,11 @@ type wireUsage struct {
 	// hit-rate Σhit/Σ(hit+miss), steadier than the single-turn CacheHitTokens.
 	SessionCacheHitTokens  int     `json:"sessionCacheHitTokens"`
 	SessionCacheMissTokens int     `json:"sessionCacheMissTokens"`
-	CostUSD                float64 `json:"costUsd,omitempty"`
+	Cost                   float64 `json:"cost,omitempty"`
+	Currency               string  `json:"currency,omitempty"`
+	// CostUSD is kept for older frontend/status consumers. It mirrors Cost and
+	// does not imply USD.
+	CostUSD float64 `json:"costUsd,omitempty"`
 }
 
 type wireApproval struct {
@@ -145,7 +149,10 @@ func toWire(e event.Event) wireEvent {
 				SessionCacheHitTokens: e.SessionHit, SessionCacheMissTokens: e.SessionMiss,
 			}
 			if e.Pricing != nil {
-				w.Usage.CostUSD = e.Pricing.Cost(u)
+				cost := e.Pricing.Cost(u)
+				w.Usage.Cost = cost
+				w.Usage.Currency = e.Pricing.Symbol()
+				w.Usage.CostUSD = cost
 			}
 		}
 	case event.ApprovalRequest:

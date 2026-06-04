@@ -98,6 +98,8 @@ func (a *App) restoreOrBuildTabs() {
 			} else {
 				tab = a.createTabEntryWithID("global", globalTabWorkspaceRoot(), entry.TopicID, entry.ID)
 			}
+			tab.model = entry.Model
+			tab.effort = cloneStringPtr(entry.Effort)
 			tab.sink = &tabEventSink{tabID: tab.ID, app: a, ctx: ctx}
 			a.mu.Lock()
 			a.tabs[tab.ID] = tab
@@ -141,6 +143,7 @@ func (a *App) createTabEntryWithID(scope, workspaceRoot, topicID, id string) *Wo
 		WorkspaceRoot: workspaceRoot,
 		TopicID:       topicID,
 		TopicTitle:    topicTitleForTab(scope, workspaceRoot, topicID),
+		mode:          "normal",
 		disabledMCP:   map[string]ServerView{},
 	}
 }
@@ -218,12 +221,16 @@ func (a *App) domReady(_ context.Context) {
 // Submit runs raw user input as a turn; slash commands and @-references are
 // resolved by the controller. Output arrives asynchronously on eventChannel.
 func (a *App) Submit(input string) {
+	a.SubmitToTab("", input)
+}
+
+func (a *App) SubmitToTab(tabID, input string) {
 	trimmed := strings.TrimSpace(input)
 	if trimmed == "/effort" || strings.HasPrefix(trimmed, "/effort ") {
-		a.runEffortCommand(trimmed)
+		a.runEffortCommandForTab(tabID, trimmed)
 		return
 	}
-	if ctrl := a.activeCtrl(); ctrl != nil {
+	if ctrl := a.ctrlByTabID(tabID); ctrl != nil {
 		ctrl.Submit(input)
 	}
 }
@@ -231,7 +238,11 @@ func (a *App) Submit(input string) {
 // SubmitDisplay runs input as a turn while recording a shorter UI-only display
 // string for the saved desktop transcript. The model still receives input.
 func (a *App) SubmitDisplay(display, input string) {
-	ctrl := a.activeCtrl()
+	a.SubmitDisplayToTab("", display, input)
+}
+
+func (a *App) SubmitDisplayToTab(tabID, display, input string) {
+	ctrl := a.ctrlByTabID(tabID)
 	if ctrl == nil {
 		return
 	}
@@ -241,7 +252,11 @@ func (a *App) SubmitDisplay(display, input string) {
 
 // Cancel aborts the in-flight turn.
 func (a *App) Cancel() {
-	if ctrl := a.activeCtrl(); ctrl != nil {
+	a.CancelTab("")
+}
+
+func (a *App) CancelTab(tabID string) {
+	if ctrl := a.ctrlByTabID(tabID); ctrl != nil {
 		ctrl.Cancel()
 	}
 }
@@ -249,7 +264,11 @@ func (a *App) Cancel() {
 // Approve answers a pending approval_request by ID: allow runs the call, session
 // also remembers the grant for the rest of the session.
 func (a *App) Approve(id string, allow, session, persist bool) {
-	ctrl := a.activeCtrl()
+	a.ApproveTab("", id, allow, session, persist)
+}
+
+func (a *App) ApproveTab(tabID, id string, allow, session, persist bool) {
+	ctrl := a.ctrlByTabID(tabID)
 	if ctrl != nil {
 		ctrl.Approve(id, allow, session, persist)
 	}
@@ -267,20 +286,30 @@ func (a *App) SetPlanMode(on bool) {
 // normal) in one call, so a turn submitted right after the switch can't race a
 // half-applied SetPlanMode/SetBypass pair.
 func (a *App) SetMode(mode string) {
-	a.mu.RLock()
-	ctrl := a.activeCtrlLocked()
-	a.mu.RUnlock()
+	a.SetModeForTab("", mode)
+}
+
+func (a *App) SetModeForTab(tabID, mode string) {
+	ctrl := a.ctrlByTabID(tabID)
 	if ctrl == nil {
 		return
 	}
+	normalized := "normal"
 	switch mode {
 	case "plan":
+		normalized = "plan"
 		ctrl.SetMode(true, false)
 	case "yolo":
+		normalized = "yolo"
 		ctrl.SetMode(false, true)
 	default:
 		ctrl.SetMode(false, false)
 	}
+	a.mu.Lock()
+	if tab := a.tabByIDLocked(tabID); tab != nil {
+		tab.mode = normalized
+	}
+	a.mu.Unlock()
 }
 
 // QuestionAnswer is the frontend's reply to one question in an ask_request.
@@ -292,9 +321,11 @@ type QuestionAnswer struct {
 // AnswerQuestion resolves a pending ask_request (the `ask` tool) by ID with the
 // user's selections per question.
 func (a *App) AnswerQuestion(id string, answers []QuestionAnswer) {
-	a.mu.RLock()
-	ctrl := a.activeCtrlLocked()
-	a.mu.RUnlock()
+	a.AnswerQuestionForTab("", id, answers)
+}
+
+func (a *App) AnswerQuestionForTab(tabID, id string, answers []QuestionAnswer) {
+	ctrl := a.ctrlByTabID(tabID)
 	if ctrl == nil {
 		return
 	}
@@ -691,9 +722,11 @@ type HistoryMessage struct {
 
 // History returns the session's message log.
 func (a *App) History() []HistoryMessage {
-	a.mu.RLock()
-	ctrl := a.activeCtrlLocked()
-	a.mu.RUnlock()
+	return a.HistoryForTab("")
+}
+
+func (a *App) HistoryForTab(tabID string) []HistoryMessage {
+	ctrl := a.ctrlByTabID(tabID)
 	if ctrl == nil {
 		return []HistoryMessage{}
 	}
@@ -734,9 +767,11 @@ type ContextInfo struct {
 
 // ContextUsage returns the latest context-window gauge numbers.
 func (a *App) ContextUsage() ContextInfo {
-	a.mu.RLock()
-	ctrl := a.activeCtrlLocked()
-	a.mu.RUnlock()
+	return a.ContextUsageForTab("")
+}
+
+func (a *App) ContextUsageForTab(tabID string) ContextInfo {
+	ctrl := a.ctrlByTabID(tabID)
 	if ctrl == nil {
 		return ContextInfo{}
 	}
@@ -759,9 +794,11 @@ type BalanceInfo struct {
 // controller is down, or the fetch fails — so the status bar simply shows nothing
 // rather than an error.
 func (a *App) Balance() BalanceInfo {
-	a.mu.RLock()
-	ctrl := a.activeCtrlLocked()
-	a.mu.RUnlock()
+	return a.BalanceForTab("")
+}
+
+func (a *App) BalanceForTab(tabID string) BalanceInfo {
+	ctrl := a.ctrlByTabID(tabID)
 	if ctrl == nil {
 		return BalanceInfo{}
 	}
@@ -789,9 +826,17 @@ type JobView struct {
 // on demand (mount, turn end, and on each notice the frontend receives).
 func (a *App) Jobs() []JobView {
 	out := []JobView{}
-	a.mu.RLock()
-	ctrl := a.activeCtrlLocked()
-	a.mu.RUnlock()
+	ctrl := a.ctrlByTabID("")
+	return a.jobsForCtrl(ctrl, out)
+}
+
+func (a *App) JobsForTab(tabID string) []JobView {
+	out := []JobView{}
+	ctrl := a.ctrlByTabID(tabID)
+	return a.jobsForCtrl(ctrl, out)
+}
+
+func (a *App) jobsForCtrl(ctrl *control.Controller, out []JobView) []JobView {
 	if ctrl == nil {
 		return out
 	}
@@ -815,9 +860,11 @@ type Meta struct {
 // directory (for the status line), and the runtime event channel the frontend
 // subscribes to.
 func (a *App) Meta() Meta {
-	a.mu.RLock()
-	tab := a.activeTabLocked()
-	a.mu.RUnlock()
+	return a.MetaForTab("")
+}
+
+func (a *App) MetaForTab(tabID string) Meta {
+	tab := a.tabByID(tabID)
 	if tab == nil {
 		return Meta{EventChannel: eventChannel}
 	}
@@ -1837,10 +1884,14 @@ type EffortInfo struct {
 // providers are skipped. Result is non-nil: the frontend reads .length, so a nil
 // slice (JSON null) would crash the switcher on an empty list.
 func (a *App) Models() []ModelInfo {
+	return a.ModelsForTab("")
+}
+
+func (a *App) ModelsForTab(tabID string) []ModelInfo {
 	a.mu.RLock()
 	curModel := ""
 	workspaceRoot := ""
-	if tab := a.activeTabLocked(); tab != nil {
+	if tab := a.tabByIDLocked(tabID); tab != nil {
 		curModel = tab.model
 		workspaceRoot = tab.WorkspaceRoot
 	}
@@ -1867,15 +1918,40 @@ func (a *App) Models() []ModelInfo {
 // new model's session, so the chat continues seamlessly and subsequent turns use
 // the new model. No-op if name is already active or the controller is down.
 func (a *App) SetModel(name string) error {
+	return a.SetModelForTab("", name)
+}
+
+func (a *App) SetModelForTab(tabID, name string) error {
 	if a.ctx == nil || name == "" {
 		return nil
 	}
-	tab := a.activeTab()
+	tab := a.tabByID(tabID)
 	if tab == nil {
 		return nil
 	}
 	if name == tab.model {
 		return nil
+	}
+	if tab.Ctrl != nil && tab.Ctrl.Running() {
+		return fmt.Errorf("finish or cancel the current turn before changing model")
+	}
+	cfg, err := config.LoadForRoot(tab.WorkspaceRoot)
+	if err != nil {
+		return err
+	}
+	entry, ok := cfg.ResolveModel(name)
+	if !ok {
+		return fmt.Errorf("unknown model %q", name)
+	}
+	name = entry.Name + "/" + entry.Model
+	effortOverride := cloneStringPtr(tab.effort)
+	if effortOverride != nil {
+		normalized, err := config.NormalizeEffort(entry, config.EffortDisplay(&config.ProviderEntry{Effort: *effortOverride, Name: entry.Name, Kind: entry.Kind, BaseURL: entry.BaseURL}))
+		if err != nil {
+			effortOverride = nil
+		} else {
+			effortOverride = &normalized
+		}
 	}
 
 	var carried []provider.Message
@@ -1888,10 +1964,11 @@ func (a *App) SetModel(name string) error {
 	}
 
 	newCtrl, err := boot.Build(a.ctx, boot.Options{
-		Model:         name,
-		RequireKey:    false,
-		Sink:          tab.sink,
-		WorkspaceRoot: tab.WorkspaceRoot,
+		Model:          name,
+		RequireKey:     false,
+		Sink:           tab.sink,
+		WorkspaceRoot:  tab.WorkspaceRoot,
+		EffortOverride: cloneStringPtr(effortOverride),
 	})
 	if err != nil {
 		return err
@@ -1899,7 +1976,9 @@ func (a *App) SetModel(name string) error {
 	a.mu.Lock()
 	tab.Ctrl = newCtrl
 	tab.model = name
+	tab.effort = cloneStringPtr(effortOverride)
 	tab.Label = newCtrl.Label()
+	a.saveTabsLocked()
 	a.mu.Unlock()
 	newCtrl.EnableInteractiveApproval()
 
@@ -1913,7 +1992,11 @@ func (a *App) SetModel(name string) error {
 }
 
 func (a *App) Effort() EffortInfo {
-	entry, err := a.currentProviderEntry()
+	return a.EffortForTab("")
+}
+
+func (a *App) EffortForTab(tabID string) EffortInfo {
+	entry, err := a.currentProviderEntryForTab(tabID)
 	if err != nil {
 		return EffortInfo{Current: "auto", Levels: []string{}}
 	}
@@ -1929,13 +2012,30 @@ func (a *App) Effort() EffortInfo {
 }
 
 func (a *App) SetEffort(level string) error {
-	a.mu.RLock()
-	ctrl := a.activeCtrlLocked()
-	a.mu.RUnlock()
+	return a.SetEffortForTab("", level)
+}
+
+func (a *App) SetEffortForTab(tabID, level string) error {
+	tab := a.tabByID(tabID)
+	if tab == nil {
+		if strings.TrimSpace(tabID) == "" {
+			entry, err := a.currentProviderEntryForTab("")
+			if err != nil {
+				return err
+			}
+			effort, err := config.NormalizeEffort(entry, level)
+			if err != nil {
+				return err
+			}
+			return a.applyProviderEffortConfig(entry, effort)
+		}
+		return fmt.Errorf("tab %q not found", tabID)
+	}
+	ctrl := tab.Ctrl
 	if ctrl != nil && ctrl.Running() {
 		return fmt.Errorf("finish or cancel the current turn before changing effort")
 	}
-	entry, err := a.currentProviderEntry()
+	entry, err := a.currentProviderEntryForTab(tabID)
 	if err != nil {
 		return err
 	}
@@ -1943,6 +2043,43 @@ func (a *App) SetEffort(level string) error {
 	if err != nil {
 		return err
 	}
+	var carried []provider.Message
+	prevPath := ""
+	if tab.Ctrl != nil {
+		prevPath = tab.Ctrl.SessionPath()
+		_ = tab.Ctrl.Snapshot()
+		carried = tab.Ctrl.History()
+		tab.Ctrl.Close()
+	}
+	newCtrl, err := boot.Build(a.ctx, boot.Options{
+		Model:          tab.model,
+		RequireKey:     false,
+		Sink:           tab.sink,
+		WorkspaceRoot:  tab.WorkspaceRoot,
+		EffortOverride: &effort,
+	})
+	if err != nil {
+		return err
+	}
+	a.mu.Lock()
+	tab.Ctrl = newCtrl
+	tab.effort = &effort
+	tab.Label = newCtrl.Label()
+	tab.StartupErr = ""
+	tab.Ready = true
+	a.saveTabsLocked()
+	a.mu.Unlock()
+	newCtrl.EnableInteractiveApproval()
+	path := agent.ContinueSessionPath(prevPath, newCtrl.SessionDir(), newCtrl.Label())
+	if len(carried) > 0 {
+		newCtrl.Resume(&agent.Session{Messages: carried}, path)
+	} else if path != "" {
+		newCtrl.SetSessionPath(path)
+	}
+	return nil
+}
+
+func (a *App) applyProviderEffortConfig(entry *config.ProviderEntry, effort string) error {
 	return a.applyConfigChange(func(cfg *config.Config) error {
 		if _, ok := cfg.Provider(entry.Name); !ok {
 			if err := cfg.UpsertProvider(*entry); err != nil {
@@ -2215,64 +2352,84 @@ func revealPath(path string) error {
 }
 
 func (a *App) notice(text string) {
-	if a.activeSink() != nil {
-		a.activeSink().Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo, Text: text})
+	a.noticeForTab("", text)
+}
+
+func (a *App) noticeForTab(tabID, text string) {
+	tab := a.tabByID(tabID)
+	if tab != nil && tab.sink != nil {
+		tab.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo, Text: text})
 	}
 }
 
 func (a *App) runEffortCommand(input string) {
-	entry, err := a.currentProviderEntry()
+	a.runEffortCommandForTab("", input)
+}
+
+func (a *App) runEffortCommandForTab(tabID, input string) {
+	entry, err := a.currentProviderEntryForTab(tabID)
 	if err != nil {
-		a.notice("effort: " + err.Error())
+		a.noticeForTab(tabID, "effort: "+err.Error())
 		return
 	}
 	cap := config.EffortCapabilityForEntry(entry)
 	if !cap.Supported {
-		a.notice(fmt.Sprintf("effort is not configurable for %s", entry.Name))
+		a.noticeForTab(tabID, fmt.Sprintf("effort is not configurable for %s", entry.Name))
 		return
 	}
 	args := strings.Fields(input)
 	if len(args) < 2 {
-		a.notice(fmt.Sprintf("effort for %s: %s (default: %s; options: %s)", entry.Name, config.EffortDisplay(entry), cap.Default, strings.Join(cap.Levels, "|")))
+		a.noticeForTab(tabID, fmt.Sprintf("effort for %s: %s (default: %s; options: %s)", entry.Name, config.EffortDisplay(entry), cap.Default, strings.Join(cap.Levels, "|")))
 		return
 	}
 	if len(args) > 2 {
-		a.notice("usage: /effort " + strings.Join(cap.Levels, "|"))
+		a.noticeForTab(tabID, "usage: /effort "+strings.Join(cap.Levels, "|"))
 		return
 	}
 	effort, err := config.NormalizeEffort(entry, args[1])
 	if err != nil {
-		a.notice(err.Error())
+		a.noticeForTab(tabID, err.Error())
 		return
 	}
-	if err := a.SetEffort(args[1]); err != nil {
-		a.notice("effort: " + err.Error())
+	if err := a.SetEffortForTab(tabID, args[1]); err != nil {
+		a.noticeForTab(tabID, "effort: "+err.Error())
 		return
 	}
 	display := effort
 	if display == "" {
 		display = "auto"
 	}
-	a.notice(fmt.Sprintf("effort for %s set to %s", entry.Name, display))
+	a.noticeForTab(tabID, fmt.Sprintf("effort for %s set to %s", entry.Name, display))
 }
 
 func (a *App) currentProviderEntry() (*config.ProviderEntry, error) {
-	cfg, err := config.Load()
+	return a.currentProviderEntryForTab("")
+}
+
+func (a *App) currentProviderEntryForTab(tabID string) (*config.ProviderEntry, error) {
+	a.mu.RLock()
+	ref := ""
+	workspaceRoot := ""
+	effortOverride := (*string)(nil)
+	if tab := a.tabByIDLocked(tabID); tab != nil {
+		ref = tab.model
+		workspaceRoot = tab.WorkspaceRoot
+		effortOverride = cloneStringPtr(tab.effort)
+	}
+	a.mu.RUnlock()
+	cfg, err := config.LoadForRoot(workspaceRoot)
 	if err != nil {
 		return nil, err
 	}
-	a.mu.RLock()
-	ref := ""
-	if tab := a.activeTabLocked(); tab != nil {
-		ref = tab.model
-	}
-	a.mu.RUnlock()
 	if strings.TrimSpace(ref) == "" {
 		ref = cfg.DefaultModel
 	}
 	entry, ok := cfg.ResolveModel(ref)
 	if !ok {
 		return nil, fmt.Errorf("unknown model %q", ref)
+	}
+	if effortOverride != nil {
+		entry.Effort = *effortOverride
 	}
 	return entry, nil
 }

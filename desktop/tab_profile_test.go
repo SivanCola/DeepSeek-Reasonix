@@ -1,0 +1,101 @@
+package main
+
+import (
+	"context"
+	"os"
+	"strings"
+	"testing"
+
+	"reasonix/internal/control"
+)
+
+func testTab(id, root string) *WorkspaceTab {
+	return &WorkspaceTab{
+		ID:            id,
+		Scope:         "project",
+		WorkspaceRoot: root,
+		Ready:         true,
+		Ctrl:          control.New(control.Options{Label: id}),
+		model:         "deepseek-flash/deepseek-v4-flash",
+		mode:          "normal",
+		disabledMCP:   map[string]ServerView{},
+	}
+}
+
+func TestSetEffortForTabIsTabLocal(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+
+	rootA := t.TempDir()
+	rootB := t.TempDir()
+	app := NewApp()
+	app.ctx = context.Background()
+	app.readyHook = func() {}
+	tabA := testTab("a", rootA)
+	tabB := testTab("b", rootB)
+	tabA.sink = &tabEventSink{tabID: tabA.ID, app: app}
+	tabB.sink = &tabEventSink{tabID: tabB.ID, app: app}
+	app.tabs = map[string]*WorkspaceTab{tabA.ID: tabA, tabB.ID: tabB}
+	app.tabOrder = []string{tabA.ID, tabB.ID}
+	app.activeTabID = tabA.ID
+	defer func() {
+		for _, tab := range app.tabs {
+			if tab.Ctrl != nil {
+				tab.Ctrl.Close()
+			}
+		}
+	}()
+
+	if err := app.SetEffortForTab(tabA.ID, "max"); err != nil {
+		t.Fatalf("SetEffortForTab: %v", err)
+	}
+	if got := app.EffortForTab(tabA.ID).Current; got != "max" {
+		t.Fatalf("tab A effort = %q, want max", got)
+	}
+	if got := app.EffortForTab(tabB.ID).Current; got != "auto" {
+		t.Fatalf("tab B effort = %q, want auto", got)
+	}
+	if tabB.effort != nil {
+		t.Fatalf("tab B stored effort = %q, want nil", *tabB.effort)
+	}
+	body, err := os.ReadFile(userConfigPathForTest())
+	if err == nil && strings.Contains(string(body), `effort`) {
+		t.Fatalf("tab-local effort should not write provider config:\n%s", body)
+	}
+}
+
+func TestSaveTabsPersistsModelAndEffort(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+
+	effort := "max"
+	app := NewApp()
+	tab := testTab("a", t.TempDir())
+	tab.effort = &effort
+	tab.model = "deepseek/deepseek-v4-pro"
+	app.tabs = map[string]*WorkspaceTab{tab.ID: tab}
+	app.tabOrder = []string{tab.ID}
+	app.activeTabID = tab.ID
+
+	app.mu.Lock()
+	app.saveTabsLocked()
+	app.mu.Unlock()
+
+	got := loadTabsFile()
+	if len(got.Tabs) != 1 {
+		t.Fatalf("tabs len = %d, want 1", len(got.Tabs))
+	}
+	if got.Tabs[0].Model != tab.model {
+		t.Fatalf("saved model = %q, want %q", got.Tabs[0].Model, tab.model)
+	}
+	if got.Tabs[0].Effort == nil || *got.Tabs[0].Effort != effort {
+		t.Fatalf("saved effort = %#v, want %q", got.Tabs[0].Effort, effort)
+	}
+}
+
+func userConfigPathForTest() string {
+	if dir, err := os.UserConfigDir(); err == nil {
+		return dir + "/reasonix/reasonix.toml"
+	}
+	return ""
+}

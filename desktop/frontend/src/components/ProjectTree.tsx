@@ -22,6 +22,7 @@ interface ProjectTreeProps {
   onOpenProjectHistory: (scope: "global" | "project", workspaceRoot: string) => Promise<void> | void;
   onAddProject: () => Promise<void>;
   onUseCurrentProject?: () => Promise<void>;
+  onRenameTopic?: (topicId: string, title: string) => Promise<void> | void;
   onTopicsChanged?: () => Promise<void> | void;
   refreshSignal?: number;
 }
@@ -137,6 +138,7 @@ export function ProjectTree({
   onOpenProjectHistory,
   onAddProject,
   onUseCurrentProject,
+  onRenameTopic,
   onTopicsChanged,
   refreshSignal,
 }: ProjectTreeProps) {
@@ -153,6 +155,7 @@ export function ProjectTree({
   const [menuPoint, setMenuPoint] = useState<ContextMenuPoint | null>(null);
   const [editingProject, setEditingProject] = useState<{ key: string; root: string } | null>(null);
   const [projectDraft, setProjectDraft] = useState("");
+  const [addingProject, setAddingProject] = useState(false);
   const [confirmAction, setConfirmAction] = useState<{ topicId: string; action: "trash" } | null>(null);
   const [confirmRemoveProject, setConfirmRemoveProject] = useState<string | null>(null);
   const [dragProjectRoot, setDragProjectRoot] = useState<string | null>(null);
@@ -215,6 +218,17 @@ export function ProjectTree({
     });
   };
 
+  const handleAddProject = async () => {
+    if (addingProject) return;
+    setAddingProject(true);
+    try {
+      await onAddProject();
+      await refresh();
+    } finally {
+      setAddingProject(false);
+    }
+  };
+
   const handleCreateTopic = async (scope: string, workspaceRoot: string, key: string) => {
     if (creatingRef.current) return;
     creatingRef.current = true;
@@ -268,9 +282,10 @@ export function ProjectTree({
     setEditingTopic(null);
     if (!title) return;
     try {
-      await app.RenameTopic(topicId, title);
+      if (onRenameTopic) await onRenameTopic(topicId, title);
+      else await app.RenameTopic(topicId, title);
       await refresh();
-      await onTopicsChanged?.();
+      if (!onRenameTopic) await onTopicsChanged?.();
     } catch {
       /* ignore */
     }
@@ -689,7 +704,7 @@ export function ProjectTree({
             {node.projectColor && <span className="project-tree__folder-color" aria-hidden="true" />}
             <span className="project-tree__folder-label">{projectLabel}</span>
           </button>
-          <Tooltip label="新建会话">
+          <Tooltip label={t("projectTree.newTopicTooltip")} className="project-tree__action-slot">
             <button
               type="button"
               className={`project-tree__new-topic${creatingProject === key ? " project-tree__new-topic--active" : ""}`}
@@ -735,31 +750,40 @@ export function ProjectTree({
           <BriefcaseBusiness size={13} />
           {t("projectTree.workspaceTitle")}
         </span>
+        <Tooltip label={t("projectTree.addProjectTooltip")} className="project-tree__action-slot">
+          <button
+            type="button"
+            className="project-tree__add-project"
+            aria-label={t("projectTree.addProjectTooltip")}
+            disabled={addingProject}
+            onClick={() => void handleAddProject()}
+          >
+            <FolderPlus size={13} />
+          </button>
+        </Tooltip>
       </div>
       <div className="project-tree__list">
         {visibleTree.length === 0 ? (
           query.trim() ? (
-            <div className="project-tree__empty">没有匹配的项目或会话</div>
+            <div className="project-tree__empty">{t("projectTree.emptyNoMatch")}</div>
           ) : (
             <div className="project-tree__empty-state">
               <div className="project-tree__empty-icon">
                 <FolderPlus size={18} />
               </div>
               <div className="project-tree__empty-copy">
-                <strong>还没有项目</strong>
-                <span>添加项目后，可以按项目管理会话、文件和上下文。</span>
+                <strong>{t("projectTree.emptyNoProjects")}</strong>
+                <span>{t("projectTree.emptyNoProjectsDesc")}</span>
               </div>
               <div className="project-tree__empty-actions">
                 <button
                   type="button"
                   className="project-tree__empty-primary"
-                  onClick={async () => {
-                    await onAddProject();
-                    await refresh();
-                  }}
+                  onClick={() => void handleAddProject()}
+                  disabled={addingProject}
                 >
                   <FolderPlus size={14} />
-                  <span>添加项目</span>
+                  <span>{t("projectTree.emptyAddProject")}</span>
                 </button>
                 {onUseCurrentProject && currentWorkspaceName && (
                   <button
@@ -771,11 +795,11 @@ export function ProjectTree({
                     }}
                   >
                     <FolderGit2 size={14} />
-                    <span>使用当前目录</span>
+                    <span>{t("projectTree.emptyUseCurrentDir")}</span>
                   </button>
                 )}
               </div>
-              {currentWorkspaceName && <div className="project-tree__empty-current">当前目录：{currentWorkspaceName}</div>}
+              {currentWorkspaceName && <div className="project-tree__empty-current">{t("projectTree.emptyCurrentDir", { dir: currentWorkspaceName })}</div>}
             </div>
           )
         ) : (

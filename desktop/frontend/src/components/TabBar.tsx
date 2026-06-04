@@ -5,6 +5,7 @@ import type { CSSProperties, DragEvent, KeyboardEvent as ReactKeyboardEvent, Mou
 import { FileText, Plus, X } from "lucide-react";
 import type { TabMeta } from "../lib/types";
 import { projectColorValue } from "../lib/projectColors";
+import { useT } from "../lib/i18n";
 import { Tooltip } from "./Tooltip";
 import { ContextMenu, contextMenuPointFromEvent, type ContextMenuItem, type ContextMenuPoint } from "./ContextMenu";
 
@@ -42,6 +43,7 @@ function projectAccentStyle(color?: string): CSSProperties | undefined {
 }
 
 export function TabBar({ tabs, activeTabId, onTabChange, onTabClose, onTabsClose, onTabsReorder, onNewTab, revealActiveSignal = 0 }: TabBarProps) {
+  const t = useT();
   const [draggingTabId, setDraggingTabId] = useState<string | null>(null);
   const [dropTarget, setDropTarget] = useState<{ id: string; side: DropSide } | null>(null);
   const [menuTabId, setMenuTabId] = useState<string | null>(null);
@@ -147,19 +149,19 @@ export function TabBar({ tabs, activeTabId, onTabChange, onTabClose, onTabsClose
     ? [
         {
           key: "close-current",
-          label: "关闭标签页",
+          label: t("tabBar.closeTab"),
           disabled: tabs.length <= 1,
           onSelect: () => closeTabsFromMenu([menuTabId]),
         },
         {
           key: "close-other",
-          label: "关闭其他标签页",
+          label: t("tabBar.closeOtherTabs"),
           disabled: tabs.length <= 1,
           onSelect: () => closeTabsFromMenu(tabs.filter((tab) => tab.id !== menuTabId).map((tab) => tab.id), menuTabId),
         },
         {
           key: "close-right",
-          label: "关闭右侧标签页",
+          label: t("tabBar.closeTabsToRight"),
           disabled: menuTabIndex >= tabs.length - 1,
           onSelect: () => {
             const rightTabIds = tabs.slice(menuTabIndex + 1).map((tab) => tab.id);
@@ -227,8 +229,8 @@ export function TabBar({ tabs, activeTabId, onTabChange, onTabClose, onTabsClose
           );
         })}
       </div>
-      <Tooltip label="新建会话">
-        <button className="tabbar__new" type="button" aria-label="新建会话" onClick={onNewTab}>
+      <Tooltip label={t("tabBar.newSession")}>
+        <button className="tabbar__new" type="button" aria-label={t("tabBar.newSession")} onClick={onNewTab}>
           <Plus size={13} />
         </button>
       </Tooltip>
@@ -237,7 +239,7 @@ export function TabBar({ tabs, activeTabId, onTabChange, onTabClose, onTabsClose
         point={menuPoint}
         items={tabMenuItems}
         minWidth={170}
-        ariaLabel="标签页操作"
+        ariaLabel={t("tabBar.tabActions")}
         onClose={closeTabMenu}
       />
     </div>

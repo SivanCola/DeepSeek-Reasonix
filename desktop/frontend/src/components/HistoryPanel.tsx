@@ -392,7 +392,7 @@ export function HistoryPanel({
           point={menuPoint}
           items={sessionMenuItems}
           minWidth={220}
-          ariaLabel={isTrash ? "回收站会话操作" : "历史会话操作"}
+          ariaLabel={isTrash ? tr("history.trashSessionActions") : tr("history.historySessionActions")}
           onClose={closeHistoryMenus}
         />
         <ContextMenu
@@ -400,7 +400,7 @@ export function HistoryPanel({
           point={blankMenuPoint}
           items={trashBlankMenuItems}
           minWidth={220}
-          ariaLabel="回收站操作"
+          ariaLabel={tr("history.trashActions")}
           onClose={closeHistoryMenus}
         />
       </div>

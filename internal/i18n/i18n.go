@@ -72,6 +72,8 @@ type Messages struct {
 	ChatStatusIdle         string // shortcuts hint when idle
 	ChatStatusYoloIdle     string // shortcuts hint when idle in YOLO/bypass mode
 	ChatStatusCycleHint    string // mode-cycle shortcut hint shown when no modal prompt owns the status row
+	ChatStatusCacheNowFmt  string // cache status tag, "%s" = latest-turn hit rate with percent sign
+	ChatStatusCacheAvgFmt  string // cache status tag, "%s" = session-average hit rate with percent sign
 	ChatStatusPlanApproval string // shortcuts hint while a plan is pending
 	PlanApprovalPrompt     string // one-line "plan above is ready" banner shown above the input
 	ChatStatusToolApproval string // shortcuts hint while a tool call awaits approval

@@ -7,6 +7,8 @@
 
 import type * as GeneratedApp from "../../wailsjs/go/main/App";
 
+import { t } from "./i18n";
+
 import type {
   BalanceInfo,
   CapabilitiesView,
@@ -76,15 +78,22 @@ interface DesktopWindowState {
 export interface AppBindings {
   Platform(): Promise<string>;
   Submit(input: string): Promise<void>;
+  SubmitToTab(tabID: string, input: string): Promise<void>;
   SubmitDisplay(display: string, input: string): Promise<void>;
+  SubmitDisplayToTab(tabID: string, display: string, input: string): Promise<void>;
   Cancel(): Promise<void>;
+  CancelTab(tabID: string): Promise<void>;
   Approve(id: string, allow: boolean, session: boolean, persist: boolean): Promise<void>;
+  ApproveTab(tabID: string, id: string, allow: boolean, session: boolean, persist: boolean): Promise<void>;
   AnswerQuestion(id: string, answers: QuestionAnswer[]): Promise<void>;
+  AnswerQuestionForTab(tabID: string, id: string, answers: QuestionAnswer[]): Promise<void>;
   SetPlanMode(on: boolean): Promise<void>;
   SetMode(mode: string): Promise<void>;
+  SetModeForTab(tabID: string, mode: string): Promise<void>;
   Compact(): Promise<void>;
   NewSession(): Promise<void>;
   History(): Promise<HistoryMessage[]>;
+  HistoryForTab(tabID: string): Promise<HistoryMessage[]>;
   Checkpoints(): Promise<CheckpointMeta[]>;
   Rewind(turn: number, scope: string): Promise<void>;
   Fork(turn: number): Promise<void>;
@@ -103,9 +112,13 @@ export interface AppBindings {
   SwitchWorkspace(path: string): Promise<string>;
   RemoveWorkspace(path: string): Promise<void>;
   ContextUsage(): Promise<ContextInfo>;
+  ContextUsageForTab(tabID: string): Promise<ContextInfo>;
   Balance(): Promise<BalanceInfo>;
+  BalanceForTab(tabID: string): Promise<BalanceInfo>;
   Jobs(): Promise<JobView[]>;
+  JobsForTab(tabID: string): Promise<JobView[]>;
   Meta(): Promise<Meta>;
+  MetaForTab(tabID: string): Promise<Meta>;
   Commands(): Promise<CommandInfo[]>;
   Capabilities(): Promise<CapabilitiesView>;
   AddMCPServer(input: MCPServerInput): Promise<number>;
@@ -134,8 +147,12 @@ export interface AppBindings {
   AttachmentDataURL(path: string): Promise<string>;
   Models(): Promise<ModelInfo[]>;
   SetModel(name: string): Promise<void>;
+  ModelsForTab(tabID: string): Promise<ModelInfo[]>;
+  SetModelForTab(tabID: string, name: string): Promise<void>;
   Effort(): Promise<EffortInfo>;
   SetEffort(level: string): Promise<void>;
+  EffortForTab(tabID: string): Promise<EffortInfo>;
+  SetEffortForTab(tabID: string, level: string): Promise<void>;
   Memory(): Promise<MemoryView>;
   Remember(scope: string, note: string): Promise<string>;
   Forget(name: string): Promise<void>;
@@ -439,8 +456,8 @@ function makeMockApp(): AppBindings {
   const trashedSessions: SessionMeta[] = [
     {
       path: "/mock/sessions/.trash/trash-dev-standard.jsonl",
-      title: "00 制定项目开发规范",
-      preview: "整理项目开发规范，包含目录结构、分支约定和提交要求。",
+      title: t("mock.trashDevStandardTitle"),
+      preview: t("mock.trashDevStandardPreview"),
       turns: 4,
       createdAt: t0 - 8 * day,
       lastActivityAt: t0 - 7 * day,
@@ -450,12 +467,12 @@ function makeMockApp(): AppBindings {
       scope: "project",
       workspaceRoot: "~/projects/joyquant-db",
       topicId: "topic_dev_standard",
-      topicTitle: "00 制定项目开发规范",
+      topicTitle: t("mock.trashDevStandardTitle"),
     },
     {
       path: "/mock/sessions/.trash/trash-p3a-review.jsonl",
-      title: "20260521 p3a P&D",
-      preview: "复盘 p3a P&D 需求范围，记录遗留风险和下轮处理建议。",
+      title: t("mock.trashP3aTitle"),
+      preview: t("mock.trashP3aPreview"),
       turns: 7,
       createdAt: t0 - 6 * day,
       lastActivityAt: t0 - 5 * day,
@@ -465,12 +482,12 @@ function makeMockApp(): AppBindings {
       scope: "project",
       workspaceRoot: "~/projects/joyquant-sys",
       topicId: "topic_p3a_pd",
-      topicTitle: "20260521 p3a P&D",
+      topicTitle: t("mock.trashP3aTitle"),
     },
     {
       path: "/mock/sessions/.trash/trash-global-product.jsonl",
-      title: "产品通用规范",
-      preview: "沉淀跨项目通用产品规则，包含验收、灰度和异常处理。",
+      title: t("mock.trashGlobalProductTitle"),
+      preview: t("mock.trashGlobalProductPreview"),
       turns: 2,
       createdAt: t0 - 4 * day,
       lastActivityAt: t0 - 3 * day,
@@ -479,7 +496,7 @@ function makeMockApp(): AppBindings {
       current: false,
       scope: "global",
       topicId: "topic_product",
-      topicTitle: "产品通用规范",
+      topicTitle: t("mock.trashGlobalProductTitle"),
     },
   ];
   // Mutable settings so the Settings panel's edits are observable in browser dev.
@@ -507,27 +524,27 @@ function makeMockApp(): AppBindings {
     {
       key: "project_~/projects/joyquant-db",
       kind: "project",
-      label: "joyquant-db",
+      label: t("mock.projectJoyquantDb"),
       root: "~/projects/joyquant-db",
       projectColor: "blue",
       children: [
-        { key: "topic_dev_standard", kind: "topic", label: "● 00 制定项目开发规范", root: "~/projects/joyquant-db", topicId: "topic_dev_standard", projectColor: "blue" },
-        { key: "topic_db_maint", kind: "topic", label: "01 JoyQuant DB项目维护", root: "~/projects/joyquant-db", topicId: "topic_db_maint", projectColor: "blue" },
-        { key: "topic_env", kind: "topic", label: "项目环境uv和Python运行问题", root: "~/projects/joyquant-db", topicId: "topic_env", projectColor: "blue" },
+        { key: "topic_dev_standard", kind: "topic", label: `● ${t("mock.topicDevStandard")}`, root: "~/projects/joyquant-db", topicId: "topic_dev_standard", projectColor: "blue" },
+        { key: "topic_db_maint", kind: "topic", label: t("mock.topicDbMaint"), root: "~/projects/joyquant-db", topicId: "topic_db_maint", projectColor: "blue" },
+        { key: "topic_env", kind: "topic", label: t("mock.topicEnv"), root: "~/projects/joyquant-db", topicId: "topic_env", projectColor: "blue" },
       ],
     },
     {
       key: "project_~/projects/joyquant-sys",
       kind: "project",
-      label: "joyquant-sys",
+      label: t("mock.projectJoyquantSys"),
       root: "~/projects/joyquant-sys",
       projectColor: "purple",
       children: [
-        { key: "topic_p3b_pd", kind: "topic", label: "● 20260523 p3b P&D", root: "~/projects/joyquant-sys", topicId: "topic_p3b_pd", projectColor: "purple" },
-        { key: "topic_p3a_pd", kind: "topic", label: "20260521 p3a P&D", root: "~/projects/joyquant-sys", topicId: "topic_p3a_pd", projectColor: "purple" },
-        { key: "topic_hotfix", kind: "topic", label: "20260522 post-p3-hotfix P&D", root: "~/projects/joyquant-sys", topicId: "topic_hotfix", projectColor: "purple" },
-        { key: "topic_sys_coord", kind: "topic", label: "01 JoyQuant-SYS 项目总协调", root: "~/projects/joyquant-sys", topicId: "topic_sys_coord", projectColor: "purple" },
-        { key: "topic_sys_standard", kind: "topic", label: "00 制定项目开发规范", root: "~/projects/joyquant-sys", topicId: "topic_sys_standard", projectColor: "purple" },
+        { key: "topic_p3b_pd", kind: "topic", label: `● ${t("mock.topicP3b")}`, root: "~/projects/joyquant-sys", topicId: "topic_p3b_pd", projectColor: "purple" },
+        { key: "topic_p3a_pd", kind: "topic", label: t("mock.topicP3a"), root: "~/projects/joyquant-sys", topicId: "topic_p3a_pd", projectColor: "purple" },
+        { key: "topic_hotfix", kind: "topic", label: t("mock.topicHotfix"), root: "~/projects/joyquant-sys", topicId: "topic_hotfix", projectColor: "purple" },
+        { key: "topic_sys_coord", kind: "topic", label: t("mock.topicSysCoord"), root: "~/projects/joyquant-sys", topicId: "topic_sys_coord", projectColor: "purple" },
+        { key: "topic_sys_standard", kind: "topic", label: t("mock.topicSysStandard"), root: "~/projects/joyquant-sys", topicId: "topic_sys_standard", projectColor: "purple" },
       ],
     },
     {
@@ -536,9 +553,9 @@ function makeMockApp(): AppBindings {
       label: "Global",
       root: globalWorkspaceRoot,
       children: [
-        { key: "global_topic_product", kind: "global_topic", label: "产品通用规范", topicId: "topic_product" },
-        { key: "global_topic_ai", kind: "global_topic", label: "AI 工程化最佳实践", topicId: "topic_ai" },
-        { key: "global_topic_lab", kind: "global_topic", label: "临时探索与实验", topicId: "topic_lab" },
+        { key: "global_topic_product", kind: "global_topic", label: t("mock.topicProduct"), topicId: "topic_product" },
+        { key: "global_topic_ai", kind: "global_topic", label: t("mock.topicAi"), topicId: "topic_ai" },
+        { key: "global_topic_lab", kind: "global_topic", label: t("mock.topicLab"), topicId: "topic_lab" },
       ],
     },
   ];
@@ -567,7 +584,7 @@ function makeMockApp(): AppBindings {
       workspaceRoot: "~/projects/joyquant-db",
       workspaceName: "joyquant-db",
       topicId: "topic_dev_standard",
-      topicTitle: "00 制定项目开发规范",
+      topicTitle: t("mock.trashDevStandardTitle"),
       projectColor: "blue",
       label: "DeepSeek-R1",
       ready: true,
@@ -611,8 +628,8 @@ function makeMockApp(): AppBindings {
       if (/Mac/i.test(ua)) return "darwin";
       return "linux";
     },
-    async Submit(input) {
-      cancelled = false;
+        async Submit(input) {
+          cancelled = false;
       emit({ kind: "turn_started" });
       const trimmedInput = input.trim().toLowerCase();
       if (trimmedInput === "/approve-preview" || trimmedInput === "approve preview" || trimmedInput === "approve预览") {
@@ -624,7 +641,7 @@ function makeMockApp(): AppBindings {
           approval: {
             id: "mock-approval-preview",
             tool: "bash",
-            subject: "npm run build\n\n需要运行构建命令来验证前端产物和样式打包是否正常。",
+            subject: t("mock.approvalSubject"),
           },
         });
         return;
@@ -658,22 +675,22 @@ function makeMockApp(): AppBindings {
             questions: [
               {
                 id: "q1",
-                header: "处理方向",
-                prompt: "git pull 的冲突你想怎么处理？",
+                header: t("mock.askQ1Header"),
+                prompt: t("mock.askQ1Prompt"),
                 options: [
-                  { label: "git stash 后 pull", description: "用 git stash 暂存本地修改，拉取最新代码后再恢复" },
-                  { label: "丢弃本地修改后 pull", description: "放弃本地所有修改，强制与远端同步" },
-                  { label: "另建分支保存改动", description: "先创建分支把本地改动保存起来，再拉取主分支" },
+                  { label: t("mock.askQ1Opt1Label"), description: t("mock.askQ1Opt1Desc") },
+                  { label: t("mock.askQ1Opt2Label"), description: t("mock.askQ1Opt2Desc") },
+                  { label: t("mock.askQ1Opt3Label"), description: t("mock.askQ1Opt3Desc") },
                 ],
               },
               {
                 id: "q2",
-                header: "Reasonix 构建",
-                prompt: "对于 reasonix 二进制缺失的问题，你想怎么做？",
+                header: t("mock.askQ2Header"),
+                prompt: t("mock.askQ2Prompt"),
                 options: [
-                  { label: "先查文档", description: "查看 README / 构建文档来确定正确的构建命令" },
-                  { label: "看构建配置", description: "查看 desktop/wails.json 与 main.go 来推断入口" },
-                  { label: "我先帮你尝试构建", description: "先处理 git 冲突，然后尝试本地构建并汇报结果" },
+                  { label: t("mock.askQ2Opt1Label"), description: t("mock.askQ2Opt1Desc") },
+                  { label: t("mock.askQ2Opt2Label"), description: t("mock.askQ2Opt2Desc") },
+                  { label: t("mock.askQ2Opt3Label"), description: t("mock.askQ2Opt3Desc") },
                 ],
               },
             ],
@@ -691,9 +708,9 @@ function makeMockApp(): AppBindings {
             name: "todo_write",
             args: JSON.stringify({
               todos: [
-                { content: "梳理当前前端结构", status: "completed" },
-                { content: "优化审批与 Ask 决策条布局", activeForm: "正在调整决策条布局", status: "in_progress" },
-                { content: "验证三种预览状态", status: "pending" },
+                { content: t("mock.todo1"), status: "completed" },
+                { content: t("mock.todo2"), activeForm: t("mock.todo2ActiveForm"), status: "in_progress" },
+                { content: t("mock.todo3"), status: "pending" },
               ],
             }),
             readOnly: false,
@@ -707,9 +724,9 @@ function makeMockApp(): AppBindings {
             name: "todo_write",
             args: JSON.stringify({
               todos: [
-                { content: "梳理当前前端结构", status: "completed" },
-                { content: "优化审批与 Ask 决策条布局", activeForm: "正在调整决策条布局", status: "in_progress" },
-                { content: "验证三种预览状态", status: "pending" },
+                { content: t("mock.todo1"), status: "completed" },
+                { content: t("mock.todo2"), activeForm: t("mock.todo2ActiveForm"), status: "in_progress" },
+                { content: t("mock.todo3"), status: "pending" },
               ],
             }),
             output: "todo list updated",
@@ -761,16 +778,25 @@ function makeMockApp(): AppBindings {
           sessionCacheMissTokens: 256,
         },
       });
-      emit({ kind: "turn_done" });
-    },
-    async SubmitDisplay(_display, input) {
-      await this.Submit(input);
-    },
-    async Cancel() {
-      cancelled = true;
-      emit({ kind: "turn_done" });
-    },
-    async Approve(_id, allow, session, persist) {
+          emit({ kind: "turn_done" });
+        },
+        async SubmitToTab(_tabID, input) {
+          await this.Submit(input);
+        },
+        async SubmitDisplay(_display, input) {
+          await this.Submit(input);
+        },
+        async SubmitDisplayToTab(_tabID, display, input) {
+          await this.SubmitDisplay(display, input);
+        },
+        async Cancel() {
+          cancelled = true;
+          emit({ kind: "turn_done" });
+        },
+        async CancelTab(_tabID) {
+          await this.Cancel();
+        },
+        async Approve(_id, allow, session, persist) {
       if (!pendingApprovalPreview) return;
       pendingApprovalPreview = false;
       const suffix = persist ? "persisted" : session ? "allowed for session" : "allowed once";
@@ -778,23 +804,30 @@ function makeMockApp(): AppBindings {
         kind: "message",
         text: `approval preview answered: ${allow ? suffix : "denied"}`,
       });
-      emit({ kind: "turn_done" });
-    },
-    async AnswerQuestion(_id, answers) {
+          emit({ kind: "turn_done" });
+        },
+        async ApproveTab(_tabID, id, allow, session, persist) {
+          await this.Approve(id, allow, session, persist);
+        },
+        async AnswerQuestion(_id, answers) {
       if (!pendingAskPreview) return;
       pendingAskPreview = false;
       const summary = answers
         .map((answer) => `${answer.questionId}: ${(answer.selected ?? []).join(", ") || "(no answer)"}`)
         .join("\n");
       emit({ kind: "message", text: `ask preview answered:\n\n${summary}` });
-      emit({ kind: "turn_done" });
-    },
+          emit({ kind: "turn_done" });
+        },
+        async AnswerQuestionForTab(_tabID, id, answers) {
+          await this.AnswerQuestion(id, answers);
+        },
     async ConfirmAction(req) {
       void req;
       return false;
     },
-    async SetPlanMode() {},
-    async SetMode() {},
+        async SetPlanMode() {},
+        async SetMode() {},
+        async SetModeForTab() {},
     async Compact() {},
     async NewSession() {},
     async Checkpoints() {
@@ -804,9 +837,12 @@ function makeMockApp(): AppBindings {
     async Fork() {},
     async SummarizeFrom() {},
     async SummarizeUpTo() {},
-    async History() {
-      return [];
-    },
+        async History() {
+          return [];
+        },
+        async HistoryForTab() {
+          return this.History();
+        },
     async ListSessions() {
       return sessions.map((s) => ({ ...s }));
     },
@@ -886,27 +922,39 @@ function makeMockApp(): AppBindings {
       const index = mockProjectTree.findIndex((node) => node.root === path);
       if (index >= 0) mockProjectTree.splice(index, 1);
     },
-    async ContextUsage() {
-      return { used: 42124, window: 128000, compactRatio: 0.8 };
-    },
-    async Balance() {
+        async ContextUsage() {
+          return { used: 42124, window: 128000, compactRatio: 0.8 };
+        },
+        async ContextUsageForTab() {
+          return this.ContextUsage();
+        },
+        async Balance() {
       // Mirror the active mock provider: deepseek-flash carries a balance_url.
       const p = settings.providers.find((x) => x.name === settings.defaultModel);
       if (!p?.balanceUrl) return { available: false, display: "" };
-      return { available: true, display: "¥128.50" };
-    },
-    async Jobs() {
-      return []; // browser dev mock has no background jobs
-    },
-    async Meta() {
+          return { available: true, display: "¥128.50" };
+        },
+        async BalanceForTab() {
+          return this.Balance();
+        },
+        async Jobs() {
+          return []; // browser dev mock has no background jobs
+        },
+        async JobsForTab() {
+          return this.Jobs();
+        },
+        async Meta() {
       return {
         label: "DeepSeek-R1",
         ready: true,
         eventChannel: EVENT_CHANNEL,
         cwd,
-        bypass: settings.bypass,
-      };
-    },
+            bypass: settings.bypass,
+          };
+        },
+        async MetaForTab() {
+          return this.Meta();
+        },
     async Commands() {
       return [
         { name: "new", description: "Start a new session", kind: "builtin" as const },
@@ -1159,19 +1207,31 @@ function makeMockApp(): AppBindings {
     async AttachmentDataURL(_path: string) {
       return "data:image/png;base64,iVBORw0KGgo=";
     },
-    async Models() {
-      return [
-        { ref: "deepseek/deepseek-v4-flash", provider: "deepseek", model: "deepseek-v4-flash", current: true },
-        { ref: "deepseek/deepseek-v4-pro", provider: "deepseek", model: "deepseek-v4-pro", current: false },
-      ];
-    },
-    async SetModel() {},
-    async Effort() {
-      return { supported: true, current: mockEffort, default: "high", levels: ["auto", "high", "max"] };
-    },
-    async SetEffort(level: string) {
-      mockEffort = level || "auto";
-    },
+        async Models() {
+          return [
+            { ref: "deepseek/deepseek-v4-flash", provider: "deepseek", model: "deepseek-v4-flash", current: true },
+            { ref: "deepseek/deepseek-v4-pro", provider: "deepseek", model: "deepseek-v4-pro", current: false },
+          ];
+        },
+        async ModelsForTab() {
+          return this.Models();
+        },
+        async SetModel() {},
+        async SetModelForTab(_tabID, name) {
+          await this.SetModel(name);
+        },
+        async Effort() {
+          return { supported: true, current: mockEffort, default: "high", levels: ["auto", "high", "max"] };
+        },
+        async EffortForTab() {
+          return this.Effort();
+        },
+        async SetEffort(level: string) {
+          mockEffort = level || "auto";
+        },
+        async SetEffortForTab(_tabID, level) {
+          await this.SetEffort(level);
+        },
     async Memory() {
       return {
         available: true,
@@ -1185,7 +1245,7 @@ function makeMockApp(): AppBindings {
           {
             path: "~/.config/reasonix/REASONIX.md",
             scope: "user",
-            body: "# User memory\n\nAlways respond in 中文.",
+            body: t("mock.memoryBody"),
           },
         ],
         facts: [
@@ -1247,12 +1307,12 @@ function makeMockApp(): AppBindings {
       const k = list as "allow" | "ask" | "deny";
       settings.permissions[k] = settings.permissions[k].filter((r) => r !== rule);
     },
-	    async SetSandbox(bash: string, network: boolean, workspaceRoot: string, allowWrite: string[]) {
-	      settings.sandbox = { bash, network, workspaceRoot, allowWrite };
-	    },
-	    async SetNetwork(n: NetworkView) {
-	      settings.network = n;
-	    },
+        async SetSandbox(bash: string, network: boolean, workspaceRoot: string, allowWrite: string[]) {
+          settings.sandbox = { bash, network, workspaceRoot, allowWrite };
+        },
+        async SetNetwork(n: NetworkView) {
+          settings.network = n;
+        },
     async SetAgentParams(temperature: number, maxSteps: number, systemPrompt: string) {
       settings.agent = { temperature, maxSteps, systemPrompt };
     },
@@ -1321,7 +1381,7 @@ function makeMockApp(): AppBindings {
         workspaceRoot,
         workspaceName: workspaceRoot.split("/").filter(Boolean).pop() ?? workspaceRoot,
         topicId: _topicID,
-        topicTitle: topicLabel(_topicID, "新的会话"),
+        topicTitle: topicLabel(_topicID, t("mock.newSession")),
         projectColor: mockProjectTree.find((node) => node.root === workspaceRoot)?.projectColor,
         label: "deepseek-v4-flash",
         ready: true,
@@ -1403,7 +1463,7 @@ function makeMockApp(): AppBindings {
     },
     async CreateTopic(_scope: string, _workspaceRoot: string, title: string) {
       const id = "topic_" + Date.now();
-      const topicTitle = title.trim() || "新的会话";
+      const topicTitle = title.trim() || t("mock.newSession");
       const parent = _scope === "global"
         ? mockProjectTree.find((node) => node.kind === "global_folder")
         : mockProjectTree.find((node) => node.root === _workspaceRoot);
@@ -1422,7 +1482,13 @@ function makeMockApp(): AppBindings {
     },
     async RenameTopic(topicID: string, title: string) {
       const topic = findMockTopic(topicID);
-      if (topic) topic.label = title.trim() || topic.label;
+      const nextTitle = title.trim();
+      if (!topic || !nextTitle) return;
+      const activePrefix = topic.label?.startsWith("● ") ? "● " : "";
+      topic.label = `${activePrefix}${nextTitle}`;
+      mockTabs = mockTabs.map((tab) =>
+        tab.topicId === topicID ? { ...tab, topicTitle: nextTitle } : tab,
+      );
     },
     async DeleteTopic(topicID: string) {
       deleteMockTopic(topicID);
@@ -1443,6 +1509,8 @@ function makeMockApp(): AppBindings {
         reasoningTokens: 7521,
         cacheHitTokens: 87000,
         cacheMissTokens: 13000,
+        sessionCost: 0.018,
+        sessionCurrency: "¥",
         sessionCostUsd: 0.018,
         readFiles: [
           { path: "REASONIX.md", turn: 2, time: now - 34 * 60 * 1000 },
@@ -1451,8 +1519,8 @@ function makeMockApp(): AppBindings {
           { path: "scripts/db_migrate.sh", turn: 6, time: now - 4 * 60 * 1000, offset: 120, limit: 80, truncated: true },
         ],
         changedFiles: [
-          { path: "docs/dev-standard.md", sources: ["session"], gitStatus: "modified", turns: [5, 6], latestPrompt: "更新规范草案 v0.3", latestTime: now - 2 * 60 * 1000 },
-          { path: ".reasonix/project.md", sources: ["session"], gitStatus: "added", turns: [6], latestPrompt: "记录项目上下文", latestTime: now - 60 * 1000 },
+          { path: t("mock.changedFile1Path"), sources: ["session"], gitStatus: "modified", turns: [5, 6], latestPrompt: t("mock.changedFile1Prompt"), latestTime: now - 2 * 60 * 1000 },
+          { path: t("mock.changedFile2Path"), sources: ["session"], gitStatus: "added", turns: [6], latestPrompt: t("mock.changedFile2Prompt"), latestTime: now - 60 * 1000 },
         ],
       };
     },

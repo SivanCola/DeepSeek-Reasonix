@@ -57,6 +57,9 @@ type Options struct {
 	MaxSteps   int
 	RequireKey bool
 	Sink       event.Sink
+	// EffortOverride is a session-local reasoning effort override. Nil means use
+	// the resolved provider config; a non-nil empty string means provider default.
+	EffortOverride *string
 	// Stderr is the writer for diagnostic warnings and plugin subprocess
 	// stderr output. When nil, defaults to os.Stderr. Set to io.Discard
 	// during model switch inside a bubbletea session to prevent any output
@@ -99,6 +102,12 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	entry, ok := cfg.ResolveModel(modelName)
 	if !ok {
 		return nil, fmt.Errorf("%w %q (configured: %s); note: defining [[providers]] replaces the built-in presets, so add a [[providers]] entry for it or use a configured name, or run `reasonix setup` to reconfigure", ErrUnknownModel, modelName, providerNames(cfg))
+	}
+	if opts.EffortOverride != nil {
+		entry.Effort = *opts.EffortOverride
+		if entry.Kind == "anthropic" && strings.TrimSpace(entry.Effort) != "" && strings.TrimSpace(entry.Thinking) == "" {
+			entry.Thinking = "adaptive"
+		}
 	}
 	if opts.RequireKey {
 		if err := cfg.Validate(modelName); err != nil {

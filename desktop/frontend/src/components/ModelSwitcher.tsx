@@ -8,15 +8,17 @@ import { AnchoredPopover } from "./AnchoredPopover";
 
 // ModelSwitcher opens an upward popover listing configured providers. Selecting
 // one switches the active model while the current conversation continues.
-export function ModelSwitcher({ label, onPick }: { label: string; onPick: (name: string) => void }) {
+export function ModelSwitcher({ label, tabId, onPick }: { label: string; tabId?: string; onPick: (name: string) => void }) {
   const t = useT();
   const [open, setOpen] = useState(false);
   const [models, setModels] = useState<ModelInfo[]>([]);
   const triggerRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
-    if (open) app.Models().then((next) => setModels(asArray(next))).catch(() => {});
-  }, [open]);
+    if (open) {
+      (tabId ? app.ModelsForTab(tabId) : app.Models()).then((next) => setModels(asArray(next))).catch(() => {});
+    }
+  }, [open, tabId]);
 
   const pick = (name: string) => {
     setOpen(false);

@@ -207,7 +207,7 @@ func (a *App) rebuild() error {
 		tab.Ctrl.Close()
 	}
 	model := tab.model
-	if cfg, err := config.Load(); err == nil {
+	if cfg, err := config.LoadForRoot(tab.WorkspaceRoot); err == nil {
 		if _, ok := cfg.ResolveModel(model); !ok {
 			model = cfg.DefaultModel
 			if e, ok := cfg.ResolveModel(model); ok {
@@ -217,8 +217,9 @@ func (a *App) rebuild() error {
 	}
 	ctrl, err := boot.Build(a.ctx, boot.Options{
 		Model: model, RequireKey: false,
-		Sink:          tab.sink,
-		WorkspaceRoot: tab.WorkspaceRoot,
+		Sink:           tab.sink,
+		WorkspaceRoot:  tab.WorkspaceRoot,
+		EffortOverride: cloneStringPtr(tab.effort),
 	})
 	if err != nil {
 		a.mu.Lock()
@@ -234,6 +235,7 @@ func (a *App) rebuild() error {
 	tab.Label = ctrl.Label()
 	tab.StartupErr = ""
 	tab.Ready = true
+	a.saveTabsLocked()
 	a.mu.Unlock()
 	a.emitReady(a.ctx)
 	ctrl.EnableInteractiveApproval()

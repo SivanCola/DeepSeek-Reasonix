@@ -51,6 +51,8 @@ type WorkspaceTab struct {
 	telemMu       sync.Mutex
 
 	model       string // active model ref (for meta)
+	effort      *string
+	mode        string // "normal" | "plan" | "yolo"; runtime-only, not persisted
 	disabledMCP map[string]ServerView
 	mcpOrder    []string
 }
@@ -62,6 +64,14 @@ type readFileRecord struct {
 	Offset    int    `json:"offset,omitempty"`
 	Limit     int    `json:"limit,omitempty"`
 	Truncated bool   `json:"truncated,omitempty"`
+}
+
+func cloneStringPtr(v *string) *string {
+	if v == nil {
+		return nil
+	}
+	cp := *v
+	return &cp
 }
 
 func (t *WorkspaceTab) recordReadFile(rec readFileRecord) {
@@ -175,7 +185,9 @@ func toWireTab(e event.Event, tabID string) wireEventTab {
 		TabID:             tabID,
 		SessionHitTokens:  e.SessionHit,
 		SessionMissTokens: e.SessionMiss,
-		SessionCostUsd:    0, // filled by frontend accumulator per tab
+		SessionCost:       0, // filled by frontend accumulator per tab
+		SessionCurrency:   "",
+		SessionCostUsd:    0, // deprecated compatibility alias
 	}
 }
 
@@ -187,7 +199,11 @@ type wireEventTab struct {
 	// Session-cumulative tokens per tab.
 	SessionHitTokens  int `json:"sessionHitTokens,omitempty"`
 	SessionMissTokens int `json:"sessionMissTokens,omitempty"`
-	// SessionCostUsd is filled by the frontend's per-tab accumulator.
+	// SessionCost is filled by the frontend's per-tab accumulator.
+	SessionCost     float64 `json:"sessionCost,omitempty"`
+	SessionCurrency string  `json:"sessionCurrency,omitempty"`
+	// SessionCostUsd is a deprecated compatibility alias. It mirrors
+	// SessionCost and does not imply USD.
 	SessionCostUsd float64 `json:"sessionCostUsd,omitempty"`
 }
 
@@ -279,6 +295,7 @@ func (a *App) OpenProjectTab(workspaceRoot, topicID string) (TabMeta, error) {
 		WorkspaceRoot: workspaceRoot,
 		TopicID:       topicID,
 		TopicTitle:    topicTitle,
+		mode:          "normal",
 		disabledMCP:   map[string]ServerView{},
 	}
 	tab.sink = &tabEventSink{tabID: tabID, app: a}
@@ -320,6 +337,7 @@ func (a *App) OpenGlobalTab(topicID string) (TabMeta, error) {
 		WorkspaceRoot: globalRoot,
 		TopicID:       topicID,
 		TopicTitle:    topicTitle,
+		mode:          "normal",
 		disabledMCP:   map[string]ServerView{},
 	}
 	tab.sink = &tabEventSink{tabID: tabID, app: a}
@@ -452,14 +470,23 @@ func (a *App) buildTabController(tab *WorkspaceTab) {
 		return
 	}
 
-	model := cfg.DefaultModel
+	model := strings.TrimSpace(tab.model)
+	if model == "" {
+		model = cfg.DefaultModel
+	}
 	if e, ok := cfg.ResolveModel(model); ok {
 		model = e.Name + "/" + e.Model
+	} else {
+		model = cfg.DefaultModel
+		if e, ok := cfg.ResolveModel(model); ok {
+			model = e.Name + "/" + e.Model
+		}
 	}
 
 	a.mu.Lock()
 	tab.model = model
 	tab.Label = model
+	a.saveTabsLocked()
 	a.mu.Unlock()
 
 	if tab.sink != nil {
@@ -467,10 +494,11 @@ func (a *App) buildTabController(tab *WorkspaceTab) {
 	}
 
 	ctrl, err := boot.Build(ctx, boot.Options{
-		Model:         model,
-		RequireKey:    false,
-		Sink:          tab.sink,
-		WorkspaceRoot: root,
+		Model:          model,
+		RequireKey:     false,
+		Sink:           tab.sink,
+		WorkspaceRoot:  root,
+		EffortOverride: cloneStringPtr(tab.effort),
 	})
 	if err != nil {
 		a.mu.Lock()
@@ -565,6 +593,29 @@ func (a *App) activeCtrlLocked() *control.Controller {
 		return nil
 	}
 	return t.Ctrl
+}
+
+func (a *App) tabByID(tabID string) *WorkspaceTab {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return a.tabByIDLocked(tabID)
+}
+
+func (a *App) tabByIDLocked(tabID string) *WorkspaceTab {
+	if strings.TrimSpace(tabID) == "" {
+		return a.activeTabLocked()
+	}
+	return a.tabs[tabID]
+}
+
+func (a *App) ctrlByTabID(tabID string) *control.Controller {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	tab := a.tabByIDLocked(tabID)
+	if tab == nil {
+		return nil
+	}
+	return tab.Ctrl
 }
 
 // activeSink returns the active tab's event sink, or nil.
@@ -753,10 +804,12 @@ type desktopProjectFile struct {
 }
 
 type desktopTabEntry struct {
-	ID            string `json:"id"`
-	Scope         string `json:"scope"`
-	WorkspaceRoot string `json:"workspaceRoot"`
-	TopicID       string `json:"topicId"`
+	ID            string  `json:"id"`
+	Scope         string  `json:"scope"`
+	WorkspaceRoot string  `json:"workspaceRoot"`
+	TopicID       string  `json:"topicId"`
+	Model         string  `json:"model,omitempty"`
+	Effort        *string `json:"effort,omitempty"`
 }
 
 type desktopTabsFile struct {
@@ -784,6 +837,8 @@ func (a *App) saveTabsLocked() {
 				Scope:         tab.Scope,
 				WorkspaceRoot: tab.WorkspaceRoot,
 				TopicID:       tab.TopicID,
+				Model:         tab.model,
+				Effort:        cloneStringPtr(tab.effort),
 			})
 		}
 	}
@@ -1664,7 +1719,9 @@ type ContextPanelInfo struct {
 	ReasoningTokens  int               `json:"reasoningTokens"`
 	CacheHitTokens   int               `json:"cacheHitTokens"`
 	CacheMissTokens  int               `json:"cacheMissTokens"`
-	SessionCostUsd   float64           `json:"sessionCostUsd"`
+	SessionCost      float64           `json:"sessionCost"`
+	SessionCurrency  string            `json:"sessionCurrency,omitempty"`
+	SessionCostUsd   float64           `json:"sessionCostUsd,omitempty"`
 	ReadFiles        []readFileRecord  `json:"readFiles"`
 	ChangedFiles     []ChangedFileInfo `json:"changedFiles"`
 }

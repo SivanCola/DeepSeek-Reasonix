@@ -15,6 +15,7 @@ import { en, type DictKey } from "../locales/en";
 import { zh } from "../locales/zh";
 
 export type Locale = "en" | "zh";
+export type { DictKey };
 // LangPref is the stored preference: "" means auto-detect from the OS.
 export type LangPref = "" | "en" | "zh";
 

@@ -72,7 +72,8 @@ interface State {
   discardTurn?: boolean;
   turnStartAt: number;
   turnTokens: number;
-  sessionCostUsd: number;
+  sessionCost: number;
+  sessionCurrency: string;
   retry?: { attempt: number; max: number };
   seq: number;
 }
@@ -85,7 +86,8 @@ const initialState: State = {
   jobs: [],
   turnStartAt: 0,
   turnTokens: 0,
-  sessionCostUsd: 0,
+  sessionCost: 0,
+  sessionCurrency: "¥",
   seq: 0,
 };
 
@@ -201,8 +203,10 @@ function applyEvent(s: State, e: WireEvent): State {
     case "usage": {
       const used = e.usage && s.context.window ? e.usage.promptTokens : s.context.used;
       const turnTokens = s.turnTokens + (e.usage?.completionTokens ?? 0);
-      const sessionCostUsd = s.sessionCostUsd + (e.usage?.costUsd ?? 0);
-      return { ...s, usage: e.usage, context: { ...s.context, used }, turnTokens, sessionCostUsd };
+      const usageCost = e.usage?.cost ?? e.usage?.costUsd ?? 0;
+      const sessionCost = s.sessionCost + usageCost;
+      const sessionCurrency = e.usage?.currency || s.sessionCurrency || "¥";
+      return { ...s, usage: e.usage, context: { ...s.context, used }, turnTokens, sessionCost, sessionCurrency };
     }
     case "notice":
       return { ...s, running: s.turnActive ? s.running : false, seq: s.seq + 1, items: [...s.items, { kind: "notice", id: `n${s.seq}`, level: e.level ?? "info", text: e.text ?? "" }] };
@@ -306,12 +310,12 @@ export function useController() {
   const loadSessionDataForTab = useCallback(async (tabId: string, reset = false) => {
     try {
       if (reset) dispatchTo(tabId, { type: "reset" });
-      dispatchTo(tabId, { type: "meta", meta: await app.Meta() });
-      dispatchTo(tabId, { type: "context", context: await app.ContextUsage() });
-      dispatchTo(tabId, { type: "effort", effort: await app.Effort() });
-      dispatchTo(tabId, { type: "balance", balance: await app.Balance() });
-      dispatchTo(tabId, { type: "jobs", jobs: asArray(await app.Jobs()) });
-      const history = asArray(await app.History());
+      dispatchTo(tabId, { type: "meta", meta: await app.MetaForTab(tabId) });
+      dispatchTo(tabId, { type: "context", context: await app.ContextUsageForTab(tabId) });
+      dispatchTo(tabId, { type: "effort", effort: await app.EffortForTab(tabId) });
+      dispatchTo(tabId, { type: "balance", balance: await app.BalanceForTab(tabId) });
+      dispatchTo(tabId, { type: "jobs", jobs: asArray(await app.JobsForTab(tabId)) });
+      const history = asArray(await app.HistoryForTab(tabId));
       if (history && history.length) dispatchTo(tabId, { type: "history", messages: history });
     } catch { /* ignore */ }
   }, [dispatchTo]);
@@ -344,29 +348,32 @@ export function useController() {
       dispatchTo(targetTabId, { type: "event", e });
       if (e.kind === "turn_done") {
         app
-          .ContextUsage()
+          .ContextUsageForTab(targetTabId)
           .then((context) => dispatchTo(targetTabId, { type: "context", context }))
           .catch(() => {});
-        app.Balance().then((balance) => dispatchTo(targetTabId, { type: "balance", balance })).catch(() => {});
-        app.Effort().then((effort) => dispatchTo(targetTabId, { type: "effort", effort })).catch(() => {});
+        app.BalanceForTab(targetTabId).then((balance) => dispatchTo(targetTabId, { type: "balance", balance })).catch(() => {});
+        app.EffortForTab(targetTabId).then((effort) => dispatchTo(targetTabId, { type: "effort", effort })).catch(() => {});
       }
       if (e.kind === "turn_done" || e.kind === "notice") {
-        app.Jobs().then((jobs) => dispatchTo(targetTabId, { type: "jobs", jobs: asArray(jobs) })).catch(() => {});
+        app.JobsForTab(targetTabId).then((jobs) => dispatchTo(targetTabId, { type: "jobs", jobs: asArray(jobs) })).catch(() => {});
       }
     });
 
     const offReady = onReady(() => {
       void loadSessionData();
-      app.Balance().then((balance) => { if (activeTabId) dispatchTo(activeTabId, { type: "balance", balance }); }).catch(() => {});
-      app.Jobs().then((jobs) => { if (activeTabId) dispatchTo(activeTabId, { type: "jobs", jobs: asArray(jobs) }); }).catch(() => {});
-      app.Effort().then((effort) => { if (activeTabId) dispatchTo(activeTabId, { type: "effort", effort }); }).catch(() => {});
+      const readyTabId = activeTabId;
+      if (readyTabId) {
+        app.BalanceForTab(readyTabId).then((balance) => dispatchTo(readyTabId, { type: "balance", balance })).catch(() => {});
+        app.JobsForTab(readyTabId).then((jobs) => dispatchTo(readyTabId, { type: "jobs", jobs: asArray(jobs) })).catch(() => {});
+        app.EffortForTab(readyTabId).then((effort) => dispatchTo(readyTabId, { type: "effort", effort })).catch(() => {});
+      }
     });
 
     void loadSessionData();
     if (activeTabId) {
-      app.Balance().then((balance) => dispatchTo(activeTabId, { type: "balance", balance })).catch(() => {});
-      app.Effort().then((effort) => dispatchTo(activeTabId, { type: "effort", effort })).catch(() => {});
-      app.Jobs().then((jobs) => dispatchTo(activeTabId, { type: "jobs", jobs: asArray(jobs) })).catch(() => {});
+      app.BalanceForTab(activeTabId).then((balance) => dispatchTo(activeTabId, { type: "balance", balance })).catch(() => {});
+      app.EffortForTab(activeTabId).then((effort) => dispatchTo(activeTabId, { type: "effort", effort })).catch(() => {});
+      app.JobsForTab(activeTabId).then((jobs) => dispatchTo(activeTabId, { type: "jobs", jobs: asArray(jobs) })).catch(() => {});
     }
 
     return () => { off(); offReady(); };
@@ -376,7 +383,7 @@ export function useController() {
     if (!activeTabId) return;
     dispatchTo(activeTabId, { type: "user", text: displayText });
     const display = displayText.trim(); const submit = submitText.trim();
-    (display !== submit ? app.SubmitDisplay(display, submit) : app.Submit(submit)).catch(() => {});
+    (display !== submit ? app.SubmitDisplayToTab(activeTabId, display, submit) : app.SubmitToTab(activeTabId, submit)).catch(() => {});
   }, [activeTabId, dispatchTo]);
 
   const notice = useCallback((text: string, level: "info" | "warn" = "info") => {
@@ -386,30 +393,34 @@ export function useController() {
 
   const cancel = useCallback((): string | undefined => {
     const cur = stateRef.current;
+    const tabId = activeTabId;
     if (cur.running && cur.pendingUser !== undefined) {
       const text = cur.pendingUser;
-      if (activeTabId) dispatchTo(activeTabId, { type: "unsend" });
-      app.Cancel().catch(() => {});
+      if (tabId) {
+        dispatchTo(tabId, { type: "unsend" });
+        app.CancelTab(tabId).catch(() => {});
+      }
       return text;
     }
-    app.Cancel().catch(() => {});
+    if (tabId) app.CancelTab(tabId).catch(() => {});
     return undefined;
   }, [activeTabId, dispatchTo]);
 
   const approve = useCallback((id: string, allow: boolean, session: boolean, persist: boolean) => {
     if (!activeTabId) return;
     dispatchTo(activeTabId, { type: "clearApproval" });
-    app.Approve(id, allow, session, persist).catch(() => {});
+    app.ApproveTab(activeTabId, id, allow, session, persist).catch(() => {});
   }, [activeTabId, dispatchTo]);
 
   const answerQuestion = useCallback((id: string, answers: QuestionAnswer[]) => {
     if (!activeTabId) return;
     dispatchTo(activeTabId, { type: "clearAsk" });
-    app.AnswerQuestion(id, answers).catch(() => {});
+    app.AnswerQuestionForTab(activeTabId, id, answers).catch(() => {});
   }, [activeTabId, dispatchTo]);
 
   const setControllerMode = useCallback((mode: "plan" | "yolo" | "normal"): Promise<void> => {
-    return app.SetMode(mode).then(() => {
+    if (!activeTabId) return Promise.resolve();
+    return app.SetModeForTab(activeTabId, mode).then(() => {
       if (mode === "yolo" && activeTabId) dispatchTo(activeTabId, { type: "clearApproval" });
     }).catch(() => {});
   }, [activeTabId, dispatchTo]);
@@ -426,7 +437,7 @@ export function useController() {
     if (activeTabId) {
       dispatchTo(activeTabId, { type: "reset" });
       if (messages.length) dispatchTo(activeTabId, { type: "history", messages });
-      app.ContextUsage().then((context) => dispatchTo(activeTabId, { type: "context", context })).catch(() => {});
+      app.ContextUsageForTab(activeTabId).then((context) => dispatchTo(activeTabId, { type: "context", context })).catch(() => {});
     }
   }, [activeTabId, dispatchTo]);
   const previewSession = useCallback(async (path: string): Promise<HistoryMessage[]> => asArray<HistoryMessage>(await app.PreviewSession(path).catch(() => [])), []);
@@ -438,9 +449,9 @@ export function useController() {
   const refreshMeta = useCallback(async () => {
     if (!activeTabId) return;
     try {
-      dispatchTo(activeTabId, { type: "meta", meta: await app.Meta() });
-      dispatchTo(activeTabId, { type: "context", context: await app.ContextUsage() });
-      dispatchTo(activeTabId, { type: "effort", effort: await app.Effort() });
+      dispatchTo(activeTabId, { type: "meta", meta: await app.MetaForTab(activeTabId) });
+      dispatchTo(activeTabId, { type: "context", context: await app.ContextUsageForTab(activeTabId) });
+      dispatchTo(activeTabId, { type: "effort", effort: await app.EffortForTab(activeTabId) });
     } catch { /* ignore */ }
   }, [activeTabId, dispatchTo]);
 
@@ -461,22 +472,22 @@ export function useController() {
   const compact = useCallback(() => { app.Compact().catch(() => {}); }, []);
 
   const setModel = useCallback(async (name: string) => {
-    await app.SetModel(name).catch(() => {});
     if (!activeTabId) return;
+    await app.SetModelForTab(activeTabId, name).catch(() => {});
     try {
-      dispatchTo(activeTabId, { type: "meta", meta: await app.Meta() });
-      dispatchTo(activeTabId, { type: "context", context: await app.ContextUsage() });
-      dispatchTo(activeTabId, { type: "effort", effort: await app.Effort() });
+      dispatchTo(activeTabId, { type: "meta", meta: await app.MetaForTab(activeTabId) });
+      dispatchTo(activeTabId, { type: "context", context: await app.ContextUsageForTab(activeTabId) });
+      dispatchTo(activeTabId, { type: "effort", effort: await app.EffortForTab(activeTabId) });
     } catch { /* ignore */ }
   }, [activeTabId, dispatchTo]);
 
   const setEffort = useCallback(async (level: string) => {
-    await app.SetEffort(level).catch(() => {});
     if (!activeTabId) return;
+    await app.SetEffortForTab(activeTabId, level).catch(() => {});
     try {
-      dispatchTo(activeTabId, { type: "meta", meta: await app.Meta() });
-      dispatchTo(activeTabId, { type: "context", context: await app.ContextUsage() });
-      dispatchTo(activeTabId, { type: "effort", effort: await app.Effort() });
+      dispatchTo(activeTabId, { type: "meta", meta: await app.MetaForTab(activeTabId) });
+      dispatchTo(activeTabId, { type: "context", context: await app.ContextUsageForTab(activeTabId) });
+      dispatchTo(activeTabId, { type: "effort", effort: await app.EffortForTab(activeTabId) });
     } catch { /* ignore */ }
   }, [activeTabId, dispatchTo]);
 
@@ -492,10 +503,10 @@ export function useController() {
     else if (scope === "summ-upto") await app.SummarizeUpTo(turn).catch(() => {});
     else await app.Rewind(turn, scope).catch(() => {});
     if (!activeTabId) return;
-    const messages = asArray(await app.History().catch(() => [] as HistoryMessage[]));
-    dispatchTo(activeTabId, { type: "reset" });
-    if (messages.length) dispatchTo(activeTabId, { type: "history", messages });
-    app.ContextUsage().then((context) => dispatchTo(activeTabId, { type: "context", context })).catch(() => {});
+        const messages = asArray(await app.HistoryForTab(activeTabId).catch(() => [] as HistoryMessage[]));
+        dispatchTo(activeTabId, { type: "reset" });
+        if (messages.length) dispatchTo(activeTabId, { type: "history", messages });
+        app.ContextUsageForTab(activeTabId).then((context) => dispatchTo(activeTabId, { type: "context", context })).catch(() => {});
   }, [activeTabId, dispatchTo]);
 
   // Tab management: switch preserves per-tab state; open creates it.

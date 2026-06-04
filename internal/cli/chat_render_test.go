@@ -31,6 +31,18 @@ func newTestChatTUI() chatTUI {
 	}
 }
 
+func TestCacheRateLabelKeepsTwoDecimals(t *testing.T) {
+	if got := cacheRateLabel("turn hit %s", 998, 1000); got != "turn hit 99.80%" {
+		t.Fatalf("cacheRateLabel = %q, want turn hit 99.80%%", got)
+	}
+	if got := cacheRateLabel("avg %s", 1, 3); got != "avg 33.33%" {
+		t.Fatalf("cacheRateLabel = %q, want avg 33.33%%", got)
+	}
+	if got := cacheRateLabel("avg %s", 1, 0); got != "" {
+		t.Fatalf("cacheRateLabel with zero denominator = %q, want empty", got)
+	}
+}
+
 // TestIngestSeparatesReasoningFromAnswer proves the thinking marker plus its live
 // text appear as reasoning streams, collapse to a "thought for Ns" summary (the
 // streamed text removed) when the answer begins, and the answer commits as its

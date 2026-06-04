@@ -22,7 +22,7 @@ func TestToWire(t *testing.T) {
 			Usage:   &provider.Usage{PromptTokens: 1000, CompletionTokens: 200, TotalTokens: 1200, CacheHitTokens: 900, CacheMissTokens: 100},
 			Pricing: &provider.Pricing{CacheHit: 0.02, Input: 1, Output: 2},
 		})
-		if w.Usage == nil || w.Usage.TotalTokens != 1200 || w.Usage.CostUSD <= 0 {
+		if w.Usage == nil || w.Usage.TotalTokens != 1200 || w.Usage.Cost <= 0 || w.Usage.CostUSD <= 0 || w.Usage.Currency != "¥" {
 			t.Errorf("usage = %+v", w.Usage)
 		}
 	})

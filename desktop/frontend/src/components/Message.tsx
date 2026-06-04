@@ -1,5 +1,5 @@
 import { memo, useState } from "react";
-import { ChevronRight } from "lucide-react";
+import { ChevronRight, MoreHorizontal } from "lucide-react";
 import { Markdown } from "./Markdown";
 import { CopyButton } from "./CopyButton";
 import { Tooltip } from "./Tooltip";
@@ -15,6 +15,7 @@ export function UserMessage({
   open,
   onToggle,
   onRewind,
+  rewindDisabled = false,
 }: {
   text: string;
   turn?: number;
@@ -22,30 +23,78 @@ export function UserMessage({
   open?: boolean; // whether this message's rewind menu is the open one (lifted to Transcript)
   onToggle?: () => void;
   onRewind?: (turn: number, scope: string) => void;
+  rewindDisabled?: boolean;
 }) {
   const t = useT();
+  const [confirmScope, setConfirmScope] = useState<string | null>(null);
   const canRewind = onRewind != null && turn != null;
-  const rewind = (scope: string) => onRewind?.(turn as number, scope);
+  const rewind = (scope: string) => {
+    setConfirmScope(null);
+    onRewind?.(turn as number, scope);
+  };
+  const selectRewind = (scope: string) => {
+    if (rewindDisabled) return;
+    if (scope === "both" || scope === "conversation" || scope === "code") {
+      if (confirmScope !== scope) {
+        setConfirmScope(scope);
+        return;
+      }
+    }
+    rewind(scope);
+  };
   const displayText = text.replace(/@\.reasonix\/attachments\/[^\s]+/g, "[image]");
   return (
-    <div className="msg msg--user" id={anchorId} data-question-anchor={anchorId}>
+    <div className="msg msg--user" id={anchorId} data-question-anchor={anchorId} data-turn={turn}>
       <span className="msg__caret">›</span>
       <div className="msg__text">{displayText}</div>
       {canRewind && (
-        <div className="rewind">
+        <div className={`rewind${open ? " rewind--open" : ""}`}>
           <Tooltip label={t("rewind.label")}>
-            <button className="rewind__btn" onClick={onToggle}>
-              ⟲
+            <button
+              className="rewind__btn"
+              type="button"
+              aria-label={t("rewind.label")}
+              aria-expanded={Boolean(open)}
+              onClick={() => {
+                setConfirmScope(null);
+                onToggle?.();
+              }}
+            >
+              <MoreHorizontal size={15} />
             </button>
           </Tooltip>
           {open && (
             <div className="rewind__menu">
-              <button onClick={() => rewind("both")}>{t("rewind.both")}</button>
-              <button onClick={() => rewind("conversation")}>{t("rewind.conversation")}</button>
-              <button onClick={() => rewind("code")}>{t("rewind.code")}</button>
-              <button onClick={() => rewind("fork")}>{t("rewind.fork")}</button>
-              <button onClick={() => rewind("summ-from")}>{t("rewind.summFrom")}</button>
-              <button onClick={() => rewind("summ-upto")}>{t("rewind.summUpto")}</button>
+              <div className="rewind__menu-title">{t("rewind.anchor")}</div>
+              {rewindDisabled && <div className="rewind__menu-hint">{t("rewind.disabledRunning")}</div>}
+              <button
+                className={confirmScope === "both" ? "rewind__menu-danger" : ""}
+                type="button"
+                disabled={rewindDisabled}
+                onClick={() => selectRewind("both")}
+              >
+                {confirmScope === "both" ? t("rewind.confirmBoth") : t("rewind.both")}
+              </button>
+              <button
+                className={confirmScope === "conversation" ? "rewind__menu-danger" : ""}
+                type="button"
+                disabled={rewindDisabled}
+                onClick={() => selectRewind("conversation")}
+              >
+                {confirmScope === "conversation" ? t("rewind.confirmConversation") : t("rewind.conversation")}
+              </button>
+              <button
+                className={confirmScope === "code" ? "rewind__menu-danger" : ""}
+                type="button"
+                disabled={rewindDisabled}
+                onClick={() => selectRewind("code")}
+              >
+                {confirmScope === "code" ? t("rewind.confirmCode") : t("rewind.code")}
+              </button>
+              <button type="button" disabled={rewindDisabled} onClick={() => selectRewind("fork")}>{t("rewind.fork")}</button>
+              <div className="rewind__menu-separator" />
+              <button type="button" disabled={rewindDisabled} onClick={() => selectRewind("summ-from")}>{t("rewind.summFrom")}</button>
+              <button type="button" disabled={rewindDisabled} onClick={() => selectRewind("summ-upto")}>{t("rewind.summUpto")}</button>
             </div>
           )}
         </div>

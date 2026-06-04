@@ -43,25 +43,41 @@ function JobsChip({ jobs }: { jobs: JobView[] }) {
   );
 }
 
+function formatRate(hit: number, denom: number): string | null {
+  if (denom <= 0) return null;
+  return ((hit / denom) * 100).toFixed(2);
+}
+
 // nowRate is the SINGLE-TURN prompt cache-hit % (latest turn) — the higher,
 // steeper number on a non-compacting DeepSeek session. null when nothing yet.
-function nowRate(u?: WireUsage): number | null {
+function nowRate(u?: WireUsage): string | null {
   if (!u) return null;
   let denom = u.cacheHitTokens + u.cacheMissTokens;
   if (denom === 0) denom = u.promptTokens;
-  if (denom <= 0) return null;
-  return Math.round((u.cacheHitTokens / denom) * 100);
+  return formatRate(u.cacheHitTokens, denom);
 }
 
 // avgRate is the SESSION-AGGREGATE cache-hit % — Σhit/Σ(hit+miss) across every
 // turn — the steadier, cost-oriented number that matches the legacy dashboard.
 // On a non-compacting DeepSeek session it trails nowRate (early cold-start turns
 // drag the average down); it overtakes only when compaction craters single turns.
-function avgRate(u?: WireUsage): number | null {
+function avgRate(u?: WireUsage): string | null {
   if (!u) return null;
   const denom = u.sessionCacheHitTokens + u.sessionCacheMissTokens;
-  if (denom <= 0) return null;
-  return Math.round((u.sessionCacheHitTokens / denom) * 100);
+  return formatRate(u.sessionCacheHitTokens, denom);
+}
+
+function currencySymbol(currency?: string): string {
+  const value = (currency || "¥").trim();
+  if (/^(cny|rmb|yuan)$/i.test(value)) return "¥";
+  if (/^(usd|dollar)$/i.test(value)) return "$";
+  return value || "¥";
+}
+
+function formatMoney(amount?: number, currency?: string): string {
+  const symbol = currencySymbol(currency);
+  if (typeof amount !== "number" || amount <= 0) return `${symbol}0.0000`;
+  return `${symbol}${amount < 1 ? amount.toFixed(4) : amount.toFixed(2)}`;
 }
 
 export function StatusBar({
@@ -72,6 +88,7 @@ export function StatusBar({
   running,
   mode,
   cost,
+  currency,
 }: {
   context: ContextInfo;
   usage?: WireUsage;
@@ -80,6 +97,7 @@ export function StatusBar({
   running: boolean;
   mode: Mode;
   cost?: number;
+  currency?: string;
 }) {
   const { t } = useI18n();
   const pct = context.window ? Math.min(100, Math.round((context.used / context.window) * 100)) : null;
@@ -87,7 +105,7 @@ export function StatusBar({
   const nowPct = nowRate(usage);
   const avgPct = avgRate(usage);
   const jobsList = jobs ?? [];
-  const costLabel = typeof cost === "number" && cost > 0 ? `¥${cost < 1 ? cost.toFixed(4) : cost.toFixed(2)}` : "¥0.0000";
+  const costLabel = formatMoney(cost, currency);
 
   return (
     <div className="statusbar">

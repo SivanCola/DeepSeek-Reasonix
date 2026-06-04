@@ -19,7 +19,7 @@ import {
 } from "lucide-react";
 import logo from "./assets/logo.svg";
 import { asArray } from "./lib/array";
-import { useT } from "./lib/i18n";
+import { t, useT } from "./lib/i18n";
 import { useController } from "./lib/useController";
 import { app, onProjectTreeChanged } from "./lib/bridge";
 import { Transcript } from "./components/Transcript";
@@ -144,8 +144,8 @@ function topicTitle(tab?: TabMeta): string {
 }
 
 function topicScopeLabel(tab?: TabMeta): string {
-  if (!tab || tab.scope === "global") return "范围：全局";
-  return `项目 · ${tab.workspaceName || tab.workspaceRoot || "Project"}`;
+  if (!tab || tab.scope === "global") return t("scope.global");
+  return t("scope.project", { name: tab.workspaceName || tab.workspaceRoot || "Project" });
 }
 
 function appChromeScopeLabel(tab?: TabMeta, meta?: Meta): string {
@@ -165,13 +165,6 @@ function workspaceDisplayName(path?: string): string {
   if (!path) return "";
   const parts = path.split(/[/\\]/).filter(Boolean);
   return parts.length > 0 ? parts[parts.length - 1] : path;
-}
-
-function formatContextWindow(tokens: number): string {
-  if (!tokens) return "context";
-  if (tokens >= 1_000_000) return `${Math.round(tokens / 1_000_000)}M context`;
-  if (tokens >= 1000) return `${Math.round(tokens / 1000)}K context`;
-  return `${tokens} context`;
 }
 
 export default function App() {
@@ -210,7 +203,7 @@ export default function App() {
     reorderTabs,
   } = useController();
   const t = useT();
-  const [mode, setMode] = useState<Mode>("normal");
+  const [modesByTab, setModesByTab] = useState<Record<string, Mode>>({});
   const [tabMetas, setTabMetas] = useState<TabMeta[]>([]);
   const [tabOrderIds, setTabOrderIds] = useState<string[]>([]);
   const [tabRevealSignal, setTabRevealSignal] = useState(0);
@@ -232,6 +225,10 @@ export default function App() {
   const [composerInsertRequest, setComposerInsertRequest] = useState<ComposerInsertRequest | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [capsOpen, setCapsOpen] = useState(false);
+  const [renamingTopicId, setRenamingTopicId] = useState<string | null>(null);
+  const [topicTitleDraft, setTopicTitleDraft] = useState("");
+  const topicRenameSkipCommitRef = useRef(false);
+  const topicRenameCommitHandledRef = useRef(false);
 
   // Persist window geometry across launches.
   useWindowStatePersistence();
@@ -259,6 +256,23 @@ export default function App() {
     () => tabMetas.find((tab) => tab.id === activeTabId) ?? tabMetas.find((tab) => tab.active),
     [activeTabId, tabMetas],
   );
+  const mode = activeTabId ? modesByTab[activeTabId] ?? "normal" : "normal";
+  const setMode = useCallback(
+    (next: Mode | ((prev: Mode) => Mode)) => {
+      if (!activeTabId) return;
+      setModesByTab((current) => {
+        const prev = current[activeTabId] ?? "normal";
+        const value = typeof next === "function" ? next(prev) : next;
+        if (value === prev) return current;
+        return { ...current, [activeTabId]: value };
+      });
+    },
+    [activeTabId],
+  );
+  const topicbarEditing = Boolean(activeTab?.topicId && activeTab.topicId === renamingTopicId);
+  const topicbarProjectPrefix = activeTab?.scope === "project"
+    ? activeTab.workspaceName || activeTab.workspaceRoot || "Project"
+    : "";
   const visibleTabId = activeTabId;
   const visibleTabs = useMemo(() => {
     const byId = new Map(tabMetas.map((tab) => [tab.id, tab]));
@@ -281,6 +295,14 @@ export default function App() {
     });
   }, [tabMetas]);
 
+  useEffect(() => {
+    if (!renamingTopicId || activeTab?.topicId === renamingTopicId) return;
+    topicRenameSkipCommitRef.current = false;
+    topicRenameCommitHandledRef.current = false;
+    setRenamingTopicId(null);
+    setTopicTitleDraft("");
+  }, [activeTab?.topicId, renamingTopicId]);
+
   const syncModeToController = useCallback((m: Mode) => setControllerMode(m), [setControllerMode]);
 
   // applyMode is the single source of truth for the input mode: it updates the
@@ -291,7 +313,7 @@ export default function App() {
       setMode(m);
       void syncModeToController(m);
     },
-    [syncModeToController],
+    [setMode, syncModeToController],
   );
   // Shift+Tab cycles auto(normal) → plan → yolo → auto.
   const cycleMode = useCallback(() => {
@@ -803,6 +825,12 @@ export default function App() {
   }, [refreshTabMetas, switchTab]);
 
   const handleTabClose = useCallback(async (id: string) => {
+    setModesByTab((current) => {
+      if (!(id in current)) return current;
+      const next = { ...current };
+      delete next[id];
+      return next;
+    });
     setTabMetas((current) => {
       if (current.length <= 1) return current;
       const closingIndex = current.findIndex((tab) => tab.id === id);
@@ -972,6 +1000,45 @@ export default function App() {
     await refreshTabMetas();
   }, [refreshTabMetas]);
 
+  const renameTopic = useCallback(async (topicId: string, title: string) => {
+    const nextTitle = title.trim();
+    if (!topicId || !nextTitle) return;
+    await app.RenameTopic(topicId, nextTitle);
+    await refreshProjectsAndTabs();
+  }, [refreshProjectsAndTabs]);
+
+  const startActiveTopicRename = useCallback(() => {
+    if (!activeTab?.topicId) return;
+    topicRenameSkipCommitRef.current = false;
+    topicRenameCommitHandledRef.current = false;
+    setRenamingTopicId(activeTab.topicId);
+    setTopicTitleDraft(activeTab.topicTitle || "");
+  }, [activeTab?.topicId, activeTab?.topicTitle]);
+
+  const cancelActiveTopicRename = useCallback(() => {
+    topicRenameSkipCommitRef.current = true;
+    topicRenameCommitHandledRef.current = true;
+    setRenamingTopicId(null);
+    setTopicTitleDraft("");
+  }, []);
+
+  const commitActiveTopicRename = useCallback(async () => {
+    if (topicRenameSkipCommitRef.current) {
+      topicRenameSkipCommitRef.current = false;
+      topicRenameCommitHandledRef.current = false;
+      setRenamingTopicId(null);
+      return;
+    }
+    if (topicRenameCommitHandledRef.current) return;
+    topicRenameCommitHandledRef.current = true;
+    const topicId = renamingTopicId;
+    setRenamingTopicId(null);
+    if (!topicId) return;
+    const nextTitle = topicTitleDraft.trim();
+    if (!nextTitle) return;
+    await renameTopic(topicId, nextTitle);
+  }, [renameTopic, renamingTopicId, topicTitleDraft]);
+
   const onRemember = useCallback(
     async (scope: string, note: string) => {
       await remember(scope, note);
@@ -1065,7 +1132,8 @@ export default function App() {
               currentWorkspaceName={workspaceDisplayName(state.meta?.cwd)}
               onOpenTopic={handleOpenTopic}
               onOpenProjectHistory={openProjectHistory}
-              onTopicsChanged={() => void refreshProjectsAndTabs()}
+              onTopicsChanged={refreshProjectsAndTabs}
+              onRenameTopic={renameTopic}
               refreshSignal={projectRevision}
               onAddProject={async () => {
                 await switchFolder();
@@ -1151,21 +1219,48 @@ export default function App() {
           <header className="topicbar">
             <div className="topicbar__identity">
               <div className="topicbar__title-row">
-                <h1>{topicTitle(activeTab)}</h1>
-                <Tooltip label="重命名会话">
-                  <button className="topicbar__icon-btn">
+                {topicbarEditing ? (
+                  <div className="topicbar__title-edit">
+                    {topicbarProjectPrefix && (
+                      <span className="topicbar__title-prefix">{topicbarProjectPrefix} /</span>
+                    )}
+                    <input
+                      autoFocus
+                      className="topicbar__title-input"
+                      value={topicTitleDraft}
+                      onChange={(event) => setTopicTitleDraft(event.target.value)}
+                      onKeyDown={(event: KeyboardEvent<HTMLInputElement>) => {
+                        if (event.key === "Enter") {
+                          event.preventDefault();
+                          void commitActiveTopicRename();
+                        }
+                        if (event.key === "Escape") {
+                          event.preventDefault();
+                          cancelActiveTopicRename();
+                        }
+                      }}
+                      onBlur={() => void commitActiveTopicRename()}
+                    />
+                  </div>
+                ) : (
+                  <h1>{topicTitle(activeTab)}</h1>
+                )}
+                <Tooltip label={t("topicBar.renameSession")}>
+                  <button
+                    className="topicbar__icon-btn"
+                    type="button"
+                    disabled={!activeTab?.topicId || topicbarEditing}
+                    onClick={startActiveTopicRename}
+                    aria-label={t("topicBar.renameSession")}
+                  >
                     <Pencil size={14} />
                   </button>
                 </Tooltip>
               </div>
-              <div className="topicbar__meta">
-                <span>{state.meta?.label ?? "…"}</span>
-                <span className="topicbar__context-badge">{formatContextWindow(state.context.window)}</span>
-              </div>
             </div>
             <div className="topicbar__spacer" />
             <div className="topicbar__actions">
-              <Tooltip label="更多">
+              <Tooltip label={t("topicBar.more")}>
                 <button className="topicbar__icon-btn">
                   <MoreHorizontal size={16} />
                 </button>
@@ -1186,7 +1281,14 @@ export default function App() {
                 <span className="loading-screen__text">{t("common.loading")}</span>
               </div>
             ) : (
-              <Transcript items={state.items} live={state.live} footerHeight={footerHeight} onPrompt={send} onRewind={rewind} />
+              <Transcript
+                items={state.items}
+                live={state.live}
+                footerHeight={footerHeight}
+                onPrompt={send}
+                onRewind={rewind}
+                rewindDisabled={state.running || state.approval != null || state.ask != null}
+              />
             )}
           </main>
 
@@ -1223,6 +1325,7 @@ export default function App() {
               mode={mode}
               cwd={state.meta?.cwd}
               modelLabel={state.meta?.label ?? t("status.connecting")}
+              tabId={activeTabId}
               effort={state.effort}
               onSend={handleSend}
               onCancel={cancel}
@@ -1248,7 +1351,8 @@ export default function App() {
               jobs={state.jobs}
               running={state.running}
               mode={mode}
-              cost={state.sessionCostUsd}
+              cost={state.sessionCost}
+              currency={state.sessionCurrency}
             />
           </footer>
           </>
@@ -1260,7 +1364,7 @@ export default function App() {
             type="button"
             role="separator"
             aria-orientation="vertical"
-            aria-label="调整右侧面板宽度"
+            aria-label={t("rightDock.resize")}
             aria-valuemin={RIGHT_DOCK_MIN_WIDTH}
             aria-valuemax={Math.max(RIGHT_DOCK_MAX_WIDTH, workspacePanelRenderWidth)}
             aria-valuenow={workspacePanelRenderWidth}
@@ -1271,12 +1375,12 @@ export default function App() {
         )}
 
         {!workspacePanelOpen && !workspacePanelMaximized && (
-          <Tooltip label="展开右侧工作区" className="workspace-dock-peek">
+          <Tooltip label={t("rightDock.expand")} className="workspace-dock-peek">
             <button
               className="workspace-iconbtn workspace-dock-peek__button"
               type="button"
               onClick={() => openWorkspacePanel("files")}
-              aria-label="展开右侧工作区"
+              aria-label={t("rightDock.expand")}
               aria-pressed={false}
             >
               <PanelRightOpen size={14} />
@@ -1291,10 +1395,10 @@ export default function App() {
               `workbench-dock--${rightDockMode}`,
             ].join(" ")}
             ref={workbenchDockRef}
-            aria-label="右侧工作台"
+            aria-label={t("rightDock.workbench")}
           >
             <div className="workbench-dock__tools">
-              <div className="workbench-dock__tabs" role="tablist" aria-label="右侧工作台视图">
+              <div className="workbench-dock__tabs" role="tablist" aria-label={t("rightDock.views")}>
                 {SHOW_CONTEXT_DOCK && (
                   <button
                     type="button"
@@ -1304,7 +1408,7 @@ export default function App() {
                     onClick={() => openRightDockMode("context")}
                   >
                     <CircleGauge size={13} />
-                    概览
+                    {t("rightDock.overview")}
                   </button>
                 )}
                 <button
@@ -1328,11 +1432,11 @@ export default function App() {
                   {t("workspace.changedTab")}
                 </button>
               </div>
-              <Tooltip label="收起右侧工作区">
+              <Tooltip label={t("rightDock.collapse")}>
                 <button
                   className="workspace-iconbtn"
                   type="button"
-                  aria-label="收起右侧工作区"
+                  aria-label={t("rightDock.collapse")}
                   onClick={closeWorkspacePanel}
                 >
                   <PanelRightClose size={14} />
@@ -1345,7 +1449,8 @@ export default function App() {
                   tabId={activeTabId}
                   context={state.context}
                   usage={state.usage}
-                  sessionCostUsd={state.sessionCostUsd}
+                  sessionCost={state.sessionCost}
+                  sessionCurrency={state.sessionCurrency}
                   scopeLabel={topicScopeLabel(activeTab)}
                   refreshKey={dockRefreshKey}
                 />

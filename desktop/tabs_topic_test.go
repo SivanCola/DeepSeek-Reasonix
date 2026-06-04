@@ -386,6 +386,36 @@ func TestRenameTopicLocksTitleManual(t *testing.T) {
 	}
 }
 
+func TestRenameTopicUpdatesOpenTabMeta(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+
+	projectRoot := t.TempDir()
+	app := NewApp()
+	topic, err := app.CreateTopic("project", projectRoot, "旧标题")
+	if err != nil {
+		t.Fatalf("create topic: %v", err)
+	}
+	tab, err := app.OpenProjectTab(projectRoot, topic.ID)
+	if err != nil {
+		t.Fatalf("open project tab: %v", err)
+	}
+	if tab.TopicTitle != "旧标题" {
+		t.Fatalf("opened tab title = %q, want 旧标题", tab.TopicTitle)
+	}
+
+	if err := app.RenameTopic(topic.ID, "新标题"); err != nil {
+		t.Fatalf("rename topic: %v", err)
+	}
+	tabs := app.ListTabs()
+	if len(tabs) != 1 {
+		t.Fatalf("tabs len = %d, want 1: %+v", len(tabs), tabs)
+	}
+	if got := tabs[0].TopicTitle; got != "新标题" {
+		t.Fatalf("open tab title = %q, want 新标题", got)
+	}
+}
+
 func TestAutoTitleTopicFromFirstUserMessage(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())

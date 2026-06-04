@@ -1,17 +1,19 @@
 // ContextPanel shows the active tab's context gauge, token usage, read files,
-// and workspace changes. It replaces/extend the right-hand workspace panel's
-// metadata view.
+// and workspace changes. All visible text is routed through the i18n dictionary.
 import { useCallback, useEffect, useState } from "react";
 import { ArrowLeft, FileText, Search } from "lucide-react";
 import { asArray } from "../lib/array";
 import { app } from "../lib/bridge";
+import { useT, type Translator } from "../lib/i18n";
+import type { DictKey } from "../locales/en";
 import type { ContextInfo, ContextPanelInfo, WireUsage } from "../lib/types";
 
 interface ContextPanelProps {
   tabId?: string;
   context?: ContextInfo;
   usage?: WireUsage;
-  sessionCostUsd?: number;
+  sessionCost?: number;
+  sessionCurrency?: string;
   scopeLabel?: string;
   refreshKey?: number;
 }
@@ -28,45 +30,70 @@ function fmtTime(ms?: number): string {
   return new Date(ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
-function fmtDuration(ms: number): string {
+function fmtDuration(ms: number, t: Translator): string {
   if (ms <= 0) return "-";
   const totalSeconds = Math.max(1, Math.round(ms / 1000));
   const minutes = Math.floor(totalSeconds / 60);
   const seconds = totalSeconds % 60;
-  if (minutes <= 0) return `${seconds}s`;
-  return `${minutes}m ${seconds}s`;
+  if (minutes <= 0) return t("context.durationSeconds", { seconds });
+  return t("context.durationMinutesSeconds", { minutes, seconds });
 }
 
-function contextHealth(usagePct: number, cachePct: number, readCount: number) {
+function currencySymbol(currency?: string): string {
+  const value = (currency || "¥").trim();
+  if (/^(cny|rmb|yuan)$/i.test(value)) return "¥";
+  if (/^(usd|dollar)$/i.test(value)) return "$";
+  return value || "¥";
+}
+
+function fmtMoney(amount: number, currency?: string): string {
+  if (amount <= 0) return "-";
+  const symbol = currencySymbol(currency);
+  return `${symbol}${amount < 1 ? amount.toFixed(4) : amount.toFixed(2)}`;
+}
+
+interface HealthResult {
+  tone: "good" | "notice" | "warn";
+  labelKey: DictKey;
+  bodyKey: DictKey;
+  vars: Record<string, string | number>;
+}
+
+function contextHealth(usagePct: number, cachePct: number, readCount: number): HealthResult {
   if (usagePct >= 85) {
     return {
       tone: "warn",
-      label: "上下文接近上限",
-      body: `已使用 ${usagePct}%，优先保留关键依据并考虑压缩。`,
+      labelKey: "context.healthNearLimit",
+      bodyKey: "context.healthNearLimitBody",
+      vars: { pct: usagePct },
     };
   }
   if (readCount >= 8) {
     return {
       tone: "notice",
-      label: "依据文件较多",
-      body: `已读取 ${readCount} 条文件记录，可查看依据文件确认是否仍相关。`,
+      labelKey: "context.healthManyFiles",
+      bodyKey: "context.healthManyFilesBody",
+      vars: { count: readCount },
     };
   }
   if (cachePct > 0 && cachePct < 50) {
     return {
       tone: "notice",
-      label: "缓存命中偏低",
-      body: `当前缓存命中 ${cachePct}%，后续长任务可关注上下文稳定性。`,
+      labelKey: "context.healthLowCache",
+      bodyKey: "context.healthLowCacheBody",
+      vars: { pct: cachePct },
     };
   }
   return {
     tone: "good",
-    label: "上下文状态正常",
-    body: "用量、依据文件和本会话变更保持可追踪。",
+    labelKey: "context.healthGood",
+    bodyKey: "context.healthGoodBody",
+    vars: {},
   };
 }
 
-export function ContextPanel({ tabId, context, usage, sessionCostUsd, scopeLabel, refreshKey }: ContextPanelProps) {
+export function ContextPanel({ tabId, context, usage, sessionCost, sessionCurrency, scopeLabel, refreshKey }: ContextPanelProps) {
+  const t = useT();
   const [info, setInfo] = useState<ContextPanelInfo | null>(null);
   const [detailView, setDetailView] = useState<ContextDetail | null>(null);
   const [query, setQuery] = useState("");
@@ -96,7 +123,8 @@ export function ContextPanel({ tabId, context, usage, sessionCostUsd, scopeLabel
   const reasoningTokens = usage?.reasoningTokens && usage.reasoningTokens > 0 ? usage.reasoningTokens : info?.reasoningTokens ?? 0;
   const cacheHitTokens = usage?.cacheHitTokens && usage.cacheHitTokens > 0 ? usage.cacheHitTokens : info?.cacheHitTokens ?? 0;
   const cacheMissTokens = usage?.cacheMissTokens && usage.cacheMissTokens > 0 ? usage.cacheMissTokens : info?.cacheMissTokens ?? 0;
-  const cost = sessionCostUsd && sessionCostUsd > 0 ? sessionCostUsd : info?.sessionCostUsd ?? 0;
+  const cost = sessionCost && sessionCost > 0 ? sessionCost : info?.sessionCost ?? info?.sessionCostUsd ?? 0;
+  const currency = sessionCurrency || info?.sessionCurrency || usage?.currency || "¥";
   const readFiles = asArray(info?.readFiles);
   const changedFiles = asArray(info?.changedFiles);
 
@@ -144,13 +172,13 @@ export function ContextPanel({ tabId, context, usage, sessionCostUsd, scopeLabel
   const filteredChangedRows = filterRows(changedRows);
   const health = contextHealth(usagePct, cachePct, readRows.length);
   const detailRows = detailView === "changed" ? filteredChangedRows : filteredReadRows;
-  const detailTitle = detailView === "changed" ? "本会话变更" : "依据文件";
+  const detailTitle = detailView === "changed" ? t("context.sessionChanges") : t("context.referencedFiles");
   const detailCount = detailView === "changed" ? changedRows.length : readRows.length;
-  const detailEmpty = detailView === "changed" ? "当前会话还没有变更文件" : "当前会话还没有读取文件";
-  const detailPlaceholder = detailView === "changed" ? "筛选本会话变更文件..." : "筛选依据文件...";
+  const detailEmpty = detailView === "changed" ? t("context.noChanges") : t("context.noReads");
+  const detailPlaceholder = detailView === "changed" ? t("context.filterChanges") : t("context.filterReads");
   const detailNote = detailView === "changed"
-    ? `当前会话关联 ${detailCount} 条变更记录`
-    : `当前会话读取过 ${detailCount} 条文件记录`;
+    ? t("context.changedNote", { count: detailCount })
+    : t("context.readNote", { count: detailCount });
 
   const openDetail = (next: ContextDetail) => {
     setDetailView(next);
@@ -166,13 +194,13 @@ export function ContextPanel({ tabId, context, usage, sessionCostUsd, scopeLabel
     <div className="context-panel">
       <div className="context-panel__summary-head">
         <div className="context-panel__heading-main">
-          <span>{detailView ? detailTitle : "当前会话概览"}</span>
-          <strong>{scopeLabel || "范围：全局"}</strong>
+          <span>{detailView ? detailTitle : t("context.overview")}</span>
+          <strong>{scopeLabel || t("context.scopeGlobal")}</strong>
         </div>
         {detailView && (
           <button className="context-panel__back" type="button" onClick={closeDetail}>
             <ArrowLeft size={13} />
-            概览
+            {t("rightDock.overview")}
           </button>
         )}
       </div>
@@ -204,42 +232,42 @@ export function ContextPanel({ tabId, context, usage, sessionCostUsd, scopeLabel
               </div>
               <div className="context-panel__percent">{usagePct}%</div>
               <div className="context-panel__breakdown">
-                <TokenLegend label="Prompt" value={promptTokens} color="prompt" />
-                <TokenLegend label="Completion" value={completionTokens} color="completion" />
-                <TokenLegend label="Reasoning" value={reasoningTokens} color="reasoning" />
-                <TokenLegend label="Other" value={otherTokens} color="other" />
+                <TokenLegend label={t("context.prompt")} value={promptTokens} color="prompt" />
+                <TokenLegend label={t("context.completion")} value={completionTokens} color="completion" />
+                <TokenLegend label={t("context.reasoning")} value={reasoningTokens} color="reasoning" />
+                <TokenLegend label={t("context.other")} value={otherTokens} color="other" />
                 <div className="context-panel__total">
-                  <span>Total</span>
+                  <span>{t("context.total")}</span>
                   <strong>{usedTokens.toLocaleString()} / {windowTokens.toLocaleString()}</strong>
                 </div>
               </div>
               <div className="context-panel__stats">
-                <MetricCard label="Cache hit" value={cachePct > 0 ? `${cachePct}%` : "-"} tone="accent" />
-                <MetricCard label="Session cost" value={cost > 0 ? `¥${cost < 1 ? cost.toFixed(3) : cost.toFixed(2)}` : "-"} />
-                <MetricCard label="Requests" value={requestCount > 0 ? String(requestCount) : "-"} />
-                <MetricCard label="Time" value={fmtDuration(elapsed)} />
+                <MetricCard label={t("context.cacheHit")} value={cachePct > 0 ? `${cachePct}%` : "-"} tone="accent" />
+                <MetricCard label={t("context.sessionCost")} value={fmtMoney(cost, currency)} />
+                <MetricCard label={t("context.requests")} value={requestCount > 0 ? String(requestCount) : "-"} />
+                <MetricCard label={t("context.time")} value={fmtDuration(elapsed, t)} />
               </div>
             </section>
             <div className={`context-panel__health context-panel__health--${health.tone}`}>
-              <span>上下文状态</span>
-              <strong>{health.label}</strong>
-              <small>{health.body}</small>
+              <span>{t("context.health")}</span>
+              <strong>{t(health.labelKey, health.vars)}</strong>
+              <small>{t(health.bodyKey, health.vars)}</small>
             </div>
             <PreviewSection
-              title="依据文件"
-              meta={`${readRows.length} 条读取记录`}
-              action="查看全部"
+              title={t("context.referencedFiles")}
+              meta={t("context.readMeta", { count: readRows.length })}
+              action={t("context.viewAll")}
               onAction={() => openDetail("read")}
               rows={readRows.slice(0, 3)}
-              empty="当前会话还没有读取文件"
+              empty={t("context.noReads")}
             />
             <PreviewSection
-              title="本会话变更"
-              meta={`${changedRows.length} 条变更记录`}
-              action="查看全部"
+              title={t("context.sessionChanges")}
+              meta={t("context.changedMeta", { count: changedRows.length })}
+              action={t("context.viewAll")}
               onAction={() => openDetail("changed")}
               rows={changedRows.slice(0, 3)}
-              empty="当前会话还没有变更文件"
+              empty={t("context.noChanges")}
             />
           </section>
         )}
@@ -247,7 +275,7 @@ export function ContextPanel({ tabId, context, usage, sessionCostUsd, scopeLabel
 
       <footer className="context-panel__scope">
         <FileText size={14} />
-        <span>{scopeLabel || "范围：全局"}</span>
+        <span>{scopeLabel || t("context.scopeGlobal")}</span>
       </footer>
     </div>
   );

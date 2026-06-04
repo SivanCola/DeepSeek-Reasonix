@@ -49,6 +49,9 @@ export interface WireUsage {
   // hit-rate (Σhit/Σ(hit+miss)), steadier than the single-turn cacheHitTokens.
   sessionCacheHitTokens: number;
   sessionCacheMissTokens: number;
+  cost?: number;
+  currency?: string;
+  // Deprecated compatibility alias. Prefer cost + currency.
   costUsd?: number;
 }
 
@@ -100,6 +103,9 @@ export interface WireEvent {
   tabId?: string;
   sessionHitTokens?: number;
   sessionMissTokens?: number;
+  sessionCost?: number;
+  sessionCurrency?: string;
+  // Deprecated compatibility alias. Prefer sessionCost + sessionCurrency.
   sessionCostUsd?: number;
 }
 
@@ -150,7 +156,10 @@ export interface ContextPanelInfo {
   reasoningTokens: number;
   cacheHitTokens: number;
   cacheMissTokens: number;
-  sessionCostUsd: number;
+  sessionCost?: number;
+  sessionCurrency?: string;
+  // Deprecated compatibility alias. Prefer sessionCost + sessionCurrency.
+  sessionCostUsd?: number;
   readFiles: ReadFileRecord[];
   changedFiles: ChangedFileInfo[];
 }

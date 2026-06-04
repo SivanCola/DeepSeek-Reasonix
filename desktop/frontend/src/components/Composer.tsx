@@ -123,6 +123,7 @@ export function Composer({
   mode,
   cwd,
   modelLabel,
+  tabId,
   effort,
   onSend,
   onCancel,
@@ -145,6 +146,7 @@ export function Composer({
   mode: Mode;
   cwd?: string;
   modelLabel: string;
+  tabId?: string;
   effort?: EffortInfo;
   onSend: (displayText: string, submitText?: string) => void;
   // Returns the un-sent text when cancelling before the server replied (so it can
@@ -818,7 +820,7 @@ export function Composer({
             {filteredWorkspaces.map((w) => (
               <div className="workspace-switcher__row" key={w.path}>
                 <button
-                  className="workspace-switcher__item"
+                  className={`workspace-switcher__item${w.current ? " workspace-switcher__item--current" : ""}`}
                   title={w.path}
                   onClick={() => {
                     if (w.current) {
@@ -1038,7 +1040,7 @@ export function Composer({
           )}
           <div className="composer-meta__params">
             <div className="composer-meta__control composer-meta__control--model">
-              <ModelSwitcher label={modelLabel} onPick={onSwitchModel} />
+              <ModelSwitcher label={modelLabel} tabId={tabId} onPick={onSwitchModel} />
             </div>
             {effort?.supported && (
               <div className="composer-meta__control composer-meta__control--effort">

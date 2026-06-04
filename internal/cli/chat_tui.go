@@ -1823,8 +1823,15 @@ func (m chatTUI) contextTag() string {
 	}
 }
 
+func cacheRateLabel(format string, hit, denom int) string {
+	if denom <= 0 {
+		return ""
+	}
+	return fmt.Sprintf(format, fmt.Sprintf("%.2f%%", float64(hit)*100/float64(denom)))
+}
+
 // cacheTag renders both prompt cache-hit rates for the status line —
-// "cache 88% · avg 78%": the single-turn rate (latest turn, the higher/steeper
+// "turn hit 88.00% · avg 78.00%": the single-turn rate (latest turn, the higher/steeper
 // number on a non-compacting DeepSeek session) and the session-aggregate rate
 // Σhit/Σ(hit+miss) (the steadier, cost-oriented number that matches the legacy
 // dashboard). "" before any cache tokens have been reported.
@@ -1835,13 +1842,11 @@ func (m chatTUI) cacheTag() string {
 		if d == 0 {
 			d = u.PromptTokens
 		}
-		if d > 0 {
-			now = fmt.Sprintf("cache %d%%", u.CacheHitTokens*100/d)
-		}
+		now = cacheRateLabel(i18n.M.ChatStatusCacheNowFmt, u.CacheHitTokens, d)
 	}
 	avg := ""
 	if hit, miss := m.ctrl.SessionCache(); hit+miss > 0 {
-		avg = fmt.Sprintf("avg %d%%", hit*100/(hit+miss))
+		avg = cacheRateLabel(i18n.M.ChatStatusCacheAvgFmt, hit, hit+miss)
 	}
 	switch {
 	case now != "" && avg != "":
