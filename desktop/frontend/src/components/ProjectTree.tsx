@@ -3,11 +3,13 @@
 // section. Clicking a topic opens its tab; "+" next to a project creates a
 // new topic.
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Archive, ChevronRight, ChevronDown, MoreHorizontal, Pencil, Plus, Folder, FolderGit2, FolderPlus, MessageSquare, Search, BriefcaseBusiness, ListTree, Trash2 } from "lucide-react";
+import type { KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent } from "react";
+import { Archive, ChevronRight, ChevronDown, Pencil, Plus, Folder, FolderGit2, FolderPlus, MessageSquare, Search, BriefcaseBusiness, ListTree, Trash2, Copy, FolderOpen, XCircle } from "lucide-react";
 import { asArray } from "../lib/array";
 import { app } from "../lib/bridge";
 import type { ProjectNode } from "../lib/types";
 import { getLocale, useT, type Translator } from "../lib/i18n";
+import { ContextMenu, contextMenuPointFromEvent, type ContextMenuItem, type ContextMenuPoint } from "./ContextMenu";
 import { Tooltip } from "./Tooltip";
 
 interface ProjectTreeProps {
@@ -75,7 +77,20 @@ export function ProjectTree({
   const [editingTopic, setEditingTopic] = useState<string | null>(null);
   const [topicDraft, setTopicDraft] = useState("");
   const [menuTopic, setMenuTopic] = useState<string | null>(null);
+  const [menuProject, setMenuProject] = useState<{ key: string; root: string; path: string; scope: "global" | "project"; label: string } | null>(null);
+  const [menuPoint, setMenuPoint] = useState<ContextMenuPoint | null>(null);
+  const [editingProject, setEditingProject] = useState<{ key: string; root: string } | null>(null);
+  const [projectDraft, setProjectDraft] = useState("");
   const [confirmAction, setConfirmAction] = useState<{ topicId: string; action: "delete" | "trash" } | null>(null);
+  const [confirmRemoveProject, setConfirmRemoveProject] = useState<string | null>(null);
+
+  const closeMenu = useCallback(() => {
+    setMenuTopic(null);
+    setMenuProject(null);
+    setMenuPoint(null);
+    setConfirmAction(null);
+    setConfirmRemoveProject(null);
+  }, []);
 
   const refresh = useCallback(async () => {
     try {
@@ -97,16 +112,6 @@ export function ProjectTree({
   useEffect(() => {
     void refresh();
   }, [refresh]);
-
-  useEffect(() => {
-    if (!menuTopic) return;
-    const close = () => {
-      setMenuTopic(null);
-      setConfirmAction(null);
-    };
-    window.addEventListener("click", close);
-    return () => window.removeEventListener("click", close);
-  }, [menuTopic]);
 
   const toggleExpand = (key: string) => {
     const willCollapse = expanded.has(key);
@@ -141,9 +146,20 @@ export function ProjectTree({
 
   const startRenameTopic = (node: ProjectNode, label: string) => {
     setMenuTopic(null);
+    setMenuProject(null);
+    setMenuPoint(null);
     setConfirmAction(null);
     setEditingTopic(node.topicId ?? null);
     setTopicDraft(label);
+  };
+
+  const startRenameProject = (key: string, root: string, label: string) => {
+    setMenuProject(null);
+    setMenuTopic(null);
+    setMenuPoint(null);
+    setConfirmRemoveProject(null);
+    setEditingProject({ key, root });
+    setProjectDraft(label);
   };
 
   const commitRenameTopic = async (topicId: string) => {
@@ -158,10 +174,23 @@ export function ProjectTree({
     }
   };
 
+  const commitRenameProject = async (root: string) => {
+    const title = projectDraft.trim();
+    setEditingProject(null);
+    if (!title) return;
+    try {
+      await app.RenameProject(root, title);
+      await refresh();
+    } catch {
+      /* ignore */
+    }
+  };
+
   const deleteTopic = async (topicId: string) => {
     try {
       await app.DeleteTopic(topicId);
       setMenuTopic(null);
+      setMenuPoint(null);
       setConfirmAction(null);
       await refresh();
     } catch {
@@ -173,7 +202,30 @@ export function ProjectTree({
     try {
       await app.TrashTopic(topicId);
       setMenuTopic(null);
+      setMenuPoint(null);
       setConfirmAction(null);
+      await refresh();
+    } catch {
+      /* ignore */
+    }
+  };
+
+  const copyProjectPath = async (path: string) => {
+    if (!path) return;
+    try {
+      await navigator.clipboard?.writeText(path);
+    } catch {
+      /* ignore */
+    }
+  };
+
+  const removeProject = async (path: string) => {
+    if (!path) return;
+    try {
+      await app.RemoveWorkspace(path);
+      setMenuProject(null);
+      setMenuPoint(null);
+      setConfirmRemoveProject(null);
       await refresh();
     } catch {
       /* ignore */
@@ -239,6 +291,44 @@ export function ProjectTree({
       const active = topicIsActive(node, activeScope, activeWorkspaceRoot, activeTopicId);
       const label = (node.label || node.topicId || "Untitled").replace(/^●\s*/, "");
       const topicId = node.topicId ?? "";
+      const topicMenuOpen = menuTopic === topicId;
+      const openTopicMenu = (event: ReactMouseEvent<HTMLElement> | ReactKeyboardEvent<HTMLElement>) => {
+        event.preventDefault();
+        event.stopPropagation();
+        setMenuProject(null);
+        setConfirmRemoveProject(null);
+        setMenuPoint(contextMenuPointFromEvent(event));
+        setMenuTopic(topicId);
+        setConfirmAction(null);
+      };
+      const topicMenuItems: ContextMenuItem[] = [
+        {
+          key: "rename",
+          icon: <Pencil size={13} />,
+          label: "重命名会话",
+          onSelect: () => startRenameTopic(node, label),
+        },
+        {
+          key: "delete",
+          icon: <Trash2 size={13} />,
+          label: confirmAction?.topicId === topicId && confirmAction.action === "delete" ? "确认删除会话" : "删除会话",
+          danger: true,
+          onSelect: () => {
+            if (confirmAction?.topicId === topicId && confirmAction.action === "delete") void deleteTopic(topicId);
+            else setConfirmAction({ topicId, action: "delete" });
+          },
+        },
+        {
+          key: "trash",
+          icon: <Archive size={13} />,
+          label: confirmAction?.topicId === topicId && confirmAction.action === "trash" ? "确认移入回收站" : "移到回收站",
+          danger: true,
+          onSelect: () => {
+            if (confirmAction?.topicId === topicId && confirmAction.action === "trash") void trashTopic(topicId);
+            else setConfirmAction({ topicId, action: "trash" });
+          },
+        },
+      ];
       if (editingTopic === topicId) {
         return (
           <div
@@ -263,13 +353,19 @@ export function ProjectTree({
       return (
         <div
           key={key}
-          className={`project-tree__topic${active ? " project-tree__topic--active" : ""}`}
+          className={`project-tree__topic${active ? " project-tree__topic--active" : ""}${topicMenuOpen ? " project-tree__topic--menu-open" : ""}`}
+          onContextMenu={openTopicMenu}
         >
           <button
             type="button"
             className="project-tree__topic-main"
             style={{ paddingLeft: 16 + depth * 16 }}
             onClick={() => onOpenTopic(scope, node.root ?? "", topicId)}
+            onKeyDown={(event) => {
+              if (event.key === "ContextMenu" || (event.shiftKey && event.key === "F10")) {
+                openTopicMenu(event);
+              }
+            }}
           >
             <MessageSquare size={12} />
             {(node.open || node.running) && (
@@ -284,46 +380,109 @@ export function ProjectTree({
             </span>
           </button>
           {active && <ListTree className="project-tree__active-mark" size={16} />}
-          <button
-            type="button"
-            className="project-tree__topic-menu-btn"
-            aria-label="话题操作"
-            onClick={(event) => {
-              event.stopPropagation();
-              setMenuTopic((current) => (current === topicId ? null : topicId));
-              setConfirmAction(null);
-            }}
+          <ContextMenu
+            open={topicMenuOpen}
+            point={menuPoint}
+            items={topicMenuItems}
+            minWidth={178}
+            ariaLabel="会话操作"
+            onClose={closeMenu}
+          />
+        </div>
+      );
+    }
+
+    const scope = node.kind === "global_folder" ? "global" : "project";
+    const projectRoot = scope === "global" ? "" : node.root ?? "";
+    const projectPath = node.root ?? "";
+    const projectLabel = node.label || (scope === "global" ? "Global" : "Untitled");
+    const projectActive = activeScope === scope && (scope === "global" || activeWorkspaceRoot === node.root);
+    const openProjectMenu = (event: ReactMouseEvent<HTMLElement> | ReactKeyboardEvent<HTMLElement>) => {
+      event.preventDefault();
+      event.stopPropagation();
+      setMenuTopic(null);
+      setConfirmAction(null);
+      setMenuPoint(contextMenuPointFromEvent(event));
+      setMenuProject({ key, root: projectRoot, path: projectPath, scope, label: projectLabel });
+      setConfirmRemoveProject(null);
+    };
+    const projectMenuItems: ContextMenuItem[] = [
+      {
+        key: "new-session",
+        icon: <Plus size={13} />,
+        label: "新建会话",
+        onSelect: () => {
+          setMenuProject(null);
+          setMenuPoint(null);
+          setCreatingUnder(key);
+          setNewTitle("");
+        },
+      },
+      {
+        key: "rename",
+        icon: <Pencil size={13} />,
+        label: "修改显示名称",
+        onSelect: () => startRenameProject(key, projectRoot, projectLabel),
+      },
+      {
+        key: "reveal",
+        icon: <FolderOpen size={13} />,
+        label: "在 Finder 中显示",
+        disabled: !projectPath,
+        onSelect: () => {
+          void app.RevealPath(projectPath);
+          closeMenu();
+        },
+      },
+      {
+        key: "copy-path",
+        icon: <Copy size={13} />,
+        label: "复制路径",
+        disabled: !projectPath,
+        onSelect: () => {
+          void copyProjectPath(projectPath);
+          closeMenu();
+        },
+      },
+      ...(scope === "project"
+        ? [
+            { type: "separator" as const, key: "remove-separator" },
+            {
+              key: "remove",
+              icon: <XCircle size={13} />,
+              label: confirmRemoveProject === key ? "确认移出侧边栏" : "移出侧边栏",
+              danger: true,
+              onSelect: () => {
+                if (confirmRemoveProject === key) void removeProject(projectPath);
+                else setConfirmRemoveProject(key);
+              },
+            },
+          ]
+        : []),
+    ];
+
+    if (editingProject?.key === key) {
+      return (
+        <div key={key}>
+          <div
+            className={`project-tree__folder project-tree__folder--editing${projectActive ? " project-tree__folder--active" : ""}`}
+            style={{ paddingLeft: 8 + depth * 16 }}
           >
-            <MoreHorizontal size={15} />
-          </button>
-          {menuTopic === topicId && (
-            <div className="project-tree__topic-menu" onClick={(event) => event.stopPropagation()}>
-              <button type="button" onClick={() => startRenameTopic(node, label)}>
-                <Pencil size={13} />
-                <span>重命名话题</span>
-              </button>
-              <button
-                type="button"
-                className="project-tree__topic-menu-danger"
-                onClick={() => {
-                  if (confirmAction?.topicId === topicId && confirmAction.action === "delete") void deleteTopic(topicId);
-                  else setConfirmAction({ topicId, action: "delete" });
-                }}
-              >
-                <Trash2 size={13} />
-                <span>{confirmAction?.topicId === topicId && confirmAction.action === "delete" ? "确认删除话题" : "删除话题"}</span>
-              </button>
-              <button
-                type="button"
-                className="project-tree__topic-menu-danger"
-                onClick={() => {
-                  if (confirmAction?.topicId === topicId && confirmAction.action === "trash") void trashTopic(topicId);
-                  else setConfirmAction({ topicId, action: "trash" });
-                }}
-              >
-                <Archive size={13} />
-                <span>{confirmAction?.topicId === topicId && confirmAction.action === "trash" ? "确认移入回收站" : "移到回收站"}</span>
-              </button>
+            <input
+              autoFocus
+              className="project-tree__folder-input"
+              value={projectDraft}
+              onChange={(event) => setProjectDraft(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") void commitRenameProject(projectRoot);
+                if (event.key === "Escape") setEditingProject(null);
+              }}
+              onBlur={() => void commitRenameProject(projectRoot)}
+            />
+          </div>
+          {isExpanded && hasChildren && (
+            <div className="project-tree__children">
+              {children.map((child) => renderNode(child, depth + 1))}
             </div>
           )}
         </div>
@@ -332,13 +491,21 @@ export function ProjectTree({
 
     return (
       <div key={key}>
-        <div className="project-tree__folder">
+        <div
+          className={`project-tree__folder${projectActive ? " project-tree__folder--active" : ""}${menuProject?.key === key ? " project-tree__folder--menu-open" : ""}`}
+          onContextMenu={openProjectMenu}
+        >
           <button
             type="button"
             className="project-tree__folder-main"
             style={{ paddingLeft: 8 + depth * 16 }}
             onClick={() => {
               if (hasChildren) toggleExpand(key);
+            }}
+            onKeyDown={(event) => {
+              if (event.key === "ContextMenu" || (event.shiftKey && event.key === "F10")) {
+                openProjectMenu(event);
+              }
             }}
             aria-expanded={hasChildren ? isExpanded : undefined}
           >
@@ -348,9 +515,9 @@ export function ProjectTree({
               <span style={{ width: 12 }} />
             )}
             <Folder size={12} />
-            <span className="project-tree__folder-label">{node.label || "Untitled"}</span>
+            <span className="project-tree__folder-label">{projectLabel}</span>
           </button>
-          <Tooltip label="New topic">
+          <Tooltip label="新建会话">
             <button
               type="button"
               className="project-tree__new-topic"
@@ -363,6 +530,14 @@ export function ProjectTree({
               <Plus size={12} />
             </button>
           </Tooltip>
+          <ContextMenu
+            open={menuProject?.key === key}
+            point={menuPoint}
+            items={projectMenuItems}
+            minWidth={212}
+            ariaLabel="项目操作"
+            onClose={closeMenu}
+          />
         </div>
         {creatingUnder === key && (
           <div className="project-tree__new-input" style={{ paddingLeft: 28 + depth * 16 }}>
@@ -386,7 +561,7 @@ export function ProjectTree({
                   node.root ?? "",
                 );
               }}
-              placeholder="Topic name"
+              placeholder="会话名称"
             />
           </div>
         )}
@@ -406,7 +581,7 @@ export function ProjectTree({
         <input
           value={query}
           onChange={(event) => setQuery(event.target.value)}
-          placeholder="搜索项目或主题"
+          placeholder="搜索项目或会话"
         />
       </label>
       <div className="project-tree__header">
@@ -418,7 +593,7 @@ export function ProjectTree({
       <div className="project-tree__list">
         {visibleTree.length === 0 ? (
           query.trim() ? (
-            <div className="project-tree__empty">没有匹配的项目或主题</div>
+            <div className="project-tree__empty">没有匹配的项目或会话</div>
           ) : (
             <div className="project-tree__empty-state">
               <div className="project-tree__empty-icon">
@@ -426,7 +601,7 @@ export function ProjectTree({
               </div>
               <div className="project-tree__empty-copy">
                 <strong>还没有项目</strong>
-                <span>添加项目后，可以按项目管理话题、文件和上下文。</span>
+                <span>添加项目后，可以按项目管理会话、文件和上下文。</span>
               </div>
               <div className="project-tree__empty-actions">
                 <button

@@ -223,7 +223,9 @@ func (a *App) rebuild() error {
 	if err != nil {
 		a.mu.Lock()
 		tab.StartupErr = err.Error()
+		tab.Ready = true
 		a.mu.Unlock()
+		a.emitReady(a.ctx)
 		return err
 	}
 	a.mu.Lock()
@@ -231,7 +233,9 @@ func (a *App) rebuild() error {
 	tab.model = model
 	tab.Label = ctrl.Label()
 	tab.StartupErr = ""
+	tab.Ready = true
 	a.mu.Unlock()
+	a.emitReady(a.ctx)
 	ctrl.EnableInteractiveApproval()
 	path := agent.ContinueSessionPath(prevPath, ctrl.SessionDir(), ctrl.Label())
 	if len(carried) > 0 {

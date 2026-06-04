@@ -62,7 +62,7 @@ function contextHealth(usagePct: number, cachePct: number, readCount: number) {
   return {
     tone: "good",
     label: "上下文状态正常",
-    body: "用量、依据文件和本主题变更保持可追踪。",
+    body: "用量、依据文件和本会话变更保持可追踪。",
   };
 }
 
@@ -144,13 +144,13 @@ export function ContextPanel({ tabId, context, usage, sessionCostUsd, scopeLabel
   const filteredChangedRows = filterRows(changedRows);
   const health = contextHealth(usagePct, cachePct, readRows.length);
   const detailRows = detailView === "changed" ? filteredChangedRows : filteredReadRows;
-  const detailTitle = detailView === "changed" ? "本主题变更" : "依据文件";
+  const detailTitle = detailView === "changed" ? "本会话变更" : "依据文件";
   const detailCount = detailView === "changed" ? changedRows.length : readRows.length;
-  const detailEmpty = detailView === "changed" ? "当前主题还没有变更文件" : "当前主题还没有读取文件";
-  const detailPlaceholder = detailView === "changed" ? "筛选本主题变更文件..." : "筛选依据文件...";
+  const detailEmpty = detailView === "changed" ? "当前会话还没有变更文件" : "当前会话还没有读取文件";
+  const detailPlaceholder = detailView === "changed" ? "筛选本会话变更文件..." : "筛选依据文件...";
   const detailNote = detailView === "changed"
-    ? `当前主题关联 ${detailCount} 条变更记录`
-    : `当前主题读取过 ${detailCount} 条文件记录`;
+    ? `当前会话关联 ${detailCount} 条变更记录`
+    : `当前会话读取过 ${detailCount} 条文件记录`;
 
   const openDetail = (next: ContextDetail) => {
     setDetailView(next);
@@ -166,7 +166,7 @@ export function ContextPanel({ tabId, context, usage, sessionCostUsd, scopeLabel
     <div className="context-panel">
       <div className="context-panel__summary-head">
         <div className="context-panel__heading-main">
-          <span>{detailView ? detailTitle : "当前主题概览"}</span>
+          <span>{detailView ? detailTitle : "当前会话概览"}</span>
           <strong>{scopeLabel || "范围：全局"}</strong>
         </div>
         {detailView && (
@@ -231,15 +231,15 @@ export function ContextPanel({ tabId, context, usage, sessionCostUsd, scopeLabel
               action="查看全部"
               onAction={() => openDetail("read")}
               rows={readRows.slice(0, 3)}
-              empty="当前主题还没有读取文件"
+              empty="当前会话还没有读取文件"
             />
             <PreviewSection
-              title="本主题变更"
+              title="本会话变更"
               meta={`${changedRows.length} 条变更记录`}
               action="查看全部"
               onAction={() => openDetail("changed")}
               rows={changedRows.slice(0, 3)}
-              empty="当前主题还没有变更文件"
+              empty="当前会话还没有变更文件"
             />
           </section>
         )}

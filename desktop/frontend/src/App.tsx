@@ -42,7 +42,7 @@ import { OnboardingOverlay } from "./components/OnboardingOverlay";
 import { TabBar } from "./components/TabBar";
 import { ProjectTree } from "./components/ProjectTree";
 import { parseTodos } from "./lib/tools";
-import type { ComposerInsertRequest, MemoryView, Mode, SessionMeta, TabMeta } from "./lib/types";
+import type { ComposerInsertRequest, MemoryView, Meta, Mode, SessionMeta, TabMeta } from "./lib/types";
 import { loadLayoutSize, saveLayoutSize } from "./lib/layoutPreferences";
 import { applyTheme, getTheme, getThemeStyle, isThemeStyle, themeForStyle, type Theme } from "./lib/theme";
 
@@ -65,6 +65,7 @@ const WORKSPACE_PANEL_MAX_WIDTH = 920;
 const WORKSPACE_PANEL_MAX_RATIO = 0.58;
 
 type RightDockMode = "context" | "files" | "changed";
+const SHOW_CONTEXT_DOCK = false;
 
 function clampSidebarWidth(width: number): number {
   return Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, Math.round(width)));
@@ -120,6 +121,12 @@ function topicTitle(tab?: TabMeta): string {
 function topicScopeLabel(tab?: TabMeta): string {
   if (!tab || tab.scope === "global") return "范围：全局";
   return `项目 · ${tab.workspaceName || tab.workspaceRoot || "Project"}`;
+}
+
+function appChromeScopeLabel(tab?: TabMeta, meta?: Meta): string {
+  if (tab?.scope === "project") return tab.workspaceName || tab.workspaceRoot || "Project";
+  if (tab?.scope === "global") return tab.topicTitle || "Global";
+  return workspaceDisplayName(meta?.cwd) || meta?.label || "Global";
 }
 
 function workspaceDisplayName(path?: string): string {
@@ -184,7 +191,7 @@ export default function App() {
   const [workspacePanelWidth, setWorkspacePanelWidth] = useState(loadWorkspacePanelWidth);
   const [workspacePanelResizing, setWorkspacePanelResizing] = useState(false);
   const [workspacePanelMaximized, setWorkspacePanelMaximized] = useState(false);
-  const [rightDockMode, setRightDockMode] = useState<RightDockMode>("context");
+  const [rightDockMode, setRightDockMode] = useState<RightDockMode>("files");
   const [dockRefreshKey, setDockRefreshKey] = useState(0);
   const [composerInsertRequest, setComposerInsertRequest] = useState<ComposerInsertRequest | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -662,22 +669,40 @@ export default function App() {
           .join(" ")}
         style={layoutStyle}
       >
-        <aside className={`sidebar${sidebarCollapsed ? " sidebar--collapsed" : ""}`} aria-label={t("sidebar.navigation")}>
-          <div className="sidebar__brand">
-            <img src={logo} alt="" className="sidebar__logo" />
-            <span>Reasonix</span>
-            <Tooltip label={sidebarToggleTitle}>
-              <button
-                className={`sidebar__toggle${sidebarExpandBlocked ? " sidebar__toggle--blocked" : ""}`}
-                onClick={sidebarExpandBlocked ? undefined : toggleSidebar}
-                aria-label={sidebarToggleTitle}
-                aria-disabled={sidebarExpandBlocked}
-              >
-                {sidebarCollapsed ? <PanelLeftOpen size={15} /> : <PanelLeftClose size={15} />}
-              </button>
-            </Tooltip>
+        <header className="app-chrome">
+          <button
+            className={[
+              "app-chrome__panel-toggle",
+              "app-chrome__panel-toggle--left",
+              !sidebarCollapsed ? "app-chrome__panel-toggle--active" : "",
+              sidebarExpandBlocked ? "app-chrome__panel-toggle--blocked" : "",
+            ].filter(Boolean).join(" ")}
+            type="button"
+            onClick={sidebarExpandBlocked ? undefined : toggleSidebar}
+            aria-label={sidebarToggleTitle}
+            aria-disabled={sidebarExpandBlocked}
+          >
+            {sidebarCollapsed ? <PanelLeftOpen size={15} /> : <PanelLeftClose size={15} />}
+          </button>
+          <div className="app-chrome__identity" aria-label="Reasonix">
+            <img src={logo} alt="" className="app-chrome__logo" />
+            <strong>Reasonix</strong>
+            <span className="app-chrome__separator">/</span>
+            <span className="app-chrome__scope">{appChromeScopeLabel(activeTab, state.meta)}</span>
           </div>
+          <div className="app-chrome__spacer" />
+          <button
+            className={`app-chrome__panel-toggle app-chrome__panel-toggle--right${workspacePanelOpen ? " app-chrome__panel-toggle--active" : ""}`}
+            type="button"
+            onClick={toggleWorkspacePanel}
+            aria-label={workspacePanelOpen ? "关闭右侧工作台" : "打开右侧工作台"}
+            aria-pressed={workspacePanelOpen}
+          >
+            {workspacePanelOpen ? <PanelRightClose size={15} /> : <PanelRightOpen size={15} />}
+          </button>
+        </header>
 
+        <aside className={`sidebar${sidebarCollapsed ? " sidebar--collapsed" : ""}`} aria-label={t("sidebar.navigation")}>
           <Tooltip label={t("topbar.newSession")} fill>
             <button
               className="sidebar__new"
@@ -756,20 +781,7 @@ export default function App() {
         />
 
         <section className="chat-pane">
-          <header className={`workspace-tabs-bar${sidebarCollapsed ? " workspace-tabs-bar--sidebar-collapsed" : ""}`}>
-            {sidebarCollapsed && (
-              <Tooltip label={sidebarToggleTitle} block>
-                <button
-                  className={`workspace-tabs-bar__sidebar-toggle${sidebarExpandBlocked ? " workspace-tabs-bar__sidebar-toggle--blocked" : ""}`}
-                  type="button"
-                  onClick={sidebarExpandBlocked ? undefined : toggleSidebar}
-                  aria-label={sidebarToggleTitle}
-                  aria-disabled={sidebarExpandBlocked}
-                >
-                  <PanelLeftOpen size={14} />
-                </button>
-              </Tooltip>
-            )}
+          <header className="workspace-tabs-bar">
             <TabBar
               tabs={tabMetas}
               activeTabId={activeTabId}
@@ -777,28 +789,13 @@ export default function App() {
               onTabClose={(id) => void handleTabClose(id)}
               onNewTab={() => void handleNewTab()}
             />
-            {!workspacePanelOpen && (
-              <div className="workspace-tabs-bar__right-actions">
-                <Tooltip label="打开右侧工作台">
-                  <button
-                    className="workspace-tabs-bar__right-toggle"
-                    type="button"
-                    onClick={toggleWorkspacePanel}
-                    aria-label="打开右侧工作台"
-                    aria-pressed={false}
-                  >
-                    <PanelRightOpen size={15} />
-                  </button>
-                </Tooltip>
-              </div>
-            )}
           </header>
 
           <header className="topicbar">
             <div className="topicbar__identity">
               <div className="topicbar__title-row">
                 <h1>{topicTitle(activeTab)}</h1>
-                <Tooltip label="重命名主题">
+                <Tooltip label="重命名会话">
                   <button className="topicbar__icon-btn">
                     <Pencil size={14} />
                   </button>
@@ -811,7 +808,7 @@ export default function App() {
             </div>
             <div className="topicbar__spacer" />
             <div className="topicbar__actions">
-              <Tooltip label="固定主题">
+              <Tooltip label="固定会话">
                 <button className="topicbar__icon-btn">
                   <Pin size={15} />
                 </button>
@@ -925,31 +922,20 @@ export default function App() {
 
         {workspacePanelOpen && (
           <aside className={`workbench-dock workbench-dock--${rightDockMode}`} aria-label="右侧工作台">
-            <div className="workbench-dock__chrome">
-              <Tooltip label="关闭右侧工作台">
-                <button
-                  className="workbench-dock__toggle"
-                  type="button"
-                  onClick={toggleWorkspacePanel}
-                  aria-label="关闭右侧工作台"
-                  aria-pressed={true}
-                >
-                  <PanelRightClose size={15} />
-                </button>
-              </Tooltip>
-            </div>
             <div className="workbench-dock__tools">
               <div className="workbench-dock__tabs" role="tablist" aria-label="右侧工作台视图">
-                <button
-                  type="button"
-                  role="tab"
-                  aria-selected={rightDockMode === "context"}
-                  className={`workbench-dock__tab${rightDockMode === "context" ? " workbench-dock__tab--active" : ""}`}
-                  onClick={() => openRightDockMode("context")}
-                >
-                  <CircleGauge size={13} />
-                  概览
-                </button>
+                {SHOW_CONTEXT_DOCK && (
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={rightDockMode === "context"}
+                    className={`workbench-dock__tab${rightDockMode === "context" ? " workbench-dock__tab--active" : ""}`}
+                    onClick={() => openRightDockMode("context")}
+                  >
+                    <CircleGauge size={13} />
+                    概览
+                  </button>
+                )}
                 <button
                   type="button"
                   role="tab"

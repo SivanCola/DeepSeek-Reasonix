@@ -113,6 +113,7 @@ export interface AppBindings {
   WorkspaceChanges(): Promise<WorkspaceChangesView>;
   OpenWorkspacePath(rel: string): Promise<void>;
   RevealWorkspacePath(rel: string): Promise<void>;
+  RevealPath(path: string): Promise<void>;
   SavePastedImage(dataUrl: string): Promise<string>;
   SavePastedFile(name: string, dataUrl: string): Promise<string>;
   // AttachDropped resolves an OS-dropped absolute path (from the native file-drop
@@ -166,6 +167,7 @@ export interface AppBindings {
   CloseTab(tabID: string): Promise<void>;
   // Project tree (desktop/tabs.go).
   ListProjectTree(): Promise<ProjectNode[]>;
+  RenameProject(workspaceRoot: string, title: string): Promise<void>;
   CreateTopic(scope: string, workspaceRoot: string, title: string): Promise<TopicMeta>;
   RenameTopic(topicID: string, title: string): Promise<void>;
   DeleteTopic(topicID: string): Promise<void>;
@@ -957,6 +959,9 @@ function makeMockApp(): AppBindings {
     async RevealWorkspacePath(rel: string) {
       console.info("mock RevealWorkspacePath", rel);
     },
+    async RevealPath(path: string) {
+      console.info("mock RevealPath", path);
+    },
     async SavePastedImage(_dataUrl: string) {
       return ".reasonix/attachments/mock.png";
     },
@@ -1194,6 +1199,12 @@ function makeMockApp(): AppBindings {
     async CloseTab(_tabID: string) {},
     async ListProjectTree() {
       return cloneProjectTree();
+    },
+    async RenameProject(workspaceRoot: string, title: string) {
+      const node = workspaceRoot
+        ? mockProjectTree.find((item) => item.root === workspaceRoot)
+        : mockProjectTree.find((item) => item.kind === "global_folder");
+      if (node) node.label = title.trim() || (node.kind === "global_folder" ? "Global" : node.label);
     },
     async CreateTopic(_scope: string, _workspaceRoot: string, title: string) {
       const id = "topic_" + Date.now();

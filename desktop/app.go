@@ -2136,6 +2136,22 @@ func (a *App) RevealWorkspacePath(rel string) error {
 	if err != nil || !ok {
 		return os.ErrInvalid
 	}
+	return revealPath(path)
+}
+
+// RevealPath shows an arbitrary absolute path in the native file manager.
+func (a *App) RevealPath(path string) error {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return os.ErrInvalid
+	}
+	if abs, err := filepath.Abs(path); err == nil {
+		path = abs
+	}
+	return revealPath(path)
+}
+
+func revealPath(path string) error {
 	switch goruntime.GOOS {
 	case "darwin":
 		return exec.Command("open", "-R", path).Start()

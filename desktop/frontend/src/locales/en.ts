@@ -309,7 +309,7 @@ export const en = {
   "history.yesterday": "Yesterday",
 
   // project tree
-  "projectTree.newTopic": "New topic",
+  "projectTree.newTopic": "New session",
 
   // memory drawer
   "memory.title": "Memory",

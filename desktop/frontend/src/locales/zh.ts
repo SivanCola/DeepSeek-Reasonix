@@ -310,7 +310,7 @@ export const zh: Record<DictKey, string> = {
   "history.yesterday": "昨天",
 
   // 项目树
-  "projectTree.newTopic": "新话题",
+  "projectTree.newTopic": "新会话",
 
   // 记忆抽屉
   "memory.title": "记忆",

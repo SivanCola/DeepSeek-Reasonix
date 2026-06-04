@@ -105,6 +105,7 @@ func (a *App) emitReady(ctx context.Context) {
 	a.mu.RUnlock()
 	if hook != nil {
 		hook()
+		return
 	}
 	if ctx != nil {
 		runtime.EventsEmit(ctx, "agent:ready")
@@ -620,7 +621,8 @@ type desktopProject struct {
 }
 
 type desktopProjectFile struct {
-	Projects []desktopProject `json:"projects"`
+	GlobalTitle string           `json:"globalTitle,omitempty"`
+	Projects    []desktopProject `json:"projects"`
 }
 
 type desktopTabEntry struct {
@@ -703,11 +705,31 @@ func saveProjectsFile(f desktopProjectFile) error {
 
 func addProject(root, title string) error {
 	f := loadProjectsFile()
-	for _, p := range f.Projects {
+	for i, p := range f.Projects {
 		if p.Root == root {
 			if title != "" {
-				p.Title = title
+				f.Projects[i].Title = title
 			}
+			return saveProjectsFile(f)
+		}
+	}
+	f.Projects = append(f.Projects, desktopProject{Root: root, Title: title})
+	return saveProjectsFile(f)
+}
+
+func renameProject(root, title string) error {
+	title = strings.TrimSpace(title)
+	f := loadProjectsFile()
+	if strings.TrimSpace(root) == "" {
+		f.GlobalTitle = title
+		return saveProjectsFile(f)
+	}
+	if abs, err := filepath.Abs(root); err == nil {
+		root = abs
+	}
+	for i, p := range f.Projects {
+		if p.Root == root {
+			f.Projects[i].Title = title
 			return saveProjectsFile(f)
 		}
 	}
@@ -889,6 +911,12 @@ func (a *App) CreateTopic(scope, workspaceRoot, title string) (TopicMeta, error)
 	return TopicMeta{ID: topicID, Title: title, CreatedAt: time.Now().UnixMilli()}, nil
 }
 
+// RenameProject updates the sidebar-only display title for a project folder.
+// Empty title clears the override and falls back to the folder name.
+func (a *App) RenameProject(workspaceRoot, title string) error {
+	return renameProject(workspaceRoot, title)
+}
+
 // RenameTopic updates a topic's display title.
 func (a *App) RenameTopic(topicID, title string) error {
 	trimmed := strings.TrimSpace(title)
@@ -1057,6 +1085,10 @@ func (a *App) ListProjectTree() []ProjectNode {
 	// Global section.
 	globalTopics := loadTopicTitles("")
 	if len(globalTopics) > 0 {
+		globalTitle := strings.TrimSpace(f.GlobalTitle)
+		if globalTitle == "" {
+			globalTitle = "Global"
+		}
 		children := make([]ProjectNode, 0, len(globalTopics))
 		for id, title := range globalTopics {
 			summary := topicSummaries[topicSummaryKey("global", "", id)]
@@ -1078,7 +1110,8 @@ func (a *App) ListProjectTree() []ProjectNode {
 		out = append(out, ProjectNode{
 			Key:      "global_folder",
 			Kind:     "global_folder",
-			Label:    "Global",
+			Label:    globalTitle,
+			Root:     globalWorkspaceRoot(),
 			Children: children,
 		})
 	}

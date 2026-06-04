@@ -100,6 +100,7 @@ func TestSetEffortRebuildsController(t *testing.T) {
 
 	app := NewApp()
 	app.ctx = context.Background()
+	app.readyHook = func() {}
 	old := control.New(control.Options{Label: "old-controller"})
 	app.setTestCtrl(old, "deepseek-flash/deepseek-v4-flash")
 	defer func() {

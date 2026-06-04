@@ -62,8 +62,8 @@ export function TabBar({ tabs, activeTabId, onTabChange, onTabClose, onNewTab }:
           </button>
         ))}
       </div>
-      <Tooltip label="新建主题">
-        <button className="tabbar__new" type="button" aria-label="新建主题" onClick={onNewTab}>
+      <Tooltip label="新建会话">
+        <button className="tabbar__new" type="button" aria-label="新建会话" onClick={onNewTab}>
           <Plus size={13} />
         </button>
       </Tooltip>

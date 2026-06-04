@@ -58,6 +58,35 @@ func TestDeleteTopicKeepsSessionHistory(t *testing.T) {
 	}
 }
 
+func TestRenameProjectUpdatesSidebarTitle(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+
+	projectRoot := t.TempDir()
+	if err := addProject(projectRoot, ""); err != nil {
+		t.Fatalf("add project: %v", err)
+	}
+	if err := NewApp().RenameProject(projectRoot, "Client API"); err != nil {
+		t.Fatalf("rename project: %v", err)
+	}
+
+	nodes := NewApp().ListProjectTree()
+	if len(nodes) != 1 {
+		t.Fatalf("project tree len = %d, want 1", len(nodes))
+	}
+	if got := nodes[0].Label; got != "Client API" {
+		t.Fatalf("project label = %q, want Client API", got)
+	}
+
+	if err := NewApp().RenameProject(projectRoot, ""); err != nil {
+		t.Fatalf("clear project title: %v", err)
+	}
+	nodes = NewApp().ListProjectTree()
+	if got, want := nodes[0].Label, filepath.Base(projectRoot); got != want {
+		t.Fatalf("cleared project label = %q, want %q", got, want)
+	}
+}
+
 func TestTrashTopicMovesRelatedSessionsToTrash(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
