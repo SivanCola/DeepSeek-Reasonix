@@ -24,7 +24,7 @@ type workspaceChangeAccumulator struct {
 }
 
 func (a *App) WorkspaceChanges() WorkspaceChangesView {
-	out := WorkspaceChangesView{Files: []WorkspaceChangeView{}, GitAvailable: true}
+	out := WorkspaceChangesView{GitAvailable: true}
 	base, err := os.Getwd()
 	if err != nil {
 		out.GitAvailable = false
@@ -45,7 +45,7 @@ func (a *App) WorkspaceChanges() WorkspaceChangesView {
 	}
 
 	a.mu.RLock()
-	ctrl := a.activeCtrlLocked()
+	ctrl := a.ctrl
 	a.mu.RUnlock()
 	if ctrl != nil {
 		for _, meta := range ctrl.Checkpoints() {

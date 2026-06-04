@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
 import { Check, ChevronsUpDown } from "lucide-react";
-import { asArray } from "../lib/array";
 import { app } from "../lib/bridge";
 import { useT } from "../lib/i18n";
 import type { ModelInfo } from "../lib/types";
@@ -16,7 +15,7 @@ export function ModelSwitcher({ label, onPick }: { label: string; onPick: (name:
   const [models, setModels] = useState<ModelInfo[]>([]);
 
   useEffect(() => {
-    if (open) app.Models().then((next) => setModels(asArray(next))).catch(() => {});
+    if (open) app.Models().then(setModels).catch(() => {});
   }, [open]);
 
   const pick = (name: string) => {

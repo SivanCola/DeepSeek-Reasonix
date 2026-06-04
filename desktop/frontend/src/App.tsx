@@ -8,8 +8,6 @@ import {
   Settings as SettingsIcon,
   MessageSquare,
   Pencil,
-  Pin,
-  MoreHorizontal,
   PanelLeftClose,
   PanelLeftOpen,
   PanelRightClose,
@@ -19,7 +17,6 @@ import {
   X,
 } from "lucide-react";
 import logo from "./assets/logo.svg";
-import { asArray } from "./lib/array";
 import { useT } from "./lib/i18n";
 import { useController } from "./lib/useController";
 import { app } from "./lib/bridge";
@@ -34,14 +31,12 @@ import { HistoryPanel } from "./components/HistoryPanel";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { CapabilitiesPanel } from "./components/CapabilitiesPanel";
 import { UpdateBanner } from "./components/UpdateBanner";
-import { ContextPanel } from "./components/ContextPanel";
+import { WorkspacePanel } from "./components/WorkspacePanel";
 import { Tooltip } from "./components/Tooltip";
 import { OnboardingOverlay } from "./components/OnboardingOverlay";
-import { TabBar } from "./components/TabBar";
-import { ProjectTree } from "./components/ProjectTree";
 import { parseTodos } from "./lib/tools";
 import { sessionActivityTime } from "./lib/session";
-import type { MemoryView, Mode, SessionMeta, TabMeta } from "./lib/types";
+import type { ComposerInsertRequest, MemoryView, Mode, SessionMeta } from "./lib/types";
 import { loadLayoutSize, saveLayoutSize } from "./lib/layoutPreferences";
 import { applyTheme, getTheme, getThemeStyle, isThemeStyle, themeForStyle, type Theme } from "./lib/theme";
 
@@ -55,11 +50,14 @@ const CHAT_MIN_WIDTH = 420;
 function isThemeMode(value: string): value is Theme {
   return value === "auto" || value === "light" || value === "dark";
 }
-const CONTEXT_PANEL_MIN_WIDTH = 340;
-const WORKSPACE_PANEL_MIN_WIDTH = CONTEXT_PANEL_MIN_WIDTH;
-const WORKSPACE_PANEL_DEFAULT_WIDTH = 380;
-const WORKSPACE_PANEL_MAX_WIDTH = 460;
-const WORKSPACE_PANEL_MAX_RATIO = 0.34;
+const WORKSPACE_PANEL_MIN_WIDTH = 640;
+const WORKSPACE_PANEL_DEFAULT_WIDTH = WORKSPACE_PANEL_MIN_WIDTH;
+const WORKSPACE_PANEL_MAX_WIDTH = 820;
+const WORKSPACE_PANEL_MAX_RATIO = 0.54;
+const WORKSPACE_FILE_TREE_PANEL_DEFAULT_WIDTH = 360;
+const WORKSPACE_FILE_TREE_PANEL_MIN_WIDTH = 320;
+const WORKSPACE_FILE_TREE_PANEL_MAX_WIDTH = 480;
+const WORKSPACE_FILE_TREE_PANEL_MAX_RATIO = 0.32;
 
 function clampSidebarWidth(width: number): number {
   return Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, Math.round(width)));
@@ -70,6 +68,16 @@ function clampWorkspacePanelWidth(width: number, sidebarWidth = SIDEBAR_DEFAULT_
   const maxByChat = Math.floor(viewportWidth - sidebarWidth - CHAT_MIN_WIDTH);
   const max = Math.max(WORKSPACE_PANEL_MIN_WIDTH, Math.min(WORKSPACE_PANEL_MAX_WIDTH, maxByRatio, maxByChat));
   return Math.min(max, Math.max(WORKSPACE_PANEL_MIN_WIDTH, Math.round(width)));
+}
+
+function clampWorkspaceFileTreePanelWidth(width: number, sidebarWidth = SIDEBAR_DEFAULT_WIDTH, viewportWidth = 1440): number {
+  const maxByRatio = Math.floor(viewportWidth * WORKSPACE_FILE_TREE_PANEL_MAX_RATIO);
+  const maxByChat = Math.floor(viewportWidth - sidebarWidth - CHAT_MIN_WIDTH);
+  const max = Math.max(
+    WORKSPACE_FILE_TREE_PANEL_MIN_WIDTH,
+    Math.min(WORKSPACE_FILE_TREE_PANEL_MAX_WIDTH, maxByRatio, maxByChat),
+  );
+  return Math.min(max, Math.max(WORKSPACE_FILE_TREE_PANEL_MIN_WIDTH, Math.round(width)));
 }
 
 function loadSidebarCollapsed(): boolean {
@@ -106,6 +114,18 @@ function saveWorkspacePanelWidth(width: number): void {
   saveLayoutSize("workspacePanelWidth", width);
 }
 
+function loadWorkspaceFileTreePanelWidth(): number {
+  return loadLayoutSize(
+    "workspaceFileTreePanelWidth",
+    WORKSPACE_FILE_TREE_PANEL_DEFAULT_WIDTH,
+    clampWorkspaceFileTreePanelWidth,
+  );
+}
+
+function saveWorkspaceFileTreePanelWidth(width: number): void {
+  saveLayoutSize("workspaceFileTreePanelWidth", width);
+}
+
 function sessionTitle(session: SessionMeta, fallback: string): string {
   return session.title || session.preview || fallback;
 }
@@ -114,28 +134,9 @@ function sessionTime(ms: number): string {
   return new Date(ms).toLocaleDateString([], { month: "short", day: "numeric" });
 }
 
-function topicTitle(tab?: TabMeta): string {
-  if (!tab) return "Global";
-  if (tab.scope === "global") return tab.topicTitle || "Global";
-  return `${tab.workspaceName || "Project"} / ${tab.topicTitle || "Untitled"}`;
-}
-
-function topicScopeLabel(tab?: TabMeta): string {
-  if (!tab || tab.scope === "global") return "Scope: Global";
-  return `Scope: Project · ${tab.workspaceName || tab.workspaceRoot || "Project"}`;
-}
-
-function formatContextWindow(tokens: number): string {
-  if (!tokens) return "context";
-  if (tokens >= 1_000_000) return `${Math.round(tokens / 1_000_000)}M context`;
-  if (tokens >= 1000) return `${Math.round(tokens / 1000)}K context`;
-  return `${tokens} context`;
-}
-
 export default function App() {
   const {
     state,
-    activeTabId,
     send,
     notice,
     cancel,
@@ -152,20 +153,15 @@ export default function App() {
     pickWorkspace,
     switchWorkspace,
     rewind,
-    setModel,
-    setEffort,
+	setModel,
+	setEffort,
     fetchMemory,
     remember,
     forget,
     saveDoc,
-    switchTab,
-    openProjectTab,
-    openGlobalTab,
-    closeTab,
   } = useController();
   const t = useT();
   const [mode, setMode] = useState<Mode>("normal");
-  const [tabMetas, setTabMetas] = useState<TabMeta[]>([]);
   // null until the mount probe resolves; true shows the overlay. Probed once —
   // clearing the key mid-session is the Settings panel's job, not the gate's.
   const [needsOnboarding, setNeedsOnboarding] = useState<boolean | null>(null);
@@ -178,23 +174,29 @@ export default function App() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(loadSidebarCollapsed);
   const [sidebarWidth, setSidebarWidth] = useState(loadSidebarWidth);
   const [sidebarResizing, setSidebarResizing] = useState(false);
-  const [workspacePanelOpen, setWorkspacePanelOpen] = useState(true);
+  const [workspacePanelOpen, setWorkspacePanelOpen] = useState(false);
   const [workspacePanelWidth, setWorkspacePanelWidth] = useState(loadWorkspacePanelWidth);
+  const [workspaceFileTreePanelWidth, setWorkspaceFileTreePanelWidth] = useState(loadWorkspaceFileTreePanelWidth);
   const [workspacePanelResizing, setWorkspacePanelResizing] = useState(false);
+  const [workspacePanelMaximized, setWorkspacePanelMaximized] = useState(false);
+  const [workspacePreviewModeActive, setWorkspacePreviewModeActive] = useState(false);
+  const [workspaceChangesRefreshKey, setWorkspaceChangesRefreshKey] = useState(0);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [capsOpen, setCapsOpen] = useState(false);
+  const [composerInsertRequest, setComposerInsertRequest] = useState<ComposerInsertRequest | null>(null);
   const [pendingPlanRevision, setPendingPlanRevision] = useState<string | null>(null);
   const [viewportWidth, setViewportWidth] = useState(() => (typeof window === "undefined" ? 1440 : window.innerWidth));
   const [footerHeight, setFooterHeight] = useState(0);
   const footerRef = useRef<HTMLElement>(null);
+  const sidebarBeforeWorkspacePreviewRef = useRef<boolean | null>(null);
+  const wasRunningForWorkspaceChangesRef = useRef(false);
   const effectiveSidebarWidth = sidebarCollapsed ? SIDEBAR_COLLAPSED_WIDTH : sidebarWidth;
   const effectiveWorkspacePanelWidth = useMemo(
-    () => clampWorkspacePanelWidth(workspacePanelWidth, effectiveSidebarWidth, viewportWidth),
-    [effectiveSidebarWidth, viewportWidth, workspacePanelWidth],
-  );
-  const activeTab = useMemo(
-    () => tabMetas.find((tab) => tab.id === activeTabId) ?? tabMetas.find((tab) => tab.active),
-    [activeTabId, tabMetas],
+    () =>
+      workspacePreviewModeActive
+        ? clampWorkspacePanelWidth(workspacePanelWidth, effectiveSidebarWidth, viewportWidth)
+        : clampWorkspaceFileTreePanelWidth(workspaceFileTreePanelWidth, effectiveSidebarWidth, viewportWidth),
+    [effectiveSidebarWidth, viewportWidth, workspaceFileTreePanelWidth, workspacePanelWidth, workspacePreviewModeActive],
   );
 
   const syncModeToController = useCallback((m: Mode) => setControllerMode(m), [setControllerMode]);
@@ -262,6 +264,13 @@ export default function App() {
     send(text);
   }, [pendingPlanRevision, send, state.running]);
 
+  useEffect(() => {
+    if (wasRunningForWorkspaceChangesRef.current && !state.running) {
+      setWorkspaceChangesRefreshKey((key) => key + 1);
+    }
+    wasRunningForWorkspaceChangesRef.current = state.running;
+  }, [state.running]);
+
   // Memory drawer: opening fetches a fresh snapshot; writes re-fetch so the
   // panel reflects what landed on disk.
   const openMemory = useCallback(async () => {
@@ -318,41 +327,19 @@ export default function App() {
     [switchModel, openMemory, syncModeToController, mode, send, notice, t],
   );
 
+  const addToChat = useCallback((text: string) => {
+    setComposerInsertRequest((prev) => ({ id: (prev?.id ?? 0) + 1, text }));
+  }, []);
+
   const refreshSessions = useCallback(async () => {
     const sessions = await listSessions();
     setSidebarSessions(sessions.slice(0, 10));
     return sessions;
   }, [listSessions]);
 
-  const refreshTabMetas = useCallback(async () => {
-    setTabMetas(asArray(await app.ListTabs().catch(() => [] as TabMeta[])));
-  }, []);
-
   useEffect(() => {
     void refreshSessions();
   }, [refreshSessions]);
-
-  useEffect(() => {
-    void refreshTabMetas();
-    const id = window.setInterval(() => void refreshTabMetas(), 2000);
-    return () => window.clearInterval(id);
-  }, [refreshTabMetas]);
-
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      const platform = await app.Platform().catch(() => "");
-      if (cancelled || typeof document === "undefined") return;
-      if (platform) {
-        document.documentElement.dataset.platform = platform;
-      } else {
-        delete document.documentElement.dataset.platform;
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -394,15 +381,33 @@ export default function App() {
   const startNewSession = useCallback(async () => {
     await newSession();
     await refreshSessions();
+    setWorkspaceChangesRefreshKey((key) => key + 1);
   }, [newSession, refreshSessions]);
 
   const toggleSidebar = useCallback(() => {
+    sidebarBeforeWorkspacePreviewRef.current = null;
     setSidebarCollapsed((collapsed) => {
       const next = !collapsed;
       saveSidebarCollapsed(next);
       return next;
     });
   }, []);
+
+  const handleWorkspacePreviewModeChange = useCallback((active: boolean) => {
+    setWorkspacePreviewModeActive(active);
+    if (active) {
+      if (sidebarBeforeWorkspacePreviewRef.current === null) {
+        sidebarBeforeWorkspacePreviewRef.current = sidebarCollapsed;
+      }
+      if (!sidebarCollapsed) setSidebarCollapsed(true);
+      return;
+    }
+    const restoreCollapsed = sidebarBeforeWorkspacePreviewRef.current;
+    sidebarBeforeWorkspacePreviewRef.current = null;
+    if (restoreCollapsed !== null && restoreCollapsed !== sidebarCollapsed) {
+      setSidebarCollapsed(restoreCollapsed);
+    }
+  }, [sidebarCollapsed]);
 
   const setExpandedSidebarWidth = useCallback((width: number) => {
     const next = clampSidebarWidth(width);
@@ -458,26 +463,42 @@ export default function App() {
 
   const setSavedWorkspacePanelWidth = useCallback(
     (width: number) => {
-      const next = clampWorkspacePanelWidth(width, effectiveSidebarWidth, viewportWidth);
-      setWorkspacePanelWidth(next);
-      saveWorkspacePanelWidth(next);
+      if (workspacePreviewModeActive) {
+        const next = clampWorkspacePanelWidth(width, effectiveSidebarWidth, viewportWidth);
+        setWorkspacePanelWidth(next);
+        saveWorkspacePanelWidth(next);
+      } else {
+        const next = clampWorkspaceFileTreePanelWidth(width, effectiveSidebarWidth, viewportWidth);
+        setWorkspaceFileTreePanelWidth(next);
+        saveWorkspaceFileTreePanelWidth(next);
+      }
     },
-    [effectiveSidebarWidth, viewportWidth],
+    [effectiveSidebarWidth, viewportWidth, workspacePreviewModeActive],
   );
 
   const startWorkspacePanelResize = useCallback(
     (event: ReactPointerEvent<HTMLButtonElement>) => {
-      if (!workspacePanelOpen) return;
+      if (!workspacePanelOpen || workspacePanelMaximized) return;
       event.preventDefault();
       setWorkspacePanelResizing(true);
       let nextWidth = effectiveWorkspacePanelWidth;
+      const clampWidth = workspacePreviewModeActive ? clampWorkspacePanelWidth : clampWorkspaceFileTreePanelWidth;
       const onMove = (moveEvent: PointerEvent) => {
-        nextWidth = clampWorkspacePanelWidth(window.innerWidth - moveEvent.clientX, effectiveSidebarWidth, window.innerWidth);
-        setWorkspacePanelWidth(nextWidth);
+        nextWidth = clampWidth(window.innerWidth - moveEvent.clientX, effectiveSidebarWidth, window.innerWidth);
+        if (workspacePreviewModeActive) {
+          setWorkspacePanelWidth(nextWidth);
+        } else {
+          setWorkspaceFileTreePanelWidth(nextWidth);
+        }
       };
       const onDone = () => {
-        setWorkspacePanelWidth(nextWidth);
-        saveWorkspacePanelWidth(nextWidth);
+        if (workspacePreviewModeActive) {
+          setWorkspacePanelWidth(nextWidth);
+          saveWorkspacePanelWidth(nextWidth);
+        } else {
+          setWorkspaceFileTreePanelWidth(nextWidth);
+          saveWorkspaceFileTreePanelWidth(nextWidth);
+        }
         setWorkspacePanelResizing(false);
         window.removeEventListener("pointermove", onMove);
         window.removeEventListener("pointerup", onDone);
@@ -491,7 +512,7 @@ export default function App() {
       window.addEventListener("pointerup", onDone);
       window.addEventListener("pointercancel", onDone);
     },
-    [effectiveSidebarWidth, effectiveWorkspacePanelWidth, workspacePanelOpen],
+    [effectiveSidebarWidth, effectiveWorkspacePanelWidth, workspacePanelMaximized, workspacePanelOpen, workspacePreviewModeActive],
   );
 
   const resizeWorkspacePanelWithKeyboard = useCallback(
@@ -501,13 +522,13 @@ export default function App() {
         setSavedWorkspacePanelWidth(effectiveWorkspacePanelWidth + (event.key === "ArrowLeft" ? 16 : -16));
       } else if (event.key === "Home") {
         event.preventDefault();
-        setSavedWorkspacePanelWidth(WORKSPACE_PANEL_MIN_WIDTH);
+        setSavedWorkspacePanelWidth(workspacePreviewModeActive ? WORKSPACE_PANEL_MIN_WIDTH : WORKSPACE_FILE_TREE_PANEL_MIN_WIDTH);
       } else if (event.key === "End") {
         event.preventDefault();
-        setSavedWorkspacePanelWidth(WORKSPACE_PANEL_MAX_WIDTH);
+        setSavedWorkspacePanelWidth(workspacePreviewModeActive ? WORKSPACE_PANEL_MAX_WIDTH : WORKSPACE_FILE_TREE_PANEL_MAX_WIDTH);
       }
     },
-    [effectiveWorkspacePanelWidth, setSavedWorkspacePanelWidth],
+    [effectiveWorkspacePanelWidth, setSavedWorkspacePanelWidth, workspacePreviewModeActive],
   );
 
   const layoutStyle = useMemo(
@@ -521,6 +542,10 @@ export default function App() {
 
   const setWorkspacePanel = useCallback((open: boolean) => {
     setWorkspacePanelOpen(open);
+    if (!open) {
+      setWorkspacePanelMaximized(false);
+      setWorkspacePreviewModeActive(false);
+    }
   }, []);
 
   const toggleWorkspacePanel = useCallback(() => {
@@ -529,30 +554,6 @@ export default function App() {
       return next;
     });
   }, []);
-
-  const handleTabChange = useCallback(async (id: string) => {
-    await switchTab(id);
-    await refreshTabMetas();
-  }, [refreshTabMetas, switchTab]);
-
-  const handleTabClose = useCallback(async (id: string) => {
-    await closeTab(id);
-    await refreshTabMetas();
-  }, [closeTab, refreshTabMetas]);
-
-  const handleNewTab = useCallback(async () => {
-    await pickWorkspace();
-    await refreshTabMetas();
-  }, [pickWorkspace, refreshTabMetas]);
-
-  const handleOpenTopic = useCallback(async (scope: string, workspaceRoot: string, topicId: string) => {
-    if (scope === "global") {
-      await openGlobalTab(topicId);
-    } else {
-      await openProjectTab(workspaceRoot, topicId);
-    }
-    await refreshTabMetas();
-  }, [openGlobalTab, openProjectTab, refreshTabMetas]);
 
   // History drawer: opening fetches the saved-session list. Idle row clicks resume;
   // running row clicks only preview through PreviewSession.
@@ -566,6 +567,7 @@ export default function App() {
       setHistView(null);
       await resumeSession(path);
       await refreshSessions();
+      setWorkspaceChangesRefreshKey((key) => key + 1);
     },
     [state.running, resumeSession, refreshSessions],
   );
@@ -622,10 +624,10 @@ export default function App() {
     const picked = path === undefined ? await pickWorkspace() : await switchWorkspace(path);
     if (picked) {
       await refreshSessions();
-      await refreshTabMetas();
+      setWorkspaceChangesRefreshKey((key) => key + 1);
     }
     return picked;
-  }, [pickWorkspace, switchWorkspace, refreshSessions, refreshTabMetas]);
+  }, [pickWorkspace, switchWorkspace, refreshSessions]);
 
   const onRemember = useCallback(
     async (scope: string, note: string) => {
@@ -651,8 +653,10 @@ export default function App() {
     [saveDoc, fetchMemory],
   );
 
-  const sidebarExpandBlocked = false;
-  const sidebarToggleTitle = sidebarCollapsed
+  const sidebarExpandBlocked = sidebarCollapsed && workspacePreviewModeActive;
+  const sidebarToggleTitle = sidebarExpandBlocked
+    ? t("sidebar.expandBlocked")
+    : sidebarCollapsed
       ? t("sidebar.expand")
       : t("sidebar.collapse");
 
@@ -665,16 +669,16 @@ export default function App() {
           sidebarResizing ? "layout--resizing layout--sidebar-resizing" : "",
           workspacePanelOpen ? "layout--workspace-open" : "",
           workspacePanelResizing ? "layout--resizing layout--workspace-resizing" : "",
+          workspacePanelOpen && workspacePanelMaximized ? "layout--workspace-maximized" : "",
         ]
           .filter(Boolean)
           .join(" ")}
         style={layoutStyle}
       >
-        <div className="mac-window-chrome" aria-hidden="true" />
         <aside className={`sidebar${sidebarCollapsed ? " sidebar--collapsed" : ""}`} aria-label={t("sidebar.navigation")}>
           <div className="sidebar__brand">
             <img src={logo} alt="" className="sidebar__logo" />
-            <span className="sidebar__brand-name">Reasonix</span>
+            <span>Reasonix</span>
             <Tooltip label={sidebarToggleTitle}>
               <button
                 className={`sidebar__toggle${sidebarExpandBlocked ? " sidebar__toggle--blocked" : ""}`}
@@ -700,16 +704,7 @@ export default function App() {
             </button>
           </Tooltip>
 
-          <section className="sidebar__section sidebar__section--projects">
-            <ProjectTree
-              activeScope={activeTab?.scope}
-              activeWorkspaceRoot={activeTab?.workspaceRoot}
-              activeTopicId={activeTab?.topicId}
-              onOpenTopic={(scope, workspaceRoot, topicId) => void handleOpenTopic(scope, workspaceRoot, topicId)}
-            />
-          </section>
-
-          <section className="sidebar__section sidebar__section--recent">
+          <section className="sidebar__section">
             <div className="sidebar__section-head">
               <div className="sidebar__section-title">{t("sidebar.conversations")}</div>
               <Tooltip label={t("topbar.history")}>
@@ -864,57 +859,59 @@ export default function App() {
         />
 
         <section className="chat-pane">
-          <header className="workspace-tabs-bar">
-            <TabBar
-              tabs={tabMetas}
-              activeTabId={activeTabId}
-              onTabChange={(id) => void handleTabChange(id)}
-              onTabClose={(id) => void handleTabClose(id)}
-              onNewTab={() => void handleNewTab()}
-            />
-          </header>
-
-          <header className="topicbar">
-            <div className="topicbar__identity">
-              <div className="topicbar__title-row">
-                <h1>{topicTitle(activeTab)}</h1>
-                <Tooltip label="重命名主题">
-                  <button className="topicbar__icon-btn">
-                    <Pencil size={14} />
-                  </button>
-                </Tooltip>
-              </div>
-              <div className="topicbar__meta">
-                <span>{state.meta?.label ?? "…"}</span>
-                <span className="topicbar__context-badge">{formatContextWindow(state.context.window)}</span>
-              </div>
+          <header className="topbar">
+            <div className="topbar__identity">
+              <span className="topbar__title">Reasonix</span>
+              <span className="topbar__model">{state.meta?.label ?? "…"}</span>
             </div>
-            <div className="topicbar__spacer" />
-            <div className="topicbar__actions">
-              <Tooltip label="固定主题">
-                <button className="topicbar__icon-btn">
-                  <Pin size={15} />
-                </button>
-              </Tooltip>
-              <Tooltip label={t("topbar.history")}>
-                <button className="topicbar__icon-btn" onClick={() => void openHistory()}>
-                  <History size={15} />
-                </button>
-              </Tooltip>
-              <Tooltip label="更多">
-                <button className="topicbar__icon-btn">
-                  <MoreHorizontal size={16} />
-                </button>
-              </Tooltip>
-            </div>
-            <Tooltip label={workspacePanelOpen ? "关闭上下文面板" : "打开上下文面板"}>
+            <div className="topbar__spacer" />
+            <Tooltip label={workspacePanelOpen ? t("workspace.close") : t("workspace.open")}>
               <button
-                className="chip chip--icon topicbar__workspace-toggle"
+                className="chip chip--icon topbar__workspace-toggle"
                 onClick={toggleWorkspacePanel}
               >
                 {workspacePanelOpen ? <PanelRightClose size={13} /> : <PanelRightOpen size={13} />}
               </button>
             </Tooltip>
+            <div className="topbar__actions">
+              <Tooltip label={t("topbar.history")}>
+                <button
+                  className="chip chip--icon"
+                  onClick={() => void openHistory()}
+                >
+                  <History size={13} />
+                </button>
+              </Tooltip>
+              <Tooltip label={t("topbar.memory")}>
+                <button className="chip chip--icon" onClick={() => void openMemory()}>
+                  <Brain size={13} />
+                </button>
+              </Tooltip>
+              <Tooltip label={t("caps.title")}>
+                <button className="chip chip--icon" onClick={() => setCapsOpen(true)}>
+                  <Blocks size={13} />
+                </button>
+              </Tooltip>
+              <Tooltip label={t("topbar.settings")}>
+                <button
+                  className="chip chip--icon"
+                  onClick={() => setSettingsOpen(true)}
+                >
+                  <SettingsIcon size={13} />
+                </button>
+              </Tooltip>
+              <Tooltip label={t("topbar.newSession")}>
+                <button
+                  className="chip chip--icon"
+                  onClick={() => {
+                    if (state.running) cancel();
+                    void startNewSession();
+                  }}
+                >
+                  <SquarePen size={13} />
+                </button>
+              </Tooltip>
+            </div>
           </header>
 
           {state.meta?.startupErr && (
@@ -970,7 +967,7 @@ export default function App() {
               onCancel={cancel}
               onCycleMode={cycleMode}
               onPickFolder={switchFolder}
-              insertRequest={null}
+              insertRequest={composerInsertRequest}
               disabled={state.meta?.ready === false || state.approval != null || state.ask != null}
               ready={state.meta?.ready === true}
             />
@@ -993,34 +990,37 @@ export default function App() {
           </footer>
         </section>
 
-        {workspacePanelOpen && (
+        {workspacePanelOpen && !workspacePanelMaximized && (
           <button
             className="workspace-panel-resizer"
             type="button"
             role="separator"
             aria-orientation="vertical"
-            aria-label="调整上下文面板宽度"
-            aria-valuemin={WORKSPACE_PANEL_MIN_WIDTH}
-            aria-valuemax={WORKSPACE_PANEL_MAX_WIDTH}
+            aria-label={t("workspace.resizePanel")}
+            aria-valuemin={workspacePreviewModeActive ? WORKSPACE_PANEL_MIN_WIDTH : WORKSPACE_FILE_TREE_PANEL_MIN_WIDTH}
+            aria-valuemax={workspacePreviewModeActive ? WORKSPACE_PANEL_MAX_WIDTH : WORKSPACE_FILE_TREE_PANEL_MAX_WIDTH}
             aria-valuenow={effectiveWorkspacePanelWidth}
             onPointerDown={startWorkspacePanelResize}
             onKeyDown={resizeWorkspacePanelWithKeyboard}
-            onDoubleClick={() => setSavedWorkspacePanelWidth(WORKSPACE_PANEL_DEFAULT_WIDTH)}
+            onDoubleClick={() =>
+              setSavedWorkspacePanelWidth(
+                workspacePreviewModeActive ? WORKSPACE_PANEL_DEFAULT_WIDTH : WORKSPACE_FILE_TREE_PANEL_DEFAULT_WIDTH,
+              )
+            }
           />
         )}
 
-        {workspacePanelOpen && (
-          <aside className="context-inspector" aria-label="当前主题上下文">
-            <ContextPanel
-              tabId={activeTabId}
-              context={state.context}
-              usage={state.usage}
-              sessionCostUsd={state.sessionCostUsd}
-              scopeLabel={topicScopeLabel(activeTab)}
-              onClose={() => setWorkspacePanel(false)}
-            />
-          </aside>
-        )}
+        <WorkspacePanel
+          open={workspacePanelOpen}
+          cwd={state.meta?.cwd}
+          maximized={workspacePanelMaximized}
+          panelWidth={workspacePanelMaximized ? viewportWidth - effectiveSidebarWidth : effectiveWorkspacePanelWidth}
+          onClose={() => setWorkspacePanel(false)}
+          onToggleMaximized={() => setWorkspacePanelMaximized((value) => !value)}
+          onPreviewModeChange={handleWorkspacePreviewModeChange}
+          onAddToChat={addToChat}
+          changesRefreshKey={workspaceChangesRefreshKey}
+        />
       </div>
 
       {memView !== null && (

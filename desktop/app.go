@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -41,25 +42,39 @@ const eventChannel = "agent:event"
 
 // App is the Wails-bound application object: the desktop frontend's command
 // surface. Its exported methods (Submit/Cancel/Approve/…) are generated into JS
-// bindings. The app manages multiple WorkspaceTabs — each with its own controller
-// scoped to a project workspace — and routes commands to the active tab. Events
-// flow the other way: each tab's controller emits to a tabEventSink that
-// forwards events tagged with tabId to the webview via runtime.EventsEmit.
+// bindings and call straight through to one transport-agnostic control.Controller
+// — the same controller the chat TUI and the HTTP/SSE server drive, assembled by
+// the shared internal/boot. Events flow the other way: the controller emits to an
+// eventSink that forwards each one to the webview via runtime.EventsEmit.
 type App struct {
-	ctx context.Context
+	ctx  context.Context
+	sink *eventSink
+	ctrl *control.Controller
 
-	// mu protects the tab map, activeTabID, and per-tab fields that are read
-	// from bound methods. All bound methods that touch a controller use activeCtrl().
+	// mu protects ctrl, label, model, startupErr, and ready during the async
+	// boot sequence. startup() spawns a goroutine for boot.Build(); all methods
+	// that touch the controller acquire the lock.
 	mu          sync.RWMutex
-	tabs        map[string]*WorkspaceTab
-	activeTabID string
-	readyHook   func()
+	startupErr  string
+	label       string
+	model       string // active provider name (for the bottom model switcher)
+	ready       bool   // true once boot.Build completes (success or failure)
+	disabledMCP map[string]ServerView
+	mcpOrder    []string
+
+	// Per-turn autosave runs off the event goroutine so disk I/O never delays
+	// event delivery; overlapping requests coalesce into one trailing write.
+	saveMu    sync.Mutex
+	saving    bool
+	saveAgain bool
 }
 
-// NewApp constructs the bound object. Tabs are restored in startup from the
-// last session's desktop-tabs.json.
+// NewApp constructs the bound object. The controller is built later, in startup,
+// once the Wails context exists.
 func NewApp() *App {
-	return &App{tabs: map[string]*WorkspaceTab{}}
+	a := &App{sink: &eventSink{}, disabledMCP: map[string]ServerView{}}
+	a.sink.app = a
+	return a
 }
 
 // Platform exposes the native OS to the frontend so chrome/layout affordances can
@@ -69,91 +84,92 @@ func (a *App) Platform() string {
 }
 
 // startup runs once the webview process is up, before the frontend can issue any
-// bound call. It captures the Wails context (needed for EventsEmit), then kicks
-// off the initialization in a background goroutine so the webview loads immediately.
+// bound call. It captures the Wails context (needed for EventsEmit), points the
+// sink at it, then kicks off the entire initialization (workspace, config, build)
+// in a background goroutine so the webview loads immediately. The frontend polls
+// Meta() and sees Ready flip to true once the controller is assembled. RequireKey
+// is false so a missing API key opens the window in a "set your key" state rather
+// than failing to launch; a build error is surfaced through Meta instead of
+// crashing the window.
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
+	a.sink.ctx = ctx
 
-	go a.restoreOrBuildTabs()
+	// Everything else — workspace resolution, config loading, i18n setup, and
+	// boot.Build — runs in the background so the webview appears instantly.
+	// During this window Meta().Ready is false and the frontend shows a loading
+	// state; bound calls are no-ops (ctrl is nil).
+	go a.buildController()
 }
 
-// restoreOrBuildTabs restores the tabs from the last session, or creates a
-// default Global tab on first launch.
-func (a *App) restoreOrBuildTabs() {
-	ctx := a.ctx
+// buildController runs the full initialization sequence in a background goroutine:
+// workspace resolution, config loading, i18n setup, and boot.Build. On success it
+// wires up the controller and flips ready; on failure it stores the error so
+// Meta().StartupErr surfaces it.
+func (a *App) buildController() {
+	ctx := a.ctx // captured by startup before this goroutine starts
+
+	// A GUI launch starts in "/" (read-only); move into a real, writable working
+	// folder (the remembered one, else home) before anything reads/writes config,
+	// .env, memory, or skills relative to cwd.
 	ensureWorkspace()
 
-	// Load i18n from the first available config.
+	// Resolve the active model to its canonical "provider/model" ref up front so
+	// the switcher can mark it current.
+	model := ""
 	if cfg, err := config.Load(); err == nil {
+		// Drive the Go-side catalogue (i18n.M) from the configured language so the
+		// backend-provided slash UI — command descriptions, sub-command hints,
+		// listing notices — comes through localized, matching the frontend.
 		i18n.DetectLanguage(cfg.Language)
+		model = cfg.DefaultModel
+		if e, ok := cfg.ResolveModel(cfg.DefaultModel); ok {
+			model = e.Name + "/" + e.Model
+		}
 	}
 
-	f := loadTabsFile()
-	if len(f.Tabs) > 0 {
-		for _, entry := range f.Tabs {
-			var tab *WorkspaceTab
-			if entry.Scope == "project" {
-				tab = a.createTabEntryWithID(entry.Scope, entry.WorkspaceRoot, entry.TopicID, entry.ID)
-			} else {
-				tab = a.createTabEntryWithID("global", globalTabWorkspaceRoot(), entry.TopicID, entry.ID)
-			}
-			tab.sink = &tabEventSink{tabID: tab.ID, app: a, ctx: ctx}
-			a.mu.Lock()
-			a.tabs[tab.ID] = tab
-			a.mu.Unlock()
-			go a.buildTabController(tab)
-		}
+	a.mu.Lock()
+	a.model = model
+	a.mu.Unlock()
+
+	ctrl, err := boot.Build(ctx, boot.Options{Model: model, RequireKey: false, Sink: a.sink})
+	if err != nil {
 		a.mu.Lock()
-		if _, ok := a.tabs[f.ActiveTab]; ok {
-			a.activeTabID = f.ActiveTab
-		} else {
-			for id := range a.tabs {
-				a.activeTabID = id
-				break
-			}
-		}
+		a.startupErr = err.Error()
+		a.ready = true
 		a.mu.Unlock()
+		runtime.EventsEmit(ctx, "agent:ready")
 		return
 	}
 
-	// First launch: create a default Global tab.
-	tab := a.createTabEntry("global", globalTabWorkspaceRoot(), "")
-	tab.sink = &tabEventSink{tabID: tab.ID, app: a, ctx: ctx}
-	tab.TopicTitle = "Global"
 	a.mu.Lock()
-	a.tabs[tab.ID] = tab
-	a.activeTabID = tab.ID
+	a.ctrl = ctrl
+	a.label = ctrl.Label()
+	a.ready = true
 	a.mu.Unlock()
-	go a.buildTabController(tab)
-}
 
-func (a *App) createTabEntry(scope, workspaceRoot, topicID string) *WorkspaceTab {
-	return a.createTabEntryWithID(scope, workspaceRoot, topicID, newTabID())
-}
+	// Desktop is interactive: route "ask" gate decisions to the frontend as
+	// approval_request events, answered via Approve.
+	ctrl.EnableInteractiveApproval()
 
-func (a *App) createTabEntryWithID(scope, workspaceRoot, topicID, id string) *WorkspaceTab {
-	return &WorkspaceTab{
-		ID:            id,
-		Scope:         scope,
-		WorkspaceRoot: workspaceRoot,
-		TopicID:       topicID,
-		disabledMCP:   map[string]ServerView{},
+	// Land auto-save in a fresh session file (same as a fresh chat/serve start).
+	if dir := ctrl.SessionDir(); dir != "" {
+		ctrl.SetSessionPath(agent.NewSessionPath(dir, ctrl.Label()))
 	}
+
+	// Notify the frontend that the controller is ready — it re-fetches Meta,
+	// ContextUsage, and History.
+	runtime.EventsEmit(ctx, "agent:ready")
 }
 
-// shutdown snapshots all tabs and closes them.
+// shutdown snapshots the conversation and stops plugin subprocesses on close.
 func (a *App) shutdown(context.Context) {
 	a.mu.RLock()
-	tabs := make([]*WorkspaceTab, 0, len(a.tabs))
-	for _, t := range a.tabs {
-		tabs = append(tabs, t)
-	}
+	ctrl := a.ctrl
 	a.mu.RUnlock()
-	for _, t := range tabs {
-		if t.Ctrl != nil {
-			_ = t.Ctrl.Snapshot()
-			t.Ctrl.Close()
-		}
+	if ctrl != nil {
+		_ = ctrl.Snapshot()
+		ctrl.Close()
 	}
 }
 
@@ -169,7 +185,10 @@ func (a *App) Submit(input string) {
 		a.runEffortCommand(trimmed)
 		return
 	}
-	if ctrl := a.activeCtrl(); ctrl != nil {
+	a.mu.RLock()
+	ctrl := a.ctrl
+	a.mu.RUnlock()
+	if ctrl != nil {
 		ctrl.Submit(input)
 	}
 }
@@ -177,17 +196,19 @@ func (a *App) Submit(input string) {
 // SubmitDisplay runs input as a turn while recording a shorter UI-only display
 // string for the saved desktop transcript. The model still receives input.
 func (a *App) SubmitDisplay(display, input string) {
-	ctrl := a.activeCtrl()
-	if ctrl == nil {
+	if a.ctrl == nil {
 		return
 	}
-	_ = recordSessionDisplay(config.SessionDir(), ctrl.SessionPath(), input, display)
-	ctrl.Submit(input)
+	_ = recordSessionDisplay(config.SessionDir(), a.ctrl.SessionPath(), input, display)
+	a.ctrl.Submit(input)
 }
 
 // Cancel aborts the in-flight turn.
 func (a *App) Cancel() {
-	if ctrl := a.activeCtrl(); ctrl != nil {
+	a.mu.RLock()
+	ctrl := a.ctrl
+	a.mu.RUnlock()
+	if ctrl != nil {
 		ctrl.Cancel()
 	}
 }
@@ -195,7 +216,9 @@ func (a *App) Cancel() {
 // Approve answers a pending approval_request by ID: allow runs the call, session
 // also remembers the grant for the rest of the session.
 func (a *App) Approve(id string, allow, session, persist bool) {
-	ctrl := a.activeCtrl()
+	a.mu.RLock()
+	ctrl := a.ctrl
+	a.mu.RUnlock()
 	if ctrl != nil {
 		ctrl.Approve(id, allow, session, persist)
 	}
@@ -203,7 +226,9 @@ func (a *App) Approve(id string, allow, session, persist bool) {
 
 // SetPlanMode toggles read-only plan mode.
 func (a *App) SetPlanMode(on bool) {
-	ctrl := a.activeCtrl()
+	a.mu.RLock()
+	ctrl := a.ctrl
+	a.mu.RUnlock()
 	if ctrl != nil {
 		ctrl.SetPlanMode(on)
 	}
@@ -214,7 +239,7 @@ func (a *App) SetPlanMode(on bool) {
 // half-applied SetPlanMode/SetBypass pair.
 func (a *App) SetMode(mode string) {
 	a.mu.RLock()
-	ctrl := a.activeCtrlLocked()
+	ctrl := a.ctrl
 	a.mu.RUnlock()
 	if ctrl == nil {
 		return
@@ -239,7 +264,7 @@ type QuestionAnswer struct {
 // user's selections per question.
 func (a *App) AnswerQuestion(id string, answers []QuestionAnswer) {
 	a.mu.RLock()
-	ctrl := a.activeCtrlLocked()
+	ctrl := a.ctrl
 	a.mu.RUnlock()
 	if ctrl == nil {
 		return
@@ -256,7 +281,7 @@ func (a *App) AnswerQuestion(id string, answers []QuestionAnswer) {
 // compaction goes through Submit("/compact <focus>") instead.
 func (a *App) Compact() error {
 	a.mu.RLock()
-	ctrl := a.activeCtrlLocked()
+	ctrl := a.ctrl
 	a.mu.RUnlock()
 	if ctrl == nil {
 		return nil
@@ -267,7 +292,7 @@ func (a *App) Compact() error {
 // NewSession snapshots the current conversation and rotates to a fresh one.
 func (a *App) NewSession() error {
 	a.mu.RLock()
-	ctrl := a.activeCtrlLocked()
+	ctrl := a.ctrl
 	a.mu.RUnlock()
 	if ctrl == nil {
 		return nil
@@ -286,7 +311,7 @@ type CheckpointMeta struct {
 // Checkpoints lists the session's rewind points, oldest first, for the rewind UI.
 func (a *App) Checkpoints() []CheckpointMeta {
 	a.mu.RLock()
-	ctrl := a.activeCtrlLocked()
+	ctrl := a.ctrl
 	a.mu.RUnlock()
 	if ctrl == nil {
 		return []CheckpointMeta{}
@@ -304,7 +329,7 @@ func (a *App) Checkpoints() []CheckpointMeta {
 // re-reads History after this resolves.
 func (a *App) Rewind(turn int, scope string) error {
 	a.mu.RLock()
-	ctrl := a.activeCtrlLocked()
+	ctrl := a.ctrl
 	a.mu.RUnlock()
 	if ctrl == nil {
 		return nil
@@ -324,7 +349,7 @@ func (a *App) Rewind(turn int, scope string) error {
 // The frontend re-reads History after this resolves.
 func (a *App) Fork(turn int) error {
 	a.mu.RLock()
-	ctrl := a.activeCtrlLocked()
+	ctrl := a.ctrl
 	a.mu.RUnlock()
 	if ctrl == nil {
 		return nil
@@ -338,7 +363,7 @@ func (a *App) Fork(turn int) error {
 // code intact. The frontend re-reads History after this resolves.
 func (a *App) SummarizeFrom(turn int) error {
 	a.mu.RLock()
-	ctrl := a.activeCtrlLocked()
+	ctrl := a.ctrl
 	a.mu.RUnlock()
 	if ctrl == nil {
 		return nil
@@ -348,7 +373,7 @@ func (a *App) SummarizeFrom(turn int) error {
 
 func (a *App) SummarizeUpTo(turn int) error {
 	a.mu.RLock()
-	ctrl := a.activeCtrlLocked()
+	ctrl := a.ctrl
 	a.mu.RUnlock()
 	if ctrl == nil {
 		return nil
@@ -366,10 +391,6 @@ type SessionMeta struct {
 	LastActivityAt int64  `json:"lastActivityAt"` // unix milliseconds
 	ModTime        int64  `json:"modTime"`        // compatibility alias for lastActivityAt
 	Current        bool   `json:"current"`
-	Scope          string `json:"scope,omitempty"`
-	WorkspaceRoot  string `json:"workspaceRoot,omitempty"`
-	TopicID        string `json:"topicId,omitempty"`
-	TopicTitle     string `json:"topicTitle,omitempty"`
 }
 
 type WorkspaceMeta struct {
@@ -389,7 +410,7 @@ func (a *App) ListSessions() []SessionMeta {
 	}
 	titles := loadSessionTitles(dir)
 	a.mu.RLock()
-	ctrl := a.activeCtrlLocked()
+	ctrl := a.ctrl
 	a.mu.RUnlock()
 	cur := ""
 	if ctrl != nil {
@@ -406,10 +427,6 @@ func (a *App) ListSessions() []SessionMeta {
 			LastActivityAt: s.LastActivityAt.UnixMilli(),
 			ModTime:        s.LastActivityAt.UnixMilli(),
 			Current:        s.Path == cur,
-			Scope:          s.Scope,
-			WorkspaceRoot:  s.WorkspaceRoot,
-			TopicID:        s.TopicID,
-			TopicTitle:     s.TopicTitle,
 		})
 	}
 	return out
@@ -424,7 +441,9 @@ func (a *App) DeleteSession(path string) error {
 	if err != nil {
 		return err
 	}
-	ctrl := a.activeCtrl()
+	a.mu.RLock()
+	ctrl := a.ctrl
+	a.mu.RUnlock()
 	if ctrl != nil {
 		currentPath, _, err := validateSessionPath(dir, ctrl.SessionPath())
 		if err == nil && currentPath == sessionPath {
@@ -446,7 +465,7 @@ func (a *App) RenameSession(path, title string) error {
 // Returns the resumed messages for the frontend to render.
 func (a *App) ResumeSession(path string) ([]HistoryMessage, error) {
 	a.mu.RLock()
-	ctrl := a.activeCtrlLocked()
+	ctrl := a.ctrl
 	a.mu.RUnlock()
 	if ctrl == nil {
 		return []HistoryMessage{}, nil
@@ -466,35 +485,29 @@ func (a *App) PreviewSession(path string) ([]HistoryMessage, error) {
 	return previewSessionMessages(config.SessionDir(), path)
 }
 
-// PickWorkspace opens a folder chooser and, on a pick, opens a new project tab
-// scoped to that folder. Returns the chosen path ("" if cancelled).
+// PickWorkspace opens a folder chooser and, on a pick, switches the agent to that
+// project: it re-roots the process there, rebuilds the controller from that
+// folder's reasonix.toml + REASONIX.md, and starts a fresh session — the desktop
+// analogue of opening a different project. The new controller is built before the
+// old one is torn down, so a folder whose config can't load leaves the current
+// session untouched. Returns the chosen path ("" if cancelled).
 func (a *App) PickWorkspace() (string, error) {
 	if a.ctx == nil {
 		return "", nil
 	}
 	cur, _ := os.Getwd()
-	a.mu.RLock()
-	if tab := a.activeTabLocked(); tab != nil && tab.WorkspaceRoot != "" {
-		cur = tab.WorkspaceRoot
-	}
-	a.mu.RUnlock()
 	dir, err := runtime.OpenDirectoryDialog(a.ctx, runtime.OpenDialogOptions{
 		Title:            "Choose working folder",
 		DefaultDirectory: cur,
 	})
 	if err != nil || dir == "" {
-		return "", err
+		return "", err // cancelled or error → no change
 	}
 	return a.SwitchWorkspace(dir)
 }
 
 func (a *App) ListWorkspaces() []WorkspaceMeta {
 	cur, _ := os.Getwd()
-	a.mu.RLock()
-	if tab := a.activeTabLocked(); tab != nil && tab.WorkspaceRoot != "" {
-		cur = tab.WorkspaceRoot
-	}
-	a.mu.RUnlock()
 	seen := map[string]bool{}
 	paths := make([]string, 0, 8)
 	add := func(path string) {
@@ -523,7 +536,7 @@ func (a *App) ListWorkspaces() []WorkspaceMeta {
 		out = append(out, WorkspaceMeta{
 			Path:    path,
 			Name:    workspaceName(path),
-			Current: false,
+			Current: path == cur,
 		})
 	}
 	return out
@@ -555,15 +568,45 @@ func (a *App) SwitchWorkspace(dir string) (string, error) {
 	if !info.IsDir() {
 		return "", fmt.Errorf("%s is not a directory", dir)
 	}
-	saveWorkspace(dir)
-	_ = addProject(dir, "")
-
-	// Open a new project tab for this workspace.
-	meta, err := a.OpenProjectTab(dir, newTopicID())
-	if err != nil {
+	cur, _ := os.Getwd()
+	if dir == cur {
+		saveWorkspace(dir)
+		return dir, nil
+	}
+	if err := os.Chdir(dir); err != nil {
 		return "", err
 	}
-	return meta.WorkspaceRoot, nil
+	// Resolve the new folder's default model from its own config.
+	model := ""
+	if cfg, cerr := config.Load(); cerr == nil {
+		model = cfg.DefaultModel
+		if e, ok := cfg.ResolveModel(cfg.DefaultModel); ok {
+			model = e.Name + "/" + e.Model
+		}
+	}
+	ctrl, err := boot.Build(a.ctx, boot.Options{Model: model, RequireKey: false, Sink: a.sink})
+	if err != nil {
+		_ = os.Chdir(cur) // roll back; the current session stays intact
+		return "", err
+	}
+	saveWorkspace(dir) // remember it so the next launch reopens here
+	// Commit the switch: save and tear down the old session, then swap in the new
+	// project's controller with a fresh session file.
+	a.mu.Lock()
+	if a.ctrl != nil {
+		_ = a.ctrl.Snapshot()
+		a.ctrl.Close()
+	}
+	a.ctrl = ctrl
+	a.model = model
+	a.label = ctrl.Label()
+	a.startupErr = ""
+	a.mu.Unlock()
+	ctrl.EnableInteractiveApproval()
+	if d := ctrl.SessionDir(); d != "" {
+		ctrl.SetSessionPath(agent.NewSessionPath(d, ctrl.Label()))
+	}
+	return dir, nil
 }
 
 // HistoryMessage is one prior turn, for the frontend to repopulate its transcript
@@ -577,10 +620,10 @@ type HistoryMessage struct {
 // History returns the session's message log.
 func (a *App) History() []HistoryMessage {
 	a.mu.RLock()
-	ctrl := a.activeCtrlLocked()
+	ctrl := a.ctrl
 	a.mu.RUnlock()
 	if ctrl == nil {
-		return []HistoryMessage{}
+		return nil
 	}
 	msgs := ctrl.History()
 	return historyMessages(msgs, sessionDisplayResolver(config.SessionDir(), ctrl.SessionPath()))
@@ -619,7 +662,7 @@ type ContextInfo struct {
 // ContextUsage returns the latest context-window gauge numbers.
 func (a *App) ContextUsage() ContextInfo {
 	a.mu.RLock()
-	ctrl := a.activeCtrlLocked()
+	ctrl := a.ctrl
 	a.mu.RUnlock()
 	if ctrl == nil {
 		return ContextInfo{}
@@ -644,7 +687,7 @@ type BalanceInfo struct {
 // rather than an error.
 func (a *App) Balance() BalanceInfo {
 	a.mu.RLock()
-	ctrl := a.activeCtrlLocked()
+	ctrl := a.ctrl
 	a.mu.RUnlock()
 	if ctrl == nil {
 		return BalanceInfo{}
@@ -674,7 +717,7 @@ type JobView struct {
 func (a *App) Jobs() []JobView {
 	out := []JobView{}
 	a.mu.RLock()
-	ctrl := a.activeCtrlLocked()
+	ctrl := a.ctrl
 	a.mu.RUnlock()
 	if ctrl == nil {
 		return out
@@ -700,22 +743,19 @@ type Meta struct {
 // subscribes to.
 func (a *App) Meta() Meta {
 	a.mu.RLock()
-	tab := a.activeTabLocked()
+	label := a.label
+	startupErr := a.startupErr
+	ready := a.ready
+	ctrl := a.ctrl
 	a.mu.RUnlock()
-	if tab == nil {
-		return Meta{EventChannel: eventChannel}
-	}
-	cwd := tab.WorkspaceRoot
-	if cwd == "" {
-		cwd, _ = os.Getwd()
-	}
+	cwd, _ := os.Getwd()
 	return Meta{
-		Label:        tab.Label,
-		Ready:        tab.Ready,
-		StartupErr:   tab.StartupErr,
+		Label:        label,
+		Ready:        ready,
+		StartupErr:   startupErr,
 		EventChannel: eventChannel,
 		Cwd:          cwd,
-		Bypass:       tab.Ctrl != nil && tab.Ctrl.Bypass(),
+		Bypass:       ctrl != nil && ctrl.Bypass(),
 	}
 }
 
@@ -723,7 +763,9 @@ func (a *App) Meta() Meta {
 // (writers and bash run without asking). Deny rules still apply. Runtime-only —
 // not written to config, so it resets on relaunch.
 func (a *App) SetBypass(on bool) {
-	ctrl := a.activeCtrl()
+	a.mu.RLock()
+	ctrl := a.ctrl
+	a.mu.RUnlock()
 	if ctrl != nil {
 		ctrl.SetBypass(on)
 	}
@@ -754,7 +796,7 @@ func (a *App) Commands() []CommandInfo {
 		{Name: "skill", Description: i18n.M.CmdSkill, Kind: "builtin"},
 	}
 	a.mu.RLock()
-	ctrl := a.activeCtrlLocked()
+	ctrl := a.ctrl
 	a.mu.RUnlock()
 	if ctrl == nil {
 		return out
@@ -799,21 +841,15 @@ type SlashArgsResult struct {
 // Items means the input has no structured arguments to complete.
 func (a *App) SlashArgs(input string) SlashArgsResult {
 	a.mu.RLock()
-	ctrl := a.activeCtrlLocked()
-	model := ""
-	if tab := a.activeTabLocked(); tab != nil {
-		model = tab.model
-	}
+	ctrl := a.ctrl
+	model := a.model
 	a.mu.RUnlock()
 	if ctrl == nil {
-		return SlashArgsResult{Items: []SlashArgItem{}}
+		return SlashArgsResult{}
 	}
 	data := control.ArgData{
-		Skills:          ctrl.Skills(),
-		DisabledSkills:  ctrl.DisabledSkills(),
-		ConfiguredMCP:   ctrl.ConfiguredMCPNames(),
-		DisconnectedMCP: ctrl.DisconnectedMCPNames(),
-		CurrentModel:    model,
+		Skills:       ctrl.Skills(),
+		CurrentModel: model,
 	}
 	for _, m := range a.Models() {
 		data.ModelRefs = append(data.ModelRefs, m.Ref)
@@ -876,7 +912,6 @@ type SkillView struct {
 	Description string `json:"description"`
 	Scope       string `json:"scope"`
 	RunAs       string `json:"runAs"`
-	Enabled     bool   `json:"enabled"`
 }
 
 type SkillRootSkillView struct {
@@ -903,25 +938,21 @@ type SkillRootView struct {
 func (a *App) Capabilities() CapabilitiesView {
 	out := CapabilitiesView{Servers: []ServerView{}, Skills: []SkillView{}, SkillRoots: []SkillRootView{}}
 	a.mu.RLock()
-	tab := a.activeTabLocked()
-	a.mu.RUnlock()
-	if tab == nil {
-		return out
-	}
-	ctrl := tab.Ctrl
-	disabled := make(map[string]ServerView, len(tab.disabledMCP))
-	for name, s := range tab.disabledMCP {
+	ctrl := a.ctrl
+	disabled := make(map[string]ServerView, len(a.disabledMCP))
+	for name, s := range a.disabledMCP {
 		disabled[name] = s
 	}
-	order := append([]string(nil), tab.mcpOrder...)
+	order := append([]string(nil), a.mcpOrder...)
+	a.mu.RUnlock()
 	if ctrl == nil {
 		return out
 	}
 	seen := map[string]bool{}
 	connected := map[string]bool{}
 	retainedDisabled := map[string]ServerView{}
-	var loadedCfg *config.Config
 	configured := map[string]config.PluginEntry{}
+	var loadedCfg *config.Config
 	var configuredEntries []config.PluginEntry
 	if cfg, err := config.Load(); err == nil {
 		loadedCfg = cfg
@@ -1020,15 +1051,14 @@ func (a *App) Capabilities() CapabilitiesView {
 	for name := range connected {
 		delete(retainedDisabled, name)
 	}
-	tab.disabledMCP = retainedDisabled
-	tab.mcpOrder = mergeServerOrder(tab.mcpOrder, out.Servers)
+	a.disabledMCP = retainedDisabled
+	a.mcpOrder = mergeServerOrder(a.mcpOrder, out.Servers)
 	a.mu.Unlock()
 
-	for _, s := range ctrl.AllSkills() {
+	for _, s := range ctrl.Skills() {
 		out.Skills = append(out.Skills, SkillView{
 			Name: s.Name, Description: s.Description,
 			Scope: string(s.Scope), RunAs: string(s.RunAs),
-			Enabled: ctrl.SkillEnabled(s.Name),
 		})
 	}
 	out.SkillRoots = skillRootsView()
@@ -1104,7 +1134,7 @@ func skillRootsView() []SkillRootView {
 			userConfigured[config.CanonicalSkillPath(p)] = true
 		}
 	}
-	out := []SkillRootView{}
+	var out []SkillRootView
 	for _, r := range st.Roots() {
 		dir := config.CanonicalSkillPath(r.Dir)
 		view := SkillRootView{
@@ -1186,14 +1216,6 @@ func (a *App) RefreshSkills() error {
 	return a.rebuild()
 }
 
-// SetSkillEnabled persists a skill toggle and rebuilds the controller so the
-// prompt index, slash menu, and skill tools reflect it immediately.
-func (a *App) SetSkillEnabled(name string, enabled bool) error {
-	return a.applyConfigChange(func(c *config.Config) error {
-		return c.SetSkillEnabled(name, enabled)
-	})
-}
-
 func normalizeSkillPath(path string) string {
 	path = strings.TrimSpace(path)
 	if path == "" {
@@ -1251,11 +1273,10 @@ type MCPServerInput struct {
 // AddMCPServer connects a server live and persists it to config (Customize → MCP →
 // Add). Returns the number of tools it exposed.
 func (a *App) AddMCPServer(in MCPServerInput) (int, error) {
-	ctrl := a.activeCtrl()
-	if ctrl == nil {
+	if a.ctrl == nil {
 		return 0, fmt.Errorf("no active session")
 	}
-	return ctrl.AddMCPServer(config.PluginEntry{
+	return a.ctrl.AddMCPServer(config.PluginEntry{
 		Name:    in.Name,
 		Type:    normalizeMCPTransport(in.Transport),
 		Command: in.Command,
@@ -1272,8 +1293,7 @@ func (a *App) UpdateMCPServer(name string, in MCPServerInput) error {
 	if name == "codegraph" {
 		return fmt.Errorf("codegraph is built in; configure it with [codegraph]")
 	}
-	ctrl := a.activeCtrl()
-	if ctrl == nil {
+	if a.ctrl == nil {
 		return fmt.Errorf("no active session")
 	}
 	if strings.TrimSpace(in.Name) != "" && strings.TrimSpace(in.Name) != name {
@@ -1318,20 +1338,16 @@ func (a *App) UpdateMCPServer(name string, in MCPServerInput) error {
 	}
 
 	a.mu.RLock()
-	tab := a.activeTabLocked()
-	sessionDisabled := false
-	if tab != nil {
-		_, sessionDisabled = tab.disabledMCP[name]
-	}
+	_, sessionDisabled := a.disabledMCP[name]
 	a.mu.RUnlock()
-	wasConnected := mcpConnected(ctrl, name)
-	wasFailed := mcpFailed(ctrl, name)
+	wasConnected := mcpConnected(a.ctrl, name)
+	wasFailed := mcpFailed(a.ctrl, name)
 	if wasConnected {
-		ctrl.DisconnectMCPServer(name)
+		a.ctrl.DisconnectMCPServer(name)
 	}
 	if !sessionDisabled && (wasConnected || wasFailed || updated.ResolvedTier() != "lazy") {
-		if _, err := ctrl.ConnectConfiguredMCPServer(name); err != nil {
-			recordMCPFailure(ctrl, updated, err)
+		if _, err := a.ctrl.ConnectConfiguredMCPServer(name); err != nil {
+			recordMCPFailure(a.ctrl, updated, err)
 			return nil
 		}
 	}
@@ -1343,15 +1359,14 @@ func (a *App) RemoveMCPServer(name string) error {
 	if name == "codegraph" {
 		return fmt.Errorf("codegraph is built in; it cannot be removed")
 	}
-	tab := a.activeTab()
-	if tab == nil || tab.Ctrl == nil {
+	if a.ctrl == nil {
 		return fmt.Errorf("no active session")
 	}
-	_, err := tab.Ctrl.RemoveMCPServer(name)
+	_, err := a.ctrl.RemoveMCPServer(name)
 	if err == nil {
 		a.mu.Lock()
-		delete(tab.disabledMCP, name)
-		tab.mcpOrder = removeServerOrder(tab.mcpOrder, name)
+		delete(a.disabledMCP, name)
+		a.mcpOrder = removeServerOrder(a.mcpOrder, name)
 		a.mu.Unlock()
 	}
 	return err
@@ -1360,30 +1375,27 @@ func (a *App) RemoveMCPServer(name string) error {
 // RetryMCPServer reconnects a configured server that failed or was disconnected,
 // without touching config (the failed row's retry button).
 func (a *App) RetryMCPServer(name string) error {
-	ctrl := a.activeCtrl()
-	if ctrl == nil {
+	if a.ctrl == nil {
 		return fmt.Errorf("no active session")
 	}
-	_, err := ctrl.ConnectConfiguredMCPServer(name)
+	_, err := a.ctrl.ConnectConfiguredMCPServer(name)
 	return err
 }
 
-// ClearMCPServerAuthentication removes local auth-like config for one MCP and
-// clears the current session's cached connection failure. It does not remove the
-// server itself or try to sign the user out of the third-party browser session.
+// ClearMCPServerAuthentication removes stored auth-like material for a
+// configured MCP server and clears the current connection/failure state.
 func (a *App) ClearMCPServerAuthentication(name string) error {
 	if name == "codegraph" {
 		return fmt.Errorf("codegraph is built in; it has no stored MCP authentication")
 	}
-	ctrl := a.activeCtrl()
-	if ctrl == nil {
+	if a.ctrl == nil {
 		return fmt.Errorf("no active session")
 	}
 	if _, _, _, err := config.ClearPluginAuthenticationInSource(name); err != nil {
 		return err
 	}
-	ctrl.DisconnectMCPServer(name)
-	if h := ctrl.Host(); h != nil {
+	a.ctrl.DisconnectMCPServer(name)
+	if h := a.ctrl.Host(); h != nil {
 		h.ClearFailure(name)
 	}
 	return nil
@@ -1393,34 +1405,33 @@ func (a *App) ClearMCPServerAuthentication(name string) error {
 // for this session, off disconnects it (config untouched either way — like Claude
 // Code's per-conversation enable/disable, it resets on the next session start).
 func (a *App) SetMCPServerEnabled(name string, enabled bool) error {
-	tab := a.activeTab()
-	if tab == nil || tab.Ctrl == nil {
+	if a.ctrl == nil {
 		return fmt.Errorf("no active session")
 	}
 	if name == "codegraph" {
 		return a.setCodegraphEnabled(enabled)
 	}
 	if enabled {
-		_, err := tab.Ctrl.ConnectConfiguredMCPServer(name)
+		_, err := a.ctrl.ConnectConfiguredMCPServer(name)
 		if err == nil {
 			a.mu.Lock()
-			delete(tab.disabledMCP, name)
+			delete(a.disabledMCP, name)
 			a.mu.Unlock()
 		}
 		return err
 	}
-	if s, ok := findMCPServerView(tab.Ctrl, name); ok {
+	if s, ok := findMCPServerView(a.ctrl, name); ok {
 		s.Status = "disabled"
 		s.Error = ""
 		a.mu.Lock()
-		if tab.disabledMCP == nil {
-			tab.disabledMCP = map[string]ServerView{}
+		if a.disabledMCP == nil {
+			a.disabledMCP = map[string]ServerView{}
 		}
-		tab.disabledMCP[name] = s
-		tab.mcpOrder = mergeServerOrder(tab.mcpOrder, []ServerView{s})
+		a.disabledMCP[name] = s
+		a.mcpOrder = mergeServerOrder(a.mcpOrder, []ServerView{s})
 		a.mu.Unlock()
 	}
-	tab.Ctrl.DisconnectMCPServer(name)
+	a.ctrl.DisconnectMCPServer(name)
 	return nil
 }
 
@@ -1456,14 +1467,13 @@ func (a *App) SetMCPServerTier(name, tier string) error {
 	if err := cfg.Save(); err != nil {
 		return err
 	}
-	tab := a.activeTab()
-	if tier != "lazy" && tab != nil && tab.Ctrl != nil && !mcpConnected(tab.Ctrl, name) {
-		if _, err := tab.Ctrl.ConnectConfiguredMCPServer(name); err != nil {
-			recordMCPFailure(tab.Ctrl, updated, err)
+	if tier != "lazy" && a.ctrl != nil && !mcpConnected(a.ctrl, name) {
+		if _, err := a.ctrl.ConnectConfiguredMCPServer(name); err != nil {
+			recordMCPFailure(a.ctrl, updated, err)
 			return nil
 		}
 		a.mu.Lock()
-		delete(tab.disabledMCP, name)
+		delete(a.disabledMCP, name)
 		a.mu.Unlock()
 	}
 	return nil
@@ -1478,31 +1488,30 @@ func (a *App) setCodegraphEnabled(enabled bool) error {
 	if err := cfg.Save(); err != nil {
 		return err
 	}
-	tab := a.activeTab()
-	if tab == nil || tab.Ctrl == nil {
+	if a.ctrl == nil {
 		return fmt.Errorf("no active session")
 	}
 	if enabled {
 		a.mu.Lock()
-		delete(tab.disabledMCP, "codegraph")
+		delete(a.disabledMCP, "codegraph")
 		a.mu.Unlock()
-		if _, err := tab.Ctrl.ConnectConfiguredMCPServer("codegraph"); err != nil {
-			recordCodegraphFailure(tab.Ctrl, cfg.Codegraph, err)
+		if _, err := a.ctrl.ConnectConfiguredMCPServer("codegraph"); err != nil {
+			recordCodegraphFailure(a.ctrl, cfg.Codegraph, err)
 			return nil
 		}
 		return nil
 	}
-	if h := tab.Ctrl.Host(); h != nil {
+	if h := a.ctrl.Host(); h != nil {
 		h.ClearFailure("codegraph")
 	}
-	tab.Ctrl.DisconnectMCPServer("codegraph")
+	a.ctrl.DisconnectMCPServer("codegraph")
 	s := withCodegraphConfig(ServerView{Name: "codegraph", Status: "disabled"}, cfg.Codegraph)
 	a.mu.Lock()
-	if tab.disabledMCP == nil {
-		tab.disabledMCP = map[string]ServerView{}
+	if a.disabledMCP == nil {
+		a.disabledMCP = map[string]ServerView{}
 	}
-	tab.disabledMCP["codegraph"] = s
-	tab.mcpOrder = mergeServerOrder(tab.mcpOrder, []ServerView{s})
+	a.disabledMCP["codegraph"] = s
+	a.mcpOrder = mergeServerOrder(a.mcpOrder, []ServerView{s})
 	a.mu.Unlock()
 	return nil
 }
@@ -1518,16 +1527,15 @@ func (a *App) setCodegraphTier(tier string) error {
 	if err := cfg.Save(); err != nil {
 		return err
 	}
-	tab := a.activeTab()
-	if tab == nil || tab.Ctrl == nil {
+	if a.ctrl == nil {
 		return nil
 	}
 	a.mu.Lock()
-	delete(tab.disabledMCP, "codegraph")
+	delete(a.disabledMCP, "codegraph")
 	a.mu.Unlock()
-	if tier != "lazy" && !mcpConnected(tab.Ctrl, "codegraph") {
-		if _, err := tab.Ctrl.ConnectConfiguredMCPServer("codegraph"); err != nil {
-			recordCodegraphFailure(tab.Ctrl, cfg.Codegraph, err)
+	if tier != "lazy" && !mcpConnected(a.ctrl, "codegraph") {
+		if _, err := a.ctrl.ConnectConfiguredMCPServer("codegraph"); err != nil {
+			recordCodegraphFailure(a.ctrl, cfg.Codegraph, err)
 			return nil
 		}
 	}
@@ -1722,16 +1730,11 @@ type EffortInfo struct {
 // slice (JSON null) would crash the switcher on an empty list.
 func (a *App) Models() []ModelInfo {
 	a.mu.RLock()
-	curModel := ""
-	workspaceRoot := ""
-	if tab := a.activeTabLocked(); tab != nil {
-		curModel = tab.model
-		workspaceRoot = tab.WorkspaceRoot
-	}
+	curModel := a.model
 	a.mu.RUnlock()
-	cfg, err := config.LoadForRoot(workspaceRoot)
+	cfg, err := config.Load()
 	if err != nil {
-		return []ModelInfo{}
+		return nil
 	}
 	out := []ModelInfo{}
 	for i := range cfg.Providers {
@@ -1749,48 +1752,43 @@ func (a *App) Models() []ModelInfo {
 
 // SetModel switches the active model and carries the current conversation into the
 // new model's session, so the chat continues seamlessly and subsequent turns use
-// the new model. No-op if name is already active or the controller is down.
+// the new model. (Switching models necessarily resets the prompt cache; that's the
+// cost of the switch.) No-op if name is already active or the controller is down.
 func (a *App) SetModel(name string) error {
 	if a.ctx == nil || name == "" {
 		return nil
 	}
-	tab := a.activeTab()
-	if tab == nil {
-		return nil
-	}
-	if name == tab.model {
+	a.mu.RLock()
+	curModel := a.model
+	ctrl := a.ctrl
+	a.mu.RUnlock()
+	if name == curModel {
 		return nil
 	}
 
 	var carried []provider.Message
 	prevPath := ""
-	if tab.Ctrl != nil {
-		prevPath = tab.Ctrl.SessionPath()
-		_ = tab.Ctrl.Snapshot()
-		carried = tab.Ctrl.History()
+	if ctrl != nil {
+		prevPath = ctrl.SessionPath()
+		_ = ctrl.Snapshot()
+		carried = ctrl.History()
+		ctrl.Close()
 	}
 
-	newCtrl, err := boot.Build(a.ctx, boot.Options{
-		Model:         name,
-		RequireKey:    false,
-		Sink:          tab.sink,
-		WorkspaceRoot: tab.WorkspaceRoot,
-		Stderr:        io.Discard,
-	})
+	newCtrl, err := boot.Build(a.ctx, boot.Options{Model: name, RequireKey: false, Sink: a.sink})
 	if err != nil {
 		return err
 	}
-	old := tab.Ctrl
 	a.mu.Lock()
-	tab.Ctrl = newCtrl
-	tab.model = name
-	tab.Label = newCtrl.Label()
+	a.ctrl = newCtrl
+	a.model = name
+	a.label = newCtrl.Label()
 	a.mu.Unlock()
-	if old != nil {
-		old.Close()
-	}
 	newCtrl.EnableInteractiveApproval()
 
+	// Carry the prior conversation (full provider.Message log, incl. the system
+	// prompt) into the new session so history is preserved across the switch, and
+	// keep it in its existing file so the switch doesn't orphan a duplicate (#2807).
 	path := agent.ContinueSessionPath(prevPath, newCtrl.SessionDir(), newCtrl.Label())
 	if len(carried) > 0 {
 		newCtrl.Resume(&agent.Session{Messages: carried}, path)
@@ -1809,16 +1807,12 @@ func (a *App) Effort() EffortInfo {
 	if !cap.Supported {
 		return EffortInfo{Supported: false, Current: "auto", Default: cap.Default, Levels: []string{}}
 	}
-	levels := cap.Levels
-	if levels == nil {
-		levels = []string{}
-	}
-	return EffortInfo{Supported: true, Current: config.EffortDisplay(entry), Default: cap.Default, Levels: levels}
+	return EffortInfo{Supported: true, Current: config.EffortDisplay(entry), Default: cap.Default, Levels: cap.Levels}
 }
 
 func (a *App) SetEffort(level string) error {
 	a.mu.RLock()
-	ctrl := a.activeCtrlLocked()
+	ctrl := a.ctrl
 	a.mu.RUnlock()
 	if ctrl != nil && ctrl.Running() {
 		return fmt.Errorf("finish or cancel the current turn before changing effort")
@@ -1878,11 +1872,12 @@ type WorkspaceChangesView struct {
 	GitErr       string                `json:"gitErr,omitempty"`
 }
 
+const fileRefSearchLimit = 20
+
 // atSkip are entries the "@" menu hides as noise.
 var atSkip = map[string]bool{".git": true, "node_modules": true, ".DS_Store": true}
 
 const filePreviewLimit = 256 * 1024
-const fileRefSearchLimit = 20
 
 func trimUTF8PartialSuffix(data []byte) []byte {
 	if utf8.Valid(data) {
@@ -1930,7 +1925,7 @@ func workspacePath(rel string) (string, bool, error) {
 func (a *App) ListDir(rel string) []DirEntry {
 	base, err := os.Getwd()
 	if err != nil {
-		return []DirEntry{}
+		return nil
 	}
 	dir := base
 	if rel != "" {
@@ -1942,9 +1937,9 @@ func (a *App) ListDir(rel string) []DirEntry {
 	}
 	es, err := os.ReadDir(dir)
 	if err != nil {
-		return []DirEntry{}
+		return nil
 	}
-	dirs, files := []DirEntry{}, []DirEntry{}
+	var dirs, files []DirEntry
 	for _, e := range es {
 		name := e.Name()
 		if atSkip[name] {
@@ -2087,8 +2082,8 @@ func (a *App) RevealWorkspacePath(rel string) error {
 }
 
 func (a *App) notice(text string) {
-	if a.activeSink() != nil {
-		a.activeSink().Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo, Text: text})
+	if a.sink != nil {
+		a.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo, Text: text})
 	}
 }
 
@@ -2134,10 +2129,7 @@ func (a *App) currentProviderEntry() (*config.ProviderEntry, error) {
 		return nil, err
 	}
 	a.mu.RLock()
-	ref := ""
-	if tab := a.activeTabLocked(); tab != nil {
-		ref = tab.model
-	}
+	ref := a.model
 	a.mu.RUnlock()
 	if strings.TrimSpace(ref) == "" {
 		ref = cfg.DefaultModel
@@ -2273,7 +2265,7 @@ func (a *App) Memory() MemoryView {
 	// would crash the panel's `view.facts.length` / `.map`.
 	view := MemoryView{Docs: []MemoryDoc{}, Facts: []MemoryFact{}, Scopes: []MemoryScope{}}
 	a.mu.RLock()
-	ctrl := a.activeCtrlLocked()
+	ctrl := a.ctrl
 	a.mu.RUnlock()
 	if ctrl == nil {
 		return view
@@ -2305,7 +2297,7 @@ func (a *App) Memory() MemoryView {
 // An unknown scope falls back to project. Returns the file written.
 func (a *App) Remember(scope, note string) (string, error) {
 	a.mu.RLock()
-	ctrl := a.activeCtrlLocked()
+	ctrl := a.ctrl
 	a.mu.RUnlock()
 	if ctrl == nil {
 		return "", nil
@@ -2317,7 +2309,7 @@ func (a *App) Remember(scope, note string) (string, error) {
 // fact the model owns. A no-op when no controller is attached.
 func (a *App) Forget(name string) error {
 	a.mu.RLock()
-	ctrl := a.activeCtrlLocked()
+	ctrl := a.ctrl
 	a.mu.RUnlock()
 	if ctrl == nil {
 		return nil
@@ -2329,7 +2321,7 @@ func (a *App) Forget(name string) error {
 // validates path against the recognized memory files. Returns the file written.
 func (a *App) SaveDoc(path, body string) (string, error) {
 	a.mu.RLock()
-	ctrl := a.activeCtrlLocked()
+	ctrl := a.ctrl
 	a.mu.RUnlock()
 	if ctrl == nil {
 		return "", nil
@@ -2360,8 +2352,8 @@ func (a *App) NeedsOnboarding() bool {
 	return strings.TrimSpace(os.Getenv(onboardingKeyEnv)) == ""
 }
 
-// ConnectKey validates apiKey against the balance endpoint, persists it to the
-// global credentials file, and rebuilds the controller so the new key takes effect.
+// ConnectKey validates apiKey against the balance endpoint, persists it to
+// ./.env, and rebuilds the controller so the new key takes effect.
 func (a *App) ConnectKey(apiKey string) error {
 	apiKey = strings.TrimSpace(apiKey)
 	if apiKey == "" {
@@ -2378,10 +2370,66 @@ func (a *App) ConnectKey(apiKey string) error {
 	if err := a.rebuild(); err != nil {
 		// Key is persisted; surface the failure but let the next rebuild load it.
 		a.mu.Lock()
-		if tab := a.activeTabLocked(); tab != nil {
-			tab.StartupErr = err.Error()
-		}
+		a.startupErr = err.Error()
 		a.mu.Unlock()
 	}
 	return nil
+}
+
+// eventSink is the controller's event.Sink in desktop mode: it forwards every
+// agent event to the webview as one runtime event, JSON-shaped by toWire. It is a
+// type distinct from App so App's bound method set stays the clean command surface
+// — Emit must not be exposed to JS. Emit runs on the agent goroutine;
+// runtime.EventsEmit is goroutine-safe, and the ctx guard covers the brief window
+// before startup assigns it.
+type eventSink struct {
+	ctx context.Context
+	app *App
+}
+
+func (s *eventSink) Emit(e event.Event) {
+	if s.ctx != nil {
+		runtime.EventsEmit(s.ctx, eventChannel, toWire(e))
+	}
+	// Persist after each turn so a force-kill of a long session loses at most the
+	// in-flight prompt, not every turn back to the last workspace switch.
+	if e.Kind == event.TurnDone && s.app != nil {
+		s.app.scheduleSnapshot()
+	}
+}
+
+// scheduleSnapshot kicks a single-flight background save of the active session;
+// a request arriving while one runs sets a trailing pass so the final state lands.
+func (a *App) scheduleSnapshot() {
+	a.saveMu.Lock()
+	if a.saving {
+		a.saveAgain = true
+		a.saveMu.Unlock()
+		return
+	}
+	a.saving = true
+	a.saveMu.Unlock()
+	go a.snapshotLoop()
+}
+
+func (a *App) snapshotLoop() {
+	for {
+		a.mu.RLock()
+		ctrl := a.ctrl
+		a.mu.RUnlock()
+		if ctrl != nil {
+			if err := ctrl.Snapshot(); err != nil {
+				slog.Warn("desktop: per-turn snapshot", "err", err)
+			}
+		}
+		a.saveMu.Lock()
+		if a.saveAgain {
+			a.saveAgain = false
+			a.saveMu.Unlock()
+			continue
+		}
+		a.saving = false
+		a.saveMu.Unlock()
+		return
+	}
 }

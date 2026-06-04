@@ -46,48 +46,27 @@ func waitForFile(t *testing.T, path, want string) {
 	t.Fatalf("session file %q never contained %q", path, want)
 }
 
-func appWithTab(t *testing.T, path string) (*App, *WorkspaceTab) {
-	t.Helper()
-	ctrl := controllerWithContent(t, path)
-	tab := &WorkspaceTab{
-		ID:            "test_tab",
-		Ctrl:          ctrl,
-		Scope:         "global",
-		WorkspaceRoot: "",
-		Ready:         true,
-		disabledMCP:   map[string]ServerView{},
-	}
-	tab.sink = &tabEventSink{tabID: tab.ID, app: nil}
-	a := &App{
-		tabs:        map[string]*WorkspaceTab{"test_tab": tab},
-		activeTabID: "test_tab",
-	}
-	tab.sink.app = a
-	return a, tab
-}
-
 // TestTurnDonePersistsSession proves a completed turn is written to disk without
 // any explicit Snapshot call — the desktop autosave the data-loss fix adds. A
 // nil sink ctx (no webview) must not disable persistence.
 func TestTurnDonePersistsSession(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "session.jsonl")
-	_ = path
-	a, tab := appWithTab(t, path)
+	a := &App{ctrl: controllerWithContent(t, path)}
+	a.sink = &eventSink{app: a}
 
-	tab.sink.Emit(event.Event{Kind: event.TurnDone})
+	a.sink.Emit(event.Event{Kind: event.TurnDone})
 
 	waitForFile(t, path, "remember this turn")
-	_ = a
 }
 
 // TestNonTurnDoneDoesNotPersist confirms only TurnDone triggers a save, so the
 // per-token event storm doesn't thrash the disk.
 func TestNonTurnDoneDoesNotPersist(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "session.jsonl")
-	a, tab := appWithTab(t, path)
-	_ = a
+	a := &App{ctrl: controllerWithContent(t, path)}
+	a.sink = &eventSink{app: a}
 
-	tab.sink.Emit(event.Event{Kind: event.Text, Text: "tok"})
+	a.sink.Emit(event.Event{Kind: event.Text, Text: "tok"})
 
 	time.Sleep(50 * time.Millisecond)
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
@@ -99,11 +78,11 @@ func TestNonTurnDoneDoesNotPersist(t *testing.T) {
 // single-flight loop neither panics nor drops the final write.
 func TestScheduleSnapshotCoalesces(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "session.jsonl")
-	a, tab := appWithTab(t, path)
-	_ = a
+	a := &App{ctrl: controllerWithContent(t, path)}
+	a.sink = &eventSink{app: a}
 
 	for i := 0; i < 64; i++ {
-		go tab.sink.Emit(event.Event{Kind: event.TurnDone})
+		go a.scheduleSnapshot()
 	}
 
 	waitForFile(t, path, "acknowledged")

@@ -1,6 +1,5 @@
 import { ChevronDown, ChevronRight, Search, Trash2 } from "lucide-react";
 import { useMemo, useRef, useState, type ReactNode } from "react";
-import { asArray } from "../lib/array";
 import { useT } from "../lib/i18n";
 import type { MemoryFact, MemoryView } from "../lib/types";
 import { ResizableDrawer } from "./ResizableDrawer";
@@ -61,9 +60,7 @@ export function MemoryPanel({
   const [confirmForget, setConfirmForget] = useState<string | null>(null);
   const factRefs = useRef<Record<string, HTMLElement | null>>({});
 
-  const facts = asArray(view?.facts);
-  const docs = asArray(view?.docs);
-  const scopes = asArray(view?.scopes);
+  const facts = view?.facts ?? [];
   const factNames = useMemo(() => new Set(facts.map((f) => f.name)), [facts]);
   const factTypes = useMemo(
     () => Array.from(new Set(facts.map((f) => f.type).filter(Boolean))).sort(),
@@ -146,6 +143,7 @@ export function MemoryPanel({
     }
   };
 
+  const scopes = view?.scopes ?? [];
   // Default the scope selector to "project" when present, else the first option.
   const activeScope =
     scope || scopes.find((s) => s.scope === "project")?.scope || scopes[0]?.scope || "project";
@@ -185,7 +183,7 @@ export function MemoryPanel({
             <div className="drawer__title">{t("memory.title")}</div>
             {view?.available && (
               <div className="drawer__summary">
-                {t("memory.summary", { facts: facts.length, docs: docs.length })}
+                {t("memory.summary", { facts: facts.length, docs: view.docs.length })}
               </div>
             )}
           </div>
@@ -407,10 +405,10 @@ export function MemoryPanel({
             {/* Doc files — editable in place. */}
             <section className="mem-section">
               <div className="mem-section__title">{t("memory.instructionFiles")}</div>
-              {docs.length === 0 && (
+              {view.docs.length === 0 && (
                 <div className="mem-empty">{t("memory.noDocs")}</div>
               )}
-              {docs.map((d) => {
+              {view.docs.map((d) => {
                 const editing = editingPath === d.path;
                 return (
                   <div className="mem-doc" key={d.path}>

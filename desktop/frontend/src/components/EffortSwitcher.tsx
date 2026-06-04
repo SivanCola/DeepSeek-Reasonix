@@ -1,6 +1,5 @@
 import { useState } from "react";
 import { Check, ChevronsUpDown } from "lucide-react";
-import { asArray } from "../lib/array";
 import { useT } from "../lib/i18n";
 import type { EffortInfo } from "../lib/types";
 
@@ -15,8 +14,7 @@ export function EffortSwitcher({
 }) {
   const t = useT();
   const [open, setOpen] = useState(false);
-  const levels = asArray(effort?.levels);
-  if (!effort?.supported || levels.length === 0) return null;
+  if (!effort?.supported || effort.levels.length === 0) return null;
 
   const current = effort.current || "auto";
   const pick = (level: string) => {
@@ -38,7 +36,7 @@ export function EffortSwitcher({
         <>
           <div className="modelsw__backdrop" onClick={() => setOpen(false)} />
           <div className="modelsw__menu effortsw__menu" role="listbox">
-            {levels.map((level) => (
+            {effort.levels.map((level) => (
               <button
                 key={level}
                 role="option"
