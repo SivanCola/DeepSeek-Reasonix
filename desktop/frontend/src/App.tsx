@@ -51,7 +51,9 @@ const SIDEBAR_COLLAPSED_WIDTH = 68;
 const SIDEBAR_DEFAULT_WIDTH = 264;
 const SIDEBAR_MIN_WIDTH = 228;
 const SIDEBAR_MAX_WIDTH = 420;
-const CHAT_MIN_WIDTH = 420;
+// Keep the footer's 940px content rail plus its horizontal padding available
+// before allowing the right dock to take more room.
+const CHAT_MIN_WIDTH = 1004;
 
 function isThemeMode(value: string): value is Theme {
   return value === "auto" || value === "light" || value === "dark";
@@ -513,6 +515,7 @@ export default function App() {
     () =>
       ({
         "--sidebar-expanded-width": `${sidebarWidth}px`,
+        "--chat-min-width": `${CHAT_MIN_WIDTH}px`,
         "--workspace-width": `${effectiveWorkspacePanelWidth}px`,
       }) as CSSProperties,
     [effectiveWorkspacePanelWidth, sidebarWidth],
