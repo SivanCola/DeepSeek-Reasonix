@@ -29,6 +29,7 @@ export const en = {
 
   // sidebar
   "sidebar.conversations": "Chats",
+  "sidebar.allHistory": "All history",
   "sidebar.trash": "Trash",
   "sidebar.workspace": "Workspace",
   "sidebar.changeWorkspace": "Change",
@@ -43,7 +44,6 @@ export const en = {
   "workspace.title": "Workspace",
   "workspace.open": "Open workspace panel",
   "workspace.close": "Close workspace panel",
-  "workspace.minimize": "Minimize workspace panel",
   "workspace.maximize": "Maximize workspace panel",
   "workspace.restore": "Restore workspace panel",
   "workspace.resizePanel": "Resize workspace panel",

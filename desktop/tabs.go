@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 
@@ -200,6 +201,7 @@ type TabMeta struct {
 	WorkspaceName string `json:"workspaceName"`
 	TopicID       string `json:"topicId"`
 	TopicTitle    string `json:"topicTitle"`
+	ProjectColor  string `json:"projectColor,omitempty"`
 	Label         string `json:"label"`
 	Ready         bool   `json:"ready"`
 	Running       bool   `json:"running"`
@@ -222,6 +224,9 @@ func (a *App) tabMeta(tab *WorkspaceTab, active bool) TabMeta {
 		Active:        active,
 		Cwd:           tab.WorkspaceRoot,
 	}
+	if tab.Scope == "project" {
+		m.ProjectColor = projectColor(tab.WorkspaceRoot)
+	}
 	if tab.Ctrl != nil {
 		m.Running = tab.Ctrl.Running()
 	}
@@ -230,18 +235,14 @@ func (a *App) tabMeta(tab *WorkspaceTab, active bool) TabMeta {
 
 // ListTabs returns every open tab's metadata for the frontend TabBar.
 func (a *App) ListTabs() []TabMeta {
-	a.mu.RLock()
-	defer a.mu.RUnlock()
+	a.mu.Lock()
+	defer a.mu.Unlock()
 	out := make([]TabMeta, 0, len(a.tabs))
-	for _, tab := range a.tabs {
-		out = append(out, a.tabMeta(tab, tab.ID == a.activeTabID))
-	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].Active != out[j].Active {
-			return out[i].Active
+	for _, id := range a.orderedTabIDsLocked() {
+		if tab := a.tabs[id]; tab != nil {
+			out = append(out, a.tabMeta(tab, tab.ID == a.activeTabID))
 		}
-		return out[i].ID < out[j].ID
-	})
+	}
 	return out
 }
 
@@ -269,7 +270,7 @@ func (a *App) OpenProjectTab(workspaceRoot, topicID string) (TabMeta, error) {
 	}
 
 	tabID := newTabID()
-	topicTitle := loadTopicTitle(workspaceRoot, topicID)
+	topicTitle := topicTitleForTab("project", workspaceRoot, topicID)
 	tab := &WorkspaceTab{
 		ID:            tabID,
 		Scope:         "project",
@@ -281,6 +282,7 @@ func (a *App) OpenProjectTab(workspaceRoot, topicID string) (TabMeta, error) {
 	tab.sink = &tabEventSink{tabID: tabID, app: a}
 
 	a.tabs[tabID] = tab
+	a.tabOrder = append(a.tabOrder, tabID)
 	a.activeTabID = tabID
 	a.saveTabsLocked()
 	a.mu.Unlock()
@@ -309,10 +311,7 @@ func (a *App) OpenGlobalTab(topicID string) (TabMeta, error) {
 	}
 
 	tabID := newTabID()
-	topicTitle := loadTopicTitle("", topicID)
-	if topicTitle == "" {
-		topicTitle = "Global"
-	}
+	topicTitle := topicTitleForTab("global", "", topicID)
 	tab := &WorkspaceTab{
 		ID:            tabID,
 		Scope:         "global",
@@ -324,6 +323,7 @@ func (a *App) OpenGlobalTab(topicID string) (TabMeta, error) {
 	tab.sink = &tabEventSink{tabID: tabID, app: a}
 
 	a.tabs[tabID] = tab
+	a.tabOrder = append(a.tabOrder, tabID)
 	a.activeTabID = tabID
 	a.saveTabsLocked()
 	a.mu.Unlock()
@@ -348,6 +348,31 @@ func (a *App) SetActiveTab(tabID string) error {
 	return nil
 }
 
+// ReorderTabs persists the frontend's manual tab order. The submitted order must
+// contain every currently open tab exactly once.
+func (a *App) ReorderTabs(tabIDs []string) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if len(tabIDs) != len(a.tabs) {
+		return fmt.Errorf("tab order length mismatch")
+	}
+	seen := make(map[string]bool, len(tabIDs))
+	next := make([]string, 0, len(tabIDs))
+	for _, id := range tabIDs {
+		if _, ok := a.tabs[id]; !ok {
+			return fmt.Errorf("tab %q not found", id)
+		}
+		if seen[id] {
+			return fmt.Errorf("duplicate tab %q", id)
+		}
+		seen[id] = true
+		next = append(next, id)
+	}
+	a.tabOrder = next
+	a.saveTabsLocked()
+	return nil
+}
+
 // CloseTab shuts down a tab's controller (snapshot + cancel + close) and
 // removes it. The active tab cannot be closed when it is the last one; the
 // frontend should prompt first.
@@ -362,13 +387,28 @@ func (a *App) CloseTab(tabID string) error {
 		a.mu.Unlock()
 		return fmt.Errorf("cannot close the last tab")
 	}
+	ordered := a.orderedTabIDsLocked()
+	closedIndex := -1
+	for i, id := range ordered {
+		if id == tabID {
+			closedIndex = i
+			break
+		}
+	}
 	delete(a.tabs, tabID)
+	a.removeTabOrderLocked(tabID)
 	wasActive := a.activeTabID == tabID
 	if wasActive {
-		// Pick another tab.
-		for id := range a.tabs {
-			a.activeTabID = id
-			break
+		a.activeTabID = ""
+		if len(a.tabOrder) > 0 {
+			nextIndex := closedIndex
+			if nextIndex < 0 {
+				nextIndex = 0
+			}
+			if nextIndex >= len(a.tabOrder) {
+				nextIndex = len(a.tabOrder) - 1
+			}
+			a.activeTabID = a.tabOrder[nextIndex]
 		}
 	}
 	a.saveTabsLocked()
@@ -595,7 +635,9 @@ func (a *App) tabSnapshotLoop(tab *WorkspaceTab) {
 		ctrl := tab.Ctrl
 		a.mu.RUnlock()
 		if ctrl != nil {
-			_ = ctrl.Snapshot()
+			if err := ctrl.Snapshot(); err == nil {
+				a.maybeAutoTitleTopic(tab)
+			}
 		}
 		tab.saveMu.Lock()
 		if tab.saveAgain {
@@ -609,6 +651,86 @@ func (a *App) tabSnapshotLoop(tab *WorkspaceTab) {
 	}
 }
 
+func (a *App) maybeAutoTitleTopic(tab *WorkspaceTab) {
+	if tab == nil || strings.TrimSpace(tab.TopicID) == "" || tab.Ctrl == nil {
+		return
+	}
+	titleRoot := tab.WorkspaceRoot
+	if tab.Scope == "global" {
+		titleRoot = ""
+	}
+	if source := loadTopicTitleSource(titleRoot, tab.TopicID); source != topicTitleSourceAuto {
+		return
+	}
+	sessionPath := tab.Ctrl.SessionPath()
+	if sessionPath == "" {
+		return
+	}
+	nextTitle, updated := autoTitleTopicFromSession(titleRoot, tab.TopicID, sessionPath)
+	if !updated {
+		return
+	}
+	a.updateOpenTopicTitle(tab.TopicID, nextTitle)
+	a.updateTopicSessionTitles(tab.TopicID, nextTitle)
+	a.emitProjectTreeChanged()
+}
+
+func autoTitleTopicFromSession(workspaceRoot, topicID, sessionPath string) (string, bool) {
+	if source := loadTopicTitleSource(workspaceRoot, topicID); source != topicTitleSourceAuto {
+		return "", false
+	}
+	nextTitle := topicTitleFromSession(sessionPath)
+	if nextTitle == "" || nextTitle == loadTopicTitle(workspaceRoot, topicID) {
+		return "", false
+	}
+	if err := setTopicTitleWithSource(workspaceRoot, topicID, nextTitle, topicTitleSourceAuto); err != nil {
+		return "", false
+	}
+	return nextTitle, true
+}
+
+func topicTitleFromSession(path string) string {
+	f, err := os.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+	dec := json.NewDecoder(f)
+	for {
+		var msg struct {
+			Role    string `json:"role"`
+			Content string `json:"content"`
+		}
+		if err := dec.Decode(&msg); err != nil {
+			return ""
+		}
+		if msg.Role == "user" {
+			return topicTitleFromText(msg.Content)
+		}
+	}
+}
+
+func topicTitleFromText(text string) string {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return ""
+	}
+	text = strings.Join(strings.Fields(text), " ")
+	text = strings.Trim(text, " \t\r\n，。！？；：、,.!?;:\"'`“”‘’()（）[]【】")
+	if text == "" {
+		return ""
+	}
+	const maxRunes = 18
+	runes := []rune(text)
+	if len(runes) > maxRunes {
+		text = strings.TrimRightFunc(string(runes[:maxRunes]), unicode.IsPunct) + "…"
+	}
+	if text == defaultTopicTitle {
+		return ""
+	}
+	return text
+}
+
 // --- persistence: desktop-projects.json -------------------------------------
 
 const desktopProjectsFile = "desktop-projects.json"
@@ -617,6 +739,7 @@ const tabsFileName = "desktop-tabs.json"
 type desktopProject struct {
 	Root   string   `json:"root"`
 	Title  string   `json:"title,omitempty"`
+	Color  string   `json:"color,omitempty"`
 	Topics []string `json:"topics"` // ordered topic IDs
 }
 
@@ -650,13 +773,15 @@ func (a *App) saveTabsLocked() {
 	dir := desktopConfigDir()
 	os.MkdirAll(dir, 0o755)
 	var entries []desktopTabEntry
-	for _, tab := range a.tabs {
-		entries = append(entries, desktopTabEntry{
-			ID:            tab.ID,
-			Scope:         tab.Scope,
-			WorkspaceRoot: tab.WorkspaceRoot,
-			TopicID:       tab.TopicID,
-		})
+	for _, id := range a.orderedTabIDsLocked() {
+		if tab := a.tabs[id]; tab != nil {
+			entries = append(entries, desktopTabEntry{
+				ID:            tab.ID,
+				Scope:         tab.Scope,
+				WorkspaceRoot: tab.WorkspaceRoot,
+				TopicID:       tab.TopicID,
+			})
+		}
 	}
 	f := desktopTabsFile{Tabs: entries, ActiveTab: a.activeTabID}
 	b, _ := json.MarshalIndent(f, "", "  ")
@@ -664,6 +789,39 @@ func (a *App) saveTabsLocked() {
 	tmp := path + ".tmp"
 	os.WriteFile(tmp, b, 0o644)
 	os.Rename(tmp, path)
+}
+
+func (a *App) orderedTabIDsLocked() []string {
+	seen := make(map[string]bool, len(a.tabs))
+	ordered := make([]string, 0, len(a.tabs))
+	for _, id := range a.tabOrder {
+		if _, ok := a.tabs[id]; ok && !seen[id] {
+			ordered = append(ordered, id)
+			seen[id] = true
+		}
+	}
+	var missing []string
+	for id := range a.tabs {
+		if !seen[id] {
+			missing = append(missing, id)
+		}
+	}
+	sort.Strings(missing)
+	ordered = append(ordered, missing...)
+	if len(ordered) != len(a.tabOrder) || len(missing) > 0 {
+		a.tabOrder = append([]string(nil), ordered...)
+	}
+	return ordered
+}
+
+func (a *App) removeTabOrderLocked(tabID string) {
+	next := a.tabOrder[:0]
+	for _, id := range a.tabOrder {
+		if id != tabID {
+			next = append(next, id)
+		}
+	}
+	a.tabOrder = next
 }
 
 func loadTabsFile() desktopTabsFile {
@@ -685,12 +843,13 @@ func loadProjectsFile() desktopProjectFile {
 	}
 	var f desktopProjectFile
 	json.Unmarshal(b, &f)
-	return f
+	return normalizeProjectsFile(f)
 }
 
 func saveProjectsFile(f desktopProjectFile) error {
 	dir := desktopConfigDir()
 	os.MkdirAll(dir, 0o755)
+	f = normalizeProjectsFile(f)
 	b, err := json.MarshalIndent(f, "", "  ")
 	if err != nil {
 		return err
@@ -703,7 +862,94 @@ func saveProjectsFile(f desktopProjectFile) error {
 	return os.Rename(tmp, path)
 }
 
+func normalizeProjectRoot(root string) string {
+	root = strings.TrimSpace(root)
+	if root == "" {
+		return ""
+	}
+	if abs, err := filepath.Abs(root); err == nil {
+		return abs
+	}
+	return root
+}
+
+func normalizeProjectsFile(f desktopProjectFile) desktopProjectFile {
+	out := desktopProjectFile{GlobalTitle: strings.TrimSpace(f.GlobalTitle)}
+	index := map[string]int{}
+	for _, p := range f.Projects {
+		root := normalizeProjectRoot(p.Root)
+		if root == "" {
+			continue
+		}
+		p.Root = root
+		p.Title = strings.TrimSpace(p.Title)
+		p.Color = normalizeProjectColor(p.Color)
+		p.Topics = uniqueStrings(p.Topics)
+		if i, ok := index[root]; ok {
+			if out.Projects[i].Title == "" && p.Title != "" {
+				out.Projects[i].Title = p.Title
+			}
+			if out.Projects[i].Color == "" && p.Color != "" {
+				out.Projects[i].Color = p.Color
+			}
+			out.Projects[i].Topics = uniqueStrings(append(out.Projects[i].Topics, p.Topics...))
+			continue
+		}
+		index[root] = len(out.Projects)
+		out.Projects = append(out.Projects, p)
+	}
+	return out
+}
+
+func uniqueStrings(values []string) []string {
+	seen := make(map[string]bool, len(values))
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" || seen[value] {
+			continue
+		}
+		seen[value] = true
+		out = append(out, value)
+	}
+	return out
+}
+
+func projectDisplayName(p desktopProject) string {
+	if title := strings.TrimSpace(p.Title); title != "" {
+		return title
+	}
+	return workspaceName(p.Root)
+}
+
+func normalizeProjectColor(color string) string {
+	switch strings.TrimSpace(strings.ToLower(color)) {
+	case "red", "orange", "amber", "green", "teal", "blue", "purple", "pink":
+		return strings.TrimSpace(strings.ToLower(color))
+	default:
+		return ""
+	}
+}
+
+func projectColor(root string) string {
+	root = normalizeProjectRoot(root)
+	if root == "" {
+		return ""
+	}
+	for _, p := range loadProjectsFile().Projects {
+		if p.Root == root {
+			return normalizeProjectColor(p.Color)
+		}
+	}
+	return ""
+}
+
 func addProject(root, title string) error {
+	root = normalizeProjectRoot(root)
+	if root == "" {
+		return fmt.Errorf("project root is required")
+	}
+	title = strings.TrimSpace(title)
 	f := loadProjectsFile()
 	for i, p := range f.Projects {
 		if p.Root == root {
@@ -724,9 +970,7 @@ func renameProject(root, title string) error {
 		f.GlobalTitle = title
 		return saveProjectsFile(f)
 	}
-	if abs, err := filepath.Abs(root); err == nil {
-		root = abs
-	}
+	root = normalizeProjectRoot(root)
 	for i, p := range f.Projects {
 		if p.Root == root {
 			f.Projects[i].Title = title
@@ -737,7 +981,25 @@ func renameProject(root, title string) error {
 	return saveProjectsFile(f)
 }
 
+func setProjectColor(root, color string) error {
+	root = normalizeProjectRoot(root)
+	if root == "" {
+		return fmt.Errorf("project root is required")
+	}
+	color = normalizeProjectColor(color)
+	f := loadProjectsFile()
+	for i, p := range f.Projects {
+		if p.Root == root {
+			f.Projects[i].Color = color
+			return saveProjectsFile(f)
+		}
+	}
+	f.Projects = append(f.Projects, desktopProject{Root: root, Color: color})
+	return saveProjectsFile(f)
+}
+
 func removeProject(root string) error {
+	root = normalizeProjectRoot(root)
 	f := loadProjectsFile()
 	projects := make([]desktopProject, 0, len(f.Projects))
 	for _, p := range f.Projects {
@@ -750,12 +1012,10 @@ func removeProject(root string) error {
 }
 
 func projectTitle(root string) string {
+	root = normalizeProjectRoot(root)
 	for _, p := range loadProjectsFile().Projects {
 		if p.Root == root {
-			if p.Title != "" {
-				return p.Title
-			}
-			return workspaceName(root)
+			return projectDisplayName(p)
 		}
 	}
 	return workspaceName(root)
@@ -763,7 +1023,13 @@ func projectTitle(root string) string {
 
 // --- topic helpers ----------------------------------------------------------
 
-const topicTitlesFile = "desktop-topic-titles.json"
+const (
+	topicTitlesFile        = "desktop-topic-titles.json"
+	topicTitleSourcesFile  = "desktop-topic-title-sources.json"
+	defaultTopicTitle      = "新的会话"
+	topicTitleSourceAuto   = "auto"
+	topicTitleSourceManual = "manual"
+)
 
 func topicTitlesPath(workspaceRoot string) string {
 	if workspaceRoot == "" {
@@ -772,9 +1038,26 @@ func topicTitlesPath(workspaceRoot string) string {
 	return filepath.Join(workspaceRoot, ".reasonix", topicTitlesFile)
 }
 
+func topicTitleSourcesPath(workspaceRoot string) string {
+	if workspaceRoot == "" {
+		return filepath.Join(desktopConfigDir(), "global", topicTitleSourcesFile)
+	}
+	return filepath.Join(workspaceRoot, ".reasonix", topicTitleSourcesFile)
+}
+
 func loadTopicTitles(workspaceRoot string) map[string]string {
 	m := map[string]string{}
 	b, err := os.ReadFile(topicTitlesPath(workspaceRoot))
+	if err != nil {
+		return m
+	}
+	json.Unmarshal(b, &m)
+	return m
+}
+
+func loadTopicTitleSources(workspaceRoot string) map[string]string {
+	m := map[string]string{}
+	b, err := os.ReadFile(topicTitleSourcesPath(workspaceRoot))
 	if err != nil {
 		return m
 	}
@@ -798,18 +1081,76 @@ func saveTopicTitles(workspaceRoot string, m map[string]string) error {
 	return os.Rename(tmp, path)
 }
 
+func saveTopicTitleSources(workspaceRoot string, m map[string]string) error {
+	b, err := json.MarshalIndent(m, "", "  ")
+	if err != nil {
+		return err
+	}
+	path := topicTitleSourcesPath(workspaceRoot)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, b, 0o644); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
+}
+
 func loadTopicTitle(workspaceRoot, topicID string) string {
 	return loadTopicTitles(workspaceRoot)[topicID]
 }
 
+func loadTopicTitleSource(workspaceRoot, topicID string) string {
+	return loadTopicTitleSources(workspaceRoot)[topicID]
+}
+
+func topicTitleForTab(scope, workspaceRoot, topicID string) string {
+	titleRoot := workspaceRoot
+	if scope == "global" {
+		titleRoot = ""
+	}
+	if title := strings.TrimSpace(loadTopicTitle(titleRoot, topicID)); title != "" {
+		return title
+	}
+	if scope == "global" {
+		return "Global"
+	}
+	return defaultTopicTitle
+}
+
 func setTopicTitle(workspaceRoot, topicID, title string) error {
+	return setTopicTitleWithSource(workspaceRoot, topicID, title, topicTitleSourceManual)
+}
+
+func setTopicTitleWithSource(workspaceRoot, topicID, title, source string) error {
 	m := loadTopicTitles(workspaceRoot)
 	if strings.TrimSpace(title) == "" {
 		delete(m, topicID)
 	} else {
 		m[topicID] = strings.TrimSpace(title)
 	}
-	return saveTopicTitles(workspaceRoot, m)
+	if err := saveTopicTitles(workspaceRoot, m); err != nil {
+		return err
+	}
+
+	sources := loadTopicTitleSources(workspaceRoot)
+	if strings.TrimSpace(title) == "" || strings.TrimSpace(source) == "" {
+		delete(sources, topicID)
+	} else {
+		sources[topicID] = strings.TrimSpace(source)
+	}
+	return saveTopicTitleSources(workspaceRoot, sources)
+}
+
+func setTopicTitleSource(workspaceRoot, topicID, source string) error {
+	sources := loadTopicTitleSources(workspaceRoot)
+	if strings.TrimSpace(source) == "" {
+		delete(sources, topicID)
+	} else {
+		sources[topicID] = strings.TrimSpace(source)
+	}
+	return saveTopicTitleSources(workspaceRoot, sources)
 }
 
 // --- telemetry --------------------------------------------------------------
@@ -867,6 +1208,7 @@ type ProjectNode struct {
 	Label          string        `json:"label"`
 	Root           string        `json:"root,omitempty"` // project workspace root
 	TopicID        string        `json:"topicId,omitempty"`
+	ProjectColor   string        `json:"projectColor,omitempty"`
 	Turns          int           `json:"turns,omitempty"`
 	LastActivityAt int64         `json:"lastActivityAt,omitempty"`
 	Open           bool          `json:"open,omitempty"`
@@ -883,8 +1225,11 @@ type TopicMeta struct {
 
 // CreateTopic creates a new topic under a project workspace and returns its metadata.
 func (a *App) CreateTopic(scope, workspaceRoot, title string) (TopicMeta, error) {
-	if strings.TrimSpace(title) == "" {
-		return TopicMeta{}, fmt.Errorf("title is required")
+	trimmedTitle := strings.TrimSpace(title)
+	titleSource := topicTitleSourceManual
+	if trimmedTitle == "" {
+		trimmedTitle = defaultTopicTitle
+		titleSource = topicTitleSourceAuto
 	}
 	topicID := newTopicID()
 	if scope == "global" {
@@ -896,7 +1241,7 @@ func (a *App) CreateTopic(scope, workspaceRoot, title string) (TopicMeta, error)
 		}
 		_ = addProject(workspaceRoot, "")
 	}
-	if err := setTopicTitle(workspaceRoot, topicID, title); err != nil {
+	if err := setTopicTitleWithSource(workspaceRoot, topicID, trimmedTitle, titleSource); err != nil {
 		return TopicMeta{}, err
 	}
 	// Append to project's topic list.
@@ -908,13 +1253,51 @@ func (a *App) CreateTopic(scope, workspaceRoot, title string) (TopicMeta, error)
 			break
 		}
 	}
-	return TopicMeta{ID: topicID, Title: title, CreatedAt: time.Now().UnixMilli()}, nil
+	return TopicMeta{ID: topicID, Title: trimmedTitle, CreatedAt: time.Now().UnixMilli()}, nil
 }
 
 // RenameProject updates the sidebar-only display title for a project folder.
 // Empty title clears the override and falls back to the folder name.
 func (a *App) RenameProject(workspaceRoot, title string) error {
 	return renameProject(workspaceRoot, title)
+}
+
+// SetProjectColor updates the project-level accent color used by project topics
+// in the sidebar and tabs. Empty color restores the default accent.
+func (a *App) SetProjectColor(workspaceRoot, color string) error {
+	if err := setProjectColor(workspaceRoot, color); err != nil {
+		return err
+	}
+	a.emitProjectTreeChanged()
+	return nil
+}
+
+// ReorderProjects persists the user-defined order of project folders.
+func (a *App) ReorderProjects(workspaceRoots []string) error {
+	f := loadProjectsFile()
+	if len(workspaceRoots) != len(f.Projects) {
+		return fmt.Errorf("project order length mismatch")
+	}
+	byRoot := make(map[string]desktopProject, len(f.Projects))
+	for _, project := range f.Projects {
+		byRoot[project.Root] = project
+	}
+	seen := make(map[string]bool, len(workspaceRoots))
+	next := make([]desktopProject, 0, len(workspaceRoots))
+	for _, root := range workspaceRoots {
+		root = normalizeProjectRoot(root)
+		project, ok := byRoot[root]
+		if !ok {
+			return fmt.Errorf("project %q not found", root)
+		}
+		if seen[root] {
+			return fmt.Errorf("duplicate project %q", root)
+		}
+		seen[root] = true
+		next = append(next, project)
+	}
+	f.Projects = next
+	return saveProjectsFile(f)
 }
 
 // RenameTopic updates a topic's display title.
@@ -929,6 +1312,8 @@ func (a *App) RenameTopic(topicID, title string) error {
 				return err
 			}
 			a.updateOpenTopicTitle(topicID, trimmed)
+			a.updateTopicSessionTitles(topicID, trimmed)
+			a.emitProjectTreeChanged()
 			return nil
 		}
 	}
@@ -939,6 +1324,8 @@ func (a *App) RenameTopic(topicID, title string) error {
 			return err
 		}
 		a.updateOpenTopicTitle(topicID, trimmed)
+		a.updateTopicSessionTitles(topicID, trimmed)
+		a.emitProjectTreeChanged()
 		return nil
 	}
 	return fmt.Errorf("topic %q not found", topicID)
@@ -957,6 +1344,33 @@ func (a *App) updateOpenTopicTitle(topicID, title string) {
 	}
 }
 
+func (a *App) updateTopicSessionTitles(topicID, title string) {
+	if strings.TrimSpace(topicID) == "" || strings.TrimSpace(title) == "" {
+		return
+	}
+	infos, err := agent.ListSessions(config.SessionDir())
+	if err != nil {
+		return
+	}
+	for _, info := range infos {
+		if info.TopicID != topicID {
+			continue
+		}
+		meta, ok, err := agent.LoadBranchMeta(info.Path)
+		if err != nil || !ok {
+			continue
+		}
+		meta.TopicTitle = title
+		_ = agent.SaveBranchMetaPreserveUpdated(info.Path, meta)
+	}
+}
+
+func (a *App) emitProjectTreeChanged() {
+	if a.ctx != nil {
+		runtime.EventsEmit(a.ctx, "project-tree:changed")
+	}
+}
+
 // DeleteTopic removes a topic and its title metadata.
 func (a *App) DeleteTopic(topicID string) error {
 	f := loadProjectsFile()
@@ -966,6 +1380,9 @@ func (a *App) DeleteTopic(topicID string) error {
 		if _, ok := m[topicID]; ok {
 			delete(m, topicID)
 			_ = saveTopicTitles(p.Root, m)
+			sources := loadTopicTitleSources(p.Root)
+			delete(sources, topicID)
+			_ = saveTopicTitleSources(p.Root, sources)
 			found = true
 			break
 		}
@@ -975,6 +1392,9 @@ func (a *App) DeleteTopic(topicID string) error {
 		if _, ok := m[topicID]; ok {
 			delete(m, topicID)
 			_ = saveTopicTitles("", m)
+			sources := loadTopicTitleSources("")
+			delete(sources, topicID)
+			_ = saveTopicTitleSources("", sources)
 			found = true
 		}
 	}
@@ -1148,9 +1568,9 @@ func (a *App) ListProjectTree() []ProjectNode {
 
 		children := make([]ProjectNode, 0, len(topicIDs))
 		for _, tid := range topicIDs {
-			topicTitle := titleMap[tid]
+			topicTitle := strings.TrimSpace(titleMap[tid])
 			if topicTitle == "" {
-				topicTitle = tid
+				topicTitle = topicTitleForTab("project", p.Root, tid)
 			}
 			summary := topicSummaries[topicSummaryKey("project", p.Root, tid)]
 			status := openTopics[topicSummaryKey("project", p.Root, tid)]
@@ -1160,6 +1580,7 @@ func (a *App) ListProjectTree() []ProjectNode {
 				Label:          topicTitle,
 				Root:           p.Root,
 				TopicID:        tid,
+				ProjectColor:   p.Color,
 				Turns:          summary.turns,
 				LastActivityAt: summary.lastActivityAt,
 				Open:           status.open,
@@ -1167,45 +1588,10 @@ func (a *App) ListProjectTree() []ProjectNode {
 			})
 		}
 		node.Label = title
+		node.ProjectColor = p.Color
 		node.Children = children
 		out = append(out, node)
 	}
-
-	// Open projects that don't yet have topics still show up.
-	// Also add any workspace that has open tabs but isn't in the project list.
-	a.mu.RLock()
-	for _, tab := range a.tabs {
-		if tab.Scope != "project" || tab.WorkspaceRoot == "" {
-			continue
-		}
-		found := false
-		for _, n := range out {
-			if n.Root == tab.WorkspaceRoot {
-				found = true
-				break
-			}
-		}
-		if !found {
-			out = append(out, ProjectNode{
-				Key:   "project_" + tab.WorkspaceRoot,
-				Kind:  "project",
-				Root:  tab.WorkspaceRoot,
-				Label: workspaceName(tab.WorkspaceRoot),
-				Children: []ProjectNode{{
-					Key:            "topic_" + tab.TopicID,
-					Kind:           "topic",
-					Label:          tab.TopicTitle,
-					Root:           tab.WorkspaceRoot,
-					TopicID:        tab.TopicID,
-					Open:           true,
-					Running:        tab.Ctrl != nil && tab.Ctrl.Running(),
-					Turns:          topicSummaries[topicSummaryKey("project", tab.WorkspaceRoot, tab.TopicID)].turns,
-					LastActivityAt: topicSummaries[topicSummaryKey("project", tab.WorkspaceRoot, tab.TopicID)].lastActivityAt,
-				}},
-			})
-		}
-	}
-	a.mu.RUnlock()
 
 	return out
 }

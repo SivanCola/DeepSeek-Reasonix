@@ -45,7 +45,7 @@ func TestSaveLoadWorkspaceRoundTrip(t *testing.T) {
 	}
 }
 
-func TestSaveWorkspaceRemembersRecentWorkspaces(t *testing.T) {
+func TestSaveWorkspaceOnlyRemembersLastWorkspace(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	first := t.TempDir()
 	second := t.TempDir()
@@ -54,12 +54,11 @@ func TestSaveWorkspaceRemembersRecentWorkspaces(t *testing.T) {
 	saveWorkspace(second)
 	saveWorkspace(first)
 
-	got := loadWorkspaces()
-	if len(got) < 2 {
-		t.Fatalf("loadWorkspaces len = %d, want at least 2", len(got))
+	if got := loadWorkspace(); got != first {
+		t.Fatalf("loadWorkspace = %q, want %q", got, first)
 	}
-	if got[0] != first || got[1] != second {
-		t.Fatalf("loadWorkspaces = %v, want first two %q, %q", got, first, second)
+	if got := loadWorkspaces(); len(got) != 0 {
+		t.Fatalf("saveWorkspace should not maintain legacy workspace list, got %v", got)
 	}
 }
 

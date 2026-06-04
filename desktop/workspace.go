@@ -44,7 +44,6 @@ func saveWorkspace(dir string) {
 		return
 	}
 	_ = os.WriteFile(p, []byte(dir), 0o644)
-	rememberWorkspace(dir)
 }
 
 // loadWorkspace returns the remembered working folder, or "" if none.

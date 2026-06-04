@@ -30,6 +30,7 @@ export const zh: Record<DictKey, string> = {
 
   // 侧边栏
   "sidebar.conversations": "会话",
+  "sidebar.allHistory": "全部历史",
   "sidebar.trash": "回收站",
   "sidebar.workspace": "工作区",
   "sidebar.changeWorkspace": "更改",
@@ -44,7 +45,6 @@ export const zh: Record<DictKey, string> = {
   "workspace.title": "工作区",
   "workspace.open": "打开工作区面板",
   "workspace.close": "关闭工作区面板",
-  "workspace.minimize": "最小化工作区面板",
   "workspace.maximize": "最大化工作区面板",
   "workspace.restore": "还原工作区面板",
   "workspace.resizePanel": "调整工作区面板宽度",

@@ -2,13 +2,14 @@
 // It shows a tree of projects (each with expandable topics) plus a Global
 // section. Clicking a topic opens its tab; "+" next to a project creates a
 // new topic.
-import { useCallback, useEffect, useMemo, useState } from "react";
-import type { KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent } from "react";
-import { Archive, ChevronRight, ChevronDown, Pencil, Plus, Folder, FolderGit2, FolderPlus, MessageSquare, Search, BriefcaseBusiness, ListTree, Trash2, Copy, FolderOpen, XCircle } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { CSSProperties, DragEvent as ReactDragEvent, KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent } from "react";
+import { Archive, ChevronRight, ChevronDown, Pencil, Plus, Folder, FolderGit2, FolderPlus, Search, BriefcaseBusiness, ListTree, Trash2, Copy, FolderOpen, XCircle, History, Check } from "lucide-react";
 import { asArray } from "../lib/array";
 import { app } from "../lib/bridge";
 import type { ProjectNode } from "../lib/types";
 import { getLocale, useT, type Translator } from "../lib/i18n";
+import { PROJECT_COLOR_OPTIONS, projectColorValue } from "../lib/projectColors";
 import { ContextMenu, contextMenuPointFromEvent, type ContextMenuItem, type ContextMenuPoint } from "./ContextMenu";
 import { Tooltip } from "./Tooltip";
 
@@ -17,9 +18,12 @@ interface ProjectTreeProps {
   activeWorkspaceRoot?: string;
   activeTopicId?: string;
   currentWorkspaceName?: string;
-  onOpenTopic: (scope: string, workspaceRoot: string, topicId: string) => void;
+  onOpenTopic: (scope: string, workspaceRoot: string, topicId: string) => Promise<void> | void;
+  onOpenProjectHistory: (scope: "global" | "project", workspaceRoot: string) => Promise<void> | void;
   onAddProject: () => Promise<void>;
   onUseCurrentProject?: () => Promise<void>;
+  onTopicsChanged?: () => Promise<void> | void;
+  refreshSignal?: number;
 }
 
 function projectNodeKey(node: ProjectNode, depth: number): string {
@@ -58,21 +62,69 @@ function topicActivityLabel(ms: number): string {
   return new Date(ms).toLocaleDateString();
 }
 
+type ProjectDropPosition = "before" | "after";
+
+function projectRoots(nodes: ProjectNode[]): string[] {
+  return nodes
+    .filter((node) => node.kind === "project" && Boolean(node.root))
+    .map((node) => node.root!);
+}
+
+function reorderedProjectRoots(nodes: ProjectNode[], draggedRoot: string, targetRoot: string, position: ProjectDropPosition): string[] {
+  const roots = projectRoots(nodes);
+  if (draggedRoot === targetRoot || !roots.includes(draggedRoot) || !roots.includes(targetRoot)) return roots;
+  const next = roots.filter((root) => root !== draggedRoot);
+  const targetIndex = next.indexOf(targetRoot);
+  if (targetIndex < 0) return roots;
+  next.splice(position === "before" ? targetIndex : targetIndex + 1, 0, draggedRoot);
+  return next;
+}
+
+function applyProjectOrder(nodes: ProjectNode[], roots: string[]): ProjectNode[] {
+  const byRoot = new Map(nodes.filter((node) => node.kind === "project" && node.root).map((node) => [node.root!, node]));
+  const orderedProjects = roots.map((root) => byRoot.get(root)).filter((node): node is ProjectNode => Boolean(node));
+  const nonProjects = nodes.filter((node) => node.kind !== "project");
+  return [...nonProjects, ...orderedProjects];
+}
+
+function projectAccentStyle(color?: string): CSSProperties | undefined {
+  const value = projectColorValue(color);
+  if (!value) return undefined;
+  return { "--project-accent": value } as CSSProperties;
+}
+
+function colorMenuLabel(label: string, color?: string, active = false) {
+  const value = projectColorValue(color);
+  return (
+    <span className="project-tree__color-option">
+      <span
+        className="project-tree__color-swatch"
+        style={value ? ({ "--project-accent": value } as CSSProperties) : undefined}
+        aria-hidden="true"
+      />
+      <span>{label}</span>
+      {active && <Check className="project-tree__color-check" size={12} />}
+    </span>
+  );
+}
+
 export function ProjectTree({
   activeScope,
   activeWorkspaceRoot,
   activeTopicId,
   currentWorkspaceName,
   onOpenTopic,
+  onOpenProjectHistory,
   onAddProject,
   onUseCurrentProject,
+  onTopicsChanged,
+  refreshSignal,
 }: ProjectTreeProps) {
   const t = useT();
   const [tree, setTree] = useState<ProjectNode[]>([]);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [manuallyCollapsed, setManuallyCollapsed] = useState<Set<string>>(new Set());
-  const [newTitle, setNewTitle] = useState("");
-  const [creatingUnder, setCreatingUnder] = useState<string | null>(null);
+  const [creatingProject, setCreatingProject] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [editingTopic, setEditingTopic] = useState<string | null>(null);
   const [topicDraft, setTopicDraft] = useState("");
@@ -83,6 +135,9 @@ export function ProjectTree({
   const [projectDraft, setProjectDraft] = useState("");
   const [confirmAction, setConfirmAction] = useState<{ topicId: string; action: "delete" | "trash" } | null>(null);
   const [confirmRemoveProject, setConfirmRemoveProject] = useState<string | null>(null);
+  const [dragProjectRoot, setDragProjectRoot] = useState<string | null>(null);
+  const [dropProject, setDropProject] = useState<{ root: string; position: ProjectDropPosition } | null>(null);
+  const creatingRef = useRef(false);
 
   const closeMenu = useCallback(() => {
     setMenuTopic(null);
@@ -111,7 +166,7 @@ export function ProjectTree({
 
   useEffect(() => {
     void refresh();
-  }, [refresh]);
+  }, [refresh, refreshSignal]);
 
   const toggleExpand = (key: string) => {
     const willCollapse = expanded.has(key);
@@ -129,18 +184,33 @@ export function ProjectTree({
     });
   };
 
-  const handleCreateTopic = async (scope: string, workspaceRoot: string) => {
-    if (!newTitle.trim()) {
-      setCreatingUnder(null);
-      return;
-    }
+  const handleCreateTopic = async (scope: string, workspaceRoot: string, key: string) => {
+    if (creatingRef.current) return;
+    creatingRef.current = true;
+    setCreatingProject(key);
+    setMenuProject(null);
+    setMenuPoint(null);
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      next.add(key);
+      return next;
+    });
+    setManuallyCollapsed((prev) => {
+      if (!prev.has(key)) return prev;
+      const next = new Set(prev);
+      next.delete(key);
+      return next;
+    });
     try {
-      await app.CreateTopic(scope, workspaceRoot, newTitle.trim());
-      setNewTitle("");
-      setCreatingUnder(null);
+      const topic = await app.CreateTopic(scope, workspaceRoot, "");
       await refresh();
+      await onTopicsChanged?.();
+      await onOpenTopic(scope, workspaceRoot, topic.id);
     } catch {
       /* ignore */
+    } finally {
+      creatingRef.current = false;
+      setCreatingProject(null);
     }
   };
 
@@ -169,6 +239,7 @@ export function ProjectTree({
     try {
       await app.RenameTopic(topicId, title);
       await refresh();
+      await onTopicsChanged?.();
     } catch {
       /* ignore */
     }
@@ -193,6 +264,7 @@ export function ProjectTree({
       setMenuPoint(null);
       setConfirmAction(null);
       await refresh();
+      await onTopicsChanged?.();
     } catch {
       /* ignore */
     }
@@ -205,6 +277,7 @@ export function ProjectTree({
       setMenuPoint(null);
       setConfirmAction(null);
       await refresh();
+      await onTopicsChanged?.();
     } catch {
       /* ignore */
     }
@@ -232,6 +305,19 @@ export function ProjectTree({
     }
   };
 
+  const setProjectColor = async (path: string, color: string) => {
+    if (!path) return;
+    try {
+      await app.SetProjectColor(path, color);
+      setMenuProject(null);
+      setMenuPoint(null);
+      await refresh();
+      await onTopicsChanged?.();
+    } catch {
+      /* ignore */
+    }
+  };
+
   const visibleTree = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return tree;
@@ -248,6 +334,27 @@ export function ProjectTree({
       .map(filterNode)
       .filter((node): node is ProjectNode => node !== null);
   }, [query, tree]);
+
+  const projectDragEnabled = query.trim() === "";
+
+  const commitProjectReorder = useCallback(async (draggedRoot: string, targetRoot: string, position: ProjectDropPosition) => {
+    const nextRoots = reorderedProjectRoots(tree, draggedRoot, targetRoot, position);
+    const currentRoots = projectRoots(tree);
+    if (nextRoots.join("\n") === currentRoots.join("\n")) return;
+    setTree((current) => applyProjectOrder(current, nextRoots));
+    try {
+      await app.ReorderProjects(nextRoots);
+      await refresh();
+      await onTopicsChanged?.();
+    } catch {
+      await refresh();
+    }
+  }, [onTopicsChanged, refresh, tree]);
+
+  const clearProjectDrag = useCallback(() => {
+    setDragProjectRoot(null);
+    setDropProject(null);
+  }, []);
 
   const activeAncestorKeys = useMemo(() => {
     const walk = (nodes: ProjectNode[], ancestors: string[]): string[] | null => {
@@ -354,6 +461,7 @@ export function ProjectTree({
         <div
           key={key}
           className={`project-tree__topic${active ? " project-tree__topic--active" : ""}${topicMenuOpen ? " project-tree__topic--menu-open" : ""}`}
+          style={projectAccentStyle(node.projectColor)}
           onContextMenu={openTopicMenu}
         >
           <button
@@ -367,13 +475,11 @@ export function ProjectTree({
               }
             }}
           >
-            <MessageSquare size={12} />
-            {(node.open || node.running) && (
-              <span
-                className={`project-tree__topic-status${node.running ? " project-tree__topic-status--running" : ""}`}
-                aria-hidden="true"
-              />
-            )}
+            <span className="project-tree__topic-status-slot" aria-hidden="true">
+              {(node.open || node.running) && (
+                <span className={`project-tree__topic-status${node.running ? " project-tree__topic-status--running" : ""}`} />
+              )}
+            </span>
             <span className="project-tree__topic-copy">
               <span className="project-tree__topic-label">{label}</span>
               <span className="project-tree__topic-meta">{topicMetaLine(node, t)}</span>
@@ -397,6 +503,39 @@ export function ProjectTree({
     const projectPath = node.root ?? "";
     const projectLabel = node.label || (scope === "global" ? "Global" : "Untitled");
     const projectActive = activeScope === scope && (scope === "global" || activeWorkspaceRoot === node.root);
+    const draggableProject = projectDragEnabled && scope === "project" && depth === 0 && Boolean(projectRoot) && editingProject?.key !== key;
+    const projectDropPosition = dropProject?.root === projectRoot ? dropProject.position : null;
+    const handleProjectDragStart = (event: ReactDragEvent<HTMLDivElement>) => {
+      if (!draggableProject) return;
+      const target = event.target as HTMLElement | null;
+      if (target?.closest("button,input,textarea,select")) {
+        event.preventDefault();
+        return;
+      }
+      event.dataTransfer.effectAllowed = "move";
+      event.dataTransfer.setData("text/plain", projectRoot);
+      setDragProjectRoot(projectRoot);
+      setDropProject(null);
+    };
+    const handleProjectDragOver = (event: ReactDragEvent<HTMLDivElement>) => {
+      if (!draggableProject || !dragProjectRoot || dragProjectRoot === projectRoot) return;
+      event.preventDefault();
+      event.dataTransfer.dropEffect = "move";
+      const rect = event.currentTarget.getBoundingClientRect();
+      const position: ProjectDropPosition = event.clientY < rect.top + rect.height / 2 ? "before" : "after";
+      setDropProject((current) => {
+        if (current?.root === projectRoot && current.position === position) return current;
+        return { root: projectRoot, position };
+      });
+    };
+    const handleProjectDrop = (event: ReactDragEvent<HTMLDivElement>) => {
+      if (!draggableProject) return;
+      const draggedRoot = dragProjectRoot || event.dataTransfer.getData("text/plain");
+      const position = dropProject?.root === projectRoot ? dropProject.position : "after";
+      event.preventDefault();
+      clearProjectDrag();
+      if (draggedRoot && draggedRoot !== projectRoot) void commitProjectReorder(draggedRoot, projectRoot, position);
+    };
     const openProjectMenu = (event: ReactMouseEvent<HTMLElement> | ReactKeyboardEvent<HTMLElement>) => {
       event.preventDefault();
       event.stopPropagation();
@@ -412,18 +551,41 @@ export function ProjectTree({
         icon: <Plus size={13} />,
         label: "新建会话",
         onSelect: () => {
-          setMenuProject(null);
-          setMenuPoint(null);
-          setCreatingUnder(key);
-          setNewTitle("");
+          void handleCreateTopic(scope, projectRoot, key);
         },
       },
+      ...(scope === "project"
+        ? [
+            {
+              key: "project-history",
+              icon: <History size={13} />,
+              label: "查看项目历史",
+              onSelect: () => {
+                closeMenu();
+                void onOpenProjectHistory(scope, projectRoot);
+              },
+            },
+          ]
+        : []),
       {
         key: "rename",
         icon: <Pencil size={13} />,
         label: "修改显示名称",
         onSelect: () => startRenameProject(key, projectRoot, projectLabel),
       },
+      ...(scope === "project"
+        ? [
+            { type: "separator" as const, key: "color-separator" },
+            ...PROJECT_COLOR_OPTIONS.map((option): ContextMenuItem => ({
+              key: `color-${option.key || "default"}`,
+              label: colorMenuLabel(option.label, option.key, (node.projectColor || "") === option.key),
+              onSelect: () => {
+                void setProjectColor(projectPath, option.key);
+              },
+            })),
+            { type: "separator" as const, key: "path-separator" },
+          ]
+        : []),
       {
         key: "reveal",
         icon: <FolderOpen size={13} />,
@@ -492,7 +654,17 @@ export function ProjectTree({
     return (
       <div key={key}>
         <div
-          className={`project-tree__folder${projectActive ? " project-tree__folder--active" : ""}${menuProject?.key === key ? " project-tree__folder--menu-open" : ""}`}
+          className={`project-tree__folder${projectActive ? " project-tree__folder--active" : ""}${menuProject?.key === key ? " project-tree__folder--menu-open" : ""}${dragProjectRoot === projectRoot ? " project-tree__folder--dragging" : ""}${projectDropPosition ? ` project-tree__folder--drop-${projectDropPosition}` : ""}`}
+          style={projectAccentStyle(node.projectColor)}
+          draggable={draggableProject}
+          aria-grabbed={draggableProject ? dragProjectRoot === projectRoot : undefined}
+          onDragStart={handleProjectDragStart}
+          onDragOver={handleProjectDragOver}
+          onDragLeave={(event) => {
+            if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDropProject(null);
+          }}
+          onDrop={handleProjectDrop}
+          onDragEnd={clearProjectDrag}
           onContextMenu={openProjectMenu}
         >
           <button
@@ -515,16 +687,17 @@ export function ProjectTree({
               <span style={{ width: 12 }} />
             )}
             <Folder size={12} />
+            {node.projectColor && <span className="project-tree__folder-color" aria-hidden="true" />}
             <span className="project-tree__folder-label">{projectLabel}</span>
           </button>
           <Tooltip label="新建会话">
             <button
               type="button"
-              className="project-tree__new-topic"
+              className={`project-tree__new-topic${creatingProject === key ? " project-tree__new-topic--active" : ""}`}
+              disabled={creatingProject !== null}
               onClick={(e) => {
                 e.stopPropagation();
-                setCreatingUnder(key);
-                setNewTitle("");
+                void handleCreateTopic(scope, projectRoot, key);
               }}
             >
               <Plus size={12} />
@@ -539,32 +712,6 @@ export function ProjectTree({
             onClose={closeMenu}
           />
         </div>
-        {creatingUnder === key && (
-          <div className="project-tree__new-input" style={{ paddingLeft: 28 + depth * 16 }}>
-            <input
-              autoFocus
-              value={newTitle}
-              onChange={(e) => setNewTitle(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  void handleCreateTopic(
-                    node.kind === "global_folder" ? "global" : "project",
-                    node.root ?? "",
-                  );
-                }
-                if (e.key === "Escape") setCreatingUnder(null);
-              }}
-              onBlur={() => {
-                if (!newTitle.trim()) setCreatingUnder(null);
-                else void handleCreateTopic(
-                  node.kind === "global_folder" ? "global" : "project",
-                  node.root ?? "",
-                );
-              }}
-              placeholder="会话名称"
-            />
-          </div>
-        )}
         {isExpanded && hasChildren && (
           <div className="project-tree__children">
             {children.map((child) => renderNode(child, depth + 1))}

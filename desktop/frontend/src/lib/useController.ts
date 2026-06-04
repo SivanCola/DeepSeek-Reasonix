@@ -536,6 +536,12 @@ export function useController() {
     } catch { /* ignore */ }
   }, [activeTabId, bump, syncActiveTabFromBackend]);
 
+  const reorderTabs = useCallback(async (tabIds: string[]) => {
+    try {
+      await app.ReorderTabs(tabIds);
+    } catch { /* ignore */ }
+  }, []);
+
   return {
     state: activeState,
     activeTabId,
@@ -543,6 +549,6 @@ export function useController() {
     newSession, listSessions, listTrashedSessions, resumeSession, previewSession, deleteSession, restoreSession, purgeTrashedSession, renameSession,
     refreshMeta, pickWorkspace, switchWorkspace, compact, rewind, setModel, setEffort,
     fetchMemory, remember, forget, saveDoc,
-    switchTab, openProjectTab, openGlobalTab, closeTab,
+    switchTab, openProjectTab, openGlobalTab, closeTab, reorderTabs,
   };
 }

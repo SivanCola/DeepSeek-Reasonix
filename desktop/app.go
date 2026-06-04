@@ -48,10 +48,11 @@ const eventChannel = "agent:event"
 type App struct {
 	ctx context.Context
 
-	// mu protects the tab map, activeTabID, and per-tab fields that are read
+	// mu protects the tab map, tabOrder, activeTabID, and per-tab fields that are read
 	// from bound methods. All bound methods that touch a controller use activeCtrl().
 	mu          sync.RWMutex
 	tabs        map[string]*WorkspaceTab
+	tabOrder    []string
 	activeTabID string
 	readyHook   func()
 }
@@ -100,6 +101,7 @@ func (a *App) restoreOrBuildTabs() {
 			tab.sink = &tabEventSink{tabID: tab.ID, app: a, ctx: ctx}
 			a.mu.Lock()
 			a.tabs[tab.ID] = tab
+			a.tabOrder = append(a.tabOrder, tab.ID)
 			a.mu.Unlock()
 			go a.buildTabController(tab)
 		}
@@ -107,9 +109,9 @@ func (a *App) restoreOrBuildTabs() {
 		if _, ok := a.tabs[f.ActiveTab]; ok {
 			a.activeTabID = f.ActiveTab
 		} else {
-			for id := range a.tabs {
-				a.activeTabID = id
-				break
+			ordered := a.orderedTabIDsLocked()
+			if len(ordered) > 0 {
+				a.activeTabID = ordered[0]
 			}
 		}
 		a.mu.Unlock()
@@ -122,6 +124,7 @@ func (a *App) restoreOrBuildTabs() {
 	tab.TopicTitle = "Global"
 	a.mu.Lock()
 	a.tabs[tab.ID] = tab
+	a.tabOrder = append(a.tabOrder, tab.ID)
 	a.activeTabID = tab.ID
 	a.mu.Unlock()
 	go a.buildTabController(tab)
@@ -137,6 +140,7 @@ func (a *App) createTabEntryWithID(scope, workspaceRoot, topicID, id string) *Wo
 		Scope:         scope,
 		WorkspaceRoot: workspaceRoot,
 		TopicID:       topicID,
+		TopicTitle:    topicTitleForTab(scope, workspaceRoot, topicID),
 		disabledMCP:   map[string]ServerView{},
 	}
 }
@@ -533,41 +537,24 @@ func (a *App) PickWorkspace() (string, error) {
 }
 
 func (a *App) ListWorkspaces() []WorkspaceMeta {
+	migrateLegacyWorkspacesIntoProjects()
+	activeRoot := ""
 	cur, _ := os.Getwd()
 	a.mu.RLock()
 	if tab := a.activeTabLocked(); tab != nil && tab.WorkspaceRoot != "" {
-		cur = tab.WorkspaceRoot
+		activeRoot = normalizeProjectRoot(tab.WorkspaceRoot)
 	}
 	a.mu.RUnlock()
-	seen := map[string]bool{}
-	paths := make([]string, 0, 8)
-	add := func(path string) {
-		path = strings.TrimSpace(path)
-		if path == "" {
-			return
-		}
-		if abs, err := filepath.Abs(path); err == nil {
-			path = abs
-		}
-		if seen[path] {
-			return
-		}
-		if info, err := os.Stat(path); err != nil || !info.IsDir() {
-			return
-		}
-		seen[path] = true
-		paths = append(paths, path)
+	if activeRoot == "" {
+		activeRoot = normalizeProjectRoot(cur)
 	}
-	add(cur)
-	for _, path := range loadWorkspaces() {
-		add(path)
-	}
-	out := make([]WorkspaceMeta, 0, len(paths))
-	for _, path := range paths {
+	projects := loadProjectsFile().Projects
+	out := make([]WorkspaceMeta, 0, len(projects))
+	for _, project := range projects {
 		out = append(out, WorkspaceMeta{
-			Path:    path,
-			Name:    workspaceName(path),
-			Current: false,
+			Path:    project.Root,
+			Name:    projectDisplayName(project),
+			Current: activeRoot != "" && project.Root == activeRoot,
 		})
 	}
 	return out
@@ -577,23 +564,34 @@ func (a *App) RemoveWorkspace(dir string) error {
 	if dir == "" {
 		return fmt.Errorf("workspace path is required")
 	}
-	if abs, err := filepath.Abs(dir); err == nil {
-		dir = abs
-	}
-	cur, _ := os.Getwd()
-	a.mu.RLock()
-	if tab := a.activeTabLocked(); tab != nil && tab.WorkspaceRoot != "" {
-		cur = tab.WorkspaceRoot
-	}
-	a.mu.RUnlock()
-	if abs, err := filepath.Abs(cur); err == nil {
-		cur = abs
-	}
-	if dir == cur {
-		return fmt.Errorf("cannot remove current workspace")
-	}
+	dir = normalizeProjectRoot(dir)
 	forgetWorkspace(dir)
 	return removeProject(dir)
+}
+
+func migrateLegacyWorkspacesIntoProjects() {
+	legacy := loadWorkspaces()
+	if len(legacy) == 0 {
+		return
+	}
+	f := loadProjectsFile()
+	seen := make(map[string]bool, len(f.Projects)+len(legacy))
+	for _, p := range f.Projects {
+		seen[p.Root] = true
+	}
+	changed := false
+	for _, path := range legacy {
+		root := normalizeProjectRoot(path)
+		if root == "" || seen[root] {
+			continue
+		}
+		f.Projects = append(f.Projects, desktopProject{Root: root})
+		seen[root] = true
+		changed = true
+	}
+	if changed {
+		_ = saveProjectsFile(f)
+	}
 }
 
 func workspaceName(path string) string {

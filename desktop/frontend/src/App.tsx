@@ -10,7 +10,6 @@ import {
   History,
   Settings as SettingsIcon,
   Pencil,
-  Pin,
   MoreHorizontal,
   PanelLeftClose,
   PanelLeftOpen,
@@ -23,7 +22,7 @@ import logo from "./assets/logo.svg";
 import { asArray } from "./lib/array";
 import { useT } from "./lib/i18n";
 import { useController } from "./lib/useController";
-import { app } from "./lib/bridge";
+import { app, onProjectTreeChanged } from "./lib/bridge";
 import { Transcript } from "./components/Transcript";
 import { Composer } from "./components/Composer";
 import { TodoPanel } from "./components/TodoPanel";
@@ -37,6 +36,7 @@ import { CapabilitiesPanel } from "./components/CapabilitiesPanel";
 import { UpdateBanner } from "./components/UpdateBanner";
 import { ContextPanel } from "./components/ContextPanel";
 import { WorkspacePanel } from "./components/WorkspacePanel";
+import { FileTabPane } from "./components/FileTabPane";
 import { Tooltip } from "./components/Tooltip";
 import { OnboardingOverlay } from "./components/OnboardingOverlay";
 import { TabBar } from "./components/TabBar";
@@ -45,39 +45,63 @@ import { parseTodos } from "./lib/tools";
 import type { ComposerInsertRequest, MemoryView, Meta, Mode, SessionMeta, TabMeta } from "./lib/types";
 import { loadLayoutSize, saveLayoutSize } from "./lib/layoutPreferences";
 import { applyTheme, getTheme, getThemeStyle, isThemeStyle, themeForStyle, type Theme } from "./lib/theme";
+import {
+  ScreenGetAll,
+  WindowGetPosition,
+  WindowGetSize,
+  WindowIsFullscreen,
+  WindowIsMaximised,
+  WindowSetSize,
+} from "../wailsjs/runtime/runtime";
 
 const SIDEBAR_COLLAPSED_KEY = "reasonix.sidebar.collapsed";
-const SIDEBAR_COLLAPSED_WIDTH = 68;
 const SIDEBAR_DEFAULT_WIDTH = 264;
 const SIDEBAR_MIN_WIDTH = 228;
-const SIDEBAR_MAX_WIDTH = 420;
-// Keep the footer's 940px content rail plus its horizontal padding available
-// before allowing the right dock to take more room.
-const CHAT_MIN_WIDTH = 1004;
+const SIDEBAR_MAX_WIDTH = 320;
+const CHAT_MIN_WIDTH = 760;
 
 function isThemeMode(value: string): value is Theme {
   return value === "auto" || value === "light" || value === "dark";
 }
 const CONTEXT_PANEL_MIN_WIDTH = 340;
 const CONTEXT_PANEL_MAX_WIDTH = 420;
-const WORKSPACE_PANEL_MIN_WIDTH = CONTEXT_PANEL_MIN_WIDTH;
-const WORKSPACE_PANEL_DEFAULT_WIDTH = 380;
-const WORKSPACE_PANEL_FILES_DEFAULT_WIDTH = 760;
-const WORKSPACE_PANEL_MAX_WIDTH = 920;
-const WORKSPACE_PANEL_MAX_RATIO = 0.58;
+const RIGHT_DOCK_MIN_WIDTH = CONTEXT_PANEL_MIN_WIDTH;
+const RIGHT_DOCK_CONTEXT_WIDTH = 380;
+const RIGHT_DOCK_DEFAULT_WIDTH = 420;
+const RIGHT_DOCK_MAX_WIDTH = 860;
+const RIGHT_DOCK_RESIZER_WIDTH = 8;
 
 type RightDockMode = "context" | "files" | "changed";
 const SHOW_CONTEXT_DOCK = false;
+type HistoryScopeFilter = { scope: "global" | "project"; workspaceRoot: string };
+type HistoryViewState =
+  | { kind: "history"; source: "scope"; filter: HistoryScopeFilter; sessions: SessionMeta[] }
+  | { kind: "history"; source: "all"; sessions: SessionMeta[] }
+  | { kind: "trash"; sessions: SessionMeta[] };
+type WailsScreen = { isCurrent: boolean; isPrimary: boolean; width: number; height: number };
+
+function hasNativeWindowRuntime(): boolean {
+  if (typeof window === "undefined") return false;
+  const runtime = (window as { runtime?: Record<string, unknown> }).runtime;
+  return typeof runtime?.WindowGetSize === "function" && typeof runtime.WindowSetSize === "function";
+}
 
 function clampSidebarWidth(width: number): number {
   return Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, Math.round(width)));
 }
 
-function clampWorkspacePanelWidth(width: number, sidebarWidth = SIDEBAR_DEFAULT_WIDTH, viewportWidth = 1440): number {
-  const maxByRatio = Math.floor(viewportWidth * WORKSPACE_PANEL_MAX_RATIO);
-  const maxByChat = Math.floor(viewportWidth - sidebarWidth - CHAT_MIN_WIDTH);
-  const max = Math.max(WORKSPACE_PANEL_MIN_WIDTH, Math.min(WORKSPACE_PANEL_MAX_WIDTH, maxByRatio, maxByChat));
-  return Math.min(max, Math.max(WORKSPACE_PANEL_MIN_WIDTH, Math.round(width)));
+function clampRightDockWidth(width: number): number {
+  return Math.min(RIGHT_DOCK_MAX_WIDTH, Math.max(RIGHT_DOCK_MIN_WIDTH, Math.round(width)));
+}
+
+function resolveRightDockSplit(totalWidth: number, desiredDockWidth: number): { chatWidth: number; dockWidth: number } {
+  const total = Math.round(totalWidth);
+  const maxDockWidth = Math.max(RIGHT_DOCK_MIN_WIDTH, Math.min(RIGHT_DOCK_MAX_WIDTH, total - CHAT_MIN_WIDTH));
+  const dockWidth = Math.min(maxDockWidth, Math.max(RIGHT_DOCK_MIN_WIDTH, Math.round(desiredDockWidth)));
+  return {
+    chatWidth: Math.max(CHAT_MIN_WIDTH, total - dockWidth),
+    dockWidth,
+  };
 }
 
 function loadSidebarCollapsed(): boolean {
@@ -106,12 +130,12 @@ function saveSidebarWidth(width: number): void {
   saveLayoutSize("sidebarWidth", width, clampSidebarWidth);
 }
 
-function loadWorkspacePanelWidth(): number {
-  return loadLayoutSize("workspacePanelWidth", WORKSPACE_PANEL_DEFAULT_WIDTH, clampWorkspacePanelWidth);
+function loadRightDockWidth(): number {
+  return loadLayoutSize("rightDockWidth", RIGHT_DOCK_DEFAULT_WIDTH, clampRightDockWidth);
 }
 
-function saveWorkspacePanelWidth(width: number): void {
-  saveLayoutSize("workspacePanelWidth", width);
+function saveRightDockWidth(width: number): void {
+  saveLayoutSize("rightDockWidth", width, clampRightDockWidth);
 }
 
 function topicTitle(tab?: TabMeta): string {
@@ -129,6 +153,27 @@ function appChromeScopeLabel(tab?: TabMeta, meta?: Meta): string {
   if (tab?.scope === "project") return tab.workspaceName || tab.workspaceRoot || "Project";
   if (tab?.scope === "global") return tab.topicTitle || "Global";
   return workspaceDisplayName(meta?.cwd) || meta?.label || "Global";
+}
+
+type FileTabMeta = TabMeta & {
+  tabType: "file";
+  scope: "file";
+  filePath: string;
+};
+
+function fileTabId(workspaceRoot: string, path: string): string {
+  return `file:${workspaceRoot || "global"}:${path}`;
+}
+
+function fileName(path: string): string {
+  return path.split("/").filter(Boolean).pop() || path;
+}
+
+function sessionsForScope(sessions: SessionMeta[], filter: HistoryScopeFilter): SessionMeta[] {
+  if (filter.scope === "project") {
+    return sessions.filter((session) => session.scope === "project" && session.workspaceRoot === filter.workspaceRoot);
+  }
+  return sessions.filter((session) => (session.scope || "global") === "global");
 }
 
 function workspaceDisplayName(path?: string): string {
@@ -177,44 +222,81 @@ export default function App() {
     openProjectTab,
     openGlobalTab,
     closeTab,
+    reorderTabs,
   } = useController();
   const t = useT();
   const [mode, setMode] = useState<Mode>("normal");
   const [tabMetas, setTabMetas] = useState<TabMeta[]>([]);
+  const [fileTabs, setFileTabs] = useState<FileTabMeta[]>([]);
+  const [activeFileTabId, setActiveFileTabId] = useState<string | null>(null);
+  const [tabOrderIds, setTabOrderIds] = useState<string[]>([]);
+  const [tabRevealSignal, setTabRevealSignal] = useState(0);
   // null until the mount probe resolves; true shows the overlay. Probed once —
   // clearing the key mid-session is the Settings panel's job, not the gate's.
   const [needsOnboarding, setNeedsOnboarding] = useState<boolean | null>(null);
   const [memView, setMemView] = useState<MemoryView | null>(null);
-  const [histView, setHistView] = useState<{ kind: "history" | "trash"; sessions: SessionMeta[] } | null>(null);
+  const [histView, setHistView] = useState<HistoryViewState | null>(null);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(loadSidebarCollapsed);
   const [sidebarWidth, setSidebarWidth] = useState(loadSidebarWidth);
   const [sidebarResizing, setSidebarResizing] = useState(false);
   const [workspacePanelOpen, setWorkspacePanelOpen] = useState(true);
-  const [workspacePanelWidth, setWorkspacePanelWidth] = useState(loadWorkspacePanelWidth);
+  const [rightDockWidth, setRightDockWidth] = useState(loadRightDockWidth);
   const [workspacePanelResizing, setWorkspacePanelResizing] = useState(false);
   const [workspacePanelMaximized, setWorkspacePanelMaximized] = useState(false);
   const [rightDockMode, setRightDockMode] = useState<RightDockMode>("files");
   const [dockRefreshKey, setDockRefreshKey] = useState(0);
+  const [projectRevision, setProjectRevision] = useState(0);
   const [composerInsertRequest, setComposerInsertRequest] = useState<ComposerInsertRequest | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [capsOpen, setCapsOpen] = useState(false);
   const [pendingPlanRevision, setPendingPlanRevision] = useState<string | null>(null);
-  const [viewportWidth, setViewportWidth] = useState(() => (typeof window === "undefined" ? 1440 : window.innerWidth));
   const [footerHeight, setFooterHeight] = useState(0);
   const footerRef = useRef<HTMLElement>(null);
-  const effectiveSidebarWidth = sidebarCollapsed ? SIDEBAR_COLLAPSED_WIDTH : sidebarWidth;
-  const effectiveWorkspacePanelWidth = useMemo(
-    () => {
-      const width = clampWorkspacePanelWidth(workspacePanelWidth, effectiveSidebarWidth, viewportWidth);
-      if (rightDockMode === "context") return Math.min(CONTEXT_PANEL_MAX_WIDTH, width);
-      return width;
-    },
-    [effectiveSidebarWidth, rightDockMode, viewportWidth, workspacePanelWidth],
-  );
+  const chatPaneRef = useRef<HTMLElement>(null);
+  const workbenchDockRef = useRef<HTMLElement>(null);
+  const rightDockToggleSequenceRef = useRef(0);
+  const rightDockTogglingRef = useRef(false);
+  const [chatWidth, setChatWidth] = useState<number | null>(null);
+  const [rightDockRenderWidth, setRightDockRenderWidth] = useState<number | null>(null);
+  const preferredWorkspacePanelWidth =
+    rightDockMode === "context" ? Math.min(CONTEXT_PANEL_MAX_WIDTH, rightDockWidth) : rightDockWidth;
+  const workspacePanelRenderWidth = rightDockRenderWidth ?? preferredWorkspacePanelWidth;
   const activeTab = useMemo(
     () => tabMetas.find((tab) => tab.id === activeTabId) ?? tabMetas.find((tab) => tab.active),
     [activeTabId, tabMetas],
   );
+  const activeFileTab = useMemo(
+    () => fileTabs.find((tab) => tab.id === activeFileTabId),
+    [activeFileTabId, fileTabs],
+  );
+  const visibleTabId = activeFileTabId ?? activeTabId;
+  const visibleTabs = useMemo(() => {
+    const source = [...tabMetas, ...fileTabs];
+    const byId = new Map(source.map((tab) => [tab.id, tab]));
+    const ordered = tabOrderIds.map((id) => byId.get(id)).filter((tab): tab is TabMeta => Boolean(tab));
+    const missing = source.filter((tab) => !tabOrderIds.includes(tab.id));
+    return [...ordered, ...missing].map((tab) => ({
+      ...tab,
+      active: tab.id === visibleTabId,
+    }));
+  }, [activeFileTabId, activeTabId, fileTabs, tabMetas, tabOrderIds, visibleTabId]);
+
+  useEffect(() => {
+    const ids = [...tabMetas.map((tab) => tab.id), ...fileTabs.map((tab) => tab.id)];
+    setTabOrderIds((current) => {
+      const next = current.filter((id) => ids.includes(id));
+      for (const id of ids) {
+        if (!next.includes(id)) next.push(id);
+      }
+      return next.join("\u0000") === current.join("\u0000") ? current : next;
+    });
+  }, [fileTabs, tabMetas]);
+
+  useEffect(() => {
+    if (activeFileTabId && !fileTabs.some((tab) => tab.id === activeFileTabId)) {
+      setActiveFileTabId(null);
+    }
+  }, [activeFileTabId, fileTabs]);
 
   const syncModeToController = useCallback((m: Mode) => setControllerMode(m), [setControllerMode]);
 
@@ -348,6 +430,13 @@ export default function App() {
   }, [refreshTabMetas]);
 
   useEffect(() => {
+    return onProjectTreeChanged(() => {
+      setProjectRevision((value) => value + 1);
+      void refreshTabMetas();
+    });
+  }, [refreshTabMetas]);
+
+  useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
@@ -365,12 +454,6 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    const onResize = () => setViewportWidth(window.innerWidth);
-    window.addEventListener("resize", onResize);
-    return () => window.removeEventListener("resize", onResize);
-  }, []);
-
-  useEffect(() => {
     const el = footerRef.current;
     if (!el || typeof ResizeObserver === "undefined") return;
     const update = () => setFooterHeight(Math.round(el.getBoundingClientRect().height));
@@ -380,7 +463,44 @@ export default function App() {
     return () => observer.disconnect();
   }, []);
 
+  const measureChatWidth = useCallback(() => {
+    const width = chatPaneRef.current?.getBoundingClientRect().width;
+    return Math.max(CHAT_MIN_WIDTH, Math.round(width && Number.isFinite(width) ? width : CHAT_MIN_WIDTH));
+  }, []);
+
+  const measureRightDockWidth = useCallback(() => {
+    const width = workbenchDockRef.current?.getBoundingClientRect().width;
+    if (width && Number.isFinite(width)) return Math.max(RIGHT_DOCK_MIN_WIDTH, Math.round(width));
+    return preferredWorkspacePanelWidth;
+  }, [preferredWorkspacePanelWidth]);
+
+  useEffect(() => {
+    if (!workspacePanelOpen || workspacePanelMaximized) {
+      setRightDockRenderWidth(null);
+      return;
+    }
+    const el = workbenchDockRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const update = () => {
+      const width = el.getBoundingClientRect().width;
+      if (width && Number.isFinite(width)) setRightDockRenderWidth(Math.max(RIGHT_DOCK_MIN_WIDTH, Math.round(width)));
+    };
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [workspacePanelMaximized, workspacePanelOpen]);
+
+  useEffect(() => {
+    if (workspacePanelMaximized || chatWidth !== null) return;
+    const frame = window.requestAnimationFrame(() => {
+      setChatWidth(measureChatWidth());
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [chatWidth, measureChatWidth, workspacePanelMaximized]);
+
   const startNewSession = useCallback(async () => {
+    setActiveFileTabId(null);
     await newSession();
   }, [newSession]);
 
@@ -444,13 +564,78 @@ export default function App() {
     [setExpandedSidebarWidth, sidebarCollapsed, sidebarWidth],
   );
 
+  const resizeNativeWindowBy = useCallback(
+    async (deltaWidth: number): Promise<boolean> => {
+      if (!hasNativeWindowRuntime()) return false;
+      try {
+        const [fullscreen, maximised] = await Promise.all([WindowIsFullscreen(), WindowIsMaximised()]);
+        if (fullscreen || maximised) return false;
+
+        const [size, position, screens] = await Promise.all([WindowGetSize(), WindowGetPosition(), ScreenGetAll()]);
+        const desiredWidth = Math.max(640, Math.round(size.w + deltaWidth));
+        const screenList = screens as WailsScreen[];
+        const screen = screenList.find((item) => item.isCurrent) ?? screenList.find((item) => item.isPrimary) ?? screenList[0];
+        const availableRight = screen && position.x >= 0 ? screen.width - position.x : screen?.width;
+        const maxWidth = availableRight && availableRight > size.w ? availableRight : desiredWidth;
+        const nextWidth = deltaWidth > 0 ? Math.min(desiredWidth, maxWidth) : desiredWidth;
+        if (Math.abs(nextWidth - size.w) > 8) {
+          WindowSetSize(nextWidth, size.h);
+          return deltaWidth <= 0 || nextWidth >= desiredWidth - 8;
+        }
+      } catch {
+        /* The browser dev runtime and some window states do not expose sizing. */
+      }
+      return false;
+    },
+    [],
+  );
+
   const setSavedWorkspacePanelWidth = useCallback(
     (width: number) => {
-      const next = clampWorkspacePanelWidth(width, effectiveSidebarWidth, viewportWidth);
-      setWorkspacePanelWidth(next);
-      saveWorkspacePanelWidth(next);
+      const currentChatWidth = chatWidth ?? measureChatWidth();
+      const currentDockWidth = measureRightDockWidth();
+      const next = resolveRightDockSplit(currentChatWidth + currentDockWidth, width);
+      setRightDockWidth(next.dockWidth);
+      saveRightDockWidth(next.dockWidth);
+      if (workspacePanelOpen && !workspacePanelMaximized) {
+        setChatWidth(next.chatWidth);
+      }
     },
-    [effectiveSidebarWidth, viewportWidth],
+    [chatWidth, measureChatWidth, measureRightDockWidth, workspacePanelMaximized, workspacePanelOpen],
+  );
+
+  const ensureWorkspacePanelWidth = useCallback(
+    (width: number) => {
+      const desiredDockWidth = clampRightDockWidth(width);
+      const currentChatWidth = chatWidth ?? measureChatWidth();
+      const currentDockWidth = measureRightDockWidth();
+      const missingWidth = desiredDockWidth - currentDockWidth;
+
+      if (!workspacePanelOpen || workspacePanelMaximized || missingWidth <= 8) {
+        setSavedWorkspacePanelWidth(desiredDockWidth);
+        return;
+      }
+
+      void (async () => {
+        const resized = await resizeNativeWindowBy(missingWidth);
+        if (resized) {
+          setRightDockWidth(desiredDockWidth);
+          saveRightDockWidth(desiredDockWidth);
+          setChatWidth(currentChatWidth);
+          return;
+        }
+        setSavedWorkspacePanelWidth(desiredDockWidth);
+      })();
+    },
+    [
+      chatWidth,
+      measureChatWidth,
+      measureRightDockWidth,
+      resizeNativeWindowBy,
+      setSavedWorkspacePanelWidth,
+      workspacePanelMaximized,
+      workspacePanelOpen,
+    ],
   );
 
   const startWorkspacePanelResize = useCallback(
@@ -458,14 +643,24 @@ export default function App() {
       if (!workspacePanelOpen) return;
       event.preventDefault();
       setWorkspacePanelResizing(true);
-      let nextWidth = effectiveWorkspacePanelWidth;
+      const startX = event.clientX;
+      const startChatWidth = chatWidth ?? measureChatWidth();
+      const startDockWidth = measureRightDockWidth();
+      const totalWidth = startChatWidth + startDockWidth;
+      let nextChatWidth = startChatWidth;
+      let nextDockWidth = startDockWidth;
       const onMove = (moveEvent: PointerEvent) => {
-        nextWidth = clampWorkspacePanelWidth(window.innerWidth - moveEvent.clientX, effectiveSidebarWidth, window.innerWidth);
-        setWorkspacePanelWidth(nextWidth);
+        const delta = moveEvent.clientX - startX;
+        const next = resolveRightDockSplit(totalWidth, startDockWidth - delta);
+        nextChatWidth = next.chatWidth;
+        nextDockWidth = next.dockWidth;
+        setChatWidth(nextChatWidth);
+        setRightDockWidth(nextDockWidth);
       };
       const onDone = () => {
-        setWorkspacePanelWidth(nextWidth);
-        saveWorkspacePanelWidth(nextWidth);
+        setChatWidth(nextChatWidth);
+        setRightDockWidth(nextDockWidth);
+        saveRightDockWidth(nextDockWidth);
         setWorkspacePanelResizing(false);
         window.removeEventListener("pointermove", onMove);
         window.removeEventListener("pointerup", onDone);
@@ -479,36 +674,85 @@ export default function App() {
       window.addEventListener("pointerup", onDone);
       window.addEventListener("pointercancel", onDone);
     },
-    [effectiveSidebarWidth, effectiveWorkspacePanelWidth, workspacePanelOpen],
+    [chatWidth, measureChatWidth, measureRightDockWidth, workspacePanelOpen],
   );
 
   const resizeWorkspacePanelWithKeyboard = useCallback(
     (event: KeyboardEvent<HTMLButtonElement>) => {
       if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
         event.preventDefault();
-        setSavedWorkspacePanelWidth(effectiveWorkspacePanelWidth + (event.key === "ArrowLeft" ? 16 : -16));
+        setSavedWorkspacePanelWidth(measureRightDockWidth() + (event.key === "ArrowLeft" ? 16 : -16));
       } else if (event.key === "Home") {
         event.preventDefault();
-        setSavedWorkspacePanelWidth(WORKSPACE_PANEL_MIN_WIDTH);
+        setSavedWorkspacePanelWidth(RIGHT_DOCK_MIN_WIDTH);
       } else if (event.key === "End") {
         event.preventDefault();
-        setSavedWorkspacePanelWidth(WORKSPACE_PANEL_MAX_WIDTH);
+        setSavedWorkspacePanelWidth(RIGHT_DOCK_MAX_WIDTH);
       }
     },
-    [effectiveWorkspacePanelWidth, setSavedWorkspacePanelWidth],
+    [measureRightDockWidth, setSavedWorkspacePanelWidth],
   );
+
+  const openWorkspacePanel = useCallback(
+    (mode: RightDockMode = rightDockMode) => {
+      setRightDockMode(mode);
+      if (mode === "context") {
+        setWorkspacePanelMaximized(false);
+      }
+      if (workspacePanelOpen) {
+        return;
+      }
+      if (rightDockTogglingRef.current) {
+        return;
+      }
+
+      const sequence = rightDockToggleSequenceRef.current + 1;
+      rightDockToggleSequenceRef.current = sequence;
+      const capturedChatWidth = measureChatWidth();
+      const targetWidth = mode === "context" ? Math.min(CONTEXT_PANEL_MAX_WIDTH, rightDockWidth) : rightDockWidth;
+      rightDockTogglingRef.current = true;
+      setChatWidth(capturedChatWidth);
+      setWorkspacePanelOpen(true);
+      void (async () => {
+        const resized = await resizeNativeWindowBy(targetWidth + RIGHT_DOCK_RESIZER_WIDTH);
+        if (rightDockToggleSequenceRef.current !== sequence) return;
+        if (!resized) {
+          setChatWidth(null);
+        }
+        rightDockTogglingRef.current = false;
+      })();
+    },
+    [measureChatWidth, resizeNativeWindowBy, rightDockMode, rightDockWidth, workspacePanelOpen],
+  );
+
+  const closeWorkspacePanel = useCallback(() => {
+    if (!workspacePanelOpen) {
+      return;
+    }
+    if (rightDockTogglingRef.current) {
+      return;
+    }
+
+    const sequence = rightDockToggleSequenceRef.current + 1;
+    rightDockToggleSequenceRef.current = sequence;
+    const dockWidth = measureRightDockWidth();
+    rightDockTogglingRef.current = true;
+    setWorkspacePanelMaximized(false);
+    void (async () => {
+      await resizeNativeWindowBy(-(dockWidth + RIGHT_DOCK_RESIZER_WIDTH));
+      if (rightDockToggleSequenceRef.current !== sequence) return;
+      setWorkspacePanelOpen(false);
+      setRightDockRenderWidth(null);
+      setChatWidth(null);
+      rightDockTogglingRef.current = false;
+    })();
+  }, [measureRightDockWidth, resizeNativeWindowBy, workspacePanelOpen]);
 
   const openRightDockMode = useCallback(
     (mode: RightDockMode) => {
-      setRightDockMode(mode);
-      setWorkspacePanelOpen(true);
-      if (mode !== "context") {
-        setSavedWorkspacePanelWidth(Math.max(effectiveWorkspacePanelWidth, WORKSPACE_PANEL_FILES_DEFAULT_WIDTH));
-      } else {
-        setWorkspacePanelMaximized(false);
-      }
+      openWorkspacePanel(mode);
     },
-    [effectiveWorkspacePanelWidth, setSavedWorkspacePanelWidth],
+    [openWorkspacePanel],
   );
 
   const layoutStyle = useMemo(
@@ -516,54 +760,157 @@ export default function App() {
       ({
         "--sidebar-expanded-width": `${sidebarWidth}px`,
         "--chat-min-width": `${CHAT_MIN_WIDTH}px`,
-        "--workspace-width": `${effectiveWorkspacePanelWidth}px`,
+        "--chat-width": `${chatWidth ?? CHAT_MIN_WIDTH}px`,
+        "--workspace-width": `${preferredWorkspacePanelWidth}px`,
       }) as CSSProperties,
-    [effectiveWorkspacePanelWidth, sidebarWidth],
+    [chatWidth, preferredWorkspacePanelWidth, sidebarWidth],
   );
 
   const setWorkspacePanel = useCallback((open: boolean) => {
-    setWorkspacePanelOpen(open);
-  }, []);
+    if (open) {
+      openWorkspacePanel();
+    } else {
+      closeWorkspacePanel();
+    }
+  }, [closeWorkspacePanel, openWorkspacePanel]);
 
   const toggleWorkspacePanel = useCallback(() => {
-    setWorkspacePanelOpen((open) => {
-      const next = !open;
-      return next;
-    });
-  }, []);
+    if (workspacePanelOpen) {
+      closeWorkspacePanel();
+      return;
+    }
+    openWorkspacePanel();
+  }, [closeWorkspacePanel, openWorkspacePanel, workspacePanelOpen]);
 
   const addWorkspaceTextToComposer = useCallback((text: string) => {
+    setActiveFileTabId(null);
     setComposerInsertRequest({ id: Date.now(), text });
   }, []);
 
+  const openWorkspaceFileTab = useCallback((path: string) => {
+    const workspaceRoot = state.meta?.cwd ?? "";
+    const workspaceName = workspaceDisplayName(workspaceRoot) || "Project";
+    const id = fileTabId(workspaceRoot, path);
+    setFileTabs((current) => {
+      if (current.some((tab) => tab.id === id)) return current;
+      return [
+        ...current,
+        {
+          id,
+          tabType: "file",
+          scope: "file",
+          workspaceRoot,
+          workspaceName,
+          topicId: "",
+          topicTitle: fileName(path),
+          filePath: path,
+          label: "File",
+          ready: true,
+          running: false,
+          active: false,
+          cwd: workspaceRoot,
+        },
+      ];
+    });
+    setTabOrderIds((current) => (current.includes(id) ? current : [...current, id]));
+    setActiveFileTabId(id);
+    setTabRevealSignal((signal) => signal + 1);
+  }, [state.meta?.cwd]);
+
   const handleTabChange = useCallback(async (id: string) => {
+    if (fileTabs.some((tab) => tab.id === id)) {
+      setActiveFileTabId(id);
+      setTabRevealSignal((signal) => signal + 1);
+      return;
+    }
+    setActiveFileTabId(null);
     await switchTab(id);
     await refreshTabMetas();
-  }, [refreshTabMetas, switchTab]);
+    setTabRevealSignal((signal) => signal + 1);
+  }, [fileTabs, refreshTabMetas, switchTab]);
 
   const handleTabClose = useCallback(async (id: string) => {
+    const closingFileTab = fileTabs.find((tab) => tab.id === id);
+    if (closingFileTab) {
+      const currentTabs = visibleTabs;
+      const closingIndex = currentTabs.findIndex((tab) => tab.id === id);
+      const remaining = currentTabs.filter((tab) => tab.id !== id);
+      setFileTabs((current) => current.filter((tab) => tab.id !== id));
+      setTabOrderIds((current) => current.filter((tabId) => tabId !== id));
+      if (activeFileTabId === id) {
+        const nextIndex = Math.min(Math.max(closingIndex, 0), remaining.length - 1);
+        const nextTab = remaining[nextIndex];
+        if (nextTab?.tabType === "file" || nextTab?.scope === "file") {
+          setActiveFileTabId(nextTab.id);
+        } else {
+          setActiveFileTabId(null);
+          if (nextTab?.id) await switchTab(nextTab.id);
+        }
+      }
+      setTabRevealSignal((signal) => signal + 1);
+      return;
+    }
+    setTabMetas((current) => {
+      if (current.length <= 1) return current;
+      const closingIndex = current.findIndex((tab) => tab.id === id);
+      if (closingIndex < 0) return current;
+      const closingTab = current[closingIndex];
+      const remaining = current.filter((tab) => tab.id !== id);
+      if (!closingTab.active && closingTab.id !== activeTabId) return remaining;
+      const nextIndex = Math.min(closingIndex, remaining.length - 1);
+      const nextActiveId = remaining[nextIndex]?.id;
+      return remaining.map((tab) => ({ ...tab, active: tab.id === nextActiveId }));
+    });
+    if (activeFileTabId === id) setActiveFileTabId(null);
     await closeTab(id);
     await refreshTabMetas();
-  }, [closeTab, refreshTabMetas]);
+    setTabRevealSignal((signal) => signal + 1);
+  }, [activeFileTabId, activeTabId, closeTab, fileTabs, refreshTabMetas, switchTab, visibleTabs]);
+
+  const handleTabsReorder = useCallback(async (ids: string[]) => {
+    setTabOrderIds(ids);
+    setTabMetas((current) => {
+      const byId = new Map(current.map((tab) => [tab.id, tab]));
+      const ordered = ids.map((id) => byId.get(id)).filter((tab): tab is TabMeta => Boolean(tab));
+      return ordered.length === current.length ? ordered : current;
+    });
+    setFileTabs((current) => {
+      const byId = new Map(current.map((tab) => [tab.id, tab]));
+      const ordered = ids.map((id) => byId.get(id)).filter((tab): tab is FileTabMeta => Boolean(tab));
+      return ordered.length === current.length ? ordered : current;
+    });
+    const sessionIds = ids.filter((id) => tabMetas.some((tab) => tab.id === id));
+    await reorderTabs(sessionIds);
+    await refreshTabMetas();
+    setTabRevealSignal((signal) => signal + 1);
+  }, [refreshTabMetas, reorderTabs, tabMetas]);
 
   const handleNewTab = useCallback(async () => {
+    setActiveFileTabId(null);
     await pickWorkspace();
     await refreshTabMetas();
+    setTabRevealSignal((signal) => signal + 1);
   }, [pickWorkspace, refreshTabMetas]);
 
   const handleOpenTopic = useCallback(async (scope: string, workspaceRoot: string, topicId: string) => {
+    setActiveFileTabId(null);
     if (scope === "global") {
       await openGlobalTab(topicId);
     } else {
       await openProjectTab(workspaceRoot, topicId);
     }
     await refreshTabMetas();
+    setTabRevealSignal((signal) => signal + 1);
   }, [openGlobalTab, openProjectTab, refreshTabMetas]);
 
-  // History drawer: opening fetches the saved-session list. Idle row clicks resume;
-  // running row clicks only preview through PreviewSession.
-  const openHistory = useCallback(async () => {
-    setHistView({ kind: "history", sessions: await listSessions() });
+  // History drawer: project menus can open a scoped saved-session list. Idle row
+  // clicks resume; running row clicks only preview through PreviewSession.
+  const openProjectHistory = useCallback(async (scope: "global" | "project", workspaceRoot: string) => {
+    const filter = { scope, workspaceRoot };
+    setHistView({ kind: "history", source: "scope", filter, sessions: sessionsForScope(await listSessions(), filter) });
+  }, [listSessions]);
+  const openAllHistory = useCallback(async () => {
+    setHistView({ kind: "history", source: "all", sessions: await listSessions() });
   }, [listSessions]);
   const openTrash = useCallback(async () => {
     setHistView({ kind: "trash", sessions: await listTrashedSessions() });
@@ -583,7 +930,13 @@ export default function App() {
       if (state.running) return;
       await deleteSession(path);
       const sessions = await listSessions();
-      setHistView((cur) => (cur === null ? null : cur.kind === "history" ? { ...cur, sessions } : cur));
+      setHistView((cur) =>
+        cur === null
+          ? null
+          : cur.kind === "history"
+            ? { ...cur, sessions: cur.source === "scope" ? sessionsForScope(sessions, cur.filter) : sessions }
+            : cur,
+      );
     },
     [state.running, deleteSession, listSessions],
   );
@@ -592,7 +945,13 @@ export default function App() {
       if (state.running) return;
       await renameSession(path, title);
       const sessions = await listSessions();
-      setHistView((cur) => (cur === null ? null : cur.kind === "history" ? { ...cur, sessions } : cur));
+      setHistView((cur) =>
+        cur === null
+          ? null
+          : cur.kind === "history"
+            ? { ...cur, sessions: cur.source === "scope" ? sessionsForScope(sessions, cur.filter) : sessions }
+            : cur,
+      );
     },
     [state.running, renameSession, listSessions],
   );
@@ -618,6 +977,7 @@ export default function App() {
   const switchFolder = useCallback(async (path?: string) => {
     const picked = path === undefined ? await pickWorkspace() : await switchWorkspace(path);
     if (picked) {
+      setProjectRevision((value) => value + 1);
       await refreshTabMetas();
     }
     return picked;
@@ -625,6 +985,12 @@ export default function App() {
 
   const removeWorkspace = useCallback(async (path: string) => {
     await app.RemoveWorkspace(path);
+    setProjectRevision((value) => value + 1);
+    await refreshTabMetas();
+  }, [refreshTabMetas]);
+
+  const refreshProjectsAndTabs = useCallback(async () => {
+    setProjectRevision((value) => value + 1);
     await refreshTabMetas();
   }, [refreshTabMetas]);
 
@@ -656,6 +1022,7 @@ export default function App() {
   const sidebarToggleTitle = sidebarCollapsed
       ? t("sidebar.expand")
       : t("sidebar.collapse");
+  const workspacePanelResetWidth = rightDockMode === "context" ? RIGHT_DOCK_CONTEXT_WIDTH : RIGHT_DOCK_DEFAULT_WIDTH;
 
   return (
     <div className="app">
@@ -665,6 +1032,7 @@ export default function App() {
           sidebarCollapsed ? "layout--sidebar-collapsed" : "",
           sidebarResizing ? "layout--resizing layout--sidebar-resizing" : "",
           workspacePanelOpen ? "layout--workspace-open" : "",
+          workspacePanelOpen && !workspacePanelMaximized && chatWidth !== null ? "layout--chat-sized" : "",
           workspacePanelOpen && workspacePanelMaximized ? "layout--workspace-maximized" : "",
           workspacePanelResizing ? "layout--resizing layout--workspace-resizing" : "",
         ]
@@ -725,7 +1093,10 @@ export default function App() {
               activeWorkspaceRoot={activeTab?.workspaceRoot}
               activeTopicId={activeTab?.topicId}
               currentWorkspaceName={workspaceDisplayName(state.meta?.cwd)}
-              onOpenTopic={(scope, workspaceRoot, topicId) => void handleOpenTopic(scope, workspaceRoot, topicId)}
+              onOpenTopic={handleOpenTopic}
+              onOpenProjectHistory={openProjectHistory}
+              onTopicsChanged={() => void refreshProjectsAndTabs()}
+              refreshSignal={projectRevision}
               onAddProject={async () => {
                 await switchFolder();
               }}
@@ -736,6 +1107,15 @@ export default function App() {
           </section>
 
           <nav className="sidebar__nav">
+            <Tooltip label={t("sidebar.allHistory")} fill>
+              <button
+                className="sidebar__navitem"
+                onClick={() => void openAllHistory()}
+              >
+                <History size={15} />
+                <span>{t("sidebar.allHistory")}</span>
+              </button>
+            </Tooltip>
             <Tooltip label={t("sidebar.trash")} fill>
               <button
                 className="sidebar__navitem"
@@ -783,17 +1163,27 @@ export default function App() {
           onDoubleClick={() => setExpandedSidebarWidth(SIDEBAR_DEFAULT_WIDTH)}
         />
 
-        <section className="chat-pane">
+        <section className="chat-pane" ref={chatPaneRef}>
           <header className="workspace-tabs-bar">
             <TabBar
-              tabs={tabMetas}
-              activeTabId={activeTabId}
+              tabs={visibleTabs}
+              activeTabId={visibleTabId}
+              revealActiveSignal={tabRevealSignal}
               onTabChange={(id) => void handleTabChange(id)}
               onTabClose={(id) => void handleTabClose(id)}
+              onTabsReorder={(ids) => void handleTabsReorder(ids)}
               onNewTab={() => void handleNewTab()}
             />
           </header>
 
+          {activeFileTab ? (
+            <FileTabPane
+              path={activeFileTab.filePath}
+              workspaceName={activeFileTab.workspaceName}
+              onAddToChat={addWorkspaceTextToComposer}
+            />
+          ) : (
+          <>
           <header className="topicbar">
             <div className="topicbar__identity">
               <div className="topicbar__title-row">
@@ -811,16 +1201,6 @@ export default function App() {
             </div>
             <div className="topicbar__spacer" />
             <div className="topicbar__actions">
-              <Tooltip label="固定会话">
-                <button className="topicbar__icon-btn">
-                  <Pin size={15} />
-                </button>
-              </Tooltip>
-              <Tooltip label={t("topbar.history")}>
-                <button className="topicbar__icon-btn" onClick={() => void openHistory()}>
-                  <History size={15} />
-                </button>
-              </Tooltip>
               <Tooltip label="更多">
                 <button className="topicbar__icon-btn">
                   <MoreHorizontal size={16} />
@@ -894,6 +1274,7 @@ export default function App() {
               turnStartAt={state.turnStartAt}
               turnTokens={state.turnTokens}
               retry={state.retry}
+              workspaceRefreshSignal={projectRevision}
             />
             <StatusBar
               context={state.context}
@@ -905,6 +1286,8 @@ export default function App() {
               cost={state.sessionCostUsd}
             />
           </footer>
+          </>
+          )}
         </section>
 
         {workspacePanelOpen && !workspacePanelMaximized && (
@@ -914,17 +1297,24 @@ export default function App() {
             role="separator"
             aria-orientation="vertical"
             aria-label="调整右侧面板宽度"
-            aria-valuemin={WORKSPACE_PANEL_MIN_WIDTH}
-            aria-valuemax={WORKSPACE_PANEL_MAX_WIDTH}
-            aria-valuenow={effectiveWorkspacePanelWidth}
+            aria-valuemin={RIGHT_DOCK_MIN_WIDTH}
+            aria-valuemax={Math.max(RIGHT_DOCK_MAX_WIDTH, workspacePanelRenderWidth)}
+            aria-valuenow={workspacePanelRenderWidth}
             onPointerDown={startWorkspacePanelResize}
             onKeyDown={resizeWorkspacePanelWithKeyboard}
-            onDoubleClick={() => setSavedWorkspacePanelWidth(WORKSPACE_PANEL_DEFAULT_WIDTH)}
+            onDoubleClick={() => setSavedWorkspacePanelWidth(workspacePanelResetWidth)}
           />
         )}
 
         {workspacePanelOpen && (
-          <aside className={`workbench-dock workbench-dock--${rightDockMode}`} aria-label="右侧工作台">
+          <aside
+            className={[
+              "workbench-dock",
+              `workbench-dock--${rightDockMode}`,
+            ].join(" ")}
+            ref={workbenchDockRef}
+            aria-label="右侧工作台"
+          >
             <div className="workbench-dock__tools">
               <div className="workbench-dock__tabs" role="tablist" aria-label="右侧工作台视图">
                 {SHOW_CONTEXT_DOCK && (
@@ -985,10 +1375,12 @@ export default function App() {
                   open={workspacePanelOpen}
                   cwd={state.meta?.cwd}
                   maximized={workspacePanelMaximized}
-                  panelWidth={effectiveWorkspacePanelWidth}
+                  panelWidth={workspacePanelRenderWidth}
                   onClose={() => setWorkspacePanel(false)}
                   onToggleMaximized={() => setWorkspacePanelMaximized((value) => !value)}
                   onAddToChat={addWorkspaceTextToComposer}
+                  onOpenFileTab={openWorkspaceFileTab}
+                  onRequestPanelWidth={ensureWorkspacePanelWidth}
                   refreshKey={dockRefreshKey}
                   initialViewMode={rightDockMode === "changed" ? "changed" : "files"}
                   showViewTabs={false}

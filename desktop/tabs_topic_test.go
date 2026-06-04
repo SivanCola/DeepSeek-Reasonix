@@ -87,6 +87,307 @@ func TestRenameProjectUpdatesSidebarTitle(t *testing.T) {
 	}
 }
 
+func TestListWorkspacesUsesProjectRegistryTitles(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+
+	projectRoot := t.TempDir()
+	if err := addProject(projectRoot, "Client API"); err != nil {
+		t.Fatalf("add project: %v", err)
+	}
+
+	workspaces := NewApp().ListWorkspaces()
+	if len(workspaces) != 1 {
+		t.Fatalf("workspaces len = %d, want 1: %+v", len(workspaces), workspaces)
+	}
+	if got := workspaces[0].Path; got != projectRoot {
+		t.Fatalf("workspace path = %q, want %q", got, projectRoot)
+	}
+	if got := workspaces[0].Name; got != "Client API" {
+		t.Fatalf("workspace name = %q, want Client API", got)
+	}
+}
+
+func TestListWorkspacesMigratesLegacyWorkspaceList(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+
+	legacyRoot := t.TempDir()
+	rememberWorkspace(legacyRoot)
+
+	workspaces := NewApp().ListWorkspaces()
+	if len(workspaces) != 1 {
+		t.Fatalf("workspaces len = %d, want 1: %+v", len(workspaces), workspaces)
+	}
+	if got := workspaces[0].Path; got != legacyRoot {
+		t.Fatalf("workspace path = %q, want %q", got, legacyRoot)
+	}
+	projects := loadProjectsFile().Projects
+	if len(projects) != 1 || projects[0].Root != legacyRoot {
+		t.Fatalf("legacy workspace was not migrated into projects: %+v", projects)
+	}
+}
+
+func TestReorderProjectsPersistsSidebarAndWorkspaceOrder(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+
+	first := t.TempDir()
+	second := t.TempDir()
+	third := t.TempDir()
+	if err := addProject(first, "First"); err != nil {
+		t.Fatalf("add first project: %v", err)
+	}
+	if err := addProject(second, "Second"); err != nil {
+		t.Fatalf("add second project: %v", err)
+	}
+	if err := addProject(third, "Third"); err != nil {
+		t.Fatalf("add third project: %v", err)
+	}
+
+	app := NewApp()
+	if err := app.ReorderProjects([]string{third, first, second}); err != nil {
+		t.Fatalf("ReorderProjects: %v", err)
+	}
+
+	nodes := app.ListProjectTree()
+	if len(nodes) != 3 {
+		t.Fatalf("project tree len = %d, want 3: %+v", len(nodes), nodes)
+	}
+	if got := []string{nodes[0].Root, nodes[1].Root, nodes[2].Root}; got[0] != third || got[1] != first || got[2] != second {
+		t.Fatalf("project tree order = %v, want %v", got, []string{third, first, second})
+	}
+	workspaces := app.ListWorkspaces()
+	if len(workspaces) != 3 {
+		t.Fatalf("workspaces len = %d, want 3: %+v", len(workspaces), workspaces)
+	}
+	if got := []string{workspaces[0].Path, workspaces[1].Path, workspaces[2].Path}; got[0] != third || got[1] != first || got[2] != second {
+		t.Fatalf("workspace order = %v, want %v", got, []string{third, first, second})
+	}
+}
+
+func TestReorderProjectsRejectsInvalidOrder(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+
+	first := t.TempDir()
+	second := t.TempDir()
+	if err := addProject(first, "First"); err != nil {
+		t.Fatalf("add first project: %v", err)
+	}
+	if err := addProject(second, "Second"); err != nil {
+		t.Fatalf("add second project: %v", err)
+	}
+	app := NewApp()
+	for name, order := range map[string][]string{
+		"missing":   {first},
+		"unknown":   {first, filepath.Join(t.TempDir(), "missing")},
+		"duplicate": {first, first},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := app.ReorderProjects(order); err == nil {
+				t.Fatalf("ReorderProjects(%v) succeeded, want error", order)
+			}
+		})
+	}
+
+	nodes := app.ListProjectTree()
+	if got := []string{nodes[0].Root, nodes[1].Root}; got[0] != first || got[1] != second {
+		t.Fatalf("project tree order changed after invalid reorder: %v", got)
+	}
+}
+
+func TestRemoveWorkspaceUsesSharedProjectRegistryForCurrentProject(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+
+	projectRoot := t.TempDir()
+	if err := addProject(projectRoot, "Current Project"); err != nil {
+		t.Fatalf("add project: %v", err)
+	}
+	app := NewApp()
+	tab := app.createTabEntryWithID("project", projectRoot, "topic_current", "tab_current")
+	app.tabs[tab.ID] = tab
+	app.tabOrder = []string{tab.ID}
+	app.activeTabID = tab.ID
+
+	if err := app.RemoveWorkspace(projectRoot); err != nil {
+		t.Fatalf("remove current project: %v", err)
+	}
+	if got := app.ListWorkspaces(); len(got) != 0 {
+		t.Fatalf("workspaces after remove = %+v, want empty", got)
+	}
+	if got := app.ListProjectTree(); len(got) != 0 {
+		t.Fatalf("project tree after remove = %+v, want empty", got)
+	}
+}
+
+func TestRestoredProjectTabUsesStoredTopicTitle(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+
+	projectRoot := t.TempDir()
+	topicID := "topic_stored_title"
+	if err := addProject(projectRoot, ""); err != nil {
+		t.Fatalf("add project: %v", err)
+	}
+	if err := setTopicTitle(projectRoot, topicID, "你是谁"); err != nil {
+		t.Fatalf("set topic title: %v", err)
+	}
+
+	app := NewApp()
+	tab := app.createTabEntryWithID("project", projectRoot, topicID, "tab1")
+	app.tabs[tab.ID] = tab
+	app.tabOrder = []string{tab.ID}
+	app.activeTabID = tab.ID
+
+	tabs := app.ListTabs()
+	if len(tabs) != 1 {
+		t.Fatalf("tabs len = %d, want 1", len(tabs))
+	}
+	if got := tabs[0].TopicTitle; got != "你是谁" {
+		t.Fatalf("tab title = %q, want 你是谁", got)
+	}
+	nodes := app.ListProjectTree()
+	if len(nodes) != 1 || len(nodes[0].Children) != 1 {
+		t.Fatalf("project tree = %#v, want one project with one topic", nodes)
+	}
+	if got := nodes[0].Children[0].Label; got != tabs[0].TopicTitle {
+		t.Fatalf("tree title = %q, want same as tab title %q", got, tabs[0].TopicTitle)
+	}
+}
+
+func TestUntitledProjectTopicUsesSameFallbackEverywhere(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+
+	projectRoot := t.TempDir()
+	topicID := "topic_without_title"
+	if err := saveProjectsFile(desktopProjectFile{Projects: []desktopProject{{
+		Root:   projectRoot,
+		Topics: []string{topicID},
+	}}}); err != nil {
+		t.Fatalf("save projects: %v", err)
+	}
+
+	app := NewApp()
+	tab := app.createTabEntryWithID("project", projectRoot, topicID, "tab1")
+	app.tabs[tab.ID] = tab
+	app.tabOrder = []string{tab.ID}
+	app.activeTabID = tab.ID
+
+	tabs := app.ListTabs()
+	if len(tabs) != 1 {
+		t.Fatalf("tabs len = %d, want 1", len(tabs))
+	}
+	if got := tabs[0].TopicTitle; got != defaultTopicTitle {
+		t.Fatalf("tab title = %q, want %q", got, defaultTopicTitle)
+	}
+	nodes := app.ListProjectTree()
+	if len(nodes) != 1 || len(nodes[0].Children) != 1 {
+		t.Fatalf("project tree = %#v, want one project with one topic", nodes)
+	}
+	if got := nodes[0].Children[0].Label; got != defaultTopicTitle {
+		t.Fatalf("tree title = %q, want %q", got, defaultTopicTitle)
+	}
+}
+
+func TestCreateTopicDefaultsToAutoNewSessionTitle(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+
+	projectRoot := t.TempDir()
+	topic, err := NewApp().CreateTopic("project", projectRoot, "")
+	if err != nil {
+		t.Fatalf("create topic: %v", err)
+	}
+	if got := topic.Title; got != defaultTopicTitle {
+		t.Fatalf("topic title = %q, want %q", got, defaultTopicTitle)
+	}
+	if got := loadTopicTitle(projectRoot, topic.ID); got != defaultTopicTitle {
+		t.Fatalf("stored title = %q, want %q", got, defaultTopicTitle)
+	}
+	if got := loadTopicTitleSource(projectRoot, topic.ID); got != topicTitleSourceAuto {
+		t.Fatalf("title source = %q, want auto", got)
+	}
+}
+
+func TestRenameTopicLocksTitleManual(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+
+	projectRoot := t.TempDir()
+	app := NewApp()
+	topic, err := app.CreateTopic("project", projectRoot, "")
+	if err != nil {
+		t.Fatalf("create topic: %v", err)
+	}
+	if err := app.RenameTopic(topic.ID, "手动标题"); err != nil {
+		t.Fatalf("rename topic: %v", err)
+	}
+	if got := loadTopicTitle(projectRoot, topic.ID); got != "手动标题" {
+		t.Fatalf("stored title = %q, want 手动标题", got)
+	}
+	if got := loadTopicTitleSource(projectRoot, topic.ID); got != topicTitleSourceManual {
+		t.Fatalf("title source = %q, want manual", got)
+	}
+}
+
+func TestAutoTitleTopicFromFirstUserMessage(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+
+	projectRoot := t.TempDir()
+	topic, err := NewApp().CreateTopic("project", projectRoot, "")
+	if err != nil {
+		t.Fatalf("create topic: %v", err)
+	}
+	sessionPath := filepath.Join(t.TempDir(), "session.jsonl")
+	if err := os.WriteFile(sessionPath, []byte(`{"role":"user","content":"讲讲这个代码库的架构"}`+"\n"), 0o644); err != nil {
+		t.Fatalf("write session: %v", err)
+	}
+
+	title, updated := autoTitleTopicFromSession(projectRoot, topic.ID, sessionPath)
+	if !updated {
+		t.Fatal("auto title should update")
+	}
+	if title != "讲讲这个代码库的架构" {
+		t.Fatalf("generated title = %q", title)
+	}
+	if got := loadTopicTitle(projectRoot, topic.ID); got != title {
+		t.Fatalf("stored title = %q, want %q", got, title)
+	}
+	if got := loadTopicTitleSource(projectRoot, topic.ID); got != topicTitleSourceAuto {
+		t.Fatalf("title source = %q, want auto", got)
+	}
+}
+
+func TestAutoTitleDoesNotOverrideManualTopicTitle(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+
+	projectRoot := t.TempDir()
+	app := NewApp()
+	topic, err := app.CreateTopic("project", projectRoot, "")
+	if err != nil {
+		t.Fatalf("create topic: %v", err)
+	}
+	if err := app.RenameTopic(topic.ID, "手动标题"); err != nil {
+		t.Fatalf("rename topic: %v", err)
+	}
+	sessionPath := filepath.Join(t.TempDir(), "session.jsonl")
+	if err := os.WriteFile(sessionPath, []byte(`{"role":"user","content":"讲讲这个代码库的架构"}`+"\n"), 0o644); err != nil {
+		t.Fatalf("write session: %v", err)
+	}
+
+	if title, updated := autoTitleTopicFromSession(projectRoot, topic.ID, sessionPath); updated || title != "" {
+		t.Fatalf("manual title should not auto-update, title=%q updated=%v", title, updated)
+	}
+	if got := loadTopicTitle(projectRoot, topic.ID); got != "手动标题" {
+		t.Fatalf("stored title = %q, want 手动标题", got)
+	}
+}
+
 func TestTrashTopicMovesRelatedSessionsToTrash(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())

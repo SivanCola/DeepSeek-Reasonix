@@ -164,10 +164,13 @@ export interface AppBindings {
   OpenProjectTab(workspaceRoot: string, topicID: string): Promise<TabMeta>;
   OpenGlobalTab(topicID: string): Promise<TabMeta>;
   SetActiveTab(tabID: string): Promise<void>;
+  ReorderTabs(tabIDs: string[]): Promise<void>;
   CloseTab(tabID: string): Promise<void>;
   // Project tree (desktop/tabs.go).
   ListProjectTree(): Promise<ProjectNode[]>;
   RenameProject(workspaceRoot: string, title: string): Promise<void>;
+  SetProjectColor(workspaceRoot: string, color: string): Promise<void>;
+  ReorderProjects(workspaceRoots: string[]): Promise<void>;
   CreateTopic(scope: string, workspaceRoot: string, title: string): Promise<TopicMeta>;
   RenameTopic(topicID: string, title: string): Promise<void>;
   DeleteTopic(topicID: string): Promise<void>;
@@ -253,6 +256,13 @@ export function onReady(cb: () => void): () => void {
   return () => {};
 }
 
+export function onProjectTreeChanged(cb: () => void): () => void {
+  if (realApp() && typeof window !== "undefined" && window.runtime) {
+    return window.runtime.EventsOn("project-tree:changed", () => cb());
+  }
+  return () => {};
+}
+
 // app proxies each call to the live binding (or the dev mock only when truly
 // outside the shell), so a late-injected window.go is picked up transparently.
 export const app: AppBindings = new Proxy({} as AppBindings, {
@@ -299,6 +309,10 @@ function emitUpdater(p: UpdateProgress) {
 
 function delay(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
+}
+
+function baseName(path: string): string {
+  return path.replace(/[/\\]+$/, "").split(/[/\\]/).filter(Boolean).pop() ?? path;
 }
 
 function makeMockApp(): AppBindings {
@@ -389,6 +403,15 @@ function makeMockApp(): AppBindings {
   const mockSwitchWorkspace = async (path: string) => {
     cwd = path || "~";
     workspaces = [cwd, ...workspaces.filter((p) => p !== cwd)].slice(0, 12);
+    if (!mockProjectTree.some((node) => node.kind === "project" && node.root === cwd)) {
+      mockProjectTree.unshift({
+        key: `project_${cwd}`,
+        kind: "project",
+        label: baseName(cwd),
+        root: cwd,
+        children: [],
+      });
+    }
     return cwd;
   };
   // Mutable so delete/rename are observable in browser dev.
@@ -426,10 +449,11 @@ function makeMockApp(): AppBindings {
       kind: "project",
       label: "joyquant-db",
       root: "~/projects/joyquant-db",
+      projectColor: "blue",
       children: [
-        { key: "topic_dev_standard", kind: "topic", label: "● 00 制定项目开发规范", root: "~/projects/joyquant-db", topicId: "topic_dev_standard" },
-        { key: "topic_db_maint", kind: "topic", label: "01 JoyQuant DB项目维护", root: "~/projects/joyquant-db", topicId: "topic_db_maint" },
-        { key: "topic_env", kind: "topic", label: "项目环境uv和Python运行问题", root: "~/projects/joyquant-db", topicId: "topic_env" },
+        { key: "topic_dev_standard", kind: "topic", label: "● 00 制定项目开发规范", root: "~/projects/joyquant-db", topicId: "topic_dev_standard", projectColor: "blue" },
+        { key: "topic_db_maint", kind: "topic", label: "01 JoyQuant DB项目维护", root: "~/projects/joyquant-db", topicId: "topic_db_maint", projectColor: "blue" },
+        { key: "topic_env", kind: "topic", label: "项目环境uv和Python运行问题", root: "~/projects/joyquant-db", topicId: "topic_env", projectColor: "blue" },
       ],
     },
     {
@@ -437,12 +461,13 @@ function makeMockApp(): AppBindings {
       kind: "project",
       label: "joyquant-sys",
       root: "~/projects/joyquant-sys",
+      projectColor: "purple",
       children: [
-        { key: "topic_p3b_pd", kind: "topic", label: "● 20260523 p3b P&D", root: "~/projects/joyquant-sys", topicId: "topic_p3b_pd" },
-        { key: "topic_p3a_pd", kind: "topic", label: "20260521 p3a P&D", root: "~/projects/joyquant-sys", topicId: "topic_p3a_pd" },
-        { key: "topic_hotfix", kind: "topic", label: "20260522 post-p3-hotfix P&D", root: "~/projects/joyquant-sys", topicId: "topic_hotfix" },
-        { key: "topic_sys_coord", kind: "topic", label: "01 JoyQuant-SYS 项目总协调", root: "~/projects/joyquant-sys", topicId: "topic_sys_coord" },
-        { key: "topic_sys_standard", kind: "topic", label: "00 制定项目开发规范", root: "~/projects/joyquant-sys", topicId: "topic_sys_standard" },
+        { key: "topic_p3b_pd", kind: "topic", label: "● 20260523 p3b P&D", root: "~/projects/joyquant-sys", topicId: "topic_p3b_pd", projectColor: "purple" },
+        { key: "topic_p3a_pd", kind: "topic", label: "20260521 p3a P&D", root: "~/projects/joyquant-sys", topicId: "topic_p3a_pd", projectColor: "purple" },
+        { key: "topic_hotfix", kind: "topic", label: "20260522 post-p3-hotfix P&D", root: "~/projects/joyquant-sys", topicId: "topic_hotfix", projectColor: "purple" },
+        { key: "topic_sys_coord", kind: "topic", label: "01 JoyQuant-SYS 项目总协调", root: "~/projects/joyquant-sys", topicId: "topic_sys_coord", projectColor: "purple" },
+        { key: "topic_sys_standard", kind: "topic", label: "00 制定项目开发规范", root: "~/projects/joyquant-sys", topicId: "topic_sys_standard", projectColor: "purple" },
       ],
     },
     {
@@ -683,11 +708,13 @@ function makeMockApp(): AppBindings {
       if (s) s.title = title.trim() || undefined;
     },
     async ListWorkspaces() {
-      return workspaces.map((path) => ({
-        path,
-        name: path.split("/").filter(Boolean).pop() ?? path,
-        current: path === cwd,
-      }));
+      return mockProjectTree
+        .filter((node) => node.kind === "project" && node.root)
+        .map((node) => ({
+          path: node.root!,
+          name: node.label || baseName(node.root!),
+          current: node.root === cwd,
+        }));
     },
     async PickWorkspace() {
       // Browser dev has no native dialog; simulate picking a folder and re-root so
@@ -1131,6 +1158,7 @@ function makeMockApp(): AppBindings {
           workspaceName: "joyquant-db",
           topicId: "topic_dev_standard",
           topicTitle: "00 制定项目开发规范",
+          projectColor: "blue",
           label: "DeepSeek-R1",
           ready: true,
           running: false,
@@ -1144,6 +1172,7 @@ function makeMockApp(): AppBindings {
           workspaceName: "joyquant-sys",
           topicId: "topic_p3b_pd",
           topicTitle: "p3b P&D",
+          projectColor: "purple",
           label: "DeepSeek-R1",
           ready: true,
           running: false,
@@ -1166,13 +1195,15 @@ function makeMockApp(): AppBindings {
       ];
     },
     async OpenProjectTab(workspaceRoot: string, _topicID: string) {
+      const topic = findMockTopic(_topicID);
       return {
         id: "tab_" + Date.now(),
         scope: "project",
         workspaceRoot,
         workspaceName: workspaceRoot.split("/").filter(Boolean).pop() ?? workspaceRoot,
         topicId: _topicID,
-        topicTitle: "New topic",
+        topicTitle: topic?.label || "新的会话",
+        projectColor: mockProjectTree.find((node) => node.root === workspaceRoot)?.projectColor,
         label: "deepseek-v4-flash",
         ready: true,
         running: false,
@@ -1196,6 +1227,7 @@ function makeMockApp(): AppBindings {
       };
     },
     async SetActiveTab(_tabID: string) {},
+    async ReorderTabs(_tabIDs: string[]) {},
     async CloseTab(_tabID: string) {},
     async ListProjectTree() {
       return cloneProjectTree();
@@ -1206,8 +1238,24 @@ function makeMockApp(): AppBindings {
         : mockProjectTree.find((item) => item.kind === "global_folder");
       if (node) node.label = title.trim() || (node.kind === "global_folder" ? "Global" : node.label);
     },
+    async SetProjectColor(workspaceRoot: string, color: string) {
+      const node = mockProjectTree.find((item) => item.root === workspaceRoot);
+      if (!node) return;
+      node.projectColor = color || undefined;
+      for (const child of projectChildren(node)) child.projectColor = node.projectColor;
+    },
+    async ReorderProjects(workspaceRoots: string[]) {
+      const projects = mockProjectTree.filter((node) => node.kind === "project");
+      if (workspaceRoots.length !== projects.length) return;
+      const byRoot = new Map(projects.map((node) => [node.root, node]));
+      const ordered = workspaceRoots.map((root) => byRoot.get(root)).filter((node): node is ProjectNode => Boolean(node));
+      if (ordered.length !== projects.length) return;
+      const globals = mockProjectTree.filter((node) => node.kind !== "project");
+      mockProjectTree.splice(0, mockProjectTree.length, ...globals, ...ordered);
+    },
     async CreateTopic(_scope: string, _workspaceRoot: string, title: string) {
       const id = "topic_" + Date.now();
+      const topicTitle = title.trim() || "新的会话";
       const parent = _scope === "global"
         ? mockProjectTree.find((node) => node.kind === "global_folder")
         : mockProjectTree.find((node) => node.root === _workspaceRoot);
@@ -1216,12 +1264,13 @@ function makeMockApp(): AppBindings {
         parent.children = [...projectChildren(parent), {
           key: parent.kind === "global_folder" ? "global_topic_" + id : "topic_" + id,
           kind: global ? "global_topic" : "topic",
-          label: title,
+          label: topicTitle,
           root: parent.root,
           topicId: id,
+          projectColor: parent.projectColor,
         }];
       }
-      return { id, title, createdAt: Date.now() };
+      return { id, title: topicTitle, createdAt: Date.now() };
     },
     async RenameTopic(topicID: string, title: string) {
       const topic = findMockTopic(topicID);

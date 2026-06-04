@@ -106,11 +106,14 @@ export interface WireEvent {
 // Tab management types (desktop/tabs.go).
 export interface TabMeta {
   id: string;
+  tabType?: "session" | "file";
   scope: string;
   workspaceRoot: string;
   workspaceName: string;
   topicId: string;
   topicTitle: string;
+  filePath?: string;
+  projectColor?: string;
   label: string;
   ready: boolean;
   running: boolean;
@@ -125,6 +128,7 @@ export interface ProjectNode {
   label: string;
   root?: string;
   topicId?: string;
+  projectColor?: string;
   turns?: number;
   lastActivityAt?: number;
   open?: boolean;

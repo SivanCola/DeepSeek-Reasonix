@@ -9,15 +9,14 @@ import type {
 import {
   ChevronDown,
   ChevronRight,
-  Columns2,
   FileText,
   Folder,
   GitBranch,
   Maximize2,
   MessageSquarePlus,
-  Minus,
   Minimize2,
-  PanelRightClose,
+  PanelLeftClose,
+  PanelLeftOpen,
   Plus,
   RefreshCw,
   Search,
@@ -34,10 +33,13 @@ import { FloatingMenu, FloatingMenuItems } from "./FloatingMenu";
 import { Markdown } from "./Markdown";
 import { Tooltip } from "./Tooltip";
 
-const WORKSPACE_TREE_MIN_WIDTH = 220;
-const WORKSPACE_TREE_DEFAULT_WIDTH = WORKSPACE_TREE_MIN_WIDTH;
-const WORKSPACE_TREE_MAX_WIDTH = 420;
-const WORKSPACE_PREVIEW_MIN_WIDTH = 420;
+const WORKSPACE_TREE_MIN_WIDTH = 208;
+const WORKSPACE_TREE_DEFAULT_WIDTH = 240;
+const WORKSPACE_TREE_MAX_WIDTH = 340;
+const WORKSPACE_PREVIEW_MIN_WIDTH = 360;
+const WORKSPACE_PREVIEW_TARGET_WIDTH = 480;
+const WORKSPACE_DUAL_PANEL_MIN_WIDTH = WORKSPACE_TREE_MIN_WIDTH + WORKSPACE_PREVIEW_MIN_WIDTH;
+const WORKSPACE_DUAL_PANEL_TARGET_WIDTH = WORKSPACE_TREE_DEFAULT_WIDTH + WORKSPACE_PREVIEW_TARGET_WIDTH;
 const WORKSPACE_CONTEXT_MENU_FILE_HEIGHT = 92;
 const WORKSPACE_CONTEXT_MENU_REF_HEIGHT = 48;
 
@@ -156,6 +158,8 @@ export function WorkspacePanel({
   onToggleMaximized,
   onPreviewModeChange,
   onAddToChat,
+  onOpenFileTab,
+  onRequestPanelWidth,
   refreshKey,
   initialViewMode = "files",
   showViewTabs = true,
@@ -168,6 +172,8 @@ export function WorkspacePanel({
   onToggleMaximized: () => void;
   onPreviewModeChange?: (active: boolean) => void;
   onAddToChat?: (text: string) => void;
+  onOpenFileTab?: (path: string) => void;
+  onRequestPanelWidth?: (width: number) => void;
   refreshKey?: number;
   initialViewMode?: "files" | "changed";
   showViewTabs?: boolean;
@@ -221,6 +227,17 @@ export function WorkspacePanel({
 
   const selectFile = useCallback(
     (path: string) => {
+      if (onOpenFileTab) {
+        onOpenFileTab(path);
+        setFilter("");
+        const dirs = parentDirs(path);
+        setOpenDirs((prev) => new Set([...Array.from(prev), ...dirs]));
+        dirs.forEach((dir) => {
+          if (!entriesByDir[dir]) void loadDir(dir);
+        });
+        return;
+      }
+      onRequestPanelWidth?.(WORKSPACE_DUAL_PANEL_TARGET_WIDTH);
       setSelectedPath(path);
       setFilter("");
       setOpenTabs((tabs) => (tabs.includes(path) ? tabs : [...tabs, path]));
@@ -230,7 +247,7 @@ export function WorkspacePanel({
         if (!entriesByDir[dir]) void loadDir(dir);
       });
     },
-    [entriesByDir, loadDir],
+    [entriesByDir, loadDir, onOpenFileTab, onRequestPanelWidth],
   );
 
   useEffect(() => {
@@ -388,12 +405,19 @@ export function WorkspacePanel({
 
   const effectiveTreeWidth = useMemo(() => clampWorkspaceTreeWidth(treeWidth, panelWidth), [panelWidth, treeWidth]);
   const previewVisible = openTabs.length > 0 || selectedPath !== null;
+  const selectedFileVisible = selectedPath !== null;
+  const panelCanFitDual = !selectedFileVisible || panelWidth === undefined || panelWidth >= WORKSPACE_DUAL_PANEL_MIN_WIDTH;
+  const actualTreeVisible = treeVisible && panelCanFitDual;
   const previewModeActive = open && previewVisible;
   const embeddedDockMode = !showViewTabs;
   const showFileTools = showViewTabs || previewVisible;
 
   const panelStyle = useMemo(
-    () => ({ "--workspace-tree-width": `${effectiveTreeWidth}px` }) as CSSProperties,
+    () =>
+      ({
+        "--workspace-tree-width": `${effectiveTreeWidth}px`,
+        "--workspace-preview-min-width": `${WORKSPACE_PREVIEW_MIN_WIDTH}px`,
+      }) as CSSProperties,
     [effectiveTreeWidth],
   );
 
@@ -431,7 +455,7 @@ export function WorkspacePanel({
       setTreeResizing(true);
       let nextWidth = effectiveTreeWidth;
       const onMove = (moveEvent: PointerEvent) => {
-        nextWidth = clampWorkspaceTreeWidth(rect.right - moveEvent.clientX, rect.width);
+        nextWidth = clampWorkspaceTreeWidth(moveEvent.clientX - rect.left, rect.width);
         setTreeWidth(nextWidth);
       };
       const onDone = () => {
@@ -457,7 +481,7 @@ export function WorkspacePanel({
     (event: KeyboardEvent<HTMLButtonElement>) => {
       if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
         event.preventDefault();
-        setSavedTreeWidth(effectiveTreeWidth + (event.key === "ArrowLeft" ? 16 : -16));
+        setSavedTreeWidth(effectiveTreeWidth + (event.key === "ArrowRight" ? 16 : -16));
       } else if (event.key === "Home") {
         event.preventDefault();
         setSavedTreeWidth(WORKSPACE_TREE_MIN_WIDTH);
@@ -576,32 +600,31 @@ export function WorkspacePanel({
       const isOpen = openDirs.has(path);
       const active = selectedPath === path;
       const row = (
-        <Tooltip key={path} label={path} fill>
-          <button
-            className={`workspace-tree__row${active ? " workspace-tree__row--active" : ""}`}
-            draggable
-            onDragStart={(event) => startTreeDrag(event, path, entry.isDir)}
-            onClick={() => (entry.isDir ? toggleDir(path) : selectFile(path))}
-            onContextMenu={(event) => openTreeMenu(event, path, entry.isDir)}
-            style={{ paddingLeft: 8 + depth * 14 }}
-          >
-            {entry.isDir ? (
-              isOpen ? (
-                <ChevronDown size={13} className="workspace-tree__chev" />
-              ) : (
-                <ChevronRight size={13} className="workspace-tree__chev" />
-              )
+        <button
+          key={path}
+          className={`workspace-tree__row${active ? " workspace-tree__row--active" : ""}`}
+          draggable
+          onDragStart={(event) => startTreeDrag(event, path, entry.isDir)}
+          onClick={() => (entry.isDir ? toggleDir(path) : selectFile(path))}
+          onContextMenu={(event) => openTreeMenu(event, path, entry.isDir)}
+          style={{ paddingLeft: 8 + depth * 14 }}
+        >
+          {entry.isDir ? (
+            isOpen ? (
+              <ChevronDown size={13} className="workspace-tree__chev" />
             ) : (
-              <span className="workspace-tree__chev" />
-            )}
-            {entry.isDir ? (
-              <Folder size={14} className="workspace-tree__icon workspace-tree__icon--dir" />
-            ) : (
-              <FileText size={14} className="workspace-tree__icon" />
-            )}
-            <span className="workspace-tree__name">{entry.name}</span>
-          </button>
-        </Tooltip>
+              <ChevronRight size={13} className="workspace-tree__chev" />
+            )
+          ) : (
+            <span className="workspace-tree__chev" />
+          )}
+          {entry.isDir ? (
+            <Folder size={14} className="workspace-tree__icon workspace-tree__icon--dir" />
+          ) : (
+            <FileText size={14} className="workspace-tree__icon" />
+          )}
+          <span className="workspace-tree__name">{entry.name}</span>
+        </button>
       );
       if (!entry.isDir || !isOpen) return [row];
       return [row, ...renderRows(path, depth + 1)];
@@ -613,7 +636,7 @@ export function WorkspacePanel({
   return (
     <aside
       ref={panelRef}
-      className={`workspace-panel${embeddedDockMode ? " workspace-panel--embedded" : ""}${treeVisible ? "" : " workspace-panel--tree-hidden"}${previewVisible ? "" : " workspace-panel--preview-hidden"}${treeResizing ? " workspace-panel--tree-resizing" : ""}`}
+      className={`workspace-panel${embeddedDockMode ? " workspace-panel--embedded" : ""}${actualTreeVisible ? "" : " workspace-panel--tree-hidden"}${previewVisible ? "" : " workspace-panel--preview-hidden"}${treeResizing ? " workspace-panel--tree-resizing" : ""}`}
       aria-label={t("workspace.title")}
       style={panelStyle}
     >
@@ -663,19 +686,6 @@ export function WorkspacePanel({
                 {maximized ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
               </button>
             </Tooltip>
-            <Tooltip label={t("workspace.minimize")}>
-              <button className="workspace-iconbtn" onClick={onClose}>
-                <Minus size={15} />
-              </button>
-            </Tooltip>
-            <Tooltip label={treeVisible ? t("workspace.hideTree") : t("workspace.showTree")}>
-              <button
-                className="workspace-iconbtn workspace-iconbtn--on"
-                onClick={() => setTreeVisible((value) => !value)}
-              >
-                {treeVisible ? <PanelRightClose size={15} /> : <Columns2 size={15} />}
-              </button>
-            </Tooltip>
           </div>
         </header>
 
@@ -686,6 +696,7 @@ export function WorkspacePanel({
               onClick={() => {
                 setFilter("");
                 setTreeVisible(true);
+                onRequestPanelWidth?.(WORKSPACE_DUAL_PANEL_TARGET_WIDTH);
                 setOpenDirs((prev) => new Set([...Array.from(prev), ""]));
               }}
             >
@@ -704,6 +715,7 @@ export function WorkspacePanel({
                     onClick={() => {
                       if (isLast) return;
                       setTreeVisible(true);
+                      onRequestPanelWidth?.(WORKSPACE_DUAL_PANEL_TARGET_WIDTH);
                       setFilter("");
                       setOpenDirs((prev) => new Set([...Array.from(prev), ...breadcrumbDirs, dir]));
                       void loadDir(dir);
@@ -753,7 +765,24 @@ export function WorkspacePanel({
         </div>
       </section>}
 
-      {treeVisible && previewVisible && (
+      {previewVisible && !actualTreeVisible && (
+        <section className="workspace-tree-rail" aria-label={t("workspace.showTree")}>
+          <Tooltip label={t("workspace.showTree")} side="right">
+            <button
+              className="workspace-tree-reveal workspace-iconbtn workspace-iconbtn--on"
+              type="button"
+              onClick={() => {
+                setTreeVisible(true);
+                onRequestPanelWidth?.(WORKSPACE_DUAL_PANEL_TARGET_WIDTH);
+              }}
+            >
+              <PanelLeftOpen size={15} />
+            </button>
+          </Tooltip>
+        </section>
+      )}
+
+      {actualTreeVisible && previewVisible && (
         <button
           className="workspace-tree-resizer"
           type="button"
@@ -777,7 +806,7 @@ export function WorkspacePanel({
                 className="workspace-iconbtn workspace-iconbtn--on"
                 onClick={hideTreeOrClosePanel}
               >
-                <PanelRightClose size={15} />
+                <PanelLeftClose size={15} />
               </button>
             </Tooltip>
             {showViewTabs && (

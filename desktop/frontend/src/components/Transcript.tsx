@@ -154,9 +154,11 @@ export function Transcript({
     if (it.kind === "user") userTurn.set(it.id, nt++);
   }
 
+  const empty = items.length === 0;
+
   return (
-    <div className="transcript" ref={scrollRef} onScroll={onScroll}>
-      {items.length === 0 && <Welcome onPrompt={onPrompt} />}
+    <div className={`transcript${empty ? " transcript--empty" : ""}`} ref={scrollRef} onScroll={onScroll}>
+      {empty && <Welcome onPrompt={onPrompt} />}
 
       {items.map((it) => {
         switch (it.kind) {

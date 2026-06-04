@@ -18,6 +18,7 @@ import { FileMenu } from "./FileMenu";
 import { EffortSwitcher } from "./EffortSwitcher";
 import { ModelSwitcher } from "./ModelSwitcher";
 import { Tooltip } from "./Tooltip";
+import { AnchoredPopover } from "./AnchoredPopover";
 
 interface Attachment {
   path: string;
@@ -137,6 +138,7 @@ export function Composer({
   turnStartAt,
   turnTokens,
   retry,
+  workspaceRefreshSignal,
 }: {
   running: boolean;
   mode: Mode;
@@ -162,6 +164,7 @@ export function Composer({
   turnStartAt?: number;
   turnTokens?: number;
   retry?: { attempt: number; max: number };
+  workspaceRefreshSignal?: number;
 }) {
   const { t, locale } = useI18n();
   const now = useTick(running);
@@ -184,7 +187,6 @@ export function Composer({
   const taRef = useRef<HTMLTextAreaElement>(null);
   const composerCardRef = useRef<HTMLDivElement>(null);
   const workspaceAnchorRef = useRef<HTMLDivElement>(null);
-  const workspaceMenuRef = useRef<HTMLDivElement>(null);
   const wasRunning = useRef(running);
   const composingRef = useRef(false);
   const lastCompositionEndAt = useRef(0);
@@ -625,18 +627,7 @@ export function Composer({
 
   useEffect(() => {
     if (workspaceMenuOpen) loadWorkspaces();
-  }, [workspaceMenuOpen, cwd]);
-
-  useEffect(() => {
-    if (!workspaceMenuOpen) return;
-    const close = (e: MouseEvent) => {
-      const target = e.target as Node;
-      if (workspaceAnchorRef.current?.contains(target) || workspaceMenuRef.current?.contains(target)) return;
-      setWorkspaceMenuOpen(false);
-    };
-    document.addEventListener("mousedown", close);
-    return () => document.removeEventListener("mousedown", close);
-  }, [workspaceMenuOpen]);
+  }, [workspaceMenuOpen, cwd, workspaceRefreshSignal]);
 
   const filteredWorkspaces = useMemo(() => {
     const q = workspaceQuery.trim().toLowerCase();
@@ -793,8 +784,12 @@ export function Composer({
 
   return (
     <div className="composer-wrap" style={{ "--wails-drop-target": "drop" } as CSSProperties}>
-      {workspaceMenuOpen && cwd && (
-        <div className="workspace-switcher" ref={workspaceMenuRef}>
+      <AnchoredPopover
+        open={workspaceMenuOpen && !!cwd}
+        anchorRef={workspaceAnchorRef}
+        onClose={() => setWorkspaceMenuOpen(false)}
+        className="workspace-switcher workspace-switcher--portal"
+      >
           <label className="workspace-switcher__search">
             <Search size={14} />
             <input
@@ -829,8 +824,8 @@ export function Composer({
                   className="workspace-switcher__remove"
                   type="button"
                   aria-label={t("composer.removeProject")}
-                  title={w.current ? t("composer.removeCurrentProjectDisabled") : t("composer.removeProject")}
-                  disabled={w.current || running}
+                  title={t("composer.removeProject")}
+                  disabled={running}
                   onClick={(event) => {
                     event.stopPropagation();
                     void removeWorkspace(w.path);
@@ -848,8 +843,7 @@ export function Composer({
               <span>{t("composer.addProject")}</span>
             </button>
           </div>
-        </div>
-      )}
+      </AnchoredPopover>
       {menuMode === "slash" && (
         <SlashMenu items={slashMatches} activeIndex={active} onPick={pickCommand} onHover={setActive} />
       )}
