@@ -35,6 +35,58 @@ func TestEffortDefaultsBeforeStartup(t *testing.T) {
 	}
 }
 
+func TestSettingsFallbackKeepsNestedDefaultsOnLoadFailure(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	dir := t.TempDir()
+	t.Chdir(dir)
+	if err := os.WriteFile(filepath.Join(dir, "reasonix.toml"), []byte("default_model = [\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got := NewApp().Settings()
+	if got.Providers == nil || got.ProviderKinds == nil {
+		t.Fatalf("Settings fallback providers/kinds should be non-nil: %+v", got)
+	}
+	if got.Permissions.Mode != "ask" || got.Permissions.Allow == nil || got.Permissions.Ask == nil || got.Permissions.Deny == nil {
+		t.Fatalf("Settings fallback permissions should be safe defaults: %+v", got.Permissions)
+	}
+	if got.Sandbox.Bash != "enforce" || got.Sandbox.AllowWrite == nil {
+		t.Fatalf("Settings fallback sandbox should be safe defaults: %+v", got.Sandbox)
+	}
+}
+
+func TestRebuildKeepsOldControllerOnBuildFailure(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	app := NewApp()
+	app.ctx = context.Background()
+	app.model = "deepseek-flash/deepseek-v4-flash"
+	old := control.New(control.Options{Label: "old-controller"})
+	app.ctrl = old
+	defer func() {
+		if app.ctrl != nil {
+			app.ctrl.Close()
+		}
+	}()
+
+	if err := os.WriteFile(filepath.Join(dir, "reasonix.toml"), []byte("default_model = [\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := app.rebuild(); err == nil {
+		t.Fatal("rebuild should fail for malformed config")
+	}
+	if app.ctrl != old {
+		t.Fatalf("rebuild failure replaced controller: got %p want old %p", app.ctrl, old)
+	}
+	if app.startupErr == "" {
+		t.Fatal("rebuild failure should surface startupErr")
+	}
+}
+
 func TestSetEffortPersistsAndAutoClears(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())

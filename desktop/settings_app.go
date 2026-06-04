@@ -97,7 +97,17 @@ func nonNil(s []string) []string {
 func (a *App) Settings() SettingsView {
 	cfg, err := config.Load()
 	if err != nil {
-		return SettingsView{Providers: []ProviderView{}}
+		return SettingsView{
+			Providers:     []ProviderView{},
+			ProviderKinds: nonNil(provider.Kinds()),
+			Permissions: PermissionsView{
+				Mode:  "ask",
+				Allow: []string{},
+				Ask:   []string{},
+				Deny:  []string{},
+			},
+			Sandbox: SandboxView{Bash: "enforce", AllowWrite: []string{}},
+		}
 	}
 	bash := cfg.Sandbox.Bash
 	if bash == "" {
@@ -189,7 +199,6 @@ func (a *App) rebuild() error {
 		prevPath = a.ctrl.SessionPath()
 		_ = a.ctrl.Snapshot()
 		carried = a.ctrl.History()
-		a.ctrl.Close()
 	}
 	model := a.model
 	if cfg, err := config.Load(); err == nil {
@@ -202,14 +211,17 @@ func (a *App) rebuild() error {
 	}
 	ctrl, err := boot.Build(a.ctx, boot.Options{Model: model, RequireKey: false, Sink: a.sink})
 	if err != nil {
-		a.ctrl = nil
 		a.startupErr = err.Error()
 		return err
 	}
+	old := a.ctrl
 	a.ctrl = ctrl
 	a.model = model
 	a.label = ctrl.Label()
 	a.startupErr = ""
+	if old != nil {
+		old.Close()
+	}
 	ctrl.EnableInteractiveApproval()
 	path := agent.ContinueSessionPath(prevPath, ctrl.SessionDir(), ctrl.Label())
 	if len(carried) > 0 {
