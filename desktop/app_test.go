@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -50,6 +51,20 @@ func TestEffortDefaultsBeforeStartup(t *testing.T) {
 	got := NewApp().Effort()
 	if !got.Supported || got.Current != "auto" || got.Default != "high" || !hasLevel(got.Levels, "auto") {
 		t.Fatalf("pre-startup Effort() = %+v, want auto with DeepSeek default high", got)
+	}
+}
+
+func TestEmitReadyInvokesReadyHook(t *testing.T) {
+	app := NewApp()
+	var calls int32
+	app.readyHook = func() {
+		atomic.AddInt32(&calls, 1)
+	}
+
+	app.emitReady(nil)
+
+	if got := atomic.LoadInt32(&calls); got != 1 {
+		t.Fatalf("ready hook calls = %d, want 1", got)
 	}
 }
 

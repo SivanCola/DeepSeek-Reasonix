@@ -99,6 +99,18 @@ func (s *tabEventSink) Emit(e event.Event) {
 	}
 }
 
+func (a *App) emitReady(ctx context.Context) {
+	a.mu.RLock()
+	hook := a.readyHook
+	a.mu.RUnlock()
+	if hook != nil {
+		hook()
+	}
+	if ctx != nil {
+		runtime.EventsEmit(ctx, "agent:ready")
+	}
+}
+
 func (s *tabEventSink) recordReadTelemetry(e event.Event) {
 	if s.app == nil {
 		return
@@ -393,6 +405,7 @@ func (a *App) buildTabController(tab *WorkspaceTab) {
 		tab.StartupErr = err.Error()
 		tab.Ready = true
 		a.mu.Unlock()
+		a.emitReady(ctx)
 		return
 	}
 
@@ -421,6 +434,7 @@ func (a *App) buildTabController(tab *WorkspaceTab) {
 		tab.StartupErr = err.Error()
 		tab.Ready = true
 		a.mu.Unlock()
+		a.emitReady(ctx)
 		return
 	}
 
@@ -467,6 +481,7 @@ func (a *App) buildTabController(tab *WorkspaceTab) {
 	tab.Ready = true
 	tab.StartupErr = ""
 	a.mu.Unlock()
+	a.emitReady(ctx)
 }
 
 // --- active tab helpers -----------------------------------------------------
