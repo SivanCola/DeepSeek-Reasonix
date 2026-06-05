@@ -166,7 +166,7 @@ func TestBuiltinSubagentSkillsDeclareAllowedTools(t *testing.T) {
 		if !sameStrings(sk.AllowedTools, want) {
 			t.Errorf("%s AllowedTools = %v, want %v", name, sk.AllowedTools, want)
 		}
-		for _, meta := range []string{"task", "run_skill", "install_skill", "explore", "research", "review", "security_review"} {
+		for _, meta := range []string{"task", "run_skill", "install_skill", "install_source", "explore", "research", "review", "security_review"} {
 			if containsString(sk.AllowedTools, meta) {
 				t.Errorf("%s AllowedTools should not include meta-tool %q: %v", name, meta, sk.AllowedTools)
 			}
@@ -186,6 +186,32 @@ func TestBuiltinsPresentAndOverridable(t *testing.T) {
 	ex, _ := st2.Read("explore")
 	if ex.Scope == ScopeBuiltin || ex.Description != "mine" {
 		t.Errorf("user explore should override builtin: scope=%s desc=%q", ex.Scope, ex.Description)
+	}
+}
+
+func TestInstallCapabilityBuiltinIsInlineWithExpectedMetadata(t *testing.T) {
+	st := New(Options{HomeDir: t.TempDir()})
+	sk, ok := st.Read("install-capability")
+	if !ok {
+		t.Fatal("install-capability builtin skill must be registered")
+	}
+	if sk.Scope != ScopeBuiltin {
+		t.Errorf("install-capability scope = %s, want builtin", sk.Scope)
+	}
+	if sk.RunAs != RunInline {
+		t.Errorf("install-capability runAs = %s, want inline (it folds into the parent turn)", sk.RunAs)
+	}
+	if !strings.Contains(sk.Description, "install_source") {
+		t.Errorf("description should mention install_source, got %q", sk.Description)
+	}
+	if !strings.Contains(sk.Description, "uninstall") {
+		t.Errorf("description should advertise op=uninstall, got %q", sk.Description)
+	}
+	if !strings.Contains(sk.Body, "riskLevel") {
+		t.Error("body should mention the per-action riskLevel field so the model reads it")
+	}
+	if !strings.Contains(sk.Body, "planId") {
+		t.Error("body should mention the planId echo requirement on apply=true")
 	}
 }
 

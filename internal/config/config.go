@@ -728,6 +728,7 @@ func LoadForRoot(root string) (*Config, error) {
 	// from the TypeScript line keeps MCP servers without rewriting them. Anything
 	// the v2 config or .mcp.json already declared wins on a name collision.
 	cfg.mergeMCPJSON(loadLegacyMCP(legacyConfigPath()))
+	normalizePluginCommandLines(cfg)
 	normalizeLegacyEffort(cfg)
 	normalizeEffortConfig(cfg)
 	backfillDeepSeekPro(cfg)
@@ -808,6 +809,7 @@ func mergeTOMLPlugins(paths []string) ([]PluginEntry, error) {
 			return nil, fmt.Errorf("config %s: %w", path, err)
 		}
 		for _, p := range f.Plugins {
+			p, _ = NormalizePluginCommandLine(p)
 			if i, ok := index[p.Name]; ok {
 				merged[i] = p
 				continue
@@ -830,6 +832,7 @@ func LoadForEdit(path string) *Config {
 	if err := mergeFile(cfg, path); err != nil {
 		slog.Warn("config: load for edit failed, using defaults", "path", path, "err", err)
 	}
+	normalizePluginCommandLines(cfg)
 	normalizeLegacyEffort(cfg)
 	normalizeEffortConfig(cfg)
 	return cfg

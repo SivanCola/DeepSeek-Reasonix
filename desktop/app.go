@@ -1654,6 +1654,7 @@ func (a *App) AddMCPServer(in MCPServerInput) (int, error) {
 		Env:     in.Env,
 		Tier:    normalizeMCPTier(in.Tier),
 	}
+	entry, _ = config.NormalizePluginCommandLine(entry)
 	if err := a.saveDesktopMCPServer(entry); err != nil {
 		return 0, err
 	}
@@ -1688,6 +1689,7 @@ func (a *App) UpdateMCPServer(name string, in MCPServerInput) error {
 	if in.Env != nil {
 		updated.Env = in.Env
 	}
+	updated, _ = config.NormalizePluginCommandLine(updated)
 	if updated.Type == "stdio" {
 		updated.URL = ""
 	} else {
