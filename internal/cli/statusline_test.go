@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"runtime"
 	"strings"
 	"testing"
@@ -8,9 +9,12 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
+	"reasonix/internal/agent"
+	"reasonix/internal/agent/testutil"
 	"reasonix/internal/control"
 	"reasonix/internal/event"
 	"reasonix/internal/i18n"
+	"reasonix/internal/tool"
 )
 
 // TestRunStatuslineCmd checks the custom status-line runner: it returns the
@@ -163,6 +167,20 @@ func TestStatuslineShowsEffort(t *testing.T) {
 	}
 }
 
+func TestStatuslineKeepsCacheRatesInPrimaryDataRow(t *testing.T) {
+	i18n.DetectLanguage("en")
+
+	content := renderStatuslineViewWithCache(t)
+	lines := bottomStatusPlainLines(content)
+	if len(lines) != 2 {
+		t.Fatalf("status block lines = %d, want 2:\n%s", len(lines), strings.Join(lines, "\n"))
+	}
+	want := "deepseek-v4-flash · effort auto · turn hit 90.00% · avg 90.00%"
+	if !strings.Contains(lines[1], want) {
+		t.Fatalf("data row should keep cache rates next to model/effort:\n%s", strings.Join(lines, "\n"))
+	}
+}
+
 func TestStatuslinePutsGitIdentityOnModeRow(t *testing.T) {
 	i18n.DetectLanguage("en")
 
@@ -243,6 +261,22 @@ func renderStatuslineViewWithGitAndEffort(t *testing.T) string {
 		Untracked: 2,
 	}
 	next, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 24})
+	return next.(chatTUI).View().Content
+}
+
+func renderStatuslineViewWithCache(t *testing.T) string {
+	t.Helper()
+
+	prov := testutil.NewMock("deepseek-v4-flash", testutil.UsageTurn(900, 100, 50))
+	exec := agent.New(prov, tool.NewRegistry(), agent.NewSession(""), agent.Options{MaxSteps: 1, ContextWindow: 200_000}, event.Discard)
+	if err := exec.Run(context.Background(), "hello"); err != nil {
+		t.Fatalf("seed agent usage: %v", err)
+	}
+	ctrl := control.New(control.Options{Executor: exec})
+	m := newChatTUI(ctrl, "", make(chan event.Event, 1), 160)
+	m.label = "deepseek-v4-flash"
+	m.effortLevel = "auto"
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 160, Height: 24})
 	return next.(chatTUI).View().Content
 }
 

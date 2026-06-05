@@ -1693,8 +1693,9 @@ func (m chatTUI) View() tea.View {
 			}
 		}
 	}
-	// Second status row: the live run data (model, effort, context gauge, cache
-	// rates, jobs, balance). It lives on its own fixed row so it's always shown in
+	// Second status row: the live run data. Keep cache rates near the front: prompt
+	// cache efficiency is a core Reasonix signal, not an expendable tail metric.
+	// It lives on its own fixed row so it's always shown in
 	// full rather than being truncated off the end of the status line. Two rows is
 	// a fixed height, so unlike a wrap-when-long status it doesn't reintroduce
 	// resize ghosting.
@@ -1705,11 +1706,11 @@ func (m chatTUI) View() tea.View {
 	if et := m.effortTag(); et != "" {
 		data = append(data, et)
 	}
-	if ctxTag != "" {
-		data = append(data, ctxTag)
-	}
 	if cache := m.cacheTag(); cache != "" {
 		data = append(data, cache)
+	}
+	if ctxTag != "" {
+		data = append(data, ctxTag)
 	}
 	if jt := m.jobsTag(); jt != "" {
 		data = append(data, jt)
@@ -2928,7 +2929,9 @@ func wrapForViewport(text string, width int, fg cliColor) string {
 	return themeStyle(fg).Width(width).Render(text)
 }
 
-// renderUserBubble styles the just-submitted line with a filled dim background.
+// renderUserBubble renders the just-submitted prompt as a transcript line. Keep
+// it visually lighter than the real bottom composer so a fresh session does not
+// look like it has a second input box in the transcript.
 func renderUserBubble(line string, width int, planMode bool) string {
 	line = displayLineForImageRefs(line)
 	prefix := "› "
@@ -2938,12 +2941,7 @@ func renderUserBubble(line string, width int, planMode bool) string {
 	if !colorEnabled {
 		return "│ " + prefix + line
 	}
-	w := width - 4
-	if w < 10 {
-		w = 10
-	}
-	bubble := themeBGStyle(activeCLITheme.userBubbleBG).Width(w).Padding(0, 1)
-	return bubble.Render(prefix + line)
+	return "  " + dim(prefix) + line
 }
 
 var cliImageRefRe = regexp.MustCompile(`(?:^|\s)@\.reasonix/attachments/clipboard-\d{8}-\d{6}\.\d+(?:-(?:\d{6}|[a-f0-9]{8}))?\.(?:png|jpg|jpeg|gif|webp)`)

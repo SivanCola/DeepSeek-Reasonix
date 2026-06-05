@@ -370,6 +370,21 @@ func TestUserBubbleEchoedImmediately(t *testing.T) {
 	}
 }
 
+func TestUserBubbleIsLightweightTranscriptLine(t *testing.T) {
+	prevColor := colorEnabled
+	colorEnabled = true
+	defer func() { colorEnabled = prevColor }()
+
+	got := renderUserBubble("hello world", 80, false)
+	plain := ansi.Strip(got)
+	if !strings.Contains(plain, "› hello world") {
+		t.Fatalf("user bubble missing prompt text: %q", plain)
+	}
+	if w := ansi.StringWidth(plain); w > 20 {
+		t.Fatalf("user bubble should not render as a full-width input-like block, width=%d text=%q", w, plain)
+	}
+}
+
 // TestUnsendDiscardsBufferedEvents proves that after an un-send (Esc before any
 // packet) the turn's already-buffered events are swallowed — nothing reaches
 // scrollback — and its TurnDone settles the model back to idle.
