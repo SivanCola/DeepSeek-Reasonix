@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -44,6 +45,21 @@ func waitForFile(t *testing.T, path, want string) {
 		time.Sleep(5 * time.Millisecond)
 	}
 	t.Fatalf("session file %q never contained %q", path, want)
+}
+
+func waitForAutosaveIdle(t *testing.T, tab *WorkspaceTab) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		tab.saveMu.Lock()
+		idle := !tab.saving && !tab.saveAgain
+		tab.saveMu.Unlock()
+		if idle {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal("autosave loop did not become idle")
 }
 
 func appWithTab(t *testing.T, path string) (*App, *WorkspaceTab) {
@@ -102,9 +118,16 @@ func TestScheduleSnapshotCoalesces(t *testing.T) {
 	a, tab := appWithTab(t, path)
 	_ = a
 
+	var wg sync.WaitGroup
 	for i := 0; i < 64; i++ {
-		go tab.sink.Emit(event.Event{Kind: event.TurnDone})
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			tab.sink.Emit(event.Event{Kind: event.TurnDone})
+		}()
 	}
+	wg.Wait()
 
 	waitForFile(t, path, "acknowledged")
+	waitForAutosaveIdle(t, tab)
 }
