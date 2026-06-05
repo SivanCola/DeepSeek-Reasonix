@@ -2941,7 +2941,7 @@ func renderUserBubble(line string, width int, planMode bool) string {
 	if !colorEnabled {
 		return "│ " + prefix + line
 	}
-	return "  " + dim(prefix) + line
+	return "  " + accent(prefix+line)
 }
 
 var cliImageRefRe = regexp.MustCompile(`(?:^|\s)@\.reasonix/attachments/clipboard-\d{8}-\d{6}\.\d+(?:-(?:\d{6}|[a-f0-9]{8}))?\.(?:png|jpg|jpeg|gif|webp)`)

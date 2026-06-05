@@ -380,6 +380,9 @@ func TestUserBubbleIsLightweightTranscriptLine(t *testing.T) {
 	if !strings.Contains(plain, "› hello world") {
 		t.Fatalf("user bubble missing prompt text: %q", plain)
 	}
+	if got == plain {
+		t.Fatalf("user bubble should use themed foreground color when color is enabled: %q", got)
+	}
 	if w := ansi.StringWidth(plain); w > 20 {
 		t.Fatalf("user bubble should not render as a full-width input-like block, width=%d text=%q", w, plain)
 	}
