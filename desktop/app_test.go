@@ -65,8 +65,7 @@ func TestCommandsIncludesEffortNotThinking(t *testing.T) {
 }
 
 func TestEffortDefaultsBeforeStartup(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	isolateDesktopUserDirs(t)
 
 	got := NewApp().Effort()
 	if !got.Supported || got.Current != "auto" || got.Default != "high" || !hasLevel(got.Levels, "auto") {
@@ -89,8 +88,7 @@ func TestEmitReadyInvokesReadyHook(t *testing.T) {
 }
 
 func TestSetEffortPersistsAndAutoClears(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	isolateDesktopUserDirs(t)
 
 	app := NewApp()
 	if err := app.SetEffort("max"); err != nil {
@@ -115,8 +113,7 @@ func TestSetEffortPersistsAndAutoClears(t *testing.T) {
 }
 
 func TestSettingsUsesUserDesktopPreferencesNotProjectConfig(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	isolateDesktopUserDirs(t)
 
 	project := t.TempDir()
 	if err := os.WriteFile(filepath.Join(project, "reasonix.toml"), []byte(`
@@ -156,8 +153,7 @@ close_behavior = "quit"
 }
 
 func TestSettingsSeedsMissingUserConfigFromLegacyProjectConfig(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	isolateDesktopUserDirs(t)
 
 	project := t.TempDir()
 	if err := os.WriteFile(filepath.Join(project, "reasonix.toml"), []byte(`
@@ -199,8 +195,7 @@ close_behavior = "quit"
 }
 
 func TestMigrateDesktopPreferencesDoesNotOverwriteExistingConfig(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	isolateDesktopUserDirs(t)
 
 	userCfg := config.LoadForEdit(config.UserConfigPath())
 	if err := userCfg.SetDesktopLanguage("en"); err != nil {
@@ -224,8 +219,7 @@ func TestMigrateDesktopPreferencesDoesNotOverwriteExistingConfig(t *testing.T) {
 }
 
 func TestSetEffortRebuildsController(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	isolateDesktopUserDirs(t)
 
 	app := NewApp()
 	app.ctx = context.Background()
@@ -253,8 +247,7 @@ func TestSetEffortRebuildsController(t *testing.T) {
 }
 
 func TestSetEffortRejectsRunningTurn(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	isolateDesktopUserDirs(t)
 
 	runner := &blockingRunner{started: make(chan struct{}), release: make(chan struct{})}
 	app := NewApp()
@@ -345,8 +338,7 @@ func TestFileRefsUseActiveTabWorkspaceRoot(t *testing.T) {
 }
 
 func TestDeleteSessionRejectsActiveRelativePath(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	isolateDesktopUserDirs(t)
 
 	dir := config.SessionDir()
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -374,8 +366,7 @@ func TestDeleteSessionRejectsActiveRelativePath(t *testing.T) {
 }
 
 func TestDeleteSessionRejectsInactiveOpenTab(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	isolateDesktopUserDirs(t)
 
 	dir := config.SessionDir()
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -437,8 +428,7 @@ func (r *appendingDesktopRunner) Run(_ context.Context, input string) error {
 }
 
 func TestForkCreatesActiveTabWithoutSwitchingSourceController(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	isolateDesktopUserDirs(t)
 
 	workspace := t.TempDir()
 	if err := os.WriteFile(filepath.Join(workspace, "reasonix.toml"), []byte("[codegraph]\nenabled = false\n"), 0o644); err != nil {
@@ -532,8 +522,7 @@ func TestForkCreatesActiveTabWithoutSwitchingSourceController(t *testing.T) {
 }
 
 func TestCapabilitiesShowsLazyMCPAsDeferredNotDisabled(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	isolateDesktopUserDirs(t)
 	dir := t.TempDir()
 	t.Chdir(dir)
 	if err := os.WriteFile(filepath.Join(dir, "reasonix.toml"), []byte(`
@@ -599,8 +588,7 @@ func TestCapabilitiesShowsDefaultCodegraphDisabled(t *testing.T) {
 }
 
 func TestCapabilitiesMarksDeferredRemoteMCPAuthPossible(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	isolateDesktopUserDirs(t)
 	dir := t.TempDir()
 	t.Chdir(dir)
 	if err := os.WriteFile(filepath.Join(dir, "reasonix.toml"), []byte(`
@@ -633,8 +621,7 @@ tier = "lazy"
 }
 
 func TestCapabilitiesDoesNotMarkRemoteMCPWithAuthHeaderPossible(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	isolateDesktopUserDirs(t)
 	dir := t.TempDir()
 	t.Chdir(dir)
 	if err := os.WriteFile(filepath.Join(dir, "reasonix.toml"), []byte(`
@@ -668,8 +655,7 @@ tier = "lazy"
 }
 
 func TestCapabilitiesMarksAuthFailureRequired(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	isolateDesktopUserDirs(t)
 	dir := t.TempDir()
 	t.Chdir(dir)
 	if err := os.WriteFile(filepath.Join(dir, "reasonix.toml"), []byte(`
@@ -704,8 +690,7 @@ tier = "lazy"
 }
 
 func TestClearMCPServerAuthenticationClearsConfigAndFailure(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	isolateDesktopUserDirs(t)
 	dir := t.TempDir()
 	t.Chdir(dir)
 	if err := os.WriteFile(filepath.Join(dir, "reasonix.toml"), []byte(`
@@ -768,8 +753,7 @@ tier = "lazy"
 }
 
 func TestUpdateMCPServerKeepsLazyMCPDeferred(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	isolateDesktopUserDirs(t)
 	dir := t.TempDir()
 	t.Chdir(dir)
 	if err := os.WriteFile(filepath.Join(dir, "reasonix.toml"), []byte(`
@@ -840,8 +824,7 @@ env = { TOKEN = "${PLAYWRIGHT_TOKEN}" }
 }
 
 func TestUpdateMCPServerRecordsReconnectFailure(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	isolateDesktopUserDirs(t)
 	dir := t.TempDir()
 	t.Chdir(dir)
 	if err := os.WriteFile(filepath.Join(dir, "reasonix.toml"), []byte(`
@@ -897,8 +880,7 @@ tier = "lazy"
 }
 
 func TestSetMCPServerTierRecordsConnectFailure(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	isolateDesktopUserDirs(t)
 	dir := t.TempDir()
 	t.Chdir(dir)
 	if err := os.WriteFile(filepath.Join(dir, "reasonix.toml"), []byte(`
@@ -1021,8 +1003,7 @@ auto_install = true
 }
 
 func TestSetMCPServerEnabledPersistsCodegraphOff(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	isolateDesktopUserDirs(t)
 	dir := t.TempDir()
 	t.Chdir(dir)
 	if err := os.WriteFile(filepath.Join(dir, "reasonix.toml"), []byte(`
@@ -1064,8 +1045,7 @@ tier = "lazy"
 }
 
 func TestCapabilitiesKeepsFailedMCPConfiguredTierAfterRestart(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	isolateDesktopUserDirs(t)
 	dir := t.TempDir()
 	t.Chdir(dir)
 	if err := os.WriteFile(filepath.Join(dir, "reasonix.toml"), []byte(`

@@ -31,8 +31,7 @@ func writeTopicSession(t *testing.T, dir, name, topicID, topicTitle, workspaceRo
 }
 
 func TestDeleteTopicKeepsSessionHistory(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	isolateDesktopUserDirs(t)
 
 	projectRoot := t.TempDir()
 	topicID := "topic_keep_history"
@@ -60,8 +59,7 @@ func TestDeleteTopicKeepsSessionHistory(t *testing.T) {
 }
 
 func TestRenameProjectUpdatesSidebarTitle(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	isolateDesktopUserDirs(t)
 
 	projectRoot := t.TempDir()
 	if err := addProject(projectRoot, ""); err != nil {
@@ -89,8 +87,7 @@ func TestRenameProjectUpdatesSidebarTitle(t *testing.T) {
 }
 
 func TestListWorkspacesUsesProjectRegistryTitles(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	isolateDesktopUserDirs(t)
 
 	projectRoot := t.TempDir()
 	if err := addProject(projectRoot, "Client API"); err != nil {
@@ -110,8 +107,7 @@ func TestListWorkspacesUsesProjectRegistryTitles(t *testing.T) {
 }
 
 func TestListWorkspacesMigratesLegacyWorkspaceList(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	isolateDesktopUserDirs(t)
 
 	legacyRoot := t.TempDir()
 	rememberWorkspace(legacyRoot)
@@ -130,8 +126,7 @@ func TestListWorkspacesMigratesLegacyWorkspaceList(t *testing.T) {
 }
 
 func TestReorderProjectsPersistsSidebarAndWorkspaceOrder(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	isolateDesktopUserDirs(t)
 
 	first := t.TempDir()
 	second := t.TempDir()
@@ -168,8 +163,7 @@ func TestReorderProjectsPersistsSidebarAndWorkspaceOrder(t *testing.T) {
 }
 
 func TestReorderProjectsRejectsInvalidOrder(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	isolateDesktopUserDirs(t)
 
 	first := t.TempDir()
 	second := t.TempDir()
@@ -199,8 +193,7 @@ func TestReorderProjectsRejectsInvalidOrder(t *testing.T) {
 }
 
 func TestRemoveWorkspaceUsesSharedProjectRegistryForCurrentProject(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	isolateDesktopUserDirs(t)
 
 	projectRoot := t.TempDir()
 	if err := addProject(projectRoot, "Current Project"); err != nil {
@@ -224,8 +217,7 @@ func TestRemoveWorkspaceUsesSharedProjectRegistryForCurrentProject(t *testing.T)
 }
 
 func TestRestoredProjectTabUsesStoredTopicTitle(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	isolateDesktopUserDirs(t)
 
 	projectRoot := t.TempDir()
 	topicID := "topic_stored_title"
@@ -259,8 +251,7 @@ func TestRestoredProjectTabUsesStoredTopicTitle(t *testing.T) {
 }
 
 func TestUntitledProjectTopicUsesSameFallbackEverywhere(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	isolateDesktopUserDirs(t)
 
 	projectRoot := t.TempDir()
 	topicID := "topic_without_title"
@@ -294,8 +285,7 @@ func TestUntitledProjectTopicUsesSameFallbackEverywhere(t *testing.T) {
 }
 
 func TestCreateTopicDefaultsToAutoNewSessionTitle(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	isolateDesktopUserDirs(t)
 
 	projectRoot := t.TempDir()
 	topic, err := NewApp().CreateTopic("project", projectRoot, "")
@@ -314,8 +304,7 @@ func TestCreateTopicDefaultsToAutoNewSessionTitle(t *testing.T) {
 }
 
 func TestCreateTopicAppearsFirstInProjectTree(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	isolateDesktopUserDirs(t)
 
 	projectRoot := t.TempDir()
 	app := NewApp()
@@ -341,8 +330,7 @@ func TestCreateTopicAppearsFirstInProjectTree(t *testing.T) {
 }
 
 func TestCreateGlobalTopicAppearsFirstInProjectTree(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	isolateDesktopUserDirs(t)
 
 	app := NewApp()
 	first, err := app.CreateTopic("global", "", "")
@@ -367,8 +355,7 @@ func TestCreateGlobalTopicAppearsFirstInProjectTree(t *testing.T) {
 }
 
 func TestSwitchWorkspaceRegistersDefaultTopicInProjectTree(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	isolateDesktopUserDirs(t)
 
 	projectRoot := t.TempDir()
 	app := NewApp()
@@ -402,8 +389,7 @@ func TestSwitchWorkspaceRegistersDefaultTopicInProjectTree(t *testing.T) {
 }
 
 func TestRenameTopicLocksTitleManual(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	isolateDesktopUserDirs(t)
 
 	projectRoot := t.TempDir()
 	app := NewApp()
@@ -423,8 +409,7 @@ func TestRenameTopicLocksTitleManual(t *testing.T) {
 }
 
 func TestRenameTopicUpdatesOpenTabMeta(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	isolateDesktopUserDirs(t)
 
 	projectRoot := t.TempDir()
 	app := NewApp()
@@ -453,8 +438,7 @@ func TestRenameTopicUpdatesOpenTabMeta(t *testing.T) {
 }
 
 func TestAutoTitleTopicFromFirstUserMessage(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	isolateDesktopUserDirs(t)
 
 	projectRoot := t.TempDir()
 	topic, err := NewApp().CreateTopic("project", projectRoot, "")
@@ -482,8 +466,7 @@ func TestAutoTitleTopicFromFirstUserMessage(t *testing.T) {
 }
 
 func TestAutoTitleDoesNotOverrideManualTopicTitle(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	isolateDesktopUserDirs(t)
 
 	projectRoot := t.TempDir()
 	app := NewApp()
@@ -508,8 +491,7 @@ func TestAutoTitleDoesNotOverrideManualTopicTitle(t *testing.T) {
 }
 
 func TestTrashTopicMovesRelatedSessionsToTrash(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	isolateDesktopUserDirs(t)
 
 	projectRoot := t.TempDir()
 	topicID := "topic_trash_history"
@@ -541,8 +523,7 @@ func TestTrashTopicMovesRelatedSessionsToTrash(t *testing.T) {
 }
 
 func TestTrashTopicMovesOpenSessionToTrash(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	isolateDesktopUserDirs(t)
 
 	projectRoot := t.TempDir()
 	topicID := "topic_open_trash"

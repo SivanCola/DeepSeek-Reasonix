@@ -7,8 +7,7 @@ import (
 )
 
 func TestBoundArrayPayloadsAreNonNilBeforeStartup(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	isolateDesktopUserDirs(t)
 
 	app := NewApp()
 	cases := []struct {

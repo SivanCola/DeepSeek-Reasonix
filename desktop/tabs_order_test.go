@@ -7,8 +7,7 @@ import (
 
 func testAppWithOrderedTabs(t *testing.T, active string, ids ...string) *App {
 	t.Helper()
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	isolateDesktopUserDirs(t)
 	tabs := make(map[string]*WorkspaceTab, len(ids))
 	for _, id := range ids {
 		tabs[id] = &WorkspaceTab{

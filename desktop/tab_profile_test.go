@@ -24,8 +24,7 @@ func testTab(id, root string) *WorkspaceTab {
 }
 
 func TestSetEffortForTabIsTabLocal(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	isolateDesktopUserDirs(t)
 
 	rootA := t.TempDir()
 	rootB := t.TempDir()
@@ -66,8 +65,7 @@ func TestSetEffortForTabIsTabLocal(t *testing.T) {
 }
 
 func TestEffortForTabResolvesProjectProviderConfig(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	isolateDesktopUserDirs(t)
 
 	projectRoot := t.TempDir()
 	configBody := `default_model = "project-provider/deepseek-v4-flash"
@@ -97,8 +95,7 @@ effort = "max"
 }
 
 func TestSaveTabsPersistsModelAndEffort(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	isolateDesktopUserDirs(t)
 
 	effort := "max"
 	app := NewApp()
@@ -131,8 +128,7 @@ func TestSaveTabsPersistsModelAndEffort(t *testing.T) {
 }
 
 func TestSaveTabsDoesNotPersistYoloMode(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	isolateDesktopUserDirs(t)
 
 	app := NewApp()
 	tab := testTab("a", t.TempDir())

@@ -28,6 +28,7 @@ func TestSkillRootsViewCountsProjectSkills(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	t.Setenv("AppData", filepath.Join(home, "AppData"))
 	project := t.TempDir()
 	root := filepath.Join(project, ".reasonix", "skills")
 	if err := os.MkdirAll(root, 0o755); err != nil {
@@ -65,6 +66,7 @@ func TestSkillRootsViewMarksEnvConfiguredCustomRoot(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	t.Setenv("AppData", filepath.Join(home, "AppData"))
 	project := t.TempDir()
 	root := filepath.Join(home, "custom-skills")
 	if err := os.MkdirAll(root, 0o755); err != nil {
@@ -121,6 +123,7 @@ func TestCapabilitiesIncludesDisabledSkills(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	t.Setenv("AppData", filepath.Join(home, "AppData"))
 	cfgPath := config.UserConfigPath()
 	if err := os.MkdirAll(filepath.Dir(cfgPath), 0o755); err != nil {
 		t.Fatal(err)
