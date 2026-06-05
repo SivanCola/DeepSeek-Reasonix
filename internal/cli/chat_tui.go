@@ -91,6 +91,10 @@ type chatTUI struct {
 	// untouched.
 	planMode bool
 
+	// pendingInterject queues input typed while a turn runs; each TurnDone
+	// dequeues the front and submits it as the next turn.
+	pendingInterject []string
+
 	// history is a resumed session's messages, committed to scrollback once on
 	// the first WindowSizeMsg so a reopened chat shows its prior transcript.
 	history []provider.Message
@@ -663,7 +667,9 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case tea.KeyPressMsg:
-		// Any keystroke dismisses a finished selection (copy is a right-click).
+		// Any keystroke dismisses a finished selection (copy is a right-click),
+		// except Ctrl+C/Super+C/Meta+C which may copy the selection to clipboard.
+		sel := m.sel
 		m.sel = selection{}
 		// Transcript scroll keys work in any state (PgUp/PgDn are never text).
 		switch msg.String() {
@@ -778,15 +784,14 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "esc":
 			// "Back out" of the most specific in-progress state: un-send a just-sent
 			// turn (server not yet replied), cancel a streaming turn, turn plan mode
-			// off, or clear typed-but-unsent input. Scrollback is the terminal's now,
-			// so there's no viewport to dismiss.
+			// off, or clear typed-but-unsent input. YOLO mode is only exited via
+			// Shift+Tab cycle (/plan → YOLO → normal) or --yolo flag. Scrollback is
+			// the terminal's now, so there's no viewport to dismiss.
 			switch {
 			case m.state == tuiRunning && m.bubblePending:
 				m.unsendPending()
 			case m.state == tuiRunning:
 				m.ctrl.Cancel()
-			case m.ctrl.Bypass():
-				m.ctrl.SetBypass(false) // back out of YOLO
 			case m.planMode:
 				m.planMode = false
 				m.ctrl.SetPlanMode(false)
@@ -817,12 +822,20 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			// Idle: if the composer has text, a single press clears it (like Esc).
-			// On an empty composer, require double-press within 1.5s to quit.
+			// On an empty composer: if there's an active text selection, copy to
+			// clipboard (standard terminal convention); otherwise require double-press
+			// within 1.5s to quit.
 			if strings.TrimSpace(m.input.Value()) != "" {
 				m.input.Reset()
 				m.pastedBlocks = nil
 				m.lastCtrlCAt = time.Time{}
 				return m, nil
+			}
+			if sel.active && !sel.empty() {
+				m.sel = sel // restore so selectedText() can read it
+				text := m.selectedText()
+				m.sel = selection{}
+				return m, tea.Batch(copyToClipboard(text), finalize(m, cmds))
 			}
 			if !m.lastCtrlCAt.IsZero() && time.Since(m.lastCtrlCAt) < 1500*time.Millisecond {
 				return m, tea.Quit
@@ -854,7 +867,16 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case "enter":
 			if m.state == tuiRunning {
-				return m, nil // ignore Enter while a turn is in flight
+				line := strings.TrimSpace(m.input.Value())
+				if line == "" {
+					return m, nil
+				}
+				m.pendingInterject = append(m.pendingInterject, line)
+				m.input.Reset()
+				m.input.SetHeight(1)
+				m.pastedBlocks = nil
+				m.notice("feedback queued — will send when the current turn finishes")
+				return m, finalize(m, cmds)
 			}
 			if m.modelSwitchPending {
 				return m, nil // ignore Enter while /model switch is building
@@ -949,6 +971,11 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmds = append(cmds, fetchBalance(m.ctrl))
 			if c := m.runStatusline(); c != nil {
 				cmds = append(cmds, c)
+			}
+			if len(m.pendingInterject) > 0 {
+				interject := m.pendingInterject[0]
+				m.pendingInterject = m.pendingInterject[1:]
+				cmds = append(cmds, m.startTurn(interject, interject, interject))
 			}
 		}
 		if turnDone || gitMaybeChanged {
@@ -1653,6 +1680,13 @@ func (m chatTUI) View() tea.View {
 			working = fmt.Sprintf("  "+i18n.M.ChatStatusThinkingFmt, m.spinner.View(), m.elapsed)
 			if m.turnTokens > 0 {
 				working += " · ↓" + shortTokens(m.turnTokens)
+			}
+			if n := len(m.pendingInterject); n > 0 {
+				if n == 1 {
+					working += dim(" · ✎ feedback queued")
+				} else {
+					working += dim(fmt.Sprintf(" · ✎ %d queued", n))
+				}
 			}
 		}
 	}
@@ -2504,7 +2538,7 @@ func (m *chatTUI) ingestEvent(e event.Event) {
 		if e.Usage != nil {
 			m.turnTokens += e.Usage.CompletionTokens
 		}
-		if line := agent.FormatUsageLine(e.Usage, e.Pricing); line != "" {
+		if line := agent.FormatUsageLine(e.Usage, e.Pricing, e.CacheDiagnostics); line != "" {
 			m.finalizeStreamed()
 			m.commitLine(line)
 		}

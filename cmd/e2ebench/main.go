@@ -34,6 +34,7 @@ type runMetrics struct {
 	Steps            int     `json:"steps"`
 	Cost             float64 `json:"cost"`
 	Currency         string  `json:"currency"`
+	Compactions      int     `json:"compactions"`
 }
 
 type result struct {
@@ -45,6 +46,17 @@ type result struct {
 }
 
 func main() {
+	flag.Usage = func() {
+		fmt.Fprintf(flag.CommandLine.Output(), "e2ebench — Reasonix end-to-end benchmark.\n\n")
+		fmt.Fprintf(flag.CommandLine.Output(), "Usage of %s:\n", flag.CommandLine.Name())
+		flag.PrintDefaults()
+		fmt.Fprintf(flag.CommandLine.Output(), "\nExamples:\n")
+		fmt.Fprintf(flag.CommandLine.Output(), "  # Run the committed suite:\n")
+		fmt.Fprintf(flag.CommandLine.Output(), "  %[1]s\n\n", strings.Replace(flag.CommandLine.Name(), "e2ebench", "go run ./cmd/e2ebench", 1))
+		fmt.Fprintf(flag.CommandLine.Output(), "  # Grade a PR's diff with a retry budget:\n")
+		fmt.Fprintf(flag.CommandLine.Output(), "  %[1]s -mode diff -base origin/main -repo . -attempts 3 -timeout 1800\n", strings.Replace(flag.CommandLine.Name(), "e2ebench", "go run ./cmd/e2ebench", 1))
+	}
+
 	mode := flag.String("mode", "suite", "suite | diff (diff = generate tests for the PR diff and grade with the repo's tests)")
 	suite := flag.String("suite", "benchmarks/e2e", "suite root (contains tasks/<id>/)")
 	bin := flag.String("bin", "reasonix", "path to the reasonix binary")
@@ -76,7 +88,12 @@ func main() {
 		os.Exit(1)
 	}
 	if len(tasks) == 0 {
-		fmt.Fprintln(os.Stderr, "no tasks found under", filepath.Join(*suite, "tasks"))
+		dir := filepath.Join(*suite, "tasks")
+		if _, statErr := os.Stat(dir); statErr != nil {
+			fmt.Fprintf(os.Stderr, "no tasks found under %s: %v\n", dir, statErr)
+		} else {
+			fmt.Fprintf(os.Stderr, "no tasks found under %s (the directory exists but contains no task.toml files)\n", dir)
+		}
 		os.Exit(1)
 	}
 
@@ -102,8 +119,15 @@ func main() {
 		fmt.Print(report)
 	}
 	if *outJSON != "" {
-		b, _ := json.MarshalIndent(results, "", "  ")
-		_ = os.WriteFile(*outJSON, b, 0o644)
+		b, err := json.MarshalIndent(results, "", "  ")
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "marshal json:", err)
+			os.Exit(1)
+		}
+		if err := os.WriteFile(*outJSON, b, 0o644); err != nil {
+			fmt.Fprintln(os.Stderr, "write json:", err)
+			os.Exit(1)
+		}
 	}
 }
 
@@ -182,6 +206,7 @@ func runTask(bin, model string, t task) result {
 	cmd.Dir = work
 	cmd.Stdout = os.Stderr // stream the run to the job log, keep stdout clean for the report
 	cmd.Stderr = os.Stderr
+	cmd.WaitDelay = 10 * time.Second // bound the wait for a stuck child after ctx timeout
 	runErr := cmd.Run()
 
 	if m, err := readMetrics(metricsPath); err == nil {
@@ -215,7 +240,7 @@ func grade(work, taskDir string) bool {
 func render(results []result) string {
 	var b strings.Builder
 	passed, ran := 0, 0
-	var pTok, cTok, hit, miss int
+	var pTok, cTok, hit, miss, compacts int
 	var cost float64
 	currency := ""
 	for _, r := range results {
@@ -230,6 +255,7 @@ func render(results []result) string {
 		cTok += r.CompletionTokens
 		hit += r.CacheHitTokens
 		miss += r.CacheMissTokens
+		compacts += r.Compactions
 		cost += r.Cost
 		if r.Currency != "" {
 			currency = r.Currency
@@ -237,28 +263,28 @@ func render(results []result) string {
 	}
 
 	fmt.Fprintf(&b, "## 🤖 Reasonix e2e benchmark\n\n")
-	fmt.Fprintf(&b, "**Accuracy:** %d/%d (%s) · **Cache hit:** %s · **Tokens:** %s (prompt %s / completion %s) · **Cost:** %s%.4f\n\n",
+	fmt.Fprintf(&b, "**Accuracy:** %d/%d (%s) · **Cache hit:** %s · **Tokens:** %s (prompt %s / completion %s) · **Compactions:** %d · **Cost:** %s%.4f\n\n",
 		passed, ran, pct(passed, ran), pct(hit, hit+miss),
-		comma(pTok+cTok), comma(pTok), comma(cTok), currencySym(currency), cost)
+		comma(pTok+cTok), comma(pTok), comma(cTok), compacts, currencySym(currency), cost)
 
-	fmt.Fprintf(&b, "| Task | Result | Steps | Prompt | Completion | Cache hit | Cost |\n")
-	fmt.Fprintf(&b, "|------|--------|------:|-------:|-----------:|----------:|-----:|\n")
+	fmt.Fprintf(&b, "| Task | Result | Steps | Prompt | Completion | Cache hit | Compact | Cost |\n")
+	fmt.Fprintf(&b, "|------|--------|------:|-------:|-----------:|----------:|--------:|-----:|\n")
 	for _, r := range results {
 		switch {
 		case r.Skipped:
-			fmt.Fprintf(&b, "| `%s` | ⏭️ skipped | — | — | — | — | — |\n", r.ID)
+			fmt.Fprintf(&b, "| `%s` | ⏭️ skipped | — | — | — | — | — | — |\n", r.ID)
 		default:
 			res := "❌ fail"
 			if r.Passed {
 				res = "✅ pass"
 			}
-			fmt.Fprintf(&b, "| `%s` | %s | %d | %s | %s | %s | %s%.4f |\n",
+			fmt.Fprintf(&b, "| `%s` | %s | %d | %s | %s | %s | %d | %s%.4f |\n",
 				r.ID, res, r.Steps, comma(r.PromptTokens), comma(r.CompletionTokens),
 				pct(r.CacheHitTokens, r.CacheHitTokens+r.CacheMissTokens),
-				currencySym(r.Currency), r.Cost)
+				r.Compactions, currencySym(r.Currency), r.Cost)
 		}
 	}
-	fmt.Fprintf(&b, "\n<sub>Real provider run on the PR head. Cache-hit %% is cached prompt tokens / total prompt tokens.</sub>\n")
+	fmt.Fprintf(&b, "\n<sub>Real provider run. Cache-hit %% is cached prompt tokens / total prompt tokens.</sub>\n")
 
 	notes := false
 	for _, r := range results {
@@ -329,6 +355,10 @@ func copyDir(src, dst string) error {
 		if err != nil {
 			return err
 		}
+		// Skip symlinks so a seed link can't leak a file from outside the seed tree.
+		if info.Mode()&os.ModeSymlink != 0 {
+			return nil
+		}
 		rel, _ := filepath.Rel(src, p)
 		target := filepath.Join(dst, rel)
 		if info.IsDir() {
@@ -347,11 +377,18 @@ func copyFile(src, dst string) error {
 		return err
 	}
 	defer in.Close()
-	out, err := os.Create(dst)
+	info, err := in.Stat()
+	if err != nil {
+		return err
+	}
+	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, info.Mode().Perm())
 	if err != nil {
 		return err
 	}
 	defer out.Close()
-	_, err = io.Copy(out, in)
-	return err
+	if _, err := io.Copy(out, in); err != nil {
+		return err
+	}
+	// Mirror the source mode so a seed's read-only / exec bit survives the copy.
+	return os.Chmod(dst, info.Mode().Perm())
 }

@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"sort"
@@ -24,8 +23,8 @@ type workspaceChangeAccumulator struct {
 }
 
 func (a *App) WorkspaceChanges() WorkspaceChangesView {
-	out := WorkspaceChangesView{Files: []WorkspaceChangeView{}, GitAvailable: true}
-	base, err := os.Getwd()
+	out := WorkspaceChangesView{GitAvailable: true}
+	base, err := a.activeWorkspaceBase()
 	if err != nil {
 		out.GitAvailable = false
 		out.GitErr = err.Error()
@@ -103,14 +102,14 @@ func (a *App) WorkspaceChanges() WorkspaceChangesView {
 
 func workspaceGitStatus(base string) ([]gitStatusEntry, error) {
 	cmd := exec.Command("git", "-C", base, "status", "--porcelain=v1", "-z", "--untracked-files=all")
-	proc.HideWindow(cmd)
+	proc.HideWindowDetached(cmd)
 	raw, err := cmd.Output()
 	if err != nil {
 		return nil, err
 	}
 	entries := parseGitStatusPorcelainZ(raw)
 	topCmd := exec.Command("git", "-C", base, "rev-parse", "--show-toplevel")
-	proc.HideWindow(topCmd)
+	proc.HideWindowDetached(topCmd)
 	topRaw, err := topCmd.Output()
 	if err != nil {
 		return nil, err

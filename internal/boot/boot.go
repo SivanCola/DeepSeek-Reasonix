@@ -17,7 +17,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"reasonix/internal/agent"
 	"reasonix/internal/codegraph"
@@ -150,7 +149,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	if err := netclient.Validate(proxySpec); err != nil {
 		return nil, err
 	}
-	balanceClient, err := netclient.NewHTTPClient(proxySpec, 12*time.Second, netclient.TransportOptions{})
+	balanceClient, err := netclient.NewHTTPClient(proxySpec, netclient.TransportOptions{})
 	if err != nil {
 		return nil, err
 	}
@@ -294,7 +293,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		case cfg.Codegraph.AutoInstall:
 			notify := func(msg string) { sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo, Text: msg}) }
 			notify("codegraph: fetching code-intelligence runtime in the background (one-time) — symbol-graph tools available next session")
-			codegraphClient, err := netclient.NewHTTPClient(proxySpec, 0, netclient.TransportOptions{})
+			codegraphClient, err := netclient.NewHTTPClient(proxySpec, netclient.TransportOptions{})
 			if err != nil {
 				notify("codegraph: install skipped (" + err.Error() + ")")
 			} else {
@@ -411,7 +410,8 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	// nesting out of the picture). It registers into the same reg the
 	// executor uses, so the model surfaces it like any other tool.
 	reg.Add(agent.NewTaskTool(execProv, entry.Price, reg, maxSteps,
-		entry.ContextWindow, cfg.Agent.Temperature, config.ArchiveDir(), "", headlessGate))
+		entry.ContextWindow, cfg.Agent.SoftCompactRatio, cfg.Agent.CompactRatio, cfg.Agent.CompactForceRatio,
+		cfg.Agent.Temperature, config.ArchiveDir(), "", headlessGate))
 
 	// The `remember` tool lets the model persist durable facts to the project's
 	// auto-memory store; `forget` prunes ones that turn out wrong. The saved index
@@ -464,15 +464,18 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 
 	execSess := agent.NewSession(sysPrompt)
 	executor := agent.New(execProv, reg, execSess, agent.Options{
-		MaxSteps:      maxSteps,
-		Temperature:   cfg.Agent.Temperature,
-		Pricing:       entry.Price,
-		Gate:          headlessGate,
-		Hooks:         hookRunner,
-		Jobs:          jm,
-		ProjectChecks: projectChecks,
-		ContextWindow: entry.ContextWindow,
-		ArchiveDir:    config.ArchiveDir(),
+		MaxSteps:          maxSteps,
+		Temperature:       cfg.Agent.Temperature,
+		Pricing:           entry.Price,
+		Gate:              headlessGate,
+		Hooks:             hookRunner,
+		Jobs:              jm,
+		ProjectChecks:     projectChecks,
+		ContextWindow:     entry.ContextWindow,
+		SoftCompactRatio:  cfg.Agent.SoftCompactRatio,
+		CompactRatio:      cfg.Agent.CompactRatio,
+		CompactForceRatio: cfg.Agent.CompactForceRatio,
+		ArchiveDir:        config.ArchiveDir(),
 	}, sink)
 
 	// Custom slash commands (.reasonix/commands + user dir). Best-effort: a malformed

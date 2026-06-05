@@ -7,6 +7,7 @@ package serve
 
 import (
 	"context"
+	"crypto/sha256"
 	_ "embed"
 	"encoding/json"
 	"fmt"
@@ -279,6 +280,15 @@ func (s *Server) index(w http.ResponseWriter, _ *http.Request) {
 	_, _ = w.Write(indexHTML)
 }
 
+// sseKeepaliveInterval is how often the /events handler emits a `: ping`
+// SSE comment. Most reverse proxies (nginx, ALB, Cloudflare) close idle
+// upstream connections after 30–60 s; a long quiet turn (the agent
+// thinking, the model generating a single long response) easily hits
+// that window. The comment is one byte on the wire and is dropped by
+// the EventSource client, so it's a no-op for the consumer while it
+// keeps the TCP socket warm for the proxy.
+const sseKeepaliveInterval = 15 * time.Second
+
 // events streams the controller's event flow as SSE until the client
 // disconnects. Each event is one `data:` frame of the JSON wire form.
 func (s *Server) events(w http.ResponseWriter, r *http.Request) {
@@ -297,6 +307,9 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprint(w, ": connected\n\n") // open the stream immediately
 	flusher.Flush()
 
+	keepalive := time.NewTicker(sseKeepaliveInterval)
+	defer keepalive.Stop()
+
 	for {
 		select {
 		case data, ok := <-ch:
@@ -304,6 +317,15 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			fmt.Fprintf(w, "data: %s\n\n", data)
+			flusher.Flush()
+		case <-keepalive.C:
+			// SSE comment lines start with `:` and are ignored by the
+			// client. Emit one every sseKeepaliveInterval so the
+			// upstream socket stays warm; without this, a long quiet
+			// turn (e.g. a model thinking) lets a proxy like nginx
+			// or an ALB close the idle connection and the next
+			// event arrives on a half-closed stream.
+			fmt.Fprint(w, ": ping\n\n")
 			flusher.Flush()
 		case <-r.Context().Done():
 			return
@@ -404,8 +426,10 @@ func (s *Server) newSession(w http.ResponseWriter, _ *http.Request) {
 }
 
 // history returns the session's message log as {role, content} pairs so a
-// reconnecting client can repopulate its transcript.
-func (s *Server) history(w http.ResponseWriter, _ *http.Request) {
+// reconnecting client can repopulate its transcript. Supports ETag caching:
+// if the client sends If-None-Match with the current ETag, the server returns
+// 304 Not Modified with no body, saving bandwidth on reconnects.
+func (s *Server) history(w http.ResponseWriter, r *http.Request) {
 	type msg struct {
 		Role    string `json:"role"`
 		Content string `json:"content"`
@@ -414,13 +438,14 @@ func (s *Server) history(w http.ResponseWriter, _ *http.Request) {
 	for _, m := range s.ctl().History() {
 		out = append(out, msg{Role: string(m.Role), Content: m.Content})
 	}
-	writeJSON(w, out)
+	writeJSONCached(w, r, out)
 }
 
-// context returns the prompt-vs-window gauge numbers.
-func (s *Server) context(w http.ResponseWriter, _ *http.Request) {
+// context returns the prompt-vs-window gauge numbers. Supports ETag caching
+// so reconnecting clients avoid re-fetching unchanged context data.
+func (s *Server) context(w http.ResponseWriter, r *http.Request) {
 	used, window := s.ctl().ContextSnapshot()
-	writeJSON(w, map[string]int{"used": used, "window": window})
+	writeJSONCached(w, r, map[string]int{"used": used, "window": window})
 }
 
 func writeJSON(w http.ResponseWriter, v any) {
@@ -428,6 +453,27 @@ func writeJSON(w http.ResponseWriter, v any) {
 	if err := json.NewEncoder(w).Encode(v); err != nil {
 		slog.Warn("serve: writeJSON encode failed", "err", err)
 	}
+}
+
+// writeJSONCached encodes v as JSON, computes a weak ETag from the body, and
+// returns 304 Not Modified if the client's If-None-Match matches. This avoids
+// re-sending unchanged history/context payloads on every reconnect.
+func writeJSONCached(w http.ResponseWriter, r *http.Request, v any) {
+	body, err := json.Marshal(v)
+	if err != nil {
+		slog.Warn("serve: writeJSONCached marshal failed", "err", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	etag := fmt.Sprintf(`"%x"`, sha256.Sum256(body))
+	if match := r.Header.Get("If-None-Match"); match == etag {
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("ETag", etag)
+	w.Header().Set("Cache-Control", "private, max-age=0, must-revalidate")
+	_, _ = w.Write(body)
 }
 
 // corsMiddleware adds CORS headers for a specific allowed origin. Only use for

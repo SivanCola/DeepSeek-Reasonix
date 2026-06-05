@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"reasonix/internal/netclient"
@@ -78,7 +79,7 @@ func New(cfg provider.Config) (provider.Provider, error) {
 
 func newHTTPClient(cfg provider.Config) (*http.Client, error) {
 	spec, _ := cfg.Extra["proxy_spec"].(netclient.ProxySpec)
-	return netclient.NewHTTPClient(spec, 0, netclient.TransportOptions{
+	return netclient.NewHTTPClient(spec, netclient.TransportOptions{
 		DialTimeout:           30 * time.Second,
 		KeepAlive:             30 * time.Second,
 		TLSHandshakeTimeout:   15 * time.Second,
@@ -108,11 +109,24 @@ func isDeepSeekBaseURL(baseURL string) bool {
 	return host == "api.deepseek.com" || strings.HasSuffix(host, ".deepseek.com")
 }
 
+// bufPool reuses byte buffers for JSON-marshalled request bodies. Each turn
+// allocates a buffer, marshals the request, and sends it — pooling avoids the
+// GC churn from repeated alloc/free of ~10-100KB buffers. The pool is
+// provider-level (not global) so OpenAI and Anthropic don't compete.
+var bufPool = sync.Pool{
+	New: func() any { return new(bytes.Buffer) },
+}
+
 func (c *client) Stream(ctx context.Context, req provider.Request) (<-chan provider.Chunk, error) {
-	body, err := json.Marshal(c.buildRequest(req))
-	if err != nil {
+	buf := bufPool.Get().(*bytes.Buffer)
+	buf.Reset()
+	if err := json.NewEncoder(buf).Encode(c.buildRequest(req)); err != nil {
+		bufPool.Put(buf)
 		return nil, fmt.Errorf("%s: marshal request: %w", c.name, err)
 	}
+	body := make([]byte, buf.Len())
+	copy(body, buf.Bytes())
+	bufPool.Put(buf)
 
 	newReq := func(ctx context.Context) (*http.Request, error) {
 		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/chat/completions", bytes.NewReader(body))

@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 type diffOpts struct {
@@ -82,6 +83,7 @@ func runOnce(o diffOpts, srcFiles, pkgs []string, prompt string) diffReport {
 	cmd.Dir = o.repo
 	cmd.Stdout = os.Stderr
 	cmd.Stderr = os.Stderr
+	cmd.WaitDelay = 10 * time.Second // bound the wait for a wedged child after ctx timeout
 	runErr := cmd.Run()
 
 	// The agent's new files are untracked, so `git diff HEAD` would miss them;
@@ -150,6 +152,7 @@ func resetTree(repo string) {
 func goBuildAll(repo string) (bool, string) {
 	cmd := exec.Command("go", "build", "./...")
 	cmd.Dir = repo
+	cmd.WaitDelay = 2 * time.Minute // bound the wait if `go build` hangs
 	out, err := cmd.CombinedOutput()
 	return err == nil, string(out)
 }
@@ -305,10 +308,22 @@ func differentialPerTest(repo, base string, srcFiles []string, refs []testRef) [
 			_ = os.Remove(filepath.Join(repo, filepath.FromSlash(f)))
 		}
 	}
+	// Restore source even on panic; a tree left on `base` would mask the PR for later steps.
+	restored := false
+	defer func() {
+		if restored {
+			return
+		}
+		for _, f := range srcFiles {
+			_ = exec.Command("git", "-C", repo, "checkout", "HEAD", "--", f).Run()
+		}
+	}()
+
 	out := make([]pinResult, 0, len(refs))
 	for _, r := range refs {
 		cmd := exec.Command("go", "test", "-run", "^"+r.name+"$", r.pkg)
 		cmd.Dir = repo
+		cmd.WaitDelay = 2 * time.Minute // bound the wait for a hung test
 		raw, err := cmd.CombinedOutput()
 		out = append(out, pinResult{
 			testRef:     r,
@@ -319,6 +334,7 @@ func differentialPerTest(repo, base string, srcFiles []string, refs []testRef) [
 	for _, f := range srcFiles {
 		_ = exec.Command("git", "-C", repo, "checkout", "HEAD", "--", f).Run()
 	}
+	restored = true
 	return out
 }
 
@@ -386,6 +402,11 @@ func parseCoverProfile(repo, path string) map[string][]coverBlock {
 // repoRelFromModulePath turns "reasonix/internal/agent/foo.go" into
 // "internal/agent/foo.go" by dropping the first path element (the module root).
 func repoRelFromModulePath(p string) string {
+	// Strip the full module prefix; a generic first-segment cut mis-strips a multi-segment module path.
+	prefix := "reasonix/"
+	if strings.HasPrefix(p, prefix) {
+		return p[len(prefix):]
+	}
 	if i := strings.IndexByte(p, '/'); i >= 0 {
 		return p[i+1:]
 	}
@@ -464,11 +485,26 @@ func parseNewTests(diff string) []testRef {
 			continue
 		}
 		sig := strings.TrimPrefix(body, "func ")
-		paren := strings.IndexByte(sig, '(')
-		if paren <= 0 {
-			continue
+		// Method form `(r T) Name(...)` starts with '('; parse the receiver out before the name.
+		var name string
+		if sig[0] == '(' {
+			close := strings.IndexByte(sig, ')')
+			if close < 0 {
+				continue
+			}
+			rest := strings.TrimSpace(sig[close+1:])
+			methodParen := strings.IndexByte(rest, '(')
+			if methodParen <= 0 {
+				continue
+			}
+			name = rest[:methodParen]
+		} else {
+			funcParen := strings.IndexByte(sig, '(')
+			if funcParen <= 0 {
+				continue
+			}
+			name = sig[:funcParen]
 		}
-		name := sig[:paren]
 		if strings.HasPrefix(name, "Test") || strings.HasPrefix(name, "Fuzz") || strings.HasPrefix(name, "Benchmark") {
 			refs = append(refs, testRef{name: name, pkg: pkg})
 		}
@@ -505,15 +541,55 @@ func failingTestNames(out string) []string {
 }
 
 func runTests(repo, testCmd string, pkgs []string) (bool, string) {
-	fields := strings.Fields(testCmd)
+	fields := splitShellFields(testCmd)
 	if len(fields) == 0 {
 		fields = []string{"go", "test"}
 	}
 	args := append(fields[1:], pkgs...)
 	cmd := exec.Command(fields[0], args...)
 	cmd.Dir = repo
+	cmd.WaitDelay = 5 * time.Minute // bound the wait if `go test` hangs
 	out, err := cmd.CombinedOutput()
 	return err == nil, string(out)
+}
+
+// splitShellFields splits on whitespace, honoring single/double-quoted spans and stripping the quotes.
+func splitShellFields(s string) []string {
+	var out []string
+	var cur strings.Builder
+	inSingle, inDouble := false, false
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case inSingle:
+			if c == '\'' {
+				inSingle = false
+			} else {
+				cur.WriteByte(c)
+			}
+		case inDouble:
+			if c == '"' {
+				inDouble = false
+			} else {
+				cur.WriteByte(c)
+			}
+		case c == '\'':
+			inSingle = true
+		case c == '"':
+			inDouble = true
+		case c == ' ' || c == '\t' || c == '\n':
+			if cur.Len() > 0 {
+				out = append(out, cur.String())
+				cur.Reset()
+			}
+		default:
+			cur.WriteByte(c)
+		}
+	}
+	if cur.Len() > 0 {
+		out = append(out, cur.String())
+	}
+	return out
 }
 
 // changedGoFiles lists .go files changed by base...HEAD, excluding *_test.go
@@ -561,10 +637,15 @@ func gitOut(repo string, args ...string) string {
 func truncate(s string) string { return truncateFor(s, 12000) }
 
 func truncateFor(s string, max int) string {
-	if len(s) <= max {
+	if max <= 0 || len(s) <= max {
 		return s
 	}
-	return s[:max] + "\n…(truncated)…"
+	// Back the cut up to a rune boundary so we don't split a multi-byte UTF-8 rune.
+	cut := max
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut] + "\n…(truncated)…"
 }
 
 func tail(s string, n int) string {
