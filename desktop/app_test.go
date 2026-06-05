@@ -36,6 +36,23 @@ func (a *App) setTestCtrl(ctrl *control.Controller, model string) {
 	tab.model = model
 }
 
+func isolateDesktopUserDirs(t *testing.T) string {
+	t.Helper()
+	home := t.TempDir()
+	xdg := filepath.Join(home, ".config")
+	appData := filepath.Join(home, "AppData")
+	for _, dir := range []string{xdg, appData} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("XDG_CONFIG_HOME", xdg)
+	t.Setenv("AppData", appData)
+	return home
+}
+
 func TestCommandsIncludesEffortNotThinking(t *testing.T) {
 	app := NewApp()
 	cmds := app.Commands()
@@ -501,10 +518,7 @@ args = ["-y", "@playwright/mcp"]
 }
 
 func TestCapabilitiesShowsDefaultCodegraphDisabled(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("USERPROFILE", t.TempDir())
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
-	t.Setenv("AppData", t.TempDir())
+	isolateDesktopUserDirs(t)
 	dir := t.TempDir()
 	t.Chdir(dir)
 
