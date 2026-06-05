@@ -39,7 +39,7 @@ function inlineMathNode(value: string): any {
   return {
     type: "inlineMath",
     value,
-    data: { hName: "inline-math-node", hProperties: {} },
+    data: { hName: "inline-math-node", hProperties: { value } },
   };
 }
 
@@ -47,7 +47,7 @@ function blockMathNode(value: string): any {
   return {
     type: "math",
     value,
-    data: { hName: "block-math-node", hProperties: {} },
+    data: { hName: "block-math-node", hProperties: { value } },
   };
 }
 
