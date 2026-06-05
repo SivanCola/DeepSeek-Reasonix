@@ -163,6 +163,25 @@ func TestStatuslineShowsEffort(t *testing.T) {
 	}
 }
 
+func TestStatuslinePutsGitIdentityOnModeRow(t *testing.T) {
+	i18n.DetectLanguage("en")
+
+	content := renderStatuslineViewWithGitAndEffort(t)
+	lines := bottomStatusPlainLines(content)
+	if len(lines) != 2 {
+		t.Fatalf("status block lines = %d, want 2:\n%s", len(lines), strings.Join(lines, "\n"))
+	}
+	if !strings.Contains(lines[0], "Reasonix@codex/demo (+3 -1 ?2)") {
+		t.Fatalf("mode row should include git identity:\n%s", strings.Join(lines, "\n"))
+	}
+	if strings.Contains(lines[1], "Reasonix@codex/demo") {
+		t.Fatalf("data row should not include git identity:\n%s", strings.Join(lines, "\n"))
+	}
+	if !strings.Contains(lines[1], "deepseek-v4-flash · effort auto") {
+		t.Fatalf("data row should keep model and effort:\n%s", strings.Join(lines, "\n"))
+	}
+}
+
 func TestStatuslineExplicitEffortUsesBlue(t *testing.T) {
 	i18n.DetectLanguage("en")
 
@@ -209,6 +228,24 @@ func renderStatuslineViewWithEffort(t *testing.T, effort string) string {
 	return next.(chatTUI).View().Content
 }
 
+func renderStatuslineViewWithGitAndEffort(t *testing.T) string {
+	t.Helper()
+
+	ctrl := control.New(control.Options{})
+	m := newChatTUI(ctrl, "", make(chan event.Event, 1), 120)
+	m.label = "deepseek-v4-flash"
+	m.effortLevel = "auto"
+	m.gitStatus = gitStatus{
+		Repo:      "Reasonix",
+		Branch:    "codex/demo",
+		Added:     3,
+		Removed:   1,
+		Untracked: 2,
+	}
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 24})
+	return next.(chatTUI).View().Content
+}
+
 func renderPlanStatuslineView(t *testing.T) string {
 	t.Helper()
 
@@ -220,9 +257,13 @@ func renderPlanStatuslineView(t *testing.T) string {
 }
 
 func bottomStatusPlain(content string) string {
+	return strings.Join(bottomStatusPlainLines(content), "\n")
+}
+
+func bottomStatusPlainLines(content string) []string {
 	lines := strings.Split(ansi.Strip(content), "\n")
 	if len(lines) < 2 {
-		return strings.Join(lines, "\n")
+		return lines
 	}
-	return strings.Join(lines[len(lines)-2:], "\n")
+	return lines[len(lines)-2:]
 }

@@ -1669,6 +1669,9 @@ func (m chatTUI) View() tea.View {
 	default:
 		status = "  " + modeTag + " · " + i18n.M.ChatStatusIdle + " " + dim("("+i18n.M.ChatStatusCycleHint+")")
 	}
+	if gt := m.gitTag(); gt != "" {
+		status += " · " + gt
+	}
 	// The spinning "thinking…" indicator is its own line ABOVE the input box (shown
 	// only while a turn runs); the status/data rows stay below. This mirrors Claude
 	// Code: live progress over the composer, shortcuts + stats under it.
@@ -1690,7 +1693,7 @@ func (m chatTUI) View() tea.View {
 			}
 		}
 	}
-	// Second status row: the live data (model, git, effort, context gauge, cache
+	// Second status row: the live run data (model, effort, context gauge, cache
 	// rates, jobs, balance). It lives on its own fixed row so it's always shown in
 	// full rather than being truncated off the end of the status line. Two rows is
 	// a fixed height, so unlike a wrap-when-long status it doesn't reintroduce
@@ -1698,9 +1701,6 @@ func (m chatTUI) View() tea.View {
 	var data []string
 	if mt := m.modelTag(); mt != "" {
 		data = append(data, mt)
-	}
-	if gt := m.gitTag(); gt != "" {
-		data = append(data, gt)
 	}
 	if et := m.effortTag(); et != "" {
 		data = append(data, et)
@@ -1753,7 +1753,7 @@ func (m chatTUI) View() tea.View {
 		rowsAboveBox += strings.Count(menu, "\n") + 1
 	}
 	// Layout: the working spinner (when running), then the composer when visible,
-	// then the two status rows (line 1 = mode + shortcuts/state, line 2 = live data).
+	// then the two status rows (line 1 = mode + session/worktree identity, line 2 = live run data).
 	// Each row is clamped to width independently so neither wraps; padding to full
 	// width keeps a short row from leaving stale cells from the prior frame.
 	if working != "" {
