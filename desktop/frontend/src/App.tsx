@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, KeyboardEvent, PointerEvent as ReactPointerEvent } from "react";
+import { ShellExpandProvider, useShellExpand } from "./lib/shellExpand";
 import {
   SquarePen,
   Brain,
@@ -40,6 +41,7 @@ import { OnboardingOverlay } from "./components/OnboardingOverlay";
 import { TabBar } from "./components/TabBar";
 import { ProjectTree } from "./components/ProjectTree";
 import { parseTodos } from "./lib/tools";
+import { shouldShowTodoPanel } from "./lib/todoVisibility";
 import type { ComposerInsertRequest, MemoryView, Meta, Mode, SessionMeta, TabMeta } from "./lib/types";
 import { loadLayoutSize, saveLayoutSize } from "./lib/layoutPreferences";
 import {
@@ -207,11 +209,30 @@ function workspaceDisplayName(path?: string): string {
   return parts.length > 0 ? parts[parts.length - 1] : path;
 }
 
+
+/** Global hotkey handler for shell-expand toggle (Ctrl/Cmd+B). */
+function ShellHotkeys() {
+  const shellExpand = useShellExpand();
+  useEffect(() => {
+    if (!shellExpand) return;
+    const onKey = (e: globalThis.KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === "b") {
+        e.preventDefault();
+        shellExpand.toggleLast();
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [shellExpand]);
+  return null;
+}
+
 export default function App() {
   const {
     state,
     activeTabId,
     send,
+    runShell,
     notice,
     cancel,
     approve,
@@ -434,10 +455,10 @@ export default function App() {
 
   // The live task list pinned above the composer comes from the most recent
   // successful top-level todo_write result; failed or still-running attempts do
-  // not advance the canonical panel state. It stays visible while work remains,
-  // clears itself once every item is completed, and can be dismissed by the user
-  // (the ✕). A dismissal is keyed to that list's id, so a fresh accepted
-  // todo_write brings the panel back.
+  // not advance the canonical panel state. It stays visible through the final
+  // all-completed update, and can be dismissed by the user (the ✕). A dismissal
+  // is keyed to that list's id, so a fresh accepted todo_write brings the panel
+  // back.
   const todoEntry = useMemo(() => {
     for (let i = state.items.length - 1; i >= 0; i--) {
       const it = state.items[i];
@@ -450,11 +471,7 @@ export default function App() {
   const todoItem = todoEntry?.item ?? null;
   const todos = useMemo(() => (todoItem ? parseTodos(todoItem.args) : []), [todoItem]);
   const [dismissedTodo, setDismissedTodo] = useState<string | null>(null);
-  const showTodos =
-    !!todoItem &&
-    todoItem.id !== dismissedTodo &&
-    todos.length > 0 &&
-    todos.some((t) => t.status !== "completed");
+  const showTodos = shouldShowTodoPanel(todoItem?.id, dismissedTodo, todos);
   const [todoNow, setTodoNow] = useState(() => Date.now());
   const todoSeenRef = useRef<{ id: string; at: number } | null>(null);
 
@@ -513,6 +530,16 @@ export default function App() {
   const handleSend = useCallback(
     async (displayText: string, submitText = displayText) => {
       const trimmed = displayText.trim();
+      // "!<cmd>" runs a shell command directly, bypassing the model.
+      if (trimmed.startsWith("!")) {
+        const cmd = trimmed.slice(1).trim();
+        if (!cmd) {
+          notice("usage: !<command>  (e.g. !ls -la)");
+          return;
+        }
+        runShell(cmd);
+        return;
+      }
       const model = /^\/model\s+(\S+)$/.exec(trimmed);
       if (model) {
         void switchModel(model[1]);
@@ -551,7 +578,7 @@ export default function App() {
       await syncModeToController(mode);
       send(trimmed, submitText.trim());
     },
-    [switchModel, openMemory, syncModeToController, mode, send, notice, t],
+    [switchModel, openMemory, syncModeToController, mode, send, runShell, notice, t],
   );
 
   const refreshTabMetas = useCallback(async (): Promise<TabMeta[]> => {
@@ -1094,6 +1121,8 @@ export default function App() {
   const workspacePanelMaxWidth = workspacePreviewActive ? RIGHT_DOCK_MAX_WIDTH : RIGHT_DOCK_TREE_MAX_WIDTH;
 
   return (
+    <ShellExpandProvider>
+    <ShellHotkeys />
     <div className="app">
       <div
         ref={layoutRef}
@@ -1527,5 +1556,6 @@ export default function App() {
 
       {needsOnboarding && <OnboardingOverlay onComplete={() => setNeedsOnboarding(false)} />}
     </div>
+    </ShellExpandProvider>
   );
 }
