@@ -188,11 +188,19 @@ func (a *App) Settings() SettingsView {
 		v.CurrentModel = tab.model
 	}
 	a.mu.RUnlock()
+	defaultCanonical := cfg.DefaultModel
+	if e, ok := cfg.ResolveModel(cfg.DefaultModel); ok {
+		defaultCanonical = e.Name + "/" + e.Model
+	}
+	currentCanonical := v.CurrentModel
+	if e, ok := cfg.ResolveModel(v.CurrentModel); ok {
+		currentCanonical = e.Name + "/" + e.Model
+	}
 	_, v.DefaultModelValid = cfg.ResolveModel(cfg.DefaultModel)
 	_, v.PlannerModelValid = cfg.ResolveModel(cfg.Agent.PlannerModel)
 	v.CurrentModelValid = v.CurrentModel == "" ||
 		func() bool { _, ok := cfg.ResolveModel(v.CurrentModel); return ok }()
-	if v.CurrentModel != "" && v.CurrentModel != v.DefaultModel {
+	if currentCanonical != "" && currentCanonical != defaultCanonical {
 		v.ModelWarning = "current session model differs from default model"
 	}
 	if !v.CurrentModelValid && v.CurrentModel != "" {
@@ -425,7 +433,7 @@ func (a *App) SyncActiveTabModelToDefault() error {
 	}
 	resolved, _, ok := cfg.ResolveModelWithFallback(cfg.DefaultModel)
 	if !ok {
-		return fmt.Errorf("no configured model providers available")
+		return fmt.Errorf("no model providers available")
 	}
 	if resolved != cfg.DefaultModel {
 		cfg.DefaultModel = resolved
@@ -445,7 +453,7 @@ func (a *App) SyncAllTabModelsToDefault() error {
 	}
 	resolved, _, ok := cfg.ResolveModelWithFallback(cfg.DefaultModel)
 	if !ok {
-		return fmt.Errorf("no configured model providers available")
+		return fmt.Errorf("no model providers available")
 	}
 	if resolved != cfg.DefaultModel {
 		cfg.DefaultModel = resolved

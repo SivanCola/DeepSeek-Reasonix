@@ -1046,21 +1046,18 @@ func (c *Config) ResolveModel(ref string) (*ProviderEntry, bool) {
 
 // ResolveModelWithFallback resolves a model reference to a canonical "provider/model"
 // string. When ref doesn't resolve (stale after provider deletion, etc.) it falls
-// back to the first configured provider. Returns:
+// back to the first provider with models. Returns:
 //   - resolvedRef: "provider/model" ready for boot.Build
 //   - fallback: true when the original ref was invalid and a substitute was picked
-//   - ok: false when no configured provider with models exists at all
+//   - ok: false when no provider with models exists at all
 func (c *Config) ResolveModelWithFallback(ref string) (resolvedRef string, fallback bool, ok bool) {
 	if ref != "" {
-		if e, found := c.ResolveModel(ref); found && e.Configured() {
+		if e, found := c.ResolveModel(ref); found {
 			return e.Name + "/" + e.Model, false, true
 		}
 	}
 	for i := range c.Providers {
 		p := &c.Providers[i]
-		if !p.Configured() {
-			continue
-		}
 		if len(p.ModelList()) == 0 {
 			continue
 		}

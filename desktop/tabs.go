@@ -495,7 +495,7 @@ func (a *App) buildTabController(tab *WorkspaceTab) {
 	resolved, fallback, ok := cfg.ResolveModelWithFallback(model)
 	if !ok {
 		a.mu.Lock()
-		tab.StartupErr = "no available model providers — configure at least one provider with a valid API key"
+		tab.StartupErr = "no available model providers — configure at least one provider"
 		tab.Ready = true
 		a.mu.Unlock()
 		a.emitReady(wailsCtx)

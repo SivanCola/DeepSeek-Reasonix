@@ -227,7 +227,17 @@ function ShellHotkeys() {
   return null;
 }
 
-function StartupErrorBanner({ meta, t, setModel }: { meta: Meta; t: ReturnType<typeof useT>; setModel: (name: string) => Promise<void> }) {
+function StartupErrorBanner({
+  meta,
+  t,
+  setModel,
+  onOpenSettings,
+}: {
+  meta: Meta;
+  t: ReturnType<typeof useT>;
+  setModel: (name: string) => Promise<void>;
+  onOpenSettings: () => void;
+}) {
   const [recovering, setRecovering] = useState(false);
   const code = meta.startupErrCode;
   const recoveryModel = meta.startupRecoveryModel;
@@ -261,13 +271,7 @@ function StartupErrorBanner({ meta, t, setModel }: { meta: Meta; t: ReturnType<t
             {t("topbar.switchTo", { model: recoveryModel || "" })}
           </button>
         )}
-        <button
-          className="btn btn--small"
-          onClick={() => {
-            // Toggle settings panel open — the event is handled by the main component.
-            window.dispatchEvent(new CustomEvent("reasonix:openSettings"));
-          }}
-        >
+        <button className="btn btn--small" onClick={onOpenSettings}>
           {t("topbar.openModelSettings")}
         </button>
       </div>
@@ -1402,7 +1406,12 @@ export default function App() {
           </header>
 
           {state.meta?.startupErr && (
-            <StartupErrorBanner meta={state.meta} t={t} setModel={setModel} />
+            <StartupErrorBanner
+              meta={state.meta}
+              t={t}
+              setModel={setModel}
+              onOpenSettings={() => setSettingsOpen(true)}
+            />
           )}
 
           <UpdateBanner />
