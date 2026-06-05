@@ -95,15 +95,20 @@ func (t *installSourceTool) remoteMCPAction(req request, sourceURL string) actio
 }
 
 // localExecutableMCPAction treats a chmod +x'd local file as a stdio MCP
-// server. The file itself becomes the command.
+// server. By default the file itself becomes the command; callers may override
+// the command to wrap the source with an interpreter.
 func (t *installSourceTool) localExecutableMCPAction(req request, path string) action {
 	name := strings.TrimSpace(req.Name)
 	if name == "" {
 		name = sanitizeName(strings.TrimSuffix(filepath.Base(path), filepath.Ext(path)))
 	}
+	command := strings.TrimSpace(req.Command)
+	if command == "" {
+		command = path
+	}
 	e := config.PluginEntry{
 		Name:    name,
-		Command: path,
+		Command: command,
 		Args:    append([]string(nil), req.Args...),
 		Env:     cleanMap(req.Env),
 		Tier:    req.Tier,

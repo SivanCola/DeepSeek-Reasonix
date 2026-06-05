@@ -988,6 +988,45 @@ func TestPlanLocalExecutableDetected(t *testing.T) {
 	}
 }
 
+func TestApplyLocalExecutableHonorsCommandOverride(t *testing.T) {
+	project := t.TempDir()
+	home := t.TempDir()
+	bin := filepath.Join(t.TempDir(), "bin")
+	if err := os.MkdirAll(bin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	server := filepath.Join(bin, "server.js")
+	writeFile(t, server, "#!/usr/bin/env node\n")
+	if err := os.Chmod(server, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	stub := &stubConnector{toolCount: 1}
+	tl := NewTool(Options{ProjectRoot: project, HomeDir: home, ConnectMCP: stub.connector()})
+	resp := execInstall(t, tl, map[string]any{
+		"source":  server,
+		"kind":    "mcp",
+		"apply":   true,
+		"name":    "wrapped",
+		"command": "node",
+		"args":    []string{server},
+	})
+
+	if !resp.OK || len(resp.Actions) != 1 {
+		t.Fatalf("response = %+v", resp)
+	}
+	if resp.Actions[0].Command != "node" || len(resp.Actions[0].Args) != 1 || resp.Actions[0].Args[0] != server {
+		t.Fatalf("action command/args = %q %v, want node [%s]", resp.Actions[0].Command, resp.Actions[0].Args, server)
+	}
+	if len(stub.connected) != 1 || stub.connected[0].Command != "node" || len(stub.connected[0].Args) != 1 || stub.connected[0].Args[0] != server {
+		t.Fatalf("connected entry = %+v, want node [%s]", stub.connected, server)
+	}
+	cfg := config.LoadForEdit(filepath.Join(project, "reasonix.toml"))
+	if len(cfg.Plugins) != 1 || cfg.Plugins[0].Command != "node" || len(cfg.Plugins[0].Args) != 1 || cfg.Plugins[0].Args[0] != server {
+		t.Fatalf("persisted plugins = %+v, want node [%s]", cfg.Plugins, server)
+	}
+}
+
 // --- plan-only: RiskLevel surfacing -----------------------------------------
 
 func TestLinkRiskIsMedium(t *testing.T) {
