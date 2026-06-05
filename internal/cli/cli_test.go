@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -148,6 +149,18 @@ func TestRunMetadataCommandsDoNotMigrateLegacyConfig(t *testing.T) {
 	}
 	if _, err := os.Stat(config.UserConfigPath()); !os.IsNotExist(err) {
 		t.Fatalf("version should not migrate legacy config, stat err=%v", err)
+	}
+}
+
+func TestWelcomePromptMissingKeysRequiresConfigSource(t *testing.T) {
+	if welcomeShouldPromptMissingKeys("", nil) {
+		t.Fatal("built-in defaults without a config source should not prompt for missing provider keys")
+	}
+	if welcomeShouldPromptMissingKeys("reasonix.toml", errors.New("bad config")) {
+		t.Fatal("invalid config should not enter the missing-key prompt path")
+	}
+	if !welcomeShouldPromptMissingKeys("reasonix.toml", nil) {
+		t.Fatal("valid config source should enter the missing-key prompt path")
 	}
 }
 
