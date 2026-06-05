@@ -19,7 +19,7 @@ import {
 } from "lucide-react";
 import logo from "./assets/logo.svg";
 import { asArray } from "./lib/array";
-import { t, useT } from "./lib/i18n";
+import { clearLegacyLangPref, normalizeLangPref, readLegacyLangPref, t, useI18n, useT } from "./lib/i18n";
 import { useController } from "./lib/useController";
 import { app, onProjectTreeChanged } from "./lib/bridge";
 import { Transcript } from "./components/Transcript";
@@ -42,33 +42,41 @@ import { ProjectTree } from "./components/ProjectTree";
 import { parseTodos } from "./lib/tools";
 import type { ComposerInsertRequest, MemoryView, Meta, Mode, SessionMeta, TabMeta } from "./lib/types";
 import { loadLayoutSize, saveLayoutSize } from "./lib/layoutPreferences";
-import { applyTheme, getTheme, getThemeStyle, isThemeStyle, themeForStyle, type Theme } from "./lib/theme";
-import { useWindowStatePersistence } from "./lib/windowState";
 import {
-  ScreenGetAll,
-  WindowGetPosition,
-  WindowGetSize,
-  WindowIsFullscreen,
-  WindowIsMaximised,
-  WindowSetSize,
-} from "../wailsjs/runtime/runtime";
+  applyTheme,
+  clearLegacyThemePreference,
+  getTheme,
+  getThemeStyle,
+  isThemeStyle,
+  normalizeThemePreference,
+  normalizeThemeStyleForTheme,
+  readLegacyThemePreference,
+  themeForStyle,
+  type Theme,
+} from "./lib/theme";
+import { useWindowStatePersistence } from "./lib/windowState";
 
 const SIDEBAR_COLLAPSED_KEY = "reasonix.sidebar.collapsed";
 const SIDEBAR_DEFAULT_WIDTH = 264;
+const SIDEBAR_DEFAULT_RATIO = 0.175;
 const SIDEBAR_MIN_WIDTH = 228;
-const SIDEBAR_MAX_WIDTH = 320;
+const SIDEBAR_MAX_WIDTH = 420;
 const CHAT_MIN_WIDTH = 760;
+const WORKSPACE_RESIZER_WIDTH = 8;
 
 function isThemeMode(value: string): value is Theme {
   return value === "auto" || value === "light" || value === "dark";
 }
 const CONTEXT_PANEL_MIN_WIDTH = 340;
-const CONTEXT_PANEL_MAX_WIDTH = 420;
 const RIGHT_DOCK_MIN_WIDTH = CONTEXT_PANEL_MIN_WIDTH;
 const RIGHT_DOCK_CONTEXT_WIDTH = 380;
-const RIGHT_DOCK_DEFAULT_WIDTH = 420;
+const RIGHT_DOCK_TREE_DEFAULT_WIDTH = 320;
+const RIGHT_DOCK_TREE_DEFAULT_RATIO = 0.25;
+const RIGHT_DOCK_TREE_MIN_WIDTH = 260;
+const RIGHT_DOCK_TREE_MAX_WIDTH = 560;
+const RIGHT_DOCK_PREVIEW_DEFAULT_WIDTH = 640;
 const RIGHT_DOCK_MAX_WIDTH = 860;
-const RIGHT_DOCK_RESIZER_WIDTH = 8;
+const RIGHT_DOCK_MIN_RENDER_WIDTH = 220;
 
 type RightDockMode = "context" | "files" | "changed";
 const SHOW_CONTEXT_DOCK = false;
@@ -77,13 +85,6 @@ type HistoryViewState =
   | { kind: "history"; source: "scope"; filter: HistoryScopeFilter; sessions: SessionMeta[] }
   | { kind: "history"; source: "all"; sessions: SessionMeta[] }
   | { kind: "trash"; sessions: SessionMeta[] };
-type WailsScreen = { isCurrent: boolean; isPrimary: boolean; width: number; height: number };
-
-function hasNativeWindowRuntime(): boolean {
-  if (typeof window === "undefined") return false;
-  const runtime = (window as { runtime?: Record<string, unknown> }).runtime;
-  return typeof runtime?.WindowGetSize === "function" && typeof runtime.WindowSetSize === "function";
-}
 
 function clampSidebarWidth(width: number): number {
   return Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, Math.round(width)));
@@ -93,14 +94,33 @@ function clampRightDockWidth(width: number): number {
   return Math.min(RIGHT_DOCK_MAX_WIDTH, Math.max(RIGHT_DOCK_MIN_WIDTH, Math.round(width)));
 }
 
-function resolveRightDockSplit(totalWidth: number, desiredDockWidth: number): { chatWidth: number; dockWidth: number } {
-  const total = Math.round(totalWidth);
-  const maxDockWidth = Math.max(RIGHT_DOCK_MIN_WIDTH, Math.min(RIGHT_DOCK_MAX_WIDTH, total - CHAT_MIN_WIDTH));
-  const dockWidth = Math.min(maxDockWidth, Math.max(RIGHT_DOCK_MIN_WIDTH, Math.round(desiredDockWidth)));
-  return {
-    chatWidth: Math.max(CHAT_MIN_WIDTH, total - dockWidth),
-    dockWidth,
-  };
+function clampRightDockTreeWidth(width: number): number {
+  return Math.min(RIGHT_DOCK_TREE_MAX_WIDTH, Math.max(RIGHT_DOCK_TREE_MIN_WIDTH, Math.round(width)));
+}
+
+function viewportWidthFallback(): number {
+  if (typeof window === "undefined") return 0;
+  const width = Math.round(window.innerWidth || 0);
+  return Number.isFinite(width) && width > 0 ? width : 0;
+}
+
+function defaultSidebarWidth(): number {
+  const width = viewportWidthFallback();
+  if (width <= 0) return SIDEBAR_DEFAULT_WIDTH;
+  return clampSidebarWidth(width * SIDEBAR_DEFAULT_RATIO);
+}
+
+function defaultRightDockTreeWidth(): number {
+  const width = viewportWidthFallback();
+  if (width <= 0) return RIGHT_DOCK_TREE_DEFAULT_WIDTH;
+  return clampRightDockTreeWidth(width * RIGHT_DOCK_TREE_DEFAULT_RATIO);
+}
+
+function resolveRightDockWidth(mainWidth: number, desiredDockWidth: number): number {
+  const budget = Math.max(0, Math.round(mainWidth) - CHAT_MIN_WIDTH - WORKSPACE_RESIZER_WIDTH);
+  if (budget < RIGHT_DOCK_MIN_RENDER_WIDTH) return 0;
+  const desired = Math.min(RIGHT_DOCK_MAX_WIDTH, Math.max(RIGHT_DOCK_MIN_RENDER_WIDTH, Math.round(desiredDockWidth)));
+  return Math.min(budget, desired);
 }
 
 function loadSidebarCollapsed(): boolean {
@@ -122,36 +142,56 @@ function saveSidebarCollapsed(collapsed: boolean): void {
 }
 
 function loadSidebarWidth(): number {
-  return loadLayoutSize("sidebarWidth", SIDEBAR_DEFAULT_WIDTH, clampSidebarWidth);
+  return loadLayoutSize("sidebarWidth", defaultSidebarWidth(), clampSidebarWidth);
 }
 
 function saveSidebarWidth(width: number): void {
   saveLayoutSize("sidebarWidth", width, clampSidebarWidth);
 }
 
-function loadRightDockWidth(): number {
-  return loadLayoutSize("rightDockWidth", RIGHT_DOCK_DEFAULT_WIDTH, clampRightDockWidth);
+function loadRightDockTreeWidth(): number {
+  return loadLayoutSize("rightDockTreeWidth", defaultRightDockTreeWidth(), clampRightDockTreeWidth);
 }
 
-function saveRightDockWidth(width: number): void {
-  saveLayoutSize("rightDockWidth", width, clampRightDockWidth);
+function saveRightDockTreeWidth(width: number): void {
+  saveLayoutSize("rightDockTreeWidth", width, clampRightDockTreeWidth);
+}
+
+function loadRightDockPreviewWidth(): number {
+  return loadLayoutSize("rightDockPreviewWidth", RIGHT_DOCK_PREVIEW_DEFAULT_WIDTH, clampRightDockWidth);
+}
+
+function saveRightDockPreviewWidth(width: number): void {
+  saveLayoutSize("rightDockPreviewWidth", width, clampRightDockWidth);
+}
+
+function tabWorkspaceTitle(tab?: TabMeta): string {
+  if (!tab) return "Global";
+  if (tab.scope === "project") return tab.workspaceName || tab.workspaceRoot || "Project";
+  if (tab.scope === "global") return tab.workspaceName || "Global";
+  return tab.workspaceName || tab.workspaceRoot || "Global";
 }
 
 function topicTitle(tab?: TabMeta): string {
   if (!tab) return "Global";
-  if (tab.scope === "global") return tab.topicTitle || "Global";
-  return `${tab.workspaceName || "Project"} / ${tab.topicTitle || "Untitled"}`;
+  const workspaceTitle = tabWorkspaceTitle(tab);
+  const topic = tab.topicTitle || (tab.scope === "global" ? workspaceTitle : "Untitled");
+  return topic === workspaceTitle ? workspaceTitle : `${workspaceTitle} / ${topic}`;
 }
 
 function topicScopeLabel(tab?: TabMeta): string {
-  if (!tab || tab.scope === "global") return t("scope.global");
+  if (!tab) return t("scope.global");
+  if (tab.scope === "global") return tab.workspaceName || t("scope.global");
   return t("scope.project", { name: tab.workspaceName || tab.workspaceRoot || "Project" });
 }
 
 function appChromeScopeLabel(tab?: TabMeta, meta?: Meta): string {
-  if (tab?.scope === "project") return tab.workspaceName || tab.workspaceRoot || "Project";
-  if (tab?.scope === "global") return tab.topicTitle || "Global";
+  if (tab?.scope === "project" || tab?.scope === "global") return tabWorkspaceTitle(tab);
   return workspaceDisplayName(meta?.cwd) || meta?.label || "Global";
+}
+
+function normalizeModeValue(mode?: string): Mode {
+  return mode === "plan" || mode === "yolo" ? mode : "normal";
 }
 
 function sessionsForScope(sessions: SessionMeta[], filter: HistoryScopeFilter): SessionMeta[] {
@@ -201,7 +241,9 @@ export default function App() {
     openGlobalTab,
     closeTab,
     reorderTabs,
+    syncActiveTab,
   } = useController();
+  const { setPref: setLocalePref } = useI18n();
   const t = useT();
   const [modesByTab, setModesByTab] = useState<Record<string, Mode>>({});
   const [tabMetas, setTabMetas] = useState<TabMeta[]>([]);
@@ -216,11 +258,13 @@ export default function App() {
   const [sidebarWidth, setSidebarWidth] = useState(loadSidebarWidth);
   const [sidebarResizing, setSidebarResizing] = useState(false);
   const [workspacePanelOpen, setWorkspacePanelOpen] = useState(true);
-  const [rightDockWidth, setRightDockWidth] = useState(loadRightDockWidth);
+  const [rightDockTreeWidth, setRightDockTreeWidth] = useState(loadRightDockTreeWidth);
+  const [rightDockPreviewWidth, setRightDockPreviewWidth] = useState(loadRightDockPreviewWidth);
+  const [workspacePreviewActive, setWorkspacePreviewActive] = useState(false);
   const [workspacePanelResizing, setWorkspacePanelResizing] = useState(false);
   const [workspacePanelMaximized, setWorkspacePanelMaximized] = useState(false);
   const [rightDockMode, setRightDockMode] = useState<RightDockMode>("files");
-  const dockRefreshKey = 0;
+  const [dockRefreshKey, setDockRefreshKey] = useState(0);
   const [projectRevision, setProjectRevision] = useState(0);
   const [composerInsertRequest, setComposerInsertRequest] = useState<ComposerInsertRequest | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -233,6 +277,31 @@ export default function App() {
   // Persist window geometry across launches.
   useWindowStatePersistence();
 
+  useEffect(() => {
+    let cancelled = false;
+    const syncDesktopPreferences = async () => {
+      const legacyLanguage = readLegacyLangPref();
+      const legacyTheme = readLegacyThemePreference();
+      if (legacyLanguage || legacyTheme.hasValue) {
+        await app.MigrateDesktopPreferences(legacyLanguage, legacyTheme.theme, legacyTheme.style);
+        clearLegacyLangPref();
+        clearLegacyThemePreference();
+      }
+      const settings = await app.Settings();
+      if (cancelled) return;
+      const nextTheme = normalizeThemePreference(settings.desktopTheme);
+      const nextStyle = normalizeThemeStyleForTheme(settings.desktopThemeStyle, nextTheme);
+      applyTheme(nextTheme, nextStyle, { persist: false });
+      setLocalePref(normalizeLangPref(settings.desktopLanguage));
+    };
+    void syncDesktopPreferences().catch((e) => {
+      console.warn("desktop preferences sync failed", e);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [setLocalePref]);
+
   // Open settings when the native menu item (CmdOrCtrl+,) is activated.
   useEffect(() => {
     if (typeof window === "undefined" || !window.runtime) return;
@@ -242,16 +311,23 @@ export default function App() {
   }, []);
   const [pendingPlanRevision, setPendingPlanRevision] = useState<string | null>(null);
   const [footerHeight, setFooterHeight] = useState(0);
+  const layoutRef = useRef<HTMLDivElement>(null);
   const footerRef = useRef<HTMLElement>(null);
-  const chatPaneRef = useRef<HTMLElement>(null);
-  const workbenchDockRef = useRef<HTMLElement>(null);
-  const rightDockToggleSequenceRef = useRef(0);
-  const rightDockTogglingRef = useRef(false);
-  const [chatWidth, setChatWidth] = useState<number | null>(null);
-  const [rightDockRenderWidth, setRightDockRenderWidth] = useState<number | null>(null);
+  const [layoutWidth, setLayoutWidth] = useState(0);
   const preferredWorkspacePanelWidth =
-    rightDockMode === "context" ? Math.min(CONTEXT_PANEL_MAX_WIDTH, rightDockWidth) : rightDockWidth;
-  const workspacePanelRenderWidth = rightDockRenderWidth ?? preferredWorkspacePanelWidth;
+    rightDockMode === "context"
+      ? RIGHT_DOCK_CONTEXT_WIDTH
+      : workspacePreviewActive
+      ? rightDockPreviewWidth
+      : rightDockTreeWidth;
+  const sidebarRenderWidth = sidebarCollapsed ? 0 : sidebarWidth;
+  const measuredMainWidth = layoutWidth > 0 ? Math.max(0, layoutWidth - sidebarRenderWidth) : CHAT_MIN_WIDTH + WORKSPACE_RESIZER_WIDTH + preferredWorkspacePanelWidth;
+  const resolvedWorkspacePanelWidth = workspacePanelOpen && !workspacePanelMaximized
+    ? resolveRightDockWidth(measuredMainWidth, preferredWorkspacePanelWidth)
+    : preferredWorkspacePanelWidth;
+  const workspacePanelRenderable = workspacePanelOpen && (workspacePanelMaximized || resolvedWorkspacePanelWidth > 0);
+  const workspacePanelGridOpen = workspacePanelRenderable && !workspacePanelMaximized;
+  const workspacePanelRenderWidth = workspacePanelMaximized ? preferredWorkspacePanelWidth : resolvedWorkspacePanelWidth;
   const activeTab = useMemo(
     () => tabMetas.find((tab) => tab.id === activeTabId) ?? tabMetas.find((tab) => tab.active),
     [activeTabId, tabMetas],
@@ -270,9 +346,7 @@ export default function App() {
     [activeTabId],
   );
   const topicbarEditing = Boolean(activeTab?.topicId && activeTab.topicId === renamingTopicId);
-  const topicbarProjectPrefix = activeTab?.scope === "project"
-    ? activeTab.workspaceName || activeTab.workspaceRoot || "Project"
-    : "";
+  const topicbarProjectPrefix = activeTab ? tabWorkspaceTitle(activeTab) : "";
   const visibleTabId = activeTabId;
   const visibleTabs = useMemo(() => {
     const byId = new Map(tabMetas.map((tab) => [tab.id, tab]));
@@ -280,9 +354,10 @@ export default function App() {
     const missing = tabMetas.filter((tab) => !tabOrderIds.includes(tab.id));
     return [...ordered, ...missing].map((tab) => ({
       ...tab,
+      mode: modesByTab[tab.id] ?? normalizeModeValue(tab.mode),
       active: tab.id === visibleTabId,
     }));
-  }, [tabMetas, tabOrderIds, visibleTabId]);
+  }, [modesByTab, tabMetas, tabOrderIds, visibleTabId]);
 
   useEffect(() => {
     const ids = tabMetas.map((tab) => tab.id);
@@ -292,6 +367,23 @@ export default function App() {
         if (!next.includes(id)) next.push(id);
       }
       return next.join("\u0000") === current.join("\u0000") ? current : next;
+    });
+  }, [tabMetas]);
+
+  useEffect(() => {
+    const ids = new Set(tabMetas.map((tab) => tab.id));
+    setModesByTab((current) => {
+      let changed = false;
+      const next: Record<string, Mode> = {};
+      for (const tab of tabMetas) {
+        const mode = normalizeModeValue(tab.mode);
+        next[tab.id] = mode;
+        if (current[tab.id] !== mode) changed = true;
+      }
+      for (const id of Object.keys(current)) {
+        if (!ids.has(id)) changed = true;
+      }
+      return changed ? next : current;
     });
   }, [tabMetas]);
 
@@ -441,12 +533,14 @@ export default function App() {
         if (isThemeMode(arg)) {
           const next = arg;
           const style = getThemeStyle(next);
+          await app.SetDesktopAppearance(next, style);
           applyTheme(next, style);
           notice(t("settings.themeChanged", { theme: next, style }));
           return;
         }
         if (isThemeStyle(arg)) {
           const next = themeForStyle(arg);
+          await app.SetDesktopAppearance(next, arg);
           applyTheme(next, arg);
           notice(t("settings.themeChanged", { theme: next, style: arg }));
           return;
@@ -460,8 +554,10 @@ export default function App() {
     [switchModel, openMemory, syncModeToController, mode, send, notice, t],
   );
 
-  const refreshTabMetas = useCallback(async () => {
-    setTabMetas(asArray(await app.ListTabs().catch(() => [] as TabMeta[])));
+  const refreshTabMetas = useCallback(async (): Promise<TabMeta[]> => {
+    const tabs = asArray(await app.ListTabs().catch(() => [] as TabMeta[]));
+    setTabMetas(tabs);
+    return tabs;
   }, []);
 
   useEffect(() => {
@@ -504,41 +600,18 @@ export default function App() {
     return () => observer.disconnect();
   }, []);
 
-  const measureChatWidth = useCallback(() => {
-    const width = chatPaneRef.current?.getBoundingClientRect().width;
-    return Math.max(CHAT_MIN_WIDTH, Math.round(width && Number.isFinite(width) ? width : CHAT_MIN_WIDTH));
-  }, []);
-
-  const measureRightDockWidth = useCallback(() => {
-    const width = workbenchDockRef.current?.getBoundingClientRect().width;
-    if (width && Number.isFinite(width)) return Math.max(RIGHT_DOCK_MIN_WIDTH, Math.round(width));
-    return preferredWorkspacePanelWidth;
-  }, [preferredWorkspacePanelWidth]);
-
   useEffect(() => {
-    if (!workspacePanelOpen || workspacePanelMaximized) {
-      setRightDockRenderWidth(null);
-      return;
-    }
-    const el = workbenchDockRef.current;
+    const el = layoutRef.current;
     if (!el || typeof ResizeObserver === "undefined") return;
     const update = () => {
       const width = el.getBoundingClientRect().width;
-      if (width && Number.isFinite(width)) setRightDockRenderWidth(Math.max(RIGHT_DOCK_MIN_WIDTH, Math.round(width)));
+      if (width && Number.isFinite(width)) setLayoutWidth(Math.round(width));
     };
     update();
     const observer = new ResizeObserver(update);
     observer.observe(el);
     return () => observer.disconnect();
-  }, [workspacePanelMaximized, workspacePanelOpen]);
-
-  useEffect(() => {
-    if (workspacePanelMaximized || chatWidth !== null) return;
-    const frame = window.requestAnimationFrame(() => {
-      setChatWidth(measureChatWidth());
-    });
-    return () => window.cancelAnimationFrame(frame);
-  }, [chatWidth, measureChatWidth, workspacePanelMaximized]);
+  }, []);
 
   const startNewSession = useCallback(async () => {
     await newSession();
@@ -604,78 +677,30 @@ export default function App() {
     [setExpandedSidebarWidth, sidebarCollapsed, sidebarWidth],
   );
 
-  const resizeNativeWindowBy = useCallback(
-    async (deltaWidth: number): Promise<boolean> => {
-      if (!hasNativeWindowRuntime()) return false;
-      try {
-        const [fullscreen, maximised] = await Promise.all([WindowIsFullscreen(), WindowIsMaximised()]);
-        if (fullscreen || maximised) return false;
-
-        const [size, position, screens] = await Promise.all([WindowGetSize(), WindowGetPosition(), ScreenGetAll()]);
-        const desiredWidth = Math.max(640, Math.round(size.w + deltaWidth));
-        const screenList = screens as WailsScreen[];
-        const screen = screenList.find((item) => item.isCurrent) ?? screenList.find((item) => item.isPrimary) ?? screenList[0];
-        const availableRight = screen && position.x >= 0 ? screen.width - position.x : screen?.width;
-        const maxWidth = availableRight && availableRight > size.w ? availableRight : desiredWidth;
-        const nextWidth = deltaWidth > 0 ? Math.min(desiredWidth, maxWidth) : desiredWidth;
-        if (Math.abs(nextWidth - size.w) > 8) {
-          WindowSetSize(nextWidth, size.h);
-          return deltaWidth <= 0 || nextWidth >= desiredWidth - 8;
-        }
-      } catch {
-        /* The browser dev runtime and some window states do not expose sizing. */
-      }
-      return false;
-    },
-    [],
-  );
-
   const setSavedWorkspacePanelWidth = useCallback(
     (width: number) => {
-      const currentChatWidth = chatWidth ?? measureChatWidth();
-      const currentDockWidth = measureRightDockWidth();
-      const next = resolveRightDockSplit(currentChatWidth + currentDockWidth, width);
-      setRightDockWidth(next.dockWidth);
-      saveRightDockWidth(next.dockWidth);
-      if (workspacePanelOpen && !workspacePanelMaximized) {
-        setChatWidth(next.chatWidth);
+      if (rightDockMode === "context") return;
+      if (workspacePreviewActive) {
+        const next = clampRightDockWidth(width);
+        setRightDockPreviewWidth(next);
+        saveRightDockPreviewWidth(next);
+        return;
       }
+      const next = clampRightDockTreeWidth(width);
+      setRightDockTreeWidth(next);
+      saveRightDockTreeWidth(next);
     },
-    [chatWidth, measureChatWidth, measureRightDockWidth, workspacePanelMaximized, workspacePanelOpen],
+    [rightDockMode, workspacePreviewActive],
   );
 
   const ensureWorkspacePanelWidth = useCallback(
     (width: number) => {
-      const desiredDockWidth = clampRightDockWidth(width);
-      const currentChatWidth = chatWidth ?? measureChatWidth();
-      const currentDockWidth = measureRightDockWidth();
-      const missingWidth = desiredDockWidth - currentDockWidth;
-
-      if (!workspacePanelOpen || workspacePanelMaximized || missingWidth <= 8) {
-        setSavedWorkspacePanelWidth(desiredDockWidth);
-        return;
-      }
-
-      void (async () => {
-        const resized = await resizeNativeWindowBy(missingWidth);
-        if (resized) {
-          setRightDockWidth(desiredDockWidth);
-          saveRightDockWidth(desiredDockWidth);
-          setChatWidth(currentChatWidth);
-          return;
-        }
-        setSavedWorkspacePanelWidth(desiredDockWidth);
-      })();
+      if (rightDockMode === "context") return;
+      const next = clampRightDockWidth(width);
+      setRightDockPreviewWidth(next);
+      saveRightDockPreviewWidth(next);
     },
-    [
-      chatWidth,
-      measureChatWidth,
-      measureRightDockWidth,
-      resizeNativeWindowBy,
-      setSavedWorkspacePanelWidth,
-      workspacePanelMaximized,
-      workspacePanelOpen,
-    ],
+    [rightDockMode],
   );
 
   const startWorkspacePanelResize = useCallback(
@@ -684,23 +709,20 @@ export default function App() {
       event.preventDefault();
       setWorkspacePanelResizing(true);
       const startX = event.clientX;
-      const startChatWidth = chatWidth ?? measureChatWidth();
-      const startDockWidth = measureRightDockWidth();
-      const totalWidth = startChatWidth + startDockWidth;
-      let nextChatWidth = startChatWidth;
+      const startDockWidth = preferredWorkspacePanelWidth;
       let nextDockWidth = startDockWidth;
       const onMove = (moveEvent: PointerEvent) => {
         const delta = moveEvent.clientX - startX;
-        const next = resolveRightDockSplit(totalWidth, startDockWidth - delta);
-        nextChatWidth = next.chatWidth;
-        nextDockWidth = next.dockWidth;
-        setChatWidth(nextChatWidth);
-        setRightDockWidth(nextDockWidth);
+        nextDockWidth = startDockWidth - delta;
+        if (rightDockMode === "context") return;
+        if (workspacePreviewActive) {
+          setRightDockPreviewWidth(clampRightDockWidth(nextDockWidth));
+        } else {
+          setRightDockTreeWidth(clampRightDockTreeWidth(nextDockWidth));
+        }
       };
       const onDone = () => {
-        setChatWidth(nextChatWidth);
-        setRightDockWidth(nextDockWidth);
-        saveRightDockWidth(nextDockWidth);
+        setSavedWorkspacePanelWidth(nextDockWidth);
         setWorkspacePanelResizing(false);
         window.removeEventListener("pointermove", onMove);
         window.removeEventListener("pointerup", onDone);
@@ -714,23 +736,23 @@ export default function App() {
       window.addEventListener("pointerup", onDone);
       window.addEventListener("pointercancel", onDone);
     },
-    [chatWidth, measureChatWidth, measureRightDockWidth, workspacePanelOpen],
+    [preferredWorkspacePanelWidth, rightDockMode, setSavedWorkspacePanelWidth, workspacePanelOpen, workspacePreviewActive],
   );
 
   const resizeWorkspacePanelWithKeyboard = useCallback(
     (event: KeyboardEvent<HTMLButtonElement>) => {
       if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
         event.preventDefault();
-        setSavedWorkspacePanelWidth(measureRightDockWidth() + (event.key === "ArrowLeft" ? 16 : -16));
+        setSavedWorkspacePanelWidth(preferredWorkspacePanelWidth + (event.key === "ArrowLeft" ? 16 : -16));
       } else if (event.key === "Home") {
         event.preventDefault();
-        setSavedWorkspacePanelWidth(RIGHT_DOCK_MIN_WIDTH);
+        setSavedWorkspacePanelWidth(workspacePreviewActive ? RIGHT_DOCK_MIN_WIDTH : RIGHT_DOCK_TREE_MIN_WIDTH);
       } else if (event.key === "End") {
         event.preventDefault();
-        setSavedWorkspacePanelWidth(RIGHT_DOCK_MAX_WIDTH);
+        setSavedWorkspacePanelWidth(workspacePreviewActive ? RIGHT_DOCK_MAX_WIDTH : RIGHT_DOCK_TREE_MAX_WIDTH);
       }
     },
-    [measureRightDockWidth, setSavedWorkspacePanelWidth],
+    [preferredWorkspacePanelWidth, setSavedWorkspacePanelWidth, workspacePreviewActive],
   );
 
   const openWorkspacePanel = useCallback(
@@ -742,51 +764,18 @@ export default function App() {
       if (workspacePanelOpen) {
         return;
       }
-      if (rightDockTogglingRef.current) {
-        return;
-      }
-
-      const sequence = rightDockToggleSequenceRef.current + 1;
-      rightDockToggleSequenceRef.current = sequence;
-      const capturedChatWidth = measureChatWidth();
-      const targetWidth = mode === "context" ? Math.min(CONTEXT_PANEL_MAX_WIDTH, rightDockWidth) : rightDockWidth;
-      rightDockTogglingRef.current = true;
-      setChatWidth(capturedChatWidth);
       setWorkspacePanelOpen(true);
-      void (async () => {
-        const resized = await resizeNativeWindowBy(targetWidth + RIGHT_DOCK_RESIZER_WIDTH);
-        if (rightDockToggleSequenceRef.current !== sequence) return;
-        if (!resized) {
-          setChatWidth(null);
-        }
-        rightDockTogglingRef.current = false;
-      })();
     },
-    [measureChatWidth, resizeNativeWindowBy, rightDockMode, rightDockWidth, workspacePanelOpen],
+    [rightDockMode, workspacePanelOpen],
   );
 
   const closeWorkspacePanel = useCallback(() => {
     if (!workspacePanelOpen) {
       return;
     }
-    if (rightDockTogglingRef.current) {
-      return;
-    }
-
-    const sequence = rightDockToggleSequenceRef.current + 1;
-    rightDockToggleSequenceRef.current = sequence;
-    const dockWidth = measureRightDockWidth();
-    rightDockTogglingRef.current = true;
     setWorkspacePanelMaximized(false);
-    void (async () => {
-      await resizeNativeWindowBy(-(dockWidth + RIGHT_DOCK_RESIZER_WIDTH));
-      if (rightDockToggleSequenceRef.current !== sequence) return;
-      setWorkspacePanelOpen(false);
-      setRightDockRenderWidth(null);
-      setChatWidth(null);
-      rightDockTogglingRef.current = false;
-    })();
-  }, [measureRightDockWidth, resizeNativeWindowBy, workspacePanelOpen]);
+    setWorkspacePanelOpen(false);
+  }, [workspacePanelOpen]);
 
   const openRightDockMode = useCallback(
     (mode: RightDockMode) => {
@@ -800,10 +789,10 @@ export default function App() {
       ({
         "--sidebar-expanded-width": `${sidebarWidth}px`,
         "--chat-min-width": `${CHAT_MIN_WIDTH}px`,
-        "--chat-width": `${chatWidth ?? CHAT_MIN_WIDTH}px`,
-        "--workspace-width": `${preferredWorkspacePanelWidth}px`,
+        "--workspace-width": `${workspacePanelRenderWidth}px`,
+        "--workspace-resizer-width": `${WORKSPACE_RESIZER_WIDTH}px`,
       }) as CSSProperties,
-    [chatWidth, preferredWorkspacePanelWidth, sidebarWidth],
+    [sidebarWidth, workspacePanelRenderWidth],
   );
 
   const setWorkspacePanel = useCallback((open: boolean) => {
@@ -887,6 +876,20 @@ export default function App() {
     await refreshTabMetas();
     setTabRevealSignal((signal) => signal + 1);
   }, [activeTab?.scope, activeTab?.workspaceRoot, openGlobalTab, openProjectTab, refreshTabMetas, state.meta?.cwd]);
+
+  const handleMessageAction = useCallback(async (turn: number, scope: string) => {
+    await rewind(turn, scope);
+    if (scope === "fork") {
+      await refreshTabMetas();
+      setProjectRevision((value) => value + 1);
+      setTabRevealSignal((signal) => signal + 1);
+      return;
+    }
+    if (scope === "code" || scope === "both") {
+      setDockRefreshKey((value) => value + 1);
+      setProjectRevision((value) => value + 1);
+    }
+  }, [refreshTabMetas, rewind]);
 
   const handleOpenTopic = useCallback(async (scope: string, workspaceRoot: string, topicId: string) => {
     if (scope === "global") {
@@ -997,8 +1000,11 @@ export default function App() {
 
   const refreshProjectsAndTabs = useCallback(async () => {
     setProjectRevision((value) => value + 1);
-    await refreshTabMetas();
-  }, [refreshTabMetas]);
+    const tabs = await refreshTabMetas();
+    if (activeTabId && !tabs.some((tab) => tab.id === activeTabId)) {
+      await syncActiveTab(true);
+    }
+  }, [activeTabId, refreshTabMetas, syncActiveTab]);
 
   const renameTopic = useCallback(async (topicId: string, title: string) => {
     const nextTitle = title.trim();
@@ -1068,17 +1074,24 @@ export default function App() {
       ? t("sidebar.expand")
       : t("sidebar.collapse");
   const sidebarNavTooltipDisabled = !sidebarCollapsed;
-  const workspacePanelResetWidth = rightDockMode === "context" ? RIGHT_DOCK_CONTEXT_WIDTH : RIGHT_DOCK_DEFAULT_WIDTH;
+  const workspacePanelResetWidth = rightDockMode === "context"
+    ? RIGHT_DOCK_CONTEXT_WIDTH
+    : workspacePreviewActive
+    ? RIGHT_DOCK_PREVIEW_DEFAULT_WIDTH
+    : defaultRightDockTreeWidth();
+  const workspacePanelMinWidth = workspacePreviewActive ? RIGHT_DOCK_MIN_WIDTH : RIGHT_DOCK_TREE_MIN_WIDTH;
+  const workspacePanelMaxWidth = workspacePreviewActive ? RIGHT_DOCK_MAX_WIDTH : RIGHT_DOCK_TREE_MAX_WIDTH;
 
   return (
     <div className="app">
       <div
+        ref={layoutRef}
         className={[
           "layout",
           sidebarCollapsed ? "layout--sidebar-collapsed" : "",
           sidebarResizing ? "layout--resizing layout--sidebar-resizing" : "",
-          workspacePanelOpen ? "layout--workspace-open" : "",
-          workspacePanelOpen && !workspacePanelMaximized && chatWidth !== null ? "layout--chat-sized" : "",
+          workspacePanelGridOpen ? "layout--workspace-open" : "",
+          workspacePanelOpen && !workspacePanelGridOpen && !workspacePanelMaximized ? "layout--workspace-constrained" : "",
           workspacePanelOpen && workspacePanelMaximized ? "layout--workspace-maximized" : "",
           workspacePanelResizing ? "layout--resizing layout--workspace-resizing" : "",
         ]
@@ -1198,10 +1211,10 @@ export default function App() {
           aria-valuenow={sidebarWidth}
           onPointerDown={startSidebarResize}
           onKeyDown={resizeSidebarWithKeyboard}
-          onDoubleClick={() => setExpandedSidebarWidth(SIDEBAR_DEFAULT_WIDTH)}
+          onDoubleClick={() => setExpandedSidebarWidth(defaultSidebarWidth())}
         />
 
-        <section className="chat-pane" ref={chatPaneRef}>
+        <section className="chat-pane">
           <header className="workspace-tabs-bar">
             <TabBar
               tabs={visibleTabs}
@@ -1213,6 +1226,25 @@ export default function App() {
               onTabsReorder={(ids) => void handleTabsReorder(ids)}
               onNewTab={() => void handleNewTab()}
             />
+            {!workspacePanelMaximized && (
+              <Tooltip
+                label={workspacePanelOpen ? t("rightDock.collapse") : t("rightDock.expand")}
+                className={[
+                  "workspace-dock-toggle",
+                  workspacePanelOpen ? "workspace-dock-toggle--open" : "workspace-dock-toggle--closed",
+                ].join(" ")}
+              >
+                <button
+                  className="workspace-dock-toggle__button"
+                  type="button"
+                  onClick={workspacePanelOpen ? closeWorkspacePanel : () => openWorkspacePanel("files")}
+                  aria-label={workspacePanelOpen ? t("rightDock.collapse") : t("rightDock.expand")}
+                  aria-pressed={workspacePanelOpen}
+                >
+                  {workspacePanelOpen ? <PanelRightClose size={15} /> : <PanelRightOpen size={15} />}
+                </button>
+              </Tooltip>
+            )}
           </header>
 
           <>
@@ -1281,14 +1313,16 @@ export default function App() {
                 <span className="loading-screen__text">{t("common.loading")}</span>
               </div>
             ) : (
-              <Transcript
-                items={state.items}
-                live={state.live}
-                footerHeight={footerHeight}
-                onPrompt={send}
-                onRewind={rewind}
-                rewindDisabled={state.running || state.approval != null || state.ask != null}
-              />
+	              <Transcript
+	                items={state.items}
+	                live={state.live}
+	                footerHeight={footerHeight}
+	                onPrompt={send}
+	                onRewind={handleMessageAction}
+	                checkpoints={state.checkpoints}
+	                actionPending={state.messageAction != null}
+	                rewindDisabled={state.running || state.messageAction != null || state.approval != null || state.ask != null}
+	              />
             )}
           </main>
 
@@ -1298,9 +1332,9 @@ export default function App() {
               <ApprovalModal
                 approval={state.approval}
                 onAnswer={(allow, session, persist) => {
-                  // Approving an exit_plan_mode plan leaves plan mode (the controller
-                  // flips the executor; mirror it here for the indicator).
-                  if (state.approval!.tool === "exit_plan_mode" && allow) setMode("normal");
+                  // Approving an exit_plan_mode plan leaves plan mode; sync the
+                  // tab-local indicator and persisted safe mode immediately.
+                  if (state.approval!.tool === "exit_plan_mode" && allow) applyMode("normal");
                   approve(state.approval!.id, allow, session, persist);
                 }}
                 onRevisePlan={(text) => {
@@ -1320,8 +1354,8 @@ export default function App() {
                 onDismiss={() => answerQuestion(state.ask!.id, [])}
               />
             )}
-            <Composer
-              running={state.running}
+	              <Composer
+	              running={state.running}
               mode={mode}
               cwd={state.meta?.cwd}
               modelLabel={state.meta?.label ?? t("status.connecting")}
@@ -1336,8 +1370,8 @@ export default function App() {
               onPickFolder={switchFolder}
               onRemoveWorkspace={removeWorkspace}
               insertRequest={composerInsertRequest}
-              disabled={state.meta?.ready === false || state.approval != null || state.ask != null}
-              decisionPending={state.approval != null || state.ask != null}
+	              disabled={state.meta?.ready === false || state.messageAction != null || state.approval != null || state.ask != null}
+	              decisionPending={state.messageAction != null || state.approval != null || state.ask != null}
               ready={state.meta?.ready === true}
               turnStartAt={state.turnStartAt}
               turnTokens={state.turnTokens}
@@ -1358,15 +1392,15 @@ export default function App() {
           </>
         </section>
 
-        {workspacePanelOpen && !workspacePanelMaximized && (
+        {workspacePanelGridOpen && (
           <button
             className="workspace-panel-resizer"
             type="button"
             role="separator"
             aria-orientation="vertical"
             aria-label={t("rightDock.resize")}
-            aria-valuemin={RIGHT_DOCK_MIN_WIDTH}
-            aria-valuemax={Math.max(RIGHT_DOCK_MAX_WIDTH, workspacePanelRenderWidth)}
+            aria-valuemin={workspacePanelMinWidth}
+            aria-valuemax={Math.max(workspacePanelMaxWidth, workspacePanelRenderWidth)}
             aria-valuenow={workspacePanelRenderWidth}
             onPointerDown={startWorkspacePanelResize}
             onKeyDown={resizeWorkspacePanelWithKeyboard}
@@ -1374,27 +1408,12 @@ export default function App() {
           />
         )}
 
-        {!workspacePanelOpen && !workspacePanelMaximized && (
-          <Tooltip label={t("rightDock.expand")} className="workspace-dock-peek">
-            <button
-              className="workspace-iconbtn workspace-dock-peek__button"
-              type="button"
-              onClick={() => openWorkspacePanel("files")}
-              aria-label={t("rightDock.expand")}
-              aria-pressed={false}
-            >
-              <PanelRightOpen size={14} />
-            </button>
-          </Tooltip>
-        )}
-
-        {workspacePanelOpen && (
+        {workspacePanelRenderable && (
           <aside
             className={[
               "workbench-dock",
               `workbench-dock--${rightDockMode}`,
             ].join(" ")}
-            ref={workbenchDockRef}
             aria-label={t("rightDock.workbench")}
           >
             <div className="workbench-dock__tools">
@@ -1408,7 +1427,7 @@ export default function App() {
                     onClick={() => openRightDockMode("context")}
                   >
                     <CircleGauge size={13} />
-                    {t("rightDock.overview")}
+                    <span className="workbench-dock__tab-label">{t("rightDock.overview")}</span>
                   </button>
                 )}
                 <button
@@ -1419,7 +1438,7 @@ export default function App() {
                   onClick={() => openRightDockMode("files")}
                 >
                   <FileText size={13} />
-                  {t("workspace.filesTab")}
+                  <span className="workbench-dock__tab-label">{t("workspace.filesTab")}</span>
                 </button>
                 <button
                   type="button"
@@ -1429,19 +1448,9 @@ export default function App() {
                   onClick={() => openRightDockMode("changed")}
                 >
                   <GitBranch size={13} />
-                  {t("workspace.changedTab")}
+                  <span className="workbench-dock__tab-label">{t("workspace.changedTab")}</span>
                 </button>
               </div>
-              <Tooltip label={t("rightDock.collapse")}>
-                <button
-                  className="workspace-iconbtn"
-                  type="button"
-                  aria-label={t("rightDock.collapse")}
-                  onClick={closeWorkspacePanel}
-                >
-                  <PanelRightClose size={14} />
-                </button>
-              </Tooltip>
             </div>
             <div className="workbench-dock__body">
               {rightDockMode === "context" ? (
@@ -1456,12 +1465,13 @@ export default function App() {
                 />
               ) : (
                 <WorkspacePanel
-                  open={workspacePanelOpen}
+                  open={workspacePanelRenderable}
                   cwd={state.meta?.cwd}
                   maximized={workspacePanelMaximized}
                   panelWidth={workspacePanelRenderWidth}
                   onClose={() => setWorkspacePanel(false)}
                   onToggleMaximized={() => setWorkspacePanelMaximized((value) => !value)}
+                  onPreviewModeChange={setWorkspacePreviewActive}
                   onAddToChat={addWorkspaceTextToComposer}
                   onRequestPanelWidth={ensureWorkspacePanelWidth}
                   refreshKey={dockRefreshKey}

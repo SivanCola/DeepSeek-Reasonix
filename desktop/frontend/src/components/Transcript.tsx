@@ -1,5 +1,6 @@
 import { type CSSProperties, type MouseEvent as ReactMouseEvent, useEffect, useMemo, useRef, useState } from "react";
 import type { Item, LiveStream } from "../lib/useController";
+import type { CheckpointMeta } from "../lib/types";
 import { useT } from "../lib/i18n";
 import { AssistantMessage, UserMessage } from "./Message";
 import { ToolCard } from "./ToolCard";
@@ -58,6 +59,8 @@ export function Transcript({
   footerHeight = 0,
   onPrompt,
   onRewind,
+  checkpoints = [],
+  actionPending = false,
   rewindDisabled = false,
   questionNavigator = true,
 }: {
@@ -66,6 +69,8 @@ export function Transcript({
   footerHeight?: number;
   onPrompt: (text: string) => void;
   onRewind?: (turn: number, scope: string) => void;
+  checkpoints?: CheckpointMeta[];
+  actionPending?: boolean;
   rewindDisabled?: boolean;
   questionNavigator?: boolean;
 }) {
@@ -178,6 +183,7 @@ export function Transcript({
   // Each user message's turn = its ordinal among user messages, so a rewind
   // targets the matching checkpoint.
   const userTurn = useMemo(() => new Map(questions.map((question) => [question.id, question.turn])), [questions]);
+  const checkpointsByTurn = useMemo(() => new Map(checkpoints.map((checkpoint) => [checkpoint.turn, checkpoint])), [checkpoints]);
 
   const jumpToQuestion = (question: QuestionAnchor) => {
     const el = scrollRef.current;
@@ -218,10 +224,12 @@ export function Transcript({
                 text={it.text}
                 turn={tn}
                 anchorId={questionAnchorId(it.id)}
-                open={tn != null && openTurn === tn}
-                onToggle={() => setOpenTurn((cur) => (cur === tn ? null : (tn ?? null)))}
-                rewindDisabled={rewindDisabled}
-                onRewind={(turn, scope) => {
+	                open={tn != null && openTurn === tn}
+	                onToggle={() => setOpenTurn((cur) => (cur === tn ? null : (tn ?? null)))}
+	                checkpoint={tn != null ? checkpointsByTurn.get(tn) : undefined}
+	                actionPending={actionPending}
+	                rewindDisabled={rewindDisabled}
+	                onRewind={(turn, scope) => {
                   onRewind?.(turn, scope);
                   setOpenTurn(null);
                 }}

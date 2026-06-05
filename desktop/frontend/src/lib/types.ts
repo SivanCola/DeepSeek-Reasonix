@@ -123,6 +123,7 @@ export interface TabMeta {
   label: string;
   ready: boolean;
   running: boolean;
+  mode: Mode;
   startupErr?: string;
   active: boolean;
   cwd: string;
@@ -196,6 +197,8 @@ export interface CheckpointMeta {
   prompt: string;
   files: string[];
   time: number; // unix ms
+  canCode?: boolean;
+  canConversation?: boolean;
 }
 
 // SessionMeta is one saved session for the history panel.
@@ -483,6 +486,10 @@ export interface SettingsView {
   sandbox: SandboxView;
   network: NetworkView;
   agent: AgentView;
+  desktopLanguage: string; // "" | "en" | "zh"; empty = auto
+  desktopTheme: string; // "auto" | "dark" | "light"
+  desktopThemeStyle: string;
+  closeBehavior: string; // "background" | "quit"
   configPath: string;
   providerKinds: string[]; // provider implementations the kernel registered (for the kind picker)
   bypass: boolean; // live YOLO state (runtime-only) — whether approvals are skipped this session

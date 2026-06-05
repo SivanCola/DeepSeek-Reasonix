@@ -88,8 +88,9 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 			root = wd
 		}
 	}
-	// One-time import of a v0.x (~/.reasonix/config.json) install — runs before
-	// Load so the freshly written config + ~/.env are picked up this same boot.
+	// One-time import of v1/v0.5 legacy config — runs before Load so the freshly
+	// written config + ~/.env are picked up this same boot. CLI Run also calls this
+	// before config-only commands; this call stays as the shared frontend fallback.
 	migrated, migErr := config.MigrateLegacyIfNeeded()
 	cfg, err := config.LoadForRoot(root)
 	if err != nil {

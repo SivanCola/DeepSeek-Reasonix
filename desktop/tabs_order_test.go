@@ -1,6 +1,9 @@
 package main
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func testAppWithOrderedTabs(t *testing.T, active string, ids ...string) *App {
 	t.Helper()
@@ -99,4 +102,43 @@ func TestReorderTabsRejectsInvalidOrder(t *testing.T) {
 		})
 	}
 	assertTabIDs(t, app.ListTabs(), "a", "b", "c")
+}
+
+func TestNewUniqueTabIDLockedUsesFreshRandomID(t *testing.T) {
+	app := testAppWithOrderedTabs(t, "a", "a", "b", "c")
+
+	app.mu.Lock()
+	got := app.newUniqueTabIDLocked()
+	app.mu.Unlock()
+	if _, exists := app.tabs[got]; exists {
+		t.Fatalf("newUniqueTabIDLocked returned existing id %q", got)
+	}
+	if !strings.HasPrefix(got, "tab_") {
+		t.Fatalf("tab id = %q, want tab_ prefix", got)
+	}
+	if len(got) != len("tab_")+32 {
+		t.Fatalf("tab id = %q, length %d, want 36", got, len(got))
+	}
+}
+
+func TestRestoredTabIDLockedReplacesEmptyAndDuplicateIDs(t *testing.T) {
+	app := testAppWithOrderedTabs(t, "a", "a", "b", "c")
+
+	app.mu.Lock()
+	kept := app.restoredTabIDLocked("d")
+	duplicate := app.restoredTabIDLocked("a")
+	empty := app.restoredTabIDLocked(" ")
+	app.mu.Unlock()
+
+	if kept != "d" {
+		t.Fatalf("restored unique id = %q, want d", kept)
+	}
+	for name, got := range map[string]string{"duplicate": duplicate, "empty": empty} {
+		if _, exists := app.tabs[got]; exists {
+			t.Fatalf("%s restored id %q already exists", name, got)
+		}
+		if !strings.HasPrefix(got, "tab_") {
+			t.Fatalf("%s restored id = %q, want tab_ prefix", name, got)
+		}
+	}
 }

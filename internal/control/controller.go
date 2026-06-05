@@ -819,6 +819,17 @@ func (c *Controller) Fork(turn int) (string, error) {
 }
 
 func (c *Controller) ForkNamed(turn int, name string) (string, error) {
+	return c.forkNamed(turn, name, true)
+}
+
+// ForkSession copies the conversation at the start of turn into a new session
+// file without switching this controller to it. Desktop uses this to open the
+// branch in a new tab while the source tab keeps its current transcript.
+func (c *Controller) ForkSession(turn int, name string) (string, error) {
+	return c.forkNamed(turn, name, false)
+}
+
+func (c *Controller) forkNamed(turn int, name string, switchToFork bool) (string, error) {
 	if c.executor == nil {
 		return "", c.rewindFail(fmt.Errorf("checkpoints unavailable"))
 	}
@@ -863,14 +874,23 @@ func (c *Controller) ForkNamed(turn int, name string) (string, error) {
 	}); err != nil {
 		return "", c.rewindFail(err)
 	}
-	c.executor.SetSession(sess)
-	c.mu.Lock()
-	c.sessionPath = newPath
-	c.mu.Unlock()
-	c.rebindCheckpoints(newPath)
+	if switchToFork {
+		c.executor.SetSession(sess)
+		c.mu.Lock()
+		c.sessionPath = newPath
+		c.mu.Unlock()
+		c.rebindCheckpoints(newPath)
+	}
 	c.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo,
 		Text: fmt.Sprintf("forked conversation at turn %d into a new session", turn)})
 	return newPath, nil
+}
+
+func (c *Controller) CheckpointHasBoundary(turn int) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	_, ok := c.cpBound[turn]
+	return ok
 }
 
 // Branch copies the current conversation into a child branch and switches to it.
@@ -1294,6 +1314,13 @@ func (c *Controller) AddMCPServer(e config.PluginEntry) (int, error) {
 	return n, nil
 }
 
+// ConnectMCPServer connects an MCP server entry for this session without writing
+// it to config. Desktop owns config placement so it can keep user-level settings
+// out of project reasonix.toml while preserving the CLI AddMCPServer semantics.
+func (c *Controller) ConnectMCPServer(e config.PluginEntry) (int, error) {
+	return c.connectMCPServer(e)
+}
+
 func (c *Controller) connectMCPServer(e config.PluginEntry) (int, error) {
 	exp := e.ExpandedPlugin()
 	return c.connectMCPSpec(plugin.Spec{
@@ -1370,6 +1397,13 @@ func (c *Controller) ConnectConfiguredMCPServer(name string) (int, error) {
 		return c.connectCodegraphMCPServer(cfg)
 	}
 	return 0, fmt.Errorf("no configured MCP server named %q", name)
+}
+
+// ConnectCodegraphMCPServer connects the built-in CodeGraph server using an
+// already-resolved config. Desktop uses this after saving user-level settings so
+// a stale project config cannot override the just-applied choice.
+func (c *Controller) ConnectCodegraphMCPServer(cfg *config.Config) (int, error) {
+	return c.connectCodegraphMCPServer(cfg)
 }
 
 func (c *Controller) connectCodegraphMCPServer(cfg *config.Config) (int, error) {

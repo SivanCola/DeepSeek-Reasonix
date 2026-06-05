@@ -58,12 +58,14 @@ func main() {
 		MinHeight: 480,
 		// Match the dark UI shell so the initial webview background doesn't flash
 		// white before CSS loads — particularly visible on WebKitGTK.
-		BackgroundColour: &options.RGBA{R: 26, G: 26, B: 46, A: 255},
-		AssetServer:      &assetserver.Options{Assets: assets},
-		OnStartup:        app.startup,
-		OnDomReady:       app.domReady,
-		OnShutdown:       app.shutdown,
-		Bind:             []any{app},
+		BackgroundColour:   &options.RGBA{R: 26, G: 26, B: 46, A: 255},
+		AssetServer:        &assetserver.Options{Assets: assets},
+		OnStartup:          app.startup,
+		OnDomReady:         app.domReady,
+		OnBeforeClose:      app.beforeClose,
+		OnShutdown:         app.shutdown,
+		Bind:               []any{app},
+		SingleInstanceLock: singleInstanceLock(app),
 
 		// Start hidden — domReady positions and shows the window after restoring
 		// geometry, so the user never sees the default size/position flash.

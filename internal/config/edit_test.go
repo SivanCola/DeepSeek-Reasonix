@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/BurntSushi/toml"
@@ -55,6 +56,90 @@ func TestUIThemeStyleNormalizes(t *testing.T) {
 		if got := c.UIThemeStyle(); got != tt.want {
 			t.Errorf("UIThemeStyle(%q) = %q, want %q", tt.in, got, tt.want)
 		}
+	}
+}
+
+func TestUICloseBehaviorNormalizes(t *testing.T) {
+	c := Default()
+	for _, tt := range []struct {
+		in   string
+		want string
+	}{
+		{"", "background"},
+		{"QUIT", "quit"},
+		{"exit", "quit"},
+		{" background ", "background"},
+		{"hide", "background"},
+		{"unknown", "background"},
+	} {
+		c.UI.CloseBehavior = tt.in
+		if got := c.UICloseBehavior(); got != tt.want {
+			t.Errorf("UICloseBehavior(%q) = %q, want %q", tt.in, got, tt.want)
+		}
+	}
+}
+
+func TestDesktopPreferencesAreSeparateFromCLI(t *testing.T) {
+	c := Default()
+	c.Language = "zh"
+	c.UI.Theme = "light"
+	c.UI.ThemeStyle = "glacier"
+
+	if err := c.SetDesktopLanguage("en"); err != nil {
+		t.Fatalf("SetDesktopLanguage: %v", err)
+	}
+	if err := c.SetDesktopAppearance("dark", "graphite"); err != nil {
+		t.Fatalf("SetDesktopAppearance: %v", err)
+	}
+
+	if c.Language != "zh" {
+		t.Fatalf("CLI language changed to %q", c.Language)
+	}
+	if got := c.UITheme(); got != "light" {
+		t.Fatalf("CLI theme = %q, want light", got)
+	}
+	if got := c.UIThemeStyle(); got != "glacier" {
+		t.Fatalf("CLI theme style = %q, want glacier", got)
+	}
+	if got := c.DesktopLanguage(); got != "en" {
+		t.Fatalf("desktop language = %q, want en", got)
+	}
+	if got := c.DesktopTheme(); got != "dark" {
+		t.Fatalf("desktop theme = %q, want dark", got)
+	}
+	if got := c.DesktopThemeStyle(); got != "graphite" {
+		t.Fatalf("desktop theme style = %q, want graphite", got)
+	}
+}
+
+func TestDesktopCloseBehaviorFallsBackToLegacyUI(t *testing.T) {
+	c := Default()
+	c.UI.CloseBehavior = "quit"
+	if got := c.DesktopCloseBehavior(); got != "quit" {
+		t.Fatalf("legacy close behavior = %q, want quit", got)
+	}
+	c.Desktop.CloseBehavior = "background"
+	if got := c.DesktopCloseBehavior(); got != "background" {
+		t.Fatalf("desktop close behavior = %q, want background", got)
+	}
+}
+
+func TestSetUICloseBehavior(t *testing.T) {
+	c := Default()
+	if err := c.SetUICloseBehavior("background"); err != nil {
+		t.Fatalf("SetUICloseBehavior background: %v", err)
+	}
+	if got := c.UICloseBehavior(); got != "background" {
+		t.Fatalf("close behavior = %q, want background", got)
+	}
+	if err := c.SetUICloseBehavior("quit"); err != nil {
+		t.Fatalf("SetUICloseBehavior quit: %v", err)
+	}
+	if got := c.UICloseBehavior(); got != "quit" {
+		t.Fatalf("close behavior = %q, want quit", got)
+	}
+	if err := c.SetUICloseBehavior("later"); err == nil {
+		t.Fatal("expected error for invalid close behavior")
 	}
 }
 
@@ -547,6 +632,38 @@ func TestSaveToRoundTrips(t *testing.T) {
 	}
 	if got.Plugins[0].AutoStart == nil || *got.Plugins[0].AutoStart {
 		t.Errorf("auto_start should round-trip false, got %+v", got.Plugins[0].AutoStart)
+	}
+}
+
+func TestSaveToScopesUserAndProjectFiles(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	c := Default()
+	c.Desktop.Theme = "dark"
+	c.Desktop.ThemeStyle = "graphite"
+	c.Desktop.CloseBehavior = "background"
+
+	userPath := UserConfigPath()
+	if err := c.SaveTo(userPath); err != nil {
+		t.Fatalf("SaveTo user config: %v", err)
+	}
+	userBody, err := os.ReadFile(userPath)
+	if err != nil {
+		t.Fatalf("read user config: %v", err)
+	}
+	if !strings.Contains(string(userBody), "[desktop]") {
+		t.Fatalf("user config should include desktop preferences:\n%s", userBody)
+	}
+
+	projectPath := filepath.Join(t.TempDir(), "reasonix.toml")
+	if err := c.SaveTo(projectPath); err != nil {
+		t.Fatalf("SaveTo project config: %v", err)
+	}
+	projectBody, err := os.ReadFile(projectPath)
+	if err != nil {
+		t.Fatalf("read project config: %v", err)
+	}
+	if strings.Contains(string(projectBody), "[desktop]") || strings.Contains(string(projectBody), "close_behavior") {
+		t.Fatalf("project config should not include desktop preferences:\n%s", projectBody)
 	}
 }
 

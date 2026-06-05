@@ -83,7 +83,7 @@ func (c *Config) SetProviderEffort(name, effort string) error {
 	return fmt.Errorf("set provider effort: no provider %q", name)
 }
 
-// SetLanguage pins the CLI UI language; empty/auto clears the override so runtime detection falls back to REASONIX_LANG / locale.
+// SetLanguage pins the CLI UI/model language; empty/auto clears the override so runtime detection falls back to REASONIX_LANG / locale.
 func (c *Config) SetLanguage(lang string) error {
 	switch strings.ToLower(strings.TrimSpace(lang)) {
 	case "", "auto":
@@ -96,6 +96,67 @@ func (c *Config) SetLanguage(lang string) error {
 		return fmt.Errorf("language %q: must be auto|en|zh", lang)
 	}
 	return nil
+}
+
+// SetDesktopLanguage pins the desktop UI language. It intentionally does not
+// modify Config.Language, which is used by the CLI/model-facing runtime.
+func (c *Config) SetDesktopLanguage(lang string) error {
+	switch strings.ToLower(strings.TrimSpace(lang)) {
+	case "", "auto":
+		c.Desktop.Language = ""
+	case "en":
+		c.Desktop.Language = "en"
+	case "zh":
+		c.Desktop.Language = "zh"
+	default:
+		return fmt.Errorf("desktop language %q: must be auto|en|zh", lang)
+	}
+	return nil
+}
+
+// SetDesktopAppearance sets desktop-only theme preferences. It must not affect
+// CLI theme settings or provider-visible request data.
+func (c *Config) SetDesktopAppearance(theme, style string) error {
+	switch strings.ToLower(strings.TrimSpace(theme)) {
+	case "auto":
+		c.Desktop.Theme = "auto"
+	case "light":
+		c.Desktop.Theme = "light"
+	case "", "dark":
+		c.Desktop.Theme = "dark"
+	default:
+		return fmt.Errorf("desktop theme %q: must be auto|dark|light", theme)
+	}
+	if strings.TrimSpace(style) == "" {
+		c.Desktop.ThemeStyle = ""
+		return nil
+	}
+	normalized := normalizeThemeStyle(style)
+	if normalized == "" {
+		return fmt.Errorf("desktop theme style %q: must be graphite|ember|aurora|midnight|sandstone|porcelain|linen|glacier", style)
+	}
+	c.Desktop.ThemeStyle = normalized
+	return nil
+}
+
+// SetDesktopCloseBehavior sets the desktop close-window preference. It is
+// intentionally UI-only and must not affect model prompts or provider-visible
+// request data.
+func (c *Config) SetDesktopCloseBehavior(mode string) error {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "quit", "exit":
+		c.Desktop.CloseBehavior = "quit"
+	case "", "background", "hide":
+		c.Desktop.CloseBehavior = "background"
+	default:
+		return fmt.Errorf("close behavior %q: must be quit|background", mode)
+	}
+	return nil
+}
+
+// SetUICloseBehavior is kept for callers compiled against the old edit API.
+func (c *Config) SetUICloseBehavior(mode string) error {
+	return c.SetDesktopCloseBehavior(mode)
 }
 
 // SetProviderThinking updates a provider's provider-specific thinking mode knob.
@@ -429,6 +490,10 @@ func validatePlugin(e PluginEntry) error {
 // half-written reasonix.toml that fails to parse on next load. Parent directories
 // are created as needed.
 func (c *Config) SaveTo(path string) error {
+	return c.SaveToScope(path, renderScopeForPath(path))
+}
+
+func (c *Config) SaveToScope(path string, scope RenderScope) error {
 	if strings.TrimSpace(path) == "" {
 		return fmt.Errorf("save: empty config path")
 	}
@@ -441,7 +506,7 @@ func (c *Config) SaveTo(path string) error {
 		return fmt.Errorf("save: create temp: %w", err)
 	}
 	tmpPath := tmp.Name()
-	if _, err := tmp.WriteString(RenderTOML(c)); err != nil {
+	if _, err := tmp.WriteString(RenderTOMLForScope(c, scope)); err != nil {
 		tmp.Close()
 		os.Remove(tmpPath)
 		return fmt.Errorf("save: write: %w", err)
@@ -451,6 +516,27 @@ func (c *Config) SaveTo(path string) error {
 		return fmt.Errorf("save: close temp: %w", err)
 	}
 	return fileutil.ReplaceFile(tmpPath, path)
+}
+
+func renderScopeForPath(path string) RenderScope {
+	if isUserConfigPath(path) {
+		return RenderScopeUser
+	}
+	return RenderScopeProject
+}
+
+func isUserConfigPath(path string) bool {
+	path = strings.TrimSpace(path)
+	uc := strings.TrimSpace(userConfigPath())
+	if path == "" || uc == "" {
+		return false
+	}
+	pathAbs, pathErr := filepath.Abs(path)
+	ucAbs, ucErr := filepath.Abs(uc)
+	if pathErr == nil && ucErr == nil {
+		return filepath.Clean(pathAbs) == filepath.Clean(ucAbs)
+	}
+	return filepath.Clean(path) == filepath.Clean(uc)
 }
 
 // Save writes the configuration back to the file it was loaded from

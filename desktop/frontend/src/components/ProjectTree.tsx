@@ -701,7 +701,7 @@ export function ProjectTree({
               <span style={{ width: 12 }} />
             )}
             <Folder size={12} />
-            {node.projectColor && <span className="project-tree__folder-color" aria-hidden="true" />}
+            <span className="project-tree__folder-color" aria-hidden="true" />
             <span className="project-tree__folder-label">{projectLabel}</span>
           </button>
           <Tooltip label={t("projectTree.newTopicTooltip")} className="project-tree__action-slot">

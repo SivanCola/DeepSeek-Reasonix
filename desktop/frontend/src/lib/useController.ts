@@ -6,8 +6,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { asArray } from "./array";
 import { app, onEvent, onReady } from "./bridge";
+import { t } from "./i18n";
 import type {
   BalanceInfo,
+  CheckpointMeta,
   ContextInfo,
   EffortInfo,
   HistoryMessage,
@@ -26,6 +28,8 @@ import type {
 export type ToolStatus = "running" | "done" | "error" | "stopped";
 
 export type LiveStream = { id: string; text: string; reasoning: string };
+export type MessageActionScope = "fork" | "summ-from" | "summ-upto" | "conversation" | "code" | "both";
+export type MessageActionState = { turn: number; scope: MessageActionScope };
 
 export type Item =
   | { kind: "user"; id: string; text: string }
@@ -66,6 +70,8 @@ interface State {
   balance?: BalanceInfo;
   effort?: EffortInfo;
   jobs: JobView[];
+  checkpoints: CheckpointMeta[];
+  messageAction?: MessageActionState;
   currentAssistant?: string;
   live?: LiveStream;
   pendingUser?: string;
@@ -84,6 +90,7 @@ const initialState: State = {
   turnActive: false,
   context: { used: 0, window: 0 },
   jobs: [],
+  checkpoints: [],
   turnStartAt: 0,
   turnTokens: 0,
   sessionCost: 0,
@@ -100,6 +107,9 @@ type Action =
   | { type: "balance"; balance: BalanceInfo }
   | { type: "effort"; effort: EffortInfo }
   | { type: "jobs"; jobs: JobView[] }
+  | { type: "checkpoints"; checkpoints: CheckpointMeta[] }
+  | { type: "message_action_start"; action: MessageActionState }
+  | { type: "message_action_done" }
   | { type: "history"; messages: HistoryMessage[] }
   | { type: "local_notice"; level: "info" | "warn"; text: string }
   | { type: "clearApproval" }
@@ -252,6 +262,9 @@ function reducer(s: State, a: Action): State {
     case "balance": return { ...s, balance: a.balance };
     case "effort": return { ...s, effort: a.effort };
     case "jobs": return { ...s, jobs: a.jobs };
+    case "checkpoints": return { ...s, checkpoints: a.checkpoints };
+    case "message_action_start": return { ...s, messageAction: a.action };
+    case "message_action_done": return { ...s, messageAction: undefined };
     case "history": {
       const visible = a.messages.filter(
         (m) => (m.role === "user" && m.content.trim() !== "") ||
@@ -280,6 +293,23 @@ type TabStates = Map<string, State>;
 function getOrCreateState(states: TabStates, tabId: string): State {
   if (!states.has(tabId)) states.set(tabId, { ...initialState });
   return states.get(tabId)!;
+}
+
+function messageActionBusyText(scope: MessageActionScope): string {
+  switch (scope) {
+    case "fork":
+      return t("rewind.busyFork");
+    case "summ-from":
+      return t("rewind.busySummFrom");
+    case "summ-upto":
+      return t("rewind.busySummUpto");
+    case "conversation":
+      return t("rewind.busyConversation");
+    case "code":
+      return t("rewind.busyCode");
+    default:
+      return t("rewind.busyBoth");
+  }
 }
 
 export function useController() {
@@ -315,6 +345,7 @@ export function useController() {
       dispatchTo(tabId, { type: "effort", effort: await app.EffortForTab(tabId) });
       dispatchTo(tabId, { type: "balance", balance: await app.BalanceForTab(tabId) });
       dispatchTo(tabId, { type: "jobs", jobs: asArray(await app.JobsForTab(tabId)) });
+      dispatchTo(tabId, { type: "checkpoints", checkpoints: asArray(await app.CheckpointsForTab(tabId)) });
       const history = asArray(await app.HistoryForTab(tabId));
       if (history && history.length) dispatchTo(tabId, { type: "history", messages: history });
     } catch { /* ignore */ }
@@ -498,16 +529,38 @@ export function useController() {
   const saveDoc = useCallback(async (path: string, body: string) => { await app.SaveDoc(path, body).catch(() => {}); }, []);
 
   const rewind = useCallback(async (turn: number, scope: string) => {
-    if (scope === "fork") await app.Fork(turn).catch(() => {});
-    else if (scope === "summ-from") await app.SummarizeFrom(turn).catch(() => {});
-    else if (scope === "summ-upto") await app.SummarizeUpTo(turn).catch(() => {});
-    else await app.Rewind(turn, scope).catch(() => {});
-    if (!activeTabId) return;
-        const messages = asArray(await app.HistoryForTab(activeTabId).catch(() => [] as HistoryMessage[]));
-        dispatchTo(activeTabId, { type: "reset" });
-        if (messages.length) dispatchTo(activeTabId, { type: "history", messages });
-        app.ContextUsageForTab(activeTabId).then((context) => dispatchTo(activeTabId, { type: "context", context })).catch(() => {});
-  }, [activeTabId, dispatchTo]);
+    const sourceTabId = activeTabId;
+    if (!sourceTabId) return;
+    const actionScope = (["fork", "summ-from", "summ-upto", "conversation", "code", "both"].includes(scope) ? scope : "both") as MessageActionScope;
+    dispatchTo(sourceTabId, { type: "message_action_start", action: { turn, scope: actionScope } });
+    dispatchTo(sourceTabId, { type: "local_notice", level: "info", text: messageActionBusyText(actionScope) });
+    try {
+      if (actionScope === "fork") {
+        const tab = await app.Fork(turn);
+        if (tab?.id) {
+          setActiveTabId(tab.id);
+          await loadSessionDataForTab(tab.id, true);
+        } else {
+          await syncActiveTabFromBackend(true);
+        }
+        return;
+      }
+
+      if (actionScope === "summ-from") await app.SummarizeFrom(turn);
+      else if (actionScope === "summ-upto") await app.SummarizeUpTo(turn);
+      else await app.Rewind(turn, actionScope);
+
+      const messages = asArray(await app.HistoryForTab(sourceTabId).catch(() => [] as HistoryMessage[]));
+      dispatchTo(sourceTabId, { type: "reset" });
+      if (messages.length) dispatchTo(sourceTabId, { type: "history", messages });
+      dispatchTo(sourceTabId, { type: "context", context: await app.ContextUsageForTab(sourceTabId) });
+      dispatchTo(sourceTabId, { type: "checkpoints", checkpoints: asArray(await app.CheckpointsForTab(sourceTabId)) });
+    } catch {
+      /* The controller emits a warning notice with the specific failure reason. */
+    } finally {
+      dispatchTo(sourceTabId, { type: "message_action_done" });
+    }
+  }, [activeTabId, dispatchTo, loadSessionDataForTab, syncActiveTabFromBackend]);
 
   // Tab management: switch preserves per-tab state; open creates it.
   const switchTab = useCallback(async (tabId: string) => {
@@ -561,5 +614,6 @@ export function useController() {
     refreshMeta, pickWorkspace, switchWorkspace, compact, rewind, setModel, setEffort,
     fetchMemory, remember, forget, saveDoc,
     switchTab, openProjectTab, openGlobalTab, closeTab, reorderTabs,
+    syncActiveTab: syncActiveTabFromBackend,
   };
 }

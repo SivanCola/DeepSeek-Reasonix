@@ -65,7 +65,7 @@ func TestMigrateImportsKeyPluginsAndLang(t *testing.T) {
 		t.Fatalf("read dest config: %v", err)
 	}
 	toml := string(got)
-	for _, want := range []string{`language      = "zh"`, `name    = "fs"`, `name    = "stripe"`, `type    = "http"`, `auto_start = false`} {
+	for _, want := range []string{`language      = "zh"`, `[desktop]`, `language = "zh"`, `name    = "fs"`, `name    = "stripe"`, `type    = "http"`, `auto_start = false`} {
 		if !strings.Contains(toml, want) {
 			t.Errorf("dest config missing %q:\n%s", want, toml)
 		}
@@ -114,6 +114,90 @@ func TestMigrateSkipsWhenDestExists(t *testing.T) {
 	}
 }
 
+func TestMigrateImportsLegacyV1TOMLBeforeJSON(t *testing.T) {
+	srcJSON, dest, home := legacyHome(t)
+	legacyTOML := filepath.Join(filepath.Dir(dest), "reasonix.toml")
+	if err := os.MkdirAll(filepath.Dir(legacyTOML), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(legacyTOML, []byte(`
+default_model = "deepseek-flash"
+language = "en"
+
+[ui]
+theme = "light"
+theme_style = "glacier"
+close_behavior = "quit"
+
+[[plugins]]
+name = "legacy-v1"
+command = "legacy-bin"
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	writeLegacy(t, srcJSON, `{"apiKey":"sk-json-should-not-win"}`)
+
+	res, err := MigrateLegacyIfNeeded()
+	if err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	if res == nil || res.From != legacyTOML {
+		t.Fatalf("expected v1 TOML migration, got %+v", res)
+	}
+
+	got, err := os.ReadFile(dest)
+	if err != nil {
+		t.Fatalf("read migrated config: %v", err)
+	}
+	text := string(got)
+	for _, want := range []string{`config_version = 2`, `[desktop]`, `close_behavior = "quit"`, `name    = "legacy-v1"`} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("migrated TOML missing %q:\n%s", want, text)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(home, ".env")); !os.IsNotExist(err) {
+		t.Fatalf("v1 TOML migration should not import lower-priority JSON key, env stat err=%v", err)
+	}
+}
+
+func TestMigrateImportsLegacyV1HomeTOMLBeforeJSON(t *testing.T) {
+	srcJSON, dest, home := legacyHome(t)
+	legacyTOML := filepath.Join(home, ".reasonix", "reasonix.toml")
+	if err := os.MkdirAll(filepath.Dir(legacyTOML), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(legacyTOML, []byte(`
+default_model = "deepseek-flash"
+
+[[plugins]]
+name = "legacy-home-v1"
+command = "legacy-home-bin"
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	writeLegacy(t, srcJSON, `{"apiKey":"sk-json-should-not-win","mcpServers":{"json":{"command":"json-bin"}}}`)
+
+	res, err := MigrateLegacyIfNeeded()
+	if err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	if res == nil || res.From != legacyTOML {
+		t.Fatalf("expected home v1 TOML migration, got %+v", res)
+	}
+
+	got, err := os.ReadFile(dest)
+	if err != nil {
+		t.Fatalf("read migrated config: %v", err)
+	}
+	text := string(got)
+	if !strings.Contains(text, `name    = "legacy-home-v1"`) {
+		t.Fatalf("home v1 plugin was not migrated:\n%s", text)
+	}
+	if strings.Contains(text, `name    = "json"`) {
+		t.Fatalf("lower-priority v0.5 JSON should not be merged when v1 TOML exists:\n%s", text)
+	}
+}
+
 func TestMigrateNoLegacyIsNoop(t *testing.T) {
 	legacyHome(t)
 	res, err := MigrateLegacyIfNeeded()
@@ -147,5 +231,15 @@ func TestMigrateCustomBaseURLWarns(t *testing.T) {
 	}
 	if len(res.Warnings) == 0 {
 		t.Error("a non-DeepSeek base_url should produce a warning")
+	}
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("load migrated config: %v", err)
+	}
+	for _, name := range []string{"deepseek-flash", "deepseek-pro"} {
+		p, ok := cfg.Provider(name)
+		if !ok || p.BaseURL != "https://my-proxy.example/v1" {
+			t.Fatalf("%s base_url was not migrated: %+v", name, p)
+		}
 	}
 }

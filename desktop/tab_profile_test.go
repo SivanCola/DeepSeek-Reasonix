@@ -73,6 +73,8 @@ func TestSaveTabsPersistsModelAndEffort(t *testing.T) {
 	tab := testTab("a", t.TempDir())
 	tab.effort = &effort
 	tab.model = "deepseek/deepseek-v4-pro"
+	tab.mode = "plan"
+	tab.Ctrl.SetPlanMode(true)
 	app.tabs = map[string]*WorkspaceTab{tab.ID: tab}
 	app.tabOrder = []string{tab.ID}
 	app.activeTabID = tab.ID
@@ -90,6 +92,34 @@ func TestSaveTabsPersistsModelAndEffort(t *testing.T) {
 	}
 	if got.Tabs[0].Effort == nil || *got.Tabs[0].Effort != effort {
 		t.Fatalf("saved effort = %#v, want %q", got.Tabs[0].Effort, effort)
+	}
+	if got.Tabs[0].Mode != "plan" {
+		t.Fatalf("saved mode = %q, want plan", got.Tabs[0].Mode)
+	}
+}
+
+func TestSaveTabsDoesNotPersistYoloMode(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+
+	app := NewApp()
+	tab := testTab("a", t.TempDir())
+	tab.mode = "yolo"
+	tab.Ctrl.SetBypass(true)
+	app.tabs = map[string]*WorkspaceTab{tab.ID: tab}
+	app.tabOrder = []string{tab.ID}
+	app.activeTabID = tab.ID
+
+	app.mu.Lock()
+	app.saveTabsLocked()
+	app.mu.Unlock()
+
+	got := loadTabsFile()
+	if len(got.Tabs) != 1 {
+		t.Fatalf("tabs len = %d, want 1", len(got.Tabs))
+	}
+	if got.Tabs[0].Mode != "" {
+		t.Fatalf("saved yolo mode = %q, want empty", got.Tabs[0].Mode)
 	}
 }
 

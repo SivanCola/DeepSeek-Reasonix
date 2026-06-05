@@ -95,8 +95,9 @@ export interface AppBindings {
   History(): Promise<HistoryMessage[]>;
   HistoryForTab(tabID: string): Promise<HistoryMessage[]>;
   Checkpoints(): Promise<CheckpointMeta[]>;
+  CheckpointsForTab(tabID: string): Promise<CheckpointMeta[]>;
   Rewind(turn: number, scope: string): Promise<void>;
-  Fork(turn: number): Promise<void>;
+  Fork(turn: number): Promise<TabMeta>;
   SummarizeFrom(turn: number): Promise<void>;
   SummarizeUpTo(turn: number): Promise<void>;
   ListSessions(): Promise<SessionMeta[]>;
@@ -168,6 +169,10 @@ export interface AppBindings {
   RemovePermissionRule(list: string, rule: string): Promise<void>;
   SetSandbox(bash: string, network: boolean, workspaceRoot: string, allowWrite: string[]): Promise<void>;
   SetNetwork(n: NetworkView): Promise<void>;
+  SetCloseBehavior(mode: string): Promise<void>;
+  SetDesktopLanguage(lang: string): Promise<void>;
+  SetDesktopAppearance(theme: string, style: string): Promise<void>;
+  MigrateDesktopPreferences(language: string, theme: string, style: string): Promise<void>;
   SetAgentParams(temperature: number, maxSteps: number, systemPrompt: string): Promise<void>;
   SetBypass(on: boolean): Promise<void>;
   Version(): Promise<string>;
@@ -516,6 +521,10 @@ function makeMockApp(): AppBindings {
       proxy: { type: "socks5", server: "127.0.0.1", port: 7890, username: "", password: "" },
     },
     agent: { temperature: 0.2, maxSteps: 0, systemPrompt: "You are Reasonix, a coding agent." },
+    desktopLanguage: "",
+    desktopTheme: "dark",
+    desktopThemeStyle: "graphite",
+    closeBehavior: "background",
     configPath: "~/projects/reasonix/reasonix.toml",
     providerKinds: ["openai"],
     bypass: false,
@@ -586,11 +595,12 @@ function makeMockApp(): AppBindings {
       topicId: "topic_dev_standard",
       topicTitle: t("mock.trashDevStandardTitle"),
       projectColor: "blue",
-      label: "DeepSeek-R1",
-      ready: true,
-      running: false,
-      active: true,
-      cwd: "~/projects/joyquant-db",
+	      label: "DeepSeek-R1",
+	      ready: true,
+	      running: false,
+	      mode: "normal",
+	      active: true,
+	      cwd: "~/projects/joyquant-db",
     },
     {
       id: "tab_joyquant_sys",
@@ -600,11 +610,12 @@ function makeMockApp(): AppBindings {
       topicId: "topic_p3b_pd",
       topicTitle: "p3b P&D",
       projectColor: "purple",
-      label: "DeepSeek-R1",
-      ready: true,
-      running: false,
-      active: false,
-      cwd: "~/projects/joyquant-sys",
+	      label: "DeepSeek-R1",
+	      ready: true,
+	      running: false,
+	      mode: "normal",
+	      active: false,
+	      cwd: "~/projects/joyquant-sys",
     },
     {
       id: "tab_global",
@@ -613,11 +624,12 @@ function makeMockApp(): AppBindings {
       workspaceName: "Global",
       topicId: "topic_global",
       topicTitle: "Global",
-      label: "DeepSeek-R1",
-      ready: true,
-      running: false,
-      active: false,
-      cwd: "~/projects/joyquant-db",
+	      label: "DeepSeek-R1",
+	      ready: true,
+	      running: false,
+	      mode: "normal",
+	      active: false,
+	      cwd: "~/projects/joyquant-db",
     },
   ];
   return {
@@ -826,15 +838,38 @@ function makeMockApp(): AppBindings {
       return false;
     },
         async SetPlanMode() {},
-        async SetMode() {},
-        async SetModeForTab() {},
+	        async SetMode(mode) {
+	          const active = mockTabs.find((tab) => tab.active);
+	          if (active) await this.SetModeForTab(active.id, mode);
+	        },
+	        async SetModeForTab(tabID, mode) {
+	          const nextMode = mode === "plan" || mode === "yolo" ? mode : "normal";
+	          mockTabs = mockTabs.map((tab) => tab.id === tabID ? { ...tab, mode: nextMode } : tab);
+	        },
     async Compact() {},
     async NewSession() {},
     async Checkpoints() {
-      return [];
+      return [
+        { turn: 0, prompt: "你好呀", files: ["src/App.tsx"], time: Date.now() - 30_000, canCode: true, canConversation: true },
+      ];
+    },
+    async CheckpointsForTab() {
+      return this.Checkpoints();
     },
     async Rewind() {},
-    async Fork() {},
+    async Fork() {
+      const active = mockTabs.find((tab) => tab.active) ?? mockTabs[0];
+      const tab: TabMeta = {
+        ...active,
+        id: "tab_fork_" + Date.now(),
+        topicId: "topic_fork_" + Date.now(),
+        topicTitle: `${active.topicTitle || t("rewind.fork")} · fork`,
+        active: true,
+        running: false,
+      };
+      mockTabs = [...mockTabs.map((item) => ({ ...item, active: false })), tab];
+      return { ...tab };
+    },
     async SummarizeFrom() {},
     async SummarizeUpTo() {},
         async History() {
@@ -1313,6 +1348,23 @@ function makeMockApp(): AppBindings {
         async SetNetwork(n: NetworkView) {
           settings.network = n;
         },
+        async SetCloseBehavior(mode: string) {
+          settings.closeBehavior = mode === "quit" ? "quit" : "background";
+        },
+        async SetDesktopLanguage(lang: string) {
+          settings.desktopLanguage = lang === "en" || lang === "zh" ? lang : "";
+        },
+        async SetDesktopAppearance(theme: string, style: string) {
+          settings.desktopTheme = theme === "auto" || theme === "light" ? theme : "dark";
+          settings.desktopThemeStyle = style;
+        },
+        async MigrateDesktopPreferences(language: string, theme: string, style: string) {
+          if (!settings.desktopLanguage) settings.desktopLanguage = language === "en" || language === "zh" ? language : "";
+          if (!settings.desktopTheme && !settings.desktopThemeStyle) {
+            settings.desktopTheme = theme === "auto" || theme === "light" ? theme : "dark";
+            settings.desktopThemeStyle = style;
+          }
+        },
     async SetAgentParams(temperature: number, maxSteps: number, systemPrompt: string) {
       settings.agent = { temperature, maxSteps, systemPrompt };
     },
@@ -1383,11 +1435,12 @@ function makeMockApp(): AppBindings {
         topicId: _topicID,
         topicTitle: topicLabel(_topicID, t("mock.newSession")),
         projectColor: mockProjectTree.find((node) => node.root === workspaceRoot)?.projectColor,
-        label: "deepseek-v4-flash",
-        ready: true,
-        running: false,
-        active: true,
-        cwd: workspaceRoot,
+	        label: "deepseek-v4-flash",
+	        ready: true,
+	        running: false,
+	        mode: "normal",
+	        active: true,
+	        cwd: workspaceRoot,
       };
       mockTabs = [...mockTabs.map((item) => ({ ...item, active: false })), tab];
       return { ...tab };
@@ -1405,11 +1458,12 @@ function makeMockApp(): AppBindings {
         workspaceName: "Global",
         topicId: _topicID,
         topicTitle: topicLabel(_topicID, "Global"),
-        label: "deepseek-v4-flash",
-        ready: true,
-        running: false,
-        active: true,
-        cwd: "",
+	        label: "deepseek-v4-flash",
+	        ready: true,
+	        running: false,
+	        mode: "normal",
+	        active: true,
+	        cwd: "",
       };
       mockTabs = [...mockTabs.map((item) => ({ ...item, active: false })), tab];
       return { ...tab };

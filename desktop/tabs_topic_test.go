@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -365,6 +366,41 @@ func TestCreateGlobalTopicAppearsFirstInProjectTree(t *testing.T) {
 	}
 }
 
+func TestSwitchWorkspaceRegistersDefaultTopicInProjectTree(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+
+	projectRoot := t.TempDir()
+	app := NewApp()
+	if got, err := app.SwitchWorkspace(projectRoot); err != nil {
+		t.Fatalf("SwitchWorkspace: %v", err)
+	} else if got != projectRoot {
+		t.Fatalf("SwitchWorkspace root = %q, want %q", got, projectRoot)
+	}
+
+	nodes := app.ListProjectTree()
+	if len(nodes) != 1 {
+		t.Fatalf("project tree len = %d, want 1: %+v", len(nodes), nodes)
+	}
+	if got := nodes[0].Root; got != projectRoot {
+		t.Fatalf("project root = %q, want %q", got, projectRoot)
+	}
+	if len(nodes[0].Children) != 1 {
+		t.Fatalf("project children len = %d, want 1: %+v", len(nodes[0].Children), nodes[0].Children)
+	}
+	child := nodes[0].Children[0]
+	if got := child.Label; got != defaultTopicTitle {
+		t.Fatalf("default topic label = %q, want %q", got, defaultTopicTitle)
+	}
+	if strings.TrimSpace(child.TopicID) == "" {
+		t.Fatalf("default topic ID should be persisted in the project tree: %+v", child)
+	}
+	tabs := app.ListTabs()
+	if len(tabs) != 1 || tabs[0].TopicID != child.TopicID {
+		t.Fatalf("opened tab should use the persisted topic, tabs=%+v child=%+v", tabs, child)
+	}
+}
+
 func TestRenameTopicLocksTitleManual(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
@@ -498,6 +534,83 @@ func TestTrashTopicMovesRelatedSessionsToTrash(t *testing.T) {
 	trashPath := filepath.Join(dir, sessionTrashDir, "trash-me.jsonl", "trash-me.jsonl")
 	if _, err := os.Stat(trashPath); err != nil {
 		t.Fatalf("topic session should be moved to trash: %v", err)
+	}
+	if got := loadTopicTitle(projectRoot, topicID); got != "" {
+		t.Fatalf("topic title should be removed, got %q", got)
+	}
+}
+
+func TestTrashTopicMovesOpenSessionToTrash(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+
+	projectRoot := t.TempDir()
+	topicID := "topic_open_trash"
+	if err := addProject(projectRoot, ""); err != nil {
+		t.Fatalf("add project: %v", err)
+	}
+	if err := setTopicTitle(projectRoot, topicID, "Open trash"); err != nil {
+		t.Fatalf("set topic title: %v", err)
+	}
+	dir := config.SessionDir()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir sessions: %v", err)
+	}
+	sessionPath := filepath.Join(dir, "open-trash.jsonl")
+	if err := agent.SaveBranchMeta(sessionPath, agent.BranchMeta{
+		CreatedAt:     time.Now().Add(-time.Minute),
+		UpdatedAt:     time.Now(),
+		Scope:         "project",
+		WorkspaceRoot: projectRoot,
+		TopicID:       topicID,
+		TopicTitle:    "Open trash",
+	}); err != nil {
+		t.Fatalf("save branch meta: %v", err)
+	}
+	openTab := &WorkspaceTab{
+		ID:            "tab_open",
+		Scope:         "project",
+		WorkspaceRoot: projectRoot,
+		TopicID:       topicID,
+		TopicTitle:    "Open trash",
+		Ctrl:          controllerWithContent(t, sessionPath),
+		Ready:         true,
+		disabledMCP:   map[string]ServerView{},
+	}
+	otherTab := &WorkspaceTab{
+		ID:            "tab_other",
+		Scope:         "project",
+		WorkspaceRoot: projectRoot,
+		TopicID:       "topic_keep",
+		TopicTitle:    "Keep",
+		Ready:         true,
+		disabledMCP:   map[string]ServerView{},
+	}
+	app := &App{
+		tabs:        map[string]*WorkspaceTab{"tab_open": openTab, "tab_other": otherTab},
+		tabOrder:    []string{"tab_open", "tab_other"},
+		activeTabID: "tab_open",
+	}
+
+	if err := app.TrashTopic(topicID); err != nil {
+		t.Fatalf("trash topic: %v", err)
+	}
+	if _, ok := app.tabs["tab_open"]; ok {
+		t.Fatalf("open tab for trashed topic should be removed")
+	}
+	if got := app.activeTabID; got != "tab_other" {
+		t.Fatalf("active tab = %q, want tab_other", got)
+	}
+	if _, err := os.Stat(sessionPath); !os.IsNotExist(err) {
+		t.Fatalf("open topic session should be removed from active history, stat err = %v", err)
+	}
+	trashPath := filepath.Join(dir, sessionTrashDir, "open-trash.jsonl", "open-trash.jsonl")
+	if _, err := os.Stat(trashPath); err != nil {
+		t.Fatalf("open topic session should be moved to trash: %v", err)
+	}
+	trashed := app.ListTrashedSessions()
+	if len(trashed) != 1 || trashed[0].Path != trashPath {
+		t.Fatalf("trashed sessions = %#v, want %q", trashed, trashPath)
 	}
 	if got := loadTopicTitle(projectRoot, topicID); got != "" {
 		t.Fatalf("topic title should be removed, got %q", got)

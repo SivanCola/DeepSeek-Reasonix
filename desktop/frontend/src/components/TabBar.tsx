@@ -24,16 +24,24 @@ type DropSide = "before" | "after";
 
 function tabDisplayTitle(tab: TabMeta): string {
   if (tab.tabType === "file" || tab.scope === "file") return tab.topicTitle?.trim() || tab.filePath?.split("/").filter(Boolean).pop() || "File";
-  if (tab.scope === "global") return "Global";
   const title = tab.topicTitle?.trim();
+  if (tab.scope === "global") return title || "Global";
   return title || "Untitled";
 }
 
 function tabFullTitle(tab: TabMeta): string {
   if (tab.tabType === "file" || tab.scope === "file") return tab.filePath || tabDisplayTitle(tab);
-  if (tab.scope === "global") return "Global";
+  if (tab.scope === "global") {
+    const title = tabDisplayTitle(tab);
+    const workspaceName = tab.workspaceName?.trim() || "Global";
+    return title === workspaceName ? workspaceName : `${workspaceName} / ${title}`;
+  }
   const workspaceName = tab.workspaceName?.trim() || "Project";
   return `${workspaceName} / ${tabDisplayTitle(tab)}`;
+}
+
+function tabMode(tab: TabMeta): "normal" | "plan" | "yolo" {
+  return tab.mode === "plan" || tab.mode === "yolo" ? tab.mode : "normal";
 }
 
 function projectAccentStyle(color?: string): CSSProperties | undefined {
@@ -178,6 +186,12 @@ export function TabBar({ tabs, activeTabId, onTabChange, onTabClose, onTabsClose
         {tabs.map((tab) => {
           const displayTitle = tabDisplayTitle(tab);
           const fullTitle = tabFullTitle(tab);
+          const mode = tabMode(tab);
+          const stateTitle = [
+            tab.running ? "Running" : "",
+            mode === "yolo" ? "YOLO" : mode === "plan" ? "Plan" : "",
+          ].filter(Boolean).join(" · ");
+          const annotatedTitle = stateTitle ? `${stateTitle} · ${fullTitle}` : fullTitle;
           return (
             <button
               key={tab.id}
@@ -192,11 +206,12 @@ export function TabBar({ tabs, activeTabId, onTabChange, onTabClose, onTabsClose
               className={[
                 "tabbar__tab",
                 tab.id === resolvedActiveTabId ? "tabbar__tab--active" : "",
+                mode === "yolo" ? "tabbar__tab--yolo" : "",
                 draggingTabId === tab.id ? "tabbar__tab--dragging" : "",
                 dropTarget?.id === tab.id ? `tabbar__tab--drop-${dropTarget.side}` : "",
               ].filter(Boolean).join(" ")}
-              title={fullTitle}
-              aria-label={fullTitle}
+              title={annotatedTitle}
+              aria-label={annotatedTitle}
               style={projectAccentStyle(tab.projectColor)}
               onClick={() => handleTabClick(tab.id)}
               onContextMenu={(event) => openTabMenu(event, tab.id)}
@@ -213,9 +228,15 @@ export function TabBar({ tabs, activeTabId, onTabChange, onTabClose, onTabsClose
               {tab.tabType === "file" || tab.scope === "file" ? (
                 <FileText size={12} className="tabbar__file-icon" />
               ) : (
-                <span className={`tabbar__status${tab.running ? " tabbar__status--running" : ""}`} />
+                <span
+                  className={[
+                    "tabbar__status",
+                    tab.running ? "tabbar__status--running" : "",
+                  ].filter(Boolean).join(" ")}
+                />
               )}
               <span className="tabbar__tab-label">{displayTitle}</span>
+              {mode === "yolo" && <span className="tabbar__mode-badge tabbar__mode-badge--yolo">yolo</span>}
               <span
                 className="tabbar__tab-close"
                 onClick={(e) => {

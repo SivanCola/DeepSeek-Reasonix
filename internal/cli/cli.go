@@ -39,6 +39,13 @@ func Run(args []string, version string) int {
 	// welcome banner) come through localized. Env-only first; if a config
 	// exists and pins a language, that wins.
 	i18n.DetectLanguage("")
+	cmd := ""
+	if len(args) > 0 {
+		cmd = args[0]
+	}
+	if shouldMigrateLegacyConfigForCLI(cmd) {
+		migrateLegacyConfigForCLI()
+	}
 	if cfg, err := config.Load(); err == nil {
 		if cfg.Language != "" {
 			i18n.DetectLanguage(cfg.Language)
@@ -50,7 +57,7 @@ func Run(args []string, version string) int {
 		return welcome(version)
 	}
 
-	cmd, rest := args[0], args[1:]
+	rest := args[1:]
 	switch cmd {
 	case "run":
 		return runAgent(rest)
@@ -89,6 +96,21 @@ func Run(args []string, version string) int {
 		fmt.Fprintf(os.Stderr, i18n.M.UnknownCommandFmt+"\n\n", cmd)
 		usage()
 		return 2
+	}
+}
+
+func shouldMigrateLegacyConfigForCLI(cmd string) bool {
+	switch cmd {
+	case "", "run", "chat", "code", "serve", "setup", "init", "acp", "mcp", "codegraph", "doctor":
+		return true
+	default:
+		return false
+	}
+}
+
+func migrateLegacyConfigForCLI() {
+	if _, err := config.MigrateLegacyIfNeeded(); err != nil {
+		fmt.Fprintln(os.Stderr, "warning: config migration failed:", err)
 	}
 }
 

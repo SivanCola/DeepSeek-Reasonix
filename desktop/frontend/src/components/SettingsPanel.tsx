@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { asArray } from "../lib/array";
 import { app } from "../lib/bridge";
-import { useI18n, useT } from "../lib/i18n";
+import { normalizeLangPref, useI18n, useT, type LangPref } from "../lib/i18n";
 import { useUpdater } from "../lib/useUpdater";
 import {
   THEME_STYLES,
@@ -10,6 +10,8 @@ import {
   getResolvedTheme,
   getTheme,
   getThemeStyle,
+  normalizeThemePreference,
+  normalizeThemeStyleForTheme,
   themeForStyle,
   type Theme,
   type ThemeStyle,
@@ -19,9 +21,9 @@ import { InlineConfirmButton } from "./InlineConfirmButton";
 import { ResizableDrawer } from "./ResizableDrawer";
 import { Tooltip } from "./Tooltip";
 
-type SettingsTab = "models" | "providers" | "network" | "permissions" | "sandbox" | "agent" | "appearance" | "updates";
+type SettingsTab = "general" | "models" | "providers" | "network" | "permissions" | "sandbox" | "agent" | "appearance" | "updates";
 
-const SETTINGS_TABS: SettingsTab[] = ["models", "providers", "network", "permissions", "sandbox", "agent", "appearance", "updates"];
+const SETTINGS_TABS: SettingsTab[] = ["general", "models", "providers", "network", "permissions", "sandbox", "agent", "appearance", "updates"];
 
 // SettingsPanel is the desktop settings surface, aligning with Claude Code's
 // settings: model & providers (incl. API keys), permissions, sandbox, agent
@@ -34,12 +36,21 @@ export function SettingsPanel({ onClose, onChanged }: { onClose: () => void; onC
   const [err, setErr] = useState<string | null>(null);
   const [theme, setThemeState] = useState<Theme>(getTheme());
   const [themeStyle, setThemeStyleState] = useState<ThemeStyle>(() => getThemeStyle(getTheme()));
-  const [tab, setTab] = useState<SettingsTab>("models");
+  const [tab, setTab] = useState<SettingsTab>("general");
+  const [platform, setPlatform] = useState("darwin");
 
   const reload = async () => setS(normalizeSettingsView(await app.Settings().catch(() => null)));
   useEffect(() => {
     void reload();
+    void app.Platform().then(setPlatform).catch(() => setPlatform("darwin"));
   }, []);
+  useEffect(() => {
+    if (!s) return;
+    const nextTheme = normalizeThemePreference(s.desktopTheme);
+    const nextStyle = normalizeThemeStyleForTheme(s.desktopThemeStyle, nextTheme);
+    setThemeState(nextTheme);
+    setThemeStyleState(nextStyle);
+  }, [s?.desktopTheme, s?.desktopThemeStyle]);
 
   // apply runs a mutation, re-reads settings, and refreshes the topbar/model. A
   // rejected binding (validation / rebuild failure) surfaces as an inline banner.
@@ -87,6 +98,7 @@ export function SettingsPanel({ onClose, onChanged }: { onClose: () => void; onC
               </nav>
               <main className="settings-content">
                 {err && <div className="banner banner--error">{err}</div>}
+                {tab === "general" && <GeneralSection s={s} busy={busy} apply={apply} platform={platform} />}
                 {tab === "models" && <ModelsSection s={s} busy={busy} apply={apply} onManageProviders={() => setTab("providers")} />}
                 {tab === "providers" && <ProvidersSection s={s} busy={busy} apply={apply} />}
                 {tab === "network" && <NetworkSection s={s} busy={busy} apply={apply} />}
@@ -99,15 +111,17 @@ export function SettingsPanel({ onClose, onChanged }: { onClose: () => void; onC
                     themeStyle={themeStyle}
                     onTheme={(t) => {
                       const nextStyle = themeForStyle(themeStyle) === getResolvedTheme(t) ? themeStyle : defaultStyleForTheme(t);
-                      applyTheme(t, nextStyle);
+                      applyTheme(t, nextStyle, { persist: false });
                       setThemeState(t);
                       setThemeStyleState(nextStyle);
+                      void apply(() => app.SetDesktopAppearance(t, nextStyle));
                     }}
                     onThemeStyle={(style) => {
                       const nextTheme = themeForStyle(style);
-                      applyTheme(nextTheme, style);
+                      applyTheme(nextTheme, style, { persist: false });
                       setThemeState(nextTheme);
                       setThemeStyleState(style);
+                      void apply(() => app.SetDesktopAppearance(nextTheme, style));
                     }}
                   />
                 )}
@@ -130,6 +144,8 @@ function settingsTabLabel(id: SettingsTab, t: ReturnType<typeof useT>): string {
   switch (id) {
     case "models":
       return t("settings.tab.models");
+    case "general":
+      return t("settings.tab.general");
     case "providers":
       return t("settings.tab.providers");
     case "network":
@@ -151,6 +167,8 @@ function settingsTabMeta(id: SettingsTab, s: SettingsView, t: ReturnType<typeof 
   switch (id) {
     case "models":
       return toRef(s.defaultModel, s) || t("common.none");
+    case "general":
+      return closeBehaviorLabel(normalizeCloseBehavior(s.closeBehavior), t);
     case "providers":
       return t("settings.providerCount", { n: s.providers.length });
     case "network":
@@ -237,7 +255,62 @@ function normalizeSettingsView(view: SettingsView | null | undefined): SettingsV
       proxy: network.proxy ?? { type: "socks5", server: "", port: 0, username: "", password: "" },
     },
     agent,
+    desktopLanguage: normalizeLangPref(view.desktopLanguage),
+    desktopTheme: normalizeThemePreference(view.desktopTheme),
+    desktopThemeStyle: normalizeThemeStyleForTheme(view.desktopThemeStyle, normalizeThemePreference(view.desktopTheme)),
+    closeBehavior: normalizeCloseBehavior(view.closeBehavior),
   };
+}
+
+type CloseBehavior = "background" | "quit";
+
+function normalizeCloseBehavior(mode: string | undefined): CloseBehavior {
+  return mode === "quit" ? "quit" : "background";
+}
+
+function closeBehaviorLabel(mode: CloseBehavior, t: ReturnType<typeof useT>): string {
+  return mode === "quit" ? t("settings.closeBehavior.quit") : t("settings.closeBehavior.background");
+}
+
+function GeneralSection({ s, busy, apply, platform }: SectionProps & { platform: string }) {
+  const { t, setPref } = useI18n();
+  const closeBehavior = normalizeCloseBehavior(s.closeBehavior);
+  const languagePref = normalizeLangPref(s.desktopLanguage);
+  const closeBehaviorHint =
+    platform === "darwin" ? t("settings.closeBehaviorHintMac") : t("settings.closeBehaviorHintDesktop");
+  const setLanguage = (next: LangPref) => {
+    setPref(next);
+    void apply(() => app.SetDesktopLanguage(next));
+  };
+  return (
+    <section className="mem-section">
+      <div className="mem-section__title">{t("settings.tab.general")}</div>
+      <div className="set-row">
+        <label className="set-label">{t("settings.language")}</label>
+        <select className="mem-select set-grow" value={languagePref} onChange={(e) => setLanguage(e.target.value as LangPref)}>
+          <option value="">{t("settings.langAuto")}</option>
+          <option value="zh">中文</option>
+          <option value="en">English</option>
+        </select>
+      </div>
+      <div className="set-row">
+        <label className="set-label">{t("settings.closeBehavior")}</label>
+        <div className="set-seg">
+          {(["background", "quit"] as const).map((mode) => (
+            <button
+              key={mode}
+              className={`set-seg__btn${closeBehavior === mode ? " set-seg__btn--on" : ""}`}
+              disabled={busy}
+              onClick={() => void apply(() => app.SetCloseBehavior(mode))}
+            >
+              {closeBehaviorLabel(mode, t)}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="mem-hint set-hint">{closeBehaviorHint}</div>
+    </section>
+  );
 }
 
 function NetworkSection({ s, busy, apply }: SectionProps) {
@@ -810,7 +883,7 @@ function AppearanceSection({
   onTheme: (t: Theme) => void;
   onThemeStyle: (style: ThemeStyle) => void;
 }) {
-  const { t, pref, setPref } = useI18n();
+  const t = useT();
   const themeOptions: Theme[] = ["auto", "light", "dark"];
   return (
     <section className="mem-section">
@@ -843,14 +916,6 @@ function AppearanceSection({
             </button>
           ))}
         </div>
-      </div>
-      <div className="set-row">
-        <label className="set-label">{t("settings.language")}</label>
-        <select className="mem-select set-grow" value={pref} onChange={(e) => setPref(e.target.value as "" | "en" | "zh")}>
-          <option value="">{t("settings.langAuto")}</option>
-          <option value="zh">中文</option>
-          <option value="en">English</option>
-        </select>
       </div>
     </section>
   );

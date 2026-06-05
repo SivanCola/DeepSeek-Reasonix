@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"reasonix/internal/agent"
@@ -69,14 +70,18 @@ type AgentView struct {
 
 // SettingsView is the whole Settings panel payload.
 type SettingsView struct {
-	DefaultModel string          `json:"defaultModel"`
-	PlannerModel string          `json:"plannerModel"`
-	Providers    []ProviderView  `json:"providers"`
-	Permissions  PermissionsView `json:"permissions"`
-	Sandbox      SandboxView     `json:"sandbox"`
-	Network      NetworkView     `json:"network"`
-	Agent        AgentView       `json:"agent"`
-	ConfigPath   string          `json:"configPath"`
+	DefaultModel      string          `json:"defaultModel"`
+	PlannerModel      string          `json:"plannerModel"`
+	Providers         []ProviderView  `json:"providers"`
+	Permissions       PermissionsView `json:"permissions"`
+	Sandbox           SandboxView     `json:"sandbox"`
+	Network           NetworkView     `json:"network"`
+	Agent             AgentView       `json:"agent"`
+	DesktopLanguage   string          `json:"desktopLanguage"`
+	DesktopTheme      string          `json:"desktopTheme"`
+	DesktopThemeStyle string          `json:"desktopThemeStyle"`
+	CloseBehavior     string          `json:"closeBehavior"`
+	ConfigPath        string          `json:"configPath"`
 	// ProviderKinds lists the provider implementations the kernel actually
 	// registered (provider.Kinds()), so the editor's "kind" picker offers only
 	// kinds that resolve — selecting an unregistered one would fail the rebuild.
@@ -95,7 +100,7 @@ func nonNil(s []string) []string {
 
 // Settings returns the current configuration for the Settings panel.
 func (a *App) Settings() SettingsView {
-	cfg, err := config.Load()
+	cfg, cfgPath, err := a.loadDesktopUserConfigForEdit()
 	if err != nil {
 		return SettingsView{
 			Providers:     []ProviderView{},
@@ -106,7 +111,10 @@ func (a *App) Settings() SettingsView {
 				Ask:   []string{},
 				Deny:  []string{},
 			},
-			Sandbox: SandboxView{Bash: "enforce", AllowWrite: []string{}},
+			Sandbox:           SandboxView{Bash: "enforce", AllowWrite: []string{}},
+			DesktopTheme:      "dark",
+			DesktopThemeStyle: "graphite",
+			CloseBehavior:     "background",
 		}
 	}
 	ctrl := a.activeCtrl()
@@ -140,10 +148,14 @@ func (a *App) Settings() SettingsView {
 				Password: cfg.Network.Proxy.Password,
 			},
 		},
-		Agent:         AgentView{Temperature: cfg.Agent.Temperature, MaxSteps: cfg.Agent.MaxSteps, SystemPrompt: cfg.Agent.SystemPrompt},
-		ConfigPath:    config.SourcePath(),
-		ProviderKinds: nonNil(provider.Kinds()),
-		Bypass:        ctrl != nil && ctrl.Bypass(),
+		Agent:             AgentView{Temperature: cfg.Agent.Temperature, MaxSteps: cfg.Agent.MaxSteps, SystemPrompt: cfg.Agent.SystemPrompt},
+		DesktopLanguage:   cfg.DesktopLanguage(),
+		DesktopTheme:      cfg.DesktopTheme(),
+		DesktopThemeStyle: cfg.DesktopThemeStyle(),
+		CloseBehavior:     cfg.DesktopCloseBehavior(),
+		ConfigPath:        cfgPath,
+		ProviderKinds:     nonNil(provider.Kinds()),
+		Bypass:            ctrl != nil && ctrl.Bypass(),
 	}
 	for i := range cfg.Providers {
 		p := &cfg.Providers[i]
@@ -173,11 +185,10 @@ func orDefault(s, def string) string {
 // keys are account-level, not per-project: writing them to the global config
 // rather than the cwd's reasonix.toml is what lets them survive a workspace switch.
 func (a *App) applyConfigChange(mutate func(*config.Config) error) error {
-	path := config.UserConfigPath()
-	if path == "" {
-		return fmt.Errorf("cannot resolve user config directory")
+	cfg, path, err := a.loadDesktopUserConfigForEdit()
+	if err != nil {
+		return err
 	}
-	cfg := config.LoadForEdit(path)
 	if err := mutate(cfg); err != nil {
 		return err
 	}
@@ -185,6 +196,65 @@ func (a *App) applyConfigChange(mutate func(*config.Config) error) error {
 		return err
 	}
 	return a.rebuild()
+}
+
+func (a *App) applyConfigOnly(mutate func(*config.Config) error) error {
+	cfg, path, err := a.loadDesktopUserConfigForEdit()
+	if err != nil {
+		return err
+	}
+	if err := mutate(cfg); err != nil {
+		return err
+	}
+	return cfg.SaveTo(path)
+}
+
+func (a *App) loadDesktopUserConfigForEdit() (*config.Config, string, error) {
+	userPath := config.UserConfigPath()
+	if userPath == "" {
+		return nil, "", fmt.Errorf("cannot resolve user config directory")
+	}
+	if _, err := os.Stat(userPath); err == nil {
+		return config.LoadForEdit(userPath), userPath, nil
+	}
+	cfg := config.LoadForEdit(userPath)
+	legacyPath := config.SourcePathForRoot(a.activeWorkspaceRoot())
+	if legacyPath == "" || sameConfigPath(legacyPath, userPath) {
+		return cfg, userPath, nil
+	}
+	legacyCfg := config.LoadForEdit(legacyPath)
+	legacyCfg.ConfigVersion = config.Default().ConfigVersion
+	return legacyCfg, userPath, nil
+}
+
+func (a *App) activeWorkspaceRoot() string {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	if tab := a.activeTabLocked(); tab != nil {
+		return tab.WorkspaceRoot
+	}
+	return "."
+}
+
+func projectConfigPathForRoot(root string) string {
+	if strings.TrimSpace(root) == "" || root == "." {
+		return "reasonix.toml"
+	}
+	return filepath.Join(root, "reasonix.toml")
+}
+
+func sameConfigPath(a, b string) bool {
+	a = strings.TrimSpace(a)
+	b = strings.TrimSpace(b)
+	if a == "" || b == "" {
+		return false
+	}
+	aAbs, aErr := filepath.Abs(a)
+	bAbs, bErr := filepath.Abs(b)
+	if aErr == nil && bErr == nil {
+		return filepath.Clean(aAbs) == filepath.Clean(bAbs)
+	}
+	return filepath.Clean(a) == filepath.Clean(b)
 }
 
 // rebuild tears down the controller and rebuilds it from the (just-changed)
@@ -215,7 +285,7 @@ func (a *App) rebuild() error {
 			}
 		}
 	}
-	ctrl, err := boot.Build(a.ctx, boot.Options{
+	ctrl, err := boot.Build(a.bootContext(), boot.Options{
 		Model: model, RequireKey: false,
 		Sink:           tab.sink,
 		WorkspaceRoot:  tab.WorkspaceRoot,
@@ -239,6 +309,7 @@ func (a *App) rebuild() error {
 	a.mu.Unlock()
 	a.emitReady(a.ctx)
 	ctrl.EnableInteractiveApproval()
+	applyTabModeToController(ctrl, tab.mode)
 	path := agent.ContinueSessionPath(prevPath, ctrl.SessionDir(), ctrl.Label())
 	if len(carried) > 0 {
 		carried = withFreshSystemPrompt(carried, systemPromptFrom(ctrl.History()))
@@ -392,6 +463,43 @@ func (a *App) SetNetwork(n NetworkView) error {
 				Password: n.Proxy.Password,
 			},
 		})
+	})
+}
+
+// SetCloseBehavior updates desktop-only window close behavior without rebuilding
+// the active controller. It must stay out of provider-visible prompt/request data.
+func (a *App) SetCloseBehavior(mode string) error {
+	return a.applyConfigOnly(func(c *config.Config) error { return c.SetDesktopCloseBehavior(mode) })
+}
+
+// SetDesktopLanguage updates only the desktop UI language. It deliberately does
+// not touch config.language, which the CLI/model-facing runtime uses.
+func (a *App) SetDesktopLanguage(lang string) error {
+	return a.applyConfigOnly(func(c *config.Config) error { return c.SetDesktopLanguage(lang) })
+}
+
+// SetDesktopAppearance updates only desktop theme preferences. It does not
+// rebuild the active controller and must stay out of provider-visible requests.
+func (a *App) SetDesktopAppearance(theme, style string) error {
+	return a.applyConfigOnly(func(c *config.Config) error { return c.SetDesktopAppearance(theme, style) })
+}
+
+// MigrateDesktopPreferences imports old browser-local desktop preferences into
+// the user config once. Existing [desktop] values win so stale localStorage never
+// overwrites an explicit config edit.
+func (a *App) MigrateDesktopPreferences(language, theme, style string) error {
+	return a.applyConfigOnly(func(c *config.Config) error {
+		if strings.TrimSpace(c.Desktop.Language) == "" {
+			if err := c.SetDesktopLanguage(language); err != nil {
+				return err
+			}
+		}
+		if strings.TrimSpace(c.Desktop.Theme) == "" && strings.TrimSpace(c.Desktop.ThemeStyle) == "" {
+			if err := c.SetDesktopAppearance(theme, style); err != nil {
+				return err
+			}
+		}
+		return nil
 	})
 }
 

@@ -10,9 +10,12 @@ import (
 	"testing"
 	"time"
 
+	"reasonix/internal/agent"
 	"reasonix/internal/config"
 	"reasonix/internal/control"
+	"reasonix/internal/event"
 	"reasonix/internal/plugin"
+	"reasonix/internal/provider"
 )
 
 // setTestCtrl creates a minimal workspace tab (if needed) and sets its
@@ -91,6 +94,115 @@ func TestSetEffortPersistsAndAutoClears(t *testing.T) {
 	}
 	if strings.Contains(string(body), `effort      = "max"`) {
 		t.Fatalf("auto should clear explicit max effort:\n%s", body)
+	}
+}
+
+func TestSettingsUsesUserDesktopPreferencesNotProjectConfig(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+
+	project := t.TempDir()
+	if err := os.WriteFile(filepath.Join(project, "reasonix.toml"), []byte(`
+[desktop]
+language = "zh"
+theme = "light"
+theme_style = "glacier"
+close_behavior = "quit"
+`), 0o644); err != nil {
+		t.Fatalf("write project config: %v", err)
+	}
+
+	userCfg := config.LoadForEdit(config.UserConfigPath())
+	if err := userCfg.SetDesktopLanguage("en"); err != nil {
+		t.Fatalf("set desktop language: %v", err)
+	}
+	if err := userCfg.SetDesktopAppearance("dark", "graphite"); err != nil {
+		t.Fatalf("set desktop appearance: %v", err)
+	}
+	if err := userCfg.SetDesktopCloseBehavior("background"); err != nil {
+		t.Fatalf("set desktop close behavior: %v", err)
+	}
+	if err := userCfg.SaveTo(config.UserConfigPath()); err != nil {
+		t.Fatalf("save user config: %v", err)
+	}
+
+	orig, _ := os.Getwd()
+	defer func() { _ = os.Chdir(orig) }()
+	if err := os.Chdir(project); err != nil {
+		t.Fatalf("chdir project: %v", err)
+	}
+
+	got := NewApp().Settings()
+	if got.DesktopLanguage != "en" || got.DesktopTheme != "dark" || got.DesktopThemeStyle != "graphite" || got.CloseBehavior != "background" {
+		t.Fatalf("desktop settings = lang:%q theme:%q style:%q close:%q, want user-level desktop prefs", got.DesktopLanguage, got.DesktopTheme, got.DesktopThemeStyle, got.CloseBehavior)
+	}
+}
+
+func TestSettingsSeedsMissingUserConfigFromLegacyProjectConfig(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+
+	project := t.TempDir()
+	if err := os.WriteFile(filepath.Join(project, "reasonix.toml"), []byte(`
+default_model = "legacy-provider/legacy-model"
+
+[desktop]
+language = "zh"
+theme = "light"
+theme_style = "glacier"
+close_behavior = "quit"
+`), 0o644); err != nil {
+		t.Fatalf("write project config: %v", err)
+	}
+
+	orig, _ := os.Getwd()
+	defer func() { _ = os.Chdir(orig) }()
+	if err := os.Chdir(project); err != nil {
+		t.Fatalf("chdir project: %v", err)
+	}
+
+	app := NewApp()
+	got := app.Settings()
+	if got.ConfigPath != config.UserConfigPath() {
+		t.Fatalf("Settings configPath = %q, want user config %q", got.ConfigPath, config.UserConfigPath())
+	}
+	if got.DefaultModel != "legacy-provider/legacy-model" || got.DesktopLanguage != "zh" || got.DesktopTheme != "light" || got.DesktopThemeStyle != "glacier" || got.CloseBehavior != "quit" {
+		t.Fatalf("Settings did not seed from legacy project config: %+v", got)
+	}
+	if _, err := os.Stat(config.UserConfigPath()); !os.IsNotExist(err) {
+		t.Fatalf("Settings() should not write user config before an edit, stat err = %v", err)
+	}
+	if err := app.SetDesktopLanguage("en"); err != nil {
+		t.Fatalf("SetDesktopLanguage: %v", err)
+	}
+	userCfg := config.LoadForEdit(config.UserConfigPath())
+	if userCfg.DesktopLanguage() != "en" || userCfg.DesktopTheme() != "light" || userCfg.DesktopThemeStyle() != "glacier" || userCfg.DesktopCloseBehavior() != "quit" {
+		t.Fatalf("saved user config did not preserve seeded desktop prefs: lang:%q theme:%q style:%q close:%q", userCfg.DesktopLanguage(), userCfg.DesktopTheme(), userCfg.DesktopThemeStyle(), userCfg.DesktopCloseBehavior())
+	}
+}
+
+func TestMigrateDesktopPreferencesDoesNotOverwriteExistingConfig(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+
+	userCfg := config.LoadForEdit(config.UserConfigPath())
+	if err := userCfg.SetDesktopLanguage("en"); err != nil {
+		t.Fatalf("set desktop language: %v", err)
+	}
+	if err := userCfg.SetDesktopAppearance("dark", "graphite"); err != nil {
+		t.Fatalf("set desktop appearance: %v", err)
+	}
+	if err := userCfg.SaveTo(config.UserConfigPath()); err != nil {
+		t.Fatalf("save user config: %v", err)
+	}
+
+	if err := NewApp().MigrateDesktopPreferences("zh", "light", "glacier"); err != nil {
+		t.Fatalf("migrate desktop preferences: %v", err)
+	}
+
+	got := config.LoadForEdit(config.UserConfigPath())
+	if got.DesktopLanguage() != "en" || got.DesktopTheme() != "dark" || got.DesktopThemeStyle() != "graphite" {
+		t.Fatalf("desktop prefs after migration = lang:%q theme:%q style:%q, want existing config preserved", got.DesktopLanguage(), got.DesktopTheme(), got.DesktopThemeStyle())
 	}
 }
 
@@ -198,6 +310,113 @@ func TestDeleteSessionRejectsActiveRelativePath(t *testing.T) {
 	}
 	if _, err := os.Stat(path); err != nil {
 		t.Fatalf("active session should remain: %v", err)
+	}
+}
+
+type appendingDesktopRunner struct {
+	session *agent.Session
+	started chan string
+}
+
+func (r *appendingDesktopRunner) Run(_ context.Context, input string) error {
+	r.started <- input
+	r.session.Add(provider.Message{Role: provider.RoleUser, Content: input})
+	r.session.Add(provider.Message{Role: provider.RoleAssistant, Content: "ok"})
+	return nil
+}
+
+func TestForkCreatesActiveTabWithoutSwitchingSourceController(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+
+	workspace := t.TempDir()
+	if err := os.WriteFile(filepath.Join(workspace, "reasonix.toml"), []byte("[codegraph]\nenabled = false\n"), 0o644); err != nil {
+		t.Fatalf("write workspace config: %v", err)
+	}
+	dir := config.SessionDir()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir session dir: %v", err)
+	}
+	path := agent.NewSessionPath(dir, "test")
+	sess := agent.NewSession("sys")
+	exec := agent.New(nil, nil, sess, agent.Options{}, event.Discard)
+	runner := &appendingDesktopRunner{session: sess, started: make(chan string, 2)}
+	ctrl := control.New(control.Options{
+		Runner:        runner,
+		Executor:      exec,
+		Sink:          event.Discard,
+		SessionDir:    dir,
+		SessionPath:   path,
+		Label:         "test",
+		WorkspaceRoot: workspace,
+	})
+	app := NewApp()
+	app.setTestCtrl(ctrl, "deepseek/test")
+	app.tabs["test"].Scope = "project"
+	app.tabs["test"].WorkspaceRoot = workspace
+	app.tabs["test"].TopicID = "topic_source"
+	app.tabs["test"].TopicTitle = "Source topic"
+	defer ctrl.Close()
+
+	ctrl.Submit("first")
+	<-runner.started
+	waitNotRunning(t, ctrl)
+	ctrl.Submit("second")
+	<-runner.started
+	waitNotRunning(t, ctrl)
+	if got := len(ctrl.History()); got != 5 {
+		t.Fatalf("source history len before fork = %d, want 5", got)
+	}
+
+	meta, err := app.Fork(1)
+	if err != nil {
+		t.Fatalf("Fork: %v", err)
+	}
+	if !meta.Active || meta.ID == "" || meta.ID == "test" {
+		t.Fatalf("fork meta = %+v, want a new active tab", meta)
+	}
+	if got := app.activeTabID; got != meta.ID {
+		t.Fatalf("active tab = %q, want fork tab %q", got, meta.ID)
+	}
+	if got := ctrl.SessionPath(); got != path {
+		t.Fatalf("source controller session path = %q, want %q", got, path)
+	}
+	if got := len(ctrl.History()); got != 5 {
+		t.Fatalf("source history len after fork = %d, want 5", got)
+	}
+	if got, want := meta.TopicTitle, "Source topic · 分叉"; got != want {
+		t.Fatalf("fork topic title = %q, want %q", got, want)
+	}
+
+	var forkPath string
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("read session dir: %v", err)
+	}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		candidate := filepath.Join(dir, entry.Name())
+		if candidate == path {
+			continue
+		}
+		m, ok, err := agent.LoadBranchMeta(candidate)
+		if err != nil {
+			t.Fatalf("load fork meta: %v", err)
+		}
+		if ok && m.TopicID == meta.TopicID {
+			forkPath = candidate
+			if m.ParentID != agent.BranchID(path) || m.ForkTurn != 1 || m.ForkMessageIndex != 3 {
+				t.Fatalf("fork branch meta = %+v, want parent %q turn 1 index 3", m, agent.BranchID(path))
+			}
+			if m.Scope != "project" || m.WorkspaceRoot != workspace || m.TopicTitle != "Source topic · 分叉" {
+				t.Fatalf("fork topic meta = %+v", m)
+			}
+		}
+	}
+	if forkPath == "" {
+		t.Fatalf("fork session with topic %q not found in %s", meta.TopicID, dir)
 	}
 }
 
@@ -485,6 +704,18 @@ env = { TOKEN = "${PLAYWRIGHT_TOKEN}" }
 	if got := cfg.Plugins[0].Env["TOKEN"]; got != "${PLAYWRIGHT_TOKEN}" {
 		t.Fatalf("env TOKEN = %q, want preserved env", got)
 	}
+	userCfg := config.LoadForEdit(config.UserConfigPath())
+	userPlugin, ok := findPluginEntry(userCfg.Plugins, "playwright")
+	if !ok {
+		t.Fatalf("playwright should be migrated to user config: %+v", userCfg.Plugins)
+	}
+	if userPlugin.Command != "node" || userPlugin.Env["TOKEN"] != "${PLAYWRIGHT_TOKEN}" {
+		t.Fatalf("user plugin after migration = %+v", userPlugin)
+	}
+	projectCfg := config.LoadForEdit(filepath.Join(dir, "reasonix.toml"))
+	if _, ok := findPluginEntry(projectCfg.Plugins, "playwright"); ok {
+		t.Fatalf("project plugin should be removed after desktop migration: %+v", projectCfg.Plugins)
+	}
 	view := app.Capabilities()
 	for _, s := range view.Servers {
 		if s.Name == "playwright" {
@@ -592,6 +823,18 @@ tier = "lazy"
 	if got := cfg.Plugins[0].Tier; got != "background" {
 		t.Fatalf("saved tier = %q, want background", got)
 	}
+	userCfg := config.LoadForEdit(config.UserConfigPath())
+	userPlugin, ok := findPluginEntry(userCfg.Plugins, "broken")
+	if !ok {
+		t.Fatalf("broken should be migrated to user config: %+v", userCfg.Plugins)
+	}
+	if userPlugin.Tier != "background" {
+		t.Fatalf("user plugin tier = %q, want background", userPlugin.Tier)
+	}
+	projectCfg := config.LoadForEdit(filepath.Join(dir, "reasonix.toml"))
+	if _, ok := findPluginEntry(projectCfg.Plugins, "broken"); ok {
+		t.Fatalf("project plugin should be removed after desktop migration: %+v", projectCfg.Plugins)
+	}
 	if !mcpFailed(app.activeCtrl(), "broken") {
 		t.Fatalf("Host.Failures() = %+v, want broken failure recorded", app.activeCtrl().Host().Failures())
 	}
@@ -644,6 +887,13 @@ auto_install = true
 	if got := cfg.Codegraph.Tier; got != "background" {
 		t.Fatalf("codegraph tier = %q, want background", got)
 	}
+	userCfg := config.LoadForEdit(config.UserConfigPath())
+	if !userCfg.Codegraph.Enabled {
+		t.Fatal("user codegraph enabled = false, want true after selecting a startup tier")
+	}
+	if got := userCfg.Codegraph.Tier; got != "background" {
+		t.Fatalf("user codegraph tier = %q, want background", got)
+	}
 	if !mcpFailed(app.activeCtrl(), "codegraph") {
 		t.Fatalf("Host.Failures() = %+v, want codegraph failure recorded for missing runtime", app.activeCtrl().Host().Failures())
 	}
@@ -688,6 +938,10 @@ tier = "lazy"
 	}
 	if cfg.Codegraph.Enabled {
 		t.Fatal("codegraph enabled = true, want false after disabling")
+	}
+	userCfg := config.LoadForEdit(config.UserConfigPath())
+	if userCfg.Codegraph.Enabled {
+		t.Fatal("user codegraph enabled = true, want false after disabling")
 	}
 	view := app.Capabilities()
 	for _, s := range view.Servers {
