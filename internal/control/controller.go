@@ -739,6 +739,13 @@ func (c *Controller) EnableInteractiveApproval() {
 // AnswerQuestion(ID, …) answers or ctx is cancelled. promptMu serialises it
 // against tool-approval prompts so at most one user prompt is outstanding.
 func (c *Controller) Ask(ctx context.Context, questions []event.AskQuestion) ([]event.AskAnswer, error) {
+	c.mu.Lock()
+	bypass := c.bypass
+	c.mu.Unlock()
+	if bypass {
+		return recommendedAskAnswers(questions), nil
+	}
+
 	c.promptMu.Lock()
 	defer c.promptMu.Unlock()
 
@@ -760,6 +767,17 @@ func (c *Controller) Ask(ctx context.Context, questions []event.AskQuestion) ([]
 		c.mu.Unlock()
 		return nil, ctx.Err()
 	}
+}
+
+func recommendedAskAnswers(questions []event.AskQuestion) []event.AskAnswer {
+	out := make([]event.AskAnswer, len(questions))
+	for i, q := range questions {
+		out[i] = event.AskAnswer{QuestionID: q.ID}
+		if len(q.Options) > 0 {
+			out[i].Selected = []string{q.Options[0].Label}
+		}
+	}
+	return out
 }
 
 // AnswerQuestion resolves a pending AskRequest by ID with the user's selections.
@@ -1930,9 +1948,11 @@ func listItem(line string) (content string, level int, ok bool) {
 // answers or ctx is cancelled. A prior session grant for the same tool+subject
 // short-circuits. promptMu serialises outstanding prompts.
 // parseRewind parses the arguments after "/rewind". The user may provide:
-//   /rewind              → latest checkpoint, both
-//   /rewind <turn>       → that turn, both
-//   /rewind <turn> <scope> → that turn, code|conversation|both
+//
+//	/rewind              → latest checkpoint, both
+//	/rewind <turn>       → that turn, both
+//	/rewind <turn> <scope> → that turn, code|conversation|both
+//
 // If no turn is given, the latest checkpoint is used. If no scope is given, Both is assumed.
 func parseRewind(args string, cps []checkpoint.Meta) (int, RewindScope, error) {
 	fields := strings.Fields(args)

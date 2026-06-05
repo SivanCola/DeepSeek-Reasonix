@@ -182,3 +182,55 @@ func TestSetModeAppliesBothGates(t *testing.T) {
 		t.Fatalf("normal mode: plan=%v bypass=%v, want false/false", c.PlanMode(), c.Bypass())
 	}
 }
+
+func TestBypassAutoAnswersAskWithRecommendedOptions(t *testing.T) {
+	var askRequested bool
+	c := New(Options{
+		Sink: event.FuncSink(func(e event.Event) {
+			if e.Kind == event.AskRequest {
+				askRequested = true
+			}
+		}),
+	})
+	c.SetBypass(true)
+
+	answers, err := c.Ask(context.Background(), []event.AskQuestion{
+		{
+			ID:     "approach",
+			Header: "Approach",
+			Prompt: "Which path?",
+			Options: []event.AskOption{
+				{Label: "Recommended path"},
+				{Label: "Alternative path"},
+			},
+		},
+		{
+			ID:     "scope",
+			Header: "Scope",
+			Prompt: "How broad?",
+			Options: []event.AskOption{
+				{Label: "Minimal"},
+				{Label: "Broad"},
+			},
+			Multi: true,
+		},
+	})
+	if err != nil {
+		t.Fatalf("Ask: %v", err)
+	}
+	if askRequested {
+		t.Fatal("bypass must not emit an AskRequest event")
+	}
+	want := []event.AskAnswer{
+		{QuestionID: "approach", Selected: []string{"Recommended path"}},
+		{QuestionID: "scope", Selected: []string{"Minimal"}},
+	}
+	if len(answers) != len(want) {
+		t.Fatalf("answers len = %d, want %d: %#v", len(answers), len(want), answers)
+	}
+	for i := range want {
+		if answers[i].QuestionID != want[i].QuestionID || len(answers[i].Selected) != 1 || answers[i].Selected[0] != want[i].Selected[0] {
+			t.Fatalf("answers[%d] = %#v, want %#v", i, answers[i], want[i])
+		}
+	}
+}
