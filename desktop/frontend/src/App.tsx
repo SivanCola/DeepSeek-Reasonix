@@ -227,6 +227,58 @@ function ShellHotkeys() {
   return null;
 }
 
+function StartupErrorBanner({ meta, t, setModel }: { meta: Meta; t: ReturnType<typeof useT>; setModel: (name: string) => Promise<void> }) {
+  const [recovering, setRecovering] = useState(false);
+  const code = meta.startupErrCode;
+  const recoveryModel = meta.startupRecoveryModel;
+  const configured = meta.startupErrConfigured;
+
+  const handleRecover = async () => {
+    if (!recoveryModel) return;
+    setRecovering(true);
+    try {
+      await setModel(recoveryModel);
+    } finally {
+      setRecovering(false);
+    }
+  };
+
+  const showRecovery = code === "unknown_model" && recoveryModel;
+  const showNoProviders = code === "no_providers";
+
+  return (
+    <div className="banner banner--error" style={{ flexDirection: "column", alignItems: "flex-start", gap: 8 }}>
+      <div>
+        {showNoProviders
+          ? t("topbar.noProvidersError")
+          : showRecovery
+            ? t("topbar.modelUnavailable", { model: meta.startupErrModel || "", available: (configured || []).join(", ") })
+            : t("topbar.startupError", { msg: meta.startupErr || "" })}
+      </div>
+      <div style={{ display: "flex", gap: 8 }}>
+        {showRecovery && (
+          <button className="btn btn--small" disabled={recovering} onClick={handleRecover}>
+            {t("topbar.switchTo", { model: recoveryModel || "" })}
+          </button>
+        )}
+        <button
+          className="btn btn--small"
+          onClick={() => {
+            // Toggle settings panel open — the event is handled by the main component.
+            window.dispatchEvent(new CustomEvent("reasonix:openSettings"));
+          }}
+        >
+          {t("topbar.openModelSettings")}
+        </button>
+      </div>
+      <details style={{ fontSize: "0.8em", opacity: 0.7, marginTop: 4 }}>
+        <summary>{t("topbar.errorDetails")}</summary>
+        <div style={{ marginTop: 4 }}>{meta.startupErr}</div>
+      </details>
+    </div>
+  );
+}
+
 export default function App() {
   const {
     state,
@@ -1350,7 +1402,7 @@ export default function App() {
           </header>
 
           {state.meta?.startupErr && (
-            <div className="banner banner--error">{t("topbar.startupError", { msg: state.meta.startupErr })}</div>
+            <StartupErrorBanner meta={state.meta} t={t} setModel={setModel} />
           )}
 
           <UpdateBanner />
