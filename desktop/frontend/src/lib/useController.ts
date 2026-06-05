@@ -339,13 +339,17 @@ export function useController() {
   }, [bump]);
 
   const checkpointRefreshSeq = useRef(new Map<string, number>());
-  const refreshCheckpoints = useCallback(async (tabId: string) => {
+  const bumpCheckpointRefreshSeq = useCallback((tabId: string): number => {
     const seq = (checkpointRefreshSeq.current.get(tabId) ?? 0) + 1;
     checkpointRefreshSeq.current.set(tabId, seq);
+    return seq;
+  }, []);
+  const refreshCheckpoints = useCallback(async (tabId: string) => {
+    const seq = bumpCheckpointRefreshSeq(tabId);
     const checkpoints = await app.CheckpointsForTab(tabId).catch(() => undefined);
     if (checkpointRefreshSeq.current.get(tabId) !== seq || checkpoints === undefined) return;
     dispatchTo(tabId, { type: "checkpoints", checkpoints: asArray(checkpoints) });
-  }, [dispatchTo]);
+  }, [bumpCheckpointRefreshSeq, dispatchTo]);
 
   const loadSessionDataForTab = useCallback(async (tabId: string, reset = false) => {
     try {
@@ -483,9 +487,11 @@ export function useController() {
   }, [activeTabId, dispatchTo]);
 
   const newSession = useCallback(async () => {
+    const tabId = activeTabId;
+    if (tabId) bumpCheckpointRefreshSeq(tabId);
     await app.NewSession().catch(() => {});
-    if (activeTabId) dispatchTo(activeTabId, { type: "reset" });
-  }, [activeTabId, dispatchTo]);
+    if (tabId) dispatchTo(tabId, { type: "reset" });
+  }, [activeTabId, bumpCheckpointRefreshSeq, dispatchTo]);
 
   const listSessions = useCallback(async (): Promise<SessionMeta[]> => asArray<SessionMeta>(await app.ListSessions().catch(() => [])), []);
   const listTrashedSessions = useCallback(async (): Promise<SessionMeta[]> => asArray<SessionMeta>(await app.ListTrashedSessions().catch(() => [])), []);
