@@ -739,15 +739,16 @@ func (c *Controller) EnableInteractiveApproval() {
 // AnswerQuestion(ID, …) answers or ctx is cancelled. promptMu serialises it
 // against tool-approval prompts so at most one user prompt is outstanding.
 func (c *Controller) Ask(ctx context.Context, questions []event.AskQuestion) ([]event.AskAnswer, error) {
-	c.mu.Lock()
-	bypass := c.bypass
-	c.mu.Unlock()
-	if bypass {
+	if c.bypassEnabled() {
 		return recommendedAskAnswers(questions), nil
 	}
 
 	c.promptMu.Lock()
 	defer c.promptMu.Unlock()
+
+	if c.bypassEnabled() {
+		return recommendedAskAnswers(questions), nil
+	}
 
 	c.mu.Lock()
 	c.nextID++
@@ -767,6 +768,12 @@ func (c *Controller) Ask(ctx context.Context, questions []event.AskQuestion) ([]
 		c.mu.Unlock()
 		return nil, ctx.Err()
 	}
+}
+
+func (c *Controller) bypassEnabled() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.bypass
 }
 
 func recommendedAskAnswers(questions []event.AskQuestion) []event.AskAnswer {
