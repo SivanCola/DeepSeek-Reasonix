@@ -2405,11 +2405,35 @@ func trimUTF8PartialSuffix(data []byte) []byte {
 	return data
 }
 
+func (a *App) activeWorkspaceBase() (string, error) {
+	root := a.activeWorkspaceRoot()
+	if strings.TrimSpace(root) == "" || root == "." {
+		return os.Getwd()
+	}
+	if abs, err := filepath.Abs(root); err == nil {
+		root = abs
+	}
+	return filepath.Clean(root), nil
+}
+
+func (a *App) workspacePath(rel string) (string, bool, error) {
+	base, err := a.activeWorkspaceBase()
+	if err != nil {
+		return "", false, err
+	}
+	return workspacePathForBase(base, rel)
+}
+
 func workspacePath(rel string) (string, bool, error) {
 	base, err := os.Getwd()
 	if err != nil {
 		return "", false, err
 	}
+	return workspacePathForBase(base, rel)
+}
+
+func workspacePathForBase(base, rel string) (string, bool, error) {
+	base = filepath.Clean(base)
 	if rel == "" {
 		return "", false, os.ErrInvalid
 	}
@@ -2429,21 +2453,21 @@ func workspacePath(rel string) (string, bool, error) {
 }
 
 // ListDir lists one directory level (directories first, then files, each
-// alphabetical) for the "@" file-reference menu. rel resolves against the process
-// cwd; "" lists the cwd. The menu navigates one level at a time, never
-// recursively — bounded for huge trees.
+// alphabetical) for the "@" file-reference menu. rel resolves against the active
+// tab workspace. The menu navigates one level at a time, never recursively —
+// bounded for huge trees.
 func (a *App) ListDir(rel string) []DirEntry {
-	base, err := os.Getwd()
+	base, err := a.activeWorkspaceBase()
 	if err != nil {
 		return []DirEntry{}
 	}
 	dir := base
 	if rel != "" {
-		if filepath.IsAbs(rel) {
-			dir = filepath.Clean(rel)
-		} else {
-			dir = filepath.Join(base, rel)
+		path, ok, err := workspacePathForBase(base, rel)
+		if err != nil || !ok {
+			return []DirEntry{}
 		}
+		dir = path
 	}
 	es, err := os.ReadDir(dir)
 	if err != nil {
@@ -2472,7 +2496,7 @@ func (a *App) ListDir(rel string) []DirEntry {
 
 // SearchFileRefs finds workspace files by basename for bare "@token" completion.
 func (a *App) SearchFileRefs(query string) []DirEntry {
-	base, err := os.Getwd()
+	base, err := a.activeWorkspaceBase()
 	if err != nil {
 		return nil
 	}
@@ -2487,7 +2511,7 @@ func (a *App) SearchFileRefs(query string) []DirEntry {
 // ReadFile returns a small text preview for a file under the current workspace.
 func (a *App) ReadFile(rel string) FilePreview {
 	out := FilePreview{Path: rel}
-	path, ok, err := workspacePath(rel)
+	path, ok, err := a.workspacePath(rel)
 	if err != nil || !ok {
 		out.Err = "invalid path"
 		return out
@@ -2564,7 +2588,7 @@ func (a *App) ReadFile(rel string) FilePreview {
 
 // OpenWorkspacePath opens a file or folder from the workspace in the OS default app.
 func (a *App) OpenWorkspacePath(rel string) error {
-	path, ok, err := workspacePath(rel)
+	path, ok, err := a.workspacePath(rel)
 	if err != nil || !ok {
 		return os.ErrInvalid
 	}
@@ -2573,7 +2597,7 @@ func (a *App) OpenWorkspacePath(rel string) error {
 
 // RevealWorkspacePath shows a workspace file in the native file manager.
 func (a *App) RevealWorkspacePath(rel string) error {
-	path, ok, err := workspacePath(rel)
+	path, ok, err := a.workspacePath(rel)
 	if err != nil || !ok {
 		return os.ErrInvalid
 	}

@@ -284,6 +284,49 @@ func TestSearchFileRefsFindsNestedBasename(t *testing.T) {
 	}
 }
 
+func TestFileRefsUseActiveTabWorkspaceRoot(t *testing.T) {
+	orig, _ := os.Getwd()
+	defer os.Chdir(orig)
+
+	launchRoot := t.TempDir()
+	projectRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(launchRoot, "launch-only.txt"), []byte("wrong"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(projectRoot, "frontend", "wailsjs", "runtime"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	projectFile := filepath.Join(projectRoot, "frontend", "wailsjs", "runtime", "runtime.js")
+	if err := os.WriteFile(projectFile, []byte("right workspace"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(launchRoot); err != nil {
+		t.Fatal(err)
+	}
+
+	app := NewApp()
+	tab := &WorkspaceTab{ID: "project", Scope: "project", WorkspaceRoot: projectRoot}
+	app.tabs = map[string]*WorkspaceTab{tab.ID: tab}
+	app.activeTabID = tab.ID
+
+	listed := app.ListDir("")
+	if !hasDirEntry(listed, "frontend") {
+		t.Fatalf("ListDir should list active project root, got %+v", listed)
+	}
+	if hasDirEntry(listed, "launch-only.txt") {
+		t.Fatalf("ListDir leaked launch cwd entries, got %+v", listed)
+	}
+
+	found := app.SearchFileRefs("runtime.js")
+	if !hasDirEntry(found, "frontend/wailsjs/runtime/runtime.js") {
+		t.Fatalf("SearchFileRefs should search active project root, got %+v", found)
+	}
+	preview := app.ReadFile("frontend/wailsjs/runtime/runtime.js")
+	if preview.Err != "" || preview.Body != "right workspace" {
+		t.Fatalf("ReadFile active project preview = %+v, want project file", preview)
+	}
+}
+
 func TestDeleteSessionRejectsActiveRelativePath(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -61,6 +62,37 @@ func TestSetEffortForTabIsTabLocal(t *testing.T) {
 	body, err := os.ReadFile(userConfigPathForTest())
 	if err == nil && strings.Contains(string(body), `effort`) {
 		t.Fatalf("tab-local effort should not write provider config:\n%s", body)
+	}
+}
+
+func TestEffortForTabResolvesProjectProviderConfig(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+
+	projectRoot := t.TempDir()
+	configBody := `default_model = "project-provider/deepseek-v4-flash"
+[[providers]]
+name = "project-provider"
+kind = "openai"
+base_url = "https://api.deepseek.com"
+model = "deepseek-v4-flash"
+api_key_env = "PROJECT_API_KEY"
+effort = "max"
+`
+	if err := os.WriteFile(filepath.Join(projectRoot, "reasonix.toml"), []byte(configBody), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	app := NewApp()
+	tab := testTab("project", projectRoot)
+	tab.model = "project-provider/deepseek-v4-flash"
+	app.tabs = map[string]*WorkspaceTab{tab.ID: tab}
+	app.activeTabID = tab.ID
+	defer tab.Ctrl.Close()
+
+	got := app.EffortForTab(tab.ID)
+	if !got.Supported || got.Current != "max" {
+		t.Fatalf("EffortForTab project config = %+v, want supported max", got)
 	}
 }
 
