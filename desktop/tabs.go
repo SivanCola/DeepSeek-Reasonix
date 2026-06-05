@@ -505,14 +505,19 @@ func (a *App) buildTabController(tab *WorkspaceTab) {
 	if model == "" {
 		model = cfg.DefaultModel
 	}
-	if e, ok := cfg.ResolveModel(model); ok {
-		model = e.Name + "/" + e.Model
-	} else {
-		model = cfg.DefaultModel
-		if e, ok := cfg.ResolveModel(model); ok {
-			model = e.Name + "/" + e.Model
-		}
+	resolved, fallback, ok := cfg.ResolveModelWithFallback(model)
+	if !ok {
+		a.mu.Lock()
+		tab.StartupErr = "no available model providers — configure at least one provider with a valid API key"
+		tab.Ready = true
+		a.mu.Unlock()
+		a.emitReady(wailsCtx)
+		return
 	}
+	if fallback {
+		a.noticeForTab(tab.ID, fmt.Sprintf("model %q is no longer available — switched to %s", model, resolved))
+	}
+	model = resolved
 
 	a.mu.Lock()
 	tab.model = model

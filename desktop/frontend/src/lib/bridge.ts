@@ -168,6 +168,8 @@ export interface AppBindings {
   SetAutoPlan(mode: string): Promise<void>;
   SaveProvider(p: ProviderView): Promise<void>;
   DeleteProvider(name: string): Promise<void>;
+  SyncActiveTabModelToDefault(): Promise<void>;
+  SyncAllTabModelsToDefault(): Promise<void>;
   SetProviderKey(apiKeyEnv: string, value: string): Promise<void>;
   SetPermissionMode(mode: string): Promise<void>;
   AddPermissionRule(list: string, rule: string): Promise<void>;
@@ -553,6 +555,10 @@ function makeMockApp(): AppBindings {
     configPath: "~/projects/reasonix/reasonix.toml",
     providerKinds: ["openai"],
     bypass: false,
+    currentModel: "deepseek-flash/deepseek-v4-flash",
+    currentModelValid: true,
+    defaultModelValid: true,
+    plannerModelValid: true,
   };
   settings.providers = settings.providers.map((provider) =>
     provider.apiKeyEnv === "DEEPSEEK_API_KEY" ? { ...provider, keySet: !freshMock } : provider,
@@ -1432,6 +1438,12 @@ function makeMockApp(): AppBindings {
     },
     async DeleteProvider(name: string) {
       settings.providers = settings.providers.filter((p) => p.name !== name);
+    },
+    async SyncActiveTabModelToDefault() {
+      // no-op in browser dev mode
+    },
+    async SyncAllTabModelsToDefault() {
+      // no-op in browser dev mode
     },
     async SetProviderKey(apiKeyEnv: string) {
       settings.providers.forEach((p) => {

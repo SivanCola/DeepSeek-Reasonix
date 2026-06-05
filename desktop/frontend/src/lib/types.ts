@@ -260,6 +260,10 @@ export interface Meta {
   eventChannel: string;
   cwd: string;
   bypass?: boolean; // YOLO mode on (auto-approve every tool call)
+  startupErrCode?: string; // "unknown_model" | "no_providers"
+  startupErrModel?: string;
+  startupErrConfigured?: string[];
+  startupRecoveryModel?: string;
 }
 
 // Mode is the input mode cycled by Shift+Tab: normal (shown as auto) → plan
@@ -523,6 +527,12 @@ export interface SettingsView {
   configPath: string;
   providerKinds: string[]; // provider implementations the kernel registered (for the kind picker)
   bypass: boolean; // live YOLO state (runtime-only) — whether approvals are skipped this session
+  // Model health diagnostics (read-only).
+  currentModel: string;
+  currentModelValid: boolean;
+  defaultModelValid: boolean;
+  plannerModelValid: boolean;
+  modelWarning?: string;
 }
 
 // Auto-updater payloads (desktop/updater.go). UpdateInfo drives the update banner;
