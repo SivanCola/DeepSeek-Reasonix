@@ -87,31 +87,28 @@ func TestResolveModelWithFallback_StaleDefaultModel(t *testing.T) {
 	}
 }
 
-func TestResolveModelWithFallback_NoConfiguredProviders(t *testing.T) {
+func TestResolveModelWithFallback_NoProviders(t *testing.T) {
 	c := testCfg()
-	c.Providers = []ProviderEntry{
-		{Name: "nk", Kind: "openai", BaseURL: "https://nk.example.com", Model: "m", APIKeyEnv: "NO_SUCH_KEY"},
-	}
+	c.Providers = nil
 	_, fallback, ok := c.ResolveModelWithFallback("nk/m")
 	if ok {
-		t.Error("expected no fallback when no provider is configured")
+		t.Error("expected no fallback when no provider exists")
 	}
 	_ = fallback
 }
 
-func TestResolveModelWithFallback_SkipsUnconfigured(t *testing.T) {
+func TestResolveModelWithFallback_AllowsProviderWithoutKey(t *testing.T) {
 	c := testCfg()
-	// Only the unconfigured provider has the model being searched.
 	c.Providers = []ProviderEntry{
 		{Name: "nk", Kind: "openai", BaseURL: "https://nk.example.com", Model: "m", APIKeyEnv: "NO_SUCH_KEY"},
 		{Name: "good", Kind: "openai", BaseURL: "https://g.example.com", Model: "g", APIKeyEnv: "TEST_KEY"},
 	}
 	resolved, fallback, ok := c.ResolveModelWithFallback("nk/m")
-	if !ok || !fallback {
-		t.Fatalf("should fallback to configured provider: ok=%v fallback=%v", ok, fallback)
+	if !ok || fallback {
+		t.Fatalf("provider without key should still resolve for startup: ok=%v fallback=%v", ok, fallback)
 	}
-	if resolved != "good/g" {
-		t.Errorf("resolved = %q, want good/g", resolved)
+	if resolved != "nk/m" {
+		t.Errorf("resolved = %q, want nk/m", resolved)
 	}
 }
 
