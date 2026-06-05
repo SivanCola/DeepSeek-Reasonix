@@ -1669,6 +1669,9 @@ func (m chatTUI) View() tea.View {
 	default:
 		status = "  " + modeTag + " · " + i18n.M.ChatStatusIdle + " " + dim("("+i18n.M.ChatStatusCycleHint+")")
 	}
+	if et := m.effortTag(); et != "" {
+		status += " · " + et
+	}
 	if gt := m.gitTag(); gt != "" {
 		status += " · " + gt
 	}
@@ -1702,9 +1705,6 @@ func (m chatTUI) View() tea.View {
 	var data []string
 	if mt := m.modelTag(); mt != "" {
 		data = append(data, mt)
-	}
-	if et := m.effortTag(); et != "" {
-		data = append(data, et)
 	}
 	if cache := m.cacheTag(); cache != "" {
 		data = append(data, cache)
@@ -1754,7 +1754,7 @@ func (m chatTUI) View() tea.View {
 		rowsAboveBox += strings.Count(menu, "\n") + 1
 	}
 	// Layout: the working spinner (when running), then the composer when visible,
-	// then the two status rows (line 1 = mode + session/worktree identity, line 2 = live run data).
+	// then the two status rows (line 1 = mode + run config + worktree identity, line 2 = live run data).
 	// Each row is clamped to width independently so neither wraps; padding to full
 	// width keeps a short row from leaving stale cells from the prior frame.
 	if working != "" {

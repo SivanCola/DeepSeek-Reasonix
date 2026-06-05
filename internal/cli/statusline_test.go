@@ -161,9 +161,15 @@ func TestStatuslineShowsEffort(t *testing.T) {
 	i18n.DetectLanguage("en")
 
 	content := renderStatuslineViewWithEffort(t, "auto")
-	plain := bottomStatusPlain(content)
-	if !strings.Contains(plain, "deepseek-v4-flash · effort auto") {
-		t.Fatalf("status data line should show effort:\n%s", plain)
+	lines := bottomStatusPlainLines(content)
+	if len(lines) != 2 {
+		t.Fatalf("status block lines = %d, want 2:\n%s", len(lines), strings.Join(lines, "\n"))
+	}
+	if !strings.Contains(lines[0], "effort auto") {
+		t.Fatalf("mode row should show effort:\n%s", strings.Join(lines, "\n"))
+	}
+	if strings.Contains(lines[1], "effort auto") {
+		t.Fatalf("data row should not show effort:\n%s", strings.Join(lines, "\n"))
 	}
 }
 
@@ -175,9 +181,9 @@ func TestStatuslineKeepsCacheRatesInPrimaryDataRow(t *testing.T) {
 	if len(lines) != 2 {
 		t.Fatalf("status block lines = %d, want 2:\n%s", len(lines), strings.Join(lines, "\n"))
 	}
-	want := "deepseek-v4-flash · effort auto · turn hit 90.00% · avg 90.00%"
+	want := "deepseek-v4-flash · turn hit 90.00% · avg 90.00%"
 	if !strings.Contains(lines[1], want) {
-		t.Fatalf("data row should keep cache rates next to model/effort:\n%s", strings.Join(lines, "\n"))
+		t.Fatalf("data row should keep cache rates next to model:\n%s", strings.Join(lines, "\n"))
 	}
 }
 
@@ -189,14 +195,14 @@ func TestStatuslinePutsGitIdentityOnModeRow(t *testing.T) {
 	if len(lines) != 2 {
 		t.Fatalf("status block lines = %d, want 2:\n%s", len(lines), strings.Join(lines, "\n"))
 	}
-	if !strings.Contains(lines[0], "Reasonix@codex/demo (+3 -1 ?2)") {
-		t.Fatalf("mode row should include git identity:\n%s", strings.Join(lines, "\n"))
+	if !strings.Contains(lines[0], "effort auto · Reasonix@codex/demo (+3 -1 ?2)") {
+		t.Fatalf("mode row should include effort before git identity:\n%s", strings.Join(lines, "\n"))
 	}
 	if strings.Contains(lines[1], "Reasonix@codex/demo") {
 		t.Fatalf("data row should not include git identity:\n%s", strings.Join(lines, "\n"))
 	}
-	if !strings.Contains(lines[1], "deepseek-v4-flash · effort auto") {
-		t.Fatalf("data row should keep model and effort:\n%s", strings.Join(lines, "\n"))
+	if !strings.Contains(lines[1], "deepseek-v4-flash") || strings.Contains(lines[1], "effort auto") {
+		t.Fatalf("data row should keep model without effort:\n%s", strings.Join(lines, "\n"))
 	}
 }
 
