@@ -1672,7 +1672,7 @@ func (m chatTUI) View() tea.View {
 	if et := m.effortTag(); et != "" {
 		status += " · " + et
 	}
-	if gt := m.gitTag(); gt != "" {
+	if gt := m.gitTag(boxW - visibleWidth(status) - visibleWidth(" · ")); gt != "" {
 		status += " · " + gt
 	}
 	// The spinning "thinking…" indicator is its own line ABOVE the input box (shown
