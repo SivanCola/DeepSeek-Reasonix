@@ -613,16 +613,11 @@ func (a *App) ListSessions() []SessionMeta {
 		return []SessionMeta{}
 	}
 	titles := loadSessionTitles(dir)
-	a.mu.RLock()
-	ctrl := a.activeCtrlLocked()
-	a.mu.RUnlock()
-	cur := ""
-	if ctrl != nil {
-		cur = ctrl.SessionPath()
-	}
+	open := a.openSessionPaths(dir)
 	out := make([]SessionMeta, 0, len(infos))
 	for _, s := range infos {
-		out = append(out, sessionMetaFromInfo(s, titles[filepath.Base(s.Path)], s.Path == cur, 0))
+		_, current := open[s.Path]
+		out = append(out, sessionMetaFromInfo(s, titles[filepath.Base(s.Path)], current, 0))
 	}
 	return out
 }
@@ -672,23 +667,38 @@ func sessionMetaFromInfo(s agent.SessionInfo, title string, current bool, delete
 	}
 }
 
-// DeleteSession moves a saved session to the local trash. It refuses the active
-// session — that's the conversation on screen, and auto-save would recreate the
-// file on the next turn; start a new session first to retire it.
+// DeleteSession moves a saved session to the local trash. It refuses any open
+// session because tab auto-save would recreate or append to the file later.
 func (a *App) DeleteSession(path string) error {
 	dir := config.SessionDir()
 	sessionPath, key, err := validateSessionPath(dir, path)
 	if err != nil {
 		return err
 	}
-	ctrl := a.activeCtrl()
-	if ctrl != nil {
-		currentPath, _, err := validateSessionPath(dir, ctrl.SessionPath())
-		if err == nil && currentPath == sessionPath {
-			return errActiveSession
-		}
+	if _, ok := a.openSessionPaths(dir)[sessionPath]; ok {
+		return errActiveSession
 	}
 	return trashSessionArtifacts(dir, sessionPath, key)
+}
+
+func (a *App) openSessionPaths(dir string) map[string]struct{} {
+	a.mu.RLock()
+	paths := make([]string, 0, len(a.tabs))
+	for _, tab := range a.tabs {
+		if tab != nil && tab.Ctrl != nil {
+			paths = append(paths, tab.Ctrl.SessionPath())
+		}
+	}
+	a.mu.RUnlock()
+
+	out := make(map[string]struct{}, len(paths))
+	for _, path := range paths {
+		currentPath, _, err := validateSessionPath(dir, path)
+		if err == nil {
+			out[currentPath] = struct{}{}
+		}
+	}
+	return out
 }
 
 // RestoreSession moves a trashed session back into the saved-session list.

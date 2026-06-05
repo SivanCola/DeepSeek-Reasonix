@@ -373,6 +373,57 @@ func TestDeleteSessionRejectsActiveRelativePath(t *testing.T) {
 	}
 }
 
+func TestDeleteSessionRejectsInactiveOpenTab(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+
+	dir := config.SessionDir()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir session dir: %v", err)
+	}
+	activePath := filepath.Join(dir, "active.jsonl")
+	inactivePath := filepath.Join(dir, "inactive.jsonl")
+	otherPath := filepath.Join(dir, "other.jsonl")
+	for _, path := range []string{activePath, inactivePath, otherPath} {
+		if err := os.WriteFile(path, []byte(`{"role":"user","content":"hello"}`+"\n"), 0o644); err != nil {
+			t.Fatalf("write session %s: %v", path, err)
+		}
+	}
+
+	activeCtrl := control.New(control.Options{SessionDir: dir, SessionPath: activePath, Label: "active"})
+	inactiveCtrl := control.New(control.Options{SessionDir: dir, SessionPath: inactivePath, Label: "inactive"})
+	defer activeCtrl.Close()
+	defer inactiveCtrl.Close()
+
+	app := &App{
+		tabs: map[string]*WorkspaceTab{
+			"active":   {ID: "active", Scope: "global", Ctrl: activeCtrl, Ready: true},
+			"inactive": {ID: "inactive", Scope: "global", Ctrl: inactiveCtrl, Ready: true},
+		},
+		tabOrder:    []string{"active", "inactive"},
+		activeTabID: "active",
+	}
+
+	if err := app.DeleteSession(filepath.Base(inactivePath)); err != errActiveSession {
+		t.Fatalf("DeleteSession(inactive open basename) error = %v, want errActiveSession", err)
+	}
+	if _, err := os.Stat(inactivePath); err != nil {
+		t.Fatalf("inactive open session should remain: %v", err)
+	}
+
+	sessions := app.ListSessions()
+	current := map[string]bool{}
+	for _, s := range sessions {
+		current[filepath.Base(s.Path)] = s.Current
+	}
+	if !current[filepath.Base(activePath)] || !current[filepath.Base(inactivePath)] {
+		t.Fatalf("ListSessions should mark active and inactive open sessions current, got %#v", current)
+	}
+	if current[filepath.Base(otherPath)] {
+		t.Fatalf("ListSessions marked unopened session current, got %#v", current)
+	}
+}
+
 type appendingDesktopRunner struct {
 	session *agent.Session
 	started chan string
