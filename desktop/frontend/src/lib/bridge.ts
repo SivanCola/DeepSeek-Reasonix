@@ -103,6 +103,7 @@ export interface AppBindings {
   ListSessions(): Promise<SessionMeta[]>;
   ListTrashedSessions(): Promise<SessionMeta[]>;
   ResumeSession(path: string): Promise<HistoryMessage[]>;
+  ResumeSessionForTab(tabID: string, path: string): Promise<HistoryMessage[]>;
   PreviewSession(path: string): Promise<HistoryMessage[]>;
   DeleteSession(path: string): Promise<void>;
   RestoreSession(path: string): Promise<void>;
@@ -892,6 +893,9 @@ function makeMockApp(): AppBindings {
         { role: "user", content: `(mock) resumed ${path}` },
         { role: "assistant", content: "This is a mock resumed transcript — the real one comes from the kernel." },
       ];
+    },
+    async ResumeSessionForTab(_tabID: string, path: string) {
+      return this.ResumeSession(path);
     },
     async PreviewSession(path: string) {
       const s = sessions.find((x) => x.path === path) ?? trashedSessions.find((x) => x.path === path);

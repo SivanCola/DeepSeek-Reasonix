@@ -29,7 +29,7 @@ export function HistoryPanel({
   kind?: "history" | "trash";
   sessions: SessionMeta[];
   running: boolean;
-  onResume: (path: string) => void;
+  onResume: (session: SessionMeta) => void;
   onPreview: (path: string) => Promise<HistoryMessage[]>;
   onDelete: (path: string) => void;
   onRename: (path: string, title: string) => void;
@@ -337,7 +337,7 @@ export function HistoryPanel({
                           className="hist-item__main"
                           onClick={() => {
                             if (isTrash || running) void loadPreview(s);
-                            else onResume(s.path);
+                            else onResume(s);
                           }}
                         >
                           <div className="hist-item__preview">{sessionDisplayTitle(s, tr("history.emptySession"))}</div>

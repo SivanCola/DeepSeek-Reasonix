@@ -719,15 +719,21 @@ func (a *App) RenameSession(path, title string) error {
 }
 
 // ResumeSession snapshots the current conversation, then loads the session at
-// path and continues it — auto-save keeps appending to that file. The model and
-// working folder are unchanged (same controller); only the transcript is swapped.
-// Returns the resumed messages for the frontend to render.
+// path and continues it on the active tab. The model and working folder are
+// unchanged; only the transcript is swapped. Returns the resumed messages for
+// the frontend to render.
 func (a *App) ResumeSession(path string) ([]HistoryMessage, error) {
-	a.mu.RLock()
-	ctrl := a.activeCtrlLocked()
-	a.mu.RUnlock()
+	return a.ResumeSessionForTab("", path)
+}
+
+// ResumeSessionForTab is the tab-scoped form of ResumeSession. History rows
+// carry scope/workspace/topic metadata, so callers that opened or selected a
+// matching tab should resume on that exact controller instead of whichever tab is
+// active by the time the async call reaches the backend.
+func (a *App) ResumeSessionForTab(tabID, path string) ([]HistoryMessage, error) {
+	ctrl := a.ctrlByTabID(tabID)
 	if ctrl == nil {
-		return []HistoryMessage{}, nil
+		return []HistoryMessage{}, fmt.Errorf("tab is not ready")
 	}
 	loaded, err := agent.LoadSession(path)
 	if err != nil {
@@ -735,7 +741,7 @@ func (a *App) ResumeSession(path string) ([]HistoryMessage, error) {
 	}
 	_ = ctrl.Snapshot() // persist the current session before switching away
 	ctrl.Resume(loaded, path)
-	return a.History(), nil
+	return a.HistoryForTab(tabID), nil
 }
 
 // PreviewSession reads a saved session for display only. It does not snapshot or

@@ -915,12 +915,23 @@ export default function App() {
   }, [listTrashedSessions]);
   const closeHistory = useCallback(() => setHistView(null), []);
   const onResumeSession = useCallback(
-    async (path: string) => {
+    async (session: SessionMeta) => {
       if (state.running) return;
       setHistView(null);
-      await resumeSession(path);
+      const scope = session.scope || (session.workspaceRoot ? "project" : "global");
+      let targetTab: TabMeta | undefined;
+      if (scope === "project" && session.workspaceRoot && session.topicId) {
+        targetTab = await openProjectTab(session.workspaceRoot, session.topicId);
+      } else if (scope === "global" && session.topicId) {
+        targetTab = await openGlobalTab(session.topicId);
+      }
+      await resumeSession(session.path, targetTab?.id);
+      if (targetTab) {
+        await refreshTabMetas();
+        setTabRevealSignal((signal) => signal + 1);
+      }
     },
-    [state.running, resumeSession],
+    [openGlobalTab, openProjectTab, refreshTabMetas, state.running, resumeSession],
   );
   // Delete / rename act on disk, then re-fetch so the panel reflects the change.
   const onDeleteSession = useCallback(

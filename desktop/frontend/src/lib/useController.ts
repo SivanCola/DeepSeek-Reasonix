@@ -356,6 +356,15 @@ export function useController() {
     return tabs.find((tab) => tab.active) ?? tabs[0];
   }, []);
 
+  const waitForTabReady = useCallback(async (tabId: string): Promise<void> => {
+    for (let attempt = 0; attempt < 60; attempt += 1) {
+      const tabs = asArray(await app.ListTabs().catch(() => [] as TabMeta[]));
+      const tab = tabs.find((candidate) => candidate.id === tabId);
+      if (!tab || tab.ready || tab.startupErr) return;
+      await new Promise((resolve) => window.setTimeout(resolve, 100));
+    }
+  }, []);
+
   const syncActiveTabFromBackend = useCallback(async (reset = false): Promise<string | undefined> => {
     const active = await activeTabFromBackend();
     if (!active) return undefined;
@@ -463,14 +472,18 @@ export function useController() {
 
   const listSessions = useCallback(async (): Promise<SessionMeta[]> => asArray<SessionMeta>(await app.ListSessions().catch(() => [])), []);
   const listTrashedSessions = useCallback(async (): Promise<SessionMeta[]> => asArray<SessionMeta>(await app.ListTrashedSessions().catch(() => [])), []);
-  const resumeSession = useCallback(async (path: string) => {
-    const messages = asArray(await app.ResumeSession(path).catch(() => [] as HistoryMessage[]));
-    if (activeTabId) {
-      dispatchTo(activeTabId, { type: "reset" });
-      if (messages.length) dispatchTo(activeTabId, { type: "history", messages });
-      app.ContextUsageForTab(activeTabId).then((context) => dispatchTo(activeTabId, { type: "context", context })).catch(() => {});
-    }
-  }, [activeTabId, dispatchTo]);
+  const resumeSession = useCallback(async (path: string, tabId?: string) => {
+    const targetTabId = tabId || activeTabId;
+    if (!targetTabId) return;
+    if (tabId) await waitForTabReady(tabId);
+    const messages = asArray(
+      await (tabId ? app.ResumeSessionForTab(tabId, path) : app.ResumeSession(path)).catch(() => [] as HistoryMessage[]),
+    );
+    dispatchTo(targetTabId, { type: "reset" });
+    if (messages.length) dispatchTo(targetTabId, { type: "history", messages });
+    app.ContextUsageForTab(targetTabId).then((context) => dispatchTo(targetTabId, { type: "context", context })).catch(() => {});
+  }, [activeTabId, dispatchTo, waitForTabReady]);
+
   const previewSession = useCallback(async (path: string): Promise<HistoryMessage[]> => asArray<HistoryMessage>(await app.PreviewSession(path).catch(() => [])), []);
   const deleteSession = useCallback((path: string) => app.DeleteSession(path).catch(() => {}), []);
   const restoreSession = useCallback((path: string) => app.RestoreSession(path).catch(() => {}), []);
@@ -575,20 +588,22 @@ export function useController() {
     } catch { /* ignore */ }
   }, [loadSessionDataForTab]);
 
-  const openProjectTab = useCallback(async (workspaceRoot: string, topicId: string) => {
+  const openProjectTab = useCallback(async (workspaceRoot: string, topicId: string): Promise<TabMeta | undefined> => {
     try {
       const meta = await app.OpenProjectTab(workspaceRoot, topicId);
       setActiveTabId(meta.id);
       await loadSessionDataForTab(meta.id, !statesRef.current.has(meta.id));
-    } catch { /* ignore */ }
+      return meta;
+    } catch { return undefined; }
   }, [loadSessionDataForTab]);
 
-  const openGlobalTab = useCallback(async (topicId: string) => {
+  const openGlobalTab = useCallback(async (topicId: string): Promise<TabMeta | undefined> => {
     try {
       const meta = await app.OpenGlobalTab(topicId);
       setActiveTabId(meta.id);
       await loadSessionDataForTab(meta.id, !statesRef.current.has(meta.id));
-    } catch { /* ignore */ }
+      return meta;
+    } catch { return undefined; }
   }, [loadSessionDataForTab]);
 
   const closeTab = useCallback(async (tabId: string) => {
