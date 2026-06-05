@@ -1,7 +1,9 @@
 // Golden-case verification for math rendering pipeline.
 // Run: tsx src/__tests__/math-golden.test.ts
+import katex from "katex";
 import { isInlineMathLike } from "../components/CodeOrMath";
 import { stripMathDelimiters, latexNormalizeForKatex } from "../components/latexNormalize";
+import { isLikelyInlineMath } from "../components/mathClassify";
 
 let passed = 0;
 let failed = 0;
@@ -47,7 +49,8 @@ eq(latexNormalizeForKatex("\\text{a & b % c_d ^ e ~ f}"),
   "escapes & % _ ^ ~ in \\text");
 eq(latexNormalizeForKatex("\\text{already\\_escaped}"), "\\text{already\\_escaped}", "no double-escape");
 eq(latexNormalizeForKatex("\\alpha + \\beta"), "\\alpha + \\beta", "non-text commands");
-eq(latexNormalizeForKatex("a | b"), "a \\vert  b", "| to \\vert");
+eq(latexNormalizeForKatex("a | b"), "a \\vert b", "| to \\vert without doubled space");
+eq(latexNormalizeForKatex("|x|"), "\\vert x\\vert", "|x| keeps command boundary");
 eq(latexNormalizeForKatex("\\text{foo \\$ bar}"), "\\text{foo \\$ bar}", "already escaped $");
 eq(latexNormalizeForKatex("\\textrm{test #}"), "\\textrm{test \\#}", "\\textrm also handled");
 eq(latexNormalizeForKatex("\\textbf{hello world}"), "\\textbf{hello world}", "\\textbf no special chars");
@@ -96,20 +99,6 @@ check("import stmt", () => isInlineMathLike("import React from 'react'") === fal
 check("export stmt", () => isInlineMathLike("export default App") === false);
 check(".env filename", () => isInlineMathLike(".env") === false);
 
-// ── isLikelyInlineMath (remark plugin $...$ gate) ──────────────────────────────
-// Mirrors the isLikelyInlineMath logic from Markdown.tsx.
-
-const isLikelyInlineMath = (math: string): boolean => {
-  if (!math || math !== math.trim() || math.includes("\n")) return false;
-  if (math.includes("://") || math.includes("](")) return false;
-  if (/^\$?\d+(?:\.\d+)?%?$/.test(math)) return false;
-  if (/\\[A-Za-z]+\b/.test(math)) return true;
-  if (/[\^_{}|]/.test(math)) return true;
-  if (/\b(?:alpha|beta|gamma|sum|int|prod|lim|infty|sqrt|frac|sin|cos|tan|log|ln|max|min|partial|nabla|left|right)\b/.test(math)) return true;
-  if (/[A-Za-z]\s+[A-Za-z]/.test(math)) return false;
-  return true;
-};
-
 console.log("\nisLikelyInlineMath — math");
 check("$x$ (single var)", () => isLikelyInlineMath("x") === true);
 check("$E=mc^2$", () => isLikelyInlineMath("E=mc^2") === true);
@@ -118,6 +107,7 @@ check("$\\alpha$", () => isLikelyInlineMath("\\alpha") === true);
 check("$a \\le b$", () => isLikelyInlineMath("a \\le b") === true);
 check("$\\frac{a}{b}$", () => isLikelyInlineMath("\\frac{a}{b}") === true);
 check("$f(x)$", () => isLikelyInlineMath("f(x)") === true);
+check("$x+1$", () => isLikelyInlineMath("x+1") === true);
 
 console.log("\nisLikelyInlineMath — currency/link (NOT math)");
 check("$5", () => isLikelyInlineMath("5") === false);
@@ -127,6 +117,41 @@ check("$100%", () => isLikelyInlineMath("100%") === false);
 check("URL", () => isLikelyInlineMath("https://example.com") === false);
 check("prose text", () => isLikelyInlineMath("hello world today") === false);
 check("prose $x y z$ (spaces)", () => isLikelyInlineMath("x y z") === false);
+check("$PATH$ env token", () => isLikelyInlineMath("PATH") === false);
+check("$TODO$ word token", () => isLikelyInlineMath("TODO") === false);
+check("$OK$ word token", () => isLikelyInlineMath("OK") === false);
+check("$v1$ version token", () => isLikelyInlineMath("v1") === false);
+check("$foo$ plain word", () => isLikelyInlineMath("foo") === false);
+
+// ── KaTeX end-to-end rendering ────────────────────────────────────────────────
+
+const chiralSource = String.raw`
+\underbrace{N}_{\text{baryon #}}
+=
+\underbrace{\frac{1+\tau_3}{2}}_{\text{isospin}}
++
+\underbrace{g_A \gamma^\mu \gamma_5}_{\text{axial}}
++
+\underbrace{SU(2)_L \times SU(2)_R}_{\text{chiral}}
+`;
+
+function renderDisplay(source: string): string {
+  return katex.renderToString(latexNormalizeForKatex(source), {
+    throwOnError: true,
+    displayMode: true,
+  });
+}
+
+console.log("\nKaTeX renderToString — end to end");
+check("chiral decomposition renders", () => {
+  const html = renderDisplay(chiralSource);
+  return !html.includes("katex-error")
+    && ["baryon", "isospin", "axial", "chiral"].every((label) => html.includes(label));
+});
+check("\\|x\\| renders as double bars", () => {
+  const html = renderDisplay(String.raw`\|x\|`);
+  return !html.includes("katex-error") && html.includes("∥");
+});
 
 // ── looksLikeFormula (CodeBlockOrMath fenced-code classifier) ──────────────────
 // Mirrors the looksLikeFormula logic from CodeBlockOrMath.tsx.
