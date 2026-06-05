@@ -338,6 +338,15 @@ export function useController() {
     }
   }, [bump]);
 
+  const checkpointRefreshSeq = useRef(new Map<string, number>());
+  const refreshCheckpoints = useCallback(async (tabId: string) => {
+    const seq = (checkpointRefreshSeq.current.get(tabId) ?? 0) + 1;
+    checkpointRefreshSeq.current.set(tabId, seq);
+    const checkpoints = await app.CheckpointsForTab(tabId).catch(() => undefined);
+    if (checkpointRefreshSeq.current.get(tabId) !== seq || checkpoints === undefined) return;
+    dispatchTo(tabId, { type: "checkpoints", checkpoints: asArray(checkpoints) });
+  }, [dispatchTo]);
+
   const loadSessionDataForTab = useCallback(async (tabId: string, reset = false) => {
     try {
       if (reset) dispatchTo(tabId, { type: "reset" });
@@ -346,11 +355,11 @@ export function useController() {
       dispatchTo(tabId, { type: "effort", effort: await app.EffortForTab(tabId) });
       dispatchTo(tabId, { type: "balance", balance: await app.BalanceForTab(tabId) });
       dispatchTo(tabId, { type: "jobs", jobs: asArray(await app.JobsForTab(tabId)) });
-      dispatchTo(tabId, { type: "checkpoints", checkpoints: asArray(await app.CheckpointsForTab(tabId)) });
+      await refreshCheckpoints(tabId);
       const history = asArray(await app.HistoryForTab(tabId));
       if (history && history.length) dispatchTo(tabId, { type: "history", messages: history });
     } catch { /* ignore */ }
-  }, [dispatchTo]);
+  }, [dispatchTo, refreshCheckpoints]);
 
   const activeTabFromBackend = useCallback(async (): Promise<TabMeta | undefined> => {
     const tabs = asArray(await app.ListTabs().catch(() => [] as TabMeta[]));
@@ -394,6 +403,7 @@ export function useController() {
           .catch(() => {});
         app.BalanceForTab(targetTabId).then((balance) => dispatchTo(targetTabId, { type: "balance", balance })).catch(() => {});
         app.EffortForTab(targetTabId).then((effort) => dispatchTo(targetTabId, { type: "effort", effort })).catch(() => {});
+        void refreshCheckpoints(targetTabId);
       }
       if (e.kind === "turn_done" || e.kind === "notice") {
         app.JobsForTab(targetTabId).then((jobs) => dispatchTo(targetTabId, { type: "jobs", jobs: asArray(jobs) })).catch(() => {});
@@ -489,7 +499,8 @@ export function useController() {
     dispatchTo(targetTabId, { type: "reset" });
     if (messages.length) dispatchTo(targetTabId, { type: "history", messages });
     app.ContextUsageForTab(targetTabId).then((context) => dispatchTo(targetTabId, { type: "context", context })).catch(() => {});
-  }, [activeTabId, dispatchTo, waitForTabReady]);
+    void refreshCheckpoints(targetTabId);
+  }, [activeTabId, dispatchTo, refreshCheckpoints, waitForTabReady]);
 
   const previewSession = useCallback(async (path: string): Promise<HistoryMessage[]> => asArray<HistoryMessage>(await app.PreviewSession(path).catch(() => [])), []);
   const deleteSession = useCallback((path: string) => app.DeleteSession(path).catch(() => {}), []);
