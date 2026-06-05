@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -514,8 +515,14 @@ func (a *App) SyncAllTabModelsToDefault() error {
 	}
 	a.mu.Unlock()
 
+	var errs []error
 	for _, id := range tabIDs {
-		_ = a.SetModelForTab(id, resolved)
+		if err := a.setModelForTab(id, resolved, false); err != nil {
+			errs = append(errs, fmt.Errorf("tab %s: %w", id, err))
+		}
+	}
+	if len(errs) > 0 {
+		return fmt.Errorf("sync all tab models: %w", errors.Join(errs...))
 	}
 	return nil
 }
@@ -577,6 +584,27 @@ func (a *App) DeleteProvider(name string) error {
 		}
 	}
 
+	var affectedTabIDs []string
+	var runningTabIDs []string
+	a.mu.RLock()
+	for _, id := range a.orderedTabIDsLocked() {
+		tab := a.tabs[id]
+		if tab == nil || !config.ModelRefsProvider(tab.model, name) {
+			continue
+		}
+		affectedTabIDs = append(affectedTabIDs, id)
+		if tab.Ctrl != nil && tab.Ctrl.Running() {
+			runningTabIDs = append(runningTabIDs, id)
+		}
+	}
+	a.mu.RUnlock()
+	if len(affectedTabIDs) > 0 && fallbackRef == "" {
+		return fmt.Errorf("remove provider: %q is used by open tabs and no other configured provider exists", name)
+	}
+	if len(runningTabIDs) > 0 {
+		return fmt.Errorf("finish or cancel the current turn before removing provider %q (running tabs: %s)", name, strings.Join(runningTabIDs, ", "))
+	}
+
 	if err := cfg.RemoveProvider(name); err != nil {
 		return err
 	}
@@ -584,21 +612,16 @@ func (a *App) DeleteProvider(name string) error {
 		return err
 	}
 
-	// Fix any tab whose model ref targets the deleted provider.
-	if fallbackRef != "" {
-		a.mu.Lock()
-		for _, id := range a.orderedTabIDsLocked() {
-			tab := a.tabs[id]
-			if tab != nil && config.ModelRefsProvider(tab.model, name) {
-				tab.model = fallbackRef
-			}
+	var errs []error
+	for _, id := range affectedTabIDs {
+		if err := a.setModelForTab(id, fallbackRef, true); err != nil {
+			errs = append(errs, fmt.Errorf("tab %s: %w", id, err))
 		}
-		a.saveTabsLocked()
-		a.mu.Unlock()
 	}
-
-	// Always rebuild so config changes (default_model migration, etc.) take effect.
-	return a.rebuild()
+	if len(errs) > 0 {
+		return fmt.Errorf("remove provider: rebuild affected tabs: %w", errors.Join(errs...))
+	}
+	return nil
 }
 
 // SetProviderKey writes a secret to the global credentials file under the given

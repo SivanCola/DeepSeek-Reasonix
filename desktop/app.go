@@ -2747,6 +2747,10 @@ func (a *App) SetModel(name string) error {
 }
 
 func (a *App) SetModelForTab(tabID, name string) error {
+	return a.setModelForTab(tabID, name, false)
+}
+
+func (a *App) setModelForTab(tabID, name string, force bool) error {
 	if a.ctx == nil || name == "" {
 		return nil
 	}
@@ -2754,7 +2758,7 @@ func (a *App) SetModelForTab(tabID, name string) error {
 	if tab == nil {
 		return nil
 	}
-	if name == tab.model {
+	if name == tab.model && !force {
 		return nil
 	}
 	if tab.Ctrl != nil && tab.Ctrl.Running() {
