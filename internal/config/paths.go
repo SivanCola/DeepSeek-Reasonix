@@ -107,15 +107,6 @@ func BackupDir() string {
 	return filepath.Join(root, "backups", "config")
 }
 
-// oldUserConfigPath returns the XDG-based path used before the ~/.reasonix migration.
-func oldUserConfigPath() string {
-	dir, err := os.UserConfigDir()
-	if err != nil {
-		return ""
-	}
-	return filepath.Join(dir, "reasonix", "config.toml")
-}
-
 // oldLegacyPaths returns known historical Reasonix config directories for migration.
 func oldLegacyPaths() []string {
 	var paths []string

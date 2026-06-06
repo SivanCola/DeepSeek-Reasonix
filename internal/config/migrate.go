@@ -166,9 +166,13 @@ func migrateOldConfigToNew(dest, home string) (*MigrationResult, error) {
 			return nil, fmt.Errorf("write %s: %w", dest, err)
 		}
 		if len(mcpPlugins) > 0 {
-			SaveMCPTOML(mcpPlugins)
+			if err := SaveMCPTOML(mcpPlugins); err != nil {
+				return nil, fmt.Errorf("write mcp.toml: %w", err)
+			}
 		}
-		SaveSkillsTOML(cfg)
+		if err := SaveSkillsTOML(cfg); err != nil {
+			return nil, fmt.Errorf("write skills.toml: %w", err)
+		}
 
 		// Copy data dirs
 		migrateDataDirs(oldRoot, UserRootDir(), nil)
@@ -223,7 +227,9 @@ func copyDir(src, dst string) error {
 		if err != nil {
 			continue
 		}
-		os.WriteFile(dstPath, data, 0o644)
+		if err := os.WriteFile(dstPath, data, 0o644); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -248,8 +254,10 @@ func writeMigrationRecord(r *MigrationResult) {
 	}
 	path := MigrationPath()
 	if path != "" {
-		os.MkdirAll(filepath.Dir(path), 0o755)
-		os.WriteFile(path, append(data, '\n'), 0o644)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			return
+		}
+		_ = os.WriteFile(path, append(data, '\n'), 0o644)
 	}
 }
 
@@ -300,18 +308,28 @@ func importTOMLSource(srcPath string) (imported, skipped int, errors []string) {
 	// Skills: merge into existing skills.toml content.
 	current, _ := loadExistingSkillsForImport()
 	for _, p := range src.Skills.Paths {
-		current.AddSkillPath(p)
+		if err := current.AddSkillPath(p); err != nil {
+			errors = append(errors, fmt.Sprintf("skill path %q: %v", p, err))
+			skipped++
+		}
 	}
 	for _, name := range src.Skills.DisabledSkills {
-		current.SetSkillEnabled(name, false)
+		if err := current.SetSkillEnabled(name, false); err != nil {
+			errors = append(errors, fmt.Sprintf("disabled skill %q: %v", name, err))
+			skipped++
+		}
 	}
-	SaveSkillsTOML(current)
+	if err := SaveSkillsTOML(current); err != nil {
+		errors = append(errors, fmt.Sprintf("skills.toml: %v", err))
+	}
 	return
 }
 
 func loadExistingSkillsForImport() (*Config, error) {
 	cfg := Default()
-	loadSkillsTOML(cfg)
+	if err := loadSkillsTOML(cfg); err != nil {
+		return cfg, err
+	}
 	return cfg, nil
 }
 
@@ -341,14 +359,6 @@ func importJSONSource(srcPath string) (imported, skipped int, errors []string) {
 		}
 	}
 	return
-}
-
-func legacyTOMLPaths(dest, home string) []string {
-	paths := []string{filepath.Join(filepath.Dir(dest), "reasonix.toml")}
-	if home != "" {
-		paths = append(paths, filepath.Join(home, ".reasonix", "reasonix.toml"))
-	}
-	return paths
 }
 
 func migrateLegacyBaseURL(cfg *Config, baseURL string) {

@@ -23,11 +23,6 @@ func loadDotEnvGlobal() {
 	}
 }
 
-// loadDotEnvForRoot calls loadDotEnvGlobal — project .env is no longer read.
-func loadDotEnvForRoot(root string) {
-	loadDotEnvGlobal()
-}
-
 // loadDotEnvFile reads one .env file (if present) and sets any keys not already
 // present in the environment. Lenient, zero-dependency parsing.
 func loadDotEnvFile(path string) {

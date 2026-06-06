@@ -10,12 +10,12 @@ import (
 // ConfigDiagnostic records issues found during config loading that don't prevent
 // startup: malformed optional files, ignored project-level files, migration state.
 type ConfigDiagnostic struct {
-	MalformedFiles   []string `json:"malformed_files,omitempty"`
-	IgnoredFiles     []string `json:"ignored_files,omitempty"`
-	MigrationStatus  string   `json:"migration_status,omitempty"`
-	ImportSkipped    int      `json:"import_skipped,omitempty"`
-	ImportImported   int      `json:"import_imported,omitempty"`
-	ImportErrors     []string `json:"import_errors,omitempty"`
+	MalformedFiles  []string `json:"malformed_files,omitempty"`
+	IgnoredFiles    []string `json:"ignored_files,omitempty"`
+	MigrationStatus string   `json:"migration_status,omitempty"`
+	ImportSkipped   int      `json:"import_skipped,omitempty"`
+	ImportImported  int      `json:"import_imported,omitempty"`
+	ImportErrors    []string `json:"import_errors,omitempty"`
 }
 
 var loadDiags ConfigDiagnostic
@@ -43,8 +43,8 @@ func DetectIgnoredProjectFiles(root string) {
 	}
 	// Files we can import via `reasonix config import --from`
 	importable := map[string]bool{
-		".toml":  true,
-		".json":  true,
+		".toml": true,
+		".json": true,
 	}
 	// Top-level files
 	for _, name := range []string{"reasonix.toml", ".mcp.json", ".env"} {

@@ -131,7 +131,7 @@ func (t *TaskTool) ResolveProfile(args json.RawMessage) *event.Profile {
 		Model  string `json:"model"`
 		Effort string `json:"effort"`
 	}
-	json.Unmarshal(args, &p)
+	_ = json.Unmarshal(args, &p)
 	model, effort := t.effectiveProfile(p.Model, p.Effort)
 	if model == "" && effort == "" {
 		return nil

@@ -786,31 +786,6 @@ func normalizeLegacyEffort(c *Config) {
 	}
 }
 
-// mergeTOMLPlugins merges [[plugins]] across TOML sources by name (later source wins).
-func mergeTOMLPlugins(paths []string) ([]PluginEntry, error) {
-	var merged []PluginEntry
-	index := map[string]int{}
-	for _, path := range paths {
-		if _, err := os.Stat(path); err != nil {
-			continue
-		}
-		var f Config
-		if _, err := toml.DecodeFile(path, &f); err != nil {
-			return nil, fmt.Errorf("config %s: %w", path, err)
-		}
-		for _, p := range f.Plugins {
-			p, _ = NormalizePluginCommandLine(p)
-			if i, ok := index[p.Name]; ok {
-				merged[i] = p
-				continue
-			}
-			index[p.Name] = len(merged)
-			merged = append(merged, p)
-		}
-	}
-	return merged, nil
-}
-
 // LoadForEdit returns a config to seed the `reasonix setup` wizard when reconfiguring:
 // the built-in defaults with the file at path (if present) decoded on top, so a
 // reconfigure preserves the user's existing providers and agent settings instead

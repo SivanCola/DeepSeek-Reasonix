@@ -297,23 +297,18 @@ func (t *installSkillTool) Execute(_ context.Context, args json.RawMessage) (str
 		return "", fmt.Errorf("install_skill requires a non-empty 'body' — the playbook the skill executes")
 	}
 
-	scope := ScopeGlobal
 	switch strings.TrimSpace(p.Scope) {
 	case "global":
-		scope = ScopeGlobal
 	case "project":
 		return "", fmt.Errorf("install_skill: scope='project' is no longer supported — skills are only written to ~/.reasonix/skills/; use scope='global'")
 	default:
-		scope = ScopeGlobal
-	}
-	if scope == ScopeProject && !t.store.HasProjectScope() {
-		return "", fmt.Errorf("install_skill: scope='project' is no longer supported")
 	}
 
 	runAs := RunInline
 	if strings.TrimSpace(p.RunAs) == "subagent" {
 		runAs = RunSubagent
 	}
+	scope := ScopeGlobal
 
 	content := renderSkillFile(name, desc, p.Body, runAs, strings.TrimSpace(p.Model), strings.TrimSpace(p.Effort), p.AllowedTools)
 	path, err := t.store.CreateWithContent(name, scope, content)

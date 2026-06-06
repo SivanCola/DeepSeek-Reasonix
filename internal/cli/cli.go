@@ -1573,14 +1573,13 @@ func configPathsCommand() int {
 }
 
 func configDoctorCommand() int {
-	diags := config.CollectDiagnostics()
 	cfg, err := config.Load()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "config load error: %v\n", err)
 	}
 	_ = cfg
 	config.DetectIgnoredProjectFiles(".")
-	diags = config.CollectDiagnostics()
+	diags := config.CollectDiagnostics()
 	summary := config.RenderDiagnostics(diags)
 	if summary != "" {
 		fmt.Print(summary)
