@@ -1,7 +1,10 @@
 package installsource
 
 import (
+	"bytes"
+	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -12,25 +15,35 @@ import (
 	"reasonix/internal/skill"
 )
 
+const (
+	maxSkillScanDepth = 3
+	maxSkillScanCount = 200
+	maxSkillCopyBytes = 20 << 20
+)
+
 // skillAction builds the DTO for a single-skill install (copy or link).
 func (t *installSourceTool) skillAction(req request, cand skillCandidate, mode string) action {
 	actionName := "copy_skill"
 	if mode == "link" {
 		actionName = "link_skill"
 	}
-	target, _ := t.skillTarget(cand.Name, req.Scope, cand.IsDir)
+	canonical, _ := t.skillCanonicalPath(cand.Name, req.Scope)
+	root, _ := t.skillInstallRoot(req.Scope)
 	a := action{
-		Kind:       "skill",
-		Action:     actionName,
-		Name:       cand.Name,
-		Source:     cand.SourcePath,
-		Target:     target,
-		Scope:      req.Scope,
-		Mode:       mode,
-		ConfigPath: t.skillConfigPath(req.Scope),
-		Skills:     []string{cand.Name},
-		SkillCount: 1,
-		skill:      cand,
+		Kind:          "skill",
+		Action:        actionName,
+		Name:          cand.Name,
+		Source:        cand.SourcePath,
+		Target:        canonical,
+		Scope:         req.Scope,
+		Mode:          mode,
+		ConfigPath:    t.skillConfigPath(req.Scope),
+		Skills:        []string{cand.Name},
+		SkillCount:    1,
+		Layout:        "canonical_dir",
+		InstallRoot:   root,
+		CanonicalPath: canonical,
+		skill:         cand,
 	}
 	a.RiskLevel, a.RiskReasons = skillActionRisk(mode, cand)
 	if mode == "link" && !isLinkTargetSafe(cand.SourcePath, t.home, t.root) {
@@ -53,6 +66,9 @@ func skillActionRisk(mode string, cand skillCandidate) (RiskLevel, []string) {
 		reasons = append(reasons, "symlink to a foreign path")
 	}
 	if cand.IsDir && mode == "copy" {
+		if level == RiskLow {
+			level = RiskMedium
+		}
 		reasons = append(reasons, "copy of a directory")
 	}
 	return level, reasons
@@ -71,37 +87,40 @@ func (t *installSourceTool) skillRootAction(req request, path string, names []st
 		Mode:        "register",
 		Skills:      names,
 		SkillCount:  len(names),
+		Layout:      "registered_root",
+		InstallRoot: path,
 		RiskLevel:   RiskMedium,
 		RiskReasons: []string{"adds a new skill root to the active config"},
 	}
 }
 
-// skillTarget computes the install destination path for a skill of the
-// given name under the resolved scope. The bool `dir` selects between a
-// directory layout (<scope>/skills/<name>/SKILL.md) and a flat one
-// (<scope>/skills/<name>.md).
-func (t *installSourceTool) skillTarget(name, scope string, dir bool) (string, error) {
-	if !config.IsValidSkillName(name) {
-		return "", newErr(ErrInvalidManifest, "invalid skill name %q", name)
-	}
-	var root string
+func (t *installSourceTool) skillInstallRoot(scope string) (string, error) {
 	if scope == "global" {
 		if t.home == "" {
 			return "", newErr(ErrSourceUnreadable, "global skill install requires a home directory")
 		}
-		root = filepath.Join(t.home, ".reasonix", skill.SkillsDirname)
-	} else {
-		root = filepath.Join(t.root, ".reasonix", skill.SkillsDirname)
+		return filepath.Join(t.home, ".reasonix", skill.SkillsDirname), nil
 	}
-	if dir {
-		return filepath.Join(root, name), nil
+	return filepath.Join(t.root, ".reasonix", skill.SkillsDirname), nil
+}
+
+// skillCanonicalPath computes the canonical install destination:
+// <scope>/skills/<skill-name>/SKILL.md. Flat <name>.md remains readable for
+// backward compatibility, but the installer no longer writes it by default.
+func (t *installSourceTool) skillCanonicalPath(name, scope string) (string, error) {
+	if !config.IsValidSkillName(name) {
+		return "", newErr(ErrInvalidManifest, "invalid skill name %q", name)
 	}
-	return filepath.Join(root, name+".md"), nil
+	root, err := t.skillInstallRoot(scope)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(root, name, skill.SkillFile), nil
 }
 
 // verifySkill confirms the installed skill is reachable through a freshly
 // built Store. It is the post-install guard against partial failures.
-func (t *installSourceTool) verifySkill(scope, name string) error {
+func (t *installSourceTool) verifySkill(scope, name string, act *action) error {
 	custom := []string(nil)
 	if scope == "global" {
 		cfg, err := t.loadConfig()
@@ -110,22 +129,40 @@ func (t *installSourceTool) verifySkill(scope, name string) error {
 		}
 		custom = cfg.SkillCustomPaths()
 	}
-	store := skill.New(skill.Options{HomeDir: t.home, ProjectRoot: t.root, CustomPaths: custom})
-	if _, ok := store.Read(name); !ok {
+	var stderr bytes.Buffer
+	store := skill.New(skill.Options{HomeDir: t.home, ProjectRoot: t.root, CustomPaths: custom, DisableBuiltins: true, Stderr: &stderr})
+	sk, ok := store.Read(name)
+	if !ok {
 		return newErr(ErrSourceUnreadable, "skill %q is installed but not discoverable", name)
+	}
+	act.Discoverable = true
+	act.CanonicalPath = sk.Path
+	for _, listed := range store.List() {
+		if listed.Name == name {
+			act.Indexed = true
+			break
+		}
+	}
+	if strings.TrimSpace(sk.Description) == "" {
+		act.Warnings = append(act.Warnings, fmt.Sprintf("skill %q has no description frontmatter; it is installed but the skills index will use a placeholder", name))
+	}
+	if msg := strings.TrimSpace(stderr.String()); msg != "" {
+		act.Warnings = append(act.Warnings, msg)
 	}
 	return nil
 }
 
-// alternateSkillTarget finds the "other" shape for a given target. If the
-// planned install writes a directory, the alternate is a flat file with the
-// same stem; vice versa. We check both for the "already exists" guard so a
-// pre-existing <name>/SKILL.md is not silently shadowed by a new <name>.md.
-func alternateSkillTarget(path string, dir bool) string {
-	if dir {
-		return strings.TrimSuffix(path, string(filepath.Separator)+skill.SkillFile) + ".md"
+// skillConflictTargets returns every existing layout that would collide with
+// installing name: the canonical directory, its SKILL.md, and the legacy flat
+// file. The apply step checks all of them so new canonical installs don't
+// silently shadow older <name>.md installs.
+func (t *installSourceTool) skillConflictTargets(name, scope string) ([]string, error) {
+	canonical, err := t.skillCanonicalPath(name, scope)
+	if err != nil {
+		return nil, err
 	}
-	return strings.TrimSuffix(path, filepath.Ext(path))
+	dir := filepath.Dir(canonical)
+	return []string{dir, canonical, filepath.Join(filepath.Dir(dir), name+".md")}, nil
 }
 
 // readSkillFile reads and validates a single skill file. The fallback name
@@ -170,36 +207,89 @@ func parseSkillContent(content, fallbackName, source string, strict bool) (skill
 	return skillCandidate{Name: name, Description: desc, SourcePath: source, Content: content}, nil
 }
 
-// scanSkillRoot enumerates skills under a directory: any subdirectory
-// containing a SKILL.md is a single skill, and any <name>.md at the root is
-// a flat skill. Subdirectories without SKILL.md are skipped silently.
+// scanSkillRoot enumerates skills under a directory with bounded recursion:
+// any <name>/SKILL.md is a directory-layout skill, and any <name>.md is a
+// flat compatibility skill. RootPath records the containing directory that must
+// be registered for the runtime Store to discover that candidate.
 func scanSkillRoot(root string, strict bool) ([]skillCandidate, error) {
-	entries, err := os.ReadDir(root)
+	var out []skillCandidate
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if path == root {
+			return nil
+		}
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		depth := pathDepth(rel)
+		if d.IsDir() {
+			if depth > maxSkillScanDepth {
+				return filepath.SkipDir
+			}
+			if strings.EqualFold(d.Name(), ".git") {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if len(out) >= maxSkillScanCount {
+			return newErr(ErrInvalidManifest, "too many skills under %s; limit is %d", root, maxSkillScanCount)
+		}
+		if !d.Type().IsRegular() || !strings.EqualFold(filepath.Ext(d.Name()), ".md") {
+			return nil
+		}
+		parent := filepath.Dir(path)
+		if strings.EqualFold(d.Name(), skill.SkillFile) {
+			containerDepth := pathDepth(mustRel(root, parent))
+			if containerDepth > maxSkillScanDepth {
+				return nil
+			}
+			if parent == root {
+				return nil
+			}
+			cand, err := readSkillFile(path, filepath.Base(parent), strict)
+			if err == nil {
+				cand.IsDir = true
+				cand.SourcePath = parent
+				cand.RootPath = filepath.Dir(parent)
+				out = append(out, cand)
+			}
+			return nil
+		}
+		containerDepth := pathDepth(mustRel(root, parent))
+		if containerDepth > maxSkillScanDepth {
+			return nil
+		}
+		stem := strings.TrimSuffix(d.Name(), filepath.Ext(d.Name()))
+		cand, err := readSkillFile(path, stem, strict)
+		if err == nil {
+			cand.RootPath = parent
+			out = append(out, cand)
+		}
+		return nil
+	})
 	if err != nil {
 		return nil, err
 	}
-	var out []skillCandidate
-	for _, e := range entries {
-		full := filepath.Join(root, e.Name())
-		if e.IsDir() {
-			cand, err := readSkillFile(filepath.Join(full, skill.SkillFile), e.Name(), strict)
-			if err == nil {
-				cand.IsDir = true
-				cand.SourcePath = full
-				out = append(out, cand)
-			}
-			continue
-		}
-		if e.Type().IsRegular() && strings.EqualFold(filepath.Ext(e.Name()), ".md") {
-			stem := strings.TrimSuffix(e.Name(), filepath.Ext(e.Name()))
-			cand, err := readSkillFile(full, stem, strict)
-			if err == nil {
-				out = append(out, cand)
-			}
-		}
-	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out, nil
+}
+
+func pathDepth(rel string) int {
+	if rel == "." || rel == "" {
+		return 0
+	}
+	return len(strings.Split(filepath.Clean(rel), string(filepath.Separator)))
+}
+
+func mustRel(base, path string) string {
+	rel, err := filepath.Rel(base, path)
+	if err != nil {
+		return "."
+	}
+	return rel
 }
 
 // copyDir walks src and writes a parallel tree under dst. O_EXCL refuses to
@@ -207,6 +297,7 @@ func scanSkillRoot(root string, strict bool) ([]skillCandidate, error) {
 // inspect (we never rm -rf). Symlinks inside src are followed once and
 // copied as the resolved file, which is what skill directories expect.
 func copyDir(src, dst string) error {
+	var copied int64
 	return filepath.WalkDir(src, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -217,10 +308,21 @@ func copyDir(src, dst string) error {
 		}
 		target := filepath.Join(dst, rel)
 		if d.IsDir() {
+			if strings.EqualFold(d.Name(), ".git") {
+				return filepath.SkipDir
+			}
 			return os.MkdirAll(target, 0o755)
 		}
 		if !d.Type().IsRegular() {
 			return nil
+		}
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+		copied += info.Size()
+		if copied > maxSkillCopyBytes {
+			return newErr(ErrInvalidManifest, "skill directory exceeds %d bytes", maxSkillCopyBytes)
 		}
 		in, err := os.Open(path)
 		if err != nil {

@@ -117,8 +117,8 @@ func (*installSourceTool) Schema() json.RawMessage {
   "source":{"type":"string","description":"URL, local file/folder path, .mcp.json path, or package name to install from. Ignored when op=uninstall (use name instead)."},
   "kind":{"type":"string","enum":["auto","skill","mcp"],"description":"Capability kind. Defaults to auto."},
   "apply":{"type":"boolean","description":"false (default) only returns an install plan; true performs the planned writes/connects. Ignored for op=uninstall."},
-  "scope":{"type":"string","enum":["project","global"],"description":"Where to persist config or copy skills. Reasonix stores MCP and skills globally; project is accepted as a legacy alias for global."},
-  "mode":{"type":"string","enum":["auto","copy","link","register"],"description":"Skill install mode. auto registers skill roots and copies single skills; copy copies skill files/folders; link creates symlinks; register adds a skill root to [skills].paths."},
+  "scope":{"type":"string","enum":["project","global"],"description":"Where to persist config or copy skills. Defaults to project when a workspace exists, otherwise global."},
+  "mode":{"type":"string","enum":["auto","copy","link","register"],"description":"Skill install mode. auto registers multi-skill roots and copies single skills into the canonical <skill-name>/SKILL.md layout; copy copies skill files/folders; link creates symlinks; register adds a skill root to [skills].paths."},
   "name":{"type":"string","description":"Optional override for the installed MCP server or single skill name. Required for op=uninstall when removing by name."},
   "transport":{"type":"string","enum":["auto","stdio","http","sse"],"description":"MCP transport override. URL sources default to http unless --sse-like; package sources default to stdio."},
   "command":{"type":"string","description":"Optional stdio MCP command override for package/local executable installs."},
@@ -255,6 +255,7 @@ func (t *installSourceTool) executeApply(ctx context.Context, req request, actio
 		}
 		actions[i].Status = "done"
 		anySucceeded = true
+		warnings = append(warnings, actions[i].Warnings...)
 	}
 	status := "done"
 	next := "Installed and verified."
@@ -292,12 +293,21 @@ func (t *installSourceTool) executeApply(ctx context.Context, req request, actio
 func (t *installSourceTool) executeUninstall(req request) string {
 	scope := req.Scope
 	actions := []action{}
-	skillCfgPath := t.skillConfigPath(scope)
-	mcpCfgPath := t.mcpConfigPath(scope)
 	cfg, err := t.loadConfig()
 	if err != nil {
-		cfg = config.Default()
+		return marshalJSON(response{
+			OK:      false,
+			Status:  "blocked",
+			Op:      req.Op,
+			Applied: false,
+			Source:  req.Source,
+			Name:    req.Name,
+			Scope:   scope,
+			Next:    "The active install config could not be loaded: " + err.Error(),
+		})
 	}
+	skillCfgPath := t.skillConfigPath(scope)
+	mcpCfgPath := t.mcpConfigPath(scope)
 
 	// Skills: try the flat file, then the directory layout, in the chosen
 	// scope. We don't require a kind — "name" disambiguates.

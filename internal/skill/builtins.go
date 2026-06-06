@@ -63,11 +63,13 @@ Operate as an installer, not as a shell-script guesser:
    - medium → safe to apply, but mention what was written.
    - high → ask the user to confirm in one short question before apply=true. High actions include MCP installs that send auth headers, eager-tier servers, link targets that are absolute paths outside the project/home root, and any replace=true on an existing entry.
 6. If the plan is acceptable, call install_source again with apply=true and echo back the same planId you got from the planning call. The tool refuses to apply when the planId does not match, so always re-fetch by running apply=false again if the user changed their mind about the source.
-7. After apply=true, report what was installed, where it was persisted, and whether it is usable in the current session. The plan's kinds field tells you how many skills vs MCP servers were touched.
+7. After apply=true, report what was installed, where it was persisted, and whether it is usable in the current session. For skills, prefer actions[].canonicalPath, actions[].installRoot, actions[].discoverable, and actions[].indexed over guessing from the source path. The plan's kinds field tells you how many skills vs MCP servers were touched.
 
 Defaults:
 - A folder containing many skills should be registered as a skill root, not copied.
-- A single SKILL.md, <name>.md, or <name>/SKILL.md should be copied unless the user asked to link/register. Set strict=false only for files the user has explicitly vetted.
+- A single SKILL.md, <name>.md, or <name>/SKILL.md should be copied unless the user asked to link/register. The installer writes canonical <skill-name>/SKILL.md paths by default; flat <name>.md is compatibility input, not the preferred output.
+- A local SKILL.md source may have references/, scripts/, assets/, or other sibling files. Treat its parent directory as the skill package so those files remain available after install.
+- Local skill folders may contain grouped skills up to a bounded depth. Let install_source decide which roots to register instead of telling the user to manually split every nested folder first.
 - Remote MCP URLs should use http unless the endpoint is explicitly SSE.
 - Package-name MCP installs should default to npx -y <package>.
 - Never put raw tokens in headers or config. Prefer ${VAR} placeholders and tell the user which env var to set.
