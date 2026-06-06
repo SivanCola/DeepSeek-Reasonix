@@ -199,6 +199,20 @@ func TestConfigAutoPlanSetsGlobalConfig(t *testing.T) {
 	}
 }
 
+func TestSetupRejectsCustomPath(t *testing.T) {
+	isolateCLIConfigHome(t)
+
+	if rc := Run([]string{"setup", "reasonix.toml"}, "test-version"); rc != 2 {
+		t.Fatalf("setup custom path rc = %d, want 2", rc)
+	}
+	if _, err := os.Stat("reasonix.toml"); !os.IsNotExist(err) {
+		t.Fatalf("setup custom path should not write project config, stat err=%v", err)
+	}
+	if _, err := os.Stat(config.UserConfigPath()); !os.IsNotExist(err) {
+		t.Fatalf("setup custom path should not write global config after rejecting the path, stat err=%v", err)
+	}
+}
+
 func TestWelcomePromptMissingKeysRequiresConfigSource(t *testing.T) {
 	if welcomeShouldPromptMissingKeys("", nil) {
 		t.Fatal("built-in defaults without a config source should not prompt for missing provider keys")
