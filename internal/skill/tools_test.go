@@ -174,9 +174,15 @@ func TestInstallSkill(t *testing.T) {
 	if !strings.Contains(out, `"ok":true`) {
 		t.Errorf("expected ok result, got %s", out)
 	}
+	var res struct {
+		Path string `json:"path"`
+	}
+	if err := json.Unmarshal([]byte(out), &res); err != nil {
+		t.Fatalf("result JSON: %v", err)
+	}
 	wantPath := filepath.Join(home, ".reasonix", "skills", "deploy", SkillFile)
-	if !strings.Contains(out, wantPath) {
-		t.Fatalf("install_skill should report canonical path %s, got %s", wantPath, out)
+	if res.Path != wantPath {
+		t.Fatalf("install_skill should report canonical path %s, got %s", wantPath, res.Path)
 	}
 	if _, err := os.Stat(wantPath); err != nil {
 		t.Fatalf("install_skill should write canonical SKILL.md: %v", err)
