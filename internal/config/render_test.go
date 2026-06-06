@@ -118,8 +118,8 @@ func TestRenderTOMLRoundTrips(t *testing.T) {
 	if got.Codegraph.Path != "/opt/codegraph" {
 		t.Errorf("codegraph.path = %q, want /opt/codegraph", got.Codegraph.Path)
 	}
-	if got.Codegraph.Tier != "background" {
-		t.Errorf("codegraph.tier = %q, want background", got.Codegraph.Tier)
+	if got.Codegraph.Tier != "" {
+		t.Errorf("codegraph.tier = %q, want migrated empty", got.Codegraph.Tier)
 	}
 	if got.Agent.SubagentModel != "mimo-pro" {
 		t.Errorf("subagent_model = %q, want mimo-pro", got.Agent.SubagentModel)
@@ -158,6 +158,9 @@ func TestRenderTOMLRoundTrips(t *testing.T) {
 	}
 	if len(got.Plugins) != 0 {
 		t.Fatalf("plugins count = %d, want 0 (plugins now in mcp.toml)", len(got.Plugins))
+	}
+	if strings.Contains(rendered, "\ntier") {
+		t.Errorf("rendered config should not contain MCP tier fields:\n%s", rendered)
 	}
 }
 

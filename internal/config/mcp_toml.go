@@ -3,7 +3,6 @@ package config
 import (
 	"fmt"
 	"os"
-	"strings"
 
 	"github.com/BurntSushi/toml"
 )
@@ -85,15 +84,13 @@ func RenderMCPTOML(plugins []PluginEntry) string {
 		if p.AutoStart != nil {
 			b += fmt.Sprintf("auto_start = %v\n", *p.AutoStart)
 		}
-		if strings.TrimSpace(p.Tier) != "" {
-			b += fmt.Sprintf("tier    = %q\n", p.Tier)
-		}
 	}
 	return b
 }
 
 // UpsertMCPPlugin adds or replaces an MCP server and persists to mcp.toml.
 func UpsertMCPPlugin(e PluginEntry) error {
+	e.Tier = ""
 	plugins, _ := loadMCPTOML()
 	for i := range plugins {
 		if plugins[i].Name == e.Name {

@@ -579,10 +579,11 @@ type PluginEntry struct {
 	//                  servers whose tools the system prompt depends on.
 	//   "lazy"       — registers placeholder tools immediately (from on-disk
 	//                  schema cache when available) and only spawns the real
-	//                  subprocess on first model use. Default for user plugins.
+	//                  subprocess on first model use. Kept for legacy configs.
 	//   "background" — placeholder + spawn fired at boot but not waited on;
 	//                  swap happens once the spawn finishes.
-	// Empty defaults to "lazy" so adding a plugin never slows the next launch.
+	// Empty defaults to "background" so enabled MCPs connect automatically
+	// without blocking chat. Unknown non-empty values fall back to "lazy".
 	Tier string `toml:"tier"`
 }
 
@@ -602,6 +603,8 @@ func resolvedMCPTier(tier string) string {
 	case "eager":
 		return "eager"
 	case "background":
+		return "background"
+	case "":
 		return "background"
 	default:
 		return "lazy"
@@ -709,6 +712,9 @@ func LoadForRoot(root string) (*Config, error) {
 	if uc := UserConfigPath(); uc != "" {
 		if _, err := os.Stat(uc); err == nil {
 			sawConfigFile = true
+			if err := migrateLegacyMCPTiersFile(uc); err != nil {
+				slog.Warn("config: legacy mcp tier migration failed", "path", uc, "err", err)
+			}
 		}
 		if err := mergeFile(cfg, uc); err != nil {
 			return nil, err
@@ -719,12 +725,17 @@ func LoadForRoot(root string) (*Config, error) {
 	// authority — [[plugins]] from config.toml and legacy config.json are ignored.
 	// Good entries are accepted even when some entries fail validation (nonfatal).
 	hasMCPFile := false
-	if _, statErr := os.Stat(UserMCPConfigPath()); statErr == nil {
-		hasMCPFile = true
-		plugins, err := loadMCPTOML()
-		cfg.Plugins = plugins // always use what loadMCPTOML returned (may be empty)
-		if err != nil {
-			addLoadDiagnostic("mcp.toml", err.Error())
+	if mcpPath := UserMCPConfigPath(); mcpPath != "" {
+		if _, statErr := os.Stat(mcpPath); statErr == nil {
+			if err := migrateLegacyMCPTiersFile(mcpPath); err != nil {
+				slog.Warn("config: legacy mcp tier migration failed", "path", mcpPath, "err", err)
+			}
+			hasMCPFile = true
+			plugins, err := loadMCPTOML()
+			cfg.Plugins = plugins // always use what loadMCPTOML returned (may be empty)
+			if err != nil {
+				addLoadDiagnostic("mcp.toml", err.Error())
+			}
 		}
 	}
 
@@ -743,6 +754,7 @@ func LoadForRoot(root string) (*Config, error) {
 	}
 	normalizePluginCommandLines(cfg)
 	normalizeLegacyEffort(cfg)
+	normalizeLegacyMCPTiers(cfg)
 	normalizeEffortConfig(cfg)
 	backfillDeepSeekPro(cfg)
 	if !sawConfigFile {
@@ -814,11 +826,17 @@ func normalizeLegacyEffort(c *Config) {
 func LoadForEdit(path string) *Config {
 	loadDotEnv()
 	cfg := Default()
+	if _, err := os.Stat(path); err == nil {
+		if err := migrateLegacyMCPTiersFile(path); err != nil {
+			slog.Warn("config: legacy mcp tier migration failed", "path", path, "err", err)
+		}
+	}
 	if err := mergeFile(cfg, path); err != nil {
 		slog.Warn("config: load for edit failed, using defaults", "path", path, "err", err)
 	}
 	normalizePluginCommandLines(cfg)
 	normalizeLegacyEffort(cfg)
+	normalizeLegacyMCPTiers(cfg)
 	normalizeEffortConfig(cfg)
 	return cfg
 }
@@ -832,6 +850,80 @@ func mergeFile(cfg *Config, path string) error {
 		return fmt.Errorf("config %s: %w", path, err)
 	}
 	return nil
+}
+
+// normalizeLegacyMCPTiers keeps loaded legacy config files on the new product
+// behavior: enabled MCP servers connect in the background by default, and the
+// retired per-server startup tier is no longer a user-facing setting.
+func normalizeLegacyMCPTiers(c *Config) {
+	if c == nil {
+		return
+	}
+	c.Codegraph.Tier = ""
+	for i := range c.Plugins {
+		c.Plugins[i].Tier = ""
+	}
+}
+
+func migrateLegacyMCPTiersFile(path string) error {
+	info, err := os.Stat(path)
+	if err != nil {
+		return err
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	next, changed := stripLegacyMCPTierLines(string(raw))
+	if !changed {
+		return nil
+	}
+	return os.WriteFile(path, []byte(next), info.Mode().Perm())
+}
+
+func stripLegacyMCPTierLines(raw string) (string, bool) {
+	lines := strings.Split(raw, "\n")
+	section := ""
+	changed := false
+	out := make([]string, 0, len(lines))
+	for _, line := range lines {
+		if header := tomlSectionHeader(line); header != "" {
+			section = header
+		}
+		if (section == "codegraph" || section == "plugins") && isTOMLKeyAssignment(line, "tier") {
+			changed = true
+			continue
+		}
+		out = append(out, line)
+	}
+	return strings.Join(out, "\n"), changed
+}
+
+func tomlSectionHeader(line string) string {
+	trimmed := strings.TrimSpace(line)
+	if !strings.HasPrefix(trimmed, "[") {
+		return ""
+	}
+	if i := strings.Index(trimmed, "#"); i >= 0 {
+		trimmed = strings.TrimSpace(trimmed[:i])
+	}
+	switch trimmed {
+	case "[codegraph]":
+		return "codegraph"
+	case "[[plugins]]":
+		return "plugins"
+	default:
+		return "other"
+	}
+}
+
+func isTOMLKeyAssignment(line, key string) bool {
+	trimmed := strings.TrimSpace(line)
+	if strings.HasPrefix(trimmed, "#") || !strings.HasPrefix(trimmed, key) {
+		return false
+	}
+	rest := strings.TrimSpace(strings.TrimPrefix(trimmed, key))
+	return strings.HasPrefix(rest, "=")
 }
 
 // ConventionDirs are the parent directories scanned for agent assets (skills,
