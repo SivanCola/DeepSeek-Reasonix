@@ -5,6 +5,8 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime"
@@ -1130,9 +1132,15 @@ type HistoryMessage struct {
 	Role       string            `json:"role"`
 	Content    string            `json:"content"`
 	Reasoning  string            `json:"reasoning,omitempty"`
+	Level      string            `json:"level,omitempty"`
 	ToolCalls  []HistoryToolCall `json:"toolCalls,omitempty"`
 	ToolCallID string            `json:"toolCallId,omitempty"`
 	ToolName   string            `json:"toolName,omitempty"`
+	Pending    bool              `json:"pending,omitempty"`
+	Trigger    string            `json:"trigger,omitempty"`
+	Messages   int               `json:"messages,omitempty"`
+	Summary    string            `json:"summary,omitempty"`
+	Archive    string            `json:"archive,omitempty"`
 }
 
 type HistoryToolCall struct {
@@ -1183,11 +1191,149 @@ func historyMessages(msgs []provider.Message, resolveUserContent func(string) st
 }
 
 func previewSessionMessages(sessionDir, path string) ([]HistoryMessage, error) {
+	if out, ok, err := previewEventSessionMessages(path); ok || err != nil {
+		return out, err
+	}
 	loaded, err := agent.LoadSession(path)
 	if err != nil {
 		return nil, err
 	}
 	return historyMessages(loaded.Snapshot(), sessionDisplayResolver(sessionDir, path)), nil
+}
+
+type previewEventRecord struct {
+	Kind             string             `json:"kind"`
+	Type             string             `json:"type"`
+	Role             string             `json:"role"`
+	Text             string             `json:"text"`
+	Content          string             `json:"content"`
+	Reasoning        string             `json:"reasoning"`
+	ReasoningContent string             `json:"reasoningContent"`
+	Level            string             `json:"level"`
+	ToolCalls        []previewToolCall  `json:"toolCalls"`
+	CallID           string             `json:"callId"`
+	ToolCallID       string             `json:"toolCallId"`
+	ToolName         string             `json:"toolName"`
+	Name             string             `json:"name"`
+	Output           string             `json:"output"`
+	Compaction       *previewCompaction `json:"compaction"`
+	Trigger          string             `json:"trigger"`
+	Messages         int                `json:"messages"`
+	Summary          string             `json:"summary"`
+	Archive          string             `json:"archive"`
+}
+
+type previewToolCall struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	Arguments string `json:"arguments"`
+	Function  struct {
+		Name      string `json:"name"`
+		Arguments string `json:"arguments"`
+	} `json:"function"`
+}
+
+type previewCompaction struct {
+	Trigger  string `json:"trigger"`
+	Messages int    `json:"messages"`
+	Summary  string `json:"summary"`
+	Archive  string `json:"archive"`
+}
+
+func previewEventSessionMessages(path string) ([]HistoryMessage, bool, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, false, err
+	}
+	defer f.Close()
+
+	dec := json.NewDecoder(f)
+	out := []HistoryMessage{}
+	toolName := map[string]string{}
+	sawEvent := false
+	for {
+		var rec previewEventRecord
+		if err := dec.Decode(&rec); err != nil {
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			if sawEvent {
+				return out, true, nil
+			}
+			return nil, false, nil
+		}
+		eventName := strings.TrimSpace(rec.Kind)
+		if eventName == "" {
+			eventName = strings.TrimSpace(rec.Type)
+		}
+		if eventName == "" {
+			continue
+		}
+		sawEvent = true
+		switch eventName {
+		case "user.message":
+			if rec.Text != "" {
+				out = append(out, HistoryMessage{Role: "user", Content: rec.Text})
+			}
+		case "model.final":
+			hm := HistoryMessage{Role: "assistant", Content: rec.Content, Reasoning: firstNonEmpty(rec.Reasoning, rec.ReasoningContent)}
+			for _, tc := range rec.ToolCalls {
+				id := tc.ID
+				name := firstNonEmpty(tc.Name, tc.Function.Name)
+				args := firstNonEmpty(tc.Arguments, tc.Function.Arguments)
+				hm.ToolCalls = append(hm.ToolCalls, HistoryToolCall{ID: id, Name: name, Arguments: args})
+				if id != "" {
+					toolName[id] = name
+				}
+			}
+			out = append(out, hm)
+		case "tool.result":
+			callID := firstNonEmpty(rec.CallID, rec.ToolCallID)
+			out = append(out, HistoryMessage{
+				Role:       "tool",
+				ToolCallID: callID,
+				ToolName:   firstNonEmpty(rec.ToolName, rec.Name, toolName[callID]),
+				Content:    firstNonEmpty(rec.Output, rec.Content),
+			})
+		case "phase":
+			out = append(out, HistoryMessage{Role: "phase", Content: firstNonEmpty(rec.Text, rec.Content)})
+		case "notice":
+			level := rec.Level
+			if level != "warn" {
+				level = "info"
+			}
+			out = append(out, HistoryMessage{Role: "notice", Level: level, Content: firstNonEmpty(rec.Text, rec.Content)})
+		case "compaction_started":
+			c := rec.compactionPayload()
+			out = append(out, HistoryMessage{Role: "compaction", Pending: true, Trigger: c.Trigger})
+		case "compaction_done":
+			c := rec.compactionPayload()
+			out = append(out, HistoryMessage{
+				Role:     "compaction",
+				Trigger:  c.Trigger,
+				Messages: c.Messages,
+				Summary:  c.Summary,
+				Archive:  c.Archive,
+			})
+		}
+	}
+	return out, sawEvent, nil
+}
+
+func (r previewEventRecord) compactionPayload() previewCompaction {
+	if r.Compaction != nil {
+		return *r.Compaction
+	}
+	return previewCompaction{Trigger: r.Trigger, Messages: r.Messages, Summary: r.Summary, Archive: r.Archive}
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 // ContextInfo is the prompt-vs-window gauge payload. Both zero means no data yet.
