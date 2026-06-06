@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"reasonix/internal/config"
 	"reasonix/internal/control"
 )
 
@@ -64,7 +65,7 @@ func TestSetEffortForTabIsTabLocal(t *testing.T) {
 	}
 }
 
-func TestEffortForTabResolvesProjectProviderConfig(t *testing.T) {
+func TestEffortForTabResolvesGlobalProviderConfig(t *testing.T) {
 	isolateDesktopUserDirs(t)
 
 	projectRoot := t.TempDir()
@@ -77,7 +78,10 @@ model = "deepseek-v4-flash"
 api_key_env = "PROJECT_API_KEY"
 effort = "max"
 `
-	if err := os.WriteFile(filepath.Join(projectRoot, "reasonix.toml"), []byte(configBody), 0o644); err != nil {
+	if err := os.MkdirAll(filepath.Dir(userConfigPathForTest()), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(userConfigPathForTest(), []byte(configBody), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -90,7 +94,7 @@ effort = "max"
 
 	got := app.EffortForTab(tab.ID)
 	if !got.Supported || got.Current != "max" {
-		t.Fatalf("EffortForTab project config = %+v, want supported max", got)
+		t.Fatalf("EffortForTab global config = %+v, want supported max", got)
 	}
 }
 
@@ -152,8 +156,5 @@ func TestSaveTabsDoesNotPersistYoloMode(t *testing.T) {
 }
 
 func userConfigPathForTest() string {
-	if dir, err := os.UserConfigDir(); err == nil {
-		return dir + "/reasonix/reasonix.toml"
-	}
-	return ""
+	return config.UserConfigPath()
 }

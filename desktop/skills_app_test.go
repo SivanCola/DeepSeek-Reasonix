@@ -24,17 +24,19 @@ func TestNormalizeSkillPathDirectoryLayout(t *testing.T) {
 	}
 }
 
-func TestSkillRootsViewCountsProjectSkills(t *testing.T) {
+func TestSkillRootsViewCountsGlobalSkills(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
 	t.Setenv("AppData", filepath.Join(home, "AppData"))
+	t.Setenv("APPDATA", filepath.Join(home, "AppData"))
 	project := t.TempDir()
-	root := filepath.Join(project, ".reasonix", "skills")
+	root := filepath.Join(home, ".reasonix", "skills")
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(root, "proj.md"), []byte("---\ndescription: project\n---\nbody"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "global.md"), []byte("---\ndescription: global\n---\nbody"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	wd, err := os.Getwd()
@@ -50,23 +52,25 @@ func TestSkillRootsViewCountsProjectSkills(t *testing.T) {
 	want := realTestPath(root)
 	for _, r := range roots {
 		if realTestPath(r.Dir) == want {
-			if r.Status != "ok" || r.Skills != 1 || r.Scope != "project" {
-				t.Fatalf("project root view = %+v", r)
+			if r.Status != "ok" || r.Skills != 1 || r.Scope != "global" {
+				t.Fatalf("global root view = %+v", r)
 			}
-			if len(r.SkillItems) != 1 || r.SkillItems[0].Name != "proj" || r.SkillItems[0].Description != "project" {
-				t.Fatalf("project root skill items = %+v", r.SkillItems)
+			if len(r.SkillItems) != 1 || r.SkillItems[0].Name != "global" || r.SkillItems[0].Description != "global" {
+				t.Fatalf("global root skill items = %+v", r.SkillItems)
 			}
 			return
 		}
 	}
-	t.Fatalf("project skill root %q not found in %+v", root, roots)
+	t.Fatalf("global skill root %q not found in %+v", root, roots)
 }
 
 func TestSkillRootsViewMarksEnvConfiguredCustomRoot(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
 	t.Setenv("AppData", filepath.Join(home, "AppData"))
+	t.Setenv("APPDATA", filepath.Join(home, "AppData"))
 	project := t.TempDir()
 	root := filepath.Join(home, "custom-skills")
 	if err := os.MkdirAll(root, 0o755); err != nil {
