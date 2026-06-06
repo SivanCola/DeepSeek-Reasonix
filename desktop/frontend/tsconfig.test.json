@@ -3,6 +3,6 @@
   "compilerOptions": {
     "types": ["node"]
   },
-  "include": ["src", "vite-env.d.ts"],
+  "include": ["src/__tests__/**/*.ts", "vite-env.d.ts"],
   "exclude": []
 }

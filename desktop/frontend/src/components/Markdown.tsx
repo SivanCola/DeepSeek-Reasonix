@@ -7,6 +7,7 @@ import { CodeBlockOrMath } from "./CodeBlockOrMath";
 import { CodeOrMath } from "./CodeOrMath";
 import { InlineMath } from "./InlineMath";
 import { BlockMath } from "./BlockMath";
+import { isLikelyInlineMath } from "./mathClassify";
 import { openExternal } from "../lib/bridge";
 
 // ── remark plugin: LLM-LaTeX delimiters ────────────────────────────────────────
@@ -153,17 +154,6 @@ function isMathEscaped(s: string, i: number): boolean {
   let slashCount = 0;
   for (let j = i - 1; j >= 0 && s[j] === "\\"; j -= 1) slashCount += 1;
   return slashCount % 2 === 1;
-}
-
-function isLikelyInlineMath(math: string): boolean {
-  if (!math || math !== math.trim() || math.includes("\n")) return false;
-  if (math.includes("://") || math.includes("](")) return false;
-  if (/^\$?\d+(?:\.\d+)?%?$/.test(math)) return false;
-  if (/\\[A-Za-z]+\b/.test(math)) return true;
-  if (/[\^_{}|]/.test(math)) return true;
-  if (/\b(?:alpha|beta|gamma|sum|int|prod|lim|infty|sqrt|frac|sin|cos|tan|log|ln|max|min|partial|nabla|left|right)\b/.test(math)) return true;
-  if (/[A-Za-z]\s+[A-Za-z]/.test(math)) return false;
-  return true;
 }
 
 // ── Components ─────────────────────────────────────────────────────────────────

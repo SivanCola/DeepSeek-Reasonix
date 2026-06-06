@@ -46,7 +46,8 @@ export function latexNormalizeForKatex(source: string): string {
     }
 
     if (source[i] === "|") {
-      out += "\\vert ";
+      out += "\\vert";
+      if (/[A-Za-z]/.test(source[i + 1] ?? "")) out += " ";
       i += 1;
       continue;
     }
