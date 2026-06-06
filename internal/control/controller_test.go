@@ -151,15 +151,22 @@ func TestDisconnectMCPServerRemovesLazyPlaceholder(t *testing.T) {
 }
 
 func TestRemoveMCPServerRemovesUnconnectedLazyPlaceholder(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	dir := t.TempDir()
 	t.Chdir(dir)
-	if err := os.WriteFile("reasonix.toml", []byte(`
+	mcpPath := filepath.Join(home, ".reasonix", "mcp.toml")
+	if err := os.MkdirAll(filepath.Dir(mcpPath), 0o755); err != nil {
+		t.Fatalf("create dir: %v", err)
+	}
+	if err := os.WriteFile(mcpPath, []byte(`
 [[plugins]]
 name = "mock"
 command = "mock-mcp"
 tier = "lazy"
 `), 0o644); err != nil {
-		t.Fatalf("write config: %v", err)
+		t.Fatalf("write mcp.toml: %v", err)
 	}
 
 	reg := tool.NewRegistry()

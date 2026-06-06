@@ -2,6 +2,7 @@ package boot
 
 import (
 	"context"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -16,9 +17,12 @@ import (
 // fail with a message that names the model, lists what IS configured, and hints
 // at the [[providers]] trap — not a silent empty model.
 func TestBuildUnknownModelErrorIsActionable(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	dir := t.TempDir()
 	t.Chdir(dir)
-	writeFile(t, dir, "reasonix.toml", `
+	writeFile(t, filepath.Join(home, ".reasonix"), "config.toml", `
 default_model = "mimo"
 
 [codegraph]
@@ -49,9 +53,12 @@ api_key_env = "REASONIX_TEST_KEY_UNSET"
 // notice naming the env var, instead of silently showing a dead/empty model.
 func TestBuildNoticesMissingAPIKey(t *testing.T) {
 	const keyEnv = "REASONIX_MISSING_KEY_FOR_TEST"
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	dir := t.TempDir()
 	t.Chdir(dir)
-	writeFile(t, dir, "reasonix.toml", `
+	writeFile(t, filepath.Join(home, ".reasonix"), "config.toml", `
 default_model = "x"
 
 [codegraph]

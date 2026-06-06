@@ -386,15 +386,15 @@ func TestApplyMCPModePersistsTier(t *testing.T) {
 	isolateUserConfig(t)
 	cfg := config.Default()
 	cfg.Plugins = []config.PluginEntry{{Name: "github", Command: "npx", Args: []string{"server"}, Tier: "lazy"}}
-	if err := cfg.SaveTo("reasonix.toml"); err != nil {
-		t.Fatalf("save config: %v", err)
+	if err := config.SaveMCPTOML(cfg.Plugins); err != nil {
+		t.Fatalf("save mcp.toml: %v", err)
 	}
 
 	m := newTestChatTUI()
 	m.mcp = &mcpManager{
 		stage: mcpStageMode,
 		name:  "github",
-		snapshot: mcpSnapshot{configPath: "reasonix.toml", servers: []mcpServerView{{
+		snapshot: mcpSnapshot{configPath: config.UserMCPConfigPath(), servers: []mcpServerView{{
 			Name: "github", Transport: "stdio", Status: "deferred", Configured: true, Tier: "lazy",
 		}}},
 	}
@@ -414,7 +414,7 @@ func TestApplyMCPModeRecordsPluginConnectFailure(t *testing.T) {
 	t.Setenv("PATH", "")
 	cfg := config.Default()
 	cfg.Plugins = []config.PluginEntry{{Name: "broken", Command: "definitely-missing-reasonix-mcp", Tier: "lazy"}}
-	if err := cfg.SaveTo("reasonix.toml"); err != nil {
+	if err := config.SaveMCPTOML(cfg.Plugins); err != nil {
 		t.Fatalf("save config: %v", err)
 	}
 
@@ -425,7 +425,7 @@ func TestApplyMCPModeRecordsPluginConnectFailure(t *testing.T) {
 	m.mcp = &mcpManager{
 		stage: mcpStageMode,
 		name:  "broken",
-		snapshot: mcpSnapshot{configPath: "reasonix.toml", servers: []mcpServerView{{
+		snapshot: mcpSnapshot{configPath: config.UserMCPConfigPath(), servers: []mcpServerView{{
 			Name: "broken", Transport: "stdio", Status: "deferred", Configured: true, Tier: "lazy",
 		}}},
 	}

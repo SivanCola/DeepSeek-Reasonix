@@ -679,61 +679,49 @@ func Load() (*Config, error) {
 // each project's reasonix.toml + .env + .mcp.json are resolved independently
 // without changing the process cwd.
 func LoadForRoot(root string) (*Config, error) {
-	root = resolveRoot(root)
-	loadDotEnvForRoot(root)
+	// .env: only global credentials and legacy ~/.env; project .env is no longer read.
+	loadDotEnvGlobal()
 	cfg := Default()
 
-	projectTOML := "reasonix.toml"
-	if root != "." {
-		projectTOML = filepath.Join(root, "reasonix.toml")
-	}
-
-	var tomlSources []string
-	if uc := userConfigPath(); uc != "" {
-		tomlSources = append(tomlSources, uc)
-	}
-	tomlSources = append(tomlSources, projectTOML)
 	sawConfigFile := false
-	for _, path := range tomlSources {
-		if _, err := os.Stat(path); err == nil {
+	if uc := UserConfigPath(); uc != "" {
+		if _, err := os.Stat(uc); err == nil {
 			sawConfigFile = true
 		}
-		if err := mergeFile(cfg, path); err != nil {
+		if err := mergeFile(cfg, uc); err != nil {
 			return nil, err
 		}
 	}
-	// toml.DecodeFile replaces [[plugins]] wholesale, so cfg.Plugins now holds
-	// only the last file's. Re-merge by name across all sources (later wins) so a
-	// project reasonix.toml doesn't drop the global config's MCP servers.
-	plugins, err := mergeTOMLPlugins(tomlSources)
-	if err != nil {
-		return nil, err
-	}
-	cfg.Plugins = plugins
 
-	// Claude Code's .mcp.json (project root) is read last and merged into
-	// [[plugins]], so a server configured for Claude works here unchanged.
-	// reasonix.toml wins on a name collision (see mergeMCPJSON).
-	mcpFile := mcpJSONFile
-	if root != "." {
-		mcpFile = filepath.Join(root, mcpJSONFile)
+	// MCP: if ~/.reasonix/mcp.toml exists on disk (even if empty), it is the sole
+	// authority — [[plugins]] from config.toml and legacy config.json are ignored.
+	// Good entries are accepted even when some entries fail validation (nonfatal).
+	hasMCPFile := false
+	if _, statErr := os.Stat(UserMCPConfigPath()); statErr == nil {
+		hasMCPFile = true
+		plugins, err := loadMCPTOML()
+		cfg.Plugins = plugins // always use what loadMCPTOML returned (may be empty)
+		if err != nil {
+			addLoadDiagnostic("mcp.toml", err.Error())
+		}
 	}
-	entries, err := loadMCPJSON(mcpFile)
-	if err != nil {
-		return nil, err
-	}
-	cfg.mergeMCPJSON(entries)
 
-	// Lowest priority: the v0.x ~/.reasonix/config.json's mcpServers, so upgrading
-	// from the TypeScript line keeps MCP servers without rewriting them. Anything
-	// the v2 config or .mcp.json already declared wins on a name collision.
-	cfg.mergeMCPJSON(loadLegacyMCP(legacyConfigPath()))
+	// Load skills config from ~/.reasonix/skills.toml. When the file exists on
+	// disk, it replaces inline [skills] entirely. Otherwise keep inline [skills]
+	// for backward compat.
+	if _, statErr := os.Stat(UserSkillsConfigPath()); statErr == nil {
+		if err := loadSkillsTOML(cfg); err != nil {
+			addLoadDiagnostic("skills.toml", err.Error())
+		}
+	}
+
+	// Legacy JSON MCP: only read when mcp.toml does NOT exist.
+	if !hasMCPFile {
+		cfg.mergeMCPJSON(loadLegacyMCP(legacyConfigPath()))
+	}
 	normalizeLegacyEffort(cfg)
 	normalizeEffortConfig(cfg)
 	backfillDeepSeekPro(cfg)
-	// First run (no config file anywhere): keep CodeGraph off until the user opts
-	// in. An existing config — even one without a [codegraph] section — keeps the
-	// built-in default (on), so an upgrade never silently drops code intelligence.
 	if !sawConfigFile {
 		cfg.Codegraph.Enabled = false
 	}
@@ -846,78 +834,6 @@ func mergeFile(cfg *Config, path string) error {
 	return nil
 }
 
-func userConfigPath() string {
-	dir, err := os.UserConfigDir()
-	if err != nil {
-		return ""
-	}
-	return filepath.Join(dir, "reasonix", "config.toml")
-}
-
-// UserConfigPath is the user-global config file (~/.config/reasonix/config.toml),
-// or "" when the user config dir can't be resolved.
-func UserConfigPath() string { return userConfigPath() }
-
-// UserCredentialsPath is the reasonix-owned global secrets file, beside
-// config.toml in the user config dir (e.g. ~/.config/reasonix/credentials). It
-// holds KEY=value lines loaded into the environment by loadDotEnv. The setup
-// wizard writes API keys here, deliberately NOT named .env: keys never land in a
-// project's own .env (which can't be selectively gitignored), never get
-// committed, and resolve from any working directory. "" when the user config dir
-// can't be resolved.
-func UserCredentialsPath() string {
-	dir, err := os.UserConfigDir()
-	if err != nil {
-		return ""
-	}
-	return filepath.Join(dir, "reasonix", "credentials")
-}
-
-// ArchiveDir is where compacted conversation history is archived for
-// traceability (one timestamped .jsonl per compaction). Empty if the user config
-// directory cannot be resolved, in which case archiving is skipped.
-func ArchiveDir() string {
-	dir, err := os.UserConfigDir()
-	if err != nil {
-		return ""
-	}
-	return filepath.Join(dir, "reasonix", "archive")
-}
-
-// SessionDir is where chat sessions are persisted (one .jsonl per session).
-// Used by `reasonix chat --continue` / `--resume` to find the recent ones. Empty
-// if the user config dir can't be resolved — sessions then aren't saved.
-func SessionDir() string {
-	dir, err := os.UserConfigDir()
-	if err != nil {
-		return ""
-	}
-	return filepath.Join(dir, "reasonix", "sessions")
-}
-
-// CacheDir is the per-user cache root for derived/regenerable artefacts: MCP
-// handshake snapshots, plugin startup-latency telemetry. Lives beside the
-// existing dirs (UserConfigDir/reasonix/...) so the whole reasonix state tree
-// shares one root the user can wipe in a single rm. Empty when the OS dir is
-// unavailable — callers must tolerate that (caching is best-effort).
-func CacheDir() string {
-	dir, err := os.UserConfigDir()
-	if err != nil {
-		return ""
-	}
-	return filepath.Join(dir, "reasonix", "cache")
-}
-
-// MemoryUserDir returns the reasonix user config root (…/reasonix), under which
-// the user-global REASONIX.md and the per-project auto-memory store live. Empty
-// when the user config dir can't be resolved, which disables user-scoped memory.
-func MemoryUserDir() string {
-	dir, err := os.UserConfigDir()
-	if err != nil {
-		return ""
-	}
-	return filepath.Join(dir, "reasonix")
-}
 
 // ConventionDirs are the parent directories scanned for agent assets (skills,
 // commands), in canonical-first order. .reasonix is ours; .agents / .agent /
@@ -939,22 +855,16 @@ func conventionSubdirsAsc(base, sub string) []string {
 	return out
 }
 
-// CommandDirs returns the directories scanned for custom slash commands, lowest
-// priority first, so a later (more specific) directory overrides an earlier one
-// on a name clash. Order: home-dir convention dirs (~/.claude/commands … ~/.reasonix/commands),
-// the legacy XDG user dir (~/.config/reasonix/commands), then the project's
-// convention dirs (.claude/commands … .reasonix/commands). Scanning the .claude /
-// .agents / .agent dirs lets commands authored for other agent tools (same .md +
-// frontmatter format) work here unchanged.
+// CommandDirs returns the global directories scanned for custom slash commands.
+// Only global convention dirs + legacy XDG user dir are scanned; project dirs are
+// no longer included.
 func CommandDirs() []string {
 	return CommandDirsForRoot(".")
 }
 
-// CommandDirsForRoot is like CommandDirs but resolves the project convention
-// dirs under root instead of the current working directory. Global (home/XDG)
-// dirs are unchanged — they are always user-scoped.
+// CommandDirsForRoot resolves global command directories only. Project convention
+// dirs are no longer scanned.
 func CommandDirsForRoot(root string) []string {
-	root = resolveRoot(root)
 	var dirs []string
 	if home, err := os.UserHomeDir(); err == nil {
 		dirs = append(dirs, conventionSubdirsAsc(home, "commands")...)
@@ -962,7 +872,6 @@ func CommandDirsForRoot(root string) []string {
 	if dir, err := os.UserConfigDir(); err == nil {
 		dirs = append(dirs, filepath.Join(dir, "reasonix", "commands")) // legacy XDG user dir
 	}
-	dirs = append(dirs, conventionSubdirsAsc(root, "commands")...)
 	return dirs
 }
 
@@ -971,18 +880,10 @@ func SourcePath() string {
 	return SourcePathForRoot(".")
 }
 
-// SourcePathForRoot returns the highest-priority config file that exists under
-// root, or "" if none. Equivalent to SourcePath() when root is ".".
+// SourcePathForRoot returns only the global config path — project reasonix.toml
+// is no longer read.
 func SourcePathForRoot(root string) string {
-	root = resolveRoot(root)
-	projectTOML := "reasonix.toml"
-	if root != "." {
-		projectTOML = filepath.Join(root, "reasonix.toml")
-	}
-	if _, err := os.Stat(projectTOML); err == nil {
-		return projectTOML
-	}
-	if uc := userConfigPath(); uc != "" {
+	if uc := UserConfigPath(); uc != "" {
 		if _, err := os.Stat(uc); err == nil {
 			return uc
 		}

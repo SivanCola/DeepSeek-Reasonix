@@ -1878,9 +1878,6 @@ func (a *App) setCodegraphEnabled(enabled bool) error {
 	if err := cfg.SaveTo(path); err != nil {
 		return err
 	}
-	if err := a.syncProjectCodegraphOverride(cfg.Codegraph); err != nil {
-		return err
-	}
 	if enabled {
 		a.mu.Lock()
 		delete(tab.disabledMCP, "codegraph")
@@ -1917,9 +1914,6 @@ func (a *App) setCodegraphTier(tier string) error {
 	if err := cfg.SaveTo(path); err != nil {
 		return err
 	}
-	if err := a.syncProjectCodegraphOverride(cfg.Codegraph); err != nil {
-		return err
-	}
 	tab := a.activeTab()
 	if tab == nil || tab.Ctrl == nil {
 		return nil
@@ -1953,37 +1947,21 @@ func (a *App) desktopMCPServerForEdit(name string) (config.PluginEntry, bool, er
 }
 
 func (a *App) saveDesktopMCPServer(entry config.PluginEntry) error {
-	cfg, path, err := a.loadDesktopUserConfigForEdit()
-	if err != nil {
+	if err := config.UpsertMCPPlugin(entry); err != nil {
 		return err
 	}
-	if err := cfg.UpsertPlugin(entry); err != nil {
-		return err
-	}
-	if err := cfg.SaveTo(path); err != nil {
-		return err
-	}
-	_, err = a.removeProjectMCPOverride(entry.Name)
-	return err
+	// Project-level overrides are no longer supported; clean up legacy entries.
+	_, _ = a.removeProjectMCPOverride(entry.Name)
+	return nil
 }
 
 func (a *App) removeDesktopMCPServer(name string) (bool, error) {
-	removed := false
-	cfg, path, err := a.loadDesktopUserConfigForEdit()
+	found, err := config.RemoveMCPPlugin(name)
 	if err != nil {
 		return false, err
 	}
-	if cfg.RemovePlugin(name) {
-		removed = true
-		if err := cfg.SaveTo(path); err != nil {
-			return false, err
-		}
-	}
-	projectRemoved, err := a.removeProjectMCPOverride(name)
-	if err != nil {
-		return removed, err
-	}
-	return removed || projectRemoved, nil
+	projectRemoved, _ := a.removeProjectMCPOverride(name)
+	return found || projectRemoved, nil
 }
 
 func (a *App) removeProjectMCPOverride(name string) (bool, error) {
@@ -2006,23 +1984,6 @@ func (a *App) removeProjectMCPOverride(name string) (bool, error) {
 		return false, err
 	}
 	return true, nil
-}
-
-func (a *App) syncProjectCodegraphOverride(c config.CodegraphConfig) error {
-	path := projectConfigPathForRoot(a.activeWorkspaceRoot())
-	userPath := config.UserConfigPath()
-	if path == "" || sameConfigPath(path, userPath) {
-		return nil
-	}
-	if _, err := os.Stat(path); err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
-		return err
-	}
-	cfg := config.LoadForEdit(path)
-	cfg.Codegraph = c
-	return cfg.SaveTo(path)
 }
 
 func findPluginEntry(entries []config.PluginEntry, name string) (config.PluginEntry, bool) {

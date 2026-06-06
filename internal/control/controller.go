@@ -1448,15 +1448,8 @@ func (c *Controller) AddMCPServer(e config.PluginEntry) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	cfg, lerr := config.Load()
-	if lerr != nil {
-		return n, fmt.Errorf("connected, but reloading config to save failed: %w", lerr)
-	}
-	if err := cfg.UpsertPlugin(e); err != nil {
-		return n, fmt.Errorf("connected, but config rejected the entry: %w", err)
-	}
-	if err := cfg.Save(); err != nil {
-		return n, fmt.Errorf("connected, but saving config failed: %w", err)
+	if err := config.UpsertMCPPlugin(e); err != nil {
+		return n, fmt.Errorf("connected, but saving to mcp.toml failed: %w", err)
 	}
 	return n, nil
 }
@@ -1591,20 +1584,16 @@ func (c *Controller) RemoveMCPServer(name string) (disconnected bool, err error)
 			}
 		}
 	}
-	cfg, lerr := config.Load()
-	if lerr != nil {
-		return disconnected, lerr
-	}
-	inConfig := cfg.RemovePlugin(name)
-	if inConfig {
+	found, rerr := config.RemoveMCPPlugin(name)
+	if found {
 		if !disconnected && c.reg != nil {
 			c.reg.RemovePrefix(plugin.ToolPrefix(name))
 		}
-		if serr := cfg.Save(); serr != nil {
-			return disconnected, serr
+		if rerr != nil {
+			return disconnected, rerr
 		}
 	}
-	if !disconnected && !inConfig {
+	if !disconnected && !found {
 		return false, fmt.Errorf("no MCP server named %q", name)
 	}
 	return disconnected, nil

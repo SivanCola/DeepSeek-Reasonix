@@ -122,7 +122,7 @@ command = "legacy-bin"
 	if err != nil {
 		t.Fatalf("read migrated user config: %v", err)
 	}
-	for _, want := range []string{`config_version = 2`, `[desktop]`, `name    = "legacy-cli"`} {
+	for _, want := range []string{`config_version = 2`, `[desktop]`} {
 		if !strings.Contains(string(body), want) {
 			t.Fatalf("migrated config missing %q:\n%s", want, body)
 		}
@@ -169,7 +169,7 @@ func TestConfigAutoPlanCommandWritesUserConfig(t *testing.T) {
 	}
 }
 
-func TestConfigAutoPlanLocalCreatesMinimalProjectOverride(t *testing.T) {
+func TestConfigAutoPlanSetsGlobalConfig(t *testing.T) {
 	isolateCLIConfigHome(t)
 
 	userCfg := config.Default()
@@ -179,23 +179,12 @@ func TestConfigAutoPlanLocalCreatesMinimalProjectOverride(t *testing.T) {
 	}
 
 	out := captureStdout(t, func() {
-		if rc := Run([]string{"config", "auto-plan", "--local", "on"}, "test-version"); rc != 0 {
-			t.Fatalf("config auto-plan --local rc = %d, want 0", rc)
+		if rc := Run([]string{"config", "auto-plan", "on"}, "test-version"); rc != 0 {
+			t.Fatalf("config auto-plan rc = %d, want 0", rc)
 		}
 	})
 	if !strings.Contains(out, `auto_plan = "on"`) {
-		t.Fatalf("config auto-plan --local output = %q", out)
-	}
-
-	body, err := os.ReadFile("reasonix.toml")
-	if err != nil {
-		t.Fatalf("read project config: %v", err)
-	}
-	if strings.Contains(string(body), "default_model") {
-		t.Fatalf("project auto-plan override should not pin default_model:\n%s", body)
-	}
-	if !strings.Contains(string(body), "[agent]") || !strings.Contains(string(body), `auto_plan = "on"`) {
-		t.Fatalf("project config missing auto_plan override:\n%s", body)
+		t.Fatalf("config auto-plan output = %q", out)
 	}
 
 	cfg, err := config.Load()
@@ -206,7 +195,7 @@ func TestConfigAutoPlanLocalCreatesMinimalProjectOverride(t *testing.T) {
 		t.Fatalf("default_model = %q, want global mimo-pro", cfg.DefaultModel)
 	}
 	if cfg.Agent.AutoPlan != "on" {
-		t.Fatalf("auto_plan = %q, want local on", cfg.Agent.AutoPlan)
+		t.Fatalf("auto_plan = %q, want on", cfg.Agent.AutoPlan)
 	}
 }
 

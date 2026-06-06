@@ -125,7 +125,7 @@ func Collect(opts Options) Report {
 		Arch:    runtime.GOARCH,
 		CWD:     redactHome(cwd),
 		Config: ConfigReport{
-			SourcePath:   redactHome(config.SourcePath()),
+			SourcePath:   redactHome(config.UserConfigPath()),
 			UserPath:     redactHome(config.UserConfigPath()),
 			DefaultModel: cfg.DefaultModel,
 		},

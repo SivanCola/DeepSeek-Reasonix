@@ -147,27 +147,16 @@ func TestRenderTOMLRoundTrips(t *testing.T) {
 	if got.Network.ProxyMode != "custom" || got.Network.Proxy.Type != "socks5" || got.Network.Proxy.Port != 7890 {
 		t.Errorf("network proxy not preserved: %+v", got.Network)
 	}
-	if len(got.Skills.Paths) != 2 || got.Skills.Paths[0] != "~/my-skills" {
-		t.Errorf("skills.paths = %v", got.Skills.Paths)
+	// Skills and plugins are no longer serialized into config.toml —
+	// they live in ~/.reasonix/skills.toml and ~/.reasonix/mcp.toml.
+	if len(got.Skills.Paths) != 0 {
+		t.Errorf("skills.paths should be empty in config.toml (now in skills.toml): %v", got.Skills.Paths)
 	}
-	if len(got.Skills.DisabledSkills) != 2 || got.Skills.DisabledSkills[0] != "review" || got.Skills.DisabledSkills[1] != "explore" {
-		t.Errorf("skills.disabled_skills = %v", got.Skills.DisabledSkills)
+	if len(got.Skills.DisabledSkills) != 0 {
+		t.Errorf("skills.disabled_skills should be empty in config.toml (now in skills.toml): %v", got.Skills.DisabledSkills)
 	}
-	if len(got.Plugins) != 2 {
-		t.Fatalf("plugins count = %d, want 2", len(got.Plugins))
-	}
-	stripe := got.Plugins[1]
-	if stripe.Name != "stripe" || stripe.Type != "http" || stripe.URL != "https://mcp.stripe.com" {
-		t.Errorf("http plugin not preserved: %+v", stripe)
-	}
-	if stripe.Headers["Authorization"] != "Bearer x" {
-		t.Errorf("plugin headers not preserved: %v", stripe.Headers)
-	}
-	if stripe.AutoStart == nil || *stripe.AutoStart {
-		t.Errorf("auto_start should render and parse as false, got %+v", stripe.AutoStart)
-	}
-	if stripe.Tier != "background" {
-		t.Errorf("plugin tier should render and parse as background, got %q", stripe.Tier)
+	if len(got.Plugins) != 0 {
+		t.Fatalf("plugins count = %d, want 0 (plugins now in mcp.toml)", len(got.Plugins))
 	}
 }
 

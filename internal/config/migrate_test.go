@@ -7,16 +7,14 @@ import (
 	"testing"
 )
 
-// legacyHome points HOME / config-dir / .env resolution at a fresh temp tree and
-// returns the legacy config.json path and the v1+ dest config path.
 func legacyHome(t *testing.T) (src, dest, home string) {
 	t.Helper()
 	home = t.TempDir()
 	t.Setenv("HOME", home)
-	t.Setenv("USERPROFILE", home)                               // os.UserHomeDir on Windows
-	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config")) // os.UserConfigDir on Linux
-	t.Setenv("AppData", filepath.Join(home, "AppData"))         // os.UserConfigDir on Windows
-	return filepath.Join(home, ".reasonix", "config.json"), userConfigPath(), home
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	t.Setenv("AppData", filepath.Join(home, "AppData"))
+	return filepath.Join(home, ".reasonix", "config.json"), UserConfigPath(), home
 }
 
 func writeLegacy(t *testing.T, src, body string) {
@@ -63,14 +61,28 @@ func TestMigrateImportsKeyPluginsAndLang(t *testing.T) {
 		t.Errorf("migration must not write the user's ~/.env, stat err=%v", err)
 	}
 
+	// Core config should have language but NOT plugins (they are in mcp.toml now)
 	got, err := os.ReadFile(dest)
 	if err != nil {
 		t.Fatalf("read dest config: %v", err)
 	}
 	toml := string(got)
-	for _, want := range []string{`language      = "zh"`, `[desktop]`, `language = "zh"`, `name    = "fs"`, `name    = "stripe"`, `type    = "http"`, `auto_start = false`} {
+	for _, want := range []string{`language      = "zh"`, `[desktop]`, `language = "zh"`} {
 		if !strings.Contains(toml, want) {
 			t.Errorf("dest config missing %q:\n%s", want, toml)
+		}
+	}
+	// Plugins should NOT be in config.toml
+	// Check mcp.toml has the plugins (not config.toml)
+
+	mcpData, err := os.ReadFile(UserMCPConfigPath())
+	if err != nil {
+		t.Fatalf("read mcp.toml: %v", err)
+	}
+	mcpToml := string(mcpData)
+	for _, want := range []string{`name    = "fs"`, `name    = "stripe"`, `type    = "http"`, `auto_start = false`} {
+		if !strings.Contains(mcpToml, want) {
+			t.Errorf("mcp.toml missing %q:\n%s", want, mcpToml)
 		}
 	}
 
@@ -118,8 +130,8 @@ func TestMigrateSkipsWhenDestExists(t *testing.T) {
 }
 
 func TestMigrateImportsLegacyV1TOMLBeforeJSON(t *testing.T) {
-	srcJSON, dest, _ := legacyHome(t)
-	legacyTOML := filepath.Join(filepath.Dir(dest), "reasonix.toml")
+	srcJSON, _, _ := legacyHome(t)
+	legacyTOML := filepath.Join(filepath.Dir(UserConfigPath()), "reasonix.toml")
 	if err := os.MkdirAll(filepath.Dir(legacyTOML), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -148,15 +160,20 @@ command = "legacy-bin"
 		t.Fatalf("expected v1 TOML migration, got %+v", res)
 	}
 
-	got, err := os.ReadFile(dest)
+	got, err := os.ReadFile(UserConfigPath())
 	if err != nil {
 		t.Fatalf("read migrated config: %v", err)
 	}
 	text := string(got)
-	for _, want := range []string{`config_version = 2`, `[desktop]`, `close_behavior = "quit"`, `name    = "legacy-v1"`} {
+	for _, want := range []string{`config_version = 2`, `[desktop]`, `close_behavior = "quit"`} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("migrated TOML missing %q:\n%s", want, text)
 		}
+	}
+	// Plugins migrated to mcp.toml, not in config.toml as real entries
+	mcpData, _ := os.ReadFile(UserMCPConfigPath())
+	if !strings.Contains(string(mcpData), `name    = "legacy-v1"`) {
+		t.Fatal("mcp.toml missing plugin:\n" + string(mcpData))
 	}
 	if _, err := os.Stat(UserCredentialsPath()); !os.IsNotExist(err) {
 		t.Fatalf("v1 TOML migration should not import lower-priority JSON key, credentials stat err=%v", err)
@@ -164,7 +181,7 @@ command = "legacy-bin"
 }
 
 func TestMigrateImportsLegacyV1HomeTOMLBeforeJSON(t *testing.T) {
-	srcJSON, dest, home := legacyHome(t)
+	srcJSON, _, home := legacyHome(t)
 	legacyTOML := filepath.Join(home, ".reasonix", "reasonix.toml")
 	if err := os.MkdirAll(filepath.Dir(legacyTOML), 0o755); err != nil {
 		t.Fatal(err)
@@ -188,16 +205,12 @@ command = "legacy-home-bin"
 		t.Fatalf("expected home v1 TOML migration, got %+v", res)
 	}
 
-	got, err := os.ReadFile(dest)
-	if err != nil {
-		t.Fatalf("read migrated config: %v", err)
+	mcpData, _ := os.ReadFile(UserMCPConfigPath())
+	if !strings.Contains(string(mcpData), `name    = "legacy-home-v1"`) {
+		t.Fatal("home v1 plugin was not migrated to mcp.toml:\n" + string(mcpData))
 	}
-	text := string(got)
-	if !strings.Contains(text, `name    = "legacy-home-v1"`) {
-		t.Fatalf("home v1 plugin was not migrated:\n%s", text)
-	}
-	if strings.Contains(text, `name    = "json"`) {
-		t.Fatalf("lower-priority v0.5 JSON should not be merged when v1 TOML exists:\n%s", text)
+	if strings.Contains(string(mcpData), `name    = "json"`) {
+		t.Fatalf("lower-priority v0.5 JSON should not be merged when v1 TOML exists:\n%s", mcpData)
 	}
 }
 
@@ -211,7 +224,7 @@ func TestMigrateNoLegacyIsNoop(t *testing.T) {
 
 func TestMigrateToleratesUTF8BOM(t *testing.T) {
 	src, _, _ := legacyHome(t)
-	writeLegacy(t, src, "\ufeff"+`{"apiKey":"sk-bom"}`)
+	writeLegacy(t, src, string([]byte{0xEF, 0xBB, 0xBF})+`{"apiKey":"sk-bom"}`)
 	res, err := MigrateLegacyIfNeeded()
 	if err != nil {
 		t.Fatalf("a BOM-prefixed legacy config must still parse: %v", err)

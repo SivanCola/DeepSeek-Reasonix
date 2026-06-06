@@ -648,11 +648,10 @@ func TestSaveToRoundTrips(t *testing.T) {
 	if got.Network.ProxyMode != "custom" || got.Network.Proxy.Server != "127.0.0.1" || got.Network.Proxy.Port != 7890 {
 		t.Errorf("network = %+v", got.Network)
 	}
-	if len(got.Plugins) != 1 || got.Plugins[0].Name != "stripe" {
-		t.Errorf("plugins = %+v", got.Plugins)
-	}
-	if got.Plugins[0].AutoStart == nil || *got.Plugins[0].AutoStart {
-		t.Errorf("auto_start should round-trip false, got %+v", got.Plugins[0].AutoStart)
+	// Plugins are no longer serialized into config.toml — they live in
+	// ~/.reasonix/mcp.toml. The round-trip through config.toml omits them.
+	if len(got.Plugins) != 0 {
+		t.Errorf("plugins = %+v, want empty (plugins now in mcp.toml)", got.Plugins)
 	}
 }
 

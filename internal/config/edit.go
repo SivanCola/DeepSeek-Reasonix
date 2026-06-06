@@ -7,7 +7,6 @@ import (
 	"runtime"
 	"strings"
 
-	"reasonix/internal/fileutil"
 	"reasonix/internal/mcpdiag"
 	"reasonix/internal/netclient"
 	"reasonix/internal/permission"
@@ -446,39 +445,51 @@ func (c *Config) ClearPluginAuthentication(name string) (PluginEntry, bool, erro
 // user config. Source priority mirrors Load(): project TOML, user TOML, then the
 // project .mcp.json entry if TOML did not define that server.
 func ClearPluginAuthenticationInSource(name string) (PluginEntry, bool, string, error) {
-	if path := pluginTOMLSourcePath(name); path != "" {
-		cfg := LoadForEdit(path)
-		updated, changed, err := cfg.ClearPluginAuthentication(name)
-		if err != nil {
-			return PluginEntry{}, false, path, err
-		}
-		if changed {
-			if err := cfg.SaveTo(path); err != nil {
-				return PluginEntry{}, false, path, err
+	// Check mcp.toml first — it is the sole MCP authority when it exists.
+	if mcpPath := UserMCPConfigPath(); mcpPath != "" {
+		if _, statErr := os.Stat(mcpPath); statErr == nil {
+			plugins, _ := loadMCPTOML()
+			for i := range plugins {
+				if plugins[i].Name != name {
+					continue
+				}
+				headers, env, url, changed := mcpdiag.ClearAuthConfig(plugins[i].Headers, plugins[i].Env, plugins[i].URL)
+				plugins[i].Headers = headers
+				plugins[i].Env = env
+				plugins[i].URL = url
+				if err := SaveMCPTOML(plugins); err != nil {
+					return PluginEntry{}, false, mcpPath, err
+				}
+				return plugins[i], changed, mcpPath, nil
 			}
 		}
-		return updated, changed, path, nil
 	}
+	// Fall back to global config.toml for pre-migration configs.
+	if uc := UserConfigPath(); strings.TrimSpace(uc) != "" {
+		if _, statErr := os.Stat(uc); statErr == nil {
+			cfg := LoadForEdit(uc)
+			for i := range cfg.Plugins {
+				if cfg.Plugins[i].Name == name {
+					updated, changed, err := cfg.ClearPluginAuthentication(name)
+					if err != nil {
+						return PluginEntry{}, false, uc, err
+					}
+					if changed {
+						if err := cfg.SaveTo(uc); err != nil {
+							return PluginEntry{}, false, uc, err
+						}
+					}
+					return updated, changed, uc, nil
+				}
+			}
+		}
+	}
+	// Fall back to project .mcp.json — still used as a manual import source.
 	updated, changed, err := clearMCPJSONAuthentication(mcpJSONFile, name)
-	if err != nil {
-		return PluginEntry{}, false, "", err
+	if err == nil {
+		return updated, changed, mcpJSONFile, nil
 	}
-	return updated, changed, mcpJSONFile, nil
-}
-
-func pluginTOMLSourcePath(name string) string {
-	for _, path := range []string{"reasonix.toml", userConfigPath()} {
-		if strings.TrimSpace(path) == "" {
-			continue
-		}
-		cfg := LoadForEdit(path)
-		for _, p := range cfg.Plugins {
-			if p.Name == name {
-				return path
-			}
-		}
-	}
-	return ""
+	return PluginEntry{}, false, "", fmt.Errorf("clear plugin authentication: no plugin %q", name)
 }
 
 // validatePlugin checks a plugin entry by transport. An empty Type means stdio.
@@ -525,38 +536,12 @@ func SaveMinimalProjectAutoPlan(path, mode string) (string, error) {
 	if err := cfg.SetAutoPlan(mode); err != nil {
 		return "", err
 	}
-	body := fmt.Sprintf(`# Reasonix project configuration.
-# Project-local overrides are merged over the user config.
+	body := fmt.Sprintf(`# Reasonix global configuration.
 
 [agent]
 auto_plan = %q
 `, cfg.Agent.AutoPlan)
 	return cfg.Agent.AutoPlan, writeConfigFile(path, body)
-}
-
-func writeConfigFile(path, body string) error {
-	if strings.TrimSpace(path) == "" {
-		return fmt.Errorf("save: empty config path")
-	}
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return fmt.Errorf("save: create dir: %w", err)
-	}
-	tmp, err := os.CreateTemp(dir, ".reasonix.*.toml.tmp")
-	if err != nil {
-		return fmt.Errorf("save: create temp: %w", err)
-	}
-	tmpPath := tmp.Name()
-	if _, err := tmp.WriteString(body); err != nil {
-		tmp.Close()
-		os.Remove(tmpPath)
-		return fmt.Errorf("save: write: %w", err)
-	}
-	if err := tmp.Close(); err != nil {
-		os.Remove(tmpPath)
-		return fmt.Errorf("save: close temp: %w", err)
-	}
-	return fileutil.ReplaceFile(tmpPath, path)
 }
 
 func renderScopeForPath(path string) RenderScope {
@@ -568,7 +553,7 @@ func renderScopeForPath(path string) RenderScope {
 
 func isUserConfigPath(path string) bool {
 	path = strings.TrimSpace(path)
-	uc := strings.TrimSpace(userConfigPath())
+	uc := strings.TrimSpace(UserConfigPath())
 	if path == "" || uc == "" {
 		return false
 	}
@@ -580,33 +565,24 @@ func isUserConfigPath(path string) bool {
 	return filepath.Clean(path) == filepath.Clean(uc)
 }
 
-// Save writes the configuration back to the file it was loaded from
-// (SourcePath), or to ./reasonix.toml when none exists yet — the conventional
-// project-local target a fresh GUI session would create.
+// Save writes the configuration to the global config file.
 func (c *Config) Save() error {
-	path := SourcePath()
+	path := UserConfigPath()
 	if path == "" {
-		path = "reasonix.toml"
+		return fmt.Errorf("save: cannot resolve user config path")
 	}
 	return c.SaveTo(path)
 }
 
-// SaveForRoot saves the config to root's reasonix.toml, falling back to the
-// user's global config when root has no existing reasonix.toml.
+// SaveForRoot saves the config to the global config file (project layer removed).
 func (c *Config) SaveForRoot(root string) error {
-	root = resolveRoot(root)
-	projectTOML := "reasonix.toml"
-	if root != "." {
-		projectTOML = filepath.Join(root, "reasonix.toml")
+	uc := UserConfigPath()
+	if uc == "" {
+		root := resolveRoot(root)
+		return c.SaveTo(filepath.Join(root, "reasonix.toml"))
 	}
-	if _, err := os.Stat(projectTOML); err == nil {
-		return c.SaveTo(projectTOML)
+	if err := os.MkdirAll(filepath.Dir(uc), 0o755); err != nil {
+		return err
 	}
-	if uc := userConfigPath(); uc != "" {
-		if err := os.MkdirAll(filepath.Dir(uc), 0o755); err != nil {
-			return err
-		}
-		return c.SaveTo(uc)
-	}
-	return c.SaveTo(projectTOML)
+	return c.SaveTo(uc)
 }

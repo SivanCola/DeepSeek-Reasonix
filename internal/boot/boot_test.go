@@ -34,10 +34,13 @@ import (
 // into the session's system message (the cached prefix), and the `remember`
 // tool is registered. It builds a real Controller from a throwaway project dir.
 func TestBuildFoldsProjectMemoryIntoSystemPrompt(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	dir := t.TempDir()
 	t.Chdir(dir)
 
-	writeFile(t, dir, "reasonix.toml", `
+	writeFile(t, filepath.Join(home, ".reasonix"), "config.toml", `
 default_model = "test-model"
 
 [codegraph]
@@ -127,7 +130,7 @@ func TestBuildDiscoversSkills(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
 	t.Chdir(dir)
-	writeFile(t, dir, "reasonix.toml", `
+	writeFile(t, filepath.Join(home, ".reasonix"), "config.toml", `
 default_model = "test-model"
 
 [codegraph]
@@ -143,7 +146,7 @@ base_url = "https://example.invalid"
 model = "x"
 api_key_env = "REASONIX_TEST_KEY_UNSET"
 `)
-	writeFile(t, dir, ".reasonix/skills/projskill.md", "---\ndescription: a project skill\n---\nplaybook")
+	writeFile(t, home, ".reasonix/skills/projskill.md", "---\ndescription: a project skill\n---\nplaybook")
 
 	ctrl, err := Build(context.Background(), Options{})
 	if err != nil {
@@ -197,7 +200,7 @@ func TestBuildOmitsDisabledSkillsFromPromptAndRuntimeList(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
 	t.Chdir(dir)
-	writeFile(t, dir, "reasonix.toml", `
+	writeFile(t, filepath.Join(home, ".reasonix"), "config.toml", `
 default_model = "test-model"
 
 [codegraph]
@@ -216,7 +219,7 @@ base_url = "https://example.invalid"
 model = "x"
 api_key_env = "REASONIX_TEST_KEY_UNSET"
 `)
-	writeFile(t, dir, ".reasonix/skills/projskill.md", "---\ndescription: a project skill\n---\nplaybook")
+	writeFile(t, home, ".reasonix/skills/projskill.md", "---\ndescription: a project skill\n---\nplaybook")
 
 	ctrl, err := Build(context.Background(), Options{})
 	if err != nil {
@@ -245,9 +248,12 @@ api_key_env = "REASONIX_TEST_KEY_UNSET"
 }
 
 func TestBuildRecordsMCPStartupFailure(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	dir := t.TempDir()
 	t.Chdir(dir)
-	writeFile(t, dir, "reasonix.toml", `
+	writeFile(t, filepath.Join(home, ".reasonix"), "config.toml", `
 default_model = "test-model"
 
 [codegraph]
@@ -300,9 +306,12 @@ tier = "eager"
 // memory files, the system prompt is exactly the configured base — the cache
 // prefix is untouched by the memory feature.
 func TestBuildWithoutMemoryLeavesPromptUnchanged(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	dir := t.TempDir()
 	t.Chdir(dir)
-	writeFile(t, dir, "reasonix.toml", `
+	writeFile(t, filepath.Join(home, ".reasonix"), "config.toml", `
 default_model = "test-model"
 
 [codegraph]
@@ -344,9 +353,12 @@ api_key_env = "REASONIX_TEST_KEY_UNSET"
 }
 
 func TestBuildLanguagePolicyIsAppended(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	dir := t.TempDir()
 	t.Chdir(dir)
-	writeFile(t, dir, "reasonix.toml", `
+	writeFile(t, filepath.Join(home, ".reasonix"), "config.toml", `
 default_model = "test-model"
 
 [codegraph]
@@ -423,13 +435,14 @@ allow = ["bash(workspace*)"]
 	const rule = "bash=go test ./..."
 	rememberPermissionRule(workspace, rule)
 
+	// Rule is written to global config regardless of workspace root
+	userCfg := config.LoadForEdit(config.UserConfigPath())
+	if !hasPermissionRule(userCfg.Permissions.Allow, rule) {
+		t.Fatalf("remembered rule missing from global config: %v", userCfg.Permissions.Allow)
+	}
 	cwdCfg := config.LoadForEdit(filepath.Join(cwd, "reasonix.toml"))
 	if hasPermissionRule(cwdCfg.Permissions.Allow, rule) {
-		t.Fatalf("remembered rule was written to cwd config: %v", cwdCfg.Permissions.Allow)
-	}
-	workspaceCfg := config.LoadForEdit(filepath.Join(workspace, "reasonix.toml"))
-	if !hasPermissionRule(workspaceCfg.Permissions.Allow, rule) {
-		t.Fatalf("remembered rule missing from workspace config: %v", workspaceCfg.Permissions.Allow)
+		t.Fatalf("rule should not be in cwd config: %v", cwdCfg.Permissions.Allow)
 	}
 }
 
@@ -519,8 +532,16 @@ func TestBuildMigratesLegacyConfigEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("v2 config not written to %s: %v", dest, err)
 	}
-	if !strings.Contains(string(data), `name    = "fs"`) || !strings.Contains(string(data), `language      = "zh"`) {
-		t.Errorf("migrated config missing plugin/lang:\n%s", data)
+	if !strings.Contains(string(data), `language      = "zh"`) {
+		t.Errorf("migrated config missing lang:\n%s", data)
+	}
+	// Plugins are now in mcp.toml
+	mcpData, err := os.ReadFile(config.UserMCPConfigPath())
+	if err != nil {
+		t.Fatalf("mcp.toml not written: %v", err)
+	}
+	if !strings.Contains(string(mcpData), `name    = "fs"`) {
+		t.Errorf("migrated mcp.toml missing plugin:\n%s", mcpData)
 	}
 
 	if got := os.Getenv("DEEPSEEK_API_KEY"); got != "sk-e2e" {
@@ -599,11 +620,11 @@ func TestPartitionByTier(t *testing.T) {
 // as a stdio MCP helper (see TestHelperProcess), so the spawn is real but
 // deterministic and hermetic — no external MCP server required on PATH.
 func TestBuildEagerStartsAtBoot(t *testing.T) {
-	isolateConfigHome(t)
+	homeDir := isolateConfigHome(t)
 	dir := t.TempDir()
 	t.Chdir(dir)
 
-	writeFile(t, dir, "reasonix.toml", fmt.Sprintf(`
+	writeFile(t, filepath.Join(homeDir, ".reasonix"), "config.toml", fmt.Sprintf(`
 default_model = "test-model"
 
 [codegraph]
@@ -661,11 +682,11 @@ env = { GO_WANT_HELPER_PROCESS = "1" }
 // no public accessor on Controller, so at this layer we pin the load-bearing
 // boot-time invariant — no spawn — rather than re-validating the placeholder.
 func TestBuildLazyDoesNotConnectAtBoot(t *testing.T) {
-	isolateConfigHome(t)
+	homeDir := isolateConfigHome(t)
 	dir := t.TempDir()
 	t.Chdir(dir)
 
-	writeFile(t, dir, "reasonix.toml", fmt.Sprintf(`
+	writeFile(t, filepath.Join(homeDir, ".reasonix"), "config.toml", fmt.Sprintf(`
 default_model = "test-model"
 
 [codegraph]
@@ -723,13 +744,13 @@ env = { GO_WANT_HELPER_PROCESS = "1" }
 }
 
 func TestBuildColdCodegraphStartsInBackground(t *testing.T) {
-	isolateConfigHome(t)
+	homeDir := isolateConfigHome(t)
 	dir := t.TempDir()
 	t.Chdir(dir)
 	launcher := writeCodegraphHelper(t, dir)
 	t.Setenv("GO_WANT_HELPER_PROCESS", "1")
 
-	writeFile(t, dir, "reasonix.toml", fmt.Sprintf(`
+	writeFile(t, filepath.Join(homeDir, ".reasonix"), "config.toml", fmt.Sprintf(`
 default_model = "test-model"
 
 [codegraph]
@@ -798,7 +819,7 @@ api_key_env = "REASONIX_TEST_KEY_UNSET"
 // Host.ServerNames() — and (b) a Notice carrying the demote reason fired so
 // the user understands why their explicit "eager" was ignored this session.
 func TestBuildAutoDemoteFromStats(t *testing.T) {
-	isolateConfigHome(t)
+	homeDir := isolateConfigHome(t)
 	dir := t.TempDir()
 	t.Chdir(dir)
 
@@ -811,7 +832,7 @@ func TestBuildAutoDemoteFromStats(t *testing.T) {
 		}
 	}
 
-	writeFile(t, dir, "reasonix.toml", `
+	writeFile(t, filepath.Join(homeDir, ".reasonix"), "config.toml", `
 default_model = "test-model"
 
 [codegraph]

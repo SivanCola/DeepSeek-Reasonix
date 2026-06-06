@@ -7,32 +7,25 @@ import (
 	"strings"
 )
 
-// loadDotEnv loads KEY=value files into the process environment without
-// overriding variables that are already set (first file to set a key wins).
-// Order: a project ./.env (read-only back-compat, so a manual project override
-// takes precedence), then the reasonix-owned global credentials file in the user
-// config dir (where `reasonix setup` writes keys, so they resolve from any
-// directory without ever touching a project's own .env), then ~/.env as a legacy
-// fallback (the desktop app writes there). Existing environment variables always
-// win over all three.
+// loadDotEnv loads only global credentials and legacy ~/.env. Project .env is no
+// longer read, avoiding cwd-dependent API key or MCP env changes.
 func loadDotEnv() {
-	loadDotEnvForRoot(".")
+	loadDotEnvGlobal()
 }
 
-// loadDotEnvForRoot loads a root's .env file (if present) before the home .env
-// fallback. When root is "." it behaves like loadDotEnv().
-func loadDotEnvForRoot(root string) {
-	dotEnvPath := ".env"
-	if root != "" && root != "." {
-		dotEnvPath = filepath.Join(root, ".env")
-	}
-	loadDotEnvFile(dotEnvPath)
+// loadDotEnvGlobal loads the global credentials and legacy home .env only.
+func loadDotEnvGlobal() {
 	if p := UserCredentialsPath(); p != "" {
 		loadDotEnvFile(p)
 	}
 	if home, err := os.UserHomeDir(); err == nil {
 		loadDotEnvFile(filepath.Join(home, ".env"))
 	}
+}
+
+// loadDotEnvForRoot calls loadDotEnvGlobal — project .env is no longer read.
+func loadDotEnvForRoot(root string) {
+	loadDotEnvGlobal()
 }
 
 // loadDotEnvFile reads one .env file (if present) and sets any keys not already

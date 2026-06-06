@@ -586,13 +586,9 @@ func rememberPermissionRule(workspaceRoot, rule string) {
 }
 
 func rememberPermissionConfigPath(workspaceRoot string) string {
-	workspaceRoot = strings.TrimSpace(workspaceRoot)
-	if workspaceRoot != "" {
-		return filepath.Join(workspaceRoot, "reasonix.toml")
-	}
-	path := config.SourcePath()
+	path := config.UserConfigPath()
 	if path == "" {
-		path = "reasonix.toml" // match Config.Save() fallback
+		path = "reasonix.toml"
 	}
 	return path
 }

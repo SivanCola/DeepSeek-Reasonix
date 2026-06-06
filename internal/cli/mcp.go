@@ -180,9 +180,6 @@ func mcpList() int {
 		return 1
 	}
 	listed := 0
-	// CodeGraph is a built-in server injected by boot, not a [[plugins]] entry, so
-	// report its resolved status here too. It is listed even when disabled, matching
-	// the MCP manager where the user can enable it and choose a startup tier.
 	codegraphMeta := fmt.Sprintf(" [auto_start=%v tier=%s]", cfg.Codegraph.Enabled, cfg.Codegraph.ResolvedTier())
 	if bin, ok := codegraph.Resolve(cfg.Codegraph.Path); ok {
 		fmt.Printf("%-16s (stdio, built-in)%s  %s serve --mcp\n", "codegraph", codegraphMeta, bin)
@@ -214,6 +211,7 @@ func mcpList() int {
 	if listed == 0 {
 		fmt.Println("no MCP servers configured")
 	}
+	fmt.Println("\nMCP servers are stored in", config.UserMCPConfigPath())
 	return 0
 }
 
@@ -223,20 +221,11 @@ func mcpAddCLI(args []string) int {
 		fmt.Fprintln(os.Stderr, err)
 		return 2
 	}
-	cfg, err := config.Load()
-	if err != nil {
+	if err := config.UpsertMCPPlugin(entry); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
 	}
-	if err := cfg.UpsertPlugin(entry); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return 1
-	}
-	if err := cfg.Save(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return 1
-	}
-	fmt.Printf("added MCP server %q — loads on the next session (or run `/mcp add` inside chat to connect it live now)\n", entry.Name)
+	fmt.Printf("added MCP server %q to %s — loads on the next session (or run `/mcp add` inside chat to connect it live now)\n", entry.Name, config.UserMCPConfigPath())
 	return 0
 }
 
@@ -246,17 +235,13 @@ func mcpRemoveCLI(args []string) int {
 		return 2
 	}
 	name := args[0]
-	cfg, err := config.Load()
+	found, err := config.RemoveMCPPlugin(name)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
 	}
-	if !cfg.RemovePlugin(name) {
-		fmt.Fprintf(os.Stderr, "no MCP server named %q in config\n", name)
-		return 1
-	}
-	if err := cfg.Save(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
+	if !found {
+		fmt.Fprintf(os.Stderr, "no MCP server named %q in %s\n", name, config.UserMCPConfigPath())
 		return 1
 	}
 	fmt.Printf("removed MCP server %q\n", name)
@@ -264,7 +249,7 @@ func mcpRemoveCLI(args []string) int {
 }
 
 func mcpUsage() {
-	fmt.Println(`Manage MCP servers (persisted to reasonix.toml).
+	fmt.Println(`Manage MCP servers (persisted to ` + config.UserMCPConfigPath() + `).
 
 Usage:
   reasonix mcp list

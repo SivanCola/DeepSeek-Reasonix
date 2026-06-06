@@ -32,7 +32,6 @@ func TestLoadMCPJSON(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Sorted by name: filesystem before stripe.
 	if len(got) != 2 || got[0].Name != "filesystem" || got[1].Name != "stripe" {
 		t.Fatalf("entries = %+v, want [filesystem stripe] sorted", got)
 	}
@@ -50,13 +49,11 @@ func TestLoadMCPJSON(t *testing.T) {
 func TestLoadMCPJSONAbsentAndMalformed(t *testing.T) {
 	dir := t.TempDir()
 
-	// Absent file: not an error, no entries.
 	got, err := loadMCPJSON(filepath.Join(dir, "missing.json"))
 	if err != nil || got != nil {
 		t.Errorf("absent file: got (%v, %v), want (nil, nil)", got, err)
 	}
 
-	// Malformed file: an error so a typo surfaces instead of dropping servers.
 	bad := filepath.Join(dir, mcpJSONFile)
 	if err := os.WriteFile(bad, []byte("{not json"), 0o644); err != nil {
 		t.Fatal(err)
@@ -66,56 +63,12 @@ func TestLoadMCPJSONAbsentAndMalformed(t *testing.T) {
 	}
 }
 
-func TestLoadMergesMCPJSON(t *testing.T) {
-	// Point the user-config and home dirs at an empty temp dir so Load picks up
-	// no global config, then chdir into a project dir holding both files.
-	empty := t.TempDir()
-	t.Setenv("HOME", empty)
-	t.Setenv("XDG_CONFIG_HOME", empty)
-	t.Chdir(t.TempDir())
-
-	toml := `[[plugins]]
-name = "shared"
-command = "local-bin"
-`
-	if err := os.WriteFile("reasonix.toml", []byte(toml), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	mcp := `{ "mcpServers": {
-  "shared": { "type": "http", "url": "https://override.example" },
-  "extra":  { "command": "extra-bin", "auto_start": false }
-} }`
-	if err := os.WriteFile(mcpJSONFile, []byte(mcp), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	cfg, err := Load()
-	if err != nil {
-		t.Fatal(err)
-	}
-	byName := map[string]PluginEntry{}
-	for _, p := range cfg.Plugins {
-		byName[p.Name] = p
-	}
-	if len(byName) != 2 {
-		t.Fatalf("plugins = %+v, want shared + extra", cfg.Plugins)
-	}
-	if byName["shared"].Command != "local-bin" || byName["shared"].URL != "" {
-		t.Errorf("reasonix.toml should win the collision, got %+v", byName["shared"])
-	}
-	if byName["extra"].Command != "extra-bin" {
-		t.Errorf("extra not merged from .mcp.json, got %+v", byName["extra"])
-	}
-	if byName["extra"].AutoStart == nil || *byName["extra"].AutoStart {
-		t.Errorf("extra auto_start=false not preserved, got %+v", byName["extra"].AutoStart)
-	}
-}
-
-func TestLoadMergesPluginsAcrossTOMLSources(t *testing.T) {
+func TestLoadOnlyUsesGlobalConfig(t *testing.T) {
+	// Project reasonix.toml is no longer read.
 	root := t.TempDir()
 	t.Setenv("HOME", root)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(root, "xdg"))
-	t.Setenv("AppData", filepath.Join(root, "AppData")) // os.UserConfigDir reads AppData on Windows
+	t.Setenv("AppData", filepath.Join(root, "AppData"))
 	t.Chdir(t.TempDir())
 
 	gpath := UserConfigPath()
@@ -128,7 +81,13 @@ func TestLoadMergesPluginsAcrossTOMLSources(t *testing.T) {
 	if err := os.WriteFile(gpath, []byte("[[plugins]]\nname = \"globalmcp\"\ncommand = \"global-bin\"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	// Write a project reasonix.toml — it should be ignored.
 	if err := os.WriteFile("reasonix.toml", []byte("[[plugins]]\nname = \"projectmcp\"\ncommand = \"project-bin\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Write .mcp.json — it should also be ignored.
+	mcp := `{ "mcpServers": { "extra": { "command": "extra-bin" } } }`
+	if err := os.WriteFile(mcpJSONFile, []byte(mcp), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -136,19 +95,27 @@ func TestLoadMergesPluginsAcrossTOMLSources(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	names := map[string]bool{}
+	// Only globalmcp should appear (from global config). Project and .mcp.json are ignored.
 	for _, p := range cfg.Plugins {
-		names[p.Name] = true
+		if p.Name == "projectmcp" {
+			t.Error("project reasonix.toml [[plugins]] should be ignored")
+		}
+		if p.Name == "extra" {
+			t.Error(".mcp.json should not be auto-loaded")
+		}
 	}
-	if !names["globalmcp"] || !names["projectmcp"] {
-		t.Fatalf("a project reasonix.toml [[plugins]] dropped the global config's server; got %+v", cfg.Plugins)
+	found := false
+	for _, p := range cfg.Plugins {
+		if p.Name == "globalmcp" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("global [[plugins]] not loaded")
 	}
 }
 
 func TestMergeMCPJSONPrecedence(t *testing.T) {
-	// reasonix.toml already declares "shared" (stdio); .mcp.json offers a colliding
-	// "shared" (http) plus a fresh "extra". reasonix.toml must win on the collision;
-	// "extra" gets appended.
 	cfg := &Config{Plugins: []PluginEntry{
 		{Name: "shared", Command: "local-bin"},
 	}}
@@ -175,11 +142,12 @@ func TestClearPluginAuthenticationInSourceUsesMCPJSON(t *testing.T) {
 	t.Setenv("AppData", filepath.Join(root, "AppData"))
 	t.Chdir(t.TempDir())
 
+	// Global config should not have the server
 	userPath := UserConfigPath()
 	if err := os.MkdirAll(filepath.Dir(userPath), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(userPath, []byte("[[plugins]]\nname = \"global\"\ncommand = \"global-bin\"\n"), 0o644); err != nil {
+	if err := os.WriteFile(userPath, []byte(""), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	mcp := `{
@@ -210,13 +178,6 @@ func TestClearPluginAuthenticationInSourceUsesMCPJSON(t *testing.T) {
 		t.Fatalf("updated URL = %q", updated.URL)
 	}
 
-	userRaw, err := os.ReadFile(userPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(string(userRaw), "dida") {
-		t.Fatalf("user config should not receive .mcp.json server:\n%s", userRaw)
-	}
 	entries, err := loadMCPJSON(mcpJSONFile)
 	if err != nil {
 		t.Fatal(err)
@@ -242,30 +203,24 @@ func TestClearPluginAuthenticationInSourceUsesMCPJSON(t *testing.T) {
 	}
 }
 
-func TestClearPluginAuthenticationInSourcePrefersTOML(t *testing.T) {
+func TestClearPluginAuthenticationInSourcePrefersGlobalConfig(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("HOME", root)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(root, "xdg"))
 	t.Setenv("AppData", filepath.Join(root, "AppData"))
 	t.Chdir(t.TempDir())
 
-	if err := os.WriteFile("reasonix.toml", []byte(`[[plugins]]
+	gpath := UserConfigPath()
+	if err := os.MkdirAll(filepath.Dir(gpath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(gpath, []byte(`[[plugins]]
 name = "dida"
 type = "http"
 url = "https://reasonix.example/mcp?access_token=toml"
 [plugins.headers]
 Authorization = "Bearer ${TOML_TOKEN}"
 `), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	mcp := `{ "mcpServers": {
-  "dida": {
-    "type": "http",
-    "url": "https://mcp-json.example/mcp?access_token=json",
-    "headers": { "Authorization": "Bearer ${JSON_TOKEN}" }
-  }
-} }`
-	if err := os.WriteFile(mcpJSONFile, []byte(mcp), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -276,26 +231,19 @@ Authorization = "Bearer ${TOML_TOKEN}"
 	if !changed {
 		t.Fatal("ClearPluginAuthenticationInSource should report changed")
 	}
-	if source != "reasonix.toml" {
-		t.Fatalf("source = %q, want reasonix.toml", source)
+	if source != gpath {
+		t.Fatalf("source = %q, want %q", source, gpath)
 	}
 	if updated.URL != "https://reasonix.example/mcp" {
 		t.Fatalf("updated URL = %q", updated.URL)
 	}
 
-	projectRaw, err := os.ReadFile("reasonix.toml")
+	globalRaw, err := os.ReadFile(gpath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(projectRaw), "access_token=toml") || strings.Contains(string(projectRaw), "Authorization") {
-		t.Fatalf("reasonix.toml auth material should be removed:\n%s", projectRaw)
-	}
-	mcpRaw, err := os.ReadFile(mcpJSONFile)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(mcpRaw), "access_token=json") {
-		t.Fatalf(".mcp.json collision entry should be left untouched:\n%s", mcpRaw)
+	if strings.Contains(string(globalRaw), "access_token=toml") || strings.Contains(string(globalRaw), "Authorization") {
+		t.Fatalf("global config auth material should be removed:\n%s", globalRaw)
 	}
 }
 
@@ -316,7 +264,6 @@ func TestLoadLegacyMCP(t *testing.T) {
 	}
 
 	got := loadLegacyMCP(path)
-	// "old" is in mcpDisabled and dropped; github + remote remain, name-sorted.
 	if len(got) != 2 {
 		t.Fatalf("got %d entries, want 2: %+v", len(got), got)
 	}
@@ -330,8 +277,6 @@ func TestLoadLegacyMCP(t *testing.T) {
 		t.Errorf("remote mapped wrong: %+v", got[1])
 	}
 
-	// Absent, malformed, and empty paths must not error — just yield nil, so a
-	// stale legacy file can never block startup.
 	if got := loadLegacyMCP(filepath.Join(dir, "nope.json")); got != nil {
 		t.Errorf("absent file: got %+v, want nil", got)
 	}

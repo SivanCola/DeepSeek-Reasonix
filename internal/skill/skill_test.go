@@ -29,22 +29,22 @@ func find(skills []Skill, name string) (Skill, bool) {
 	return Skill{}, false
 }
 
-func TestListPrecedenceProjectOverGlobal(t *testing.T) {
+func TestListPrecedenceCustomOverGlobal(t *testing.T) {
 	home := t.TempDir()
-	proj := t.TempDir()
-	writeSkill(t, proj, ".reasonix/skills/greet.md", "---\nname: greet\ndescription: project greet\n---\nproject body")
+	customDir := t.TempDir()
+	writeSkill(t, customDir, "greet.md", "---\nname: greet\ndescription: custom greet\n---\ncustom body")
 	writeSkill(t, home, ".reasonix/skills/greet.md", "---\ndescription: global greet\n---\nglobal body")
 	writeSkill(t, home, ".reasonix/skills/onlyglobal.md", "---\ndescription: only global\n---\nbody")
 
-	st := New(Options{HomeDir: home, ProjectRoot: proj, DisableBuiltins: true})
+	st := New(Options{HomeDir: home, CustomPaths: []string{customDir}, DisableBuiltins: true})
 	list := st.List()
 
 	greet, ok := find(list, "greet")
 	if !ok {
 		t.Fatal("greet not found")
 	}
-	if greet.Scope != ScopeProject || greet.Description != "project greet" {
-		t.Fatalf("project skill should win: got scope=%s desc=%q", greet.Scope, greet.Description)
+	if greet.Scope != ScopeCustom || greet.Description != "custom greet" {
+		t.Fatalf("custom skill should win over global: got scope=%s desc=%q", greet.Scope, greet.Description)
 	}
 	if _, ok := find(list, "onlyglobal"); !ok {
 		t.Fatal("global-only skill should be discovered")
@@ -67,13 +67,14 @@ func TestFlatAndDirLayout(t *testing.T) {
 }
 
 func TestConventionDirsDiscovered(t *testing.T) {
-	proj := t.TempDir()
-	writeSkill(t, proj, ".claude/skills/fromclaude.md", "---\ndescription: c\n---\nb")
-	writeSkill(t, proj, ".agents/skills/fromagents.md", "---\ndescription: a\n---\nb")
-	writeSkill(t, proj, ".agent/skills/fromagent.md", "---\ndescription: s\n---\nb")
-	st := New(Options{HomeDir: t.TempDir(), ProjectRoot: proj, DisableBuiltins: true})
+	home := t.TempDir()
+	writeSkill(t, home, ".claude/skills/fromclaude.md", "---\ndescription: c\n---\nb")
+	writeSkill(t, home, ".agents/skills/fromagents.md", "---\ndescription: a\n---\nb")
+	writeSkill(t, home, ".agent/skills/fromagent.md", "---\ndescription: s\n---\nb")
+	writeSkill(t, home, ".reasonix/skills/fromreasonix.md", "---\ndescription: r\n---\nb")
+	st := New(Options{HomeDir: home, DisableBuiltins: true})
 	list := st.List()
-	for _, name := range []string{"fromclaude", "fromagents", "fromagent"} {
+	for _, name := range []string{"fromclaude", "fromagents", "fromagent", "fromreasonix"} {
 		if _, ok := find(list, name); !ok {
 			t.Errorf("convention dir for %q not scanned", name)
 		}

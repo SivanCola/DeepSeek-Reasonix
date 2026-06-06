@@ -187,11 +187,7 @@ func (*installSkillTool) Name() string   { return "install_skill" }
 func (*installSkillTool) ReadOnly() bool { return false }
 
 func (t *installSkillTool) Description() string {
-	scope := "'global' (only option — no project workspace) writes to ~/.reasonix/skills/."
-	if t.store.HasProjectScope() {
-		scope = "'project' (default) writes to <repo>/.reasonix/skills/ (this workspace only); 'global' writes to ~/.reasonix/skills/ (every project)."
-	}
-	return "Author and save a new skill — a reusable playbook future turns invoke via run_skill (or /<name>). Runnable immediately this turn; appears in the pinned Skills index on the next launch. " + scope
+	return "Author and save a new skill — a reusable playbook future turns invoke via run_skill (or /<name>). Runnable immediately this turn; appears in the pinned Skills index on the next launch. Scope: skills now live only in ~/.reasonix/skills/ (global) — project-scoped skills are no longer supported."
 }
 
 func (*installSkillTool) Schema() json.RawMessage {
@@ -201,7 +197,7 @@ func (*installSkillTool) Schema() json.RawMessage {
   "name":{"type":"string","description":"Identifier — letters/digits/_/-/., 1-64 chars, starts alphanumeric. Becomes the filename."},
   "description":{"type":"string","description":"≤120-char one-liner shown in the pinned Skills index — future agents read it to decide whether to invoke."},
   "body":{"type":"string","description":"Markdown playbook. For subagent skills, write the subagent's persona/rules — it gets no context besides 'arguments' at runtime."},
-  "scope":{"type":"string","enum":["project","global"],"description":"Where to write. Defaults to project when a workspace exists, else global."},
+  "scope":{"type":"string","enum":["global"],"description":"Always global — skills are written to ~/.reasonix/skills/. Project-scoped skills are no longer supported."},
   "runAs":{"type":"string","enum":["inline","subagent"],"description":"inline (default) folds the body into the parent turn; subagent spawns an isolated child loop returning only its final answer (use for context-heavy work)."},
   "model":{"type":"string","description":"Optional model override for runAs=subagent (a configured provider/model name). Ignored otherwise."},
   "allowedTools":{"type":"array","items":{"type":"string"},"description":"Optional tool allowlist for runAs=subagent (e.g. ['read_file','grep'])."}
@@ -240,14 +236,12 @@ func (t *installSkillTool) Execute(_ context.Context, args json.RawMessage) (str
 	case "global":
 		scope = ScopeGlobal
 	case "project":
-		scope = ScopeProject
+		return "", fmt.Errorf("install_skill: scope='project' is no longer supported — skills are only written to ~/.reasonix/skills/; use scope='global'")
 	default:
-		if t.store.HasProjectScope() {
-			scope = ScopeProject
-		}
+		scope = ScopeGlobal
 	}
 	if scope == ScopeProject && !t.store.HasProjectScope() {
-		return "", fmt.Errorf("install_skill: scope='project' requires a workspace — use scope='global'")
+		return "", fmt.Errorf("install_skill: scope='project' is no longer supported")
 	}
 
 	runAs := RunInline

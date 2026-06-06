@@ -8,12 +8,11 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 )
 
 // legacyConfig is the subset of the v0.x (~/.reasonix/config.json) schema this
-// import carries forward. Fields absent here are dropped on purpose: desktop tab
-// state is frontend-owned, and skills already live in the shared ~/.reasonix/skills
-// root that v1+ also scans, so they need no migration.
+// import carries forward.
 type legacyConfig struct {
 	APIKey      string                       `json:"apiKey"`
 	BaseURL     string                       `json:"baseUrl"`
@@ -36,21 +35,22 @@ type legacyMCPServer struct {
 
 // MigrationResult summarizes a one-time legacy import for the boot-time notice.
 type MigrationResult struct {
-	From     string
-	To       string
-	KeyToEnv bool
-	Plugins  int
-	Warnings []string
+	From        string
+	To          string
+	KeyToEnv    bool
+	Plugins     int
+	Warnings    []string
+	SourceFiles []string
 }
 
 func (r *MigrationResult) Notice() string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "migrated your previous configuration: %s → %s", r.From, r.To)
+	fmt.Fprintf(&b, "migrated your previous configuration to %s", r.To)
 	if r.Plugins > 0 {
 		fmt.Fprintf(&b, " (%d MCP server(s))", r.Plugins)
 	}
 	if r.KeyToEnv {
-		b.WriteString("; API key saved to reasonix's credentials store")
+		b.WriteString("; API key saved to credentials")
 	}
 	b.WriteString(". The old files were left untouched.")
 	for _, w := range r.Warnings {
@@ -60,15 +60,14 @@ func (r *MigrationResult) Notice() string {
 }
 
 // MigrateLegacyIfNeeded performs a one-time, non-destructive import of older
-// installs into the current user config when the latter does not exist yet. It
-// checks v1-era TOML first, then v0.5/v0.x ~/.reasonix/config.json, and never
-// modifies or deletes the legacy files. Returns nil when there is nothing to
-// migrate, or when the current user config already exists.
+// installs into the new ~/.reasonix layout. Checks for existing config first,
+// then migrates from old XDG/macOS Library/Windows AppData directories.
 func MigrateLegacyIfNeeded() (*MigrationResult, error) {
-	dest := userConfigPath()
+	dest := UserConfigPath()
 	if dest == "" {
 		return nil, nil
 	}
+	// Already migrated: ~/.reasonix/config.toml exists.
 	if _, err := os.Stat(dest); err == nil {
 		return nil, nil
 	}
@@ -76,16 +75,18 @@ func MigrateLegacyIfNeeded() (*MigrationResult, error) {
 	if err != nil {
 		return nil, nil
 	}
-	if res, err := migrateLegacyTOMLIfNeeded(dest, home); res != nil || err != nil {
+	// Check old XDG / platform-specific config directories for an existing config.
+	if res, err := migrateOldConfigToNew(dest, home); res != nil || err != nil {
 		return res, err
 	}
+	// v0.x ~/.reasonix/config.json
 	src := filepath.Join(home, ".reasonix", "config.json")
 	data, err := os.ReadFile(src)
 	if err != nil {
 		return nil, nil
 	}
 	var legacy legacyConfig
-	data = bytes.TrimPrefix(data, []byte{0xEF, 0xBB, 0xBF}) // tolerate a UTF-8 BOM (some editors add one)
+	data = bytes.TrimPrefix(data, []byte{0xEF, 0xBB, 0xBF})
 	if err := json.Unmarshal(data, &legacy); err != nil {
 		return nil, fmt.Errorf("parse legacy config %s: %w", src, err)
 	}
@@ -97,8 +98,8 @@ func MigrateLegacyIfNeeded() (*MigrationResult, error) {
 		_ = cfg.SetDesktopLanguage(legacy.Lang)
 	}
 	migrateLegacyBaseURL(cfg, legacy.BaseURL)
-	cfg.Plugins = legacyPlugins(legacy)
-	res.Plugins = len(cfg.Plugins)
+	mcpPlugins := legacyPlugins(legacy)
+	res.Plugins = len(mcpPlugins)
 
 	var envLines []string
 	if key := strings.TrimSpace(legacy.APIKey); key != "" {
@@ -116,21 +117,34 @@ func MigrateLegacyIfNeeded() (*MigrationResult, error) {
 	if err := cfg.WriteFile(dest); err != nil {
 		return nil, fmt.Errorf("write %s: %w", dest, err)
 	}
+	// Write MCP to separate mcp.toml
+	if len(mcpPlugins) > 0 {
+		if err := SaveMCPTOML(mcpPlugins); err != nil {
+			res.Warnings = append(res.Warnings, "could not write mcp.toml: "+err.Error())
+		}
+	}
 	if len(envLines) > 0 {
 		if err := writeCredentialsEnv(home, envLines); err != nil {
 			return res, fmt.Errorf("write credentials: %w", err)
 		}
 	}
+	// Copy sessions, archive, memory from old ~/.reasonix to new root
+	migrateDataDirs(filepath.Join(home, ".reasonix"), UserRootDir(), res)
+	writeMigrationRecord(res)
 	return res, nil
 }
 
-func migrateLegacyTOMLIfNeeded(dest, home string) (*MigrationResult, error) {
-	for _, src := range legacyTOMLPaths(dest, home) {
-		if src == "" || filepath.Clean(src) == filepath.Clean(dest) {
-			continue
-		}
+// migrateOldConfigToNew checks old platform-specific config directories and migrates
+// the config to the new ~/.reasonix layout, splitting into config/mcp/skills.
+func migrateOldConfigToNew(dest, home string) (*MigrationResult, error) {
+	for _, oldRoot := range oldLegacyPaths() {
+		src := filepath.Join(oldRoot, "config.toml")
 		if _, err := os.Stat(src); err != nil {
-			continue
+			// Also check the old filename: reasonix.toml in the same dirs
+			src = filepath.Join(oldRoot, "reasonix.toml")
+			if _, err := os.Stat(src); err != nil {
+				continue
+			}
 		}
 		cfg := Default()
 		if err := mergeFile(cfg, src); err != nil {
@@ -140,15 +154,193 @@ func migrateLegacyTOMLIfNeeded(dest, home string) (*MigrationResult, error) {
 		if strings.TrimSpace(cfg.Desktop.CloseBehavior) == "" && strings.TrimSpace(cfg.UI.CloseBehavior) != "" {
 			cfg.Desktop.CloseBehavior = cfg.DesktopCloseBehavior()
 		}
+
+		// Split: core stays in config.toml, plugins → mcp.toml, skills → skills.toml
+		mcpPlugins := cfg.Plugins
+		cfg.Plugins = nil // remove from core config
+
 		if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
 			return nil, fmt.Errorf("create config dir: %w", err)
 		}
 		if err := cfg.WriteFile(dest); err != nil {
 			return nil, fmt.Errorf("write %s: %w", dest, err)
 		}
-		return &MigrationResult{From: src, To: dest, Plugins: len(cfg.Plugins)}, nil
+		if len(mcpPlugins) > 0 {
+			SaveMCPTOML(mcpPlugins)
+		}
+		SaveSkillsTOML(cfg)
+
+		// Copy data dirs
+		migrateDataDirs(oldRoot, UserRootDir(), nil)
+		writeMigrationRecord(&MigrationResult{From: src, To: dest, Plugins: len(mcpPlugins)})
+		return &MigrationResult{From: src, To: dest, Plugins: len(mcpPlugins)}, nil
 	}
 	return nil, nil
+}
+
+// migrateDataDirs copies sessions, archive, and memory from oldRoot to newRoot
+// if the old data exists and the new does not.
+func migrateDataDirs(oldRoot, newRoot string, res *MigrationResult) {
+	if oldRoot == "" || newRoot == "" || filepath.Clean(oldRoot) == filepath.Clean(newRoot) {
+		return
+	}
+	subdirs := []string{"sessions", "archive", "memory"}
+	for _, sub := range subdirs {
+		oldDir := filepath.Join(oldRoot, sub)
+		newDir := filepath.Join(newRoot, sub)
+		if _, err := os.Stat(oldDir); os.IsNotExist(err) {
+			continue
+		}
+		if _, err := os.Stat(newDir); err == nil {
+			continue // already has data
+		}
+		if err := copyDir(oldDir, newDir); err != nil {
+			if res != nil {
+				res.Warnings = append(res.Warnings, fmt.Sprintf("could not copy %s: %v", sub, err))
+			}
+		}
+	}
+}
+
+func copyDir(src, dst string) error {
+	if err := os.MkdirAll(dst, 0o755); err != nil {
+		return err
+	}
+	entries, err := os.ReadDir(src)
+	if err != nil {
+		return err
+	}
+	for _, e := range entries {
+		srcPath := filepath.Join(src, e.Name())
+		dstPath := filepath.Join(dst, e.Name())
+		if e.IsDir() {
+			if err := copyDir(srcPath, dstPath); err != nil {
+				return err
+			}
+			continue
+		}
+		data, err := os.ReadFile(srcPath)
+		if err != nil {
+			continue
+		}
+		os.WriteFile(dstPath, data, 0o644)
+	}
+	return nil
+}
+
+// writeMigrationRecord writes a migration.json to ~/.reasonix recording the event.
+func writeMigrationRecord(r *MigrationResult) {
+	if r == nil {
+		return
+	}
+	record := map[string]any{
+		"from":    r.From,
+		"to":      r.To,
+		"time":    time.Now().UTC().Format(time.RFC3339),
+		"plugins": r.Plugins,
+	}
+	if len(r.Warnings) > 0 {
+		record["warnings"] = r.Warnings
+	}
+	data, err := json.MarshalIndent(record, "", "  ")
+	if err != nil {
+		return
+	}
+	path := MigrationPath()
+	if path != "" {
+		os.MkdirAll(filepath.Dir(path), 0o755)
+		os.WriteFile(path, append(data, '\n'), 0o644)
+	}
+}
+
+// ImportConfigFromPath imports a legacy config file (TOML or .mcp.json) into the
+// global config. Returns counts and errors.
+func ImportConfigFromPath(srcPath string) (imported, skipped int, errors []string) {
+	if _, err := os.Stat(srcPath); os.IsNotExist(err) {
+		errors = append(errors, fmt.Sprintf("file not found: %s", srcPath))
+		return
+	}
+	ext := strings.ToLower(filepath.Ext(srcPath))
+	switch ext {
+	case ".toml":
+		return importTOMLSource(srcPath)
+	case ".json":
+		return importJSONSource(srcPath)
+	default:
+		errors = append(errors, fmt.Sprintf("unsupported file type: %s (expected .toml or .json)", srcPath))
+	}
+	return
+}
+
+func importTOMLSource(srcPath string) (imported, skipped int, errors []string) {
+	src := Default()
+	if err := mergeFile(src, srcPath); err != nil {
+		errors = append(errors, err.Error())
+		return
+	}
+	// MCP: skip name conflicts — existing global entry wins.
+	existing, _ := loadMCPTOML()
+	have := map[string]bool{}
+	for _, p := range existing {
+		have[p.Name] = true
+	}
+	for _, p := range src.Plugins {
+		if have[p.Name] {
+			skipped++
+			continue
+		}
+		if err := UpsertMCPPlugin(p); err != nil {
+			errors = append(errors, fmt.Sprintf("plugin %q: %v", p.Name, err))
+			skipped++
+		} else {
+			have[p.Name] = true
+			imported++
+		}
+	}
+	// Skills: merge into existing skills.toml content.
+	current, _ := loadExistingSkillsForImport()
+	for _, p := range src.Skills.Paths {
+		current.AddSkillPath(p)
+	}
+	for _, name := range src.Skills.DisabledSkills {
+		current.SetSkillEnabled(name, false)
+	}
+	SaveSkillsTOML(current)
+	return
+}
+
+func loadExistingSkillsForImport() (*Config, error) {
+	cfg := Default()
+	loadSkillsTOML(cfg)
+	return cfg, nil
+}
+
+func importJSONSource(srcPath string) (imported, skipped int, errors []string) {
+	entries, err := loadMCPJSON(srcPath)
+	if err != nil {
+		errors = append(errors, err.Error())
+		return
+	}
+	// Check for existing names — skip conflicts, don't overwrite.
+	existing, _ := loadMCPTOML()
+	have := map[string]bool{}
+	for _, p := range existing {
+		have[p.Name] = true
+	}
+	for _, e := range entries {
+		if have[e.Name] {
+			skipped++
+			continue
+		}
+		if err := UpsertMCPPlugin(e); err != nil {
+			errors = append(errors, fmt.Sprintf("plugin %q: %v", e.Name, err))
+			skipped++
+		} else {
+			have[e.Name] = true
+			imported++
+		}
+	}
+	return
 }
 
 func legacyTOMLPaths(dest, home string) []string {
@@ -205,8 +397,6 @@ func legacyPlugins(legacy legacyConfig) []PluginEntry {
 	return out
 }
 
-// normalizeTransport maps the v0.x transport names to v1+ plugin types. stdio is
-// the default, so it returns "" (RenderTOML then omits the field).
 func normalizeTransport(t string) string {
 	switch strings.ToLower(strings.TrimSpace(t)) {
 	case "http", "streamable-http":
@@ -225,8 +415,6 @@ func firstNonEmpty(a, b string) string {
 	return b
 }
 
-// mergeEnv overlays the per-server env map onto the spec's own env (overlay wins,
-// matching v0.x mcpEnv precedence). Returns nil when both are empty.
 func mergeEnv(base, overlay map[string]string) map[string]string {
 	if len(base) == 0 && len(overlay) == 0 {
 		return nil
@@ -241,12 +429,6 @@ func mergeEnv(base, overlay map[string]string) map[string]string {
 	return out
 }
 
-// writeCredentialsEnv merges lines into the reasonix-owned global credentials
-// file (UserCredentialsPath, e.g. %AppData%\reasonix\credentials), replacing any
-// existing assignment of the same key, and pins them into the current process env
-// so the just-built session resolves the key without a restart. Falls back to
-// ~/.env only when the user config dir can't be resolved — never a project .env,
-// so a migration keeps secrets out of the user's project tree.
 func writeCredentialsEnv(home string, lines []string) error {
 	path := UserCredentialsPath()
 	if path == "" {

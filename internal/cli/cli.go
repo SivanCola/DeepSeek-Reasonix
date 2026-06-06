@@ -478,10 +478,11 @@ func chatREPL(args []string) int {
 
 // setupTargets is where the wizard writes: the TOML config and the secrets file.
 // Keys always go to the reasonix-owned global credentials file so they never land
-// in a project's own .env; only the config location is project-local under --local.
+// in a project's own .env.
 type setupTargets struct {
-	config string
-	env    string
+	config  string
+	env     string
+	invalid bool
 }
 
 // defaultConfigTarget is the user-global config file, falling back to a
@@ -502,15 +503,15 @@ func defaultEnvTarget() string {
 	return ".env"
 }
 
-// resolveSetupTargets picks where `reasonix setup` writes. Keys always go to the
-// global env. The config goes to the user-global dir by default, to ./reasonix.toml
-// under --local, or to an explicit path argument when given.
+// resolveSetupTargets picks where `reasonix setup` writes. The config always goes
+// to the global ~/.reasonix/config.toml. --local is deprecated and errors.
 func resolveSetupTargets(args []string) setupTargets {
 	t := setupTargets{config: defaultConfigTarget(), env: defaultEnvTarget()}
 	for _, a := range args {
 		switch a {
 		case "--local", "-l":
-			t.config = "reasonix.toml"
+			fmt.Fprintln(os.Stderr, "error: --local is no longer supported. Configuration is always global (~/.reasonix/). To import an existing project config, use:\n  reasonix config import --from reasonix.toml")
+			return setupTargets{invalid: true}
 		default:
 			t.config = a
 		}
@@ -527,12 +528,15 @@ func displayPath(p string) string {
 }
 
 // setupConfig runs the configuration wizard (the `reasonix setup` command),
-// writing config.toml to the user-global dir (or ./reasonix.toml under --local)
-// and API keys to the reasonix-owned global .env — never a project's own .env.
+// writing config.toml to the user-global dir and API keys to the reasonix-owned
+// global .env — never a project's own .env.
 // Project memory is a separate concern — the in-session `/init` skill generates
 // AGENTS.md (see initHint).
 func setupConfig(args []string) int {
 	t := resolveSetupTargets(args)
+	if t.invalid {
+		return 2
+	}
 	path := t.config
 	if _, err := os.Stat(path); err == nil {
 		// Non-interactive must not clobber an existing config silently.
@@ -1540,15 +1544,90 @@ func configCommand(args []string) int {
 	switch args[0] {
 	case "auto-plan":
 		return configAutoPlanCommand(args[1:])
+	case "paths":
+		return configPathsCommand()
+	case "doctor":
+		return configDoctorCommand()
+	case "import":
+		return configImportCommand(args[1:])
 	default:
 		configUsage()
 		return 2
 	}
 }
 
+func configPathsCommand() int {
+	fmt.Println("Rawsonix configuration paths:")
+	fmt.Println("  root:          ", displayPath(config.UserRootDir()))
+	fmt.Println("  config.toml:   ", displayPath(config.UserConfigPath()))
+	fmt.Println("  mcp.toml:      ", displayPath(config.UserMCPConfigPath()))
+	fmt.Println("  skills.toml:   ", displayPath(config.UserSkillsConfigPath()))
+	fmt.Println("  credentials:   ", displayPath(config.UserCredentialsPath()))
+	fmt.Println("  sessions:      ", displayPath(config.SessionDir()))
+	fmt.Println("  archive:       ", displayPath(config.ArchiveDir()))
+	fmt.Println("  cache:         ", displayPath(config.CacheDir()))
+	fmt.Println("  backups:       ", displayPath(config.BackupDir()))
+	return 0
+}
+
+func configDoctorCommand() int {
+	diags := config.CollectDiagnostics()
+	cfg, err := config.Load()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "config load error: %v\n", err)
+	}
+	_ = cfg
+	config.DetectIgnoredProjectFiles(".")
+	diags = config.CollectDiagnostics()
+	summary := config.RenderDiagnostics(diags)
+	if summary != "" {
+		fmt.Print(summary)
+	} else {
+		fmt.Println("No configuration issues detected.")
+	}
+	fmt.Println("\nGlobal config:", displayPath(config.UserConfigPath()))
+	fmt.Println("MCP config:   ", displayPath(config.UserMCPConfigPath()))
+	fmt.Println("Skills config:", displayPath(config.UserSkillsConfigPath()))
+	return 0
+}
+
+func configImportCommand(args []string) int {
+	if len(args) == 0 {
+		fmt.Fprintln(os.Stderr, "usage: reasonix config import --from <path>")
+		return 2
+	}
+	from := ""
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--from":
+			if i+1 < len(args) {
+				from = args[i+1]
+				i++
+			}
+		default:
+			fmt.Fprintf(os.Stderr, "unknown flag: %s\n", args[i])
+			return 2
+		}
+	}
+	if from == "" {
+		fmt.Fprintln(os.Stderr, "usage: reasonix config import --from <path>")
+		return 2
+	}
+	imported, skipped, errs := config.ImportConfigFromPath(from)
+	if len(errs) > 0 {
+		for _, e := range errs {
+			fmt.Fprintln(os.Stderr, "error:", e)
+		}
+	}
+	fmt.Printf("imported %d, skipped %d from %s\n", imported, skipped, from)
+	if len(errs) > 0 {
+		return 1
+	}
+	return 0
+}
+
 func configAutoPlanCommand(args []string) int {
 	fs := flag.NewFlagSet("config auto-plan", flag.ContinueOnError)
-	local := fs.Bool("local", false, "write ./reasonix.toml instead of the user config")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -1569,31 +1648,9 @@ func configAutoPlanCommand(args []string) int {
 		return 0
 	}
 	path := config.UserConfigPath()
-	if *local {
-		path = "reasonix.toml"
-	}
 	if path == "" {
 		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, "cannot resolve config path")
 		return 1
-	}
-	if *local {
-		if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
-			probe := config.Default()
-			if err := probe.SetAutoPlan(rest[0]); err != nil {
-				fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
-				return 2
-			}
-			mode, err := config.SaveMinimalProjectAutoPlan(path, rest[0])
-			if err != nil {
-				fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
-				return 1
-			}
-			fmt.Printf("auto_plan = %q (%s)\n", mode, displayPath(path))
-			return 0
-		} else if err != nil {
-			fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
-			return 1
-		}
 	}
 	cfg := config.LoadForEdit(path)
 	if err := cfg.SetAutoPlan(rest[0]); err != nil {
@@ -1610,12 +1667,15 @@ func configAutoPlanCommand(args []string) int {
 
 func configUsage() {
 	fmt.Print(`Usage:
-  reasonix config auto-plan [--local] [off|on]
+  reasonix config auto-plan [off|on]
+  reasonix config paths
+  reasonix config doctor
+  reasonix config import --from <path>
 `)
 }
 
 func configAutoPlanUsage() {
 	fmt.Print(`Usage:
-  reasonix config auto-plan [--local] [off|on]
+  reasonix config auto-plan [off|on]
 `)
 }

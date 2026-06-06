@@ -206,10 +206,8 @@ func enableVerb(enabled bool) string {
 
 func (m *chatTUI) skillNew(name string, global bool) {
 	st := m.skillStore()
-	scope := skill.ScopeProject
-	if global || !st.HasProjectScope() {
-		scope = skill.ScopeGlobal
-	}
+	// Skills are always global now; project-scoped skills are no longer supported.
+	scope := skill.ScopeGlobal
 	path, err := st.Create(name, scope)
 	if err != nil {
 		m.notice("skill new: " + err.Error())

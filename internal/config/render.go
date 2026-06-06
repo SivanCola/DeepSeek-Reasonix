@@ -40,7 +40,7 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 	var b strings.Builder
 
 	b.WriteString("# Reasonix configuration.\n")
-	b.WriteString("# Resolution order: flag > ./reasonix.toml > ~/.config/reasonix/config.toml > built-in defaults.\n")
+	b.WriteString("# Resolution order: flag > ~/.reasonix/config.toml > built-in defaults.\n")
 	b.WriteString("# Secrets come from the environment via api_key_env; never put keys here.\n\n")
 
 	fmt.Fprintf(&b, "config_version = %d   # schema marker for diagnostics; old versions may ignore it\n", configVersion(c))
@@ -254,17 +254,7 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 	}
 	b.WriteString("\n")
 
-	b.WriteString("[skills]\n")
-	if len(c.Skills.Paths) > 0 {
-		fmt.Fprintf(&b, "paths = %s   # extra custom skill roots\n", renderStringArray(c.Skills.Paths))
-	} else {
-		b.WriteString("# paths = [\"~/my-skills\", \"../shared/skills\"]   # extra custom skill roots\n")
-	}
-	if disabled := c.DisabledSkillNames(); len(disabled) > 0 {
-		fmt.Fprintf(&b, "disabled_skills = %s   # hidden from the prompt, slash invocation, and skill tools\n\n", renderStringArray(disabled))
-	} else {
-		b.WriteString("# disabled_skills = [\"review\"]   # hide noisy or unwanted skills\n\n")
-	}
+	b.WriteString("# Skills are managed in ~/.reasonix/skills.toml — see `reasonix config doctor`.\n\n")
 
 	b.WriteString("[permissions]\n")
 	b.WriteString("# Per-call gating. mode = writer fallback when no rule matches: ask|allow|deny.\n")
@@ -309,47 +299,7 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 	}
 	b.WriteString("\n")
 
-	b.WriteString("# External MCP servers. type: \"stdio\" (default, a subprocess) | \"http\" | \"sse\".\n")
-	b.WriteString("# ${VAR} / ${VAR:-default} are expanded from the environment in command/args/env/url/headers.\n")
-	if len(c.Plugins) == 0 {
-		b.WriteString("# [[plugins]]\n")
-		b.WriteString("# name    = \"example\"\n")
-		b.WriteString("# command = \"reasonix-plugin-example\"\n")
-		b.WriteString("# [[plugins]]                                  # a remote server over Streamable HTTP\n")
-		b.WriteString("# name    = \"stripe\"\n")
-		b.WriteString("# type    = \"http\"\n")
-		b.WriteString("# url     = \"https://mcp.stripe.com\"\n")
-		b.WriteString("# headers = { Authorization = \"Bearer ${STRIPE_KEY}\" }\n")
-	} else {
-		for _, pl := range c.Plugins {
-			b.WriteString("\n[[plugins]]\n")
-			fmt.Fprintf(&b, "name    = %q\n", pl.Name)
-			if pl.Type != "" {
-				fmt.Fprintf(&b, "type    = %q\n", pl.Type)
-			}
-			if pl.Command != "" {
-				fmt.Fprintf(&b, "command = %q\n", pl.Command)
-			}
-			if len(pl.Args) > 0 {
-				fmt.Fprintf(&b, "args    = %s\n", renderStringArray(pl.Args))
-			}
-			if pl.URL != "" {
-				fmt.Fprintf(&b, "url     = %q\n", pl.URL)
-			}
-			if len(pl.Headers) > 0 {
-				fmt.Fprintf(&b, "headers = %s\n", renderStringMap(pl.Headers))
-			}
-			if len(pl.Env) > 0 {
-				fmt.Fprintf(&b, "env     = %s\n", renderStringMap(pl.Env))
-			}
-			if pl.AutoStart != nil {
-				fmt.Fprintf(&b, "auto_start = %v\n", *pl.AutoStart)
-			}
-			if strings.TrimSpace(pl.Tier) != "" {
-				fmt.Fprintf(&b, "tier    = %q\n", pl.Tier)
-			}
-		}
-	}
+	b.WriteString("# MCP servers are managed in ~/.reasonix/mcp.toml — use `reasonix mcp` commands.\n")
 
 	return b.String()
 }

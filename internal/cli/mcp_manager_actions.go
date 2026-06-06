@@ -211,7 +211,7 @@ func (m chatTUI) applyMCPMode(tier string) (tea.Model, tea.Cmd) {
 		m.notice(fmt.Sprintf("mcp mode: no configured MCP server named %q", v.Name))
 		return m, nil
 	}
-	if err := cfg.Save(); err != nil {
+	if err := config.SaveMCPTOML(cfg.Plugins); err != nil {
 		m.notice("mcp mode: " + err.Error())
 		return m, nil
 	}
@@ -369,16 +369,13 @@ func normalizeMCPTierForCLI(tier string) string {
 }
 
 func mcpConfigLocation() string {
-	if path := config.SourcePath(); path != "" {
+	if path := config.UserMCPConfigPath(); path != "" {
 		return path
-	}
-	if _, err := os.Stat(".mcp.json"); err == nil {
-		return ".mcp.json"
 	}
 	if path := config.UserConfigPath(); path != "" {
 		return path
 	}
-	return "reasonix.toml"
+	return ""
 }
 
 type mcpEditConfigLaunch struct {

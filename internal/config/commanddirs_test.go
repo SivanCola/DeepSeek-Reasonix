@@ -6,10 +6,6 @@ import (
 	"testing"
 )
 
-// TestCommandDirsIncludeConventions verifies command discovery covers the
-// cross-tool convention dirs (so .claude/commands etc. migrate in) and that the
-// canonical .reasonix project dir is highest priority (last, since command.Load
-// lets a later dir win on a name clash).
 func TestCommandDirsIncludeConventions(t *testing.T) {
 	dirs := CommandDirs()
 	joined := strings.Join(dirs, "\n")
@@ -23,8 +19,11 @@ func TestCommandDirsIncludeConventions(t *testing.T) {
 			t.Errorf("CommandDirs missing %q\ngot:\n%s", want, joined)
 		}
 	}
-	// The project's .reasonix/commands must be the highest-priority (last) entry.
-	if last := dirs[len(dirs)-1]; last != filepath.Join(".reasonix", "commands") {
-		t.Errorf("project .reasonix/commands should be highest priority (last), got %q", last)
+	// Home .reasonix/commands or legacy XDG commands must be last.
+	// On macOS the XDG path is ~/Library/Application Support/reasonix/commands.
+	last := dirs[len(dirs)-1]
+	if !strings.HasSuffix(last, filepath.Join(".reasonix", "commands")) &&
+		!strings.Contains(last, filepath.Join("reasonix", "commands")) {
+		t.Errorf("last entry should be a reasonix commands dir, got %q", last)
 	}
 }

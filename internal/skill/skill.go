@@ -148,21 +148,14 @@ type Root struct {
 	Status   PathStatus
 }
 
-// roots returns the discovery directories, highest priority first: the
-// convention dirs (config.ConventionDirs: .reasonix / .agents / .agent / .claude)
-// under the project root → custom paths → the same convention dirs under the home
-// dir. A later root never overrides an earlier one.
+// roots returns the discovery directories, highest priority first: custom paths,
+// then the convention dirs under the home dir. Project roots are no longer scanned.
 func (s *Store) roots() []Root {
 	type de struct {
 		dir   string
 		scope Scope
 	}
 	var dirs []de
-	if s.projectRoot != "" {
-		for _, c := range config.ConventionDirs {
-			dirs = append(dirs, de{filepath.Join(s.projectRoot, c, SkillsDirname), ScopeProject})
-		}
-	}
 	for _, d := range s.customPaths {
 		dirs = append(dirs, de{d, ScopeCustom})
 	}
@@ -372,10 +365,7 @@ func (s *Store) CreateWithContent(name string, scope Scope, content string) (str
 	var root string
 	switch scope {
 	case ScopeProject:
-		if s.projectRoot == "" {
-			return "", fmt.Errorf("project scope requires a workspace — run from a project directory, or use global scope")
-		}
-		root = filepath.Join(s.projectRoot, ".reasonix", SkillsDirname)
+		return "", fmt.Errorf("project-scoped skills are no longer supported — skills are only written to ~/.reasonix/skills/; use scope='global'")
 	default:
 		root = filepath.Join(s.homeDir, ".reasonix", SkillsDirname)
 	}
