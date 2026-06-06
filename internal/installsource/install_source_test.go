@@ -51,6 +51,16 @@ func writeFile(t *testing.T, path, content string) {
 	}
 }
 
+func registeredRoots(actions []action) []string {
+	var roots []string
+	for _, a := range actions {
+		if a.Action == "register_skill_root" {
+			roots = append(roots, a.Source)
+		}
+	}
+	return roots
+}
+
 // stubConnector returns a ConnectMCP closure that records every entry and
 // returns the configured tool count + Disconnect. disconnectCalls counts
 // rollback invocations so tests can assert on ghost-install behavior.
@@ -136,9 +146,75 @@ func TestApplyLocalSkillFileCopiesToProject(t *testing.T) {
 	if resp.Actions[0].RiskLevel != RiskLow {
 		t.Errorf("copy of a single file should be RiskLow, got %q", resp.Actions[0].RiskLevel)
 	}
-	target := filepath.Join(project, ".reasonix", "skills", "beta.md")
+	target := filepath.Join(project, ".reasonix", "skills", "beta", "SKILL.md")
 	if raw, err := os.ReadFile(target); err != nil || !strings.Contains(string(raw), "Beta helper") {
 		t.Fatalf("copied skill = %q err=%v", raw, err)
+	}
+	if resp.Actions[0].CanonicalPath != target || !resp.Actions[0].Discoverable || !resp.Actions[0].Indexed {
+		t.Fatalf("skill verification fields = %+v, want canonical/discoverable/indexed", resp.Actions[0])
+	}
+}
+
+func TestApplyLocalSkillFileDoesNotShadowFlatCompatInstall(t *testing.T) {
+	project := t.TempDir()
+	home := t.TempDir()
+	existing := filepath.Join(project, ".reasonix", "skills", "beta.md")
+	writeFile(t, existing, "---\nname: beta\ndescription: Existing beta\n---\nold")
+	src := filepath.Join(t.TempDir(), "beta.md")
+	writeFile(t, src, "---\nname: beta\ndescription: New beta\n---\nnew")
+
+	tl := NewTool(Options{ProjectRoot: project, HomeDir: home})
+	resp := execInstall(t, tl, map[string]any{
+		"source": src,
+		"kind":   "skill",
+		"apply":  true,
+		"scope":  "project",
+	})
+
+	if resp.OK {
+		t.Fatalf("canonical install should not shadow existing flat skill, got %+v", resp)
+	}
+	if !strings.Contains(resp.Actions[0].Error, "already exists") {
+		t.Fatalf("error = %q, want duplicate guard", resp.Actions[0].Error)
+	}
+}
+
+func TestApplyLocalSKILLFileCopiesSiblingResources(t *testing.T) {
+	project := t.TempDir()
+	home := t.TempDir()
+	srcDir := filepath.Join(t.TempDir(), "frontend-design")
+	writeFile(t, filepath.Join(srcDir, "SKILL.md"), "---\nname: frontend-design\ndescription: Frontend helper\n---\nSee references/style.md")
+	writeFile(t, filepath.Join(srcDir, "references", "style.md"), "# Style\n\nUse crisp layouts.")
+	writeFile(t, filepath.Join(srcDir, "scripts", "lint.sh"), "#!/bin/sh\nexit 0\n")
+
+	tl := NewTool(Options{ProjectRoot: project, HomeDir: home})
+	resp := execInstall(t, tl, map[string]any{
+		"source": filepath.Join(srcDir, "SKILL.md"),
+		"kind":   "skill",
+		"apply":  true,
+		"scope":  "project",
+	})
+
+	if !resp.OK {
+		t.Fatalf("response = %+v", resp)
+	}
+	if resp.Actions[0].RiskLevel != RiskMedium {
+		t.Fatalf("directory package copy should be RiskMedium, got %q", resp.Actions[0].RiskLevel)
+	}
+	target := filepath.Join(project, ".reasonix", "skills", "frontend-design", "SKILL.md")
+	if resp.Actions[0].CanonicalPath != target {
+		t.Fatalf("canonicalPath = %q, want %q", resp.Actions[0].CanonicalPath, target)
+	}
+	if _, err := os.Stat(filepath.Join(project, ".reasonix", "skills", "frontend-design", "references", "style.md")); err != nil {
+		t.Fatalf("reference file should be copied with SKILL.md source: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(project, ".reasonix", "skills", "frontend-design", "scripts", "lint.sh")); err != nil {
+		t.Fatalf("script file should be copied with SKILL.md source: %v", err)
+	}
+	st := skill.New(skill.Options{HomeDir: home, ProjectRoot: project, DisableBuiltins: true})
+	sk, ok := st.Read("frontend-design")
+	if !ok || !strings.Contains(sk.Body, "Use crisp layouts.") {
+		t.Fatalf("installed skill should load copied reference, ok=%v body=%q", ok, sk.Body)
 	}
 }
 
@@ -169,9 +245,72 @@ func TestApplyLocalSkillLinkMode(t *testing.T) {
 	if resp.Actions[0].RiskLevel != RiskMedium && resp.Actions[0].RiskLevel != RiskHigh {
 		t.Errorf("link mode should be at least RiskMedium, got %q", resp.Actions[0].RiskLevel)
 	}
-	target := filepath.Join(project, ".reasonix", "skills", "gamma.md")
+	target := filepath.Join(project, ".reasonix", "skills", "gamma", "SKILL.md")
 	if fi, err := os.Lstat(target); err != nil || fi.Mode()&os.ModeSymlink == 0 {
 		t.Fatalf("target should be a symlink: lstat err=%v mode=%v", err, fi.Mode())
+	}
+}
+
+func TestPlanNestedSkillRootRegistersContainingRoots(t *testing.T) {
+	project := t.TempDir()
+	home := t.TempDir()
+	root := filepath.Join(t.TempDir(), "skill-pack")
+	writeFile(t, filepath.Join(root, "top.md"), "---\nname: top\ndescription: Top helper\n---\nbody")
+	writeFile(t, filepath.Join(root, "superpower", "tool-a", "SKILL.md"), "---\nname: tool-a\ndescription: Tool A\n---\nbody")
+	writeFile(t, filepath.Join(root, "superpower", "tool-b", "SKILL.md"), "---\nname: tool-b\ndescription: Tool B\n---\nbody")
+
+	tl := NewTool(Options{ProjectRoot: project, HomeDir: home})
+	resp := execInstall(t, tl, map[string]any{
+		"source": root,
+		"kind":   "skill",
+		"apply":  true,
+		"scope":  "project",
+	})
+
+	if !resp.OK {
+		t.Fatalf("response = %+v", resp)
+	}
+	if len(resp.Actions) != 2 {
+		t.Fatalf("actions = %+v, want root and nested containing-root registrations", resp.Actions)
+	}
+	registered := map[string][]string{}
+	for _, a := range resp.Actions {
+		registered[a.Source] = a.Skills
+		if !a.Discoverable || !a.Indexed {
+			t.Fatalf("registered action should be verified: %+v", a)
+		}
+	}
+	if got := strings.Join(registered[root], ","); got != "top" {
+		t.Fatalf("root skills = %q, want top", got)
+	}
+	if got := strings.Join(registered[filepath.Join(root, "superpower")], ","); got != "tool-a,tool-b" {
+		t.Fatalf("nested skills = %q, want tool-a,tool-b", got)
+	}
+	st := skill.New(skill.Options{HomeDir: home, ProjectRoot: project, CustomPaths: registeredRoots(resp.Actions), DisableBuiltins: true})
+	for _, name := range []string{"top", "tool-a", "tool-b"} {
+		if _, ok := st.Read(name); !ok {
+			t.Fatalf("%s should be discoverable after registering containing roots", name)
+		}
+	}
+}
+
+func TestPlanNestedSkillRootRespectsDepthLimit(t *testing.T) {
+	project := t.TempDir()
+	home := t.TempDir()
+	root := filepath.Join(t.TempDir(), "deep-pack")
+	writeFile(t, filepath.Join(root, "one", "two", "three", "deep", "SKILL.md"), "---\nname: deep\ndescription: Deep helper\n---\nbody")
+
+	tl := NewTool(Options{ProjectRoot: project, HomeDir: home})
+	raw, _ := json.Marshal(map[string]any{
+		"source": root,
+		"kind":   "skill",
+	})
+	out, err := tl.Execute(context.Background(), raw)
+	if err == nil {
+		t.Fatalf("expected no manifest within depth limit, got %s", out)
+	}
+	if !errors.Is(err, ErrManifestMissing) {
+		t.Fatalf("error = %v, want ErrManifestMissing", err)
 	}
 }
 
@@ -228,6 +367,38 @@ func TestParseSkillContentStrictAllowsMissingDescription(t *testing.T) {
 
 	if _, err := parseSkillContent("---\nname: strict\n---\nbody", "strict", "in-memory", true); err == nil {
 		t.Fatal("strict=true should reject missing description")
+	}
+}
+
+func TestApplyStrictFalseWarnsWhenDescriptionMissing(t *testing.T) {
+	project := t.TempDir()
+	home := t.TempDir()
+	src := filepath.Join(t.TempDir(), "raw.md")
+	writeFile(t, src, "---\nname: raw\n---\nBody without desc")
+
+	tl := NewTool(Options{ProjectRoot: project, HomeDir: home})
+	resp := execInstall(t, tl, map[string]any{
+		"source": src,
+		"kind":   "skill",
+		"apply":  true,
+		"strict": false,
+	})
+
+	if !resp.OK {
+		t.Fatalf("response = %+v", resp)
+	}
+	if !resp.Actions[0].Discoverable || !resp.Actions[0].Indexed {
+		t.Fatalf("raw skill should still be discoverable/indexed with placeholder: %+v", resp.Actions[0])
+	}
+	found := false
+	for _, warning := range append(resp.Warnings, resp.Actions[0].Warnings...) {
+		if strings.Contains(warning, "no description") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("warnings = %v action warnings = %v, want missing description warning", resp.Warnings, resp.Actions[0].Warnings)
 	}
 }
 

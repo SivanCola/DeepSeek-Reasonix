@@ -58,8 +58,24 @@ func (t *installSourceTool) applySkillRoot(req request, act *action) error {
 	}
 	store := skill.New(skill.Options{HomeDir: t.home, ProjectRoot: t.root, CustomPaths: append(cfg.SkillCustomPaths(), act.Source)})
 	for _, name := range act.Skills {
-		if _, ok := store.Read(name); !ok {
+		sk, ok := store.Read(name)
+		if !ok {
 			return newErr(ErrSourceUnreadable, "skill %q was registered but is not discoverable", name)
+		}
+		act.Discoverable = true
+		if act.CanonicalPath == "" && sk.Path != "" {
+			act.CanonicalPath = sk.Path
+		}
+		if strings.TrimSpace(sk.Description) == "" {
+			act.Warnings = append(act.Warnings, fmt.Sprintf("skill %q has no description frontmatter; it is installed but the skills index will use a placeholder", name))
+		}
+	}
+	for _, listed := range store.List() {
+		for _, name := range act.Skills {
+			if listed.Name == name {
+				act.Indexed = true
+				break
+			}
 		}
 	}
 	act.Target = act.Source
@@ -67,36 +83,39 @@ func (t *installSourceTool) applySkillRoot(req request, act *action) error {
 }
 
 // applyCopySkill copies a single skill into the project/global skills dir.
-// We refuse to overwrite an existing target by checking both the planned
-// path and its "alternate" shape (dir vs flat). copyDir uses O_EXCL so any
-// race that slips through the Lstat check still loses atomically.
+// We refuse to overwrite any existing canonical directory or legacy flat file.
+// copyDir uses O_EXCL so any race that slips through the Lstat check still
+// loses atomically.
 func (t *installSourceTool) applyCopySkill(req request, act *action) error {
-	target, err := t.skillTarget(act.skill.Name, req.Scope, act.skill.IsDir)
+	canonical, err := t.skillCanonicalPath(act.skill.Name, req.Scope)
 	if err != nil {
 		return err
 	}
-	if _, err := os.Lstat(target); err == nil {
-		return newErr(ErrAlreadyExists, "skill %q already exists at %s", act.skill.Name, target)
+	targetDir := filepath.Dir(canonical)
+	conflicts, err := t.skillConflictTargets(act.skill.Name, req.Scope)
+	if err != nil {
+		return err
 	}
-	if alt := alternateSkillTarget(target, act.skill.IsDir); alt != "" {
-		if _, err := os.Lstat(alt); err == nil {
-			return newErr(ErrAlreadyExists, "skill %q already exists at %s", act.skill.Name, alt)
+	for _, conflict := range conflicts {
+		if _, err := os.Lstat(conflict); err == nil {
+			return newErr(ErrAlreadyExists, "skill %q already exists at %s", act.skill.Name, conflict)
 		}
 	}
 	if act.skill.IsDir {
-		if err := copyDir(act.skill.SourcePath, target); err != nil {
+		if err := copyDir(act.skill.SourcePath, targetDir); err != nil {
 			return err
 		}
 	} else {
-		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		if err := os.MkdirAll(targetDir, 0o755); err != nil {
 			return err
 		}
-		if err := writeNewFile(target, []byte(act.skill.Content)); err != nil {
+		if err := writeNewFile(canonical, []byte(act.skill.Content)); err != nil {
 			return err
 		}
 	}
-	act.Target = target
-	return t.verifySkill(req.Scope, act.skill.Name)
+	act.Target = canonical
+	act.CanonicalPath = canonical
+	return t.verifySkill(req.Scope, act.skill.Name, act)
 }
 
 // applyLinkSkill creates a symlink in the skills dir pointing at the source.
@@ -104,12 +123,22 @@ func (t *installSourceTool) applyCopySkill(req request, act *action) error {
 // plan was approved: a link-mode skill should not become a backdoor to arbitrary
 // host files.
 func (t *installSourceTool) applyLinkSkill(req request, act *action) error {
-	target, err := t.skillTarget(act.skill.Name, req.Scope, act.skill.IsDir)
+	canonical, err := t.skillCanonicalPath(act.skill.Name, req.Scope)
 	if err != nil {
 		return err
 	}
-	if _, err := os.Lstat(target); err == nil {
-		return newErr(ErrAlreadyExists, "skill %q already exists at %s", act.skill.Name, target)
+	target := canonical
+	if act.skill.IsDir {
+		target = filepath.Dir(canonical)
+	}
+	conflicts, err := t.skillConflictTargets(act.skill.Name, req.Scope)
+	if err != nil {
+		return err
+	}
+	for _, conflict := range conflicts {
+		if _, err := os.Lstat(conflict); err == nil {
+			return newErr(ErrAlreadyExists, "skill %q already exists at %s", act.skill.Name, conflict)
+		}
 	}
 	if !isLinkTargetSafe(act.skill.SourcePath, t.home, t.root) {
 		act.RiskLevel = RiskHigh
@@ -123,7 +152,8 @@ func (t *installSourceTool) applyLinkSkill(req request, act *action) error {
 		return err
 	}
 	act.Target = target
-	return t.verifySkill(req.Scope, act.skill.Name)
+	act.CanonicalPath = canonical
+	return t.verifySkill(req.Scope, act.skill.Name, act)
 }
 
 // isLinkTargetSafe reports whether a symlink source is allowed. The link

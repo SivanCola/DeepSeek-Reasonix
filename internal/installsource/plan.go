@@ -171,15 +171,30 @@ func (t *installSourceTool) localSkillActions(req request, path string, info os.
 		if !strings.EqualFold(filepath.Ext(path), ".md") {
 			return nil, newErr(ErrUnsupportedKind, "not a markdown skill file: %s", path)
 		}
-		cand, err := readSkillFile(path, strings.TrimSuffix(filepath.Base(path), filepath.Ext(path)), strict)
+		fallback := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
+		if strings.EqualFold(filepath.Base(path), skill.SkillFile) {
+			fallback = filepath.Base(filepath.Dir(path))
+		}
+		cand, err := readSkillFile(path, fallback, strict)
 		if err != nil {
 			return nil, err
+		}
+		if strings.EqualFold(filepath.Base(path), skill.SkillFile) {
+			cand.IsDir = true
+			cand.SourcePath = filepath.Dir(path)
+			cand.RootPath = filepath.Dir(filepath.Dir(path))
+		} else {
+			cand.RootPath = filepath.Dir(path)
 		}
 		if req.Name != "" {
 			cand.Name = req.Name
 		}
 		if req.Mode == "register" {
-			return []action{t.skillRootAction(req, filepath.Dir(path), []string{cand.Name})}, nil
+			root := cand.RootPath
+			if root == "" {
+				root = filepath.Dir(path)
+			}
+			return []action{t.skillRootAction(req, root, []string{cand.Name})}, nil
 		}
 		return []action{t.skillAction(req, cand, modeForSingleSkill(req.Mode))}, nil
 	}
@@ -190,6 +205,7 @@ func (t *installSourceTool) localSkillActions(req request, path string, info os.
 		}
 		cand.IsDir = true
 		cand.SourcePath = path
+		cand.RootPath = filepath.Dir(path)
 		if req.Name != "" {
 			cand.Name = req.Name
 		}
@@ -205,17 +221,31 @@ func (t *installSourceTool) localSkillActions(req request, path string, info os.
 	if len(cands) == 0 {
 		return nil, newErr(ErrManifestMissing, "no SKILL.md or <name>.md skills found under %s", path)
 	}
-	names := make([]string, len(cands))
-	for i, c := range cands {
-		names[i] = c.Name
-	}
-	sort.Strings(names)
 	mode := req.Mode
 	if mode == "auto" {
 		mode = "register"
 	}
 	if mode == "register" {
-		return []action{t.skillRootAction(req, path, names)}, nil
+		byRoot := map[string][]string{}
+		for _, cand := range cands {
+			root := cand.RootPath
+			if root == "" {
+				root = path
+			}
+			byRoot[root] = append(byRoot[root], cand.Name)
+		}
+		roots := make([]string, 0, len(byRoot))
+		for root := range byRoot {
+			roots = append(roots, root)
+		}
+		sort.Strings(roots)
+		actions := make([]action, 0, len(roots))
+		for _, root := range roots {
+			rootNames := byRoot[root]
+			sort.Strings(rootNames)
+			actions = append(actions, t.skillRootAction(req, root, rootNames))
+		}
+		return actions, nil
 	}
 	actions := make([]action, 0, len(cands))
 	for _, cand := range cands {
