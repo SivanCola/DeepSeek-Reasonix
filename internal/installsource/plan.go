@@ -2,6 +2,7 @@ package installsource
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"os"
@@ -11,6 +12,8 @@ import (
 
 	"reasonix/internal/skill"
 )
+
+var githubAPIBaseURL = "https://api.github.com"
 
 // plan turns a request into a list of actions plus a warnings slice. It
 // does not touch the disk; the apply phase is responsible for side effects.
@@ -89,25 +92,14 @@ func (t *installSourceTool) tryGitHubRepo(ctx context.Context, req request) ([]a
 	if req.Kind != "auto" && req.Kind != "skill" && req.Kind != "mcp" {
 		return nil, nil
 	}
-	u, err := url.Parse(req.Source)
-	if err != nil || !strings.EqualFold(u.Hostname(), "github.com") {
+	src, ok := parseGitHubRepoSource(req.Source)
+	if !ok {
 		return nil, nil
 	}
-	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
-	if len(parts) < 2 {
-		return nil, nil
-	}
-	owner, repo := parts[0], strings.TrimSuffix(parts[1], ".git")
 	var warnings []string
-	for _, branch := range []string{"main", "master"} {
-		var candidates []string
+	for _, branch := range src.branches() {
 		if req.Kind == "auto" || req.Kind == "mcp" {
-			candidates = append(candidates, fmt.Sprintf("https://raw.githubusercontent.com/%s/%s/%s/.mcp.json", owner, repo, branch))
-		}
-		if req.Kind == "auto" || req.Kind == "skill" {
-			candidates = append(candidates, fmt.Sprintf("https://raw.githubusercontent.com/%s/%s/%s/SKILL.md", owner, repo, branch))
-		}
-		for _, cand := range candidates {
+			cand := fmt.Sprintf("https://raw.githubusercontent.com/%s/%s/%s/%s", src.Owner, src.Repo, branch, joinURLPath(src.Path, ".mcp.json"))
 			actions, _, err := t.planDownloadedURL(ctx, req, cand)
 			if err == nil && len(actions) > 0 {
 				return actions, warnings
@@ -116,8 +108,192 @@ func (t *installSourceTool) tryGitHubRepo(ctx context.Context, req request) ([]a
 				warnings = append(warnings, fmt.Sprintf("%s: %s", cand, err.Error()))
 			}
 		}
+		if req.Kind == "auto" || req.Kind == "skill" {
+			actions, skillWarnings, err := t.planGitHubSkillRepo(ctx, req, src, branch)
+			warnings = append(warnings, skillWarnings...)
+			if err == nil && len(actions) > 0 {
+				return actions, warnings
+			}
+			if err != nil {
+				warnings = append(warnings, fmt.Sprintf("github repo %s/%s@%s: %s", src.Owner, src.Repo, branch, err.Error()))
+			}
+		}
 	}
 	return nil, warnings
+}
+
+type githubRepoSource struct {
+	Owner  string
+	Repo   string
+	Branch string
+	Path   string
+}
+
+func (s githubRepoSource) branches() []string {
+	if s.Branch != "" {
+		return []string{s.Branch}
+	}
+	return []string{"main", "master"}
+}
+
+func parseGitHubRepoSource(source string) (githubRepoSource, bool) {
+	u, err := url.Parse(source)
+	if err != nil || !strings.EqualFold(u.Hostname(), "github.com") {
+		return githubRepoSource{}, false
+	}
+	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
+	if len(parts) < 2 {
+		return githubRepoSource{}, false
+	}
+	out := githubRepoSource{Owner: parts[0], Repo: strings.TrimSuffix(parts[1], ".git")}
+	if len(parts) >= 4 && parts[2] == "tree" {
+		out.Branch = parts[3]
+		if len(parts) > 4 {
+			out.Path = strings.Join(parts[4:], "/")
+		}
+	}
+	return out, true
+}
+
+type githubContentEntry struct {
+	Name        string `json:"name"`
+	Path        string `json:"path"`
+	Type        string `json:"type"`
+	DownloadURL string `json:"download_url"`
+}
+
+func (t *installSourceTool) planGitHubSkillRepo(ctx context.Context, req request, src githubRepoSource, branch string) ([]action, []string, error) {
+	cands, warnings, err := t.scanGitHubSkills(ctx, req, src, branch)
+	if err != nil {
+		return nil, warnings, err
+	}
+	if len(cands) == 0 {
+		return nil, warnings, newErr(ErrManifestMissing, "no SKILL.md or <name>.md skills found under GitHub repo path %s", firstNonEmpty(src.Path, "."))
+	}
+	actions := make([]action, 0, len(cands))
+	for _, cand := range cands {
+		actions = append(actions, t.skillAction(req, cand, "copy"))
+	}
+	sort.Slice(actions, func(i, j int) bool { return actions[i].Name < actions[j].Name })
+	return actions, warnings, nil
+}
+
+func (t *installSourceTool) scanGitHubSkills(ctx context.Context, req request, src githubRepoSource, branch string) ([]skillCandidate, []string, error) {
+	var out []skillCandidate
+	var warnings []string
+	var walk func(path string, depth int) error
+	walk = func(path string, depth int) error {
+		if depth > maxSkillScanDepth {
+			return nil
+		}
+		entries, err := t.fetchGitHubContents(ctx, src, branch, path)
+		if err != nil {
+			return err
+		}
+		sort.Slice(entries, func(i, j int) bool { return entries[i].Path < entries[j].Path })
+		for _, entry := range entries {
+			if len(out) >= maxSkillScanCount {
+				return newErr(ErrInvalidManifest, "too many skills under GitHub repo; limit is %d", maxSkillScanCount)
+			}
+			switch entry.Type {
+			case "dir":
+				if skipSkillRepoDir(entry.Name) {
+					continue
+				}
+				if err := walk(entry.Path, depth+1); err != nil {
+					return err
+				}
+			case "file":
+				cand, ok, warning := t.githubSkillCandidate(ctx, req, entry, src.Repo)
+				if warning != "" {
+					warnings = append(warnings, warning)
+				}
+				if ok {
+					out = append(out, cand)
+				}
+			}
+		}
+		return nil
+	}
+	err := walk(src.Path, 0)
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out, warnings, err
+}
+
+func (t *installSourceTool) githubSkillCandidate(ctx context.Context, req request, entry githubContentEntry, repoName string) (skillCandidate, bool, string) {
+	if entry.DownloadURL == "" {
+		return skillCandidate{}, false, ""
+	}
+	base := filepath.Base(entry.Path)
+	if !strings.EqualFold(filepath.Ext(base), ".md") {
+		return skillCandidate{}, false, ""
+	}
+	fallback := strings.TrimSuffix(base, filepath.Ext(base))
+	if strings.EqualFold(base, skill.SkillFile) {
+		parent := filepath.Base(filepath.Dir(entry.Path))
+		if parent == "." || parent == "" {
+			parent = repoName
+		}
+		fallback = parent
+	}
+	body, err := t.fetchText(ctx, entry.DownloadURL)
+	if err != nil {
+		return skillCandidate{}, false, fmt.Sprintf("%s: %s", entry.DownloadURL, err.Error())
+	}
+	cand, err := parseSkillContent(body, fallback, entry.DownloadURL, req.strict())
+	if err != nil {
+		if strings.EqualFold(base, skill.SkillFile) {
+			return skillCandidate{}, false, err.Error()
+		}
+		return skillCandidate{}, false, ""
+	}
+	cand.SourcePath = entry.DownloadURL
+	cand.Content = body
+	return cand, true, ""
+}
+
+func (t *installSourceTool) fetchGitHubContents(ctx context.Context, src githubRepoSource, branch, path string) ([]githubContentEntry, error) {
+	apiURL, err := url.Parse(strings.TrimRight(githubAPIBaseURL, "/"))
+	if err != nil {
+		return nil, err
+	}
+	apiURL.Path = "/" + joinURLPath(apiURL.Path, "repos", src.Owner, src.Repo, "contents", path)
+	q := apiURL.Query()
+	q.Set("ref", branch)
+	apiURL.RawQuery = q.Encode()
+	body, err := t.fetchText(ctx, apiURL.String())
+	if err != nil {
+		return nil, err
+	}
+	var entries []githubContentEntry
+	if err := json.Unmarshal([]byte(body), &entries); err == nil {
+		return entries, nil
+	}
+	var single githubContentEntry
+	if err := json.Unmarshal([]byte(body), &single); err != nil {
+		return nil, newErr(ErrInvalidManifest, "%s: invalid GitHub contents response: %v", apiURL.String(), err)
+	}
+	return []githubContentEntry{single}, nil
+}
+
+func skipSkillRepoDir(name string) bool {
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "", ".git", ".github", "node_modules", "references", "scripts", "assets":
+		return true
+	default:
+		return false
+	}
+}
+
+func joinURLPath(parts ...string) string {
+	var cleaned []string
+	for _, part := range parts {
+		part = strings.Trim(part, "/")
+		if part != "" {
+			cleaned = append(cleaned, part)
+		}
+	}
+	return strings.Join(cleaned, "/")
 }
 
 func (t *installSourceTool) planLocal(req request, path string, info os.FileInfo) ([]action, []string, error) {

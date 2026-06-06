@@ -851,6 +851,69 @@ func TestPlanGitHubRepoProbesMainAndMaster(t *testing.T) {
 	}
 }
 
+func TestPlanGitHubRepoDiscoversMultipleSkills(t *testing.T) {
+	project := t.TempDir()
+	home := t.TempDir()
+
+	var srv *httptest.Server
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/repos/foo/bar/contents":
+			if r.URL.Query().Get("ref") != "main" {
+				t.Fatalf("ref = %q, want main", r.URL.Query().Get("ref"))
+			}
+			_, _ = fmt.Fprintf(w, `[
+				{"name":"skills","path":"skills","type":"dir"}
+			]`)
+		case "/repos/foo/bar/contents/skills":
+			_, _ = fmt.Fprintf(w, `[
+				{"name":"gsap-core","path":"skills/gsap-core","type":"dir"},
+				{"name":"gsap-timeline","path":"skills/gsap-timeline","type":"dir"}
+			]`)
+		case "/repos/foo/bar/contents/skills/gsap-core":
+			_, _ = fmt.Fprintf(w, `[
+				{"name":"SKILL.md","path":"skills/gsap-core/SKILL.md","type":"file","download_url":%q}
+			]`, srv.URL+"/raw/gsap-core/SKILL.md")
+		case "/repos/foo/bar/contents/skills/gsap-timeline":
+			_, _ = fmt.Fprintf(w, `[
+				{"name":"SKILL.md","path":"skills/gsap-timeline/SKILL.md","type":"file","download_url":%q}
+			]`, srv.URL+"/raw/gsap-timeline/SKILL.md")
+		case "/raw/gsap-core/SKILL.md":
+			_, _ = w.Write([]byte("---\nname: gsap-core\ndescription: GSAP core helper\n---\ncore body"))
+		case "/raw/gsap-timeline/SKILL.md":
+			_, _ = w.Write([]byte("---\nname: gsap-timeline\ndescription: GSAP timeline helper\n---\ntimeline body"))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	oldAPIBase := githubAPIBaseURL
+	githubAPIBaseURL = srv.URL
+	defer func() { githubAPIBaseURL = oldAPIBase }()
+
+	tl := NewTool(Options{ProjectRoot: project, HomeDir: home, HTTPClient: srv.Client()})
+	resp := execInstall(t, tl, map[string]any{
+		"source": "https://github.com/foo/bar",
+		"kind":   "skill",
+	})
+
+	if !resp.OK || resp.Status != "planned" {
+		t.Fatalf("response = %+v", resp)
+	}
+	if len(resp.Actions) != 2 {
+		t.Fatalf("actions = %+v, want two skills", resp.Actions)
+	}
+	if resp.Actions[0].Name != "gsap-core" || resp.Actions[1].Name != "gsap-timeline" {
+		t.Fatalf("actions = %+v", resp.Actions)
+	}
+	for _, action := range resp.Actions {
+		wantSuffix := filepath.Join(action.Name, skill.SkillFile)
+		if action.Layout != "canonical_dir" || !strings.HasSuffix(action.CanonicalPath, wantSuffix) {
+			t.Fatalf("action = %+v, want canonical layout ending in %s", action, wantSuffix)
+		}
+	}
+}
+
 func TestFetchTextAppliesTimeoutAndUA(t *testing.T) {
 	// Use a context with a tiny deadline to assert timeout behavior. We
 	// can't easily test the UA from inside a HandlerFunc, so we just check

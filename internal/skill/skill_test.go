@@ -429,10 +429,15 @@ func TestCreateRefusesOverwrite(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	if !strings.HasSuffix(path, filepath.Join(".reasonix", "skills", "mine.md")) {
+	if !strings.HasSuffix(path, filepath.Join(".reasonix", "skills", "mine", SkillFile)) {
 		t.Errorf("unexpected path %q", path)
 	}
 	if _, err := st.Create("mine", ScopeGlobal); err == nil {
 		t.Error("second create should refuse to overwrite")
+	}
+
+	writeSkill(t, home, ".reasonix/skills/legacy.md", "---\ndescription: legacy\n---\nbody")
+	if _, err := st.Create("legacy", ScopeGlobal); err == nil {
+		t.Error("create should refuse to shadow an existing legacy flat skill")
 	}
 }
