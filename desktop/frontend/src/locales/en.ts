@@ -524,7 +524,13 @@ export const en = {
 
   // assistant message
   "msg.thinking": "thinking",
+  "msg.thinkingRunning": "thinking…",
+  "msg.thinkingDone": "done",
   "msg.copy": "Copy",
+  "turnActions.summary": "Summary",
+  "turnActions.rewind": "Rewind",
+  "notice.info": "Notice",
+  "notice.warning": "Warning",
   "questionNav.label": "Question navigation",
   "questionNav.progress": "Question {current} / {total}",
   "questionNav.jump": "Jump to question {n}",

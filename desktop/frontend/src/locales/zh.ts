@@ -525,7 +525,13 @@ export const zh: Record<DictKey, string> = {
 
   // 助手消息
   "msg.thinking": "思考过程",
+  "msg.thinkingRunning": "思考中…",
+  "msg.thinkingDone": "已完成",
   "msg.copy": "复制",
+  "turnActions.summary": "总结",
+  "turnActions.rewind": "回溯",
+  "notice.info": "提示",
+  "notice.warning": "警告",
   "questionNav.label": "问题导航",
   "questionNav.progress": "问题 {current} / {total}",
   "questionNav.jump": "跳转到问题 {n}",
