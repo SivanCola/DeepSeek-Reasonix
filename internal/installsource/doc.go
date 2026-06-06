@@ -7,8 +7,10 @@
 // The two-phase design exists so the model (or a UI) can inspect a plan before
 // it touches disk or spawns subprocesses. `install_source` deliberately does
 // not run a README's `curl | sh` chain: it locates a concrete manifest
-// (SKILL.md / <name>.md / <name>/SKILL.md / .mcp.json / mcpServers entry) and
-// describes what it would do, and only then does it act on apply=true.
+// (SKILL.md / <name>.md / <name>/SKILL.md / nested skill roots / .mcp.json /
+// mcpServers entry) and describes what it would do, and only then does it act on
+// apply=true. Single skills are written to the canonical <name>/SKILL.md layout;
+// flat <name>.md is treated as compatibility input.
 //
 // Concurrency: each Execute call is independent; the tool does not lock the
 // filesystem. Callers that want to serialize installs (e.g. two parallel calls

@@ -51,6 +51,44 @@ func writeFile(t *testing.T, path, content string) {
 	}
 }
 
+func skillConfigPathForHome(home string) string {
+	return filepath.Join(home, ".reasonix", "skills.toml")
+}
+
+func mcpConfigPathForHome(home string) string {
+	return filepath.Join(home, ".reasonix", "mcp.toml")
+}
+
+func skillInstallPath(home string, elems ...string) string {
+	parts := append([]string{home, ".reasonix", "skills"}, elems...)
+	return filepath.Join(parts...)
+}
+
+func loadSkillsConfigForHome(home string) *config.Config {
+	return config.LoadForEdit(skillConfigPathForHome(home))
+}
+
+func loadMCPConfigForHome(home string) *config.Config {
+	return config.LoadForEdit(mcpConfigPathForHome(home))
+}
+
+func saveMCPConfigForHome(t *testing.T, home string, cfg *config.Config) {
+	t.Helper()
+	if err := writeInstallConfigFile(mcpConfigPathForHome(home), config.RenderMCPTOML(cfg.Plugins)); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func registeredRoots(actions []action) []string {
+	var roots []string
+	for _, a := range actions {
+		if a.Action == "register_skill_root" {
+			roots = append(roots, a.Source)
+		}
+	}
+	return roots
+}
+
 // stubConnector returns a ConnectMCP closure that records every entry and
 // returns the configured tool count + Disconnect. disconnectCalls counts
 // rollback invocations so tests can assert on ghost-install behavior.
@@ -106,7 +144,7 @@ func TestApplyLocalSkillRootRegistersPath(t *testing.T) {
 	if resp.PlanID == "" {
 		t.Error("PlanID should be populated on apply")
 	}
-	cfg := config.LoadForEdit(filepath.Join(home, ".reasonix", "skills.toml"))
+	cfg := loadSkillsConfigForHome(home)
 	if len(cfg.Skills.Paths) != 1 || cfg.Skills.Paths[0] != root {
 		t.Fatalf("skills.paths = %v, want %q", cfg.Skills.Paths, root)
 	}
@@ -136,9 +174,75 @@ func TestApplyLocalSkillFileCopiesToProject(t *testing.T) {
 	if resp.Actions[0].RiskLevel != RiskLow {
 		t.Errorf("copy of a single file should be RiskLow, got %q", resp.Actions[0].RiskLevel)
 	}
-	target := filepath.Join(home, ".reasonix", "skills", "beta.md")
+	target := skillInstallPath(home, "beta", "SKILL.md")
 	if raw, err := os.ReadFile(target); err != nil || !strings.Contains(string(raw), "Beta helper") {
 		t.Fatalf("copied skill = %q err=%v", raw, err)
+	}
+	if resp.Actions[0].CanonicalPath != target || !resp.Actions[0].Discoverable || !resp.Actions[0].Indexed {
+		t.Fatalf("skill verification fields = %+v, want canonical/discoverable/indexed", resp.Actions[0])
+	}
+}
+
+func TestApplyLocalSkillFileDoesNotShadowFlatCompatInstall(t *testing.T) {
+	project := t.TempDir()
+	home := t.TempDir()
+	existing := skillInstallPath(home, "beta.md")
+	writeFile(t, existing, "---\nname: beta\ndescription: Existing beta\n---\nold")
+	src := filepath.Join(t.TempDir(), "beta.md")
+	writeFile(t, src, "---\nname: beta\ndescription: New beta\n---\nnew")
+
+	tl := NewTool(Options{ProjectRoot: project, HomeDir: home})
+	resp := execInstall(t, tl, map[string]any{
+		"source": src,
+		"kind":   "skill",
+		"apply":  true,
+		"scope":  "project",
+	})
+
+	if resp.OK {
+		t.Fatalf("canonical install should not shadow existing flat skill, got %+v", resp)
+	}
+	if !strings.Contains(resp.Actions[0].Error, "already exists") {
+		t.Fatalf("error = %q, want duplicate guard", resp.Actions[0].Error)
+	}
+}
+
+func TestApplyLocalSKILLFileCopiesSiblingResources(t *testing.T) {
+	project := t.TempDir()
+	home := t.TempDir()
+	srcDir := filepath.Join(t.TempDir(), "frontend-design")
+	writeFile(t, filepath.Join(srcDir, "SKILL.md"), "---\nname: frontend-design\ndescription: Frontend helper\n---\nSee references/style.md")
+	writeFile(t, filepath.Join(srcDir, "references", "style.md"), "# Style\n\nUse crisp layouts.")
+	writeFile(t, filepath.Join(srcDir, "scripts", "lint.sh"), "#!/bin/sh\nexit 0\n")
+
+	tl := NewTool(Options{ProjectRoot: project, HomeDir: home})
+	resp := execInstall(t, tl, map[string]any{
+		"source": filepath.Join(srcDir, "SKILL.md"),
+		"kind":   "skill",
+		"apply":  true,
+		"scope":  "project",
+	})
+
+	if !resp.OK {
+		t.Fatalf("response = %+v", resp)
+	}
+	if resp.Actions[0].RiskLevel != RiskMedium {
+		t.Fatalf("directory package copy should be RiskMedium, got %q", resp.Actions[0].RiskLevel)
+	}
+	target := skillInstallPath(home, "frontend-design", "SKILL.md")
+	if resp.Actions[0].CanonicalPath != target {
+		t.Fatalf("canonicalPath = %q, want %q", resp.Actions[0].CanonicalPath, target)
+	}
+	if _, err := os.Stat(skillInstallPath(home, "frontend-design", "references", "style.md")); err != nil {
+		t.Fatalf("reference file should be copied with SKILL.md source: %v", err)
+	}
+	if _, err := os.Stat(skillInstallPath(home, "frontend-design", "scripts", "lint.sh")); err != nil {
+		t.Fatalf("script file should be copied with SKILL.md source: %v", err)
+	}
+	st := skill.New(skill.Options{HomeDir: home, ProjectRoot: project, DisableBuiltins: true})
+	sk, ok := st.Read("frontend-design")
+	if !ok || !strings.Contains(sk.Body, "Use crisp layouts.") {
+		t.Fatalf("installed skill should load copied reference, ok=%v body=%q", ok, sk.Body)
 	}
 }
 
@@ -169,9 +273,72 @@ func TestApplyLocalSkillLinkMode(t *testing.T) {
 	if resp.Actions[0].RiskLevel != RiskMedium && resp.Actions[0].RiskLevel != RiskHigh {
 		t.Errorf("link mode should be at least RiskMedium, got %q", resp.Actions[0].RiskLevel)
 	}
-	target := filepath.Join(home, ".reasonix", "skills", "gamma.md")
+	target := skillInstallPath(home, "gamma", "SKILL.md")
 	if fi, err := os.Lstat(target); err != nil || fi.Mode()&os.ModeSymlink == 0 {
 		t.Fatalf("target should be a symlink: lstat err=%v mode=%v", err, fi.Mode())
+	}
+}
+
+func TestPlanNestedSkillRootRegistersContainingRoots(t *testing.T) {
+	project := t.TempDir()
+	home := t.TempDir()
+	root := filepath.Join(t.TempDir(), "skill-pack")
+	writeFile(t, filepath.Join(root, "top.md"), "---\nname: top\ndescription: Top helper\n---\nbody")
+	writeFile(t, filepath.Join(root, "superpower", "tool-a", "SKILL.md"), "---\nname: tool-a\ndescription: Tool A\n---\nbody")
+	writeFile(t, filepath.Join(root, "superpower", "tool-b", "SKILL.md"), "---\nname: tool-b\ndescription: Tool B\n---\nbody")
+
+	tl := NewTool(Options{ProjectRoot: project, HomeDir: home})
+	resp := execInstall(t, tl, map[string]any{
+		"source": root,
+		"kind":   "skill",
+		"apply":  true,
+		"scope":  "project",
+	})
+
+	if !resp.OK {
+		t.Fatalf("response = %+v", resp)
+	}
+	if len(resp.Actions) != 2 {
+		t.Fatalf("actions = %+v, want root and nested containing-root registrations", resp.Actions)
+	}
+	registered := map[string][]string{}
+	for _, a := range resp.Actions {
+		registered[a.Source] = a.Skills
+		if !a.Discoverable || !a.Indexed {
+			t.Fatalf("registered action should be verified: %+v", a)
+		}
+	}
+	if got := strings.Join(registered[root], ","); got != "top" {
+		t.Fatalf("root skills = %q, want top", got)
+	}
+	if got := strings.Join(registered[filepath.Join(root, "superpower")], ","); got != "tool-a,tool-b" {
+		t.Fatalf("nested skills = %q, want tool-a,tool-b", got)
+	}
+	st := skill.New(skill.Options{HomeDir: home, ProjectRoot: project, CustomPaths: registeredRoots(resp.Actions), DisableBuiltins: true})
+	for _, name := range []string{"top", "tool-a", "tool-b"} {
+		if _, ok := st.Read(name); !ok {
+			t.Fatalf("%s should be discoverable after registering containing roots", name)
+		}
+	}
+}
+
+func TestPlanNestedSkillRootRespectsDepthLimit(t *testing.T) {
+	project := t.TempDir()
+	home := t.TempDir()
+	root := filepath.Join(t.TempDir(), "deep-pack")
+	writeFile(t, filepath.Join(root, "one", "two", "three", "deep", "SKILL.md"), "---\nname: deep\ndescription: Deep helper\n---\nbody")
+
+	tl := NewTool(Options{ProjectRoot: project, HomeDir: home})
+	raw, _ := json.Marshal(map[string]any{
+		"source": root,
+		"kind":   "skill",
+	})
+	out, err := tl.Execute(context.Background(), raw)
+	if err == nil {
+		t.Fatalf("expected no manifest within depth limit, got %s", out)
+	}
+	if !errors.Is(err, ErrManifestMissing) {
+		t.Fatalf("error = %v, want ErrManifestMissing", err)
 	}
 }
 
@@ -228,6 +395,38 @@ func TestParseSkillContentStrictAllowsMissingDescription(t *testing.T) {
 
 	if _, err := parseSkillContent("---\nname: strict\n---\nbody", "strict", "in-memory", true); err == nil {
 		t.Fatal("strict=true should reject missing description")
+	}
+}
+
+func TestApplyStrictFalseWarnsWhenDescriptionMissing(t *testing.T) {
+	project := t.TempDir()
+	home := t.TempDir()
+	src := filepath.Join(t.TempDir(), "raw.md")
+	writeFile(t, src, "---\nname: raw\n---\nBody without desc")
+
+	tl := NewTool(Options{ProjectRoot: project, HomeDir: home})
+	resp := execInstall(t, tl, map[string]any{
+		"source": src,
+		"kind":   "skill",
+		"apply":  true,
+		"strict": false,
+	})
+
+	if !resp.OK {
+		t.Fatalf("response = %+v", resp)
+	}
+	if !resp.Actions[0].Discoverable || !resp.Actions[0].Indexed {
+		t.Fatalf("raw skill should still be discoverable/indexed with placeholder: %+v", resp.Actions[0])
+	}
+	found := false
+	for _, warning := range append(resp.Warnings, resp.Actions[0].Warnings...) {
+		if strings.Contains(warning, "no description") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("warnings = %v action warnings = %v, want missing description warning", resp.Warnings, resp.Actions[0].Warnings)
 	}
 }
 
@@ -371,7 +570,7 @@ func TestApplyRemoteMCPURLConnectsAndPersists(t *testing.T) {
 	if resp.Actions[0].RiskLevel != RiskHigh {
 		t.Errorf("auth headers should produce RiskHigh, got %q", resp.Actions[0].RiskLevel)
 	}
-	cfg := config.LoadForEdit(filepath.Join(home, ".reasonix", "mcp.toml"))
+	cfg := loadMCPConfigForHome(home)
 	if len(cfg.Plugins) != 1 || cfg.Plugins[0].Headers["Authorization"] != "Bearer ${TOKEN}" {
 		t.Fatalf("plugins = %+v", cfg.Plugins)
 	}
@@ -381,13 +580,11 @@ func TestApplyMCPRejectsDuplicateByDefault(t *testing.T) {
 	project := t.TempDir()
 	home := t.TempDir()
 	// Seed an existing entry the same way the first install would have.
-	cfg := config.LoadForEdit(filepath.Join(home, ".reasonix", "mcp.toml"))
+	cfg := loadMCPConfigForHome(home)
 	if err := cfg.UpsertPlugin(config.PluginEntry{Name: "dup", Command: "x"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeInstallConfigFile(filepath.Join(home, ".reasonix", "mcp.toml"), config.RenderMCPTOML(cfg.Plugins)); err != nil {
-		t.Fatal(err)
-	}
+	saveMCPConfigForHome(t, home, cfg)
 
 	stub := &stubConnector{toolCount: 1, failOnName: "dup"}
 	tl := NewTool(Options{ProjectRoot: project, HomeDir: home, ConnectMCP: stub.connector()})
@@ -410,13 +607,11 @@ func TestApplyMCPRejectsDuplicateByDefault(t *testing.T) {
 func TestApplyMCPReplaceOverwritesExisting(t *testing.T) {
 	project := t.TempDir()
 	home := t.TempDir()
-	cfg := config.LoadForEdit(filepath.Join(home, ".reasonix", "mcp.toml"))
+	cfg := loadMCPConfigForHome(home)
 	if err := cfg.UpsertPlugin(config.PluginEntry{Name: "editable", Command: "old"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeInstallConfigFile(filepath.Join(home, ".reasonix", "mcp.toml"), config.RenderMCPTOML(cfg.Plugins)); err != nil {
-		t.Fatal(err)
-	}
+	saveMCPConfigForHome(t, home, cfg)
 
 	stub := &stubConnector{toolCount: 1}
 	tl := NewTool(Options{ProjectRoot: project, HomeDir: home, ConnectMCP: stub.connector()})
@@ -432,7 +627,7 @@ func TestApplyMCPReplaceOverwritesExisting(t *testing.T) {
 	if !resp.OK {
 		t.Fatalf("response = %+v", resp)
 	}
-	reloaded := config.LoadForEdit(filepath.Join(home, ".reasonix", "mcp.toml"))
+	reloaded := loadMCPConfigForHome(home)
 	if reloaded.Plugins[0].Command != "" || reloaded.Plugins[0].URL != "https://mcp.example.com/mcp" {
 		t.Errorf("replace did not update entry: %+v", reloaded.Plugins[0])
 	}
@@ -441,13 +636,11 @@ func TestApplyMCPReplaceOverwritesExisting(t *testing.T) {
 func TestApplyMCPReplaceDisconnectsLiveServerBeforeConnect(t *testing.T) {
 	project := t.TempDir()
 	home := t.TempDir()
-	cfg := config.LoadForEdit(filepath.Join(home, ".reasonix", "mcp.toml"))
+	cfg := loadMCPConfigForHome(home)
 	if err := cfg.UpsertPlugin(config.PluginEntry{Name: "live", Command: "old"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeInstallConfigFile(filepath.Join(home, ".reasonix", "mcp.toml"), config.RenderMCPTOML(cfg.Plugins)); err != nil {
-		t.Fatal(err)
-	}
+	saveMCPConfigForHome(t, home, cfg)
 
 	var liveConnected atomic.Bool
 	liveConnected.Store(true)
@@ -493,16 +686,15 @@ func TestApplyMCPReplaceDisconnectsLiveServerBeforeConnect(t *testing.T) {
 func TestApplyMCPRollsBackOnSaveFailure(t *testing.T) {
 	project := t.TempDir()
 	home := t.TempDir()
-	// Pre-create a readable but unwritable config file so load succeeds and
-	// persistence fails after the live connection has been established.
-	mcpPath := filepath.Join(home, ".reasonix", "mcp.toml")
-	if err := os.MkdirAll(filepath.Dir(mcpPath), 0o755); err != nil {
+	// Make the config readable during loadConfig, then make the file
+	// unwritable so persistence fails after the live MCP connect succeeds.
+	writeFile(t, mcpConfigPathForHome(home), "# empty mcp config\n")
+	if err := os.Chmod(mcpConfigPathForHome(home), 0o400); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(mcpPath, []byte(""), 0o400); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.Chmod(mcpPath, 0o600) })
+	defer func() {
+		_ = os.Chmod(mcpConfigPathForHome(home), 0o600)
+	}()
 
 	var disconnects atomic.Int32
 	stub := &stubConnector{toolCount: 2, disconnectCalls: &disconnects}
@@ -547,7 +739,7 @@ func TestApplyConnectFailureDoesNotPersist(t *testing.T) {
 	if resp.OK {
 		t.Fatalf("expected connect failure, got %+v", resp)
 	}
-	cfg := config.LoadForEdit(filepath.Join(home, ".reasonix", "mcp.toml"))
+	cfg := loadMCPConfigForHome(home)
 	if len(cfg.Plugins) != 0 {
 		t.Errorf("no plugin should be persisted on connect failure, got %+v", cfg.Plugins)
 	}
@@ -714,7 +906,7 @@ func TestPlanMarkdownSkillURL(t *testing.T) {
 func TestUninstallRemovesSkillByName(t *testing.T) {
 	project := t.TempDir()
 	home := t.TempDir()
-	target := filepath.Join(home, ".reasonix", "skills", "doomed.md")
+	target := skillInstallPath(home, "doomed.md")
 	writeFile(t, target, "---\nname: doomed\ndescription: Doomed\n---\nbody")
 
 	tl := NewTool(Options{ProjectRoot: project, HomeDir: home})
@@ -761,7 +953,7 @@ func TestUninstallRemovesRegisteredSkillRootByContainedSkillName(t *testing.T) {
 	if resp.Actions[0].SkillCount != 2 {
 		t.Errorf("SkillCount = %d, want 2", resp.Actions[0].SkillCount)
 	}
-	cfg := config.LoadForEdit(filepath.Join(home, ".reasonix", "skills.toml"))
+	cfg := loadSkillsConfigForHome(home)
 	if len(cfg.Skills.Paths) != 0 {
 		t.Fatalf("skills.paths should be empty after root uninstall, got %v", cfg.Skills.Paths)
 	}
@@ -770,13 +962,11 @@ func TestUninstallRemovesRegisteredSkillRootByContainedSkillName(t *testing.T) {
 func TestUninstallRemovesMCPAndDisconnects(t *testing.T) {
 	project := t.TempDir()
 	home := t.TempDir()
-	cfg := config.LoadForEdit(filepath.Join(home, ".reasonix", "mcp.toml"))
+	cfg := loadMCPConfigForHome(home)
 	if err := cfg.UpsertPlugin(config.PluginEntry{Name: "ed", Type: "http", URL: "https://mcp.example.com/mcp"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeInstallConfigFile(filepath.Join(home, ".reasonix", "mcp.toml"), config.RenderMCPTOML(cfg.Plugins)); err != nil {
-		t.Fatal(err)
-	}
+	saveMCPConfigForHome(t, home, cfg)
 
 	var disconnects atomic.Int32
 	tl := NewTool(Options{
@@ -799,7 +989,7 @@ func TestUninstallRemovesMCPAndDisconnects(t *testing.T) {
 	if disconnects.Load() != 1 {
 		t.Errorf("OnDisconnect should fire once, got %d", disconnects.Load())
 	}
-	reloaded := config.LoadForEdit(filepath.Join(home, ".reasonix", "mcp.toml"))
+	reloaded := loadMCPConfigForHome(home)
 	if len(reloaded.Plugins) != 0 {
 		t.Errorf("plugin should be removed, got %+v", reloaded.Plugins)
 	}
@@ -1018,7 +1208,7 @@ func TestApplyLocalExecutableHonorsCommandOverride(t *testing.T) {
 	if len(stub.connected) != 1 || stub.connected[0].Command != "node" || len(stub.connected[0].Args) != 1 || stub.connected[0].Args[0] != server {
 		t.Fatalf("connected entry = %+v, want node [%s]", stub.connected, server)
 	}
-	cfg := config.LoadForEdit(filepath.Join(home, ".reasonix", "mcp.toml"))
+	cfg := loadMCPConfigForHome(home)
 	if len(cfg.Plugins) != 1 || cfg.Plugins[0].Command != "node" || len(cfg.Plugins[0].Args) != 1 || cfg.Plugins[0].Args[0] != server {
 		t.Fatalf("persisted plugins = %+v, want node [%s]", cfg.Plugins, server)
 	}
