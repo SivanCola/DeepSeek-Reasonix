@@ -247,6 +247,7 @@ api_key_env = "REASONIX_TEST_KEY_UNSET"
 	}
 }
 
+<<<<<<< HEAD
 func TestBuildMigratesLegacyMCPStartupTier(t *testing.T) {
 	homeDir := isolateConfigHome(t)
 	dir := t.TempDir()
@@ -288,6 +289,8 @@ tier = "eager"
 	}
 }
 
+=======
+>>>>>>> origin/codex/mcp-auto-background-migration
 // TestBuildWithoutMemoryLeavesPromptUnchanged is the inverse invariant: with no
 // memory files, the system prompt is exactly the configured base — the cache
 // prefix is untouched by the memory feature.
@@ -602,7 +605,11 @@ func TestBuildMigratesLegacyEagerTierToBackground(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
 
+<<<<<<< HEAD
 	writeFile(t, filepath.Join(homeDir, ".reasonix"), "config.toml", fmt.Sprintf(`
+=======
+	writeFile(t, dir, "reasonix.toml", `
+>>>>>>> origin/codex/mcp-auto-background-migration
 default_model = "test-model"
 
 [codegraph]
@@ -619,12 +626,10 @@ model = "x"
 api_key_env = "REASONIX_TEST_KEY_UNSET"
 
 [[plugins]]
-name = "eagermock"
-command = %q
-args = ["-test.run=TestHelperProcess", "--"]
+name = "legacy-eager"
+command = "reasonix-missing-legacy-eager-mcp"
 tier = "eager"
-env = { GO_WANT_HELPER_PROCESS = "1" }
-`, os.Args[0]))
+`)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
@@ -634,11 +639,16 @@ env = { GO_WANT_HELPER_PROCESS = "1" }
 	}
 	defer ctrl.Close()
 
-	if !waitForMCPServerName(ctrl.Host(), "eagermock", 2*time.Second) {
-		t.Fatalf("legacy eager plugin did not connect in the background; names = %v", ctrl.Host().ServerNames())
+	failures := waitForMCPFailure(t, ctrl.Host(), "legacy-eager", 2*time.Second)
+	if len(failures) != 1 || failures[0].Name != "legacy-eager" {
+		t.Fatalf("failures = %+v, want background startup failure for migrated legacy eager plugin", failures)
 	}
-	if got := ctrl.Host().Failures(); len(got) != 0 {
-		t.Fatalf("Host.Failures() = %+v, want empty for a healthy migrated plugin", got)
+	raw, err := os.ReadFile(filepath.Join(dir, "reasonix.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "\ntier") {
+		t.Fatalf("legacy eager tier should be removed during load:\n%s", raw)
 	}
 }
 
@@ -647,7 +657,11 @@ func TestBuildMigratesLegacyLazyTierToBackground(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
 
+<<<<<<< HEAD
 	writeFile(t, filepath.Join(homeDir, ".reasonix"), "config.toml", fmt.Sprintf(`
+=======
+	writeFile(t, dir, "reasonix.toml", `
+>>>>>>> origin/codex/mcp-auto-background-migration
 default_model = "test-model"
 
 [codegraph]
@@ -664,12 +678,10 @@ model = "x"
 api_key_env = "REASONIX_TEST_KEY_UNSET"
 
 [[plugins]]
-name = "lazymock"
-command = %q
-args = ["-test.run=TestHelperProcess", "--"]
+name = "legacy-lazy"
+command = "reasonix-missing-legacy-lazy-mcp"
 tier = "lazy"
-env = { GO_WANT_HELPER_PROCESS = "1" }
-`, os.Args[0]))
+`)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
@@ -679,11 +691,16 @@ env = { GO_WANT_HELPER_PROCESS = "1" }
 	}
 	defer ctrl.Close()
 
-	if !waitForMCPServerName(ctrl.Host(), "lazymock", 2*time.Second) {
-		t.Fatalf("legacy lazy plugin did not connect in the background; names = %v", ctrl.Host().ServerNames())
+	failures := waitForMCPFailure(t, ctrl.Host(), "legacy-lazy", 2*time.Second)
+	if len(failures) != 1 || failures[0].Name != "legacy-lazy" {
+		t.Fatalf("failures = %+v, want background startup failure for migrated legacy lazy plugin", failures)
 	}
-	if got := ctrl.Host().Failures(); len(got) != 0 {
-		t.Fatalf("Host.Failures() = %+v, want empty for a healthy migrated plugin", got)
+	raw, err := os.ReadFile(filepath.Join(dir, "reasonix.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "\ntier") {
+		t.Fatalf("legacy lazy tier should be removed during load:\n%s", raw)
 	}
 }
 
@@ -818,21 +835,6 @@ tier = "eager"
 	}
 	if foundDemoteNotice {
 		t.Fatalf("legacy tier should be migrated before demotion logic; got notices %+v", notices)
-	}
-}
-
-func waitForMCPServerName(h *plugin.Host, name string, timeout time.Duration) bool {
-	deadline := time.Now().Add(timeout)
-	for {
-		for _, n := range h.ServerNames() {
-			if n == name {
-				return true
-			}
-		}
-		if time.Now().After(deadline) {
-			return false
-		}
-		time.Sleep(10 * time.Millisecond)
 	}
 }
 
