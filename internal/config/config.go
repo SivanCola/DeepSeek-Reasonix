@@ -1041,6 +1041,28 @@ func (c *Config) ResolveModel(ref string) (*ProviderEntry, bool) {
 	return nil, false
 }
 
+// ResolveModelWithFallback resolves a model reference to a canonical "provider/model"
+// string. When ref doesn't resolve (stale after provider deletion, etc.) it falls
+// back to the first provider with models. Returns:
+//   - resolvedRef: "provider/model" ready for boot.Build
+//   - fallback: true when the original ref was invalid and a substitute was picked
+//   - ok: false when no provider with models exists at all
+func (c *Config) ResolveModelWithFallback(ref string) (resolvedRef string, fallback bool, ok bool) {
+	if ref != "" {
+		if e, found := c.ResolveModel(ref); found {
+			return e.Name + "/" + e.Model, false, true
+		}
+	}
+	for i := range c.Providers {
+		p := &c.Providers[i]
+		if len(p.ModelList()) == 0 {
+			continue
+		}
+		return p.Name + "/" + p.DefaultModel(), true, true
+	}
+	return "", false, false
+}
+
 // APIKey resolves the entry's API key from its api_key_env.
 func (e *ProviderEntry) APIKey() string {
 	if e.APIKeyEnv == "" {

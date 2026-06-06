@@ -399,6 +399,90 @@ func TestSetEffortRejectsRunningTurn(t *testing.T) {
 	waitNotRunning(t, app.activeCtrl())
 }
 
+func TestSyncAllTabModelsToDefaultReturnsTabErrors(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	t.Setenv("DEEPSEEK_API_KEY", "sk-test")
+
+	runner := &blockingRunner{started: make(chan struct{}), release: make(chan struct{})}
+	ctrl := control.New(control.Options{Runner: runner})
+	app := NewApp()
+	app.ctx = context.Background()
+	app.readyHook = func() {}
+	app.tabs = map[string]*WorkspaceTab{
+		"running": {
+			ID:          "running",
+			Scope:       "global",
+			Ctrl:        ctrl,
+			Ready:       true,
+			model:       "deepseek-pro/deepseek-v4-pro",
+			disabledMCP: map[string]ServerView{},
+		},
+	}
+	app.tabOrder = []string{"running"}
+	app.activeTabID = "running"
+
+	ctrl.Submit("work")
+	<-runner.started
+
+	err := app.SyncAllTabModelsToDefault()
+	if err == nil || !strings.Contains(err.Error(), "running") || !strings.Contains(err.Error(), "finish or cancel") {
+		t.Fatalf("SyncAllTabModelsToDefault error = %v, want tab-specific running error", err)
+	}
+
+	close(runner.release)
+	waitNotRunning(t, ctrl)
+}
+
+func TestDeleteProviderRebuildsInactiveAffectedTab(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	t.Setenv("DEEPSEEK_API_KEY", "sk-test")
+
+	oldActive := control.New(control.Options{Label: "old-active"})
+	oldInactive := control.New(control.Options{Label: "old-inactive"})
+	defer oldActive.Close()
+	defer oldInactive.Close()
+
+	app := NewApp()
+	app.ctx = context.Background()
+	app.readyHook = func() {}
+	app.tabs = map[string]*WorkspaceTab{
+		"active": {
+			ID:          "active",
+			Scope:       "global",
+			Ctrl:        oldActive,
+			Ready:       true,
+			model:       "deepseek-pro/deepseek-v4-pro",
+			disabledMCP: map[string]ServerView{},
+		},
+		"inactive": {
+			ID:          "inactive",
+			Scope:       "global",
+			Ctrl:        oldInactive,
+			Ready:       true,
+			model:       "deepseek-flash/deepseek-v4-flash",
+			disabledMCP: map[string]ServerView{},
+		},
+	}
+	app.tabOrder = []string{"active", "inactive"}
+	app.activeTabID = "active"
+
+	if err := app.DeleteProvider("deepseek-flash"); err != nil {
+		t.Fatalf("DeleteProvider: %v", err)
+	}
+	if got := app.tabs["inactive"].model; got != "deepseek-pro/deepseek-v4-pro" {
+		t.Fatalf("inactive model = %q, want fallback deepseek-pro/deepseek-v4-pro", got)
+	}
+	if app.tabs["inactive"].Ctrl == oldInactive {
+		t.Fatal("inactive tab controller should be rebuilt after its provider is removed")
+	}
+	if app.tabs["active"].Ctrl != oldActive {
+		t.Fatal("unaffected active tab should not be rebuilt")
+	}
+	if _, ok := config.LoadForEdit(config.UserConfigPath()).Provider("deepseek-flash"); ok {
+		t.Fatal("deepseek-flash provider should be removed from user config")
+	}
+}
+
 func TestSearchFileRefsFindsNestedBasename(t *testing.T) {
 	orig, _ := os.Getwd()
 	defer os.Chdir(orig)

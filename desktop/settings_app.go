@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -100,6 +101,12 @@ type SettingsView struct {
 	// Bypass is the live YOLO state (runtime-only, not from config), so the panel's
 	// toggle reflects whether approvals are currently being skipped this session.
 	Bypass bool `json:"bypass"`
+	// Model health diagnostics (read-only).
+	CurrentModel      string `json:"currentModel"`
+	CurrentModelValid bool   `json:"currentModelValid"`
+	DefaultModelValid bool   `json:"defaultModelValid"`
+	PlannerModelValid bool   `json:"plannerModelValid"`
+	ModelWarning      string `json:"modelWarning,omitempty"`
 }
 
 func nonNil(s []string) []string {
@@ -236,6 +243,35 @@ func (a *App) Settings() SettingsView {
 			DefaultEffort:     p.DefaultEffort,
 		})
 	}
+
+	// Model health diagnostics.
+	a.mu.RLock()
+	if tab := a.activeTabLocked(); tab != nil {
+		v.CurrentModel = tab.model
+	}
+	a.mu.RUnlock()
+	defaultCanonical := cfg.DefaultModel
+	if e, ok := cfg.ResolveModel(cfg.DefaultModel); ok {
+		defaultCanonical = e.Name + "/" + e.Model
+	}
+	currentCanonical := v.CurrentModel
+	if e, ok := cfg.ResolveModel(v.CurrentModel); ok {
+		currentCanonical = e.Name + "/" + e.Model
+	}
+	_, v.DefaultModelValid = cfg.ResolveModel(cfg.DefaultModel)
+	_, v.PlannerModelValid = cfg.ResolveModel(cfg.Agent.PlannerModel)
+	v.CurrentModelValid = v.CurrentModel == "" ||
+		func() bool { _, ok := cfg.ResolveModel(v.CurrentModel); return ok }()
+	if currentCanonical != "" && currentCanonical != defaultCanonical {
+		v.ModelWarning = "current session model differs from default model"
+	}
+	if !v.CurrentModelValid && v.CurrentModel != "" {
+		v.ModelWarning = "current session model is no longer available"
+	}
+	if !v.DefaultModelValid {
+		v.ModelWarning = "default model is no longer available"
+	}
+
 	return v
 }
 
@@ -346,11 +382,11 @@ func (a *App) rebuild() error {
 	}
 	model := tab.model
 	if cfg, err := config.LoadForRoot(tab.WorkspaceRoot); err == nil {
-		if _, ok := cfg.ResolveModel(model); !ok {
-			model = cfg.DefaultModel
-			if e, ok := cfg.ResolveModel(model); ok {
-				model = e.Name + "/" + e.Model
+		if resolved, fallback, resOK := cfg.ResolveModelWithFallback(model); resOK {
+			if fallback {
+				a.noticeForTab(tab.ID, fmt.Sprintf("model %q is no longer available — switched to %s", model, resolved))
 			}
+			model = resolved
 		}
 	}
 	ctrl, err := boot.Build(a.bootContext(), boot.Options{
@@ -487,6 +523,61 @@ func (a *App) SetSubagentEffort(level string) error {
 		c.Agent.SubagentEffort = effort
 		return nil
 	})
+// SyncActiveTabModelToDefault sets the active tab's model to match default_model.
+// If default_model itself is stale it is first auto-migrated to a valid provider.
+func (a *App) SyncActiveTabModelToDefault() error {
+	cfg, path, err := a.loadDesktopUserConfigForEdit()
+	if err != nil {
+		return err
+	}
+	resolved, _, ok := cfg.ResolveModelWithFallback(cfg.DefaultModel)
+	if !ok {
+		return fmt.Errorf("no model providers available")
+	}
+	if resolved != cfg.DefaultModel {
+		cfg.DefaultModel = resolved
+		if err := cfg.SaveTo(path); err != nil {
+			return err
+		}
+	}
+	return a.SetModel(resolved)
+}
+
+// SyncAllTabModelsToDefault sets every open tab's model to default_model.
+// If default_model is stale it is first auto-migrated.
+func (a *App) SyncAllTabModelsToDefault() error {
+	cfg, path, err := a.loadDesktopUserConfigForEdit()
+	if err != nil {
+		return err
+	}
+	resolved, _, ok := cfg.ResolveModelWithFallback(cfg.DefaultModel)
+	if !ok {
+		return fmt.Errorf("no model providers available")
+	}
+	if resolved != cfg.DefaultModel {
+		cfg.DefaultModel = resolved
+		if err := cfg.SaveTo(path); err != nil {
+			return err
+		}
+	}
+
+	a.mu.Lock()
+	var tabIDs []string
+	for _, id := range a.orderedTabIDsLocked() {
+		tabIDs = append(tabIDs, id)
+	}
+	a.mu.Unlock()
+
+	var errs []error
+	for _, id := range tabIDs {
+		if err := a.setModelForTab(id, resolved, false); err != nil {
+			errs = append(errs, fmt.Errorf("tab %s: %w", id, err))
+		}
+	}
+	if len(errs) > 0 {
+		return fmt.Errorf("sync all tab models: %w", errors.Join(errs...))
+	}
+	return nil
 }
 
 // SetAutoPlan updates the automatic plan-mode gate (off|on).
@@ -615,9 +706,66 @@ func (a *App) FetchProviderModels(p ProviderView) ([]string, error) {
 	return nonNil(models), nil
 }
 
-// DeleteProvider removes a provider (refused for the current default_model).
+// DeleteProvider removes a provider and fixes any tab whose model referenced it.
+// When default_model or planner_model target the deleted provider, RemoveProvider
+// auto-migrates them to the first remaining configured provider. Here we mirror
+// that fix across all open tabs so no tab is left with a dangling model ref.
 func (a *App) DeleteProvider(name string) error {
-	return a.applyConfigChange(func(c *config.Config) error { return c.RemoveProvider(name) })
+	cfg, path, err := a.loadDesktopUserConfigForEdit()
+	if err != nil {
+		return err
+	}
+
+	// Find a fallback before removing, so we know what to patch tabs to.
+	var fallbackRef string
+	for i := range cfg.Providers {
+		if cfg.Providers[i].Name == name {
+			continue
+		}
+		if cfg.Providers[i].Configured() && len(cfg.Providers[i].ModelList()) > 0 {
+			fallbackRef = cfg.Providers[i].Name + "/" + cfg.Providers[i].DefaultModel()
+			break
+		}
+	}
+
+	var affectedTabIDs []string
+	var runningTabIDs []string
+	a.mu.RLock()
+	for _, id := range a.orderedTabIDsLocked() {
+		tab := a.tabs[id]
+		if tab == nil || !config.ModelRefsProvider(tab.model, name) {
+			continue
+		}
+		affectedTabIDs = append(affectedTabIDs, id)
+		if tab.Ctrl != nil && tab.Ctrl.Running() {
+			runningTabIDs = append(runningTabIDs, id)
+		}
+	}
+	a.mu.RUnlock()
+	if len(affectedTabIDs) > 0 && fallbackRef == "" {
+		return fmt.Errorf("remove provider: %q is used by open tabs and no other configured provider exists", name)
+	}
+	if len(runningTabIDs) > 0 {
+		return fmt.Errorf("finish or cancel the current turn before removing provider %q (running tabs: %s)", name, strings.Join(runningTabIDs, ", "))
+	}
+
+	if err := cfg.RemoveProvider(name); err != nil {
+		return err
+	}
+	if err := cfg.SaveTo(path); err != nil {
+		return err
+	}
+
+	var errs []error
+	for _, id := range affectedTabIDs {
+		if err := a.setModelForTab(id, fallbackRef, true); err != nil {
+			errs = append(errs, fmt.Errorf("tab %s: %w", id, err))
+		}
+	}
+	if len(errs) > 0 {
+		return fmt.Errorf("remove provider: rebuild affected tabs: %w", errors.Join(errs...))
+	}
+	return nil
 }
 
 // RemoveProviderAccess hides a provider from Settings > Model > Access. Built-in

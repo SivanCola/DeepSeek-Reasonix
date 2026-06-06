@@ -199,10 +199,24 @@ func (c *Config) SetNetwork(n NetworkConfig) error {
 	return netclient.Validate(c.NetworkProxySpec())
 }
 
-// RemoveProvider deletes the named provider. It refuses to remove the current
-// default_model (reassign it first, so the config never points at a missing
-// model); if the removed provider was the planner, planner_model is cleared as
-// a side effect since it is optional. Errors when the name isn't configured.
+// ModelRefsProvider reports whether ref targets the named provider. Matches both
+// bare provider names ("deepseek") and "provider/model" refs ("deepseek/v4").
+func ModelRefsProvider(ref, name string) bool {
+	if ref == name {
+		return true
+	}
+	if prov, _, ok := strings.Cut(ref, "/"); ok && prov == name {
+		return true
+	}
+	return false
+}
+
+// RemoveProvider deletes the named provider. When default_model or planner_model
+// reference this provider (as a bare name or "provider/model" ref), they are
+// automatically migrated to the first remaining configured provider — the config
+// never points at a missing model. If no other configured provider exists the
+// removal is refused. All open tab model refs that target the deleted provider
+// must be fixed by the caller (the desktop layer traverses tabs).
 func (c *Config) RemoveProvider(name string) error {
 	idx := -1
 	for i := range c.Providers {
@@ -214,12 +228,35 @@ func (c *Config) RemoveProvider(name string) error {
 	if idx < 0 {
 		return fmt.Errorf("remove provider: no provider %q", name)
 	}
-	if c.DefaultModel == name {
-		return fmt.Errorf("remove provider: %q is the default model — set a different default_model first", name)
+
+	defaultRefsProvider := ModelRefsProvider(c.DefaultModel, name)
+	plannerRefsProvider := ModelRefsProvider(c.Agent.PlannerModel, name)
+
+	// Find a fallback provider (configured, with models, not the one being removed).
+	var fallback string
+	if defaultRefsProvider || plannerRefsProvider {
+		for i := range c.Providers {
+			if c.Providers[i].Name == name {
+				continue
+			}
+			if c.Providers[i].Configured() && len(c.Providers[i].ModelList()) > 0 {
+				fallback = c.Providers[i].Name
+				break
+			}
+		}
 	}
+
+	if defaultRefsProvider && fallback == "" {
+		return fmt.Errorf("remove provider: %q is referenced by default_model and no other configured provider exists", name)
+	}
+
 	c.Providers = append(c.Providers[:idx], c.Providers[idx+1:]...)
-	if c.Agent.PlannerModel == name {
-		c.Agent.PlannerModel = ""
+
+	if defaultRefsProvider {
+		c.DefaultModel = fallback
+	}
+	if plannerRefsProvider {
+		c.Agent.PlannerModel = fallback
 	}
 	return nil
 }

@@ -171,6 +171,8 @@ export interface AppBindings {
   FetchProviderModels(p: ProviderView): Promise<string[]>;
   DeleteProvider(name: string): Promise<void>;
   RemoveProviderAccess(name: string): Promise<void>;
+  SyncActiveTabModelToDefault(): Promise<void>;
+  SyncAllTabModelsToDefault(): Promise<void>;
   SetProviderKey(apiKeyEnv: string, value: string): Promise<void>;
   ClearProviderKey(apiKeyEnv: string): Promise<void>;
   SetPermissionMode(mode: string): Promise<void>;
@@ -546,6 +548,10 @@ function makeMockApp(): AppBindings {
     configPath: "~/projects/reasonix/reasonix.toml",
     providerKinds: ["openai"],
     bypass: false,
+    currentModel: "deepseek-flash/deepseek-v4-flash",
+    currentModelValid: true,
+    defaultModelValid: true,
+    plannerModelValid: true,
   };
   const mockProjectTree: ProjectNode[] = [
     {
@@ -1402,6 +1408,13 @@ function makeMockApp(): AppBindings {
       const p = settings.providers.find((x) => x.name === name);
       if (p?.builtIn) p.added = false;
       else settings.providers = settings.providers.filter((x) => x.name !== name);
+    },
+    async SyncActiveTabModelToDefault() {
+      // no-op in browser dev mode
+    },
+    async SyncAllTabModelsToDefault() {
+      // no-op in browser dev mode
+    },
     },
     async SetProviderKey(apiKeyEnv: string) {
       settings.providers.forEach((p) => {

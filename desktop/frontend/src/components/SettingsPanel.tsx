@@ -761,6 +761,52 @@ function ModelsSection({ s, busy, apply, backgroundApply }: ModelsSectionProps) 
       ) : (
         <ProvidersSection s={s} busy={busy} apply={apply} />
       )}
+
+      {s.modelWarning && (
+        <div className="banner banner--warning" style={{ marginTop: 12 }}>
+          {s.modelWarning === "current session model is no longer available" && (
+            <span>{t("settings.modelUnavailable", { model: s.currentModel || t("common.none") })}</span>
+          )}
+          {s.modelWarning === "default model is no longer available" && (
+            <span>{t("settings.defaultModelUnavailable")}</span>
+          )}
+          {s.modelWarning === "current session model differs from default model" && (
+            <span>{t("settings.modelDiffers", { current: s.currentModel || t("common.none"), default: toRef(s.defaultModel, s) || t("common.none") })}</span>
+          )}
+        </div>
+      )}
+
+      {s.currentModel && (
+        <div className="settings-model-card" style={{ marginTop: 12 }}>
+          <div>
+            <span>{t("settings.currentSessionModel")}</span>
+            <strong>{s.currentModel}</strong>
+            {!s.currentModelValid && <small className="text--error">{t("settings.modelInvalid")}</small>}
+          </div>
+        </div>
+      )}
+
+      {s.currentModel && s.currentModel !== toRef(s.defaultModel, s) && (
+        <div style={{ marginTop: 8, display: "flex", gap: 8 }}>
+          <button className="btn btn--small" disabled={busy} onClick={() => apply(() => app.SyncActiveTabModelToDefault())}>
+            {t("settings.syncActiveToDefault")}
+          </button>
+          <button className="btn btn--small" disabled={busy} onClick={() => apply(() => app.SyncAllTabModelsToDefault())}>
+            {t("settings.syncAllToDefault")}
+          </button>
+        </div>
+      )}
+
+      <div className="settings-summary-grid">
+        <div className="settings-summary">
+          <span>{t("settings.providers")}</span>
+          <strong>{s.providers.length}</strong>
+        </div>
+        <div className="settings-summary">
+          <span>{t("settings.availableModels")}</span>
+          <strong>{refs.length}</strong>
+        </div>
+      </div>
     </>
   );
 }

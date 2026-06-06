@@ -1266,6 +1266,12 @@ type Meta struct {
 	EventChannel string `json:"eventChannel"`
 	Cwd          string `json:"cwd"`
 	Bypass       bool   `json:"bypass"` // YOLO mode on (auto-approve every tool call)
+	// Structured startup error fields for model-related failures, so the
+	// frontend can show actionable recovery UI instead of a raw error string.
+	StartupErrCode       string   `json:"startupErrCode,omitempty"`
+	StartupErrModel      string   `json:"startupErrModel,omitempty"`
+	StartupErrConfigured []string `json:"startupErrConfigured,omitempty"`
+	StartupRecoveryModel string   `json:"startupRecoveryModel,omitempty"`
 }
 
 // Meta reports the model label, readiness, any startup error, the working
@@ -1284,13 +1290,47 @@ func (a *App) MetaForTab(tabID string) Meta {
 	if cwd == "" {
 		cwd, _ = os.Getwd()
 	}
-	return Meta{
+	m := Meta{
 		Label:        tab.Label,
 		Ready:        tab.Ready,
 		StartupErr:   tab.StartupErr,
 		EventChannel: eventChannel,
 		Cwd:          cwd,
 		Bypass:       tab.Ctrl != nil && tab.Ctrl.Bypass(),
+	}
+	if tab.StartupErr != "" {
+		a.populateModelStartupErr(&m, tab)
+	}
+	return m
+}
+
+func (a *App) populateModelStartupErr(m *Meta, tab *WorkspaceTab) {
+	cfg, err := config.LoadForRoot(tab.WorkspaceRoot)
+	if err != nil {
+		return
+	}
+	// Collect configured provider names for the error detail.
+	var configured []string
+	var recoveryRef string
+	for i := range cfg.Providers {
+		p := &cfg.Providers[i]
+		if !p.Configured() || len(p.ModelList()) == 0 {
+			continue
+		}
+		ref := p.Name + "/" + p.DefaultModel()
+		configured = append(configured, ref)
+		if recoveryRef == "" {
+			recoveryRef = ref
+		}
+	}
+	m.StartupErrConfigured = configured
+	m.StartupRecoveryModel = recoveryRef
+	m.StartupErrModel = tab.model
+
+	if strings.Contains(tab.StartupErr, "unknown model") {
+		m.StartupErrCode = "unknown_model"
+	} else if strings.Contains(tab.StartupErr, "no available model") {
+		m.StartupErrCode = "no_providers"
 	}
 }
 
@@ -2437,6 +2477,10 @@ func (a *App) SetModel(name string) error {
 }
 
 func (a *App) SetModelForTab(tabID, name string) error {
+	return a.setModelForTab(tabID, name, false)
+}
+
+func (a *App) setModelForTab(tabID, name string, force bool) error {
 	if a.ctx == nil || name == "" {
 		return nil
 	}
@@ -2444,7 +2488,7 @@ func (a *App) SetModelForTab(tabID, name string) error {
 	if tab == nil {
 		return nil
 	}
-	if name == tab.model {
+	if name == tab.model && !force {
 		return nil
 	}
 	if tab.Ctrl != nil && tab.Ctrl.Running() {
@@ -2493,8 +2537,11 @@ func (a *App) SetModelForTab(tabID, name string) error {
 	tab.model = name
 	tab.effort = cloneStringPtr(effortOverride)
 	tab.Label = newCtrl.Label()
+	tab.StartupErr = ""
+	tab.Ready = true
 	a.saveTabsLocked()
 	a.mu.Unlock()
+	a.emitReady(a.ctx)
 	newCtrl.EnableInteractiveApproval()
 	applyTabModeToController(newCtrl, tab.mode)
 
@@ -3002,7 +3049,19 @@ func (a *App) currentProviderEntryForTab(tabID string) (*config.ProviderEntry, e
 	}
 	entry, ok := cfg.ResolveModel(ref)
 	if !ok {
-		return nil, fmt.Errorf("unknown model %q", ref)
+		// The tab's model ref is stale; silently use the fallback for this read.
+		// The tab model is not mutated here — that happens on next rebuild or
+		// explicit SetModelForTab. This keeps balance/effort/context readouts
+		// working until the tab is recovered.
+		resolved, _, fallbackOK := cfg.ResolveModelWithFallback(ref)
+		if !fallbackOK {
+			return nil, fmt.Errorf("unknown model %q", ref)
+		}
+		e, _ := cfg.ResolveModel(resolved)
+		if e == nil {
+			return nil, fmt.Errorf("unknown model %q", ref)
+		}
+		entry = e
 	}
 	if effortOverride != nil {
 		entry.Effort = *effortOverride

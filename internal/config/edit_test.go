@@ -319,19 +319,33 @@ func TestResolveModelPreservesProviderEffort(t *testing.T) {
 }
 
 func TestRemoveProvider(t *testing.T) {
+	os.Setenv("DEEPSEEK_API_KEY", "sk-test")
+	os.Setenv("MIMO_API_KEY", "sk-test")
+	defer os.Unsetenv("DEEPSEEK_API_KEY")
+	defer os.Unsetenv("MIMO_API_KEY")
+
 	c := Default()
 	c.Agent.PlannerModel = "deepseek-pro"
 
-	// Cannot remove the default model.
-	if err := c.RemoveProvider(c.DefaultModel); err == nil {
-		t.Error("expected error removing the default model")
+	// Removing a provider that is not the default (or planner) should succeed.
+	if err := c.RemoveProvider("mimo-flash"); err != nil {
+		t.Fatalf("remove unreferenced provider: %v", err)
 	}
-	// Removing the planner provider clears planner_model.
+	if _, ok := c.Provider("mimo-flash"); ok {
+		t.Error("provider not actually removed")
+	}
+
+	// Removing the default model auto-migrates to the next configured provider.
+	if err := c.RemoveProvider(c.DefaultModel); err != nil {
+		t.Fatalf("remove default model (should auto-migrate): %v", err)
+	}
+	if c.DefaultModel == "deepseek-flash" {
+		t.Error("default_model should have migrated away from deepseek-flash")
+	}
+
+	// Removing the planner provider auto-migrates instead of clearing.
 	if err := c.RemoveProvider("deepseek-pro"); err != nil {
 		t.Fatalf("remove planner provider: %v", err)
-	}
-	if c.Agent.PlannerModel != "" {
-		t.Errorf("planner should be cleared, got %q", c.Agent.PlannerModel)
 	}
 	if _, ok := c.Provider("deepseek-pro"); ok {
 		t.Error("provider not actually removed")
@@ -339,6 +353,18 @@ func TestRemoveProvider(t *testing.T) {
 	// Unknown name errors.
 	if err := c.RemoveProvider("ghost"); err == nil {
 		t.Error("expected error for unknown provider")
+	}
+
+	// No fallback available: last configured provider can't be removed when
+	// it is the default model.
+	c2 := Default()
+	os.Setenv("MIMO_API_KEY", "") // make mimo providers unconfigured
+	c2.Providers = []ProviderEntry{
+		{Name: "only", Kind: "openai", BaseURL: "https://only.example.com", Model: "m1", APIKeyEnv: "DEEPSEEK_API_KEY"},
+	}
+	c2.DefaultModel = "only"
+	if err := c2.RemoveProvider("only"); err == nil {
+		t.Error("expected error when no fallback exists")
 	}
 }
 
