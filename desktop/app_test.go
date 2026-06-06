@@ -50,7 +50,28 @@ func isolateDesktopUserDirs(t *testing.T) string {
 	t.Setenv("USERPROFILE", home)
 	t.Setenv("XDG_CONFIG_HOME", xdg)
 	t.Setenv("AppData", appData)
+	t.Setenv("APPDATA", appData)
 	return home
+}
+
+func writeDesktopConfig(t *testing.T, body string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(config.UserConfigPath()), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(config.UserConfigPath(), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func writeDesktopMCP(t *testing.T, body string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(config.UserMCPConfigPath()), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(config.UserMCPConfigPath(), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestCommandsIncludesEffortNotThinking(t *testing.T) {
@@ -174,7 +195,7 @@ close_behavior = "quit"
 	}
 }
 
-func TestSettingsSeedsMissingUserConfigFromLegacyProjectConfig(t *testing.T) {
+func TestSettingsIgnoresLegacyProjectConfigWhenUserConfigMissing(t *testing.T) {
 	isolateDesktopUserDirs(t)
 
 	project := t.TempDir()
@@ -201,8 +222,8 @@ close_behavior = "quit"
 	if got.ConfigPath != config.UserConfigPath() {
 		t.Fatalf("Settings configPath = %q, want user config %q", got.ConfigPath, config.UserConfigPath())
 	}
-	if got.DefaultModel != "legacy-provider/legacy-model" || got.DesktopLanguage != "zh" || got.DesktopTheme != "light" || got.DesktopThemeStyle != "glacier" || got.CloseBehavior != "quit" {
-		t.Fatalf("Settings did not seed from legacy project config: %+v", got)
+	if got.DefaultModel == "legacy-provider/legacy-model" || got.DesktopLanguage == "zh" || got.DesktopTheme == "light" || got.DesktopThemeStyle == "glacier" || got.CloseBehavior == "quit" {
+		t.Fatalf("Settings should ignore legacy project config: %+v", got)
 	}
 	if _, err := os.Stat(config.UserConfigPath()); !os.IsNotExist(err) {
 		t.Fatalf("Settings() should not write user config before an edit, stat err = %v", err)
@@ -211,8 +232,8 @@ close_behavior = "quit"
 		t.Fatalf("SetDesktopLanguage: %v", err)
 	}
 	userCfg := config.LoadForEdit(config.UserConfigPath())
-	if userCfg.DesktopLanguage() != "en" || userCfg.DesktopTheme() != "light" || userCfg.DesktopThemeStyle() != "glacier" || userCfg.DesktopCloseBehavior() != "quit" {
-		t.Fatalf("saved user config did not preserve seeded desktop prefs: lang:%q theme:%q style:%q close:%q", userCfg.DesktopLanguage(), userCfg.DesktopTheme(), userCfg.DesktopThemeStyle(), userCfg.DesktopCloseBehavior())
+	if userCfg.DesktopLanguage() != "en" || userCfg.DesktopTheme() == "light" || userCfg.DesktopThemeStyle() == "glacier" || userCfg.DesktopCloseBehavior() == "quit" {
+		t.Fatalf("saved user config should use global defaults plus the edit, not legacy project prefs: lang:%q theme:%q style:%q close:%q", userCfg.DesktopLanguage(), userCfg.DesktopTheme(), userCfg.DesktopThemeStyle(), userCfg.DesktopCloseBehavior())
 	}
 }
 
@@ -594,17 +615,16 @@ func TestCapabilitiesShowsDefaultMCPAsInitializingNotDisabled(t *testing.T) {
 	isolateDesktopUserDirs(t)
 	dir := t.TempDir()
 	t.Chdir(dir)
-	if err := os.WriteFile(filepath.Join(dir, "reasonix.toml"), []byte(`
+	writeDesktopConfig(t, `
 [codegraph]
 enabled = false
-
+`)
+	writeDesktopMCP(t, `
 [[plugins]]
 name = "playwright"
 command = "npx"
 args = ["-y", "@playwright/mcp"]
-`), 0o644); err != nil {
-		t.Fatal(err)
-	}
+`)
 
 	app := NewApp()
 	app.setTestCtrl(control.New(control.Options{Host: plugin.NewHost()}), "")
@@ -660,18 +680,17 @@ func TestCapabilitiesMarksBackgroundRemoteMCPAuthPossible(t *testing.T) {
 	isolateDesktopUserDirs(t)
 	dir := t.TempDir()
 	t.Chdir(dir)
-	if err := os.WriteFile(filepath.Join(dir, "reasonix.toml"), []byte(`
+	writeDesktopConfig(t, `
 [codegraph]
 enabled = false
-
+`)
+	writeDesktopMCP(t, `
 [[plugins]]
 name = "dida"
 type = "http"
 url = "https://mcp.dida365.com"
 tier = "lazy"
-`), 0o644); err != nil {
-		t.Fatal(err)
-	}
+`)
 
 	app := NewApp()
 	app.setTestCtrl(control.New(control.Options{Host: plugin.NewHost()}), "")
@@ -693,19 +712,18 @@ func TestCapabilitiesDoesNotMarkRemoteMCPWithAuthHeaderPossible(t *testing.T) {
 	isolateDesktopUserDirs(t)
 	dir := t.TempDir()
 	t.Chdir(dir)
-	if err := os.WriteFile(filepath.Join(dir, "reasonix.toml"), []byte(`
+	writeDesktopConfig(t, `
 [codegraph]
 enabled = false
-
+`)
+	writeDesktopMCP(t, `
 [[plugins]]
 name = "stripe"
 type = "http"
 url = "https://mcp.stripe.com"
 headers = { Authorization = "Bearer ${STRIPE_TOKEN}" }
 tier = "lazy"
-`), 0o644); err != nil {
-		t.Fatal(err)
-	}
+`)
 
 	app := NewApp()
 	app.setTestCtrl(control.New(control.Options{Host: plugin.NewHost()}), "")
@@ -727,18 +745,17 @@ func TestCapabilitiesMarksAuthFailureRequired(t *testing.T) {
 	isolateDesktopUserDirs(t)
 	dir := t.TempDir()
 	t.Chdir(dir)
-	if err := os.WriteFile(filepath.Join(dir, "reasonix.toml"), []byte(`
+	writeDesktopConfig(t, `
 [codegraph]
 enabled = false
-
+`)
+	writeDesktopMCP(t, `
 [[plugins]]
 name = "figma"
 type = "http"
 url = "https://mcp.figma.com/mcp"
 tier = "lazy"
-`), 0o644); err != nil {
-		t.Fatal(err)
-	}
+`)
 
 	host := plugin.NewHost()
 	host.RecordFailure(plugin.Spec{Name: "figma", Type: "http", URL: "https://mcp.figma.com/mcp"}, errors.New("connect: 401 unauthorized"))
@@ -762,10 +779,11 @@ func TestClearMCPServerAuthenticationClearsConfigAndFailure(t *testing.T) {
 	isolateDesktopUserDirs(t)
 	dir := t.TempDir()
 	t.Chdir(dir)
-	if err := os.WriteFile(filepath.Join(dir, "reasonix.toml"), []byte(`
+	writeDesktopConfig(t, `
 [codegraph]
 enabled = false
-
+`)
+	writeDesktopMCP(t, `
 [[plugins]]
 name = "figma"
 type = "http"
@@ -773,9 +791,7 @@ url = "https://mcp.figma.com/mcp?access_token=abc&workspace=main"
 headers = { Authorization = "Bearer ${FIGMA_TOKEN}", "X-Org" = "team" }
 env = { FIGMA_TOKEN = "${FIGMA_TOKEN}", DEBUG = "1" }
 tier = "lazy"
-`), 0o644); err != nil {
-		t.Fatal(err)
-	}
+`)
 
 	host := plugin.NewHost()
 	host.RecordFailure(plugin.Spec{Name: "figma", Type: "http", URL: "https://mcp.figma.com/mcp"}, errors.New("connect: 401 unauthorized"))
@@ -825,19 +841,18 @@ func TestUpdateMCPServerMigratesLegacyTierToBackground(t *testing.T) {
 	isolateDesktopUserDirs(t)
 	dir := t.TempDir()
 	t.Chdir(dir)
-	if err := os.WriteFile(filepath.Join(dir, "reasonix.toml"), []byte(`
+	writeDesktopConfig(t, `
 [codegraph]
 enabled = false
-
+`)
+	writeDesktopMCP(t, `
 [[plugins]]
 name = "playwright"
 command = "npx"
 args = ["-y", "@playwright/mcp"]
 env = { TOKEN = "${PLAYWRIGHT_TOKEN}" }
 tier = "lazy"
-`), 0o644); err != nil {
-		t.Fatal(err)
-	}
+`)
 
 	app := NewApp()
 	app.setTestCtrl(control.New(control.Options{Host: plugin.NewHost()}), "")
@@ -865,20 +880,15 @@ tier = "lazy"
 	if got := cfg.Plugins[0].Env["TOKEN"]; got != "${PLAYWRIGHT_TOKEN}" {
 		t.Fatalf("env TOKEN = %q, want preserved env", got)
 	}
-	userCfg := config.LoadForEdit(config.UserConfigPath())
-	userPlugin, ok := findPluginEntry(userCfg.Plugins, "playwright")
+	userPlugin, ok := findPluginEntry(cfg.Plugins, "playwright")
 	if !ok {
-		t.Fatalf("playwright should be migrated to user config: %+v", userCfg.Plugins)
+		t.Fatalf("playwright should be saved to mcp.toml: %+v", cfg.Plugins)
 	}
 	if userPlugin.Command != "node" || userPlugin.Env["TOKEN"] != "${PLAYWRIGHT_TOKEN}" {
 		t.Fatalf("user plugin after migration = %+v", userPlugin)
 	}
 	if userPlugin.Tier != "" {
 		t.Fatalf("user plugin tier = %q, want migrated empty", userPlugin.Tier)
-	}
-	projectCfg := config.LoadForEdit(filepath.Join(dir, "reasonix.toml"))
-	if _, ok := findPluginEntry(projectCfg.Plugins, "playwright"); ok {
-		t.Fatalf("project plugin should be removed after desktop migration: %+v", projectCfg.Plugins)
 	}
 	view := app.Capabilities()
 	for _, s := range view.Servers {
@@ -899,17 +909,16 @@ func TestUpdateMCPServerSplitsPastedCommandLine(t *testing.T) {
 	isolateDesktopUserDirs(t)
 	dir := t.TempDir()
 	t.Chdir(dir)
-	if err := os.WriteFile(filepath.Join(dir, "reasonix.toml"), []byte(`
+	writeDesktopConfig(t, `
 [codegraph]
 enabled = false
-
+`)
+	writeDesktopMCP(t, `
 [[plugins]]
 name = "playwright"
 command = "npx"
 args = ["-y", "@playwright/mcp"]
-`), 0o644); err != nil {
-		t.Fatal(err)
-	}
+`)
 
 	app := NewApp()
 	app.setTestCtrl(control.New(control.Options{Host: plugin.NewHost()}), "")
@@ -939,17 +948,16 @@ func TestUpdateMCPServerRecordsReconnectFailure(t *testing.T) {
 	isolateDesktopUserDirs(t)
 	dir := t.TempDir()
 	t.Chdir(dir)
-	if err := os.WriteFile(filepath.Join(dir, "reasonix.toml"), []byte(`
+	writeDesktopConfig(t, `
 [codegraph]
 enabled = false
-
+`)
+	writeDesktopMCP(t, `
 [[plugins]]
 name = "broken"
 command = "npx"
 tier = "background"
-`), 0o644); err != nil {
-		t.Fatal(err)
-	}
+`)
 
 	app := NewApp()
 	app.setTestCtrl(control.New(control.Options{Host: plugin.NewHost()}), "")
@@ -994,17 +1002,16 @@ func TestSetMCPServerTierRecordsConnectFailure(t *testing.T) {
 	isolateDesktopUserDirs(t)
 	dir := t.TempDir()
 	t.Chdir(dir)
-	if err := os.WriteFile(filepath.Join(dir, "reasonix.toml"), []byte(`
+	writeDesktopConfig(t, `
 [codegraph]
 enabled = false
-
+`)
+	writeDesktopMCP(t, `
 [[plugins]]
 name = "broken"
 command = "reasonix-missing-mcp-binary"
 tier = "lazy"
-`), 0o644); err != nil {
-		t.Fatal(err)
-	}
+`)
 
 	app := NewApp()
 	app.setTestCtrl(control.New(control.Options{Host: plugin.NewHost()}), "")
@@ -1024,17 +1031,12 @@ tier = "lazy"
 	if got := cfg.Plugins[0].Tier; got != "" {
 		t.Fatalf("saved tier = %q, want migrated empty", got)
 	}
-	userCfg := config.LoadForEdit(config.UserConfigPath())
-	userPlugin, ok := findPluginEntry(userCfg.Plugins, "broken")
+	userPlugin, ok := findPluginEntry(cfg.Plugins, "broken")
 	if !ok {
-		t.Fatalf("broken should be migrated to user config: %+v", userCfg.Plugins)
+		t.Fatalf("broken should be saved to mcp.toml: %+v", cfg.Plugins)
 	}
 	if userPlugin.Tier != "" {
 		t.Fatalf("user plugin tier = %q, want migrated empty", userPlugin.Tier)
-	}
-	projectCfg := config.LoadForEdit(filepath.Join(dir, "reasonix.toml"))
-	if _, ok := findPluginEntry(projectCfg.Plugins, "broken"); ok {
-		t.Fatalf("project plugin should be removed after desktop migration: %+v", projectCfg.Plugins)
 	}
 	if !mcpFailed(app.activeCtrl(), "broken") {
 		t.Fatalf("Host.Failures() = %+v, want broken failure recorded", app.activeCtrl().Host().Failures())
@@ -1055,21 +1057,16 @@ tier = "lazy"
 }
 
 func TestSetMCPServerTierPersistsCodegraphConfig(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("USERPROFILE", t.TempDir())
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
-	t.Setenv("AppData", t.TempDir())
+	isolateDesktopUserDirs(t)
 	t.Setenv("PATH", t.TempDir())
 	t.Setenv("REASONIX_CACHE_DIR", t.TempDir()) // isolate the codegraph bundle cache so Resolve fails deterministically
 	dir := t.TempDir()
 	t.Chdir(dir)
-	if err := os.WriteFile(filepath.Join(dir, "reasonix.toml"), []byte(`
+	writeDesktopConfig(t, `
 [codegraph]
 enabled = false
 auto_install = true
-`), 0o644); err != nil {
-		t.Fatal(err)
-	}
+`)
 
 	app := NewApp()
 	app.setTestCtrl(control.New(control.Options{Host: plugin.NewHost()}), "")
@@ -1117,13 +1114,11 @@ func TestSetMCPServerEnabledPersistsCodegraphOff(t *testing.T) {
 	isolateDesktopUserDirs(t)
 	dir := t.TempDir()
 	t.Chdir(dir)
-	if err := os.WriteFile(filepath.Join(dir, "reasonix.toml"), []byte(`
+	writeDesktopConfig(t, `
 [codegraph]
 enabled = true
 tier = "lazy"
-`), 0o644); err != nil {
-		t.Fatal(err)
-	}
+`)
 
 	app := NewApp()
 	app.setTestCtrl(control.New(control.Options{Host: plugin.NewHost()}), "")
@@ -1159,17 +1154,16 @@ func TestCapabilitiesMigratesFailedMCPConfiguredTierAfterRestart(t *testing.T) {
 	isolateDesktopUserDirs(t)
 	dir := t.TempDir()
 	t.Chdir(dir)
-	if err := os.WriteFile(filepath.Join(dir, "reasonix.toml"), []byte(`
+	writeDesktopConfig(t, `
 [codegraph]
 enabled = false
-
+`)
+	writeDesktopMCP(t, `
 [[plugins]]
 name = "broken"
 command = "reasonix-missing-mcp-binary"
 tier = "eager"
-`), 0o644); err != nil {
-		t.Fatal(err)
-	}
+`)
 
 	app := NewApp()
 	app.setTestCtrl(control.New(control.Options{Host: plugin.NewHost()}), "")

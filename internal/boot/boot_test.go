@@ -62,7 +62,7 @@ api_key_env = "REASONIX_TEST_KEY_UNSET"
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
-	defer ctrl.Close()
+	defer closeControllerForTest(ctrl)
 
 	// The system message is the cached prefix; it must contain both the base
 	// prompt and the discovered memory.
@@ -128,7 +128,10 @@ func TestBuildDiscoversSkills(t *testing.T) {
 	dir := t.TempDir()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	t.Setenv("AppData", filepath.Join(home, "AppData"))
+	t.Setenv("APPDATA", filepath.Join(home, "AppData"))
 	t.Chdir(dir)
 	writeFile(t, filepath.Join(home, ".reasonix"), "config.toml", `
 default_model = "test-model"
@@ -152,7 +155,7 @@ api_key_env = "REASONIX_TEST_KEY_UNSET"
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
-	defer ctrl.Close()
+	defer closeControllerForTest(ctrl)
 
 	var hasProj, hasBuiltin bool
 	for _, s := range ctrl.Skills() {
@@ -198,7 +201,10 @@ func TestBuildOmitsDisabledSkillsFromPromptAndRuntimeList(t *testing.T) {
 	dir := t.TempDir()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	t.Setenv("AppData", filepath.Join(home, "AppData"))
+	t.Setenv("APPDATA", filepath.Join(home, "AppData"))
 	t.Chdir(dir)
 	writeFile(t, filepath.Join(home, ".reasonix"), "config.toml", `
 default_model = "test-model"
@@ -225,7 +231,7 @@ api_key_env = "REASONIX_TEST_KEY_UNSET"
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
-	defer ctrl.Close()
+	defer closeControllerForTest(ctrl)
 
 	for _, s := range ctrl.Skills() {
 		if s.Name == "projskill" || s.Name == "review" {
@@ -278,7 +284,7 @@ tier = "eager"
 	if err != nil {
 		t.Fatalf("Build should not fail when an MCP server is unavailable: %v", err)
 	}
-	defer ctrl.Close()
+	defer closeControllerForTest(ctrl)
 	raw, err := os.ReadFile(filepath.Join(homeDir, ".reasonix", "config.toml"))
 	if err != nil {
 		t.Fatal(err)
@@ -318,7 +324,7 @@ api_key_env = "REASONIX_TEST_KEY_UNSET"
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
-	defer ctrl.Close()
+	defer closeControllerForTest(ctrl)
 
 	sys := systemMessage(ctrl.History())
 	// The built-in skills always append a "# Skills" index to the prefix; this
@@ -365,7 +371,7 @@ api_key_env = "REASONIX_TEST_KEY_UNSET"
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
-	defer ctrl.Close()
+	defer closeControllerForTest(ctrl)
 
 	sys := systemMessage(ctrl.History())
 	if !strings.Contains(sys, config.LanguagePolicy) {
@@ -477,15 +483,14 @@ func TestBuildMigratesLegacyConfigEndToEnd(t *testing.T) {
 	t.Setenv("USERPROFILE", home)                               // os.UserHomeDir on Windows
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config")) // os.UserConfigDir on Linux
 	t.Setenv("AppData", filepath.Join(home, "AppData"))         // os.UserConfigDir on Windows
-	t.Setenv("DEEPSEEK_API_KEY", "")                            // track for cleanup; migration os.Setenv's it live
+	t.Setenv("APPDATA", filepath.Join(home, "AppData"))
+	t.Setenv("DEEPSEEK_API_KEY", "") // track for cleanup; migration os.Setenv's it live
+	t.Setenv("PATH", t.TempDir())    // avoid resolving a real codegraph on the runner
 
 	proj := t.TempDir()
 	t.Chdir(proj)
-	// codegraph off keeps Build offline; it merges over the migrated user config
-	// without dropping the migrated plugins.
-	writeFile(t, proj, "reasonix.toml", "[codegraph]\nenabled = false\n")
 	writeFile(t, filepath.Join(home, ".reasonix"), "config.json",
-		`{"apiKey":"sk-e2e","lang":"zh","mcpServers":{"fs":{"command":"npx","args":["-y","server-fs"]}}}`)
+		`{"apiKey":"sk-e2e","lang":"zh","mcpServers":{"fs":{"command":"npx","args":["-y","server-fs"],"disabled":true}}}`)
 	writeFile(t, filepath.Join(home, ".reasonix", "sessions"), "chat-1.events.jsonl",
 		`{"type":"user.message","id":1,"ts":"t","turn":0,"text":"hello from v0.x"}`+"\n"+
 			`{"type":"model.final","id":2,"ts":"t","turn":0,"content":"hi","toolCalls":[],"usage":{},"costUsd":0}`+"\n")
@@ -501,7 +506,7 @@ func TestBuildMigratesLegacyConfigEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
-	defer ctrl.Close()
+	defer closeControllerForTest(ctrl)
 
 	migrated := false
 	for _, n := range notices {
@@ -566,7 +571,10 @@ func isolateConfigHome(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
+	t.Setenv("USERPROFILE", dir)
 	t.Setenv("XDG_CONFIG_HOME", dir)
+	t.Setenv("APPDATA", filepath.Join(dir, "AppData"))
+	t.Setenv("AppData", filepath.Join(dir, "AppData"))
 	return dir
 }
 
@@ -632,7 +640,7 @@ env = { GO_WANT_HELPER_PROCESS = "1" }
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
-	defer ctrl.Close()
+	defer closeControllerForTest(ctrl)
 
 	if !waitForMCPServerName(ctrl.Host(), "eagermock", 2*time.Second) {
 		t.Fatalf("legacy eager plugin did not connect in the background; names = %v", ctrl.Host().ServerNames())
@@ -677,7 +685,7 @@ env = { GO_WANT_HELPER_PROCESS = "1" }
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
-	defer ctrl.Close()
+	defer closeControllerForTest(ctrl)
 
 	if !waitForMCPServerName(ctrl.Host(), "lazymock", 2*time.Second) {
 		t.Fatalf("legacy lazy plugin did not connect in the background; names = %v", ctrl.Host().ServerNames())
@@ -726,7 +734,7 @@ api_key_env = "REASONIX_TEST_KEY_UNSET"
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
-	defer ctrl.Close()
+	defer closeControllerForTest(ctrl)
 
 	if got := ctrl.Host().Failures(); len(got) != 0 {
 		t.Fatalf("Host.Failures() = %+v, want empty for cold built-in codegraph background startup", got)
@@ -802,7 +810,7 @@ tier = "eager"
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
-	defer ctrl.Close()
+	defer closeControllerForTest(ctrl)
 
 	failures := waitForMCPFailure(t, ctrl.Host(), "slowserver", 2*time.Second)
 	if len(failures) != 1 || failures[0].Name != "slowserver" {
@@ -833,6 +841,13 @@ func waitForMCPServerName(h *plugin.Host, name string, timeout time.Duration) bo
 			return false
 		}
 		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func closeControllerForTest(ctrl interface{ Close() }) {
+	ctrl.Close()
+	if runtime.GOOS == "windows" {
+		time.Sleep(100 * time.Millisecond)
 	}
 }
 
@@ -917,7 +932,10 @@ func TestHelperProcess(t *testing.T) {
 
 func writeCodegraphHelper(t *testing.T, dir string) string {
 	t.Helper()
-	path := filepath.Join(dir, "codegraph-helper")
+	path, err := filepath.Abs(filepath.Join(dir, "codegraph-helper"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	if runtime.GOOS == "windows" {
 		path += ".exe"
 	}

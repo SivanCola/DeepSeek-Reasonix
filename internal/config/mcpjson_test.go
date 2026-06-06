@@ -189,8 +189,10 @@ func TestLoadOnlyUsesGlobalConfig(t *testing.T) {
 func TestLoadNormalizesTOMLPastedCommandLine(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "xdg"))
 	t.Setenv("AppData", filepath.Join(home, "AppData"))
+	t.Setenv("APPDATA", filepath.Join(home, "AppData"))
 	t.Chdir(t.TempDir())
 
 	if err := os.MkdirAll(filepath.Join(home, ".reasonix"), 0o755); err != nil {
