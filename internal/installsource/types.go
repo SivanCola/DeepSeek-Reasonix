@@ -25,9 +25,9 @@ type request struct {
 	Tier      string            `json:"tier"`
 	Replace   bool              `json:"replace"` // overwrite existing entries
 	Strict    *bool             `json:"strict"`  // nil -> true; require skill frontmatter
-	// PlanId is echoed back on a confirm-apply call so the host can refuse
+	// PlanID is echoed back on a confirm-apply call so the host can refuse
 	// to apply a plan that does not match the one it approved.
-	PlanId string `json:"planId"`
+	PlanID string `json:"planId"`
 }
 
 // response is the JSON shape returned to the model. Status is one of
@@ -47,7 +47,7 @@ type response struct {
 	Kinds    kindTally `json:"kinds,omitempty"` // counts per kind
 	Scope    string    `json:"scope"`
 	Mode     string    `json:"mode"`
-	PlanId   string    `json:"planId,omitempty"`
+	PlanID   string    `json:"planId,omitempty"`
 	Actions  []action  `json:"actions"`
 	Warnings []string  `json:"warnings,omitempty"`
 	Next     string    `json:"next,omitempty"`

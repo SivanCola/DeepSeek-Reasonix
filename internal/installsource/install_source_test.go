@@ -103,8 +103,8 @@ func TestApplyLocalSkillRootRegistersPath(t *testing.T) {
 	if len(resp.Actions) != 1 || resp.Actions[0].Action != "register_skill_root" {
 		t.Fatalf("actions = %+v", resp.Actions)
 	}
-	if resp.PlanId == "" {
-		t.Error("PlanId should be populated on apply")
+	if resp.PlanID == "" {
+		t.Error("PlanID should be populated on apply")
 	}
 	cfg := config.LoadForEdit(filepath.Join(project, "reasonix.toml"))
 	if len(cfg.Skills.Paths) != 1 || cfg.Skills.Paths[0] != root {
@@ -858,7 +858,7 @@ func TestApprovalHookDeniesApply(t *testing.T) {
 	}
 }
 
-func TestPlanIdMismatchRefusesApply(t *testing.T) {
+func TestPlanIDMismatchRefusesApply(t *testing.T) {
 	project := t.TempDir()
 	home := t.TempDir()
 	src := filepath.Join(t.TempDir(), "eta.md")
@@ -971,19 +971,16 @@ func TestPlanLocalExecutableDetected(t *testing.T) {
 	if err := os.MkdirAll(bin, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	writeFile(t, filepath.Join(bin, "mcp-x"), "#!/bin/sh\nexit 0\n")
-	if err := os.Chmod(filepath.Join(bin, "mcp-x"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	exe := writeLocalExecutable(t, bin, "mcp-x")
 	tl := NewTool(Options{ProjectRoot: project, HomeDir: home})
 	resp := execInstall(t, tl, map[string]any{
-		"source": filepath.Join(bin, "mcp-x"),
+		"source": exe,
 		"kind":   "mcp",
 	})
 	if !resp.OK || len(resp.Actions) != 1 {
 		t.Fatalf("response = %+v", resp)
 	}
-	if resp.Actions[0].Command != filepath.Join(bin, "mcp-x") {
+	if resp.Actions[0].Command != exe {
 		t.Errorf("command = %q, want the executable path", resp.Actions[0].Command)
 	}
 }
@@ -995,11 +992,7 @@ func TestApplyLocalExecutableHonorsCommandOverride(t *testing.T) {
 	if err := os.MkdirAll(bin, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	server := filepath.Join(bin, "server.js")
-	writeFile(t, server, "#!/usr/bin/env node\n")
-	if err := os.Chmod(server, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	server := writeLocalExecutable(t, bin, "server")
 
 	stub := &stubConnector{toolCount: 1}
 	tl := NewTool(Options{ProjectRoot: project, HomeDir: home, ConnectMCP: stub.connector()})
@@ -1025,6 +1018,21 @@ func TestApplyLocalExecutableHonorsCommandOverride(t *testing.T) {
 	if len(cfg.Plugins) != 1 || cfg.Plugins[0].Command != "node" || len(cfg.Plugins[0].Args) != 1 || cfg.Plugins[0].Args[0] != server {
 		t.Fatalf("persisted plugins = %+v, want node [%s]", cfg.Plugins, server)
 	}
+}
+
+func writeLocalExecutable(t *testing.T, dir, name string) string {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		path := filepath.Join(dir, name+".cmd")
+		writeFile(t, path, "@echo off\r\nexit /b 0\r\n")
+		return path
+	}
+	path := filepath.Join(dir, name)
+	writeFile(t, path, "#!/bin/sh\nexit 0\n")
+	if err := os.Chmod(path, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return path
 }
 
 // --- plan-only: RiskLevel surfacing -----------------------------------------

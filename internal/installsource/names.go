@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 
 	"reasonix/internal/config"
@@ -82,10 +83,20 @@ func looksLikePackage(s string) bool {
 	return packageNameRe.MatchString(s)
 }
 
-// isExecutable reports whether info is a regular file with at least one
-// execute bit. Used to treat a chmod +x'd local file as a stdio MCP server.
-func isExecutable(info os.FileInfo) bool {
-	return info.Mode().IsRegular() && info.Mode().Perm()&0o111 != 0
+// isExecutable reports whether path is a regular executable file. POSIX uses
+// execute bits; Windows uses executable file extensions because chmod bits do
+// not reliably model launchability there.
+func isExecutable(path string, info os.FileInfo) bool {
+	if !info.Mode().IsRegular() {
+		return false
+	}
+	if runtime.GOOS == "windows" {
+		switch strings.ToLower(filepath.Ext(path)) {
+		case ".exe", ".cmd", ".bat", ".ps1":
+			return true
+		}
+	}
+	return info.Mode().Perm()&0o111 != 0
 }
 
 // nameFromURL produces a stable human-readable skill name from a URL's

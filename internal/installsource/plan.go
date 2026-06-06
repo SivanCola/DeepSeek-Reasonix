@@ -139,7 +139,7 @@ func (t *installSourceTool) planLocal(req request, path string, info os.FileInfo
 				return nil, nil, err
 			}
 		}
-		if !info.IsDir() && isExecutable(info) && filepath.Base(path) != ".mcp.json" {
+		if !info.IsDir() && isExecutable(path, info) && filepath.Base(path) != ".mcp.json" {
 			actions = append(actions, t.localExecutableMCPAction(req, path))
 		}
 	}

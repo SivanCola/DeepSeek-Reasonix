@@ -99,12 +99,12 @@ func splitPluginCommandLine(s string) ([]string, bool) {
 			continue
 		}
 		if r == '"' || r == '\'' {
-			switch {
-			case quote == 0:
+			switch quote {
+			case 0:
 				quote = r
 				inToken = true
 				continue
-			case quote == r:
+			case r:
 				quote = 0
 				continue
 			}

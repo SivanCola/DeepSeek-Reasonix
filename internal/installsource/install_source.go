@@ -159,9 +159,6 @@ func (t *installSourceTool) Execute(ctx context.Context, raw json.RawMessage) (s
 	req.Transport = normalizeTransport(req.Transport)
 	if norm, ok := normalizeTier(req.Tier); ok {
 		req.Tier = norm
-	} else {
-		// Don't drop the user's value; apply step will surface a warning
-		// per MCP action. The request still keeps the original spelling.
 	}
 
 	if req.Op == "uninstall" {
@@ -183,7 +180,7 @@ func (t *installSourceTool) Execute(ctx context.Context, raw json.RawMessage) (s
 			Kind:     "",
 			Scope:    req.Scope,
 			Mode:     req.Mode,
-			PlanId:   planID,
+			PlanID:   planID,
 			Warnings: warnings,
 			Next:     "No installable Reasonix skill or MCP server was detected. Ask the user for a direct SKILL.md, skill root, .mcp.json, MCP endpoint, or package name.",
 		}
@@ -204,7 +201,7 @@ func (t *installSourceTool) Execute(ctx context.Context, raw json.RawMessage) (s
 			Kinds:    kindCounts(actions),
 			Scope:    req.Scope,
 			Mode:     req.Mode,
-			PlanId:   planID,
+			PlanID:   planID,
 			Actions:  publicActions(actions),
 			Warnings: warnings,
 			Next:     "Review the plan (especially each action's riskLevel). Call install_source again with apply=true and the same planId to install.",
@@ -212,8 +209,8 @@ func (t *installSourceTool) Execute(ctx context.Context, raw json.RawMessage) (s
 		return marshalJSON(out), nil
 	}
 
-	if req.PlanId != "" && req.PlanId != planID {
-		return "", newErr(ErrApprovalDenied, "planId mismatch (got %s, expected %s); re-plan and re-approve", req.PlanId, planID)
+	if req.PlanID != "" && req.PlanID != planID {
+		return "", newErr(ErrApprovalDenied, "planId mismatch (got %s, expected %s); re-plan and re-approve", req.PlanID, planID)
 	}
 	if t.approval != nil {
 		if err := t.approval(publicActions(actions)); err != nil {
@@ -227,7 +224,7 @@ func (t *installSourceTool) Execute(ctx context.Context, raw json.RawMessage) (s
 				Kinds:    kindCounts(actions),
 				Scope:    req.Scope,
 				Mode:     req.Mode,
-				PlanId:   planID,
+				PlanID:   planID,
 				Actions:  publicActions(actions),
 				Warnings: append(warnings, "host approval was denied: "+err.Error()),
 				Next:     "Ask the user to confirm, or run with a less risky plan (e.g. lower scope, fewer actions).",
@@ -278,7 +275,7 @@ func (t *installSourceTool) executeApply(ctx context.Context, req request, actio
 		Kinds:    kindCounts(actions),
 		Scope:    req.Scope,
 		Mode:     req.Mode,
-		PlanId:   planID,
+		PlanID:   planID,
 		Actions:  publicActions(actions),
 		Warnings: warnings,
 		Next:     next,
@@ -489,7 +486,7 @@ func (t *installSourceTool) resolvePath(p string) string {
 
 // computePlanID hashes the request plus the full public action set so a later
 // apply call with the same planId can be verified to be approving exactly the
-// same plan. It intentionally excludes Apply and PlanId; everything that changes
+// same plan. It intentionally excludes Apply and PlanID; everything that changes
 // what will be written/connected must live either in req's planning fields or in
 // the action DTO.
 func computePlanID(req request, actions []action) string {
@@ -542,9 +539,10 @@ func computePlanID(req request, actions []action) string {
 func kindCounts(actions []action) kindTally {
 	var out kindTally
 	for _, a := range actions {
-		if a.Kind == "skill" {
+		switch a.Kind {
+		case "skill":
 			out.Skill++
-		} else if a.Kind == "mcp" {
+		case "mcp":
 			out.MCP++
 		}
 	}
@@ -587,6 +585,3 @@ var (
 func defaultCurrentDir() (string, error)            { return os.Getwd() }
 func defaultUserHomeDir() (string, error)           { return os.UserHomeDir() }
 func defaultLstat(path string) (os.FileInfo, error) { return os.Lstat(path) }
-
-// osFileInfo is a local alias so the helpers above stay readable.
-type osFileInfo = os.FileInfo
