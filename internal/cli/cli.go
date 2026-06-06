@@ -504,7 +504,8 @@ func defaultEnvTarget() string {
 }
 
 // resolveSetupTargets picks where `reasonix setup` writes. The config always goes
-// to the global ~/.reasonix/config.toml. --local is deprecated and errors.
+// to the global ~/.reasonix/config.toml. Custom output paths and --local are
+// rejected because the loader no longer reads project-local setup outputs.
 func resolveSetupTargets(args []string) setupTargets {
 	t := setupTargets{config: defaultConfigTarget(), env: defaultEnvTarget()}
 	for _, a := range args {
@@ -513,7 +514,8 @@ func resolveSetupTargets(args []string) setupTargets {
 			fmt.Fprintln(os.Stderr, "error: --local is no longer supported. Configuration is always global (~/.reasonix/). To import an existing project config, use:\n  reasonix config import --from reasonix.toml")
 			return setupTargets{invalid: true}
 		default:
-			t.config = a
+			fmt.Fprintf(os.Stderr, "error: setup path %q is no longer supported. Configuration is always written to ~/.reasonix/config.toml. To import an existing project config, use:\n  reasonix config import --from %s\n", a, a)
+			return setupTargets{invalid: true}
 		}
 	}
 	return t
