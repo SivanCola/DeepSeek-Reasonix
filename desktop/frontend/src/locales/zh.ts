@@ -60,6 +60,10 @@ export const zh: Record<DictKey, string> = {
   // 话题栏
   "topicBar.renameSession": "重命名会话",
   "topicBar.more": "更多",
+  "topicBar.copyAll": "复制会话",
+  "topicBar.export": "导出会话",
+  "topicBar.exportMarkdown": "导出 Markdown",
+  "topicBar.exportJson": "导出 JSON",
 
   // 范围标签
   "scope.global": "范围：全局",
