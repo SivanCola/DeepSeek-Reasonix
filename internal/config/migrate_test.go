@@ -222,6 +222,95 @@ func TestMigrateNoLegacyIsNoop(t *testing.T) {
 	}
 }
 
+func TestImportTOMLWithoutSkillsPreservesInlineGlobalSkills(t *testing.T) {
+	_, _, home := legacyHome(t)
+	if err := os.MkdirAll(UserRootDir(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(UserConfigPath(), []byte(`
+default_model = "deepseek-flash"
+
+[skills]
+paths = ["~/inline-skills"]
+disabled_skills = ["review"]
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	src := filepath.Join(home, "project.toml")
+	if err := os.WriteFile(src, []byte(`
+[[plugins]]
+name = "imported"
+command = "imported-bin"
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	imported, skipped, errs := ImportConfigFromPath(src)
+	if len(errs) > 0 {
+		t.Fatalf("import errors: %v", errs)
+	}
+	if imported != 1 || skipped != 0 {
+		t.Fatalf("imported=%d skipped=%d, want 1/0", imported, skipped)
+	}
+	if _, err := os.Stat(UserSkillsConfigPath()); !os.IsNotExist(err) {
+		t.Fatalf("import without [skills] should not create skills.toml, stat err=%v", err)
+	}
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if len(cfg.Skills.Paths) != 1 || cfg.Skills.Paths[0] != "~/inline-skills" {
+		t.Fatalf("inline skills paths were not preserved: %+v", cfg.Skills.Paths)
+	}
+	if len(cfg.Skills.DisabledSkills) != 1 || cfg.Skills.DisabledSkills[0] != "review" {
+		t.Fatalf("inline disabled skills were not preserved: %+v", cfg.Skills.DisabledSkills)
+	}
+}
+
+func TestImportTOMLWithSkillsMergesExistingInlineGlobalSkills(t *testing.T) {
+	_, _, home := legacyHome(t)
+	if err := os.MkdirAll(UserRootDir(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(UserConfigPath(), []byte(`
+default_model = "deepseek-flash"
+
+[skills]
+paths = ["~/inline-skills"]
+disabled_skills = ["review"]
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	src := filepath.Join(home, "project.toml")
+	if err := os.WriteFile(src, []byte(`
+[skills]
+paths = ["~/imported-skills"]
+disabled_skills = ["explore"]
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, _, errs := ImportConfigFromPath(src); len(errs) > 0 {
+		t.Fatalf("import errors: %v", errs)
+	}
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	paths := strings.Join(cfg.Skills.Paths, "\n")
+	for _, want := range []string{"~/inline-skills", "~/imported-skills"} {
+		if !strings.Contains(paths, want) {
+			t.Fatalf("merged skills paths missing %q: %+v", want, cfg.Skills.Paths)
+		}
+	}
+	disabled := strings.Join(cfg.Skills.DisabledSkills, "\n")
+	for _, want := range []string{"review", "explore"} {
+		if !strings.Contains(disabled, want) {
+			t.Fatalf("merged disabled skills missing %q: %+v", want, cfg.Skills.DisabledSkills)
+		}
+	}
+}
+
 func TestMigrateToleratesUTF8BOM(t *testing.T) {
 	src, _, _ := legacyHome(t)
 	writeLegacy(t, src, string([]byte{0xEF, 0xBB, 0xBF})+`{"apiKey":"sk-bom"}`)

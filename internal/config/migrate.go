@@ -9,6 +9,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/BurntSushi/toml"
 )
 
 // legacyConfig is the subset of the v0.x (~/.reasonix/config.json) schema this
@@ -286,6 +288,11 @@ func importTOMLSource(srcPath string) (imported, skipped int, errors []string) {
 		errors = append(errors, err.Error())
 		return
 	}
+	hasSkills, err := tomlSourceDeclaresSkills(srcPath)
+	if err != nil {
+		errors = append(errors, err.Error())
+		return
+	}
 	// MCP: skip name conflicts — existing global entry wins.
 	existing, _ := loadMCPTOML()
 	have := map[string]bool{}
@@ -305,8 +312,15 @@ func importTOMLSource(srcPath string) (imported, skipped int, errors []string) {
 			imported++
 		}
 	}
+	if !hasSkills {
+		return
+	}
 	// Skills: merge into existing skills.toml content.
-	current, _ := loadExistingSkillsForImport()
+	current, err := loadExistingSkillsForImport()
+	if err != nil {
+		errors = append(errors, err.Error())
+		return
+	}
 	for _, p := range src.Skills.Paths {
 		if err := current.AddSkillPath(p); err != nil {
 			errors = append(errors, fmt.Sprintf("skill path %q: %v", p, err))
@@ -325,8 +339,22 @@ func importTOMLSource(srcPath string) (imported, skipped int, errors []string) {
 	return
 }
 
+func tomlSourceDeclaresSkills(path string) (bool, error) {
+	var raw map[string]any
+	if _, err := toml.DecodeFile(path, &raw); err != nil {
+		return false, err
+	}
+	_, ok := raw["skills"]
+	return ok, nil
+}
+
 func loadExistingSkillsForImport() (*Config, error) {
 	cfg := Default()
+	if path := UserConfigPath(); strings.TrimSpace(path) != "" {
+		if err := mergeFile(cfg, path); err != nil {
+			return cfg, err
+		}
+	}
 	if err := loadSkillsTOML(cfg); err != nil {
 		return cfg, err
 	}
