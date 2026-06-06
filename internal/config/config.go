@@ -719,6 +719,7 @@ func LoadForRoot(root string) (*Config, error) {
 	if !hasMCPFile {
 		cfg.mergeMCPJSON(loadLegacyMCP(legacyConfigPath()))
 	}
+	normalizePluginCommandLines(cfg)
 	normalizeLegacyEffort(cfg)
 	normalizeEffortConfig(cfg)
 	backfillDeepSeekPro(cfg)
@@ -796,6 +797,7 @@ func mergeTOMLPlugins(paths []string) ([]PluginEntry, error) {
 			return nil, fmt.Errorf("config %s: %w", path, err)
 		}
 		for _, p := range f.Plugins {
+			p, _ = NormalizePluginCommandLine(p)
 			if i, ok := index[p.Name]; ok {
 				merged[i] = p
 				continue
@@ -818,6 +820,7 @@ func LoadForEdit(path string) *Config {
 	if err := mergeFile(cfg, path); err != nil {
 		slog.Warn("config: load for edit failed, using defaults", "path", path, "err", err)
 	}
+	normalizePluginCommandLines(cfg)
 	normalizeLegacyEffort(cfg)
 	normalizeEffortConfig(cfg)
 	return cfg
@@ -833,7 +836,6 @@ func mergeFile(cfg *Config, path string) error {
 	}
 	return nil
 }
-
 
 // ConventionDirs are the parent directories scanned for agent assets (skills,
 // commands), in canonical-first order. .reasonix is ours; .agents / .agent /

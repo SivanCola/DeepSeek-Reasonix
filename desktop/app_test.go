@@ -856,6 +856,47 @@ env = { TOKEN = "${PLAYWRIGHT_TOKEN}" }
 	t.Fatalf("playwright MCP missing from Capabilities: %+v", view.Servers)
 }
 
+func TestUpdateMCPServerSplitsPastedCommandLine(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	dir := t.TempDir()
+	t.Chdir(dir)
+	if err := os.WriteFile(filepath.Join(dir, "reasonix.toml"), []byte(`
+[codegraph]
+enabled = false
+
+[[plugins]]
+name = "playwright"
+command = "npx"
+args = ["-y", "@playwright/mcp"]
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	app := NewApp()
+	app.setTestCtrl(control.New(control.Options{Host: plugin.NewHost()}), "")
+	defer app.activeCtrl().Close()
+
+	if err := app.UpdateMCPServer("playwright", MCPServerInput{
+		Name:      "playwright",
+		Transport: "stdio",
+		Command:   "npx -y @modelcontextprotocol/server-filesystem .",
+		Tier:      "lazy",
+	}); err != nil {
+		t.Fatalf("UpdateMCPServer: %v", err)
+	}
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := cfg.Plugins[0]
+	if p.Command != "npx" {
+		t.Fatalf("command = %q, want npx", p.Command)
+	}
+	if got := strings.Join(p.Args, "\x00"); got != strings.Join([]string{"-y", "@modelcontextprotocol/server-filesystem", "."}, "\x00") {
+		t.Fatalf("args = %v", p.Args)
+	}
+}
+
 func TestUpdateMCPServerRecordsReconnectFailure(t *testing.T) {
 	isolateDesktopUserDirs(t)
 	dir := t.TempDir()

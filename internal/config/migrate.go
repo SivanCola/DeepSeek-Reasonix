@@ -392,6 +392,7 @@ func legacyPlugins(legacy legacyConfig) []PluginEntry {
 			off := false
 			pe.AutoStart = &off
 		}
+		pe, _ = NormalizePluginCommandLine(pe)
 		out = append(out, pe)
 	}
 	return out
