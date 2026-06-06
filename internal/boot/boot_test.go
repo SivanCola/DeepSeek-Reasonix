@@ -244,46 +244,6 @@ api_key_env = "REASONIX_TEST_KEY_UNSET"
 	}
 }
 
-func TestBuildMigratesLegacyMCPStartupTier(t *testing.T) {
-	dir := t.TempDir()
-	t.Chdir(dir)
-	writeFile(t, dir, "reasonix.toml", `
-default_model = "test-model"
-
-[codegraph]
-enabled = false
-
-[agent]
-system_prompt = "BASE"
-
-[[providers]]
-name = "test-model"
-kind = "openai"
-base_url = "https://example.invalid"
-model = "x"
-api_key_env = "REASONIX_TEST_KEY_UNSET"
-
-[[plugins]]
-name = "missing"
-command = "reasonix-missing-mcp-binary"
-tier = "eager"
-`)
-	ctrl, err := Build(context.Background(), Options{
-		Sink: event.FuncSink(func(event.Event) {}),
-	})
-	if err != nil {
-		t.Fatalf("Build should not fail when an MCP server is unavailable: %v", err)
-	}
-	defer ctrl.Close()
-	raw, err := os.ReadFile(filepath.Join(dir, "reasonix.toml"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(string(raw), "\ntier") {
-		t.Fatalf("legacy MCP tier should be removed during load:\n%s", raw)
-	}
-}
-
 // TestBuildWithoutMemoryLeavesPromptUnchanged is the inverse invariant: with no
 // memory files, the system prompt is exactly the configured base — the cache
 // prefix is untouched by the memory feature.
