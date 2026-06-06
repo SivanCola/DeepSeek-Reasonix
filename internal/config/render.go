@@ -247,11 +247,6 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 	} else {
 		b.WriteString("# path       = \"\"   # empty = cache, then PATH, then a bundle beside reasonix\n")
 	}
-	if strings.TrimSpace(c.Codegraph.Tier) != "" {
-		fmt.Fprintf(&b, "tier         = %q   # lazy|background|eager\n", c.Codegraph.ResolvedTier())
-	} else {
-		b.WriteString("# tier       = \"lazy\"   # lazy|background|eager\n")
-	}
 	b.WriteString("\n")
 
 	b.WriteString("[skills]\n")
@@ -344,9 +339,6 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 			}
 			if pl.AutoStart != nil {
 				fmt.Fprintf(&b, "auto_start = %v\n", *pl.AutoStart)
-			}
-			if strings.TrimSpace(pl.Tier) != "" {
-				fmt.Fprintf(&b, "tier    = %q\n", pl.Tier)
 			}
 		}
 	}

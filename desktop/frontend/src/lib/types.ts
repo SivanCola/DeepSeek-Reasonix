@@ -355,7 +355,6 @@ export interface MCPServerInput {
   args: string[];
   url: string;
   env?: Record<string, string> | null;
-  tier: string;
 }
 
 export interface ModelInfo {
