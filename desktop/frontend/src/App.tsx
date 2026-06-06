@@ -1075,7 +1075,11 @@ export default function App() {
     if (!topicId) return;
     const nextTitle = topicTitleDraft.trim();
     if (!nextTitle) return;
-    await renameTopic(topicId, nextTitle);
+    try {
+      await renameTopic(topicId, nextTitle);
+    } catch {
+      /* keep the app usable if a stale topic cannot be renamed */
+    }
   }, [renameTopic, renamingTopicId, topicTitleDraft]);
 
   const sidebarExpandBlocked = false;
