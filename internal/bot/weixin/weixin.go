@@ -103,6 +103,14 @@ type LoginResult struct {
 	UserID    string
 }
 
+type LoginSession struct {
+	SessionKey string
+	QRCode     string
+	QRCodeURL  string
+	BaseURL    string
+	StartedAt  time.Time
+}
+
 // adapter 微信适配器实现。
 type adapter struct {
 	cfg    config.WeixinBotConfig
@@ -154,6 +162,13 @@ func (a *adapter) SendTyping(ctx context.Context, chatID string) error {
 
 func (a *adapter) Messages() <-chan bot.InboundMessage {
 	return a.msgCh
+}
+
+// SendText sends one plain text message to a saved Weixin iLink conversation.
+// It is used by desktop settings as an actual connection test.
+func SendText(ctx context.Context, cfg config.WeixinBotConfig, chatID, text string) (bot.SendResult, error) {
+	a := &adapter{cfg: cfg, logger: slog.Default().With("platform", "weixin"), contextTokens: make(map[string]string)}
+	return a.sendMessage(ctx, bot.OutboundMessage{ChatID: chatID, Text: text})
 }
 
 // token 从环境变量获取微信 token。
@@ -337,6 +352,51 @@ func Login(ctx context.Context, out io.Writer, timeout time.Duration) (*LoginRes
 	if timeout <= 0 {
 		timeout = 8 * time.Minute
 	}
+	session, err := StartLogin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if out != nil {
+		fmt.Fprintln(out, "请使用微信扫描以下二维码链接：")
+		if session.QRCodeURL != "" {
+			fmt.Fprintln(out, session.QRCodeURL)
+		} else {
+			fmt.Fprintln(out, session.QRCode)
+		}
+	}
+
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(time.Second):
+		}
+		result, status, err := PollLogin(ctx, session)
+		if err != nil {
+			if out != nil {
+				fmt.Fprintf(out, "二维码状态查询失败: %v\n", err)
+			}
+			continue
+		}
+		if result != nil {
+			return result, nil
+		}
+		if out != nil {
+			switch status {
+			case "wait", "", "<nil>":
+				fmt.Fprint(out, ".")
+			case "scaned":
+				fmt.Fprintln(out, "\n已扫码，请在微信里确认...")
+			default:
+				fmt.Fprintf(out, "\n二维码状态: %s\n", status)
+			}
+		}
+	}
+	return nil, fmt.Errorf("weixin login timed out")
+}
+
+func StartLogin(ctx context.Context) (*LoginSession, error) {
 	qrResp, err := ilinkGET(ctx, defaultWeixinAPI, getBotQRPath+"?bot_type=3")
 	if err != nil {
 		return nil, fmt.Errorf("fetch qr code: %w", err)
@@ -349,77 +409,67 @@ func Login(ctx context.Context, out io.Writer, timeout time.Duration) (*LoginRes
 	if qrcodeURL == "<nil>" {
 		qrcodeURL = ""
 	}
-	if out != nil {
-		fmt.Fprintln(out, "请使用微信扫描以下二维码链接：")
-		if qrcodeURL != "" {
-			fmt.Fprintln(out, qrcodeURL)
-		} else {
-			fmt.Fprintln(out, qrcode)
-		}
-	}
+	return &LoginSession{
+		SessionKey: qrcode,
+		QRCode:     qrcode,
+		QRCodeURL:  qrcodeURL,
+		BaseURL:    defaultWeixinAPI,
+		StartedAt:  time.Now(),
+	}, nil
+}
 
-	deadline := time.Now().Add(timeout)
-	baseURL := defaultWeixinAPI
-	for time.Now().Before(deadline) {
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case <-time.After(time.Second):
-		}
-		statusResp, err := ilinkGET(ctx, baseURL, getQRStatusPath+"?qrcode="+qrcode)
-		if err != nil {
-			if out != nil {
-				fmt.Fprintf(out, "二维码状态查询失败: %v\n", err)
-			}
-			continue
-		}
-		status := fmt.Sprint(statusResp["status"])
-		switch status {
-		case "wait", "", "<nil>":
-			if out != nil {
-				fmt.Fprint(out, ".")
-			}
-		case "scaned":
-			if out != nil {
-				fmt.Fprintln(out, "\n已扫码，请在微信里确认...")
-			}
-		case "scaned_but_redirect":
-			if host := fmt.Sprint(statusResp["redirect_host"]); host != "" && host != "<nil>" {
-				baseURL = "https://" + host
-			}
-		case "confirmed":
-			accountID := fmt.Sprint(statusResp["ilink_bot_id"])
-			token := fmt.Sprint(statusResp["bot_token"])
-			userID := fmt.Sprint(statusResp["ilink_user_id"])
-			respBaseURL := fmt.Sprint(statusResp["baseurl"])
-			if respBaseURL == "" || respBaseURL == "<nil>" {
-				respBaseURL = defaultWeixinAPI
-			}
-			if accountID == "" || accountID == "<nil>" || token == "" || token == "<nil>" {
-				return nil, fmt.Errorf("weixin qr confirmed but credential payload is incomplete")
-			}
-			account := savedAccount{
-				Token:   token,
-				BaseURL: respBaseURL,
-				UserID:  userID,
-				SavedAt: time.Now().UTC().Format(time.RFC3339),
-			}
-			if err := saveAccount(accountID, account); err != nil {
-				return nil, err
-			}
-			if err := saveAccount("default", account); err != nil {
-				return nil, err
-			}
-			return &LoginResult{AccountID: accountID, Token: token, BaseURL: respBaseURL, UserID: userID}, nil
-		case "expired":
-			return nil, fmt.Errorf("weixin qr code expired; rerun login")
-		default:
-			if out != nil {
-				fmt.Fprintf(out, "\n二维码状态: %s\n", status)
-			}
-		}
+func PollLogin(ctx context.Context, session *LoginSession) (*LoginResult, string, error) {
+	if session == nil || session.QRCode == "" {
+		return nil, "", fmt.Errorf("weixin login session is missing")
 	}
-	return nil, fmt.Errorf("weixin login timed out")
+	baseURL := session.BaseURL
+	if baseURL == "" {
+		baseURL = defaultWeixinAPI
+	}
+	statusResp, err := ilinkGET(ctx, baseURL, getQRStatusPath+"?qrcode="+session.QRCode)
+	if err != nil {
+		return nil, "", err
+	}
+	status := fmt.Sprint(statusResp["status"])
+	switch status {
+	case "wait", "", "<nil>":
+		return nil, status, nil
+	case "scaned":
+		return nil, status, nil
+	case "scaned_but_redirect":
+		if host := fmt.Sprint(statusResp["redirect_host"]); host != "" && host != "<nil>" {
+			session.BaseURL = "https://" + host
+		}
+		return nil, status, nil
+	case "confirmed":
+		accountID := fmt.Sprint(statusResp["ilink_bot_id"])
+		token := fmt.Sprint(statusResp["bot_token"])
+		userID := fmt.Sprint(statusResp["ilink_user_id"])
+		respBaseURL := fmt.Sprint(statusResp["baseurl"])
+		if respBaseURL == "" || respBaseURL == "<nil>" {
+			respBaseURL = defaultWeixinAPI
+		}
+		if accountID == "" || accountID == "<nil>" || token == "" || token == "<nil>" {
+			return nil, status, fmt.Errorf("weixin qr confirmed but credential payload is incomplete")
+		}
+		account := savedAccount{
+			Token:   token,
+			BaseURL: respBaseURL,
+			UserID:  userID,
+			SavedAt: time.Now().UTC().Format(time.RFC3339),
+		}
+		if err := saveAccount(accountID, account); err != nil {
+			return nil, status, err
+		}
+		if err := saveAccount("default", account); err != nil {
+			return nil, status, err
+		}
+		return &LoginResult{AccountID: accountID, Token: token, BaseURL: respBaseURL, UserID: userID}, status, nil
+	case "expired":
+		return nil, status, fmt.Errorf("weixin qr code expired; rerun login")
+	default:
+		return nil, status, nil
+	}
 }
 
 func ilinkGET(ctx context.Context, baseURL, endpoint string) (map[string]any, error) {

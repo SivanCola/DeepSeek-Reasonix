@@ -8,7 +8,6 @@
 package feishu
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -16,20 +15,17 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"reasonix/internal/bot"
 	"reasonix/internal/config"
 
-	"golang.org/x/net/websocket"
-)
-
-const (
-	feishuTokenURL    = "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal"
-	feishuReplyMsgURL = "https://open.feishu.cn/open-apis/im/v1/messages/%s/reply"
-	feishuSendMsgURL  = "https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=chat_id"
-	feishuUserInfoURL = "https://open.feishu.cn/open-apis/contact/v3/users/%s"
-	feishuWSSURL      = "wss://open.feishu.cn/open-apis/ws"
+	lark "github.com/larksuite/oapi-sdk-go/v3"
+	larkcore "github.com/larksuite/oapi-sdk-go/v3/core"
+	"github.com/larksuite/oapi-sdk-go/v3/event/dispatcher"
+	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
+	larkws "github.com/larksuite/oapi-sdk-go/v3/ws"
 )
 
 // textContent 飞书消息文本内容结构。
@@ -78,21 +74,14 @@ type feishuMention struct {
 	} `json:"id"`
 }
 
-type feishuTenantToken struct {
-	Code              int    `json:"code"`
-	Msg               string `json:"msg"`
-	TenantAccessToken string `json:"tenant_access_token"`
-	Expire            int    `json:"expire"`
-}
-
 // adapter 飞书适配器实现。
 type adapter struct {
-	cfg         config.FeishuBotConfig
-	logger      *slog.Logger
-	msgCh       chan bot.InboundMessage
-	cancel      context.CancelFunc
-	token       string
-	tokenExpiry time.Time
+	cfg      config.FeishuBotConfig
+	logger   *slog.Logger
+	msgCh    chan bot.InboundMessage
+	cancel   context.CancelFunc
+	client   *lark.Client
+	wsClient *larkws.Client
 
 	seen map[string]bool // 消息去重
 }
@@ -131,6 +120,9 @@ func (a *adapter) Stop() error {
 	if a.cancel != nil {
 		a.cancel()
 	}
+	if a.wsClient != nil {
+		a.wsClient.Close()
+	}
 	return nil
 }
 
@@ -146,126 +138,107 @@ func (a *adapter) Messages() <-chan bot.InboundMessage {
 	return a.msgCh
 }
 
-// getTenantToken 获取飞书 tenant access token。
-func (a *adapter) getTenantToken(ctx context.Context) (string, error) {
-	if a.token != "" && time.Now().Before(a.tokenExpiry) {
-		return a.token, nil
-	}
+func (a *adapter) appSecret() (string, error) {
 	secret := os.Getenv(a.cfg.AppSecretEnv)
 	if a.cfg.AppID == "" || secret == "" {
 		return "", fmt.Errorf("feishu app_id or %s is not configured", a.cfg.AppSecretEnv)
 	}
-
-	body := fmt.Sprintf(`{"app_id":"%s","app_secret":"%s"}`,
-		a.cfg.AppID, secret)
-
-	req, err := http.NewRequestWithContext(ctx, "POST", feishuTokenURL, bytes.NewBufferString(body))
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-
-	var token feishuTenantToken
-	if err := json.NewDecoder(resp.Body).Decode(&token); err != nil {
-		return "", err
-	}
-	if token.Code != 0 {
-		return "", fmt.Errorf("feishu token error: %s", token.Msg)
-	}
-
-	a.token = token.TenantAccessToken
-	if token.Expire > 60 {
-		a.tokenExpiry = time.Now().Add(time.Duration(token.Expire-60) * time.Second)
-	} else {
-		a.tokenExpiry = time.Now().Add(5 * time.Minute)
-	}
-	return a.token, nil
+	return secret, nil
 }
 
 // runWebSocket 启动飞书 WebSocket 长连接。
 func (a *adapter) runWebSocket(ctx context.Context) {
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		default:
-		}
-		if err := a.connectWSS(ctx); err != nil {
-			a.logger.Error("feishu websocket error", "err", err)
-			time.Sleep(5 * time.Second)
+	secret, err := a.appSecret()
+	if err != nil {
+		a.logger.Error("feishu websocket config error", "err", err)
+		return
+	}
+	eventHandler := dispatcher.NewEventDispatcher(a.cfg.VerificationToken, "").
+		OnP2MessageReceiveV1(func(ctx context.Context, event *larkim.P2MessageReceiveV1) error {
+			a.handleSDKMessage(event)
+			return nil
+		})
+	opts := []larkws.ClientOption{
+		larkws.WithEventHandler(eventHandler),
+		larkws.WithLogLevel(larkcore.LogLevelError),
+		larkws.WithAutoReconnect(true),
+		larkws.WithOnReady(func() { a.logger.Info("feishu sdk websocket connected") }),
+		larkws.WithOnReconnecting(func() { a.logger.Warn("feishu sdk websocket reconnecting") }),
+		larkws.WithOnReconnected(func() { a.logger.Info("feishu sdk websocket reconnected") }),
+		larkws.WithOnError(func(err error) { a.logger.Error("feishu sdk websocket error", "err", err) }),
+	}
+	if feishuDomain(a.cfg.Domain) == "lark" {
+		opts = append(opts, larkws.WithDomain(lark.LarkBaseUrl))
+	}
+	client := larkws.NewClient(a.cfg.AppID, secret, opts...)
+	a.wsClient = client
+	errCh := make(chan error, 1)
+	go func() { errCh <- client.Start(ctx) }()
+	select {
+	case <-ctx.Done():
+		client.Close()
+	case err := <-errCh:
+		if err != nil {
+			a.logger.Error("feishu sdk websocket stopped", "err", err)
 		}
 	}
 }
 
-func (a *adapter) connectWSS(ctx context.Context) error {
-	token, err := a.getTenantToken(ctx)
-	if err != nil {
-		return err
+func (a *adapter) handleSDKMessage(event *larkim.P2MessageReceiveV1) {
+	if event == nil || event.Event == nil || event.Event.Message == nil {
+		return
 	}
-
-	cfg, err := websocket.NewConfig(feishuWSSURL, feishuWSSURL)
-	if err != nil {
-		return err
+	eventID := ""
+	if event.EventV2Base != nil && event.EventV2Base.Header != nil {
+		eventID = event.EventV2Base.Header.EventID
 	}
-	cfg.Header = http.Header{}
-	cfg.Header.Set("Authorization", "Bearer "+token)
-
-	conn, err := websocket.DialConfig(cfg)
-	if err != nil {
-		return fmt.Errorf("dial feishu wss: %w", err)
-	}
-	defer conn.Close()
-
-	decoder := json.NewDecoder(conn)
-
-	type wsPacket struct {
-		Type string          `json:"type"`
-		Data json.RawMessage `json:"data"`
-	}
-
-	// 发送建立连接事件
-	establish := map[string]interface{}{
-		"type": "url_verification",
-	}
-	data, _ := json.Marshal(establish)
-	var pkt wsPacket
-	pkt.Type = "event"
-	pkt.Data = data
-
-	encoder := json.NewEncoder(conn)
-
-	for {
-		if err := decoder.Decode(&pkt); err != nil {
-			return fmt.Errorf("read wss: %w", err)
+	if eventID != "" {
+		if a.seen[eventID] {
+			return
 		}
-
-		switch pkt.Type {
-		case "url_verification":
-			var challenge struct {
-				Challenge string `json:"challenge"`
-				Token     string `json:"token"`
-			}
-			json.Unmarshal(pkt.Data, &challenge)
-
-			resp := map[string]string{"challenge": challenge.Challenge}
-			respData, _ := json.Marshal(resp)
-			pkt.Type = "event"
-			pkt.Data = respData
-			encoder.Encode(resp)
-
-		case "event":
-			a.handleWSEvent(ctx, pkt.Data)
-
-		case "ping":
-			pong := wsPacket{Type: "pong"}
-			encoder.Encode(pong)
+		a.seen[eventID] = true
+		if len(a.seen) > 10000 {
+			a.seen = make(map[string]bool)
 		}
+	}
+	msg := event.Event.Message
+	if stringPtrValue(msg.MessageType) != "text" {
+		return
+	}
+	var content textContent
+	if err := json.Unmarshal([]byte(stringPtrValue(msg.Content)), &content); err != nil {
+		return
+	}
+	chatType := bot.ChatDM
+	if stringPtrValue(msg.ChatType) == "group" || stringPtrValue(msg.ChatType) == "topic_group" {
+		chatType = bot.ChatGroup
+		if a.cfg.RequireMention && len(msg.Mentions) == 0 {
+			return
+		}
+	}
+	userID := ""
+	if event.Event.Sender != nil && event.Event.Sender.SenderId != nil {
+		userID = firstNonEmpty(
+			stringPtrValue(event.Event.Sender.SenderId.OpenId),
+			stringPtrValue(event.Event.Sender.SenderId.UnionId),
+			stringPtrValue(event.Event.Sender.SenderId.UserId),
+		)
+	}
+	ib := bot.InboundMessage{
+		Platform:  bot.PlatformFeishu,
+		ChatType:  chatType,
+		ChatID:    stringPtrValue(msg.ChatId),
+		UserID:    userID,
+		UserName:  userID,
+		Text:      content.Text,
+		MessageID: stringPtrValue(msg.MessageId),
+		ThreadID:  stringPtrValue(msg.ThreadId),
+		Raw:       event,
+	}
+	select {
+	case a.msgCh <- ib:
+	default:
+		a.logger.Warn("feishu message channel full")
 	}
 }
 
@@ -391,64 +364,94 @@ func (a *adapter) handleMessage(msg feishuMsgEvent) {
 	}
 }
 
-// sendMessage 使用飞书 REST API 回复消息。
+// SendText sends one plain text message to a Feishu/Lark chat_id using the SDK.
+// It is used by the desktop settings panel as an actual connection test.
+func SendText(ctx context.Context, cfg config.FeishuBotConfig, chatID, text string) (bot.SendResult, error) {
+	a := &adapter{cfg: cfg, logger: slog.Default().With("platform", "feishu")}
+	return a.sendMessage(ctx, bot.OutboundMessage{ChatID: chatID, Text: text})
+}
+
+// sendMessage 使用飞书/Lark SDK 回复或主动发送消息。
 func (a *adapter) sendMessage(ctx context.Context, msg bot.OutboundMessage) (bot.SendResult, error) {
-	token, err := a.getTenantToken(ctx)
-	if err != nil {
-		return bot.SendResult{}, err
-	}
-
 	if msg.Card != nil {
-		return a.sendCard(ctx, token, msg)
+		return a.sendCard(ctx, msg)
 	}
-
 	content, _ := json.Marshal(textContent{Text: msg.Text})
-	payload := map[string]interface{}{
-		"msg_type": "text",
-		"content":  string(content),
-	}
+	return a.sendSDKContent(ctx, msg, larkim.MsgTypeText, string(content))
+}
 
-	url := feishuSendMsgURL
+func (a *adapter) sdkClient() (*lark.Client, error) {
+	if a.client != nil {
+		return a.client, nil
+	}
+	secret, err := a.appSecret()
+	if err != nil {
+		return nil, err
+	}
+	opts := []lark.ClientOptionFunc{
+		lark.WithLogLevel(larkcore.LogLevelError),
+		lark.WithReqTimeout(15 * time.Second),
+		lark.WithSource("reasonix"),
+	}
+	if feishuDomain(a.cfg.Domain) == "lark" {
+		opts = append(opts, lark.WithOpenBaseUrl(lark.LarkBaseUrl), lark.WithOAuthBaseUrl(lark.OAuthBaseUrlLark))
+	}
+	a.client = lark.NewClient(a.cfg.AppID, secret, opts...)
+	return a.client, nil
+}
+
+func (a *adapter) sendSDKContent(ctx context.Context, msg bot.OutboundMessage, msgType, content string) (bot.SendResult, error) {
+	client, err := a.sdkClient()
+	if err != nil {
+		return bot.SendResult{}, err
+	}
 	if msg.ReplyToMsgID != "" {
-		url = fmt.Sprintf(feishuReplyMsgURL, msg.ReplyToMsgID)
-	} else {
-		payload["receive_id"] = msg.ChatID
+		req := larkim.NewReplyMessageReqBuilder().
+			MessageId(msg.ReplyToMsgID).
+			Body(larkim.NewReplyMessageReqBodyBuilder().MsgType(msgType).Content(content).Build()).
+			Build()
+		resp, err := client.Im.Message.Reply(ctx, req)
+		if err != nil {
+			return bot.SendResult{}, err
+		}
+		if resp == nil {
+			return bot.SendResult{}, fmt.Errorf("feishu reply error: empty response")
+		}
+		if !resp.Success() {
+			return bot.SendResult{}, fmt.Errorf("feishu reply error: %s", feishuCodeError(resp.Code, resp.Msg))
+		}
+		if resp.Data == nil {
+			return bot.SendResult{}, nil
+		}
+		return bot.SendResult{MessageID: stringPtrValue(resp.Data.MessageId)}, nil
 	}
-	body, _ := json.Marshal(payload)
 
-	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(body))
+	chatID := strings.TrimSpace(msg.ChatID)
+	if chatID == "" {
+		return bot.SendResult{}, fmt.Errorf("feishu chat_id is empty")
+	}
+	req := larkim.NewCreateMessageReqBuilder().
+		ReceiveIdType(larkim.CreateMessageV1ReceiveIDTypeChatId).
+		Body(larkim.NewCreateMessageReqBodyBuilder().ReceiveId(chatID).MsgType(msgType).Content(content).Build()).
+		Build()
+	resp, err := client.Im.Message.Create(ctx, req)
 	if err != nil {
 		return bot.SendResult{}, err
 	}
-	req.Header.Set("Authorization", "Bearer "+token)
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return bot.SendResult{}, err
+	if resp == nil {
+		return bot.SendResult{}, fmt.Errorf("feishu send error: empty response")
 	}
-	defer resp.Body.Close()
-
-	var result struct {
-		Code int    `json:"code"`
-		Msg  string `json:"msg"`
-		Data struct {
-			MessageID string `json:"message_id"`
-		} `json:"data"`
+	if !resp.Success() {
+		return bot.SendResult{}, fmt.Errorf("feishu send error: %s", feishuCodeError(resp.Code, resp.Msg))
 	}
-	respBody, _ := io.ReadAll(resp.Body)
-	if err := json.Unmarshal(respBody, &result); err != nil {
-		return bot.SendResult{}, err
+	if resp.Data == nil {
+		return bot.SendResult{}, nil
 	}
-	if result.Code != 0 {
-		return bot.SendResult{}, fmt.Errorf("feishu send error: %s", result.Msg)
-	}
-
-	return bot.SendResult{MessageID: result.Data.MessageID}, nil
+	return bot.SendResult{MessageID: stringPtrValue(resp.Data.MessageId)}, nil
 }
 
 // sendCard 发送 interactive card 消息（用于审批/问答）。
-func (a *adapter) sendCard(ctx context.Context, token string, msg bot.OutboundMessage) (bot.SendResult, error) {
+func (a *adapter) sendCard(ctx context.Context, msg bot.OutboundMessage) (bot.SendResult, error) {
 	card := msg.Card
 
 	elements := make([]map[string]interface{}, 0)
@@ -478,47 +481,32 @@ func (a *adapter) sendCard(ctx context.Context, token string, msg bot.OutboundMe
 	}
 
 	cardJSON, _ := json.Marshal(cardPayload)
-	payload := map[string]interface{}{
-		"msg_type": "interactive",
-		"content":  string(cardJSON),
-	}
+	return a.sendSDKContent(ctx, msg, larkim.MsgTypeInteractive, string(cardJSON))
+}
 
-	url := feishuSendMsgURL
-	if msg.ReplyToMsgID != "" {
-		url = fmt.Sprintf(feishuReplyMsgURL, msg.ReplyToMsgID)
-	} else {
-		payload["receive_id"] = msg.ChatID
+func feishuDomain(domain string) string {
+	if strings.EqualFold(strings.TrimSpace(domain), "lark") {
+		return "lark"
 	}
-	body, _ := json.Marshal(payload)
+	return "feishu"
+}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(body))
-	if err != nil {
-		return bot.SendResult{}, err
+func stringPtrValue(ptr *string) string {
+	if ptr == nil {
+		return ""
 	}
-	req.Header.Set("Authorization", "Bearer "+token)
-	req.Header.Set("Content-Type", "application/json")
+	return strings.TrimSpace(*ptr)
+}
 
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return bot.SendResult{}, err
+func feishuCodeError(code int, msg string) string {
+	msg = strings.TrimSpace(msg)
+	if msg == "" {
+		msg = "unknown error"
 	}
-	defer resp.Body.Close()
-
-	var result struct {
-		Code int    `json:"code"`
-		Msg  string `json:"msg"`
-		Data struct {
-			MessageID string `json:"message_id"`
-		} `json:"data"`
+	if code == 0 {
+		return msg
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return bot.SendResult{}, err
-	}
-	if result.Code != 0 {
-		return bot.SendResult{}, fmt.Errorf("feishu send card error: %s", result.Msg)
-	}
-
-	return bot.SendResult{MessageID: result.Data.MessageID}, nil
+	return fmt.Sprintf("%s (code %d)", msg, code)
 }
 
 // runWebhook 启动飞书 Webhook 模式。

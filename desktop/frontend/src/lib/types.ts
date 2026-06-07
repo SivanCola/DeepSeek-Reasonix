@@ -557,6 +557,7 @@ export interface QQBotView {
 
 export interface FeishuBotView {
   enabled: boolean;
+  domain: string;
   appId: string;
   appSecretEnv: string;
   secretSet: boolean;
@@ -574,6 +575,34 @@ export interface WeixinBotView {
   apiBase: string;
 }
 
+export interface BotConnectionCredentialView {
+  appId: string;
+  appSecretEnv: string;
+  accountId: string;
+  tokenEnv: string;
+  secretSet: boolean;
+}
+
+export interface BotConnectionSessionMappingView {
+  remoteId: string;
+  sessionId: string;
+  updatedAt: string;
+}
+
+export interface BotConnectionView {
+  id: string;
+  provider: "qq" | "feishu" | "weixin" | string;
+  domain: "qq" | "feishu" | "lark" | "weixin" | string;
+  label: string;
+  enabled: boolean;
+  status: "disconnected" | "pending" | "connected" | "error" | string;
+  credential: BotConnectionCredentialView;
+  sessionMappings: BotConnectionSessionMappingView[];
+  lastError: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface BotSettingsView {
   enabled: boolean;
   model: string;
@@ -583,6 +612,36 @@ export interface BotSettingsView {
   qq: QQBotView;
   feishu: FeishuBotView;
   weixin: WeixinBotView;
+  connections: BotConnectionView[];
+}
+
+export interface BotInstallStartResult {
+  ok: boolean;
+  provider: string;
+  domain: string;
+  installId: string;
+  url: string;
+  deviceCode: string;
+  userCode: string;
+  interval: number;
+  expireIn: number;
+  message: string;
+}
+
+export interface BotInstallPollResult {
+  done: boolean;
+  connection: BotConnectionView;
+  status: string;
+  message: string;
+  error: string;
+}
+
+export interface BotConnectionDiagnostic {
+  id: string;
+  label: string;
+  status: string;
+  message: string;
+  messageId: string;
 }
 
 export interface SettingsView {
