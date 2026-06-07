@@ -3,8 +3,11 @@ package acp
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strconv"
 	"strings"
+	"sync"
+	"unicode/utf8"
 
 	"reasonix/internal/event"
 	"reasonix/internal/provider"
@@ -42,7 +45,9 @@ const maxResultChars = 8000
 type updateSink struct {
 	conn      notifier
 	sessionID string
-	approve   func(id string, allow, session bool)
+	approve   func(id string, allow, session, persist bool)
+	mu        sync.Mutex
+	turnCtx   context.Context
 }
 
 func newUpdateSink(conn notifier, sessionID string) *updateSink {
@@ -51,8 +56,30 @@ func newUpdateSink(conn notifier, sessionID string) *updateSink {
 
 // bindApprove installs the controller's Approve callback, called by the service
 // once the controller exists (the sink is built first, to hand to the Factory).
-func (s *updateSink) bindApprove(fn func(id string, allow, session bool)) {
+func (s *updateSink) bindApprove(fn func(id string, allow, session, persist bool)) {
 	s.approve = fn
+}
+
+func (s *updateSink) setTurnContext(ctx context.Context) {
+	s.mu.Lock()
+	s.turnCtx = ctx
+	s.mu.Unlock()
+}
+
+func (s *updateSink) clearTurnContext() {
+	s.mu.Lock()
+	s.turnCtx = nil
+	s.mu.Unlock()
+}
+
+func (s *updateSink) currentTurnContext() context.Context {
+	s.mu.Lock()
+	ctx := s.turnCtx
+	s.mu.Unlock()
+	if ctx == nil {
+		return context.Background()
+	}
+	return ctx
 }
 
 // Emit implements event.Sink. The agent calls it serially (see event.Sink), so no
@@ -72,6 +99,11 @@ func (s *updateSink) Emit(e event.Event) {
 		s.send(messageChunk{SessionUpdate: "agent_message_chunk", Content: textBlock(e.Text)})
 
 	case event.ToolDispatch:
+		// Skip the early (Partial) dispatch: it carries no args, and the full one
+		// that follows is the single pending tool_call the protocol expects.
+		if e.Tool.Partial {
+			return
+		}
 		s.send(toolCall{
 			SessionUpdate: "tool_call",
 			ToolCallID:    e.Tool.ID,
@@ -105,11 +137,22 @@ func (s *updateSink) Emit(e event.Event) {
 			})
 		}
 
+	case event.CompactionDone:
+		// ACP has no compaction-card concept; surface a one-line note so the host
+		// knows the context was summarized (an aborted pass has no summary).
+		if e.Compaction.Summary != "" {
+			s.send(messageChunk{
+				SessionUpdate: "agent_message_chunk",
+				Content:       textBlock(fmt.Sprintf("\n\n[compacted %d earlier messages to save context]", e.Compaction.Messages)),
+			})
+		}
+
 	case event.ApprovalRequest:
 		// The run loop is now blocked awaiting Approve(id, …). Do the
 		// client round-trip off the emit goroutine so Emit returns at once
 		// (the agent emits serially); the answer unblocks the loop.
-		go s.requestPermission(e.Approval)
+		turnCtx := s.currentTurnContext()
+		go s.requestPermission(turnCtx, e.Approval)
 	}
 }
 
@@ -160,7 +203,7 @@ func (s *updateSink) replay(msgs []provider.Message) {
 // session/request_permission round-trip and feeds the outcome back through
 // approve. Any transport failure or a cancelled/rejected outcome denies the call,
 // so the model gets a blocked result rather than the turn hanging.
-func (s *updateSink) requestPermission(a event.Approval) {
+func (s *updateSink) requestPermission(ctx context.Context, a event.Approval) {
 	if s.approve == nil {
 		return
 	}
@@ -179,14 +222,13 @@ func (s *updateSink) requestPermission(a event.Approval) {
 		Options: []PermissionOption{
 			{OptionID: string(OptAllowOnce), Name: "Allow", Kind: OptAllowOnce},
 			{OptionID: string(OptAllowAlways), Name: "Allow for this session", Kind: OptAllowAlways},
+			{OptionID: string(OptAllowPersistent), Name: "Always allow (save to config)", Kind: OptAllowPersistent},
 			{OptionID: string(OptRejectOnce), Name: "Reject", Kind: OptRejectOnce},
 		},
 	}
 
-	allow, session := false, false
-	// context.Background: Conn.Request also unblocks on connection close, so the
-	// round-trip can't outlive the wire even without a turn-scoped context here.
-	if raw, err := s.conn.Request(context.Background(), "session/request_permission", params); err == nil {
+	allow, session, persist := false, false, false
+	if raw, err := s.conn.Request(ctx, "session/request_permission", params); err == nil {
 		var res PermissionRequestResult
 		if json.Unmarshal(raw, &res) == nil && res.Outcome.Outcome == "selected" {
 			switch PermissionOptionKind(res.Outcome.OptionID) {
@@ -194,10 +236,12 @@ func (s *updateSink) requestPermission(a event.Approval) {
 				allow = true
 			case OptAllowAlways:
 				allow, session = true, true
+			case OptAllowPersistent:
+				allow, session, persist = true, true, true
 			}
 		}
 	}
-	s.approve(a.ID, allow, session)
+	s.approve(a.ID, allow, session, persist)
 }
 
 // textBlock builds a text content block.
@@ -217,8 +261,12 @@ func clip(text string) string {
 	if len(text) <= maxResultChars {
 		return text
 	}
-	return text[:maxResultChars] + "\n…(" +
-		strconv.Itoa(len(text)-maxResultChars) + " more chars truncated)"
+	end := maxResultChars
+	for end > 0 && !utf8.ValidString(text[:end]) {
+		end--
+	}
+	return text[:end] + "\n…(" +
+		strconv.Itoa(len(text)-end) + " more chars truncated)"
 }
 
 // toolKindFor maps a tool name to the ACP tool kind the host uses to categorize

@@ -1,11 +1,18 @@
 package cli
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
 
+	tea "charm.land/bubbletea/v2"
+
+	"reasonix/internal/agent"
 	"reasonix/internal/command"
+	"reasonix/internal/control"
+	"reasonix/internal/event"
+	"reasonix/internal/provider"
 )
 
 // writeAt creates dir/rel (with parents) holding content, for fs-backed tests.
@@ -155,6 +162,52 @@ func TestFileItemsOneLevel(t *testing.T) {
 	}
 }
 
+func TestFileItemsSearchesBasenameAtTopLevel(t *testing.T) {
+	orig, _ := os.Getwd()
+	defer os.Chdir(orig)
+
+	dir := t.TempDir()
+	writeAt(t, dir, "frontend/wailsjs/runtime/runtime.js", "x")
+	writeAt(t, dir, "node_modules/pkg/runtime.js", "noise")
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+
+	m := newTestChatTUI()
+	items := m.fileItems("runtime.js")
+
+	if !hasLabel(items, "frontend/wailsjs/runtime/runtime.js") {
+		t.Fatalf("top-level @runtime.js should offer nested file path, got %v", labels(items))
+	}
+	if hasLabel(items, "node_modules/pkg/runtime.js") {
+		t.Fatalf("file search should skip node_modules noise, got %v", labels(items))
+	}
+}
+
+func TestFileItemsSearchRespectsMenuCap(t *testing.T) {
+	orig, _ := os.Getwd()
+	defer os.Chdir(orig)
+
+	dir := t.TempDir()
+	for i := 0; i < maxCompItems; i++ {
+		writeAt(t, dir, filepath.Join("aa-dir-"+fmt.Sprintf("%03d", i), "file.txt"), "x")
+	}
+	writeAt(t, dir, "nested/aa-deep.js", "y")
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+
+	m := newTestChatTUI()
+	items := m.fileItems("aa")
+
+	if len(items) != maxCompItems {
+		t.Fatalf("fileItems should stay capped at %d entries, got %d", maxCompItems, len(items))
+	}
+	if hasLabel(items, "nested/aa-deep.js") {
+		t.Fatalf("search result should not exceed capped menu: %v", labels(items))
+	}
+}
+
 func TestFileItemsHiddenWhenDotTyped(t *testing.T) {
 	dir := t.TempDir()
 	writeAt(t, dir, ".hidden", "z")
@@ -165,20 +218,32 @@ func TestFileItemsHiddenWhenDotTyped(t *testing.T) {
 	}
 }
 
-// TestSlashArgCompletionMCPSubcommands proves the menu now follows past the
-// command word: "/mcp " opens an argument menu of subcommands rather than going
-// dark the moment a space is typed.
+// TestSlashArgCompletionMCPSubcommands proves explicit help syntax opens the
+// subcommand menu; a bare trailing space stays submit-ready.
 func TestSlashArgCompletionMCPSubcommands(t *testing.T) {
 	m := newTestChatTUI()
-	m.input.SetValue("/mcp ")
+	m.input.SetValue("/mcp?")
 	m.updateCompletion()
 	if !m.completion.active || m.completion.kind != compSlashArg {
-		t.Fatalf("/mcp <space> should open the argument menu: %+v", m.completion)
+		t.Fatalf("/mcp? should open the argument menu: %+v", m.completion)
 	}
-	for _, want := range []string{"add", "remove", "list"} {
+	for _, want := range []string{"add", "connect", "remove", "show", "tools"} {
 		if !hasLabel(m.completion.items, want) {
 			t.Errorf("subcommand %q missing: %v", want, labels(m.completion.items))
 		}
+	}
+	if hasLabel(m.completion.items, "list") {
+		t.Errorf("redundant list subcommand should be hidden from /mcp? menu: %v", labels(m.completion.items))
+	}
+	m.acceptCompletion()
+	if got := m.input.Value(); got != "/mcp add " {
+		t.Fatalf("accepting /mcp? subcommand should replace ? with command, got %q", got)
+	}
+
+	m.input.SetValue("/mcp ")
+	m.updateCompletion()
+	if m.completion.active {
+		t.Fatalf("/mcp <space> should not open the argument menu: %+v", m.completion)
 	}
 }
 
@@ -214,21 +279,54 @@ func TestSlashArgCompletionMCPAddFlags(t *testing.T) {
 	}
 }
 
-// TestSlashArgCompletionChainsFromName proves accepting "/mcp" chains straight
-// into the subcommand menu (the command is marked to descend on accept).
-func TestSlashArgCompletionChainsFromName(t *testing.T) {
+// TestSlashCompletionMCPDoesNotAutoDescend proves accepting "/mcp" keeps the
+// bare command submit-ready; only an explicitly typed trailing space opens the
+// subcommand menu.
+func TestSlashCompletionMCPDoesNotAutoDescend(t *testing.T) {
 	m := newTestChatTUI()
 	m.input.SetValue("/mcp")
 	m.updateCompletion()
 	m.acceptCompletion()
-	if got := m.input.Value(); got != "/mcp " {
-		t.Fatalf("accepting /mcp should fill %q, got %q", "/mcp ", got)
+	if got := m.input.Value(); got != "/mcp" {
+		t.Fatalf("accepting /mcp should keep %q, got %q", "/mcp", got)
 	}
-	if !m.completion.active || m.completion.kind != compSlashArg {
-		t.Fatalf("accepting /mcp should chain into the subcommand menu: %+v", m.completion)
+	if m.completion.active {
+		t.Fatalf("accepting /mcp should not chain into the subcommand menu: %+v", m.completion)
 	}
-	if !hasLabel(m.completion.items, "add") {
-		t.Errorf("chained menu should list subcommands: %v", labels(m.completion.items))
+}
+
+func TestEnterOnExactMCPSubmitsManager(t *testing.T) {
+	isolateUserConfig(t)
+	m := newTestChatTUI()
+	m.input.SetValue("/mcp")
+	m.updateCompletion()
+	if !m.completion.active {
+		t.Fatal("typing /mcp should show slash completion before Enter")
+	}
+	if m.completion.kind == compSlashArg {
+		t.Fatalf("typing exact /mcp should not open subcommand completion: %+v", m.completion)
+	}
+
+	got, _ := m.update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	next := got.(chatTUI)
+	if next.mcp == nil || next.mcp.stage != mcpStageList {
+		t.Fatalf("Enter on exact /mcp should open manager, got %#v", next.mcp)
+	}
+}
+
+func TestEnterOnMCPWithTrailingSpaceSubmitsManager(t *testing.T) {
+	isolateUserConfig(t)
+	m := newTestChatTUI()
+	m.input.SetValue("/mcp ")
+	m.updateCompletion()
+	if m.completion.active {
+		t.Fatalf("/mcp <space> should stay submit-ready before Enter: %+v", m.completion)
+	}
+
+	got, _ := m.update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	next := got.(chatTUI)
+	if next.mcp == nil || next.mcp.stage != mcpStageList {
+		t.Fatalf("Enter on bare /mcp arg menu should open manager, got %#v", next.mcp)
 	}
 }
 
@@ -240,6 +338,70 @@ func TestSlashArgCompletionRemoveNoHost(t *testing.T) {
 	m.updateCompletion()
 	if m.completion.active {
 		t.Error("remove with no connected servers should not open a menu")
+	}
+}
+
+func TestSlashArgCompletionSwitchBranches(t *testing.T) {
+	dir := t.TempDir()
+	exec := agent.New(nil, nil, agent.NewSession("sys"), agent.Options{}, event.Discard)
+	exec.Session().Add(provider.Message{Role: provider.RoleUser, Content: "root prompt"})
+	ctrl := control.New(control.Options{Executor: exec, SessionDir: dir, Label: "test"})
+	rootPath := filepath.Join(dir, "root.jsonl")
+	ctrl.SetSessionPath(rootPath)
+	if err := ctrl.Snapshot(); err != nil {
+		t.Fatal(err)
+	}
+
+	child := agent.NewSession("sys")
+	child.Add(provider.Message{Role: provider.RoleUser, Content: "child prompt"})
+	childPath := filepath.Join(dir, "child.jsonl")
+	if err := child.Save(childPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := agent.SaveBranchMeta(childPath, agent.BranchMeta{Name: "experiment", ParentID: agent.BranchID(rootPath)}); err != nil {
+		t.Fatal(err)
+	}
+
+	m := newTestChatTUI()
+	m.ctrl = ctrl
+	m.input.SetValue("/switch exp")
+	m.updateCompletion()
+	if !m.completion.active || m.completion.kind != compSlashArg {
+		t.Fatalf("/switch should open branch completion: %+v", m.completion)
+	}
+	if len(m.completion.items) != 1 || m.completion.items[0].label != "child" {
+		t.Fatalf("branch completion = %v, want child", labels(m.completion.items))
+	}
+}
+
+func TestSlashArgCompletionLanguage(t *testing.T) {
+	m := newTestChatTUI()
+	m.input.SetValue("/language ")
+	m.updateCompletion()
+	if !m.completion.active || m.completion.kind != compSlashArg {
+		t.Fatalf("/language should open arg completion: %+v", m.completion)
+	}
+	for _, want := range []string{"auto", "en", "zh"} {
+		if !hasLabel(m.completion.items, want) {
+			t.Fatalf("/language completion missing %q: %v", want, labels(m.completion.items))
+		}
+	}
+}
+
+func TestSlashArgCompletionAutoPlan(t *testing.T) {
+	m := newTestChatTUI()
+	m.input.SetValue("/auto-plan ")
+	m.updateCompletion()
+	if !m.completion.active || m.completion.kind != compSlashArg {
+		t.Fatalf("/auto-plan should open arg completion: %+v", m.completion)
+	}
+	for _, want := range []string{"off", "on"} {
+		if !hasLabel(m.completion.items, want) {
+			t.Fatalf("/auto-plan completion missing %q: %v", want, labels(m.completion.items))
+		}
+	}
+	if hasLabel(m.completion.items, "ask") {
+		t.Fatalf("/auto-plan completion should not include legacy ask: %v", labels(m.completion.items))
 	}
 }
 

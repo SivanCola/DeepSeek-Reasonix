@@ -1,7 +1,8 @@
-import { useState } from "react";
-import { Check, ChevronDown, ChevronRight, Circle, CircleDot, X } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { Check, ChevronDown, ChevronRight, Circle, CircleDot, RefreshCw, X } from "lucide-react";
 import { useT } from "../lib/i18n";
 import type { Todo } from "../lib/tools";
+import { Tooltip } from "./Tooltip";
 
 // TodoPanel is the live task list pinned just above the composer — the kernel's
 // latest todo_write call drives it, and it updates in place as the agent flips
@@ -10,13 +11,20 @@ import type { Todo } from "../lib/tools";
 // shows the current item so the footer stays compact during a long run. The ✕
 // dismisses it (onDismiss) when the user abandons the task; a fresh todo_write
 // brings it back.
-export function TodoPanel({ todos, onDismiss }: { todos: Todo[]; onDismiss: () => void }) {
+export function TodoPanel({ todos, stale, onDismiss }: { todos: Todo[]; stale?: boolean; onDismiss: () => void }) {
   const t = useT();
   const [open, setOpen] = useState(true);
-  if (todos.length === 0) return null;
+  const currentRef = useRef<HTMLLIElement | null>(null);
 
   const done = todos.filter((t) => t.status === "completed").length;
   const current = todos.find((t) => t.status === "in_progress");
+
+  useEffect(() => {
+    if (!open) return;
+    currentRef.current?.scrollIntoView({ block: "nearest" });
+  }, [open, current?.content, current?.activeForm]);
+
+  if (todos.length === 0) return null;
 
   return (
     <div className="todobar">
@@ -27,19 +35,31 @@ export function TodoPanel({ todos, onDismiss }: { todos: Todo[]; onDismiss: () =
           <span className="todobar__count">
             {done}/{todos.length}
           </span>
+          {stale && (
+            <span className="todobar__stale">
+              <RefreshCw size={11} />
+              {t("todo.stale")}
+            </span>
+          )}
           {!open && current && (
             <span className="todobar__current">{current.activeForm || current.content}</span>
           )}
         </button>
-        <button className="todobar__close" onClick={onDismiss} title={t("todo.dismiss")}>
-          <X size={13} />
-        </button>
+        <Tooltip label={t("todo.dismiss")}>
+          <button className="todobar__close" onClick={onDismiss}>
+            <X size={13} />
+          </button>
+        </Tooltip>
       </div>
 
       {open && (
         <ul className="todobar__list">
           {todos.map((t, i) => (
-            <li key={i} className={`todobar__item todobar__item--${t.status}`}>
+            <li
+              key={i}
+              ref={t.status === "in_progress" ? currentRef : undefined}
+              className={`todobar__item todobar__item--${t.status}${t.level ? " todobar__item--sub" : ""}`}
+            >
               {t.status === "completed" ? (
                 <Check size={14} className="todobar__ico todobar__ico--done" />
               ) : t.status === "in_progress" ? (

@@ -23,6 +23,8 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	"reasonix/internal/proc"
 )
 
 // Event is a point in the agent loop a hook can fire at.
@@ -33,13 +35,34 @@ const (
 	PostToolUse      Event = "PostToolUse"
 	UserPromptSubmit Event = "UserPromptSubmit"
 	Stop             Event = "Stop"
+	// PostLLMCall fires after every model turn completes (streaming finishes) but
+	// before the reasoning_content is stored in the session. The hook receives the
+	// raw reasoning text in the payload; its stdout, if non-empty on exit 0,
+	// replaces the reasoning stored and displayed to the user. It can't block — a
+	// non-zero exit or empty stdout leaves the reasoning unchanged.
+	PostLLMCall Event = "PostLLMCall"
+	// SessionStart fires once when a session becomes active (fresh, resumed, or
+	// after /new). SessionEnd fires when it is closed or rotated. SubagentStop
+	// fires when a `task` sub-agent finishes. Notification fires when the agent
+	// needs the user's attention (e.g. a pending approval). PreCompact fires just
+	// before a compaction pass; its stdout is injected as extra summary guidance.
+	SessionStart Event = "SessionStart"
+	SessionEnd   Event = "SessionEnd"
+	SubagentStop Event = "SubagentStop"
+	Notification Event = "Notification"
+	PreCompact   Event = "PreCompact"
 )
 
 // Events is every event, in a stable order — drives loading and `/hooks`.
-var Events = []Event{PreToolUse, PostToolUse, UserPromptSubmit, Stop}
+var Events = []Event{
+	PreToolUse, PostToolUse, UserPromptSubmit, Stop,
+	PostLLMCall,
+	SessionStart, SessionEnd, SubagentStop, Notification, PreCompact,
+}
 
 // IsBlocking reports whether a non-zero/exit-2 (or timed-out) hook on this event
-// can block the loop. Only the gating events qualify.
+// can block the loop. Only the gating events qualify. (PreCompact does not block;
+// it only contributes guidance via stdout.)
 func IsBlocking(e Event) bool { return e == PreToolUse || e == UserPromptSubmit }
 
 // defaultTimeout is the per-event timeout when a hook sets none. Tool/prompt
@@ -211,6 +234,9 @@ type Payload struct {
 	Prompt        string          `json:"prompt,omitempty"`
 	LastAssistant string          `json:"lastAssistantText,omitempty"`
 	Turn          int             `json:"turn,omitempty"`
+	Message       string          `json:"message,omitempty"`   // Notification: what needs attention
+	Trigger       string          `json:"trigger,omitempty"`   // PreCompact: "auto" | "manual"
+	Reasoning     string          `json:"reasoning,omitempty"` // PostLLMCall: the model's raw reasoning text
 }
 
 // Decision is a single hook invocation's verdict.
@@ -350,6 +376,7 @@ func DefaultSpawner(ctx context.Context, in SpawnInput) SpawnResult {
 
 	name, args := shellInvocation(in.Command)
 	cmd := exec.CommandContext(cctx, name, args...)
+	proc.HideWindow(cmd)
 	cmd.Dir = in.Cwd
 	cmd.Stdin = strings.NewReader(in.Stdin)
 	var outBuf, errBuf cappedBuffer

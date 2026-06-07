@@ -1,7 +1,9 @@
 package builtin
 
 import (
+	"bytes"
 	"context"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -10,6 +12,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"unicode/utf16"
+
+	"golang.org/x/text/encoding/simplifiedchinese"
 
 	"reasonix/internal/tool"
 )
@@ -131,6 +136,37 @@ func TestReadFileBinary(t *testing.T) {
 	_, err := readFile{}.Execute(context.Background(), argsJSON(t, map[string]any{"path": f}))
 	if err == nil || !strings.Contains(err.Error(), "binary") {
 		t.Errorf("expected binary-file error, got %v", err)
+	}
+}
+
+func TestReadFileBOM(t *testing.T) {
+	enc := func(order binary.ByteOrder, s string) []byte {
+		var b bytes.Buffer
+		if order == binary.LittleEndian {
+			b.Write([]byte{0xFF, 0xFE})
+		} else {
+			b.Write([]byte{0xFE, 0xFF})
+		}
+		for _, r := range utf16.Encode([]rune(s)) {
+			_ = binary.Write(&b, order, r)
+		}
+		return b.Bytes()
+	}
+	cases := map[string][]byte{
+		"utf16le.txt": enc(binary.LittleEndian, "hello world\nsecond line"),
+		"utf16be.txt": enc(binary.BigEndian, "hello world\nsecond line"),
+		"utf8bom.txt": append([]byte{0xEF, 0xBB, 0xBF}, []byte("hello world\nsecond line")...),
+	}
+	for name, content := range cases {
+		f := filepath.Join(t.TempDir(), name)
+		os.WriteFile(f, content, 0o644)
+		out := runTool(t, readFile{}, map[string]any{"path": f})
+		if !strings.Contains(out, "hello world") || !strings.Contains(out, "second line") {
+			t.Errorf("%s: expected decoded text, got %q", name, out)
+		}
+		if strings.Contains(out, "\ufeff") || strings.IndexByte(out, 0) >= 0 {
+			t.Errorf("%s: BOM/NUL leaked into output: %q", name, out)
+		}
 	}
 }
 
@@ -289,5 +325,151 @@ func TestLsAndGlob(t *testing.T) {
 	g := runTool(t, globTool{}, map[string]any{"pattern": filepath.Join(dir, "*.txt")})
 	if !strings.Contains(g, "x.txt") {
 		t.Fatalf("glob result = %q", g)
+	}
+}
+
+func TestGlobRecursive(t *testing.T) {
+	dir := t.TempDir()
+	// Create a nested structure:
+	// dir/a.go
+	// dir/sub/b.go
+	// dir/sub/deep/c.go
+	// dir/sub/deep/c.txt
+	// dir/other.txt
+	os.WriteFile(filepath.Join(dir, "a.go"), []byte("package a"), 0o644)
+	os.MkdirAll(filepath.Join(dir, "sub", "deep"), 0o755)
+	os.WriteFile(filepath.Join(dir, "sub", "b.go"), []byte("package b"), 0o644)
+	os.WriteFile(filepath.Join(dir, "sub", "deep", "c.go"), []byte("package c"), 0o644)
+	os.WriteFile(filepath.Join(dir, "sub", "deep", "c.txt"), []byte("text"), 0o644)
+	os.WriteFile(filepath.Join(dir, "other.txt"), []byte("other"), 0o644)
+
+	// **  *.go should find all .go files recursively.
+	out := runTool(t, globTool{}, map[string]any{"pattern": filepath.Join(dir, "**", "*.go")})
+	if !strings.Contains(out, "a.go") {
+		t.Errorf("missing a.go in:\n%s", out)
+	}
+	if !strings.Contains(out, "b.go") {
+		t.Errorf("missing b.go in:\n%s", out)
+	}
+	if !strings.Contains(out, "c.go") {
+		t.Errorf("missing c.go in:\n%s", out)
+	}
+	// Should not include .txt files.
+	if strings.Contains(out, "other.txt") || strings.Contains(out, "c.txt") {
+		t.Errorf("should not include .txt files:\n%s", out)
+	}
+
+	// **  *.txt should find all .txt files recursively.
+	out2 := runTool(t, globTool{}, map[string]any{"pattern": filepath.Join(dir, "**", "*.txt")})
+	if !strings.Contains(out2, "other.txt") {
+		t.Errorf("missing other.txt in:\n%s", out2)
+	}
+	if !strings.Contains(out2, "c.txt") {
+		t.Errorf("missing c.txt in:\n%s", out2)
+	}
+
+	// **  with no suffix should find all files.
+	out3 := runTool(t, globTool{}, map[string]any{"pattern": filepath.Join(dir, "**")})
+	if !strings.Contains(out3, "a.go") || !strings.Contains(out3, "c.txt") {
+		t.Errorf("bare ** should find all files:\n%s", out3)
+	}
+}
+
+func TestGlobForwardSlashPattern(t *testing.T) {
+	dir := t.TempDir()
+	os.MkdirAll(filepath.Join(dir, "sub", "deep"), 0o755)
+	os.WriteFile(filepath.Join(dir, "top.txt"), []byte("x"), 0o644)
+	os.WriteFile(filepath.Join(dir, "sub", "deep", "nested.txt"), []byte("y"), 0o644)
+	t.Chdir(dir)
+
+	out := runTool(t, globTool{}, map[string]any{"pattern": "**/*.txt"})
+	if !strings.Contains(out, "top.txt") || !strings.Contains(out, "nested.txt") {
+		t.Errorf("forward-slash recursive pattern should match every .txt:\n%s", out)
+	}
+}
+
+func TestGlobRecursiveNoMatches(t *testing.T) {
+	dir := t.TempDir()
+	os.MkdirAll(filepath.Join(dir, "sub"), 0o755)
+	os.WriteFile(filepath.Join(dir, "sub", "a.go"), []byte("package a"), 0o644)
+
+	out := runTool(t, globTool{}, map[string]any{"pattern": filepath.Join(dir, "**", "*.py")})
+	if !strings.Contains(out, "(no matches)") {
+		t.Errorf("expected (no matches), got:\n%s", out)
+	}
+}
+
+func TestGlobNoMatches(t *testing.T) {
+	dir := t.TempDir()
+	out := runTool(t, globTool{}, map[string]any{"pattern": filepath.Join(dir, "*.xyz")})
+	if !strings.Contains(out, "(no matches)") {
+		t.Errorf("expected (no matches), got:\n%s", out)
+	}
+}
+
+// --- GB18030 encoding integration tests (issue #2637) ---
+
+func TestReadFileGB18030(t *testing.T) {
+	f := filepath.Join(t.TempDir(), "gbk.txt")
+	gb, err := simplifiedchinese.GB18030.NewEncoder().String("你好世界\n第二行")
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	os.WriteFile(f, []byte(gb), 0o644)
+
+	out := runTool(t, readFile{}, map[string]any{"path": f})
+	if !strings.Contains(out, "你好世界") || !strings.Contains(out, "第二行") {
+		t.Errorf("expected decoded Chinese text, got:\n%s", out)
+	}
+}
+
+func TestEditFileGB18030RoundTrip(t *testing.T) {
+	f := filepath.Join(t.TempDir(), "gbk.txt")
+	original, _ := simplifiedchinese.GB18030.NewEncoder().String("你好世界\n第二行\n")
+	os.WriteFile(f, []byte(original), 0o644)
+
+	runTool(t, editFile{}, map[string]any{
+		"path":       f,
+		"old_string": "第二行",
+		"new_string": "新的行",
+	})
+
+	got, _ := os.ReadFile(f)
+	// The file should still be GB18030-encoded (not silently converted to UTF-8).
+	dec, _ := simplifiedchinese.GB18030.NewDecoder().Bytes(got)
+	if string(dec) != "你好世界\n新的行\n" {
+		t.Errorf("after edit = %q (decoded)", dec)
+	}
+}
+
+func TestMultiEditGB18030RoundTrip(t *testing.T) {
+	f := filepath.Join(t.TempDir(), "gbk.txt")
+	original, _ := simplifiedchinese.GB18030.NewEncoder().String("package old\n\nfunc old() {\n\told()\n}\n")
+	os.WriteFile(f, []byte(original), 0o644)
+
+	runTool(t, multiEdit{}, map[string]any{
+		"path": f,
+		"edits": []map[string]any{
+			{"old_string": "package old", "new_string": "package new"},
+			{"old_string": "old", "new_string": "reasonix", "replace_all": true},
+		},
+	})
+
+	got, _ := os.ReadFile(f)
+	dec, _ := simplifiedchinese.GB18030.NewDecoder().Bytes(got)
+	want := "package new\n\nfunc reasonix() {\n\treasonix()\n}\n"
+	if string(dec) != want {
+		t.Errorf("after multi_edit = %q (decoded), want %q", dec, want)
+	}
+}
+
+func TestGrepGB18030(t *testing.T) {
+	dir := t.TempDir()
+	gb, _ := simplifiedchinese.GB18030.NewEncoder().String("你好世界\n包含函数的行\n")
+	os.WriteFile(filepath.Join(dir, "gbk.txt"), []byte(gb), 0o644)
+
+	out := runTool(t, grepTool{}, map[string]any{"pattern": "函数", "path": dir})
+	if !strings.Contains(out, "函数") {
+		t.Errorf("expected match in decoded GB18030 text, got:\n%s", out)
 	}
 }

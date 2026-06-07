@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"strings"
 
+	"reasonix/internal/evidence"
+	"reasonix/internal/instruction"
 	"reasonix/internal/tool"
 )
 
@@ -103,6 +105,141 @@ func (completeStep) Execute(ctx context.Context, args json.RawMessage) (string, 
 		}
 		kinds = append(kinds, e.Kind)
 	}
-	return fmt.Sprintf("Step %q signed off with %d evidence item(s) [%s]. Move the next step to in_progress with todo_write.",
-		p.Step, len(p.Evidence), strings.Join(kinds, ", ")), nil
+
+	hostVerified, manualUnverified, err := verifyStepEvidence(ctx, p.Evidence)
+	if err != nil {
+		return "", err
+	}
+	todoMatch, hasTodo, err := verifyTodoStep(ctx, p.Step)
+	if err != nil {
+		return "", err
+	}
+	projectVerified, err := verifyProjectChecks(ctx, p.Evidence)
+	if err != nil {
+		return "", err
+	}
+	hostStatus := ""
+	if _, ok := evidence.FromContext(ctx); ok {
+		hostStatus = fmt.Sprintf(" Host evidence: host-verified %d, manual/unverified %d.", hostVerified, manualUnverified)
+	}
+	todoStatus := ""
+	if hasTodo {
+		todoStatus = fmt.Sprintf(" Todo step: todo-matched %d.", todoMatch.Index)
+	}
+	projectStatus := ""
+	if projectVerified > 0 {
+		projectStatus = fmt.Sprintf(" Project checks: project checks %d.", projectVerified)
+	}
+	return fmt.Sprintf("Step %q signed off with %d evidence item(s) [%s].%s Move the next step to in_progress with todo_write.",
+		p.Step, len(p.Evidence), strings.Join(kinds, ", "), hostStatus+todoStatus+projectStatus), nil
+}
+
+func verifyStepEvidence(ctx context.Context, items []stepEvidence) (hostVerified int, manualUnverified int, err error) {
+	ledger, ok := evidence.FromContext(ctx)
+	if !ok {
+		return 0, 0, nil
+	}
+	for i, e := range items {
+		switch e.Kind {
+		case "verification":
+			command := strings.TrimSpace(e.Command)
+			if command == "" {
+				return 0, 0, fmt.Errorf("evidence %d: verification command is required for host verification", i+1)
+			}
+			if !ledger.HasSuccessfulCommand(command) {
+				return 0, 0, fmt.Errorf("evidence %d: verification command %q has no matching successful bash receipt in this turn", i+1, command)
+			}
+			hostVerified++
+		case "diff":
+			if len(e.Paths) == 0 {
+				return 0, 0, fmt.Errorf("evidence %d: diff evidence requires paths for host verification", i+1)
+			}
+			if !ledger.HasSuccessfulWrite(e.Paths) {
+				return 0, 0, fmt.Errorf("evidence %d: diff paths have no matching successful writer receipt in this turn", i+1)
+			}
+			hostVerified++
+		case "files":
+			if len(e.Paths) == 0 {
+				return 0, 0, fmt.Errorf("evidence %d: files evidence requires paths for host verification", i+1)
+			}
+			if !ledger.HasSuccessfulReadOrWrite(e.Paths) {
+				return 0, 0, fmt.Errorf("evidence %d: file paths have no matching successful read/write receipt in this turn", i+1)
+			}
+			hostVerified++
+		case "manual":
+			manualUnverified++
+		}
+	}
+	return hostVerified, manualUnverified, nil
+}
+
+func verifyProjectChecks(ctx context.Context, items []stepEvidence) (int, error) {
+	checks := instruction.FromContext(ctx)
+	if len(checks) == 0 {
+		return 0, nil
+	}
+	ledger, ok := evidence.FromContext(ctx)
+	if !ok {
+		return 0, nil
+	}
+	after, ok := latestWriteBackedEvidenceIndex(ledger, items)
+	if !ok {
+		return 0, nil
+	}
+	for _, check := range checks {
+		command := strings.TrimSpace(check.Command)
+		if command == "" {
+			continue
+		}
+		if !ledger.HasSuccessfulCommandAfter(command, after) {
+			return 0, fmt.Errorf("project check %q from %s has no matching successful bash receipt after the latest matching write in this turn", command, checkSource(check))
+		}
+	}
+	return len(checks), nil
+}
+
+func latestWriteBackedEvidenceIndex(ledger *evidence.Ledger, items []stepEvidence) (int, bool) {
+	latest := -1
+	for _, item := range items {
+		switch item.Kind {
+		case "diff", "files":
+			if i, ok := ledger.LatestSuccessfulWriteIndex(item.Paths); ok && i > latest {
+				latest = i
+			}
+		}
+	}
+	return latest, latest >= 0
+}
+
+func checkSource(check instruction.VerifyCheck) string {
+	source := strings.TrimSpace(check.SourcePath)
+	if source == "" {
+		source = "project memory"
+	}
+	if check.Line > 0 {
+		return fmt.Sprintf("%s:%d", source, check.Line)
+	}
+	return source
+}
+
+func verifyTodoStep(ctx context.Context, step string) (evidence.TodoStepMatch, bool, error) {
+	ledger, ok := evidence.FromContext(ctx)
+	if !ok {
+		return evidence.TodoStepMatch{}, false, nil
+	}
+	match, hasTodo := ledger.MatchLatestTodoStep(step)
+	if !hasTodo {
+		return evidence.TodoStepMatch{}, false, nil
+	}
+	if !match.Found {
+		return evidence.TodoStepMatch{}, true, fmt.Errorf("step %q has no matching todo_write item in this turn", step)
+	}
+	switch match.Status {
+	case "in_progress", "completed":
+		return match, true, nil
+	case "":
+		return evidence.TodoStepMatch{}, true, fmt.Errorf("step %q matches todo %d (%q) but its status is pending; complete_step requires in_progress or completed", step, match.Index, match.Content)
+	default:
+		return evidence.TodoStepMatch{}, true, fmt.Errorf("step %q matches todo %d (%q) but its status is %q; complete_step requires in_progress or completed", step, match.Index, match.Content, match.Status)
+	}
 }

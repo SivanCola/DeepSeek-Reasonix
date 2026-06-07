@@ -27,7 +27,9 @@ type TextSink struct {
 
 	// Per-stream state, reset on Message / TurnStarted.
 	wroteReasoningHeader bool
+	wroteReasoningBody   bool
 	textWritten          bool
+	showReasoning        bool
 	// Per-turn state, reset on TurnStarted. Tracks whether anything has been
 	// written this turn so a coordinator Phase marker leads with a blank line
 	// only when it follows earlier output.
@@ -40,11 +42,17 @@ func NewTextSink(out io.Writer, renderer Renderer, termWidth int) *TextSink {
 	return &TextSink{out: out, renderer: renderer, termWidth: termWidth}
 }
 
+// SetShowReasoning toggles Claude Code-style verbose display for thinking-mode
+// reasoning. Reasoning is still kept in session state by the agent; this only
+// controls terminal rendering.
+func (s *TextSink) SetShowReasoning(show bool) { s.showReasoning = show }
+
 // Emit renders one event. Called serially by the run loop.
 func (s *TextSink) Emit(e event.Event) {
 	switch e.Kind {
 	case event.TurnStarted:
 		s.wroteReasoningHeader = false
+		s.wroteReasoningBody = false
 		s.textWritten = false
 		s.wroteAnything = false
 
@@ -53,11 +61,14 @@ func (s *TextSink) Emit(e event.Event) {
 			fmt.Fprintln(s.out, dimText("  ▎ thinking"))
 			s.wroteReasoningHeader = true
 		}
-		fmt.Fprint(s.out, dimText(e.Text))
+		if s.showReasoning && e.Text != "" {
+			fmt.Fprint(s.out, dimText(e.Text))
+			s.wroteReasoningBody = true
+		}
 		s.wroteAnything = true
 
 	case event.Text:
-		if s.wroteReasoningHeader && !s.textWritten {
+		if s.wroteReasoningHeader && s.wroteReasoningBody && !s.textWritten {
 			fmt.Fprintln(s.out) // separate the reasoning block from the answer
 		}
 		fmt.Fprint(s.out, e.Text)
@@ -68,7 +79,12 @@ func (s *TextSink) Emit(e event.Event) {
 		s.closeTextStream(e.Text, e.Reasoning)
 
 	case event.ToolDispatch:
-		fmt.Fprintf(s.out, "  -> %s %s\n", e.Tool.Name, compactArgs(e.Tool.Args))
+		// The early (Partial) dispatch carries no args — the full one prints the
+		// line. Without this the headless stream shows every call twice.
+		if e.Tool.Partial {
+			break
+		}
+		fmt.Fprintf(s.out, "  -> %s %s\n", e.Tool.Name, CompactArgs(e.Tool.Args))
 		s.wroteAnything = true
 
 	case event.ToolResult:
@@ -80,13 +96,13 @@ func (s *TextSink) Emit(e event.Event) {
 		}
 
 	case event.Usage:
-		// Close a still-open raw text block (the planner path streams text with
-		// no Message redraw) before the usage line, matching the old Fprintln.
+		// Close a still-open raw text block before the usage line, matching the
+		// old Fprintln path for streams that do not emit a Message redraw.
 		if s.textWritten {
 			fmt.Fprintln(s.out)
 			s.textWritten = false
 		}
-		s.usageLine(e.Usage, e.Pricing)
+		s.usageLine(e.Usage, e.Pricing, e.CacheDiagnostics)
 
 	case event.Notice:
 		glyph := "·"
@@ -102,6 +118,21 @@ func (s *TextSink) Emit(e event.Event) {
 		}
 		fmt.Fprintf(s.out, "[%s]\n", e.Text)
 		s.wroteAnything = true
+
+	case event.CompactionStarted:
+		fmt.Fprintln(s.out, dimText("  ⋯ compacting conversation…"))
+		s.wroteAnything = true
+
+	case event.CompactionDone:
+		c := e.Compaction
+		if c.Summary == "" {
+			break // aborted pass — the caller's Notice already explained why
+		}
+		fmt.Fprintln(s.out, dimText(fmt.Sprintf("  ⋯ compacted %d messages (%s)", c.Messages, c.Trigger)))
+		for _, ln := range strings.Split(strings.TrimRight(c.Summary, "\n"), "\n") {
+			fmt.Fprintln(s.out, dimText("    "+ln))
+		}
+		s.wroteAnything = true
 	}
 }
 
@@ -113,6 +144,7 @@ func (s *TextSink) Emit(e event.Event) {
 func (s *TextSink) closeTextStream(text, reasoning string) {
 	defer func() {
 		s.wroteReasoningHeader = false
+		s.wroteReasoningBody = false
 		s.textWritten = false
 	}()
 	if len(text) > 0 {
@@ -129,14 +161,14 @@ func (s *TextSink) closeTextStream(text, reasoning string) {
 			return
 		}
 	}
-	if len(text) > 0 || len(reasoning) > 0 {
+	if len(text) > 0 || (len(reasoning) > 0 && s.wroteReasoningBody) {
 		fmt.Fprintln(s.out)
 	}
 }
 
 // usageLine writes the one-line token/cache summary; no-op when usage is unset.
-func (s *TextSink) usageLine(u *provider.Usage, p *provider.Pricing) {
-	if line := FormatUsageLine(u, p); line != "" {
+func (s *TextSink) usageLine(u *provider.Usage, p *provider.Pricing, d *event.CacheDiagnostics) {
+	if line := FormatUsageLine(u, p, d); line != "" {
 		fmt.Fprintln(s.out, line)
 		s.wroteAnything = true
 	}
@@ -150,7 +182,7 @@ func (s *TextSink) usageLine(u *provider.Usage, p *provider.Pricing) {
 // denominator just grew. Reasoning tokens (a subset of completion) show the
 // chain-of-thought cost. Shared by TextSink and the chat TUI so both frontends
 // render the line identically.
-func FormatUsageLine(u *provider.Usage, p *provider.Pricing) string {
+func FormatUsageLine(u *provider.Usage, p *provider.Pricing, d *event.CacheDiagnostics) string {
 	if u == nil || u.TotalTokens == 0 {
 		return ""
 	}
@@ -173,16 +205,25 @@ func FormatUsageLine(u *provider.Usage, p *provider.Pricing) string {
 	if p != nil {
 		cost = fmt.Sprintf(" · %s%.4f", p.Symbol(), p.Cost(u))
 	}
-	return fmt.Sprintf("  · %d tok · in %d%s · out %d%s%s",
-		u.TotalTokens, u.PromptTokens, cacheCol, u.CompletionTokens, reasoning, cost)
+	churn := ""
+	if d != nil && d.PrefixChanged {
+		reasons := strings.Join(d.PrefixChangeReasons, "+")
+		if reasons == "" {
+			reasons = "unknown"
+		}
+		churn = fmt.Sprintf(" · cache prefix changed: %s", reasons)
+	}
+	return fmt.Sprintf("  · %d tok · in %d%s · out %d%s%s%s",
+		u.TotalTokens, u.PromptTokens, cacheCol, u.CompletionTokens, reasoning, cost, churn)
 }
 
 // dimText wraps s in the ANSI dim SGR sequence so reasoning streams visually
 // recede from the final answer.
 func dimText(s string) string { return "\x1b[2m" + s + "\x1b[0m" }
 
-// compactArgs trims and caps a tool's raw JSON arguments for the dispatch line.
-func compactArgs(s string) string {
+// CompactArgs trims and caps a tool's raw JSON arguments for the dispatch line.
+// Exported so the CLI can reuse the same rendering without duplicating the logic.
+func CompactArgs(s string) string {
 	s = strings.TrimSpace(s)
 	r := []rune(s)
 	if len(r) > 120 {

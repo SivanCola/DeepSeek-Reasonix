@@ -8,6 +8,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -178,7 +180,7 @@ func TestCacheHitPrefixStable(t *testing.T) {
 		}
 		t.Logf("turn %d: prompt=%d hit=%d miss=%d → 'cache %d%%' (hit/prompt=%d%%) | %s",
 			i, u.PromptTokens, u.CacheHitTokens, u.CacheMissTokens, hitRate(u), want,
-			strings.TrimSpace(FormatUsageLine(u, nil)))
+			strings.TrimSpace(FormatUsageLine(u, nil, nil)))
 		if u.CacheHitTokens+u.CacheMissTokens != u.PromptTokens {
 			t.Errorf("display denominator mismatch: hit+miss=%d != prompt=%d (status%% would read wrong)",
 				u.CacheHitTokens+u.CacheMissTokens, u.PromptTokens)
@@ -220,43 +222,56 @@ func TestCacheHitClimbsWithoutCompaction(t *testing.T) {
 	}
 }
 
-// TestCacheHitCollapsesOnCompaction is the smoking gun: a long tool-loop with
-// compaction enabled. maybeCompact only runs after a tool-call step (agent.go
-// returns before it on a no-tool turn), so we drive a steady stream of tool
-// calls. Each time the prompt nears the window the prefix is rewritten to
-// system + summary + tail and the hit rate craters on the very next step.
-func TestCacheHitCollapsesOnCompaction(t *testing.T) {
+// TestCacheHitSurvivesTooSmallWindow drives a long tool-loop against a window so
+// small a single turn can't be summarized under it — the misconfigured regime
+// that used to make compaction rewrite the prefix every step, cratering the
+// cache turn after turn. The stuck guard now detects that compaction can't make
+// progress, pauses it (with a notice), and lets the prefix grow append-only — so
+// the hit rate recovers and stays high instead of collapsing repeatedly.
+func TestCacheHitSurvivesTooSmallWindow(t *testing.T) {
 	mock := &mockDeepSeek{t: t, withTools: true, reasoning: longReasoning, toolRounds: 30}
 	srv := httptest.NewServer(http.HandlerFunc(mock.handler))
 	defer srv.Close()
 
-	// Small window + small recentKeep so compaction fires several times over the
-	// loop — exactly the regime a misconfigured context_window puts a long
-	// session in.
 	a, sink := newAgent(t, srv.URL, mock.tools(), 900 /*window tok*/, 4 /*recentKeep*/)
 
-	// One Run; the model keeps calling the tool, so the loop spans 31 steps.
 	if err := a.Run(context.Background(), strings.Repeat("please consider this requirement. ", 6)); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 
-	t.Logf("==== hit-rate curve, compaction ON (window=900 tok, recentKeep=4) ====")
+	t.Logf("==== hit-rate curve, too-small window (900 tok) ====")
 	collapses := 0
 	for i, u := range sink.usages {
 		r := hitRate(u)
 		marker := ""
 		if i > 0 && r+20 < hitRate(sink.usages[i-1]) {
-			marker = "   <<< COLLAPSED — prefix rewritten by compaction"
+			marker = "   <<< collapse"
 			collapses++
 		}
 		t.Logf("step %2d: prompt=%5d hit=%5d miss=%4d → cache %3d%%%s", i, u.PromptTokens, u.CacheHitTokens, u.CacheMissTokens, r, marker)
 	}
+
+	paused := false
 	for _, n := range sink.notices {
 		t.Logf("notice: %s", n)
+		if strings.Contains(n, "Auto-compaction paused") {
+			paused = true
+		}
 	}
-	t.Logf("compaction-induced hit-rate collapses: %d", collapses)
-	if collapses == 0 {
-		t.Errorf("expected compaction to crater the hit rate at least once, saw none")
+
+	// The guard caps the damage: a couple of compactions at most, not one per step.
+	if collapses > 2 {
+		t.Errorf("compaction cratered the cache %d times; the stuck guard should cap it at ≤2", collapses)
+	}
+	if !paused {
+		t.Errorf("expected an auto-compaction-paused notice for the too-small window")
+	}
+	// Once paused, the prefix grows append-only again, so the tail of the run
+	// recovers to a high, stable hit rate instead of collapsing every step.
+	if n := len(sink.usages); n >= 6 {
+		if tail := tailAverage(usageRates(sink.usages), 5); tail < 85 {
+			t.Errorf("tail hit rate after the guard kicked in = %d%%, want ≥85%%", tail)
+		}
 	}
 }
 
@@ -338,6 +353,179 @@ func TestSessionAggregateCacheRate(t *testing.T) {
 	if agg <= 0 || agg > 100 {
 		t.Errorf("aggregate rate out of range: %d%%", agg)
 	}
+}
+
+func TestReleaseCacheHitGuard(t *testing.T) {
+	if os.Getenv("REASONIX_RELEASE_CACHE_GUARD") == "" {
+		t.Skip("set REASONIX_RELEASE_CACHE_GUARD=1 to run the release cache guard")
+	}
+
+	threshold := envInt("REASONIX_CACHE_GUARD_THRESHOLD", 90)
+	maxLowCases := envInt("REASONIX_CACHE_GUARD_MAX_LOW_CASES", 1)
+
+	cases := []struct {
+		name string
+		run  func(*testing.T) []int
+	}{
+		{
+			name: "plain-dialogue",
+			run: func(t *testing.T) []int {
+				return cacheCurve(t, &mockDeepSeek{t: t, reasoning: longReasoning}, 14)
+			},
+		},
+		{
+			name: "plain-dialogue-no-reasoning",
+			run: func(t *testing.T) []int {
+				return cacheCurve(t, &mockDeepSeek{t: t}, 14)
+			},
+		},
+		{
+			name: "long-dialogue",
+			run: func(t *testing.T) []int {
+				return cacheCurveWithMessages(t, &mockDeepSeek{t: t, reasoning: longReasoning}, repeatedMessages(18, 18))
+			},
+		},
+		{
+			name: "mixed-message-sizes",
+			run: func(t *testing.T) []int {
+				msgs := make([]string, 0, 20)
+				for i := 0; i < 20; i++ {
+					repeats := 4
+					if i%3 == 2 {
+						repeats = 20
+					}
+					msgs = append(msgs, fmt.Sprintf("Turn %d: ", i)+strings.Repeat("preserve the request prefix while handling varied input. ", repeats))
+				}
+				return cacheCurveWithMessages(t, &mockDeepSeek{t: t, reasoning: longReasoning}, msgs)
+			},
+		},
+		{
+			name: "tool-loop",
+			run: func(t *testing.T) []int {
+				return toolLoopCurve(t, &mockDeepSeek{t: t, withTools: true, reasoning: longReasoning, toolRounds: 14})
+			},
+		},
+		{
+			name: "tool-loop-no-reasoning",
+			run: func(t *testing.T) []int {
+				return toolLoopCurve(t, &mockDeepSeek{t: t, withTools: true, toolRounds: 14})
+			},
+		},
+		{
+			name: "long-tool-loop",
+			run: func(t *testing.T) []int {
+				return toolLoopCurve(t, &mockDeepSeek{t: t, withTools: true, reasoning: longReasoning, toolRounds: 24})
+			},
+		},
+		{
+			name: "long-tool-loop-no-reasoning",
+			run: func(t *testing.T) []int {
+				return toolLoopCurve(t, &mockDeepSeek{t: t, withTools: true, toolRounds: 24})
+			},
+		},
+	}
+
+	type result struct {
+		name string
+		rate int
+		all  []int
+	}
+	var lows []result
+	for _, c := range cases {
+		rates := c.run(t)
+		rate := tailAverage(rates, 3)
+		status := "pass"
+		if rate < threshold {
+			status = "low"
+			lows = append(lows, result{name: c.name, rate: rate, all: rates})
+		}
+		t.Logf("CACHE_GUARD_RESULT: case=%s tail_avg=%d threshold=%d status=%s rates=%v",
+			c.name, rate, threshold, status, rates)
+	}
+
+	if len(lows) > maxLowCases {
+		var parts []string
+		for _, low := range lows {
+			parts = append(parts, fmt.Sprintf("%s=%d%%", low.name, low.rate))
+		}
+		msg := fmt.Sprintf("%d cache guard cases are below %d%%: %s", len(lows), threshold, strings.Join(parts, ", "))
+		t.Logf("CACHE_GUARD_WARNING: %s", msg)
+		if os.Getenv("REASONIX_CACHE_GUARD_STRICT") != "" {
+			t.Fatal(msg)
+		}
+	}
+}
+
+func cacheCurve(t *testing.T, mock *mockDeepSeek, turns int) []int {
+	return cacheCurveWithMessages(t, mock, repeatedMessages(turns, 6))
+}
+
+func repeatedMessages(turns, repeats int) []string {
+	msgs := make([]string, 0, turns)
+	for i := 0; i < turns; i++ {
+		msgs = append(msgs, "Turn "+fmt.Sprint(i)+": "+strings.Repeat("please consider this requirement. ", repeats))
+	}
+	return msgs
+}
+
+func cacheCurveWithMessages(t *testing.T, mock *mockDeepSeek, messages []string) []int {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(mock.handler))
+	defer srv.Close()
+
+	a, sink := newAgent(t, srv.URL, mock.tools(), 0, 0)
+	for i, userMsg := range messages {
+		if err := a.Run(context.Background(), userMsg); err != nil {
+			t.Fatalf("Run %d: %v", i, err)
+		}
+	}
+	return usageRates(sink.usages)
+}
+
+func toolLoopCurve(t *testing.T, mock *mockDeepSeek) []int {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(mock.handler))
+	defer srv.Close()
+
+	a, sink := newAgent(t, srv.URL, mock.tools(), 0, 0)
+	if err := a.Run(context.Background(), strings.Repeat("please consider this requirement. ", 6)); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	return usageRates(sink.usages)
+}
+
+func usageRates(usages []*provider.Usage) []int {
+	out := make([]int, len(usages))
+	for i, u := range usages {
+		out[i] = hitRate(u)
+	}
+	return out
+}
+
+func tailAverage(xs []int, n int) int {
+	if len(xs) == 0 {
+		return 0
+	}
+	if n > len(xs) {
+		n = len(xs)
+	}
+	sum := 0
+	for _, x := range xs[len(xs)-n:] {
+		sum += x
+	}
+	return sum / n
+}
+
+func envInt(name string, fallback int) int {
+	raw := os.Getenv(name)
+	if raw == "" {
+		return fallback
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n < 0 {
+		return fallback
+	}
+	return n
 }
 
 // newAgent wires a real openai.Provider at url into a real Agent.

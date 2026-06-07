@@ -21,7 +21,24 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
+
+	"reasonix/internal/proc"
 )
+
+const initTimeout = 30 * time.Second
+
+// SteerText is injected into the system prompt when CodeGraph tools are
+// available, so the model knows to prefer them for symbol-level questions.
+const SteerText = `## Code Intelligence (codegraph)
+You have codegraph tools for symbol-level code intelligence. For architecture questions, "how does X work", call graphs, symbol search, and impact analysis, prefer codegraph tools over grep/read_file:
+- codegraph_context — entry points + related symbols + key code in one call (USE THIS FIRST for "how does X work")
+- codegraph_search — find symbols by name (functions, types, interfaces)
+- codegraph_callers / codegraph_callees — trace call chains
+- codegraph_impact — what breaks if I change X
+- codegraph_trace — full call path between two symbols
+- codegraph_files — project file tree with symbol counts
+Use grep/read_file for content search (comments, strings, config values) and when codegraph is not available.`
 
 // BundleDirName is the directory, beside the reasonix executable, that the release
 // archive unpacks the CodeGraph bundle into. Its launcher lives at
@@ -107,15 +124,31 @@ func EnsureInit(ctx context.Context, bin, root string) error {
 	if root == "" {
 		return nil
 	}
-	if fi, err := os.Stat(filepath.Join(root, ".codegraph")); err == nil && fi.IsDir() {
+	if Initialized(root) {
 		return nil // already initialised — serve re-syncs and the watcher keeps it fresh
 	}
+	ctx, cancel := context.WithTimeout(ctx, initTimeout)
+	defer cancel()
 	cmd := exec.CommandContext(ctx, bin, "init", root)
+	cmd.Cancel = func() error { proc.KillTree(cmd); return nil }
+	cmd.WaitDelay = 3 * time.Second
+	proc.HideWindow(cmd)
 	cmd.Dir = root
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("codegraph init: %w: %s", err, strings.TrimSpace(string(out)))
 	}
 	return nil
+}
+
+// Initialized reports whether root already has CodeGraph's project state. Boot
+// uses this to keep warm projects eager while moving first-time project setup to
+// background startup, avoiding a cold MCP handshake on the app's critical path.
+func Initialized(root string) bool {
+	if root == "" {
+		return false
+	}
+	fi, err := os.Stat(filepath.Join(root, ".codegraph"))
+	return err == nil && fi.IsDir()
 }
 
 func expand(p string) string {

@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -18,7 +19,7 @@ func TestTaskToolReturnsSubAgentFinalAnswer(t *testing.T) {
 		{Type: provider.ChunkDone},
 	}}
 	parentReg := tool.NewRegistry()
-	task := NewTaskTool(sub, nil, parentReg, 20, 0, 0, 0, 0.0, "", "test-sys-prompt", nil, 0)
+	task := NewTaskTool(sub, nil, parentReg, 20, 0, 0, 0, 0, 0.0, "", "test-sys-prompt", nil, 0, "", "", nil)
 
 	out, err := task.Execute(context.Background(), []byte(`{"prompt":"find callers of Foo"}`))
 	if err != nil {
@@ -40,8 +41,8 @@ func TestTaskToolReturnsSubAgentFinalAnswer(t *testing.T) {
 }
 
 // TestTaskToolFiltersTools verifies the whitelist behaviour: when the caller
-// names a subset of tools, the sub-agent's registry contains exactly that
-// set (with "task" stripped to prevent recursion).
+// names a subset of tools, the sub-agent's registry contains exactly that set
+// with subagent/skill meta-tools stripped to prevent recursive delegation.
 func TestTaskToolFiltersTools(t *testing.T) {
 	sub := &mockProvider{name: "sub", chunks: []provider.Chunk{
 		{Type: provider.ChunkText, Text: "ok"},
@@ -51,26 +52,28 @@ func TestTaskToolFiltersTools(t *testing.T) {
 	parentReg.Add(fakeTool{name: "read_file", readOnly: true})
 	parentReg.Add(fakeTool{name: "write_file", readOnly: false})
 	parentReg.Add(fakeTool{name: "bash", readOnly: false})
-	task := NewTaskTool(sub, nil, parentReg, 20, 0, 0, 0, 0.0, "", "sys", nil, 0)
+	task := NewTaskTool(sub, nil, parentReg, 20, 0, 0, 0, 0, 0.0, "", "sys", nil, 0, "", "", nil)
 	parentReg.Add(task) // simulate the wiring in cli.setup
+	parentReg.Add(fakeTool{name: "run_skill", readOnly: false})
+	parentReg.Add(fakeTool{name: "research", readOnly: false})
 
-	args := []byte(`{"prompt":"x","tools":["read_file","task","write_file"]}`)
+	args := []byte(`{"prompt":"x","tools":["read_file","task","write_file","run_skill","research"]}`)
 	if _, err := task.Execute(context.Background(), args); err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	// The sub-agent's tool schemas should reflect the whitelist minus task.
+	// The sub-agent's tool schemas should reflect the whitelist minus meta-tools.
 	got := map[string]bool{}
 	for _, s := range sub.lastReq.Tools {
 		got[s.Name] = true
 	}
-	if !got["read_file"] || !got["write_file"] || got["task"] || got["bash"] {
-		t.Errorf("sub-agent tools = %v, want {read_file, write_file} (task stripped, bash not requested)", got)
+	if !got["read_file"] || !got["write_file"] || got["task"] || got["run_skill"] || got["research"] || got["bash"] {
+		t.Errorf("sub-agent tools = %v, want {read_file, write_file} (meta-tools stripped, bash not requested)", got)
 	}
 }
 
-// TestTaskToolDefaultsToParentToolsWithoutTask covers the no-whitelist path:
-// the sub-agent inherits every parent tool except the task tool itself.
-func TestTaskToolDefaultsToParentToolsWithoutTask(t *testing.T) {
+// TestTaskToolDefaultsToParentToolsWithoutMetaTools covers the no-whitelist
+// path: the sub-agent inherits parent tools except subagent/skill meta-tools.
+func TestTaskToolDefaultsToParentToolsWithoutMetaTools(t *testing.T) {
 	sub := &mockProvider{name: "sub", chunks: []provider.Chunk{
 		{Type: provider.ChunkText, Text: "ok"},
 		{Type: provider.ChunkDone},
@@ -78,8 +81,14 @@ func TestTaskToolDefaultsToParentToolsWithoutTask(t *testing.T) {
 	parentReg := tool.NewRegistry()
 	parentReg.Add(fakeTool{name: "read_file", readOnly: true})
 	parentReg.Add(fakeTool{name: "grep", readOnly: true})
-	task := NewTaskTool(sub, nil, parentReg, 20, 0, 0, 0, 0.0, "", "sys", nil, 0)
+	task := NewTaskTool(sub, nil, parentReg, 20, 0, 0, 0, 0, 0.0, "", "sys", nil, 0, "", "", nil)
 	parentReg.Add(task)
+	parentReg.Add(fakeTool{name: "run_skill", readOnly: false})
+	parentReg.Add(fakeTool{name: "explore", readOnly: false})
+	parentReg.Add(fakeTool{name: "research", readOnly: false})
+	parentReg.Add(fakeTool{name: "review", readOnly: false})
+	parentReg.Add(fakeTool{name: "security_review", readOnly: false})
+	parentReg.Add(fakeTool{name: "remember", readOnly: false})
 
 	if _, err := task.Execute(context.Background(), []byte(`{"prompt":"x"}`)); err != nil {
 		t.Fatalf("Execute: %v", err)
@@ -88,7 +97,52 @@ func TestTaskToolDefaultsToParentToolsWithoutTask(t *testing.T) {
 	for _, s := range sub.lastReq.Tools {
 		got[s.Name] = true
 	}
-	if !got["read_file"] || !got["grep"] || got["task"] {
-		t.Errorf("default sub-agent tools = %v, want {read_file, grep} only", got)
+	if !got["read_file"] || !got["grep"] || !got["remember"] ||
+		got["task"] || got["run_skill"] || got["explore"] || got["research"] || got["review"] || got["security_review"] {
+		t.Errorf("default sub-agent tools = %v, want normal tools inherited and meta-tools stripped", got)
+	}
+}
+
+func TestTaskToolUsesConfiguredProfileForExecution(t *testing.T) {
+	parent := &mockProvider{name: "parent", chunks: []provider.Chunk{
+		{Type: provider.ChunkText, Text: "parent answer"},
+		{Type: provider.ChunkDone},
+	}}
+	resolved := &mockProvider{name: "resolved", chunks: []provider.Chunk{
+		{Type: provider.ChunkText, Text: "resolved answer"},
+		{Type: provider.ChunkDone},
+	}}
+	var gotModel, gotEffort string
+	task := NewTaskTool(parent, nil, tool.NewRegistry(), 20, 0, 0, 0, 0, 0.0, "", "sys", nil, 0, "deepseek-pro", "max",
+		func(model, effort string) (provider.Provider, *provider.Pricing, int, error) {
+			gotModel, gotEffort = model, effort
+			return resolved, nil, 0, nil
+		})
+
+	out, err := task.Execute(context.Background(), []byte(`{"prompt":"x"}`))
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if !strings.Contains(out, "resolved answer") {
+		t.Fatalf("sub-agent did not use resolved provider, got %q", out)
+	}
+	if gotModel != "deepseek-pro" || gotEffort != "max" {
+		t.Fatalf("resolved profile = %q/%q, want deepseek-pro/max", gotModel, gotEffort)
+	}
+}
+
+func TestTaskToolReturnsProfileResolutionErrors(t *testing.T) {
+	parent := &mockProvider{name: "parent", chunks: []provider.Chunk{
+		{Type: provider.ChunkText, Text: "parent answer"},
+		{Type: provider.ChunkDone},
+	}}
+	task := NewTaskTool(parent, nil, tool.NewRegistry(), 20, 0, 0, 0, 0, 0.0, "", "sys", nil, 0, "", "",
+		func(string, string) (provider.Provider, *provider.Pricing, int, error) {
+			return nil, nil, 0, errors.New("bad effort")
+		})
+
+	_, err := task.Execute(context.Background(), []byte(`{"prompt":"x","effort":"turbo"}`))
+	if err == nil || !strings.Contains(err.Error(), "bad effort") {
+		t.Fatalf("Execute error = %v, want profile resolution error", err)
 	}
 }

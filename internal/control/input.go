@@ -10,7 +10,7 @@ import (
 // PlanModeMarker is prepended to every user turn while plan mode is on. It rides
 // in the user message (not the system prompt or tools), so the cache-stable
 // prompt prefix is left untouched and the toggle costs nothing in cache hits.
-const PlanModeMarker = "[Plan mode — read-only. Explore and propose; do not write files, edit, or run side-effecting bash. Read-only tools (read_file, ls, grep, glob, web_fetch, task) are available; writers are refused by the harness. When you have a concrete plan, present it as your reply and stop — write the steps as a markdown numbered list (one concrete step per item) so they become the task list. The user will be asked to approve before any changes are made.]"
+const PlanModeMarker = "[Plan mode — read-only. Explore the codebase first (read_file, ls, grep, glob, web_fetch, task are available; writers are refused by the harness), then present a LAYERED plan as your reply and stop — do not write files, edit, or run side-effecting bash. Structure the plan as a two-level markdown list so it becomes a layered task list: each PHASE is a top-level numbered list item (a coherent milestone, e.g. \"1. Add the config loader\"), and each phase's concrete, verifiable sub-steps are bullets indented beneath it (e.g. \"   - parse the TOML into Config\"). Use plain numbered list items for phases — do NOT write phases as markdown headings (##, ###) — so both levels parse. Keep phases few (about 2-6). The user will be asked to approve before any changes are made.]"
 
 // Compose applies the plan-mode marker to a turn's text when plan mode is on,
 // returning the message to actually send to the model. The frontend keeps
@@ -32,7 +32,7 @@ func (c *Controller) Compose(text string) string {
 	if len(notes) > 0 {
 		var b strings.Builder
 		b.WriteString("<memory-update>\n")
-		b.WriteString("The following was just saved to project memory and applies from now on:\n")
+		b.WriteString("The following project-memory changes were just made and apply from now on:\n")
 		for _, n := range notes {
 			b.WriteString("- " + n + "\n")
 		}
@@ -49,6 +49,30 @@ func (c *Controller) Compose(text string) string {
 		}
 	}
 	return text
+}
+
+// MemoryQuickAddNote parses the legacy "# <note>" memory shortcut. The space
+// after "#" is intentional: "#7", "#issue", and "#标题" are ordinary user
+// prompts, not memory writes.
+func MemoryQuickAddNote(input string) (note string, ok bool) {
+	trimmed := strings.TrimSpace(input)
+	if strings.HasPrefix(trimmed, "# ") || strings.HasPrefix(trimmed, "#\t") {
+		return strings.TrimSpace(trimmed[1:]), true
+	}
+	return "", false
+}
+
+// RememberCommandNote parses the explicit "/remember <note>" memory command.
+func RememberCommandNote(input string) (note string, ok bool) {
+	trimmed := strings.TrimSpace(input)
+	switch {
+	case trimmed == "/remember":
+		return "", true
+	case strings.HasPrefix(trimmed, "/remember ") || strings.HasPrefix(trimmed, "/remember\t"):
+		return strings.TrimSpace(trimmed[len("/remember"):]), true
+	default:
+		return "", false
+	}
 }
 
 // CustomCommand resolves a "/name args…" line against the loaded custom slash

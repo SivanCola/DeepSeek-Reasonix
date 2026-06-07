@@ -8,12 +8,28 @@ export type EventKind =
   | "message"
   | "tool_dispatch"
   | "tool_result"
+  | "tool_progress"
   | "usage"
   | "notice"
   | "phase"
   | "approval_request"
   | "ask_request"
-  | "turn_done";
+  | "turn_done"
+  | "compaction_started"
+  | "compaction_done"
+  | "retrying";
+
+export interface WireCompaction {
+  trigger?: string; // "auto" | "manual"
+  messages?: number; // done: how many messages were folded into the summary
+  summary?: string; // done: the briefing (empty on an aborted pass)
+  archive?: string; // done: archive path, if any
+}
+
+export interface WireProfile {
+  model?: string;
+  effort?: string;
+}
 
 export interface WireTool {
   id?: string;
@@ -23,8 +39,10 @@ export interface WireTool {
   err?: string;
   readOnly: boolean;
   truncated?: boolean;
+  durationMs?: number;
   partial?: boolean; // an early dispatch (name only) — a full one with args follows
   parentId?: string; // set on a sub-agent's calls — the parent `task` call's id
+  profile?: WireProfile; // subagent model/effort resolved for this call
 }
 
 export interface WireUsage {
@@ -38,6 +56,9 @@ export interface WireUsage {
   // hit-rate (Σhit/Σ(hit+miss)), steadier than the single-turn cacheHitTokens.
   sessionCacheHitTokens: number;
   sessionCacheMissTokens: number;
+  cost?: number;
+  currency?: string;
+  // Deprecated compatibility alias. Prefer cost + currency.
   costUsd?: number;
 }
 
@@ -80,13 +101,116 @@ export interface WireEvent {
   usage?: WireUsage;
   approval?: WireApproval;
   ask?: WireAsk;
+  compaction?: WireCompaction;
   err?: string;
+  retryAttempt?: number;
+  retryMax?: number;
+  // Tab routing: set by the Go-side tabEventSink so multi-tab frontends
+  // route each event to the correct per-tab reducer.
+  tabId?: string;
+  sessionHitTokens?: number;
+  sessionMissTokens?: number;
+  sessionCost?: number;
+  sessionCurrency?: string;
+  // Deprecated compatibility alias. Prefer sessionCost + sessionCurrency.
+  sessionCostUsd?: number;
+}
+
+// Tab management types (desktop/tabs.go).
+export interface TabMeta {
+  id: string;
+  tabType?: "session" | "file";
+  scope: string;
+  workspaceRoot: string;
+  workspaceName: string;
+  topicId: string;
+  topicTitle: string;
+  filePath?: string;
+  projectColor?: string;
+  label: string;
+  ready: boolean;
+  running: boolean;
+  mode: Mode;
+  startupErr?: string;
+  active: boolean;
+  cwd: string;
+}
+
+export interface ProjectNode {
+  key: string;
+  kind: "project" | "topic" | "global_folder" | "global_topic";
+  label: string;
+  root?: string;
+  topicId?: string;
+  projectColor?: string;
+  turns?: number;
+  lastActivityAt?: number;
+  open?: boolean;
+  running?: boolean;
+  children?: ProjectNode[];
+}
+
+export interface TopicMeta {
+  id: string;
+  title: string;
+  createdAt: number;
+}
+
+export interface ContextPanelInfo {
+  usedTokens: number;
+  windowTokens: number;
+  promptTokens: number;
+  completionTokens: number;
+  reasoningTokens: number;
+  cacheHitTokens: number;
+  cacheMissTokens: number;
+  sessionCost?: number;
+  sessionCurrency?: string;
+  // Deprecated compatibility alias. Prefer sessionCost + sessionCurrency.
+  sessionCostUsd?: number;
+  readFiles: ReadFileRecord[];
+  changedFiles: ChangedFileInfo[];
+}
+
+export interface ReadFileRecord {
+  path: string;
+  turn: number;
+  time: number;
+  offset?: number;
+  limit?: number;
+  truncated?: boolean;
+}
+
+export interface ChangedFileInfo {
+  path: string;
+  oldPath?: string;
+  sources: string[];
+  gitStatus?: string;
+  turns: number[];
+  latestPrompt?: string;
+  latestTime?: number;
 }
 
 // Bound-method payloads (desktop/app.go).
 export interface HistoryMessage {
   role: string;
   content: string;
+  reasoning?: string;
+  level?: "info" | "warn";
+  toolCalls?: HistoryToolCall[];
+  toolCallId?: string;
+  toolName?: string;
+  pending?: boolean;
+  trigger?: string;
+  messages?: number;
+  summary?: string;
+  archive?: string;
+}
+
+export interface HistoryToolCall {
+  id: string;
+  name: string;
+  arguments: string;
 }
 
 // CheckpointMeta is one rewind point (a user turn) for the rewind UI.
@@ -95,6 +219,8 @@ export interface CheckpointMeta {
   prompt: string;
   files: string[];
   time: number; // unix ms
+  canCode?: boolean;
+  canConversation?: boolean;
 }
 
 // SessionMeta is one saved session for the history panel.
@@ -103,13 +229,28 @@ export interface SessionMeta {
   preview: string;
   title?: string; // user-chosen name; falls back to preview when empty
   turns: number;
-  modTime: number; // unix milliseconds
+  createdAt: number; // unix milliseconds
+  lastActivityAt: number; // unix milliseconds
+  modTime: number; // compatibility alias for lastActivityAt
+  deletedAt?: number; // unix milliseconds, present for trashed sessions
+  current: boolean;
+  open: boolean;
+  scope?: string;       // "project" | "global"; empty for legacy → treated as "global"
+  workspaceRoot?: string;
+  topicId?: string;
+  topicTitle?: string;
+}
+
+export interface WorkspaceView {
+  path: string;
+  name: string;
   current: boolean;
 }
 
 export interface ContextInfo {
   used: number;
   window: number;
+  compactRatio?: number;
 }
 
 export interface Meta {
@@ -121,8 +262,8 @@ export interface Meta {
   bypass?: boolean; // YOLO mode on (auto-approve every tool call)
 }
 
-// Mode is the input mode cycled by Shift+Tab: normal → plan (read-only) → yolo
-// (auto-approve every tool call; deny rules still apply).
+// Mode is the input mode cycled by Shift+Tab: normal (shown as auto) → plan
+// (read-only) → yolo (auto-approve every tool call; deny rules still apply).
 export type Mode = "normal" | "plan" | "yolo";
 
 export interface CommandInfo {
@@ -137,11 +278,122 @@ export interface DirEntry {
   isDir: boolean;
 }
 
+export interface DroppedItem {
+  kind: "workspace" | "attachment";
+  path: string;
+  isDir?: boolean;
+  previewUrl?: string;
+}
+
+export interface FilePreview {
+  path: string;
+  body: string;
+  size: number;
+  truncated: boolean;
+  binary: boolean;
+  kind?: "image" | "pdf";
+  mime?: string;
+  url?: string;
+  err?: string;
+}
+
+export interface WorkspaceChangeView {
+  path: string;
+  oldPath?: string;
+  sources: string[];
+  gitStatus?: string;
+  turns?: number[];
+  latestPrompt?: string;
+  latestTime?: number;
+}
+
+export interface WorkspaceChangesView {
+  files: WorkspaceChangeView[];
+  gitAvailable: boolean;
+  gitErr?: string;
+}
+
+export interface ComposerInsertRequest {
+  id: number;
+  text: string;
+}
+
+// MCP & Skills drawer (desktop/app.go Capabilities) — the GUI counterpart to
+// /mcp + /skill: connected/failed servers and discoverable skills.
+export interface ServerView {
+  name: string;
+  transport: string;
+  status: "connected" | "deferred" | "failed" | "initializing" | "disabled";
+  builtIn?: boolean;
+  configured?: boolean;
+  autoStart: boolean;
+  tier?: "lazy" | "background" | "eager" | string;
+  command?: string;
+  args?: string[];
+  url?: string;
+  envKeys?: string[];
+  tools: number;
+  prompts: number;
+  resources: number;
+  error?: string;
+  toolList?: MCPToolView[];
+  authStatus?: "none" | "possible" | "required" | string;
+  authUrl?: string;
+  authConfigured?: boolean;
+}
+export interface MCPToolView {
+  name: string;
+  description: string;
+}
+export interface SkillView {
+  name: string;
+  description: string;
+  scope: string;
+  runAs: string;
+  enabled: boolean;
+}
+export interface SkillRootSkillView {
+  name: string;
+  description: string;
+  scope: string;
+  runAs: string;
+}
+export interface SkillRootView {
+  dir: string;
+  scope: string;
+  priority: number;
+  status: string;
+  configured: boolean;
+  skills: number;
+  skillItems?: SkillRootSkillView[];
+  warning?: string;
+}
+export interface CapabilitiesView {
+  servers: ServerView[];
+  skills: SkillView[];
+  skillRoots: SkillRootView[];
+}
+export interface MCPServerInput {
+  name: string;
+  transport: string; // stdio | http | sse
+  command: string;
+  args: string[];
+  url: string;
+  env?: Record<string, string> | null;
+}
+
 export interface ModelInfo {
   ref: string; // "provider/model" — pass to SetModel
   provider: string;
   model: string;
   current: boolean;
+}
+
+export interface EffortInfo {
+  supported: boolean;
+  current: string; // "auto" | "low" | "medium" | "high" | "xhigh" | "max"
+  default: string;
+  levels: string[];
 }
 
 // Slash sub-command / argument completion (desktop/app.go SlashArgs). Mirrors the
@@ -166,6 +418,7 @@ export interface MemoryDoc {
 
 export interface MemoryFact {
   name: string;
+  title?: string;
   description: string;
   type: string; // "user" | "feedback" | "project" | "reference"
   body: string;
@@ -195,6 +448,8 @@ export interface ProviderView {
   keySet: boolean; // the env var currently resolves to a value
   balanceUrl: string; // optional wallet-balance endpoint; "" disables the readout
   contextWindow: number;
+  supportedEfforts: string[]; // custom /effort levels; empty = use built-in Kind/BaseURL default
+  defaultEffort: string; // /effort level when user picks "auto" or unset; "" = supportedEfforts[0]
 }
 
 // BalanceInfo is the wallet-balance readout (desktop/app.go Balance). available
@@ -229,6 +484,21 @@ export interface SandboxView {
   allowWrite: string[];
 }
 
+export interface NetworkProxyView {
+  type: string;
+  server: string;
+  port: number;
+  username: string;
+  password: string;
+}
+
+export interface NetworkView {
+  proxyMode: string; // "auto" | "custom" | "off" (backend may still return legacy "env")
+  proxyUrl: string;
+  noProxy: string;
+  proxy: NetworkProxyView;
+}
+
 export interface AgentView {
   temperature: number;
   maxSteps: number;
@@ -238,12 +508,39 @@ export interface AgentView {
 export interface SettingsView {
   defaultModel: string;
   plannerModel: string;
+  subagentModel: string;
+  subagentEffort: string;
+  autoPlan: string;
   providers: ProviderView[];
   permissions: PermissionsView;
   sandbox: SandboxView;
+  network: NetworkView;
   agent: AgentView;
-  language: string;
+  desktopLanguage: string; // "" | "en" | "zh"; empty = auto
+  desktopTheme: string; // "auto" | "dark" | "light"
+  desktopThemeStyle: string;
+  closeBehavior: string; // "background" | "quit"
   configPath: string;
   providerKinds: string[]; // provider implementations the kernel registered (for the kind picker)
   bypass: boolean; // live YOLO state (runtime-only) — whether approvals are skipped this session
+}
+
+// Auto-updater payloads (desktop/updater.go). UpdateInfo drives the update banner;
+// UpdateProgress streams on the "updater:progress" event during ApplyUpdate.
+export interface UpdateInfo {
+  available: boolean;
+  current: string;
+  latest: string;
+  notes: string;
+  canSelfUpdate: boolean; // win/linux true; macOS false (no cert → manual download)
+  downloadUrl: string; // human-facing releases page (macOS path / fallback link)
+  assetSize: number; // running platform's artifact size, for the progress bar
+  err?: string; // set when the check itself failed (both endpoints down)
+}
+
+export interface UpdateProgress {
+  phase: "downloading" | "verifying" | "applying" | "done" | "error";
+  received: number;
+  total: number;
+  err?: string;
 }

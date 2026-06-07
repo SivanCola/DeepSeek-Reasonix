@@ -4,8 +4,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
+	"reasonix/internal/fileutil"
+	"reasonix/internal/mcpdiag"
+	"reasonix/internal/netclient"
 	"reasonix/internal/permission"
 )
 
@@ -50,11 +54,27 @@ func (c *Config) SetPlannerModel(name string) error {
 	return nil
 }
 
+// SetAutoPlan sets the interactive auto-plan gate. "off" keeps plan mode manual;
+// "on" opts into automatic read-only planning for complex-looking turns.
+// "ask" is accepted as a legacy synonym for "on" but is never written back.
+func (c *Config) SetAutoPlan(mode string) error {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "off":
+		c.Agent.AutoPlan = "off"
+	case "on", "ask":
+		c.Agent.AutoPlan = "on"
+	default:
+		return fmt.Errorf("auto_plan %q: must be off|on", mode)
+	}
+	return nil
+}
+
 // UpsertProvider adds e, or replaces an existing provider with the same name
 // (preserving its position). Required fields (name, kind, base_url, model) are
 // validated; whether the kind is actually registered and the key resolves is
 // checked later by provider.New / Validate, which give actionable errors.
 func (c *Config) UpsertProvider(e ProviderEntry) error {
+	normalizeProviderEffortFields(&e)
 	if err := validateProvider(e); err != nil {
 		return err
 	}
@@ -66,6 +86,118 @@ func (c *Config) UpsertProvider(e ProviderEntry) error {
 	}
 	c.Providers = append(c.Providers, e)
 	return nil
+}
+
+// SetProviderEffort updates a provider's provider-specific thinking effort knob.
+func (c *Config) SetProviderEffort(name, effort string) error {
+	for i := range c.Providers {
+		if c.Providers[i].Name == name {
+			c.Providers[i].Effort = strings.ToLower(strings.TrimSpace(effort))
+			return nil
+		}
+	}
+	return fmt.Errorf("set provider effort: no provider %q", name)
+}
+
+// SetLanguage pins the CLI UI/model language; empty/auto clears the override so runtime detection falls back to REASONIX_LANG / locale.
+func (c *Config) SetLanguage(lang string) error {
+	switch strings.ToLower(strings.TrimSpace(lang)) {
+	case "", "auto":
+		c.Language = ""
+	case "en":
+		c.Language = "en"
+	case "zh":
+		c.Language = "zh"
+	default:
+		return fmt.Errorf("language %q: must be auto|en|zh", lang)
+	}
+	return nil
+}
+
+// SetDesktopLanguage pins the desktop UI language. It intentionally does not
+// modify Config.Language, which is used by the CLI/model-facing runtime.
+func (c *Config) SetDesktopLanguage(lang string) error {
+	switch strings.ToLower(strings.TrimSpace(lang)) {
+	case "", "auto":
+		c.Desktop.Language = ""
+	case "en":
+		c.Desktop.Language = "en"
+	case "zh":
+		c.Desktop.Language = "zh"
+	default:
+		return fmt.Errorf("desktop language %q: must be auto|en|zh", lang)
+	}
+	return nil
+}
+
+// SetDesktopAppearance sets desktop-only theme preferences. It must not affect
+// CLI theme settings or provider-visible request data.
+func (c *Config) SetDesktopAppearance(theme, style string) error {
+	switch strings.ToLower(strings.TrimSpace(theme)) {
+	case "auto":
+		c.Desktop.Theme = "auto"
+	case "light":
+		c.Desktop.Theme = "light"
+	case "", "dark":
+		c.Desktop.Theme = "dark"
+	default:
+		return fmt.Errorf("desktop theme %q: must be auto|dark|light", theme)
+	}
+	if strings.TrimSpace(style) == "" {
+		c.Desktop.ThemeStyle = ""
+		return nil
+	}
+	normalized := normalizeThemeStyle(style)
+	if normalized == "" {
+		return fmt.Errorf("desktop theme style %q: must be graphite|ember|aurora|midnight|sandstone|porcelain|linen|glacier", style)
+	}
+	c.Desktop.ThemeStyle = normalized
+	return nil
+}
+
+// SetDesktopCloseBehavior sets the desktop close-window preference. It is
+// intentionally UI-only and must not affect model prompts or provider-visible
+// request data.
+func (c *Config) SetDesktopCloseBehavior(mode string) error {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "quit", "exit":
+		c.Desktop.CloseBehavior = "quit"
+	case "", "background", "hide":
+		c.Desktop.CloseBehavior = "background"
+	default:
+		return fmt.Errorf("close behavior %q: must be quit|background", mode)
+	}
+	return nil
+}
+
+// SetUICloseBehavior is kept for callers compiled against the old edit API.
+func (c *Config) SetUICloseBehavior(mode string) error {
+	return c.SetDesktopCloseBehavior(mode)
+}
+
+// SetProviderThinking updates a provider's provider-specific thinking mode knob.
+func (c *Config) SetProviderThinking(name, thinking string) error {
+	for i := range c.Providers {
+		if c.Providers[i].Name == name {
+			c.Providers[i].Thinking = strings.ToLower(strings.TrimSpace(thinking))
+			return nil
+		}
+	}
+	return fmt.Errorf("set provider thinking: no provider %q", name)
+}
+
+// SetNetwork updates ordinary outbound network proxy settings. Invalid custom
+// proxy settings are rejected here so the desktop panel cannot save a config that
+// would break provider startup.
+func (c *Config) SetNetwork(n NetworkConfig) error {
+	n.ProxyMode = netclient.NormalizeMode(n.ProxyMode)
+	n.ProxyURL = strings.TrimSpace(n.ProxyURL)
+	n.NoProxy = strings.TrimSpace(n.NoProxy)
+	n.Proxy.Type = strings.ToLower(strings.TrimSpace(n.Proxy.Type))
+	n.Proxy.Server = strings.TrimSpace(n.Proxy.Server)
+	n.Proxy.Username = strings.TrimSpace(n.Proxy.Username)
+	c.Network = n
+	return netclient.Validate(c.NetworkProxySpec())
 }
 
 // RemoveProvider deletes the named provider. It refuses to remove the current
@@ -174,6 +306,94 @@ func (c *Config) ruleList(list string) (*[]string, error) {
 	}
 }
 
+// AddSkillPath appends a custom skill root, deduping by its expanded absolute
+// path while preserving the caller's original spelling in the config file.
+func (c *Config) AddSkillPath(path string) error {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return fmt.Errorf("skill path: empty path")
+	}
+	want := CanonicalSkillPath(path)
+	for _, existing := range c.Skills.Paths {
+		if CanonicalSkillPath(existing) == want {
+			return nil
+		}
+	}
+	c.Skills.Paths = append(c.Skills.Paths, path)
+	return nil
+}
+
+// RemoveSkillPath removes the first custom skill root matching path after
+// expansion and path cleaning. It reports whether anything changed.
+func (c *Config) RemoveSkillPath(path string) (bool, error) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return false, fmt.Errorf("skill path: empty path")
+	}
+	want := CanonicalSkillPath(path)
+	for i, existing := range c.Skills.Paths {
+		if CanonicalSkillPath(existing) == want {
+			c.Skills.Paths = append(c.Skills.Paths[:i], c.Skills.Paths[i+1:]...)
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// SetSkillEnabled persists a per-skill enable/disable preference. Skills are
+// enabled by default; disabling records the name, enabling removes it.
+func (c *Config) SetSkillEnabled(name string, enabled bool) error {
+	name = strings.TrimSpace(name)
+	key := SkillNameKey(name)
+	if key == "" {
+		return fmt.Errorf("skill name %q: use letters, digits, '_', '-', '.', 1-64 chars, starting alphanumeric", name)
+	}
+	next := c.DisabledSkillNames()
+	idx := -1
+	for i, existing := range next {
+		if SkillNameKey(existing) == key {
+			idx = i
+			break
+		}
+	}
+	if enabled {
+		if idx >= 0 {
+			next = append(next[:idx], next[idx+1:]...)
+		}
+		c.Skills.DisabledSkills = next
+		return nil
+	}
+	if idx < 0 {
+		next = append(next, name)
+	}
+	c.Skills.DisabledSkills = next
+	return nil
+}
+
+// CanonicalSkillPath expands env vars, ~ and relative segments to an absolute
+// cleaned path for comparing skill roots. On Windows it folds case so paths that
+// differ only in casing dedupe. Use only for comparison, never as stored config.
+func CanonicalSkillPath(path string) string {
+	path = ExpandVars(strings.TrimSpace(path))
+	if strings.HasPrefix(path, "~/") || strings.HasPrefix(path, `~\`) {
+		if home, err := os.UserHomeDir(); err == nil {
+			path = filepath.Join(home, path[2:])
+		}
+	} else if path == "~" {
+		if home, err := os.UserHomeDir(); err == nil {
+			path = home
+		}
+	}
+	if abs, err := filepath.Abs(path); err == nil {
+		path = abs
+	}
+	path = filepath.Clean(path)
+	if runtime.GOOS == "windows" {
+		return strings.ToLower(path)
+	}
+	return path
+}
+
 // UpsertPlugin adds e, or replaces an MCP server with the same name (preserving
 // position). The transport-specific required fields are validated: stdio needs
 // a command, http/sse need a url.
@@ -202,6 +422,65 @@ func (c *Config) RemovePlugin(name string) bool {
 	return false
 }
 
+// ClearPluginAuthentication removes locally stored auth-like material for one
+// MCP server while keeping the server entry itself. It intentionally leaves
+// non-auth config (command, URL host/path, ordinary env/header keys, tier) alone.
+func (c *Config) ClearPluginAuthentication(name string) (PluginEntry, bool, error) {
+	for i := range c.Plugins {
+		if c.Plugins[i].Name != name {
+			continue
+		}
+		headers, env, url, changed := mcpdiag.ClearAuthConfig(c.Plugins[i].Headers, c.Plugins[i].Env, c.Plugins[i].URL)
+		c.Plugins[i].Headers = headers
+		c.Plugins[i].Env = env
+		c.Plugins[i].URL = url
+		return c.Plugins[i], changed, nil
+	}
+	return PluginEntry{}, false, fmt.Errorf("clear plugin authentication: no plugin %q", name)
+}
+
+// ClearPluginAuthenticationInSource clears auth material in the file that actually
+// owns the MCP server. Load() merges user/project TOML and project .mcp.json into
+// one Config, so callers must not mutate that merged view and Save() it back: a
+// .mcp.json-only server would otherwise be serialized into reasonix.toml or the
+// user config. Source priority mirrors Load(): project TOML, user TOML, then the
+// project .mcp.json entry if TOML did not define that server.
+func ClearPluginAuthenticationInSource(name string) (PluginEntry, bool, string, error) {
+	if path := pluginTOMLSourcePath(name); path != "" {
+		cfg := LoadForEdit(path)
+		updated, changed, err := cfg.ClearPluginAuthentication(name)
+		if err != nil {
+			return PluginEntry{}, false, path, err
+		}
+		if changed {
+			if err := cfg.SaveTo(path); err != nil {
+				return PluginEntry{}, false, path, err
+			}
+		}
+		return updated, changed, path, nil
+	}
+	updated, changed, err := clearMCPJSONAuthentication(mcpJSONFile, name)
+	if err != nil {
+		return PluginEntry{}, false, "", err
+	}
+	return updated, changed, mcpJSONFile, nil
+}
+
+func pluginTOMLSourcePath(name string) string {
+	for _, path := range []string{"reasonix.toml", userConfigPath()} {
+		if strings.TrimSpace(path) == "" {
+			continue
+		}
+		cfg := LoadForEdit(path)
+		for _, p := range cfg.Plugins {
+			if p.Name == name {
+				return path
+			}
+		}
+	}
+	return ""
+}
+
 // validatePlugin checks a plugin entry by transport. An empty Type means stdio.
 func validatePlugin(e PluginEntry) error {
 	if strings.TrimSpace(e.Name) == "" {
@@ -227,6 +506,35 @@ func validatePlugin(e PluginEntry) error {
 // half-written reasonix.toml that fails to parse on next load. Parent directories
 // are created as needed.
 func (c *Config) SaveTo(path string) error {
+	return c.SaveToScope(path, renderScopeForPath(path))
+}
+
+func (c *Config) SaveToScope(path string, scope RenderScope) error {
+	if strings.TrimSpace(path) == "" {
+		return fmt.Errorf("save: empty config path")
+	}
+	return writeConfigFile(path, RenderTOMLForScope(c, scope))
+}
+
+// SaveMinimalProjectAutoPlan writes a new project config that only overrides
+// [agent].auto_plan. It is intentionally minimal so toggling a project-local
+// auto-plan preference in an otherwise unconfigured workspace does not pin
+// default_model or providers from built-in defaults.
+func SaveMinimalProjectAutoPlan(path, mode string) (string, error) {
+	cfg := Default()
+	if err := cfg.SetAutoPlan(mode); err != nil {
+		return "", err
+	}
+	body := fmt.Sprintf(`# Reasonix project configuration.
+# Project-local overrides are merged over the user config.
+
+[agent]
+auto_plan = %q
+`, cfg.Agent.AutoPlan)
+	return cfg.Agent.AutoPlan, writeConfigFile(path, body)
+}
+
+func writeConfigFile(path, body string) error {
 	if strings.TrimSpace(path) == "" {
 		return fmt.Errorf("save: empty config path")
 	}
@@ -239,7 +547,7 @@ func (c *Config) SaveTo(path string) error {
 		return fmt.Errorf("save: create temp: %w", err)
 	}
 	tmpPath := tmp.Name()
-	if _, err := tmp.WriteString(RenderTOML(c)); err != nil {
+	if _, err := tmp.WriteString(body); err != nil {
 		tmp.Close()
 		os.Remove(tmpPath)
 		return fmt.Errorf("save: write: %w", err)
@@ -248,7 +556,28 @@ func (c *Config) SaveTo(path string) error {
 		os.Remove(tmpPath)
 		return fmt.Errorf("save: close temp: %w", err)
 	}
-	return os.Rename(tmpPath, path)
+	return fileutil.ReplaceFile(tmpPath, path)
+}
+
+func renderScopeForPath(path string) RenderScope {
+	if isUserConfigPath(path) {
+		return RenderScopeUser
+	}
+	return RenderScopeProject
+}
+
+func isUserConfigPath(path string) bool {
+	path = strings.TrimSpace(path)
+	uc := strings.TrimSpace(userConfigPath())
+	if path == "" || uc == "" {
+		return false
+	}
+	pathAbs, pathErr := filepath.Abs(path)
+	ucAbs, ucErr := filepath.Abs(uc)
+	if pathErr == nil && ucErr == nil {
+		return filepath.Clean(pathAbs) == filepath.Clean(ucAbs)
+	}
+	return filepath.Clean(path) == filepath.Clean(uc)
 }
 
 // Save writes the configuration back to the file it was loaded from
@@ -260,4 +589,24 @@ func (c *Config) Save() error {
 		path = "reasonix.toml"
 	}
 	return c.SaveTo(path)
+}
+
+// SaveForRoot saves the config to root's reasonix.toml, falling back to the
+// user's global config when root has no existing reasonix.toml.
+func (c *Config) SaveForRoot(root string) error {
+	root = resolveRoot(root)
+	projectTOML := "reasonix.toml"
+	if root != "." {
+		projectTOML = filepath.Join(root, "reasonix.toml")
+	}
+	if _, err := os.Stat(projectTOML); err == nil {
+		return c.SaveTo(projectTOML)
+	}
+	if uc := userConfigPath(); uc != "" {
+		if err := os.MkdirAll(filepath.Dir(uc), 0o755); err != nil {
+			return err
+		}
+		return c.SaveTo(uc)
+	}
+	return c.SaveTo(projectTOML)
 }

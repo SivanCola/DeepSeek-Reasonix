@@ -13,6 +13,7 @@ package checkpoint
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
@@ -21,22 +22,27 @@ import (
 	"time"
 
 	"reasonix/internal/diff"
+	fileenc "reasonix/internal/fileutil/encoding"
 )
 
 // FileSnap is one file's state at the moment it was first touched in a turn.
 // Content == nil means the file did not exist then, so a restore deletes it.
 type FileSnap struct {
-	Path    string  `json:"path"`
-	Content *string `json:"content"`
+	Path     string        `json:"path"`
+	Content  *string       `json:"content"`
+	Encoding *fileenc.Kind `json:"encoding,omitempty"`
 }
 
 // Checkpoint anchors the pre-edit state of every distinct file touched during one
-// user turn.
+// user turn. MsgIndex is len(Session.Messages) at the turn's start — the
+// conversation-rewind boundary — persisted so a resumed session can rewind the
+// conversation and fork, not just the code.
 type Checkpoint struct {
-	Turn   int        `json:"turn"`
-	Time   time.Time  `json:"time"`
-	Prompt string     `json:"prompt"`
-	Files  []FileSnap `json:"files"`
+	Turn     int        `json:"turn"`
+	Time     time.Time  `json:"time"`
+	Prompt   string     `json:"prompt"`
+	MsgIndex int        `json:"msgIndex"`
+	Files    []FileSnap `json:"files"`
 }
 
 // Meta is the picker-facing summary of a checkpoint (no file contents).
@@ -66,7 +72,6 @@ type Store struct {
 func New(dir, root string) *Store {
 	s := &Store{dir: dir, root: root, seen: map[string]bool{}}
 	if dir != "" {
-		_ = os.MkdirAll(dir, 0o755)
 		s.load()
 	}
 	return s
@@ -94,25 +99,49 @@ func (s *Store) load() {
 }
 
 // Begin opens a checkpoint for a new user turn, finalizing the previous one. The
-// prompt labels it in the picker.
-func (s *Store) Begin(turn int, prompt string) {
+// prompt labels it in the picker; msgIndex is the conversation-rewind boundary.
+func (s *Store) Begin(turn int, prompt string, msgIndex int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.cur != nil {
 		s.done = append(s.done, s.cur)
 	}
-	s.cur = &Checkpoint{Turn: turn, Time: time.Now(), Prompt: prompt}
+	s.cur = &Checkpoint{Turn: turn, Time: time.Now(), Prompt: prompt, MsgIndex: msgIndex}
 	s.seen = map[string]bool{}
 	s.persist(s.cur)
+}
+
+// Bounds returns turn → MsgIndex over all checkpoints (persisted + current), so
+// the controller can rebuild its conversation-rewind boundaries after loading a
+// resumed session's checkpoints from disk.
+func (s *Store) Bounds() map[int]int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	m := make(map[int]int, len(s.done)+1)
+	for _, c := range s.done {
+		m[c.Turn] = c.MsgIndex
+	}
+	if s.cur != nil {
+		m[s.cur.Turn] = s.cur.MsgIndex
+	}
+	return m
 }
 
 // Snapshot records the pre-edit state of the file a writer is about to change.
 // Only the first touch of a path in the current turn is kept (that is its
 // turn-start content). A no-op before the first Begin.
 func (s *Store) Snapshot(ch diff.Change) {
+	if ch.Path == "" {
+		return
+	}
+	var enc *fileenc.Kind
+	if ch.Kind != diff.Create {
+		enc = s.detectEncoding(ch.Path)
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.cur == nil || ch.Path == "" || s.seen[ch.Path] {
+	if s.cur == nil || s.seen[ch.Path] {
 		return
 	}
 	s.seen[ch.Path] = true
@@ -121,8 +150,21 @@ func (s *Store) Snapshot(ch diff.Change) {
 		old := ch.OldText
 		content = &old
 	}
-	s.cur.Files = append(s.cur.Files, FileSnap{Path: ch.Path, Content: content})
+	s.cur.Files = append(s.cur.Files, FileSnap{Path: ch.Path, Content: content, Encoding: enc})
 	s.persist(s.cur)
+}
+
+func (s *Store) detectEncoding(p string) *fileenc.Kind {
+	abs, err := safePath(s.root, p)
+	if err != nil {
+		return nil
+	}
+	b, err := os.ReadFile(abs)
+	if err != nil {
+		return nil
+	}
+	enc, _ := fileenc.Detect(b)
+	return &enc
 }
 
 func (s *Store) persist(c *Checkpoint) {
@@ -133,7 +175,13 @@ func (s *Store) persist(c *Checkpoint) {
 	if err != nil {
 		return
 	}
-	_ = os.WriteFile(filepath.Join(s.dir, fmt.Sprintf("turn-%d.json", c.Turn)), b, 0o644)
+	if err := os.MkdirAll(s.dir, 0o755); err != nil {
+		slog.Warn("checkpoint: create dir failed", "dir", s.dir, "err", err)
+		return
+	}
+	if err := os.WriteFile(filepath.Join(s.dir, fmt.Sprintf("turn-%d.json", c.Turn)), b, 0o644); err != nil {
+		slog.Warn("checkpoint: persist failed", "turn", c.Turn, "err", err)
+	}
 }
 
 // NextTurn returns the turn number a new checkpoint should take: one past the
@@ -186,7 +234,7 @@ func (s *Store) all() []*Checkpoint {
 func (s *Store) RestoreCode(fromTurn int) (written, deleted []string, err error) {
 	s.mu.Lock()
 	// earliest snapshot per path across checkpoints >= fromTurn (turn order → first wins).
-	earliest := map[string]*string{}
+	earliest := map[string]FileSnap{}
 	order := []string{}
 	for _, c := range s.all() {
 		if c.Turn < fromTurn {
@@ -196,7 +244,7 @@ func (s *Store) RestoreCode(fromTurn int) (written, deleted []string, err error)
 			if _, ok := earliest[f.Path]; ok {
 				continue
 			}
-			earliest[f.Path] = f.Content
+			earliest[f.Path] = f
 			order = append(order, f.Path)
 		}
 	}
@@ -209,8 +257,8 @@ func (s *Store) RestoreCode(fromTurn int) (written, deleted []string, err error)
 			err = gerr
 			continue
 		}
-		content := earliest[p]
-		if content == nil {
+		snap := earliest[p]
+		if snap.Content == nil {
 			if rmErr := os.Remove(abs); rmErr == nil {
 				deleted = append(deleted, p)
 			} else if !os.IsNotExist(rmErr) {
@@ -222,13 +270,28 @@ func (s *Store) RestoreCode(fromTurn int) (written, deleted []string, err error)
 			err = mkErr
 			continue
 		}
-		if wErr := os.WriteFile(abs, []byte(*content), 0o644); wErr != nil {
+		enc := fileenc.UTF8
+		if snap.Encoding != nil {
+			enc = *snap.Encoding
+		} else if current := detectCurrentEncoding(abs); current != nil {
+			enc = *current
+		}
+		if wErr := os.WriteFile(abs, fileenc.Encode(*snap.Content, enc), 0o644); wErr != nil {
 			err = wErr
 			continue
 		}
 		written = append(written, p)
 	}
 	return written, deleted, err
+}
+
+func detectCurrentEncoding(path string) *fileenc.Kind {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	enc, _ := fileenc.Detect(b)
+	return &enc
 }
 
 // safePath resolves p against root and rejects anything escaping it — restore
