@@ -462,7 +462,7 @@ export interface MemoryView {
 }
 
 // SettingsTab is the top-level navigation item in the Settings Centre modal.
-export type SettingsTab = "general" | "models" | "providers" | "mcp" | "skills" | "memory" | "permissions" | "sandbox" | "network" | "appearance" | "updates";
+export type SettingsTab = "general" | "models" | "providers" | "bots" | "mcp" | "skills" | "memory" | "permissions" | "sandbox" | "network" | "appearance" | "updates";
 
 // Settings panel payloads (desktop/settings_app.go).
 export interface ProviderView {
@@ -537,6 +537,54 @@ export interface AgentView {
   systemPrompt: string;
 }
 
+export interface BotAllowlistView {
+  enabled: boolean;
+  allowAll: boolean;
+  qqUsers: string[];
+  feishuUsers: string[];
+  weixinUsers: string[];
+  qqGroups: string[];
+  feishuGroups: string[];
+  weixinGroups: string[];
+}
+
+export interface QQBotView {
+  enabled: boolean;
+  appId: string;
+  appSecretEnv: string;
+  secretSet: boolean;
+}
+
+export interface FeishuBotView {
+  enabled: boolean;
+  appId: string;
+  appSecretEnv: string;
+  secretSet: boolean;
+  verificationToken: string;
+  mode: string;
+  webhookPort: number;
+  requireMention: boolean;
+}
+
+export interface WeixinBotView {
+  enabled: boolean;
+  accountId: string;
+  tokenEnv: string;
+  tokenSet: boolean;
+  apiBase: string;
+}
+
+export interface BotSettingsView {
+  enabled: boolean;
+  model: string;
+  maxSteps: number;
+  debounceMs: number;
+  allowlist: BotAllowlistView;
+  qq: QQBotView;
+  feishu: FeishuBotView;
+  weixin: WeixinBotView;
+}
+
 export interface SettingsView {
   defaultModel: string;
   plannerModel: string;
@@ -549,6 +597,7 @@ export interface SettingsView {
   sandbox: SandboxView;
   network: NetworkView;
   agent: AgentView;
+  bot: BotSettingsView;
   desktopLanguage: string; // "" | "en" | "zh"; empty = auto
   desktopTheme: string; // "auto" | "dark" | "light"
   desktopThemeStyle: string;
