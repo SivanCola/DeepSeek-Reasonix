@@ -17,7 +17,7 @@
 > [!IMPORTANT]
 > **Reasonix 1.0 是用 Go 从零重写的版本** —— 本分支(`main-v2`)已是新的默认分支,后续开发都在这里。
 > 早期的 `0.x` TypeScript 版本转为 **legacy**,保留在 [`v1`](https://github.com/esengine/DeepSeek-Reasonix/tree/v1) 分支(仅维护)。
-> 详见**[迁移指南](./docs/MIGRATING.md)**。`npm i -g reasonix` 仍是安装命令——`1.0.0`+ 装的是 Go 二进制,`0.x` 是 legacy TS 版。(注意:1.0.0 尚未发到 npm,在此之前请从源码构建。)
+> 详见**[迁移指南](./docs/MIGRATING.md)**。`npm i -g reasonix` 仍是安装命令——`1.0.0`+ 装的是 Go 二进制,`0.x` 是 legacy TS 版。
 
 <p align="center">
   <a href="https://www.npmjs.com/package/reasonix"><img src="https://img.shields.io/npm/v/reasonix.svg?style=flat-square&color=cb3837&labelColor=161b22&logo=npm&logoColor=white" alt="npm version"/></a>
@@ -58,10 +58,20 @@
 - **零摩擦分发**：`CGO_ENABLED=0` 单二进制；一条命令交叉编译到六个目标平台。
   唯一依赖是一个 TOML 解析库。
 
-## 安装 / 构建
+## 安装
 
 ```sh
-make build      # -> bin/reasonix
+npm i -g reasonix                  # 任意系统;自动拉取对应平台的原生二进制
+brew install esengine/reasonix/reasonix   # macOS
+```
+
+预编译归档(`darwin|linux|windows × amd64|arm64`)和 `SHA256SUMS` 见每个
+[GitHub release](https://github.com/esengine/DeepSeek-Reasonix/releases)。
+
+### 从源码构建
+
+```sh
+make build      # -> bin/reasonix(.exe)
 make cross      # -> dist/（darwin|linux|windows × amd64|arm64）
 ```
 
@@ -89,6 +99,8 @@ default_model = "deepseek-flash"   # 执行器；设 [agent].planner_model 可�
 # planner_model = "mimo-pro"          # 可选的低频规划器
 # subagent_model = "deepseek-pro"     # runAs=subagent skill 的默认模型
 # subagent_models = { review = "deepseek-pro", security_review = "deepseek-pro" }
+auto_plan = "off"                  # off|on；off 表示计划模式仅手动开启
+# auto_plan_classifier = "deepseek-flash"   # 可选；只在边界任务上调用
 
 [[providers]]
 name        = "deepseek-flash"
@@ -100,6 +112,10 @@ api_key_env = "DEEPSEEK_API_KEY"
 
 [tools]
 enabled = []   # 省略/为空 = 全部内置工具
+
+[skills]
+# paths = ["~/my-skills", "../shared/skills"]   # 额外的自定义技能目录
+# disabled_skills = ["review"]                  # 隐藏技能，直到 /skill enable <name>
 
 [permissions]
 mode  = "ask"                                # 无规则命中时 writer 的兜底：ask|allow|deny
@@ -116,7 +132,7 @@ command = "reasonix-plugin-example"
 ```
 
 权限逐次调用把关：`deny` > `ask` > `allow` > 兜底（只读工具永远 allow，writer 落到
-`mode`）。`reasonix chat` 会在 writer 调用前征求同意（`y` 本次 · `a` 本会话 · `n` 拒绝）；
+`mode`）。`reasonix chat` 会在 writer 调用前征求同意（`1` 本次 · `2` 本会话 · `3` 拒绝，兼容 `y/a/n`）；
 `reasonix run` 保持自主运行但仍然遵守 `deny`。完整 schema 与契约见
 [`docs/SPEC.md`](docs/SPEC.md)。
 
@@ -166,9 +182,13 @@ headers = { Authorization = "Bearer ${STRIPE_KEY}" }
 }
 ```
 
+**从 `0.x` 升级？** 旧的 `~/.reasonix/config.json` 仍会被读取(读其 `mcpServers`、并遵从
+`mcpDisabled`),作为最低优先级来源——所以 MCP 服务器照常可用;方便时再把它们挪进
+`reasonix.toml` 的 `[[plugins]]` 或 `.mcp.json`。
+
 ### 斜杠命令
 
-`reasonix chat` 里,内置命令(`/compact`、`/new`、`/rewind`、`/tree`、`/branch`、`/switch`、`/todo`、`/model`、`/mcp`、`/help`)在本地执行。
+`reasonix chat` 里,内置命令(`/compact`、`/new`、`/rewind`、`/tree`、`/branch`、`/switch`、`/todo`、`/model`、`/effort`、`/mcp`、`/help`)在本地执行。
 `/tree` 查看已保存的对话分支,`/branch [name]` 从当前对话末端分支,`/branch <turn> [name]`
 从较早的 checkpoint 轮次分支,`/switch <id|name>` 切换到另一个分支。**自定义命令**
 是放在 `.reasonix/commands/`(项目)或 `~/.config/reasonix/commands/`(用户)下的 Markdown 文件——
@@ -204,8 +224,19 @@ session），向导后手动在 `reasonix.toml` 加一行即可：
 planner_model = "deepseek-pro"   # 作为低频规划器
 ```
 
+Planner 会看到已加载的 `REASONIX.md` / `AGENTS.md` 记忆，并拿到一小组只读研究工具，
+因此可以先检查相关文件再把计划交给执行器。写入类和流程类工具仍只给执行器使用。
+
 Subagent skills 默认继承执行器模型。设置 `subagent_model` 可让它们统一走另一个已配置
 模型；设置 `subagent_models` 则只覆盖 `review`、`security_review` 等指定 skill。
+
+交互式前端中，计划模式默认手动开启。设置 `agent.auto_plan = "on"` 后，看起来复杂
+的任务会自动进入 plan mode：Reasonix 先只读生成计划，待用户批准后才
+编辑文件或执行有副作用的命令。`auto_plan_classifier` 可以指定便宜的 provider，例如
+`deepseek-flash`；它只在边界输入上调用，分类失败会回退到启发式规则。也可以用
+`reasonix chat` 里的 `/auto-plan off|on` 修改用户级设置，或在 shell/脚本里用
+`reasonix config auto-plan off|on`。只有明确想写项目级覆盖时，才给 shell 命令加
+`--local`。
 
 ## 架构
 

@@ -22,6 +22,7 @@ type Workspace struct {
 	Dir        string
 	WriteRoots []string
 	Bash       sandbox.Spec
+	Search     SearchSpec
 }
 
 // Tools returns the built-in tools bound to the workspace, ready to Add to a
@@ -36,18 +37,27 @@ func (w Workspace) Tools(enabled ...string) []tool.Tool {
 	}
 	roots := realRoots(writeRoots)
 
-	all := []tool.Tool{
-		readFile{workDir: w.Dir},
-		writeFile{workDir: w.Dir, roots: roots},
-		editFile{workDir: w.Dir, roots: roots},
-		multiEdit{workDir: w.Dir, roots: roots},
-		bash{workDir: w.Dir, sb: w.Bash},
-		listDir{workDir: w.Dir},
-		globTool{workDir: w.Dir},
-		grepTool{workDir: w.Dir},
-		webFetch{},
+	overrides := map[string]tool.Tool{
+		"read_file":     readFile{workDir: w.Dir},
+		"write_file":    writeFile{workDir: w.Dir, roots: roots},
+		"edit_file":     editFile{workDir: w.Dir, roots: roots},
+		"multi_edit":    multiEdit{workDir: w.Dir, roots: roots},
+		"notebook_edit": notebookEdit{workDir: w.Dir, roots: roots},
+		"delete_range":  deleteRange{workDir: w.Dir, roots: roots},
+		"delete_symbol": deleteSymbol{workDir: w.Dir, roots: roots},
+		"bash":          bash{workDir: w.Dir, sb: w.Bash},
+		"ls":            listDir{workDir: w.Dir},
+		"glob":          globTool{workDir: w.Dir},
+		"grep":          grepTool{workDir: w.Dir, rg: w.Search.RgPath},
+		"web_fetch":     webFetch{},
 	}
+	all := tool.Builtins()
 	if len(enabled) == 0 {
+		for i, t := range all {
+			if bound, ok := overrides[t.Name()]; ok {
+				all[i] = bound
+			}
+		}
 		return all
 	}
 	want := make(map[string]bool, len(enabled))
@@ -57,6 +67,9 @@ func (w Workspace) Tools(enabled ...string) []tool.Tool {
 	out := make([]tool.Tool, 0, len(enabled))
 	for _, t := range all {
 		if want[t.Name()] {
+			if bound, ok := overrides[t.Name()]; ok {
+				t = bound
+			}
 			out = append(out, t)
 		}
 	}
@@ -81,4 +94,25 @@ func resolveIn(workDir, p string) string {
 		return p
 	}
 	return filepath.Join(workDir, p)
+}
+
+// vendorDirs are directory names grep and glob skip during a recursive walk:
+// dependency, VCS, and build-cache trees that almost never hold the searched
+// source and would otherwise dominate the walk (node_modules alone can be 100k+
+// files) and fill the result cap with noise. Only skipped when nested — a walk
+// rooted directly at one (an explicit `grep node_modules`) still searches it.
+var vendorDirs = map[string]bool{
+	".git": true, ".svn": true, ".hg": true, ".jj": true,
+	"node_modules": true, "vendor": true, ".venv": true,
+	"__pycache__": true, ".mypy_cache": true, ".pytest_cache": true,
+}
+
+// skipWalkDir reports whether a directory should be pruned from a recursive walk
+// rooted at root. The root itself is never pruned, so explicitly targeting a
+// vendor dir still works.
+func skipWalkDir(root, path, name string) bool {
+	if path == root {
+		return false
+	}
+	return vendorDirs[name] || isProtectedDir(absClean(path))
 }

@@ -1,15 +1,17 @@
 package agent
 
 import (
-	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"time"
 
+	"reasonix/internal/fileutil"
 	"reasonix/internal/provider"
 )
 
@@ -33,7 +35,7 @@ func (s *Session) Save(path string) error {
 	}
 	tmpPath := tmp.Name()
 	enc := json.NewEncoder(tmp)
-	for _, m := range s.Messages {
+	for _, m := range s.Snapshot() { // copy under the lock — a turn may be appending
 		if err := enc.Encode(m); err != nil {
 			tmp.Close()
 			os.Remove(tmpPath)
@@ -44,7 +46,7 @@ func (s *Session) Save(path string) error {
 		os.Remove(tmpPath)
 		return err
 	}
-	return os.Rename(tmpPath, path)
+	return fileutil.ReplaceFile(tmpPath, path)
 }
 
 // LoadSession reads a JSONL file written by Save into a fresh Session value.
@@ -58,37 +60,44 @@ func LoadSession(path string) (*Session, error) {
 	defer f.Close()
 
 	s := &Session{}
-	sc := bufio.NewScanner(f)
-	// Chat messages can be large after a long read_file result; raise the
-	// scanner buffer to a few MiB rather than failing on long lines.
-	sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
-	for sc.Scan() {
+	// Decode a stream of JSON values rather than scanning lines: a single
+	// message (e.g. a multi-MiB bash output) can exceed any line-buffer cap, and
+	// Save's json.Encoder has no such limit — a Scanner here made sessions that
+	// saved fine fail to reload.
+	dec := json.NewDecoder(f)
+	for {
 		var m provider.Message
-		if err := json.Unmarshal(sc.Bytes(), &m); err != nil {
+		if err := dec.Decode(&m); err != nil {
+			if errors.Is(err, io.EOF) {
+				break
+			}
 			return nil, fmt.Errorf("decode %s: %w", path, err)
 		}
 		s.Messages = append(s.Messages, m)
 	}
-	if err := sc.Err(); err != nil {
-		return nil, err
-	}
 	return s, nil
 }
 
-// SessionInfo summarises a saved session for the --resume picker: where it
-// is on disk, when it was last touched, the first user message as a preview,
-// and a rough turn count.
+// SessionInfo summarises a saved session for the --resume picker: where it is on
+// disk, when it was created/last active, the first user message as a preview, and
+// a rough turn count.
 type SessionInfo struct {
-	Path    string
-	ModTime time.Time
-	Preview string
-	Turns   int
+	Path           string
+	CreatedAt      time.Time
+	LastActivityAt time.Time
+	ModTime        time.Time // compatibility alias for LastActivityAt
+	Preview        string
+	Turns          int
+	Scope          string
+	WorkspaceRoot  string
+	TopicID        string
+	TopicTitle     string
 }
 
-// ListSessions returns every *.jsonl session under dir, newest first, each
-// with a preview line so the picker can show something the user recognises.
-// A missing directory is not an error — it just means there's nothing to
-// resume yet.
+// ListSessions returns every *.jsonl session under dir, most-recently-active
+// first, each with a preview line so the picker can show something the user
+// recognises. A missing directory is not an error — it just means there's
+// nothing to resume yet.
 func ListSessions(dir string) ([]SessionInfo, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -114,15 +123,42 @@ func ListSessions(dir string) ([]SessionInfo, error) {
 			// or the resume picker.
 			continue
 		}
+		createdAt := info.ModTime()
+		lastActivityAt := info.ModTime()
+		scope := "global"
+		workspaceRoot := ""
+		topicID := ""
+		topicTitle := ""
+		if meta, ok, err := LoadBranchMeta(full); err == nil && ok {
+			if !meta.CreatedAt.IsZero() {
+				createdAt = meta.CreatedAt
+			}
+			if !meta.UpdatedAt.IsZero() {
+				lastActivityAt = meta.UpdatedAt
+			}
+			scope = meta.DefaultScope()
+			workspaceRoot = meta.WorkspaceRoot
+			topicID = meta.TopicID
+			topicTitle = meta.TopicTitle
+		}
 		out = append(out, SessionInfo{
-			Path:    full,
-			ModTime: info.ModTime(),
-			Preview: preview,
-			Turns:   turns,
+			Path:           full,
+			CreatedAt:      createdAt,
+			LastActivityAt: lastActivityAt,
+			ModTime:        lastActivityAt,
+			Preview:        preview,
+			Turns:          turns,
+			Scope:          scope,
+			WorkspaceRoot:  workspaceRoot,
+			TopicID:        topicID,
+			TopicTitle:     topicTitle,
 		})
 	}
 	sort.Slice(out, func(i, j int) bool {
-		return out[i].ModTime.After(out[j].ModTime)
+		if out[i].LastActivityAt.Equal(out[j].LastActivityAt) {
+			return out[i].Path < out[j].Path
+		}
+		return out[i].LastActivityAt.After(out[j].LastActivityAt)
 	})
 	return out, nil
 }
@@ -136,14 +172,13 @@ func previewSession(path string) (string, int) {
 		return "", 0
 	}
 	defer f.Close()
-	sc := bufio.NewScanner(f)
-	sc.Buffer(make([]byte, 0, 8192), 1<<20)
+	dec := json.NewDecoder(f)
 	first := ""
 	turns := 0
-	for sc.Scan() {
+	for {
 		var m provider.Message
-		if err := json.Unmarshal(sc.Bytes(), &m); err != nil {
-			continue
+		if err := dec.Decode(&m); err != nil {
+			break // EOF or a malformed tail — return the preview gathered so far
 		}
 		if m.Role == provider.RoleUser {
 			turns++
@@ -157,6 +192,21 @@ func previewSession(path string) (string, int) {
 		}
 	}
 	return first, turns
+}
+
+// ContinueSessionPath returns where a conversation carried into a rebuilt
+// controller (model switch, config change) should keep auto-saving: its existing
+// file when it has one, so the continued session stays a single file instead of
+// the old one being orphaned as an identical duplicate (#2807). A session with no
+// file yet gets a fresh path; "" when persistence is disabled.
+func ContinueSessionPath(prevPath, dir, model string) string {
+	if prevPath != "" {
+		return prevPath
+	}
+	if dir == "" {
+		return ""
+	}
+	return NewSessionPath(dir, model)
 }
 
 // NewSessionPath returns the path to use for a fresh session, namespaced by

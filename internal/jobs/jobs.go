@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"reasonix/internal/event"
+	"reasonix/internal/nilutil"
 )
 
 // Status is a job's lifecycle state.
@@ -64,6 +65,7 @@ type Job struct {
 	readOffset int
 	status     Status
 	result     string
+	resultRead bool // result already surfaced by Output (task jobs stream nothing to buf)
 	startedAt  int64
 	cancel     context.CancelFunc
 	done       chan struct{}
@@ -74,6 +76,7 @@ type Manager struct {
 	sink   event.Sink
 	root   context.Context
 	cancel context.CancelFunc
+	wg     sync.WaitGroup
 
 	mu        sync.Mutex
 	seq       int
@@ -86,7 +89,7 @@ type Manager struct {
 // context (cancelled by Close). sink receives job-lifecycle notices; pass the
 // session's synchronized sink (event.Sync) since jobs emit from goroutines.
 func NewManager(sink event.Sink) *Manager {
-	if sink == nil {
+	if nilutil.IsNil(sink) {
 		sink = event.Discard
 	}
 	root, cancel := context.WithCancel(context.Background())
@@ -120,7 +123,9 @@ func (m *Manager) Start(kind, label string, run func(ctx context.Context, out io
 
 	m.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo, Text: startedText(kind, id, label)})
 
+	m.wg.Add(1)
 	go func() {
+		defer m.wg.Done()
 		result, err := run(ctx, jobWriter{j})
 		j.mu.Lock()
 		j.result = result
@@ -185,6 +190,13 @@ func (m *Manager) Output(id string) (text string, status Status, ok bool) {
 	full := j.buf.String()
 	text = full[j.readOffset:]
 	j.readOffset = len(full)
+	// A task job streams nothing to the buffer — its answer lands in result. Once
+	// it is terminal with no buffered output, surface that result once so a task's
+	// answer is visible here too (bash_output's description promises task support).
+	if text == "" && j.status != Running && j.result != "" && !j.resultRead {
+		text = j.result
+		j.resultRead = true
+	}
 	return text, j.status, true
 }
 
@@ -197,6 +209,15 @@ func (m *Manager) Kill(id string) bool {
 	}
 	j.mu.Lock()
 	running := j.status == Running
+	if running {
+		// Flip to Killed synchronously so Output/Wait reflect the kill the instant
+		// it's requested, not whenever the run goroutine's cmd.Run returns (which
+		// trails by WaitDelay while a cancelled process tree tears down). The
+		// goroutine still sets Killed + records completion on return; this only
+		// fires when the job is actually Running, so a job that just finished
+		// keeps its real terminal status.
+		j.status = Killed
+	}
 	j.mu.Unlock()
 	if !running {
 		return false
@@ -302,9 +323,15 @@ func (m *Manager) DrainCompletedNote() string {
 		". Read their output with bash_output or wait if you still need it."
 }
 
-// Close cancels the session context, terminating every running job. Safe to call
-// once at controller shutdown.
-func (m *Manager) Close() { m.cancel() }
+// Close cancels the session context and waits for every background job goroutine
+// to return before unblocking. Jobs observe the cancel through their run context
+// (exec.CommandContext kills a bash job's process), so the wait is bounded. This
+// matters for callers tearing down a t.TempDir: without the wait, RemoveAll can
+// race a job goroutine that still holds a file under that dir.
+func (m *Manager) Close() {
+	m.cancel()
+	m.wg.Wait()
+}
 
 func nowMs() int64 { return time.Now().UnixMilli() }
 

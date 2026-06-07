@@ -5,17 +5,18 @@
 // non-React code (lib/tools.ts) translate too; it stays fresh because the provider
 // updates it on every render.
 //
-// The kernel's reasonix.toml `language` is the cross-surface source of truth (CLI +
-// desktop share it); localStorage is a fast cache so the first paint isn't blank.
-// On boot we reconcile the cache against the kernel; the language picker writes both.
+// Desktop UI language is intentionally separate from the CLI/kernel `language`
+// config for prompts and terminal text. The desktop preference is persisted in
+// the user-level [desktop] config; localStorage is only read once for legacy
+// migration from older desktop builds.
 
-import { createContext, useCallback, useContext, useEffect, useState } from "react";
+import { createContext, useCallback, useContext, useState } from "react";
 import type { ReactNode } from "react";
-import { app } from "./bridge";
 import { en, type DictKey } from "../locales/en";
 import { zh } from "../locales/zh";
 
 export type Locale = "en" | "zh";
+export type { DictKey };
 // LangPref is the stored preference: "" means auto-detect from the OS.
 export type LangPref = "" | "en" | "zh";
 
@@ -49,16 +50,23 @@ export function detectLocale(pref: LangPref): Locale {
 }
 
 function readPref(): LangPref {
-  const v = typeof localStorage !== "undefined" ? localStorage.getItem(STORAGE_KEY) : null;
+  return "";
+}
+
+export function normalizeLangPref(v: unknown): LangPref {
   return v === "en" || v === "zh" ? v : "";
 }
 
-function writePref(pref: LangPref): void {
+export function readLegacyLangPref(): LangPref {
+  const v = typeof localStorage !== "undefined" ? localStorage.getItem(STORAGE_KEY) : null;
+  return normalizeLangPref(v);
+}
+
+export function clearLegacyLangPref(): void {
   try {
-    if (pref) localStorage.setItem(STORAGE_KEY, pref);
-    else localStorage.removeItem(STORAGE_KEY);
+    localStorage.removeItem(STORAGE_KEY);
   } catch {
-    /* private mode / no storage — the in-memory state still applies this session */
+    /* private mode / no storage */
   }
 }
 
@@ -80,7 +88,7 @@ export function getLocale(): Locale {
   return currentLocale;
 }
 
-type Translator = (key: DictKey, vars?: Record<string, string | number>) => string;
+export type Translator = (key: DictKey, vars?: Record<string, string | number>) => string;
 
 interface I18nValue {
   locale: Locale;
@@ -96,31 +104,9 @@ export function LocaleProvider({ children }: { children: ReactNode }) {
   const locale = detectLocale(pref);
   currentLocale = locale; // keep the mirror fresh for non-React callers
 
-  // Reconcile the cached preference against the kernel's stored language once on
-  // boot, so a language chosen in the CLI/config shows here too. Ignored when the
-  // binding isn't reachable yet (browser dev / pre-startup).
-  useEffect(() => {
-    let live = true;
-    app
-      .Settings()
-      .then((s) => {
-        const backend: LangPref = s.language === "en" || s.language === "zh" ? s.language : "";
-        if (live && backend !== readPref()) {
-          writePref(backend);
-          setPrefState(backend);
-        }
-      })
-      .catch(() => {});
-    return () => {
-      live = false;
-    };
-  }, []);
-
-  // setPref updates the live UI, the cache, and the kernel config in one step.
+  // setPref updates only the live UI; persistence is handled by desktop config.
   const setPref = useCallback((next: LangPref) => {
-    writePref(next);
-    setPrefState(next);
-    app.SetLanguage(next).catch(() => {});
+    setPrefState(normalizeLangPref(next));
   }, []);
 
   const tt = useCallback<Translator>((key, vars) => translate(detectLocale(pref), key, vars), [pref]);

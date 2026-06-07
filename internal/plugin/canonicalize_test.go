@@ -3,6 +3,8 @@ package plugin
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"strings"
 	"testing"
 
 	"reasonix/internal/tool"
@@ -93,6 +95,40 @@ func TestSortToolsByName(t *testing.T) {
 	}
 }
 
+func TestNormalizeNameForToolNames(t *testing.T) {
+	if got := normalizeName("valid_name-1"); got != "valid_name-1" {
+		t.Fatalf("valid name changed: %q", got)
+	}
+	cases := []string{"@modelcontextprotocol/server-memory", "mcp server/fetch", "   "}
+	for _, in := range cases {
+		got := normalizeName(in)
+		if got == "" || strings.ContainsAny(got, " @/") {
+			t.Errorf("normalizeName(%q) = %q, want non-empty safe identifier", in, got)
+		}
+	}
+}
+
+func TestNormalizeNameAvoidsSanitizedCollisions(t *testing.T) {
+	a := normalizeName("search/code")
+	b := normalizeName("search_code")
+	if a == b {
+		t.Fatalf("normalized names collided: %q", a)
+	}
+	if b != "search_code" {
+		t.Fatalf("valid identifier should stay stable, got %q", b)
+	}
+	if normalizeName("@foo") == normalizeName("foo") {
+		t.Fatal("trimmed invalid prefix should not collapse onto valid name")
+	}
+}
+
+func TestSummarizeFailureErrorSingleLine(t *testing.T) {
+	got := summarizeFailureError(errors.New("npm error code ENOTEMPTY\nnpm error path /tmp/x"))
+	if strings.Contains(got, "\n") || !strings.Contains(got, "ENOTEMPTY") {
+		t.Fatalf("summary = %q", got)
+	}
+}
+
 type testTool struct{ name string }
 
 func (t testTool) Name() string                                                      { return t.name }
@@ -107,17 +143,4 @@ func toolNames(ts []tool.Tool) []string {
 		names[i] = t.Name()
 	}
 	return names
-}
-
-func getJSONKeys(t *testing.T, raw json.RawMessage) []string {
-	t.Helper()
-	var m map[string]any
-	if err := json.Unmarshal(raw, &m); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	return keys
 }

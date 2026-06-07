@@ -5,11 +5,16 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 )
 
 func TestAssetNameForCurrentPlatform(t *testing.T) {
@@ -23,6 +28,38 @@ func TestAssetNameForCurrentPlatform(t *testing.T) {
 	}
 	if !strings.HasSuffix(got, wantExt) {
 		t.Fatalf("assetName %q should end in %s on %s", got, wantExt, runtime.GOOS)
+	}
+}
+
+func TestPromoteReplacesStalePartialDest(t *testing.T) {
+	parent := t.TempDir()
+	root := filepath.Join(parent, ".dl-x", "codegraph-x64")
+	if err := os.MkdirAll(filepath.Join(root, "bin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "bin", "codegraph"), []byte("new"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	dir := filepath.Join(parent, "v0.9.7")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "stale.txt"), []byte("old"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := promote(root, dir); err != nil {
+		t.Fatalf("promote over a stale dest: %v", err)
+	}
+	if got, err := os.ReadFile(filepath.Join(dir, "bin", "codegraph")); err != nil || string(got) != "new" {
+		t.Fatalf("dest missing promoted bundle: %q %v", got, err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "stale.txt")); !os.IsNotExist(err) {
+		t.Fatal("stale dest content survived promote")
+	}
+	if _, err := os.Stat(root); !os.IsNotExist(err) {
+		t.Fatal("root should have been moved into dir")
 	}
 }
 
@@ -129,5 +166,65 @@ func TestInstallReturnsCachedWithoutNetwork(t *testing.T) {
 	// Resolve should also find it (no override, cache wins).
 	if p, ok := Resolve(""); !ok || p != launcher {
 		t.Fatalf("Resolve = %q, %v; want %q", p, ok, launcher)
+	}
+}
+
+func TestHTTPGetDetachedCtxSurvivesParentCancel(t *testing.T) {
+	started := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(started)
+		select {
+		case <-time.After(300 * time.Millisecond):
+		case <-r.Context().Done():
+		}
+		w.Write([]byte("payload"))
+	}))
+	defer srv.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	var wg sync.WaitGroup
+	var got []byte
+	var gotErr error
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		got, gotErr = httpGet(context.WithoutCancel(ctx), http.DefaultClient, srv.URL)
+	}()
+
+	<-started
+	cancel()
+	wg.Wait()
+
+	if gotErr != nil {
+		t.Fatalf("detached download aborted after parent cancel: %v", gotErr)
+	}
+	if string(got) != "payload" {
+		t.Fatalf("got %q, want payload", got)
+	}
+}
+
+func TestHTTPGetPlainCtxAbortsOnParentCancel(t *testing.T) {
+	started := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(started)
+		<-r.Context().Done()
+	}))
+	defer srv.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	var wg sync.WaitGroup
+	var gotErr error
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		_, gotErr = httpGet(ctx, http.DefaultClient, srv.URL)
+	}()
+
+	<-started
+	cancel()
+	wg.Wait()
+
+	if !errors.Is(gotErr, context.Canceled) {
+		t.Fatalf("plain ctx should abort on parent cancel, got %v", gotErr)
 	}
 }

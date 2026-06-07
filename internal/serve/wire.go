@@ -48,30 +48,54 @@ type wireAsk struct {
 	Questions []wireAskQuestion `json:"questions"`
 }
 
+type wireProfile struct {
+	Model  string `json:"model,omitempty"`
+	Effort string `json:"effort,omitempty"`
+}
+
 type wireTool struct {
-	ID        string `json:"id,omitempty"`
-	Name      string `json:"name"`
-	Args      string `json:"args,omitempty"`
-	Output    string `json:"output,omitempty"`
-	Err       string `json:"err,omitempty"`
-	ReadOnly  bool   `json:"readOnly"`
-	Truncated bool   `json:"truncated,omitempty"`
-	Partial   bool   `json:"partial,omitempty"`
-	ParentID  string `json:"parentId,omitempty"`
+	ID         string       `json:"id,omitempty"`
+	Name       string       `json:"name"`
+	Args       string       `json:"args,omitempty"`
+	Output     string       `json:"output,omitempty"`
+	Err        string       `json:"err,omitempty"`
+	ReadOnly   bool         `json:"readOnly"`
+	Truncated  bool         `json:"truncated,omitempty"`
+	DurationMs int64        `json:"durationMs,omitempty"`
+	Partial    bool         `json:"partial,omitempty"`
+	ParentID   string       `json:"parentId,omitempty"`
+	Profile    *wireProfile `json:"profile,omitempty"`
 }
 
 type wireUsage struct {
-	PromptTokens     int `json:"promptTokens"`
-	CompletionTokens int `json:"completionTokens"`
-	TotalTokens      int `json:"totalTokens"`
-	CacheHitTokens   int `json:"cacheHitTokens"`
-	CacheMissTokens  int `json:"cacheMissTokens"`
-	ReasoningTokens  int `json:"reasoningTokens,omitempty"`
+	PromptTokens     int                   `json:"promptTokens"`
+	CompletionTokens int                   `json:"completionTokens"`
+	TotalTokens      int                   `json:"totalTokens"`
+	CacheHitTokens   int                   `json:"cacheHitTokens"`
+	CacheMissTokens  int                   `json:"cacheMissTokens"`
+	ReasoningTokens  int                   `json:"reasoningTokens,omitempty"`
+	CacheDiagnostics *wireCacheDiagnostics `json:"cacheDiagnostics,omitempty"`
 	// Session-cumulative cache tokens — the status line shows the aggregate
 	// hit-rate Σhit/Σ(hit+miss), steadier than the single-turn CacheHitTokens.
 	SessionCacheHitTokens  int     `json:"sessionCacheHitTokens"`
 	SessionCacheMissTokens int     `json:"sessionCacheMissTokens"`
-	CostUSD                float64 `json:"costUsd,omitempty"`
+	Cost                   float64 `json:"cost,omitempty"`
+	Currency               string  `json:"currency,omitempty"`
+	// CostUSD is kept for older status consumers. It mirrors Cost and does not
+	// imply USD.
+	CostUSD float64 `json:"costUsd,omitempty"`
+}
+
+type wireCacheDiagnostics struct {
+	PrefixHash          string   `json:"prefixHash"`
+	PrefixChanged       bool     `json:"prefixChanged"`
+	PrefixChangeReasons []string `json:"prefixChangeReasons,omitempty"`
+	SystemHash          string   `json:"systemHash"`
+	ToolsHash           string   `json:"toolsHash"`
+	LogRewriteVersion   int      `json:"logRewriteVersion"`
+	ToolSchemaTokens    int      `json:"toolSchemaTokens"`
+	CacheMissTokens     int      `json:"cacheMissTokens"`
+	CacheHitTokens      int      `json:"cacheHitTokens"`
 }
 
 type wireApproval struct {
@@ -96,6 +120,7 @@ var kindNames = map[event.Kind]string{
 	event.TurnDone:          "turn_done",
 	event.CompactionStarted: "compaction_started",
 	event.CompactionDone:    "compaction_done",
+	event.ToolProgress:      "tool_progress",
 }
 
 // toWireAsk converts an event.Ask into its JSON wire form.
@@ -121,13 +146,18 @@ func toWire(e event.Event) wireEvent {
 		} else {
 			w.Level = "info"
 		}
-	case event.ToolDispatch, event.ToolResult:
-		w.Tool = &wireTool{
+	case event.ToolDispatch, event.ToolResult, event.ToolProgress:
+		wt := &wireTool{
 			ID: e.Tool.ID, Name: e.Tool.Name, Args: e.Tool.Args,
 			Output: e.Tool.Output, Err: e.Tool.Err,
 			ReadOnly: e.Tool.ReadOnly, Truncated: e.Tool.Truncated,
-			Partial: e.Tool.Partial, ParentID: e.Tool.ParentID,
+			DurationMs: e.Tool.DurationMs, Partial: e.Tool.Partial,
+			ParentID: e.Tool.ParentID,
 		}
+		if e.Tool.Profile != nil {
+			wt.Profile = &wireProfile{Model: e.Tool.Profile.Model, Effort: e.Tool.Profile.Effort}
+		}
+		w.Tool = wt
 	case event.Usage:
 		if u := e.Usage; u != nil {
 			w.Usage = &wireUsage{
@@ -136,8 +166,14 @@ func toWire(e event.Event) wireEvent {
 				CacheMissTokens: u.CacheMissTokens, ReasoningTokens: u.ReasoningTokens,
 				SessionCacheHitTokens: e.SessionHit, SessionCacheMissTokens: e.SessionMiss,
 			}
+			if e.CacheDiagnostics != nil {
+				w.Usage.CacheDiagnostics = toWireCacheDiagnostics(e.CacheDiagnostics)
+			}
 			if e.Pricing != nil {
-				w.Usage.CostUSD = e.Pricing.Cost(u)
+				cost := e.Pricing.Cost(u)
+				w.Usage.Cost = cost
+				w.Usage.Currency = e.Pricing.Symbol()
+				w.Usage.CostUSD = cost
 			}
 		}
 	case event.ApprovalRequest:
@@ -155,4 +191,18 @@ func toWire(e event.Event) wireEvent {
 		}
 	}
 	return w
+}
+
+func toWireCacheDiagnostics(d *event.CacheDiagnostics) *wireCacheDiagnostics {
+	return &wireCacheDiagnostics{
+		PrefixHash:          d.PrefixHash,
+		PrefixChanged:       d.PrefixChanged,
+		PrefixChangeReasons: append([]string(nil), d.PrefixChangeReasons...),
+		SystemHash:          d.SystemHash,
+		ToolsHash:           d.ToolsHash,
+		LogRewriteVersion:   d.LogRewriteVersion,
+		ToolSchemaTokens:    d.ToolSchemaTokens,
+		CacheMissTokens:     d.CacheMissTokens,
+		CacheHitTokens:      d.CacheHitTokens,
+	}
 }

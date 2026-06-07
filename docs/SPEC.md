@@ -165,8 +165,10 @@ When `agent.planner_model` names a provider different from the executor, a
 `Coordinator` runs two models in **separate sessions** to keep each one's prompt
 prefix cache-stable:
 
-- The **planner** (low-frequency) runs in its own session with no tools and
-  produces a concise plan.
+- The **planner** (low-frequency) runs in its own session with the same standing
+  memory context plus a filtered read-only research tool set, then produces a
+  concise plan. It can inspect files/docs before planning, but writer and
+  workflow tools are not exposed to it.
 - The plan is handed off as structured text to the **executor** — a full
   tool-using `Agent` in its own session — which carries it out.
 - The sessions never mix, so neither model's prefix is disturbed by the other's
@@ -241,7 +243,7 @@ each writer/bash call. `deny` rules harden both modes.
 
 The chat TUI accepts `/command` input. Three kinds share one dispatch:
 
-- **Built-in actions** (`/compact`, `/new`, `/mcp`, `/help`) manipulate session
+- **Built-in actions** (`/compact`, `/new`, `/effort`, `/mcp`, `/help`) manipulate session
   state locally and never reach the model.
 - **Custom commands** are Markdown files under `.reasonix/commands/` (project) and
   `~/.config/reasonix/commands/` (user); the project dir overrides the user dir on a
@@ -268,6 +270,22 @@ Review the staged diff. Focus on $ARGUMENTS, list bugs with file:line.
   skipped, not fatal. Custom and MCP-prompt commands both resolve to text and
   reuse the same "start a turn" path as a typed message.
 
+#### CLI modal/composer ownership
+
+The Bubble Tea chat TUI has one bottom composer. A slash-command overlay must
+declare whether it owns keyboard input:
+
+- **Modal overlays** own navigation/confirm/cancel keys and must hide the
+  composer while open. Examples: `/mcp`, `/resume`, `/rewind`, approval prompts,
+  and non-typing `ask` choice cards.
+- **Input-owned overlays** are attached to the textarea and must keep the
+  composer visible. Examples: slash/@ autocomplete and `ask` free-text mode.
+
+New CLI overlays must update `chat_tui.hideComposer()` and add/extend layout
+tests so `bottomRows()` accounts for either `panel + status` or
+`panel + composer + status`. This prevents inactive chat input boxes from being
+rendered under modal panels.
+
 ### 3.9 Chat references (`@`)
 
 A chat message may embed `@` references; before the turn is sent, each is
@@ -279,7 +297,8 @@ resolved and prepended to the message as a tagged block the model can read.
   actually exists on disk. This existence gate is the disambiguator: an ordinary
   `@mention` or an email address resolves to no file and stays literal text. A
   file is wrapped `<file path="…">…</file>` (size-capped, binary files noted not
-  dumped); a directory becomes a one-level listing.
+  dumped); a directory becomes a recursive listing (depth-first, skipping common
+  noise like `.git` and `node_modules`).
 - Resolution is asynchronous (off the TUI event loop); a fetch failure surfaces
   as a notice but doesn't block the turn. Reads are user-initiated and read-only
   — they do **not** pass the permission gate (§3.7).
@@ -366,6 +385,10 @@ api_key_env = "MIMO_API_KEY"
 
 [tools]
 enabled = []   # omit/empty = all built-ins
+
+[skills]
+# paths = ["~/my-skills", "../shared/skills"]   # extra custom skill roots
+# disabled_skills = ["review"]                  # hidden from prompt, slash invocation, and skill tools
 
 [permissions]
 mode  = "ask"                              # writer fallback when no rule matches: ask|allow|deny

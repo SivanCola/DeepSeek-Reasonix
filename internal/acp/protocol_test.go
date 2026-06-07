@@ -1,6 +1,9 @@
 package acp
 
 import (
+	"context"
+	"encoding/json"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -127,19 +130,22 @@ func TestNewSessionIDUnique(t *testing.T) {
 // --- mcpSpecs ---
 
 func TestMcpSpecsNil(t *testing.T) {
-	if got := mcpSpecs(nil); got != nil {
+	if got, err := mcpSpecs(nil, ""); err != nil || got != nil {
 		t.Errorf("mcpSpecs(nil) = %v, want nil", got)
 	}
-	if got := mcpSpecs([]MCPServerSpec{}); got != nil {
+	if got, err := mcpSpecs([]MCPServerSpec{}, ""); err != nil || got != nil {
 		t.Errorf("mcpSpecs([]) = %v, want nil", got)
 	}
 }
 
 func TestMcpSpecsConversion(t *testing.T) {
 	in := []MCPServerSpec{
-		{Name: "codegraph", Command: "codegraph", Args: []string{"--stdio"}, Env: map[string]string{"HOME": "/tmp"}},
+		{Name: "codegraph", Command: "codegraph", Args: []string{"--stdio"}, Env: MCPEnv{"HOME": "/tmp"}},
 	}
-	got := mcpSpecs(in)
+	got, err := mcpSpecs(in, "/workspace")
+	if err != nil {
+		t.Fatalf("mcpSpecs: %v", err)
+	}
 	if len(got) != 1 {
 		t.Fatalf("len = %d, want 1", len(got))
 	}
@@ -152,14 +158,48 @@ func TestMcpSpecsConversion(t *testing.T) {
 	if got[0].Env["HOME"] != "/tmp" {
 		t.Errorf("env = %v", got[0].Env)
 	}
+	if got[0].Dir != "/workspace" {
+		t.Errorf("dir = %q, want /workspace", got[0].Dir)
+	}
+}
+
+func TestMCPEnvAcceptsOfficialArrayShape(t *testing.T) {
+	var p SessionNewParams
+	raw := []byte(`{
+		"cwd":"/tmp",
+		"mcpServers":[{
+			"name":"fs",
+			"command":"mcp-fs",
+			"args":["--stdio"],
+			"env":[{"name":"HOME","value":"/tmp"},{"name":"EMPTY","value":""}]
+		}]
+	}`)
+	if err := json.Unmarshal(raw, &p); err != nil {
+		t.Fatalf("unmarshal official env array: %v", err)
+	}
+	got, err := mcpSpecs(p.MCPServers, p.Cwd)
+	if err != nil {
+		t.Fatalf("mcpSpecs: %v", err)
+	}
+	if got[0].Env["HOME"] != "/tmp" || got[0].Env["EMPTY"] != "" {
+		t.Fatalf("env = %v, want HOME and EMPTY from official array", got[0].Env)
+	}
+}
+
+func TestMcpSpecsRejectsUnsupportedTransport(t *testing.T) {
+	_, err := mcpSpecs([]MCPServerSpec{{Name: "remote", Type: "http", Command: "ignored"}}, "/tmp")
+	if err == nil || !strings.Contains(err.Error(), "unsupported transport") {
+		t.Fatalf("mcpSpecs unsupported transport err = %v", err)
+	}
 }
 
 // --- transcriptPath ---
 
 func TestTranscriptPath(t *testing.T) {
-	got := transcriptPath("/sessions", "abc-123")
-	if got != "/sessions/abc-123.jsonl" {
-		t.Errorf("transcriptPath = %q", got)
+	dir := t.TempDir()
+	got := transcriptPath(dir, "abc-123")
+	if want := filepath.Join(dir, "abc-123.jsonl"); got != want {
+		t.Errorf("transcriptPath = %q, want %q", got, want)
 	}
 }
 
@@ -194,7 +234,16 @@ func TestErrorCodes(t *testing.T) {
 func TestAcpSessionSetCancelAbort(t *testing.T) {
 	sess := &acpSession{id: "test"}
 	aborted := false
-	sess.setCancel(func() { aborted = true })
+	_, cancel, ok := sess.begin(context.Background())
+	if !ok {
+		t.Fatal("begin should succeed")
+	}
+	sess.mu.Lock()
+	sess.cancel = func() {
+		aborted = true
+		cancel()
+	}
+	sess.mu.Unlock()
 	sess.abort()
 	if !aborted {
 		t.Error("abort should call the cancel func")
@@ -208,6 +257,6 @@ func TestAcpSessionAbortNil(t *testing.T) {
 
 func TestAcpSessionSetCancelNil(t *testing.T) {
 	sess := &acpSession{id: "test"}
-	sess.setCancel(nil)
+	sess.finish()
 	sess.abort() // should not panic
 }

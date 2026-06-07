@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 )
 
 const (
@@ -22,6 +23,9 @@ const (
 	// with CODEGRAPH_VERSION in the Makefile and .github/workflows.
 	Version = "v0.9.7"
 	cgRepo  = "colbymchenry/codegraph"
+
+	renameAttempts = 5
+	renameBackoff  = 200 * time.Millisecond
 )
 
 // CacheDir is where the CodeGraph bundle is unpacked on first use:
@@ -81,6 +85,15 @@ func assetName() string {
 // atomically renamed into place, so a cancelled or failed run leaves no partial
 // install behind.
 func Install(ctx context.Context, log func(string)) (string, error) {
+	return InstallWithClient(ctx, http.DefaultClient, log)
+}
+
+// InstallWithClient is Install with an explicit HTTP client, used when Reasonix
+// network proxy settings should apply.
+func InstallWithClient(ctx context.Context, client *http.Client, log func(string)) (string, error) {
+	if client == nil {
+		client = http.DefaultClient
+	}
 	if p, ok := cached(); ok {
 		return p, nil
 	}
@@ -92,7 +105,7 @@ func Install(ctx context.Context, log func(string)) (string, error) {
 	logf(log, "codegraph: downloading %s (%s, one-time)…", asset, Version)
 
 	base := fmt.Sprintf("https://github.com/%s/releases/download/%s", cgRepo, Version)
-	sums, err := httpGet(ctx, base+"/SHA256SUMS")
+	sums, err := httpGet(ctx, client, base+"/SHA256SUMS")
 	if err != nil {
 		return "", fmt.Errorf("codegraph: fetch checksums: %w", err)
 	}
@@ -100,7 +113,7 @@ func Install(ctx context.Context, log func(string)) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	data, err := httpGet(ctx, base+"/"+asset)
+	data, err := httpGet(ctx, client, base+"/"+asset)
 	if err != nil {
 		return "", fmt.Errorf("codegraph: download %s: %w", asset, err)
 	}
@@ -132,12 +145,14 @@ func Install(ctx context.Context, log func(string)) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if err := os.Rename(root, dir); err != nil {
-		// A concurrent session may have won the race; accept its install.
+	if p, ok := cached(); ok {
+		return p, nil // a concurrent session already populated dir
+	}
+	if err := promote(root, dir); err != nil {
 		if p, ok := cached(); ok {
-			return p, nil
+			return p, nil // a concurrent winner landed during our retries
 		}
-		return "", err
+		return "", fmt.Errorf("codegraph: install to %s failed: %w — the cache directory may be read-only or locked by antivirus; set REASONIX_CACHE_DIR to a writable location to relocate it", dir, err)
 	}
 	p, ok := cached()
 	if !ok {
@@ -147,12 +162,29 @@ func Install(ctx context.Context, log func(string)) (string, error) {
 	return p, nil
 }
 
-func httpGet(ctx context.Context, url string) ([]byte, error) {
+// promote moves the freshly extracted bundle (root) into its versioned home
+// (dir). On Windows os.Rename onto an existing directory fails with "Access is
+// denied", so a stale/partial dest from an earlier interrupted install (cached()
+// already reported it incomplete) is cleared first; a just-extracted .exe can
+// also stay briefly locked by an AV scanner, so the move is retried.
+func promote(root, dir string) error {
+	_ = os.RemoveAll(dir)
+	var err error
+	for i := 0; i < renameAttempts; i++ {
+		if err = os.Rename(root, dir); err == nil {
+			return nil
+		}
+		time.Sleep(renameBackoff)
+	}
+	return err
+}
+
+func httpGet(ctx context.Context, client *http.Client, url string) ([]byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -185,6 +217,22 @@ func safeJoin(dir, name string) (string, error) {
 	return p, nil
 }
 
+// safeSymlink rejects a symlink whose destination escapes dir. linkPath is the
+// symlink's own (already safeJoin'd) location; linkname is its raw target. Without
+// this a symlink to ../../etc lets a later archive entry written "through" it land
+// outside dir — the tar-slip-via-symlink the path check alone misses.
+func safeSymlink(dir, linkPath, linkname string) error {
+	dest := linkname
+	if !filepath.IsAbs(dest) {
+		dest = filepath.Join(filepath.Dir(linkPath), linkname)
+	}
+	dest = filepath.Clean(dest)
+	if dest != dir && !strings.HasPrefix(dest, dir+string(os.PathSeparator)) {
+		return fmt.Errorf("unsafe symlink %q -> %q in archive", linkPath, linkname)
+	}
+	return nil
+}
+
 func extractTarGz(data []byte, dir string) error {
 	gz, err := gzip.NewReader(bytes.NewReader(data))
 	if err != nil {
@@ -210,6 +258,9 @@ func extractTarGz(data []byte, dir string) error {
 				return err
 			}
 		case tar.TypeSymlink:
+			if err := safeSymlink(dir, target, hdr.Linkname); err != nil {
+				return err
+			}
 			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 				return err
 			}

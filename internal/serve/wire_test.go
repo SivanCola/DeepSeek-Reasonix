@@ -16,14 +16,39 @@ func TestToWire(t *testing.T) {
 		}
 	})
 
+	t.Run("tool dispatch profile", func(t *testing.T) {
+		w := toWire(event.Event{Kind: event.ToolDispatch, Tool: event.Tool{
+			Name: "task", Args: `{"prompt":"x"}`,
+			Profile: &event.Profile{Model: "deepseek-pro", Effort: "max"},
+		}})
+		if w.Tool == nil || w.Tool.Profile == nil || w.Tool.Profile.Model != "deepseek-pro" || w.Tool.Profile.Effort != "max" {
+			t.Errorf("profile = %+v", w.Tool)
+		}
+	})
+
+	t.Run("tool result duration", func(t *testing.T) {
+		w := toWire(event.Event{Kind: event.ToolResult, Tool: event.Tool{Name: "web_fetch", Output: "ok", DurationMs: 522}})
+		if w.Tool == nil || w.Tool.Output != "ok" || w.Tool.DurationMs != 522 {
+			t.Errorf("tool result duration = %+v", w.Tool)
+		}
+	})
+
 	t.Run("usage with cost", func(t *testing.T) {
 		w := toWire(event.Event{
 			Kind:    event.Usage,
 			Usage:   &provider.Usage{PromptTokens: 1000, CompletionTokens: 200, TotalTokens: 1200, CacheHitTokens: 900, CacheMissTokens: 100},
 			Pricing: &provider.Pricing{CacheHit: 0.02, Input: 1, Output: 2},
+			CacheDiagnostics: &event.CacheDiagnostics{
+				PrefixChanged:       true,
+				PrefixChangeReasons: []string{"log_rewrite"},
+				LogRewriteVersion:   1,
+			},
 		})
-		if w.Usage == nil || w.Usage.TotalTokens != 1200 || w.Usage.CostUSD <= 0 {
+		if w.Usage == nil || w.Usage.TotalTokens != 1200 || w.Usage.Cost <= 0 || w.Usage.CostUSD <= 0 || w.Usage.Currency != "¥" {
 			t.Errorf("usage = %+v", w.Usage)
+		}
+		if w.Usage.CacheDiagnostics == nil || w.Usage.CacheDiagnostics.PrefixChangeReasons[0] != "log_rewrite" {
+			t.Errorf("cache diagnostics = %+v", w.Usage.CacheDiagnostics)
 		}
 	})
 

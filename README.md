@@ -17,7 +17,7 @@
 > [!IMPORTANT]
 > **Reasonix 1.0 is a ground-up rewrite in Go** — this branch (`main-v2`) is the new default and where development happens now.
 > The earlier `0.x` TypeScript releases are **legacy**, living on the [`v1`](https://github.com/esengine/DeepSeek-Reasonix/tree/v1) branch (maintenance only).
-> See the **[migration guide](./docs/MIGRATING.md)**. `npm i -g reasonix` stays the install command — `1.0.0`+ delivers the Go binary, `0.x` is the legacy TS build. (Heads-up: 1.0.0 isn't on npm yet — build from source meanwhile.)
+> See the **[migration guide](./docs/MIGRATING.md)**. `npm i -g reasonix` stays the install command — `1.0.0`+ delivers the Go binary, `0.x` is the legacy TS build.
 
 <p align="center">
   <a href="https://www.npmjs.com/package/reasonix"><img src="https://img.shields.io/npm/v/reasonix.svg?style=flat-square&color=cb3837&labelColor=161b22&logo=npm&logoColor=white" alt="npm version"/></a>
@@ -61,10 +61,20 @@
 - **Zero-friction distribution.** `CGO_ENABLED=0` single binary; cross-compile
   to six targets with one command. The only dependency is a TOML parser.
 
-## Install / Build
+## Install
 
 ```sh
-make build      # -> bin/reasonix
+npm i -g reasonix                  # any OS; pulls the prebuilt native binary
+brew install esengine/reasonix/reasonix   # macOS
+```
+
+Prebuilt archives (`darwin|linux|windows × amd64|arm64`) and `SHA256SUMS` are on
+every [GitHub release](https://github.com/esengine/DeepSeek-Reasonix/releases).
+
+### Build from source
+
+```sh
+make build      # -> bin/reasonix(.exe)
 make cross      # -> dist/ (darwin|linux|windows × amd64|arm64)
 ```
 
@@ -93,6 +103,8 @@ default_model = "deepseek-flash"   # executor; set [agent].planner_model to add 
 # planner_model = "mimo-pro"          # optional low-frequency planner
 # subagent_model = "deepseek-pro"     # optional default for runAs=subagent skills
 # subagent_models = { review = "deepseek-pro", security_review = "deepseek-pro" }
+auto_plan = "off"                  # off|on; off keeps plan mode manual
+# auto_plan_classifier = "deepseek-flash"   # optional; only borderline tasks call it
 
 [[providers]]
 name        = "deepseek-flash"
@@ -104,6 +116,10 @@ api_key_env = "DEEPSEEK_API_KEY"
 
 [tools]
 enabled = []   # omit/empty = all built-ins
+
+[skills]
+# paths = ["~/my-skills", "../shared/skills"]   # extra custom skill roots
+# disabled_skills = ["review"]                  # hide skills until /skill enable <name>
 
 [permissions]
 mode  = "ask"                                # writer fallback when no rule matches: ask|allow|deny
@@ -163,6 +179,11 @@ url     = "https://mcp.stripe.com"
 headers = { Authorization = "Bearer ${STRIPE_KEY}" }
 ```
 
+Enabled MCP servers start connecting automatically in the background after a
+session begins, so chat stays usable while tools come online. Use `/mcp` or the
+desktop MCP panel to refresh status, reconnect a server, inspect failures, or
+disable a server for the current session.
+
 **Already have an `.mcp.json`?** Drop it in the project root and Reasonix
 reads it as-is — the `mcpServers` spec (`command`/`args`/`env`, `type`/`url`/
 `headers`, `${VAR}` expansion) maps field-for-field onto `[[plugins]]`. Both
@@ -177,10 +198,15 @@ sources are merged; on a name collision `reasonix.toml` wins.
 }
 ```
 
+**Upgrading from `0.x`?** Your old `~/.reasonix/config.json` is still read for its
+`mcpServers` (honouring `mcpDisabled`) as a lowest-priority source, so MCP servers
+keep working — move them into `reasonix.toml`'s `[[plugins]]` or a `.mcp.json` when
+convenient.
+
 ### Slash commands
 
 In `reasonix chat`, built-in commands (`/compact`, `/new`, `/rewind`, `/tree`,
-`/branch`, `/switch`, `/todo`, `/model`, `/mcp`, `/memory`, `/help`) run locally.
+`/branch`, `/switch`, `/todo`, `/model`, `/effort`, `/mcp`, `/memory`, `/help`) run locally.
 `/tree` shows saved conversation branches, `/branch [name]` forks the current
 conversation tip, `/branch <turn> [name]` forks from an earlier checkpointed turn,
 and `/switch <id|name>` loads another branch. **Custom commands** are Markdown files under
@@ -222,9 +248,23 @@ separate cache-stable sessions) is a one-line edit afterwards — set
 planner_model = "deepseek-pro"   # used as the low-frequency planner
 ```
 
+The planner sees loaded `REASONIX.md` / `AGENTS.md` memory and a small read-only
+research tool set, so it can inspect relevant files before handing a plan to the
+executor. Writer and workflow tools remain executor-only.
+
 Subagent skills inherit the executor model by default. Set `subagent_model` to
 run them on another configured model, or use `subagent_models` to override only
 specific skills such as `review` or `security_review`.
+
+For interactive frontends, plan mode is manual by default. Set
+`agent.auto_plan = "on"` to make complex-looking tasks enter plan mode
+automatically: Reasonix first drafts a read-only plan, then waits for approval
+before editing or running side-effecting commands. `auto_plan_classifier` can
+name a cheap provider such as `deepseek-flash`; it is only called for borderline
+inputs and falls back to the heuristic if classification fails. Use
+`/auto-plan off|on` in `reasonix chat` to change the user-level setting, or
+`reasonix config auto-plan off|on` from a shell/script. Pass `--local` to the
+shell command only when you intentionally want a project-local override.
 
 ## Architecture
 
