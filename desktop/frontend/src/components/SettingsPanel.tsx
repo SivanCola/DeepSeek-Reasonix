@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type Dispatch, type ReactNode, type SetStateAction } from "react";
 import { Check, ChevronDown } from "lucide-react";
 import { asArray } from "../lib/array";
+import { useDeferredClose } from "../lib/useMountTransition";
 import { app } from "../lib/bridge";
 import { normalizeLangPref, useI18n, useT, type DictKey, type LangPref } from "../lib/i18n";
 import { useUpdater } from "../lib/useUpdater";
@@ -39,6 +40,8 @@ export function SettingsPanel({ onClose, onChanged, initialTab }: { onClose: () 
   const [textSize, setTextSizeState] = useState<TextSize>(getTextSize());
   const [fontFamily, setFontFamilyState] = useState<FontFamily>(getFontFamily());
   const [tab, setTab] = useState<SettingsTab>(initialTab === "providers" ? "models" : initialTab ?? "general");
+  // Play the modal exit animation, then let the parent unmount us.
+  const { status, requestClose } = useDeferredClose(onClose, 240);
 
   const reload = async () => setS(normalizeSettingsView(await app.Settings().catch(() => null)));
   useEffect(() => {
@@ -81,11 +84,11 @@ export function SettingsPanel({ onClose, onChanged, initialTab }: { onClose: () 
   // Close on Esc
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && !document.querySelector("[data-anchored-popover='active']")) onClose();
+      if (e.key === "Escape" && !document.querySelector("[data-anchored-popover='active']")) requestClose();
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  }, [requestClose]);
 
   // The settings-reliant pages (general, models, network, permissions,
   // sandbox, appearance, updates) need SettingsView loaded. MCP, Skills, and Memory
@@ -93,12 +96,12 @@ export function SettingsPanel({ onClose, onChanged, initialTab }: { onClose: () 
   const needsSettings = tab === "general" || tab === "models" || tab === "bots" || tab === "network" || tab === "permissions" || tab === "sandbox" || tab === "appearance" || tab === "updates";
 
   return (
-    <div className="settings-modal-backdrop" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="settings-modal">
+    <div className="settings-modal-backdrop" data-state={status} onClick={(e) => { if (e.target === e.currentTarget) requestClose(); }}>
+      <div className="settings-modal" data-state={status}>
         <header className="settings-modal__head">
           <div className="settings-modal__title">{t("settings.title")}</div>
           <Tooltip label={t("common.close")}>
-            <button className="chip" aria-label={t("common.close")} onClick={onClose}>✕</button>
+            <button className="chip" aria-label={t("common.close")} onClick={requestClose}>✕</button>
           </Tooltip>
         </header>
 
@@ -121,17 +124,17 @@ export function SettingsPanel({ onClose, onChanged, initialTab }: { onClose: () 
               <div className="empty">{t("settings.loading")}</div>
             ) : (
               <>
-                {tab === "general" && s && <SettingsPageShell s={s} tab={tab} busy={busy} apply={apply}><GeneralSection s={s} busy={busy} apply={apply} /></SettingsPageShell>}
-                {tab === "models" && s && <SettingsPageShell s={s} tab={tab} busy={busy} apply={apply}><ModelsSection s={s} busy={busy} apply={apply} backgroundApply={backgroundApply} /></SettingsPageShell>}
-                {tab === "bots" && s && <SettingsPageShell s={s} tab={tab} busy={busy} apply={apply}><BotsSection s={s} busy={busy} apply={apply} /></SettingsPageShell>}
-                {tab === "mcp" && <SettingsPageShell s={s} tab={tab} busy={false} apply={apply}><MCPServersSettingsPage /></SettingsPageShell>}
-                {tab === "skills" && <SettingsPageShell s={s} tab={tab} busy={false} apply={apply}><SkillsSettingsPage /></SettingsPageShell>}
-                {tab === "memory" && <SettingsPageShell s={s} tab={tab} busy={false} apply={apply}><MemorySettingsPage /></SettingsPageShell>}
-                {tab === "permissions" && s && <SettingsPageShell s={s} tab={tab} busy={busy} apply={apply}><PermissionsSection s={s} busy={busy} apply={apply} /></SettingsPageShell>}
-                {tab === "sandbox" && s && <SettingsPageShell s={s} tab={tab} busy={busy} apply={apply}><SandboxSection s={s} busy={busy} apply={apply} /></SettingsPageShell>}
-                {tab === "network" && s && <SettingsPageShell s={s} tab={tab} busy={busy} apply={apply}><NetworkSection s={s} busy={busy} apply={apply} /></SettingsPageShell>}
+                {tab === "general" && s && <SettingsPageShell key={tab} s={s} tab={tab} busy={busy} apply={apply}><GeneralSection s={s} busy={busy} apply={apply} /></SettingsPageShell>}
+                {tab === "models" && s && <SettingsPageShell key={tab} s={s} tab={tab} busy={busy} apply={apply}><ModelsSection s={s} busy={busy} apply={apply} backgroundApply={backgroundApply} /></SettingsPageShell>}
+                {tab === "bots" && s && <SettingsPageShell key={tab} s={s} tab={tab} busy={busy} apply={apply}><BotsSection s={s} busy={busy} apply={apply} /></SettingsPageShell>}
+                {tab === "mcp" && <SettingsPageShell key={tab} s={s} tab={tab} busy={false} apply={apply}><MCPServersSettingsPage /></SettingsPageShell>}
+                {tab === "skills" && <SettingsPageShell key={tab} s={s} tab={tab} busy={false} apply={apply}><SkillsSettingsPage /></SettingsPageShell>}
+                {tab === "memory" && <SettingsPageShell key={tab} s={s} tab={tab} busy={false} apply={apply}><MemorySettingsPage /></SettingsPageShell>}
+                {tab === "permissions" && s && <SettingsPageShell key={tab} s={s} tab={tab} busy={busy} apply={apply}><PermissionsSection s={s} busy={busy} apply={apply} /></SettingsPageShell>}
+                {tab === "sandbox" && s && <SettingsPageShell key={tab} s={s} tab={tab} busy={busy} apply={apply}><SandboxSection s={s} busy={busy} apply={apply} /></SettingsPageShell>}
+                {tab === "network" && s && <SettingsPageShell key={tab} s={s} tab={tab} busy={busy} apply={apply}><NetworkSection s={s} busy={busy} apply={apply} /></SettingsPageShell>}
                 {tab === "appearance" && s && (
-                  <SettingsPageShell s={s} tab={tab} busy={busy} apply={apply}>
+                  <SettingsPageShell key={tab} s={s} tab={tab} busy={busy} apply={apply}>
                     <AppearanceSection
                       theme={theme}
                       themeStyle={themeStyle}
@@ -158,7 +161,7 @@ export function SettingsPanel({ onClose, onChanged, initialTab }: { onClose: () 
                     />
                   </SettingsPageShell>
                 )}
-                {tab === "updates" && s && <SettingsPageShell s={s} tab={tab} busy={busy} apply={apply}><UpdatesSection configPath={s.configPath} /></SettingsPageShell>}
+                {tab === "updates" && s && <SettingsPageShell key={tab} s={s} tab={tab} busy={busy} apply={apply}><UpdatesSection configPath={s.configPath} /></SettingsPageShell>}
               </>
             )}
           </main>

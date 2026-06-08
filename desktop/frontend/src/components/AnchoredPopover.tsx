@@ -104,6 +104,7 @@ export function AnchoredPopover({
       <div
         ref={popoverRef}
         data-anchored-popover="active"
+        data-ready={position ? "true" : "false"}
         className={`anchored-popover ${className}`}
         style={{
           ...style,

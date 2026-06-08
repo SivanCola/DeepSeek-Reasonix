@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, ClipboardEvent, DragEvent, KeyboardEvent, PointerEvent as ReactPointerEvent, ReactNode } from "react";
-import { AlertTriangle, ArrowUp, Check, ChevronDown, Eye, FileText, Folder, FolderGit2, FolderPlus, List, Search, Square, Trash2, X, Zap } from "lucide-react";
+import { AlertTriangle, ArrowUp, Eye, FileText, Folder, List, Square, Trash2, X, Zap } from "lucide-react";
 import { asArray } from "../lib/array";
 import { app, onFilesDropped } from "../lib/bridge";
 import { SPINNER_WORDS, useI18n } from "../lib/i18n";
 import { clearLayoutSize, loadOptionalLayoutSize, saveLayoutSize } from "../lib/layoutPreferences";
-import type { CommandInfo, ComposerInsertRequest, DirEntry, EffortInfo, Mode, SlashArgItem, SlashArgsResult, WorkspaceView } from "../lib/types";
+import type { CommandInfo, ComposerInsertRequest, DirEntry, EffortInfo, Mode, SlashArgItem, SlashArgsResult } from "../lib/types";
 import {
   formatWorkspaceReference,
   parseWorkspaceReference,
@@ -18,7 +18,6 @@ import { FileMenu } from "./FileMenu";
 import { EffortSwitcher } from "./EffortSwitcher";
 import { ModelSwitcher } from "./ModelSwitcher";
 import { Tooltip } from "./Tooltip";
-import { AnchoredPopover } from "./AnchoredPopover";
 
 interface Attachment {
   path: string;
@@ -140,8 +139,6 @@ export function Composer({
   onSetMode,
   onSwitchModel,
   onSetEffort,
-  onPickFolder,
-  onRemoveWorkspace,
   insertRequest,
   disabled,
   decisionPending = false,
@@ -149,7 +146,6 @@ export function Composer({
   turnStartAt,
   turnTokens,
   retry,
-  workspaceRefreshSignal,
   transientDismissSignal,
 }: {
   running: boolean;
@@ -166,8 +162,6 @@ export function Composer({
   onSetMode: (mode: Mode) => void;
   onSwitchModel: (name: string) => void;
   onSetEffort: (level: string) => void;
-  onPickFolder: (path?: string) => Promise<string>;
-  onRemoveWorkspace: (path: string) => Promise<void>;
   insertRequest?: ComposerInsertRequest | null;
   disabled?: boolean;
   decisionPending?: boolean;
@@ -179,7 +173,6 @@ export function Composer({
   turnStartAt?: number;
   turnTokens?: number;
   retry?: { attempt: number; max: number };
-  workspaceRefreshSignal?: number;
   transientDismissSignal?: number;
 }) {
   const { t, locale } = useI18n();
@@ -195,23 +188,12 @@ export function Composer({
   const [active, setActive] = useState(0);
   const [dismissed, setDismissed] = useState(false);
   const [dragOver, setDragOver] = useState(false);
-  const [workspaceMenuOpen, setWorkspaceMenuOpen] = useState(false);
-  const [workspaceQuery, setWorkspaceQuery] = useState("");
-  const [workspaces, setWorkspaces] = useState<WorkspaceView[]>([]);
-  // Two-click delete: the first click on the trash icon moves the row into a
-  // "Confirm?" state and shows a real label ("Delete?") on the icon; the
-  // second click (within ~3s) actually fires the removal. A click anywhere
-  // else, Escape, or a workspace switch resets the row. We keep the existing
-  // server-side RemoveWorkspace as the actual delete so the projects file
-  // stays the single source of truth — this is purely a confirmation gate.
-  const [confirmRemovePath, setConfirmRemovePath] = useState<string | null>(null);
   const [composerHeight, setComposerHeight] = useState<number | null>(loadComposerHeight);
   const [composerResizing, setComposerResizing] = useState(false);
   const [textareaAutoHeight, setTextareaAutoHeight] = useState<number | null>(null);
   const [textareaAutoOverflow, setTextareaAutoOverflow] = useState(false);
   const taRef = useRef<HTMLTextAreaElement>(null);
   const composerCardRef = useRef<HTMLDivElement>(null);
-  const workspaceAnchorRef = useRef<HTMLDivElement>(null);
   const wasRunning = useRef(running);
   const composingRef = useRef(false);
   const lastCompositionEndAt = useRef(0);
@@ -394,8 +376,6 @@ export function Composer({
     if (transientDismissSignal === undefined || transientDismissSignal === lastTransientDismissSignal.current) return;
     lastTransientDismissSignal.current = transientDismissSignal;
     setDismissed(true);
-    setWorkspaceMenuOpen(false);
-    setConfirmRemovePath(null);
   }, [transientDismissSignal]);
 
   const setTextCaretEnd = (next: string) => {
@@ -690,53 +670,6 @@ export function Composer({
     setTextCaretEnd(next);
   };
 
-  const workspaceName = useMemo(() => {
-    if (!cwd) return "";
-    const parts = cwd.split(/[/\\]/).filter(Boolean);
-    return parts.length > 0 ? parts[parts.length - 1] : cwd;
-  }, [cwd]);
-
-  const loadWorkspaces = () => {
-    app.ListWorkspaces().then((next) => setWorkspaces(asArray(next))).catch(() => setWorkspaces([]));
-  };
-
-  useEffect(() => {
-    if (workspaceMenuOpen) loadWorkspaces();
-  }, [workspaceMenuOpen, cwd, workspaceRefreshSignal]);
-
-  const filteredWorkspaces = useMemo(() => {
-    const q = workspaceQuery.trim().toLowerCase();
-    if (!q) return workspaces;
-    return workspaces.filter((w) => `${w.name} ${w.path}`.toLowerCase().includes(q));
-  }, [workspaceQuery, workspaces]);
-
-  const chooseWorkspace = async (path?: string) => {
-    const next = await onPickFolder(path);
-    if (next) {
-      setWorkspaceMenuOpen(false);
-      setWorkspaceQuery("");
-    }
-  };
-
-  const removeWorkspace = async (path: string) => {
-    await onRemoveWorkspace(path);
-    setWorkspaces((prev) => prev.filter((w) => w.path !== path));
-    setConfirmRemovePath(null);
-  };
-
-  // First click on the trash icon arms the confirmation; second click fires.
-  // We reset the armed state after a short idle window so the user doesn't
-  // accidentally delete a workspace they walked past 30s ago.
-  useEffect(() => {
-    if (!confirmRemovePath) return;
-    const id = window.setTimeout(() => setConfirmRemovePath(null), 3000);
-    return () => window.clearTimeout(id);
-  }, [confirmRemovePath]);
-
-  // Escape / menu close / workspace switch all clear the armed delete.
-  useEffect(() => {
-    if (!workspaceMenuOpen) setConfirmRemovePath(null);
-  }, [workspaceMenuOpen]);
 
   useEffect(() => {
     const onResize = () => setComposerHeight((height) => (height === null ? null : clampComposerHeight(height)));
@@ -946,13 +879,7 @@ export function Composer({
           return `${word}… ${fmtElapsed(elapsedMs)}${tok}`;
         })()
       : null;
-  const hasWorkspace = Boolean(cwd);
-  const hasEffort = Boolean(effort?.supported);
-  const composerMetaClass = [
-    "composer-meta",
-    hasWorkspace ? "composer-meta--has-workspace" : "composer-meta--no-workspace",
-    hasEffort ? "composer-meta--has-effort" : "composer-meta--no-effort",
-  ].join(" ");
+  const composerMetaClass = "composer-meta";
 
   return (
     <div
@@ -960,77 +887,6 @@ export function Composer({
       style={{ "--wails-drop-target": "drop" } as CSSProperties}
       onDropCapture={onFileDropCapture}
     >
-      <AnchoredPopover
-        open={workspaceMenuOpen && !!cwd}
-        anchorRef={workspaceAnchorRef}
-        onClose={() => setWorkspaceMenuOpen(false)}
-        className="workspace-switcher workspace-switcher--portal"
-      >
-          <label className="workspace-switcher__search">
-            <Search size={14} />
-            <input
-              autoFocus
-              value={workspaceQuery}
-              onChange={(e) => setWorkspaceQuery(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Escape") setWorkspaceMenuOpen(false);
-              }}
-              placeholder={t("composer.searchProjects")}
-            />
-          </label>
-          <div className="workspace-switcher__list">
-            {filteredWorkspaces.map((w) => (
-              <div className="workspace-switcher__row" key={w.path}>
-                <button
-                  className={`workspace-switcher__item${w.current ? " workspace-switcher__item--current" : ""}`}
-                  title={w.path}
-                  onClick={() => {
-                    if (w.current) {
-                      setWorkspaceMenuOpen(false);
-                      return;
-                    }
-                    void chooseWorkspace(w.path);
-                  }}
-                >
-                  <FolderGit2 size={15} />
-                  <span>{w.name}</span>
-                  {w.current && <Check size={15} />}
-                </button>
-                <button
-                  className={`workspace-switcher__remove${confirmRemovePath === w.path ? " workspace-switcher__remove--armed" : ""}${w.current ? " workspace-switcher__remove--current" : ""}`}
-                  type="button"
-                  aria-label={confirmRemovePath === w.path ? t("composer.confirmRemoveProject") : t("composer.removeProject")}
-                  title={
-                    w.current
-                      ? t("composer.cannotRemoveCurrent")
-                      : confirmRemovePath === w.path
-                        ? t("composer.confirmRemoveProject")
-                        : t("composer.removeProject")
-                  }
-                  disabled={running || w.current}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    if (w.current) return;
-                    if (confirmRemovePath === w.path) {
-                      void removeWorkspace(w.path);
-                    } else {
-                      setConfirmRemovePath(w.path);
-                    }
-                  }}
-                >
-                  {confirmRemovePath === w.path ? <Check size={14} /> : <Trash2 size={14} />}
-                </button>
-              </div>
-            ))}
-            {filteredWorkspaces.length === 0 && <div className="workspace-switcher__empty">{t("composer.noProjectMatches")}</div>}
-          </div>
-          <div className="workspace-switcher__actions">
-            <button type="button" onClick={() => void chooseWorkspace()}>
-              <FolderPlus size={15} />
-              <span>{t("composer.addProject")}</span>
-            </button>
-          </div>
-      </AnchoredPopover>
       {menuMode === "slash" && (
         <SlashMenu items={slashMatches} activeIndex={active} onPick={pickCommand} onHover={setActive} />
       )}
@@ -1188,21 +1044,6 @@ export function Composer({
           )}
         </div>
         <div className={composerMetaClass}>
-          {cwd && (
-            <div className="composer-meta__control composer-meta__control--workspace composer-workspace-wrap" ref={workspaceAnchorRef}>
-              <button
-                className={`composer__workspace${workspaceMenuOpen ? " composer__workspace--open" : ""}`}
-                onClick={() => {
-                  if (!running) setWorkspaceMenuOpen((open) => !open);
-                }}
-                disabled={running}
-              >
-                <FolderGit2 size={13} />
-                <span>{workspaceName}</span>
-                <ChevronDown size={12} />
-              </button>
-            </div>
-          )}
           <div className="composer-meta__params">
             <div className="composer-modebar" role="toolbar" aria-label={t("composer.modeTitle")} ref={modebarRef} data-mode={mode}>
               {modeThumb && (

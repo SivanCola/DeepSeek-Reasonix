@@ -8,6 +8,7 @@ import { historyMessagesToItems, type Item } from "../lib/useController";
 import { Tooltip } from "./Tooltip";
 import { Transcript } from "./Transcript";
 import { ContextMenu, contextMenuPointFromEvent, type ContextMenuItem, type ContextMenuPoint } from "./ContextMenu";
+import { useDeferredClose } from "../lib/useMountTransition";
 
 type HistoryScopeFilter = "all" | "project" | "global";
 type HistoryStatusFilter = "all" | "current" | "open";
@@ -43,6 +44,8 @@ export function HistoryPanel({
 }) {
   const tr = useT();
   const isTrash = kind === "trash";
+  // Play the modal exit animation, then let the parent unmount us.
+  const { status, requestClose } = useDeferredClose(onClose, 240);
   const [editing, setEditing] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
   const [query, setQuery] = useState("");
@@ -341,9 +344,10 @@ export function HistoryPanel({
   };
 
   return (
-    <div className="management-modal-backdrop history-modal-backdrop" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+    <div className="management-modal-backdrop history-modal-backdrop" data-state={status} onClick={(e) => { if (e.target === e.currentTarget) requestClose(); }}>
       <section
         className={`management-modal history-modal${showPreview || running ? " history-modal--wide" : ""}`}
+        data-state={status}
         aria-label={tr(isTrash ? "history.trashTitle" : "history.title")}
         onClick={(e) => e.stopPropagation()}
       >
@@ -363,7 +367,7 @@ export function HistoryPanel({
             </button>
           )}
           <Tooltip label={tr("common.close")}>
-            <button className="chip" onClick={onClose}>
+            <button className="chip" onClick={requestClose}>
               ✕
             </button>
           </Tooltip>

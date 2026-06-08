@@ -166,6 +166,21 @@
   --hl-builtin: #56b6c2;
   --hl-meta: #7f848e;
 
+  /* motion — shared timing + easing tokens. Durations mirror the values
+   * already used across the app (0.12 / 0.18 / 0.34 / 0.42s); easings reuse the
+   * existing curves. The global prefers-reduced-motion block at EOF collapses
+   * every animation/transition to ~0ms, so these tokens are safe to reuse
+   * freely without per-rule reduce overrides. */
+  --dur-fast: 120ms; /* color/border hovers, tooltips */
+  --dur-base: 180ms; /* popovers, menus, small enters */
+  --dur-slow: 340ms; /* drawers, modals, panel slides */
+  --dur-slower: 420ms; /* large overlay fades */
+  --ease-out: cubic-bezier(0.2, 0.72, 0.2, 1); /* fast-out / decelerate */
+  --ease-decelerate: cubic-bezier(0.2, 0.7, 0.1, 1); /* soft landing (splash) */
+  --ease-standard: cubic-bezier(0.25, 0.1, 0.25, 1); /* symmetric */
+  --motion-pop-scale: 0.98; /* enter-from scale for popovers/palette */
+  --motion-rise: 4px; /* enter-from translateY for popovers/menus */
+
   --radius: 9px;
   --maxw: 940px;
   --mono: ui-monospace, "SF Mono", SFMono-Regular, "Cascadia Code", Consolas,
@@ -1757,6 +1772,13 @@ a[href] {
   box-sizing: border-box;
   border-top: 1px solid var(--border-soft);
   background: var(--bg-soft);
+  animation: card-body-in var(--dur-base) var(--ease-out) both;
+}
+@keyframes card-body-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
 }
 .process-card__status {
   flex-shrink: 0;
@@ -2543,9 +2565,10 @@ a[href] {
 .composer-meta__params {
   display: inline-flex;
   align-items: center;
-  justify-content: flex-end;
+  justify-content: flex-start;
   gap: 6px;
   min-width: 0;
+  flex: 1 1 auto;
   margin-left: auto;
 }
 
@@ -2554,22 +2577,6 @@ a[href] {
   align-items: center;
   height: 30px;
   min-width: 0;
-}
-
-.composer-meta__control--workspace {
-  flex: 0 1 160px;
-  width: 160px;
-  min-width: 132px;
-  max-width: 160px;
-}
-
-.composer-meta--no-effort .composer-meta__control--workspace {
-  max-width: 160px;
-}
-
-.composer-meta--has-workspace .composer-meta__params {
-  padding-left: 12px;
-  border-left: 1px solid color-mix(in srgb, var(--border-soft) 74%, transparent);
 }
 
 .composer-meta__control--model {
@@ -2609,77 +2616,14 @@ a[href] {
 }
 
 .composer-meta .modelsw__kind,
-.composer-meta .modelsw__trigger svg,
-.composer__workspace > svg {
+.composer-meta .modelsw__trigger svg {
   flex-shrink: 0;
-}
-
-.composer__workspace {
-  --wails-draggable: no-drag;
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  width: 100%;
-  min-width: 0;
-  max-width: 100%;
-  height: 30px;
-  padding: 0 8px;
-  border: 1px solid transparent;
-  border-radius: 7px;
-  background: transparent;
-  color: var(--fg-dim);
-  font: inherit;
-}
-.composer__workspace:hover {
-  color: var(--fg);
-  border-color: var(--border-soft);
-  background: var(--bg-soft);
-}
-.composer__workspace--open {
-  color: var(--fg);
-  border-color: var(--border-soft);
-  background: var(--bg-soft);
-}
-.composer__workspace:disabled {
-  cursor: default;
-  opacity: 0.6;
-}
-.composer__workspace:disabled:hover {
-  color: var(--fg-dim);
-  background: transparent;
-}
-.composer__workspace span {
-  flex: 0 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.composer__workspace > svg:last-child {
-  margin-left: auto;
-}
-.composer-workspace-wrap {
-  position: relative;
-  display: inline-flex;
-  width: 100%;
-  min-width: 0;
 }
 
 @container (max-width: 620px) {
   .composer-meta {
     gap: 8px;
     padding-inline: 10px;
-  }
-
-  .composer-meta__control--workspace {
-    flex-basis: 150px;
-    width: 150px;
-    min-width: 124px;
-    max-width: 150px;
-  }
-
-  .composer-meta--has-workspace .composer-meta__params {
-    padding-left: 8px;
   }
 
   .composer-meta__control--model {
@@ -2698,188 +2642,14 @@ a[href] {
     padding-inline: 8px;
   }
 
-  .composer-meta__control--workspace {
-    flex-basis: 132px;
-    width: 132px;
-    min-width: 118px;
-    max-width: 132px;
-  }
-
-  .composer-meta--has-workspace .composer-meta__params {
-    padding-left: 6px;
-  }
-
   .composer-meta__control--model {
     flex-basis: 128px;
     max-width: 34vw;
   }
 
-  .composer-meta .modelsw__trigger,
-  .composer__workspace {
+  .composer-meta .modelsw__trigger {
     padding-inline: 6px;
   }
-}
-
-.workspace-switcher {
-  --wails-draggable: no-drag;
-  position: absolute;
-  left: 10px;
-  bottom: 44px;
-  z-index: var(--z-workspace-float);
-  width: clamp(260px, 24vw, 300px);
-  max-width: calc(100vw - 16px);
-  padding: 8px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--bg-elev);
-  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.18);
-}
-.workspace-switcher__search {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  height: 36px;
-  padding: 0 8px;
-  border-bottom: 1px solid var(--border-soft);
-  color: var(--fg-faint);
-}
-.workspace-switcher__search input {
-  min-width: 0;
-  flex: 1;
-  border: none;
-  background: transparent;
-  color: var(--fg);
-  font: inherit;
-  font-size: 13px;
-  outline: none;
-}
-.workspace-switcher__search input::placeholder {
-  color: var(--fg-faint);
-}
-.workspace-switcher__list {
-  max-height: 196px;
-  overflow-y: auto;
-  padding: 5px 0;
-}
-.workspace-switcher__row {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  min-height: 38px;
-  border-radius: 7px;
-}
-.workspace-switcher__row:hover {
-  background: var(--bg-soft);
-}
-.workspace-switcher__item,
-.workspace-switcher__remove,
-.workspace-switcher__actions button {
-  --workspace-current-color: var(--workspace-accent, var(--project-accent, var(--accent)));
-  width: 100%;
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  border: none;
-  border-radius: 7px;
-  background: transparent;
-  color: var(--fg-dim);
-  font: inherit;
-  font-size: 13px;
-  text-align: left;
-}
-.workspace-switcher__item {
-  flex: 1 1 auto;
-  min-height: 38px;
-  padding: 0 8px;
-}
-.workspace-switcher__item--current {
-  color: var(--workspace-current-color);
-}
-.workspace-switcher__item--current svg {
-  color: var(--workspace-current-color);
-}
-.workspace-switcher__item > svg {
-  flex: 0 0 auto;
-}
-.workspace-switcher__remove {
-  flex: 0 0 auto;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  padding: 0;
-  color: var(--fg-faint);
-  /* Always visible (was opacity: 0 + hover-only) — the trash button was
-     effectively undiscoverable for many users, so a freshly created workspace
-     looked "permanent". A low-opacity resting state keeps the row calm
-     while making the affordance legible. */
-  opacity: 0.45;
-  transition: color 0.12s, opacity 0.12s, background 0.12s, transform 0.12s;
-}
-.workspace-switcher__row:hover .workspace-switcher__remove,
-.workspace-switcher__remove:focus-visible {
-  opacity: 1;
-}
-.workspace-switcher__remove--armed {
-  opacity: 1;
-  background: color-mix(in srgb, var(--err) 18%, transparent);
-  color: var(--err);
-  transform: scale(1.05);
-}
-.workspace-switcher__remove--current {
-  cursor: not-allowed;
-  opacity: 0.25;
-}
-.workspace-switcher__row:hover .workspace-switcher__remove--current,
-.workspace-switcher__remove--current:focus-visible {
-  opacity: 0.4;
-}
-.workspace-switcher__remove:hover:not(:disabled):not(.workspace-switcher__remove--armed),
-.workspace-switcher__remove:focus-visible:not(:disabled):not(.workspace-switcher__remove--armed) {
-  background: color-mix(in srgb, var(--err) 12%, transparent);
-  color: var(--err);
-}
-.workspace-switcher__remove:disabled {
-  cursor: not-allowed;
-}
-.workspace-switcher__item:hover,
-.workspace-switcher__actions button:hover {
-  background: transparent;
-  color: var(--fg);
-}
-.workspace-switcher__item--current:hover {
-  color: var(--workspace-current-color);
-}
-.workspace-switcher__item span,
-.workspace-switcher__actions button span {
-  min-width: 0;
-  flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.workspace-switcher__item svg:last-child {
-  flex: 0 0 auto;
-  color: var(--fg-dim);
-}
-.workspace-switcher__item--current svg:last-child {
-  color: var(--workspace-current-color);
-}
-.workspace-switcher__empty {
-  padding: 9px 8px;
-  color: var(--fg-faint);
-  font-size: 12px;
-}
-.workspace-switcher__actions {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding-top: 5px;
-  border-top: 1px solid var(--border-soft);
-}
-.workspace-switcher__actions button {
-  min-height: 38px;
-  padding: 0 8px;
 }
 
 .anchored-popover__backdrop {
@@ -2896,11 +2666,15 @@ a[href] {
   z-index: var(--z-popover);
 }
 
-.anchored-popover.workspace-switcher {
-  position: fixed;
-  left: auto;
-  top: auto;
-  bottom: auto;
+.anchored-popover[data-ready="true"] {
+  animation: popover-in var(--dur-base) var(--ease-out) both;
+}
+
+@keyframes popover-in {
+  from {
+    opacity: 0;
+    transform: translateY(calc(-1 * var(--motion-rise)));
+  }
 }
 
 .statusbar {
@@ -2908,7 +2682,7 @@ a[href] {
   margin: 7px auto 0;
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 16px;
   font-family: var(--mono);
   font-size: var(--font-status);
   line-height: 1.45;
@@ -2925,18 +2699,27 @@ a[href] {
   flex-shrink: 1;
   min-width: 0;
 }
-.statusbar__item {
+/* design-spec stat: a "label + bold value" pair separated by the bar's gap. */
+.stat {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
   min-width: 0;
+  white-space: nowrap;
   font-variant-numeric: tabular-nums;
 }
+.stat b {
+  color: var(--fg-dim);
+  font-weight: 600;
+}
+.stat__label {
+  color: var(--fg-faint);
+}
 .statusbar__dot {
-  width: 6px;
-  height: 6px;
+  width: 7px;
+  height: 7px;
   border-radius: 50%;
-  background: var(--fg-faint);
+  background: var(--ok);
   flex-shrink: 0;
 }
 .statusbar__dot--busy {
@@ -2948,40 +2731,25 @@ a[href] {
     opacity: 0.35;
   }
 }
+.stat--model {
+  flex-shrink: 1;
+  min-width: 0;
+}
 .statusbar__model {
   color: var(--fg-dim);
-}
-.statusbar__sep {
-  opacity: 0.5;
-}
-.statusbar__cache {
-  color: var(--accent-strong);
-}
-.statusbar__ctx {
-  color: var(--fg-dim);
-}
-.statusbar__compact,
-.statusbar__avg {
-  color: var(--fg-faint);
-}
-.statusbar__cost {
-  color: var(--ok);
-}
-.statusbar__balance {
-  color: var(--ok);
-}
-.statusbar__workspace {
-  max-width: 124px;
   overflow: hidden;
   text-overflow: ellipsis;
-  color: var(--fg-dim);
-}
-.statusbar__modelgroup {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
   min-width: 0;
-  flex-shrink: 1;
+}
+.statusbar__cache b {
+  color: var(--accent-strong);
+}
+.statusbar__cost b,
+.statusbar__balance b {
+  color: var(--ok);
+}
+.stat--balance b {
+  color: var(--fg);
 }
 .statusbar__jobswrap {
   position: relative;
@@ -3282,6 +3050,13 @@ a[href] {
 .prompt-shelf {
   max-width: var(--maxw);
   margin: 0 auto 10px;
+  animation: shelf-in var(--dur-slow) var(--ease-out) both;
+}
+@keyframes shelf-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
 }
 .prompt-shelf__bar {
   display: flex;
@@ -4100,6 +3875,8 @@ a[href] {
   border-radius: 8px;
   background: var(--bg-elev);
   box-shadow: 0 12px 30px rgba(0, 0, 0, 0.36);
+  transform-origin: top left;
+  animation: menu-pop-in var(--dur-base) var(--ease-out) both;
 }
 .floating-menu button {
   display: flex;
@@ -4146,6 +3923,33 @@ a[href] {
   overflow-wrap: anywhere;
   pointer-events: none;
   white-space: pre-line;
+  animation: tooltip-in var(--dur-fast) var(--ease-out) both;
+}
+.tooltip--top {
+  --tooltip-from-y: var(--motion-rise);
+  --tooltip-from-x: 0;
+}
+.tooltip--bottom {
+  --tooltip-from-y: calc(-1 * var(--motion-rise));
+  --tooltip-from-x: 0;
+}
+.tooltip--left {
+  --tooltip-from-x: var(--motion-rise);
+  --tooltip-from-y: 0;
+}
+.tooltip--right {
+  --tooltip-from-x: calc(-1 * var(--motion-rise));
+  --tooltip-from-y: 0;
+}
+@keyframes tooltip-in {
+  from {
+    opacity: 0;
+    transform: translate(var(--tooltip-from-x, 0), var(--tooltip-from-y, 0));
+  }
+  to {
+    opacity: 1;
+    transform: translate(0, 0);
+  }
 }
 .tooltip::before {
   content: "";
@@ -4485,6 +4289,22 @@ a[href] {
   display: flex;
   justify-content: flex-end;
   z-index: var(--z-drawer-backdrop);
+  animation: backdrop-in var(--dur-base) var(--ease-out) both;
+}
+@keyframes backdrop-in {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes backdrop-out {
+  to {
+    opacity: 0;
+  }
+}
+/* Overlays that opt into exit animation via useMountTransition flip
+ * data-state="closing" before unmount; reverse the backdrop fade. */
+.drawer-backdrop[data-state="closing"] {
+  animation: backdrop-out var(--dur-base) var(--ease-out) both;
 }
 .drawer-backdrop--subtle {
   background: rgba(0, 0, 0, 0.16);
@@ -4511,9 +4331,18 @@ a[href] {
   overflow: hidden;
   animation: palette-in 0.16s cubic-bezier(0.34, 1.4, 0.5, 1);
 }
+.palette[data-state="closing"] {
+  animation: palette-out var(--dur-base) var(--ease-out) both;
+}
 @keyframes palette-in {
   from {
     transform: translateY(-12px) scale(0.97);
+    opacity: 0;
+  }
+}
+@keyframes palette-out {
+  to {
+    transform: translateY(-8px) scale(0.98);
     opacity: 0;
   }
 }
@@ -4637,7 +4466,7 @@ a[href] {
   box-shadow: -18px 0 48px rgba(0, 0, 0, 0.46);
   display: flex;
   flex-direction: column;
-  animation: drawer-in 0.14s ease;
+  animation: drawer-in var(--dur-slow) var(--ease-out) both;
 }
 .drawer--wide {
   width: min(var(--drawer-width, 720px), 94vw);
@@ -4679,9 +4508,18 @@ a[href] {
 }
 @keyframes drawer-in {
   from {
-    transform: translateX(12px);
-    opacity: 0.6;
+    transform: translateX(24px);
+    opacity: 0;
   }
+}
+@keyframes drawer-out {
+  to {
+    transform: translateX(24px);
+    opacity: 0;
+  }
+}
+.drawer[data-state="closing"] {
+  animation: drawer-out var(--dur-slow) var(--ease-out) both;
 }
 .drawer__head {
   display: flex;
@@ -6243,6 +6081,7 @@ a[href] {
   justify-content: center;
   padding: 24px;
   overflow: hidden;
+  animation: backdrop-in var(--dur-base) var(--ease-out) both;
 }
 
 .management-modal {
@@ -6255,10 +6094,11 @@ a[href] {
   border-radius: 14px;
   box-shadow: 0 16px 48px rgba(0, 0, 0, 0.32);
   overflow: hidden;
-  animation: modal-in 0.12s ease;
+  animation: modal-in var(--dur-slow) var(--ease-out) both;
 }
 .history-modal {
   width: min(1180px, calc(100vw - 96px));
+  transition: width var(--dur-slow) var(--ease-out);
 }
 .history-modal--wide {
   width: min(1360px, calc(100vw - 96px));
@@ -6294,9 +6134,24 @@ a[href] {
 }
 @keyframes modal-in {
   from {
-    transform: translateY(8px) scale(0.99);
-    opacity: 0.72;
+    transform: translateY(12px) scale(0.985);
+    opacity: 0;
   }
+}
+@keyframes modal-out {
+  to {
+    transform: translateY(8px) scale(0.985);
+    opacity: 0;
+  }
+}
+/* Exit animations for modals/backdrops driven by useDeferredClose. */
+.management-modal[data-state="closing"],
+.settings-modal[data-state="closing"] {
+  animation: modal-out var(--dur-base) var(--ease-out) both;
+}
+.management-modal-backdrop[data-state="closing"],
+.settings-modal-backdrop[data-state="closing"] {
+  animation: backdrop-out var(--dur-base) var(--ease-out) both;
 }
 
 /* ── history manager: searchable list with preview and actions ─────────────── */
@@ -6627,6 +6482,7 @@ a[href] {
   align-items: center;
   justify-content: center;
   overflow: hidden;
+  animation: backdrop-in var(--dur-base) var(--ease-out) both;
 }
 
 .settings-modal {
@@ -6639,6 +6495,7 @@ a[href] {
   border-radius: 14px;
   box-shadow: 0 16px 48px rgba(0, 0, 0, 0.32);
   overflow: hidden;
+  animation: modal-in var(--dur-slow) var(--ease-out) both;
 }
 
 .settings-modal__head {
@@ -6743,6 +6600,13 @@ a[href] {
   min-width: 0;
   width: 100%;
   margin: 0 auto;
+  animation: settings-page-in var(--dur-base) var(--ease-out) both;
+}
+@keyframes settings-page-in {
+  from {
+    opacity: 0;
+    transform: translateY(var(--motion-rise));
+  }
 }
 
 .settings-page--form {
@@ -8560,6 +8424,13 @@ a[href] {
   border-radius: 9px;
   background: var(--bg-soft);
   overflow: hidden;
+  animation: todobar-in var(--dur-base) var(--ease-out) both;
+}
+@keyframes todobar-in {
+  from {
+    opacity: 0;
+    transform: translateY(var(--motion-rise));
+  }
 }
 .todobar__head {
   display: flex;
@@ -8645,6 +8516,13 @@ a[href] {
   gap: 3px;
   max-height: 168px;
   overflow-y: auto;
+  animation: todo-list-in var(--dur-base) var(--ease-out) both;
+}
+@keyframes todo-list-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
 }
 .todobar__item {
   display: flex;
@@ -8704,7 +8582,7 @@ a[href] {
   margin: 0;
   padding: 3px;
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: 999px;
   background: color-mix(in srgb, var(--bg-elev) 72%, var(--bg));
   box-shadow: inset 0 1px 0 color-mix(in srgb, var(--fg) 4%, transparent);
 }
@@ -8714,7 +8592,7 @@ a[href] {
   top: 3px;
   bottom: 3px;
   left: 0;
-  border-radius: 7px;
+  border-radius: 999px;
   border: 1px solid var(--mode-auto-border);
   background: var(--mode-auto-bg);
   box-shadow:
@@ -8748,14 +8626,15 @@ a[href] {
   align-items: center;
   justify-content: center;
   gap: 6px;
-  height: 30px;
+  height: 28px;
   padding: 0 13px;
   border: 1px solid transparent;
-  border-radius: 7px;
+  border-radius: 999px;
   background: transparent;
   color: var(--fg-faint);
   font: inherit;
-  font-size: 13px;
+  font-size: 12px;
+  font-weight: 600;
   transition: color 0.12s, border-color 0.12s, background 0.12s, box-shadow 0.12s;
 }
 .composer-modebar__item:hover:not(:disabled) {
@@ -10130,7 +10009,14 @@ a[href] {
   background: transparent;
   font-size: 12.5px;
   white-space: nowrap;
-  transition: background 0.12s;
+  transition: background var(--dur-fast) var(--ease-out);
+  animation: tab-in var(--dur-base) var(--ease-out) both;
+}
+@keyframes tab-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
 }
 
 .tabbar__tab:not(.tabbar__tab--active):hover {
@@ -10759,6 +10645,14 @@ a[href] {
   border-radius: 8px;
   background: var(--bg-elev);
   box-shadow: 0 16px 36px rgba(0, 0, 0, 0.36);
+  transform-origin: top left;
+  animation: menu-pop-in var(--dur-base) var(--ease-out) both;
+}
+@keyframes menu-pop-in {
+  from {
+    opacity: 0;
+    transform: scale(var(--motion-pop-scale)) translateY(calc(-0.5 * var(--motion-rise)));
+  }
 }
 
 .context-menu__item {

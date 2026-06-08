@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useMountTransition } from "../lib/useMountTransition";
 
 // CommandPalette is a ⌘K / Ctrl+K modal that surfaces the desktop app's
 // long-tail navigation surface. Tabs through sessions, slash-commands, and
@@ -49,6 +50,9 @@ export function CommandPalette({
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
+  // Keep the palette mounted through its exit animation after `open` flips
+  // false; `status` drives the enter/exit keyframes via data-state.
+  const { mounted, status } = useMountTransition(open, 200);
 
   // Re-init whenever the palette opens: clear the query, reset the
   // highlight, and steal focus. Doing it on the open edge (not on every
@@ -158,15 +162,20 @@ export function CommandPalette({
     return () => document.removeEventListener("keydown", onKey);
   }, [open, flat, active, onClose]);
 
-  if (!open) return null;
+  if (!mounted) return null;
 
   // The running counter maps a flat-index back to its group header so we
   // can render the section dividers in order.
   let running = 0;
 
   return (
-    <div className="drawer-backdrop" onClick={onClose} role="presentation">
-      <div className="palette" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-label={placeholder}>
+    <div
+      className="drawer-backdrop"
+      data-state={status}
+      onClick={onClose}
+      role="presentation"
+    >
+      <div className="palette" data-state={status} onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-label={placeholder}>
         <div className="palette__inputrow">
           <input
             ref={inputRef}

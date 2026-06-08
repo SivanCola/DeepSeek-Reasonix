@@ -1311,12 +1311,6 @@ export default function App() {
     return picked;
   }, [pickWorkspace, switchWorkspace, refreshTabMetas]);
 
-  const removeWorkspace = useCallback(async (path: string) => {
-    await app.RemoveWorkspace(path);
-    setProjectRevision((value) => value + 1);
-    await refreshTabMetas();
-  }, [refreshTabMetas]);
-
   const refreshProjectsAndTabs = useCallback(async () => {
     setProjectRevision((value) => value + 1);
     const tabs = await refreshTabMetas();
@@ -1720,8 +1714,6 @@ export default function App() {
               onSetMode={applyMode}
               onSwitchModel={switchModel}
               onSetEffort={setEffort}
-              onPickFolder={switchFolder}
-              onRemoveWorkspace={removeWorkspace}
               insertRequest={composerInsertRequest}
 	              disabled={state.meta?.ready === false || state.messageAction != null || state.approval != null || state.ask != null}
 	              decisionPending={state.messageAction != null || state.approval != null || state.ask != null}
@@ -1729,7 +1721,6 @@ export default function App() {
               turnStartAt={state.turnStartAt}
               turnTokens={state.turnTokens}
               retry={state.retry}
-              workspaceRefreshSignal={projectRevision}
               transientDismissSignal={transientOverlayDismissSignal}
             />
             <StatusBar
@@ -1741,6 +1732,7 @@ export default function App() {
               mode={mode}
               cost={state.sessionCost}
               currency={state.sessionCurrency}
+              modelLabel={state.meta?.label}
             />
           </footer>
           </>
