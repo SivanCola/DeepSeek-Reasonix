@@ -146,6 +146,8 @@ export interface AppBindings {
   SearchFileRefs(query: string): Promise<DirEntry[]>;
   ReadFile(rel: string): Promise<FilePreview>;
   WorkspaceChanges(): Promise<WorkspaceChangesView>;
+  GitBranches(): Promise<string[]>;
+  GitCheckout(branch: string): Promise<void>;
   OpenWorkspacePath(rel: string): Promise<void>;
   RevealWorkspacePath(rel: string): Promise<void>;
   RevealPath(path: string): Promise<void>;
@@ -1375,6 +1377,7 @@ function makeMockApp(): AppBindings {
     async WorkspaceChanges() {
       return {
         gitAvailable: true,
+        gitBranch: "main",
         files: [
           {
             path: "desktop/frontend/src/components/WorkspacePanel.tsx",
@@ -1388,6 +1391,12 @@ function makeMockApp(): AppBindings {
           { path: "internal/control/controller.go", sources: ["session"], turns: [1], latestTime: Date.now() - 120_000 },
         ],
       };
+    },
+    async GitBranches() {
+      return ["main", "dev", "feature/branch-switcher"];
+    },
+    async GitCheckout(_branch: string) {
+      console.info("mock GitCheckout", _branch);
     },
     async OpenWorkspacePath(rel: string) {
       console.info("mock OpenWorkspacePath", rel);

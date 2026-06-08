@@ -37,6 +37,7 @@ import { OnboardingOverlay } from "./components/OnboardingOverlay";
 import { TabBar } from "./components/TabBar";
 import { ProjectTree } from "./components/ProjectTree";
 import { CopyButton } from "./components/CopyButton";
+import { CommandPalette, type PaletteItem } from "./components/CommandPalette";
 import { parseTodos } from "./lib/tools";
 import { shouldShowTodoPanel } from "./lib/todoVisibility";
 import type { ComposerInsertRequest, Mode, SessionMeta, SettingsTab, TabMeta } from "./lib/types";
@@ -393,6 +394,7 @@ export default function App() {
   const [topicExportOpen, setTopicExportOpen] = useState(false);
   const [sidebarTogglePressed, setSidebarTogglePressed] = useState(false);
   const [sidebarSlideDirection, setSidebarSlideDirection] = useState<SidebarSlideDirection | null>(null);
+  const [paletteOpen, setPaletteOpen] = useState(false);
   const topicRenameSkipCommitRef = useRef(false);
   const topicRenameCommitHandledRef = useRef(false);
   const sidebarTogglePressTimerRef = useRef<number | null>(null);
@@ -1133,6 +1135,17 @@ export default function App() {
     setTabRevealSignal((signal) => signal + 1);
   }, [activeTab?.scope, activeTab?.workspaceRoot, closeTransientOverlays, openGlobalTab, openProjectTab, refreshTabMetas, state.meta?.cwd]);
 
+  // ── Command palette (⌘K) ────────────────────────────────────────────
+  useEffect(() => {
+    const onKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (!(event.metaKey || event.ctrlKey) || event.altKey || event.shiftKey || event.key.toLowerCase() !== "k") return;
+      event.preventDefault();
+      setPaletteOpen((open) => !open);
+    };
+    window.addEventListener("keydown", onKeyDown, { capture: true });
+    return () => window.removeEventListener("keydown", onKeyDown, { capture: true });
+  }, []);
+
   const handleMessageAction = useCallback(async (turn: number, scope: string) => {
     await rewind(turn, scope);
     if (scope === "fork") {
@@ -1177,6 +1190,55 @@ export default function App() {
     closeTransientOverlays();
     setHistView(null);
   }, [closeTransientOverlays]);
+
+  // ── Command palette (⌘K) item builder ───────────────────────────────
+  const buildPaletteItems = useCallback((): PaletteItem[] => {
+    const items: PaletteItem[] = [];
+
+    for (const tab of tabMetas) {
+      items.push({
+        id: `tab:${tab.id}`,
+        title: tab.topicTitle || "Untitled",
+        hint: tab.scope === "global" ? "Global" : tab.workspaceName || tab.workspaceRoot,
+        group: t("sidebar.conversations"),
+        keywords: [tab.label],
+        run: () => void handleTabChange(tab.id),
+      });
+    }
+
+    items.push(
+      {
+        id: "action:new-session",
+        title: t("topbar.newSession"),
+        group: "Actions",
+        keywords: ["new", "chat", "session"],
+        run: () => void handleNewTab(),
+      },
+      {
+        id: "action:history",
+        title: t("sidebar.allHistory"),
+        group: "Actions",
+        keywords: ["history", "sessions", "past"],
+        run: () => void openAllHistory(),
+      },
+      {
+        id: "action:settings",
+        title: t("topbar.settings"),
+        group: "Actions",
+        keywords: ["preferences", "config", "options"],
+        run: () => setSettingsTarget("general"),
+      },
+      {
+        id: "action:trash",
+        title: t("sidebar.trash"),
+        group: "Actions",
+        keywords: ["deleted", "bin"],
+        run: () => void openTrash(),
+      },
+    );
+
+    return items;
+  }, [tabMetas, handleTabChange, handleNewTab, openAllHistory, openTrash, t]);
   const onResumeSession = useCallback(
     async (session: SessionMeta) => {
       if (state.running) return;
@@ -1826,6 +1888,14 @@ export default function App() {
       )}
 
       {needsOnboarding && <OnboardingOverlay onComplete={() => setNeedsOnboarding(false)} />}
+
+      <CommandPalette
+        open={paletteOpen}
+        onClose={() => setPaletteOpen(false)}
+        items={buildPaletteItems()}
+        placeholder="Quick actions…"
+        emptyText="No matches"
+      />
     </div>
     </ShellExpandProvider>
   );
