@@ -10710,8 +10710,41 @@ a[href] {
 }
 
 .project-tree__children {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transition: grid-template-rows 0.2s ease, opacity 0.18s ease;
+}
+
+.project-tree__children--expanded {
+  grid-template-rows: 1fr;
+  opacity: 1;
+}
+
+.project-tree__children-inner {
   display: flex;
   flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* Chevron rotates 90° on expand; single icon keeps the rotation smooth. */
+.project-tree__chevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.2s ease;
+}
+
+.project-tree__chevron--open {
+  transform: rotate(90deg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .project-tree__children,
+  .project-tree__chevron {
+    transition: none;
+  }
 }
 
 .context-menu {

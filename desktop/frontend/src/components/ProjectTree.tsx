@@ -4,7 +4,7 @@
 // new topic.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, DragEvent as ReactDragEvent, KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent } from "react";
-import { Archive, ChevronRight, ChevronDown, Pencil, Plus, Folder, FolderPlus, Search, BriefcaseBusiness, Copy, FolderOpen, XCircle, History, Check } from "lucide-react";
+import { Archive, ChevronRight, Pencil, Plus, Folder, FolderPlus, Search, BriefcaseBusiness, Copy, FolderOpen, XCircle, History, Check } from "lucide-react";
 import { asArray } from "../lib/array";
 import { app } from "../lib/bridge";
 import type { ProjectNode } from "../lib/types";
@@ -652,9 +652,11 @@ export function ProjectTree({
               onBlur={() => void commitRenameProject(projectRoot)}
             />
           </div>
-          {isExpanded && hasChildren && (
-            <div className="project-tree__children">
-              {children.map((child) => renderNode(child, depth + 1))}
+          {hasChildren && (
+            <div className={`project-tree__children${isExpanded ? " project-tree__children--expanded" : ""}`}>
+              <div className="project-tree__children-inner">
+                {children.map((child) => renderNode(child, depth + 1))}
+              </div>
             </div>
           )}
         </div>
@@ -692,7 +694,9 @@ export function ProjectTree({
             aria-expanded={hasChildren ? isExpanded : undefined}
           >
             {hasChildren ? (
-              isExpanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />
+              <span className={`project-tree__chevron${isExpanded ? " project-tree__chevron--open" : ""}`}>
+                <ChevronRight size={12} />
+              </span>
             ) : (
               <span style={{ width: 12 }} />
             )}
@@ -722,9 +726,11 @@ export function ProjectTree({
             onClose={closeMenu}
           />
         </div>
-        {isExpanded && hasChildren && (
-          <div className="project-tree__children">
-            {children.map((child) => renderNode(child, depth + 1))}
+        {hasChildren && (
+          <div className={`project-tree__children${isExpanded ? " project-tree__children--expanded" : ""}`}>
+            <div className="project-tree__children-inner">
+              {children.map((child) => renderNode(child, depth + 1))}
+            </div>
           </div>
         )}
       </div>
