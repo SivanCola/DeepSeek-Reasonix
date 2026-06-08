@@ -1480,7 +1480,7 @@ export function Composer({
             >
               <Tooltip label={a.path}>
                 <span className="composer-context__label">
-                  {a.previewUrl ? <img src={a.previewUrl} alt="" /> : <FileText size={15} />}
+                  {a.previewUrl ? <img src={a.previewUrl} alt="" draggable={false} /> : <FileText size={15} />}
                   <span>{a.path.split("/").pop()}</span>
                 </span>
               </Tooltip>

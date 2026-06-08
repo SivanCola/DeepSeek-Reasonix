@@ -117,7 +117,7 @@ function renderMediaPreview(preview: FilePreview): JSX.Element | null {
   if (preview.kind === "image") {
     return (
       <div className="workspace-media workspace-media--image">
-        <img src={preview.url} alt={basename(preview.path)} decoding="async" />
+        <img src={preview.url} alt={basename(preview.path)} decoding="async" draggable={false} />
       </div>
     );
   }
