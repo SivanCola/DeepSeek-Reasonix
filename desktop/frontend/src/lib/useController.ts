@@ -8,18 +8,22 @@ import { asArray } from "./array";
 import { app, onEvent, onReady } from "./bridge";
 import { createRafBatch } from "./rafBatch";
 import { t } from "./i18n";
+import { modeHasAutoApproveTools } from "./types";
 import type {
   BalanceInfo,
   CheckpointMeta,
+  CollaborationMode,
   ContextInfo,
   EffortInfo,
   HistoryMessage,
   JobView,
   MemoryView,
   Meta,
+  Mode,
   QuestionAnswer,
   SessionMeta,
   TabMeta,
+  ToolApprovalMode,
   WireApproval,
   WireAsk,
   WireEvent,
@@ -444,6 +448,16 @@ function errorMessage(err: unknown): string {
   return String(err || "");
 }
 
+async function refreshMetaForTab(tabId: string, dispatchTo: (tabId: string, action: Action) => void): Promise<void> {
+  try {
+    dispatchTo(tabId, { type: "meta", meta: await app.MetaForTab(tabId) });
+    dispatchTo(tabId, { type: "context", context: await app.ContextUsageForTab(tabId) });
+    dispatchTo(tabId, { type: "effort", effort: await app.EffortForTab(tabId) });
+  } catch {
+    /* ignore */
+  }
+}
+
 export function useController() {
   const statesRef = useRef<TabStates>(new Map());
   const [activeTabId, setActiveTabId] = useState<string | undefined>();
@@ -575,6 +589,7 @@ export function useController() {
         dispatchTo(targetTabId, { type: "event", e });
       }
       if (e.kind === "turn_done") {
+        void refreshMetaForTab(targetTabId, dispatchTo);
         app
           .ContextUsageForTab(targetTabId)
           .then((context) => dispatchTo(targetTabId, { type: "context", context }))
@@ -648,10 +663,10 @@ export function useController() {
     return undefined;
   }, [activeTabId, dispatchTo]);
 
-  const approve = useCallback((id: string, allow: boolean, session: boolean, persist: boolean) => {
+  const approve = useCallback((id: string, allow: boolean, session: boolean, persist: boolean, scope = "") => {
     if (!activeTabId) return;
     dispatchTo(activeTabId, { type: "clearApproval" });
-    app.ApproveTab(activeTabId, id, allow, session, persist).catch(() => {});
+    app.ApproveTabWithScope(activeTabId, id, allow, session, persist, scope).catch(() => {});
   }, [activeTabId, dispatchTo]);
 
   const answerQuestion = useCallback((id: string, answers: QuestionAnswer[]) => {
@@ -660,11 +675,36 @@ export function useController() {
     app.AnswerQuestionForTab(activeTabId, id, answers).catch(() => {});
   }, [activeTabId, dispatchTo]);
 
-  const setControllerMode = useCallback((mode: "plan" | "yolo" | "normal"): Promise<void> => {
+  const setControllerMode = useCallback((mode: Mode): Promise<void> => {
     if (!activeTabId) return Promise.resolve();
     return app.SetModeForTab(activeTabId, mode).then(() => {
-      if (mode === "yolo" && activeTabId) dispatchTo(activeTabId, { type: "clearApproval" });
+      if (modeHasAutoApproveTools(mode) && activeTabId) dispatchTo(activeTabId, { type: "clearApproval" });
     }).catch(() => {});
+  }, [activeTabId, dispatchTo]);
+
+  const setCollaborationMode = useCallback(async (mode: CollaborationMode): Promise<void> => {
+    if (!activeTabId) return;
+    await app.SetCollaborationModeForTab(activeTabId, mode).catch(() => {});
+    await refreshMetaForTab(activeTabId, dispatchTo);
+  }, [activeTabId, dispatchTo]);
+
+  const setToolApprovalMode = useCallback(async (mode: ToolApprovalMode): Promise<void> => {
+    if (!activeTabId) return;
+    await app.SetToolApprovalModeForTab(activeTabId, mode).catch(() => {});
+    if (mode === "auto" || mode === "yolo") dispatchTo(activeTabId, { type: "clearApproval" });
+    await refreshMetaForTab(activeTabId, dispatchTo);
+  }, [activeTabId, dispatchTo]);
+
+  const setGoal = useCallback(async (goal: string): Promise<void> => {
+    if (!activeTabId) return;
+    await app.SetGoalForTab(activeTabId, goal).catch(() => {});
+    await refreshMetaForTab(activeTabId, dispatchTo);
+  }, [activeTabId, dispatchTo]);
+
+  const clearGoal = useCallback(async (): Promise<void> => {
+    if (!activeTabId) return;
+    await app.ClearGoalForTab(activeTabId).catch(() => {});
+    await refreshMetaForTab(activeTabId, dispatchTo);
   }, [activeTabId, dispatchTo]);
 
   const newSession = useCallback(async () => {
@@ -683,8 +723,9 @@ export function useController() {
     const messages = asArray(
       await (tabId ? app.ResumeSessionForTab(tabId, path) : app.ResumeSession(path)).catch(() => [] as HistoryMessage[]),
     );
+    if (messages.length === 0) return;
     dispatchTo(targetTabId, { type: "reset" });
-    if (messages.length) dispatchTo(targetTabId, { type: "history", messages });
+    dispatchTo(targetTabId, { type: "history", messages });
     app.ContextUsageForTab(targetTabId).then((context) => dispatchTo(targetTabId, { type: "context", context })).catch(() => {});
     void refreshCheckpoints(targetTabId);
   }, [activeTabId, dispatchTo, refreshCheckpoints, waitForTabReady]);
@@ -794,22 +835,18 @@ export function useController() {
     } catch { /* ignore */ }
   }, [reconcileTabRuntime]);
 
-  const openProjectTab = useCallback(async (workspaceRoot: string, topicId: string): Promise<TabMeta | undefined> => {
-    try {
-      const meta = await app.OpenProjectTab(workspaceRoot, topicId);
-      setActiveTabId(meta.id);
-      await loadSessionDataForTab(meta.id, !statesRef.current.has(meta.id));
-      return meta;
-    } catch { return undefined; }
+  const openProjectTab = useCallback(async (workspaceRoot: string, topicId: string): Promise<TabMeta> => {
+    const meta = await app.OpenProjectTab(workspaceRoot, topicId);
+    setActiveTabId(meta.id);
+    await loadSessionDataForTab(meta.id, !statesRef.current.has(meta.id));
+    return meta;
   }, [loadSessionDataForTab]);
 
-  const openGlobalTab = useCallback(async (topicId: string): Promise<TabMeta | undefined> => {
-    try {
-      const meta = await app.OpenGlobalTab(topicId);
-      setActiveTabId(meta.id);
-      await loadSessionDataForTab(meta.id, !statesRef.current.has(meta.id));
-      return meta;
-    } catch { return undefined; }
+  const openGlobalTab = useCallback(async (topicId: string): Promise<TabMeta> => {
+    const meta = await app.OpenGlobalTab(topicId);
+    setActiveTabId(meta.id);
+    await loadSessionDataForTab(meta.id, !statesRef.current.has(meta.id));
+    return meta;
   }, [loadSessionDataForTab]);
 
   const closeTab = useCallback(async (tabId: string) => {
@@ -830,7 +867,7 @@ export function useController() {
   return {
     state: activeState,
     activeTabId,
-    send, runShell, notice, cancel, approve, answerQuestion, setControllerMode,
+    send, runShell, notice, cancel, approve, answerQuestion, setControllerMode, setCollaborationMode, setToolApprovalMode, setGoal, clearGoal,
     newSession, listSessions, listTrashedSessions, resumeSession, previewSession, deleteSession, restoreSession, purgeTrashedSession, renameSession,
     refreshMeta, pickWorkspace, switchWorkspace, compact, rewind, setModel, setEffort,
     fetchMemory, remember, forget, saveDoc,

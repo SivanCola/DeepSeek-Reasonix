@@ -55,11 +55,13 @@ type WorkspaceTab struct {
 	readTelemetry []readFileRecord
 	telemMu       sync.Mutex
 
-	model       string // active model ref (for meta)
-	effort      *string
-	mode        string // "normal" | "plan" | "yolo"; yolo is runtime-only
-	disabledMCP map[string]ServerView
-	mcpOrder    []string
+	model            string // active model ref (for meta)
+	effort           *string
+	mode             string // "normal" | "plan" | "yolo" | "plan-yolo"; yolo/full access is runtime-only
+	goal             string
+	toolApprovalMode string
+	disabledMCP      map[string]ServerView
+	mcpOrder         []string
 }
 
 const (
@@ -267,36 +269,44 @@ type wireEventTab struct {
 
 // TabMeta is the frontend-facing shape of one tab.
 type TabMeta struct {
-	ID            string `json:"id"`
-	Scope         string `json:"scope"`
-	WorkspaceRoot string `json:"workspaceRoot"`
-	WorkspaceName string `json:"workspaceName"`
-	TopicID       string `json:"topicId"`
-	TopicTitle    string `json:"topicTitle"`
-	ProjectColor  string `json:"projectColor,omitempty"`
-	Label         string `json:"label"`
-	Ready         bool   `json:"ready"`
-	Running       bool   `json:"running"`
-	Mode          string `json:"mode"`
-	StartupErr    string `json:"startupErr,omitempty"`
-	Active        bool   `json:"active"`
-	Cwd           string `json:"cwd"`
+	ID                string `json:"id"`
+	Scope             string `json:"scope"`
+	WorkspaceRoot     string `json:"workspaceRoot"`
+	WorkspaceName     string `json:"workspaceName"`
+	TopicID           string `json:"topicId"`
+	TopicTitle        string `json:"topicTitle"`
+	ProjectColor      string `json:"projectColor,omitempty"`
+	Label             string `json:"label"`
+	Ready             bool   `json:"ready"`
+	Running           bool   `json:"running"`
+	Mode              string `json:"mode"`
+	CollaborationMode string `json:"collaborationMode"`
+	ToolApprovalMode  string `json:"toolApprovalMode"`
+	Goal              string `json:"goal,omitempty"`
+	GoalStatus        string `json:"goalStatus,omitempty"`
+	StartupErr        string `json:"startupErr,omitempty"`
+	Active            bool   `json:"active"`
+	Cwd               string `json:"cwd"`
 }
 
 func (a *App) tabMeta(tab *WorkspaceTab, active bool) TabMeta {
 	m := TabMeta{
-		ID:            tab.ID,
-		Scope:         tab.Scope,
-		WorkspaceRoot: tab.WorkspaceRoot,
-		WorkspaceName: workspaceName(tab.WorkspaceRoot),
-		TopicID:       tab.TopicID,
-		TopicTitle:    tab.TopicTitle,
-		Label:         tab.Label,
-		Ready:         tab.Ready,
-		Mode:          currentTabMode(tab),
-		StartupErr:    tab.StartupErr,
-		Active:        active,
-		Cwd:           tab.WorkspaceRoot,
+		ID:                tab.ID,
+		Scope:             tab.Scope,
+		WorkspaceRoot:     tab.WorkspaceRoot,
+		WorkspaceName:     workspaceName(tab.WorkspaceRoot),
+		TopicID:           tab.TopicID,
+		TopicTitle:        tab.TopicTitle,
+		Label:             tab.Label,
+		Ready:             tab.Ready,
+		Mode:              currentTabMode(tab),
+		CollaborationMode: currentTabCollaborationMode(tab),
+		ToolApprovalMode:  currentTabToolApprovalMode(tab),
+		Goal:              currentTabGoal(tab),
+		GoalStatus:        currentTabGoalStatus(tab),
+		StartupErr:        tab.StartupErr,
+		Active:            active,
+		Cwd:               tab.WorkspaceRoot,
 	}
 	if tab.Scope == "global" {
 		m.ProjectColor = globalProjectColor()
@@ -334,6 +344,7 @@ func (a *App) OpenProjectTab(workspaceRoot, topicID string) (TabMeta, error) {
 		workspaceRoot = abs
 	}
 	saveWorkspace(workspaceRoot)
+	_ = addProject(workspaceRoot, "")
 
 	a.mu.Lock()
 	// If already open, just activate.
@@ -350,13 +361,14 @@ func (a *App) OpenProjectTab(workspaceRoot, topicID string) (TabMeta, error) {
 	tabID := a.newUniqueTabIDLocked()
 	topicTitle := topicTitleForTab("project", workspaceRoot, topicID)
 	tab := &WorkspaceTab{
-		ID:            tabID,
-		Scope:         "project",
-		WorkspaceRoot: workspaceRoot,
-		TopicID:       topicID,
-		TopicTitle:    topicTitle,
-		mode:          "normal",
-		disabledMCP:   map[string]ServerView{},
+		ID:               tabID,
+		Scope:            "project",
+		WorkspaceRoot:    workspaceRoot,
+		TopicID:          topicID,
+		TopicTitle:       topicTitle,
+		mode:             "normal",
+		toolApprovalMode: control.ToolApprovalAsk,
+		disabledMCP:      map[string]ServerView{},
 	}
 	tab.sink = &tabEventSink{tabID: tabID, app: a}
 
@@ -367,6 +379,7 @@ func (a *App) OpenProjectTab(workspaceRoot, topicID string) (TabMeta, error) {
 	a.mu.Unlock()
 
 	a.startTabControllerBuild(tab)
+	a.emitProjectTreeChanged()
 	return a.tabMeta(tab, true), nil
 }
 
@@ -392,13 +405,14 @@ func (a *App) OpenGlobalTab(topicID string) (TabMeta, error) {
 	tabID := a.newUniqueTabIDLocked()
 	topicTitle := topicTitleForTab("global", "", topicID)
 	tab := &WorkspaceTab{
-		ID:            tabID,
-		Scope:         "global",
-		WorkspaceRoot: globalRoot,
-		TopicID:       topicID,
-		TopicTitle:    topicTitle,
-		mode:          "normal",
-		disabledMCP:   map[string]ServerView{},
+		ID:               tabID,
+		Scope:            "global",
+		WorkspaceRoot:    globalRoot,
+		TopicID:          topicID,
+		TopicTitle:       topicTitle,
+		mode:             "normal",
+		toolApprovalMode: control.ToolApprovalAsk,
+		disabledMCP:      map[string]ServerView{},
 	}
 	tab.sink = &tabEventSink{tabID: tabID, app: a}
 
@@ -584,6 +598,8 @@ func (a *App) buildTabController(tab *WorkspaceTab) {
 	a.bindControllerDisplayRecorder(ctrl)
 	ctrl.EnableInteractiveApproval()
 	applyTabModeToController(ctrl, tab.mode)
+	applyTabToolApprovalModeToController(ctrl, tab.toolApprovalMode)
+	ctrl.SetGoal(tab.goal)
 
 	if dir := ctrl.SessionDir(); dir != "" {
 		migratedTopics := migrateLegacySessionsIntoGlobalTopics(dir)
@@ -903,14 +919,16 @@ type desktopProjectFile struct {
 }
 
 type desktopTabEntry struct {
-	ID            string  `json:"id"`
-	Scope         string  `json:"scope"`
-	WorkspaceRoot string  `json:"workspaceRoot"`
-	TopicID       string  `json:"topicId"`
-	SessionPath   string  `json:"sessionPath,omitempty"`
-	Model         string  `json:"model,omitempty"`
-	Effort        *string `json:"effort,omitempty"`
-	Mode          string  `json:"mode,omitempty"`
+	ID               string  `json:"id"`
+	Scope            string  `json:"scope"`
+	WorkspaceRoot    string  `json:"workspaceRoot"`
+	TopicID          string  `json:"topicId"`
+	SessionPath      string  `json:"sessionPath,omitempty"`
+	Model            string  `json:"model,omitempty"`
+	Effort           *string `json:"effort,omitempty"`
+	Mode             string  `json:"mode,omitempty"`
+	Goal             string  `json:"goal,omitempty"`
+	ToolApprovalMode string  `json:"toolApprovalMode,omitempty"`
 }
 
 type desktopTabsFile struct {
@@ -934,14 +952,16 @@ func (a *App) saveTabsLocked() {
 	for _, id := range a.orderedTabIDsLocked() {
 		if tab := a.tabs[id]; tab != nil {
 			entries = append(entries, desktopTabEntry{
-				ID:            tab.ID,
-				Scope:         tab.Scope,
-				WorkspaceRoot: tab.WorkspaceRoot,
-				TopicID:       tab.TopicID,
-				SessionPath:   tab.currentSessionPath(),
-				Model:         tab.model,
-				Effort:        cloneStringPtr(tab.effort),
-				Mode:          persistedTabMode(currentTabMode(tab)),
+				ID:               tab.ID,
+				Scope:            tab.Scope,
+				WorkspaceRoot:    tab.WorkspaceRoot,
+				TopicID:          tab.TopicID,
+				SessionPath:      tab.currentSessionPath(),
+				Model:            tab.model,
+				Effort:           cloneStringPtr(tab.effort),
+				Mode:             persistedTabMode(currentTabMode(tab)),
+				Goal:             strings.TrimSpace(currentTabGoal(tab)),
+				ToolApprovalMode: persistedToolApprovalMode(currentTabToolApprovalMode(tab)),
 			})
 		}
 	}
@@ -2381,10 +2401,44 @@ func (a *App) restoredTabIDLocked(id string) string {
 
 func normalizeTabMode(mode string) string {
 	switch mode {
-	case "plan", "yolo":
+	case "plan", "yolo", "plan-yolo", "yolo-plan":
+		if mode == "yolo-plan" {
+			return "plan-yolo"
+		}
 		return mode
 	default:
 		return "normal"
+	}
+}
+
+func tabModeFromAxes(plan, autoApproveTools bool) string {
+	switch {
+	case plan && autoApproveTools:
+		return "plan-yolo"
+	case plan:
+		return "plan"
+	case autoApproveTools:
+		return "yolo"
+	default:
+		return "normal"
+	}
+}
+
+func tabModeHasPlan(mode string) bool {
+	switch normalizeTabMode(mode) {
+	case "plan", "plan-yolo":
+		return true
+	default:
+		return false
+	}
+}
+
+func tabModeHasAutoApproveTools(mode string) bool {
+	switch normalizeTabMode(mode) {
+	case "yolo", "plan-yolo":
+		return true
+	default:
+		return false
 	}
 }
 
@@ -2393,23 +2447,84 @@ func currentTabMode(tab *WorkspaceTab) string {
 		return "normal"
 	}
 	if tab.Ctrl != nil {
-		if tab.Ctrl.Bypass() {
-			return "yolo"
-		}
-		if tab.Ctrl.PlanMode() {
-			return "plan"
-		}
-		return "normal"
+		return tabModeFromAxes(tab.Ctrl.PlanMode(), tab.Ctrl.AutoApproveTools())
 	}
 	return normalizeTabMode(tab.mode)
 }
 
+func currentTabGoal(tab *WorkspaceTab) string {
+	if tab == nil {
+		return ""
+	}
+	if tab.Ctrl != nil {
+		return tab.Ctrl.Goal()
+	}
+	return strings.TrimSpace(tab.goal)
+}
+
+func currentTabGoalStatus(tab *WorkspaceTab) string {
+	if tab == nil {
+		return control.GoalStatusStopped
+	}
+	if tab.Ctrl != nil {
+		return tab.Ctrl.GoalStatus()
+	}
+	if strings.TrimSpace(tab.goal) != "" {
+		return control.GoalStatusRunning
+	}
+	return control.GoalStatusStopped
+}
+
+func currentTabCollaborationMode(tab *WorkspaceTab) string {
+	if tab == nil {
+		return "normal"
+	}
+	if tab.Ctrl != nil && tab.Ctrl.PlanMode() {
+		return "plan"
+	}
+	if strings.TrimSpace(currentTabGoal(tab)) != "" && currentTabGoalStatus(tab) == control.GoalStatusRunning {
+		return "goal"
+	}
+	return "normal"
+}
+
+func currentTabToolApprovalMode(tab *WorkspaceTab) string {
+	if tab == nil {
+		return control.ToolApprovalAsk
+	}
+	if tab.Ctrl != nil {
+		return tab.Ctrl.ToolApprovalMode()
+	}
+	return normalizeToolApprovalMode(tab.toolApprovalMode)
+}
+
+func normalizeToolApprovalMode(mode string) string {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case control.ToolApprovalAuto:
+		return control.ToolApprovalAuto
+	case control.ToolApprovalYolo, "full", "full-access", "bypass":
+		return control.ToolApprovalYolo
+	default:
+		return control.ToolApprovalAsk
+	}
+}
+
+func persistedToolApprovalMode(mode string) string {
+	switch normalizeToolApprovalMode(mode) {
+	case control.ToolApprovalAuto, control.ToolApprovalYolo:
+		return normalizeToolApprovalMode(mode)
+	default:
+		return ""
+	}
+}
+
 // persistedTabMode is the composer mode saved with a tab so it survives reload
-// and app relaunch. plan and yolo are both remembered (a restored yolo tab keeps
-// its status-bar indicator); "normal" is the default and isn't persisted. (#3517)
+// and app relaunch. plan, yolo, and plan-yolo are remembered (a restored yolo
+// tab keeps its status-bar indicator); "normal" is the default and isn't
+// persisted. (#3517)
 func persistedTabMode(mode string) string {
 	switch normalizeTabMode(mode) {
-	case "plan", "yolo":
+	case "plan", "yolo", "plan-yolo":
 		return normalizeTabMode(mode)
 	}
 	return ""

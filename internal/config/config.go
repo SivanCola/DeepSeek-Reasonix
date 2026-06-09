@@ -212,9 +212,8 @@ type StatuslineConfig struct {
 // enabled but missing; set false to require an explicit `reasonix codegraph
 // install` (e.g. for air-gapped or headless runs). Path overrides binary
 // resolution; empty resolves the cache, then a `codegraph` on PATH, then a
-// bundle beside the executable. Tier matches ordinary MCP servers (lazy,
-// background, eager); when unset it preserves the historical warm→eager /
-// cold→background startup.
+// bundle beside the executable. CodeGraph always starts in the background when
+// enabled; legacy tier values are ignored and removed during config load.
 type CodegraphConfig struct {
 	Enabled     bool   `toml:"enabled"`
 	AutoInstall bool   `toml:"auto_install"`
@@ -227,7 +226,7 @@ func (c CodegraphConfig) ShouldAutoStart() bool {
 }
 
 func (c CodegraphConfig) ResolvedTier() string {
-	return resolvedMCPTier(c.Tier)
+	return "background"
 }
 
 // BotConfig 控制多渠道 IM bot 消息网关。
@@ -825,7 +824,10 @@ guessing; keep changes minimal and correct; briefly summarize what you did.
 When the request leaves a real choice to the user — which approach or library,
 the scope, or a consequential or ambiguous decision — call the ask tool to offer
 2-4 concrete options rather than guessing or burying the question in prose. Skip
-it when there's an obvious default; don't ask just to confirm.
+it when there's an obvious default; don't ask just to confirm. Approval-bypass
+modes do not answer ask questions or approve plans for the user. If no
+interactive user is available, the ask tool returns a model-assumption fallback;
+state the assumption you made before proceeding.
 For multi-step work, track progress with the todo_write tool: lay out the steps,
 keep exactly one in_progress, and flip each to completed as you finish it — update
 the list as you go, not just at the end.

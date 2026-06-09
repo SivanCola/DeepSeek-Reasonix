@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { CSSProperties, DragEvent, KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent } from "react";
 import { FileText, Plus, Search, X } from "lucide-react";
-import type { TabMeta } from "../lib/types";
+import { normalizeCollaborationMode, normalizeMode, normalizeToolApprovalMode, type Mode, type TabMeta } from "../lib/types";
 import { projectColorValue } from "../lib/projectColors";
 import { useT } from "../lib/i18n";
 import { Tooltip } from "./Tooltip";
@@ -42,8 +42,8 @@ function tabFullTitle(tab: TabMeta): string {
   return `${workspaceName} / ${tabDisplayTitle(tab)}`;
 }
 
-function tabMode(tab: TabMeta): "normal" | "plan" | "yolo" {
-  return tab.mode === "plan" || tab.mode === "yolo" ? tab.mode : "normal";
+function tabMode(tab: TabMeta): Mode {
+  return normalizeMode(tab.mode);
 }
 
 function projectAccentStyle(color?: string): CSSProperties | undefined {
@@ -189,9 +189,16 @@ export function TabBar({ tabs, activeTabId, onTabChange, onTabClose, onTabsClose
           const displayTitle = tabDisplayTitle(tab);
           const fullTitle = tabFullTitle(tab);
           const mode = tabMode(tab);
+          const collaborationMode = normalizeCollaborationMode(tab.collaborationMode, tab.goal, mode);
+          const planMode = collaborationMode === "plan";
+          const goalMode = collaborationMode === "goal";
+          const toolApprovalMode = normalizeToolApprovalMode(tab.toolApprovalMode, mode);
           const stateTitle = [
             tab.running ? "Running" : "",
-            mode === "yolo" ? "YOLO" : mode === "plan" ? "Plan" : "",
+            planMode ? "Plan" : "",
+            goalMode ? "Goal" : "",
+            toolApprovalMode === "auto" ? "Auto approve" : "",
+            toolApprovalMode === "yolo" ? "YOLO approval" : "",
           ].filter(Boolean).join(" · ");
           const annotatedTitle = stateTitle ? `${stateTitle} · ${fullTitle}` : fullTitle;
           return (
@@ -208,7 +215,7 @@ export function TabBar({ tabs, activeTabId, onTabChange, onTabClose, onTabsClose
               className={[
                 "tabbar__tab",
                 tab.id === resolvedActiveTabId ? "tabbar__tab--active" : "",
-                mode !== "normal" ? `tabbar__tab--${mode}` : "",
+                toolApprovalMode === "yolo" ? "tabbar__tab--yolo" : "",
                 draggingTabId === tab.id ? "tabbar__tab--dragging" : "",
                 dropTarget?.id === tab.id ? `tabbar__tab--drop-${dropTarget.side}` : "",
               ].filter(Boolean).join(" ")}
@@ -238,7 +245,10 @@ export function TabBar({ tabs, activeTabId, onTabChange, onTabClose, onTabsClose
                 />
               )}
               <span className="tabbar__tab-label">{displayTitle}</span>
-              {mode !== "normal" && <span className={`tabbar__mode-badge tabbar__mode-badge--${mode}`}>{mode}</span>}
+              {planMode && <span className="tabbar__mode-badge tabbar__mode-badge--plan">plan</span>}
+              {goalMode && <span className="tabbar__mode-badge tabbar__mode-badge--plan">goal</span>}
+              {toolApprovalMode === "auto" && <span className="tabbar__mode-badge tabbar__mode-badge--plan">auto</span>}
+              {toolApprovalMode === "yolo" && <span className="tabbar__mode-badge tabbar__mode-badge--yolo">yolo</span>}
               <span
                 className="tabbar__tab-close"
                 onClick={(e) => {

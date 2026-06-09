@@ -4,6 +4,7 @@ import { asArray } from "../lib/array";
 import { useDeferredClose } from "../lib/useMountTransition";
 import { app } from "../lib/bridge";
 import { normalizeLangPref, useI18n, useT, type DictKey, type LangPref } from "../lib/i18n";
+import { mergedFetchedProviderModels, providerDefaultModel } from "../lib/providerModels";
 import { useUpdater } from "../lib/useUpdater";
 import {
   THEME_STYLES,
@@ -534,6 +535,8 @@ function normalizeSettingsView(view: SettingsView | null | undefined): SettingsV
     agent,
     bot: normalizeBotSettings(view.bot),
     autoPlan: normalizeAutoPlan(view.autoPlan),
+    autoApproveTools: Boolean(view.autoApproveTools ?? view.bypass),
+    bypass: Boolean(view.autoApproveTools ?? view.bypass),
     desktopLanguage: normalizeLangPref(view.desktopLanguage),
     desktopTheme: normalizeThemePreference(view.desktopTheme),
     desktopThemeStyle: normalizeThemeStyleForTheme(view.desktopThemeStyle, normalizeThemePreference(view.desktopTheme)),
@@ -1557,9 +1560,10 @@ function ModelsSection({ s, busy, apply, backgroundApply }: ModelsSectionProps) 
         try {
           const fetched = await app.FetchProviderModels(provider);
           if (fetched.length === 0) continue;
-          const currentDefault = provider.default && fetched.includes(provider.default) ? provider.default : fetched[0];
-          if (sameStringList(provider.models, fetched) && provider.default === currentDefault) continue;
-          await app.SaveProvider({ ...provider, models: fetched, default: currentDefault });
+          const models = mergedFetchedProviderModels(provider.models, fetched, { preserveCurated: true });
+          const currentDefault = providerDefaultModel(provider.default, models);
+          if (sameStringList(provider.models, models) && provider.default === currentDefault) continue;
+          await app.SaveProvider({ ...provider, models, default: currentDefault });
         } catch {
           // Background discovery is opportunistic; manual refresh shows errors.
         }
@@ -1939,11 +1943,12 @@ function ProvidersSection({ s, busy, apply }: SectionProps) {
           });
           return;
         }
-        const currentDefault = p.default && fetched.includes(p.default) ? p.default : fetched[0];
-        await app.SaveProvider({ ...p, models: fetched, default: currentDefault });
+        const models = mergedFetchedProviderModels(p.models, fetched);
+        const currentDefault = providerDefaultModel(p.default, models);
+        await app.SaveProvider({ ...p, models, default: currentDefault });
         setGroupFetchResult(group.id, {
           kind: "ok",
-          text: t("settings.fetchModelsUpdatedForProvider", { provider: group.label, n: fetched.length }),
+          text: t("settings.fetchModelsUpdatedForProvider", { provider: group.label, n: models.length }),
         });
       });
     } finally {
@@ -1968,11 +1973,12 @@ function ProvidersSection({ s, busy, apply }: SectionProps) {
         try {
           const fetched = await app.FetchProviderModels({ ...probe, apiKeyEnv });
           if (fetched.length > 0) {
-            const currentDefault = probe.default && fetched.includes(probe.default) ? probe.default : fetched[0];
-            await app.SaveProvider({ ...probe, apiKeyEnv, models: fetched, default: currentDefault });
+            const models = mergedFetchedProviderModels(probe.models, fetched, { preserveCurated: true });
+            const currentDefault = providerDefaultModel(probe.default, models);
+            await app.SaveProvider({ ...probe, apiKeyEnv, models, default: currentDefault });
             setGroupFetchResult(group.id, {
               kind: "ok",
-              text: t("settings.fetchModelsUpdatedForProvider", { provider: group.label, n: fetched.length }),
+              text: t("settings.fetchModelsUpdatedForProvider", { provider: group.label, n: models.length }),
             });
             return;
           }

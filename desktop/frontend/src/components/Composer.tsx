@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { CSSProperties, ClipboardEvent, DragEvent, KeyboardEvent, PointerEvent as ReactPointerEvent, ReactNode } from "react";
-import { AlertTriangle, ArrowUp, Eye, FileText, Folder, List, MessageSquare, Search, Square, Trash2, X, Zap } from "lucide-react";
+import type { CSSProperties, ClipboardEvent, DragEvent, KeyboardEvent, PointerEvent as ReactPointerEvent } from "react";
+import { ArrowUp, Check, ChevronDown, Eye, FileText, Folder, FolderGit2, FolderPlus, List, MessageSquare, Search, Shield, ShieldAlert, ShieldCheck, Square, Target, Trash2, X } from "lucide-react";
 import { asArray } from "../lib/array";
 import { DedupIndex, sha256 } from "../lib/attachDedup";
 import { app, onFilesDropped } from "../lib/bridge";
 import { SPINNER_WORDS, useI18n } from "../lib/i18n";
 import { clearLayoutSize, loadOptionalLayoutSize, saveLayoutSize } from "../lib/layoutPreferences";
-import type { CommandInfo, ComposerInsertRequest, DirEntry, EffortInfo, HistoryMessage, Mode, SessionMeta, SessionReference, SlashArgItem, SlashArgsResult } from "../lib/types";
+import { type CollaborationMode, type CommandInfo, type ComposerInsertRequest, type DirEntry, type EffortInfo, type HistoryMessage, type Mode, type SessionMeta, type SessionReference, type SlashArgItem, type SlashArgsResult, type ToolApprovalMode, type WorkspaceView } from "../lib/types";
 import {
   formatWorkspaceReference,
   parseWorkspaceReference,
@@ -16,6 +16,7 @@ import {
 import { SlashMenu } from "./SlashMenu";
 import { ArgMenu } from "./ArgMenu";
 import { VirtualMenu } from "./VirtualMenu";
+import { AnchoredPopover } from "./AnchoredPopover";
 import { EffortSwitcher } from "./EffortSwitcher";
 import { ModelSwitcher } from "./ModelSwitcher";
 import { Tooltip } from "./Tooltip";
@@ -248,6 +249,9 @@ async function buildSessionContext(refs: SessionReference[]): Promise<string> {
 export function Composer({
   running,
   mode,
+  collaborationMode,
+  toolApprovalMode,
+  goal,
   cwd,
   modelLabel,
   tabId,
@@ -256,8 +260,14 @@ export function Composer({
   onCancel,
   onCycleMode,
   onSetMode,
+  onSetCollaborationMode,
+  onSetToolApprovalMode,
+  onSetGoal,
+  onClearGoal,
   onSwitchModel,
   onSetEffort,
+  onPickFolder,
+  onRemoveWorkspace,
   insertRequest,
   disabled,
   decisionPending = false,
@@ -266,9 +276,13 @@ export function Composer({
   turnTokens,
   retry,
   transientDismissSignal,
+  workspaceRefreshSignal,
 }: {
   running: boolean;
   mode: Mode;
+  collaborationMode: CollaborationMode;
+  toolApprovalMode: ToolApprovalMode;
+  goal?: string;
   cwd?: string;
   modelLabel: string;
   tabId?: string;
@@ -279,8 +293,14 @@ export function Composer({
   onCancel: () => string | undefined;
   onCycleMode: () => void;
   onSetMode: (mode: Mode) => void;
+  onSetCollaborationMode: (mode: CollaborationMode) => void;
+  onSetToolApprovalMode: (mode: ToolApprovalMode) => void;
+  onSetGoal: (goal: string) => void;
+  onClearGoal: () => void;
   onSwitchModel: (name: string) => void;
   onSetEffort: (level: string) => void;
+  onPickFolder: (path?: string) => Promise<string>;
+  onRemoveWorkspace: (path: string) => Promise<void>;
   insertRequest?: ComposerInsertRequest | null;
   disabled?: boolean;
   decisionPending?: boolean;
@@ -293,6 +313,7 @@ export function Composer({
   turnTokens?: number;
   retry?: { attempt: number; max: number };
   transientDismissSignal?: number;
+  workspaceRefreshSignal?: number;
 }) {
   const { t, locale } = useI18n();
   const now = useTick(running);
@@ -307,6 +328,17 @@ export function Composer({
   const [active, setActive] = useState(0);
   const [dismissed, setDismissed] = useState(false);
   const [dragOver, setDragOver] = useState(false);
+  const [workspaceMenuOpen, setWorkspaceMenuOpen] = useState(false);
+  const [accessMenuOpen, setAccessMenuOpen] = useState(false);
+  const [workspaceQuery, setWorkspaceQuery] = useState("");
+  const [workspaces, setWorkspaces] = useState<WorkspaceView[]>([]);
+  // Two-click delete: the first click on the trash icon moves the row into a
+  // "Confirm?" state and shows a real label ("Delete?") on the icon; the
+  // second click (within ~3s) actually fires the removal. A click anywhere
+  // else, Escape, or a workspace switch resets the row. We keep the existing
+  // server-side RemoveWorkspace as the actual delete so the projects file
+  // stays the single source of truth — this is purely a confirmation gate.
+  const [confirmRemovePath, setConfirmRemovePath] = useState<string | null>(null);
   const [composerHeight, setComposerHeight] = useState<number | null>(loadComposerHeight);
   const [composerResizing, setComposerResizing] = useState(false);
   const [textareaAutoHeight, setTextareaAutoHeight] = useState<number | null>(null);
@@ -319,6 +351,8 @@ export function Composer({
   const [submitting, setSubmitting] = useState(false);
   const taRef = useRef<HTMLTextAreaElement>(null);
   const composerCardRef = useRef<HTMLDivElement>(null);
+  const workspaceAnchorRef = useRef<HTMLDivElement>(null);
+  const accessAnchorRef = useRef<HTMLDivElement>(null);
   const wasRunning = useRef(running);
   const composingRef = useRef(false);
   const lastCompositionEndAt = useRef(0);
@@ -326,6 +360,10 @@ export function Composer({
   const consumedInsertIdRef = useRef(0);
   const lastTransientDismissSignal = useRef(transientDismissSignal);
   const submittingRef = useRef(false);
+  // Snapshot of the current cwd so async callbacks (openPastChats) can detect
+  // workspace switches and discard stale responses (issue #3601).
+  const cwdRef = useRef(cwd);
+  cwdRef.current = cwd;
   const attachmentDedupRef = useRef(new DedupIndex());
   const attachmentDedupKeysRef = useRef<Record<string, AttachmentDedupKey>>({});
 
@@ -416,6 +454,27 @@ export function Composer({
   const [searchEntries, setSearchEntries] = useState<DirEntry[]>([]);
   const dirCache = useRef<Record<string, DirEntry[]>>({});
   const searchCache = useRef<Record<string, DirEntry[]>>({});
+
+  // When the workspace/project changes (cwd prop), invalidate all @ mention
+  // state so the picker reloads candidates for the new project. Without this,
+  // dirCache/searchCache retain entries from the old project and the picker
+  // shows stale results (issue #3601).
+  const prevCwdRef = useRef(cwd);
+  useEffect(() => {
+    if (prevCwdRef.current === cwd) return; // skip mount — state already initial
+    prevCwdRef.current = cwd;
+    dirCache.current = {};
+    searchCache.current = {};
+    setEntries([]);
+    setSearchEntries([]);
+    setShowPastChats(false);
+    setPastChats([]);
+    setPastChatQuery("");
+    setLoadingPastChats(false);
+    setActive(0);
+    setDismissed(false);
+  }, [cwd]);
+
   useEffect(() => {
     if (atRaw === null) return;
     const cached = dirCache.current[atDir];
@@ -435,8 +494,8 @@ export function Composer({
     return () => {
       live = false;
     };
-    // re-fetch only when the menu opens or the directory level changes
-  }, [atRaw === null, atDir]);
+    // re-fetch when the menu opens or the directory level changes
+  }, [atRaw === null, atDir, cwd]);
   useEffect(() => {
     if (atRaw === null || atDir !== "" || atFrag === "") {
       setSearchEntries([]);
@@ -460,7 +519,7 @@ export function Composer({
     return () => {
       live = false;
     };
-  }, [atRaw === null, atDir, atFrag]);
+  }, [atRaw === null, atDir, atFrag, cwd]);
   const atMatches = useMemo(
     () => {
       if (atRaw === null) return [];
@@ -880,6 +939,50 @@ export function Composer({
     setTextCaretEnd(next);
   };
 
+  const workspaceName = useMemo(() => {
+    if (!cwd) return "";
+    const parts = cwd.split(/[/\\]/).filter(Boolean);
+    return parts.length > 0 ? parts[parts.length - 1] : cwd;
+  }, [cwd]);
+
+  const loadWorkspaces = () => {
+    app.ListWorkspaces().then((next) => setWorkspaces(asArray(next))).catch(() => setWorkspaces([]));
+  };
+
+  useEffect(() => {
+    if (workspaceMenuOpen) loadWorkspaces();
+  }, [workspaceMenuOpen, cwd, workspaceRefreshSignal]);
+
+  const filteredWorkspaces = useMemo(() => {
+    const q = workspaceQuery.trim().toLowerCase();
+    if (!q) return workspaces;
+    return workspaces.filter((w) => `${w.name} ${w.path}`.toLowerCase().includes(q));
+  }, [workspaceQuery, workspaces]);
+
+  const chooseWorkspace = async (path?: string) => {
+    const next = await onPickFolder(path);
+    if (next) {
+      setWorkspaceMenuOpen(false);
+      setWorkspaceQuery("");
+    }
+  };
+
+  const removeWorkspace = async (path: string) => {
+    await onRemoveWorkspace(path);
+    setWorkspaces((prev) => prev.filter((w) => w.path !== path));
+    setConfirmRemovePath(null);
+  };
+
+  useEffect(() => {
+    if (!confirmRemovePath) return;
+    const id = window.setTimeout(() => setConfirmRemovePath(null), 3000);
+    return () => window.clearTimeout(id);
+  }, [confirmRemovePath]);
+
+  useEffect(() => {
+    if (!workspaceMenuOpen) setConfirmRemovePath(null);
+  }, [workspaceMenuOpen]);
+
 
   useEffect(() => {
     const onResize = () => setComposerHeight((height) => (height === null ? null : clampComposerHeight(height)));
@@ -995,12 +1098,15 @@ export function Composer({
 
   // --- past:chats session reference ---
   const openPastChats = async () => {
+    const snapshotCwd = cwdRef.current;
     setShowPastChats(true);
     setActive(0);
     setPastChatQuery("");
     setLoadingPastChats(true);
     try {
       const sessions = await app.ListSessions();
+      // Discard stale response if workspace changed while the request was in-flight.
+      if (cwdRef.current !== snapshotCwd) return;
       const sorted = asArray(sessions)
         .filter((s) => !s.current)
         .sort((a, b) => {
@@ -1011,9 +1117,10 @@ export function Composer({
         .slice(0, 50);
       setPastChats(sorted);
     } catch {
+      if (cwdRef.current !== snapshotCwd) return;
       setPastChats([]);
     } finally {
-      setLoadingPastChats(false);
+      if (cwdRef.current === snapshotCwd) setLoadingPastChats(false);
     }
   };
 
@@ -1129,8 +1236,8 @@ export function Composer({
     const composing = isImeKeyEvent(e, composingRef.current, lastCompositionEndAt.current);
     if (e.key === "Enter" && composing) return;
 
-    // Shift+Tab cycles the input mode (normal → plan → YOLO → normal). Handled
-    // before the menus so it works even while one is open.
+    // Shift+Tab toggles plan mode only. Tool access is deliberately changed via
+    // the access menu so keyboard cycling never crosses a permission boundary.
     if (e.key === "Tab" && e.shiftKey && !composing) {
       e.preventDefault();
       onCycleMode();
@@ -1207,24 +1314,50 @@ export function Composer({
     ? ({ height: `${textareaAutoHeight}px`, overflowY: textareaAutoOverflow ? "auto" : "hidden" } as CSSProperties)
     : undefined;
   const composerAutoExpanded = composerHeight === null && textareaAutoHeight !== null && textareaAutoHeight > 40;
-  const modeOptions: Array<{ id: Mode; label: string; icon: ReactNode }> = [
-    { id: "normal", label: "auto", icon: <Zap size={13} /> },
-    { id: "plan", label: "plan", icon: <List size={13} /> },
-    { id: "yolo", label: "yolo", icon: <AlertTriangle size={13} /> },
-  ];
-  // T2: a sliding thumb tracks the active mode. Measured from the live button
-  // so it stays aligned with the variable-width labels.
-  const modebarRef = useRef<HTMLDivElement>(null);
-  const [modeThumb, setModeThumb] = useState<{ left: number; width: number } | null>(null);
-  useLayoutEffect(() => {
-    const bar = modebarRef.current;
-    const active = bar?.querySelector<HTMLElement>(".composer-modebar__item--active");
-    if (!active) {
-      setModeThumb(null);
+  void mode;
+  void onSetMode;
+  const planModeOn = collaborationMode === "plan";
+  const activeGoal = (goal ?? "").trim();
+  const goalModeOn = collaborationMode === "goal" && activeGoal.length > 0;
+  const accessLabel = toolApprovalMode === "yolo"
+    ? t("composer.accessYolo")
+    : toolApprovalMode === "auto"
+      ? t("composer.accessAuto")
+      : t("composer.accessAsk");
+  const accessTitle = toolApprovalMode === "yolo"
+    ? t("composer.accessYoloTitle")
+    : toolApprovalMode === "auto"
+      ? t("composer.accessAutoTitle")
+      : t("composer.accessAskTitle");
+  const applyAccess = (nextMode: ToolApprovalMode) => {
+    onSetToolApprovalMode(nextMode);
+    setAccessMenuOpen(false);
+  };
+  const togglePlanFromMenu = () => {
+    onSetCollaborationMode(planModeOn ? "normal" : "plan");
+    setAccessMenuOpen(false);
+  };
+  const chooseNormalMode = () => {
+    onSetCollaborationMode("normal");
+    setAccessMenuOpen(false);
+  };
+  const chooseGoalMode = () => {
+    if (goalModeOn) {
+      onClearGoal();
+      setAccessMenuOpen(false);
       return;
     }
-    setModeThumb({ left: active.offsetLeft, width: active.offsetWidth });
-  }, [mode, disabled, running]);
+    const draftGoal = text.trim();
+    if (draftGoal) {
+      onSetGoal(draftGoal);
+      setText("");
+      setAccessMenuOpen(false);
+      requestAnimationFrame(() => taRef.current?.focus());
+      return;
+    }
+    setTextCaretEnd("/goal ");
+    setAccessMenuOpen(false);
+  };
   const runActivity = retry
     ? t("status.retrying", { attempt: retry.attempt, max: retry.max })
     : running && turnStartAt
@@ -1236,7 +1369,13 @@ export function Composer({
           return `${word}… ${fmtElapsed(elapsedMs)}${tok}`;
         })()
       : null;
-  const composerMetaClass = "composer-meta";
+  const hasWorkspace = Boolean(cwd);
+  const hasEffort = Boolean(effort?.supported);
+  const composerMetaClass = [
+    "composer-meta",
+    hasWorkspace ? "composer-meta--has-workspace" : "composer-meta--no-workspace",
+    hasEffort ? "composer-meta--has-effort" : "composer-meta--no-effort",
+  ].join(" ");
 
   return (
     <div
@@ -1244,6 +1383,164 @@ export function Composer({
       style={{ "--wails-drop-target": "drop" } as CSSProperties}
       onDropCapture={onFileDropCapture}
     >
+      <AnchoredPopover
+        open={workspaceMenuOpen && !!cwd}
+        anchorRef={workspaceAnchorRef}
+        onClose={() => setWorkspaceMenuOpen(false)}
+        className="workspace-switcher workspace-switcher--portal"
+      >
+          <label className="workspace-switcher__search">
+            <Search size={14} />
+            <input
+              autoFocus
+              value={workspaceQuery}
+              onChange={(e) => setWorkspaceQuery(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Escape") setWorkspaceMenuOpen(false);
+              }}
+              placeholder={t("composer.searchProjects")}
+            />
+          </label>
+          <div className="workspace-switcher__list">
+            {filteredWorkspaces.map((w) => (
+              <div className="workspace-switcher__row" key={w.path}>
+                <button
+                  className={`workspace-switcher__item${w.current ? " workspace-switcher__item--current" : ""}`}
+                  title={w.path}
+                  onClick={() => {
+                    if (w.current) {
+                      setWorkspaceMenuOpen(false);
+                      return;
+                    }
+                    void chooseWorkspace(w.path);
+                  }}
+                >
+                  <FolderGit2 size={15} />
+                  <span>{w.name}</span>
+                  {w.current && <Check size={15} />}
+                </button>
+                <button
+                  className={`workspace-switcher__remove${confirmRemovePath === w.path ? " workspace-switcher__remove--armed" : ""}${w.current ? " workspace-switcher__remove--current" : ""}`}
+                  type="button"
+                  aria-label={confirmRemovePath === w.path ? t("composer.confirmRemoveProject") : t("composer.removeProject")}
+                  title={
+                    w.current
+                      ? t("composer.cannotRemoveCurrent")
+                      : confirmRemovePath === w.path
+                        ? t("composer.confirmRemoveProject")
+                        : t("composer.removeProject")
+                  }
+                  disabled={running || w.current}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    if (w.current) return;
+                    if (confirmRemovePath === w.path) {
+                      void removeWorkspace(w.path);
+                    } else {
+                      setConfirmRemovePath(w.path);
+                    }
+                  }}
+                >
+                  {confirmRemovePath === w.path ? <Check size={14} /> : <Trash2 size={14} />}
+                </button>
+              </div>
+            ))}
+            {filteredWorkspaces.length === 0 && <div className="workspace-switcher__empty">{t("composer.noProjectMatches")}</div>}
+          </div>
+          <div className="workspace-switcher__actions">
+            <button type="button" onClick={() => void chooseWorkspace()}>
+              <FolderPlus size={15} />
+              <span>{t("composer.addProject")}</span>
+            </button>
+          </div>
+      </AnchoredPopover>
+      <AnchoredPopover
+        open={accessMenuOpen}
+        anchorRef={accessAnchorRef}
+        onClose={() => setAccessMenuOpen(false)}
+        className="composer-access-menu composer-access-menu--portal"
+        align="start"
+      >
+        <div className="composer-access-menu__section">
+          <div className="composer-access-menu__label">{t("composer.accessMenuTitle")}</div>
+          <button
+            type="button"
+            className={`composer-access-menu__item${toolApprovalMode === "ask" ? " composer-access-menu__item--active" : ""}`}
+            onClick={() => applyAccess("ask")}
+          >
+            <Shield size={15} />
+            <span className="composer-access-menu__copy">
+              <span className="composer-access-menu__title">{t("composer.accessAsk")}</span>
+              <span className="composer-access-menu__desc">{t("composer.accessAskDesc")}</span>
+            </span>
+            {toolApprovalMode === "ask" && <Check size={15} />}
+          </button>
+          <button
+            type="button"
+            className={`composer-access-menu__item${toolApprovalMode === "auto" ? " composer-access-menu__item--active" : ""}`}
+            onClick={() => applyAccess("auto")}
+          >
+            <ShieldCheck size={15} />
+            <span className="composer-access-menu__copy">
+              <span className="composer-access-menu__title">{t("composer.accessAuto")}</span>
+              <span className="composer-access-menu__desc">{t("composer.accessAutoDesc")}</span>
+            </span>
+            {toolApprovalMode === "auto" && <Check size={15} />}
+          </button>
+          <button
+            type="button"
+            className={`composer-access-menu__item composer-access-menu__item--danger${toolApprovalMode === "yolo" ? " composer-access-menu__item--active" : ""}`}
+            onClick={() => applyAccess("yolo")}
+          >
+            <ShieldAlert size={15} />
+            <span className="composer-access-menu__copy">
+              <span className="composer-access-menu__title">{t("composer.accessYolo")}</span>
+              <span className="composer-access-menu__desc">{t("composer.accessYoloDesc")}</span>
+            </span>
+            {toolApprovalMode === "yolo" && <Check size={15} />}
+          </button>
+        </div>
+        <div className="composer-access-menu__section composer-access-menu__section--plan">
+          <div className="composer-access-menu__label">{t("composer.planMenuTitle")}</div>
+          <button
+            type="button"
+            className={`composer-access-menu__item${collaborationMode === "normal" ? " composer-access-menu__item--active" : ""}`}
+            onClick={chooseNormalMode}
+          >
+            <MessageSquare size={15} />
+            <span className="composer-access-menu__copy">
+              <span className="composer-access-menu__title">{t("composer.normalMode")}</span>
+              <span className="composer-access-menu__desc">{t("composer.normalModeDesc")}</span>
+            </span>
+            {collaborationMode === "normal" && <Check size={15} />}
+          </button>
+          <button
+            type="button"
+            className={`composer-access-menu__item${planModeOn ? " composer-access-menu__item--active" : ""}`}
+            onClick={togglePlanFromMenu}
+          >
+            <List size={15} />
+            <span className="composer-access-menu__copy">
+              <span className="composer-access-menu__title">{t("composer.planMode")}</span>
+              <span className="composer-access-menu__desc">{t("composer.planModeDesc")}</span>
+            </span>
+            {planModeOn && <Check size={15} />}
+          </button>
+          <button
+            type="button"
+            className={`composer-access-menu__item${goalModeOn ? " composer-access-menu__item--active" : ""}`}
+            onClick={chooseGoalMode}
+            title={goalModeOn ? activeGoal : undefined}
+          >
+            <Target size={15} />
+            <span className="composer-access-menu__copy">
+              <span className="composer-access-menu__title">{t("composer.goalMode")}</span>
+              <span className="composer-access-menu__desc">{goalModeOn ? t("composer.goalModeActiveDesc") : t("composer.goalModeDesc")}</span>
+            </span>
+            {goalModeOn && <Check size={15} />}
+          </button>
+        </div>
+      </AnchoredPopover>
       {menuMode === "slash" && (
         <SlashMenu items={slashMatches} activeIndex={active} onPick={pickCommand} onHover={setActive} />
       )}
@@ -1384,6 +1681,46 @@ export function Composer({
         )
       )}
       <div className="composer-toolbar">
+        <div className="composer-run-controls" role="toolbar" aria-label={t("composer.modeTitle")} ref={accessAnchorRef}>
+          {planModeOn && (
+            <button
+              type="button"
+              className="composer-plan-chip"
+              onClick={() => onSetCollaborationMode("normal")}
+              title={t("composer.exitPlanTitle")}
+              disabled={disabled || running}
+            >
+              <List size={13} />
+              <span>{t("composer.planMode")}</span>
+              <X size={11} />
+            </button>
+          )}
+          {goalModeOn && (
+            <button
+              type="button"
+              className="composer-goal-chip"
+              onClick={onClearGoal}
+              title={activeGoal}
+              disabled={disabled || running}
+            >
+              <Target size={13} />
+              <span>{t("composer.goalMode")}</span>
+              <X size={11} />
+            </button>
+          )}
+          <button
+            type="button"
+            className={`composer-access-trigger${toolApprovalMode === "yolo" ? " composer-access-trigger--yolo" : ""}${toolApprovalMode === "auto" ? " composer-access-trigger--auto" : ""}${accessMenuOpen ? " composer-access-trigger--open" : ""}`}
+            onClick={() => setAccessMenuOpen((open) => !open)}
+            aria-expanded={accessMenuOpen}
+            title={accessTitle}
+            disabled={disabled || running}
+          >
+            {toolApprovalMode === "yolo" ? <ShieldAlert size={14} /> : toolApprovalMode === "auto" ? <ShieldCheck size={14} /> : <Shield size={14} />}
+            <span>{accessLabel}</span>
+            <ChevronDown size={12} />
+          </button>
+        </div>
         {runActivity && (
           <div className="composer-runstatus" role="status" aria-live="polite">
             <span className="composer-runstatus__dot" />
@@ -1557,29 +1894,22 @@ export function Composer({
           )}
         </div>
         <div className={composerMetaClass}>
-          <div className="composer-meta__params">
-            <div className="composer-modebar" role="toolbar" aria-label={t("composer.modeTitle")} ref={modebarRef} data-mode={mode}>
-              {modeThumb && (
-                <span
-                  className="composer-modebar__thumb"
-                  aria-hidden="true"
-                  style={{ transform: `translateX(${modeThumb.left}px)`, width: modeThumb.width }}
-                />
-              )}
-              {modeOptions.map((option) => (
-                <button
-                  key={option.id}
-                  type="button"
-                  className={`composer-modebar__item composer-modebar__item--${option.id}${mode === option.id ? " composer-modebar__item--active" : ""}`}
-                  onClick={() => onSetMode(option.id)}
-                  aria-pressed={mode === option.id}
-                  disabled={disabled || running}
-                >
-                  {option.icon}
-                  <span>{option.label}</span>
-                </button>
-              ))}
+          {cwd && (
+            <div className="composer-meta__control composer-meta__control--workspace composer-workspace-wrap" ref={workspaceAnchorRef}>
+              <button
+                className={`composer__workspace${workspaceMenuOpen ? " composer__workspace--open" : ""}`}
+                onClick={() => {
+                  if (!running) setWorkspaceMenuOpen((open) => !open);
+                }}
+                disabled={running}
+              >
+                <FolderGit2 size={13} />
+                <span>{workspaceName}</span>
+                <ChevronDown size={12} />
+              </button>
             </div>
+          )}
+          <div className="composer-meta__params">
             <div className="composer-meta__control composer-meta__control--model">
               <ModelSwitcher label={modelLabel} tabId={tabId} onPick={onSwitchModel} />
             </div>

@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Tooltip } from "./Tooltip";
 import { useI18n } from "../lib/i18n";
-import type { BalanceInfo, ContextInfo, JobView, Mode, WireUsage } from "../lib/types";
+import { type BalanceInfo, type CollaborationMode, type ContextInfo, type JobView, type ToolApprovalMode, type WireUsage } from "../lib/types";
 
 // JobsChip is the status-bar background-jobs indicator: a count that opens an
 // upward popover listing the running jobs (id · label · status), mirroring the
@@ -88,7 +88,8 @@ export function StatusBar({
   balance,
   jobs,
   running,
-  mode,
+  collaborationMode,
+  toolApprovalMode,
   cost,
   currency,
   modelLabel,
@@ -98,7 +99,8 @@ export function StatusBar({
   balance?: BalanceInfo;
   jobs?: JobView[];
   running: boolean;
-  mode: Mode;
+  collaborationMode: CollaborationMode;
+  toolApprovalMode: ToolApprovalMode;
   cost?: number;
   currency?: string;
   modelLabel?: string;
@@ -111,6 +113,8 @@ export function StatusBar({
   const jobsList = jobs ?? [];
   const costLabel = formatMoney(cost, currency);
   const balanceLabel = balance?.available && balance.display ? balance.display : "-";
+  const planMode = collaborationMode === "plan";
+  const goalMode = collaborationMode === "goal";
 
   return (
     <div className="statusbar">
@@ -148,7 +152,18 @@ export function StatusBar({
           <b>{balanceLabel}</b>
         </span>
       </Tooltip>
-      {mode === "plan" && <span className="statusbar__plan">{t("status.plan")}</span>}
+      {planMode && <span className="statusbar__plan">{t("status.plan")}</span>}
+      {goalMode && <span className="statusbar__plan">{t("composer.goalMode")}</span>}
+      {toolApprovalMode === "auto" && (
+        <Tooltip label={t("composer.accessAutoTitle")}>
+          <span className="statusbar__yolo">{t("composer.accessAuto")}</span>
+        </Tooltip>
+      )}
+      {toolApprovalMode === "yolo" && (
+        <Tooltip label={t("status.yoloTitle")}>
+          <span className="statusbar__yolo">{t("composer.accessYolo")}</span>
+        </Tooltip>
+      )}
     </div>
   );
 }
