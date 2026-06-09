@@ -6,22 +6,24 @@ import type { BalanceInfo, ContextInfo, JobView, Mode, WireUsage } from "../lib/
 // JobsChip is the status-bar background-jobs indicator: a count that opens an
 // upward popover listing the running jobs (id · label · status), mirroring the
 // ModelSwitcher's click-to-open pattern. With no jobs it still reserves a stable
-// "jobs 0" slot so the IDE-style status order does not jump.
+// "任务 0" slot so the IDE-style status order does not jump.
 function JobsChip({ jobs }: { jobs: JobView[] }) {
   const { t } = useI18n();
   const [open, setOpen] = useState(false);
   if (jobs.length === 0) {
     return (
-      <span className="statusbar__item">
-        {t("status.jobsCount", { n: 0 })}
+      <span className="stat stat--jobs">
+        <span className="stat__label">{t("status.jobsLabel")}</span>
+        <b>0</b>
       </span>
     );
   }
   return (
     <div className="statusbar__jobswrap">
       <Tooltip label={t("status.jobsTitle")}>
-        <button className="statusbar__item statusbar__jobs" onClick={() => setOpen((v) => !v)}>
-          {t("status.jobsCount", { n: jobs.length })}
+        <button className="stat stat--jobs statusbar__jobs" onClick={() => setOpen((v) => !v)}>
+          <span className="stat__label">{t("status.jobsLabel")}</span>
+          <b>{jobs.length}</b>
         </button>
       </Tooltip>
       {open && (
@@ -89,6 +91,7 @@ export function StatusBar({
   mode,
   cost,
   currency,
+  modelLabel,
 }: {
   context: ContextInfo;
   usage?: WireUsage;
@@ -98,6 +101,7 @@ export function StatusBar({
   mode: Mode;
   cost?: number;
   currency?: string;
+  modelLabel?: string;
 }) {
   const { t } = useI18n();
   const pct = context.window ? Math.min(100, Math.round((context.used / context.window) * 100)) : null;
@@ -106,32 +110,44 @@ export function StatusBar({
   const avgPct = avgRate(usage);
   const jobsList = jobs ?? [];
   const costLabel = formatMoney(cost, currency);
+  const balanceLabel = balance?.available && balance.display ? balance.display : "-";
 
   return (
     <div className="statusbar">
-      <span className={`statusbar__dot ${running ? "statusbar__dot--busy" : ""}`} />
-      <span className="statusbar__item statusbar__ctx">{pct !== null ? t("status.ctx", { pct }) : t("status.ctxUnknown")}</span>
-      <span className="statusbar__sep">·</span>
-      <span className="statusbar__item statusbar__compact">{compactPct !== null ? t("status.compact", { pct: compactPct }) : t("status.compactUnknown")}</span>
-      <span className="statusbar__sep">·</span>
-      <span className="statusbar__item statusbar__cache">{t("status.cache", { pct: nowPct ?? "-" })}</span>
-      <span className="statusbar__sep">·</span>
-      <span className="statusbar__item statusbar__avg">{t("status.cacheAvg", { pct: avgPct ?? "-" })}</span>
-      <span className="statusbar__sep">·</span>
-      <Tooltip label={t("status.spendTitle")}>
-        <span className="statusbar__item statusbar__cost">
-          {t("status.cost", { amount: costLabel })}
-        </span>
-      </Tooltip>
-      <span className="statusbar__sep">·</span>
-      <JobsChip jobs={jobsList} />
-      <span className="statusbar__sep">·</span>
-      <Tooltip label={t("status.balanceTitle")}>
-        <span className="statusbar__item statusbar__balance">
-          {t("status.balance", { amount: balance?.available && balance.display ? balance.display : "-" })}
-        </span>
-      </Tooltip>
+      <span className="stat stat--model">
+        <span className={`statusbar__dot ${running ? "statusbar__dot--busy" : ""}`} />
+        {modelLabel && <span className="statusbar__model">{modelLabel}</span>}
+      </span>
+      <span className="stat statusbar__ctx">
+        <span className="stat__label">{t("status.ctxLabel")}</span>
+        <b>{pct !== null ? `${pct}%` : "-"}</b>
+      </span>
+      <span className="stat statusbar__compact">
+        <span className="stat__label">{t("status.compactLabel")}</span>
+        <b>{compactPct !== null ? `${compactPct}%` : "-"}</b>
+      </span>
+      <span className="stat statusbar__cache">
+        <span className="stat__label">{t("status.cacheLabel")}</span>
+        <b>{nowPct !== null ? `${nowPct}%` : "-"}</b>
+      </span>
+      <span className="stat statusbar__avg">
+        <span className="stat__label">{t("status.cacheAvgLabel")}</span>
+        <b>{avgPct !== null ? `${avgPct}%` : "-"}</b>
+      </span>
       <span className="statusbar__spacer" />
+      <Tooltip label={t("status.spendTitle")}>
+        <span className="stat statusbar__cost">
+          <span className="stat__label">{t("status.costLabel")}</span>
+          <b>{costLabel}</b>
+        </span>
+      </Tooltip>
+      <JobsChip jobs={jobsList} />
+      <Tooltip label={t("status.balanceTitle")}>
+        <span className="stat stat--balance statusbar__balance">
+          <span className="stat__label">{t("status.balanceLabel")}</span>
+          <b>{balanceLabel}</b>
+        </span>
+      </Tooltip>
       {mode === "plan" && <span className="statusbar__plan">{t("status.plan")}</span>}
     </div>
   );

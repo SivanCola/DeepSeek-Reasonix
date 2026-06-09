@@ -1,10 +1,12 @@
-import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, KeyboardEvent, PointerEvent as ReactPointerEvent } from "react";
 import { ShellExpandProvider, useShellExpand } from "./lib/shellExpand";
 import {
+  Activity,
+  Brain,
+  Command,
   Download,
   SquarePen,
-  CircleGauge,
   FileText,
   FileJson,
   GitBranch,
@@ -14,7 +16,6 @@ import {
   PanelLeft,
   PanelRightClose,
   PanelRightOpen,
-  Trash2,
 } from "lucide-react";
 import { asArray } from "./lib/array";
 import { clearLegacyLangPref, normalizeLangPref, readLegacyLangPref, t, useI18n, useT } from "./lib/i18n";
@@ -27,6 +28,7 @@ import { ApprovalModal } from "./components/ApprovalModal";
 import { AskCard } from "./components/AskCard";
 import { StatusBar } from "./components/StatusBar";
 import { HistoryPanel } from "./components/HistoryPanel";
+import { CommandPalette, type PaletteItem } from "./components/CommandPalette";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { UpdateBanner } from "./components/UpdateBanner";
 import { ContextPanel } from "./components/ContextPanel";
@@ -37,7 +39,6 @@ import { OnboardingOverlay } from "./components/OnboardingOverlay";
 import { TabBar } from "./components/TabBar";
 import { ProjectTree } from "./components/ProjectTree";
 import { CopyButton } from "./components/CopyButton";
-import { CommandPalette, type PaletteItem } from "./components/CommandPalette";
 import { parseTodos } from "./lib/tools";
 import { shouldShowTodoPanel } from "./lib/todoVisibility";
 import type { ComposerInsertRequest, Meta, Mode, SessionMeta, SettingsTab, TabMeta } from "./lib/types";
@@ -51,7 +52,6 @@ import {
   normalizeThemePreference,
   normalizeThemeStyleForTheme,
   readLegacyThemePreference,
-  themeForStyle,
   type Theme,
 } from "./lib/theme";
 import { applyTextSize, DEFAULT_TEXT_SIZE, getTextSize, nextTextSize } from "./lib/textSize";
@@ -61,7 +61,6 @@ import logoWordmark from "./assets/logo-wordmark.svg";
 
 const SIDEBAR_COLLAPSED_KEY = "reasonix.sidebar.collapsed";
 const SIDEBAR_DEFAULT_WIDTH = 264;
-const SIDEBAR_DEFAULT_RATIO = 0.175;
 const SIDEBAR_MIN_WIDTH = 228;
 const SIDEBAR_MAX_WIDTH = 420;
 const CHAT_MIN_WIDTH = 400;
@@ -72,18 +71,16 @@ const MAC_SIDEBAR_SLIDE_DURATION_MS = 640;
 function isThemeMode(value: string): value is Theme {
   return value === "auto" || value === "light" || value === "dark";
 }
-const CONTEXT_PANEL_MIN_WIDTH = 340;
-const RIGHT_DOCK_MIN_WIDTH = CONTEXT_PANEL_MIN_WIDTH;
-const RIGHT_DOCK_CONTEXT_WIDTH = 380;
-const RIGHT_DOCK_TREE_DEFAULT_WIDTH = 320;
-const RIGHT_DOCK_TREE_DEFAULT_RATIO = 0.25;
-const RIGHT_DOCK_TREE_MIN_WIDTH = 260;
+const RIGHT_DOCK_CONTEXT_WIDTH = 300;
+const RIGHT_DOCK_TREE_DEFAULT_WIDTH = 300;
+const RIGHT_DOCK_TREE_MIN_WIDTH = 300;
 const RIGHT_DOCK_TREE_MAX_WIDTH = 560;
-const RIGHT_DOCK_PREVIEW_DEFAULT_WIDTH = 640;
+const RIGHT_DOCK_PREVIEW_DEFAULT_WIDTH = 660;
+const RIGHT_DOCK_PREVIEW_MIN_WIDTH = RIGHT_DOCK_PREVIEW_DEFAULT_WIDTH;
 const RIGHT_DOCK_MAX_WIDTH = 860;
 
 type RightDockMode = "context" | "files" | "changed";
-const SHOW_CONTEXT_DOCK = false;
+const SHOW_CONTEXT_DOCK = true;
 type SidebarSlideDirection = "collapse" | "expand";
 type HistoryScopeFilter = { scope: "global" | "project"; workspaceRoot: string };
 type DesktopPlatform = "darwin" | "windows" | "linux";
@@ -96,30 +93,20 @@ function clampSidebarWidth(width: number): number {
   return Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, Math.round(width)));
 }
 
-function clampRightDockWidth(width: number): number {
-  return Math.min(RIGHT_DOCK_MAX_WIDTH, Math.max(RIGHT_DOCK_MIN_WIDTH, Math.round(width)));
+function clampRightDockPreviewWidth(width: number): number {
+  return Math.min(RIGHT_DOCK_MAX_WIDTH, Math.max(RIGHT_DOCK_PREVIEW_MIN_WIDTH, Math.round(width)));
 }
 
 function clampRightDockTreeWidth(width: number): number {
   return Math.min(RIGHT_DOCK_TREE_MAX_WIDTH, Math.max(RIGHT_DOCK_TREE_MIN_WIDTH, Math.round(width)));
 }
 
-function viewportWidthFallback(): number {
-  if (typeof window === "undefined") return 0;
-  const width = Math.round(window.innerWidth || 0);
-  return Number.isFinite(width) && width > 0 ? width : 0;
-}
-
 function defaultSidebarWidth(): number {
-  const width = viewportWidthFallback();
-  if (width <= 0) return SIDEBAR_DEFAULT_WIDTH;
-  return clampSidebarWidth(width * SIDEBAR_DEFAULT_RATIO);
+  return SIDEBAR_DEFAULT_WIDTH;
 }
 
 function defaultRightDockTreeWidth(): number {
-  const width = viewportWidthFallback();
-  if (width <= 0) return RIGHT_DOCK_TREE_DEFAULT_WIDTH;
-  return clampRightDockTreeWidth(width * RIGHT_DOCK_TREE_DEFAULT_RATIO);
+  return RIGHT_DOCK_TREE_DEFAULT_WIDTH;
 }
 
 function resolveRightDockWidth(mainWidth: number, desiredDockWidth: number, minWidth: number): number {
@@ -148,11 +135,11 @@ function saveSidebarCollapsed(collapsed: boolean): void {
 }
 
 function loadSidebarWidth(): number {
-  return loadLayoutSize("sidebarWidth", defaultSidebarWidth(), clampSidebarWidth);
+  return loadLayoutSize("sidebarWidthGraphite", defaultSidebarWidth(), clampSidebarWidth);
 }
 
 function saveSidebarWidth(width: number): void {
-  saveLayoutSize("sidebarWidth", width, clampSidebarWidth);
+  saveLayoutSize("sidebarWidthGraphite", width, clampSidebarWidth);
 }
 
 function normalizeDesktopPlatform(value: string): DesktopPlatform {
@@ -186,11 +173,11 @@ function saveRightDockTreeWidth(width: number): void {
 }
 
 function loadRightDockPreviewWidth(): number {
-  return loadLayoutSize("rightDockPreviewWidth", RIGHT_DOCK_PREVIEW_DEFAULT_WIDTH, clampRightDockWidth);
+  return loadLayoutSize("rightDockPreviewWidth", RIGHT_DOCK_PREVIEW_DEFAULT_WIDTH, clampRightDockPreviewWidth);
 }
 
 function saveRightDockPreviewWidth(width: number): void {
-  saveLayoutSize("rightDockPreviewWidth", width, clampRightDockWidth);
+  saveLayoutSize("rightDockPreviewWidth", width, clampRightDockPreviewWidth);
 }
 
 function tabWorkspaceTitle(tab?: TabMeta): string {
@@ -198,6 +185,13 @@ function tabWorkspaceTitle(tab?: TabMeta): string {
   if (tab.scope === "project") return tab.workspaceName || tab.workspaceRoot || "Project";
   if (tab.scope === "global") return tab.workspaceName || "Global";
   return tab.workspaceName || tab.workspaceRoot || "Global";
+}
+
+function compactPathLabel(path?: string): string {
+  if (!path) return "";
+  const parts = path.split(/[\\/]/).filter(Boolean);
+  if (parts.length === 0) return path;
+  return parts.slice(-2).join("/");
 }
 
 function topicTitle(tab?: TabMeta): string {
@@ -407,6 +401,8 @@ export default function App() {
   const [needsOnboarding, setNeedsOnboarding] = useState<boolean | null>(null);
   const [settingsTarget, setSettingsTarget] = useState<SettingsTab | null>(null);
   const [histView, setHistView] = useState<HistoryViewState | null>(null);
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [paletteSessions, setPaletteSessions] = useState<SessionMeta[]>([]);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(loadSidebarCollapsed);
   const [sidebarWidth, setSidebarWidth] = useState(loadSidebarWidth);
   const [sidebarResizing, setSidebarResizing] = useState(false);
@@ -427,7 +423,6 @@ export default function App() {
   const [topicExportOpen, setTopicExportOpen] = useState(false);
   const [sidebarTogglePressed, setSidebarTogglePressed] = useState(false);
   const [sidebarSlideDirection, setSidebarSlideDirection] = useState<SidebarSlideDirection | null>(null);
-  const [paletteOpen, setPaletteOpen] = useState(false);
   const topicRenameSkipCommitRef = useRef(false);
   const topicRenameCommitHandledRef = useRef(false);
   const sidebarTogglePressTimerRef = useRef<number | null>(null);
@@ -542,7 +537,7 @@ export default function App() {
       : rightDockTreeWidth;
   const sidebarRenderWidth = sidebarCollapsed ? 0 : sidebarWidth;
   const measuredMainWidth = layoutWidth > 0 ? Math.max(0, layoutWidth - sidebarRenderWidth) : CHAT_MIN_WIDTH + WORKSPACE_RESIZER_WIDTH + preferredWorkspacePanelWidth;
-  const workspacePanelMinWidth = workspacePreviewActive ? RIGHT_DOCK_MIN_WIDTH : RIGHT_DOCK_TREE_MIN_WIDTH;
+  const workspacePanelMinWidth = workspacePreviewActive ? RIGHT_DOCK_PREVIEW_MIN_WIDTH : RIGHT_DOCK_TREE_MIN_WIDTH;
 
   const budget = Math.max(0, measuredMainWidth - CHAT_MIN_WIDTH - WORKSPACE_RESIZER_WIDTH);
   const dockedChatWidth = measuredMainWidth - preferredWorkspacePanelWidth - WORKSPACE_RESIZER_WIDTH;
@@ -687,11 +682,6 @@ export default function App() {
   const [dismissedTodo, setDismissedTodo] = useState<string | null>(null);
   const showTodos = shouldShowTodoPanel(todoItem?.id, dismissedTodo, todos);
 
-  // useDeferredValue lets React prioritise Composer input (high-priority) over
-  // Transcript re-renders (low-priority) during streaming. When a keystroke
-  // and a transcript update collide, the keystroke is processed immediately
-  // and the transcript re-render is deferred to idle time.
-  const deferredItems = useDeferredValue(state.items);
   const sessionTitle = topicTitle(activeTab);
   const sessionHasContent = state.items.length > 0 || Boolean(state.live?.text || state.live?.reasoning);
   const getSessionMarkdown = useCallback(
@@ -776,10 +766,10 @@ export default function App() {
           return;
         }
         if (isThemeStyle(arg)) {
-          const next = themeForStyle(arg);
-          await app.SetDesktopAppearance(next, arg);
-          applyTheme(next, arg);
-          notice(t("settings.themeChanged", { theme: next, style: arg }));
+          const cur = getTheme();
+          await app.SetDesktopAppearance(cur, arg);
+          applyTheme(cur, arg);
+          notice(t("settings.themeChanged", { theme: cur, style: arg }));
           return;
         }
         notice(t("settings.themeUnknown", { name: arg }), "warn");
@@ -922,7 +912,7 @@ export default function App() {
       closeTransientOverlays();
       if (rightDockMode === "context") return;
       if (workspacePreviewActive) {
-        const next = clampRightDockWidth(width);
+        const next = clampRightDockPreviewWidth(width);
         setRightDockPreviewWidth(next);
         saveRightDockPreviewWidth(next);
         return;
@@ -938,7 +928,7 @@ export default function App() {
     (width: number) => {
       closeTransientOverlays();
       if (rightDockMode === "context") return;
-      const next = clampRightDockWidth(width);
+      const next = clampRightDockPreviewWidth(width);
       setRightDockPreviewWidth(next);
       saveRightDockPreviewWidth(next);
     },
@@ -959,7 +949,7 @@ export default function App() {
         nextDockWidth = startDockWidth - delta;
         if (rightDockMode === "context") return;
         if (workspacePreviewActive) {
-          setRightDockPreviewWidth(clampRightDockWidth(nextDockWidth));
+          setRightDockPreviewWidth(clampRightDockPreviewWidth(nextDockWidth));
         } else {
           setRightDockTreeWidth(clampRightDockTreeWidth(nextDockWidth));
         }
@@ -989,7 +979,7 @@ export default function App() {
         setSavedWorkspacePanelWidth(preferredWorkspacePanelWidth + (event.key === "ArrowLeft" ? 16 : -16));
       } else if (event.key === "Home") {
         event.preventDefault();
-        setSavedWorkspacePanelWidth(workspacePreviewActive ? RIGHT_DOCK_MIN_WIDTH : RIGHT_DOCK_TREE_MIN_WIDTH);
+        setSavedWorkspacePanelWidth(workspacePreviewActive ? RIGHT_DOCK_PREVIEW_MIN_WIDTH : RIGHT_DOCK_TREE_MIN_WIDTH);
       } else if (event.key === "End") {
         event.preventDefault();
         setSavedWorkspacePanelWidth(workspacePreviewActive ? RIGHT_DOCK_MAX_WIDTH : RIGHT_DOCK_TREE_MAX_WIDTH);
@@ -1135,17 +1125,6 @@ export default function App() {
     setTabRevealSignal((signal) => signal + 1);
   }, [activeTab?.scope, activeTab?.workspaceRoot, closeTransientOverlays, openGlobalTab, openProjectTab, refreshTabMetas, state.meta?.cwd]);
 
-  // ── Command palette (⌘K) ────────────────────────────────────────────
-  useEffect(() => {
-    const onKeyDown = (event: globalThis.KeyboardEvent) => {
-      if (!(event.metaKey || event.ctrlKey) || event.altKey || event.shiftKey || event.key.toLowerCase() !== "k") return;
-      event.preventDefault();
-      setPaletteOpen((open) => !open);
-    };
-    window.addEventListener("keydown", onKeyDown, { capture: true });
-    return () => window.removeEventListener("keydown", onKeyDown, { capture: true });
-  }, []);
-
   const handleMessageAction = useCallback(async (turn: number, scope: string) => {
     await rewind(turn, scope);
     if (scope === "fork") {
@@ -1191,54 +1170,6 @@ export default function App() {
     setHistView(null);
   }, [closeTransientOverlays]);
 
-  // ── Command palette (⌘K) item builder ───────────────────────────────
-  const buildPaletteItems = useCallback((): PaletteItem[] => {
-    const items: PaletteItem[] = [];
-
-    for (const tab of tabMetas) {
-      items.push({
-        id: `tab:${tab.id}`,
-        title: tab.topicTitle || "Untitled",
-        hint: tab.scope === "global" ? "Global" : tab.workspaceName || tab.workspaceRoot,
-        group: t("sidebar.conversations"),
-        keywords: [tab.label],
-        run: () => void handleTabChange(tab.id),
-      });
-    }
-
-    items.push(
-      {
-        id: "action:new-session",
-        title: t("topbar.newSession"),
-        group: "Actions",
-        keywords: ["new", "chat", "session"],
-        run: () => void handleNewTab(),
-      },
-      {
-        id: "action:history",
-        title: t("sidebar.allHistory"),
-        group: "Actions",
-        keywords: ["history", "sessions", "past"],
-        run: () => void openAllHistory(),
-      },
-      {
-        id: "action:settings",
-        title: t("topbar.settings"),
-        group: "Actions",
-        keywords: ["preferences", "config", "options"],
-        run: () => setSettingsTarget("general"),
-      },
-      {
-        id: "action:trash",
-        title: t("sidebar.trash"),
-        group: "Actions",
-        keywords: ["deleted", "bin"],
-        run: () => void openTrash(),
-      },
-    );
-
-    return items;
-  }, [tabMetas, handleTabChange, handleNewTab, openAllHistory, openTrash, t]);
   const onResumeSession = useCallback(
     async (session: SessionMeta) => {
       if (state.running) return;
@@ -1258,6 +1189,49 @@ export default function App() {
     },
     [openGlobalTab, openProjectTab, refreshTabMetas, state.running, resumeSession],
   );
+
+  // Command palette: ⌘K / Ctrl+K opens a fuzzy navigator over commands and
+  // recent sessions. Sessions are snapshotted on open so the list is stable
+  // while the palette is up.
+  const openPalette = useCallback(async () => {
+    closeTransientOverlays();
+    setPaletteOpen(true);
+    setPaletteSessions(await listSessions().catch(() => []));
+  }, [closeTransientOverlays, listSessions]);
+  useEffect(() => {
+    const onKey = (e: globalThis.KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setPaletteOpen((cur) => {
+          if (!cur) void openPalette();
+          return cur;
+        });
+      } else if (e.key === "Escape") {
+        setPaletteOpen(false);
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [openPalette]);
+  const paletteItems = useMemo<PaletteItem[]>(() => {
+    const cmds: PaletteItem[] = [
+      { id: "cmd-new", group: t("palette.group.commands"), title: t("palette.cmd.newSession"), keywords: ["new", "新建"], run: () => void newSession() },
+      { id: "cmd-history", group: t("palette.group.commands"), title: t("palette.cmd.history"), keywords: ["history", "历史"], run: () => void openAllHistory() },
+      { id: "cmd-trash", group: t("palette.group.commands"), title: t("palette.cmd.trash"), keywords: ["trash", "回收站"], run: () => void openTrash() },
+      { id: "cmd-settings", group: t("palette.group.commands"), title: t("palette.cmd.settings"), keywords: ["settings", "设置"], run: () => setSettingsTarget("general") },
+      { id: "cmd-appearance", group: t("palette.group.commands"), title: t("palette.cmd.appearance"), keywords: ["theme", "appearance", "外观", "主题"], run: () => setSettingsTarget("appearance") },
+      { id: "cmd-memory", group: t("palette.group.commands"), title: t("palette.cmd.memory"), keywords: ["memory", "记忆"], run: () => setSettingsTarget("memory") },
+      { id: "cmd-models", group: t("palette.group.commands"), title: t("palette.cmd.models"), keywords: ["model", "模型"], run: () => setSettingsTarget("models") },
+    ];
+    const sessionItems: PaletteItem[] = paletteSessions.slice(0, 12).map((s) => ({
+      id: `sess-${s.path}`,
+      group: t("palette.group.sessions"),
+      title: s.title?.trim() || s.preview || t("history.emptySession"),
+      hint: s.workspaceRoot || undefined,
+      run: () => void onResumeSession(s),
+    }));
+    return [...cmds, ...sessionItems];
+  }, [t, paletteSessions, newSession, openAllHistory, openTrash, onResumeSession]);
   // Delete / rename act on disk, then re-fetch so the panel reflects the change.
   const onDeleteSession = useCallback(
     async (path: string) => {
@@ -1328,12 +1302,6 @@ export default function App() {
     return picked;
   }, [pickWorkspace, switchWorkspace, refreshTabMetas]);
 
-  const removeWorkspace = useCallback(async (path: string) => {
-    await app.RemoveWorkspace(path);
-    setProjectRevision((value) => value + 1);
-    await refreshTabMetas();
-  }, [refreshTabMetas]);
-
   const refreshProjectsAndTabs = useCallback(async () => {
     setProjectRevision((value) => value + 1);
     const tabs = await refreshTabMetas();
@@ -1391,6 +1359,7 @@ export default function App() {
       : t("sidebar.collapse");
   const sidebarNavTooltipDisabled = !sidebarCollapsed;
   const macChromeTabs = desktopPlatform === "darwin";
+  const browserPreviewChrome = typeof window !== "undefined" && !window.runtime;
   const workspacePanelResetWidth = rightDockMode === "context"
     ? RIGHT_DOCK_CONTEXT_WIDTH
     : workspacePreviewActive
@@ -1401,12 +1370,16 @@ export default function App() {
     activeTab?.scope === "project" ? activeTab.workspaceRoot || state.meta?.cwd : activeTab?.scope === "global" ? t("scope.global") : "",
     state.meta?.label ?? "",
   ].filter(Boolean).join(" · ");
+  const dockWorkspacePath = activeTab?.scope === "project"
+    ? activeTab.workspaceRoot || state.meta?.cwd
+    : state.meta?.cwd || activeTab?.workspaceRoot;
+  const dockWorkspaceLabel = compactPathLabel(dockWorkspacePath) || tabWorkspaceTitle(activeTab);
 
   return (
     <ShellExpandProvider>
     <ShellHotkeys />
     <TextSizeHotkeys />
-    <div className={`app app--${desktopPlatform}`}>
+    <div className={["app", `app--${desktopPlatform}`, browserPreviewChrome ? "app--browser-preview" : ""].filter(Boolean).join(" ")}>
       <div
         ref={layoutRef}
         className={[
@@ -1424,6 +1397,13 @@ export default function App() {
         style={layoutStyle}
       >
         <header className={`app-chrome${macChromeTabs ? " app-chrome--tabs" : ""}`}>
+          {browserPreviewChrome && macChromeTabs && (
+            <div className="app-chrome__traffic" aria-hidden="true">
+              <span />
+              <span />
+              <span />
+            </div>
+          )}
           <button
             className={[
               "app-chrome__panel-toggle",
@@ -1450,6 +1430,7 @@ export default function App() {
                 onTabsClose={(ids, nextActiveTabId) => void handleTabsClose(ids, nextActiveTabId)}
                 onTabsReorder={(ids) => void handleTabsReorder(ids)}
                 onNewTab={() => void handleNewTab()}
+                onOpenPalette={() => void openPalette()}
               />
             </div>
           ) : (
@@ -1508,6 +1489,7 @@ export default function App() {
               activeTopicId={activeTab?.topicId}
               onOpenTopic={handleOpenTopic}
               onOpenProjectHistory={openProjectHistory}
+              onOpenAllHistory={openAllHistory}
               onTopicsChanged={refreshProjectsAndTabs}
               onRenameTopic={renameTopic}
               refreshSignal={projectRevision}
@@ -1527,13 +1509,16 @@ export default function App() {
                 <span>{t("sidebar.allHistory")}</span>
               </button>
             </Tooltip>
-            <Tooltip label={t("sidebar.trash")} fill side="right" disabled={sidebarNavTooltipDisabled}>
+            <Tooltip label={t("sidebar.memorySkills")} fill side="right" disabled={sidebarNavTooltipDisabled}>
               <button
                 className="sidebar__navitem"
-                onClick={() => void openTrash()}
+                onClick={() => {
+                  closeTransientOverlays();
+                  setSettingsTarget("memory");
+                }}
               >
-                <Trash2 size={15} />
-                <span>{t("sidebar.trash")}</span>
+                <Brain size={15} />
+                <span>{t("sidebar.memorySkills")}</span>
               </button>
             </Tooltip>
             <Tooltip label={t("topbar.settings")} fill side="right" disabled={sidebarNavTooltipDisabled}>
@@ -1577,6 +1562,7 @@ export default function App() {
                 onTabsClose={(ids, nextActiveTabId) => void handleTabsClose(ids, nextActiveTabId)}
                 onTabsReorder={(ids) => void handleTabsReorder(ids)}
                 onNewTab={() => void handleNewTab()}
+                onOpenPalette={() => void openPalette()}
               />
             </header>
           )}
@@ -1640,16 +1626,26 @@ export default function App() {
                 <GitBranch size={14} />
                 <span>{t("workspace.changedTab")}</span>
               </button>
+              <Tooltip label={t("topicBar.command")}>
+                <button
+                  className="topicbar__action-btn topicbar__action-btn--label topicbar__action-btn--accent"
+                  type="button"
+                  onClick={() => void openPalette()}
+                >
+                  <Command size={14} />
+                  <span>{t("topicBar.command")}</span>
+                </button>
+              </Tooltip>
               <CopyButton
                 getText={getSessionMarkdown}
                 label={t("topicBar.copyAll")}
                 showLabel={false}
-                className="topicbar__action-btn topicbar__action-btn--icon"
+                className="topicbar__action-btn topicbar__action-btn--icon topicbar__action-btn--utility"
               />
               <div className={`topicbar__export${topicExportOpen ? " topicbar__export--open" : ""}`}>
                 <Tooltip label={t("topicBar.export")}>
                   <button
-                    className="topicbar__action-btn topicbar__action-btn--icon"
+                    className="topicbar__action-btn topicbar__action-btn--icon topicbar__action-btn--utility"
                     type="button"
                     disabled={!sessionHasContent}
                     aria-label={t("topicBar.export")}
@@ -1690,7 +1686,7 @@ export default function App() {
               </div>
             ) : (
 	              <Transcript
-	                items={deferredItems}
+	                items={state.items}
 	                live={state.live}
 	                footerHeight={footerHeight}
 	                onPrompt={send}
@@ -1743,8 +1739,6 @@ export default function App() {
               onSetMode={applyMode}
               onSwitchModel={switchModel}
               onSetEffort={setEffort}
-              onPickFolder={switchFolder}
-              onRemoveWorkspace={removeWorkspace}
               insertRequest={composerInsertRequest}
 	              disabled={state.meta?.ready === false || state.messageAction != null || state.approval != null || state.ask != null}
 	              decisionPending={state.messageAction != null || state.approval != null || state.ask != null}
@@ -1752,7 +1746,6 @@ export default function App() {
               turnStartAt={state.turnStartAt}
               turnTokens={state.turnTokens}
               retry={state.retry}
-              workspaceRefreshSignal={projectRevision}
               transientDismissSignal={transientOverlayDismissSignal}
             />
             <StatusBar
@@ -1764,6 +1757,7 @@ export default function App() {
               mode={mode}
               cost={state.sessionCost}
               currency={state.sessionCurrency}
+              modelLabel={state.meta?.label}
             />
           </footer>
           </>
@@ -1793,20 +1787,15 @@ export default function App() {
             ].join(" ")}
             aria-label={t("rightDock.workbench")}
           >
+            <div className="workbench-dock__head">
+              <div className="workbench-dock__heading">
+                <h2>{t("workspace.title")}</h2>
+              </div>
+              <span className="workbench-dock__head-spacer" />
+              {dockWorkspaceLabel && <small>{dockWorkspaceLabel}</small>}
+            </div>
             <div className="workbench-dock__tools">
               <div className="workbench-dock__tabs" role="tablist" aria-label={t("rightDock.views")}>
-                {SHOW_CONTEXT_DOCK && (
-                  <button
-                    type="button"
-                    role="tab"
-                    aria-selected={rightDockMode === "context"}
-                    className={`workbench-dock__tab${rightDockMode === "context" ? " workbench-dock__tab--active" : ""}`}
-                    onClick={() => openRightDockMode("context")}
-                  >
-                    <CircleGauge size={13} />
-                    <span className="workbench-dock__tab-label">{t("rightDock.overview")}</span>
-                  </button>
-                )}
                 <button
                   type="button"
                   role="tab"
@@ -1827,6 +1816,18 @@ export default function App() {
                   <GitBranch size={13} />
                   <span className="workbench-dock__tab-label">{t("workspace.changedTab")}</span>
                 </button>
+                {SHOW_CONTEXT_DOCK && (
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={rightDockMode === "context"}
+                    className={`workbench-dock__tab${rightDockMode === "context" ? " workbench-dock__tab--active" : ""}`}
+                    onClick={() => openRightDockMode("context")}
+                  >
+                    <Activity size={13} />
+                    <span className="workbench-dock__tab-label">{t("rightDock.overview")}</span>
+                  </button>
+                )}
               </div>
             </div>
             <div className="workbench-dock__body">
@@ -1891,19 +1892,19 @@ export default function App() {
         />
       )}
 
+      <CommandPalette
+        open={paletteOpen}
+        onClose={() => setPaletteOpen(false)}
+        items={paletteItems}
+        placeholder={t("palette.placeholder")}
+        emptyText={t("palette.empty")}
+      />
+
       {startupSplashVisible && (
         <StartupSplash hold={startupSplashHold} onDone={() => setStartupSplashVisible(false)} />
       )}
 
       {needsOnboarding && <OnboardingOverlay onComplete={() => setNeedsOnboarding(false)} />}
-
-      <CommandPalette
-        open={paletteOpen}
-        onClose={() => setPaletteOpen(false)}
-        items={buildPaletteItems()}
-        placeholder="Quick actions…"
-        emptyText="No matches"
-      />
     </div>
     </ShellExpandProvider>
   );

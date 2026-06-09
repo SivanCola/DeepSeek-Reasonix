@@ -4,7 +4,7 @@
 // new topic.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, DragEvent as ReactDragEvent, KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent } from "react";
-import { Archive, ChevronRight, ChevronDown, Pencil, Plus, Folder, FolderPlus, Search, BriefcaseBusiness, Copy, FolderOpen, XCircle, History, Check } from "lucide-react";
+import { Archive, ChevronRight, Pencil, Plus, Folder, FolderPlus, Search, BriefcaseBusiness, Copy, FolderOpen, XCircle, History, Check } from "lucide-react";
 import { asArray } from "../lib/array";
 import { app } from "../lib/bridge";
 import type { ProjectNode } from "../lib/types";
@@ -20,6 +20,7 @@ interface ProjectTreeProps {
   onOpenTopic: (scope: string, workspaceRoot: string, topicId: string) => Promise<void> | void;
   onOpenProjectHistory: (scope: "global" | "project", workspaceRoot: string) => Promise<void> | void;
   onAddProject: () => Promise<void>;
+  onOpenAllHistory?: () => Promise<void> | void;
   onRenameTopic?: (topicId: string, title: string) => Promise<void> | void;
   onTopicsChanged?: () => Promise<void> | void;
   refreshSignal?: number;
@@ -39,11 +40,17 @@ function topicIsActive(node: ProjectNode, activeScope?: string, activeWorkspaceR
   );
 }
 
-function topicMetaLine(node: ProjectNode, t: Translator): string {
+function topicMetaLine(node: ProjectNode, active: boolean, t: Translator): string {
+  const parts: string[] = [];
+  if (active || node.open) parts.push(t("history.current"));
+  if (node.running) {
+    parts.push(t("projectTree.running"));
+    return parts.join(" · ");
+  }
   const turns = node.turns ?? 0;
-  if (turns <= 0) return "";
-  const last = node.lastActivityAt ? ` · ${topicActivityLabel(node.lastActivityAt)}` : "";
-  return `${t(turns === 1 ? "history.turnOne" : "history.turnOther", { n: turns })}${last}`;
+  if (turns > 0) parts.push(t(turns === 1 ? "history.turnOne" : "history.turnOther", { n: turns }));
+  if (node.lastActivityAt) parts.push(topicActivityLabel(node.lastActivityAt));
+  return parts.join(" · ");
 }
 
 function topicActivityLabel(ms: number): string {
@@ -134,6 +141,7 @@ export function ProjectTree({
   onOpenTopic,
   onOpenProjectHistory,
   onAddProject,
+  onOpenAllHistory,
   onRenameTopic,
   onTopicsChanged,
   refreshSignal,
@@ -425,7 +433,7 @@ export function ProjectTree({
       const scope = node.kind === "global_topic" ? "global" : "project";
       const active = topicIsActive(node, activeScope, activeWorkspaceRoot, activeTopicId);
       const label = (node.label || node.topicId || "Untitled").replace(/^●\s*/, "");
-      const meta = topicMetaLine(node, t);
+      const meta = topicMetaLine(node, active, t);
       const topicId = node.topicId ?? "";
       const topicMenuOpen = menuTopic === topicId;
       const openTopicMenu = (event: ReactMouseEvent<HTMLElement> | ReactKeyboardEvent<HTMLElement>) => {
@@ -479,7 +487,7 @@ export function ProjectTree({
       return (
         <div
           key={key}
-          className={`project-tree__topic${active ? " project-tree__topic--active" : ""}${topicMenuOpen ? " project-tree__topic--menu-open" : ""}`}
+          className={`project-tree__topic${active ? " project-tree__topic--active" : ""}${topicMenuOpen ? " project-tree__topic--menu-open" : ""}${meta ? " project-tree__topic--has-meta" : ""}`}
           style={projectAccentStyle(node.projectColor)}
           onContextMenu={openTopicMenu}
         >
@@ -497,6 +505,7 @@ export function ProjectTree({
           >
             <span className="project-tree__topic-copy">
               <span className="project-tree__topic-label">{label}</span>
+              {meta && <span className="project-tree__topic-meta">{meta}</span>}
             </span>
           </button>
           <ContextMenu
@@ -652,9 +661,11 @@ export function ProjectTree({
               onBlur={() => void commitRenameProject(projectRoot)}
             />
           </div>
-          {isExpanded && hasChildren && (
-            <div className="project-tree__children">
-              {children.map((child) => renderNode(child, depth + 1))}
+          {hasChildren && (
+            <div className={`project-tree__children${isExpanded ? " project-tree__children--expanded" : ""}`}>
+              <div className="project-tree__children-inner">
+                {children.map((child) => renderNode(child, depth + 1))}
+              </div>
             </div>
           )}
         </div>
@@ -692,7 +703,9 @@ export function ProjectTree({
             aria-expanded={hasChildren ? isExpanded : undefined}
           >
             {hasChildren ? (
-              isExpanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />
+              <span className={`project-tree__chevron${isExpanded ? " project-tree__chevron--open" : ""}`}>
+                <ChevronRight size={12} />
+              </span>
             ) : (
               <span style={{ width: 12 }} />
             )}
@@ -722,9 +735,11 @@ export function ProjectTree({
             onClose={closeMenu}
           />
         </div>
-        {isExpanded && hasChildren && (
-          <div className="project-tree__children">
-            {children.map((child) => renderNode(child, depth + 1))}
+        {hasChildren && (
+          <div className={`project-tree__children${isExpanded ? " project-tree__children--expanded" : ""}`}>
+            <div className="project-tree__children-inner">
+              {children.map((child) => renderNode(child, depth + 1))}
+            </div>
           </div>
         )}
       </div>
@@ -740,23 +755,35 @@ export function ProjectTree({
           onChange={(event) => setQuery(event.target.value)}
           placeholder={t("projectTree.searchPlaceholder")}
         />
+        <kbd className="project-tree__search-kbd" aria-hidden="true">⌘K</kbd>
       </label>
       <div className="project-tree__header">
         <span className="project-tree__header-title">
-          <BriefcaseBusiness size={13} />
+          <BriefcaseBusiness className="project-tree__header-icon" size={13} />
           {t("projectTree.workspaceTitle")}
         </span>
-        <Tooltip label={t("projectTree.addProjectTooltip")} className="project-tree__action-slot">
-          <button
-            type="button"
-            className="project-tree__add-project"
-            aria-label={t("projectTree.addProjectTooltip")}
-            disabled={addingProject}
-            onClick={() => void handleAddProject()}
-          >
-            <FolderPlus size={13} />
-          </button>
-        </Tooltip>
+        <span className="project-tree__header-actions">
+          {onOpenAllHistory && (
+            <button
+              type="button"
+              className="project-tree__all"
+              onClick={() => void onOpenAllHistory()}
+            >
+              {t("projectTree.all")}
+            </button>
+          )}
+          <Tooltip label={t("projectTree.addProjectTooltip")} className="project-tree__action-slot project-tree__action-slot--add">
+            <button
+              type="button"
+              className="project-tree__add-project"
+              aria-label={t("projectTree.addProjectTooltip")}
+              disabled={addingProject}
+              onClick={() => void handleAddProject()}
+            >
+              <FolderPlus size={13} />
+            </button>
+          </Tooltip>
+        </span>
       </div>
       <div className="project-tree__list">
         {visibleTree.length === 0 ? (

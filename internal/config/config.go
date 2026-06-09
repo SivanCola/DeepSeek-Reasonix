@@ -136,7 +136,7 @@ func (c *Config) DesktopLanguage() string {
 	}
 }
 
-// DesktopTheme normalizes desktop.theme. New desktop users default to the dark
+// DesktopTheme normalizes desktop.theme. New desktop users default to the light
 // graphite product look; an explicit auto/light/dark is preserved.
 func (c *Config) DesktopTheme() string {
 	switch strings.ToLower(strings.TrimSpace(c.Desktop.Theme)) {
@@ -147,7 +147,7 @@ func (c *Config) DesktopTheme() string {
 	case "dark":
 		return "dark"
 	default:
-		return "dark"
+		return "light"
 	}
 }
 

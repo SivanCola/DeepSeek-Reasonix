@@ -317,7 +317,7 @@ func (a *App) Settings() SettingsView {
 			Agent:             AgentView{PlannerMaxSteps: 12},
 			Bot:               botSettingsView(config.BotConfig{}),
 			AutoPlan:          "off",
-			DesktopTheme:      "dark",
+			DesktopTheme:      "light",
 			DesktopThemeStyle: "graphite",
 			CloseBehavior:     "background",
 		}
