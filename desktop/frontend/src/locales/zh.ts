@@ -36,11 +36,13 @@ export const zh: Record<DictKey, string> = {
   "tabBar.closeTabsToRight": "关闭右侧标签页",
   "tabBar.newSession": "新建会话",
   "tabBar.tabActions": "标签页操作",
+  "tabBar.commandSearch": "搜索 · 命令 · 打开文件",
 
   // 侧边栏
   "sidebar.conversations": "会话",
   "sidebar.allHistory": "历史",
   "sidebar.trash": "回收站",
+  "sidebar.memorySkills": "记忆与技能",
   "sidebar.workspace": "工作区",
   "sidebar.changeWorkspace": "更改",
   "sidebar.navigation": "Reasonix 导航",
@@ -56,11 +58,12 @@ export const zh: Record<DictKey, string> = {
   "rightDock.collapse": "收起工作区",
   "rightDock.workbench": "工作区面板",
   "rightDock.views": "工作区视图",
-  "rightDock.overview": "概览",
+  "rightDock.overview": "上下文",
 
   // 话题栏
   "topicBar.renameSession": "重命名会话",
   "topicBar.more": "更多",
+  "topicBar.command": "命令",
   "topicBar.copyAll": "复制会话",
   "topicBar.export": "导出会话",
   "topicBar.exportMarkdown": "导出 Markdown",
@@ -217,7 +220,8 @@ export const zh: Record<DictKey, string> = {
   "caps.hideDiagnostics": "隐藏诊断路径",
 
   // 欢迎 / 空状态
-  "welcome.tagline": "一个编码智能体 —— 描述任务或随便问点什么。",
+  "welcome.title": "一个编码智能体",
+  "welcome.tagline": "描述任务，或随便问点什么。",
   "welcome.hintCommands": "命令",
   "welcome.hintFiles": "引用文件",
   "welcome.hintSend": "发送",
@@ -248,6 +252,8 @@ export const zh: Record<DictKey, string> = {
   "composer.removeCurrentProjectDisabled": "不能移除当前项目",
   "composer.resize": "拖动调整输入区高度，双击重置",
   "composer.send": "发送（Enter）",
+  "composer.shellMode": "Shell 模式：给输入前加 !",
+  "composer.shellModeOn": "Shell 模式已开：点击移除 !",
   "composer.stop": "停止（Esc）",
   "composer.stopShort": "停止",
   "composer.pastedLabel": "[已粘贴文本 #{id} · {lines} 行]",
@@ -363,11 +369,13 @@ export const zh: Record<DictKey, string> = {
 
   // 项目树
   "projectTree.workspaceTitle": "项目工作区",
+  "projectTree.all": "全部",
   "projectTree.searchPlaceholder": "搜索项目或会话",
   "projectTree.newTopic": "新会话",
   "projectTree.renameTopic": "重命名会话",
   "projectTree.renameProject": "修改显示名称",
   "projectTree.projectHistory": "查看项目历史",
+  "projectTree.running": "流式中",
   "projectTree.removeProject": "移出侧边栏",
   "projectTree.confirmRemoveProject": "确认移出侧边栏",
   "projectTree.copyPath": "复制路径",
@@ -681,6 +689,9 @@ export const zh: Record<DictKey, string> = {
   "settings.appearance": "外观",
   "settings.theme": "主题",
   "settings.themeStyle": "方向",
+  "settings.style.graphite.zh": "石墨",
+  "settings.style.graphite.note": "利落",
+  "settings.style.graphite.desc": "纸面白配石墨文字与橙色强调,利落、克制,贴近编辑器工作台。",
   "settings.style.slate.zh": "精炼",
   "settings.style.slate.note": "原生",
   "settings.style.slate.desc": "冷调近黑配品牌蓝,克制专业的原生工作台。",

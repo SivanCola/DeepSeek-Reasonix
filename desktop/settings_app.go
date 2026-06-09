@@ -276,7 +276,7 @@ func (a *App) Settings() SettingsView {
 			Sandbox:           SandboxView{Bash: "enforce", AllowWrite: []string{}},
 			Bot:               botSettingsView(config.BotConfig{}),
 			AutoPlan:          "off",
-			DesktopTheme:      "dark",
+			DesktopTheme:      "light",
 			DesktopThemeStyle: "graphite",
 			CloseBehavior:     "background",
 		}

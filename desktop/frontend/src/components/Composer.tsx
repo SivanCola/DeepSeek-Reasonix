@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, ClipboardEvent, DragEvent, KeyboardEvent, PointerEvent as ReactPointerEvent, ReactNode } from "react";
-import { AlertTriangle, ArrowUp, Eye, FileText, Folder, List, Square, Trash2, X, Zap } from "lucide-react";
+import { AlertTriangle, ArrowUp, Eye, FileText, Folder, List, Square, SquareTerminal, Trash2, X, Zap } from "lucide-react";
 import { asArray } from "../lib/array";
 import { app, onFilesDropped } from "../lib/bridge";
 import { SPINNER_WORDS, useI18n } from "../lib/i18n";
@@ -643,6 +643,15 @@ export function Composer({
   const pickCommand = (c: CommandInfo) => setTextCaretEnd("/" + c.name + " ");
 
   const activePastedBlocks = pastedBlocks.filter((block) => text.includes(block.label));
+  const shellModeActive = text.trimStart().startsWith("!");
+  const toggleShellMode = () => {
+    if (disabled || running) return;
+    if (shellModeActive) {
+      setTextCaretEnd(text.replace(/^\s*!\s?/, ""));
+      return;
+    }
+    setTextCaretEnd(text ? `! ${text}` : "! ");
+  };
 
   const removeWorkspaceReference = (target: WorkspaceReference) => {
     const key = workspaceReferenceKey(target);
@@ -1076,6 +1085,18 @@ export function Composer({
               </div>
             )}
           </div>
+          <Tooltip label={t(shellModeActive ? "composer.shellModeOn" : "composer.shellMode")}>
+            <button
+              className={`meta-chip composer-shell-chip${shellModeActive ? " composer-shell-chip--active" : ""}`}
+              type="button"
+              aria-pressed={shellModeActive}
+              onClick={toggleShellMode}
+              disabled={disabled || running}
+            >
+              <SquareTerminal size={13} />
+              <span>shell</span>
+            </button>
+          </Tooltip>
         </div>
       </div>
     </div>

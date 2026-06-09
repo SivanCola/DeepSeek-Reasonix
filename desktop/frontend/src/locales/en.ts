@@ -35,11 +35,13 @@ export const en = {
   "tabBar.closeTabsToRight": "Close tabs to right",
   "tabBar.newSession": "New session",
   "tabBar.tabActions": "Tab actions",
+  "tabBar.commandSearch": "Search · Command · Open file",
 
   // sidebar
   "sidebar.conversations": "Chats",
   "sidebar.allHistory": "History",
   "sidebar.trash": "Trash",
+  "sidebar.memorySkills": "Memory & Skills",
   "sidebar.workspace": "Workspace",
   "sidebar.changeWorkspace": "Change",
   "sidebar.navigation": "Reasonix navigation",
@@ -55,11 +57,12 @@ export const en = {
   "rightDock.collapse": "Collapse workspace",
   "rightDock.workbench": "Workspace panel",
   "rightDock.views": "Workspace views",
-  "rightDock.overview": "Overview",
+  "rightDock.overview": "Context",
 
   // topic bar
   "topicBar.renameSession": "Rename session",
   "topicBar.more": "More",
+  "topicBar.command": "Command",
   "topicBar.copyAll": "Copy session",
   "topicBar.export": "Export session",
   "topicBar.exportMarkdown": "Export Markdown",
@@ -216,7 +219,8 @@ export const en = {
   "caps.hideDiagnostics": "Hide diagnostic paths",
 
   // welcome / empty state
-  "welcome.tagline": "A coding agent — describe a task or ask anything.",
+  "welcome.title": "A coding agent",
+  "welcome.tagline": "Describe a task, or ask anything.",
   "welcome.hintCommands": "commands",
   "welcome.hintFiles": "reference files",
   "welcome.hintSend": "send",
@@ -247,6 +251,8 @@ export const en = {
   "composer.removeCurrentProjectDisabled": "Current project cannot be removed",
   "composer.resize": "Drag to resize composer, double-click to reset",
   "composer.send": "Send (Enter)",
+  "composer.shellMode": "Shell mode: prefix input with !",
+  "composer.shellModeOn": "Shell mode on: click to remove !",
   "composer.stop": "Stop (Esc)",
   "composer.stopShort": "Stop",
   "composer.pastedLabel": "[Pasted text #{id} · {lines} lines]",
@@ -362,11 +368,13 @@ export const en = {
 
   // project tree
   "projectTree.workspaceTitle": "Project workspace",
+  "projectTree.all": "All",
   "projectTree.searchPlaceholder": "Search projects or sessions",
   "projectTree.newTopic": "New session",
   "projectTree.renameTopic": "Rename session",
   "projectTree.renameProject": "Rename display name",
   "projectTree.projectHistory": "View project history",
+  "projectTree.running": "streaming",
   "projectTree.removeProject": "Remove from sidebar",
   "projectTree.confirmRemoveProject": "Confirm remove from sidebar",
   "projectTree.copyPath": "Copy path",
@@ -679,6 +687,9 @@ export const en = {
   "settings.appearance": "Appearance",
   "settings.theme": "Theme",
   "settings.themeStyle": "Direction",
+  "settings.style.graphite.zh": "Graphite",
+  "settings.style.graphite.note": "Crisp",
+  "settings.style.graphite.desc": "Paper white, graphite text, and orange accents — restrained, editor-like workbench.",
   "settings.style.slate.zh": "Refined",
   "settings.style.slate.note": "Native",
   "settings.style.slate.desc": "Cool near-black with brand blue — a restrained, professional native workbench.",

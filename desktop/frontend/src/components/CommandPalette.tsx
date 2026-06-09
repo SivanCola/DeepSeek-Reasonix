@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { Command, Search } from "lucide-react";
 import { useMountTransition } from "../lib/useMountTransition";
 
 // CommandPalette is a ⌘K / Ctrl+K modal that surfaces the desktop app's
@@ -177,6 +178,7 @@ export function CommandPalette({
     >
       <div className="palette" data-state={status} onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-label={placeholder}>
         <div className="palette__inputrow">
+          <Search className="palette__search-icon" size={18} aria-hidden="true" />
           <input
             ref={inputRef}
             className="palette__input"
@@ -211,8 +213,13 @@ export function CommandPalette({
                         onClose();
                       }}
                     >
-                      <span className="palette__title">{it.title}</span>
-                      {it.hint && <span className="palette__hint">{it.hint}</span>}
+                      <span className="palette__item-icon" aria-hidden="true">
+                        <Command size={15} />
+                      </span>
+                      <span className="palette__body">
+                        <span className="palette__title">{it.title}</span>
+                        {it.hint && <span className="palette__hint">{it.hint}</span>}
+                      </span>
                     </button>
                   );
                 })}

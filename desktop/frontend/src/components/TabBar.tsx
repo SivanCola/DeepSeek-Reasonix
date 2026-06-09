@@ -207,7 +207,7 @@ export function TabBar({ tabs, activeTabId, onTabChange, onTabClose, onTabsClose
               className={[
                 "tabbar__tab",
                 tab.id === resolvedActiveTabId ? "tabbar__tab--active" : "",
-                mode === "yolo" ? "tabbar__tab--yolo" : "",
+                mode !== "normal" ? `tabbar__tab--${mode}` : "",
                 draggingTabId === tab.id ? "tabbar__tab--dragging" : "",
                 dropTarget?.id === tab.id ? `tabbar__tab--drop-${dropTarget.side}` : "",
               ].filter(Boolean).join(" ")}
@@ -237,7 +237,7 @@ export function TabBar({ tabs, activeTabId, onTabChange, onTabClose, onTabsClose
                 />
               )}
               <span className="tabbar__tab-label">{displayTitle}</span>
-              {mode === "yolo" && <span className="tabbar__mode-badge tabbar__mode-badge--yolo">yolo</span>}
+              {mode !== "normal" && <span className={`tabbar__mode-badge tabbar__mode-badge--${mode}`}>{mode}</span>}
               <span
                 className="tabbar__tab-close"
                 onClick={(e) => {
@@ -256,6 +256,7 @@ export function TabBar({ tabs, activeTabId, onTabChange, onTabClose, onTabsClose
           <Plus size={13} />
         </button>
       </Tooltip>
+      {onOpenPalette && <span className="tabbar__spacer" aria-hidden="true" />}
       {onOpenPalette && (
         <button
           className="tabbar__command"
@@ -264,7 +265,7 @@ export function TabBar({ tabs, activeTabId, onTabChange, onTabClose, onTabsClose
           aria-label={t("palette.placeholder")}
         >
           <Search size={13} className="tabbar__command-icon" />
-          <span className="tabbar__command-text">{t("palette.placeholder")}</span>
+          <span className="tabbar__command-text">{t("tabBar.commandSearch")}</span>
           <kbd className="tabbar__command-kbd">⌘K</kbd>
         </button>
       )}

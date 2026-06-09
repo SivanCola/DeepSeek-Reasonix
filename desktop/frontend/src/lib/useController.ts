@@ -594,12 +594,24 @@ export function useController() {
   }, [dispatchTo, loadSessionDataForTab, refreshCheckpoints, syncActiveTabFromBackend]);
 
   const send = useCallback((displayText: string, submitText = displayText) => {
-    if (!activeTabId) return;
-    const seq = getOrCreateState(statesRef.current, activeTabId).seq;
-    dispatchTo(activeTabId, { type: "user", text: displayText, seq });
-    const display = displayText.trim(); const submit = submitText.trim();
-    (display !== submit ? app.SubmitDisplayToTab(activeTabId, display, submit) : app.SubmitToTab(activeTabId, submit)).catch(() => {});
-  }, [activeTabId, dispatchTo]);
+    const submitForTab = (tabId: string) => {
+      const seq = getOrCreateState(statesRef.current, tabId).seq;
+      dispatchTo(tabId, { type: "user", text: displayText, seq });
+      const display = displayText.trim();
+      const submit = submitText.trim();
+      (display !== submit ? app.SubmitDisplayToTab(tabId, display, submit) : app.SubmitToTab(tabId, submit)).catch(() => {});
+    };
+    const tabId = activeTabIdRef.current ?? activeTabId;
+    if (tabId) {
+      submitForTab(tabId);
+      return;
+    }
+    void activeTabFromBackend().then((active) => {
+      if (!active?.id) return;
+      setActiveTabId(active.id);
+      submitForTab(active.id);
+    });
+  }, [activeTabFromBackend, activeTabId, dispatchTo]);
 
   const runShell = useCallback((command: string) => {
     if (!activeTabId) return;

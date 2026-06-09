@@ -347,6 +347,7 @@ export function openExternal(url: string): void {
 // --- browser dev mock --------------------------------------------------------
 
 const listeners = new Set<(e: WireEvent) => void>();
+let mockScopedTabId: string | undefined;
 
 function mockSubscribe(cb: (e: WireEvent) => void): () => void {
   listeners.add(cb);
@@ -356,7 +357,18 @@ function mockSubscribe(cb: (e: WireEvent) => void): () => void {
 }
 
 function emit(e: WireEvent) {
-  listeners.forEach((l) => l(e));
+  const event = mockScopedTabId && !e.tabId ? { ...e, tabId: mockScopedTabId } : e;
+  listeners.forEach((l) => l(event));
+}
+
+async function withMockTabScope<T>(tabId: string, fn: () => Promise<T>): Promise<T> {
+  const previous = mockScopedTabId;
+  mockScopedTabId = tabId || previous;
+  try {
+    return await fn();
+  } finally {
+    mockScopedTabId = previous;
+  }
 }
 
 // Updater progress has its own listener set so the browser dev mock's ApplyUpdate
@@ -612,7 +624,7 @@ function makeMockApp(): AppBindings {
       connections: [],
     },
     desktopLanguage: "",
-    desktopTheme: "dark",
+    desktopTheme: "light",
     desktopThemeStyle: "graphite",
     closeBehavior: "background",
     configPath: "~/projects/reasonix/reasonix.toml",
@@ -625,6 +637,7 @@ function makeMockApp(): AppBindings {
   if (freshMock) {
     settings.configPath = "~/.config/reasonix/config.toml";
   }
+  const mockNow = Date.now();
   const mockProjectTree: ProjectNode[] = freshMock ? [] : [
     {
       key: "project_~/projects/joyquant-db",
@@ -633,9 +646,9 @@ function makeMockApp(): AppBindings {
       root: "~/projects/joyquant-db",
       projectColor: "blue",
       children: [
-        { key: "topic_dev_standard", kind: "topic", label: `● ${t("mock.topicDevStandard")}`, root: "~/projects/joyquant-db", topicId: "topic_dev_standard", projectColor: "blue" },
-        { key: "topic_db_maint", kind: "topic", label: t("mock.topicDbMaint"), root: "~/projects/joyquant-db", topicId: "topic_db_maint", projectColor: "blue" },
-        { key: "topic_env", kind: "topic", label: t("mock.topicEnv"), root: "~/projects/joyquant-db", topicId: "topic_env", projectColor: "blue" },
+        { key: "topic_dev_standard", kind: "topic", label: `● ${t("mock.topicDevStandard")}`, root: "~/projects/joyquant-db", topicId: "topic_dev_standard", projectColor: "blue", turns: 18, lastActivityAt: mockNow - 8 * 60_000, open: true, running: true },
+        { key: "topic_db_maint", kind: "topic", label: t("mock.topicDbMaint"), root: "~/projects/joyquant-db", topicId: "topic_db_maint", projectColor: "blue", turns: 7, lastActivityAt: mockNow - 2 * 60 * 60_000 },
+        { key: "topic_env", kind: "topic", label: t("mock.topicEnv"), root: "~/projects/joyquant-db", topicId: "topic_env", projectColor: "blue", turns: 3, lastActivityAt: mockNow - 26 * 60 * 60_000 },
       ],
     },
     {
@@ -645,11 +658,11 @@ function makeMockApp(): AppBindings {
       root: "~/projects/joyquant-sys",
       projectColor: "purple",
       children: [
-        { key: "topic_p3b_pd", kind: "topic", label: `● ${t("mock.topicP3b")}`, root: "~/projects/joyquant-sys", topicId: "topic_p3b_pd", projectColor: "purple" },
-        { key: "topic_p3a_pd", kind: "topic", label: t("mock.topicP3a"), root: "~/projects/joyquant-sys", topicId: "topic_p3a_pd", projectColor: "purple" },
-        { key: "topic_hotfix", kind: "topic", label: t("mock.topicHotfix"), root: "~/projects/joyquant-sys", topicId: "topic_hotfix", projectColor: "purple" },
-        { key: "topic_sys_coord", kind: "topic", label: t("mock.topicSysCoord"), root: "~/projects/joyquant-sys", topicId: "topic_sys_coord", projectColor: "purple" },
-        { key: "topic_sys_standard", kind: "topic", label: t("mock.topicSysStandard"), root: "~/projects/joyquant-sys", topicId: "topic_sys_standard", projectColor: "purple" },
+        { key: "topic_p3b_pd", kind: "topic", label: `● ${t("mock.topicP3b")}`, root: "~/projects/joyquant-sys", topicId: "topic_p3b_pd", projectColor: "purple", turns: 11, lastActivityAt: mockNow - 3 * 24 * 60 * 60_000 },
+        { key: "topic_p3a_pd", kind: "topic", label: t("mock.topicP3a"), root: "~/projects/joyquant-sys", topicId: "topic_p3a_pd", projectColor: "purple", turns: 9, lastActivityAt: mockNow - 4 * 24 * 60 * 60_000 },
+        { key: "topic_hotfix", kind: "topic", label: t("mock.topicHotfix"), root: "~/projects/joyquant-sys", topicId: "topic_hotfix", projectColor: "purple", turns: 4, lastActivityAt: mockNow - 5 * 24 * 60 * 60_000 },
+        { key: "topic_sys_coord", kind: "topic", label: t("mock.topicSysCoord"), root: "~/projects/joyquant-sys", topicId: "topic_sys_coord", projectColor: "purple", turns: 14, lastActivityAt: mockNow - 6 * 24 * 60 * 60_000 },
+        { key: "topic_sys_standard", kind: "topic", label: t("mock.topicSysStandard"), root: "~/projects/joyquant-sys", topicId: "topic_sys_standard", projectColor: "purple", turns: 6, lastActivityAt: mockNow - 7 * 24 * 60 * 60_000 },
       ],
     },
     {
@@ -658,9 +671,9 @@ function makeMockApp(): AppBindings {
       label: "Global",
       root: globalWorkspaceRoot,
       children: [
-        { key: "global_topic_product", kind: "global_topic", label: t("mock.topicProduct"), topicId: "topic_product" },
-        { key: "global_topic_ai", kind: "global_topic", label: t("mock.topicAi"), topicId: "topic_ai" },
-        { key: "global_topic_lab", kind: "global_topic", label: t("mock.topicLab"), topicId: "topic_lab" },
+        { key: "global_topic_product", kind: "global_topic", label: t("mock.topicProduct"), topicId: "topic_product", turns: 5, lastActivityAt: mockNow - 8 * 24 * 60 * 60_000 },
+        { key: "global_topic_ai", kind: "global_topic", label: t("mock.topicAi"), topicId: "topic_ai", turns: 8, lastActivityAt: mockNow - 10 * 24 * 60 * 60_000 },
+        { key: "global_topic_lab", kind: "global_topic", label: t("mock.topicLab"), topicId: "topic_lab", turns: 2, lastActivityAt: mockNow - 12 * 24 * 60 * 60_000 },
       ],
     },
   ];
@@ -709,7 +722,7 @@ function makeMockApp(): AppBindings {
 	      label: "DeepSeek-R1",
 	      ready: true,
 	      running: false,
-	      mode: "normal",
+	      mode: "plan",
 	      active: true,
 	      cwd: "~/projects/joyquant-db",
     },
@@ -930,13 +943,13 @@ function makeMockApp(): AppBindings {
           emit({ kind: "turn_done" });
         },
         async SubmitToTab(_tabID, input) {
-          await this.Submit(input);
+          await withMockTabScope(_tabID, () => this.Submit(input));
         },
         async SubmitDisplay(_display, input) {
           await this.Submit(input);
         },
         async SubmitDisplayToTab(_tabID, display, input) {
-          await this.SubmitDisplay(display, input);
+          await withMockTabScope(_tabID, () => this.SubmitDisplay(display, input));
         },
         async RunShell(command) {
           cancelled = false;
@@ -954,14 +967,14 @@ function makeMockApp(): AppBindings {
           emit({ kind: "turn_done" });
         },
         async RunShellForTab(_tabID, command) {
-          await this.RunShell(command);
+          await withMockTabScope(_tabID, () => this.RunShell(command));
         },
         async Cancel() {
           cancelled = true;
           emit({ kind: "turn_done" });
         },
         async CancelTab(_tabID) {
-          await this.Cancel();
+          await withMockTabScope(_tabID, () => this.Cancel());
         },
         async Approve(_id, allow, session, persist) {
           if (!pendingApprovalPreview) return;
@@ -974,7 +987,7 @@ function makeMockApp(): AppBindings {
           emit({ kind: "turn_done" });
         },
         async ApproveTab(_tabID, id, allow, session, persist) {
-          await this.Approve(id, allow, session, persist);
+          await withMockTabScope(_tabID, () => this.Approve(id, allow, session, persist));
         },
         async AnswerQuestion(_id, answers) {
       if (!pendingAskPreview) return;
@@ -986,7 +999,7 @@ function makeMockApp(): AppBindings {
           emit({ kind: "turn_done" });
         },
         async AnswerQuestionForTab(_tabID, id, answers) {
-          await this.AnswerQuestion(id, answers);
+          await withMockTabScope(_tabID, () => this.AnswerQuestion(id, answers));
         },
     async ConfirmAction(req) {
       void req;
