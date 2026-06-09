@@ -69,9 +69,10 @@ type App struct {
 	activeTabID string
 	readyHook   func()
 
-	forceQuit atomic.Bool
-	trayReady bool
-	tray      *desktopTray
+	forceQuit           atomic.Bool
+	backgroundMaximised atomic.Bool
+	trayReady           bool
+	tray                *desktopTray
 
 	mediaTokens *mediaTokenStore
 	botInstalls map[string]*botInstallSession
@@ -279,6 +280,7 @@ func (a *App) beforeClose(ctx context.Context) bool {
 		cfg = config.LoadForEdit(config.UserConfigPath())
 	}
 	if cfg.DesktopCloseBehavior() == "background" {
+		a.backgroundMaximised.Store(runtime.WindowIsMaximised(ctx))
 		a.saveWindowStateSync()
 		a.snapshotAllTabs()
 		hideForBackground(ctx)
@@ -289,7 +291,7 @@ func (a *App) beforeClose(ctx context.Context) bool {
 
 func (a *App) showMainWindow() {
 	if a.ctx != nil {
-		showFromBackground(a.ctx)
+		showFromBackground(a.ctx, a.backgroundMaximised.Swap(false))
 	}
 }
 
@@ -313,16 +315,38 @@ func hideForBackground(ctx context.Context) {
 	runtime.WindowHide(ctx)
 }
 
-func showFromBackground(ctx context.Context) {
+func showFromBackground(ctx context.Context, wasMaximised bool) {
 	if backgroundCloseUsesApplicationHide(goruntime.GOOS) {
 		runtime.Show(ctx)
 	}
+	plan := backgroundRestorePlanFor(goruntime.GOOS, wasMaximised)
+	if plan.maximiseBeforeShow {
+		runtime.WindowMaximise(ctx)
+	}
 	runtime.WindowShow(ctx)
-	runtime.WindowUnminimise(ctx)
+	if plan.unminimiseAfterShow {
+		runtime.WindowUnminimise(ctx)
+	}
 }
 
 func backgroundCloseUsesApplicationHide(goos string) bool {
 	return goos == "darwin"
+}
+
+type backgroundRestorePlan struct {
+	maximiseBeforeShow  bool
+	unminimiseAfterShow bool
+}
+
+func backgroundRestorePlanFor(goos string, wasMaximised bool) backgroundRestorePlan {
+	if backgroundRestoreShouldMaximise(goos, wasMaximised) {
+		return backgroundRestorePlan{maximiseBeforeShow: true}
+	}
+	return backgroundRestorePlan{unminimiseAfterShow: true}
+}
+
+func backgroundRestoreShouldMaximise(goos string, wasMaximised bool) bool {
+	return wasMaximised && !backgroundCloseUsesApplicationHide(goos)
 }
 
 // restoreOrBuildTabs restores the tabs from the last session, or creates a
@@ -2950,16 +2974,46 @@ func (a *App) applyProviderEffortConfig(entry *config.ProviderEntry, effort stri
 				return err
 			}
 		}
-		canonicalName := config.CanonicalDesktopOfficialProviderName(entry.Name)
-		if canonicalName != entry.Name {
-			if _, ok := cfg.Provider(canonicalName); ok {
-				if err := cfg.SetProviderEffort(canonicalName, effort); err != nil {
-					return err
-				}
+		for _, name := range providerEffortTargetNames(cfg, entry) {
+			if err := cfg.SetProviderEffort(name, effort); err != nil {
+				return err
 			}
 		}
-		return cfg.SetProviderEffort(entry.Name, effort)
+		return nil
 	})
+}
+
+func providerEffortTargetNames(cfg *config.Config, entry *config.ProviderEntry) []string {
+	if cfg == nil || entry == nil {
+		return nil
+	}
+	out := []string{entry.Name}
+	seen := map[string]bool{entry.Name: true}
+	kind := officialProviderKindFromEntry(*entry)
+	if kind == "" {
+		return out
+	}
+	var family []string
+	switch kind {
+	case "deepseek":
+		family = []string{"deepseek", "deepseek-flash", "deepseek-pro"}
+	case "mimo-token-plan":
+		family = []string{"mimo-token-plan", "mimo-pro", "mimo-flash"}
+	case "mimo-api":
+		family = []string{"mimo-api"}
+	}
+	for _, name := range family {
+		if seen[name] {
+			continue
+		}
+		p, ok := cfg.Provider(name)
+		if !ok || officialProviderKindFromEntry(*p) != kind {
+			continue
+		}
+		seen[name] = true
+		out = append(out, name)
+	}
+	return out
 }
 
 // DirEntry is one entry in the "@" file-reference menu.
@@ -3403,16 +3457,32 @@ func (a *App) currentProviderEntryForTab(tabID string) (*config.ProviderEntry, e
 	return entry, nil
 }
 
-// SavePastedImage stores a browser clipboard image data URL under
-// .reasonix/attachments and returns the relative @-reference path.
+// SavePastedImage stores a browser clipboard image data URL under the active
+// tab's workspace .reasonix/attachments and returns the relative @-reference path.
 func (a *App) SavePastedImage(dataURL string) (string, error) {
+	root := a.activeWorkspaceRoot()
+	if root != "" && root != "." {
+		if prev, err := os.Getwd(); err == nil {
+			if err := os.Chdir(root); err == nil {
+				defer func() { _ = os.Chdir(prev) }()
+			}
+		}
+	}
 	return control.SaveImageDataURL(dataURL)
 }
 
 // SavePastedFile stores a dropped non-image file (the browser exposes its bytes
-// as a data URL but not a real path) under .reasonix/attachments and returns the
-// relative @-reference path.
+// as a data URL but not a real path) under the active tab's workspace
+// .reasonix/attachments and returns the relative @-reference path.
 func (a *App) SavePastedFile(name, dataURL string) (string, error) {
+	root := a.activeWorkspaceRoot()
+	if root != "" && root != "." {
+		if prev, err := os.Getwd(); err == nil {
+			if err := os.Chdir(root); err == nil {
+				defer func() { _ = os.Chdir(prev) }()
+			}
+		}
+	}
 	return control.SaveAttachmentDataURL(name, dataURL)
 }
 

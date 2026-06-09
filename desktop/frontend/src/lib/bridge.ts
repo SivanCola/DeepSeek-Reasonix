@@ -46,6 +46,8 @@ import type {
   UpdateProgress,
   WireEvent,
   WorkspaceChangesView,
+  GitCommitView,
+  GitCommitDetailView,
   WorkspaceView,
 } from "./types";
 
@@ -148,6 +150,8 @@ export interface AppBindings {
   WorkspaceChanges(): Promise<WorkspaceChangesView>;
   GitBranches(): Promise<string[]>;
   GitCheckout(branch: string): Promise<void>;
+  WorkspaceGitHistory(path: string): Promise<GitCommitView[]>;
+  WorkspaceGitCommitDetail(hash: string, path: string): Promise<GitCommitDetailView>;
   OpenWorkspacePath(rel: string): Promise<void>;
   RevealWorkspacePath(rel: string): Promise<void>;
   RevealPath(path: string): Promise<void>;
@@ -196,7 +200,7 @@ export interface AppBindings {
   SetDesktopLanguage(lang: string): Promise<void>;
   SetDesktopAppearance(theme: string, style: string): Promise<void>;
   MigrateDesktopPreferences(language: string, theme: string, style: string): Promise<void>;
-  SetAgentParams(temperature: number, maxSteps: number, systemPrompt: string): Promise<void>;
+  SetAgentParams(temperature: number, maxSteps: number, plannerMaxSteps: number, systemPrompt: string): Promise<void>;
   SetTrayLocale(locale: "en" | "zh"): Promise<void>;
   // SetBypass toggles YOLO mode (auto-approve every tool call this session; deny
   // rules still apply). Runtime-only — not written to config.
@@ -576,7 +580,7 @@ function makeMockApp(): AppBindings {
       noProxy: "",
       proxy: { type: "socks5", server: "127.0.0.1", port: 7890, username: "", password: "" },
     },
-    agent: { temperature: 0.2, maxSteps: 0, systemPrompt: "You are Reasonix, a coding agent." },
+    agent: { temperature: 0.2, maxSteps: 0, plannerMaxSteps: 12, systemPrompt: "You are Reasonix, a coding agent." },
     bot: {
       enabled: false,
       model: "",
@@ -1398,6 +1402,17 @@ function makeMockApp(): AppBindings {
     async GitCheckout(_branch: string) {
       console.info("mock GitCheckout", _branch);
     },
+    async WorkspaceGitHistory(path: string) {
+      return [
+        { hash: "abcdef123456", author: "Mock Author", date: new Date().toISOString(), message: "Mock commit message for " + path },
+      ];
+    },
+    async WorkspaceGitCommitDetail(_hash: string, path: string) {
+      if (path) {
+        return { diff: "--- a/mock\n+++ b/mock\n@@ -1,1 +1,1 @@\n-mock\n+mock diff" };
+      }
+      return { files: ["mock_file_1.ts", "mock_file_2.ts"] };
+    },
     async OpenWorkspacePath(rel: string) {
       console.info("mock OpenWorkspacePath", rel);
     },
@@ -1650,8 +1665,8 @@ function makeMockApp(): AppBindings {
             settings.desktopThemeStyle = style;
           }
         },
-    async SetAgentParams(temperature: number, maxSteps: number, systemPrompt: string) {
-      settings.agent = { temperature, maxSteps, systemPrompt };
+    async SetAgentParams(temperature: number, maxSteps: number, plannerMaxSteps: number, systemPrompt: string) {
+      settings.agent = { temperature, maxSteps, plannerMaxSteps, systemPrompt };
     },
     async SetTrayLocale(_locale: "en" | "zh") {},
     async SetBypass(on: boolean) {

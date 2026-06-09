@@ -40,7 +40,7 @@ import { CopyButton } from "./components/CopyButton";
 import { CommandPalette, type PaletteItem } from "./components/CommandPalette";
 import { parseTodos } from "./lib/tools";
 import { shouldShowTodoPanel } from "./lib/todoVisibility";
-import type { ComposerInsertRequest, Mode, SessionMeta, SettingsTab, TabMeta } from "./lib/types";
+import type { ComposerInsertRequest, Meta, Mode, SessionMeta, SettingsTab, TabMeta } from "./lib/types";
 import { loadLayoutSize, saveLayoutSize } from "./lib/layoutPreferences";
 import {
   applyTheme,
@@ -54,8 +54,10 @@ import {
   themeForStyle,
   type Theme,
 } from "./lib/theme";
+import { applyTextSize, DEFAULT_TEXT_SIZE, getTextSize, nextTextSize } from "./lib/textSize";
 import { useWindowStatePersistence } from "./lib/windowState";
 import logoSymbol from "./assets/logo-symbol.svg";
+import logoWordmark from "./assets/logo-wordmark.svg";
 
 const SIDEBAR_COLLAPSED_KEY = "reasonix.sidebar.collapsed";
 const SIDEBAR_DEFAULT_WIDTH = 264;
@@ -211,6 +213,11 @@ function topicScopeLabel(tab?: TabMeta): string {
   return t("scope.project", { name: tab.workspaceName || tab.workspaceRoot || "Project" });
 }
 
+function appChromeScopeLabel(tab?: TabMeta, meta?: Meta): string {
+  if (tab?.scope === "project" || tab?.scope === "global") return tabWorkspaceTitle(tab);
+  return workspaceDisplayName(meta?.cwd) || meta?.label || "Global";
+}
+
 function normalizeModeValue(mode?: string): Mode {
   return mode === "plan" || mode === "yolo" ? mode : "normal";
 }
@@ -220,6 +227,12 @@ function sessionsForScope(sessions: SessionMeta[], filter: HistoryScopeFilter): 
     return sessions.filter((session) => session.scope === "project" && session.workspaceRoot === filter.workspaceRoot);
   }
   return sessions.filter((session) => (session.scope || "global") === "global");
+}
+
+function workspaceDisplayName(path?: string): string {
+  if (!path) return "";
+  const parts = path.split(/[/\\]/).filter(Boolean);
+  return parts.length > 0 ? parts[parts.length - 1] : path;
 }
 
 function materializeLiveItems(items: Item[], live?: LiveStream): Item[] {
@@ -326,6 +339,26 @@ function ShellHotkeys() {
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
   }, [shellExpand]);
+  return null;
+}
+
+/** Global hotkey handler for text-size shortcuts (Ctrl/Cmd + Plus/Minus/0). */
+function TextSizeHotkeys() {
+  useEffect(() => {
+    const onKey = (e: globalThis.KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey)) return;
+      if (e.key !== "+" && e.key !== "=" && e.key !== "-" && e.key !== "0") return;
+
+      e.preventDefault();
+      if (e.key === "0") {
+        applyTextSize(DEFAULT_TEXT_SIZE);
+        return;
+      }
+      applyTextSize(nextTextSize(getTextSize(), e.key === "-" ? -1 : 1));
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, []);
   return null;
 }
 
@@ -653,39 +686,6 @@ export default function App() {
   const todos = useMemo(() => (todoItem ? parseTodos(todoItem.args) : []), [todoItem]);
   const [dismissedTodo, setDismissedTodo] = useState<string | null>(null);
   const showTodos = shouldShowTodoPanel(todoItem?.id, dismissedTodo, todos);
-  const [todoNow, setTodoNow] = useState(() => Date.now());
-  const todoSeenRef = useRef<{ id: string; at: number } | null>(null);
-
-  useEffect(() => {
-    if (!todoItem) {
-      todoSeenRef.current = null;
-      return;
-    }
-    if (todoSeenRef.current?.id !== todoItem.id) {
-      todoSeenRef.current = { id: todoItem.id, at: Date.now() };
-      setTodoNow(Date.now());
-    }
-  }, [todoItem]);
-
-  useEffect(() => {
-    if (!showTodos) return;
-    const id = window.setInterval(() => setTodoNow(Date.now()), 15000);
-    return () => window.clearInterval(id);
-  }, [showTodos]);
-
-  const todoStale = useMemo(() => {
-    if (!showTodos || !todoEntry) return false;
-    const after = state.items.slice(todoEntry.index + 1);
-    const completedToolsAfter = after.filter(
-      (it) => it.kind === "tool" && it.name !== "todo_write" && !it.parentId && (it.status === "done" || it.status === "error"),
-    ).length;
-    const finalAssistantAfter = after.some((it) => it.kind === "assistant" && !it.streaming && it.text.trim() !== "");
-    const readinessNoticeAfter = after.some(
-      (it) => it.kind === "notice" && /final-answer readiness|todo_write|complete_step/i.test(it.text),
-    );
-    const staleByTime = state.running && todoSeenRef.current?.id === todoEntry.item.id && todoNow - todoSeenRef.current.at > 90_000;
-    return completedToolsAfter >= 2 || finalAssistantAfter || readinessNoticeAfter || staleByTime;
-  }, [showTodos, state.items, state.running, todoEntry, todoNow]);
 
   // useDeferredValue lets React prioritise Composer input (high-priority) over
   // Transcript re-renders (low-priority) during streaming. When a keystroke
@@ -1405,6 +1405,7 @@ export default function App() {
   return (
     <ShellExpandProvider>
     <ShellHotkeys />
+    <TextSizeHotkeys />
     <div className={`app app--${desktopPlatform}`}>
       <div
         ref={layoutRef}
@@ -1452,7 +1453,14 @@ export default function App() {
               />
             </div>
           ) : (
-            <div className="app-chrome__spacer" />
+            <>
+              <div className="app-chrome__identity" aria-label="Reasonix">
+                <img src={logoWordmark} alt="" className="app-chrome__logo" draggable={false} />
+                <span className="app-chrome__separator">/</span>
+                <span className="app-chrome__scope">{appChromeScopeLabel(activeTab, state.meta)}</span>
+              </div>
+              <div className="app-chrome__spacer" />
+            </>
           )}
           {!workspacePanelMaximized && (
             <button
@@ -1695,7 +1703,7 @@ export default function App() {
           </main>
 
           <footer className="footer" ref={footerRef}>
-            {showTodos && <TodoPanel todos={todos} stale={todoStale} onDismiss={() => setDismissedTodo(todoItem!.id)} />}
+            {showTodos && <TodoPanel todos={todos} onDismiss={() => setDismissedTodo(todoItem!.id)} />}
             {state.approval && (
               <ApprovalModal
                 approval={state.approval}

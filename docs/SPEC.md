@@ -168,7 +168,8 @@ prefix cache-stable:
 - The **planner** (low-frequency) runs in its own session with the same standing
   memory context plus a filtered read-only research tool set, then produces a
   concise plan. It can inspect files/docs before planning, but writer and
-  workflow tools are not exposed to it.
+  workflow tools are not exposed to it. `agent.planner_max_steps` bounds this
+  read-only exploration independently from the executor's `agent.max_steps`.
 - The plan is handed off as structured text to the **executor** — a full
   tool-using `Agent` in its own session — which carries it out.
 - The sessions never mix, so neither model's prefix is disturbed by the other's
@@ -243,8 +244,10 @@ each writer/bash call. `deny` rules harden both modes.
 
 The chat TUI accepts `/command` input. Three kinds share one dispatch:
 
-- **Built-in actions** (`/compact`, `/new`, `/effort`, `/mcp`, `/help`) manipulate session
-  state locally and never reach the model.
+- **Built-in actions** (`/compact`, `/new`/`/clear`, `/effort`, `/mcp`, `/help`) manipulate session
+  state locally and never reach the model. `/new` and its Claude Code-compatible
+  alias `/clear` start a fresh model context while saving the previous transcript
+  for resume/history; they do not delete persisted history or project memory.
 - **Custom commands** are Markdown files under `.reasonix/commands/` (project) and
   `~/.config/reasonix/commands/` (user); the project dir overrides the user dir on a
   name clash. A file `review.md` becomes `/review`; a subdirectory namespaces it
@@ -344,7 +347,9 @@ type Chunk struct {
 Resolution order: **flag > project `./reasonix.toml` > user `~/.config/reasonix/config.toml`
 > built-in defaults**. Secrets come from the environment via `api_key_env` and
 are never stored in config files. A `.env` in the working directory is loaded if
-present.
+present. Step-limit preferences usually belong in the user config; project
+`reasonix.toml` should override them only when the repository needs shared
+runtime bounds.
 
 ```toml
 default_model = "deepseek"   # provider name (→ its default model) or "provider/model"
@@ -352,8 +357,9 @@ default_model = "deepseek"   # provider name (→ its default model) or "provide
 
 [agent]
 system_prompt = "You are Reasonix, a coding agent..."  # or system_prompt_file = "..."
-max_steps     = 25
-temperature   = 0.0
+max_steps         = 0    # executor tool-call rounds; 0 = no limit
+planner_max_steps = 12   # planner read-only tool-call rounds; 0 = no limit
+temperature       = 0.0
 # planner_model = "mimo"   # optional: two-model collaboration (low-frequency planner)
 # subagent_model = "deepseek-pro"   # optional default for runAs=subagent skills
 # subagent_models = { review = "deepseek-pro", security_review = "deepseek-pro" }

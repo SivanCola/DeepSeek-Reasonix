@@ -6,6 +6,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { asArray } from "./array";
 import { app, onEvent, onReady } from "./bridge";
+import { createRafBatch } from "./rafBatch";
 import { t } from "./i18n";
 import type {
   BalanceInfo,
@@ -561,10 +562,18 @@ export function useController() {
   }, [dispatchTo, loadSessionDataForTab]);
 
   useEffect(() => {
+    const textBatch = createRafBatch<{ tabId: string; e: WireEvent }>((batch) => {
+      for (const { tabId, e } of batch) dispatchTo(tabId, { type: "event", e });
+    });
     const off = onEvent((e) => {
       const targetTabId = e.tabId || activeTabIdRef.current;
       if (!targetTabId) return;
-      dispatchTo(targetTabId, { type: "event", e });
+      if (e.kind === "text" || e.kind === "reasoning") {
+        textBatch.push({ tabId: targetTabId, e });
+      } else {
+        textBatch.drain();
+        dispatchTo(targetTabId, { type: "event", e });
+      }
       if (e.kind === "turn_done") {
         app
           .ContextUsageForTab(targetTabId)
@@ -590,7 +599,7 @@ export function useController() {
 
     void syncActiveTabFromBackend();
 
-    return () => { off(); offReady(); };
+    return () => { textBatch.drain(); off(); offReady(); };
   }, [dispatchTo, loadSessionDataForTab, refreshCheckpoints, syncActiveTabFromBackend]);
 
   const send = useCallback((displayText: string, submitText = displayText) => {

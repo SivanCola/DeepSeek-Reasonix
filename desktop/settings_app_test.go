@@ -56,3 +56,28 @@ func TestProviderViewFromEntry_FiltersNonChatModels(t *testing.T) {
 		t.Errorf("ProviderView.Models = %v, want %v", view.Models, want)
 	}
 }
+
+func TestSetAgentParamsPersistsStepLimitsToUserConfig(t *testing.T) {
+	isolateDesktopUserDirs(t)
+
+	app := NewApp()
+	if err := app.SetAgentParams(0.35, 37, 9, "custom system"); err != nil {
+		t.Fatalf("SetAgentParams: %v", err)
+	}
+
+	view := app.Settings()
+	if view.Agent.MaxSteps != 37 || view.Agent.PlannerMaxSteps != 9 {
+		t.Fatalf("Settings().Agent = %+v, want maxSteps=37 plannerMaxSteps=9", view.Agent)
+	}
+	if view.Agent.Temperature != 0.35 || view.Agent.SystemPrompt != "custom system" {
+		t.Fatalf("Settings().Agent did not preserve other agent params: %+v", view.Agent)
+	}
+
+	cfg := config.LoadForEdit(config.UserConfigPath())
+	if cfg.Agent.MaxSteps != 37 || cfg.Agent.PlannerMaxSteps != 9 {
+		t.Fatalf("saved config agent steps = max:%d planner:%d, want 37/9", cfg.Agent.MaxSteps, cfg.Agent.PlannerMaxSteps)
+	}
+	if cfg.Agent.Temperature != 0.35 || cfg.Agent.SystemPrompt != "custom system" {
+		t.Fatalf("saved config did not preserve other agent params: %+v", cfg.Agent)
+	}
+}

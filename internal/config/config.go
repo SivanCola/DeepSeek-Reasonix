@@ -314,8 +314,9 @@ type BotConnectionSessionMapping struct {
 }
 
 // NetworkConfig controls ordinary outbound HTTP traffic such as model providers,
-// wallet-balance lookups, updater checks, and CodeGraph downloads. It intentionally
-// does not apply to web_fetch, which keeps its own SSRF-guarded dialer.
+// wallet-balance lookups, updater checks, CodeGraph downloads, and web_fetch.
+// web_fetch reuses these proxy settings while keeping its own SSRF-guarded
+// dialer.
 type NetworkConfig struct {
 	// ProxyMode is "auto" (default; environment proxy for now), "env", "custom",
 	// or "off". auto leaves room for OS proxy detection later without changing the
@@ -542,7 +543,8 @@ func (c *Config) BashMode() string {
 type AgentConfig struct {
 	SystemPrompt     string            `toml:"system_prompt"`
 	SystemPromptFile string            `toml:"system_prompt_file"`
-	MaxSteps         int               `toml:"max_steps"` // tool-call rounds per turn; 0 = unlimited
+	MaxSteps         int               `toml:"max_steps"`         // tool-call rounds per turn; 0 = unlimited
+	PlannerMaxSteps  int               `toml:"planner_max_steps"` // planner read-only tool-call rounds; 0 = unlimited
 	Temperature      float64           `toml:"temperature"`
 	PlannerModel     string            `toml:"planner_model"`
 	SubagentModel    string            `toml:"subagent_model"`
@@ -858,6 +860,7 @@ func Default() *Config {
 			// compaction, not by a round count. Set a positive agent.max_steps only
 			// if you want a hard guard against runaway.
 			MaxSteps:          0,
+			PlannerMaxSteps:   12,
 			AutoPlan:          "off",
 			SoftCompactRatio:  0.5,
 			CompactRatio:      0.8,

@@ -324,6 +324,18 @@ export interface WorkspaceChangesView {
   gitBranch?: string;
 }
 
+export interface GitCommitView {
+  hash: string;
+  author: string;
+  date: string;
+  message: string;
+}
+
+export interface GitCommitDetailView {
+  diff?: string;
+  files?: string[];
+}
+
 export interface ComposerInsertRequest {
   id: number;
   text: string;
@@ -521,6 +533,7 @@ export interface NetworkView {
 export interface AgentView {
   temperature: number;
   maxSteps: number;
+  plannerMaxSteps: number;
   systemPrompt: string;
 }
 
