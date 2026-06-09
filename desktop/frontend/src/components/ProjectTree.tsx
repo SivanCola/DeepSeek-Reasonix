@@ -7,8 +7,8 @@ import type { CSSProperties, DragEvent as ReactDragEvent, KeyboardEvent as React
 import { Archive, ChevronRight, Pencil, Plus, Folder, FolderPlus, Search, BriefcaseBusiness, Copy, FolderOpen, XCircle, History, Check } from "lucide-react";
 import { asArray } from "../lib/array";
 import { app } from "../lib/bridge";
-import type { ProjectNode } from "../lib/types";
-import { getLocale, useT, type Translator } from "../lib/i18n";
+import type { ProjectNode, ProjectTopicStatus } from "../lib/types";
+import { getLocale, useT, type DictKey, type Translator } from "../lib/i18n";
 import { PROJECT_COLOR_OPTIONS, projectColorValue } from "../lib/projectColors";
 import { ContextMenu, contextMenuPointFromEvent, type ContextMenuItem, type ContextMenuPoint } from "./ContextMenu";
 import { Tooltip } from "./Tooltip";
@@ -40,17 +40,37 @@ function topicIsActive(node: ProjectNode, activeScope?: string, activeWorkspaceR
   );
 }
 
-function topicMetaLine(node: ProjectNode, active: boolean, t: Translator): string {
+function topicMetaLine(node: ProjectNode, t: Translator): string {
   const parts: string[] = [];
-  if (active || node.open) parts.push(t("history.current"));
-  if (node.running) {
-    parts.push(t("projectTree.running"));
-    return parts.join(" · ");
-  }
   const turns = node.turns ?? 0;
   if (turns > 0) parts.push(t(turns === 1 ? "history.turnOne" : "history.turnOther", { n: turns }));
   if (node.lastActivityAt) parts.push(topicActivityLabel(node.lastActivityAt));
   return parts.join(" · ");
+}
+
+const topicStatusLabels: Record<ProjectTopicStatus, DictKey> = {
+  thinking: "projectTree.status.thinking",
+  streaming: "projectTree.status.streaming",
+  waiting_confirmation: "projectTree.status.waitingConfirmation",
+  paused: "projectTree.status.paused",
+  error: "projectTree.status.error",
+};
+
+function normalizeTopicStatus(status?: string): ProjectTopicStatus | "" {
+  if (!status) return "";
+  if (status === "thinking" || status === "streaming" || status === "waiting_confirmation" || status === "paused" || status === "error") {
+    return status;
+  }
+  return "";
+}
+
+function topicStatus(node: ProjectNode): ProjectTopicStatus | "" {
+  return normalizeTopicStatus(node.status) || (node.running ? "streaming" : "");
+}
+
+function topicStatusLabel(node: ProjectNode, t: Translator): string {
+  const status = topicStatus(node);
+  return status ? t(topicStatusLabels[status]) : "";
 }
 
 function topicActivityLabel(ms: number): string {
@@ -433,7 +453,10 @@ export function ProjectTree({
       const scope = node.kind === "global_topic" ? "global" : "project";
       const active = topicIsActive(node, activeScope, activeWorkspaceRoot, activeTopicId);
       const label = (node.label || node.topicId || "Untitled").replace(/^●\s*/, "");
-      const meta = topicMetaLine(node, active, t);
+      const meta = topicMetaLine(node, t);
+      const status = topicStatus(node);
+      const statusLabel = topicStatusLabel(node, t);
+      const title = [label, statusLabel, meta].filter(Boolean).join(" · ");
       const topicId = node.topicId ?? "";
       const topicMenuOpen = menuTopic === topicId;
       const openTopicMenu = (event: ReactMouseEvent<HTMLElement> | ReactKeyboardEvent<HTMLElement>) => {
@@ -487,14 +510,14 @@ export function ProjectTree({
       return (
         <div
           key={key}
-          className={`project-tree__topic${active ? " project-tree__topic--active" : ""}${topicMenuOpen ? " project-tree__topic--menu-open" : ""}${meta ? " project-tree__topic--has-meta" : ""}`}
+          className={`project-tree__topic${active ? " project-tree__topic--active" : ""}${node.running ? " project-tree__topic--running" : ""}${status ? ` project-tree__topic--status-${status}` : ""}${topicMenuOpen ? " project-tree__topic--menu-open" : ""}${meta ? " project-tree__topic--has-meta" : ""}`}
           style={projectAccentStyle(node.projectColor)}
           onContextMenu={openTopicMenu}
         >
           <button
             type="button"
             className="project-tree__topic-main"
-            title={meta ? `${label} · ${meta}` : label}
+            title={title}
             style={{ paddingLeft: 14 + depth * 16 }}
             onClick={() => onOpenTopic(scope, node.root ?? "", topicId)}
             onKeyDown={(event) => {
@@ -504,8 +527,15 @@ export function ProjectTree({
             }}
           >
             <span className="project-tree__topic-copy">
-              <span className="project-tree__topic-label">{label}</span>
-              {meta && <span className="project-tree__topic-meta">{meta}</span>}
+              <span className="project-tree__topic-heading">
+                <span className="project-tree__topic-label">{label}</span>
+                {statusLabel && <span className={`project-tree__topic-status project-tree__topic-status--${status}`}>{statusLabel}</span>}
+              </span>
+              {meta && (
+                <span className="project-tree__topic-meta">
+                  <span className="project-tree__topic-meta-text">{meta}</span>
+                </span>
+              )}
             </span>
           </button>
           <ContextMenu

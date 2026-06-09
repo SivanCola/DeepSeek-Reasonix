@@ -147,8 +147,11 @@ export interface ProjectNode {
   lastActivityAt?: number;
   open?: boolean;
   running?: boolean;
+  status?: ProjectTopicStatus;
   children?: ProjectNode[];
 }
+
+export type ProjectTopicStatus = "thinking" | "streaming" | "waiting_confirmation" | "paused" | "error";
 
 export interface TopicMeta {
   id: string;

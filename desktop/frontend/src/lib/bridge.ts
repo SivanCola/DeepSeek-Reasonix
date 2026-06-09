@@ -664,11 +664,12 @@ function makeMockApp(): AppBindings {
       root: "~/projects/joyquant-sys",
       projectColor: "purple",
       children: [
-        { key: "topic_p3b_pd", kind: "topic", label: `● ${t("mock.topicP3b")}`, root: "~/projects/joyquant-sys", topicId: "topic_p3b_pd", projectColor: "purple", turns: 11, lastActivityAt: mockNow - 3 * 24 * 60 * 60_000 },
-        { key: "topic_p3a_pd", kind: "topic", label: t("mock.topicP3a"), root: "~/projects/joyquant-sys", topicId: "topic_p3a_pd", projectColor: "purple", turns: 9, lastActivityAt: mockNow - 4 * 24 * 60 * 60_000 },
-        { key: "topic_hotfix", kind: "topic", label: t("mock.topicHotfix"), root: "~/projects/joyquant-sys", topicId: "topic_hotfix", projectColor: "purple", turns: 4, lastActivityAt: mockNow - 5 * 24 * 60 * 60_000 },
-        { key: "topic_sys_coord", kind: "topic", label: t("mock.topicSysCoord"), root: "~/projects/joyquant-sys", topicId: "topic_sys_coord", projectColor: "purple", turns: 14, lastActivityAt: mockNow - 6 * 24 * 60 * 60_000 },
-        { key: "topic_sys_standard", kind: "topic", label: t("mock.topicSysStandard"), root: "~/projects/joyquant-sys", topicId: "topic_sys_standard", projectColor: "purple", turns: 6, lastActivityAt: mockNow - 7 * 24 * 60 * 60_000 },
+        { key: "topic_p3b_pd", kind: "topic", label: `● ${t("mock.topicP3b")}`, root: "~/projects/joyquant-sys", topicId: "topic_p3b_pd", projectColor: "purple", turns: 11, lastActivityAt: mockNow - 3 * 24 * 60 * 60_000, status: "streaming" },
+        { key: "topic_p3a_pd", kind: "topic", label: t("mock.topicP3a"), root: "~/projects/joyquant-sys", topicId: "topic_p3a_pd", projectColor: "purple", turns: 9, lastActivityAt: mockNow - 4 * 24 * 60 * 60_000, status: "thinking" },
+        { key: "topic_hotfix", kind: "topic", label: t("mock.topicHotfix"), root: "~/projects/joyquant-sys", topicId: "topic_hotfix", projectColor: "purple", turns: 4, lastActivityAt: mockNow - 5 * 24 * 60 * 60_000, status: "thinking" },
+        { key: "topic_sys_coord", kind: "topic", label: t("mock.topicSysCoord"), root: "~/projects/joyquant-sys", topicId: "topic_sys_coord", projectColor: "purple", turns: 14, lastActivityAt: mockNow - 6 * 24 * 60 * 60_000, status: "waiting_confirmation" },
+        { key: "topic_sys_standard", kind: "topic", label: t("mock.topicSysStandard"), root: "~/projects/joyquant-sys", topicId: "topic_sys_standard", projectColor: "purple", turns: 6, lastActivityAt: mockNow - 7 * 24 * 60 * 60_000, status: "paused" },
+        { key: "topic_sys_exception", kind: "topic", label: t("mock.topicSysException"), root: "~/projects/joyquant-sys", topicId: "topic_sys_exception", projectColor: "purple", turns: 2, lastActivityAt: mockNow - 8 * 24 * 60 * 60_000, status: "error" },
       ],
     },
     {
@@ -698,6 +699,96 @@ function makeMockApp(): AppBindings {
     }
   };
   const topicLabel = (topicId: string, fallback: string) => (findMockTopic(topicId)?.label || fallback).replace(/^●\s*/, "");
+  const mockTopicStatus = (topicId: string) => findMockTopic(topicId)?.status ?? "";
+  const mockTopicIsRunning = (topicId: string) => {
+    const status = mockTopicStatus(topicId);
+    return status === "streaming" || status === "thinking" || status === "waiting_confirmation";
+  };
+  const mockTopicHistory = (topicId: string): HistoryMessage[] => {
+    switch (topicId) {
+      case "topic_p3b_pd":
+        return [
+          { role: "user", content: "把 p3b P&D 的范围和风险重新整理成可执行计划。" },
+          { role: "phase", content: "分析需求范围" },
+        ];
+      case "topic_p3a_pd":
+        return [
+          { role: "user", content: "复盘 p3a 的技术方案，先不要写文件，先说明你的判断。" },
+        ];
+      case "topic_hotfix":
+        return [
+          { role: "user", content: "检查 post-p3-hotfix 的回归风险，重点看最近的 shell 输出和 git 改动。" },
+          { role: "assistant", content: "", reasoning: "我先定位最近一次 hotfix 的上下文，然后用只读命令检查状态；左侧保持“思考中”，工具细节在这里展开。" },
+        ];
+      case "topic_sys_coord":
+        return [
+          { role: "user", content: "准备执行 joyquant-sys 的同步脚本，但需要我确认后再运行。" },
+          { role: "assistant", content: "", reasoning: "这个动作会运行脚本并可能刷新本地缓存，所以需要先等用户确认。" },
+        ];
+      case "topic_sys_standard":
+        return [
+          { role: "user", content: "继续制定 SYS 项目开发规范，先停在当前检查点。" },
+          { role: "assistant", content: "已暂停在规范整理阶段。当前保留了目录约定、分支策略和待确认的发布检查项；继续时可以从这里恢复。" },
+          { role: "notice", level: "info", content: "会话已暂停：未继续执行命令，等待用户恢复或切换任务。" },
+        ];
+      case "topic_sys_exception":
+        return [
+          { role: "user", content: "演练异常处理流程，看看失败时界面怎么提示。" },
+          { role: "assistant", content: "我尝试校验恢复脚本时遇到异常，已停止继续执行。" },
+          { role: "notice", level: "warn", content: "运行异常：恢复脚本缺少必要环境变量 JOYQUANT_SYS_TOKEN。请补齐配置后重试。" },
+        ];
+      default:
+        return [];
+    }
+  };
+  const mockRuntimeInjected = new Set<string>();
+  const queueMockTopicRuntime = (tab: TabMeta) => {
+    const status = mockTopicStatus(tab.topicId);
+    if (status !== "streaming" && status !== "thinking" && status !== "waiting_confirmation") return;
+    const key = `${tab.id}:${tab.topicId}:${status}`;
+    if (mockRuntimeInjected.has(key)) return;
+    mockRuntimeInjected.add(key);
+    window.setTimeout(() => {
+      void withMockTabScope(tab.id, async () => {
+        emit({ kind: "turn_started" });
+        await delay(120);
+        if (tab.topicId === "topic_p3b_pd") {
+          const text = "我会先把范围拆成三层：目标、依赖、风险。当前已经确认 p3b 的交付边界，接下来补充每个模块的验收口径...";
+          for (const ch of text) {
+            emit({ kind: "text", text: ch });
+            await delay(5);
+          }
+          return;
+        }
+        if (tab.topicId === "topic_p3a_pd") {
+          emit({ kind: "reasoning", text: "我正在对比 p3a 和 p3b 的差异：先看约束，再看变更风险，最后判断是否需要拆成独立任务。\n\n" });
+          await delay(220);
+          emit({ kind: "reasoning", text: "当前倾向：先保留 p3a 的兼容路径，不急于删除旧逻辑。" });
+          return;
+        }
+        if (tab.topicId === "topic_hotfix") {
+          const id = "mock-hotfix-shell";
+          emit({ kind: "tool_dispatch", tool: { id, name: "bash", args: JSON.stringify({ command: "git status --short && npm test" }), readOnly: true } });
+          await delay(180);
+          emit({ kind: "tool_progress", tool: { id, name: "bash", readOnly: true, output: "$ git status --short\n M internal/sys/runner.go\n\n$ npm test\nrunning targeted regression tests...\n" } });
+          return;
+        }
+        if (tab.topicId === "topic_sys_coord") {
+          pendingApprovalPreview = true;
+          emit({ kind: "reasoning", text: "我已经准备好执行同步脚本，但这个操作会影响本地 workspace，需要用户确认。" });
+          await delay(160);
+          emit({
+            kind: "approval_request",
+            approval: {
+              id: "mock-sys-confirm",
+              tool: "bash",
+              subject: "npm run sync:joyquant-sys\n\n该命令会同步 SYS 项目配置并刷新本地缓存。",
+            },
+          });
+        }
+      });
+    }, 180);
+  };
   const setMockActiveTab = (tabId: string) => {
     mockTabs = mockTabs.map((tab) => ({ ...tab, active: tab.id === tabId }));
   };
@@ -742,7 +833,7 @@ function makeMockApp(): AppBindings {
       projectColor: "purple",
 	      label: "DeepSeek-R1",
 	      ready: true,
-	      running: false,
+	      running: mockTopicIsRunning("topic_p3b_pd"),
 	      mode: "normal",
 	      active: false,
 	      cwd: "~/projects/joyquant-sys",
@@ -1049,7 +1140,12 @@ function makeMockApp(): AppBindings {
         async History() {
           return [];
         },
-        async HistoryForTab() {
+        async HistoryForTab(tabID?: string) {
+          const tab = mockTabs.find((item) => item.id === tabID) ?? mockTabs.find((item) => item.active);
+          if (tab?.topicId) {
+            queueMockTopicRuntime(tab);
+            return mockTopicHistory(tab.topicId);
+          }
           return this.History();
         },
     async ListSessions() {
@@ -1738,8 +1834,9 @@ function makeMockApp(): AppBindings {
     async OpenProjectTab(workspaceRoot: string, _topicID: string) {
       const existing = mockTabs.find((tab) => tab.scope === "project" && tab.workspaceRoot === workspaceRoot && tab.topicId === _topicID);
       if (existing) {
-        setMockActiveTab(existing.id);
-        return { ...existing, active: true };
+        const active = { ...existing, active: true, running: mockTopicIsRunning(_topicID) };
+        mockTabs = mockTabs.map((tab) => (tab.id === existing.id ? active : { ...tab, active: false }));
+        return { ...active };
       }
       const tab: TabMeta = {
         id: "tab_" + Date.now(),
@@ -1749,12 +1846,12 @@ function makeMockApp(): AppBindings {
         topicId: _topicID,
         topicTitle: topicLabel(_topicID, t("mock.newSession")),
         projectColor: mockProjectTree.find((node) => node.root === workspaceRoot)?.projectColor,
-	        label: "deepseek-v4-flash",
-	        ready: true,
-	        running: false,
-	        mode: "normal",
-	        active: true,
-	        cwd: workspaceRoot,
+		        label: "deepseek-v4-flash",
+		        ready: true,
+		        running: mockTopicIsRunning(_topicID),
+		        mode: "normal",
+		        active: true,
+		        cwd: workspaceRoot,
       };
       mockTabs = [...mockTabs.map((item) => ({ ...item, active: false })), tab];
       return { ...tab };
@@ -1784,6 +1881,8 @@ function makeMockApp(): AppBindings {
     },
     async SetActiveTab(_tabID: string) {
       setMockActiveTab(_tabID);
+      const tab = mockTabs.find((item) => item.id === _tabID);
+      if (tab) queueMockTopicRuntime(tab);
     },
     async ReorderTabs(_tabIDs: string[]) {
       const byId = new Map(mockTabs.map((tab) => [tab.id, tab]));

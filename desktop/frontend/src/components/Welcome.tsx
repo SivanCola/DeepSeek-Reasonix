@@ -1,7 +1,7 @@
-import logoSymbol from "../assets/logo-symbol.svg";
+import logoWordmark from "../assets/logo-wordmark.svg";
 import { useT } from "../lib/i18n";
 
-// Welcome is the empty-state landing: brand, a one-liner, the input affordances
+// Welcome is the empty-state landing: a one-liner, the input affordances
 // (/ commands, @ files, Enter), and a few clickable example prompts that send
 // immediately so a first turn is one click away.
 
@@ -9,9 +9,9 @@ export function Welcome({ onPrompt }: { onPrompt: (text: string) => void }) {
   const t = useT();
   const examples = [t("welcome.ex1"), t("welcome.ex2"), t("welcome.ex3"), t("welcome.ex4")];
   return (
-    <div className="welcome">
-      <span className="welcome__mark">
-        <img src={logoSymbol} className="welcome__logo" alt="" />
+    <div className="welcome welcome--brand">
+      <span className="welcome__brand">
+        <img src={logoWordmark} className="welcome__brand-logo" alt="Reasonix" draggable={false} />
       </span>
       <h2 className="welcome__title">{t("welcome.title")}</h2>
       <div className="welcome__tag">{t("welcome.tagline")}</div>

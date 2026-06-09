@@ -56,7 +56,6 @@ import {
 } from "./lib/theme";
 import { applyTextSize, DEFAULT_TEXT_SIZE, getTextSize, nextTextSize } from "./lib/textSize";
 import { useWindowStatePersistence } from "./lib/windowState";
-import logoSymbol from "./assets/logo-symbol.svg";
 import logoWordmark from "./assets/logo-wordmark.svg";
 
 const SIDEBAR_COLLAPSED_KEY = "reasonix.sidebar.collapsed";
@@ -64,9 +63,8 @@ const SIDEBAR_DEFAULT_WIDTH = 264;
 const SIDEBAR_MIN_WIDTH = 228;
 const SIDEBAR_MAX_WIDTH = 420;
 const CHAT_MIN_WIDTH = 400;
-const CHAT_FLOATING_MIN_WIDTH = 640;
+const CHAT_DOCKED_MIN_WIDTH = 640;
 const WORKSPACE_RESIZER_WIDTH = 8;
-const MAC_SIDEBAR_SLIDE_DURATION_MS = 640;
 
 function isThemeMode(value: string): value is Theme {
   return value === "auto" || value === "light" || value === "dark";
@@ -81,7 +79,6 @@ const RIGHT_DOCK_MAX_WIDTH = 860;
 
 type RightDockMode = "context" | "files" | "changed";
 const SHOW_CONTEXT_DOCK = true;
-type SidebarSlideDirection = "collapse" | "expand";
 type HistoryScopeFilter = { scope: "global" | "project"; workspaceRoot: string };
 type DesktopPlatform = "darwin" | "windows" | "linux";
 type HistoryViewState =
@@ -107,13 +104,6 @@ function defaultSidebarWidth(): number {
 
 function defaultRightDockTreeWidth(): number {
   return RIGHT_DOCK_TREE_DEFAULT_WIDTH;
-}
-
-function resolveRightDockWidth(mainWidth: number, desiredDockWidth: number, minWidth: number): number {
-  const budget = Math.max(0, Math.round(mainWidth) - CHAT_MIN_WIDTH - WORKSPACE_RESIZER_WIDTH);
-  if (budget < minWidth) return 0;
-  const desired = Math.min(RIGHT_DOCK_MAX_WIDTH, Math.max(minWidth, Math.round(desiredDockWidth)));
-  return Math.min(budget, desired);
 }
 
 function loadSidebarCollapsed(): boolean {
@@ -199,6 +189,11 @@ function topicTitle(tab?: TabMeta): string {
   const workspaceTitle = tabWorkspaceTitle(tab);
   const topic = tab.topicTitle || (tab.scope === "global" ? workspaceTitle : "Untitled");
   return topic === workspaceTitle ? workspaceTitle : `${workspaceTitle} / ${topic}`;
+}
+
+function topicDisplayTitle(tab?: TabMeta): string {
+  if (!tab) return "Global";
+  return tab.topicTitle || (tab.scope === "global" ? tabWorkspaceTitle(tab) : "Untitled");
 }
 
 function topicScopeLabel(tab?: TabMeta): string {
@@ -422,11 +417,10 @@ export default function App() {
   const [topicTitleDraft, setTopicTitleDraft] = useState("");
   const [topicExportOpen, setTopicExportOpen] = useState(false);
   const [sidebarTogglePressed, setSidebarTogglePressed] = useState(false);
-  const [sidebarSlideDirection, setSidebarSlideDirection] = useState<SidebarSlideDirection | null>(null);
   const topicRenameSkipCommitRef = useRef(false);
   const topicRenameCommitHandledRef = useRef(false);
+  const appRef = useRef<HTMLDivElement>(null);
   const sidebarTogglePressTimerRef = useRef<number | null>(null);
-  const sidebarSlideTimerRef = useRef<number | null>(null);
 
   // Persist window geometry across launches.
   useWindowStatePersistence();
@@ -447,25 +441,22 @@ export default function App() {
     }, 260);
   }, []);
 
-  const startSidebarSlide = useCallback((direction: SidebarSlideDirection) => {
+  const anchorAppScrollToChat = useCallback(() => {
     if (typeof window === "undefined") return;
-    if (sidebarSlideTimerRef.current !== null) {
-      window.clearTimeout(sidebarSlideTimerRef.current);
-    }
-    setSidebarSlideDirection(direction);
-    sidebarSlideTimerRef.current = window.setTimeout(() => {
-      sidebarSlideTimerRef.current = null;
-      setSidebarSlideDirection(null);
-    }, MAC_SIDEBAR_SLIDE_DURATION_MS);
+    const el = appRef.current;
+    if (!el) return;
+    const pin = () => {
+      el.scrollLeft = 0;
+    };
+    pin();
+    window.requestAnimationFrame(pin);
+    window.setTimeout(pin, 300);
   }, []);
 
   useEffect(() => {
     return () => {
       if (sidebarTogglePressTimerRef.current !== null) {
         window.clearTimeout(sidebarTogglePressTimerRef.current);
-      }
-      if (sidebarSlideTimerRef.current !== null) {
-        window.clearTimeout(sidebarSlideTimerRef.current);
       }
     };
   }, []);
@@ -526,32 +517,21 @@ export default function App() {
   }, [closeTransientOverlays]);
   const [pendingPlanRevision, setPendingPlanRevision] = useState<string | null>(null);
   const [footerHeight, setFooterHeight] = useState(0);
-  const layoutRef = useRef<HTMLDivElement>(null);
   const footerRef = useRef<HTMLElement>(null);
-  const [layoutWidth, setLayoutWidth] = useState(0);
   const preferredWorkspacePanelWidth =
     rightDockMode === "context"
       ? RIGHT_DOCK_CONTEXT_WIDTH
       : workspacePreviewActive
       ? rightDockPreviewWidth
       : rightDockTreeWidth;
-  const sidebarRenderWidth = sidebarCollapsed ? 0 : sidebarWidth;
-  const measuredMainWidth = layoutWidth > 0 ? Math.max(0, layoutWidth - sidebarRenderWidth) : CHAT_MIN_WIDTH + WORKSPACE_RESIZER_WIDTH + preferredWorkspacePanelWidth;
   const workspacePanelMinWidth = workspacePreviewActive ? RIGHT_DOCK_PREVIEW_MIN_WIDTH : RIGHT_DOCK_TREE_MIN_WIDTH;
 
-  const budget = Math.max(0, measuredMainWidth - CHAT_MIN_WIDTH - WORKSPACE_RESIZER_WIDTH);
-  const dockedChatWidth = measuredMainWidth - preferredWorkspacePanelWidth - WORKSPACE_RESIZER_WIDTH;
-  const workspacePanelFloating =
-    workspacePanelOpen &&
-    !workspacePanelMaximized &&
-    (budget < workspacePanelMinWidth || (layoutWidth > 0 && dockedChatWidth < CHAT_FLOATING_MIN_WIDTH));
-
   const resolvedWorkspacePanelWidth = workspacePanelOpen && !workspacePanelMaximized
-    ? (workspacePanelFloating ? Math.min(measuredMainWidth, Math.max(workspacePanelMinWidth, preferredWorkspacePanelWidth)) : resolveRightDockWidth(measuredMainWidth, preferredWorkspacePanelWidth, workspacePanelMinWidth))
+    ? Math.max(workspacePanelMinWidth, preferredWorkspacePanelWidth)
     : preferredWorkspacePanelWidth;
 
   const workspacePanelRenderable = workspacePanelOpen && (workspacePanelMaximized || resolvedWorkspacePanelWidth > 0);
-  const workspacePanelGridOpen = workspacePanelRenderable && !workspacePanelMaximized && !workspacePanelFloating;
+  const workspacePanelGridOpen = workspacePanelRenderable && !workspacePanelMaximized;
   const workspacePanelRenderWidth = workspacePanelMaximized ? preferredWorkspacePanelWidth : resolvedWorkspacePanelWidth;
   const activeTab = useMemo(
     () => tabMetas.find((tab) => tab.id === activeTabId) ?? tabMetas.find((tab) => tab.active),
@@ -572,7 +552,6 @@ export default function App() {
     [activeTabId],
   );
   const topicbarEditing = Boolean(activeTab?.topicId && activeTab.topicId === renamingTopicId);
-  const topicbarProjectPrefix = activeTab ? tabWorkspaceTitle(activeTab) : "";
   const visibleTabId = activeTabId;
   const visibleTabs = useMemo(() => {
     const byId = new Map(tabMetas.map((tab) => [tab.id, tab]));
@@ -827,19 +806,6 @@ export default function App() {
     return () => observer.disconnect();
   }, []);
 
-  useEffect(() => {
-    const el = layoutRef.current;
-    if (!el || typeof ResizeObserver === "undefined") return;
-    const update = () => {
-      const width = el.getBoundingClientRect().width;
-      if (width && Number.isFinite(width)) setLayoutWidth(Math.round(width));
-    };
-    update();
-    const observer = new ResizeObserver(update);
-    observer.observe(el);
-    return () => observer.disconnect();
-  }, []);
-
   const startNewSession = useCallback(async () => {
     await newSession();
   }, [newSession]);
@@ -847,11 +813,11 @@ export default function App() {
   const toggleSidebar = useCallback(() => {
     closeTransientOverlays();
     pulseSidebarToggle();
+    anchorAppScrollToChat();
     const nextCollapsed = !sidebarCollapsed;
-    startSidebarSlide(nextCollapsed ? "collapse" : "expand");
     setSidebarCollapsed(nextCollapsed);
     saveSidebarCollapsed(nextCollapsed);
-  }, [closeTransientOverlays, pulseSidebarToggle, sidebarCollapsed, startSidebarSlide]);
+  }, [anchorAppScrollToChat, closeTransientOverlays, pulseSidebarToggle, sidebarCollapsed]);
 
   const setExpandedSidebarWidth = useCallback((width: number) => {
     closeTransientOverlays();
@@ -1033,6 +999,7 @@ export default function App() {
       ({
         "--sidebar-expanded-width": `${sidebarWidth}px`,
         "--chat-min-width": `${CHAT_MIN_WIDTH}px`,
+        "--chat-docked-min-width": `${CHAT_DOCKED_MIN_WIDTH}px`,
         "--workspace-width": `${workspacePanelRenderWidth}px`,
         "--workspace-resizer-width": `${WORKSPACE_RESIZER_WIDTH}px`,
       }) as CSSProperties,
@@ -1366,10 +1333,11 @@ export default function App() {
     ? RIGHT_DOCK_PREVIEW_DEFAULT_WIDTH
     : defaultRightDockTreeWidth();
   const workspacePanelMaxWidth = workspacePreviewActive ? RIGHT_DOCK_MAX_WIDTH : RIGHT_DOCK_TREE_MAX_WIDTH;
-  const topicbarSubtitle = [
-    activeTab?.scope === "project" ? activeTab.workspaceRoot || state.meta?.cwd : activeTab?.scope === "global" ? t("scope.global") : "",
-    state.meta?.label ?? "",
-  ].filter(Boolean).join(" · ");
+  const topicbarTitle = topicDisplayTitle(activeTab);
+  const topicbarWorkspaceLabel = activeTab ? tabWorkspaceTitle(activeTab) : "";
+  const topicbarWorkspacePath = activeTab?.scope === "project" ? activeTab.workspaceRoot || state.meta?.cwd : "";
+  const topicbarSubtitleVisible = Boolean(topicbarWorkspaceLabel);
+  const topicbarSubtitleTitle = topicbarWorkspacePath || topicbarWorkspaceLabel;
   const dockWorkspacePath = activeTab?.scope === "project"
     ? activeTab.workspaceRoot || state.meta?.cwd
     : state.meta?.cwd || activeTab?.workspaceRoot;
@@ -1379,18 +1347,15 @@ export default function App() {
     <ShellExpandProvider>
     <ShellHotkeys />
     <TextSizeHotkeys />
-    <div className={["app", `app--${desktopPlatform}`, browserPreviewChrome ? "app--browser-preview" : ""].filter(Boolean).join(" ")}>
+    <div ref={appRef} className={["app", `app--${desktopPlatform}`, browserPreviewChrome ? "app--browser-preview" : ""].filter(Boolean).join(" ")}>
       <div
-        ref={layoutRef}
         className={[
           "layout",
           sidebarCollapsed ? "layout--sidebar-collapsed" : "",
           sidebarResizing ? "layout--resizing layout--sidebar-resizing" : "",
           workspacePanelGridOpen ? "layout--workspace-open" : "",
-          workspacePanelFloating ? "layout--workspace-floating" : "",
           workspacePanelOpen && workspacePanelMaximized ? "layout--workspace-maximized" : "",
           workspacePanelResizing ? "layout--resizing layout--workspace-resizing" : "",
-          sidebarSlideDirection ? `layout--sidebar-slide-${sidebarSlideDirection}` : "",
         ]
           .filter(Boolean)
           .join(" ")}
@@ -1408,13 +1373,13 @@ export default function App() {
             className={[
               "app-chrome__panel-toggle",
               "app-chrome__panel-toggle--left",
-              !sidebarCollapsed ? "app-chrome__panel-toggle--active" : "",
               sidebarTogglePressed ? "app-chrome__panel-toggle--pressed" : "",
               sidebarExpandBlocked ? "app-chrome__panel-toggle--blocked" : "",
             ].filter(Boolean).join(" ")}
             type="button"
             onClick={sidebarExpandBlocked ? undefined : toggleSidebar}
             aria-label={sidebarToggleTitle}
+            aria-pressed={!sidebarCollapsed}
             aria-disabled={sidebarExpandBlocked}
           >
             <PanelLeft size={16} />
@@ -1431,6 +1396,7 @@ export default function App() {
                 onTabsReorder={(ids) => void handleTabsReorder(ids)}
                 onNewTab={() => void handleNewTab()}
                 onOpenPalette={() => void openPalette()}
+                commandCompact={workspacePanelGridOpen}
               />
             </div>
           ) : (
@@ -1462,11 +1428,7 @@ export default function App() {
 
         <aside className={`sidebar${sidebarCollapsed ? " sidebar--collapsed" : ""}`} aria-label={t("sidebar.navigation")}>
           <div className="sidebar__brand" aria-hidden={sidebarCollapsed}>
-            <img src={logoSymbol} alt="" />
-            <div className="sidebar__brand-copy">
-              <strong>Reasonix</strong>
-              <span>{state.meta?.label ?? t("status.connecting")}</span>
-            </div>
+            <img src={logoWordmark} alt="Reasonix" className="sidebar__brand-logo" draggable={false} />
           </div>
 
           <Tooltip label={t("topbar.newSession")} fill>
@@ -1563,23 +1525,17 @@ export default function App() {
                 onTabsReorder={(ids) => void handleTabsReorder(ids)}
                 onNewTab={() => void handleNewTab()}
                 onOpenPalette={() => void openPalette()}
+                commandCompact={workspacePanelGridOpen}
               />
             </header>
           )}
 
           <>
           <header className="topicbar">
-            <div className="topicbar__scope-pill" title={topicScopeLabel(activeTab)}>
-              <GitBranch size={13} />
-              <span>{topicScopeLabel(activeTab)}</span>
-            </div>
             <div className="topicbar__identity">
               <div className="topicbar__title-row">
                 {topicbarEditing ? (
                   <div className="topicbar__title-edit">
-                    {topicbarProjectPrefix && (
-                      <span className="topicbar__title-prefix">{topicbarProjectPrefix} /</span>
-                    )}
                     <input
                       autoFocus
                       className="topicbar__title-input"
@@ -1599,7 +1555,7 @@ export default function App() {
                     />
                   </div>
                 ) : (
-                  <h1>{topicTitle(activeTab)}</h1>
+                  <h1 title={topicTitle(activeTab)}>{topicbarTitle}</h1>
                 )}
                 <Tooltip label={t("topicBar.renameSession")}>
                   <button
@@ -1613,29 +1569,14 @@ export default function App() {
                   </button>
                 </Tooltip>
               </div>
-              {topicbarSubtitle && <div className="topicbar__subtitle">{topicbarSubtitle}</div>}
+              {topicbarSubtitleVisible && (
+                <div className="topicbar__subtitle" title={topicbarSubtitleTitle}>
+                  <span>{topicbarWorkspaceLabel}</span>
+                </div>
+              )}
             </div>
             <div className="topicbar__spacer" />
             <div className="topicbar__actions">
-              <button
-                className="topicbar__action-btn topicbar__action-btn--label"
-                type="button"
-                aria-pressed={workspacePanelRenderable && rightDockMode === "changed"}
-                onClick={() => openRightDockMode("changed")}
-              >
-                <GitBranch size={14} />
-                <span>{t("workspace.changedTab")}</span>
-              </button>
-              <Tooltip label={t("topicBar.command")}>
-                <button
-                  className="topicbar__action-btn topicbar__action-btn--label topicbar__action-btn--accent"
-                  type="button"
-                  onClick={() => void openPalette()}
-                >
-                  <Command size={14} />
-                  <span>{t("topicBar.command")}</span>
-                </button>
-              </Tooltip>
               <CopyButton
                 getText={getSessionMarkdown}
                 label={t("topicBar.copyAll")}
@@ -1669,6 +1610,29 @@ export default function App() {
                   </div>
                 )}
               </div>
+              <Tooltip label={t("workspace.changedTab")}>
+                <button
+                  className="topicbar__action-btn topicbar__action-btn--label"
+                  type="button"
+                  aria-label={t("workspace.changedTab")}
+                  aria-pressed={workspacePanelRenderable && rightDockMode === "changed"}
+                  onClick={() => openRightDockMode("changed")}
+                >
+                  <GitBranch size={14} />
+                  <span>{t("workspace.changedTab")}</span>
+                </button>
+              </Tooltip>
+              <Tooltip label={t("topicBar.command")}>
+                <button
+                  className="topicbar__action-btn topicbar__action-btn--label topicbar__action-btn--accent"
+                  type="button"
+                  aria-label={t("topicBar.command")}
+                  onClick={() => void openPalette()}
+                >
+                  <Command size={14} />
+                  <span>{t("topicBar.command")}</span>
+                </button>
+              </Tooltip>
             </div>
           </header>
 
@@ -1685,16 +1649,16 @@ export default function App() {
                 <span className="loading-screen__text">{t("common.loading")}</span>
               </div>
             ) : (
-	              <Transcript
-	                items={state.items}
-	                live={state.live}
-	                footerHeight={footerHeight}
-	                onPrompt={send}
-	                onRewind={handleMessageAction}
-	                checkpoints={state.checkpoints}
-	                actionPending={state.messageAction != null}
-	                rewindDisabled={state.running || state.messageAction != null || state.approval != null || state.ask != null}
-	              />
+              <Transcript
+                items={state.items}
+                live={state.live}
+                footerHeight={footerHeight}
+                onPrompt={send}
+                onRewind={handleMessageAction}
+                checkpoints={state.checkpoints}
+                actionPending={state.messageAction != null}
+                rewindDisabled={state.running || state.messageAction != null || state.approval != null || state.ask != null}
+              />
             )}
           </main>
 

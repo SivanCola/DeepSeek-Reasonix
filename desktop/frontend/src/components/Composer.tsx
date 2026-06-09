@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, ClipboardEvent, DragEvent, KeyboardEvent, PointerEvent as ReactPointerEvent, ReactNode } from "react";
-import { AlertTriangle, ArrowUp, Eye, FileText, Folder, List, MessageSquare, Search, Square, SquareTerminal, Trash2, X, Zap } from "lucide-react";
+import { AlertTriangle, ArrowUp, Eye, FileText, Folder, List, MessageSquare, Search, Square, Trash2, X, Zap } from "lucide-react";
 import { asArray } from "../lib/array";
 import { DedupIndex, sha256 } from "../lib/attachDedup";
 import { app, onFilesDropped } from "../lib/bridge";
@@ -853,14 +853,6 @@ export function Composer({
 
   const activePastedBlocks = pastedBlocks.filter((block) => text.includes(block.label));
   const shellModeActive = text.trimStart().startsWith("!");
-  const toggleShellMode = () => {
-    if (disabled || running) return;
-    if (shellModeActive) {
-      setTextCaretEnd(text.replace(/^\s*!\s?/, ""));
-      return;
-    }
-    setTextCaretEnd(text ? `! ${text}` : "! ");
-  };
 
   const removeWorkspaceReference = (target: WorkspaceReference) => {
     const key = workspaceReferenceKey(target);
@@ -1523,12 +1515,12 @@ export function Composer({
           onDoubleClick={resetComposerHeight}
         />
         <div
-          className={`composer${dragOver ? " composer--dragover" : ""}${disabled ? " composer--disabled" : ""}${text.trimStart().startsWith("!") ? " composer--shell" : ""}`}
+          className={`composer${dragOver ? " composer--dragover" : ""}${disabled ? " composer--disabled" : ""}${shellModeActive ? " composer--shell" : ""}`}
           onDrop={onDrop}
           onDragOver={onDragOver}
           onDragLeave={onDragLeave}
         >
-          <span className="composer__caret">{text.trimStart().startsWith("!") ? "$" : "›"}</span>
+          <span className="composer__caret">{shellModeActive ? "$" : "›"}</span>
           <textarea
             ref={taRef}
             className="composer__input"
@@ -1597,18 +1589,6 @@ export function Composer({
               </div>
             )}
           </div>
-          <Tooltip label={t(shellModeActive ? "composer.shellModeOn" : "composer.shellMode")}>
-            <button
-              className={`meta-chip composer-shell-chip${shellModeActive ? " composer-shell-chip--active" : ""}`}
-              type="button"
-              aria-pressed={shellModeActive}
-              onClick={toggleShellMode}
-              disabled={disabled || running}
-            >
-              <SquareTerminal size={13} />
-              <span>shell</span>
-            </button>
-          </Tooltip>
         </div>
       </div>
     </div>

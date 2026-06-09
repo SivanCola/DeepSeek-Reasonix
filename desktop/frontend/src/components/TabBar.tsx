@@ -18,6 +18,7 @@ interface TabBarProps {
   onTabsReorder: (tabIds: string[]) => void;
   onNewTab: () => void;
   onOpenPalette?: () => void;
+  commandCompact?: boolean;
   revealActiveSignal?: number;
 }
 
@@ -51,7 +52,7 @@ function projectAccentStyle(color?: string): CSSProperties | undefined {
   return { "--project-accent": value } as CSSProperties;
 }
 
-export function TabBar({ tabs, activeTabId, onTabChange, onTabClose, onTabsClose, onTabsReorder, onNewTab, onOpenPalette, revealActiveSignal = 0 }: TabBarProps) {
+export function TabBar({ tabs, activeTabId, onTabChange, onTabClose, onTabsClose, onTabsReorder, onNewTab, onOpenPalette, commandCompact = false, revealActiveSignal = 0 }: TabBarProps) {
   const t = useT();
   const [draggingTabId, setDraggingTabId] = useState<string | null>(null);
   const [dropTarget, setDropTarget] = useState<{ id: string; side: DropSide } | null>(null);
@@ -259,7 +260,7 @@ export function TabBar({ tabs, activeTabId, onTabChange, onTabClose, onTabsClose
       {onOpenPalette && <span className="tabbar__spacer" aria-hidden="true" />}
       {onOpenPalette && (
         <button
-          className="tabbar__command"
+          className={["tabbar__command", commandCompact ? "tabbar__command--compact" : ""].filter(Boolean).join(" ")}
           type="button"
           onClick={onOpenPalette}
           aria-label={t("palette.placeholder")}

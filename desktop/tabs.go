@@ -44,6 +44,8 @@ type WorkspaceTab struct {
 	StartupErr    string              // build error, surfaced to the frontend
 	sink          *tabEventSink       // routes events with this tab's ID
 
+	ActivityStatus string // transient project-tree status for the in-flight turn
+
 	// Per-turn autosave per tab.
 	saveMu    sync.Mutex
 	saving    bool
@@ -59,6 +61,14 @@ type WorkspaceTab struct {
 	disabledMCP map[string]ServerView
 	mcpOrder    []string
 }
+
+const (
+	topicStatusThinking            = "thinking"
+	topicStatusStreaming           = "streaming"
+	topicStatusWaitingConfirmation = "waiting_confirmation"
+	topicStatusPaused              = "paused"
+	topicStatusError               = "error"
+)
 
 type readFileRecord struct {
 	Path      string `json:"path"`
@@ -123,6 +133,11 @@ func (s *tabEventSink) Emit(e event.Event) {
 	if s.ctx != nil {
 		runtime.EventsEmit(s.ctx, eventChannel, toWireTab(e, s.tabID))
 	}
+	if s.app != nil {
+		if status, update := topicActivityStatusFromEvent(e); update && s.app.setTabActivityStatus(s.tabID, status) {
+			s.app.emitProjectTreeChanged()
+		}
+	}
 	// Record read_file successes in the tab's telemetry.
 	if e.Kind == event.ToolResult && e.Tool.Name == "read_file" && e.Tool.Err == "" {
 		s.recordReadTelemetry(e)
@@ -130,6 +145,24 @@ func (s *tabEventSink) Emit(e event.Event) {
 	// Persist after each turn so a force-kill loses at most the in-flight prompt.
 	if e.Kind == event.TurnDone && s.app != nil {
 		s.app.scheduleTabSnapshot(s.tabID)
+	}
+}
+
+func topicActivityStatusFromEvent(e event.Event) (string, bool) {
+	switch e.Kind {
+	case event.TurnStarted, event.Reasoning, event.ToolDispatch, event.ToolProgress, event.ToolResult, event.CompactionStarted, event.CompactionDone, event.Retrying:
+		return topicStatusThinking, true
+	case event.Text, event.Message:
+		return topicStatusStreaming, true
+	case event.ApprovalRequest, event.AskRequest:
+		return topicStatusWaitingConfirmation, true
+	case event.TurnDone:
+		if e.Err != nil {
+			return topicStatusError, true
+		}
+		return "", true
+	default:
+		return "", false
 	}
 }
 
@@ -1460,7 +1493,59 @@ type ProjectNode struct {
 	LastActivityAt int64         `json:"lastActivityAt,omitempty"`
 	Open           bool          `json:"open,omitempty"`
 	Running        bool          `json:"running,omitempty"`
+	Status         string        `json:"status,omitempty"`
 	Children       []ProjectNode `json:"children,omitempty"`
+}
+
+func normalizeTopicStatus(status string) string {
+	switch status {
+	case topicStatusThinking, topicStatusStreaming, topicStatusWaitingConfirmation, topicStatusPaused, topicStatusError:
+		return status
+	default:
+		return ""
+	}
+}
+
+func topicStatusPriority(status string) int {
+	switch normalizeTopicStatus(status) {
+	case topicStatusWaitingConfirmation:
+		return 60
+	case topicStatusStreaming:
+		return 40
+	case topicStatusThinking:
+		return 30
+	case topicStatusPaused:
+		return 20
+	case topicStatusError:
+		return 10
+	default:
+		return 0
+	}
+}
+
+func mergeTopicStatus(current, candidate string) string {
+	if topicStatusPriority(candidate) > topicStatusPriority(current) {
+		return normalizeTopicStatus(candidate)
+	}
+	return normalizeTopicStatus(current)
+}
+
+func activityStatusForTab(tab *WorkspaceTab) string {
+	if tab == nil {
+		return ""
+	}
+	status := normalizeTopicStatus(tab.ActivityStatus)
+	running := tab.Ctrl != nil && tab.Ctrl.Running()
+	if running {
+		if status == "" || status == topicStatusError {
+			return topicStatusThinking
+		}
+		return status
+	}
+	if status == topicStatusError || status == topicStatusPaused {
+		return status
+	}
+	return ""
 }
 
 // migrateLegacySessionsIntoGlobalTopics makes pre-topic desktop history visible
@@ -1880,6 +1965,21 @@ func (a *App) updateTopicSessionTitles(topicID, title string) {
 	}
 }
 
+func (a *App) setTabActivityStatus(tabID, status string) bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	tab := a.tabs[tabID]
+	if tab == nil {
+		return false
+	}
+	status = normalizeTopicStatus(status)
+	if tab.ActivityStatus == status {
+		return false
+	}
+	tab.ActivityStatus = status
+	return true
+}
+
 func (a *App) emitProjectTreeChanged() {
 	if a.ctx != nil {
 		runtime.EventsEmit(a.ctx, "project-tree:changed")
@@ -2079,6 +2179,7 @@ func (a *App) ListProjectTree() []ProjectNode {
 	openTopics := map[string]struct {
 		open    bool
 		running bool
+		status  string
 	}{}
 	a.mu.RLock()
 	for _, tab := range a.tabs {
@@ -2091,6 +2192,7 @@ func (a *App) ListProjectTree() []ProjectNode {
 		if tab.Ctrl != nil && tab.Ctrl.Running() {
 			status.running = true
 		}
+		status.status = mergeTopicStatus(status.status, activityStatusForTab(tab))
 		openTopics[key] = status
 	}
 	a.mu.RUnlock()
@@ -2119,6 +2221,7 @@ func (a *App) ListProjectTree() []ProjectNode {
 				LastActivityAt: summary.lastActivityAt,
 				Open:           status.open,
 				Running:        status.running,
+				Status:         status.status,
 			})
 		}
 		out = append(out, ProjectNode{
@@ -2166,6 +2269,7 @@ func (a *App) ListProjectTree() []ProjectNode {
 				LastActivityAt: summary.lastActivityAt,
 				Open:           status.open,
 				Running:        status.running,
+				Status:         status.status,
 			})
 		}
 		node.Label = title
