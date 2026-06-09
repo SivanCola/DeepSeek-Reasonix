@@ -432,6 +432,8 @@ function normalizeSettingsView(view: SettingsView | null | undefined): SettingsV
     },
     agent,
     autoPlan: normalizeAutoPlan(view.autoPlan),
+    autoApproveTools: Boolean(view.autoApproveTools ?? view.bypass),
+    bypass: Boolean(view.autoApproveTools ?? view.bypass),
     desktopLanguage: normalizeLangPref(view.desktopLanguage),
     desktopTheme: normalizeThemePreference(view.desktopTheme),
     desktopThemeStyle: normalizeThemeStyleForTheme(view.desktopThemeStyle, normalizeThemePreference(view.desktopTheme)),

@@ -8,6 +8,7 @@
 import type * as GeneratedApp from "../../wailsjs/go/main/App";
 
 import { t } from "./i18n";
+import { modeWithAutoApproveTools, modeWithPlan, normalizeCollaborationMode, normalizeMode, normalizeToolApprovalMode } from "./types";
 
 import type {
   BalanceInfo,
@@ -96,6 +97,15 @@ export interface AppBindings {
   SetPlanMode(on: boolean): Promise<void>;
   SetMode(mode: string): Promise<void>;
   SetModeForTab(tabID: string, mode: string): Promise<void>;
+  SetAutoApproveTools(on: boolean): Promise<void>;
+  SetCollaborationMode(mode: string): Promise<void>;
+  SetCollaborationModeForTab(tabID: string, mode: string): Promise<void>;
+  SetToolApprovalMode(mode: string): Promise<void>;
+  SetToolApprovalModeForTab(tabID: string, mode: string): Promise<void>;
+  SetGoal(goal: string): Promise<void>;
+  SetGoalForTab(tabID: string, goal: string): Promise<void>;
+  ClearGoal(): Promise<void>;
+  ClearGoalForTab(tabID: string): Promise<void>;
   Compact(): Promise<void>;
   NewSession(): Promise<void>;
   History(): Promise<HistoryMessage[]>;
@@ -193,8 +203,9 @@ export interface AppBindings {
   MigrateDesktopPreferences(language: string, theme: string, style: string): Promise<void>;
   SetAgentParams(temperature: number, maxSteps: number, plannerMaxSteps: number, systemPrompt: string): Promise<void>;
   SetTrayLocale(locale: "en" | "zh"): Promise<void>;
-  // SetBypass toggles YOLO mode (auto-approve every tool call this session; deny
-  // rules still apply). Runtime-only — not written to config.
+  // SetBypass is the legacy Wails name for YOLO/full-access tool auto-approval
+  // (ask questions and plan approvals still wait; deny rules still apply).
+  // Runtime-only.
   SetBypass(on: boolean): Promise<void>;
   Version(): Promise<string>;
   CheckUpdate(): Promise<UpdateInfo | null>;
@@ -600,6 +611,7 @@ function makeMockApp(): AppBindings {
     closeBehavior: "background",
     configPath: "~/projects/reasonix/reasonix.toml",
     providerKinds: ["openai"],
+    autoApproveTools: false,
     bypass: false,
   };
   settings.providers = settings.providers.map((provider) =>
@@ -677,6 +689,8 @@ function makeMockApp(): AppBindings {
       ready: true,
       running: false,
       mode: "normal",
+      collaborationMode: "normal",
+      toolApprovalMode: "ask",
       active: true,
       cwd: globalWorkspaceRoot,
     },
@@ -689,12 +703,14 @@ function makeMockApp(): AppBindings {
       topicId: "topic_dev_standard",
       topicTitle: t("mock.trashDevStandardTitle"),
       projectColor: "blue",
-	      label: "DeepSeek-R1",
-	      ready: true,
-	      running: false,
-	      mode: "normal",
-	      active: true,
-	      cwd: "~/projects/joyquant-db",
+      label: "DeepSeek-R1",
+      ready: true,
+      running: false,
+      mode: "normal",
+      collaborationMode: "normal",
+      toolApprovalMode: "ask",
+      active: true,
+      cwd: "~/projects/joyquant-db",
     },
     {
       id: "tab_joyquant_sys",
@@ -704,12 +720,14 @@ function makeMockApp(): AppBindings {
       topicId: "topic_p3b_pd",
       topicTitle: "p3b P&D",
       projectColor: "purple",
-	      label: "DeepSeek-R1",
-	      ready: true,
-	      running: false,
-	      mode: "normal",
-	      active: false,
-	      cwd: "~/projects/joyquant-sys",
+      label: "DeepSeek-R1",
+      ready: true,
+      running: false,
+      mode: "normal",
+      collaborationMode: "normal",
+      toolApprovalMode: "ask",
+      active: false,
+      cwd: "~/projects/joyquant-sys",
     },
     {
       id: "tab_global",
@@ -718,12 +736,14 @@ function makeMockApp(): AppBindings {
       workspaceName: "Global",
       topicId: "topic_global",
       topicTitle: "Global",
-	      label: "DeepSeek-R1",
-	      ready: true,
-	      running: false,
-	      mode: "normal",
-	      active: false,
-	      cwd: "~/projects/joyquant-db",
+      label: "DeepSeek-R1",
+      ready: true,
+      running: false,
+      mode: "normal",
+      collaborationMode: "normal",
+      toolApprovalMode: "ask",
+      active: false,
+      cwd: "~/projects/joyquant-db",
     },
   ];
   return {
@@ -740,6 +760,33 @@ function makeMockApp(): AppBindings {
           cancelled = false;
       emit({ kind: "turn_started" });
       const trimmedInput = input.trim().toLowerCase();
+      const goalMatch = /^\/goal(?:\s+([\s\S]*))?$/.exec(input.trim());
+      if (goalMatch) {
+        const arg = (goalMatch[1] ?? "").trim();
+        const lowered = arg.toLowerCase();
+        const active = mockTabs.find((tab) => tab.active);
+        if (!arg || lowered === "status") {
+          emit({ kind: "notice", level: "info", text: active?.goal ? `goal: ${active.goal}` : "goal: none" });
+          emit({ kind: "turn_done" });
+          return;
+        }
+        if (["clear", "off", "stop", "done"].includes(lowered)) {
+          mockTabs = mockTabs.map((tab) => (tab.active ? { ...tab, goal: "", goalStatus: "stopped", collaborationMode: "normal" } : tab));
+          emit({ kind: "notice", level: "info", text: "goal cleared" });
+          emit({ kind: "turn_done" });
+          return;
+        }
+        mockTabs = mockTabs.map((tab) => (tab.active ? { ...tab, goal: arg, goalStatus: "running", collaborationMode: "goal" } : tab));
+        emit({ kind: "notice", level: "info", text: `goal set: ${arg}` });
+        await delay(350);
+        if (cancelled) return;
+        const reply = `Autonomous goal run started for: **${arg}**\n\nMock run completed.\n\n[goal:complete]`;
+        emit({ kind: "message", text: reply });
+        mockTabs = mockTabs.map((tab) => (tab.active ? { ...tab, goal: "", goalStatus: "complete", collaborationMode: "normal" } : tab));
+        emit({ kind: "notice", level: "info", text: "goal complete" });
+        emit({ kind: "turn_done" });
+        return;
+      }
       if (trimmedInput === "/approve-preview" || trimmedInput === "approve preview" || trimmedInput === "approve预览") {
         pendingApprovalPreview = true;
         await delay(250);
@@ -978,21 +1025,92 @@ function makeMockApp(): AppBindings {
         async AnswerQuestionForTab(_tabID, id, answers) {
           await this.AnswerQuestion(id, answers);
         },
-    async ConfirmAction(req) {
-      void req;
-      return false;
-    },
-        async SetPlanMode() {},
-	        async SetMode(mode) {
-	          const active = mockTabs.find((tab) => tab.active);
-	          if (active) await this.SetModeForTab(active.id, mode);
-	        },
-	        async SetModeForTab(tabID, mode) {
-	          const nextMode = mode === "plan" || mode === "yolo" ? mode : "normal";
-	          mockTabs = mockTabs.map((tab) => tab.id === tabID ? { ...tab, mode: nextMode } : tab);
-	        },
-    async Compact() {},
-    async NewSession() {},
+        async ConfirmAction(req) {
+          void req;
+          return false;
+        },
+        async SetPlanMode(on) {
+          const active = mockTabs.find((tab) => tab.active);
+          if (active) await this.SetModeForTab(active.id, modeWithPlan(normalizeMode(active.mode), on));
+        },
+        async SetMode(mode) {
+          const active = mockTabs.find((tab) => tab.active);
+          if (active) await this.SetModeForTab(active.id, mode);
+        },
+        async SetModeForTab(tabID, mode) {
+          const nextMode = normalizeMode(mode);
+          mockTabs = mockTabs.map((tab) =>
+            tab.id === tabID
+              ? {
+                  ...tab,
+                  mode: nextMode,
+                  collaborationMode: normalizeCollaborationMode(undefined, tab.goal, nextMode),
+                  toolApprovalMode: normalizeToolApprovalMode(undefined, nextMode),
+                }
+              : tab,
+          );
+        },
+        async SetCollaborationMode(mode) {
+          const active = mockTabs.find((tab) => tab.active);
+          if (active) await this.SetCollaborationModeForTab(active.id, mode);
+        },
+        async SetCollaborationModeForTab(tabID, mode) {
+          const next = normalizeCollaborationMode(mode);
+          mockTabs = mockTabs.map((tab) => {
+            if (tab.id !== tabID) return tab;
+            const toolMode = normalizeToolApprovalMode(tab.toolApprovalMode, normalizeMode(tab.mode));
+            return {
+              ...tab,
+              collaborationMode: next,
+              goal: next === "normal" || next === "plan" ? "" : tab.goal,
+              mode: modeWithPlan(modeWithAutoApproveTools(normalizeMode(tab.mode), toolMode === "yolo"), next === "plan"),
+            };
+          });
+        },
+        async SetToolApprovalMode(mode) {
+          const active = mockTabs.find((tab) => tab.active);
+          if (active) await this.SetToolApprovalModeForTab(active.id, mode);
+        },
+        async SetToolApprovalModeForTab(tabID, mode) {
+          const next = normalizeToolApprovalMode(mode);
+          settings.autoApproveTools = next === "yolo";
+          settings.bypass = next === "yolo";
+          mockTabs = mockTabs.map((tab) =>
+            tab.id === tabID
+              ? {
+                  ...tab,
+                  toolApprovalMode: next,
+                  mode: modeWithAutoApproveTools(normalizeMode(tab.mode), next === "yolo"),
+                }
+              : tab,
+          );
+        },
+        async SetGoal(goal) {
+          const active = mockTabs.find((tab) => tab.active);
+          if (active) await this.SetGoalForTab(active.id, goal);
+        },
+        async SetGoalForTab(tabID, goal) {
+          const nextGoal = goal.trim();
+          mockTabs = mockTabs.map((tab) =>
+            tab.id === tabID
+              ? {
+                  ...tab,
+                  goal: nextGoal,
+                  goalStatus: nextGoal ? "running" : "stopped",
+                  collaborationMode: nextGoal ? "goal" : "normal",
+                  mode: modeWithPlan(normalizeMode(tab.mode), false),
+                }
+              : tab,
+          );
+        },
+        async ClearGoal() {
+          await this.SetGoal("");
+        },
+        async ClearGoalForTab(tabID) {
+          await this.SetGoalForTab(tabID, "");
+        },
+        async Compact() {},
+        async NewSession() {},
     async Checkpoints() {
       return [
         { turn: 0, prompt: "你好呀", files: ["src/App.tsx"], time: Date.now() - 30_000, canCode: true, canConversation: true },
@@ -1132,16 +1250,36 @@ function makeMockApp(): AppBindings {
           return this.Jobs();
         },
         async Meta() {
-      return {
-        label: "DeepSeek-R1",
-        ready: true,
-        eventChannel: EVENT_CHANNEL,
-        cwd,
-            bypass: settings.bypass,
+          const active = mockTabs.find((tab) => tab.active) ?? mockTabs[0];
+          const toolApprovalMode = normalizeToolApprovalMode(active?.toolApprovalMode, active ? normalizeMode(active.mode) : "normal", settings.autoApproveTools);
+          const autoApproveTools = toolApprovalMode === "yolo";
+          return {
+            label: active?.label ?? "DeepSeek-R1",
+            ready: active?.ready ?? true,
+            eventChannel: EVENT_CHANNEL,
+            cwd: active?.cwd || cwd,
+            autoApproveTools,
+            bypass: autoApproveTools,
+            toolApprovalMode,
+            goal: active?.goal ?? "",
+            goalStatus: active?.goalStatus ?? (active?.goal ? "running" : "stopped"),
           };
         },
-        async MetaForTab() {
-          return this.Meta();
+        async MetaForTab(tabID) {
+          const tab = mockTabs.find((item) => item.id === tabID) ?? mockTabs.find((item) => item.active) ?? mockTabs[0];
+          const toolApprovalMode = normalizeToolApprovalMode(tab?.toolApprovalMode, tab ? normalizeMode(tab.mode) : "normal", settings.autoApproveTools);
+          const autoApproveTools = toolApprovalMode === "yolo";
+          return {
+            label: tab?.label ?? "DeepSeek-R1",
+            ready: tab?.ready ?? true,
+            eventChannel: EVENT_CHANNEL,
+            cwd: tab?.cwd || cwd,
+            autoApproveTools,
+            bypass: autoApproveTools,
+            toolApprovalMode,
+            goal: tab?.goal ?? "",
+            goalStatus: tab?.goalStatus ?? (tab?.goal ? "running" : "stopped"),
+          };
         },
     async Commands() {
       return [
@@ -1585,8 +1723,11 @@ function makeMockApp(): AppBindings {
       settings.agent = { temperature, maxSteps, plannerMaxSteps, systemPrompt };
     },
     async SetTrayLocale(_locale: "en" | "zh") {},
+    async SetAutoApproveTools(on: boolean) {
+      await this.SetToolApprovalMode(on ? "yolo" : "ask");
+    },
     async SetBypass(on: boolean) {
-      settings.bypass = on;
+      await this.SetAutoApproveTools(on);
     },
     async Version() {
       return "v1.0.0 (browser dev)";
@@ -1652,12 +1793,14 @@ function makeMockApp(): AppBindings {
         topicId: _topicID,
         topicTitle: topicLabel(_topicID, t("mock.newSession")),
         projectColor: mockProjectTree.find((node) => node.root === workspaceRoot)?.projectColor,
-	        label: "deepseek-v4-flash",
-	        ready: true,
-	        running: false,
-	        mode: "normal",
-	        active: true,
-	        cwd: workspaceRoot,
+        label: "deepseek-v4-flash",
+        ready: true,
+        running: false,
+        mode: "normal",
+        collaborationMode: "normal",
+        toolApprovalMode: "ask",
+        active: true,
+        cwd: workspaceRoot,
       };
       mockTabs = [...mockTabs.map((item) => ({ ...item, active: false })), tab];
       return { ...tab };
@@ -1675,12 +1818,14 @@ function makeMockApp(): AppBindings {
         workspaceName: "Global",
         topicId: _topicID,
         topicTitle: topicLabel(_topicID, "Global"),
-	        label: "deepseek-v4-flash",
-	        ready: true,
-	        running: false,
-	        mode: "normal",
-	        active: true,
-	        cwd: "",
+        label: "deepseek-v4-flash",
+        ready: true,
+        running: false,
+        mode: "normal",
+        collaborationMode: "normal",
+        toolApprovalMode: "ask",
+        active: true,
+        cwd: "",
       };
       mockTabs = [...mockTabs.map((item) => ({ ...item, active: false })), tab];
       return { ...tab };
