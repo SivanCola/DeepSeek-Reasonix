@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, ClipboardEvent, DragEvent, KeyboardEvent, PointerEvent as ReactPointerEvent } from "react";
-import { ArrowUp, Eye, FileText, Folder, List, MessageSquare, Plus, Search, Shield, ShieldAlert, ShieldCheck, Square, Target, Trash2, X } from "lucide-react";
+import { ArrowUp, Eye, FileText, Folder, List, MessageSquare, Search, Shield, ShieldAlert, ShieldCheck, SlidersHorizontal, Square, Target, Trash2, X } from "lucide-react";
 import { asArray } from "../lib/array";
 import { DedupIndex, sha256 } from "../lib/attachDedup";
 import { app, onFilesDropped } from "../lib/bridge";
@@ -1726,9 +1726,10 @@ export function Composer({
                   disabled={disabled || running}
                   aria-haspopup="menu"
                   aria-expanded={intentMenuOpen && !intentMenuClosing}
+                  aria-label={t("composer.intentMenuTitle")}
                   title={intentMenuOpen || intentMenuClosing ? undefined : t("composer.intentMenuTitle")}
                 >
-                  <Plus size={17} />
+                  <SlidersHorizontal size={17} />
                 </button>
               </Tooltip>
               {planModeOn && (
