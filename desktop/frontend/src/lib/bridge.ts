@@ -12,7 +12,6 @@ import { modeWithAutoApproveTools, modeWithPlan, normalizeCollaborationMode, nor
 
 import type {
   BalanceInfo,
-  BotSettingsView,
   CapabilitiesView,
   CheckpointMeta,
   CommandInfo,
@@ -200,9 +199,6 @@ export interface AppBindings {
   RemovePermissionRule(list: string, rule: string): Promise<void>;
   SetSandbox(bash: string, network: boolean, workspaceRoot: string, allowWrite: string[]): Promise<void>;
   SetNetwork(n: NetworkView): Promise<void>;
-  SetBotSettings(b: BotSettingsView): Promise<void>;
-  SetBotSecret(envName: string, value: string): Promise<void>;
-  ClearBotSecret(envName: string): Promise<void>;
   SetCloseBehavior(mode: string): Promise<void>;
   SetDesktopLanguage(lang: string): Promise<void>;
   SetDesktopAppearance(theme: string, style: string): Promise<void>;
@@ -627,40 +623,6 @@ function makeMockApp(): AppBindings {
       proxy: { type: "socks5", server: "127.0.0.1", port: 7890, username: "", password: "" },
     },
     agent: { temperature: 0.2, maxSteps: 0, plannerMaxSteps: 12, systemPrompt: "You are Reasonix, a coding agent." },
-    bot: {
-      enabled: false,
-      model: "",
-      maxSteps: 25,
-      debounceMs: 1500,
-      allowlist: {
-        enabled: true,
-        allowAll: false,
-        qqUsers: [],
-        feishuUsers: [],
-        weixinUsers: [],
-        qqGroups: [],
-        feishuGroups: [],
-        weixinGroups: [],
-      },
-      qq: { enabled: false, appId: "", appSecretEnv: "QQ_BOT_APP_SECRET", secretSet: false },
-      feishu: {
-        enabled: false,
-        appId: "",
-        appSecretEnv: "FEISHU_BOT_APP_SECRET",
-        secretSet: false,
-        verificationToken: "",
-        mode: "webhook",
-        webhookPort: 8080,
-        requireMention: true,
-      },
-      weixin: {
-        enabled: false,
-        accountId: "default",
-        tokenEnv: "WEIXIN_BOT_TOKEN",
-        tokenSet: false,
-        apiBase: "https://ilinkai.weixin.qq.com",
-      },
-    },
     desktopLanguage: "",
     desktopTheme: "light",
     desktopThemeStyle: "graphite",
@@ -1918,21 +1880,6 @@ function makeMockApp(): AppBindings {
         },
         async SetNetwork(n: NetworkView) {
           settings.network = n;
-        },
-        async SetBotSettings(b: BotSettingsView) {
-          settings.bot = JSON.parse(JSON.stringify(b)) as BotSettingsView;
-        },
-        async SetBotSecret(envName: string, _value: string) {
-          const name = envName.trim();
-          if (settings.bot.qq.appSecretEnv === name) settings.bot.qq.secretSet = true;
-          if (settings.bot.feishu.appSecretEnv === name) settings.bot.feishu.secretSet = true;
-          if (settings.bot.weixin.tokenEnv === name) settings.bot.weixin.tokenSet = true;
-        },
-        async ClearBotSecret(envName: string) {
-          const name = envName.trim();
-          if (settings.bot.qq.appSecretEnv === name) settings.bot.qq.secretSet = false;
-          if (settings.bot.feishu.appSecretEnv === name) settings.bot.feishu.secretSet = false;
-          if (settings.bot.weixin.tokenEnv === name) settings.bot.weixin.tokenSet = false;
         },
         async SetCloseBehavior(mode: string) {
           settings.closeBehavior = mode === "quit" ? "quit" : "background";

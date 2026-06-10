@@ -94,13 +94,10 @@ func Run(args []string, version string) int {
 	case "doctor":
 		configureCLIThemeFromConfigNoProbe()
 		return doctorCommand(rest, version)
-	case "bot":
-		configureCLIThemeFromConfigNoProbe()
-		return botCommand(rest, version)
-	case "review":
-		configureCLIThemeFromConfigNoProbe()
-		return reviewCommand(rest)
-	case "version", "--version", "-v":
+		case "review":
+			configureCLIThemeFromConfigNoProbe()
+			return reviewCommand(rest)
+		case "version", "--version", "-v":
 		fmt.Println("reasonix", version)
 		return 0
 	case "help", "--help", "-h":
@@ -115,7 +112,7 @@ func Run(args []string, version string) int {
 
 func shouldMigrateLegacyConfigForCLI(cmd string) bool {
 	switch cmd {
-	case "", "run", "chat", "code", "serve", "setup", "config", "init", "acp", "mcp", "codegraph", "doctor", "bot":
+	case "", "run", "chat", "code", "serve", "setup", "config", "init", "acp", "mcp", "codegraph", "doctor":
 		return true
 	default:
 		return false

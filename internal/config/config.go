@@ -56,7 +56,6 @@ type Config struct {
 	Codegraph     CodegraphConfig     `toml:"codegraph"`
 	Statusline    StatuslineConfig    `toml:"statusline"`
 	LSP           LSPConfig           `toml:"lsp"`
-	Bot           BotConfig           `toml:"bot"`
 }
 
 // UIConfig controls CLI presentation-only settings. Desktop appearance is kept in
@@ -227,56 +226,6 @@ func (c CodegraphConfig) ShouldAutoStart() bool {
 
 func (c CodegraphConfig) ResolvedTier() string {
 	return "background"
-}
-
-// BotConfig 控制多渠道 IM bot 消息网关。
-type BotConfig struct {
-	Enabled    bool            `toml:"enabled"`
-	Model      string          `toml:"model"` // 用于 bot 的模型名，空则用 default_model
-	MaxSteps   int             `toml:"max_steps"`
-	DebounceMs int             `toml:"debounce_ms"` // 消息合并窗口，毫秒
-	Allowlist  BotAllowlist    `toml:"allowlist"`
-	QQ         QQBotConfig     `toml:"qq"`
-	Feishu     FeishuBotConfig `toml:"feishu"`
-	Weixin     WeixinBotConfig `toml:"weixin"`
-}
-
-// BotAllowlist 控制哪些用户可以使用 bot。
-type BotAllowlist struct {
-	Enabled      bool     `toml:"enabled"`
-	AllowAll     bool     `toml:"allow_all"`
-	QQUsers      []string `toml:"qq_users"`
-	FeishuUsers  []string `toml:"feishu_users"`
-	WeixinUsers  []string `toml:"weixin_users"`
-	QQGroups     []string `toml:"qq_groups"`
-	FeishuGroups []string `toml:"feishu_groups"`
-	WeixinGroups []string `toml:"weixin_groups"`
-}
-
-// QQBotConfig QQ 官方 Bot API v2 配置。
-type QQBotConfig struct {
-	Enabled      bool   `toml:"enabled"`
-	AppID        string `toml:"app_id"`
-	AppSecretEnv string `toml:"app_secret_env"` // 环境变量名，如 QQ_BOT_APP_SECRET
-}
-
-// FeishuBotConfig 飞书自建应用 Bot 配置。
-type FeishuBotConfig struct {
-	Enabled           bool   `toml:"enabled"`
-	AppID             string `toml:"app_id"`
-	AppSecretEnv      string `toml:"app_secret_env"`     // 如 FEISHU_BOT_APP_SECRET
-	VerificationToken string `toml:"verification_token"` // 事件订阅验证 token
-	Mode              string `toml:"mode"`               // webhook（默认）| websocket
-	WebhookPort       int    `toml:"webhook_port"`       // webhook 模式端口
-	RequireMention    bool   `toml:"require_mention"`
-}
-
-// WeixinBotConfig 微信 iLink Bot 配置。
-type WeixinBotConfig struct {
-	Enabled   bool   `toml:"enabled"`
-	AccountID string `toml:"account_id"`
-	TokenEnv  string `toml:"token_env"` // 环境变量名，如 WEIXIN_BOT_TOKEN
-	APIBase   string `toml:"api_base"`  // iLink API base URL
 }
 
 // NetworkConfig controls ordinary outbound HTTP traffic such as model providers,
