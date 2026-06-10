@@ -81,6 +81,11 @@ function memoryDocPreview(body: string): string {
   return lines.length > 6 ? `${preview}\n...` : preview;
 }
 
+function errorMessage(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  return String(err || "Unknown error");
+}
+
 // MemoryPanel is the desktop memory manager: a right-side drawer over the loaded
 // REASONIX.md hierarchy and saved auto-memories. Unlike Claude Code's /memory
 // (which shells out to $EDITOR) it edits docs in place, and unlike Codex (no UI
@@ -112,6 +117,7 @@ export function MemoryPanel({
   const [typeFilter, setTypeFilter] = useState("all");
   const [expanded, setExpanded] = useState<string | null>(null);
   const [confirmForget, setConfirmForget] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const factRefs = useRef<Record<string, HTMLElement | null>>({});
 
   // Filter input — a single substring search across docs and facts. The
@@ -199,10 +205,13 @@ export function MemoryPanel({
   const forgetFact = async (name: string) => {
     if (busy) return;
     setBusy(true);
+    setError(null);
     try {
       await onForget(name);
       if (expanded === name) setExpanded(null);
       setConfirmForget(null);
+    } catch (err) {
+      setError(errorMessage(err));
     } finally {
       setBusy(false);
     }
@@ -224,9 +233,12 @@ export function MemoryPanel({
     const trimmed = note.trim();
     if (!trimmed || busy) return;
     setBusy(true);
+    setError(null);
     try {
       await onRemember(activeScope, trimmed);
       setNote("");
+    } catch (err) {
+      setError(errorMessage(err));
     } finally {
       setBusy(false);
     }
@@ -240,9 +252,12 @@ export function MemoryPanel({
   const saveEdit = async () => {
     if (editingPath === null || busy) return;
     setBusy(true);
+    setError(null);
     try {
       await onSaveDoc(editingPath, draft);
       setEditingPath(null);
+    } catch (err) {
+      setError(errorMessage(err));
     } finally {
       setBusy(false);
     }
@@ -305,6 +320,7 @@ export function MemoryPanel({
                   ))}
                 </div>
               </div>
+              {error && <div className="mem-error" role="alert">{error}</div>}
               {facts.length === 0 ? (
                 <div className="mem-empty">{t("memory.noFacts")}</div>
               ) : filteredFacts.length === 0 ? (
@@ -585,6 +601,7 @@ export function MemorySettingsPage() {
 	const [expanded, setExpanded] = useState<string | null>(null);
 	const [expandedDoc, setExpandedDoc] = useState<string | null>(null);
 	const [confirmForget, setConfirmForget] = useState<string | null>(null);
+	const [error, setError] = useState<string | null>(null);
 	const [tab, setTab] = useState<"memories" | "docs">("memories");
 	const [showAdd, setShowAdd] = useState(false);
 	const factRefs = useRef<Record<string, HTMLElement | null>>({});
@@ -665,11 +682,14 @@ export function MemorySettingsPage() {
 	const forgetFact = useCallback(async (name: string) => {
 		if (busy) return;
 		setBusy(true);
+		setError(null);
 		try {
 			await app.Forget(name);
 			await reload();
 			if (expanded === name) setExpanded(null);
 			setConfirmForget(null);
+		} catch (err) {
+			setError(errorMessage(err));
 		} finally {
 			setBusy(false);
 		}
@@ -683,11 +703,14 @@ export function MemorySettingsPage() {
 		const trimmed = note.trim();
 		if (!trimmed || busy) return;
 		setBusy(true);
+		setError(null);
 		try {
 			await app.Remember(activeScope, trimmed);
 			await reload();
 			setNote("");
 			setShowAdd(false);
+		} catch (err) {
+			setError(errorMessage(err));
 		} finally {
 			setBusy(false);
 		}
@@ -701,10 +724,13 @@ export function MemorySettingsPage() {
 	const saveEdit = useCallback(async () => {
 		if (editingPath === null || busy) return;
 		setBusy(true);
+		setError(null);
 		try {
 			await app.SaveDoc(editingPath, draft);
 			await reload();
 			setEditingPath(null);
+		} catch (err) {
+			setError(errorMessage(err));
 		} finally {
 			setBusy(false);
 		}
@@ -830,6 +856,7 @@ export function MemorySettingsPage() {
 						))}
 					</div>
 				</div>
+				{error && <div className="mem-error" role="alert">{error}</div>}
 				{facts.length === 0 ? (
 					<div className="mem-empty">{t("memory.noFacts")}</div>
 				) : filteredFacts.length === 0 ? (

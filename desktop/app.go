@@ -829,6 +829,16 @@ func (a *App) CheckpointsForTab(tabID string) []CheckpointMeta {
 			CanConversation: ctrl.CheckpointHasBoundary(m.Turn),
 		})
 	}
+	// RestoreCode(turn) reverts every file touched in this turn or any later one, so
+	// a turn can rewind code even when it changed no files itself — as long as a
+	// later turn did. Propagate CanCode backwards over the oldest-first list.
+	hasCodeAfter := false
+	for i := len(out) - 1; i >= 0; i-- {
+		if len(out[i].Files) > 0 {
+			hasCodeAfter = true
+		}
+		out[i].CanCode = hasCodeAfter
+	}
 	return out
 }
 
@@ -1371,6 +1381,9 @@ func historyMessages(msgs []provider.Message, resolveUserContent func(string) st
 		content := m.Content
 		if m.Role == provider.RoleUser {
 			content = resolveUserContent(m.Content)
+			if control.IsSyntheticUserMessage(content) {
+				continue
+			}
 		}
 		reasoning := ""
 		if m.Role == provider.RoleAssistant {

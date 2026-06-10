@@ -542,6 +542,30 @@ func assertAskAnswers(t *testing.T, got, want []event.AskAnswer) {
 	}
 }
 
+func TestBypassDoesNotAutoAnswerAsk(t *testing.T) {
+	userAnswers := []event.AskAnswer{
+		{QuestionID: "approach", Selected: []string{"Alternative path"}},
+		{QuestionID: "scope", Selected: []string{"Broad"}},
+	}
+	askCh := make(chan event.Ask, 1)
+	c := New(Options{
+		Sink: event.FuncSink(func(e event.Event) {
+			if e.Kind == event.AskRequest {
+				askCh <- e.Ask
+			}
+		}),
+	})
+	c.SetBypass(true)
+
+	done := askController(t, c, sampleAskQuestions())
+	ask := waitAskRequest(t, askCh)
+
+	// Even with bypass/YOLO on, Ask must wait for the user's non-default choice.
+	c.AnswerQuestion(ask.ID, userAnswers)
+	result := waitAskResult(t, done)
+	assertAskAnswers(t, result.answers, userAnswers)
+}
+
 func TestAskPromptsAcrossInteractiveModes(t *testing.T) {
 	userAnswers := []event.AskAnswer{
 		{QuestionID: "approach", Selected: []string{"Alternative path"}},
@@ -675,6 +699,79 @@ func TestAskSerializesBehindPromptLockEvenWithAutoApproveTools(t *testing.T) {
 		t.Fatal("Ask did not emit AskRequest after acquiring promptMu with tool auto-approval on")
 	}
 
+	c.AnswerQuestion(ask.ID, []event.AskAnswer{
+		{QuestionID: "q1", Selected: []string{"Alternative"}},
+	})
+
+	var answers []event.AskAnswer
+	select {
+	case err := <-errs:
+		t.Fatalf("Ask: %v", err)
+	case answers = <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Ask stayed blocked after AnswerQuestion")
+	}
+	if len(answers) != 1 || answers[0].QuestionID != "q1" || len(answers[0].Selected) != 1 || answers[0].Selected[0] != "Alternative" {
+		t.Fatalf("answers = %#v, want Alternative (user's choice, not auto-recommended)", answers)
+	}
+}
+
+func TestAskSerializesBehindPromptLockEvenWithBypass(t *testing.T) {
+	askCh := make(chan event.Ask, 1)
+	c := New(Options{
+		Sink: event.FuncSink(func(e event.Event) {
+			if e.Kind == event.AskRequest {
+				askCh <- e.Ask
+			}
+		}),
+	})
+	questions := []event.AskQuestion{{
+		ID:     "q1",
+		Header: "Choice",
+		Prompt: "Which path?",
+		Options: []event.AskOption{
+			{Label: "Recommended"},
+			{Label: "Alternative"},
+		},
+	}}
+
+	c.promptMu.Lock()
+	done := make(chan []event.AskAnswer, 1)
+	errs := make(chan error, 1)
+	go func() {
+		answers, err := c.Ask(context.Background(), questions)
+		if err != nil {
+			errs <- err
+			return
+		}
+		done <- answers
+	}()
+
+	// Give the goroutine a chance to reach promptMu, then prove it did not emit
+	// AskRequest while another prompt owns the user-decision slot.
+	time.Sleep(20 * time.Millisecond)
+	select {
+	case ask := <-askCh:
+		t.Fatalf("AskRequest emitted while promptMu was held: %#v", ask)
+	default:
+	}
+
+	// Enable bypass while Ask is queued behind promptMu.
+	c.SetBypass(true)
+	// Release the lock — Ask proceeds but must still emit an AskRequest.
+	c.promptMu.Unlock()
+
+	// Post-unlock assertion: Ask must emit AskRequest now that it holds the lock.
+	var ask event.Ask
+	select {
+	case err := <-errs:
+		t.Fatalf("Ask: %v", err)
+	case ask = <-askCh:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Ask did not emit AskRequest after acquiring promptMu with bypass on; bypass should not suppress ask")
+	}
+
+	// Answer and verify we get the user's choice.
 	c.AnswerQuestion(ask.ID, []event.AskAnswer{
 		{QuestionID: "q1", Selected: []string{"Alternative"}},
 	})

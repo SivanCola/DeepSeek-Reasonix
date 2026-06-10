@@ -490,6 +490,7 @@ func (c *Controller) runGoalLoopWithRawDisplay(ctx context.Context, input, raw, 
 func (c *Controller) runTurnWithRawDisplay(ctx context.Context, input, raw, display string) error {
 	c.maybeSessionStart(ctx)
 	c.maybeAutoPlan(ctx, raw)
+	ctx = agent.WithParentSession(ctx, c.parentSessionID())
 	input = c.Compose(input)
 	startMessages := c.messageCount()
 	defer c.snapshotActivityIfChanged(startMessages)
@@ -996,6 +997,7 @@ func (c *Controller) notice(text string) {
 // just needs the exit status — no TurnDone event, no cancel bookkeeping.
 func (c *Controller) Run(ctx context.Context, input string) error {
 	c.maybeSessionStart(ctx)
+	ctx = agent.WithParentSession(ctx, c.parentSessionID())
 	startMessages := c.messageCount()
 	defer c.snapshotActivityIfChanged(startMessages)
 	if c.hooks.Enabled() {
@@ -1103,10 +1105,10 @@ func (c *Controller) refreshInteractiveGate() {
 
 // Ask implements agent.Asker: it emits an AskRequest and blocks until
 // AnswerQuestion(ID, …) answers or ctx is cancelled. promptMu serialises it
-// against tool-approval prompts so at most one user decision is outstanding.
-// Unlike requestApproval (which auto-approves in YOLO/full-access mode), Ask always
-// reaches the user: the model is asking a question, not asking permission.
-// Headless sessions keep asker nil, so the ask tool falls back without blocking.
+// against tool-approval prompts so at most one user prompt is outstanding.
+// Unlike tool-approval gates, Ask is NOT bypassed in YOLO mode — the `ask`
+// tool exists to get a genuine user decision, and YOLO only auto-approves
+// tool calls; it must not answer the user's questions for them.
 func (c *Controller) Ask(ctx context.Context, questions []event.AskQuestion) ([]event.AskAnswer, error) {
 	c.promptMu.Lock()
 	defer c.promptMu.Unlock()
@@ -1321,19 +1323,23 @@ func (c *Controller) Rewind(turn int, scope RewindScope) error {
 			return c.rewindFail(fmt.Errorf("conversation rewind unavailable for turn %d (resumed session)", turn))
 		}
 		s := c.executor.Session()
-		if boundary <= len(s.Messages) {
-			s.Messages = s.Messages[:boundary]
-			c.mu.Lock()
-			c.cpTurn = turn // renumber future turns from here; later turns are gone
-			for k := range c.cpBound {
-				if k >= turn {
-					delete(c.cpBound, k)
-				}
+		// boundary is the message-log index at turn start; compaction shrinks the
+		// log without rewriting boundaries, so a stale boundary past the end means
+		// the turn was compacted away — fail loudly instead of skipping silently.
+		if boundary > len(s.Messages) {
+			return c.rewindFail(fmt.Errorf("conversation rewind unavailable for turn %d: the conversation was compacted past this point", turn))
+		}
+		s.Messages = s.Messages[:boundary]
+		c.mu.Lock()
+		c.cpTurn = turn // renumber future turns from here; later turns are gone
+		for k := range c.cpBound {
+			if k >= turn {
+				delete(c.cpBound, k)
 			}
-			c.mu.Unlock()
-			if err := c.Snapshot(); err != nil {
-				slog.Warn("controller: snapshot after rewind", "err", err)
-			}
+		}
+		c.mu.Unlock()
+		if err := c.Snapshot(); err != nil {
+			slog.Warn("controller: snapshot after rewind", "err", err)
 		}
 		c.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo,
 			Text: fmt.Sprintf("rewound conversation to turn %d", turn)})
@@ -1692,6 +1698,10 @@ func (c *Controller) SessionPath() string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.sessionPath
+}
+
+func (c *Controller) parentSessionID() string {
+	return agent.BranchID(c.SessionPath())
 }
 
 // History returns the executor's current message log (for repopulating a
