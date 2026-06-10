@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "node scripts/check-browser-preview-stability.mjs && node scripts/check-css-syntax.mjs src/styles.css && node scripts/check-z-index-tokens.mjs src/styles.css && tsc --noEmit && vite build",
+    "build": "node scripts/check-css-syntax.mjs src/styles.css && node scripts/check-z-index-tokens.mjs src/styles.css && tsc --noEmit && vite build",
     "preview": "vite preview",
     "check:css": "node scripts/check-css-syntax.mjs src/styles.css && node scripts/check-z-index-tokens.mjs src/styles.css",
     "check:browser-preview": "node scripts/check-browser-preview-stability.mjs",
