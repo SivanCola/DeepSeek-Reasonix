@@ -99,7 +99,6 @@ type QQBotView struct {
 
 type FeishuBotView struct {
 	Enabled           bool   `json:"enabled"`
-	Domain            string `json:"domain"`
 	AppID             string `json:"appId"`
 	AppSecretEnv      string `json:"appSecretEnv"`
 	SecretSet         bool   `json:"secretSet"`
@@ -118,15 +117,14 @@ type WeixinBotView struct {
 }
 
 type BotSettingsView struct {
-	Enabled     bool                `json:"enabled"`
-	Model       string              `json:"model"`
-	MaxSteps    int                 `json:"maxSteps"`
-	DebounceMs  int                 `json:"debounceMs"`
-	Allowlist   BotAllowlistView    `json:"allowlist"`
-	QQ          QQBotView           `json:"qq"`
-	Feishu      FeishuBotView       `json:"feishu"`
-	Weixin      WeixinBotView       `json:"weixin"`
-	Connections []BotConnectionView `json:"connections"`
+	Enabled    bool             `json:"enabled"`
+	Model      string           `json:"model"`
+	MaxSteps   int              `json:"maxSteps"`
+	DebounceMs int              `json:"debounceMs"`
+	Allowlist  BotAllowlistView `json:"allowlist"`
+	QQ         QQBotView        `json:"qq"`
+	Feishu     FeishuBotView    `json:"feishu"`
+	Weixin     WeixinBotView    `json:"weixin"`
 }
 
 // SettingsView is the whole Settings panel payload.
@@ -408,7 +406,6 @@ func botSettingsView(b config.BotConfig) BotSettingsView {
 		},
 		Feishu: FeishuBotView{
 			Enabled:           b.Feishu.Enabled,
-			Domain:            orDefault(strings.TrimSpace(b.Feishu.Domain), "feishu"),
 			AppID:             b.Feishu.AppID,
 			AppSecretEnv:      b.Feishu.AppSecretEnv,
 			SecretSet:         strings.TrimSpace(b.Feishu.AppSecretEnv) != "" && os.Getenv(b.Feishu.AppSecretEnv) != "",
@@ -424,7 +421,6 @@ func botSettingsView(b config.BotConfig) BotSettingsView {
 			TokenSet:  strings.TrimSpace(b.Weixin.TokenEnv) != "" && os.Getenv(b.Weixin.TokenEnv) != "",
 			APIBase:   b.Weixin.APIBase,
 		},
-		Connections: botConnectionViews(b.Connections),
 	}
 }
 
@@ -433,13 +429,6 @@ func orDefault(s, def string) string {
 		return def
 	}
 	return s
-}
-
-func botDomainOrDefault(domain string) string {
-	if strings.EqualFold(strings.TrimSpace(domain), "lark") {
-		return "lark"
-	}
-	return "feishu"
 }
 
 // --- apply (write config, then rebuild the controller so it's live) ---
@@ -1188,7 +1177,6 @@ func (a *App) SetBotSettings(b BotSettingsView) error {
 		}
 		c.Bot.Feishu = config.FeishuBotConfig{
 			Enabled:           b.Feishu.Enabled,
-			Domain:            botDomainOrDefault(b.Feishu.Domain),
 			AppID:             strings.TrimSpace(b.Feishu.AppID),
 			AppSecretEnv:      strings.TrimSpace(b.Feishu.AppSecretEnv),
 			VerificationToken: strings.TrimSpace(b.Feishu.VerificationToken),
@@ -1202,7 +1190,6 @@ func (a *App) SetBotSettings(b BotSettingsView) error {
 			TokenEnv:  strings.TrimSpace(b.Weixin.TokenEnv),
 			APIBase:   strings.TrimRight(strings.TrimSpace(b.Weixin.APIBase), "/"),
 		}
-		c.Bot.Connections = botConnectionConfigs(b.Connections)
 		return nil
 	})
 }

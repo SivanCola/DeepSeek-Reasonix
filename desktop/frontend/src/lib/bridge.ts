@@ -12,9 +12,6 @@ import { modeWithAutoApproveTools, modeWithPlan, normalizeCollaborationMode, nor
 
 import type {
   BalanceInfo,
-  BotConnectionDiagnostic,
-  BotInstallPollResult,
-  BotInstallStartResult,
   BotSettingsView,
   CapabilitiesView,
   CheckpointMeta,
@@ -206,10 +203,6 @@ export interface AppBindings {
   SetBotSettings(b: BotSettingsView): Promise<void>;
   SetBotSecret(envName: string, value: string): Promise<void>;
   ClearBotSecret(envName: string): Promise<void>;
-  StartBotConnectionInstall(provider: string, domain: string): Promise<BotInstallStartResult>;
-  PollBotConnectionInstall(installID: string): Promise<BotInstallPollResult>;
-  DiagnoseBotConnection(id: string): Promise<BotConnectionDiagnostic>;
-  TestBotConnection(id: string, target?: string): Promise<BotConnectionDiagnostic>;
   SetCloseBehavior(mode: string): Promise<void>;
   SetDesktopLanguage(lang: string): Promise<void>;
   SetDesktopAppearance(theme: string, style: string): Promise<void>;
@@ -652,7 +645,6 @@ function makeMockApp(): AppBindings {
       qq: { enabled: false, appId: "", appSecretEnv: "QQ_BOT_APP_SECRET", secretSet: false },
       feishu: {
         enabled: false,
-        domain: "feishu",
         appId: "",
         appSecretEnv: "FEISHU_BOT_APP_SECRET",
         secretSet: false,
@@ -668,7 +660,6 @@ function makeMockApp(): AppBindings {
         tokenSet: false,
         apiBase: "https://ilinkai.weixin.qq.com",
       },
-      connections: [],
     },
     desktopLanguage: "",
     desktopTheme: "light",
@@ -1942,59 +1933,6 @@ function makeMockApp(): AppBindings {
           if (settings.bot.qq.appSecretEnv === name) settings.bot.qq.secretSet = false;
           if (settings.bot.feishu.appSecretEnv === name) settings.bot.feishu.secretSet = false;
           if (settings.bot.weixin.tokenEnv === name) settings.bot.weixin.tokenSet = false;
-        },
-        async StartBotConnectionInstall(provider: string, domain: string) {
-          const normalizedProvider = provider === "weixin" ? "weixin" : "feishu";
-          const normalizedDomain = normalizedProvider === "weixin" ? "weixin" : domain === "lark" ? "lark" : "feishu";
-          return {
-            ok: true,
-            provider: normalizedProvider,
-            domain: normalizedDomain,
-            installId: `mock-${normalizedProvider}-${normalizedDomain}`,
-            url: "https://example.com/reasonix-bot-qr",
-            deviceCode: "MOCKDEVICE",
-            userCode: normalizedProvider === "weixin" ? "" : "MOCK-CODE",
-            interval: 3,
-            expireIn: 300,
-            message: "",
-          };
-        },
-        async PollBotConnectionInstall(installID: string) {
-          const isWeixin = installID.includes("weixin");
-          const domain = installID.includes("lark") ? "lark" : isWeixin ? "weixin" : "feishu";
-          const provider = isWeixin ? "weixin" : "feishu";
-          const connection = {
-            id: `${provider}-${domain}`,
-            provider,
-            domain,
-            label: domain === "lark" ? "Lark" : domain === "weixin" ? "微信" : "飞书",
-            enabled: true,
-            status: "connected",
-            credential: {
-              appId: provider === "feishu" ? "cli_mock" : "",
-              appSecretEnv: provider === "feishu" ? (domain === "lark" ? "LARK_BOT_APP_SECRET" : "FEISHU_BOT_APP_SECRET") : "",
-              accountId: provider === "weixin" ? "mock-account" : "",
-              tokenEnv: provider === "weixin" ? "WEIXIN_BOT_TOKEN" : "",
-              secretSet: true,
-            },
-            sessionMappings: [],
-            lastError: "",
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString(),
-          };
-          settings.bot.connections = [...settings.bot.connections.filter((c) => c.id !== connection.id), connection];
-          return { done: true, connection, status: "connected", message: "connected", error: "" };
-        },
-        async DiagnoseBotConnection(id: string) {
-          const connection = settings.bot.connections.find((c) => c.id === id);
-          return connection
-            ? { id, label: connection.label, status: connection.enabled ? "ok" : "disabled", message: connection.enabled ? "连接配置已保存。" : "连接已保存但未启用。", messageId: "" }
-            : { id, label: "", status: "missing", message: "未找到连接。", messageId: "" };
-        },
-        async TestBotConnection(id: string, target?: string) {
-          const diag = await this.DiagnoseBotConnection(id);
-          if (target?.trim()) return { ...diag, message: `Mock test sent to ${target.trim()}`, messageId: "mock-message-id" };
-          return diag;
         },
         async SetCloseBehavior(mode: string) {
           settings.closeBehavior = mode === "quit" ? "quit" : "background";

@@ -83,16 +83,16 @@ func (s *renderSink) Emit(e event.Event) {
 			name = e.Tool.ID
 		}
 		if e.Tool.Err != "" {
-			fmt.Fprintf(&s.buf, "\n❌ %s 出错: %s", name, e.Tool.Err)
+			s.buf.WriteString(fmt.Sprintf("\n❌ %s 出错: %s", name, e.Tool.Err))
 		} else {
 			// 截断输出
 			output := e.Tool.Output
 			if len(output) > 500 {
 				output = output[:500] + "\n... (已截断)"
 			}
-			fmt.Fprintf(&s.buf, "\n✅ %s 完成", name)
+			s.buf.WriteString(fmt.Sprintf("\n✅ %s 完成", name))
 			if output != "" {
-				fmt.Fprintf(&s.buf, "\n```\n%s\n```", output)
+				s.buf.WriteString(fmt.Sprintf("\n```\n%s\n```", output))
 			}
 		}
 		s.maybeFlush()
@@ -127,11 +127,11 @@ func (s *renderSink) Emit(e event.Event) {
 		var qb strings.Builder
 		qb.WriteString("❓ 请回答以下问题:\n")
 		for i, q := range e.Ask.Questions {
-			fmt.Fprintf(&qb, "\n**%d. %s**\n", i+1, q.Prompt)
+			qb.WriteString(fmt.Sprintf("\n**%d. %s**\n", i+1, q.Prompt))
 			for j, opt := range q.Options {
-				fmt.Fprintf(&qb, "  %d. %s", j+1, opt.Label)
+				qb.WriteString(fmt.Sprintf("  %d. %s", j+1, opt.Label))
 				if opt.Description != "" {
-					fmt.Fprintf(&qb, " — %s", opt.Description)
+					qb.WriteString(fmt.Sprintf(" — %s", opt.Description))
 				}
 				qb.WriteString("\n")
 			}
@@ -139,8 +139,8 @@ func (s *renderSink) Emit(e event.Event) {
 				qb.WriteString("  (可多选)\n")
 			}
 		}
-		fmt.Fprintf(&qb, "\nID: `%s`", e.Ask.ID)
-		fmt.Fprintf(&qb, "\n用 /answer %s <选项编号或文本> 回答。", e.Ask.ID)
+		qb.WriteString(fmt.Sprintf("\nID: `%s`", e.Ask.ID))
+		qb.WriteString(fmt.Sprintf("\n用 /answer %s <选项编号或文本> 回答。", e.Ask.ID))
 		msg := OutboundMessage{
 			ChatID:       s.chatID,
 			ChatType:     s.chatType,
