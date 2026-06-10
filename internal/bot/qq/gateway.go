@@ -59,12 +59,6 @@ type properties struct {
 	Device  string `json:"$device"`
 }
 
-type resumeData struct {
-	Token     string `json:"token"`
-	SessionID string `json:"session_id"`
-	Seq       int64  `json:"seq"`
-}
-
 type dispatchEvent struct {
 	ID        string `json:"id"`
 	Type      string `json:"type"`
@@ -215,7 +209,9 @@ func (a *adapter) connectGateway(ctx context.Context, token string) error {
 		var ready struct {
 			SessionID string `json:"session_id"`
 		}
-		json.Unmarshal(msg.D, &ready)
+		if err := json.Unmarshal(msg.D, &ready); err != nil {
+			return fmt.Errorf("decode ready: %w", err)
+		}
 		ws.sessionID = ready.SessionID
 		a.sessionID = ready.SessionID
 		a.seq = msg.S
@@ -380,7 +376,9 @@ func (a *adapter) sendMessage(ctx context.Context, msg bot.OutboundMessage) (bot
 	if resp.StatusCode >= 400 {
 		return bot.SendResult{}, fmt.Errorf("qq api error %d: %s", resp.StatusCode, string(respBody))
 	}
-	json.Unmarshal(respBody, &result)
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return bot.SendResult{}, fmt.Errorf("decode send response: %w", err)
+	}
 
 	return bot.SendResult{MessageID: result.ID}, nil
 }

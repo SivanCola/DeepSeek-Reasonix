@@ -37,7 +37,7 @@ const (
 	getQRStatusPath  = "/ilink/bot/get_qrcode_status"
 
 	ilinkAppID          = "bot"
-	ilinkClientVersion  = (2 << 16) | (2 << 8) | 0
+	ilinkClientVersion  = (2 << 16) | (2 << 8)
 	ilinkChannelVersion = "2.2.0"
 	weixinItemText      = 1
 	weixinMsgTypeBot    = 2
