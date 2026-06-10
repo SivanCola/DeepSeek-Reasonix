@@ -3631,7 +3631,7 @@ a[href] {
 .composer-meta {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
   gap: 12px;
   min-width: 0;
   min-height: 40px;
@@ -3649,7 +3649,7 @@ a[href] {
   gap: 8px;
   min-width: 0;
   flex: 1 1 auto;
-  margin-left: auto;
+  margin-left: 0;
 }
 
 .composer-meta--has-intent-chip .composer-meta__params {
