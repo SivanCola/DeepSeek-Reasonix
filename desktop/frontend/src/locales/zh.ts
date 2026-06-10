@@ -288,6 +288,7 @@ export const zh: Record<DictKey, string> = {
   "composer.enterPlanTitle": "进入计划模式（shift+tab）—— 只读；先给出计划再动手",
   "composer.exitPlanTitle": "退出计划模式（shift+tab）",
   "composer.exitGoalTitle": "退出目标模式",
+  "composer.moreControls": "更多控制",
   "composer.searchProjects": "搜索项目",
   "composer.noProjectMatches": "没有匹配的项目",
   "composer.addProject": "添加新项目",

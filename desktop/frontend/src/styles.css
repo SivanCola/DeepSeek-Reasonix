@@ -3682,6 +3682,11 @@ a[href] {
   max-width: 92px;
 }
 
+.composer-meta__control--more {
+  display: none;
+  flex: 0 0 auto;
+}
+
 .composer-meta__control--intent {
   flex: 0 0 auto;
   gap: 6px;
@@ -3853,6 +3858,52 @@ a[href] {
   transform: none;
 }
 
+.composer-more-trigger {
+  --wails-draggable: no-drag;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+  height: 32px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface-2);
+  color: var(--fg-dim);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 620;
+  transition: border-color 0.14s, background 0.14s, color 0.14s, transform 0.14s var(--ease-out);
+}
+
+.composer-more-trigger span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.composer-more-trigger svg {
+  flex: 0 0 auto;
+}
+
+.composer-more-trigger:hover:not(:disabled),
+.composer-more-trigger:focus-visible,
+.composer-more-trigger--open {
+  outline: none;
+  color: var(--fg);
+  border-color: var(--border-soft);
+  background: var(--bg-soft);
+}
+
+.composer-more-trigger:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+  transform: none;
+}
+
 .composer-mode-chip {
   --wails-draggable: no-drag;
   position: relative;
@@ -3987,7 +4038,7 @@ a[href] {
   .composer-meta__control--model {
     flex: 1 1 132px;
     width: auto;
-    max-width: 29vw;
+    max-width: 148px;
   }
 
   .composer-meta__control--intent {
@@ -3995,9 +4046,9 @@ a[href] {
   }
 
   .composer-meta__control--approval {
-    flex-basis: 184px;
-    min-width: 172px;
-    max-width: 184px;
+    flex-basis: 178px;
+    min-width: 164px;
+    max-width: 178px;
   }
 
   .composer-mode-chip {
@@ -4011,10 +4062,15 @@ a[href] {
     font-size: 11.5px;
   }
 
-.composer-meta__control--effort {
-    flex-basis: 76px;
-    width: 76px;
-    max-width: 76px;
+  .composer-meta__control--effort {
+    display: none;
+  }
+
+  .composer-meta__control--more {
+    display: inline-flex;
+    flex: 0 0 78px;
+    width: 78px;
+    max-width: 78px;
   }
 }
 
@@ -4027,7 +4083,7 @@ a[href] {
   .composer-meta__control--model {
     flex: 1 1 112px;
     width: auto;
-    max-width: 32vw;
+    max-width: 126px;
   }
 
   .composer-meta__control--intent {
@@ -4041,9 +4097,21 @@ a[href] {
   }
 
   .composer-meta__control--effort {
-    flex-basis: 58px;
-    width: 58px;
-    max-width: 58px;
+    display: none;
+  }
+
+  .composer-meta__control--more {
+    flex-basis: 38px;
+    width: 38px;
+    max-width: 38px;
+  }
+
+  .composer-more-trigger {
+    padding-inline: 0;
+  }
+
+  .composer-more-trigger span {
+    display: none;
   }
 
   .composer-modebar__item {
@@ -4171,6 +4239,61 @@ a[href] {
   height: 54px;
   min-height: 54px;
   padding-right: 10px;
+}
+
+.composer-more-menu {
+  width: min(190px, calc(100vw - 16px));
+}
+
+.composer-more-menu__items {
+  display: grid;
+  gap: 3px;
+}
+
+.composer-more-menu__item {
+  --wails-draggable: no-drag;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: 34px;
+  padding: 0 8px;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--fg-dim);
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 620;
+  text-align: left;
+}
+
+.composer-more-menu__item span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.composer-more-menu__item > svg {
+  flex: 0 0 auto;
+}
+
+.composer-more-menu__item > svg:last-child {
+  margin-left: auto;
+  color: var(--accent);
+}
+
+.composer-more-menu__item:hover,
+.composer-more-menu__item:focus-visible {
+  outline: none;
+  background: var(--bg-elev-2);
+  color: var(--fg);
+}
+
+.composer-more-menu__item--active {
+  color: var(--fg);
+  background: var(--bg-elev-2);
 }
 
 .composer-intent-switch {
@@ -16041,6 +16164,7 @@ a[href] {
 :root[data-theme-style="graphite"] .composer-modebar,
 :root[data-theme-style="graphite"] .composer-mode-chip,
 :root[data-theme-style="graphite"] .meta-chip,
+:root[data-theme-style="graphite"] .composer-more-trigger,
 :root[data-theme-style="graphite"] .composer-meta .modelsw__trigger,
 :root[data-theme-style="graphite"] .composer-context__item {
   border-radius: 7px;
@@ -16055,6 +16179,9 @@ a[href] {
 :root[data-theme-style="graphite"] .composer-mode-chip:active:not(:disabled),
 :root[data-theme-style="graphite"] .tooltip-trigger:hover > .composer-mode-chip:not(:disabled),
 :root[data-theme-style="graphite"] .tooltip-trigger:focus-within > .composer-mode-chip:not(:disabled),
+:root[data-theme-style="graphite"] .composer-more-trigger:hover:not(:disabled),
+:root[data-theme-style="graphite"] .composer-more-trigger:focus-visible,
+:root[data-theme-style="graphite"] .composer-more-trigger--open,
 :root[data-theme-style="graphite"] .composer-meta .modelsw__trigger:hover {
   color: var(--fg);
   border-color: var(--app-graphite-hairline-strong);

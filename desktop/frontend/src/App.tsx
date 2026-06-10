@@ -85,6 +85,7 @@ const SIDEBAR_MIN_WIDTH = 264;
 const SIDEBAR_MAX_WIDTH = 300;
 const SIDEBAR_VIEWPORT_RATIO = 0.18;
 const CHAT_MIN_WIDTH = 400;
+const CHAT_COMFORT_MIN_WIDTH = 560;
 const WORKSPACE_RESIZER_WIDTH = 8;
 
 function isThemeMode(value: string): value is Theme {
@@ -95,6 +96,7 @@ const RIGHT_DOCK_TREE_MIN_WIDTH = 300;
 const RIGHT_DOCK_TREE_MAX_WIDTH = 560;
 const RIGHT_DOCK_PREVIEW_DEFAULT_WIDTH = 660;
 const RIGHT_DOCK_PREVIEW_MIN_WIDTH = 420;
+const RIGHT_DOCK_MIN_RENDER_WIDTH = 280;
 const RIGHT_DOCK_MAX_WIDTH = 860;
 
 type RightDockMode = "context" | "files" | "changed";
@@ -583,11 +585,12 @@ export default function App() {
   const rightDockDetailActive = rightDockMode === "context" ? contextDetailActive : workspacePreviewActive;
   const preferredWorkspacePanelWidth = rightDockDetailActive ? rightDockPreviewWidth : rightDockTreeWidth;
   const workspacePanelMinWidth = rightDockDetailActive ? RIGHT_DOCK_PREVIEW_MIN_WIDTH : RIGHT_DOCK_TREE_MIN_WIDTH;
+  const chatReservedWidth = workspacePanelOpen && !workspacePanelMaximized ? CHAT_COMFORT_MIN_WIDTH : CHAT_MIN_WIDTH;
   const workspacePanelAvailableWidth = availableWorkspacePanelWidth({
     viewportWidth,
     sidebarCollapsed,
     sidebarWidth,
-    chatMinWidth: CHAT_MIN_WIDTH,
+    chatMinWidth: chatReservedWidth,
     resizerWidth: WORKSPACE_RESIZER_WIDTH,
   });
 
@@ -599,7 +602,8 @@ export default function App() {
     availableWidth: workspacePanelAvailableWidth,
   });
 
-  const workspacePanelRenderable = workspacePanelOpen && (workspacePanelMaximized || resolvedWorkspacePanelWidth > 0);
+  const workspacePanelRenderable =
+    workspacePanelOpen && (workspacePanelMaximized || resolvedWorkspacePanelWidth >= RIGHT_DOCK_MIN_RENDER_WIDTH);
   const workspacePanelGridOpen = workspacePanelRenderable && !workspacePanelMaximized;
   const workspacePanelRenderWidth = workspacePanelMaximized ? preferredWorkspacePanelWidth : resolvedWorkspacePanelWidth;
   const activeTab = useMemo(
@@ -1351,11 +1355,11 @@ export default function App() {
     () =>
       ({
         "--sidebar-expanded-width": `${sidebarWidth}px`,
-        "--chat-min-width": `${CHAT_MIN_WIDTH}px`,
+        "--chat-min-width": `${chatReservedWidth}px`,
         "--workspace-width": `${workspacePanelRenderWidth}px`,
         "--workspace-resizer-width": `${WORKSPACE_RESIZER_WIDTH}px`,
       }) as CSSProperties,
-    [sidebarWidth, workspacePanelRenderWidth],
+    [chatReservedWidth, sidebarWidth, workspacePanelRenderWidth],
   );
 
   const setWorkspacePanel = useCallback((open: boolean) => {

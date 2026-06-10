@@ -287,6 +287,7 @@ export const en = {
   "composer.enterPlanTitle": "Enter plan mode (shift+tab) — read-only; propose a plan before writing",
   "composer.exitPlanTitle": "Exit plan mode (shift+tab)",
   "composer.exitGoalTitle": "Exit goal mode",
+  "composer.moreControls": "More controls",
   "composer.searchProjects": "Search projects",
   "composer.noProjectMatches": "No matching projects",
   "composer.addProject": "Add new project",
