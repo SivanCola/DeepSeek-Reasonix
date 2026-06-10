@@ -535,7 +535,9 @@ func (a *adapter) runWebhook(ctx context.Context) {
 				return
 			}
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(map[string]string{"challenge": challenge.Challenge})
+			if err := json.NewEncoder(w).Encode(map[string]string{"challenge": challenge.Challenge}); err != nil {
+				a.logger.Error("feishu challenge response error", "err", err)
+			}
 			return
 		}
 
@@ -563,7 +565,9 @@ func (a *adapter) runWebhook(ctx context.Context) {
 
 	go func() {
 		<-ctx.Done()
-		server.Shutdown(context.Background())
+		if err := server.Shutdown(context.Background()); err != nil && err != http.ErrServerClosed {
+			a.logger.Error("feishu webhook shutdown error", "err", err)
+		}
 	}()
 
 	a.logger.Info("feishu webhook listening", "port", port)

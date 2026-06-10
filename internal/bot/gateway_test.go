@@ -64,10 +64,6 @@ func (f *fakeAdapter) sentMessages() []OutboundMessage {
 	return out
 }
 
-func (f *fakeAdapter) injectMessage(msg InboundMessage) {
-	f.msgCh <- msg
-}
-
 func TestFakeAdapterInterface(t *testing.T) {
 	fa := newFakeAdapter(PlatformQQ, "fake-qq")
 
