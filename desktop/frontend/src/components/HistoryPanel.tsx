@@ -5,10 +5,10 @@ import { t, useT } from "../lib/i18n";
 import { sessionActivityTime } from "../lib/session";
 import type { HistoryMessage, SessionMeta } from "../lib/types";
 import { historyMessagesToItems, type Item } from "../lib/useController";
-import { Tooltip } from "./Tooltip";
 import { Transcript } from "./Transcript";
 import { ContextMenu, contextMenuPointFromEvent, type ContextMenuItem, type ContextMenuPoint } from "./ContextMenu";
 import { useDeferredClose } from "../lib/useMountTransition";
+import { ModalCloseButton } from "./ModalCloseButton";
 
 type HistoryScopeFilter = "all" | "project" | "global";
 type HistoryStatusFilter = "all" | "current" | "open";
@@ -178,7 +178,6 @@ export function HistoryPanel({
   }, [filteredSessions, loadPreview, preview]);
 
   const previewItems = useMemo(() => previewMessagesToItems(preview?.messages ?? []), [preview?.messages]);
-  const showPreview = preview !== null;
   const selectedSession = useMemo(
     () => (preview ? filteredSessions.find((s) => s.path === preview.path) ?? null : null),
     [filteredSessions, preview],
@@ -346,7 +345,7 @@ export function HistoryPanel({
   return (
     <div className="management-modal-backdrop history-modal-backdrop" data-state={status} onClick={(e) => { if (e.target === e.currentTarget) requestClose(); }}>
       <section
-        className={`management-modal history-modal${showPreview || running ? " history-modal--wide" : ""}`}
+        className="management-modal history-modal"
         data-state={status}
         aria-label={tr(isTrash ? "history.trashTitle" : "history.title")}
         onClick={(e) => e.stopPropagation()}
@@ -366,11 +365,7 @@ export function HistoryPanel({
               {tr(actionConfirmClearTrash ? "history.confirmClearTrash" : "history.clearTrash")}
             </button>
           )}
-          <Tooltip label={tr("common.close")}>
-            <button className="chip" onClick={requestClose}>
-              ✕
-            </button>
-          </Tooltip>
+          <ModalCloseButton label={tr("common.close")} onClick={requestClose} />
         </div>
       </header>
 

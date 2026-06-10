@@ -25,6 +25,7 @@ import { AnchoredPopover } from "./AnchoredPopover";
 import { MCPServersSettingsPage, SkillsSettingsPage } from "./CapabilitiesPanel";
 import { MemorySettingsPage } from "./MemoryPanel";
 import { CopyButton } from "./CopyButton";
+import { ModalCloseButton } from "./ModalCloseButton";
 
 const SETTINGS_TABS: SettingsTab[] = ["general", "models", "bots", "mcp", "skills", "memory", "permissions", "sandbox", "network", "appearance", "updates"];
 
@@ -97,13 +98,11 @@ export function SettingsPanel({ onClose, onChanged, initialTab }: { onClose: () 
   const needsSettings = tab === "general" || tab === "models" || tab === "bots" || tab === "network" || tab === "permissions" || tab === "sandbox" || tab === "appearance" || tab === "updates";
 
   return (
-    <div className="settings-modal-backdrop" data-state={status} onClick={(e) => { if (e.target === e.currentTarget) requestClose(); }}>
-      <div className="settings-modal" data-state={status}>
-        <header className="settings-modal__head">
-          <div className="settings-modal__title">{t("settings.title")}</div>
-          <Tooltip label={t("common.close")}>
-            <button className="chip" aria-label={t("common.close")} onClick={requestClose}>✕</button>
-          </Tooltip>
+    <div className="management-modal-backdrop settings-modal-backdrop" data-state={status} onClick={(e) => { if (e.target === e.currentTarget) requestClose(); }}>
+      <div className="management-modal settings-modal" data-state={status}>
+        <header className="management-modal__head settings-modal__head">
+          <div className="management-modal__title settings-modal__title">{t("settings.title")}</div>
+          <ModalCloseButton label={t("common.close")} onClick={requestClose} />
         </header>
 
         <div className="settings-center">
@@ -3050,11 +3049,12 @@ function SandboxSection({ s, busy, apply }: SectionProps) {
   );
 }
 
-// Direction metadata for the appearance theme-style cards. The two surface
+// Visual-style metadata for the appearance theme cards. The two surface
 // swatches + accent are read from CSS variables at render time so they always
 // reflect the live token values for the currently-resolved light/dark mode.
 const THEME_STYLE_META: Record<ThemeStyle, { name: string; zh: DictKey; note: DictKey; desc: DictKey }> = {
   graphite: { name: "Graphite", zh: "settings.style.graphite.zh", note: "settings.style.graphite.note", desc: "settings.style.graphite.desc" },
+  aurora: { name: "Aurora", zh: "settings.style.aurora.zh", note: "settings.style.aurora.note", desc: "settings.style.aurora.desc" },
   slate: { name: "Slate", zh: "settings.style.slate.zh", note: "settings.style.slate.note", desc: "settings.style.slate.desc" },
   carbon: { name: "Carbon", zh: "settings.style.carbon.zh", note: "settings.style.carbon.note", desc: "settings.style.carbon.desc" },
   nocturne: { name: "Nocturne", zh: "settings.style.nocturne.zh", note: "settings.style.nocturne.note", desc: "settings.style.nocturne.desc" },

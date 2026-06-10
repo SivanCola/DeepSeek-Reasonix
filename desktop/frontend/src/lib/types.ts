@@ -148,6 +148,7 @@ export interface ProjectNode {
   topicId?: string;
   projectColor?: string;
   turns?: number;
+  createdAt?: number;
   lastActivityAt?: number;
   open?: boolean;
   running?: boolean;
@@ -171,10 +172,13 @@ export interface ContextPanelInfo {
   reasoningTokens: number;
   cacheHitTokens: number;
   cacheMissTokens: number;
+  requestCount?: number;
+  elapsedMs?: number;
   sessionCost?: number;
   sessionCurrency?: string;
   // Deprecated compatibility alias. Prefer sessionCost + sessionCurrency.
   sessionCostUsd?: number;
+  mock?: boolean;
   readFiles: ReadFileRecord[];
   changedFiles: ChangedFileInfo[];
 }

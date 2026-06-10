@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Tooltip } from "./Tooltip";
 import { useI18n } from "../lib/i18n";
 import { type BalanceInfo, type CollaborationMode, type ContextInfo, type JobView, type ToolApprovalMode, type WireUsage } from "../lib/types";
@@ -10,16 +10,28 @@ import { type BalanceInfo, type CollaborationMode, type ContextInfo, type JobVie
 function JobsChip({ jobs }: { jobs: JobView[] }) {
   const { t } = useI18n();
   const [open, setOpen] = useState(false);
+  const wrapRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const closeOnOutsideClick = (event: MouseEvent) => {
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+      if (wrapRef.current?.contains(target)) return;
+      setOpen(false);
+    };
+    document.addEventListener("click", closeOnOutsideClick);
+    return () => document.removeEventListener("click", closeOnOutsideClick);
+  }, [open]);
   if (jobs.length === 0) {
     return (
       <span className="stat stat--jobs">
         <span className="stat__label">{t("status.jobsLabel")}</span>
-        <b>0</b>
+        <b>-</b>
       </span>
     );
   }
   return (
-    <div className="statusbar__jobswrap">
+    <div className="statusbar__jobswrap" ref={wrapRef}>
       <Tooltip label={t("status.jobsTitle")}>
         <button className="stat stat--jobs statusbar__jobs" onClick={() => setOpen((v) => !v)}>
           <span className="stat__label">{t("status.jobsLabel")}</span>
@@ -27,19 +39,16 @@ function JobsChip({ jobs }: { jobs: JobView[] }) {
         </button>
       </Tooltip>
       {open && (
-        <>
-          <div className="modelsw__backdrop" onClick={() => setOpen(false)} />
-          <div className="modelsw__menu jobsmenu" role="listbox">
-            <div className="jobsmenu__head">{t("status.jobsTitle")}</div>
-            {jobs.map((j) => (
-              <div className="jobsmenu__item" key={j.id} role="option">
-                <span className="jobsmenu__id">{j.id}</span>
-                <span className="jobsmenu__label">{j.label || j.kind}</span>
-                <span className="jobsmenu__status">{j.status}</span>
-              </div>
-            ))}
-          </div>
-        </>
+        <div className="modelsw__menu jobsmenu" role="listbox">
+          <div className="jobsmenu__head">{t("status.jobsTitle")}</div>
+          {jobs.map((j) => (
+            <div className="jobsmenu__item" key={j.id} role="option">
+              <span className="jobsmenu__id">{j.id}</span>
+              <span className="jobsmenu__label">{j.label || j.kind}</span>
+              <span className="jobsmenu__status">{j.status}</span>
+            </div>
+          ))}
+        </div>
       )}
     </div>
   );
@@ -93,6 +102,7 @@ export function StatusBar({
   cost,
   currency,
   modelLabel,
+  currentTurnCount,
 }: {
   context: ContextInfo;
   usage?: WireUsage;
@@ -104,6 +114,7 @@ export function StatusBar({
   cost?: number;
   currency?: string;
   modelLabel?: string;
+  currentTurnCount?: number;
 }) {
   const { t } = useI18n();
   const pct = context.window ? Math.min(100, Math.round((context.used / context.window) * 100)) : null;
@@ -122,6 +133,12 @@ export function StatusBar({
         <span className={`statusbar__dot ${running ? "statusbar__dot--busy" : ""}`} />
         {modelLabel && <span className="statusbar__model">{modelLabel}</span>}
       </span>
+      {typeof currentTurnCount === "number" && currentTurnCount > 0 && (
+        <span className="stat statusbar__turns" title={t("status.sessionTurnsTitle")}>
+          <span className="stat__label">{t("status.sessionTurnsLabel")}</span>
+          <b>{t(currentTurnCount === 1 ? "history.turnOne" : "history.turnOther", { n: currentTurnCount })}</b>
+        </span>
+      )}
       <span className="stat statusbar__ctx">
         <span className="stat__label">{t("status.ctxLabel")}</span>
         <b>{pct !== null ? `${pct}%` : "-"}</b>
@@ -139,13 +156,13 @@ export function StatusBar({
         <b>{avgPct !== null ? `${avgPct}%` : "-"}</b>
       </span>
       <span className="statusbar__spacer" />
+      <JobsChip jobs={jobsList} />
       <Tooltip label={t("status.spendTitle")}>
         <span className="stat statusbar__cost">
           <span className="stat__label">{t("status.costLabel")}</span>
           <b>{costLabel}</b>
         </span>
       </Tooltip>
-      <JobsChip jobs={jobsList} />
       <Tooltip label={t("status.balanceTitle")}>
         <span className="stat stat--balance statusbar__balance">
           <span className="stat__label">{t("status.balanceLabel")}</span>

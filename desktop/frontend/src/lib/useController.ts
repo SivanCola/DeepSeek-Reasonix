@@ -106,6 +106,23 @@ const initialState: State = {
   seq: 0,
 };
 
+function sameMeta(a?: Meta, b?: Meta): boolean {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  return (
+    a.label === b.label &&
+    a.ready === b.ready &&
+    a.startupErr === b.startupErr &&
+    a.eventChannel === b.eventChannel &&
+    a.cwd === b.cwd &&
+    a.autoApproveTools === b.autoApproveTools &&
+    a.bypass === b.bypass &&
+    a.toolApprovalMode === b.toolApprovalMode &&
+    a.goal === b.goal &&
+    a.goalStatus === b.goalStatus
+  );
+}
+
 type Action =
   | { type: "event"; e: WireEvent }
   | { type: "user"; text: string; seq: number }
@@ -395,7 +412,7 @@ function reducer(s: State, a: Action): State {
       });
       return { ...s, items: finalized, running: false, turnActive: false, live: undefined, currentAssistant: undefined, approval: undefined, ask: undefined };
     }
-    case "meta": return { ...s, meta: a.meta };
+    case "meta": return sameMeta(s.meta, a.meta) ? s : { ...s, meta: a.meta };
     case "context": return { ...s, context: a.context };
     case "balance": return { ...s, balance: a.balance };
     case "effort": return { ...s, effort: a.effort };

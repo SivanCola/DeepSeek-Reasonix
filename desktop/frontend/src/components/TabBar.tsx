@@ -215,6 +215,7 @@ export function TabBar({ tabs, activeTabId, onTabChange, onTabClose, onTabsClose
               className={[
                 "tabbar__tab",
                 tab.id === resolvedActiveTabId ? "tabbar__tab--active" : "",
+                tab.running ? "tabbar__tab--running" : "",
                 toolApprovalMode === "yolo" ? "tabbar__tab--yolo" : "",
                 draggingTabId === tab.id ? "tabbar__tab--dragging" : "",
                 dropTarget?.id === tab.id ? `tabbar__tab--drop-${dropTarget.side}` : "",
@@ -276,7 +277,8 @@ export function TabBar({ tabs, activeTabId, onTabChange, onTabClose, onTabsClose
           aria-label={t("palette.placeholder")}
         >
           <Search size={13} className="tabbar__command-icon" />
-          <span className="tabbar__command-text">{t("tabBar.commandSearch")}</span>
+          <span className="tabbar__command-text tabbar__command-text--full">{t("tabBar.commandSearch")}</span>
+          <span className="tabbar__command-text tabbar__command-text--compact">{t("tabBar.commandSearchCompact")}</span>
           <kbd className="tabbar__command-kbd">⌘K</kbd>
         </button>
       )}

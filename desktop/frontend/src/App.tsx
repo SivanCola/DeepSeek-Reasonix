@@ -3,7 +3,6 @@ import type { CSSProperties, KeyboardEvent, PointerEvent as ReactPointerEvent } 
 import { ShellExpandProvider, useShellExpand } from "./lib/shellExpand";
 import {
   Activity,
-  Brain,
   Command,
   Download,
   SquarePen,
@@ -13,9 +12,7 @@ import {
   History,
   Settings as SettingsIcon,
   Pencil,
-  PanelLeft,
-  PanelRightClose,
-  PanelRightOpen,
+  Trash2,
 } from "lucide-react";
 import { useToast } from "./lib/toast";
 import { asArray } from "./lib/array";
@@ -37,20 +34,22 @@ import { WorkspacePanel } from "./components/WorkspacePanel";
 import { Tooltip } from "./components/Tooltip";
 import { StartupSplash, shouldShowStartupSplash } from "./components/StartupSplash";
 import { OnboardingOverlay } from "./components/OnboardingOverlay";
-import { TabBar } from "./components/TabBar";
+import { AppChrome } from "./components/AppChrome";
 import { ProjectTree } from "./components/ProjectTree";
 import { CopyButton } from "./components/CopyButton";
 import { parseTodos } from "./lib/tools";
 import { shouldShowTodoPanel } from "./lib/todoVisibility";
 import {
+  modeHasAutoApproveTools,
+  modeHasPlan,
   modeFromAxes,
   normalizeCollaborationMode,
   normalizeMode,
   normalizeToolApprovalMode,
   type CollaborationMode,
   type ComposerInsertRequest,
-  type Meta,
   type Mode,
+  type ProjectNode,
   type SessionMeta,
   type SettingsTab,
   type TabMeta,
@@ -74,8 +73,9 @@ import logoWordmark from "./assets/logo-wordmark.svg";
 
 const SIDEBAR_COLLAPSED_KEY = "reasonix.sidebar.collapsed";
 const SIDEBAR_DEFAULT_WIDTH = 264;
-const SIDEBAR_MIN_WIDTH = 228;
-const SIDEBAR_MAX_WIDTH = 420;
+const SIDEBAR_MIN_WIDTH = 248;
+const SIDEBAR_MAX_WIDTH = 300;
+const SIDEBAR_VIEWPORT_RATIO = 0.18;
 const CHAT_MIN_WIDTH = 400;
 const CHAT_DOCKED_MIN_WIDTH = 640;
 const WORKSPACE_RESIZER_WIDTH = 8;
@@ -83,7 +83,6 @@ const WORKSPACE_RESIZER_WIDTH = 8;
 function isThemeMode(value: string): value is Theme {
   return value === "auto" || value === "light" || value === "dark";
 }
-const RIGHT_DOCK_CONTEXT_WIDTH = 300;
 const RIGHT_DOCK_TREE_DEFAULT_WIDTH = 300;
 const RIGHT_DOCK_TREE_MIN_WIDTH = 300;
 const RIGHT_DOCK_TREE_MAX_WIDTH = 560;
@@ -113,6 +112,9 @@ function clampRightDockTreeWidth(width: number): number {
 }
 
 function defaultSidebarWidth(): number {
+  if (typeof window !== "undefined") {
+    return clampSidebarWidth(window.innerWidth * SIDEBAR_VIEWPORT_RATIO);
+  }
   return SIDEBAR_DEFAULT_WIDTH;
 }
 
@@ -191,13 +193,6 @@ function tabWorkspaceTitle(tab?: TabMeta): string {
   return tab.workspaceName || tab.workspaceRoot || "Global";
 }
 
-function compactPathLabel(path?: string): string {
-  if (!path) return "";
-  const parts = path.split(/[\\/]/).filter(Boolean);
-  if (parts.length === 0) return path;
-  return parts.slice(-2).join("/");
-}
-
 function topicTitle(tab?: TabMeta): string {
   if (!tab) return "Global";
   const workspaceTitle = tabWorkspaceTitle(tab);
@@ -216,16 +211,28 @@ function topicScopeLabel(tab?: TabMeta): string {
   return t("scope.project", { name: tab.workspaceName || tab.workspaceRoot || "Project" });
 }
 
-function appChromeScopeLabel(tab?: TabMeta, meta?: Meta): string {
-  if (tab?.scope === "project" || tab?.scope === "global") return tabWorkspaceTitle(tab);
-  return workspaceDisplayName(meta?.cwd) || meta?.label || "Global";
-}
-
 function sessionsForScope(sessions: SessionMeta[], filter: HistoryScopeFilter): SessionMeta[] {
   if (filter.scope === "project") {
     return sessions.filter((session) => session.scope === "project" && session.workspaceRoot === filter.workspaceRoot);
   }
   return sessions.filter((session) => (session.scope || "global") === "global");
+}
+
+function activeTopicTurnsFromTree(nodes: ProjectNode[], tab?: TabMeta): number | undefined {
+  if (!tab?.topicId) return undefined;
+  const activeScope = tab.scope === "global" ? "global" : "project";
+  const stack = [...nodes];
+  while (stack.length > 0) {
+    const node = stack.shift();
+    if (!node) continue;
+    if (node.kind === "topic" || node.kind === "global_topic") {
+      const nodeScope = node.kind === "global_topic" ? "global" : "project";
+      const sameRoot = nodeScope === "global" || node.root === tab.workspaceRoot;
+      if (node.topicId === tab.topicId && nodeScope === activeScope && sameRoot) return node.turns ?? 0;
+    }
+    if (node.children?.length) stack.push(...node.children);
+  }
+  return undefined;
 }
 
 function workspaceDisplayName(path?: string): string {
@@ -376,7 +383,6 @@ export default function App() {
     setToolApprovalMode: setControllerToolApprovalMode,
     setGoal: setControllerGoal,
     clearGoal: clearControllerGoal,
-    newSession,
     listSessions,
     listTrashedSessions,
     resumeSession,
@@ -423,9 +429,10 @@ export default function App() {
   const [rightDockTreeWidth, setRightDockTreeWidth] = useState(loadRightDockTreeWidth);
   const [rightDockPreviewWidth, setRightDockPreviewWidth] = useState(loadRightDockPreviewWidth);
   const [workspacePreviewActive, setWorkspacePreviewActive] = useState(false);
+  const [contextDetailActive, setContextDetailActive] = useState(false);
   const [workspacePanelResizing, setWorkspacePanelResizing] = useState(false);
   const [workspacePanelMaximized, setWorkspacePanelMaximized] = useState(false);
-  const [rightDockMode, setRightDockMode] = useState<RightDockMode>("files");
+  const [rightDockMode, setRightDockMode] = useState<RightDockMode>("context");
   const [dockRefreshKey, setDockRefreshKey] = useState(0);
   const [projectRevision, setProjectRevision] = useState(0);
   const [composerInsertRequest, setComposerInsertRequest] = useState<ComposerInsertRequest | null>(null);
@@ -435,10 +442,13 @@ export default function App() {
   const [topicTitleDraft, setTopicTitleDraft] = useState("");
   const [topicExportOpen, setTopicExportOpen] = useState(false);
   const [sidebarTogglePressed, setSidebarTogglePressed] = useState(false);
+  const [workspaceTogglePressed, setWorkspaceTogglePressed] = useState(false);
+  const [savedTopicTurnCount, setSavedTopicTurnCount] = useState<number | undefined>(undefined);
   const topicRenameSkipCommitRef = useRef(false);
   const topicRenameCommitHandledRef = useRef(false);
   const appRef = useRef<HTMLDivElement>(null);
   const sidebarTogglePressTimerRef = useRef<number | null>(null);
+  const workspaceTogglePressTimerRef = useRef<number | null>(null);
 
   // Persist window geometry across launches.
   useWindowStatePersistence();
@@ -459,6 +469,18 @@ export default function App() {
     }, 260);
   }, []);
 
+  const pulseWorkspaceToggle = useCallback(() => {
+    if (typeof window === "undefined") return;
+    if (workspaceTogglePressTimerRef.current !== null) {
+      window.clearTimeout(workspaceTogglePressTimerRef.current);
+    }
+    setWorkspaceTogglePressed(true);
+    workspaceTogglePressTimerRef.current = window.setTimeout(() => {
+      workspaceTogglePressTimerRef.current = null;
+      setWorkspaceTogglePressed(false);
+    }, 260);
+  }, []);
+
   const anchorAppScrollToChat = useCallback(() => {
     if (typeof window === "undefined") return;
     const el = appRef.current;
@@ -475,6 +497,9 @@ export default function App() {
     return () => {
       if (sidebarTogglePressTimerRef.current !== null) {
         window.clearTimeout(sidebarTogglePressTimerRef.current);
+      }
+      if (workspaceTogglePressTimerRef.current !== null) {
+        window.clearTimeout(workspaceTogglePressTimerRef.current);
       }
     };
   }, []);
@@ -535,14 +560,11 @@ export default function App() {
   }, [closeTransientOverlays]);
   const [pendingPlanRevision, setPendingPlanRevision] = useState<string | null>(null);
   const [footerHeight, setFooterHeight] = useState(0);
+  const footerHeightRef = useRef(0);
   const footerRef = useRef<HTMLElement>(null);
-  const preferredWorkspacePanelWidth =
-    rightDockMode === "context"
-      ? RIGHT_DOCK_CONTEXT_WIDTH
-      : workspacePreviewActive
-      ? rightDockPreviewWidth
-      : rightDockTreeWidth;
-  const workspacePanelMinWidth = workspacePreviewActive ? RIGHT_DOCK_PREVIEW_MIN_WIDTH : RIGHT_DOCK_TREE_MIN_WIDTH;
+  const rightDockDetailActive = rightDockMode === "context" ? contextDetailActive : workspacePreviewActive;
+  const preferredWorkspacePanelWidth = rightDockDetailActive ? rightDockPreviewWidth : rightDockTreeWidth;
+  const workspacePanelMinWidth = rightDockDetailActive ? RIGHT_DOCK_PREVIEW_MIN_WIDTH : RIGHT_DOCK_TREE_MIN_WIDTH;
 
   const resolvedWorkspacePanelWidth = workspacePanelOpen && !workspacePanelMaximized
     ? Math.max(workspacePanelMinWidth, preferredWorkspacePanelWidth)
@@ -564,7 +586,7 @@ export default function App() {
   const toolApprovalMode = activeTabId
     ? toolApprovalModesByTab[activeTabId] ?? normalizeToolApprovalMode(state.meta?.toolApprovalMode ?? activeTab?.toolApprovalMode, legacyMode, state.meta?.autoApproveTools ?? state.meta?.bypass)
     : "ask";
-  const mode = modeFromAxes(collaborationMode === "plan", toolApprovalMode === "yolo");
+  const controllerReady = state.meta?.ready === true;
   const setMode = useCallback(
     (next: Mode | ((prev: Mode) => Mode)) => {
       if (!activeTabId) return;
@@ -585,13 +607,14 @@ export default function App() {
     const missing = tabMetas.filter((tab) => !tabOrderIds.includes(tab.id));
     return [...ordered, ...missing].map((tab) => ({
       ...tab,
+      running: tab.id === visibleTabId ? tab.running || state.running : tab.running,
       mode: modesByTab[tab.id] ?? normalizeMode(tab.mode),
       collaborationMode: collaborationModesByTab[tab.id] ?? normalizeCollaborationMode(tab.collaborationMode, goalsByTab[tab.id] ?? tab.goal, normalizeMode(tab.mode)),
       toolApprovalMode: toolApprovalModesByTab[tab.id] ?? normalizeToolApprovalMode(tab.toolApprovalMode, normalizeMode(tab.mode), tab.toolApprovalMode === "yolo"),
       goal: goalsByTab[tab.id] ?? tab.goal ?? "",
       active: tab.id === visibleTabId,
     }));
-  }, [collaborationModesByTab, goalsByTab, modesByTab, tabMetas, tabOrderIds, toolApprovalModesByTab, visibleTabId]);
+  }, [collaborationModesByTab, goalsByTab, modesByTab, state.running, tabMetas, tabOrderIds, toolApprovalModesByTab, visibleTabId]);
 
   useEffect(() => {
     const ids = tabMetas.map((tab) => tab.id);
@@ -690,17 +713,23 @@ export default function App() {
   // normal clears both.
   const applyMode = useCallback(
     (m: Mode) => {
+      if (!activeTabId) return;
+      const nextCollaborationMode: CollaborationMode = modeHasPlan(m) ? "plan" : "normal";
+      const nextToolApprovalMode: ToolApprovalMode = modeHasAutoApproveTools(m) ? "yolo" : "ask";
       setMode(m);
+      setCollaborationModesByTab((current) => (current[activeTabId] === nextCollaborationMode ? current : { ...current, [activeTabId]: nextCollaborationMode }));
+      setToolApprovalModesByTab((current) => (current[activeTabId] === nextToolApprovalMode ? current : { ...current, [activeTabId]: nextToolApprovalMode }));
+      setGoalsByTab((current) => (current[activeTabId] ? { ...current, [activeTabId]: "" } : current));
       void syncModeToController(m);
     },
-    [setMode, syncModeToController],
+    [activeTabId, setMode, syncModeToController],
   );
   const applyCollaborationMode = useCallback(
     (m: CollaborationMode) => {
       if (!activeTabId) return;
-      setCollaborationModesByTab((current) => ({ ...current, [activeTabId]: m }));
+      setCollaborationModesByTab((current) => (current[activeTabId] === m ? current : { ...current, [activeTabId]: m }));
       if (m === "normal" || m === "plan") {
-        setGoalsByTab((current) => ({ ...current, [activeTabId]: "" }));
+        setGoalsByTab((current) => (current[activeTabId] ? { ...current, [activeTabId]: "" } : current));
       }
       setMode(modeFromAxes(m === "plan", toolApprovalMode === "yolo"));
       void setControllerCollaborationMode(m);
@@ -710,7 +739,7 @@ export default function App() {
   const applyToolApprovalMode = useCallback(
     (m: ToolApprovalMode) => {
       if (!activeTabId) return;
-      setToolApprovalModesByTab((current) => ({ ...current, [activeTabId]: m }));
+      setToolApprovalModesByTab((current) => (current[activeTabId] === m ? current : { ...current, [activeTabId]: m }));
       setMode(modeFromAxes(collaborationMode === "plan", m === "yolo"));
       void setControllerToolApprovalMode(m);
     },
@@ -720,8 +749,11 @@ export default function App() {
     (nextGoal: string) => {
       if (!activeTabId) return;
       const trimmed = nextGoal.trim();
-      setGoalsByTab((current) => ({ ...current, [activeTabId]: trimmed }));
-      setCollaborationModesByTab((current) => ({ ...current, [activeTabId]: trimmed ? "goal" : "normal" }));
+      setGoalsByTab((current) => (current[activeTabId] === trimmed ? current : { ...current, [activeTabId]: trimmed }));
+      setCollaborationModesByTab((current) => {
+        const nextMode = trimmed ? "goal" : "normal";
+        return current[activeTabId] === nextMode ? current : { ...current, [activeTabId]: nextMode };
+      });
       setMode(modeFromAxes(false, toolApprovalMode === "yolo"));
       void (trimmed ? setControllerGoal(trimmed) : clearControllerGoal());
     },
@@ -736,7 +768,7 @@ export default function App() {
     },
     [applyGoal, send],
   );
-  // Shift+Tab toggles plan mode only; tool access stays behind an explicit menu.
+  // Shift+Tab toggles only the collaboration axis; tool permission stays independent.
   const cycleMode = useCallback(() => {
     applyCollaborationMode(collaborationMode === "plan" ? "normal" : "plan");
   }, [applyCollaborationMode, collaborationMode]);
@@ -759,11 +791,11 @@ export default function App() {
   // where the user picked YOLO while boot was still loading and the legacy
   // SetBypass binding was a harmless no-op.
   useEffect(() => {
-    if (state.meta?.ready !== true) return;
+    if (!controllerReady) return;
     void setControllerCollaborationMode(collaborationMode);
     void setControllerToolApprovalMode(toolApprovalMode);
     if (goal.trim()) void setControllerGoal(goal);
-  }, [collaborationMode, goal, setControllerCollaborationMode, setControllerGoal, setControllerToolApprovalMode, state.meta, toolApprovalMode]);
+  }, [collaborationMode, controllerReady, goal, setControllerCollaborationMode, setControllerGoal, setControllerToolApprovalMode, toolApprovalMode]);
 
   // The live task list pinned above the composer comes from the most recent
   // successful top-level todo_write result; failed or still-running attempts do
@@ -787,6 +819,8 @@ export default function App() {
 
   const sessionTitle = topicTitle(activeTab);
   const sessionHasContent = state.items.length > 0 || Boolean(state.live?.text || state.live?.reasoning);
+  const transcriptTurnCount = useMemo(() => state.items.reduce((count, item) => count + (item.kind === "user" ? 1 : 0), 0), [state.items]);
+  const currentTurnCount = Math.max(transcriptTurnCount, savedTopicTurnCount ?? 0);
   const getSessionMarkdown = useCallback(
     () => sessionItemsToMarkdown(sessionTitle, state.items, state.live),
     [sessionTitle, state.items, state.live],
@@ -863,6 +897,11 @@ export default function App() {
         send(trimmed, submitText.trim());
         return;
       }
+      if (collaborationMode === "goal" && !goal.trim()) {
+        applyGoal(trimmed);
+        send(trimmed, `/goal ${submitText.trim()}`);
+        return;
+      }
       const theme = /^\/theme(?:\s+(\S+))?$/.exec(trimmed);
       if (theme) {
         const arg = theme[1]?.toLowerCase();
@@ -918,6 +957,24 @@ export default function App() {
 
   useEffect(() => {
     let cancelled = false;
+    if (!activeTab?.topicId) {
+      setSavedTopicTurnCount(undefined);
+      return () => {
+        cancelled = true;
+      };
+    }
+    void app.ListProjectTree().then((nodes) => {
+      if (!cancelled) setSavedTopicTurnCount(activeTopicTurnsFromTree(asArray<ProjectNode>(nodes), activeTab));
+    }).catch(() => {
+      if (!cancelled) setSavedTopicTurnCount(undefined);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeTab?.scope, activeTab?.workspaceRoot, activeTab?.topicId, projectRevision]);
+
+  useEffect(() => {
+    let cancelled = false;
     (async () => {
       try {
         const needs = await app.NeedsOnboarding();
@@ -936,16 +993,25 @@ export default function App() {
   useEffect(() => {
     const el = footerRef.current;
     if (!el || typeof ResizeObserver === "undefined") return;
-    const update = () => setFooterHeight(Math.round(el.getBoundingClientRect().height));
+    let frame = 0;
+    const update = () => {
+      if (frame) window.cancelAnimationFrame(frame);
+      frame = window.requestAnimationFrame(() => {
+        frame = 0;
+        const next = Math.round(el.getBoundingClientRect().height);
+        if (Math.abs(footerHeightRef.current - next) < 2) return;
+        footerHeightRef.current = next;
+        setFooterHeight(next);
+      });
+    };
     update();
     const observer = new ResizeObserver(update);
     observer.observe(el);
-    return () => observer.disconnect();
+    return () => {
+      if (frame) window.cancelAnimationFrame(frame);
+      observer.disconnect();
+    };
   }, []);
-
-  const startNewSession = useCallback(async () => {
-    await newSession();
-  }, [newSession]);
 
   const toggleSidebar = useCallback(() => {
     closeTransientOverlays();
@@ -1013,8 +1079,7 @@ export default function App() {
   const setSavedWorkspacePanelWidth = useCallback(
     (width: number) => {
       closeTransientOverlays();
-      if (rightDockMode === "context") return;
-      if (workspacePreviewActive) {
+      if (rightDockDetailActive) {
         const next = clampRightDockPreviewWidth(width);
         setRightDockPreviewWidth(next);
         saveRightDockPreviewWidth(next);
@@ -1024,7 +1089,7 @@ export default function App() {
       setRightDockTreeWidth(next);
       saveRightDockTreeWidth(next);
     },
-    [closeTransientOverlays, rightDockMode, workspacePreviewActive],
+    [closeTransientOverlays, rightDockDetailActive],
   );
 
   const ensureWorkspacePanelWidth = useCallback(
@@ -1050,8 +1115,7 @@ export default function App() {
       const onMove = (moveEvent: PointerEvent) => {
         const delta = moveEvent.clientX - startX;
         nextDockWidth = startDockWidth - delta;
-        if (rightDockMode === "context") return;
-        if (workspacePreviewActive) {
+        if (rightDockDetailActive) {
           setRightDockPreviewWidth(clampRightDockPreviewWidth(nextDockWidth));
         } else {
           setRightDockTreeWidth(clampRightDockTreeWidth(nextDockWidth));
@@ -1072,7 +1136,7 @@ export default function App() {
       window.addEventListener("pointerup", onDone);
       window.addEventListener("pointercancel", onDone);
     },
-    [closeTransientOverlays, preferredWorkspacePanelWidth, rightDockMode, setSavedWorkspacePanelWidth, workspacePanelOpen, workspacePreviewActive],
+    [closeTransientOverlays, preferredWorkspacePanelWidth, rightDockDetailActive, setSavedWorkspacePanelWidth, workspacePanelOpen],
   );
 
   const resizeWorkspacePanelWithKeyboard = useCallback(
@@ -1082,18 +1146,26 @@ export default function App() {
         setSavedWorkspacePanelWidth(preferredWorkspacePanelWidth + (event.key === "ArrowLeft" ? 16 : -16));
       } else if (event.key === "Home") {
         event.preventDefault();
-        setSavedWorkspacePanelWidth(workspacePreviewActive ? RIGHT_DOCK_PREVIEW_MIN_WIDTH : RIGHT_DOCK_TREE_MIN_WIDTH);
+        setSavedWorkspacePanelWidth(rightDockDetailActive ? RIGHT_DOCK_PREVIEW_MIN_WIDTH : RIGHT_DOCK_TREE_MIN_WIDTH);
       } else if (event.key === "End") {
         event.preventDefault();
-        setSavedWorkspacePanelWidth(workspacePreviewActive ? RIGHT_DOCK_MAX_WIDTH : RIGHT_DOCK_TREE_MAX_WIDTH);
+        setSavedWorkspacePanelWidth(rightDockDetailActive ? RIGHT_DOCK_MAX_WIDTH : RIGHT_DOCK_TREE_MAX_WIDTH);
       }
     },
-    [preferredWorkspacePanelWidth, setSavedWorkspacePanelWidth, workspacePreviewActive],
+    [preferredWorkspacePanelWidth, rightDockDetailActive, setSavedWorkspacePanelWidth],
   );
 
   const openWorkspacePanel = useCallback(
     (mode: RightDockMode = rightDockMode) => {
       closeTransientOverlays();
+      if (mode !== rightDockMode) {
+        setWorkspacePreviewActive(false);
+        setContextDetailActive(false);
+      } else if (mode === "context") {
+        setWorkspacePreviewActive(false);
+      } else {
+        setContextDetailActive(false);
+      }
       setRightDockMode(mode);
       let nextMaximized = workspacePanelMaximized;
       if (mode === "context") {
@@ -1124,11 +1196,38 @@ export default function App() {
     setWorkspacePanelOpen(false);
   }, [closeTransientOverlays, workspacePanelOpen]);
 
+  const toggleWorkspacePanel = useCallback(() => {
+    pulseWorkspaceToggle();
+    if (workspacePanelRenderable) {
+      closeWorkspacePanel();
+      return;
+    }
+    openWorkspacePanel("context");
+  }, [closeWorkspacePanel, openWorkspacePanel, pulseWorkspaceToggle, workspacePanelRenderable]);
+
   const openRightDockMode = useCallback(
     (mode: RightDockMode) => {
       openWorkspacePanel(mode);
     },
     [openWorkspacePanel],
+  );
+
+  const handleWorkspacePreviewModeChange = useCallback(
+    (active: boolean) => {
+      if (workspacePreviewActive === active) return;
+      closeTransientOverlays();
+      setWorkspacePreviewActive(active);
+    },
+    [closeTransientOverlays, workspacePreviewActive],
+  );
+
+  const handleContextDetailModeChange = useCallback(
+    (active: boolean) => {
+      if (contextDetailActive === active) return;
+      closeTransientOverlays();
+      setContextDetailActive(active);
+    },
+    [closeTransientOverlays, contextDetailActive],
   );
 
   const layoutStyle = useMemo(
@@ -1215,9 +1314,9 @@ export default function App() {
 
   const handleNewTab = useCallback(async () => {
     closeTransientOverlays();
-    const activeWorkspaceRoot = activeTab?.workspaceRoot || state.meta?.cwd || "";
-    const targetScope = activeTab?.scope === "global" || !activeWorkspaceRoot ? "global" : "project";
-    const workspaceRoot = targetScope === "project" ? activeWorkspaceRoot : "";
+    const activeWorkspaceRoot = activeTab?.scope === "project" ? activeTab.workspaceRoot || "" : "";
+    const targetScope = activeWorkspaceRoot ? "project" : "global";
+    const workspaceRoot = activeWorkspaceRoot;
     const topic = await app.CreateTopic(targetScope, workspaceRoot, "");
     if (targetScope === "global" || !workspaceRoot) {
       await openGlobalTab(topic.id);
@@ -1227,7 +1326,7 @@ export default function App() {
     setProjectRevision((value) => value + 1);
     await refreshTabMetas();
     setTabRevealSignal((signal) => signal + 1);
-  }, [activeTab?.scope, activeTab?.workspaceRoot, closeTransientOverlays, openGlobalTab, openProjectTab, refreshTabMetas, state.meta?.cwd]);
+  }, [activeTab?.scope, activeTab?.workspaceRoot, closeTransientOverlays, openGlobalTab, openProjectTab, refreshTabMetas]);
 
   const handleMessageAction = useCallback(async (turn: number, scope: string) => {
     await rewind(turn, scope);
@@ -1331,7 +1430,7 @@ export default function App() {
   }, [openPalette]);
   const paletteItems = useMemo<PaletteItem[]>(() => {
     const cmds: PaletteItem[] = [
-      { id: "cmd-new", group: t("palette.group.commands"), title: t("palette.cmd.newSession"), keywords: ["new", "新建"], run: () => void newSession() },
+      { id: "cmd-new", group: t("palette.group.commands"), title: t("palette.cmd.newSession"), keywords: ["new", "新建"], run: () => void handleNewTab() },
       { id: "cmd-history", group: t("palette.group.commands"), title: t("palette.cmd.history"), keywords: ["history", "历史"], run: () => void openAllHistory() },
       { id: "cmd-trash", group: t("palette.group.commands"), title: t("palette.cmd.trash"), keywords: ["trash", "回收站"], run: () => void openTrash() },
       { id: "cmd-settings", group: t("palette.group.commands"), title: t("palette.cmd.settings"), keywords: ["settings", "设置"], run: () => setSettingsTarget("general") },
@@ -1347,7 +1446,7 @@ export default function App() {
       run: () => void onResumeSession(s),
     }));
     return [...cmds, ...sessionItems];
-  }, [t, paletteSessions, newSession, openAllHistory, openTrash, onResumeSession]);
+  }, [t, paletteSessions, handleNewTab, openAllHistory, openTrash, onResumeSession]);
   // Delete / rename act on disk, then re-fetch so the panel reflects the change.
   const onDeleteSession = useCallback(
     async (path: string) => {
@@ -1418,12 +1517,6 @@ export default function App() {
     return picked;
   }, [pickWorkspace, switchWorkspace, refreshTabMetas]);
 
-  const removeWorkspace = useCallback(async (path: string) => {
-    await app.RemoveWorkspace(path);
-    setProjectRevision((value) => value + 1);
-    await refreshTabMetas();
-  }, [refreshTabMetas]);
-
   const refreshProjectsAndTabs = useCallback(async () => {
     setProjectRevision((value) => value + 1);
     const tabs = await refreshTabMetas();
@@ -1480,23 +1573,16 @@ export default function App() {
       ? t("sidebar.expand")
       : t("sidebar.collapse");
   const sidebarNavTooltipDisabled = !sidebarCollapsed;
-  const macChromeTabs = desktopPlatform === "darwin";
   const browserPreviewChrome = typeof window !== "undefined" && !window.runtime;
-  const workspacePanelResetWidth = rightDockMode === "context"
-    ? RIGHT_DOCK_CONTEXT_WIDTH
-    : workspacePreviewActive
+  const workspacePanelResetWidth = rightDockDetailActive
     ? RIGHT_DOCK_PREVIEW_DEFAULT_WIDTH
     : defaultRightDockTreeWidth();
-  const workspacePanelMaxWidth = workspacePreviewActive ? RIGHT_DOCK_MAX_WIDTH : RIGHT_DOCK_TREE_MAX_WIDTH;
+  const workspacePanelMaxWidth = rightDockDetailActive ? RIGHT_DOCK_MAX_WIDTH : RIGHT_DOCK_TREE_MAX_WIDTH;
   const topicbarTitle = topicDisplayTitle(activeTab);
   const topicbarWorkspaceLabel = activeTab ? tabWorkspaceTitle(activeTab) : "";
   const topicbarWorkspacePath = activeTab?.scope === "project" ? activeTab.workspaceRoot || state.meta?.cwd : "";
   const topicbarSubtitleVisible = Boolean(topicbarWorkspaceLabel);
   const topicbarSubtitleTitle = topicbarWorkspacePath || topicbarWorkspaceLabel;
-  const dockWorkspacePath = activeTab?.scope === "project"
-    ? activeTab.workspaceRoot || state.meta?.cwd
-    : state.meta?.cwd || activeTab?.workspaceRoot;
-  const dockWorkspaceLabel = compactPathLabel(dockWorkspacePath) || tabWorkspaceTitle(activeTab);
 
   return (
     <ShellExpandProvider>
@@ -1516,88 +1602,45 @@ export default function App() {
           .join(" ")}
         style={layoutStyle}
       >
-        <header className={`app-chrome${macChromeTabs ? " app-chrome--tabs" : ""}`}>
-          {browserPreviewChrome && macChromeTabs && (
-            <div className="app-chrome__traffic" aria-hidden="true">
-              <span />
-              <span />
-              <span />
-            </div>
-          )}
-          <button
-            className={[
-              "app-chrome__panel-toggle",
-              "app-chrome__panel-toggle--left",
-              sidebarTogglePressed ? "app-chrome__panel-toggle--pressed" : "",
-              sidebarExpandBlocked ? "app-chrome__panel-toggle--blocked" : "",
-            ].filter(Boolean).join(" ")}
-            type="button"
-            onClick={sidebarExpandBlocked ? undefined : toggleSidebar}
-            aria-label={sidebarToggleTitle}
-            aria-pressed={!sidebarCollapsed}
-            aria-disabled={sidebarExpandBlocked}
-          >
-            <PanelLeft size={16} />
-          </button>
-          {macChromeTabs ? (
-            <div className="app-chrome__tab-strip">
-              <TabBar
-                tabs={visibleTabs}
-                activeTabId={visibleTabId}
-                revealActiveSignal={tabRevealSignal}
-                onTabChange={(id) => void handleTabChange(id)}
-                onTabClose={(id) => void handleTabClose(id)}
-                onTabsClose={(ids, nextActiveTabId) => void handleTabsClose(ids, nextActiveTabId)}
-                onTabsReorder={(ids) => void handleTabsReorder(ids)}
-                onNewTab={() => void handleNewTab()}
-                onOpenPalette={() => void openPalette()}
-                commandCompact={workspacePanelGridOpen}
-              />
-            </div>
-          ) : (
-            <>
-              <div className="app-chrome__identity" aria-label="Reasonix">
-                <img src={logoWordmark} alt="" className="app-chrome__logo" draggable={false} />
-                <span className="app-chrome__separator">/</span>
-                <span className="app-chrome__scope">{appChromeScopeLabel(activeTab, state.meta)}</span>
-              </div>
-              <div className="app-chrome__spacer" />
-            </>
-          )}
-          {!workspacePanelMaximized && (
-            <button
-              className={[
-                "app-chrome__panel-toggle",
-                "app-chrome__panel-toggle--right",
-                workspacePanelRenderable ? "app-chrome__panel-toggle--active" : "",
-              ].filter(Boolean).join(" ")}
-              type="button"
-              onClick={workspacePanelRenderable ? closeWorkspacePanel : () => openWorkspacePanel("files")}
-              aria-label={workspacePanelRenderable ? t("rightDock.collapse") : t("rightDock.expand")}
-              aria-pressed={workspacePanelRenderable}
-            >
-              {workspacePanelRenderable ? <PanelRightClose size={16} /> : <PanelRightOpen size={16} />}
-            </button>
-          )}
-        </header>
+        <AppChrome
+          platform={desktopPlatform}
+          browserPreviewChrome={browserPreviewChrome}
+          tabs={visibleTabs}
+          activeTabId={visibleTabId}
+          revealActiveSignal={tabRevealSignal}
+          commandCompact={workspacePanelGridOpen}
+          sidebarTogglePressed={sidebarTogglePressed}
+          sidebarExpandBlocked={sidebarExpandBlocked}
+          sidebarCollapsed={sidebarCollapsed}
+          sidebarToggleTitle={sidebarToggleTitle}
+          workspacePanelMaximized={workspacePanelMaximized}
+          workspacePanelRenderable={workspacePanelRenderable}
+          workspaceTogglePressed={workspaceTogglePressed}
+          workspacePanelLabel={workspacePanelRenderable ? t("rightDock.collapse") : t("rightDock.expand")}
+          onToggleSidebar={toggleSidebar}
+          onToggleWorkspacePanel={toggleWorkspacePanel}
+          onTabChange={(id) => void handleTabChange(id)}
+          onTabClose={(id) => void handleTabClose(id)}
+          onTabsClose={(ids, nextActiveTabId) => void handleTabsClose(ids, nextActiveTabId)}
+          onTabsReorder={(ids) => void handleTabsReorder(ids)}
+          onNewTab={() => void handleNewTab()}
+          onOpenPalette={() => void openPalette()}
+        />
 
         <aside className={`sidebar${sidebarCollapsed ? " sidebar--collapsed" : ""}`} aria-label={t("sidebar.navigation")}>
           <div className="sidebar__brand" aria-hidden={sidebarCollapsed}>
             <img src={logoWordmark} alt="Reasonix" className="sidebar__brand-logo" draggable={false} />
           </div>
 
-          <Tooltip label={t("topbar.newSession")} fill>
-            <button
-              className="sidebar__new"
-              onClick={() => {
-                if (state.running) cancel();
-                void startNewSession();
-              }}
-            >
-              <SquarePen size={15} />
-              <span>{t("topbar.newSession")}</span>
-            </button>
-          </Tooltip>
+          <button
+            className="sidebar__new"
+            onClick={() => {
+              void handleNewTab();
+            }}
+          >
+            <SquarePen size={18} />
+            <span>{t("topbar.newSession")}</span>
+          </button>
 
           <section className="sidebar__section sidebar__section--projects">
             <ProjectTree
@@ -1606,7 +1649,6 @@ export default function App() {
               activeTopicId={activeTab?.topicId}
               onOpenTopic={handleOpenTopic}
               onOpenProjectHistory={openProjectHistory}
-              onOpenAllHistory={openAllHistory}
               onTopicsChanged={refreshProjectsAndTabs}
               onRenameTopic={renameTopic}
               refreshSignal={projectRevision}
@@ -1626,16 +1668,13 @@ export default function App() {
                 <span>{t("sidebar.allHistory")}</span>
               </button>
             </Tooltip>
-            <Tooltip label={t("sidebar.memorySkills")} fill side="right" disabled={sidebarNavTooltipDisabled}>
+            <Tooltip label={t("sidebar.trash")} fill side="right" disabled={sidebarNavTooltipDisabled}>
               <button
                 className="sidebar__navitem"
-                onClick={() => {
-                  closeTransientOverlays();
-                  setSettingsTarget("memory");
-                }}
+                onClick={() => void openTrash()}
               >
-                <Brain size={15} />
-                <span>{t("sidebar.memorySkills")}</span>
+                <Trash2 size={15} />
+                <span>{t("sidebar.trash")}</span>
               </button>
             </Tooltip>
             <Tooltip label={t("topbar.settings")} fill side="right" disabled={sidebarNavTooltipDisabled}>
@@ -1668,23 +1707,6 @@ export default function App() {
         />
 
         <section className="chat-pane">
-          {!macChromeTabs && (
-            <header className="workspace-tabs-bar">
-              <TabBar
-                tabs={visibleTabs}
-                activeTabId={visibleTabId}
-                revealActiveSignal={tabRevealSignal}
-                onTabChange={(id) => void handleTabChange(id)}
-                onTabClose={(id) => void handleTabClose(id)}
-                onTabsClose={(ids, nextActiveTabId) => void handleTabsClose(ids, nextActiveTabId)}
-                onTabsReorder={(ids) => void handleTabsReorder(ids)}
-                onNewTab={() => void handleNewTab()}
-                onOpenPalette={() => void openPalette()}
-                commandCompact={workspacePanelGridOpen}
-              />
-            </header>
-          )}
-
           <>
           <header className="topicbar">
             <div className="topicbar__identity">
@@ -1845,9 +1867,8 @@ export default function App() {
                 onDismiss={() => answerQuestion(state.ask!.id, [])}
               />
             )}
-	              <Composer
+            <Composer
               running={state.running}
-              mode={mode}
               collaborationMode={collaborationMode}
               toolApprovalMode={toolApprovalMode}
               goal={goal}
@@ -1865,17 +1886,14 @@ export default function App() {
               onClearGoal={() => applyGoal("")}
               onSwitchModel={switchModel}
               onSetEffort={setEffort}
-              onPickFolder={switchFolder}
-              onRemoveWorkspace={removeWorkspace}
               insertRequest={composerInsertRequest}
-	              disabled={state.meta?.ready === false || state.messageAction != null || state.approval != null || state.ask != null}
-	              decisionPending={state.messageAction != null || state.approval != null || state.ask != null}
+              disabled={state.meta?.ready === false || state.messageAction != null || state.approval != null || state.ask != null}
+              decisionPending={state.messageAction != null || state.approval != null || state.ask != null}
               ready={state.meta?.ready === true}
               turnStartAt={state.turnStartAt}
               turnTokens={state.turnTokens}
               retry={state.retry}
               transientDismissSignal={transientOverlayDismissSignal}
-              workspaceRefreshSignal={projectRevision}
             />
             <StatusBar
               context={state.context}
@@ -1888,6 +1906,7 @@ export default function App() {
               cost={state.sessionCost}
               currency={state.sessionCurrency}
               modelLabel={state.meta?.label}
+              currentTurnCount={currentTurnCount}
             />
           </footer>
           </>
@@ -1922,10 +1941,21 @@ export default function App() {
                 <h2>{t("workspace.title")}</h2>
               </div>
               <span className="workbench-dock__head-spacer" />
-              {dockWorkspaceLabel && <small>{dockWorkspaceLabel}</small>}
             </div>
             <div className="workbench-dock__tools">
               <div className="workbench-dock__tabs" role="tablist" aria-label={t("rightDock.views")}>
+                {SHOW_CONTEXT_DOCK && (
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={rightDockMode === "context"}
+                    className={`workbench-dock__tab${rightDockMode === "context" ? " workbench-dock__tab--active" : ""}`}
+                    onClick={() => openRightDockMode("context")}
+                  >
+                    <Activity size={13} />
+                    <span className="workbench-dock__tab-label">{t("rightDock.overview")}</span>
+                  </button>
+                )}
                 <button
                   type="button"
                   role="tab"
@@ -1946,18 +1976,6 @@ export default function App() {
                   <GitBranch size={13} />
                   <span className="workbench-dock__tab-label">{t("workspace.changedTab")}</span>
                 </button>
-                {SHOW_CONTEXT_DOCK && (
-                  <button
-                    type="button"
-                    role="tab"
-                    aria-selected={rightDockMode === "context"}
-                    className={`workbench-dock__tab${rightDockMode === "context" ? " workbench-dock__tab--active" : ""}`}
-                    onClick={() => openRightDockMode("context")}
-                  >
-                    <Activity size={13} />
-                    <span className="workbench-dock__tab-label">{t("rightDock.overview")}</span>
-                  </button>
-                )}
               </div>
             </div>
             <div className="workbench-dock__body">
@@ -1970,6 +1988,7 @@ export default function App() {
                   sessionCurrency={state.sessionCurrency}
                   scopeLabel={topicScopeLabel(activeTab)}
                   refreshKey={dockRefreshKey}
+                  onDetailModeChange={handleContextDetailModeChange}
                 />
               ) : (
                 <WorkspacePanel
@@ -1982,10 +2001,7 @@ export default function App() {
                     closeTransientOverlays();
                     setWorkspacePanelMaximized((value) => !value);
                   }}
-                  onPreviewModeChange={(active) => {
-                    closeTransientOverlays();
-                    setWorkspacePreviewActive(active);
-                  }}
+                  onPreviewModeChange={handleWorkspacePreviewModeChange}
                   onAddToChat={addWorkspaceTextToComposer}
                   onRequestPanelWidth={ensureWorkspacePanelWidth}
                   refreshKey={dockRefreshKey}

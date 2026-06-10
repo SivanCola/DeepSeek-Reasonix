@@ -52,8 +52,9 @@ type WorkspaceTab struct {
 	saveAgain bool
 
 	// readTelemetry tracks files read during this tab's session.
-	readTelemetry []readFileRecord
-	telemMu       sync.Mutex
+	readTelemetry  []readFileRecord
+	usageTelemetry sessionUsageStats
+	telemMu        sync.Mutex
 
 	model            string // active model ref (for meta)
 	effort           *string
@@ -79,6 +80,28 @@ type readFileRecord struct {
 	Offset    int    `json:"offset,omitempty"`
 	Limit     int    `json:"limit,omitempty"`
 	Truncated bool   `json:"truncated,omitempty"`
+}
+
+type sessionUsageStats struct {
+	PromptTokens     int     `json:"promptTokens"`
+	CompletionTokens int     `json:"completionTokens"`
+	TotalTokens      int     `json:"totalTokens"`
+	ReasoningTokens  int     `json:"reasoningTokens"`
+	CacheHitTokens   int     `json:"cacheHitTokens"`
+	CacheMissTokens  int     `json:"cacheMissTokens"`
+	RequestCount     int     `json:"requestCount"`
+	ElapsedMs        int64   `json:"elapsedMs"`
+	SessionCost      float64 `json:"sessionCost,omitempty"`
+	SessionCurrency  string  `json:"sessionCurrency,omitempty"`
+	SessionCostUsd   float64 `json:"sessionCostUsd,omitempty"`
+
+	activeTurnStartedAt int64
+}
+
+type tabTelemetrySnapshot struct {
+	Version   int               `json:"version"`
+	ReadFiles []readFileRecord  `json:"readFiles"`
+	Usage     sessionUsageStats `json:"usage"`
 }
 
 func cloneStringPtr(v *string) *string {
@@ -115,12 +138,64 @@ func (t *WorkspaceTab) recordReadFile(rec readFileRecord) {
 	t.telemMu.Unlock()
 }
 
-func (t *WorkspaceTab) readTelemetrySnapshot() []readFileRecord {
+func (t *WorkspaceTab) recordTurnStarted(now int64) {
+	t.telemMu.Lock()
+	if t.usageTelemetry.activeTurnStartedAt == 0 {
+		t.usageTelemetry.activeTurnStartedAt = now
+	}
+	t.telemMu.Unlock()
+}
+
+func (t *WorkspaceTab) recordTurnDone(now int64) {
+	t.telemMu.Lock()
+	if started := t.usageTelemetry.activeTurnStartedAt; started > 0 && now >= started {
+		t.usageTelemetry.ElapsedMs += now - started
+		t.usageTelemetry.activeTurnStartedAt = 0
+	}
+	t.telemMu.Unlock()
+}
+
+func (t *WorkspaceTab) recordUsage(e event.Event) {
+	if e.Usage == nil {
+		return
+	}
+	u := e.Usage
+	t.telemMu.Lock()
+	t.usageTelemetry.PromptTokens += u.PromptTokens
+	t.usageTelemetry.CompletionTokens += u.CompletionTokens
+	t.usageTelemetry.TotalTokens += u.TotalTokens
+	t.usageTelemetry.ReasoningTokens += u.ReasoningTokens
+	if e.SessionHit+e.SessionMiss > 0 {
+		t.usageTelemetry.CacheHitTokens = e.SessionHit
+		t.usageTelemetry.CacheMissTokens = e.SessionMiss
+	} else {
+		t.usageTelemetry.CacheHitTokens += u.CacheHitTokens
+		t.usageTelemetry.CacheMissTokens += u.CacheMissTokens
+	}
+	t.usageTelemetry.RequestCount++
+	if e.Pricing != nil {
+		cost := e.Pricing.Cost(u)
+		t.usageTelemetry.SessionCost += cost
+		t.usageTelemetry.SessionCostUsd = t.usageTelemetry.SessionCost
+		t.usageTelemetry.SessionCurrency = e.Pricing.Symbol()
+	}
+	t.telemMu.Unlock()
+}
+
+func (t *WorkspaceTab) telemetrySnapshot() tabTelemetrySnapshot {
 	t.telemMu.Lock()
 	defer t.telemMu.Unlock()
-	out := make([]readFileRecord, len(t.readTelemetry))
-	copy(out, t.readTelemetry)
-	return out
+	records := make([]readFileRecord, len(t.readTelemetry))
+	copy(records, t.readTelemetry)
+	usage := t.usageTelemetry
+	if started := usage.activeTurnStartedAt; started > 0 {
+		now := time.Now().UnixMilli()
+		if now >= started {
+			usage.ElapsedMs += now - started
+		}
+	}
+	usage.activeTurnStartedAt = 0
+	return tabTelemetrySnapshot{Version: 2, ReadFiles: records, Usage: usage}
 }
 
 // tabEventSink wraps a parent event.Sink and prepends a tabId to every wire
@@ -132,6 +207,16 @@ type tabEventSink struct {
 }
 
 func (s *tabEventSink) Emit(e event.Event) {
+	if s.app != nil {
+		switch e.Kind {
+		case event.TurnStarted:
+			s.recordTurnStarted()
+		case event.Usage:
+			s.recordUsageTelemetry(e)
+		case event.TurnDone:
+			s.recordTurnDone()
+		}
+	}
 	if s.ctx != nil {
 		runtime.EventsEmit(s.ctx, eventChannel, toWireTab(e, s.tabID))
 	}
@@ -230,8 +315,65 @@ func (s *tabEventSink) recordReadTelemetry(e event.Event) {
 		return
 	}
 	if sp := ctrl.SessionPath(); sp != "" {
-		_ = saveTelemetry(sp+".telemetry.json", tab.readTelemetrySnapshot())
+		_ = saveTelemetry(sp+".telemetry.json", tab.telemetrySnapshot())
 	}
+}
+
+func (s *tabEventSink) recordTurnStarted() {
+	tab, sp := s.telemetryTab()
+	if tab == nil {
+		return
+	}
+	tab.recordTurnStarted(time.Now().UnixMilli())
+	if sp != "" {
+		_ = saveTelemetry(sp+".telemetry.json", tab.telemetrySnapshot())
+	}
+}
+
+func (s *tabEventSink) recordTurnDone() {
+	tab, sp := s.telemetryTab()
+	if tab == nil {
+		return
+	}
+	tab.recordTurnDone(time.Now().UnixMilli())
+	if sp != "" {
+		_ = saveTelemetry(sp+".telemetry.json", tab.telemetrySnapshot())
+	}
+}
+
+func (s *tabEventSink) recordUsageTelemetry(e event.Event) {
+	tab, sp := s.telemetryTab()
+	if tab == nil {
+		return
+	}
+	tab.recordUsage(e)
+	if sp != "" {
+		_ = saveTelemetry(sp+".telemetry.json", tab.telemetrySnapshot())
+	}
+}
+
+func (s *tabEventSink) telemetryTab() (*WorkspaceTab, string) {
+	if s.app == nil {
+		return nil, ""
+	}
+	s.app.mu.RLock()
+	tab, ok := s.app.tabs[s.tabID]
+	var ctrl *control.Controller
+	if ok && tab != nil {
+		ctrl = tab.Ctrl
+	}
+	s.app.mu.RUnlock()
+	if !ok || tab == nil {
+		return nil, ""
+	}
+	if ctrl == nil {
+		return tab, ""
+	}
+	sp := ctrl.SessionPath()
+	if sp == "" {
+		return tab, ""
+	}
+	return tab, sp
 }
 
 // --- wire event with tab ----------------------------------------------------
@@ -650,9 +792,10 @@ func (a *App) buildTabController(tab *WorkspaceTab) {
 			}
 			// Restore existing telemetry if resuming a session.
 			telemetryPath := path + ".telemetry.json"
-			if records := loadTelemetry(telemetryPath); len(records) > 0 {
+			if snapshot := loadTelemetry(telemetryPath); len(snapshot.ReadFiles) > 0 || snapshot.Usage.RequestCount > 0 {
 				tab.telemMu.Lock()
-				tab.readTelemetry = records
+				tab.readTelemetry = snapshot.ReadFiles
+				tab.usageTelemetry = snapshot.Usage
 				tab.telemMu.Unlock()
 			}
 		}
@@ -903,6 +1046,7 @@ func topicTitleFromText(text string) string {
 
 const desktopProjectsFile = "desktop-projects.json"
 const tabsFileName = "desktop-tabs.json"
+const desktopGlobalOrderToken = "__global__"
 
 type desktopProject struct {
 	Root   string   `json:"root"`
@@ -915,6 +1059,7 @@ type desktopProjectFile struct {
 	GlobalTitle  string           `json:"globalTitle,omitempty"`
 	GlobalColor  string           `json:"globalColor,omitempty"`
 	GlobalTopics []string         `json:"globalTopics,omitempty"`
+	SidebarOrder []string         `json:"sidebarOrder,omitempty"`
 	Projects     []desktopProject `json:"projects"`
 }
 
@@ -1084,6 +1229,35 @@ func normalizeProjectsFile(f desktopProjectFile) desktopProjectFile {
 		index[root] = len(out.Projects)
 		out.Projects = append(out.Projects, p)
 	}
+	out.SidebarOrder = normalizeSidebarOrder(f.SidebarOrder, out.Projects)
+	return out
+}
+
+func normalizeSidebarOrder(order []string, projects []desktopProject) []string {
+	projectRoots := make(map[string]bool, len(projects))
+	for _, project := range projects {
+		if project.Root != "" {
+			projectRoots[project.Root] = true
+		}
+	}
+	seen := make(map[string]bool, len(order))
+	out := make([]string, 0, len(order))
+	for _, value := range order {
+		value = strings.TrimSpace(value)
+		if value == desktopGlobalOrderToken {
+			if !seen[value] {
+				seen[value] = true
+				out = append(out, value)
+			}
+			continue
+		}
+		root := normalizeProjectRoot(value)
+		if root == "" || !projectRoots[root] || seen[root] {
+			continue
+		}
+		seen[root] = true
+		out = append(out, root)
+	}
 	return out
 }
 
@@ -1142,6 +1316,58 @@ func orderedTopicIDs(explicit []string, titleMap map[string]string) []string {
 	}
 	sort.Strings(remaining)
 	return append(out, remaining...)
+}
+
+func projectTreeOrderKey(node ProjectNode) string {
+	switch node.Kind {
+	case "global_folder":
+		return desktopGlobalOrderToken
+	case "project":
+		return normalizeProjectRoot(node.Root)
+	default:
+		return ""
+	}
+}
+
+func applyProjectTreeOrder(nodes []ProjectNode, order []string) []ProjectNode {
+	if len(order) == 0 {
+		return nodes
+	}
+	byKey := make(map[string]ProjectNode, len(nodes))
+	for _, node := range nodes {
+		key := projectTreeOrderKey(node)
+		if key != "" {
+			byKey[key] = node
+		}
+	}
+	seen := make(map[string]bool, len(nodes))
+	out := make([]ProjectNode, 0, len(nodes))
+	for _, value := range order {
+		key := strings.TrimSpace(value)
+		if key != desktopGlobalOrderToken {
+			key = normalizeProjectRoot(key)
+		}
+		if key == "" || seen[key] {
+			continue
+		}
+		node, ok := byKey[key]
+		if !ok {
+			continue
+		}
+		seen[key] = true
+		out = append(out, node)
+	}
+	for _, node := range nodes {
+		key := projectTreeOrderKey(node)
+		if key != "" && seen[key] {
+			continue
+		}
+		if key != "" {
+			seen[key] = true
+		}
+		out = append(out, node)
+	}
+	return out
 }
 
 func projectDisplayName(p desktopProject) string {
@@ -1268,6 +1494,7 @@ func projectTitle(root string) string {
 const (
 	topicTitlesFile        = "desktop-topic-titles.json"
 	topicTitleSourcesFile  = "desktop-topic-title-sources.json"
+	topicCreatedAtsFile    = "desktop-topic-created-at.json"
 	defaultTopicTitle      = "新的会话"
 	topicTitleSourceAuto   = "auto"
 	topicTitleSourceManual = "manual"
@@ -1287,6 +1514,13 @@ func topicTitleSourcesPath(workspaceRoot string) string {
 	return filepath.Join(workspaceRoot, ".reasonix", topicTitleSourcesFile)
 }
 
+func topicCreatedAtsPath(workspaceRoot string) string {
+	if workspaceRoot == "" {
+		return filepath.Join(desktopConfigDir(), "global", topicCreatedAtsFile)
+	}
+	return filepath.Join(workspaceRoot, ".reasonix", topicCreatedAtsFile)
+}
+
 func loadTopicTitles(workspaceRoot string) map[string]string {
 	m := map[string]string{}
 	b, err := os.ReadFile(topicTitlesPath(workspaceRoot))
@@ -1300,6 +1534,16 @@ func loadTopicTitles(workspaceRoot string) map[string]string {
 func loadTopicTitleSources(workspaceRoot string) map[string]string {
 	m := map[string]string{}
 	b, err := os.ReadFile(topicTitleSourcesPath(workspaceRoot))
+	if err != nil {
+		return m
+	}
+	json.Unmarshal(b, &m)
+	return m
+}
+
+func loadTopicCreatedAts(workspaceRoot string) map[string]int64 {
+	m := map[string]int64{}
+	b, err := os.ReadFile(topicCreatedAtsPath(workspaceRoot))
 	if err != nil {
 		return m
 	}
@@ -1339,12 +1583,32 @@ func saveTopicTitleSources(workspaceRoot string, m map[string]string) error {
 	return os.Rename(tmp, path)
 }
 
+func saveTopicCreatedAts(workspaceRoot string, m map[string]int64) error {
+	b, err := json.MarshalIndent(m, "", "  ")
+	if err != nil {
+		return err
+	}
+	path := topicCreatedAtsPath(workspaceRoot)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, b, 0o644); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
+}
+
 func loadTopicTitle(workspaceRoot, topicID string) string {
 	return loadTopicTitles(workspaceRoot)[topicID]
 }
 
 func loadTopicTitleSource(workspaceRoot, topicID string) string {
 	return loadTopicTitleSources(workspaceRoot)[topicID]
+}
+
+func loadTopicCreatedAt(workspaceRoot, topicID string) int64 {
+	return loadTopicCreatedAts(workspaceRoot)[topicID]
 }
 
 func topicTitleForTab(scope, workspaceRoot, topicID string) string {
@@ -1410,6 +1674,23 @@ func setTopicTitleSource(workspaceRoot, topicID, source string) error {
 	return saveTopicTitleSources(workspaceRoot, sources)
 }
 
+func setTopicCreatedAt(workspaceRoot, topicID string, createdAt int64) error {
+	created := loadTopicCreatedAts(workspaceRoot)
+	topicID = strings.TrimSpace(topicID)
+	if topicID == "" || createdAt <= 0 {
+		delete(created, topicID)
+	} else {
+		created[topicID] = createdAt
+	}
+	return saveTopicCreatedAts(workspaceRoot, created)
+}
+
+func deleteTopicCreatedAt(workspaceRoot, topicID string) {
+	created := loadTopicCreatedAts(workspaceRoot)
+	delete(created, topicID)
+	_ = saveTopicCreatedAts(workspaceRoot, created)
+}
+
 // topicIndexMu serializes recovery writes to desktop-projects.json and topic
 // title indexes. Startup builds restored tabs concurrently, and each tab may
 // repair its missing index.
@@ -1473,8 +1754,14 @@ func (a *App) tabTelemetryPath(tabID string) string {
 	return sp + ".telemetry.json"
 }
 
-func saveTelemetry(path string, records []readFileRecord) error {
-	b, err := json.MarshalIndent(records, "", "  ")
+func saveTelemetry(path string, snapshot tabTelemetrySnapshot) error {
+	if snapshot.Version == 0 {
+		snapshot.Version = 2
+	}
+	if snapshot.ReadFiles == nil {
+		snapshot.ReadFiles = []readFileRecord{}
+	}
+	b, err := json.MarshalIndent(snapshot, "", "  ")
 	if err != nil {
 		return err
 	}
@@ -1485,17 +1772,26 @@ func saveTelemetry(path string, records []readFileRecord) error {
 	return os.Rename(tmp, path)
 }
 
-func loadTelemetry(path string) []readFileRecord {
+func loadTelemetry(path string) tabTelemetrySnapshot {
 	b, err := os.ReadFile(path)
 	if err != nil {
-		return []readFileRecord{}
+		return tabTelemetrySnapshot{Version: 2, ReadFiles: []readFileRecord{}}
+	}
+	var snapshot tabTelemetrySnapshot
+	if err := json.Unmarshal(b, &snapshot); err == nil && (snapshot.Version > 0 || snapshot.ReadFiles != nil) {
+		if snapshot.ReadFiles == nil {
+			snapshot.ReadFiles = []readFileRecord{}
+		}
+		if snapshot.Usage.SessionCost == 0 && snapshot.Usage.SessionCostUsd > 0 {
+			snapshot.Usage.SessionCost = snapshot.Usage.SessionCostUsd
+		}
+		return snapshot
 	}
 	var records []readFileRecord
-	json.Unmarshal(b, &records)
-	if records == nil {
-		return []readFileRecord{}
+	if err := json.Unmarshal(b, &records); err != nil || records == nil {
+		records = []readFileRecord{}
 	}
-	return records
+	return tabTelemetrySnapshot{Version: 1, ReadFiles: records}
 }
 
 // --- project tree -----------------------------------------------------------
@@ -1510,6 +1806,7 @@ type ProjectNode struct {
 	TopicID        string        `json:"topicId,omitempty"`
 	ProjectColor   string        `json:"projectColor,omitempty"`
 	Turns          int           `json:"turns,omitempty"`
+	CreatedAt      int64         `json:"createdAt,omitempty"`
 	LastActivityAt int64         `json:"lastActivityAt,omitempty"`
 	Open           bool          `json:"open,omitempty"`
 	Running        bool          `json:"running,omitempty"`
@@ -1788,6 +2085,7 @@ func (a *App) CreateTopic(scope, workspaceRoot, title string) (TopicMeta, error)
 		titleSource = topicTitleSourceAuto
 	}
 	topicID := newTopicID()
+	createdAt := time.Now().UnixMilli()
 	if scope == "global" {
 		workspaceRoot = ""
 	}
@@ -1798,6 +2096,9 @@ func (a *App) CreateTopic(scope, workspaceRoot, title string) (TopicMeta, error)
 		_ = addProject(workspaceRoot, "")
 	}
 	if err := setTopicTitleWithSource(workspaceRoot, topicID, trimmedTitle, titleSource); err != nil {
+		return TopicMeta{}, err
+	}
+	if err := setTopicCreatedAt(workspaceRoot, topicID, createdAt); err != nil {
 		return TopicMeta{}, err
 	}
 	// New topics should appear first in their project/global group so the item
@@ -1816,7 +2117,7 @@ func (a *App) CreateTopic(scope, workspaceRoot, title string) (TopicMeta, error)
 		}
 	}
 	a.emitProjectTreeChanged()
-	return TopicMeta{ID: topicID, Title: trimmedTitle, CreatedAt: time.Now().UnixMilli()}, nil
+	return TopicMeta{ID: topicID, Title: trimmedTitle, CreatedAt: createdAt}, nil
 }
 
 // RenameProject updates the sidebar-only display title for a project folder.
@@ -1839,19 +2140,29 @@ func (a *App) SetProjectColor(workspaceRoot, color string) error {
 	return nil
 }
 
-// ReorderProjects persists the user-defined order of project folders.
+// ReorderProjects persists the user-defined order of project folders and,
+// when present, the virtual Global sidebar section.
 func (a *App) ReorderProjects(workspaceRoots []string) error {
 	f := loadProjectsFile()
-	if len(workspaceRoots) != len(f.Projects) {
-		return fmt.Errorf("project order length mismatch")
-	}
 	byRoot := make(map[string]desktopProject, len(f.Projects))
 	for _, project := range f.Projects {
 		byRoot[project.Root] = project
 	}
 	seen := make(map[string]bool, len(workspaceRoots))
 	next := make([]desktopProject, 0, len(workspaceRoots))
+	sidebarOrder := make([]string, 0, len(workspaceRoots))
+	hasGlobalOrder := false
 	for _, root := range workspaceRoots {
+		root = strings.TrimSpace(root)
+		if root == desktopGlobalOrderToken {
+			if seen[root] {
+				return fmt.Errorf("duplicate global section")
+			}
+			seen[root] = true
+			hasGlobalOrder = true
+			sidebarOrder = append(sidebarOrder, root)
+			continue
+		}
 		root = normalizeProjectRoot(root)
 		project, ok := byRoot[root]
 		if !ok {
@@ -1862,8 +2173,17 @@ func (a *App) ReorderProjects(workspaceRoots []string) error {
 		}
 		seen[root] = true
 		next = append(next, project)
+		sidebarOrder = append(sidebarOrder, root)
+	}
+	if len(next) != len(f.Projects) {
+		return fmt.Errorf("project order length mismatch")
 	}
 	f.Projects = next
+	if hasGlobalOrder {
+		f.SidebarOrder = sidebarOrder
+	} else {
+		f.SidebarOrder = nil
+	}
 	if err := saveProjectsFile(f); err != nil {
 		return err
 	}
@@ -2018,6 +2338,7 @@ func (a *App) DeleteTopic(topicID string) error {
 			sources := loadTopicTitleSources(p.Root)
 			delete(sources, topicID)
 			_ = saveTopicTitleSources(p.Root, sources)
+			deleteTopicCreatedAt(p.Root, topicID)
 			found = true
 			break
 		}
@@ -2030,6 +2351,7 @@ func (a *App) DeleteTopic(topicID string) error {
 			sources := loadTopicTitleSources("")
 			delete(sources, topicID)
 			_ = saveTopicTitleSources("", sources)
+			deleteTopicCreatedAt("", topicID)
 			f.GlobalTopics = removeString(f.GlobalTopics, topicID)
 			found = true
 		}
@@ -2219,7 +2541,8 @@ func (a *App) ListProjectTree() []ProjectNode {
 
 	// Global section.
 	globalTitleMap := loadTopicTitles("")
-	if len(globalTitleMap) > 0 {
+	globalCreatedMap := loadTopicCreatedAts("")
+	if len(globalTitleMap) > 0 || len(f.Projects) == 0 {
 		globalTitle := strings.TrimSpace(f.GlobalTitle)
 		if globalTitle == "" {
 			globalTitle = "Global"
@@ -2238,6 +2561,7 @@ func (a *App) ListProjectTree() []ProjectNode {
 				TopicID:        id,
 				ProjectColor:   globalColor,
 				Turns:          summary.turns,
+				CreatedAt:      globalCreatedMap[id],
 				LastActivityAt: summary.lastActivityAt,
 				Open:           status.open,
 				Running:        status.running,
@@ -2268,6 +2592,7 @@ func (a *App) ListProjectTree() []ProjectNode {
 
 		// Gather topics: explicit topic list + all known topic titles.
 		titleMap := loadTopicTitles(p.Root)
+		createdMap := loadTopicCreatedAts(p.Root)
 		topicIDs := orderedTopicIDs(p.Topics, titleMap)
 
 		children := make([]ProjectNode, 0, len(topicIDs))
@@ -2286,6 +2611,7 @@ func (a *App) ListProjectTree() []ProjectNode {
 				TopicID:        tid,
 				ProjectColor:   p.Color,
 				Turns:          summary.turns,
+				CreatedAt:      createdMap[tid],
 				LastActivityAt: summary.lastActivityAt,
 				Open:           status.open,
 				Running:        status.running,
@@ -2298,7 +2624,7 @@ func (a *App) ListProjectTree() []ProjectNode {
 		out = append(out, node)
 	}
 
-	return out
+	return applyProjectTreeOrder(out, f.SidebarOrder)
 }
 
 func topicSummaryKey(scope, workspaceRoot, topicID string) string {
@@ -2317,9 +2643,12 @@ type ContextPanelInfo struct {
 	ReasoningTokens  int               `json:"reasoningTokens"`
 	CacheHitTokens   int               `json:"cacheHitTokens"`
 	CacheMissTokens  int               `json:"cacheMissTokens"`
+	RequestCount     int               `json:"requestCount"`
+	ElapsedMs        int64             `json:"elapsedMs"`
 	SessionCost      float64           `json:"sessionCost"`
 	SessionCurrency  string            `json:"sessionCurrency,omitempty"`
 	SessionCostUsd   float64           `json:"sessionCostUsd,omitempty"`
+	Mock             bool              `json:"mock,omitempty"`
 	ReadFiles        []readFileRecord  `json:"readFiles"`
 	ChangedFiles     []ChangedFileInfo `json:"changedFiles"`
 }
@@ -2355,9 +2684,21 @@ func (a *App) ContextPanel(tabID string) ContextPanelInfo {
 		info.WindowTokens = window
 	}
 
-	if records := tab.readTelemetrySnapshot(); records != nil {
+	telemetry := tab.telemetrySnapshot()
+	if records := telemetry.ReadFiles; records != nil {
 		info.ReadFiles = records
 	}
+	usage := telemetry.Usage
+	info.PromptTokens = usage.PromptTokens
+	info.CompletionTokens = usage.CompletionTokens
+	info.ReasoningTokens = usage.ReasoningTokens
+	info.CacheHitTokens = usage.CacheHitTokens
+	info.CacheMissTokens = usage.CacheMissTokens
+	info.RequestCount = usage.RequestCount
+	info.ElapsedMs = usage.ElapsedMs
+	info.SessionCost = usage.SessionCost
+	info.SessionCurrency = usage.SessionCurrency
+	info.SessionCostUsd = usage.SessionCostUsd
 
 	// Gather workspace changes for this tab's root.
 	if ctrl != nil && tab.WorkspaceRoot != "" {

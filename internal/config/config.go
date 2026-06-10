@@ -63,7 +63,7 @@ type Config struct {
 // DesktopConfig so desktop preferences cannot alter terminal output or prompts.
 type UIConfig struct {
 	Theme         string `toml:"theme"`          // auto|dark|light; empty resolves to auto
-	ThemeStyle    string `toml:"theme_style"`    // graphite|ember|aurora|midnight|sandstone|porcelain|linen|glacier
+	ThemeStyle    string `toml:"theme_style"`    // graphite|aurora|slate|carbon|nocturne|amber and legacy aliases
 	CloseBehavior string `toml:"close_behavior"` // legacy desktop close behavior; prefer desktop.close_behavior
 }
 
@@ -73,7 +73,7 @@ type UIConfig struct {
 type DesktopConfig struct {
 	Language       string   `toml:"language"`        // auto|en|zh; empty/auto = browser/OS auto-detect
 	Theme          string   `toml:"theme"`           // auto|dark|light; empty resolves to dark
-	ThemeStyle     string   `toml:"theme_style"`     // graphite|ember|aurora|midnight|sandstone|porcelain|linen|glacier
+	ThemeStyle     string   `toml:"theme_style"`     // graphite|aurora|slate|carbon|nocturne|amber and legacy aliases
 	CloseBehavior  string   `toml:"close_behavior"`  // quit|background; desktop window close behavior
 	ProviderAccess []string `toml:"provider_access"` // desktop-only list of provider entries shown in Settings > Model > Access
 }
@@ -106,7 +106,7 @@ func (c *Config) UIThemeStyle() string {
 
 func normalizeThemeStyle(style string) string {
 	switch strings.ToLower(strings.TrimSpace(style)) {
-	case "graphite", "ember", "aurora", "midnight", "sandstone", "porcelain", "linen", "glacier":
+	case "graphite", "aurora", "slate", "carbon", "nocturne", "amber", "ember", "midnight", "sandstone", "porcelain", "linen", "glacier":
 		return strings.ToLower(strings.TrimSpace(style))
 	default:
 		return ""

@@ -5,6 +5,7 @@ import { useT } from "../lib/i18n";
 import type { MemoryFact, MemoryView } from "../lib/types";
 import { ResizableDrawer } from "./ResizableDrawer";
 import { Tooltip } from "./Tooltip";
+import { ModalCloseButton } from "./ModalCloseButton";
 
 type LinkInfo = {
   name: string;
@@ -258,11 +259,7 @@ export function MemoryPanel({
               </div>
             )}
           </div>
-          <Tooltip label={t("common.close")}>
-            <button className="chip" onClick={onClose}>
-              ✕
-            </button>
-          </Tooltip>
+          <ModalCloseButton label={t("common.close")} onClick={onClose} />
         </header>
 
         {!view?.available ? (

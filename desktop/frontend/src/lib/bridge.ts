@@ -52,6 +52,8 @@ import type {
   WorkspaceView,
 } from "./types";
 
+const GLOBAL_PROJECT_ORDER_KEY = "__global__";
+
 // AppBindings is derived from the Wails-generated Go → TS method signatures, so
 // the compiler catches drift between the Go binding surface and the frontend mock.
 // Run `wails generate module` after adding/renaming a bound method on App, then
@@ -434,14 +436,18 @@ function browserPlatformOverride(): "darwin" | "windows" | "linux" | "" {
   return value === "darwin" || value === "windows" || value === "linux" ? value : "";
 }
 
-function mockScenario(): "demo" | "fresh" {
+function mockScenario(): "demo" | "fresh" | "running" {
   if (typeof window === "undefined") return "demo";
   const value = new URLSearchParams(window.location.search).get("mock")?.trim().toLowerCase();
-  return value === "fresh" || value === "empty" || value === "first-run" ? "fresh" : "demo";
+  if (value === "fresh" || value === "empty" || value === "first-run") return "fresh";
+  if (value === "running" || value === "busy" || value === "streaming") return "running";
+  return "demo";
 }
 
 function makeMockApp(): AppBindings {
-  const freshMock = mockScenario() === "fresh";
+  const scenario = mockScenario();
+  const freshMock = scenario === "fresh";
+  const runningMock = scenario === "running";
   let cancelled = false;
   let pendingAskPreview = false;
   let pendingApprovalPreview = false;
@@ -688,7 +694,7 @@ function makeMockApp(): AppBindings {
       root: "~/projects/joyquant-db",
       projectColor: "blue",
       children: [
-        { key: "topic_dev_standard", kind: "topic", label: `● ${t("mock.topicDevStandard")}`, root: "~/projects/joyquant-db", topicId: "topic_dev_standard", projectColor: "blue", turns: 18, lastActivityAt: mockNow - 8 * 60_000, open: true, running: true },
+        { key: "topic_dev_standard", kind: "topic", label: `● ${t("mock.topicDevStandard")}`, root: "~/projects/joyquant-db", topicId: "topic_dev_standard", projectColor: "blue", turns: 18, lastActivityAt: mockNow - 8 * 60_000, open: true, running: runningMock },
         { key: "topic_db_maint", kind: "topic", label: t("mock.topicDbMaint"), root: "~/projects/joyquant-db", topicId: "topic_db_maint", projectColor: "blue", turns: 7, lastActivityAt: mockNow - 2 * 60 * 60_000 },
         { key: "topic_env", kind: "topic", label: t("mock.topicEnv"), root: "~/projects/joyquant-db", topicId: "topic_env", projectColor: "blue", turns: 3, lastActivityAt: mockNow - 26 * 60 * 60_000 },
       ],
@@ -700,10 +706,10 @@ function makeMockApp(): AppBindings {
       root: "~/projects/joyquant-sys",
       projectColor: "purple",
       children: [
-        { key: "topic_p3b_pd", kind: "topic", label: `● ${t("mock.topicP3b")}`, root: "~/projects/joyquant-sys", topicId: "topic_p3b_pd", projectColor: "purple", turns: 11, lastActivityAt: mockNow - 3 * 24 * 60 * 60_000, status: "streaming" },
-        { key: "topic_p3a_pd", kind: "topic", label: t("mock.topicP3a"), root: "~/projects/joyquant-sys", topicId: "topic_p3a_pd", projectColor: "purple", turns: 9, lastActivityAt: mockNow - 4 * 24 * 60 * 60_000, status: "thinking" },
-        { key: "topic_hotfix", kind: "topic", label: t("mock.topicHotfix"), root: "~/projects/joyquant-sys", topicId: "topic_hotfix", projectColor: "purple", turns: 4, lastActivityAt: mockNow - 5 * 24 * 60 * 60_000, status: "thinking" },
-        { key: "topic_sys_coord", kind: "topic", label: t("mock.topicSysCoord"), root: "~/projects/joyquant-sys", topicId: "topic_sys_coord", projectColor: "purple", turns: 14, lastActivityAt: mockNow - 6 * 24 * 60 * 60_000, status: "waiting_confirmation" },
+        { key: "topic_p3b_pd", kind: "topic", label: `● ${t("mock.topicP3b")}`, root: "~/projects/joyquant-sys", topicId: "topic_p3b_pd", projectColor: "purple", turns: 11, lastActivityAt: mockNow - 3 * 24 * 60 * 60_000, status: runningMock ? "streaming" : undefined },
+        { key: "topic_p3a_pd", kind: "topic", label: t("mock.topicP3a"), root: "~/projects/joyquant-sys", topicId: "topic_p3a_pd", projectColor: "purple", turns: 9, lastActivityAt: mockNow - 4 * 24 * 60 * 60_000, status: runningMock ? "thinking" : undefined },
+        { key: "topic_hotfix", kind: "topic", label: t("mock.topicHotfix"), root: "~/projects/joyquant-sys", topicId: "topic_hotfix", projectColor: "purple", turns: 4, lastActivityAt: mockNow - 5 * 24 * 60 * 60_000, status: runningMock ? "thinking" : undefined },
+        { key: "topic_sys_coord", kind: "topic", label: t("mock.topicSysCoord"), root: "~/projects/joyquant-sys", topicId: "topic_sys_coord", projectColor: "purple", turns: 14, lastActivityAt: mockNow - 6 * 24 * 60 * 60_000, status: runningMock ? "waiting_confirmation" : undefined },
         { key: "topic_sys_standard", kind: "topic", label: t("mock.topicSysStandard"), root: "~/projects/joyquant-sys", topicId: "topic_sys_standard", projectColor: "purple", turns: 6, lastActivityAt: mockNow - 7 * 24 * 60 * 60_000, status: "paused" },
         { key: "topic_sys_exception", kind: "topic", label: t("mock.topicSysException"), root: "~/projects/joyquant-sys", topicId: "topic_sys_exception", projectColor: "purple", turns: 2, lastActivityAt: mockNow - 8 * 24 * 60 * 60_000, status: "error" },
       ],
@@ -720,7 +726,24 @@ function makeMockApp(): AppBindings {
       ],
     },
   ];
-  const cloneProjectTree = () => JSON.parse(JSON.stringify(mockProjectTree)) as ProjectNode[];
+  const ensureMockGlobalFolder = (): ProjectNode => {
+    let node = mockProjectTree.find((item) => item.kind === "global_folder");
+    if (!node) {
+      node = {
+        key: "global_folder",
+        kind: "global_folder",
+        label: "Global",
+        root: globalWorkspaceRoot,
+        children: [],
+      };
+      mockProjectTree.push(node);
+    }
+    return node;
+  };
+  const cloneProjectTree = () => {
+    if (mockProjectTree.length === 0) ensureMockGlobalFolder();
+    return JSON.parse(JSON.stringify(mockProjectTree)) as ProjectNode[];
+  };
   const projectChildren = (node: ProjectNode): ProjectNode[] => Array.isArray(node.children) ? node.children : [];
   const findMockTopic = (topicId: string): ProjectNode | null => {
     for (const parent of mockProjectTree) {
@@ -740,6 +763,7 @@ function makeMockApp(): AppBindings {
     const status = mockTopicStatus(topicId);
     return status === "streaming" || status === "thinking" || status === "waiting_confirmation";
   };
+  const mockTopicRunsInScenario = (topicId: string) => runningMock && mockTopicIsRunning(topicId);
   const mockTopicHistory = (topicId: string): HistoryMessage[] => {
     switch (topicId) {
       case "topic_p3b_pd":
@@ -779,6 +803,7 @@ function makeMockApp(): AppBindings {
   };
   const mockRuntimeInjected = new Set<string>();
   const queueMockTopicRuntime = (tab: TabMeta) => {
+    if (!runningMock) return;
     const status = mockTopicStatus(tab.topicId);
     if (status !== "streaming" && status !== "thinking" && status !== "waiting_confirmation") return;
     const key = `${tab.id}:${tab.topicId}:${status}`;
@@ -786,7 +811,7 @@ function makeMockApp(): AppBindings {
     mockRuntimeInjected.add(key);
     window.setTimeout(() => {
       void withMockTabScope(tab.id, async () => {
-        emit({ kind: "turn_started" });
+        emitMockTurnStarted();
         await delay(120);
         if (tab.topicId === "topic_p3b_pd") {
           const text = "我会先把范围拆成三层：目标、依赖、风险。当前已经确认 p3b 的交付边界，接下来补充每个模块的验收口径...";
@@ -828,6 +853,19 @@ function makeMockApp(): AppBindings {
   const setMockActiveTab = (tabId: string) => {
     mockTabs = mockTabs.map((tab) => ({ ...tab, active: tab.id === tabId }));
   };
+  const currentMockTurnTabId = () => mockScopedTabId || mockTabs.find((tab) => tab.active)?.id;
+  const setMockTabRunning = (tabId: string | undefined, running: boolean) => {
+    if (!tabId) return;
+    mockTabs = mockTabs.map((tab) => (tab.id === tabId ? { ...tab, running } : tab));
+  };
+  const emitMockTurnStarted = () => {
+    setMockTabRunning(currentMockTurnTabId(), true);
+    emit({ kind: "turn_started" });
+  };
+  const emitMockTurnDone = () => {
+    setMockTabRunning(currentMockTurnTabId(), false);
+    emit({ kind: "turn_done" });
+  };
   let mockTabs: TabMeta[] = freshMock ? [
     {
       id: "tab_global",
@@ -858,7 +896,7 @@ function makeMockApp(): AppBindings {
       ready: true,
       running: false,
       mode: "normal",
-      collaborationMode: "plan",
+      collaborationMode: "normal",
       toolApprovalMode: "ask",
       active: true,
       cwd: "~/projects/joyquant-db",
@@ -873,7 +911,7 @@ function makeMockApp(): AppBindings {
       projectColor: "purple",
       label: "DeepSeek-R1",
       ready: true,
-      running: mockTopicIsRunning("topic_p3b_pd"),
+      running: runningMock && mockTopicIsRunning("topic_p3b_pd"),
       mode: "normal",
       collaborationMode: "normal",
       toolApprovalMode: "ask",
@@ -897,6 +935,35 @@ function makeMockApp(): AppBindings {
       cwd: "~/projects/joyquant-db",
     },
   ];
+  const mockModelCatalog = [
+    { ref: "deepseek/deepseek-v4-flash", provider: "deepseek", model: "deepseek-v4-flash" },
+    { ref: "deepseek/deepseek-v4-pro", provider: "deepseek", model: "deepseek-v4-pro" },
+  ];
+  const defaultMockModelRef = mockModelCatalog[0].ref;
+  const mockModelRef = (name: string): string => {
+    const trimmed = name.trim();
+    if (!trimmed || trimmed === "DeepSeek-R1") return defaultMockModelRef;
+    const exact = mockModelCatalog.find((model) => model.ref === trimmed);
+    if (exact) return exact.ref;
+    const byModel = mockModelCatalog.find((model) => model.model === trimmed);
+    return byModel?.ref ?? trimmed;
+  };
+  const mockModelLabel = (ref: string): string => mockModelCatalog.find((model) => model.ref === mockModelRef(ref))?.model ?? ref.split("/").pop() ?? ref;
+  const mockTabModelRef = (tab?: TabMeta): string => mockModelRef(tab?.label ?? "");
+  const setMockTabModel = (tabID: string | undefined, name: string) => {
+    const ref = mockModelRef(name);
+    const label = mockModelLabel(ref);
+    let applied = false;
+    mockTabs = mockTabs.map((tab) => {
+      const match = tabID ? tab.id === tabID : tab.active;
+      if (!match) return tab;
+      applied = true;
+      return { ...tab, label };
+    });
+    if (!applied && mockTabs.length > 0) {
+      mockTabs = mockTabs.map((tab, index) => (index === 0 ? { ...tab, label } : tab));
+    }
+  };
   return {
     async Platform() {
       const override = browserPlatformOverride();
@@ -909,7 +976,7 @@ function makeMockApp(): AppBindings {
     },
         async Submit(input) {
           cancelled = false;
-      emit({ kind: "turn_started" });
+      emitMockTurnStarted();
       const trimmedInput = input.trim().toLowerCase();
       const goalMatch = /^\/goal(?:\s+([\s\S]*))?$/.exec(input.trim());
       if (goalMatch) {
@@ -918,13 +985,13 @@ function makeMockApp(): AppBindings {
         const active = mockTabs.find((tab) => tab.active);
         if (!arg || lowered === "status") {
           emit({ kind: "notice", level: "info", text: active?.goal ? `goal: ${active.goal}` : "goal: none" });
-          emit({ kind: "turn_done" });
+          emitMockTurnDone();
           return;
         }
         if (["clear", "off", "stop", "done"].includes(lowered)) {
           mockTabs = mockTabs.map((tab) => (tab.active ? { ...tab, goal: "", goalStatus: "stopped", collaborationMode: "normal" } : tab));
           emit({ kind: "notice", level: "info", text: "goal cleared" });
-          emit({ kind: "turn_done" });
+          emitMockTurnDone();
           return;
         }
         mockTabs = mockTabs.map((tab) => (tab.active ? { ...tab, goal: arg, goalStatus: "running", collaborationMode: "goal" } : tab));
@@ -935,7 +1002,7 @@ function makeMockApp(): AppBindings {
         emit({ kind: "message", text: reply });
         mockTabs = mockTabs.map((tab) => (tab.active ? { ...tab, goal: "", goalStatus: "complete", collaborationMode: "normal" } : tab));
         emit({ kind: "notice", level: "info", text: "goal complete" });
-        emit({ kind: "turn_done" });
+        emitMockTurnDone();
         return;
       }
       if (trimmedInput === "/approve-preview" || trimmedInput === "approve preview" || trimmedInput === "approve预览") {
@@ -1040,7 +1107,7 @@ function makeMockApp(): AppBindings {
             durationMs: 150,
           },
         });
-        emit({ kind: "turn_done" });
+        emitMockTurnDone();
         return;
       }
       if (trimmedInput === "/process-preview" || trimmedInput === "process preview" || trimmedInput === "过程预览") {
@@ -1063,7 +1130,7 @@ function makeMockApp(): AppBindings {
           },
         });
         emit({ kind: "message", text: "Process card preview complete." });
-        emit({ kind: "turn_done" });
+        emitMockTurnDone();
         return;
       }
       // Simulate the server's pre-first-token latency so the deferred user bubble
@@ -1108,7 +1175,7 @@ function makeMockApp(): AppBindings {
           sessionCacheMissTokens: 256,
         },
       });
-          emit({ kind: "turn_done" });
+          emitMockTurnDone();
         },
         async SubmitToTab(_tabID, input) {
           await withMockTabScope(_tabID, () => this.Submit(input));
@@ -1121,7 +1188,7 @@ function makeMockApp(): AppBindings {
         },
         async RunShell(command) {
           cancelled = false;
-          emit({ kind: "turn_started" });
+          emitMockTurnStarted();
           await delay(100);
           if (cancelled) return;
           const id = `shell-${command.slice(0, 32)}`;
@@ -1132,14 +1199,14 @@ function makeMockApp(): AppBindings {
           await delay(100);
           if (cancelled) return;
           emit({ kind: "tool_result", tool: { id, name: "bash", output: `$ ${command}\n(mock output)\n`, readOnly: false, durationMs: 300 } });
-          emit({ kind: "turn_done" });
+          emitMockTurnDone();
         },
         async RunShellForTab(_tabID, command) {
           await withMockTabScope(_tabID, () => this.RunShell(command));
         },
         async Cancel() {
           cancelled = true;
-          emit({ kind: "turn_done" });
+          emitMockTurnDone();
         },
         async CancelTab(_tabID) {
           await withMockTabScope(_tabID, () => this.Cancel());
@@ -1156,7 +1223,7 @@ function makeMockApp(): AppBindings {
             kind: "message",
             text: `approval preview answered: ${allow ? suffix : "denied"}`,
           });
-          emit({ kind: "turn_done" });
+          emitMockTurnDone();
         },
         async ApproveTab(_tabID, id, allow, session, persist) {
           await this.ApproveTabWithScope(_tabID, id, allow, session, persist, "");
@@ -1171,7 +1238,7 @@ function makeMockApp(): AppBindings {
         .map((answer) => `${answer.questionId}: ${(answer.selected ?? []).join(", ") || "(no answer)"}`)
         .join("\n");
       emit({ kind: "message", text: `ask preview answered:\n\n${summary}` });
-          emit({ kind: "turn_done" });
+          emitMockTurnDone();
         },
         async AnswerQuestionForTab(_tabID, id, answers) {
           await withMockTabScope(_tabID, () => this.AnswerQuestion(id, answers));
@@ -1714,17 +1781,20 @@ function makeMockApp(): AppBindings {
       return "data:image/png;base64,iVBORw0KGgo=";
     },
         async Models() {
-          return [
-            { ref: "deepseek/deepseek-v4-flash", provider: "deepseek", model: "deepseek-v4-flash", current: true },
-            { ref: "deepseek/deepseek-v4-pro", provider: "deepseek", model: "deepseek-v4-pro", current: false },
-          ];
+          const active = mockTabs.find((tab) => tab.active) ?? mockTabs[0];
+          const current = mockTabModelRef(active);
+          return mockModelCatalog.map((model) => ({ ...model, current: model.ref === current }));
         },
-        async ModelsForTab() {
-          return this.Models();
+        async ModelsForTab(tabID) {
+          const tab = mockTabs.find((item) => item.id === tabID) ?? mockTabs.find((item) => item.active) ?? mockTabs[0];
+          const current = mockTabModelRef(tab);
+          return mockModelCatalog.map((model) => ({ ...model, current: model.ref === current }));
         },
-        async SetModel() {},
-        async SetModelForTab(_tabID, name) {
-          await this.SetModel(name);
+        async SetModel(name) {
+          setMockTabModel(undefined, name);
+        },
+        async SetModelForTab(tabID, name) {
+          setMockTabModel(tabID, name);
         },
         async Effort() {
           return { supported: true, current: mockEffort, default: "high", levels: ["auto", "high", "max"] };
@@ -2006,7 +2076,7 @@ function makeMockApp(): AppBindings {
     async OpenProjectTab(workspaceRoot: string, _topicID: string) {
       const existing = mockTabs.find((tab) => tab.scope === "project" && tab.workspaceRoot === workspaceRoot && tab.topicId === _topicID);
       if (existing) {
-        const active = { ...existing, active: true, running: mockTopicIsRunning(_topicID) };
+        const active = { ...existing, active: true, running: mockTopicRunsInScenario(_topicID) };
         mockTabs = mockTabs.map((tab) => (tab.id === existing.id ? active : { ...tab, active: false }));
         return { ...active };
       }
@@ -2020,7 +2090,7 @@ function makeMockApp(): AppBindings {
         projectColor: mockProjectTree.find((node) => node.root === workspaceRoot)?.projectColor,
         label: "deepseek-v4-flash",
         ready: true,
-        running: mockTopicIsRunning(_topicID),
+        running: mockTopicRunsInScenario(_topicID),
         mode: "normal",
         collaborationMode: "normal",
         toolApprovalMode: "ask",
@@ -2097,18 +2167,38 @@ function makeMockApp(): AppBindings {
     },
     async ReorderProjects(workspaceRoots: string[]) {
       const projects = mockProjectTree.filter((node) => node.kind === "project");
-      if (workspaceRoots.length !== projects.length) return;
-      const byRoot = new Map(projects.map((node) => [node.root, node]));
-      const ordered = workspaceRoots.map((root) => byRoot.get(root)).filter((node): node is ProjectNode => Boolean(node));
-      if (ordered.length !== projects.length) return;
-      const globals = mockProjectTree.filter((node) => node.kind !== "project");
-      mockProjectTree.splice(0, mockProjectTree.length, ...globals, ...ordered);
+      const globals = mockProjectTree.filter((node) => node.kind === "global_folder");
+      if (!workspaceRoots.includes(GLOBAL_PROJECT_ORDER_KEY)) {
+        if (workspaceRoots.length !== projects.length) return;
+        const byRoot = new Map(projects.map((node) => [node.root, node]));
+        const ordered = workspaceRoots.map((root) => byRoot.get(root)).filter((node): node is ProjectNode => Boolean(node));
+        if (ordered.length !== projects.length) return;
+        mockProjectTree.splice(0, mockProjectTree.length, ...globals, ...ordered);
+        return;
+      }
+      const byKey = new Map<string, ProjectNode>();
+      for (const node of projects) {
+        if (node.root) byKey.set(node.root, node);
+      }
+      for (const node of globals) byKey.set(GLOBAL_PROJECT_ORDER_KEY, node);
+      const seen = new Set<string>();
+      const ordered: ProjectNode[] = [];
+      for (const key of workspaceRoots) {
+        if (seen.has(key)) return;
+        const node = byKey.get(key);
+        if (!node) return;
+        seen.add(key);
+        ordered.push(node);
+      }
+      if (ordered.length !== projects.length + globals.length) return;
+      mockProjectTree.splice(0, mockProjectTree.length, ...ordered);
     },
     async CreateTopic(_scope: string, _workspaceRoot: string, title: string) {
-      const id = "topic_" + Date.now();
+      const now = Date.now();
+      const id = "topic_" + now;
       const topicTitle = title.trim() || t("mock.newSession");
       const parent = _scope === "global"
-        ? mockProjectTree.find((node) => node.kind === "global_folder")
+        ? ensureMockGlobalFolder()
         : mockProjectTree.find((node) => node.root === _workspaceRoot);
       if (parent) {
         const global = parent.kind === "global_folder";
@@ -2119,9 +2209,10 @@ function makeMockApp(): AppBindings {
           root: parent.root,
           topicId: id,
           projectColor: parent.projectColor,
+          createdAt: now,
         }, ...projectChildren(parent)];
       }
-      return { id, title: topicTitle, createdAt: Date.now() };
+      return { id, title: topicTitle, createdAt: now };
     },
     async RenameTopic(topicID: string, title: string) {
       const topic = findMockTopic(topicID);
@@ -2152,9 +2243,12 @@ function makeMockApp(): AppBindings {
         reasoningTokens: 7521,
         cacheHitTokens: 87000,
         cacheMissTokens: 13000,
+        requestCount: 6,
+        elapsedMs: 33 * 60 * 1000,
         sessionCost: 0.018,
         sessionCurrency: "¥",
         sessionCostUsd: 0.018,
+        mock: true,
         readFiles: [
           { path: "REASONIX.md", turn: 2, time: now - 34 * 60 * 1000 },
           { path: "pyproject.toml", turn: 3, time: now - 30 * 60 * 1000 },
