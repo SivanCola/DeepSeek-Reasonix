@@ -19,9 +19,16 @@ type GatewayConfig struct {
 	Model         string
 	MaxSteps      int
 	WorkspaceRoot string
+	Channels      map[Platform]ChannelConfig
 	Allowlist     AllowlistConfig
 	Enabled       map[Platform]bool
 	Debounce      time.Duration
+}
+
+// ChannelConfig overrides gateway defaults for one IM channel.
+type ChannelConfig struct {
+	Model         string
+	WorkspaceRoot string
 }
 
 // AllowlistConfig 控制哪些用户/群可以使用 bot。
@@ -59,6 +66,10 @@ type sessionState struct {
 type sessionEventSink struct {
 	mu     sync.RWMutex
 	target event.Sink
+}
+
+type pendingReactionAdapter interface {
+	AddPendingReaction(ctx context.Context, messageID string) error
 }
 
 func (s *sessionEventSink) setTarget(target event.Sink) {
@@ -189,6 +200,8 @@ func (gw *BotGateway) handleMessage(ctx context.Context, plat Platform, adapter 
 		return
 	}
 
+	gw.addPendingReaction(ctx, plat, adapter, msg)
+
 	// session 并发控制
 	acquired, merged := gw.sessions.TryAcquire(key, msg)
 	if merged {
@@ -202,6 +215,19 @@ func (gw *BotGateway) handleMessage(ctx context.Context, plat Platform, adapter 
 	}
 
 	gw.runTurn(ctx, adapter, key, msg)
+}
+
+func (gw *BotGateway) addPendingReaction(ctx context.Context, plat Platform, adapter Adapter, msg InboundMessage) {
+	if strings.TrimSpace(msg.MessageID) == "" {
+		return
+	}
+	reactor, ok := adapter.(pendingReactionAdapter)
+	if !ok {
+		return
+	}
+	if err := reactor.AddPendingReaction(ctx, msg.MessageID); err != nil {
+		gw.logger.Warn("pending reaction failed", "platform", plat, "err", err)
+	}
 }
 
 func (gw *BotGateway) checkAllowlist(plat Platform, msg InboundMessage) bool {
@@ -348,7 +374,7 @@ func (gw *BotGateway) runTurn(ctx context.Context, adapter Adapter, key string, 
 	}
 
 	// 获取或创建 Controller
-	state := gw.getOrCreateSession(ctx, key)
+	state := gw.getOrCreateSession(ctx, key, msg)
 	if state == nil || state.ctrl == nil {
 		_ = gw.sendText(ctx, adapter, msg, "内部错误：无法创建会话。")
 		return
@@ -387,7 +413,7 @@ func (gw *BotGateway) runTurn(ctx context.Context, adapter Adapter, key string, 
 	}
 }
 
-func (gw *BotGateway) getOrCreateSession(ctx context.Context, key string) *sessionState {
+func (gw *BotGateway) getOrCreateSession(ctx context.Context, key string, msg InboundMessage) *sessionState {
 	gw.mu.Lock()
 	if state, ok := gw.controllers[key]; ok {
 		state.lastActive = time.Now()
@@ -398,12 +424,13 @@ func (gw *BotGateway) getOrCreateSession(ctx context.Context, key string) *sessi
 
 	// 创建新 Controller
 	sessionSink := &sessionEventSink{}
+	model, workspaceRoot := gw.sessionOptionsForPlatform(msg.Platform)
 	ctrl, err := boot.Build(ctx, boot.Options{
-		Model:         gw.cfg.Model,
+		Model:         model,
 		MaxSteps:      gw.cfg.MaxSteps,
 		RequireKey:    true,
 		Sink:          sessionSink,
-		WorkspaceRoot: gw.cfg.WorkspaceRoot,
+		WorkspaceRoot: workspaceRoot,
 	})
 	if err != nil {
 		gw.logger.Error("build controller failed", "err", err)
@@ -423,6 +450,25 @@ func (gw *BotGateway) getOrCreateSession(ctx context.Context, key string) *sessi
 	gw.mu.Unlock()
 
 	return state
+}
+
+func (gw *BotGateway) sessionOptionsForPlatform(plat Platform) (model string, workspaceRoot string) {
+	model = gw.cfg.Model
+	workspaceRoot = gw.cfg.WorkspaceRoot
+	if gw.cfg.Channels == nil {
+		return model, workspaceRoot
+	}
+	channel, ok := gw.cfg.Channels[plat]
+	if !ok {
+		return model, workspaceRoot
+	}
+	if value := strings.TrimSpace(channel.Model); value != "" {
+		model = value
+	}
+	if value := strings.TrimSpace(channel.WorkspaceRoot); value != "" {
+		workspaceRoot = value
+	}
+	return model, workspaceRoot
 }
 
 func (gw *BotGateway) sendText(ctx context.Context, adapter Adapter, msg InboundMessage, text string) error {

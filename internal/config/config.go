@@ -292,6 +292,8 @@ type BotConnectionConfig struct {
 	Label           string                        `toml:"label"`
 	Enabled         bool                          `toml:"enabled"`
 	Status          string                        `toml:"status"` // disconnected|pending|connected|error
+	Model           string                        `toml:"model"`
+	WorkspaceRoot   string                        `toml:"workspace_root"`
 	Credential      BotConnectionCredential       `toml:"credential"`
 	SessionMappings []BotConnectionSessionMapping `toml:"session_mappings"`
 	LastError       string                        `toml:"last_error"`
@@ -307,9 +309,11 @@ type BotConnectionCredential struct {
 }
 
 type BotConnectionSessionMapping struct {
-	RemoteID  string `toml:"remote_id"`
-	SessionID string `toml:"session_id"`
-	UpdatedAt string `toml:"updated_at"`
+	RemoteID      string `toml:"remote_id"`
+	SessionID     string `toml:"session_id"`
+	Scope         string `toml:"scope"`
+	WorkspaceRoot string `toml:"workspace_root"`
+	UpdatedAt     string `toml:"updated_at"`
 }
 
 // NetworkConfig controls ordinary outbound HTTP traffic such as model providers,

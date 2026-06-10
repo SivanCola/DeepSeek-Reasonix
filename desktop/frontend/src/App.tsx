@@ -10,13 +10,15 @@ import {
   FileJson,
   GitBranch,
   History,
+  MessageSquare,
+  Plus,
   Settings as SettingsIcon,
   Pencil,
   Trash2,
 } from "lucide-react";
 import { useToast } from "./lib/toast";
 import { asArray } from "./lib/array";
-import { clearLegacyLangPref, normalizeLangPref, readLegacyLangPref, t, useI18n, useT } from "./lib/i18n";
+import { clearLegacyLangPref, normalizeLangPref, readLegacyLangPref, t, useI18n, useT, type Translator } from "./lib/i18n";
 import { useController, type Item, type LiveStream } from "./lib/useController";
 import { app, onProjectTreeChanged } from "./lib/bridge";
 import { Transcript } from "./components/Transcript";
@@ -46,6 +48,8 @@ import {
   modeFromAxes,
   normalizeMode,
   normalizeToolApprovalMode,
+  type BotConnectionView,
+  type BotSettingsView,
   type CollaborationMode,
   type ComposerInsertRequest,
   type Mode,
@@ -105,6 +109,286 @@ type HistoryViewState =
   | { kind: "history"; source: "scope"; filter: HistoryScopeFilter; sessions: SessionMeta[] }
   | { kind: "history"; source: "all"; sessions: SessionMeta[] }
   | { kind: "trash"; sessions: SessionMeta[] };
+type SidebarImPlatform = "feishu" | "lark" | "weixin";
+type SidebarImStatus = "connected" | "disabled" | "pending" | "error" | "disconnected";
+type SidebarImConnection = {
+  id: string;
+  platform: SidebarImPlatform;
+  title: string;
+  platformLabel: string;
+  subtitle: string;
+  status: SidebarImStatus;
+  statusLabel: string;
+  remoteId: string;
+  sessionId: string;
+  scope: "global" | "project";
+  workspaceRoot: string;
+};
+type SidebarImTopicSource = {
+  platform: SidebarImPlatform;
+  label: string;
+  title: string;
+  remoteId: string;
+  connectionId: string;
+};
+type SidebarImConnectionDetailProps = {
+  connection: SidebarImConnection;
+  onClose: () => void;
+  onOpenSession: () => void;
+  onOpenSettings: () => void;
+};
+
+function isSidebarImConnection(connection: BotConnectionView): boolean {
+  return connection.provider === "feishu" || connection.provider === "weixin";
+}
+
+function sidebarImPlatform(connection: BotConnectionView): SidebarImPlatform {
+  if (connection.provider === "weixin") return "weixin";
+  return connection.domain === "lark" ? "lark" : "feishu";
+}
+
+function sidebarImPlatformLabel(platform: SidebarImPlatform, translate: Translator): string {
+  if (platform === "lark") return "Lark";
+  if (platform === "weixin") return translate("settings.botWeixin");
+  return translate("settings.botFeishu");
+}
+
+function firstBotSessionMapping(connection: BotConnectionView): BotConnectionView["sessionMappings"][number] | null {
+  return (
+    connection.sessionMappings.find((mapping) => mapping.sessionId.trim()) ??
+    connection.sessionMappings.find((mapping) => mapping.remoteId.trim()) ??
+    null
+  );
+}
+
+function botMappingScope(mapping: BotConnectionView["sessionMappings"][number] | null | undefined, connectionWorkspaceRoot: string): "global" | "project" {
+  if (mapping?.scope === "project") return "project";
+  if ((mapping?.workspaceRoot ?? "").trim()) return "project";
+  return connectionWorkspaceRoot.trim() ? "project" : "global";
+}
+
+function botMappingWorkspaceRoot(
+  mapping: BotConnectionView["sessionMappings"][number] | null | undefined,
+  connectionWorkspaceRoot: string,
+): string {
+  const workspaceRoot = (mapping?.workspaceRoot ?? "").trim() || connectionWorkspaceRoot.trim();
+  return botMappingScope(mapping, connectionWorkspaceRoot) === "project" ? workspaceRoot : "";
+}
+
+function compactRemoteId(value: string): string {
+  const trimmed = value.trim();
+  if (trimmed.length <= 28) return trimmed;
+  return `${trimmed.slice(0, 12)}…${trimmed.slice(-8)}`;
+}
+
+function sidebarImStatus(connection: BotConnectionView, botEnabled: boolean): SidebarImStatus {
+  if (!botEnabled || !connection.enabled) return "disabled";
+  if (connection.status === "connected") return "connected";
+  if (connection.status === "pending") return "pending";
+  if (connection.status === "error") return "error";
+  return "disconnected";
+}
+
+function sidebarImStatusLabel(status: SidebarImStatus, translate: Translator): string {
+  switch (status) {
+    case "connected":
+      return translate("sidebar.imConnected");
+    case "disabled":
+      return translate("sidebar.imDisabled");
+    case "pending":
+      return translate("sidebar.imPending");
+    case "error":
+      return translate("sidebar.imError");
+    default:
+      return translate("sidebar.imDisconnected");
+  }
+}
+
+function sidebarImConnectionsFromBot(bot: BotSettingsView | null | undefined, translate: Translator): SidebarImConnection[] {
+  if (!bot?.connections?.length) return [];
+  return bot.connections
+    .filter(isSidebarImConnection)
+    .map((connection) => {
+      const platform = sidebarImPlatform(connection);
+      const platformLabel = sidebarImPlatformLabel(platform, translate);
+      const mapping = firstBotSessionMapping(connection);
+      const remoteId = mapping?.remoteId.trim() ?? "";
+      const sessionId = mapping?.sessionId.trim() ?? "";
+      const scope = botMappingScope(mapping, connection.workspaceRoot);
+      const workspaceRoot = botMappingWorkspaceRoot(mapping, connection.workspaceRoot);
+      const status = sidebarImStatus(connection, bot.enabled);
+      const title = connection.label.trim() || platformLabel;
+      const subtitleParts = [
+        remoteId ? compactRemoteId(remoteId) : platformLabel,
+        connection.model.trim() || "",
+        sidebarImStatusLabel(status, translate),
+      ].filter(Boolean);
+      return {
+        id: connection.id,
+        platform,
+        title,
+        platformLabel,
+        subtitle: subtitleParts.join(" · "),
+        status,
+        statusLabel: sidebarImStatusLabel(status, translate),
+        remoteId,
+        sessionId,
+        scope,
+        workspaceRoot,
+      };
+    });
+}
+
+function mappedSessionTarget(sessionId: string): { kind: "path" | "topic"; value: string } | null {
+  const trimmed = sessionId.trim();
+  if (!trimmed) return null;
+  const lower = trimmed.toLowerCase();
+  if (lower.startsWith("path:")) {
+    const value = trimmed.slice(5).trim();
+    return value ? { kind: "path", value } : null;
+  }
+  if (lower.startsWith("topic:")) {
+    const value = trimmed.slice(6).trim();
+    return value ? { kind: "topic", value } : null;
+  }
+  if (trimmed.endsWith(".jsonl") || trimmed.includes("/") || trimmed.includes("\\") || trimmed.startsWith("~")) {
+    return { kind: "path", value: trimmed };
+  }
+  return { kind: "topic", value: trimmed };
+}
+
+function sidebarImTopicSourcesFromBot(bot: BotSettingsView | null | undefined, translate: Translator): Record<string, SidebarImTopicSource> {
+  if (!bot?.connections?.length) return {};
+  const sources: Record<string, SidebarImTopicSource> = {};
+  for (const connection of bot.connections) {
+    if (!isSidebarImConnection(connection)) continue;
+    const platform = sidebarImPlatform(connection);
+    const label = sidebarImPlatformLabel(platform, translate);
+    const title = connection.label.trim() || label;
+    for (const mapping of asArray(connection.sessionMappings)) {
+      const scope = botMappingScope(mapping, connection.workspaceRoot);
+      if (scope !== "global") continue;
+      const target = mappedSessionTarget(mapping.sessionId);
+      if (!target || target.kind !== "topic") continue;
+      if (sources[target.value]) continue;
+      sources[target.value] = {
+        platform,
+        label,
+        title,
+        remoteId: mapping.remoteId.trim(),
+        connectionId: connection.id,
+      };
+    }
+  }
+  return sources;
+}
+
+function sidebarImScopeLabel(connection: SidebarImConnection, translate: Translator): string {
+  if (connection.scope === "project") return translate("botDetail.scopeProject", { name: connection.workspaceRoot || "Project" });
+  return translate("botDetail.scopeGlobal");
+}
+
+function sidebarImSessionLabel(connection: SidebarImConnection, translate: Translator): string {
+  const target = mappedSessionTarget(connection.sessionId);
+  if (!target) return translate("botDetail.noSession");
+  if (target.kind === "path") return target.value.split(/[\\/]/).pop() || target.value;
+  return target.value;
+}
+
+function SidebarImConnectionDetail({ connection, onClose, onOpenSession, onOpenSettings }: SidebarImConnectionDetailProps) {
+  const translate = useT();
+  const target = mappedSessionTarget(connection.sessionId);
+  const permissionKey = connection.scope === "project" ? "botDetail.permissionProject" : "botDetail.permissionGlobal";
+  return (
+    <div className="bot-detail">
+      <section className="bot-detail__summary">
+        <div className={`bot-detail__avatar bot-detail__avatar--${connection.platform}`} aria-hidden="true">
+          {connection.platform === "weixin" ? "微" : connection.platform === "lark" ? "L" : "飞"}
+        </div>
+        <div className="bot-detail__summary-main">
+          <span>{translate("botDetail.subtitle")}</span>
+          <h2>{connection.title}</h2>
+          <div className="bot-detail__chips">
+            <span>{connection.platformLabel}</span>
+            <span>{connection.statusLabel}</span>
+            <span>{sidebarImScopeLabel(connection, translate)}</span>
+          </div>
+        </div>
+        <button type="button" className="btn btn--primary btn--small bot-detail__primary" disabled={!target} title={target ? undefined : translate("botDetail.openDisabled")} onClick={onOpenSession}>
+          <MessageSquare size={14} />
+          {translate("botDetail.openSession")}
+        </button>
+      </section>
+
+      <div className="bot-detail__layout">
+        <section className="bot-detail__panel bot-detail__panel--facts" aria-label={translate("botDetail.summary")}>
+          <div className="bot-detail__section-head">
+            <span>{translate("botDetail.summary")}</span>
+            <strong>{sidebarImSessionLabel(connection, translate)}</strong>
+          </div>
+          <div className="bot-detail__facts">
+            <div>
+              <span>{translate("botDetail.source")}</span>
+              <strong>{connection.platformLabel}</strong>
+            </div>
+            <div>
+              <span>{translate("botDetail.remoteId")}</span>
+              <code>{connection.remoteId || "—"}</code>
+            </div>
+            <div>
+              <span>{translate("botDetail.localTopic")}</span>
+              <strong>{sidebarImSessionLabel(connection, translate)}</strong>
+            </div>
+            <div>
+              <span>{translate("botDetail.status")}</span>
+              <strong>{connection.statusLabel}</strong>
+            </div>
+          </div>
+        </section>
+
+        <aside className="bot-detail__panel bot-detail__panel--actions">
+          <span>{translate("botDetail.actions")}</span>
+          <button type="button" className="btn btn--secondary btn--small" onClick={onOpenSettings}>
+            <SettingsIcon size={14} />
+            {translate("botDetail.manage")}
+          </button>
+          <button type="button" className="btn btn--secondary btn--small" disabled={!target} title={target ? undefined : translate("botDetail.openDisabled")} onClick={onOpenSession}>
+            <MessageSquare size={14} />
+            {translate("botDetail.openSession")}
+          </button>
+          <button type="button" className="btn btn--secondary btn--small" onClick={onClose}>
+            {translate("botDetail.close")}
+          </button>
+        </aside>
+      </div>
+
+      <section className="bot-detail__panel">
+        <div>
+          <span>{translate("botDetail.permission")}</span>
+          <strong>{translate(permissionKey)}</strong>
+        </div>
+      </section>
+
+      <section className="bot-detail__workflow">
+        <div className="bot-detail__workflow-head">
+          <span>{translate("botDetail.route")}</span>
+        </div>
+        <div className="bot-detail__workflow-step">
+          <span>1</span>
+          <strong>{translate("botDetail.flowReceive")}</strong>
+        </div>
+        <div className="bot-detail__workflow-step">
+          <span>2</span>
+          <strong>{translate("botDetail.flowDesktop")}</strong>
+        </div>
+        <div className="bot-detail__workflow-step">
+          <span>3</span>
+          <strong>{translate("botDetail.flowReply")}</strong>
+        </div>
+      </section>
+    </div>
+  );
+}
 
 function clampSidebarWidth(width: number): number {
   return Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, Math.round(width)));
@@ -432,6 +716,11 @@ export default function App() {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [paletteSessions, setPaletteSessions] = useState<SessionMeta[]>([]);
   const { showToast } = useToast();
+  const [sidebarImConnections, setSidebarImConnections] = useState<SidebarImConnection[]>([]);
+  const [imTopicSources, setImTopicSources] = useState<Record<string, SidebarImTopicSource>>({});
+  const [activeSidebarImConnectionId, setActiveSidebarImConnectionId] = useState("");
+  const [sidebarImDetailConnectionId, setSidebarImDetailConnectionId] = useState("");
+  const [sidebarImExpanded, setSidebarImExpanded] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(loadSidebarCollapsed);
   const [sidebarWidth, setSidebarWidth] = useState(loadSidebarWidth);
   const [sidebarResizing, setSidebarResizing] = useState(false);
@@ -461,6 +750,7 @@ export default function App() {
   const appRef = useRef<HTMLDivElement>(null);
   const sidebarTogglePressTimerRef = useRef<number | null>(null);
   const workspaceTogglePressTimerRef = useRef<number | null>(null);
+  const sidebarImRefreshRef = useRef({ last: 0, inFlight: false });
 
   // Persist window geometry across launches.
   useWindowStatePersistence();
@@ -468,6 +758,31 @@ export default function App() {
   const closeTransientOverlays = useCallback(() => {
     setTransientOverlayDismissSignal((signal) => signal + 1);
   }, []);
+
+  const reloadSidebarImConnections = useCallback(async () => {
+    const settings = await app.Settings();
+    setSidebarImConnections(sidebarImConnectionsFromBot(settings.bot, t));
+    setImTopicSources(sidebarImTopicSourcesFromBot(settings.bot, t));
+  }, [t]);
+
+  const quietlyRefreshSidebarImConnections = useCallback(() => {
+    const now = Date.now();
+    if (sidebarImRefreshRef.current.inFlight || now - sidebarImRefreshRef.current.last < 1000) return;
+    sidebarImRefreshRef.current.inFlight = true;
+    sidebarImRefreshRef.current.last = now;
+    void reloadSidebarImConnections()
+      .catch((e) => console.warn("bot sidebar refresh failed", e))
+      .finally(() => {
+        sidebarImRefreshRef.current.inFlight = false;
+      });
+  }, [reloadSidebarImConnections]);
+
+  const openBotSettings = useCallback(() => {
+    closeTransientOverlays();
+    setSidebarImExpanded(false);
+    setSidebarImDetailConnectionId("");
+    setSettingsTarget("bots");
+  }, [closeTransientOverlays]);
 
   const pulseSidebarToggle = useCallback(() => {
     if (typeof window === "undefined") return;
@@ -553,6 +868,8 @@ export default function App() {
       const nextStyle = normalizeThemeStyleForTheme(settings.desktopThemeStyle, nextTheme);
       applyTheme(nextTheme, nextStyle, { persist: false });
       setLocalePref(normalizeLangPref(settings.desktopLanguage));
+      setSidebarImConnections(sidebarImConnectionsFromBot(settings.bot, t));
+      setImTopicSources(sidebarImTopicSourcesFromBot(settings.bot, t));
     };
     void syncDesktopPreferences().catch((e) => {
       console.warn("desktop preferences sync failed", e);
@@ -560,7 +877,22 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [setLocalePref]);
+  }, [setLocalePref, t]);
+
+  useEffect(() => {
+    if (sidebarImConnections.length === 0) {
+      setSidebarImExpanded(false);
+    }
+    setActiveSidebarImConnectionId((current) => {
+      if (sidebarImConnections.length === 0) return "";
+      if (current && sidebarImConnections.some((connection) => connection.id === current)) return current;
+      return sidebarImConnections[0].id;
+    });
+    setSidebarImDetailConnectionId((current) => {
+      if (!current) return "";
+      return sidebarImConnections.some((connection) => connection.id === current) ? current : "";
+    });
+  }, [sidebarImConnections]);
 
   // Open settings when the native menu item (CmdOrCtrl+,) is activated.
   useEffect(() => {
@@ -605,6 +937,10 @@ export default function App() {
   const activeTab = useMemo(
     () => tabMetas.find((tab) => tab.id === activeTabId) ?? tabMetas.find((tab) => tab.active),
     [activeTabId, tabMetas],
+  );
+  const sidebarImDetailConnection = useMemo(
+    () => sidebarImConnections.find((connection) => connection.id === sidebarImDetailConnectionId) ?? null,
+    [sidebarImConnections, sidebarImDetailConnectionId],
   );
   const startupSplashHold = state.meta?.ready !== true && !state.meta?.startupErr;
   const legacyMode = activeTabId ? modesByTab[activeTabId] ?? "normal" : "normal";
@@ -1430,6 +1766,7 @@ export default function App() {
 
   const handleNewTab = useCallback(async () => {
     closeTransientOverlays();
+    setSidebarImDetailConnectionId("");
     const target = blankSessionTarget();
     await openBlankSession(target.scope, target.workspaceRoot);
   }, [blankSessionTarget, closeTransientOverlays, openBlankSession]);
@@ -1450,6 +1787,7 @@ export default function App() {
 
   const handleOpenTopic = useCallback(async (scope: string, workspaceRoot: string, topicId: string) => {
     closeTransientOverlays();
+    setSidebarImDetailConnectionId("");
     if (scope === "global") {
       await openGlobalTab(topicId);
     } else {
@@ -1458,6 +1796,47 @@ export default function App() {
     await refreshTabMetas();
     setTabRevealSignal((signal) => signal + 1);
   }, [closeTransientOverlays, openGlobalTab, openProjectTab, refreshTabMetas]);
+
+  const openSidebarImConnectionSession = useCallback(async (connection: SidebarImConnection) => {
+    const target = mappedSessionTarget(connection.sessionId);
+    if (!target) {
+      showToast(t("sidebar.imWaiting", { name: connection.title }));
+      return;
+    }
+    setSidebarImDetailConnectionId("");
+    try {
+      if (target.kind === "path") {
+        const tab = await ensureBlankTab(connection.scope, connection.scope === "project" ? connection.workspaceRoot : "");
+        await resumeSession(target.value, tab.id);
+      } else if (connection.scope === "project") {
+        await openProjectTab(connection.workspaceRoot, target.value);
+      } else {
+        await openGlobalTab(target.value);
+      }
+      await refreshTabMetas();
+      setProjectRevision((value) => value + 1);
+      setTabRevealSignal((signal) => signal + 1);
+    } catch (err) {
+      console.warn("bot sidebar open failed", err);
+      showToast(t("sidebar.imOpenFailed", { name: connection.title }));
+    }
+  }, [ensureBlankTab, openGlobalTab, openProjectTab, refreshTabMetas, resumeSession, showToast, t]);
+
+  const selectSidebarImConnection = useCallback((connection: SidebarImConnection) => {
+    setActiveSidebarImConnectionId(connection.id);
+    setSidebarImDetailConnectionId(connection.id);
+    setSidebarImExpanded(false);
+    closeTransientOverlays();
+  }, [closeTransientOverlays]);
+
+  const toggleSidebarImPanel = useCallback(() => {
+    if (sidebarImConnections.length === 0) {
+      openBotSettings();
+      return;
+    }
+    if (!sidebarImExpanded) quietlyRefreshSidebarImConnections();
+    setSidebarImExpanded((value) => !value);
+  }, [openBotSettings, quietlyRefreshSidebarImConnections, sidebarImConnections.length, sidebarImExpanded]);
 
   // History drawer: project menus can open a scoped saved-session list. Idle row
   // clicks resume; running row clicks only preview through PreviewSession.
@@ -1685,11 +2064,27 @@ export default function App() {
     : defaultRightDockTreeWidth();
   const workspacePanelResizeMinWidth = workspacePanelAriaMinWidth(workspacePanelMinWidth, workspacePanelRenderWidth);
   const workspacePanelMaxWidth = rightDockDetailActive ? RIGHT_DOCK_MAX_WIDTH : RIGHT_DOCK_TREE_MAX_WIDTH;
-  const topicbarTitle = topicDisplayTitle(activeTab);
-  const topicbarWorkspaceLabel = activeTab ? tabWorkspaceTitle(activeTab) : "";
+  const topicbarTitle = sidebarImDetailConnection ? t("botDetail.title", { name: sidebarImDetailConnection.title }) : topicDisplayTitle(activeTab);
+  const topicbarWorkspaceLabel = sidebarImDetailConnection ? t("botDetail.subtitle") : activeTab ? tabWorkspaceTitle(activeTab) : "";
   const topicbarWorkspacePath = activeTab?.scope === "project" ? activeTab.workspaceRoot || state.meta?.cwd : "";
-  const topicbarSubtitleVisible = Boolean(topicbarWorkspaceLabel);
-  const topicbarSubtitleTitle = topicbarWorkspacePath || topicbarWorkspaceLabel;
+  const topicbarImSource = activeTab?.scope === "global" && activeTab.topicId ? imTopicSources[activeTab.topicId] : undefined;
+  const topicbarImSourceLabel = sidebarImDetailConnection
+    ? sidebarImDetailConnection.platformLabel
+    : topicbarImSource ? t("msg.fromIm", { source: topicbarImSource.label }) : "";
+  const topicbarImSourcePlatform = sidebarImDetailConnection?.platform ?? topicbarImSource?.platform;
+  const topicbarSubtitleVisible = Boolean(topicbarWorkspaceLabel || topicbarImSourceLabel);
+  const topicbarSubtitleTitle = sidebarImDetailConnection
+    ? [topicbarWorkspaceLabel, topicbarImSourceLabel, sidebarImScopeLabel(sidebarImDetailConnection, t)].filter(Boolean).join(" · ")
+    : [topicbarWorkspacePath || topicbarWorkspaceLabel, topicbarImSourceLabel].filter(Boolean).join(" · ");
+  const sidebarImConnectedCount = sidebarImConnections.filter((connection) => connection.status === "connected").length;
+  const sidebarImSummaryText = sidebarImConnections.length === 0
+    ? t("sidebar.imEmpty")
+    : sidebarImConnectedCount > 0
+      ? t("sidebar.imOnlineCount", { n: sidebarImConnectedCount })
+      : t("sidebar.imConnectionCount", { n: sidebarImConnections.length });
+  const sidebarImToggleLabel = sidebarImConnections.length === 0
+    ? t("sidebar.imEmpty")
+    : t(sidebarImExpanded ? "common.collapse" : "common.expand");
 
   return (
     <ShellExpandProvider>
@@ -1754,6 +2149,7 @@ export default function App() {
               activeScope={activeTab?.scope}
               activeWorkspaceRoot={activeTab?.workspaceRoot}
               activeTopicId={activeTab?.topicId}
+              imTopicSources={imTopicSources}
               onOpenTopic={handleOpenTopic}
               onOpenProjectHistory={openProjectHistory}
               onCreateTopic={(scope, workspaceRoot) => openBlankSession(scope, scope === "project" ? workspaceRoot : "")}
@@ -1767,6 +2163,76 @@ export default function App() {
           </section>
 
           <nav className="sidebar__nav">
+          <div className={`sidebar-im${sidebarImExpanded ? " sidebar-im--expanded" : ""}`} aria-label={t("sidebar.im")}>
+            <button
+              className="sidebar-im__summary"
+              type="button"
+              aria-expanded={sidebarImExpanded}
+              aria-label={sidebarImToggleLabel}
+              title={sidebarImToggleLabel}
+              onPointerDown={(event) => {
+                if (event.button !== 0) return;
+                event.preventDefault();
+                toggleSidebarImPanel();
+              }}
+              onKeyDown={(event) => {
+                if (event.key !== "Enter" && event.key !== " ") return;
+                event.preventDefault();
+                toggleSidebarImPanel();
+              }}
+            >
+              <MessageSquare size={15} />
+              <span className="sidebar-im__summary-label">{t("sidebar.im")}</span>
+              <span className="sidebar-im__summary-status">{sidebarImSummaryText}</span>
+            </button>
+            {sidebarImExpanded && sidebarImConnections.length > 0 && (
+              <div className="sidebar-im__panel" role="dialog" aria-label={t("sidebar.imManage")}>
+                <div className="sidebar-im__panel-head">
+                  <span>{t("sidebar.imManage")}</span>
+                  <div className="sidebar-im__panel-actions">
+                    <Tooltip label={t("sidebar.imAdd")} fill side="right" disabled={sidebarNavTooltipDisabled}>
+                      <button
+                        className="sidebar-im__icon-button"
+                        type="button"
+                        onClick={openBotSettings}
+                        aria-label={t("sidebar.imAdd")}
+                      >
+                        <Plus size={13} />
+                      </button>
+                    </Tooltip>
+                  </div>
+                </div>
+                <div className="sidebar-im__list">
+                  {sidebarImConnections.map((connection) => (
+                    <div
+                      key={connection.id}
+                      className={[
+                        "sidebar-im-row-shell",
+                        activeSidebarImConnectionId === connection.id ? "sidebar-im-row-shell--active" : "",
+                        `sidebar-im-row-shell--${connection.status}`,
+                      ].filter(Boolean).join(" ")}
+                    >
+                      <button
+                        className="sidebar-im-row"
+                        type="button"
+                        title={`${connection.platformLabel} · ${connection.statusLabel}`}
+                        onClick={() => void selectSidebarImConnection(connection)}
+                      >
+                        <span className={`sidebar-im-row__platform sidebar-im-row__platform--${connection.platform}`} aria-hidden="true">
+                          {connection.platform === "weixin" ? "微" : connection.platform === "lark" ? "L" : "飞"}
+                        </span>
+                        <span className="sidebar-im-row__main">
+                          <strong>{connection.title}</strong>
+                          <span>{connection.subtitle}</span>
+                        </span>
+                        <span className={`sidebar-im-row__status sidebar-im-row__status--${connection.status}`} title={connection.statusLabel} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
             <Tooltip label={t("sidebar.allHistory")} fill side="right" disabled={sidebarNavTooltipDisabled}>
               <button
                 className="sidebar__navitem"
@@ -1840,13 +2306,13 @@ export default function App() {
                     />
                   </div>
                 ) : (
-                  <h1 title={topicTitle(activeTab)}>{topicbarTitle}</h1>
+                  <h1 title={sidebarImDetailConnection ? topicbarTitle : topicTitle(activeTab)}>{topicbarTitle}</h1>
                 )}
                 <Tooltip label={t("topicBar.renameSession")}>
                   <button
                     className="topicbar__icon-btn"
                     type="button"
-                    disabled={!activeTab?.topicId || topicbarEditing}
+                    disabled={Boolean(sidebarImDetailConnection) || !activeTab?.topicId || topicbarEditing}
                     onClick={startActiveTopicRename}
                     aria-label={t("topicBar.renameSession")}
                   >
@@ -1856,12 +2322,19 @@ export default function App() {
               </div>
               {topicbarSubtitleVisible && (
                 <div className="topicbar__subtitle" title={topicbarSubtitleTitle}>
-                  <span>{topicbarWorkspaceLabel}</span>
+                  {topicbarWorkspaceLabel && <span>{topicbarWorkspaceLabel}</span>}
+                  {topicbarImSourcePlatform && (
+                    <span className={`topicbar__source-chip topicbar__source-chip--${topicbarImSourcePlatform}`}>
+                      {topicbarImSourceLabel}
+                    </span>
+                  )}
                 </div>
               )}
             </div>
             <div className="topicbar__spacer" />
             <div className="topicbar__actions">
+              {!sidebarImDetailConnection && (
+              <>
               <CopyButton
                 getText={getSessionMarkdown}
                 label={t("topicBar.copyAll")}
@@ -1895,6 +2368,8 @@ export default function App() {
                   </div>
                 )}
               </div>
+              </>
+              )}
               <Tooltip label={t("workspace.changedTab")}>
                 <button
                   className="topicbar__action-btn topicbar__action-btn--label"
@@ -1928,7 +2403,14 @@ export default function App() {
           <UpdateBanner />
 
           <main className="main">
-            {state.meta?.ready === false && !state.meta?.startupErr ? (
+            {sidebarImDetailConnection ? (
+              <SidebarImConnectionDetail
+                connection={sidebarImDetailConnection}
+                onClose={() => setSidebarImDetailConnectionId("")}
+                onOpenSettings={openBotSettings}
+                onOpenSession={() => void openSidebarImConnectionSession(sidebarImDetailConnection)}
+              />
+            ) : state.meta?.ready === false && !state.meta?.startupErr ? (
               <div className="loading-screen">
                 <div className="loading-screen__spinner" />
                 <span className="loading-screen__text">{t("common.loading")}</span>
@@ -1947,6 +2429,7 @@ export default function App() {
             )}
           </main>
 
+          {!sidebarImDetailConnection && (
           <footer className="footer" ref={footerRef}>
             {showTodos && <TodoPanel todos={todos} onDismiss={() => setDismissedTodo(todoItem!.id)} />}
             {state.approval && (
@@ -2025,6 +2508,7 @@ export default function App() {
               currentTurnCount={currentTurnCount}
             />
           </footer>
+          )}
           </>
         </section>
 
@@ -2150,7 +2634,10 @@ export default function App() {
         <SettingsPanel
           initialTab={settingsTarget}
           onClose={() => setSettingsTarget(null)}
-          onChanged={() => void refreshMeta()}
+          onChanged={() => {
+            void refreshMeta();
+            void reloadSidebarImConnections().catch((e) => console.warn("bot sidebar refresh failed", e));
+          }}
         />
       )}
 

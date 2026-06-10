@@ -64,6 +64,18 @@ func (f *fakeAdapter) sentMessages() []OutboundMessage {
 	return out
 }
 
+type fakeReactionAdapter struct {
+	*fakeAdapter
+	reactions []string
+}
+
+func (f *fakeReactionAdapter) AddPendingReaction(ctx context.Context, messageID string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.reactions = append(f.reactions, messageID)
+	return nil
+}
+
 func TestFakeAdapterInterface(t *testing.T) {
 	fa := newFakeAdapter(PlatformQQ, "fake-qq")
 
@@ -191,5 +203,44 @@ func TestGatewayAllowAll(t *testing.T) {
 
 	if !gw.checkAllowlist(PlatformQQ, InboundMessage{Platform: PlatformQQ, ChatType: ChatDM, UserID: "any_user"}) {
 		t.Error("allow_all should allow everyone")
+	}
+}
+
+func TestGatewayAddsPendingReactionWhenAdapterSupportsIt(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	gw := NewGateway(GatewayConfig{}, nil, logger)
+	fa := &fakeReactionAdapter{fakeAdapter: newFakeAdapter(PlatformFeishu, "fake-feishu")}
+
+	gw.addPendingReaction(context.Background(), PlatformFeishu, fa, InboundMessage{MessageID: "om_123"})
+
+	if len(fa.reactions) != 1 || fa.reactions[0] != "om_123" {
+		t.Fatalf("reactions = %#v, want [om_123]", fa.reactions)
+	}
+}
+
+func TestGatewaySessionOptionsUseChannelOverride(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	gw := NewGateway(GatewayConfig{
+		Model:         "global-model",
+		WorkspaceRoot: "/global",
+		Channels: map[Platform]ChannelConfig{
+			PlatformFeishu: {Model: "feishu-model", WorkspaceRoot: "/feishu"},
+			PlatformWeixin: {WorkspaceRoot: "/weixin"},
+		},
+	}, nil, logger)
+
+	model, root := gw.sessionOptionsForPlatform(PlatformFeishu)
+	if model != "feishu-model" || root != "/feishu" {
+		t.Fatalf("feishu options = %q,%q; want channel override", model, root)
+	}
+
+	model, root = gw.sessionOptionsForPlatform(PlatformWeixin)
+	if model != "global-model" || root != "/weixin" {
+		t.Fatalf("weixin options = %q,%q; want global model and channel root", model, root)
+	}
+
+	model, root = gw.sessionOptionsForPlatform(PlatformQQ)
+	if model != "global-model" || root != "/global" {
+		t.Fatalf("qq options = %q,%q; want global defaults", model, root)
 	}
 }

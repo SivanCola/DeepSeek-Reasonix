@@ -49,6 +49,24 @@ func TestRenderTOMLRoundTrips(t *testing.T) {
 	orig.Skills.DisabledSkills = []string{"review", "explore"}
 	orig.Skills.MaxDepth = 2
 	orig.Codegraph = CodegraphConfig{Enabled: true, AutoInstall: false, Path: "/opt/codegraph", Tier: "background"}
+	orig.Bot.Connections = []BotConnectionConfig{{
+		ID:            "feishu-lark",
+		Provider:      "feishu",
+		Domain:        "lark",
+		Label:         "Lark",
+		Enabled:       true,
+		Status:        "connected",
+		Model:         "deepseek-pro",
+		WorkspaceRoot: "/tmp/reasonix-bot",
+		Credential:    BotConnectionCredential{AppID: "cli_lark", AppSecretEnv: "LARK_BOT_APP_SECRET"},
+		SessionMappings: []BotConnectionSessionMapping{{
+			RemoteID:      "ou_123",
+			SessionID:     "topic:topic_bot",
+			Scope:         "project",
+			WorkspaceRoot: "/tmp/reasonix-bot",
+			UpdatedAt:     "2026-06-11T00:00:00Z",
+		}},
+	}}
 	orig.LSP = LSPConfig{
 		Enabled: true,
 		Servers: map[string]LSPServer{
@@ -114,6 +132,12 @@ func TestRenderTOMLRoundTrips(t *testing.T) {
 	}
 	if got.Agent.PlannerMaxSteps != orig.Agent.PlannerMaxSteps {
 		t.Errorf("planner_max_steps = %d, want %d", got.Agent.PlannerMaxSteps, orig.Agent.PlannerMaxSteps)
+	}
+	if len(got.Bot.Connections) != 1 || got.Bot.Connections[0].Model != "deepseek-pro" || got.Bot.Connections[0].WorkspaceRoot != "/tmp/reasonix-bot" {
+		t.Errorf("bot connection not preserved: %+v", got.Bot.Connections)
+	}
+	if len(got.Bot.Connections[0].SessionMappings) != 1 || got.Bot.Connections[0].SessionMappings[0].Scope != "project" || got.Bot.Connections[0].SessionMappings[0].WorkspaceRoot != "/tmp/reasonix-bot" {
+		t.Errorf("bot session mapping scope not preserved: %+v", got.Bot.Connections[0].SessionMappings)
 	}
 	if got.Agent.Temperature != orig.Agent.Temperature {
 		t.Errorf("temperature = %v, want %v", got.Agent.Temperature, orig.Agent.Temperature)
