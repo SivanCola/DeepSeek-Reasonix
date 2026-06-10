@@ -115,7 +115,7 @@ func (s *renderSink) Emit(e event.Event) {
 		case PlatformQQ:
 			msg.Keyboard = approvalKeyboard(e.Approval.ID)
 		case PlatformFeishu:
-			msg.Card = approvalCard(e.Approval)
+			msg.Card = approvalCard(e.Approval, s.chatType)
 		}
 		_ = s.send(msg)
 
@@ -221,18 +221,25 @@ func approvalKeyboard(id string) *InlineKeyboard {
 	}}}
 }
 
-func approvalCard(a event.Approval) *InteractiveCard {
+func approvalCard(a event.Approval, chatType ChatType) *InteractiveCard {
 	return &InteractiveCard{
 		Header: "需要批准操作",
 		Elements: []InteractiveCardElement{
 			{Tag: "markdown", Content: fmt.Sprintf("**工具**: %s\n\n**操作**: %s\n\nID: `%s`", a.Tool, a.Subject, a.ID)},
 			{Tag: "action", Extra: map[string]any{
 				"actions": []map[string]any{
-					{"tag": "button", "text": map[string]string{"tag": "plain_text", "content": "允许一次"}, "type": "primary", "value": map[string]string{"command": "/approve " + a.ID}},
-					{"tag": "button", "text": map[string]string{"tag": "plain_text", "content": "拒绝"}, "type": "danger", "value": map[string]string{"command": "/deny " + a.ID}},
+					{"tag": "button", "text": map[string]string{"tag": "plain_text", "content": "允许一次"}, "type": "primary", "value": cardActionValue("/approve "+a.ID, chatType)},
+					{"tag": "button", "text": map[string]string{"tag": "plain_text", "content": "拒绝"}, "type": "danger", "value": cardActionValue("/deny "+a.ID, chatType)},
 				},
 			}},
 		},
+	}
+}
+
+func cardActionValue(command string, chatType ChatType) map[string]string {
+	return map[string]string{
+		"command":   command,
+		"chat_type": string(chatType),
 	}
 }
 

@@ -294,7 +294,7 @@ func (a *adapter) handleDispatch(msg gatewayPayload) {
 		ib.ChatType = bot.ChatGuild
 		ib.ChatID = evt.ChannelID
 	case "DIRECT_MESSAGE_CREATE":
-		ib.ChatType = bot.ChatDM
+		ib.ChatType = bot.ChatDirect
 		ib.ChatID = evt.GuildID
 	case "MESSAGE_CREATE":
 		ib.ChatType = bot.ChatDM
@@ -389,6 +389,8 @@ func qqSendURL(msg bot.OutboundMessage) string {
 		return fmt.Sprintf(qqSendGroupURL, msg.ChatID)
 	case bot.ChatGuild, bot.ChatThread:
 		return fmt.Sprintf(qqSendGuildURL, msg.ChatID)
+	case bot.ChatDirect:
+		return fmt.Sprintf(qqSendDirectURL, msg.ChatID)
 	default:
 		return fmt.Sprintf(qqSendMsgURL, msg.ChatID)
 	}

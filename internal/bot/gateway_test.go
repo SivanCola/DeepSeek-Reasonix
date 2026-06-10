@@ -146,6 +146,30 @@ func TestGatewayAllowlistCheck(t *testing.T) {
 	}
 }
 
+func TestGatewayAllowlistDoesNotApplyGroupsToDirectMessages(t *testing.T) {
+	cfg := GatewayConfig{
+		Allowlist: AllowlistConfig{
+			Enabled: true,
+			Users: map[Platform][]string{
+				PlatformQQ: {"allowed_user"},
+			},
+			Groups: map[Platform][]string{
+				PlatformQQ: {"allowed_group"},
+			},
+		},
+	}
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	gw := NewGateway(cfg, nil, logger)
+
+	if !gw.checkAllowlist(PlatformQQ, InboundMessage{Platform: PlatformQQ, ChatType: ChatDirect, ChatID: "guild-dm", UserID: "allowed_user"}) {
+		t.Error("direct message should not be rejected by group allowlist")
+	}
+	if gw.checkAllowlist(PlatformQQ, InboundMessage{Platform: PlatformQQ, ChatType: ChatGroup, ChatID: "unknown_group", UserID: "allowed_user"}) {
+		t.Error("unknown group should still be rejected by group allowlist")
+	}
+}
+
 func TestGatewayAllowlistDisabledRejectsByDefault(t *testing.T) {
 	cfg := GatewayConfig{
 		Allowlist: AllowlistConfig{Enabled: false},
