@@ -92,12 +92,12 @@ export interface AppBindings {
   SubmitDisplayToTab(tabID: string, display: string, input: string): Promise<void>;
   RunShell(command: string): Promise<void>;
   RunShellForTab(tabID: string, command: string): Promise<void>;
+  Steer(text: string): Promise<void>;
+  SteerForTab(tabID: string, text: string): Promise<void>;
   Cancel(): Promise<void>;
   CancelTab(tabID: string): Promise<void>;
   Approve(id: string, allow: boolean, session: boolean, persist: boolean): Promise<void>;
-  ApproveWithScope(id: string, allow: boolean, session: boolean, persist: boolean, scope: string): Promise<void>;
   ApproveTab(tabID: string, id: string, allow: boolean, session: boolean, persist: boolean): Promise<void>;
-  ApproveTabWithScope(tabID: string, id: string, allow: boolean, session: boolean, persist: boolean, scope: string): Promise<void>;
   AnswerQuestion(id: string, answers: QuestionAnswer[]): Promise<void>;
   AnswerQuestionForTab(tabID: string, id: string, answers: QuestionAnswer[]): Promise<void>;
   ReplayPendingPrompts(): Promise<void>;
@@ -174,6 +174,8 @@ export interface AppBindings {
   SavePastedImage(dataUrl: string): Promise<string>;
   SaveClipboardImage(): Promise<string>;
   SavePastedFile(name: string, dataUrl: string): Promise<string>;
+  PickExportFile(defaultFilename: string, mimeType: string): Promise<string>;
+  SaveExportFile(path: string, payload: string, base64Encoded: boolean): Promise<void>;
   AttachDropped(path: string): Promise<DroppedItem>;
   AttachmentDataURL(path: string): Promise<string>;
   Models(): Promise<ModelInfo[]>;
@@ -214,8 +216,12 @@ export interface AppBindings {
   DiagnoseBotConnection(id: string): Promise<BotConnectionDiagnostic>;
   TestBotConnection(id: string, target?: string): Promise<BotConnectionDiagnostic>;
   SetCloseBehavior(mode: string): Promise<void>;
+  SetDisplayMode(mode: string): Promise<void>;
   SetDesktopLanguage(lang: string): Promise<void>;
   SetDesktopAppearance(theme: string, style: string): Promise<void>;
+  SetDesktopCheckUpdates(enabled: boolean): Promise<void>;
+  SetDesktopTelemetry(enabled: boolean): Promise<void>;
+  SetExpandThinking(on: boolean): Promise<void>;
   MigrateDesktopPreferences(language: string, theme: string, style: string): Promise<void>;
   SetAgentParams(temperature: number, maxSteps: number, plannerMaxSteps: number, systemPrompt: string): Promise<void>;
   SetTrayLocale(locale: "en" | "zh"): Promise<void>;
@@ -229,6 +235,9 @@ export interface AppBindings {
   OpenDownloadPage(): Promise<void>;
   NeedsOnboarding(): Promise<boolean>;
   ConnectKey(apiKey: string): Promise<void>;
+  // Crash overlay "Send report" (desktop/crash_app.go): scrubs user paths, attaches
+  // version/os/arch, POSTs to the collection endpoint. Only ever sent on user click.
+  ReportCrash(kind: string, detail: string): Promise<void>;
   ListTabs(): Promise<TabMeta[]>;
   OpenProjectTab(workspaceRoot: string, topicID: string): Promise<TabMeta>;
   OpenGlobalTab(topicID: string): Promise<TabMeta>;
@@ -735,6 +744,10 @@ function makeMockApp(): AppBindings {
     desktopTheme: "light",
     desktopThemeStyle: "graphite",
     closeBehavior: "background",
+    displayMode: "minimal",
+    checkUpdates: true,
+    telemetry: true,
+    expandThinking: false,
     configPath: "~/projects/reasonix/reasonix.toml",
     providerKinds: ["openai"],
     autoApproveTools: false,
@@ -1322,6 +1335,13 @@ function makeMockApp(): AppBindings {
         async RunShellForTab(_tabID, command) {
           await withMockTabScope(_tabID, () => this.RunShell(command));
         },
+        async Steer(_text) {
+          // Mock: emit a steer event as confirmation in the transcript.
+          emit({ kind: "steer", text: _text });
+        },
+        async SteerForTab(_tabID, _text) {
+          await this.Steer(_text);
+        },
         async Cancel() {
           cancelled = true;
           emitMockTurnDone();
@@ -1330,13 +1350,9 @@ function makeMockApp(): AppBindings {
           await withMockTabScope(_tabID, () => this.Cancel());
         },
         async Approve(_id, allow, session, persist) {
-          await this.ApproveWithScope(_id, allow, session, persist, "");
-        },
-        async ApproveWithScope(_id, allow, session, persist, scope) {
           if (!pendingApprovalPreview) return;
           pendingApprovalPreview = false;
-          const scopeLabel = scope === "prefix" ? "prefix" : "scope";
-          const suffix = persist ? `${scopeLabel} grant saved` : session ? `${scopeLabel} grant active this session` : "allowed once";
+          const suffix = persist ? "grant saved" : session ? "grant active this session" : "allowed once";
           emit({
             kind: "message",
             text: `approval preview answered: ${allow ? suffix : "denied"}`,
@@ -1344,10 +1360,7 @@ function makeMockApp(): AppBindings {
           emitMockTurnDone();
         },
         async ApproveTab(_tabID, id, allow, session, persist) {
-          await this.ApproveTabWithScope(_tabID, id, allow, session, persist, "");
-        },
-        async ApproveTabWithScope(_tabID, id, allow, session, persist, scope) {
-          await withMockTabScope(_tabID, () => this.ApproveWithScope(id, allow, session, persist, scope));
+          await withMockTabScope(_tabID, () => this.Approve(id, allow, session, persist));
         },
         async AnswerQuestion(_id, answers) {
       if (!pendingAskPreview) return;
@@ -1572,7 +1585,7 @@ function makeMockApp(): AppBindings {
       if (index >= 0) mockProjectTree.splice(index, 1);
     },
         async ContextUsage() {
-          return { used: 42124, window: 128000, compactRatio: 0.8 };
+          return { used: 42124, window: 128000, sessionTokens: 34479, compactRatio: 0.8 };
         },
         async ContextUsageForTab() {
           return this.ContextUsage();
@@ -1897,6 +1910,24 @@ function makeMockApp(): AppBindings {
     async SavePastedFile(name: string, _dataUrl: string) {
       return `.reasonix/attachments/mock-${name}`;
     },
+    async PickExportFile(defaultFilename: string, _mimeType: string) {
+      return defaultFilename;
+    },
+    async SaveExportFile(path: string, payload: string, base64Encoded: boolean) {
+      const a = document.createElement("a");
+      let url = "";
+      if (base64Encoded) {
+        url = `data:application/octet-stream;base64,${payload}`;
+      } else {
+        url = URL.createObjectURL(new Blob([payload], { type: "text/plain;charset=utf-8" }));
+      }
+      a.href = url;
+      a.download = path;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      if (!base64Encoded) URL.revokeObjectURL(url);
+    },
     async AttachDropped(path: string) {
       const name = path.split(/[/\\]/).filter(Boolean).pop() ?? path;
       return { kind: "attachment" as const, path: `.reasonix/attachments/mock-${name}` };
@@ -2137,12 +2168,24 @@ function makeMockApp(): AppBindings {
         async SetCloseBehavior(mode: string) {
           settings.closeBehavior = mode === "quit" ? "quit" : "background";
         },
+        async SetDisplayMode(mode: string) {
+          settings.displayMode = mode;
+        },
         async SetDesktopLanguage(lang: string) {
           settings.desktopLanguage = lang === "en" || lang === "zh" ? lang : "";
         },
         async SetDesktopAppearance(theme: string, style: string) {
           settings.desktopTheme = theme === "auto" || theme === "light" ? theme : "dark";
           settings.desktopThemeStyle = style;
+        },
+        async SetDesktopCheckUpdates(enabled: boolean) {
+          settings.checkUpdates = enabled;
+        },
+        async SetDesktopTelemetry(enabled: boolean) {
+          settings.telemetry = enabled;
+        },
+        async SetExpandThinking(on: boolean) {
+          settings.expandThinking = on;
         },
         async MigrateDesktopPreferences(language: string, theme: string, style: string) {
           if (!settings.desktopLanguage) settings.desktopLanguage = language === "en" || language === "zh" ? language : "";
@@ -2205,6 +2248,9 @@ function makeMockApp(): AppBindings {
       settings.providers.forEach((p) => {
         if (p.apiKeyEnv === "DEEPSEEK_API_KEY") p.keySet = true;
       });
+      await delay(300);
+    },
+    async ReportCrash() {
       await delay(300);
     },
     // Tab management mocks.
@@ -2393,6 +2439,7 @@ function makeMockApp(): AppBindings {
         windowTokens: 128000,
         promptTokens: 22134,
         completionTokens: 12345,
+        totalTokens: 34479,
         reasoningTokens: 7521,
         cacheHitTokens: 87000,
         cacheMissTokens: 13000,
@@ -2403,10 +2450,10 @@ function makeMockApp(): AppBindings {
         sessionCostUsd: 0.018,
         mock: true,
         readFiles: [
-          { path: "REASONIX.md", turn: 2, time: now - 34 * 60 * 1000 },
-          { path: "pyproject.toml", turn: 3, time: now - 30 * 60 * 1000 },
-          { path: "docs/dev-standard.md", turn: 5, time: now - 13 * 60 * 1000, offset: 0, limit: 180 },
-          { path: "scripts/db_migrate.sh", turn: 6, time: now - 4 * 60 * 1000, offset: 120, limit: 80, truncated: true },
+          { path: "README.md", turn: 2, time: now - 34 * 60 * 1000 },
+          { path: "go.mod", turn: 3, time: now - 30 * 60 * 1000 },
+          { path: "desktop/file.go", turn: 5, time: now - 13 * 60 * 1000, offset: 0, limit: 180 },
+          { path: "internal/event.go", turn: 6, time: now - 4 * 60 * 1000, offset: 120, limit: 80, truncated: true },
         ],
         changedFiles: [
           { path: t("mock.changedFile1Path"), sources: ["session"], gitStatus: "modified", turns: [5, 6], latestPrompt: t("mock.changedFile1Prompt"), latestTime: now - 2 * 60 * 1000 },

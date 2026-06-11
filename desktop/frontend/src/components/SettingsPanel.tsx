@@ -19,6 +19,7 @@ import {
 } from "../lib/theme";
 import { TEXT_SIZES, applyTextSize, getTextSize, type TextSize } from "../lib/textSize";
 import { FONT_FAMILIES, applyFontFamily, getFontFamily, type FontFamily } from "../lib/fontFamily";
+import { getDisplayMode, onDisplayModeChange, setDisplayMode as setLocalDisplayMode } from "../lib/displayMode";
 import type { BotConnectionView, BotInstallStartResult, BotSettingsView, NetworkView, ProviderView, SettingsTab, SettingsView } from "../lib/types";
 import { InlineConfirmButton } from "./InlineConfirmButton";
 import { Tooltip } from "./Tooltip";
@@ -32,7 +33,7 @@ const SETTINGS_TABS: SettingsTab[] = ["general", "models", "bots", "mcp", "skill
 // SettingsPanel is the desktop settings centre — a centred modal with left
 // navigation and a right content area. It hosts all settings pages plus MCP,
 // Skills, and Memory management, replacing the old per-feature drawers.
-export function SettingsPanel({ onClose, onChanged, initialTab }: { onClose: () => void; onChanged: () => void; initialTab?: SettingsTab }) {
+export function SettingsPanel({ onClose, onChanged, initialTab, isDevBuild }: { onClose: () => void; onChanged: () => void; initialTab?: SettingsTab; isDevBuild?: boolean }) {
   const t = useT();
   const [s, setS] = useState<SettingsView | null>(null);
   const [busy, setBusy] = useState(false);
@@ -107,7 +108,7 @@ export function SettingsPanel({ onClose, onChanged, initialTab }: { onClose: () 
 
         <div className="settings-center">
           <nav className="settings-center__nav" aria-label={t("settings.title")}>
-            {SETTINGS_TABS.map((id) => (
+            {SETTINGS_TABS.filter((id) => id !== "bots" || isDevBuild).map((id) => (
               <button
                 key={id}
                 className={`settings-center__navitem${tab === id ? " settings-center__navitem--active" : ""}`}
@@ -126,7 +127,7 @@ export function SettingsPanel({ onClose, onChanged, initialTab }: { onClose: () 
               <>
                 {tab === "general" && s && <SettingsPageShell key={tab} s={s} tab={tab} busy={busy} apply={apply}><GeneralSection s={s} busy={busy} apply={apply} /></SettingsPageShell>}
                 {tab === "models" && s && <SettingsPageShell key={tab} s={s} tab={tab} busy={busy} apply={apply}><ModelsSection s={s} busy={busy} apply={apply} backgroundApply={backgroundApply} /></SettingsPageShell>}
-                {tab === "bots" && s && <SettingsPageShell key={tab} s={s} tab={tab} busy={busy} apply={apply}><BotsSection s={s} busy={busy} apply={apply} /></SettingsPageShell>}
+                {tab === "bots" && isDevBuild && s && <SettingsPageShell key={tab} s={s} tab={tab} busy={busy} apply={apply}><BotsSection s={s} busy={busy} apply={apply} /></SettingsPageShell>}
                 {tab === "mcp" && <SettingsPageShell key={tab} s={s} tab={tab} busy={false} apply={apply}><MCPServersSettingsPage /></SettingsPageShell>}
                 {tab === "skills" && <SettingsPageShell key={tab} s={s} tab={tab} busy={false} apply={apply}><SkillsSettingsPage /></SettingsPageShell>}
                 {tab === "memory" && <SettingsPageShell key={tab} s={s} tab={tab} busy={false} apply={apply}><MemorySettingsPage /></SettingsPageShell>}
@@ -161,7 +162,17 @@ export function SettingsPanel({ onClose, onChanged, initialTab }: { onClose: () 
                     />
                   </SettingsPageShell>
                 )}
-                {tab === "updates" && s && <SettingsPageShell key={tab} s={s} tab={tab} busy={busy} apply={apply}><UpdatesSection configPath={s.configPath} /></SettingsPageShell>}
+                {tab === "updates" && s && (
+                  <SettingsPageShell key={tab} s={s} tab={tab} busy={busy} apply={apply}>
+                    <UpdatesSection
+                      configPath={s.configPath}
+                      checkUpdates={s.checkUpdates}
+                      telemetry={s.telemetry !== false}
+                      settingsBusy={busy}
+                      applySettings={apply}
+                    />
+                  </SettingsPageShell>
+                )}
               </>
             )}
           </main>
@@ -227,22 +238,40 @@ function SettingsField({
   label,
   hint,
   children,
+  className,
   stacked = false,
 }: {
   label: ReactNode;
   hint?: ReactNode;
   children: ReactNode;
+  className?: string;
   stacked?: boolean;
 }) {
   return (
-    <div className={`settings-field${stacked ? " settings-field--stacked" : ""}`}>
+    <div className={`settings-field${stacked ? " settings-field--stacked" : ""}${className ? ` ${className}` : ""}`}>
       <div className="settings-field__copy">
         <div className="settings-field__label">{label}</div>
-        {hint && <div className="settings-field__hint">{hint}</div>}
+        {hint && (
+          <div className="settings-field__hint">
+            <SettingsHint hint={hint} />
+          </div>
+        )}
       </div>
       <div className="settings-field__control">{children}</div>
     </div>
   );
+}
+
+function SettingsHint({ hint }: { hint: ReactNode }) {
+  if (typeof hint === "string" || typeof hint === "number") {
+    const label = String(hint);
+    return (
+      <Tooltip label={label} fill block className="settings-field__hint-tooltip">
+        <span className="settings-field__hint-line">{label}</span>
+      </Tooltip>
+    );
+  }
+  return hint;
 }
 
 function settingsTabPageTitle(id: SettingsTab, t: ReturnType<typeof useT>): string {
@@ -552,6 +581,8 @@ function normalizeSettingsView(view: SettingsView | null | undefined): SettingsV
     desktopTheme: normalizeThemePreference(view.desktopTheme),
     desktopThemeStyle: normalizeThemeStyleForTheme(view.desktopThemeStyle, normalizeThemePreference(view.desktopTheme)),
     closeBehavior: normalizeCloseBehavior(view.closeBehavior),
+    displayMode: normalizeDisplayMode(view.displayMode),
+    checkUpdates: view.checkUpdates !== false,
   };
 }
 
@@ -559,6 +590,12 @@ type CloseBehavior = "background" | "quit";
 
 function normalizeCloseBehavior(mode: string | undefined): CloseBehavior {
   return mode === "quit" ? "quit" : "background";
+}
+
+type DisplayMode = "standard" | "compact" | "minimal";
+
+function normalizeDisplayMode(mode: string | undefined): DisplayMode {
+  return mode === "standard" || mode === "compact" || mode === "minimal" ? mode : "minimal";
 }
 
 function closeBehaviorLabel(mode: CloseBehavior, t: ReturnType<typeof useT>): string {
@@ -596,6 +633,8 @@ function reasoningProtocolLabel(protocol: string, t: ReturnType<typeof useT>): s
 function GeneralSection({ s, busy, apply }: SectionProps) {
   const { t, setPref } = useI18n();
   const closeBehavior = normalizeCloseBehavior(s.closeBehavior);
+  const [displayMode, setDisplayMode] = useState<DisplayMode>(() => normalizeDisplayMode(getDisplayMode()));
+  useEffect(() => onDisplayModeChange((mode) => setDisplayMode(mode)), []);
   const autoPlan = normalizeAutoPlan(s.autoPlan);
   const languagePref = normalizeLangPref(s.desktopLanguage);
   const setLanguage = (next: LangPref) => {
@@ -628,6 +667,37 @@ function GeneralSection({ s, busy, apply }: SectionProps) {
               onClick={() => void apply(() => app.SetCloseBehavior(mode))}
             >
               {closeBehaviorLabel(mode, t)}
+            </button>
+          ))}
+        </div>
+      </SettingsField>
+      <SettingsField label={t("settings.expandThinking")}>
+        <div className="set-seg">
+          {([false, true] as const).map((val) => (
+            <button
+              key={val ? "on" : "off"}
+              className={`set-seg__btn${s.expandThinking === val ? " set-seg__btn--on" : ""}`}
+              disabled={busy}
+              onClick={() => void apply(() => app.SetExpandThinking(val))}
+            >
+              {val ? t("settings.expandThinking.expanded") : t("settings.expandThinking.collapsed")}
+            </button>
+          ))}
+        </div>
+      </SettingsField>
+      <SettingsField label={t("settings.displayMode")}>
+        <div className="set-seg">
+          {(["standard", "compact", "minimal"] as const).map((mode) => (
+            <button
+              key={mode}
+              className={`set-seg__btn${displayMode === mode ? " set-seg__btn--on" : ""}`}
+              disabled={busy}
+              onClick={() => {
+                setLocalDisplayMode(mode);
+                void apply(() => app.SetDisplayMode(mode));
+              }}
+            >
+              {t(`settings.displayMode.${mode}`)}
             </button>
           ))}
         </div>
@@ -3322,24 +3392,59 @@ function fontFamilyName(font: FontFamily, t: ReturnType<typeof useT>): string {
 const MB = 1024 * 1024;
 const mb = (n: number) => (n / MB).toFixed(1);
 
-// UpdatesSection is the manual side of the auto-updater: it shows the running
-// version and a Check button, then the same state machine the top banner uses
-// (useUpdater) — available → install/download, with progress and errors inline.
-function UpdatesSection({ configPath }: { configPath: string }) {
+// UpdatesSection is the manual side of the auto-updater: it shows the startup
+// check preference, running version, and a Check button, then the same state
+// machine the top banner uses (useUpdater) — available → install/download, with
+// progress and errors inline.
+function UpdatesSection({
+  configPath,
+  checkUpdates,
+  telemetry,
+  settingsBusy,
+  applySettings,
+}: {
+  configPath: string;
+  checkUpdates: boolean;
+  telemetry: boolean;
+  settingsBusy: boolean;
+  applySettings: (fn: () => Promise<void>) => Promise<void>;
+}) {
   const t = useT();
-  const { status, check, apply } = useUpdater();
+  const { status, check, apply: applyUpdate } = useUpdater();
   const [version, setVersion] = useState("");
   useEffect(() => {
     app.Version().then(setVersion).catch(() => {});
   }, []);
 
-  const busy =
+  const updaterBusy =
     status.kind === "checking" || status.kind === "downloading" || status.kind === "verifying" || status.kind === "applying";
 
   return (
     <SettingsSection title={t("updater.title")}>
+      <SettingsField
+        className="settings-field--wide-copy"
+        label={t("updater.autoCheckLabel")}
+        hint={t("updater.autoCheckHint")}
+      >
+        <ToggleSegment
+          value={checkUpdates}
+          disabled={settingsBusy}
+          onChange={(enabled) => void applySettings(() => app.SetDesktopCheckUpdates(enabled))}
+        />
+      </SettingsField>
+      <SettingsField
+        className="settings-field--wide-copy"
+        label={t("settings.telemetryLabel")}
+        hint={t("settings.telemetryHint")}
+      >
+        <ToggleSegment
+          value={telemetry}
+          disabled={settingsBusy}
+          onChange={(enabled) => void applySettings(() => app.SetDesktopTelemetry(enabled))}
+        />
+      </SettingsField>
       <SettingsField label={t("updater.currentVersion", { v: version || "…" })}>
-        <button className="btn btn--small" disabled={busy} onClick={() => void check()}>
+        <button className="btn btn--small" disabled={updaterBusy} onClick={() => void check()}>
           {status.kind === "checking" ? t("updater.checking") : t("updater.checkButton")}
         </button>
       </SettingsField>
@@ -3347,7 +3452,7 @@ function UpdatesSection({ configPath }: { configPath: string }) {
       {status.kind === "available" && (
         <>
           <SettingsField label={t("updater.available", { v: status.info.latest })}>
-            <button className="btn btn--primary btn--small" onClick={() => apply(status.info)}>
+            <button className="btn btn--primary btn--small" onClick={() => applyUpdate(status.info)}>
               {status.info.canSelfUpdate ? t("updater.installNow") : t("updater.goToDownload")}
             </button>
           </SettingsField>

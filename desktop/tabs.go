@@ -1206,7 +1206,7 @@ func topicTitleFromSession(path string) string {
 			return ""
 		}
 		if msg.Role == "user" {
-			return topicTitleFromText(msg.Content)
+			return topicTitleFromText(agent.HandoffTask(msg.Content))
 		}
 	}
 }
@@ -2837,6 +2837,7 @@ type ContextPanelInfo struct {
 	WindowTokens     int               `json:"windowTokens"`
 	PromptTokens     int               `json:"promptTokens"`
 	CompletionTokens int               `json:"completionTokens"`
+	TotalTokens      int               `json:"totalTokens"`
 	ReasoningTokens  int               `json:"reasoningTokens"`
 	CacheHitTokens   int               `json:"cacheHitTokens"`
 	CacheMissTokens  int               `json:"cacheMissTokens"`
@@ -2879,6 +2880,16 @@ func (a *App) ContextPanel(tabID string) ContextPanelInfo {
 		used, window := ctrl.ContextSnapshot()
 		info.UsedTokens = used
 		info.WindowTokens = window
+		// Per-turn token breakdown from LastUsage (same snapshot as UsedTokens)
+		// so the donut segments are proportional to the current context fill,
+		// not inflated by cumulative session totals.
+		if u := ctrl.LastUsage(); u != nil {
+			info.PromptTokens = u.PromptTokens
+			info.CompletionTokens = u.CompletionTokens
+			info.ReasoningTokens = u.ReasoningTokens
+			info.CacheHitTokens = u.CacheHitTokens
+			info.CacheMissTokens = u.CacheMissTokens
+		}
 	}
 
 	telemetry := tab.telemetrySnapshot()
@@ -2886,11 +2897,7 @@ func (a *App) ContextPanel(tabID string) ContextPanelInfo {
 		info.ReadFiles = records
 	}
 	usage := telemetry.Usage
-	info.PromptTokens = usage.PromptTokens
-	info.CompletionTokens = usage.CompletionTokens
-	info.ReasoningTokens = usage.ReasoningTokens
-	info.CacheHitTokens = usage.CacheHitTokens
-	info.CacheMissTokens = usage.CacheMissTokens
+	info.TotalTokens = usage.TotalTokens
 	info.RequestCount = usage.RequestCount
 	info.ElapsedMs = usage.ElapsedMs
 	info.SessionCost = usage.SessionCost

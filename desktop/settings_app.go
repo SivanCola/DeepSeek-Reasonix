@@ -147,6 +147,10 @@ type SettingsView struct {
 	DesktopTheme      string          `json:"desktopTheme"`
 	DesktopThemeStyle string          `json:"desktopThemeStyle"`
 	CloseBehavior     string          `json:"closeBehavior"`
+	DisplayMode       string          `json:"displayMode"`
+	CheckUpdates      bool            `json:"checkUpdates"`
+	Telemetry         bool            `json:"telemetry"`
+	ExpandThinking    bool            `json:"expandThinking"`
 	ConfigPath        string          `json:"configPath"`
 	// ProviderKinds lists the provider implementations the kernel actually
 	// registered (provider.Kinds()), so the editor's "kind" picker offers only
@@ -323,6 +327,10 @@ func (a *App) Settings() SettingsView {
 			DesktopTheme:      "light",
 			DesktopThemeStyle: "graphite",
 			CloseBehavior:     "background",
+			DisplayMode:       "minimal",
+			CheckUpdates:      true,
+			Telemetry:         true,
+			ExpandThinking:    false,
 		}
 	}
 	ctrl := a.activeCtrl()
@@ -366,6 +374,10 @@ func (a *App) Settings() SettingsView {
 		DesktopTheme:      cfg.DesktopTheme(),
 		DesktopThemeStyle: cfg.DesktopThemeStyle(),
 		CloseBehavior:     cfg.DesktopCloseBehavior(),
+		DisplayMode:       cfg.DesktopDisplayMode(),
+		CheckUpdates:      cfg.DesktopCheckUpdates(),
+		Telemetry:         cfg.DesktopTelemetry(),
+		ExpandThinking:    cfg.Desktop.ExpandThinking,
 		ConfigPath:        cfgPath,
 		ProviderKinds:     nonNil(provider.Kinds()),
 		AutoApproveTools:  ctrl != nil && ctrl.AutoApproveTools(),
@@ -1263,6 +1275,11 @@ func (a *App) SetCloseBehavior(mode string) error {
 	return a.applyConfigOnly(func(c *config.Config) error { return c.SetDesktopCloseBehavior(mode) })
 }
 
+// SetDisplayMode updates the transcript display mode. UI-only, no rebuild needed.
+func (a *App) SetDisplayMode(mode string) error {
+	return a.applyConfigOnly(func(c *config.Config) error { return c.SetDesktopDisplayMode(mode) })
+}
+
 // SetDesktopLanguage updates only the desktop UI language. It deliberately does
 // not touch config.language, which the CLI/model-facing runtime uses.
 func (a *App) SetDesktopLanguage(lang string) error {
@@ -1287,6 +1304,23 @@ func (a *App) SetTrayLocale(locale string) error {
 // rebuild the active controller and must stay out of provider-visible requests.
 func (a *App) SetDesktopAppearance(theme, style string) error {
 	return a.applyConfigOnly(func(c *config.Config) error { return c.SetDesktopAppearance(theme, style) })
+}
+
+// SetDesktopCheckUpdates updates only the desktop startup update-check
+// preference. Manual checks in Settings are unaffected.
+func (a *App) SetDesktopCheckUpdates(enabled bool) error {
+	return a.applyConfigOnly(func(c *config.Config) error { return c.SetDesktopCheckUpdates(enabled) })
+}
+
+// SetDesktopTelemetry sets whether the desktop sends the anonymous launch ping.
+func (a *App) SetDesktopTelemetry(enabled bool) error {
+	return a.applyConfigOnly(func(c *config.Config) error { return c.SetDesktopTelemetry(enabled) })
+}
+
+// SetExpandThinking sets whether reasoning text is expanded by default on
+// the desktop. It is desktop-only and does not rebuild the controller.
+func (a *App) SetExpandThinking(on bool) error {
+	return a.applyConfigOnly(func(c *config.Config) error { return c.SetExpandThinking(on) })
 }
 
 // MigrateDesktopPreferences imports old browser-local desktop preferences into
