@@ -333,10 +333,11 @@ function settingsModelMeta(s: SettingsView, t: ReturnType<typeof useT>): string 
 }
 
 function botSettingsMeta(bot: BotSettingsView, t: ReturnType<typeof useT>): string {
-  if (!bot.enabled) return t("settings.botMetaOff");
-  const channels = [bot.qq.enabled, bot.feishu.enabled, bot.weixin.enabled].filter(Boolean).length;
-  if (channels === 0) return t("settings.botMetaNoChannels");
-  return t("settings.botMetaChannels", { n: channels });
+  const normalized = normalizeBotSettings(bot);
+  const connections = normalized.connections.length;
+  if (connections === 0) return t("settings.botNoConnections");
+  if (!normalized.enabled) return t("settings.botDisabledWithConnections", { n: connections });
+  return t("settings.botConnectionCount", { n: connections });
 }
 
 // allRefs flattens providers into "provider/model" refs for the model selectors.
@@ -895,6 +896,15 @@ function BotsSection({ s, busy, apply }: SectionProps) {
     setConnections((items) => items.map((item) => item.id === id ? { ...item, ...patch } : item));
   const updateConnectionCredential = (id: string, patch: Partial<BotConnectionView["credential"]>) =>
     setConnections((items) => items.map((item) => item.id === id ? { ...item, credential: { ...item.credential, ...patch } } : item));
+  const removeConnection = async (connection: BotConnectionView) => {
+    const nextDraft = sanitizeBotDraft({
+      ...draft,
+      connections: draft.connections.filter((item) => item.id !== connection.id),
+    });
+    await apply(async () => {
+      await app.SetBotSettings(nextDraft);
+    });
+  };
   const installQrURL = install.result?.url ?? "";
   const installQrIsImage = installQrURL.startsWith("data:image/");
   const selectedInstallConnection = draft.connections.find((connection) => botInstallTargetMatchesConnection(installTarget, connection));
@@ -1037,16 +1047,16 @@ function BotsSection({ s, busy, apply }: SectionProps) {
 
   return (
     <SettingsSection
-      title={t("settings.botConnectPhoneTitle")}
-      description={t("settings.botConnectPhoneSubtitle")}
+      title={t("settings.botGateway")}
+      description={t("settings.botGatewayHint")}
     >
       <div className="bot-phone-connect">
-        <div className="bot-phone-connect__top">
-          <div className="bot-phone-connect__title">
-            <strong>{t("settings.botInstallTitle")}</strong>
-            <span>{t("settings.botInstallSubtitle")}</span>
+        <div className="bot-gateway-card">
+          <div className="bot-gateway-card__copy">
+            <strong>{t("settings.botGateway")}</strong>
+            <span>{t("settings.botGatewayHint")}</span>
           </div>
-          <div className="bot-phone-connect__actions">
+          <div className="bot-gateway-card__actions">
             <div className="bot-phone-connect__switch">
               <span>{t("settings.botEnableBot")}</span>
               <ToggleSegment
@@ -1062,82 +1072,6 @@ function BotsSection({ s, busy, apply }: SectionProps) {
             >
               {t("settings.saveBotSettings")}
             </button>
-          </div>
-        </div>
-
-        <div className="bot-phone-targets" role="tablist" aria-label={t("settings.botChannels")}>
-          {BOT_INSTALL_TARGETS.map((target) => (
-            <button
-              key={target}
-              type="button"
-              role="tab"
-              aria-selected={installTarget === target}
-              className={`bot-phone-target${installTarget === target ? " bot-phone-target--active" : ""}`}
-              disabled={busy || install.status === "starting"}
-              onClick={() => setInstallTarget(target)}
-            >
-              <strong>{botTargetLabel(target, t)}</strong>
-              <span>{botTargetHint(target, t)}</span>
-            </button>
-          ))}
-        </div>
-
-        <div className="bot-connect-panel bot-connect-panel--phone">
-          <div className="bot-connect-panel__qr">
-            {selectedInstallConnection ? (
-              <div className="bot-connect-panel__state bot-connect-panel__state--success">
-                <CheckCircle2 aria-hidden="true" />
-              </div>
-            ) : install.status === "showing" && installQrURL ? (
-              installQrIsImage ? (
-                <img src={installQrURL} alt={t("settings.botInstallQrAlt")} />
-              ) : (
-                <QRCodeSVG className="bot-connect-panel__qr-code" value={installQrURL} size={196} marginSize={1} />
-              )
-            ) : install.status === "starting" ? (
-              <div className="bot-connect-panel__state">
-                <Loader2 className="bot-spin" aria-hidden="true" />
-                <span>{t("settings.botInstallStarting")}</span>
-              </div>
-            ) : install.status === "error" ? (
-              <div className="bot-connect-panel__state bot-connect-panel__state--error">
-                <RefreshCw aria-hidden="true" />
-              </div>
-            ) : (
-              <div className="bot-connect-panel__state">
-                <QrCode aria-hidden="true" />
-              </div>
-            )}
-          </div>
-          <div className="bot-connect-panel__body">
-            <strong>{selectedInstallLabel}</strong>
-            <p>
-              {selectedInstallConnection
-                ? t("settings.botInstallAlreadyConnected", { provider: selectedInstallLabel })
-                : install.message || botTargetHint(installTarget, t)}
-            </p>
-            {install.status === "showing" && install.timeLeft > 0 ? (
-              <span className="bot-connect-panel__timer">{t("settings.botInstallTimeLeft", { time: formatInstallTimeLeft(install.timeLeft) })}</span>
-            ) : null}
-            {installUserCode ? <code>{installUserCode}</code> : null}
-            <div className="bot-connect-panel__actions">
-              {!selectedInstallConnection && install.status !== "showing" && install.status !== "starting" ? (
-                <button type="button" className="btn btn--primary btn--small" disabled={busy} onClick={() => void startInstall()}>
-                  {install.status === "error" ? <RefreshCw aria-hidden="true" /> : <QrCode aria-hidden="true" />}
-                  {install.status === "error" ? t("settings.botInstallRetry") : t("settings.botInstallGenerate")}
-                </button>
-              ) : null}
-              {install.status === "showing" ? (
-                <button type="button" className="btn btn--secondary btn--small" disabled={busy} onClick={() => void pollInstall()}>
-                  {t("settings.botInstallCheck")}
-                </button>
-              ) : null}
-              {selectedInstallConnection ? (
-                <button type="button" className="btn btn--secondary btn--small" disabled={busy} onClick={() => void diagnoseConnection(selectedInstallConnection.id)}>
-                  {t("settings.botDiagnose")}
-                </button>
-              ) : null}
-            </div>
           </div>
         </div>
 
@@ -1186,19 +1120,23 @@ function BotsSection({ s, busy, apply }: SectionProps) {
                       >
                         {t("settings.botManage")}
                       </button>
-                      <button type="button" className="btn btn--secondary btn--small" disabled={busy} onClick={() => void diagnoseConnection(connection.id)}>
-                        {t("settings.botDiagnose")}
-                      </button>
-                      {(connection.provider === "feishu" || connection.provider === "weixin") ? (
-                        <button type="button" className="btn btn--secondary btn--small" disabled={busy} onClick={() => void testConnection(connection)}>
-                          {t("settings.botTest")}
-                        </button>
-                      ) : null}
                     </div>
                   </div>
                   {diagnostics[connection.id] ? <em className="bot-connection-row__diag">{diagnostics[connection.id]}</em> : null}
                   {expandedConnectionId === connection.id ? (
                     <div className="bot-connection-manage">
+                      <SettingsField label={t("settings.botConnectionActions")}>
+                        <div className="bot-connection-manage__actions">
+                          <button type="button" className="btn btn--secondary btn--small" disabled={busy} onClick={() => void diagnoseConnection(connection.id)}>
+                            {t("settings.botDiagnose")}
+                          </button>
+                          {(connection.provider === "feishu" || connection.provider === "weixin") ? (
+                            <button type="button" className="btn btn--secondary btn--small" disabled={busy} onClick={() => void testConnection(connection)}>
+                              {t("settings.botTest")}
+                            </button>
+                          ) : null}
+                        </div>
+                      </SettingsField>
                       {(connection.provider === "feishu" || connection.provider === "weixin") ? (
                         <SettingsField label={t("settings.botTestChatId")}>
                           <input
@@ -1265,12 +1203,109 @@ function BotsSection({ s, busy, apply }: SectionProps) {
                           ) : null}
                         </div>
                       </SettingsField>
+                      <SettingsField label={t("settings.deleteBot")} hint={t("settings.deleteBotHint")}>
+                        <div className="bot-connection-danger">
+                          <InlineConfirmButton
+                            label={t("settings.deleteBot")}
+                            confirmLabel={t("settings.confirmDeleteBot")}
+                            cancelLabel={t("common.cancel")}
+                            disabled={busy}
+                            danger
+                            onConfirm={() => removeConnection(connection)}
+                          />
+                        </div>
+                      </SettingsField>
                     </div>
                   ) : null}
                 </div>
               ))}
             </div>
           )}
+        </div>
+
+        <div className="bot-add-panel">
+          <div className="bot-phone-connect__top">
+            <div className="bot-phone-connect__title">
+              <strong>{t("settings.botConnectPhoneTitle")}</strong>
+              <span>{t("settings.botConnectPhoneSubtitle")}</span>
+            </div>
+          </div>
+
+          <div className="bot-phone-targets" role="tablist" aria-label={t("settings.botChannels")}>
+            {BOT_INSTALL_TARGETS.map((target) => (
+              <button
+                key={target}
+                type="button"
+                role="tab"
+                aria-selected={installTarget === target}
+                className={`bot-phone-target${installTarget === target ? " bot-phone-target--active" : ""}`}
+                disabled={busy || install.status === "starting"}
+                onClick={() => setInstallTarget(target)}
+              >
+                <strong>{botTargetLabel(target, t)}</strong>
+                <span>{botTargetHint(target, t)}</span>
+              </button>
+            ))}
+          </div>
+
+          <div className="bot-connect-panel bot-connect-panel--phone">
+            <div className="bot-connect-panel__qr">
+              {selectedInstallConnection ? (
+                <div className="bot-connect-panel__state bot-connect-panel__state--success">
+                  <CheckCircle2 aria-hidden="true" />
+                </div>
+              ) : install.status === "showing" && installQrURL ? (
+                installQrIsImage ? (
+                  <img src={installQrURL} alt={t("settings.botInstallQrAlt")} />
+                ) : (
+                  <QRCodeSVG className="bot-connect-panel__qr-code" value={installQrURL} size={196} marginSize={1} />
+                )
+              ) : install.status === "starting" ? (
+                <div className="bot-connect-panel__state">
+                  <Loader2 className="bot-spin" aria-hidden="true" />
+                  <span>{t("settings.botInstallStarting")}</span>
+                </div>
+              ) : install.status === "error" ? (
+                <div className="bot-connect-panel__state bot-connect-panel__state--error">
+                  <RefreshCw aria-hidden="true" />
+                </div>
+              ) : (
+                <div className="bot-connect-panel__state">
+                  <QrCode aria-hidden="true" />
+                </div>
+              )}
+            </div>
+            <div className="bot-connect-panel__body">
+              <strong>{selectedInstallLabel}</strong>
+              <p>
+                {selectedInstallConnection
+                  ? t("settings.botInstallAlreadyConnected", { provider: selectedInstallLabel })
+                  : install.message || botTargetHint(installTarget, t)}
+              </p>
+              {install.status === "showing" && install.timeLeft > 0 ? (
+                <span className="bot-connect-panel__timer">{t("settings.botInstallTimeLeft", { time: formatInstallTimeLeft(install.timeLeft) })}</span>
+              ) : null}
+              {installUserCode ? <code>{installUserCode}</code> : null}
+              <div className="bot-connect-panel__actions">
+                {!selectedInstallConnection && install.status !== "showing" && install.status !== "starting" ? (
+                  <button type="button" className="btn btn--primary btn--small" disabled={busy} onClick={() => void startInstall()}>
+                    {install.status === "error" ? <RefreshCw aria-hidden="true" /> : <QrCode aria-hidden="true" />}
+                    {install.status === "error" ? t("settings.botInstallRetry") : t("settings.botInstallGenerate")}
+                  </button>
+                ) : null}
+                {install.status === "showing" ? (
+                  <button type="button" className="btn btn--secondary btn--small" disabled={busy} onClick={() => void pollInstall()}>
+                    {t("settings.botInstallCheck")}
+                  </button>
+                ) : null}
+                {selectedInstallConnection ? (
+                  <button type="button" className="btn btn--secondary btn--small" disabled={busy} onClick={() => void diagnoseConnection(selectedInstallConnection.id)}>
+                    {t("settings.botDiagnose")}
+                  </button>
+                ) : null}
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </SettingsSection>

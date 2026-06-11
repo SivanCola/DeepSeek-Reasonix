@@ -298,7 +298,6 @@ function sidebarImSessionLabel(connection: SidebarImConnection, translate: Trans
 function SidebarImConnectionDetail({ connection, onClose, onOpenSession, onOpenSettings }: SidebarImConnectionDetailProps) {
   const translate = useT();
   const target = mappedSessionTarget(connection.sessionId);
-  const permissionKey = connection.scope === "project" ? "botDetail.permissionProject" : "botDetail.permissionGlobal";
   return (
     <div className="bot-detail">
       <section className="bot-detail__summary">
@@ -314,76 +313,38 @@ function SidebarImConnectionDetail({ connection, onClose, onOpenSession, onOpenS
             <span>{sidebarImScopeLabel(connection, translate)}</span>
           </div>
         </div>
-        <button type="button" className="btn btn--primary btn--small bot-detail__primary" disabled={!target} title={target ? undefined : translate("botDetail.openDisabled")} onClick={onOpenSession}>
-          <MessageSquare size={14} />
-          {translate("botDetail.openSession")}
-        </button>
-      </section>
-
-      <div className="bot-detail__layout">
-        <section className="bot-detail__panel bot-detail__panel--facts" aria-label={translate("botDetail.summary")}>
-          <div className="bot-detail__section-head">
-            <span>{translate("botDetail.summary")}</span>
-            <strong>{sidebarImSessionLabel(connection, translate)}</strong>
-          </div>
-          <div className="bot-detail__facts">
-            <div>
-              <span>{translate("botDetail.source")}</span>
-              <strong>{connection.platformLabel}</strong>
-            </div>
-            <div>
-              <span>{translate("botDetail.remoteId")}</span>
-              <code>{connection.remoteId || "—"}</code>
-            </div>
-            <div>
-              <span>{translate("botDetail.localTopic")}</span>
-              <strong>{sidebarImSessionLabel(connection, translate)}</strong>
-            </div>
-            <div>
-              <span>{translate("botDetail.status")}</span>
-              <strong>{connection.statusLabel}</strong>
-            </div>
-          </div>
-        </section>
-
-        <aside className="bot-detail__panel bot-detail__panel--actions">
-          <span>{translate("botDetail.actions")}</span>
+        <div className="bot-detail__summary-actions">
+          <button type="button" className="btn btn--primary btn--small bot-detail__primary" disabled={!target} title={target ? undefined : translate("botDetail.openDisabled")} onClick={onOpenSession}>
+            <MessageSquare size={14} />
+            {translate("botDetail.openSession")}
+          </button>
           <button type="button" className="btn btn--secondary btn--small" onClick={onOpenSettings}>
             <SettingsIcon size={14} />
             {translate("botDetail.manage")}
           </button>
-          <button type="button" className="btn btn--secondary btn--small" disabled={!target} title={target ? undefined : translate("botDetail.openDisabled")} onClick={onOpenSession}>
-            <MessageSquare size={14} />
-            {translate("botDetail.openSession")}
-          </button>
           <button type="button" className="btn btn--secondary btn--small" onClick={onClose}>
             {translate("botDetail.close")}
           </button>
-        </aside>
-      </div>
-
-      <section className="bot-detail__panel">
-        <div>
-          <span>{translate("botDetail.permission")}</span>
-          <strong>{translate(permissionKey)}</strong>
         </div>
       </section>
 
-      <section className="bot-detail__workflow">
-        <div className="bot-detail__workflow-head">
-          <span>{translate("botDetail.route")}</span>
+      <section className="bot-detail__panel bot-detail__panel--facts" aria-label={translate("botDetail.summary")}>
+        <div className="bot-detail__section-head">
+          <span>{translate("botDetail.summary")}</span>
         </div>
-        <div className="bot-detail__workflow-step">
-          <span>1</span>
-          <strong>{translate("botDetail.flowReceive")}</strong>
-        </div>
-        <div className="bot-detail__workflow-step">
-          <span>2</span>
-          <strong>{translate("botDetail.flowDesktop")}</strong>
-        </div>
-        <div className="bot-detail__workflow-step">
-          <span>3</span>
-          <strong>{translate("botDetail.flowReply")}</strong>
+        <div className="bot-detail__facts">
+          <div>
+            <span>{translate("botDetail.remoteId")}</span>
+            <code>{connection.remoteId || "—"}</code>
+          </div>
+          <div>
+            <span>{translate("botDetail.localTopic")}</span>
+            <strong>{sidebarImSessionLabel(connection, translate)}</strong>
+          </div>
+          <div>
+            <span>{translate("botDetail.scope")}</span>
+            <strong>{sidebarImScopeLabel(connection, translate)}</strong>
+          </div>
         </div>
       </section>
     </div>

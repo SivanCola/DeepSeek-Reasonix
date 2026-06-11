@@ -2216,24 +2216,25 @@ a[href] {
   display: grid;
   align-content: start;
   gap: 12px;
-  width: min(100%, 980px);
+  width: min(100%, 880px);
   margin: 0 auto;
-  padding: 28px clamp(22px, 5vw, 64px);
+  padding: 26px clamp(18px, 4vw, 48px);
 }
 .bot-detail__summary {
-  display: grid;
-  grid-template-columns: 42px minmax(0, 1fr) auto;
+  display: flex;
   align-items: center;
-  gap: 12px;
+  flex-wrap: wrap;
+  gap: 12px 14px;
   min-width: 0;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--bg-elev);
-  padding: 13px 14px;
+  padding: 14px 16px;
 }
 .bot-detail__avatar {
   display: grid;
   place-items: center;
+  flex: 0 0 auto;
   width: 42px;
   height: 42px;
   border-radius: 9px;
@@ -2252,6 +2253,7 @@ a[href] {
 }
 .bot-detail__summary-main {
   display: grid;
+  flex: 1 1 250px;
   gap: 4px;
   min-width: 0;
 }
@@ -2288,18 +2290,21 @@ a[href] {
   padding: 1px 7px;
 }
 .bot-detail__primary,
-.bot-detail__panel--actions .btn {
+.bot-detail__summary-actions .btn {
   display: flex;
   align-items: center;
   gap: 6px;
 }
-.bot-detail__layout {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 190px;
-  gap: 10px;
+.bot-detail__summary-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex: 1 1 320px;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
 }
-.bot-detail__panel,
-.bot-detail__workflow {
+.bot-detail__panel {
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--bg-elev);
@@ -2317,9 +2322,7 @@ a[href] {
   min-width: 0;
 }
 .bot-detail__section-head span,
-.bot-detail__panel > span,
-.bot-detail__panel span,
-.bot-detail__workflow-head span {
+.bot-detail__panel span {
   color: var(--fg-faint);
   font-size: 11px;
   font-weight: 750;
@@ -2335,23 +2338,15 @@ a[href] {
 }
 .bot-detail__facts {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 0;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 14px;
   border-top: 1px solid var(--border-soft);
+  padding-top: 12px;
 }
 .bot-detail__facts > div {
   display: grid;
   gap: 7px;
   min-width: 0;
-  border-right: 1px solid var(--border-soft);
-  padding: 12px 12px 0 0;
-}
-.bot-detail__facts > div + div {
-  padding-left: 12px;
-}
-.bot-detail__facts > div:last-child {
-  border-right: 0;
-  padding-right: 0;
 }
 .bot-detail__facts span {
   color: var(--fg-faint);
@@ -2379,65 +2374,11 @@ a[href] {
   font-size: 12px;
   padding: 4px 6px;
 }
-.bot-detail__panel--actions {
-  align-content: start;
-}
-.bot-detail__panel--actions .btn {
-  justify-content: center;
-  width: 100%;
-}
-.bot-detail__panel--actions > span {
-  margin-bottom: 1px;
-}
-.bot-detail__panel:not(.bot-detail__panel--actions) {
-  display: grid;
-}
-.bot-detail__panel:not(.bot-detail__panel--facts):not(.bot-detail__panel--actions) > div {
-  display: grid;
-  gap: 6px;
-}
 .bot-detail__panel strong {
   color: var(--fg);
   font-size: 13px;
   font-weight: 650;
   line-height: 1.5;
-}
-.bot-detail__workflow {
-  display: grid;
-  grid-template-columns: auto repeat(3, minmax(0, 1fr));
-  align-items: center;
-  gap: 0;
-  padding: 10px 14px;
-}
-.bot-detail__workflow-step {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  min-width: 0;
-  min-height: 34px;
-  padding: 0 12px;
-  border-left: 1px solid var(--border-soft);
-}
-.bot-detail__workflow-step span {
-  display: grid;
-  place-items: center;
-  flex: 0 0 auto;
-  width: 20px;
-  height: 20px;
-  border-radius: 999px;
-  background: var(--accent-soft);
-  color: var(--accent);
-  font-size: 11px;
-  font-weight: 800;
-}
-.bot-detail__workflow-step strong {
-  min-width: 0;
-  overflow: hidden;
-  color: var(--fg-dim);
-  font-size: 13px;
-  font-weight: 650;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 /* Startup splash restored from the v0.50 desktop intro. It masks cold boot while
@@ -10266,8 +10207,49 @@ a[href] {
 }
 .bot-phone-connect {
   display: grid;
+  gap: 16px;
+  min-width: 0;
+}
+.bot-gateway-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-elev);
+  padding: 14px 16px;
+}
+.bot-gateway-card__copy {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+.bot-gateway-card__copy strong {
+  color: var(--fg);
+  font-size: 15px;
+  font-weight: 760;
+  line-height: 1.25;
+}
+.bot-gateway-card__copy span {
+  max-width: 620px;
+  color: var(--fg-dim);
+  font-size: var(--font-control-small);
+  line-height: 1.45;
+}
+.bot-gateway-card__actions {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  gap: 10px;
+}
+.bot-add-panel {
+  display: grid;
   gap: 12px;
   min-width: 0;
+  border-top: 1px solid var(--border-soft);
+  padding-top: 14px;
 }
 .bot-phone-connect__top {
   display: flex;
@@ -10275,10 +10257,6 @@ a[href] {
   justify-content: space-between;
   gap: 14px;
   min-width: 0;
-  border: 1px solid var(--border-soft);
-  border-radius: 8px;
-  background: var(--bg-elev);
-  padding: 12px 14px;
 }
 .bot-phone-connect__title {
   display: grid;
@@ -10610,14 +10588,14 @@ a[href] {
 .bot-connection-row__grid {
   display: grid;
   grid-template-columns:
-    minmax(92px, 0.9fr)
-    minmax(90px, 0.9fr)
-    minmax(140px, 1.2fr)
-    minmax(64px, 0.55fr)
-    minmax(76px, 0.65fr)
-    minmax(246px, auto);
+    minmax(72px, 0.8fr)
+    minmax(64px, 0.75fr)
+    minmax(0, 1.25fr)
+    minmax(52px, 0.55fr)
+    minmax(60px, 0.6fr)
+    minmax(140px, auto);
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   min-width: 0;
 }
 .bot-connection-table__header {
@@ -10728,11 +10706,17 @@ a[href] {
   align-items: center;
   justify-content: flex-end;
   flex-wrap: nowrap;
-  gap: 6px;
+  gap: 4px;
   min-width: 0;
 }
 .bot-connection-row__actions .set-seg__btn {
-  padding: 4px 10px;
+  padding: 4px 8px;
+}
+.bot-connection-row__actions .btn--small {
+  padding-inline: 8px;
+}
+.bot-connection-row__actions .btn {
+  white-space: nowrap;
 }
 .bot-connection-row__target {
   width: 180px;
@@ -10754,10 +10738,26 @@ a[href] {
   border-top: 1px solid var(--border-soft);
   padding-top: 10px;
 }
+.bot-connection-manage__actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  width: 100%;
+}
 .bot-connection-manage .settings-field {
   grid-template-columns: minmax(150px, 190px) minmax(0, 1fr);
   gap: 14px;
   padding: 0;
+}
+.bot-connection-manage .settings-field:last-child {
+  border-top: 1px solid var(--border-soft);
+  padding-top: 10px;
+}
+.bot-connection-danger {
+  display: flex;
+  justify-content: flex-end;
+  width: 100%;
 }
 .bot-credential-stack {
   display: grid;
@@ -11160,7 +11160,7 @@ a[href] {
     padding: 18px;
   }
   .bot-detail__summary {
-    grid-template-columns: 40px minmax(0, 1fr);
+    align-items: flex-start;
   }
   .bot-detail__avatar {
     width: 40px;
@@ -11168,29 +11168,9 @@ a[href] {
     border-radius: 9px;
     font-size: 15px;
   }
-  .bot-detail__primary {
-    grid-column: 1 / -1;
+  .bot-detail__summary-actions {
     justify-content: flex-start;
-    width: fit-content;
-  }
-  .bot-detail__layout,
-  .bot-detail__facts,
-  .bot-detail__workflow {
-    grid-template-columns: 1fr;
-  }
-  .bot-detail__facts > div,
-  .bot-detail__facts > div + div {
-    border-right: 0;
-    border-top: 1px solid var(--border-soft);
-    padding: 10px 0 0;
-  }
-  .bot-detail__workflow {
-    align-items: stretch;
-  }
-  .bot-detail__workflow-step {
-    border-left: 0;
-    border-top: 1px solid var(--border-soft);
-    padding: 9px 0 0;
+    width: 100%;
   }
   .provider-access-card__head {
     align-items: flex-start;
@@ -11207,6 +11187,14 @@ a[href] {
   .bot-connect-targets,
   .bot-list-grid {
     grid-template-columns: 1fr;
+  }
+  .bot-gateway-card,
+  .bot-gateway-card__actions {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .bot-gateway-card__actions {
+    width: 100%;
   }
   .bot-phone-targets {
     display: grid;
@@ -11257,6 +11245,12 @@ a[href] {
   .bot-connection-manage .settings-field {
     grid-template-columns: 1fr;
     gap: 7px;
+  }
+  .bot-connection-manage__actions {
+    justify-content: flex-start;
+  }
+  .bot-connection-danger {
+    justify-content: flex-start;
   }
   .bot-credential-line {
     align-items: flex-start;
