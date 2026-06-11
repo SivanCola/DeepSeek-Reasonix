@@ -3127,7 +3127,6 @@ a[href] {
   font-size: 11px;
   color: var(--danger);
 }
-}
 .msg-attachments {
   display: flex;
   flex-wrap: wrap;
