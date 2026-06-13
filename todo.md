@@ -482,3 +482,71 @@ dynamic workflow 或开发者平台，而是先把 Reasonix 从一次性会话�
 - [x] 预算策略第一版按 session runtime 计费，project/global 只作为批量配置入口。
   - 理由：执行、wait、wakeup、timeline 都以 session 为最小可恢复单元；跨 session
     聚合预算留到个人场景稳定后再抽象。
+
+## Post-MVP 优化池
+
+这些任务不阻塞个人常驻 AgentOS MVP，但会决定它能否从“能用”变成“长期好用”。
+
+### P0：常驻进程产品化
+
+- [ ] daemon 进程管理 UX。
+  - [ ] 桌面端能启动、停止、重启 daemon。
+  - [ ] 桌面端能显示 daemon PID、uptime、监听地址、session 数和最近错误。
+  - [ ] 提供 launchd / systemd / Windows startup helper 的安装与卸载命令。
+  - 验收：用户不需要开终端也能知道常驻 agent 是否活着，以及为什么没被唤醒。
+- [ ] daemon 日志与凭据运维。
+  - [ ] daemon log 支持轮转和大小上限。
+  - [ ] daemon auth token 支持手动 rotate。
+  - [ ] doctor 能报告 token 缺失、权限异常、端口占用、stale lock 和日志不可写。
+  - 验收：长期运行不会因为日志膨胀、token 漂移或 lock 残留变成黑盒。
+
+### P0：桌面常驻控制台
+
+- [ ] 常驻任务总览。
+  - [ ] 列出所有 daemon managed sessions、goal、run、wait、budget 和 next wakeup。
+  - [ ] 支持按 project / global / waiting / running / blocked 过滤。
+  - [ ] 支持 stop、continue、open session、disable schedule、disable watch。
+  - 验收：用户能在一个页面看懂“现在 agent 正在等什么、接下来会做什么”。
+- [ ] 审批台体验升级。
+  - [ ] approval / ask 列表支持跨 session 排队处理。
+  - [ ] 明确 dormant wait 和 active wait 的差异。
+  - [ ] 高风险动作展示来源事件、目标 session、命令或工具参数摘要。
+  - 验收：用户可以在 30 秒内批完当天积压的低风险任务，并识别高风险任务。
+
+### P1：真实场景 E2E
+
+- [ ] 增加 daily triage 端到端测试脚本。
+  - [ ] 启动 daemon，配置 daily-triage，模拟时间唤醒，验证只入队一次。
+  - [ ] 验证预算耗尽时不调用模型，并写入 timeline。
+- [ ] 增加 CI watcher 端到端测试脚本。
+  - [ ] 配置 wait-event，模拟 GitHub workflow_run/check_suite/status。
+  - [ ] 验证失败走 diagnosis，成功继续原 goal，重复 webhook 不重复执行。
+- [ ] 增加 release assistant 端到端测试脚本。
+  - [ ] 配置 wait-file，写入 changelog/version 文件，验证 debounce 和一次性唤醒。
+  - [ ] 验证发布类写操作仍进入 approval desk。
+  - 验收：三条首批场景都能在本地无真实外网依赖下稳定复现。
+
+### P1：事件与监听能力升级
+
+- [ ] webhook adapter registry。
+  - [ ] 保留通用 envelope。
+  - [ ] GitHub adapter 作为默认内置 adapter。
+  - [ ] 新 provider 通过 adapter 归一化 event id、routing key、summary 和 failure semantics。
+  - 验收：新增 provider 不需要改 daemon 核心 worker / scheduler。
+- [ ] 文件监听从 polling 升级为 hybrid watcher。
+  - [ ] 优先使用原生文件事件库。
+  - [ ] polling 作为跨平台 fallback。
+  - [ ] 大仓库下暴露 watcher 延迟、扫描目录数和 ignored change 计数。
+  - 验收：大型仓库不会因为常驻监听造成明显 CPU 抖动。
+
+### P2：跨 Session 策略
+
+- [ ] project / global 聚合预算。
+  - [ ] 保持 session runtime 预算为最小账本。
+  - [ ] 增加 project / global aggregate quota 视图。
+  - [ ] 支持“本项目今天最多 N 次自动模型调用”。
+  - 验收：多个常驻 session 不会绕过用户设置的项目级成本上限。
+- [ ] 个人 AgentOS 场景模板库。
+  - [ ] 把 daily triage、CI watcher、release assistant、repo health 抽成可复制模板。
+  - [ ] 模板只生成 session runtime 配置和 goal starter，不引入插件市场。
+  - 验收：新用户可以用一个命令创建可恢复、可审批、可复盘的常驻任务。
