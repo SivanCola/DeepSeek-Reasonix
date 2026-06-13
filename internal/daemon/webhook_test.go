@@ -572,6 +572,104 @@ func TestWebhookMatchesGitHubCheckSuiteWait(t *testing.T) {
 	}
 }
 
+func TestWebhookMatchesGitHubStatusWait(t *testing.T) {
+	dir := t.TempDir()
+	sess := filepath.Join(dir, "webhook-status.jsonl")
+	if err := os.WriteFile(sess, []byte(`{}`), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	if err := agent.SaveRuntimeMeta(sess, agent.RuntimeMeta{
+		SessionID: "webhook-status",
+		Goal:      agent.RuntimeGoalMeta{Text: "watch esengine/DeepSeek-Reasonix branch main status", Status: "running"},
+		Run:       agent.RuntimeRunMeta{Status: "waiting_event"},
+		Wait: agent.RuntimeWaitMeta{
+			Kind:            "event",
+			EventSource:     "github.status",
+			EventConclusion: "success",
+			Reason:          "waiting for commit status",
+			Subject:         "branch main",
+		},
+		Budget: agent.RuntimeBudgetMeta{
+			DailyWakeupLimit: 2,
+			WindowStartedAt:  budgetWindowStart(time.Now().UTC()),
+		},
+	}); err != nil {
+		t.Fatalf("SaveRuntimeMeta: %v", err)
+	}
+
+	secret := "status-secret"
+	d := New(Options{
+		SessionDir: dir,
+		Webhook:    &WebhookConfig{Secret: secret, Enabled: true},
+	})
+	d.scanSessions()
+
+	payload := `{"state":"success","context":"ci/build","repository":{"full_name":"esengine/DeepSeek-Reasonix"},"branches":[{"name":"main"}]}`
+	sig := computeHMAC([]byte(payload), secret)
+	req := httptest.NewRequest("POST", "/webhook", strings.NewReader(payload))
+	req.Header.Set("X-Webhook-Signature", sig)
+	req.Header.Set("X-GitHub-Event", "status")
+	req.Header.Set("X-GitHub-Delivery", "delivery-status")
+	rr := httptest.NewRecorder()
+	d.handleWebhook(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("webhook status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	var resp map[string]any
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp["session_id"] != "webhook-status" || resp["status"] != "queued" {
+		t.Fatalf("unexpected response: %+v", resp)
+	}
+	select {
+	case intent := <-d.intentCh:
+		if intent.Source != "webhook" || intent.Reason != "webhook:github.status" || intent.EventID != "delivery-status" {
+			t.Fatalf("unexpected intent: %+v", intent)
+		}
+		for _, want := range []string{"github.status", "status=success", "conclusion=success", "ref=main", "title=ci/build"} {
+			if !strings.Contains(intent.Context, want) {
+				t.Fatalf("intent context missing %q:\n%s", want, intent.Context)
+			}
+		}
+	default:
+		t.Fatal("matching status webhook did not enqueue an intent")
+	}
+	loaded, ok, err := agent.LoadRuntimeMeta(sess)
+	if err != nil || !ok {
+		t.Fatalf("LoadRuntimeMeta: err=%v ok=%v", err, ok)
+	}
+	if loaded.Run.Status != "queued" || loaded.Wait.Kind != "" {
+		t.Fatalf("status webhook should clear wait and continue: run=%+v wait=%+v", loaded.Run, loaded.Wait)
+	}
+}
+
+func TestGitHubWebhookInfoNormalizesPushAndRelease(t *testing.T) {
+	pushPayload := []byte(`{"ref":"refs/heads/main","repository":{"full_name":"esengine/DeepSeek-Reasonix"}}`)
+	req := httptest.NewRequest("POST", "/webhook", strings.NewReader(string(pushPayload)))
+	req.Header.Set("X-GitHub-Event", "push")
+	req.Header.Set("X-GitHub-Delivery", "delivery-push")
+	info := extractGitHubWebhookInfo(req, pushPayload)
+	if info.Event != "push" || info.Action != "push" || info.Ref != "main" || info.Repo != "esengine/DeepSeek-Reasonix" {
+		t.Fatalf("unexpected push info: %+v", info)
+	}
+	if summary := webhookSummary(WebhookEvent{Type: "github.push"}, info); !strings.Contains(summary, "action=push") || !strings.Contains(summary, "ref=main") {
+		t.Fatalf("push summary missing normalized fields: %s", summary)
+	}
+
+	releasePayload := []byte(`{"action":"published","repository":{"full_name":"esengine/DeepSeek-Reasonix"},"release":{"tag_name":"v1.2.3","name":"Reasonix v1.2.3"}}`)
+	req = httptest.NewRequest("POST", "/webhook", strings.NewReader(string(releasePayload)))
+	req.Header.Set("X-GitHub-Event", "release")
+	req.Header.Set("X-GitHub-Delivery", "delivery-release")
+	info = extractGitHubWebhookInfo(req, releasePayload)
+	if info.Event != "release" || info.Action != "published" || info.Ref != "v1.2.3" || info.Title != "Reasonix v1.2.3" {
+		t.Fatalf("unexpected release info: %+v", info)
+	}
+	if summary := webhookSummary(WebhookEvent{Type: "github.release"}, info); !strings.Contains(summary, "ref=v1.2.3") || !strings.Contains(summary, "title=Reasonix v1.2.3") {
+		t.Fatalf("release summary missing normalized fields: %s", summary)
+	}
+}
+
 func TestWebhookQueuesDiagnosisForWaitEventFailure(t *testing.T) {
 	dir := t.TempDir()
 	sess := filepath.Join(dir, "webhook-wait-conclusion.jsonl")

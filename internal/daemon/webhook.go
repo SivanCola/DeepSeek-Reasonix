@@ -465,9 +465,12 @@ func extractGitHubWebhookInfo(r *http.Request, body []byte) githubWebhookInfo {
 		return info
 	}
 	info.Action = stringField(root, "action")
-	info.Ref = stringField(root, "ref")
+	info.Ref = normalizeGitHubRef(stringField(root, "ref"))
 	if repo := mapField(root, "repository"); repo != nil {
 		info.Repo = stringField(repo, "full_name")
+	}
+	if strings.EqualFold(info.Event, "push") && info.Action == "" {
+		info.Action = "push"
 	}
 	if pr := mapField(root, "pull_request"); pr != nil {
 		info.Number = intField(pr, "number")
@@ -512,6 +515,29 @@ func extractGitHubWebhookInfo(r *http.Request, body []byte) githubWebhookInfo {
 			info.Number = firstPullNumber(cs)
 		}
 	}
+	if strings.EqualFold(info.Event, "status") {
+		state := stringField(root, "state")
+		if info.Status == "" {
+			info.Status = state
+		}
+		if info.Conclusion == "" {
+			info.Conclusion = state
+		}
+		if info.Ref == "" {
+			info.Ref = firstBranchName(root)
+		}
+		if info.Title == "" {
+			info.Title = stringField(root, "context")
+		}
+	}
+	if rel := mapField(root, "release"); rel != nil {
+		if info.Ref == "" {
+			info.Ref = stringField(rel, "tag_name")
+		}
+		if info.Title == "" {
+			info.Title = firstNonEmpty(stringField(rel, "name"), stringField(rel, "tag_name"))
+		}
+	}
 	return info
 }
 
@@ -532,7 +558,7 @@ func (d *Daemon) routeWebhookEvent(evt WebhookEvent, info githubWebhookInfo) (st
 	d.mu.RUnlock()
 	var candidates []candidate
 	for _, entry := range entries {
-		score := webhookRouteScore(entry, repo, info.Number, len(entries))
+		score := webhookRouteScore(entry, repo, info.Ref, info.Number, len(entries))
 		if score > 0 {
 			candidates = append(candidates, candidate{id: entry.ID, score: score})
 		}
@@ -556,7 +582,7 @@ func (d *Daemon) routeWebhookEvent(evt WebhookEvent, info githubWebhookInfo) (st
 	return best.id, true
 }
 
-func webhookRouteScore(entry *SessionEntry, repo string, number int, totalSessions int) int {
+func webhookRouteScore(entry *SessionEntry, repo, ref string, number int, totalSessions int) int {
 	meta, _, _ := agent.LoadBranchMeta(entry.Path)
 	haystack := strings.ToLower(strings.Join([]string{
 		entry.Runtime.Goal.Text,
@@ -572,6 +598,9 @@ func webhookRouteScore(entry *SessionEntry, repo string, number int, totalSessio
 	}
 	if number > 0 && textMentionsNumber(haystack, number) {
 		score += 3
+	}
+	if ref != "" && textMentionsRef(haystack, ref) {
+		score += 2
 	}
 	switch entry.Runtime.Goal.Status {
 	case "running", "blocked":
@@ -607,6 +636,21 @@ func textMentionsNumber(text string, n int) bool {
 		strings.Contains(text, "pr-"+s) ||
 		strings.Contains(text, "pull/"+s) ||
 		strings.Contains(text, "issues/"+s)
+}
+
+func textMentionsRef(text, ref string) bool {
+	ref = strings.ToLower(strings.TrimSpace(ref))
+	if ref == "" {
+		return false
+	}
+	return strings.Contains(text, "branch "+ref) ||
+		strings.Contains(text, "branch="+ref) ||
+		strings.Contains(text, "ref "+ref) ||
+		strings.Contains(text, "ref="+ref) ||
+		strings.Contains(text, "tag "+ref) ||
+		strings.Contains(text, "tag="+ref) ||
+		strings.Contains(text, "/tree/"+ref) ||
+		strings.Contains(text, "/releases/tag/"+ref)
 }
 
 func webhookSummary(evt WebhookEvent, info githubWebhookInfo) string {
@@ -694,6 +738,27 @@ func firstPullNumber(m map[string]any) int {
 		}
 	}
 	return 0
+}
+
+func firstBranchName(m map[string]any) string {
+	raw, _ := m["branches"].([]any)
+	for _, item := range raw {
+		branch, _ := item.(map[string]any)
+		if name := stringField(branch, "name"); name != "" {
+			return normalizeGitHubRef(name)
+		}
+	}
+	return ""
+}
+
+func normalizeGitHubRef(ref string) string {
+	ref = strings.TrimSpace(ref)
+	for _, prefix := range []string{"refs/heads/", "refs/tags/"} {
+		if strings.HasPrefix(ref, prefix) {
+			return strings.TrimPrefix(ref, prefix)
+		}
+	}
+	return ref
 }
 
 // validateSignature checks the HMAC-SHA256 signature against the webhook secret.

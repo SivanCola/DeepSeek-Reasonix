@@ -256,13 +256,13 @@ dynamic workflow 或开发者平台，而是先把 Reasonix 从一次性会话�
   - [x] 第一版只支持 localhost / 用户自托管。
   - [x] 必须有 secret 校验。
   - [x] payload 大小限制。
-- [ ] GitHub 事件路由。
+- [x] GitHub 事件路由。
   - [x] issue opened / assigned。
   - [x] pull_request opened / review_requested / checks completed。
   - [x] workflow_run completed。
-  - [ ] 更多 provider-specific 事件归一化。
+  - [x] 更多 provider-specific 事件归一化。
     - [x] GitHub check_suite completed -> status/conclusion/PR number/ref。
-    - [ ] GitHub status / push / release 等事件归一化。
+    - [x] GitHub status / push / release 等事件归一化。
 - [x] CI 等待场景。
   - [x] daemon API/CLI 可写 runtime event wait condition。
   - [x] webhook 匹配 event wait condition 后触发下一步。
