@@ -41,6 +41,43 @@ type WebhookEvent struct {
 	EventID string `json:"event_id,omitempty"`
 }
 
+// WebhookAdapter normalizes provider-specific webhook requests into the daemon's
+// common envelope plus routing fields. New providers should plug in here instead
+// of adding conditionals to the worker or scheduler path.
+type WebhookAdapter interface {
+	Normalize(r *http.Request, body []byte, evt WebhookEvent) (WebhookEvent, WebhookInfo, bool)
+}
+
+type webhookAdapterRegistry struct {
+	adapters []WebhookAdapter
+}
+
+var defaultWebhookAdapters = webhookAdapterRegistry{
+	adapters: []WebhookAdapter{githubWebhookAdapter{}},
+}
+
+// RegisterWebhookAdapter prepends an adapter to the daemon's default webhook
+// registry. Register provider-specific adapters during initialization so the
+// daemon core continues to operate on the common WebhookEvent/WebhookInfo shape.
+func RegisterWebhookAdapter(adapter WebhookAdapter) {
+	if adapter == nil {
+		return
+	}
+	defaultWebhookAdapters.adapters = append([]WebhookAdapter{adapter}, defaultWebhookAdapters.adapters...)
+}
+
+func (r webhookAdapterRegistry) normalize(req *http.Request, body []byte, evt WebhookEvent) (WebhookEvent, WebhookInfo) {
+	for _, adapter := range r.adapters {
+		if adapter == nil {
+			continue
+		}
+		if normalized, info, ok := adapter.Normalize(req, body, evt); ok {
+			return normalized, info
+		}
+	}
+	return evt, WebhookInfo{}
+}
+
 // handleWebhook receives external events, validates the signature, and queues
 // a wakeup for the targeted session.
 func (d *Daemon) handleWebhook(w http.ResponseWriter, r *http.Request) {
@@ -72,13 +109,7 @@ func (d *Daemon) handleWebhook(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"invalid json"}`, http.StatusBadRequest)
 		return
 	}
-	info := extractGitHubWebhookInfo(r, body)
-	if evt.Type == "" && info.Event != "" {
-		evt.Type = "github." + info.Event
-	}
-	if evt.EventID == "" {
-		evt.EventID = info.Delivery
-	}
+	evt, info := defaultWebhookAdapters.normalize(r, body, evt)
 	if evt.SessionID == "" {
 		sessionID, ok := d.routeWebhookEvent(evt, info)
 		if !ok {
@@ -359,7 +390,7 @@ func webhookPayloadPathFromRef(sessionPath, ref string) (string, bool) {
 	return filepath.Join(filepath.Dir(dir), ref), true
 }
 
-func webhookMatchesWait(wait agent.RuntimeWaitMeta, evt WebhookEvent, info githubWebhookInfo) bool {
+func webhookMatchesWait(wait agent.RuntimeWaitMeta, evt WebhookEvent, info WebhookInfo) bool {
 	if wait.EventSource != "" && !webhookSourceMatches(wait.EventSource, evt, info) {
 		return false
 	}
@@ -375,7 +406,7 @@ func webhookMatchesWait(wait agent.RuntimeWaitMeta, evt WebhookEvent, info githu
 	return true
 }
 
-func webhookWakeupKey(evt WebhookEvent, info githubWebhookInfo) string {
+func webhookWakeupKey(evt WebhookEvent, info WebhookInfo) string {
 	eventType := strings.ToLower(strings.TrimSpace(firstNonEmpty(evt.Type, info.Event)))
 	repo := strings.ToLower(strings.TrimSpace(info.Repo))
 	if eventType == "" || repo == "" {
@@ -397,8 +428,8 @@ func webhookWakeupKey(evt WebhookEvent, info githubWebhookInfo) string {
 	return strings.Join([]string{eventType, repo, target, state}, "|")
 }
 
-func webhookShouldDiagnoseWaitFailure(wait agent.RuntimeWaitMeta, evt WebhookEvent, info githubWebhookInfo) bool {
-	if !strings.EqualFold(wait.EventConclusion, "success") || !isFailureConclusion(info.Conclusion) {
+func webhookShouldDiagnoseWaitFailure(wait agent.RuntimeWaitMeta, evt WebhookEvent, info WebhookInfo) bool {
+	if !strings.EqualFold(wait.EventConclusion, "success") || !info.Failure {
 		return false
 	}
 	if wait.EventSource != "" && !webhookSourceMatches(wait.EventSource, evt, info) {
@@ -422,7 +453,7 @@ func isFailureConclusion(conclusion string) bool {
 	}
 }
 
-func webhookSourceMatches(want string, evt WebhookEvent, info githubWebhookInfo) bool {
+func webhookSourceMatches(want string, evt WebhookEvent, info WebhookInfo) bool {
 	want = strings.TrimSpace(want)
 	if want == "" {
 		return true
@@ -432,8 +463,9 @@ func webhookSourceMatches(want string, evt WebhookEvent, info githubWebhookInfo)
 		"webhook:" + evt.Type,
 		info.Event,
 	}
-	if info.Event != "" {
-		candidates = append(candidates, "github."+info.Event, "webhook:github."+info.Event)
+	if info.Provider != "" && info.Event != "" {
+		providerEvent := info.Provider + "." + info.Event
+		candidates = append(candidates, providerEvent, "webhook:"+providerEvent)
 	}
 	for _, candidate := range candidates {
 		if strings.EqualFold(want, strings.TrimSpace(candidate)) {
@@ -443,7 +475,10 @@ func webhookSourceMatches(want string, evt WebhookEvent, info githubWebhookInfo)
 	return false
 }
 
-type githubWebhookInfo struct {
+// WebhookInfo is the provider-normalized view used for routing, deduplication,
+// wait matching, summaries, and failure semantics.
+type WebhookInfo struct {
+	Provider   string
 	Event      string
 	Delivery   string
 	Action     string
@@ -453,10 +488,30 @@ type githubWebhookInfo struct {
 	Status     string
 	Conclusion string
 	Title      string
+	Failure    bool
+}
+
+type githubWebhookInfo = WebhookInfo
+
+type githubWebhookAdapter struct{}
+
+func (githubWebhookAdapter) Normalize(r *http.Request, body []byte, evt WebhookEvent) (WebhookEvent, WebhookInfo, bool) {
+	info := extractGitHubWebhookInfo(r, body)
+	if info.Event == "" {
+		return evt, info, false
+	}
+	if evt.Type == "" {
+		evt.Type = "github." + info.Event
+	}
+	if evt.EventID == "" {
+		evt.EventID = info.Delivery
+	}
+	return evt, info, true
 }
 
 func extractGitHubWebhookInfo(r *http.Request, body []byte) githubWebhookInfo {
 	info := githubWebhookInfo{
+		Provider: "github",
 		Event:    strings.TrimSpace(r.Header.Get("X-GitHub-Event")),
 		Delivery: strings.TrimSpace(r.Header.Get("X-GitHub-Delivery")),
 	}
@@ -538,10 +593,11 @@ func extractGitHubWebhookInfo(r *http.Request, body []byte) githubWebhookInfo {
 			info.Title = firstNonEmpty(stringField(rel, "name"), stringField(rel, "tag_name"))
 		}
 	}
+	info.Failure = isFailureConclusion(info.Conclusion)
 	return info
 }
 
-func (d *Daemon) routeWebhookEvent(evt WebhookEvent, info githubWebhookInfo) (string, bool) {
+func (d *Daemon) routeWebhookEvent(evt WebhookEvent, info WebhookInfo) (string, bool) {
 	repo := strings.ToLower(strings.TrimSpace(info.Repo))
 	if repo == "" {
 		return "", false
@@ -653,7 +709,7 @@ func textMentionsRef(text, ref string) bool {
 		strings.Contains(text, "/releases/tag/"+ref)
 }
 
-func webhookSummary(evt WebhookEvent, info githubWebhookInfo) string {
+func webhookSummary(evt WebhookEvent, info WebhookInfo) string {
 	parts := []string{"webhook event"}
 	if evt.Type != "" {
 		parts = append(parts, evt.Type)
@@ -682,7 +738,7 @@ func webhookSummary(evt WebhookEvent, info githubWebhookInfo) string {
 	return strings.Join(parts, " ")
 }
 
-func boundedWebhookContext(evt WebhookEvent, info githubWebhookInfo) string {
+func boundedWebhookContext(evt WebhookEvent, info WebhookInfo) string {
 	summary := strings.TrimSpace(evt.Summary)
 	if summary == "" {
 		summary = webhookSummary(evt, info)
@@ -693,7 +749,7 @@ func boundedWebhookContext(evt WebhookEvent, info githubWebhookInfo) string {
 	return summary
 }
 
-func boundedWebhookFailureContext(evt WebhookEvent, info githubWebhookInfo, wait agent.RuntimeWaitMeta) string {
+func boundedWebhookFailureContext(evt WebhookEvent, info WebhookInfo, wait agent.RuntimeWaitMeta) string {
 	summary := boundedWebhookContext(evt, info)
 	prefix := "CI finished without the awaited successful conclusion. Summarize the failure, identify likely next diagnostic steps, and keep waiting for the success condition before release or merge actions."
 	if wait.Subject != "" {

@@ -670,6 +670,121 @@ func TestGitHubWebhookInfoNormalizesPushAndRelease(t *testing.T) {
 	}
 }
 
+func TestWebhookAdapterRegistryNormalizesNonGitHubProvider(t *testing.T) {
+	prev := defaultWebhookAdapters
+	defaultWebhookAdapters = webhookAdapterRegistry{
+		adapters: append([]WebhookAdapter{testWebhookAdapter{}}, prev.adapters...),
+	}
+	t.Cleanup(func() { defaultWebhookAdapters = prev })
+
+	dir := t.TempDir()
+	sess := filepath.Join(dir, "webhook-adapter.jsonl")
+	if err := os.WriteFile(sess, []byte(`{}`), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	if err := agent.SaveRuntimeMeta(sess, agent.RuntimeMeta{
+		SessionID: "webhook-adapter",
+		Goal:      agent.RuntimeGoalMeta{Text: "watch example/repo branch main build", Status: "running"},
+		Run:       agent.RuntimeRunMeta{Status: "waiting_event"},
+		Wait: agent.RuntimeWaitMeta{
+			Kind:            "event",
+			EventSource:     "example.build",
+			EventConclusion: "success",
+			Reason:          "waiting for external build",
+			Subject:         "branch main",
+		},
+		Budget: agent.RuntimeBudgetMeta{
+			DailyWakeupLimit: 2,
+			WindowStartedAt:  budgetWindowStart(time.Now().UTC()),
+		},
+	}); err != nil {
+		t.Fatalf("SaveRuntimeMeta: %v", err)
+	}
+
+	webhookKey := "adapter-registry-key"
+	d := New(Options{
+		SessionDir: dir,
+		Webhook:    &WebhookConfig{Secret: webhookKey, Enabled: true},
+	})
+	d.scanSessions()
+
+	payload := `{"delivery":"adapter-delivery-1","repo":"example/repo","ref":"main","state":"failed","title":"adapter build"}`
+	sig := computeHMAC([]byte(payload), webhookKey)
+	req := httptest.NewRequest("POST", "/webhook", strings.NewReader(payload))
+	req.Header.Set("X-Webhook-Signature", sig)
+	req.Header.Set("X-Test-Webhook", "build")
+	rr := httptest.NewRecorder()
+	d.handleWebhook(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("webhook status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	var resp map[string]any
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp["session_id"] != "webhook-adapter" || resp["status"] != "pending_diagnosis" {
+		t.Fatalf("unexpected adapter response: %+v", resp)
+	}
+	select {
+	case intent := <-d.intentCh:
+		if intent.Source != "webhook" || intent.Reason != "webhook:example.build:failure" || intent.EventID != "adapter-delivery-1" {
+			t.Fatalf("unexpected adapter intent: %+v", intent)
+		}
+		for _, want := range []string{"example build failed", "repo=example/repo", "ref=main"} {
+			if !strings.Contains(intent.Context, want) {
+				t.Fatalf("adapter intent context missing %q:\n%s", want, intent.Context)
+			}
+		}
+	default:
+		t.Fatal("adapter-normalized failure did not enqueue diagnosis intent")
+	}
+	loaded, ok, err := agent.LoadRuntimeMeta(sess)
+	if err != nil || !ok {
+		t.Fatalf("LoadRuntimeMeta: err=%v ok=%v", err, ok)
+	}
+	if loaded.Scheduler.LastWakeupEventID != "adapter-delivery-1" || loaded.Scheduler.LastWakeupKey == "" ||
+		loaded.Budget.DailyWakeups != 1 || loaded.Wait.Kind != "event" {
+		t.Fatalf("adapter wakeup metadata not persisted: scheduler=%+v budget=%+v wait=%+v", loaded.Scheduler, loaded.Budget, loaded.Wait)
+	}
+}
+
+type testWebhookAdapter struct{}
+
+func (testWebhookAdapter) Normalize(r *http.Request, body []byte, evt WebhookEvent) (WebhookEvent, WebhookInfo, bool) {
+	if r.Header.Get("X-Test-Webhook") != "build" {
+		return evt, WebhookInfo{}, false
+	}
+	var payload struct {
+		Delivery string `json:"delivery"`
+		Repo     string `json:"repo"`
+		Ref      string `json:"ref"`
+		State    string `json:"state"`
+		Title    string `json:"title"`
+	}
+	_ = json.Unmarshal(body, &payload)
+	info := WebhookInfo{
+		Provider:   "example",
+		Event:      "build",
+		Delivery:   payload.Delivery,
+		Repo:       payload.Repo,
+		Ref:        payload.Ref,
+		Status:     payload.State,
+		Conclusion: payload.State,
+		Title:      payload.Title,
+		Failure:    payload.State == "failed",
+	}
+	if evt.Type == "" {
+		evt.Type = "example.build"
+	}
+	if evt.EventID == "" {
+		evt.EventID = payload.Delivery
+	}
+	if evt.Summary == "" {
+		evt.Summary = "example build " + payload.State + " repo=" + payload.Repo + " ref=" + payload.Ref
+	}
+	return evt, info, true
+}
+
 func TestWebhookQueuesDiagnosisForWaitEventFailure(t *testing.T) {
 	dir := t.TempDir()
 	sess := filepath.Join(dir, "webhook-wait-conclusion.jsonl")

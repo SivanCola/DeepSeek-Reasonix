@@ -529,10 +529,10 @@ dynamic workflow 或开发者平台，而是先把 Reasonix 从一次性会话�
 
 ### P1：事件与监听能力升级
 
-- [ ] webhook adapter registry。
-  - [ ] 保留通用 envelope。
-  - [ ] GitHub adapter 作为默认内置 adapter。
-  - [ ] 新 provider 通过 adapter 归一化 event id、routing key、summary 和 failure semantics。
+- [x] webhook adapter registry。
+  - [x] 保留通用 envelope。
+  - [x] GitHub adapter 作为默认内置 adapter。
+  - [x] 新 provider 通过 adapter 归一化 event id、routing key、summary 和 failure semantics。
   - 验收：新增 provider 不需要改 daemon 核心 worker / scheduler。
 - [ ] 文件监听从 polling 升级为 hybrid watcher。
   - [ ] 优先使用原生文件事件库。
