@@ -182,6 +182,28 @@ func (d *Daemon) executeIntent(parent context.Context, intent RunIntent) {
 		})
 		return
 	}
+	if ok, reason := d.checkScopeModelBudgetLocked(entry, firstNonEmpty(intent.Source, intent.Reason, "daemon"), now); !ok {
+		entry.Runtime.Run.Status = agent.RunStatusIdle
+		entry.Runtime.Run.LastError = reason
+		entry.Runtime.Scheduler.LastWakeupReason = "budget_blocked:model"
+		runtime := entry.Runtime
+		path := entry.Path
+		d.mu.Unlock()
+		if err := saveRuntimeMeta(path, runtime); err != nil {
+			d.logger.Warn("daemon: persist scope model budget block", "session", intent.SessionID, "err", err)
+		}
+		d.appendTimeline(path, agent.RuntimeTimelineEvent{
+			Type:       "model_budget_blocked",
+			Source:     firstNonEmpty(intent.Source, "daemon"),
+			Reason:     reason,
+			EventID:    intent.EventID,
+			Step:       "deterministic",
+			RunStatus:  runtime.Run.Status,
+			GoalStatus: runtime.Goal.Status,
+			Message:    reason,
+		})
+		return
+	}
 	entryCopy := *entry
 	ctx, cancel := context.WithCancel(parent)
 	active := &ActiveRun{

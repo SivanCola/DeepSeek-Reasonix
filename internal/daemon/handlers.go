@@ -209,6 +209,16 @@ func (d *Daemon) handleApprovals(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(ApprovalDeskResponse{Items: items})
 }
 
+func (d *Daemon) handleBudgets(w http.ResponseWriter, r *http.Request) {
+	views, err := d.budgetAggregates(time.Now().UTC())
+	if err != nil {
+		http.Error(w, fmt.Sprintf(`{"error":"load budgets failed: %s"}`, err), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(BudgetAggregatesResponse{Budgets: views})
+}
+
 func (d *Daemon) approvalDeskItems() []ApprovalDeskItem {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
@@ -628,6 +638,8 @@ func sameWorkspaceRoot(a, b string) bool {
 func (d *Daemon) handleBudget(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		SessionID           string   `json:"session_id"`
+		Scope               string   `json:"scope"`
+		WorkspaceRoot       string   `json:"workspace_root"`
 		DailyWakeupLimit    *int     `json:"daily_wakeup_limit"`
 		MaxGoalAutoTurns    *int     `json:"max_goal_auto_turns"`
 		DailyModelCallLimit *int     `json:"daily_model_call_limit"`
@@ -638,8 +650,23 @@ func (d *Daemon) handleBudget(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"invalid json"}`, http.StatusBadRequest)
 		return
 	}
-	if req.SessionID == "" {
-		http.Error(w, `{"error":"session_id required"}`, http.StatusBadRequest)
+	req.SessionID = strings.TrimSpace(req.SessionID)
+	req.Scope = strings.TrimSpace(req.Scope)
+	req.WorkspaceRoot = strings.TrimSpace(req.WorkspaceRoot)
+	if req.SessionID == "" && req.Scope == "" {
+		http.Error(w, `{"error":"session_id or scope required"}`, http.StatusBadRequest)
+		return
+	}
+	if req.SessionID != "" && req.Scope != "" {
+		http.Error(w, `{"error":"session_id and scope are mutually exclusive"}`, http.StatusBadRequest)
+		return
+	}
+	if req.Scope != "" && req.Scope != "global" && req.Scope != "project" {
+		http.Error(w, `{"error":"scope must be global or project"}`, http.StatusBadRequest)
+		return
+	}
+	if req.Scope == "project" && req.WorkspaceRoot == "" {
+		http.Error(w, `{"error":"workspace_root required for project scope"}`, http.StatusBadRequest)
 		return
 	}
 	if req.DailyWakeupLimit != nil && *req.DailyWakeupLimit < 0 {
@@ -656,6 +683,10 @@ func (d *Daemon) handleBudget(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.DailyModelCostLimit != nil && *req.DailyModelCostLimit < 0 {
 		http.Error(w, `{"error":"daily_model_cost_limit must be >= 0"}`, http.StatusBadRequest)
+		return
+	}
+	if req.Scope != "" {
+		d.handleScopeBudget(w, req.Scope, req.WorkspaceRoot, req.DailyWakeupLimit, req.MaxGoalAutoTurns, req.DailyModelCallLimit, req.DailyModelCostLimit, req.Reset)
 		return
 	}
 
@@ -730,6 +761,88 @@ func (d *Daemon) handleBudget(w http.ResponseWriter, r *http.Request) {
 		"daily_model_cost":       runtime.Budget.DailyModelCost,
 		"model_cost_currency":    runtime.Budget.ModelCostCurrency,
 		"window_started_at":      runtime.Budget.WindowStartedAt.Format(time.RFC3339),
+	}
+	json.NewEncoder(w).Encode(resp)
+}
+
+func (d *Daemon) handleScopeBudget(w http.ResponseWriter, scope, workspaceRoot string, dailyWakeupLimit, maxGoalAutoTurns, dailyModelCallLimit *int, dailyModelCostLimit *float64, reset bool) {
+	if dailyWakeupLimit != nil || maxGoalAutoTurns != nil {
+		http.Error(w, `{"error":"scope budgets support daily_model_call_limit and daily_model_cost_limit only"}`, http.StatusBadRequest)
+		return
+	}
+	if dailyModelCallLimit == nil && dailyModelCostLimit == nil && !reset {
+		http.Error(w, `{"error":"daily_model_call_limit, daily_model_cost_limit, or reset required"}`, http.StatusBadRequest)
+		return
+	}
+	cfg, err := d.loadScopeBudgetConfig()
+	if err != nil {
+		http.Error(w, fmt.Sprintf(`{"error":"load budgets failed: %s"}`, err), http.StatusInternalServerError)
+		return
+	}
+	quota := ScopeBudgetQuota{Scope: scope, WorkspaceRoot: workspaceRoot}
+	for _, existing := range cfg.Quotas {
+		existing = normalizeScopeBudgetQuota(existing)
+		if existing.Scope == scope && sameWorkspaceRoot(existing.WorkspaceRoot, workspaceRoot) {
+			quota = existing
+			break
+		}
+	}
+	if dailyModelCallLimit != nil {
+		quota.DailyModelCallLimit = *dailyModelCallLimit
+	}
+	if dailyModelCostLimit != nil {
+		quota.DailyModelCostLimit = *dailyModelCostLimit
+	}
+	upsertScopeBudgetQuota(&cfg, quota)
+	if err := d.saveScopeBudgetConfig(cfg); err != nil {
+		http.Error(w, fmt.Sprintf(`{"error":"save budgets failed: %s"}`, err), http.StatusInternalServerError)
+		return
+	}
+
+	now := time.Now().UTC()
+	var snapshots []SessionEntry
+	if reset {
+		d.mu.Lock()
+		for _, entry := range d.registry {
+			if !entryMatchesAggregate(entry, scope, workspaceRoot) {
+				continue
+			}
+			entry.Runtime.Budget.DailyModelCalls = 0
+			entry.Runtime.Budget.DailyModelCost = 0
+			entry.Runtime.Budget.ModelCostCurrency = ""
+			entry.Runtime.Budget.WindowStartedAt = budgetWindowStart(now)
+			entry.Runtime.Budget.LastBlockedAt = time.Time{}
+			entry.Runtime.Budget.LastBlockedReason = ""
+			snapshots = append(snapshots, *entry)
+		}
+		d.mu.Unlock()
+		for _, entry := range snapshots {
+			if err := agent.SaveRuntimeMeta(entry.Path, entry.Runtime); err != nil {
+				http.Error(w, fmt.Sprintf(`{"error":"save failed: %s"}`, err), http.StatusInternalServerError)
+				return
+			}
+		}
+	}
+	views, err := d.budgetAggregates(now)
+	if err != nil {
+		http.Error(w, fmt.Sprintf(`{"error":"load budgets failed: %s"}`, err), http.StatusInternalServerError)
+		return
+	}
+	var selected BudgetAggregateView
+	for _, view := range views {
+		if view.Scope == scope && sameWorkspaceRoot(view.WorkspaceRoot, workspaceRoot) {
+			selected = view
+			break
+		}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	resp := map[string]interface{}{
+		"ok":             true,
+		"scope":          selected.Scope,
+		"workspace_root": selected.WorkspaceRoot,
+		"session_count":  selected.SessionCount,
+		"reset":          reset,
+		"budget":         selected,
 	}
 	json.NewEncoder(w).Encode(resp)
 }

@@ -248,6 +248,7 @@ func (d *Daemon) Start(ctx context.Context) error {
 	mux.HandleFunc("GET /sessions", d.withAuth(d.handleSessions))
 	mux.HandleFunc("GET /timeline", d.withAuth(d.handleTimeline))
 	mux.HandleFunc("GET /approvals", d.withAuth(d.handleApprovals))
+	mux.HandleFunc("GET /budgets", d.withAuth(d.handleBudgets))
 	mux.HandleFunc("POST /continue-goal", d.withAuth(d.handleContinueGoal))
 	mux.HandleFunc("POST /stop", d.withAuth(d.handleStop))
 	mux.HandleFunc("POST /schedule", d.withAuth(d.handleSchedule))

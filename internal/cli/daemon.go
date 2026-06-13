@@ -60,6 +60,8 @@ func daemonCommand(args []string) int {
 		return daemonDisableScheduleCmd(rest)
 	case "budget":
 		return daemonBudgetCmd(rest)
+	case "budgets":
+		return daemonBudgetsCmd(rest)
 	case "daily-triage":
 		return daemonDailyTriageCmd(rest)
 	case "ci-watch":
@@ -851,6 +853,8 @@ func daemonBudgetCmd(args []string) int {
 	addr := fs.String("addr", daemon.DefaultAddr, "daemon 地址")
 	dir := fs.String("dir", "", "会话目录（用于读取本地 token）")
 	sessionID := fs.String("session", "", "要配置预算的 session ID")
+	scope := fs.String("scope", "", "要配置聚合预算的范围：global 或 project")
+	workspaceRoot := fs.String("workspace-root", "", "project 聚合预算的工作区路径")
 	dailyWakeups := fs.Int("daily-wakeups", -1, "每日自动唤醒次数上限，0 表示关闭限制")
 	maxGoalAutoTurns := fs.Int("max-goal-auto-turns", -1, "每个 goal 最大自动续跑轮次，0 表示使用内置默认值")
 	dailyModelCalls := fs.Int("daily-model-calls", -1, "每日模型调用次数上限，0 表示关闭限制")
@@ -859,8 +863,23 @@ func daemonBudgetCmd(args []string) int {
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
-	if *sessionID == "" {
-		fmt.Fprintln(os.Stderr, "error: --session is required")
+	*sessionID = strings.TrimSpace(*sessionID)
+	*scope = strings.TrimSpace(*scope)
+	*workspaceRoot = strings.TrimSpace(*workspaceRoot)
+	if *sessionID == "" && *scope == "" {
+		fmt.Fprintln(os.Stderr, "error: --session or --scope is required")
+		return 2
+	}
+	if *sessionID != "" && *scope != "" {
+		fmt.Fprintln(os.Stderr, "error: --session and --scope are mutually exclusive")
+		return 2
+	}
+	if *scope != "" && *scope != "global" && *scope != "project" {
+		fmt.Fprintln(os.Stderr, "error: --scope must be global or project")
+		return 2
+	}
+	if *scope == "project" && *workspaceRoot == "" {
+		fmt.Fprintln(os.Stderr, "error: --workspace-root is required for project scope")
 		return 2
 	}
 	if *dailyWakeups < 0 && *maxGoalAutoTurns < 0 && *dailyModelCalls < 0 && *dailyModelCost < 0 && !*reset {
@@ -883,24 +902,40 @@ func daemonBudgetCmd(args []string) int {
 		fmt.Fprintln(os.Stderr, "error: --daily-model-cost must be >= 0")
 		return 2
 	}
-	body := fmt.Sprintf(`{"session_id":%q`, *sessionID)
+	if *scope != "" && (*dailyWakeups >= 0 || *maxGoalAutoTurns >= 0) {
+		fmt.Fprintln(os.Stderr, "error: scope budgets support --daily-model-calls and --daily-model-cost only")
+		return 2
+	}
+	payload := map[string]interface{}{}
+	if *sessionID != "" {
+		payload["session_id"] = *sessionID
+	} else {
+		payload["scope"] = *scope
+		if *workspaceRoot != "" {
+			payload["workspace_root"] = *workspaceRoot
+		}
+	}
 	if *dailyWakeups >= 0 {
-		body += fmt.Sprintf(`,"daily_wakeup_limit":%d`, *dailyWakeups)
+		payload["daily_wakeup_limit"] = *dailyWakeups
 	}
 	if *maxGoalAutoTurns >= 0 {
-		body += fmt.Sprintf(`,"max_goal_auto_turns":%d`, *maxGoalAutoTurns)
+		payload["max_goal_auto_turns"] = *maxGoalAutoTurns
 	}
 	if *dailyModelCalls >= 0 {
-		body += fmt.Sprintf(`,"daily_model_call_limit":%d`, *dailyModelCalls)
+		payload["daily_model_call_limit"] = *dailyModelCalls
 	}
 	if *dailyModelCost >= 0 {
-		body += fmt.Sprintf(`,"daily_model_cost_limit":%g`, *dailyModelCost)
+		payload["daily_model_cost_limit"] = *dailyModelCost
 	}
 	if *reset {
-		body += `,"reset":true`
+		payload["reset"] = true
 	}
-	body += "}"
-	resp, err := daemonPost(*addr, *dir, "/budget", body)
+	bodyBytes, err := json.Marshal(payload)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	resp, err := daemonPost(*addr, *dir, "/budget", string(bodyBytes))
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "daemon not reachable: %v\n", err)
 		return 1
@@ -912,6 +947,35 @@ func daemonBudgetCmd(args []string) int {
 		return 1
 	}
 	fmt.Println(string(b))
+	return 0
+}
+
+func daemonBudgetsCmd(args []string) int {
+	fs := flag.NewFlagSet("daemon budgets", flag.ContinueOnError)
+	addr := fs.String("addr", daemon.DefaultAddr, "daemon 地址")
+	dir := fs.String("dir", "", "会话目录（用于读取本地 token）")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	resp, err := daemonGet(*addr, *dir, "/budgets")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "daemon not reachable: %v\n", err)
+		return 1
+	}
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 200 {
+		fmt.Fprintf(os.Stderr, "error: %s\n", string(b))
+		return 1
+	}
+	var out daemon.BudgetAggregatesResponse
+	if err := json.Unmarshal(b, &out); err != nil {
+		fmt.Fprintf(os.Stderr, "invalid response: %v\n", err)
+		return 1
+	}
+	enc := json.NewEncoder(os.Stdout)
+	enc.SetIndent("", "  ")
+	enc.Encode(out)
 	return 0
 }
 
@@ -1595,9 +1659,10 @@ Usage:
   reasonix daemon approvals [--addr HOST:PORT] [--dir PATH] [--json]
   reasonix daemon timeline --session ID [--limit N] [--json]
   reasonix daemon continue --session ID [--addr HOST:PORT] [--dir PATH]
-  reasonix daemon schedule (--session ID | --scope global|project [--workspace-root PATH]) [--daily-at HH:MM] [--timezone Area/City] [--interval 1h]
-  reasonix daemon disable-schedule (--session ID | --scope global|project [--workspace-root PATH])
-  reasonix daemon budget   --session ID [--daily-wakeups N] [--max-goal-auto-turns N] [--daily-model-calls N] [--daily-model-cost N] [--reset]
+	reasonix daemon schedule (--session ID | --scope global|project [--workspace-root PATH]) [--daily-at HH:MM] [--timezone Area/City] [--interval 1h]
+	reasonix daemon disable-schedule (--session ID | --scope global|project [--workspace-root PATH])
+  reasonix daemon budget   (--session ID | --scope global|project [--workspace-root PATH]) [--daily-wakeups N] [--max-goal-auto-turns N] [--daily-model-calls N] [--daily-model-cost N] [--reset]
+  reasonix daemon budgets  [--addr HOST:PORT] [--dir PATH]
   reasonix daemon daily-triage --session ID [--daily-at HH:MM] [--timezone Area/City] [--daily-wakeups N]
   reasonix daemon ci-watch --session ID [--source workflow_run|check_suite|status] [--repo owner/repo] [--pr N]
   reasonix daemon release-assist --session ID [--paths CHANGELOG.md,package.json] [--debounce 3s]
@@ -1623,7 +1688,8 @@ Subcommands:
   continue   显式唤醒并继续指定 goal
   schedule   设置 daily/interval 定时唤醒和 daily 时区
   disable-schedule 关闭 session/project/global 调度但保留配置
-  budget     设置自动唤醒、模型调用、模型费用和 goal 自动续跑预算
+  budget     设置自动唤醒、模型调用、模型费用、goal 自动续跑或 project/global 聚合预算
+  budgets    查看 project/global 聚合预算视图
   daily-triage 配置每日 PR / issue triage 场景
   ci-watch   配置“等 GitHub CI 成功后继续”的个人 AgentOS 场景
   release-assist 配置发布文件变化后检查 changelog / version 的发布助手场景

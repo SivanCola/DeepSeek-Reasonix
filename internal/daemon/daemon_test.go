@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
@@ -872,6 +873,86 @@ func TestDaemonBudgetHandlerPersistsConfig(t *testing.T) {
 		!strings.Contains(events[0].Message, "daily_model_cost_limit=1.250000") {
 		t.Fatalf("budget timeline missing auto-turn cap: %+v", events[0])
 	}
+}
+
+func TestDaemonBudgetHandlerConfiguresProjectAggregateQuota(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, "workspace")
+	now := time.Now().UTC()
+	writeBudgetAggregateSession(t, dir, root, "project-budget-a", 1, 0.25, now)
+	writeBudgetAggregateSession(t, dir, root, "project-budget-b", 1, 0.50, now)
+	writeBudgetAggregateSession(t, dir, "", "global-budget-a", 1, 0.75, now)
+
+	d := New(Options{SessionDir: dir})
+	d.scanSessions()
+	body := fmt.Sprintf(`{"scope":"project","workspace_root":%q,"daily_model_call_limit":3,"daily_model_cost_limit":2.5}`, root)
+	req := httptest.NewRequest("POST", "/budget", strings.NewReader(body))
+	rr := httptest.NewRecorder()
+	d.handleBudget(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("project budget status = %d body=%s", rr.Code, rr.Body.String())
+	}
+
+	req = httptest.NewRequest("GET", "/budgets", nil)
+	rr = httptest.NewRecorder()
+	d.handleBudgets(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("budgets status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	var resp BudgetAggregatesResponse
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode budgets: %v", err)
+	}
+	var project, global *BudgetAggregateView
+	for i := range resp.Budgets {
+		view := &resp.Budgets[i]
+		if view.Scope == "project" && sameWorkspaceRoot(view.WorkspaceRoot, root) {
+			project = view
+		}
+		if view.Scope == "global" {
+			global = view
+		}
+	}
+	if project == nil {
+		t.Fatalf("project aggregate missing: %+v", resp.Budgets)
+	}
+	if project.SessionCount != 2 || project.DailyModelCalls != 2 || project.DailyModelCallLimit != 3 ||
+		project.DailyModelCost != 0.75 || project.DailyModelCostLimit != 2.5 || project.Blocked {
+		t.Fatalf("unexpected project aggregate: %+v", project)
+	}
+	if global == nil || global.SessionCount != 3 || global.DailyModelCalls != 3 {
+		t.Fatalf("unexpected global aggregate: %+v", global)
+	}
+}
+
+func writeBudgetAggregateSession(t *testing.T, dir, workspaceRoot, id string, calls int, cost float64, now time.Time) string {
+	t.Helper()
+	path := filepath.Join(dir, id+".jsonl")
+	if err := os.WriteFile(path, []byte(`{"role":"user","content":"start"}`+"\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile %s: %v", id, err)
+	}
+	if err := agent.SaveRuntimeMeta(path, agent.RuntimeMeta{
+		SessionID:     id,
+		WorkspaceRoot: workspaceRoot,
+		Goal:          agent.RuntimeGoalMeta{Text: "budget aggregate", Status: control.GoalStatusRunning},
+		Run:           agent.RuntimeRunMeta{Status: agent.RunStatusIdle},
+		Budget: agent.RuntimeBudgetMeta{
+			DailyModelCalls:   calls,
+			DailyModelCost:    cost,
+			ModelCostCurrency: "$",
+			WindowStartedAt:   budgetWindowStart(now),
+		},
+	}); err != nil {
+		t.Fatalf("SaveRuntimeMeta %s: %v", id, err)
+	}
+	scope := "global"
+	if workspaceRoot != "" {
+		scope = "project"
+	}
+	if err := agent.SaveBranchMeta(path, agent.BranchMeta{Scope: scope, WorkspaceRoot: workspaceRoot}); err != nil {
+		t.Fatalf("SaveBranchMeta %s: %v", id, err)
+	}
+	return path
 }
 
 func TestDaemonWaitEventHandlerPersistsConfig(t *testing.T) {
@@ -1779,6 +1860,78 @@ func TestDaemonExecuteIntentBlocksWhenModelCallBudgetExhausted(t *testing.T) {
 	}
 	if !blocked {
 		t.Fatalf("missing model budget block timeline event: %+v", events)
+	}
+}
+
+func TestDaemonExecuteIntentBlocksWhenProjectModelCallBudgetExhausted(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, "workspace")
+	now := time.Now().UTC()
+	writeBudgetAggregateSession(t, dir, root, "project-budget-used", 1, 0, now)
+	targetPath := writeBudgetAggregateSession(t, dir, root, "project-budget-target", 0, 0, now)
+
+	prov := &daemonScriptedProvider{}
+	d := New(Options{
+		SessionDir: dir,
+		ControllerFactory: func(ctx context.Context, d *Daemon, entry *SessionEntry, sink event.Sink) (*control.Controller, error) {
+			loaded, err := agent.LoadSession(entry.Path)
+			if err != nil {
+				return nil, err
+			}
+			ag := agent.New(prov, tool.NewRegistry(), loaded, agent.Options{}, sink)
+			c := control.New(control.Options{
+				Runner:      ag,
+				Executor:    ag,
+				SessionPath: entry.Path,
+				SessionDir:  dir,
+				Sink:        sink,
+			})
+			c.Resume(loaded, entry.Path)
+			return c, nil
+		},
+	})
+	if err := d.saveScopeBudgetConfig(ScopeBudgetConfig{Quotas: []ScopeBudgetQuota{{
+		Scope:               "project",
+		WorkspaceRoot:       root,
+		DailyModelCallLimit: 1,
+	}}}); err != nil {
+		t.Fatalf("saveScopeBudgetConfig: %v", err)
+	}
+	d.scanSessions()
+	d.executeIntent(context.Background(), RunIntent{SessionID: "project-budget-target", Source: "cron", Reason: "cron"})
+
+	if prov.calls != 0 {
+		t.Fatalf("provider should not be called after project budget is exhausted, got %d call(s)", prov.calls)
+	}
+	loaded, ok, err := agent.LoadRuntimeMeta(targetPath)
+	if err != nil || !ok {
+		t.Fatalf("LoadRuntimeMeta: err=%v ok=%v", err, ok)
+	}
+	if loaded.Run.Status != agent.RunStatusIdle || loaded.Scheduler.LastWakeupReason != "budget_blocked:model" {
+		t.Fatalf("project model budget block not persisted: run=%+v scheduler=%+v", loaded.Run, loaded.Scheduler)
+	}
+	if !strings.Contains(loaded.Budget.LastBlockedReason, "project") ||
+		!strings.Contains(loaded.Budget.LastBlockedReason, "daily model call budget exhausted") {
+		t.Fatalf("missing project budget block reason: %+v", loaded.Budget)
+	}
+	events, ok, err := agent.LoadRuntimeTimeline(targetPath, 0)
+	if err != nil || !ok {
+		t.Fatalf("LoadRuntimeTimeline: err=%v ok=%v", err, ok)
+	}
+	var blocked bool
+	for _, event := range events {
+		if event.Type == "model_budget_blocked" {
+			blocked = true
+			if event.Step != "deterministic" || event.Source != "cron" || !strings.Contains(event.Reason, "project") {
+				t.Fatalf("unexpected project budget timeline event: %+v", event)
+			}
+		}
+		if event.Type == "model_usage" {
+			t.Fatalf("blocked intent should not record model usage: %+v", event)
+		}
+	}
+	if !blocked {
+		t.Fatalf("missing project model budget block timeline event: %+v", events)
 	}
 }
 

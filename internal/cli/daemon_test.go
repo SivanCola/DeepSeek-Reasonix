@@ -646,6 +646,63 @@ func TestDaemonDailyTriageCommandConfiguresScheduleAndBudget(t *testing.T) {
 	}
 }
 
+func TestDaemonBudgetCommandConfiguresProjectAggregateQuota(t *testing.T) {
+	var payload map[string]interface{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/budget" {
+			t.Fatalf("path = %q, want /budget", r.URL.Path)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer server.Close()
+	addr := strings.TrimPrefix(server.URL, "http://")
+
+	_ = captureStdout(t, func() {
+		if rc := daemonBudgetCmd([]string{
+			"--addr", addr,
+			"--scope", "project",
+			"--workspace-root", "/repo",
+			"--daily-model-calls", "3",
+			"--daily-model-cost", "1.5",
+		}); rc != 0 {
+			t.Fatalf("daemonBudgetCmd project scope rc = %d, want 0", rc)
+		}
+	})
+
+	if payload["scope"] != "project" || payload["workspace_root"] != "/repo" ||
+		payload["daily_model_call_limit"] != float64(3) || payload["daily_model_cost_limit"] != 1.5 {
+		t.Fatalf("unexpected project budget payload: %+v", payload)
+	}
+	if _, ok := payload["session_id"]; ok {
+		t.Fatalf("scope budget should not include session_id: %+v", payload)
+	}
+}
+
+func TestDaemonBudgetsCommandPrintsAggregateJSON(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/budgets" {
+			t.Fatalf("path = %q, want /budgets", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"budgets":[{"scope":"global","session_count":2,"daily_model_call_limit":3,"daily_model_calls":1}]}`))
+	}))
+	defer server.Close()
+	addr := strings.TrimPrefix(server.URL, "http://")
+
+	out := captureStdout(t, func() {
+		if rc := daemonBudgetsCmd([]string{"--addr", addr}); rc != 0 {
+			t.Fatalf("daemonBudgetsCmd rc = %d, want 0", rc)
+		}
+	})
+	if !strings.Contains(out, `"scope": "global"`) || !strings.Contains(out, `"daily_model_calls": 1`) {
+		t.Fatalf("budgets output = %q", out)
+	}
+}
+
 func TestDaemonDailyTriageCommandCanSkipBudget(t *testing.T) {
 	var paths []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

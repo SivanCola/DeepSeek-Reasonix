@@ -542,10 +542,10 @@ dynamic workflow 或开发者平台，而是先把 Reasonix 从一次性会话�
 
 ### P2：跨 Session 策略
 
-- [ ] project / global 聚合预算。
-  - [ ] 保持 session runtime 预算为最小账本。
-  - [ ] 增加 project / global aggregate quota 视图。
-  - [ ] 支持“本项目今天最多 N 次自动模型调用”。
+- [x] project / global 聚合预算。
+  - [x] 保持 session runtime 预算为最小账本。
+  - [x] 增加 project / global aggregate quota 视图。
+  - [x] 支持“本项目今天最多 N 次自动模型调用”。
   - 验收：多个常驻 session 不会绕过用户设置的项目级成本上限。
 - [ ] 个人 AgentOS 场景模板库。
   - [ ] 把 daily triage、CI watcher、release assistant、repo health 抽成可复制模板。
