@@ -228,15 +228,15 @@ dynamic workflow 或开发者平台，而是先把 Reasonix 从一次性会话�
   - [x] session 是否仍 active。
   - [x] goal 是否 complete / blocked。
   - [x] 是否已有 run 正在执行。
-  - [ ] 是否超过每日预算。
-- [ ] 增加去重。
-  - 同一 schedule 在同一窗口只触发一次。
-  - daemon 重启后不会补跑重复任务。
+  - [x] 是否超过每日预算。
+- [x] 增加去重。
+  - [x] 同一 schedule 在同一窗口只触发一次。
+  - [x] daemon 重启后不会补跑重复任务。
 - [ ] 增加测试。
-  - daily schedule 计算 next run。
+  - [x] daily schedule 计算 next run。
   - timezone 正确。
-  - missed wakeup 不重复风暴。
-  - running session 不并发触发。
+  - [x] missed wakeup 不重复风暴。
+  - [x] running session 不并发触发。
 
 ### 验收标准
 

@@ -91,7 +91,7 @@ func (s *Scheduler) tick() {
 //  2. Goal is active (running or blocked)
 //  3. Run is not already in-flight (not running, not pending_continue)
 //  4. NextWakeupAt has passed
-//  5. No duplicate event (LastWakeupEventID check)
+//  5. No duplicate schedule window (LastWakeupEventID/LastWakeupKey check)
 func (s *Scheduler) shouldWakeup(entry *SessionEntry, now time.Time) bool {
 	return s.shouldWakeupRuntime(entry.ID, entry.Runtime, now)
 }
@@ -114,21 +114,16 @@ func (s *Scheduler) shouldWakeupRuntime(id string, runtime agent.RuntimeMeta, no
 		return false
 	}
 
-	// NextWakeupAt must be set and in the past.
-	if sched.NextWakeupAt.IsZero() {
-		// Compute the next wakeup from configuration.
-		next := s.computeNextWakeup(sched, now)
-		if next.IsZero() || next.After(now) {
-			return false
-		}
-		// Falls through to fire.
-	} else if sched.NextWakeupAt.After(now) {
+	due := s.dueTime(sched, now)
+	if due.IsZero() {
 		return false
 	}
 
-	// Dedup: don't fire the same event twice.
-	eventID := s.eventIDFor(id, sched, now)
-	if eventID == sched.LastWakeupEventID {
+	// Dedup: don't fire the same schedule window twice, even if the daemon
+	// restarts or the tick arrives late in the same window.
+	eventID := s.eventIDFor(id, sched, due)
+	key := s.wakeupKeyFor(id, sched, due)
+	if eventID == sched.LastWakeupEventID || (key != "" && key == sched.LastWakeupKey) {
 		return false
 	}
 
@@ -148,12 +143,19 @@ func (s *Scheduler) wakeupSession(id string, now time.Time) {
 		return
 	}
 
-	eventID := s.eventID(entry, now)
+	due := s.dueTime(entry.Runtime.Scheduler, now)
+	if due.IsZero() {
+		s.daemon.mu.Unlock()
+		return
+	}
+	eventID := s.eventIDFor(entry.ID, entry.Runtime.Scheduler, due)
+	wakeupKey := s.wakeupKeyFor(entry.ID, entry.Runtime.Scheduler, due)
 	s.logger.Info("scheduler wakeup", "session", entry.ID, "event", eventID)
 	if ok, reason := reserveAutoWakeupBudget(&entry.Runtime, "cron", now); !ok {
 		entry.Runtime.Scheduler.LastWakeupAt = now
 		entry.Runtime.Scheduler.LastWakeupReason = "budget_blocked:cron"
 		entry.Runtime.Scheduler.LastWakeupEventID = eventID
+		entry.Runtime.Scheduler.LastWakeupKey = wakeupKey
 		entry.Runtime.Scheduler.NextWakeupAt = s.computeNextWakeup(entry.Runtime.Scheduler, now)
 		runtime := entry.Runtime
 		path := entry.Path
@@ -176,6 +178,7 @@ func (s *Scheduler) wakeupSession(id string, now time.Time) {
 	entry.Runtime.Scheduler.LastWakeupAt = now
 	entry.Runtime.Scheduler.LastWakeupReason = "cron"
 	entry.Runtime.Scheduler.LastWakeupEventID = eventID
+	entry.Runtime.Scheduler.LastWakeupKey = wakeupKey
 	entry.Runtime.Run.Status = "pending_continue"
 	entry.Runtime.Run.LastWakeupReason = "cron"
 	entry.Runtime.Run.ResumeCount++
@@ -198,6 +201,20 @@ func (s *Scheduler) wakeupSession(id string, now time.Time) {
 		Reason:      "cron",
 		EventID:     eventID,
 	})
+}
+
+func (s *Scheduler) dueTime(sched agent.RuntimeSchedMeta, now time.Time) time.Time {
+	if !sched.NextWakeupAt.IsZero() {
+		if sched.NextWakeupAt.After(now) {
+			return time.Time{}
+		}
+		return sched.NextWakeupAt
+	}
+	next := s.computeNextWakeup(sched, now)
+	if next.IsZero() || next.After(now) {
+		return time.Time{}
+	}
+	return next
 }
 
 // computeNextWakeup determines when the next wakeup should fire based on the
@@ -226,7 +243,7 @@ func (s *Scheduler) computeNextWakeup(sched agent.RuntimeSchedMeta, after time.T
 
 // eventID generates a dedup key for a wakeup event.
 func (s *Scheduler) eventID(entry *SessionEntry, t time.Time) string {
-	// Use session + truncated timestamp as a simple dedup key.
+	// Use session + schedule-window timestamp as a simple dedup key.
 	// For daily: round to the day. For interval: round to the interval.
 	return s.eventIDFor(entry.ID, entry.Runtime.Scheduler, t)
 }
@@ -244,6 +261,13 @@ func (s *Scheduler) eventIDFor(id string, sched agent.RuntimeSchedMeta, t time.T
 		return fmt.Sprintf("interval:%s:%d", id, epoch)
 	}
 	return fmt.Sprintf("manual:%s:%d", id, t.Unix())
+}
+
+func (s *Scheduler) wakeupKeyFor(id string, sched agent.RuntimeSchedMeta, due time.Time) string {
+	if due.IsZero() {
+		return ""
+	}
+	return "schedule:" + s.eventIDFor(id, sched, due)
 }
 
 // nextDailyTime parses "HH:MM" and returns the next occurrence after `after`

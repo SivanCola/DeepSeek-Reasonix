@@ -225,6 +225,9 @@ func TestSchedulerWakeupPersists(t *testing.T) {
 	if rt.Scheduler.LastWakeupReason != "cron" {
 		t.Errorf("LastWakeupReason = %q, want cron", rt.Scheduler.LastWakeupReason)
 	}
+	if rt.Scheduler.LastWakeupKey == "" {
+		t.Fatalf("LastWakeupKey should be set after wakeup: %+v", rt.Scheduler)
+	}
 	if rt.Scheduler.NextWakeupAt.IsZero() {
 		t.Error("NextWakeupAt should be set after wakeup")
 	}
@@ -382,5 +385,41 @@ func TestSchedulerDedupPreventsDoubleFire(t *testing.T) {
 	// Second check with same time window should NOT fire (dedup).
 	if s.shouldWakeup(entry, now) {
 		t.Fatal("second shouldWakeup should return false (dedup)")
+	}
+}
+
+func TestSchedulerDedupUsesDueWindowForLateTicks(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	d := New(Options{SessionDir: t.TempDir()})
+	s := NewScheduler(d, logger)
+
+	due := time.Date(2026, 6, 13, 10, 0, 0, 0, time.UTC)
+	now := due.Add(59 * time.Minute)
+	sched := agent.RuntimeSchedMeta{
+		Enabled:      true,
+		Interval:     time.Hour,
+		NextWakeupAt: due,
+	}
+	windowEvent := s.eventIDFor("late-window", sched, due)
+	windowKey := s.wakeupKeyFor("late-window", sched, due)
+
+	runtime := agent.RuntimeMeta{
+		Goal: agent.RuntimeGoalMeta{Status: "running"},
+		Run:  agent.RuntimeRunMeta{Status: "idle"},
+		Scheduler: agent.RuntimeSchedMeta{
+			Enabled:           true,
+			Interval:          time.Hour,
+			NextWakeupAt:      due,
+			LastWakeupEventID: windowEvent,
+		},
+	}
+	if s.shouldWakeupRuntime("late-window", runtime, now) {
+		t.Fatal("same due window should not wake again when tick arrives late")
+	}
+
+	runtime.Scheduler.LastWakeupEventID = ""
+	runtime.Scheduler.LastWakeupKey = windowKey
+	if s.shouldWakeupRuntime("late-window", runtime, now) {
+		t.Fatal("same due window should also dedupe by LastWakeupKey")
 	}
 }
