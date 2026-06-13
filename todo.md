@@ -402,8 +402,15 @@ dynamic workflow 或开发者平台，而是先把 Reasonix 从一次性会话�
 
 ## 风险清单
 
-- [ ] Cache 风险：把动态状态写进稳定 prompt prefix。
-  - 缓解：状态写 sidecar，唤醒时作为普通 turn 输入。
+- [x] Cache 风险：把动态状态写进稳定 prompt prefix。
+  - [x] 缓解：goal/run/wait/scheduler/file-watch/budget 动态状态写入
+    `.runtime.json` sidecar，不进入 system prompt、tool schema 或稳定 prefix。
+  - [x] 缓解：cron / webhook / file wait 唤醒时只把 bounded wakeup context
+    注入普通 goal continuation user turn。
+  - [x] 缓解：webhook 原始 payload 只保存为 payload ref，模型上下文只包含
+    受限 summary，避免外部事件正文污染稳定 prefix。
+  - [x] 缓解：cache prefix / hit-rate / compaction guard tests 守住 provider-visible
+    请求前缀稳定性。
 - [x] 重复执行风险：daemon 重启、webhook 重放、cron 补跑导致重复提交。
   - [x] 缓解：daemon startup recovery 只标记 interrupted，不补跑或排队 intent。
   - [x] 缓解：cron 使用 schedule window 的 event id / wakeup key 去重，同一窗口不重复唤醒。
