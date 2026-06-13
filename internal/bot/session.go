@@ -38,15 +38,18 @@ func BuildSessionKey(src SessionSource) string {
 
 // slashCommands 是绕过忙碌队列的命令集合。
 var slashCommands = map[string]bool{
-	"/stop":    true,
-	"/new":     true,
-	"/reset":   true,
-	"/approve": true,
-	"/deny":    true,
-	"/answer":  true,
-	"/status":  true,
-	"/goal":    true,
-	"/help":    true,
+	"/stop":     true,
+	"/new":      true,
+	"/reset":    true,
+	"/approve":  true,
+	"/deny":     true,
+	"/answer":   true,
+	"/status":   true,
+	"/sessions": true,
+	"/attach":   true,
+	"/detach":   true,
+	"/goal":     true,
+	"/help":     true,
 }
 
 // IsSlashBypass 判断消息是否为绕过队列的斜杠命令。

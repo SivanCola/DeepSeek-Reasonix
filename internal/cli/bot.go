@@ -7,10 +7,12 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
 
+	"reasonix/internal/agent"
 	"reasonix/internal/bot"
 	"reasonix/internal/bot/feishu"
 	"reasonix/internal/bot/qq"
@@ -148,11 +150,15 @@ func prepareBotGateway(cfg *config.Config, opts botGatewayOptions, logger *slog.
 	}
 
 	gwCfg := bot.GatewayConfig{
-		Model:         modelName,
-		MaxSteps:      cfg.Bot.MaxSteps,
-		WorkspaceRoot: workspaceRoot,
-		Channels:      botChannelConfigs(cfg.Bot.Connections, strings.TrimSpace(opts.Model) == "", strings.TrimSpace(opts.WorkspaceRoot) == ""),
-		Enabled:       enabledPlatforms,
+		Model:              modelName,
+		MaxSteps:           cfg.Bot.MaxSteps,
+		WorkspaceRoot:      workspaceRoot,
+		SessionDir:         botPrimarySessionDir(workspaceRoot),
+		SessionSearchDirs:  botSessionSearchDirs(workspaceRoot),
+		SessionMappingPath: botSessionMappingPath(),
+		SessionMappings:    botStaticSessionMappings(cfg.Bot.Connections, botSessionSearchDirs(workspaceRoot)),
+		Channels:           botChannelConfigs(cfg.Bot.Connections, strings.TrimSpace(opts.Model) == "", strings.TrimSpace(opts.WorkspaceRoot) == ""),
+		Enabled:            enabledPlatforms,
 		Allowlist: bot.AllowlistConfig{
 			Enabled:  cfg.Bot.Allowlist.Enabled,
 			AllowAll: cfg.Bot.Allowlist.AllowAll,
@@ -234,6 +240,113 @@ func botChannelSummary(enabled map[bot.Platform]bool) string {
 		return "(none)"
 	}
 	return strings.Join(names, ",")
+}
+
+func botSessionMappingPath() string {
+	root := config.MemoryUserDir()
+	if strings.TrimSpace(root) == "" {
+		return ""
+	}
+	return filepath.Join(root, "bot-session-mappings.json")
+}
+
+func botPrimarySessionDir(workspaceRoot string) string {
+	workspaceRoot = strings.TrimSpace(workspaceRoot)
+	if workspaceRoot != "" {
+		if dir := config.ProjectSessionDir(workspaceRoot); dir != "" {
+			return dir
+		}
+	}
+	return config.SessionDir()
+}
+
+func botSessionSearchDirs(workspaceRoot string) []string {
+	var dirs []string
+	add := func(dir string) {
+		dir = strings.TrimSpace(dir)
+		if dir == "" {
+			return
+		}
+		for _, existing := range dirs {
+			if existing == dir {
+				return
+			}
+		}
+		dirs = append(dirs, dir)
+	}
+	add(botPrimarySessionDir(workspaceRoot))
+	add(config.SessionDir())
+	return dirs
+}
+
+func botStaticSessionMappings(connections []config.BotConnectionConfig, dirs []string) []bot.SessionMapping {
+	var out []bot.SessionMapping
+	for _, conn := range connections {
+		if !conn.Enabled {
+			continue
+		}
+		searchDirs := append([]string(nil), dirs...)
+		if conn.WorkspaceRoot != "" {
+			searchDirs = append(searchDirs, botSessionSearchDirs(conn.WorkspaceRoot)...)
+		}
+		for _, mapping := range conn.SessionMappings {
+			remoteID := strings.TrimSpace(mapping.RemoteID)
+			sessionID := strings.TrimSpace(mapping.SessionID)
+			if remoteID == "" || sessionID == "" {
+				continue
+			}
+			if mapping.WorkspaceRoot != "" {
+				searchDirs = append(searchDirs, botSessionSearchDirs(mapping.WorkspaceRoot)...)
+			}
+			path := resolveBotSessionPath(sessionID, searchDirs)
+			if path == "" {
+				continue
+			}
+			out = append(out, bot.SessionMapping{
+				RemoteKey:     remoteID,
+				SessionPath:   path,
+				SessionID:     sessionID,
+				WorkspaceRoot: firstNonEmptyString(mapping.WorkspaceRoot, conn.WorkspaceRoot),
+			})
+		}
+	}
+	return out
+}
+
+func resolveBotSessionPath(sessionID string, dirs []string) string {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return ""
+	}
+	if filepath.IsAbs(sessionID) || strings.Contains(sessionID, string(filepath.Separator)) {
+		if _, err := os.Stat(sessionID); err == nil {
+			return sessionID
+		}
+		return ""
+	}
+	for _, dir := range dirs {
+		sessions, err := agent.ListSessions(dir)
+		if err != nil {
+			continue
+		}
+		for _, session := range sessions {
+			id := agent.BranchID(session.Path)
+			base := strings.TrimSuffix(filepath.Base(session.Path), filepath.Ext(session.Path))
+			if id == sessionID || strings.HasPrefix(id, sessionID) || base == sessionID || strings.HasPrefix(base, sessionID) {
+				return session.Path
+			}
+		}
+	}
+	return ""
+}
+
+func firstNonEmptyString(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func botChannelConfigs(connections []config.BotConnectionConfig, includeModel bool, includeWorkspaceRoot bool) map[bot.Platform]bot.ChannelConfig {

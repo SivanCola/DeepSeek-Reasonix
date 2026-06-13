@@ -4,8 +4,14 @@ import (
 	"context"
 	"io"
 	"log/slog"
+	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
+
+	"reasonix/internal/agent"
+	"reasonix/internal/provider"
 )
 
 // fakeAdapter 是一个内存中的假适配器，用于测试 BotGateway。
@@ -243,4 +249,68 @@ func TestGatewaySessionOptionsUseChannelOverride(t *testing.T) {
 	if model != "global-model" || root != "/global" {
 		t.Fatalf("qq options = %q,%q; want global defaults", model, root)
 	}
+}
+
+func TestGatewayRenderSessionListAndResolveRef(t *testing.T) {
+	dir := t.TempDir()
+	sessionPath := writeBotTestSession(t, dir, "hello from saved session")
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	gw := NewGateway(GatewayConfig{SessionDir: dir}, nil, logger)
+
+	list := gw.renderSessionList(5)
+	id := shortSessionID(sessionPath)
+	if !strings.Contains(list, id) || !strings.Contains(list, "hello from saved session") {
+		t.Fatalf("session list missing saved session: %s", list)
+	}
+
+	resolved, err := gw.resolveSessionRef(id[:6])
+	if err != nil {
+		t.Fatalf("resolveSessionRef: %v", err)
+	}
+	if resolved != sessionPath {
+		t.Fatalf("resolved = %q, want %q", resolved, sessionPath)
+	}
+}
+
+func TestGatewaySessionMappingPersists(t *testing.T) {
+	dir := t.TempDir()
+	mappingPath := filepath.Join(dir, "mappings.json")
+	sessionPath := filepath.Join(dir, "saved.jsonl")
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	gw := NewGateway(GatewayConfig{SessionMappingPath: mappingPath}, nil, logger)
+	gw.mappings["remote-1"] = SessionMapping{
+		RemoteKey:   "remote-1",
+		SessionPath: sessionPath,
+		SessionID:   "saved",
+	}
+	if err := gw.saveSessionMappings(); err != nil {
+		t.Fatalf("saveSessionMappings: %v", err)
+	}
+
+	gw2 := NewGateway(GatewayConfig{SessionMappingPath: mappingPath}, nil, logger)
+	mapping, ok := gw2.sessionMapping("remote-1")
+	if !ok || mapping.SessionPath != sessionPath || mapping.SessionID != "saved" {
+		t.Fatalf("mapping not reloaded: ok=%v mapping=%+v", ok, mapping)
+	}
+	if !gw2.clearSessionMapping("remote-1") {
+		t.Fatal("clearSessionMapping should return true")
+	}
+	gw3 := NewGateway(GatewayConfig{SessionMappingPath: mappingPath}, nil, logger)
+	if _, ok := gw3.sessionMapping("remote-1"); ok {
+		t.Fatal("mapping should be removed after clear")
+	}
+}
+
+func writeBotTestSession(t *testing.T, dir, content string) string {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	sessionPath := filepath.Join(dir, "saved-session.jsonl")
+	sess := agent.NewSession("")
+	sess.Add(provider.Message{Role: provider.RoleUser, Content: content})
+	if err := sess.Save(sessionPath); err != nil {
+		t.Fatalf("Save session: %v", err)
+	}
+	return sessionPath
 }

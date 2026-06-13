@@ -2,27 +2,36 @@ package bot
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"reasonix/internal/agent"
 	"reasonix/internal/boot"
 	"reasonix/internal/control"
 	"reasonix/internal/event"
+	"reasonix/internal/fileutil"
 )
 
 // GatewayConfig 是 BotGateway 的配置。
 type GatewayConfig struct {
-	Model         string
-	MaxSteps      int
-	WorkspaceRoot string
-	Channels      map[Platform]ChannelConfig
-	Allowlist     AllowlistConfig
-	Enabled       map[Platform]bool
-	Debounce      time.Duration
+	Model              string
+	MaxSteps           int
+	WorkspaceRoot      string
+	SessionDir         string
+	SessionSearchDirs  []string
+	SessionMappingPath string
+	SessionMappings    []SessionMapping
+	Channels           map[Platform]ChannelConfig
+	Allowlist          AllowlistConfig
+	Enabled            map[Platform]bool
+	Debounce           time.Duration
 }
 
 // ChannelConfig overrides gateway defaults for one IM channel.
@@ -39,6 +48,20 @@ type AllowlistConfig struct {
 	Groups   map[Platform][]string
 }
 
+// SessionMapping binds a remote IM session key to a Reasonix session file.
+type SessionMapping struct {
+	RemoteKey     string    `json:"remote_key"`
+	SessionPath   string    `json:"session_path"`
+	SessionID     string    `json:"session_id,omitempty"`
+	WorkspaceRoot string    `json:"workspace_root,omitempty"`
+	UpdatedAt     time.Time `json:"updated_at,omitempty"`
+}
+
+type sessionMappingFile struct {
+	Version  int              `json:"version"`
+	Mappings []SessionMapping `json:"mappings"`
+}
+
 // BotGateway 是 reasonix bot 消息网关，管理 Controller 生命周期、session 并发、
 // 事件渲染和平台适配器。
 type BotGateway struct {
@@ -48,6 +71,7 @@ type BotGateway struct {
 
 	mu             sync.Mutex
 	controllers    map[string]*sessionState // session key -> active state
+	mappings       map[string]SessionMapping
 	allowlist      map[Platform]map[string]bool
 	groupAllowlist map[Platform]map[string]bool
 
@@ -100,10 +124,12 @@ func NewGateway(cfg GatewayConfig, adapters map[Platform]Adapter, logger *slog.L
 		adapters:       adapters,
 		sessions:       NewSessionManager(cfg.Debounce),
 		controllers:    make(map[string]*sessionState),
+		mappings:       make(map[string]SessionMapping),
 		allowlist:      make(map[Platform]map[string]bool),
 		groupAllowlist: make(map[Platform]map[string]bool),
 		logger:         logger.With("component", "bot_gateway"),
 	}
+	gw.loadSessionMappings()
 	gw.buildAllowlist()
 	return gw
 }
@@ -360,6 +386,41 @@ func (gw *BotGateway) handleSlashCommand(ctx context.Context, adapter Adapter, k
 		}
 		_ = gw.sendText(ctx, adapter, msg, fmt.Sprintf("活跃任务数: %d\n保留会话数: %d%s", active, sessions, goalInfo))
 
+	case strings.HasPrefix(msg.Text, "/sessions"):
+		_ = gw.sendText(ctx, adapter, msg, gw.renderSessionList(8))
+
+	case strings.HasPrefix(msg.Text, "/attach"):
+		parts := strings.Fields(msg.Text)
+		if len(parts) < 2 {
+			_ = gw.sendText(ctx, adapter, msg, "用法: /attach <session-id-or-path>")
+			return
+		}
+		if err := gw.attachSession(ctx, key, msg, parts[1]); err != nil {
+			_ = gw.sendText(ctx, adapter, msg, "绑定失败："+err.Error())
+			return
+		}
+		mapping, _ := gw.sessionMapping(key)
+		_ = gw.sendText(ctx, adapter, msg, fmt.Sprintf("已绑定会话：%s", shortSessionID(mapping.SessionPath)))
+
+	case strings.HasPrefix(msg.Text, "/detach"):
+		if ok := gw.clearSessionMapping(key); ok {
+			gw.mu.Lock()
+			if state, exists := gw.controllers[key]; exists {
+				if state.cancel != nil {
+					state.cancel()
+				}
+				if state.ctrl != nil {
+					state.ctrl.Close()
+				}
+				delete(gw.controllers, key)
+			}
+			gw.mu.Unlock()
+			gw.sessions.ForceRelease(key)
+			_ = gw.sendText(ctx, adapter, msg, "已解除当前 IM 会话绑定。")
+		} else {
+			_ = gw.sendText(ctx, adapter, msg, "当前 IM 会话没有绑定 Reasonix session。")
+		}
+
 	case strings.HasPrefix(msg.Text, "/goal"):
 		gw.handleGoalCommand(ctx, adapter, key, msg)
 
@@ -375,6 +436,9 @@ func (gw *BotGateway) handleSlashCommand(ctx context.Context, adapter Adapter, k
 			"/approve <id> - 批准操作\n" +
 			"/deny <id> - 拒绝操作\n" +
 			"/answer <id> <选项> - 回答 ask 问题\n" +
+			"/sessions - 列出可绑定的 Reasonix 会话\n" +
+			"/attach <id> - 绑定并恢复已有 Reasonix 会话\n" +
+			"/detach - 解除当前 IM 会话绑定\n" +
 			"/status - 查看状态\n" +
 			"/help - 显示帮助"
 		_ = gw.sendText(ctx, adapter, msg, help)
@@ -446,16 +510,15 @@ func (gw *BotGateway) getOrCreateSession(ctx context.Context, key string, msg In
 	}
 	gw.mu.Unlock()
 
+	if mapping, ok := gw.sessionMapping(key); ok {
+		if state := gw.resumeMappedSession(ctx, key, msg, mapping); state != nil {
+			return state
+		}
+	}
+
 	// 创建新 Controller
 	sessionSink := &sessionEventSink{}
-	model, workspaceRoot := gw.sessionOptionsForPlatform(msg.Platform)
-	ctrl, err := boot.Build(ctx, boot.Options{
-		Model:         model,
-		MaxSteps:      gw.cfg.MaxSteps,
-		RequireKey:    true,
-		Sink:          sessionSink,
-		WorkspaceRoot: workspaceRoot,
-	})
+	ctrl, err := gw.buildController(ctx, msg.Platform, sessionSink)
 	if err != nil {
 		gw.logger.Error("build controller failed", "err", err)
 		return nil
@@ -476,6 +539,100 @@ func (gw *BotGateway) getOrCreateSession(ctx context.Context, key string, msg In
 	return state
 }
 
+func (gw *BotGateway) buildController(ctx context.Context, plat Platform, sink event.Sink) (*control.Controller, error) {
+	model, workspaceRoot := gw.sessionOptionsForPlatform(plat)
+	return boot.Build(ctx, boot.Options{
+		Model:         model,
+		MaxSteps:      gw.cfg.MaxSteps,
+		RequireKey:    true,
+		Sink:          sink,
+		WorkspaceRoot: workspaceRoot,
+		SessionDir:    gw.cfg.SessionDir,
+	})
+}
+
+func (gw *BotGateway) resumeMappedSession(ctx context.Context, key string, msg InboundMessage, mapping SessionMapping) *sessionState {
+	if strings.TrimSpace(mapping.SessionPath) == "" {
+		return nil
+	}
+	loaded, err := agent.LoadSession(mapping.SessionPath)
+	if err != nil {
+		gw.logger.Warn("bot mapped session load failed", "session", shortSessionID(mapping.SessionPath), "err", err)
+		return nil
+	}
+	sessionSink := &sessionEventSink{}
+	ctrl, err := gw.buildController(ctx, msg.Platform, sessionSink)
+	if err != nil {
+		gw.logger.Warn("bot mapped controller build failed", "session", shortSessionID(mapping.SessionPath), "err", err)
+		return nil
+	}
+	ctrl.Resume(loaded, mapping.SessionPath)
+	ctrl.EnableInteractiveApproval()
+	state := &sessionState{
+		ctrl:        ctrl,
+		sink:        sessionSink,
+		pendingAsks: make(map[string][]event.AskQuestion),
+		createdAt:   time.Now(),
+		lastActive:  time.Now(),
+	}
+	gw.mu.Lock()
+	gw.controllers[key] = state
+	gw.mu.Unlock()
+	gw.logger.Info("bot resumed mapped session", "session", shortSessionID(mapping.SessionPath))
+	return state
+}
+
+func (gw *BotGateway) attachSession(ctx context.Context, key string, msg InboundMessage, ref string) error {
+	path, err := gw.resolveSessionRef(ref)
+	if err != nil {
+		return err
+	}
+	loaded, err := agent.LoadSession(path)
+	if err != nil {
+		return err
+	}
+	sessionSink := &sessionEventSink{}
+	ctrl, err := gw.buildController(ctx, msg.Platform, sessionSink)
+	if err != nil {
+		return err
+	}
+	ctrl.Resume(loaded, path)
+	ctrl.EnableInteractiveApproval()
+	gw.mu.Lock()
+	if existing, ok := gw.controllers[key]; ok {
+		if existing.ctrl != nil && existing.ctrl.Running() {
+			gw.mu.Unlock()
+			ctrl.Close()
+			return fmt.Errorf("当前会话正在运行，无法绑定")
+		}
+		if existing.cancel != nil {
+			existing.cancel()
+		}
+		if existing.ctrl != nil {
+			existing.ctrl.Close()
+		}
+	}
+	gw.controllers[key] = &sessionState{
+		ctrl:        ctrl,
+		sink:        sessionSink,
+		pendingAsks: make(map[string][]event.AskQuestion),
+		createdAt:   time.Now(),
+		lastActive:  time.Now(),
+	}
+	gw.mappings[key] = SessionMapping{
+		RemoteKey:     key,
+		SessionPath:   path,
+		SessionID:     shortSessionID(path),
+		WorkspaceRoot: gw.cfg.WorkspaceRoot,
+		UpdatedAt:     time.Now().UTC(),
+	}
+	gw.mu.Unlock()
+	if err := gw.saveSessionMappings(); err != nil {
+		return err
+	}
+	return nil
+}
+
 func (gw *BotGateway) sessionOptionsForPlatform(plat Platform) (model string, workspaceRoot string) {
 	model = gw.cfg.Model
 	workspaceRoot = gw.cfg.WorkspaceRoot
@@ -493,6 +650,216 @@ func (gw *BotGateway) sessionOptionsForPlatform(plat Platform) (model string, wo
 		workspaceRoot = value
 	}
 	return model, workspaceRoot
+}
+
+func (gw *BotGateway) loadSessionMappings() {
+	for _, mapping := range gw.cfg.SessionMappings {
+		if mapping.RemoteKey == "" || mapping.SessionPath == "" {
+			continue
+		}
+		gw.mappings[mapping.RemoteKey] = mapping
+	}
+	path := strings.TrimSpace(gw.cfg.SessionMappingPath)
+	if path == "" {
+		return
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			gw.logger.Warn("bot session mappings load failed", "err", err)
+		}
+		return
+	}
+	var file sessionMappingFile
+	if err := json.Unmarshal(b, &file); err != nil {
+		gw.logger.Warn("bot session mappings decode failed", "err", err)
+		return
+	}
+	for _, mapping := range file.Mappings {
+		if mapping.RemoteKey == "" || mapping.SessionPath == "" {
+			continue
+		}
+		gw.mappings[mapping.RemoteKey] = mapping
+	}
+}
+
+func (gw *BotGateway) saveSessionMappings() error {
+	path := strings.TrimSpace(gw.cfg.SessionMappingPath)
+	if path == "" {
+		return nil
+	}
+	gw.mu.Lock()
+	mappings := make([]SessionMapping, 0, len(gw.mappings))
+	for _, mapping := range gw.mappings {
+		if strings.TrimSpace(mapping.RemoteKey) == "" || strings.TrimSpace(mapping.SessionPath) == "" {
+			continue
+		}
+		mappings = append(mappings, mapping)
+	}
+	gw.mu.Unlock()
+	data, err := json.MarshalIndent(sessionMappingFile{Version: 1, Mappings: mappings}, "", "  ")
+	if err != nil {
+		return err
+	}
+	data = append(data, '\n')
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".bot-session-mappings.*.tmp")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		os.Remove(tmpPath)
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmpPath)
+		return err
+	}
+	return fileutil.ReplaceFile(tmpPath, path)
+}
+
+func (gw *BotGateway) sessionMapping(key string) (SessionMapping, bool) {
+	gw.mu.Lock()
+	defer gw.mu.Unlock()
+	mapping, ok := gw.mappings[key]
+	return mapping, ok
+}
+
+func (gw *BotGateway) clearSessionMapping(key string) bool {
+	gw.mu.Lock()
+	_, ok := gw.mappings[key]
+	if ok {
+		delete(gw.mappings, key)
+	}
+	gw.mu.Unlock()
+	if ok {
+		if err := gw.saveSessionMappings(); err != nil {
+			gw.logger.Warn("bot session mapping save failed", "err", err)
+		}
+	}
+	return ok
+}
+
+func (gw *BotGateway) renderSessionList(limit int) string {
+	sessions := gw.availableSessions()
+	if len(sessions) == 0 {
+		return "没有可绑定的 Reasonix session。"
+	}
+	if limit <= 0 || limit > len(sessions) {
+		limit = len(sessions)
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "可绑定会话（使用 /attach <id>）：")
+	for _, session := range sessions[:limit] {
+		id := shortSessionID(session.Path)
+		preview := strings.TrimSpace(session.Preview)
+		if preview == "" {
+			preview = "(empty)"
+		}
+		fmt.Fprintf(&b, "\n%s  %s", id, truncateBotText(preview, 48))
+	}
+	if omitted := len(sessions) - limit; omitted > 0 {
+		fmt.Fprintf(&b, "\n... 还有 %d 个", omitted)
+	}
+	return b.String()
+}
+
+func (gw *BotGateway) resolveSessionRef(ref string) (string, error) {
+	ref = strings.TrimSpace(ref)
+	if ref == "" {
+		return "", fmt.Errorf("session id required")
+	}
+	if filepath.IsAbs(ref) || strings.Contains(ref, string(filepath.Separator)) {
+		path := ref
+		if !filepath.IsAbs(path) {
+			path = filepath.Clean(path)
+		}
+		if _, err := os.Stat(path); err != nil {
+			return "", err
+		}
+		return path, nil
+	}
+	var matches []agent.SessionInfo
+	for _, session := range gw.availableSessions() {
+		id := shortSessionID(session.Path)
+		base := strings.TrimSuffix(filepath.Base(session.Path), filepath.Ext(session.Path))
+		if strings.HasPrefix(id, ref) || strings.HasPrefix(base, ref) {
+			matches = append(matches, session)
+		}
+	}
+	switch len(matches) {
+	case 0:
+		return "", fmt.Errorf("session %q not found", ref)
+	case 1:
+		return matches[0].Path, nil
+	default:
+		return "", fmt.Errorf("session %q is ambiguous", ref)
+	}
+}
+
+func (gw *BotGateway) availableSessions() []agent.SessionInfo {
+	var out []agent.SessionInfo
+	seen := make(map[string]struct{})
+	for _, dir := range gw.sessionSearchDirs() {
+		sessions, err := agent.ListSessions(dir)
+		if err != nil {
+			gw.logger.Warn("bot list sessions failed", "dir", dir, "err", err)
+			continue
+		}
+		for _, session := range sessions {
+			if _, ok := seen[session.Path]; ok {
+				continue
+			}
+			seen[session.Path] = struct{}{}
+			out = append(out, session)
+		}
+	}
+	return out
+}
+
+func (gw *BotGateway) sessionSearchDirs() []string {
+	var dirs []string
+	add := func(dir string) {
+		dir = strings.TrimSpace(dir)
+		if dir == "" {
+			return
+		}
+		clean := filepath.Clean(dir)
+		for _, existing := range dirs {
+			if existing == clean {
+				return
+			}
+		}
+		dirs = append(dirs, clean)
+	}
+	add(gw.cfg.SessionDir)
+	for _, dir := range gw.cfg.SessionSearchDirs {
+		add(dir)
+	}
+	return dirs
+}
+
+func shortSessionID(path string) string {
+	id := agent.BranchID(path)
+	if len(id) > 8 {
+		return id[:8]
+	}
+	return id
+}
+
+func truncateBotText(s string, max int) string {
+	runes := []rune(s)
+	if len(runes) <= max {
+		return s
+	}
+	if max <= 1 {
+		return string(runes[:max])
+	}
+	return string(runes[:max-1]) + "…"
 }
 
 func (gw *BotGateway) sendText(ctx context.Context, adapter Adapter, msg InboundMessage, text string) error {
