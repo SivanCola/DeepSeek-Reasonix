@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -706,6 +708,68 @@ func TestBuildDaemonDoctorReportWarnsMissingLog(t *testing.T) {
 	}
 	if report.LogFile != daemon.LogFile(dir) || !hasDoctorCheck(report, "log", "warn") {
 		t.Fatalf("missing log warning not recorded: log=%q checks=%+v", report.LogFile, report.Checks)
+	}
+}
+
+func TestBuildDaemonDoctorReportWarnsBroadTokenPermissions(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("permission mode bits are not stable on Windows")
+	}
+	dir := t.TempDir()
+	if err := os.WriteFile(daemon.TokenFile(dir), []byte("token\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile token: %v", err)
+	}
+
+	report, failed := buildDaemonDoctorReport("127.0.0.1:1", dir, "none", nil)
+	if failed {
+		t.Fatalf("broad token permissions should warn, not fail: %+v", report.Checks)
+	}
+	if !hasDoctorCheck(report, "token", "warn") {
+		t.Fatalf("missing token permission warning: %+v", report.Checks)
+	}
+}
+
+func TestBuildDaemonDoctorReportFailsUnwritableLog(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("permission mode bits are not stable on Windows")
+	}
+	dir := t.TempDir()
+	if err := os.WriteFile(daemon.TokenFile(dir), []byte("token\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile token: %v", err)
+	}
+	logPath := daemon.LogFile(dir)
+	if err := os.WriteFile(logPath, []byte("daemon log\n"), 0o400); err != nil {
+		t.Fatalf("WriteFile log: %v", err)
+	}
+
+	report, failed := buildDaemonDoctorReport("127.0.0.1:1", dir, "", nil)
+	if !failed {
+		t.Fatalf("unwritable log should fail: %+v", report.Checks)
+	}
+	if !hasDoctorCheck(report, "log", "fail") {
+		t.Fatalf("missing log failure: %+v", report.Checks)
+	}
+}
+
+func TestBuildDaemonDoctorReportWarnsOccupiedPort(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(daemon.TokenFile(dir), []byte("token\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile token: %v", err)
+	}
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Listen: %v", err)
+	}
+	defer ln.Close()
+
+	report, failed := buildDaemonDoctorReport(ln.Addr().String(), dir, "none", func(string, string, string) (*http.Response, error) {
+		return nil, errTestDaemonOffline{}
+	})
+	if failed {
+		t.Fatalf("occupied port should warn, not fail: %+v", report.Checks)
+	}
+	if !hasDoctorCheck(report, "port", "warn") {
+		t.Fatalf("missing port warning: %+v", report.Checks)
 	}
 }
 

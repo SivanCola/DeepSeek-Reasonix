@@ -393,7 +393,10 @@ func writeTokenFile(path, token string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	return os.WriteFile(path, []byte(strings.TrimSpace(token)+"\n"), 0o600)
+	if err := os.WriteFile(path, []byte(strings.TrimSpace(token)+"\n"), 0o600); err != nil {
+		return err
+	}
+	return os.Chmod(path, 0o600)
 }
 
 func (d *Daemon) withAuth(next http.HandlerFunc) http.HandlerFunc {

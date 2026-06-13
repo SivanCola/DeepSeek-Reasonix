@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -146,6 +147,12 @@ func (r *daemonDoctorReport) checkToken() {
 		r.addCheck("token", "fail", "token file is empty")
 		return
 	}
+	if info, err := os.Stat(path); err == nil {
+		if mode := info.Mode().Perm(); mode&0o077 != 0 {
+			r.addCheck("token", "warn", fmt.Sprintf("token file permissions are too broad (%04o); expected 0600", mode))
+			return
+		}
+	}
 	r.addCheck("token", "ok", "token file is readable")
 }
 
@@ -183,14 +190,22 @@ func (r *daemonDoctorReport) checkLogFile() {
 	case err == nil && info.IsDir():
 		r.addCheck("log", "fail", "log path exists but is a directory")
 	case err == nil:
-		f, err := os.Open(r.LogFile)
+		if mode := info.Mode().Perm(); mode&0o222 == 0 {
+			r.addCheck("log", "fail", fmt.Sprintf("log file is not writable (%04o)", mode))
+			return
+		}
+		f, err := os.OpenFile(r.LogFile, os.O_WRONLY|os.O_APPEND, 0)
 		if err != nil {
 			r.addCheck("log", "fail", err.Error())
 			return
 		}
 		_ = f.Close()
-		r.addCheck("log", "ok", fmt.Sprintf("log file readable (%d bytes)", info.Size()))
+		r.addCheck("log", "ok", fmt.Sprintf("log file writable (%d bytes)", info.Size()))
 	case os.IsNotExist(err):
+		if dirInfo, dirErr := os.Stat(filepath.Dir(r.LogFile)); dirErr == nil && dirInfo.IsDir() && dirInfo.Mode().Perm()&0o222 == 0 {
+			r.addCheck("log", "fail", fmt.Sprintf("log directory is not writable (%04o)", dirInfo.Mode().Perm()))
+			return
+		}
 		r.addCheck("log", "warn", "log file missing; daemon start will create it")
 	default:
 		r.addCheck("log", "fail", err.Error())
@@ -287,6 +302,9 @@ func (r *daemonDoctorReport) checkOnline(get daemonDoctorHTTPGet) daemonDoctorOn
 	resp, err := get(r.Addr, r.SessionDir, "/status")
 	if err != nil {
 		r.addCheck("online", "warn", "daemon not reachable: "+err.Error())
+		if daemonDoctorPortAcceptsTCP(r.Addr) {
+			r.addCheck("port", "warn", "address accepts TCP but daemon /status is not reachable; port may be occupied or token may be stale")
+		}
 		return daemonDoctorOnlineStatus{Reachable: false, Error: err.Error()}
 	}
 	defer resp.Body.Close()
@@ -310,6 +328,15 @@ func (r *daemonDoctorReport) checkOnline(get daemonDoctorHTTPGet) daemonDoctorOn
 		Sessions:  status.Sessions,
 		Uptime:    status.Uptime,
 	}
+}
+
+func daemonDoctorPortAcceptsTCP(addr string) bool {
+	conn, err := net.DialTimeout("tcp", addr, 300*time.Millisecond)
+	if err != nil {
+		return false
+	}
+	_ = conn.Close()
+	return true
 }
 
 func printDaemonDoctorReport(report daemonDoctorReport) {
