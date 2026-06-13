@@ -434,8 +434,11 @@ dynamic workflow 或开发者平台，而是先把 Reasonix 从一次性会话�
   - [x] 缓解：`Controller.Resume` 只恢复 runtime 状态和 notice，不触发模型调用。
   - [x] 缓解：daemon startup recovery 只把 in-flight run 标记为 interrupted 并记录 timeline，不排队 intent。
   - [x] 缓解：继续执行只能来自显式 `/goal continue` / daemon `continue`，或已配置的 scheduler / webhook / file wait。
-- [ ] 平台化过早风险：插件生态、SDK、企业平台会拖慢个人 OS MVP。
-  - 缓解：先完成个人常驻场景，再抽象生态能力。
+- [x] 平台化过早风险：插件生态、SDK、企业平台会拖慢个人 OS MVP。
+  - [x] 缓解：当前路线只承诺个人常驻 OS、daemon、bot、cron、webhook、file watch、
+    approval desk 和首批个人场景。
+  - [x] 缓解：暂不做插件市场、企业多租户控制台、第三方 SDK 生态和工作流编排平台。
+  - [x] 缓解：未来平台化必须从已验证的个人场景抽象，不能反向拖慢 MVP。
 
 ## 建议实现顺序
 
@@ -460,11 +463,22 @@ dynamic workflow 或开发者平台，而是先把 Reasonix 从一次性会话�
 - [x] 增加核心单元测试。
 - [x] 确认 provider request 稳定前缀无变化。
 
-## 后续决策点
+## 已定产品决策
 
-- [ ] Runtime sidecar 是独立文件还是扩展 `.meta`。
-- [ ] daemon 与桌面通信使用 localhost HTTP、unix socket 还是现有 serve transport。
-- [ ] cron 配置放全局 config、project config，还是 session runtime。
-- [ ] webhook 是否先只支持 GitHub。
-- [ ] 常驻 agent 默认是否自动继续 interrupted goal。
-- [ ] 预算策略按 session、project 还是全局计算。
+- [x] Runtime sidecar 使用独立 `.runtime.json` 文件，不扩展 `.meta`。
+  - 理由：`.meta` 继续承载结构信息，runtime sidecar 只承载可恢复执行状态。
+- [x] daemon 与桌面通信第一版使用 localhost HTTP。
+  - 理由：现有 daemon API、CLI、desktop bridge 和 auth token 已围绕 localhost HTTP 闭环。
+  - 后续只有在权限、沙箱或平台兼容性需要时再评估 unix socket / serve transport。
+- [x] cron 配置最终落到 session runtime sidecar。
+  - 理由：session/project/global scope 是配置选择器，实际写入目标 session 的
+    scheduler runtime，避免额外引入全局调度数据库。
+- [x] webhook 第一版采用通用 event envelope，并优先内置 GitHub / CI adapter。
+  - 理由：个人 AgentOS 首批高频场景是 PR、issue、CI、release；其他 provider 先通过
+    通用 localhost webhook 接入。
+- [x] 常驻 agent 默认不自动继续 interrupted goal。
+  - 理由：crash / kill 后只标记 interrupted 和 timeline，继续必须来自用户显式命令
+    或已配置的 cron / webhook / file wait。
+- [x] 预算策略第一版按 session runtime 计费，project/global 只作为批量配置入口。
+  - 理由：执行、wait、wakeup、timeline 都以 session 为最小可恢复单元；跨 session
+    聚合预算留到个人场景稳定后再抽象。
