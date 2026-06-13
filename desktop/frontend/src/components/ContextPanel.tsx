@@ -200,6 +200,12 @@ export function ContextPanel({
     void refresh();
   }, [refresh, refreshKey]);
 
+  useEffect(() => {
+    if (context?.used === 0 && sessionTokens === 0 && info) {
+      setInfo(null);
+    }
+  }, [context?.used, sessionTokens]);
+
   const hasPanelUsage = Boolean(
     (info?.requestCount ?? 0) > 0 ||
     (info?.promptTokens ?? 0) > 0 ||

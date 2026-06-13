@@ -95,6 +95,7 @@ interface State {
   sessionCurrency: string;
   retry?: { attempt: number; max: number };
   seq: number;
+  sessionGen: number;
 }
 
 export const initialState: State = {
@@ -112,6 +113,7 @@ export const initialState: State = {
   sessionCost: 0,
   sessionCurrency: "¥",
   seq: 0,
+  sessionGen: 0,
 };
 
 function usageTotalTokens(usage?: WireUsage): number {
@@ -406,6 +408,7 @@ function applyEvent(s: State, e: WireEvent): State {
       return { ...s, items: next };
     }
     case "usage": {
+      if (!s.turnActive) return s;
       const used = e.usage && s.context.window ? e.usage.promptTokens : s.context.used;
       const turnTokens = s.turnTokens + (e.usage?.completionTokens ?? 0);
       const usageTokens = usageTotalTokens(e.usage);
@@ -514,7 +517,7 @@ export function reducer(s: State, a: Action): State {
     case "local_notice": return { ...s, running: false, turnActive: false, seq: s.seq + 1, items: [...s.items, { kind: "notice", id: `n${s.seq}`, level: a.level, text: a.text }] };
     case "clearApproval": return { ...s, approval: undefined };
     case "clearAsk": return { ...s, ask: undefined };
-    case "reset": return { ...initialState, meta: s.meta, context: { ...s.context, used: 0, sessionTokens: 0 }, balance: s.balance, effort: s.effort, jobs: s.jobs };
+    case "reset": return { ...initialState, meta: s.meta, context: { ...s.context, used: 0, sessionTokens: 0 }, balance: s.balance, effort: s.effort, jobs: s.jobs, sessionGen: s.sessionGen + 1 };
     case "event": return applyEvent(s, a.e);
     default: return s;
   }

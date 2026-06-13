@@ -884,6 +884,7 @@ func (a *App) ClearSession() error {
 	if err := ctrl.ClearSession(); err != nil {
 		return err
 	}
+	tab.resetTelemetry()
 	a.persistTabSessionPath(tab, ctrl.SessionPath())
 	return nil
 }
