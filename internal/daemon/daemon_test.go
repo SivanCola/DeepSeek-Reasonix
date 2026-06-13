@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -426,6 +427,133 @@ func TestDaemonScheduleHandlerPersistsTimezone(t *testing.T) {
 	}
 	if resp["timezone"] != "Asia/Shanghai" {
 		t.Fatalf("response timezone = %v, want Asia/Shanghai", resp["timezone"])
+	}
+}
+
+func TestDaemonScheduleHandlerAppliesProjectAndGlobalScopes(t *testing.T) {
+	dir := t.TempDir()
+	rootA := filepath.Join(dir, "workspace-a")
+	rootB := filepath.Join(dir, "workspace-b")
+	if err := os.MkdirAll(rootA, 0o755); err != nil {
+		t.Fatalf("MkdirAll rootA: %v", err)
+	}
+	if err := os.MkdirAll(rootB, 0o755); err != nil {
+		t.Fatalf("MkdirAll rootB: %v", err)
+	}
+
+	globalSess := filepath.Join(dir, "global-api.jsonl")
+	projectASess := filepath.Join(dir, "project-a.jsonl")
+	projectBSess := filepath.Join(dir, "project-b.jsonl")
+	for _, sess := range []string{globalSess, projectASess, projectBSess} {
+		if err := os.WriteFile(sess, []byte(`{"role":"user","content":"start"}`+"\n"), 0o644); err != nil {
+			t.Fatalf("WriteFile %s: %v", sess, err)
+		}
+	}
+	if err := agent.SaveRuntimeMeta(globalSess, agent.RuntimeMeta{
+		SessionID: "global-api",
+		Goal:      agent.RuntimeGoalMeta{Text: "global goal", Status: control.GoalStatusRunning},
+		Run:       agent.RuntimeRunMeta{Status: "idle"},
+	}); err != nil {
+		t.Fatalf("SaveRuntimeMeta global: %v", err)
+	}
+	if err := agent.SaveBranchMeta(globalSess, agent.BranchMeta{Scope: "global"}); err != nil {
+		t.Fatalf("SaveBranchMeta global: %v", err)
+	}
+	if err := agent.SaveRuntimeMeta(projectASess, agent.RuntimeMeta{
+		SessionID:     "project-a",
+		WorkspaceRoot: rootA,
+		Goal:          agent.RuntimeGoalMeta{Text: "project goal", Status: control.GoalStatusRunning},
+		Run:           agent.RuntimeRunMeta{Status: "idle"},
+	}); err != nil {
+		t.Fatalf("SaveRuntimeMeta projectA: %v", err)
+	}
+	if err := agent.SaveBranchMeta(projectASess, agent.BranchMeta{Scope: "project", WorkspaceRoot: rootA}); err != nil {
+		t.Fatalf("SaveBranchMeta projectA: %v", err)
+	}
+	if err := agent.SaveRuntimeMeta(projectBSess, agent.RuntimeMeta{
+		SessionID:     "project-b",
+		WorkspaceRoot: rootB,
+		Goal:          agent.RuntimeGoalMeta{Text: "project goal", Status: control.GoalStatusRunning},
+		Run:           agent.RuntimeRunMeta{Status: "idle"},
+	}); err != nil {
+		t.Fatalf("SaveRuntimeMeta projectB: %v", err)
+	}
+	if err := agent.SaveBranchMeta(projectBSess, agent.BranchMeta{Scope: "project", WorkspaceRoot: rootB}); err != nil {
+		t.Fatalf("SaveBranchMeta projectB: %v", err)
+	}
+
+	d := New(Options{SessionDir: dir})
+	d.scanSessions()
+	d.scheduler = NewScheduler(d, nil)
+
+	req := httptest.NewRequest("POST", "/schedule", strings.NewReader(`{"scope":"project","workspace_root":`+strconv.Quote(rootA)+`,"daily_at":"08:30","timezone":"Asia/Shanghai","enabled":true}`))
+	rr := httptest.NewRecorder()
+	d.handleSchedule(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("project schedule status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	var projectResp struct {
+		Updated    int      `json:"updated"`
+		SessionIDs []string `json:"session_ids"`
+	}
+	if err := json.NewDecoder(rr.Body).Decode(&projectResp); err != nil {
+		t.Fatalf("decode project response: %v", err)
+	}
+	if projectResp.Updated != 1 || len(projectResp.SessionIDs) != 1 || projectResp.SessionIDs[0] != "project-a" {
+		t.Fatalf("unexpected project schedule response: %+v", projectResp)
+	}
+
+	projectA, ok, err := agent.LoadRuntimeMeta(projectASess)
+	if err != nil || !ok {
+		t.Fatalf("LoadRuntimeMeta projectA: err=%v ok=%v", err, ok)
+	}
+	projectB, ok, err := agent.LoadRuntimeMeta(projectBSess)
+	if err != nil || !ok {
+		t.Fatalf("LoadRuntimeMeta projectB: err=%v ok=%v", err, ok)
+	}
+	global, ok, err := agent.LoadRuntimeMeta(globalSess)
+	if err != nil || !ok {
+		t.Fatalf("LoadRuntimeMeta global: err=%v ok=%v", err, ok)
+	}
+	if projectA.Scheduler.DailyAt != "08:30" || projectA.Scheduler.Timezone != "Asia/Shanghai" || !projectA.Scheduler.Enabled {
+		t.Fatalf("projectA schedule not applied: %+v", projectA.Scheduler)
+	}
+	if projectB.Scheduler.Enabled || projectB.Scheduler.DailyAt != "" {
+		t.Fatalf("projectB schedule should be untouched: %+v", projectB.Scheduler)
+	}
+	if global.Scheduler.Enabled || global.Scheduler.DailyAt != "" {
+		t.Fatalf("global schedule should be untouched by project scope: %+v", global.Scheduler)
+	}
+
+	req = httptest.NewRequest("POST", "/schedule", strings.NewReader(`{"scope":"global","interval":"1h","enabled":true}`))
+	rr = httptest.NewRecorder()
+	d.handleSchedule(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("global schedule status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	var globalResp struct {
+		Updated    int      `json:"updated"`
+		SessionIDs []string `json:"session_ids"`
+	}
+	if err := json.NewDecoder(rr.Body).Decode(&globalResp); err != nil {
+		t.Fatalf("decode global response: %v", err)
+	}
+	if globalResp.Updated != 1 || len(globalResp.SessionIDs) != 1 || globalResp.SessionIDs[0] != "global-api" {
+		t.Fatalf("unexpected global schedule response: %+v", globalResp)
+	}
+	global, ok, err = agent.LoadRuntimeMeta(globalSess)
+	if err != nil || !ok {
+		t.Fatalf("LoadRuntimeMeta global after schedule: err=%v ok=%v", err, ok)
+	}
+	projectA, ok, err = agent.LoadRuntimeMeta(projectASess)
+	if err != nil || !ok {
+		t.Fatalf("LoadRuntimeMeta projectA after global: err=%v ok=%v", err, ok)
+	}
+	if global.Scheduler.Interval != time.Hour || !global.Scheduler.Enabled {
+		t.Fatalf("global schedule not applied: %+v", global.Scheduler)
+	}
+	if projectA.Scheduler.Interval != 0 || projectA.Scheduler.DailyAt != "08:30" {
+		t.Fatalf("project schedule should not be overwritten by global scope: %+v", projectA.Scheduler)
 	}
 }
 

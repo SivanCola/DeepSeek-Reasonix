@@ -338,24 +338,42 @@ func (d *Daemon) handleStop(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, `{"ok":true,"session_id":%q,"status":"stopped"}`, req.SessionID)
 }
 
-// handleSchedule sets or clears a cron schedule for a session.
+// handleSchedule sets or clears a cron schedule for a session or scope.
 // Body: {"session_id": "...", "daily_at": "09:00", "timezone":"Asia/Shanghai", "interval": "1h", "enabled": true}
+// Body: {"scope":"project","workspace_root":"/repo", ...} or {"scope":"global", ...}
 // All schedule fields are optional; omitted fields are left unchanged.
 // Set enabled=false to disable without clearing the schedule.
 func (d *Daemon) handleSchedule(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		SessionID string  `json:"session_id"`
-		DailyAt   *string `json:"daily_at"` // "HH:MM" or "" to clear
-		Timezone  *string `json:"timezone"` // IANA timezone or "" to clear
-		Interval  *string `json:"interval"` // duration string or "" to clear
-		Enabled   *bool   `json:"enabled"`
+		SessionID     string  `json:"session_id"`
+		Scope         string  `json:"scope"`          // global|project; optional alternative to session_id
+		WorkspaceRoot string  `json:"workspace_root"` // required for project scope
+		DailyAt       *string `json:"daily_at"`       // "HH:MM" or "" to clear
+		Timezone      *string `json:"timezone"`       // IANA timezone or "" to clear
+		Interval      *string `json:"interval"`       // duration string or "" to clear
+		Enabled       *bool   `json:"enabled"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, `{"error":"invalid json"}`, http.StatusBadRequest)
 		return
 	}
-	if req.SessionID == "" {
-		http.Error(w, `{"error":"session_id required"}`, http.StatusBadRequest)
+	req.SessionID = strings.TrimSpace(req.SessionID)
+	req.Scope = strings.TrimSpace(req.Scope)
+	req.WorkspaceRoot = strings.TrimSpace(req.WorkspaceRoot)
+	if req.SessionID == "" && req.Scope == "" {
+		http.Error(w, `{"error":"session_id or scope required"}`, http.StatusBadRequest)
+		return
+	}
+	if req.SessionID != "" && req.Scope != "" {
+		http.Error(w, `{"error":"session_id and scope are mutually exclusive"}`, http.StatusBadRequest)
+		return
+	}
+	if req.Scope != "" && req.Scope != "global" && req.Scope != "project" {
+		http.Error(w, `{"error":"scope must be global or project"}`, http.StatusBadRequest)
+		return
+	}
+	if req.Scope == "project" && req.WorkspaceRoot == "" {
+		http.Error(w, `{"error":"workspace_root required for project scope"}`, http.StatusBadRequest)
 		return
 	}
 	if req.Timezone != nil && *req.Timezone != "" {
@@ -364,71 +382,136 @@ func (d *Daemon) handleSchedule(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	var interval *time.Duration
+	if req.Interval != nil && *req.Interval != "" {
+		dur, err := time.ParseDuration(*req.Interval)
+		if err != nil {
+			http.Error(w, fmt.Sprintf(`{"error":"invalid interval: %s"}`, err), http.StatusBadRequest)
+			return
+		}
+		if dur < time.Second {
+			http.Error(w, `{"error":"interval must be at least 1s"}`, http.StatusBadRequest)
+			return
+		}
+		interval = &dur
+	}
 
 	d.mu.Lock()
-	entry, ok := d.registry[req.SessionID]
-	if !ok {
+	targets := d.scheduleTargetsLocked(req.SessionID, req.Scope, req.WorkspaceRoot)
+	if len(targets) == 0 {
 		d.mu.Unlock()
 		http.Error(w, `{"error":"session not found"}`, http.StatusNotFound)
 		return
 	}
 
-	if req.DailyAt != nil {
-		entry.Runtime.Scheduler.DailyAt = *req.DailyAt
-	}
-	if req.Timezone != nil {
-		entry.Runtime.Scheduler.Timezone = *req.Timezone
-	}
-	if req.Interval != nil {
-		if *req.Interval == "" {
-			entry.Runtime.Scheduler.Interval = 0
-		} else {
-			dur, err := time.ParseDuration(*req.Interval)
-			if err != nil {
-				d.mu.Unlock()
-				http.Error(w, fmt.Sprintf(`{"error":"invalid interval: %s"}`, err), http.StatusBadRequest)
-				return
-			}
-			if dur < time.Second {
-				d.mu.Unlock()
-				http.Error(w, `{"error":"interval must be at least 1s"}`, http.StatusBadRequest)
-				return
-			}
-			entry.Runtime.Scheduler.Interval = dur
+	now := time.Now()
+	snapshots := make([]SessionEntry, 0, len(targets))
+	for _, entry := range targets {
+		applyScheduleRequest(&entry.Runtime.Scheduler, req.DailyAt, req.Timezone, req.Interval, interval, req.Enabled)
+		if entry.Runtime.Scheduler.Enabled && d.scheduler != nil {
+			entry.Runtime.Scheduler.NextWakeupAt = d.scheduler.computeNextWakeup(entry.Runtime.Scheduler, now)
+		} else if !entry.Runtime.Scheduler.Enabled {
+			entry.Runtime.Scheduler.NextWakeupAt = time.Time{}
 		}
+		snapshots = append(snapshots, *entry)
 	}
-	if req.Enabled != nil {
-		entry.Runtime.Scheduler.Enabled = *req.Enabled
-	}
-
-	// Compute next wakeup if enabling.
-	if entry.Runtime.Scheduler.Enabled && d.scheduler != nil {
-		next := d.scheduler.computeNextWakeup(entry.Runtime.Scheduler, time.Now())
-		entry.Runtime.Scheduler.NextWakeupAt = next
-	} else if !entry.Runtime.Scheduler.Enabled {
-		entry.Runtime.Scheduler.NextWakeupAt = time.Time{}
-	}
-
-	runtime := entry.Runtime
-	path := entry.Path
 	d.mu.Unlock()
 
-	if err := agent.SaveRuntimeMeta(path, runtime); err != nil {
-		http.Error(w, fmt.Sprintf(`{"error":"save failed: %s"}`, err), http.StatusInternalServerError)
-		return
+	for _, entry := range snapshots {
+		if err := agent.SaveRuntimeMeta(entry.Path, entry.Runtime); err != nil {
+			http.Error(w, fmt.Sprintf(`{"error":"save failed: %s"}`, err), http.StatusInternalServerError)
+			return
+		}
 	}
 
 	w.Header().Set("Content-Type", "application/json")
+	sessionIDs := make([]string, 0, len(snapshots))
+	for _, entry := range snapshots {
+		sessionIDs = append(sessionIDs, entry.ID)
+	}
+	first := snapshots[0]
 	resp := map[string]interface{}{
 		"ok":             true,
-		"session_id":     req.SessionID,
-		"enabled":        runtime.Scheduler.Enabled,
-		"daily_at":       runtime.Scheduler.DailyAt,
-		"timezone":       runtime.Scheduler.Timezone,
-		"interval":       runtime.Scheduler.Interval.String(),
-		"next_wakeup_at": runtime.Scheduler.NextWakeupAt.Format(time.RFC3339),
+		"session_id":     first.ID,
+		"session_ids":    sessionIDs,
+		"scope":          req.Scope,
+		"workspace_root": req.WorkspaceRoot,
+		"updated":        len(snapshots),
+		"enabled":        first.Runtime.Scheduler.Enabled,
+		"daily_at":       first.Runtime.Scheduler.DailyAt,
+		"timezone":       first.Runtime.Scheduler.Timezone,
+		"interval":       first.Runtime.Scheduler.Interval.String(),
+		"next_wakeup_at": first.Runtime.Scheduler.NextWakeupAt.Format(time.RFC3339),
 	}
 	json.NewEncoder(w).Encode(resp)
+}
+
+func applyScheduleRequest(sched *agent.RuntimeSchedMeta, dailyAt, timezone, intervalRaw *string, interval *time.Duration, enabled *bool) {
+	if dailyAt != nil {
+		sched.DailyAt = *dailyAt
+	}
+	if timezone != nil {
+		sched.Timezone = *timezone
+	}
+	if intervalRaw != nil {
+		if *intervalRaw == "" {
+			sched.Interval = 0
+		} else if interval != nil {
+			sched.Interval = *interval
+		}
+	}
+	if enabled != nil {
+		sched.Enabled = *enabled
+	}
+}
+
+func (d *Daemon) scheduleTargetsLocked(sessionID, scope, workspaceRoot string) []*SessionEntry {
+	if sessionID != "" {
+		if entry := d.registry[sessionID]; entry != nil {
+			return []*SessionEntry{entry}
+		}
+		return nil
+	}
+	targets := make([]*SessionEntry, 0)
+	for _, entry := range d.registry {
+		if scheduleEntryMatchesScope(entry, scope, workspaceRoot) {
+			targets = append(targets, entry)
+		}
+	}
+	sort.Slice(targets, func(i, j int) bool { return targets[i].ID < targets[j].ID })
+	return targets
+}
+
+func scheduleEntryMatchesScope(entry *SessionEntry, scope, workspaceRoot string) bool {
+	meta, _, _ := agent.LoadBranchMeta(entry.Path)
+	entryScope := meta.DefaultScope()
+	root := firstNonEmpty(entry.Runtime.WorkspaceRoot, meta.WorkspaceRoot)
+	if entryScope == "global" && strings.TrimSpace(root) != "" {
+		entryScope = "project"
+	}
+	switch scope {
+	case "global":
+		return entryScope == "global"
+	case "project":
+		return entryScope == "project" && sameWorkspaceRoot(root, workspaceRoot)
+	default:
+		return false
+	}
+}
+
+func sameWorkspaceRoot(a, b string) bool {
+	a = strings.TrimSpace(a)
+	b = strings.TrimSpace(b)
+	if a == "" || b == "" {
+		return a == b
+	}
+	if abs, err := filepath.Abs(a); err == nil {
+		a = abs
+	}
+	if abs, err := filepath.Abs(b); err == nil {
+		b = abs
+	}
+	return filepath.Clean(a) == filepath.Clean(b)
 }
 
 // handleBudget sets or resets the automatic wakeup budget for a session.

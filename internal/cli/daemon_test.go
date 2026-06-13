@@ -208,6 +208,49 @@ func TestDaemonApprovalsCommandJSON(t *testing.T) {
 	}
 }
 
+func TestDaemonScheduleCommandSendsScopedPayload(t *testing.T) {
+	seenPath := ""
+	var payload map[string]interface{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seenPath = r.URL.Path
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer server.Close()
+	addr := strings.TrimPrefix(server.URL, "http://")
+
+	out := captureStdout(t, func() {
+		if rc := daemonScheduleCmd([]string{
+			"--addr", addr,
+			"--scope", "project",
+			"--workspace-root", "/repo",
+			"--daily-at", "07:00",
+			"--timezone", "Asia/Shanghai",
+		}); rc != 0 {
+			t.Fatalf("daemonScheduleCmd rc = %d, want 0", rc)
+		}
+	})
+
+	if seenPath != "/schedule" {
+		t.Fatalf("seenPath = %q, want /schedule", seenPath)
+	}
+	if payload["scope"] != "project" || payload["workspace_root"] != "/repo" || payload["daily_at"] != "07:00" || payload["timezone"] != "Asia/Shanghai" {
+		t.Fatalf("unexpected schedule payload: %+v", payload)
+	}
+	if enabled, ok := payload["enabled"].(bool); !ok || !enabled {
+		t.Fatalf("enabled = %v, want true", payload["enabled"])
+	}
+	if _, ok := payload["session_id"]; ok {
+		t.Fatalf("schedule payload should not include session_id: %+v", payload)
+	}
+	if !strings.Contains(out, `"ok":true`) {
+		t.Fatalf("schedule output = %q, want ok response", out)
+	}
+}
+
 func TestPrepareBotGatewayRejectsUnsafeConfig(t *testing.T) {
 	cfg := testBotGatewayConfig()
 	cfg.Bot.Enabled = false

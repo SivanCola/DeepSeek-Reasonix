@@ -522,6 +522,8 @@ func daemonScheduleCmd(args []string) int {
 	addr := fs.String("addr", daemon.DefaultAddr, "daemon 地址")
 	dir := fs.String("dir", "", "会话目录（用于读取本地 token）")
 	sessionID := fs.String("session", "", "要调度的 session ID")
+	scope := fs.String("scope", "", "调度范围：global 或 project（替代 --session）")
+	workspaceRoot := fs.String("workspace-root", "", "project scope 的工作区根目录")
 	dailyAt := fs.String("daily-at", "", "每日唤醒时间 HH:MM")
 	timezone := fs.String("timezone", "", "daily-at 使用的 IANA 时区，例如 Asia/Shanghai")
 	interval := fs.String("interval", "", "固定间隔，例如 1h")
@@ -529,22 +531,40 @@ func daemonScheduleCmd(args []string) int {
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
-	if *sessionID == "" {
-		fmt.Fprintln(os.Stderr, "error: --session is required")
+	if strings.TrimSpace(*sessionID) == "" && strings.TrimSpace(*scope) == "" {
+		fmt.Fprintln(os.Stderr, "error: --session or --scope is required")
 		return 2
 	}
-	body := fmt.Sprintf(`{"session_id":%q,"enabled":%t`, *sessionID, *enabled)
+	if strings.TrimSpace(*sessionID) != "" && strings.TrimSpace(*scope) != "" {
+		fmt.Fprintln(os.Stderr, "error: --session and --scope are mutually exclusive")
+		return 2
+	}
+	payload := map[string]interface{}{
+		"enabled": *enabled,
+	}
+	if strings.TrimSpace(*sessionID) != "" {
+		payload["session_id"] = strings.TrimSpace(*sessionID)
+	} else {
+		payload["scope"] = strings.TrimSpace(*scope)
+		if strings.TrimSpace(*workspaceRoot) != "" {
+			payload["workspace_root"] = strings.TrimSpace(*workspaceRoot)
+		}
+	}
 	if *dailyAt != "" {
-		body += fmt.Sprintf(`,"daily_at":%q`, *dailyAt)
+		payload["daily_at"] = *dailyAt
 	}
 	if *timezone != "" {
-		body += fmt.Sprintf(`,"timezone":%q`, *timezone)
+		payload["timezone"] = *timezone
 	}
 	if *interval != "" {
-		body += fmt.Sprintf(`,"interval":%q`, *interval)
+		payload["interval"] = *interval
 	}
-	body += "}"
-	resp, err := daemonPost(*addr, *dir, "/schedule", body)
+	body, err := json.Marshal(payload)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	resp, err := daemonPost(*addr, *dir, "/schedule", string(body))
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "daemon not reachable: %v\n", err)
 		return 1
@@ -951,7 +971,7 @@ Usage:
   reasonix daemon approvals [--addr HOST:PORT] [--dir PATH] [--json]
   reasonix daemon timeline --session ID [--limit N] [--json]
   reasonix daemon continue --session ID [--addr HOST:PORT] [--dir PATH]
-  reasonix daemon schedule --session ID [--daily-at HH:MM] [--timezone Area/City] [--interval 1h]
+  reasonix daemon schedule (--session ID | --scope global|project [--workspace-root PATH]) [--daily-at HH:MM] [--timezone Area/City] [--interval 1h]
   reasonix daemon budget   --session ID [--daily-wakeups N] [--max-goal-auto-turns N] [--daily-model-calls N] [--daily-model-cost N] [--reset]
   reasonix daemon wait-event --session ID --source TYPE [--event-id ID] [--status completed] [--conclusion success]
   reasonix daemon wait-time --session ID (--until RFC3339 | --after 1h)

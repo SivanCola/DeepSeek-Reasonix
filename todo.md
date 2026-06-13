@@ -206,11 +206,11 @@ dynamic workflow 或开发者平台，而是先把 Reasonix 从一次性会话�
 
 ### 任务
 
-- [ ] 设计 schedule 配置。
+- [x] 设计 schedule 配置。
   - [x] session 级 schedule。
-  - [ ] project 级 schedule。
-  - [ ] global schedule。
-  - [x] 支持 session 级 daily schedule timezone。
+  - [x] project 级 schedule。
+  - [x] global schedule。
+  - [x] 支持 session/project/global 级 daily schedule timezone。
 - [x] 实现轻量 scheduler。
   - [x] 第一版只支持 fixed interval 和 daily time。
   - [x] 持久化 `next_wakeup_at` / `last_wakeup_at`。
