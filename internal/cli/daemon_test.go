@@ -459,6 +459,92 @@ func TestDaemonReleaseAssistCommandRequiresPaths(t *testing.T) {
 	}
 }
 
+func TestDaemonRepoHealthCommandConfiguresScheduleAndBudget(t *testing.T) {
+	var paths []string
+	var payloads []map[string]interface{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.URL.Path)
+		var payload map[string]interface{}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		payloads = append(payloads, payload)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer server.Close()
+	addr := strings.TrimPrefix(server.URL, "http://")
+
+	out := captureStdout(t, func() {
+		if rc := daemonRepoHealthCmd([]string{
+			"--addr", addr,
+			"--session", "health-session",
+			"--daily-at", "10:30",
+			"--timezone", "Asia/Shanghai",
+			"--daily-wakeups", "1",
+			"--max-goal-auto-turns", "2",
+			"--daily-model-calls", "4",
+			"--daily-model-cost", "0.25",
+		}); rc != 0 {
+			t.Fatalf("daemonRepoHealthCmd rc = %d, want 0", rc)
+		}
+	})
+
+	if got, want := strings.Join(paths, ","), "/schedule,/budget"; got != want {
+		t.Fatalf("paths = %q, want %q", got, want)
+	}
+	if len(payloads) != 2 {
+		t.Fatalf("payload count = %d, want 2", len(payloads))
+	}
+	schedule := payloads[0]
+	if schedule["session_id"] != "health-session" || schedule["daily_at"] != "10:30" || schedule["timezone"] != "Asia/Shanghai" || schedule["enabled"] != true {
+		t.Fatalf("unexpected schedule payload: %+v", schedule)
+	}
+	budget := payloads[1]
+	if budget["session_id"] != "health-session" ||
+		budget["daily_wakeup_limit"] != float64(1) ||
+		budget["max_goal_auto_turns"] != float64(2) ||
+		budget["daily_model_call_limit"] != float64(4) ||
+		budget["daily_model_cost_limit"] != 0.25 {
+		t.Fatalf("unexpected budget payload: %+v", budget)
+	}
+	if strings.Count(out, `"ok":true`) != 2 {
+		t.Fatalf("repo-health output = %q, want two ok responses", out)
+	}
+}
+
+func TestDaemonRepoHealthCommandCanSkipBudget(t *testing.T) {
+	var paths []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer server.Close()
+	addr := strings.TrimPrefix(server.URL, "http://")
+
+	_ = captureStdout(t, func() {
+		if rc := daemonRepoHealthCmd([]string{
+			"--addr", addr,
+			"--session", "health-session",
+			"--daily-wakeups", "-1",
+			"--max-goal-auto-turns", "-1",
+		}); rc != 0 {
+			t.Fatalf("daemonRepoHealthCmd skip budget rc = %d, want 0", rc)
+		}
+	})
+
+	if got, want := strings.Join(paths, ","), "/schedule"; got != want {
+		t.Fatalf("paths = %q, want %q", got, want)
+	}
+}
+
+func TestDaemonRepoHealthCommandRejectsNegativeBudget(t *testing.T) {
+	if rc := daemonRepoHealthCmd([]string{"--session", "health-session", "--daily-model-calls", "-2"}); rc != 2 {
+		t.Fatalf("daemonRepoHealthCmd negative model calls rc = %d, want 2", rc)
+	}
+}
+
 func TestPrepareBotGatewayRejectsUnsafeConfig(t *testing.T) {
 	cfg := testBotGatewayConfig()
 	cfg.Bot.Enabled = false

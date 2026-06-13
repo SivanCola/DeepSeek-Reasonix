@@ -384,9 +384,11 @@ dynamic workflow 或开发者平台，而是先把 Reasonix 从一次性会话�
   - [x] 文件变化后唤醒 release session 检查 changelog 和版本号。
   - [x] 发布动作继续走 tool approval / approval desk。
   - [x] 发布后通知 IM 由 active release goal 复用 bot gateway 承接。
-- [ ] 仓库健康巡检。
-  - 定期跑轻量检查。
-  - 报告 flaky tests、长期未合并 PR、过期依赖。
+- [x] 仓库健康巡检。
+  - [x] `reasonix daemon repo-health` 可为已有巡检 session 配置每日唤醒。
+  - [x] 默认只配置 deterministic schedule / budget，不直接执行高风险写操作。
+  - [x] 轻量检查、flaky tests、长期未合并 PR、过期依赖报告由 active health goal 承接。
+  - [x] 后续修复、升级依赖、关闭 PR 等动作继续走 tool approval / approval desk。
 - [ ] 个人任务复盘。
   - 总结当天自动处理了什么。
   - 列出需要用户决策的任务。

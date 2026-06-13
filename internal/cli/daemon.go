@@ -57,6 +57,8 @@ func daemonCommand(args []string) int {
 		return daemonCIWatchCmd(rest)
 	case "release-assist":
 		return daemonReleaseAssistCmd(rest)
+	case "repo-health":
+		return daemonRepoHealthCmd(rest)
 	case "wait-event":
 		return daemonWaitEventCmd(rest)
 	case "wait-time":
@@ -868,6 +870,105 @@ func defaultReleaseAssistPaths() string {
 	return "CHANGELOG.md,package.json,package-lock.json,pnpm-lock.yaml,yarn.lock,go.mod,Cargo.toml,pyproject.toml"
 }
 
+func daemonRepoHealthCmd(args []string) int {
+	fs := flag.NewFlagSet("daemon repo-health", flag.ContinueOnError)
+	addr := fs.String("addr", daemon.DefaultAddr, "daemon 地址")
+	dir := fs.String("dir", "", "会话目录（用于读取本地 token）")
+	sessionID := fs.String("session", "", "要配置仓库健康巡检的 session ID")
+	dailyAt := fs.String("daily-at", "10:00", "每日仓库巡检唤醒时间 HH:MM")
+	timezone := fs.String("timezone", "", "daily-at 使用的 IANA 时区，例如 Asia/Shanghai")
+	dailyWakeups := fs.Int("daily-wakeups", 1, "每日自动唤醒次数上限，0 表示关闭限制，-1 表示不修改预算")
+	maxGoalAutoTurns := fs.Int("max-goal-auto-turns", 0, "每个巡检 goal 最大自动续跑轮次，0 表示使用内置默认值，-1 表示不修改")
+	dailyModelCalls := fs.Int("daily-model-calls", -1, "每日模型调用次数上限，0 表示关闭限制，-1 表示不修改")
+	dailyModelCost := fs.Float64("daily-model-cost", -1, "每日模型费用上限，0 表示关闭限制，-1 表示不修改")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	session := strings.TrimSpace(*sessionID)
+	if session == "" {
+		fmt.Fprintln(os.Stderr, "error: --session is required")
+		return 2
+	}
+	if strings.TrimSpace(*dailyAt) == "" {
+		fmt.Fprintln(os.Stderr, "error: --daily-at is required")
+		return 2
+	}
+	if *dailyWakeups < -1 {
+		fmt.Fprintln(os.Stderr, "error: --daily-wakeups must be >= -1")
+		return 2
+	}
+	if *maxGoalAutoTurns < -1 {
+		fmt.Fprintln(os.Stderr, "error: --max-goal-auto-turns must be >= -1")
+		return 2
+	}
+	if *dailyModelCalls < -1 {
+		fmt.Fprintln(os.Stderr, "error: --daily-model-calls must be >= -1")
+		return 2
+	}
+	if *dailyModelCost < -1 {
+		fmt.Fprintln(os.Stderr, "error: --daily-model-cost must be >= -1")
+		return 2
+	}
+
+	schedulePayload := map[string]interface{}{
+		"session_id": session,
+		"daily_at":   strings.TrimSpace(*dailyAt),
+		"enabled":    true,
+	}
+	if tz := strings.TrimSpace(*timezone); tz != "" {
+		schedulePayload["timezone"] = tz
+	}
+	scheduleBody, err := json.Marshal(schedulePayload)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	resp, err := daemonPost(*addr, *dir, "/schedule", string(scheduleBody))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "daemon not reachable: %v\n", err)
+		return 1
+	}
+	scheduleResp, ok := readDaemonCommandResponse(resp)
+	if !ok {
+		return 1
+	}
+	fmt.Println(scheduleResp)
+
+	budgetPayload := map[string]interface{}{
+		"session_id": session,
+	}
+	if *dailyWakeups >= 0 {
+		budgetPayload["daily_wakeup_limit"] = *dailyWakeups
+	}
+	if *maxGoalAutoTurns >= 0 {
+		budgetPayload["max_goal_auto_turns"] = *maxGoalAutoTurns
+	}
+	if *dailyModelCalls >= 0 {
+		budgetPayload["daily_model_call_limit"] = *dailyModelCalls
+	}
+	if *dailyModelCost >= 0 {
+		budgetPayload["daily_model_cost_limit"] = *dailyModelCost
+	}
+	if len(budgetPayload) > 1 {
+		budgetBody, err := json.Marshal(budgetPayload)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			return 1
+		}
+		resp, err = daemonPost(*addr, *dir, "/budget", string(budgetBody))
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "daemon not reachable: %v\n", err)
+			return 1
+		}
+		budgetResp, ok := readDaemonCommandResponse(resp)
+		if !ok {
+			return 1
+		}
+		fmt.Println(budgetResp)
+	}
+	return 0
+}
+
 func daemonWaitEventCmd(args []string) int {
 	fs := flag.NewFlagSet("daemon wait-event", flag.ContinueOnError)
 	addr := fs.String("addr", daemon.DefaultAddr, "daemon 地址")
@@ -1206,6 +1307,7 @@ Usage:
   reasonix daemon daily-triage --session ID [--daily-at HH:MM] [--timezone Area/City] [--daily-wakeups N]
   reasonix daemon ci-watch --session ID [--source workflow_run|check_suite|status] [--repo owner/repo] [--pr N]
   reasonix daemon release-assist --session ID [--paths CHANGELOG.md,package.json] [--debounce 3s]
+  reasonix daemon repo-health --session ID [--daily-at HH:MM] [--timezone Area/City] [--daily-wakeups N]
   reasonix daemon wait-event --session ID --source TYPE [--event-id ID] [--status completed] [--conclusion success]
   reasonix daemon wait-time --session ID (--until RFC3339 | --after 1h)
   reasonix daemon wait-file --session ID --paths PATH[,PATH...] [--ignore GLOB[,GLOB...]]
@@ -1227,6 +1329,7 @@ Subcommands:
   daily-triage 配置每日 PR / issue triage 场景
   ci-watch   配置“等 GitHub CI 成功后继续”的个人 AgentOS 场景
   release-assist 配置发布文件变化后检查 changelog / version 的发布助手场景
+  repo-health 配置每日仓库健康巡检场景
   wait-event 设置或清除等待外部事件条件
   wait-time  设置或清除等待到指定时间的条件
   wait-file  设置或清除等待文件变化的条件
