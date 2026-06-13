@@ -143,6 +143,10 @@ func daemonStart(args []string) int {
 	addr := fs.String("addr", daemon.DefaultAddr, "监听地址")
 	dir := fs.String("dir", "", "会话目录（默认用户配置）")
 	logFile := fs.String("log-file", "", "daemon 日志文件（默认 <session-dir>/.daemon.log，none 表示关闭文件日志）")
+	startBot := fs.Bool("bot", false, "同时启动 bot gateway")
+	botChannels := fs.String("bot-channels", "", "bot 平台，逗号分隔：qq,feishu,weixin")
+	botDir := fs.String("bot-dir", "", "bot 工作目录（空则使用当前目录或 bot connection 配置）")
+	botModel := fs.String("bot-model", "", "bot 模型名（空则用 bot/default_model 配置）")
 	webhook := fs.Bool("webhook", false, "启用 /webhook 外部事件入口")
 	webhookSecret := fs.String("webhook-secret", "", "webhook HMAC secret（也可用 REASONIX_DAEMON_WEBHOOK_SECRET）")
 
@@ -175,6 +179,32 @@ func daemonStart(args []string) int {
 	if logCloser != nil {
 		defer logCloser.Close()
 		logger.Info("daemon logging to file", "path", logPath)
+	}
+
+	if *startBot {
+		cfg, err := config.Load()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: load config for bot: %v\n", err)
+			return 1
+		}
+		prepared, err := prepareBotGateway(cfg, botGatewayOptions{
+			Channels:      *botChannels,
+			WorkspaceRoot: *botDir,
+			Model:         *botModel,
+		}, logger, func(format string, args ...interface{}) {
+			logger.Warn(fmt.Sprintf(format, args...))
+		})
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: bot gateway: %v\n", err)
+			return 1
+		}
+		if err := prepared.Gateway.Start(ctx); err != nil {
+			fmt.Fprintf(os.Stderr, "error: start bot gateway: %v\n", err)
+			prepared.Gateway.Stop()
+			return 1
+		}
+		defer prepared.Gateway.Stop()
+		logger.Info("daemon bot gateway started", "model", prepared.Model, "channels", prepared.ChannelSummary)
 	}
 
 	d := daemon.New(daemon.Options{
@@ -781,7 +811,7 @@ func daemonUsage() {
 	fmt.Print(`reasonix daemon — 常驻后台 agent 服务
 
 Usage:
-  reasonix daemon start    [--addr HOST:PORT] [--dir PATH] [--log-file PATH|none] [--webhook --webhook-secret SECRET]
+  reasonix daemon start    [--addr HOST:PORT] [--dir PATH] [--log-file PATH|none] [--bot --bot-channels qq,feishu,weixin] [--webhook --webhook-secret SECRET]
   reasonix daemon status   [--addr HOST:PORT] [--dir PATH]
   reasonix daemon doctor   [--addr HOST:PORT] [--dir PATH] [--log-file PATH|none] [--json]
   reasonix daemon sessions [--addr HOST:PORT] [--dir PATH] [--json]

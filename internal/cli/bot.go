@@ -63,57 +63,83 @@ func botStart(args []string, version string) int {
 		return 1
 	}
 
-	if !cfg.Bot.Enabled {
-		fmt.Fprintln(os.Stderr, "error: bot is not enabled in config — set [bot] enabled = true")
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	prepared, err := prepareBotGateway(cfg, botGatewayOptions{
+		Channels:      *channels,
+		WorkspaceRoot: *dir,
+		Model:         *model,
+	}, logger, func(format string, args ...interface{}) {
+		fmt.Fprintf(os.Stderr, "warning: "+format+"\n", args...)
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
 	}
-	if !cfg.Bot.Allowlist.AllowAll && (!cfg.Bot.Allowlist.Enabled || botAllowlistUserCount(cfg.Bot.Allowlist) == 0) {
-		fmt.Fprintln(os.Stderr, "error: bot requires an explicit allowlist; set [bot.allowlist] enabled = true with platform user ids, or set allow_all = true intentionally")
+	gw := prepared.Gateway
+
+	// 信号处理
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+
+	go func() {
+		<-sigCh
+		fmt.Fprintln(os.Stderr, "\nshutting down...")
+		cancel()
+		gw.Stop()
+	}()
+
+	fmt.Fprintf(os.Stderr, "reasonix bot starting (model: %s, channels: %s)...\n", prepared.Model, prepared.ChannelSummary)
+	fmt.Fprintf(os.Stderr, "version: %s\n", version)
+
+	if err := gw.Start(ctx); err != nil {
+		fmt.Fprintf(os.Stderr, "error: start gateway: %v\n", err)
 		return 1
 	}
 
-	workspaceRoot := *dir
+	// 等待信号或 context 取消
+	<-ctx.Done()
+	return 0
+}
+
+type botGatewayOptions struct {
+	Channels      string
+	WorkspaceRoot string
+	Model         string
+}
+
+type preparedBotGateway struct {
+	Gateway        *bot.BotGateway
+	Model          string
+	ChannelSummary string
+}
+
+func prepareBotGateway(cfg *config.Config, opts botGatewayOptions, logger *slog.Logger, warnf func(string, ...interface{})) (*preparedBotGateway, error) {
+	if cfg == nil {
+		return nil, fmt.Errorf("bot config is nil")
+	}
+	if logger == nil {
+		logger = slog.Default()
+	}
+	if !cfg.Bot.Enabled {
+		return nil, fmt.Errorf("bot is not enabled in config — set [bot] enabled = true")
+	}
+	if !cfg.Bot.Allowlist.AllowAll && (!cfg.Bot.Allowlist.Enabled || botAllowlistUserCount(cfg.Bot.Allowlist) == 0) {
+		return nil, fmt.Errorf("bot requires an explicit allowlist; set [bot.allowlist] enabled = true with platform user ids, or set allow_all = true intentionally")
+	}
+
+	workspaceRoot := opts.WorkspaceRoot
 	if workspaceRoot == "" {
 		if wd, err := os.Getwd(); err == nil {
 			workspaceRoot = wd
 		}
 	}
 
-	// 确定启用的平台
-	enabledPlatforms := make(map[bot.Platform]bool)
-	if *channels != "" {
-		for _, ch := range strings.Split(*channels, ",") {
-			ch = strings.TrimSpace(ch)
-			switch bot.Platform(ch) {
-			case bot.PlatformQQ:
-				enabledPlatforms[bot.PlatformQQ] = cfg.Bot.QQ.Enabled
-			case bot.PlatformFeishu:
-				enabledPlatforms[bot.PlatformFeishu] = cfg.Bot.Feishu.Enabled
-			case bot.PlatformWeixin:
-				enabledPlatforms[bot.PlatformWeixin] = cfg.Bot.Weixin.Enabled
-			default:
-				fmt.Fprintf(os.Stderr, "warning: unknown channel %q\n", ch)
-			}
-		}
-	} else {
-		enabledPlatforms[bot.PlatformQQ] = cfg.Bot.QQ.Enabled
-		enabledPlatforms[bot.PlatformFeishu] = cfg.Bot.Feishu.Enabled
-		enabledPlatforms[bot.PlatformWeixin] = cfg.Bot.Weixin.Enabled
+	enabledPlatforms := resolveBotEnabledPlatforms(cfg.Bot, opts.Channels, warnf)
+	if !hasEnabledBotPlatform(enabledPlatforms) {
+		return nil, fmt.Errorf("no bot channels enabled — enable at least one in config")
 	}
 
-	hasEnabled := false
-	for _, v := range enabledPlatforms {
-		if v {
-			hasEnabled = true
-			break
-		}
-	}
-	if !hasEnabled {
-		fmt.Fprintln(os.Stderr, "error: no bot channels enabled — enable at least one in config")
-		return 1
-	}
-
-	modelName := *model
+	modelName := strings.TrimSpace(opts.Model)
 	if modelName == "" {
 		modelName = cfg.Bot.Model
 	}
@@ -121,14 +147,11 @@ func botStart(args []string, version string) int {
 		modelName = cfg.DefaultModel
 	}
 
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
-
-	// 构建网关配置
 	gwCfg := bot.GatewayConfig{
 		Model:         modelName,
 		MaxSteps:      cfg.Bot.MaxSteps,
 		WorkspaceRoot: workspaceRoot,
-		Channels:      botChannelConfigs(cfg.Bot.Connections, *model == "", *dir == ""),
+		Channels:      botChannelConfigs(cfg.Bot.Connections, strings.TrimSpace(opts.Model) == "", strings.TrimSpace(opts.WorkspaceRoot) == ""),
 		Enabled:       enabledPlatforms,
 		Allowlist: bot.AllowlistConfig{
 			Enabled:  cfg.Bot.Allowlist.Enabled,
@@ -147,7 +170,6 @@ func botStart(args []string, version string) int {
 		Debounce: time.Duration(cfg.Bot.DebounceMs) * time.Millisecond,
 	}
 
-	// 创建适配器
 	adapters := make(map[bot.Platform]bot.Adapter)
 	if enabledPlatforms[bot.PlatformQQ] {
 		adapters[bot.PlatformQQ] = qq.New(cfg.Bot.QQ, logger)
@@ -159,30 +181,59 @@ func botStart(args []string, version string) int {
 		adapters[bot.PlatformWeixin] = weixin.New(cfg.Bot.Weixin, logger)
 	}
 
-	gw := bot.NewGateway(gwCfg, adapters, logger)
+	return &preparedBotGateway{
+		Gateway:        bot.NewGateway(gwCfg, adapters, logger),
+		Model:          modelName,
+		ChannelSummary: botChannelSummary(enabledPlatforms),
+	}, nil
+}
 
-	// 信号处理
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-
-	go func() {
-		<-sigCh
-		fmt.Fprintln(os.Stderr, "\nshutting down...")
-		cancel()
-		gw.Stop()
-	}()
-
-	fmt.Fprintf(os.Stderr, "reasonix bot starting (model: %s, channels: %s)...\n", modelName, *channels)
-	fmt.Fprintf(os.Stderr, "version: %s\n", version)
-
-	if err := gw.Start(ctx); err != nil {
-		fmt.Fprintf(os.Stderr, "error: start gateway: %v\n", err)
-		return 1
+func resolveBotEnabledPlatforms(cfg config.BotConfig, channels string, warnf func(string, ...interface{})) map[bot.Platform]bool {
+	enabledPlatforms := make(map[bot.Platform]bool)
+	if strings.TrimSpace(channels) != "" {
+		for _, ch := range strings.Split(channels, ",") {
+			ch = strings.TrimSpace(ch)
+			switch bot.Platform(ch) {
+			case bot.PlatformQQ:
+				enabledPlatforms[bot.PlatformQQ] = cfg.QQ.Enabled
+			case bot.PlatformFeishu:
+				enabledPlatforms[bot.PlatformFeishu] = cfg.Feishu.Enabled
+			case bot.PlatformWeixin:
+				enabledPlatforms[bot.PlatformWeixin] = cfg.Weixin.Enabled
+			default:
+				if warnf != nil {
+					warnf("unknown channel %q", ch)
+				}
+			}
+		}
+		return enabledPlatforms
 	}
+	enabledPlatforms[bot.PlatformQQ] = cfg.QQ.Enabled
+	enabledPlatforms[bot.PlatformFeishu] = cfg.Feishu.Enabled
+	enabledPlatforms[bot.PlatformWeixin] = cfg.Weixin.Enabled
+	return enabledPlatforms
+}
 
-	// 等待信号或 context 取消
-	<-ctx.Done()
-	return 0
+func hasEnabledBotPlatform(enabled map[bot.Platform]bool) bool {
+	for _, v := range enabled {
+		if v {
+			return true
+		}
+	}
+	return false
+}
+
+func botChannelSummary(enabled map[bot.Platform]bool) string {
+	var names []string
+	for _, plat := range []bot.Platform{bot.PlatformQQ, bot.PlatformFeishu, bot.PlatformWeixin} {
+		if enabled[plat] {
+			names = append(names, string(plat))
+		}
+	}
+	if len(names) == 0 {
+		return "(none)"
+	}
+	return strings.Join(names, ",")
 }
 
 func botChannelConfigs(connections []config.BotConnectionConfig, includeModel bool, includeWorkspaceRoot bool) map[bot.Platform]bot.ChannelConfig {

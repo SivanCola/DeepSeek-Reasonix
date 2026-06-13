@@ -179,7 +179,7 @@ dynamic workflow 或开发者平台，而是先把 Reasonix 从一次性会话�
 - [ ] 新增 `reasonix daemon start` 命令。
   - [x] 管理 session registry。
   - [x] 持有 scheduler。
-  - [ ] 可选择启动 bot gateway。
+  - [x] 可选择启动 bot gateway。
 - [x] 新增本地控制接口。
   - [x] 使用 localhost HTTP。
   - [x] 提供 status、sessions、continue goal、stop run、approve、answer、wait-event、wait-time、wait-file。

@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"reasonix/internal/agent"
+	"reasonix/internal/bot"
+	"reasonix/internal/config"
 	"reasonix/internal/daemon"
 )
 
@@ -101,6 +103,67 @@ func TestNewDaemonLoggerCanDisableFile(t *testing.T) {
 	}
 	if logger == nil || closer != nil {
 		t.Fatalf("logger=%v closer=%v, want logger without closer", logger, closer)
+	}
+}
+
+func TestPrepareBotGatewayBuildsGateway(t *testing.T) {
+	cfg := testBotGatewayConfig()
+	cfg.Bot.Model = "bot-model"
+	cfg.Bot.QQ.Enabled = true
+
+	prepared, err := prepareBotGateway(&cfg, botGatewayOptions{Channels: "qq"}, nil, nil)
+	if err != nil {
+		t.Fatalf("prepareBotGateway: %v", err)
+	}
+	if prepared == nil || prepared.Gateway == nil {
+		t.Fatalf("gateway not prepared: %+v", prepared)
+	}
+	if prepared.Model != "bot-model" || prepared.ChannelSummary != "qq" {
+		t.Fatalf("unexpected prepared gateway: %+v", prepared)
+	}
+}
+
+func TestPrepareBotGatewayRejectsUnsafeConfig(t *testing.T) {
+	cfg := testBotGatewayConfig()
+	cfg.Bot.Enabled = false
+	if _, err := prepareBotGateway(&cfg, botGatewayOptions{}, nil, nil); err == nil {
+		t.Fatal("disabled bot config should be rejected")
+	}
+
+	cfg = testBotGatewayConfig()
+	cfg.Bot.Allowlist.AllowAll = false
+	cfg.Bot.Allowlist.Enabled = false
+	if _, err := prepareBotGateway(&cfg, botGatewayOptions{}, nil, nil); err == nil {
+		t.Fatal("bot config without allowlist should be rejected")
+	}
+
+	cfg = testBotGatewayConfig()
+	if _, err := prepareBotGateway(&cfg, botGatewayOptions{Channels: "qq"}, nil, nil); err == nil {
+		t.Fatal("requested disabled channel should be rejected")
+	}
+}
+
+func TestResolveBotEnabledPlatformsWarnsUnknown(t *testing.T) {
+	cfg := testBotGatewayConfig().Bot
+	cfg.QQ.Enabled = true
+	var warnings []string
+	enabled := resolveBotEnabledPlatforms(cfg, "qq,nope", func(format string, args ...interface{}) {
+		warnings = append(warnings, format)
+	})
+	if !enabled[bot.PlatformQQ] || len(warnings) != 1 {
+		t.Fatalf("enabled=%+v warnings=%+v", enabled, warnings)
+	}
+}
+
+func testBotGatewayConfig() config.Config {
+	return config.Config{
+		DefaultModel: "default-model",
+		Bot: config.BotConfig{
+			Enabled: true,
+			Allowlist: config.BotAllowlist{
+				AllowAll: true,
+			},
+		},
 	}
 }
 
