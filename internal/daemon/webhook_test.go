@@ -422,7 +422,7 @@ func TestWebhookMatchesWaitEventAndClearsWait(t *testing.T) {
 	}
 }
 
-func TestWebhookIgnoresWaitEventWithWrongConclusion(t *testing.T) {
+func TestWebhookQueuesDiagnosisForWaitEventFailure(t *testing.T) {
 	dir := t.TempDir()
 	sess := filepath.Join(dir, "webhook-wait-conclusion.jsonl")
 	if err := os.WriteFile(sess, []byte(`{}`), 0o644); err != nil {
@@ -470,23 +470,31 @@ func TestWebhookIgnoresWaitEventWithWrongConclusion(t *testing.T) {
 	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if resp["status"] != "ignored" {
-		t.Fatalf("status = %v, want ignored", resp["status"])
+	if resp["status"] != "pending_diagnosis" {
+		t.Fatalf("status = %v, want pending_diagnosis", resp["status"])
 	}
 	select {
 	case intent := <-d.intentCh:
-		t.Fatalf("wrong conclusion should not enqueue intent: %+v", intent)
+		if intent.Source != "webhook" || intent.Reason != "webhook:github.workflow_run:failure" {
+			t.Fatalf("unexpected diagnosis intent: %+v", intent)
+		}
+		if !strings.Contains(intent.Context, "CI finished without the awaited successful conclusion") ||
+			!strings.Contains(intent.Context, "conclusion=failure") ||
+			!strings.Contains(intent.Context, "keep waiting for the success condition") {
+			t.Fatalf("diagnosis context missing guidance:\n%s", intent.Context)
+		}
 	default:
+		t.Fatal("failure conclusion should enqueue diagnosis intent")
 	}
 	loaded, ok, err := agent.LoadRuntimeMeta(sess)
 	if err != nil || !ok {
 		t.Fatalf("LoadRuntimeMeta: err=%v ok=%v", err, ok)
 	}
-	if loaded.Run.Status != "waiting_event" || loaded.Wait.EventConclusion != "success" {
-		t.Fatalf("wait condition should remain active: run=%+v wait=%+v", loaded.Run, loaded.Wait)
+	if loaded.Run.Status != "pending_continue" || loaded.Wait.Kind != "event" || loaded.Wait.EventConclusion != "success" {
+		t.Fatalf("diagnosis should queue run while preserving wait: run=%+v wait=%+v", loaded.Run, loaded.Wait)
 	}
-	if loaded.Budget.DailyWakeups != 0 {
-		t.Fatalf("ignored conclusion should not consume budget: %+v", loaded.Budget)
+	if loaded.Budget.DailyWakeups != 1 {
+		t.Fatalf("diagnosis wakeup should consume budget: %+v", loaded.Budget)
 	}
 }
 

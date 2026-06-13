@@ -406,6 +406,42 @@ func TestSnapshotPreservesBudgetRuntime(t *testing.T) {
 	}
 }
 
+func TestSnapshotPreservesEventWaitRuntime(t *testing.T) {
+	dir := t.TempDir()
+	sessionPath := filepath.Join(dir, "preserve-wait.jsonl")
+
+	sess := agent.NewSession("")
+	sess.Add(provider.Message{Role: provider.RoleUser, Content: "hello"})
+	ag := agent.New(nil, tool.NewRegistry(), sess, agent.Options{}, event.Discard)
+	c := New(Options{Executor: ag, SessionPath: sessionPath, Sink: event.Discard})
+
+	if err := agent.SaveRuntimeMeta(sessionPath, agent.RuntimeMeta{
+		Goal: agent.RuntimeGoalMeta{Text: "wait for CI", Status: GoalStatusRunning},
+		Wait: agent.RuntimeWaitMeta{
+			Kind:            "event",
+			EventSource:     "github.workflow_run",
+			EventStatus:     "completed",
+			EventConclusion: "success",
+			Subject:         "PR #42",
+		},
+	}); err != nil {
+		t.Fatalf("SaveRuntimeMeta: %v", err)
+	}
+
+	c.SetGoal("wait for CI")
+	if err := c.Snapshot(); err != nil {
+		t.Fatalf("Snapshot: %v", err)
+	}
+
+	m, ok, err := agent.LoadRuntimeMeta(sessionPath)
+	if err != nil || !ok {
+		t.Fatalf("LoadRuntimeMeta: err=%v ok=%v", err, ok)
+	}
+	if m.Wait.Kind != "event" || m.Wait.EventConclusion != "success" {
+		t.Fatalf("event wait not preserved: %+v", m.Wait)
+	}
+}
+
 func TestClearGoalRemovesStaleRuntimeSidecar(t *testing.T) {
 	dir := t.TempDir()
 	sessionPath := filepath.Join(dir, "clear-goal.jsonl")

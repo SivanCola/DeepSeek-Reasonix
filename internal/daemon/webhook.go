@@ -113,6 +113,80 @@ func (d *Daemon) handleWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 	waitingEvent := entry.Runtime.Wait.Kind == "event"
 	if waitingEvent && !webhookMatchesWait(entry.Runtime.Wait, evt, info) {
+		if webhookShouldDiagnoseWaitFailure(entry.Runtime.Wait, evt, info) {
+			wait := entry.Runtime.Wait
+			now := time.Now()
+			reasonKey := "webhook:" + evt.Type + ":failure"
+			if ok, reason := reserveAutoWakeupBudget(&entry.Runtime, reasonKey, now); !ok {
+				entry.Runtime.Scheduler.LastWakeupAt = now
+				entry.Runtime.Scheduler.LastWakeupReason = "budget_blocked:" + reasonKey
+				if evt.EventID != "" {
+					entry.Runtime.Scheduler.LastWakeupEventID = evt.EventID
+				}
+				runtime := entry.Runtime
+				path := entry.Path
+				d.mu.Unlock()
+				if err := agent.SaveRuntimeMeta(path, runtime); err != nil {
+					http.Error(w, fmt.Sprintf(`{"error":"save failed: %s"}`, err), http.StatusInternalServerError)
+					return
+				}
+				d.appendTimeline(path, agent.RuntimeTimelineEvent{
+					Type:       "wakeup_budget_blocked",
+					Source:     "webhook",
+					Reason:     reason,
+					EventID:    evt.EventID,
+					RunStatus:  runtime.Run.Status,
+					GoalStatus: runtime.Goal.Status,
+					WaitKind:   wait.Kind,
+					WaitID:     wait.EventID,
+					Subject:    wait.Subject,
+					Message:    reason,
+				})
+				w.Header().Set("Content-Type", "application/json")
+				fmt.Fprintf(w, `{"ok":true,"status":"budget_blocked","event_id":%q}`, evt.EventID)
+				return
+			}
+
+			entry.Runtime.Run.Status = "pending_continue"
+			entry.Runtime.Run.LastWakeupReason = reasonKey
+			entry.Runtime.Run.ResumeCount++
+			entry.Runtime.Scheduler.LastWakeupAt = now
+			entry.Runtime.Scheduler.LastWakeupReason = reasonKey
+			if evt.EventID != "" {
+				entry.Runtime.Scheduler.LastWakeupEventID = evt.EventID
+			}
+			runtime := entry.Runtime
+			path := entry.Path
+			d.mu.Unlock()
+
+			if err := agent.SaveRuntimeMeta(path, runtime); err != nil {
+				http.Error(w, fmt.Sprintf(`{"error":"save failed: %s"}`, err), http.StatusInternalServerError)
+				return
+			}
+			d.appendTimeline(path, agent.RuntimeTimelineEvent{
+				Type:       "wait_event_failure_detected",
+				Source:     "webhook",
+				Reason:     reasonKey,
+				EventID:    evt.EventID,
+				RunStatus:  runtime.Run.Status,
+				GoalStatus: runtime.Goal.Status,
+				WaitKind:   wait.Kind,
+				WaitID:     wait.EventID,
+				Subject:    wait.Subject,
+				Message:    webhookSummary(evt, info),
+			})
+			d.enqueueIntent(RunIntent{
+				SessionID:   evt.SessionID,
+				SessionPath: path,
+				Source:      "webhook",
+				Reason:      reasonKey,
+				EventID:     evt.EventID,
+				Context:     boundedWebhookFailureContext(evt, info, wait),
+			})
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprintf(w, `{"ok":true,"session_id":%q,"status":"pending_diagnosis","event_id":%q}`, evt.SessionID, evt.EventID)
+			return
+		}
 		wait := entry.Runtime.Wait
 		runtime := entry.Runtime
 		path := entry.Path
@@ -215,6 +289,31 @@ func webhookMatchesWait(wait agent.RuntimeWaitMeta, evt WebhookEvent, info githu
 		return false
 	}
 	return true
+}
+
+func webhookShouldDiagnoseWaitFailure(wait agent.RuntimeWaitMeta, evt WebhookEvent, info githubWebhookInfo) bool {
+	if !strings.EqualFold(wait.EventConclusion, "success") || !isFailureConclusion(info.Conclusion) {
+		return false
+	}
+	if wait.EventSource != "" && !webhookSourceMatches(wait.EventSource, evt, info) {
+		return false
+	}
+	if wait.EventID != "" && !strings.EqualFold(wait.EventID, evt.EventID) {
+		return false
+	}
+	if wait.EventStatus != "" && !strings.EqualFold(wait.EventStatus, info.Status) {
+		return false
+	}
+	return true
+}
+
+func isFailureConclusion(conclusion string) bool {
+	switch strings.ToLower(strings.TrimSpace(conclusion)) {
+	case "failure", "cancelled", "timed_out", "action_required", "startup_failure", "stale":
+		return true
+	default:
+		return false
+	}
 }
 
 func webhookSourceMatches(want string, evt WebhookEvent, info githubWebhookInfo) bool {
@@ -428,6 +527,18 @@ func boundedWebhookContext(evt WebhookEvent, info githubWebhookInfo) string {
 		summary = summary[:2000]
 	}
 	return summary
+}
+
+func boundedWebhookFailureContext(evt WebhookEvent, info githubWebhookInfo, wait agent.RuntimeWaitMeta) string {
+	summary := boundedWebhookContext(evt, info)
+	prefix := "CI finished without the awaited successful conclusion. Summarize the failure, identify likely next diagnostic steps, and keep waiting for the success condition before release or merge actions."
+	if wait.Subject != "" {
+		prefix += " Waiting subject: " + wait.Subject + "."
+	}
+	if wait.EventConclusion != "" {
+		prefix += " Awaited conclusion: " + wait.EventConclusion + "."
+	}
+	return prefix + "\n\nEvent: " + summary
 }
 
 func mapField(m map[string]any, key string) map[string]any {
