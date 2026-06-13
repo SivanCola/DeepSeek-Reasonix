@@ -42,6 +42,25 @@ func TestDesktopDaemonClientStatusAndActionsUseAuthToken(t *testing.T) {
 		switch r.URL.Path {
 		case "/status":
 			_ = json.NewEncoder(w).Encode(daemon.StatusResponse{Status: "running", Addr: "127.0.0.1:19840", Sessions: 1, Uptime: "1s", PID: 123})
+		case "/approvals":
+			_ = json.NewEncoder(w).Encode(daemon.ApprovalDeskResponse{Items: []daemon.ApprovalDeskItem{{
+				SessionID:  "session-1",
+				Kind:       "ask",
+				ID:         "ask-1",
+				Reason:     "user answer required",
+				GoalText:   "ship release",
+				GoalStatus: "running",
+				RunStatus:  "waiting_ask",
+				Active:     true,
+				Questions: []daemon.ApprovalDeskQuestion{{
+					ID:     "q1",
+					Prompt: "Ship now?",
+					Options: []daemon.ApprovalDeskOption{
+						{Label: "yes"},
+						{Label: "no", Description: "hold release"},
+					},
+				}},
+			}}})
 		case "/continue-goal":
 			var req map[string]string
 			_ = json.NewDecoder(r.Body).Decode(&req)
@@ -61,6 +80,14 @@ func TestDesktopDaemonClientStatusAndActionsUseAuthToken(t *testing.T) {
 	if !status.Connected || status.Sessions != 1 || status.PID != 123 {
 		t.Fatalf("DaemonStatus = %+v", status)
 	}
+	approvals, err := app.ListDaemonApprovals(server.URL)
+	if err != nil {
+		t.Fatalf("ListDaemonApprovals: %v", err)
+	}
+	if len(approvals) != 1 || approvals[0].SessionID != "session-1" || approvals[0].ID != "ask-1" ||
+		len(approvals[0].Questions) != 1 || approvals[0].Questions[0].Options[1].Description != "hold release" {
+		t.Fatalf("ListDaemonApprovals = %+v", approvals)
+	}
 	if err := app.ContinueDaemonGoal("session-1", server.URL); err != nil {
 		t.Fatalf("ContinueDaemonGoal: %v", err)
 	}
@@ -73,7 +100,7 @@ func TestDesktopDaemonClientStatusAndActionsUseAuthToken(t *testing.T) {
 	if err := app.AnswerDaemonQuestion("session-1", "ask-1", []QuestionAnswer{{QuestionID: "q1", Selected: []string{"yes"}}}, "", server.URL); err != nil {
 		t.Fatalf("AnswerDaemonQuestion: %v", err)
 	}
-	for _, path := range []string{"/status", "/continue-goal", "/stop", "/approvals/approve", "/asks/answer"} {
+	for _, path := range []string{"/status", "/approvals", "/continue-goal", "/stop", "/approvals/approve", "/asks/answer"} {
 		if !seen[path] {
 			t.Fatalf("daemon endpoint %s was not called; seen=%+v", path, seen)
 		}

@@ -284,6 +284,34 @@ export interface DaemonSessionView {
   topicTitle?: string;
 }
 
+export interface DaemonApprovalOptionView {
+  label: string;
+  description?: string;
+}
+
+export interface DaemonApprovalQuestionView {
+  id?: string;
+  header?: string;
+  prompt?: string;
+  options?: DaemonApprovalOptionView[];
+  multi?: boolean;
+}
+
+export interface DaemonApprovalDeskItemView {
+  sessionId: string;
+  kind: "approval" | "ask" | string;
+  id?: string;
+  tool?: string;
+  subject?: string;
+  reason?: string;
+  goalText?: string;
+  goalStatus?: GoalStatus;
+  runStatus?: string;
+  active?: boolean;
+  since?: string;
+  questions?: DaemonApprovalQuestionView[];
+}
+
 // SessionReference is a session selected via @ past:chats for context injection.
 export interface SessionReference {
   path: string;

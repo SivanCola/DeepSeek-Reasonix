@@ -103,6 +103,42 @@ type TimelineResponse struct {
 	Events    []agent.RuntimeTimelineEvent `json:"events"`
 }
 
+// ApprovalDeskResponse is the JSON body of GET /approvals.
+type ApprovalDeskResponse struct {
+	Items []ApprovalDeskItem `json:"items"`
+}
+
+// ApprovalDeskItem is one approval or ask currently blocking a run.
+type ApprovalDeskItem struct {
+	SessionID  string                 `json:"session_id"`
+	Kind       string                 `json:"kind"` // approval|ask
+	ID         string                 `json:"id,omitempty"`
+	Tool       string                 `json:"tool,omitempty"`
+	Subject    string                 `json:"subject,omitempty"`
+	Reason     string                 `json:"reason,omitempty"`
+	GoalText   string                 `json:"goal_text,omitempty"`
+	GoalStatus string                 `json:"goal_status,omitempty"`
+	RunStatus  string                 `json:"run_status,omitempty"`
+	Active     bool                   `json:"active,omitempty"`
+	Since      time.Time              `json:"since,omitempty"`
+	Questions  []ApprovalDeskQuestion `json:"questions,omitempty"`
+}
+
+// ApprovalDeskQuestion is a frontend-friendly view of an ask question.
+type ApprovalDeskQuestion struct {
+	ID      string               `json:"id,omitempty"`
+	Header  string               `json:"header,omitempty"`
+	Prompt  string               `json:"prompt,omitempty"`
+	Options []ApprovalDeskOption `json:"options,omitempty"`
+	Multi   bool                 `json:"multi,omitempty"`
+}
+
+// ApprovalDeskOption is a frontend-friendly view of an ask option.
+type ApprovalDeskOption struct {
+	Label       string `json:"label"`
+	Description string `json:"description,omitempty"`
+}
+
 // SessionView is the public representation of a session in the API.
 type SessionView struct {
 	ID          string `json:"id"`
@@ -194,6 +230,7 @@ func (d *Daemon) Start(ctx context.Context) error {
 	mux.HandleFunc("GET /status", d.withAuth(d.handleStatus))
 	mux.HandleFunc("GET /sessions", d.withAuth(d.handleSessions))
 	mux.HandleFunc("GET /timeline", d.withAuth(d.handleTimeline))
+	mux.HandleFunc("GET /approvals", d.withAuth(d.handleApprovals))
 	mux.HandleFunc("POST /continue-goal", d.withAuth(d.handleContinueGoal))
 	mux.HandleFunc("POST /stop", d.withAuth(d.handleStop))
 	mux.HandleFunc("POST /schedule", d.withAuth(d.handleSchedule))

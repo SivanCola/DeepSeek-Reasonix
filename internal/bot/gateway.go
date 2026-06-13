@@ -376,6 +376,9 @@ func (gw *BotGateway) handleSlashCommand(ctx context.Context, adapter Adapter, k
 		gw.mu.Unlock()
 		_ = gw.sendText(ctx, adapter, msg, gw.renderStatus(key, state, hasState, active, sessions))
 
+	case strings.HasPrefix(msg.Text, "/approvals"):
+		_ = gw.sendText(ctx, adapter, msg, gw.renderApprovals(key))
+
 	case strings.HasPrefix(msg.Text, "/timeline"):
 		_ = gw.sendText(ctx, adapter, msg, gw.renderTimeline(key, msg.Text))
 
@@ -432,6 +435,7 @@ func (gw *BotGateway) handleSlashCommand(ctx context.Context, adapter Adapter, k
 			"/approve <id> - 批准操作\n" +
 			"/deny <id> - 拒绝操作\n" +
 			"/answer <id> <选项> - 回答 ask 问题\n" +
+			"/approvals - 查看等待审批或回答的任务\n" +
 			"/sessions - 列出可绑定的 Reasonix 会话\n" +
 			"/attach <id> - 绑定并恢复已有 Reasonix 会话\n" +
 			"/detach - 解除当前 IM 会话绑定\n" +
@@ -1091,6 +1095,93 @@ func (gw *BotGateway) renderStatus(key string, state *sessionState, hasState boo
 		lines = append(lines, renderRuntimeStatusLines(meta)...)
 	}
 	return strings.Join(lines, "\n")
+}
+
+func (gw *BotGateway) renderApprovals(key string) string {
+	sessionPath := gw.sessionPathForKey(key)
+	if sessionPath == "" {
+		return "当前 IM 会话没有绑定 Reasonix session。"
+	}
+	meta, ok, err := agent.LoadRuntimeMeta(sessionPath)
+	if err != nil {
+		gw.logger.Warn("bot approvals load failed", "session", shortSessionID(sessionPath), "err", err)
+		return "审批台读取失败。"
+	}
+	if !ok || (meta.Wait.Kind != "approval" && meta.Wait.Kind != "ask") {
+		return "当前没有等待审批或回答的任务。"
+	}
+
+	lines := []string{fmt.Sprintf("待处理审批/提问（%s）：", shortSessionID(sessionPath))}
+	switch meta.Wait.Kind {
+	case "approval":
+		line := "审批: " + firstNonEmpty(meta.Wait.ApprovalID, "(unknown)")
+		if meta.Wait.Tool != "" {
+			line += "  tool=" + meta.Wait.Tool
+		}
+		if meta.Wait.Subject != "" {
+			line += "  subject=" + truncateBotText(meta.Wait.Subject, 80)
+		}
+		lines = append(lines, line)
+		if meta.Wait.Reason != "" {
+			lines = append(lines, "原因: "+truncateBotText(meta.Wait.Reason, 100))
+		}
+		if meta.Wait.ApprovalID != "" {
+			lines = append(lines, "命令: /approve "+meta.Wait.ApprovalID+" 或 /deny "+meta.Wait.ApprovalID)
+		}
+	case "ask":
+		line := "提问: " + firstNonEmpty(meta.Wait.AskID, "(unknown)")
+		if meta.Wait.Subject != "" {
+			line += "  subject=" + truncateBotText(meta.Wait.Subject, 80)
+		}
+		lines = append(lines, line)
+		if meta.Wait.Reason != "" {
+			lines = append(lines, "原因: "+truncateBotText(meta.Wait.Reason, 100))
+		}
+		for _, qLine := range gw.renderPendingAskQuestions(key, meta.Wait.AskID) {
+			lines = append(lines, qLine)
+		}
+		if meta.Wait.AskID != "" {
+			lines = append(lines, "命令: /answer "+meta.Wait.AskID+" <选项>")
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+func (gw *BotGateway) renderPendingAskQuestions(key, askID string) []string {
+	if askID == "" {
+		return nil
+	}
+	gw.mu.Lock()
+	state := gw.controllers[key]
+	var questions []event.AskQuestion
+	if state != nil && len(state.pendingAsks) > 0 {
+		questions = append(questions, state.pendingAsks[askID]...)
+	}
+	gw.mu.Unlock()
+	if len(questions) == 0 {
+		return nil
+	}
+	lines := make([]string, 0, len(questions))
+	for _, q := range questions {
+		line := "问题"
+		if q.ID != "" {
+			line += " " + q.ID
+		}
+		if q.Prompt != "" {
+			line += ": " + truncateBotText(q.Prompt, 90)
+		}
+		var options []string
+		for _, opt := range q.Options {
+			if opt.Label != "" {
+				options = append(options, opt.Label)
+			}
+		}
+		if len(options) > 0 {
+			line += " [" + strings.Join(options, " / ") + "]"
+		}
+		lines = append(lines, line)
+	}
+	return lines
 }
 
 func (gw *BotGateway) renderTimeline(key, command string) string {

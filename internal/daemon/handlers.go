@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -91,6 +92,140 @@ func (d *Daemon) handleTimeline(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(TimelineResponse{SessionID: sessionID, Events: events})
+}
+
+func (d *Daemon) handleApprovals(w http.ResponseWriter, r *http.Request) {
+	items := d.approvalDeskItems()
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(ApprovalDeskResponse{Items: items})
+}
+
+func (d *Daemon) approvalDeskItems() []ApprovalDeskItem {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+
+	items := make([]ApprovalDeskItem, 0)
+	seen := make(map[string]bool)
+	for _, entry := range d.registry {
+		active := d.activeRuns[entry.ID]
+		if active != nil {
+			for _, approval := range active.Approvals {
+				wait := matchingWait(entry.Runtime.Wait, "approval", approval.ID)
+				addApprovalDeskItem(&items, seen, ApprovalDeskItem{
+					SessionID:  entry.ID,
+					Kind:       "approval",
+					ID:         approval.ID,
+					Tool:       firstNonEmpty(approval.Tool, wait.Tool),
+					Subject:    firstNonEmpty(approval.Subject, wait.Subject),
+					Reason:     wait.Reason,
+					GoalText:   entry.Runtime.Goal.Text,
+					GoalStatus: entry.Runtime.Goal.Status,
+					RunStatus:  entry.Runtime.Run.Status,
+					Active:     active.Control != nil,
+					Since:      wait.Since,
+				})
+			}
+			for _, ask := range active.Asks {
+				wait := matchingWait(entry.Runtime.Wait, "ask", ask.ID)
+				addApprovalDeskItem(&items, seen, ApprovalDeskItem{
+					SessionID:  entry.ID,
+					Kind:       "ask",
+					ID:         ask.ID,
+					Subject:    wait.Subject,
+					Reason:     wait.Reason,
+					GoalText:   entry.Runtime.Goal.Text,
+					GoalStatus: entry.Runtime.Goal.Status,
+					RunStatus:  entry.Runtime.Run.Status,
+					Active:     active.Control != nil,
+					Since:      wait.Since,
+					Questions:  approvalDeskQuestions(ask.Questions),
+				})
+			}
+		}
+
+		wait := entry.Runtime.Wait
+		switch wait.Kind {
+		case "approval":
+			addApprovalDeskItem(&items, seen, ApprovalDeskItem{
+				SessionID:  entry.ID,
+				Kind:       "approval",
+				ID:         wait.ApprovalID,
+				Tool:       wait.Tool,
+				Subject:    wait.Subject,
+				Reason:     wait.Reason,
+				GoalText:   entry.Runtime.Goal.Text,
+				GoalStatus: entry.Runtime.Goal.Status,
+				RunStatus:  entry.Runtime.Run.Status,
+				Since:      wait.Since,
+			})
+		case "ask":
+			addApprovalDeskItem(&items, seen, ApprovalDeskItem{
+				SessionID:  entry.ID,
+				Kind:       "ask",
+				ID:         wait.AskID,
+				Subject:    wait.Subject,
+				Reason:     wait.Reason,
+				GoalText:   entry.Runtime.Goal.Text,
+				GoalStatus: entry.Runtime.Goal.Status,
+				RunStatus:  entry.Runtime.Run.Status,
+				Since:      wait.Since,
+			})
+		}
+	}
+
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].Active != items[j].Active {
+			return items[i].Active
+		}
+		if items[i].SessionID != items[j].SessionID {
+			return items[i].SessionID < items[j].SessionID
+		}
+		if items[i].Kind != items[j].Kind {
+			return items[i].Kind < items[j].Kind
+		}
+		return items[i].ID < items[j].ID
+	})
+	return items
+}
+
+func addApprovalDeskItem(items *[]ApprovalDeskItem, seen map[string]bool, item ApprovalDeskItem) {
+	key := item.SessionID + "\x00" + item.Kind + "\x00" + item.ID
+	if seen[key] {
+		return
+	}
+	seen[key] = true
+	*items = append(*items, item)
+}
+
+func matchingWait(wait agent.RuntimeWaitMeta, kind, id string) agent.RuntimeWaitMeta {
+	if wait.Kind != kind {
+		return agent.RuntimeWaitMeta{}
+	}
+	if id == "" || firstNonEmpty(wait.ApprovalID, wait.AskID, wait.EventID) == id {
+		return wait
+	}
+	return agent.RuntimeWaitMeta{}
+}
+
+func approvalDeskQuestions(questions []event.AskQuestion) []ApprovalDeskQuestion {
+	if len(questions) == 0 {
+		return nil
+	}
+	out := make([]ApprovalDeskQuestion, 0, len(questions))
+	for _, q := range questions {
+		options := make([]ApprovalDeskOption, 0, len(q.Options))
+		for _, opt := range q.Options {
+			options = append(options, ApprovalDeskOption{Label: opt.Label, Description: opt.Description})
+		}
+		out = append(out, ApprovalDeskQuestion{
+			ID:      q.ID,
+			Header:  q.Header,
+			Prompt:  q.Prompt,
+			Options: options,
+			Multi:   q.Multi,
+		})
+	}
+	return out
 }
 
 // handleContinueGoal triggers goal continuation for a session.

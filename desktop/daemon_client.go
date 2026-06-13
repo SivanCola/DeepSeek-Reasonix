@@ -50,6 +50,34 @@ type DaemonSessionView struct {
 	TopicTitle  string `json:"topicTitle,omitempty"`
 }
 
+type DaemonApprovalDeskItemView struct {
+	SessionID  string                       `json:"sessionId"`
+	Kind       string                       `json:"kind"`
+	ID         string                       `json:"id,omitempty"`
+	Tool       string                       `json:"tool,omitempty"`
+	Subject    string                       `json:"subject,omitempty"`
+	Reason     string                       `json:"reason,omitempty"`
+	GoalText   string                       `json:"goalText,omitempty"`
+	GoalStatus string                       `json:"goalStatus,omitempty"`
+	RunStatus  string                       `json:"runStatus,omitempty"`
+	Active     bool                         `json:"active,omitempty"`
+	Since      time.Time                    `json:"since,omitempty"`
+	Questions  []DaemonApprovalQuestionView `json:"questions,omitempty"`
+}
+
+type DaemonApprovalQuestionView struct {
+	ID      string                     `json:"id,omitempty"`
+	Header  string                     `json:"header,omitempty"`
+	Prompt  string                     `json:"prompt,omitempty"`
+	Options []DaemonApprovalOptionView `json:"options,omitempty"`
+	Multi   bool                       `json:"multi,omitempty"`
+}
+
+type DaemonApprovalOptionView struct {
+	Label       string `json:"label"`
+	Description string `json:"description,omitempty"`
+}
+
 // DaemonStatus reports whether the local daemon API is reachable. It returns an
 // error field instead of failing so the frontend can render offline state.
 func (a *App) DaemonStatus(addr string) DaemonStatusView {
@@ -73,6 +101,18 @@ func (a *App) ListDaemonSessions(addr string) ([]DaemonSessionView, error) {
 		return nil, err
 	}
 	return sessions, nil
+}
+
+func (a *App) ListDaemonApprovals(addr string) ([]DaemonApprovalDeskItemView, error) {
+	var resp daemonapi.ApprovalDeskResponse
+	if err := a.daemonJSON("GET", addr, "/approvals", nil, &resp); err != nil {
+		return nil, err
+	}
+	out := make([]DaemonApprovalDeskItemView, 0, len(resp.Items))
+	for _, item := range resp.Items {
+		out = append(out, daemonApprovalDeskItemView(item))
+	}
+	return out, nil
 }
 
 func (a *App) OpenDaemonSession(sessionID, addr string) (TabMeta, error) {
@@ -121,6 +161,37 @@ func (a *App) AnswerDaemonQuestion(sessionID, askID string, answers []QuestionAn
 		body["selected"] = strings.TrimSpace(selected)
 	}
 	return a.daemonJSON("POST", addr, "/asks/answer", body, nil)
+}
+
+func daemonApprovalDeskItemView(item daemonapi.ApprovalDeskItem) DaemonApprovalDeskItemView {
+	questions := make([]DaemonApprovalQuestionView, 0, len(item.Questions))
+	for _, q := range item.Questions {
+		options := make([]DaemonApprovalOptionView, 0, len(q.Options))
+		for _, opt := range q.Options {
+			options = append(options, DaemonApprovalOptionView{Label: opt.Label, Description: opt.Description})
+		}
+		questions = append(questions, DaemonApprovalQuestionView{
+			ID:      q.ID,
+			Header:  q.Header,
+			Prompt:  q.Prompt,
+			Options: options,
+			Multi:   q.Multi,
+		})
+	}
+	return DaemonApprovalDeskItemView{
+		SessionID:  item.SessionID,
+		Kind:       item.Kind,
+		ID:         item.ID,
+		Tool:       item.Tool,
+		Subject:    item.Subject,
+		Reason:     item.Reason,
+		GoalText:   item.GoalText,
+		GoalStatus: item.GoalStatus,
+		RunStatus:  item.RunStatus,
+		Active:     item.Active,
+		Since:      item.Since,
+		Questions:  questions,
+	}
 }
 
 func (a *App) fetchDaemonSessions(addr string) ([]DaemonSessionView, error) {

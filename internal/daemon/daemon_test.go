@@ -1612,6 +1612,117 @@ func TestDaemonRecordAskAndAnswerClearsRuntime(t *testing.T) {
 	}
 }
 
+func TestDaemonApprovalDeskListsActiveAndDormantWaits(t *testing.T) {
+	dir := t.TempDir()
+	activeApprovalPath := filepath.Join(dir, "active-approval.jsonl")
+	activeAskPath := filepath.Join(dir, "active-ask.jsonl")
+	dormantAskPath := filepath.Join(dir, "dormant-ask.jsonl")
+	for _, path := range []string{activeApprovalPath, activeAskPath, dormantAskPath} {
+		if err := os.WriteFile(path, []byte(`{"role":"user","content":"start"}`+"\n"), 0o644); err != nil {
+			t.Fatalf("write session: %v", err)
+		}
+	}
+	since := time.Date(2026, 6, 13, 12, 0, 0, 0, time.UTC)
+	if err := agent.SaveRuntimeMeta(activeApprovalPath, agent.RuntimeMeta{
+		SessionID: "active-approval",
+		Goal:      agent.RuntimeGoalMeta{Text: "ship release", Status: control.GoalStatusRunning},
+		Run:       agent.RuntimeRunMeta{Status: agent.RunStatusWaitingApproval},
+		Wait: agent.RuntimeWaitMeta{
+			Kind:       "approval",
+			Reason:     "approval required",
+			ApprovalID: "approval-1",
+			Tool:       "shell",
+			Subject:    "git push",
+			Since:      since,
+		},
+	}); err != nil {
+		t.Fatalf("SaveRuntimeMeta active approval: %v", err)
+	}
+	if err := agent.SaveRuntimeMeta(activeAskPath, agent.RuntimeMeta{
+		SessionID: "active-ask",
+		Goal:      agent.RuntimeGoalMeta{Text: "choose channel", Status: control.GoalStatusRunning},
+		Run:       agent.RuntimeRunMeta{Status: agent.RunStatusWaitingAsk},
+		Wait: agent.RuntimeWaitMeta{
+			Kind:   "ask",
+			Reason: "user answer required",
+			AskID:  "ask-1",
+			Since:  since.Add(time.Minute),
+		},
+	}); err != nil {
+		t.Fatalf("SaveRuntimeMeta active ask: %v", err)
+	}
+	if err := agent.SaveRuntimeMeta(dormantAskPath, agent.RuntimeMeta{
+		SessionID: "dormant-ask",
+		Goal:      agent.RuntimeGoalMeta{Text: "recover prompt", Status: control.GoalStatusRunning},
+		Run:       agent.RuntimeRunMeta{Status: agent.RunStatusWaitingAsk},
+		Wait: agent.RuntimeWaitMeta{
+			Kind:    "ask",
+			Reason:  "user answer required",
+			AskID:   "ask-2",
+			Subject: "Which fix?",
+			Since:   since.Add(2 * time.Minute),
+		},
+	}); err != nil {
+		t.Fatalf("SaveRuntimeMeta dormant ask: %v", err)
+	}
+
+	d := New(Options{SessionDir: dir})
+	d.scanSessions()
+	d.mu.Lock()
+	d.activeRuns["active-approval"] = &ActiveRun{
+		Control:   control.New(control.Options{Sink: event.Discard}),
+		Approvals: map[string]event.Approval{"approval-1": {ID: "approval-1", Tool: "shell", Subject: "git push"}},
+		Asks:      map[string]event.Ask{},
+	}
+	d.activeRuns["active-ask"] = &ActiveRun{
+		Control:   control.New(control.Options{Sink: event.Discard}),
+		Approvals: map[string]event.Approval{},
+		Asks: map[string]event.Ask{"ask-1": {
+			ID: "ask-1",
+			Questions: []event.AskQuestion{{
+				ID:     "q1",
+				Prompt: "Release now?",
+				Options: []event.AskOption{
+					{Label: "yes", Description: "ship now"},
+					{Label: "no"},
+				},
+			}},
+		}},
+	}
+	d.mu.Unlock()
+
+	req := httptest.NewRequest("GET", "/approvals", nil)
+	rr := httptest.NewRecorder()
+	d.handleApprovals(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("approvals status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	var resp ApprovalDeskResponse
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode approvals: %v", err)
+	}
+	if len(resp.Items) != 3 {
+		t.Fatalf("items len = %d, want 3: %+v", len(resp.Items), resp.Items)
+	}
+	byKey := map[string]ApprovalDeskItem{}
+	for _, item := range resp.Items {
+		byKey[item.SessionID+"/"+item.Kind+"/"+item.ID] = item
+	}
+	approval := byKey["active-approval/approval/approval-1"]
+	if !approval.Active || approval.Tool != "shell" || approval.Subject != "git push" || approval.GoalText != "ship release" {
+		t.Fatalf("active approval item = %+v", approval)
+	}
+	ask := byKey["active-ask/ask/ask-1"]
+	if !ask.Active || len(ask.Questions) != 1 || ask.Questions[0].Prompt != "Release now?" ||
+		len(ask.Questions[0].Options) != 2 || ask.Questions[0].Options[0].Description != "ship now" {
+		t.Fatalf("active ask item = %+v", ask)
+	}
+	dormant := byKey["dormant-ask/ask/ask-2"]
+	if dormant.Active || dormant.Subject != "Which fix?" || dormant.Reason != "user answer required" {
+		t.Fatalf("dormant ask item = %+v", dormant)
+	}
+}
+
 func TestDaemonStaleLock(t *testing.T) {
 	dir := t.TempDir()
 	d := New(Options{SessionDir: dir})

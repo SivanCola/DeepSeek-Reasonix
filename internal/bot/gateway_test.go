@@ -13,6 +13,7 @@ import (
 
 	"reasonix/internal/agent"
 	"reasonix/internal/control"
+	"reasonix/internal/event"
 	"reasonix/internal/provider"
 )
 
@@ -717,6 +718,116 @@ func TestGatewayRecordsAndClearsRuntimeWait(t *testing.T) {
 	}
 	if len(events) != 2 || events[0].Type != "wait_started" || events[1].Type != "wait_cleared" {
 		t.Fatalf("unexpected timeline: %+v", events)
+	}
+}
+
+func TestGatewayApprovalsCommandUsesMappedSession(t *testing.T) {
+	dir := t.TempDir()
+	sessionPath := writeBotTestSession(t, dir, "hello")
+	if err := agent.SaveRuntimeMeta(sessionPath, agent.RuntimeMeta{
+		Goal: agent.RuntimeGoalMeta{Text: "ship release", Status: control.GoalStatusRunning},
+		Run:  agent.RuntimeRunMeta{Status: agent.RunStatusWaitingApproval},
+		Wait: agent.RuntimeWaitMeta{
+			Kind:       "approval",
+			Reason:     "approval required",
+			ApprovalID: "approval-1",
+			Tool:       "shell",
+			Subject:    "go test ./...",
+		},
+	}); err != nil {
+		t.Fatalf("SaveRuntimeMeta: %v", err)
+	}
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	gw := NewGateway(GatewayConfig{SessionDir: dir}, nil, logger)
+	if err := gw.setSessionMapping("remote-approvals", sessionPath, "/workspace"); err != nil {
+		t.Fatalf("setSessionMapping: %v", err)
+	}
+	fa := newFakeAdapter(PlatformQQ, "fake-qq")
+
+	gw.handleSlashCommand(context.Background(), fa, "remote-approvals", InboundMessage{
+		Platform:  PlatformQQ,
+		ChatType:  ChatDM,
+		ChatID:    "chat-1",
+		UserID:    "user-1",
+		Text:      "/approvals",
+		MessageID: "msg-1",
+	})
+
+	sent := fa.sentMessages()
+	if len(sent) != 1 {
+		t.Fatalf("sent count = %d, want 1", len(sent))
+	}
+	text := sent[0].Text
+	for _, want := range []string{
+		"待处理审批/提问（" + shortSessionID(sessionPath) + "）：",
+		"审批: approval-1",
+		"tool=shell",
+		"subject=go test ./...",
+		"原因: approval required",
+		"命令: /approve approval-1 或 /deny approval-1",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("approvals missing %q:\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, sessionPath) {
+		t.Fatalf("approvals should not expose full session path:\n%s", text)
+	}
+}
+
+func TestGatewayApprovalsCommandShowsActiveAskOptions(t *testing.T) {
+	dir := t.TempDir()
+	sessionPath := writeBotTestSession(t, dir, "hello")
+	if err := agent.SaveRuntimeMeta(sessionPath, agent.RuntimeMeta{
+		Run: agent.RuntimeRunMeta{Status: agent.RunStatusWaitingAsk},
+		Wait: agent.RuntimeWaitMeta{
+			Kind:   "ask",
+			Reason: "user answer required",
+			AskID:  "ask-1",
+		},
+	}); err != nil {
+		t.Fatalf("SaveRuntimeMeta: %v", err)
+	}
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	gw := NewGateway(GatewayConfig{SessionDir: dir}, nil, logger)
+	ctrl := control.New(control.Options{SessionDir: dir, SessionPath: sessionPath, Label: "test"})
+	gw.controllers["remote-ask"] = &sessionState{
+		ctrl: ctrl,
+		pendingAsks: map[string][]event.AskQuestion{"ask-1": {{
+			ID:     "q1",
+			Prompt: "Ship now?",
+			Options: []event.AskOption{
+				{Label: "yes"},
+				{Label: "no"},
+			},
+		}}},
+	}
+	fa := newFakeAdapter(PlatformQQ, "fake-qq")
+
+	gw.handleSlashCommand(context.Background(), fa, "remote-ask", InboundMessage{
+		Platform:  PlatformQQ,
+		ChatType:  ChatDM,
+		ChatID:    "chat-1",
+		UserID:    "user-1",
+		Text:      "/approvals",
+		MessageID: "msg-1",
+	})
+
+	sent := fa.sentMessages()
+	if len(sent) != 1 {
+		t.Fatalf("sent count = %d, want 1", len(sent))
+	}
+	text := sent[0].Text
+	for _, want := range []string{
+		"提问: ask-1",
+		"问题 q1: Ship now? [yes / no]",
+		"命令: /answer ask-1 <选项>",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("ask approvals missing %q:\n%s", want, text)
+		}
 	}
 }
 

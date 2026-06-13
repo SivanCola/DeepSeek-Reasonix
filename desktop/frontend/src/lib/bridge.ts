@@ -22,6 +22,7 @@ import type {
   CommandInfo,
   ContextInfo,
   ContextPanelInfo,
+  DaemonApprovalDeskItemView,
   DaemonSessionView,
   DaemonStatusView,
   DirEntry,
@@ -110,6 +111,7 @@ export interface AppBindings {
   AnswerQuestionForTab(tabID: string, id: string, answers: QuestionAnswer[]): Promise<void>;
   DaemonStatus(addr: string): Promise<DaemonStatusView>;
   ListDaemonSessions(addr: string): Promise<DaemonSessionView[]>;
+  ListDaemonApprovals(addr: string): Promise<DaemonApprovalDeskItemView[]>;
   OpenDaemonSession(sessionID: string, addr: string): Promise<TabMeta>;
   ContinueDaemonGoal(sessionID: string, addr: string): Promise<void>;
   StopDaemonSession(sessionID: string, addr: string): Promise<void>;
@@ -1462,6 +1464,9 @@ function makeMockApp(): AppBindings {
           return { connected: false, addr: addr || "127.0.0.1:19840", error: "mock daemon is offline" };
         },
         async ListDaemonSessions() {
+          return [];
+        },
+        async ListDaemonApprovals() {
           return [];
         },
         async OpenDaemonSession(sessionID) {

@@ -345,9 +345,11 @@ dynamic workflow 或开发者平台，而是先把 Reasonix 从一次性会话�
   - [x] 每日模型调用次数。
   - [x] 每日费用预算。
   - [x] 每个 goal 最大自动轮次。
-- [ ] 审批台。
-  - 桌面端和 bot 都能看到等待审批的任务。
-  - 审批后继续同一 run。
+- [x] 审批台（daemon 数据面 + bot/desktop bridge）。
+  - [x] daemon `GET /approvals` 能列出 active approval / ask 和重启后保留在 runtime sidecar 的等待项。
+  - [x] bot `/approvals` 能看到当前绑定 session 的等待审批或提问，并提示 `/approve`、`/deny`、`/answer` 命令。
+  - [x] 桌面 bridge 暴露 `ListDaemonApprovals`，供后续可见 UI 面板读取。
+  - [x] 审批后继续同一 run。
 - [x] 可观测性。
   - [x] run timeline。
   - [x] wakeup history。
