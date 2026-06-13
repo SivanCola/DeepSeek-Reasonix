@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -1664,6 +1665,97 @@ func TestDaemonExecuteIntentBlocksWhenModelCallBudgetExhausted(t *testing.T) {
 	}
 }
 
+func TestDaemonDailyTriageE2EQueuesOnceAndBlocksOnModelBudget(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Date(2026, 6, 13, 9, 0, 0, 0, time.UTC)
+	due := now.Add(-time.Minute)
+
+	triagePath := writeDailyTriageE2ESession(t, dir, "daily-triage-e2e", due, agent.RuntimeBudgetMeta{
+		DailyWakeupLimit:    2,
+		DailyModelCallLimit: 4,
+		WindowStartedAt:     budgetWindowStart(now),
+	})
+	blockedPath := writeDailyTriageE2ESession(t, dir, "daily-triage-budget-e2e", due, agent.RuntimeBudgetMeta{
+		DailyWakeupLimit:    2,
+		DailyModelCallLimit: 1,
+		DailyModelCalls:     1,
+		WindowStartedAt:     budgetWindowStart(now),
+	})
+
+	prov := &daemonScriptedProvider{turns: [][]provider.Chunk{{
+		{Type: provider.ChunkUsage, Usage: &provider.Usage{PromptTokens: 10, CompletionTokens: 5, TotalTokens: 15, FinishReason: "stop"}},
+		{Type: provider.ChunkText, Text: "triage complete\n\n[goal:complete]"},
+	}}}
+	d := New(Options{
+		SessionDir:        dir,
+		MaxConcurrentRuns: 1,
+		ControllerFactory: func(ctx context.Context, d *Daemon, entry *SessionEntry, sink event.Sink) (*control.Controller, error) {
+			loaded, err := agent.LoadSession(entry.Path)
+			if err != nil {
+				return nil, err
+			}
+			ag := agent.New(prov, tool.NewRegistry(), loaded, agent.Options{}, sink)
+			c := control.New(control.Options{
+				Runner:      ag,
+				Executor:    ag,
+				SessionPath: entry.Path,
+				SessionDir:  dir,
+				Sink:        sink,
+			})
+			c.Resume(loaded, entry.Path)
+			return c, nil
+		},
+	})
+	d.scanSessions()
+	scheduler := NewScheduler(d, slog.New(slog.NewTextHandler(os.Stderr, nil)))
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go d.runIntentWorker(ctx)
+
+	scheduler.wakeupSession("daily-triage-e2e", now)
+	scheduler.wakeupSession("daily-triage-e2e", now)
+	waitForTimelineCount(t, triagePath, "goal_continuation_complete", 1)
+	if got := countTimelineEvents(t, triagePath, "intent_queued"); got != 1 {
+		t.Fatalf("daily triage should enqueue exactly once for the due window, got %d", got)
+	}
+	if got := countTimelineEvents(t, triagePath, "run_started"); got != 1 {
+		t.Fatalf("daily triage should start exactly once for the due window, got %d", got)
+	}
+	if prov.calls != 1 {
+		t.Fatalf("daily triage should call provider once, got %d", prov.calls)
+	}
+	loaded, ok, err := agent.LoadRuntimeMeta(triagePath)
+	if err != nil || !ok {
+		t.Fatalf("LoadRuntimeMeta triage: err=%v ok=%v", err, ok)
+	}
+	if loaded.Scheduler.LastWakeupEventID != "daily:daily-triage-e2e:2026-06-13" || loaded.Budget.DailyWakeups != 1 {
+		t.Fatalf("daily triage wakeup metadata not persisted: scheduler=%+v budget=%+v", loaded.Scheduler, loaded.Budget)
+	}
+
+	callsBeforeBudgetBlock := prov.calls
+	scheduler.wakeupSession("daily-triage-budget-e2e", now)
+	waitForTimelineCount(t, blockedPath, "model_budget_blocked", 1)
+	if prov.calls != callsBeforeBudgetBlock {
+		t.Fatalf("budget exhausted daily triage should not call provider, before=%d after=%d", callsBeforeBudgetBlock, prov.calls)
+	}
+	if got := countTimelineEvents(t, blockedPath, "intent_queued"); got != 1 {
+		t.Fatalf("budget exhausted daily triage should still record one queued intent, got %d", got)
+	}
+	if got := countTimelineEvents(t, blockedPath, "model_usage"); got != 0 {
+		t.Fatalf("budget exhausted daily triage should not record model usage, got %d", got)
+	}
+	blocked, ok, err := agent.LoadRuntimeMeta(blockedPath)
+	if err != nil || !ok {
+		t.Fatalf("LoadRuntimeMeta blocked: err=%v ok=%v", err, ok)
+	}
+	if blocked.Run.Status != agent.RunStatusIdle || blocked.Scheduler.LastWakeupReason != "budget_blocked:model" {
+		t.Fatalf("budget exhausted runtime not persisted: run=%+v scheduler=%+v", blocked.Run, blocked.Scheduler)
+	}
+	if !strings.Contains(blocked.Budget.LastBlockedReason, "daily model call budget exhausted") {
+		t.Fatalf("budget block reason missing: %+v", blocked.Budget)
+	}
+}
+
 func TestDaemonIntentQueueSelectsHighestPriorityRunnable(t *testing.T) {
 	d := New(Options{SessionDir: t.TempDir()})
 	now := time.Now().UTC()
@@ -2125,6 +2217,32 @@ func writeDaemonQueueSession(t *testing.T, dir, id string) string {
 		SessionID: id,
 		Goal:      agent.RuntimeGoalMeta{Text: "finish " + id, Status: control.GoalStatusRunning},
 		Run:       agent.RuntimeRunMeta{Status: "idle"},
+	}); err != nil {
+		t.Fatalf("SaveRuntimeMeta(%s): %v", id, err)
+	}
+	return sessionPath
+}
+
+func writeDailyTriageE2ESession(t *testing.T, dir, id string, due time.Time, budget agent.RuntimeBudgetMeta) string {
+	t.Helper()
+	sessionPath := filepath.Join(dir, id+".jsonl")
+	sess := agent.NewSession("")
+	sess.Add(provider.Message{Role: provider.RoleUser, Content: "start daily triage"})
+	if err := sess.Save(sessionPath); err != nil {
+		t.Fatalf("Save(%s): %v", id, err)
+	}
+	if err := agent.SaveRuntimeMeta(sessionPath, agent.RuntimeMeta{
+		SessionID: id,
+		Model:     "daemon-test-model",
+		Goal:      agent.RuntimeGoalMeta{Text: "daily PR and issue triage", Status: control.GoalStatusRunning},
+		Run:       agent.RuntimeRunMeta{Status: agent.RunStatusIdle},
+		Scheduler: agent.RuntimeSchedMeta{
+			Enabled:      true,
+			DailyAt:      "09:00",
+			Timezone:     "UTC",
+			NextWakeupAt: due,
+		},
+		Budget: budget,
 	}); err != nil {
 		t.Fatalf("SaveRuntimeMeta(%s): %v", id, err)
 	}

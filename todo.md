@@ -516,9 +516,9 @@ dynamic workflow 或开发者平台，而是先把 Reasonix 从一次性会话�
 
 ### P1：真实场景 E2E
 
-- [ ] 增加 daily triage 端到端测试脚本。
-  - [ ] 启动 daemon，配置 daily-triage，模拟时间唤醒，验证只入队一次。
-  - [ ] 验证预算耗尽时不调用模型，并写入 timeline。
+- [x] 增加 daily triage 端到端测试脚本。
+  - [x] 启动 daemon，配置 daily-triage，模拟时间唤醒，验证只入队一次。
+  - [x] 验证预算耗尽时不调用模型，并写入 timeline。
 - [ ] 增加 CI watcher 端到端测试脚本。
   - [ ] 配置 wait-event，模拟 GitHub workflow_run/check_suite/status。
   - [ ] 验证失败走 diagnosis，成功继续原 goal，重复 webhook 不重复执行。
