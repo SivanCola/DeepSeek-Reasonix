@@ -213,11 +213,11 @@ dynamic workflow 或开发者平台，而是先把 Reasonix 从一次性会话�
 - [x] 实现轻量 scheduler。
   - [x] 第一版只支持 fixed interval 和 daily time。
   - [x] 持久化 `next_wakeup_at` / `last_wakeup_at`。
-- [ ] 定义 wakeup payload。
-  - reason: `cron`
-  - schedule id
-  - previous run status
-  - bounded event summary
+- [x] 定义 wakeup payload。
+  - [x] reason: `cron`
+  - [x] schedule id
+  - [x] previous run status
+  - [x] bounded event summary
 - [ ] 唤醒时先做确定性检查。
   - [x] session 是否仍 active。
   - [x] goal 是否 complete / blocked。

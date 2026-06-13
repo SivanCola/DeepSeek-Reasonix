@@ -4,6 +4,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -318,6 +319,26 @@ func TestSchedulerWakeupPersists(t *testing.T) {
 	}
 	if loaded.Run.Status != "pending_continue" {
 		t.Errorf("persisted Run.Status = %q", loaded.Run.Status)
+	}
+
+	select {
+	case intent := <-d.intentCh:
+		if intent.Source != "cron" || intent.Reason != "cron" || intent.EventID == "" {
+			t.Fatalf("unexpected cron intent: %+v", intent)
+		}
+		for _, want := range []string{
+			"Cron wakeup reached",
+			"schedule_id=schedule:",
+			"previous_run_status=idle",
+			"interval=1h0m0s",
+			"next_wakeup_at=",
+		} {
+			if !strings.Contains(intent.Context, want) {
+				t.Fatalf("cron intent context missing %q:\n%s", want, intent.Context)
+			}
+		}
+	default:
+		t.Fatal("scheduler wakeup did not enqueue an intent")
 	}
 }
 

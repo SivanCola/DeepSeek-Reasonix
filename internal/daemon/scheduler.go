@@ -261,6 +261,8 @@ func (s *Scheduler) wakeupSession(id string, now time.Time) {
 	}
 	eventID := s.eventIDFor(entry.ID, entry.Runtime.Scheduler, due)
 	wakeupKey := s.wakeupKeyFor(entry.ID, entry.Runtime.Scheduler, due)
+	sched := entry.Runtime.Scheduler
+	previousRunStatus := entry.Runtime.Run.Status
 	s.logger.Info("scheduler wakeup", "session", entry.ID, "event", eventID)
 	if ok, reason := reserveAutoWakeupBudget(&entry.Runtime, "cron", now); !ok {
 		entry.Runtime.Scheduler.LastWakeupAt = now
@@ -311,6 +313,7 @@ func (s *Scheduler) wakeupSession(id string, now time.Time) {
 		Source:      "cron",
 		Reason:      "cron",
 		EventID:     eventID,
+		Context:     boundedCronWakeupContext(sched, due, next, eventID, wakeupKey, previousRunStatus),
 	})
 }
 
@@ -406,6 +409,35 @@ func boundedTimeWaitContext(wait agent.RuntimeWaitMeta) string {
 	}
 	if wait.Reason != "" {
 		parts = append(parts, "reason="+wait.Reason)
+	}
+	return strings.Join(parts, " ")
+}
+
+func boundedCronWakeupContext(sched agent.RuntimeSchedMeta, due, next time.Time, eventID, wakeupKey, previousRunStatus string) string {
+	parts := []string{"Cron wakeup reached; continue the active goal."}
+	if eventID != "" {
+		parts = append(parts, "event_id="+eventID)
+	}
+	if wakeupKey != "" {
+		parts = append(parts, "schedule_id="+wakeupKey)
+	}
+	if previousRunStatus != "" {
+		parts = append(parts, "previous_run_status="+previousRunStatus)
+	}
+	if sched.DailyAt != "" {
+		parts = append(parts, "daily_at="+sched.DailyAt)
+		if sched.Timezone != "" {
+			parts = append(parts, "timezone="+sched.Timezone)
+		}
+	}
+	if sched.Interval > 0 {
+		parts = append(parts, "interval="+sched.Interval.String())
+	}
+	if !due.IsZero() {
+		parts = append(parts, "due_at="+due.UTC().Format(time.RFC3339))
+	}
+	if !next.IsZero() {
+		parts = append(parts, "next_wakeup_at="+next.UTC().Format(time.RFC3339))
 	}
 	return strings.Join(parts, " ")
 }
