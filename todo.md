@@ -72,19 +72,19 @@ dynamic workflow 或开发者平台，而是先把 Reasonix 从一次性会话�
 - [x] 恢复 active goal，但不要默认立刻自动执行。
   - [x] 防止用户只是打开历史记录时意外跑任务。
   - [x] 先提供显式入口，如 `/goal continue` 或 UI 按钮。
-- [ ] 增加 `resume` 通知。
-  - 例如：`resumed active goal: <short goal>`。
-  - blocked / complete 状态应显示不同提示。
+- [x] 增加 `resume` 通知。
+  - [x] 例如：`resumed active goal: <short goal>`。
+  - [x] blocked / complete 状态应显示不同提示。
 - [x] 明确 warm resume 与 cold resume 行为。
   - [x] 保持现有 cold resume prune 逻辑。
   - [x] sidecar 恢复不得触发 prompt 重写。
 - [x] 更新桌面 meta。
   - [x] `Meta.Goal` / `Meta.GoalStatus` 来自 controller runtime 状态。
   - [x] 避免只依赖 desktop tab profile。
-- [ ] 增加 CLI resume 测试。
-  - `reasonix chat --resume` 恢复 goal 状态。
-  - resume 后普通 user turn 会继续注入 active goal block。
-  - resume 后未触发显式继续时不自动跑 `continueGoal`。
+- [x] 增加 CLI resume 测试。
+  - [x] `/resume <n>` 恢复 goal 状态并显示 runtime goal notice。
+  - [x] resume 后普通 user turn 会继续注入 active goal block。
+  - [x] resume 后未触发显式继续时不自动跑 `continueGoal`。
 
 ### 验收标准
 

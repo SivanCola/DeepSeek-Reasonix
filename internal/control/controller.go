@@ -1812,8 +1812,49 @@ func (c *Controller) Resume(s *agent.Session, path string) {
 	c.rebindCheckpoints(path)
 	// Restore runtime sidecar (goal/run state) BEFORE cold-resume prune, so
 	// a prune-triggered snapshot does not overwrite the just-restored state.
-	c.loadAndRestoreRuntime(path)
+	if c.loadAndRestoreRuntime(path) {
+		if text := c.runtimeResumeNotice(); text != "" {
+			c.notice(text)
+		}
+	}
 	c.maybeColdResumePrune(path)
+}
+
+func (c *Controller) runtimeResumeNotice() string {
+	c.mu.Lock()
+	goal := c.goal
+	status := c.goalStatus
+	c.mu.Unlock()
+	switch status {
+	case GoalStatusRunning:
+		if goal == "" {
+			return "resumed active goal"
+		}
+		return fmt.Sprintf("resumed active goal: %s", ShortGoalForNotice(goal))
+	case GoalStatusBlocked:
+		if goal == "" {
+			return "resumed blocked goal"
+		}
+		return fmt.Sprintf("resumed blocked goal: %s", ShortGoalForNotice(goal))
+	case GoalStatusComplete:
+		if goal == "" {
+			return "resumed completed goal"
+		}
+		return fmt.Sprintf("resumed completed goal: %s", ShortGoalForNotice(goal))
+	case GoalStatusStopped:
+		if goal == "" {
+			return "resumed stopped goal"
+		}
+		return fmt.Sprintf("resumed stopped goal: %s", ShortGoalForNotice(goal))
+	default:
+		if goal == "" {
+			return ""
+		}
+		if status == "" {
+			return fmt.Sprintf("resumed goal: %s", ShortGoalForNotice(goal))
+		}
+		return fmt.Sprintf("resumed %s goal: %s", status, ShortGoalForNotice(goal))
+	}
 }
 
 // cacheColdAfter approximates how long the provider keeps a prompt prefix

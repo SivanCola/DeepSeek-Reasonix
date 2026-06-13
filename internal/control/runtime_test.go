@@ -79,6 +79,72 @@ func TestResumeRestoresRuntimeGoalState(t *testing.T) {
 	}
 }
 
+func TestResumeRuntimeGoalEmitsNotice(t *testing.T) {
+	tests := []struct {
+		name       string
+		goal       string
+		status     string
+		wantNotice string
+	}{
+		{
+			name:       "running",
+			goal:       "ship the notification",
+			status:     GoalStatusRunning,
+			wantNotice: "resumed active goal: ship the notification",
+		},
+		{
+			name:       "blocked",
+			goal:       "wait for CI",
+			status:     GoalStatusBlocked,
+			wantNotice: "resumed blocked goal: wait for CI",
+		},
+		{
+			name:       "complete",
+			goal:       "",
+			status:     GoalStatusComplete,
+			wantNotice: "resumed completed goal",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			sessionPath := filepath.Join(dir, "resume-notice.jsonl")
+			s := agent.NewSession("")
+			s.Add(provider.Message{Role: provider.RoleUser, Content: "hello"})
+			if err := s.Save(sessionPath); err != nil {
+				t.Fatalf("save session: %v", err)
+			}
+			if err := agent.SaveRuntimeMeta(sessionPath, agent.RuntimeMeta{
+				Goal: agent.RuntimeGoalMeta{Text: tt.goal, Status: tt.status},
+				Run:  agent.RuntimeRunMeta{Status: "idle"},
+			}); err != nil {
+				t.Fatalf("SaveRuntimeMeta: %v", err)
+			}
+
+			var notices []string
+			ag := agent.New(nil, tool.NewRegistry(), agent.NewSession(""), agent.Options{}, event.Discard)
+			c := New(Options{
+				Executor: ag,
+				Sink: event.FuncSink(func(e event.Event) {
+					if e.Kind == event.Notice {
+						notices = append(notices, e.Text)
+					}
+				}),
+			})
+			loaded, err := agent.LoadSession(sessionPath)
+			if err != nil {
+				t.Fatalf("LoadSession: %v", err)
+			}
+
+			c.Resume(loaded, sessionPath)
+
+			if len(notices) != 1 || notices[0] != tt.wantNotice {
+				t.Fatalf("notices = %#v, want [%q]", notices, tt.wantNotice)
+			}
+		})
+	}
+}
+
 func TestResumeDoesNotAutoCallModel(t *testing.T) {
 	dir := t.TempDir()
 	sessionPath := filepath.Join(dir, "no-auto.jsonl")
