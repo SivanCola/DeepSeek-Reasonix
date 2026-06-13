@@ -288,10 +288,10 @@ dynamic workflow 或开发者平台，而是先把 Reasonix 从一次性会话�
 
 ### 任务
 
-- [ ] 选择文件监听实现。
+- [x] 选择文件监听实现。
   - [x] 第一版使用 portable polling 实现。
   - [x] 与 codegraph watcher 分清职责。
-  - [ ] 评估 Go 原生跨平台事件库替代 polling。
+  - [x] 评估 Go 原生跨平台事件库替代 polling。
 - [x] 配置 watched paths。
   - [x] 支持 watched paths。
   - [x] 支持 exclude / ignore patterns。

@@ -28,7 +28,7 @@ type FileWatchConfig struct {
 
 // FileWatcher monitors filesystem changes and queues wakeups for sessions
 // that have file watch configurations. It uses polling (not inotify) for
-// simplicity and portability — the tick interval is the debounce period.
+// simplicity and portability; per-session debounce controls wakeup batching.
 type FileWatcher struct {
 	daemon *Daemon
 	logger *slog.Logger
