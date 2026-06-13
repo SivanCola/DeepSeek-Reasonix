@@ -1,0 +1,438 @@
+# Reasonix 常驻个人 AgentOS 路线 TODO
+
+本文档把内部讨论中的方向拆成可执行任务。核心目标不是先做复杂的
+dynamic workflow 或开发者平台，而是先把 Reasonix 从一次性会话工具推进为
+低成本、可恢复、可被时间和外部事件唤醒的个人常驻 agent。
+
+## 总原则
+
+- 优先保护 prompt cache 命中率。动态状态必须写入 session sidecar 或普通
+  user turn，不进入 system prompt、稳定 tool schema 或稳定 prefix。
+- 优先复用现有控制器、session、goal、bot gateway 和 TurnDone snapshot 机制。
+- 先做个人常驻 OS，不先做插件市场、企业平台或完整 SDK 生态。
+- 每一步都保持增量可回滚：先能恢复，再能唤醒，再能调度。
+- 常驻 agent 默认只在需要模型决策时调用模型；cron 检查、等待 CI、文件监听
+  等确定性步骤应尽量不产生模型费用。
+
+## 当前代码基础
+
+- `internal/control/controller.go` 已有 goal 模式、`continueGoal` 自动续跑和
+  `[goal:continue]` / `[goal:complete]` / `[goal:blocked]` 状态标记。
+- `internal/control/controller.go` 的 `Resume` 当前只恢复 transcript 和 checkpoint，
+  尚未恢复 goal/run 状态。
+- `desktop/tabs.go` 已有 `TurnDone -> scheduleTabSnapshot` 的合并保存机制。
+- `internal/agent/branch.go` 已有 session `.meta` sidecar，可作为新增状态 sidecar 的
+  设计参考。
+- `internal/bot/gateway.go` 已有 IM 入口、session key、排队/合并、审批和 controller
+  生命周期雏形。
+- `cmd/reasonix bot start` 已经能启动 bot gateway，但还不是通用 daemon 调度器。
+
+## Phase 1: 持久化 Goal / Run 状态
+
+目标：关闭客户端或重启后，Reasonix 能知道一个 session 是否仍有活跃 goal，以及
+上次自动推进到了哪里。
+
+### 任务
+
+- [ ] 设计 session runtime sidecar schema。
+  - 建议路径：`<session>.runtime.json` 或扩展现有 `<session>.meta`。
+  - 字段建议：
+    - `version`
+    - `session_id`
+    - `goal.text`
+    - `goal.status`
+    - `goal.turns`
+    - `goal.block_count`
+    - `goal.block_reason`
+    - `goal.updated_at`
+    - `run.status`
+    - `run.last_turn_at`
+    - `run.last_error`
+    - `run.resume_count`
+    - `scheduler.next_wakeup_at`
+    - `scheduler.last_wakeup_reason`
+- [ ] 在 controller 中提供只读 snapshot 方法。
+  - 例如 `GoalSnapshot()` 或 `RuntimeSnapshot()`。
+  - 不暴露可变内部字段。
+- [ ] 在 controller 中提供恢复方法。
+  - 例如 `RestoreRuntimeSnapshot(snapshot)`。
+  - 恢复时要处理旧 schema、损坏 sidecar、空 goal、已完成 goal、blocked goal。
+- [ ] 将 sidecar 写入接入现有 snapshot 节奏。
+  - CLI / serve / desktop 都应复用同一 controller 层写入逻辑。
+  - 桌面侧可继续沿用 `TurnDone -> scheduleTabSnapshot` 的合并写入节奏。
+- [ ] 确保写入是原子的。
+  - 复用 `fileutil.ReplaceFile` 模式。
+  - 避免崩溃时留下半截 JSON。
+- [ ] 增加 focused tests。
+  - 设置 goal 后 snapshot 会写 sidecar。
+  - goal complete 后 sidecar 状态正确。
+  - repeated blocked 计数能保存。
+  - 损坏 sidecar 不影响 transcript resume。
+  - 空 session 不创建多余 runtime sidecar。
+
+### 验收标准
+
+- 重启或 resume 后，`Goal()` / `GoalStatus()` 能还原。
+- sidecar 写入不会改变 `.jsonl` transcript 格式。
+- 不修改 system prompt、tool schema、provider request 稳定前缀。
+
+## Phase 2: Resume 后恢复自治上下文
+
+目标：用户恢复旧 session 时，不只看到历史消息，还能恢复上次的目标和自治轮次。
+
+### 任务
+
+- [ ] 在 `Controller.Resume` 中读取 runtime sidecar。
+- [ ] 恢复 active goal，但不要默认立刻自动执行。
+  - 防止用户只是打开历史记录时意外跑任务。
+  - 先提供显式入口，如 `/goal continue` 或 UI 按钮。
+- [ ] 增加 `resume` 通知。
+  - 例如：`resumed active goal: <short goal>`。
+  - blocked / complete 状态应显示不同提示。
+- [ ] 明确 warm resume 与 cold resume 行为。
+  - 保持现有 cold resume prune 逻辑。
+  - sidecar 恢复不得触发 prompt 重写。
+- [ ] 更新桌面 meta。
+  - `Meta.Goal` / `Meta.GoalStatus` 应来自 controller runtime 状态。
+  - 避免只依赖 desktop tab profile。
+- [ ] 增加 CLI resume 测试。
+  - `reasonix chat --resume` 恢复 goal 状态。
+  - resume 后普通 user turn 会继续注入 active goal block。
+  - resume 后未触发显式继续时不自动跑 `continueGoal`。
+
+### 验收标准
+
+- 手动恢复 session 后，用户能看到活跃 goal。
+- 用户发出继续指令后，能复用已有 `continueGoal`。
+- 打开历史、预览历史、切换 tab 不会误触发模型调用。
+
+## Phase 3: 显式 Goal 续跑入口
+
+目标：在恢复或唤醒后，用统一入口继续推进 active goal。
+
+### 任务
+
+- [ ] 增加 `/goal continue` 命令。
+  - 若无 active goal，返回清晰提示。
+  - 若 goal 已 complete，提示无需继续。
+  - 若 goal blocked，默认开启新的 blocked audit。
+- [ ] 增加 controller API。
+  - 例如 `ContinueGoal(ctx, reason string)`。
+  - reason 用于区分 user、cron、webhook、file_watch。
+- [ ] 将自动续跑限制持久化。
+  - `goalTurns` 恢复后不能无限重跑。
+  - 明确每次唤醒最多推进多少轮。
+- [ ] 增加通知和事件。
+  - goal continuation started
+  - goal continuation complete
+  - goal blocked
+  - goal continuation limit reached
+- [ ] 增加测试。
+  - `/goal continue` 恢复 blocked audit。
+  - context cancel 会把 goal 标记为 stopped。
+  - reached max auto turns 后不会继续自动唤醒。
+
+### 验收标准
+
+- 所有入口最终都走同一个 goal continuation API。
+- 没有新增 prompt prefix 风险。
+- 失败状态可解释、可恢复。
+
+## Phase 4: Bot Gateway 消费 Runtime Session
+
+目标：让 IM bot 不只是临时消息入口，而能连接到已存在的 Reasonix session。
+
+### 任务
+
+- [ ] 设计 bot session mapping。
+  - remote chat/thread/user -> Reasonix session path。
+  - 支持 global 和 project scope。
+  - 复用 `bot.connections.session_mappings` 概念。
+- [ ] bot gateway 创建 controller 时优先恢复已有 session。
+  - 若 mapping 存在，加载对应 `.jsonl` 和 runtime sidecar。
+  - 若不存在，创建新 session 并写 mapping。
+- [ ] bot 命令增强。
+  - `/status` 显示 active goal、run status、last wakeup。
+  - `/goal continue` 从 IM 触发继续。
+  - `/sessions` 列出可恢复 session。
+  - `/attach <session>` 将当前 IM 会话绑定到已有 session。
+- [ ] 将 approval / ask 状态纳入 runtime。
+  - 重启后至少能提示有未完成审批，而不是静默丢失。
+  - 第一版可以要求用户重新触发，不必恢复阻塞中的 channel。
+- [ ] 增加 bot gateway tests。
+  - 同一 remote session 重启后恢复 goal。
+  - 群聊按 user 隔离的 session key 不串线。
+  - allowlist 不允许的用户无法触发已绑定 session。
+
+### 验收标准
+
+- 用户可以在 IM 中继续桌面或 CLI 里创建的 goal。
+- bot 重启后不会丢失 session 映射。
+- bot 不会误把不同用户/群/线程合并到同一长期任务。
+
+## Phase 5: Daemon 常驻进程
+
+目标：让 run 生命周期脱离桌面客户端，客户端只负责观察、审批和下命令。
+
+### 任务
+
+- [ ] 新增 `reasonix daemon start` 命令。
+  - 管理 session registry。
+  - 持有 scheduler。
+  - 可选择启动 bot gateway。
+- [ ] 新增本地控制接口。
+  - 建议先用 localhost HTTP 或 unix socket。
+  - 提供 status、sessions、continue goal、stop run、approve、answer。
+- [ ] 单实例控制。
+  - 同一 config/session dir 只允许一个 daemon 写 runtime state。
+  - 启动时检测锁文件或 socket。
+- [ ] 进程崩溃恢复。
+  - 启动时扫描 runtime sidecar。
+  - 将 running 但无 owner 的 run 标记为 interrupted。
+  - 不自动继续，除非 scheduler 明确允许。
+- [ ] 桌面端连接 daemon。
+  - 显示 daemon 状态。
+  - 能打开 daemon 管理的 session。
+  - 能发送审批、ask 回答和 stop。
+- [ ] 日志与诊断。
+  - daemon log 文件。
+  - `reasonix daemon doctor`。
+  - 运行中 session 和 wakeup 历史。
+
+### 验收标准
+
+- 关闭桌面端后，daemon 仍可响应 bot/cron。
+- daemon 重启后不会把 running 任务误判为成功。
+- 多客户端观察同一 session 不造成重复执行。
+
+## Phase 6: Cron / 时间唤醒
+
+目标：实现每天、每小时或指定时间自动唤醒某个 goal。
+
+### 任务
+
+- [ ] 设计 schedule 配置。
+  - session 级 schedule。
+  - project 级 schedule。
+  - global schedule。
+  - 支持 timezone。
+- [ ] 实现轻量 scheduler。
+  - 第一版只支持 fixed interval 和 daily time。
+  - 持久化 `next_wakeup_at` / `last_wakeup_at`。
+- [ ] 定义 wakeup payload。
+  - reason: `cron`
+  - schedule id
+  - previous run status
+  - bounded event summary
+- [ ] 唤醒时先做确定性检查。
+  - session 是否仍 active。
+  - goal 是否 complete / blocked。
+  - 是否已有 run 正在执行。
+  - 是否超过每日预算。
+- [ ] 增加去重。
+  - 同一 schedule 在同一窗口只触发一次。
+  - daemon 重启后不会补跑重复任务。
+- [ ] 增加测试。
+  - daily schedule 计算 next run。
+  - timezone 正确。
+  - missed wakeup 不重复风暴。
+  - running session 不并发触发。
+
+### 验收标准
+
+- 可以配置“每天早上自动检查昨天没干完的 PR / issue”。
+- scheduler 行为可预测、可解释。
+- 不依赖模型来决定是否到了唤醒时间。
+
+## Phase 7: Webhook / 外部事件唤醒
+
+目标：把唤醒从时间扩展到 GitHub、CI、IM、HTTP webhook 等外部事件。
+
+### 任务
+
+- [ ] 设计通用 event envelope。
+  - source
+  - event_id
+  - received_at
+  - project/session routing key
+  - payload summary
+  - raw payload storage reference
+- [ ] 新增 webhook receiver。
+  - 第一版只支持 localhost / 用户自托管。
+  - 必须有 secret 校验。
+  - payload 大小限制。
+- [ ] GitHub 事件路由。
+  - issue opened / assigned。
+  - pull_request opened / review_requested / checks completed。
+  - workflow_run completed。
+- [ ] CI 等待场景。
+  - 任务等待 CI 时写 runtime wait condition。
+  - webhook 收到 CI 绿灯后触发下一步。
+- [ ] 幂等处理。
+  - event id 去重。
+  - 同一 PR 的相同状态变化不重复跑。
+- [ ] 增加安全边界。
+  - webhook 不能直接执行写操作。
+  - 外部事件只生成 bounded turn input。
+  - 高风险操作继续走 approval。
+
+### 验收标准
+
+- 新 issue / PR / CI 状态变化能唤醒对应 session。
+- 重复 webhook 不会重复提交、重复发布或重复评论。
+- 未授权 webhook 被拒绝并有审计日志。
+
+## Phase 8: 文件监听唤醒
+
+目标：对本地工作区文件变化作出反应，例如文档更新、测试结果落盘、构建产物生成。
+
+### 任务
+
+- [ ] 选择文件监听实现。
+  - 优先 Go 原生跨平台库。
+  - 与 codegraph watcher 分清职责。
+- [ ] 配置 watched paths。
+  - 支持 include / exclude。
+  - 默认不监听大目录、依赖目录、secret 文件。
+- [ ] 防抖和批量。
+  - 短时间内多次变化合并成一个 event。
+  - 记录 changed files summary。
+- [ ] 事件转 turn input。
+  - 不把大文件内容直接塞进 prompt。
+  - 只提供路径、变更类型、摘要。
+- [ ] 测试。
+  - rapid changes 合并。
+  - ignored path 不触发。
+  - running session 不并发触发。
+
+### 验收标准
+
+- 文件变化能唤醒指定 goal。
+- 大型仓库不会因为监听导致 CPU 或 prompt 爆炸。
+
+## Phase 9: 确定性调度层
+
+目标：把“自动继续”升级成可观察、可暂停、可审批的任务状态机。
+
+### 任务
+
+- [ ] 定义 task/run 状态机。
+  - idle
+  - queued
+  - running
+  - waiting_approval
+  - waiting_event
+  - waiting_time
+  - blocked
+  - complete
+  - failed
+  - stopped
+- [ ] 引入 run queue。
+  - 同一 session 串行。
+  - 不同 session 可限制并发。
+  - 支持优先级。
+- [ ] 引入 wait condition。
+  - wait for CI
+  - wait for user approval
+  - wait until time
+  - wait for file change
+  - wait for webhook
+- [ ] 成本预算。
+  - 每日模型调用次数。
+  - 每日费用预算。
+  - 每个 goal 最大自动轮次。
+- [ ] 审批台。
+  - 桌面端和 bot 都能看到等待审批的任务。
+  - 审批后继续同一 run。
+- [ ] 可观测性。
+  - run timeline。
+  - wakeup history。
+  - last model decision。
+  - deterministic steps log。
+
+### 验收标准
+
+- 常驻 agent 可以“等 CI 绿了再继续发布”。
+- 用户可以随时暂停、恢复、终止某个长期 goal。
+- 一天内成本可控，并且能解释钱花在哪里。
+
+## Phase 10: 产品化个人 AgentOS 场景
+
+目标：把底座包装成用户能理解和复用的个人工作流。
+
+### 推荐首批场景
+
+- [ ] 每天自动 PR / issue triage。
+  - 拉取昨天未处理的 PR / issue。
+  - 起草 triage。
+  - 放入审批台。
+- [ ] CI watcher。
+  - 检测等待中的 PR。
+  - CI 失败时总结错误。
+  - CI 成功后准备发布说明或 merge 建议。
+- [ ] 发布助手。
+  - 检查 changelog。
+  - 检查版本号。
+  - 等待审批。
+  - 发布后通知 IM。
+- [ ] 仓库健康巡检。
+  - 定期跑轻量检查。
+  - 报告 flaky tests、长期未合并 PR、过期依赖。
+- [ ] 个人任务复盘。
+  - 总结当天自动处理了什么。
+  - 列出需要用户决策的任务。
+
+### 验收标准
+
+- 用户能从 UI 或 bot 看到“今天 agent 帮我做了什么”。
+- 用户能快速批准或拒绝下一步。
+- 默认不执行高风险写操作。
+
+## 风险清单
+
+- [ ] Cache 风险：把动态状态写进稳定 prompt prefix。
+  - 缓解：状态写 sidecar，唤醒时作为普通 turn 输入。
+- [ ] 重复执行风险：daemon 重启、webhook 重放、cron 补跑导致重复提交。
+  - 缓解：event id、schedule window、run id 去重。
+- [ ] 权限风险：外部事件触发写操作。
+  - 缓解：外部事件只触发 bounded turn，高风险操作走 approval。
+- [ ] 状态漂移风险：transcript、runtime sidecar、desktop tab profile 不一致。
+  - 缓解：controller runtime sidecar 是权威状态，desktop profile 只是 UI 偏好。
+- [ ] 成本风险：常驻 agent 频繁唤醒模型。
+  - 缓解：确定性预检查、每日预算、最大自动轮次。
+- [ ] 用户体验风险：恢复历史时自动开跑。
+  - 缓解：resume 只恢复状态，不默认执行；显式 continue 或 scheduler 才执行。
+- [ ] 平台化过早风险：插件生态、SDK、企业平台会拖慢个人 OS MVP。
+  - 缓解：先完成个人常驻场景，再抽象生态能力。
+
+## 建议实现顺序
+
+1. Runtime sidecar schema 和读写测试。
+2. `Controller.Resume` 恢复 goal 状态。
+3. `/goal continue` 显式续跑。
+4. bot gateway 恢复已有 session。
+5. daemon skeleton 和本地 status API。
+6. cron wakeup。
+7. webhook wakeup。
+8. file watcher wakeup。
+9. run queue 和 wait condition。
+10. PR / issue / CI 场景产品化。
+
+## 第一周可交付 MVP
+
+- [ ] 新增 runtime sidecar。
+- [ ] 恢复 active goal。
+- [ ] 提供 `/goal continue`。
+- [ ] 桌面 meta 能显示恢复后的 active goal。
+- [ ] bot `/status` 显示 goal 状态。
+- [ ] 增加核心单元测试。
+- [ ] 确认 provider request 稳定前缀无变化。
+
+## 后续决策点
+
+- [ ] Runtime sidecar 是独立文件还是扩展 `.meta`。
+- [ ] daemon 与桌面通信使用 localhost HTTP、unix socket 还是现有 serve transport。
+- [ ] cron 配置放全局 config、project config，还是 session runtime。
+- [ ] webhook 是否先只支持 GitHub。
+- [ ] 常驻 agent 默认是否自动继续 interrupted goal。
+- [ ] 预算策略按 session、project 还是全局计算。
