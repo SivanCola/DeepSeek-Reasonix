@@ -379,6 +379,9 @@ func (gw *BotGateway) handleSlashCommand(ctx context.Context, adapter Adapter, k
 	case strings.HasPrefix(msg.Text, "/timeline"):
 		_ = gw.sendText(ctx, adapter, msg, gw.renderTimeline(key, msg.Text))
 
+	case strings.HasPrefix(msg.Text, "/wakeups"):
+		_ = gw.sendText(ctx, adapter, msg, gw.renderWakeupHistory(key, msg.Text))
+
 	case strings.HasPrefix(msg.Text, "/sessions"):
 		_ = gw.sendText(ctx, adapter, msg, gw.renderSessionList(8))
 
@@ -434,6 +437,7 @@ func (gw *BotGateway) handleSlashCommand(ctx context.Context, adapter Adapter, k
 			"/detach - 解除当前 IM 会话绑定\n" +
 			"/status - 查看状态\n" +
 			"/timeline [n] - 查看当前会话最近运行事件\n" +
+			"/wakeups [n] - 查看当前会话最近唤醒历史\n" +
 			"/help - 显示帮助"
 		_ = gw.sendText(ctx, adapter, msg, help)
 	}
@@ -1093,6 +1097,48 @@ func (gw *BotGateway) renderTimeline(key, command string) string {
 	return strings.Join(lines, "\n")
 }
 
+func (gw *BotGateway) renderWakeupHistory(key, command string) string {
+	sessionPath := gw.sessionPathForKey(key)
+	if sessionPath == "" {
+		return "当前 IM 会话没有绑定 Reasonix session。"
+	}
+	limit := parseTimelineLimit(command, 8)
+	readLimit := limit * 4
+	if readLimit < 32 {
+		readLimit = 32
+	}
+	events, ok, err := agent.LoadRuntimeTimeline(sessionPath, readLimit)
+	if err != nil {
+		gw.logger.Warn("bot wakeup history load failed", "session", shortSessionID(sessionPath), "err", err)
+		return "wakeup history 读取失败。"
+	}
+	if !ok || len(events) == 0 {
+		return "当前会话还没有唤醒历史。"
+	}
+	wakeups := make([]agent.RuntimeTimelineEvent, 0, limit)
+	for i := len(events) - 1; i >= 0; i-- {
+		e := events[i]
+		if !isWakeupTimelineEvent(e) {
+			continue
+		}
+		wakeups = append(wakeups, e)
+		if limit > 0 && len(wakeups) >= limit {
+			break
+		}
+	}
+	if len(wakeups) == 0 {
+		return "当前会话还没有唤醒历史。"
+	}
+	for i, j := 0, len(wakeups)-1; i < j; i, j = i+1, j-1 {
+		wakeups[i], wakeups[j] = wakeups[j], wakeups[i]
+	}
+	lines := []string{fmt.Sprintf("最近唤醒历史（%s）：", shortSessionID(sessionPath))}
+	for _, e := range wakeups {
+		lines = append(lines, renderTimelineEvent(e))
+	}
+	return strings.Join(lines, "\n")
+}
+
 func parseTimelineLimit(command string, fallback int) int {
 	parts := strings.Fields(command)
 	if len(parts) < 2 {
@@ -1106,6 +1152,19 @@ func parseTimelineLimit(command string, fallback int) int {
 		return 50
 	}
 	return limit
+}
+
+func isWakeupTimelineEvent(e agent.RuntimeTimelineEvent) bool {
+	switch e.Type {
+	case "wakeup_budget_blocked", "wait_time_reached", "wait_event_failure_detected", "file_change_detected":
+		return true
+	case "intent_queued":
+		switch e.Source {
+		case "cron", "time", "webhook", "file_watch":
+			return true
+		}
+	}
+	return false
 }
 
 func renderTimelineEvent(e agent.RuntimeTimelineEvent) string {

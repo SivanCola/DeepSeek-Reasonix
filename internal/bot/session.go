@@ -50,6 +50,7 @@ var slashCommands = map[string]bool{
 	"/detach":   true,
 	"/goal":     true,
 	"/timeline": true,
+	"/wakeups":  true,
 	"/help":     true,
 }
 

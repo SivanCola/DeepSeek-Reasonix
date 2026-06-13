@@ -18,11 +18,11 @@ dynamic workflow 或开发者平台，而是先把 Reasonix 从一次性会话�
 
 - `internal/control/controller.go` 已有 goal 模式、`continueGoal` 自动续跑和
   `[goal:continue]` / `[goal:complete]` / `[goal:blocked]` 状态标记。
-- `internal/control/controller.go` 的 `Resume` 当前只恢复 transcript 和 checkpoint，
-  尚未恢复 goal/run 状态。
+- `internal/control/controller.go` 的 `Resume` 会恢复 transcript、checkpoint 和
+  runtime sidecar 中的 goal/run 状态，但不会自动触发续跑。
 - `desktop/tabs.go` 已有 `TurnDone -> scheduleTabSnapshot` 的合并保存机制。
-- `internal/agent/branch.go` 已有 session `.meta` sidecar，可作为新增状态 sidecar 的
-  设计参考。
+- `internal/agent/runtime.go` 已有 session `.runtime.json` sidecar，用于保存
+  goal/run/wait/scheduler/file-watch/budget 动态状态。
 - `internal/bot/gateway.go` 已有 IM 入口、session key、排队/合并、审批和 controller
   生命周期雏形。
 - `cmd/reasonix bot start` 已经能启动 bot gateway，但还不是通用 daemon 调度器。
@@ -34,41 +34,27 @@ dynamic workflow 或开发者平台，而是先把 Reasonix 从一次性会话�
 
 ### 任务
 
-- [ ] 设计 session runtime sidecar schema。
-  - 建议路径：`<session>.runtime.json` 或扩展现有 `<session>.meta`。
-  - 字段建议：
-    - `version`
-    - `session_id`
-    - `goal.text`
-    - `goal.status`
-    - `goal.turns`
-    - `goal.block_count`
-    - `goal.block_reason`
-    - `goal.updated_at`
-    - `run.status`
-    - `run.last_turn_at`
-    - `run.last_error`
-    - `run.resume_count`
-    - `scheduler.next_wakeup_at`
-    - `scheduler.last_wakeup_reason`
-- [ ] 在 controller 中提供只读 snapshot 方法。
-  - 例如 `GoalSnapshot()` 或 `RuntimeSnapshot()`。
-  - 不暴露可变内部字段。
-- [ ] 在 controller 中提供恢复方法。
-  - 例如 `RestoreRuntimeSnapshot(snapshot)`。
-  - 恢复时要处理旧 schema、损坏 sidecar、空 goal、已完成 goal、blocked goal。
-- [ ] 将 sidecar 写入接入现有 snapshot 节奏。
-  - CLI / serve / desktop 都应复用同一 controller 层写入逻辑。
-  - 桌面侧可继续沿用 `TurnDone -> scheduleTabSnapshot` 的合并写入节奏。
-- [ ] 确保写入是原子的。
-  - 复用 `fileutil.ReplaceFile` 模式。
-  - 避免崩溃时留下半截 JSON。
-- [ ] 增加 focused tests。
-  - 设置 goal 后 snapshot 会写 sidecar。
-  - goal complete 后 sidecar 状态正确。
-  - repeated blocked 计数能保存。
-  - 损坏 sidecar 不影响 transcript resume。
-  - 空 session 不创建多余 runtime sidecar。
+- [x] 设计 session runtime sidecar schema。
+  - [x] 路径：`<session>.runtime.json`。
+  - [x] 字段覆盖 `version`、`session_id`、`goal.*`、`run.*`、
+    `scheduler.*`、`wait.*`、`file_watch.*`、`budget.*`。
+- [x] 在 controller 中提供只读 snapshot 方法。
+  - [x] `RuntimeSnapshot()` 不暴露可变内部字段。
+- [x] 在 controller 中提供恢复方法。
+  - [x] `RestoreRuntimeSnapshot(snapshot)` 恢复 goal/run 账本。
+  - [x] 恢复时处理空 goal、已完成 goal、blocked goal 和 running->interrupted。
+- [x] 将 sidecar 写入接入现有 snapshot 节奏。
+  - [x] CLI / serve / desktop 复用 controller 层写入逻辑。
+  - [x] 桌面侧继续沿用 `TurnDone -> scheduleTabSnapshot` 的合并写入节奏。
+- [x] 确保写入是原子的。
+  - [x] 复用 `fileutil.ReplaceFile` 模式。
+  - [x] 避免崩溃时留下半截 JSON。
+- [x] 增加 focused tests。
+  - [x] 设置 goal 后 snapshot 会写 sidecar。
+  - [x] goal complete 后 sidecar 状态正确。
+  - [x] repeated blocked 计数能保存。
+  - [x] 损坏 sidecar 不影响 transcript resume。
+  - [x] 空 session 不创建多余 runtime sidecar。
 
 ### 验收标准
 
@@ -82,19 +68,19 @@ dynamic workflow 或开发者平台，而是先把 Reasonix 从一次性会话�
 
 ### 任务
 
-- [ ] 在 `Controller.Resume` 中读取 runtime sidecar。
-- [ ] 恢复 active goal，但不要默认立刻自动执行。
-  - 防止用户只是打开历史记录时意外跑任务。
-  - 先提供显式入口，如 `/goal continue` 或 UI 按钮。
+- [x] 在 `Controller.Resume` 中读取 runtime sidecar。
+- [x] 恢复 active goal，但不要默认立刻自动执行。
+  - [x] 防止用户只是打开历史记录时意外跑任务。
+  - [x] 先提供显式入口，如 `/goal continue` 或 UI 按钮。
 - [ ] 增加 `resume` 通知。
   - 例如：`resumed active goal: <short goal>`。
   - blocked / complete 状态应显示不同提示。
-- [ ] 明确 warm resume 与 cold resume 行为。
-  - 保持现有 cold resume prune 逻辑。
-  - sidecar 恢复不得触发 prompt 重写。
-- [ ] 更新桌面 meta。
-  - `Meta.Goal` / `Meta.GoalStatus` 应来自 controller runtime 状态。
-  - 避免只依赖 desktop tab profile。
+- [x] 明确 warm resume 与 cold resume 行为。
+  - [x] 保持现有 cold resume prune 逻辑。
+  - [x] sidecar 恢复不得触发 prompt 重写。
+- [x] 更新桌面 meta。
+  - [x] `Meta.Goal` / `Meta.GoalStatus` 来自 controller runtime 状态。
+  - [x] 避免只依赖 desktop tab profile。
 - [ ] 增加 CLI resume 测试。
   - `reasonix chat --resume` 恢复 goal 状态。
   - resume 后普通 user turn 会继续注入 active goal block。
@@ -157,6 +143,7 @@ dynamic workflow 或开发者平台，而是先把 Reasonix 从一次性会话�
   - [x] `/sessions` 列出可恢复 session。
   - [x] `/attach <session>` 将当前 IM 会话绑定到已有 session。
   - [x] `/timeline [n]` 从 IM 查看当前 session 最近 runtime 事件。
+  - [x] `/wakeups [n]` 从 IM 查看当前 session 最近唤醒历史。
 - [x] 将 approval / ask 状态纳入 runtime。
   - [x] 重启后至少能提示有未完成审批，而不是静默丢失。
   - [x] 第一版可以要求用户重新触发，不必恢复阻塞中的 channel。
@@ -167,6 +154,7 @@ dynamic workflow 或开发者平台，而是先把 Reasonix 从一次性会话�
   - [x] `/status` 能从 runtime sidecar 显示 wait、wakeup 和预算。
   - [x] `/status` 能在只有 session mapping、没有活跃 controller 时显示状态。
   - [x] `/timeline` 能从 session mapping 显示最近 runtime timeline。
+  - [x] `/wakeups` 能从 session mapping 显示最近唤醒历史。
   - [x] bot 记录并清除 approval / ask wait runtime 状态。
 
 ### 验收标准
@@ -360,7 +348,7 @@ dynamic workflow 或开发者平台，而是先把 Reasonix 从一次性会话�
   - 审批后继续同一 run。
 - [ ] 可观测性。
   - [x] run timeline。
-  - wakeup history。
+  - [x] wakeup history。
   - last model decision。
   - deterministic steps log。
 
@@ -438,10 +426,10 @@ dynamic workflow 或开发者平台，而是先把 Reasonix 从一次性会话�
 - [x] 新增 runtime sidecar。
 - [x] 恢复 active goal。
 - [x] 提供 `/goal continue`。
-- [ ] 桌面 meta 能显示恢复后的 active goal。
+- [x] 桌面 meta 能显示恢复后的 active goal。
 - [x] bot `/status` 显示 goal 状态。
 - [x] 增加核心单元测试。
-- [ ] 确认 provider request 稳定前缀无变化。
+- [x] 确认 provider request 稳定前缀无变化。
 
 ## 后续决策点
 

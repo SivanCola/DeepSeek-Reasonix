@@ -790,6 +790,82 @@ func TestGatewayTimelineCommandRequiresSession(t *testing.T) {
 	}
 }
 
+func TestGatewayWakeupsCommandFiltersTimeline(t *testing.T) {
+	dir := t.TempDir()
+	sessionPath := writeBotTestSession(t, dir, "hello")
+	now := time.Date(2026, 6, 13, 12, 0, 0, 0, time.UTC)
+	events := []agent.RuntimeTimelineEvent{
+		{Time: now, Type: "wait_started", Source: "bot", WaitKind: "approval", WaitID: "approval-1"},
+		{Time: now.Add(time.Minute), Type: "intent_queued", Source: "cron", Reason: "cron", EventID: "cron-1", RunStatus: "pending_continue"},
+		{Time: now.Add(2 * time.Minute), Type: "wakeup_budget_blocked", Source: "webhook", Reason: "daily budget exhausted", EventID: "delivery-1"},
+		{Time: now.Add(3 * time.Minute), Type: "run_finished", Source: "daemon", RunStatus: "idle"},
+		{Time: now.Add(4 * time.Minute), Type: "file_change_detected", Source: "file_watch", Reason: "file_change", RunStatus: "pending_continue"},
+	}
+	for _, event := range events {
+		if err := agent.AppendRuntimeTimeline(sessionPath, event); err != nil {
+			t.Fatalf("AppendRuntimeTimeline: %v", err)
+		}
+	}
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	gw := NewGateway(GatewayConfig{SessionDir: dir}, nil, logger)
+	if err := gw.setSessionMapping("remote-wakeups", sessionPath, "/workspace"); err != nil {
+		t.Fatalf("setSessionMapping: %v", err)
+	}
+	fa := newFakeAdapter(PlatformQQ, "fake-qq")
+
+	gw.handleSlashCommand(context.Background(), fa, "remote-wakeups", InboundMessage{
+		Platform:  PlatformQQ,
+		ChatType:  ChatDM,
+		ChatID:    "chat-1",
+		UserID:    "user-1",
+		Text:      "/wakeups 2",
+		MessageID: "msg-1",
+	})
+
+	sent := fa.sentMessages()
+	if len(sent) != 1 {
+		t.Fatalf("sent count = %d, want 1", len(sent))
+	}
+	text := sent[0].Text
+	for _, want := range []string{
+		"最近唤醒历史（" + shortSessionID(sessionPath) + "）：",
+		"wakeup_budget_blocked",
+		"source=webhook",
+		"file_change_detected",
+		"source=file_watch",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("wakeups missing %q:\n%s", want, text)
+		}
+	}
+	for _, unwanted := range []string{"wait_started", "run_finished", "source=cron", sessionPath} {
+		if strings.Contains(text, unwanted) {
+			t.Fatalf("wakeups should not contain %q:\n%s", unwanted, text)
+		}
+	}
+}
+
+func TestGatewayWakeupsCommandRequiresSession(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	gw := NewGateway(GatewayConfig{}, nil, logger)
+	fa := newFakeAdapter(PlatformQQ, "fake-qq")
+
+	gw.handleSlashCommand(context.Background(), fa, "remote-empty", InboundMessage{
+		Platform:  PlatformQQ,
+		ChatType:  ChatDM,
+		ChatID:    "chat-1",
+		UserID:    "user-1",
+		Text:      "/wakeups",
+		MessageID: "msg-1",
+	})
+
+	sent := fa.sentMessages()
+	if len(sent) != 1 || !strings.Contains(sent[0].Text, "没有绑定 Reasonix session") {
+		t.Fatalf("unexpected wakeups response: %+v", sent)
+	}
+}
+
 func writeBotTestSession(t *testing.T, dir, content string) string {
 	t.Helper()
 	if err := os.MkdirAll(dir, 0o755); err != nil {
