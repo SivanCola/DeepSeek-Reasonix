@@ -156,15 +156,15 @@ func TestSeedTodoState(t *testing.T) {
 	}
 }
 
-func TestSeedTodoStateNoOverwrite(t *testing.T) {
+func TestSeedTodoStateReplacesExisting(t *testing.T) {
 	a := &Agent{sink: event.Discard, todoState: []evidence.TodoItem{
 		{Content: "existing", Status: "in_progress"},
 	}}
 	a.SeedTodoState([]evidence.TodoItem{
 		{Content: "new", Status: "in_progress"},
 	})
-	if len(a.todoState) != 1 || a.todoState[0].Content != "existing" {
-		t.Fatalf("SeedTodoState overwrote existing state: %+v", a.todoState)
+	if len(a.todoState) != 1 || a.todoState[0].Content != "new" {
+		t.Fatalf("SeedTodoState did not replace existing state: %+v", a.todoState)
 	}
 }
 

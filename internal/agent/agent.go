@@ -769,17 +769,13 @@ func (a *Agent) setTodoState(todos []evidence.TodoItem) {
 }
 
 // SeedTodoState initializes the canonical task list from a host-generated
-// starter list, such as an approved plan. It does not overwrite a list the model
-// has already established.
+// starter list, such as an approved plan. A new host seed replaces stale state
+// from earlier work so complete_step matches the plan the UI just displayed.
 func (a *Agent) SeedTodoState(todos []evidence.TodoItem) {
 	if len(todos) == 0 {
 		return
 	}
-	a.todoMu.Lock()
-	if len(a.todoState) == 0 {
-		a.todoState = append([]evidence.TodoItem(nil), todos...)
-	}
-	a.todoMu.Unlock()
+	a.setTodoState(todos)
 }
 
 // ReplaceTodoState mirrors a host-generated todo list into the canonical state.

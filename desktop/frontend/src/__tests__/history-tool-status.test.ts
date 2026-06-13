@@ -62,5 +62,22 @@ const missingResult = toolItems([
 ]);
 eq(missingResult[0]?.kind === "tool" && missingResult[0].status, "stopped", "missing tool result restores as stopped");
 
+const positionalResult = toolItems([
+  {
+    role: "assistant",
+    content: "",
+    toolCalls: [{ id: "", name: "todo_write", arguments: "{\"todos\":[{\"content\":\"A\",\"status\":\"in_progress\"}]}" }],
+  },
+  {
+    role: "tool",
+    content: "Todos updated",
+    toolCallId: "",
+    toolName: "todo_write",
+  },
+]);
+eq(positionalResult.length, 1, "positional tool result is consumed instead of rendering as an orphan");
+eq(positionalResult[0]?.kind === "tool" && positionalResult[0].status, "done", "empty-id tool call restores from positional result");
+eq(positionalResult[0]?.kind === "tool" && positionalResult[0].output, "Todos updated", "empty-id tool call keeps positional output");
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);
