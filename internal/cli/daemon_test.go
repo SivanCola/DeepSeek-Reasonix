@@ -334,6 +334,78 @@ func TestDaemonCIWatchCommandRejectsUnknownSource(t *testing.T) {
 	}
 }
 
+func TestDaemonDailyTriageCommandConfiguresScheduleAndBudget(t *testing.T) {
+	var paths []string
+	var payloads []map[string]interface{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.URL.Path)
+		var payload map[string]interface{}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		payloads = append(payloads, payload)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer server.Close()
+	addr := strings.TrimPrefix(server.URL, "http://")
+
+	out := captureStdout(t, func() {
+		if rc := daemonDailyTriageCmd([]string{
+			"--addr", addr,
+			"--session", "triage-session",
+			"--daily-at", "08:45",
+			"--timezone", "Asia/Shanghai",
+			"--daily-wakeups", "2",
+		}); rc != 0 {
+			t.Fatalf("daemonDailyTriageCmd rc = %d, want 0", rc)
+		}
+	})
+
+	if got, want := strings.Join(paths, ","), "/schedule,/budget"; got != want {
+		t.Fatalf("paths = %q, want %q", got, want)
+	}
+	if len(payloads) != 2 {
+		t.Fatalf("payload count = %d, want 2", len(payloads))
+	}
+	schedule := payloads[0]
+	if schedule["session_id"] != "triage-session" || schedule["daily_at"] != "08:45" || schedule["timezone"] != "Asia/Shanghai" || schedule["enabled"] != true {
+		t.Fatalf("unexpected schedule payload: %+v", schedule)
+	}
+	budget := payloads[1]
+	if budget["session_id"] != "triage-session" || budget["daily_wakeup_limit"] != float64(2) || budget["max_goal_auto_turns"] != float64(0) {
+		t.Fatalf("unexpected budget payload: %+v", budget)
+	}
+	if strings.Count(out, `"ok":true`) != 2 {
+		t.Fatalf("daily-triage output = %q, want two ok responses", out)
+	}
+}
+
+func TestDaemonDailyTriageCommandCanSkipBudget(t *testing.T) {
+	var paths []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer server.Close()
+	addr := strings.TrimPrefix(server.URL, "http://")
+
+	_ = captureStdout(t, func() {
+		if rc := daemonDailyTriageCmd([]string{
+			"--addr", addr,
+			"--session", "triage-session",
+			"--daily-wakeups", "-1",
+		}); rc != 0 {
+			t.Fatalf("daemonDailyTriageCmd skip budget rc = %d, want 0", rc)
+		}
+	})
+
+	if got, want := strings.Join(paths, ","), "/schedule"; got != want {
+		t.Fatalf("paths = %q, want %q", got, want)
+	}
+}
+
 func TestPrepareBotGatewayRejectsUnsafeConfig(t *testing.T) {
 	cfg := testBotGatewayConfig()
 	cfg.Bot.Enabled = false

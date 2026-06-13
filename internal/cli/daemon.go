@@ -51,6 +51,8 @@ func daemonCommand(args []string) int {
 		return daemonScheduleCmd(rest)
 	case "budget":
 		return daemonBudgetCmd(rest)
+	case "daily-triage":
+		return daemonDailyTriageCmd(rest)
 	case "ci-watch":
 		return daemonCIWatchCmd(rest)
 	case "wait-event":
@@ -734,6 +736,80 @@ func ciWatchSubject(repo string, pr int) string {
 	}
 }
 
+func daemonDailyTriageCmd(args []string) int {
+	fs := flag.NewFlagSet("daemon daily-triage", flag.ContinueOnError)
+	addr := fs.String("addr", daemon.DefaultAddr, "daemon 地址")
+	dir := fs.String("dir", "", "会话目录（用于读取本地 token）")
+	sessionID := fs.String("session", "", "要配置每日 triage 的 session ID")
+	dailyAt := fs.String("daily-at", "09:00", "每日 triage 唤醒时间 HH:MM")
+	timezone := fs.String("timezone", "", "daily-at 使用的 IANA 时区，例如 Asia/Shanghai")
+	dailyWakeups := fs.Int("daily-wakeups", 1, "每日自动唤醒次数上限，0 表示关闭限制，-1 表示不修改预算")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	session := strings.TrimSpace(*sessionID)
+	if session == "" {
+		fmt.Fprintln(os.Stderr, "error: --session is required")
+		return 2
+	}
+	if strings.TrimSpace(*dailyAt) == "" {
+		fmt.Fprintln(os.Stderr, "error: --daily-at is required")
+		return 2
+	}
+	if *dailyWakeups < -1 {
+		fmt.Fprintln(os.Stderr, "error: --daily-wakeups must be >= -1")
+		return 2
+	}
+
+	schedulePayload := map[string]interface{}{
+		"session_id": session,
+		"daily_at":   strings.TrimSpace(*dailyAt),
+		"enabled":    true,
+	}
+	if tz := strings.TrimSpace(*timezone); tz != "" {
+		schedulePayload["timezone"] = tz
+	}
+	scheduleBody, err := json.Marshal(schedulePayload)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	resp, err := daemonPost(*addr, *dir, "/schedule", string(scheduleBody))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "daemon not reachable: %v\n", err)
+		return 1
+	}
+	scheduleResp, ok := readDaemonCommandResponse(resp)
+	if !ok {
+		return 1
+	}
+	fmt.Println(scheduleResp)
+
+	if *dailyWakeups >= 0 {
+		budgetPayload := map[string]interface{}{
+			"session_id":          session,
+			"daily_wakeup_limit":  *dailyWakeups,
+			"max_goal_auto_turns": 0,
+		}
+		budgetBody, err := json.Marshal(budgetPayload)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			return 1
+		}
+		resp, err = daemonPost(*addr, *dir, "/budget", string(budgetBody))
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "daemon not reachable: %v\n", err)
+			return 1
+		}
+		budgetResp, ok := readDaemonCommandResponse(resp)
+		if !ok {
+			return 1
+		}
+		fmt.Println(budgetResp)
+	}
+	return 0
+}
+
 func daemonWaitEventCmd(args []string) int {
 	fs := flag.NewFlagSet("daemon wait-event", flag.ContinueOnError)
 	addr := fs.String("addr", daemon.DefaultAddr, "daemon 地址")
@@ -1008,6 +1084,16 @@ func daemonPost(addr, dir, path, body string) (*http.Response, error) {
 	return client.Do(req)
 }
 
+func readDaemonCommandResponse(resp *http.Response) (string, bool) {
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 200 {
+		fmt.Fprintf(os.Stderr, "error: %s\n", string(b))
+		return "", false
+	}
+	return string(b), true
+}
+
 func addDaemonAuth(req *http.Request, dir string) {
 	token := readDaemonToken(dir)
 	if token != "" {
@@ -1059,6 +1145,7 @@ Usage:
   reasonix daemon continue --session ID [--addr HOST:PORT] [--dir PATH]
   reasonix daemon schedule (--session ID | --scope global|project [--workspace-root PATH]) [--daily-at HH:MM] [--timezone Area/City] [--interval 1h]
   reasonix daemon budget   --session ID [--daily-wakeups N] [--max-goal-auto-turns N] [--daily-model-calls N] [--daily-model-cost N] [--reset]
+  reasonix daemon daily-triage --session ID [--daily-at HH:MM] [--timezone Area/City] [--daily-wakeups N]
   reasonix daemon ci-watch --session ID [--source workflow_run|check_suite|status] [--repo owner/repo] [--pr N]
   reasonix daemon wait-event --session ID --source TYPE [--event-id ID] [--status completed] [--conclusion success]
   reasonix daemon wait-time --session ID (--until RFC3339 | --after 1h)
@@ -1078,6 +1165,7 @@ Subcommands:
   continue   显式唤醒并继续指定 goal
   schedule   设置 daily/interval 定时唤醒和 daily 时区
   budget     设置自动唤醒、模型调用、模型费用和 goal 自动续跑预算
+  daily-triage 配置每日 PR / issue triage 场景
   ci-watch   配置“等 GitHub CI 成功后继续”的个人 AgentOS 场景
   wait-event 设置或清除等待外部事件条件
   wait-time  设置或清除等待到指定时间的条件

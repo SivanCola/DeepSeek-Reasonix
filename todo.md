@@ -370,10 +370,10 @@ dynamic workflow 或开发者平台，而是先把 Reasonix 从一次性会话�
 
 ### 推荐首批场景
 
-- [ ] 每天自动 PR / issue triage。
-  - 拉取昨天未处理的 PR / issue。
-  - 起草 triage。
-  - 放入审批台。
+- [x] 每天自动 PR / issue triage。
+  - [x] `reasonix daemon daily-triage` 可为已有 triage session 配置每日唤醒。
+  - [x] 默认设置每日自动唤醒预算，避免重复 triage 风暴。
+  - [x] 拉取未处理 PR / issue、起草 triage 和审批由 active goal 与 approval 机制承接。
 - [x] CI watcher。
   - [x] `reasonix daemon ci-watch` 可把 session 配置为等待 GitHub CI 成功。
   - [x] 支持 workflow_run / check_suite / commit status。
