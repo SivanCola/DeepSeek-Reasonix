@@ -25,6 +25,26 @@ function itemSummary(item: DaemonApprovalDeskItemView): string {
   return item.subject || firstQuestion || item.reason || "";
 }
 
+function itemKindLabel(item: DaemonApprovalDeskItemView, t: ReturnType<typeof useT>): string {
+  return item.kind === "ask" ? t("daemonApprovals.askBadge") : t("daemonApprovals.approvalBadge");
+}
+
+function waitStateLabel(item: DaemonApprovalDeskItemView, t: ReturnType<typeof useT>): string {
+  return item.active ? t("daemonApprovals.active") : t("daemonApprovals.dormant");
+}
+
+function sinceLabel(value?: string): string {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
 function answered(question: DaemonApprovalQuestionView, selected: Record<string, string[]>, custom: Record<string, string>): boolean {
   const id = question.id ?? "";
   return (selected[id]?.length ?? 0) > 0 || custom[id]?.trim() !== "";
@@ -128,6 +148,17 @@ export function DaemonApprovalsPanel() {
   const canSubmitAsk = questions.length === 0
     ? custom.__fallback?.trim() !== ""
     : questions.every((question) => answered(question, selected, custom));
+  const showPanel = detailsOpen || item.kind === "ask" || error || items.length > 1;
+  const detailRows = [
+    { label: t("daemonApprovals.target"), value: shortSessionID(item.sessionId), title: item.sessionId },
+    { label: t("daemonApprovals.waitState"), value: waitStateLabel(item, t) },
+    { label: t("daemonApprovals.runStatus"), value: item.runStatus },
+    { label: t("daemonApprovals.goal"), value: item.goalText },
+    { label: t("daemonApprovals.source"), value: item.reason },
+    { label: t("daemonApprovals.tool"), value: item.tool },
+    { label: t("daemonApprovals.actionSummary"), value: item.subject },
+    { label: t("daemonApprovals.since"), value: sinceLabel(item.since) },
+  ].filter((row) => row.value);
 
   const handleAsk = async () => {
     if (working) return;
@@ -151,9 +182,9 @@ export function DaemonApprovalsPanel() {
 
   const badges = (
     <>
-      <PromptBadge>{item.kind === "ask" ? t("daemonApprovals.askBadge") : t("daemonApprovals.approvalBadge")}</PromptBadge>
+      <PromptBadge>{itemKindLabel(item, t)}</PromptBadge>
       <PromptBadge>{t("daemonApprovals.count", { current: index + 1, total: items.length })}</PromptBadge>
-      {!item.active && <PromptBadge>{t("daemonApprovals.dormant")}</PromptBadge>}
+      <PromptBadge>{waitStateLabel(item, t)}</PromptBadge>
     </>
   );
 
@@ -197,14 +228,48 @@ export function DaemonApprovalsPanel() {
         </>
       }
     >
-      {(detailsOpen || item.kind === "ask" || error) && (
+      {showPanel && (
         <div className="daemon-approvals__panel">
           {error && <div className="daemon-approvals__error">{t("daemonApprovals.actionFailed", { err: error })}</div>}
-          <div className="daemon-approvals__meta">
-            <span>{t("daemonApprovals.session", { id: item.sessionId })}</span>
-            {item.runStatus && <span>{item.runStatus}</span>}
+          {items.length > 1 && (
+            <div className="daemon-approvals__queue" aria-label={t("daemonApprovals.queue")}>
+              {items.map((candidate, candidateIndex) => {
+                const active = candidateIndex === index;
+                return (
+                  <button
+                    className={`daemon-approvals__queue-item${active ? " daemon-approvals__queue-item--active" : ""}${!candidate.active ? " daemon-approvals__queue-item--dormant" : ""}`}
+                    disabled={working}
+                    key={itemKey(candidate)}
+                    onClick={() => setIndex(candidateIndex)}
+                    type="button"
+                  >
+                    <span className="daemon-approvals__queue-top">
+                      <b>{shortSessionID(candidate.sessionId)}</b>
+                      <em>{itemKindLabel(candidate, t)}</em>
+                      <small>{waitStateLabel(candidate, t)}</small>
+                    </span>
+                    <span className="daemon-approvals__queue-summary">
+                      {candidate.goalText || itemSummary(candidate) || candidate.runStatus || t("daemonApprovals.noSummary")}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+          <div className="daemon-approvals__detail-grid">
+            {detailRows.map((row) => (
+              <div className="daemon-approvals__detail" key={row.label} title={row.title || row.value}>
+                <span>{row.label}</span>
+                <b>{row.value}</b>
+              </div>
+            ))}
           </div>
-          {item.kind === "approval" && item.subject && <pre className="approval-subject">{item.subject}</pre>}
+          {item.kind === "approval" && item.subject && (
+            <div className="daemon-approvals__summary">
+              <span>{t("daemonApprovals.actionSummary")}</span>
+              <pre className="approval-subject">{item.subject}</pre>
+            </div>
+          )}
           {item.kind === "ask" && (
             <div className="daemon-approvals__questions">
               {questions.length > 0 ? questions.map((question, questionIndex) => {

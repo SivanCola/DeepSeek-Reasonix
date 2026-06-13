@@ -508,10 +508,10 @@ dynamic workflow 或开发者平台，而是先把 Reasonix 从一次性会话�
   - [x] daemon API / CLI / desktop bridge 支持 stop、continue、open session、disable schedule、disable watch。
   - [x] 桌面常驻任务总览页面提供上述操作入口。
   - 验收：用户能在一个页面看懂“现在 agent 正在等什么、接下来会做什么”。
-- [ ] 审批台体验升级。
-  - [ ] approval / ask 列表支持跨 session 排队处理。
-  - [ ] 明确 dormant wait 和 active wait 的差异。
-  - [ ] 高风险动作展示来源事件、目标 session、命令或工具参数摘要。
+- [x] 审批台体验升级。
+  - [x] approval / ask 列表支持跨 session 排队处理。
+  - [x] 明确 dormant wait 和 active wait 的差异。
+  - [x] 高风险动作展示来源事件、目标 session、命令或工具参数摘要。
   - 验收：用户可以在 30 秒内批完当天积压的低风险任务，并识别高风险任务。
 
 ### P1：真实场景 E2E
