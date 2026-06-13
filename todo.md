@@ -245,13 +245,13 @@ dynamic workflow 或开发者平台，而是先把 Reasonix 从一次性会话�
 
 ### 任务
 
-- [ ] 设计通用 event envelope。
-  - source
-  - event_id
-  - received_at
-  - project/session routing key
-  - payload summary
-  - raw payload storage reference
+- [x] 设计通用 event envelope。
+  - [x] source
+  - [x] event_id
+  - [x] received_at
+  - [x] project/session routing key
+  - [x] payload summary
+  - [x] raw payload storage reference
 - [x] 新增 webhook receiver。
   - [x] 第一版只支持 localhost / 用户自托管。
   - [x] 必须有 secret 校验。

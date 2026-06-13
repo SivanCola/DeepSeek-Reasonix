@@ -41,6 +41,7 @@ type RuntimeTimelineEvent struct {
 	Source     string    `json:"source,omitempty"`
 	Reason     string    `json:"reason,omitempty"`
 	EventID    string    `json:"event_id,omitempty"`
+	PayloadRef string    `json:"payload_ref,omitempty"`
 	RunStatus  string    `json:"run_status,omitempty"`
 	GoalStatus string    `json:"goal_status,omitempty"`
 	WaitKind   string    `json:"wait_kind,omitempty"`

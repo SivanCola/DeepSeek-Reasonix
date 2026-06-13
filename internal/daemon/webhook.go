@@ -34,7 +34,8 @@ type WebhookEvent struct {
 	SessionID string `json:"session_id,omitempty"`
 	// Summary is a short human-readable description injected as the user turn.
 	Summary string `json:"summary"`
-	// Payload is arbitrary event data (passed through to the model as context).
+	// Payload is arbitrary event data. The raw request is stored in a local
+	// sidecar; model context only receives a bounded summary.
 	Payload json.RawMessage `json:"payload,omitempty"`
 	// EventID is an optional dedup key. If set, duplicate events are ignored.
 	EventID string `json:"event_id,omitempty"`
@@ -118,6 +119,12 @@ func (d *Daemon) handleWebhook(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"session already running"}`, http.StatusConflict)
 		return
 	}
+	payloadRef, err := saveWebhookPayload(entry.Path, body, time.Now().UTC())
+	if err != nil {
+		d.mu.Unlock()
+		http.Error(w, fmt.Sprintf(`{"error":"save payload failed: %s"}`, err), http.StatusInternalServerError)
+		return
+	}
 	waitingEvent := entry.Runtime.Wait.Kind == "event"
 	if waitingEvent && !webhookMatchesWait(entry.Runtime.Wait, evt, info) {
 		if webhookShouldDiagnoseWaitFailure(entry.Runtime.Wait, evt, info) {
@@ -151,6 +158,7 @@ func (d *Daemon) handleWebhook(w http.ResponseWriter, r *http.Request) {
 					WaitID:     wait.EventID,
 					Subject:    wait.Subject,
 					Message:    reason,
+					PayloadRef: payloadRef,
 				})
 				w.Header().Set("Content-Type", "application/json")
 				fmt.Fprintf(w, `{"ok":true,"status":"budget_blocked","event_id":%q}`, evt.EventID)
@@ -187,6 +195,7 @@ func (d *Daemon) handleWebhook(w http.ResponseWriter, r *http.Request) {
 				WaitID:     wait.EventID,
 				Subject:    wait.Subject,
 				Message:    webhookSummary(evt, info),
+				PayloadRef: payloadRef,
 			})
 			d.enqueueIntent(RunIntent{
 				SessionID:   evt.SessionID,
@@ -215,6 +224,7 @@ func (d *Daemon) handleWebhook(w http.ResponseWriter, r *http.Request) {
 			WaitID:     wait.EventID,
 			Subject:    wait.Subject,
 			Message:    webhookSummary(evt, info),
+			PayloadRef: payloadRef,
 		})
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprintf(w, `{"ok":true,"status":"ignored","event_id":%q}`, evt.EventID)
@@ -245,6 +255,7 @@ func (d *Daemon) handleWebhook(w http.ResponseWriter, r *http.Request) {
 			RunStatus:  runtime.Run.Status,
 			GoalStatus: runtime.Goal.Status,
 			Message:    reason,
+			PayloadRef: payloadRef,
 		})
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprintf(w, `{"ok":true,"status":"budget_blocked","event_id":%q}`, evt.EventID)
@@ -279,6 +290,16 @@ func (d *Daemon) handleWebhook(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf(`{"error":"save failed: %s"}`, err), http.StatusInternalServerError)
 		return
 	}
+	d.appendTimeline(path, agent.RuntimeTimelineEvent{
+		Type:       "webhook_event_received",
+		Source:     "webhook",
+		Reason:     "webhook:" + evt.Type,
+		EventID:    evt.EventID,
+		RunStatus:  runtime.Run.Status,
+		GoalStatus: runtime.Goal.Status,
+		Message:    webhookSummary(evt, info),
+		PayloadRef: payloadRef,
+	})
 	d.enqueueIntent(RunIntent{
 		SessionID:   evt.SessionID,
 		SessionPath: path,
@@ -292,6 +313,45 @@ func (d *Daemon) handleWebhook(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	fmt.Fprintf(w, `{"ok":true,"session_id":%q,"status":"pending_continue","event_id":%q}`, evt.SessionID, evt.EventID)
+}
+
+func saveWebhookPayload(sessionPath string, body []byte, receivedAt time.Time) (string, error) {
+	dir := webhookPayloadDir(sessionPath)
+	if dir == "" {
+		return "", fmt.Errorf("empty session path")
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(body)
+	name := fmt.Sprintf("%s-%s.json",
+		receivedAt.UTC().Format("20060102T150405.000000000Z"),
+		hex.EncodeToString(sum[:8]),
+	)
+	path := filepath.Join(dir, name)
+	if err := os.WriteFile(path, body, 0o600); err != nil {
+		return "", err
+	}
+	return filepath.ToSlash(filepath.Join(filepath.Base(dir), name)), nil
+}
+
+func webhookPayloadDir(sessionPath string) string {
+	if sessionPath == "" {
+		return ""
+	}
+	return agent.RuntimeMetaPath(sessionPath) + ".webhooks"
+}
+
+func webhookPayloadPathFromRef(sessionPath, ref string) (string, bool) {
+	ref = filepath.Clean(filepath.FromSlash(strings.TrimSpace(ref)))
+	if ref == "." || filepath.IsAbs(ref) || strings.HasPrefix(ref, ".."+string(filepath.Separator)) {
+		return "", false
+	}
+	dir := webhookPayloadDir(sessionPath)
+	if filepath.Dir(ref) != filepath.Base(dir) {
+		return "", false
+	}
+	return filepath.Join(filepath.Dir(dir), ref), true
 }
 
 func webhookMatchesWait(wait agent.RuntimeWaitMeta, evt WebhookEvent, info githubWebhookInfo) bool {

@@ -78,6 +78,80 @@ func TestWebhookValidSignature(t *testing.T) {
 	}
 }
 
+func TestWebhookStoresRawPayloadReferenceOutsidePromptContext(t *testing.T) {
+	dir := t.TempDir()
+	sess := filepath.Join(dir, "webhook-payload-ref.jsonl")
+	if err := os.WriteFile(sess, []byte(`{}`), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	if err := agent.SaveRuntimeMeta(sess, agent.RuntimeMeta{
+		SessionID: "webhook-payload-ref",
+		Goal:      agent.RuntimeGoalMeta{Text: "deploy", Status: "running"},
+		Run:       agent.RuntimeRunMeta{Status: "idle"},
+	}); err != nil {
+		t.Fatalf("SaveRuntimeMeta: %v", err)
+	}
+
+	secret := "payload-ref-secret"
+	d := New(Options{
+		SessionDir: dir,
+		Webhook:    &WebhookConfig{Secret: secret, Enabled: true},
+	})
+	d.scanSessions()
+
+	payload := `{"type":"github.ci","session_id":"webhook-payload-ref","summary":"CI passed","event_id":"evt-payload-ref","payload":{"raw_secret":"do-not-inject"}}`
+	sig := computeHMAC([]byte(payload), secret)
+	req := httptest.NewRequest("POST", "/webhook", strings.NewReader(payload))
+	req.Header.Set("X-Webhook-Signature", sig)
+	rr := httptest.NewRecorder()
+	d.handleWebhook(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("webhook status = %d body=%s", rr.Code, rr.Body.String())
+	}
+
+	select {
+	case intent := <-d.intentCh:
+		if strings.Contains(intent.Context, "do-not-inject") {
+			t.Fatalf("raw payload leaked into bounded context:\n%s", intent.Context)
+		}
+	default:
+		t.Fatal("webhook did not enqueue an intent")
+	}
+
+	events, ok, err := agent.LoadRuntimeTimeline(sess, 0)
+	if err != nil || !ok {
+		t.Fatalf("LoadRuntimeTimeline: err=%v ok=%v", err, ok)
+	}
+	var payloadRef string
+	for _, event := range events {
+		if event.Type == "webhook_event_received" {
+			payloadRef = event.PayloadRef
+			break
+		}
+	}
+	if payloadRef == "" {
+		t.Fatalf("webhook timeline event missing payload ref: %+v", events)
+	}
+	payloadPath, ok := webhookPayloadPathFromRef(sess, payloadRef)
+	if !ok {
+		t.Fatalf("invalid payload ref %q", payloadRef)
+	}
+	raw, err := os.ReadFile(payloadPath)
+	if err != nil {
+		t.Fatalf("ReadFile(%s): %v", payloadPath, err)
+	}
+	if string(raw) != payload {
+		t.Fatalf("stored payload mismatch:\ngot  %s\nwant %s", raw, payload)
+	}
+	info, err := os.Stat(payloadPath)
+	if err != nil {
+		t.Fatalf("Stat(%s): %v", payloadPath, err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Fatalf("payload file mode = %o, want 600", got)
+	}
+}
+
 func TestWebhookInvalidSignature(t *testing.T) {
 	dir := t.TempDir()
 	sess := filepath.Join(dir, "sig-test.jsonl")
