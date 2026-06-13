@@ -13,14 +13,15 @@ import (
 
 // renderSink 将 Reasonix 事件流渲染为平台消息。
 type renderSink struct {
-	ctx      context.Context
-	adapter  Adapter
-	chatID   string
-	chatType ChatType
-	replyTo  string
-	logger   *slog.Logger
-	ctrl     *control.Controller
-	onAsk    func(event.Ask)
+	ctx        context.Context
+	adapter    Adapter
+	chatID     string
+	chatType   ChatType
+	replyTo    string
+	logger     *slog.Logger
+	ctrl       *control.Controller
+	onApproval func(event.Approval)
+	onAsk      func(event.Ask)
 
 	// 渲染缓冲
 	buf        strings.Builder
@@ -30,17 +31,18 @@ type renderSink struct {
 	lastFlush  time.Time
 }
 
-func newRenderSink(ctx context.Context, adapter Adapter, chatID string, chatType ChatType, replyTo string, logger *slog.Logger, onAsk func(event.Ask)) *renderSink {
+func newRenderSink(ctx context.Context, adapter Adapter, chatID string, chatType ChatType, replyTo string, logger *slog.Logger, onApproval func(event.Approval), onAsk func(event.Ask)) *renderSink {
 	return &renderSink{
-		ctx:       ctx,
-		adapter:   adapter,
-		chatID:    chatID,
-		chatType:  chatType,
-		replyTo:   replyTo,
-		logger:    logger,
-		onAsk:     onAsk,
-		toolNames: make(map[string]string),
-		lastFlush: time.Now(),
+		ctx:        ctx,
+		adapter:    adapter,
+		chatID:     chatID,
+		chatType:   chatType,
+		replyTo:    replyTo,
+		logger:     logger,
+		onApproval: onApproval,
+		onAsk:      onAsk,
+		toolNames:  make(map[string]string),
+		lastFlush:  time.Now(),
 	}
 }
 
@@ -102,6 +104,9 @@ func (s *renderSink) Emit(e event.Event) {
 		s.maybeFlush()
 
 	case event.ApprovalRequest:
+		if s.onApproval != nil {
+			s.onApproval(e.Approval)
+		}
 		// 发送审批请求
 		approvalText := fmt.Sprintf("⚠️ 需要批准操作:\n工具: %s\n操作: %s\n\nID: `%s`\n用 /approve %s 批准，/deny %s 拒绝。",
 			e.Approval.Tool, e.Approval.Subject, e.Approval.ID, e.Approval.ID, e.Approval.ID)

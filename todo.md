@@ -112,11 +112,11 @@ dynamic workflow 或开发者平台，而是先把 Reasonix 从一次性会话�
 
 ### 任务
 
-- [ ] 增加 `/goal continue` 命令。
+- [x] 增加 `/goal continue` 命令。
   - 若无 active goal，返回清晰提示。
   - 若 goal 已 complete，提示无需继续。
   - 若 goal blocked，默认开启新的 blocked audit。
-- [ ] 增加 controller API。
+- [x] 增加 controller API。
   - 例如 `ContinueGoal(ctx, reason string)`。
   - reason 用于区分 user、cron、webhook、file_watch。
 - [ ] 将自动续跑限制持久化。
@@ -148,21 +148,24 @@ dynamic workflow 或开发者平台，而是先把 Reasonix 从一次性会话�
   - [x] remote chat/thread/user -> Reasonix session path。
   - [x] 支持 global 和 project scope。
   - [x] 复用 `bot.connections.session_mappings` 概念。
-- [ ] bot gateway 创建 controller 时优先恢复已有 session。
+- [x] bot gateway 创建 controller 时优先恢复已有 session。
   - [x] 若 mapping 存在，加载对应 `.jsonl` 和 runtime sidecar。
   - [x] 若不存在，创建新 session 并写 mapping。
-- [ ] bot 命令增强。
-  - [x] `/status` 显示 active goal、run status。
-  - `/goal continue` 从 IM 触发继续。
+- [x] bot 命令增强。
+  - [x] `/status` 显示 active goal、run status、wait、last wakeup 和预算。
+  - [x] `/goal continue` 从 IM 触发继续。
   - [x] `/sessions` 列出可恢复 session。
   - [x] `/attach <session>` 将当前 IM 会话绑定到已有 session。
-- [ ] 将 approval / ask 状态纳入 runtime。
-  - 重启后至少能提示有未完成审批，而不是静默丢失。
-  - 第一版可以要求用户重新触发，不必恢复阻塞中的 channel。
+- [x] 将 approval / ask 状态纳入 runtime。
+  - [x] 重启后至少能提示有未完成审批，而不是静默丢失。
+  - [x] 第一版可以要求用户重新触发，不必恢复阻塞中的 channel。
 - [ ] 增加 bot gateway tests。
   - 同一 remote session 重启后恢复 goal。
   - 群聊按 user 隔离的 session key 不串线。
   - allowlist 不允许的用户无法触发已绑定 session。
+  - [x] `/status` 能从 runtime sidecar 显示 wait、wakeup 和预算。
+  - [x] `/status` 能在只有 session mapping、没有活跃 controller 时显示状态。
+  - [x] bot 记录并清除 approval / ask wait runtime 状态。
 
 ### 验收标准
 
@@ -430,12 +433,12 @@ dynamic workflow 或开发者平台，而是先把 Reasonix 从一次性会话�
 
 ## 第一周可交付 MVP
 
-- [ ] 新增 runtime sidecar。
-- [ ] 恢复 active goal。
-- [ ] 提供 `/goal continue`。
+- [x] 新增 runtime sidecar。
+- [x] 恢复 active goal。
+- [x] 提供 `/goal continue`。
 - [ ] 桌面 meta 能显示恢复后的 active goal。
-- [ ] bot `/status` 显示 goal 状态。
-- [ ] 增加核心单元测试。
+- [x] bot `/status` 显示 goal 状态。
+- [x] 增加核心单元测试。
 - [ ] 确认 provider request 稳定前缀无变化。
 
 ## 后续决策点

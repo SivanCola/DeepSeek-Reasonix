@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"reasonix/internal/agent"
 	"reasonix/internal/control"
@@ -346,6 +347,240 @@ func TestGatewayEnsuresMappingPreservesExistingControllerPath(t *testing.T) {
 	mapping, ok := gw.sessionMapping("remote-existing")
 	if !ok || mapping.SessionPath != existingPath || ctrl.SessionPath() != existingPath {
 		t.Fatalf("existing path should be preserved: ok=%v mapping=%+v ctrlPath=%q", ok, mapping, ctrl.SessionPath())
+	}
+}
+
+func TestGatewayStatusIncludesRuntimeDetails(t *testing.T) {
+	dir := t.TempDir()
+	sessionPath := writeBotTestSession(t, dir, "hello")
+	now := time.Date(2026, 6, 13, 9, 30, 0, 0, time.UTC)
+	if err := agent.SaveRuntimeMeta(sessionPath, agent.RuntimeMeta{
+		Goal: agent.RuntimeGoalMeta{
+			Text:   "ship the daemon status panel",
+			Status: control.GoalStatusRunning,
+		},
+		Run: agent.RuntimeRunMeta{Status: "waiting_event"},
+		Wait: agent.RuntimeWaitMeta{
+			Kind:            "event",
+			Reason:          "waiting for CI",
+			EventID:         "run-123",
+			EventSource:     "github.workflow_run",
+			EventStatus:     "completed",
+			EventConclusion: "success",
+			Subject:         "PR #42",
+			Since:           now.Add(-10 * time.Minute),
+		},
+		Scheduler: agent.RuntimeSchedMeta{
+			Enabled:          true,
+			DailyAt:          "09:00",
+			Interval:         time.Hour,
+			LastWakeupAt:     now,
+			LastWakeupReason: "webhook",
+			NextWakeupAt:     now.Add(time.Hour),
+		},
+		Budget: agent.RuntimeBudgetMeta{
+			DailyWakeupLimit: 5,
+			DailyWakeups:     2,
+		},
+	}); err != nil {
+		t.Fatalf("SaveRuntimeMeta: %v", err)
+	}
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	gw := NewGateway(GatewayConfig{SessionDir: dir}, nil, logger)
+	ctrl := control.New(control.Options{SessionDir: dir, SessionPath: sessionPath, Label: "test"})
+	ctrl.SetGoal("ship the daemon status panel")
+	gw.controllers["remote-status"] = &sessionState{ctrl: ctrl, createdAt: now, lastActive: now}
+	fa := newFakeAdapter(PlatformQQ, "fake-qq")
+
+	gw.handleSlashCommand(context.Background(), fa, "remote-status", InboundMessage{
+		Platform:  PlatformQQ,
+		ChatType:  ChatDM,
+		ChatID:    "chat-1",
+		UserID:    "user-1",
+		Text:      "/status",
+		MessageID: "msg-1",
+	})
+
+	sent := fa.sentMessages()
+	if len(sent) != 1 {
+		t.Fatalf("sent count = %d, want 1", len(sent))
+	}
+	text := sent[0].Text
+	for _, want := range []string{
+		"会话: " + shortSessionID(sessionPath),
+		"目标: ship the daemon status panel",
+		"运行状态: waiting_event",
+		"等待: event run-123 (PR #42)",
+		"等待原因: waiting for CI",
+		"事件条件: source=github.workflow_run status=completed conclusion=success",
+		"调度: enabled daily=09:00 interval=1h0m0s",
+		"上次唤醒:",
+		"(webhook)",
+		"下次唤醒:",
+		"唤醒预算: 2/5",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("status missing %q:\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, sessionPath) {
+		t.Fatalf("status should not expose full session path:\n%s", text)
+	}
+}
+
+func TestGatewayStatusUsesMappingWithoutActiveController(t *testing.T) {
+	dir := t.TempDir()
+	sessionPath := writeBotTestSession(t, dir, "hello")
+	if err := agent.SaveRuntimeMeta(sessionPath, agent.RuntimeMeta{
+		Goal: agent.RuntimeGoalMeta{
+			Text:   "resume mapped work",
+			Status: control.GoalStatusRunning,
+		},
+		Run: agent.RuntimeRunMeta{Status: "idle"},
+		Wait: agent.RuntimeWaitMeta{
+			Kind:       "time",
+			Reason:     "nap before retry",
+			Until:      time.Date(2026, 6, 13, 10, 0, 0, 0, time.UTC),
+			FilePaths:  nil,
+			ApprovalID: "",
+		},
+	}); err != nil {
+		t.Fatalf("SaveRuntimeMeta: %v", err)
+	}
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	gw := NewGateway(GatewayConfig{SessionDir: dir}, nil, logger)
+	if err := gw.setSessionMapping("remote-mapped", sessionPath, "/workspace"); err != nil {
+		t.Fatalf("setSessionMapping: %v", err)
+	}
+	fa := newFakeAdapter(PlatformQQ, "fake-qq")
+
+	gw.handleSlashCommand(context.Background(), fa, "remote-mapped", InboundMessage{
+		Platform:  PlatformQQ,
+		ChatType:  ChatDM,
+		ChatID:    "chat-1",
+		UserID:    "user-1",
+		Text:      "/status",
+		MessageID: "msg-1",
+	})
+
+	sent := fa.sentMessages()
+	if len(sent) != 1 {
+		t.Fatalf("sent count = %d, want 1", len(sent))
+	}
+	text := sent[0].Text
+	for _, want := range []string{
+		"会话: " + shortSessionID(sessionPath),
+		"目标: resume mapped work",
+		"目标状态: running",
+		"运行状态: idle",
+		"等待: time",
+		"等待原因: nap before retry",
+		"等待到:",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("status missing %q:\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, sessionPath) {
+		t.Fatalf("status should not expose full session path:\n%s", text)
+	}
+}
+
+func TestGatewayRecordRuntimeWaitPersistsApprovalAndAsk(t *testing.T) {
+	dir := t.TempDir()
+	sessionPath := writeBotTestSession(t, dir, "hello")
+	if err := agent.SaveRuntimeMeta(sessionPath, agent.RuntimeMeta{
+		Goal:   agent.RuntimeGoalMeta{Text: "needs a decision", Status: control.GoalStatusRunning},
+		Budget: agent.RuntimeBudgetMeta{DailyWakeupLimit: 3, DailyWakeups: 1},
+	}); err != nil {
+		t.Fatalf("SaveRuntimeMeta: %v", err)
+	}
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	gw := NewGateway(GatewayConfig{SessionDir: dir}, nil, logger)
+	ctrl := control.New(control.Options{SessionDir: dir, SessionPath: sessionPath, Label: "test"})
+	ctrl.SetGoal("needs a decision")
+	gw.controllers["remote-wait"] = &sessionState{ctrl: ctrl}
+
+	gw.recordRuntimeWait("remote-wait", agent.RuntimeWaitMeta{
+		Kind:       "approval",
+		Reason:     "approval required",
+		ApprovalID: "approval-1",
+		Tool:       "bash",
+		Subject:    "git push",
+	})
+
+	loaded, ok, err := agent.LoadRuntimeMeta(sessionPath)
+	if err != nil || !ok {
+		t.Fatalf("LoadRuntimeMeta after approval wait: err=%v ok=%v", err, ok)
+	}
+	if loaded.Wait.Kind != "approval" || loaded.Wait.ApprovalID != "approval-1" ||
+		loaded.Wait.Tool != "bash" || loaded.Wait.Subject != "git push" ||
+		loaded.Run.Status != "waiting_approval" {
+		t.Fatalf("approval wait not persisted: %+v", loaded)
+	}
+	if loaded.Budget.DailyWakeupLimit != 3 || loaded.Budget.DailyWakeups != 1 {
+		t.Fatalf("budget should be preserved: %+v", loaded.Budget)
+	}
+
+	gw.recordRuntimeWait("remote-wait", agent.RuntimeWaitMeta{
+		Kind:    "ask",
+		Reason:  "user answer required",
+		AskID:   "ask-1",
+		Subject: "Which release channel?",
+	})
+
+	loaded, ok, err = agent.LoadRuntimeMeta(sessionPath)
+	if err != nil || !ok {
+		t.Fatalf("LoadRuntimeMeta after ask wait: err=%v ok=%v", err, ok)
+	}
+	if loaded.Wait.Kind != "ask" || loaded.Wait.AskID != "ask-1" ||
+		loaded.Wait.Subject != "Which release channel?" || loaded.Run.Status != "waiting_ask" {
+		t.Fatalf("ask wait not persisted: %+v", loaded)
+	}
+}
+
+func TestGatewayRecordsAndClearsRuntimeWait(t *testing.T) {
+	dir := t.TempDir()
+	sessionPath := writeBotTestSession(t, dir, "hello")
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	gw := NewGateway(GatewayConfig{SessionDir: dir}, nil, logger)
+	ctrl := control.New(control.Options{SessionDir: dir, SessionPath: sessionPath, Label: "test"})
+	gw.controllers["remote-wait"] = &sessionState{ctrl: ctrl}
+
+	gw.recordRuntimeWait("remote-wait", agent.RuntimeWaitMeta{
+		Kind:       "approval",
+		Reason:     "approval required",
+		ApprovalID: "approval-1",
+		Tool:       "shell",
+		Subject:    "go test ./...",
+	})
+
+	meta, ok, err := agent.LoadRuntimeMeta(sessionPath)
+	if err != nil || !ok {
+		t.Fatalf("LoadRuntimeMeta after record: ok=%v err=%v", ok, err)
+	}
+	if meta.Run.Status != "waiting_approval" || meta.Wait.ApprovalID != "approval-1" || meta.Wait.Tool != "shell" {
+		t.Fatalf("wait not recorded: %+v", meta)
+	}
+
+	gw.clearRuntimeWait("remote-wait", "approval", "approval-1")
+
+	meta, ok, err = agent.LoadRuntimeMeta(sessionPath)
+	if err != nil || !ok {
+		t.Fatalf("LoadRuntimeMeta after clear: ok=%v err=%v", ok, err)
+	}
+	if meta.Wait.Kind != "" || meta.Run.Status != "running" {
+		t.Fatalf("wait not cleared: %+v", meta)
+	}
+	events, ok, err := agent.LoadRuntimeTimeline(sessionPath, 2)
+	if err != nil || !ok {
+		t.Fatalf("LoadRuntimeTimeline: ok=%v err=%v", ok, err)
+	}
+	if len(events) != 2 || events[0].Type != "wait_started" || events[1].Type != "wait_cleared" {
+		t.Fatalf("unexpected timeline: %+v", events)
 	}
 }
 
