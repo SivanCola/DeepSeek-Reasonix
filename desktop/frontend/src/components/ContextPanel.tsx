@@ -16,6 +16,7 @@ interface ContextPanelProps {
   sessionTokens?: number;
   sessionCost?: number;
   sessionCurrency?: string;
+  sessionGen?: number;
   refreshKey?: number;
   onOpenWorkspaceMode?: (mode: "files" | "changed") => void;
   onOpenWorkspaceFile?: (path: string) => void;
@@ -210,6 +211,7 @@ export function ContextPanel({
   sessionTokens,
   sessionCost,
   sessionCurrency,
+  sessionGen,
   refreshKey,
   onOpenWorkspaceMode,
   onOpenWorkspaceFile,
@@ -238,14 +240,14 @@ export function ContextPanel({
   }, [refresh]);
 
   useEffect(() => {
+    refreshSeq.current += 1;
+    setInfo(null);
     void refresh();
-  }, [refresh, refreshKey]);
+  }, [refresh, sessionGen]);
 
   useEffect(() => {
-    if (context?.used === 0 && sessionTokens === 0 && info) {
-      setInfo(null);
-    }
-  }, [context?.used, info, sessionTokens]);
+    void refresh();
+  }, [refresh, refreshKey]);
 
   const hasPanelUsage = Boolean(
     (info?.requestCount ?? 0) > 0 ||

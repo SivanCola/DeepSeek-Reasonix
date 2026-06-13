@@ -146,6 +146,43 @@ func TestBackfillDeepSeekOfficialPrices(t *testing.T) {
 	}
 }
 
+func TestBackfillDeepSeekOfficialPricesKeepsProviderWidePrice(t *testing.T) {
+	custom := &provider.Pricing{CacheHit: 9, Input: 9, Output: 9, Currency: "$"}
+	c := &Config{Providers: []ProviderEntry{{
+		Name:    "deepseek",
+		Kind:    "openai",
+		BaseURL: "https://api.deepseek.com",
+		Models:  []string{"deepseek-v4-flash", "deepseek-v4-pro"},
+		Default: "deepseek-v4-flash",
+		Price:   custom,
+		Prices: map[string]*provider.Pricing{
+			"deepseek-v4-flash": {CacheHit: 1, Input: 1, Output: 1, Currency: "$"},
+		},
+	}}}
+	backfillDeepSeekOfficialPrices(c)
+	p, ok := c.Provider("deepseek")
+	if !ok {
+		t.Fatal("deepseek provider missing")
+	}
+	if len(p.Prices) != 1 {
+		t.Fatalf("deepseek prices = %+v, want existing per-model prices only", p.Prices)
+	}
+	pro, ok := c.ResolveModel("deepseek/deepseek-v4-pro")
+	if !ok {
+		t.Fatal("deepseek pro did not resolve")
+	}
+	if pro.Price == nil || pro.Price.Output != 9 {
+		t.Fatalf("pro price = %+v, want provider-wide custom price", pro.Price)
+	}
+	flash, ok := c.ResolveModel("deepseek")
+	if !ok {
+		t.Fatal("deepseek default did not resolve")
+	}
+	if flash.Price == nil || flash.Price.Output != 1 {
+		t.Fatalf("flash price = %+v, want existing per-model custom price", flash.Price)
+	}
+}
+
 func TestResolveModelUsesPerModelPricing(t *testing.T) {
 	c := &Config{Providers: []ProviderEntry{{
 		Name:    "deepseek",

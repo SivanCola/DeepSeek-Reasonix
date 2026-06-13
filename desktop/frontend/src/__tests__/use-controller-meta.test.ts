@@ -84,6 +84,14 @@ console.log("\nuse controller meta");
   eq(idleHelper.sessionTokens, 0, "helper usage outside a turn does not inflate session tokens");
   eq(idleHelper.sessionCost, 0, "helper usage outside a turn does not inflate session cost");
 
+  const pendingClassifier = reducer(
+    { ...initialState, running: true, context: { used: 0, window: 200, sessionTokens: 0 } },
+    { type: "event", e: { kind: "usage", usage: usage("classifier") } },
+  );
+  eq(pendingClassifier.sessionTokens, 120, "classifier usage while send is running counts toward session tokens");
+  eq(pendingClassifier.sessionCost, 0.001, "classifier usage while send is running counts toward session cost");
+  eq(pendingClassifier.context.used, 0, "classifier usage while send is running does not refresh context used tokens");
+
   const active = reducer(initialState, { type: "event", e: { kind: "turn_started" } });
   const activeHelper = reducer(active, { type: "event", e: { kind: "usage", usage: usage("subagent") } });
   eq(activeHelper.sessionTokens, 120, "helper usage inside a turn still counts toward session tokens");

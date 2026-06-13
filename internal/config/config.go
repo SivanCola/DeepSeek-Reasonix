@@ -1334,6 +1334,9 @@ func backfillDeepSeekOfficialPrices(c *Config) {
 		if officialProviderKind(p) != "deepseek" {
 			continue
 		}
+		if p.Price != nil {
+			continue
+		}
 		if p.Prices == nil {
 			p.Prices = map[string]*provider.Pricing{}
 		}

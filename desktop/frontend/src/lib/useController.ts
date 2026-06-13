@@ -129,7 +129,7 @@ function updatesContextGauge(usage?: WireUsage): boolean {
 }
 
 function countsTowardCurrentTurn(state: State): boolean {
-  return state.turnActive;
+  return state.turnActive || state.running;
 }
 
 export function sameMeta(a?: Meta, b?: Meta): boolean {

@@ -2854,6 +2854,7 @@ export default function App() {
                   sessionTokens={state.sessionTokens}
                   sessionCost={state.sessionCost}
                   sessionCurrency={state.sessionCurrency}
+                  sessionGen={state.sessionGen}
                   refreshKey={dockRefreshKey}
                   onOpenWorkspaceMode={openRightDockMode}
                   onOpenWorkspaceFile={openRightDockFile}
