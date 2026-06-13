@@ -48,6 +48,33 @@ func (p *daemonScriptedProvider) Stream(ctx context.Context, req provider.Reques
 	return ch, nil
 }
 
+type daemonBlockingProvider struct {
+	started chan struct{}
+	release chan struct{}
+	calls   int
+}
+
+func (p *daemonBlockingProvider) Name() string { return "daemon-blocking-test" }
+
+func (p *daemonBlockingProvider) Stream(ctx context.Context, req provider.Request) (<-chan provider.Chunk, error) {
+	p.calls++
+	if p.calls == 1 {
+		close(p.started)
+	}
+	ch := make(chan provider.Chunk, 4)
+	go func() {
+		defer close(ch)
+		select {
+		case <-ctx.Done():
+			return
+		case <-p.release:
+		}
+		ch <- provider.Chunk{Type: provider.ChunkText, Text: "done\n\n[goal:complete]"}
+		ch <- provider.Chunk{Type: provider.ChunkDone}
+	}()
+	return ch, nil
+}
+
 func TestDaemonStartAndStatus(t *testing.T) {
 	dir := t.TempDir()
 
@@ -1351,6 +1378,141 @@ func TestDaemonExecuteIntentBlocksWhenModelCallBudgetExhausted(t *testing.T) {
 	}
 }
 
+func TestDaemonIntentQueueSelectsHighestPriorityRunnable(t *testing.T) {
+	d := New(Options{SessionDir: t.TempDir()})
+	now := time.Now().UTC()
+	pending := []RunIntent{
+		{SessionID: "low", Priority: 10, CreatedAt: now},
+		{SessionID: "high", Priority: 90, CreatedAt: now.Add(time.Millisecond)},
+		{SessionID: "same-high", Priority: 90, CreatedAt: now.Add(2 * time.Millisecond)},
+	}
+	if got := d.nextRunnableIntentIndex(pending, map[string]struct{}{"same-high": {}}); got != 1 {
+		t.Fatalf("nextRunnableIntentIndex = %d, want high-priority runnable index 1", got)
+	}
+	pending[0].Priority = 90
+	if got := d.nextRunnableIntentIndex(pending[:2], nil); got != 0 {
+		t.Fatalf("same priority should preserve FIFO order, got index %d", got)
+	}
+}
+
+func TestDaemonIntentWorkerSerializesSameSessionQueue(t *testing.T) {
+	dir := t.TempDir()
+	sessPath := filepath.Join(dir, "queue-session.jsonl")
+	sess := agent.NewSession("")
+	sess.Add(provider.Message{Role: provider.RoleUser, Content: "start"})
+	if err := sess.Save(sessPath); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if err := agent.SaveRuntimeMeta(sessPath, agent.RuntimeMeta{
+		SessionID: "queue-session",
+		Goal:      agent.RuntimeGoalMeta{Text: "finish queue", Status: control.GoalStatusRunning},
+		Run:       agent.RuntimeRunMeta{Status: "idle"},
+	}); err != nil {
+		t.Fatalf("SaveRuntimeMeta: %v", err)
+	}
+
+	prov := &daemonBlockingProvider{
+		started: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+	d := New(Options{
+		SessionDir:        dir,
+		MaxConcurrentRuns: 2,
+		ControllerFactory: func(ctx context.Context, d *Daemon, entry *SessionEntry, sink event.Sink) (*control.Controller, error) {
+			loaded, err := agent.LoadSession(entry.Path)
+			if err != nil {
+				return nil, err
+			}
+			ag := agent.New(prov, tool.NewRegistry(), loaded, agent.Options{}, sink)
+			c := control.New(control.Options{
+				Runner:      ag,
+				Executor:    ag,
+				SessionPath: entry.Path,
+				SessionDir:  dir,
+				Sink:        sink,
+			})
+			c.Resume(loaded, entry.Path)
+			return c, nil
+		},
+	})
+	d.scanSessions()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go d.runIntentWorker(ctx)
+
+	d.enqueueIntent(RunIntent{SessionID: "queue-session", SessionPath: sessPath, Source: "test", Reason: "first", Priority: 10})
+	d.enqueueIntent(RunIntent{SessionID: "queue-session", SessionPath: sessPath, Source: "test", Reason: "second", Priority: 10})
+
+	select {
+	case <-prov.started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("first queued intent did not start")
+	}
+	time.Sleep(50 * time.Millisecond)
+	if got := countTimelineEvents(t, sessPath, "run_started"); got != 1 {
+		t.Fatalf("same-session second intent started while first was active; run_started=%d", got)
+	}
+
+	close(prov.release)
+	waitForTimelineCount(t, sessPath, "run_started", 2)
+	if prov.calls != 1 {
+		t.Fatalf("second intent should start after the first but not call provider after goal completion; provider calls=%d", prov.calls)
+	}
+}
+
+func TestDaemonIntentWorkerRespectsPriorityAndGlobalConcurrency(t *testing.T) {
+	dir := t.TempDir()
+	highPath := writeDaemonQueueSession(t, dir, "queue-high")
+	lowPath := writeDaemonQueueSession(t, dir, "queue-low")
+
+	prov := &daemonBlockingProvider{
+		started: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+	d := New(Options{
+		SessionDir:        dir,
+		MaxConcurrentRuns: 1,
+		ControllerFactory: func(ctx context.Context, d *Daemon, entry *SessionEntry, sink event.Sink) (*control.Controller, error) {
+			loaded, err := agent.LoadSession(entry.Path)
+			if err != nil {
+				return nil, err
+			}
+			ag := agent.New(prov, tool.NewRegistry(), loaded, agent.Options{}, sink)
+			c := control.New(control.Options{
+				Runner:      ag,
+				Executor:    ag,
+				SessionPath: entry.Path,
+				SessionDir:  dir,
+				Sink:        sink,
+			})
+			c.Resume(loaded, entry.Path)
+			return c, nil
+		},
+	})
+	d.scanSessions()
+	d.enqueueIntent(RunIntent{SessionID: "queue-low", SessionPath: lowPath, Source: "cron", Reason: "low", Priority: 10, CreatedAt: time.Now().UTC()})
+	d.enqueueIntent(RunIntent{SessionID: "queue-high", SessionPath: highPath, Source: "api", Reason: "high", Priority: 100, CreatedAt: time.Now().UTC().Add(time.Millisecond)})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go d.runIntentWorker(ctx)
+
+	select {
+	case <-prov.started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("queued high-priority intent did not start")
+	}
+	if got := countTimelineEvents(t, highPath, "run_started"); got != 1 {
+		t.Fatalf("high-priority intent should start first, got high run_started=%d", got)
+	}
+	if got := countTimelineEvents(t, lowPath, "run_started"); got != 0 {
+		t.Fatalf("low-priority intent should wait behind global concurrency limit, got low run_started=%d", got)
+	}
+
+	close(prov.release)
+	waitForTimelineCount(t, lowPath, "run_started", 1)
+}
+
 func TestDaemonRecordWaitAndApproveClearsRuntime(t *testing.T) {
 	dir := t.TempDir()
 	sessPath := filepath.Join(dir, "approval-test.jsonl")
@@ -1484,4 +1646,52 @@ func TestDaemonAuthMiddlewareRequiresToken(t *testing.T) {
 	if rr.Code != http.StatusNoContent {
 		t.Fatalf("authorized status = %d, want 204", rr.Code)
 	}
+}
+
+func countTimelineEvents(t *testing.T, sessionPath, eventType string) int {
+	t.Helper()
+	events, ok, err := agent.LoadRuntimeTimeline(sessionPath, 0)
+	if err != nil {
+		t.Fatalf("LoadRuntimeTimeline: %v", err)
+	}
+	if !ok {
+		return 0
+	}
+	n := 0
+	for _, event := range events {
+		if event.Type == eventType {
+			n++
+		}
+	}
+	return n
+}
+
+func waitForTimelineCount(t *testing.T, sessionPath, eventType string, want int) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if got := countTimelineEvents(t, sessionPath, eventType); got >= want {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for %d %q timeline events; got %d", want, eventType, countTimelineEvents(t, sessionPath, eventType))
+}
+
+func writeDaemonQueueSession(t *testing.T, dir, id string) string {
+	t.Helper()
+	sessionPath := filepath.Join(dir, id+".jsonl")
+	sess := agent.NewSession("")
+	sess.Add(provider.Message{Role: provider.RoleUser, Content: "start"})
+	if err := sess.Save(sessionPath); err != nil {
+		t.Fatalf("Save(%s): %v", id, err)
+	}
+	if err := agent.SaveRuntimeMeta(sessionPath, agent.RuntimeMeta{
+		SessionID: id,
+		Goal:      agent.RuntimeGoalMeta{Text: "finish " + id, Status: control.GoalStatusRunning},
+		Run:       agent.RuntimeRunMeta{Status: "idle"},
+	}); err != nil {
+		t.Fatalf("SaveRuntimeMeta(%s): %v", id, err)
+	}
+	return sessionPath
 }

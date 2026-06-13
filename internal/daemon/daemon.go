@@ -46,6 +46,7 @@ type Daemon struct {
 	token           string
 	intentCh        chan RunIntent
 	activeRuns      map[string]*ActiveRun
+	maxConcurrent   int
 	buildController ControllerFactory
 }
 
@@ -65,6 +66,7 @@ type RunIntent struct {
 	Reason      string    `json:"reason,omitempty"`
 	EventID     string    `json:"event_id,omitempty"`
 	Context     string    `json:"context,omitempty"`
+	Priority    int       `json:"priority,omitempty"`
 	CreatedAt   time.Time `json:"created_at"`
 }
 
@@ -124,6 +126,7 @@ type Options struct {
 	Webhook           *WebhookConfig
 	Token             string
 	ControllerFactory ControllerFactory
+	MaxConcurrentRuns int
 }
 
 // New creates a Daemon but does not start it.
@@ -144,6 +147,10 @@ func New(opts Options) *Daemon {
 	if factory == nil {
 		factory = defaultControllerFactory
 	}
+	maxConcurrent := opts.MaxConcurrentRuns
+	if maxConcurrent <= 0 {
+		maxConcurrent = 4
+	}
 	return &Daemon{
 		addr:            addr,
 		sessionDir:      sessionDir,
@@ -153,6 +160,7 @@ func New(opts Options) *Daemon {
 		token:           strings.TrimSpace(opts.Token),
 		intentCh:        make(chan RunIntent, 128),
 		activeRuns:      make(map[string]*ActiveRun),
+		maxConcurrent:   maxConcurrent,
 		buildController: factory,
 	}
 }

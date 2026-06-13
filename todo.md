@@ -330,10 +330,10 @@ dynamic workflow 或开发者平台，而是先把 Reasonix 从一次性会话�
   - complete
   - failed
   - stopped
-- [ ] 引入 run queue。
-  - 同一 session 串行。
-  - 不同 session 可限制并发。
-  - 支持优先级。
+- [x] 引入 run queue。
+  - [x] 同一 session 串行。
+  - [x] 不同 session 可限制并发。
+  - [x] 支持优先级。
 - [ ] 引入 wait condition。
   - [x] wait for user approval
   - [x] wait for webhook / external event

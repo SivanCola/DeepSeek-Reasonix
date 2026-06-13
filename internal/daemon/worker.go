@@ -19,6 +19,9 @@ func (d *Daemon) enqueueIntent(intent RunIntent) {
 	if intent.Source == "" {
 		intent.Source = "daemon"
 	}
+	if intent.Priority == 0 {
+		intent.Priority = defaultIntentPriority(intent)
+	}
 	d.appendTimeline(intent.SessionPath, agent.RuntimeTimelineEvent{
 		Type:    "intent_queued",
 		Source:  intent.Source,
@@ -33,14 +36,98 @@ func (d *Daemon) enqueueIntent(intent RunIntent) {
 	}
 }
 
+type intentDone struct {
+	sessionID string
+}
+
 func (d *Daemon) runIntentWorker(ctx context.Context) {
+	var pending []RunIntent
+	busy := make(map[string]struct{})
+	running := 0
+	doneCh := make(chan intentDone, d.maxConcurrent)
+
+	dispatch := func() {
+		for running < d.maxConcurrent {
+			idx := d.nextRunnableIntentIndex(pending, busy)
+			if idx < 0 {
+				return
+			}
+			intent := pending[idx]
+			pending = append(pending[:idx], pending[idx+1:]...)
+			busy[intent.SessionID] = struct{}{}
+			running++
+			go func(intent RunIntent) {
+				defer func() {
+					doneCh <- intentDone{sessionID: intent.SessionID}
+				}()
+				d.executeIntent(ctx, intent)
+			}(intent)
+		}
+	}
+
 	for {
+		dispatch()
 		select {
 		case <-ctx.Done():
 			return
 		case intent := <-d.intentCh:
-			go d.executeIntent(ctx, intent)
+			pending = append(pending, intent)
+			pending = drainIntentQueue(d.intentCh, pending)
+		case done := <-doneCh:
+			delete(busy, done.sessionID)
+			if running > 0 {
+				running--
+			}
 		}
+	}
+}
+
+func drainIntentQueue(ch <-chan RunIntent, pending []RunIntent) []RunIntent {
+	for {
+		select {
+		case intent := <-ch:
+			pending = append(pending, intent)
+		default:
+			return pending
+		}
+	}
+}
+
+func (d *Daemon) nextRunnableIntentIndex(pending []RunIntent, busy map[string]struct{}) int {
+	best := -1
+	for i, intent := range pending {
+		if _, ok := busy[intent.SessionID]; ok {
+			continue
+		}
+		if d.isSessionActive(intent.SessionID) {
+			continue
+		}
+		if best < 0 ||
+			intent.Priority > pending[best].Priority ||
+			(intent.Priority == pending[best].Priority && intent.CreatedAt.Before(pending[best].CreatedAt)) {
+			best = i
+		}
+	}
+	return best
+}
+
+func (d *Daemon) isSessionActive(sessionID string) bool {
+	d.mu.RLock()
+	_, ok := d.activeRuns[sessionID]
+	d.mu.RUnlock()
+	return ok
+}
+
+func defaultIntentPriority(intent RunIntent) int {
+	switch strings.TrimSpace(intent.Source) {
+	case "api", "bot", "user":
+		return 100
+	case "webhook", "file_watch", "time":
+		return 50
+	case "cron":
+		return 10
+	default:
+		return 20
 	}
 }
 
