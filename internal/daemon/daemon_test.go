@@ -410,7 +410,7 @@ func TestDaemonWaitEventHandlerPersistsConfig(t *testing.T) {
 
 	d := New(Options{SessionDir: dir})
 	d.scanSessions()
-	req := httptest.NewRequest("POST", "/wait-event", strings.NewReader(`{"session_id":"wait-event-api","event_source":"github.workflow_run","event_id":"delivery-42","reason":"waiting for CI","subject":"PR #42"}`))
+	req := httptest.NewRequest("POST", "/wait-event", strings.NewReader(`{"session_id":"wait-event-api","event_source":"github.workflow_run","event_id":"delivery-42","event_status":"completed","event_conclusion":"success","reason":"waiting for CI","subject":"PR #42"}`))
 	rr := httptest.NewRecorder()
 	d.handleWaitEvent(rr, req)
 	if rr.Code != http.StatusOK {
@@ -426,6 +426,9 @@ func TestDaemonWaitEventHandlerPersistsConfig(t *testing.T) {
 	}
 	if loaded.Wait.Kind != "event" || loaded.Wait.EventSource != "github.workflow_run" || loaded.Wait.EventID != "delivery-42" {
 		t.Fatalf("wait condition not persisted: %+v", loaded.Wait)
+	}
+	if loaded.Wait.EventStatus != "completed" || loaded.Wait.EventConclusion != "success" {
+		t.Fatalf("wait event status not persisted: %+v", loaded.Wait)
 	}
 	if loaded.Wait.Reason != "waiting for CI" || loaded.Wait.Subject != "PR #42" || loaded.Wait.Since.IsZero() {
 		t.Fatalf("wait metadata incomplete: %+v", loaded.Wait)

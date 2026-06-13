@@ -208,6 +208,12 @@ func webhookMatchesWait(wait agent.RuntimeWaitMeta, evt WebhookEvent, info githu
 	if wait.EventID != "" && !strings.EqualFold(wait.EventID, evt.EventID) {
 		return false
 	}
+	if wait.EventStatus != "" && !strings.EqualFold(wait.EventStatus, info.Status) {
+		return false
+	}
+	if wait.EventConclusion != "" && !strings.EqualFold(wait.EventConclusion, info.Conclusion) {
+		return false
+	}
 	return true
 }
 

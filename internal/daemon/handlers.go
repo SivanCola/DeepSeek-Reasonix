@@ -352,15 +352,17 @@ func (d *Daemon) handleBudget(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleWaitEvent sets or clears an external event wait condition.
-// Body: {"session_id":"...","event_source":"github.workflow_run","event_id":"...","reason":"waiting for CI","subject":"PR #42","clear":false}
+// Body: {"session_id":"...","event_source":"github.workflow_run","event_id":"...","event_status":"completed","event_conclusion":"success","reason":"waiting for CI","subject":"PR #42","clear":false}
 func (d *Daemon) handleWaitEvent(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		SessionID   string `json:"session_id"`
-		EventSource string `json:"event_source"`
-		EventID     string `json:"event_id"`
-		Reason      string `json:"reason"`
-		Subject     string `json:"subject"`
-		Clear       bool   `json:"clear"`
+		SessionID       string `json:"session_id"`
+		EventSource     string `json:"event_source"`
+		EventID         string `json:"event_id"`
+		EventStatus     string `json:"event_status"`
+		EventConclusion string `json:"event_conclusion"`
+		Reason          string `json:"reason"`
+		Subject         string `json:"subject"`
+		Clear           bool   `json:"clear"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, `{"error":"invalid json"}`, http.StatusBadRequest)
@@ -401,12 +403,14 @@ func (d *Daemon) handleWaitEvent(w http.ResponseWriter, r *http.Request) {
 			reason = "waiting for external event"
 		}
 		entry.Runtime.Wait = agent.RuntimeWaitMeta{
-			Kind:        "event",
-			Reason:      reason,
-			EventSource: strings.TrimSpace(req.EventSource),
-			EventID:     strings.TrimSpace(req.EventID),
-			Subject:     strings.TrimSpace(req.Subject),
-			Since:       now,
+			Kind:            "event",
+			Reason:          reason,
+			EventSource:     strings.TrimSpace(req.EventSource),
+			EventID:         strings.TrimSpace(req.EventID),
+			EventStatus:     strings.TrimSpace(req.EventStatus),
+			EventConclusion: strings.TrimSpace(req.EventConclusion),
+			Subject:         strings.TrimSpace(req.Subject),
+			Since:           now,
 		}
 		entry.Runtime.Run.Status = "waiting_event"
 	}
@@ -432,12 +436,14 @@ func (d *Daemon) handleWaitEvent(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	resp := map[string]interface{}{
-		"ok":           true,
-		"session_id":   req.SessionID,
-		"run_status":   runtime.Run.Status,
-		"wait_kind":    runtime.Wait.Kind,
-		"event_source": runtime.Wait.EventSource,
-		"event_id":     runtime.Wait.EventID,
+		"ok":               true,
+		"session_id":       req.SessionID,
+		"run_status":       runtime.Run.Status,
+		"wait_kind":        runtime.Wait.Kind,
+		"event_source":     runtime.Wait.EventSource,
+		"event_id":         runtime.Wait.EventID,
+		"event_status":     runtime.Wait.EventStatus,
+		"event_conclusion": runtime.Wait.EventConclusion,
 	}
 	json.NewEncoder(w).Encode(resp)
 }

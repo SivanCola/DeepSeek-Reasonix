@@ -72,15 +72,17 @@ type RuntimeRunMeta struct {
 
 // RuntimeWaitMeta captures a user-owned wait condition that paused a run.
 type RuntimeWaitMeta struct {
-	Kind        string    `json:"kind,omitempty"` // approval|ask|event|time
-	Reason      string    `json:"reason,omitempty"`
-	ApprovalID  string    `json:"approval_id,omitempty"`
-	AskID       string    `json:"ask_id,omitempty"`
-	Tool        string    `json:"tool,omitempty"`
-	Subject     string    `json:"subject,omitempty"`
-	EventSource string    `json:"event_source,omitempty"`
-	EventID     string    `json:"event_id,omitempty"`
-	Since       time.Time `json:"since,omitempty"`
+	Kind            string    `json:"kind,omitempty"` // approval|ask|event|time
+	Reason          string    `json:"reason,omitempty"`
+	ApprovalID      string    `json:"approval_id,omitempty"`
+	AskID           string    `json:"ask_id,omitempty"`
+	Tool            string    `json:"tool,omitempty"`
+	Subject         string    `json:"subject,omitempty"`
+	EventSource     string    `json:"event_source,omitempty"`
+	EventID         string    `json:"event_id,omitempty"`
+	EventStatus     string    `json:"event_status,omitempty"`
+	EventConclusion string    `json:"event_conclusion,omitempty"`
+	Since           time.Time `json:"since,omitempty"`
 }
 
 // RuntimeSchedMeta holds scheduler/wakeup state for future cron/webhook use.

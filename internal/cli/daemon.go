@@ -420,6 +420,8 @@ func daemonWaitEventCmd(args []string) int {
 	sessionID := fs.String("session", "", "要设置等待条件的 session ID")
 	source := fs.String("source", "", "等待的事件来源，例如 github.workflow_run")
 	eventID := fs.String("event-id", "", "等待的具体 event id")
+	status := fs.String("status", "", "等待的事件状态，例如 completed")
+	conclusion := fs.String("conclusion", "", "等待的事件结果，例如 success")
 	reason := fs.String("reason", "", "等待原因")
 	subject := fs.String("subject", "", "等待对象，例如 PR #42")
 	clear := fs.Bool("clear", false, "清除当前 event wait 条件")
@@ -444,6 +446,12 @@ func daemonWaitEventCmd(args []string) int {
 		}
 		if *eventID != "" {
 			body += fmt.Sprintf(`,"event_id":%q`, *eventID)
+		}
+		if *status != "" {
+			body += fmt.Sprintf(`,"event_status":%q`, *status)
+		}
+		if *conclusion != "" {
+			body += fmt.Sprintf(`,"event_conclusion":%q`, *conclusion)
 		}
 		if *reason != "" {
 			body += fmt.Sprintf(`,"reason":%q`, *reason)
@@ -596,7 +604,7 @@ Usage:
   reasonix daemon continue --session ID [--addr HOST:PORT] [--dir PATH]
   reasonix daemon schedule --session ID [--daily-at HH:MM | --interval 1h]
   reasonix daemon budget   --session ID --daily-wakeups N [--reset]
-  reasonix daemon wait-event --session ID --source TYPE [--event-id ID]
+  reasonix daemon wait-event --session ID --source TYPE [--event-id ID] [--status completed] [--conclusion success]
   reasonix daemon approve  --session ID --approval ID
   reasonix daemon deny     --session ID --approval ID
   reasonix daemon answer   --session ID --ask ID --selected TEXT

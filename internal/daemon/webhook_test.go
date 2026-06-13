@@ -358,11 +358,13 @@ func TestWebhookMatchesWaitEventAndClearsWait(t *testing.T) {
 		Goal:      agent.RuntimeGoalMeta{Text: "wait for CI", Status: "running"},
 		Run:       agent.RuntimeRunMeta{Status: "waiting_event"},
 		Wait: agent.RuntimeWaitMeta{
-			Kind:        "event",
-			EventSource: "github.workflow_run",
-			EventID:     "delivery-42",
-			Reason:      "waiting for CI",
-			Subject:     "PR #42",
+			Kind:            "event",
+			EventSource:     "github.workflow_run",
+			EventID:         "delivery-42",
+			EventStatus:     "completed",
+			EventConclusion: "success",
+			Reason:          "waiting for CI",
+			Subject:         "PR #42",
 		},
 		Budget: agent.RuntimeBudgetMeta{
 			DailyWakeupLimit: 2,
@@ -417,6 +419,74 @@ func TestWebhookMatchesWaitEventAndClearsWait(t *testing.T) {
 	}
 	if loaded.Scheduler.LastWakeupEventID != "delivery-42" || loaded.Budget.DailyWakeups != 1 {
 		t.Fatalf("wakeup metadata not persisted: scheduler=%+v budget=%+v", loaded.Scheduler, loaded.Budget)
+	}
+}
+
+func TestWebhookIgnoresWaitEventWithWrongConclusion(t *testing.T) {
+	dir := t.TempDir()
+	sess := filepath.Join(dir, "webhook-wait-conclusion.jsonl")
+	if err := os.WriteFile(sess, []byte(`{}`), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	if err := agent.SaveRuntimeMeta(sess, agent.RuntimeMeta{
+		SessionID: "webhook-wait-conclusion",
+		Goal:      agent.RuntimeGoalMeta{Text: "wait for successful CI", Status: "running"},
+		Run:       agent.RuntimeRunMeta{Status: "waiting_event"},
+		Wait: agent.RuntimeWaitMeta{
+			Kind:            "event",
+			EventSource:     "github.workflow_run",
+			EventStatus:     "completed",
+			EventConclusion: "success",
+			Reason:          "waiting for CI success",
+			Subject:         "PR #42",
+		},
+		Budget: agent.RuntimeBudgetMeta{
+			DailyWakeupLimit: 2,
+			WindowStartedAt:  budgetWindowStart(time.Now().UTC()),
+		},
+	}); err != nil {
+		t.Fatalf("SaveRuntimeMeta: %v", err)
+	}
+
+	secret := "wait-conclusion-secret"
+	d := New(Options{
+		SessionDir: dir,
+		Webhook:    &WebhookConfig{Secret: secret, Enabled: true},
+	})
+	d.scanSessions()
+
+	payload := `{"action":"completed","repository":{"full_name":"esengine/DeepSeek-Reasonix"},"workflow_run":{"status":"completed","conclusion":"failure","pull_requests":[{"number":42}],"head_branch":"feature/agentos"}}`
+	sig := computeHMAC([]byte(payload), secret)
+	req := httptest.NewRequest("POST", "/webhook", strings.NewReader(payload))
+	req.Header.Set("X-Webhook-Signature", sig)
+	req.Header.Set("X-GitHub-Event", "workflow_run")
+	req.Header.Set("X-GitHub-Delivery", "delivery-failure")
+	rr := httptest.NewRecorder()
+	d.handleWebhook(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("webhook status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	var resp map[string]any
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp["status"] != "ignored" {
+		t.Fatalf("status = %v, want ignored", resp["status"])
+	}
+	select {
+	case intent := <-d.intentCh:
+		t.Fatalf("wrong conclusion should not enqueue intent: %+v", intent)
+	default:
+	}
+	loaded, ok, err := agent.LoadRuntimeMeta(sess)
+	if err != nil || !ok {
+		t.Fatalf("LoadRuntimeMeta: err=%v ok=%v", err, ok)
+	}
+	if loaded.Run.Status != "waiting_event" || loaded.Wait.EventConclusion != "success" {
+		t.Fatalf("wait condition should remain active: run=%+v wait=%+v", loaded.Run, loaded.Wait)
+	}
+	if loaded.Budget.DailyWakeups != 0 {
+		t.Fatalf("ignored conclusion should not consume budget: %+v", loaded.Budget)
 	}
 }
 

@@ -269,7 +269,8 @@ dynamic workflow 或开发者平台，而是先把 Reasonix 从一次性会话�
 - [ ] CI 等待场景。
   - [x] daemon API/CLI 可写 runtime event wait condition。
   - [x] webhook 匹配 event wait condition 后触发下一步。
-  - [ ] CI 绿灯语义过滤（status/conclusion）和失败分支总结。
+  - [x] CI 绿灯语义过滤（status/conclusion）。
+  - [ ] CI 失败分支总结。
 - [ ] 幂等处理。
   - [x] event id 去重。
   - [ ] 同一 PR 的相同状态变化不重复跑。
@@ -338,7 +339,7 @@ dynamic workflow 或开发者平台，而是先把 Reasonix 从一次性会话�
 - [ ] 引入 wait condition。
   - [x] wait for user approval
   - [x] wait for webhook / external event
-  - [ ] wait for CI status/conclusion
+  - [x] wait for CI status/conclusion
   - [ ] wait until time
   - [ ] wait for file change
 - [ ] 成本预算。
