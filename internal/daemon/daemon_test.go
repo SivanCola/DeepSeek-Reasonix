@@ -17,6 +17,7 @@ import (
 	"reasonix/internal/agent"
 	"reasonix/internal/control"
 	"reasonix/internal/event"
+	"reasonix/internal/permission"
 	"reasonix/internal/provider"
 	"reasonix/internal/tool"
 )
@@ -1880,6 +1881,160 @@ func TestDaemonCIWatcherE2EDiagnosesThenContinuesAndDedupes(t *testing.T) {
 	}
 }
 
+func TestDaemonReleaseAssistantE2EDebouncesAndQueuesApproval(t *testing.T) {
+	dir := t.TempDir()
+	workspace := filepath.Join(dir, "workspace")
+	if err := os.MkdirAll(workspace, 0o755); err != nil {
+		t.Fatalf("MkdirAll workspace: %v", err)
+	}
+	changelogPath := filepath.Join(workspace, "CHANGELOG.md")
+	versionPath := filepath.Join(workspace, "package.json")
+	base := time.Now().Add(-10 * time.Minute)
+	for path, body := range map[string]string{
+		changelogPath: "# Changelog\n\n## 1.2.2\n- Previous release\n",
+		versionPath:   `{"version":"1.2.2"}` + "\n",
+	} {
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatalf("WriteFile baseline %s: %v", filepath.Base(path), err)
+		}
+		if err := os.Chtimes(path, base, base); err != nil {
+			t.Fatalf("Chtimes baseline %s: %v", filepath.Base(path), err)
+		}
+	}
+
+	sessionPath := writeReleaseAssistantE2ESession(t, dir, workspace)
+	writer := &daemonReleaseWriter{executed: make(chan string, 1)}
+	prov := &daemonScriptedProvider{turns: [][]provider.Chunk{{
+		{Type: provider.ChunkUsage, Usage: &provider.Usage{PromptTokens: 17, CompletionTokens: 5, TotalTokens: 22, FinishReason: "tool_calls"}},
+		{Type: provider.ChunkToolCall, ToolCall: &provider.ToolCall{
+			ID:        "release-write-1",
+			Name:      "publish_release",
+			Arguments: `{"path":"releases/v1.2.3"}`,
+		}},
+	}}}
+	d := New(Options{
+		SessionDir:        dir,
+		MaxConcurrentRuns: 1,
+		ControllerFactory: func(ctx context.Context, d *Daemon, entry *SessionEntry, sink event.Sink) (*control.Controller, error) {
+			loaded, err := agent.LoadSession(entry.Path)
+			if err != nil {
+				return nil, err
+			}
+			reg := tool.NewRegistry()
+			reg.Add(writer)
+			ag := agent.New(prov, reg, loaded, agent.Options{}, sink)
+			c := control.New(control.Options{
+				Runner:      ag,
+				Executor:    ag,
+				Policy:      permission.New("ask", nil, nil, nil),
+				SessionPath: entry.Path,
+				SessionDir:  dir,
+				Sink:        sink,
+			})
+			c.EnableInteractiveApproval()
+			c.Resume(loaded, entry.Path)
+			return c, nil
+		},
+	})
+	d.scanSessions()
+	d.fileWatcher = NewFileWatcher(d, d.logger)
+
+	body := `{"session_id":"release-assistant-e2e","paths":["CHANGELOG.md","package.json"],"debounce":"1s","reason":"release files changed; check changelog and version before publishing","subject":"v1.2.3"}`
+	rr := httptest.NewRecorder()
+	d.handleWaitFile(rr, httptest.NewRequest("POST", "/wait-file", strings.NewReader(body)))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("wait-file status = %d body=%s", rr.Code, rr.Body.String())
+	}
+
+	d.fileWatcher.poll()
+	if err := os.WriteFile(changelogPath, []byte("# Changelog\n\n## 1.2.3\n- Ship release assistant\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile changelog update: %v", err)
+	}
+	if err := os.Chtimes(changelogPath, base.Add(time.Minute), base.Add(time.Minute)); err != nil {
+		t.Fatalf("Chtimes changelog update: %v", err)
+	}
+	d.fileWatcher.poll()
+	if err := os.WriteFile(versionPath, []byte(`{"version":"1.2.3"}`+"\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile version update: %v", err)
+	}
+	if err := os.Chtimes(versionPath, base.Add(2*time.Minute), base.Add(2*time.Minute)); err != nil {
+		t.Fatalf("Chtimes version update: %v", err)
+	}
+	d.fileWatcher.poll()
+	d.fileWatcher.mu.Lock()
+	state := d.fileWatcher.watches["release-assistant-e2e"]
+	if state == nil {
+		d.fileWatcher.mu.Unlock()
+		t.Fatal("release assistant file watch missing before debounce fires")
+	}
+	if len(state.changes) != 2 {
+		d.fileWatcher.mu.Unlock()
+		t.Fatalf("release assistant pending changes = %d, want 2: %+v", len(state.changes), state.changes)
+	}
+	state.timer = time.Now().Add(-time.Second)
+	d.fileWatcher.mu.Unlock()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer func() {
+		cancel()
+		waitForInactiveRun(d, "release-assistant-e2e")
+	}()
+	go d.runIntentWorker(ctx)
+	d.fileWatcher.poll()
+	waitForTimelineCount(t, sessionPath, "wait_started", 1)
+	waitForTimelineCount(t, sessionPath, "file_change_detected", 1)
+	waitForTimelineCount(t, sessionPath, "wait_started", 2)
+
+	if prov.calls != 1 {
+		t.Fatalf("release assistant should call provider once after debounced file changes, got %d", prov.calls)
+	}
+	if got := countTimelineEvents(t, sessionPath, "intent_queued"); got != 1 {
+		t.Fatalf("release assistant should enqueue exactly one intent, got %d", got)
+	}
+	if got := countTimelineEvents(t, sessionPath, "file_change_detected"); got != 1 {
+		t.Fatalf("release assistant should record exactly one file_change_detected event, got %d", got)
+	}
+	loaded, ok, err := agent.LoadRuntimeMeta(sessionPath)
+	if err != nil || !ok {
+		t.Fatalf("LoadRuntimeMeta release assistant: err=%v ok=%v", err, ok)
+	}
+	if loaded.Run.Status != agent.RunStatusWaitingApproval || loaded.Wait.Kind != "approval" ||
+		loaded.Wait.Tool != "publish_release" || !strings.Contains(loaded.Wait.Subject, "v1.2.3") {
+		t.Fatalf("release publish action should wait for approval: run=%+v wait=%+v", loaded.Run, loaded.Wait)
+	}
+	d.fileWatcher.mu.Lock()
+	registered := d.fileWatcher.watches["release-assistant-e2e"]
+	d.fileWatcher.mu.Unlock()
+	if registered != nil {
+		t.Fatalf("matching wait-file should unregister one-shot watcher: %+v", registered)
+	}
+
+	req := httptest.NewRequest("GET", "/approvals", nil)
+	rr = httptest.NewRecorder()
+	d.handleApprovals(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("approvals status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	var desk ApprovalDeskResponse
+	if err := json.NewDecoder(rr.Body).Decode(&desk); err != nil {
+		t.Fatalf("decode approvals: %v", err)
+	}
+	if len(desk.Items) != 1 {
+		t.Fatalf("approval desk items = %d, want 1: %+v", len(desk.Items), desk.Items)
+	}
+	item := desk.Items[0]
+	if item.SessionID != "release-assistant-e2e" || item.Kind != "approval" || item.Tool != "publish_release" ||
+		!strings.Contains(item.Subject, "v1.2.3") || !item.Active || item.RunStatus != agent.RunStatusWaitingApproval ||
+		item.GoalText != "prepare release v1.2.3" {
+		t.Fatalf("unexpected release approval desk item: %+v", item)
+	}
+	select {
+	case target := <-writer.executed:
+		t.Fatalf("release writer executed before approval: %s", target)
+	default:
+	}
+}
+
 func TestDaemonIntentQueueSelectsHighestPriorityRunnable(t *testing.T) {
 	d := New(Options{SessionDir: t.TempDir()})
 	now := time.Now().UTC()
@@ -2329,6 +2484,19 @@ func waitForTimelineCount(t *testing.T, sessionPath, eventType string, want int)
 	t.Fatalf("timed out waiting for %d %q timeline events; got %d", want, eventType, countTimelineEvents(t, sessionPath, eventType))
 }
 
+func waitForInactiveRun(d *Daemon, sessionID string) {
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		d.mu.RLock()
+		_, active := d.activeRuns[sessionID]
+		d.mu.RUnlock()
+		if !active {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
 func writeDaemonQueueSession(t *testing.T, dir, id string) string {
 	t.Helper()
 	sessionPath := filepath.Join(dir, id+".jsonl")
@@ -2409,6 +2577,63 @@ func writeCIWatchE2ESession(t *testing.T, dir, id, source string) string {
 		t.Fatalf("SaveRuntimeMeta(%s): %v", id, err)
 	}
 	return sessionPath
+}
+
+func writeReleaseAssistantE2ESession(t *testing.T, dir, workspace string) string {
+	t.Helper()
+	id := "release-assistant-e2e"
+	sessionPath := filepath.Join(dir, id+".jsonl")
+	sess := agent.NewSession("")
+	sess.Add(provider.Message{Role: provider.RoleUser, Content: "prepare release v1.2.3"})
+	if err := sess.Save(sessionPath); err != nil {
+		t.Fatalf("Save(%s): %v", id, err)
+	}
+	if err := agent.SaveRuntimeMeta(sessionPath, agent.RuntimeMeta{
+		SessionID:     id,
+		Model:         "daemon-test-model",
+		WorkspaceRoot: workspace,
+		Goal:          agent.RuntimeGoalMeta{Text: "prepare release v1.2.3", Status: control.GoalStatusRunning},
+		Run:           agent.RuntimeRunMeta{Status: agent.RunStatusIdle},
+		Budget: agent.RuntimeBudgetMeta{
+			DailyWakeupLimit:    8,
+			DailyModelCallLimit: 8,
+			MaxGoalAutoTurns:    2,
+			WindowStartedAt:     budgetWindowStart(time.Date(2026, 6, 13, 9, 0, 0, 0, time.UTC)),
+		},
+	}); err != nil {
+		t.Fatalf("SaveRuntimeMeta(%s): %v", id, err)
+	}
+	return sessionPath
+}
+
+type daemonReleaseWriter struct {
+	executed chan string
+}
+
+func (w *daemonReleaseWriter) Name() string { return "publish_release" }
+
+func (w *daemonReleaseWriter) Description() string {
+	return "publish a release after changelog and version updates"
+}
+
+func (w *daemonReleaseWriter) Schema() json.RawMessage {
+	return json.RawMessage(`{"type":"object","properties":{"path":{"type":"string"},"target":{"type":"string"}},"required":["path"]}`)
+}
+
+func (w *daemonReleaseWriter) ReadOnly() bool { return false }
+
+func (w *daemonReleaseWriter) Execute(ctx context.Context, args json.RawMessage) (string, error) {
+	var in struct {
+		Target string `json:"target"`
+		Path   string `json:"path"`
+	}
+	_ = json.Unmarshal(args, &in)
+	target := firstNonEmpty(in.Target, in.Path)
+	select {
+	case w.executed <- target:
+	default:
+	}
+	return "published " + target, nil
 }
 
 func postSignedGitHubWebhook(t *testing.T, d *Daemon, webhookKey, eventName, delivery, payload string) map[string]any {

@@ -522,9 +522,9 @@ dynamic workflow 或开发者平台，而是先把 Reasonix 从一次性会话�
 - [x] 增加 CI watcher 端到端测试脚本。
   - [x] 配置 wait-event，模拟 GitHub workflow_run/check_suite/status。
   - [x] 验证失败走 diagnosis，成功继续原 goal，重复 webhook 不重复执行。
-- [ ] 增加 release assistant 端到端测试脚本。
-  - [ ] 配置 wait-file，写入 changelog/version 文件，验证 debounce 和一次性唤醒。
-  - [ ] 验证发布类写操作仍进入 approval desk。
+- [x] 增加 release assistant 端到端测试脚本。
+  - [x] 配置 wait-file，写入 changelog/version 文件，验证 debounce 和一次性唤醒。
+  - [x] 验证发布类写操作仍进入 approval desk。
   - 验收：三条首批场景都能在本地无真实外网依赖下稳定复现。
 
 ### P1：事件与监听能力升级
