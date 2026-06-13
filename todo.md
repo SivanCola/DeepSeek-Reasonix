@@ -494,8 +494,8 @@ dynamic workflow 或开发者平台，而是先把 Reasonix 从一次性会话�
   - [ ] 桌面端能显示 daemon PID、uptime、监听地址、session 数和最近错误。
   - [ ] 提供 launchd / systemd / Windows startup helper 的安装与卸载命令。
   - 验收：用户不需要开终端也能知道常驻 agent 是否活着，以及为什么没被唤醒。
-- [ ] daemon 日志与凭据运维。
-  - [ ] daemon log 支持轮转和大小上限。
+- [x] daemon 日志与凭据运维。
+  - [x] daemon log 支持轮转和大小上限。
   - [x] daemon auth token 支持手动 rotate。
   - [x] doctor 能报告 token 缺失、权限异常、端口占用、stale lock 和日志不可写。
   - 验收：长期运行不会因为日志膨胀、token 漂移或 lock 残留变成黑盒。

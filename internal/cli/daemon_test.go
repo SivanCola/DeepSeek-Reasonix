@@ -76,11 +76,40 @@ func TestResolveDaemonLogFile(t *testing.T) {
 	}
 }
 
+func TestParseDaemonLogSize(t *testing.T) {
+	cases := []struct {
+		in   string
+		want int64
+	}{
+		{"", defaultDaemonLogMaxSize},
+		{"0", 0},
+		{"512", 512},
+		{"2KB", 2 << 10},
+		{"3mb", 3 << 20},
+		{"1G", 1 << 30},
+	}
+	for _, tc := range cases {
+		got, err := parseDaemonLogSize(tc.in)
+		if err != nil {
+			t.Fatalf("parseDaemonLogSize(%q): %v", tc.in, err)
+		}
+		if got != tc.want {
+			t.Fatalf("parseDaemonLogSize(%q) = %d, want %d", tc.in, got, tc.want)
+		}
+	}
+	if _, err := parseDaemonLogSize("-1"); err == nil {
+		t.Fatal("negative size should fail")
+	}
+	if _, err := parseDaemonLogSize("abc"); err == nil {
+		t.Fatal("invalid size should fail")
+	}
+}
+
 func TestNewDaemonLoggerWritesFile(t *testing.T) {
 	dir := t.TempDir()
 	logPath := filepath.Join(dir, "nested", "daemon.log")
 	var stderr bytes.Buffer
-	logger, closer, err := newDaemonLogger(&stderr, logPath)
+	logger, closer, err := newDaemonLogger(&stderr, logPath, defaultDaemonLogMaxSize)
 	if err != nil {
 		t.Fatalf("newDaemonLogger: %v", err)
 	}
@@ -101,12 +130,73 @@ func TestNewDaemonLoggerWritesFile(t *testing.T) {
 }
 
 func TestNewDaemonLoggerCanDisableFile(t *testing.T) {
-	logger, closer, err := newDaemonLogger(io.Discard, "")
+	logger, closer, err := newDaemonLogger(io.Discard, "", defaultDaemonLogMaxSize)
 	if err != nil {
 		t.Fatalf("newDaemonLogger: %v", err)
 	}
 	if logger == nil || closer != nil {
 		t.Fatalf("logger=%v closer=%v, want logger without closer", logger, closer)
+	}
+}
+
+func TestNewDaemonLoggerRotatesLargeLog(t *testing.T) {
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "daemon.log")
+	if err := os.WriteFile(logPath, []byte("0123456789"), 0o600); err != nil {
+		t.Fatalf("WriteFile log: %v", err)
+	}
+	if err := os.WriteFile(logPath+".1", []byte("old backup"), 0o600); err != nil {
+		t.Fatalf("WriteFile backup: %v", err)
+	}
+
+	logger, closer, err := newDaemonLogger(io.Discard, logPath, 5)
+	if err != nil {
+		t.Fatalf("newDaemonLogger: %v", err)
+	}
+	logger.Info("fresh log")
+	if err := closer.Close(); err != nil {
+		t.Fatalf("close log: %v", err)
+	}
+
+	backup, err := os.ReadFile(logPath + ".1")
+	if err != nil {
+		t.Fatalf("ReadFile backup: %v", err)
+	}
+	if string(backup) != "0123456789" {
+		t.Fatalf("backup = %q, want original log", backup)
+	}
+	current, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("ReadFile current: %v", err)
+	}
+	if !strings.Contains(string(current), "fresh log") || strings.Contains(string(current), "0123456789") {
+		t.Fatalf("current log should be fresh after rotation: %q", current)
+	}
+}
+
+func TestNewDaemonLoggerCanDisableRotation(t *testing.T) {
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "daemon.log")
+	if err := os.WriteFile(logPath, []byte("0123456789"), 0o600); err != nil {
+		t.Fatalf("WriteFile log: %v", err)
+	}
+	logger, closer, err := newDaemonLogger(io.Discard, logPath, 0)
+	if err != nil {
+		t.Fatalf("newDaemonLogger: %v", err)
+	}
+	logger.Info("appended")
+	if err := closer.Close(); err != nil {
+		t.Fatalf("close log: %v", err)
+	}
+	if _, err := os.Stat(logPath + ".1"); !os.IsNotExist(err) {
+		t.Fatalf("backup should not exist when rotation disabled: %v", err)
+	}
+	current, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("ReadFile current: %v", err)
+	}
+	if !strings.Contains(string(current), "0123456789") || !strings.Contains(string(current), "appended") {
+		t.Fatalf("log should append without rotation: %q", current)
 	}
 }
 

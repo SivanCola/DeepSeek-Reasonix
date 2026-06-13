@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -20,6 +21,8 @@ import (
 	"reasonix/internal/config"
 	"reasonix/internal/daemon"
 )
+
+const defaultDaemonLogMaxSize = 10 << 20
 
 func daemonCommand(args []string) int {
 	if len(args) < 1 {
@@ -205,6 +208,7 @@ func daemonStart(args []string) int {
 	addr := fs.String("addr", daemon.DefaultAddr, "监听地址")
 	dir := fs.String("dir", "", "会话目录（默认用户配置）")
 	logFile := fs.String("log-file", "", "daemon 日志文件（默认 <session-dir>/.daemon.log，none 表示关闭文件日志）")
+	logMaxSize := fs.String("log-max-size", "10MB", "daemon 日志轮转阈值，0 表示关闭轮转")
 	startBot := fs.Bool("bot", false, "同时启动 bot gateway")
 	botChannels := fs.String("bot-channels", "", "bot 平台，逗号分隔：qq,feishu,weixin")
 	botDir := fs.String("bot-dir", "", "bot 工作目录（空则使用当前目录或 bot connection 配置）")
@@ -213,6 +217,11 @@ func daemonStart(args []string) int {
 	webhookSecret := fs.String("webhook-secret", "", "webhook HMAC secret（也可用 REASONIX_DAEMON_WEBHOOK_SECRET）")
 
 	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	maxLogBytes, err := parseDaemonLogSize(*logMaxSize)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: invalid --log-max-size: %v\n", err)
 		return 2
 	}
 	webhookCfg, err := resolveDaemonWebhookConfig(*webhook, *webhookSecret, os.Getenv)
@@ -233,7 +242,7 @@ func daemonStart(args []string) int {
 	}()
 
 	logPath := resolveDaemonLogFile(*dir, *logFile)
-	logger, logCloser, err := newDaemonLogger(os.Stderr, logPath)
+	logger, logCloser, err := newDaemonLogger(os.Stderr, logPath, maxLogBytes)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: open daemon log: %v\n", err)
 		return 1
@@ -316,7 +325,45 @@ func resolveDaemonLogFile(sessionDir, requested string) string {
 	}
 }
 
-func newDaemonLogger(stderr io.Writer, logPath string) (*slog.Logger, io.Closer, error) {
+func parseDaemonLogSize(raw string) (int64, error) {
+	s := strings.TrimSpace(raw)
+	if s == "" {
+		return defaultDaemonLogMaxSize, nil
+	}
+	upper := strings.ToUpper(s)
+	mult := int64(1)
+	for _, suffix := range []struct {
+		name string
+		mult int64
+	}{
+		{"GB", 1 << 30},
+		{"G", 1 << 30},
+		{"MB", 1 << 20},
+		{"M", 1 << 20},
+		{"KB", 1 << 10},
+		{"K", 1 << 10},
+		{"B", 1},
+	} {
+		if strings.HasSuffix(upper, suffix.name) {
+			mult = suffix.mult
+			s = strings.TrimSpace(s[:len(s)-len(suffix.name)])
+			break
+		}
+	}
+	n, err := strconv.ParseInt(s, 10, 64)
+	if err != nil {
+		return 0, err
+	}
+	if n < 0 {
+		return 0, fmt.Errorf("must be >= 0")
+	}
+	if n > 0 && n > (1<<63-1)/mult {
+		return 0, fmt.Errorf("too large")
+	}
+	return n * mult, nil
+}
+
+func newDaemonLogger(stderr io.Writer, logPath string, maxSize int64) (*slog.Logger, io.Closer, error) {
 	writer := stderr
 	if writer == nil {
 		writer = io.Discard
@@ -327,11 +374,35 @@ func newDaemonLogger(stderr io.Writer, logPath string) (*slog.Logger, io.Closer,
 	if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
 		return nil, nil, err
 	}
+	if err := rotateDaemonLogIfNeeded(logPath, maxSize); err != nil {
+		return nil, nil, err
+	}
 	f, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
 		return nil, nil, err
 	}
 	return slog.New(slog.NewTextHandler(io.MultiWriter(writer, f), &slog.HandlerOptions{Level: slog.LevelInfo})), f, nil
+}
+
+func rotateDaemonLogIfNeeded(logPath string, maxSize int64) error {
+	if maxSize <= 0 {
+		return nil
+	}
+	info, err := os.Stat(logPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	if info.IsDir() || info.Size() < maxSize {
+		return nil
+	}
+	backup := logPath + ".1"
+	if err := os.Remove(backup); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return os.Rename(logPath, backup)
 }
 
 func daemonStatus(args []string) int {
@@ -1347,7 +1418,7 @@ func daemonUsage() {
 	fmt.Print(`reasonix daemon — 常驻后台 agent 服务
 
 Usage:
-  reasonix daemon start    [--addr HOST:PORT] [--dir PATH] [--log-file PATH|none] [--bot --bot-channels qq,feishu,weixin] [--webhook --webhook-secret SECRET]
+  reasonix daemon start    [--addr HOST:PORT] [--dir PATH] [--log-file PATH|none] [--log-max-size 10MB] [--bot --bot-channels qq,feishu,weixin] [--webhook --webhook-secret SECRET]
   reasonix daemon status   [--addr HOST:PORT] [--dir PATH]
   reasonix daemon doctor   [--addr HOST:PORT] [--dir PATH] [--log-file PATH|none] [--json]
   reasonix daemon token rotate [--dir PATH]
