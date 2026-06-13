@@ -84,6 +84,44 @@ func TestSchedulerComputeNextWakeupDaily(t *testing.T) {
 	}
 }
 
+func TestSchedulerComputeNextWakeupDailyWithTimezone(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	d := New(Options{SessionDir: t.TempDir()})
+	s := NewScheduler(d, logger)
+
+	loc, err := time.LoadLocation("Asia/Shanghai")
+	if err != nil {
+		t.Fatalf("LoadLocation: %v", err)
+	}
+	now := time.Date(2026, 6, 13, 0, 30, 0, 0, time.UTC) // 08:30 in Asia/Shanghai.
+	sched := agent.RuntimeSchedMeta{
+		DailyAt:  "09:00",
+		Timezone: "Asia/Shanghai",
+		Enabled:  true,
+	}
+
+	next := s.computeNextWakeup(sched, now)
+	want := time.Date(2026, 6, 13, 9, 0, 0, 0, loc)
+	if !next.Equal(want) {
+		t.Errorf("computeNextWakeup(daily=09:00 Asia/Shanghai) = %v, want %v", next, want)
+	}
+	if got := next.In(loc).Format("15:04"); got != "09:00" {
+		t.Errorf("next local time = %s, want 09:00", got)
+	}
+}
+
+func TestSchedulerDailyEventIDUsesScheduleTimezone(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	d := New(Options{SessionDir: t.TempDir()})
+	s := NewScheduler(d, logger)
+
+	due := time.Date(2026, 6, 12, 17, 0, 0, 0, time.UTC) // 2026-06-13 in Asia/Shanghai.
+	sched := agent.RuntimeSchedMeta{DailyAt: "01:00", Timezone: "Asia/Shanghai", Enabled: true}
+	if got, want := s.eventIDFor("daily-tz", sched, due), "daily:daily-tz:2026-06-13"; got != want {
+		t.Fatalf("eventIDFor timezone daily = %q, want %q", got, want)
+	}
+}
+
 func TestSchedulerShouldWakeupGuards(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
 	d := New(Options{SessionDir: t.TempDir()})

@@ -90,7 +90,8 @@ type RuntimeWaitMeta struct {
 // RuntimeSchedMeta holds scheduler/wakeup state for future cron/webhook use.
 type RuntimeSchedMeta struct {
 	// Schedule configuration (set by user via /goal schedule or API).
-	DailyAt  string        `json:"daily_at,omitempty"` // "HH:MM" in local time, e.g. "09:00"
+	DailyAt  string        `json:"daily_at,omitempty"` // "HH:MM", interpreted in Timezone when set.
+	Timezone string        `json:"timezone,omitempty"` // IANA timezone for DailyAt, e.g. "Asia/Shanghai".
 	Interval time.Duration `json:"interval,omitempty"` // fixed interval between wakeups, e.g. 1h
 	Enabled  bool          `json:"enabled,omitempty"`  // whether scheduling is active
 

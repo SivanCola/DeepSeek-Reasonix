@@ -418,6 +418,7 @@ func daemonScheduleCmd(args []string) int {
 	dir := fs.String("dir", "", "会话目录（用于读取本地 token）")
 	sessionID := fs.String("session", "", "要调度的 session ID")
 	dailyAt := fs.String("daily-at", "", "每日唤醒时间 HH:MM")
+	timezone := fs.String("timezone", "", "daily-at 使用的 IANA 时区，例如 Asia/Shanghai")
 	interval := fs.String("interval", "", "固定间隔，例如 1h")
 	enabled := fs.Bool("enable", true, "是否启用调度")
 	if err := fs.Parse(args); err != nil {
@@ -430,6 +431,9 @@ func daemonScheduleCmd(args []string) int {
 	body := fmt.Sprintf(`{"session_id":%q,"enabled":%t`, *sessionID, *enabled)
 	if *dailyAt != "" {
 		body += fmt.Sprintf(`,"daily_at":%q`, *dailyAt)
+	}
+	if *timezone != "" {
+		body += fmt.Sprintf(`,"timezone":%q`, *timezone)
 	}
 	if *interval != "" {
 		body += fmt.Sprintf(`,"interval":%q`, *interval)
@@ -825,7 +829,7 @@ Usage:
   reasonix daemon sessions [--addr HOST:PORT] [--dir PATH] [--json]
   reasonix daemon timeline --session ID [--limit N] [--json]
   reasonix daemon continue --session ID [--addr HOST:PORT] [--dir PATH]
-  reasonix daemon schedule --session ID [--daily-at HH:MM | --interval 1h]
+  reasonix daemon schedule --session ID [--daily-at HH:MM] [--timezone Area/City] [--interval 1h]
   reasonix daemon budget   --session ID [--daily-wakeups N] [--max-goal-auto-turns N] [--reset]
   reasonix daemon wait-event --session ID --source TYPE [--event-id ID] [--status completed] [--conclusion success]
   reasonix daemon wait-time --session ID (--until RFC3339 | --after 1h)
@@ -842,7 +846,7 @@ Subcommands:
   sessions   列出所有跟踪的 session 及其 goal/run 状态
   timeline   查看指定 session 的运行事件时间线
   continue   显式唤醒并继续指定 goal
-  schedule   设置 daily/interval 定时唤醒
+  schedule   设置 daily/interval 定时唤醒和 daily 时区
   budget     设置自动唤醒预算和 goal 自动续跑上限
   wait-event 设置或清除等待外部事件条件
   wait-time  设置或清除等待到指定时间的条件

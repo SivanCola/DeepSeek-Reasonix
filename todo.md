@@ -209,7 +209,7 @@ dynamic workflow 或开发者平台，而是先把 Reasonix 从一次性会话�
   - [x] session 级 schedule。
   - [ ] project 级 schedule。
   - [ ] global schedule。
-  - [ ] 支持 timezone。
+  - [x] 支持 session 级 daily schedule timezone。
 - [x] 实现轻量 scheduler。
   - [x] 第一版只支持 fixed interval 和 daily time。
   - [x] 持久化 `next_wakeup_at` / `last_wakeup_at`。
@@ -228,7 +228,7 @@ dynamic workflow 或开发者平台，而是先把 Reasonix 从一次性会话�
   - [x] daemon 重启后不会补跑重复任务。
 - [ ] 增加测试。
   - [x] daily schedule 计算 next run。
-  - timezone 正确。
+  - [x] timezone 正确。
   - [x] missed wakeup 不重复风暴。
   - [x] running session 不并发触发。
 

@@ -346,7 +346,7 @@ func (s *Scheduler) computeNextWakeup(sched agent.RuntimeSchedMeta, after time.T
 	}
 
 	if sched.DailyAt != "" {
-		return nextDailyTime(sched.DailyAt, after)
+		return nextDailyTimeInLocation(sched.DailyAt, after, scheduleLocation(sched, after))
 	}
 
 	return time.Time{}
@@ -361,7 +361,7 @@ func (s *Scheduler) eventID(entry *SessionEntry, t time.Time) string {
 
 func (s *Scheduler) eventIDFor(id string, sched agent.RuntimeSchedMeta, t time.Time) string {
 	if sched.DailyAt != "" {
-		return fmt.Sprintf("daily:%s:%s", id, t.Format("2006-01-02"))
+		return fmt.Sprintf("daily:%s:%s", id, t.In(scheduleLocation(sched, t)).Format("2006-01-02"))
 	}
 	if sched.Interval > 0 {
 		seconds := int64(sched.Interval.Seconds())
@@ -411,8 +411,12 @@ func boundedTimeWaitContext(wait agent.RuntimeWaitMeta) string {
 }
 
 // nextDailyTime parses "HH:MM" and returns the next occurrence after `after`
-// in local time.
+// in after's local time.
 func nextDailyTime(spec string, after time.Time) time.Time {
+	return nextDailyTimeInLocation(spec, after, after.Location())
+}
+
+func nextDailyTimeInLocation(spec string, after time.Time, loc *time.Location) time.Time {
 	var hour, min int
 	if _, err := fmt.Sscanf(spec, "%d:%d", &hour, &min); err != nil {
 		return time.Time{}
@@ -421,10 +425,25 @@ func nextDailyTime(spec string, after time.Time) time.Time {
 		return time.Time{}
 	}
 
-	loc := after.Location()
-	today := time.Date(after.Year(), after.Month(), after.Day(), hour, min, 0, 0, loc)
-	if today.After(after) {
+	if loc == nil {
+		loc = after.Location()
+	}
+	localAfter := after.In(loc)
+	today := time.Date(localAfter.Year(), localAfter.Month(), localAfter.Day(), hour, min, 0, 0, loc)
+	if today.After(localAfter) {
 		return today
 	}
-	return today.Add(24 * time.Hour)
+	return time.Date(localAfter.Year(), localAfter.Month(), localAfter.Day()+1, hour, min, 0, 0, loc)
+}
+
+func scheduleLocation(sched agent.RuntimeSchedMeta, fallback time.Time) *time.Location {
+	name := strings.TrimSpace(sched.Timezone)
+	if name == "" {
+		return fallback.Location()
+	}
+	loc, err := time.LoadLocation(name)
+	if err != nil {
+		return fallback.Location()
+	}
+	return loc
 }

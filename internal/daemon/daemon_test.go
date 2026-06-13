@@ -356,6 +356,70 @@ func TestDaemonTimelineHandler(t *testing.T) {
 	}
 }
 
+func TestDaemonScheduleHandlerPersistsTimezone(t *testing.T) {
+	dir := t.TempDir()
+	sess := filepath.Join(dir, "schedule-api.jsonl")
+	if err := os.WriteFile(sess, []byte(`{"role":"user","content":"start"}`+"\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	if err := agent.SaveRuntimeMeta(sess, agent.RuntimeMeta{
+		SessionID: "schedule-api",
+		Goal:      agent.RuntimeGoalMeta{Text: "daily check", Status: control.GoalStatusRunning},
+		Run:       agent.RuntimeRunMeta{Status: "idle"},
+	}); err != nil {
+		t.Fatalf("SaveRuntimeMeta: %v", err)
+	}
+
+	d := New(Options{SessionDir: dir})
+	d.scanSessions()
+	d.scheduler = NewScheduler(d, nil)
+	req := httptest.NewRequest("POST", "/schedule", strings.NewReader(`{"session_id":"schedule-api","daily_at":"09:00","timezone":"Asia/Shanghai","enabled":true}`))
+	rr := httptest.NewRecorder()
+	d.handleSchedule(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("schedule status = %d body=%s", rr.Code, rr.Body.String())
+	}
+
+	loaded, ok, err := agent.LoadRuntimeMeta(sess)
+	if err != nil || !ok {
+		t.Fatalf("LoadRuntimeMeta: err=%v ok=%v", err, ok)
+	}
+	if loaded.Scheduler.DailyAt != "09:00" || loaded.Scheduler.Timezone != "Asia/Shanghai" || !loaded.Scheduler.Enabled {
+		t.Fatalf("schedule config not persisted: %+v", loaded.Scheduler)
+	}
+	if loaded.Scheduler.NextWakeupAt.IsZero() {
+		t.Fatalf("NextWakeupAt not computed: %+v", loaded.Scheduler)
+	}
+
+	var resp map[string]interface{}
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp["timezone"] != "Asia/Shanghai" {
+		t.Fatalf("response timezone = %v, want Asia/Shanghai", resp["timezone"])
+	}
+}
+
+func TestDaemonScheduleHandlerRejectsInvalidTimezone(t *testing.T) {
+	dir := t.TempDir()
+	sess := filepath.Join(dir, "schedule-bad-tz.jsonl")
+	if err := os.WriteFile(sess, []byte(`{"role":"user","content":"start"}`+"\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	if err := agent.SaveRuntimeMeta(sess, agent.RuntimeMeta{SessionID: "schedule-bad-tz"}); err != nil {
+		t.Fatalf("SaveRuntimeMeta: %v", err)
+	}
+
+	d := New(Options{SessionDir: dir})
+	d.scanSessions()
+	req := httptest.NewRequest("POST", "/schedule", strings.NewReader(`{"session_id":"schedule-bad-tz","timezone":"Mars/Olympus"}`))
+	rr := httptest.NewRecorder()
+	d.handleSchedule(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("schedule status = %d body=%s, want bad request", rr.Code, rr.Body.String())
+	}
+}
+
 func TestDaemonWatchHandlerPersistsConfig(t *testing.T) {
 	dir := t.TempDir()
 	watchDir := filepath.Join(dir, "workspace")

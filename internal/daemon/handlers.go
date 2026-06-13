@@ -203,13 +203,14 @@ func (d *Daemon) handleStop(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleSchedule sets or clears a cron schedule for a session.
-// Body: {"session_id": "...", "daily_at": "09:00", "interval": "1h", "enabled": true}
+// Body: {"session_id": "...", "daily_at": "09:00", "timezone":"Asia/Shanghai", "interval": "1h", "enabled": true}
 // All schedule fields are optional; omitted fields are left unchanged.
 // Set enabled=false to disable without clearing the schedule.
 func (d *Daemon) handleSchedule(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		SessionID string  `json:"session_id"`
 		DailyAt   *string `json:"daily_at"` // "HH:MM" or "" to clear
+		Timezone  *string `json:"timezone"` // IANA timezone or "" to clear
 		Interval  *string `json:"interval"` // duration string or "" to clear
 		Enabled   *bool   `json:"enabled"`
 	}
@@ -220,6 +221,12 @@ func (d *Daemon) handleSchedule(w http.ResponseWriter, r *http.Request) {
 	if req.SessionID == "" {
 		http.Error(w, `{"error":"session_id required"}`, http.StatusBadRequest)
 		return
+	}
+	if req.Timezone != nil && *req.Timezone != "" {
+		if _, err := time.LoadLocation(*req.Timezone); err != nil {
+			http.Error(w, fmt.Sprintf(`{"error":"invalid timezone: %s"}`, err), http.StatusBadRequest)
+			return
+		}
 	}
 
 	d.mu.Lock()
@@ -232,6 +239,9 @@ func (d *Daemon) handleSchedule(w http.ResponseWriter, r *http.Request) {
 
 	if req.DailyAt != nil {
 		entry.Runtime.Scheduler.DailyAt = *req.DailyAt
+	}
+	if req.Timezone != nil {
+		entry.Runtime.Scheduler.Timezone = *req.Timezone
 	}
 	if req.Interval != nil {
 		if *req.Interval == "" {
@@ -278,6 +288,7 @@ func (d *Daemon) handleSchedule(w http.ResponseWriter, r *http.Request) {
 		"session_id":     req.SessionID,
 		"enabled":        runtime.Scheduler.Enabled,
 		"daily_at":       runtime.Scheduler.DailyAt,
+		"timezone":       runtime.Scheduler.Timezone,
 		"interval":       runtime.Scheduler.Interval.String(),
 		"next_wakeup_at": runtime.Scheduler.NextWakeupAt.Format(time.RFC3339),
 	}
