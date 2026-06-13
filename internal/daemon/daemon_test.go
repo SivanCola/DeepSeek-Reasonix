@@ -176,6 +176,11 @@ func TestDaemonRecoverInterrupted(t *testing.T) {
 	if loaded.Run.Status != "interrupted" {
 		t.Errorf("persisted Run.Status = %q, want 'interrupted'", loaded.Run.Status)
 	}
+	select {
+	case intent := <-d.intentCh:
+		t.Fatalf("recoverInterrupted should not auto-resume or enqueue intent: %+v", intent)
+	default:
+	}
 }
 
 func TestDaemonRecoverWaitingApprovalAsInterrupted(t *testing.T) {

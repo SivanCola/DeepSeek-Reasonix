@@ -414,8 +414,10 @@ dynamic workflow 或开发者平台，而是先把 Reasonix 从一次性会话�
   - [x] 缓解：确定性预检查、每日自动唤醒预算。
   - [x] 缓解：最大自动轮次。
   - [x] 缓解：每日模型调用 / 费用预算。
-- [ ] 用户体验风险：恢复历史时自动开跑。
-  - 缓解：resume 只恢复状态，不默认执行；显式 continue 或 scheduler 才执行。
+- [x] 用户体验风险：恢复历史时自动开跑。
+  - [x] 缓解：`Controller.Resume` 只恢复 runtime 状态和 notice，不触发模型调用。
+  - [x] 缓解：daemon startup recovery 只把 in-flight run 标记为 interrupted 并记录 timeline，不排队 intent。
+  - [x] 缓解：继续执行只能来自显式 `/goal continue` / daemon `continue`，或已配置的 scheduler / webhook / file wait。
 - [ ] 平台化过早风险：插件生态、SDK、企业平台会拖慢个人 OS MVP。
   - 缓解：先完成个人常驻场景，再抽象生态能力。
 
