@@ -414,8 +414,11 @@ dynamic workflow 或开发者平台，而是先把 Reasonix 从一次性会话�
   - [x] 缓解：外部事件只入队 bounded `RunIntent`，模型上下文只包含受限 summary / payload ref，不注入原始 payload。
   - [x] 缓解：daemon worker 恢复 controller 后启用 interactive approval gate，高风险工具调用会进入 approval wait。
   - [x] 缓解：daemon approval desk / bot `/approvals` 提供显式 approve / deny / answer 入口。
-- [ ] 状态漂移风险：transcript、runtime sidecar、desktop tab profile 不一致。
-  - 缓解：controller runtime sidecar 是权威状态，desktop profile 只是 UI 偏好。
+- [x] 状态漂移风险：transcript、runtime sidecar、desktop tab profile 不一致。
+  - [x] 缓解：runtime sidecar 独立于 `.meta`，只承载 goal/run/wait/scheduler/file-watch/budget 动态状态。
+  - [x] 缓解：`Controller.Resume` 从 runtime sidecar 恢复 goal/run，desktop profile 不作为执行状态来源。
+  - [x] 缓解：controller snapshot 合并并保留 scheduler / file-watch / budget / wait，避免普通 turn 覆盖 daemon 状态。
+  - [x] 缓解：bot `/status`、daemon `/sessions`、`/approvals` 都读取 runtime sidecar 作为用户可见状态。
 - [x] 成本风险：常驻 agent 频繁唤醒模型。
   - [x] 缓解：确定性预检查、每日自动唤醒预算。
   - [x] 缓解：最大自动轮次。
