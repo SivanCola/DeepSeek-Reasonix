@@ -170,13 +170,13 @@ dynamic workflow 或开发者平台，而是先把 Reasonix 从一次性会话�
 
 ### 任务
 
-- [ ] 新增 `reasonix daemon start` 命令。
+- [x] 新增 `reasonix daemon start` 命令。
   - [x] 管理 session registry。
   - [x] 持有 scheduler。
   - [x] 可选择启动 bot gateway。
 - [x] 新增本地控制接口。
   - [x] 使用 localhost HTTP。
-  - [x] 提供 status、sessions、continue goal、stop run、approve、answer、wait-event、wait-time、wait-file。
+  - [x] 提供 status、sessions、approvals、continue goal、stop run、approve、answer、wait-event、wait-time、wait-file。
 - [x] 单实例控制。
   - [x] 同一 config/session dir 只允许一个 daemon 写 runtime state。
   - [x] 启动时检测锁文件。
@@ -189,7 +189,7 @@ dynamic workflow 或开发者平台，而是先把 Reasonix 从一次性会话�
   - [x] 能打开 daemon 管理的 session。
   - [x] 能发送审批、ask 回答和 stop。
   - [x] 增加可见的桌面 daemon 管理 UI / 审批入口。
-- [ ] 日志与诊断。
+- [x] 日志与诊断。
   - [x] daemon log 文件。
   - [x] `reasonix daemon doctor`。
   - [x] 运行中 session 和 wakeup 历史。
@@ -219,7 +219,7 @@ dynamic workflow 或开发者平台，而是先把 Reasonix 从一次性会话�
   - [x] schedule id
   - [x] previous run status
   - [x] bounded event summary
-- [ ] 唤醒时先做确定性检查。
+- [x] 唤醒时先做确定性检查。
   - [x] session 是否仍 active。
   - [x] goal 是否 complete / blocked。
   - [x] 是否已有 run 正在执行。
@@ -227,7 +227,7 @@ dynamic workflow 或开发者平台，而是先把 Reasonix 从一次性会话�
 - [x] 增加去重。
   - [x] 同一 schedule 在同一窗口只触发一次。
   - [x] daemon 重启后不会补跑重复任务。
-- [ ] 增加测试。
+- [x] 增加测试。
   - [x] daily schedule 计算 next run。
   - [x] timezone 正确。
   - [x] missed wakeup 不重复风暴。
@@ -261,12 +261,12 @@ dynamic workflow 或开发者平台，而是先把 Reasonix 从一次性会话�
   - [x] pull_request opened / review_requested / checks completed。
   - [x] workflow_run completed。
   - [ ] 更多 provider-specific 事件归一化。
-- [ ] CI 等待场景。
+- [x] CI 等待场景。
   - [x] daemon API/CLI 可写 runtime event wait condition。
   - [x] webhook 匹配 event wait condition 后触发下一步。
   - [x] CI 绿灯语义过滤（status/conclusion）。
   - [x] CI 失败分支总结。
-- [ ] 幂等处理。
+- [x] 幂等处理。
   - [x] event id 去重。
   - [x] 同一 PR 的相同状态变化不重复跑。
 - [x] 增加安全边界。
@@ -290,17 +290,17 @@ dynamic workflow 或开发者平台，而是先把 Reasonix 从一次性会话�
   - [x] 第一版使用 portable polling 实现。
   - [x] 与 codegraph watcher 分清职责。
   - [ ] 评估 Go 原生跨平台事件库替代 polling。
-- [ ] 配置 watched paths。
+- [x] 配置 watched paths。
   - [x] 支持 watched paths。
   - [x] 支持 exclude / ignore patterns。
   - [x] 默认不监听大目录、依赖目录、secret 文件。
-- [ ] 防抖和批量。
+- [x] 防抖和批量。
   - [x] 短时间内多次变化合并成一个 event。
   - [x] 记录 changed files summary。
 - [x] 事件转 turn input。
   - [x] 不把大文件内容直接塞进 prompt。
   - [x] 只提供路径、变更类型、摘要。
-- [ ] 测试。
+- [x] 测试。
   - [x] explicit file wait 匹配后一次性唤醒并清除 wait。
   - [x] explicit file wait 不匹配时不唤醒。
   - [x] event/time 等其他 wait 不会被文件变化误唤醒。
@@ -404,10 +404,10 @@ dynamic workflow 或开发者平台，而是先把 Reasonix 从一次性会话�
   - 缓解：外部事件只触发 bounded turn，高风险操作走 approval。
 - [ ] 状态漂移风险：transcript、runtime sidecar、desktop tab profile 不一致。
   - 缓解：controller runtime sidecar 是权威状态，desktop profile 只是 UI 偏好。
-- [ ] 成本风险：常驻 agent 频繁唤醒模型。
+- [x] 成本风险：常驻 agent 频繁唤醒模型。
   - [x] 缓解：确定性预检查、每日自动唤醒预算。
   - [x] 缓解：最大自动轮次。
-  - [ ] 缓解：每日模型调用 / 费用预算。
+  - [x] 缓解：每日模型调用 / 费用预算。
 - [ ] 用户体验风险：恢复历史时自动开跑。
   - 缓解：resume 只恢复状态，不默认执行；显式 continue 或 scheduler 才执行。
 - [ ] 平台化过早风险：插件生态、SDK、企业平台会拖慢个人 OS MVP。

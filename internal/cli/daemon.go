@@ -39,6 +39,8 @@ func daemonCommand(args []string) int {
 		return daemonDoctor(rest)
 	case "sessions":
 		return daemonSessions(rest)
+	case "approvals":
+		return daemonApprovals(rest)
 	case "timeline":
 		return daemonTimeline(rest)
 	case "stop":
@@ -352,6 +354,109 @@ func daemonSessions(args []string) int {
 		}
 	}
 	return 0
+}
+
+func daemonApprovals(args []string) int {
+	fs := flag.NewFlagSet("daemon approvals", flag.ContinueOnError)
+	addr := fs.String("addr", daemon.DefaultAddr, "daemon 地址")
+	dir := fs.String("dir", "", "会话目录（用于读取本地 token）")
+	jsonOut := fs.Bool("json", false, "JSON 格式输出")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+
+	resp, err := daemonGet(*addr, *dir, "/approvals")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "daemon not reachable: %v\n", err)
+		return 1
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(resp.Body)
+		fmt.Fprintf(os.Stderr, "error: %s\n", string(b))
+		return 1
+	}
+	var approvals daemon.ApprovalDeskResponse
+	if err := json.NewDecoder(resp.Body).Decode(&approvals); err != nil {
+		fmt.Fprintf(os.Stderr, "invalid response: %v\n", err)
+		return 1
+	}
+	if *jsonOut {
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		enc.Encode(approvals)
+		return 0
+	}
+	printDaemonApprovals(os.Stdout, approvals)
+	return 0
+}
+
+func printDaemonApprovals(w io.Writer, approvals daemon.ApprovalDeskResponse) {
+	if len(approvals.Items) == 0 {
+		fmt.Fprintln(w, "no pending daemon approvals or asks")
+		return
+	}
+	for _, item := range approvals.Items {
+		session := item.SessionID
+		if len(session) > 12 {
+			session = session[:12]
+		}
+		id := item.ID
+		if id == "" {
+			id = "(unknown)"
+		}
+		status := item.RunStatus
+		if status == "" {
+			status = "waiting"
+		}
+		active := "inactive"
+		if item.Active {
+			active = "active"
+		}
+		parts := []string{
+			fmt.Sprintf("%s  %s:%s", session, item.Kind, id),
+			"run=" + status,
+			active,
+		}
+		if item.Tool != "" {
+			parts = append(parts, "tool="+item.Tool)
+		}
+		if item.Subject != "" {
+			parts = append(parts, "subject="+truncate(item.Subject, 60))
+		}
+		if item.Reason != "" {
+			parts = append(parts, "reason="+truncate(item.Reason, 60))
+		}
+		fmt.Fprintln(w, strings.Join(parts, "  "))
+		switch item.Kind {
+		case "approval":
+			fmt.Fprintf(w, "  next: reasonix daemon approve --session %s --approval %s  # or daemon deny\n", item.SessionID, id)
+		case "ask":
+			fmt.Fprintf(w, "  next: reasonix daemon answer --session %s --ask %s --selected TEXT\n", item.SessionID, id)
+			for _, q := range item.Questions {
+				if q.Prompt == "" && len(q.Options) == 0 {
+					continue
+				}
+				label := q.ID
+				if label == "" {
+					label = "question"
+				}
+				fmt.Fprintf(w, "  %s: %s", label, truncate(q.Prompt, 80))
+				if len(q.Options) > 0 {
+					options := make([]string, 0, len(q.Options))
+					for _, opt := range q.Options {
+						if opt.Label != "" {
+							options = append(options, opt.Label)
+						}
+					}
+					if len(options) > 0 {
+						fmt.Fprintf(w, " [%s]", strings.Join(options, " / "))
+					}
+				}
+				fmt.Fprintln(w)
+			}
+		}
+	}
 }
 
 func daemonStopCmd(args []string) int {
@@ -843,6 +948,7 @@ Usage:
   reasonix daemon status   [--addr HOST:PORT] [--dir PATH]
   reasonix daemon doctor   [--addr HOST:PORT] [--dir PATH] [--log-file PATH|none] [--json]
   reasonix daemon sessions [--addr HOST:PORT] [--dir PATH] [--json]
+  reasonix daemon approvals [--addr HOST:PORT] [--dir PATH] [--json]
   reasonix daemon timeline --session ID [--limit N] [--json]
   reasonix daemon continue --session ID [--addr HOST:PORT] [--dir PATH]
   reasonix daemon schedule --session ID [--daily-at HH:MM] [--timezone Area/City] [--interval 1h]
@@ -860,6 +966,7 @@ Subcommands:
   status     查询 daemon 状态
   doctor     检查 daemon token、lock、runtime sidecar 和在线状态
   sessions   列出所有跟踪的 session 及其 goal/run 状态
+  approvals  列出等待审批或 ask 回答的 daemon 待办
   timeline   查看指定 session 的运行事件时间线
   continue   显式唤醒并继续指定 goal
   schedule   设置 daily/interval 定时唤醒和 daily 时区

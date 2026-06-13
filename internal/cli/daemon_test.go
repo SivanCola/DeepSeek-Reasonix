@@ -2,8 +2,10 @@ package cli
 
 import (
 	"bytes"
+	"encoding/json"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -120,6 +122,89 @@ func TestPrepareBotGatewayBuildsGateway(t *testing.T) {
 	}
 	if prepared.Model != "bot-model" || prepared.ChannelSummary != "qq" {
 		t.Fatalf("unexpected prepared gateway: %+v", prepared)
+	}
+}
+
+func TestDaemonApprovalsCommandListsPendingItems(t *testing.T) {
+	seenPath := ""
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seenPath = r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(daemon.ApprovalDeskResponse{Items: []daemon.ApprovalDeskItem{{
+			SessionID: "session-approval-123456",
+			Kind:      "approval",
+			ID:        "approval-1",
+			Tool:      "shell",
+			Subject:   "go test ./...",
+			RunStatus: "waiting_approval",
+			Active:    true,
+		}, {
+			SessionID: "session-ask-123456",
+			Kind:      "ask",
+			ID:        "ask-1",
+			Reason:    "user answer required",
+			RunStatus: "waiting_ask",
+			Active:    true,
+			Questions: []daemon.ApprovalDeskQuestion{{
+				ID:     "q1",
+				Prompt: "Ship now?",
+				Options: []daemon.ApprovalDeskOption{
+					{Label: "yes"},
+					{Label: "no"},
+				},
+			}},
+		}}})
+	}))
+	defer server.Close()
+	addr := strings.TrimPrefix(server.URL, "http://")
+
+	out := captureStdout(t, func() {
+		if rc := daemonApprovals([]string{"--addr", addr}); rc != 0 {
+			t.Fatalf("daemonApprovals rc = %d, want 0", rc)
+		}
+	})
+
+	if seenPath != "/approvals" {
+		t.Fatalf("seenPath = %q, want /approvals", seenPath)
+	}
+	for _, want := range []string{
+		"session-appr",
+		"approval:approval-1",
+		"tool=shell",
+		"reasonix daemon approve --session session-approval-123456 --approval approval-1",
+		"ask:ask-1",
+		"q1: Ship now? [yes / no]",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("approvals output missing %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestDaemonApprovalsCommandJSON(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(daemon.ApprovalDeskResponse{Items: []daemon.ApprovalDeskItem{{
+			SessionID: "session-1",
+			Kind:      "approval",
+			ID:        "approval-1",
+		}}})
+	}))
+	defer server.Close()
+	addr := strings.TrimPrefix(server.URL, "http://")
+
+	out := captureStdout(t, func() {
+		if rc := daemonApprovals([]string{"--addr", addr, "--json"}); rc != 0 {
+			t.Fatalf("daemonApprovals --json rc = %d, want 0", rc)
+		}
+	})
+
+	var resp daemon.ApprovalDeskResponse
+	if err := json.Unmarshal([]byte(out), &resp); err != nil {
+		t.Fatalf("json output did not decode: %v\n%s", err, out)
+	}
+	if len(resp.Items) != 1 || resp.Items[0].ID != "approval-1" {
+		t.Fatalf("decoded approvals = %+v", resp)
 	}
 }
 
