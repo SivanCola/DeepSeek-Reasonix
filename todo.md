@@ -404,8 +404,11 @@ dynamic workflow 或开发者平台，而是先把 Reasonix 从一次性会话�
 
 - [ ] Cache 风险：把动态状态写进稳定 prompt prefix。
   - 缓解：状态写 sidecar，唤醒时作为普通 turn 输入。
-- [ ] 重复执行风险：daemon 重启、webhook 重放、cron 补跑导致重复提交。
-  - 缓解：event id、schedule window、run id 去重。
+- [x] 重复执行风险：daemon 重启、webhook 重放、cron 补跑导致重复提交。
+  - [x] 缓解：daemon startup recovery 只标记 interrupted，不补跑或排队 intent。
+  - [x] 缓解：cron 使用 schedule window 的 event id / wakeup key 去重，同一窗口不重复唤醒。
+  - [x] 缓解：webhook 使用 delivery event id 和语义 wakeup key 去重，重放不 enqueue intent、不重复消耗预算。
+  - [x] 缓解：budget-blocked wakeup 也记录 wakeup key，避免同一窗口阻断后反复刷屏。
 - [ ] 权限风险：外部事件触发写操作。
   - 缓解：外部事件只触发 bounded turn，高风险操作走 approval。
 - [ ] 状态漂移风险：transcript、runtime sidecar、desktop tab profile 不一致。
