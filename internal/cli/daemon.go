@@ -436,12 +436,16 @@ func daemonSessions(args []string) int {
 	fs := flag.NewFlagSet("daemon sessions", flag.ContinueOnError)
 	addr := fs.String("addr", daemon.DefaultAddr, "daemon 地址")
 	dir := fs.String("dir", "", "会话目录（用于读取本地 token）")
+	scope := fs.String("scope", "", "过滤范围：global 或 project")
+	workspaceRoot := fs.String("workspace-root", "", "project 范围过滤的工作区路径")
+	status := fs.String("status", "", "过滤状态：running、waiting、blocked、active、scheduled、watched 或具体 run 状态")
 	jsonOut := fs.Bool("json", false, "JSON 格式输出")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
 
-	resp, err := daemonGet(*addr, *dir, "/sessions")
+	path := daemonSessionsPath(*scope, *workspaceRoot, *status)
+	resp, err := daemonGet(*addr, *dir, path)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "daemon not reachable: %v\n", err)
 		return 1
@@ -481,10 +485,92 @@ func daemonSessions(args []string) int {
 			if s.Active {
 				active = "  active=true"
 			}
-			fmt.Printf("  %s  goal=%s  status=%s  run=%s%s%s\n", s.ID[:8], truncate(goal, 40), s.GoalStatus, s.RunStatus, wait, active)
+			next := ""
+			if s.NextWakeupAt != nil {
+				next = "  next=" + s.NextWakeupAt.Format(time.RFC3339)
+			}
+			flags := daemonSessionFlags(s)
+			if flags != "" {
+				flags = "  " + flags
+			}
+			budget := daemonSessionBudgetSummary(s)
+			if budget != "" {
+				budget = "  budget=" + budget
+			}
+			fmt.Printf("  %s  scope=%s  goal=%s  status=%s  run=%s%s%s%s%s%s\n", shortDaemonSessionID(s.ID), daemonSessionScope(s.Scope), truncate(goal, 40), s.GoalStatus, s.RunStatus, wait, next, budget, flags, active)
 		}
 	}
 	return 0
+}
+
+func daemonSessionsPath(scope, workspaceRoot, status string) string {
+	q := url.Values{}
+	if strings.TrimSpace(scope) != "" {
+		q.Set("scope", strings.TrimSpace(scope))
+	}
+	if strings.TrimSpace(workspaceRoot) != "" {
+		q.Set("workspace_root", strings.TrimSpace(workspaceRoot))
+	}
+	if strings.TrimSpace(status) != "" {
+		q.Set("status", strings.TrimSpace(status))
+	}
+	if encoded := q.Encode(); encoded != "" {
+		return "/sessions?" + encoded
+	}
+	return "/sessions"
+}
+
+func shortDaemonSessionID(id string) string {
+	if len(id) <= 8 {
+		return id
+	}
+	return id[:8]
+}
+
+func daemonSessionScope(scope string) string {
+	scope = strings.TrimSpace(scope)
+	if scope == "" {
+		return "unknown"
+	}
+	return scope
+}
+
+func daemonSessionFlags(s daemon.SessionView) string {
+	flags := make([]string, 0, 2)
+	if s.Scheduled {
+		flags = append(flags, "scheduled=true")
+	}
+	if s.Watched {
+		flags = append(flags, "watched=true")
+	}
+	return strings.Join(flags, "  ")
+}
+
+func daemonSessionBudgetSummary(s daemon.SessionView) string {
+	parts := make([]string, 0, 4)
+	if s.DailyWakeupLimit > 0 || s.DailyWakeups > 0 {
+		parts = append(parts, fmt.Sprintf("wakeups %d/%d", s.DailyWakeups, s.DailyWakeupLimit))
+	}
+	if s.DailyModelCallLimit > 0 || s.DailyModelCalls > 0 {
+		parts = append(parts, fmt.Sprintf("models %d/%d", s.DailyModelCalls, s.DailyModelCallLimit))
+	}
+	if s.DailyModelCostLimit > 0 || s.DailyModelCost > 0 {
+		currency := s.ModelCostCurrency
+		if currency == "" {
+			currency = "$"
+		}
+		parts = append(parts, fmt.Sprintf("cost %s%.4g/%s%.4g", currency, s.DailyModelCost, currency, s.DailyModelCostLimit))
+	}
+	if s.MaxGoalAutoTurns > 0 {
+		parts = append(parts, fmt.Sprintf("auto-turns %d", s.MaxGoalAutoTurns))
+	}
+	if s.BudgetBlockedReason != "" {
+		parts = append(parts, "blocked")
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return strings.Join(parts, ",")
 }
 
 func daemonApprovals(args []string) int {
@@ -1422,7 +1508,7 @@ Usage:
   reasonix daemon status   [--addr HOST:PORT] [--dir PATH]
   reasonix daemon doctor   [--addr HOST:PORT] [--dir PATH] [--log-file PATH|none] [--json]
   reasonix daemon token rotate [--dir PATH]
-  reasonix daemon sessions [--addr HOST:PORT] [--dir PATH] [--json]
+  reasonix daemon sessions [--addr HOST:PORT] [--dir PATH] [--scope global|project] [--workspace-root PATH] [--status running|waiting|blocked|active|scheduled|watched] [--json]
   reasonix daemon approvals [--addr HOST:PORT] [--dir PATH] [--json]
   reasonix daemon timeline --session ID [--limit N] [--json]
   reasonix daemon continue --session ID [--addr HOST:PORT] [--dir PATH]

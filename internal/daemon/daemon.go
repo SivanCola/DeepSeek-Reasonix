@@ -141,17 +141,33 @@ type ApprovalDeskOption struct {
 
 // SessionView is the public representation of a session in the API.
 type SessionView struct {
-	ID          string `json:"id"`
-	Path        string `json:"path"`
-	GoalText    string `json:"goal_text,omitempty"`
-	GoalStatus  string `json:"goal_status,omitempty"`
-	RunStatus   string `json:"run_status,omitempty"`
-	WaitKind    string `json:"wait_kind,omitempty"`
-	WaitReason  string `json:"wait_reason,omitempty"`
-	WaitID      string `json:"wait_id,omitempty"`
-	WaitTool    string `json:"wait_tool,omitempty"`
-	WaitSubject string `json:"wait_subject,omitempty"`
-	Active      bool   `json:"active,omitempty"`
+	ID                  string     `json:"id"`
+	Path                string     `json:"path"`
+	GoalText            string     `json:"goal_text,omitempty"`
+	GoalStatus          string     `json:"goal_status,omitempty"`
+	RunStatus           string     `json:"run_status,omitempty"`
+	WaitKind            string     `json:"wait_kind,omitempty"`
+	WaitReason          string     `json:"wait_reason,omitempty"`
+	WaitID              string     `json:"wait_id,omitempty"`
+	WaitTool            string     `json:"wait_tool,omitempty"`
+	WaitSubject         string     `json:"wait_subject,omitempty"`
+	Active              bool       `json:"active,omitempty"`
+	Scope               string     `json:"scope,omitempty"`
+	WorkspaceRoot       string     `json:"workspace_root,omitempty"`
+	TopicID             string     `json:"topic_id,omitempty"`
+	TopicTitle          string     `json:"topic_title,omitempty"`
+	NextWakeupAt        *time.Time `json:"next_wakeup_at,omitempty"`
+	DailyWakeupLimit    int        `json:"daily_wakeup_limit,omitempty"`
+	DailyWakeups        int        `json:"daily_wakeups,omitempty"`
+	MaxGoalAutoTurns    int        `json:"max_goal_auto_turns,omitempty"`
+	DailyModelCallLimit int        `json:"daily_model_call_limit,omitempty"`
+	DailyModelCalls     int        `json:"daily_model_calls,omitempty"`
+	DailyModelCostLimit float64    `json:"daily_model_cost_limit,omitempty"`
+	DailyModelCost      float64    `json:"daily_model_cost,omitempty"`
+	ModelCostCurrency   string     `json:"model_cost_currency,omitempty"`
+	BudgetBlockedReason string     `json:"budget_blocked_reason,omitempty"`
+	Scheduled           bool       `json:"scheduled,omitempty"`
+	Watched             bool       `json:"watched,omitempty"`
 }
 
 // Options configures daemon creation.

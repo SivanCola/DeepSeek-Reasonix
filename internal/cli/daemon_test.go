@@ -234,6 +234,70 @@ func TestDaemonTokenRotateCommandWritesNewTokenWithoutPrintingIt(t *testing.T) {
 	}
 }
 
+func TestDaemonSessionsCommandFiltersAndPrintsOverview(t *testing.T) {
+	next := time.Date(2026, 6, 14, 9, 30, 0, 0, time.UTC)
+	seenPath := ""
+	seenQuery := ""
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seenPath = r.URL.Path
+		seenQuery = r.URL.RawQuery
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(daemon.SessionsResponse{Sessions: []daemon.SessionView{{
+			ID:                  "abc",
+			Path:                "/tmp/abc.jsonl",
+			Scope:               "project",
+			GoalText:            "finish daemon session overview",
+			GoalStatus:          "running",
+			RunStatus:           "waiting_event",
+			WaitKind:            "event",
+			WaitID:              "ci-green",
+			NextWakeupAt:        &next,
+			DailyWakeupLimit:    3,
+			DailyWakeups:        1,
+			DailyModelCallLimit: 5,
+			DailyModelCalls:     2,
+			DailyModelCostLimit: 1.5,
+			DailyModelCost:      0.25,
+			ModelCostCurrency:   "$",
+			BudgetBlockedReason: "daily budget exhausted",
+			Scheduled:           true,
+			Watched:             true,
+			Active:              true,
+		}}})
+	}))
+	defer server.Close()
+	addr := strings.TrimPrefix(server.URL, "http://")
+
+	out := captureStdout(t, func() {
+		if rc := daemonSessions([]string{"--addr", addr, "--scope", "project", "--workspace-root", "/repo", "--status", "waiting"}); rc != 0 {
+			t.Fatalf("daemonSessions rc = %d, want 0", rc)
+		}
+	})
+
+	if seenPath != "/sessions" {
+		t.Fatalf("seenPath = %q, want /sessions", seenPath)
+	}
+	for _, want := range []string{"scope=project", "workspace_root=%2Frepo", "status=waiting"} {
+		if !strings.Contains(seenQuery, want) {
+			t.Fatalf("query missing %q: %s", want, seenQuery)
+		}
+	}
+	for _, want := range []string{
+		"abc  scope=project",
+		"run=waiting_event",
+		"wait=event:ci-green",
+		"next=2026-06-14T09:30:00Z",
+		"budget=wakeups 1/3,models 2/5,cost $0.25/$1.5,blocked",
+		"scheduled=true",
+		"watched=true",
+		"active=true",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("sessions output missing %q:\n%s", want, out)
+		}
+	}
+}
+
 func TestPrepareBotGatewayBuildsGateway(t *testing.T) {
 	cfg := testBotGatewayConfig()
 	cfg.Bot.Model = "bot-model"

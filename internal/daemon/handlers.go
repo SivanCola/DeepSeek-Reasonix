@@ -36,28 +36,133 @@ func (d *Daemon) handleStatus(w http.ResponseWriter, r *http.Request) {
 
 // handleSessions lists all tracked sessions with their runtime state.
 func (d *Daemon) handleSessions(w http.ResponseWriter, r *http.Request) {
+	scope := strings.TrimSpace(r.URL.Query().Get("scope"))
+	workspaceRoot := strings.TrimSpace(r.URL.Query().Get("workspace_root"))
+	status := strings.TrimSpace(r.URL.Query().Get("status"))
+	if !validSessionScopeFilter(scope) {
+		http.Error(w, `{"error":"invalid scope"}`, http.StatusBadRequest)
+		return
+	}
+	if !validSessionStatusFilter(status) {
+		http.Error(w, `{"error":"invalid status"}`, http.StatusBadRequest)
+		return
+	}
+
 	d.mu.RLock()
 	views := make([]SessionView, 0, len(d.registry))
 	for _, entry := range d.registry {
 		_, active := d.activeRuns[entry.ID]
-		views = append(views, SessionView{
-			ID:          entry.ID,
-			Path:        entry.Path,
-			GoalText:    entry.Runtime.Goal.Text,
-			GoalStatus:  entry.Runtime.Goal.Status,
-			RunStatus:   entry.Runtime.Run.Status,
-			WaitKind:    entry.Runtime.Wait.Kind,
-			WaitReason:  entry.Runtime.Wait.Reason,
-			WaitID:      firstNonEmpty(entry.Runtime.Wait.ApprovalID, entry.Runtime.Wait.AskID, entry.Runtime.Wait.EventID),
-			WaitTool:    entry.Runtime.Wait.Tool,
-			WaitSubject: entry.Runtime.Wait.Subject,
-			Active:      active,
-		})
+		view := sessionViewForEntry(entry, active)
+		if sessionViewMatchesFilters(view, scope, workspaceRoot, status) {
+			views = append(views, view)
+		}
 	}
 	d.mu.RUnlock()
+	sort.Slice(views, func(i, j int) bool { return views[i].ID < views[j].ID })
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(SessionsResponse{Sessions: views})
+}
+
+func sessionViewForEntry(entry *SessionEntry, active bool) SessionView {
+	meta, _, _ := agent.LoadBranchMeta(entry.Path)
+	scope := meta.DefaultScope()
+	workspaceRoot := firstNonEmpty(entry.Runtime.WorkspaceRoot, meta.WorkspaceRoot)
+	if scope == "global" && strings.TrimSpace(workspaceRoot) != "" {
+		scope = "project"
+	}
+	runStatus := agent.NormalizeRunStatus(entry.Runtime.Run.Status)
+	nextWakeupAt := timePtr(entry.Runtime.Scheduler.NextWakeupAt)
+	budget := entry.Runtime.Budget
+	return SessionView{
+		ID:                  entry.ID,
+		Path:                entry.Path,
+		GoalText:            entry.Runtime.Goal.Text,
+		GoalStatus:          entry.Runtime.Goal.Status,
+		RunStatus:           runStatus,
+		WaitKind:            entry.Runtime.Wait.Kind,
+		WaitReason:          entry.Runtime.Wait.Reason,
+		WaitID:              firstNonEmpty(entry.Runtime.Wait.ApprovalID, entry.Runtime.Wait.AskID, entry.Runtime.Wait.EventID),
+		WaitTool:            entry.Runtime.Wait.Tool,
+		WaitSubject:         entry.Runtime.Wait.Subject,
+		Active:              active,
+		Scope:               scope,
+		WorkspaceRoot:       workspaceRoot,
+		TopicID:             meta.TopicID,
+		TopicTitle:          meta.TopicTitle,
+		NextWakeupAt:        nextWakeupAt,
+		DailyWakeupLimit:    budget.DailyWakeupLimit,
+		DailyWakeups:        budget.DailyWakeups,
+		MaxGoalAutoTurns:    budget.MaxGoalAutoTurns,
+		DailyModelCallLimit: budget.DailyModelCallLimit,
+		DailyModelCalls:     budget.DailyModelCalls,
+		DailyModelCostLimit: budget.DailyModelCostLimit,
+		DailyModelCost:      budget.DailyModelCost,
+		ModelCostCurrency:   budget.ModelCostCurrency,
+		BudgetBlockedReason: budget.LastBlockedReason,
+		Scheduled:           entry.Runtime.Scheduler.Enabled,
+		Watched:             entry.Runtime.FileWatch.Enabled && len(entry.Runtime.FileWatch.Paths) > 0,
+	}
+}
+
+func timePtr(t time.Time) *time.Time {
+	if t.IsZero() {
+		return nil
+	}
+	tt := t
+	return &tt
+}
+
+func validSessionScopeFilter(scope string) bool {
+	switch scope {
+	case "", "all", "global", "project":
+		return true
+	default:
+		return false
+	}
+}
+
+func validSessionStatusFilter(status string) bool {
+	switch status {
+	case "", "all", "active", "running", "waiting", "blocked", "scheduled", "watched":
+		return true
+	default:
+		return agent.IsKnownRunStatus(status)
+	}
+}
+
+func sessionViewMatchesFilters(view SessionView, scope, workspaceRoot, status string) bool {
+	switch scope {
+	case "global":
+		if view.Scope != "global" {
+			return false
+		}
+	case "project":
+		if view.Scope != "project" {
+			return false
+		}
+		if strings.TrimSpace(workspaceRoot) != "" && !sameWorkspaceRoot(view.WorkspaceRoot, workspaceRoot) {
+			return false
+		}
+	}
+	switch status {
+	case "", "all":
+		return true
+	case "active":
+		return view.Active
+	case "running":
+		return view.Active || view.RunStatus == agent.RunStatusRunning || view.RunStatus == agent.RunStatusQueued
+	case "waiting":
+		return view.WaitKind != "" || strings.HasPrefix(view.RunStatus, "waiting_")
+	case "blocked":
+		return view.GoalStatus == "blocked" || view.RunStatus == agent.RunStatusBlocked || view.BudgetBlockedReason != ""
+	case "scheduled":
+		return view.Scheduled
+	case "watched":
+		return view.Watched
+	default:
+		return view.RunStatus == agent.NormalizeRunStatus(status)
+	}
 }
 
 func (d *Daemon) handleTimeline(w http.ResponseWriter, r *http.Request) {

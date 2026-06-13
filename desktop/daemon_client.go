@@ -32,22 +32,34 @@ type DaemonStatusView struct {
 }
 
 type DaemonSessionView struct {
-	ID          string `json:"id"`
-	Path        string `json:"path"`
-	GoalText    string `json:"goalText,omitempty"`
-	GoalStatus  string `json:"goalStatus,omitempty"`
-	RunStatus   string `json:"runStatus,omitempty"`
-	WaitKind    string `json:"waitKind,omitempty"`
-	WaitReason  string `json:"waitReason,omitempty"`
-	WaitID      string `json:"waitId,omitempty"`
-	WaitTool    string `json:"waitTool,omitempty"`
-	WaitSubject string `json:"waitSubject,omitempty"`
-	Active      bool   `json:"active,omitempty"`
-	Open        bool   `json:"open,omitempty"`
-	Scope       string `json:"scope,omitempty"`
-	Workspace   string `json:"workspaceRoot,omitempty"`
-	TopicID     string `json:"topicId,omitempty"`
-	TopicTitle  string `json:"topicTitle,omitempty"`
+	ID                  string     `json:"id"`
+	Path                string     `json:"path"`
+	GoalText            string     `json:"goalText,omitempty"`
+	GoalStatus          string     `json:"goalStatus,omitempty"`
+	RunStatus           string     `json:"runStatus,omitempty"`
+	WaitKind            string     `json:"waitKind,omitempty"`
+	WaitReason          string     `json:"waitReason,omitempty"`
+	WaitID              string     `json:"waitId,omitempty"`
+	WaitTool            string     `json:"waitTool,omitempty"`
+	WaitSubject         string     `json:"waitSubject,omitempty"`
+	Active              bool       `json:"active,omitempty"`
+	Open                bool       `json:"open,omitempty"`
+	Scope               string     `json:"scope,omitempty"`
+	Workspace           string     `json:"workspaceRoot,omitempty"`
+	TopicID             string     `json:"topicId,omitempty"`
+	TopicTitle          string     `json:"topicTitle,omitempty"`
+	NextWakeupAt        *time.Time `json:"nextWakeupAt,omitempty"`
+	DailyWakeupLimit    int        `json:"dailyWakeupLimit,omitempty"`
+	DailyWakeups        int        `json:"dailyWakeups,omitempty"`
+	MaxGoalAutoTurns    int        `json:"maxGoalAutoTurns,omitempty"`
+	DailyModelCallLimit int        `json:"dailyModelCallLimit,omitempty"`
+	DailyModelCalls     int        `json:"dailyModelCalls,omitempty"`
+	DailyModelCostLimit float64    `json:"dailyModelCostLimit,omitempty"`
+	DailyModelCost      float64    `json:"dailyModelCost,omitempty"`
+	ModelCostCurrency   string     `json:"modelCostCurrency,omitempty"`
+	BudgetBlockedReason string     `json:"budgetBlockedReason,omitempty"`
+	Scheduled           bool       `json:"scheduled,omitempty"`
+	Watched             bool       `json:"watched,omitempty"`
 }
 
 type DaemonApprovalDeskItemView struct {
@@ -203,26 +215,50 @@ func (a *App) fetchDaemonSessions(addr string) ([]DaemonSessionView, error) {
 	out := make([]DaemonSessionView, 0, len(resp.Sessions))
 	for _, s := range resp.Sessions {
 		view := DaemonSessionView{
-			ID:          s.ID,
-			Path:        s.Path,
-			GoalText:    s.GoalText,
-			GoalStatus:  s.GoalStatus,
-			RunStatus:   s.RunStatus,
-			WaitKind:    s.WaitKind,
-			WaitReason:  s.WaitReason,
-			WaitID:      s.WaitID,
-			WaitTool:    s.WaitTool,
-			WaitSubject: s.WaitSubject,
-			Active:      s.Active,
+			ID:                  s.ID,
+			Path:                s.Path,
+			GoalText:            s.GoalText,
+			GoalStatus:          s.GoalStatus,
+			RunStatus:           s.RunStatus,
+			WaitKind:            s.WaitKind,
+			WaitReason:          s.WaitReason,
+			WaitID:              s.WaitID,
+			WaitTool:            s.WaitTool,
+			WaitSubject:         s.WaitSubject,
+			Active:              s.Active,
+			Scope:               s.Scope,
+			Workspace:           s.WorkspaceRoot,
+			TopicID:             s.TopicID,
+			TopicTitle:          s.TopicTitle,
+			NextWakeupAt:        s.NextWakeupAt,
+			DailyWakeupLimit:    s.DailyWakeupLimit,
+			DailyWakeups:        s.DailyWakeups,
+			MaxGoalAutoTurns:    s.MaxGoalAutoTurns,
+			DailyModelCallLimit: s.DailyModelCallLimit,
+			DailyModelCalls:     s.DailyModelCalls,
+			DailyModelCostLimit: s.DailyModelCostLimit,
+			DailyModelCost:      s.DailyModelCost,
+			ModelCostCurrency:   s.ModelCostCurrency,
+			BudgetBlockedReason: s.BudgetBlockedReason,
+			Scheduled:           s.Scheduled,
+			Watched:             s.Watched,
 		}
 		if path, err := filepath.Abs(s.Path); err == nil {
 			_, view.Open = open[path]
 		}
 		if meta, ok, err := agent.LoadBranchMeta(s.Path); err == nil && ok {
-			view.Scope = meta.DefaultScope()
-			view.Workspace = meta.WorkspaceRoot
-			view.TopicID = meta.TopicID
-			view.TopicTitle = meta.TopicTitle
+			if view.Scope == "" {
+				view.Scope = meta.DefaultScope()
+			}
+			if view.Workspace == "" {
+				view.Workspace = meta.WorkspaceRoot
+			}
+			if view.TopicID == "" {
+				view.TopicID = meta.TopicID
+			}
+			if view.TopicTitle == "" {
+				view.TopicTitle = meta.TopicTitle
+			}
 		}
 		out = append(out, view)
 	}

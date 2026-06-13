@@ -139,15 +139,30 @@ func TestDesktopDaemonSessionsAndOpenResumeTranscript(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
 		case "/sessions":
+			next := time.Date(2026, 6, 14, 9, 30, 0, 0, time.UTC)
 			_ = json.NewEncoder(w).Encode(daemon.SessionsResponse{Sessions: []daemon.SessionView{{
-				ID:         "daemon-target",
-				Path:       targetPath,
-				GoalText:   "finish daemon session",
-				GoalStatus: "running",
-				RunStatus:  "waiting_approval",
-				WaitKind:   "approval",
-				WaitID:     "approval-1",
-				Active:     true,
+				ID:                  "daemon-target",
+				Path:                targetPath,
+				GoalText:            "finish daemon session",
+				GoalStatus:          "running",
+				RunStatus:           "waiting_approval",
+				WaitKind:            "approval",
+				WaitID:              "approval-1",
+				Active:              true,
+				Scope:               "global",
+				TopicID:             "topic-daemon",
+				TopicTitle:          "Daemon topic",
+				NextWakeupAt:        &next,
+				DailyWakeupLimit:    3,
+				DailyWakeups:        1,
+				MaxGoalAutoTurns:    4,
+				DailyModelCallLimit: 5,
+				DailyModelCalls:     2,
+				DailyModelCostLimit: 1.5,
+				DailyModelCost:      0.25,
+				ModelCostCurrency:   "$",
+				Scheduled:           true,
+				Watched:             true,
 			}}})
 		default:
 			http.NotFound(w, r)
@@ -161,6 +176,11 @@ func TestDesktopDaemonSessionsAndOpenResumeTranscript(t *testing.T) {
 	}
 	if len(sessions) != 1 || sessions[0].ID != "daemon-target" || sessions[0].TopicTitle != "Daemon topic" {
 		t.Fatalf("unexpected daemon sessions: %+v", sessions)
+	}
+	if sessions[0].NextWakeupAt == nil || sessions[0].DailyWakeupLimit != 3 || sessions[0].DailyWakeups != 1 ||
+		sessions[0].MaxGoalAutoTurns != 4 || sessions[0].DailyModelCallLimit != 5 || sessions[0].DailyModelCalls != 2 ||
+		sessions[0].DailyModelCostLimit != 1.5 || sessions[0].DailyModelCost != 0.25 || !sessions[0].Scheduled || !sessions[0].Watched {
+		t.Fatalf("daemon overview fields missing: %+v", sessions[0])
 	}
 
 	meta, err := app.OpenDaemonSession("daemon-target", server.URL)

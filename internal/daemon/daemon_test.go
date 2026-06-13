@@ -361,6 +361,137 @@ func TestDaemonHTTPHandlers(t *testing.T) {
 	}
 }
 
+func TestDaemonSessionsOverviewAndFilters(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, "workspace")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatalf("MkdirAll root: %v", err)
+	}
+	next := time.Date(2026, 6, 14, 9, 30, 0, 0, time.UTC)
+
+	projectSess := filepath.Join(dir, "project-waiting.jsonl")
+	if err := os.WriteFile(projectSess, []byte(`{"role":"user","content":"project"}`+"\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile project: %v", err)
+	}
+	if err := agent.SaveRuntimeMeta(projectSess, agent.RuntimeMeta{
+		SessionID:     "project-waiting",
+		WorkspaceRoot: root,
+		Goal:          agent.RuntimeGoalMeta{Text: "finish project triage", Status: control.GoalStatusRunning},
+		Run:           agent.RuntimeRunMeta{Status: agent.RunStatusWaitingEvent},
+		Wait:          agent.RuntimeWaitMeta{Kind: "event", Reason: "ci", EventID: "event-1"},
+		Scheduler:     agent.RuntimeSchedMeta{Enabled: true, NextWakeupAt: next},
+		FileWatch:     agent.RuntimeWatchMeta{Enabled: true, Paths: []string{"CHANGELOG.md"}},
+		Budget: agent.RuntimeBudgetMeta{
+			DailyWakeupLimit:    3,
+			DailyWakeups:        1,
+			MaxGoalAutoTurns:    4,
+			DailyModelCallLimit: 5,
+			DailyModelCalls:     2,
+			DailyModelCostLimit: 1.5,
+			DailyModelCost:      0.25,
+			ModelCostCurrency:   "$",
+		},
+	}); err != nil {
+		t.Fatalf("SaveRuntimeMeta project: %v", err)
+	}
+	if err := agent.SaveBranchMeta(projectSess, agent.BranchMeta{
+		Scope:         "project",
+		WorkspaceRoot: root,
+		TopicID:       "topic-project",
+		TopicTitle:    "Project topic",
+	}); err != nil {
+		t.Fatalf("SaveBranchMeta project: %v", err)
+	}
+
+	globalSess := filepath.Join(dir, "global-id.jsonl")
+	if err := os.WriteFile(globalSess, []byte(`{"role":"user","content":"global"}`+"\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile global: %v", err)
+	}
+	if err := agent.SaveRuntimeMeta(globalSess, agent.RuntimeMeta{
+		SessionID: "global-id",
+		Goal:      agent.RuntimeGoalMeta{Text: "global recap", Status: control.GoalStatusRunning},
+		Run:       agent.RuntimeRunMeta{Status: agent.RunStatusIdle},
+	}); err != nil {
+		t.Fatalf("SaveRuntimeMeta global: %v", err)
+	}
+	if err := agent.SaveBranchMeta(globalSess, agent.BranchMeta{Scope: "global"}); err != nil {
+		t.Fatalf("SaveBranchMeta global: %v", err)
+	}
+
+	blockedSess := filepath.Join(dir, "blocked-id.jsonl")
+	if err := os.WriteFile(blockedSess, []byte(`{"role":"user","content":"blocked"}`+"\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile blocked: %v", err)
+	}
+	if err := agent.SaveRuntimeMeta(blockedSess, agent.RuntimeMeta{
+		SessionID: "blocked-id",
+		Goal:      agent.RuntimeGoalMeta{Text: "blocked goal", Status: control.GoalStatusBlocked},
+		Run:       agent.RuntimeRunMeta{Status: agent.RunStatusBlocked},
+		Budget:    agent.RuntimeBudgetMeta{LastBlockedReason: "daily wakeup budget exhausted"},
+	}); err != nil {
+		t.Fatalf("SaveRuntimeMeta blocked: %v", err)
+	}
+	if err := agent.SaveBranchMeta(blockedSess, agent.BranchMeta{Scope: "global"}); err != nil {
+		t.Fatalf("SaveBranchMeta blocked: %v", err)
+	}
+
+	d := New(Options{SessionDir: dir})
+	d.scanSessions()
+
+	req := httptest.NewRequest("GET", "/sessions?scope=project&status=waiting", nil)
+	rr := httptest.NewRecorder()
+	d.handleSessions(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("sessions status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	var projectResp SessionsResponse
+	if err := json.NewDecoder(rr.Body).Decode(&projectResp); err != nil {
+		t.Fatalf("decode project response: %v", err)
+	}
+	if len(projectResp.Sessions) != 1 {
+		t.Fatalf("project waiting sessions = %+v, want 1", projectResp.Sessions)
+	}
+	view := projectResp.Sessions[0]
+	if view.ID != "project-waiting" || view.Scope != "project" || view.WorkspaceRoot != root || view.TopicTitle != "Project topic" {
+		t.Fatalf("unexpected project view: %+v", view)
+	}
+	if view.WaitKind != "event" || view.WaitID != "event-1" || view.NextWakeupAt == nil || !view.NextWakeupAt.Equal(next) {
+		t.Fatalf("project wait/next fields missing: %+v", view)
+	}
+	if !view.Scheduled || !view.Watched || view.DailyWakeupLimit != 3 || view.DailyWakeups != 1 ||
+		view.MaxGoalAutoTurns != 4 || view.DailyModelCallLimit != 5 || view.DailyModelCalls != 2 ||
+		view.DailyModelCostLimit != 1.5 || view.DailyModelCost != 0.25 || view.ModelCostCurrency != "$" {
+		t.Fatalf("project overview fields missing: %+v", view)
+	}
+
+	req = httptest.NewRequest("GET", "/sessions?scope=global", nil)
+	rr = httptest.NewRecorder()
+	d.handleSessions(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("global sessions status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	var globalResp SessionsResponse
+	if err := json.NewDecoder(rr.Body).Decode(&globalResp); err != nil {
+		t.Fatalf("decode global response: %v", err)
+	}
+	if len(globalResp.Sessions) != 2 {
+		t.Fatalf("global sessions = %+v, want 2", globalResp.Sessions)
+	}
+
+	req = httptest.NewRequest("GET", "/sessions?status=blocked", nil)
+	rr = httptest.NewRecorder()
+	d.handleSessions(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("blocked sessions status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	var blockedResp SessionsResponse
+	if err := json.NewDecoder(rr.Body).Decode(&blockedResp); err != nil {
+		t.Fatalf("decode blocked response: %v", err)
+	}
+	if len(blockedResp.Sessions) != 1 || blockedResp.Sessions[0].ID != "blocked-id" || blockedResp.Sessions[0].BudgetBlockedReason == "" {
+		t.Fatalf("blocked sessions = %+v, want blocked-id with reason", blockedResp.Sessions)
+	}
+}
+
 func TestDaemonTimelineHandler(t *testing.T) {
 	dir := t.TempDir()
 	sess := filepath.Join(dir, "timeline-api.jsonl")
