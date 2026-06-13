@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -141,6 +142,7 @@ func daemonStart(args []string) int {
 	fs := flag.NewFlagSet("daemon start", flag.ContinueOnError)
 	addr := fs.String("addr", daemon.DefaultAddr, "监听地址")
 	dir := fs.String("dir", "", "会话目录（默认用户配置）")
+	logFile := fs.String("log-file", "", "daemon 日志文件（默认 <session-dir>/.daemon.log，none 表示关闭文件日志）")
 	webhook := fs.Bool("webhook", false, "启用 /webhook 外部事件入口")
 	webhookSecret := fs.String("webhook-secret", "", "webhook HMAC secret（也可用 REASONIX_DAEMON_WEBHOOK_SECRET）")
 
@@ -164,7 +166,16 @@ func daemonStart(args []string) int {
 		cancel()
 	}()
 
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	logPath := resolveDaemonLogFile(*dir, *logFile)
+	logger, logCloser, err := newDaemonLogger(os.Stderr, logPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: open daemon log: %v\n", err)
+		return 1
+	}
+	if logCloser != nil {
+		defer logCloser.Close()
+		logger.Info("daemon logging to file", "path", logPath)
+	}
 
 	d := daemon.New(daemon.Options{
 		Addr:       *addr,
@@ -192,6 +203,43 @@ func resolveDaemonWebhookConfig(enabled bool, secret string, getenv func(string)
 		return nil, fmt.Errorf("--webhook requires --webhook-secret or REASONIX_DAEMON_WEBHOOK_SECRET")
 	}
 	return &daemon.WebhookConfig{Enabled: true, Secret: secret}, nil
+}
+
+func resolveDaemonLogFile(sessionDir, requested string) string {
+	requested = strings.TrimSpace(requested)
+	switch strings.ToLower(requested) {
+	case "none", "off", "false":
+		return ""
+	case "":
+		sessionDir = strings.TrimSpace(sessionDir)
+		if sessionDir == "" {
+			sessionDir = config.SessionDir()
+		}
+		if sessionDir == "" {
+			return ""
+		}
+		return daemon.LogFile(sessionDir)
+	default:
+		return requested
+	}
+}
+
+func newDaemonLogger(stderr io.Writer, logPath string) (*slog.Logger, io.Closer, error) {
+	writer := stderr
+	if writer == nil {
+		writer = io.Discard
+	}
+	if strings.TrimSpace(logPath) == "" {
+		return slog.New(slog.NewTextHandler(writer, &slog.HandlerOptions{Level: slog.LevelInfo})), nil, nil
+	}
+	if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
+		return nil, nil, err
+	}
+	f, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		return nil, nil, err
+	}
+	return slog.New(slog.NewTextHandler(io.MultiWriter(writer, f), &slog.HandlerOptions{Level: slog.LevelInfo})), f, nil
 }
 
 func daemonStatus(args []string) int {
@@ -733,9 +781,9 @@ func daemonUsage() {
 	fmt.Print(`reasonix daemon — 常驻后台 agent 服务
 
 Usage:
-  reasonix daemon start    [--addr HOST:PORT] [--dir PATH] [--webhook --webhook-secret SECRET]
+  reasonix daemon start    [--addr HOST:PORT] [--dir PATH] [--log-file PATH|none] [--webhook --webhook-secret SECRET]
   reasonix daemon status   [--addr HOST:PORT] [--dir PATH]
-  reasonix daemon doctor   [--addr HOST:PORT] [--dir PATH] [--json]
+  reasonix daemon doctor   [--addr HOST:PORT] [--dir PATH] [--log-file PATH|none] [--json]
   reasonix daemon sessions [--addr HOST:PORT] [--dir PATH] [--json]
   reasonix daemon timeline --session ID [--limit N] [--json]
   reasonix daemon continue --session ID [--addr HOST:PORT] [--dir PATH]

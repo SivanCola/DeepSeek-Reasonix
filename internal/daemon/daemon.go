@@ -287,6 +287,11 @@ func (d *Daemon) tokenFile() string {
 	return TokenFile(d.sessionDir)
 }
 
+// LogFile returns the default daemon log path for a session dir.
+func LogFile(sessionDir string) string {
+	return filepath.Join(sessionDir, ".daemon.log")
+}
+
 // TokenFile returns the path where the local daemon API token is stored.
 func TokenFile(sessionDir string) string {
 	return filepath.Join(sessionDir, ".daemon.token")

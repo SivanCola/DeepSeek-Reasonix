@@ -52,6 +52,7 @@ type daemonDoctorOnlineStatus struct {
 type daemonDoctorReport struct {
 	SessionDir string                     `json:"session_dir"`
 	Addr       string                     `json:"addr"`
+	LogFile    string                     `json:"log_file,omitempty"`
 	Checks     []daemonDoctorCheck        `json:"checks"`
 	Runtime    daemonDoctorRuntimeSummary `json:"runtime"`
 	Online     daemonDoctorOnlineStatus   `json:"online"`
@@ -61,12 +62,13 @@ func daemonDoctor(args []string) int {
 	fs := flag.NewFlagSet("daemon doctor", flag.ContinueOnError)
 	addr := fs.String("addr", daemon.DefaultAddr, "daemon 地址")
 	dir := fs.String("dir", "", "会话目录（用于读取本地 token）")
+	logFile := fs.String("log-file", "", "daemon 日志文件（默认 <session-dir>/.daemon.log，none 表示跳过）")
 	jsonOut := fs.Bool("json", false, "JSON 格式输出")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
 
-	report, failed := buildDaemonDoctorReport(*addr, *dir, daemonGet)
+	report, failed := buildDaemonDoctorReport(*addr, *dir, *logFile, daemonGet)
 	if *jsonOut {
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
@@ -82,7 +84,7 @@ func daemonDoctor(args []string) int {
 
 type daemonDoctorHTTPGet func(addr, dir, path string) (*http.Response, error)
 
-func buildDaemonDoctorReport(addr, dir string, get daemonDoctorHTTPGet) (daemonDoctorReport, bool) {
+func buildDaemonDoctorReport(addr, dir, logFile string, get daemonDoctorHTTPGet) (daemonDoctorReport, bool) {
 	dir = strings.TrimSpace(dir)
 	if dir == "" {
 		dir = config.SessionDir()
@@ -90,11 +92,13 @@ func buildDaemonDoctorReport(addr, dir string, get daemonDoctorHTTPGet) (daemonD
 	report := daemonDoctorReport{
 		SessionDir: dir,
 		Addr:       addr,
+		LogFile:    resolveDaemonLogFile(dir, logFile),
 	}
 
 	report.checkSessionDir()
 	report.checkToken()
 	report.checkLock()
+	report.checkLogFile()
 	report.Runtime = report.scanRuntimeSidecars()
 	report.checkRuntimeSummary()
 	report.Online = report.checkOnline(get)
@@ -167,6 +171,30 @@ func (r *daemonDoctorReport) checkLock() {
 		return
 	}
 	r.addCheck("lock", "warn", fmt.Sprintf("stale lock file for pid %d", pid))
+}
+
+func (r *daemonDoctorReport) checkLogFile() {
+	if strings.TrimSpace(r.LogFile) == "" {
+		r.addCheck("log", "ok", "file logging disabled")
+		return
+	}
+	info, err := os.Stat(r.LogFile)
+	switch {
+	case err == nil && info.IsDir():
+		r.addCheck("log", "fail", "log path exists but is a directory")
+	case err == nil:
+		f, err := os.Open(r.LogFile)
+		if err != nil {
+			r.addCheck("log", "fail", err.Error())
+			return
+		}
+		_ = f.Close()
+		r.addCheck("log", "ok", fmt.Sprintf("log file readable (%d bytes)", info.Size()))
+	case os.IsNotExist(err):
+		r.addCheck("log", "warn", "log file missing; daemon start will create it")
+	default:
+		r.addCheck("log", "fail", err.Error())
+	}
 }
 
 func daemonDoctorProcessAlive(pid int) bool {
@@ -287,6 +315,9 @@ func printDaemonDoctorReport(report daemonDoctorReport) {
 	fmt.Println("daemon doctor")
 	fmt.Printf("session_dir: %s\n", report.SessionDir)
 	fmt.Printf("addr: %s\n", report.Addr)
+	if report.LogFile != "" {
+		fmt.Printf("log_file: %s\n", report.LogFile)
+	}
 	for _, check := range report.Checks {
 		line := fmt.Sprintf("[%s] %s", check.Status, check.Name)
 		if check.Message != "" {

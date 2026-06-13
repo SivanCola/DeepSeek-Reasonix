@@ -195,7 +195,7 @@ dynamic workflow 或开发者平台，而是先把 Reasonix 从一次性会话�
   - 能打开 daemon 管理的 session。
   - 能发送审批、ask 回答和 stop。
 - [ ] 日志与诊断。
-  - [ ] daemon log 文件。
+  - [x] daemon log 文件。
   - [x] `reasonix daemon doctor`。
   - [x] 运行中 session 和 wakeup 历史。
 
