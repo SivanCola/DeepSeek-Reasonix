@@ -1,6 +1,6 @@
 // ContextPanel shows the active tab's context gauge, token usage, read files,
 // and workspace changes. All visible text is routed through the i18n dictionary.
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { FileText } from "lucide-react";
 import { asArray } from "../lib/array";
 import { app } from "../lib/bridge";
@@ -219,11 +219,14 @@ export function ContextPanel({
 }: ContextPanelProps) {
   const { locale, t } = useI18n();
   const [info, setInfo] = useState<ContextPanelInfo | null>(null);
+  const refreshSeq = useRef(0);
 
   const refresh = useCallback(async () => {
     if (!tabId) return;
+    const seq = ++refreshSeq.current;
     try {
-      setInfo(await app.ContextPanel(tabId));
+      const next = await app.ContextPanel(tabId);
+      if (refreshSeq.current === seq) setInfo(next);
     } catch {
       /* bridge unavailable */
     }
@@ -242,7 +245,7 @@ export function ContextPanel({
     if (context?.used === 0 && sessionTokens === 0 && info) {
       setInfo(null);
     }
-  }, [context?.used, sessionTokens]);
+  }, [context?.used, info, sessionTokens]);
 
   const hasPanelUsage = Boolean(
     (info?.requestCount ?? 0) > 0 ||
@@ -351,7 +354,7 @@ export function ContextPanel({
                 {costSources.map((row) => (
                   <div className="context-panel__source-row" key={row.source}>
                     <span>{sourceLabel(row.label, t)}</span>
-                    <strong>{formatMoney(row.cost, row.currency, "dash")}</strong>
+                    <strong>{formatMoneyLocalized(row.cost, row.currency, { locale, empty: "dash" })}</strong>
                     <em>{t("context.sourceRequests", { count: row.requests })}</em>
                   </div>
                 ))}

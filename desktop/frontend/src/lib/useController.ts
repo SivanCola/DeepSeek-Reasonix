@@ -906,11 +906,7 @@ export function useController() {
   const clearSession = useCallback(async () => {
     const tabId = activeTabId;
     if (tabId) bumpCheckpointRefreshSeq(tabId);
-    try {
-      await app.ClearSession();
-    } catch {
-      return;
-    }
+    await app.ClearSession();
     if (tabId) dispatchTo(tabId, { type: "reset" });
   }, [activeTabId, bumpCheckpointRefreshSeq, dispatchTo]);
 
