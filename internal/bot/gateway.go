@@ -340,14 +340,38 @@ func (gw *BotGateway) handleSlashCommand(ctx context.Context, adapter Adapter, k
 		active := gw.sessions.ActiveCount()
 		gw.mu.Lock()
 		sessions := len(gw.controllers)
+		state, hasState := gw.controllers[key]
 		gw.mu.Unlock()
-		_ = gw.sendText(ctx, adapter, msg, fmt.Sprintf("活跃任务数: %d\n保留会话数: %d", active, sessions))
+		var goalInfo string
+		if hasState && state.ctrl != nil {
+			goal := state.ctrl.Goal()
+			goalStatus := state.ctrl.GoalStatus()
+			running := state.ctrl.Running()
+			if goal != "" {
+				goalInfo = fmt.Sprintf("\n目标: %s\n目标状态: %s", goal, goalStatus)
+			} else {
+				goalInfo = fmt.Sprintf("\n目标状态: %s", goalStatus)
+			}
+			if running {
+				goalInfo += "\n运行状态: running"
+			} else {
+				goalInfo += "\n运行状态: idle"
+			}
+		}
+		_ = gw.sendText(ctx, adapter, msg, fmt.Sprintf("活跃任务数: %d\n保留会话数: %d%s", active, sessions, goalInfo))
+
+	case strings.HasPrefix(msg.Text, "/goal"):
+		gw.handleGoalCommand(ctx, adapter, key, msg)
 
 	case strings.HasPrefix(msg.Text, "/help"):
 		help := "可用命令:\n" +
 			"/stop - 停止当前任务\n" +
 			"/new - 开始新会话\n" +
 			"/reset - 重置会话\n" +
+			"/goal <text> - 设置目标\n" +
+			"/goal continue - 继续执行目标\n" +
+			"/goal status - 查看目标\n" +
+			"/goal clear - 清除目标\n" +
 			"/approve <id> - 批准操作\n" +
 			"/deny <id> - 拒绝操作\n" +
 			"/answer <id> <选项> - 回答 ask 问题\n" +
@@ -479,6 +503,107 @@ func (gw *BotGateway) sendText(ctx context.Context, adapter Adapter, msg Inbound
 		ReplyToMsgID: msg.MessageID,
 	})
 	return err
+}
+
+// handleGoalCommand dispatches /goal subcommands from the bot.
+func (gw *BotGateway) handleGoalCommand(ctx context.Context, adapter Adapter, key string, msg InboundMessage) {
+	args := strings.TrimSpace(strings.TrimPrefix(msg.Text, "/goal"))
+
+	gw.mu.Lock()
+	state, ok := gw.controllers[key]
+	gw.mu.Unlock()
+
+	switch strings.ToLower(args) {
+	case "", "status":
+		if !ok || state.ctrl == nil {
+			_ = gw.sendText(ctx, adapter, msg, "目标：无（没有活跃会话）")
+			return
+		}
+		goal := state.ctrl.Goal()
+		goalStatus := state.ctrl.GoalStatus()
+		if goal == "" {
+			_ = gw.sendText(ctx, adapter, msg, fmt.Sprintf("目标：无\n状态：%s", goalStatus))
+		} else {
+			_ = gw.sendText(ctx, adapter, msg, fmt.Sprintf("目标：%s\n状态：%s", goal, goalStatus))
+		}
+
+	case "clear", "off", "stop", "done":
+		if !ok || state.ctrl == nil {
+			_ = gw.sendText(ctx, adapter, msg, "没有活跃会话。")
+			return
+		}
+		state.ctrl.ClearGoal()
+		_ = gw.sendText(ctx, adapter, msg, "目标已清除。")
+
+	case "continue", "resume":
+		if !ok || state.ctrl == nil {
+			_ = gw.sendText(ctx, adapter, msg, "没有活跃会话。")
+			return
+		}
+		if state.ctrl.Running() {
+			_ = gw.sendText(ctx, adapter, msg, "当前正在运行，无法重复启动。")
+			return
+		}
+		goal := state.ctrl.Goal()
+		goalStatus := state.ctrl.GoalStatus()
+		if goal == "" && (goalStatus == "" || goalStatus == control.GoalStatusStopped) {
+			_ = gw.sendText(ctx, adapter, msg, "没有活跃目标可以继续。")
+			return
+		}
+		if goalStatus == control.GoalStatusComplete {
+			_ = gw.sendText(ctx, adapter, msg, "目标已完成，请设置新目标。")
+			return
+		}
+		if !gw.sessions.TryStart(key) {
+			_ = gw.sendText(ctx, adapter, msg, "当前正在运行，无法重复启动。")
+			return
+		}
+		_ = gw.sendText(ctx, adapter, msg, "继续执行目标…")
+		go func() {
+			defer func() {
+				next := gw.sessions.Release(key)
+				if next != nil {
+					gw.runTurn(ctx, adapter, key, *next)
+				}
+			}()
+
+			sink := newRenderSink(ctx, adapter, msg.ChatID, msg.ChatType, msg.MessageID, gw.logger, func(ask event.Ask) {
+				gw.mu.Lock()
+				if state.pendingAsks == nil {
+					state.pendingAsks = make(map[string][]event.AskQuestion)
+				}
+				state.pendingAsks[ask.ID] = ask.Questions
+				gw.mu.Unlock()
+			})
+			state.sink.setTarget(sink)
+			defer state.sink.setTarget(nil)
+
+			turnCtx, cancel := context.WithCancel(ctx)
+			gw.mu.Lock()
+			if s, ok2 := gw.controllers[key]; ok2 {
+				s.cancel = cancel
+				s.lastActive = time.Now()
+			}
+			gw.mu.Unlock()
+			defer cancel()
+			sink.ctrl = state.ctrl
+			err := state.ctrl.ContinueGoal(turnCtx, "bot")
+			sink.Emit(event.Event{Kind: event.TurnDone, Err: err})
+			if err != nil {
+				gw.logger.Warn("bot goal continue failed", "err", err)
+			}
+		}()
+
+	default:
+		// /goal <text> — set a new goal
+		if !ok || state.ctrl == nil {
+			_ = gw.sendText(ctx, adapter, msg, "没有活跃会话，请先发送一条消息创建会话。")
+			return
+		}
+		state.ctrl.SetPlanMode(false)
+		state.ctrl.SetGoal(args)
+		_ = gw.sendText(ctx, adapter, msg, fmt.Sprintf("目标已设置 → %s", args))
+	}
 }
 
 func parseAskAnswers(questions []event.AskQuestion, raw string) []event.AskAnswer {

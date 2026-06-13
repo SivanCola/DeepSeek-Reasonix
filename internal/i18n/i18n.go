@@ -228,6 +228,10 @@ type Messages struct {
 	GoalCurrentFmt         string
 	GoalSetFmt             string
 	GoalCleared            string
+	GoalContinued          string
+	GoalNoActive           string
+	GoalAlreadyComplete    string
+	GoalAlreadyStopped     string
 	ModelSwitchUnavailable string
 	ModelSwitchBusy        string
 	ModelAlreadyOnFmt      string

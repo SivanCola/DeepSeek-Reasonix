@@ -427,7 +427,11 @@ func (c *Controller) runGuarded(body func(ctx context.Context) error) {
 				c.mu.Lock()
 				c.running = false
 				c.cancel = nil
+				path := c.sessionPath
 				c.mu.Unlock()
+				if path != "" {
+					c.saveRuntimeSidecar(path)
+				}
 				c.sink.Emit(event.Event{Kind: event.TurnDone, Err: fmt.Errorf("internal error: %v", r)})
 			}
 		}()
@@ -435,7 +439,11 @@ func (c *Controller) runGuarded(body func(ctx context.Context) error) {
 		c.mu.Lock()
 		c.running = false
 		c.cancel = nil
+		path := c.sessionPath
 		c.mu.Unlock()
+		if path != "" {
+			c.saveRuntimeSidecar(path)
+		}
 		c.sink.Emit(event.Event{Kind: event.TurnDone, Err: explainError(err)})
 	}()
 }
@@ -497,7 +505,11 @@ func (c *Controller) RunTurn(ctx context.Context, input string) error {
 		c.mu.Lock()
 		c.running = false
 		c.cancel = nil
+		path := c.sessionPath
 		c.mu.Unlock()
+		if path != "" {
+			c.saveRuntimeSidecar(path)
+		}
 		cancel()
 	}()
 	return c.runTurn(ctx, input)
@@ -910,6 +922,8 @@ func (c *Controller) applyGoalCommand(input, display string) bool {
 	case GoalCommandClear:
 		c.ClearGoal()
 		c.notice(i18n.M.GoalCleared)
+	case GoalCommandContinue:
+		c.applyGoalContinue()
 	default:
 		goal := c.Goal()
 		if strings.TrimSpace(goal) == "" {
@@ -1291,16 +1305,21 @@ func (c *Controller) PlanMode() bool {
 func (c *Controller) SetGoal(goal string) {
 	goal = strings.TrimSpace(goal)
 	c.mu.Lock()
-	defer c.mu.Unlock()
 	if goal == "" {
 		c.goal = ""
 		c.goalStatus = GoalStatusStopped
 		c.goalTurns = 0
 		c.goalBlocks = 0
 		c.goalBlock = ""
+		path := c.sessionPath
+		c.mu.Unlock()
+		if path != "" {
+			c.saveRuntimeSidecar(path)
+		}
 		return
 	}
 	if c.goal == goal && c.goalStatus == GoalStatusRunning {
+		c.mu.Unlock()
 		return
 	}
 	c.goal = goal
@@ -1308,6 +1327,7 @@ func (c *Controller) SetGoal(goal string) {
 	c.goalTurns = 0
 	c.goalBlocks = 0
 	c.goalBlock = ""
+	c.mu.Unlock()
 }
 
 func (c *Controller) ClearGoal() {
@@ -1784,6 +1804,9 @@ func (c *Controller) Resume(s *agent.Session, path string) {
 	c.sessionPath = path
 	c.mu.Unlock()
 	c.rebindCheckpoints(path)
+	// Restore runtime sidecar (goal/run state) BEFORE cold-resume prune, so
+	// a prune-triggered snapshot does not overwrite the just-restored state.
+	c.loadAndRestoreRuntime(path)
 	c.maybeColdResumePrune(path)
 }
 
@@ -1885,6 +1908,8 @@ func (c *Controller) snapshot(markActivity bool) error {
 	if err := s.Save(path); err != nil {
 		return err
 	}
+	// Persist runtime sidecar alongside the transcript when there's an active goal.
+	c.saveRuntimeSidecar(path)
 	if markActivity {
 		return agent.TouchBranchMeta(path)
 	}

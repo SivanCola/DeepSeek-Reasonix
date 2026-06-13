@@ -45,6 +45,7 @@ var slashCommands = map[string]bool{
 	"/deny":    true,
 	"/answer":  true,
 	"/status":  true,
+	"/goal":    true,
 	"/help":    true,
 }
 
@@ -122,6 +123,19 @@ func (sm *SessionManager) TryAcquire(key string, msg InboundMessage) (acquired b
 
 	sm.active[key] = true
 	return true, false
+}
+
+// TryStart marks a session active only when no turn currently owns it. Unlike
+// TryAcquire, it never queues messages and never treats slash commands as a
+// bypass. It is for command handlers that start their own asynchronous run.
+func (sm *SessionManager) TryStart(key string) bool {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	if sm.active[key] {
+		return false
+	}
+	sm.active[key] = true
+	return true
 }
 
 // Release 释放 session 锁，返回等待队列中的下一条消息（合并后）。

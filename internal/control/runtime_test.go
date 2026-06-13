@@ -1,0 +1,624 @@
+package control
+
+import (
+	"context"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"reasonix/internal/agent"
+	"reasonix/internal/event"
+	"reasonix/internal/provider"
+	"reasonix/internal/tool"
+)
+
+func TestResumeRestoresRuntimeGoalState(t *testing.T) {
+	dir := t.TempDir()
+	sessionPath := filepath.Join(dir, "resume-goal.jsonl")
+
+	// Create a session with some content.
+	s := agent.NewSession("")
+	s.Add(provider.Message{Role: provider.RoleUser, Content: "hello"})
+	s.Add(provider.Message{Role: provider.RoleAssistant, Content: "hi"})
+	if err := s.Save(sessionPath); err != nil {
+		t.Fatalf("save session: %v", err)
+	}
+
+	// Write a runtime sidecar with an active goal.
+	meta := agent.RuntimeMeta{
+		SessionID: "resume-goal",
+		Goal: agent.RuntimeGoalMeta{
+			Text:        "ship the feature",
+			Status:      GoalStatusRunning,
+			Turns:       5,
+			BlockCount:  1,
+			BlockReason: "waiting for CI",
+		},
+		Run: agent.RuntimeRunMeta{
+			Status: "idle",
+		},
+	}
+	if err := agent.SaveRuntimeMeta(sessionPath, meta); err != nil {
+		t.Fatalf("save runtime meta: %v", err)
+	}
+
+	// Build a controller and resume.
+	ag := agent.New(nil, tool.NewRegistry(), agent.NewSession(""), agent.Options{}, event.Discard)
+	c := New(Options{
+		Executor: ag,
+		Sink:     event.Discard,
+	})
+	loaded, err := agent.LoadSession(sessionPath)
+	if err != nil {
+		t.Fatalf("load session: %v", err)
+	}
+	c.Resume(loaded, sessionPath)
+
+	// Verify goal state was restored.
+	if got := c.Goal(); got != "ship the feature" {
+		t.Errorf("Goal() = %q, want %q", got, "ship the feature")
+	}
+	if got := c.GoalStatus(); got != GoalStatusRunning {
+		t.Errorf("GoalStatus() = %q, want %q", got, GoalStatusRunning)
+	}
+	c.mu.Lock()
+	turns := c.goalTurns
+	blocks := c.goalBlocks
+	blockReason := c.goalBlock
+	c.mu.Unlock()
+	if turns != 5 {
+		t.Errorf("goalTurns = %d, want 5", turns)
+	}
+	if blocks != 1 {
+		t.Errorf("goalBlocks = %d, want 1", blocks)
+	}
+	if blockReason != "waiting for CI" {
+		t.Errorf("goalBlock = %q, want %q", blockReason, "waiting for CI")
+	}
+}
+
+func TestResumeDoesNotAutoCallModel(t *testing.T) {
+	dir := t.TempDir()
+	sessionPath := filepath.Join(dir, "no-auto.jsonl")
+
+	s := agent.NewSession("")
+	s.Add(provider.Message{Role: provider.RoleUser, Content: "start"})
+	s.Add(provider.Message{Role: provider.RoleAssistant, Content: "ok [goal:continue]"})
+	if err := s.Save(sessionPath); err != nil {
+		t.Fatalf("save session: %v", err)
+	}
+
+	meta := agent.RuntimeMeta{
+		Goal: agent.RuntimeGoalMeta{
+			Text:   "active goal",
+			Status: GoalStatusRunning,
+			Turns:  1,
+		},
+		Run: agent.RuntimeRunMeta{Status: "idle"},
+	}
+	if err := agent.SaveRuntimeMeta(sessionPath, meta); err != nil {
+		t.Fatalf("save runtime meta: %v", err)
+	}
+
+	// Use a provider that panics if called — resume must not call it.
+	prov := &panicProvider{}
+	ag := agent.New(prov, tool.NewRegistry(), agent.NewSession(""), agent.Options{}, event.Discard)
+	c := New(Options{
+		Runner:   ag,
+		Executor: ag,
+		Sink:     event.Discard,
+	})
+	loaded, err := agent.LoadSession(sessionPath)
+	if err != nil {
+		t.Fatalf("load session: %v", err)
+	}
+
+	// This should NOT panic — resume is passive.
+	c.Resume(loaded, sessionPath)
+
+	if got := c.Goal(); got != "active goal" {
+		t.Errorf("Goal() = %q after resume", got)
+	}
+}
+
+func TestResumeActiveGoalInjectsBlock(t *testing.T) {
+	dir := t.TempDir()
+	sessionPath := filepath.Join(dir, "inject.jsonl")
+
+	s := agent.NewSession("")
+	s.Add(provider.Message{Role: provider.RoleUser, Content: "start"})
+	s.Add(provider.Message{Role: provider.RoleAssistant, Content: "ok"})
+	if err := s.Save(sessionPath); err != nil {
+		t.Fatalf("save session: %v", err)
+	}
+
+	meta := agent.RuntimeMeta{
+		Goal: agent.RuntimeGoalMeta{
+			Text:   "deploy the app",
+			Status: GoalStatusRunning,
+			Turns:  2,
+		},
+		Run: agent.RuntimeRunMeta{Status: "idle"},
+	}
+	if err := agent.SaveRuntimeMeta(sessionPath, meta); err != nil {
+		t.Fatalf("save runtime meta: %v", err)
+	}
+
+	prov := &scriptedTurns{turns: [][]provider.Chunk{
+		textTurn("Working on it.\n\n[goal:complete]"),
+	}}
+	ag := agent.New(prov, tool.NewRegistry(), agent.NewSession(""), agent.Options{}, event.Discard)
+	events := make(chan event.Event, 8)
+	c := New(Options{
+		Runner:   ag,
+		Executor: ag,
+		Sink: event.FuncSink(func(e event.Event) {
+			if e.Kind == event.TurnDone {
+				events <- e
+			}
+		}),
+	})
+	loaded, err := agent.LoadSession(sessionPath)
+	if err != nil {
+		t.Fatalf("load session: %v", err)
+	}
+	c.Resume(loaded, sessionPath)
+
+	// Now send a normal turn — it should include the <active-goal> block.
+	c.Send("check status")
+	waitForTurnDone(t, events)
+
+	// The composed user message should contain the goal injection.
+	msgs := ag.Session().Messages
+	for _, m := range msgs {
+		if m.Role == provider.RoleUser && strings.Contains(m.Content, "<active-goal>") {
+			if !strings.Contains(m.Content, "deploy the app") {
+				t.Errorf("active-goal block should contain goal text, got %q", m.Content)
+			}
+			return
+		}
+	}
+	t.Fatal("no user message found with <active-goal> injection after resume")
+}
+
+func TestSnapshotSavesRuntimeSidecar(t *testing.T) {
+	dir := t.TempDir()
+	sessionPath := filepath.Join(dir, "snapshot-runtime.jsonl")
+
+	prov := &scriptedTurns{turns: [][]provider.Chunk{
+		textTurn("Started.\n\n[goal:continue]"),
+		textTurn("Still working.\n\n[goal:complete]"),
+	}}
+	ag := agent.New(prov, tool.NewRegistry(), agent.NewSession(""), agent.Options{}, event.Discard)
+	events := make(chan event.Event, 8)
+	c := New(Options{
+		Runner:      ag,
+		Executor:    ag,
+		SessionPath: sessionPath,
+		Sink: event.FuncSink(func(e event.Event) {
+			if e.Kind == event.TurnDone {
+				events <- e
+			}
+		}),
+	})
+
+	c.SetGoal("build the widget")
+	c.Send("go")
+	waitForTurnDone(t, events)
+
+	// The runtime sidecar should now exist.
+	runtimePath := agent.RuntimeMetaPath(sessionPath)
+	if _, err := os.Stat(runtimePath); err != nil {
+		t.Fatalf("runtime sidecar not created: %v", err)
+	}
+
+	// Load and verify.
+	m, ok, err := agent.LoadRuntimeMeta(sessionPath)
+	if err != nil || !ok {
+		t.Fatalf("LoadRuntimeMeta: err=%v ok=%v", err, ok)
+	}
+	if m.Goal.Status != GoalStatusComplete {
+		t.Errorf("Goal.Status = %q, want %q", m.Goal.Status, GoalStatusComplete)
+	}
+	if m.Goal.Text != "" {
+		t.Errorf("completed Goal.Text = %q, want empty", m.Goal.Text)
+	}
+}
+
+func TestSnapshotNoGoalNoSidecar(t *testing.T) {
+	dir := t.TempDir()
+	sessionPath := filepath.Join(dir, "no-goal.jsonl")
+
+	prov := &scriptedTurns{turns: [][]provider.Chunk{
+		textTurn("Hello!"),
+	}}
+	ag := agent.New(prov, tool.NewRegistry(), agent.NewSession(""), agent.Options{}, event.Discard)
+	events := make(chan event.Event, 4)
+	c := New(Options{
+		Runner:      ag,
+		Executor:    ag,
+		SessionPath: sessionPath,
+		Sink: event.FuncSink(func(e event.Event) {
+			if e.Kind == event.TurnDone {
+				events <- e
+			}
+		}),
+	})
+
+	// Normal turn without goal — no runtime sidecar expected.
+	c.Send("hi")
+	waitForTurnDone(t, events)
+
+	runtimePath := agent.RuntimeMetaPath(sessionPath)
+	if _, err := os.Stat(runtimePath); !os.IsNotExist(err) {
+		t.Errorf("runtime sidecar should not be created without active goal")
+	}
+}
+
+func TestTurnDoneRuntimeStatusReturnsIdle(t *testing.T) {
+	dir := t.TempDir()
+	sessionPath := filepath.Join(dir, "turn-done-idle.jsonl")
+
+	prov := &scriptedTurns{turns: [][]provider.Chunk{
+		textTurn("Finished.\n\n[goal:complete]"),
+	}}
+	ag := agent.New(prov, tool.NewRegistry(), agent.NewSession(""), agent.Options{}, event.Discard)
+	events := make(chan event.Event, 4)
+	c := New(Options{
+		Runner:      ag,
+		Executor:    ag,
+		SessionPath: sessionPath,
+		Sink: event.FuncSink(func(e event.Event) {
+			if e.Kind == event.TurnDone {
+				events <- e
+			}
+		}),
+	})
+
+	c.SetGoal("finish once")
+	c.Send("go")
+	waitForTurnDone(t, events)
+
+	m, ok, err := agent.LoadRuntimeMeta(sessionPath)
+	if err != nil || !ok {
+		t.Fatalf("LoadRuntimeMeta: err=%v ok=%v", err, ok)
+	}
+	if m.Run.Status == "running" {
+		t.Fatalf("Run.Status persisted as running after TurnDone")
+	}
+	if m.Run.Status != "idle" {
+		t.Fatalf("Run.Status = %q, want idle", m.Run.Status)
+	}
+}
+
+func TestSnapshotPreservesSchedulerRuntime(t *testing.T) {
+	dir := t.TempDir()
+	sessionPath := filepath.Join(dir, "preserve-scheduler.jsonl")
+
+	sess := agent.NewSession("")
+	sess.Add(provider.Message{Role: provider.RoleUser, Content: "hello"})
+	ag := agent.New(nil, tool.NewRegistry(), sess, agent.Options{}, event.Discard)
+	c := New(Options{Executor: ag, SessionPath: sessionPath, Sink: event.Discard})
+
+	if err := agent.SaveRuntimeMeta(sessionPath, agent.RuntimeMeta{
+		Goal: agent.RuntimeGoalMeta{Text: "old", Status: GoalStatusRunning},
+		Scheduler: agent.RuntimeSchedMeta{
+			Enabled:      true,
+			DailyAt:      "09:00",
+			Interval:     time.Hour,
+			NextWakeupAt: time.Now().Add(time.Hour).UTC(),
+		},
+	}); err != nil {
+		t.Fatalf("SaveRuntimeMeta: %v", err)
+	}
+
+	c.SetGoal("new goal")
+	if err := c.Snapshot(); err != nil {
+		t.Fatalf("Snapshot: %v", err)
+	}
+
+	m, ok, err := agent.LoadRuntimeMeta(sessionPath)
+	if err != nil || !ok {
+		t.Fatalf("LoadRuntimeMeta: err=%v ok=%v", err, ok)
+	}
+	if !m.Scheduler.Enabled || m.Scheduler.DailyAt != "09:00" || m.Scheduler.Interval != time.Hour {
+		t.Fatalf("scheduler not preserved: %+v", m.Scheduler)
+	}
+	if m.Goal.Text != "new goal" {
+		t.Fatalf("Goal.Text = %q, want new goal", m.Goal.Text)
+	}
+}
+
+func TestClearGoalRemovesStaleRuntimeSidecar(t *testing.T) {
+	dir := t.TempDir()
+	sessionPath := filepath.Join(dir, "clear-goal.jsonl")
+
+	sess := agent.NewSession("")
+	sess.Add(provider.Message{Role: provider.RoleUser, Content: "hello"})
+	ag := agent.New(nil, tool.NewRegistry(), sess, agent.Options{}, event.Discard)
+	c := New(Options{Executor: ag, SessionPath: sessionPath, Sink: event.Discard})
+
+	if err := agent.SaveRuntimeMeta(sessionPath, agent.RuntimeMeta{
+		Goal: agent.RuntimeGoalMeta{Text: "stale", Status: GoalStatusRunning},
+		Run:  agent.RuntimeRunMeta{Status: "idle"},
+	}); err != nil {
+		t.Fatalf("SaveRuntimeMeta: %v", err)
+	}
+
+	c.SetGoal("stale")
+	c.ClearGoal()
+
+	if _, err := os.Stat(agent.RuntimeMetaPath(sessionPath)); !os.IsNotExist(err) {
+		t.Fatalf("runtime sidecar should be removed after clearing goal, err=%v", err)
+	}
+}
+
+func TestClearGoalPreservesSchedulerButClearsGoal(t *testing.T) {
+	dir := t.TempDir()
+	sessionPath := filepath.Join(dir, "clear-goal-scheduled.jsonl")
+
+	sess := agent.NewSession("")
+	sess.Add(provider.Message{Role: provider.RoleUser, Content: "hello"})
+	ag := agent.New(nil, tool.NewRegistry(), sess, agent.Options{}, event.Discard)
+	c := New(Options{Executor: ag, SessionPath: sessionPath, Sink: event.Discard})
+
+	if err := agent.SaveRuntimeMeta(sessionPath, agent.RuntimeMeta{
+		Goal: agent.RuntimeGoalMeta{Text: "stale", Status: GoalStatusRunning},
+		Scheduler: agent.RuntimeSchedMeta{
+			Enabled: true,
+			DailyAt: "09:00",
+		},
+	}); err != nil {
+		t.Fatalf("SaveRuntimeMeta: %v", err)
+	}
+
+	c.SetGoal("stale")
+	c.ClearGoal()
+
+	m, ok, err := agent.LoadRuntimeMeta(sessionPath)
+	if err != nil || !ok {
+		t.Fatalf("LoadRuntimeMeta: err=%v ok=%v", err, ok)
+	}
+	if m.Goal.Text != "" || m.Goal.Status == GoalStatusRunning {
+		t.Fatalf("goal should be cleared, got %+v", m.Goal)
+	}
+	if !m.Scheduler.Enabled || m.Scheduler.DailyAt != "09:00" {
+		t.Fatalf("scheduler should be preserved, got %+v", m.Scheduler)
+	}
+}
+
+func TestResumeCorruptRuntimeDoesNotBlock(t *testing.T) {
+	dir := t.TempDir()
+	sessionPath := filepath.Join(dir, "corrupt-runtime.jsonl")
+
+	s := agent.NewSession("")
+	s.Add(provider.Message{Role: provider.RoleUser, Content: "hello"})
+	s.Add(provider.Message{Role: provider.RoleAssistant, Content: "hi"})
+	if err := s.Save(sessionPath); err != nil {
+		t.Fatalf("save session: %v", err)
+	}
+
+	// Write corrupt runtime sidecar.
+	runtimePath := agent.RuntimeMetaPath(sessionPath)
+	os.WriteFile(runtimePath, []byte("{{{not valid json"), 0o644)
+
+	ag := agent.New(nil, tool.NewRegistry(), agent.NewSession(""), agent.Options{}, event.Discard)
+	c := New(Options{
+		Executor: ag,
+		Sink:     event.Discard,
+	})
+	loaded, err := agent.LoadSession(sessionPath)
+	if err != nil {
+		t.Fatalf("load session: %v", err)
+	}
+
+	// Should not panic or fail — corrupt sidecar is a warning, not a blocker.
+	c.Resume(loaded, sessionPath)
+
+	// Goal state should be empty (not restored).
+	if got := c.Goal(); got != "" {
+		t.Errorf("Goal() = %q after corrupt runtime resume, want empty", got)
+	}
+}
+
+// panicProvider panics if Stream is called — used to verify no model calls happen.
+type panicProvider struct{}
+
+func (p *panicProvider) Name() string { return "panic" }
+func (p *panicProvider) Stream(_ context.Context, _ provider.Request) (<-chan provider.Chunk, error) {
+	panic("model should not be called during resume")
+}
+
+// --- Milestone 2: /goal continue tests ---
+
+func TestGoalContinueNoActiveGoal(t *testing.T) {
+	ag := agent.New(nil, tool.NewRegistry(), agent.NewSession(""), agent.Options{}, event.Discard)
+	var notices []string
+	c := New(Options{
+		Executor: ag,
+		Sink: event.FuncSink(func(e event.Event) {
+			if e.Kind == event.Notice {
+				notices = append(notices, e.Text)
+			}
+		}),
+	})
+
+	c.Submit("/goal continue")
+	if len(notices) == 0 {
+		t.Fatal("expected a notice for /goal continue with no active goal")
+	}
+	if !strings.Contains(notices[len(notices)-1], "no active goal") &&
+		!strings.Contains(notices[len(notices)-1], "没有活跃目标") {
+		t.Errorf("unexpected notice: %q", notices[len(notices)-1])
+	}
+}
+
+func TestGoalContinueRunningGoal(t *testing.T) {
+	prov := &scriptedTurns{turns: [][]provider.Chunk{
+		textTurn("Continued work done.\n\n[goal:complete]"),
+	}}
+	ag := agent.New(prov, tool.NewRegistry(), agent.NewSession(""), agent.Options{}, event.Discard)
+	events := make(chan event.Event, 8)
+	c := New(Options{
+		Runner:   ag,
+		Executor: ag,
+		Sink: event.FuncSink(func(e event.Event) {
+			if e.Kind == event.TurnDone || e.Kind == event.Notice {
+				events <- e
+			}
+		}),
+	})
+
+	// Set a goal manually (simulating a resumed state).
+	c.SetGoal("deploy the service")
+
+	c.Submit("/goal continue")
+	waitForTurnDone(t, events)
+
+	if prov.call != 1 {
+		t.Fatalf("provider calls = %d, want 1", prov.call)
+	}
+	if got := c.GoalStatus(); got != GoalStatusComplete {
+		t.Fatalf("GoalStatus() = %q, want complete", got)
+	}
+}
+
+func TestGoalContinueBlockedGoalResetsBlocked(t *testing.T) {
+	prov := &scriptedTurns{turns: [][]provider.Chunk{
+		textTurn("Resolved the issue.\n\n[goal:complete]"),
+	}}
+	ag := agent.New(prov, tool.NewRegistry(), agent.NewSession(""), agent.Options{}, event.Discard)
+	events := make(chan event.Event, 8)
+	c := New(Options{
+		Runner:   ag,
+		Executor: ag,
+		Sink: event.FuncSink(func(e event.Event) {
+			if e.Kind == event.TurnDone || e.Kind == event.Notice {
+				events <- e
+			}
+		}),
+	})
+
+	// Set a goal and manually mark it blocked.
+	c.mu.Lock()
+	c.goal = "deploy the service"
+	c.goalStatus = GoalStatusBlocked
+	c.goalBlocks = 3
+	c.goalBlock = "needs credentials"
+	c.mu.Unlock()
+
+	c.Submit("/goal continue")
+	waitForTurnDone(t, events)
+
+	if prov.call != 1 {
+		t.Fatalf("provider calls = %d, want 1 (blocked should reset and continue)", prov.call)
+	}
+	if got := c.GoalStatus(); got != GoalStatusComplete {
+		t.Fatalf("GoalStatus() = %q, want complete", got)
+	}
+}
+
+func TestGoalContinueCompleteGoal(t *testing.T) {
+	ag := agent.New(nil, tool.NewRegistry(), agent.NewSession(""), agent.Options{}, event.Discard)
+	var notices []string
+	c := New(Options{
+		Executor: ag,
+		Sink: event.FuncSink(func(e event.Event) {
+			if e.Kind == event.Notice {
+				notices = append(notices, e.Text)
+			}
+		}),
+	})
+
+	// Set goal as complete.
+	c.mu.Lock()
+	c.goal = ""
+	c.goalStatus = GoalStatusComplete
+	c.mu.Unlock()
+
+	c.Submit("/goal continue")
+	found := false
+	for _, n := range notices {
+		if strings.Contains(n, "complete") || strings.Contains(n, "完成") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected 'already complete' notice, got %v", notices)
+	}
+}
+
+func TestGoalContinueUsesGoalContinueTurn(t *testing.T) {
+	prov := &scriptedTurns{turns: [][]provider.Chunk{
+		textTurn("Done.\n\n[goal:complete]"),
+	}}
+	ag := agent.New(prov, tool.NewRegistry(), agent.NewSession(""), agent.Options{}, event.Discard)
+	events := make(chan event.Event, 8)
+	c := New(Options{
+		Runner:   ag,
+		Executor: ag,
+		Sink: event.FuncSink(func(e event.Event) {
+			if e.Kind == event.TurnDone {
+				events <- e
+			}
+		}),
+	})
+
+	c.SetGoal("build the widget")
+	// Clear the message that SetGoal would have caused if runner was wired.
+	// Actually, SetGoal without runGuarded+send just sets the fields. Let's
+	// directly invoke ContinueGoal.
+	c.mu.Lock()
+	c.goal = "build the widget"
+	c.goalStatus = GoalStatusRunning
+	c.goalTurns = 3
+	c.mu.Unlock()
+
+	c.Submit("/goal continue")
+	waitForTurnDone(t, events)
+
+	// The user turn sent should be goalContinueTurn, NOT "Start pursuing...".
+	msgs := ag.Session().Messages
+	for _, m := range msgs {
+		if m.Role == provider.RoleUser && strings.Contains(m.Content, "Start pursuing") {
+			t.Fatal("ContinueGoal should use goalContinueTurn, not 'Start pursuing'")
+		}
+	}
+	// It should contain the continue instruction.
+	found := false
+	for _, m := range msgs {
+		if m.Role == provider.RoleUser && strings.Contains(m.Content, "Continue pursuing the active goal") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("expected goalContinueTurn in user messages")
+	}
+}
+
+func TestParseGoalCommandContinue(t *testing.T) {
+	tests := []struct {
+		input string
+		want  GoalCommandAction
+	}{
+		{"/goal continue", GoalCommandContinue},
+		{"/goal Continue", GoalCommandContinue},
+		{"/goal CONTINUE", GoalCommandContinue},
+		{"/goal resume", GoalCommandContinue},
+		{"/goal Resume", GoalCommandContinue},
+	}
+	for _, tt := range tests {
+		cmd, ok := ParseGoalCommand(tt.input)
+		if !ok {
+			t.Errorf("ParseGoalCommand(%q) not recognized", tt.input)
+			continue
+		}
+		if cmd.Action != tt.want {
+			t.Errorf("ParseGoalCommand(%q).Action = %d, want %d", tt.input, cmd.Action, tt.want)
+		}
+	}
+}
