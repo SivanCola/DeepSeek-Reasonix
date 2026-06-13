@@ -304,7 +304,10 @@ func (gw *BotGateway) handleSlashCommand(ctx context.Context, adapter Adapter, k
 			}
 			if err := state.ctrl.NewSession(); err != nil {
 				gw.logger.Warn("new session failed", "err", err)
+				_ = gw.sendText(ctx, adapter, msg, "新会话创建失败："+err.Error())
+				return
 			}
+			gw.ensureControllerSessionMapping(key, msg.Platform, state.ctrl)
 		}
 		gw.sessions.ForceRelease(key)
 		_ = gw.sendText(ctx, adapter, msg, "已开始新会话。")
@@ -524,6 +527,7 @@ func (gw *BotGateway) getOrCreateSession(ctx context.Context, key string, msg In
 		return nil
 	}
 	ctrl.EnableInteractiveApproval()
+	gw.ensureControllerSessionMapping(key, msg.Platform, ctrl)
 
 	gw.mu.Lock()
 	gw.controllers[key] = &sessionState{
@@ -619,15 +623,8 @@ func (gw *BotGateway) attachSession(ctx context.Context, key string, msg Inbound
 		createdAt:   time.Now(),
 		lastActive:  time.Now(),
 	}
-	gw.mappings[key] = SessionMapping{
-		RemoteKey:     key,
-		SessionPath:   path,
-		SessionID:     shortSessionID(path),
-		WorkspaceRoot: gw.cfg.WorkspaceRoot,
-		UpdatedAt:     time.Now().UTC(),
-	}
 	gw.mu.Unlock()
-	if err := gw.saveSessionMappings(); err != nil {
+	if err := gw.setSessionMapping(key, path, gw.workspaceRootForPlatform(msg.Platform)); err != nil {
 		return err
 	}
 	return nil
@@ -650,6 +647,47 @@ func (gw *BotGateway) sessionOptionsForPlatform(plat Platform) (model string, wo
 		workspaceRoot = value
 	}
 	return model, workspaceRoot
+}
+
+func (gw *BotGateway) workspaceRootForPlatform(plat Platform) string {
+	_, workspaceRoot := gw.sessionOptionsForPlatform(plat)
+	return workspaceRoot
+}
+
+func (gw *BotGateway) ensureControllerSessionMapping(key string, plat Platform, ctrl *control.Controller) {
+	if ctrl == nil {
+		return
+	}
+	path := strings.TrimSpace(ctrl.SessionPath())
+	if path == "" {
+		dir := strings.TrimSpace(ctrl.SessionDir())
+		if dir == "" {
+			return
+		}
+		path = agent.NewSessionPath(dir, ctrl.Label())
+		ctrl.SetSessionPath(path)
+	}
+	if err := gw.setSessionMapping(key, path, gw.workspaceRootForPlatform(plat)); err != nil {
+		gw.logger.Warn("bot session mapping save failed", "err", err, "session", shortSessionID(path))
+	}
+}
+
+func (gw *BotGateway) setSessionMapping(key, path, workspaceRoot string) error {
+	key = strings.TrimSpace(key)
+	path = strings.TrimSpace(path)
+	if key == "" || path == "" {
+		return nil
+	}
+	gw.mu.Lock()
+	gw.mappings[key] = SessionMapping{
+		RemoteKey:     key,
+		SessionPath:   path,
+		SessionID:     shortSessionID(path),
+		WorkspaceRoot: workspaceRoot,
+		UpdatedAt:     time.Now().UTC(),
+	}
+	gw.mu.Unlock()
+	return gw.saveSessionMappings()
 }
 
 func (gw *BotGateway) loadSessionMappings() {

@@ -150,7 +150,7 @@ dynamic workflow 或开发者平台，而是先把 Reasonix 从一次性会话�
   - [x] 复用 `bot.connections.session_mappings` 概念。
 - [ ] bot gateway 创建 controller 时优先恢复已有 session。
   - [x] 若 mapping 存在，加载对应 `.jsonl` 和 runtime sidecar。
-  - 若不存在，创建新 session 并写 mapping。
+  - [x] 若不存在，创建新 session 并写 mapping。
 - [ ] bot 命令增强。
   - [x] `/status` 显示 active goal、run status。
   - `/goal continue` 从 IM 触发继续。

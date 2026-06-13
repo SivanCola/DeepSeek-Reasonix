@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"reasonix/internal/agent"
+	"reasonix/internal/control"
 	"reasonix/internal/provider"
 )
 
@@ -298,6 +299,53 @@ func TestGatewaySessionMappingPersists(t *testing.T) {
 	gw3 := NewGateway(GatewayConfig{SessionMappingPath: mappingPath}, nil, logger)
 	if _, ok := gw3.sessionMapping("remote-1"); ok {
 		t.Fatal("mapping should be removed after clear")
+	}
+}
+
+func TestGatewayEnsuresMappingForNewController(t *testing.T) {
+	dir := t.TempDir()
+	mappingPath := filepath.Join(dir, "mappings.json")
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	gw := NewGateway(GatewayConfig{
+		SessionDir:         dir,
+		SessionMappingPath: mappingPath,
+		WorkspaceRoot:      "/workspace",
+	}, nil, logger)
+	ctrl := control.New(control.Options{SessionDir: dir, Label: "model/test"})
+
+	gw.ensureControllerSessionMapping("remote-new", PlatformQQ, ctrl)
+
+	if ctrl.SessionPath() == "" {
+		t.Fatal("controller should receive a session path")
+	}
+	mapping, ok := gw.sessionMapping("remote-new")
+	if !ok {
+		t.Fatal("mapping should be recorded")
+	}
+	if mapping.SessionPath != ctrl.SessionPath() || mapping.WorkspaceRoot != "/workspace" {
+		t.Fatalf("unexpected mapping: %+v ctrlPath=%q", mapping, ctrl.SessionPath())
+	}
+
+	gw2 := NewGateway(GatewayConfig{SessionMappingPath: mappingPath}, nil, logger)
+	reloaded, ok := gw2.sessionMapping("remote-new")
+	if !ok || reloaded.SessionPath != ctrl.SessionPath() {
+		t.Fatalf("mapping not persisted: ok=%v mapping=%+v", ok, reloaded)
+	}
+}
+
+func TestGatewayEnsuresMappingPreservesExistingControllerPath(t *testing.T) {
+	dir := t.TempDir()
+	existingPath := filepath.Join(dir, "existing.jsonl")
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	gw := NewGateway(GatewayConfig{SessionDir: dir}, nil, logger)
+	ctrl := control.New(control.Options{SessionDir: dir, Label: "model/test"})
+	ctrl.SetSessionPath(existingPath)
+
+	gw.ensureControllerSessionMapping("remote-existing", PlatformQQ, ctrl)
+
+	mapping, ok := gw.sessionMapping("remote-existing")
+	if !ok || mapping.SessionPath != existingPath || ctrl.SessionPath() != existingPath {
+		t.Fatalf("existing path should be preserved: ok=%v mapping=%+v ctrlPath=%q", ok, mapping, ctrl.SessionPath())
 	}
 }
 
