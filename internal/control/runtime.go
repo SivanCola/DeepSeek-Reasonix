@@ -64,6 +64,7 @@ func mergeRuntimeForSave(path string, next agent.RuntimeMeta) agent.RuntimeMeta 
 	}
 	next.Scheduler = prev.Scheduler
 	next.FileWatch = prev.FileWatch
+	next.Budget = prev.Budget
 	if next.Model == "" {
 		next.Model = prev.Model
 	}
@@ -87,7 +88,8 @@ func hasPersistentRuntimeConfig(m agent.RuntimeMeta) bool {
 		m.Scheduler.DailyAt != "" ||
 		m.Scheduler.Interval > 0 ||
 		m.FileWatch.Enabled ||
-		len(m.FileWatch.Paths) > 0
+		len(m.FileWatch.Paths) > 0 ||
+		m.Budget.DailyWakeupLimit > 0
 }
 
 // RestoreRuntimeSnapshot applies a previously-saved RuntimeMeta to the
@@ -142,6 +144,7 @@ func (c *Controller) saveRuntimeSidecar(path string) {
 		if hasPersistentRuntimeConfig(prev) {
 			meta.Scheduler = prev.Scheduler
 			meta.FileWatch = prev.FileWatch
+			meta.Budget = prev.Budget
 			if err := agent.SaveRuntimeMeta(path, meta); err != nil {
 				slog.Warn("controller: clear runtime goal state", "err", err)
 			}

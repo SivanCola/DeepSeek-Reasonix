@@ -69,6 +69,10 @@ func TestBuildDaemonDoctorReportSummarizesRuntime(t *testing.T) {
 		Wait:      agent.RuntimeWaitMeta{Kind: "event", EventSource: "github"},
 		Scheduler: agent.RuntimeSchedMeta{Enabled: true, Interval: time.Hour},
 		FileWatch: agent.RuntimeWatchMeta{Enabled: true, Paths: []string{"src"}},
+		Budget: agent.RuntimeBudgetMeta{
+			DailyWakeupLimit:  1,
+			LastBlockedReason: "daily automatic wakeup budget exhausted for cron (1/1)",
+		},
 	}); err != nil {
 		t.Fatalf("SaveRuntimeMeta: %v", err)
 	}
@@ -80,7 +84,8 @@ func TestBuildDaemonDoctorReportSummarizesRuntime(t *testing.T) {
 		t.Fatalf("doctor should warn but not fail when daemon is offline: %+v", report.Checks)
 	}
 	if report.Runtime.Total != 1 || report.Runtime.ActiveGoals != 1 || report.Runtime.Interrupted != 1 ||
-		report.Runtime.Waiting != 1 || report.Runtime.Scheduled != 1 || report.Runtime.Watched != 1 {
+		report.Runtime.Waiting != 1 || report.Runtime.Scheduled != 1 || report.Runtime.Watched != 1 ||
+		report.Runtime.Budgeted != 1 || report.Runtime.BudgetBlocked != 1 {
 		t.Fatalf("unexpected runtime summary: %+v", report.Runtime)
 	}
 	if !hasDoctorCheck(report, "online", "warn") {

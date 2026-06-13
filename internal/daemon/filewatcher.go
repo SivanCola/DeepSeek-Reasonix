@@ -255,6 +255,25 @@ func (fw *FileWatcher) fireWakeup(sessionID string, state *watchState, now time.
 		fw.daemon.mu.Unlock()
 		return
 	}
+	if ok, reason := reserveAutoWakeupBudget(&entry.Runtime, "file_watch", now); !ok {
+		entry.Runtime.Scheduler.LastWakeupAt = now
+		entry.Runtime.Scheduler.LastWakeupReason = "budget_blocked:file_watch"
+		runtime := entry.Runtime
+		path := entry.Path
+		fw.daemon.mu.Unlock()
+		if err := agent.SaveRuntimeMeta(path, runtime); err != nil {
+			fw.logger.Warn("file watcher: save runtime after budget block", "err", err, "session", sessionID)
+		}
+		fw.daemon.appendTimeline(path, agent.RuntimeTimelineEvent{
+			Type:       "wakeup_budget_blocked",
+			Source:     "file_watch",
+			Reason:     reason,
+			RunStatus:  runtime.Run.Status,
+			GoalStatus: runtime.Goal.Status,
+			Message:    reason,
+		})
+		return
+	}
 
 	entry.Runtime.Run.Status = "pending_continue"
 	entry.Runtime.Run.LastWakeupReason = "file_change"

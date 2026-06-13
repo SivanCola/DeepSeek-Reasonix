@@ -282,6 +282,74 @@ func (d *Daemon) handleSchedule(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(resp)
 }
 
+// handleBudget sets or resets the automatic wakeup budget for a session.
+// Body: {"session_id":"...","daily_wakeup_limit":10,"reset":true}
+func (d *Daemon) handleBudget(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		SessionID        string `json:"session_id"`
+		DailyWakeupLimit *int   `json:"daily_wakeup_limit"`
+		Reset            bool   `json:"reset"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, `{"error":"invalid json"}`, http.StatusBadRequest)
+		return
+	}
+	if req.SessionID == "" {
+		http.Error(w, `{"error":"session_id required"}`, http.StatusBadRequest)
+		return
+	}
+	if req.DailyWakeupLimit != nil && *req.DailyWakeupLimit < 0 {
+		http.Error(w, `{"error":"daily_wakeup_limit must be >= 0"}`, http.StatusBadRequest)
+		return
+	}
+
+	now := time.Now().UTC()
+	d.mu.Lock()
+	entry, ok := d.registry[req.SessionID]
+	if !ok {
+		d.mu.Unlock()
+		http.Error(w, `{"error":"session not found"}`, http.StatusNotFound)
+		return
+	}
+	if req.DailyWakeupLimit != nil {
+		entry.Runtime.Budget.DailyWakeupLimit = *req.DailyWakeupLimit
+		if entry.Runtime.Budget.WindowStartedAt.IsZero() {
+			entry.Runtime.Budget.WindowStartedAt = budgetWindowStart(now)
+		}
+	}
+	if req.Reset {
+		entry.Runtime.Budget.DailyWakeups = 0
+		entry.Runtime.Budget.WindowStartedAt = budgetWindowStart(now)
+		entry.Runtime.Budget.LastBlockedAt = time.Time{}
+		entry.Runtime.Budget.LastBlockedReason = ""
+	}
+	runtime := entry.Runtime
+	path := entry.Path
+	d.mu.Unlock()
+
+	if err := agent.SaveRuntimeMeta(path, runtime); err != nil {
+		http.Error(w, fmt.Sprintf(`{"error":"save failed: %s"}`, err), http.StatusInternalServerError)
+		return
+	}
+	d.appendTimeline(path, agent.RuntimeTimelineEvent{
+		Type:       "budget_configured",
+		Source:     "api",
+		RunStatus:  runtime.Run.Status,
+		GoalStatus: runtime.Goal.Status,
+		Message:    fmt.Sprintf("daily_wakeup_limit=%d daily_wakeups=%d", runtime.Budget.DailyWakeupLimit, runtime.Budget.DailyWakeups),
+	})
+
+	w.Header().Set("Content-Type", "application/json")
+	resp := map[string]interface{}{
+		"ok":                 true,
+		"session_id":         req.SessionID,
+		"daily_wakeup_limit": runtime.Budget.DailyWakeupLimit,
+		"daily_wakeups":      runtime.Budget.DailyWakeups,
+		"window_started_at":  runtime.Budget.WindowStartedAt.Format(time.RFC3339),
+	}
+	json.NewEncoder(w).Encode(resp)
+}
+
 // handleWatch configures file watching for a session.
 // Body: {"session_id": "...", "paths": ["src/"], "ignore_patterns": ["*.tmp"], "debounce": "3s", "enabled": true}
 func (d *Daemon) handleWatch(w http.ResponseWriter, r *http.Request) {

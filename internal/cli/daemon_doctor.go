@@ -26,15 +26,17 @@ type daemonDoctorCheck struct {
 }
 
 type daemonDoctorRuntimeSummary struct {
-	Total       int        `json:"total"`
-	Corrupt     int        `json:"corrupt"`
-	ActiveGoals int        `json:"active_goals"`
-	Running     int        `json:"running"`
-	Interrupted int        `json:"interrupted"`
-	Waiting     int        `json:"waiting"`
-	Scheduled   int        `json:"scheduled"`
-	Watched     int        `json:"watched"`
-	LastUpdated *time.Time `json:"last_updated,omitempty"`
+	Total         int        `json:"total"`
+	Corrupt       int        `json:"corrupt"`
+	ActiveGoals   int        `json:"active_goals"`
+	Running       int        `json:"running"`
+	Interrupted   int        `json:"interrupted"`
+	Waiting       int        `json:"waiting"`
+	Scheduled     int        `json:"scheduled"`
+	Watched       int        `json:"watched"`
+	Budgeted      int        `json:"budgeted"`
+	BudgetBlocked int        `json:"budget_blocked"`
+	LastUpdated   *time.Time `json:"last_updated,omitempty"`
 }
 
 type daemonDoctorOnlineStatus struct {
@@ -206,6 +208,12 @@ func (r *daemonDoctorReport) scanRuntimeSidecars() daemonDoctorRuntimeSummary {
 		if meta.FileWatch.Enabled || len(meta.FileWatch.Paths) > 0 {
 			summary.Watched++
 		}
+		if meta.Budget.DailyWakeupLimit > 0 {
+			summary.Budgeted++
+		}
+		if meta.Budget.LastBlockedReason != "" {
+			summary.BudgetBlocked++
+		}
 	}
 	return summary
 }
@@ -233,8 +241,8 @@ func daemonDoctorSessionPaths(sessionDir string) []string {
 }
 
 func (r *daemonDoctorReport) checkRuntimeSummary() {
-	msg := fmt.Sprintf("runtime sidecars=%d active_goals=%d scheduled=%d watched=%d waiting=%d interrupted=%d",
-		r.Runtime.Total, r.Runtime.ActiveGoals, r.Runtime.Scheduled, r.Runtime.Watched, r.Runtime.Waiting, r.Runtime.Interrupted)
+	msg := fmt.Sprintf("runtime sidecars=%d active_goals=%d scheduled=%d watched=%d budgeted=%d budget_blocked=%d waiting=%d interrupted=%d",
+		r.Runtime.Total, r.Runtime.ActiveGoals, r.Runtime.Scheduled, r.Runtime.Watched, r.Runtime.Budgeted, r.Runtime.BudgetBlocked, r.Runtime.Waiting, r.Runtime.Interrupted)
 	if r.Runtime.Corrupt > 0 {
 		r.addCheck("runtime", "fail", fmt.Sprintf("%s corrupt=%d", msg, r.Runtime.Corrupt))
 		return

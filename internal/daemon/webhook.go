@@ -111,6 +111,33 @@ func (d *Daemon) handleWebhook(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"session already running"}`, http.StatusConflict)
 		return
 	}
+	now := time.Now()
+	if ok, reason := reserveAutoWakeupBudget(&entry.Runtime, "webhook:"+evt.Type, now); !ok {
+		entry.Runtime.Scheduler.LastWakeupAt = now
+		entry.Runtime.Scheduler.LastWakeupReason = "budget_blocked:webhook:" + evt.Type
+		if evt.EventID != "" {
+			entry.Runtime.Scheduler.LastWakeupEventID = evt.EventID
+		}
+		runtime := entry.Runtime
+		path := entry.Path
+		d.mu.Unlock()
+		if err := agent.SaveRuntimeMeta(path, runtime); err != nil {
+			http.Error(w, fmt.Sprintf(`{"error":"save failed: %s"}`, err), http.StatusInternalServerError)
+			return
+		}
+		d.appendTimeline(path, agent.RuntimeTimelineEvent{
+			Type:       "wakeup_budget_blocked",
+			Source:     "webhook",
+			Reason:     reason,
+			EventID:    evt.EventID,
+			RunStatus:  runtime.Run.Status,
+			GoalStatus: runtime.Goal.Status,
+			Message:    reason,
+		})
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"ok":true,"status":"budget_blocked","event_id":%q}`, evt.EventID)
+		return
+	}
 
 	// Update runtime to signal the wakeup.
 	entry.Runtime.Run.Status = "pending_continue"
@@ -120,7 +147,7 @@ func (d *Daemon) handleWebhook(w http.ResponseWriter, r *http.Request) {
 		EventSource: "webhook:" + evt.Type,
 		EventID:     evt.EventID,
 	}
-	entry.Runtime.Scheduler.LastWakeupAt = time.Now()
+	entry.Runtime.Scheduler.LastWakeupAt = now
 	entry.Runtime.Scheduler.LastWakeupReason = "webhook:" + evt.Type
 	if evt.EventID != "" {
 		entry.Runtime.Scheduler.LastWakeupEventID = evt.EventID

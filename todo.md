@@ -341,6 +341,7 @@ dynamic workflow 或开发者平台，而是先把 Reasonix 从一次性会话�
   - wait for file change
   - wait for webhook
 - [ ] 成本预算。
+  - [x] session 级每日自动唤醒次数预算。
   - 每日模型调用次数。
   - 每日费用预算。
   - 每个 goal 最大自动轮次。
@@ -402,7 +403,8 @@ dynamic workflow 或开发者平台，而是先把 Reasonix 从一次性会话�
 - [ ] 状态漂移风险：transcript、runtime sidecar、desktop tab profile 不一致。
   - 缓解：controller runtime sidecar 是权威状态，desktop profile 只是 UI 偏好。
 - [ ] 成本风险：常驻 agent 频繁唤醒模型。
-  - 缓解：确定性预检查、每日预算、最大自动轮次。
+  - [x] 缓解：确定性预检查、每日自动唤醒预算。
+  - [ ] 缓解：每日模型调用 / 费用预算、最大自动轮次。
 - [ ] 用户体验风险：恢复历史时自动开跑。
   - 缓解：resume 只恢复状态，不默认执行；显式 continue 或 scheduler 才执行。
 - [ ] 平台化过早风险：插件生态、SDK、企业平台会拖慢个人 OS MVP。

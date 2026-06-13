@@ -242,6 +242,65 @@ func TestSchedulerWakeupPersists(t *testing.T) {
 	}
 }
 
+func TestSchedulerWakeupRespectsDailyBudget(t *testing.T) {
+	dir := t.TempDir()
+	sess := filepath.Join(dir, "sched-budget.jsonl")
+	if err := os.WriteFile(sess, []byte(`{}`), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	now := time.Now().UTC()
+	if err := agent.SaveRuntimeMeta(sess, agent.RuntimeMeta{
+		SessionID: "sched-budget",
+		Goal:      agent.RuntimeGoalMeta{Text: "do work", Status: "running"},
+		Run:       agent.RuntimeRunMeta{Status: "idle"},
+		Scheduler: agent.RuntimeSchedMeta{
+			Enabled:      true,
+			Interval:     time.Hour,
+			NextWakeupAt: now.Add(-time.Minute),
+		},
+		Budget: agent.RuntimeBudgetMeta{
+			DailyWakeupLimit: 1,
+			DailyWakeups:     1,
+			WindowStartedAt:  budgetWindowStart(now),
+		},
+	}); err != nil {
+		t.Fatalf("SaveRuntimeMeta: %v", err)
+	}
+
+	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	d := New(Options{SessionDir: dir})
+	d.scanSessions()
+	s := NewScheduler(d, logger)
+
+	d.mu.RLock()
+	entry := d.registry["sched-budget"]
+	d.mu.RUnlock()
+	s.wakeup(entry, now)
+
+	select {
+	case intent := <-d.intentCh:
+		t.Fatalf("budget-blocked scheduler should not enqueue intent: %+v", intent)
+	default:
+	}
+
+	loaded, ok, err := agent.LoadRuntimeMeta(sess)
+	if err != nil || !ok {
+		t.Fatalf("LoadRuntimeMeta: err=%v ok=%v", err, ok)
+	}
+	if loaded.Run.Status != "idle" {
+		t.Fatalf("Run.Status = %q, want idle", loaded.Run.Status)
+	}
+	if loaded.Budget.LastBlockedReason == "" {
+		t.Fatalf("budget block reason missing: %+v", loaded.Budget)
+	}
+	if loaded.Scheduler.LastWakeupReason != "budget_blocked:cron" {
+		t.Fatalf("LastWakeupReason = %q, want budget_blocked:cron", loaded.Scheduler.LastWakeupReason)
+	}
+	if !loaded.Scheduler.NextWakeupAt.After(now) {
+		t.Fatalf("NextWakeupAt should advance after budget block, got %v", loaded.Scheduler.NextWakeupAt)
+	}
+}
+
 func TestSchedulerWakeupRechecksRuntimeBeforePersist(t *testing.T) {
 	dir := t.TempDir()
 	sess := filepath.Join(dir, "recheck.jsonl")

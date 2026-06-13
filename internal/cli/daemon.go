@@ -46,6 +46,8 @@ func daemonCommand(args []string) int {
 		return daemonContinueCmd(rest)
 	case "schedule":
 		return daemonScheduleCmd(rest)
+	case "budget":
+		return daemonBudgetCmd(rest)
 	case "approve":
 		return daemonApprovalCmd(rest, true)
 	case "deny":
@@ -364,6 +366,51 @@ func daemonScheduleCmd(args []string) int {
 	return 0
 }
 
+func daemonBudgetCmd(args []string) int {
+	fs := flag.NewFlagSet("daemon budget", flag.ContinueOnError)
+	addr := fs.String("addr", daemon.DefaultAddr, "daemon 地址")
+	dir := fs.String("dir", "", "会话目录（用于读取本地 token）")
+	sessionID := fs.String("session", "", "要配置预算的 session ID")
+	dailyWakeups := fs.Int("daily-wakeups", -1, "每日自动唤醒次数上限，0 表示关闭限制")
+	reset := fs.Bool("reset", false, "重置当前 UTC 日预算计数")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if *sessionID == "" {
+		fmt.Fprintln(os.Stderr, "error: --session is required")
+		return 2
+	}
+	if *dailyWakeups < 0 && !*reset {
+		fmt.Fprintln(os.Stderr, "error: --daily-wakeups or --reset is required")
+		return 2
+	}
+	if *dailyWakeups < -1 {
+		fmt.Fprintln(os.Stderr, "error: --daily-wakeups must be >= 0")
+		return 2
+	}
+	body := fmt.Sprintf(`{"session_id":%q`, *sessionID)
+	if *dailyWakeups >= 0 {
+		body += fmt.Sprintf(`,"daily_wakeup_limit":%d`, *dailyWakeups)
+	}
+	if *reset {
+		body += `,"reset":true`
+	}
+	body += "}"
+	resp, err := daemonPost(*addr, *dir, "/budget", body)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "daemon not reachable: %v\n", err)
+		return 1
+	}
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 200 {
+		fmt.Fprintf(os.Stderr, "error: %s\n", string(b))
+		return 1
+	}
+	fmt.Println(string(b))
+	return 0
+}
+
 func daemonApprovalCmd(args []string, allow bool) int {
 	name := "daemon approve"
 	path := "/approvals/approve"
@@ -491,6 +538,7 @@ Usage:
   reasonix daemon timeline --session ID [--limit N] [--json]
   reasonix daemon continue --session ID [--addr HOST:PORT] [--dir PATH]
   reasonix daemon schedule --session ID [--daily-at HH:MM | --interval 1h]
+  reasonix daemon budget   --session ID --daily-wakeups N [--reset]
   reasonix daemon approve  --session ID --approval ID
   reasonix daemon deny     --session ID --approval ID
   reasonix daemon answer   --session ID --ask ID --selected TEXT
@@ -504,6 +552,7 @@ Subcommands:
   timeline   查看指定 session 的运行事件时间线
   continue   显式唤醒并继续指定 goal
   schedule   设置 daily/interval 定时唤醒
+  budget     设置自动唤醒每日预算
   approve    批准 daemon 中等待的审批
   deny       拒绝 daemon 中等待的审批
   answer     回答 daemon 中等待的 ask 问题

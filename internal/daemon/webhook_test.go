@@ -220,6 +220,63 @@ func TestWebhookRoutesGitHubEventWithoutSessionID(t *testing.T) {
 	}
 }
 
+func TestWebhookRespectsDailyBudget(t *testing.T) {
+	dir := t.TempDir()
+	sess := filepath.Join(dir, "webhook-budget.jsonl")
+	if err := os.WriteFile(sess, []byte(`{}`), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	now := time.Now().UTC()
+	if err := agent.SaveRuntimeMeta(sess, agent.RuntimeMeta{
+		SessionID: "webhook-budget",
+		Goal:      agent.RuntimeGoalMeta{Text: "deploy", Status: "running"},
+		Run:       agent.RuntimeRunMeta{Status: "idle"},
+		Budget: agent.RuntimeBudgetMeta{
+			DailyWakeupLimit: 1,
+			DailyWakeups:     1,
+			WindowStartedAt:  budgetWindowStart(now),
+		},
+	}); err != nil {
+		t.Fatalf("SaveRuntimeMeta: %v", err)
+	}
+
+	secret := "budget-secret"
+	d := New(Options{
+		SessionDir: dir,
+		Webhook:    &WebhookConfig{Secret: secret, Enabled: true},
+	})
+	d.scanSessions()
+
+	payload := `{"type":"github.ci","session_id":"webhook-budget","summary":"CI passed","event_id":"evt-budget"}`
+	sig := computeHMAC([]byte(payload), secret)
+	req := httptest.NewRequest("POST", "/webhook", strings.NewReader(payload))
+	req.Header.Set("X-Webhook-Signature", sig)
+	rr := httptest.NewRecorder()
+	d.handleWebhook(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("webhook status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	var resp map[string]any
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp["status"] != "budget_blocked" {
+		t.Fatalf("status = %v, want budget_blocked", resp["status"])
+	}
+	select {
+	case intent := <-d.intentCh:
+		t.Fatalf("budget-blocked webhook should not enqueue intent: %+v", intent)
+	default:
+	}
+	loaded, ok, err := agent.LoadRuntimeMeta(sess)
+	if err != nil || !ok {
+		t.Fatalf("LoadRuntimeMeta: err=%v ok=%v", err, ok)
+	}
+	if loaded.Run.Status != "idle" || loaded.Scheduler.LastWakeupEventID != "evt-budget" || loaded.Budget.LastBlockedReason == "" {
+		t.Fatalf("budget block not persisted: run=%+v scheduler=%+v budget=%+v", loaded.Run, loaded.Scheduler, loaded.Budget)
+	}
+}
+
 func TestFileWatcherIgnorePatterns(t *testing.T) {
 	fw := NewFileWatcher(nil, nil)
 

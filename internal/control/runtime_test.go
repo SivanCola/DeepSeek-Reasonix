@@ -372,6 +372,40 @@ func TestSnapshotPreservesFileWatchRuntime(t *testing.T) {
 	}
 }
 
+func TestSnapshotPreservesBudgetRuntime(t *testing.T) {
+	dir := t.TempDir()
+	sessionPath := filepath.Join(dir, "preserve-budget.jsonl")
+
+	sess := agent.NewSession("")
+	sess.Add(provider.Message{Role: provider.RoleUser, Content: "hello"})
+	ag := agent.New(nil, tool.NewRegistry(), sess, agent.Options{}, event.Discard)
+	c := New(Options{Executor: ag, SessionPath: sessionPath, Sink: event.Discard})
+
+	if err := agent.SaveRuntimeMeta(sessionPath, agent.RuntimeMeta{
+		Goal: agent.RuntimeGoalMeta{Text: "old", Status: GoalStatusRunning},
+		Budget: agent.RuntimeBudgetMeta{
+			DailyWakeupLimit: 7,
+			DailyWakeups:     2,
+			WindowStartedAt:  time.Now().UTC(),
+		},
+	}); err != nil {
+		t.Fatalf("SaveRuntimeMeta: %v", err)
+	}
+
+	c.SetGoal("new goal")
+	if err := c.Snapshot(); err != nil {
+		t.Fatalf("Snapshot: %v", err)
+	}
+
+	m, ok, err := agent.LoadRuntimeMeta(sessionPath)
+	if err != nil || !ok {
+		t.Fatalf("LoadRuntimeMeta: err=%v ok=%v", err, ok)
+	}
+	if m.Budget.DailyWakeupLimit != 7 || m.Budget.DailyWakeups != 2 {
+		t.Fatalf("budget not preserved: %+v", m.Budget)
+	}
+}
+
 func TestClearGoalRemovesStaleRuntimeSidecar(t *testing.T) {
 	dir := t.TempDir()
 	sessionPath := filepath.Join(dir, "clear-goal.jsonl")
@@ -462,6 +496,37 @@ func TestClearGoalPreservesFileWatchButClearsGoal(t *testing.T) {
 	}
 	if !m.FileWatch.Enabled || len(m.FileWatch.Paths) != 1 || m.FileWatch.Paths[0] != "src" {
 		t.Fatalf("file watch should be preserved, got %+v", m.FileWatch)
+	}
+}
+
+func TestClearGoalPreservesBudgetButClearsGoal(t *testing.T) {
+	dir := t.TempDir()
+	sessionPath := filepath.Join(dir, "clear-goal-budget.jsonl")
+
+	sess := agent.NewSession("")
+	sess.Add(provider.Message{Role: provider.RoleUser, Content: "hello"})
+	ag := agent.New(nil, tool.NewRegistry(), sess, agent.Options{}, event.Discard)
+	c := New(Options{Executor: ag, SessionPath: sessionPath, Sink: event.Discard})
+
+	if err := agent.SaveRuntimeMeta(sessionPath, agent.RuntimeMeta{
+		Goal:   agent.RuntimeGoalMeta{Text: "stale", Status: GoalStatusRunning},
+		Budget: agent.RuntimeBudgetMeta{DailyWakeupLimit: 3},
+	}); err != nil {
+		t.Fatalf("SaveRuntimeMeta: %v", err)
+	}
+
+	c.SetGoal("stale")
+	c.ClearGoal()
+
+	m, ok, err := agent.LoadRuntimeMeta(sessionPath)
+	if err != nil || !ok {
+		t.Fatalf("LoadRuntimeMeta: err=%v ok=%v", err, ok)
+	}
+	if m.Goal.Text != "" || m.Goal.Status == GoalStatusRunning {
+		t.Fatalf("goal should be cleared, got %+v", m.Goal)
+	}
+	if m.Budget.DailyWakeupLimit != 3 {
+		t.Fatalf("budget should be preserved, got %+v", m.Budget)
 	}
 }
 

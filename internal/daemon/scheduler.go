@@ -150,6 +150,28 @@ func (s *Scheduler) wakeupSession(id string, now time.Time) {
 
 	eventID := s.eventID(entry, now)
 	s.logger.Info("scheduler wakeup", "session", entry.ID, "event", eventID)
+	if ok, reason := reserveAutoWakeupBudget(&entry.Runtime, "cron", now); !ok {
+		entry.Runtime.Scheduler.LastWakeupAt = now
+		entry.Runtime.Scheduler.LastWakeupReason = "budget_blocked:cron"
+		entry.Runtime.Scheduler.LastWakeupEventID = eventID
+		entry.Runtime.Scheduler.NextWakeupAt = s.computeNextWakeup(entry.Runtime.Scheduler, now)
+		runtime := entry.Runtime
+		path := entry.Path
+		s.daemon.mu.Unlock()
+		if err := agent.SaveRuntimeMeta(path, runtime); err != nil {
+			s.logger.Warn("scheduler: save runtime after budget block", "err", err, "session", id)
+		}
+		s.daemon.appendTimeline(path, agent.RuntimeTimelineEvent{
+			Type:       "wakeup_budget_blocked",
+			Source:     "cron",
+			Reason:     reason,
+			EventID:    eventID,
+			RunStatus:  runtime.Run.Status,
+			GoalStatus: runtime.Goal.Status,
+			Message:    reason,
+		})
+		return
+	}
 
 	entry.Runtime.Scheduler.LastWakeupAt = now
 	entry.Runtime.Scheduler.LastWakeupReason = "cron"

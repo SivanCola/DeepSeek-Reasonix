@@ -351,6 +351,49 @@ func TestDaemonWatchHandlerPersistsConfig(t *testing.T) {
 	}
 }
 
+func TestDaemonBudgetHandlerPersistsConfig(t *testing.T) {
+	dir := t.TempDir()
+	sess := filepath.Join(dir, "budget-api.jsonl")
+	if err := os.WriteFile(sess, []byte(`{"role":"user","content":"start"}`+"\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	if err := agent.SaveRuntimeMeta(sess, agent.RuntimeMeta{
+		SessionID: "budget-api",
+		Goal:      agent.RuntimeGoalMeta{Text: "keep budget", Status: control.GoalStatusRunning},
+		Run:       agent.RuntimeRunMeta{Status: "idle"},
+		Budget: agent.RuntimeBudgetMeta{
+			DailyWakeups:      3,
+			LastBlockedReason: "old",
+		},
+	}); err != nil {
+		t.Fatalf("SaveRuntimeMeta: %v", err)
+	}
+
+	d := New(Options{SessionDir: dir})
+	d.scanSessions()
+	req := httptest.NewRequest("POST", "/budget", strings.NewReader(`{"session_id":"budget-api","daily_wakeup_limit":5,"reset":true}`))
+	rr := httptest.NewRecorder()
+	d.handleBudget(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("budget status = %d body=%s", rr.Code, rr.Body.String())
+	}
+
+	loaded, ok, err := agent.LoadRuntimeMeta(sess)
+	if err != nil || !ok {
+		t.Fatalf("LoadRuntimeMeta: err=%v ok=%v", err, ok)
+	}
+	if loaded.Budget.DailyWakeupLimit != 5 || loaded.Budget.DailyWakeups != 0 || loaded.Budget.LastBlockedReason != "" {
+		t.Fatalf("budget not persisted/reset: %+v", loaded.Budget)
+	}
+	if loaded.Budget.WindowStartedAt.IsZero() {
+		t.Fatal("budget reset should stamp WindowStartedAt")
+	}
+	events, ok, err := agent.LoadRuntimeTimeline(sess, 1)
+	if err != nil || !ok || len(events) != 1 || events[0].Type != "budget_configured" {
+		t.Fatalf("budget timeline not recorded: events=%+v err=%v ok=%v", events, err, ok)
+	}
+}
+
 func TestDaemonRestoreFileWatches(t *testing.T) {
 	dir := t.TempDir()
 	watchDir := filepath.Join(dir, "workspace")
@@ -462,6 +505,60 @@ func TestFileWatcherWakeupIncludesChangedFileSummary(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("file change timeline event missing: %+v", events)
+	}
+}
+
+func TestFileWatcherWakeupRespectsDailyBudget(t *testing.T) {
+	dir := t.TempDir()
+	watchDir := filepath.Join(dir, "workspace")
+	if err := os.MkdirAll(watchDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	sess := filepath.Join(dir, "file-budget.jsonl")
+	if err := os.WriteFile(sess, []byte(`{"role":"user","content":"start"}`+"\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	now := time.Now().UTC()
+	if err := agent.SaveRuntimeMeta(sess, agent.RuntimeMeta{
+		SessionID: "file-budget",
+		Goal:      agent.RuntimeGoalMeta{Text: "react to files", Status: control.GoalStatusRunning},
+		Run:       agent.RuntimeRunMeta{Status: "idle"},
+		Budget: agent.RuntimeBudgetMeta{
+			DailyWakeupLimit: 1,
+			DailyWakeups:     1,
+			WindowStartedAt:  budgetWindowStart(now),
+		},
+	}); err != nil {
+		t.Fatalf("SaveRuntimeMeta: %v", err)
+	}
+
+	d := New(Options{SessionDir: dir})
+	d.scanSessions()
+	fw := NewFileWatcher(d, d.logger)
+	state := &watchState{
+		config:   FileWatchConfig{Paths: []string{watchDir}, Enabled: true},
+		lastSeen: map[string]time.Time{},
+		changes: map[string]struct{}{
+			filepath.Join(watchDir, "changed.md"): {},
+		},
+		pending: true,
+	}
+	fw.fireWakeup("file-budget", state, now)
+
+	select {
+	case intent := <-d.intentCh:
+		t.Fatalf("budget-blocked file watch should not enqueue intent: %+v", intent)
+	default:
+	}
+	loaded, ok, err := agent.LoadRuntimeMeta(sess)
+	if err != nil || !ok {
+		t.Fatalf("LoadRuntimeMeta: err=%v ok=%v", err, ok)
+	}
+	if loaded.Run.Status != "idle" {
+		t.Fatalf("Run.Status = %q, want idle", loaded.Run.Status)
+	}
+	if loaded.Budget.LastBlockedReason == "" || loaded.Scheduler.LastWakeupReason != "budget_blocked:file_watch" {
+		t.Fatalf("budget block not persisted: budget=%+v scheduler=%+v", loaded.Budget, loaded.Scheduler)
 	}
 }
 

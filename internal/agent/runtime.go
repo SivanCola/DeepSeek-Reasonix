@@ -19,16 +19,17 @@ import (
 // The sidecar is independent of BranchMeta: branch meta is structural (tree
 // lineage, topic), runtime meta is ephemeral execution state.
 type RuntimeMeta struct {
-	Version       int              `json:"version"`
-	SessionID     string           `json:"session_id"`
-	UpdatedAt     time.Time        `json:"updated_at"`
-	Model         string           `json:"model,omitempty"`
-	WorkspaceRoot string           `json:"workspace_root,omitempty"`
-	Goal          RuntimeGoalMeta  `json:"goal,omitempty"`
-	Run           RuntimeRunMeta   `json:"run,omitempty"`
-	Wait          RuntimeWaitMeta  `json:"wait,omitempty"`
-	Scheduler     RuntimeSchedMeta `json:"scheduler,omitempty"`
-	FileWatch     RuntimeWatchMeta `json:"file_watch,omitempty"`
+	Version       int               `json:"version"`
+	SessionID     string            `json:"session_id"`
+	UpdatedAt     time.Time         `json:"updated_at"`
+	Model         string            `json:"model,omitempty"`
+	WorkspaceRoot string            `json:"workspace_root,omitempty"`
+	Goal          RuntimeGoalMeta   `json:"goal,omitempty"`
+	Run           RuntimeRunMeta    `json:"run,omitempty"`
+	Wait          RuntimeWaitMeta   `json:"wait,omitempty"`
+	Scheduler     RuntimeSchedMeta  `json:"scheduler,omitempty"`
+	FileWatch     RuntimeWatchMeta  `json:"file_watch,omitempty"`
+	Budget        RuntimeBudgetMeta `json:"budget,omitempty"`
 }
 
 // RuntimeTimelineEvent is an append-only event record for daemon/runtime
@@ -106,6 +107,20 @@ type RuntimeWatchMeta struct {
 	Debounce time.Duration `json:"debounce,omitempty"`
 	// Enabled controls whether file-change wakeups are active.
 	Enabled bool `json:"enabled,omitempty"`
+}
+
+// RuntimeBudgetMeta holds deterministic automatic-wakeup budget state.
+type RuntimeBudgetMeta struct {
+	// DailyWakeupLimit limits automatic daemon wakeups per UTC day. 0 disables the limit.
+	DailyWakeupLimit int `json:"daily_wakeup_limit,omitempty"`
+	// DailyWakeups counts automatic wakeups reserved in the current UTC day window.
+	DailyWakeups int `json:"daily_wakeups,omitempty"`
+	// WindowStartedAt is the UTC start of the current accounting day.
+	WindowStartedAt time.Time `json:"window_started_at,omitempty"`
+	// LastBlockedAt records the most recent budget-blocked wakeup.
+	LastBlockedAt time.Time `json:"last_blocked_at,omitempty"`
+	// LastBlockedReason explains the most recent budget block.
+	LastBlockedReason string `json:"last_blocked_reason,omitempty"`
 }
 
 const runtimeMetaVersion = 1
