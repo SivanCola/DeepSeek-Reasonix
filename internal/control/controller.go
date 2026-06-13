@@ -2828,13 +2828,11 @@ func (c *Controller) seedAgentTodoState(args string) {
 	if c.executor == nil {
 		return
 	}
-	var payload struct {
-		Todos []evidence.TodoItem `json:"todos"`
-	}
-	if err := json.Unmarshal([]byte(args), &payload); err != nil || len(payload.Todos) == 0 {
+	todos := agentTodoStateFromArgs(args)
+	if len(todos) == 0 {
 		return
 	}
-	c.executor.SeedTodoState(payload.Todos)
+	c.executor.SeedTodoState(todos)
 }
 
 func (c *Controller) completePlanTodos(args string) {
@@ -2849,6 +2847,28 @@ func (c *Controller) completePlanTodos(args string) {
 	c.sink.Emit(event.Event{Kind: event.ToolDispatch, Tool: t})
 	t.Output = "approved plan finished"
 	c.sink.Emit(event.Event{Kind: event.ToolResult, Tool: t})
+	c.replaceAgentTodoState(done)
+}
+
+func (c *Controller) replaceAgentTodoState(args string) {
+	if c.executor == nil {
+		return
+	}
+	todos := agentTodoStateFromArgs(args)
+	if len(todos) == 0 {
+		return
+	}
+	c.executor.ReplaceTodoState(todos)
+}
+
+func agentTodoStateFromArgs(args string) []evidence.TodoItem {
+	var payload struct {
+		Todos []evidence.TodoItem `json:"todos"`
+	}
+	if err := json.Unmarshal([]byte(args), &payload); err != nil {
+		return nil
+	}
+	return payload.Todos
 }
 
 // PlanTodosJSON parses an approved plan's markdown into todo_write-shaped args

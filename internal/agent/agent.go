@@ -782,6 +782,13 @@ func (a *Agent) SeedTodoState(todos []evidence.TodoItem) {
 	a.todoMu.Unlock()
 }
 
+// ReplaceTodoState mirrors a host-generated todo list into the canonical state.
+// It is used when the host, rather than the model, owns the full state transition.
+func (a *Agent) ReplaceTodoState(todos []evidence.TodoItem) {
+	a.setTodoState(todos)
+	a.recordTodoState(todos)
+}
+
 // CanonicalTodoState returns a copy of the host-reconstructed task list.
 func (a *Agent) CanonicalTodoState() []evidence.TodoItem {
 	a.todoMu.Lock()
