@@ -331,6 +331,47 @@ func TestSnapshotPreservesSchedulerRuntime(t *testing.T) {
 	}
 }
 
+func TestSnapshotPreservesFileWatchRuntime(t *testing.T) {
+	dir := t.TempDir()
+	sessionPath := filepath.Join(dir, "preserve-watch.jsonl")
+
+	sess := agent.NewSession("")
+	sess.Add(provider.Message{Role: provider.RoleUser, Content: "hello"})
+	ag := agent.New(nil, tool.NewRegistry(), sess, agent.Options{}, event.Discard)
+	c := New(Options{Executor: ag, SessionPath: sessionPath, Sink: event.Discard})
+
+	if err := agent.SaveRuntimeMeta(sessionPath, agent.RuntimeMeta{
+		Goal: agent.RuntimeGoalMeta{Text: "old", Status: GoalStatusRunning},
+		FileWatch: agent.RuntimeWatchMeta{
+			Enabled:        true,
+			Paths:          []string{"src"},
+			IgnorePatterns: []string{"*.tmp"},
+			Debounce:       5 * time.Second,
+		},
+	}); err != nil {
+		t.Fatalf("SaveRuntimeMeta: %v", err)
+	}
+
+	c.SetGoal("new goal")
+	if err := c.Snapshot(); err != nil {
+		t.Fatalf("Snapshot: %v", err)
+	}
+
+	m, ok, err := agent.LoadRuntimeMeta(sessionPath)
+	if err != nil || !ok {
+		t.Fatalf("LoadRuntimeMeta: err=%v ok=%v", err, ok)
+	}
+	if !m.FileWatch.Enabled || len(m.FileWatch.Paths) != 1 || m.FileWatch.Paths[0] != "src" {
+		t.Fatalf("file watch not preserved: %+v", m.FileWatch)
+	}
+	if m.FileWatch.Debounce != 5*time.Second {
+		t.Fatalf("Debounce = %v, want 5s", m.FileWatch.Debounce)
+	}
+	if m.Goal.Text != "new goal" {
+		t.Fatalf("Goal.Text = %q, want new goal", m.Goal.Text)
+	}
+}
+
 func TestClearGoalRemovesStaleRuntimeSidecar(t *testing.T) {
 	dir := t.TempDir()
 	sessionPath := filepath.Join(dir, "clear-goal.jsonl")
@@ -386,6 +427,41 @@ func TestClearGoalPreservesSchedulerButClearsGoal(t *testing.T) {
 	}
 	if !m.Scheduler.Enabled || m.Scheduler.DailyAt != "09:00" {
 		t.Fatalf("scheduler should be preserved, got %+v", m.Scheduler)
+	}
+}
+
+func TestClearGoalPreservesFileWatchButClearsGoal(t *testing.T) {
+	dir := t.TempDir()
+	sessionPath := filepath.Join(dir, "clear-goal-watch.jsonl")
+
+	sess := agent.NewSession("")
+	sess.Add(provider.Message{Role: provider.RoleUser, Content: "hello"})
+	ag := agent.New(nil, tool.NewRegistry(), sess, agent.Options{}, event.Discard)
+	c := New(Options{Executor: ag, SessionPath: sessionPath, Sink: event.Discard})
+
+	if err := agent.SaveRuntimeMeta(sessionPath, agent.RuntimeMeta{
+		Goal: agent.RuntimeGoalMeta{Text: "stale", Status: GoalStatusRunning},
+		FileWatch: agent.RuntimeWatchMeta{
+			Enabled:  true,
+			Paths:    []string{"src"},
+			Debounce: 2 * time.Second,
+		},
+	}); err != nil {
+		t.Fatalf("SaveRuntimeMeta: %v", err)
+	}
+
+	c.SetGoal("stale")
+	c.ClearGoal()
+
+	m, ok, err := agent.LoadRuntimeMeta(sessionPath)
+	if err != nil || !ok {
+		t.Fatalf("LoadRuntimeMeta: err=%v ok=%v", err, ok)
+	}
+	if m.Goal.Text != "" || m.Goal.Status == GoalStatusRunning {
+		t.Fatalf("goal should be cleared, got %+v", m.Goal)
+	}
+	if !m.FileWatch.Enabled || len(m.FileWatch.Paths) != 1 || m.FileWatch.Paths[0] != "src" {
+		t.Fatalf("file watch should be preserved, got %+v", m.FileWatch)
 	}
 }
 

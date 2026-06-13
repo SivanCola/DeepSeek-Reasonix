@@ -302,7 +302,13 @@ func (d *Daemon) handleWatch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	d.mu.RLock()
-	_, ok := d.registry[req.SessionID]
+	entry, ok := d.registry[req.SessionID]
+	var runtime agent.RuntimeMeta
+	var path string
+	if ok {
+		runtime = entry.Runtime
+		path = entry.Path
+	}
 	d.mu.RUnlock()
 	if !ok {
 		http.Error(w, `{"error":"session not found"}`, http.StatusNotFound)
@@ -325,22 +331,46 @@ func (d *Daemon) handleWatch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	cfg := FileWatchConfig{
-		Paths:          req.Paths,
-		IgnorePatterns: req.IgnorePatterns,
+		Paths:          append([]string(nil), req.Paths...),
+		IgnorePatterns: append([]string(nil), req.IgnorePatterns...),
 		Debounce:       debounce,
 		Enabled:        enabled,
 	}
+	runtime.FileWatch = agent.RuntimeWatchMeta{
+		Paths:          append([]string(nil), cfg.Paths...),
+		IgnorePatterns: append([]string(nil), cfg.IgnorePatterns...),
+		Debounce:       cfg.Debounce,
+		Enabled:        cfg.Enabled && len(cfg.Paths) > 0,
+	}
+	if err := agent.SaveRuntimeMeta(path, runtime); err != nil {
+		http.Error(w, fmt.Sprintf(`{"error":"save failed: %s"}`, err), http.StatusInternalServerError)
+		return
+	}
+
+	d.mu.Lock()
+	if entry := d.registry[req.SessionID]; entry != nil {
+		entry.Runtime = runtime
+	}
+	d.mu.Unlock()
 
 	if d.fileWatcher != nil {
-		if enabled && len(req.Paths) > 0 {
-			d.fileWatcher.Register(req.SessionID, cfg)
+		watchEntry := &SessionEntry{ID: req.SessionID, Path: path, Runtime: runtime}
+		if runtime.FileWatch.Enabled {
+			d.fileWatcher.Register(req.SessionID, fileWatchConfigForEntry(watchEntry))
 		} else {
 			d.fileWatcher.Unregister(req.SessionID)
 		}
 	}
+	d.appendTimeline(path, agent.RuntimeTimelineEvent{
+		Type:       "watch_configured",
+		Source:     "api",
+		RunStatus:  runtime.Run.Status,
+		GoalStatus: runtime.Goal.Status,
+		Message:    fmt.Sprintf("file watch enabled=%t paths=%d", runtime.FileWatch.Enabled, len(runtime.FileWatch.Paths)),
+	})
 
 	w.Header().Set("Content-Type", "application/json")
-	fmt.Fprintf(w, `{"ok":true,"session_id":%q,"enabled":%t,"paths":%d}`, req.SessionID, enabled, len(req.Paths))
+	fmt.Fprintf(w, `{"ok":true,"session_id":%q,"enabled":%t,"paths":%d}`, req.SessionID, runtime.FileWatch.Enabled, len(runtime.FileWatch.Paths))
 }
 
 // handleApprove resolves a pending daemon approval.

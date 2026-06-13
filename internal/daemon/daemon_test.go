@@ -299,6 +299,103 @@ func TestDaemonTimelineHandler(t *testing.T) {
 	}
 }
 
+func TestDaemonWatchHandlerPersistsConfig(t *testing.T) {
+	dir := t.TempDir()
+	watchDir := filepath.Join(dir, "workspace")
+	if err := os.MkdirAll(watchDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	sess := filepath.Join(dir, "watch-api.jsonl")
+	if err := os.WriteFile(sess, []byte(`{"role":"user","content":"start"}`+"\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	if err := agent.SaveRuntimeMeta(sess, agent.RuntimeMeta{
+		SessionID: "watch-api",
+		Goal:      agent.RuntimeGoalMeta{Text: "watch files", Status: control.GoalStatusRunning},
+		Run:       agent.RuntimeRunMeta{Status: "idle"},
+	}); err != nil {
+		t.Fatalf("SaveRuntimeMeta: %v", err)
+	}
+
+	d := New(Options{SessionDir: dir})
+	d.scanSessions()
+	d.fileWatcher = NewFileWatcher(d, nil)
+
+	body := `{"session_id":"watch-api","paths":["` + watchDir + `"],"ignore_patterns":["*.tmp"],"debounce":"5s","enabled":true}`
+	req := httptest.NewRequest("POST", "/watch", strings.NewReader(body))
+	rr := httptest.NewRecorder()
+	d.handleWatch(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("watch status = %d body=%s", rr.Code, rr.Body.String())
+	}
+
+	loaded, ok, err := agent.LoadRuntimeMeta(sess)
+	if err != nil || !ok {
+		t.Fatalf("LoadRuntimeMeta: err=%v ok=%v", err, ok)
+	}
+	if !loaded.FileWatch.Enabled || len(loaded.FileWatch.Paths) != 1 || loaded.FileWatch.Paths[0] != watchDir {
+		t.Fatalf("file watch config not persisted: %+v", loaded.FileWatch)
+	}
+	if loaded.FileWatch.Debounce != 5*time.Second {
+		t.Fatalf("Debounce = %v, want 5s", loaded.FileWatch.Debounce)
+	}
+	d.fileWatcher.mu.Lock()
+	registered := d.fileWatcher.watches["watch-api"]
+	d.fileWatcher.mu.Unlock()
+	if registered == nil || !registered.config.Enabled || len(registered.config.Paths) != 1 {
+		t.Fatalf("file watcher not registered: %+v", registered)
+	}
+	events, ok, err := agent.LoadRuntimeTimeline(sess, 1)
+	if err != nil || !ok || len(events) != 1 || events[0].Type != "watch_configured" {
+		t.Fatalf("watch timeline not recorded: events=%+v err=%v ok=%v", events, err, ok)
+	}
+}
+
+func TestDaemonRestoreFileWatches(t *testing.T) {
+	dir := t.TempDir()
+	watchDir := filepath.Join(dir, "workspace")
+	if err := os.MkdirAll(watchDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	sess := filepath.Join(dir, "watch-restore.jsonl")
+	if err := os.WriteFile(sess, []byte(`{"role":"user","content":"start"}`+"\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	if err := agent.SaveRuntimeMeta(sess, agent.RuntimeMeta{
+		SessionID:     "watch-restore",
+		WorkspaceRoot: watchDir,
+		Goal:          agent.RuntimeGoalMeta{Text: "watch files", Status: control.GoalStatusRunning},
+		Run:           agent.RuntimeRunMeta{Status: "idle"},
+		FileWatch: agent.RuntimeWatchMeta{
+			Enabled:        true,
+			Paths:          []string{"src"},
+			IgnorePatterns: []string{"*.tmp"},
+			Debounce:       4 * time.Second,
+		},
+	}); err != nil {
+		t.Fatalf("SaveRuntimeMeta: %v", err)
+	}
+
+	d := New(Options{SessionDir: dir})
+	d.scanSessions()
+	d.fileWatcher = NewFileWatcher(d, nil)
+	d.restoreFileWatches()
+
+	d.fileWatcher.mu.Lock()
+	registered := d.fileWatcher.watches["watch-restore"]
+	d.fileWatcher.mu.Unlock()
+	if registered == nil {
+		t.Fatal("file watch not restored")
+	}
+	if registered.config.Debounce != 4*time.Second || registered.config.IgnorePatterns[0] != "*.tmp" {
+		t.Fatalf("unexpected restored config: %+v", registered.config)
+	}
+	wantPath := filepath.Join(watchDir, "src")
+	if len(registered.config.Paths) != 1 || registered.config.Paths[0] != wantPath {
+		t.Fatalf("restored paths = %+v, want %q", registered.config.Paths, wantPath)
+	}
+}
+
 func TestDaemonExecuteIntentCompletesGoal(t *testing.T) {
 	dir := t.TempDir()
 	sessPath := filepath.Join(dir, "worker-test.jsonl")

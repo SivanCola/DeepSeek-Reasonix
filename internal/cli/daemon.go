@@ -131,8 +131,15 @@ func daemonStart(args []string) int {
 	fs := flag.NewFlagSet("daemon start", flag.ContinueOnError)
 	addr := fs.String("addr", daemon.DefaultAddr, "监听地址")
 	dir := fs.String("dir", "", "会话目录（默认用户配置）")
+	webhook := fs.Bool("webhook", false, "启用 /webhook 外部事件入口")
+	webhookSecret := fs.String("webhook-secret", "", "webhook HMAC secret（也可用 REASONIX_DAEMON_WEBHOOK_SECRET）")
 
 	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	webhookCfg, err := resolveDaemonWebhookConfig(*webhook, *webhookSecret, os.Getenv)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 2
 	}
 
@@ -153,6 +160,7 @@ func daemonStart(args []string) int {
 		Addr:       *addr,
 		SessionDir: *dir,
 		Logger:     logger,
+		Webhook:    webhookCfg,
 	})
 
 	if err := d.Start(ctx); err != nil {
@@ -160,6 +168,20 @@ func daemonStart(args []string) int {
 		return 1
 	}
 	return 0
+}
+
+func resolveDaemonWebhookConfig(enabled bool, secret string, getenv func(string) string) (*daemon.WebhookConfig, error) {
+	secret = strings.TrimSpace(secret)
+	if secret == "" && getenv != nil {
+		secret = strings.TrimSpace(getenv("REASONIX_DAEMON_WEBHOOK_SECRET"))
+	}
+	if !enabled && secret == "" {
+		return nil, nil
+	}
+	if secret == "" {
+		return nil, fmt.Errorf("--webhook requires --webhook-secret or REASONIX_DAEMON_WEBHOOK_SECRET")
+	}
+	return &daemon.WebhookConfig{Enabled: true, Secret: secret}, nil
 }
 
 func daemonStatus(args []string) int {
@@ -460,7 +482,7 @@ func daemonUsage() {
 	fmt.Print(`reasonix daemon — 常驻后台 agent 服务
 
 Usage:
-  reasonix daemon start    [--addr HOST:PORT] [--dir PATH]
+  reasonix daemon start    [--addr HOST:PORT] [--dir PATH] [--webhook --webhook-secret SECRET]
   reasonix daemon status   [--addr HOST:PORT] [--dir PATH]
   reasonix daemon sessions [--addr HOST:PORT] [--dir PATH] [--json]
   reasonix daemon timeline --session ID [--limit N] [--json]
@@ -486,6 +508,7 @@ Subcommands:
 The daemon scans session directories for *.runtime.json files, recovers
 interrupted sessions, and exposes a localhost HTTP API for status queries
 and goal continuation. The local HTTP API uses a token stored beside the
-session directory.
+session directory. Webhooks require an HMAC secret supplied by
+--webhook-secret or REASONIX_DAEMON_WEBHOOK_SECRET.
 `)
 }

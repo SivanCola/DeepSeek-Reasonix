@@ -179,6 +179,7 @@ func (d *Daemon) Start(ctx context.Context) error {
 
 	// Start the file watcher.
 	d.fileWatcher = NewFileWatcher(d, d.logger)
+	d.restoreFileWatches()
 	go d.fileWatcher.Start(ctx)
 
 	mux := http.NewServeMux()
@@ -224,6 +225,52 @@ func (d *Daemon) Start(ctx context.Context) error {
 	case err := <-errCh:
 		return err
 	}
+}
+
+func (d *Daemon) restoreFileWatches() {
+	if d.fileWatcher == nil {
+		return
+	}
+	d.mu.RLock()
+	entries := make([]*SessionEntry, 0, len(d.registry))
+	for _, entry := range d.registry {
+		entries = append(entries, entry)
+	}
+	d.mu.RUnlock()
+
+	for _, entry := range entries {
+		watch := entry.Runtime.FileWatch
+		if !watch.Enabled || len(watch.Paths) == 0 {
+			continue
+		}
+		d.fileWatcher.Register(entry.ID, fileWatchConfigForEntry(entry))
+	}
+}
+
+func fileWatchConfigForEntry(entry *SessionEntry) FileWatchConfig {
+	watch := entry.Runtime.FileWatch
+	return FileWatchConfig{
+		Paths:          resolveFileWatchPaths(entry.Runtime.WorkspaceRoot, watch.Paths),
+		IgnorePatterns: append([]string(nil), watch.IgnorePatterns...),
+		Debounce:       watch.Debounce,
+		Enabled:        watch.Enabled && len(watch.Paths) > 0,
+	}
+}
+
+func resolveFileWatchPaths(workspaceRoot string, paths []string) []string {
+	resolved := make([]string, 0, len(paths))
+	for _, path := range paths {
+		path = strings.TrimSpace(path)
+		if path == "" {
+			continue
+		}
+		if filepath.IsAbs(path) || workspaceRoot == "" {
+			resolved = append(resolved, path)
+			continue
+		}
+		resolved = append(resolved, filepath.Join(workspaceRoot, path))
+	}
+	return resolved
 }
 
 // --- Lock management ---

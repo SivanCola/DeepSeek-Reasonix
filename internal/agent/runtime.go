@@ -28,6 +28,7 @@ type RuntimeMeta struct {
 	Run           RuntimeRunMeta   `json:"run,omitempty"`
 	Wait          RuntimeWaitMeta  `json:"wait,omitempty"`
 	Scheduler     RuntimeSchedMeta `json:"scheduler,omitempty"`
+	FileWatch     RuntimeWatchMeta `json:"file_watch,omitempty"`
 }
 
 // RuntimeTimelineEvent is an append-only event record for daemon/runtime
@@ -93,6 +94,18 @@ type RuntimeSchedMeta struct {
 	LastWakeupAt      time.Time `json:"last_wakeup_at,omitempty"`
 	LastWakeupReason  string    `json:"last_wakeup_reason,omitempty"`
 	LastWakeupEventID string    `json:"last_wakeup_event_id,omitempty"`
+}
+
+// RuntimeWatchMeta holds file-watch wakeup configuration for a session.
+type RuntimeWatchMeta struct {
+	// Paths are watched by the daemon and may be relative to the workspace root.
+	Paths []string `json:"paths,omitempty"`
+	// IgnorePatterns are glob patterns skipped in addition to daemon defaults.
+	IgnorePatterns []string `json:"ignore_patterns,omitempty"`
+	// Debounce delays wakeup until the file changes settle.
+	Debounce time.Duration `json:"debounce,omitempty"`
+	// Enabled controls whether file-change wakeups are active.
+	Enabled bool `json:"enabled,omitempty"`
 }
 
 const runtimeMetaVersion = 1
