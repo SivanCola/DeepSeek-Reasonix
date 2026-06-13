@@ -258,14 +258,14 @@ export function historyMessagesToItems(messages: HistoryMessage[], idPrefix: str
         const result = resultByID.get(tc.id);
         if (tc.id) consumedToolIDs.add(tc.id);
         const output = result?.content ?? "";
-        const error = output.startsWith("[error") || output.startsWith("Error:") ? output : undefined;
+        const error = result ? historyToolError(output) : undefined;
         items.push({
           kind: "tool",
           id: tc.id || `${idPrefix}tool${seq}`,
           name: tc.name,
           args: tc.arguments ?? "",
           readOnly: isReadOnlyTool(tc.name),
-          status: error ? "error" : "done",
+          status: result ? (error ? "error" : "done") : "stopped",
           output,
           error,
           isShell: (tc.id || "").startsWith("shell-"),
@@ -277,7 +277,7 @@ export function historyMessagesToItems(messages: HistoryMessage[], idPrefix: str
     if (m.role === "tool") {
       if (m.toolCallId && consumedToolIDs.has(m.toolCallId)) continue;
       const output = m.content;
-      const error = output.startsWith("[error") || output.startsWith("Error:") ? output : undefined;
+      const error = historyToolError(output);
       items.push({
         kind: "tool",
         id: m.toolCallId || `${idPrefix}tool${seq}`,
@@ -294,6 +294,19 @@ export function historyMessagesToItems(messages: HistoryMessage[], idPrefix: str
     }
   }
   return { items, seq };
+}
+
+function historyToolError(output: string): string | undefined {
+  const trimmed = output.trimStart();
+  if (
+    trimmed.startsWith("[error") ||
+    trimmed.startsWith("Error:") ||
+    trimmed.startsWith("error:") ||
+    trimmed.startsWith("blocked:")
+  ) {
+    return output;
+  }
+  return undefined;
 }
 
 function ensureAssistant(s: State): { items: Item[]; id: string; seq: number } {

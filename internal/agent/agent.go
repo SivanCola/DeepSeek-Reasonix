@@ -768,6 +768,27 @@ func (a *Agent) setTodoState(todos []evidence.TodoItem) {
 	a.todoMu.Unlock()
 }
 
+// SeedTodoState initializes the canonical task list from a host-generated
+// starter list, such as an approved plan. It does not overwrite a list the model
+// has already established.
+func (a *Agent) SeedTodoState(todos []evidence.TodoItem) {
+	if len(todos) == 0 {
+		return
+	}
+	a.todoMu.Lock()
+	if len(a.todoState) == 0 {
+		a.todoState = append([]evidence.TodoItem(nil), todos...)
+	}
+	a.todoMu.Unlock()
+}
+
+// CanonicalTodoState returns a copy of the host-reconstructed task list.
+func (a *Agent) CanonicalTodoState() []evidence.TodoItem {
+	a.todoMu.Lock()
+	defer a.todoMu.Unlock()
+	return append([]evidence.TodoItem(nil), a.todoState...)
+}
+
 func (a *Agent) incompleteCanonicalTodos() ([]evidence.TodoStepMatch, bool) {
 	a.todoMu.Lock()
 	defer a.todoMu.Unlock()
@@ -859,12 +880,12 @@ func (a *Agent) emitTodoState(todos []evidence.TodoItem, itemIndex int) {
 // fresh load or a rewind (the truncated history yields the historical state).
 // Empty after compaction drops the todo_write — no worse than no canonical list.
 func (a *Agent) rebuildTodoState(msgs []provider.Message) {
-	failed := failedToolCallIDs(msgs)
+	successful := successfulToolCallIDs(msgs)
 	var todos []evidence.TodoItem
 	baseIdx := -1
 	for i, msg := range msgs {
 		for _, tc := range msg.ToolCalls {
-			if tc.Name != "todo_write" || failed[tc.ID] {
+			if tc.Name != "todo_write" || !successful[tc.ID] {
 				continue
 			}
 			if rec := evidence.ReceiptFromToolCall(tc.Name, json.RawMessage(tc.Arguments), true, true); len(rec.Todos) > 0 {
@@ -879,7 +900,7 @@ func (a *Agent) rebuildTodoState(msgs []provider.Message) {
 	}
 	for i := baseIdx; i < len(msgs); i++ {
 		for _, tc := range msgs[i].ToolCalls {
-			if tc.Name != "complete_step" || failed[tc.ID] {
+			if tc.Name != "complete_step" || !successful[tc.ID] {
 				continue
 			}
 			rec := evidence.ReceiptFromToolCall(tc.Name, json.RawMessage(tc.Arguments), true, true)
@@ -892,17 +913,25 @@ func (a *Agent) rebuildTodoState(msgs []provider.Message) {
 	a.setTodoState(todos)
 }
 
-func failedToolCallIDs(msgs []provider.Message) map[string]bool {
-	failed := map[string]bool{}
+func successfulToolCallIDs(msgs []provider.Message) map[string]bool {
+	successful := map[string]bool{}
 	for _, msg := range msgs {
 		if msg.Role != provider.RoleTool || msg.ToolCallID == "" {
 			continue
 		}
-		if strings.HasPrefix(msg.Content, "error:") || strings.HasPrefix(msg.Content, "blocked:") {
-			failed[msg.ToolCallID] = true
+		if !toolResultFailed(msg.Content) {
+			successful[msg.ToolCallID] = true
 		}
 	}
-	return failed
+	return successful
+}
+
+func toolResultFailed(content string) bool {
+	content = strings.TrimSpace(content)
+	return strings.HasPrefix(content, "error:") ||
+		strings.HasPrefix(content, "blocked:") ||
+		strings.HasPrefix(content, "Error:") ||
+		strings.HasPrefix(content, "[error")
 }
 
 func finalReadinessCheckSource(check instruction.VerifyCheck) string {
