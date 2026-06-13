@@ -73,6 +73,13 @@ console.log("\nuse controller meta");
 }
 
 {
+  const idleExecutor = reducer(
+    { ...initialState, context: { used: 0, window: 200, sessionTokens: 0 } },
+    { type: "event", e: { kind: "usage", usage: usage("executor") } },
+  );
+  eq(idleExecutor.sessionTokens, 0, "executor usage outside a turn does not inflate session tokens");
+  eq(idleExecutor.context.used, 0, "executor usage outside a turn does not refresh context used tokens");
+
   const idleHelper = reducer(initialState, { type: "event", e: { kind: "usage", usage: usage("classifier") } });
   eq(idleHelper.sessionTokens, 0, "helper usage outside a turn does not inflate session tokens");
   eq(idleHelper.sessionCost, 0, "helper usage outside a turn does not inflate session cost");

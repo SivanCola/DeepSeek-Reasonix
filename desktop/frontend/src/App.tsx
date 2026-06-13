@@ -1364,6 +1364,7 @@ export default function App() {
     setClearContextPending(false);
     try {
       await clearSession();
+      setDockRefreshKey((v) => v + 1);
       notice(t("clearContext.done"));
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);

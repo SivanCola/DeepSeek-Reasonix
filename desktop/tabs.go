@@ -250,6 +250,13 @@ func (t *WorkspaceTab) telemetrySnapshot() tabTelemetrySnapshot {
 	return tabTelemetrySnapshot{Version: 2, ReadFiles: records, Usage: usage}
 }
 
+func (t *WorkspaceTab) resetTelemetry() {
+	t.telemMu.Lock()
+	t.readTelemetry = nil
+	t.usageTelemetry = sessionUsageStats{}
+	t.telemMu.Unlock()
+}
+
 // tabEventSink wraps a parent event.Sink and prepends a tabId to every wire
 // event so the frontend can route it to the correct tab's reducer.
 type tabEventSink struct {
