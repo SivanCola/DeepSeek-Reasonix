@@ -282,6 +282,18 @@ export interface DaemonSessionView {
   workspaceRoot?: string;
   topicId?: string;
   topicTitle?: string;
+  nextWakeupAt?: string;
+  dailyWakeupLimit?: number;
+  dailyWakeups?: number;
+  maxGoalAutoTurns?: number;
+  dailyModelCallLimit?: number;
+  dailyModelCalls?: number;
+  dailyModelCostLimit?: number;
+  dailyModelCost?: number;
+  modelCostCurrency?: string;
+  budgetBlockedReason?: string;
+  scheduled?: boolean;
+  watched?: boolean;
 }
 
 export interface DaemonApprovalOptionView {

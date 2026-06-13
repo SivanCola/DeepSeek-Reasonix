@@ -115,6 +115,8 @@ export interface AppBindings {
   OpenDaemonSession(sessionID: string, addr: string): Promise<TabMeta>;
   ContinueDaemonGoal(sessionID: string, addr: string): Promise<void>;
   StopDaemonSession(sessionID: string, addr: string): Promise<void>;
+  DisableDaemonSchedule(sessionID: string, addr: string): Promise<void>;
+  DisableDaemonWatch(sessionID: string, addr: string): Promise<void>;
   ApproveDaemon(sessionID: string, approvalID: string, allow: boolean, session: boolean, persist: boolean, addr: string): Promise<void>;
   AnswerDaemonQuestion(sessionID: string, askID: string, answers: QuestionAnswer[], selected: string, addr: string): Promise<void>;
   ReplayPendingPrompts(): Promise<void>;
@@ -469,6 +471,10 @@ function delay(ms: number): Promise<void> {
 
 function mockDaemonApprovalsPreviewEnabled(): boolean {
   return typeof window !== "undefined" && new URLSearchParams(window.location.search).get("daemonApprovalsPreview") === "1";
+}
+
+function mockDaemonSessionsPreviewEnabled(): boolean {
+  return typeof window !== "undefined" && new URLSearchParams(window.location.search).get("daemonSessionsPreview") === "1";
 }
 
 function baseName(path: string): string {
@@ -1465,9 +1471,67 @@ function makeMockApp(): AppBindings {
           await withMockTabScope(_tabID, () => this.AnswerQuestion(id, answers));
         },
         async DaemonStatus(addr) {
+          if (mockDaemonSessionsPreviewEnabled()) {
+            return { connected: true, status: "running", addr: addr || "127.0.0.1:19840", sessions: 3, uptime: "2h14m", pid: 19840 };
+          }
           return { connected: false, addr: addr || "127.0.0.1:19840", error: "mock daemon is offline" };
         },
         async ListDaemonSessions() {
+          if (mockDaemonSessionsPreviewEnabled()) {
+            return [
+              {
+                id: "triage-session-20260613",
+                path: "mock-sessions/triage-session.jsonl",
+                goalText: "Daily PR and issue triage",
+                goalStatus: "running",
+                runStatus: "waiting_event",
+                waitKind: "event",
+                waitReason: "CI checks",
+                waitId: "workflow-run-42",
+                active: false,
+                scope: "project",
+                workspaceRoot: "mock-workspace/DeepSeek-Reasonix",
+                topicTitle: "DeepSeek-Reasonix",
+                nextWakeupAt: "2026-06-14T00:30:00Z",
+                dailyWakeupLimit: 3,
+                dailyWakeups: 1,
+                dailyModelCallLimit: 5,
+                dailyModelCalls: 2,
+                dailyModelCostLimit: 1.5,
+                dailyModelCost: 0.24,
+                modelCostCurrency: "$",
+                scheduled: true,
+                watched: false,
+              },
+              {
+                id: "release-session-20260613",
+                path: "mock-sessions/release-session.jsonl",
+                goalText: "Prepare release assistant",
+                goalStatus: "running",
+                runStatus: "running",
+                active: true,
+                scope: "project",
+                workspaceRoot: "mock-workspace/DeepSeek-Reasonix",
+                topicTitle: "Release",
+                dailyWakeupLimit: 2,
+                dailyWakeups: 1,
+                scheduled: false,
+                watched: true,
+              },
+              {
+                id: "recap-session-20260613",
+                path: "mock-sessions/recap-session.jsonl",
+                goalText: "Personal AgentOS recap",
+                goalStatus: "blocked",
+                runStatus: "blocked",
+                waitKind: "ask",
+                waitReason: "needs decision",
+                active: false,
+                scope: "global",
+                budgetBlockedReason: "daily automatic wakeup budget exhausted",
+              },
+            ];
+          }
           return [];
         },
         async ListDaemonApprovals() {
@@ -1520,6 +1584,12 @@ function makeMockApp(): AppBindings {
         },
         async StopDaemonSession(sessionID) {
           emit({ kind: "notice", level: "info", text: `mock daemon stopped: ${sessionID}` });
+        },
+        async DisableDaemonSchedule(sessionID) {
+          emit({ kind: "notice", level: "info", text: `mock daemon schedule disabled: ${sessionID}` });
+        },
+        async DisableDaemonWatch(sessionID) {
+          emit({ kind: "notice", level: "info", text: `mock daemon watch disabled: ${sessionID}` });
         },
         async ApproveDaemon(_sessionID, _approvalID, _allow, _session, _persist) {},
         async AnswerDaemonQuestion(_sessionID, _askID, _answers, _selected) {},
