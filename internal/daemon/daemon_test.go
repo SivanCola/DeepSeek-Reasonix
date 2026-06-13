@@ -21,11 +21,13 @@ import (
 
 type daemonScriptedProvider struct {
 	turns [][]provider.Chunk
+	calls int
 }
 
 func (p *daemonScriptedProvider) Name() string { return "daemon-test" }
 
 func (p *daemonScriptedProvider) Stream(ctx context.Context, req provider.Request) (<-chan provider.Chunk, error) {
+	p.calls++
 	ch := make(chan provider.Chunk, 8)
 	turn := []provider.Chunk{{Type: provider.ChunkText, Text: "done\n\n[goal:complete]"}}
 	if len(p.turns) > 0 {
@@ -484,6 +486,9 @@ func TestDaemonBudgetHandlerPersistsConfig(t *testing.T) {
 		Run:       agent.RuntimeRunMeta{Status: "idle"},
 		Budget: agent.RuntimeBudgetMeta{
 			DailyWakeups:      3,
+			DailyModelCalls:   2,
+			DailyModelCost:    0.75,
+			ModelCostCurrency: "$",
 			LastBlockedReason: "old",
 		},
 	}); err != nil {
@@ -492,7 +497,7 @@ func TestDaemonBudgetHandlerPersistsConfig(t *testing.T) {
 
 	d := New(Options{SessionDir: dir})
 	d.scanSessions()
-	req := httptest.NewRequest("POST", "/budget", strings.NewReader(`{"session_id":"budget-api","daily_wakeup_limit":5,"max_goal_auto_turns":12,"reset":true}`))
+	req := httptest.NewRequest("POST", "/budget", strings.NewReader(`{"session_id":"budget-api","daily_wakeup_limit":5,"max_goal_auto_turns":12,"daily_model_call_limit":7,"daily_model_cost_limit":1.25,"reset":true}`))
 	rr := httptest.NewRecorder()
 	d.handleBudget(rr, req)
 	if rr.Code != http.StatusOK {
@@ -503,7 +508,10 @@ func TestDaemonBudgetHandlerPersistsConfig(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("LoadRuntimeMeta: err=%v ok=%v", err, ok)
 	}
-	if loaded.Budget.DailyWakeupLimit != 5 || loaded.Budget.MaxGoalAutoTurns != 12 || loaded.Budget.DailyWakeups != 0 || loaded.Budget.LastBlockedReason != "" {
+	if loaded.Budget.DailyWakeupLimit != 5 || loaded.Budget.MaxGoalAutoTurns != 12 ||
+		loaded.Budget.DailyModelCallLimit != 7 || loaded.Budget.DailyModelCostLimit != 1.25 ||
+		loaded.Budget.DailyWakeups != 0 || loaded.Budget.DailyModelCalls != 0 || loaded.Budget.DailyModelCost != 0 ||
+		loaded.Budget.ModelCostCurrency != "" || loaded.Budget.LastBlockedReason != "" {
 		t.Fatalf("budget not persisted/reset: %+v", loaded.Budget)
 	}
 	if loaded.Budget.WindowStartedAt.IsZero() {
@@ -513,7 +521,9 @@ func TestDaemonBudgetHandlerPersistsConfig(t *testing.T) {
 	if err != nil || !ok || len(events) != 1 || events[0].Type != "budget_configured" {
 		t.Fatalf("budget timeline not recorded: events=%+v err=%v ok=%v", events, err, ok)
 	}
-	if !strings.Contains(events[0].Message, "max_goal_auto_turns=12") {
+	if !strings.Contains(events[0].Message, "max_goal_auto_turns=12") ||
+		!strings.Contains(events[0].Message, "daily_model_call_limit=7") ||
+		!strings.Contains(events[0].Message, "daily_model_cost_limit=1.250000") {
 		t.Fatalf("budget timeline missing auto-turn cap: %+v", events[0])
 	}
 }
@@ -1229,6 +1239,9 @@ func TestDaemonExecuteIntentCompletesGoal(t *testing.T) {
 	if loaded.Run.Status != "idle" {
 		t.Fatalf("Run.Status = %q, want idle", loaded.Run.Status)
 	}
+	if loaded.Budget.DailyModelCalls != 1 || loaded.Budget.DailyModelCost <= 0 || loaded.Budget.ModelCostCurrency != "$" {
+		t.Fatalf("model budget usage not persisted: %+v", loaded.Budget)
+	}
 	events, ok, err := agent.LoadRuntimeTimeline(sessPath, 0)
 	if err != nil || !ok {
 		t.Fatalf("LoadRuntimeTimeline: err=%v ok=%v", err, ok)
@@ -1256,6 +1269,85 @@ func TestDaemonExecuteIntentCompletesGoal(t *testing.T) {
 	}
 	if !sawUsage || !sawComplete {
 		t.Fatalf("missing model observability events usage=%t complete=%t events=%+v", sawUsage, sawComplete, events)
+	}
+}
+
+func TestDaemonExecuteIntentBlocksWhenModelCallBudgetExhausted(t *testing.T) {
+	dir := t.TempDir()
+	sessPath := filepath.Join(dir, "worker-budget-block.jsonl")
+	sess := agent.NewSession("")
+	sess.Add(provider.Message{Role: provider.RoleUser, Content: "start"})
+	if err := sess.Save(sessPath); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	now := time.Now().UTC()
+	if err := agent.SaveRuntimeMeta(sessPath, agent.RuntimeMeta{
+		SessionID: "worker-budget-block",
+		Goal:      agent.RuntimeGoalMeta{Text: "finish worker", Status: control.GoalStatusRunning},
+		Run:       agent.RuntimeRunMeta{Status: "pending_continue"},
+		Budget: agent.RuntimeBudgetMeta{
+			DailyModelCallLimit: 1,
+			DailyModelCalls:     1,
+			WindowStartedAt:     budgetWindowStart(now),
+		},
+	}); err != nil {
+		t.Fatalf("SaveRuntimeMeta: %v", err)
+	}
+
+	prov := &daemonScriptedProvider{}
+	d := New(Options{
+		SessionDir: dir,
+		ControllerFactory: func(ctx context.Context, d *Daemon, entry *SessionEntry, sink event.Sink) (*control.Controller, error) {
+			loaded, err := agent.LoadSession(entry.Path)
+			if err != nil {
+				return nil, err
+			}
+			ag := agent.New(prov, tool.NewRegistry(), loaded, agent.Options{}, sink)
+			c := control.New(control.Options{
+				Runner:      ag,
+				Executor:    ag,
+				SessionPath: entry.Path,
+				SessionDir:  dir,
+				Sink:        sink,
+			})
+			c.Resume(loaded, entry.Path)
+			return c, nil
+		},
+	})
+	d.scanSessions()
+	d.executeIntent(context.Background(), RunIntent{SessionID: "worker-budget-block", Source: "cron", Reason: "cron"})
+
+	if prov.calls != 0 {
+		t.Fatalf("provider should not be called after model budget is exhausted, got %d call(s)", prov.calls)
+	}
+	loaded, ok, err := agent.LoadRuntimeMeta(sessPath)
+	if err != nil || !ok {
+		t.Fatalf("LoadRuntimeMeta: err=%v ok=%v", err, ok)
+	}
+	if loaded.Run.Status != "idle" || loaded.Scheduler.LastWakeupReason != "budget_blocked:model" {
+		t.Fatalf("model budget block not persisted: run=%+v scheduler=%+v", loaded.Run, loaded.Scheduler)
+	}
+	if !strings.Contains(loaded.Budget.LastBlockedReason, "daily model call budget exhausted") {
+		t.Fatalf("missing model budget block reason: %+v", loaded.Budget)
+	}
+	events, ok, err := agent.LoadRuntimeTimeline(sessPath, 0)
+	if err != nil || !ok {
+		t.Fatalf("LoadRuntimeTimeline: err=%v ok=%v", err, ok)
+	}
+	var blocked bool
+	for _, event := range events {
+		if event.Type == "model_budget_blocked" {
+			blocked = true
+			if event.Step != "deterministic" || event.Source != "cron" {
+				t.Fatalf("unexpected model budget timeline event: %+v", event)
+			}
+		}
+		if event.Type == "model_usage" {
+			t.Fatalf("blocked intent should not record model usage: %+v", event)
+		}
+	}
+	if !blocked {
+		t.Fatalf("missing model budget block timeline event: %+v", events)
 	}
 }
 

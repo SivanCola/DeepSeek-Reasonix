@@ -236,7 +236,8 @@ func (r *daemonDoctorReport) scanRuntimeSidecars() daemonDoctorRuntimeSummary {
 		if meta.FileWatch.Enabled || len(meta.FileWatch.Paths) > 0 {
 			summary.Watched++
 		}
-		if meta.Budget.DailyWakeupLimit > 0 || meta.Budget.MaxGoalAutoTurns > 0 {
+		if meta.Budget.DailyWakeupLimit > 0 || meta.Budget.MaxGoalAutoTurns > 0 ||
+			meta.Budget.DailyModelCallLimit > 0 || meta.Budget.DailyModelCostLimit > 0 {
 			summary.Budgeted++
 		}
 		if meta.Budget.LastBlockedReason != "" {

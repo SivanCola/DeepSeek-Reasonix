@@ -109,7 +109,9 @@ func hasPersistentRuntimeConfig(m agent.RuntimeMeta) bool {
 		m.FileWatch.Enabled ||
 		len(m.FileWatch.Paths) > 0 ||
 		m.Budget.DailyWakeupLimit > 0 ||
-		m.Budget.MaxGoalAutoTurns > 0
+		m.Budget.MaxGoalAutoTurns > 0 ||
+		m.Budget.DailyModelCallLimit > 0 ||
+		m.Budget.DailyModelCostLimit > 0
 }
 
 // RestoreRuntimeSnapshot applies a previously-saved RuntimeMeta to the

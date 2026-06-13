@@ -459,8 +459,13 @@ func TestGatewayStatusIncludesRuntimeDetails(t *testing.T) {
 			NextWakeupAt:     now.Add(time.Hour),
 		},
 		Budget: agent.RuntimeBudgetMeta{
-			DailyWakeupLimit: 5,
-			DailyWakeups:     2,
+			DailyWakeupLimit:    5,
+			DailyWakeups:        2,
+			DailyModelCallLimit: 7,
+			DailyModelCalls:     3,
+			DailyModelCostLimit: 1.25,
+			DailyModelCost:      0.5,
+			ModelCostCurrency:   "$",
 		},
 	}); err != nil {
 		t.Fatalf("SaveRuntimeMeta: %v", err)
@@ -499,6 +504,8 @@ func TestGatewayStatusIncludesRuntimeDetails(t *testing.T) {
 		"(webhook)",
 		"下次唤醒:",
 		"唤醒预算: 2/5",
+		"模型调用预算: 3/7",
+		"模型费用预算: $ 0.5000/1.2500",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("status missing %q:\n%s", want, text)

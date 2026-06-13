@@ -55,6 +55,29 @@ func (d *Daemon) executeIntent(parent context.Context, intent RunIntent) {
 		d.mu.Unlock()
 		return
 	}
+	now := time.Now().UTC()
+	if ok, reason := checkModelBudget(&entry.Runtime, firstNonEmpty(intent.Source, intent.Reason, "daemon"), now); !ok {
+		entry.Runtime.Run.Status = "idle"
+		entry.Runtime.Run.LastError = reason
+		entry.Runtime.Scheduler.LastWakeupReason = "budget_blocked:model"
+		runtime := entry.Runtime
+		path := entry.Path
+		d.mu.Unlock()
+		if err := saveRuntimeMeta(path, runtime); err != nil {
+			d.logger.Warn("daemon: persist model budget block", "session", intent.SessionID, "err", err)
+		}
+		d.appendTimeline(path, agent.RuntimeTimelineEvent{
+			Type:       "model_budget_blocked",
+			Source:     firstNonEmpty(intent.Source, "daemon"),
+			Reason:     reason,
+			EventID:    intent.EventID,
+			Step:       "deterministic",
+			RunStatus:  runtime.Run.Status,
+			GoalStatus: runtime.Goal.Status,
+			Message:    reason,
+		})
+		return
+	}
 	entryCopy := *entry
 	ctx, cancel := context.WithCancel(parent)
 	active := &ActiveRun{
@@ -84,6 +107,7 @@ func (d *Daemon) executeIntent(parent context.Context, intent RunIntent) {
 		d.finishIntent(intent.SessionID, "failed", err)
 		return
 	}
+	applyModelBudgetTurnLimit(ctrl, entryCopy.Runtime)
 	d.mu.Lock()
 	active.Control = ctrl
 	d.mu.Unlock()
@@ -176,6 +200,21 @@ func (d *Daemon) recordModelUsage(sessionID string, e event.Event) {
 		runtime = loaded
 	}
 	usage := e.Usage
+	var cost float64
+	var currency string
+	if e.Pricing != nil {
+		cost = e.Pricing.Cost(usage)
+		currency = e.Pricing.Symbol()
+	}
+	recordModelBudgetUsage(&runtime, cost, currency, time.Now().UTC())
+	if err := saveRuntimeMeta(path, runtime); err != nil {
+		d.logger.Warn("daemon: persist model budget usage", "session", sessionID, "err", err)
+	}
+	d.mu.Lock()
+	if entry := d.registry[sessionID]; entry != nil {
+		entry.Runtime.Budget = runtime.Budget
+	}
+	d.mu.Unlock()
 	timeline := agent.RuntimeTimelineEvent{
 		Type:       "model_usage",
 		Source:     firstNonEmpty(intent.Source, "model"),
@@ -193,11 +232,29 @@ func (d *Daemon) recordModelUsage(sessionID string, e event.Event) {
 		Reasoning:  usage.ReasoningTokens,
 		Finish:     usage.FinishReason,
 	}
-	if e.Pricing != nil {
-		timeline.Cost = e.Pricing.Cost(usage)
-		timeline.Currency = e.Pricing.Symbol()
-	}
+	timeline.Cost = cost
+	timeline.Currency = currency
 	d.appendTimeline(path, timeline)
+}
+
+func applyModelBudgetTurnLimit(ctrl *control.Controller, runtime agent.RuntimeMeta) {
+	if ctrl == nil || runtime.Budget.DailyModelCallLimit <= 0 {
+		return
+	}
+	budget := runtime.Budget
+	resetBudgetWindowIfNeeded(&budget, time.Now().UTC())
+	remaining := budget.DailyModelCallLimit - budget.DailyModelCalls
+	if remaining <= 0 {
+		return
+	}
+	cap := runtime.Goal.Turns + remaining
+	if runtime.Budget.MaxGoalAutoTurns > 0 && runtime.Budget.MaxGoalAutoTurns < cap {
+		return
+	}
+	if runtime.Budget.MaxGoalAutoTurns == 0 && cap >= control.DefaultMaxGoalAutoTurns {
+		return
+	}
+	ctrl.SetGoalAutoTurnLimit(cap)
 }
 
 func (d *Daemon) recordWait(sessionID string, wait agent.RuntimeWaitMeta, e event.Event) {

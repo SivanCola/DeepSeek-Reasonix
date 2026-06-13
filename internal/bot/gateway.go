@@ -1250,6 +1250,16 @@ func renderRuntimeStatusLines(meta agent.RuntimeMeta) []string {
 	if meta.Budget.DailyWakeupLimit > 0 {
 		lines = append(lines, fmt.Sprintf("唤醒预算: %d/%d", meta.Budget.DailyWakeups, meta.Budget.DailyWakeupLimit))
 	}
+	if meta.Budget.DailyModelCallLimit > 0 {
+		lines = append(lines, fmt.Sprintf("模型调用预算: %d/%d", meta.Budget.DailyModelCalls, meta.Budget.DailyModelCallLimit))
+	}
+	if meta.Budget.DailyModelCostLimit > 0 {
+		currency := meta.Budget.ModelCostCurrency
+		if currency == "" {
+			currency = "cost"
+		}
+		lines = append(lines, fmt.Sprintf("模型费用预算: %s %.4f/%.4f", currency, meta.Budget.DailyModelCost, meta.Budget.DailyModelCostLimit))
+	}
 	if meta.Budget.MaxGoalAutoTurns > 0 {
 		lines = append(lines, fmt.Sprintf("自动续跑上限: %d 轮", meta.Budget.MaxGoalAutoTurns))
 	}

@@ -184,8 +184,10 @@ func TestBuildDaemonDoctorReportSummarizesRuntime(t *testing.T) {
 		Scheduler: agent.RuntimeSchedMeta{Enabled: true, Interval: time.Hour},
 		FileWatch: agent.RuntimeWatchMeta{Enabled: true, Paths: []string{"src"}},
 		Budget: agent.RuntimeBudgetMeta{
-			DailyWakeupLimit:  1,
-			LastBlockedReason: "daily automatic wakeup budget exhausted for cron (1/1)",
+			DailyWakeupLimit:    1,
+			DailyModelCallLimit: 2,
+			DailyModelCostLimit: 0.5,
+			LastBlockedReason:   "daily automatic wakeup budget exhausted for cron (1/1)",
 		},
 	}); err != nil {
 		t.Fatalf("SaveRuntimeMeta: %v", err)

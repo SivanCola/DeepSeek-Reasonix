@@ -300,10 +300,12 @@ func (d *Daemon) handleSchedule(w http.ResponseWriter, r *http.Request) {
 // Body: {"session_id":"...","daily_wakeup_limit":10,"max_goal_auto_turns":20,"reset":true}
 func (d *Daemon) handleBudget(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		SessionID        string `json:"session_id"`
-		DailyWakeupLimit *int   `json:"daily_wakeup_limit"`
-		MaxGoalAutoTurns *int   `json:"max_goal_auto_turns"`
-		Reset            bool   `json:"reset"`
+		SessionID           string   `json:"session_id"`
+		DailyWakeupLimit    *int     `json:"daily_wakeup_limit"`
+		MaxGoalAutoTurns    *int     `json:"max_goal_auto_turns"`
+		DailyModelCallLimit *int     `json:"daily_model_call_limit"`
+		DailyModelCostLimit *float64 `json:"daily_model_cost_limit"`
+		Reset               bool     `json:"reset"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, `{"error":"invalid json"}`, http.StatusBadRequest)
@@ -319,6 +321,14 @@ func (d *Daemon) handleBudget(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.MaxGoalAutoTurns != nil && *req.MaxGoalAutoTurns < 0 {
 		http.Error(w, `{"error":"max_goal_auto_turns must be >= 0"}`, http.StatusBadRequest)
+		return
+	}
+	if req.DailyModelCallLimit != nil && *req.DailyModelCallLimit < 0 {
+		http.Error(w, `{"error":"daily_model_call_limit must be >= 0"}`, http.StatusBadRequest)
+		return
+	}
+	if req.DailyModelCostLimit != nil && *req.DailyModelCostLimit < 0 {
+		http.Error(w, `{"error":"daily_model_cost_limit must be >= 0"}`, http.StatusBadRequest)
 		return
 	}
 
@@ -342,8 +352,23 @@ func (d *Daemon) handleBudget(w http.ResponseWriter, r *http.Request) {
 			active.Control.SetGoalAutoTurnLimit(*req.MaxGoalAutoTurns)
 		}
 	}
+	if req.DailyModelCallLimit != nil {
+		entry.Runtime.Budget.DailyModelCallLimit = *req.DailyModelCallLimit
+		if entry.Runtime.Budget.WindowStartedAt.IsZero() {
+			entry.Runtime.Budget.WindowStartedAt = budgetWindowStart(now)
+		}
+	}
+	if req.DailyModelCostLimit != nil {
+		entry.Runtime.Budget.DailyModelCostLimit = *req.DailyModelCostLimit
+		if entry.Runtime.Budget.WindowStartedAt.IsZero() {
+			entry.Runtime.Budget.WindowStartedAt = budgetWindowStart(now)
+		}
+	}
 	if req.Reset {
 		entry.Runtime.Budget.DailyWakeups = 0
+		entry.Runtime.Budget.DailyModelCalls = 0
+		entry.Runtime.Budget.DailyModelCost = 0
+		entry.Runtime.Budget.ModelCostCurrency = ""
 		entry.Runtime.Budget.WindowStartedAt = budgetWindowStart(now)
 		entry.Runtime.Budget.LastBlockedAt = time.Time{}
 		entry.Runtime.Budget.LastBlockedReason = ""
@@ -362,17 +387,22 @@ func (d *Daemon) handleBudget(w http.ResponseWriter, r *http.Request) {
 		Step:       "deterministic",
 		RunStatus:  runtime.Run.Status,
 		GoalStatus: runtime.Goal.Status,
-		Message:    fmt.Sprintf("daily_wakeup_limit=%d daily_wakeups=%d max_goal_auto_turns=%d", runtime.Budget.DailyWakeupLimit, runtime.Budget.DailyWakeups, runtime.Budget.MaxGoalAutoTurns),
+		Message:    fmt.Sprintf("daily_wakeup_limit=%d daily_wakeups=%d max_goal_auto_turns=%d daily_model_call_limit=%d daily_model_calls=%d daily_model_cost_limit=%.6f daily_model_cost=%.6f", runtime.Budget.DailyWakeupLimit, runtime.Budget.DailyWakeups, runtime.Budget.MaxGoalAutoTurns, runtime.Budget.DailyModelCallLimit, runtime.Budget.DailyModelCalls, runtime.Budget.DailyModelCostLimit, runtime.Budget.DailyModelCost),
 	})
 
 	w.Header().Set("Content-Type", "application/json")
 	resp := map[string]interface{}{
-		"ok":                  true,
-		"session_id":          req.SessionID,
-		"daily_wakeup_limit":  runtime.Budget.DailyWakeupLimit,
-		"max_goal_auto_turns": runtime.Budget.MaxGoalAutoTurns,
-		"daily_wakeups":       runtime.Budget.DailyWakeups,
-		"window_started_at":   runtime.Budget.WindowStartedAt.Format(time.RFC3339),
+		"ok":                     true,
+		"session_id":             req.SessionID,
+		"daily_wakeup_limit":     runtime.Budget.DailyWakeupLimit,
+		"max_goal_auto_turns":    runtime.Budget.MaxGoalAutoTurns,
+		"daily_model_call_limit": runtime.Budget.DailyModelCallLimit,
+		"daily_model_cost_limit": runtime.Budget.DailyModelCostLimit,
+		"daily_wakeups":          runtime.Budget.DailyWakeups,
+		"daily_model_calls":      runtime.Budget.DailyModelCalls,
+		"daily_model_cost":       runtime.Budget.DailyModelCost,
+		"model_cost_currency":    runtime.Budget.ModelCostCurrency,
+		"window_started_at":      runtime.Budget.WindowStartedAt.Format(time.RFC3339),
 	}
 	json.NewEncoder(w).Encode(resp)
 }

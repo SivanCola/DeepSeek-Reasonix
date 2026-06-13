@@ -133,8 +133,18 @@ type RuntimeBudgetMeta struct {
 	DailyWakeupLimit int `json:"daily_wakeup_limit,omitempty"`
 	// MaxGoalAutoTurns caps automatic continuation turns for one goal. 0 uses the built-in default.
 	MaxGoalAutoTurns int `json:"max_goal_auto_turns,omitempty"`
+	// DailyModelCallLimit limits model completions per UTC day. 0 disables the limit.
+	DailyModelCallLimit int `json:"daily_model_call_limit,omitempty"`
+	// DailyModelCostLimit limits estimated model spend per UTC day. 0 disables the limit.
+	DailyModelCostLimit float64 `json:"daily_model_cost_limit,omitempty"`
 	// DailyWakeups counts automatic wakeups reserved in the current UTC day window.
 	DailyWakeups int `json:"daily_wakeups,omitempty"`
+	// DailyModelCalls counts model completions observed in the current UTC day window.
+	DailyModelCalls int `json:"daily_model_calls,omitempty"`
+	// DailyModelCost accumulates estimated model spend in the current UTC day window.
+	DailyModelCost float64 `json:"daily_model_cost,omitempty"`
+	// ModelCostCurrency is the display currency for DailyModelCost.
+	ModelCostCurrency string `json:"model_cost_currency,omitempty"`
 	// WindowStartedAt is the UTC start of the current accounting day.
 	WindowStartedAt time.Time `json:"window_started_at,omitempty"`
 	// LastBlockedAt records the most recent budget-blocked wakeup.

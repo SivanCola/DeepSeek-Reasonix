@@ -461,6 +461,8 @@ func daemonBudgetCmd(args []string) int {
 	sessionID := fs.String("session", "", "要配置预算的 session ID")
 	dailyWakeups := fs.Int("daily-wakeups", -1, "每日自动唤醒次数上限，0 表示关闭限制")
 	maxGoalAutoTurns := fs.Int("max-goal-auto-turns", -1, "每个 goal 最大自动续跑轮次，0 表示使用内置默认值")
+	dailyModelCalls := fs.Int("daily-model-calls", -1, "每日模型调用次数上限，0 表示关闭限制")
+	dailyModelCost := fs.Float64("daily-model-cost", -1, "每日模型费用上限，0 表示关闭限制")
 	reset := fs.Bool("reset", false, "重置当前 UTC 日预算计数")
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -469,8 +471,8 @@ func daemonBudgetCmd(args []string) int {
 		fmt.Fprintln(os.Stderr, "error: --session is required")
 		return 2
 	}
-	if *dailyWakeups < 0 && *maxGoalAutoTurns < 0 && !*reset {
-		fmt.Fprintln(os.Stderr, "error: --daily-wakeups, --max-goal-auto-turns, or --reset is required")
+	if *dailyWakeups < 0 && *maxGoalAutoTurns < 0 && *dailyModelCalls < 0 && *dailyModelCost < 0 && !*reset {
+		fmt.Fprintln(os.Stderr, "error: --daily-wakeups, --max-goal-auto-turns, --daily-model-calls, --daily-model-cost, or --reset is required")
 		return 2
 	}
 	if *dailyWakeups < -1 {
@@ -481,12 +483,26 @@ func daemonBudgetCmd(args []string) int {
 		fmt.Fprintln(os.Stderr, "error: --max-goal-auto-turns must be >= 0")
 		return 2
 	}
+	if *dailyModelCalls < -1 {
+		fmt.Fprintln(os.Stderr, "error: --daily-model-calls must be >= 0")
+		return 2
+	}
+	if *dailyModelCost < -1 {
+		fmt.Fprintln(os.Stderr, "error: --daily-model-cost must be >= 0")
+		return 2
+	}
 	body := fmt.Sprintf(`{"session_id":%q`, *sessionID)
 	if *dailyWakeups >= 0 {
 		body += fmt.Sprintf(`,"daily_wakeup_limit":%d`, *dailyWakeups)
 	}
 	if *maxGoalAutoTurns >= 0 {
 		body += fmt.Sprintf(`,"max_goal_auto_turns":%d`, *maxGoalAutoTurns)
+	}
+	if *dailyModelCalls >= 0 {
+		body += fmt.Sprintf(`,"daily_model_call_limit":%d`, *dailyModelCalls)
+	}
+	if *dailyModelCost >= 0 {
+		body += fmt.Sprintf(`,"daily_model_cost_limit":%g`, *dailyModelCost)
 	}
 	if *reset {
 		body += `,"reset":true`
@@ -830,7 +846,7 @@ Usage:
   reasonix daemon timeline --session ID [--limit N] [--json]
   reasonix daemon continue --session ID [--addr HOST:PORT] [--dir PATH]
   reasonix daemon schedule --session ID [--daily-at HH:MM] [--timezone Area/City] [--interval 1h]
-  reasonix daemon budget   --session ID [--daily-wakeups N] [--max-goal-auto-turns N] [--reset]
+  reasonix daemon budget   --session ID [--daily-wakeups N] [--max-goal-auto-turns N] [--daily-model-calls N] [--daily-model-cost N] [--reset]
   reasonix daemon wait-event --session ID --source TYPE [--event-id ID] [--status completed] [--conclusion success]
   reasonix daemon wait-time --session ID (--until RFC3339 | --after 1h)
   reasonix daemon wait-file --session ID --paths PATH[,PATH...] [--ignore GLOB[,GLOB...]]
@@ -847,7 +863,7 @@ Subcommands:
   timeline   查看指定 session 的运行事件时间线
   continue   显式唤醒并继续指定 goal
   schedule   设置 daily/interval 定时唤醒和 daily 时区
-  budget     设置自动唤醒预算和 goal 自动续跑上限
+  budget     设置自动唤醒、模型调用、模型费用和 goal 自动续跑预算
   wait-event 设置或清除等待外部事件条件
   wait-time  设置或清除等待到指定时间的条件
   wait-file  设置或清除等待文件变化的条件
