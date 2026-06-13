@@ -214,6 +214,86 @@ func TestGatewayAllowAll(t *testing.T) {
 	}
 }
 
+func TestBuildSessionKeyIsolatesGroupUsersAndSharesThreads(t *testing.T) {
+	alice := BuildSessionKey(SessionSource{
+		Platform: PlatformQQ,
+		ChatType: ChatGroup,
+		ChatID:   "group-1",
+		UserID:   "alice",
+	})
+	bob := BuildSessionKey(SessionSource{
+		Platform: PlatformQQ,
+		ChatType: ChatGroup,
+		ChatID:   "group-1",
+		UserID:   "bob",
+	})
+	if alice == bob {
+		t.Fatal("group sessions should be isolated by user")
+	}
+
+	threadAlice := BuildSessionKey(SessionSource{
+		Platform: PlatformQQ,
+		ChatType: ChatThread,
+		ChatID:   "group-1",
+		ThreadID: "thread-1",
+		UserID:   "alice",
+	})
+	threadBob := BuildSessionKey(SessionSource{
+		Platform: PlatformQQ,
+		ChatType: ChatThread,
+		ChatID:   "group-1",
+		ThreadID: "thread-1",
+		UserID:   "bob",
+	})
+	if threadAlice != threadBob {
+		t.Fatal("thread sessions should be shared within the same thread")
+	}
+}
+
+func TestGatewayRejectsUnauthorizedBoundSession(t *testing.T) {
+	dir := t.TempDir()
+	sessionPath := writeBotTestSession(t, dir, "private session")
+	unauthorized := InboundMessage{
+		Platform:  PlatformQQ,
+		ChatType:  ChatDM,
+		ChatID:    "dm-unauthorized",
+		UserID:    "blocked-user",
+		Text:      "/status",
+		MessageID: "msg-1",
+	}
+	unauthorizedKey := BuildSessionKey(unauthorized.Session())
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	fa := newFakeAdapter(PlatformQQ, "fake-qq")
+	gw := NewGateway(GatewayConfig{
+		SessionDir: dir,
+		Allowlist: AllowlistConfig{
+			Enabled: true,
+			Users: map[Platform][]string{
+				PlatformQQ: {"allowed-user"},
+			},
+		},
+	}, nil, logger)
+	if err := gw.setSessionMapping(unauthorizedKey, sessionPath, ""); err != nil {
+		t.Fatalf("setSessionMapping: %v", err)
+	}
+
+	gw.handleMessage(context.Background(), PlatformQQ, fa, unauthorized)
+
+	sent := fa.sentMessages()
+	if len(sent) != 1 {
+		t.Fatalf("sent count = %d, want permission rejection", len(sent))
+	}
+	if !strings.Contains(sent[0].Text, "没有使用此 bot 的权限") {
+		t.Fatalf("unexpected rejection text: %q", sent[0].Text)
+	}
+	gw.mu.Lock()
+	_, hasController := gw.controllers[unauthorizedKey]
+	gw.mu.Unlock()
+	if hasController {
+		t.Fatal("unauthorized user should not open a bound session controller")
+	}
+}
+
 func TestGatewayAddsPendingReactionWhenAdapterSupportsIt(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	gw := NewGateway(GatewayConfig{}, nil, logger)
@@ -488,6 +568,55 @@ func TestGatewayStatusUsesMappingWithoutActiveController(t *testing.T) {
 	}
 }
 
+func TestGatewayStatusAfterRestartUsesPersistedMappingGoal(t *testing.T) {
+	dir := t.TempDir()
+	mappingPath := filepath.Join(dir, "mappings.json")
+	sessionPath := writeBotTestSession(t, dir, "hello")
+	if err := agent.SaveRuntimeMeta(sessionPath, agent.RuntimeMeta{
+		Goal: agent.RuntimeGoalMeta{
+			Text:   "continue after gateway restart",
+			Status: control.GoalStatusRunning,
+		},
+		Run: agent.RuntimeRunMeta{Status: "idle"},
+	}); err != nil {
+		t.Fatalf("SaveRuntimeMeta: %v", err)
+	}
+	msg := InboundMessage{
+		Platform:  PlatformQQ,
+		ChatType:  ChatDM,
+		ChatID:    "chat-1",
+		UserID:    "user-1",
+		Text:      "/status",
+		MessageID: "msg-1",
+	}
+	key := BuildSessionKey(msg.Session())
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	gw := NewGateway(GatewayConfig{SessionDir: dir, SessionMappingPath: mappingPath}, nil, logger)
+	if err := gw.setSessionMapping(key, sessionPath, "/workspace"); err != nil {
+		t.Fatalf("setSessionMapping: %v", err)
+	}
+
+	restarted := NewGateway(GatewayConfig{SessionDir: dir, SessionMappingPath: mappingPath}, nil, logger)
+	fa := newFakeAdapter(PlatformQQ, "fake-qq")
+	restarted.handleSlashCommand(context.Background(), fa, key, msg)
+
+	sent := fa.sentMessages()
+	if len(sent) != 1 {
+		t.Fatalf("sent count = %d, want 1", len(sent))
+	}
+	text := sent[0].Text
+	for _, want := range []string{
+		"会话: " + shortSessionID(sessionPath),
+		"目标: continue after gateway restart",
+		"目标状态: running",
+		"运行状态: idle",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("status missing %q after restart:\n%s", want, text)
+		}
+	}
+}
+
 func TestGatewayRecordRuntimeWaitPersistsApprovalAndAsk(t *testing.T) {
 	dir := t.TempDir()
 	sessionPath := writeBotTestSession(t, dir, "hello")
@@ -581,6 +710,83 @@ func TestGatewayRecordsAndClearsRuntimeWait(t *testing.T) {
 	}
 	if len(events) != 2 || events[0].Type != "wait_started" || events[1].Type != "wait_cleared" {
 		t.Fatalf("unexpected timeline: %+v", events)
+	}
+}
+
+func TestGatewayTimelineCommandUsesMappedSession(t *testing.T) {
+	dir := t.TempDir()
+	sessionPath := writeBotTestSession(t, dir, "hello")
+	now := time.Date(2026, 6, 13, 12, 0, 0, 0, time.UTC)
+	if err := agent.AppendRuntimeTimeline(sessionPath, agent.RuntimeTimelineEvent{
+		Time:      now,
+		Type:      "wait_started",
+		Source:    "bot",
+		RunStatus: "waiting_approval",
+		WaitKind:  "approval",
+		WaitID:    "approval-1",
+		Tool:      "bash",
+		Subject:   "git push origin feature/agentos-roadmap-todo",
+		Reason:    "approval required",
+	}); err != nil {
+		t.Fatalf("AppendRuntimeTimeline: %v", err)
+	}
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	gw := NewGateway(GatewayConfig{SessionDir: dir}, nil, logger)
+	if err := gw.setSessionMapping("remote-timeline", sessionPath, "/workspace"); err != nil {
+		t.Fatalf("setSessionMapping: %v", err)
+	}
+	fa := newFakeAdapter(PlatformQQ, "fake-qq")
+
+	gw.handleSlashCommand(context.Background(), fa, "remote-timeline", InboundMessage{
+		Platform:  PlatformQQ,
+		ChatType:  ChatDM,
+		ChatID:    "chat-1",
+		UserID:    "user-1",
+		Text:      "/timeline 5",
+		MessageID: "msg-1",
+	})
+
+	sent := fa.sentMessages()
+	if len(sent) != 1 {
+		t.Fatalf("sent count = %d, want 1", len(sent))
+	}
+	text := sent[0].Text
+	for _, want := range []string{
+		"最近运行事件（" + shortSessionID(sessionPath) + "）：",
+		"wait_started",
+		"source=bot",
+		"run=waiting_approval",
+		"wait=approval:approval-1",
+		"tool=bash",
+		"reason=approval required",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("timeline missing %q:\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, sessionPath) {
+		t.Fatalf("timeline should not expose full session path:\n%s", text)
+	}
+}
+
+func TestGatewayTimelineCommandRequiresSession(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	gw := NewGateway(GatewayConfig{}, nil, logger)
+	fa := newFakeAdapter(PlatformQQ, "fake-qq")
+
+	gw.handleSlashCommand(context.Background(), fa, "remote-empty", InboundMessage{
+		Platform:  PlatformQQ,
+		ChatType:  ChatDM,
+		ChatID:    "chat-1",
+		UserID:    "user-1",
+		Text:      "/timeline",
+		MessageID: "msg-1",
+	})
+
+	sent := fa.sentMessages()
+	if len(sent) != 1 || !strings.Contains(sent[0].Text, "没有绑定 Reasonix session") {
+		t.Fatalf("unexpected timeline response: %+v", sent)
 	}
 }
 

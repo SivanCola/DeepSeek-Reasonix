@@ -156,15 +156,17 @@ dynamic workflow 或开发者平台，而是先把 Reasonix 从一次性会话�
   - [x] `/goal continue` 从 IM 触发继续。
   - [x] `/sessions` 列出可恢复 session。
   - [x] `/attach <session>` 将当前 IM 会话绑定到已有 session。
+  - [x] `/timeline [n]` 从 IM 查看当前 session 最近 runtime 事件。
 - [x] 将 approval / ask 状态纳入 runtime。
   - [x] 重启后至少能提示有未完成审批，而不是静默丢失。
   - [x] 第一版可以要求用户重新触发，不必恢复阻塞中的 channel。
-- [ ] 增加 bot gateway tests。
-  - 同一 remote session 重启后恢复 goal。
-  - 群聊按 user 隔离的 session key 不串线。
-  - allowlist 不允许的用户无法触发已绑定 session。
+- [x] 增加 bot gateway tests。
+  - [x] 同一 remote session 重启后恢复 goal。
+  - [x] 群聊按 user 隔离的 session key 不串线。
+  - [x] allowlist 不允许的用户无法触发已绑定 session。
   - [x] `/status` 能从 runtime sidecar 显示 wait、wakeup 和预算。
   - [x] `/status` 能在只有 session mapping、没有活跃 controller 时显示状态。
+  - [x] `/timeline` 能从 session mapping 显示最近 runtime timeline。
   - [x] bot 记录并清除 approval / ask wait runtime 状态。
 
 ### 验收标准
@@ -357,7 +359,7 @@ dynamic workflow 或开发者平台，而是先把 Reasonix 从一次性会话�
   - 桌面端和 bot 都能看到等待审批的任务。
   - 审批后继续同一 run。
 - [ ] 可观测性。
-  - run timeline。
+  - [x] run timeline。
   - wakeup history。
   - last model decision。
   - deterministic steps log。

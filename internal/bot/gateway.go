@@ -376,6 +376,9 @@ func (gw *BotGateway) handleSlashCommand(ctx context.Context, adapter Adapter, k
 		gw.mu.Unlock()
 		_ = gw.sendText(ctx, adapter, msg, gw.renderStatus(key, state, hasState, active, sessions))
 
+	case strings.HasPrefix(msg.Text, "/timeline"):
+		_ = gw.sendText(ctx, adapter, msg, gw.renderTimeline(key, msg.Text))
+
 	case strings.HasPrefix(msg.Text, "/sessions"):
 		_ = gw.sendText(ctx, adapter, msg, gw.renderSessionList(8))
 
@@ -430,6 +433,7 @@ func (gw *BotGateway) handleSlashCommand(ctx context.Context, adapter Adapter, k
 			"/attach <id> - 绑定并恢复已有 Reasonix 会话\n" +
 			"/detach - 解除当前 IM 会话绑定\n" +
 			"/status - 查看状态\n" +
+			"/timeline [n] - 查看当前会话最近运行事件\n" +
 			"/help - 显示帮助"
 		_ = gw.sendText(ctx, adapter, msg, help)
 	}
@@ -1066,6 +1070,82 @@ func (gw *BotGateway) renderStatus(key string, state *sessionState, hasState boo
 		lines = append(lines, renderRuntimeStatusLines(meta)...)
 	}
 	return strings.Join(lines, "\n")
+}
+
+func (gw *BotGateway) renderTimeline(key, command string) string {
+	sessionPath := gw.sessionPathForKey(key)
+	if sessionPath == "" {
+		return "当前 IM 会话没有绑定 Reasonix session。"
+	}
+	limit := parseTimelineLimit(command, 8)
+	events, ok, err := agent.LoadRuntimeTimeline(sessionPath, limit)
+	if err != nil {
+		gw.logger.Warn("bot timeline load failed", "session", shortSessionID(sessionPath), "err", err)
+		return "timeline 读取失败。"
+	}
+	if !ok || len(events) == 0 {
+		return "当前会话还没有 runtime timeline 事件。"
+	}
+	lines := []string{fmt.Sprintf("最近运行事件（%s）：", shortSessionID(sessionPath))}
+	for _, e := range events {
+		lines = append(lines, renderTimelineEvent(e))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func parseTimelineLimit(command string, fallback int) int {
+	parts := strings.Fields(command)
+	if len(parts) < 2 {
+		return fallback
+	}
+	limit, err := strconv.Atoi(parts[1])
+	if err != nil || limit < 0 {
+		return fallback
+	}
+	if limit > 50 {
+		return 50
+	}
+	return limit
+}
+
+func renderTimelineEvent(e agent.RuntimeTimelineEvent) string {
+	when := ""
+	if !e.Time.IsZero() {
+		when = formatBotStatusTime(e.Time)
+	}
+	parts := []string{}
+	if when != "" {
+		parts = append(parts, when)
+	}
+	if e.Type != "" {
+		parts = append(parts, e.Type)
+	}
+	if e.Source != "" {
+		parts = append(parts, "source="+e.Source)
+	}
+	if e.RunStatus != "" {
+		parts = append(parts, "run="+e.RunStatus)
+	}
+	if e.WaitKind != "" {
+		wait := e.WaitKind
+		if e.WaitID != "" {
+			wait += ":" + e.WaitID
+		}
+		parts = append(parts, "wait="+wait)
+	}
+	if e.Tool != "" {
+		parts = append(parts, "tool="+e.Tool)
+	}
+	if e.Subject != "" {
+		parts = append(parts, "subject="+truncateBotText(e.Subject, 60))
+	}
+	if e.Reason != "" {
+		parts = append(parts, "reason="+truncateBotText(e.Reason, 60))
+	}
+	if e.Error != "" {
+		parts = append(parts, "error="+truncateBotText(e.Error, 60))
+	}
+	return strings.Join(parts, "  ")
 }
 
 func renderRuntimeStatusLines(meta agent.RuntimeMeta) []string {

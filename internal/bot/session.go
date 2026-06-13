@@ -49,6 +49,7 @@ var slashCommands = map[string]bool{
 	"/attach":   true,
 	"/detach":   true,
 	"/goal":     true,
+	"/timeline": true,
 	"/help":     true,
 }
 
