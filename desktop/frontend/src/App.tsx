@@ -34,6 +34,7 @@ import { TodoPanel } from "./components/TodoPanel";
 import { ApprovalModal } from "./components/ApprovalModal";
 import { AskCard } from "./components/AskCard";
 import { DaemonApprovalsPanel } from "./components/DaemonApprovalsPanel";
+import { DaemonProcessPanel } from "./components/DaemonProcessPanel";
 import { DaemonSessionsPanel } from "./components/DaemonSessionsPanel";
 import { ClearContextCard } from "./components/ClearContextCard";
 import { StatusBar } from "./components/StatusBar";
@@ -2533,6 +2534,7 @@ export default function App() {
                 }}
               />
             )}
+            <DaemonProcessPanel />
             <DaemonSessionsPanel />
             <DaemonApprovalsPanel />
             <Composer

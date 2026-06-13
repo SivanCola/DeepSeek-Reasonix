@@ -489,10 +489,10 @@ dynamic workflow 或开发者平台，而是先把 Reasonix 从一次性会话�
 
 ### P0：常驻进程产品化
 
-- [ ] daemon 进程管理 UX。
-  - [ ] 桌面端能启动、停止、重启 daemon。
-  - [ ] 桌面端能显示 daemon PID、uptime、监听地址、session 数和最近错误。
-  - [ ] 提供 launchd / systemd / Windows startup helper 的安装与卸载命令。
+- [x] daemon 进程管理 UX。
+  - [x] 桌面端能启动、停止、重启 daemon。
+  - [x] 桌面端能显示 daemon PID、uptime、监听地址、session 数和最近错误。
+  - [x] 提供 launchd / systemd / Windows startup helper 的安装与卸载命令。
   - 验收：用户不需要开终端也能知道常驻 agent 是否活着，以及为什么没被唤醒。
 - [x] daemon 日志与凭据运维。
   - [x] daemon log 支持轮转和大小上限。

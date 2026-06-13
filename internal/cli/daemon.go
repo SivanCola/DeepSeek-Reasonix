@@ -40,6 +40,8 @@ func daemonCommand(args []string) int {
 		return daemonStatus(rest)
 	case "doctor":
 		return daemonDoctor(rest)
+	case "startup":
+		return daemonStartupCmd(rest)
 	case "token":
 		return daemonTokenCmd(rest)
 	case "sessions":
@@ -1587,6 +1589,7 @@ Usage:
   reasonix daemon start    [--addr HOST:PORT] [--dir PATH] [--log-file PATH|none] [--log-max-size 10MB] [--bot --bot-channels qq,feishu,weixin] [--webhook --webhook-secret SECRET]
   reasonix daemon status   [--addr HOST:PORT] [--dir PATH]
   reasonix daemon doctor   [--addr HOST:PORT] [--dir PATH] [--log-file PATH|none] [--json]
+  reasonix daemon startup  install|uninstall|print [--exe PATH] [--addr HOST:PORT] [--dir PATH] [--log-file PATH|none]
   reasonix daemon token rotate [--dir PATH]
   reasonix daemon sessions [--addr HOST:PORT] [--dir PATH] [--scope global|project] [--workspace-root PATH] [--status running|waiting|blocked|active|scheduled|watched] [--json]
   reasonix daemon approvals [--addr HOST:PORT] [--dir PATH] [--json]
@@ -1612,6 +1615,7 @@ Subcommands:
   start      启动 daemon（前台运行，Ctrl-C 停止）
   status     查询 daemon 状态
   doctor     检查 daemon token、lock、runtime sidecar 和在线状态
+  startup    安装、卸载或打印用户级开机/登录自启动 helper
   token      管理本地 daemon API token
   sessions   列出所有跟踪的 session 及其 goal/run 状态
   approvals  列出等待审批或 ask 回答的 daemon 待办

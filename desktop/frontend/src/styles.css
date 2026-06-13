@@ -5916,6 +5916,67 @@ a[href] {
   font-size: 11px;
   line-height: 1.25;
 }
+.daemon-process__panel {
+  display: grid;
+  gap: 8px;
+}
+.daemon-process__details {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 6px;
+}
+.daemon-process__detail {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  background: var(--bg-soft);
+  padding: 7px 8px;
+}
+.daemon-process__detail span {
+  color: var(--fg-faint);
+  font-size: 10.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+.daemon-process__detail b {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--fg);
+  font-size: 12px;
+  font-weight: 650;
+}
+.daemon-process__startup {
+  display: grid;
+  gap: 5px;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  background: var(--bg-soft);
+  padding: 8px;
+}
+.daemon-process__startup span {
+  color: var(--fg-dim);
+  font-size: 11.5px;
+  line-height: 1.35;
+}
+.daemon-process__startup code {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--mono);
+  font-size: 11.5px;
+  line-height: 1.25;
+  padding: 5px 6px;
+}
 .daemon-sessions__panel {
   display: grid;
   gap: 7px;

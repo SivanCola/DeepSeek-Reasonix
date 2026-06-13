@@ -265,6 +265,19 @@ export interface DaemonStatusView {
   error?: string;
 }
 
+export interface DaemonProcessActionResult {
+  message?: string;
+  status: DaemonStatusView;
+}
+
+export interface DaemonStartupHelperView {
+  platform: string;
+  installCommand: string;
+  uninstallCommand: string;
+  printCommand: string;
+  description: string;
+}
+
 export interface DaemonSessionView {
   id: string;
   path: string;

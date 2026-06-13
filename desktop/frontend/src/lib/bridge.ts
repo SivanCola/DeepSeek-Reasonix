@@ -23,7 +23,9 @@ import type {
   ContextInfo,
   ContextPanelInfo,
   DaemonApprovalDeskItemView,
+  DaemonProcessActionResult,
   DaemonSessionView,
+  DaemonStartupHelperView,
   DaemonStatusView,
   DirEntry,
   DroppedItem,
@@ -110,6 +112,10 @@ export interface AppBindings {
   AnswerQuestion(id: string, answers: QuestionAnswer[]): Promise<void>;
   AnswerQuestionForTab(tabID: string, id: string, answers: QuestionAnswer[]): Promise<void>;
   DaemonStatus(addr: string): Promise<DaemonStatusView>;
+  StartDaemon(addr: string): Promise<DaemonProcessActionResult>;
+  StopDaemon(addr: string): Promise<DaemonProcessActionResult>;
+  RestartDaemon(addr: string): Promise<DaemonProcessActionResult>;
+  DaemonStartupHelper(): Promise<DaemonStartupHelperView>;
   ListDaemonSessions(addr: string): Promise<DaemonSessionView[]>;
   ListDaemonApprovals(addr: string): Promise<DaemonApprovalDeskItemView[]>;
   OpenDaemonSession(sessionID: string, addr: string): Promise<TabMeta>;
@@ -477,6 +483,10 @@ function mockDaemonSessionsPreviewEnabled(): boolean {
   return typeof window !== "undefined" && new URLSearchParams(window.location.search).get("daemonSessionsPreview") === "1";
 }
 
+function mockDaemonProcessPreviewEnabled(): boolean {
+  return typeof window !== "undefined" && new URLSearchParams(window.location.search).get("daemonProcessPreview") === "1";
+}
+
 function baseName(path: string): string {
   return path.replace(/[/\\]+$/, "").split(/[/\\]/).filter(Boolean).pop() ?? path;
 }
@@ -506,6 +516,7 @@ function makeMockApp(): AppBindings {
   let cwd = freshMock ? globalWorkspaceRoot : "~/projects/joyquant-db"; // mutable so PickWorkspace is visible in dev
   let workspaces = freshMock ? [] : ["~/projects/joyquant-db", "~/projects/joyquant-sys", "~/projects/reasonix", "~/projects/blade"];
   let mockEffort = "auto";
+  let mockDaemonOnline = mockDaemonSessionsPreviewEnabled() || mockDaemonProcessPreviewEnabled();
   const day = 86_400_000;
   const t0 = Date.now();
   // Mutable so MCP add/remove/retry are observable in browser dev.
@@ -1471,13 +1482,37 @@ function makeMockApp(): AppBindings {
           await withMockTabScope(_tabID, () => this.AnswerQuestion(id, answers));
         },
         async DaemonStatus(addr) {
-          if (mockDaemonSessionsPreviewEnabled()) {
+          if (mockDaemonOnline) {
             return { connected: true, status: "running", addr: addr || "127.0.0.1:19840", sessions: 3, uptime: "2h14m", pid: 19840 };
           }
           return { connected: false, addr: addr || "127.0.0.1:19840", error: "mock daemon is offline" };
         },
+        async StartDaemon(addr) {
+          await delay(120);
+          mockDaemonOnline = true;
+          return { message: "daemon started", status: await this.DaemonStatus(addr) };
+        },
+        async StopDaemon(addr) {
+          await delay(120);
+          mockDaemonOnline = false;
+          return { message: "daemon stopped", status: await this.DaemonStatus(addr) };
+        },
+        async RestartDaemon(addr) {
+          await delay(180);
+          mockDaemonOnline = true;
+          return { message: "daemon restarted", status: await this.DaemonStatus(addr) };
+        },
+        async DaemonStartupHelper() {
+          return {
+            platform: "launchd",
+            installCommand: "reasonix daemon startup install",
+            uninstallCommand: "reasonix daemon startup uninstall",
+            printCommand: "reasonix daemon startup print",
+            description: "Install a user-level login helper for the local Reasonix daemon.",
+          };
+        },
         async ListDaemonSessions() {
-          if (mockDaemonSessionsPreviewEnabled()) {
+          if (mockDaemonSessionsPreviewEnabled() && mockDaemonOnline) {
             return [
               {
                 id: "triage-session-20260613",
