@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -177,6 +178,45 @@ func TestWebhookDedup(t *testing.T) {
 	json.NewDecoder(resp2.Body).Decode(&result)
 	if result["status"] != "duplicate" {
 		t.Errorf("second request should be deduped, got status=%v", result["status"])
+	}
+}
+
+func TestWebhookRoutesGitHubEventWithoutSessionID(t *testing.T) {
+	dir := t.TempDir()
+	sess := filepath.Join(dir, "github-route.jsonl")
+	os.WriteFile(sess, []byte(`{}`), 0o644)
+	agent.SaveRuntimeMeta(sess, agent.RuntimeMeta{
+		SessionID: "github-route",
+		Goal:      agent.RuntimeGoalMeta{Text: "watch esengine/DeepSeek-Reasonix PR #42", Status: "running"},
+		Run:       agent.RuntimeRunMeta{Status: "idle"},
+	})
+
+	secret := "route-secret"
+	d := New(Options{
+		SessionDir: dir,
+		Webhook:    &WebhookConfig{Secret: secret, Enabled: true},
+	})
+	d.scanSessions()
+
+	payload := `{"action":"completed","repository":{"full_name":"esengine/DeepSeek-Reasonix"},"workflow_run":{"status":"completed","conclusion":"success","pull_requests":[{"number":42}],"head_branch":"feature/agentos"}}`
+	sig := computeHMAC([]byte(payload), secret)
+	req := httptest.NewRequest("POST", "/webhook", strings.NewReader(payload))
+	req.Header.Set("X-Webhook-Signature", sig)
+	req.Header.Set("X-GitHub-Event", "workflow_run")
+	req.Header.Set("X-GitHub-Delivery", "delivery-42")
+	rr := httptest.NewRecorder()
+	d.handleWebhook(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("webhook status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	d.mu.RLock()
+	entry := d.registry["github-route"]
+	d.mu.RUnlock()
+	if entry.Runtime.Run.Status != "pending_continue" {
+		t.Fatalf("Run.Status = %q, want pending_continue", entry.Runtime.Run.Status)
+	}
+	if entry.Runtime.Scheduler.LastWakeupEventID != "delivery-42" {
+		t.Fatalf("LastWakeupEventID = %q, want delivery-42", entry.Runtime.Scheduler.LastWakeupEventID)
 	}
 }
 

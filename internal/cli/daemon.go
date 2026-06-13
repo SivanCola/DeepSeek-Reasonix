@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"strings"
@@ -35,6 +36,8 @@ func daemonCommand(args []string) int {
 		return daemonStatus(rest)
 	case "sessions":
 		return daemonSessions(rest)
+	case "timeline":
+		return daemonTimeline(rest)
 	case "stop":
 		return daemonStopCmd(rest)
 	case "continue":
@@ -55,6 +58,73 @@ func daemonCommand(args []string) int {
 		daemonUsage()
 		return 2
 	}
+}
+
+func daemonTimeline(args []string) int {
+	fs := flag.NewFlagSet("daemon timeline", flag.ContinueOnError)
+	addr := fs.String("addr", daemon.DefaultAddr, "daemon 地址")
+	dir := fs.String("dir", "", "会话目录（用于读取本地 token）")
+	sessionID := fs.String("session", "", "session ID")
+	limit := fs.Int("limit", 50, "最多显示多少条事件，0 表示全部")
+	jsonOut := fs.Bool("json", false, "JSON 格式输出")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if *sessionID == "" {
+		fmt.Fprintln(os.Stderr, "error: --session is required")
+		return 2
+	}
+	q := url.Values{}
+	q.Set("session_id", *sessionID)
+	q.Set("limit", fmt.Sprintf("%d", *limit))
+	resp, err := daemonGet(*addr, *dir, "/timeline?"+q.Encode())
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "daemon not reachable: %v\n", err)
+		return 1
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		b, _ := io.ReadAll(resp.Body)
+		fmt.Fprintf(os.Stderr, "error: %s\n", string(b))
+		return 1
+	}
+	var timeline daemon.TimelineResponse
+	if err := json.NewDecoder(resp.Body).Decode(&timeline); err != nil {
+		fmt.Fprintf(os.Stderr, "invalid response: %v\n", err)
+		return 1
+	}
+	if *jsonOut {
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		enc.Encode(timeline)
+		return 0
+	}
+	if len(timeline.Events) == 0 {
+		fmt.Println("no timeline events")
+		return 0
+	}
+	for _, e := range timeline.Events {
+		when := e.Time.Local().Format("2006-01-02 15:04:05")
+		parts := []string{when, e.Type}
+		if e.Source != "" {
+			parts = append(parts, "source="+e.Source)
+		}
+		if e.RunStatus != "" {
+			parts = append(parts, "run="+e.RunStatus)
+		}
+		if e.WaitKind != "" {
+			wait := e.WaitKind
+			if e.WaitID != "" {
+				wait += ":" + e.WaitID
+			}
+			parts = append(parts, "wait="+wait)
+		}
+		if e.Error != "" {
+			parts = append(parts, "error="+e.Error)
+		}
+		fmt.Println(strings.Join(parts, "  "))
+	}
+	return 0
 }
 
 func daemonStart(args []string) int {
@@ -393,6 +463,7 @@ Usage:
   reasonix daemon start    [--addr HOST:PORT] [--dir PATH]
   reasonix daemon status   [--addr HOST:PORT] [--dir PATH]
   reasonix daemon sessions [--addr HOST:PORT] [--dir PATH] [--json]
+  reasonix daemon timeline --session ID [--limit N] [--json]
   reasonix daemon continue --session ID [--addr HOST:PORT] [--dir PATH]
   reasonix daemon schedule --session ID [--daily-at HH:MM | --interval 1h]
   reasonix daemon approve  --session ID --approval ID
@@ -404,6 +475,7 @@ Subcommands:
   start      启动 daemon（前台运行，Ctrl-C 停止）
   status     查询 daemon 状态
   sessions   列出所有跟踪的 session 及其 goal/run 状态
+  timeline   查看指定 session 的运行事件时间线
   continue   显式唤醒并继续指定 goal
   schedule   设置 daily/interval 定时唤醒
   approve    批准 daemon 中等待的审批

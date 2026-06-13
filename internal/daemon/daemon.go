@@ -64,6 +64,7 @@ type RunIntent struct {
 	Source      string    `json:"source"`
 	Reason      string    `json:"reason,omitempty"`
 	EventID     string    `json:"event_id,omitempty"`
+	Context     string    `json:"context,omitempty"`
 	CreatedAt   time.Time `json:"created_at"`
 }
 
@@ -92,6 +93,12 @@ type StatusResponse struct {
 // SessionsResponse is the JSON body of GET /sessions.
 type SessionsResponse struct {
 	Sessions []SessionView `json:"sessions"`
+}
+
+// TimelineResponse is the JSON body of GET /timeline.
+type TimelineResponse struct {
+	SessionID string                       `json:"session_id"`
+	Events    []agent.RuntimeTimelineEvent `json:"events"`
 }
 
 // SessionView is the public representation of a session in the API.
@@ -177,6 +184,7 @@ func (d *Daemon) Start(ctx context.Context) error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /status", d.withAuth(d.handleStatus))
 	mux.HandleFunc("GET /sessions", d.withAuth(d.handleSessions))
+	mux.HandleFunc("GET /timeline", d.withAuth(d.handleTimeline))
 	mux.HandleFunc("POST /continue-goal", d.withAuth(d.handleContinueGoal))
 	mux.HandleFunc("POST /stop", d.withAuth(d.handleStop))
 	mux.HandleFunc("POST /schedule", d.withAuth(d.handleSchedule))
@@ -376,19 +384,30 @@ func (d *Daemon) scanDir(dir string) {
 	}
 }
 
-// recoverInterrupted marks any session with Run.Status="running" as
-// "interrupted" — these were killed mid-flight. Does NOT auto-resume.
+// recoverInterrupted marks any session with an in-flight or user-waiting run as
+// "interrupted" — these were killed mid-flight and no longer have a live
+// controller to receive approvals/answers. Does NOT auto-resume.
 func (d *Daemon) recoverInterrupted() {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	for _, entry := range d.registry {
-		if entry.Runtime.Run.Status == "running" {
+		if entry.Runtime.Run.Status == "running" || strings.HasPrefix(entry.Runtime.Run.Status, "waiting_") {
+			prev := entry.Runtime.Run.Status
 			entry.Runtime.Run.Status = "interrupted"
-			entry.Runtime.Run.LastError = "daemon startup recovery"
+			entry.Runtime.Run.LastError = "daemon startup recovery from " + prev
 			// Persist the change.
 			if err := agent.SaveRuntimeMeta(entry.Path, entry.Runtime); err != nil {
 				d.logger.Warn("recover interrupted: save failed", "id", entry.ID, "err", err)
 			} else {
+				d.appendTimeline(entry.Path, agent.RuntimeTimelineEvent{
+					Type:       "run_interrupted",
+					Source:     "daemon_startup",
+					RunStatus:  entry.Runtime.Run.Status,
+					GoalStatus: entry.Runtime.Goal.Status,
+					WaitKind:   entry.Runtime.Wait.Kind,
+					WaitID:     firstNonEmpty(entry.Runtime.Wait.ApprovalID, entry.Runtime.Wait.AskID, entry.Runtime.Wait.EventID),
+					Message:    "recovered from " + prev,
+				})
 				d.logger.Info("recovered interrupted session", "id", entry.ID)
 			}
 		}

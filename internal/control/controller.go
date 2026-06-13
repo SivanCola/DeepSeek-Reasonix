@@ -530,7 +530,7 @@ func (c *Controller) runGoalLoopWithRawDisplay(ctx context.Context, input, raw, 
 		}
 		return err
 	}
-	return c.continueGoal(ctx)
+	return c.continueGoal(ctx, "")
 }
 
 func (c *Controller) runTurnWithRawDisplay(ctx context.Context, input, raw, display string) error {
@@ -598,7 +598,8 @@ func (c *Controller) runTurnWithRawDisplay(ctx context.Context, input, raw, disp
 	return nil
 }
 
-func (c *Controller) continueGoal(ctx context.Context) error {
+func (c *Controller) continueGoal(ctx context.Context, wakeupContext string) error {
+	first := true
 	for {
 		cont := c.advanceGoalAfterTurn()
 		if !cont {
@@ -608,7 +609,12 @@ func (c *Controller) continueGoal(ctx context.Context) error {
 			c.stopGoal(GoalStatusStopped)
 			return err
 		}
-		if err := c.runTurnWithRawDisplay(ctx, goalContinueTurn, goalContinueTurn, ""); err != nil {
+		prompt := goalContinueTurn
+		if first && strings.TrimSpace(wakeupContext) != "" {
+			prompt += "\n\n<wakeup-context>\n" + strings.TrimSpace(wakeupContext) + "\n</wakeup-context>"
+		}
+		first = false
+		if err := c.runTurnWithRawDisplay(ctx, prompt, prompt, ""); err != nil {
 			if ctx.Err() != nil {
 				c.stopGoal(GoalStatusStopped)
 			}

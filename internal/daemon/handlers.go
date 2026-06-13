@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strconv"
 	"time"
 
 	"reasonix/internal/agent"
@@ -54,6 +55,40 @@ func (d *Daemon) handleSessions(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(SessionsResponse{Sessions: views})
+}
+
+func (d *Daemon) handleTimeline(w http.ResponseWriter, r *http.Request) {
+	sessionID := r.URL.Query().Get("session_id")
+	if sessionID == "" {
+		sessionID = r.URL.Query().Get("session")
+	}
+	if sessionID == "" {
+		http.Error(w, `{"error":"session_id required"}`, http.StatusBadRequest)
+		return
+	}
+	limit := 50
+	if raw := r.URL.Query().Get("limit"); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil || n < 0 {
+			http.Error(w, `{"error":"invalid limit"}`, http.StatusBadRequest)
+			return
+		}
+		limit = n
+	}
+	d.mu.RLock()
+	entry, ok := d.registry[sessionID]
+	d.mu.RUnlock()
+	if !ok {
+		http.Error(w, `{"error":"session not found"}`, http.StatusNotFound)
+		return
+	}
+	events, _, err := agent.LoadRuntimeTimeline(entry.Path, limit)
+	if err != nil {
+		http.Error(w, fmt.Sprintf(`{"error":"load timeline failed: %s"}`, err), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(TimelineResponse{SessionID: sessionID, Events: events})
 }
 
 // handleContinueGoal triggers goal continuation for a session.
@@ -154,6 +189,12 @@ func (d *Daemon) handleStop(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf(`{"error":"save failed: %s"}`, err), http.StatusInternalServerError)
 		return
 	}
+	d.appendTimeline(path, agent.RuntimeTimelineEvent{
+		Type:       "stopped",
+		Source:     "api",
+		RunStatus:  runtime.Run.Status,
+		GoalStatus: runtime.Goal.Status,
+	})
 
 	w.Header().Set("Content-Type", "application/json")
 	fmt.Fprintf(w, `{"ok":true,"session_id":%q,"status":"stopped"}`, req.SessionID)
@@ -341,6 +382,18 @@ func (d *Daemon) handleApprove(w http.ResponseWriter, r *http.Request) {
 		path := entry.Path
 		d.mu.Unlock()
 		_ = saveRuntimeMeta(path, runtime)
+		action := "approval_denied"
+		if allow {
+			action = "approval_approved"
+		}
+		d.appendTimeline(path, agent.RuntimeTimelineEvent{
+			Type:       action,
+			Source:     "api",
+			RunStatus:  runtime.Run.Status,
+			GoalStatus: runtime.Goal.Status,
+			WaitKind:   "approval",
+			WaitID:     req.ApprovalID,
+		})
 		active.Control.Approve(req.ApprovalID, allow, req.Session, req.Persist)
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprintf(w, `{"ok":true,"session_id":%q,"approval_id":%q,"allow":%t}`, req.SessionID, req.ApprovalID, allow)
@@ -399,6 +452,14 @@ func (d *Daemon) handleAnswer(w http.ResponseWriter, r *http.Request) {
 		path := entry.Path
 		d.mu.Unlock()
 		_ = saveRuntimeMeta(path, runtime)
+		d.appendTimeline(path, agent.RuntimeTimelineEvent{
+			Type:       "ask_answered",
+			Source:     "api",
+			RunStatus:  runtime.Run.Status,
+			GoalStatus: runtime.Goal.Status,
+			WaitKind:   "ask",
+			WaitID:     req.AskID,
+		})
 		active.Control.AnswerQuestion(req.AskID, req.Answers)
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprintf(w, `{"ok":true,"session_id":%q,"ask_id":%q}`, req.SessionID, req.AskID)

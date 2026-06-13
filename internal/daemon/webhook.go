@@ -8,6 +8,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -68,12 +71,23 @@ func (d *Daemon) handleWebhook(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"invalid json"}`, http.StatusBadRequest)
 		return
 	}
+	info := extractGitHubWebhookInfo(r, body)
+	if evt.Type == "" && info.Event != "" {
+		evt.Type = "github." + info.Event
+	}
+	if evt.EventID == "" {
+		evt.EventID = info.Delivery
+	}
 	if evt.SessionID == "" {
-		http.Error(w, `{"error":"session_id required"}`, http.StatusBadRequest)
-		return
+		sessionID, ok := d.routeWebhookEvent(evt, info)
+		if !ok {
+			http.Error(w, `{"error":"session_id required or no matching session"}`, http.StatusBadRequest)
+			return
+		}
+		evt.SessionID = sessionID
 	}
 	if evt.Summary == "" {
-		evt.Summary = fmt.Sprintf("webhook event: %s", evt.Type)
+		evt.Summary = webhookSummary(evt, info)
 	}
 
 	// Find session.
@@ -125,12 +139,240 @@ func (d *Daemon) handleWebhook(w http.ResponseWriter, r *http.Request) {
 		Source:      "webhook",
 		Reason:      "webhook:" + evt.Type,
 		EventID:     evt.EventID,
+		Context:     boundedWebhookContext(evt, info),
 	})
 
 	d.logger.Info("webhook event received", "type", evt.Type, "session", evt.SessionID, "event_id", evt.EventID)
 
 	w.Header().Set("Content-Type", "application/json")
 	fmt.Fprintf(w, `{"ok":true,"session_id":%q,"status":"pending_continue","event_id":%q}`, evt.SessionID, evt.EventID)
+}
+
+type githubWebhookInfo struct {
+	Event      string
+	Delivery   string
+	Action     string
+	Repo       string
+	Number     int
+	Ref        string
+	Status     string
+	Conclusion string
+	Title      string
+}
+
+func extractGitHubWebhookInfo(r *http.Request, body []byte) githubWebhookInfo {
+	info := githubWebhookInfo{
+		Event:    strings.TrimSpace(r.Header.Get("X-GitHub-Event")),
+		Delivery: strings.TrimSpace(r.Header.Get("X-GitHub-Delivery")),
+	}
+	var root map[string]any
+	if err := json.Unmarshal(body, &root); err != nil {
+		return info
+	}
+	info.Action = stringField(root, "action")
+	info.Ref = stringField(root, "ref")
+	if repo := mapField(root, "repository"); repo != nil {
+		info.Repo = stringField(repo, "full_name")
+	}
+	if pr := mapField(root, "pull_request"); pr != nil {
+		info.Number = intField(pr, "number")
+		info.Title = stringField(pr, "title")
+	}
+	if issue := mapField(root, "issue"); issue != nil && info.Number == 0 {
+		info.Number = intField(issue, "number")
+		info.Title = stringField(issue, "title")
+	}
+	if wr := mapField(root, "workflow_run"); wr != nil {
+		info.Status = stringField(wr, "status")
+		info.Conclusion = stringField(wr, "conclusion")
+		if info.Ref == "" {
+			info.Ref = stringField(wr, "head_branch")
+		}
+		if info.Number == 0 {
+			info.Number = firstPullNumber(wr)
+		}
+	}
+	if cr := mapField(root, "check_run"); cr != nil {
+		if info.Status == "" {
+			info.Status = stringField(cr, "status")
+		}
+		if info.Conclusion == "" {
+			info.Conclusion = stringField(cr, "conclusion")
+		}
+		if info.Number == 0 {
+			info.Number = firstPullNumber(cr)
+		}
+	}
+	return info
+}
+
+func (d *Daemon) routeWebhookEvent(evt WebhookEvent, info githubWebhookInfo) (string, bool) {
+	repo := strings.ToLower(strings.TrimSpace(info.Repo))
+	if repo == "" {
+		return "", false
+	}
+	type candidate struct {
+		id    string
+		score int
+	}
+	d.mu.RLock()
+	entries := make([]*SessionEntry, 0, len(d.registry))
+	for _, entry := range d.registry {
+		entries = append(entries, entry)
+	}
+	d.mu.RUnlock()
+	var candidates []candidate
+	for _, entry := range entries {
+		score := webhookRouteScore(entry, repo, info.Number, len(entries))
+		if score > 0 {
+			candidates = append(candidates, candidate{id: entry.ID, score: score})
+		}
+	}
+	if len(candidates) == 0 {
+		return "", false
+	}
+	best := candidates[0]
+	tie := false
+	for _, c := range candidates[1:] {
+		if c.score > best.score {
+			best = c
+			tie = false
+		} else if c.score == best.score {
+			tie = true
+		}
+	}
+	if tie {
+		return "", false
+	}
+	return best.id, true
+}
+
+func webhookRouteScore(entry *SessionEntry, repo string, number int, totalSessions int) int {
+	meta, _, _ := agent.LoadBranchMeta(entry.Path)
+	haystack := strings.ToLower(strings.Join([]string{
+		entry.Runtime.Goal.Text,
+		meta.TopicTitle,
+		meta.TopicID,
+		meta.WorkspaceRoot,
+		entry.Runtime.WorkspaceRoot,
+		entry.Path,
+	}, "\n"))
+	score := 0
+	if strings.Contains(haystack, repo) || strings.Contains(haystack, filepath.Base(repo)) || workspaceMatchesRepo(firstNonEmpty(entry.Runtime.WorkspaceRoot, meta.WorkspaceRoot), repo) {
+		score += 4
+	}
+	if number > 0 && textMentionsNumber(haystack, number) {
+		score += 3
+	}
+	switch entry.Runtime.Goal.Status {
+	case "running", "blocked":
+		score++
+	}
+	if number > 0 && score > 0 && !textMentionsNumber(haystack, number) && totalSessions > 1 {
+		score--
+	}
+	return score
+}
+
+func workspaceMatchesRepo(root, repo string) bool {
+	root = strings.TrimSpace(root)
+	if root == "" || repo == "" {
+		return false
+	}
+	b, err := os.ReadFile(filepath.Join(root, ".git", "config"))
+	if err != nil {
+		return false
+	}
+	text := strings.ToLower(string(b))
+	repo = strings.ToLower(strings.TrimSuffix(repo, ".git"))
+	return strings.Contains(text, repo) || strings.Contains(text, repo+".git")
+}
+
+func textMentionsNumber(text string, n int) bool {
+	if n <= 0 {
+		return false
+	}
+	s := strconv.Itoa(n)
+	return strings.Contains(text, "#"+s) ||
+		strings.Contains(text, "pr "+s) ||
+		strings.Contains(text, "pr-"+s) ||
+		strings.Contains(text, "pull/"+s) ||
+		strings.Contains(text, "issues/"+s)
+}
+
+func webhookSummary(evt WebhookEvent, info githubWebhookInfo) string {
+	parts := []string{"webhook event"}
+	if evt.Type != "" {
+		parts = append(parts, evt.Type)
+	}
+	if info.Repo != "" {
+		parts = append(parts, "repo="+info.Repo)
+	}
+	if info.Number > 0 {
+		parts = append(parts, fmt.Sprintf("number=%d", info.Number))
+	}
+	if info.Action != "" {
+		parts = append(parts, "action="+info.Action)
+	}
+	if info.Status != "" {
+		parts = append(parts, "status="+info.Status)
+	}
+	if info.Conclusion != "" {
+		parts = append(parts, "conclusion="+info.Conclusion)
+	}
+	if info.Ref != "" {
+		parts = append(parts, "ref="+info.Ref)
+	}
+	if info.Title != "" {
+		parts = append(parts, "title="+info.Title)
+	}
+	return strings.Join(parts, " ")
+}
+
+func boundedWebhookContext(evt WebhookEvent, info githubWebhookInfo) string {
+	summary := strings.TrimSpace(evt.Summary)
+	if summary == "" {
+		summary = webhookSummary(evt, info)
+	}
+	if len(summary) > 2000 {
+		summary = summary[:2000]
+	}
+	return summary
+}
+
+func mapField(m map[string]any, key string) map[string]any {
+	v, _ := m[key].(map[string]any)
+	return v
+}
+
+func stringField(m map[string]any, key string) string {
+	v, _ := m[key].(string)
+	return strings.TrimSpace(v)
+}
+
+func intField(m map[string]any, key string) int {
+	switch v := m[key].(type) {
+	case float64:
+		return int(v)
+	case int:
+		return v
+	case string:
+		n, _ := strconv.Atoi(v)
+		return n
+	default:
+		return 0
+	}
+}
+
+func firstPullNumber(m map[string]any) int {
+	raw, _ := m["pull_requests"].([]any)
+	for _, item := range raw {
+		pr, _ := item.(map[string]any)
+		if n := intField(pr, "number"); n > 0 {
+			return n
+		}
+	}
+	return 0
 }
 
 // validateSignature checks the HMAC-SHA256 signature against the webhook secret.

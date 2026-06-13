@@ -19,6 +19,12 @@ func (d *Daemon) enqueueIntent(intent RunIntent) {
 	if intent.Source == "" {
 		intent.Source = "daemon"
 	}
+	d.appendTimeline(intent.SessionPath, agent.RuntimeTimelineEvent{
+		Type:    "intent_queued",
+		Source:  intent.Source,
+		Reason:  intent.Reason,
+		EventID: intent.EventID,
+	})
 	select {
 	case d.intentCh <- intent:
 	default:
@@ -58,7 +64,14 @@ func (d *Daemon) executeIntent(parent context.Context, intent RunIntent) {
 		Asks:      make(map[string]event.Ask),
 	}
 	d.activeRuns[intent.SessionID] = active
+	runPath := entry.Path
 	d.mu.Unlock()
+	d.appendTimeline(runPath, agent.RuntimeTimelineEvent{
+		Type:    "run_started",
+		Source:  intent.Source,
+		Reason:  intent.Reason,
+		EventID: intent.EventID,
+	})
 
 	sink := event.Sync(event.FuncSink(func(e event.Event) {
 		d.handleRunEvent(intent.SessionID, e)
@@ -75,7 +88,7 @@ func (d *Daemon) executeIntent(parent context.Context, intent RunIntent) {
 	defer ctrl.Close()
 	defer cancel()
 
-	err = ctrl.ContinueGoal(ctx, firstNonEmpty(intent.Reason, intent.Source))
+	err = ctrl.ContinueGoalWithContext(ctx, firstNonEmpty(intent.Reason, intent.Source), intent.Context)
 	if err != nil && ctx.Err() == nil {
 		d.finishIntent(intent.SessionID, "failed", err)
 		return
@@ -161,6 +174,17 @@ func (d *Daemon) recordWait(sessionID string, wait agent.RuntimeWaitMeta, e even
 		if err := saveRuntimeMeta(path, runtime); err != nil {
 			d.logger.Warn("daemon: persist wait state", "session", sessionID, "err", err)
 		}
+		d.appendTimeline(path, agent.RuntimeTimelineEvent{
+			Type:       "wait_started",
+			RunStatus:  runtime.Run.Status,
+			GoalStatus: runtime.Goal.Status,
+			WaitKind:   wait.Kind,
+			WaitID:     firstNonEmpty(wait.ApprovalID, wait.AskID, wait.EventID),
+			Tool:       wait.Tool,
+			Subject:    wait.Subject,
+			Reason:     wait.Reason,
+			EventID:    wait.EventID,
+		})
 	}
 }
 
@@ -183,6 +207,12 @@ func (d *Daemon) finishIntent(sessionID, fallbackStatus string, runErr error) {
 			entry.Runtime = loaded
 		}
 		d.mu.Unlock()
+		d.appendTimeline(path, agent.RuntimeTimelineEvent{
+			Type:       "run_finished",
+			RunStatus:  loaded.Run.Status,
+			GoalStatus: loaded.Goal.Status,
+			Error:      errorString(runErr),
+		})
 		return
 	}
 	if fallbackStatus == "" {
@@ -205,6 +235,21 @@ func (d *Daemon) finishIntent(sessionID, fallbackStatus string, runErr error) {
 		if err := saveRuntimeMeta(path, runtime); err != nil {
 			slog.Warn("daemon: persist finished intent", "err", err, "session", sessionID)
 		}
+		d.appendTimeline(path, agent.RuntimeTimelineEvent{
+			Type:       "run_finished",
+			RunStatus:  runtime.Run.Status,
+			GoalStatus: runtime.Goal.Status,
+			Error:      errorString(runErr),
+		})
+	}
+}
+
+func (d *Daemon) appendTimeline(path string, e agent.RuntimeTimelineEvent) {
+	if path == "" {
+		return
+	}
+	if err := agent.AppendRuntimeTimeline(path, e); err != nil {
+		d.logger.Warn("daemon: append runtime timeline", "err", err)
 	}
 }
 
@@ -215,4 +260,11 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func errorString(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
 }

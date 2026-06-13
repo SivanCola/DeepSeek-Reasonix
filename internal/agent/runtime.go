@@ -3,6 +3,7 @@ package agent
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"time"
@@ -27,6 +28,25 @@ type RuntimeMeta struct {
 	Run           RuntimeRunMeta   `json:"run,omitempty"`
 	Wait          RuntimeWaitMeta  `json:"wait,omitempty"`
 	Scheduler     RuntimeSchedMeta `json:"scheduler,omitempty"`
+}
+
+// RuntimeTimelineEvent is an append-only event record for daemon/runtime
+// observability. It intentionally lives outside the transcript and provider
+// prompt path.
+type RuntimeTimelineEvent struct {
+	Time       time.Time `json:"time"`
+	Type       string    `json:"type"`
+	Source     string    `json:"source,omitempty"`
+	Reason     string    `json:"reason,omitempty"`
+	EventID    string    `json:"event_id,omitempty"`
+	RunStatus  string    `json:"run_status,omitempty"`
+	GoalStatus string    `json:"goal_status,omitempty"`
+	WaitKind   string    `json:"wait_kind,omitempty"`
+	WaitID     string    `json:"wait_id,omitempty"`
+	Tool       string    `json:"tool,omitempty"`
+	Subject    string    `json:"subject,omitempty"`
+	Message    string    `json:"message,omitempty"`
+	Error      string    `json:"error,omitempty"`
 }
 
 // RuntimeGoalMeta captures the active goal's lifecycle.
@@ -83,6 +103,14 @@ func RuntimeMetaPath(sessionPath string) string {
 		return ""
 	}
 	return sessionPath + ".runtime.json"
+}
+
+// RuntimeTimelinePath returns the append-only runtime timeline path.
+func RuntimeTimelinePath(sessionPath string) string {
+	if sessionPath == "" {
+		return ""
+	}
+	return sessionPath + ".runtime.timeline.jsonl"
 }
 
 // LoadRuntimeMeta reads the runtime sidecar. Returns (meta, true, nil) on
@@ -156,4 +184,61 @@ func RemoveRuntimeMeta(sessionPath string) error {
 		return err
 	}
 	return nil
+}
+
+// AppendRuntimeTimeline appends one timeline event beside a session runtime
+// sidecar. The write is best-effort atomic at the single-line append level.
+func AppendRuntimeTimeline(sessionPath string, e RuntimeTimelineEvent) error {
+	path := RuntimeTimelinePath(sessionPath)
+	if path == "" {
+		return nil
+	}
+	if e.Time.IsZero() {
+		e.Time = time.Now().UTC()
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	if err := json.NewEncoder(f).Encode(e); err != nil {
+		return err
+	}
+	return nil
+}
+
+// LoadRuntimeTimeline loads the most recent timeline events. limit <= 0 returns
+// all events.
+func LoadRuntimeTimeline(sessionPath string, limit int) ([]RuntimeTimelineEvent, bool, error) {
+	path := RuntimeTimelinePath(sessionPath)
+	if path == "" {
+		return nil, false, nil
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, false, nil
+		}
+		return nil, false, err
+	}
+	defer f.Close()
+	var events []RuntimeTimelineEvent
+	dec := json.NewDecoder(f)
+	for {
+		var e RuntimeTimelineEvent
+		if err := dec.Decode(&e); err != nil {
+			if err == io.EOF {
+				break
+			}
+			return nil, false, fmt.Errorf("decode runtime timeline %s: %w", path, err)
+		}
+		events = append(events, e)
+	}
+	if limit > 0 && len(events) > limit {
+		events = events[len(events)-limit:]
+	}
+	return events, true, nil
 }

@@ -177,6 +177,13 @@ func (c *Controller) loadAndRestoreRuntime(path string) bool {
 //   - Context cancel → marks goal stopped.
 //   - Hits maxGoalAutoTurns → marks blocked, stops.
 func (c *Controller) ContinueGoal(ctx context.Context, reason string) error {
+	return c.ContinueGoalWithContext(ctx, reason, "")
+}
+
+// ContinueGoalWithContext resumes the active goal and injects bounded wakeup
+// context into the first continuation turn. The context is dynamic runtime
+// state, not part of the stable system prompt.
+func (c *Controller) ContinueGoalWithContext(ctx context.Context, reason, wakeupContext string) error {
 	ctx, cancel := context.WithCancel(ctx)
 	c.mu.Lock()
 	if c.running {
@@ -200,10 +207,10 @@ func (c *Controller) ContinueGoal(ctx context.Context, reason string) error {
 		cancel()
 	}()
 
-	return c.continueGoalWithReason(ctx, reason)
+	return c.continueGoalWithReason(ctx, reason, wakeupContext)
 }
 
-func (c *Controller) continueGoalWithReason(ctx context.Context, reason string) error {
+func (c *Controller) continueGoalWithReason(ctx context.Context, reason, wakeupContext string) error {
 	c.mu.Lock()
 	goal := c.goal
 	status := c.goalStatus
@@ -238,7 +245,7 @@ func (c *Controller) continueGoalWithReason(ctx context.Context, reason string) 
 	}
 
 	// Run the continuation loop — uses goalContinueTurn (not "Start pursuing…").
-	err := c.continueGoal(ctx)
+	err := c.continueGoal(ctx, wakeupContext)
 
 	return err
 }
@@ -262,7 +269,7 @@ func (c *Controller) applyGoalContinue() {
 		c.notice(i18n.M.GoalContinued)
 		if c.runner != nil {
 			c.runGuarded(func(ctx context.Context) error {
-				return c.continueGoalWithReason(ctx, "user")
+				return c.continueGoalWithReason(ctx, "user", "")
 			})
 		}
 	}

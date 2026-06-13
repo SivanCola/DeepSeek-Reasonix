@@ -239,3 +239,34 @@ func TestRemoveRuntimeMeta(t *testing.T) {
 		t.Fatalf("RemoveRuntimeMeta on missing file: %v", err)
 	}
 }
+
+func TestRuntimeTimelineAppendLoadAndLimit(t *testing.T) {
+	dir := t.TempDir()
+	sessionPath := filepath.Join(dir, "timeline.jsonl")
+
+	if err := AppendRuntimeTimeline(sessionPath, RuntimeTimelineEvent{Type: "intent_queued", Source: "cron"}); err != nil {
+		t.Fatalf("AppendRuntimeTimeline first: %v", err)
+	}
+	if err := AppendRuntimeTimeline(sessionPath, RuntimeTimelineEvent{Type: "run_finished", RunStatus: "idle"}); err != nil {
+		t.Fatalf("AppendRuntimeTimeline second: %v", err)
+	}
+
+	events, ok, err := LoadRuntimeTimeline(sessionPath, 0)
+	if err != nil || !ok {
+		t.Fatalf("LoadRuntimeTimeline: err=%v ok=%v", err, ok)
+	}
+	if len(events) != 2 {
+		t.Fatalf("events = %d, want 2", len(events))
+	}
+	if events[0].Type != "intent_queued" || events[1].RunStatus != "idle" {
+		t.Fatalf("unexpected events: %+v", events)
+	}
+
+	limited, ok, err := LoadRuntimeTimeline(sessionPath, 1)
+	if err != nil || !ok {
+		t.Fatalf("LoadRuntimeTimeline limit: err=%v ok=%v", err, ok)
+	}
+	if len(limited) != 1 || limited[0].Type != "run_finished" {
+		t.Fatalf("limited events = %+v, want last run_finished", limited)
+	}
+}

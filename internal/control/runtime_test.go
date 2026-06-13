@@ -600,6 +600,39 @@ func TestGoalContinueUsesGoalContinueTurn(t *testing.T) {
 	}
 }
 
+func TestGoalContinueWithContextInjectsWakeupContext(t *testing.T) {
+	prov := &scriptedTurns{turns: [][]provider.Chunk{
+		textTurn("Done.\n\n[goal:complete]"),
+	}}
+	ag := agent.New(prov, tool.NewRegistry(), agent.NewSession(""), agent.Options{}, event.Discard)
+	c := New(Options{Runner: ag, Executor: ag, Sink: event.Discard})
+	c.SetGoal("triage CI")
+	c.mu.Lock()
+	c.goal = "triage CI"
+	c.goalStatus = GoalStatusRunning
+	c.mu.Unlock()
+
+	if err := c.ContinueGoalWithContext(context.Background(), "webhook:github.workflow_run", "GitHub workflow failed on main"); err != nil {
+		t.Fatalf("ContinueGoalWithContext: %v", err)
+	}
+
+	var found bool
+	for _, m := range ag.Session().Messages {
+		if m.Role != provider.RoleUser {
+			continue
+		}
+		if strings.Contains(m.Content, "Continue pursuing the active goal") &&
+			strings.Contains(m.Content, "<wakeup-context>") &&
+			strings.Contains(m.Content, "GitHub workflow failed on main") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("expected continuation user message to include wakeup context")
+	}
+}
+
 func TestParseGoalCommandContinue(t *testing.T) {
 	tests := []struct {
 		input string

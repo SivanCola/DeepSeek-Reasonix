@@ -148,6 +148,41 @@ func TestDaemonRecoverInterrupted(t *testing.T) {
 	}
 }
 
+func TestDaemonRecoverWaitingApprovalAsInterrupted(t *testing.T) {
+	dir := t.TempDir()
+
+	sess := filepath.Join(dir, "waiting.jsonl")
+	os.WriteFile(sess, []byte(`{"role":"user"}`), 0o644)
+	agent.SaveRuntimeMeta(sess, agent.RuntimeMeta{
+		SessionID: "waiting",
+		Goal:      agent.RuntimeGoalMeta{Text: "ship it", Status: "running"},
+		Run:       agent.RuntimeRunMeta{Status: "waiting_approval"},
+		Wait:      agent.RuntimeWaitMeta{Kind: "approval", ApprovalID: "7", Tool: "bash"},
+	})
+
+	d := New(Options{SessionDir: dir})
+	d.scanSessions()
+	d.recoverInterrupted()
+
+	loaded, ok, err := agent.LoadRuntimeMeta(sess)
+	if err != nil || !ok {
+		t.Fatalf("LoadRuntimeMeta: err=%v ok=%v", err, ok)
+	}
+	if loaded.Run.Status != "interrupted" {
+		t.Fatalf("Run.Status = %q, want interrupted", loaded.Run.Status)
+	}
+	if loaded.Wait.ApprovalID != "7" {
+		t.Fatalf("wait metadata should be preserved, got %+v", loaded.Wait)
+	}
+	events, ok, err := agent.LoadRuntimeTimeline(sess, 1)
+	if err != nil || !ok || len(events) != 1 {
+		t.Fatalf("LoadRuntimeTimeline: events=%+v err=%v ok=%v", events, err, ok)
+	}
+	if events[0].Type != "run_interrupted" || events[0].WaitID != "7" {
+		t.Fatalf("unexpected recovery timeline: %+v", events[0])
+	}
+}
+
 func TestDaemonHTTPHandlers(t *testing.T) {
 	dir := t.TempDir()
 
@@ -231,6 +266,36 @@ func TestDaemonHTTPHandlers(t *testing.T) {
 	d.mu.RUnlock()
 	if entry.Runtime.Run.Status != "stopped" {
 		t.Errorf("after stop: Run.Status = %q", entry.Runtime.Run.Status)
+	}
+}
+
+func TestDaemonTimelineHandler(t *testing.T) {
+	dir := t.TempDir()
+	sess := filepath.Join(dir, "timeline-api.jsonl")
+	os.WriteFile(sess, []byte(`{"role":"user","content":"start"}`+"\n"), 0o644)
+	agent.SaveRuntimeMeta(sess, agent.RuntimeMeta{
+		SessionID: "timeline-api",
+		Goal:      agent.RuntimeGoalMeta{Text: "timeline goal", Status: "running"},
+		Run:       agent.RuntimeRunMeta{Status: "idle"},
+	})
+	if err := agent.AppendRuntimeTimeline(sess, agent.RuntimeTimelineEvent{Type: "intent_queued", Source: "test"}); err != nil {
+		t.Fatalf("AppendRuntimeTimeline: %v", err)
+	}
+
+	d := New(Options{SessionDir: dir})
+	d.scanSessions()
+	req := httptest.NewRequest("GET", "/timeline?session_id=timeline-api&limit=10", nil)
+	rr := httptest.NewRecorder()
+	d.handleTimeline(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("timeline status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	var resp TimelineResponse
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode timeline: %v", err)
+	}
+	if resp.SessionID != "timeline-api" || len(resp.Events) != 1 || resp.Events[0].Type != "intent_queued" {
+		t.Fatalf("unexpected timeline response: %+v", resp)
 	}
 }
 
