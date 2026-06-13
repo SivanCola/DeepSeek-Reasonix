@@ -240,6 +240,34 @@ func TestStoreArchiveReturnsArchivePath(t *testing.T) {
 	}
 }
 
+func TestStoreArchiveFlushesStaleIndexWithoutFile(t *testing.T) {
+	s := Store{Dir: t.TempDir()}
+	if _, err := s.Save(Memory{Name: "beta", Description: "keep", Type: TypeProject, Body: "body"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := flushIndexIn(s.Dir, map[string]string{
+		"alpha": "- [alpha](alpha.md) — stale",
+		"beta":  "- [beta](beta.md) — keep",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	archive, err := s.Archive("alpha")
+	if err != nil {
+		t.Fatalf("Archive stale index: %v", err)
+	}
+	if archive != "" {
+		t.Fatalf("Archive should return no path for missing file, got %q", archive)
+	}
+	idx := s.Index()
+	if strings.Contains(idx, "alpha.md") {
+		t.Fatalf("stale index line should be removed:\n%s", idx)
+	}
+	if !strings.Contains(idx, "beta.md") {
+		t.Fatalf("unrelated index line should remain:\n%s", idx)
+	}
+}
+
 func TestStoreListArchivedNewestFirst(t *testing.T) {
 	s := Store{Dir: t.TempDir()}
 	dir := filepath.Join(s.Dir, ".archive")
@@ -392,6 +420,48 @@ func TestStoreGlobalAndProject(t *testing.T) {
 	idx2 := s.Index()
 	if strings.Count(idx2, "# Memory") != 0 {
 		t.Fatalf("Index should have 0 # Memory headers (Block() adds one), got %d:\n%s", strings.Count(idx2, "# Memory"), idx2)
+	}
+}
+
+func TestStoreSaveRemovesStaleCopyWhenScopeChanges(t *testing.T) {
+	dir := t.TempDir()
+	s := Store{
+		Dir:       filepath.Join(dir, "project", "memory"),
+		GlobalDir: filepath.Join(dir, "global"),
+	}
+
+	globalPath, err := s.Save(Memory{Name: "same-name", Description: "old global", Type: TypeUser, Body: "old body"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	projectPath, err := s.Save(Memory{Name: "same-name", Description: "new project", Type: TypeProject, Body: "new body"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(projectPath, s.Dir) {
+		t.Fatalf("project-scoped rewrite should land in project dir, got %s", projectPath)
+	}
+	if _, err := os.Stat(globalPath); !os.IsNotExist(err) {
+		t.Fatalf("old global active file should be archived away, stat err = %v", err)
+	}
+	globalIndex, err := os.ReadFile(filepath.Join(s.GlobalDir, indexFile))
+	if err != nil {
+		t.Fatalf("read global index: %v", err)
+	}
+	if strings.Contains(string(globalIndex), "same-name.md") {
+		t.Fatalf("old global index line should be removed:\n%s", globalIndex)
+	}
+
+	list := s.List()
+	if len(list) != 1 {
+		t.Fatalf("List() = %+v, want one active copy", list)
+	}
+	if list[0].Type != TypeProject || !strings.Contains(list[0].Body, "new body") {
+		t.Fatalf("active copy = %+v, want new project body", list[0])
+	}
+	idx := s.Index()
+	if strings.Contains(idx, "old global") || !strings.Contains(idx, "new project") {
+		t.Fatalf("merged index should reflect new scope only:\n%s", idx)
 	}
 }
 

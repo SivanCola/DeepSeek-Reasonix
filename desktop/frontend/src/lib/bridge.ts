@@ -200,6 +200,9 @@ export interface AppBindings {
   AcceptMemorySuggestion(suggestion: MemorySuggestion): Promise<string>;
   AcceptSkillSuggestion(suggestion: SkillSuggestion): Promise<string>;
   MemoryForTab(tabID: string): Promise<MemoryView>;
+  MemorySuggestionsForTab(tabID: string): Promise<MemorySuggestionsView>;
+  AcceptMemorySuggestionForTab(tabID: string, suggestion: MemorySuggestion): Promise<string>;
+  AcceptSkillSuggestionForTab(tabID: string, suggestion: SkillSuggestion): Promise<string>;
   Remember(scope: string, note: string): Promise<string>;
   RememberForTab(tabID: string, scope: string, note: string): Promise<string>;
   Forget(name: string): Promise<void>;
@@ -2140,6 +2143,15 @@ function makeMockApp(): AppBindings {
     async AcceptSkillSuggestion(suggestion: SkillSuggestion) {
       emit({ kind: "notice", level: "info", text: `created suggested skill → ${suggestion.name}` });
       return `.reasonix/skills/${suggestion.name}/SKILL.md`;
+    },
+    async MemorySuggestionsForTab(_tabID: string) {
+      return this.MemorySuggestions();
+    },
+    async AcceptMemorySuggestionForTab(_tabID: string, suggestion: MemorySuggestion) {
+      return this.AcceptMemorySuggestion(suggestion);
+    },
+    async AcceptSkillSuggestionForTab(_tabID: string, suggestion: SkillSuggestion) {
+      return this.AcceptSkillSuggestion(suggestion);
     },
     async MemoryForTab(_tabID: string) {
       return this.Memory();

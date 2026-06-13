@@ -444,9 +444,12 @@ func (m *Manager) DestroySession(parentSession string) []<-chan struct{} {
 			continue
 		}
 		j.mu.Lock()
-		if j.status == Running {
+		switch j.status {
+		case Running:
 			j.status = Killed
 			cancels = append(cancels, j.cancel)
+			done = append(done, j.done)
+		case Killed:
 			done = append(done, j.done)
 		}
 		j.mu.Unlock()

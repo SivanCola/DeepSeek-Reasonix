@@ -201,6 +201,14 @@ func (s Store) Save(m Memory) (string, error) {
 	if err := reindexIn(dir, name, m); err != nil {
 		return path, err
 	}
+	for _, otherDir := range s.dirs() {
+		if sameDir(otherDir, dir) {
+			continue
+		}
+		if err := removeActiveMemoryInDir(otherDir, name); err != nil {
+			return path, err
+		}
+	}
 	return path, nil
 }
 
@@ -227,14 +235,30 @@ func (s Store) Archive(name string) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		if p != "" {
+		if p != "" || indexContainsIn(dir, name) {
 			if err := flushIndexIn(dir, indexLinesExceptIn(dir, name)); err != nil {
 				return "", err
 			}
+		}
+		if p != "" {
 			lastPath = p
 		}
 	}
 	return lastPath, nil
+}
+
+func removeActiveMemoryInDir(dir, name string) error {
+	if strings.TrimSpace(dir) == "" {
+		return nil
+	}
+	p, err := archiveInDir(dir, name)
+	if err != nil {
+		return err
+	}
+	if p != "" || indexContainsIn(dir, name) {
+		return flushIndexIn(dir, indexLinesExceptIn(dir, name))
+	}
+	return nil
 }
 
 // Delete removes a memory from the active store and its MEMORY.md line — the
@@ -390,6 +414,19 @@ func indexLinesExceptIn(dir, name string) map[string]string {
 		}
 	}
 	return keep
+}
+
+func indexContainsIn(dir, name string) bool {
+	existing, err := os.ReadFile(filepath.Join(dir, indexFile))
+	if err != nil {
+		return false
+	}
+	for _, line := range strings.Split(string(existing), "\n") {
+		if mt := indexLineRe.FindStringSubmatch(line); mt != nil && mt[1] == name {
+			return true
+		}
+	}
+	return false
 }
 
 // flushIndexIn rewrites MEMORY.md in the given directory from the managed lines,

@@ -796,7 +796,9 @@ export function MemorySettingsPage() {
 		setSuggestionBusy(true);
 		setError(null);
 		try {
-			const next = await app.MemorySuggestions();
+			const next = selectedTabId
+				? await app.MemorySuggestionsForTab(selectedTabId)
+				: await app.MemorySuggestions();
 			setSuggestions({
 				memories: next.memories ?? [],
 				skills: next.skills ?? [],
@@ -810,7 +812,7 @@ export function MemorySettingsPage() {
 		} finally {
 			setSuggestionBusy(false);
 		}
-	}, [suggestionBusy]);
+	}, [selectedTabId, suggestionBusy]);
 
 	const setAutoSuggestionsPreference = useCallback((enabled: boolean) => {
 		autoSuggestionsRequested.current = false;
@@ -960,7 +962,9 @@ export function MemorySettingsPage() {
 		setBusy(true);
 		setError(null);
 		try {
-			const path = await app.AcceptMemorySuggestion(candidate);
+			const path = selectedTabId
+				? await app.AcceptMemorySuggestionForTab(selectedTabId, candidate)
+				: await app.AcceptMemorySuggestion(candidate);
 			setAcceptedSuggestions((prev) => ({ ...prev, [candidate.id]: path || candidate.name }));
 			await reload();
 		} catch (err) {
@@ -968,21 +972,23 @@ export function MemorySettingsPage() {
 		} finally {
 			setBusy(false);
 		}
-	}, [busy, reload]);
+	}, [busy, reload, selectedTabId]);
 
 	const acceptSkillSuggestion = useCallback(async (candidate: SkillSuggestion) => {
 		if (busy) return;
 		setBusy(true);
 		setError(null);
 		try {
-			const path = await app.AcceptSkillSuggestion(candidate);
+			const path = selectedTabId
+				? await app.AcceptSkillSuggestionForTab(selectedTabId, candidate)
+				: await app.AcceptSkillSuggestion(candidate);
 			setAcceptedSuggestions((prev) => ({ ...prev, [candidate.id]: path || candidate.name }));
 		} catch (err) {
 			setError(errorMessage(err));
 		} finally {
 			setBusy(false);
 		}
-	}, [busy]);
+	}, [busy, selectedTabId]);
 
 	if (!view?.available) {
 		return (

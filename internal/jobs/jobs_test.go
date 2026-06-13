@@ -311,3 +311,57 @@ func TestDestroySessionCancelsOwnedJobsAndSuppressesCompletion(t *testing.T) {
 		t.Fatal("session-a should no longer be marked destroying")
 	}
 }
+
+func TestDestroySessionWaitsForAlreadyKilledJobs(t *testing.T) {
+	m := NewManager(event.Discard)
+	defer m.Close()
+
+	started := make(chan struct{})
+	release := make(chan struct{})
+	j := m.StartForSession("session-a", "task", "cleanup", func(ctx context.Context, _ io.Writer) (string, error) {
+		close(started)
+		<-ctx.Done()
+		<-release
+		return "", ctx.Err()
+	})
+	<-started
+
+	if !m.KillForSession("session-a", j.ID) {
+		t.Fatal("KillForSession on a running job returned false")
+	}
+	waitFor(t, func() bool {
+		_, status, ok := m.OutputForSession("session-a", j.ID)
+		return ok && status == Killed
+	})
+
+	done := m.DestroySession("session-a")
+	if len(done) != 1 {
+		t.Fatalf("DestroySession returned %d done channels, want 1", len(done))
+	}
+	if !m.IsDestroying("session-a") {
+		t.Fatal("session-a should be marked destroying")
+	}
+	select {
+	case <-done[0]:
+		t.Fatal("done channel closed before killed job finished unwinding")
+	default:
+	}
+
+	close(release)
+	select {
+	case <-done[0]:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for killed job to unwind")
+	}
+	res := m.WaitForSession(context.Background(), "session-a", []string{j.ID}, 5)
+	if len(res) != 1 || res[0].Status != Killed {
+		t.Fatalf("destroyed job result = %+v, want killed", res)
+	}
+	if note := m.DrainCompletedNoteForSession("session-a"); note != "" {
+		t.Fatalf("destroyed session should not queue completion note, got %q", note)
+	}
+	m.FinishDestroySession("session-a")
+	if m.IsDestroying("session-a") {
+		t.Fatal("session-a should no longer be marked destroying")
+	}
+}
