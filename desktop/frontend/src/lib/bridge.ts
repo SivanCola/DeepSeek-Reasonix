@@ -1126,6 +1126,7 @@ function makeMockApp(): AppBindings {
       scope: "global",
       workspaceRoot: globalWorkspaceRoot,
       workspaceName: "Global",
+      workspacePath: globalWorkspaceRoot,
       topicId: "",
       topicTitle: "Global",
       label: "DeepSeek-R1",
@@ -1144,6 +1145,8 @@ function makeMockApp(): AppBindings {
       scope: "project",
       workspaceRoot: "~/projects/joyquant-db",
       workspaceName: "joyquant-db",
+      workspacePath: "~/projects/joyquant-db",
+      gitBranch: "main",
       topicId: "topic_dev_standard",
       topicTitle: t("mock.trashDevStandardTitle"),
       projectColor: "blue",
@@ -1162,6 +1165,8 @@ function makeMockApp(): AppBindings {
       scope: "project",
       workspaceRoot: "~/projects/joyquant-sys",
       workspaceName: "joyquant-sys",
+      workspacePath: "~/projects/joyquant-sys",
+      gitBranch: "feature/p3b",
       topicId: "topic_p3b_pd",
       topicTitle: "p3b P&D",
       projectColor: "purple",
@@ -1180,6 +1185,7 @@ function makeMockApp(): AppBindings {
       scope: "global",
       workspaceRoot: "",
       workspaceName: "Global",
+      workspacePath: "~/projects/joyquant-db",
       topicId: "topic_global",
       topicTitle: "Global",
       label: "DeepSeek-R1",
@@ -1737,11 +1743,17 @@ function makeMockApp(): AppBindings {
           const toolApprovalMode = normalizeToolApprovalMode(active?.toolApprovalMode, active ? normalizeMode(active.mode) : "normal", settings.autoApproveTools);
           const autoApproveTools = toolApprovalMode === "yolo";
           const collaborationMode = normalizeCollaborationMode(active?.collaborationMode, active?.goal, active ? normalizeMode(active.mode) : "normal");
+          const workspacePath = active?.workspacePath || active?.workspaceRoot || active?.cwd || cwd;
           return {
             label: active?.label ?? "DeepSeek-R1",
             ready: active?.ready ?? true,
             eventChannel: EVENT_CHANNEL,
             cwd: active?.cwd || cwd,
+            workspaceRoot: active?.workspaceRoot || workspacePath,
+            workspaceName: active?.workspaceName,
+            workspacePath,
+            sandboxPath: settings.sandbox.workspaceRoot,
+            gitBranch: active?.gitBranch || (active?.scope === "project" ? "main" : ""),
             autoApproveTools,
             bypass: autoApproveTools,
             collaborationMode,
@@ -1756,11 +1768,17 @@ function makeMockApp(): AppBindings {
           const toolApprovalMode = normalizeToolApprovalMode(tab?.toolApprovalMode, tab ? normalizeMode(tab.mode) : "normal", settings.autoApproveTools);
           const autoApproveTools = toolApprovalMode === "yolo";
           const collaborationMode = normalizeCollaborationMode(tab?.collaborationMode, tab?.goal, tab ? normalizeMode(tab.mode) : "normal");
+          const workspacePath = tab?.workspacePath || tab?.workspaceRoot || tab?.cwd || cwd;
           return {
             label: tab?.label ?? "DeepSeek-R1",
             ready: tab?.ready ?? true,
             eventChannel: EVENT_CHANNEL,
             cwd: tab?.cwd || cwd,
+            workspaceRoot: tab?.workspaceRoot || workspacePath,
+            workspaceName: tab?.workspaceName,
+            workspacePath,
+            sandboxPath: settings.sandbox.workspaceRoot,
+            gitBranch: tab?.gitBranch || (tab?.scope === "project" ? "main" : ""),
             autoApproveTools,
             bypass: autoApproveTools,
             collaborationMode,
@@ -2525,6 +2543,8 @@ function makeMockApp(): AppBindings {
         scope: "project",
         workspaceRoot,
         workspaceName: workspaceRoot.split("/").filter(Boolean).pop() ?? workspaceRoot,
+        workspacePath: workspaceRoot,
+        gitBranch: "main",
         topicId: _topicID,
         topicTitle: topicLabel(_topicID, t("mock.newSession")),
         projectColor: mockProjectTree.find((node) => node.root === workspaceRoot)?.projectColor,
@@ -2552,6 +2572,7 @@ function makeMockApp(): AppBindings {
         scope: "global",
         workspaceRoot: "",
         workspaceName: "Global",
+        workspacePath: cwd,
         topicId: _topicID,
         topicTitle: topicLabel(_topicID, "Global"),
         label: "deepseek-v4-flash",

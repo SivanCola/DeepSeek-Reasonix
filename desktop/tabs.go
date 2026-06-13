@@ -473,6 +473,8 @@ type TabMeta struct {
 	Scope             string `json:"scope"`
 	WorkspaceRoot     string `json:"workspaceRoot"`
 	WorkspaceName     string `json:"workspaceName"`
+	WorkspacePath     string `json:"workspacePath,omitempty"`
+	GitBranch         string `json:"gitBranch,omitempty"`
 	TopicID           string `json:"topicId"`
 	TopicTitle        string `json:"topicTitle"`
 	ProjectColor      string `json:"projectColor,omitempty"`
@@ -490,12 +492,29 @@ type TabMeta struct {
 	Cwd               string `json:"cwd"`
 }
 
+func enrichTabMeta(meta TabMeta) TabMeta {
+	if meta.Active {
+		meta.GitBranch = workspaceGitBranch(meta.WorkspaceRoot)
+	}
+	return meta
+}
+
+func enrichTabMetas(metas []TabMeta) []TabMeta {
+	for i := range metas {
+		if metas[i].Active {
+			metas[i].GitBranch = workspaceGitBranch(metas[i].WorkspaceRoot)
+		}
+	}
+	return metas
+}
+
 func (a *App) tabMeta(tab *WorkspaceTab, active bool) TabMeta {
 	m := TabMeta{
 		ID:                tab.ID,
 		Scope:             tab.Scope,
 		WorkspaceRoot:     tab.WorkspaceRoot,
 		WorkspaceName:     workspaceName(tab.WorkspaceRoot),
+		WorkspacePath:     tab.WorkspaceRoot,
 		TopicID:           tab.TopicID,
 		TopicTitle:        tab.TopicTitle,
 		Label:             tab.Label,
@@ -526,14 +545,14 @@ func (a *App) tabMeta(tab *WorkspaceTab, active bool) TabMeta {
 // ListTabs returns every open tab's metadata for the frontend TabBar.
 func (a *App) ListTabs() []TabMeta {
 	a.mu.Lock()
-	defer a.mu.Unlock()
 	out := make([]TabMeta, 0, len(a.tabs))
 	for _, id := range a.orderedTabIDsLocked() {
 		if tab := a.tabs[id]; tab != nil {
 			out = append(out, a.tabMeta(tab, tab.ID == a.activeTabID))
 		}
 	}
-	return out
+	a.mu.Unlock()
+	return enrichTabMetas(out)
 }
 
 // OpenProjectTab builds a controller scoped to workspaceRoot and opens a tab
@@ -557,7 +576,7 @@ func (a *App) OpenProjectTab(workspaceRoot, topicID string) (TabMeta, error) {
 			meta := a.tabMeta(tab, true)
 			a.saveTabsLocked()
 			a.mu.Unlock()
-			return meta, nil
+			return enrichTabMeta(meta), nil
 		}
 	}
 
@@ -584,7 +603,7 @@ func (a *App) OpenProjectTab(workspaceRoot, topicID string) (TabMeta, error) {
 
 	a.startTabControllerBuild(tab)
 	a.emitProjectTreeChanged()
-	return a.tabMeta(tab, true), nil
+	return enrichTabMeta(a.tabMeta(tab, true)), nil
 }
 
 // OpenGlobalTab opens a new global-scope tab (no project root). The global
@@ -602,7 +621,7 @@ func (a *App) OpenGlobalTab(topicID string) (TabMeta, error) {
 			meta := a.tabMeta(tab, true)
 			a.saveTabsLocked()
 			a.mu.Unlock()
-			return meta, nil
+			return enrichTabMeta(meta), nil
 		}
 	}
 
@@ -628,7 +647,7 @@ func (a *App) OpenGlobalTab(topicID string) (TabMeta, error) {
 	a.mu.Unlock()
 
 	a.startTabControllerBuild(tab)
-	return a.tabMeta(tab, true), nil
+	return enrichTabMeta(a.tabMeta(tab, true)), nil
 }
 
 // EnsureBlankTab activates the existing blank tab for the target scope, or
@@ -675,7 +694,7 @@ func (a *App) EnsureBlankTab(scope, workspaceRoot string) (TabMeta, error) {
 			meta := a.tabMeta(tab, true)
 			a.saveTabsLocked()
 			a.mu.Unlock()
-			return meta, nil
+			return enrichTabMeta(meta), nil
 		}
 	}
 
@@ -728,7 +747,7 @@ func (a *App) EnsureBlankTab(scope, workspaceRoot string) (TabMeta, error) {
 
 		a.startTabControllerBuild(created)
 		a.emitProjectTreeChanged()
-		return meta, nil
+		return enrichTabMeta(meta), nil
 	}
 
 	topicID := newTopicID()
@@ -776,7 +795,7 @@ func (a *App) EnsureBlankTab(scope, workspaceRoot string) (TabMeta, error) {
 
 	a.startTabControllerBuild(created)
 	a.emitProjectTreeChanged()
-	return meta, nil
+	return enrichTabMeta(meta), nil
 }
 
 // blankTabMatchesTargetLocked returns true if tab is a reusable blank tab
