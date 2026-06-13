@@ -396,6 +396,75 @@ func TestDaemonRestoreFileWatches(t *testing.T) {
 	}
 }
 
+func TestFileWatcherWakeupIncludesChangedFileSummary(t *testing.T) {
+	dir := t.TempDir()
+	watchDir := filepath.Join(dir, "workspace")
+	if err := os.MkdirAll(filepath.Join(watchDir, "src"), 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	sess := filepath.Join(dir, "file-summary.jsonl")
+	if err := os.WriteFile(sess, []byte(`{"role":"user","content":"start"}`+"\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	if err := agent.SaveRuntimeMeta(sess, agent.RuntimeMeta{
+		SessionID: "file-summary",
+		Goal:      agent.RuntimeGoalMeta{Text: "react to files", Status: control.GoalStatusRunning},
+		Run:       agent.RuntimeRunMeta{Status: "idle"},
+	}); err != nil {
+		t.Fatalf("SaveRuntimeMeta: %v", err)
+	}
+
+	d := New(Options{SessionDir: dir})
+	d.scanSessions()
+	fw := NewFileWatcher(d, d.logger)
+	state := &watchState{
+		config: FileWatchConfig{
+			Paths:   []string{watchDir},
+			Enabled: true,
+		},
+		lastSeen: map[string]time.Time{},
+		changes: map[string]struct{}{
+			filepath.Join(watchDir, "src", "b.go"): {},
+			filepath.Join(watchDir, "src", "a.go"): {},
+		},
+		pending: true,
+	}
+
+	fw.fireWakeup("file-summary", state, time.Now())
+
+	select {
+	case intent := <-d.intentCh:
+		if intent.Source != "file_watch" || intent.Reason != "file_change" {
+			t.Fatalf("unexpected intent: %+v", intent)
+		}
+		if !strings.Contains(intent.Context, "File watch detected 2 changed file(s)") ||
+			!strings.Contains(intent.Context, "src/a.go") ||
+			!strings.Contains(intent.Context, "src/b.go") {
+			t.Fatalf("missing changed file summary:\n%s", intent.Context)
+		}
+		if strings.Contains(intent.Context, watchDir) {
+			t.Fatalf("summary should prefer paths relative to watch root:\n%s", intent.Context)
+		}
+	default:
+		t.Fatal("file watcher did not enqueue an intent")
+	}
+
+	events, ok, err := agent.LoadRuntimeTimeline(sess, 0)
+	if err != nil || !ok {
+		t.Fatalf("LoadRuntimeTimeline: err=%v ok=%v", err, ok)
+	}
+	var found bool
+	for _, event := range events {
+		if event.Type == "file_change_detected" && strings.Contains(event.Message, "src/a.go") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("file change timeline event missing: %+v", events)
+	}
+}
+
 func TestDaemonExecuteIntentCompletesGoal(t *testing.T) {
 	dir := t.TempDir()
 	sessPath := filepath.Join(dir, "worker-test.jsonl")

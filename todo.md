@@ -299,10 +299,10 @@ dynamic workflow 或开发者平台，而是先把 Reasonix 从一次性会话�
   - [x] 默认不监听大目录、依赖目录、secret 文件。
 - [ ] 防抖和批量。
   - [x] 短时间内多次变化合并成一个 event。
-  - [ ] 记录 changed files summary。
-- [ ] 事件转 turn input。
+  - [x] 记录 changed files summary。
+- [x] 事件转 turn input。
   - [x] 不把大文件内容直接塞进 prompt。
-  - [ ] 只提供路径、变更类型、摘要。
+  - [x] 只提供路径、变更类型、摘要。
 - [ ] 测试。
   - rapid changes 合并。
   - ignored path 不触发。

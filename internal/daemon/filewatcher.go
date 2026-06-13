@@ -2,9 +2,11 @@ package daemon
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -42,8 +44,11 @@ type watchState struct {
 	lastSeen  map[string]time.Time // path → last mod time
 	lastFired time.Time
 	pending   bool // debounce pending
+	changes   map[string]struct{}
 	timer     time.Time
 }
+
+const maxFileWatchSummaryFiles = 20
 
 // DefaultIgnorePatterns are always excluded from file watching.
 var DefaultIgnorePatterns = []string{
@@ -77,6 +82,7 @@ func (fw *FileWatcher) Register(sessionID string, cfg FileWatchConfig) {
 	fw.watches[sessionID] = &watchState{
 		config:   cfg,
 		lastSeen: make(map[string]time.Time),
+		changes:  make(map[string]struct{}),
 	}
 }
 
@@ -153,6 +159,9 @@ func (fw *FileWatcher) poll() {
 		}
 
 		// Changes detected — start/reset debounce timer.
+		for _, change := range changes {
+			state.changes[change] = struct{}{}
+		}
 		debounce := state.config.Debounce
 		if debounce == 0 {
 			debounce = 3 * time.Second
@@ -222,6 +231,9 @@ func (fw *FileWatcher) shouldIgnore(name string, patterns []string) bool {
 func (fw *FileWatcher) fireWakeup(sessionID string, state *watchState, now time.Time) {
 	state.pending = false
 	state.lastFired = now
+	changes := sortedFileWatchChanges(state.changes)
+	state.changes = make(map[string]struct{})
+	summary := fileWatchWakeupContext(state.config, changes)
 
 	fw.daemon.mu.Lock()
 	entry, ok := fw.daemon.registry[sessionID]
@@ -258,10 +270,74 @@ func (fw *FileWatcher) fireWakeup(sessionID string, state *watchState, now time.
 	} else {
 		fw.logger.Info("file watcher triggered wakeup", "session", sessionID)
 	}
+	fw.daemon.appendTimeline(path, agent.RuntimeTimelineEvent{
+		Type:       "file_change_detected",
+		Source:     "file_watch",
+		Reason:     "file_change",
+		RunStatus:  runtime.Run.Status,
+		GoalStatus: runtime.Goal.Status,
+		Message:    summary,
+	})
 	fw.daemon.enqueueIntent(RunIntent{
 		SessionID:   sessionID,
 		SessionPath: path,
 		Source:      "file_watch",
 		Reason:      "file_change",
+		Context:     summary,
 	})
+}
+
+func sortedFileWatchChanges(changes map[string]struct{}) []string {
+	if len(changes) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(changes))
+	for path := range changes {
+		out = append(out, path)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func fileWatchWakeupContext(cfg FileWatchConfig, changes []string) string {
+	if len(changes) == 0 {
+		return "File watch detected changes, but no changed file paths were captured."
+	}
+	limit := len(changes)
+	if limit > maxFileWatchSummaryFiles {
+		limit = maxFileWatchSummaryFiles
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "File watch detected %d changed file(s).\nChanged files:", len(changes))
+	for _, path := range changes[:limit] {
+		fmt.Fprintf(&b, "\n- %s", displayFileWatchPath(cfg.Paths, path))
+	}
+	if omitted := len(changes) - limit; omitted > 0 {
+		fmt.Fprintf(&b, "\n... %d more file(s) omitted", omitted)
+	}
+	return b.String()
+}
+
+func displayFileWatchPath(roots []string, path string) string {
+	path = filepath.Clean(path)
+	best := path
+	bestLen := -1
+	for _, root := range roots {
+		root = filepath.Clean(strings.TrimSpace(root))
+		if root == "" {
+			continue
+		}
+		rel, err := filepath.Rel(root, path)
+		if err != nil || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || rel == ".." {
+			continue
+		}
+		if rel == "." {
+			rel = filepath.Base(path)
+		}
+		if len(root) > bestLen {
+			best = rel
+			bestLen = len(root)
+		}
+	}
+	return best
 }
