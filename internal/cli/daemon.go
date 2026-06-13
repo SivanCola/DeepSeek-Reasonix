@@ -34,6 +34,8 @@ func daemonCommand(args []string) int {
 		return daemonStart(rest)
 	case "status":
 		return daemonStatus(rest)
+	case "doctor":
+		return daemonDoctor(rest)
 	case "sessions":
 		return daemonSessions(rest)
 	case "timeline":
@@ -484,6 +486,7 @@ func daemonUsage() {
 Usage:
   reasonix daemon start    [--addr HOST:PORT] [--dir PATH] [--webhook --webhook-secret SECRET]
   reasonix daemon status   [--addr HOST:PORT] [--dir PATH]
+  reasonix daemon doctor   [--addr HOST:PORT] [--dir PATH] [--json]
   reasonix daemon sessions [--addr HOST:PORT] [--dir PATH] [--json]
   reasonix daemon timeline --session ID [--limit N] [--json]
   reasonix daemon continue --session ID [--addr HOST:PORT] [--dir PATH]
@@ -496,6 +499,7 @@ Usage:
 Subcommands:
   start      启动 daemon（前台运行，Ctrl-C 停止）
   status     查询 daemon 状态
+  doctor     检查 daemon token、lock、runtime sidecar 和在线状态
   sessions   列出所有跟踪的 session 及其 goal/run 状态
   timeline   查看指定 session 的运行事件时间线
   continue   显式唤醒并继续指定 goal

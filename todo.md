@@ -177,27 +177,27 @@ dynamic workflow 或开发者平台，而是先把 Reasonix 从一次性会话�
 ### 任务
 
 - [ ] 新增 `reasonix daemon start` 命令。
-  - 管理 session registry。
-  - 持有 scheduler。
-  - 可选择启动 bot gateway。
-- [ ] 新增本地控制接口。
-  - 建议先用 localhost HTTP 或 unix socket。
-  - 提供 status、sessions、continue goal、stop run、approve、answer。
-- [ ] 单实例控制。
-  - 同一 config/session dir 只允许一个 daemon 写 runtime state。
-  - 启动时检测锁文件或 socket。
-- [ ] 进程崩溃恢复。
-  - 启动时扫描 runtime sidecar。
-  - 将 running 但无 owner 的 run 标记为 interrupted。
-  - 不自动继续，除非 scheduler 明确允许。
+  - [x] 管理 session registry。
+  - [x] 持有 scheduler。
+  - [ ] 可选择启动 bot gateway。
+- [x] 新增本地控制接口。
+  - [x] 使用 localhost HTTP。
+  - [x] 提供 status、sessions、continue goal、stop run、approve、answer。
+- [x] 单实例控制。
+  - [x] 同一 config/session dir 只允许一个 daemon 写 runtime state。
+  - [x] 启动时检测锁文件。
+- [x] 进程崩溃恢复。
+  - [x] 启动时扫描 runtime sidecar。
+  - [x] 将 running 但无 owner 的 run 标记为 interrupted。
+  - [x] 不自动继续，除非 scheduler 明确允许。
 - [ ] 桌面端连接 daemon。
   - 显示 daemon 状态。
   - 能打开 daemon 管理的 session。
   - 能发送审批、ask 回答和 stop。
 - [ ] 日志与诊断。
-  - daemon log 文件。
-  - `reasonix daemon doctor`。
-  - 运行中 session 和 wakeup 历史。
+  - [ ] daemon log 文件。
+  - [x] `reasonix daemon doctor`。
+  - [x] 运行中 session 和 wakeup 历史。
 
 ### 验收标准
 
@@ -212,23 +212,23 @@ dynamic workflow 或开发者平台，而是先把 Reasonix 从一次性会话�
 ### 任务
 
 - [ ] 设计 schedule 配置。
-  - session 级 schedule。
-  - project 级 schedule。
-  - global schedule。
-  - 支持 timezone。
-- [ ] 实现轻量 scheduler。
-  - 第一版只支持 fixed interval 和 daily time。
-  - 持久化 `next_wakeup_at` / `last_wakeup_at`。
+  - [x] session 级 schedule。
+  - [ ] project 级 schedule。
+  - [ ] global schedule。
+  - [ ] 支持 timezone。
+- [x] 实现轻量 scheduler。
+  - [x] 第一版只支持 fixed interval 和 daily time。
+  - [x] 持久化 `next_wakeup_at` / `last_wakeup_at`。
 - [ ] 定义 wakeup payload。
   - reason: `cron`
   - schedule id
   - previous run status
   - bounded event summary
 - [ ] 唤醒时先做确定性检查。
-  - session 是否仍 active。
-  - goal 是否 complete / blocked。
-  - 是否已有 run 正在执行。
-  - 是否超过每日预算。
+  - [x] session 是否仍 active。
+  - [x] goal 是否 complete / blocked。
+  - [x] 是否已有 run 正在执行。
+  - [ ] 是否超过每日预算。
 - [ ] 增加去重。
   - 同一 schedule 在同一窗口只触发一次。
   - daemon 重启后不会补跑重复任务。
@@ -257,24 +257,25 @@ dynamic workflow 或开发者平台，而是先把 Reasonix 从一次性会话�
   - project/session routing key
   - payload summary
   - raw payload storage reference
-- [ ] 新增 webhook receiver。
-  - 第一版只支持 localhost / 用户自托管。
-  - 必须有 secret 校验。
-  - payload 大小限制。
+- [x] 新增 webhook receiver。
+  - [x] 第一版只支持 localhost / 用户自托管。
+  - [x] 必须有 secret 校验。
+  - [x] payload 大小限制。
 - [ ] GitHub 事件路由。
-  - issue opened / assigned。
-  - pull_request opened / review_requested / checks completed。
-  - workflow_run completed。
+  - [x] issue opened / assigned。
+  - [x] pull_request opened / review_requested / checks completed。
+  - [x] workflow_run completed。
+  - [ ] 更多 provider-specific 事件归一化。
 - [ ] CI 等待场景。
   - 任务等待 CI 时写 runtime wait condition。
   - webhook 收到 CI 绿灯后触发下一步。
 - [ ] 幂等处理。
-  - event id 去重。
-  - 同一 PR 的相同状态变化不重复跑。
-- [ ] 增加安全边界。
-  - webhook 不能直接执行写操作。
-  - 外部事件只生成 bounded turn input。
-  - 高风险操作继续走 approval。
+  - [x] event id 去重。
+  - [ ] 同一 PR 的相同状态变化不重复跑。
+- [x] 增加安全边界。
+  - [x] webhook 不能直接执行写操作。
+  - [x] 外部事件只生成 bounded turn input。
+  - [x] 高风险操作继续走 approval。
 
 ### 验收标准
 
@@ -289,17 +290,19 @@ dynamic workflow 或开发者平台，而是先把 Reasonix 从一次性会话�
 ### 任务
 
 - [ ] 选择文件监听实现。
-  - 优先 Go 原生跨平台库。
-  - 与 codegraph watcher 分清职责。
+  - [x] 第一版使用 portable polling 实现。
+  - [x] 与 codegraph watcher 分清职责。
+  - [ ] 评估 Go 原生跨平台事件库替代 polling。
 - [ ] 配置 watched paths。
-  - 支持 include / exclude。
-  - 默认不监听大目录、依赖目录、secret 文件。
+  - [x] 支持 watched paths。
+  - [x] 支持 exclude / ignore patterns。
+  - [x] 默认不监听大目录、依赖目录、secret 文件。
 - [ ] 防抖和批量。
-  - 短时间内多次变化合并成一个 event。
-  - 记录 changed files summary。
+  - [x] 短时间内多次变化合并成一个 event。
+  - [ ] 记录 changed files summary。
 - [ ] 事件转 turn input。
-  - 不把大文件内容直接塞进 prompt。
-  - 只提供路径、变更类型、摘要。
+  - [x] 不把大文件内容直接塞进 prompt。
+  - [ ] 只提供路径、变更类型、摘要。
 - [ ] 测试。
   - rapid changes 合并。
   - ignored path 不触发。

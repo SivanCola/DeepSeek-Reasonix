@@ -276,7 +276,7 @@ func resolveFileWatchPaths(workspaceRoot string, paths []string) []string {
 // --- Lock management ---
 
 func (d *Daemon) lockFile() string {
-	return filepath.Join(d.sessionDir, ".daemon.lock")
+	return LockFile(d.sessionDir)
 }
 
 func (d *Daemon) tokenFile() string {
@@ -286,6 +286,11 @@ func (d *Daemon) tokenFile() string {
 // TokenFile returns the path where the local daemon API token is stored.
 func TokenFile(sessionDir string) string {
 	return filepath.Join(sessionDir, ".daemon.token")
+}
+
+// LockFile returns the daemon single-instance lock path for a session dir.
+func LockFile(sessionDir string) string {
+	return filepath.Join(sessionDir, ".daemon.lock")
 }
 
 func (d *Daemon) ensureToken() error {
