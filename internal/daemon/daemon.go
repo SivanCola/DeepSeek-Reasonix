@@ -6,6 +6,8 @@ package daemon
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -20,6 +22,8 @@ import (
 
 	"reasonix/internal/agent"
 	"reasonix/internal/config"
+	"reasonix/internal/control"
+	"reasonix/internal/event"
 )
 
 // DefaultAddr is the localhost-only address the daemon listens on.
@@ -32,22 +36,49 @@ type Daemon struct {
 	sessionDir string
 	logger     *slog.Logger
 
-	mu          sync.RWMutex
-	registry    map[string]*SessionEntry // session ID → entry
-	server      *http.Server
-	scheduler   *Scheduler
-	fileWatcher *FileWatcher
-	webhookCfg  *WebhookConfig
-	lockPath    string
+	mu              sync.RWMutex
+	registry        map[string]*SessionEntry // session ID → entry
+	server          *http.Server
+	scheduler       *Scheduler
+	fileWatcher     *FileWatcher
+	webhookCfg      *WebhookConfig
+	lockPath        string
+	token           string
+	intentCh        chan RunIntent
+	activeRuns      map[string]*ActiveRun
+	buildController ControllerFactory
 }
 
 // SessionEntry is one tracked session in the registry.
 type SessionEntry struct {
-	ID          string              `json:"id"`
-	Path        string              `json:"path"`
-	Runtime     agent.RuntimeMeta   `json:"runtime"`
-	DiscoveredAt time.Time          `json:"discovered_at"`
+	ID           string            `json:"id"`
+	Path         string            `json:"path"`
+	Runtime      agent.RuntimeMeta `json:"runtime"`
+	DiscoveredAt time.Time         `json:"discovered_at"`
 }
+
+// RunIntent is the normalized wakeup request consumed by the daemon worker.
+type RunIntent struct {
+	SessionID   string    `json:"session_id"`
+	SessionPath string    `json:"session_path,omitempty"`
+	Source      string    `json:"source"`
+	Reason      string    `json:"reason,omitempty"`
+	EventID     string    `json:"event_id,omitempty"`
+	CreatedAt   time.Time `json:"created_at"`
+}
+
+// ActiveRun is the daemon-owned controller currently driving a session.
+type ActiveRun struct {
+	Intent    RunIntent
+	StartedAt time.Time
+	Cancel    context.CancelFunc
+	Control   *control.Controller
+	Approvals map[string]event.Approval
+	Asks      map[string]event.Ask
+}
+
+// ControllerFactory builds a resumed controller for a daemon worker intent.
+type ControllerFactory func(context.Context, *Daemon, *SessionEntry, event.Sink) (*control.Controller, error)
 
 // StatusResponse is the JSON body of GET /status.
 type StatusResponse struct {
@@ -65,19 +96,27 @@ type SessionsResponse struct {
 
 // SessionView is the public representation of a session in the API.
 type SessionView struct {
-	ID         string `json:"id"`
-	Path       string `json:"path"`
-	GoalText   string `json:"goal_text,omitempty"`
-	GoalStatus string `json:"goal_status,omitempty"`
-	RunStatus  string `json:"run_status,omitempty"`
+	ID          string `json:"id"`
+	Path        string `json:"path"`
+	GoalText    string `json:"goal_text,omitempty"`
+	GoalStatus  string `json:"goal_status,omitempty"`
+	RunStatus   string `json:"run_status,omitempty"`
+	WaitKind    string `json:"wait_kind,omitempty"`
+	WaitReason  string `json:"wait_reason,omitempty"`
+	WaitID      string `json:"wait_id,omitempty"`
+	WaitTool    string `json:"wait_tool,omitempty"`
+	WaitSubject string `json:"wait_subject,omitempty"`
+	Active      bool   `json:"active,omitempty"`
 }
 
 // Options configures daemon creation.
 type Options struct {
-	Addr       string
-	SessionDir string
-	Logger     *slog.Logger
-	Webhook    *WebhookConfig
+	Addr              string
+	SessionDir        string
+	Logger            *slog.Logger
+	Webhook           *WebhookConfig
+	Token             string
+	ControllerFactory ControllerFactory
 }
 
 // New creates a Daemon but does not start it.
@@ -94,12 +133,20 @@ func New(opts Options) *Daemon {
 	if logger == nil {
 		logger = slog.Default()
 	}
+	factory := opts.ControllerFactory
+	if factory == nil {
+		factory = defaultControllerFactory
+	}
 	return &Daemon{
-		addr:       addr,
-		sessionDir: sessionDir,
-		logger:     logger,
-		webhookCfg: opts.Webhook,
-		registry:   make(map[string]*SessionEntry),
+		addr:            addr,
+		sessionDir:      sessionDir,
+		logger:          logger,
+		webhookCfg:      opts.Webhook,
+		registry:        make(map[string]*SessionEntry),
+		token:           strings.TrimSpace(opts.Token),
+		intentCh:        make(chan RunIntent, 128),
+		activeRuns:      make(map[string]*ActiveRun),
+		buildController: factory,
 	}
 }
 
@@ -111,6 +158,9 @@ func (d *Daemon) Start(ctx context.Context) error {
 		return fmt.Errorf("daemon already running or lock error: %w", err)
 	}
 	defer d.releaseLock()
+	if err := d.ensureToken(); err != nil {
+		return fmt.Errorf("daemon token: %w", err)
+	}
 
 	d.scanSessions()
 	d.recoverInterrupted()
@@ -118,19 +168,23 @@ func (d *Daemon) Start(ctx context.Context) error {
 	// Start the scheduler.
 	d.scheduler = NewScheduler(d, d.logger)
 	go d.scheduler.Start(ctx)
+	go d.runIntentWorker(ctx)
 
 	// Start the file watcher.
 	d.fileWatcher = NewFileWatcher(d, d.logger)
 	go d.fileWatcher.Start(ctx)
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /status", d.handleStatus)
-	mux.HandleFunc("GET /sessions", d.handleSessions)
-	mux.HandleFunc("POST /continue-goal", d.handleContinueGoal)
-	mux.HandleFunc("POST /stop", d.handleStop)
-	mux.HandleFunc("POST /schedule", d.handleSchedule)
+	mux.HandleFunc("GET /status", d.withAuth(d.handleStatus))
+	mux.HandleFunc("GET /sessions", d.withAuth(d.handleSessions))
+	mux.HandleFunc("POST /continue-goal", d.withAuth(d.handleContinueGoal))
+	mux.HandleFunc("POST /stop", d.withAuth(d.handleStop))
+	mux.HandleFunc("POST /schedule", d.withAuth(d.handleSchedule))
 	mux.HandleFunc("POST /webhook", d.handleWebhook)
-	mux.HandleFunc("POST /watch", d.handleWatch)
+	mux.HandleFunc("POST /watch", d.withAuth(d.handleWatch))
+	mux.HandleFunc("POST /approvals/approve", d.withAuth(d.handleApprove))
+	mux.HandleFunc("POST /approvals/deny", d.withAuth(d.handleApprove))
+	mux.HandleFunc("POST /asks/answer", d.withAuth(d.handleAnswer))
 
 	d.server = &http.Server{
 		Addr:    d.addr,
@@ -168,6 +222,56 @@ func (d *Daemon) Start(ctx context.Context) error {
 
 func (d *Daemon) lockFile() string {
 	return filepath.Join(d.sessionDir, ".daemon.lock")
+}
+
+func (d *Daemon) tokenFile() string {
+	return TokenFile(d.sessionDir)
+}
+
+// TokenFile returns the path where the local daemon API token is stored.
+func TokenFile(sessionDir string) string {
+	return filepath.Join(sessionDir, ".daemon.token")
+}
+
+func (d *Daemon) ensureToken() error {
+	if strings.TrimSpace(d.token) != "" {
+		return nil
+	}
+	path := d.tokenFile()
+	if b, err := os.ReadFile(path); err == nil {
+		d.token = strings.TrimSpace(string(b))
+		if d.token != "" {
+			return nil
+		}
+	}
+	var raw [32]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		return err
+	}
+	d.token = hex.EncodeToString(raw[:])
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(path, []byte(d.token+"\n"), 0o600)
+}
+
+func (d *Daemon) withAuth(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if d.token == "" {
+			next(w, r)
+			return
+		}
+		got := strings.TrimSpace(r.Header.Get("X-Reasonix-Daemon-Token"))
+		if got == "" {
+			auth := strings.TrimSpace(r.Header.Get("Authorization"))
+			got = strings.TrimSpace(strings.TrimPrefix(auth, "Bearer "))
+		}
+		if got != d.token {
+			http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+			return
+		}
+		next(w, r)
+	}
 }
 
 func (d *Daemon) acquireLock() error {

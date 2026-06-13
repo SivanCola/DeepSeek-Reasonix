@@ -18,12 +18,15 @@ import (
 // The sidecar is independent of BranchMeta: branch meta is structural (tree
 // lineage, topic), runtime meta is ephemeral execution state.
 type RuntimeMeta struct {
-	Version   int              `json:"version"`
-	SessionID string           `json:"session_id"`
-	UpdatedAt time.Time        `json:"updated_at"`
-	Goal      RuntimeGoalMeta  `json:"goal,omitempty"`
-	Run       RuntimeRunMeta   `json:"run,omitempty"`
-	Scheduler RuntimeSchedMeta `json:"scheduler,omitempty"`
+	Version       int              `json:"version"`
+	SessionID     string           `json:"session_id"`
+	UpdatedAt     time.Time        `json:"updated_at"`
+	Model         string           `json:"model,omitempty"`
+	WorkspaceRoot string           `json:"workspace_root,omitempty"`
+	Goal          RuntimeGoalMeta  `json:"goal,omitempty"`
+	Run           RuntimeRunMeta   `json:"run,omitempty"`
+	Wait          RuntimeWaitMeta  `json:"wait,omitempty"`
+	Scheduler     RuntimeSchedMeta `json:"scheduler,omitempty"`
 }
 
 // RuntimeGoalMeta captures the active goal's lifecycle.
@@ -45,12 +48,25 @@ type RuntimeRunMeta struct {
 	LastWakeupReason string    `json:"last_wakeup_reason,omitempty"`
 }
 
+// RuntimeWaitMeta captures a user-owned wait condition that paused a run.
+type RuntimeWaitMeta struct {
+	Kind        string    `json:"kind,omitempty"` // approval|ask|event|time
+	Reason      string    `json:"reason,omitempty"`
+	ApprovalID  string    `json:"approval_id,omitempty"`
+	AskID       string    `json:"ask_id,omitempty"`
+	Tool        string    `json:"tool,omitempty"`
+	Subject     string    `json:"subject,omitempty"`
+	EventSource string    `json:"event_source,omitempty"`
+	EventID     string    `json:"event_id,omitempty"`
+	Since       time.Time `json:"since,omitempty"`
+}
+
 // RuntimeSchedMeta holds scheduler/wakeup state for future cron/webhook use.
 type RuntimeSchedMeta struct {
 	// Schedule configuration (set by user via /goal schedule or API).
-	DailyAt  string        `json:"daily_at,omitempty"`  // "HH:MM" in local time, e.g. "09:00"
-	Interval time.Duration `json:"interval,omitempty"`  // fixed interval between wakeups, e.g. 1h
-	Enabled  bool          `json:"enabled,omitempty"`   // whether scheduling is active
+	DailyAt  string        `json:"daily_at,omitempty"` // "HH:MM" in local time, e.g. "09:00"
+	Interval time.Duration `json:"interval,omitempty"` // fixed interval between wakeups, e.g. 1h
+	Enabled  bool          `json:"enabled,omitempty"`  // whether scheduling is active
 
 	// Runtime state (managed by the scheduler).
 	NextWakeupAt      time.Time `json:"next_wakeup_at,omitempty"`

@@ -31,10 +31,10 @@ type FileWatcher struct {
 	daemon *Daemon
 	logger *slog.Logger
 
-	mu       sync.Mutex
-	watches  map[string]*watchState // session ID → state
-	running  bool
-	cancel   context.CancelFunc
+	mu      sync.Mutex
+	watches map[string]*watchState // session ID → state
+	running bool
+	cancel  context.CancelFunc
 }
 
 type watchState struct {
@@ -229,6 +229,10 @@ func (fw *FileWatcher) fireWakeup(sessionID string, state *watchState, now time.
 		fw.daemon.mu.Unlock()
 		return
 	}
+	if _, running := fw.daemon.activeRuns[sessionID]; running {
+		fw.daemon.mu.Unlock()
+		return
+	}
 
 	// Guards: goal must be active, run must not be in-flight.
 	if entry.Runtime.Goal.Status != "running" && entry.Runtime.Goal.Status != "blocked" {
@@ -254,4 +258,10 @@ func (fw *FileWatcher) fireWakeup(sessionID string, state *watchState, now time.
 	} else {
 		fw.logger.Info("file watcher triggered wakeup", "session", sessionID)
 	}
+	fw.daemon.enqueueIntent(RunIntent{
+		SessionID:   sessionID,
+		SessionPath: path,
+		Source:      "file_watch",
+		Reason:      "file_change",
+	})
 }

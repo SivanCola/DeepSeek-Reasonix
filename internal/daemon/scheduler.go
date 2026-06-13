@@ -169,6 +169,13 @@ func (s *Scheduler) wakeupSession(id string, now time.Time) {
 	if err := agent.SaveRuntimeMeta(path, runtime); err != nil {
 		s.logger.Warn("scheduler: save runtime after wakeup", "err", err, "session", id)
 	}
+	s.daemon.enqueueIntent(RunIntent{
+		SessionID:   id,
+		SessionPath: path,
+		Source:      "cron",
+		Reason:      "cron",
+		EventID:     eventID,
+	})
 }
 
 // computeNextWakeup determines when the next wakeup should fire based on the
@@ -207,7 +214,11 @@ func (s *Scheduler) eventIDFor(id string, sched agent.RuntimeSchedMeta, t time.T
 		return fmt.Sprintf("daily:%s:%s", id, t.Format("2006-01-02"))
 	}
 	if sched.Interval > 0 {
-		epoch := t.Unix() / int64(sched.Interval.Seconds())
+		seconds := int64(sched.Interval.Seconds())
+		if seconds <= 0 {
+			seconds = 1
+		}
+		epoch := t.Unix() / seconds
 		return fmt.Sprintf("interval:%s:%d", id, epoch)
 	}
 	return fmt.Sprintf("manual:%s:%d", id, t.Unix())

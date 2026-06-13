@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"reasonix/internal/agent"
+	"reasonix/internal/event"
 )
 
 var startTime = time.Now()
@@ -34,12 +35,19 @@ func (d *Daemon) handleSessions(w http.ResponseWriter, r *http.Request) {
 	d.mu.RLock()
 	views := make([]SessionView, 0, len(d.registry))
 	for _, entry := range d.registry {
+		_, active := d.activeRuns[entry.ID]
 		views = append(views, SessionView{
-			ID:         entry.ID,
-			Path:       entry.Path,
-			GoalText:   entry.Runtime.Goal.Text,
-			GoalStatus: entry.Runtime.Goal.Status,
-			RunStatus:  entry.Runtime.Run.Status,
+			ID:          entry.ID,
+			Path:        entry.Path,
+			GoalText:    entry.Runtime.Goal.Text,
+			GoalStatus:  entry.Runtime.Goal.Status,
+			RunStatus:   entry.Runtime.Run.Status,
+			WaitKind:    entry.Runtime.Wait.Kind,
+			WaitReason:  entry.Runtime.Wait.Reason,
+			WaitID:      firstNonEmpty(entry.Runtime.Wait.ApprovalID, entry.Runtime.Wait.AskID, entry.Runtime.Wait.EventID),
+			WaitTool:    entry.Runtime.Wait.Tool,
+			WaitSubject: entry.Runtime.Wait.Subject,
+			Active:      active,
 		})
 	}
 	d.mu.RUnlock()
@@ -75,14 +83,16 @@ func (d *Daemon) handleContinueGoal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// For the daemon skeleton (Milestone 4), we mark the intent but don't
-	// actually spawn a controller and run turns — that requires the full boot
-	// pipeline. Instead we update the runtime sidecar to signal continuation
-	// was requested, so the next interactive attach picks it up.
 	d.mu.Lock()
+	if _, running := d.activeRuns[req.SessionID]; running {
+		d.mu.Unlock()
+		http.Error(w, `{"error":"session already running"}`, http.StatusConflict)
+		return
+	}
 	entry.Runtime.Run.Status = "pending_continue"
 	entry.Runtime.Run.LastWakeupReason = req.Reason
 	entry.Runtime.Run.ResumeCount++
+	entry.Runtime.Wait = agent.RuntimeWaitMeta{}
 	runtime := entry.Runtime
 	path := entry.Path
 	d.mu.Unlock()
@@ -91,6 +101,12 @@ func (d *Daemon) handleContinueGoal(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf(`{"error":"save failed: %s"}`, err), http.StatusInternalServerError)
 		return
 	}
+	d.enqueueIntent(RunIntent{
+		SessionID:   req.SessionID,
+		SessionPath: path,
+		Source:      "api",
+		Reason:      req.Reason,
+	})
 
 	w.Header().Set("Content-Type", "application/json")
 	fmt.Fprintf(w, `{"ok":true,"session_id":%q,"status":"pending_continue"}`, req.SessionID)
@@ -113,9 +129,14 @@ func (d *Daemon) handleStop(w http.ResponseWriter, r *http.Request) {
 
 	d.mu.Lock()
 	entry, ok := d.registry[req.SessionID]
+	active := d.activeRuns[req.SessionID]
 	if ok {
+		if active != nil && active.Cancel != nil {
+			active.Cancel()
+		}
 		entry.Runtime.Run.Status = "stopped"
 		entry.Runtime.Goal.Status = "stopped"
+		entry.Runtime.Wait = agent.RuntimeWaitMeta{}
 	}
 	var runtime agent.RuntimeMeta
 	var path string
@@ -179,6 +200,11 @@ func (d *Daemon) handleSchedule(w http.ResponseWriter, r *http.Request) {
 				http.Error(w, fmt.Sprintf(`{"error":"invalid interval: %s"}`, err), http.StatusBadRequest)
 				return
 			}
+			if dur < time.Second {
+				d.mu.Unlock()
+				http.Error(w, `{"error":"interval must be at least 1s"}`, http.StatusBadRequest)
+				return
+			}
 			entry.Runtime.Scheduler.Interval = dur
 		}
 	}
@@ -190,6 +216,8 @@ func (d *Daemon) handleSchedule(w http.ResponseWriter, r *http.Request) {
 	if entry.Runtime.Scheduler.Enabled && d.scheduler != nil {
 		next := d.scheduler.computeNextWakeup(entry.Runtime.Scheduler, time.Now())
 		entry.Runtime.Scheduler.NextWakeupAt = next
+	} else if !entry.Runtime.Scheduler.Enabled {
+		entry.Runtime.Scheduler.NextWakeupAt = time.Time{}
 	}
 
 	runtime := entry.Runtime
@@ -272,4 +300,110 @@ func (d *Daemon) handleWatch(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	fmt.Fprintf(w, `{"ok":true,"session_id":%q,"enabled":%t,"paths":%d}`, req.SessionID, enabled, len(req.Paths))
+}
+
+// handleApprove resolves a pending daemon approval.
+// Body: {"session_id":"...","approval_id":"...","session":true,"persist":false}
+func (d *Daemon) handleApprove(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		SessionID  string `json:"session_id"`
+		ApprovalID string `json:"approval_id"`
+		Session    bool   `json:"session"`
+		Persist    bool   `json:"persist"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, `{"error":"invalid json"}`, http.StatusBadRequest)
+		return
+	}
+	if req.SessionID == "" || req.ApprovalID == "" {
+		http.Error(w, `{"error":"session_id and approval_id required"}`, http.StatusBadRequest)
+		return
+	}
+	allow := r.URL.Path == "/approvals/approve"
+
+	d.mu.Lock()
+	active := d.activeRuns[req.SessionID]
+	if active == nil || active.Control == nil {
+		d.mu.Unlock()
+		http.Error(w, `{"error":"active run not found"}`, http.StatusNotFound)
+		return
+	}
+	if _, ok := active.Approvals[req.ApprovalID]; !ok {
+		d.mu.Unlock()
+		http.Error(w, `{"error":"approval not found"}`, http.StatusNotFound)
+		return
+	}
+	delete(active.Approvals, req.ApprovalID)
+	if entry := d.registry[req.SessionID]; entry != nil {
+		entry.Runtime.Run.Status = "running"
+		entry.Runtime.Wait = agent.RuntimeWaitMeta{}
+		runtime := entry.Runtime
+		path := entry.Path
+		d.mu.Unlock()
+		_ = saveRuntimeMeta(path, runtime)
+		active.Control.Approve(req.ApprovalID, allow, req.Session, req.Persist)
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"ok":true,"session_id":%q,"approval_id":%q,"allow":%t}`, req.SessionID, req.ApprovalID, allow)
+		return
+	}
+	d.mu.Unlock()
+	http.Error(w, `{"error":"session not found"}`, http.StatusNotFound)
+}
+
+// handleAnswer resolves a pending daemon ask request.
+// Body: {"session_id":"...","ask_id":"...","selected":"..."} or
+// {"session_id":"...","ask_id":"...","answers":[...]}.
+func (d *Daemon) handleAnswer(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		SessionID string            `json:"session_id"`
+		AskID     string            `json:"ask_id"`
+		Selected  string            `json:"selected"`
+		Answers   []event.AskAnswer `json:"answers"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, `{"error":"invalid json"}`, http.StatusBadRequest)
+		return
+	}
+	if req.SessionID == "" || req.AskID == "" {
+		http.Error(w, `{"error":"session_id and ask_id required"}`, http.StatusBadRequest)
+		return
+	}
+
+	d.mu.Lock()
+	active := d.activeRuns[req.SessionID]
+	if active == nil || active.Control == nil {
+		d.mu.Unlock()
+		http.Error(w, `{"error":"active run not found"}`, http.StatusNotFound)
+		return
+	}
+	ask, ok := active.Asks[req.AskID]
+	if !ok {
+		d.mu.Unlock()
+		http.Error(w, `{"error":"ask not found"}`, http.StatusNotFound)
+		return
+	}
+	delete(active.Asks, req.AskID)
+	if len(req.Answers) == 0 && req.Selected != "" {
+		if len(ask.Questions) > 0 {
+			for _, q := range ask.Questions {
+				req.Answers = append(req.Answers, event.AskAnswer{QuestionID: q.ID, Selected: []string{req.Selected}})
+			}
+		} else {
+			req.Answers = []event.AskAnswer{{Selected: []string{req.Selected}}}
+		}
+	}
+	if entry := d.registry[req.SessionID]; entry != nil {
+		entry.Runtime.Run.Status = "running"
+		entry.Runtime.Wait = agent.RuntimeWaitMeta{}
+		runtime := entry.Runtime
+		path := entry.Path
+		d.mu.Unlock()
+		_ = saveRuntimeMeta(path, runtime)
+		active.Control.AnswerQuestion(req.AskID, req.Answers)
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"ok":true,"session_id":%q,"ask_id":%q}`, req.SessionID, req.AskID)
+		return
+	}
+	d.mu.Unlock()
+	http.Error(w, `{"error":"session not found"}`, http.StatusNotFound)
 }

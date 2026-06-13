@@ -20,7 +20,9 @@ func (c *Controller) RuntimeSnapshot() agent.RuntimeMeta {
 
 func (c *Controller) runtimeSnapshotLocked() agent.RuntimeMeta {
 	m := agent.RuntimeMeta{
-		SessionID: agent.BranchID(c.sessionPath),
+		SessionID:     agent.BranchID(c.sessionPath),
+		Model:         c.label,
+		WorkspaceRoot: c.cpRoot,
 	}
 
 	// Goal state.
@@ -61,6 +63,12 @@ func mergeRuntimeForSave(path string, next agent.RuntimeMeta) agent.RuntimeMeta 
 		return next
 	}
 	next.Scheduler = prev.Scheduler
+	if next.Model == "" {
+		next.Model = prev.Model
+	}
+	if next.WorkspaceRoot == "" {
+		next.WorkspaceRoot = prev.WorkspaceRoot
+	}
 	if next.Run.ResumeCount == 0 {
 		next.Run.ResumeCount = prev.Run.ResumeCount
 	}

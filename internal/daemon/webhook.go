@@ -92,11 +92,20 @@ func (d *Daemon) handleWebhook(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, `{"ok":true,"status":"duplicate","event_id":%q}`, evt.EventID)
 		return
 	}
+	if _, running := d.activeRuns[evt.SessionID]; running {
+		d.mu.Unlock()
+		http.Error(w, `{"error":"session already running"}`, http.StatusConflict)
+		return
+	}
 
 	// Update runtime to signal the wakeup.
 	entry.Runtime.Run.Status = "pending_continue"
 	entry.Runtime.Run.LastWakeupReason = "webhook:" + evt.Type
 	entry.Runtime.Run.ResumeCount++
+	entry.Runtime.Wait = agent.RuntimeWaitMeta{
+		EventSource: "webhook:" + evt.Type,
+		EventID:     evt.EventID,
+	}
 	entry.Runtime.Scheduler.LastWakeupAt = time.Now()
 	entry.Runtime.Scheduler.LastWakeupReason = "webhook:" + evt.Type
 	if evt.EventID != "" {
@@ -110,6 +119,13 @@ func (d *Daemon) handleWebhook(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf(`{"error":"save failed: %s"}`, err), http.StatusInternalServerError)
 		return
 	}
+	d.enqueueIntent(RunIntent{
+		SessionID:   evt.SessionID,
+		SessionPath: path,
+		Source:      "webhook",
+		Reason:      "webhook:" + evt.Type,
+		EventID:     evt.EventID,
+	})
 
 	d.logger.Info("webhook event received", "type", evt.Type, "session", evt.SessionID, "event_id", evt.EventID)
 

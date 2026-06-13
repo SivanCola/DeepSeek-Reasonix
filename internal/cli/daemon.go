@@ -15,6 +15,7 @@ import (
 
 	"log/slog"
 
+	"reasonix/internal/config"
 	"reasonix/internal/daemon"
 )
 
@@ -36,6 +37,16 @@ func daemonCommand(args []string) int {
 		return daemonSessions(rest)
 	case "stop":
 		return daemonStopCmd(rest)
+	case "continue":
+		return daemonContinueCmd(rest)
+	case "schedule":
+		return daemonScheduleCmd(rest)
+	case "approve":
+		return daemonApprovalCmd(rest, true)
+	case "deny":
+		return daemonApprovalCmd(rest, false)
+	case "answer":
+		return daemonAnswerCmd(rest)
 	case "help", "--help", "-h":
 		daemonUsage()
 		return 0
@@ -84,11 +95,12 @@ func daemonStart(args []string) int {
 func daemonStatus(args []string) int {
 	fs := flag.NewFlagSet("daemon status", flag.ContinueOnError)
 	addr := fs.String("addr", daemon.DefaultAddr, "daemon 地址")
+	dir := fs.String("dir", "", "会话目录（用于读取本地 token）")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
 
-	resp, err := daemonGet(*addr, "/status")
+	resp, err := daemonGet(*addr, *dir, "/status")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "daemon not reachable: %v\n", err)
 		return 1
@@ -110,12 +122,13 @@ func daemonStatus(args []string) int {
 func daemonSessions(args []string) int {
 	fs := flag.NewFlagSet("daemon sessions", flag.ContinueOnError)
 	addr := fs.String("addr", daemon.DefaultAddr, "daemon 地址")
+	dir := fs.String("dir", "", "会话目录（用于读取本地 token）")
 	jsonOut := fs.Bool("json", false, "JSON 格式输出")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
 
-	resp, err := daemonGet(*addr, "/sessions")
+	resp, err := daemonGet(*addr, *dir, "/sessions")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "daemon not reachable: %v\n", err)
 		return 1
@@ -141,7 +154,21 @@ func daemonSessions(args []string) int {
 			if goal == "" {
 				goal = "(none)"
 			}
-			fmt.Printf("  %s  goal=%s  status=%s  run=%s\n", s.ID[:8], truncate(goal, 40), s.GoalStatus, s.RunStatus)
+			wait := ""
+			if s.WaitKind != "" {
+				wait = "  wait=" + s.WaitKind
+				if s.WaitID != "" {
+					wait += ":" + s.WaitID
+				}
+				if s.WaitTool != "" {
+					wait += "(" + s.WaitTool + ")"
+				}
+			}
+			active := ""
+			if s.Active {
+				active = "  active=true"
+			}
+			fmt.Printf("  %s  goal=%s  status=%s  run=%s%s%s\n", s.ID[:8], truncate(goal, 40), s.GoalStatus, s.RunStatus, wait, active)
 		}
 	}
 	return 0
@@ -150,6 +177,7 @@ func daemonSessions(args []string) int {
 func daemonStopCmd(args []string) int {
 	fs := flag.NewFlagSet("daemon stop", flag.ContinueOnError)
 	addr := fs.String("addr", daemon.DefaultAddr, "daemon 地址")
+	dir := fs.String("dir", "", "会话目录（用于读取本地 token）")
 	sessionID := fs.String("session", "", "要停止的 session ID")
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -160,7 +188,7 @@ func daemonStopCmd(args []string) int {
 	}
 
 	body := fmt.Sprintf(`{"session_id":%q}`, *sessionID)
-	resp, err := daemonPost(*addr, "/stop", body)
+	resp, err := daemonPost(*addr, *dir, "/stop", body)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "daemon not reachable: %v\n", err)
 		return 1
@@ -175,16 +203,179 @@ func daemonStopCmd(args []string) int {
 	return 0
 }
 
-func daemonGet(addr, path string) (*http.Response, error) {
-	client := &http.Client{Timeout: 5 * time.Second}
-	url := "http://" + addr + path
-	return client.Get(url)
+func daemonContinueCmd(args []string) int {
+	fs := flag.NewFlagSet("daemon continue", flag.ContinueOnError)
+	addr := fs.String("addr", daemon.DefaultAddr, "daemon 地址")
+	dir := fs.String("dir", "", "会话目录（用于读取本地 token）")
+	sessionID := fs.String("session", "", "要继续的 session ID")
+	reason := fs.String("reason", "cli", "唤醒原因")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if *sessionID == "" {
+		fmt.Fprintln(os.Stderr, "error: --session is required")
+		return 2
+	}
+	body := fmt.Sprintf(`{"session_id":%q,"reason":%q}`, *sessionID, *reason)
+	resp, err := daemonPost(*addr, *dir, "/continue-goal", body)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "daemon not reachable: %v\n", err)
+		return 1
+	}
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 200 {
+		fmt.Fprintf(os.Stderr, "error: %s\n", string(b))
+		return 1
+	}
+	fmt.Println(string(b))
+	return 0
 }
 
-func daemonPost(addr, path, body string) (*http.Response, error) {
+func daemonScheduleCmd(args []string) int {
+	fs := flag.NewFlagSet("daemon schedule", flag.ContinueOnError)
+	addr := fs.String("addr", daemon.DefaultAddr, "daemon 地址")
+	dir := fs.String("dir", "", "会话目录（用于读取本地 token）")
+	sessionID := fs.String("session", "", "要调度的 session ID")
+	dailyAt := fs.String("daily-at", "", "每日唤醒时间 HH:MM")
+	interval := fs.String("interval", "", "固定间隔，例如 1h")
+	enabled := fs.Bool("enable", true, "是否启用调度")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if *sessionID == "" {
+		fmt.Fprintln(os.Stderr, "error: --session is required")
+		return 2
+	}
+	body := fmt.Sprintf(`{"session_id":%q,"enabled":%t`, *sessionID, *enabled)
+	if *dailyAt != "" {
+		body += fmt.Sprintf(`,"daily_at":%q`, *dailyAt)
+	}
+	if *interval != "" {
+		body += fmt.Sprintf(`,"interval":%q`, *interval)
+	}
+	body += "}"
+	resp, err := daemonPost(*addr, *dir, "/schedule", body)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "daemon not reachable: %v\n", err)
+		return 1
+	}
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 200 {
+		fmt.Fprintf(os.Stderr, "error: %s\n", string(b))
+		return 1
+	}
+	fmt.Println(string(b))
+	return 0
+}
+
+func daemonApprovalCmd(args []string, allow bool) int {
+	name := "daemon approve"
+	path := "/approvals/approve"
+	if !allow {
+		name = "daemon deny"
+		path = "/approvals/deny"
+	}
+	fs := flag.NewFlagSet(name, flag.ContinueOnError)
+	addr := fs.String("addr", daemon.DefaultAddr, "daemon 地址")
+	dir := fs.String("dir", "", "会话目录（用于读取本地 token）")
+	sessionID := fs.String("session", "", "session ID")
+	approvalID := fs.String("approval", "", "approval ID")
+	sessionGrant := fs.Bool("session-grant", false, "本 session 内记住该批准范围")
+	persist := fs.Bool("persist", false, "持久化批准规则")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if *sessionID == "" || *approvalID == "" {
+		fmt.Fprintln(os.Stderr, "error: --session and --approval are required")
+		return 2
+	}
+	body := fmt.Sprintf(`{"session_id":%q,"approval_id":%q,"session":%t,"persist":%t}`, *sessionID, *approvalID, *sessionGrant, *persist)
+	resp, err := daemonPost(*addr, *dir, path, body)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "daemon not reachable: %v\n", err)
+		return 1
+	}
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 200 {
+		fmt.Fprintf(os.Stderr, "error: %s\n", string(b))
+		return 1
+	}
+	fmt.Println(string(b))
+	return 0
+}
+
+func daemonAnswerCmd(args []string) int {
+	fs := flag.NewFlagSet("daemon answer", flag.ContinueOnError)
+	addr := fs.String("addr", daemon.DefaultAddr, "daemon 地址")
+	dir := fs.String("dir", "", "会话目录（用于读取本地 token）")
+	sessionID := fs.String("session", "", "session ID")
+	askID := fs.String("ask", "", "ask ID")
+	selected := fs.String("selected", "", "选择/回答文本")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if *sessionID == "" || *askID == "" || *selected == "" {
+		fmt.Fprintln(os.Stderr, "error: --session, --ask and --selected are required")
+		return 2
+	}
+	body := fmt.Sprintf(`{"session_id":%q,"ask_id":%q,"selected":%q}`, *sessionID, *askID, *selected)
+	resp, err := daemonPost(*addr, *dir, "/asks/answer", body)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "daemon not reachable: %v\n", err)
+		return 1
+	}
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 200 {
+		fmt.Fprintf(os.Stderr, "error: %s\n", string(b))
+		return 1
+	}
+	fmt.Println(string(b))
+	return 0
+}
+
+func daemonGet(addr, dir, path string) (*http.Response, error) {
+	client := &http.Client{Timeout: 5 * time.Second}
+	url := "http://" + addr + path
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, err
+	}
+	addDaemonAuth(req, dir)
+	return client.Do(req)
+}
+
+func daemonPost(addr, dir, path, body string) (*http.Response, error) {
 	client := &http.Client{Timeout: 10 * time.Second}
 	url := "http://" + addr + path
-	return client.Post(url, "application/json", strings.NewReader(body))
+	req, err := http.NewRequest("POST", url, strings.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	addDaemonAuth(req, dir)
+	return client.Do(req)
+}
+
+func addDaemonAuth(req *http.Request, dir string) {
+	token := readDaemonToken(dir)
+	if token != "" {
+		req.Header.Set("X-Reasonix-Daemon-Token", token)
+	}
+}
+
+func readDaemonToken(dir string) string {
+	if strings.TrimSpace(dir) == "" {
+		dir = config.SessionDir()
+	}
+	b, err := os.ReadFile(daemon.TokenFile(dir))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(b))
 }
 
 func truncate(s string, max int) string {
@@ -200,18 +391,29 @@ func daemonUsage() {
 
 Usage:
   reasonix daemon start    [--addr HOST:PORT] [--dir PATH]
-  reasonix daemon status   [--addr HOST:PORT]
-  reasonix daemon sessions [--addr HOST:PORT] [--json]
-  reasonix daemon stop     --session ID [--addr HOST:PORT]
+  reasonix daemon status   [--addr HOST:PORT] [--dir PATH]
+  reasonix daemon sessions [--addr HOST:PORT] [--dir PATH] [--json]
+  reasonix daemon continue --session ID [--addr HOST:PORT] [--dir PATH]
+  reasonix daemon schedule --session ID [--daily-at HH:MM | --interval 1h]
+  reasonix daemon approve  --session ID --approval ID
+  reasonix daemon deny     --session ID --approval ID
+  reasonix daemon answer   --session ID --ask ID --selected TEXT
+  reasonix daemon stop     --session ID [--addr HOST:PORT] [--dir PATH]
 
 Subcommands:
   start      启动 daemon（前台运行，Ctrl-C 停止）
   status     查询 daemon 状态
   sessions   列出所有跟踪的 session 及其 goal/run 状态
+  continue   显式唤醒并继续指定 goal
+  schedule   设置 daily/interval 定时唤醒
+  approve    批准 daemon 中等待的审批
+  deny       拒绝 daemon 中等待的审批
+  answer     回答 daemon 中等待的 ask 问题
   stop       停止指定 session 的目标
 
 The daemon scans session directories for *.runtime.json files, recovers
 interrupted sessions, and exposes a localhost HTTP API for status queries
-and goal continuation.
+and goal continuation. The local HTTP API uses a token stored beside the
+session directory.
 `)
 }
