@@ -169,6 +169,21 @@ func TestSchedulerShouldWakeupGuards(t *testing.T) {
 			},
 			expect: true,
 		},
+		{
+			name: "goal continuation limit blocked should not wake",
+			entry: &SessionEntry{
+				ID: "t7",
+				Runtime: agent.RuntimeMeta{
+					Goal: agent.RuntimeGoalMeta{
+						Status:      "blocked",
+						BlockReason: goalContinuationLimitReason,
+					},
+					Run:       agent.RuntimeRunMeta{Status: "idle"},
+					Scheduler: agent.RuntimeSchedMeta{Enabled: true, Interval: time.Hour, NextWakeupAt: pastTime},
+				},
+			},
+			expect: false,
+		},
 	}
 
 	for _, tt := range tests {
@@ -178,6 +193,29 @@ func TestSchedulerShouldWakeupGuards(t *testing.T) {
 				t.Errorf("shouldWakeup() = %v, want %v", got, tt.expect)
 			}
 		})
+	}
+}
+
+func TestSchedulerSkipsGoalContinuationLimitBlockedTimeWait(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	d := New(Options{SessionDir: t.TempDir()})
+	s := NewScheduler(d, logger)
+
+	now := time.Now()
+	runtime := agent.RuntimeMeta{
+		Goal: agent.RuntimeGoalMeta{
+			Status:      "blocked",
+			BlockReason: goalContinuationLimitReason,
+		},
+		Run: agent.RuntimeRunMeta{Status: "idle"},
+		Wait: agent.RuntimeWaitMeta{
+			Kind:  "time",
+			Until: now.Add(-time.Minute),
+		},
+	}
+
+	if s.shouldWakeupTimeRuntime("limit-blocked-time", runtime, now) {
+		t.Fatal("time wait should not wake after goal continuation limit is reached")
 	}
 }
 

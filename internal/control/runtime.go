@@ -9,6 +9,16 @@ import (
 	"reasonix/internal/i18n"
 )
 
+const (
+	goalContinuationLimitReason = "goal continuation limit reached"
+
+	runtimeEventGoalContinuationStarted      = "goal_continuation_started"
+	runtimeEventGoalContinuationComplete     = "goal_continuation_complete"
+	runtimeEventGoalContinuationStopped      = "goal_continuation_stopped"
+	runtimeEventGoalBlocked                  = "goal_blocked"
+	runtimeEventGoalContinuationLimitReached = "goal_continuation_limit_reached"
+)
+
 // RuntimeSnapshot builds a RuntimeMeta from the controller's current state.
 // It captures the active goal, run status, and turn metadata — everything needed
 // to restore a session's runtime posture on resume.
@@ -53,6 +63,9 @@ func (c *Controller) runtimeSnapshotLocked() agent.RuntimeMeta {
 		Status:     runStatus,
 		LastTurnAt: time.Now().UTC(),
 	}
+	if c.goalTurnCap > 0 {
+		m.Budget.MaxGoalAutoTurns = c.goalTurnCap
+	}
 
 	return m
 }
@@ -64,6 +77,9 @@ func mergeRuntimeForSave(path string, next agent.RuntimeMeta) agent.RuntimeMeta 
 	}
 	next.Scheduler = prev.Scheduler
 	next.FileWatch = prev.FileWatch
+	if next.Budget.MaxGoalAutoTurns > 0 {
+		prev.Budget.MaxGoalAutoTurns = next.Budget.MaxGoalAutoTurns
+	}
 	next.Budget = prev.Budget
 	if next.Wait.Kind == "" && (prev.Wait.Kind == "event" || prev.Wait.Kind == "time" || prev.Wait.Kind == "file") {
 		next.Wait = prev.Wait
@@ -92,7 +108,8 @@ func hasPersistentRuntimeConfig(m agent.RuntimeMeta) bool {
 		m.Scheduler.Interval > 0 ||
 		m.FileWatch.Enabled ||
 		len(m.FileWatch.Paths) > 0 ||
-		m.Budget.DailyWakeupLimit > 0
+		m.Budget.DailyWakeupLimit > 0 ||
+		m.Budget.MaxGoalAutoTurns > 0
 }
 
 // RestoreRuntimeSnapshot applies a previously-saved RuntimeMeta to the
@@ -108,6 +125,7 @@ func (c *Controller) RestoreRuntimeSnapshot(m agent.RuntimeMeta) {
 	c.goalTurns = m.Goal.Turns
 	c.goalBlocks = m.Goal.BlockCount
 	c.goalBlock = m.Goal.BlockReason
+	c.goalTurnCap = m.Budget.MaxGoalAutoTurns
 
 	// If the run was interrupted (e.g. crash while running), mark it so the
 	// user/bot can see what happened. Don't auto-resume.
@@ -117,11 +135,25 @@ func (c *Controller) RestoreRuntimeSnapshot(m agent.RuntimeMeta) {
 	}
 }
 
+// SetGoalAutoTurnLimit updates the in-memory automatic continuation cap.
+// A zero value clears the custom cap and falls back to the built-in default.
+func (c *Controller) SetGoalAutoTurnLimit(limit int) {
+	if limit < 0 {
+		limit = 0
+	}
+	c.mu.Lock()
+	c.goalTurnCap = limit
+	c.mu.Unlock()
+}
+
 // hasActiveGoal reports whether the controller has a goal that warrants runtime
-// persistence (running or blocked — complete goals are kept briefly for
-// visibility, stopped goals are not persisted).
+// persistence (running, blocked, or stopped — complete goals are kept briefly for
+// visibility).
 func (c *Controller) hasActiveGoalLocked() bool {
-	if c.goal != "" && (c.goalStatus == GoalStatusRunning || c.goalStatus == GoalStatusBlocked) {
+	if c.goal != "" &&
+		(c.goalStatus == GoalStatusRunning ||
+			c.goalStatus == GoalStatusBlocked ||
+			c.goalStatus == GoalStatusStopped) {
 		return true
 	}
 	// Also persist "just completed" so the status is visible on next resume.
@@ -162,6 +194,42 @@ func (c *Controller) saveRuntimeSidecar(path string) {
 	meta = mergeRuntimeForSave(path, meta)
 	if err := agent.SaveRuntimeMeta(path, meta); err != nil {
 		slog.Warn("controller: save runtime sidecar", "err", err)
+	}
+}
+
+func (c *Controller) saveRuntimeSidecarForCurrentSession() {
+	c.mu.Lock()
+	path := c.sessionPath
+	c.mu.Unlock()
+	if path != "" {
+		c.saveRuntimeSidecar(path)
+	}
+}
+
+func (c *Controller) appendRuntimeTimeline(eventType, source, reason, message string) {
+	c.mu.Lock()
+	path := c.sessionPath
+	runStatus := "idle"
+	if c.running {
+		runStatus = "running"
+	}
+	goalStatus := c.goalStatus
+	c.mu.Unlock()
+	if path == "" {
+		return
+	}
+	if source == "" {
+		source = "goal"
+	}
+	if err := agent.AppendRuntimeTimeline(path, agent.RuntimeTimelineEvent{
+		Type:       eventType,
+		Source:     source,
+		Reason:     reason,
+		Message:    message,
+		RunStatus:  runStatus,
+		GoalStatus: goalStatus,
+	}); err != nil {
+		slog.Warn("controller: append runtime timeline", "err", err, "type", eventType)
 	}
 }
 
@@ -261,7 +329,7 @@ func (c *Controller) continueGoalWithReason(ctx context.Context, reason, wakeupC
 	}
 
 	// Run the continuation loop — uses goalContinueTurn (not "Start pursuing…").
-	err := c.continueGoal(ctx, wakeupContext)
+	err := c.continueGoal(ctx, wakeupContext, reason)
 
 	return err
 }

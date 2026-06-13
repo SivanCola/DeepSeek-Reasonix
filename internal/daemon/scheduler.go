@@ -11,6 +11,8 @@ import (
 	"reasonix/internal/agent"
 )
 
+const goalContinuationLimitReason = "goal continuation limit reached"
+
 // Scheduler runs periodic checks on all tracked sessions and triggers wakeups
 // when their schedule fires. It respects guards: goal must be active, run must
 // not be in-flight, no duplicate wakeup for the same event, and max turns not
@@ -110,6 +112,9 @@ func (s *Scheduler) shouldWakeupRuntime(id string, runtime agent.RuntimeMeta, no
 	if goalStatus != "running" && goalStatus != "blocked" {
 		return false
 	}
+	if isGoalContinuationLimitBlocked(runtime.Goal) {
+		return false
+	}
 
 	// Run must not be in-flight.
 	runStatus := runtime.Run.Status
@@ -146,6 +151,9 @@ func (s *Scheduler) shouldWakeupTimeRuntime(id string, runtime agent.RuntimeMeta
 	if goalStatus != "running" && goalStatus != "blocked" {
 		return false
 	}
+	if isGoalContinuationLimitBlocked(runtime.Goal) {
+		return false
+	}
 	runStatus := runtime.Run.Status
 	if runStatus == "running" || runStatus == "pending_continue" {
 		return false
@@ -158,6 +166,10 @@ func (s *Scheduler) shouldWakeupTimeRuntime(id string, runtime agent.RuntimeMeta
 		return false
 	}
 	return true
+}
+
+func isGoalContinuationLimitBlocked(goal agent.RuntimeGoalMeta) bool {
+	return goal.Status == "blocked" && strings.EqualFold(strings.TrimSpace(goal.BlockReason), goalContinuationLimitReason)
 }
 
 // wakeup fires a scheduled continuation for the session.

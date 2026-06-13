@@ -428,7 +428,7 @@ func TestDaemonBudgetHandlerPersistsConfig(t *testing.T) {
 
 	d := New(Options{SessionDir: dir})
 	d.scanSessions()
-	req := httptest.NewRequest("POST", "/budget", strings.NewReader(`{"session_id":"budget-api","daily_wakeup_limit":5,"reset":true}`))
+	req := httptest.NewRequest("POST", "/budget", strings.NewReader(`{"session_id":"budget-api","daily_wakeup_limit":5,"max_goal_auto_turns":12,"reset":true}`))
 	rr := httptest.NewRecorder()
 	d.handleBudget(rr, req)
 	if rr.Code != http.StatusOK {
@@ -439,7 +439,7 @@ func TestDaemonBudgetHandlerPersistsConfig(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("LoadRuntimeMeta: err=%v ok=%v", err, ok)
 	}
-	if loaded.Budget.DailyWakeupLimit != 5 || loaded.Budget.DailyWakeups != 0 || loaded.Budget.LastBlockedReason != "" {
+	if loaded.Budget.DailyWakeupLimit != 5 || loaded.Budget.MaxGoalAutoTurns != 12 || loaded.Budget.DailyWakeups != 0 || loaded.Budget.LastBlockedReason != "" {
 		t.Fatalf("budget not persisted/reset: %+v", loaded.Budget)
 	}
 	if loaded.Budget.WindowStartedAt.IsZero() {
@@ -448,6 +448,9 @@ func TestDaemonBudgetHandlerPersistsConfig(t *testing.T) {
 	events, ok, err := agent.LoadRuntimeTimeline(sess, 1)
 	if err != nil || !ok || len(events) != 1 || events[0].Type != "budget_configured" {
 		t.Fatalf("budget timeline not recorded: events=%+v err=%v ok=%v", events, err, ok)
+	}
+	if !strings.Contains(events[0].Message, "max_goal_auto_turns=12") {
+		t.Fatalf("budget timeline missing auto-turn cap: %+v", events[0])
 	}
 }
 

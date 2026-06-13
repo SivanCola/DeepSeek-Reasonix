@@ -39,6 +39,9 @@ func TestResumeRestoresRuntimeGoalState(t *testing.T) {
 		Run: agent.RuntimeRunMeta{
 			Status: "idle",
 		},
+		Budget: agent.RuntimeBudgetMeta{
+			MaxGoalAutoTurns: 9,
+		},
 	}
 	if err := agent.SaveRuntimeMeta(sessionPath, meta); err != nil {
 		t.Fatalf("save runtime meta: %v", err)
@@ -67,6 +70,7 @@ func TestResumeRestoresRuntimeGoalState(t *testing.T) {
 	turns := c.goalTurns
 	blocks := c.goalBlocks
 	blockReason := c.goalBlock
+	turnCap := c.goalTurnCap
 	c.mu.Unlock()
 	if turns != 5 {
 		t.Errorf("goalTurns = %d, want 5", turns)
@@ -76,6 +80,9 @@ func TestResumeRestoresRuntimeGoalState(t *testing.T) {
 	}
 	if blockReason != "waiting for CI" {
 		t.Errorf("goalBlock = %q, want %q", blockReason, "waiting for CI")
+	}
+	if turnCap != 9 {
+		t.Errorf("goalTurnCap = %d, want 9", turnCap)
 	}
 }
 
@@ -469,6 +476,84 @@ func TestSnapshotPreservesBudgetRuntime(t *testing.T) {
 	}
 	if m.Budget.DailyWakeupLimit != 7 || m.Budget.DailyWakeups != 2 {
 		t.Fatalf("budget not preserved: %+v", m.Budget)
+	}
+}
+
+func TestGoalContinueUsesPersistedAutoTurnLimit(t *testing.T) {
+	dir := t.TempDir()
+	sessionPath := filepath.Join(dir, "persisted-auto-turn-limit.jsonl")
+
+	s := agent.NewSession("")
+	s.Add(provider.Message{Role: provider.RoleUser, Content: "continue"})
+	s.Add(provider.Message{Role: provider.RoleAssistant, Content: "Still working.\n\n[goal:continue]"})
+	if err := s.Save(sessionPath); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if err := agent.SaveRuntimeMeta(sessionPath, agent.RuntimeMeta{
+		SessionID: "persisted-auto-turn-limit",
+		Goal: agent.RuntimeGoalMeta{
+			Text:   "finish the roadmap",
+			Status: GoalStatusRunning,
+			Turns:  2,
+		},
+		Run: agent.RuntimeRunMeta{Status: "idle"},
+		Budget: agent.RuntimeBudgetMeta{
+			MaxGoalAutoTurns: 4,
+		},
+	}); err != nil {
+		t.Fatalf("SaveRuntimeMeta: %v", err)
+	}
+
+	prov := &scriptedTurns{turns: [][]provider.Chunk{
+		textTurn("One more step.\n\n[goal:continue]"),
+		textTurn("This should not run.\n\n[goal:continue]"),
+	}}
+	ag := agent.New(prov, tool.NewRegistry(), agent.NewSession(""), agent.Options{}, event.Discard)
+	c := New(Options{Runner: ag, Executor: ag, SessionPath: sessionPath, Sink: event.Discard})
+	loaded, err := agent.LoadSession(sessionPath)
+	if err != nil {
+		t.Fatalf("LoadSession: %v", err)
+	}
+	c.Resume(loaded, sessionPath)
+
+	if err := c.ContinueGoal(context.Background(), "test"); err != nil {
+		t.Fatalf("ContinueGoal: %v", err)
+	}
+	if prov.call != 1 {
+		t.Fatalf("provider calls = %d, want 1", prov.call)
+	}
+	if got := c.GoalStatus(); got != GoalStatusBlocked {
+		t.Fatalf("GoalStatus = %q, want %q", got, GoalStatusBlocked)
+	}
+	meta, ok, err := agent.LoadRuntimeMeta(sessionPath)
+	if err != nil || !ok {
+		t.Fatalf("LoadRuntimeMeta: err=%v ok=%v", err, ok)
+	}
+	if meta.Goal.Turns != 4 || meta.Goal.BlockReason != "goal continuation limit reached" {
+		t.Fatalf("limit block not persisted: %+v", meta.Goal)
+	}
+	if meta.Budget.MaxGoalAutoTurns != 4 {
+		t.Fatalf("MaxGoalAutoTurns = %d, want 4", meta.Budget.MaxGoalAutoTurns)
+	}
+}
+
+func TestGoalContinueCanceledContextStopsGoal(t *testing.T) {
+	sess := agent.NewSession("")
+	sess.Add(provider.Message{Role: provider.RoleUser, Content: "continue"})
+	sess.Add(provider.Message{Role: provider.RoleAssistant, Content: "Still working.\n\n[goal:continue]"})
+	ag := agent.New(&scriptedTurns{turns: [][]provider.Chunk{
+		textTurn("This should not run.\n\n[goal:continue]"),
+	}}, tool.NewRegistry(), sess, agent.Options{}, event.Discard)
+	c := New(Options{Runner: ag, Executor: ag, Sink: event.Discard})
+	c.SetGoal("finish the canceled work")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := c.ContinueGoal(ctx, "test"); err == nil {
+		t.Fatal("ContinueGoal with canceled context returned nil")
+	}
+	if got := c.GoalStatus(); got != GoalStatusStopped {
+		t.Fatalf("GoalStatus = %q, want %q", got, GoalStatusStopped)
 	}
 }
 
@@ -942,6 +1027,144 @@ func TestGoalContinueWithContextInjectsWakeupContext(t *testing.T) {
 	if !found {
 		t.Fatal("expected continuation user message to include wakeup context")
 	}
+}
+
+func TestGoalContinueRecordsStartedAndCompleteTimeline(t *testing.T) {
+	dir := t.TempDir()
+	sessionPath := filepath.Join(dir, "goal-complete-timeline.jsonl")
+
+	prov := &scriptedTurns{turns: [][]provider.Chunk{
+		textTurn("Done.\n\n[goal:complete]"),
+	}}
+	ag := agent.New(prov, tool.NewRegistry(), agent.NewSession(""), agent.Options{}, event.Discard)
+	c := New(Options{Runner: ag, Executor: ag, SessionPath: sessionPath, Sink: event.Discard})
+	c.SetGoal("finish timeline work")
+
+	if err := c.ContinueGoalWithContext(context.Background(), "user", ""); err != nil {
+		t.Fatalf("ContinueGoalWithContext: %v", err)
+	}
+
+	events, ok, err := agent.LoadRuntimeTimeline(sessionPath, 0)
+	if err != nil || !ok {
+		t.Fatalf("LoadRuntimeTimeline: ok=%v err=%v", ok, err)
+	}
+	requireRuntimeTimelineEvent(t, events, runtimeEventGoalContinuationStarted)
+	requireRuntimeTimelineEvent(t, events, runtimeEventGoalContinuationComplete)
+}
+
+func TestGoalContinueBlockedRecordsTimeline(t *testing.T) {
+	dir := t.TempDir()
+	sessionPath := filepath.Join(dir, "goal-blocked-timeline.jsonl")
+
+	prov := &scriptedTurns{turns: [][]provider.Chunk{
+		textTurn("Blocked.\n\n[goal:blocked:needs credentials]"),
+		textTurn("Still blocked.\n\n[goal:blocked:needs credentials]"),
+		textTurn("Still blocked.\n\n[goal:blocked:needs credentials]"),
+	}}
+	ag := agent.New(prov, tool.NewRegistry(), agent.NewSession(""), agent.Options{}, event.Discard)
+	c := New(Options{Runner: ag, Executor: ag, SessionPath: sessionPath, Sink: event.Discard})
+	c.SetGoal("deploy the service")
+
+	if err := c.ContinueGoalWithContext(context.Background(), "user", ""); err != nil {
+		t.Fatalf("ContinueGoalWithContext: %v", err)
+	}
+	if got := c.GoalStatus(); got != GoalStatusBlocked {
+		t.Fatalf("GoalStatus() = %q, want blocked", got)
+	}
+
+	events, ok, err := agent.LoadRuntimeTimeline(sessionPath, 0)
+	if err != nil || !ok {
+		t.Fatalf("LoadRuntimeTimeline: ok=%v err=%v", ok, err)
+	}
+	event := requireRuntimeTimelineEvent(t, events, runtimeEventGoalBlocked)
+	if event.Reason != "needs credentials" {
+		t.Fatalf("blocked event reason = %q, want needs credentials", event.Reason)
+	}
+}
+
+func TestGoalContinueLimitPersistsBlockedRuntimeAndTimeline(t *testing.T) {
+	dir := t.TempDir()
+	sessionPath := filepath.Join(dir, "goal-limit.jsonl")
+
+	prov := &panicProvider{}
+	ag := agent.New(prov, tool.NewRegistry(), agent.NewSession(""), agent.Options{}, event.Discard)
+	c := New(Options{Runner: ag, Executor: ag, SessionPath: sessionPath, Sink: event.Discard})
+	c.mu.Lock()
+	c.goal = "keep working forever"
+	c.goalStatus = GoalStatusRunning
+	c.goalTurns = 1
+	c.goalTurnCap = 2
+	c.mu.Unlock()
+
+	if err := c.ContinueGoalWithContext(context.Background(), "cron", ""); err != nil {
+		t.Fatalf("ContinueGoalWithContext: %v", err)
+	}
+	if got := c.GoalStatus(); got != GoalStatusBlocked {
+		t.Fatalf("GoalStatus() = %q, want blocked", got)
+	}
+
+	meta, ok, err := agent.LoadRuntimeMeta(sessionPath)
+	if err != nil || !ok {
+		t.Fatalf("LoadRuntimeMeta: ok=%v err=%v", ok, err)
+	}
+	if meta.Goal.Status != GoalStatusBlocked || meta.Goal.BlockReason != goalContinuationLimitReason || meta.Goal.Turns != 2 {
+		t.Fatalf("unexpected persisted goal state: %+v", meta.Goal)
+	}
+	if meta.Budget.MaxGoalAutoTurns != 2 {
+		t.Fatalf("MaxGoalAutoTurns = %d, want 2", meta.Budget.MaxGoalAutoTurns)
+	}
+
+	events, ok, err := agent.LoadRuntimeTimeline(sessionPath, 0)
+	if err != nil || !ok {
+		t.Fatalf("LoadRuntimeTimeline: ok=%v err=%v", ok, err)
+	}
+	requireRuntimeTimelineEvent(t, events, runtimeEventGoalContinuationLimitReached)
+}
+
+func TestGoalContinueContextCancelPersistsStoppedRuntimeAndTimeline(t *testing.T) {
+	dir := t.TempDir()
+	sessionPath := filepath.Join(dir, "goal-cancel.jsonl")
+
+	prov := &panicProvider{}
+	ag := agent.New(prov, tool.NewRegistry(), agent.NewSession(""), agent.Options{}, event.Discard)
+	c := New(Options{Runner: ag, Executor: ag, SessionPath: sessionPath, Sink: event.Discard})
+	c.SetGoal("stop when canceled")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	err := c.ContinueGoalWithContext(ctx, "user", "")
+	if err == nil {
+		t.Fatal("ContinueGoalWithContext on canceled context returned nil, want error")
+	}
+	if got := c.GoalStatus(); got != GoalStatusStopped {
+		t.Fatalf("GoalStatus() = %q, want stopped", got)
+	}
+
+	meta, ok, loadErr := agent.LoadRuntimeMeta(sessionPath)
+	if loadErr != nil || !ok {
+		t.Fatalf("LoadRuntimeMeta: ok=%v err=%v", ok, loadErr)
+	}
+	if meta.Goal.Status != GoalStatusStopped || meta.Goal.Text != "stop when canceled" {
+		t.Fatalf("unexpected persisted stopped goal: %+v", meta.Goal)
+	}
+
+	events, ok, loadErr := agent.LoadRuntimeTimeline(sessionPath, 0)
+	if loadErr != nil || !ok {
+		t.Fatalf("LoadRuntimeTimeline: ok=%v err=%v", ok, loadErr)
+	}
+	requireRuntimeTimelineEvent(t, events, runtimeEventGoalContinuationStarted)
+	requireRuntimeTimelineEvent(t, events, runtimeEventGoalContinuationStopped)
+}
+
+func requireRuntimeTimelineEvent(t *testing.T, events []agent.RuntimeTimelineEvent, eventType string) agent.RuntimeTimelineEvent {
+	t.Helper()
+	for _, e := range events {
+		if e.Type == eventType {
+			return e
+		}
+	}
+	t.Fatalf("runtime timeline missing %q: %+v", eventType, events)
+	return agent.RuntimeTimelineEvent{}
 }
 
 func TestParseGoalCommandContinue(t *testing.T) {

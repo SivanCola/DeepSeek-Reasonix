@@ -131,6 +131,7 @@ type Controller struct {
 	goalTurns   int
 	goalBlocks  int
 	goalBlock   string
+	goalTurnCap int
 	sessionPath string
 	approvals   map[string]pendingApproval
 	asks        map[string]pendingAsk
@@ -527,10 +528,12 @@ func (c *Controller) runGoalLoopWithRawDisplay(ctx context.Context, input, raw, 
 	if err := c.runTurnWithRawDisplay(ctx, input, raw, display); err != nil {
 		if ctx.Err() != nil {
 			c.stopGoal(GoalStatusStopped)
+			c.appendRuntimeTimeline(runtimeEventGoalContinuationStopped, "goal", ctx.Err().Error(), "goal continuation stopped")
+			c.saveRuntimeSidecarForCurrentSession()
 		}
 		return err
 	}
-	return c.continueGoal(ctx, "")
+	return c.continueGoal(ctx, "", "goal")
 }
 
 func (c *Controller) runTurnWithRawDisplay(ctx context.Context, input, raw, display string) error {
@@ -598,15 +601,22 @@ func (c *Controller) runTurnWithRawDisplay(ctx context.Context, input, raw, disp
 	return nil
 }
 
-func (c *Controller) continueGoal(ctx context.Context, wakeupContext string) error {
+func (c *Controller) continueGoal(ctx context.Context, wakeupContext, source string) error {
 	first := true
+	started := false
 	for {
-		cont := c.advanceGoalAfterTurn()
+		cont := c.advanceGoalAfterTurn(source)
 		if !cont {
 			return nil
 		}
+		if !started {
+			c.appendRuntimeTimeline(runtimeEventGoalContinuationStarted, source, "", "goal continuation started")
+			started = true
+		}
 		if err := ctx.Err(); err != nil {
 			c.stopGoal(GoalStatusStopped)
+			c.appendRuntimeTimeline(runtimeEventGoalContinuationStopped, source, err.Error(), "goal continuation stopped")
+			c.saveRuntimeSidecarForCurrentSession()
 			return err
 		}
 		prompt := goalContinueTurn
@@ -617,16 +627,20 @@ func (c *Controller) continueGoal(ctx context.Context, wakeupContext string) err
 		if err := c.runTurnWithRawDisplay(ctx, prompt, prompt, ""); err != nil {
 			if ctx.Err() != nil {
 				c.stopGoal(GoalStatusStopped)
+				c.appendRuntimeTimeline(runtimeEventGoalContinuationStopped, source, ctx.Err().Error(), "goal continuation stopped")
+				c.saveRuntimeSidecarForCurrentSession()
 			}
 			return err
 		}
 	}
 }
 
-func (c *Controller) advanceGoalAfterTurn() bool {
+func (c *Controller) advanceGoalAfterTurn(source string) bool {
 	reply := lastAssistantText(c.History())
 	status, reason, _ := parseGoalStatusMarker(reply)
 	var notice string
+	var eventType string
+	var eventReason string
 	c.mu.Lock()
 	if strings.TrimSpace(c.goal) == "" || c.goalStatus != GoalStatusRunning {
 		c.mu.Unlock()
@@ -640,6 +654,7 @@ func (c *Controller) advanceGoalAfterTurn() bool {
 		c.goalBlocks = 0
 		c.goalBlock = ""
 		notice = "goal complete"
+		eventType = runtimeEventGoalContinuationComplete
 	case GoalStatusBlocked:
 		reason = cleanGoalBlockReason(reason)
 		if reason == "" {
@@ -654,22 +669,38 @@ func (c *Controller) advanceGoalAfterTurn() bool {
 		if c.goalBlocks >= 3 {
 			c.goalStatus = GoalStatusBlocked
 			notice = "goal blocked: " + reason
+			eventType = runtimeEventGoalBlocked
+			eventReason = reason
 		}
 	default:
 		c.goalBlocks = 0
 		c.goalBlock = ""
 	}
-	if notice == "" && c.goalTurns >= maxGoalAutoTurns {
+	turnCap := c.goalAutoTurnLimitLocked()
+	if notice == "" && turnCap > 0 && c.goalTurns >= turnCap {
 		c.goalStatus = GoalStatusBlocked
-		c.goalBlock = "goal continuation limit reached"
+		c.goalBlock = goalContinuationLimitReason
 		notice = c.goalBlock
+		eventType = runtimeEventGoalContinuationLimitReached
+		eventReason = c.goalBlock
 	}
 	cont := notice == ""
 	c.mu.Unlock()
 	if notice != "" {
 		c.notice(notice)
 	}
+	if eventType != "" {
+		c.appendRuntimeTimeline(eventType, source, eventReason, notice)
+		c.saveRuntimeSidecarForCurrentSession()
+	}
 	return cont
+}
+
+func (c *Controller) goalAutoTurnLimitLocked() int {
+	if c.goalTurnCap > 0 {
+		return c.goalTurnCap
+	}
+	return maxGoalAutoTurns
 }
 
 func parseGoalStatusMarker(text string) (status, reason string, ok bool) {

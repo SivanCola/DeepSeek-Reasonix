@@ -1250,6 +1250,9 @@ func renderRuntimeStatusLines(meta agent.RuntimeMeta) []string {
 	if meta.Budget.DailyWakeupLimit > 0 {
 		lines = append(lines, fmt.Sprintf("唤醒预算: %d/%d", meta.Budget.DailyWakeups, meta.Budget.DailyWakeupLimit))
 	}
+	if meta.Budget.MaxGoalAutoTurns > 0 {
+		lines = append(lines, fmt.Sprintf("自动续跑上限: %d 轮", meta.Budget.MaxGoalAutoTurns))
+	}
 	if meta.Budget.LastBlockedReason != "" {
 		lines = append(lines, "预算阻塞: "+truncateBotText(meta.Budget.LastBlockedReason, 100))
 	}

@@ -622,7 +622,7 @@ func TestGatewayRecordRuntimeWaitPersistsApprovalAndAsk(t *testing.T) {
 	sessionPath := writeBotTestSession(t, dir, "hello")
 	if err := agent.SaveRuntimeMeta(sessionPath, agent.RuntimeMeta{
 		Goal:   agent.RuntimeGoalMeta{Text: "needs a decision", Status: control.GoalStatusRunning},
-		Budget: agent.RuntimeBudgetMeta{DailyWakeupLimit: 3, DailyWakeups: 1},
+		Budget: agent.RuntimeBudgetMeta{DailyWakeupLimit: 3, MaxGoalAutoTurns: 8, DailyWakeups: 1},
 	}); err != nil {
 		t.Fatalf("SaveRuntimeMeta: %v", err)
 	}
@@ -650,7 +650,7 @@ func TestGatewayRecordRuntimeWaitPersistsApprovalAndAsk(t *testing.T) {
 		loaded.Run.Status != "waiting_approval" {
 		t.Fatalf("approval wait not persisted: %+v", loaded)
 	}
-	if loaded.Budget.DailyWakeupLimit != 3 || loaded.Budget.DailyWakeups != 1 {
+	if loaded.Budget.DailyWakeupLimit != 3 || loaded.Budget.MaxGoalAutoTurns != 8 || loaded.Budget.DailyWakeups != 1 {
 		t.Fatalf("budget should be preserved: %+v", loaded.Budget)
 	}
 

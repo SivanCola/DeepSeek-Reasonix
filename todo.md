@@ -105,18 +105,19 @@ dynamic workflow 或开发者平台，而是先把 Reasonix 从一次性会话�
 - [x] 增加 controller API。
   - 例如 `ContinueGoal(ctx, reason string)`。
   - reason 用于区分 user、cron、webhook、file_watch。
-- [ ] 将自动续跑限制持久化。
-  - `goalTurns` 恢复后不能无限重跑。
-  - 明确每次唤醒最多推进多少轮。
-- [ ] 增加通知和事件。
-  - goal continuation started
-  - goal continuation complete
-  - goal blocked
-  - goal continuation limit reached
-- [ ] 增加测试。
-  - `/goal continue` 恢复 blocked audit。
-  - context cancel 会把 goal 标记为 stopped。
-  - reached max auto turns 后不会继续自动唤醒。
+- [x] 将自动续跑限制持久化。
+  - [x] `goalTurns` 恢复后不能无限重跑。
+  - [x] 通过 runtime `budget.max_goal_auto_turns` 明确每个 goal 最多自动推进多少轮。
+  - [x] daemon `budget` API / CLI 可配置，bot `/status` 和 doctor 可见。
+- [x] 增加通知和事件。
+  - [x] goal continuation started。
+  - [x] goal continuation complete。
+  - [x] goal blocked。
+  - [x] goal continuation limit reached。
+- [x] 增加测试。
+  - [x] `/goal continue` 恢复 blocked audit。
+  - [x] context cancel 会把 goal 标记为 stopped。
+  - [x] reached max auto turns 后不会继续自动唤醒。
 
 ### 验收标准
 
@@ -342,7 +343,7 @@ dynamic workflow 或开发者平台，而是先把 Reasonix 从一次性会话�
   - [x] session 级每日自动唤醒次数预算。
   - 每日模型调用次数。
   - 每日费用预算。
-  - 每个 goal 最大自动轮次。
+  - [x] 每个 goal 最大自动轮次。
 - [ ] 审批台。
   - 桌面端和 bot 都能看到等待审批的任务。
   - 审批后继续同一 run。
@@ -402,7 +403,8 @@ dynamic workflow 或开发者平台，而是先把 Reasonix 从一次性会话�
   - 缓解：controller runtime sidecar 是权威状态，desktop profile 只是 UI 偏好。
 - [ ] 成本风险：常驻 agent 频繁唤醒模型。
   - [x] 缓解：确定性预检查、每日自动唤醒预算。
-  - [ ] 缓解：每日模型调用 / 费用预算、最大自动轮次。
+  - [x] 缓解：最大自动轮次。
+  - [ ] 缓解：每日模型调用 / 费用预算。
 - [ ] 用户体验风险：恢复历史时自动开跑。
   - 缓解：resume 只恢复状态，不默认执行；显式 continue 或 scheduler 才执行。
 - [ ] 平台化过早风险：插件生态、SDK、企业平台会拖慢个人 OS MVP。

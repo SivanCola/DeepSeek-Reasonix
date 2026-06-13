@@ -285,11 +285,12 @@ func (d *Daemon) handleSchedule(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleBudget sets or resets the automatic wakeup budget for a session.
-// Body: {"session_id":"...","daily_wakeup_limit":10,"reset":true}
+// Body: {"session_id":"...","daily_wakeup_limit":10,"max_goal_auto_turns":20,"reset":true}
 func (d *Daemon) handleBudget(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		SessionID        string `json:"session_id"`
 		DailyWakeupLimit *int   `json:"daily_wakeup_limit"`
+		MaxGoalAutoTurns *int   `json:"max_goal_auto_turns"`
 		Reset            bool   `json:"reset"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -302,6 +303,10 @@ func (d *Daemon) handleBudget(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.DailyWakeupLimit != nil && *req.DailyWakeupLimit < 0 {
 		http.Error(w, `{"error":"daily_wakeup_limit must be >= 0"}`, http.StatusBadRequest)
+		return
+	}
+	if req.MaxGoalAutoTurns != nil && *req.MaxGoalAutoTurns < 0 {
+		http.Error(w, `{"error":"max_goal_auto_turns must be >= 0"}`, http.StatusBadRequest)
 		return
 	}
 
@@ -317,6 +322,12 @@ func (d *Daemon) handleBudget(w http.ResponseWriter, r *http.Request) {
 		entry.Runtime.Budget.DailyWakeupLimit = *req.DailyWakeupLimit
 		if entry.Runtime.Budget.WindowStartedAt.IsZero() {
 			entry.Runtime.Budget.WindowStartedAt = budgetWindowStart(now)
+		}
+	}
+	if req.MaxGoalAutoTurns != nil {
+		entry.Runtime.Budget.MaxGoalAutoTurns = *req.MaxGoalAutoTurns
+		if active := d.activeRuns[req.SessionID]; active != nil && active.Control != nil {
+			active.Control.SetGoalAutoTurnLimit(*req.MaxGoalAutoTurns)
 		}
 	}
 	if req.Reset {
@@ -338,16 +349,17 @@ func (d *Daemon) handleBudget(w http.ResponseWriter, r *http.Request) {
 		Source:     "api",
 		RunStatus:  runtime.Run.Status,
 		GoalStatus: runtime.Goal.Status,
-		Message:    fmt.Sprintf("daily_wakeup_limit=%d daily_wakeups=%d", runtime.Budget.DailyWakeupLimit, runtime.Budget.DailyWakeups),
+		Message:    fmt.Sprintf("daily_wakeup_limit=%d daily_wakeups=%d max_goal_auto_turns=%d", runtime.Budget.DailyWakeupLimit, runtime.Budget.DailyWakeups, runtime.Budget.MaxGoalAutoTurns),
 	})
 
 	w.Header().Set("Content-Type", "application/json")
 	resp := map[string]interface{}{
-		"ok":                 true,
-		"session_id":         req.SessionID,
-		"daily_wakeup_limit": runtime.Budget.DailyWakeupLimit,
-		"daily_wakeups":      runtime.Budget.DailyWakeups,
-		"window_started_at":  runtime.Budget.WindowStartedAt.Format(time.RFC3339),
+		"ok":                  true,
+		"session_id":          req.SessionID,
+		"daily_wakeup_limit":  runtime.Budget.DailyWakeupLimit,
+		"max_goal_auto_turns": runtime.Budget.MaxGoalAutoTurns,
+		"daily_wakeups":       runtime.Budget.DailyWakeups,
+		"window_started_at":   runtime.Budget.WindowStartedAt.Format(time.RFC3339),
 	}
 	json.NewEncoder(w).Encode(resp)
 }

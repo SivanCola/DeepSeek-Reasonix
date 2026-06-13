@@ -118,6 +118,8 @@ type RuntimeWatchMeta struct {
 type RuntimeBudgetMeta struct {
 	// DailyWakeupLimit limits automatic daemon wakeups per UTC day. 0 disables the limit.
 	DailyWakeupLimit int `json:"daily_wakeup_limit,omitempty"`
+	// MaxGoalAutoTurns caps automatic continuation turns for one goal. 0 uses the built-in default.
+	MaxGoalAutoTurns int `json:"max_goal_auto_turns,omitempty"`
 	// DailyWakeups counts automatic wakeups reserved in the current UTC day window.
 	DailyWakeups int `json:"daily_wakeups,omitempty"`
 	// WindowStartedAt is the UTC start of the current accounting day.
