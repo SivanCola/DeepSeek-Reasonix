@@ -465,6 +465,7 @@ func (d *Daemon) recoverInterrupted() {
 				d.appendTimeline(entry.Path, agent.RuntimeTimelineEvent{
 					Type:       "run_interrupted",
 					Source:     "daemon_startup",
+					Step:       "deterministic",
 					RunStatus:  entry.Runtime.Run.Status,
 					GoalStatus: entry.Runtime.Goal.Status,
 					WaitKind:   entry.Runtime.Wait.Kind,

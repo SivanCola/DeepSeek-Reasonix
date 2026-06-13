@@ -811,6 +811,9 @@ func TestFileWatcherWakeupIncludesChangedFileSummary(t *testing.T) {
 	var found bool
 	for _, event := range events {
 		if event.Type == "file_change_detected" && strings.Contains(event.Message, "src/a.go") {
+			if event.Step != "deterministic" {
+				t.Fatalf("file change timeline should be deterministic: %+v", event)
+			}
 			found = true
 			break
 		}
@@ -1173,13 +1176,25 @@ func TestDaemonExecuteIntentCompletesGoal(t *testing.T) {
 	}
 	if err := agent.SaveRuntimeMeta(sessPath, agent.RuntimeMeta{
 		SessionID: "worker-test",
+		Model:     "daemon-test-model",
 		Goal:      agent.RuntimeGoalMeta{Text: "finish worker", Status: control.GoalStatusRunning},
 		Run:       agent.RuntimeRunMeta{Status: "pending_continue"},
 	}); err != nil {
 		t.Fatalf("SaveRuntimeMeta: %v", err)
 	}
 
-	prov := &daemonScriptedProvider{}
+	prov := &daemonScriptedProvider{turns: [][]provider.Chunk{{
+		{Type: provider.ChunkUsage, Usage: &provider.Usage{
+			PromptTokens:     30,
+			CompletionTokens: 10,
+			TotalTokens:      40,
+			CacheHitTokens:   20,
+			CacheMissTokens:  10,
+			ReasoningTokens:  3,
+			FinishReason:     "stop",
+		}},
+		{Type: provider.ChunkText, Text: "done\n\n[goal:complete]"},
+	}}}
 	d := New(Options{
 		SessionDir: dir,
 		ControllerFactory: func(ctx context.Context, d *Daemon, entry *SessionEntry, sink event.Sink) (*control.Controller, error) {
@@ -1187,7 +1202,9 @@ func TestDaemonExecuteIntentCompletesGoal(t *testing.T) {
 			if err != nil {
 				return nil, err
 			}
-			ag := agent.New(prov, tool.NewRegistry(), loaded, agent.Options{}, sink)
+			ag := agent.New(prov, tool.NewRegistry(), loaded, agent.Options{
+				Pricing: &provider.Pricing{CacheHit: 0.5, Input: 1, Output: 2, Currency: "usd"},
+			}, sink)
 			c := control.New(control.Options{
 				Runner:      ag,
 				Executor:    ag,
@@ -1211,6 +1228,34 @@ func TestDaemonExecuteIntentCompletesGoal(t *testing.T) {
 	}
 	if loaded.Run.Status != "idle" {
 		t.Fatalf("Run.Status = %q, want idle", loaded.Run.Status)
+	}
+	events, ok, err := agent.LoadRuntimeTimeline(sessPath, 0)
+	if err != nil || !ok {
+		t.Fatalf("LoadRuntimeTimeline: err=%v ok=%v", err, ok)
+	}
+	var sawUsage, sawComplete bool
+	for _, event := range events {
+		switch event.Type {
+		case "model_usage":
+			sawUsage = true
+			if event.Step != "model" || event.Model != "daemon-test-model" || event.Finish != "stop" {
+				t.Fatalf("model usage decision metadata incomplete: %+v", event)
+			}
+			if event.Prompt != 30 || event.Completion != 10 || event.Total != 40 || event.CacheHit != 20 || event.CacheMiss != 10 || event.Reasoning != 3 {
+				t.Fatalf("model usage tokens not recorded: %+v", event)
+			}
+			if event.Cost <= 0 || event.Currency != "$" {
+				t.Fatalf("model usage cost not recorded: %+v", event)
+			}
+		case "goal_continuation_complete":
+			sawComplete = true
+			if event.Step != "model" {
+				t.Fatalf("goal completion should be marked as a model decision: %+v", event)
+			}
+		}
+	}
+	if !sawUsage || !sawComplete {
+		t.Fatalf("missing model observability events usage=%t complete=%t events=%+v", sawUsage, sawComplete, events)
 	}
 }
 

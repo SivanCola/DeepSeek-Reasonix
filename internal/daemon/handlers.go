@@ -194,6 +194,7 @@ func (d *Daemon) handleStop(w http.ResponseWriter, r *http.Request) {
 	d.appendTimeline(path, agent.RuntimeTimelineEvent{
 		Type:       "stopped",
 		Source:     "api",
+		Step:       "deterministic",
 		RunStatus:  runtime.Run.Status,
 		GoalStatus: runtime.Goal.Status,
 	})
@@ -358,6 +359,7 @@ func (d *Daemon) handleBudget(w http.ResponseWriter, r *http.Request) {
 	d.appendTimeline(path, agent.RuntimeTimelineEvent{
 		Type:       "budget_configured",
 		Source:     "api",
+		Step:       "deterministic",
 		RunStatus:  runtime.Run.Status,
 		GoalStatus: runtime.Goal.Status,
 		Message:    fmt.Sprintf("daily_wakeup_limit=%d daily_wakeups=%d max_goal_auto_turns=%d", runtime.Budget.DailyWakeupLimit, runtime.Budget.DailyWakeups, runtime.Budget.MaxGoalAutoTurns),
@@ -449,6 +451,7 @@ func (d *Daemon) handleWaitEvent(w http.ResponseWriter, r *http.Request) {
 	d.appendTimeline(path, agent.RuntimeTimelineEvent{
 		Type:       action,
 		Source:     "api",
+		Step:       "deterministic",
 		RunStatus:  runtime.Run.Status,
 		GoalStatus: runtime.Goal.Status,
 		WaitKind:   runtime.Wait.Kind,
@@ -550,6 +553,7 @@ func (d *Daemon) handleWaitTime(w http.ResponseWriter, r *http.Request) {
 	d.appendTimeline(path, agent.RuntimeTimelineEvent{
 		Type:       action,
 		Source:     "api",
+		Step:       "deterministic",
 		RunStatus:  runtime.Run.Status,
 		GoalStatus: runtime.Goal.Status,
 		WaitKind:   runtime.Wait.Kind,
@@ -707,6 +711,7 @@ func (d *Daemon) handleWaitFile(w http.ResponseWriter, r *http.Request) {
 	d.appendTimeline(path, agent.RuntimeTimelineEvent{
 		Type:       action,
 		Source:     "api",
+		Step:       "deterministic",
 		RunStatus:  runtime.Run.Status,
 		GoalStatus: runtime.Goal.Status,
 		WaitKind:   runtime.Wait.Kind,
@@ -859,6 +864,7 @@ func (d *Daemon) handleWatch(w http.ResponseWriter, r *http.Request) {
 	d.appendTimeline(path, agent.RuntimeTimelineEvent{
 		Type:       "watch_configured",
 		Source:     "api",
+		Step:       "deterministic",
 		RunStatus:  runtime.Run.Status,
 		GoalStatus: runtime.Goal.Status,
 		Message:    fmt.Sprintf("file watch enabled=%t paths=%d", runtime.FileWatch.Enabled, len(runtime.FileWatch.Paths)),
@@ -914,6 +920,7 @@ func (d *Daemon) handleApprove(w http.ResponseWriter, r *http.Request) {
 		d.appendTimeline(path, agent.RuntimeTimelineEvent{
 			Type:       action,
 			Source:     "api",
+			Step:       "deterministic",
 			RunStatus:  runtime.Run.Status,
 			GoalStatus: runtime.Goal.Status,
 			WaitKind:   "approval",
@@ -980,6 +987,7 @@ func (d *Daemon) handleAnswer(w http.ResponseWriter, r *http.Request) {
 		d.appendTimeline(path, agent.RuntimeTimelineEvent{
 			Type:       "ask_answered",
 			Source:     "api",
+			Step:       "deterministic",
 			RunStatus:  runtime.Run.Status,
 			GoalStatus: runtime.Goal.Status,
 			WaitKind:   "ask",

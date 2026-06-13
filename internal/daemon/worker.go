@@ -24,6 +24,7 @@ func (d *Daemon) enqueueIntent(intent RunIntent) {
 		Source:  intent.Source,
 		Reason:  intent.Reason,
 		EventID: intent.EventID,
+		Step:    "deterministic",
 	})
 	select {
 	case d.intentCh <- intent:
@@ -71,6 +72,7 @@ func (d *Daemon) executeIntent(parent context.Context, intent RunIntent) {
 		Source:  intent.Source,
 		Reason:  intent.Reason,
 		EventID: intent.EventID,
+		Step:    "deterministic",
 	})
 
 	sink := event.Sync(event.FuncSink(func(e event.Event) {
@@ -124,6 +126,8 @@ func defaultControllerFactory(ctx context.Context, d *Daemon, entry *SessionEntr
 
 func (d *Daemon) handleRunEvent(sessionID string, e event.Event) {
 	switch e.Kind {
+	case event.Usage:
+		d.recordModelUsage(sessionID, e)
 	case event.ApprovalRequest:
 		d.recordWait(sessionID, agent.RuntimeWaitMeta{
 			Kind:       "approval",
@@ -145,6 +149,55 @@ func (d *Daemon) handleRunEvent(sessionID string, e event.Event) {
 			d.logger.Warn("daemon run turn finished with error", "session", sessionID, "err", e.Err)
 		}
 	}
+}
+
+func (d *Daemon) recordModelUsage(sessionID string, e event.Event) {
+	if e.Usage == nil {
+		return
+	}
+	d.mu.RLock()
+	entry, ok := d.registry[sessionID]
+	active := d.activeRuns[sessionID]
+	var path string
+	var runtime agent.RuntimeMeta
+	var intent RunIntent
+	if ok {
+		path = entry.Path
+		runtime = entry.Runtime
+	}
+	if active != nil {
+		intent = active.Intent
+	}
+	d.mu.RUnlock()
+	if !ok {
+		return
+	}
+	if loaded, found, err := agent.LoadRuntimeMeta(path); err == nil && found {
+		runtime = loaded
+	}
+	usage := e.Usage
+	timeline := agent.RuntimeTimelineEvent{
+		Type:       "model_usage",
+		Source:     firstNonEmpty(intent.Source, "model"),
+		Reason:     intent.Reason,
+		EventID:    intent.EventID,
+		Step:       "model",
+		Model:      runtime.Model,
+		RunStatus:  runtime.Run.Status,
+		GoalStatus: runtime.Goal.Status,
+		Prompt:     usage.PromptTokens,
+		Completion: usage.CompletionTokens,
+		Total:      usage.TotalTokens,
+		CacheHit:   usage.CacheHitTokens,
+		CacheMiss:  usage.CacheMissTokens,
+		Reasoning:  usage.ReasoningTokens,
+		Finish:     usage.FinishReason,
+	}
+	if e.Pricing != nil {
+		timeline.Cost = e.Pricing.Cost(usage)
+		timeline.Currency = e.Pricing.Symbol()
+	}
+	d.appendTimeline(path, timeline)
 }
 
 func (d *Daemon) recordWait(sessionID string, wait agent.RuntimeWaitMeta, e event.Event) {
@@ -176,6 +229,7 @@ func (d *Daemon) recordWait(sessionID string, wait agent.RuntimeWaitMeta, e even
 		}
 		d.appendTimeline(path, agent.RuntimeTimelineEvent{
 			Type:       "wait_started",
+			Step:       "deterministic",
 			RunStatus:  runtime.Run.Status,
 			GoalStatus: runtime.Goal.Status,
 			WaitKind:   wait.Kind,
@@ -209,6 +263,7 @@ func (d *Daemon) finishIntent(sessionID, fallbackStatus string, runErr error) {
 		d.mu.Unlock()
 		d.appendTimeline(path, agent.RuntimeTimelineEvent{
 			Type:       "run_finished",
+			Step:       "deterministic",
 			RunStatus:  loaded.Run.Status,
 			GoalStatus: loaded.Goal.Status,
 			Error:      errorString(runErr),
@@ -237,6 +292,7 @@ func (d *Daemon) finishIntent(sessionID, fallbackStatus string, runErr error) {
 		}
 		d.appendTimeline(path, agent.RuntimeTimelineEvent{
 			Type:       "run_finished",
+			Step:       "deterministic",
 			RunStatus:  runtime.Run.Status,
 			GoalStatus: runtime.Goal.Status,
 			Error:      errorString(runErr),

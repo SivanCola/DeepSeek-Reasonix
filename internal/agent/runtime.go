@@ -42,12 +42,23 @@ type RuntimeTimelineEvent struct {
 	Reason     string    `json:"reason,omitempty"`
 	EventID    string    `json:"event_id,omitempty"`
 	PayloadRef string    `json:"payload_ref,omitempty"`
+	Step       string    `json:"step,omitempty"`
+	Model      string    `json:"model,omitempty"`
 	RunStatus  string    `json:"run_status,omitempty"`
 	GoalStatus string    `json:"goal_status,omitempty"`
 	WaitKind   string    `json:"wait_kind,omitempty"`
 	WaitID     string    `json:"wait_id,omitempty"`
 	Tool       string    `json:"tool,omitempty"`
 	Subject    string    `json:"subject,omitempty"`
+	Prompt     int       `json:"prompt_tokens,omitempty"`
+	Completion int       `json:"completion_tokens,omitempty"`
+	Total      int       `json:"total_tokens,omitempty"`
+	CacheHit   int       `json:"cache_hit_tokens,omitempty"`
+	CacheMiss  int       `json:"cache_miss_tokens,omitempty"`
+	Reasoning  int       `json:"reasoning_tokens,omitempty"`
+	Finish     string    `json:"finish_reason,omitempty"`
+	Cost       float64   `json:"cost,omitempty"`
+	Currency   string    `json:"currency,omitempty"`
 	Message    string    `json:"message,omitempty"`
 	Error      string    `json:"error,omitempty"`
 }

@@ -221,11 +221,17 @@ func (c *Controller) appendRuntimeTimeline(eventType, source, reason, message st
 	if source == "" {
 		source = "goal"
 	}
+	step := "deterministic"
+	switch eventType {
+	case runtimeEventGoalContinuationComplete, runtimeEventGoalBlocked:
+		step = "model"
+	}
 	if err := agent.AppendRuntimeTimeline(path, agent.RuntimeTimelineEvent{
 		Type:       eventType,
 		Source:     source,
 		Reason:     reason,
 		Message:    message,
+		Step:       step,
 		RunStatus:  runStatus,
 		GoalStatus: goalStatus,
 	}); err != nil {

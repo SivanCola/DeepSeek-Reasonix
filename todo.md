@@ -348,11 +348,11 @@ dynamic workflow 或开发者平台，而是先把 Reasonix 从一次性会话�
 - [ ] 审批台。
   - 桌面端和 bot 都能看到等待审批的任务。
   - 审批后继续同一 run。
-- [ ] 可观测性。
+- [x] 可观测性。
   - [x] run timeline。
   - [x] wakeup history。
-  - last model decision。
-  - deterministic steps log。
+  - [x] last model decision。
+  - [x] deterministic steps log。
 
 ### 验收标准
 
