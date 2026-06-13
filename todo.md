@@ -304,9 +304,9 @@ dynamic workflow 或开发者平台，而是先把 Reasonix 从一次性会话�
   - [x] explicit file wait 匹配后一次性唤醒并清除 wait。
   - [x] explicit file wait 不匹配时不唤醒。
   - [x] event/time 等其他 wait 不会被文件变化误唤醒。
-  - rapid changes 合并。
+  - [x] rapid changes 合并。
   - [x] ignored path 不触发。
-  - running session 不并发触发。
+  - [x] running session 不并发触发。
 
 ### 验收标准
 

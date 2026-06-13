@@ -820,6 +820,134 @@ func TestFileWatcherWakeupIncludesChangedFileSummary(t *testing.T) {
 	}
 }
 
+func TestFileWatcherDebouncesRapidChangesIntoOneWakeup(t *testing.T) {
+	dir := t.TempDir()
+	watchDir := filepath.Join(dir, "workspace")
+	srcDir := filepath.Join(watchDir, "src")
+	if err := os.MkdirAll(srcDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	aPath := filepath.Join(srcDir, "a.go")
+	bPath := filepath.Join(srcDir, "b.go")
+	if err := os.WriteFile(aPath, []byte("package main\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile a: %v", err)
+	}
+	if err := os.WriteFile(bPath, []byte("package main\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile b: %v", err)
+	}
+	base := time.Now().Add(-10 * time.Minute)
+	if err := os.Chtimes(aPath, base, base); err != nil {
+		t.Fatalf("Chtimes a: %v", err)
+	}
+	if err := os.Chtimes(bPath, base, base); err != nil {
+		t.Fatalf("Chtimes b: %v", err)
+	}
+
+	sess := filepath.Join(dir, "file-debounce.jsonl")
+	if err := os.WriteFile(sess, []byte(`{"role":"user","content":"start"}`+"\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile session: %v", err)
+	}
+	if err := agent.SaveRuntimeMeta(sess, agent.RuntimeMeta{
+		SessionID: "file-debounce",
+		Goal:      agent.RuntimeGoalMeta{Text: "react to files", Status: control.GoalStatusRunning},
+		Run:       agent.RuntimeRunMeta{Status: "idle"},
+	}); err != nil {
+		t.Fatalf("SaveRuntimeMeta: %v", err)
+	}
+
+	d := New(Options{SessionDir: dir})
+	d.scanSessions()
+	fw := NewFileWatcher(d, d.logger)
+	fw.Register("file-debounce", FileWatchConfig{Paths: []string{watchDir}, Debounce: time.Hour, Enabled: true})
+
+	// First poll establishes the baseline without firing.
+	fw.poll()
+	if err := os.Chtimes(aPath, base.Add(time.Minute), base.Add(time.Minute)); err != nil {
+		t.Fatalf("Chtimes a update: %v", err)
+	}
+	fw.poll()
+	if err := os.Chtimes(bPath, base.Add(2*time.Minute), base.Add(2*time.Minute)); err != nil {
+		t.Fatalf("Chtimes b update: %v", err)
+	}
+	fw.poll()
+
+	fw.mu.Lock()
+	state := fw.watches["file-debounce"]
+	if state == nil {
+		fw.mu.Unlock()
+		t.Fatal("file watch missing")
+	}
+	if len(state.changes) != 2 {
+		fw.mu.Unlock()
+		t.Fatalf("pending changes = %d, want 2: %+v", len(state.changes), state.changes)
+	}
+	state.timer = time.Now().Add(-time.Second)
+	fw.mu.Unlock()
+	fw.poll()
+
+	select {
+	case intent := <-d.intentCh:
+		if !strings.Contains(intent.Context, "File watch detected 2 changed file(s)") ||
+			!strings.Contains(intent.Context, "src/a.go") ||
+			!strings.Contains(intent.Context, "src/b.go") {
+			t.Fatalf("rapid changes not merged into one summary:\n%s", intent.Context)
+		}
+	default:
+		t.Fatal("debounced file changes did not enqueue one intent")
+	}
+	select {
+	case intent := <-d.intentCh:
+		t.Fatalf("rapid changes should produce only one intent, got second: %+v", intent)
+	default:
+	}
+}
+
+func TestFileWatcherDoesNotWakeActiveRun(t *testing.T) {
+	dir := t.TempDir()
+	watchDir := filepath.Join(dir, "workspace")
+	if err := os.MkdirAll(watchDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	sess := filepath.Join(dir, "file-active-run.jsonl")
+	if err := os.WriteFile(sess, []byte(`{"role":"user","content":"start"}`+"\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	if err := agent.SaveRuntimeMeta(sess, agent.RuntimeMeta{
+		SessionID: "file-active-run",
+		Goal:      agent.RuntimeGoalMeta{Text: "react to files", Status: control.GoalStatusRunning},
+		Run:       agent.RuntimeRunMeta{Status: "idle"},
+	}); err != nil {
+		t.Fatalf("SaveRuntimeMeta: %v", err)
+	}
+
+	d := New(Options{SessionDir: dir})
+	d.scanSessions()
+	d.activeRuns["file-active-run"] = &ActiveRun{Intent: RunIntent{SessionID: "file-active-run"}}
+	fw := NewFileWatcher(d, d.logger)
+	state := &watchState{
+		config:   FileWatchConfig{Paths: []string{watchDir}, Enabled: true},
+		lastSeen: map[string]time.Time{},
+		changes: map[string]struct{}{
+			filepath.Join(watchDir, "changed.md"): {},
+		},
+		pending: true,
+	}
+	fw.fireWakeup("file-active-run", state, time.Now())
+
+	select {
+	case intent := <-d.intentCh:
+		t.Fatalf("file watcher should not wake active run: %+v", intent)
+	default:
+	}
+	loaded, ok, err := agent.LoadRuntimeMeta(sess)
+	if err != nil || !ok {
+		t.Fatalf("LoadRuntimeMeta: err=%v ok=%v", err, ok)
+	}
+	if loaded.Run.Status != "idle" || loaded.Run.ResumeCount != 0 {
+		t.Fatalf("active run should leave runtime unchanged: %+v", loaded.Run)
+	}
+}
+
 func TestFileWatcherWakeupClearsMatchingFileWait(t *testing.T) {
 	dir := t.TempDir()
 	watchDir := filepath.Join(dir, "workspace")
