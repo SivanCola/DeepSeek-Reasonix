@@ -498,6 +498,20 @@ func extractGitHubWebhookInfo(r *http.Request, body []byte) githubWebhookInfo {
 			info.Number = firstPullNumber(cr)
 		}
 	}
+	if cs := mapField(root, "check_suite"); cs != nil {
+		if info.Status == "" {
+			info.Status = stringField(cs, "status")
+		}
+		if info.Conclusion == "" {
+			info.Conclusion = stringField(cs, "conclusion")
+		}
+		if info.Ref == "" {
+			info.Ref = stringField(cs, "head_branch")
+		}
+		if info.Number == 0 {
+			info.Number = firstPullNumber(cs)
+		}
+	}
 	return info
 }
 

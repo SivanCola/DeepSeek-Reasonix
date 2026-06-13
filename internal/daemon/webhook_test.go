@@ -496,6 +496,82 @@ func TestWebhookMatchesWaitEventAndClearsWait(t *testing.T) {
 	}
 }
 
+func TestWebhookMatchesGitHubCheckSuiteWait(t *testing.T) {
+	dir := t.TempDir()
+	sess := filepath.Join(dir, "webhook-check-suite.jsonl")
+	if err := os.WriteFile(sess, []byte(`{}`), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	if err := agent.SaveRuntimeMeta(sess, agent.RuntimeMeta{
+		SessionID: "webhook-check-suite",
+		Goal:      agent.RuntimeGoalMeta{Text: "watch esengine/DeepSeek-Reasonix PR #42 checks", Status: "running"},
+		Run:       agent.RuntimeRunMeta{Status: "waiting_event"},
+		Wait: agent.RuntimeWaitMeta{
+			Kind:            "event",
+			EventSource:     "github.check_suite",
+			EventStatus:     "completed",
+			EventConclusion: "success",
+			Reason:          "waiting for check suite",
+			Subject:         "PR #42",
+		},
+		Budget: agent.RuntimeBudgetMeta{
+			DailyWakeupLimit: 2,
+			WindowStartedAt:  budgetWindowStart(time.Now().UTC()),
+		},
+	}); err != nil {
+		t.Fatalf("SaveRuntimeMeta: %v", err)
+	}
+
+	secret := "check-suite-secret"
+	d := New(Options{
+		SessionDir: dir,
+		Webhook:    &WebhookConfig{Secret: secret, Enabled: true},
+	})
+	d.scanSessions()
+
+	payload := `{"action":"completed","repository":{"full_name":"esengine/DeepSeek-Reasonix"},"check_suite":{"status":"completed","conclusion":"success","pull_requests":[{"number":42}],"head_branch":"feature/agentos"}}`
+	sig := computeHMAC([]byte(payload), secret)
+	req := httptest.NewRequest("POST", "/webhook", strings.NewReader(payload))
+	req.Header.Set("X-Webhook-Signature", sig)
+	req.Header.Set("X-GitHub-Event", "check_suite")
+	req.Header.Set("X-GitHub-Delivery", "delivery-check-suite")
+	rr := httptest.NewRecorder()
+	d.handleWebhook(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("webhook status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	var resp map[string]any
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp["session_id"] != "webhook-check-suite" || resp["status"] != "queued" {
+		t.Fatalf("unexpected response: %+v", resp)
+	}
+	select {
+	case intent := <-d.intentCh:
+		if intent.Source != "webhook" || intent.Reason != "webhook:github.check_suite" || intent.EventID != "delivery-check-suite" {
+			t.Fatalf("unexpected intent: %+v", intent)
+		}
+		for _, want := range []string{"github.check_suite", "status=completed", "conclusion=success", "number=42", "ref=feature/agentos"} {
+			if !strings.Contains(intent.Context, want) {
+				t.Fatalf("intent context missing %q:\n%s", want, intent.Context)
+			}
+		}
+	default:
+		t.Fatal("matching check_suite webhook did not enqueue an intent")
+	}
+	loaded, ok, err := agent.LoadRuntimeMeta(sess)
+	if err != nil || !ok {
+		t.Fatalf("LoadRuntimeMeta: err=%v ok=%v", err, ok)
+	}
+	if loaded.Run.Status != "queued" || loaded.Wait.Kind != "" {
+		t.Fatalf("check_suite webhook should clear wait and continue: run=%+v wait=%+v", loaded.Run, loaded.Wait)
+	}
+	if loaded.Scheduler.LastWakeupKey == "" || loaded.Budget.DailyWakeups != 1 {
+		t.Fatalf("wakeup metadata not persisted: scheduler=%+v budget=%+v", loaded.Scheduler, loaded.Budget)
+	}
+}
+
 func TestWebhookQueuesDiagnosisForWaitEventFailure(t *testing.T) {
 	dir := t.TempDir()
 	sess := filepath.Join(dir, "webhook-wait-conclusion.jsonl")
