@@ -409,8 +409,11 @@ dynamic workflow 或开发者平台，而是先把 Reasonix 从一次性会话�
   - [x] 缓解：cron 使用 schedule window 的 event id / wakeup key 去重，同一窗口不重复唤醒。
   - [x] 缓解：webhook 使用 delivery event id 和语义 wakeup key 去重，重放不 enqueue intent、不重复消耗预算。
   - [x] 缓解：budget-blocked wakeup 也记录 wakeup key，避免同一窗口阻断后反复刷屏。
-- [ ] 权限风险：外部事件触发写操作。
-  - 缓解：外部事件只触发 bounded turn，高风险操作走 approval。
+- [x] 权限风险：外部事件触发写操作。
+  - [x] 缓解：webhook receiver 必须 HMAC secret 校验，未授权事件被拒绝。
+  - [x] 缓解：外部事件只入队 bounded `RunIntent`，模型上下文只包含受限 summary / payload ref，不注入原始 payload。
+  - [x] 缓解：daemon worker 恢复 controller 后启用 interactive approval gate，高风险工具调用会进入 approval wait。
+  - [x] 缓解：daemon approval desk / bot `/approvals` 提供显式 approve / deny / answer 入口。
 - [ ] 状态漂移风险：transcript、runtime sidecar、desktop tab profile 不一致。
   - 缓解：controller runtime sidecar 是权威状态，desktop profile 只是 UI 偏好。
 - [x] 成本风险：常驻 agent 频繁唤醒模型。
