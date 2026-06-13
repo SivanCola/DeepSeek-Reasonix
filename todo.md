@@ -374,10 +374,11 @@ dynamic workflow 或开发者平台，而是先把 Reasonix 从一次性会话�
   - 拉取昨天未处理的 PR / issue。
   - 起草 triage。
   - 放入审批台。
-- [ ] CI watcher。
-  - 检测等待中的 PR。
-  - CI 失败时总结错误。
-  - CI 成功后准备发布说明或 merge 建议。
+- [x] CI watcher。
+  - [x] `reasonix daemon ci-watch` 可把 session 配置为等待 GitHub CI 成功。
+  - [x] 支持 workflow_run / check_suite / commit status。
+  - [x] CI 失败时复用 webhook failure diagnosis 唤醒总结错误。
+  - [x] CI 成功后唤醒原 session，准备发布说明或 merge 建议。
 - [ ] 发布助手。
   - 检查 changelog。
   - 检查版本号。

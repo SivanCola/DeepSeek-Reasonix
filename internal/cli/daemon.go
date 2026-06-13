@@ -51,6 +51,8 @@ func daemonCommand(args []string) int {
 		return daemonScheduleCmd(rest)
 	case "budget":
 		return daemonBudgetCmd(rest)
+	case "ci-watch":
+		return daemonCIWatchCmd(rest)
 	case "wait-event":
 		return daemonWaitEventCmd(rest)
 	case "wait-time":
@@ -648,6 +650,90 @@ func daemonBudgetCmd(args []string) int {
 	return 0
 }
 
+func daemonCIWatchCmd(args []string) int {
+	fs := flag.NewFlagSet("daemon ci-watch", flag.ContinueOnError)
+	addr := fs.String("addr", daemon.DefaultAddr, "daemon 地址")
+	dir := fs.String("dir", "", "会话目录（用于读取本地 token）")
+	sessionID := fs.String("session", "", "要设置 CI watcher 的 session ID")
+	source := fs.String("source", "workflow_run", "GitHub CI 事件来源：workflow_run、check_suite 或 status")
+	pr := fs.Int("pr", 0, "关联的 PR 编号（用于 subject 展示）")
+	repo := fs.String("repo", "", "关联仓库，例如 owner/repo（用于 subject 展示）")
+	subject := fs.String("subject", "", "等待对象说明，默认由 --repo/--pr 生成")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if strings.TrimSpace(*sessionID) == "" {
+		fmt.Fprintln(os.Stderr, "error: --session is required")
+		return 2
+	}
+	eventSource, eventStatus, err := ciWatchEventFields(*source)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 2
+	}
+	waitSubject := strings.TrimSpace(*subject)
+	if waitSubject == "" {
+		waitSubject = ciWatchSubject(*repo, *pr)
+	}
+	payload := map[string]interface{}{
+		"session_id":       strings.TrimSpace(*sessionID),
+		"event_source":     eventSource,
+		"event_conclusion": "success",
+		"reason":           "waiting for CI success",
+	}
+	if eventStatus != "" {
+		payload["event_status"] = eventStatus
+	}
+	if waitSubject != "" {
+		payload["subject"] = waitSubject
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	resp, err := daemonPost(*addr, *dir, "/wait-event", string(body))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "daemon not reachable: %v\n", err)
+		return 1
+	}
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 200 {
+		fmt.Fprintf(os.Stderr, "error: %s\n", string(b))
+		return 1
+	}
+	fmt.Println(string(b))
+	return 0
+}
+
+func ciWatchEventFields(source string) (eventSource, eventStatus string, err error) {
+	switch strings.ToLower(strings.TrimSpace(source)) {
+	case "", "workflow", "workflow_run", "github.workflow_run":
+		return "github.workflow_run", "completed", nil
+	case "check", "checks", "check_suite", "github.check_suite":
+		return "github.check_suite", "completed", nil
+	case "status", "commit_status", "github.status":
+		return "github.status", "", nil
+	default:
+		return "", "", fmt.Errorf("--source must be workflow_run, check_suite, or status")
+	}
+}
+
+func ciWatchSubject(repo string, pr int) string {
+	repo = strings.TrimSpace(repo)
+	switch {
+	case repo != "" && pr > 0:
+		return fmt.Sprintf("%s PR #%d", repo, pr)
+	case pr > 0:
+		return fmt.Sprintf("PR #%d", pr)
+	case repo != "":
+		return repo
+	default:
+		return ""
+	}
+}
+
 func daemonWaitEventCmd(args []string) int {
 	fs := flag.NewFlagSet("daemon wait-event", flag.ContinueOnError)
 	addr := fs.String("addr", daemon.DefaultAddr, "daemon 地址")
@@ -973,6 +1059,7 @@ Usage:
   reasonix daemon continue --session ID [--addr HOST:PORT] [--dir PATH]
   reasonix daemon schedule (--session ID | --scope global|project [--workspace-root PATH]) [--daily-at HH:MM] [--timezone Area/City] [--interval 1h]
   reasonix daemon budget   --session ID [--daily-wakeups N] [--max-goal-auto-turns N] [--daily-model-calls N] [--daily-model-cost N] [--reset]
+  reasonix daemon ci-watch --session ID [--source workflow_run|check_suite|status] [--repo owner/repo] [--pr N]
   reasonix daemon wait-event --session ID --source TYPE [--event-id ID] [--status completed] [--conclusion success]
   reasonix daemon wait-time --session ID (--until RFC3339 | --after 1h)
   reasonix daemon wait-file --session ID --paths PATH[,PATH...] [--ignore GLOB[,GLOB...]]
@@ -991,6 +1078,7 @@ Subcommands:
   continue   显式唤醒并继续指定 goal
   schedule   设置 daily/interval 定时唤醒和 daily 时区
   budget     设置自动唤醒、模型调用、模型费用和 goal 自动续跑预算
+  ci-watch   配置“等 GitHub CI 成功后继续”的个人 AgentOS 场景
   wait-event 设置或清除等待外部事件条件
   wait-time  设置或清除等待到指定时间的条件
   wait-file  设置或清除等待文件变化的条件

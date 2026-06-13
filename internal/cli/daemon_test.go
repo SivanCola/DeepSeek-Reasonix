@@ -251,6 +251,89 @@ func TestDaemonScheduleCommandSendsScopedPayload(t *testing.T) {
 	}
 }
 
+func TestDaemonCIWatchCommandSendsWorkflowPayload(t *testing.T) {
+	seenPath := ""
+	var payload map[string]interface{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seenPath = r.URL.Path
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer server.Close()
+	addr := strings.TrimPrefix(server.URL, "http://")
+
+	out := captureStdout(t, func() {
+		if rc := daemonCIWatchCmd([]string{
+			"--addr", addr,
+			"--session", "session-ci",
+			"--repo", "esengine/DeepSeek-Reasonix",
+			"--pr", "42",
+		}); rc != 0 {
+			t.Fatalf("daemonCIWatchCmd rc = %d, want 0", rc)
+		}
+	})
+
+	if seenPath != "/wait-event" {
+		t.Fatalf("seenPath = %q, want /wait-event", seenPath)
+	}
+	want := map[string]interface{}{
+		"session_id":       "session-ci",
+		"event_source":     "github.workflow_run",
+		"event_status":     "completed",
+		"event_conclusion": "success",
+		"reason":           "waiting for CI success",
+		"subject":          "esengine/DeepSeek-Reasonix PR #42",
+	}
+	for key, value := range want {
+		if payload[key] != value {
+			t.Fatalf("payload[%s] = %v, want %v; payload=%+v", key, payload[key], value, payload)
+		}
+	}
+	if !strings.Contains(out, `"ok":true`) {
+		t.Fatalf("ci-watch output = %q, want ok response", out)
+	}
+}
+
+func TestDaemonCIWatchCommandSendsStatusPayload(t *testing.T) {
+	var payload map[string]interface{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer server.Close()
+	addr := strings.TrimPrefix(server.URL, "http://")
+
+	_ = captureStdout(t, func() {
+		if rc := daemonCIWatchCmd([]string{
+			"--addr", addr,
+			"--session", "session-status",
+			"--source", "status",
+			"--subject", "branch main",
+		}); rc != 0 {
+			t.Fatalf("daemonCIWatchCmd status rc = %d, want 0", rc)
+		}
+	})
+
+	if payload["event_source"] != "github.status" || payload["event_conclusion"] != "success" || payload["subject"] != "branch main" {
+		t.Fatalf("unexpected status payload: %+v", payload)
+	}
+	if _, ok := payload["event_status"]; ok {
+		t.Fatalf("status payload should not include event_status: %+v", payload)
+	}
+}
+
+func TestDaemonCIWatchCommandRejectsUnknownSource(t *testing.T) {
+	if rc := daemonCIWatchCmd([]string{"--session", "session-ci", "--source", "push"}); rc != 2 {
+		t.Fatalf("daemonCIWatchCmd unknown source rc = %d, want 2", rc)
+	}
+}
+
 func TestPrepareBotGatewayRejectsUnsafeConfig(t *testing.T) {
 	cfg := testBotGatewayConfig()
 	cfg.Bot.Enabled = false
