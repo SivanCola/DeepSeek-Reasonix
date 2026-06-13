@@ -277,6 +277,149 @@ func TestWebhookRespectsDailyBudget(t *testing.T) {
 	}
 }
 
+func TestWebhookIgnoresNonMatchingWaitEvent(t *testing.T) {
+	dir := t.TempDir()
+	sess := filepath.Join(dir, "webhook-wait-ignore.jsonl")
+	if err := os.WriteFile(sess, []byte(`{}`), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	if err := agent.SaveRuntimeMeta(sess, agent.RuntimeMeta{
+		SessionID: "webhook-wait-ignore",
+		Goal:      agent.RuntimeGoalMeta{Text: "wait for CI", Status: "running"},
+		Run:       agent.RuntimeRunMeta{Status: "waiting_event"},
+		Wait: agent.RuntimeWaitMeta{
+			Kind:        "event",
+			EventSource: "github.workflow_run",
+			Reason:      "waiting for CI",
+			Subject:     "PR #42",
+		},
+		Budget: agent.RuntimeBudgetMeta{
+			DailyWakeupLimit: 2,
+			WindowStartedAt:  budgetWindowStart(time.Now().UTC()),
+		},
+	}); err != nil {
+		t.Fatalf("SaveRuntimeMeta: %v", err)
+	}
+
+	secret := "wait-ignore-secret"
+	d := New(Options{
+		SessionDir: dir,
+		Webhook:    &WebhookConfig{Secret: secret, Enabled: true},
+	})
+	d.scanSessions()
+
+	payload := `{"action":"opened","repository":{"full_name":"esengine/DeepSeek-Reasonix"},"pull_request":{"number":42,"title":"feat"}}`
+	sig := computeHMAC([]byte(payload), secret)
+	req := httptest.NewRequest("POST", "/webhook", strings.NewReader(payload))
+	req.Header.Set("X-Webhook-Signature", sig)
+	req.Header.Set("X-GitHub-Event", "pull_request")
+	req.Header.Set("X-GitHub-Delivery", "delivery-pr")
+	rr := httptest.NewRecorder()
+	d.handleWebhook(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("webhook status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	var resp map[string]any
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp["status"] != "ignored" {
+		t.Fatalf("status = %v, want ignored", resp["status"])
+	}
+	select {
+	case intent := <-d.intentCh:
+		t.Fatalf("ignored webhook should not enqueue intent: %+v", intent)
+	default:
+	}
+	loaded, ok, err := agent.LoadRuntimeMeta(sess)
+	if err != nil || !ok {
+		t.Fatalf("LoadRuntimeMeta: err=%v ok=%v", err, ok)
+	}
+	if loaded.Run.Status != "waiting_event" || loaded.Wait.Kind != "event" {
+		t.Fatalf("wait condition should remain active: run=%+v wait=%+v", loaded.Run, loaded.Wait)
+	}
+	if loaded.Budget.DailyWakeups != 0 {
+		t.Fatalf("ignored webhook should not consume budget: %+v", loaded.Budget)
+	}
+	events, ok, err := agent.LoadRuntimeTimeline(sess, 1)
+	if err != nil || !ok || len(events) != 1 || events[0].Type != "wait_event_ignored" {
+		t.Fatalf("ignored wait timeline not recorded: events=%+v err=%v ok=%v", events, err, ok)
+	}
+}
+
+func TestWebhookMatchesWaitEventAndClearsWait(t *testing.T) {
+	dir := t.TempDir()
+	sess := filepath.Join(dir, "webhook-wait-match.jsonl")
+	if err := os.WriteFile(sess, []byte(`{}`), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	if err := agent.SaveRuntimeMeta(sess, agent.RuntimeMeta{
+		SessionID: "webhook-wait-match",
+		Goal:      agent.RuntimeGoalMeta{Text: "wait for CI", Status: "running"},
+		Run:       agent.RuntimeRunMeta{Status: "waiting_event"},
+		Wait: agent.RuntimeWaitMeta{
+			Kind:        "event",
+			EventSource: "github.workflow_run",
+			EventID:     "delivery-42",
+			Reason:      "waiting for CI",
+			Subject:     "PR #42",
+		},
+		Budget: agent.RuntimeBudgetMeta{
+			DailyWakeupLimit: 2,
+			WindowStartedAt:  budgetWindowStart(time.Now().UTC()),
+		},
+	}); err != nil {
+		t.Fatalf("SaveRuntimeMeta: %v", err)
+	}
+
+	secret := "wait-match-secret"
+	d := New(Options{
+		SessionDir: dir,
+		Webhook:    &WebhookConfig{Secret: secret, Enabled: true},
+	})
+	d.scanSessions()
+
+	payload := `{"action":"completed","repository":{"full_name":"esengine/DeepSeek-Reasonix"},"workflow_run":{"status":"completed","conclusion":"success","pull_requests":[{"number":42}],"head_branch":"feature/agentos"}}`
+	sig := computeHMAC([]byte(payload), secret)
+	req := httptest.NewRequest("POST", "/webhook", strings.NewReader(payload))
+	req.Header.Set("X-Webhook-Signature", sig)
+	req.Header.Set("X-GitHub-Event", "workflow_run")
+	req.Header.Set("X-GitHub-Delivery", "delivery-42")
+	rr := httptest.NewRecorder()
+	d.handleWebhook(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("webhook status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	var resp map[string]any
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp["status"] != "pending_continue" {
+		t.Fatalf("status = %v, want pending_continue", resp["status"])
+	}
+	select {
+	case intent := <-d.intentCh:
+		if intent.Source != "webhook" || intent.Reason != "webhook:github.workflow_run" || intent.EventID != "delivery-42" {
+			t.Fatalf("unexpected intent: %+v", intent)
+		}
+		if !strings.Contains(intent.Context, "workflow_run") || !strings.Contains(intent.Context, "success") {
+			t.Fatalf("missing bounded webhook context:\n%s", intent.Context)
+		}
+	default:
+		t.Fatal("matching webhook did not enqueue an intent")
+	}
+	loaded, ok, err := agent.LoadRuntimeMeta(sess)
+	if err != nil || !ok {
+		t.Fatalf("LoadRuntimeMeta: err=%v ok=%v", err, ok)
+	}
+	if loaded.Run.Status != "pending_continue" || loaded.Wait.Kind != "" {
+		t.Fatalf("matching webhook should clear wait and continue: run=%+v wait=%+v", loaded.Run, loaded.Wait)
+	}
+	if loaded.Scheduler.LastWakeupEventID != "delivery-42" || loaded.Budget.DailyWakeups != 1 {
+		t.Fatalf("wakeup metadata not persisted: scheduler=%+v budget=%+v", loaded.Scheduler, loaded.Budget)
+	}
+}
+
 func TestFileWatcherIgnorePatterns(t *testing.T) {
 	fw := NewFileWatcher(nil, nil)
 

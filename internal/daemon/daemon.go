@@ -190,6 +190,7 @@ func (d *Daemon) Start(ctx context.Context) error {
 	mux.HandleFunc("POST /stop", d.withAuth(d.handleStop))
 	mux.HandleFunc("POST /schedule", d.withAuth(d.handleSchedule))
 	mux.HandleFunc("POST /budget", d.withAuth(d.handleBudget))
+	mux.HandleFunc("POST /wait-event", d.withAuth(d.handleWaitEvent))
 	mux.HandleFunc("POST /webhook", d.handleWebhook)
 	mux.HandleFunc("POST /watch", d.withAuth(d.handleWatch))
 	mux.HandleFunc("POST /approvals/approve", d.withAuth(d.handleApprove))

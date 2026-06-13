@@ -394,6 +394,66 @@ func TestDaemonBudgetHandlerPersistsConfig(t *testing.T) {
 	}
 }
 
+func TestDaemonWaitEventHandlerPersistsConfig(t *testing.T) {
+	dir := t.TempDir()
+	sess := filepath.Join(dir, "wait-event-api.jsonl")
+	if err := os.WriteFile(sess, []byte(`{"role":"user","content":"start"}`+"\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	if err := agent.SaveRuntimeMeta(sess, agent.RuntimeMeta{
+		SessionID: "wait-event-api",
+		Goal:      agent.RuntimeGoalMeta{Text: "wait for CI", Status: control.GoalStatusRunning},
+		Run:       agent.RuntimeRunMeta{Status: "idle"},
+	}); err != nil {
+		t.Fatalf("SaveRuntimeMeta: %v", err)
+	}
+
+	d := New(Options{SessionDir: dir})
+	d.scanSessions()
+	req := httptest.NewRequest("POST", "/wait-event", strings.NewReader(`{"session_id":"wait-event-api","event_source":"github.workflow_run","event_id":"delivery-42","reason":"waiting for CI","subject":"PR #42"}`))
+	rr := httptest.NewRecorder()
+	d.handleWaitEvent(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("wait-event status = %d body=%s", rr.Code, rr.Body.String())
+	}
+
+	loaded, ok, err := agent.LoadRuntimeMeta(sess)
+	if err != nil || !ok {
+		t.Fatalf("LoadRuntimeMeta: err=%v ok=%v", err, ok)
+	}
+	if loaded.Run.Status != "waiting_event" {
+		t.Fatalf("Run.Status = %q, want waiting_event", loaded.Run.Status)
+	}
+	if loaded.Wait.Kind != "event" || loaded.Wait.EventSource != "github.workflow_run" || loaded.Wait.EventID != "delivery-42" {
+		t.Fatalf("wait condition not persisted: %+v", loaded.Wait)
+	}
+	if loaded.Wait.Reason != "waiting for CI" || loaded.Wait.Subject != "PR #42" || loaded.Wait.Since.IsZero() {
+		t.Fatalf("wait metadata incomplete: %+v", loaded.Wait)
+	}
+	events, ok, err := agent.LoadRuntimeTimeline(sess, 1)
+	if err != nil || !ok || len(events) != 1 || events[0].Type != "wait_started" {
+		t.Fatalf("wait timeline not recorded: events=%+v err=%v ok=%v", events, err, ok)
+	}
+
+	req = httptest.NewRequest("POST", "/wait-event", strings.NewReader(`{"session_id":"wait-event-api","clear":true}`))
+	rr = httptest.NewRecorder()
+	d.handleWaitEvent(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("clear wait-event status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	loaded, ok, err = agent.LoadRuntimeMeta(sess)
+	if err != nil || !ok {
+		t.Fatalf("LoadRuntimeMeta after clear: err=%v ok=%v", err, ok)
+	}
+	if loaded.Run.Status != "idle" || loaded.Wait.Kind != "" {
+		t.Fatalf("wait condition not cleared: run=%+v wait=%+v", loaded.Run, loaded.Wait)
+	}
+	events, ok, err = agent.LoadRuntimeTimeline(sess, 1)
+	if err != nil || !ok || len(events) != 1 || events[0].Type != "wait_cleared" {
+		t.Fatalf("wait clear timeline not recorded: events=%+v err=%v ok=%v", events, err, ok)
+	}
+}
+
 func TestDaemonRestoreFileWatches(t *testing.T) {
 	dir := t.TempDir()
 	watchDir := filepath.Join(dir, "workspace")

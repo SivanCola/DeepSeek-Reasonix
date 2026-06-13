@@ -111,6 +111,28 @@ func (d *Daemon) handleWebhook(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"session already running"}`, http.StatusConflict)
 		return
 	}
+	waitingEvent := entry.Runtime.Wait.Kind == "event"
+	if waitingEvent && !webhookMatchesWait(entry.Runtime.Wait, evt, info) {
+		wait := entry.Runtime.Wait
+		runtime := entry.Runtime
+		path := entry.Path
+		d.mu.Unlock()
+		d.appendTimeline(path, agent.RuntimeTimelineEvent{
+			Type:       "wait_event_ignored",
+			Source:     "webhook",
+			Reason:     "incoming event did not match wait condition",
+			EventID:    evt.EventID,
+			RunStatus:  runtime.Run.Status,
+			GoalStatus: runtime.Goal.Status,
+			WaitKind:   wait.Kind,
+			WaitID:     wait.EventID,
+			Subject:    wait.Subject,
+			Message:    webhookSummary(evt, info),
+		})
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"ok":true,"status":"ignored","event_id":%q}`, evt.EventID)
+		return
+	}
 	now := time.Now()
 	if ok, reason := reserveAutoWakeupBudget(&entry.Runtime, "webhook:"+evt.Type, now); !ok {
 		entry.Runtime.Scheduler.LastWakeupAt = now
@@ -143,9 +165,13 @@ func (d *Daemon) handleWebhook(w http.ResponseWriter, r *http.Request) {
 	entry.Runtime.Run.Status = "pending_continue"
 	entry.Runtime.Run.LastWakeupReason = "webhook:" + evt.Type
 	entry.Runtime.Run.ResumeCount++
-	entry.Runtime.Wait = agent.RuntimeWaitMeta{
-		EventSource: "webhook:" + evt.Type,
-		EventID:     evt.EventID,
+	if waitingEvent {
+		entry.Runtime.Wait = agent.RuntimeWaitMeta{}
+	} else {
+		entry.Runtime.Wait = agent.RuntimeWaitMeta{
+			EventSource: "webhook:" + evt.Type,
+			EventID:     evt.EventID,
+		}
 	}
 	entry.Runtime.Scheduler.LastWakeupAt = now
 	entry.Runtime.Scheduler.LastWakeupReason = "webhook:" + evt.Type
@@ -173,6 +199,37 @@ func (d *Daemon) handleWebhook(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	fmt.Fprintf(w, `{"ok":true,"session_id":%q,"status":"pending_continue","event_id":%q}`, evt.SessionID, evt.EventID)
+}
+
+func webhookMatchesWait(wait agent.RuntimeWaitMeta, evt WebhookEvent, info githubWebhookInfo) bool {
+	if wait.EventSource != "" && !webhookSourceMatches(wait.EventSource, evt, info) {
+		return false
+	}
+	if wait.EventID != "" && !strings.EqualFold(wait.EventID, evt.EventID) {
+		return false
+	}
+	return true
+}
+
+func webhookSourceMatches(want string, evt WebhookEvent, info githubWebhookInfo) bool {
+	want = strings.TrimSpace(want)
+	if want == "" {
+		return true
+	}
+	candidates := []string{
+		evt.Type,
+		"webhook:" + evt.Type,
+		info.Event,
+	}
+	if info.Event != "" {
+		candidates = append(candidates, "github."+info.Event, "webhook:github."+info.Event)
+	}
+	for _, candidate := range candidates {
+		if strings.EqualFold(want, strings.TrimSpace(candidate)) {
+			return true
+		}
+	}
+	return false
 }
 
 type githubWebhookInfo struct {

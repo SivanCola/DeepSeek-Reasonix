@@ -48,6 +48,8 @@ func daemonCommand(args []string) int {
 		return daemonScheduleCmd(rest)
 	case "budget":
 		return daemonBudgetCmd(rest)
+	case "wait-event":
+		return daemonWaitEventCmd(rest)
 	case "approve":
 		return daemonApprovalCmd(rest, true)
 	case "deny":
@@ -411,6 +413,61 @@ func daemonBudgetCmd(args []string) int {
 	return 0
 }
 
+func daemonWaitEventCmd(args []string) int {
+	fs := flag.NewFlagSet("daemon wait-event", flag.ContinueOnError)
+	addr := fs.String("addr", daemon.DefaultAddr, "daemon 地址")
+	dir := fs.String("dir", "", "会话目录（用于读取本地 token）")
+	sessionID := fs.String("session", "", "要设置等待条件的 session ID")
+	source := fs.String("source", "", "等待的事件来源，例如 github.workflow_run")
+	eventID := fs.String("event-id", "", "等待的具体 event id")
+	reason := fs.String("reason", "", "等待原因")
+	subject := fs.String("subject", "", "等待对象，例如 PR #42")
+	clear := fs.Bool("clear", false, "清除当前 event wait 条件")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if *sessionID == "" {
+		fmt.Fprintln(os.Stderr, "error: --session is required")
+		return 2
+	}
+	if !*clear && *source == "" && *eventID == "" {
+		fmt.Fprintln(os.Stderr, "error: --source or --event-id is required unless --clear is set")
+		return 2
+	}
+
+	body := fmt.Sprintf(`{"session_id":%q`, *sessionID)
+	if *clear {
+		body += `,"clear":true`
+	} else {
+		if *source != "" {
+			body += fmt.Sprintf(`,"event_source":%q`, *source)
+		}
+		if *eventID != "" {
+			body += fmt.Sprintf(`,"event_id":%q`, *eventID)
+		}
+		if *reason != "" {
+			body += fmt.Sprintf(`,"reason":%q`, *reason)
+		}
+		if *subject != "" {
+			body += fmt.Sprintf(`,"subject":%q`, *subject)
+		}
+	}
+	body += "}"
+	resp, err := daemonPost(*addr, *dir, "/wait-event", body)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "daemon not reachable: %v\n", err)
+		return 1
+	}
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 200 {
+		fmt.Fprintf(os.Stderr, "error: %s\n", string(b))
+		return 1
+	}
+	fmt.Println(string(b))
+	return 0
+}
+
 func daemonApprovalCmd(args []string, allow bool) int {
 	name := "daemon approve"
 	path := "/approvals/approve"
@@ -539,6 +596,7 @@ Usage:
   reasonix daemon continue --session ID [--addr HOST:PORT] [--dir PATH]
   reasonix daemon schedule --session ID [--daily-at HH:MM | --interval 1h]
   reasonix daemon budget   --session ID --daily-wakeups N [--reset]
+  reasonix daemon wait-event --session ID --source TYPE [--event-id ID]
   reasonix daemon approve  --session ID --approval ID
   reasonix daemon deny     --session ID --approval ID
   reasonix daemon answer   --session ID --ask ID --selected TEXT
@@ -553,6 +611,7 @@ Subcommands:
   continue   显式唤醒并继续指定 goal
   schedule   设置 daily/interval 定时唤醒
   budget     设置自动唤醒每日预算
+  wait-event 设置或清除等待外部事件条件
   approve    批准 daemon 中等待的审批
   deny       拒绝 daemon 中等待的审批
   answer     回答 daemon 中等待的 ask 问题

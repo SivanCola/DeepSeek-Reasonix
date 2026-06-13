@@ -182,7 +182,7 @@ dynamic workflow 或开发者平台，而是先把 Reasonix 从一次性会话�
   - [ ] 可选择启动 bot gateway。
 - [x] 新增本地控制接口。
   - [x] 使用 localhost HTTP。
-  - [x] 提供 status、sessions、continue goal、stop run、approve、answer。
+  - [x] 提供 status、sessions、continue goal、stop run、approve、answer、wait-event。
 - [x] 单实例控制。
   - [x] 同一 config/session dir 只允许一个 daemon 写 runtime state。
   - [x] 启动时检测锁文件。
@@ -267,8 +267,9 @@ dynamic workflow 或开发者平台，而是先把 Reasonix 从一次性会话�
   - [x] workflow_run completed。
   - [ ] 更多 provider-specific 事件归一化。
 - [ ] CI 等待场景。
-  - 任务等待 CI 时写 runtime wait condition。
-  - webhook 收到 CI 绿灯后触发下一步。
+  - [x] daemon API/CLI 可写 runtime event wait condition。
+  - [x] webhook 匹配 event wait condition 后触发下一步。
+  - [ ] CI 绿灯语义过滤（status/conclusion）和失败分支总结。
 - [ ] 幂等处理。
   - [x] event id 去重。
   - [ ] 同一 PR 的相同状态变化不重复跑。
@@ -335,11 +336,11 @@ dynamic workflow 或开发者平台，而是先把 Reasonix 从一次性会话�
   - 不同 session 可限制并发。
   - 支持优先级。
 - [ ] 引入 wait condition。
-  - wait for CI
-  - wait for user approval
-  - wait until time
-  - wait for file change
-  - wait for webhook
+  - [x] wait for user approval
+  - [x] wait for webhook / external event
+  - [ ] wait for CI status/conclusion
+  - [ ] wait until time
+  - [ ] wait for file change
 - [ ] 成本预算。
   - [x] session 级每日自动唤醒次数预算。
   - 每日模型调用次数。

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"reasonix/internal/agent"
@@ -346,6 +347,97 @@ func (d *Daemon) handleBudget(w http.ResponseWriter, r *http.Request) {
 		"daily_wakeup_limit": runtime.Budget.DailyWakeupLimit,
 		"daily_wakeups":      runtime.Budget.DailyWakeups,
 		"window_started_at":  runtime.Budget.WindowStartedAt.Format(time.RFC3339),
+	}
+	json.NewEncoder(w).Encode(resp)
+}
+
+// handleWaitEvent sets or clears an external event wait condition.
+// Body: {"session_id":"...","event_source":"github.workflow_run","event_id":"...","reason":"waiting for CI","subject":"PR #42","clear":false}
+func (d *Daemon) handleWaitEvent(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		SessionID   string `json:"session_id"`
+		EventSource string `json:"event_source"`
+		EventID     string `json:"event_id"`
+		Reason      string `json:"reason"`
+		Subject     string `json:"subject"`
+		Clear       bool   `json:"clear"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, `{"error":"invalid json"}`, http.StatusBadRequest)
+		return
+	}
+	if req.SessionID == "" {
+		http.Error(w, `{"error":"session_id required"}`, http.StatusBadRequest)
+		return
+	}
+	if !req.Clear && req.EventSource == "" && req.EventID == "" {
+		http.Error(w, `{"error":"event_source or event_id required"}`, http.StatusBadRequest)
+		return
+	}
+
+	now := time.Now().UTC()
+	d.mu.Lock()
+	entry, ok := d.registry[req.SessionID]
+	if !ok {
+		d.mu.Unlock()
+		http.Error(w, `{"error":"session not found"}`, http.StatusNotFound)
+		return
+	}
+	if _, active := d.activeRuns[req.SessionID]; active {
+		d.mu.Unlock()
+		http.Error(w, `{"error":"session already running"}`, http.StatusConflict)
+		return
+	}
+	action := "wait_started"
+	if req.Clear {
+		entry.Runtime.Wait = agent.RuntimeWaitMeta{}
+		if entry.Runtime.Run.Status == "waiting_event" {
+			entry.Runtime.Run.Status = "idle"
+		}
+		action = "wait_cleared"
+	} else {
+		reason := req.Reason
+		if reason == "" {
+			reason = "waiting for external event"
+		}
+		entry.Runtime.Wait = agent.RuntimeWaitMeta{
+			Kind:        "event",
+			Reason:      reason,
+			EventSource: strings.TrimSpace(req.EventSource),
+			EventID:     strings.TrimSpace(req.EventID),
+			Subject:     strings.TrimSpace(req.Subject),
+			Since:       now,
+		}
+		entry.Runtime.Run.Status = "waiting_event"
+	}
+	runtime := entry.Runtime
+	path := entry.Path
+	d.mu.Unlock()
+
+	if err := agent.SaveRuntimeMeta(path, runtime); err != nil {
+		http.Error(w, fmt.Sprintf(`{"error":"save failed: %s"}`, err), http.StatusInternalServerError)
+		return
+	}
+	d.appendTimeline(path, agent.RuntimeTimelineEvent{
+		Type:       action,
+		Source:     "api",
+		RunStatus:  runtime.Run.Status,
+		GoalStatus: runtime.Goal.Status,
+		WaitKind:   runtime.Wait.Kind,
+		WaitID:     runtime.Wait.EventID,
+		Subject:    runtime.Wait.Subject,
+		Reason:     runtime.Wait.Reason,
+		EventID:    runtime.Wait.EventID,
+	})
+
+	w.Header().Set("Content-Type", "application/json")
+	resp := map[string]interface{}{
+		"ok":           true,
+		"session_id":   req.SessionID,
+		"run_status":   runtime.Run.Status,
+		"wait_kind":    runtime.Wait.Kind,
+		"event_source": runtime.Wait.EventSource,
+		"event_id":     runtime.Wait.EventID,
 	}
 	json.NewEncoder(w).Encode(resp)
 }
