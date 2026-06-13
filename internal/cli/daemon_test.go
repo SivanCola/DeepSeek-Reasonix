@@ -108,6 +108,40 @@ func TestNewDaemonLoggerCanDisableFile(t *testing.T) {
 	}
 }
 
+func TestDaemonTokenRotateCommandWritesNewTokenWithoutPrintingIt(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(daemon.TokenFile(dir), []byte("old-token\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile token: %v", err)
+	}
+
+	out := captureStdout(t, func() {
+		if rc := daemonCommand([]string{"token", "rotate", "--dir", dir}); rc != 0 {
+			t.Fatalf("daemon token rotate rc = %d, want 0", rc)
+		}
+	})
+
+	b, err := os.ReadFile(daemon.TokenFile(dir))
+	if err != nil {
+		t.Fatalf("ReadFile token: %v", err)
+	}
+	token := strings.TrimSpace(string(b))
+	if token == "" || token == "old-token" {
+		t.Fatalf("token was not rotated: %q", token)
+	}
+	if strings.Contains(out, token) {
+		t.Fatal("rotate output should not print token")
+	}
+	for _, want := range []string{
+		"daemon token rotated:",
+		daemon.TokenFile(dir),
+		"restart any running daemon",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("rotate output missing %q:\n%s", want, out)
+		}
+	}
+}
+
 func TestPrepareBotGatewayBuildsGateway(t *testing.T) {
 	cfg := testBotGatewayConfig()
 	cfg.Bot.Model = "bot-model"

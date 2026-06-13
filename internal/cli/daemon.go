@@ -37,6 +37,8 @@ func daemonCommand(args []string) int {
 		return daemonStatus(rest)
 	case "doctor":
 		return daemonDoctor(rest)
+	case "token":
+		return daemonTokenCmd(rest)
 	case "sessions":
 		return daemonSessions(rest)
 	case "approvals":
@@ -79,6 +81,56 @@ func daemonCommand(args []string) int {
 		daemonUsage()
 		return 2
 	}
+}
+
+func daemonTokenCmd(args []string) int {
+	if len(args) < 1 {
+		daemonTokenUsage()
+		return 2
+	}
+	sub := args[0]
+	rest := args[1:]
+	switch sub {
+	case "rotate":
+		return daemonTokenRotate(rest)
+	case "help", "--help", "-h":
+		daemonTokenUsage()
+		return 0
+	default:
+		fmt.Fprintf(os.Stderr, "unknown daemon token subcommand %q\n\n", sub)
+		daemonTokenUsage()
+		return 2
+	}
+}
+
+func daemonTokenRotate(args []string) int {
+	fs := flag.NewFlagSet("daemon token rotate", flag.ContinueOnError)
+	dir := fs.String("dir", "", "会话目录（默认用户配置）")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	sessionDir := strings.TrimSpace(*dir)
+	if sessionDir == "" {
+		sessionDir = config.SessionDir()
+	}
+	if _, err := daemon.RotateToken(sessionDir); err != nil {
+		fmt.Fprintf(os.Stderr, "error: rotate daemon token: %v\n", err)
+		return 1
+	}
+	fmt.Printf("daemon token rotated: %s\n", daemon.TokenFile(sessionDir))
+	fmt.Println("restart any running daemon for the new token to take effect")
+	return 0
+}
+
+func daemonTokenUsage() {
+	fmt.Print(`reasonix daemon token — 管理本地 daemon API token
+
+Usage:
+  reasonix daemon token rotate [--dir PATH]
+
+Subcommands:
+  rotate   生成并写入新的本地 daemon API token（不打印 token 内容）
+`)
 }
 
 func daemonTimeline(args []string) int {
@@ -1298,6 +1350,7 @@ Usage:
   reasonix daemon start    [--addr HOST:PORT] [--dir PATH] [--log-file PATH|none] [--bot --bot-channels qq,feishu,weixin] [--webhook --webhook-secret SECRET]
   reasonix daemon status   [--addr HOST:PORT] [--dir PATH]
   reasonix daemon doctor   [--addr HOST:PORT] [--dir PATH] [--log-file PATH|none] [--json]
+  reasonix daemon token rotate [--dir PATH]
   reasonix daemon sessions [--addr HOST:PORT] [--dir PATH] [--json]
   reasonix daemon approvals [--addr HOST:PORT] [--dir PATH] [--json]
   reasonix daemon timeline --session ID [--limit N] [--json]
@@ -1320,6 +1373,7 @@ Subcommands:
   start      启动 daemon（前台运行，Ctrl-C 停止）
   status     查询 daemon 状态
   doctor     检查 daemon token、lock、runtime sidecar 和在线状态
+  token      管理本地 daemon API token
   sessions   列出所有跟踪的 session 及其 goal/run 状态
   approvals  列出等待审批或 ask 回答的 daemon 待办
   timeline   查看指定 session 的运行事件时间线

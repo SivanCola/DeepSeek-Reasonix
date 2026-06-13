@@ -1892,6 +1892,44 @@ func TestDaemonAuthMiddlewareRequiresToken(t *testing.T) {
 	}
 }
 
+func TestRotateTokenWritesFreshToken(t *testing.T) {
+	dir := t.TempDir()
+	path := TokenFile(dir)
+	if err := os.WriteFile(path, []byte("old-token\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile old token: %v", err)
+	}
+
+	token, err := RotateToken(dir)
+	if err != nil {
+		t.Fatalf("RotateToken: %v", err)
+	}
+	if len(token) != 64 {
+		t.Fatalf("token length = %d, want 64", len(token))
+	}
+	for _, r := range token {
+		if !strings.ContainsRune("0123456789abcdef", r) {
+			t.Fatalf("token contains non-hex rune %q", r)
+		}
+	}
+	if token == "old-token" {
+		t.Fatal("token should change")
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile token: %v", err)
+	}
+	if got := strings.TrimSpace(string(b)); got != token {
+		t.Fatal("stored token does not match generated token")
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("Stat token: %v", err)
+	}
+	if mode := info.Mode().Perm(); mode != 0o600 {
+		t.Fatalf("token file mode = %v, want 0600", mode)
+	}
+}
+
 func countTimelineEvents(t *testing.T, sessionPath, eventType string) int {
 	t.Helper()
 	events, ok, err := agent.LoadRuntimeTimeline(sessionPath, 0)

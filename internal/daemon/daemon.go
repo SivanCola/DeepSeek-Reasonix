@@ -342,6 +342,29 @@ func TokenFile(sessionDir string) string {
 	return filepath.Join(sessionDir, ".daemon.token")
 }
 
+// GenerateToken returns a fresh local API token for daemon authentication.
+func GenerateToken() (string, error) {
+	var raw [32]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(raw[:]), nil
+}
+
+// RotateToken writes a fresh daemon API token to the session dir token file and
+// returns the token. Running daemon processes keep their in-memory token until
+// restarted.
+func RotateToken(sessionDir string) (string, error) {
+	token, err := GenerateToken()
+	if err != nil {
+		return "", err
+	}
+	if err := writeTokenFile(TokenFile(sessionDir), token); err != nil {
+		return "", err
+	}
+	return token, nil
+}
+
 // LockFile returns the daemon single-instance lock path for a session dir.
 func LockFile(sessionDir string) string {
 	return filepath.Join(sessionDir, ".daemon.lock")
@@ -358,15 +381,19 @@ func (d *Daemon) ensureToken() error {
 			return nil
 		}
 	}
-	var raw [32]byte
-	if _, err := rand.Read(raw[:]); err != nil {
+	token, err := GenerateToken()
+	if err != nil {
 		return err
 	}
-	d.token = hex.EncodeToString(raw[:])
+	d.token = token
+	return writeTokenFile(path, d.token)
+}
+
+func writeTokenFile(path, token string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	return os.WriteFile(path, []byte(d.token+"\n"), 0o600)
+	return os.WriteFile(path, []byte(strings.TrimSpace(token)+"\n"), 0o600)
 }
 
 func (d *Daemon) withAuth(next http.HandlerFunc) http.HandlerFunc {
