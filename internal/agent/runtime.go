@@ -72,7 +72,7 @@ type RuntimeRunMeta struct {
 
 // RuntimeWaitMeta captures a user-owned wait condition that paused a run.
 type RuntimeWaitMeta struct {
-	Kind            string    `json:"kind,omitempty"` // approval|ask|event|time
+	Kind            string    `json:"kind,omitempty"` // approval|ask|event|time|file
 	Reason          string    `json:"reason,omitempty"`
 	ApprovalID      string    `json:"approval_id,omitempty"`
 	AskID           string    `json:"ask_id,omitempty"`
@@ -82,6 +82,7 @@ type RuntimeWaitMeta struct {
 	EventID         string    `json:"event_id,omitempty"`
 	EventStatus     string    `json:"event_status,omitempty"`
 	EventConclusion string    `json:"event_conclusion,omitempty"`
+	FilePaths       []string  `json:"file_paths,omitempty"`
 	Until           time.Time `json:"until,omitempty"`
 	Since           time.Time `json:"since,omitempty"`
 }

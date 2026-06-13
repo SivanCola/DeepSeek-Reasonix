@@ -182,7 +182,7 @@ dynamic workflow 或开发者平台，而是先把 Reasonix 从一次性会话�
   - [ ] 可选择启动 bot gateway。
 - [x] 新增本地控制接口。
   - [x] 使用 localhost HTTP。
-  - [x] 提供 status、sessions、continue goal、stop run、approve、answer、wait-event、wait-time。
+  - [x] 提供 status、sessions、continue goal、stop run、approve、answer、wait-event、wait-time、wait-file。
 - [x] 单实例控制。
   - [x] 同一 config/session dir 只允许一个 daemon 写 runtime state。
   - [x] 启动时检测锁文件。
@@ -306,8 +306,11 @@ dynamic workflow 或开发者平台，而是先把 Reasonix 从一次性会话�
   - [x] 不把大文件内容直接塞进 prompt。
   - [x] 只提供路径、变更类型、摘要。
 - [ ] 测试。
+  - [x] explicit file wait 匹配后一次性唤醒并清除 wait。
+  - [x] explicit file wait 不匹配时不唤醒。
+  - [x] event/time 等其他 wait 不会被文件变化误唤醒。
   - rapid changes 合并。
-  - ignored path 不触发。
+  - [x] ignored path 不触发。
   - running session 不并发触发。
 
 ### 验收标准
@@ -341,7 +344,7 @@ dynamic workflow 或开发者平台，而是先把 Reasonix 从一次性会话�
   - [x] wait for webhook / external event
   - [x] wait for CI status/conclusion
   - [x] wait until time
-  - [ ] wait for file change
+  - [x] wait for file change
 - [ ] 成本预算。
   - [x] session 级每日自动唤醒次数预算。
   - 每日模型调用次数。

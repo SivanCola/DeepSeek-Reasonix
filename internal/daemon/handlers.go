@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -571,6 +572,186 @@ func parseWaitUntil(untilRaw, afterRaw string, now time.Time) (time.Time, error)
 		return time.Time{}, fmt.Errorf("invalid until: %s", err)
 	}
 	return until.UTC(), nil
+}
+
+// handleWaitFile sets or clears a file-change wait condition and configures the
+// underlying watcher needed to observe it.
+// Body: {"session_id":"...","paths":["src/"],"ignore_patterns":["*.tmp"],"debounce":"3s","reason":"waiting for build output","subject":"dist/app.js"}
+func (d *Daemon) handleWaitFile(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		SessionID      string   `json:"session_id"`
+		Paths          []string `json:"paths"`
+		IgnorePatterns []string `json:"ignore_patterns"`
+		Debounce       string   `json:"debounce"`
+		Reason         string   `json:"reason"`
+		Subject        string   `json:"subject"`
+		Clear          bool     `json:"clear"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, `{"error":"invalid json"}`, http.StatusBadRequest)
+		return
+	}
+	if req.SessionID == "" {
+		http.Error(w, `{"error":"session_id required"}`, http.StatusBadRequest)
+		return
+	}
+	if !req.Clear && len(req.Paths) == 0 {
+		http.Error(w, `{"error":"paths required"}`, http.StatusBadRequest)
+		return
+	}
+	debounce := 3 * time.Second
+	if req.Debounce != "" {
+		dur, err := time.ParseDuration(req.Debounce)
+		if err != nil {
+			http.Error(w, fmt.Sprintf(`{"error":"invalid debounce: %s"}`, err), http.StatusBadRequest)
+			return
+		}
+		if dur < time.Second {
+			http.Error(w, `{"error":"debounce must be at least 1s"}`, http.StatusBadRequest)
+			return
+		}
+		debounce = dur
+	}
+
+	now := time.Now().UTC()
+	d.mu.Lock()
+	entry, ok := d.registry[req.SessionID]
+	if !ok {
+		d.mu.Unlock()
+		http.Error(w, `{"error":"session not found"}`, http.StatusNotFound)
+		return
+	}
+	if _, active := d.activeRuns[req.SessionID]; active {
+		d.mu.Unlock()
+		http.Error(w, `{"error":"session already running"}`, http.StatusConflict)
+		return
+	}
+	action := "wait_started"
+	if req.Clear {
+		entry.Runtime.Wait = agent.RuntimeWaitMeta{}
+		entry.Runtime.FileWatch = agent.RuntimeWatchMeta{}
+		if entry.Runtime.Run.Status == "waiting_file" {
+			entry.Runtime.Run.Status = "idle"
+		}
+		action = "wait_cleared"
+	} else {
+		reason := strings.TrimSpace(req.Reason)
+		if reason == "" {
+			reason = "waiting for file change"
+		}
+		subject := strings.TrimSpace(req.Subject)
+		if subject == "" {
+			subject = strings.Join(req.Paths, ",")
+		}
+		paths := append([]string(nil), req.Paths...)
+		watchPaths := fileWaitWatchPaths(paths, entry.Runtime.WorkspaceRoot)
+		entry.Runtime.Wait = agent.RuntimeWaitMeta{
+			Kind:      "file",
+			Reason:    reason,
+			Subject:   subject,
+			FilePaths: paths,
+			Since:     now,
+		}
+		entry.Runtime.Run.Status = "waiting_file"
+		entry.Runtime.FileWatch = agent.RuntimeWatchMeta{
+			Paths:          watchPaths,
+			IgnorePatterns: append([]string(nil), req.IgnorePatterns...),
+			Debounce:       debounce,
+			Enabled:        true,
+		}
+	}
+	runtime := entry.Runtime
+	path := entry.Path
+	d.mu.Unlock()
+
+	if err := agent.SaveRuntimeMeta(path, runtime); err != nil {
+		http.Error(w, fmt.Sprintf(`{"error":"save failed: %s"}`, err), http.StatusInternalServerError)
+		return
+	}
+	d.mu.Lock()
+	if entry := d.registry[req.SessionID]; entry != nil {
+		entry.Runtime = runtime
+	}
+	d.mu.Unlock()
+	if d.fileWatcher != nil {
+		watchEntry := &SessionEntry{ID: req.SessionID, Path: path, Runtime: runtime}
+		if runtime.FileWatch.Enabled {
+			d.fileWatcher.Register(req.SessionID, fileWatchConfigForEntry(watchEntry))
+		} else if req.Clear {
+			d.fileWatcher.Unregister(req.SessionID)
+		}
+	}
+	d.appendTimeline(path, agent.RuntimeTimelineEvent{
+		Type:       action,
+		Source:     "api",
+		RunStatus:  runtime.Run.Status,
+		GoalStatus: runtime.Goal.Status,
+		WaitKind:   runtime.Wait.Kind,
+		Subject:    runtime.Wait.Subject,
+		Reason:     runtime.Wait.Reason,
+		Message:    fmt.Sprintf("file wait paths=%d", len(runtime.Wait.FilePaths)),
+	})
+
+	w.Header().Set("Content-Type", "application/json")
+	resp := map[string]interface{}{
+		"ok":         true,
+		"session_id": req.SessionID,
+		"run_status": runtime.Run.Status,
+		"wait_kind":  runtime.Wait.Kind,
+		"paths":      len(runtime.Wait.FilePaths),
+	}
+	json.NewEncoder(w).Encode(resp)
+}
+
+func fileWaitWatchPaths(paths []string, workspaceRoot string) []string {
+	out := make([]string, 0, len(paths))
+	seen := make(map[string]struct{})
+	for _, path := range paths {
+		root := fileWaitWatchPath(path, workspaceRoot)
+		if root == "" {
+			continue
+		}
+		if _, ok := seen[root]; ok {
+			continue
+		}
+		seen[root] = struct{}{}
+		out = append(out, root)
+	}
+	return out
+}
+
+func fileWaitWatchPath(path, workspaceRoot string) string {
+	raw := strings.TrimSpace(path)
+	if raw == "" {
+		return ""
+	}
+	clean := filepath.Clean(raw)
+	if idx := strings.IndexAny(clean, "*?["); idx >= 0 {
+		prefix := clean[:idx]
+		if prefix == "" {
+			return "."
+		}
+		dir := filepath.Dir(prefix)
+		if dir == "." && strings.HasSuffix(prefix, string(filepath.Separator)) {
+			return filepath.Clean(prefix)
+		}
+		return dir
+	}
+	if strings.HasSuffix(raw, string(filepath.Separator)) {
+		return clean
+	}
+	resolved := clean
+	if !filepath.IsAbs(clean) && workspaceRoot != "" {
+		resolved = filepath.Join(workspaceRoot, clean)
+	}
+	if info, err := os.Stat(resolved); err == nil && info.IsDir() {
+		return clean
+	}
+	dir := filepath.Dir(clean)
+	if dir == "" {
+		return "."
+	}
+	return dir
 }
 
 // handleWatch configures file watching for a session.

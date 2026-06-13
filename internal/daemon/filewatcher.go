@@ -255,6 +255,39 @@ func (fw *FileWatcher) fireWakeup(sessionID string, state *watchState, now time.
 		fw.daemon.mu.Unlock()
 		return
 	}
+	wait := entry.Runtime.Wait
+	if wait.Kind != "" && wait.Kind != "file" {
+		runtime := entry.Runtime
+		path := entry.Path
+		fw.daemon.mu.Unlock()
+		fw.daemon.appendTimeline(path, agent.RuntimeTimelineEvent{
+			Type:       "file_change_ignored",
+			Source:     "file_watch",
+			Reason:     "waiting_for_" + wait.Kind,
+			RunStatus:  runtime.Run.Status,
+			GoalStatus: runtime.Goal.Status,
+			WaitKind:   wait.Kind,
+			Subject:    wait.Subject,
+			Message:    summary,
+		})
+		return
+	}
+	if wait.Kind == "file" && !fileWaitMatches(wait, state.config, changes) {
+		runtime := entry.Runtime
+		path := entry.Path
+		fw.daemon.mu.Unlock()
+		fw.daemon.appendTimeline(path, agent.RuntimeTimelineEvent{
+			Type:       "wait_file_ignored",
+			Source:     "file_watch",
+			Reason:     "changed files did not match wait condition",
+			RunStatus:  runtime.Run.Status,
+			GoalStatus: runtime.Goal.Status,
+			WaitKind:   wait.Kind,
+			Subject:    wait.Subject,
+			Message:    summary,
+		})
+		return
+	}
 	if ok, reason := reserveAutoWakeupBudget(&entry.Runtime, "file_watch", now); !ok {
 		entry.Runtime.Scheduler.LastWakeupAt = now
 		entry.Runtime.Scheduler.LastWakeupReason = "budget_blocked:file_watch"
@@ -270,11 +303,18 @@ func (fw *FileWatcher) fireWakeup(sessionID string, state *watchState, now time.
 			Reason:     reason,
 			RunStatus:  runtime.Run.Status,
 			GoalStatus: runtime.Goal.Status,
+			WaitKind:   runtime.Wait.Kind,
+			Subject:    runtime.Wait.Subject,
 			Message:    reason,
 		})
 		return
 	}
 
+	clearFileWait := wait.Kind == "file"
+	if clearFileWait {
+		entry.Runtime.Wait = agent.RuntimeWaitMeta{}
+		entry.Runtime.FileWatch = agent.RuntimeWatchMeta{}
+	}
 	entry.Runtime.Run.Status = "pending_continue"
 	entry.Runtime.Run.LastWakeupReason = "file_change"
 	entry.Runtime.Run.ResumeCount++
@@ -289,12 +329,17 @@ func (fw *FileWatcher) fireWakeup(sessionID string, state *watchState, now time.
 	} else {
 		fw.logger.Info("file watcher triggered wakeup", "session", sessionID)
 	}
+	if clearFileWait {
+		fw.Unregister(sessionID)
+	}
 	fw.daemon.appendTimeline(path, agent.RuntimeTimelineEvent{
 		Type:       "file_change_detected",
 		Source:     "file_watch",
 		Reason:     "file_change",
 		RunStatus:  runtime.Run.Status,
 		GoalStatus: runtime.Goal.Status,
+		WaitKind:   wait.Kind,
+		Subject:    wait.Subject,
 		Message:    summary,
 	})
 	fw.daemon.enqueueIntent(RunIntent{
@@ -304,6 +349,67 @@ func (fw *FileWatcher) fireWakeup(sessionID string, state *watchState, now time.
 		Reason:      "file_change",
 		Context:     summary,
 	})
+}
+
+func fileWaitMatches(wait agent.RuntimeWaitMeta, cfg FileWatchConfig, changes []string) bool {
+	if len(wait.FilePaths) == 0 {
+		return true
+	}
+	for _, changed := range changes {
+		for _, want := range wait.FilePaths {
+			if filePathMatchesWait(want, changed, cfg.Paths) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func filePathMatchesWait(want, changed string, roots []string) bool {
+	want = filepath.Clean(strings.TrimSpace(want))
+	if want == "." || want == "" {
+		return false
+	}
+	changed = filepath.Clean(changed)
+	display := filepath.Clean(displayFileWatchPath(roots, changed))
+	base := filepath.Base(changed)
+	candidates := []string{changed, display, base}
+	matches := func(pattern, candidate string) bool {
+		candidate = filepath.Clean(candidate)
+		if candidate == pattern || strings.HasSuffix(candidate, string(filepath.Separator)+pattern) {
+			return true
+		}
+		if strings.HasPrefix(candidate, pattern+string(filepath.Separator)) {
+			return true
+		}
+		if matched, _ := filepath.Match(pattern, candidate); matched {
+			return true
+		}
+		if matched, _ := filepath.Match(pattern, filepath.Base(candidate)); matched {
+			return true
+		}
+		return false
+	}
+	if !filepath.IsAbs(want) {
+		for _, root := range roots {
+			root = filepath.Clean(strings.TrimSpace(root))
+			if root == "" {
+				continue
+			}
+			if matches(filepath.Join(root, want), changed) {
+				return true
+			}
+			if rel, err := filepath.Rel(filepath.Dir(root), changed); err == nil {
+				candidates = append(candidates, filepath.Clean(rel))
+			}
+		}
+	}
+	for _, candidate := range candidates {
+		if matches(want, candidate) {
+			return true
+		}
+	}
+	return false
 }
 
 func sortedFileWatchChanges(changes map[string]struct{}) []string {

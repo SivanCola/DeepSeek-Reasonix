@@ -181,8 +181,9 @@ func TestSaveRuntimeMetaRoundTrip(t *testing.T) {
 			LastWakeupKey:     "github.workflow_run|esengine/deepseek-reasonix|#42|completed/success",
 		},
 		Wait: RuntimeWaitMeta{
-			Kind:  "time",
-			Until: now.Add(2 * time.Hour),
+			Kind:      "time",
+			FilePaths: []string{"src/a.go"},
+			Until:     now.Add(2 * time.Hour),
 		},
 	}
 
@@ -225,6 +226,9 @@ func TestSaveRuntimeMetaRoundTrip(t *testing.T) {
 	}
 	if !loaded.Wait.Until.Equal(meta.Wait.Until) {
 		t.Errorf("Wait.Until = %v, want %v", loaded.Wait.Until, meta.Wait.Until)
+	}
+	if len(loaded.Wait.FilePaths) != 1 || loaded.Wait.FilePaths[0] != "src/a.go" {
+		t.Errorf("Wait.FilePaths = %+v, want src/a.go", loaded.Wait.FilePaths)
 	}
 }
 

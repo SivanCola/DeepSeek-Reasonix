@@ -192,6 +192,7 @@ func (d *Daemon) Start(ctx context.Context) error {
 	mux.HandleFunc("POST /budget", d.withAuth(d.handleBudget))
 	mux.HandleFunc("POST /wait-event", d.withAuth(d.handleWaitEvent))
 	mux.HandleFunc("POST /wait-time", d.withAuth(d.handleWaitTime))
+	mux.HandleFunc("POST /wait-file", d.withAuth(d.handleWaitFile))
 	mux.HandleFunc("POST /webhook", d.handleWebhook)
 	mux.HandleFunc("POST /watch", d.withAuth(d.handleWatch))
 	mux.HandleFunc("POST /approvals/approve", d.withAuth(d.handleApprove))
@@ -441,7 +442,7 @@ func (d *Daemon) scanDir(dir string) {
 
 // recoverInterrupted marks any session with an in-flight or controller-owned
 // user wait as "interrupted" — these were killed mid-flight and no longer have a
-// live controller to receive approvals/answers. Daemon-owned event/time waits
+// live controller to receive approvals/answers. Daemon-owned event/time/file waits
 // are dormant waits and survive restart. Does NOT auto-resume.
 func (d *Daemon) recoverInterrupted() {
 	d.mu.Lock()

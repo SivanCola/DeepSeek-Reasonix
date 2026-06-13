@@ -204,6 +204,15 @@ func TestDaemonRecoverPreservesDaemonOwnedWaits(t *testing.T) {
 		Wait:      agent.RuntimeWaitMeta{Kind: "time", Until: time.Now().Add(time.Hour).UTC()},
 	})
 
+	fileSess := filepath.Join(dir, "waiting-file.jsonl")
+	os.WriteFile(fileSess, []byte(`{"role":"user"}`), 0o644)
+	agent.SaveRuntimeMeta(fileSess, agent.RuntimeMeta{
+		SessionID: "waiting-file",
+		Goal:      agent.RuntimeGoalMeta{Text: "ship it", Status: "running"},
+		Run:       agent.RuntimeRunMeta{Status: "waiting_file"},
+		Wait:      agent.RuntimeWaitMeta{Kind: "file", FilePaths: []string{"src/a.go"}},
+	})
+
 	d := New(Options{SessionDir: dir})
 	d.scanSessions()
 	d.recoverInterrupted()
@@ -221,6 +230,13 @@ func TestDaemonRecoverPreservesDaemonOwnedWaits(t *testing.T) {
 	}
 	if timeMeta.Run.Status != "waiting_time" || timeMeta.Wait.Kind != "time" {
 		t.Fatalf("time wait should be preserved: run=%+v wait=%+v", timeMeta.Run, timeMeta.Wait)
+	}
+	fileMeta, ok, err := agent.LoadRuntimeMeta(fileSess)
+	if err != nil || !ok {
+		t.Fatalf("LoadRuntimeMeta file: err=%v ok=%v", err, ok)
+	}
+	if fileMeta.Run.Status != "waiting_file" || fileMeta.Wait.Kind != "file" {
+		t.Fatalf("file wait should be preserved: run=%+v wait=%+v", fileMeta.Run, fileMeta.Wait)
 	}
 }
 
@@ -551,6 +567,78 @@ func TestDaemonWaitTimeHandlerPersistsConfig(t *testing.T) {
 	}
 }
 
+func TestDaemonWaitFileHandlerPersistsConfig(t *testing.T) {
+	dir := t.TempDir()
+	watchDir := filepath.Join(dir, "workspace")
+	if err := os.MkdirAll(filepath.Join(watchDir, "src"), 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	sess := filepath.Join(dir, "wait-file-api.jsonl")
+	if err := os.WriteFile(sess, []byte(`{"role":"user","content":"start"}`+"\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	if err := agent.SaveRuntimeMeta(sess, agent.RuntimeMeta{
+		SessionID:     "wait-file-api",
+		WorkspaceRoot: watchDir,
+		Goal:          agent.RuntimeGoalMeta{Text: "wait for generated file", Status: control.GoalStatusRunning},
+		Run:           agent.RuntimeRunMeta{Status: "idle"},
+	}); err != nil {
+		t.Fatalf("SaveRuntimeMeta: %v", err)
+	}
+
+	d := New(Options{SessionDir: dir})
+	d.scanSessions()
+	d.fileWatcher = NewFileWatcher(d, nil)
+	req := httptest.NewRequest("POST", "/wait-file", strings.NewReader(`{"session_id":"wait-file-api","paths":["src/output.txt"],"ignore_patterns":["*.tmp"],"debounce":"5s","reason":"waiting for generator","subject":"output.txt"}`))
+	rr := httptest.NewRecorder()
+	d.handleWaitFile(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("wait-file status = %d body=%s", rr.Code, rr.Body.String())
+	}
+
+	loaded, ok, err := agent.LoadRuntimeMeta(sess)
+	if err != nil || !ok {
+		t.Fatalf("LoadRuntimeMeta: err=%v ok=%v", err, ok)
+	}
+	if loaded.Run.Status != "waiting_file" || loaded.Wait.Kind != "file" || loaded.Wait.FilePaths[0] != "src/output.txt" {
+		t.Fatalf("file wait not persisted: run=%+v wait=%+v", loaded.Run, loaded.Wait)
+	}
+	if !loaded.FileWatch.Enabled || loaded.FileWatch.Paths[0] != "src" || loaded.FileWatch.Debounce != 5*time.Second {
+		t.Fatalf("file watch not configured for wait: %+v", loaded.FileWatch)
+	}
+	d.fileWatcher.mu.Lock()
+	registered := d.fileWatcher.watches["wait-file-api"]
+	d.fileWatcher.mu.Unlock()
+	wantPath := filepath.Join(watchDir, "src")
+	if registered == nil || len(registered.config.Paths) != 1 || registered.config.Paths[0] != wantPath {
+		t.Fatalf("file watcher not registered with resolved path: %+v", registered)
+	}
+	events, ok, err := agent.LoadRuntimeTimeline(sess, 1)
+	if err != nil || !ok || len(events) != 1 || events[0].Type != "wait_started" {
+		t.Fatalf("wait-file timeline not recorded: events=%+v err=%v ok=%v", events, err, ok)
+	}
+
+	req = httptest.NewRequest("POST", "/wait-file", strings.NewReader(`{"session_id":"wait-file-api","clear":true}`))
+	rr = httptest.NewRecorder()
+	d.handleWaitFile(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("clear wait-file status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	loaded, ok, err = agent.LoadRuntimeMeta(sess)
+	if err != nil || !ok {
+		t.Fatalf("LoadRuntimeMeta after clear: err=%v ok=%v", err, ok)
+	}
+	if loaded.Run.Status != "idle" || loaded.Wait.Kind != "" || loaded.FileWatch.Enabled {
+		t.Fatalf("file wait not cleared: run=%+v wait=%+v watch=%+v", loaded.Run, loaded.Wait, loaded.FileWatch)
+	}
+	d.fileWatcher.mu.Lock()
+	registered = d.fileWatcher.watches["wait-file-api"]
+	d.fileWatcher.mu.Unlock()
+	if registered != nil {
+		t.Fatalf("file watcher should be unregistered after clear: %+v", registered)
+	}
+}
+
 func TestDaemonRestoreFileWatches(t *testing.T) {
 	dir := t.TempDir()
 	watchDir := filepath.Join(dir, "workspace")
@@ -662,6 +750,167 @@ func TestFileWatcherWakeupIncludesChangedFileSummary(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("file change timeline event missing: %+v", events)
+	}
+}
+
+func TestFileWatcherWakeupClearsMatchingFileWait(t *testing.T) {
+	dir := t.TempDir()
+	watchDir := filepath.Join(dir, "workspace")
+	if err := os.MkdirAll(filepath.Join(watchDir, "src"), 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	sess := filepath.Join(dir, "file-wait-match.jsonl")
+	if err := os.WriteFile(sess, []byte(`{"role":"user","content":"start"}`+"\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	if err := agent.SaveRuntimeMeta(sess, agent.RuntimeMeta{
+		SessionID: "file-wait-match",
+		Goal:      agent.RuntimeGoalMeta{Text: "react to one file", Status: control.GoalStatusRunning},
+		Run:       agent.RuntimeRunMeta{Status: "waiting_file"},
+		Wait: agent.RuntimeWaitMeta{
+			Kind:      "file",
+			FilePaths: []string{"src/a.go"},
+			Subject:   "src/a.go",
+		},
+		FileWatch: agent.RuntimeWatchMeta{
+			Enabled: true,
+			Paths:   []string{filepath.Join(watchDir, "src", "a.go")},
+		},
+	}); err != nil {
+		t.Fatalf("SaveRuntimeMeta: %v", err)
+	}
+
+	d := New(Options{SessionDir: dir})
+	d.scanSessions()
+	fw := NewFileWatcher(d, d.logger)
+	fw.Register("file-wait-match", FileWatchConfig{Paths: []string{filepath.Join(watchDir, "src", "a.go")}, Enabled: true})
+	state := &watchState{
+		config:   FileWatchConfig{Paths: []string{filepath.Join(watchDir, "src", "a.go")}, Enabled: true},
+		lastSeen: map[string]time.Time{},
+		changes: map[string]struct{}{
+			filepath.Join(watchDir, "src", "a.go"): {},
+		},
+		pending: true,
+	}
+
+	fw.fireWakeup("file-wait-match", state, time.Now())
+
+	select {
+	case intent := <-d.intentCh:
+		if intent.SessionID != "file-wait-match" || intent.Source != "file_watch" {
+			t.Fatalf("unexpected intent: %+v", intent)
+		}
+	default:
+		t.Fatal("matching file wait did not enqueue intent")
+	}
+	loaded, ok, err := agent.LoadRuntimeMeta(sess)
+	if err != nil || !ok {
+		t.Fatalf("LoadRuntimeMeta: err=%v ok=%v", err, ok)
+	}
+	if loaded.Run.Status != "pending_continue" || loaded.Wait.Kind != "" || loaded.FileWatch.Enabled {
+		t.Fatalf("matching file wait should clear wait and watcher: run=%+v wait=%+v watch=%+v", loaded.Run, loaded.Wait, loaded.FileWatch)
+	}
+	fw.mu.Lock()
+	registered := fw.watches["file-wait-match"]
+	fw.mu.Unlock()
+	if registered != nil {
+		t.Fatalf("matching file wait should unregister watcher: %+v", registered)
+	}
+}
+
+func TestFileWatcherDoesNotWakeDifferentWaitKind(t *testing.T) {
+	dir := t.TempDir()
+	watchDir := filepath.Join(dir, "workspace")
+	if err := os.MkdirAll(watchDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	sess := filepath.Join(dir, "file-wait-event.jsonl")
+	if err := os.WriteFile(sess, []byte(`{"role":"user","content":"start"}`+"\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	if err := agent.SaveRuntimeMeta(sess, agent.RuntimeMeta{
+		SessionID: "file-wait-event",
+		Goal:      agent.RuntimeGoalMeta{Text: "wait for CI", Status: control.GoalStatusRunning},
+		Run:       agent.RuntimeRunMeta{Status: "waiting_event"},
+		Wait:      agent.RuntimeWaitMeta{Kind: "event", EventSource: "github.workflow_run"},
+	}); err != nil {
+		t.Fatalf("SaveRuntimeMeta: %v", err)
+	}
+
+	d := New(Options{SessionDir: dir})
+	d.scanSessions()
+	fw := NewFileWatcher(d, d.logger)
+	state := &watchState{
+		config:   FileWatchConfig{Paths: []string{watchDir}, Enabled: true},
+		lastSeen: map[string]time.Time{},
+		changes: map[string]struct{}{
+			filepath.Join(watchDir, "changed.md"): {},
+		},
+		pending: true,
+	}
+	fw.fireWakeup("file-wait-event", state, time.Now())
+
+	select {
+	case intent := <-d.intentCh:
+		t.Fatalf("file watcher should not wake event wait: %+v", intent)
+	default:
+	}
+	loaded, ok, err := agent.LoadRuntimeMeta(sess)
+	if err != nil || !ok {
+		t.Fatalf("LoadRuntimeMeta: err=%v ok=%v", err, ok)
+	}
+	if loaded.Run.Status != "waiting_event" || loaded.Wait.Kind != "event" {
+		t.Fatalf("event wait should remain unchanged: run=%+v wait=%+v", loaded.Run, loaded.Wait)
+	}
+}
+
+func TestFileWatcherIgnoresNonMatchingFileWait(t *testing.T) {
+	dir := t.TempDir()
+	watchDir := filepath.Join(dir, "workspace")
+	if err := os.MkdirAll(watchDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	sess := filepath.Join(dir, "file-wait-miss.jsonl")
+	if err := os.WriteFile(sess, []byte(`{"role":"user","content":"start"}`+"\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	if err := agent.SaveRuntimeMeta(sess, agent.RuntimeMeta{
+		SessionID: "file-wait-miss",
+		Goal:      agent.RuntimeGoalMeta{Text: "wait for one file", Status: control.GoalStatusRunning},
+		Run:       agent.RuntimeRunMeta{Status: "waiting_file"},
+		Wait:      agent.RuntimeWaitMeta{Kind: "file", FilePaths: []string{"wanted.txt"}},
+	}); err != nil {
+		t.Fatalf("SaveRuntimeMeta: %v", err)
+	}
+
+	d := New(Options{SessionDir: dir})
+	d.scanSessions()
+	fw := NewFileWatcher(d, d.logger)
+	state := &watchState{
+		config:   FileWatchConfig{Paths: []string{watchDir}, Enabled: true},
+		lastSeen: map[string]time.Time{},
+		changes: map[string]struct{}{
+			filepath.Join(watchDir, "other.txt"): {},
+		},
+		pending: true,
+	}
+	fw.fireWakeup("file-wait-miss", state, time.Now())
+
+	select {
+	case intent := <-d.intentCh:
+		t.Fatalf("non-matching file wait should not enqueue intent: %+v", intent)
+	default:
+	}
+	loaded, ok, err := agent.LoadRuntimeMeta(sess)
+	if err != nil || !ok {
+		t.Fatalf("LoadRuntimeMeta: err=%v ok=%v", err, ok)
+	}
+	if loaded.Run.Status != "waiting_file" || loaded.Wait.Kind != "file" {
+		t.Fatalf("file wait should remain unchanged: run=%+v wait=%+v", loaded.Run, loaded.Wait)
+	}
+	events, ok, err := agent.LoadRuntimeTimeline(sess, 1)
+	if err != nil || !ok || len(events) != 1 || events[0].Type != "wait_file_ignored" {
+		t.Fatalf("file wait miss timeline not recorded: events=%+v err=%v ok=%v", events, err, ok)
 	}
 }
 

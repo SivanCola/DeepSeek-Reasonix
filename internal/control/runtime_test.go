@@ -476,6 +476,40 @@ func TestSnapshotPreservesTimeWaitRuntime(t *testing.T) {
 	}
 }
 
+func TestSnapshotPreservesFileWaitRuntime(t *testing.T) {
+	dir := t.TempDir()
+	sessionPath := filepath.Join(dir, "preserve-file-wait.jsonl")
+
+	sess := agent.NewSession("")
+	sess.Add(provider.Message{Role: provider.RoleUser, Content: "hello"})
+	ag := agent.New(nil, tool.NewRegistry(), sess, agent.Options{}, event.Discard)
+	c := New(Options{Executor: ag, SessionPath: sessionPath, Sink: event.Discard})
+
+	if err := agent.SaveRuntimeMeta(sessionPath, agent.RuntimeMeta{
+		Goal: agent.RuntimeGoalMeta{Text: "wait for output", Status: GoalStatusRunning},
+		Wait: agent.RuntimeWaitMeta{
+			Kind:      "file",
+			FilePaths: []string{"dist/output.txt"},
+			Subject:   "dist/output.txt",
+		},
+	}); err != nil {
+		t.Fatalf("SaveRuntimeMeta: %v", err)
+	}
+
+	c.SetGoal("wait for output")
+	if err := c.Snapshot(); err != nil {
+		t.Fatalf("Snapshot: %v", err)
+	}
+
+	m, ok, err := agent.LoadRuntimeMeta(sessionPath)
+	if err != nil || !ok {
+		t.Fatalf("LoadRuntimeMeta: err=%v ok=%v", err, ok)
+	}
+	if m.Wait.Kind != "file" || len(m.Wait.FilePaths) != 1 || m.Wait.FilePaths[0] != "dist/output.txt" {
+		t.Fatalf("file wait not preserved: %+v", m.Wait)
+	}
+}
+
 func TestClearGoalRemovesStaleRuntimeSidecar(t *testing.T) {
 	dir := t.TempDir()
 	sessionPath := filepath.Join(dir, "clear-goal.jsonl")
