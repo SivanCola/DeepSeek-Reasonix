@@ -547,7 +547,7 @@ dynamic workflow 或开发者平台，而是先把 Reasonix 从一次性会话�
   - [x] 增加 project / global aggregate quota 视图。
   - [x] 支持“本项目今天最多 N 次自动模型调用”。
   - 验收：多个常驻 session 不会绕过用户设置的项目级成本上限。
-- [ ] 个人 AgentOS 场景模板库。
-  - [ ] 把 daily triage、CI watcher、release assistant、repo health 抽成可复制模板。
-  - [ ] 模板只生成 session runtime 配置和 goal starter，不引入插件市场。
+- [x] 个人 AgentOS 场景模板库。
+  - [x] 把 daily triage、CI watcher、release assistant、repo health 抽成可复制模板。
+  - [x] 模板只生成 session runtime 配置和 goal starter，不引入插件市场。
   - 验收：新用户可以用一个命令创建可恢复、可审批、可复盘的常驻任务。

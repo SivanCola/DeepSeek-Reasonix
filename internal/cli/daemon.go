@@ -62,6 +62,10 @@ func daemonCommand(args []string) int {
 		return daemonBudgetCmd(rest)
 	case "budgets":
 		return daemonBudgetsCmd(rest)
+	case "templates":
+		return daemonTemplatesCmd(rest)
+	case "apply-template":
+		return daemonApplyTemplateCmd(rest)
 	case "daily-triage":
 		return daemonDailyTriageCmd(rest)
 	case "ci-watch":
@@ -1663,6 +1667,8 @@ Usage:
 	reasonix daemon disable-schedule (--session ID | --scope global|project [--workspace-root PATH])
   reasonix daemon budget   (--session ID | --scope global|project [--workspace-root PATH]) [--daily-wakeups N] [--max-goal-auto-turns N] [--daily-model-calls N] [--daily-model-cost N] [--reset]
   reasonix daemon budgets  [--addr HOST:PORT] [--dir PATH]
+  reasonix daemon templates [--json]
+  reasonix daemon apply-template --template daily-triage|ci-watcher|release-assist|repo-health --session ID [template options]
   reasonix daemon daily-triage --session ID [--daily-at HH:MM] [--timezone Area/City] [--daily-wakeups N]
   reasonix daemon ci-watch --session ID [--source workflow_run|check_suite|status] [--repo owner/repo] [--pr N]
   reasonix daemon release-assist --session ID [--paths CHANGELOG.md,package.json] [--debounce 3s]
@@ -1690,6 +1696,8 @@ Subcommands:
   disable-schedule 关闭 session/project/global 调度但保留配置
   budget     设置自动唤醒、模型调用、模型费用、goal 自动续跑或 project/global 聚合预算
   budgets    查看 project/global 聚合预算视图
+  templates  列出可复制的个人 AgentOS 场景模板
+  apply-template 将模板配置应用到已有 session，并输出 goal starter
   daily-triage 配置每日 PR / issue triage 场景
   ci-watch   配置“等 GitHub CI 成功后继续”的个人 AgentOS 场景
   release-assist 配置发布文件变化后检查 changelog / version 的发布助手场景

@@ -703,6 +703,73 @@ func TestDaemonBudgetsCommandPrintsAggregateJSON(t *testing.T) {
 	}
 }
 
+func TestDaemonTemplatesCommandListsCopyableTemplates(t *testing.T) {
+	out := captureStdout(t, func() {
+		if rc := daemonTemplatesCmd(nil); rc != 0 {
+			t.Fatalf("daemonTemplatesCmd rc = %d, want 0", rc)
+		}
+	})
+	for _, id := range []string{"daily-triage", "ci-watcher", "release-assist", "repo-health"} {
+		if !strings.Contains(out, id) {
+			t.Fatalf("templates output missing %q: %s", id, out)
+		}
+	}
+	if !strings.Contains(out, "goal starter:") {
+		t.Fatalf("templates output should include goal starters: %s", out)
+	}
+}
+
+func TestDaemonApplyTemplateConfiguresEachScenario(t *testing.T) {
+	cases := []struct {
+		name      string
+		template  string
+		extraArgs []string
+		wantPaths string
+		wantLabel string
+	}{
+		{name: "daily triage", template: "daily-triage", wantPaths: "/schedule,/budget", wantLabel: "daily-triage"},
+		{name: "ci watcher alias", template: "ci-watch", extraArgs: []string{"--repo", "owner/repo", "--pr", "42"}, wantPaths: "/wait-event", wantLabel: "ci-watcher"},
+		{name: "release assist", template: "release-assist", extraArgs: []string{"--paths", "CHANGELOG.md,go.mod"}, wantPaths: "/wait-file", wantLabel: "release-assist"},
+		{name: "repo health", template: "repo-health", wantPaths: "/schedule,/budget", wantLabel: "repo-health"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var paths []string
+			var payloads []map[string]interface{}
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				paths = append(paths, r.URL.Path)
+				var payload map[string]interface{}
+				if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+					t.Fatalf("decode request: %v", err)
+				}
+				payloads = append(payloads, payload)
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"ok":true}`))
+			}))
+			defer server.Close()
+			addr := strings.TrimPrefix(server.URL, "http://")
+
+			args := []string{"--addr", addr, "--template", tc.template, "--session", "template-session"}
+			args = append(args, tc.extraArgs...)
+			out := captureStdout(t, func() {
+				if rc := daemonApplyTemplateCmd(args); rc != 0 {
+					t.Fatalf("daemonApplyTemplateCmd rc = %d, want 0", rc)
+				}
+			})
+
+			if got := strings.Join(paths, ","); got != tc.wantPaths {
+				t.Fatalf("paths = %q, want %q", got, tc.wantPaths)
+			}
+			if len(payloads) == 0 || payloads[0]["session_id"] != "template-session" {
+				t.Fatalf("template should configure the target session: %+v", payloads)
+			}
+			if !strings.Contains(out, "template: "+tc.wantLabel) || !strings.Contains(out, "goal starter:") {
+				t.Fatalf("template output missing label/starter: %q", out)
+			}
+		})
+	}
+}
+
 func TestDaemonDailyTriageCommandCanSkipBudget(t *testing.T) {
 	var paths []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
