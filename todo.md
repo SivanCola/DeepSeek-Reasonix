@@ -273,7 +273,7 @@ dynamic workflow 或开发者平台，而是先把 Reasonix 从一次性会话�
   - [x] CI 失败分支总结。
 - [ ] 幂等处理。
   - [x] event id 去重。
-  - [ ] 同一 PR 的相同状态变化不重复跑。
+  - [x] 同一 PR 的相同状态变化不重复跑。
 - [x] 增加安全边界。
   - [x] webhook 不能直接执行写操作。
   - [x] 外部事件只生成 bounded turn input。

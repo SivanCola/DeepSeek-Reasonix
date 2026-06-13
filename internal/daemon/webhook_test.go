@@ -496,6 +496,38 @@ func TestWebhookQueuesDiagnosisForWaitEventFailure(t *testing.T) {
 	if loaded.Budget.DailyWakeups != 1 {
 		t.Fatalf("diagnosis wakeup should consume budget: %+v", loaded.Budget)
 	}
+	if loaded.Scheduler.LastWakeupKey == "" {
+		t.Fatalf("diagnosis wakeup should persist semantic wakeup key: %+v", loaded.Scheduler)
+	}
+
+	req = httptest.NewRequest("POST", "/webhook", strings.NewReader(payload))
+	req.Header.Set("X-Webhook-Signature", sig)
+	req.Header.Set("X-GitHub-Event", "workflow_run")
+	req.Header.Set("X-GitHub-Delivery", "delivery-failure-replay")
+	rr = httptest.NewRecorder()
+	d.handleWebhook(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("replay webhook status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	resp = map[string]any{}
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode replay response: %v", err)
+	}
+	if resp["status"] != "duplicate" {
+		t.Fatalf("replay status = %v, want duplicate", resp["status"])
+	}
+	select {
+	case intent := <-d.intentCh:
+		t.Fatalf("semantic duplicate should not enqueue intent: %+v", intent)
+	default:
+	}
+	loaded, ok, err = agent.LoadRuntimeMeta(sess)
+	if err != nil || !ok {
+		t.Fatalf("LoadRuntimeMeta after replay: err=%v ok=%v", err, ok)
+	}
+	if loaded.Budget.DailyWakeups != 1 {
+		t.Fatalf("semantic duplicate should not consume budget: %+v", loaded.Budget)
+	}
 }
 
 func TestFileWatcherIgnorePatterns(t *testing.T) {

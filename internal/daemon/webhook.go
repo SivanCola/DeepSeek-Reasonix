@@ -89,6 +89,7 @@ func (d *Daemon) handleWebhook(w http.ResponseWriter, r *http.Request) {
 	if evt.Summary == "" {
 		evt.Summary = webhookSummary(evt, info)
 	}
+	wakeupKey := webhookWakeupKey(evt, info)
 
 	// Find session.
 	d.mu.Lock()
@@ -104,6 +105,12 @@ func (d *Daemon) handleWebhook(w http.ResponseWriter, r *http.Request) {
 		d.mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprintf(w, `{"ok":true,"status":"duplicate","event_id":%q}`, evt.EventID)
+		return
+	}
+	if wakeupKey != "" && entry.Runtime.Scheduler.LastWakeupKey == wakeupKey {
+		d.mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"ok":true,"status":"duplicate","event_id":%q,"wakeup_key":%q}`, evt.EventID, wakeupKey)
 		return
 	}
 	if _, running := d.activeRuns[evt.SessionID]; running {
@@ -122,6 +129,9 @@ func (d *Daemon) handleWebhook(w http.ResponseWriter, r *http.Request) {
 				entry.Runtime.Scheduler.LastWakeupReason = "budget_blocked:" + reasonKey
 				if evt.EventID != "" {
 					entry.Runtime.Scheduler.LastWakeupEventID = evt.EventID
+				}
+				if wakeupKey != "" {
+					entry.Runtime.Scheduler.LastWakeupKey = wakeupKey
 				}
 				runtime := entry.Runtime
 				path := entry.Path
@@ -154,6 +164,9 @@ func (d *Daemon) handleWebhook(w http.ResponseWriter, r *http.Request) {
 			entry.Runtime.Scheduler.LastWakeupReason = reasonKey
 			if evt.EventID != "" {
 				entry.Runtime.Scheduler.LastWakeupEventID = evt.EventID
+			}
+			if wakeupKey != "" {
+				entry.Runtime.Scheduler.LastWakeupKey = wakeupKey
 			}
 			runtime := entry.Runtime
 			path := entry.Path
@@ -214,6 +227,9 @@ func (d *Daemon) handleWebhook(w http.ResponseWriter, r *http.Request) {
 		if evt.EventID != "" {
 			entry.Runtime.Scheduler.LastWakeupEventID = evt.EventID
 		}
+		if wakeupKey != "" {
+			entry.Runtime.Scheduler.LastWakeupKey = wakeupKey
+		}
 		runtime := entry.Runtime
 		path := entry.Path
 		d.mu.Unlock()
@@ -252,6 +268,9 @@ func (d *Daemon) handleWebhook(w http.ResponseWriter, r *http.Request) {
 	if evt.EventID != "" {
 		entry.Runtime.Scheduler.LastWakeupEventID = evt.EventID
 	}
+	if wakeupKey != "" {
+		entry.Runtime.Scheduler.LastWakeupKey = wakeupKey
+	}
 	runtime := entry.Runtime
 	path := entry.Path
 	d.mu.Unlock()
@@ -289,6 +308,28 @@ func webhookMatchesWait(wait agent.RuntimeWaitMeta, evt WebhookEvent, info githu
 		return false
 	}
 	return true
+}
+
+func webhookWakeupKey(evt WebhookEvent, info githubWebhookInfo) string {
+	eventType := strings.ToLower(strings.TrimSpace(firstNonEmpty(evt.Type, info.Event)))
+	repo := strings.ToLower(strings.TrimSpace(info.Repo))
+	if eventType == "" || repo == "" {
+		return ""
+	}
+	target := strings.ToLower(strings.TrimSpace(info.Ref))
+	if info.Number > 0 {
+		target = "#" + strconv.Itoa(info.Number)
+	}
+	state := strings.ToLower(strings.Join([]string{
+		strings.TrimSpace(info.Action),
+		strings.TrimSpace(info.Status),
+		strings.TrimSpace(info.Conclusion),
+	}, "/"))
+	state = strings.Trim(state, "/")
+	if target == "" || state == "" {
+		return ""
+	}
+	return strings.Join([]string{eventType, repo, target, state}, "|")
 }
 
 func webhookShouldDiagnoseWaitFailure(wait agent.RuntimeWaitMeta, evt WebhookEvent, info githubWebhookInfo) bool {

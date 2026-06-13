@@ -97,6 +97,7 @@ type RuntimeSchedMeta struct {
 	LastWakeupAt      time.Time `json:"last_wakeup_at,omitempty"`
 	LastWakeupReason  string    `json:"last_wakeup_reason,omitempty"`
 	LastWakeupEventID string    `json:"last_wakeup_event_id,omitempty"`
+	LastWakeupKey     string    `json:"last_wakeup_key,omitempty"`
 }
 
 // RuntimeWatchMeta holds file-watch wakeup configuration for a session.

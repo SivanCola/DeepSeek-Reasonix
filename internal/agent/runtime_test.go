@@ -178,6 +178,7 @@ func TestSaveRuntimeMetaRoundTrip(t *testing.T) {
 			LastWakeupAt:      now.Add(-30 * time.Minute),
 			LastWakeupReason:  "daily",
 			LastWakeupEventID: "evt-123",
+			LastWakeupKey:     "github.workflow_run|esengine/deepseek-reasonix|#42|completed/success",
 		},
 	}
 
@@ -214,6 +215,9 @@ func TestSaveRuntimeMetaRoundTrip(t *testing.T) {
 	}
 	if loaded.Scheduler.LastWakeupEventID != meta.Scheduler.LastWakeupEventID {
 		t.Errorf("Scheduler.LastWakeupEventID = %q, want %q", loaded.Scheduler.LastWakeupEventID, meta.Scheduler.LastWakeupEventID)
+	}
+	if loaded.Scheduler.LastWakeupKey != meta.Scheduler.LastWakeupKey {
+		t.Errorf("Scheduler.LastWakeupKey = %q, want %q", loaded.Scheduler.LastWakeupKey, meta.Scheduler.LastWakeupKey)
 	}
 }
 
