@@ -984,6 +984,101 @@ func TestGatewayWakeupsCommandRequiresSession(t *testing.T) {
 	}
 }
 
+func TestGatewayRecapCommandSummarizesTodayAndPendingDecision(t *testing.T) {
+	dir := t.TempDir()
+	sessionPath := writeBotTestSession(t, dir, "hello")
+	if err := agent.SaveRuntimeMeta(sessionPath, agent.RuntimeMeta{
+		Run: agent.RuntimeRunMeta{Status: agent.RunStatusWaitingApproval},
+		Wait: agent.RuntimeWaitMeta{
+			Kind:       "approval",
+			Reason:     "approval required",
+			ApprovalID: "approval-1",
+			Tool:       "bash",
+			Subject:    "git push fork feature/agentos-roadmap-todo",
+		},
+	}); err != nil {
+		t.Fatalf("SaveRuntimeMeta: %v", err)
+	}
+	previous := time.Date(2026, 6, 12, 23, 0, 0, 0, time.Local)
+	today := time.Date(2026, 6, 13, 9, 0, 0, 0, time.Local)
+	events := []agent.RuntimeTimelineEvent{
+		{Time: previous, Type: "run_finished", Source: "daemon", RunStatus: "idle"},
+		{Time: today, Type: "intent_queued", Source: "cron", Reason: "cron", EventID: "cron-1", RunStatus: "queued"},
+		{Time: today.Add(time.Minute), Type: "model_usage", Source: "cron", Model: "deepseek-reasoner", Total: 1234, Cost: 0.25, Currency: "USD"},
+		{Time: today.Add(2 * time.Minute), Type: "wait_started", Source: "bot", WaitKind: "approval", WaitID: "approval-1", Tool: "bash", Subject: "git push fork feature/agentos-roadmap-todo", Reason: "approval required"},
+		{Time: today.Add(3 * time.Minute), Type: "wakeup_budget_blocked", Source: "webhook", Reason: "daily budget exhausted", EventID: "delivery-1"},
+		{Time: today.Add(4 * time.Minute), Type: "run_finished", Source: "daemon", RunStatus: "waiting_approval"},
+	}
+	for _, event := range events {
+		if err := agent.AppendRuntimeTimeline(sessionPath, event); err != nil {
+			t.Fatalf("AppendRuntimeTimeline: %v", err)
+		}
+	}
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	gw := NewGateway(GatewayConfig{SessionDir: dir}, nil, logger)
+	if err := gw.setSessionMapping("remote-recap", sessionPath, "/workspace"); err != nil {
+		t.Fatalf("setSessionMapping: %v", err)
+	}
+	fa := newFakeAdapter(PlatformQQ, "fake-qq")
+
+	gw.handleSlashCommand(context.Background(), fa, "remote-recap", InboundMessage{
+		Platform:  PlatformQQ,
+		ChatType:  ChatDM,
+		ChatID:    "chat-1",
+		UserID:    "user-1",
+		Text:      "/recap 2026-06-13",
+		MessageID: "msg-1",
+	})
+
+	sent := fa.sentMessages()
+	if len(sent) != 1 {
+		t.Fatalf("sent count = %d, want 1", len(sent))
+	}
+	text := sent[0].Text
+	for _, want := range []string{
+		"任务复盘（" + shortSessionID(sessionPath) + "，2026-06-13）：",
+		"自动处理: 唤醒 2 次，运行完成 1 次，等待用户 1 次，预算阻断 1 次。",
+		"模型使用: 调用 1 次，tokens 1234，费用 USD 0.2500。",
+		"最近事件:",
+		"intent_queued",
+		"model_usage",
+		"待决策:",
+		"- 审批 approval-1 tool=bash subject=git push fork feature/agentos-roadmap-todo",
+		"原因: approval required",
+		"命令: /approve approval-1 或 /deny approval-1",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("recap missing %q:\n%s", want, text)
+		}
+	}
+	for _, unwanted := range []string{"2026-06-12", sessionPath} {
+		if strings.Contains(text, unwanted) {
+			t.Fatalf("recap should not contain %q:\n%s", unwanted, text)
+		}
+	}
+}
+
+func TestGatewayRecapCommandRequiresSession(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	gw := NewGateway(GatewayConfig{}, nil, logger)
+	fa := newFakeAdapter(PlatformQQ, "fake-qq")
+
+	gw.handleSlashCommand(context.Background(), fa, "remote-empty", InboundMessage{
+		Platform:  PlatformQQ,
+		ChatType:  ChatDM,
+		ChatID:    "chat-1",
+		UserID:    "user-1",
+		Text:      "/recap",
+		MessageID: "msg-1",
+	})
+
+	sent := fa.sentMessages()
+	if len(sent) != 1 || !strings.Contains(sent[0].Text, "没有绑定 Reasonix session") {
+		t.Fatalf("unexpected recap response: %+v", sent)
+	}
+}
+
 func writeBotTestSession(t *testing.T, dir, content string) string {
 	t.Helper()
 	if err := os.MkdirAll(dir, 0o755); err != nil {

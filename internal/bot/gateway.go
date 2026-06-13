@@ -385,6 +385,9 @@ func (gw *BotGateway) handleSlashCommand(ctx context.Context, adapter Adapter, k
 	case strings.HasPrefix(msg.Text, "/wakeups"):
 		_ = gw.sendText(ctx, adapter, msg, gw.renderWakeupHistory(key, msg.Text))
 
+	case strings.HasPrefix(msg.Text, "/recap"):
+		_ = gw.sendText(ctx, adapter, msg, gw.renderRecap(key, msg.Text))
+
 	case strings.HasPrefix(msg.Text, "/sessions"):
 		_ = gw.sendText(ctx, adapter, msg, gw.renderSessionList(8))
 
@@ -442,6 +445,7 @@ func (gw *BotGateway) handleSlashCommand(ctx context.Context, adapter Adapter, k
 			"/status - 查看状态\n" +
 			"/timeline [n] - 查看当前会话最近运行事件\n" +
 			"/wakeups [n] - 查看当前会话最近唤醒历史\n" +
+			"/recap [YYYY-MM-DD] - 复盘当天自动处理和待决策任务\n" +
 			"/help - 显示帮助"
 		_ = gw.sendText(ctx, adapter, msg, help)
 	}
@@ -1245,6 +1249,180 @@ func (gw *BotGateway) renderWakeupHistory(key, command string) string {
 		lines = append(lines, renderTimelineEvent(e))
 	}
 	return strings.Join(lines, "\n")
+}
+
+func (gw *BotGateway) renderRecap(key, command string) string {
+	sessionPath := gw.sessionPathForKey(key)
+	if sessionPath == "" {
+		return "当前 IM 会话没有绑定 Reasonix session。"
+	}
+	start, end, label, ok := parseRecapWindow(command, time.Now)
+	if !ok {
+		return "用法: /recap [YYYY-MM-DD]"
+	}
+	events, hasTimeline, err := agent.LoadRuntimeTimeline(sessionPath, 0)
+	if err != nil {
+		gw.logger.Warn("bot recap timeline load failed", "session", shortSessionID(sessionPath), "err", err)
+		return "复盘 timeline 读取失败。"
+	}
+	meta, hasMeta, err := agent.LoadRuntimeMeta(sessionPath)
+	if err != nil {
+		gw.logger.Warn("bot recap runtime load failed", "session", shortSessionID(sessionPath), "err", err)
+		return "复盘 runtime 读取失败。"
+	}
+
+	dayEvents := filterRecapEvents(events, start, end)
+	stats := summarizeRecapEvents(dayEvents)
+	lines := []string{fmt.Sprintf("任务复盘（%s，%s）：", shortSessionID(sessionPath), label)}
+	if !hasTimeline || len(dayEvents) == 0 {
+		lines = append(lines, "自动处理: 今天还没有记录到 runtime 事件。")
+	} else {
+		lines = append(lines, fmt.Sprintf(
+			"自动处理: 唤醒 %d 次，运行完成 %d 次，等待用户 %d 次，预算阻断 %d 次。",
+			stats.Wakeups, stats.RunFinished, stats.WaitStarted, stats.BudgetBlocked,
+		))
+		if stats.ModelCalls > 0 {
+			cost := ""
+			if stats.Cost > 0 {
+				currency := stats.Currency
+				if currency == "" {
+					currency = "cost"
+				}
+				cost = fmt.Sprintf("，费用 %s %.4f", currency, stats.Cost)
+			}
+			lines = append(lines, fmt.Sprintf("模型使用: 调用 %d 次，tokens %d%s。", stats.ModelCalls, stats.Tokens, cost))
+		}
+		lines = append(lines, "最近事件:")
+		for _, event := range lastRecapEvents(dayEvents, 5) {
+			lines = append(lines, "- "+renderTimelineEvent(event))
+		}
+	}
+
+	decisionLines := gw.renderRecapDecisionLines(key, meta, hasMeta)
+	lines = append(lines, decisionLines...)
+	return strings.Join(lines, "\n")
+}
+
+type recapStats struct {
+	Wakeups       int
+	RunFinished   int
+	WaitStarted   int
+	BudgetBlocked int
+	ModelCalls    int
+	Tokens        int
+	Cost          float64
+	Currency      string
+}
+
+func parseRecapWindow(command string, now func() time.Time) (time.Time, time.Time, string, bool) {
+	if now == nil {
+		now = time.Now
+	}
+	parts := strings.Fields(command)
+	loc := time.Local
+	if len(parts) >= 2 {
+		day, err := time.ParseInLocation("2006-01-02", parts[1], loc)
+		if err != nil {
+			return time.Time{}, time.Time{}, "", false
+		}
+		return day, day.Add(24 * time.Hour), parts[1], true
+	}
+	t := now().In(loc)
+	start := time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, loc)
+	return start, start.Add(24 * time.Hour), start.Format("2006-01-02"), true
+}
+
+func filterRecapEvents(events []agent.RuntimeTimelineEvent, start, end time.Time) []agent.RuntimeTimelineEvent {
+	if start.IsZero() || end.IsZero() {
+		return nil
+	}
+	out := make([]agent.RuntimeTimelineEvent, 0, len(events))
+	for _, event := range events {
+		if event.Time.IsZero() {
+			continue
+		}
+		t := event.Time.In(start.Location())
+		if (t.Equal(start) || t.After(start)) && t.Before(end) {
+			out = append(out, event)
+		}
+	}
+	return out
+}
+
+func summarizeRecapEvents(events []agent.RuntimeTimelineEvent) recapStats {
+	var stats recapStats
+	for _, event := range events {
+		if isWakeupTimelineEvent(event) {
+			stats.Wakeups++
+		}
+		switch event.Type {
+		case "run_finished":
+			stats.RunFinished++
+		case "wait_started":
+			stats.WaitStarted++
+		case "wakeup_budget_blocked":
+			stats.BudgetBlocked++
+		case "model_usage":
+			stats.ModelCalls++
+			stats.Tokens += event.Total
+			if event.Cost > 0 {
+				stats.Cost += event.Cost
+				if stats.Currency == "" {
+					stats.Currency = event.Currency
+				}
+			}
+		}
+	}
+	return stats
+}
+
+func lastRecapEvents(events []agent.RuntimeTimelineEvent, limit int) []agent.RuntimeTimelineEvent {
+	if limit <= 0 || len(events) <= limit {
+		return events
+	}
+	return events[len(events)-limit:]
+}
+
+func (gw *BotGateway) renderRecapDecisionLines(key string, meta agent.RuntimeMeta, hasMeta bool) []string {
+	if !hasMeta || (meta.Wait.Kind != "approval" && meta.Wait.Kind != "ask") {
+		return []string{"待决策: 无。"}
+	}
+	lines := []string{"待决策:"}
+	switch meta.Wait.Kind {
+	case "approval":
+		id := firstNonEmpty(meta.Wait.ApprovalID, "(unknown)")
+		line := "- 审批 " + id
+		if meta.Wait.Tool != "" {
+			line += " tool=" + meta.Wait.Tool
+		}
+		if meta.Wait.Subject != "" {
+			line += " subject=" + truncateBotText(meta.Wait.Subject, 80)
+		}
+		lines = append(lines, line)
+		if meta.Wait.Reason != "" {
+			lines = append(lines, "  原因: "+truncateBotText(meta.Wait.Reason, 100))
+		}
+		if meta.Wait.ApprovalID != "" {
+			lines = append(lines, "  命令: /approve "+meta.Wait.ApprovalID+" 或 /deny "+meta.Wait.ApprovalID)
+		}
+	case "ask":
+		id := firstNonEmpty(meta.Wait.AskID, "(unknown)")
+		line := "- 回答 " + id
+		if meta.Wait.Subject != "" {
+			line += " subject=" + truncateBotText(meta.Wait.Subject, 80)
+		}
+		lines = append(lines, line)
+		if meta.Wait.Reason != "" {
+			lines = append(lines, "  原因: "+truncateBotText(meta.Wait.Reason, 100))
+		}
+		for _, qLine := range gw.renderPendingAskQuestions(key, meta.Wait.AskID) {
+			lines = append(lines, "  "+qLine)
+		}
+		if meta.Wait.AskID != "" {
+			lines = append(lines, "  命令: /answer "+meta.Wait.AskID+" <选项>")
+		}
+	}
+	return lines
 }
 
 func parseTimelineLimit(command string, fallback int) int {
