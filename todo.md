@@ -519,9 +519,9 @@ dynamic workflow 或开发者平台，而是先把 Reasonix 从一次性会话�
 - [x] 增加 daily triage 端到端测试脚本。
   - [x] 启动 daemon，配置 daily-triage，模拟时间唤醒，验证只入队一次。
   - [x] 验证预算耗尽时不调用模型，并写入 timeline。
-- [ ] 增加 CI watcher 端到端测试脚本。
-  - [ ] 配置 wait-event，模拟 GitHub workflow_run/check_suite/status。
-  - [ ] 验证失败走 diagnosis，成功继续原 goal，重复 webhook 不重复执行。
+- [x] 增加 CI watcher 端到端测试脚本。
+  - [x] 配置 wait-event，模拟 GitHub workflow_run/check_suite/status。
+  - [x] 验证失败走 diagnosis，成功继续原 goal，重复 webhook 不重复执行。
 - [ ] 增加 release assistant 端到端测试脚本。
   - [ ] 配置 wait-file，写入 changelog/version 文件，验证 debounce 和一次性唤醒。
   - [ ] 验证发布类写操作仍进入 approval desk。

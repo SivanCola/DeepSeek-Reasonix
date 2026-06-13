@@ -1756,6 +1756,130 @@ func TestDaemonDailyTriageE2EQueuesOnceAndBlocksOnModelBudget(t *testing.T) {
 	}
 }
 
+func TestDaemonCIWatcherE2EDiagnosesThenContinuesAndDedupes(t *testing.T) {
+	dir := t.TempDir()
+	webhookKey := "ci-watch-e2e-key"
+	failurePath := writeCIWatchE2ESession(t, dir, "ci-workflow-failure-e2e", "github.workflow_run")
+	workflowPath := writeCIWatchE2ESession(t, dir, "ci-workflow-success-e2e", "github.workflow_run")
+	checkSuitePath := writeCIWatchE2ESession(t, dir, "ci-check-suite-e2e", "github.check_suite")
+	statusPath := writeCIWatchE2ESession(t, dir, "ci-status-e2e", "github.status")
+
+	prov := &daemonScriptedProvider{turns: [][]provider.Chunk{
+		{
+			{Type: provider.ChunkUsage, Usage: &provider.Usage{PromptTokens: 11, CompletionTokens: 5, TotalTokens: 16, FinishReason: "stop"}},
+			{Type: provider.ChunkText, Text: "workflow CI passed\n\n[goal:complete]"},
+		},
+		{
+			{Type: provider.ChunkUsage, Usage: &provider.Usage{PromptTokens: 9, CompletionTokens: 3, TotalTokens: 12, FinishReason: "stop"}},
+			{Type: provider.ChunkText, Text: "check suite passed\n\n[goal:complete]"},
+		},
+		{
+			{Type: provider.ChunkUsage, Usage: &provider.Usage{PromptTokens: 8, CompletionTokens: 3, TotalTokens: 11, FinishReason: "stop"}},
+			{Type: provider.ChunkText, Text: "commit status passed\n\n[goal:complete]"},
+		},
+	}}
+	d := New(Options{
+		SessionDir:        dir,
+		Webhook:           &WebhookConfig{Secret: webhookKey, Enabled: true},
+		MaxConcurrentRuns: 1,
+		ControllerFactory: func(ctx context.Context, d *Daemon, entry *SessionEntry, sink event.Sink) (*control.Controller, error) {
+			loaded, err := agent.LoadSession(entry.Path)
+			if err != nil {
+				return nil, err
+			}
+			ag := agent.New(prov, tool.NewRegistry(), loaded, agent.Options{}, sink)
+			c := control.New(control.Options{
+				Runner:      ag,
+				Executor:    ag,
+				SessionPath: entry.Path,
+				SessionDir:  dir,
+				Sink:        sink,
+			})
+			c.Resume(loaded, entry.Path)
+			return c, nil
+		},
+	})
+	d.scanSessions()
+
+	workflowFailurePayload := `{"session_id":"ci-workflow-failure-e2e","action":"completed","repository":{"full_name":"example/repo"},"workflow_run":{"status":"completed","conclusion":"failure","pull_requests":[{"number":42}],"head_branch":"feature/ci-watch"}}`
+	resp := postSignedGitHubWebhook(t, d, webhookKey, "workflow_run", "delivery-workflow-failure", workflowFailurePayload)
+	if resp["status"] != "pending_diagnosis" {
+		t.Fatalf("workflow failure status = %v, want pending_diagnosis", resp["status"])
+	}
+	select {
+	case intent := <-d.intentCh:
+		if intent.Source != "webhook" || intent.Reason != "webhook:github.workflow_run:failure" {
+			t.Fatalf("unexpected diagnosis intent: %+v", intent)
+		}
+		if !strings.Contains(intent.Context, "CI finished without the awaited successful conclusion") ||
+			!strings.Contains(intent.Context, "conclusion=failure") {
+			t.Fatalf("diagnosis context missing CI failure details:\n%s", intent.Context)
+		}
+	default:
+		t.Fatal("workflow failure should enqueue diagnosis intent")
+	}
+	failureRuntime, ok, err := agent.LoadRuntimeMeta(failurePath)
+	if err != nil || !ok {
+		t.Fatalf("LoadRuntimeMeta workflow failure: err=%v ok=%v", err, ok)
+	}
+	if failureRuntime.Wait.Kind != "event" || failureRuntime.Wait.EventConclusion != "success" {
+		t.Fatalf("failure diagnosis should preserve CI wait: %+v", failureRuntime.Wait)
+	}
+	if got := countTimelineEvents(t, failurePath, "wait_event_failure_detected"); got != 1 {
+		t.Fatalf("failure diagnosis should record wait_event_failure_detected once, got %d", got)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go d.runIntentWorker(ctx)
+
+	workflowSuccessPayload := `{"session_id":"ci-workflow-success-e2e","action":"completed","repository":{"full_name":"example/repo"},"workflow_run":{"status":"completed","conclusion":"success","pull_requests":[{"number":42}],"head_branch":"feature/ci-watch"}}`
+	resp = postSignedGitHubWebhook(t, d, webhookKey, "workflow_run", "delivery-workflow-success", workflowSuccessPayload)
+	if resp["status"] != "queued" {
+		t.Fatalf("workflow success status = %v, want queued", resp["status"])
+	}
+	waitForTimelineCount(t, workflowPath, "goal_continuation_complete", 1)
+	if prov.calls != 1 {
+		t.Fatalf("workflow success should call provider once, got %d", prov.calls)
+	}
+	workflowRuntime, ok, err := agent.LoadRuntimeMeta(workflowPath)
+	if err != nil || !ok {
+		t.Fatalf("LoadRuntimeMeta workflow success: err=%v ok=%v", err, ok)
+	}
+	if workflowRuntime.Wait.Kind != "" || workflowRuntime.Goal.Status != control.GoalStatusComplete {
+		t.Fatalf("workflow success should clear wait and complete goal: goal=%+v wait=%+v", workflowRuntime.Goal, workflowRuntime.Wait)
+	}
+
+	resp = postSignedGitHubWebhook(t, d, webhookKey, "workflow_run", "delivery-workflow-success-replay", workflowSuccessPayload)
+	if resp["status"] != "duplicate" {
+		t.Fatalf("workflow success replay status = %v, want duplicate", resp["status"])
+	}
+	time.Sleep(50 * time.Millisecond)
+	if prov.calls != 1 {
+		t.Fatalf("duplicate workflow success should not execute again, got provider calls=%d", prov.calls)
+	}
+	if got := countTimelineEvents(t, workflowPath, "run_started"); got != 1 {
+		t.Fatalf("workflow run should start exactly once for success, got %d", got)
+	}
+
+	checkSuitePayload := `{"session_id":"ci-check-suite-e2e","action":"completed","repository":{"full_name":"example/repo"},"check_suite":{"status":"completed","conclusion":"success","pull_requests":[{"number":42}],"head_branch":"feature/ci-watch"}}`
+	resp = postSignedGitHubWebhook(t, d, webhookKey, "check_suite", "delivery-check-suite-success", checkSuitePayload)
+	if resp["status"] != "queued" {
+		t.Fatalf("check_suite success status = %v, want queued", resp["status"])
+	}
+	waitForTimelineCount(t, checkSuitePath, "goal_continuation_complete", 1)
+
+	statusPayload := `{"session_id":"ci-status-e2e","state":"success","context":"ci/build","repository":{"full_name":"example/repo"},"branches":[{"name":"feature/ci-watch"}]}`
+	resp = postSignedGitHubWebhook(t, d, webhookKey, "status", "delivery-status-success", statusPayload)
+	if resp["status"] != "queued" {
+		t.Fatalf("status success status = %v, want queued", resp["status"])
+	}
+	waitForTimelineCount(t, statusPath, "goal_continuation_complete", 1)
+	if prov.calls != 3 {
+		t.Fatalf("workflow success, check_suite, and status should call provider three times, got %d", prov.calls)
+	}
+}
+
 func TestDaemonIntentQueueSelectsHighestPriorityRunnable(t *testing.T) {
 	d := New(Options{SessionDir: t.TempDir()})
 	now := time.Now().UTC()
@@ -2247,4 +2371,61 @@ func writeDailyTriageE2ESession(t *testing.T, dir, id string, due time.Time, bud
 		t.Fatalf("SaveRuntimeMeta(%s): %v", id, err)
 	}
 	return sessionPath
+}
+
+func writeCIWatchE2ESession(t *testing.T, dir, id, source string) string {
+	t.Helper()
+	sessionPath := filepath.Join(dir, id+".jsonl")
+	sess := agent.NewSession("")
+	sess.Add(provider.Message{Role: provider.RoleUser, Content: "wait for CI"})
+	if err := sess.Save(sessionPath); err != nil {
+		t.Fatalf("Save(%s): %v", id, err)
+	}
+	eventStatus := "completed"
+	if source == "github.status" {
+		eventStatus = ""
+	}
+	if err := agent.SaveRuntimeMeta(sessionPath, agent.RuntimeMeta{
+		SessionID: id,
+		Model:     "daemon-test-model",
+		Goal:      agent.RuntimeGoalMeta{Text: "continue after successful CI", Status: control.GoalStatusRunning},
+		Run:       agent.RuntimeRunMeta{Status: "waiting_event"},
+		Wait: agent.RuntimeWaitMeta{
+			Kind:            "event",
+			EventSource:     source,
+			EventStatus:     eventStatus,
+			EventConclusion: "success",
+			Reason:          "waiting for CI success",
+			Subject:         "PR #42",
+			Since:           time.Date(2026, 6, 13, 8, 0, 0, 0, time.UTC),
+		},
+		Budget: agent.RuntimeBudgetMeta{
+			DailyWakeupLimit:    8,
+			DailyModelCallLimit: 8,
+			MaxGoalAutoTurns:    2,
+			WindowStartedAt:     budgetWindowStart(time.Date(2026, 6, 13, 9, 0, 0, 0, time.UTC)),
+		},
+	}); err != nil {
+		t.Fatalf("SaveRuntimeMeta(%s): %v", id, err)
+	}
+	return sessionPath
+}
+
+func postSignedGitHubWebhook(t *testing.T, d *Daemon, webhookKey, eventName, delivery, payload string) map[string]any {
+	t.Helper()
+	sig := computeHMAC([]byte(payload), webhookKey)
+	req := httptest.NewRequest("POST", "/webhook", strings.NewReader(payload))
+	req.Header.Set("X-Webhook-Signature", sig)
+	req.Header.Set("X-GitHub-Event", eventName)
+	req.Header.Set("X-GitHub-Delivery", delivery)
+	rr := httptest.NewRecorder()
+	d.handleWebhook(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("webhook %s/%s status = %d body=%s", eventName, delivery, rr.Code, rr.Body.String())
+	}
+	var resp map[string]any
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode webhook %s/%s response: %v", eventName, delivery, err)
+	}
+	return resp
 }
