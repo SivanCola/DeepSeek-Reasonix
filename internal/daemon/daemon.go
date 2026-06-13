@@ -85,11 +85,12 @@ type ControllerFactory func(context.Context, *Daemon, *SessionEntry, event.Sink)
 
 // StatusResponse is the JSON body of GET /status.
 type StatusResponse struct {
-	Status   string `json:"status"`
-	Addr     string `json:"addr"`
-	Sessions int    `json:"sessions"`
-	Uptime   string `json:"uptime"`
-	PID      int    `json:"pid"`
+	Status      string            `json:"status"`
+	Addr        string            `json:"addr"`
+	Sessions    int               `json:"sessions"`
+	Uptime      string            `json:"uptime"`
+	PID         int               `json:"pid"`
+	FileWatcher *FileWatcherStats `json:"file_watcher,omitempty"`
 }
 
 // SessionsResponse is the JSON body of GET /sessions.

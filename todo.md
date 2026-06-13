@@ -534,10 +534,10 @@ dynamic workflow 或开发者平台，而是先把 Reasonix 从一次性会话�
   - [x] GitHub adapter 作为默认内置 adapter。
   - [x] 新 provider 通过 adapter 归一化 event id、routing key、summary 和 failure semantics。
   - 验收：新增 provider 不需要改 daemon 核心 worker / scheduler。
-- [ ] 文件监听从 polling 升级为 hybrid watcher。
-  - [ ] 优先使用原生文件事件库。
-  - [ ] polling 作为跨平台 fallback。
-  - [ ] 大仓库下暴露 watcher 延迟、扫描目录数和 ignored change 计数。
+- [x] 文件监听从 polling 升级为 hybrid watcher。
+  - [x] 优先使用原生文件事件库。
+  - [x] polling 作为跨平台 fallback。
+  - [x] 大仓库下暴露 watcher 延迟、扫描目录数和 ignored change 计数。
   - 验收：大型仓库不会因为常驻监听造成明显 CPU 抖动。
 
 ### P2：跨 Session 策略

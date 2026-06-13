@@ -11,6 +11,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/fsnotify/fsnotify"
+
 	"reasonix/internal/agent"
 )
 
@@ -27,16 +29,20 @@ type FileWatchConfig struct {
 }
 
 // FileWatcher monitors filesystem changes and queues wakeups for sessions
-// that have file watch configurations. It uses polling (not inotify) for
-// simplicity and portability; per-session debounce controls wakeup batching.
+// that have file watch configurations. It prefers native fs notifications and
+// keeps polling as a correctness fallback; per-session debounce controls wakeup
+// batching for both paths.
 type FileWatcher struct {
 	daemon *Daemon
 	logger *slog.Logger
 
-	mu      sync.Mutex
-	watches map[string]*watchState // session ID → state
-	running bool
-	cancel  context.CancelFunc
+	mu          sync.Mutex
+	watches     map[string]*watchState // session ID -> state
+	running     bool
+	cancel      context.CancelFunc
+	native      *fsnotify.Watcher
+	nativeRoots map[string]struct{}
+	stats       FileWatcherStats
 }
 
 type watchState struct {
@@ -48,7 +54,29 @@ type watchState struct {
 	timer     time.Time
 }
 
-const maxFileWatchSummaryFiles = 20
+// FileWatcherStats is exposed on /status so large-repo watcher health can be
+// inspected without reading daemon logs.
+type FileWatcherStats struct {
+	Mode               string `json:"mode"`
+	NativeAvailable    bool   `json:"native_available"`
+	NativeWatchRoots   int    `json:"native_watch_roots"`
+	NativeEvents       int64  `json:"native_events"`
+	NativeErrors       int64  `json:"native_errors"`
+	IgnoredChanges     int64  `json:"ignored_changes"`
+	PollScans          int64  `json:"poll_scans"`
+	PollInterval       string `json:"poll_interval"`
+	LastPollDurationMS int64  `json:"last_poll_duration_ms"`
+	LastPollFiles      int    `json:"last_poll_files"`
+	LastPollDirs       int    `json:"last_poll_dirs"`
+	LastNativeError    string `json:"last_native_error,omitempty"`
+}
+
+const (
+	maxFileWatchSummaryFiles = 20
+	pollingInterval          = 2 * time.Second
+	hybridFallbackInterval   = 30 * time.Second
+	debounceCheckInterval    = 250 * time.Millisecond
+)
 
 // DefaultIgnorePatterns are always excluded from file watching.
 var DefaultIgnorePatterns = []string{
@@ -84,6 +112,7 @@ func (fw *FileWatcher) Register(sessionID string, cfg FileWatchConfig) {
 		lastSeen: make(map[string]time.Time),
 		changes:  make(map[string]struct{}),
 	}
+	fw.refreshNativeWatchesLocked()
 }
 
 // Unregister removes a file watch for a session.
@@ -91,9 +120,10 @@ func (fw *FileWatcher) Unregister(sessionID string) {
 	fw.mu.Lock()
 	defer fw.mu.Unlock()
 	delete(fw.watches, sessionID)
+	fw.refreshNativeWatchesLocked()
 }
 
-// Start begins the polling loop.
+// Start begins the hybrid native/polling watch loop.
 func (fw *FileWatcher) Start(ctx context.Context) {
 	fw.mu.Lock()
 	if fw.running {
@@ -102,19 +132,60 @@ func (fw *FileWatcher) Start(ctx context.Context) {
 	}
 	ctx, fw.cancel = context.WithCancel(ctx)
 	fw.running = true
+	pollInterval := pollingInterval
+	if native, err := fsnotify.NewWatcher(); err == nil {
+		fw.native = native
+		fw.nativeRoots = make(map[string]struct{})
+		fw.stats.Mode = "hybrid"
+		fw.stats.NativeAvailable = true
+		pollInterval = hybridFallbackInterval
+		fw.refreshNativeWatchesLocked()
+	} else {
+		fw.stats.Mode = "polling"
+		fw.stats.NativeAvailable = false
+		fw.stats.NativeErrors++
+		fw.stats.LastNativeError = err.Error()
+	}
+	fw.stats.PollInterval = pollInterval.String()
+	native := fw.native
 	fw.mu.Unlock()
 
-	ticker := time.NewTicker(2 * time.Second) // poll every 2s
-	defer ticker.Stop()
+	pollTicker := time.NewTicker(pollInterval)
+	defer pollTicker.Stop()
+	debounceTicker := time.NewTicker(debounceCheckInterval)
+	defer debounceTicker.Stop()
+	var nativeEvents <-chan fsnotify.Event
+	var nativeErrors <-chan error
+	if native != nil {
+		nativeEvents = native.Events
+		nativeErrors = native.Errors
+		defer native.Close()
+	}
 
 	for {
 		select {
 		case <-ctx.Done():
 			fw.mu.Lock()
 			fw.running = false
+			fw.native = nil
+			fw.nativeRoots = nil
 			fw.mu.Unlock()
 			return
-		case <-ticker.C:
+		case event, ok := <-nativeEvents:
+			if !ok {
+				nativeEvents = nil
+				continue
+			}
+			fw.handleNativeEvent(event, time.Now())
+		case err, ok := <-nativeErrors:
+			if !ok {
+				nativeErrors = nil
+				continue
+			}
+			fw.recordNativeError(err)
+		case <-debounceTicker.C:
+			fw.flushDue(time.Now())
+		case <-pollTicker.C:
 			fw.poll()
 		}
 	}
@@ -129,7 +200,21 @@ func (fw *FileWatcher) Stop() {
 	fw.mu.Unlock()
 }
 
+func (fw *FileWatcher) Stats() FileWatcherStats {
+	fw.mu.Lock()
+	defer fw.mu.Unlock()
+	stats := fw.stats
+	if stats.Mode == "" {
+		stats.Mode = "polling"
+	}
+	if stats.PollInterval == "" {
+		stats.PollInterval = pollingInterval.String()
+	}
+	return stats
+}
+
 func (fw *FileWatcher) poll() {
+	start := time.Now()
 	fw.mu.Lock()
 	sessions := make([]string, 0, len(fw.watches))
 	for id := range fw.watches {
@@ -138,6 +223,8 @@ func (fw *FileWatcher) poll() {
 	fw.mu.Unlock()
 
 	now := time.Now()
+	totalFiles := 0
+	totalDirs := 0
 	for _, id := range sessions {
 		fw.mu.Lock()
 		state, ok := fw.watches[id]
@@ -149,32 +236,32 @@ func (fw *FileWatcher) poll() {
 			continue
 		}
 
-		changes := fw.detectChanges(state)
+		changes, files, dirs := fw.detectChanges(state)
+		totalFiles += files
+		totalDirs += dirs
 		if len(changes) == 0 {
-			// Check if debounce timer has elapsed.
-			if state.pending && now.After(state.timer) {
-				fw.fireWakeup(id, state, now)
-			}
 			continue
 		}
 
-		// Changes detected — start/reset debounce timer.
-		for _, change := range changes {
-			state.changes[change] = struct{}{}
-		}
-		debounce := state.config.Debounce
-		if debounce == 0 {
-			debounce = 3 * time.Second
-		}
-		state.pending = true
-		state.timer = now.Add(debounce)
+		fw.noteChanges(state, changes, now)
 	}
+	fw.mu.Lock()
+	fw.stats.PollScans++
+	fw.stats.LastPollDurationMS = time.Since(start).Milliseconds()
+	fw.stats.LastPollFiles = totalFiles
+	fw.stats.LastPollDirs = totalDirs
+	fw.mu.Unlock()
+	fw.flushDue(now)
 }
 
-func (fw *FileWatcher) detectChanges(state *watchState) []string {
+func (fw *FileWatcher) detectChanges(state *watchState) ([]string, int, int) {
 	var changed []string
+	totalFiles := 0
+	totalDirs := 0
 	for _, path := range state.config.Paths {
-		entries := fw.walkPath(path, state.config.IgnorePatterns)
+		entries, dirs := fw.walkPath(path, state.config.IgnorePatterns)
+		totalDirs += dirs
+		totalFiles += len(entries)
 		for _, entry := range entries {
 			info, err := os.Stat(entry)
 			if err != nil {
@@ -189,16 +276,18 @@ func (fw *FileWatcher) detectChanges(state *watchState) []string {
 			state.lastSeen[entry] = mod
 		}
 	}
-	return changed
+	return changed, totalFiles, totalDirs
 }
 
-func (fw *FileWatcher) walkPath(root string, ignorePatterns []string) []string {
+func (fw *FileWatcher) walkPath(root string, ignorePatterns []string) ([]string, int) {
 	var files []string
+	dirs := 0
 	filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return nil
 		}
 		if info.IsDir() {
+			dirs++
 			name := info.Name()
 			if fw.shouldIgnore(name, ignorePatterns) {
 				return filepath.SkipDir
@@ -211,7 +300,7 @@ func (fw *FileWatcher) walkPath(root string, ignorePatterns []string) []string {
 		files = append(files, path)
 		return nil
 	})
-	return files
+	return files, dirs
 }
 
 func (fw *FileWatcher) shouldIgnore(name string, patterns []string) bool {
@@ -226,6 +315,197 @@ func (fw *FileWatcher) shouldIgnore(name string, patterns []string) bool {
 		}
 	}
 	return false
+}
+
+func (fw *FileWatcher) handleNativeEvent(event fsnotify.Event, now time.Time) {
+	if event.Name == "" || event.Op&(fsnotify.Create|fsnotify.Write|fsnotify.Remove|fsnotify.Rename) == 0 {
+		return
+	}
+	path := filepath.Clean(event.Name)
+	var matched bool
+	var ignored bool
+
+	fw.mu.Lock()
+	if event.Op&fsnotify.Create != 0 {
+		if info, err := os.Stat(path); err == nil && info.IsDir() {
+			fw.refreshNativeWatchesLocked()
+		}
+	}
+	for _, state := range fw.watches {
+		if state == nil || !state.config.Enabled {
+			continue
+		}
+		if fw.pathIgnored(path, state.config.IgnorePatterns) {
+			ignored = true
+			continue
+		}
+		if !fw.eventMatchesConfig(state.config, path) {
+			continue
+		}
+		matched = true
+		if info, err := os.Stat(path); err == nil {
+			state.lastSeen[path] = info.ModTime()
+		}
+		fw.noteChangesLocked(state, []string{path}, now)
+	}
+	fw.stats.NativeEvents++
+	if ignored || !matched {
+		fw.stats.IgnoredChanges++
+	}
+	fw.mu.Unlock()
+}
+
+func (fw *FileWatcher) noteChanges(state *watchState, changes []string, now time.Time) {
+	fw.mu.Lock()
+	defer fw.mu.Unlock()
+	fw.noteChangesLocked(state, changes, now)
+}
+
+func (fw *FileWatcher) noteChangesLocked(state *watchState, changes []string, now time.Time) {
+	for _, change := range changes {
+		state.changes[change] = struct{}{}
+	}
+	debounce := state.config.Debounce
+	if debounce == 0 {
+		debounce = 3 * time.Second
+	}
+	state.pending = true
+	state.timer = now.Add(debounce)
+}
+
+func (fw *FileWatcher) flushDue(now time.Time) {
+	fw.mu.Lock()
+	sessions := make([]string, 0, len(fw.watches))
+	for id := range fw.watches {
+		sessions = append(sessions, id)
+	}
+	fw.mu.Unlock()
+	for _, id := range sessions {
+		fw.mu.Lock()
+		state, ok := fw.watches[id]
+		due := ok && state.pending && now.After(state.timer)
+		fw.mu.Unlock()
+		if due {
+			fw.fireWakeup(id, state, now)
+		}
+	}
+}
+
+func (fw *FileWatcher) eventMatchesConfig(cfg FileWatchConfig, path string) bool {
+	path = filepath.Clean(path)
+	for _, root := range cfg.Paths {
+		root = filepath.Clean(strings.TrimSpace(root))
+		if root == "" {
+			continue
+		}
+		if info, err := os.Stat(root); err == nil && info.IsDir() {
+			if path == root || strings.HasPrefix(path, root+string(filepath.Separator)) {
+				return true
+			}
+			continue
+		}
+		if path == root {
+			return true
+		}
+	}
+	return false
+}
+
+func (fw *FileWatcher) pathIgnored(path string, patterns []string) bool {
+	return fw.shouldIgnore(filepath.Base(path), patterns)
+}
+
+func (fw *FileWatcher) refreshNativeWatchesLocked() {
+	if fw.native == nil {
+		return
+	}
+	want := make(map[string]struct{})
+	for _, state := range fw.watches {
+		if state == nil || !state.config.Enabled {
+			continue
+		}
+		for _, dir := range fw.nativeWatchDirs(state.config) {
+			want[dir] = struct{}{}
+		}
+	}
+	for root := range fw.nativeRoots {
+		if _, ok := want[root]; ok {
+			continue
+		}
+		_ = fw.native.Remove(root)
+		delete(fw.nativeRoots, root)
+	}
+	for root := range want {
+		if _, ok := fw.nativeRoots[root]; ok {
+			continue
+		}
+		if err := fw.native.Add(root); err != nil {
+			fw.stats.NativeErrors++
+			fw.stats.LastNativeError = err.Error()
+			continue
+		}
+		fw.nativeRoots[root] = struct{}{}
+	}
+	fw.stats.NativeWatchRoots = len(fw.nativeRoots)
+}
+
+func (fw *FileWatcher) nativeWatchDirs(cfg FileWatchConfig) []string {
+	seen := make(map[string]struct{})
+	var dirs []string
+	add := func(dir string) {
+		dir = filepath.Clean(strings.TrimSpace(dir))
+		if dir == "" || fw.pathIgnored(dir, cfg.IgnorePatterns) {
+			return
+		}
+		if info, err := os.Stat(dir); err != nil || !info.IsDir() {
+			return
+		}
+		if _, ok := seen[dir]; ok {
+			return
+		}
+		seen[dir] = struct{}{}
+		dirs = append(dirs, dir)
+	}
+	for _, root := range cfg.Paths {
+		root = filepath.Clean(strings.TrimSpace(root))
+		if root == "" {
+			continue
+		}
+		info, err := os.Stat(root)
+		if err != nil {
+			add(filepath.Dir(root))
+			continue
+		}
+		if !info.IsDir() {
+			add(filepath.Dir(root))
+			continue
+		}
+		filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+			if err != nil || !entry.IsDir() {
+				return nil
+			}
+			if path != root && fw.shouldIgnore(entry.Name(), cfg.IgnorePatterns) {
+				return filepath.SkipDir
+			}
+			add(path)
+			return nil
+		})
+	}
+	sort.Strings(dirs)
+	return dirs
+}
+
+func (fw *FileWatcher) recordNativeError(err error) {
+	if err == nil {
+		return
+	}
+	fw.mu.Lock()
+	fw.stats.NativeErrors++
+	fw.stats.LastNativeError = err.Error()
+	fw.mu.Unlock()
+	if fw.logger != nil {
+		fw.logger.Warn("file watcher native event error", "err", err)
+	}
 }
 
 func (fw *FileWatcher) fireWakeup(sessionID string, state *watchState, now time.Time) {

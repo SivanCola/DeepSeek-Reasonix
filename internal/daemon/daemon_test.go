@@ -14,6 +14,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fsnotify/fsnotify"
+
 	"reasonix/internal/agent"
 	"reasonix/internal/control"
 	"reasonix/internal/event"
@@ -108,6 +110,35 @@ func TestDaemonStartAndStatus(t *testing.T) {
 	}
 
 	_ = ctx
+}
+
+func TestDaemonStatusIncludesFileWatcherStats(t *testing.T) {
+	d := New(Options{SessionDir: t.TempDir()})
+	d.fileWatcher = NewFileWatcher(d, nil)
+	d.fileWatcher.mu.Lock()
+	d.fileWatcher.stats = FileWatcherStats{
+		Mode:             "hybrid",
+		NativeAvailable:  true,
+		NativeWatchRoots: 2,
+		LastPollDirs:     7,
+		IgnoredChanges:   3,
+	}
+	d.fileWatcher.mu.Unlock()
+
+	req := httptest.NewRequest("GET", "/status", nil)
+	rr := httptest.NewRecorder()
+	d.handleStatus(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	var resp StatusResponse
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode status: %v", err)
+	}
+	if resp.FileWatcher == nil || resp.FileWatcher.Mode != "hybrid" || !resp.FileWatcher.NativeAvailable ||
+		resp.FileWatcher.NativeWatchRoots != 2 || resp.FileWatcher.LastPollDirs != 7 || resp.FileWatcher.IgnoredChanges != 3 {
+		t.Fatalf("file watcher stats missing from status: %+v", resp.FileWatcher)
+	}
 }
 
 func TestDaemonScanSessions(t *testing.T) {
@@ -1227,6 +1258,91 @@ func TestFileWatcherDebouncesRapidChangesIntoOneWakeup(t *testing.T) {
 	case intent := <-d.intentCh:
 		t.Fatalf("rapid changes should produce only one intent, got second: %+v", intent)
 	default:
+	}
+}
+
+func TestFileWatcherNativeEventDebouncesIntoWakeup(t *testing.T) {
+	dir := t.TempDir()
+	watchDir := filepath.Join(dir, "workspace")
+	if err := os.MkdirAll(watchDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	changedPath := filepath.Join(watchDir, "CHANGELOG.md")
+	if err := os.WriteFile(changedPath, []byte("# Changelog\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile changed: %v", err)
+	}
+	sess := filepath.Join(dir, "file-native.jsonl")
+	if err := os.WriteFile(sess, []byte(`{"role":"user","content":"start"}`+"\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile session: %v", err)
+	}
+	if err := agent.SaveRuntimeMeta(sess, agent.RuntimeMeta{
+		SessionID: "file-native",
+		Goal:      agent.RuntimeGoalMeta{Text: "react to native file events", Status: control.GoalStatusRunning},
+		Run:       agent.RuntimeRunMeta{Status: "idle"},
+	}); err != nil {
+		t.Fatalf("SaveRuntimeMeta: %v", err)
+	}
+
+	d := New(Options{SessionDir: dir})
+	d.scanSessions()
+	fw := NewFileWatcher(d, d.logger)
+	fw.Register("file-native", FileWatchConfig{Paths: []string{watchDir}, Debounce: time.Hour, Enabled: true})
+	now := time.Now()
+	fw.handleNativeEvent(fsnotify.Event{Name: changedPath, Op: fsnotify.Write}, now)
+
+	fw.mu.Lock()
+	state := fw.watches["file-native"]
+	if state == nil {
+		fw.mu.Unlock()
+		t.Fatal("file-native watch missing")
+	}
+	if !state.pending || len(state.changes) != 1 {
+		fw.mu.Unlock()
+		t.Fatalf("native event did not record one pending change: %+v", state)
+	}
+	state.timer = now.Add(-time.Second)
+	fw.mu.Unlock()
+	fw.flushDue(now)
+
+	select {
+	case intent := <-d.intentCh:
+		if intent.Source != "file_watch" || !strings.Contains(intent.Context, "CHANGELOG.md") {
+			t.Fatalf("unexpected native event intent: %+v", intent)
+		}
+	default:
+		t.Fatal("native file event did not enqueue an intent")
+	}
+	if stats := fw.Stats(); stats.NativeEvents != 1 {
+		t.Fatalf("NativeEvents = %d, want 1", stats.NativeEvents)
+	}
+}
+
+func TestFileWatcherStatsTrackPollAndIgnoredNativeChanges(t *testing.T) {
+	dir := t.TempDir()
+	watchDir := filepath.Join(dir, "workspace")
+	if err := os.MkdirAll(watchDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	kept := filepath.Join(watchDir, "main.go")
+	ignored := filepath.Join(watchDir, "scratch.tmp")
+	if err := os.WriteFile(kept, []byte("package main\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile kept: %v", err)
+	}
+	if err := os.WriteFile(ignored, []byte("tmp\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile ignored: %v", err)
+	}
+
+	fw := NewFileWatcher(nil, nil)
+	fw.Register("file-stats", FileWatchConfig{Paths: []string{watchDir}, IgnorePatterns: []string{"*.tmp"}, Enabled: true})
+	fw.poll()
+	stats := fw.Stats()
+	if stats.PollScans != 1 || stats.LastPollFiles != 1 || stats.LastPollDirs < 1 || stats.LastPollDurationMS < 0 {
+		t.Fatalf("poll stats not recorded: %+v", stats)
+	}
+	fw.handleNativeEvent(fsnotify.Event{Name: ignored, Op: fsnotify.Write}, time.Now())
+	stats = fw.Stats()
+	if stats.NativeEvents != 1 || stats.IgnoredChanges != 1 {
+		t.Fatalf("ignored native change stats not recorded: %+v", stats)
 	}
 }
 

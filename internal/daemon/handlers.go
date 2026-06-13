@@ -30,6 +30,10 @@ func (d *Daemon) handleStatus(w http.ResponseWriter, r *http.Request) {
 		Uptime:   time.Since(startTime).Round(time.Second).String(),
 		PID:      os.Getpid(),
 	}
+	if d.fileWatcher != nil {
+		stats := d.fileWatcher.Stats()
+		resp.FileWatcher = &stats
+	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
 }
