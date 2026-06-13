@@ -180,6 +180,10 @@ func TestSaveRuntimeMetaRoundTrip(t *testing.T) {
 			LastWakeupEventID: "evt-123",
 			LastWakeupKey:     "github.workflow_run|esengine/deepseek-reasonix|#42|completed/success",
 		},
+		Wait: RuntimeWaitMeta{
+			Kind:  "time",
+			Until: now.Add(2 * time.Hour),
+		},
 	}
 
 	if err := SaveRuntimeMeta(sessionPath, meta); err != nil {
@@ -218,6 +222,9 @@ func TestSaveRuntimeMetaRoundTrip(t *testing.T) {
 	}
 	if loaded.Scheduler.LastWakeupKey != meta.Scheduler.LastWakeupKey {
 		t.Errorf("Scheduler.LastWakeupKey = %q, want %q", loaded.Scheduler.LastWakeupKey, meta.Scheduler.LastWakeupKey)
+	}
+	if !loaded.Wait.Until.Equal(meta.Wait.Until) {
+		t.Errorf("Wait.Until = %v, want %v", loaded.Wait.Until, meta.Wait.Until)
 	}
 }
 

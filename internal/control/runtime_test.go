@@ -442,6 +442,40 @@ func TestSnapshotPreservesEventWaitRuntime(t *testing.T) {
 	}
 }
 
+func TestSnapshotPreservesTimeWaitRuntime(t *testing.T) {
+	dir := t.TempDir()
+	sessionPath := filepath.Join(dir, "preserve-time-wait.jsonl")
+
+	sess := agent.NewSession("")
+	sess.Add(provider.Message{Role: provider.RoleUser, Content: "hello"})
+	ag := agent.New(nil, tool.NewRegistry(), sess, agent.Options{}, event.Discard)
+	c := New(Options{Executor: ag, SessionPath: sessionPath, Sink: event.Discard})
+	until := time.Now().Add(time.Hour).UTC().Truncate(time.Second)
+
+	if err := agent.SaveRuntimeMeta(sessionPath, agent.RuntimeMeta{
+		Goal: agent.RuntimeGoalMeta{Text: "wait until later", Status: GoalStatusRunning},
+		Wait: agent.RuntimeWaitMeta{
+			Kind:  "time",
+			Until: until,
+		},
+	}); err != nil {
+		t.Fatalf("SaveRuntimeMeta: %v", err)
+	}
+
+	c.SetGoal("wait until later")
+	if err := c.Snapshot(); err != nil {
+		t.Fatalf("Snapshot: %v", err)
+	}
+
+	m, ok, err := agent.LoadRuntimeMeta(sessionPath)
+	if err != nil || !ok {
+		t.Fatalf("LoadRuntimeMeta: err=%v ok=%v", err, ok)
+	}
+	if m.Wait.Kind != "time" || !m.Wait.Until.Equal(until) {
+		t.Fatalf("time wait not preserved: %+v", m.Wait)
+	}
+}
+
 func TestClearGoalRemovesStaleRuntimeSidecar(t *testing.T) {
 	dir := t.TempDir()
 	sessionPath := filepath.Join(dir, "clear-goal.jsonl")

@@ -65,7 +65,7 @@ func mergeRuntimeForSave(path string, next agent.RuntimeMeta) agent.RuntimeMeta 
 	next.Scheduler = prev.Scheduler
 	next.FileWatch = prev.FileWatch
 	next.Budget = prev.Budget
-	if next.Wait.Kind == "" && prev.Wait.Kind == "event" {
+	if next.Wait.Kind == "" && (prev.Wait.Kind == "event" || prev.Wait.Kind == "time") {
 		next.Wait = prev.Wait
 	}
 	if next.Model == "" {

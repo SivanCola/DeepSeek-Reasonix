@@ -82,6 +82,7 @@ type RuntimeWaitMeta struct {
 	EventID         string    `json:"event_id,omitempty"`
 	EventStatus     string    `json:"event_status,omitempty"`
 	EventConclusion string    `json:"event_conclusion,omitempty"`
+	Until           time.Time `json:"until,omitempty"`
 	Since           time.Time `json:"since,omitempty"`
 }
 

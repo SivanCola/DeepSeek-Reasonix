@@ -183,6 +183,47 @@ func TestDaemonRecoverWaitingApprovalAsInterrupted(t *testing.T) {
 	}
 }
 
+func TestDaemonRecoverPreservesDaemonOwnedWaits(t *testing.T) {
+	dir := t.TempDir()
+
+	eventSess := filepath.Join(dir, "waiting-event.jsonl")
+	os.WriteFile(eventSess, []byte(`{"role":"user"}`), 0o644)
+	agent.SaveRuntimeMeta(eventSess, agent.RuntimeMeta{
+		SessionID: "waiting-event",
+		Goal:      agent.RuntimeGoalMeta{Text: "ship it", Status: "running"},
+		Run:       agent.RuntimeRunMeta{Status: "waiting_event"},
+		Wait:      agent.RuntimeWaitMeta{Kind: "event", EventSource: "github.workflow_run"},
+	})
+
+	timeSess := filepath.Join(dir, "waiting-time.jsonl")
+	os.WriteFile(timeSess, []byte(`{"role":"user"}`), 0o644)
+	agent.SaveRuntimeMeta(timeSess, agent.RuntimeMeta{
+		SessionID: "waiting-time",
+		Goal:      agent.RuntimeGoalMeta{Text: "ship it", Status: "running"},
+		Run:       agent.RuntimeRunMeta{Status: "waiting_time"},
+		Wait:      agent.RuntimeWaitMeta{Kind: "time", Until: time.Now().Add(time.Hour).UTC()},
+	})
+
+	d := New(Options{SessionDir: dir})
+	d.scanSessions()
+	d.recoverInterrupted()
+
+	eventMeta, ok, err := agent.LoadRuntimeMeta(eventSess)
+	if err != nil || !ok {
+		t.Fatalf("LoadRuntimeMeta event: err=%v ok=%v", err, ok)
+	}
+	if eventMeta.Run.Status != "waiting_event" || eventMeta.Wait.Kind != "event" {
+		t.Fatalf("event wait should be preserved: run=%+v wait=%+v", eventMeta.Run, eventMeta.Wait)
+	}
+	timeMeta, ok, err := agent.LoadRuntimeMeta(timeSess)
+	if err != nil || !ok {
+		t.Fatalf("LoadRuntimeMeta time: err=%v ok=%v", err, ok)
+	}
+	if timeMeta.Run.Status != "waiting_time" || timeMeta.Wait.Kind != "time" {
+		t.Fatalf("time wait should be preserved: run=%+v wait=%+v", timeMeta.Run, timeMeta.Wait)
+	}
+}
+
 func TestDaemonHTTPHandlers(t *testing.T) {
 	dir := t.TempDir()
 
@@ -454,6 +495,59 @@ func TestDaemonWaitEventHandlerPersistsConfig(t *testing.T) {
 	events, ok, err = agent.LoadRuntimeTimeline(sess, 1)
 	if err != nil || !ok || len(events) != 1 || events[0].Type != "wait_cleared" {
 		t.Fatalf("wait clear timeline not recorded: events=%+v err=%v ok=%v", events, err, ok)
+	}
+}
+
+func TestDaemonWaitTimeHandlerPersistsConfig(t *testing.T) {
+	dir := t.TempDir()
+	sess := filepath.Join(dir, "wait-time-api.jsonl")
+	if err := os.WriteFile(sess, []byte(`{"role":"user","content":"start"}`+"\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	if err := agent.SaveRuntimeMeta(sess, agent.RuntimeMeta{
+		SessionID: "wait-time-api",
+		Goal:      agent.RuntimeGoalMeta{Text: "wait until later", Status: control.GoalStatusRunning},
+		Run:       agent.RuntimeRunMeta{Status: "idle"},
+	}); err != nil {
+		t.Fatalf("SaveRuntimeMeta: %v", err)
+	}
+
+	d := New(Options{SessionDir: dir})
+	d.scanSessions()
+	req := httptest.NewRequest("POST", "/wait-time", strings.NewReader(`{"session_id":"wait-time-api","after":"1h","reason":"wait for release window","subject":"release"}`))
+	rr := httptest.NewRecorder()
+	d.handleWaitTime(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("wait-time status = %d body=%s", rr.Code, rr.Body.String())
+	}
+
+	loaded, ok, err := agent.LoadRuntimeMeta(sess)
+	if err != nil || !ok {
+		t.Fatalf("LoadRuntimeMeta: err=%v ok=%v", err, ok)
+	}
+	if loaded.Run.Status != "waiting_time" || loaded.Wait.Kind != "time" {
+		t.Fatalf("time wait not persisted: run=%+v wait=%+v", loaded.Run, loaded.Wait)
+	}
+	if loaded.Wait.Until.IsZero() || loaded.Wait.Reason != "wait for release window" || loaded.Wait.Subject != "release" {
+		t.Fatalf("time wait metadata incomplete: %+v", loaded.Wait)
+	}
+	events, ok, err := agent.LoadRuntimeTimeline(sess, 1)
+	if err != nil || !ok || len(events) != 1 || events[0].Type != "wait_started" {
+		t.Fatalf("time wait timeline not recorded: events=%+v err=%v ok=%v", events, err, ok)
+	}
+
+	req = httptest.NewRequest("POST", "/wait-time", strings.NewReader(`{"session_id":"wait-time-api","clear":true}`))
+	rr = httptest.NewRecorder()
+	d.handleWaitTime(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("clear wait-time status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	loaded, ok, err = agent.LoadRuntimeMeta(sess)
+	if err != nil || !ok {
+		t.Fatalf("LoadRuntimeMeta after clear: err=%v ok=%v", err, ok)
+	}
+	if loaded.Run.Status != "idle" || loaded.Wait.Kind != "" {
+		t.Fatalf("time wait not cleared: run=%+v wait=%+v", loaded.Run, loaded.Wait)
 	}
 }
 

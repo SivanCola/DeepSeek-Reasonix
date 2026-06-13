@@ -448,6 +448,131 @@ func (d *Daemon) handleWaitEvent(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(resp)
 }
 
+// handleWaitTime sets or clears a time wait condition.
+// Body: {"session_id":"...","until":"2026-06-13T10:00:00Z","after":"1h","reason":"waiting until CI window","subject":"release"}
+func (d *Daemon) handleWaitTime(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		SessionID string `json:"session_id"`
+		Until     string `json:"until"`
+		After     string `json:"after"`
+		Reason    string `json:"reason"`
+		Subject   string `json:"subject"`
+		Clear     bool   `json:"clear"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, `{"error":"invalid json"}`, http.StatusBadRequest)
+		return
+	}
+	if req.SessionID == "" {
+		http.Error(w, `{"error":"session_id required"}`, http.StatusBadRequest)
+		return
+	}
+	now := time.Now().UTC()
+	var until time.Time
+	if !req.Clear {
+		var err error
+		until, err = parseWaitUntil(req.Until, req.After, now)
+		if err != nil {
+			http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err), http.StatusBadRequest)
+			return
+		}
+	}
+
+	d.mu.Lock()
+	entry, ok := d.registry[req.SessionID]
+	if !ok {
+		d.mu.Unlock()
+		http.Error(w, `{"error":"session not found"}`, http.StatusNotFound)
+		return
+	}
+	if _, active := d.activeRuns[req.SessionID]; active {
+		d.mu.Unlock()
+		http.Error(w, `{"error":"session already running"}`, http.StatusConflict)
+		return
+	}
+	action := "wait_started"
+	if req.Clear {
+		entry.Runtime.Wait = agent.RuntimeWaitMeta{}
+		if entry.Runtime.Run.Status == "waiting_time" {
+			entry.Runtime.Run.Status = "idle"
+		}
+		action = "wait_cleared"
+	} else {
+		reason := strings.TrimSpace(req.Reason)
+		if reason == "" {
+			reason = "waiting until time"
+		}
+		subject := strings.TrimSpace(req.Subject)
+		if subject == "" {
+			subject = until.Format(time.RFC3339)
+		}
+		entry.Runtime.Wait = agent.RuntimeWaitMeta{
+			Kind:    "time",
+			Reason:  reason,
+			Subject: subject,
+			Until:   until,
+			Since:   now,
+		}
+		entry.Runtime.Run.Status = "waiting_time"
+	}
+	runtime := entry.Runtime
+	path := entry.Path
+	d.mu.Unlock()
+
+	if err := agent.SaveRuntimeMeta(path, runtime); err != nil {
+		http.Error(w, fmt.Sprintf(`{"error":"save failed: %s"}`, err), http.StatusInternalServerError)
+		return
+	}
+	d.appendTimeline(path, agent.RuntimeTimelineEvent{
+		Type:       action,
+		Source:     "api",
+		RunStatus:  runtime.Run.Status,
+		GoalStatus: runtime.Goal.Status,
+		WaitKind:   runtime.Wait.Kind,
+		Subject:    runtime.Wait.Subject,
+		Reason:     runtime.Wait.Reason,
+	})
+
+	w.Header().Set("Content-Type", "application/json")
+	resp := map[string]interface{}{
+		"ok":         true,
+		"session_id": req.SessionID,
+		"run_status": runtime.Run.Status,
+		"wait_kind":  runtime.Wait.Kind,
+		"until":      runtime.Wait.Until.Format(time.RFC3339),
+	}
+	json.NewEncoder(w).Encode(resp)
+}
+
+func parseWaitUntil(untilRaw, afterRaw string, now time.Time) (time.Time, error) {
+	untilRaw = strings.TrimSpace(untilRaw)
+	afterRaw = strings.TrimSpace(afterRaw)
+	if untilRaw == "" && afterRaw == "" {
+		return time.Time{}, fmt.Errorf("until or after required")
+	}
+	if untilRaw != "" && afterRaw != "" {
+		return time.Time{}, fmt.Errorf("only one of until or after may be set")
+	}
+	if afterRaw != "" {
+		dur, err := time.ParseDuration(afterRaw)
+		if err != nil {
+			return time.Time{}, fmt.Errorf("invalid after: %s", err)
+		}
+		if dur < time.Second {
+			return time.Time{}, fmt.Errorf("after must be at least 1s")
+		}
+		return now.Add(dur).UTC(), nil
+	}
+	until, err := time.Parse(time.RFC3339, untilRaw)
+	if err != nil {
+		until, err = time.Parse(time.RFC3339Nano, untilRaw)
+	}
+	if err != nil {
+		return time.Time{}, fmt.Errorf("invalid until: %s", err)
+	}
+	return until.UTC(), nil
+}
+
 // handleWatch configures file watching for a session.
 // Body: {"session_id": "...", "paths": ["src/"], "ignore_patterns": ["*.tmp"], "debounce": "3s", "enabled": true}
 func (d *Daemon) handleWatch(w http.ResponseWriter, r *http.Request) {

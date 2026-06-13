@@ -50,6 +50,8 @@ func daemonCommand(args []string) int {
 		return daemonBudgetCmd(rest)
 	case "wait-event":
 		return daemonWaitEventCmd(rest)
+	case "wait-time":
+		return daemonWaitTimeCmd(rest)
 	case "approve":
 		return daemonApprovalCmd(rest, true)
 	case "deny":
@@ -476,6 +478,63 @@ func daemonWaitEventCmd(args []string) int {
 	return 0
 }
 
+func daemonWaitTimeCmd(args []string) int {
+	fs := flag.NewFlagSet("daemon wait-time", flag.ContinueOnError)
+	addr := fs.String("addr", daemon.DefaultAddr, "daemon 地址")
+	dir := fs.String("dir", "", "会话目录（用于读取本地 token）")
+	sessionID := fs.String("session", "", "要设置等待条件的 session ID")
+	until := fs.String("until", "", "等待到 RFC3339 时间，例如 2026-06-13T10:00:00Z")
+	after := fs.String("after", "", "从现在起等待多久，例如 30m 或 2h")
+	reason := fs.String("reason", "", "等待原因")
+	subject := fs.String("subject", "", "等待对象")
+	clear := fs.Bool("clear", false, "清除当前 time wait 条件")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if *sessionID == "" {
+		fmt.Fprintln(os.Stderr, "error: --session is required")
+		return 2
+	}
+	if !*clear {
+		if (*until == "" && *after == "") || (*until != "" && *after != "") {
+			fmt.Fprintln(os.Stderr, "error: exactly one of --until or --after is required unless --clear is set")
+			return 2
+		}
+	}
+
+	body := fmt.Sprintf(`{"session_id":%q`, *sessionID)
+	if *clear {
+		body += `,"clear":true`
+	} else {
+		if *until != "" {
+			body += fmt.Sprintf(`,"until":%q`, *until)
+		}
+		if *after != "" {
+			body += fmt.Sprintf(`,"after":%q`, *after)
+		}
+		if *reason != "" {
+			body += fmt.Sprintf(`,"reason":%q`, *reason)
+		}
+		if *subject != "" {
+			body += fmt.Sprintf(`,"subject":%q`, *subject)
+		}
+	}
+	body += "}"
+	resp, err := daemonPost(*addr, *dir, "/wait-time", body)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "daemon not reachable: %v\n", err)
+		return 1
+	}
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 200 {
+		fmt.Fprintf(os.Stderr, "error: %s\n", string(b))
+		return 1
+	}
+	fmt.Println(string(b))
+	return 0
+}
+
 func daemonApprovalCmd(args []string, allow bool) int {
 	name := "daemon approve"
 	path := "/approvals/approve"
@@ -605,6 +664,7 @@ Usage:
   reasonix daemon schedule --session ID [--daily-at HH:MM | --interval 1h]
   reasonix daemon budget   --session ID --daily-wakeups N [--reset]
   reasonix daemon wait-event --session ID --source TYPE [--event-id ID] [--status completed] [--conclusion success]
+  reasonix daemon wait-time --session ID (--until RFC3339 | --after 1h)
   reasonix daemon approve  --session ID --approval ID
   reasonix daemon deny     --session ID --approval ID
   reasonix daemon answer   --session ID --ask ID --selected TEXT
@@ -620,6 +680,7 @@ Subcommands:
   schedule   设置 daily/interval 定时唤醒
   budget     设置自动唤醒每日预算
   wait-event 设置或清除等待外部事件条件
+  wait-time  设置或清除等待到指定时间的条件
   approve    批准 daemon 中等待的审批
   deny       拒绝 daemon 中等待的审批
   answer     回答 daemon 中等待的 ask 问题

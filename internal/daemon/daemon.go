@@ -191,6 +191,7 @@ func (d *Daemon) Start(ctx context.Context) error {
 	mux.HandleFunc("POST /schedule", d.withAuth(d.handleSchedule))
 	mux.HandleFunc("POST /budget", d.withAuth(d.handleBudget))
 	mux.HandleFunc("POST /wait-event", d.withAuth(d.handleWaitEvent))
+	mux.HandleFunc("POST /wait-time", d.withAuth(d.handleWaitTime))
 	mux.HandleFunc("POST /webhook", d.handleWebhook)
 	mux.HandleFunc("POST /watch", d.withAuth(d.handleWatch))
 	mux.HandleFunc("POST /approvals/approve", d.withAuth(d.handleApprove))
@@ -438,14 +439,16 @@ func (d *Daemon) scanDir(dir string) {
 	}
 }
 
-// recoverInterrupted marks any session with an in-flight or user-waiting run as
-// "interrupted" — these were killed mid-flight and no longer have a live
-// controller to receive approvals/answers. Does NOT auto-resume.
+// recoverInterrupted marks any session with an in-flight or controller-owned
+// user wait as "interrupted" — these were killed mid-flight and no longer have a
+// live controller to receive approvals/answers. Daemon-owned event/time waits
+// are dormant waits and survive restart. Does NOT auto-resume.
 func (d *Daemon) recoverInterrupted() {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	for _, entry := range d.registry {
-		if entry.Runtime.Run.Status == "running" || strings.HasPrefix(entry.Runtime.Run.Status, "waiting_") {
+		waitingForController := entry.Runtime.Run.Status == "waiting_approval" || entry.Runtime.Run.Status == "waiting_ask"
+		if entry.Runtime.Run.Status == "running" || waitingForController {
 			prev := entry.Runtime.Run.Status
 			entry.Runtime.Run.Status = "interrupted"
 			entry.Runtime.Run.LastError = "daemon startup recovery from " + prev

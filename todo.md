@@ -182,7 +182,7 @@ dynamic workflow 或开发者平台，而是先把 Reasonix 从一次性会话�
   - [ ] 可选择启动 bot gateway。
 - [x] 新增本地控制接口。
   - [x] 使用 localhost HTTP。
-  - [x] 提供 status、sessions、continue goal、stop run、approve、answer、wait-event。
+  - [x] 提供 status、sessions、continue goal、stop run、approve、answer、wait-event、wait-time。
 - [x] 单实例控制。
   - [x] 同一 config/session dir 只允许一个 daemon 写 runtime state。
   - [x] 启动时检测锁文件。
@@ -340,7 +340,7 @@ dynamic workflow 或开发者平台，而是先把 Reasonix 从一次性会话�
   - [x] wait for user approval
   - [x] wait for webhook / external event
   - [x] wait for CI status/conclusion
-  - [ ] wait until time
+  - [x] wait until time
   - [ ] wait for file change
 - [ ] 成本预算。
   - [x] session 级每日自动唤醒次数预算。

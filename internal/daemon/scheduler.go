@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -80,7 +81,9 @@ func (s *Scheduler) tick() {
 
 	now := time.Now()
 	for _, entry := range entries {
-		if s.shouldWakeup(&entry, now) {
+		if s.shouldWakeupTime(&entry, now) {
+			s.wakeupTimeSession(entry.ID, now)
+		} else if s.shouldWakeup(&entry, now) {
 			s.wakeupSession(entry.ID, now)
 		}
 	}
@@ -130,9 +133,105 @@ func (s *Scheduler) shouldWakeupRuntime(id string, runtime agent.RuntimeMeta, no
 	return true
 }
 
+func (s *Scheduler) shouldWakeupTime(entry *SessionEntry, now time.Time) bool {
+	return s.shouldWakeupTimeRuntime(entry.ID, entry.Runtime, now)
+}
+
+func (s *Scheduler) shouldWakeupTimeRuntime(id string, runtime agent.RuntimeMeta, now time.Time) bool {
+	wait := runtime.Wait
+	if wait.Kind != "time" || wait.Until.IsZero() || wait.Until.After(now) {
+		return false
+	}
+	goalStatus := runtime.Goal.Status
+	if goalStatus != "running" && goalStatus != "blocked" {
+		return false
+	}
+	runStatus := runtime.Run.Status
+	if runStatus == "running" || runStatus == "pending_continue" {
+		return false
+	}
+	key := s.timeWaitKeyFor(id, wait)
+	if key != "" && key == runtime.Scheduler.LastWakeupKey &&
+		runtime.Scheduler.LastWakeupReason == "budget_blocked:time" &&
+		!runtime.Budget.LastBlockedAt.IsZero() &&
+		budgetWindowStart(runtime.Budget.LastBlockedAt).Equal(budgetWindowStart(now)) {
+		return false
+	}
+	return true
+}
+
 // wakeup fires a scheduled continuation for the session.
 func (s *Scheduler) wakeup(entry *SessionEntry, now time.Time) {
 	s.wakeupSession(entry.ID, now)
+}
+
+func (s *Scheduler) wakeupTimeSession(id string, now time.Time) {
+	s.daemon.mu.Lock()
+	entry, ok := s.daemon.registry[id]
+	if !ok || !s.shouldWakeupTimeRuntime(entry.ID, entry.Runtime, now) {
+		s.daemon.mu.Unlock()
+		return
+	}
+	wait := entry.Runtime.Wait
+	eventID := s.timeWaitEventIDFor(entry.ID, wait)
+	wakeupKey := s.timeWaitKeyFor(entry.ID, wait)
+	if ok, reason := reserveAutoWakeupBudget(&entry.Runtime, "time", now); !ok {
+		entry.Runtime.Scheduler.LastWakeupAt = now
+		entry.Runtime.Scheduler.LastWakeupReason = "budget_blocked:time"
+		entry.Runtime.Scheduler.LastWakeupEventID = eventID
+		entry.Runtime.Scheduler.LastWakeupKey = wakeupKey
+		runtime := entry.Runtime
+		path := entry.Path
+		s.daemon.mu.Unlock()
+		if err := agent.SaveRuntimeMeta(path, runtime); err != nil {
+			s.logger.Warn("scheduler: save runtime after time wait budget block", "err", err, "session", id)
+		}
+		s.daemon.appendTimeline(path, agent.RuntimeTimelineEvent{
+			Type:       "wakeup_budget_blocked",
+			Source:     "time",
+			Reason:     reason,
+			EventID:    eventID,
+			RunStatus:  runtime.Run.Status,
+			GoalStatus: runtime.Goal.Status,
+			WaitKind:   wait.Kind,
+			Subject:    wait.Subject,
+			Message:    reason,
+		})
+		return
+	}
+
+	entry.Runtime.Run.Status = "pending_continue"
+	entry.Runtime.Run.LastWakeupReason = "time"
+	entry.Runtime.Run.ResumeCount++
+	entry.Runtime.Wait = agent.RuntimeWaitMeta{}
+	entry.Runtime.Scheduler.LastWakeupAt = now
+	entry.Runtime.Scheduler.LastWakeupReason = "time"
+	entry.Runtime.Scheduler.LastWakeupEventID = eventID
+	entry.Runtime.Scheduler.LastWakeupKey = wakeupKey
+	runtime := entry.Runtime
+	path := entry.Path
+	s.daemon.mu.Unlock()
+
+	if err := agent.SaveRuntimeMeta(path, runtime); err != nil {
+		s.logger.Warn("scheduler: save runtime after time wait wakeup", "err", err, "session", id)
+	}
+	s.daemon.appendTimeline(path, agent.RuntimeTimelineEvent{
+		Type:       "wait_time_reached",
+		Source:     "time",
+		EventID:    eventID,
+		RunStatus:  runtime.Run.Status,
+		GoalStatus: runtime.Goal.Status,
+		Subject:    wait.Subject,
+		Reason:     wait.Reason,
+	})
+	s.daemon.enqueueIntent(RunIntent{
+		SessionID:   id,
+		SessionPath: path,
+		Source:      "time",
+		Reason:      "time",
+		EventID:     eventID,
+		Context:     boundedTimeWaitContext(wait),
+	})
 }
 
 func (s *Scheduler) wakeupSession(id string, now time.Time) {
@@ -268,6 +367,35 @@ func (s *Scheduler) wakeupKeyFor(id string, sched agent.RuntimeSchedMeta, due ti
 		return ""
 	}
 	return "schedule:" + s.eventIDFor(id, sched, due)
+}
+
+func (s *Scheduler) timeWaitEventIDFor(id string, wait agent.RuntimeWaitMeta) string {
+	unix := wait.Until.UTC().Unix()
+	if unix < 0 {
+		unix = 0
+	}
+	return fmt.Sprintf("time:%s:%d", id, unix)
+}
+
+func (s *Scheduler) timeWaitKeyFor(id string, wait agent.RuntimeWaitMeta) string {
+	if wait.Until.IsZero() {
+		return ""
+	}
+	return "wait:" + s.timeWaitEventIDFor(id, wait)
+}
+
+func boundedTimeWaitContext(wait agent.RuntimeWaitMeta) string {
+	parts := []string{"Time wait reached; continue the active goal."}
+	if !wait.Until.IsZero() {
+		parts = append(parts, "until="+wait.Until.UTC().Format(time.RFC3339))
+	}
+	if wait.Subject != "" {
+		parts = append(parts, "subject="+wait.Subject)
+	}
+	if wait.Reason != "" {
+		parts = append(parts, "reason="+wait.Reason)
+	}
+	return strings.Join(parts, " ")
 }
 
 // nextDailyTime parses "HH:MM" and returns the next occurrence after `after`

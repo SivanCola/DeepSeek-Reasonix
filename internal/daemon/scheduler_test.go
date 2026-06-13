@@ -304,6 +304,106 @@ func TestSchedulerWakeupRespectsDailyBudget(t *testing.T) {
 	}
 }
 
+func TestSchedulerTimeWaitWakeupClearsWait(t *testing.T) {
+	dir := t.TempDir()
+	sess := filepath.Join(dir, "time-wait.jsonl")
+	if err := os.WriteFile(sess, []byte(`{}`), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	now := time.Now().UTC()
+	if err := agent.SaveRuntimeMeta(sess, agent.RuntimeMeta{
+		SessionID: "time-wait",
+		Goal:      agent.RuntimeGoalMeta{Text: "continue later", Status: "running"},
+		Run:       agent.RuntimeRunMeta{Status: "waiting_time"},
+		Wait: agent.RuntimeWaitMeta{
+			Kind:    "time",
+			Reason:  "release window",
+			Subject: "release",
+			Until:   now.Add(-time.Minute),
+		},
+	}); err != nil {
+		t.Fatalf("SaveRuntimeMeta: %v", err)
+	}
+
+	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	d := New(Options{SessionDir: dir})
+	d.scanSessions()
+	s := NewScheduler(d, logger)
+	s.wakeupTimeSession("time-wait", now)
+
+	select {
+	case intent := <-d.intentCh:
+		if intent.Source != "time" || intent.Reason != "time" {
+			t.Fatalf("unexpected time wait intent: %+v", intent)
+		}
+		if intent.EventID == "" || intent.Context == "" {
+			t.Fatalf("time wait intent missing event/context: %+v", intent)
+		}
+	default:
+		t.Fatal("time wait should enqueue an intent")
+	}
+	loaded, ok, err := agent.LoadRuntimeMeta(sess)
+	if err != nil || !ok {
+		t.Fatalf("LoadRuntimeMeta: err=%v ok=%v", err, ok)
+	}
+	if loaded.Run.Status != "pending_continue" || loaded.Wait.Kind != "" {
+		t.Fatalf("time wait should clear wait and continue: run=%+v wait=%+v", loaded.Run, loaded.Wait)
+	}
+	if loaded.Scheduler.LastWakeupReason != "time" || loaded.Scheduler.LastWakeupKey == "" {
+		t.Fatalf("time wait wakeup metadata missing: %+v", loaded.Scheduler)
+	}
+}
+
+func TestSchedulerTimeWaitBudgetBlockDedupesCurrentWindow(t *testing.T) {
+	dir := t.TempDir()
+	sess := filepath.Join(dir, "time-wait-budget.jsonl")
+	if err := os.WriteFile(sess, []byte(`{}`), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	now := time.Now().UTC()
+	if err := agent.SaveRuntimeMeta(sess, agent.RuntimeMeta{
+		SessionID: "time-wait-budget",
+		Goal:      agent.RuntimeGoalMeta{Text: "continue later", Status: "running"},
+		Run:       agent.RuntimeRunMeta{Status: "waiting_time"},
+		Wait: agent.RuntimeWaitMeta{
+			Kind:  "time",
+			Until: now.Add(-time.Minute),
+		},
+		Budget: agent.RuntimeBudgetMeta{
+			DailyWakeupLimit: 1,
+			DailyWakeups:     1,
+			WindowStartedAt:  budgetWindowStart(now),
+		},
+	}); err != nil {
+		t.Fatalf("SaveRuntimeMeta: %v", err)
+	}
+
+	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	d := New(Options{SessionDir: dir})
+	d.scanSessions()
+	s := NewScheduler(d, logger)
+	s.wakeupTimeSession("time-wait-budget", now)
+
+	select {
+	case intent := <-d.intentCh:
+		t.Fatalf("budget-blocked time wait should not enqueue intent: %+v", intent)
+	default:
+	}
+	loaded, ok, err := agent.LoadRuntimeMeta(sess)
+	if err != nil || !ok {
+		t.Fatalf("LoadRuntimeMeta: err=%v ok=%v", err, ok)
+	}
+	if loaded.Run.Status != "waiting_time" || loaded.Wait.Kind != "time" {
+		t.Fatalf("budget-blocked time wait should remain waiting: run=%+v wait=%+v", loaded.Run, loaded.Wait)
+	}
+	if loaded.Scheduler.LastWakeupReason != "budget_blocked:time" || loaded.Scheduler.LastWakeupKey == "" {
+		t.Fatalf("budget-blocked time wait metadata missing: %+v", loaded.Scheduler)
+	}
+	if s.shouldWakeupTimeRuntime("time-wait-budget", loaded, now.Add(time.Minute)) {
+		t.Fatal("budget-blocked time wait should not spin again in same budget window")
+	}
+}
+
 func TestSchedulerWakeupRechecksRuntimeBeforePersist(t *testing.T) {
 	dir := t.TempDir()
 	sess := filepath.Join(dir, "recheck.jsonl")
