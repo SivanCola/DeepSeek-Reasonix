@@ -379,11 +379,11 @@ dynamic workflow 或开发者平台，而是先把 Reasonix 从一次性会话�
   - [x] 支持 workflow_run / check_suite / commit status。
   - [x] CI 失败时复用 webhook failure diagnosis 唤醒总结错误。
   - [x] CI 成功后唤醒原 session，准备发布说明或 merge 建议。
-- [ ] 发布助手。
-  - 检查 changelog。
-  - 检查版本号。
-  - 等待审批。
-  - 发布后通知 IM。
+- [x] 发布助手。
+  - [x] `reasonix daemon release-assist` 可等待 changelog / version 文件变化。
+  - [x] 文件变化后唤醒 release session 检查 changelog 和版本号。
+  - [x] 发布动作继续走 tool approval / approval desk。
+  - [x] 发布后通知 IM 由 active release goal 复用 bot gateway 承接。
 - [ ] 仓库健康巡检。
   - 定期跑轻量检查。
   - 报告 flaky tests、长期未合并 PR、过期依赖。

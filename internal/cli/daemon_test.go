@@ -406,6 +406,59 @@ func TestDaemonDailyTriageCommandCanSkipBudget(t *testing.T) {
 	}
 }
 
+func TestDaemonReleaseAssistCommandSendsWaitFilePayload(t *testing.T) {
+	seenPath := ""
+	var payload map[string]interface{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seenPath = r.URL.Path
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer server.Close()
+	addr := strings.TrimPrefix(server.URL, "http://")
+
+	out := captureStdout(t, func() {
+		if rc := daemonReleaseAssistCmd([]string{
+			"--addr", addr,
+			"--session", "release-session",
+			"--paths", "CHANGELOG.md,cmd/version.go",
+			"--ignore", "*.tmp,dist",
+			"--debounce", "5s",
+			"--subject", "v1.2.3",
+		}); rc != 0 {
+			t.Fatalf("daemonReleaseAssistCmd rc = %d, want 0", rc)
+		}
+	})
+
+	if seenPath != "/wait-file" {
+		t.Fatalf("seenPath = %q, want /wait-file", seenPath)
+	}
+	if payload["session_id"] != "release-session" || payload["reason"] != "release files changed; check changelog and version before publishing" ||
+		payload["subject"] != "v1.2.3" || payload["debounce"] != "5s" {
+		t.Fatalf("unexpected release-assist payload: %+v", payload)
+	}
+	paths, ok := payload["paths"].([]interface{})
+	if !ok || len(paths) != 2 || paths[0] != "CHANGELOG.md" || paths[1] != "cmd/version.go" {
+		t.Fatalf("unexpected paths payload: %+v", payload["paths"])
+	}
+	ignore, ok := payload["ignore_patterns"].([]interface{})
+	if !ok || len(ignore) != 2 || ignore[0] != "*.tmp" || ignore[1] != "dist" {
+		t.Fatalf("unexpected ignore payload: %+v", payload["ignore_patterns"])
+	}
+	if !strings.Contains(out, `"ok":true`) {
+		t.Fatalf("release-assist output = %q, want ok response", out)
+	}
+}
+
+func TestDaemonReleaseAssistCommandRequiresPaths(t *testing.T) {
+	if rc := daemonReleaseAssistCmd([]string{"--session", "release-session", "--paths", " , "}); rc != 2 {
+		t.Fatalf("daemonReleaseAssistCmd empty paths rc = %d, want 2", rc)
+	}
+}
+
 func TestPrepareBotGatewayRejectsUnsafeConfig(t *testing.T) {
 	cfg := testBotGatewayConfig()
 	cfg.Bot.Enabled = false

@@ -55,6 +55,8 @@ func daemonCommand(args []string) int {
 		return daemonDailyTriageCmd(rest)
 	case "ci-watch":
 		return daemonCIWatchCmd(rest)
+	case "release-assist":
+		return daemonReleaseAssistCmd(rest)
 	case "wait-event":
 		return daemonWaitEventCmd(rest)
 	case "wait-time":
@@ -810,6 +812,62 @@ func daemonDailyTriageCmd(args []string) int {
 	return 0
 }
 
+func daemonReleaseAssistCmd(args []string) int {
+	fs := flag.NewFlagSet("daemon release-assist", flag.ContinueOnError)
+	addr := fs.String("addr", daemon.DefaultAddr, "daemon 地址")
+	dir := fs.String("dir", "", "会话目录（用于读取本地 token）")
+	sessionID := fs.String("session", "", "要配置发布助手的 session ID")
+	paths := fs.String("paths", defaultReleaseAssistPaths(), "要等待的 changelog/version 文件，逗号分隔")
+	ignore := fs.String("ignore", "", "额外忽略 glob，逗号分隔")
+	debounce := fs.String("debounce", "3s", "文件变化防抖时间，例如 3s")
+	subject := fs.String("subject", "release readiness", "等待对象说明")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	session := strings.TrimSpace(*sessionID)
+	if session == "" {
+		fmt.Fprintln(os.Stderr, "error: --session is required")
+		return 2
+	}
+	watchPaths := splitCSV(*paths)
+	if len(watchPaths) == 0 {
+		fmt.Fprintln(os.Stderr, "error: --paths must include at least one file")
+		return 2
+	}
+	payload := map[string]interface{}{
+		"session_id": session,
+		"paths":      watchPaths,
+		"reason":     "release files changed; check changelog and version before publishing",
+		"subject":    strings.TrimSpace(*subject),
+	}
+	if patterns := splitCSV(*ignore); len(patterns) > 0 {
+		payload["ignore_patterns"] = patterns
+	}
+	if strings.TrimSpace(*debounce) != "" {
+		payload["debounce"] = strings.TrimSpace(*debounce)
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	resp, err := daemonPost(*addr, *dir, "/wait-file", string(body))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "daemon not reachable: %v\n", err)
+		return 1
+	}
+	out, ok := readDaemonCommandResponse(resp)
+	if !ok {
+		return 1
+	}
+	fmt.Println(out)
+	return 0
+}
+
+func defaultReleaseAssistPaths() string {
+	return "CHANGELOG.md,package.json,package-lock.json,pnpm-lock.yaml,yarn.lock,go.mod,Cargo.toml,pyproject.toml"
+}
+
 func daemonWaitEventCmd(args []string) int {
 	fs := flag.NewFlagSet("daemon wait-event", flag.ContinueOnError)
 	addr := fs.String("addr", daemon.DefaultAddr, "daemon 地址")
@@ -1147,6 +1205,7 @@ Usage:
   reasonix daemon budget   --session ID [--daily-wakeups N] [--max-goal-auto-turns N] [--daily-model-calls N] [--daily-model-cost N] [--reset]
   reasonix daemon daily-triage --session ID [--daily-at HH:MM] [--timezone Area/City] [--daily-wakeups N]
   reasonix daemon ci-watch --session ID [--source workflow_run|check_suite|status] [--repo owner/repo] [--pr N]
+  reasonix daemon release-assist --session ID [--paths CHANGELOG.md,package.json] [--debounce 3s]
   reasonix daemon wait-event --session ID --source TYPE [--event-id ID] [--status completed] [--conclusion success]
   reasonix daemon wait-time --session ID (--until RFC3339 | --after 1h)
   reasonix daemon wait-file --session ID --paths PATH[,PATH...] [--ignore GLOB[,GLOB...]]
@@ -1167,6 +1226,7 @@ Subcommands:
   budget     设置自动唤醒、模型调用、模型费用和 goal 自动续跑预算
   daily-triage 配置每日 PR / issue triage 场景
   ci-watch   配置“等 GitHub CI 成功后继续”的个人 AgentOS 场景
+  release-assist 配置发布文件变化后检查 changelog / version 的发布助手场景
   wait-event 设置或清除等待外部事件条件
   wait-time  设置或清除等待到指定时间的条件
   wait-file  设置或清除等待文件变化的条件
