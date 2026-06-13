@@ -185,9 +185,10 @@ dynamic workflow 或开发者平台，而是先把 Reasonix 从一次性会话�
   - [x] 将 running 但无 owner 的 run 标记为 interrupted。
   - [x] 不自动继续，除非 scheduler 明确允许。
 - [ ] 桌面端连接 daemon。
-  - 显示 daemon 状态。
-  - 能打开 daemon 管理的 session。
-  - 能发送审批、ask 回答和 stop。
+  - [x] 桌面 bridge 可查询 daemon 状态。
+  - [x] 能打开 daemon 管理的 session。
+  - [x] 能发送审批、ask 回答和 stop。
+  - [ ] 增加可见的桌面 daemon 管理 UI / 审批入口。
 - [ ] 日志与诊断。
   - [x] daemon log 文件。
   - [x] `reasonix daemon doctor`。

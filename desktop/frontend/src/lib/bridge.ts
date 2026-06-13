@@ -22,6 +22,8 @@ import type {
   CommandInfo,
   ContextInfo,
   ContextPanelInfo,
+  DaemonSessionView,
+  DaemonStatusView,
   DirEntry,
   DroppedItem,
   EffortInfo,
@@ -106,6 +108,13 @@ export interface AppBindings {
   ApproveTab(tabID: string, id: string, allow: boolean, session: boolean, persist: boolean): Promise<void>;
   AnswerQuestion(id: string, answers: QuestionAnswer[]): Promise<void>;
   AnswerQuestionForTab(tabID: string, id: string, answers: QuestionAnswer[]): Promise<void>;
+  DaemonStatus(addr: string): Promise<DaemonStatusView>;
+  ListDaemonSessions(addr: string): Promise<DaemonSessionView[]>;
+  OpenDaemonSession(sessionID: string, addr: string): Promise<TabMeta>;
+  ContinueDaemonGoal(sessionID: string, addr: string): Promise<void>;
+  StopDaemonSession(sessionID: string, addr: string): Promise<void>;
+  ApproveDaemon(sessionID: string, approvalID: string, allow: boolean, session: boolean, persist: boolean, addr: string): Promise<void>;
+  AnswerDaemonQuestion(sessionID: string, askID: string, answers: QuestionAnswer[], selected: string, addr: string): Promise<void>;
   ReplayPendingPrompts(): Promise<void>;
   SetPlanMode(on: boolean): Promise<void>;
   SetMode(mode: string): Promise<void>;
@@ -1449,6 +1458,25 @@ function makeMockApp(): AppBindings {
         async AnswerQuestionForTab(_tabID, id, answers) {
           await withMockTabScope(_tabID, () => this.AnswerQuestion(id, answers));
         },
+        async DaemonStatus(addr) {
+          return { connected: false, addr: addr || "127.0.0.1:19840", error: "mock daemon is offline" };
+        },
+        async ListDaemonSessions() {
+          return [];
+        },
+        async OpenDaemonSession(sessionID) {
+          const active = mockTabs.find((tab) => tab.active) ?? mockTabs[0];
+          emit({ kind: "notice", level: "info", text: `mock daemon session opened: ${sessionID}` });
+          return { ...(active ?? mockTabs[0]) };
+        },
+        async ContinueDaemonGoal(sessionID) {
+          emit({ kind: "notice", level: "info", text: `mock daemon continue: ${sessionID}` });
+        },
+        async StopDaemonSession(sessionID) {
+          emit({ kind: "notice", level: "info", text: `mock daemon stopped: ${sessionID}` });
+        },
+        async ApproveDaemon(_sessionID, _approvalID, _allow, _session, _persist) {},
+        async AnswerDaemonQuestion(_sessionID, _askID, _answers, _selected) {},
         async ReplayPendingPrompts() {},
         async ConfirmAction(req) {
           void req;

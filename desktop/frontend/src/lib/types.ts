@@ -255,6 +255,35 @@ export interface SessionMeta {
   topicTitle?: string;
 }
 
+export interface DaemonStatusView {
+  connected: boolean;
+  status?: string;
+  addr?: string;
+  sessions?: number;
+  uptime?: string;
+  pid?: number;
+  error?: string;
+}
+
+export interface DaemonSessionView {
+  id: string;
+  path: string;
+  goalText?: string;
+  goalStatus?: GoalStatus;
+  runStatus?: string;
+  waitKind?: string;
+  waitReason?: string;
+  waitId?: string;
+  waitTool?: string;
+  waitSubject?: string;
+  active?: boolean;
+  open?: boolean;
+  scope?: string;
+  workspaceRoot?: string;
+  topicId?: string;
+  topicTitle?: string;
+}
+
 // SessionReference is a session selected via @ past:chats for context injection.
 export interface SessionReference {
   path: string;
