@@ -166,7 +166,7 @@ func (d *Daemon) handleWebhook(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 
-			entry.Runtime.Run.Status = "pending_continue"
+			entry.Runtime.Run.Status = agent.RunStatusQueued
 			entry.Runtime.Run.LastWakeupReason = reasonKey
 			entry.Runtime.Run.ResumeCount++
 			entry.Runtime.Scheduler.LastWakeupAt = now
@@ -267,7 +267,7 @@ func (d *Daemon) handleWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Update runtime to signal the wakeup.
-	entry.Runtime.Run.Status = "pending_continue"
+	entry.Runtime.Run.Status = agent.RunStatusQueued
 	entry.Runtime.Run.LastWakeupReason = "webhook:" + evt.Type
 	entry.Runtime.Run.ResumeCount++
 	if waitingEvent {
@@ -317,7 +317,7 @@ func (d *Daemon) handleWebhook(w http.ResponseWriter, r *http.Request) {
 	d.logger.Info("webhook event received", "type", evt.Type, "session", evt.SessionID, "event_id", evt.EventID)
 
 	w.Header().Set("Content-Type", "application/json")
-	fmt.Fprintf(w, `{"ok":true,"session_id":%q,"status":"pending_continue","event_id":%q}`, evt.SessionID, evt.EventID)
+	fmt.Fprintf(w, `{"ok":true,"session_id":%q,"status":"queued","event_id":%q}`, evt.SessionID, evt.EventID)
 }
 
 func saveWebhookPayload(sessionPath string, body []byte, receivedAt time.Time) (string, error) {

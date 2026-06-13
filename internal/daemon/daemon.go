@@ -461,10 +461,10 @@ func (d *Daemon) recoverInterrupted() {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	for _, entry := range d.registry {
-		waitingForController := entry.Runtime.Run.Status == "waiting_approval" || entry.Runtime.Run.Status == "waiting_ask"
-		if entry.Runtime.Run.Status == "running" || waitingForController {
+		waitingForController := entry.Runtime.Run.Status == agent.RunStatusWaitingApproval || entry.Runtime.Run.Status == agent.RunStatusWaitingAsk
+		if entry.Runtime.Run.Status == agent.RunStatusRunning || waitingForController {
 			prev := entry.Runtime.Run.Status
-			entry.Runtime.Run.Status = "interrupted"
+			entry.Runtime.Run.Status = agent.RunStatusInterrupted
 			entry.Runtime.Run.LastError = "daemon startup recovery from " + prev
 			// Persist the change.
 			if err := agent.SaveRuntimeMeta(entry.Path, entry.Runtime); err != nil {

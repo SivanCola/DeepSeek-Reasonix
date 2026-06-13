@@ -73,9 +73,72 @@ type RuntimeGoalMeta struct {
 	UpdatedAt   time.Time `json:"updated_at,omitempty"`
 }
 
+const (
+	RunStatusIdle            = "idle"
+	RunStatusQueued          = "queued"
+	RunStatusPendingContinue = "pending_continue" // legacy alias for queued
+	RunStatusRunning         = "running"
+	RunStatusWaitingApproval = "waiting_approval"
+	RunStatusWaitingAsk      = "waiting_ask"
+	RunStatusWaitingEvent    = "waiting_event"
+	RunStatusWaitingTime     = "waiting_time"
+	RunStatusWaitingFile     = "waiting_file"
+	RunStatusBlocked         = "blocked"
+	RunStatusComplete        = "complete"
+	RunStatusFailed          = "failed"
+	RunStatusStopped         = "stopped"
+	RunStatusInterrupted     = "interrupted"
+)
+
+// NormalizeRunStatus folds legacy or equivalent persisted values into the
+// canonical run state machine. Unknown values are returned unchanged so older
+// sidecars remain inspectable instead of being silently erased.
+func NormalizeRunStatus(status string) string {
+	switch status {
+	case RunStatusPendingContinue:
+		return RunStatusQueued
+	default:
+		return status
+	}
+}
+
+// IsKnownRunStatus reports whether status is part of the runtime state machine.
+func IsKnownRunStatus(status string) bool {
+	switch NormalizeRunStatus(status) {
+	case "",
+		RunStatusIdle,
+		RunStatusQueued,
+		RunStatusRunning,
+		RunStatusWaitingApproval,
+		RunStatusWaitingAsk,
+		RunStatusWaitingEvent,
+		RunStatusWaitingTime,
+		RunStatusWaitingFile,
+		RunStatusBlocked,
+		RunStatusComplete,
+		RunStatusFailed,
+		RunStatusStopped,
+		RunStatusInterrupted:
+		return true
+	default:
+		return false
+	}
+}
+
+// IsRunInFlight reports whether a run state means the daemon/controller should
+// not start another model turn for the same session.
+func IsRunInFlight(status string) bool {
+	switch NormalizeRunStatus(status) {
+	case RunStatusQueued, RunStatusRunning:
+		return true
+	default:
+		return false
+	}
+}
+
 // RuntimeRunMeta captures the run loop's lifecycle.
 type RuntimeRunMeta struct {
-	Status           string    `json:"status,omitempty"` // idle|running|interrupted|failed|stopped
+	Status           string    `json:"status,omitempty"` // idle|queued|running|waiting_*|blocked|complete|failed|stopped|interrupted
 	LastTurnAt       time.Time `json:"last_turn_at,omitempty"`
 	LastError        string    `json:"last_error,omitempty"`
 	ResumeCount      int       `json:"resume_count,omitempty"`

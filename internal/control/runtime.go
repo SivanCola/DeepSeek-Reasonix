@@ -55,9 +55,9 @@ func (c *Controller) runtimeSnapshotLocked() agent.RuntimeMeta {
 	}
 
 	// Run state.
-	runStatus := "idle"
+	runStatus := agent.RunStatusIdle
 	if c.running {
-		runStatus = "running"
+		runStatus = agent.RunStatusRunning
 	}
 	m.Run = agent.RuntimeRunMeta{
 		Status:     runStatus,
@@ -131,9 +131,10 @@ func (c *Controller) RestoreRuntimeSnapshot(m agent.RuntimeMeta) {
 
 	// If the run was interrupted (e.g. crash while running), mark it so the
 	// user/bot can see what happened. Don't auto-resume.
-	if m.Run.Status == "running" {
+	m.Run.Status = agent.NormalizeRunStatus(m.Run.Status)
+	if m.Run.Status == agent.RunStatusRunning {
 		// The session was likely killed mid-flight — mark interrupted.
-		m.Run.Status = "interrupted"
+		m.Run.Status = agent.RunStatusInterrupted
 	}
 }
 
@@ -211,9 +212,9 @@ func (c *Controller) saveRuntimeSidecarForCurrentSession() {
 func (c *Controller) appendRuntimeTimeline(eventType, source, reason, message string) {
 	c.mu.Lock()
 	path := c.sessionPath
-	runStatus := "idle"
+	runStatus := agent.RunStatusIdle
 	if c.running {
-		runStatus = "running"
+		runStatus = agent.RunStatusRunning
 	}
 	goalStatus := c.goalStatus
 	c.mu.Unlock()
@@ -328,7 +329,7 @@ func (c *Controller) continueGoalWithReason(ctx context.Context, reason, wakeupC
 	if path != "" {
 		meta := c.RuntimeSnapshot()
 		meta = mergeRuntimeForSave(path, meta)
-		meta.Run.Status = "running"
+		meta.Run.Status = agent.RunStatusRunning
 		meta.Run.LastWakeupReason = reason
 		meta.Run.ResumeCount++
 		if err := agent.SaveRuntimeMeta(path, meta); err != nil {

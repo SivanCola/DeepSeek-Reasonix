@@ -296,8 +296,8 @@ func TestSchedulerWakeupPersists(t *testing.T) {
 	rt := entry.Runtime
 	d.mu.RUnlock()
 
-	if rt.Run.Status != "pending_continue" {
-		t.Errorf("Run.Status = %q, want pending_continue", rt.Run.Status)
+	if rt.Run.Status != "queued" {
+		t.Errorf("Run.Status = %q, want queued", rt.Run.Status)
 	}
 	if rt.Scheduler.LastWakeupReason != "cron" {
 		t.Errorf("LastWakeupReason = %q, want cron", rt.Scheduler.LastWakeupReason)
@@ -317,7 +317,7 @@ func TestSchedulerWakeupPersists(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("LoadRuntimeMeta: err=%v ok=%v", err, ok)
 	}
-	if loaded.Run.Status != "pending_continue" {
+	if loaded.Run.Status != "queued" {
 		t.Errorf("persisted Run.Status = %q", loaded.Run.Status)
 	}
 
@@ -443,7 +443,7 @@ func TestSchedulerTimeWaitWakeupClearsWait(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("LoadRuntimeMeta: err=%v ok=%v", err, ok)
 	}
-	if loaded.Run.Status != "pending_continue" || loaded.Wait.Kind != "" {
+	if loaded.Run.Status != "queued" || loaded.Wait.Kind != "" {
 		t.Fatalf("time wait should clear wait and continue: run=%+v wait=%+v", loaded.Run, loaded.Wait)
 	}
 	if loaded.Scheduler.LastWakeupReason != "time" || loaded.Scheduler.LastWakeupKey == "" {
@@ -534,7 +534,7 @@ func TestSchedulerWakeupRechecksRuntimeBeforePersist(t *testing.T) {
 	d.mu.RLock()
 	rt := entry.Runtime
 	d.mu.RUnlock()
-	if rt.Run.Status == "pending_continue" {
+	if rt.Run.Status == "queued" {
 		t.Fatal("wakeup should not fire after runtime no longer passes guards")
 	}
 	if rt.Scheduler.LastWakeupEventID != "" {

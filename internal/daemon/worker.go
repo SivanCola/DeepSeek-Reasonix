@@ -131,6 +131,23 @@ func defaultIntentPriority(intent RunIntent) int {
 	}
 }
 
+func waitRunStatus(kind string) string {
+	switch kind {
+	case "approval":
+		return agent.RunStatusWaitingApproval
+	case "ask":
+		return agent.RunStatusWaitingAsk
+	case "event":
+		return agent.RunStatusWaitingEvent
+	case "time":
+		return agent.RunStatusWaitingTime
+	case "file":
+		return agent.RunStatusWaitingFile
+	default:
+		return "waiting_" + kind
+	}
+}
+
 func (d *Daemon) executeIntent(parent context.Context, intent RunIntent) {
 	d.mu.Lock()
 	entry, ok := d.registry[intent.SessionID]
@@ -144,7 +161,7 @@ func (d *Daemon) executeIntent(parent context.Context, intent RunIntent) {
 	}
 	now := time.Now().UTC()
 	if ok, reason := checkModelBudget(&entry.Runtime, firstNonEmpty(intent.Source, intent.Reason, "daemon"), now); !ok {
-		entry.Runtime.Run.Status = "idle"
+		entry.Runtime.Run.Status = agent.RunStatusIdle
 		entry.Runtime.Run.LastError = reason
 		entry.Runtime.Scheduler.LastWakeupReason = "budget_blocked:model"
 		runtime := entry.Runtime
@@ -191,7 +208,7 @@ func (d *Daemon) executeIntent(parent context.Context, intent RunIntent) {
 	ctrl, err := d.buildController(ctx, d, &entryCopy, sink)
 	if err != nil {
 		cancel()
-		d.finishIntent(intent.SessionID, "failed", err)
+		d.finishIntent(intent.SessionID, agent.RunStatusFailed, err)
 		return
 	}
 	applyModelBudgetTurnLimit(ctrl, entryCopy.Runtime)
@@ -203,7 +220,7 @@ func (d *Daemon) executeIntent(parent context.Context, intent RunIntent) {
 
 	err = ctrl.ContinueGoalWithContext(ctx, firstNonEmpty(intent.Reason, intent.Source), intent.Context)
 	if err != nil && ctx.Err() == nil {
-		d.finishIntent(intent.SessionID, "failed", err)
+		d.finishIntent(intent.SessionID, agent.RunStatusFailed, err)
 		return
 	}
 	d.finishIntent(intent.SessionID, "", err)
@@ -350,7 +367,7 @@ func (d *Daemon) recordWait(sessionID string, wait agent.RuntimeWaitMeta, e even
 	active := d.activeRuns[sessionID]
 	if ok {
 		entry.Runtime.Wait = wait
-		entry.Runtime.Run.Status = "waiting_" + wait.Kind
+		entry.Runtime.Run.Status = waitRunStatus(wait.Kind)
 	}
 	if active != nil {
 		if e.Kind == event.ApprovalRequest {

@@ -70,8 +70,8 @@ func TestWebhookValidSignature(t *testing.T) {
 	d.mu.RLock()
 	entry := d.registry["webhook-test"]
 	d.mu.RUnlock()
-	if entry.Runtime.Run.Status != "pending_continue" {
-		t.Errorf("Run.Status = %q, want pending_continue", entry.Runtime.Run.Status)
+	if entry.Runtime.Run.Status != "queued" {
+		t.Errorf("Run.Status = %q, want queued", entry.Runtime.Run.Status)
 	}
 	if entry.Runtime.Scheduler.LastWakeupEventID != "evt-001" {
 		t.Errorf("LastWakeupEventID = %q, want evt-001", entry.Runtime.Scheduler.LastWakeupEventID)
@@ -286,8 +286,8 @@ func TestWebhookRoutesGitHubEventWithoutSessionID(t *testing.T) {
 	d.mu.RLock()
 	entry := d.registry["github-route"]
 	d.mu.RUnlock()
-	if entry.Runtime.Run.Status != "pending_continue" {
-		t.Fatalf("Run.Status = %q, want pending_continue", entry.Runtime.Run.Status)
+	if entry.Runtime.Run.Status != "queued" {
+		t.Fatalf("Run.Status = %q, want queued", entry.Runtime.Run.Status)
 	}
 	if entry.Runtime.Scheduler.LastWakeupEventID != "delivery-42" {
 		t.Fatalf("LastWakeupEventID = %q, want delivery-42", entry.Runtime.Scheduler.LastWakeupEventID)
@@ -470,8 +470,8 @@ func TestWebhookMatchesWaitEventAndClearsWait(t *testing.T) {
 	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if resp["status"] != "pending_continue" {
-		t.Fatalf("status = %v, want pending_continue", resp["status"])
+	if resp["status"] != "queued" {
+		t.Fatalf("status = %v, want queued", resp["status"])
 	}
 	select {
 	case intent := <-d.intentCh:
@@ -488,7 +488,7 @@ func TestWebhookMatchesWaitEventAndClearsWait(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("LoadRuntimeMeta: err=%v ok=%v", err, ok)
 	}
-	if loaded.Run.Status != "pending_continue" || loaded.Wait.Kind != "" {
+	if loaded.Run.Status != "queued" || loaded.Wait.Kind != "" {
 		t.Fatalf("matching webhook should clear wait and continue: run=%+v wait=%+v", loaded.Run, loaded.Wait)
 	}
 	if loaded.Scheduler.LastWakeupEventID != "delivery-42" || loaded.Budget.DailyWakeups != 1 {
@@ -564,7 +564,7 @@ func TestWebhookQueuesDiagnosisForWaitEventFailure(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("LoadRuntimeMeta: err=%v ok=%v", err, ok)
 	}
-	if loaded.Run.Status != "pending_continue" || loaded.Wait.Kind != "event" || loaded.Wait.EventConclusion != "success" {
+	if loaded.Run.Status != "queued" || loaded.Wait.Kind != "event" || loaded.Wait.EventConclusion != "success" {
 		t.Fatalf("diagnosis should queue run while preserving wait: run=%+v wait=%+v", loaded.Run, loaded.Wait)
 	}
 	if loaded.Budget.DailyWakeups != 1 {

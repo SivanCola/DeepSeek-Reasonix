@@ -285,3 +285,32 @@ func TestRuntimeTimelineAppendLoadAndLimit(t *testing.T) {
 		t.Fatalf("limited events = %+v, want last run_finished", limited)
 	}
 }
+
+func TestRuntimeRunStatusStateMachine(t *testing.T) {
+	if got := NormalizeRunStatus(RunStatusPendingContinue); got != RunStatusQueued {
+		t.Fatalf("NormalizeRunStatus(pending_continue) = %q, want queued", got)
+	}
+	for _, status := range []string{
+		RunStatusIdle,
+		RunStatusQueued,
+		RunStatusRunning,
+		RunStatusWaitingApproval,
+		RunStatusWaitingEvent,
+		RunStatusWaitingTime,
+		RunStatusBlocked,
+		RunStatusComplete,
+		RunStatusFailed,
+		RunStatusStopped,
+		RunStatusInterrupted,
+	} {
+		if !IsKnownRunStatus(status) {
+			t.Fatalf("status %q should be known", status)
+		}
+	}
+	if !IsRunInFlight(RunStatusPendingContinue) || !IsRunInFlight(RunStatusQueued) || !IsRunInFlight(RunStatusRunning) {
+		t.Fatal("queued/running statuses should be in-flight")
+	}
+	if IsRunInFlight(RunStatusWaitingEvent) || IsRunInFlight(RunStatusIdle) {
+		t.Fatal("waiting/idle statuses should not be in-flight")
+	}
+}

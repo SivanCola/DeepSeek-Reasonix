@@ -126,7 +126,7 @@ func (d *Daemon) handleContinueGoal(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"session already running"}`, http.StatusConflict)
 		return
 	}
-	entry.Runtime.Run.Status = "pending_continue"
+	entry.Runtime.Run.Status = agent.RunStatusQueued
 	entry.Runtime.Run.LastWakeupReason = req.Reason
 	entry.Runtime.Run.ResumeCount++
 	entry.Runtime.Wait = agent.RuntimeWaitMeta{}
@@ -146,7 +146,7 @@ func (d *Daemon) handleContinueGoal(w http.ResponseWriter, r *http.Request) {
 	})
 
 	w.Header().Set("Content-Type", "application/json")
-	fmt.Fprintf(w, `{"ok":true,"session_id":%q,"status":"pending_continue"}`, req.SessionID)
+	fmt.Fprintf(w, `{"ok":true,"session_id":%q,"status":"queued"}`, req.SessionID)
 }
 
 // handleStop stops a running session's goal.
@@ -171,7 +171,7 @@ func (d *Daemon) handleStop(w http.ResponseWriter, r *http.Request) {
 		if active != nil && active.Cancel != nil {
 			active.Cancel()
 		}
-		entry.Runtime.Run.Status = "stopped"
+		entry.Runtime.Run.Status = agent.RunStatusStopped
 		entry.Runtime.Goal.Status = "stopped"
 		entry.Runtime.Wait = agent.RuntimeWaitMeta{}
 	}
@@ -449,8 +449,8 @@ func (d *Daemon) handleWaitEvent(w http.ResponseWriter, r *http.Request) {
 	action := "wait_started"
 	if req.Clear {
 		entry.Runtime.Wait = agent.RuntimeWaitMeta{}
-		if entry.Runtime.Run.Status == "waiting_event" {
-			entry.Runtime.Run.Status = "idle"
+		if entry.Runtime.Run.Status == agent.RunStatusWaitingEvent {
+			entry.Runtime.Run.Status = agent.RunStatusIdle
 		}
 		action = "wait_cleared"
 	} else {
@@ -468,7 +468,7 @@ func (d *Daemon) handleWaitEvent(w http.ResponseWriter, r *http.Request) {
 			Subject:         strings.TrimSpace(req.Subject),
 			Since:           now,
 		}
-		entry.Runtime.Run.Status = "waiting_event"
+		entry.Runtime.Run.Status = agent.RunStatusWaitingEvent
 	}
 	runtime := entry.Runtime
 	path := entry.Path
@@ -550,8 +550,8 @@ func (d *Daemon) handleWaitTime(w http.ResponseWriter, r *http.Request) {
 	action := "wait_started"
 	if req.Clear {
 		entry.Runtime.Wait = agent.RuntimeWaitMeta{}
-		if entry.Runtime.Run.Status == "waiting_time" {
-			entry.Runtime.Run.Status = "idle"
+		if entry.Runtime.Run.Status == agent.RunStatusWaitingTime {
+			entry.Runtime.Run.Status = agent.RunStatusIdle
 		}
 		action = "wait_cleared"
 	} else {
@@ -570,7 +570,7 @@ func (d *Daemon) handleWaitTime(w http.ResponseWriter, r *http.Request) {
 			Until:   until,
 			Since:   now,
 		}
-		entry.Runtime.Run.Status = "waiting_time"
+		entry.Runtime.Run.Status = agent.RunStatusWaitingTime
 	}
 	runtime := entry.Runtime
 	path := entry.Path
@@ -687,8 +687,8 @@ func (d *Daemon) handleWaitFile(w http.ResponseWriter, r *http.Request) {
 	if req.Clear {
 		entry.Runtime.Wait = agent.RuntimeWaitMeta{}
 		entry.Runtime.FileWatch = agent.RuntimeWatchMeta{}
-		if entry.Runtime.Run.Status == "waiting_file" {
-			entry.Runtime.Run.Status = "idle"
+		if entry.Runtime.Run.Status == agent.RunStatusWaitingFile {
+			entry.Runtime.Run.Status = agent.RunStatusIdle
 		}
 		action = "wait_cleared"
 	} else {
@@ -709,7 +709,7 @@ func (d *Daemon) handleWaitFile(w http.ResponseWriter, r *http.Request) {
 			FilePaths: paths,
 			Since:     now,
 		}
-		entry.Runtime.Run.Status = "waiting_file"
+		entry.Runtime.Run.Status = agent.RunStatusWaitingFile
 		entry.Runtime.FileWatch = agent.RuntimeWatchMeta{
 			Paths:          watchPaths,
 			IgnorePatterns: append([]string(nil), req.IgnorePatterns...),
@@ -937,7 +937,7 @@ func (d *Daemon) handleApprove(w http.ResponseWriter, r *http.Request) {
 	}
 	delete(active.Approvals, req.ApprovalID)
 	if entry := d.registry[req.SessionID]; entry != nil {
-		entry.Runtime.Run.Status = "running"
+		entry.Runtime.Run.Status = agent.RunStatusRunning
 		entry.Runtime.Wait = agent.RuntimeWaitMeta{}
 		runtime := entry.Runtime
 		path := entry.Path
@@ -1008,7 +1008,7 @@ func (d *Daemon) handleAnswer(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if entry := d.registry[req.SessionID]; entry != nil {
-		entry.Runtime.Run.Status = "running"
+		entry.Runtime.Run.Status = agent.RunStatusRunning
 		entry.Runtime.Wait = agent.RuntimeWaitMeta{}
 		runtime := entry.Runtime
 		path := entry.Path

@@ -1042,7 +1042,7 @@ func TestFileWatcherWakeupClearsMatchingFileWait(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("LoadRuntimeMeta: err=%v ok=%v", err, ok)
 	}
-	if loaded.Run.Status != "pending_continue" || loaded.Wait.Kind != "" || loaded.FileWatch.Enabled {
+	if loaded.Run.Status != "queued" || loaded.Wait.Kind != "" || loaded.FileWatch.Enabled {
 		t.Fatalf("matching file wait should clear wait and watcher: run=%+v wait=%+v watch=%+v", loaded.Run, loaded.Wait, loaded.FileWatch)
 	}
 	fw.mu.Lock()
@@ -1215,7 +1215,7 @@ func TestDaemonExecuteIntentCompletesGoal(t *testing.T) {
 		SessionID: "worker-test",
 		Model:     "daemon-test-model",
 		Goal:      agent.RuntimeGoalMeta{Text: "finish worker", Status: control.GoalStatusRunning},
-		Run:       agent.RuntimeRunMeta{Status: "pending_continue"},
+		Run:       agent.RuntimeRunMeta{Status: "queued"},
 	}); err != nil {
 		t.Fatalf("SaveRuntimeMeta: %v", err)
 	}
@@ -1311,7 +1311,7 @@ func TestDaemonExecuteIntentBlocksWhenModelCallBudgetExhausted(t *testing.T) {
 	if err := agent.SaveRuntimeMeta(sessPath, agent.RuntimeMeta{
 		SessionID: "worker-budget-block",
 		Goal:      agent.RuntimeGoalMeta{Text: "finish worker", Status: control.GoalStatusRunning},
-		Run:       agent.RuntimeRunMeta{Status: "pending_continue"},
+		Run:       agent.RuntimeRunMeta{Status: "queued"},
 		Budget: agent.RuntimeBudgetMeta{
 			DailyModelCallLimit: 1,
 			DailyModelCalls:     1,

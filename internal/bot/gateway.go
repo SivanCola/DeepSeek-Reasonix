@@ -932,7 +932,7 @@ func (gw *BotGateway) recordRuntimeWait(key string, wait agent.RuntimeWaitMeta) 
 		}
 	}
 	meta.Wait = wait
-	meta.Run.Status = "waiting_" + wait.Kind
+	meta.Run.Status = botWaitRunStatus(wait.Kind)
 	if err := agent.SaveRuntimeMeta(sessionPath, meta); err != nil {
 		gw.logger.Warn("bot runtime wait save failed", "session", shortSessionID(sessionPath), "err", err)
 		return
@@ -972,7 +972,7 @@ func (gw *BotGateway) clearRuntimeWait(key, kind, id string) {
 	}
 	cleared := meta.Wait
 	meta.Wait = agent.RuntimeWaitMeta{}
-	meta.Run.Status = "running"
+	meta.Run.Status = agent.RunStatusRunning
 	if err := agent.SaveRuntimeMeta(sessionPath, meta); err != nil {
 		gw.logger.Warn("bot runtime wait clear save failed", "session", shortSessionID(sessionPath), "err", err)
 		return
@@ -989,6 +989,23 @@ func (gw *BotGateway) clearRuntimeWait(key, kind, id string) {
 		Reason:     cleared.Reason,
 		EventID:    cleared.EventID,
 	})
+}
+
+func botWaitRunStatus(kind string) string {
+	switch kind {
+	case "approval":
+		return agent.RunStatusWaitingApproval
+	case "ask":
+		return agent.RunStatusWaitingAsk
+	case "event":
+		return agent.RunStatusWaitingEvent
+	case "time":
+		return agent.RunStatusWaitingTime
+	case "file":
+		return agent.RunStatusWaitingFile
+	default:
+		return "waiting_" + kind
+	}
 }
 
 func (gw *BotGateway) sessionPathForKey(key string) string {

@@ -319,28 +319,28 @@ dynamic workflow 或开发者平台，而是先把 Reasonix 从一次性会话�
 
 ### 任务
 
-- [ ] 定义 task/run 状态机。
-  - idle
-  - queued
-  - running
-  - waiting_approval
-  - waiting_event
-  - waiting_time
-  - blocked
-  - complete
-  - failed
-  - stopped
+- [x] 定义 task/run 状态机。
+  - [x] idle
+  - [x] queued
+  - [x] running
+  - [x] waiting_approval
+  - [x] waiting_event
+  - [x] waiting_time
+  - [x] blocked
+  - [x] complete
+  - [x] failed
+  - [x] stopped
 - [x] 引入 run queue。
   - [x] 同一 session 串行。
   - [x] 不同 session 可限制并发。
   - [x] 支持优先级。
-- [ ] 引入 wait condition。
+- [x] 引入 wait condition。
   - [x] wait for user approval
   - [x] wait for webhook / external event
   - [x] wait for CI status/conclusion
   - [x] wait until time
   - [x] wait for file change
-- [ ] 成本预算。
+- [x] 成本预算。
   - [x] session 级每日自动唤醒次数预算。
   - [x] 每日模型调用次数。
   - [x] 每日费用预算。

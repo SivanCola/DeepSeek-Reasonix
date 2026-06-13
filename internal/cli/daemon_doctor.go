@@ -221,7 +221,7 @@ func (r *daemonDoctorReport) scanRuntimeSidecars() daemonDoctorRuntimeSummary {
 		if meta.Goal.Text != "" && (meta.Goal.Status == "running" || meta.Goal.Status == "blocked") {
 			summary.ActiveGoals++
 		}
-		if meta.Run.Status == "running" || meta.Run.Status == "pending_continue" {
+		if agent.IsRunInFlight(meta.Run.Status) {
 			summary.Running++
 		}
 		if meta.Run.Status == "interrupted" {

@@ -251,7 +251,7 @@ func (fw *FileWatcher) fireWakeup(sessionID string, state *watchState, now time.
 		fw.daemon.mu.Unlock()
 		return
 	}
-	if entry.Runtime.Run.Status == "running" || entry.Runtime.Run.Status == "pending_continue" {
+	if agent.IsRunInFlight(entry.Runtime.Run.Status) {
 		fw.daemon.mu.Unlock()
 		return
 	}
@@ -318,7 +318,7 @@ func (fw *FileWatcher) fireWakeup(sessionID string, state *watchState, now time.
 		entry.Runtime.Wait = agent.RuntimeWaitMeta{}
 		entry.Runtime.FileWatch = agent.RuntimeWatchMeta{}
 	}
-	entry.Runtime.Run.Status = "pending_continue"
+	entry.Runtime.Run.Status = agent.RunStatusQueued
 	entry.Runtime.Run.LastWakeupReason = "file_change"
 	entry.Runtime.Run.ResumeCount++
 	entry.Runtime.Scheduler.LastWakeupAt = now

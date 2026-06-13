@@ -94,7 +94,7 @@ func (s *Scheduler) tick() {
 // shouldWakeup performs deterministic pre-checks before triggering a wakeup:
 //  1. Scheduler is enabled
 //  2. Goal is active (running or blocked)
-//  3. Run is not already in-flight (not running, not pending_continue)
+//  3. Run is not already in-flight
 //  4. NextWakeupAt has passed
 //  5. No duplicate schedule window (LastWakeupEventID/LastWakeupKey check)
 func (s *Scheduler) shouldWakeup(entry *SessionEntry, now time.Time) bool {
@@ -117,8 +117,7 @@ func (s *Scheduler) shouldWakeupRuntime(id string, runtime agent.RuntimeMeta, no
 	}
 
 	// Run must not be in-flight.
-	runStatus := runtime.Run.Status
-	if runStatus == "running" || runStatus == "pending_continue" {
+	if agent.IsRunInFlight(runtime.Run.Status) {
 		return false
 	}
 
@@ -154,8 +153,7 @@ func (s *Scheduler) shouldWakeupTimeRuntime(id string, runtime agent.RuntimeMeta
 	if isGoalContinuationLimitBlocked(runtime.Goal) {
 		return false
 	}
-	runStatus := runtime.Run.Status
-	if runStatus == "running" || runStatus == "pending_continue" {
+	if agent.IsRunInFlight(runtime.Run.Status) {
 		return false
 	}
 	key := s.timeWaitKeyFor(id, wait)
@@ -213,7 +211,7 @@ func (s *Scheduler) wakeupTimeSession(id string, now time.Time) {
 		return
 	}
 
-	entry.Runtime.Run.Status = "pending_continue"
+	entry.Runtime.Run.Status = agent.RunStatusQueued
 	entry.Runtime.Run.LastWakeupReason = "time"
 	entry.Runtime.Run.ResumeCount++
 	entry.Runtime.Wait = agent.RuntimeWaitMeta{}
@@ -295,7 +293,7 @@ func (s *Scheduler) wakeupSession(id string, now time.Time) {
 	entry.Runtime.Scheduler.LastWakeupReason = "cron"
 	entry.Runtime.Scheduler.LastWakeupEventID = eventID
 	entry.Runtime.Scheduler.LastWakeupKey = wakeupKey
-	entry.Runtime.Run.Status = "pending_continue"
+	entry.Runtime.Run.Status = agent.RunStatusQueued
 	entry.Runtime.Run.LastWakeupReason = "cron"
 	entry.Runtime.Run.ResumeCount++
 

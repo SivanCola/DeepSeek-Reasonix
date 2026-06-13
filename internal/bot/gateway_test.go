@@ -803,10 +803,10 @@ func TestGatewayWakeupsCommandFiltersTimeline(t *testing.T) {
 	now := time.Date(2026, 6, 13, 12, 0, 0, 0, time.UTC)
 	events := []agent.RuntimeTimelineEvent{
 		{Time: now, Type: "wait_started", Source: "bot", WaitKind: "approval", WaitID: "approval-1"},
-		{Time: now.Add(time.Minute), Type: "intent_queued", Source: "cron", Reason: "cron", EventID: "cron-1", RunStatus: "pending_continue"},
+		{Time: now.Add(time.Minute), Type: "intent_queued", Source: "cron", Reason: "cron", EventID: "cron-1", RunStatus: "queued"},
 		{Time: now.Add(2 * time.Minute), Type: "wakeup_budget_blocked", Source: "webhook", Reason: "daily budget exhausted", EventID: "delivery-1"},
 		{Time: now.Add(3 * time.Minute), Type: "run_finished", Source: "daemon", RunStatus: "idle"},
-		{Time: now.Add(4 * time.Minute), Type: "file_change_detected", Source: "file_watch", Reason: "file_change", RunStatus: "pending_continue"},
+		{Time: now.Add(4 * time.Minute), Type: "file_change_detected", Source: "file_watch", Reason: "file_change", RunStatus: "queued"},
 	}
 	for _, event := range events {
 		if err := agent.AppendRuntimeTimeline(sessionPath, event); err != nil {
