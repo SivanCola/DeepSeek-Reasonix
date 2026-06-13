@@ -435,6 +435,18 @@ export const zh: Record<DictKey, string> = {
   "ask.customPlaceholder": "输入你自己的答案…",
   "ask.justChat": "只是聊聊",
 
+  // daemon 审批台
+  "daemonApprovals.title": "Daemon 等待你处理",
+  "daemonApprovals.approvalBadge": "审批",
+  "daemonApprovals.askBadge": "提问",
+  "daemonApprovals.count": "{current}/{total}",
+  "daemonApprovals.dormant": "需恢复",
+  "daemonApprovals.next": "下一项",
+  "daemonApprovals.submitAnswer": "提交回答",
+  "daemonApprovals.session": "会话 {id}",
+  "daemonApprovals.answerPlaceholder": "输入这次提问的回答…",
+  "daemonApprovals.actionFailed": "Daemon 操作失败：{err}",
+
   // 清空上下文确认
   "clearContext.title": "清空当前上下文",
   "clearContext.badge": "仅本地",

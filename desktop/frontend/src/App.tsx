@@ -33,6 +33,7 @@ import { Composer } from "./components/Composer";
 import { TodoPanel } from "./components/TodoPanel";
 import { ApprovalModal } from "./components/ApprovalModal";
 import { AskCard } from "./components/AskCard";
+import { DaemonApprovalsPanel } from "./components/DaemonApprovalsPanel";
 import { ClearContextCard } from "./components/ClearContextCard";
 import { StatusBar } from "./components/StatusBar";
 import { HistoryPanel } from "./components/HistoryPanel";
@@ -2531,6 +2532,7 @@ export default function App() {
                 }}
               />
             )}
+            <DaemonApprovalsPanel />
             <Composer
               running={state.running}
               collaborationMode={collaborationMode}

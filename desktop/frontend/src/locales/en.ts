@@ -434,6 +434,18 @@ export const en = {
   "ask.customPlaceholder": "Type your own answer…",
   "ask.justChat": "Just chat",
 
+  // daemon approvals
+  "daemonApprovals.title": "Daemon waiting for you",
+  "daemonApprovals.approvalBadge": "approval",
+  "daemonApprovals.askBadge": "ask",
+  "daemonApprovals.count": "{current}/{total}",
+  "daemonApprovals.dormant": "needs resume",
+  "daemonApprovals.next": "Next pending",
+  "daemonApprovals.submitAnswer": "Submit answer",
+  "daemonApprovals.session": "session {id}",
+  "daemonApprovals.answerPlaceholder": "Type an answer for this question...",
+  "daemonApprovals.actionFailed": "Daemon action failed: {err}",
+
   // clear context confirmation
   "clearContext.title": "Clear current context",
   "clearContext.badge": "local only",

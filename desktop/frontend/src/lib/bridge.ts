@@ -467,6 +467,10 @@ function delay(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
+function mockDaemonApprovalsPreviewEnabled(): boolean {
+  return typeof window !== "undefined" && new URLSearchParams(window.location.search).get("daemonApprovalsPreview") === "1";
+}
+
 function baseName(path: string): string {
   return path.replace(/[/\\]+$/, "").split(/[/\\]/).filter(Boolean).pop() ?? path;
 }
@@ -1467,6 +1471,43 @@ function makeMockApp(): AppBindings {
           return [];
         },
         async ListDaemonApprovals() {
+          if (mockDaemonApprovalsPreviewEnabled()) {
+            return [
+              {
+                sessionId: "release-session-20260613",
+                kind: "approval",
+                id: "approval-1",
+                tool: "shell",
+                subject: "pnpm --dir desktop/frontend build",
+                reason: "approval required",
+                goalText: "Ship the desktop daemon approval panel",
+                goalStatus: "running",
+                runStatus: "waiting_approval",
+                active: true,
+              },
+              {
+                sessionId: "triage-session-20260613",
+                kind: "ask",
+                id: "ask-1",
+                reason: "user answer required",
+                goalText: "Daily PR triage",
+                goalStatus: "running",
+                runStatus: "waiting_ask",
+                active: true,
+                questions: [
+                  {
+                    id: "q1",
+                    header: "Triage",
+                    prompt: "Which queue should this PR enter?",
+                    options: [
+                      { label: "Review now", description: "Open the diff and prepare review notes." },
+                      { label: "Wait for CI", description: "Resume after checks report a conclusion." },
+                    ],
+                  },
+                ],
+              },
+            ];
+          }
           return [];
         },
         async OpenDaemonSession(sessionID) {

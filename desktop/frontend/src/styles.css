@@ -5708,6 +5708,109 @@ a[href] {
   max-height: 150px;
   overflow: auto;
 }
+.daemon-approvals__panel {
+  display: grid;
+  gap: 8px;
+}
+.daemon-approvals__error {
+  border: 1px solid var(--button-danger-border);
+  border-radius: 8px;
+  background: var(--button-danger-bg);
+  color: var(--button-danger-fg);
+  font-size: 12px;
+  line-height: 1.35;
+  padding: 8px 9px;
+}
+.daemon-approvals__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  color: var(--fg-faint);
+  font-size: 11px;
+  line-height: 1.3;
+}
+.daemon-approvals__meta span {
+  min-width: 0;
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border: 1px solid var(--border-soft);
+  border-radius: 999px;
+  background: var(--bg-soft);
+  padding: 4px 7px;
+}
+.daemon-approvals__questions {
+  display: grid;
+  gap: 10px;
+}
+.daemon-approvals__question {
+  display: grid;
+  gap: 7px;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  background: var(--bg-soft);
+  padding: 9px;
+}
+.daemon-approvals__prompt {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+.daemon-approvals__prompt span {
+  color: var(--fg-faint);
+  font-size: 11px;
+  font-weight: 650;
+}
+.daemon-approvals__prompt b {
+  color: var(--fg);
+  font-size: 12.5px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+.daemon-approvals__options {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 6px;
+}
+.daemon-approvals__option {
+  --wails-draggable: no-drag;
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  min-height: 36px;
+  border: 1px solid var(--border-soft);
+  border-radius: 7px;
+  background: var(--bg);
+  color: var(--fg);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.25;
+  text-align: left;
+  padding: 7px 8px;
+}
+.daemon-approvals__option:hover {
+  border-color: var(--fg-faint);
+  background: var(--bg-elev-2);
+}
+.daemon-approvals__option--selected {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+  background: var(--accent-soft);
+}
+.daemon-approvals__option span,
+.daemon-approvals__option small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.daemon-approvals__option span {
+  font-weight: 600;
+}
+.daemon-approvals__option small {
+  color: var(--fg-dim);
+  font-size: 11px;
+  line-height: 1.25;
+}
 /* ── ask tool: decision details ───────────────────────────────────────────── */
 .ask-shelf__crumbs {
   display: flex;
