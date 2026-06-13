@@ -441,6 +441,81 @@ func TestDaemonScheduleCommandSendsScopedPayload(t *testing.T) {
 	}
 }
 
+func TestDaemonDisableScheduleCommandSendsDisabledPayload(t *testing.T) {
+	seenPath := ""
+	var payload map[string]interface{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seenPath = r.URL.Path
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true,"enabled":false}`))
+	}))
+	defer server.Close()
+	addr := strings.TrimPrefix(server.URL, "http://")
+
+	out := captureStdout(t, func() {
+		if rc := daemonDisableScheduleCmd([]string{
+			"--addr", addr,
+			"--scope", "project",
+			"--workspace-root", "/repo",
+		}); rc != 0 {
+			t.Fatalf("daemonDisableScheduleCmd rc = %d, want 0", rc)
+		}
+	})
+
+	if seenPath != "/schedule" {
+		t.Fatalf("seenPath = %q, want /schedule", seenPath)
+	}
+	if payload["scope"] != "project" || payload["workspace_root"] != "/repo" {
+		t.Fatalf("unexpected disable schedule payload: %+v", payload)
+	}
+	if enabled, ok := payload["enabled"].(bool); !ok || enabled {
+		t.Fatalf("enabled = %v, want false", payload["enabled"])
+	}
+	if !strings.Contains(out, `"enabled":false`) {
+		t.Fatalf("disable schedule output = %q, want disabled response", out)
+	}
+}
+
+func TestDaemonDisableWatchCommandSendsDisabledPayload(t *testing.T) {
+	seenPath := ""
+	var payload map[string]interface{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seenPath = r.URL.Path
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true,"enabled":false}`))
+	}))
+	defer server.Close()
+	addr := strings.TrimPrefix(server.URL, "http://")
+
+	out := captureStdout(t, func() {
+		if rc := daemonDisableWatchCmd([]string{"--addr", addr, "--session", "session-watch"}); rc != 0 {
+			t.Fatalf("daemonDisableWatchCmd rc = %d, want 0", rc)
+		}
+	})
+
+	if seenPath != "/watch" {
+		t.Fatalf("seenPath = %q, want /watch", seenPath)
+	}
+	if payload["session_id"] != "session-watch" {
+		t.Fatalf("unexpected disable watch payload: %+v", payload)
+	}
+	if enabled, ok := payload["enabled"].(bool); !ok || enabled {
+		t.Fatalf("enabled = %v, want false", payload["enabled"])
+	}
+	if _, ok := payload["paths"]; ok {
+		t.Fatalf("disable watch should not clear paths: %+v", payload)
+	}
+	if !strings.Contains(out, `"enabled":false`) {
+		t.Fatalf("disable watch output = %q, want disabled response", out)
+	}
+}
+
 func TestDaemonCIWatchCommandSendsWorkflowPayload(t *testing.T) {
 	seenPath := ""
 	var payload map[string]interface{}

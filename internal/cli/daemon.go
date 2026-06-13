@@ -54,6 +54,8 @@ func daemonCommand(args []string) int {
 		return daemonContinueCmd(rest)
 	case "schedule":
 		return daemonScheduleCmd(rest)
+	case "disable-schedule":
+		return daemonDisableScheduleCmd(rest)
 	case "budget":
 		return daemonBudgetCmd(rest)
 	case "daily-triage":
@@ -70,6 +72,8 @@ func daemonCommand(args []string) int {
 		return daemonWaitTimeCmd(rest)
 	case "wait-file":
 		return daemonWaitFileCmd(rest)
+	case "disable-watch":
+		return daemonDisableWatchCmd(rest)
 	case "approve":
 		return daemonApprovalCmd(rest, true)
 	case "deny":
@@ -796,6 +800,50 @@ func daemonScheduleCmd(args []string) int {
 	return 0
 }
 
+func daemonDisableScheduleCmd(args []string) int {
+	fs := flag.NewFlagSet("daemon disable-schedule", flag.ContinueOnError)
+	addr := fs.String("addr", daemon.DefaultAddr, "daemon 地址")
+	dir := fs.String("dir", "", "会话目录（用于读取本地 token）")
+	sessionID := fs.String("session", "", "要关闭调度的 session ID")
+	scope := fs.String("scope", "", "关闭调度范围：global 或 project（替代 --session）")
+	workspaceRoot := fs.String("workspace-root", "", "project scope 的工作区根目录")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if strings.TrimSpace(*sessionID) == "" && strings.TrimSpace(*scope) == "" {
+		fmt.Fprintln(os.Stderr, "error: --session or --scope is required")
+		return 2
+	}
+	if strings.TrimSpace(*sessionID) != "" && strings.TrimSpace(*scope) != "" {
+		fmt.Fprintln(os.Stderr, "error: --session and --scope are mutually exclusive")
+		return 2
+	}
+	payload := map[string]interface{}{"enabled": false}
+	if strings.TrimSpace(*sessionID) != "" {
+		payload["session_id"] = strings.TrimSpace(*sessionID)
+	} else {
+		payload["scope"] = strings.TrimSpace(*scope)
+		if strings.TrimSpace(*workspaceRoot) != "" {
+			payload["workspace_root"] = strings.TrimSpace(*workspaceRoot)
+		}
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	resp, err := daemonPost(*addr, *dir, "/schedule", string(body))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "daemon not reachable: %v\n", err)
+		return 1
+	}
+	if out, ok := readDaemonCommandResponse(resp); ok {
+		fmt.Println(out)
+		return 0
+	}
+	return 1
+}
+
 func daemonBudgetCmd(args []string) int {
 	fs := flag.NewFlagSet("daemon budget", flag.ContinueOnError)
 	addr := fs.String("addr", daemon.DefaultAddr, "daemon 地址")
@@ -1362,6 +1410,38 @@ func daemonWaitFileCmd(args []string) int {
 	return 0
 }
 
+func daemonDisableWatchCmd(args []string) int {
+	fs := flag.NewFlagSet("daemon disable-watch", flag.ContinueOnError)
+	addr := fs.String("addr", daemon.DefaultAddr, "daemon 地址")
+	dir := fs.String("dir", "", "会话目录（用于读取本地 token）")
+	sessionID := fs.String("session", "", "要关闭文件监听的 session ID")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if strings.TrimSpace(*sessionID) == "" {
+		fmt.Fprintln(os.Stderr, "error: --session is required")
+		return 2
+	}
+	body, err := json.Marshal(map[string]interface{}{
+		"session_id": strings.TrimSpace(*sessionID),
+		"enabled":    false,
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	resp, err := daemonPost(*addr, *dir, "/watch", string(body))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "daemon not reachable: %v\n", err)
+		return 1
+	}
+	if out, ok := readDaemonCommandResponse(resp); ok {
+		fmt.Println(out)
+		return 0
+	}
+	return 1
+}
+
 func daemonApprovalCmd(args []string, allow bool) int {
 	name := "daemon approve"
 	path := "/approvals/approve"
@@ -1513,6 +1593,7 @@ Usage:
   reasonix daemon timeline --session ID [--limit N] [--json]
   reasonix daemon continue --session ID [--addr HOST:PORT] [--dir PATH]
   reasonix daemon schedule (--session ID | --scope global|project [--workspace-root PATH]) [--daily-at HH:MM] [--timezone Area/City] [--interval 1h]
+  reasonix daemon disable-schedule (--session ID | --scope global|project [--workspace-root PATH])
   reasonix daemon budget   --session ID [--daily-wakeups N] [--max-goal-auto-turns N] [--daily-model-calls N] [--daily-model-cost N] [--reset]
   reasonix daemon daily-triage --session ID [--daily-at HH:MM] [--timezone Area/City] [--daily-wakeups N]
   reasonix daemon ci-watch --session ID [--source workflow_run|check_suite|status] [--repo owner/repo] [--pr N]
@@ -1521,6 +1602,7 @@ Usage:
   reasonix daemon wait-event --session ID --source TYPE [--event-id ID] [--status completed] [--conclusion success]
   reasonix daemon wait-time --session ID (--until RFC3339 | --after 1h)
   reasonix daemon wait-file --session ID --paths PATH[,PATH...] [--ignore GLOB[,GLOB...]]
+  reasonix daemon disable-watch --session ID
   reasonix daemon approve  --session ID --approval ID
   reasonix daemon deny     --session ID --approval ID
   reasonix daemon answer   --session ID --ask ID --selected TEXT
@@ -1536,6 +1618,7 @@ Subcommands:
   timeline   查看指定 session 的运行事件时间线
   continue   显式唤醒并继续指定 goal
   schedule   设置 daily/interval 定时唤醒和 daily 时区
+  disable-schedule 关闭 session/project/global 调度但保留配置
   budget     设置自动唤醒、模型调用、模型费用和 goal 自动续跑预算
   daily-triage 配置每日 PR / issue triage 场景
   ci-watch   配置“等 GitHub CI 成功后继续”的个人 AgentOS 场景
@@ -1544,6 +1627,7 @@ Subcommands:
   wait-event 设置或清除等待外部事件条件
   wait-time  设置或清除等待到指定时间的条件
   wait-file  设置或清除等待文件变化的条件
+  disable-watch 关闭 session 文件监听但保留配置
   approve    批准 daemon 中等待的审批
   deny       拒绝 daemon 中等待的审批
   answer     回答 daemon 中等待的 ask 问题

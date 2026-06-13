@@ -1168,7 +1168,10 @@ func (d *Daemon) handleWatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	debounce := 3 * time.Second
+	debounce := runtime.FileWatch.Debounce
+	if debounce == 0 {
+		debounce = 3 * time.Second
+	}
 	if req.Debounce != "" {
 		dur, err := time.ParseDuration(req.Debounce)
 		if err != nil {
@@ -1178,14 +1181,25 @@ func (d *Daemon) handleWatch(w http.ResponseWriter, r *http.Request) {
 		debounce = dur
 	}
 
-	enabled := true
+	paths := append([]string(nil), runtime.FileWatch.Paths...)
+	if req.Paths != nil {
+		paths = append([]string(nil), req.Paths...)
+	}
+	ignorePatterns := append([]string(nil), runtime.FileWatch.IgnorePatterns...)
+	if req.IgnorePatterns != nil {
+		ignorePatterns = append([]string(nil), req.IgnorePatterns...)
+	}
+
+	enabled := runtime.FileWatch.Enabled
 	if req.Enabled != nil {
 		enabled = *req.Enabled
+	} else if req.Paths != nil {
+		enabled = true
 	}
 
 	cfg := FileWatchConfig{
-		Paths:          append([]string(nil), req.Paths...),
-		IgnorePatterns: append([]string(nil), req.IgnorePatterns...),
+		Paths:          paths,
+		IgnorePatterns: ignorePatterns,
 		Debounce:       debounce,
 		Enabled:        enabled,
 	}

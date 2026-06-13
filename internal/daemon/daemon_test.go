@@ -763,6 +763,28 @@ func TestDaemonWatchHandlerPersistsConfig(t *testing.T) {
 	if err != nil || !ok || len(events) != 1 || events[0].Type != "watch_configured" {
 		t.Fatalf("watch timeline not recorded: events=%+v err=%v ok=%v", events, err, ok)
 	}
+
+	req = httptest.NewRequest("POST", "/watch", strings.NewReader(`{"session_id":"watch-api","enabled":false}`))
+	rr = httptest.NewRecorder()
+	d.handleWatch(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("disable watch status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	loaded, ok, err = agent.LoadRuntimeMeta(sess)
+	if err != nil || !ok {
+		t.Fatalf("LoadRuntimeMeta disabled watch: err=%v ok=%v", err, ok)
+	}
+	if loaded.FileWatch.Enabled || len(loaded.FileWatch.Paths) != 1 || loaded.FileWatch.Paths[0] != watchDir ||
+		len(loaded.FileWatch.IgnorePatterns) != 1 || loaded.FileWatch.IgnorePatterns[0] != "*.tmp" ||
+		loaded.FileWatch.Debounce != 5*time.Second {
+		t.Fatalf("disabled watch should preserve config: %+v", loaded.FileWatch)
+	}
+	d.fileWatcher.mu.Lock()
+	registered = d.fileWatcher.watches["watch-api"]
+	d.fileWatcher.mu.Unlock()
+	if registered != nil {
+		t.Fatalf("disabled watch should unregister watcher: %+v", registered)
+	}
 }
 
 func TestDaemonBudgetHandlerPersistsConfig(t *testing.T) {

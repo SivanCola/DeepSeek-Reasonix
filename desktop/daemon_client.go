@@ -145,6 +145,16 @@ func (a *App) StopDaemonSession(sessionID, addr string) error {
 	return a.daemonJSON("POST", addr, "/stop", body, nil)
 }
 
+func (a *App) DisableDaemonSchedule(sessionID, addr string) error {
+	body := map[string]interface{}{"session_id": strings.TrimSpace(sessionID), "enabled": false}
+	return a.daemonJSON("POST", addr, "/schedule", body, nil)
+}
+
+func (a *App) DisableDaemonWatch(sessionID, addr string) error {
+	body := map[string]interface{}{"session_id": strings.TrimSpace(sessionID), "enabled": false}
+	return a.daemonJSON("POST", addr, "/watch", body, nil)
+}
+
 func (a *App) ApproveDaemon(sessionID, approvalID string, allow, session, persist bool, addr string) error {
 	path := "/approvals/deny"
 	if allow {

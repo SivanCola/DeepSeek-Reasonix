@@ -505,7 +505,8 @@ dynamic workflow 或开发者平台，而是先把 Reasonix 从一次性会话�
 - [ ] 常驻任务总览。
   - [x] 列出所有 daemon managed sessions、goal、run、wait、budget 和 next wakeup。
   - [x] 支持按 project / global / waiting / running / blocked 过滤。
-  - [ ] 支持 stop、continue、open session、disable schedule、disable watch。
+  - [x] daemon API / CLI / desktop bridge 支持 stop、continue、open session、disable schedule、disable watch。
+  - [ ] 桌面常驻任务总览页面提供上述操作入口。
   - 验收：用户能在一个页面看懂“现在 agent 正在等什么、接下来会做什么”。
 - [ ] 审批台体验升级。
   - [ ] approval / ask 列表支持跨 session 排队处理。

@@ -70,6 +70,20 @@ func TestDesktopDaemonClientStatusAndActionsUseAuthToken(t *testing.T) {
 			_, _ = w.Write([]byte(`{"ok":true}`))
 		case "/stop", "/approvals/approve", "/asks/answer":
 			_, _ = w.Write([]byte(`{"ok":true}`))
+		case "/schedule":
+			var req map[string]interface{}
+			_ = json.NewDecoder(r.Body).Decode(&req)
+			if req["session_id"] != "session-1" || req["enabled"] != false {
+				t.Fatalf("disable schedule body = %+v", req)
+			}
+			_, _ = w.Write([]byte(`{"ok":true}`))
+		case "/watch":
+			var req map[string]interface{}
+			_ = json.NewDecoder(r.Body).Decode(&req)
+			if req["session_id"] != "session-1" || req["enabled"] != false {
+				t.Fatalf("disable watch body = %+v", req)
+			}
+			_, _ = w.Write([]byte(`{"ok":true}`))
 		default:
 			http.NotFound(w, r)
 		}
@@ -94,13 +108,19 @@ func TestDesktopDaemonClientStatusAndActionsUseAuthToken(t *testing.T) {
 	if err := app.StopDaemonSession("session-1", server.URL); err != nil {
 		t.Fatalf("StopDaemonSession: %v", err)
 	}
+	if err := app.DisableDaemonSchedule("session-1", server.URL); err != nil {
+		t.Fatalf("DisableDaemonSchedule: %v", err)
+	}
+	if err := app.DisableDaemonWatch("session-1", server.URL); err != nil {
+		t.Fatalf("DisableDaemonWatch: %v", err)
+	}
 	if err := app.ApproveDaemon("session-1", "approval-1", true, true, false, server.URL); err != nil {
 		t.Fatalf("ApproveDaemon: %v", err)
 	}
 	if err := app.AnswerDaemonQuestion("session-1", "ask-1", []QuestionAnswer{{QuestionID: "q1", Selected: []string{"yes"}}}, "", server.URL); err != nil {
 		t.Fatalf("AnswerDaemonQuestion: %v", err)
 	}
-	for _, path := range []string{"/status", "/approvals", "/continue-goal", "/stop", "/approvals/approve", "/asks/answer"} {
+	for _, path := range []string{"/status", "/approvals", "/continue-goal", "/stop", "/schedule", "/watch", "/approvals/approve", "/asks/answer"} {
 		if !seen[path] {
 			t.Fatalf("daemon endpoint %s was not called; seen=%+v", path, seen)
 		}
