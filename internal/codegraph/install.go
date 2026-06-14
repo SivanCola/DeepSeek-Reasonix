@@ -371,14 +371,6 @@ func downloadReleaseFile(ctx context.Context, client *http.Client, version, name
 	return httpGet(ctx, client, strings.TrimRight(githubReleaseDownloadBase(version), "/")+"/"+name)
 }
 
-func downloadAsset(ctx context.Context, client *http.Client, asset string, log func(string)) ([]byte, error) {
-	want := expectedAssetSHA256(asset)
-	if want == "" {
-		return nil, fmt.Errorf("codegraph: no embedded checksum for %s (%s)", asset, Version)
-	}
-	return downloadAssetFromBases(ctx, client, asset, want, downloadBases(), log)
-}
-
 func downloadAssetFromBases(ctx context.Context, client *http.Client, asset, want string, bases []string, log func(string)) ([]byte, error) {
 	var errs []string
 	for _, base := range bases {
