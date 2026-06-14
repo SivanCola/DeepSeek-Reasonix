@@ -3057,8 +3057,8 @@ func (c *Controller) requestApproval(ctx context.Context, tool, subject string, 
 	c.mu.Unlock()
 
 	c.sink.Emit(event.Event{Kind: event.ApprovalRequest, Approval: event.Approval{ID: id, Tool: tool, Subject: subject}})
-	if tool != planApprovalTool {
-		go c.hooks.PermissionRequest(ctx, tool, subject, args)
+	if hookSubject, hookArgs, ok := permissionRequestHookPayload(tool, subject, args); ok {
+		go c.hooks.PermissionRequest(ctx, tool, hookSubject, hookArgs)
 	}
 	// The agent now needs the user's attention; a Notification hook can ping an
 	// external channel (desktop notice, phone) while the run blocks on the reply.
@@ -3094,6 +3094,17 @@ func approvalNotificationText(tool, subject string) string {
 		return "approval needed: " + tool
 	}
 	return "approval needed: " + tool + " " + subject
+}
+
+func permissionRequestHookPayload(tool, subject string, args json.RawMessage) (string, json.RawMessage, bool) {
+	switch tool {
+	case planApprovalTool:
+		return "", nil, false
+	case memoryRememberTool, memoryForgetTool:
+		return "", nil, true
+	default:
+		return subject, args, true
+	}
 }
 
 func (c *Controller) approvalBypassAllowsLocked(tool string) bool {

@@ -591,6 +591,62 @@ func TestPermissionRequestHookDoesNotFireForPlanApproval(t *testing.T) {
 	}
 }
 
+func TestPermissionRequestHookRedactsMemoryApprovalPayload(t *testing.T) {
+	cases := []struct {
+		tool string
+		args json.RawMessage
+	}{
+		{
+			tool: "remember",
+			args: json.RawMessage(`{"name":"private-memory","description":"private description","body":"private memory body"}`),
+		},
+		{
+			tool: "forget",
+			args: json.RawMessage(`{"name":"private-memory"}`),
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.tool, func(t *testing.T) {
+			c, ids, payloads := permissionHookController(t, tc.tool)
+			done := make(chan string, 1)
+			go func() {
+				allow, _, err := gateApprover{c}.Approve(context.Background(), tc.tool, "", tc.args)
+				if err != nil {
+					done <- err.Error()
+					return
+				}
+				if !allow {
+					done <- tc.tool + " approval denied"
+					return
+				}
+				done <- ""
+			}()
+
+			id := waitApprovalID(t, ids)
+			payload := waitPermissionHook(t, payloads)
+			if payload.ToolName != tc.tool {
+				t.Fatalf("payload tool = %q, want %s", payload.ToolName, tc.tool)
+			}
+			if payload.Subject != "" {
+				t.Fatalf("memory PermissionRequest subject = %q, want redacted", payload.Subject)
+			}
+			if len(payload.ToolArgs) != 0 {
+				t.Fatalf("memory PermissionRequest args = %s, want redacted", payload.ToolArgs)
+			}
+
+			c.Approve(id, true, false, false)
+			select {
+			case msg := <-done:
+				if msg != "" {
+					t.Fatal(msg)
+				}
+			case <-time.After(2 * time.Second):
+				t.Fatal("memory approval stayed blocked")
+			}
+		})
+	}
+}
+
 // TestApprovalDeny confirms a declined call returns allow=false.
 func TestApprovalDeny(t *testing.T) {
 	c, ids, _ := approvalIDs()
