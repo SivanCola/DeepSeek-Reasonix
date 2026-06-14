@@ -307,8 +307,12 @@ func NewRemoteRememberer(logger *slog.Logger) func(bot.InboundMessage) {
 }
 
 func NewSessionRememberer(logger *slog.Logger) func(bot.InboundMessage, string) error {
+	return NewSessionRemembererWithWorkspace(logger, "")
+}
+
+func NewSessionRemembererWithWorkspace(logger *slog.Logger, workspaceRoot string) func(bot.InboundMessage, string) error {
 	return func(msg bot.InboundMessage, sessionID string) error {
-		if err := RememberInboundSession(msg, sessionID); err != nil {
+		if err := RememberInboundSessionWorkspace(msg, sessionID, workspaceRoot); err != nil {
 			if logger != nil {
 				logger.Warn("remember bot session failed", "platform", msg.Platform, "err", err)
 			}
@@ -319,14 +323,18 @@ func NewSessionRememberer(logger *slog.Logger) func(bot.InboundMessage, string) 
 }
 
 func RememberInbound(msg bot.InboundMessage) error {
-	return rememberInbound(msg, "")
+	return rememberInbound(msg, "", "")
 }
 
 func RememberInboundSession(msg bot.InboundMessage, sessionID string) error {
-	return rememberInbound(msg, strings.TrimSpace(sessionID))
+	return RememberInboundSessionWorkspace(msg, sessionID, "")
 }
 
-func rememberInbound(msg bot.InboundMessage, sessionID string) error {
+func RememberInboundSessionWorkspace(msg bot.InboundMessage, sessionID string, workspaceRoot string) error {
+	return rememberInbound(msg, strings.TrimSpace(sessionID), strings.TrimSpace(workspaceRoot))
+}
+
+func rememberInbound(msg bot.InboundMessage, sessionID string, actualWorkspaceRoot string) error {
 	userPath := config.UserConfigPath()
 	platform := msg.Platform
 	remoteID := strings.TrimSpace(msg.ChatID)
@@ -372,6 +380,9 @@ func rememberInbound(msg bot.InboundMessage, sessionID string) error {
 		if strings.TrimSpace(conn.WorkspaceRoot) != "" {
 			scope = "project"
 			workspaceRoot = strings.TrimSpace(conn.WorkspaceRoot)
+		} else if actualWorkspaceRoot != "" {
+			scope = "project"
+			workspaceRoot = actualWorkspaceRoot
 		}
 		chatType, userID, threadID := botSessionMappingIdentity(msg)
 		conn.SessionMappings = append(conn.SessionMappings, config.BotConnectionSessionMapping{
@@ -431,11 +442,11 @@ func botSessionMappingIdentity(msg bot.InboundMessage) (chatType string, userID 
 }
 
 func botSessionMappingHasExplicitTarget(mapping config.BotConnectionSessionMapping) bool {
-	sessionID := strings.ToLower(strings.TrimSpace(mapping.SessionID))
+	sessionID := strings.TrimSpace(mapping.SessionID)
 	if sessionID == "" || strings.TrimSpace(mapping.SessionSource) == "auto" {
 		return false
 	}
-	return strings.HasPrefix(sessionID, "topic:") || strings.HasPrefix(sessionID, "path:")
+	return true
 }
 
 func botSessionSource(sessionID string) string {

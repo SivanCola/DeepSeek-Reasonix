@@ -1656,8 +1656,13 @@ function BotsSection({ s, busy, apply, initialFocus }: BotsSectionProps) {
       await persistConnections((items) => items.map((item) => {
         if (item.id !== connection.id) return item;
         const scope = connection.workspaceRoot ? "project" : "global";
+        const matchesTestMapping = (mapping: BotConnectionView["sessionMappings"][number]) =>
+          mapping.remoteId === target &&
+          !mapping.chatType.trim() &&
+          !mapping.userId.trim() &&
+          !mapping.threadId.trim();
         const sessionMappings = [
-          ...item.sessionMappings.filter((mapping) => mapping.remoteId !== target),
+          ...item.sessionMappings.filter((mapping) => !matchesTestMapping(mapping)),
           { remoteId: target, sessionId: "", sessionSource: "", chatType: "", userId: "", threadId: "", scope, workspaceRoot: scope === "project" ? connection.workspaceRoot : "", updatedAt },
         ];
         return { ...item, sessionMappings, updatedAt };

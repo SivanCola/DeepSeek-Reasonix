@@ -194,6 +194,76 @@ func TestRememberInboundSessionPreservesExplicitMappingTarget(t *testing.T) {
 	}
 }
 
+func TestRememberInboundSessionPreservesBareExplicitMappingTarget(t *testing.T) {
+	isolateUserConfig(t)
+	cfg := config.Default()
+	cfg.Bot.Connections = []config.BotConnectionConfig{{
+		ID: "weixin-weixin", Provider: "weixin", Domain: "weixin", Label: "微信", Enabled: true, Status: "connected",
+		SessionMappings: []config.BotConnectionSessionMapping{{RemoteID: "wx-chat-1", SessionID: "manual-topic"}},
+	}}
+	if err := cfg.SaveTo(config.UserConfigPath()); err != nil {
+		t.Fatalf("save config: %v", err)
+	}
+
+	msg := bot.InboundMessage{Platform: bot.PlatformWeixin, ConnectionID: "weixin-weixin", Domain: "weixin", ChatType: bot.ChatDM, ChatID: "wx-chat-1", UserID: "wx-user-1"}
+	if err := RememberInboundSession(msg, "path:/sessions/auto.jsonl"); err != nil {
+		t.Fatalf("remember inbound session: %v", err)
+	}
+
+	got := config.LoadForEdit(config.UserConfigPath())
+	mapping := got.Bot.Connections[0].SessionMappings[0]
+	if mapping.SessionID != "manual-topic" || mapping.SessionSource != "" {
+		t.Fatalf("mapping = %+v, want bare explicit target preserved", mapping)
+	}
+}
+
+func TestRememberInboundSessionUsesActualWorkspaceWhenConnectionIsGlobal(t *testing.T) {
+	isolateUserConfig(t)
+	workspace := filepath.Join(t.TempDir(), "workspace")
+	cfg := config.Default()
+	cfg.Bot.Connections = []config.BotConnectionConfig{
+		{ID: "weixin-weixin", Provider: "weixin", Domain: "weixin", Label: "微信", Enabled: true, Status: "connected"},
+	}
+	if err := cfg.SaveTo(config.UserConfigPath()); err != nil {
+		t.Fatalf("save config: %v", err)
+	}
+
+	msg := bot.InboundMessage{Platform: bot.PlatformWeixin, ConnectionID: "weixin-weixin", Domain: "weixin", ChatType: bot.ChatDM, ChatID: "wx-chat-1", UserID: "wx-user-1"}
+	if err := RememberInboundSessionWorkspace(msg, "path:/sessions/auto.jsonl", workspace); err != nil {
+		t.Fatalf("remember inbound session: %v", err)
+	}
+
+	got := config.LoadForEdit(config.UserConfigPath())
+	mapping := got.Bot.Connections[0].SessionMappings[0]
+	if mapping.Scope != "project" || mapping.WorkspaceRoot != workspace {
+		t.Fatalf("mapping = %+v, want actual workspace scope", mapping)
+	}
+}
+
+func TestRememberInboundSessionKeepsConfiguredWorkspaceOverActualWorkspace(t *testing.T) {
+	isolateUserConfig(t)
+	configured := filepath.Join(t.TempDir(), "configured")
+	actual := filepath.Join(t.TempDir(), "actual")
+	cfg := config.Default()
+	cfg.Bot.Connections = []config.BotConnectionConfig{{
+		ID: "weixin-weixin", Provider: "weixin", Domain: "weixin", Label: "微信", Enabled: true, Status: "connected", WorkspaceRoot: configured,
+	}}
+	if err := cfg.SaveTo(config.UserConfigPath()); err != nil {
+		t.Fatalf("save config: %v", err)
+	}
+
+	msg := bot.InboundMessage{Platform: bot.PlatformWeixin, ConnectionID: "weixin-weixin", Domain: "weixin", ChatType: bot.ChatDM, ChatID: "wx-chat-1", UserID: "wx-user-1"}
+	if err := RememberInboundSessionWorkspace(msg, "path:/sessions/auto.jsonl", actual); err != nil {
+		t.Fatalf("remember inbound session: %v", err)
+	}
+
+	got := config.LoadForEdit(config.UserConfigPath())
+	mapping := got.Bot.Connections[0].SessionMappings[0]
+	if mapping.Scope != "project" || mapping.WorkspaceRoot != configured {
+		t.Fatalf("mapping = %+v, want configured workspace scope", mapping)
+	}
+}
+
 func TestRememberInboundSessionUpdatesAutoMappingTarget(t *testing.T) {
 	isolateUserConfig(t)
 	cfg := config.Default()

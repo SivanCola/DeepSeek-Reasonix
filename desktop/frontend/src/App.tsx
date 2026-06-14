@@ -145,6 +145,7 @@ type SidebarImPlatform = "feishu" | "lark" | "weixin";
 type SidebarImStatus = "connected" | "disabled" | "pending" | "error" | "disconnected";
 type SidebarImConnection = {
   id: string;
+  connectionId: string;
   platform: SidebarImPlatform;
   title: string;
   platformLabel: string;
@@ -190,14 +191,6 @@ function sidebarImPlatformLabel(platform: SidebarImPlatform, translate: Translat
   return translate("settings.botFeishu");
 }
 
-function firstBotSessionMapping(connection: BotConnectionView): BotConnectionView["sessionMappings"][number] | null {
-  return (
-    connection.sessionMappings.find((mapping) => mapping.sessionId.trim()) ??
-    connection.sessionMappings.find((mapping) => mapping.remoteId.trim()) ??
-    null
-  );
-}
-
 function botMappingScope(mapping: BotConnectionView["sessionMappings"][number] | null | undefined, connectionWorkspaceRoot: string): "global" | "project" {
   if (mapping?.scope === "project") return "project";
   if ((mapping?.workspaceRoot ?? "").trim()) return "project";
@@ -216,6 +209,15 @@ function compactRemoteId(value: string): string {
   const trimmed = value.trim();
   if (trimmed.length <= 28) return trimmed;
   return `${trimmed.slice(0, 12)}…${trimmed.slice(-8)}`;
+}
+
+function botMappingIdentityLabel(mapping: BotConnectionView["sessionMappings"][number] | null | undefined): string {
+  const chatType = (mapping?.chatType ?? "").trim();
+  const userId = (mapping?.userId ?? "").trim();
+  const threadId = (mapping?.threadId ?? "").trim();
+  if (threadId) return compactRemoteId(threadId);
+  if ((chatType === "group" || chatType === "guild") && userId) return compactRemoteId(userId);
+  return "";
 }
 
 function sidebarImStatus(connection: BotConnectionView, botEnabled: boolean): SidebarImStatus {
@@ -252,12 +254,14 @@ function sidebarImAllowlistUsers(bot: BotSettingsView, platform: SidebarImPlatfo
 
 function sidebarImConnectionsFromBot(bot: BotSettingsView | null | undefined, translate: Translator): SidebarImConnection[] {
   if (!bot?.connections?.length) return [];
-  return bot.connections
-    .filter(isSidebarImConnection)
-    .map((connection) => {
+  const rows: SidebarImConnection[] = [];
+  for (const connection of bot.connections) {
+    if (!isSidebarImConnection(connection)) continue;
+    const mappings = connection.sessionMappings.filter((mapping) => mapping.sessionId.trim() || mapping.remoteId.trim());
+    const rowMappings = mappings.length > 0 ? mappings : [null];
+    rowMappings.forEach((mapping, index) => {
       const platform = sidebarImPlatform(connection);
       const platformLabel = sidebarImPlatformLabel(platform, translate);
-      const mapping = firstBotSessionMapping(connection);
       const remoteId = mapping?.remoteId.trim() ?? "";
       const sessionId = mapping?.sessionId.trim() ?? "";
       const scope = botMappingScope(mapping, connection.workspaceRoot);
@@ -265,13 +269,17 @@ function sidebarImConnectionsFromBot(bot: BotSettingsView | null | undefined, tr
       const status = sidebarImStatus(connection, bot.enabled);
       const title = connection.label.trim() || platformLabel;
       const allowlistUsers = sidebarImAllowlistUsers(bot, platform);
+      const identityLabel = botMappingIdentityLabel(mapping);
+      const mappedUserId = mapping?.userId.trim() ?? "";
       const subtitleParts = [
         remoteId ? compactRemoteId(remoteId) : platformLabel,
+        identityLabel,
         connection.model.trim() || "",
         sidebarImStatusLabel(status, translate),
       ].filter(Boolean);
-      return {
-        id: connection.id,
+      rows.push({
+        id: mapping ? `${connection.id}:mapping:${index}` : connection.id,
+        connectionId: connection.id,
         platform,
         title,
         platformLabel,
@@ -285,9 +293,13 @@ function sidebarImConnectionsFromBot(bot: BotSettingsView | null | undefined, tr
         allowAll: bot.allowlist.allowAll,
         allowlistEnabled: bot.allowlist.enabled,
         allowlistUsers,
-        allowlistMatched: remoteId ? allowlistUsers.includes(remoteId) : false,
-      };
+        allowlistMatched: remoteId
+          ? allowlistUsers.includes(remoteId) || (mappedUserId ? allowlistUsers.includes(mappedUserId) : false)
+          : false,
+      });
     });
+  }
+  return rows;
 }
 
 function mappedSessionTarget(sessionId: string): { kind: "path" | "topic"; value: string } | null {
@@ -2653,7 +2665,7 @@ export default function App() {
                 connection={sidebarImDetailConnection}
                 onClose={() => setSidebarImDetailConnectionId("")}
                 onOpenSettings={openBotSettings}
-                onManageAllowlist={() => openBotAllowlistSettings(sidebarImDetailConnection.id)}
+                onManageAllowlist={() => openBotAllowlistSettings(sidebarImDetailConnection.connectionId)}
                 onOpenSession={() => void openSidebarImConnectionSession(sidebarImDetailConnection)}
               />
             ) : state.meta?.ready === false && !state.meta?.startupErr ? (
