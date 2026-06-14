@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, KeyboardEvent, PointerEvent as ReactPointerEvent } from "react";
 import { ShellExpandProvider, useShellExpand } from "./lib/shellExpand";
+import gsap from "gsap";
+import { useGSAP } from "@gsap/react";
+import { Flip } from "gsap/Flip";
+import { ScrollToPlugin } from "gsap/ScrollToPlugin";
+gsap.registerPlugin(useGSAP, Flip, ScrollToPlugin);
 import {
   Activity,
   Command,
@@ -36,11 +41,12 @@ import { AskCard } from "./components/AskCard";
 import { DaemonApprovalsPanel } from "./components/DaemonApprovalsPanel";
 import { DaemonProcessPanel } from "./components/DaemonProcessPanel";
 import { DaemonSessionsPanel } from "./components/DaemonSessionsPanel";
+import { UndoRewindBanner } from "./components/UndoRewindBanner";
 import { ClearContextCard } from "./components/ClearContextCard";
 import { StatusBar } from "./components/StatusBar";
 import { HistoryPanel } from "./components/HistoryPanel";
 import { CommandPalette, type PaletteItem } from "./components/CommandPalette";
-import { SettingsPanel } from "./components/SettingsPanel";
+import { SettingsPanel, type SettingsInitialFocus } from "./components/SettingsPanel";
 import { UpdateBanner } from "./components/UpdateBanner";
 import { ContextPanel } from "./components/ContextPanel";
 import { WorkspacePanel } from "./components/WorkspacePanel";
@@ -54,6 +60,7 @@ import { parseTodos } from "./lib/tools";
 import { shouldShowTodoPanel } from "./lib/todoVisibility";
 import {
   type BotConnectionView,
+  type BotRuntimeStatusView,
   type BotSettingsView,
   type CollaborationMode,
   type ComposerInsertRequest,
@@ -138,7 +145,7 @@ type HistoryViewState =
   | { kind: "history"; source: "scope"; filter: HistoryScopeFilter; sessions: SessionMeta[] }
   | { kind: "history"; source: "all"; sessions: SessionMeta[] }
   | { kind: "trash"; sessions: SessionMeta[] };
-type SidebarImPlatform = "feishu" | "lark" | "weixin";
+type SidebarImPlatform = "qq" | "feishu" | "lark" | "weixin";
 type SidebarImStatus = "connected" | "disabled" | "pending" | "error" | "disconnected";
 type SidebarImConnection = {
   id: string;
@@ -152,6 +159,10 @@ type SidebarImConnection = {
   sessionId: string;
   scope: "global" | "project";
   workspaceRoot: string;
+  allowAll: boolean;
+  allowlistEnabled: boolean;
+  allowlistUsers: string[];
+  allowlistMatched: boolean;
 };
 type SidebarImTopicSource = {
   platform: SidebarImPlatform;
@@ -165,6 +176,7 @@ type SidebarImConnectionDetailProps = {
   onClose: () => void;
   onOpenSession: () => void;
   onOpenSettings: () => void;
+  onManageAllowlist: () => void;
 };
 
 function isSidebarImConnection(connection: BotConnectionView): boolean {
@@ -177,6 +189,7 @@ function sidebarImPlatform(connection: BotConnectionView): SidebarImPlatform {
 }
 
 function sidebarImPlatformLabel(platform: SidebarImPlatform, translate: Translator): string {
+  if (platform === "qq") return "QQ";
   if (platform === "lark") return "Lark";
   if (platform === "weixin") return translate("settings.botWeixin");
   return translate("settings.botFeishu");
@@ -233,9 +246,82 @@ function sidebarImStatusLabel(status: SidebarImStatus, translate: Translator): s
   }
 }
 
-function sidebarImConnectionsFromBot(bot: BotSettingsView | null | undefined, translate: Translator): SidebarImConnection[] {
-  if (!bot?.connections?.length) return [];
-  return bot.connections
+function uniqueTrimmedValues(values: string[]): string[] {
+  return Array.from(new Set(values.map((value) => value.trim()).filter(Boolean)));
+}
+
+function sidebarImAllowlistUsers(bot: BotSettingsView, platform: SidebarImPlatform): string[] {
+  if (platform === "qq") return uniqueTrimmedValues(asArray(bot.allowlist.qqUsers));
+  if (platform === "weixin") return uniqueTrimmedValues(asArray(bot.allowlist.weixinUsers));
+  return uniqueTrimmedValues(asArray(bot.allowlist.feishuUsers));
+}
+
+function sidebarImQQAdded(qq: BotSettingsView["qq"]): boolean {
+  return Boolean(qq.enabled || qq.secretSet || qq.appId.trim());
+}
+
+function sidebarImQQStatus(bot: BotSettingsView, runtimeStatus: BotRuntimeStatusView | null | undefined): SidebarImStatus {
+  const appId = bot.qq.appId.trim();
+  if (!bot.enabled || !bot.qq.enabled) return "disabled";
+  if (!appId || !bot.qq.secretSet) return "disconnected";
+  if (typeof window !== "undefined" && !window.runtime) return "pending";
+  if (!runtimeStatus) return "pending";
+  const status = runtimeStatus.status.trim().toLowerCase();
+  if (runtimeStatus.running && runtimeStatus.connections > 0 && status === "running") {
+    return "connected";
+  }
+  if (status === "error" || status === "blocked" || status === "degraded") return "error";
+  if (status === "stopped") return "disconnected";
+  return "pending";
+}
+
+async function loadBotRuntimeStatus(): Promise<BotRuntimeStatusView | null> {
+  if (typeof window !== "undefined" && !window.runtime) return null;
+  try {
+    return await app.BotRuntimeStatus();
+  } catch (e) {
+    console.warn("bot runtime status failed", e);
+    return null;
+  }
+}
+
+function sidebarImQQConnection(bot: BotSettingsView, translate: Translator, runtimeStatus?: BotRuntimeStatusView | null): SidebarImConnection | null {
+  if (!sidebarImQQAdded(bot.qq)) return null;
+  const remoteId = bot.qq.appId.trim();
+  const status = sidebarImQQStatus(bot, runtimeStatus);
+  const statusLabel = sidebarImStatusLabel(status, translate);
+  const allowlistUsers = sidebarImAllowlistUsers(bot, "qq");
+  const subtitleParts = [
+    remoteId ? compactRemoteId(remoteId) : "QQ",
+    statusLabel,
+  ].filter(Boolean);
+  return {
+    id: "__qq_bot__",
+    platform: "qq",
+    title: "QQ Bot",
+    platformLabel: "QQ",
+    subtitle: subtitleParts.join(" · "),
+    status,
+    statusLabel,
+    remoteId,
+    sessionId: "",
+    scope: "global",
+    workspaceRoot: "",
+    allowAll: bot.allowlist.allowAll,
+    allowlistEnabled: bot.allowlist.enabled,
+    allowlistUsers,
+    allowlistMatched: remoteId ? allowlistUsers.includes(remoteId) : false,
+  };
+}
+
+function sidebarImConnectionsFromBot(
+  bot: BotSettingsView | null | undefined,
+  translate: Translator,
+  runtimeStatus?: BotRuntimeStatusView | null,
+): SidebarImConnection[] {
+  if (!bot) return [];
+  const qqConnection = sidebarImQQConnection(bot, translate, runtimeStatus);
+  const connectionItems = asArray(bot.connections)
     .filter(isSidebarImConnection)
     .map((connection) => {
       const platform = sidebarImPlatform(connection);
@@ -247,6 +333,7 @@ function sidebarImConnectionsFromBot(bot: BotSettingsView | null | undefined, tr
       const workspaceRoot = botMappingWorkspaceRoot(mapping, connection.workspaceRoot);
       const status = sidebarImStatus(connection, bot.enabled);
       const title = connection.label.trim() || platformLabel;
+      const allowlistUsers = sidebarImAllowlistUsers(bot, platform);
       const subtitleParts = [
         remoteId ? compactRemoteId(remoteId) : platformLabel,
         connection.model.trim() || "",
@@ -264,8 +351,13 @@ function sidebarImConnectionsFromBot(bot: BotSettingsView | null | undefined, tr
         sessionId,
         scope,
         workspaceRoot,
+        allowAll: bot.allowlist.allowAll,
+        allowlistEnabled: bot.allowlist.enabled,
+        allowlistUsers,
+        allowlistMatched: remoteId ? allowlistUsers.includes(remoteId) : false,
       };
     });
+  return qqConnection ? [qqConnection, ...connectionItems] : connectionItems;
 }
 
 function mappedSessionTarget(sessionId: string): { kind: "path" | "topic"; value: string } | null {
@@ -324,14 +416,33 @@ function sidebarImSessionLabel(connection: SidebarImConnection, translate: Trans
   return target.value;
 }
 
-function SidebarImConnectionDetail({ connection, onClose, onOpenSession, onOpenSettings }: SidebarImConnectionDetailProps) {
+function sidebarImAccessModeLabel(connection: SidebarImConnection, translate: Translator): string {
+  if (connection.allowAll) return translate("botDetail.accessAllowAll");
+  if (connection.allowlistEnabled) return translate("botDetail.accessWhitelist");
+  return translate("botDetail.accessDisabled");
+}
+
+function sidebarImAccessStatusLabel(connection: SidebarImConnection, translate: Translator): string {
+  if (connection.allowAll) return translate("botDetail.accessOpen");
+  if (!connection.remoteId) return translate("botDetail.accessUnknown");
+  return connection.allowlistMatched ? translate("botDetail.accessMatched") : translate("botDetail.accessMissing");
+}
+
+function sidebarImAccessStatusClass(connection: SidebarImConnection): string {
+  if (connection.allowAll || connection.allowlistMatched) return "ok";
+  if (!connection.remoteId) return "muted";
+  return "warn";
+}
+
+function SidebarImConnectionDetail({ connection, onClose, onOpenSession, onOpenSettings, onManageAllowlist }: SidebarImConnectionDetailProps) {
   const translate = useT();
   const target = mappedSessionTarget(connection.sessionId);
+  const accessStatusClass = sidebarImAccessStatusClass(connection);
   return (
     <div className="bot-detail">
       <section className="bot-detail__summary">
         <div className={`bot-detail__avatar bot-detail__avatar--${connection.platform}`} aria-hidden="true">
-          {connection.platform === "weixin" ? "微" : connection.platform === "lark" ? "L" : "飞"}
+          {connection.platform === "qq" ? "Q" : connection.platform === "weixin" ? "微" : connection.platform === "lark" ? "L" : "飞"}
         </div>
         <div className="bot-detail__summary-main">
           <span>{translate("botDetail.subtitle")}</span>
@@ -354,6 +465,54 @@ function SidebarImConnectionDetail({ connection, onClose, onOpenSession, onOpenS
           <button type="button" className="btn btn--secondary btn--small" onClick={onClose}>
             {translate("botDetail.close")}
           </button>
+        </div>
+      </section>
+
+      <section className="bot-detail__panel bot-detail__panel--access" aria-label={translate("botDetail.access")}>
+        <div className="bot-detail__section-head">
+          <span>{translate("botDetail.access")}</span>
+          <div className="bot-detail__section-actions">
+            {connection.remoteId ? (
+              <CopyButton text={connection.remoteId} label={translate("botDetail.copyRemoteId")} />
+            ) : null}
+            <button type="button" className="btn btn--secondary btn--small" onClick={onManageAllowlist}>
+              {translate("botDetail.manageAllowlist")}
+            </button>
+          </div>
+        </div>
+        <div className="bot-detail__access-grid">
+          <div>
+            <span>{translate("botDetail.accessMode")}</span>
+            <strong>{sidebarImAccessModeLabel(connection, translate)}</strong>
+          </div>
+          <div>
+            <span>{translate("botDetail.accessCurrentUser")}</span>
+            <code title={connection.remoteId || undefined}>{connection.remoteId || "—"}</code>
+          </div>
+          <div>
+            <span>{translate("botDetail.accessStatus")}</span>
+            <strong className={`bot-detail__access-status bot-detail__access-status--${accessStatusClass}`}>
+              {sidebarImAccessStatusLabel(connection, translate)}
+            </strong>
+          </div>
+        </div>
+        <div className="bot-detail__allowlist">
+          <span>{translate("botDetail.channelAllowlistUsers")}</span>
+          <div className="bot-detail__id-list">
+            {connection.allowlistUsers.length > 0 ? (
+              connection.allowlistUsers.map((id) => (
+                <code
+                  key={id}
+                  className={id === connection.remoteId ? "bot-detail__id-list-item--active" : ""}
+                  title={id}
+                >
+                  {id}
+                </code>
+              ))
+            ) : (
+              <em>{translate("botDetail.emptyAllowlistUsers")}</em>
+            )}
+          </div>
         </div>
       </section>
 
@@ -689,6 +848,7 @@ export default function App() {
   // clearing the key mid-session is the Settings panel's job, not the gate's.
   const [needsOnboarding, setNeedsOnboarding] = useState<boolean | null>(null);
   const [settingsTarget, setSettingsTarget] = useState<SettingsTab | null>(null);
+  const [settingsFocus, setSettingsFocus] = useState<SettingsInitialFocus | null>(null);
   const [startupUpdateChecksEnabled, setStartupUpdateChecksEnabled] = useState<boolean | null>(null);
   const [histView, setHistView] = useState<HistoryViewState | null>(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
@@ -699,7 +859,6 @@ export default function App() {
   const [activeSidebarImConnectionId, setActiveSidebarImConnectionId] = useState("");
   const [sidebarImDetailConnectionId, setSidebarImDetailConnectionId] = useState("");
   const [sidebarImExpanded, setSidebarImExpanded] = useState(false);
-  const [isDevBuild, setIsDevBuild] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(loadSidebarCollapsed);
   type TimeFilter = "all" | "10" | "20" | "1h" | "3h" | "5h" | "1d";
   const [topicTimeFilter, setTopicTimeFilter] = useState<TimeFilter>(() => {
@@ -744,7 +903,6 @@ export default function App() {
   const [composerInsertRequest, setComposerInsertRequest] = useState<ComposerInsertRequest | null>(null);
   const [transientOverlayDismissSignal, setTransientOverlayDismissSignal] = useState(0);
   const [desktopPlatform, setDesktopPlatform] = useState<DesktopPlatform>(detectBrowserPlatform);
-  const [expandThinking, setExpandThinking] = useState(false);
   const [statusBarStyle, setStatusBarStyle] = useState<"icon" | "text">("text");
   const [statusBarItems, setStatusBarItems] = useState<StatusBarItemId[]>(() => [...DEFAULT_STATUS_BAR_ITEMS]);
   const [renamingTopicId, setRenamingTopicId] = useState<string | null>(null);
@@ -762,18 +920,20 @@ export default function App() {
 
   // Persist window geometry across launches.
   useWindowStatePersistence();
-
   useEffect(() => {
-    void app.Version().then((v) => setIsDevBuild(v === "dev"));
-  }, []);
+    document.documentElement.setAttribute("data-platform", desktopPlatform);
+  }, [desktopPlatform]);
 
   const closeTransientOverlays = useCallback(() => {
     setTransientOverlayDismissSignal((signal) => signal + 1);
   }, []);
 
   const reloadSidebarImConnections = useCallback(async () => {
-    const settings = await app.Settings();
-    setSidebarImConnections(sidebarImConnectionsFromBot(settings.bot, t));
+    const [settings, runtimeStatus] = await Promise.all([
+      app.Settings(),
+      loadBotRuntimeStatus(),
+    ]);
+    setSidebarImConnections(sidebarImConnectionsFromBot(settings.bot, t, runtimeStatus));
     setImTopicSources(sidebarImTopicSourcesFromBot(settings.bot, t));
   }, [t]);
 
@@ -793,6 +953,15 @@ export default function App() {
     closeTransientOverlays();
     setSidebarImExpanded(false);
     setSidebarImDetailConnectionId("");
+    setSettingsFocus(null);
+    setSettingsTarget("bots");
+  }, [closeTransientOverlays]);
+
+  const openBotAllowlistSettings = useCallback((connectionId: string) => {
+    closeTransientOverlays();
+    setSidebarImExpanded(false);
+    setSidebarImDetailConnectionId("");
+    setSettingsFocus({ target: "bot-allowlist", connectionId });
     setSettingsTarget("bots");
   }, [closeTransientOverlays]);
 
@@ -887,12 +1056,14 @@ export default function App() {
         clearLegacyLangPref();
         clearLegacyThemePreference();
       }
-      const settings = await app.Settings();
+      const [settings, runtimeStatus] = await Promise.all([
+        app.Settings(),
+        loadBotRuntimeStatus(),
+      ]);
       if (cancelled) return;
       applyDesktopPreferences(settings);
-      setExpandThinking(settings.expandThinking);
       hydrateDisplayMode(settings.displayMode);
-      setSidebarImConnections(sidebarImConnectionsFromBot(settings.bot, t));
+      setSidebarImConnections(sidebarImConnectionsFromBot(settings.bot, t, runtimeStatus));
       setImTopicSources(sidebarImTopicSourcesFromBot(settings.bot, t));
     };
     void syncDesktopPreferences().catch((e) => {
@@ -933,6 +1104,7 @@ export default function App() {
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
   }, []);
+
   const [pendingPlanRevision, setPendingPlanRevision] = useState<string | null>(null);
   const [footerHeight, setFooterHeight] = useState(0);
   const footerHeightRef = useRef(0);
@@ -1148,7 +1320,7 @@ export default function App() {
       const trimmed = nextGoal.trim();
       if (!trimmed) return;
       applyGoal(trimmed);
-      send(trimmed, `/goal ${trimmed}`);
+      commitThenSend(trimmed, `/goal ${trimmed}`);
     },
     [applyGoal, send],
   );
@@ -1256,7 +1428,7 @@ export default function App() {
     if (!pendingPlanRevision || state.running) return;
     const text = pendingPlanRevision;
     setPendingPlanRevision(null);
-    send(text);
+    commitThenSend(text);
   }, [pendingPlanRevision, send, state.running]);
 
   useEffect(() => {
@@ -1325,12 +1497,12 @@ export default function App() {
         } else if (["clear", "off", "stop", "done"].includes(arg.toLowerCase())) {
           applyGoal("");
         }
-        send(trimmed, submitText.trim());
+        commitThenSend(trimmed, submitText.trim());
         return;
       }
       if (collaborationMode === "goal" && !goal.trim()) {
         applyGoal(trimmed);
-        send(trimmed, `/goal ${submitText.trim()}`);
+        commitThenSend(trimmed, `/goal ${submitText.trim()}`);
         return;
       }
       const theme = /^\/theme(?:\s+(\S+))?$/.exec(trimmed);
@@ -1363,7 +1535,7 @@ export default function App() {
       await setControllerCollaborationMode(controllerComposerProfileCollaborationMode(composerProfile));
       await setControllerToolApprovalMode(toolApprovalMode);
       if (goal.trim()) await setControllerGoal(goal);
-      send(trimmed, submitText.trim());
+      commitThenSend(trimmed, submitText.trim());
     },
     [applyGoal, closeTransientOverlays, collaborationMode, composerProfile, goal, send, runShell, notice, setControllerCollaborationMode, setControllerGoal, setControllerToolApprovalMode, steer, switchModel, t, toolApprovalMode],
   );
@@ -1755,10 +1927,10 @@ export default function App() {
 
   const handleTabChange = useCallback(async (id: string) => {
     closeTransientOverlays();
-    await switchTab(id);
-    await refreshTabMetas();
+    const tabs = await switchTab(id);
+    if (tabs) setTabMetas(tabs);
     setTabRevealSignal((signal) => signal + 1);
-  }, [closeTransientOverlays, refreshTabMetas, switchTab]);
+  }, [closeTransientOverlays, setTabMetas, switchTab]);
 
   const handleTabClose = useCallback(async (id: string) => {
     closeTransientOverlays();
@@ -1818,19 +1990,105 @@ export default function App() {
     await openBlankSession(target.scope, target.workspaceRoot);
   }, [blankSessionTarget, closeTransientOverlays, openBlankSession]);
 
-  const handleMessageAction = useCallback(async (turn: number, scope: string) => {
-    await rewind(turn, scope);
+  const [rewindSignal, setRewindSignal] = useState(0);
+
+  // ── Optimistic rewind ─────────────────────────────────────────────────
+  // Rewind is optimistic: the UI immediately truncates, scrolls to the
+  // target, fills the composer, and shows an undo banner.  The real Go
+  // Rewind is deferred until the user SENDS a new message.  Undo simply
+  // restores the full items list — no Go call needed.
+  type RewindState = {
+    turn: number;
+    scope: string;
+    fullItems: Item[];     // pre-truncation items (for undo)
+    boundaryIdx: number;   // first item index of the rewound-to turn
+    turnDiff: number;      // turns rolled back
+    prompt: string;        // user message text for composer fill
+  };
+  const [rewindState, setRewindState] = useState<RewindState | null>(null);
+  const rewindStateRef = useRef(rewindState);
+  rewindStateRef.current = rewindState;
+
+  // Display items: truncated when an optimistic rewind is pending.
+  const displayItems = useMemo(() => {
+    if (!rewindState) return state.items;
+    return state.items.slice(0, rewindState.boundaryIdx);
+  }, [state.items, rewindState]);
+
+  // send wrapper: commits any pending optimistic rewind before sending.
+  const commitThenSend = useCallback(async (displayText: string, submitText?: string) => {
+    const rs = rewindStateRef.current;
+    if (rs) {
+      setRewindState(null);
+      try {
+        await rewind(rs.turn, rs.scope);
+        setRewindSignal((v) => v + 1);
+        if (rs.scope === "both") {
+          // Code was only reverted now (deferred), so refresh the dock here.
+          setDockRefreshKey((v) => v + 1);
+          setProjectRevision((v) => v + 1);
+        }
+      } catch {
+        // Rewind failed: the Go conversation is intact, so the cleared
+        // optimistic state already shows the full transcript. Don't send —
+        // the controller emits a notice with the reason.
+        return;
+      }
+    }
+    send(displayText, submitText);
+  }, [send, rewind]);
+
+  const handleMessageAction = useCallback((turn: number, scope: string) => {
     if (scope === "fork") {
-      await refreshTabMetas();
-      setProjectRevision((value) => value + 1);
-      setTabRevealSignal((signal) => signal + 1);
+      // Fork still goes through the controller (not optimistic).
+      rewind(turn, scope).then(() => {
+        refreshTabMetas();
+        setProjectRevision((v) => v + 1);
+        setTabRevealSignal((v) => v + 1);
+      });
       return;
     }
-    if (scope === "code" || scope === "both") {
-      setDockRefreshKey((value) => value + 1);
-      setProjectRevision((value) => value + 1);
+
+    // Code-only rewind only affects files — no message truncation,
+    // no optimistic UI needed.  Execute immediately.
+    if (scope === "code") {
+      rewind(turn, scope);
+      setDockRefreshKey((v) => v + 1);
+      setProjectRevision((v) => v + 1);
+      return;
     }
-  }, [refreshTabMetas, rewind]);
+
+    const items = state.items;
+    // Find the boundary: index of the Nth user message where N = turn.
+    let boundaryIdx = 0;
+    let userCount = 0;
+    for (let i = 0; i < items.length; i++) {
+      if (items[i].kind === "user") {
+        if (userCount === turn) { boundaryIdx = i; break; }
+        userCount++;
+      }
+    }
+
+    const prevUserCount = items.filter((it) => it.kind === "user").length;
+    const turnDiff = prevUserCount - userCount;
+
+    // Save full items for undo.
+    const userItem = items[boundaryIdx]?.kind === "user" ? items[boundaryIdx] as Extract<Item, { kind: "user" }> : undefined;
+    setRewindState({
+      turn,
+      scope,
+      fullItems: items,
+      boundaryIdx,
+      turnDiff,
+      prompt: userItem?.text ?? "",
+    });
+
+    // Fill composer with the rewound-to user message.
+    const insertId = Date.now();
+    setComposerInsertRequest({ id: insertId, text: userItem?.text ?? "" });
+
+    setRewindSignal((v) => v + 1);
+  }, [state.items, rewind, refreshTabMetas, setComposerInsertRequest]);
 
   const handleOpenTopic = useCallback(async (scope: string, workspaceRoot: string, topicId: string) => {
     closeTransientOverlays();
@@ -2133,14 +2391,15 @@ export default function App() {
     ? [topicbarWorkspaceLabel, topicbarImSourceLabel, sidebarImScopeLabel(sidebarImDetailConnection, t)].filter(Boolean).join(" · ")
     : [topicbarWorkspacePath || topicbarWorkspaceLabel, topicbarImSourceLabel].filter(Boolean).join(" · ");
   const sidebarImConnectedCount = sidebarImConnections.filter((connection) => connection.status === "connected").length;
-  const sidebarImSummaryText = sidebarImConnections.length === 0
-    ? t("sidebar.imEmpty")
-    : sidebarImConnectedCount > 0
+  const sidebarImHasConnections = sidebarImConnections.length > 0;
+  const sidebarImSummaryText = sidebarImHasConnections
+    ? sidebarImConnectedCount > 0
       ? t("sidebar.imOnlineCount", { n: sidebarImConnectedCount })
-      : t("sidebar.imConnectionCount", { n: sidebarImConnections.length });
-  const sidebarImToggleLabel = sidebarImConnections.length === 0
-    ? t("sidebar.imEmpty")
-    : t(sidebarImExpanded ? "common.collapse" : "common.expand");
+      : t("sidebar.imConnectionCount", { n: sidebarImConnections.length })
+    : "";
+  const sidebarImToggleLabel = !sidebarImHasConnections
+    ? t("sidebar.im")
+    : t(sidebarImExpanded ? "sidebar.imCollapse" : "sidebar.imExpand");
 
   return (
     <ShellExpandProvider>
@@ -2221,7 +2480,6 @@ export default function App() {
           </section>
 
           <nav className="sidebar__nav">
-          {isDevBuild && (
           <div className={`sidebar-im${sidebarImExpanded ? " sidebar-im--expanded" : ""}`} aria-label={t("sidebar.im")}>
             <button
               className="sidebar-im__summary"
@@ -2242,7 +2500,7 @@ export default function App() {
             >
               <MessageSquare size={15} />
               <span className="sidebar-im__summary-label">{t("sidebar.im")}</span>
-              <span className="sidebar-im__summary-status">{sidebarImSummaryText}</span>
+              {sidebarImSummaryText ? <span className="sidebar-im__summary-status">{sidebarImSummaryText}</span> : null}
             </button>
             {sidebarImExpanded && sidebarImConnections.length > 0 && (
               <div className="sidebar-im__panel" role="dialog" aria-label={t("sidebar.imManage")}>
@@ -2278,7 +2536,7 @@ export default function App() {
                         onClick={() => void selectSidebarImConnection(connection)}
                       >
                         <span className={`sidebar-im-row__platform sidebar-im-row__platform--${connection.platform}`} aria-hidden="true">
-                          {connection.platform === "weixin" ? "微" : connection.platform === "lark" ? "L" : "飞"}
+                          {connection.platform === "qq" ? "Q" : connection.platform === "weixin" ? "微" : connection.platform === "lark" ? "L" : "飞"}
                         </span>
                         <span className="sidebar-im-row__main">
                           <strong>{connection.title}</strong>
@@ -2292,7 +2550,6 @@ export default function App() {
               </div>
             )}
           </div>
-          )}
             <Tooltip label={t("sidebar.allHistory")} fill side="right" disabled={sidebarNavTooltipDisabled}>
               <button
                 className="sidebar__navitem"
@@ -2395,11 +2652,14 @@ export default function App() {
             <div className="topicbar__actions">
               {!sidebarImDetailConnection && (
               <>
-              <CopyButton
-                getText={getSessionMarkdown}
-                label={t("topicBar.copyAll")}
-                className="topicbar__action-btn topicbar__action-btn--icon topicbar__action-btn--utility"
-              />
+              <Tooltip label={t("topicBar.copyAll")}>
+                <CopyButton
+                  getText={getSessionMarkdown}
+                  label={t("topicBar.copyAll")}
+                  className="topicbar__action-btn topicbar__action-btn--icon topicbar__action-btn--utility"
+                  showInlineLabel={false}
+                />
+              </Tooltip>
               <div className={`topicbar__export${topicExportOpen ? " topicbar__export--open" : ""}`}>
                 <Tooltip label={t("topicBar.export")}>
                   <button
@@ -2475,6 +2735,7 @@ export default function App() {
                 connection={sidebarImDetailConnection}
                 onClose={() => setSidebarImDetailConnectionId("")}
                 onOpenSettings={openBotSettings}
+                onManageAllowlist={() => openBotAllowlistSettings(sidebarImDetailConnection.id)}
                 onOpenSession={() => void openSidebarImConnectionSession(sidebarImDetailConnection)}
               />
             ) : state.meta?.ready === false && !state.meta?.startupErr ? (
@@ -2484,15 +2745,16 @@ export default function App() {
               </div>
             ) : (
               <Transcript
-                items={state.items}
+                items={displayItems}
                 live={state.live}
                 footerHeight={footerHeight}
-                onPrompt={send}
+                onPrompt={commitThenSend}
                 onRewind={handleMessageAction}
                 checkpoints={state.checkpoints}
                 actionPending={state.messageAction != null}
                 rewindDisabled={state.running || state.messageAction != null || state.approval != null || state.ask != null || clearContextPending}
-                defaultExpandThinking={expandThinking}
+                running={state.running}
+                rewindSignal={rewindSignal}
               />
             )}
           </main>
@@ -2500,8 +2762,22 @@ export default function App() {
           {!sidebarImDetailConnection && (
           <footer className="footer" ref={footerRef}>
             {showTodos && <TodoPanel todos={todos} onDismiss={() => setDismissedTodo(todoItem!.id)} />}
+            {rewindState && (
+              <UndoRewindBanner
+                meta={{
+                  turns: rewindState.turnDiff,
+                  filesRestored: [], // optimistic: files haven't changed yet
+                  filesRemoved: [],
+                  onUndo: () => {
+                    setRewindState(null);
+                    setComposerInsertRequest({ id: Date.now(), text: "" });
+                  },
+                }}
+              />
+            )}
             {state.approval && (
               <ApprovalModal
+                key={state.approval.id}
                 approval={state.approval}
                 onAnswer={(allow, session, persist) => {
                   // Approving an exit_plan_mode plan leaves plan mode; sync the
@@ -2714,9 +2990,12 @@ export default function App() {
       {settingsTarget !== null && (
         <SettingsPanel
           initialTab={settingsTarget}
-          isDevBuild={isDevBuild}
+          initialFocus={settingsFocus ?? undefined}
           agentRunning={state.running}
-          onClose={() => setSettingsTarget(null)}
+          onClose={() => {
+            setSettingsFocus(null);
+            setSettingsTarget(null);
+          }}
           onChanged={() => {
             void refreshMeta();
             void reloadSidebarImConnections().catch((e) => console.warn("bot sidebar refresh failed", e));

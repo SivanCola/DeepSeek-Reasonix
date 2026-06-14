@@ -14,9 +14,8 @@ import (
 
 	"reasonix/internal/agent"
 	"reasonix/internal/bot"
-	"reasonix/internal/bot/feishu"
-	"reasonix/internal/bot/qq"
 	"reasonix/internal/bot/weixin"
+	"reasonix/internal/botruntime"
 	"reasonix/internal/config"
 )
 
@@ -48,7 +47,7 @@ func botCommand(args []string, version string) int {
 
 func botStart(args []string, version string) int {
 	fs := flag.NewFlagSet("bot start", flag.ContinueOnError)
-	channels := fs.String("channels", "", "启用的平台，逗号分隔：qq,feishu,weixin")
+	channels := fs.String("channels", "", "启用的平台，逗号分隔：qq,feishu,lark,weixin")
 	dir := fs.String("dir", "", "工作目录")
 	model := fs.String("model", "", "模型名（空则用 default_model）")
 
@@ -59,7 +58,7 @@ func botStart(args []string, version string) int {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	cfg, err := config.Load()
+	cfg, err := loadBotCommandConfig()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: load config: %v\n", err)
 		return 1
@@ -125,7 +124,7 @@ func prepareBotGateway(cfg *config.Config, opts botGatewayOptions, logger *slog.
 	if !cfg.Bot.Enabled {
 		return nil, fmt.Errorf("bot is not enabled in config — set [bot] enabled = true")
 	}
-	if !cfg.Bot.Allowlist.AllowAll && (!cfg.Bot.Allowlist.Enabled || botAllowlistUserCount(cfg.Bot.Allowlist) == 0) {
+	if !cfg.Bot.Allowlist.AllowAll && (!cfg.Bot.Allowlist.Enabled || botruntime.AllowlistUserCount(cfg.Bot.Allowlist) == 0) {
 		return nil, fmt.Errorf("bot requires an explicit allowlist; set [bot.allowlist] enabled = true with platform user ids, or set allow_all = true intentionally")
 	}
 
@@ -136,28 +135,34 @@ func prepareBotGateway(cfg *config.Config, opts botGatewayOptions, logger *slog.
 		}
 	}
 
-	enabledPlatforms := resolveBotEnabledPlatforms(cfg.Bot, opts.Channels, warnf)
-	if !hasEnabledBotPlatform(enabledPlatforms) {
+	requestedChannels := splitBotChannels(opts.Channels)
+	enabledPlatforms, unknownChannels := botruntime.EnabledPlatforms(cfg, requestedChannels)
+	for _, ch := range unknownChannels {
+		if warnf != nil {
+			warnf("unknown channel %q", ch)
+		}
+	}
+	if !botruntime.HasEnabledPlatform(enabledPlatforms) {
 		return nil, fmt.Errorf("no bot channels enabled — enable at least one in config")
 	}
 
-	modelName := strings.TrimSpace(opts.Model)
-	if modelName == "" {
-		modelName = cfg.Bot.Model
-	}
-	if modelName == "" {
-		modelName = cfg.DefaultModel
-	}
+	modelName := botruntime.ModelName(cfg, opts.Model)
 
+	rememberInboundRemote := botruntime.NewRemoteRememberer(logger)
+	sessionSearchDirs := botSessionSearchDirs(workspaceRoot)
+
+	// 构建网关配置
 	gwCfg := bot.GatewayConfig{
 		Model:              modelName,
+		ToolApprovalMode:   cfg.Bot.ToolApprovalMode,
 		MaxSteps:           cfg.Bot.MaxSteps,
 		WorkspaceRoot:      workspaceRoot,
 		SessionDir:         botPrimarySessionDir(workspaceRoot),
-		SessionSearchDirs:  botSessionSearchDirs(workspaceRoot),
+		SessionSearchDirs:  sessionSearchDirs,
 		SessionMappingPath: botSessionMappingPath(),
-		SessionMappings:    botStaticSessionMappings(cfg.Bot.Connections, botSessionSearchDirs(workspaceRoot)),
-		Channels:           botChannelConfigs(cfg.Bot.Connections, strings.TrimSpace(opts.Model) == "", strings.TrimSpace(opts.WorkspaceRoot) == ""),
+		SessionMappings:    botStaticSessionMappings(cfg.Bot.Connections, sessionSearchDirs),
+		Channels:           botruntime.ChannelConfigs(cfg.Bot.Connections, strings.TrimSpace(opts.Model) == "", strings.TrimSpace(opts.WorkspaceRoot) == ""),
+		ConnectionChannels: botruntime.ConnectionChannelConfigs(cfg.Bot.Connections, strings.TrimSpace(opts.Model) == "", strings.TrimSpace(opts.WorkspaceRoot) == ""),
 		Enabled:            enabledPlatforms,
 		Allowlist: bot.AllowlistConfig{
 			Enabled:  cfg.Bot.Allowlist.Enabled,
@@ -173,24 +178,16 @@ func prepareBotGateway(cfg *config.Config, opts botGatewayOptions, logger *slog.
 				bot.PlatformWeixin: cfg.Bot.Allowlist.WeixinGroups,
 			},
 		},
-		Debounce: time.Duration(cfg.Bot.DebounceMs) * time.Millisecond,
+		Debounce:  time.Duration(cfg.Bot.DebounceMs) * time.Millisecond,
+		OnInbound: rememberInboundRemote,
 	}
 
-	adapters := make(map[bot.Platform]bot.Adapter)
-	if enabledPlatforms[bot.PlatformQQ] {
-		adapters[bot.PlatformQQ] = qq.New(cfg.Bot.QQ, logger)
-	}
-	if enabledPlatforms[bot.PlatformFeishu] {
-		adapters[bot.PlatformFeishu] = feishu.New(cfg.Bot.Feishu, logger)
-	}
-	if enabledPlatforms[bot.PlatformWeixin] {
-		adapters[bot.PlatformWeixin] = weixin.New(cfg.Bot.Weixin, logger)
-	}
-
+	feishuDomains := botruntime.RequestedFeishuDomains(requestedChannels)
+	gw := bot.NewGatewayWithAdapterBindings(gwCfg, botruntime.AdapterBindings(cfg, enabledPlatforms, feishuDomains, logger), logger)
 	return &preparedBotGateway{
-		Gateway:        bot.NewGateway(gwCfg, adapters, logger),
+		Gateway:        gw,
 		Model:          modelName,
-		ChannelSummary: botChannelSummary(enabledPlatforms),
+		ChannelSummary: botChannelSummaryFromRequest(opts.Channels, enabledPlatforms),
 	}, nil
 }
 
@@ -240,6 +237,13 @@ func botChannelSummary(enabled map[bot.Platform]bool) string {
 		return "(none)"
 	}
 	return strings.Join(names, ",")
+}
+
+func botChannelSummaryFromRequest(channels string, enabled map[bot.Platform]bool) string {
+	if trimmed := strings.TrimSpace(channels); trimmed != "" {
+		return trimmed
+	}
+	return botChannelSummary(enabled)
 }
 
 func botSessionMappingPath() string {
@@ -349,36 +353,12 @@ func firstNonEmptyString(values ...string) string {
 	return ""
 }
 
-func botChannelConfigs(connections []config.BotConnectionConfig, includeModel bool, includeWorkspaceRoot bool) map[bot.Platform]bot.ChannelConfig {
-	if len(connections) == 0 {
+func splitBotChannels(raw string) []string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
 		return nil
 	}
-	out := make(map[bot.Platform]bot.ChannelConfig)
-	for _, conn := range connections {
-		if !conn.Enabled {
-			continue
-		}
-		plat := bot.Platform(strings.TrimSpace(conn.Provider))
-		switch plat {
-		case bot.PlatformQQ, bot.PlatformFeishu, bot.PlatformWeixin:
-		default:
-			continue
-		}
-		channel := out[plat]
-		if includeModel {
-			channel.Model = strings.TrimSpace(conn.Model)
-		}
-		if includeWorkspaceRoot {
-			channel.WorkspaceRoot = strings.TrimSpace(conn.WorkspaceRoot)
-		}
-		if channel.Model != "" || channel.WorkspaceRoot != "" {
-			out[plat] = channel
-		}
-	}
-	if len(out) == 0 {
-		return nil
-	}
-	return out
+	return strings.Split(raw, ",")
 }
 
 func botDoctor(args []string) int {
@@ -389,7 +369,7 @@ func botDoctor(args []string) int {
 		return 2
 	}
 
-	cfg, err := config.Load()
+	cfg, err := loadBotCommandConfig()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: load config: %v\n", err)
 		return 1
@@ -472,6 +452,28 @@ func botDoctor(args []string) int {
 		addCheck("bot.weixin", "disabled", "")
 	}
 
+	enabledConnections := 0
+	for _, conn := range bc.Connections {
+		if conn.Enabled {
+			enabledConnections++
+		}
+	}
+	addCheck("bot.connections", "ok", fmt.Sprintf("enabled=%d total=%d", enabledConnections, len(bc.Connections)))
+	for _, conn := range bc.Connections {
+		id := strings.TrimSpace(conn.ID)
+		if id == "" {
+			id = strings.TrimSpace(conn.Provider)
+		}
+		status := "ok"
+		if !conn.Enabled {
+			status = "disabled"
+		} else if len(conn.SessionMappings) == 0 && (conn.Provider == string(bot.PlatformFeishu) || conn.Provider == string(bot.PlatformWeixin)) {
+			status = "missing"
+		}
+		addCheck("bot.connection."+id+".session_mappings", status,
+			fmt.Sprintf("provider=%s mappings=%d", conn.Provider, len(conn.SessionMappings)))
+	}
+
 	// Allowlist 检查
 	if bc.Allowlist.AllowAll {
 		addCheck("bot.allowlist", "open", "allow_all=true — every reachable user can trigger local tools")
@@ -512,10 +514,6 @@ func botDoctor(args []string) int {
 	return 0
 }
 
-func botAllowlistUserCount(a config.BotAllowlist) int {
-	return len(a.QQUsers) + len(a.FeishuUsers) + len(a.WeixinUsers)
-}
-
 func botWeixinLogin(args []string) int {
 	fs := flag.NewFlagSet("bot weixin-login", flag.ContinueOnError)
 	timeoutSeconds := fs.Int("timeout", 480, "登录超时时间（秒）")
@@ -523,7 +521,7 @@ func botWeixinLogin(args []string) int {
 		return 2
 	}
 
-	cfg, err := config.Load()
+	cfg, err := loadBotCommandConfig()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: load config: %v\n", err)
 		return 1
@@ -547,11 +545,40 @@ func botWeixinLogin(args []string) int {
 	return 0
 }
 
+func loadBotCommandConfig() (*config.Config, error) {
+	cfg, err := config.Load()
+	if err != nil {
+		return nil, err
+	}
+	userPath := config.UserConfigPath()
+	if strings.TrimSpace(userPath) == "" {
+		return cfg, nil
+	}
+	if _, err := os.Stat(userPath); err != nil {
+		return cfg, nil
+	}
+	userCfg := config.LoadForEdit(userPath)
+	if botConfigIsUserOwned(userCfg.Bot) {
+		cfg.Bot = userCfg.Bot
+	}
+	return cfg, nil
+}
+
+func botConfigIsUserOwned(bc config.BotConfig) bool {
+	if bc.Enabled || len(bc.Connections) > 0 || bc.QQ.Enabled || bc.Feishu.Enabled || bc.Weixin.Enabled {
+		return true
+	}
+	if bc.Allowlist.AllowAll || botruntime.AllowlistUserCount(bc.Allowlist) > 0 {
+		return true
+	}
+	return len(bc.Allowlist.QQGroups)+len(bc.Allowlist.FeishuGroups)+len(bc.Allowlist.WeixinGroups) > 0
+}
+
 func botUsage() {
 	fmt.Print(`reasonix bot — multi-channel IM bot gateway (QQ / Feishu / WeChat)
 
 Usage:
-  reasonix bot start   [--channels qq,feishu,weixin] [--dir PATH] [--model NAME]
+  reasonix bot start   [--channels qq,feishu,lark,weixin] [--dir PATH] [--model NAME]
   reasonix bot doctor  [--json]
   reasonix bot weixin-login [--timeout SECONDS]
 

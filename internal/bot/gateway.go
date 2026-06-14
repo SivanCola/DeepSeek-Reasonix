@@ -3,6 +3,7 @@ package bot
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -22,6 +23,7 @@ import (
 // GatewayConfig 是 BotGateway 的配置。
 type GatewayConfig struct {
 	Model              string
+	ToolApprovalMode   string
 	MaxSteps           int
 	WorkspaceRoot      string
 	SessionDir         string
@@ -29,15 +31,32 @@ type GatewayConfig struct {
 	SessionMappingPath string
 	SessionMappings    []SessionMapping
 	Channels           map[Platform]ChannelConfig
+	ConnectionChannels map[string]ChannelConfig
 	Allowlist          AllowlistConfig
 	Enabled            map[Platform]bool
 	Debounce           time.Duration
+	OnInbound          func(InboundMessage)
+	// OnToolApprovalModeChange persists a remote IM request such as /yolo on.
+	// The gateway updates the live session and in-memory defaults first; this
+	// callback lets desktop save the chosen connection mode to user config.
+	OnToolApprovalModeChange func(InboundMessage, string) error
 }
 
 // ChannelConfig overrides gateway defaults for one IM channel.
 type ChannelConfig struct {
-	Model         string
-	WorkspaceRoot string
+	Model            string
+	ToolApprovalMode string
+	WorkspaceRoot    string
+}
+
+// AdapterBinding attaches an adapter instance to one saved bot connection.
+// Feishu and Lark share PlatformFeishu, so ID/Domain keep their sessions,
+// replies, and per-connection settings separated at runtime.
+type AdapterBinding struct {
+	ID       string
+	Domain   string
+	Platform Platform
+	Adapter  Adapter
 }
 
 // AllowlistConfig 控制哪些用户/群可以使用 bot。
@@ -66,8 +85,9 @@ type sessionMappingFile struct {
 // 事件渲染和平台适配器。
 type BotGateway struct {
 	cfg      GatewayConfig
-	adapters map[Platform]Adapter
+	adapters []AdapterBinding
 	sessions *SessionManager
+	startErr []error
 
 	mu             sync.Mutex
 	controllers    map[string]*sessionState // session key -> active state
@@ -79,12 +99,15 @@ type BotGateway struct {
 }
 
 type sessionState struct {
-	ctrl        *control.Controller
-	sink        *sessionEventSink
-	cancel      context.CancelFunc
-	pendingAsks map[string][]event.AskQuestion
-	createdAt   time.Time
-	lastActive  time.Time
+	ctrl             *control.Controller
+	sink             *sessionEventSink
+	cancel           context.CancelFunc
+	pendingAsks      map[string][]event.AskQuestion
+	pendingApprovals map[string]event.Approval
+	lastApprovalID   string
+	lastAskID        string
+	createdAt        time.Time
+	lastActive       time.Time
 }
 
 type sessionEventSink struct {
@@ -113,6 +136,16 @@ func (s *sessionEventSink) Emit(e event.Event) {
 
 // NewGateway 创建一个新的 BotGateway。
 func NewGateway(cfg GatewayConfig, adapters map[Platform]Adapter, logger *slog.Logger) *BotGateway {
+	bindings := make([]AdapterBinding, 0, len(adapters))
+	for plat, adapter := range adapters {
+		bindings = append(bindings, AdapterBinding{ID: string(plat), Platform: plat, Adapter: adapter})
+	}
+	return NewGatewayWithAdapterBindings(cfg, bindings, logger)
+}
+
+// NewGatewayWithAdapterBindings creates a gateway with one or more adapter
+// instances per platform.
+func NewGatewayWithAdapterBindings(cfg GatewayConfig, adapters []AdapterBinding, logger *slog.Logger) *BotGateway {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -121,7 +154,7 @@ func NewGateway(cfg GatewayConfig, adapters map[Platform]Adapter, logger *slog.L
 	}
 	gw := &BotGateway{
 		cfg:            cfg,
-		adapters:       adapters,
+		adapters:       normalizeAdapterBindings(adapters),
 		sessions:       NewSessionManager(cfg.Debounce),
 		controllers:    make(map[string]*sessionState),
 		mappings:       make(map[string]SessionMapping),
@@ -132,6 +165,25 @@ func NewGateway(cfg GatewayConfig, adapters map[Platform]Adapter, logger *slog.L
 	gw.loadSessionMappings()
 	gw.buildAllowlist()
 	return gw
+}
+
+func normalizeAdapterBindings(adapters []AdapterBinding) []AdapterBinding {
+	out := make([]AdapterBinding, 0, len(adapters))
+	for _, binding := range adapters {
+		if binding.Adapter == nil {
+			continue
+		}
+		if binding.Platform == "" {
+			binding.Platform = binding.Adapter.Platform()
+		}
+		if strings.TrimSpace(binding.ID) == "" {
+			binding.ID = string(binding.Platform)
+		}
+		binding.ID = strings.TrimSpace(binding.ID)
+		binding.Domain = strings.TrimSpace(binding.Domain)
+		out = append(out, binding)
+	}
+	return out
 }
 
 func (gw *BotGateway) buildAllowlist() {
@@ -152,26 +204,44 @@ func (gw *BotGateway) buildAllowlist() {
 
 // Start 启动所有已启用的平台适配器并开始处理消息。
 func (gw *BotGateway) Start(ctx context.Context) error {
-	for plat, adapter := range gw.adapters {
-		if !gw.cfg.Enabled[plat] {
-			gw.logger.Info("platform disabled, skipping", "platform", plat)
+	started := make([]AdapterBinding, 0, len(gw.adapters))
+	var startErr []error
+	for _, binding := range gw.adapters {
+		if !gw.cfg.Enabled[binding.Platform] {
+			gw.logger.Info("platform disabled, skipping", "platform", binding.Platform, "connection", binding.ID)
 			continue
 		}
-		gw.logger.Info("starting adapter", "platform", plat)
-		if err := adapter.Start(ctx); err != nil {
-			return fmt.Errorf("start adapter %s: %w", plat, err)
+		gw.logger.Info("starting adapter", "platform", binding.Platform, "connection", binding.ID, "domain", binding.Domain)
+		if err := binding.Adapter.Start(ctx); err != nil {
+			wrapped := fmt.Errorf("start adapter %s: %w", binding.ID, err)
+			startErr = append(startErr, wrapped)
+			gw.logger.Warn("adapter start failed", "platform", binding.Platform, "connection", binding.ID, "domain", binding.Domain, "err", err)
+			continue
 		}
+		started = append(started, binding)
+	}
+	gw.adapters = started
+	gw.startErr = startErr
+	if len(started) == 0 && len(startErr) > 0 {
+		return errors.Join(startErr...)
 	}
 
 	// 合并所有适配器的消息通道
-	for plat, adapter := range gw.adapters {
-		if !gw.cfg.Enabled[plat] {
-			continue
-		}
-		go gw.dispatchLoop(ctx, plat, adapter)
+	for _, binding := range gw.adapters {
+		go gw.dispatchLoop(ctx, binding)
 	}
 
 	return nil
+}
+
+func (gw *BotGateway) AdapterCount() int {
+	return len(gw.adapters)
+}
+
+func (gw *BotGateway) StartErrors() []error {
+	out := make([]error, len(gw.startErr))
+	copy(out, gw.startErr)
+	return out
 }
 
 // Stop 停止所有适配器并关闭所有 session。
@@ -186,47 +256,79 @@ func (gw *BotGateway) Stop() {
 	}
 	gw.mu.Unlock()
 
-	for _, adapter := range gw.adapters {
-		if err := adapter.Stop(); err != nil {
-			gw.logger.Warn("error stopping adapter", "err", err)
+	for _, binding := range gw.adapters {
+		if err := binding.Adapter.Stop(); err != nil {
+			gw.logger.Warn("error stopping adapter", "platform", binding.Platform, "connection", binding.ID, "err", err)
 		}
 	}
 }
 
-func (gw *BotGateway) dispatchLoop(ctx context.Context, plat Platform, adapter Adapter) {
+func (gw *BotGateway) dispatchLoop(ctx context.Context, binding AdapterBinding) {
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case msg, ok := <-adapter.Messages():
+		case msg, ok := <-binding.Adapter.Messages():
 			if !ok {
 				return
 			}
-			gw.handleMessage(ctx, plat, adapter, msg)
+			gw.handleMessage(ctx, binding, msg)
 		}
 	}
 }
 
-func (gw *BotGateway) handleMessage(ctx context.Context, plat Platform, adapter Adapter, msg InboundMessage) {
-	msg.Platform = plat
-
-	// allowlist 检查
-	if !gw.checkAllowlist(plat, msg) {
-		gw.logger.Info("user not in allowlist", "platform", plat, "user", hashID(msg.UserID))
-		_ = gw.sendText(ctx, adapter, msg, "抱歉，您没有使用此 bot 的权限。")
-		return
+func (gw *BotGateway) handleMessage(ctx context.Context, binding AdapterBinding, msg InboundMessage) {
+	msg.Platform = binding.Platform
+	if msg.ConnectionID == "" {
+		msg.ConnectionID = binding.ID
 	}
-
+	if msg.Domain == "" {
+		msg.Domain = binding.Domain
+	}
 	src := msg.Session()
 	key := BuildSessionKey(src)
+	logFields := []any{
+		"platform", binding.Platform,
+		"connection", msg.ConnectionID,
+		"domain", msg.Domain,
+		"chat_type", msg.ChatType,
+		"chat", hashID(msg.ChatID),
+		"user", hashID(msg.UserID),
+		"operator", hashID(msg.OperatorID),
+		"thread", hashID(msg.ThreadID),
+		"message", hashID(msg.MessageID),
+		"text_chars", len([]rune(msg.Text)),
+		"session", key[:8],
+	}
+	gw.logger.Info("bot inbound message", logFields...)
+
+	// allowlist 检查
+	if !gw.checkAllowlist(binding.Platform, msg) {
+		gw.logger.Info("user not in allowlist", "platform", binding.Platform, "connection", msg.ConnectionID, "user", hashID(msg.UserID))
+		_ = gw.sendText(ctx, binding.Adapter, msg, "抱歉，您没有使用此 bot 的权限。")
+		return
+	}
+	if gw.cfg.OnInbound != nil {
+		gw.cfg.OnInbound(msg)
+	}
+
+	if normalized, ok := gw.normalizeApprovalShortcut(key, msg.Text); ok {
+		msg.Text = normalized
+	} else if normalized, ok := gw.normalizeAskShortcut(key, msg.Text); ok {
+		msg.Text = normalized
+	} else if _, ok := decisionShortcutCommand(msg.Text); ok && gw.sessions.IsActive(key) {
+		_ = gw.sendText(ctx, binding.Adapter, msg, "没有找到可匹配的待处理操作。请重新触发一次操作后回复编号，或按消息中的 ID 使用 /approve、/deny 或 /answer。")
+		return
+	}
 
 	// 斜杠命令处理
 	if IsSlashBypass(msg.Text) {
-		gw.handleSlashCommand(ctx, adapter, key, msg)
+		gw.logger.Info("bot slash command", logFields...)
+		gw.handleSlashCommand(ctx, binding.Adapter, key, msg)
 		return
 	}
 
-	gw.addPendingReaction(ctx, plat, adapter, msg)
+	gw.addPendingReaction(ctx, binding.Platform, binding.Adapter, msg)
 
 	// session 并发控制
 	acquired, merged := gw.sessions.TryAcquire(key, msg)
@@ -240,7 +342,7 @@ func (gw *BotGateway) handleMessage(ctx context.Context, plat Platform, adapter 
 		return
 	}
 
-	gw.runTurn(ctx, adapter, key, msg)
+	gw.runTurn(ctx, binding.Adapter, key, msg)
 }
 
 func (gw *BotGateway) addPendingReaction(ctx context.Context, plat Platform, adapter Adapter, msg InboundMessage) {
@@ -263,7 +365,11 @@ func (gw *BotGateway) checkAllowlist(plat Platform, msg InboundMessage) bool {
 	if !gw.cfg.Allowlist.Enabled {
 		return false
 	}
-	if !gw.allowlist[plat][msg.UserID] {
+	actor := msg.UserID
+	if msg.OperatorID != "" {
+		actor = msg.OperatorID
+	}
+	if !gw.allowlist[plat][actor] {
 		return false
 	}
 	groups := gw.groupAllowlist[plat]
@@ -280,6 +386,131 @@ func chatUsesGroupAllowlist(chatType ChatType) bool {
 	default:
 		return false
 	}
+}
+
+func (gw *BotGateway) normalizeApprovalShortcut(key, text string) (string, bool) {
+	command, ok := approvalShortcutCommand(text)
+	if !ok {
+		return "", false
+	}
+	approvalID := gw.currentPendingApprovalID(key)
+	if approvalID == "" {
+		return "", false
+	}
+	return command + " " + approvalID, true
+}
+
+func approvalShortcutCommand(text string) (string, bool) {
+	switch strings.ToLower(strings.TrimSpace(text)) {
+	case "1", "y", "yes", "ok", "同意", "批准", "允许", "允许一次":
+		return "/approve", true
+	case "2", "0", "n", "no", "deny", "拒绝":
+		return "/deny", true
+	default:
+		return "", false
+	}
+}
+
+func decisionShortcutCommand(text string) (string, bool) {
+	if command, ok := approvalShortcutCommand(text); ok {
+		return command, true
+	}
+	if _, ok := askShortcutAnswer(text); ok {
+		return "/answer", true
+	}
+	return "", false
+}
+
+func (gw *BotGateway) currentPendingApprovalID(key string) string {
+	gw.mu.Lock()
+	defer gw.mu.Unlock()
+	state, ok := gw.controllers[key]
+	if !ok || len(state.pendingApprovals) == 0 {
+		return ""
+	}
+	if state.lastApprovalID != "" {
+		if _, ok := state.pendingApprovals[state.lastApprovalID]; ok {
+			return state.lastApprovalID
+		}
+	}
+	for id := range state.pendingApprovals {
+		return id
+	}
+	return ""
+}
+
+func (gw *BotGateway) forgetPendingApproval(key, id string) {
+	gw.mu.Lock()
+	defer gw.mu.Unlock()
+	state, ok := gw.controllers[key]
+	if !ok || state.pendingApprovals == nil {
+		return
+	}
+	delete(state.pendingApprovals, id)
+	if state.lastApprovalID == id {
+		state.lastApprovalID = ""
+		for nextID := range state.pendingApprovals {
+			state.lastApprovalID = nextID
+			break
+		}
+	}
+}
+
+func (gw *BotGateway) normalizeAskShortcut(key, text string) (string, bool) {
+	answer, ok := askShortcutAnswer(text)
+	if !ok {
+		return "", false
+	}
+	askID := gw.currentPendingAskID(key)
+	if askID == "" {
+		return "", false
+	}
+	return "/answer " + askID + " " + answer, true
+}
+
+func askShortcutAnswer(text string) (string, bool) {
+	raw := strings.TrimSpace(text)
+	if raw == "" {
+		return "", false
+	}
+	if strings.ContainsAny(raw, " \t\n;=") {
+		return "", false
+	}
+	if _, err := strconv.Atoi(raw); err == nil {
+		return raw, true
+	}
+	return "", false
+}
+
+func (gw *BotGateway) currentPendingAskID(key string) string {
+	gw.mu.Lock()
+	defer gw.mu.Unlock()
+	state, ok := gw.controllers[key]
+	if !ok || len(state.pendingAsks) == 0 {
+		return ""
+	}
+	if state.lastAskID != "" {
+		if questions, ok := state.pendingAsks[state.lastAskID]; ok {
+			if askQuestionsSupportNumericShortcut(questions) {
+				return state.lastAskID
+			}
+			return ""
+		}
+	}
+	var singleID string
+	for id, questions := range state.pendingAsks {
+		if askQuestionsSupportNumericShortcut(questions) {
+			if singleID != "" {
+				return ""
+			}
+			singleID = id
+		}
+	}
+	return singleID
+}
+
+func askQuestionsSupportNumericShortcut(questions []event.AskQuestion) bool {
+	return len(questions) == 1 && len(questions[0].Options) > 0
 }
 
 func (gw *BotGateway) handleSlashCommand(ctx context.Context, adapter Adapter, key string, msg InboundMessage) {
@@ -307,7 +538,7 @@ func (gw *BotGateway) handleSlashCommand(ctx context.Context, adapter Adapter, k
 				_ = gw.sendText(ctx, adapter, msg, "新会话创建失败："+err.Error())
 				return
 			}
-			gw.ensureControllerSessionMapping(key, msg.Platform, state.ctrl)
+			gw.ensureControllerSessionMapping(key, msg, state.ctrl)
 		}
 		gw.sessions.ForceRelease(key)
 		_ = gw.sendText(ctx, adapter, msg, "已开始新会话。")
@@ -322,10 +553,13 @@ func (gw *BotGateway) handleSlashCommand(ctx context.Context, adapter Adapter, k
 		gw.mu.Lock()
 		state, ok := gw.controllers[key]
 		gw.mu.Unlock()
-		if ok {
+		if ok && state.ctrl != nil {
 			state.ctrl.Approve(parts[1], true, false, false)
+			gw.forgetPendingApproval(key, parts[1])
 			gw.clearRuntimeWait(key, "approval", parts[1])
 			_ = gw.sendText(ctx, adapter, msg, "已批准。")
+		} else {
+			_ = gw.sendText(ctx, adapter, msg, "没有找到当前会话中的待审批操作，请重新触发一次操作。")
 		}
 
 	case strings.HasPrefix(msg.Text, "/deny"):
@@ -337,10 +571,13 @@ func (gw *BotGateway) handleSlashCommand(ctx context.Context, adapter Adapter, k
 		gw.mu.Lock()
 		state, ok := gw.controllers[key]
 		gw.mu.Unlock()
-		if ok {
+		if ok && state.ctrl != nil {
 			state.ctrl.Approve(parts[1], false, false, false)
+			gw.forgetPendingApproval(key, parts[1])
 			gw.clearRuntimeWait(key, "approval", parts[1])
 			_ = gw.sendText(ctx, adapter, msg, "已拒绝。")
+		} else {
+			_ = gw.sendText(ctx, adapter, msg, "没有找到当前会话中的待审批操作，请重新触发一次操作。")
 		}
 
 	case strings.HasPrefix(msg.Text, "/answer"):
@@ -357,6 +594,13 @@ func (gw *BotGateway) handleSlashCommand(ctx context.Context, adapter Adapter, k
 		if ok {
 			questions = state.pendingAsks[askID]
 			delete(state.pendingAsks, askID)
+			if state.lastAskID == askID {
+				state.lastAskID = ""
+				for nextID := range state.pendingAsks {
+					state.lastAskID = nextID
+					break
+				}
+			}
 		}
 		gw.mu.Unlock()
 		if !ok || state.ctrl == nil {
@@ -368,13 +612,32 @@ func (gw *BotGateway) handleSlashCommand(ctx context.Context, adapter Adapter, k
 		gw.clearRuntimeWait(key, "ask", askID)
 		_ = gw.sendText(ctx, adapter, msg, "已提交回答。")
 
+	case strings.HasPrefix(msg.Text, "/yolo") || strings.HasPrefix(msg.Text, "/mode"):
+		mode, statusOnly, ok := parseToolApprovalModeCommand(msg.Text)
+		if !ok {
+			_ = gw.sendText(ctx, adapter, msg, "用法: /yolo on|off|auto|status，或 /mode yolo|ask|auto")
+			return
+		}
+		if statusOnly {
+			_ = gw.sendText(ctx, adapter, msg, gw.toolApprovalModeStatusText(key, msg))
+			return
+		}
+		persistErr := gw.setToolApprovalModeForMessage(key, msg, mode)
+		text := toolApprovalModeChangedText(mode)
+		if persistErr != nil {
+			text += "\n当前会话已生效，但保存到设置失败：" + persistErr.Error()
+		}
+		_ = gw.sendText(ctx, adapter, msg, text)
+
 	case strings.HasPrefix(msg.Text, "/status"):
 		active := gw.sessions.ActiveCount()
 		gw.mu.Lock()
 		sessions := len(gw.controllers)
 		state, hasState := gw.controllers[key]
 		gw.mu.Unlock()
-		_ = gw.sendText(ctx, adapter, msg, gw.renderStatus(key, state, hasState, active, sessions))
+		status := gw.renderStatus(key, state, hasState, active, sessions)
+		mode := gw.currentToolApprovalMode(key, msg)
+		_ = gw.sendText(ctx, adapter, msg, status+"\n工具审批模式: "+toolApprovalModeLabel(mode))
 
 	case strings.HasPrefix(msg.Text, "/approvals"):
 		_ = gw.sendText(ctx, adapter, msg, gw.renderApprovals(key))
@@ -439,6 +702,8 @@ func (gw *BotGateway) handleSlashCommand(ctx context.Context, adapter Adapter, k
 			"/deny <id> - 拒绝操作\n" +
 			"/answer <id> <选项> - 回答 ask 问题\n" +
 			"/approvals - 查看等待审批或回答的任务\n" +
+			"/yolo on|off|auto|status - 切换或查看工具审批模式\n" +
+			"/mode yolo|ask|auto - 切换工具审批模式\n" +
 			"/sessions - 列出可绑定的 Reasonix 会话\n" +
 			"/attach <id> - 绑定并恢复已有 Reasonix 会话\n" +
 			"/detach - 解除当前 IM 会话绑定\n" +
@@ -451,11 +716,133 @@ func (gw *BotGateway) handleSlashCommand(ctx context.Context, adapter Adapter, k
 	}
 }
 
+func parseToolApprovalModeCommand(text string) (mode string, statusOnly bool, ok bool) {
+	parts := strings.Fields(text)
+	if len(parts) == 0 {
+		return "", false, false
+	}
+	cmd := strings.ToLower(strings.TrimSpace(parts[0]))
+	switch cmd {
+	case "/yolo":
+		if len(parts) == 1 {
+			return control.ToolApprovalYolo, false, true
+		}
+		return parseToolApprovalModeArg(parts[1])
+	case "/mode":
+		if len(parts) == 1 {
+			return "", true, true
+		}
+		return parseToolApprovalModeArg(parts[1])
+	default:
+		return "", false, false
+	}
+}
+
+func parseToolApprovalModeArg(arg string) (mode string, statusOnly bool, ok bool) {
+	switch strings.ToLower(strings.TrimSpace(arg)) {
+	case "status", "state", "show", "状态", "查看":
+		return "", true, true
+	case "on", "enable", "enabled", "true", "1", "yolo", "full", "full-access", "bypass", "开启", "打开":
+		return control.ToolApprovalYolo, false, true
+	case "off", "disable", "disabled", "false", "0", "ask", "询问", "关闭":
+		return control.ToolApprovalAsk, false, true
+	case "auto", "自动":
+		return control.ToolApprovalAuto, false, true
+	default:
+		return "", false, false
+	}
+}
+
+func (gw *BotGateway) setToolApprovalModeForMessage(key string, msg InboundMessage, mode string) error {
+	mode = normalizeBotToolApprovalMode(mode)
+	var ctrl *control.Controller
+
+	gw.mu.Lock()
+	if state, ok := gw.controllers[key]; ok {
+		ctrl = state.ctrl
+	}
+	gw.updateToolApprovalModeDefaultLocked(msg, mode)
+	gw.mu.Unlock()
+
+	if ctrl != nil {
+		ctrl.SetToolApprovalMode(mode)
+	}
+	if gw.cfg.OnToolApprovalModeChange != nil {
+		return gw.cfg.OnToolApprovalModeChange(msg, mode)
+	}
+	return nil
+}
+
+func (gw *BotGateway) updateToolApprovalModeDefaultLocked(msg InboundMessage, mode string) {
+	if id := strings.TrimSpace(msg.ConnectionID); id != "" {
+		if gw.cfg.ConnectionChannels == nil {
+			gw.cfg.ConnectionChannels = make(map[string]ChannelConfig)
+		}
+		channel := gw.cfg.ConnectionChannels[id]
+		channel.ToolApprovalMode = mode
+		gw.cfg.ConnectionChannels[id] = channel
+		return
+	}
+	if msg.Platform != "" {
+		if gw.cfg.Channels == nil {
+			gw.cfg.Channels = make(map[Platform]ChannelConfig)
+		}
+		channel := gw.cfg.Channels[msg.Platform]
+		channel.ToolApprovalMode = mode
+		gw.cfg.Channels[msg.Platform] = channel
+		return
+	}
+	gw.cfg.ToolApprovalMode = mode
+}
+
+func (gw *BotGateway) currentToolApprovalMode(key string, msg InboundMessage) string {
+	var ctrl *control.Controller
+	gw.mu.Lock()
+	if state, ok := gw.controllers[key]; ok {
+		ctrl = state.ctrl
+	}
+	gw.mu.Unlock()
+	if ctrl != nil {
+		return ctrl.ToolApprovalMode()
+	}
+	_, _, mode := gw.sessionOptionsForMessage(msg)
+	return mode
+}
+
+func (gw *BotGateway) toolApprovalModeStatusText(key string, msg InboundMessage) string {
+	mode := gw.currentToolApprovalMode(key, msg)
+	return fmt.Sprintf("当前工具审批模式：%s\n用法：/yolo on|off|auto|status，或 /mode yolo|ask|auto", toolApprovalModeLabel(mode))
+}
+
+func toolApprovalModeChangedText(mode string) string {
+	switch normalizeBotToolApprovalMode(mode) {
+	case control.ToolApprovalYolo:
+		return "已开启 YOLO：普通工具审批将自动放行；Ask 问题和计划批准仍会等待确认。"
+	case control.ToolApprovalAuto:
+		return "已切换为自动模式：策略允许的工具会自动放行，仍保留需要询问或拒绝的规则。"
+	default:
+		return "已切回询问模式：工具执行前会请求确认。"
+	}
+}
+
+func toolApprovalModeLabel(mode string) string {
+	switch normalizeBotToolApprovalMode(mode) {
+	case control.ToolApprovalYolo:
+		return "YOLO"
+	case control.ToolApprovalAuto:
+		return "自动"
+	default:
+		return "询问"
+	}
+}
+
 func (gw *BotGateway) runTurn(ctx context.Context, adapter Adapter, key string, msg InboundMessage) {
+	gw.logger.Info("bot turn started", "platform", msg.Platform, "chat_type", msg.ChatType, "chat", hashID(msg.ChatID), "session", key[:8])
 	defer func() {
 		// 检查是否有等待队列中的消息
 		next := gw.sessions.Release(key)
 		if next != nil {
+			gw.logger.Info("bot pending message released", "platform", next.Platform, "chat_type", next.ChatType, "chat", hashID(next.ChatID), "session", key[:8])
 			gw.runTurn(ctx, adapter, key, *next)
 			return
 		}
@@ -478,30 +865,50 @@ func (gw *BotGateway) runTurn(ctx context.Context, adapter Adapter, key string, 
 	_ = adapter.SendTyping(ctx, msg.ChatID)
 
 	// 创建事件渲染 sink
-	sink := newRenderSink(ctx, adapter, msg.ChatID, msg.ChatType, msg.MessageID, gw.logger, func(approval event.Approval) {
-		gw.recordRuntimeWait(key, agent.RuntimeWaitMeta{
-			Kind:       "approval",
-			Reason:     "approval required",
-			ApprovalID: approval.ID,
-			Tool:       approval.Tool,
-			Subject:    approval.Subject,
-			Since:      time.Now().UTC(),
-		})
-	}, func(ask event.Ask) {
-		gw.mu.Lock()
-		if state.pendingAsks == nil {
-			state.pendingAsks = make(map[string][]event.AskQuestion)
-		}
-		state.pendingAsks[ask.ID] = ask.Questions
-		gw.mu.Unlock()
-		gw.recordRuntimeWait(key, agent.RuntimeWaitMeta{
-			Kind:    "ask",
-			Reason:  "user answer required",
-			AskID:   ask.ID,
-			Subject: askSubject(ask),
-			Since:   time.Now().UTC(),
-		})
-	})
+	sink := newRenderSink(
+		ctx,
+		adapter,
+		msg.ConnectionID,
+		msg.Domain,
+		msg.ChatID,
+		msg.ChatType,
+		msg.UserID,
+		msg.MessageID,
+		gw.logger,
+		func(approval event.Approval) {
+			gw.mu.Lock()
+			if state.pendingApprovals == nil {
+				state.pendingApprovals = make(map[string]event.Approval)
+			}
+			state.pendingApprovals[approval.ID] = approval
+			state.lastApprovalID = approval.ID
+			gw.mu.Unlock()
+			gw.recordRuntimeWait(key, agent.RuntimeWaitMeta{
+				Kind:       "approval",
+				Reason:     "approval required",
+				ApprovalID: approval.ID,
+				Tool:       approval.Tool,
+				Subject:    approval.Subject,
+				Since:      time.Now().UTC(),
+			})
+		},
+		func(ask event.Ask) {
+			gw.mu.Lock()
+			if state.pendingAsks == nil {
+				state.pendingAsks = make(map[string][]event.AskQuestion)
+			}
+			state.pendingAsks[ask.ID] = ask.Questions
+			state.lastAskID = ask.ID
+			gw.mu.Unlock()
+			gw.recordRuntimeWait(key, agent.RuntimeWaitMeta{
+				Kind:    "ask",
+				Reason:  "user answer required",
+				AskID:   ask.ID,
+				Subject: askSubject(ask),
+				Since:   time.Now().UTC(),
+			})
+		},
+	)
 	state.sink.setTarget(sink)
 	defer state.sink.setTarget(nil)
 
@@ -520,7 +927,9 @@ func (gw *BotGateway) runTurn(ctx context.Context, adapter Adapter, key string, 
 	sink.Emit(event.Event{Kind: event.TurnDone, Err: err})
 	if err != nil {
 		gw.logger.Warn("turn error", "session", key[:8], "err", err)
+		return
 	}
+	gw.logger.Info("bot turn completed", "platform", msg.Platform, "chat_type", msg.ChatType, "chat", hashID(msg.ChatID), "session", key[:8])
 }
 
 func (gw *BotGateway) getOrCreateSession(ctx context.Context, key string, msg InboundMessage) *sessionState {
@@ -528,6 +937,7 @@ func (gw *BotGateway) getOrCreateSession(ctx context.Context, key string, msg In
 	if state, ok := gw.controllers[key]; ok {
 		state.lastActive = time.Now()
 		gw.mu.Unlock()
+		gw.logger.Info("bot session reused", "platform", msg.Platform, "chat_type", msg.ChatType, "chat", hashID(msg.ChatID), "session", key[:8])
 		return state
 	}
 	gw.mu.Unlock()
@@ -540,13 +950,15 @@ func (gw *BotGateway) getOrCreateSession(ctx context.Context, key string, msg In
 
 	// 创建新 Controller
 	sessionSink := &sessionEventSink{}
-	ctrl, err := gw.buildController(ctx, msg.Platform, sessionSink)
+	model, workspaceRoot, toolApprovalMode := gw.sessionOptionsForMessage(msg)
+	gw.logger.Info("bot session creating", "platform", msg.Platform, "chat_type", msg.ChatType, "chat", hashID(msg.ChatID), "session", key[:8], "model", model, "workspace_set", strings.TrimSpace(workspaceRoot) != "", "tool_approval_mode", normalizeBotToolApprovalMode(toolApprovalMode))
+	ctrl, err := gw.buildController(ctx, msg, sessionSink)
 	if err != nil {
 		gw.logger.Error("build controller failed", "err", err)
 		return nil
 	}
 	ctrl.EnableInteractiveApproval()
-	gw.ensureControllerSessionMapping(key, msg.Platform, ctrl)
+	gw.ensureControllerSessionMapping(key, msg, ctrl)
 
 	gw.mu.Lock()
 	gw.controllers[key] = &sessionState{
@@ -559,12 +971,13 @@ func (gw *BotGateway) getOrCreateSession(ctx context.Context, key string, msg In
 	state := gw.controllers[key]
 	gw.mu.Unlock()
 
+	gw.logger.Info("bot session created", "platform", msg.Platform, "chat_type", msg.ChatType, "chat", hashID(msg.ChatID), "session", key[:8])
 	return state
 }
 
-func (gw *BotGateway) buildController(ctx context.Context, plat Platform, sink event.Sink) (*control.Controller, error) {
-	model, workspaceRoot := gw.sessionOptionsForPlatform(plat)
-	return boot.Build(ctx, boot.Options{
+func (gw *BotGateway) buildController(ctx context.Context, msg InboundMessage, sink event.Sink) (*control.Controller, error) {
+	model, workspaceRoot, toolApprovalMode := gw.sessionOptionsForMessage(msg)
+	ctrl, err := boot.Build(ctx, boot.Options{
 		Model:         model,
 		MaxSteps:      gw.cfg.MaxSteps,
 		RequireKey:    true,
@@ -572,6 +985,11 @@ func (gw *BotGateway) buildController(ctx context.Context, plat Platform, sink e
 		WorkspaceRoot: workspaceRoot,
 		SessionDir:    gw.cfg.SessionDir,
 	})
+	if err != nil {
+		return nil, err
+	}
+	ctrl.SetToolApprovalMode(toolApprovalMode)
+	return ctrl, nil
 }
 
 func (gw *BotGateway) resumeMappedSession(ctx context.Context, key string, msg InboundMessage, mapping SessionMapping) *sessionState {
@@ -584,7 +1002,7 @@ func (gw *BotGateway) resumeMappedSession(ctx context.Context, key string, msg I
 		return nil
 	}
 	sessionSink := &sessionEventSink{}
-	ctrl, err := gw.buildController(ctx, msg.Platform, sessionSink)
+	ctrl, err := gw.buildController(ctx, msg, sessionSink)
 	if err != nil {
 		gw.logger.Warn("bot mapped controller build failed", "session", shortSessionID(mapping.SessionPath), "err", err)
 		return nil
@@ -615,7 +1033,7 @@ func (gw *BotGateway) attachSession(ctx context.Context, key string, msg Inbound
 		return err
 	}
 	sessionSink := &sessionEventSink{}
-	ctrl, err := gw.buildController(ctx, msg.Platform, sessionSink)
+	ctrl, err := gw.buildController(ctx, msg, sessionSink)
 	if err != nil {
 		return err
 	}
@@ -643,21 +1061,36 @@ func (gw *BotGateway) attachSession(ctx context.Context, key string, msg Inbound
 		lastActive:  time.Now(),
 	}
 	gw.mu.Unlock()
-	if err := gw.setSessionMapping(key, path, gw.workspaceRootForPlatform(msg.Platform)); err != nil {
+	if err := gw.setSessionMapping(key, path, gw.workspaceRootForMessage(msg)); err != nil {
 		return err
 	}
 	return nil
 }
 
-func (gw *BotGateway) sessionOptionsForPlatform(plat Platform) (model string, workspaceRoot string) {
+func (gw *BotGateway) sessionOptionsForMessage(msg InboundMessage) (model string, workspaceRoot string, toolApprovalMode string) {
 	model = gw.cfg.Model
 	workspaceRoot = gw.cfg.WorkspaceRoot
-	if gw.cfg.Channels == nil {
-		return model, workspaceRoot
+	toolApprovalMode = normalizeBotToolApprovalMode(gw.cfg.ToolApprovalMode)
+	if gw.cfg.ConnectionChannels != nil && msg.ConnectionID != "" {
+		if channel, ok := gw.cfg.ConnectionChannels[msg.ConnectionID]; ok {
+			if value := strings.TrimSpace(channel.Model); value != "" {
+				model = value
+			}
+			if value := strings.TrimSpace(channel.WorkspaceRoot); value != "" {
+				workspaceRoot = value
+			}
+			if value := normalizeOptionalBotToolApprovalMode(channel.ToolApprovalMode); value != "" {
+				toolApprovalMode = value
+			}
+			return model, workspaceRoot, toolApprovalMode
+		}
 	}
-	channel, ok := gw.cfg.Channels[plat]
+	if gw.cfg.Channels == nil {
+		return model, workspaceRoot, toolApprovalMode
+	}
+	channel, ok := gw.cfg.Channels[msg.Platform]
 	if !ok {
-		return model, workspaceRoot
+		return model, workspaceRoot, toolApprovalMode
 	}
 	if value := strings.TrimSpace(channel.Model); value != "" {
 		model = value
@@ -665,15 +1098,38 @@ func (gw *BotGateway) sessionOptionsForPlatform(plat Platform) (model string, wo
 	if value := strings.TrimSpace(channel.WorkspaceRoot); value != "" {
 		workspaceRoot = value
 	}
-	return model, workspaceRoot
+	if value := normalizeOptionalBotToolApprovalMode(channel.ToolApprovalMode); value != "" {
+		toolApprovalMode = value
+	}
+	return model, workspaceRoot, toolApprovalMode
 }
 
-func (gw *BotGateway) workspaceRootForPlatform(plat Platform) string {
-	_, workspaceRoot := gw.sessionOptionsForPlatform(plat)
+func normalizeBotToolApprovalMode(mode string) string {
+	if value := normalizeOptionalBotToolApprovalMode(mode); value != "" {
+		return value
+	}
+	return control.ToolApprovalAsk
+}
+
+func normalizeOptionalBotToolApprovalMode(mode string) string {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case control.ToolApprovalAsk:
+		return control.ToolApprovalAsk
+	case control.ToolApprovalAuto:
+		return control.ToolApprovalAuto
+	case control.ToolApprovalYolo, "full", "full-access", "bypass":
+		return control.ToolApprovalYolo
+	default:
+		return ""
+	}
+}
+
+func (gw *BotGateway) workspaceRootForMessage(msg InboundMessage) string {
+	_, workspaceRoot, _ := gw.sessionOptionsForMessage(msg)
 	return workspaceRoot
 }
 
-func (gw *BotGateway) ensureControllerSessionMapping(key string, plat Platform, ctrl *control.Controller) {
+func (gw *BotGateway) ensureControllerSessionMapping(key string, msg InboundMessage, ctrl *control.Controller) {
 	if ctrl == nil {
 		return
 	}
@@ -686,7 +1142,7 @@ func (gw *BotGateway) ensureControllerSessionMapping(key string, plat Platform, 
 		path = agent.NewSessionPath(dir, ctrl.Label())
 		ctrl.SetSessionPath(path)
 	}
-	if err := gw.setSessionMapping(key, path, gw.workspaceRootForPlatform(plat)); err != nil {
+	if err := gw.setSessionMapping(key, path, gw.workspaceRootForMessage(msg)); err != nil {
 		gw.logger.Warn("bot session mapping save failed", "err", err, "session", shortSessionID(path))
 	}
 }
@@ -1621,12 +2077,19 @@ func truncateBotText(s string, max int) string {
 }
 
 func (gw *BotGateway) sendText(ctx context.Context, adapter Adapter, msg InboundMessage, text string) error {
-	_, err := adapter.Send(ctx, OutboundMessage{
+	result, err := adapter.Send(ctx, OutboundMessage{
+		ConnectionID: msg.ConnectionID,
+		Domain:       msg.Domain,
 		ChatID:       msg.ChatID,
 		ChatType:     msg.ChatType,
 		Text:         text,
 		ReplyToMsgID: msg.MessageID,
 	})
+	if err != nil {
+		gw.logger.Warn("bot send failed", "platform", msg.Platform, "chat_type", msg.ChatType, "chat", hashID(msg.ChatID), "reply_to", hashID(msg.MessageID), "err", err)
+		return err
+	}
+	gw.logger.Info("bot send completed", "platform", msg.Platform, "chat_type", msg.ChatType, "chat", hashID(msg.ChatID), "reply_to", hashID(msg.MessageID), "message", hashID(result.MessageID))
 	return err
 }
 
@@ -1692,30 +2155,50 @@ func (gw *BotGateway) handleGoalCommand(ctx context.Context, adapter Adapter, ke
 				}
 			}()
 
-			sink := newRenderSink(ctx, adapter, msg.ChatID, msg.ChatType, msg.MessageID, gw.logger, func(approval event.Approval) {
-				gw.recordRuntimeWait(key, agent.RuntimeWaitMeta{
-					Kind:       "approval",
-					Reason:     "approval required",
-					ApprovalID: approval.ID,
-					Tool:       approval.Tool,
-					Subject:    approval.Subject,
-					Since:      time.Now().UTC(),
-				})
-			}, func(ask event.Ask) {
-				gw.mu.Lock()
-				if state.pendingAsks == nil {
-					state.pendingAsks = make(map[string][]event.AskQuestion)
-				}
-				state.pendingAsks[ask.ID] = ask.Questions
-				gw.mu.Unlock()
-				gw.recordRuntimeWait(key, agent.RuntimeWaitMeta{
-					Kind:    "ask",
-					Reason:  "user answer required",
-					AskID:   ask.ID,
-					Subject: askSubject(ask),
-					Since:   time.Now().UTC(),
-				})
-			})
+			sink := newRenderSink(
+				ctx,
+				adapter,
+				msg.ConnectionID,
+				msg.Domain,
+				msg.ChatID,
+				msg.ChatType,
+				msg.UserID,
+				msg.MessageID,
+				gw.logger,
+				func(approval event.Approval) {
+					gw.mu.Lock()
+					if state.pendingApprovals == nil {
+						state.pendingApprovals = make(map[string]event.Approval)
+					}
+					state.pendingApprovals[approval.ID] = approval
+					state.lastApprovalID = approval.ID
+					gw.mu.Unlock()
+					gw.recordRuntimeWait(key, agent.RuntimeWaitMeta{
+						Kind:       "approval",
+						Reason:     "approval required",
+						ApprovalID: approval.ID,
+						Tool:       approval.Tool,
+						Subject:    approval.Subject,
+						Since:      time.Now().UTC(),
+					})
+				},
+				func(ask event.Ask) {
+					gw.mu.Lock()
+					if state.pendingAsks == nil {
+						state.pendingAsks = make(map[string][]event.AskQuestion)
+					}
+					state.pendingAsks[ask.ID] = ask.Questions
+					state.lastAskID = ask.ID
+					gw.mu.Unlock()
+					gw.recordRuntimeWait(key, agent.RuntimeWaitMeta{
+						Kind:    "ask",
+						Reason:  "user answer required",
+						AskID:   ask.ID,
+						Subject: askSubject(ask),
+						Since:   time.Now().UTC(),
+					})
+				},
+			)
 			state.sink.setTarget(sink)
 			defer state.sink.setTarget(nil)
 

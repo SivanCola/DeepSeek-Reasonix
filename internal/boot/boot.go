@@ -148,6 +148,10 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		sink.Emit(event.Event{Kind: event.Notice, Text: fmt.Sprintf("model %q is selected but its API key %s is not set — requests will fail until you set it", modelName, entry.APIKeyEnv)})
 	}
 	jm := jobs.NewManager(sink)
+	sessionDir := opts.SessionDir
+	if sessionDir == "" {
+		sessionDir = config.SessionDir()
+	}
 
 	proxySpec := cfg.NetworkProxySpec()
 	if err := netclient.Validate(proxySpec); err != nil {
@@ -204,11 +208,6 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	allSkills := allSkillStore.List()
 	if !tokenEconomy {
 		sysPrompt = skill.ApplyIndex(sysPrompt, skills)
-	}
-
-	sessionDir := opts.SessionDir
-	if sessionDir == "" {
-		sessionDir = config.SessionDir()
 	}
 
 	reg := tool.NewRegistry()
@@ -293,17 +292,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 			sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelWarn,
 				Text: "codegraph: project root is a filesystem root — skipped to avoid indexing the whole volume"})
 		case ok:
-			spec := plugin.Spec{
-				Name:              "codegraph",
-				StripRawPrefix:    "codegraph_",
-				Command:           bin,
-				Args:              []string{"serve", "--mcp"},
-				Dir:               root,
-				ReadOnlyToolNames: codegraph.ReadOnlyToolNames(),
-				// The daemon walks and indexes the whole tree; below-normal
-				// priority keeps it from starving the user's machine (#3797).
-				LowPriority: true,
-			}
+			spec := codegraph.MCPSpec(bin, root)
 			warm := codegraph.Initialized(root)
 			if err := codegraph.EnsureInit(ctx, bin, root); err != nil {
 				sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelWarn,
@@ -440,7 +429,10 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	if opts.MaxSteps > 0 {
 		maxSteps = opts.MaxSteps
 	}
-	subagentStore := newSubagentStore(config.SessionDir())
+	subagentStore := newSubagentStore(sessionDir)
+	if subagentStore != nil {
+		subagentStore.WithDestroyedChecker(jm.IsDestroying)
+	}
 
 	// Permission policy gates every tool call. The headless gate (no Approver)
 	// resolves "ask" to allow — preserving `reasonix run` autonomy — while deny
@@ -455,7 +447,8 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	// project hooks run arbitrary shell commands, so cloning a repo must not
 	// silently execute them). Non-blocking hook output is surfaced to the user as
 	// a Notice through the shared sink. The runner fires PreToolUse/PostToolUse in
-	// the agent loop and UserPromptSubmit/Stop at the controller's turn boundary.
+	// the agent loop and PermissionRequest/UserPromptSubmit/Stop at the controller
+	// boundary.
 	hooksTrusted := hook.IsTrusted(root, "")
 	hookRunner := hook.NewRunner(
 		hook.Load(hook.LoadOptions{ProjectRoot: root, Trusted: hooksTrusted}),
@@ -602,12 +595,13 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 			}
 		}
 		answer, err := agent.RunSubAgentWithSession(sctx, prov, subReg, run.Session, task, agent.Options{
-			MaxSteps:      steps,
-			Temperature:   cfg.Agent.Temperature,
-			Pricing:       price,
-			Gate:          headlessGate,
-			ContextWindow: ctxWin,
-			ArchiveDir:    config.ArchiveDir(),
+			MaxSteps:          steps,
+			Temperature:       cfg.Agent.Temperature,
+			Pricing:           price,
+			Gate:              headlessGate,
+			ContextWindow:     ctxWin,
+			ArchiveDir:        config.ArchiveDir(),
+			ReasoningLanguage: agent.ReasoningLanguageFromContext(sctx),
 		}, agent.NestedSink(sctx, event.Discard))
 		if err != nil {
 			return "", errors.Join(err, subagentStore.SaveFailed(run))
@@ -778,15 +772,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 				if err := codegraph.EnsureInit(ctx, bin, root); err != nil {
 					return "", fmt.Errorf("codegraph init: %w", err)
 				}
-				spec := plugin.Spec{
-					Name:              "codegraph",
-					StripRawPrefix:    "codegraph_",
-					Command:           bin,
-					Args:              []string{"serve", "--mcp"},
-					Dir:               root,
-					ReadOnlyToolNames: codegraph.ReadOnlyToolNames(),
-					LowPriority:       true,
-				}
+				spec := codegraph.MCPSpec(bin, root)
 				if opts.Stderr != nil {
 					spec.Stderr = opts.Stderr
 				}
@@ -835,6 +821,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		CompactRatio:      cfg.Agent.CompactRatio,
 		CompactForceRatio: cfg.Agent.CompactForceRatio,
 		ArchiveDir:        config.ArchiveDir(),
+		ReasoningLanguage: cfg.ReasoningLanguage(),
 	}, sink)
 
 	var runner agent.Runner = executor
@@ -866,6 +853,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 				CompactRatio:      cfg.Agent.CompactRatio,
 				CompactForceRatio: cfg.Agent.CompactForceRatio,
 				ArchiveDir:        config.ArchiveDir(),
+				ReasoningLanguage: cfg.ReasoningLanguage(),
 			}, executor, cfg.Agent.Temperature, sink, control.TaskWarrantsPlanner)
 			label = entry.Model + " + planner " + pe.Model
 		}
@@ -884,31 +872,33 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	}
 
 	ctrlOpts := control.Options{
-		Runner:        runner,
-		Executor:      executor,
-		Sink:          sink,
-		Policy:        policy,
-		Label:         label,
-		SystemPrompt:  sysPrompt,
-		SessionDir:    sessionDir,
-		Host:          pluginHost,
-		Commands:      cmds,
-		Skills:        skills,
-		AllSkills:     allSkills,
-		SkillStore:    skillStore,
-		AllSkillStore: allSkillStore,
-		Hooks:         hookRunner,
-		Memory:        mem,
-		Cleanup:       cleanup,
-		BalanceURL:    entry.BalanceURL,
-		BalanceKey:    entry.APIKey(),
-		BalanceClient: balanceClient,
-		Jobs:          jm,
-		Registry:      reg,
-		PluginCtx:     ctx,
-		WorkspaceRoot: root,
-		AutoPlan:      cfg.Agent.AutoPlan,
-		Shell:         shell,
+		Runner:                 runner,
+		Executor:               executor,
+		Sink:                   sink,
+		Policy:                 policy,
+		Label:                  label,
+		SystemPrompt:           sysPrompt,
+		SessionDir:             sessionDir,
+		Host:                   pluginHost,
+		Commands:               cmds,
+		Skills:                 skills,
+		AllSkills:              allSkills,
+		SkillStore:             skillStore,
+		AllSkillStore:          allSkillStore,
+		Hooks:                  hookRunner,
+		Memory:                 mem,
+		Cleanup:                cleanup,
+		BalanceURL:             entry.BalanceURL,
+		BalanceKey:             entry.APIKey(),
+		BalanceClient:          balanceClient,
+		Jobs:                   jm,
+		Registry:               reg,
+		PluginCtx:              ctx,
+		WorkspaceRoot:          root,
+		AutoPlan:               cfg.Agent.AutoPlan,
+		ReasoningLanguage:      cfg.ReasoningLanguage(),
+		DisableColdResumePrune: !cfg.ColdResumePruneEnabled(),
+		Shell:                  shell,
 		OnRemember: func(rule string) control.RememberResult {
 			return rememberPermissionRule(root, rule)
 		},
@@ -1192,6 +1182,8 @@ func NewProviderWithProxy(e *config.ProviderEntry, proxy netclient.ProxySpec) (p
 			"effort":             config.EffectiveEffort(e),
 			"reasoning_protocol": config.ReasoningProtocolForEntry(e),
 			"proxy_spec":         proxy,
+			"vision":             e.Vision,
+			"vision_detail":      e.VisionDetail,
 		},
 	})
 }

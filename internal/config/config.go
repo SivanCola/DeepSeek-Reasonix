@@ -78,7 +78,7 @@ type DesktopConfig struct {
 	Theme          string   `toml:"theme"`            // auto|dark|light; empty resolves to dark
 	ThemeStyle     string   `toml:"theme_style"`      // graphite|aurora|slate|carbon|nocturne|amber and legacy aliases
 	CloseBehavior  string   `toml:"close_behavior"`   // quit|background; desktop window close behavior
-	DisplayMode    string   `toml:"display_mode"`     // standard|compact|minimal; transcript display mode
+	DisplayMode    string   `toml:"display_mode"`     // standard|compact (legacy "minimal" maps to compact); transcript display mode
 	StatusBarStyle string   `toml:"status_bar_style"` // icon|text; desktop status bar metric labels
 	StatusBarItems []string `toml:"status_bar_items"` // ordered visible desktop status bar items
 	CheckUpdates   *bool    `toml:"check_updates"`    // startup update checks; nil keeps the default enabled
@@ -195,17 +195,15 @@ func (c *Config) UICloseBehavior() string {
 }
 
 // DesktopDisplayMode normalizes the transcript display mode. Default is
-// "minimal" (collapsed model-generated intermediate items).
+// "standard" (flat rendering, no folding).
 func (c *Config) DesktopDisplayMode() string {
 	switch strings.ToLower(strings.TrimSpace(c.Desktop.DisplayMode)) {
 	case "standard":
 		return "standard"
-	case "compact":
+	case "compact", "minimal":
 		return "compact"
-	case "minimal":
-		return "minimal"
 	default:
-		return "minimal"
+		return "standard"
 	}
 }
 
@@ -287,6 +285,40 @@ func (c *Config) DesktopCheckUpdates() bool {
 		return true
 	}
 	return *c.Desktop.CheckUpdates
+}
+
+// ColdResumePruneEnabled reports whether stale tool results are elided when a
+// session resumes past the provider cache window. Default true (cheaper cold
+// restart); users keep full history by disabling it.
+func (c *Config) ColdResumePruneEnabled() bool {
+	if c == nil || c.Agent.ColdResumePrune == nil {
+		return true
+	}
+	return *c.Agent.ColdResumePrune
+}
+
+// ReasoningLanguage normalizes agent.reasoning_language. Empty means auto:
+// visible reasoning follows the conversation language already described by the
+// stable LanguagePolicy. Legacy "default" is treated as auto.
+func (c *Config) ReasoningLanguage() string {
+	if c == nil {
+		return "auto"
+	}
+	return NormalizeReasoningLanguage(c.Agent.ReasoningLanguage)
+}
+
+// NormalizeReasoningLanguage returns one of auto|zh|en.
+func NormalizeReasoningLanguage(lang string) string {
+	switch strings.ToLower(strings.TrimSpace(lang)) {
+	case "", "auto", "follow", "conversation", "detect", "default", "model", "model-default", "model_default", "provider":
+		return "auto"
+	case "zh", "cn", "chinese", "中文":
+		return "zh"
+	case "en", "english":
+		return "en"
+	default:
+		return "auto"
+	}
 }
 
 // DesktopTelemetry reports whether the desktop sends the anonymous launch ping.
@@ -409,15 +441,16 @@ func (c BuiltInMCPConfig) EnabledNames() []string {
 
 // BotConfig 控制多渠道 IM bot 消息网关。
 type BotConfig struct {
-	Enabled     bool                  `toml:"enabled"`
-	Model       string                `toml:"model"` // 用于 bot 的模型名，空则用 default_model
-	MaxSteps    int                   `toml:"max_steps"`
-	DebounceMs  int                   `toml:"debounce_ms"` // 消息合并窗口，毫秒
-	Allowlist   BotAllowlist          `toml:"allowlist"`
-	QQ          QQBotConfig           `toml:"qq"`
-	Feishu      FeishuBotConfig       `toml:"feishu"`
-	Weixin      WeixinBotConfig       `toml:"weixin"`
-	Connections []BotConnectionConfig `toml:"connections"`
+	Enabled          bool                  `toml:"enabled"`
+	Model            string                `toml:"model"` // 用于 bot 的模型名，空则用 default_model
+	ToolApprovalMode string                `toml:"tool_approval_mode"`
+	MaxSteps         int                   `toml:"max_steps"`
+	DebounceMs       int                   `toml:"debounce_ms"` // 消息合并窗口，毫秒
+	Allowlist        BotAllowlist          `toml:"allowlist"`
+	QQ               QQBotConfig           `toml:"qq"`
+	Feishu           FeishuBotConfig       `toml:"feishu"`
+	Weixin           WeixinBotConfig       `toml:"weixin"`
+	Connections      []BotConnectionConfig `toml:"connections"`
 }
 
 // BotAllowlist 控制哪些用户可以使用 bot。
@@ -437,6 +470,7 @@ type QQBotConfig struct {
 	Enabled      bool   `toml:"enabled"`
 	AppID        string `toml:"app_id"`
 	AppSecretEnv string `toml:"app_secret_env"` // 环境变量名，如 QQ_BOT_APP_SECRET
+	Sandbox      bool   `toml:"sandbox"`        // true 使用 QQ 沙箱 API / gateway
 }
 
 // FeishuBotConfig 飞书自建应用 Bot 配置。
@@ -464,19 +498,20 @@ type WeixinBotConfig struct {
 // knobs so the UI can expose a simple "connect first" flow while old configs
 // keep working.
 type BotConnectionConfig struct {
-	ID              string                        `toml:"id"`
-	Provider        string                        `toml:"provider"` // qq|feishu|weixin
-	Domain          string                        `toml:"domain"`   // feishu|lark|weixin|qq
-	Label           string                        `toml:"label"`
-	Enabled         bool                          `toml:"enabled"`
-	Status          string                        `toml:"status"` // disconnected|pending|connected|error
-	Model           string                        `toml:"model"`
-	WorkspaceRoot   string                        `toml:"workspace_root"`
-	Credential      BotConnectionCredential       `toml:"credential"`
-	SessionMappings []BotConnectionSessionMapping `toml:"session_mappings"`
-	LastError       string                        `toml:"last_error"`
-	CreatedAt       string                        `toml:"created_at"`
-	UpdatedAt       string                        `toml:"updated_at"`
+	ID               string                        `toml:"id"`
+	Provider         string                        `toml:"provider"` // qq|feishu|weixin
+	Domain           string                        `toml:"domain"`   // feishu|lark|weixin|qq
+	Label            string                        `toml:"label"`
+	Enabled          bool                          `toml:"enabled"`
+	Status           string                        `toml:"status"` // disconnected|pending|connected|error
+	Model            string                        `toml:"model"`
+	ToolApprovalMode string                        `toml:"tool_approval_mode"`
+	WorkspaceRoot    string                        `toml:"workspace_root"`
+	Credential       BotConnectionCredential       `toml:"credential"`
+	SessionMappings  []BotConnectionSessionMapping `toml:"session_mappings"`
+	LastError        string                        `toml:"last_error"`
+	CreatedAt        string                        `toml:"created_at"`
+	UpdatedAt        string                        `toml:"updated_at"`
 }
 
 type BotConnectionCredential struct {
@@ -666,7 +701,7 @@ func (c *Config) IsSkillDisabled(name string) bool {
 
 // SandboxConfig bounds the blast radius of tool calls (Phase 0: file-writer
 // confinement). WorkspaceRoot is the directory the built-in file writers
-// (write_file / edit_file / multi_edit) may modify; empty means the current
+// (write_file / edit_file / multi_edit / move_file) may modify; empty means the current
 // working directory, so writes stay inside the project by default. AllowWrite
 // lists extra directories writers may also touch (e.g. a sibling repo or a temp
 // dir). Both support ${VAR} / ${VAR:-default} expansion. Reads are unrestricted;
@@ -750,6 +785,10 @@ type AgentConfig struct {
 	// plan mode automatically: "off" keeps plan mode manual, "on" enables the
 	// approval gate. Legacy "ask" is treated as "on".
 	AutoPlan string `toml:"auto_plan"`
+	// ReasoningLanguage controls the preferred language for visible reasoning
+	// text. Empty/auto follows the conversation language. Applied as transient
+	// turn context, not the stable prompt.
+	ReasoningLanguage string `toml:"reasoning_language"`
 	// AutoPlanClassifier optionally names a provider/model used to classify
 	// borderline auto-plan decisions. Empty keeps the zero-cost heuristic path.
 	AutoPlanClassifier string `toml:"auto_plan_classifier"`
@@ -757,6 +796,9 @@ type AgentConfig struct {
 	SoftCompactRatio  float64 `toml:"soft_compact_ratio"`
 	CompactRatio      float64 `toml:"compact_ratio"`
 	CompactForceRatio float64 `toml:"compact_force_ratio"`
+	// ColdResumePrune elides stale tool results when a session reopens past the
+	// provider cache window. nil = default enabled.
+	ColdResumePrune *bool `toml:"cold_resume_prune"`
 }
 
 // ProviderEntry declares a model provider instance. ContextWindow is the model's
@@ -782,6 +824,16 @@ type ProviderEntry struct {
 	// Empty = provider default.
 	Thinking string `toml:"thinking"`
 	Effort   string `toml:"effort"`
+	// Vision marks the model as accepting image input. When set, images the user
+	// attaches are embedded in the request (image_url for openai-kind, base64
+	// blocks for anthropic). Off by default: text-only models 400 on image input,
+	// and image tokens are heavy — gating keeps text-only flows cheap (the prompt
+	// prefix is byte-identical with no image, so the cache is unaffected either way).
+	Vision bool `toml:"vision"`
+	// VisionDetail sets the openai image_url detail hint (low|high); empty = auto
+	// (the field is omitted). "low" caps an image to a fixed ~85 tokens for cheap
+	// coarse reads; ignored by providers without the knob (e.g. anthropic).
+	VisionDetail string `toml:"vision_detail"`
 	// ReasoningProtocol selects the request shape for OpenAI-compatible reasoning
 	// models. Empty/auto uses the model capability registry plus endpoint
 	// heuristics; none disables automatic reasoning controls for this provider.
@@ -1092,12 +1144,13 @@ func Default() *Config {
 		LSP:     LSPConfig{Enabled: true},
 		Network: NetworkConfig{ProxyMode: netclient.ModeAuto},
 		Bot: BotConfig{
-			MaxSteps:   25,
-			DebounceMs: 1500,
-			Allowlist:  BotAllowlist{Enabled: true},
-			QQ:         QQBotConfig{AppSecretEnv: "QQ_BOT_APP_SECRET"},
-			Feishu:     FeishuBotConfig{Domain: "feishu", AppSecretEnv: "FEISHU_BOT_APP_SECRET", Mode: "webhook", WebhookPort: 8080, RequireMention: true},
-			Weixin:     WeixinBotConfig{AccountID: "default", TokenEnv: "WEIXIN_BOT_TOKEN", APIBase: "https://ilinkai.weixin.qq.com"},
+			ToolApprovalMode: "ask",
+			MaxSteps:         25,
+			DebounceMs:       1500,
+			Allowlist:        BotAllowlist{Enabled: true},
+			QQ:               QQBotConfig{AppSecretEnv: "QQ_BOT_APP_SECRET"},
+			Feishu:           FeishuBotConfig{Domain: "feishu", AppSecretEnv: "FEISHU_BOT_APP_SECRET", Mode: "webhook", WebhookPort: 8080, RequireMention: true},
+			Weixin:           WeixinBotConfig{AccountID: "default", TokenEnv: "WEIXIN_BOT_TOKEN", APIBase: "https://ilinkai.weixin.qq.com"},
 		},
 		Providers: []ProviderEntry{
 			{Name: "deepseek-flash", Kind: "openai", BaseURL: "https://api.deepseek.com", Model: "deepseek-v4-flash", APIKeyEnv: "DEEPSEEK_API_KEY", BalanceURL: "https://api.deepseek.com/user/balance", ContextWindow: 1_000_000, Price: &provider.Pricing{CacheHit: 0.02, Input: 1, Output: 2, Currency: "¥"}},

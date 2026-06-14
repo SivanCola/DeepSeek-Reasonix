@@ -74,10 +74,12 @@ type NetworkView struct {
 }
 
 type AgentView struct {
-	Temperature     float64 `json:"temperature"`
-	MaxSteps        int     `json:"maxSteps"`
-	PlannerMaxSteps int     `json:"plannerMaxSteps"`
-	SystemPrompt    string  `json:"systemPrompt"`
+	Temperature       float64 `json:"temperature"`
+	MaxSteps          int     `json:"maxSteps"`
+	PlannerMaxSteps   int     `json:"plannerMaxSteps"`
+	SystemPrompt      string  `json:"systemPrompt"`
+	ColdResumePrune   bool    `json:"coldResumePrune"`
+	ReasoningLanguage string  `json:"reasoningLanguage"`
 }
 
 type BotAllowlistView struct {
@@ -96,6 +98,7 @@ type QQBotView struct {
 	AppID        string `json:"appId"`
 	AppSecretEnv string `json:"appSecretEnv"`
 	SecretSet    bool   `json:"secretSet"`
+	Sandbox      bool   `json:"sandbox"`
 }
 
 type FeishuBotView struct {
@@ -119,15 +122,16 @@ type WeixinBotView struct {
 }
 
 type BotSettingsView struct {
-	Enabled     bool                `json:"enabled"`
-	Model       string              `json:"model"`
-	MaxSteps    int                 `json:"maxSteps"`
-	DebounceMs  int                 `json:"debounceMs"`
-	Allowlist   BotAllowlistView    `json:"allowlist"`
-	QQ          QQBotView           `json:"qq"`
-	Feishu      FeishuBotView       `json:"feishu"`
-	Weixin      WeixinBotView       `json:"weixin"`
-	Connections []BotConnectionView `json:"connections"`
+	Enabled          bool                `json:"enabled"`
+	Model            string              `json:"model"`
+	ToolApprovalMode string              `json:"toolApprovalMode"`
+	MaxSteps         int                 `json:"maxSteps"`
+	DebounceMs       int                 `json:"debounceMs"`
+	Allowlist        BotAllowlistView    `json:"allowlist"`
+	QQ               QQBotView           `json:"qq"`
+	Feishu           FeishuBotView       `json:"feishu"`
+	Weixin           WeixinBotView       `json:"weixin"`
+	Connections      []BotConnectionView `json:"connections"`
 }
 
 // SettingsView is the whole Settings panel payload.
@@ -325,13 +329,13 @@ func (a *App) Settings() SettingsView {
 				Deny:  []string{},
 			},
 			Sandbox:           SandboxView{Bash: "enforce", AllowWrite: []string{}, Shell: "auto"},
-			Agent:             AgentView{PlannerMaxSteps: 12},
+			Agent:             AgentView{PlannerMaxSteps: 12, ColdResumePrune: true, ReasoningLanguage: "auto"},
 			Bot:               botSettingsView(config.BotConfig{}),
 			AutoPlan:          "off",
 			DesktopTheme:      "light",
 			DesktopThemeStyle: "graphite",
 			CloseBehavior:     "background",
-			DisplayMode:       "minimal",
+			DisplayMode:       "standard",
 			StatusBarStyle:    "text",
 			StatusBarItems:    config.DefaultDesktopStatusBarItems(),
 			CheckUpdates:      true,
@@ -380,7 +384,7 @@ func (a *App) Settings() SettingsView {
 				Password: cfg.Network.Proxy.Password,
 			},
 		},
-		Agent:             AgentView{Temperature: cfg.Agent.Temperature, MaxSteps: cfg.Agent.MaxSteps, PlannerMaxSteps: cfg.Agent.PlannerMaxSteps, SystemPrompt: cfg.Agent.SystemPrompt},
+		Agent:             AgentView{Temperature: cfg.Agent.Temperature, MaxSteps: cfg.Agent.MaxSteps, PlannerMaxSteps: cfg.Agent.PlannerMaxSteps, SystemPrompt: cfg.Agent.SystemPrompt, ColdResumePrune: cfg.ColdResumePruneEnabled(), ReasoningLanguage: cfg.ReasoningLanguage()},
 		Bot:               botSettingsView(cfg.Bot),
 		DesktopLanguage:   cfg.DesktopLanguage(),
 		DesktopTheme:      cfg.DesktopTheme(),
@@ -413,10 +417,11 @@ func botSettingsView(b config.BotConfig) BotSettingsView {
 		mode = "webhook"
 	}
 	return BotSettingsView{
-		Enabled:    b.Enabled,
-		Model:      b.Model,
-		MaxSteps:   b.MaxSteps,
-		DebounceMs: b.DebounceMs,
+		Enabled:          b.Enabled,
+		Model:            b.Model,
+		ToolApprovalMode: normalizeBotConnectionToolApprovalMode(b.ToolApprovalMode),
+		MaxSteps:         b.MaxSteps,
+		DebounceMs:       b.DebounceMs,
 		Allowlist: BotAllowlistView{
 			Enabled:      b.Allowlist.Enabled,
 			AllowAll:     b.Allowlist.AllowAll,
@@ -432,6 +437,7 @@ func botSettingsView(b config.BotConfig) BotSettingsView {
 			AppID:        b.QQ.AppID,
 			AppSecretEnv: b.QQ.AppSecretEnv,
 			SecretSet:    strings.TrimSpace(b.QQ.AppSecretEnv) != "" && os.Getenv(b.QQ.AppSecretEnv) != "",
+			Sandbox:      b.QQ.Sandbox,
 		},
 		Feishu: FeishuBotView{
 			Enabled:           b.Feishu.Enabled,
@@ -508,6 +514,9 @@ func (a *App) loadDesktopUserConfigForEdit() (*config.Config, string, error) {
 	if _, err := os.Stat(userPath); err == nil {
 		cfg := config.LoadForEdit(userPath)
 		normalizeLegacyDesktopProviderAccessForSettings(cfg, userPath)
+		if err := a.migrateLegacyBotConfigToUser(cfg, userPath); err != nil {
+			return nil, "", err
+		}
 		return cfg, userPath, nil
 	}
 	cfg := config.LoadForEdit(userPath)
@@ -519,7 +528,71 @@ func (a *App) loadDesktopUserConfigForEdit() (*config.Config, string, error) {
 	legacyCfg := config.LoadForEdit(legacyPath)
 	normalizeLegacyDesktopProviderAccessForSettings(legacyCfg, legacyPath)
 	legacyCfg.ConfigVersion = config.Default().ConfigVersion
+	if err := migrateLegacyBotConfigToUser(cfg, legacyCfg, userPath); err != nil {
+		return nil, "", err
+	}
 	return legacyCfg, userPath, nil
+}
+
+func (a *App) migrateLegacyBotConfigToUser(userCfg *config.Config, userPath string) error {
+	if userCfg == nil {
+		return nil
+	}
+	legacyPath := config.SourcePathForRoot(a.activeWorkspaceRoot())
+	if legacyPath == "" || sameConfigPath(legacyPath, userPath) {
+		return nil
+	}
+	legacyCfg := config.LoadForEdit(legacyPath)
+	return migrateLegacyBotConfigToUser(userCfg, legacyCfg, userPath)
+}
+
+func migrateLegacyBotConfigToUser(userCfg, legacyCfg *config.Config, userPath string) error {
+	if userCfg == nil || legacyCfg == nil || desktopBotConfigConfigured(userCfg.Bot) {
+		return nil
+	}
+	if !desktopBotConfigConfigured(legacyCfg.Bot) {
+		return nil
+	}
+	userCfg.Bot = legacyCfg.Bot
+	if err := userCfg.SaveTo(userPath); err != nil {
+		return fmt.Errorf("migrate legacy bot config: %w", err)
+	}
+	return nil
+}
+
+func desktopBotConfigConfigured(bot config.BotConfig) bool {
+	defaults := config.Default().Bot
+	if bot.Enabled || strings.TrimSpace(bot.Model) != "" || len(bot.Connections) > 0 {
+		return true
+	}
+	if (bot.MaxSteps != 0 && bot.MaxSteps != defaults.MaxSteps) || (bot.DebounceMs != 0 && bot.DebounceMs != defaults.DebounceMs) {
+		return true
+	}
+	if bot.Allowlist.AllowAll ||
+		len(bot.Allowlist.QQUsers)+len(bot.Allowlist.FeishuUsers)+len(bot.Allowlist.WeixinUsers) > 0 ||
+		len(bot.Allowlist.QQGroups)+len(bot.Allowlist.FeishuGroups)+len(bot.Allowlist.WeixinGroups) > 0 {
+		return true
+	}
+	if bot.QQ.Enabled || strings.TrimSpace(bot.QQ.AppID) != "" || bot.QQ.AppSecretEnv != defaults.QQ.AppSecretEnv || bot.QQ.Sandbox != defaults.QQ.Sandbox {
+		return true
+	}
+	if bot.Feishu.Enabled ||
+		strings.TrimSpace(bot.Feishu.AppID) != "" ||
+		bot.Feishu.Domain != defaults.Feishu.Domain ||
+		bot.Feishu.AppSecretEnv != defaults.Feishu.AppSecretEnv ||
+		strings.TrimSpace(bot.Feishu.VerificationToken) != "" ||
+		bot.Feishu.Mode != defaults.Feishu.Mode ||
+		bot.Feishu.WebhookPort != defaults.Feishu.WebhookPort ||
+		bot.Feishu.RequireMention != defaults.Feishu.RequireMention {
+		return true
+	}
+	if bot.Weixin.Enabled ||
+		bot.Weixin.AccountID != defaults.Weixin.AccountID ||
+		bot.Weixin.TokenEnv != defaults.Weixin.TokenEnv ||
+		bot.Weixin.APIBase != defaults.Weixin.APIBase {
+		return true
+	}
+	return false
 }
 
 func normalizeLegacyDesktopProviderAccessForSettings(cfg *config.Config, path string) {
@@ -1226,9 +1299,10 @@ func (a *App) SetNetwork(n NetworkView) error {
 }
 
 func (a *App) SetBotSettings(b BotSettingsView) error {
-	return a.applyConfigOnly(func(c *config.Config) error {
+	err := a.applyConfigOnly(func(c *config.Config) error {
 		c.Bot.Enabled = b.Enabled
 		c.Bot.Model = strings.TrimSpace(b.Model)
+		c.Bot.ToolApprovalMode = normalizeBotConnectionToolApprovalMode(b.ToolApprovalMode)
 		c.Bot.MaxSteps = b.MaxSteps
 		c.Bot.DebounceMs = b.DebounceMs
 		c.Bot.Allowlist = config.BotAllowlist{
@@ -1245,6 +1319,7 @@ func (a *App) SetBotSettings(b BotSettingsView) error {
 			Enabled:      b.QQ.Enabled,
 			AppID:        strings.TrimSpace(b.QQ.AppID),
 			AppSecretEnv: strings.TrimSpace(b.QQ.AppSecretEnv),
+			Sandbox:      b.QQ.Sandbox,
 		}
 		c.Bot.Feishu = config.FeishuBotConfig{
 			Enabled:           b.Feishu.Enabled,
@@ -1265,6 +1340,10 @@ func (a *App) SetBotSettings(b BotSettingsView) error {
 		c.Bot.Connections = botConnectionConfigs(b.Connections)
 		return nil
 	})
+	if err == nil {
+		a.refreshBotRuntimeAsync()
+	}
+	return err
 }
 
 func (a *App) SetBotSecret(envName, value string) error {
@@ -1275,6 +1354,7 @@ func (a *App) SetBotSecret(envName, value string) error {
 	if err := upsertDotEnv(envName, value); err != nil {
 		return err
 	}
+	a.refreshBotRuntimeAsync()
 	return nil
 }
 
@@ -1283,7 +1363,11 @@ func (a *App) ClearBotSecret(envName string) error {
 	if envName == "" {
 		return fmt.Errorf("bot secret env name is empty")
 	}
-	return removeDotEnv(envName)
+	if err := removeDotEnv(envName); err != nil {
+		return err
+	}
+	a.refreshBotRuntimeAsync()
+	return nil
 }
 
 // SetCloseBehavior updates desktop-only window close behavior without rebuilding
@@ -1396,6 +1480,47 @@ func (a *App) SetAgentParams(temperature float64, maxSteps int, plannerMaxSteps 
 		c.Agent.SystemPrompt = systemPrompt
 		return nil
 	})
+}
+
+func (a *App) SetColdResumePrune(enabled bool) error {
+	return a.applyConfigChange(func(c *config.Config) error { return c.SetColdResumePrune(enabled) })
+}
+
+func (a *App) SetReasoningLanguage(lang string) error {
+	cfg, path, err := a.loadDesktopUserConfigForEdit()
+	if err != nil {
+		return err
+	}
+	if err := cfg.SetReasoningLanguage(lang); err != nil {
+		return err
+	}
+	if err := cfg.SaveTo(path); err != nil {
+		return err
+	}
+	a.applyReasoningLanguageToLiveControllers(cfg.ReasoningLanguage())
+	return nil
+}
+
+func (a *App) applyReasoningLanguageToLiveControllers(fallback string) {
+	type liveTab struct {
+		root string
+		ctrl *control.Controller
+	}
+	var tabs []liveTab
+	a.mu.RLock()
+	for _, tab := range a.tabs {
+		if tab != nil && tab.Ctrl != nil {
+			tabs = append(tabs, liveTab{root: tab.WorkspaceRoot, ctrl: tab.Ctrl})
+		}
+	}
+	a.mu.RUnlock()
+	for _, tab := range tabs {
+		mode := fallback
+		if cfg, err := config.LoadForRoot(tab.root); err == nil {
+			mode = cfg.ReasoningLanguage()
+		}
+		tab.ctrl.SetReasoningLanguage(mode)
+	}
 }
 
 // trimList drops blank entries from a string slice (and returns a non-nil slice).

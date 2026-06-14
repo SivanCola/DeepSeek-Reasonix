@@ -13,6 +13,8 @@ import (
 	"reasonix/internal/agent"
 	"reasonix/internal/checkpoint"
 	"reasonix/internal/event"
+	"reasonix/internal/hook"
+	"reasonix/internal/jobs"
 	"reasonix/internal/permission"
 	"reasonix/internal/plugin"
 	"reasonix/internal/provider"
@@ -38,6 +40,17 @@ type handoffRunner struct {
 
 func (r handoffRunner) Run(_ context.Context, input string) error {
 	r.session.Add(provider.Message{Role: provider.RoleUser, Content: "handoff: " + input})
+	return nil
+}
+
+type sessionContextRunner struct {
+	parentSession string
+	jobSession    string
+}
+
+func (r *sessionContextRunner) Run(ctx context.Context, input string) error {
+	r.parentSession = agent.ParentSession(ctx)
+	r.jobSession = jobs.SessionFromContext(ctx)
 	return nil
 }
 
@@ -86,6 +99,26 @@ func TestRunTurnSnapshotsActivityWhenTranscriptChanges(t *testing.T) {
 	}
 	if meta.UpdatedAt.IsZero() {
 		t.Fatal("activity meta should be marked")
+	}
+}
+
+func TestRunInjectsParentSessionForJobs(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "session.jsonl")
+	runner := &sessionContextRunner{}
+	sess := agent.NewSession("sys")
+	exec := agent.New(nil, nil, sess, agent.Options{}, event.Discard)
+	c := New(Options{Runner: runner, Executor: exec, SessionDir: dir, SessionPath: path, Label: "test"})
+
+	if err := c.Run(context.Background(), "hello"); err != nil {
+		t.Fatal(err)
+	}
+	want := agent.BranchID(path)
+	if runner.parentSession != want {
+		t.Fatalf("ParentSession = %q, want %q", runner.parentSession, want)
+	}
+	if runner.jobSession != want {
+		t.Fatalf("jobs session = %q, want %q", runner.jobSession, want)
 	}
 }
 
@@ -296,6 +329,64 @@ func approvalIDs() (*Controller, chan string, *int) {
 	return c, ids, &prompts
 }
 
+func permissionHookController(t *testing.T, match string) (*Controller, chan string, chan hook.Payload) {
+	t.Helper()
+	ids := make(chan string, 8)
+	payloads := make(chan hook.Payload, 8)
+	spawner := func(_ context.Context, in hook.SpawnInput) hook.SpawnResult {
+		var payload hook.Payload
+		if err := json.Unmarshal([]byte(in.Stdin), &payload); err != nil {
+			t.Errorf("permission hook payload json: %v", err)
+		}
+		payloads <- payload
+		return hook.SpawnResult{ExitCode: 0}
+	}
+	c := New(Options{
+		Sink: event.FuncSink(func(e event.Event) {
+			if e.Kind == event.ApprovalRequest {
+				ids <- e.Approval.ID
+			}
+		}),
+		Hooks: hook.NewRunner([]hook.ResolvedHook{{
+			HookConfig: hook.HookConfig{Command: "notify", Match: match},
+			Event:      hook.PermissionRequest,
+			Scope:      hook.ScopeGlobal,
+		}}, "/tmp", spawner, nil),
+	})
+	return c, ids, payloads
+}
+
+func waitApprovalID(t *testing.T, ids <-chan string) string {
+	t.Helper()
+	select {
+	case id := <-ids:
+		return id
+	case <-time.After(2 * time.Second):
+		t.Fatal("ApprovalRequest was not emitted")
+	}
+	return ""
+}
+
+func waitPermissionHook(t *testing.T, payloads <-chan hook.Payload) hook.Payload {
+	t.Helper()
+	select {
+	case payload := <-payloads:
+		return payload
+	case <-time.After(2 * time.Second):
+		t.Fatal("PermissionRequest hook did not fire")
+	}
+	return hook.Payload{}
+}
+
+func assertNoPermissionHook(t *testing.T, payloads <-chan hook.Payload) {
+	t.Helper()
+	select {
+	case payload := <-payloads:
+		t.Fatalf("PermissionRequest hook fired unexpectedly: %+v", payload)
+	case <-time.After(50 * time.Millisecond):
+	}
+}
+
 // TestApprovalAllowOnce drives the happy path: the gate emits an ApprovalRequest,
 // the (fake) frontend answers allow, and the gate returns allow with no grant.
 func TestApprovalAllowOnce(t *testing.T) {
@@ -381,6 +472,182 @@ func TestMemoryApprovalSubjectsAndNotifications(t *testing.T) {
 	}
 	if got := approvalNotificationText("bash", "go test ./..."); got != "approval needed: bash go test ./..." {
 		t.Fatalf("bash notification = %q", got)
+	}
+	moveSubject := approvalDisplaySubject("move_file", "src/a.md", json.RawMessage(`{"source_path":"src/a.md","destination_path":"docs/a.md"}`))
+	if moveSubject != "src/a.md -> docs/a.md" {
+		t.Fatalf("move_file approval subject = %q", moveSubject)
+	}
+}
+
+func TestPermissionRequestHookFiresForToolApproval(t *testing.T) {
+	c, ids, payloads := permissionHookController(t, "bash")
+	args := json.RawMessage(`{"command":"go test ./..."}`)
+	type approveResult struct {
+		allow    bool
+		remember bool
+		err      error
+	}
+	done := make(chan approveResult, 1)
+	go func() {
+		allow, remember, err := gateApprover{c}.Approve(context.Background(), "bash", "go test ./...", args)
+		done <- approveResult{allow: allow, remember: remember, err: err}
+	}()
+
+	id := waitApprovalID(t, ids)
+	payload := waitPermissionHook(t, payloads)
+	if payload.Event != hook.PermissionRequest {
+		t.Fatalf("payload event = %q, want PermissionRequest", payload.Event)
+	}
+	if payload.ToolName != "bash" {
+		t.Fatalf("payload tool = %q, want bash", payload.ToolName)
+	}
+	if payload.Subject != "go test ./..." {
+		t.Fatalf("payload subject = %q, want command subject", payload.Subject)
+	}
+	if string(payload.ToolArgs) != string(args) {
+		t.Fatalf("payload args = %s, want %s", payload.ToolArgs, args)
+	}
+
+	c.Approve(id, true, false, false)
+	select {
+	case got := <-done:
+		if got.err != nil || !got.allow || got.remember {
+			t.Fatalf("Approve = (%v,%v,%v), want allow once", got.allow, got.remember, got.err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("approval stayed blocked")
+	}
+}
+
+func TestPermissionRequestHookDoesNotFireForPolicyAllow(t *testing.T) {
+	c, _, payloads := permissionHookController(t, "bash")
+	g := permission.NewGate(permission.New("ask", []string{"bash(go test*)"}, nil, nil), gateApprover{c})
+
+	allow, _, err := g.Check(context.Background(), "bash", json.RawMessage(`{"command":"go test ./..."}`), false)
+	if err != nil || !allow {
+		t.Fatalf("allow-listed call = (%v,%v), want allowed", allow, err)
+	}
+	assertNoPermissionHook(t, payloads)
+}
+
+func TestPermissionRequestHookDoesNotFireForAutoApprovalMode(t *testing.T) {
+	c, _, payloads := permissionHookController(t, "bash")
+	c.SetToolApprovalMode(ToolApprovalAuto)
+	g := c.newInteractiveGate()
+
+	allow, _, err := g.Check(context.Background(), "bash", json.RawMessage(`{"command":"go test ./..."}`), false)
+	if err != nil || !allow {
+		t.Fatalf("auto-approved call = (%v,%v), want allowed", allow, err)
+	}
+	assertNoPermissionHook(t, payloads)
+}
+
+func TestPermissionRequestHookDoesNotFireForSessionGrant(t *testing.T) {
+	c, _, payloads := permissionHookController(t, "bash")
+	c.mu.Lock()
+	c.granted[permission.SessionGrantRuleForScope("bash", "go test ./...")] = true
+	c.mu.Unlock()
+
+	allow, _, err := c.requestApproval(context.Background(), "bash", "go test ./...", nil)
+	if err != nil || !allow {
+		t.Fatalf("session-granted approval = (%v,%v), want allowed", allow, err)
+	}
+	assertNoPermissionHook(t, payloads)
+}
+
+func TestPermissionRequestHookDoesNotFireForYolo(t *testing.T) {
+	c, _, payloads := permissionHookController(t, "bash")
+	c.SetToolApprovalMode(ToolApprovalYolo)
+
+	allow, _, err := c.requestApproval(context.Background(), "bash", "go test ./...", nil)
+	if err != nil || !allow {
+		t.Fatalf("YOLO approval = (%v,%v), want allowed", allow, err)
+	}
+	assertNoPermissionHook(t, payloads)
+}
+
+func TestPermissionRequestHookDoesNotFireForPlanApproval(t *testing.T) {
+	c, ids, payloads := permissionHookController(t, ".*")
+	done := make(chan bool, 1)
+	errs := make(chan error, 1)
+	go func() {
+		allow, _, err := c.requestApproval(context.Background(), planApprovalTool, "", nil)
+		if err != nil {
+			errs <- err
+			return
+		}
+		done <- allow
+	}()
+
+	id := waitApprovalID(t, ids)
+	assertNoPermissionHook(t, payloads)
+	c.Approve(id, true, false, false)
+
+	select {
+	case err := <-errs:
+		t.Fatalf("plan approval: %v", err)
+	case allow := <-done:
+		if !allow {
+			t.Fatal("manual plan approval should allow")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("plan approval stayed blocked")
+	}
+}
+
+func TestPermissionRequestHookRedactsMemoryApprovalPayload(t *testing.T) {
+	cases := []struct {
+		tool string
+		args json.RawMessage
+	}{
+		{
+			tool: "remember",
+			args: json.RawMessage(`{"name":"private-memory","description":"private description","body":"private memory body"}`),
+		},
+		{
+			tool: "forget",
+			args: json.RawMessage(`{"name":"private-memory"}`),
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.tool, func(t *testing.T) {
+			c, ids, payloads := permissionHookController(t, tc.tool)
+			done := make(chan string, 1)
+			go func() {
+				allow, _, err := gateApprover{c}.Approve(context.Background(), tc.tool, "", tc.args)
+				if err != nil {
+					done <- err.Error()
+					return
+				}
+				if !allow {
+					done <- tc.tool + " approval denied"
+					return
+				}
+				done <- ""
+			}()
+
+			id := waitApprovalID(t, ids)
+			payload := waitPermissionHook(t, payloads)
+			if payload.ToolName != tc.tool {
+				t.Fatalf("payload tool = %q, want %s", payload.ToolName, tc.tool)
+			}
+			if payload.Subject != "" {
+				t.Fatalf("memory PermissionRequest subject = %q, want redacted", payload.Subject)
+			}
+			if len(payload.ToolArgs) != 0 {
+				t.Fatalf("memory PermissionRequest args = %s, want redacted", payload.ToolArgs)
+			}
+
+			c.Approve(id, true, false, false)
+			select {
+			case msg := <-done:
+				if msg != "" {
+					t.Fatal(msg)
+				}
+			case <-time.After(2 * time.Second):
+				t.Fatal("memory approval stayed blocked")
+			}
+		})
 	}
 }
 
@@ -479,6 +746,7 @@ func TestApprovalSessionGrantGroupsFileMutationTools(t *testing.T) {
 		{"edit_file", "src/a.go"},
 		{"write_file", "src/b.go"},
 		{"multi_edit", "src/c.go"},
+		{"move_file", "src/d.go"},
 	} {
 		allow, _, err := gateApprover{c}.Approve(context.Background(), call.tool, call.subject, nil)
 		if err != nil || !allow {
@@ -678,4 +946,128 @@ func TestMidTurnAutosavePersistsDuringLongTurn(t *testing.T) {
 		time.Sleep(5 * time.Millisecond)
 	}
 	t.Fatal("session file was not written while the turn was still running")
+}
+
+type scriptedRunner struct {
+	exec    *agent.Agent
+	scripts []func(input string)
+}
+
+func (r *scriptedRunner) Run(_ context.Context, input string) error {
+	if len(r.scripts) == 0 {
+		return nil
+	}
+	next := r.scripts[0]
+	r.scripts = r.scripts[1:]
+	next(input)
+	return nil
+}
+
+func TestApprovedPlanAutoApproveEndsWithExecutionTurn(t *testing.T) {
+	exec := agent.New(nil, nil, agent.NewSession("sys"), agent.Options{}, event.Discard)
+	runner := &scriptedRunner{exec: exec}
+
+	var c *Controller
+	approvalPrompts := 0
+	sink := event.FuncSink(func(e event.Event) {
+		if e.Kind != event.ApprovalRequest {
+			return
+		}
+		approvalPrompts++
+		if e.Approval.Tool == planApprovalTool {
+			go c.Approve(e.Approval.ID, true, false, false)
+			return
+		}
+		go c.Approve(e.Approval.ID, false, false, false)
+	})
+	c = New(Options{Runner: runner, Executor: exec, Sink: sink})
+	c.SetPlanMode(true)
+
+	runner.scripts = append(runner.scripts,
+		func(input string) {
+			exec.Session().Add(provider.Message{Role: provider.RoleAssistant, Content: "1. Create the file\n2. Update the file"})
+		},
+		func(input string) {
+			if input != planApprovedMessage {
+				t.Fatalf("approved execution input = %q, want planApprovedMessage", input)
+			}
+			exec.Session().Add(provider.Message{Role: provider.RoleAssistant, Content: "first step done; paused for review", ToolCalls: []provider.ToolCall{{
+				ID: "todo-1", Name: "todo_write", Arguments: `{"todos":[{"content":"Create the file","status":"completed"},{"content":"Update the file","status":"in_progress"}]}`,
+			}}})
+		},
+	)
+
+	if err := c.runTurn(context.Background(), "plan this"); err != nil {
+		t.Fatal(err)
+	}
+	if approvalPrompts != 1 {
+		t.Fatalf("approval prompts after plan = %d, want 1", approvalPrompts)
+	}
+
+	// The plan approval auto-approves writers for the execution turn only. A later
+	// turn does not inherit it, and "继续" carries no special meaning — Compose must
+	// not inject any marker, and the next writer falls back to per-tool approval.
+	if got := c.Compose("继续"); got != "继续" {
+		t.Fatalf("a paused approved plan must not marker-prefix the next turn, got %q", got)
+	}
+	allow, _, err := gateApprover{c}.Approve(context.Background(), "write_file", "/tmp/a", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if allow {
+		t.Fatal("writer after the execution turn should return to per-tool approval, not auto-allow")
+	}
+	if approvalPrompts != 2 {
+		t.Fatalf("writer after the execution turn should prompt, prompts=%d", approvalPrompts)
+	}
+}
+
+func TestApprovedPlanDoesNotAutoApproveNonContinuationTurn(t *testing.T) {
+	exec := agent.New(nil, nil, agent.NewSession("sys"), agent.Options{}, event.Discard)
+	runner := &scriptedRunner{exec: exec}
+
+	var c *Controller
+	approvalPrompts := 0
+	sink := event.FuncSink(func(e event.Event) {
+		if e.Kind != event.ApprovalRequest {
+			return
+		}
+		approvalPrompts++
+		if e.Approval.Tool == planApprovalTool {
+			go c.Approve(e.Approval.ID, true, false, false)
+			return
+		}
+		go c.Approve(e.Approval.ID, false, false, false)
+	})
+	c = New(Options{Runner: runner, Executor: exec, Sink: sink})
+	c.SetPlanMode(true)
+
+	runner.scripts = append(runner.scripts,
+		func(input string) {
+			exec.Session().Add(provider.Message{Role: provider.RoleAssistant, Content: "1. Create the file\n2. Update the file"})
+		},
+		func(input string) {
+			exec.Session().Add(provider.Message{Role: provider.RoleAssistant, Content: "paused", ToolCalls: []provider.ToolCall{{
+				ID: "todo-1", Name: "todo_write", Arguments: `{"todos":[{"content":"Create the file","status":"completed"},{"content":"Update the file","status":"in_progress"}]}`,
+			}}})
+		},
+	)
+
+	if err := c.runTurn(context.Background(), "plan this"); err != nil {
+		t.Fatal(err)
+	}
+	if got := c.Compose("先别继续"); got != "先别继续" {
+		t.Fatalf("non-continuation input should not be marker-prefixed, got %q", got)
+	}
+
+	allow, _, err := gateApprover{c}.Approve(context.Background(), "write_file", "/tmp/a", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if allow {
+		t.Fatal("non-continuation turn should not inherit approved-plan auto approval")
+	}
+	if approvalPrompts != 2 {
+		t.Fatalf("non-continuation writer should prompt after plan approval, prompts=%d", approvalPrompts)
+	}
 }

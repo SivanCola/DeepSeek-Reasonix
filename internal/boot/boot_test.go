@@ -22,6 +22,7 @@ import (
 	"reasonix/internal/agent"
 	"reasonix/internal/agent/testutil"
 	"reasonix/internal/builtinmcp"
+	"reasonix/internal/codegraph"
 	"reasonix/internal/config"
 	"reasonix/internal/event"
 	"reasonix/internal/memory"
@@ -380,6 +381,102 @@ model = "x"
 	}
 }
 
+func TestBuildSubagentStoreHonorsSessionDirOverride(t *testing.T) {
+	isolateConfigHome(t)
+	dir := robustTempDir(t)
+	t.Chdir(dir)
+
+	registerBootSubagentTestProvider()
+	prov := &bootSubagentTestProvider{}
+	setBootSubagentTestProvider(t, prov)
+	writeFile(t, dir, "reasonix.toml", `
+default_model = "test-model"
+
+[codegraph]
+enabled = false
+
+[agent]
+system_prompt = "BASE"
+
+[[providers]]
+name = "test-model"
+kind = "boot-subagent-test"
+model = "x"
+`)
+
+	sessionDir := filepath.Join(t.TempDir(), "desktop-workspace-sessions")
+	ctrl, err := Build(context.Background(), Options{Sink: event.Discard, SessionDir: sessionDir})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	defer ctrl.Close()
+	sessionPath := agent.NewSessionPath(ctrl.SessionDir(), ctrl.Label())
+	ctrl.SetSessionPath(sessionPath)
+
+	if err := ctrl.Run(context.Background(), "first review"); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	ref := subagentRefFromHistory(t, ctrl.History())
+
+	overrideStore := agent.NewSubagentStore(filepath.Join(sessionDir, "subagents"))
+	meta, err := overrideStore.LoadMeta(ref)
+	if err != nil {
+		t.Fatalf("LoadMeta from override dir: %v", err)
+	}
+	if meta.ParentSession != agent.BranchID(sessionPath) {
+		t.Fatalf("parent session = %q, want %q", meta.ParentSession, agent.BranchID(sessionPath))
+	}
+	if _, err := os.Stat(filepath.Join(config.SessionDir(), "subagents", ref+".meta.json")); !os.IsNotExist(err) {
+		t.Fatalf("subagent metadata should not be written to global session dir, stat err = %v", err)
+	}
+}
+
+func TestBuildSubagentSkillUsesLiveReasoningLanguage(t *testing.T) {
+	isolateConfigHome(t)
+	dir := robustTempDir(t)
+	t.Chdir(dir)
+
+	registerBootSubagentTestProvider()
+	prov := &bootSubagentTestProvider{}
+	setBootSubagentTestProvider(t, prov)
+	writeFile(t, dir, "reasonix.toml", `
+default_model = "test-model"
+
+[codegraph]
+enabled = false
+
+[agent]
+system_prompt = "BASE"
+reasoning_language = "zh"
+
+[[providers]]
+name = "test-model"
+kind = "boot-subagent-test"
+model = "x"
+`)
+
+	ctrl, err := Build(context.Background(), Options{Sink: event.Discard})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	defer ctrl.Close()
+	ctrl.SetReasoningLanguage("auto")
+
+	if err := ctrl.Run(context.Background(), "first review"); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	reqs := prov.requestsSnapshot()
+	if len(reqs) < 2 {
+		t.Fatalf("provider requests = %d, want parent request plus skill subagent request", len(reqs))
+	}
+	if got := bootLastUser(reqs[1]); strings.Contains(got, "<reasoning-language>") {
+		t.Fatalf("skill subagent kept stale boot-time reasoning language after live auto update: %q", got)
+	}
+	if got := bootLastUser(reqs[1]); got != "first skill task" {
+		t.Fatalf("skill subagent user prompt = %q, want first skill task", got)
+	}
+}
+
 const bootSubagentTestProviderKind = "boot-subagent-test"
 
 var (
@@ -419,6 +516,7 @@ type bootSubagentTestProvider struct {
 	mu          sync.Mutex
 	calls       int
 	continueRef string
+	requests    []provider.Request
 }
 
 func (p *bootSubagentTestProvider) Name() string { return "boot-subagent-test" }
@@ -429,11 +527,12 @@ func (p *bootSubagentTestProvider) setContinueRef(ref string) {
 	p.continueRef = ref
 }
 
-func (p *bootSubagentTestProvider) Stream(context.Context, provider.Request) (<-chan provider.Chunk, error) {
+func (p *bootSubagentTestProvider) Stream(_ context.Context, req provider.Request) (<-chan provider.Chunk, error) {
 	p.mu.Lock()
 	call := p.calls
 	p.calls++
 	ref := p.continueRef
+	p.requests = append(p.requests, req)
 	p.mu.Unlock()
 
 	var chunks []provider.Chunk
@@ -460,6 +559,23 @@ func (p *bootSubagentTestProvider) Stream(context.Context, provider.Request) (<-
 	}
 	close(ch)
 	return ch, nil
+}
+
+func (p *bootSubagentTestProvider) requestsSnapshot() []provider.Request {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	out := make([]provider.Request, len(p.requests))
+	copy(out, p.requests)
+	return out
+}
+
+func bootLastUser(req provider.Request) string {
+	for i := len(req.Messages) - 1; i >= 0; i-- {
+		if req.Messages[i].Role == provider.RoleUser {
+			return req.Messages[i].Content
+		}
+	}
+	return ""
 }
 
 func subagentRefFromHistory(t *testing.T, msgs []provider.Message) string {
@@ -867,6 +983,7 @@ command = "reasonix-missing-mockmcp"
 		"kill_shell",
 		"ls",
 		"memory",
+		"move_file",
 		"multi_edit",
 		"read_file",
 		"remember",
@@ -949,6 +1066,65 @@ model = "x"
 	}
 	if !requestHasTool(reqs[1], "web_fetch") {
 		t.Fatalf("second request should expose web_fetch after connect_tool_source; tools=%v", toolSchemaNames(reqs[1].Tools))
+	}
+}
+
+func TestBuildTokenEconomyCodegraphSetsShortDaemonIdleTimeout(t *testing.T) {
+	isolateConfigHome(t)
+	dir := robustTempDir(t)
+	t.Chdir(dir)
+	launcher := writeCodegraphHelper(t, dir)
+	envOut := filepath.Join(dir, "codegraph-idle-env")
+	t.Setenv("REASONIX_CODEGRAPH_HELPER_ENV_OUT", envOut)
+
+	registerBootTokenProfileTestProvider()
+	prov := testutil.NewMock("token-economy",
+		testutil.Turn{ToolCalls: []provider.ToolCall{
+			{ID: "source-1", Name: "connect_tool_source", Arguments: `{"source":"codegraph"}`},
+		}},
+		testutil.Turn{Text: "done"},
+	)
+	setBootTokenProfileTestProvider(t, prov)
+	writeFile(t, dir, "reasonix.toml", fmt.Sprintf(`
+default_model = "test-model"
+
+[codegraph]
+enabled = true
+path = %q
+
+[agent]
+system_prompt = "BASE"
+
+[[providers]]
+name = "test-model"
+kind = "boot-token-profile-test"
+model = "x"
+`, launcher))
+
+	ctrl, err := Build(context.Background(), Options{Sink: event.Discard, TokenMode: TokenModeEconomy})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	defer ctrl.Close()
+	if err := ctrl.Run(context.Background(), "enable codegraph later"); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	reqs := prov.Requests()
+	if len(reqs) != 2 {
+		t.Fatalf("requests = %d, want 2", len(reqs))
+	}
+	if requestHasToolPrefix(reqs[0], "mcp__codegraph__") {
+		t.Fatalf("first request should hide codegraph; tools=%v", toolSchemaNames(reqs[0].Tools))
+	}
+	if !requestHasToolPrefix(reqs[1], "mcp__codegraph__") {
+		t.Fatalf("second request should expose codegraph after connect_tool_source; tools=%v", toolSchemaNames(reqs[1].Tools))
+	}
+	got, err := os.ReadFile(envOut)
+	if err != nil {
+		t.Fatalf("read codegraph idle timeout env: %v", err)
+	}
+	if string(got) != codegraph.ReasonixDaemonIdleTimeoutMS {
+		t.Fatalf("%s = %q; want %q", codegraph.DaemonIdleTimeoutEnv, got, codegraph.ReasonixDaemonIdleTimeoutMS)
 	}
 }
 
@@ -1130,6 +1306,7 @@ func TestAddBuiltinsWithWorkspaceRootKeepsSessionTools(t *testing.T) {
 		"bash_output",
 		"kill_shell",
 		"wait",
+		"move_file",
 		"notebook_edit",
 	} {
 		if _, ok := reg.Get(name); !ok {
@@ -1245,6 +1422,10 @@ api_key_env = "REASONIX_TEST_KEY_UNSET"
 // prefix is untouched by the memory feature.
 func TestBuildWithoutMemoryLeavesPromptUnchanged(t *testing.T) {
 	dir := robustTempDir(t)
+	home := robustTempDir(t)
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	t.Setenv("AppData", filepath.Join(home, "AppData"))
 	t.Chdir(dir)
 	writeFile(t, dir, "reasonix.toml", `
 default_model = "test-model"
@@ -1834,6 +2015,57 @@ api_key_env = "REASONIX_TEST_KEY_UNSET"
 	}
 }
 
+func TestBuildCodegraphSetsShortDaemonIdleTimeout(t *testing.T) {
+	isolateConfigHome(t)
+	dir := robustTempDir(t)
+	t.Chdir(dir)
+	launcher := writeCodegraphHelper(t, dir)
+	envOut := filepath.Join(dir, "codegraph-idle-env")
+	t.Setenv("REASONIX_CODEGRAPH_HELPER_ENV_OUT", envOut)
+
+	writeFile(t, dir, "reasonix.toml", fmt.Sprintf(`
+default_model = "test-model"
+
+[codegraph]
+enabled = true
+path = %q
+
+[agent]
+system_prompt = "BASE"
+
+[[providers]]
+name = "test-model"
+kind = "openai"
+base_url = "https://example.invalid"
+model = "x"
+api_key_env = "REASONIX_TEST_KEY_UNSET"
+`, launcher))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	ctrl, err := Build(ctx, Options{})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	defer ctrl.Close()
+
+	deadline := time.Now().Add(5 * time.Second)
+	var got []byte
+	for {
+		got, err = os.ReadFile(envOut)
+		if err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("codegraph helper never recorded idle timeout env: %v", err)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if string(got) != codegraph.ReasonixDaemonIdleTimeoutMS {
+		t.Fatalf("%s = %q; want %q", codegraph.DaemonIdleTimeoutEnv, got, codegraph.ReasonixDaemonIdleTimeoutMS)
+	}
+}
+
 func TestBuildWarmCodegraphIgnoresLegacyEagerTier(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("fake launcher is a POSIX-sh script")
@@ -2081,6 +2313,11 @@ func main() {
 	if len(os.Args) >= 3 && os.Args[1] == "init" {
 		_ = os.MkdirAll(filepath.Join(os.Args[2], ".codegraph"), 0o755)
 		return
+	}
+	if len(os.Args) >= 2 && os.Args[1] == "serve" {
+		if out := os.Getenv("REASONIX_CODEGRAPH_HELPER_ENV_OUT"); out != "" {
+			_ = os.WriteFile(out, []byte(os.Getenv("CODEGRAPH_DAEMON_IDLE_TIMEOUT_MS")), 0o644)
+		}
 	}
 
 	in := bufio.NewReader(os.Stdin)

@@ -227,6 +227,20 @@ export interface HistoryToolCall {
   arguments: string;
 }
 
+export interface PromptHistoryEntry {
+  text: string;
+  at: number;          // unix ms
+  sessionPath: string;
+  turn: number;
+}
+
+export interface PromptHistoryResult {
+  entries: PromptHistoryEntry[] | null;
+  nonce: string;
+  olderCursor?: string;
+  hasOlder?: boolean;
+}
+
 // CheckpointMeta is one rewind point (a user turn) for the rewind UI.
 export interface CheckpointMeta {
   turn: number;
@@ -649,6 +663,7 @@ export interface MemoryView {
   archives: MemoryArchive[];
   scopes: MemoryScope[];
   storeDir: string;
+  storeGlobalDir?: string;
   available: boolean;
 }
 
@@ -727,6 +742,8 @@ export interface AgentView {
   maxSteps: number;
   plannerMaxSteps: number;
   systemPrompt: string;
+  coldResumePrune: boolean;
+  reasoningLanguage: string; // "auto" | "zh" | "en"
 }
 
 export interface BotAllowlistView {
@@ -745,6 +762,7 @@ export interface QQBotView {
   appId: string;
   appSecretEnv: string;
   secretSet: boolean;
+  sandbox: boolean;
 }
 
 export interface FeishuBotView {
@@ -791,6 +809,7 @@ export interface BotConnectionView {
   enabled: boolean;
   status: "disconnected" | "pending" | "connected" | "error" | string;
   model: string;
+  toolApprovalMode: ToolApprovalMode | "" | string;
   workspaceRoot: string;
   credential: BotConnectionCredentialView;
   sessionMappings: BotConnectionSessionMappingView[];
@@ -802,6 +821,7 @@ export interface BotConnectionView {
 export interface BotSettingsView {
   enabled: boolean;
   model: string;
+  toolApprovalMode: ToolApprovalMode | "" | string;
   maxSteps: number;
   debounceMs: number;
   allowlist: BotAllowlistView;
@@ -809,6 +829,14 @@ export interface BotSettingsView {
   feishu: FeishuBotView;
   weixin: WeixinBotView;
   connections: BotConnectionView[];
+}
+
+export interface BotRuntimeStatusView {
+  running: boolean;
+  status: string;
+  message: string;
+  connections: number;
+  startedAt: string;
 }
 
 export interface BotInstallStartResult {
@@ -875,13 +903,12 @@ export interface SettingsView {
   desktopTheme: string; // "auto" | "dark" | "light"
   desktopThemeStyle: string;
   closeBehavior: string; // "background" | "quit"
-  displayMode: string;   // "standard" | "compact" | "minimal"
+  displayMode: string;   // "standard" | "compact"
   statusBarStyle: string; // "icon" | "text"
   statusBarItems: string[]; // ordered visible status bar item ids
   checkUpdates: boolean; // check for new versions on startup
   telemetry: boolean; // anonymous launch ping (install id + version + OS)
   metrics: boolean; // opt-in aggregate agent metrics (anonymous signal/bucket counts)
-  expandThinking: boolean; // show reasoning text expanded by default
   configPath: string;
   providerKinds: string[]; // provider implementations the kernel registered (for the kind picker)
   autoApproveTools: boolean;

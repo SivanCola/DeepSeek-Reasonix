@@ -175,6 +175,11 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 		autoPlan = "off"
 	}
 	fmt.Fprintf(&b, "auto_plan   = %q   # off|on; off keeps plan mode manual\n", autoPlan)
+	if lang := c.ReasoningLanguage(); lang != "auto" {
+		fmt.Fprintf(&b, "reasoning_language = %q   # visible reasoning language: auto|zh|en\n", lang)
+	} else {
+		b.WriteString("# reasoning_language = \"zh\"   # visible reasoning language: auto|zh|en\n")
+	}
 	if c.Agent.AutoPlanClassifier != "" {
 		fmt.Fprintf(&b, "auto_plan_classifier = %q   # optional provider/model for borderline auto-plan decisions\n", c.Agent.AutoPlanClassifier)
 	} else {
@@ -183,6 +188,7 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 	fmt.Fprintf(&b, "soft_compact_ratio  = %s   # notice only; keeps cache-first prefix intact\n", formatFloat(c.Agent.SoftCompactRatio))
 	fmt.Fprintf(&b, "compact_ratio       = %s   # try compacting when prompt reaches this fraction\n", formatFloat(c.Agent.CompactRatio))
 	fmt.Fprintf(&b, "compact_force_ratio = %s   # force compacting at this high-water mark\n", formatFloat(c.Agent.CompactForceRatio))
+	fmt.Fprintf(&b, "cold_resume_prune   = %v   # elide stale tool results when reopening a session past the provider cache window\n", c.ColdResumePruneEnabled())
 	if c.Agent.PlannerModel != "" {
 		fmt.Fprintf(&b, "planner_model = %q   # low-frequency planner (two-model collaboration)\n", c.Agent.PlannerModel)
 	} else {
@@ -334,7 +340,7 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 	b.WriteString("\n")
 
 	b.WriteString("[sandbox]\n")
-	b.WriteString("# Confine tool blast radius. File-writers (write_file/edit_file/multi_edit)\n")
+	b.WriteString("# Confine tool blast radius. File-writers (write_file/edit_file/multi_edit/move_file)\n")
 	b.WriteString("# may only write under workspace_root (empty = current dir) + allow_write.\n")
 	b.WriteString("# bash = \"enforce\" (default) jails each command in an OS sandbox (macOS now;\n")
 	b.WriteString("# graceful fallback elsewhere); \"off\" disables it. network allows egress.\n")
@@ -371,6 +377,11 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 		} else {
 			b.WriteString("# model = \"\"   # empty = default_model\n")
 		}
+		if c.Bot.ToolApprovalMode != "" {
+			fmt.Fprintf(&b, "tool_approval_mode = %q   # ask|auto|yolo; yolo skips tool approvals only\n", c.Bot.ToolApprovalMode)
+		} else {
+			b.WriteString("# tool_approval_mode = \"ask\"   # ask|auto|yolo; ask and plan decisions still wait\n")
+		}
 		fmt.Fprintf(&b, "max_steps = %d\n", c.Bot.MaxSteps)
 		fmt.Fprintf(&b, "debounce_ms = %d\n", c.Bot.DebounceMs)
 		b.WriteString("\n[bot.allowlist]\n")
@@ -386,6 +397,7 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 		fmt.Fprintf(&b, "enabled = %v\n", c.Bot.QQ.Enabled)
 		fmt.Fprintf(&b, "app_id = %q\n", c.Bot.QQ.AppID)
 		fmt.Fprintf(&b, "app_secret_env = %q\n", c.Bot.QQ.AppSecretEnv)
+		fmt.Fprintf(&b, "sandbox = %v\n", c.Bot.QQ.Sandbox)
 		b.WriteString("\n[bot.feishu]\n")
 		fmt.Fprintf(&b, "enabled = %v\n", c.Bot.Feishu.Enabled)
 		fmt.Fprintf(&b, "app_id = %q\n", c.Bot.Feishu.AppID)
@@ -410,6 +422,9 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 			fmt.Fprintf(&b, "status = %q\n", conn.Status)
 			if conn.Model != "" {
 				fmt.Fprintf(&b, "model = %q\n", conn.Model)
+			}
+			if conn.ToolApprovalMode != "" {
+				fmt.Fprintf(&b, "tool_approval_mode = %q\n", conn.ToolApprovalMode)
 			}
 			if conn.WorkspaceRoot != "" {
 				fmt.Fprintf(&b, "workspace_root = %q\n", conn.WorkspaceRoot)

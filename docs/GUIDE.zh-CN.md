@@ -12,6 +12,7 @@
 ## 目录
 
 - [配置](#配置)
+- [思考语言](./REASONING_LANGUAGE.zh-CN.md)
 - [模式快捷键速查](#模式快捷键速查)
 - [权限与沙盒](#权限与沙盒)
 - [插件（MCP）](#插件mcp)
@@ -25,6 +26,8 @@
 Linux 为 `~/.config/reasonix/`，macOS 为 `~/Library/Application Support/reasonix/`，Windows 为 `%AppData%\reasonix\`。
 密钥经环境变量通过 `api_key_env` 注入，绝不写入配置文件。
 
+桌面端和 CLI 端的可见思考语言设置，见 [思考语言](./REASONING_LANGUAGE.zh-CN.md)。
+
 ```toml
 default_model = "deepseek-flash"   # 执行器；设 [agent].planner_model 可加规划器
 # language    = "zh"               # 界面语言；为空则按 $LANG / $REASONIX_LANG 自动检测
@@ -35,6 +38,7 @@ default_model = "deepseek-flash"   # 执行器；设 [agent].planner_model 可�
 [agent]
 max_steps = 0                    # 执行器工具调用轮数；0 表示不限
 planner_max_steps = 12           # 规划器只读工具调用轮数；0 表示不限
+reasoning_language = "auto"      # 可见思考过程语言：auto|zh|en
 # planner_model = "mimo-pro"          # 可选的低频规划器
 # subagent_model = "deepseek-pro"     # runAs=subagent skill 的默认模型
 # subagent_models = { review = "deepseek-pro", security_review = "deepseek-pro" }
@@ -65,7 +69,7 @@ allow = ["Bash(go test:*)"]                  # 从不询问
 
 [sandbox]
 # workspace_root = ""          # 文件写工具被限制在此目录；留空 = 当前目录
-# allow_write    = ["/tmp"]    # write_file/edit_file/multi_edit 额外可写的目录
+# allow_write    = ["/tmp"]    # write_file/edit_file/multi_edit/move_file 额外可写的目录
 
 [[plugins]]
 name    = "example"
@@ -124,7 +128,7 @@ command = "reasonix-plugin-example"
 `reasonix run` 保持自主运行但仍然遵守 `deny`。
 
 权限是**策略**（哪些调用放行/询问），**沙盒**是**强制**：文件写工具
-（`write_file` / `edit_file` / `multi_edit`）拒绝 `[sandbox] workspace_root`
+（`write_file` / `edit_file` / `multi_edit` / `move_file`）拒绝 `[sandbox] workspace_root`
 之外的任何路径（默认当前目录，编辑不出项目），并解析符号链接与 `..`，使链接无法
 打洞越界。读不受限。`bash` 本身在 macOS 默认进沙盒（`[sandbox] bash`，Seatbelt）：
 命令只能写这些 root（外加临时目录与工具链缓存），`[sandbox] network` 为真时才能联网；
@@ -179,7 +183,7 @@ headers = { Authorization = "Bearer ${STRIPE_KEY}" }
 
 ## 斜杠命令
 
-`reasonix chat` 里，内置命令（`/compact`、`/new`、`/clear`、`/rewind`、`/tree`、`/branch`、`/switch`、`/todo`、`/model`、`/mcp`、`/skills`、`/hooks`、`/memory`、`/output-style`、`/sandbox`、`/language`、`/auto-plan`、`/help`）在本地执行——`/help` 可列出全部。
+`reasonix chat` 里，内置命令（`/compact`、`/new`、`/clear`、`/rewind`、`/tree`、`/branch`、`/switch`、`/todo`、`/model`、`/mcp`、`/skills`、`/hooks`、`/memory`、`/output-style`、`/sandbox`、`/language`、`/auto-plan`、`/reasoning-language`、`/help`）在本地执行——`/help` 可列出全部。
 `/new` 会开启新会话，同时保存之前的 transcript 供历史记录和恢复使用；`/clear` 会二次确认，确认后丢弃当前上下文且不保存。
 `/tree` 查看已保存的对话分支，`/branch [name]` 从当前对话末端分支，`/branch <turn> [name]`
 从较早的 checkpoint 轮次分支，`/switch <id|name>` 切换到另一个分支。**自定义命令**
@@ -241,8 +245,10 @@ Subagent skills 默认继承执行器模型。设置 `subagent_model` 可让它�
 编辑文件或执行有副作用的命令。`auto_plan_classifier` 可以指定便宜的 provider，例如
 `deepseek-flash`；它只在边界输入上调用，分类失败会回退到启发式规则。也可以用
 `reasonix chat` 里的 `/auto-plan off|on` 修改用户级设置，或在 shell/脚本里用
-`reasonix config auto-plan off|on`。只有明确想写项目级覆盖时，才给 shell 命令加
-`--local`。
+`reasonix config auto-plan off|on`。可见思考语言也采用同样形态：chat 里用
+`/reasoning-language auto|zh|en`，shell/脚本里用
+`reasonix config reasoning-language auto|zh|en`。只有明确想写项目级覆盖时，才给
+shell 命令加 `--local`。
 
 桌面端“协作方式”菜单里的计划模式、目标模式和省 token 模式的使用方法与注意事项，
 见 [`COLLABORATION_MODES.zh-CN.md`](./COLLABORATION_MODES.zh-CN.md)。

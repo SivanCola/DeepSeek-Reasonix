@@ -248,7 +248,7 @@ func (t *TaskTool) Execute(ctx context.Context, args json.RawMessage) (string, e
 				return "", err
 			}
 		}
-		job := jm.Start("task", label, func(jobCtx context.Context, _ io.Writer) (string, error) {
+		job := jm.StartForSession(jobs.SessionFromContext(ctx), "task", label, func(jobCtx context.Context, _ io.Writer) (string, error) {
 			defer run.Release()
 			answer, err := t.runSubSession(jobCtx, p.Prompt, subReg, nested, maxSteps, prov, pricing, ctxWin, run.Session)
 			if err != nil {
@@ -440,6 +440,7 @@ func (t *TaskTool) runSubSession(ctx context.Context, prompt string, subReg *too
 		CompactRatio:      t.compactRatio,
 		CompactForceRatio: t.compactForceRatio,
 		ArchiveDir:        t.archiveDir,
+		ReasoningLanguage: ReasoningLanguageFromContext(ctx),
 	}, sink)
 }
 

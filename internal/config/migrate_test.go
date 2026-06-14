@@ -33,6 +33,7 @@ func TestMigrateImportsKeyPluginsAndLang(t *testing.T) {
 	src, dest, home := legacyHome(t)
 	writeLegacy(t, src, `{
 		"apiKey": "sk-legacy-123",
+		"model": "deepseek-v4-pro",
 		"lang": "zh",
 		"mcpServers": {
 			"fs": {"command": "npx", "args": ["-y", "server-fs"], "type": "stdio"},
@@ -72,9 +73,69 @@ func TestMigrateImportsKeyPluginsAndLang(t *testing.T) {
 			t.Errorf("dest config missing %q:\n%s", want, toml)
 		}
 	}
+	if !strings.Contains(toml, `default_model = "deepseek-pro/deepseek-v4-pro"`) {
+		t.Errorf("dest config missing imported model:\n%s", toml)
+	}
+
+	loaded, err := Load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if loaded.DefaultModel != "deepseek-pro/deepseek-v4-pro" {
+		t.Errorf("DefaultModel = %q, want deepseek-pro/deepseek-v4-pro", loaded.DefaultModel)
+	}
 
 	if _, err := os.Stat(src); err != nil {
 		t.Errorf("legacy file must be left untouched: %v", err)
+	}
+}
+
+func TestMigrateImportsLegacyQQConfig(t *testing.T) {
+	src, dest, _ := legacyHome(t)
+	writeLegacy(t, src, `{
+		"qq": {
+			"enabled": true,
+			"appId": "qq-app-id",
+			"appSecret": "qq-secret",
+			"sandbox": true,
+			"ownerOpenId": " owner-openid ",
+			"allowlist": ["owner-openid", " member-openid ", "member-openid", ""]
+		}
+	}`)
+
+	res, err := MigrateLegacyIfNeeded()
+	if err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	if res == nil {
+		t.Fatal("expected migration result")
+	}
+	envData, err := os.ReadFile(UserCredentialsPath())
+	if err != nil {
+		t.Fatalf("read credentials: %v", err)
+	}
+	if !strings.Contains(string(envData), "QQ_BOT_APP_SECRET=qq-secret") {
+		t.Fatalf("credentials missing QQ secret: %q", envData)
+	}
+	tomlData, err := os.ReadFile(dest)
+	if err != nil {
+		t.Fatalf("read dest: %v", err)
+	}
+	toml := string(tomlData)
+	for _, want := range []string{
+		`[bot.qq]`,
+		`enabled = true`,
+		`app_id = "qq-app-id"`,
+		`app_secret_env = "QQ_BOT_APP_SECRET"`,
+		`sandbox = true`,
+		`qq_users = ["owner-openid", "member-openid"]`,
+	} {
+		if !strings.Contains(toml, want) {
+			t.Fatalf("migrated config missing %q:\n%s", want, toml)
+		}
+	}
+	if strings.Contains(toml, "qq-secret") {
+		t.Fatalf("migrated TOML must not contain QQ secret:\n%s", toml)
 	}
 }
 

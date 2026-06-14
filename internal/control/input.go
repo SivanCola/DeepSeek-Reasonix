@@ -2,13 +2,11 @@ package control
 
 import (
 	"context"
-	"regexp"
 	"strings"
 
+	"reasonix/internal/agent"
 	"reasonix/internal/skill"
 )
-
-var reComposeBlock = regexp.MustCompile(`(?s)^\s*<(?:memory-update|background-jobs)>.*?</(?:memory-update|background-jobs)>\s*\n`)
 
 // PlanModeMarker is prepended to every user turn while plan mode is on. It rides
 // in the user message (not the system prompt or tools), so the cache-stable
@@ -29,22 +27,13 @@ const (
 
 // StripComposePrefixes removes controller-injected prefixes from a composed
 // user message so that the display text matches what the user actually typed.
-// It strips the PlanModeMarker, <memory-update>…</memory-update>, and
-// <background-jobs>…</background-jobs> blocks that Compose prepends to user
-// turns. This is used as a fallback when no .display.json sidecar recording
-// exists (e.g. sessions created before the display-recording feature, or
-// synthetic user messages injected by the controller).
+// It strips the PlanModeMarker plus transient XML blocks such as
+// <reasoning-language>, <memory-update>, and <background-jobs> that Compose
+// prepends to user turns. This is used as a fallback when no .display.json
+// sidecar recording exists (e.g. sessions created before the display-recording
+// feature, or synthetic user messages injected by the controller).
 func StripComposePrefixes(content string) string {
-	s := content
-	for {
-		next := reComposeBlock.ReplaceAllStringFunc(s, func(match string) string {
-			return ""
-		})
-		if next == s {
-			break
-		}
-		s = next
-	}
+	s := agent.StripTransientUserBlocks(content)
 	s = strings.TrimPrefix(s, PlanModeMarker+"\n\n")
 	s = strings.TrimPrefix(s, PlanModeMarker)
 	s = strings.TrimSpace(s)
@@ -56,7 +45,7 @@ func StripComposePrefixes(content string) string {
 // approval, stream recovery, readiness retry, etc.). These should not be shown
 // in the chat UI.
 func IsSyntheticUserMessage(content string) bool {
-	trimmed := strings.TrimSpace(content)
+	trimmed := strings.TrimSpace(agent.StripTransientUserBlocks(content))
 	if trimmed == planApprovedMessage {
 		return true
 	}
@@ -95,6 +84,7 @@ func (c *Controller) Compose(text string) string {
 	plan := c.planMode
 	goal := c.goal
 	goalStatus := c.goalStatus
+	reasoningLanguage := c.reasoningLanguage
 	notes := c.pendingMemory
 	c.pendingMemory = nil
 	c.mu.Unlock()
@@ -105,6 +95,7 @@ func (c *Controller) Compose(text string) string {
 	if plan {
 		text = PlanModeMarker + "\n\n" + text
 	}
+	text = agent.WithReasoningLanguage(text, reasoningLanguage)
 
 	// Memory added mid-session rides the turn (never the cached system prefix),
 	// so it takes effect now without invalidating the prompt cache. It folds into
@@ -124,11 +115,22 @@ func (c *Controller) Compose(text string) string {
 	// model learns of completions even though the user-facing notices don't reach
 	// its context. Like memory, this never touches the cache-stable prefix.
 	if c.jobs != nil {
-		if note := c.jobs.DrainCompletedNote(); note != "" {
+		if note := c.jobs.DrainCompletedNoteForSession(c.parentSessionID()); note != "" {
 			text = "<background-jobs>\n" + note + "\n</background-jobs>\n\n" + text
 		}
 	}
 	return text
+}
+
+func reasoningLanguageBlock(lang string) string {
+	return agent.ReasoningLanguageBlock(lang)
+}
+
+func (c *Controller) ComposeSynthetic(text string) string {
+	c.mu.Lock()
+	lang := c.reasoningLanguage
+	c.mu.Unlock()
+	return agent.WithReasoningLanguage(text, lang)
 }
 
 func activeGoalBlock(goal string) string {
