@@ -2536,11 +2536,17 @@ func TestBuiltInMCPBackgroundDownloadDoesNotActivate(t *testing.T) {
 	}()
 
 	checkCodegraphLatest = func(ctx context.Context, client *http.Client) (string, error) {
+		if _, ok := ctx.Deadline(); !ok {
+			t.Fatal("manifest check context has no deadline")
+		}
 		return "v99.99.99", nil
 	}
 	downloaded := false
 	downloadLatestCodegraph = func(ctx context.Context, client *http.Client, log func(string)) (codegraph.UpdateResult, error) {
 		downloaded = true
+		if deadline, ok := ctx.Deadline(); ok && time.Until(deadline) <= httpTimeout+time.Second {
+			t.Fatalf("download context inherited manifest timeout; deadline=%v", deadline)
+		}
 		return codegraph.UpdateResult{Version: "v99.99.99", Path: filepath.Join(t.TempDir(), "codegraph")}, nil
 	}
 	updateBuiltInCodegraph = func(ctx context.Context, client *http.Client, log func(string)) (codegraph.UpdateResult, error) {
@@ -2576,6 +2582,9 @@ func TestBuiltInMCPBackgroundAutoNextSessionActivates(t *testing.T) {
 	}()
 
 	checkCodegraphLatest = func(ctx context.Context, client *http.Client) (string, error) {
+		if _, ok := ctx.Deadline(); !ok {
+			t.Fatal("manifest check context has no deadline")
+		}
 		return "v99.99.99", nil
 	}
 	downloadLatestCodegraph = func(ctx context.Context, client *http.Client, log func(string)) (codegraph.UpdateResult, error) {
@@ -2585,6 +2594,9 @@ func TestBuiltInMCPBackgroundAutoNextSessionActivates(t *testing.T) {
 	activated := false
 	updateBuiltInCodegraph = func(ctx context.Context, client *http.Client, log func(string)) (codegraph.UpdateResult, error) {
 		activated = true
+		if deadline, ok := ctx.Deadline(); ok && time.Until(deadline) <= httpTimeout+time.Second {
+			t.Fatalf("activation context inherited manifest timeout; deadline=%v", deadline)
+		}
 		return codegraph.UpdateResult{Version: "v99.99.99", Path: filepath.Join(t.TempDir(), "codegraph")}, nil
 	}
 

@@ -26,7 +26,7 @@ const (
 
 	officialMirrorBase         = "https://dl.reasonix.io/codegraph"
 	officialMainlandMirrorBase = ""
-	perSourceDownloadTimeout   = 15 * time.Second
+	perSourceDownloadTimeout   = 10 * time.Minute
 	activeVersionFile          = "active-version"
 
 	renameAttempts = 5

@@ -2874,7 +2874,7 @@ func (a *App) UpdateBuiltInMCPServer(name string) (BuiltInMCPUpdateResult, error
 		if h := tab.Ctrl.Host(); h != nil {
 			h.ClearFailure(name)
 		}
-		if _, err := tab.Ctrl.ConnectCodegraphMCPServer(cfg); err != nil {
+		if _, err := tab.Ctrl.ConnectCodegraphMCPServerForRoot(cfg, tab.WorkspaceRoot); err != nil {
 			recordCodegraphFailure(tab.Ctrl, cfg.Codegraph, err)
 		}
 	}
@@ -2974,7 +2974,7 @@ func (a *App) connectConfiguredMCPServerForTab(tab *WorkspaceTab, name string) (
 		}
 	}
 	if name == "codegraph" {
-		return tab.Ctrl.ConnectCodegraphMCPServer(cfg)
+		return tab.Ctrl.ConnectCodegraphMCPServerForRoot(cfg, tab.WorkspaceRoot)
 	}
 	if p, ok := builtinmcp.Entry(name); ok {
 		return tab.Ctrl.ConnectMCPServer(p)
@@ -3089,7 +3089,7 @@ func (a *App) setCodegraphEnabled(enabled bool) error {
 		a.mu.Lock()
 		delete(tab.disabledMCP, "codegraph")
 		a.mu.Unlock()
-		if _, err := tab.Ctrl.ConnectCodegraphMCPServer(cfg); err != nil {
+		if _, err := tab.Ctrl.ConnectCodegraphMCPServerForRoot(cfg, tab.WorkspaceRoot); err != nil {
 			recordCodegraphFailure(tab.Ctrl, cfg.Codegraph, err)
 			return nil
 		}
@@ -3131,7 +3131,7 @@ func (a *App) setCodegraphTier(_ string) error {
 	delete(tab.disabledMCP, "codegraph")
 	a.mu.Unlock()
 	if !mcpConnected(tab.Ctrl, "codegraph") {
-		if _, err := tab.Ctrl.ConnectCodegraphMCPServer(cfg); err != nil {
+		if _, err := tab.Ctrl.ConnectCodegraphMCPServerForRoot(cfg, tab.WorkspaceRoot); err != nil {
 			recordCodegraphFailure(tab.Ctrl, cfg.Codegraph, err)
 			return nil
 		}

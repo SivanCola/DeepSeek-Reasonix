@@ -73,9 +73,9 @@ func (a *App) runBuiltInMCPUpdateCheck(cfg *config.Config) ([]BuiltInMCPUpdateSt
 		status.Err = err.Error()
 		return []BuiltInMCPUpdateStatus{status}, nil
 	}
-	ctx, cancel := context.WithTimeout(a.reqCtx(), httpTimeout)
+	manifestCtx, cancel := context.WithTimeout(a.reqCtx(), httpTimeout)
 	defer cancel()
-	latest, err := checkCodegraphLatest(ctx, client)
+	latest, err := checkCodegraphLatest(manifestCtx, client)
 	if err != nil {
 		status.Phase = "error"
 		status.Err = err.Error()
@@ -88,7 +88,7 @@ func (a *App) runBuiltInMCPUpdateCheck(cfg *config.Config) ([]BuiltInMCPUpdateSt
 	}
 	switch mode {
 	case config.BuiltInMCPUpdateModeDownload:
-		res, err := downloadLatestCodegraph(ctx, client, nil)
+		res, err := downloadLatestCodegraph(a.reqCtx(), client, nil)
 		if err != nil {
 			status.Phase = "error"
 			status.Err = err.Error()
@@ -98,7 +98,7 @@ func (a *App) runBuiltInMCPUpdateCheck(cfg *config.Config) ([]BuiltInMCPUpdateSt
 		status.Path = res.Path
 		status.Phase = "downloaded"
 	case config.BuiltInMCPUpdateModeAutoNextSession:
-		res, err := updateBuiltInCodegraph(ctx, client, nil)
+		res, err := updateBuiltInCodegraph(a.reqCtx(), client, nil)
 		if err != nil {
 			status.Phase = "error"
 			status.Err = err.Error()

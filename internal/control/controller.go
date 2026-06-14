@@ -2393,10 +2393,25 @@ func (c *Controller) ConnectConfiguredMCPServer(name string) (int, error) {
 // already-resolved config. Desktop uses this after saving user-level settings so
 // a stale project config cannot override the just-applied choice.
 func (c *Controller) ConnectCodegraphMCPServer(cfg *config.Config) (int, error) {
-	return c.connectCodegraphMCPServer(cfg)
+	cwd, err := os.Getwd()
+	if err != nil {
+		return 0, err
+	}
+	return c.ConnectCodegraphMCPServerForRoot(cfg, cwd)
+}
+
+// ConnectCodegraphMCPServerForRoot connects CodeGraph pinned to root. Desktop
+// project tabs use this after hot updates so a reconnect keeps the same project
+// scope as boot-time CodeGraph startup.
+func (c *Controller) ConnectCodegraphMCPServerForRoot(cfg *config.Config, root string) (int, error) {
+	return c.connectCodegraphMCPServerForRoot(cfg, root)
 }
 
 func (c *Controller) connectCodegraphMCPServer(cfg *config.Config) (int, error) {
+	return c.ConnectCodegraphMCPServer(cfg)
+}
+
+func (c *Controller) connectCodegraphMCPServerForRoot(cfg *config.Config, root string) (int, error) {
 	if !cfg.Codegraph.Enabled {
 		return 0, fmt.Errorf("codegraph is disabled in config")
 	}
@@ -2404,22 +2419,31 @@ func (c *Controller) connectCodegraphMCPServer(cfg *config.Config) (int, error) 
 	if !ok {
 		return 0, fmt.Errorf("codegraph is not installed")
 	}
-	cwd, err := os.Getwd()
-	if err != nil {
-		return 0, err
+	root = strings.TrimSpace(root)
+	if root == "" {
+		cwd, err := os.Getwd()
+		if err != nil {
+			return 0, err
+		}
+		root = cwd
 	}
-	if !codegraph.IndexableRoot(cwd) {
-		return 0, fmt.Errorf("codegraph: refusing to index %q — a filesystem root would index the whole volume", cwd)
+	if !codegraph.IndexableRoot(root) {
+		return 0, fmt.Errorf("codegraph: refusing to index %q — a filesystem root would index the whole volume", root)
 	}
-	if err := codegraph.EnsureInit(c.pluginCtx, bin, cwd); err != nil {
+	if err := codegraph.EnsureInit(c.pluginCtx, bin, root); err != nil {
 		return 0, fmt.Errorf("codegraph init: %w", err)
 	}
 	return c.connectMCPSpec(plugin.Spec{
-		Name:              "codegraph",
-		Command:           bin,
-		Args:              []string{"serve", "--mcp"},
-		Dir:               cwd,
+		Name:           "codegraph",
+		StripRawPrefix: "codegraph_",
+		Command:        bin,
+		Args:           []string{"serve", "--mcp"},
+		Env: map[string]string{
+			codegraph.DaemonIdleTimeoutEnv: codegraph.ReasonixDaemonIdleTimeoutMS,
+		},
+		Dir:               root,
 		ReadOnlyToolNames: codegraph.ReadOnlyToolNames(),
+		LowPriority:       true,
 	})
 }
 
