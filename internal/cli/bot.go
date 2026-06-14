@@ -116,8 +116,9 @@ func botStart(args []string, version string) int {
 				bot.PlatformWeixin: cfg.Bot.Allowlist.WeixinGroups,
 			},
 		},
-		Debounce:  time.Duration(cfg.Bot.DebounceMs) * time.Millisecond,
-		OnInbound: rememberInboundRemote,
+		Debounce:       time.Duration(cfg.Bot.DebounceMs) * time.Millisecond,
+		OnInbound:      rememberInboundRemote,
+		OnSessionReady: botruntime.NewSessionRememberer(logger),
 	}
 
 	feishuDomains := botruntime.RequestedFeishuDomains(requestedChannels)

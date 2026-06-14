@@ -306,7 +306,27 @@ func NewRemoteRememberer(logger *slog.Logger) func(bot.InboundMessage) {
 	}
 }
 
+func NewSessionRememberer(logger *slog.Logger) func(bot.InboundMessage, string) error {
+	return func(msg bot.InboundMessage, sessionID string) error {
+		if err := RememberInboundSession(msg, sessionID); err != nil {
+			if logger != nil {
+				logger.Warn("remember bot session failed", "platform", msg.Platform, "err", err)
+			}
+			return err
+		}
+		return nil
+	}
+}
+
 func RememberInbound(msg bot.InboundMessage) error {
+	return rememberInbound(msg, "")
+}
+
+func RememberInboundSession(msg bot.InboundMessage, sessionID string) error {
+	return rememberInbound(msg, strings.TrimSpace(sessionID))
+}
+
+func rememberInbound(msg bot.InboundMessage, sessionID string) error {
 	userPath := config.UserConfigPath()
 	platform := msg.Platform
 	remoteID := strings.TrimSpace(msg.ChatID)
@@ -332,6 +352,22 @@ func RememberInbound(msg bot.InboundMessage) error {
 			}
 		}
 		if exists {
+			if sessionID == "" {
+				continue
+			}
+			for j := range conn.SessionMappings {
+				if strings.TrimSpace(conn.SessionMappings[j].RemoteID) != remoteID {
+					continue
+				}
+				if strings.TrimSpace(conn.SessionMappings[j].SessionID) == sessionID {
+					break
+				}
+				conn.SessionMappings[j].SessionID = sessionID
+				conn.SessionMappings[j].UpdatedAt = now
+				conn.UpdatedAt = now
+				changed = true
+				break
+			}
 			continue
 		}
 		scope := "global"
@@ -342,7 +378,7 @@ func RememberInbound(msg bot.InboundMessage) error {
 		}
 		conn.SessionMappings = append(conn.SessionMappings, config.BotConnectionSessionMapping{
 			RemoteID:      remoteID,
-			SessionID:     "",
+			SessionID:     sessionID,
 			Scope:         scope,
 			WorkspaceRoot: workspaceRoot,
 			UpdatedAt:     now,

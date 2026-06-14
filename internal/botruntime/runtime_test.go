@@ -50,6 +50,69 @@ func TestRemoteRemembererKeepsDistinctGroupUsers(t *testing.T) {
 	}
 }
 
+func TestRememberInboundSessionFillsExistingMappingSessionID(t *testing.T) {
+	isolateUserConfig(t)
+	cfg := config.Default()
+	cfg.Bot.Connections = []config.BotConnectionConfig{
+		{ID: "weixin-weixin", Provider: "weixin", Domain: "weixin", Label: "微信", Enabled: true, Status: "connected"},
+	}
+	if err := cfg.SaveTo(config.UserConfigPath()); err != nil {
+		t.Fatalf("save config: %v", err)
+	}
+
+	msg := bot.InboundMessage{
+		Platform:     bot.PlatformWeixin,
+		ConnectionID: "weixin-weixin",
+		Domain:       "weixin",
+		ChatType:     bot.ChatDM,
+		ChatID:       "wx-chat-1",
+		UserID:       "wx-user-1",
+	}
+	if err := RememberInbound(msg); err != nil {
+		t.Fatalf("remember inbound: %v", err)
+	}
+	if err := RememberInboundSession(msg, "20260614-120000.000000000-deepseek"); err != nil {
+		t.Fatalf("remember inbound session: %v", err)
+	}
+
+	got := config.LoadForEdit(config.UserConfigPath())
+	mappings := got.Bot.Connections[0].SessionMappings
+	if len(mappings) != 1 {
+		t.Fatalf("mappings = %+v, want one mapping", mappings)
+	}
+	if mappings[0].RemoteID != "wx-chat-1" || mappings[0].SessionID != "20260614-120000.000000000-deepseek" {
+		t.Fatalf("mapping = %+v, want remote chat with session id", mappings[0])
+	}
+}
+
+func TestRememberInboundSessionCreatesMappingWithSessionID(t *testing.T) {
+	isolateUserConfig(t)
+	cfg := config.Default()
+	cfg.Bot.Connections = []config.BotConnectionConfig{
+		{ID: "feishu-lark", Provider: "feishu", Domain: "lark", Label: "Lark", Enabled: true, Status: "connected"},
+	}
+	if err := cfg.SaveTo(config.UserConfigPath()); err != nil {
+		t.Fatalf("save config: %v", err)
+	}
+
+	if err := RememberInboundSession(bot.InboundMessage{
+		Platform:     bot.PlatformFeishu,
+		ConnectionID: "feishu-lark",
+		Domain:       "lark",
+		ChatType:     bot.ChatDM,
+		ChatID:       "oc-chat-1",
+		UserID:       "ou-user-1",
+	}, "topic-bot"); err != nil {
+		t.Fatalf("remember inbound session: %v", err)
+	}
+
+	got := config.LoadForEdit(config.UserConfigPath())
+	mappings := got.Bot.Connections[0].SessionMappings
+	if len(mappings) != 1 || mappings[0].RemoteID != "oc-chat-1" || mappings[0].SessionID != "topic-bot" {
+		t.Fatalf("mappings = %+v, want mapping with session id", mappings)
+	}
+}
+
 func TestConnectionChannelConfigsPreserveToolApprovalMode(t *testing.T) {
 	connections := []config.BotConnectionConfig{
 		{ID: "feishu-feishu", Provider: "feishu", Domain: "feishu", Enabled: true, ToolApprovalMode: "auto"},

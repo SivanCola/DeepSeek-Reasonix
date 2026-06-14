@@ -6,6 +6,8 @@ import (
 	"log/slog"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"reasonix/internal/control"
 	"reasonix/internal/event"
@@ -33,6 +35,12 @@ type renderSink struct {
 	toolNames  map[string]string // tool ID -> name
 	lastFlush  time.Time
 }
+
+const (
+	renderSoftFlushAfter = 1200 * time.Millisecond
+	renderMaxChunkRunes  = 1800
+	renderHardChunkRunes = 3500
+)
 
 func newRenderSink(ctx context.Context, adapter Adapter, connID, domain, chatID string, chatType ChatType, userID string, replyTo string, logger *slog.Logger, onApproval func(event.Approval), onAsk func(event.Ask)) *renderSink {
 	return &renderSink{
@@ -192,14 +200,28 @@ func (s *renderSink) Emit(e event.Event) {
 }
 
 func (s *renderSink) maybeFlush() {
-	if time.Since(s.lastFlush) > 500*time.Millisecond {
-		s.flush()
+	if time.Since(s.lastFlush) < renderSoftFlushAfter && utf8.RuneCountInString(s.buf.String()) < renderMaxChunkRunes {
+		return
+	}
+	if idx := renderFlushIndex(s.buf.String(), time.Since(s.lastFlush)); idx > 0 {
+		s.flushPrefix(idx)
 	}
 }
 
 func (s *renderSink) flush() {
-	text := strings.TrimSpace(s.buf.String())
+	s.flushPrefix(len(s.buf.String()))
+}
+
+func (s *renderSink) flushPrefix(idx int) {
+	raw := s.buf.String()
+	if idx <= 0 || idx > len(raw) {
+		idx = len(raw)
+	}
+	text := strings.TrimSpace(raw[:idx])
 	if text == "" {
+		if idx >= len(raw) {
+			s.buf.Reset()
+		}
 		return
 	}
 	_ = s.send(OutboundMessage{
@@ -210,8 +232,94 @@ func (s *renderSink) flush() {
 		Text:         text,
 		ReplyToMsgID: s.replyTo,
 	})
+	remaining := raw[idx:]
 	s.buf.Reset()
+	s.buf.WriteString(remaining)
 	s.lastFlush = time.Now()
+}
+
+func renderFlushIndex(text string, elapsed time.Duration) int {
+	if strings.TrimSpace(text) == "" {
+		return 0
+	}
+	runes := []rune(text)
+	if len(runes) >= renderHardChunkRunes {
+		if idx := lastSemanticBoundary(text, renderHardChunkRunes); idx > 0 {
+			return idx
+		}
+		return byteIndexForRuneLimit(text, renderMaxChunkRunes)
+	}
+	if len(runes) >= renderMaxChunkRunes {
+		if idx := lastSemanticBoundary(text, renderMaxChunkRunes); idx > 0 {
+			return idx
+		}
+	}
+	if elapsed < renderSoftFlushAfter {
+		return 0
+	}
+	return lastSemanticBoundary(text, len(runes))
+}
+
+func lastSemanticBoundary(text string, maxRunes int) int {
+	if maxRunes <= 0 {
+		return 0
+	}
+	count := 0
+	lastBoundary := 0
+	lastNonSpaceBoundary := 0
+	inFence := false
+	for idx, r := range text {
+		if strings.HasPrefix(text[idx:], "```") {
+			inFence = !inFence
+		}
+		count++
+		if count > maxRunes {
+			break
+		}
+		next := idx + len(string(r))
+		if r == '\n' && !inFence {
+			lastNonSpaceBoundary = next
+			lastBoundary = next
+			continue
+		}
+		if unicode.IsSpace(r) {
+			if lastNonSpaceBoundary > 0 {
+				lastBoundary = next
+			}
+			continue
+		}
+		if inFence {
+			continue
+		}
+		if isSemanticBoundaryRune(r) {
+			lastNonSpaceBoundary = next
+			lastBoundary = next
+		}
+	}
+	return lastBoundary
+}
+
+func isSemanticBoundaryRune(r rune) bool {
+	switch r {
+	case '.', '!', '?', ';', '。', '！', '？', '；', '…':
+		return true
+	default:
+		return false
+	}
+}
+
+func byteIndexForRuneLimit(text string, maxRunes int) int {
+	if maxRunes <= 0 {
+		return 0
+	}
+	count := 0
+	for idx, r := range text {
+		count++
+		if count >= maxRunes {
+			return idx + len(string(r))
+		}
+	}
+	return len(text)
 }
 
 func (s *renderSink) send(msg OutboundMessage) error {

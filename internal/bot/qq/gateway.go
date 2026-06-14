@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"strconv"
 	"sync"
 	"time"
 
@@ -73,6 +74,26 @@ type dispatchEvent struct {
 	GroupOpenID string `json:"group_openid"`
 }
 
+type tokenExpiresIn int
+
+func (e *tokenExpiresIn) UnmarshalJSON(data []byte) error {
+	var n int
+	if err := json.Unmarshal(data, &n); err == nil {
+		*e = tokenExpiresIn(n)
+		return nil
+	}
+	var s string
+	if err := json.Unmarshal(data, &s); err != nil {
+		return err
+	}
+	parsed, err := strconv.Atoi(s)
+	if err != nil {
+		return fmt.Errorf("expires_in: %w", err)
+	}
+	*e = tokenExpiresIn(parsed)
+	return nil
+}
+
 // wsClient 管理 QQ WebSocket 连接。
 type wsClient struct {
 	mu          sync.Mutex
@@ -132,8 +153,8 @@ func (a *adapter) getAccessToken(ctx context.Context) (string, error) {
 	defer resp.Body.Close()
 
 	var result struct {
-		AccessToken string `json:"access_token"`
-		ExpiresIn   int    `json:"expires_in"`
+		AccessToken string         `json:"access_token"`
+		ExpiresIn   tokenExpiresIn `json:"expires_in"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return "", err
@@ -143,8 +164,9 @@ func (a *adapter) getAccessToken(ctx context.Context) (string, error) {
 	}
 	a.tokenMu.Lock()
 	a.token = result.AccessToken
-	if result.ExpiresIn > 60 {
-		a.tokenExpiry = time.Now().Add(time.Duration(result.ExpiresIn-60) * time.Second)
+	expiresIn := int(result.ExpiresIn)
+	if expiresIn > 60 {
+		a.tokenExpiry = time.Now().Add(time.Duration(expiresIn-60) * time.Second)
 	} else {
 		a.tokenExpiry = time.Now().Add(5 * time.Minute)
 	}

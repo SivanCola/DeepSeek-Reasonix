@@ -46,3 +46,21 @@ func TestQQSendURLDirectMessage(t *testing.T) {
 		t.Fatalf("url = %q, want %q", got, want)
 	}
 }
+
+func TestTokenExpiresInAcceptsNumberAndString(t *testing.T) {
+	for _, raw := range []string{
+		`{"access_token":"token","expires_in":7200}`,
+		`{"access_token":"token","expires_in":"7200"}`,
+	} {
+		var got struct {
+			AccessToken string         `json:"access_token"`
+			ExpiresIn   tokenExpiresIn `json:"expires_in"`
+		}
+		if err := json.Unmarshal([]byte(raw), &got); err != nil {
+			t.Fatalf("unmarshal %s: %v", raw, err)
+		}
+		if got.AccessToken != "token" || int(got.ExpiresIn) != 7200 {
+			t.Fatalf("decoded %s as %+v, want token/7200", raw, got)
+		}
+	}
+}
