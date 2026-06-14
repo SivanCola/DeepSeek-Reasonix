@@ -699,6 +699,10 @@ export interface BotConnectionCredentialView {
 export interface BotConnectionSessionMappingView {
   remoteId: string;
   sessionId: string;
+  sessionSource: string;
+  chatType: string;
+  userId: string;
+  threadId: string;
   scope: "global" | "project" | string;
   workspaceRoot: string;
   updatedAt: string;

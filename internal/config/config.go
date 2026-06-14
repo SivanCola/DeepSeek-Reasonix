@@ -523,6 +523,10 @@ type BotConnectionCredential struct {
 type BotConnectionSessionMapping struct {
 	RemoteID      string `toml:"remote_id"`
 	SessionID     string `toml:"session_id"`
+	SessionSource string `toml:"session_source"`
+	ChatType      string `toml:"chat_type"`
+	UserID        string `toml:"user_id"`
+	ThreadID      string `toml:"thread_id"`
 	Scope         string `toml:"scope"`
 	WorkspaceRoot string `toml:"workspace_root"`
 	UpdatedAt     string `toml:"updated_at"`

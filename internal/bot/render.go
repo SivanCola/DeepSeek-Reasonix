@@ -209,7 +209,16 @@ func (s *renderSink) maybeFlush() {
 }
 
 func (s *renderSink) flush() {
-	s.flushPrefix(len(s.buf.String()))
+	for strings.TrimSpace(s.buf.String()) != "" {
+		idx := renderFlushIndex(s.buf.String(), renderSoftFlushAfter)
+		if idx <= 0 {
+			idx = byteIndexForRuneLimit(s.buf.String(), renderMaxChunkRunes)
+		}
+		if idx <= 0 || idx > len(s.buf.String()) {
+			idx = len(s.buf.String())
+		}
+		s.flushPrefix(idx)
+	}
 }
 
 func (s *renderSink) flushPrefix(idx int) {
@@ -219,9 +228,10 @@ func (s *renderSink) flushPrefix(idx int) {
 	}
 	text := strings.TrimSpace(raw[:idx])
 	if text == "" {
-		if idx >= len(raw) {
-			s.buf.Reset()
-		}
+		remaining := raw[idx:]
+		s.buf.Reset()
+		s.buf.WriteString(remaining)
+		s.lastFlush = time.Now()
 		return
 	}
 	_ = s.send(OutboundMessage{

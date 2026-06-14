@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -131,5 +132,38 @@ func TestRenderSinkFlushesAtSemanticBoundary(t *testing.T) {
 	}
 	if sent[0].Text != "第一句。" {
 		t.Fatalf("sent text = %q, want first sentence", sent[0].Text)
+	}
+}
+
+func TestRenderSinkFinalFlushKeepsChunkLimit(t *testing.T) {
+	adapter := newFakeAdapter(PlatformWeixin, "fake-weixin")
+	sink := newRenderSink(context.Background(), adapter, "weixin-weixin", "weixin", "chat-1", ChatDM, "user-1", "msg-1", slog.New(slog.NewTextHandler(io.Discard, nil)), nil, nil)
+	sink.buf.WriteString(strings.Repeat("长", renderMaxChunkRunes*2+10))
+
+	sink.Emit(event.Event{Kind: event.TurnDone})
+
+	sent := adapter.sentMessages()
+	if len(sent) < 2 {
+		t.Fatalf("sent count = %d, want chunked final flush", len(sent))
+	}
+	for i, msg := range sent {
+		if got := len([]rune(msg.Text)); got > renderMaxChunkRunes {
+			t.Fatalf("sent[%d] runes = %d, want <= %d", i, got, renderMaxChunkRunes)
+		}
+	}
+}
+
+func TestRenderSinkConsumesEmptyWhitespacePrefix(t *testing.T) {
+	adapter := newFakeAdapter(PlatformWeixin, "fake-weixin")
+	sink := newRenderSink(context.Background(), adapter, "weixin-weixin", "weixin", "chat-1", ChatDM, "user-1", "msg-1", slog.New(slog.NewTextHandler(io.Discard, nil)), nil, nil)
+	sink.buf.WriteString("\n工具状态")
+
+	sink.flushPrefix(1)
+
+	if got := sink.buf.String(); got != "工具状态" {
+		t.Fatalf("buffer = %q, want leading newline consumed", got)
+	}
+	if sent := adapter.sentMessages(); len(sent) != 0 {
+		t.Fatalf("sent = %+v, want no empty outbound message", sent)
 	}
 }

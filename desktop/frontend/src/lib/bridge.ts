@@ -800,6 +800,10 @@ function makeMockApp(): AppBindings {
             {
               remoteId: "ou_mock_user_001",
               sessionId: "topic:topic_product",
+              sessionSource: "",
+              chatType: "",
+              userId: "",
+              threadId: "",
               scope: "global",
               workspaceRoot: "",
               updatedAt: new Date(Date.now() - 4 * 60_000).toISOString(),
@@ -830,6 +834,10 @@ function makeMockApp(): AppBindings {
             {
               remoteId: "wxid_mock_user_001",
               sessionId: "topic:topic_ai",
+              sessionSource: "",
+              chatType: "",
+              userId: "",
+              threadId: "",
               scope: "global",
               workspaceRoot: "",
               updatedAt: new Date(Date.now() - 12 * 60_000).toISOString(),

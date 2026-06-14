@@ -45,8 +45,8 @@ func TestRemoteRemembererKeepsDistinctGroupUsers(t *testing.T) {
 	if groups := got.Bot.Allowlist.FeishuGroups; len(groups) != 1 || groups[0] != "oc-group-1" {
 		t.Fatalf("feishu groups = %+v, want group once", groups)
 	}
-	if mappings := got.Bot.Connections[0].SessionMappings; len(mappings) != 1 || mappings[0].RemoteID != "oc-group-1" {
-		t.Fatalf("session mappings = %+v, want group remote once", mappings)
+	if mappings := got.Bot.Connections[0].SessionMappings; len(mappings) != 2 || mappings[0].RemoteID != "oc-group-1" || mappings[0].UserID != "ou-user-1" || mappings[1].RemoteID != "oc-group-1" || mappings[1].UserID != "ou-user-2" {
+		t.Fatalf("session mappings = %+v, want distinct group-user mappings", mappings)
 	}
 }
 
@@ -71,7 +71,7 @@ func TestRememberInboundSessionFillsExistingMappingSessionID(t *testing.T) {
 	if err := RememberInbound(msg); err != nil {
 		t.Fatalf("remember inbound: %v", err)
 	}
-	if err := RememberInboundSession(msg, "20260614-120000.000000000-deepseek"); err != nil {
+	if err := RememberInboundSession(msg, "path:/sessions/20260614-120000.000000000-deepseek.jsonl"); err != nil {
 		t.Fatalf("remember inbound session: %v", err)
 	}
 
@@ -80,7 +80,7 @@ func TestRememberInboundSessionFillsExistingMappingSessionID(t *testing.T) {
 	if len(mappings) != 1 {
 		t.Fatalf("mappings = %+v, want one mapping", mappings)
 	}
-	if mappings[0].RemoteID != "wx-chat-1" || mappings[0].SessionID != "20260614-120000.000000000-deepseek" {
+	if mappings[0].RemoteID != "wx-chat-1" || mappings[0].SessionID != "path:/sessions/20260614-120000.000000000-deepseek.jsonl" || mappings[0].SessionSource != "auto" {
 		t.Fatalf("mapping = %+v, want remote chat with session id", mappings[0])
 	}
 }
@@ -102,14 +102,118 @@ func TestRememberInboundSessionCreatesMappingWithSessionID(t *testing.T) {
 		ChatType:     bot.ChatDM,
 		ChatID:       "oc-chat-1",
 		UserID:       "ou-user-1",
-	}, "topic-bot"); err != nil {
+	}, "path:/sessions/topic-bot.jsonl"); err != nil {
 		t.Fatalf("remember inbound session: %v", err)
 	}
 
 	got := config.LoadForEdit(config.UserConfigPath())
 	mappings := got.Bot.Connections[0].SessionMappings
-	if len(mappings) != 1 || mappings[0].RemoteID != "oc-chat-1" || mappings[0].SessionID != "topic-bot" {
+	if len(mappings) != 1 || mappings[0].RemoteID != "oc-chat-1" || mappings[0].SessionID != "path:/sessions/topic-bot.jsonl" || mappings[0].SessionSource != "auto" {
 		t.Fatalf("mappings = %+v, want mapping with session id", mappings)
+	}
+}
+
+func TestRememberInboundSessionKeepsDistinctGroupUsers(t *testing.T) {
+	isolateUserConfig(t)
+	cfg := config.Default()
+	cfg.Bot.Connections = []config.BotConnectionConfig{
+		{ID: "feishu-lark", Provider: "feishu", Domain: "lark", Label: "Lark", Enabled: true, Status: "connected"},
+	}
+	if err := cfg.SaveTo(config.UserConfigPath()); err != nil {
+		t.Fatalf("save config: %v", err)
+	}
+
+	msg1 := bot.InboundMessage{Platform: bot.PlatformFeishu, ConnectionID: "feishu-lark", Domain: "lark", ChatType: bot.ChatGroup, ChatID: "oc-group-1", UserID: "ou-user-1"}
+	msg2 := bot.InboundMessage{Platform: bot.PlatformFeishu, ConnectionID: "feishu-lark", Domain: "lark", ChatType: bot.ChatGroup, ChatID: "oc-group-1", UserID: "ou-user-2"}
+	if err := RememberInboundSession(msg1, "path:/sessions/user-1.jsonl"); err != nil {
+		t.Fatalf("remember user 1: %v", err)
+	}
+	if err := RememberInboundSession(msg2, "path:/sessions/user-2.jsonl"); err != nil {
+		t.Fatalf("remember user 2: %v", err)
+	}
+
+	got := config.LoadForEdit(config.UserConfigPath())
+	mappings := got.Bot.Connections[0].SessionMappings
+	if len(mappings) != 2 {
+		t.Fatalf("mappings = %+v, want two group-user mappings", mappings)
+	}
+	if mappings[0].UserID != "ou-user-1" || mappings[0].SessionID != "path:/sessions/user-1.jsonl" || mappings[1].UserID != "ou-user-2" || mappings[1].SessionID != "path:/sessions/user-2.jsonl" {
+		t.Fatalf("mappings = %+v, want user-specific session ids", mappings)
+	}
+}
+
+func TestRememberInboundSessionSharesThreadMappingAcrossUsers(t *testing.T) {
+	isolateUserConfig(t)
+	cfg := config.Default()
+	cfg.Bot.Connections = []config.BotConnectionConfig{
+		{ID: "feishu-lark", Provider: "feishu", Domain: "lark", Label: "Lark", Enabled: true, Status: "connected"},
+	}
+	if err := cfg.SaveTo(config.UserConfigPath()); err != nil {
+		t.Fatalf("save config: %v", err)
+	}
+
+	msg1 := bot.InboundMessage{Platform: bot.PlatformFeishu, ConnectionID: "feishu-lark", Domain: "lark", ChatType: bot.ChatThread, ChatID: "oc-group-1", ThreadID: "thread-1", UserID: "ou-user-1"}
+	msg2 := bot.InboundMessage{Platform: bot.PlatformFeishu, ConnectionID: "feishu-lark", Domain: "lark", ChatType: bot.ChatThread, ChatID: "oc-group-1", ThreadID: "thread-1", UserID: "ou-user-2"}
+	if err := RememberInboundSession(msg1, "path:/sessions/thread-old.jsonl"); err != nil {
+		t.Fatalf("remember user 1: %v", err)
+	}
+	if err := RememberInboundSession(msg2, "path:/sessions/thread-new.jsonl"); err != nil {
+		t.Fatalf("remember user 2: %v", err)
+	}
+
+	got := config.LoadForEdit(config.UserConfigPath())
+	mappings := got.Bot.Connections[0].SessionMappings
+	if len(mappings) != 1 {
+		t.Fatalf("mappings = %+v, want one shared thread mapping", mappings)
+	}
+	if mappings[0].ChatType != string(bot.ChatThread) || mappings[0].ThreadID != "thread-1" || mappings[0].UserID != "" || mappings[0].SessionID != "path:/sessions/thread-new.jsonl" {
+		t.Fatalf("mapping = %+v, want shared thread identity with latest auto session", mappings[0])
+	}
+}
+
+func TestRememberInboundSessionPreservesExplicitMappingTarget(t *testing.T) {
+	isolateUserConfig(t)
+	cfg := config.Default()
+	cfg.Bot.Connections = []config.BotConnectionConfig{{
+		ID: "weixin-weixin", Provider: "weixin", Domain: "weixin", Label: "微信", Enabled: true, Status: "connected",
+		SessionMappings: []config.BotConnectionSessionMapping{{RemoteID: "wx-chat-1", SessionID: "topic:manual-topic"}},
+	}}
+	if err := cfg.SaveTo(config.UserConfigPath()); err != nil {
+		t.Fatalf("save config: %v", err)
+	}
+
+	msg := bot.InboundMessage{Platform: bot.PlatformWeixin, ConnectionID: "weixin-weixin", Domain: "weixin", ChatType: bot.ChatDM, ChatID: "wx-chat-1", UserID: "wx-user-1"}
+	if err := RememberInboundSession(msg, "path:/sessions/auto.jsonl"); err != nil {
+		t.Fatalf("remember inbound session: %v", err)
+	}
+
+	got := config.LoadForEdit(config.UserConfigPath())
+	mapping := got.Bot.Connections[0].SessionMappings[0]
+	if mapping.SessionID != "topic:manual-topic" || mapping.SessionSource != "" {
+		t.Fatalf("mapping = %+v, want explicit topic preserved", mapping)
+	}
+}
+
+func TestRememberInboundSessionUpdatesAutoMappingTarget(t *testing.T) {
+	isolateUserConfig(t)
+	cfg := config.Default()
+	cfg.Bot.Connections = []config.BotConnectionConfig{{
+		ID: "weixin-weixin", Provider: "weixin", Domain: "weixin", Label: "微信", Enabled: true, Status: "connected",
+		SessionMappings: []config.BotConnectionSessionMapping{{RemoteID: "wx-chat-1", SessionID: "path:/sessions/old.jsonl", SessionSource: "auto"}},
+	}}
+	if err := cfg.SaveTo(config.UserConfigPath()); err != nil {
+		t.Fatalf("save config: %v", err)
+	}
+
+	msg := bot.InboundMessage{Platform: bot.PlatformWeixin, ConnectionID: "weixin-weixin", Domain: "weixin", ChatType: bot.ChatDM, ChatID: "wx-chat-1", UserID: "wx-user-1"}
+	if err := RememberInboundSession(msg, "path:/sessions/new.jsonl"); err != nil {
+		t.Fatalf("remember inbound session: %v", err)
+	}
+
+	got := config.LoadForEdit(config.UserConfigPath())
+	mapping := got.Bot.Connections[0].SessionMappings[0]
+	if mapping.SessionID != "path:/sessions/new.jsonl" || mapping.SessionSource != "auto" {
+		t.Fatalf("mapping = %+v, want auto target updated", mapping)
 	}
 }
 

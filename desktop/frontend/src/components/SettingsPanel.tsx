@@ -563,6 +563,10 @@ function normalizeBotConnection(raw: any) {
     sessionMappings: asArray(raw?.sessionMappings).map((item: any) => ({
       remoteId: String(item?.remoteId ?? "").trim(),
       sessionId: String(item?.sessionId ?? "").trim(),
+      sessionSource: String(item?.sessionSource ?? "").trim(),
+      chatType: String(item?.chatType ?? "").trim(),
+      userId: String(item?.userId ?? "").trim(),
+      threadId: String(item?.threadId ?? "").trim(),
       scope: normalizeBotMappingScope(item?.scope, item?.workspaceRoot ?? workspaceRoot),
       workspaceRoot: normalizeBotMappingScope(item?.scope, item?.workspaceRoot ?? workspaceRoot) === "project"
         ? String(item?.workspaceRoot ?? workspaceRoot).trim()
@@ -1654,7 +1658,7 @@ function BotsSection({ s, busy, apply, initialFocus }: BotsSectionProps) {
         const scope = connection.workspaceRoot ? "project" : "global";
         const sessionMappings = [
           ...item.sessionMappings.filter((mapping) => mapping.remoteId !== target),
-          { remoteId: target, sessionId: "", scope, workspaceRoot: scope === "project" ? connection.workspaceRoot : "", updatedAt },
+          { remoteId: target, sessionId: "", sessionSource: "", chatType: "", userId: "", threadId: "", scope, workspaceRoot: scope === "project" ? connection.workspaceRoot : "", updatedAt },
         ];
         return { ...item, sessionMappings, updatedAt };
       }));

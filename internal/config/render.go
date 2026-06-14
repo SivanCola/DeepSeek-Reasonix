@@ -658,6 +658,18 @@ func renderBotSessionMappings(mappings []BotConnectionSessionMapping) string {
 			"remote_id":  mapping.RemoteID,
 			"session_id": mapping.SessionID,
 		}
+		if mapping.SessionSource != "" {
+			parts["session_source"] = mapping.SessionSource
+		}
+		if mapping.ChatType != "" {
+			parts["chat_type"] = mapping.ChatType
+		}
+		if mapping.UserID != "" {
+			parts["user_id"] = mapping.UserID
+		}
+		if mapping.ThreadID != "" {
+			parts["thread_id"] = mapping.ThreadID
+		}
 		if mapping.Scope != "" {
 			parts["scope"] = mapping.Scope
 		}
