@@ -1,11 +1,16 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import type { CSSProperties, ClipboardEvent, DragEvent, KeyboardEvent, PointerEvent as ReactPointerEvent, ReactNode } from "react";
-import { AlertTriangle, ArrowUp, Check, ChevronDown, Eye, FileText, Folder, FolderGit2, FolderPlus, List, Search, Square, Trash2, X, Zap } from "lucide-react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import type { CSSProperties, ClipboardEvent, DragEvent, KeyboardEvent, PointerEvent as ReactPointerEvent } from "react";
+import { ArrowUp, Check, Eye, FileText, Folder, Gauge, List, MessageSquare, MoreHorizontal, Search, Shield, ShieldAlert, ShieldCheck, SlidersHorizontal, Square, Target, Trash2, X } from "lucide-react";
 import { asArray } from "../lib/array";
+import { filterAtMatches } from "../lib/atMatches";
+import { DedupIndex, sha256 } from "../lib/attachDedup";
 import { app, onFilesDropped } from "../lib/bridge";
+import { canUsePromptHistory, isFnKeyEvent, promptHistoryDirectionFromEvent } from "../lib/composerKeyboard";
+import { cacheGeneration, loadOlder } from "../lib/composerHistory";
 import { SPINNER_WORDS, useI18n } from "../lib/i18n";
 import { clearLayoutSize, loadOptionalLayoutSize, saveLayoutSize } from "../lib/layoutPreferences";
-import type { CommandInfo, ComposerInsertRequest, DirEntry, EffortInfo, Mode, SlashArgItem, SlashArgsResult, WorkspaceView } from "../lib/types";
+import { useToast } from "../lib/toast";
+import { type CollaborationMode, type CommandInfo, type ComposerInsertRequest, type DirEntry, type EffortInfo, type HistoryMessage, type Mode, type PromptHistoryEntry, type SessionMeta, type SessionReference, type SlashArgItem, type SlashArgsResult, type TokenMode, type ToolApprovalMode } from "../lib/types";
 import {
   formatWorkspaceReference,
   parseWorkspaceReference,
@@ -14,15 +19,21 @@ import {
 } from "../lib/workspaceDrag";
 import { SlashMenu } from "./SlashMenu";
 import { ArgMenu } from "./ArgMenu";
-import { FileMenu } from "./FileMenu";
+import { VirtualMenu } from "./VirtualMenu";
+import { ANCHORED_POPOVER_CLOSE_MS, AnchoredPopover } from "./AnchoredPopover";
 import { EffortSwitcher } from "./EffortSwitcher";
 import { ModelSwitcher } from "./ModelSwitcher";
 import { Tooltip } from "./Tooltip";
-import { AnchoredPopover } from "./AnchoredPopover";
 
 interface Attachment {
   path: string;
   previewUrl?: string;
+  displayName?: string;
+}
+
+interface AttachmentDedupKey {
+  hash: string;
+  source: string;
 }
 
 interface WorkspaceReference {
@@ -32,9 +43,11 @@ interface WorkspaceReference {
 
 const LONG_PASTE_MIN_CHARS = 2000;
 const LONG_PASTE_MIN_LINES = 20;
-const COMPOSER_MIN_HEIGHT = 86;
+const COMPOSER_MIN_HEIGHT = 104;
 const COMPOSER_MAX_HEIGHT = 360;
 const COMPOSER_MAX_VIEWPORT_RATIO = 0.4;
+const COMPOSER_AUTO_RESERVED_HEIGHT = 58;
+const PROMPT_HISTORY_PREFETCH_REMAINING = 3;
 // Grace after compositionend to swallow a confirm-Enter that lands just after
 // it; the real gap is a few ms, so keep it short or a deliberate quick second
 // Enter (submit) gets eaten too.
@@ -63,12 +76,81 @@ function renderPastedBlock(block: PastedBlock): string {
 }
 
 function baseName(path: string): string {
-  const clean = path.replace(/\/$/, "");
-  return clean.split("/").filter(Boolean).pop() ?? path;
+  const clean = path.replace(/[\\/]+$/, "");
+  return clean.split(/[\\/]/).filter(Boolean).pop() ?? path;
+}
+
+function attachmentName(attachment: Attachment): string {
+  return (attachment.displayName || baseName(attachment.path) || "attachment").trim();
+}
+
+function attachmentExt(name: string): string {
+  const dot = name.lastIndexOf(".");
+  return dot >= 0 ? name.slice(dot + 1).toUpperCase() : "";
+}
+
+function displayRefName(name: string): string {
+  return name.replace(/[\[\]\(\)\r\n]+/g, " ").replace(/\s+/g, " ").trim() || "attachment";
+}
+
+function formatAttachmentDisplayReference(attachment: Attachment): string {
+  return `@[${displayRefName(attachmentName(attachment))}](${attachment.path})`;
+}
+
+function sortComposerAttachments(items: Attachment[]): Attachment[] {
+  return [...items].sort((a, b) => {
+    const ai = a.previewUrl ? 0 : 1;
+    const bi = b.previewUrl ? 0 : 1;
+    return ai - bi;
+  });
 }
 
 function workspaceReferenceKey(ref: WorkspaceReference): string {
   return `${ref.isDir ? "dir" : "file"}:${ref.path}`;
+}
+
+function fileKey(file: File): string {
+  return `${file.name}:${file.type}:${file.size}:${file.lastModified}`;
+}
+
+function clipboardFiles(data: DataTransfer): File[] {
+  const files = Array.from(data.files);
+  const seen = new Set(files.map(fileKey));
+  for (const item of Array.from(data.items)) {
+    if (item.kind !== "file") continue;
+    const file = item.getAsFile();
+    if (!file) continue;
+    const key = fileKey(file);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    files.push(file);
+  }
+  return files;
+}
+
+function clipboardHasImageHint(data: DataTransfer): boolean {
+  const imageType = (value: string) => {
+    const type = value.toLowerCase();
+    return type.startsWith("image/") || type.includes("png") || type.includes("jpeg") || type.includes("jpg") || type.includes("tiff");
+  };
+  return Array.from(data.items).some((item) => imageType(item.type)) || Array.from(data.types).some(imageType);
+}
+
+function isPasteShortcut(e: KeyboardEvent<HTMLTextAreaElement>): boolean {
+  return e.key.toLowerCase() === "v" && (e.metaKey || e.ctrlKey) && !e.altKey;
+}
+
+function isYoloToggleShortcut(e: KeyboardEvent<HTMLTextAreaElement>): boolean {
+  return e.key.toLowerCase() === "y" && (e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey;
+}
+
+async function dataURLHash(dataUrl: string): Promise<string> {
+  try {
+    const res = await fetch(dataUrl);
+    return sha256(await res.blob());
+  } catch {
+    return "";
+  }
 }
 
 function composerMaxHeight(): number {
@@ -78,6 +160,10 @@ function composerMaxHeight(): number {
 
 function clampComposerHeight(height: number): number {
   return Math.min(Math.max(Math.round(height), COMPOSER_MIN_HEIGHT), composerMaxHeight());
+}
+
+function composerAutoInputMaxHeight(): number {
+  return Math.max(32, composerMaxHeight() - COMPOSER_AUTO_RESERVED_HEIGHT);
 }
 
 function loadComposerHeight(): number | null {
@@ -93,6 +179,34 @@ function fmtElapsed(ms: number): string {
   const s = Math.floor(ms / 1000);
   if (s < 60) return `${s}s`;
   return `${Math.floor(s / 60)}m ${s % 60}s`;
+}
+
+// --- past:chats hover preview helpers (PR-C2) ---
+// Pure formatting helpers used by the past:chats list tooltip. They never read
+// from disk, never call PreviewSession — they only shape the data that already
+// lives in the SessionMeta snapshot we fetched on entry.
+const PAST_CHAT_PREVIEW_MAX = 200;
+
+function truncatePreview(value?: string, max = PAST_CHAT_PREVIEW_MAX): string {
+  const text = (value || "").trim();
+  if (text.length <= max) return text;
+  return `${text.slice(0, max)}...`;
+}
+
+function fmtSessionTime(value?: number): string {
+  if (!value) return "";
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return "";
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  const hh = String(d.getHours()).padStart(2, "0");
+  const mi = String(d.getMinutes()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd} ${hh}:${mi}`;
+}
+
+function pastChatTitle(session: SessionMeta): string {
+  return session.title || session.topicTitle || session.preview || "Untitled";
 }
 
 function useTick(on: boolean): number {
@@ -122,9 +236,97 @@ function isImeKeyEvent(
   );
 }
 
+// --- past:chats session reference → prompt context (PR-B) ---
+// Send-side helpers for "@past:chats" session references. PR-A wired the menu and
+// the composer-context card; this layer reads each referenced session through the
+// existing PreviewSession API and prepends a compact "user / 助手" transcript to
+// submitText so the model sees the referenced chat as background context.
+const SESSION_REF_MAX_MESSAGES = 30;
+const SESSION_REF_MAX_CHARS = 20_000;
+const SESSION_CONTEXT_HEADER = "以下是用户引用的历史会话上下文：";
+const SESSION_CONTEXT_FOOTER = "当前用户问题：";
+const PAST_CHATS_MENU_ITEM = "past:chats";
+
+// limitSessionMessages keeps the most recent useful messages within a char budget.
+// Walks from the end so the truncation is always "drop the oldest", which matches
+// the intuition that the latest turns are the relevant ones for follow-up.
+function limitSessionMessages(
+  messages: HistoryMessage[],
+  maxMessages = SESSION_REF_MAX_MESSAGES,
+  maxChars = SESSION_REF_MAX_CHARS,
+): { messages: HistoryMessage[]; truncated: boolean } {
+  const useful = messages
+    .filter(
+      (m) =>
+        (m.role === "user" || m.role === "assistant") &&
+        typeof m.content === "string" &&
+        m.content.trim().length > 0,
+    )
+    .slice(-maxMessages);
+  const result: HistoryMessage[] = [];
+  let total = 0;
+  let truncated = useful.length >= maxMessages;
+  for (let i = useful.length - 1; i >= 0; i--) {
+    const msg = useful[i];
+    const content = msg.content.trim();
+    if (total + content.length > maxChars) {
+      truncated = true;
+      break;
+    }
+    result.unshift({ ...msg, content });
+    total += content.length;
+  }
+  if (result.length < useful.length) truncated = true;
+  return { messages: result, truncated };
+}
+
+// formatSessionContext renders one referenced session as a labelled transcript.
+// Falls back to a "no usable messages" note when filtering empties the list so
+// the model still sees that something was referenced.
+function formatSessionContext(
+  ref: SessionReference,
+  messages: HistoryMessage[],
+  truncated: boolean,
+): string {
+  const body = messages
+    .map((m) => `${m.role === "user" ? "用户" : "助手"}：${m.content.trim()}`)
+    .join("\n\n");
+  return [
+    `[会话：${ref.title}]`,
+    truncated ? "注意：该会话内容较长，以下只包含最近部分内容。" : "",
+    body || "注意：该会话没有可引用的用户/助手消息。",
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+// buildSessionContext reads each referenced session, formats the most recent
+// slice, and joins them with a separator. A single failed read must not block
+// the others; the user gets a clear "读取失败" note for the bad one and the
+// remaining refs still flow through.
+async function buildSessionContext(refs: SessionReference[]): Promise<string> {
+  if (refs.length === 0) return "";
+  let context = `${SESSION_CONTEXT_HEADER}\n\n`;
+  for (const ref of refs) {
+    try {
+      const raw = await app.PreviewSession(ref.path);
+      const limited = limitSessionMessages(asArray(raw));
+      context += `${formatSessionContext(ref, limited.messages, limited.truncated)}\n\n---\n\n`;
+    } catch (error) {
+      console.error("[past:chats] failed to preview session", ref.path, error);
+      context += `[会话：${ref.title}]\n注意：该会话读取失败，已跳过。\n\n---\n\n`;
+    }
+  }
+  context += `${SESSION_CONTEXT_FOOTER}\n`;
+  return context;
+}
+
 export function Composer({
   running,
-  mode,
+  collaborationMode,
+  toolApprovalMode,
+  tokenMode,
+  goal,
   cwd,
   modelLabel,
   tabId,
@@ -133,10 +335,14 @@ export function Composer({
   onCancel,
   onCycleMode,
   onSetMode,
+  onSetCollaborationMode,
+  onSetToolApprovalMode,
+  onToggleYoloApprovalMode,
+  onSetGoal,
+  onClearGoal,
   onSwitchModel,
   onSetEffort,
-  onPickFolder,
-  onRemoveWorkspace,
+  onSetTokenMode,
   insertRequest,
   disabled,
   decisionPending = false,
@@ -144,10 +350,13 @@ export function Composer({
   turnStartAt,
   turnTokens,
   retry,
-  workspaceRefreshSignal,
+  transientDismissSignal,
 }: {
   running: boolean;
-  mode: Mode;
+  collaborationMode: CollaborationMode;
+  toolApprovalMode: ToolApprovalMode;
+  tokenMode: TokenMode;
+  goal?: string;
   cwd?: string;
   modelLabel: string;
   tabId?: string;
@@ -158,23 +367,29 @@ export function Composer({
   onCancel: () => string | undefined;
   onCycleMode: () => void;
   onSetMode: (mode: Mode) => void;
+  onSetCollaborationMode: (mode: CollaborationMode) => void;
+  onSetToolApprovalMode: (mode: ToolApprovalMode) => void;
+  onToggleYoloApprovalMode: () => void;
+  onSetGoal: (goal: string) => void;
+  onClearGoal: () => void;
   onSwitchModel: (name: string) => void;
   onSetEffort: (level: string) => void;
-  onPickFolder: (path?: string) => Promise<string>;
-  onRemoveWorkspace: (path: string) => Promise<void>;
+  onSetTokenMode: (mode: TokenMode) => void;
   insertRequest?: ComposerInsertRequest | null;
   disabled?: boolean;
   decisionPending?: boolean;
-  // ready/cwd re-trigger the command fetch: Commands() returns only built-ins
-  // until boot.Build finishes (the controller, hence skills/custom/MCP, is nil
-  // before then), and the available set changes when the workspace switches.
+  // ready/cwd/running re-trigger the command fetch: Commands() returns only
+  // built-ins until boot.Build finishes (the controller, hence skills/custom/MCP,
+  // is nil before then), the available set changes when the workspace switches,
+  // and a completed turn may have installed skills or MCP prompts.
   ready?: boolean;
   turnStartAt?: number;
   turnTokens?: number;
   retry?: { attempt: number; max: number };
-  workspaceRefreshSignal?: number;
+  transientDismissSignal?: number;
 }) {
   const { t, locale } = useI18n();
+  const { showToast } = useToast();
   const now = useTick(running);
   const [text, setText] = useState("");
   const [attachments, setAttachments] = useState<Attachment[]>([]);
@@ -187,26 +402,60 @@ export function Composer({
   const [active, setActive] = useState(0);
   const [dismissed, setDismissed] = useState(false);
   const [dragOver, setDragOver] = useState(false);
-  const [workspaceMenuOpen, setWorkspaceMenuOpen] = useState(false);
-  const [workspaceQuery, setWorkspaceQuery] = useState("");
-  const [workspaces, setWorkspaces] = useState<WorkspaceView[]>([]);
-  // Two-click delete: the first click on the trash icon moves the row into a
-  // "Confirm?" state and shows a real label ("Delete?") on the icon; the
-  // second click (within ~3s) actually fires the removal. A click anywhere
-  // else, Escape, or a workspace switch resets the row. We keep the existing
-  // server-side RemoveWorkspace as the actual delete so the projects file
-  // stays the single source of truth — this is purely a confirmation gate.
-  const [confirmRemovePath, setConfirmRemovePath] = useState<string | null>(null);
   const [composerHeight, setComposerHeight] = useState<number | null>(loadComposerHeight);
   const [composerResizing, setComposerResizing] = useState(false);
+  const [textareaAutoHeight, setTextareaAutoHeight] = useState<number | null>(null);
+  const [textareaAutoOverflow, setTextareaAutoOverflow] = useState(false);
+  const [intentMenuOpen, setIntentMenuOpen] = useState(false);
+  const [intentMenuClosing, setIntentMenuClosing] = useState(false);
+  const [moreMenuOpen, setMoreMenuOpen] = useState(false);
+  const [moreMenuClosing, setMoreMenuClosing] = useState(false);
+  const [showPastChats, setShowPastChats] = useState(false);
+  const [pastChats, setPastChats] = useState<SessionMeta[]>([]);
+  const [pastChatQuery, setPastChatQuery] = useState("");
+  const [sessionRefs, setSessionRefs] = useState<SessionReference[]>([]);
+  const [loadingPastChats, setLoadingPastChats] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [composerPrompt, setComposerPrompt] = useState<string | null>(null);
+  // Prompt history navigation (plain ↑/↓)
+  // Use refs for values read inside async closures to avoid stale captures
+  // on rapid key presses (the React closure trap).
+  const historyIndexRef = useRef(-1);
+  const historyEntriesRef = useRef<PromptHistoryEntry[]>([]);
+  const historyLoadRef = useRef<Promise<void> | null>(null);
+  const historyGenerationRef = useRef(cacheGeneration());
+  // historyIndex state is written (via setHistoryIndex) for potential future
+  // UI feedback (e.g. "3/200" indicator); currently unused in render.
+  const [, setHistoryIndex] = useState(-1);
+  const savedTextRef = useRef("");
   const taRef = useRef<HTMLTextAreaElement>(null);
   const composerCardRef = useRef<HTMLDivElement>(null);
-  const workspaceAnchorRef = useRef<HTMLDivElement>(null);
+  const intentMenuAnchorRef = useRef<HTMLButtonElement>(null);
+  const moreMenuAnchorRef = useRef<HTMLButtonElement>(null);
+  const intentCloseTimerRef = useRef<number | null>(null);
+  const moreCloseTimerRef = useRef<number | null>(null);
   const wasRunning = useRef(running);
   const composingRef = useRef(false);
   const lastCompositionEndAt = useRef(0);
   const lastSelectionRef = useRef({ start: 0, end: 0 });
   const consumedInsertIdRef = useRef(0);
+  const lastTransientDismissSignal = useRef(transientDismissSignal);
+  const submittingRef = useRef(false);
+  const nativeClipboardPasteTimerRef = useRef<number | null>(null);
+  // Snapshot of the current cwd so async callbacks (openPastChats) can detect
+  // workspace switches and discard stale responses (issue #3601).
+  const cwdRef = useRef(cwd);
+  cwdRef.current = cwd;
+  const attachmentDedupRef = useRef(new DedupIndex());
+  const attachmentDedupKeysRef = useRef<Record<string, AttachmentDedupKey>>({});
+
+  const clearNativeClipboardPasteTimer = () => {
+    if (nativeClipboardPasteTimerRef.current === null) return;
+    window.clearTimeout(nativeClipboardPasteTimerRef.current);
+    nativeClipboardPasteTimerRef.current = null;
+  };
+
+  useEffect(() => () => clearNativeClipboardPasteTimer(), []);
 
   useEffect(() => {
     if (wasRunning.current && !running && text.trim() === "") {
@@ -221,14 +470,14 @@ export function Composer({
   const [commands, setCommands] = useState<CommandInfo[]>([]);
   useEffect(() => {
     app.Commands().then((next) => setCommands(asArray(next))).catch(() => {});
-  }, [ready, cwd]);
+  }, [ready, cwd, running]);
 
   const slashQuery = useMemo(() => {
     if (!text.startsWith("/") || /\s/.test(text)) return null;
     return text.slice(1).toLowerCase();
   }, [text]);
   const slashMatches = useMemo(
-    () => (slashQuery === null ? [] : commands.filter((c) => c.name.toLowerCase().includes(slashQuery)).slice(0, 8)),
+    () => (slashQuery === null ? [] : commands.filter((c) => c.name.toLowerCase().includes(slashQuery))),
     [slashQuery, commands],
   );
 
@@ -238,7 +487,7 @@ export function Composer({
   // by 120ms so rapid typing doesn't flood the backend with IPC calls — the
   // menu only updates after the user pauses.
   const [argRes, setArgRes] = useState<SlashArgsResult | null>(null);
-  const debounceRef = useRef<ReturnType<typeof setTimeout>>();
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   useEffect(() => {
     if (!text.startsWith("/") || !/\s/.test(text)) {
       setArgRes(null);
@@ -295,6 +544,27 @@ export function Composer({
   const [searchEntries, setSearchEntries] = useState<DirEntry[]>([]);
   const dirCache = useRef<Record<string, DirEntry[]>>({});
   const searchCache = useRef<Record<string, DirEntry[]>>({});
+
+  // When the workspace/project changes (cwd prop), invalidate all @ mention
+  // state so the picker reloads candidates for the new project. Without this,
+  // dirCache/searchCache retain entries from the old project and the picker
+  // shows stale results (issue #3601).
+  const prevCwdRef = useRef(cwd);
+  useEffect(() => {
+    if (prevCwdRef.current === cwd) return; // skip mount — state already initial
+    prevCwdRef.current = cwd;
+    dirCache.current = {};
+    searchCache.current = {};
+    setEntries([]);
+    setSearchEntries([]);
+    setShowPastChats(false);
+    setPastChats([]);
+    setPastChatQuery("");
+    setLoadingPastChats(false);
+    setActive(0);
+    setDismissed(false);
+  }, [cwd]);
+
   useEffect(() => {
     if (atRaw === null) return;
     const cached = dirCache.current[atDir];
@@ -314,8 +584,8 @@ export function Composer({
     return () => {
       live = false;
     };
-    // re-fetch only when the menu opens or the directory level changes
-  }, [atRaw === null, atDir]);
+    // re-fetch when the menu opens or the directory level changes
+  }, [atRaw === null, atDir, cwd]);
   useEffect(() => {
     if (atRaw === null || atDir !== "" || atFrag === "") {
       setSearchEntries([]);
@@ -339,20 +609,31 @@ export function Composer({
     return () => {
       live = false;
     };
-  }, [atRaw === null, atDir, atFrag]);
+  }, [atRaw === null, atDir, atFrag, cwd]);
   const atMatches = useMemo(
     () => {
       if (atRaw === null) return [];
-      const local = entries.filter((e) => e.name.toLowerCase().includes(atFrag));
-      const seen = new Set(local.map((e) => e.name));
-      const searched = searchEntries.filter((e) => {
-        const basename = e.name.split("/").pop()?.toLowerCase() ?? "";
-        return basename.includes(atFrag) && !seen.has(e.name);
-      });
-      return [...local, ...searched].slice(0, 10);
+      return filterAtMatches(entries, searchEntries, atFrag);
     },
     [atRaw, atFrag, entries, searchEntries],
   );
+
+  // Unified menu item model for the @ menu. "past:chats" is a real selectable
+  // item (kind "pastChats"), not an active===0 special case.
+  type AtMenuItem =
+    | { kind: "pastChats" }
+    | { kind: "file"; entry: DirEntry };
+
+  const includePastChatsItem = atRaw !== null && atDir === "" && (atFrag === "" || PAST_CHATS_MENU_ITEM.startsWith(atFrag));
+
+  const atMenuItems = useMemo<AtMenuItem[]>(
+    () => [
+      ...(includePastChatsItem ? [{ kind: "pastChats" as const }] : []),
+      ...atMatches.map((entry) => ({ kind: "file" as const, entry })),
+    ],
+    [includePastChatsItem, atMatches],
+  );
+
 
   // --- which menu (if any) is open --- (slash command names win; then slash
   // arguments; then @-refs — they're rarely valid at once)
@@ -361,16 +642,16 @@ export function Composer({
       ? "slash"
       : argRes && argRes.items.length > 0 && !dismissed
         ? "slasharg"
-        : atMatches.length > 0 && !dismissed
+        : atRaw !== null && !dismissed
           ? "at"
           : null;
-  const count =
+  const countBase =
     menuMode === "slash"
       ? slashMatches.length
       : menuMode === "slasharg"
         ? argRes!.items.length
         : menuMode === "at"
-          ? atMatches.length
+          ? atMenuItems.length
           : 0;
 
   // Reset highlight + un-dismiss whenever the active query changes.
@@ -378,6 +659,63 @@ export function Composer({
     setActive(0);
     setDismissed(false);
   }, [slashQuery, atRaw]);
+
+  useEffect(() => {
+    if (transientDismissSignal === undefined || transientDismissSignal === lastTransientDismissSignal.current) return;
+    lastTransientDismissSignal.current = transientDismissSignal;
+    setDismissed(true);
+  }, [transientDismissSignal]);
+
+  // When the @ trigger disappears (user deleted the @), close the past:chats
+  // sub-menu and reset related state. Without this, showPastChats can outlive
+  // the @ token and leave the session list visible with no way to dismiss it.
+  useEffect(() => {
+    if (menuMode !== "at" && showPastChats) {
+      setShowPastChats(false);
+      setPastChatQuery("");
+      setActive(0);
+    }
+  }, [menuMode]);
+
+  const resetPromptHistoryNavigation = () => {
+    if (historyIndexRef.current === -1) return;
+    historyIndexRef.current = -1;
+    setHistoryIndex(-1);
+  };
+
+  const syncPromptHistoryGeneration = () => {
+    const nextGeneration = cacheGeneration();
+    if (historyGenerationRef.current === nextGeneration) return;
+    historyGenerationRef.current = nextGeneration;
+    historyEntriesRef.current = [];
+    historyLoadRef.current = null;
+    historyIndexRef.current = -1;
+    setHistoryIndex(-1);
+  };
+
+  const ensurePromptHistoryIndex = async (index: number): Promise<boolean> => {
+    if (index < historyEntriesRef.current.length) return true;
+    if (historyLoadRef.current) await historyLoadRef.current;
+    while (index >= historyEntriesRef.current.length) {
+      let loaded = 0;
+      const task = loadOlder().then((entries) => {
+        loaded = entries.length;
+        if (loaded > 0) {
+          historyEntriesRef.current = historyEntriesRef.current.concat(entries);
+        }
+      });
+      historyLoadRef.current = task;
+      await task;
+      historyLoadRef.current = null;
+      if (loaded === 0) return index < historyEntriesRef.current.length;
+    }
+    return true;
+  };
+
+  const prefetchPromptHistoryTail = () => {
+    if (historyLoadRef.current) return;
+    void ensurePromptHistoryIndex(historyEntriesRef.current.length);
+  };
 
   const setTextCaretEnd = (next: string) => {
     setText(next);
@@ -448,20 +786,136 @@ export function Composer({
     return expanded;
   };
 
-  const submit = () => {
-    if (disabled) return;
-    const t = text.trim();
-    if ((!t && attachments.length === 0 && workspaceRefs.length === 0) || pendingPaste > 0) return;
+  const rememberAttachment = (path: string, key: AttachmentDedupKey) => {
+    attachmentDedupRef.current.add(key.hash, key.source);
+    attachmentDedupKeysRef.current[path] = key;
+  };
+
+  const forgetAttachment = (path: string) => {
+    const key = attachmentDedupKeysRef.current[path];
+    if (key) {
+      attachmentDedupRef.current.forget(key.hash, key.source);
+      delete attachmentDedupKeysRef.current[path];
+    }
+  };
+
+  const clearAttachments = () => {
+    setAttachments([]);
+    attachmentDedupRef.current.clear();
+    attachmentDedupKeysRef.current = {};
+  };
+
+  const removeAttachment = (path: string) => {
+    forgetAttachment(path);
+    setAttachments((prev) => prev.filter((x) => x.path !== path));
+    requestAnimationFrame(() => taRef.current?.focus());
+  };
+
+  const clearIntentCloseTimer = useCallback(() => {
+    if (intentCloseTimerRef.current === null) return;
+    window.clearTimeout(intentCloseTimerRef.current);
+    intentCloseTimerRef.current = null;
+  }, []);
+
+  const openIntentMenu = useCallback(() => {
+    clearIntentCloseTimer();
+    setIntentMenuClosing(false);
+    setIntentMenuOpen(true);
+  }, [clearIntentCloseTimer]);
+
+  const closeIntentMenu = useCallback((afterClose?: () => void) => {
+    clearIntentCloseTimer();
+    setIntentMenuClosing(true);
+    window.requestAnimationFrame(() => setIntentMenuOpen(false));
+    const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    intentCloseTimerRef.current = window.setTimeout(() => {
+      intentCloseTimerRef.current = null;
+      setIntentMenuClosing(false);
+      afterClose?.();
+    }, reduceMotion ? 0 : ANCHORED_POPOVER_CLOSE_MS);
+  }, [clearIntentCloseTimer]);
+
+  useEffect(() => () => clearIntentCloseTimer(), [clearIntentCloseTimer]);
+
+  const clearMoreCloseTimer = useCallback(() => {
+    if (moreCloseTimerRef.current === null) return;
+    window.clearTimeout(moreCloseTimerRef.current);
+    moreCloseTimerRef.current = null;
+  }, []);
+
+  const openMoreMenu = useCallback(() => {
+    clearMoreCloseTimer();
+    setMoreMenuClosing(false);
+    setMoreMenuOpen(true);
+  }, [clearMoreCloseTimer]);
+
+  const closeMoreMenu = useCallback((afterClose?: () => void) => {
+    clearMoreCloseTimer();
+    setMoreMenuClosing(true);
+    window.requestAnimationFrame(() => setMoreMenuOpen(false));
+    const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    moreCloseTimerRef.current = window.setTimeout(() => {
+      moreCloseTimerRef.current = null;
+      setMoreMenuClosing(false);
+      afterClose?.();
+    }, reduceMotion ? 0 : ANCHORED_POPOVER_CLOSE_MS);
+  }, [clearMoreCloseTimer]);
+
+  useEffect(() => () => clearMoreCloseTimer(), [clearMoreCloseTimer]);
+
+  const fileDedupKey = async (file: File): Promise<AttachmentDedupKey> => ({
+    hash: await sha256(file),
+    source: `file:${file.name}:${file.size}:${file.lastModified}`,
+  });
+
+  const planModeOn = collaborationMode === "plan";
+  const activeGoal = (goal ?? "").trim();
+  const goalModeOn = collaborationMode === "goal";
+  const tokenModeOn = tokenMode === "economy";
+
+  const submit = async () => {
+    if (disabled || submittingRef.current) return;
+    const trimmedText = text.trim();
+    if (pendingPaste > 0) return;
+    if (!trimmedText && attachments.length === 0 && workspaceRefs.length === 0) {
+      if (goalModeOn && !activeGoal) {
+        setComposerPrompt(t("composer.goalInputRequired"));
+        requestAnimationFrame(() => taRef.current?.focus());
+      }
+      return;
+    }
+    setComposerPrompt(null);
+    submittingRef.current = true;
+    setSubmitting(true);
+    try {
+    const orderedAttachments = sortComposerAttachments(attachments);
     const refs = [
       ...workspaceRefs.map((ref) => formatWorkspaceReference(ref.path, ref.isDir)),
-      ...attachments.map((a) => `@${a.path}`),
+      ...orderedAttachments.map((a) => `@${a.path}`),
     ].join(" ");
-    const displayText = [t, refs].filter(Boolean).join(t && refs ? " " : "");
-    const submitText = [expandPastedBlocks(t), refs].filter(Boolean).join(t && refs ? " " : "");
+    const displayRefs = [
+      ...workspaceRefs.map((ref) => formatWorkspaceReference(ref.path, ref.isDir)),
+      ...orderedAttachments.map(formatAttachmentDisplayReference),
+    ].join(" ");
+    const displayText = [trimmedText, displayRefs].filter(Boolean).join(trimmedText && displayRefs ? " " : "");
+    // PR-B: when past:chats refs are attached, prepend their formatted transcript
+    // to submitText only (displayText stays unchanged so the user still sees their
+    // original prompt in the input preview). With no refs we keep the original
+    // submitText verbatim — no header, no rewording, byte-identical to pre-PR-B.
+    const sessionContext = sessionRefs.length === 0 ? "" : await buildSessionContext(sessionRefs);
+    const baseSubmitText = [expandPastedBlocks(trimmedText), refs].filter(Boolean).join(trimmedText && refs ? " " : "");
+    const submitText = sessionContext ? `${sessionContext}${baseSubmitText}` : baseSubmitText;
     onSend(displayText, submitText);
     setText("");
-    setAttachments([]);
+    historyIndexRef.current = -1;
+    setHistoryIndex(-1);
+    clearAttachments();
     setWorkspaceRefs([]);
+    setSessionRefs([]);
+    } finally {
+      submittingRef.current = false;
+      setSubmitting(false);
+    }
   };
 
   const readFileAsDataURL = (file: File) =>
@@ -478,11 +932,16 @@ export function Composer({
     for (const file of images) {
       setPendingPaste((n) => n + 1);
       try {
+        const key = await fileDedupKey(file);
+        if (attachmentDedupRef.current.seen(key.hash, key.source)) continue;
         const dataUrl = await readFileAsDataURL(file);
         const path = await app.SavePastedImage(dataUrl);
         const previewUrl = await app.AttachmentDataURL(path);
-        setAttachments((prev) => [...prev, { path, previewUrl }]);
-      } catch {
+        rememberAttachment(path, key);
+        setAttachments((prev) => [...prev, { path, previewUrl, displayName: file.name }]);
+      } catch (error) {
+        console.warn("[composer] failed to attach pasted image", error);
+        showToast(t("composer.attachImageFailed"), "warn");
         // non-fatal: a failed image attach must not block normal text input
       } finally {
         setPendingPaste((n) => Math.max(0, n - 1));
@@ -498,9 +957,12 @@ export function Composer({
     for (const file of others) {
       setPendingPaste((n) => n + 1);
       try {
+        const key = await fileDedupKey(file);
+        if (attachmentDedupRef.current.seen(key.hash, key.source)) continue;
         const dataUrl = await readFileAsDataURL(file);
         const path = await app.SavePastedFile(file.name, dataUrl);
-        setAttachments((prev) => [...prev, { path }]);
+        rememberAttachment(path, key);
+        setAttachments((prev) => [...prev, { path, displayName: file.name }]);
       } catch {
         // non-fatal: a failed attach must not block normal text input
       } finally {
@@ -514,6 +976,23 @@ export function Composer({
     void attachOtherFiles(files);
   };
 
+  const attachNativeClipboardImage = async (notifyOnError: boolean) => {
+    setPendingPaste((n) => n + 1);
+    try {
+      const path = await app.SaveClipboardImage();
+      const previewUrl = await app.AttachmentDataURL(path);
+      const key = { hash: await dataURLHash(previewUrl), source: `native-clipboard:${path}` };
+      if (attachmentDedupRef.current.seen(key.hash, key.source)) return;
+      rememberAttachment(path, key);
+      setAttachments((prev) => [...prev, { path, previewUrl }]);
+    } catch (error) {
+      console.warn("[composer] failed to read native clipboard image", error);
+      if (notifyOnError) showToast(t("composer.pasteImageFailed"), "warn");
+    } finally {
+      setPendingPaste((n) => Math.max(0, n - 1));
+    }
+  };
+
   // OS file drops arrive as absolute paths through the native bridge (the webview
   // withholds them from the HTML drop event); the kernel resolves each into a
   // workspace @reference or a stored attachment.
@@ -522,11 +1001,14 @@ export function Composer({
     for (const path of paths) {
       setPendingPaste((n) => n + 1);
       try {
+        const key = { hash: "", source: `path:${path}` };
+        if (attachmentDedupRef.current.seen(key.hash, key.source)) continue;
         const item = await app.AttachDropped(path);
         if (item.kind === "workspace") {
           addWorkspaceReference({ path: item.path, isDir: item.isDir });
         } else {
-          setAttachments((prev) => [...prev, { path: item.path, previewUrl: item.previewUrl }]);
+          rememberAttachment(item.path, key);
+          setAttachments((prev) => [...prev, { path: item.path, previewUrl: item.previewUrl, displayName: baseName(path) }]);
         }
       } catch {
         // non-fatal: a failed drop attach must not block normal text input
@@ -536,10 +1018,13 @@ export function Composer({
     }
   };
 
-  useEffect(() => onFilesDropped((paths) => void attachDroppedPaths(paths)), []);
+  useEffect(() => {
+    return onFilesDropped((paths) => void attachDroppedPaths(paths));
+  }, []);
 
   const onPaste = (e: ClipboardEvent<HTMLTextAreaElement>) => {
-    const files = Array.from(e.clipboardData.files);
+    clearNativeClipboardPasteTimer();
+    const files = clipboardFiles(e.clipboardData);
     if (files.length > 0) {
       e.preventDefault();
       attachFiles(files);
@@ -547,6 +1032,12 @@ export function Composer({
     }
 
     const pasted = e.clipboardData.getData("text");
+    const hasImageHint = clipboardHasImageHint(e.clipboardData);
+    if (hasImageHint || pasted === "") {
+      e.preventDefault();
+      void attachNativeClipboardImage(hasImageHint);
+      return;
+    }
     if (!shouldFoldPaste(pasted)) return;
 
     e.preventDefault();
@@ -644,6 +1135,7 @@ export function Composer({
   const pickCommand = (c: CommandInfo) => setTextCaretEnd("/" + c.name + " ");
 
   const activePastedBlocks = pastedBlocks.filter((block) => text.includes(block.label));
+  const shellModeActive = text.trimStart().startsWith("!");
 
   const removeWorkspaceReference = (target: WorkspaceReference) => {
     const key = workspaceReferenceKey(target);
@@ -671,59 +1163,56 @@ export function Composer({
     setTextCaretEnd(next);
   };
 
-  const workspaceName = useMemo(() => {
-    if (!cwd) return "";
-    const parts = cwd.split(/[/\\]/).filter(Boolean);
-    return parts.length > 0 ? parts[parts.length - 1] : cwd;
-  }, [cwd]);
-
-  const loadWorkspaces = () => {
-    app.ListWorkspaces().then((next) => setWorkspaces(asArray(next))).catch(() => setWorkspaces([]));
-  };
-
-  useEffect(() => {
-    if (workspaceMenuOpen) loadWorkspaces();
-  }, [workspaceMenuOpen, cwd, workspaceRefreshSignal]);
-
-  const filteredWorkspaces = useMemo(() => {
-    const q = workspaceQuery.trim().toLowerCase();
-    if (!q) return workspaces;
-    return workspaces.filter((w) => `${w.name} ${w.path}`.toLowerCase().includes(q));
-  }, [workspaceQuery, workspaces]);
-
-  const chooseWorkspace = async (path?: string) => {
-    const next = await onPickFolder(path);
-    if (next) {
-      setWorkspaceMenuOpen(false);
-      setWorkspaceQuery("");
-    }
-  };
-
-  const removeWorkspace = async (path: string) => {
-    await onRemoveWorkspace(path);
-    setWorkspaces((prev) => prev.filter((w) => w.path !== path));
-    setConfirmRemovePath(null);
-  };
-
-  // First click on the trash icon arms the confirmation; second click fires.
-  // We reset the armed state after a short idle window so the user doesn't
-  // accidentally delete a workspace they walked past 30s ago.
-  useEffect(() => {
-    if (!confirmRemovePath) return;
-    const id = window.setTimeout(() => setConfirmRemovePath(null), 3000);
-    return () => window.clearTimeout(id);
-  }, [confirmRemovePath]);
-
-  // Escape / menu close / workspace switch all clear the armed delete.
-  useEffect(() => {
-    if (!workspaceMenuOpen) setConfirmRemovePath(null);
-  }, [workspaceMenuOpen]);
-
   useEffect(() => {
     const onResize = () => setComposerHeight((height) => (height === null ? null : clampComposerHeight(height)));
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
   }, []);
+
+  const measureTextareaAutoHeight = useCallback(() => {
+    if (composerHeight !== null) {
+      setTextareaAutoHeight(null);
+      setTextareaAutoOverflow(false);
+      return;
+    }
+    const node = taRef.current;
+    if (!node) return;
+    const previousHeight = node.style.height;
+    node.style.height = "auto";
+    const maxHeight = composerAutoInputMaxHeight();
+    const nextHeight = Math.min(node.scrollHeight, maxHeight);
+    const nextOverflow = node.scrollHeight > maxHeight + 1;
+    node.style.height = previousHeight;
+    setTextareaAutoHeight((current) => (current === nextHeight ? current : nextHeight));
+    setTextareaAutoOverflow((current) => (current === nextOverflow ? current : nextOverflow));
+  }, [composerHeight]);
+
+  useLayoutEffect(() => {
+    measureTextareaAutoHeight();
+  }, [text, measureTextareaAutoHeight]);
+
+  useEffect(() => {
+    if (composerHeight !== null) return;
+    let frame = 0;
+    const update = () => {
+      if (frame) window.cancelAnimationFrame(frame);
+      frame = window.requestAnimationFrame(() => {
+        frame = 0;
+        measureTextareaAutoHeight();
+      });
+    };
+    window.addEventListener("resize", update);
+    const observer = new MutationObserver(update);
+    observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["data-text-size", "data-font-family", "data-mono-font-family", "style"],
+    });
+    return () => {
+      if (frame) window.cancelAnimationFrame(frame);
+      window.removeEventListener("resize", update);
+      observer.disconnect();
+    };
+  }, [composerHeight, measureTextareaAutoHeight]);
 
   const saveComposerHeight = (height: number) => {
     saveLayoutSize("composerHeight", height, clampComposerHeight);
@@ -734,7 +1223,7 @@ export function Composer({
     clearLayoutSize("composerHeight");
   };
 
-  const onComposerResizeStart = (e: ReactPointerEvent<HTMLDivElement>) => {
+  const onComposerResizeStart = (e: ReactPointerEvent<HTMLButtonElement>) => {
     if (e.button !== 0) return;
     const card = composerCardRef.current;
     if (!card) return;
@@ -766,11 +1255,128 @@ export function Composer({
     document.addEventListener("pointercancel", onUp);
   };
 
+  const onComposerResizeKeyDown = (e: KeyboardEvent<HTMLButtonElement>) => {
+    const card = composerCardRef.current;
+    const current = composerHeight ?? card?.getBoundingClientRect().height ?? COMPOSER_MIN_HEIGHT;
+    const step = e.shiftKey ? 32 : 16;
+    let next: number | null = null;
+    if (e.key === "ArrowUp" || e.key === "PageUp") next = current + step;
+    else if (e.key === "ArrowDown" || e.key === "PageDown") next = current - step;
+    else if (e.key === "Home") next = COMPOSER_MIN_HEIGHT;
+    else if (e.key === "End") next = composerMaxHeight();
+    if (next === null) return;
+    e.preventDefault();
+    const height = clampComposerHeight(next);
+    setComposerHeight(height);
+    saveComposerHeight(height);
+  };
+
   const pickEntry = (e: DirEntry) => {
     const atPos = text.length - (atRaw?.length ?? 0) - 1; // index of '@'
     const prefix = text.slice(0, atPos);
     // A directory keeps the menu open (trailing "/"); a file completes it (space).
     setTextCaretEnd(prefix + "@" + atDir + e.name + (e.isDir ? "/" : " "));
+  };
+
+  // --- past:chats session reference ---
+  const openPastChats = async () => {
+    const snapshotCwd = cwdRef.current;
+    setShowPastChats(true);
+    setActive(0);
+    setPastChatQuery("");
+    setLoadingPastChats(true);
+    try {
+      const sessions = await app.ListSessions();
+      // Discard stale response if workspace changed while the request was in-flight.
+      if (cwdRef.current !== snapshotCwd) return;
+      const sorted = asArray(sessions)
+        .filter((s) => !s.current)
+        .sort((a, b) => {
+          const at = a.lastActivityAt || a.modTime || a.createdAt || 0;
+          const bt = b.lastActivityAt || b.modTime || b.createdAt || 0;
+          return bt - at;
+        })
+        .slice(0, 50);
+      setPastChats(sorted);
+    } catch {
+      if (cwdRef.current !== snapshotCwd) return;
+      setPastChats([]);
+    } finally {
+      if (cwdRef.current === snapshotCwd) setLoadingPastChats(false);
+    }
+  };
+
+  // PR-C1: client-side filter for the past:chats list. Matches against the
+  // human-visible fields (title, topic, preview, path, workspace) so users
+  // can narrow long session lists without a backend round-trip. Lowercased
+  // substring match keeps the behaviour predictable across locales.
+  const filteredPastChats = useMemo(() => {
+    const q = pastChatQuery.trim().toLowerCase();
+    if (!q) return pastChats;
+    return pastChats.filter((session) =>
+      [
+        session.title,
+        session.topicTitle,
+        session.preview,
+        session.path,
+        session.workspaceRoot,
+      ]
+        .map((value) => String(value ?? "").toLowerCase())
+        .some((value) => value.includes(q)),
+    );
+  }, [pastChats, pastChatQuery]);
+
+  // Final menu item count: when the past:chats list is open, count the
+  // filtered sessions instead of file entries + the "past:chats" row.
+  const count = menuMode === "at" && showPastChats
+    ? filteredPastChats.length
+    : countBase;
+
+  // Clamp active index when the menu item count changes (e.g. switching
+  // between file list and past:chats list, or filtering sessions).
+  useEffect(() => {
+    const maxIdx = Math.max(0, count - 1);
+    setActive((prev) => (prev > maxIdx ? 0 : prev));
+  }, [count]);
+
+
+  const removeAtToken = (value: string) => {
+    return value.replace(/(?:^|\s)@[^\s]*$/, "").trimEnd();
+  };
+
+  const pickSession = (session: SessionMeta) => {
+    setSessionRefs((prev) => {
+      if (prev.some((x) => x.path === session.path)) {
+        return prev;
+      }
+      return [
+        ...prev,
+        {
+          path: session.path,
+          title: session.title || session.topicTitle || session.preview || "Untitled",
+          preview: session.preview,
+          turns: session.turns,
+          createdAt: session.createdAt,
+          lastActivityAt: session.lastActivityAt,
+        },
+      ];
+    });
+    setText((prev) => removeAtToken(prev));
+    setPastChatQuery("");
+    setShowPastChats(false);
+    setActive(0);
+    // Return focus to textarea so the user can keep typing immediately.
+    requestAnimationFrame(() => {
+      taRef.current?.focus();
+      taRef.current?.setSelectionRange(
+        taRef.current.value.length,
+        taRef.current.value.length,
+      );
+    });
+  };
+
+  const removeSessionRef = (path: string) => {
+    setSessionRefs((prev) => prev.filter((ref) => ref.path !== path));
   };
 
   // pickArg replaces just the current token with the suggestion. A "descend" item
@@ -782,30 +1388,143 @@ export function Composer({
   };
 
   const pickActive = () => {
-    if (menuMode === "slash") pickCommand(slashMatches[active]);
-    else if (menuMode === "slasharg" && argRes) pickArg(argRes.items[active]);
-    else if (menuMode === "at") pickEntry(atMatches[active]);
+    if (menuMode === "slash") {
+      const item = slashMatches[active];
+      if (item) pickCommand(item);
+      return;
+    }
+    if (menuMode === "slasharg" && argRes) {
+      const item = argRes.items[active];
+      if (item) pickArg(item);
+      return;
+    }
+    if (menuMode === "at") {
+      if (showPastChats) {
+        const session = filteredPastChats[active];
+        if (session) pickSession(session);
+        return;
+      }
+      const item = atMenuItems[active];
+      if (!item) return;
+      if (item.kind === "pastChats") {
+        void openPastChats();
+        return;
+      }
+      pickEntry(item.entry);
+    }
   };
 
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     const composing = isImeKeyEvent(e, composingRef.current, lastCompositionEndAt.current);
-    if (e.key === "Enter" && composing) return;
+    const native = e.nativeEvent as globalThis.KeyboardEvent & {
+      keyCode?: number;
+      which?: number;
+      code?: string;
+    };
+    const fnKey = isFnKeyEvent(native);
+    const historyDirection = promptHistoryDirectionFromEvent({
+      key: e.key,
+      code: native.code,
+      keyCode: native.keyCode,
+      which: native.which,
+    });
 
-    // Shift+Tab cycles the input mode (normal → plan → YOLO → normal). Handled
-    // before the menus so it works even while one is open.
+    if (e.key === "Enter" && composing) return;
+    if (fnKey) return;
+
+    if (isPasteShortcut(e) && !composing) {
+      clearNativeClipboardPasteTimer();
+      nativeClipboardPasteTimerRef.current = window.setTimeout(() => {
+        nativeClipboardPasteTimerRef.current = null;
+        void attachNativeClipboardImage(false);
+      }, 160);
+    }
+
+    // Shift+Tab toggles plan mode only. Tool access is deliberately changed via
+    // the access menu so keyboard cycling never crosses a permission boundary.
     if (e.key === "Tab" && e.shiftKey && !composing) {
       e.preventDefault();
       onCycleMode();
       return;
     }
 
+    if (isYoloToggleShortcut(e) && !composing) {
+      e.preventDefault();
+      onToggleYoloApprovalMode();
+      return;
+    }
+
+    syncPromptHistoryGeneration();
+
+    const canUseCurrentPromptHistory = () => canUsePromptHistory({
+      direction: historyDirection,
+      menuOpen: Boolean(menuMode),
+      composing,
+      altKey: e.altKey,
+      ctrlKey: e.ctrlKey,
+      metaKey: e.metaKey,
+      shiftKey: e.shiftKey,
+      fnKey,
+      value: e.currentTarget.value,
+      selectionStart: e.currentTarget.selectionStart,
+      selectionEnd: e.currentTarget.selectionEnd,
+      historyIndex: historyIndexRef.current,
+    });
+
+    // Prompt history navigation: plain ↑/↓ only. Fn/Page/Home/End are left to
+    // the native textarea/OS so macOS dictation and text navigation keep working.
+
+    // When navigating history, any other key (letter, Backspace, etc.) resets
+    // back to the saved draft when another key is used.
+    if (historyIndexRef.current !== -1 && !canUseCurrentPromptHistory()) {
+      historyIndexRef.current = -1;
+      setHistoryIndex(-1);
+    }
+
+    if (canUseCurrentPromptHistory()) {
+      e.preventDefault();
+      void (async () => {
+        // Use refs for all mutable reads inside the async closure so rapid
+        // successive key presses always see the latest values.
+        if (historyIndexRef.current === -1) {
+          savedTextRef.current = text; // save current draft
+        }
+        const target =
+          historyDirection === "up"
+            ? historyIndexRef.current + 1
+            : historyDirection === "down"
+              ? historyIndexRef.current - 1
+              : historyIndexRef.current;
+        if (target >= historyEntriesRef.current.length && !(await ensurePromptHistoryIndex(target))) {
+          return;
+        }
+        const next =
+          historyDirection === "up"
+            ? Math.min(target, historyEntriesRef.current.length - 1)
+            : historyDirection === "down"
+              ? Math.max(target, -1)
+              : historyIndexRef.current;
+        historyIndexRef.current = next;
+        setHistoryIndex(next);
+        if (next === -1) {
+          setTextCaretEnd(savedTextRef.current);
+        } else {
+          setTextCaretEnd(historyEntriesRef.current[next].text);
+          if (historyDirection === "up" && historyEntriesRef.current.length - 1 - next <= PROMPT_HISTORY_PREFETCH_REMAINING) {
+            prefetchPromptHistoryTail();
+          }
+        }
+      })();
+      return;
+    }
+
     if (menuMode && !composing) {
-      if (e.key === "ArrowDown") {
+      if (e.key === "ArrowDown" && count > 0) {
         e.preventDefault();
         setActive((i) => (i + 1) % count);
         return;
       }
-      if (e.key === "ArrowUp") {
+      if (e.key === "ArrowUp" && count > 0) {
         e.preventDefault();
         setActive((i) => (i - 1 + count) % count);
         return;
@@ -817,7 +1536,13 @@ export function Composer({
       }
       if (e.key === "Escape") {
         e.preventDefault();
-        setDismissed(true);
+        if (showPastChats) {
+          setPastChatQuery("");
+          setShowPastChats(false);
+          setActive(0);
+        } else {
+          setDismissed(true);
+        }
         return;
       }
     }
@@ -835,12 +1560,82 @@ export function Composer({
     }
   };
 
+  // Keydown handler for the past:chats search <input>. The search input is a
+  // sibling of the <textarea>, so keyboard events never reach the textarea's
+  // onKeyDown. We intercept navigation keys here and delegate to the same
+  // menu logic. Regular typing keys (letters, Backspace, etc.) pass through
+  // so the user can type a search query.
+  const onPastChatSearchKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "ArrowDown" || e.key === "ArrowUp" || e.key === "Enter" || e.key === "Tab" || e.key === "Escape") {
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.key === "ArrowDown" && count > 0) {
+        setActive((i) => (i + 1) % count);
+      } else if (e.key === "ArrowUp" && count > 0) {
+        setActive((i) => (i - 1 + count) % count);
+      } else if (e.key === "Enter" || e.key === "Tab") {
+        pickActive();
+      } else if (e.key === "Escape") {
+        setPastChatQuery("");
+        setShowPastChats(false);
+        setActive(0);
+      }
+    }
+  };
+
   const composerCardStyle = composerHeight === null ? undefined : ({ "--composer-height": `${composerHeight}px` } as CSSProperties);
-  const modeOptions: Array<{ id: Mode; label: string; icon: ReactNode }> = [
-    { id: "normal", label: "auto", icon: <Zap size={13} /> },
-    { id: "plan", label: "plan", icon: <List size={13} /> },
-    { id: "yolo", label: "yolo", icon: <AlertTriangle size={13} /> },
-  ];
+  const textareaStyle = composerHeight === null && textareaAutoHeight !== null
+    ? ({ height: `${textareaAutoHeight}px`, overflowY: textareaAutoOverflow ? "auto" : "hidden" } as CSSProperties)
+    : undefined;
+  const composerAutoExpanded = composerHeight === null && textareaAutoHeight !== null && textareaAutoHeight > 40;
+  const draftGoal = text.trim();
+  void onSetMode;
+  const chooseApprovalMode = (nextMode: ToolApprovalMode) => {
+    onSetToolApprovalMode(nextMode);
+    requestAnimationFrame(() => taRef.current?.focus());
+  };
+  const choosePlanMode = () => {
+    closeIntentMenu(() => {
+      onSetCollaborationMode(planModeOn ? "normal" : "plan");
+      requestAnimationFrame(() => taRef.current?.focus());
+    });
+  };
+  const chooseGoalMode = () => {
+    if (goalModeOn) {
+      closeIntentMenu(() => {
+        onClearGoal();
+        requestAnimationFrame(() => taRef.current?.focus());
+      });
+      return;
+    }
+    if (draftGoal) {
+      closeIntentMenu(() => {
+        onSetGoal(draftGoal);
+        setText("");
+        requestAnimationFrame(() => taRef.current?.focus());
+      });
+      return;
+    }
+    closeIntentMenu(() => {
+      onSetCollaborationMode("goal");
+      requestAnimationFrame(() => taRef.current?.focus());
+    });
+  };
+  const chooseTokenMode = () => {
+    closeIntentMenu(() => {
+      onSetTokenMode(tokenModeOn ? "full" : "economy");
+      requestAnimationFrame(() => taRef.current?.focus());
+    });
+  };
+  const effortLevels = asArray(effort?.levels);
+  const currentEffort = effort?.current || "auto";
+  const hasEffort = Boolean(effort?.supported && effortLevels.length > 0);
+  const chooseEffortLevel = (level: string) => {
+    closeMoreMenu(() => {
+      if (level !== currentEffort) onSetEffort(level);
+      requestAnimationFrame(() => taRef.current?.focus());
+    });
+  };
   const runActivity = retry
     ? t("status.retrying", { attempt: retry.attempt, max: retry.max })
     : running && turnStartAt
@@ -852,12 +1647,10 @@ export function Composer({
           return `${word}… ${fmtElapsed(elapsedMs)}${tok}`;
         })()
       : null;
-  const hasWorkspace = Boolean(cwd);
-  const hasEffort = Boolean(effort?.supported);
   const composerMetaClass = [
     "composer-meta",
-    hasWorkspace ? "composer-meta--has-workspace" : "composer-meta--no-workspace",
     hasEffort ? "composer-meta--has-effort" : "composer-meta--no-effort",
+    planModeOn || goalModeOn || tokenModeOn ? "composer-meta--has-intent-chip" : "composer-meta--no-intent-chip",
   ].join(" ");
 
   return (
@@ -867,75 +1660,95 @@ export function Composer({
       onDropCapture={onFileDropCapture}
     >
       <AnchoredPopover
-        open={workspaceMenuOpen && !!cwd}
-        anchorRef={workspaceAnchorRef}
-        onClose={() => setWorkspaceMenuOpen(false)}
-        className="workspace-switcher workspace-switcher--portal"
+        open={intentMenuOpen}
+        closing={intentMenuClosing}
+        anchorRef={intentMenuAnchorRef}
+        onClose={() => closeIntentMenu()}
+        className="composer-access-menu composer-intent-menu"
+        align="start"
       >
-          <label className="workspace-switcher__search">
-            <Search size={14} />
-            <input
-              autoFocus
-              value={workspaceQuery}
-              onChange={(e) => setWorkspaceQuery(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Escape") setWorkspaceMenuOpen(false);
-              }}
-              placeholder={t("composer.searchProjects")}
-            />
-          </label>
-          <div className="workspace-switcher__list">
-            {filteredWorkspaces.map((w) => (
-              <div className="workspace-switcher__row" key={w.path}>
+        <div className="composer-access-menu__section">
+          <div className="composer-access-menu__label">{t("composer.intentMenuTitle")}</div>
+          <button
+            type="button"
+            className={`composer-access-menu__item composer-intent-menu__item${planModeOn ? " composer-access-menu__item--active" : ""}`}
+            onClick={choosePlanMode}
+            disabled={disabled || running}
+            title={planModeOn ? t("composer.exitPlanTitle") : t("composer.enterPlanTitle")}
+          >
+            <List size={16} />
+            <span className="composer-access-menu__copy">
+              <span className="composer-access-menu__title">{t("composer.modePlan")}</span>
+              <span className="composer-access-menu__desc">{t("composer.planModeDesc")}</span>
+            </span>
+            <span className={`composer-intent-switch${planModeOn ? " composer-intent-switch--on" : ""}`} aria-hidden="true">
+              <span />
+            </span>
+          </button>
+          <button
+            type="button"
+            className={`composer-access-menu__item composer-intent-menu__item${goalModeOn ? " composer-access-menu__item--active" : ""}`}
+            onClick={chooseGoalMode}
+            disabled={disabled || running}
+            title={goalModeOn ? activeGoal || t("composer.goalModeActiveDesc") : t("composer.goalModeDesc")}
+          >
+            <Target size={16} />
+            <span className="composer-access-menu__copy">
+              <span className="composer-access-menu__title">{t("composer.modeGoal")}</span>
+              <span className="composer-access-menu__desc">{goalModeOn ? activeGoal || t("composer.goalModeActiveDesc") : t("composer.goalModeDesc")}</span>
+            </span>
+            <span className={`composer-intent-switch${goalModeOn ? " composer-intent-switch--on" : ""}`} aria-hidden="true">
+              <span />
+            </span>
+          </button>
+          <button
+            type="button"
+            className={`composer-access-menu__item composer-intent-menu__item${tokenModeOn ? " composer-access-menu__item--active" : ""}`}
+            onClick={chooseTokenMode}
+            disabled={disabled || running}
+            title={tokenModeOn ? t("composer.tokenEconomyOnDesc") : t("composer.tokenEconomyDesc")}
+          >
+            <Gauge size={16} />
+            <span className="composer-access-menu__copy">
+              <span className="composer-access-menu__title">{t("composer.tokenEconomy")}</span>
+              <span className="composer-access-menu__desc">{tokenModeOn ? t("composer.tokenEconomyOnDesc") : t("composer.tokenEconomyDesc")}</span>
+            </span>
+            <span className={`composer-intent-switch${tokenModeOn ? " composer-intent-switch--on" : ""}`} aria-hidden="true">
+              <span />
+            </span>
+          </button>
+        </div>
+      </AnchoredPopover>
+      <AnchoredPopover
+        open={moreMenuOpen && !disabled && !running}
+        closing={moreMenuClosing}
+        anchorRef={moreMenuAnchorRef}
+        onClose={() => closeMoreMenu()}
+        className="composer-access-menu composer-more-menu"
+        align="end"
+      >
+        {hasEffort && (
+          <div className="composer-access-menu__section">
+            <div className="composer-access-menu__label">{t("status.effortTitle")}</div>
+            <div className="composer-more-menu__items" role="listbox" aria-label={t("status.effortTitle")}>
+              {effortLevels.map((level) => (
                 <button
-                  className={`workspace-switcher__item${w.current ? " workspace-switcher__item--current" : ""}`}
-                  title={w.path}
-                  onClick={() => {
-                    if (w.current) {
-                      setWorkspaceMenuOpen(false);
-                      return;
-                    }
-                    void chooseWorkspace(w.path);
-                  }}
-                >
-                  <FolderGit2 size={15} />
-                  <span>{w.name}</span>
-                  {w.current && <Check size={15} />}
-                </button>
-                <button
-                  className={`workspace-switcher__remove${confirmRemovePath === w.path ? " workspace-switcher__remove--armed" : ""}${w.current ? " workspace-switcher__remove--current" : ""}`}
+                  key={level}
                   type="button"
-                  aria-label={confirmRemovePath === w.path ? t("composer.confirmRemoveProject") : t("composer.removeProject")}
-                  title={
-                    w.current
-                      ? t("composer.cannotRemoveCurrent")
-                      : confirmRemovePath === w.path
-                        ? t("composer.confirmRemoveProject")
-                        : t("composer.removeProject")
-                  }
-                  disabled={running || w.current}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    if (w.current) return;
-                    if (confirmRemovePath === w.path) {
-                      void removeWorkspace(w.path);
-                    } else {
-                      setConfirmRemovePath(w.path);
-                    }
-                  }}
+                  role="option"
+                  aria-selected={level === currentEffort}
+                  className={`composer-more-menu__item${level === currentEffort ? " composer-more-menu__item--active" : ""}`}
+                  onClick={() => chooseEffortLevel(level)}
+                  disabled={running}
                 >
-                  {confirmRemovePath === w.path ? <Check size={14} /> : <Trash2 size={14} />}
+                  <Gauge size={14} />
+                  <span>{level}</span>
+                  {level === currentEffort && <Check size={13} />}
                 </button>
-              </div>
-            ))}
-            {filteredWorkspaces.length === 0 && <div className="workspace-switcher__empty">{t("composer.noProjectMatches")}</div>}
+              ))}
+            </div>
           </div>
-          <div className="workspace-switcher__actions">
-            <button type="button" onClick={() => void chooseWorkspace()}>
-              <FolderPlus size={15} />
-              <span>{t("composer.addProject")}</span>
-            </button>
-          </div>
+        )}
       </AnchoredPopover>
       {menuMode === "slash" && (
         <SlashMenu items={slashMatches} activeIndex={active} onPick={pickCommand} onHover={setActive} />
@@ -943,24 +1756,141 @@ export function Composer({
       {menuMode === "slasharg" && argRes && (
         <ArgMenu items={argRes.items} activeIndex={active} onPick={pickArg} onHover={setActive} />
       )}
-      {menuMode === "at" && <FileMenu items={atMatches} activeIndex={active} onPick={pickEntry} onHover={setActive} />}
-      <div className="composer-toolbar">
-        <div className="composer-modebar" role="toolbar" aria-label={t("composer.modeTitle")}>
-          {modeOptions.map((option) => (
+      {menuMode === "at" && (
+        showPastChats ? (
+          <div className="slashmenu" role="listbox">
+            {loadingPastChats ? (
+              <div className="slashmenu__item slashmenu__item--empty">
+                <span className="slashmenu__name">正在加载历史会话...</span>
+              </div>
+            ) : pastChats.length === 0 ? (
+              <div className="slashmenu__item slashmenu__item--empty">
+                <span className="slashmenu__name">暂无历史会话</span>
+              </div>
+            ) : (
+              <>
+                <div className="slashmenu__item slashmenu__item--search" onMouseDown={(ev) => ev.preventDefault()}>
+                  <Search size={13} className="filemenu__icon" />
+                  <input
+                    className="slashmenu__search"
+                    type="text"
+                    placeholder="搜索历史会话…"
+                    value={pastChatQuery}
+                    autoFocus
+                    onChange={(ev) => {
+                      setPastChatQuery(ev.target.value);
+                      setActive(0);
+                    }}
+                    onKeyDown={onPastChatSearchKeyDown}
+                  />
+                </div>
+                {filteredPastChats.length === 0 ? (
+                  <div className="slashmenu__item slashmenu__item--empty">
+                    <span className="slashmenu__name">没有匹配的历史会话</span>
+                  </div>
+                ) : (
+                  filteredPastChats.map((session, i) => {
+                    // PR-C2: hover preview uses only the SessionMeta fields we
+                    // already have on hand — no extra PreviewSession call, no
+                    // backend round-trip, no read of the full transcript.
+                    const turns = typeof session.turns === "number";
+                    const ts = session.lastActivityAt || session.modTime || session.createdAt;
+                    const preview = truncatePreview(session.preview);
+                    const pathText = session.workspaceRoot || session.path;
+                    const tooltipLabel =
+                      turns || ts || preview || pathText ? (
+                        <div className="past-chat-hover">
+                          <div className="past-chat-hover__title">{pastChatTitle(session)}</div>
+                          {preview && <div className="past-chat-hover__preview">{preview}</div>}
+                          {(turns || ts) && (
+                            <div className="past-chat-hover__meta">
+                              {turns && <span>{session.turns} 轮</span>}
+                              {ts && <span>· {fmtSessionTime(ts)}</span>}
+                            </div>
+                          )}
+                          {pathText && <div className="past-chat-hover__path">{pathText}</div>}
+                        </div>
+                      ) : null;
+                    return (
+                      <Tooltip key={session.path} block label={tooltipLabel}>
+                        <button
+                          className={`slashmenu__item ${i === active ? "slashmenu__item--active" : ""}`}
+                          onMouseDown={(ev) => {
+                            ev.preventDefault();
+                            pickSession(session);
+                          }}
+                          onMouseMove={() => setActive(i)}
+                        >
+                          <MessageSquare size={13} className="filemenu__icon" />
+                          <span className="slashmenu__name slashmenu__name--file">
+                            {pastChatTitle(session)}
+                            {turns ? ` (${session.turns} 轮)` : ""}
+                          </span>
+                        </button>
+                      </Tooltip>
+                    );
+                  })
+                )}
+              </>
+            )}
             <button
-              key={option.id}
-              type="button"
-              className={`composer-modebar__item composer-modebar__item--${option.id}${mode === option.id ? " composer-modebar__item--active" : ""}`}
-              onClick={() => onSetMode(option.id)}
-              aria-pressed={mode === option.id}
-              disabled={disabled || running}
+              className="slashmenu__item slashmenu__item--back"
+              onMouseDown={(ev) => {
+                ev.preventDefault();
+                setPastChatQuery("");
+                setShowPastChats(false);
+                setActive(0);
+              }}
             >
-              {option.icon}
-              <span>{option.label}</span>
+              <span className="slashmenu__name">← 返回文件列表</span>
             </button>
-          ))}
-        </div>
-        {runActivity && (
+          </div>
+        ) : (
+          <VirtualMenu
+            items={atMenuItems}
+            activeIndex={active}
+            itemKey={(it) => (it.kind === "pastChats" ? "past:chats" : (it.entry.isDir ? "d:" : "f:") + it.entry.name)}
+            renderItem={(it, i) =>
+              it.kind === "pastChats" ? (
+                <button
+                  className={`slashmenu__item${i === active ? " slashmenu__item--active" : ""}`}
+                  onMouseDown={(ev) => {
+                    ev.preventDefault();
+                    void openPastChats();
+                  }}
+                  onMouseMove={() => setActive(i)}
+                >
+                  <MessageSquare size={13} className="filemenu__icon" />
+                  <span className="slashmenu__name">{PAST_CHATS_MENU_ITEM}</span>
+                </button>
+              ) : (
+                <button
+                  role="option"
+                  aria-selected={i === active}
+                  className={`slashmenu__item ${i === active ? "slashmenu__item--active" : ""}`}
+                  onMouseDown={(ev) => {
+                    ev.preventDefault();
+                    pickEntry(it.entry);
+                  }}
+                  onMouseMove={() => setActive(i)}
+                >
+                  {it.entry.isDir ? (
+                    <Folder size={13} className="filemenu__icon filemenu__icon--dir" />
+                  ) : (
+                    <FileText size={13} className="filemenu__icon" />
+                  )}
+                  <span className="slashmenu__name slashmenu__name--file">
+                    {it.entry.name}
+                    {it.entry.isDir ? "/" : ""}
+                  </span>
+                </button>
+              )
+            }
+          />
+        )
+      )}
+      {runActivity && (
+        <div className="composer-toolbar composer-toolbar--status-only">
           <div className="composer-runstatus" role="status" aria-live="polite">
             <span className="composer-runstatus__dot" />
             <span className="composer-runstatus__text">{runActivity}</span>
@@ -971,31 +1901,48 @@ export function Composer({
               </button>
             </Tooltip>
           </div>
-        )}
-      </div>
-      {(attachments.length > 0 || workspaceRefs.length > 0) && (
+        </div>
+      )}
+      {(attachments.length > 0 || workspaceRefs.length > 0 || sessionRefs.length > 0) && (
         <div className="composer-context" aria-label={t("composer.contextItems")}>
-          {attachments.map((a) => (
+          {sortComposerAttachments(attachments).map((a) => {
+            const imageOnly = Boolean(a.previewUrl) && attachments.every((item) => item.previewUrl) && workspaceRefs.length === 0 && sessionRefs.length === 0;
+            return (
             <div
-              className={`composer-context__item${a.previewUrl ? " composer-context__item--image" : " composer-context__item--attachment"}`}
+              className={`composer-context__item${a.previewUrl ? " composer-context__item--image" : " composer-context__item--attachment"}${imageOnly ? " composer-context__item--image-only" : ""}`}
               key={a.path}
             >
               <Tooltip label={a.path}>
                 <span className="composer-context__label">
-                  {a.previewUrl ? <img src={a.previewUrl} alt="" /> : <FileText size={15} />}
-                  <span>{a.path.split("/").pop()}</span>
+                  {a.previewUrl ? (
+                    <span className="composer-context__thumb">
+                      <img src={a.previewUrl} alt="" draggable={false} />
+                    </span>
+                  ) : (
+                    <>
+                      <span className="composer-context__fileicon">
+                        <FileText size={20} />
+                      </span>
+                      <span className="composer-context__main">
+                        <span className="composer-context__name">{attachmentName(a)}</span>
+                        <span className="composer-context__meta">{attachmentExt(attachmentName(a)) || t("msg.fileAttachment")}</span>
+                      </span>
+                    </>
+                  )}
                 </span>
               </Tooltip>
-              <Tooltip label={t("composer.removeImage")}>
+              <Tooltip label={t("composer.removeImage")} className="composer-context__remove-trigger">
                 <button
+                  className="composer-context__remove"
                   type="button"
-                  onClick={() => setAttachments((prev) => prev.filter((x) => x.path !== a.path))}
+                  onClick={() => removeAttachment(a.path)}
                 >
                   <X size={14} />
                 </button>
               </Tooltip>
             </div>
-          ))}
+            );
+          })}
           {workspaceRefs.map((ref) => (
             <div
               className={`composer-context__item composer-context__item--workspace${ref.isDir ? " composer-context__item--folder" : " composer-context__item--file"}`}
@@ -1007,10 +1954,35 @@ export function Composer({
                   <span>{ref.isDir ? `${baseName(ref.path)}/` : baseName(ref.path)}</span>
                 </span>
               </Tooltip>
-              <Tooltip label={t("composer.removeReference")}>
+              <Tooltip label={t("composer.removeReference")} className="composer-context__remove-trigger">
                 <button
+                  className="composer-context__remove"
                   type="button"
                   onClick={() => removeWorkspaceReference(ref)}
+                >
+                  <X size={13} />
+                </button>
+              </Tooltip>
+            </div>
+          ))}
+          {sessionRefs.map((ref) => (
+            <div
+              className="composer-context__item composer-context__item--session"
+              key={ref.path}
+            >
+              <Tooltip label={ref.preview || ref.title}>
+                <span className="composer-context__label">
+                  <MessageSquare size={15} />
+                  <span>
+                    {ref.title}
+                    {typeof ref.turns === "number" ? ` (${ref.turns} 轮)` : ""}
+                  </span>
+                </span>
+              </Tooltip>
+              <Tooltip label="移除引用会话">
+                <button
+                  type="button"
+                  onClick={() => removeSessionRef(ref.path)}
                 >
                   <X size={13} />
                 </button>
@@ -1027,22 +1999,24 @@ export function Composer({
               <div className="composer__pasted-block" key={block.label}>
                 <div className="composer__pasted-head">
                   <FileText size={15} />
-                  <span>{block.label}</span>
-                  <Tooltip label={t(open ? "composer.pastedHidePreview" : "composer.pastedShowPreview")}>
-                    <button type="button" onClick={() => togglePastedPreview(block.label)}>
-                      <Eye size={14} />
-                    </button>
-                  </Tooltip>
-                  <Tooltip label={t("composer.pastedExpand")}>
-                    <button type="button" onClick={() => expandPastedBlock(block)}>
-                      {t("composer.pastedExpand")}
-                    </button>
-                  </Tooltip>
-                  <Tooltip label={t("composer.pastedRemove")}>
-                    <button type="button" onClick={() => removePastedBlock(block)}>
-                      <Trash2 size={14} />
-                    </button>
-                  </Tooltip>
+                  <span className="composer__pasted-label">{block.label}</span>
+                  <div className="composer__pasted-actions">
+                    <Tooltip label={t(open ? "composer.pastedHidePreview" : "composer.pastedShowPreview")}>
+                      <button type="button" onClick={() => togglePastedPreview(block.label)}>
+                        <Eye size={14} />
+                      </button>
+                    </Tooltip>
+                    <Tooltip label={t("composer.pastedExpand")}>
+                      <button type="button" onClick={() => expandPastedBlock(block)}>
+                        {t("composer.pastedExpand")}
+                      </button>
+                    </Tooltip>
+                    <Tooltip label={t("composer.pastedRemove")}>
+                      <button type="button" onClick={() => removePastedBlock(block)}>
+                        <Trash2 size={14} />
+                      </button>
+                    </Tooltip>
+                  </div>
                 </div>
                 {open && <pre className="composer__pasted-preview">{block.text}</pre>}
               </div>
@@ -1051,27 +2025,35 @@ export function Composer({
         </div>
       )}
       <div
-        className={`composer-card${composerHeight !== null ? " composer-card--resized" : ""}${composerResizing ? " composer-card--resizing" : ""}`}
+        className={`composer-card${composerHeight !== null ? " composer-card--resized" : ""}${composerAutoExpanded ? " composer-card--autosized" : ""}${composerResizing ? " composer-card--resizing" : ""}`}
         ref={composerCardRef}
         style={composerCardStyle}
       >
-        <div
+        <button
           className="composer-resize-handle"
+          type="button"
+          aria-label={t("composer.resize")}
+          title={t("composer.resize")}
           onPointerDown={onComposerResizeStart}
+          onKeyDown={onComposerResizeKeyDown}
           onDoubleClick={resetComposerHeight}
         />
         <div
-          className={`composer${dragOver ? " composer--dragover" : ""}${disabled ? " composer--disabled" : ""}${text.trimStart().startsWith("!") ? " composer--shell" : ""}`}
+          className={`composer${dragOver ? " composer--dragover" : ""}${disabled ? " composer--disabled" : ""}${shellModeActive ? " composer--shell" : ""}`}
           onDrop={onDrop}
           onDragOver={onDragOver}
           onDragLeave={onDragLeave}
         >
-          <span className="composer__caret">{text.trimStart().startsWith("!") ? "$" : "›"}</span>
+          <span className="composer__caret">{shellModeActive ? "$" : "›"}</span>
           <textarea
             ref={taRef}
             className="composer__input"
             value={text}
-            onChange={(e) => setText(e.target.value)}
+            onChange={(e) => {
+              resetPromptHistoryNavigation();
+              setText(e.target.value);
+              if (composerPrompt) setComposerPrompt(null);
+            }}
             onSelect={rememberCaret}
             onClick={rememberCaret}
             onKeyUp={rememberCaret}
@@ -1085,16 +2067,22 @@ export function Composer({
               composingRef.current = false;
               lastCompositionEndAt.current = Date.now();
             }}
-            placeholder={disabled ? t("common.loading") : t("composer.placeholder")}
+            style={textareaStyle}
+            placeholder={disabled ? t("common.loading") : goalModeOn && !activeGoal ? t("composer.goalInputPlaceholder") : t("composer.placeholder")}
             rows={1}
             disabled={disabled}
           />
+          {composerPrompt && (
+            <span className="composer__prompt" role="status">
+              {composerPrompt}
+            </span>
+          )}
           {!running && (
             <Tooltip label={t("composer.send")}>
               <button
                 className="composer__btn composer__btn--send"
                 onClick={submit}
-                disabled={pendingPaste > 0 || (!text.trim() && attachments.length === 0 && workspaceRefs.length === 0) || disabled}
+                disabled={submitting || pendingPaste > 0 || ((!text.trim() && attachments.length === 0 && workspaceRefs.length === 0) && !(goalModeOn && !activeGoal)) || disabled}
               >
                 <ArrowUp size={16} />
               </button>
@@ -1102,28 +2090,148 @@ export function Composer({
           )}
         </div>
         <div className={composerMetaClass}>
-          {cwd && (
-            <div className="composer-meta__control composer-meta__control--workspace composer-workspace-wrap" ref={workspaceAnchorRef}>
-              <button
-                className={`composer__workspace${workspaceMenuOpen ? " composer__workspace--open" : ""}`}
-                onClick={() => {
-                  if (!running) setWorkspaceMenuOpen((open) => !open);
-                }}
-                disabled={running}
-              >
-                <FolderGit2 size={13} />
-                <span>{workspaceName}</span>
-                <ChevronDown size={12} />
-              </button>
-            </div>
-          )}
           <div className="composer-meta__params">
+            <div className="composer-meta__control composer-meta__control--intent">
+              <Tooltip label={t("composer.intentMenuTitle")} disabled={intentMenuOpen || intentMenuClosing}>
+                <button
+                  ref={intentMenuAnchorRef}
+                  type="button"
+                  className={`composer-action-trigger${intentMenuOpen || intentMenuClosing ? " composer-action-trigger--open" : ""}`}
+                  onClick={() => (intentMenuOpen || intentMenuClosing ? closeIntentMenu() : openIntentMenu())}
+                  disabled={disabled || running}
+                  aria-haspopup="menu"
+                  aria-expanded={intentMenuOpen && !intentMenuClosing}
+                  aria-label={t("composer.intentMenuTitle")}
+                  title={intentMenuOpen || intentMenuClosing ? undefined : t("composer.intentMenuTitle")}
+                >
+                  <SlidersHorizontal size={17} />
+                </button>
+              </Tooltip>
+              {planModeOn && (
+                <Tooltip label={t("composer.exitPlanTitle")}>
+                  <button
+                    type="button"
+                    className="composer-mode-chip composer-mode-chip--plan"
+                    onClick={choosePlanMode}
+                    disabled={disabled}
+                    title={t("composer.exitPlanTitle")}
+                    aria-label={t("composer.exitPlanTitle")}
+                  >
+                    <span className="composer-mode-chip__icon composer-mode-chip__icon--mode" aria-hidden="true">
+                      <List size={14} />
+                    </span>
+                    <span className="composer-mode-chip__icon composer-mode-chip__icon--dismiss" aria-hidden="true">
+                      <X size={11} />
+                    </span>
+                    <span className="composer-mode-chip__label">{t("composer.modePlan")}</span>
+                  </button>
+                </Tooltip>
+              )}
+              {goalModeOn && (
+                <Tooltip label={t("composer.exitGoalTitle")}>
+                  <button
+                    type="button"
+                    className="composer-mode-chip composer-mode-chip--goal"
+                    onClick={chooseGoalMode}
+                    disabled={disabled}
+                    title={activeGoal || t("composer.exitGoalTitle")}
+                    aria-label={t("composer.exitGoalTitle")}
+                  >
+                    <span className="composer-mode-chip__icon composer-mode-chip__icon--mode" aria-hidden="true">
+                      <Target size={14} />
+                    </span>
+                    <span className="composer-mode-chip__icon composer-mode-chip__icon--dismiss" aria-hidden="true">
+                      <X size={11} />
+                    </span>
+                    <span className="composer-mode-chip__label">{t("composer.modeGoal")}</span>
+                  </button>
+                </Tooltip>
+              )}
+              {tokenModeOn && (
+                <Tooltip label={t("composer.tokenEconomyOnDesc")}>
+                  <button
+                    type="button"
+                    className="composer-mode-chip composer-mode-chip--token"
+                    onClick={chooseTokenMode}
+                    disabled={disabled || running}
+                    title={t("composer.tokenEconomyExitTitle")}
+                    aria-label={t("composer.tokenEconomyExitTitle")}
+                  >
+                    <span className="composer-mode-chip__icon composer-mode-chip__icon--mode" aria-hidden="true">
+                      <Gauge size={14} />
+                    </span>
+                    <span className="composer-mode-chip__icon composer-mode-chip__icon--dismiss" aria-hidden="true">
+                      <X size={11} />
+                    </span>
+                    <span className="composer-mode-chip__label">{t("composer.tokenEconomyShort")}</span>
+                  </button>
+                </Tooltip>
+              )}
+            </div>
+            <div className="composer-meta__control composer-meta__control--approval">
+              <div className="composer-modebar composer-modebar--approval" data-mode={toolApprovalMode} title={t("composer.accessMenuTitle")}>
+                <span className="composer-modebar__thumb" aria-hidden="true" />
+                <button
+                  type="button"
+                  className={`composer-modebar__item composer-modebar__item--ask${toolApprovalMode === "ask" ? " composer-modebar__item--active" : ""}`}
+                  onClick={() => chooseApprovalMode("ask")}
+                  disabled={disabled}
+                  aria-pressed={toolApprovalMode === "ask"}
+                  title={t("composer.accessAskTitle")}
+                >
+                  <Shield size={14} />
+                  <span>{t("composer.modeAsk")}</span>
+                </button>
+                <button
+                  type="button"
+                  className={`composer-modebar__item composer-modebar__item--auto${toolApprovalMode === "auto" ? " composer-modebar__item--active" : ""}`}
+                  onClick={() => chooseApprovalMode("auto")}
+                  disabled={disabled}
+                  aria-pressed={toolApprovalMode === "auto"}
+                  title={t("composer.accessAutoTitle")}
+                >
+                  <ShieldCheck size={14} />
+                  <span>{t("composer.modeNormal")}</span>
+                </button>
+                <button
+                  type="button"
+                  className={`composer-modebar__item composer-modebar__item--yolo${toolApprovalMode === "yolo" ? " composer-modebar__item--active" : ""}`}
+                  onClick={() => chooseApprovalMode("yolo")}
+                  disabled={disabled}
+                  aria-pressed={toolApprovalMode === "yolo"}
+                  title={t("composer.accessYoloTitle")}
+                >
+                  <ShieldAlert size={14} />
+                  <span>{t("composer.modeYolo")}</span>
+                </button>
+              </div>
+            </div>
             <div className="composer-meta__control composer-meta__control--model">
               <ModelSwitcher label={modelLabel} tabId={tabId} onPick={onSwitchModel} />
             </div>
-            {effort?.supported && (
+            {hasEffort && (
               <div className="composer-meta__control composer-meta__control--effort">
                 <EffortSwitcher effort={effort} disabled={running} onPick={onSetEffort} />
+              </div>
+            )}
+            {hasEffort && (
+              <div className="composer-meta__control composer-meta__control--more">
+                <Tooltip label={t("composer.moreControls")} disabled={moreMenuOpen || moreMenuClosing}>
+                  <button
+                    ref={moreMenuAnchorRef}
+                    type="button"
+                    className={`composer-more-trigger${moreMenuOpen || moreMenuClosing ? " composer-more-trigger--open" : ""}`}
+                    onClick={() => (moreMenuOpen || moreMenuClosing ? closeMoreMenu() : openMoreMenu())}
+                    disabled={disabled || running}
+                    aria-haspopup="menu"
+                    aria-expanded={moreMenuOpen && !moreMenuClosing}
+                    aria-label={t("composer.moreControls")}
+                    title={moreMenuOpen || moreMenuClosing ? undefined : t("composer.moreControls")}
+                  >
+                    <MoreHorizontal size={16} />
+                    <span>{t("topicBar.more")}</span>
+                  </button>
+                </Tooltip>
               </div>
             )}
           </div>

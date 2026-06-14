@@ -1,9 +1,10 @@
-// Package netclient builds HTTP clients that share Reasonix's user-facing proxy
-// settings. It is intentionally not used by web_fetch, whose dial-time SSRF guard
-// has a different security boundary from ordinary provider/update traffic.
+// Package netclient builds HTTP clients and proxy resolvers that share Reasonix's
+// user-facing proxy settings. web_fetch reuses the resolver while keeping its own
+// dial-time SSRF guard.
 package netclient
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"net/http"
@@ -41,12 +42,14 @@ type ProxySpec struct {
 }
 
 // TransportOptions lets callers keep their existing network timeouts while
-// sharing proxy behavior.
+// sharing proxy behavior. ForceIPv4 pins the dialer to tcp4 — the desktop updater
+// uses it to retry over IPv4 when an IPv6 route (CN → Cloudflare) resets mid-transfer.
 type TransportOptions struct {
 	DialTimeout           time.Duration
 	KeepAlive             time.Duration
 	TLSHandshakeTimeout   time.Duration
 	ResponseHeaderTimeout time.Duration
+	ForceIPv4             bool
 }
 
 // NormalizeMode maps empty and unknown modes to auto, preserving a fail-open
@@ -71,6 +74,11 @@ func Validate(spec ProxySpec) error {
 	return err
 }
 
+// ProxyFunc returns the per-request proxy resolver for spec.
+func ProxyFunc(spec ProxySpec) (func(*http.Request) (*url.URL, error), error) {
+	return proxyFunc(spec)
+}
+
 // NewHTTPClient returns an HTTP client with Reasonix proxy settings applied.
 func NewHTTPClient(spec ProxySpec, opts TransportOptions) (*http.Client, error) {
 	tr, err := NewTransport(spec, opts)
@@ -90,9 +98,23 @@ func NewTransport(spec ProxySpec, opts TransportOptions) (*http.Transport, error
 		return nil, err
 	}
 	tr.Proxy = proxy
-	if opts.DialTimeout != 0 || opts.KeepAlive != 0 {
+	if opts.DialTimeout != 0 || opts.KeepAlive != 0 || opts.ForceIPv4 {
 		d := &net.Dialer{Timeout: opts.DialTimeout, KeepAlive: opts.KeepAlive}
-		tr.DialContext = d.DialContext
+		if opts.ForceIPv4 {
+			// Default-transport dialer uses 30s/30s; keep those when no explicit
+			// timeout is set so forcing IPv4 doesn't drop the dial deadline.
+			if d.Timeout == 0 {
+				d.Timeout = 30 * time.Second
+			}
+			if d.KeepAlive == 0 {
+				d.KeepAlive = 30 * time.Second
+			}
+			tr.DialContext = func(ctx context.Context, _, addr string) (net.Conn, error) {
+				return d.DialContext(ctx, "tcp4", addr)
+			}
+		} else {
+			tr.DialContext = d.DialContext
+		}
 	}
 	if opts.TLSHandshakeTimeout != 0 {
 		tr.TLSHandshakeTimeout = opts.TLSHandshakeTimeout

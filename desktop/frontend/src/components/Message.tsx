@@ -1,29 +1,156 @@
-import { memo, useState } from "react";
-import { ChevronDown, GitBranch, RotateCcw, ScrollText } from "lucide-react";
+import { memo, useEffect, useRef, useState } from "react";
+import { ChevronDown, ChevronRight, FileText, Folder, GitBranch, Image, MessageSquare, RotateCcw, ScrollText } from "lucide-react";
 import { Markdown } from "./Markdown";
 import { CopyButton } from "./CopyButton";
-import { ProcessBrainIcon, ProcessCard, ProcessStatusIcon } from "./ProcessCard";
+import { ProcessBrainIcon } from "./ProcessCard";
+import { parseAttachmentRefsForDisplay, sortDisplayAttachments } from "../lib/attachmentDisplay";
+import { app } from "../lib/bridge";
 import { useT } from "../lib/i18n";
+import { useGSAPCollapse } from "../lib/useGSAPCollapse";
+import { displayReasoningText } from "../lib/reasoningDisplay";
 import type { Item, MessageActionScope } from "../lib/useController";
 import type { CheckpointMeta } from "../lib/types";
 
 type AssistantItem = Extract<Item, { kind: "assistant" }>;
 export type TurnActionMenu = "summary" | "rewind";
+type ImSourceMessage = {
+  provider: string;
+  label: string;
+  sender: string;
+  chat: string;
+  text: string;
+};
+
+const IM_SOURCE_START = "[[reasonix-im]]";
+const IM_SOURCE_END = "[[/reasonix-im]]";
+
+function parseImSourceMessage(text: string): ImSourceMessage | null {
+  // Display-only metadata: keep IM sender/chat details out of model prompts.
+  if (!text.startsWith(IM_SOURCE_START)) return null;
+  const end = text.indexOf(IM_SOURCE_END);
+  if (end < 0) return null;
+  const metaBlock = text.slice(IM_SOURCE_START.length, end).trim();
+  const body = text.slice(end + IM_SOURCE_END.length).replace(/^\r?\n/, "");
+  const meta: Record<string, string> = {};
+  for (const line of metaBlock.split(/\r?\n/)) {
+    const index = line.indexOf("=");
+    if (index <= 0) continue;
+    const key = line.slice(0, index).trim().toLowerCase();
+    const value = line.slice(index + 1).trim();
+    if (key) meta[key] = value;
+  }
+  return {
+    provider: meta.provider || "",
+    label: meta.label || "",
+    sender: meta.sender || meta.senderid || "",
+    chat: meta.chat || meta.chat_type || "",
+    text: body,
+  };
+}
+
+function imSourceLabel(source: ImSourceMessage, t: ReturnType<typeof useT>): string {
+  if (source.label.trim()) return source.label.trim();
+  const provider = source.provider.trim().toLowerCase();
+  if (provider === "lark") return "Lark";
+  if (provider === "weixin" || provider === "wechat") return t("settings.botWeixin");
+  return t("settings.botFeishu");
+}
+
+function attachmentIcon(kind: "image" | "file" | "folder") {
+  if (kind === "image") return <Image size={15} />;
+  if (kind === "folder") return <Folder size={15} />;
+  return <FileText size={15} />;
+}
 
 export function UserMessage({
   text,
+  failed,
   turn,
   anchorId,
+  id,
 }: {
   text: string;
+  failed?: boolean;
   turn?: number;
   anchorId?: string;
+  id?: string;
 }) {
-  const displayText = text.replace(/@\.reasonix\/attachments\/[^\s]+/g, "[image]");
+  const t = useT();
+  const imSource = parseImSourceMessage(text);
+  const { text: displayText, attachments } = parseAttachmentRefsForDisplay(imSource?.text ?? text);
+  const orderedAttachments = sortDisplayAttachments(attachments);
+  const sourceLabel = imSource ? imSourceLabel(imSource, t) : "";
+  const [imagePreviews, setImagePreviews] = useState<Record<string, string>>({});
+  const imagePreviewKey = orderedAttachments
+    .filter((attachment) => attachment.kind === "image" && attachment.source === "attachment")
+    .map((attachment) => attachment.path)
+    .join("\n");
+
+  useEffect(() => {
+    const paths = imagePreviewKey ? imagePreviewKey.split("\n") : [];
+    if (paths.length === 0) return;
+    let cancelled = false;
+    for (const path of paths) {
+      if (imagePreviews[path]) continue;
+      app.AttachmentDataURL(path)
+        .then((url) => {
+          if (cancelled) return;
+          setImagePreviews((prev) => (prev[path] ? prev : { ...prev, [path]: url }));
+        })
+        .catch(() => {});
+    }
+    return () => {
+      cancelled = true;
+    };
+  }, [imagePreviewKey]);
   return (
-    <div className="msg msg--user" id={anchorId} data-question-anchor={anchorId} data-turn={turn}>
+    <div
+      className={`msg msg--user${imSource ? " msg--im-source" : ""}${failed ? " msg--user-failed" : ""}`}
+      id={anchorId}
+      data-question-anchor={anchorId}
+      data-turn={turn}
+      data-im-source={imSource?.provider || undefined}
+      data-history-restore={id && id.startsWith("h") ? "" : undefined}
+      data-entrance={id || undefined}
+    >
       <div className="msg__body">
-        <div className="msg__text">{displayText}</div>
+        {imSource ? (
+          <div className="im-source-card">
+            <div className="im-source-card__head">
+              <MessageSquare size={14} />
+              <span>{t("msg.fromIm", { source: sourceLabel })}</span>
+            </div>
+            {displayText && <div className="im-source-card__text">{displayText}</div>}
+            {(imSource.sender || imSource.chat) && (
+              <div className="im-source-card__meta">
+                {imSource.sender && <span>{t("msg.imSender", { id: imSource.sender })}</span>}
+                {imSource.chat && <span>{imSource.chat}</span>}
+              </div>
+            )}
+          </div>
+        ) : (
+          displayText && <div className="msg__text">{displayText}</div>
+        )}
+        {failed && <div className="msg__send-failed">{t("msg.sendFailed")}</div>}
+        {orderedAttachments.length > 0 && (
+          <div className="msg-attachments" aria-label={t("msg.attachments")}>
+            {orderedAttachments.map((attachment, index) => (
+              <div className={`msg-attachment msg-attachment--${attachment.kind}`} key={`${attachment.path}:${index}`} title={attachment.path}>
+                <span className={`msg-attachment__icon msg-attachment__icon--${attachment.kind}`} aria-hidden="true">
+                  {attachment.kind === "image" && imagePreviews[attachment.path] ? <img src={imagePreviews[attachment.path]} alt="" draggable={false} /> : attachmentIcon(attachment.kind)}
+                </span>
+                <span className="msg-attachment__main">
+                  <span className="msg-attachment__name">{attachment.name}</span>
+                  <span className="msg-attachment__meta">
+                    {attachment.kind === "folder"
+                      ? t("msg.folderReference")
+                      : `${attachment.ext || t("msg.fileAttachment")} · ${attachment.source === "workspace" ? t("msg.workspaceReference") : attachment.kind === "image" ? t("msg.imageAttachment") : t("msg.fileAttachment")}`}
+                  </span>
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -211,45 +338,95 @@ export function TurnActions({
 
 export const AssistantMessage = memo(function AssistantMessage({
   item,
+  defaultExpanded = false,
+  expandWhileStreaming = true,
+  truncateStreamingReasoning = false,
 }: {
   item: AssistantItem;
+  defaultExpanded?: boolean;
+  /** false in compact mode: completed steps fold away, so auto-open + fold reads as flicker. */
+  expandWhileStreaming?: boolean;
+  /** Opt-in for compact mode to keep live DeepSeek reasoning from growing an unbounded DOM. */
+  truncateStreamingReasoning?: boolean;
 }) {
   const t = useT();
+  const reasoningBodyRef = useRef<HTMLDivElement>(null);
+  // Thinking streams in before the answer — show it live while the model is still
+  // working, then it stays available behind the toggle once the answer arrives.
+  const [reasoningOpen, setReasoningOpen] = useState((expandWhileStreaming && item.streaming) || defaultExpanded);
+  const userOverridden = useRef(false);
+  const prevStreamingRef = useRef(item.streaming);
+  const prevReasoningCompleteRef = useRef(item.reasoningComplete ?? false);
+  useGSAPCollapse(reasoningBodyRef, reasoningOpen);
+
+  // Follow the current display mode while streaming unless the user manually
+  // toggled this message; auto-close at stream end for untouched messages.
+  useEffect(() => {
+    const wasStreaming = prevStreamingRef.current;
+    const nowStreaming = item.streaming;
+    prevStreamingRef.current = nowStreaming;
+
+    const wasRC = prevReasoningCompleteRef.current;
+    const nowRC = item.reasoningComplete ?? false;
+    prevReasoningCompleteRef.current = nowRC;
+
+    if (nowStreaming) {
+      if (!wasStreaming) userOverridden.current = false;
+      if (defaultExpanded) {
+        setReasoningOpen(true);
+      } else if (!userOverridden.current) {
+        setReasoningOpen(expandWhileStreaming);
+      }
+    } else if (nowRC && !wasRC) {
+      // Reasoning just finished — auto-close while we wait for text.
+      if (!defaultExpanded && !userOverridden.current) {
+        setReasoningOpen(false);
+      }
+    } else if (wasStreaming) {
+      // Stream fully ended — auto-close if user didn't interact.
+      if (!defaultExpanded && !userOverridden.current) {
+        setReasoningOpen(false);
+      }
+    }
+  }, [item.streaming, item.reasoningComplete, defaultExpanded, expandWhileStreaming]);
+
+  const toggleReasoning = () => {
+    userOverridden.current = true;
+    setReasoningOpen((v) => !v);
+  };
   const hasText = item.streaming || item.text.trim() !== "";
   const processOnly = Boolean(item.reasoning) && !hasText;
   const processWithText = Boolean(item.reasoning) && hasText;
+  const visibleReasoning = reasoningOpen
+    ? displayReasoningText(item.reasoning, {
+        streaming: item.streaming,
+        truncateStreaming: truncateStreamingReasoning,
+      })
+    : "";
   return (
-    <div className={`msg msg--assistant${processOnly ? " msg--process-only" : ""}${processWithText ? " msg--process-with-text" : ""}`}>
+    <div className={`msg msg--assistant${processOnly ? " msg--process-only" : ""}${processWithText ? " msg--process-with-text" : ""}`} data-history-restore={item.id.startsWith("h") ? "" : undefined} data-entrance={item.id}>
       {item.reasoning && (
-        <ProcessCard
-          tone="violet"
-          icon={<ProcessBrainIcon size={12} />}
-          kind="reasoning"
-          name={t("msg.thinking")}
-          meta={
-            <>
-              <ProcessStatusIcon state={item.streaming ? "running" : "done"} label={item.streaming ? t("msg.thinkingRunning") : t("msg.thinkingDone")} />
-              <span>{item.streaming ? t("msg.thinkingRunning") : t("msg.thinkingDone")}</span>
-            </>
-          }
-          defaultOpen={item.streaming}
-        >
-          <div className="reasoning__body">{item.reasoning}</div>
-        </ProcessCard>
+        <div className="reasoning">
+          <button
+            type="button"
+            className="reasoning__head"
+            data-running={item.streaming && !item.reasoningComplete ? "" : undefined}
+            onClick={toggleReasoning}
+            aria-expanded={reasoningOpen}
+          >
+            <ProcessBrainIcon size={12} />
+            <span>{t("msg.thinking")}</span>
+            <span className="reasoning__meta">{item.streaming && !item.reasoningComplete ? t("msg.thinkingRunning") : t("msg.thinkingDone")}</span>
+            <ChevronRight className={`reasoning__chevron${reasoningOpen ? " reasoning__chevron--open" : ""}`} size={12} />
+          </button>
+          {reasoningOpen && (
+            <div ref={reasoningBodyRef} className="reasoning__body">{visibleReasoning}</div>
+          )}
+        </div>
       )}
       {hasText && (
         <div className="msg__body">
-          {item.streaming ? (
-            // While streaming, render raw text (stable, monospace-free) instead of
-            // re-parsing markdown on every token — partial markdown reflows the
-            // layout and makes the view jitter. Markdown renders once, on completion.
-            <div className="msg__stream">
-              {item.text}
-              <span className="cursor" />
-            </div>
-          ) : (
-            <Markdown text={item.text} />
-          )}
+          <Markdown text={item.text} />
         </div>
       )}
     </div>

@@ -5,9 +5,10 @@ import { t, useT } from "../lib/i18n";
 import { sessionActivityTime } from "../lib/session";
 import type { HistoryMessage, SessionMeta } from "../lib/types";
 import { historyMessagesToItems, type Item } from "../lib/useController";
-import { Tooltip } from "./Tooltip";
 import { Transcript } from "./Transcript";
 import { ContextMenu, contextMenuPointFromEvent, type ContextMenuItem, type ContextMenuPoint } from "./ContextMenu";
+import { useDeferredClose } from "../lib/useMountTransition";
+import { ModalCloseButton } from "./ModalCloseButton";
 
 type HistoryScopeFilter = "all" | "project" | "global";
 type HistoryStatusFilter = "all" | "current" | "open";
@@ -43,6 +44,8 @@ export function HistoryPanel({
 }) {
   const tr = useT();
   const isTrash = kind === "trash";
+  // Play the modal exit animation, then let the parent unmount us.
+  const { status, requestClose } = useDeferredClose(onClose, 240);
   const [editing, setEditing] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
   const [query, setQuery] = useState("");
@@ -175,7 +178,6 @@ export function HistoryPanel({
   }, [filteredSessions, loadPreview, preview]);
 
   const previewItems = useMemo(() => previewMessagesToItems(preview?.messages ?? []), [preview?.messages]);
-  const showPreview = preview !== null;
   const selectedSession = useMemo(
     () => (preview ? filteredSessions.find((s) => s.path === preview.path) ?? null : null),
     [filteredSessions, preview],
@@ -198,15 +200,12 @@ export function HistoryPanel({
     setMenuPoint(null);
     setBlankMenuPoint(contextMenuPointFromEvent(event));
   };
-  const openTrashClearMenu = (event: ReactMouseEvent<HTMLElement>) => {
+  const armClearTrash = () => {
     if (!isTrash || sessions.length === 0) return;
-    event.preventDefault();
-    event.stopPropagation();
-    const rect = event.currentTarget.getBoundingClientRect();
     setMenuSession(null);
     setMenuPoint(null);
+    setBlankMenuPoint(null);
     setMenuConfirmTarget({ kind: "clear" });
-    setBlankMenuPoint({ left: rect.left, top: rect.bottom + 6 });
   };
   const closeHistoryMenus = () => {
     setMenuSession(null);
@@ -316,6 +315,7 @@ export function HistoryPanel({
     selectedSession && menuConfirmTarget?.kind === "delete" && menuConfirmTarget.path === selectedSession.path;
   const actionConfirmPurge =
     selectedSession && menuConfirmTarget?.kind === "purge" && menuConfirmTarget.path === selectedSession.path;
+  const actionConfirmClearTrash = isTrash && menuConfirmTarget?.kind === "clear";
 
   const openSelected = () => {
     if (!selectedSession || running || isTrash) return;
@@ -343,36 +343,29 @@ export function HistoryPanel({
   };
 
   return (
-    <div className="management-modal-backdrop history-modal-backdrop" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+    <div className="management-modal-backdrop history-modal-backdrop" data-state={status} onClick={(e) => { if (e.target === e.currentTarget) requestClose(); }}>
       <section
-        className={`management-modal history-modal${showPreview || running ? " history-modal--wide" : ""}`}
+        className="management-modal history-modal"
+        data-state={status}
         aria-label={tr(isTrash ? "history.trashTitle" : "history.title")}
         onClick={(e) => e.stopPropagation()}
       >
       <header className="management-modal__head history-modal__head">
         <div>
           <div className="management-modal__title history-modal__title">{tr(isTrash ? "history.trashTitle" : "history.title")}</div>
-          {isTrash ? (
-            <div className="management-modal__summary history-modal__summary">{tr("history.trashHint")}</div>
-          ) : (
-            running && <div className="management-modal__summary history-modal__summary">{tr("history.readOnlyHint")}</div>
-          )}
+          {!isTrash && running && <div className="management-modal__summary history-modal__summary">{tr("history.readOnlyHint")}</div>}
         </div>
         <div className="management-modal__actions history-modal__actions">
           {isTrash && sessions.length > 0 && (
             <button
-              className="chip history-clear"
+              className={`chip history-clear${actionConfirmClearTrash ? " history-clear--confirm" : ""}`}
               type="button"
-              onClick={openTrashClearMenu}
+              onClick={actionConfirmClearTrash ? clearTrash : armClearTrash}
             >
-              {tr("history.clearTrash")}
+              {tr(actionConfirmClearTrash ? "history.confirmClearTrash" : "history.clearTrash")}
             </button>
           )}
-          <Tooltip label={tr("common.close")}>
-            <button className="chip" onClick={onClose}>
-              ✕
-            </button>
-          </Tooltip>
+          <ModalCloseButton label={tr("common.close")} onClick={requestClose} />
         </div>
       </header>
 
@@ -434,7 +427,10 @@ export function HistoryPanel({
             ) : (
               groups.map((g) => (
                 <section className="mem-section" key={g.label}>
-                  <div className="mem-section__title">{g.label}</div>
+                  <div className="mem-section__title hist-group__title">
+                    <span>{g.label}</span>
+                    <span className="hist-group__count">{g.items.length}</span>
+                  </div>
                   {g.items.map((s) => {
                     const selected = preview?.path === s.path;
                     return (
@@ -470,22 +466,18 @@ export function HistoryPanel({
                           >
                             <div className="hist-item__preview">{sessionDisplayTitle(s, tr("history.emptySession"))}</div>
                             <div className="hist-item__meta">
+                              {!isTrash && s.current && <span className="hist-item__badge hist-item__badge--current">{tr("history.current")}</span>}
+                              {!isTrash && !s.current && s.open && <span className="hist-item__badge hist-item__badge--open">{tr("history.open")}</span>}
+                              {isTrash && <span className="hist-item__badge hist-item__badge--deleted">{tr("history.deleted")}</span>}
                               {sessionLocation(s, tr) && <span className="hist-item__scope">{sessionLocation(s, tr)}</span>}
-                              {!isTrash && s.current && <span className="hist-item__badge">{tr("history.current")}</span>}
-                              {!isTrash && !s.current && s.open && <span className="hist-item__badge">{tr("history.open")}</span>}
-                              <span>{tr(s.turns === 1 ? "history.turnOne" : "history.turnOther", { n: s.turns })}</span>
-                              <span>·</span>
-                              <span>{timeLabel(isTrash ? s.deletedAt || sessionActivityTime(s) : sessionActivityTime(s))}</span>
-                              {isTrash && s.deletedAt && (
-                                <>
-                                  <span>·</span>
-                                  <span>{tr("history.deleted")}</span>
-                                </>
-                              )}
+                              <span className="hist-item__metaspacer" />
+                              <span className="hist-item__stat">{tr(s.turns === 1 ? "history.turnOne" : "history.turnOther", { n: s.turns })}</span>
+                              <span className="hist-item__dot">·</span>
+                              <span className="hist-item__stat">{timeLabel(isTrash ? s.deletedAt || sessionActivityTime(s) : sessionActivityTime(s))}</span>
                               {!isTrash && running && (
                                 <>
-                                  <span>·</span>
-                                  <span>{tr("history.preview")}</span>
+                                  <span className="hist-item__dot">·</span>
+                                  <span className="hist-item__stat">{tr("history.preview")}</span>
                                 </>
                               )}
                             </div>
@@ -642,15 +634,20 @@ function HistoryFilterSelect({
 }) {
   const visibleOptions = options.filter((option) => option.id === "all" || option.id === value || option.count > 0);
   return (
-    <label className="history-filter-select">
-      <span>{label}</span>
-      <select value={value} onChange={(event) => onChange(event.target.value)}>
-        {visibleOptions.map((option) => (
-          <option key={option.id} value={option.id} disabled={option.id !== "all" && option.count === 0}>
-            {option.label} ({option.count})
-          </option>
-        ))}
-      </select>
-    </label>
+    <div className="history-filter" role="group" aria-label={label}>
+      {visibleOptions.map((option) => (
+        <button
+          key={option.id}
+          type="button"
+          className={`history-filter__pill${value === option.id ? " history-filter__pill--on" : ""}`}
+          aria-pressed={value === option.id}
+          disabled={option.id !== "all" && option.count === 0}
+          onClick={() => onChange(option.id)}
+        >
+          {option.label}
+          <span className="history-filter__count">{option.count}</span>
+        </button>
+      ))}
+    </div>
   );
 }

@@ -17,10 +17,13 @@ import (
 type legacyConfig struct {
 	APIKey      string                       `json:"apiKey"`
 	BaseURL     string                       `json:"baseUrl"`
+	Model       string                       `json:"model"`
 	Lang        string                       `json:"lang"`
+	MCP         []string                     `json:"mcp"` // pre-mcpServers `--mcp`-format strings
 	MCPServers  map[string]legacyMCPServer   `json:"mcpServers"`
 	MCPEnv      map[string]map[string]string `json:"mcpEnv"`
 	MCPDisabled []string                     `json:"mcpDisabled"`
+	QQ          legacyQQConfig               `json:"qq"`
 }
 
 type legacyMCPServer struct {
@@ -32,6 +35,15 @@ type legacyMCPServer struct {
 	URL       string            `json:"url"`
 	Headers   map[string]string `json:"headers"`
 	Disabled  bool              `json:"disabled"`
+}
+
+type legacyQQConfig struct {
+	AppID       string   `json:"appId"`
+	AppSecret   string   `json:"appSecret"`
+	Sandbox     bool     `json:"sandbox"`
+	Enabled     bool     `json:"enabled"`
+	OwnerOpenID string   `json:"ownerOpenId"`
+	Allowlist   []string `json:"allowlist"`
 }
 
 // MigrationResult summarizes a one-time legacy import for the boot-time notice.
@@ -96,6 +108,13 @@ func MigrateLegacyIfNeeded() (*MigrationResult, error) {
 		cfg.Language = legacy.Lang
 		_ = cfg.SetDesktopLanguage(legacy.Lang)
 	}
+	if legacy.Model != "" {
+		if entry, ok := cfg.ResolveModel(legacy.Model); ok {
+			cfg.DefaultModel = entry.Name + "/" + entry.Model
+		} else {
+			cfg.DefaultModel = legacy.Model
+		}
+	}
 	migrateLegacyBaseURL(cfg, legacy.BaseURL)
 	cfg.Plugins = legacyPlugins(legacy)
 	res.Plugins = len(cfg.Plugins)
@@ -109,6 +128,11 @@ func MigrateLegacyIfNeeded() (*MigrationResult, error) {
 				" — it was applied to the built-in DeepSeek providers; verify models if this endpoint is not DeepSeek-compatible")
 		}
 	}
+	if qqSecret := strings.TrimSpace(legacy.QQ.AppSecret); qqSecret != "" {
+		envLines = append(envLines, "QQ_BOT_APP_SECRET="+qqSecret)
+		res.Warnings = append(res.Warnings, "your previous QQ Bot App Secret was saved to reasonix's credentials store")
+	}
+	migrateLegacyQQConfig(cfg, legacy.QQ)
 
 	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
 		return nil, fmt.Errorf("create config dir: %w", err)
@@ -122,6 +146,43 @@ func MigrateLegacyIfNeeded() (*MigrationResult, error) {
 		}
 	}
 	return res, nil
+}
+
+func migrateLegacyQQConfig(cfg *Config, legacy legacyQQConfig) {
+	if cfg == nil || !legacyQQConfigured(legacy) {
+		return
+	}
+	cfg.Bot.Enabled = cfg.Bot.Enabled || legacy.Enabled
+	cfg.Bot.QQ.Enabled = legacy.Enabled
+	cfg.Bot.QQ.AppID = strings.TrimSpace(legacy.AppID)
+	cfg.Bot.QQ.AppSecretEnv = "QQ_BOT_APP_SECRET"
+	cfg.Bot.QQ.Sandbox = legacy.Sandbox
+	cfg.Bot.Allowlist.Enabled = true
+	cfg.Bot.Allowlist.QQUsers = mergeUniqueTrimmed(cfg.Bot.Allowlist.QQUsers, legacy.OwnerOpenID)
+	cfg.Bot.Allowlist.QQUsers = mergeUniqueTrimmed(cfg.Bot.Allowlist.QQUsers, legacy.Allowlist...)
+}
+
+func legacyQQConfigured(legacy legacyQQConfig) bool {
+	return legacy.Enabled ||
+		strings.TrimSpace(legacy.AppID) != "" ||
+		strings.TrimSpace(legacy.AppSecret) != "" ||
+		strings.TrimSpace(legacy.OwnerOpenID) != "" ||
+		len(legacy.Allowlist) > 0 ||
+		legacy.Sandbox
+}
+
+func mergeUniqueTrimmed(base []string, values ...string) []string {
+	seen := make(map[string]bool, len(base)+len(values))
+	out := make([]string, 0, len(base)+len(values))
+	for _, value := range append(base, values...) {
+		value = strings.TrimSpace(value)
+		if value == "" || seen[value] {
+			continue
+		}
+		seen[value] = true
+		out = append(out, value)
+	}
+	return out
 }
 
 func migrateLegacyTOMLIfNeeded(dest, home string) (*MigrationResult, error) {
@@ -172,19 +233,42 @@ func migrateLegacyBaseURL(cfg *Config, baseURL string) {
 }
 
 func legacyPlugins(legacy legacyConfig) []PluginEntry {
-	if len(legacy.MCPServers) == 0 {
-		return nil
-	}
 	disabled := make(map[string]bool, len(legacy.MCPDisabled))
 	for _, n := range legacy.MCPDisabled {
 		disabled[n] = true
+	}
+	var out []PluginEntry
+	index := make(map[string]int)
+	add := func(pe PluginEntry, off bool) {
+		if off {
+			v := false
+			pe.AutoStart = &v
+		}
+		pe, _ = NormalizePluginCommandLine(pe)
+		if j, dup := index[pe.Name]; dup {
+			out[j] = pe // mcpServers overrides the `mcp` list on a name collision, matching v0.x
+			return
+		}
+		index[pe.Name] = len(out)
+		out = append(out, pe)
+	}
+	for i, raw := range legacy.MCP {
+		pe, ok := parseLegacyMCPSpec(raw)
+		if !ok {
+			continue
+		}
+		if pe.Name == "" {
+			pe.Name = anonymousMCPName(i)
+		} else if pe.Command != "" {
+			pe.Env = mergeEnv(nil, legacy.MCPEnv[pe.Name])
+		}
+		add(pe, disabled[pe.Name])
 	}
 	names := make([]string, 0, len(legacy.MCPServers))
 	for n := range legacy.MCPServers {
 		names = append(names, n)
 	}
 	sort.Strings(names)
-	out := make([]PluginEntry, 0, len(names))
 	for _, name := range names {
 		s := legacy.MCPServers[name]
 		pe := PluginEntry{
@@ -196,11 +280,7 @@ func legacyPlugins(legacy legacyConfig) []PluginEntry {
 			URL:     s.URL,
 			Headers: s.Headers,
 		}
-		if s.Disabled || disabled[name] {
-			off := false
-			pe.AutoStart = &off
-		}
-		out = append(out, pe)
+		add(pe, s.Disabled || disabled[name])
 	}
 	return out
 }

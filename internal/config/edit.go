@@ -29,12 +29,20 @@ const (
 	listDeny  = "deny"
 )
 
-// SetDefaultModel points default_model at an existing provider. It errors if no
-// provider by that name is configured, so a UI can't strand the config on a
-// model that doesn't exist.
+// SetDefaultModel points default_model at an existing model. It accepts both
+// forms used by the runtime resolver:
+//   - "provider"          — the provider's own default model;
+//   - "provider/model"    — that specific model under that provider.
+//
+// Either is rejected when the target does not exist, so a UI can't strand
+// the config on a model that doesn't exist.
 func (c *Config) SetDefaultModel(name string) error {
-	if _, ok := c.Provider(name); !ok {
-		return fmt.Errorf("set default: no provider %q (configured: %s)", name, c.providerNames())
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return fmt.Errorf("set default: empty name")
+	}
+	if _, ok := c.ResolveModel(name); !ok {
+		return fmt.Errorf("set default: no such model %q (configured: %s)", name, c.providerNames())
 	}
 	c.DefaultModel = name
 	return nil
@@ -69,9 +77,23 @@ func (c *Config) SetAutoPlan(mode string) error {
 	return nil
 }
 
+// SetUIShortcutLayout selects the CLI keyboard shortcut layout. "classic" keeps
+// historical behavior; "desktop" enables the two-axis desktop-style shortcuts.
+func (c *Config) SetUIShortcutLayout(layout string) error {
+	switch strings.ToLower(strings.TrimSpace(layout)) {
+	case "", "classic", "default", "legacy", "off":
+		c.UI.ShortcutLayout = "classic"
+	case "desktop", "dual", "dual-axis", "dual_axis":
+		c.UI.ShortcutLayout = "desktop"
+	default:
+		return fmt.Errorf("shortcut_layout %q: must be classic|desktop", layout)
+	}
+	return nil
+}
+
 // UpsertProvider adds e, or replaces an existing provider with the same name
-// (preserving its position). Required fields (name, kind, base_url, model) are
-// validated; whether the kind is actually registered and the key resolves is
+// (preserving its position). Required fields (name, kind, base_url, model/models)
+// are validated; whether the kind is actually registered and the key resolves is
 // checked later by provider.New / Validate, which give actionable errors.
 func (c *Config) UpsertProvider(e ProviderEntry) error {
 	normalizeProviderEffortFields(&e)
@@ -92,7 +114,7 @@ func (c *Config) UpsertProvider(e ProviderEntry) error {
 func (c *Config) SetProviderEffort(name, effort string) error {
 	for i := range c.Providers {
 		if c.Providers[i].Name == name {
-			c.Providers[i].Effort = strings.ToLower(strings.TrimSpace(effort))
+			c.Providers[i].Effort = normalizeStoredEffort(effort)
 			return nil
 		}
 	}
@@ -110,6 +132,22 @@ func (c *Config) SetLanguage(lang string) error {
 		c.Language = "zh"
 	default:
 		return fmt.Errorf("language %q: must be auto|en|zh", lang)
+	}
+	return nil
+}
+
+// SetReasoningLanguage pins the preferred language for visible reasoning text.
+// Empty/auto follows the conversation language.
+func (c *Config) SetReasoningLanguage(lang string) error {
+	switch strings.ToLower(strings.TrimSpace(lang)) {
+	case "", "auto", "follow", "conversation", "detect", "default", "model", "model-default", "model_default", "provider":
+		c.Agent.ReasoningLanguage = ""
+	case "zh", "cn", "chinese", "中文":
+		c.Agent.ReasoningLanguage = "zh"
+	case "en", "english":
+		c.Agent.ReasoningLanguage = "en"
+	default:
+		return fmt.Errorf("reasoning language %q: must be auto|zh|en", lang)
 	}
 	return nil
 }
@@ -149,7 +187,7 @@ func (c *Config) SetDesktopAppearance(theme, style string) error {
 	}
 	normalized := normalizeThemeStyle(style)
 	if normalized == "" {
-		return fmt.Errorf("desktop theme style %q: must be graphite|ember|aurora|midnight|sandstone|porcelain|linen|glacier", style)
+		return fmt.Errorf("desktop theme style %q: must be graphite|aurora|slate|carbon|nocturne|amber", style)
 	}
 	c.Desktop.ThemeStyle = normalized
 	return nil
@@ -170,9 +208,101 @@ func (c *Config) SetDesktopCloseBehavior(mode string) error {
 	return nil
 }
 
+// SetDesktopDisplayMode sets the transcript display mode. UI-only.
+func (c *Config) SetDesktopDisplayMode(mode string) error {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "compact", "minimal":
+		c.Desktop.DisplayMode = "compact"
+	case "", "standard":
+		c.Desktop.DisplayMode = "standard"
+	default:
+		return fmt.Errorf("display mode %q: must be standard|compact", mode)
+	}
+	return nil
+}
+
+// SetDesktopStatusBarStyle sets the desktop status bar metric label style.
+// UI-only; it must not affect CLI output or provider-visible request data.
+func (c *Config) SetDesktopStatusBarStyle(style string) error {
+	switch strings.ToLower(strings.TrimSpace(style)) {
+	case "icon", "icons":
+		c.Desktop.StatusBarStyle = "icon"
+	case "", "text", "label", "labels":
+		c.Desktop.StatusBarStyle = "text"
+	default:
+		return fmt.Errorf("status bar style %q: must be icon|text", style)
+	}
+	return nil
+}
+
+// SetDesktopStatusBarItems sets the ordered visible desktop status bar items.
+// UI-only; it must not affect CLI output or provider-visible request data.
+func (c *Config) SetDesktopStatusBarItems(items []string) error {
+	out := make([]string, 0, len(items))
+	seen := map[string]bool{}
+	for _, raw := range items {
+		id := strings.TrimSpace(raw)
+		if id == "" || seen[id] {
+			continue
+		}
+		if !knownDesktopStatusBarItems[id] {
+			return fmt.Errorf("status bar item %q: unknown item", id)
+		}
+		out = append(out, id)
+		seen[id] = true
+	}
+	if len(out) == 0 {
+		out = DefaultDesktopStatusBarItems()
+	}
+	c.Desktop.StatusBarItems = out
+	return nil
+}
+
+// SetDesktopCheckUpdates sets whether the desktop app checks for updates on
+// startup. Manual checks remain available in Settings regardless of this value.
+func (c *Config) SetDesktopCheckUpdates(enabled bool) error {
+	c.Desktop.CheckUpdates = &enabled
+	return nil
+}
+
+// SetColdResumePrune toggles auto-elision of stale tool results on cold resume.
+func (c *Config) SetColdResumePrune(enabled bool) error {
+	c.Agent.ColdResumePrune = &enabled
+	return nil
+}
+
+// SetDesktopTelemetry sets whether the desktop sends the anonymous launch ping.
+func (c *Config) SetDesktopTelemetry(enabled bool) error {
+	c.Desktop.Telemetry = &enabled
+	return nil
+}
+
+// SetDesktopMetrics sets whether the desktop sends opt-in aggregate agent metrics.
+func (c *Config) SetDesktopMetrics(enabled bool) error {
+	c.Desktop.Metrics = &enabled
+	return nil
+}
+
 // SetUICloseBehavior is kept for callers compiled against the old edit API.
 func (c *Config) SetUICloseBehavior(mode string) error {
 	return c.SetDesktopCloseBehavior(mode)
+}
+
+// SetExpandThinking sets whether the desktop reasoning/thinking section is
+// expanded by default. It is desktop-only and must not affect CLI output or
+// provider-visible request data.
+func (c *Config) SetExpandThinking(on bool) error {
+	c.Desktop.ExpandThinking = on
+	return nil
+}
+
+// SetShowReasoning sets the CLI's default verbose-reasoning preference. When
+// true, thinking text is shown in the chat TUI on startup; when false (the
+// default), it stays collapsed until the user toggles it with Ctrl+O or
+// /verbose.
+func (c *Config) SetShowReasoning(on bool) error {
+	c.UI.ShowReasoning = on
+	return nil
 }
 
 // SetProviderThinking updates a provider's provider-specific thinking mode knob.
@@ -200,11 +330,37 @@ func (c *Config) SetNetwork(n NetworkConfig) error {
 	return netclient.Validate(c.NetworkProxySpec())
 }
 
-// RemoveProvider deletes the named provider. It refuses to remove the current
-// default_model (reassign it first, so the config never points at a missing
-// model); if the removed provider was the planner, planner_model is cleared as
-// a side effect since it is optional. Errors when the name isn't configured.
+// ModelRefsProvider reports whether ref targets the named provider. It matches
+// both bare provider names ("deepseek") and "provider/model" refs.
+func ModelRefsProvider(ref, name string) bool {
+	ref = strings.TrimSpace(ref)
+	name = strings.TrimSpace(name)
+	if ref == "" || name == "" {
+		return false
+	}
+	if ref == name {
+		return true
+	}
+	prov, _, ok := strings.Cut(ref, "/")
+	return ok && prov == name
+}
+
+func (c *Config) modelRefTargetsProvider(ref, name string) bool {
+	if ModelRefsProvider(ref, name) {
+		return true
+	}
+	if e, ok := c.ResolveModel(ref); ok {
+		return e.Name == name
+	}
+	return false
+}
+
+// RemoveProvider deletes the named provider. References to the removed provider
+// are migrated to the first remaining configured provider when possible. The
+// default model is required, so removal is refused when no fallback exists;
+// optional planner/subagent refs are cleared instead of being left dangling.
 func (c *Config) RemoveProvider(name string) error {
+	name = strings.TrimSpace(name)
 	idx := -1
 	for i := range c.Providers {
 		if c.Providers[i].Name == name {
@@ -215,14 +371,55 @@ func (c *Config) RemoveProvider(name string) error {
 	if idx < 0 {
 		return fmt.Errorf("remove provider: no provider %q", name)
 	}
-	if c.DefaultModel == name {
-		return fmt.Errorf("remove provider: %q is the default model — set a different default_model first", name)
+
+	defaultRefsProvider := c.modelRefTargetsProvider(c.DefaultModel, name)
+	plannerRefsProvider := c.modelRefTargetsProvider(c.Agent.PlannerModel, name)
+	subagentRefsProvider := c.modelRefTargetsProvider(c.Agent.SubagentModel, name)
+	subagentModelRefsProvider := map[string]bool{}
+	for skill, ref := range c.Agent.SubagentModels {
+		if c.modelRefTargetsProvider(ref, name) {
+			subagentModelRefsProvider[skill] = true
+		}
 	}
+
+	fallback := ""
+	if defaultRefsProvider || plannerRefsProvider || subagentRefsProvider || len(subagentModelRefsProvider) > 0 {
+		fallback = c.providerRemovalFallback(name)
+	}
+	if defaultRefsProvider && fallback == "" {
+		return fmt.Errorf("remove provider: %q is referenced by default_model and no other configured provider exists", name)
+	}
+
 	c.Providers = append(c.Providers[:idx], c.Providers[idx+1:]...)
-	if c.Agent.PlannerModel == name {
-		c.Agent.PlannerModel = ""
+
+	if defaultRefsProvider {
+		c.DefaultModel = fallback
+	}
+	if plannerRefsProvider {
+		c.Agent.PlannerModel = fallback
+	}
+	if subagentRefsProvider {
+		c.Agent.SubagentModel = fallback
+	}
+	for skill := range subagentModelRefsProvider {
+		if fallback != "" {
+			c.Agent.SubagentModels[skill] = fallback
+		} else {
+			delete(c.Agent.SubagentModels, skill)
+		}
 	}
 	return nil
+}
+
+func (c *Config) providerRemovalFallback(name string) string {
+	for i := range c.Providers {
+		p := &c.Providers[i]
+		if p.Name == name || !p.Configured() || len(p.ModelList()) == 0 {
+			continue
+		}
+		return p.Name
+	}
+	return ""
 }
 
 // validateProvider checks the fields a provider can't function without.
@@ -234,10 +431,22 @@ func validateProvider(e ProviderEntry) error {
 		return fmt.Errorf("provider %q: kind is required", e.Name)
 	case strings.TrimSpace(e.BaseURL) == "":
 		return fmt.Errorf("provider %q: base_url is required", e.Name)
-	case strings.TrimSpace(e.Model) == "":
+	case !providerHasAnyModel(e):
 		return fmt.Errorf("provider %q: model is required", e.Name)
 	}
 	return nil
+}
+
+func providerHasAnyModel(e ProviderEntry) bool {
+	if strings.TrimSpace(e.Model) != "" {
+		return true
+	}
+	for _, m := range e.Models {
+		if strings.TrimSpace(m) != "" {
+			return true
+		}
+	}
+	return false
 }
 
 // SetPermissionMode sets the writer-fallback mode. Accepts "ask", "allow", or
@@ -314,6 +523,7 @@ func (c *Config) AddSkillPath(path string) error {
 		return fmt.Errorf("skill path: empty path")
 	}
 	want := CanonicalSkillPath(path)
+	c.removeExcludedSkillPath(want)
 	for _, existing := range c.Skills.Paths {
 		if CanonicalSkillPath(existing) == want {
 			return nil
@@ -338,6 +548,50 @@ func (c *Config) RemoveSkillPath(path string) (bool, error) {
 		}
 	}
 	return false, nil
+}
+
+// RestoreSkillPath removes a pseudo-deleted skill source from excluded_paths.
+func (c *Config) RestoreSkillPath(path string) error {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return fmt.Errorf("skill path: empty path")
+	}
+	want := CanonicalSkillPath(path)
+	if want == "" {
+		return fmt.Errorf("skill path: empty path")
+	}
+	c.removeExcludedSkillPath(want)
+	return nil
+}
+
+// ExcludeSkillPath hides any skill discovery root matching path. This is used by
+// UI "remove source" actions for convention roots that are not stored in paths.
+func (c *Config) ExcludeSkillPath(path string) error {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return fmt.Errorf("skill path: empty path")
+	}
+	want := CanonicalSkillPath(path)
+	if want == "" {
+		return fmt.Errorf("skill path: empty path")
+	}
+	for _, existing := range c.Skills.ExcludedPaths {
+		if CanonicalSkillPath(existing) == want {
+			return nil
+		}
+	}
+	c.Skills.ExcludedPaths = append(c.Skills.ExcludedPaths, path)
+	return nil
+}
+
+func (c *Config) removeExcludedSkillPath(want string) {
+	next := c.Skills.ExcludedPaths[:0]
+	for _, existing := range c.Skills.ExcludedPaths {
+		if CanonicalSkillPath(existing) != want {
+			next = append(next, existing)
+		}
+	}
+	c.Skills.ExcludedPaths = next
 }
 
 // SetSkillEnabled persists a per-skill enable/disable preference. Skills are
@@ -398,6 +652,7 @@ func CanonicalSkillPath(path string) string {
 // position). The transport-specific required fields are validated: stdio needs
 // a command, http/sse need a url.
 func (c *Config) UpsertPlugin(e PluginEntry) error {
+	e, _ = NormalizePluginCommandLine(e)
 	if err := validatePlugin(e); err != nil {
 		return err
 	}
@@ -532,6 +787,22 @@ func SaveMinimalProjectAutoPlan(path, mode string) (string, error) {
 auto_plan = %q
 `, cfg.Agent.AutoPlan)
 	return cfg.Agent.AutoPlan, writeConfigFile(path, body)
+}
+
+// SaveMinimalProjectReasoningLanguage writes a new project config that only
+// overrides [agent].reasoning_language.
+func SaveMinimalProjectReasoningLanguage(path, lang string) (string, error) {
+	cfg := Default()
+	if err := cfg.SetReasoningLanguage(lang); err != nil {
+		return "", err
+	}
+	body := fmt.Sprintf(`# Reasonix project configuration.
+# Project-local overrides are merged over the user config.
+
+[agent]
+reasoning_language = %q
+`, cfg.ReasoningLanguage())
+	return cfg.ReasoningLanguage(), writeConfigFile(path, body)
 }
 
 func writeConfigFile(path, body string) error {

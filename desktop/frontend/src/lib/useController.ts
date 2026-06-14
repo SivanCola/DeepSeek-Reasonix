@@ -5,20 +5,28 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { asArray } from "./array";
+import { addBreadcrumb } from "./breadcrumbs";
 import { app, onEvent, onReady } from "./bridge";
+import { invalidateCache } from "./composerHistory";
+import { createRafBatch } from "./rafBatch";
 import { t } from "./i18n";
+import { modeHasAutoApproveTools } from "./types";
 import type {
   BalanceInfo,
   CheckpointMeta,
+  CollaborationMode,
   ContextInfo,
   EffortInfo,
   HistoryMessage,
   JobView,
   MemoryView,
   Meta,
+  Mode,
   QuestionAnswer,
   SessionMeta,
   TabMeta,
+  TokenMode,
+  ToolApprovalMode,
   WireApproval,
   WireAsk,
   WireEvent,
@@ -27,13 +35,13 @@ import type {
 
 export type ToolStatus = "running" | "done" | "error" | "stopped";
 
-export type LiveStream = { id: string; text: string; reasoning: string };
+export type LiveStream = { id: string; text: string; reasoning: string; reasoningComplete: boolean };
 export type MessageActionScope = "fork" | "summ-from" | "summ-upto" | "conversation" | "code" | "both";
 export type MessageActionState = { turn: number; scope: MessageActionScope };
 
 export type Item =
-  | { kind: "user"; id: string; text: string }
-  | { kind: "assistant"; id: string; text: string; reasoning: string; streaming: boolean }
+  | { kind: "user"; id: string; text: string; failed?: boolean }
+  | { kind: "assistant"; id: string; text: string; reasoning: string; streaming: boolean; reasoningComplete?: boolean }
   | { kind: "phase"; id: string; text: string }
   | { kind: "notice"; id: string; level: "info" | "warn"; text: string }
   | {
@@ -55,6 +63,7 @@ export type Item =
       output?: string;
       error?: string;
       truncated?: boolean;
+      dataArchived?: boolean; // args/output trimmed for memory; full data available via backend
       durationMs?: number;
       isShell?: boolean; // true for !-prefix shell commands (controls default expand)
       parentId?: string; // a sub-agent call nests under the `task` call with this id
@@ -81,30 +90,104 @@ interface State {
   discardTurn?: boolean;
   turnStartAt: number;
   turnTokens: number;
+  turnTotalTokens: number;
+  turnCost: number;
+  sessionTokens: number;
   sessionCost: number;
   sessionCurrency: string;
   retry?: { attempt: number; max: number };
   seq: number;
 }
 
-const initialState: State = {
+export const initialState: State = {
   items: [],
   running: false,
   turnActive: false,
-  context: { used: 0, window: 0 },
+  context: { used: 0, window: 0, sessionTokens: 0 },
   jobs: [],
   checkpoints: [],
   turnStartAt: 0,
   turnTokens: 0,
+  turnTotalTokens: 0,
+  turnCost: 0,
+  sessionTokens: 0,
   sessionCost: 0,
   sessionCurrency: "¥",
   seq: 0,
 };
 
+function usageTotalTokens(usage?: WireUsage): number {
+  if (!usage) return 0;
+  if (usage.totalTokens > 0) return usage.totalTokens;
+  const promptTokens = usage.promptTokens || usage.cacheHitTokens + usage.cacheMissTokens;
+  return Math.max(0, promptTokens + usage.completionTokens);
+}
+
+export function sameMeta(a?: Meta, b?: Meta): boolean {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  return (
+    a.label === b.label &&
+    a.ready === b.ready &&
+    a.startupErr === b.startupErr &&
+    a.eventChannel === b.eventChannel &&
+    a.cwd === b.cwd &&
+    a.autoApproveTools === b.autoApproveTools &&
+    a.bypass === b.bypass &&
+    a.collaborationMode === b.collaborationMode &&
+    a.toolApprovalMode === b.toolApprovalMode &&
+    a.tokenMode === b.tokenMode &&
+    a.goal === b.goal &&
+    a.goalStatus === b.goalStatus
+  );
+}
+
+const STALE_TURN_RECONCILE_MS = 30_000;
+
+export function shouldReconcileStaleTurn(
+  state: Pick<State, "running" | "turnActive"> | undefined,
+  lastTurnActivityAt: number,
+  now = Date.now(),
+  timeoutMs = STALE_TURN_RECONCILE_MS,
+): boolean {
+  if (!state?.running || !state.turnActive || lastTurnActivityAt <= 0) return false;
+  return Math.max(0, now - lastTurnActivityAt) >= timeoutMs;
+}
+
+/** Mirrors Go backend's ReadOnly() + codegraph ReadOnlyToolNames(). */
+export function isReadOnlyTool(name: string): boolean {
+  switch (name) {
+    case "read_file":
+    case "ls":
+    case "grep":
+    case "glob":
+    case "web_fetch":
+    case "bash_output":
+    case "waitJob":
+    case "todo_write":
+    case "read_skill":
+    case "codegraph_callees":
+    case "codegraph_callers":
+    case "codegraph_context":
+    case "codegraph_explore":
+    case "codegraph_files":
+    case "codegraph_impact":
+    case "codegraph_node":
+    case "codegraph_search":
+    case "codegraph_status":
+    case "codegraph_trace":
+      return true;
+    default:
+      return false;
+  }
+}
+
 type Action =
   | { type: "event"; e: WireEvent }
-  | { type: "user"; text: string }
+  | { type: "user"; text: string; seq: number }
   | { type: "unsend" }
+  | { type: "send_failed"; error: string }
+  | { type: "backend_status"; running: boolean }
   | { type: "meta"; meta: Meta }
   | { type: "context"; context: ContextInfo }
   | { type: "balance"; balance: BalanceInfo }
@@ -183,7 +266,7 @@ export function historyMessagesToItems(messages: HistoryMessage[], idPrefix: str
           id: tc.id || `${idPrefix}tool${seq}`,
           name: tc.name,
           args: tc.arguments ?? "",
-          readOnly: false,
+          readOnly: isReadOnlyTool(tc.name),
           status: error ? "error" : "done",
           output,
           error,
@@ -202,7 +285,7 @@ export function historyMessagesToItems(messages: HistoryMessage[], idPrefix: str
         id: m.toolCallId || `${idPrefix}tool${seq}`,
         name: m.toolName || "tool",
         args: "",
-        readOnly: false,
+        readOnly: isReadOnlyTool(m.toolName || "tool"),
         status: error ? "error" : "done",
         output,
         error,
@@ -227,6 +310,10 @@ function ensureAssistant(s: State): { items: Item[]; id: string; seq: number } {
 
 function flushPendingUser(s: State): State {
   if (s.pendingUser === undefined) return s;
+  const lastItem = s.items[s.items.length - 1];
+  if (lastItem?.kind === "user" && lastItem.text === s.pendingUser) {
+    return { ...s, pendingUser: undefined };
+  }
   return {
     ...s,
     seq: s.seq + 1,
@@ -240,7 +327,7 @@ function applyEvent(s: State, e: WireEvent): State {
     if (e.kind === "turn_done") return { ...s, discardTurn: false, running: false, turnActive: false, currentAssistant: undefined, live: undefined };
     return s;
   }
-  if (s.pendingUser !== undefined && e.kind !== "turn_started" && e.kind !== "turn_done") {
+  if (s.pendingUser !== undefined && e.kind !== "turn_done") {
     s = flushPendingUser(s);
   }
   if (e.kind === "retrying") {
@@ -248,14 +335,25 @@ function applyEvent(s: State, e: WireEvent): State {
   }
   if (s.retry) s = { ...s, retry: undefined };
   switch (e.kind) {
-    case "turn_started":
-      return { ...s, running: true, turnActive: true, currentAssistant: undefined, turnStartAt: Date.now(), turnTokens: 0 };
+    case "turn_started": {
+      // Flush the user message and pre-create an empty assistant bubble
+      // immediately so the user sees their message + a blinking cursor the
+      // instant the backend acknowledges the turn — no dead gap waiting for
+      // the first text/reasoning token.
+      let cur: State = s;
+      if (cur.pendingUser !== undefined) cur = flushPendingUser(cur);
+      const { items, id, seq } = ensureAssistant(cur);
+      return { ...cur, items, currentAssistant: id, seq, live: { id, text: "", reasoning: "", reasoningComplete: false }, running: true, turnActive: true, turnStartAt: Date.now(), turnTokens: 0, turnTotalTokens: 0, turnCost: 0 };
+    }
     case "text":
     case "reasoning": {
       const { items, id, seq } = ensureAssistant(s);
       const delta = e.text ?? e.reasoning ?? "";
-      const base = s.live?.id === id ? s.live : { id, text: "", reasoning: "" };
-      const live = e.kind === "text" ? { ...base, text: base.text + delta } : { ...base, reasoning: base.reasoning + delta };
+      const base = s.live?.id === id ? s.live : { id, text: "", reasoning: "", reasoningComplete: false };
+      const live =
+        e.kind === "text"
+          ? { ...base, text: base.text + delta, reasoningComplete: base.reasoning !== "" || base.reasoningComplete }
+          : { ...base, reasoning: base.reasoning + delta, reasoningComplete: false };
       return { ...s, items, live, currentAssistant: id, seq };
     }
     case "message": {
@@ -270,6 +368,11 @@ function applyEvent(s: State, e: WireEvent): State {
     case "tool_dispatch": {
       const t = e.tool;
       if (!t) return s;
+      // Skip partial dispatches (name-only, no args yet) — the full dispatch
+      // with complete args follows from executeBatch. Waiting for the full
+      // dispatch means the tool card appears with name + subject at once,
+      // avoiding a "name → command" visual jump.
+      if (t.partial) return s;
       const id = t.id || `tool${s.seq}`;
       const idx = s.items.findIndex((it) => it.kind === "tool" && it.id === id);
       if (idx >= 0) {
@@ -293,7 +396,14 @@ function applyEvent(s: State, e: WireEvent): State {
       }
       if (idx >= 0) {
         const it = next[idx];
-        if (it.kind === "tool") next[idx] = { ...it, status: t.err ? "error" : "done", output: t.output, error: t.err, truncated: t.truncated, durationMs: t.durationMs };
+        if (it.kind === "tool") {
+          // Archive immediately: collapsed cards only show tool name + command
+          // subject (from args). Drop output entirely; full data is loaded on
+          // demand via app.ToolResultForTab when the card is expanded.
+          const existing = it;
+          const shortArgs = existing.args && existing.args.length > 200 ? existing.args.slice(0, 200) + "…" : existing.args;
+          next[idx] = { ...existing, status: t.err ? "error" : "done", args: shortArgs, output: undefined, error: t.err, truncated: t.truncated, durationMs: t.durationMs, dataArchived: true };
+        }
       }
       return { ...s, items: next };
     }
@@ -310,10 +420,14 @@ function applyEvent(s: State, e: WireEvent): State {
     case "usage": {
       const used = e.usage && s.context.window ? e.usage.promptTokens : s.context.used;
       const turnTokens = s.turnTokens + (e.usage?.completionTokens ?? 0);
+      const usageTokens = usageTotalTokens(e.usage);
+      const turnTotalTokens = s.turnTotalTokens + usageTokens;
+      const sessionTokens = s.sessionTokens + usageTokens;
       const usageCost = e.usage?.cost ?? e.usage?.costUsd ?? 0;
+      const turnCost = s.turnCost + usageCost;
       const sessionCost = s.sessionCost + usageCost;
       const sessionCurrency = e.usage?.currency || s.sessionCurrency || "¥";
-      return { ...s, usage: e.usage, context: { ...s.context, used }, turnTokens, sessionCost, sessionCurrency };
+      return { ...s, usage: e.usage, context: { ...s.context, used, sessionTokens }, turnTokens, turnTotalTokens, turnCost, sessionTokens, sessionCost, sessionCurrency };
     }
     case "notice":
       return { ...s, running: s.turnActive ? s.running : false, seq: s.seq + 1, items: [...s.items, { kind: "notice", id: `n${s.seq}`, level: e.level ?? "info", text: e.text ?? "" }] };
@@ -333,6 +447,8 @@ function applyEvent(s: State, e: WireEvent): State {
       const items = at < 0 ? [...s.items, filled] : s.items.map((it, i) => (i === at ? filled : it));
       return { ...s, running: s.turnActive ? s.running : false, seq: s.seq + 1, items };
     }
+    case "steer":
+      return { ...s, seq: s.seq + 1, items: [...s.items, { kind: "notice", id: `s${s.seq}`, level: "info", text: `↪ ${e.text ?? ""}` }] };
     case "approval_request": return { ...s, approval: e.approval };
     case "ask_request": return { ...s, ask: e.ask };
     case "turn_done": {
@@ -343,19 +459,60 @@ function applyEvent(s: State, e: WireEvent): State {
         if (it.kind === "tool" && it.status === "running") return { ...it, status: "stopped" as const };
         return it;
       });
-      const items: Item[] = e.err ? [...finalized, { kind: "notice", id: `e${s.seq}`, level: "warn", text: e.err }] : finalized;
+      let items: Item[] = e.err ? [...finalized, { kind: "notice", id: `e${s.seq}`, level: "warn", text: e.err }] : finalized;
       return { ...s, items, live: undefined, running: false, turnActive: false, currentAssistant: undefined, approval: undefined, ask: undefined, seq: s.seq + 1 };
     }
     default: return s;
   }
 }
 
-function reducer(s: State, a: Action): State {
+export function reducer(s: State, a: Action): State {
   switch (a.type) {
-    case "user": return { ...s, running: true, turnStartAt: Date.now(), turnTokens: 0, pendingUser: a.text, discardTurn: false };
+    case "user": {
+      const seq = a.seq !== undefined ? a.seq : s.seq;
+      return {
+        ...s,
+        seq: seq + 1,
+        items: [...s.items, { kind: "user", id: `u${seq}`, text: a.text }],
+        running: true,
+        turnStartAt: Date.now(),
+        turnTokens: 0,
+        turnTotalTokens: 0,
+        turnCost: 0,
+        pendingUser: a.text,
+        discardTurn: false,
+      };
+    }
     case "unsend": return { ...s, pendingUser: undefined, discardTurn: true, running: false, live: undefined };
-    case "meta": return { ...s, meta: a.meta };
-    case "context": return { ...s, context: a.context };
+    case "send_failed": {
+      if (s.pendingUser === undefined) return s;
+      let idx = -1;
+      for (let i = s.items.length - 1; i >= 0; i--) {
+        const it = s.items[i];
+        if (it.kind === "user" && it.text === s.pendingUser) { idx = i; break; }
+      }
+      const items = idx >= 0 ? s.items.map((it, i) => (i === idx ? { ...it, failed: true } : it)) : s.items;
+      const notice: Item = { kind: "notice", id: `n${s.seq}`, level: "warn", text: a.error };
+      return { ...s, pendingUser: undefined, running: false, turnActive: false, live: undefined, seq: s.seq + 1, items: [...items, notice] };
+    }
+    case "backend_status": {
+      if (a.running === s.running) return s;
+      if (a.running) return { ...s, running: true, turnActive: true, turnStartAt: s.turnStartAt || Date.now() };
+      const finalized = s.items.map((it) => {
+        if (it.kind === "assistant" && s.live && it.id === s.live.id) return { ...it, text: s.live.text, reasoning: s.live.reasoning, streaming: false };
+        if (it.kind === "assistant" && it.streaming) return { ...it, streaming: false };
+        if (it.kind === "tool" && it.status === "running") return { ...it, status: "stopped" as const };
+        return it;
+      });
+      return { ...s, items: finalized, running: false, turnActive: false, live: undefined, currentAssistant: undefined, approval: undefined, ask: undefined };
+    }
+    case "meta": return sameMeta(s.meta, a.meta) ? s : { ...s, meta: a.meta };
+    case "context": {
+      const sessionTokens = typeof a.context.sessionTokens === "number"
+        ? Math.max(0, a.context.sessionTokens)
+        : s.sessionTokens;
+      return { ...s, context: a.context, sessionTokens };
+    }
     case "balance": return { ...s, balance: a.balance };
     case "effort": return { ...s, effort: a.effort };
     case "jobs": return { ...s, jobs: a.jobs };
@@ -364,12 +521,21 @@ function reducer(s: State, a: Action): State {
     case "message_action_done": return { ...s, messageAction: undefined };
     case "history": {
       const { items, seq } = historyMessagesToItems(a.messages, "h", s.seq);
-      return { ...s, items, seq };
+      // Archive all tool items loaded from history: collapsed cards only need
+      // tool name + command; full data is loaded on demand from the backend.
+      const archived = items.map((it) => {
+        if (it.kind !== "tool") return it;
+        const t = it;
+        const shortArgs = t.args && t.args.length > 200 ? t.args.slice(0, 200) + "…" : t.args;
+        if (shortArgs === t.args && (t.output === undefined || t.output === "")) return it;
+        return { ...t, args: shortArgs, output: undefined, dataArchived: true };
+      });
+      return { ...s, items: archived, seq };
     }
     case "local_notice": return { ...s, running: false, turnActive: false, seq: s.seq + 1, items: [...s.items, { kind: "notice", id: `n${s.seq}`, level: a.level, text: a.text }] };
     case "clearApproval": return { ...s, approval: undefined };
     case "clearAsk": return { ...s, ask: undefined };
-    case "reset": return { ...initialState, meta: s.meta, context: { ...s.context, used: 0 }, balance: s.balance, effort: s.effort, jobs: s.jobs };
+    case "reset": return { ...initialState, meta: s.meta, context: { ...s.context, used: 0, sessionTokens: 0 }, balance: s.balance, effort: s.effort, jobs: s.jobs };
     case "event": return applyEvent(s, a.e);
     default: return s;
   }
@@ -401,9 +567,32 @@ function messageActionBusyText(scope: MessageActionScope): string {
   }
 }
 
+function errorMessage(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  if (typeof err === "string") return err;
+  return String(err || "");
+}
+
+async function refreshMetaForTab(tabId: string, dispatchTo: (tabId: string, action: Action) => void): Promise<void> {
+  try {
+    dispatchTo(tabId, { type: "meta", meta: await app.MetaForTab(tabId) });
+    dispatchTo(tabId, { type: "context", context: await app.ContextUsageForTab(tabId) });
+    dispatchTo(tabId, { type: "effort", effort: await app.EffortForTab(tabId) });
+  } catch {
+    /* ignore */
+  }
+}
+
+export function replayPendingPromptsForActiveTab(activeTabId: string | undefined, replay: () => Promise<void> = () => app.ReplayPendingPrompts()): void {
+  if (!activeTabId) return;
+  void replay().catch(() => {});
+}
+
 export function useController() {
   const statesRef = useRef<TabStates>(new Map());
+  const lastTurnActivityAtByTab = useRef(new Map<string, number>());
   const [activeTabId, setActiveTabId] = useState<string | undefined>();
+  const activeTabIdRef = useRef<string | undefined>(undefined);
   // A render-triggering counter so that mutations to a non-active tab's state still
   // cause a re-render when that tab becomes active.
   const [, setVersion] = useState(0);
@@ -412,6 +601,7 @@ export function useController() {
   // The active tab's current state, with a stable identity for cancel().
   const activeState = activeTabId ? getOrCreateState(statesRef.current, activeTabId) : initialState;
   const stateRef = useRef(activeState);
+  activeTabIdRef.current = activeTabId;
   stateRef.current = activeState;
 
   // Dispatch to a specific tab's state. If the tab doesn't have state yet, it's
@@ -427,6 +617,15 @@ export function useController() {
   }, [bump]);
 
   const checkpointRefreshSeq = useRef(new Map<string, number>());
+  const sessionLoadSeq = useRef(new Map<string, number>());
+  const bumpSessionLoadSeq = useCallback((tabId: string): number => {
+    const seq = (sessionLoadSeq.current.get(tabId) ?? 0) + 1;
+    sessionLoadSeq.current.set(tabId, seq);
+    return seq;
+  }, []);
+  const sessionLoadCurrent = useCallback((tabId: string, seq: number): boolean => {
+    return sessionLoadSeq.current.get(tabId) === seq;
+  }, []);
   const bumpCheckpointRefreshSeq = useCallback((tabId: string): number => {
     const seq = (checkpointRefreshSeq.current.get(tabId) ?? 0) + 1;
     checkpointRefreshSeq.current.set(tabId, seq);
@@ -440,18 +639,28 @@ export function useController() {
   }, [bumpCheckpointRefreshSeq, dispatchTo]);
 
   const loadSessionDataForTab = useCallback(async (tabId: string, reset = false) => {
-    try {
-      if (reset) dispatchTo(tabId, { type: "reset" });
-      dispatchTo(tabId, { type: "meta", meta: await app.MetaForTab(tabId) });
-      dispatchTo(tabId, { type: "context", context: await app.ContextUsageForTab(tabId) });
-      dispatchTo(tabId, { type: "effort", effort: await app.EffortForTab(tabId) });
-      dispatchTo(tabId, { type: "balance", balance: await app.BalanceForTab(tabId) });
-      dispatchTo(tabId, { type: "jobs", jobs: asArray(await app.JobsForTab(tabId)) });
-      await refreshCheckpoints(tabId);
-      const history = asArray(await app.HistoryForTab(tabId));
-      if (history && history.length) dispatchTo(tabId, { type: "history", messages: history });
-    } catch { /* ignore */ }
-  }, [dispatchTo, refreshCheckpoints]);
+    const seq = bumpSessionLoadSeq(tabId);
+    const safe = <T,>(p: Promise<T>): Promise<T | undefined> => p.catch(() => undefined);
+    const [meta, context, effort, balance, jobs, checkpoints, history] = await Promise.all([
+      safe(app.MetaForTab(tabId)),
+      safe(app.ContextUsageForTab(tabId)),
+      safe(app.EffortForTab(tabId)),
+      safe(app.BalanceForTab(tabId)),
+      safe(app.JobsForTab(tabId)),
+      safe(app.CheckpointsForTab(tabId)),
+      safe(app.HistoryForTab(tabId)),
+    ]);
+    if (!sessionLoadCurrent(tabId, seq)) return;
+    if (reset) dispatchTo(tabId, { type: "reset" });
+    if (meta) dispatchTo(tabId, { type: "meta", meta });
+    if (context) dispatchTo(tabId, { type: "context", context });
+    if (effort) dispatchTo(tabId, { type: "effort", effort });
+    if (balance) dispatchTo(tabId, { type: "balance", balance });
+    if (jobs) dispatchTo(tabId, { type: "jobs", jobs: asArray(jobs) });
+    if (checkpoints) dispatchTo(tabId, { type: "checkpoints", checkpoints: asArray(checkpoints) });
+    const messages = asArray(history);
+    if (messages.length) dispatchTo(tabId, { type: "history", messages });
+  }, [bumpSessionLoadSeq, dispatchTo, sessionLoadCurrent]);
 
   const activeTabFromBackend = useCallback(async (): Promise<TabMeta | undefined> => {
     const tabs = asArray(await app.ListTabs().catch(() => [] as TabMeta[]));
@@ -475,20 +684,55 @@ export function useController() {
     return active.id;
   }, [activeTabFromBackend, loadSessionDataForTab]);
 
-  const loadSessionData = useCallback(async () => {
-    if (activeTabId) {
-      await loadSessionDataForTab(activeTabId);
-      return;
+  const reconcileTabRuntime = useCallback(async (tabId: string): Promise<TabMeta[] | undefined> => {
+    const tabs = asArray(await app.ListTabs().catch(() => [] as TabMeta[]));
+    const tab = tabs.find((candidate) => candidate.id === tabId);
+    if (!tab) return undefined;
+    const local = statesRef.current.get(tabId);
+    const needsInitialLoad = !local?.meta;
+    const missedTurnDone = Boolean(local?.running && !tab.running);
+    dispatchTo(tabId, { type: "backend_status", running: Boolean(tab.running) });
+    if (needsInitialLoad || missedTurnDone) {
+      await loadSessionDataForTab(tabId, missedTurnDone);
+      return tabs;
     }
-    await syncActiveTabFromBackend();
-  }, [activeTabId, loadSessionDataForTab, syncActiveTabFromBackend]);
+    const [jobs, effort, balance] = await Promise.all([
+      app.JobsForTab(tabId).catch(() => undefined),
+      app.EffortForTab(tabId).catch(() => undefined),
+      app.BalanceForTab(tabId).catch(() => undefined),
+    ]);
+    if (jobs) dispatchTo(tabId, { type: "jobs", jobs: asArray(jobs) });
+    if (effort) dispatchTo(tabId, { type: "effort", effort });
+    if (balance) dispatchTo(tabId, { type: "balance", balance });
+    return tabs;
+  }, [dispatchTo, loadSessionDataForTab]);
 
   useEffect(() => {
+    const textBatch = createRafBatch<{ tabId: string; e: WireEvent }>((batch) => {
+      for (const { tabId, e } of batch) dispatchTo(tabId, { type: "event", e });
+    });
     const off = onEvent((e) => {
-      const targetTabId = e.tabId || activeTabId;
+      const targetTabId = e.tabId || activeTabIdRef.current;
       if (!targetTabId) return;
-      dispatchTo(targetTabId, { type: "event", e });
+      if (
+        e.kind === "turn_started" ||
+        e.kind === "text" ||
+        e.kind === "reasoning" ||
+        e.kind === "message" ||
+        e.kind === "tool_dispatch" ||
+        e.kind === "tool_progress" ||
+        e.kind === "tool_result"
+      ) {
+        lastTurnActivityAtByTab.current.set(targetTabId, Date.now());
+      }
+      if (e.kind === "text" || e.kind === "reasoning") {
+        textBatch.push({ tabId: targetTabId, e });
+      } else {
+        textBatch.drain();
+        dispatchTo(targetTabId, { type: "event", e });
+      }
       if (e.kind === "turn_done") {
+        void refreshMetaForTab(targetTabId, dispatchTo);
         app
           .ContextUsageForTab(targetTabId)
           .then((context) => dispatchTo(targetTabId, { type: "context", context }))
@@ -503,37 +747,91 @@ export function useController() {
     });
 
     const offReady = onReady(() => {
-      void loadSessionData();
-      const readyTabId = activeTabId;
+      const readyTabId = activeTabIdRef.current;
       if (readyTabId) {
-        app.BalanceForTab(readyTabId).then((balance) => dispatchTo(readyTabId, { type: "balance", balance })).catch(() => {});
-        app.JobsForTab(readyTabId).then((jobs) => dispatchTo(readyTabId, { type: "jobs", jobs: asArray(jobs) })).catch(() => {});
-        app.EffortForTab(readyTabId).then((effort) => dispatchTo(readyTabId, { type: "effort", effort })).catch(() => {});
+        void loadSessionDataForTab(readyTabId);
+        return;
       }
+      void syncActiveTabFromBackend();
     });
 
-    void loadSessionData();
-    if (activeTabId) {
-      app.BalanceForTab(activeTabId).then((balance) => dispatchTo(activeTabId, { type: "balance", balance })).catch(() => {});
-      app.EffortForTab(activeTabId).then((effort) => dispatchTo(activeTabId, { type: "effort", effort })).catch(() => {});
-      app.JobsForTab(activeTabId).then((jobs) => dispatchTo(activeTabId, { type: "jobs", jobs: asArray(jobs) })).catch(() => {});
-    }
+    void syncActiveTabFromBackend();
+    // The event subscription is live now, so ask the backend to re-emit any
+    // approval/ask prompt that was already blocking a tab before this load —
+    // otherwise a session left mid-confirmation shows "waiting" with no modal
+    // and no way to stop (#3844).
+    void app.ReplayPendingPrompts().catch(() => {});
 
-    return () => { off(); offReady(); };
-  }, [loadSessionData, activeTabId, dispatchTo]);
+    return () => { textBatch.drain(); off(); offReady(); };
+  }, [dispatchTo, loadSessionDataForTab, refreshCheckpoints, syncActiveTabFromBackend]);
+
+  // Stale-turn watchdog: if the frontend thinks the agent is running but the
+  // turn stream has gone quiet, reconcile with the backend. This catches cases
+  // where the Wails event channel silently drops turn_done after the final
+  // message or synthetic todo update has already closed the live stream.
+  useEffect(() => {
+    if (!activeTabId) return;
+    const s = statesRef.current.get(activeTabId);
+    const now = Date.now();
+    const lastTurnActivityAt = lastTurnActivityAtByTab.current.get(activeTabId) ?? 0;
+    if (!s?.running || !s.turnActive || lastTurnActivityAt <= 0) return;
+    const since = Math.max(0, now - lastTurnActivityAt);
+    if (shouldReconcileStaleTurn(s, lastTurnActivityAt, now)) {
+      void reconcileTabRuntime(activeTabId);
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      const cur = statesRef.current.get(activeTabId);
+      const lastActivity = lastTurnActivityAtByTab.current.get(activeTabId) ?? 0;
+      if (shouldReconcileStaleTurn(cur, lastActivity)) {
+        void reconcileTabRuntime(activeTabId);
+      }
+    }, STALE_TURN_RECONCILE_MS - since);
+    return () => window.clearTimeout(timer);
+  }, [activeTabId, reconcileTabRuntime, activeState.running, activeState.turnActive]);
+
+  // Replay any pending approval/ask prompts when switching tabs, so a
+  // plan-mode session left awaiting confirmation rebuilds its modal (#4275).
+  useEffect(() => {
+    replayPendingPromptsForActiveTab(activeTabId);
+  }, [activeTabId]);
 
   const send = useCallback((displayText: string, submitText = displayText) => {
-    if (!activeTabId) return;
-    dispatchTo(activeTabId, { type: "user", text: displayText });
-    const display = displayText.trim(); const submit = submitText.trim();
-    (display !== submit ? app.SubmitDisplayToTab(activeTabId, display, submit) : app.SubmitToTab(activeTabId, submit)).catch(() => {});
-  }, [activeTabId, dispatchTo]);
+    const submitForTab = (tabId: string) => {
+      const seq = getOrCreateState(statesRef.current, tabId).seq;
+      dispatchTo(tabId, { type: "user", text: displayText, seq });
+      const display = displayText.trim();
+      const submit = submitText.trim();
+      invalidateCache();
+      (display !== submit ? app.SubmitDisplayToTab(tabId, display, submit) : app.SubmitToTab(tabId, submit)).catch((error) => {
+        dispatchTo(tabId, { type: "send_failed", error: `Send failed: ${error instanceof Error ? error.message : String(error)}` });
+      });
+    };
+    const tabId = activeTabIdRef.current ?? activeTabId;
+    if (tabId) {
+      submitForTab(tabId);
+      return;
+    }
+    void activeTabFromBackend().then((active) => {
+      if (!active?.id) return;
+      setActiveTabId(active.id);
+      submitForTab(active.id);
+    });
+  }, [activeTabFromBackend, activeTabId, dispatchTo]);
 
   const runShell = useCallback((command: string) => {
     if (!activeTabId) return;
-    dispatchTo(activeTabId, { type: "user", text: `!${command}` });
-    app.RunShell(command).catch(() => {});
+    dispatchTo(activeTabId, { type: "user", text: `!${command}`, seq: getOrCreateState(statesRef.current, activeTabId).seq });
+    app.RunShellForTab(activeTabId, command).catch(() => {});
   }, [activeTabId, dispatchTo]);
+
+  const steer = useCallback((text: string) => {
+    if (!activeTabId) return;
+    // No optimistic user bubble: rewind/fork map turns by counting user items,
+    // and a steer is not a backend turn — the Steer event's ↪ notice is the
+    // visible confirmation (#3660).
+    app.SteerForTab(activeTabId, text).catch(() => {});
+  }, [activeTabId]);
 
   const notice = useCallback((text: string, level: "info" | "warn" = "info") => {
     if (!activeTabId) return;
@@ -567,17 +865,59 @@ export function useController() {
     app.AnswerQuestionForTab(activeTabId, id, answers).catch(() => {});
   }, [activeTabId, dispatchTo]);
 
-  const setControllerMode = useCallback((mode: "plan" | "yolo" | "normal"): Promise<void> => {
+  const setControllerMode = useCallback((mode: Mode): Promise<void> => {
     if (!activeTabId) return Promise.resolve();
     return app.SetModeForTab(activeTabId, mode).then(() => {
-      if (mode === "yolo" && activeTabId) dispatchTo(activeTabId, { type: "clearApproval" });
+      if (modeHasAutoApproveTools(mode) && activeTabId) dispatchTo(activeTabId, { type: "clearApproval" });
     }).catch(() => {});
+  }, [activeTabId, dispatchTo]);
+
+  const setCollaborationMode = useCallback(async (mode: CollaborationMode): Promise<void> => {
+    if (!activeTabId) return;
+    await app.SetCollaborationModeForTab(activeTabId, mode).catch(() => {});
+    await refreshMetaForTab(activeTabId, dispatchTo);
+  }, [activeTabId, dispatchTo]);
+
+  const setToolApprovalMode = useCallback(async (mode: ToolApprovalMode): Promise<void> => {
+    if (!activeTabId) return;
+    await app.SetToolApprovalModeForTab(activeTabId, mode).catch(() => {});
+    if (mode === "auto" || mode === "yolo") dispatchTo(activeTabId, { type: "clearApproval" });
+    await refreshMetaForTab(activeTabId, dispatchTo);
+  }, [activeTabId, dispatchTo]);
+
+  const setGoal = useCallback(async (goal: string): Promise<void> => {
+    if (!activeTabId) return;
+    await app.SetGoalForTab(activeTabId, goal).catch(() => {});
+    await refreshMetaForTab(activeTabId, dispatchTo);
+  }, [activeTabId, dispatchTo]);
+
+  const clearGoal = useCallback(async (): Promise<void> => {
+    if (!activeTabId) return;
+    await app.ClearGoalForTab(activeTabId).catch(() => {});
+    await refreshMetaForTab(activeTabId, dispatchTo);
   }, [activeTabId, dispatchTo]);
 
   const newSession = useCallback(async () => {
     const tabId = activeTabId;
     if (tabId) bumpCheckpointRefreshSeq(tabId);
-    await app.NewSession().catch(() => {});
+    try {
+      await app.NewSession();
+    } catch {
+      return; // backend refused (workspace starting / failed) — keep the transcript
+    }
+    invalidateCache();
+    if (tabId) dispatchTo(tabId, { type: "reset" });
+  }, [activeTabId, bumpCheckpointRefreshSeq, dispatchTo]);
+
+  const clearSession = useCallback(async () => {
+    const tabId = activeTabId;
+    if (tabId) bumpCheckpointRefreshSeq(tabId);
+    try {
+      await app.ClearSession();
+    } catch {
+      return;
+    }
+    invalidateCache();
     if (tabId) dispatchTo(tabId, { type: "reset" });
   }, [activeTabId, bumpCheckpointRefreshSeq, dispatchTo]);
 
@@ -590,17 +930,18 @@ export function useController() {
     const messages = asArray(
       await (tabId ? app.ResumeSessionForTab(tabId, path) : app.ResumeSession(path)).catch(() => [] as HistoryMessage[]),
     );
+    if (messages.length === 0) return;
     dispatchTo(targetTabId, { type: "reset" });
-    if (messages.length) dispatchTo(targetTabId, { type: "history", messages });
+    dispatchTo(targetTabId, { type: "history", messages });
     app.ContextUsageForTab(targetTabId).then((context) => dispatchTo(targetTabId, { type: "context", context })).catch(() => {});
     void refreshCheckpoints(targetTabId);
   }, [activeTabId, dispatchTo, refreshCheckpoints, waitForTabReady]);
 
   const previewSession = useCallback(async (path: string): Promise<HistoryMessage[]> => asArray<HistoryMessage>(await app.PreviewSession(path).catch(() => [])), []);
-  const deleteSession = useCallback((path: string) => app.DeleteSession(path).catch(() => {}), []);
-  const restoreSession = useCallback((path: string) => app.RestoreSession(path).catch(() => {}), []);
-  const purgeTrashedSession = useCallback((path: string) => app.PurgeTrashedSession(path).catch(() => {}), []);
-  const renameSession = useCallback((path: string, title: string) => app.RenameSession(path, title).catch(() => {}), []);
+  const deleteSession = useCallback((path: string) => app.DeleteSession(path).catch(() => {}).finally(() => invalidateCache()), []);
+  const restoreSession = useCallback((path: string) => app.RestoreSession(path).catch(() => {}).finally(() => invalidateCache()), []);
+  const purgeTrashedSession = useCallback((path: string) => app.PurgeTrashedSession(path).catch(() => {}).finally(() => invalidateCache()), []);
+  const renameSession = useCallback((path: string, title: string) => app.RenameSession(path, title).catch(() => {}).finally(() => invalidateCache()), []);
 
   const refreshMeta = useCallback(async () => {
     if (!activeTabId) return;
@@ -629,7 +970,12 @@ export function useController() {
 
   const setModel = useCallback(async (name: string) => {
     if (!activeTabId) return;
-    await app.SetModelForTab(activeTabId, name).catch(() => {});
+    try {
+      await app.SetModelForTab(activeTabId, name);
+    } catch (err) {
+      dispatchTo(activeTabId, { type: "local_notice", level: "warn", text: t("status.modelSwitchFailed", { err: errorMessage(err) }) });
+      return;
+    }
     try {
       dispatchTo(activeTabId, { type: "meta", meta: await app.MetaForTab(activeTabId) });
       dispatchTo(activeTabId, { type: "context", context: await app.ContextUsageForTab(activeTabId) });
@@ -647,8 +993,23 @@ export function useController() {
     } catch { /* ignore */ }
   }, [activeTabId, dispatchTo]);
 
+  const setTokenMode = useCallback(async (mode: TokenMode) => {
+    if (!activeTabId) return;
+    try {
+      await app.SetTokenModeForTab(activeTabId, mode);
+    } catch (err) {
+      dispatchTo(activeTabId, { type: "local_notice", level: "warn", text: t("status.tokenModeSwitchFailed", { err: errorMessage(err) }) });
+      return;
+    }
+    try {
+      dispatchTo(activeTabId, { type: "meta", meta: await app.MetaForTab(activeTabId) });
+      dispatchTo(activeTabId, { type: "context", context: await app.ContextUsageForTab(activeTabId) });
+      dispatchTo(activeTabId, { type: "effort", effort: await app.EffortForTab(activeTabId) });
+    } catch { /* ignore */ }
+  }, [activeTabId, dispatchTo]);
+
   const fetchMemory = useCallback((): Promise<MemoryView> =>
-    app.Memory().catch(() => ({ docs: [], facts: [], scopes: [], storeDir: "", available: false })), []);
+    app.Memory().catch(() => ({ docs: [], facts: [], archives: [], scopes: [], storeDir: "", available: false })), []);
   const remember = useCallback(async (scope: string, note: string) => { await app.Remember(scope, note).catch(() => {}); }, []);
   const forget = useCallback(async (name: string) => { await app.Forget(name).catch(() => {}); }, []);
   const saveDoc = useCallback(async (path: string, body: string) => { await app.SaveDoc(path, body).catch(() => {}); }, []);
@@ -664,6 +1025,10 @@ export function useController() {
         const tab = await app.Fork(turn);
         if (tab?.id) {
           setActiveTabId(tab.id);
+          // The fork's controller builds in a background goroutine: an immediate
+          // load reads empty history, and the ready-event fallback can still
+          // target the source tab, leaving the fork blank (#3742).
+          await waitForTabReady(tab.id);
           await loadSessionDataForTab(tab.id, true);
         } else {
           await syncActiveTabFromBackend(true);
@@ -685,37 +1050,40 @@ export function useController() {
     } finally {
       dispatchTo(sourceTabId, { type: "message_action_done" });
     }
-  }, [activeTabId, dispatchTo, loadSessionDataForTab, syncActiveTabFromBackend]);
+  }, [activeTabId, dispatchTo, loadSessionDataForTab, syncActiveTabFromBackend, waitForTabReady]);
 
   // Tab management: switch preserves per-tab state; open creates it.
-  const switchTab = useCallback(async (tabId: string) => {
+  const switchTab = useCallback(async (tabId: string): Promise<TabMeta[] | undefined> => {
+    addBreadcrumb("nav", `switch tab ${tabId}`);
+    setActiveTabId(tabId);
     try {
       await app.SetActiveTab(tabId);
-      setActiveTabId(tabId);
-      // Load session data into the tab's state if it hasn't been loaded yet.
-      const states = statesRef.current;
-      if (!states.has(tabId) || !states.get(tabId)?.meta) {
-        await loadSessionDataForTab(tabId);
-      }
+      return await reconcileTabRuntime(tabId);
     } catch { /* ignore */ }
+    return undefined;
+  }, [reconcileTabRuntime]);
+
+  const openProjectTab = useCallback(async (workspaceRoot: string, topicId: string): Promise<TabMeta> => {
+    const meta = await app.OpenProjectTab(workspaceRoot, topicId);
+    setActiveTabId(meta.id);
+    await loadSessionDataForTab(meta.id, !statesRef.current.has(meta.id));
+    return meta;
   }, [loadSessionDataForTab]);
 
-  const openProjectTab = useCallback(async (workspaceRoot: string, topicId: string): Promise<TabMeta | undefined> => {
-    try {
-      const meta = await app.OpenProjectTab(workspaceRoot, topicId);
-      setActiveTabId(meta.id);
-      await loadSessionDataForTab(meta.id, !statesRef.current.has(meta.id));
-      return meta;
-    } catch { return undefined; }
+  const openGlobalTab = useCallback(async (topicId: string): Promise<TabMeta> => {
+    const meta = await app.OpenGlobalTab(topicId);
+    setActiveTabId(meta.id);
+    await loadSessionDataForTab(meta.id, !statesRef.current.has(meta.id));
+    return meta;
   }, [loadSessionDataForTab]);
 
-  const openGlobalTab = useCallback(async (topicId: string): Promise<TabMeta | undefined> => {
-    try {
-      const meta = await app.OpenGlobalTab(topicId);
-      setActiveTabId(meta.id);
-      await loadSessionDataForTab(meta.id, !statesRef.current.has(meta.id));
-      return meta;
-    } catch { return undefined; }
+  // Ensure a blank tab exists for the given scope — reuses an existing one
+  // or creates a new tab, then loads its session data.
+  const ensureBlankTab = useCallback(async (scope: string, workspaceRoot: string): Promise<TabMeta> => {
+    const meta = await app.EnsureBlankTab(scope, workspaceRoot);
+    setActiveTabId(meta.id);
+    await loadSessionDataForTab(meta.id, !statesRef.current.has(meta.id));
+    return meta;
   }, [loadSessionDataForTab]);
 
   const closeTab = useCallback(async (tabId: string) => {
@@ -736,11 +1104,11 @@ export function useController() {
   return {
     state: activeState,
     activeTabId,
-    send, runShell, notice, cancel, approve, answerQuestion, setControllerMode,
-    newSession, listSessions, listTrashedSessions, resumeSession, previewSession, deleteSession, restoreSession, purgeTrashedSession, renameSession,
-    refreshMeta, pickWorkspace, switchWorkspace, compact, rewind, setModel, setEffort,
+    send, runShell, steer, notice, cancel, approve, answerQuestion, setControllerMode, setCollaborationMode, setToolApprovalMode, setGoal, clearGoal,
+    newSession, clearSession, listSessions, listTrashedSessions, resumeSession, previewSession, deleteSession, restoreSession, purgeTrashedSession, renameSession,
+    refreshMeta, pickWorkspace, switchWorkspace, compact, rewind, setModel, setEffort, setTokenMode,
     fetchMemory, remember, forget, saveDoc,
-    switchTab, openProjectTab, openGlobalTab, closeTab, reorderTabs,
+    switchTab, openProjectTab, openGlobalTab, ensureBlankTab, closeTab, reorderTabs,
     syncActiveTab: syncActiveTabFromBackend,
   };
 }

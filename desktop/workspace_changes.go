@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"os/exec"
 	"path/filepath"
 	"sort"
@@ -30,6 +31,8 @@ func (a *App) WorkspaceChanges() WorkspaceChangesView {
 		out.GitErr = err.Error()
 		return out
 	}
+
+	out.GitBranch = workspaceGitBranch(base)
 
 	changes := map[string]*workspaceChangeAccumulator{}
 	add := func(path string) *workspaceChangeAccumulator {
@@ -100,16 +103,23 @@ func (a *App) WorkspaceChanges() WorkspaceChangesView {
 	return out
 }
 
+// workspaceGit builds a console-hidden git probe: CREATE_NO_WINDOW so git's own
+// children inherit the invisible console, fsmonitor/auto-maintenance off so a
+// probe never spawns a background daemon that opens a console of its own (#3906).
+func workspaceGit(args ...string) *exec.Cmd {
+	cmd := exec.Command("git", append([]string{"-c", "core.fsmonitor=false", "-c", "maintenance.auto=false"}, args...)...)
+	proc.HideWindow(cmd)
+	return cmd
+}
+
 func workspaceGitStatus(base string) ([]gitStatusEntry, error) {
-	cmd := exec.Command("git", "-C", base, "status", "--porcelain=v1", "-z", "--untracked-files=all")
-	proc.HideWindowDetached(cmd)
+	cmd := workspaceGit("-C", base, "status", "--porcelain=v1", "-z", "--untracked-files=all")
 	raw, err := cmd.Output()
 	if err != nil {
 		return nil, err
 	}
 	entries := parseGitStatusPorcelainZ(raw)
-	topCmd := exec.Command("git", "-C", base, "rev-parse", "--show-toplevel")
-	proc.HideWindowDetached(topCmd)
+	topCmd := workspaceGit("-C", base, "rev-parse", "--show-toplevel")
 	topRaw, err := topCmd.Output()
 	if err != nil {
 		return nil, err
@@ -176,4 +186,139 @@ func workspaceRelPathFromGitStatus(repoRoot, base, path string) string {
 		path = filepath.Join(repoRoot, filepath.FromSlash(path))
 	}
 	return normalizeWorkspaceRelPath(base, path)
+}
+
+// workspaceGitBranch returns the current git branch name for the repo rooted
+// at base, or an empty string when base is not inside a git repository or when
+// git is unavailable.
+func workspaceGitBranch(base string) string {
+	cmd := workspaceGit("-C", base, "branch", "--show-current")
+	raw, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	if branch := strings.TrimSpace(string(raw)); branch != "" {
+		return branch
+	}
+
+	headCmd := workspaceGit("-C", base, "rev-parse", "--short", "HEAD")
+	raw, err = headCmd.Output()
+	if err != nil {
+		return ""
+	}
+	short := strings.TrimSpace(string(raw))
+	if short == "" {
+		return ""
+	}
+	return "@" + short
+}
+
+// GitBranches returns all local git branches for the active workspace's repo.
+func (a *App) GitBranches() ([]string, error) {
+	base, err := a.activeWorkspaceBase()
+	if err != nil {
+		return nil, err
+	}
+	cmd := workspaceGit("-C", base, "branch", "--format=%(refname:short)")
+	raw, err := cmd.Output()
+	if err != nil {
+		return nil, err
+	}
+	branches := strings.FieldsFunc(strings.TrimSpace(string(raw)), func(r rune) bool { return r == '\n' })
+	return branches, nil
+}
+
+// GitCheckout switches the active workspace's git branch and returns the
+// current branch name, or an error when git is unavailable.
+func (a *App) GitCheckout(branch string) error {
+	base, err := a.activeWorkspaceBase()
+	if err != nil {
+		return err
+	}
+	cmd := workspaceGit("-C", base, "checkout", branch)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		if len(out) > 0 {
+			return fmt.Errorf("git checkout: %s", strings.TrimSpace(string(out)))
+		}
+		return err
+	}
+	return nil
+}
+
+type GitCommitView struct {
+	Hash    string `json:"hash"`
+	Author  string `json:"author"`
+	Date    string `json:"date"`
+	Message string `json:"message"`
+}
+
+type GitCommitDetailView struct {
+	Diff  *string  `json:"diff,omitempty"`
+	Files []string `json:"files,omitempty"`
+}
+
+func (a *App) WorkspaceGitHistory(path string) ([]GitCommitView, error) {
+	base, err := a.activeWorkspaceBase()
+	if err != nil {
+		return nil, err
+	}
+
+	args := []string{"-C", base, "log", "--pretty=format:%H%x00%an%x00%ad%x00%s", "-z", "-n", "100"}
+	if path != "" {
+		args = append(args, "--", path)
+	}
+
+	cmd := workspaceGit(args...)
+	raw, err := cmd.Output()
+	if err != nil {
+		return nil, err
+	}
+
+	parts := bytes.Split(raw, []byte{0})
+	var out []GitCommitView
+	// 4 parts per commit: hash, author, date, message
+	for i := 0; i+3 < len(parts); i += 4 {
+		out = append(out, GitCommitView{
+			Hash:    string(parts[i]),
+			Author:  string(parts[i+1]),
+			Date:    string(parts[i+2]),
+			Message: string(parts[i+3]),
+		})
+	}
+	return out, nil
+}
+
+func (a *App) WorkspaceGitCommitDetail(hash string, path string) (GitCommitDetailView, error) {
+	base, err := a.activeWorkspaceBase()
+	if err != nil {
+		return GitCommitDetailView{}, err
+	}
+
+	if path != "" {
+		// Single file diff
+		cmd := workspaceGit("-C", base, "show", "--relative", "--pretty=format:", "--patch", hash, "--", path)
+		raw, err := cmd.Output()
+		if err != nil {
+			return GitCommitDetailView{}, err
+		}
+		diffStr := strings.TrimSpace(string(raw))
+		return GitCommitDetailView{Diff: &diffStr}, nil
+	}
+
+	// Project level: list of files changed
+	cmd := workspaceGit("-C", base, "diff-tree", "--relative", "--no-commit-id", "--name-only", "-r", hash)
+	raw, err := cmd.Output()
+	if err != nil {
+		return GitCommitDetailView{}, err
+	}
+
+	lines := strings.Split(strings.TrimSpace(string(raw)), "\n")
+	var files []string
+	for _, line := range lines {
+		if line != "" {
+			files = append(files, line)
+		}
+	}
+	return GitCommitDetailView{Files: files}, nil
 }

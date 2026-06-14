@@ -6,6 +6,7 @@ import type { CapabilitiesView, MCPServerInput, ServerView, SkillRootSkillView, 
 import { InlineConfirmButton } from "./InlineConfirmButton";
 import { ResizableDrawer } from "./ResizableDrawer";
 import { Tooltip } from "./Tooltip";
+import { ModalCloseButton } from "./ModalCloseButton";
 
 // CapabilitiesPanel is the desktop MCP & Skills drawer — the GUI counterpart to
 // the CLI's /mcp + /skill, aligning with Claude Code's Customize → Connectors:
@@ -15,8 +16,10 @@ type CapTab = "servers" | "skills";
 
 export function CapabilitiesPanel({
   onClose,
+  initialTab = "servers",
 }: {
   onClose: () => void;
+  initialTab?: CapTab;
 }) {
   const t = useT();
   const [view, setView] = useState<CapabilitiesView | null>(null);
@@ -24,7 +27,7 @@ export function CapabilitiesPanel({
   const [err, setErr] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState<string | null>(null);
-  const [tab, setTab] = useState<CapTab>("servers");
+  const [tab, setTab] = useState<CapTab>(initialTab);
   const [skillQuery, setSkillQuery] = useState("");
   const [expandedSkills, setExpandedSkills] = useState<Set<string>>(() => new Set());
   const [expandedErrors, setExpandedErrors] = useState<Set<string>>(() => new Set());
@@ -135,16 +138,14 @@ export function CapabilitiesPanel({
             <div className="drawer__title">{t("caps.title")}</div>
             {view && <div className="drawer__summary">{summary}</div>}
           </div>
-          <Tooltip label={t("common.close")}>
-            <button className="chip" onClick={onClose}>
-              ✕
-            </button>
-          </Tooltip>
-          <Tooltip label={t("caps.refresh")}>
-            <button className="chip" disabled={busy} onClick={() => void reload()}>
-              ↻
-            </button>
-          </Tooltip>
+          <div className="drawer__actions">
+            <Tooltip label={t("caps.refresh")}>
+              <button className="chip" disabled={busy} onClick={() => void reload()}>
+                ↻
+              </button>
+            </Tooltip>
+            <ModalCloseButton label={t("common.close")} onClick={onClose} />
+          </div>
         </header>
 
         {!view ? (
@@ -174,7 +175,7 @@ export function CapabilitiesPanel({
 
             {tab === "servers" ? (
               <section className="mem-section">
-                <div className="mem-section__actions">
+                <div className="cap-mcp-toolbar cap-mcp-toolbar--drawer">
                   {!adding && (
                     <button className="btn btn--small" disabled={busy} onClick={() => setAdding(true)}>
                       {t("caps.addServer")}
@@ -187,37 +188,44 @@ export function CapabilitiesPanel({
                     expanded={expandedErrors}
                     onToggle={toggleError}
                     onRetry={(name) => void mutate(() => app.ReconnectMCPServer(name))}
+                    onRetryMany={(names) => void mutate(() => Promise.allSettled(names.map((name) => app.ReconnectMCPServer(name))))}
                     onConfirmClearAuth={(name) => void mutate(() => app.ClearMCPServerAuthentication(name))}
                     onConfirm={(name) => void mutate(() => app.RemoveMCPServer(name))}
+                    onConfirmMany={(names) => void mutate(() => Promise.allSettled(names.map((name) => app.RemoveMCPServer(name))))}
                     busy={busy}
                   />
                 )}
                 {view.servers.length === 0 && !adding && (
                   <div className="mem-empty">{t("caps.noServers")}</div>
                 )}
-                <ServerGroup
-                  busy={busy}
-                  servers={serverGroups.active}
-                  expanded={expandedServers}
-                  expandedTools={expandedServerTools}
-                  editing={editing}
-                  onConfirm={(name) => void mutate(() => app.RemoveMCPServer(name))}
-                  onEdit={(name) => {
-                    setEditing(name);
-                  }}
-                  onCancelEdit={() => setEditing(null)}
-                  onRetry={(name) => void mutate(() => app.ReconnectMCPServer(name))}
-                  onReconnect={(name) => void mutate(() => app.ReconnectMCPServer(name))}
-                  onConfirmClearAuth={(name) => void mutate(() => app.ClearMCPServerAuthentication(name))}
-                  onToggle={(name, on) => void mutate(() => app.SetMCPServerEnabled(name, on))}
-                  onUpdate={(name, input) =>
-                    void mutate(() => app.UpdateMCPServer(name, input)).then((ok) => {
-                      if (ok) setEditing(null);
-                    })
-                  }
-                  onToggleDetails={toggleServer}
-                  onToggleTools={toggleServerTools}
-                />
+                {serverGroups.active.length > 0 && (
+                  <div className="cap-server-section">
+                    <div className="cap-server-section__title">{t("caps.availableServers")}</div>
+                    <ServerGroup
+                      busy={busy}
+                      servers={serverGroups.active}
+                      expanded={expandedServers}
+                      expandedTools={expandedServerTools}
+                      editing={editing}
+                      onConfirm={(name) => void mutate(() => app.RemoveMCPServer(name))}
+                      onEdit={(name) => {
+                        setEditing(name);
+                      }}
+                      onCancelEdit={() => setEditing(null)}
+                      onRetry={(name) => void mutate(() => app.ReconnectMCPServer(name))}
+                      onReconnect={(name) => void mutate(() => app.ReconnectMCPServer(name))}
+                      onConfirmClearAuth={(name) => void mutate(() => app.ClearMCPServerAuthentication(name))}
+                      onToggle={(name, on) => void mutate(() => app.SetMCPServerEnabled(name, on))}
+                      onUpdate={(name, input) =>
+                        void mutate(() => app.UpdateMCPServer(name, input)).then((ok) => {
+                          if (ok) setEditing(null);
+                        })
+                      }
+                      onToggleDetails={toggleServer}
+                      onToggleTools={toggleServerTools}
+                    />
+                  </div>
+                )}
                 {adding ? (
                   <AddServerForm busy={busy} onCancel={() => setAdding(false)} onAdd={async (input) => (await mutate(() => app.AddMCPServer(input))) && setAdding(false)} />
                 ) : null}
@@ -288,6 +296,7 @@ function normalizeCapabilitiesView(view: CapabilitiesView | null | undefined): C
     skills: asArray(view?.skills),
     skillRoots: asArray(view?.skillRoots).map((root) => ({
       ...root,
+      removable: Boolean(root.removable),
       skillItems: asArray(root.skillItems),
     })),
   };
@@ -319,6 +328,14 @@ function skillListSummary(skills: SkillView[], filtered: SkillView[], searching:
     if (count > 0) parts.push(skillScopeSummary(scope, count, t));
   }
   return parts.join(" · ");
+}
+
+function mcpServerSummary(servers: ServerView[], t: ReturnType<typeof useT>): string {
+  return t("caps.mcpSummary", {
+    connected: servers.filter((s) => s.status === "connected").length,
+    failed: servers.filter((s) => s.status === "failed").length,
+    tools: servers.reduce((total, server) => total + (server.tools || 0), 0),
+  });
 }
 
 function skillScopeSummary(scope: string, count: number, t: ReturnType<typeof useT>): string {
@@ -434,7 +451,7 @@ function SkillSources({
                 const rootSkillsExpanded = expandedRootSkills.has(key);
                 const rootSkillsFull = fullRootSkills.has(key);
                 const canShowRootSkills = rootSkills.length > 0;
-                const canRemoveRoot = root.scope === "custom" && root.configured;
+                const canRemoveRoot = root.removable;
                 return (
                   <div className={`cap-source cap-source--${skillRootTone(root)}`} key={key}>
                     <span className={`cap-dot cap-dot--${skillRootDot(root)}`} />
@@ -654,27 +671,68 @@ function FailedServersNotice({
   busy,
   onToggle,
   onRetry,
+  onRetryMany,
   onConfirmClearAuth,
   onConfirm,
+  onConfirmMany,
 }: {
   servers: ServerView[];
   expanded: Set<string>;
   busy: boolean;
   onToggle: (name: string) => void;
   onRetry: (name: string) => void;
+  onRetryMany: (names: string[]) => void;
   onConfirmClearAuth: (name: string) => void;
   onConfirm: (name: string) => void;
+  onConfirmMany: (names: string[]) => void;
 }) {
   const t = useT();
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const [bulkOpen, setBulkOpen] = useState(false);
+  const groups = useMemo(() => failureGroups(servers, t), [servers, t]);
+  const removableFailures = useMemo(() => servers.filter(canBulkRemoveFailure), [servers]);
+  const retryNames = useMemo(() => servers.map((s) => s.name), [servers]);
   return (
-    <div className="cap-failures" role="status">
+    <div className="cap-failures" role="region" aria-label={t("caps.failureTitle", { failed: servers.length })}>
       <div className="cap-failures__head">
         <div>
           <div className="cap-failures__title">{t("caps.failureTitle", { failed: servers.length })}</div>
           <div className="cap-failures__hint">{t("caps.failureHint")}</div>
         </div>
+        <div className="cap-failures__actions">
+          <button className="btn btn--small" disabled={busy} type="button" onClick={() => setDetailsOpen((v) => !v)} aria-expanded={detailsOpen}>
+            {detailsOpen ? t("caps.hideFailureDetails") : t("caps.showFailureDetails")}
+          </button>
+          <button className="btn btn--small" disabled={busy || retryNames.length === 0} type="button" onClick={() => onRetryMany(retryNames)}>
+            {t("caps.retryAll")}
+          </button>
+          {removableFailures.length > 0 && (
+            <button className="btn btn--small" disabled={busy} type="button" onClick={() => setBulkOpen((v) => !v)} aria-expanded={bulkOpen}>
+              {t("caps.bulkActions")}
+            </button>
+          )}
+        </div>
       </div>
-      <div className="cap-failures__list">
+      <div className="cap-failures__meta">
+        <div className="cap-failures__chips" aria-label={t("caps.failureGroups")}>
+          {groups.map((group) => (
+            <span className="cap-failure-chip" key={group.kind}>{group.label}</span>
+          ))}
+        </div>
+      </div>
+      {bulkOpen && removableFailures.length > 0 && (
+        <div className="cap-failures__bulk">
+          <InlineConfirmButton
+            label={t("caps.removeInvalid", { count: removableFailures.length })}
+            confirmLabel={t("caps.confirmRemoveInvalid", { count: removableFailures.length })}
+            cancelLabel={t("common.cancel")}
+            disabled={busy}
+            danger
+            onConfirm={() => onConfirmMany(removableFailures.map((s) => s.name))}
+          />
+        </div>
+      )}
+      {detailsOpen && <div className="cap-failures__list">
         {servers.map((s) => {
           const open = expanded.has(s.name);
           const error = s.error || t("caps.failed");
@@ -736,7 +794,7 @@ function FailedServersNotice({
             </div>
           );
         })}
-      </div>
+      </div>}
     </div>
   );
 }
@@ -1134,6 +1192,68 @@ function summarizeServerError(error: string, t: ReturnType<typeof useT>): string
   return summary.length > 180 ? `${summary.slice(0, 176).trim()}…` : summary;
 }
 
+type FailureKind = "auth" | "missing-command" | "command-unavailable" | "network" | "other";
+
+function failureKind(server: ServerView): FailureKind {
+  if (server.authStatus === "required") return "auth";
+  const err = (server.error || "").toLowerCase();
+  if (err.includes("command is required")) return "missing-command";
+  if (
+    err.includes("command not found") ||
+    err.includes("executable file not found") ||
+    err.includes("no such file") ||
+    err.includes("enoent")
+  ) {
+    return "command-unavailable";
+  }
+  if (
+    err.includes("401") ||
+    err.includes("403") ||
+    err.includes("unauthorized") ||
+    err.includes("forbidden") ||
+    err.includes("timeout") ||
+    err.includes("network")
+  ) {
+    return "network";
+  }
+  return "other";
+}
+
+function failureGroups(servers: ServerView[], t: ReturnType<typeof useT>): Array<{ kind: FailureKind; label: string }> {
+  const counts = new Map<FailureKind, number>();
+  for (const server of servers) {
+    const kind = failureKind(server);
+    counts.set(kind, (counts.get(kind) ?? 0) + 1);
+  }
+  const order: FailureKind[] = ["missing-command", "command-unavailable", "auth", "network", "other"];
+  return order.flatMap((kind) => {
+    const count = counts.get(kind) ?? 0;
+    if (count === 0) return [];
+    return [{ kind, label: failureGroupLabel(kind, count, t) }];
+  });
+}
+
+function failureGroupLabel(kind: FailureKind, count: number, t: ReturnType<typeof useT>): string {
+  switch (kind) {
+    case "auth":
+      return t("caps.failureGroupAuth", { count });
+    case "missing-command":
+      return t("caps.failureGroupMissingCommand", { count });
+    case "command-unavailable":
+      return t("caps.failureGroupCommandUnavailable", { count });
+    case "network":
+      return t("caps.failureGroupNetwork", { count });
+    default:
+      return t("caps.failureGroupOther", { count });
+  }
+}
+
+function canBulkRemoveFailure(server: ServerView): boolean {
+  if (server.builtIn || !server.configured) return false;
+  const kind = failureKind(server);
+  return kind === "missing-command" || kind === "command-unavailable";
+}
+
 function serverActionLabel(s: ServerView, t: ReturnType<typeof useT>): string {
   const err = (s.error || "").toLowerCase();
   if (shouldOpenAuth(s)) return t("caps.reauthorize");
@@ -1216,7 +1336,11 @@ function SkillRow({
         </Tooltip>
       </div>
       <div className="cap-skill-card__desc">{expanded ? skill.description : summary}</div>
-      {canExpand && <div className="cap-skill-card__more">{expanded ? t("common.collapse") : t("common.expand")}</div>}
+      {canExpand && (
+        <button className="cap-skill-card__more" type="button" onClick={onToggle} aria-expanded={expanded}>
+          {expanded ? t("common.collapse") : t("common.expand")}
+        </button>
+      )}
     </div>
   );
 }
@@ -1306,4 +1430,232 @@ function AddServerForm({
       </div>
     </div>
   );
+}
+
+// MCPServersSettingsPage is a self-contained MCP servers management page
+// embedded inside the settings centre.
+export function MCPServersSettingsPage() {
+	const t = useT();
+	const [view, setView] = useState<CapabilitiesView | null>(null);
+	const [busy, setBusy] = useState(false);
+	const [err, setErr] = useState<string | null>(null);
+	const [adding, setAdding] = useState(false);
+	const [editing, setEditing] = useState<string | null>(null);
+	const [expandedErrors, setExpandedErrors] = useState<Set<string>>(() => new Set());
+	const [expandedServers, setExpandedServers] = useState<Set<string>>(() => new Set());
+	const [expandedServerTools, setExpandedServerTools] = useState<Set<string>>(() => new Set());
+
+	const reload = useCallback(async () => {
+		setView(normalizeCapabilitiesView(await app.Capabilities().catch(() => ({ servers: [], skills: [], skillRoots: [] }))));
+	}, []);
+	useEffect(() => { void reload(); }, [reload]);
+	useEffect(() => {
+		if (!view || !view.servers.some((s) => s.status === "initializing" || s.status === "deferred")) return;
+		const id = window.setInterval(() => void reload(), 2500);
+		return () => window.clearInterval(id);
+	}, [reload, view]);
+
+	const mutate = async (fn: () => Promise<unknown>) => {
+		setBusy(true);
+		setErr(null);
+		try {
+			await fn();
+			await reload();
+			return true;
+		} catch (e) {
+			setErr(String((e as Error)?.message ?? e));
+			await reload();
+			return false;
+		} finally {
+			setBusy(false);
+		}
+	};
+
+	const serverGroups = useMemo(() => {
+		const servers = sortServersForDisplay(view?.servers ?? []);
+		return {
+			failed: servers.filter((s) => s.status === "failed"),
+			active: servers.filter((s) => s.status !== "failed"),
+		};
+	}, [view]);
+
+	const toggleError = useCallback((name: string) => {
+		setExpandedErrors((prev) => { const next = new Set(prev); if (next.has(name)) next.delete(name); else next.add(name); return next; });
+	}, []);
+	const toggleServer = useCallback((name: string) => {
+		setExpandedServers((prev) => { const next = new Set(prev); if (next.has(name)) next.delete(name); else next.add(name); return next; });
+	}, []);
+	const toggleServerTools = useCallback((name: string) => {
+		setExpandedServerTools((prev) => { const next = new Set(prev); if (next.has(name)) next.delete(name); else next.add(name); return next; });
+	}, []);
+
+	const summary = useMemo(() => {
+		if (!view) return "";
+		return mcpServerSummary(view.servers, t);
+	}, [view, t]);
+
+	if (!view) return <div className="empty">{t("caps.loading")}</div>;
+
+	return (
+		<section className="mem-section">
+			{err && serverGroups.failed.length === 0 && <div className="banner banner--error">{err}</div>}
+			<div className="cap-mcp-toolbar">
+				{view.servers.length > 0 ? <div className="drawer__summary">{summary}</div> : <span />}
+				<div className="cap-mcp-toolbar__actions">
+					{!adding && (
+						<button className="btn btn--small" disabled={busy} onClick={() => setAdding(true)}>
+							{t("caps.addServer")}
+						</button>
+					)}
+				</div>
+			</div>
+			{serverGroups.failed.length > 0 && (
+				<FailedServersNotice
+					servers={serverGroups.failed}
+					expanded={expandedErrors}
+					busy={busy}
+					onToggle={toggleError}
+					onRetry={(name) => void mutate(() => app.ReconnectMCPServer(name))}
+					onRetryMany={(names) => void mutate(() => Promise.allSettled(names.map((name) => app.ReconnectMCPServer(name))))}
+					onConfirmClearAuth={(name) => void mutate(() => app.ClearMCPServerAuthentication(name))}
+					onConfirm={(name) => void mutate(() => app.RemoveMCPServer(name))}
+					onConfirmMany={(names) => void mutate(() => Promise.allSettled(names.map((name) => app.RemoveMCPServer(name))))}
+				/>
+			)}
+			{view.servers.length === 0 && !adding && (
+				<div className="mem-empty">{t("caps.noServers")}</div>
+			)}
+			{serverGroups.active.length > 0 && (
+				<div className="cap-server-section">
+					<div className="cap-server-section__title">{t("caps.availableServers")}</div>
+					<ServerGroup
+						busy={busy}
+						servers={serverGroups.active}
+						expanded={expandedServers}
+						expandedTools={expandedServerTools}
+						editing={editing}
+						onConfirm={(name) => void mutate(() => app.RemoveMCPServer(name))}
+						onEdit={(name) => { setEditing(name); }}
+						onCancelEdit={() => setEditing(null)}
+						onRetry={(name) => void mutate(() => app.ReconnectMCPServer(name))}
+						onReconnect={(name) => void mutate(() => app.ReconnectMCPServer(name))}
+						onConfirmClearAuth={(name) => void mutate(() => app.ClearMCPServerAuthentication(name))}
+						onToggle={(name, on) => void mutate(() => app.SetMCPServerEnabled(name, on))}
+						onUpdate={(name, input) =>
+							void mutate(() => app.UpdateMCPServer(name, input)).then((ok) => {
+								if (ok) setEditing(null);
+							})
+						}
+						onToggleDetails={toggleServer}
+						onToggleTools={toggleServerTools}
+					/>
+				</div>
+			)}
+			{adding ? (
+				<AddServerForm busy={busy} onCancel={() => setAdding(false)} onAdd={async (input) => (await mutate(() => app.AddMCPServer(input))) && setAdding(false)} />
+			) : null}
+		</section>
+	);
+}
+
+// SkillsSettingsPage is a self-contained skills management page embedded inside
+// the settings centre.
+export function SkillsSettingsPage() {
+	const t = useT();
+	const [view, setView] = useState<CapabilitiesView | null>(null);
+	const [busy, setBusy] = useState(false);
+	const [err, setErr] = useState<string | null>(null);
+	const [skillQuery, setSkillQuery] = useState("");
+	const [expandedSkills, setExpandedSkills] = useState<Set<string>>(() => new Set());
+
+	const reload = useCallback(async () => {
+		setView(normalizeCapabilitiesView(await app.Capabilities().catch(() => ({ servers: [], skills: [], skillRoots: [] }))));
+	}, []);
+	useEffect(() => { void reload(); }, [reload]);
+
+	const mutate = async (fn: () => Promise<unknown>) => {
+		setBusy(true);
+		setErr(null);
+		try {
+			await fn();
+			await reload();
+			return true;
+		} catch (e) {
+			setErr(String((e as Error)?.message ?? e));
+			await reload();
+			return false;
+		} finally {
+			setBusy(false);
+		}
+	};
+
+	const filteredSkills = useMemo(() => {
+		if (!view) return [];
+		const q = skillQuery.trim().toLowerCase();
+		if (!q) return view.skills;
+		return view.skills.filter((sk) => {
+			const text = [sk.name, "/" + sk.name, sk.description, sk.scope, sk.runAs].join(" ").toLowerCase();
+			return text.includes(q);
+		});
+	}, [view, skillQuery]);
+
+	const skillSummary = useMemo(() => {
+		if (!view) return "";
+		return skillListSummary(view.skills, filteredSkills, skillQuery.trim().length > 0, t);
+	}, [filteredSkills, skillQuery, t, view]);
+
+	const toggleSkill = useCallback((name: string) => {
+		setExpandedSkills((prev) => { const next = new Set(prev); if (next.has(name)) next.delete(name); else next.add(name); return next; });
+	}, []);
+
+	if (!view) return <div className="empty">{t("caps.loading")}</div>;
+
+	return (
+		<section className="mem-section">
+			{err && <div className="banner banner--error">{err}</div>}
+			<div className="cap-search">
+				<input
+					className="mem-input"
+					type="search"
+					placeholder={t("caps.searchSkills")}
+					value={skillQuery}
+					onChange={(e) => setSkillQuery(e.target.value)}
+				/>
+			</div>
+			<SkillSources
+				roots={view.skillRoots ?? []}
+				busy={busy}
+				onAdd={() => mutate(async () => {
+					const path = await app.PickSkillFolder();
+					if (path) await app.AddSkillPath(path);
+				})}
+				onRefresh={() => mutate(() => app.RefreshSkills())}
+				onRemove={(path) => mutate(() => app.RemoveSkillPath(path))}
+			/>
+			<div className="cap-skills-head">
+				<div className="cap-skills-head__copy">
+					<div className="cap-skills-head__title">{t("caps.skills")}</div>
+					<div className="cap-skills-head__summary">{skillSummary}</div>
+				</div>
+			</div>
+			{view.skills.length === 0 ? (
+				<div className="mem-empty">{t("caps.noSkills")}</div>
+			) : filteredSkills.length === 0 ? (
+				<div className="mem-empty">{t("caps.noSkillMatches")}</div>
+			) : (
+				<div className="cap-skills">
+					{filteredSkills.map((sk) => (
+						<SkillRow
+							key={sk.name}
+							skill={sk}
+							busy={busy}
+							expanded={expandedSkills.has(sk.name)}
+							onToggle={() => toggleSkill(sk.name)}
+							onToggleEnabled={(enabled) => void mutate(() => app.SetSkillEnabled(sk.name, enabled))}
+						/>
+					))}
+				</div>
+			)}
+		</section>
+	);
 }

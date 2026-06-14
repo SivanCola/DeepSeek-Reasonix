@@ -33,6 +33,7 @@ func TestMigrateImportsKeyPluginsAndLang(t *testing.T) {
 	src, dest, home := legacyHome(t)
 	writeLegacy(t, src, `{
 		"apiKey": "sk-legacy-123",
+		"model": "deepseek-v4-pro",
 		"lang": "zh",
 		"mcpServers": {
 			"fs": {"command": "npx", "args": ["-y", "server-fs"], "type": "stdio"},
@@ -47,8 +48,7 @@ func TestMigrateImportsKeyPluginsAndLang(t *testing.T) {
 	}
 	if res == nil {
 		t.Fatal("expected a migration result")
-	}
-	if !res.KeyToEnv || res.Plugins != 2 {
+	} else if !res.KeyToEnv || res.Plugins != 2 {
 		t.Errorf("result = %+v, want KeyToEnv=true Plugins=2", res)
 	}
 
@@ -73,9 +73,122 @@ func TestMigrateImportsKeyPluginsAndLang(t *testing.T) {
 			t.Errorf("dest config missing %q:\n%s", want, toml)
 		}
 	}
+	if !strings.Contains(toml, `default_model = "deepseek-pro/deepseek-v4-pro"`) {
+		t.Errorf("dest config missing imported model:\n%s", toml)
+	}
+
+	loaded, err := Load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if loaded.DefaultModel != "deepseek-pro/deepseek-v4-pro" {
+		t.Errorf("DefaultModel = %q, want deepseek-pro/deepseek-v4-pro", loaded.DefaultModel)
+	}
 
 	if _, err := os.Stat(src); err != nil {
 		t.Errorf("legacy file must be left untouched: %v", err)
+	}
+}
+
+func TestMigrateImportsLegacyQQConfig(t *testing.T) {
+	src, dest, _ := legacyHome(t)
+	writeLegacy(t, src, `{
+		"qq": {
+			"enabled": true,
+			"appId": "qq-app-id",
+			"appSecret": "qq-secret",
+			"sandbox": true,
+			"ownerOpenId": " owner-openid ",
+			"allowlist": ["owner-openid", " member-openid ", "member-openid", ""]
+		}
+	}`)
+
+	res, err := MigrateLegacyIfNeeded()
+	if err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	if res == nil {
+		t.Fatal("expected migration result")
+	}
+	envData, err := os.ReadFile(UserCredentialsPath())
+	if err != nil {
+		t.Fatalf("read credentials: %v", err)
+	}
+	if !strings.Contains(string(envData), "QQ_BOT_APP_SECRET=qq-secret") {
+		t.Fatalf("credentials missing QQ secret: %q", envData)
+	}
+	tomlData, err := os.ReadFile(dest)
+	if err != nil {
+		t.Fatalf("read dest: %v", err)
+	}
+	toml := string(tomlData)
+	for _, want := range []string{
+		`[bot.qq]`,
+		`enabled = true`,
+		`app_id = "qq-app-id"`,
+		`app_secret_env = "QQ_BOT_APP_SECRET"`,
+		`sandbox = true`,
+		`qq_users = ["owner-openid", "member-openid"]`,
+	} {
+		if !strings.Contains(toml, want) {
+			t.Fatalf("migrated config missing %q:\n%s", want, toml)
+		}
+	}
+	if strings.Contains(toml, "qq-secret") {
+		t.Fatalf("migrated TOML must not contain QQ secret:\n%s", toml)
+	}
+}
+
+// TestMigrateImportsLegacyMCPStringList covers the pre-mcpServers `mcp` format
+// (#3949): `--mcp`-style strings, with mcpEnv/mcpDisabled keyed by name and
+// mcpServers winning a name collision.
+func TestMigrateImportsLegacyMCPStringList(t *testing.T) {
+	src, _, _ := legacyHome(t)
+	writeLegacy(t, src, `{
+		"mcp": [
+			"memory=npx -y @modelcontextprotocol/server-memory",
+			"search=https://mcp.example.com/sse",
+			"stream=streamable+https://mcp.example.com/http",
+			"fs=node old-fs.js",
+			"off=npx -y server-off"
+		],
+		"mcpServers": {"fs": {"command": "npx", "args": ["-y", "server-fs"]}},
+		"mcpEnv": {"memory": {"MEMORY_PATH": "/tmp/mem"}},
+		"mcpDisabled": ["off"]
+	}`)
+
+	if _, err := MigrateLegacyIfNeeded(); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	byName := map[string]PluginEntry{}
+	for _, p := range cfg.Plugins {
+		byName[p.Name] = p
+	}
+	mem := byName["memory"]
+	if mem.Command != "npx" || len(mem.Args) != 2 || mem.Args[1] != "@modelcontextprotocol/server-memory" {
+		t.Errorf("memory spec not parsed: %+v", mem)
+	}
+	if mem.Env["MEMORY_PATH"] != "/tmp/mem" {
+		t.Errorf("mcpEnv not applied to memory: %+v", mem.Env)
+	}
+	if s := byName["search"]; s.Type != "sse" || s.URL != "https://mcp.example.com/sse" {
+		t.Errorf("plain URL should migrate as SSE: %+v", s)
+	}
+	if s := byName["stream"]; s.Type != "http" || s.URL != "https://mcp.example.com/http" {
+		t.Errorf("streamable+ URL should migrate as http: %+v", s)
+	}
+	if fs := byName["fs"]; len(fs.Args) != 2 || fs.Args[1] != "server-fs" {
+		t.Errorf("mcpServers should win the fs name collision: %+v", fs)
+	}
+	if off := byName["off"]; off.AutoStart == nil || *off.AutoStart {
+		t.Errorf("mcpDisabled entry should migrate with auto_start=false: %+v", off)
+	}
+	if len(cfg.Plugins) != 5 {
+		t.Errorf("got %d plugins, want 5: %+v", len(cfg.Plugins), cfg.Plugins)
 	}
 }
 

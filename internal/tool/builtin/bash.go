@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -15,14 +16,16 @@ import (
 	"time"
 
 	"reasonix/internal/jobs"
+	"reasonix/internal/proc"
 	"reasonix/internal/sandbox"
 	"reasonix/internal/tool"
 )
 
 const (
-	bashTimeout   = 120 * time.Second
 	bashWaitDelay = 5 * time.Second
 )
+
+var errBashTimeout = errors.New("bash foreground timeout")
 
 func init() { tool.RegisterBuiltin(bash{}) }
 
@@ -54,16 +57,19 @@ func cachedBashShellPATH(ctx context.Context) string {
 	return v
 }
 
-// bash runs a shell command with a timeout to avoid hangs. sb, when it enforces,
-// wraps the command in an OS sandbox; the zero value registered at init runs
-// unconfined and is overridden per run by ConfineBash. shell is the resolved
-// interpreter (real bash, or PowerShell on a Windows host without bash); the
-// zero value resolves lazily. workDir, when non-empty, is the directory the
-// command runs in (cmd.Dir); empty uses the process cwd.
+// bash runs a shell command. sb, when it enforces, wraps the command in an OS
+// sandbox; the zero value registered at init runs unconfined and is overridden
+// per run by ConfineBash. shell is the resolved interpreter (real bash, or
+// PowerShell on a Windows host without bash); the zero value resolves lazily.
+// workDir, when non-empty, is the directory the command runs in (cmd.Dir);
+// empty uses the process cwd. timeout optionally caps foreground commands;
+// zero or negative means no tool-local cap, while parent context cancellation
+// still kills the process tree.
 type bash struct {
 	sb      sandbox.Spec
 	shell   sandbox.Shell
 	workDir string
+	timeout time.Duration
 }
 
 func (bash) Name() string { return "bash" }
@@ -85,7 +91,7 @@ func (b bash) Description() string {
 // bashToolSteer points the model at the cross-platform built-in tools instead of
 // shell utilities, so it doesn't reach for grep/cat/ls/find (absent or different
 // on native Windows) when a native tool already does the job everywhere.
-const bashToolSteer = " Use for builds, tests, git, package managers, etc. To search/read/list/edit files, prefer the dedicated tools (grep, read_file, ls, glob, edit_file) over shell grep/cat/ls/find/sed — they behave identically on every OS. For symbol search, call graphs, or architecture questions, use codegraph tools instead of grep."
+const bashToolSteer = " Use for builds, tests, git, package managers, etc. To search/read/list/edit/move files, prefer the dedicated tools (grep, read_file, ls, glob, edit_file, move_file) over shell grep/cat/ls/find/sed/mv/Move-Item — they behave identically on every OS. For symbol search, call graphs, or architecture questions, use codegraph tools instead of grep."
 
 // resolved returns the bound shell, resolving lazily for the zero-value instance
 // (e.g. a registry that never went through ConfineBash).
@@ -93,11 +99,14 @@ func (b bash) resolved() sandbox.Shell {
 	if b.shell.Path != "" {
 		return b.shell
 	}
-	return sandbox.ResolveShell()
+	if b.sb.Shell.Path != "" {
+		return b.sb.Shell
+	}
+	return sandbox.ResolveShell("", "", nil)
 }
 
 func (bash) Schema() json.RawMessage {
-	return json.RawMessage(`{"type":"object","properties":{"command":{"type":"string","description":"Shell command to execute"},"run_in_background":{"type":"boolean","description":"Run detached: returns a job id immediately and keeps running across turns (no timeout). Read new output with bash_output, wait for it with wait, stop it with kill_shell. Use for long-running commands like servers, watchers, or builds you don't need to block on."}},"required":["command"]}`)
+	return json.RawMessage(`{"type":"object","properties":{"command":{"type":"string","description":"Shell command to execute"},"run_in_background":{"type":"boolean","description":"Run detached: returns a job id immediately and keeps running across turns (no foreground timeout). Read new output with bash_output, wait for it with wait, stop it with kill_shell. Use for long-running commands like servers, watchers, or builds you don't need to block on."}},"required":["command"]}`)
 }
 
 // ReadOnly is false: bash's effect cannot be inferred from args (rm, curl,
@@ -134,9 +143,9 @@ func (b bash) Execute(ctx context.Context, args json.RawMessage) (string, error)
 			return "", fmt.Errorf("background execution is not available in this context")
 		}
 		workDir := b.workDir
-		// The job runs under the manager's session context (no 120s timeout), so it
+		// The job runs under the manager's session context (no foreground timeout), so it
 		// survives this turn; its combined output streams to the job buffer.
-		job := jm.Start("bash", commandPreview(p.Command), func(jobCtx context.Context, out io.Writer) (string, error) {
+		job := jm.StartForSession(jobs.SessionFromContext(ctx), "bash", commandPreview(p.Command), func(jobCtx context.Context, out io.Writer) (string, error) {
 			cmd := exec.CommandContext(jobCtx, argv[0], argv[1:]...)
 			cmd.Dir = workDir
 			cmd.Env = cmdEnv
@@ -144,15 +153,22 @@ func (b bash) Execute(ctx context.Context, args json.RawMessage) (string, error)
 			cmd.WaitDelay = bashWaitDelay
 			cmd.Stdout = out
 			cmd.Stderr = out
-			return "", cmd.Run()
+			runErr := cmd.Run()
+			reapTree(cmd) // reap process-group stragglers the job left running (#3702)
+			return "", runErr
 		})
 		return fmt.Sprintf("Started background job %q. It keeps running across turns; read new output with bash_output(job_id=%q), wait for it with wait, or stop it with kill_shell(job_id=%q).", job.ID, job.ID, job.ID), nil
 	}
 
-	ctx, cancel := context.WithTimeout(ctx, bashTimeout)
-	defer cancel()
+	runCtx := ctx
+	timeout := b.foregroundTimeout()
+	if timeout > 0 {
+		var cancel context.CancelFunc
+		runCtx, cancel = context.WithTimeoutCause(ctx, timeout, errBashTimeout)
+		defer cancel()
+	}
 
-	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
+	cmd := exec.CommandContext(runCtx, argv[0], argv[1:]...)
 	cmd.Dir = b.workDir // "" lets exec use the process working directory
 	cmd.Env = cmdEnv
 	setKillTree(cmd)
@@ -165,16 +181,28 @@ func (b bash) Execute(ctx context.Context, args json.RawMessage) (string, error)
 	cmd.Stdout = w
 	cmd.Stderr = w
 	err := cmd.Run()
+	// A foreground command that spawned a lingering child (e.g. `bazel run`'s
+	// server) leaves it in the process group; Wait only reaped the shell leader.
+	// Kill the group so those don't accumulate into an OOM (#3702). On cancel/
+	// timeout setKillTree's Cancel already did this; this covers normal exit.
+	reapTree(cmd)
 	out := buf.String()
 
-	if ctx.Err() == context.DeadlineExceeded {
-		return out, fmt.Errorf("command timed out (> %s)", bashTimeout)
+	if errors.Is(context.Cause(runCtx), errBashTimeout) {
+		return out, fmt.Errorf("command timed out (> %s)", timeout)
 	}
 	if err != nil {
 		// Non-zero exit: feed output and error back so the model can self-correct.
 		return out, fmt.Errorf("command exited: %w", err)
 	}
 	return out, nil
+}
+
+func (b bash) foregroundTimeout() time.Duration {
+	if b.timeout <= 0 {
+		return 0
+	}
+	return b.timeout
 }
 
 // progressWriter forwards each chunk the command writes to a tool.ProgressFunc,
@@ -283,6 +311,7 @@ func runShellPATHCommand(parent context.Context, shell string, args []string) []
 	ctx, cancel := context.WithTimeout(parent, 2*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, shell, args...)
+	proc.PrepareShellPATHProbe(cmd)
 	cmd.Stdin = strings.NewReader("")
 	out, _ := cmd.CombinedOutput()
 	return out

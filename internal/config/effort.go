@@ -2,8 +2,16 @@ package config
 
 import (
 	"fmt"
-	"net/url"
 	"strings"
+
+	"reasonix/internal/provider/openai"
+)
+
+const (
+	ReasoningProtocolAuto     = "auto"
+	ReasoningProtocolDeepSeek = "deepseek"
+	ReasoningProtocolOpenAI   = "openai"
+	ReasoningProtocolNone     = "none"
 )
 
 // EffortCapability describes the abstract effort levels a provider/model can set
@@ -14,10 +22,24 @@ type EffortCapability struct {
 	Default   string
 }
 
+type modelReasoningCapability struct {
+	Protocol string
+	Levels   []string
+	Default  string
+}
+
+var modelReasoningCapabilities = map[string]modelReasoningCapability{
+	"deepseek-v4-flash": {Protocol: ReasoningProtocolDeepSeek, Levels: []string{"high", "max"}, Default: "high"},
+	"deepseek-v4-pro":   {Protocol: ReasoningProtocolDeepSeek, Levels: []string{"high", "max"}, Default: "high"},
+}
+
 // EffortCapabilityForEntry returns the user-facing /effort levels for a resolved
 // provider entry. Provider implementations still decide how a stored effort is
 // serialized into requests.
 func EffortCapabilityForEntry(e *ProviderEntry) EffortCapability {
+	if explicitReasoningProtocol(e) == ReasoningProtocolNone {
+		return EffortCapability{}
+	}
 	supported := normalizedSupportedEfforts(e)
 	if len(supported) > 0 {
 		levels := make([]string, 0, len(supported)+1)
@@ -29,9 +51,29 @@ func EffortCapabilityForEntry(e *ProviderEntry) EffortCapability {
 		}
 		return EffortCapability{Supported: true, Levels: levels, Default: def}
 	}
+	switch explicitReasoningProtocol(e) {
+	case ReasoningProtocolDeepSeek:
+		return deepSeekEffortCapability()
+	case ReasoningProtocolOpenAI:
+		return openAIEffortCapability()
+	}
+	if cap, ok := resolvedModelReasoningCapability(e); ok {
+		return effortCapabilityFromModel(cap)
+	}
+	switch ReasoningProtocolForEntry(e) {
+	case ReasoningProtocolDeepSeek:
+		return deepSeekEffortCapability()
+	case ReasoningProtocolOpenAI:
+		return openAIEffortCapability()
+	}
 	switch {
-	case isDeepSeekEntry(e):
-		return EffortCapability{Supported: true, Levels: []string{"auto", "high", "max"}, Default: "high"}
+	case isMiniMaxEntry(e):
+		// MiniMax-M3 only exposes a binary thinking knob (adaptive|disabled)
+		// on its OpenAI-compatible endpoint, so /effort mirrors the API
+		// vocabulary verbatim. Default is "adaptive" because the M3 model
+		// runs with thinking on out of the box; "auto" means "don't override
+		// the model default" (== adaptive for M3).
+		return EffortCapability{Supported: true, Levels: []string{"auto", "adaptive", "disabled"}, Default: "adaptive"}
 	case e != nil && e.Kind == "anthropic":
 		return EffortCapability{Supported: true, Levels: []string{"auto", "low", "medium", "high", "xhigh", "max"}, Default: "auto"}
 	default:
@@ -49,6 +91,9 @@ func NormalizeEffort(e *ProviderEntry, raw string) (string, error) {
 	if level == "auto" {
 		return "", nil
 	}
+	if explicitReasoningProtocol(e) == ReasoningProtocolNone {
+		return "", effortNotConfigurableError(e)
+	}
 	supported := normalizedSupportedEfforts(e)
 	if len(supported) > 0 {
 		if containsString(supported, level) {
@@ -56,8 +101,8 @@ func NormalizeEffort(e *ProviderEntry, raw string) (string, error) {
 		}
 		return "", fmt.Errorf("usage: /effort auto|%s", strings.Join(supported, "|"))
 	}
-	switch {
-	case isDeepSeekEntry(e):
+	switch ReasoningProtocolForEntry(e) {
+	case ReasoningProtocolDeepSeek:
 		switch level {
 		case "high", "max":
 			return level, nil
@@ -68,6 +113,33 @@ func NormalizeEffort(e *ProviderEntry, raw string) (string, error) {
 		default:
 			return "", fmt.Errorf("usage: /effort auto|high|max")
 		}
+	case ReasoningProtocolOpenAI:
+		switch level {
+		case "low", "medium", "high":
+			return level, nil
+		default:
+			return "", fmt.Errorf("usage: /effort auto|low|medium|high")
+		}
+	}
+	switch {
+	case isMiniMaxEntry(e):
+		// The M3 knob is binary; map Anthropic / OpenAI-style levels onto the
+		// nearest valid value so a stale /effort high|low still works. "off"
+		// is a retired DeepSeek level meaning "no thinking" — on M3 that maps
+		// to "disabled" rather than the model default, since M3 actually
+		// supports a "thinking off" mode and "off" is the natural request.
+		switch level {
+		case "adaptive", "disabled":
+			return level, nil
+		case "off":
+			return "disabled", nil
+		case "low", "medium", "high":
+			return "adaptive", nil
+		case "xhigh", "max":
+			return "disabled", nil
+		default:
+			return "", fmt.Errorf("usage: /effort auto|adaptive|disabled")
+		}
 	case e != nil && e.Kind == "anthropic":
 		switch level {
 		case "low", "medium", "high", "xhigh", "max":
@@ -76,14 +148,7 @@ func NormalizeEffort(e *ProviderEntry, raw string) (string, error) {
 			return "", fmt.Errorf("usage: /effort auto|low|medium|high|xhigh|max")
 		}
 	default:
-		name := ""
-		if e != nil {
-			name = e.Name
-		}
-		if name == "" {
-			name = "this model"
-		}
-		return "", fmt.Errorf("effort is not configurable for %s", name)
+		return "", effortNotConfigurableError(e)
 	}
 }
 
@@ -104,7 +169,7 @@ func EffectiveEffort(e *ProviderEntry) string {
 	if e == nil {
 		return ""
 	}
-	if effort := normalizeEffortLevel(e.Effort); effort != "" {
+	if effort := normalizeStoredEffort(e.Effort); effort != "" {
 		return effort
 	}
 	supported := normalizedSupportedEfforts(e)
@@ -131,24 +196,108 @@ func normalizeProviderEffortFields(e *ProviderEntry) {
 	if e == nil {
 		return
 	}
-	e.Effort = normalizeEffortLevel(e.Effort)
-	if e.Effort == "off" {
-		e.Effort = ""
-	}
+	e.Effort = normalizeStoredEffort(e.Effort)
+	e.ReasoningProtocol = normalizeReasoningProtocol(e.ReasoningProtocol)
 	e.DefaultEffort = normalizeEffortLevel(e.DefaultEffort)
 	e.SupportedEfforts = normalizedSupportedEfforts(e)
 }
 
+func normalizeStoredEffort(raw string) string {
+	level := normalizeEffortLevel(raw)
+	if level == "auto" || level == "off" {
+		return ""
+	}
+	return level
+}
+
+// ReasoningProtocolForEntry resolves the provider request shape for reasoning
+// controls. Explicit config wins, then the model capability registry, then legacy
+// endpoint heuristics.
+func ReasoningProtocolForEntry(e *ProviderEntry) string {
+	if explicit := explicitReasoningProtocol(e); explicit != "" {
+		return explicit
+	}
+	if cap, ok := resolvedModelReasoningCapability(e); ok {
+		return cap.Protocol
+	}
+	if isDeepSeekEntry(e) {
+		return ReasoningProtocolDeepSeek
+	}
+	return ""
+}
+
+func explicitReasoningProtocol(e *ProviderEntry) string {
+	if e == nil {
+		return ""
+	}
+	protocol := normalizeReasoningProtocol(e.ReasoningProtocol)
+	if protocol == ReasoningProtocolAuto {
+		return ""
+	}
+	return protocol
+}
+
+func normalizeReasoningProtocol(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "", ReasoningProtocolAuto:
+		return ""
+	case ReasoningProtocolDeepSeek, ReasoningProtocolOpenAI, ReasoningProtocolNone:
+		return strings.ToLower(strings.TrimSpace(raw))
+	default:
+		return ""
+	}
+}
+
+// isDeepSeekEntry reports whether the entry points at DeepSeek's API. The
+// actual host matching lives in provider/openai so the openai package and
+// the config layer stay in lockstep when new gateways are added.
 func isDeepSeekEntry(e *ProviderEntry) bool {
+	return e != nil && e.Kind == "openai" && openai.IsDeepSeek(e.BaseURL)
+}
+
+// isMiniMaxEntry reports whether the entry points at MiniMax's OpenAI-compatible
+// endpoint. See openai.IsMiniMax for the host-matching rule; the entry-wrapper
+// just gates on the openai kind.
+func isMiniMaxEntry(e *ProviderEntry) bool {
+	return e != nil && e.Kind == "openai" && openai.IsMiniMax(e.BaseURL)
+}
+
+func resolvedModelReasoningCapability(e *ProviderEntry) (modelReasoningCapability, bool) {
 	if e == nil || e.Kind != "openai" {
-		return false
+		return modelReasoningCapability{}, false
 	}
-	u, err := url.Parse(e.BaseURL)
-	if err != nil {
-		return false
+	cap, ok := modelReasoningCapabilities[strings.ToLower(strings.TrimSpace(e.Model))]
+	return cap, ok
+}
+
+func effortCapabilityFromModel(cap modelReasoningCapability) EffortCapability {
+	levels := make([]string, 0, len(cap.Levels)+1)
+	levels = append(levels, "auto")
+	levels = append(levels, cap.Levels...)
+	def := normalizeEffortLevel(cap.Default)
+	if def == "" || !containsString(cap.Levels, def) {
+		def = "auto"
 	}
-	host := strings.ToLower(u.Hostname())
-	return host == "api.deepseek.com" || strings.HasSuffix(host, ".deepseek.com")
+	return EffortCapability{Supported: true, Levels: levels, Default: def}
+}
+
+func deepSeekEffortCapability() EffortCapability {
+	return EffortCapability{Supported: true, Levels: []string{"auto", "high", "max"}, Default: "high"}
+}
+
+func openAIEffortCapability() EffortCapability {
+	return EffortCapability{Supported: true, Levels: []string{"auto", "low", "medium", "high"}, Default: "auto"}
+}
+
+func effortNotConfigurableError(e *ProviderEntry) error {
+	name := ""
+	if e != nil {
+		name = e.Name
+	}
+	if name == "" {
+		name = "this model"
+	}
+	return fmt.Errorf("effort is not configurable for %s", name)
 }
 
 func containsString(haystack []string, needle string) bool {
