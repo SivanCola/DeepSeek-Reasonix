@@ -114,6 +114,8 @@ type App struct {
 
 	metrics atomic.Pointer[metricsAggregator] // non-nil only when desktop.metrics is opted in; swapped live by SetDesktopMetrics
 
+	runtimeEvents asyncRuntimeEmitter
+
 	// promptHistoryTape is a lazy, cursor-addressed view of prompt history. It
 	// stores session order and per-session parsed entries only after that session is
 	// reached by ↑ navigation. See ScanPromptHistory.
@@ -1070,6 +1072,7 @@ func (a *App) Fork(turn int) (TabMeta, error) {
 	if err := agent.SaveBranchMeta(newPath, m); err != nil {
 		return TabMeta{}, err
 	}
+	invalidateTopicSessionIndexForPath(newPath)
 
 	a.mu.Lock()
 	tabID := a.newUniqueTabIDLocked()
