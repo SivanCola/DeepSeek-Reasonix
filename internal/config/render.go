@@ -301,6 +301,11 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 	fmt.Fprintf(&b, "context7_enabled = %v   # built-in Context7 MCP; off until manually enabled\n", c.BuiltInMCP.Context7Enabled)
 	b.WriteString("\n")
 
+	b.WriteString("[builtin_mcp_updates]\n")
+	fmt.Fprintf(&b, "mode = %q   # off|notify|download|auto_next_session; auto never hot-swaps active sessions\n", c.BuiltInMCPUpdates.ResolvedMode())
+	fmt.Fprintf(&b, "check_interval = %q   # minimum interval between desktop startup background checks\n", c.BuiltInMCPUpdates.ResolvedCheckInterval())
+	b.WriteString("\n")
+
 	renderLSPConfig(&b, c.LSP)
 
 	b.WriteString("[skills]\n")

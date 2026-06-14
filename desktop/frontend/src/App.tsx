@@ -30,7 +30,7 @@ import { useToast } from "./lib/toast";
 import { asArray } from "./lib/array";
 import { clearLegacyLangPref, normalizeLangPref, readLegacyLangPref, useI18n, useT, type Translator } from "./lib/i18n";
 import { useController, type Item, type LiveStream } from "./lib/useController";
-import { app, onEvent, onProjectTreeChanged } from "./lib/bridge";
+import { app, onBuiltInMCPUpdate, onEvent, onProjectTreeChanged } from "./lib/bridge";
 import { generativeMusic, isGenerativeMusicEnabled } from "./lib/generative-music";
 import { playSuccessChime } from "./lib/sound";
 import { Transcript } from "./components/Transcript";
@@ -819,6 +819,21 @@ export default function App() {
     });
     return unsub;
   }, []);
+
+  useEffect(() => {
+    return onBuiltInMCPUpdate((status) => {
+      if (status.name !== "codegraph") return;
+      if (status.phase === "available") {
+        showToast(t("caps.updateToastAvailable", { name: "codegraph", latest: status.latest || "" }));
+      } else if (status.phase === "downloaded") {
+        showToast(t("caps.updateToastDownloaded", { name: "codegraph", latest: status.latest || "" }));
+      } else if (status.phase === "activated") {
+        showToast(t("caps.updateToastActivated", { name: "codegraph", latest: status.latest || "" }));
+      } else if (status.phase === "error") {
+        showToast(t("caps.updateToastError", { name: "codegraph" }), "warn");
+      }
+    });
+  }, [showToast, t]);
 
   const [workspacePanelResizing, setWorkspacePanelResizing] = useState(false);
   const [workspacePanelMaximized, setWorkspacePanelMaximized] = useState(false);

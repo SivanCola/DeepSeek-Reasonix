@@ -30,6 +30,7 @@ import (
 	"reasonix/internal/billing"
 	"reasonix/internal/boot"
 	"reasonix/internal/builtinmcp"
+	"reasonix/internal/codegraph"
 	"reasonix/internal/config"
 	"reasonix/internal/control"
 	"reasonix/internal/event"
@@ -38,6 +39,7 @@ import (
 	"reasonix/internal/i18n"
 	"reasonix/internal/mcpdiag"
 	"reasonix/internal/memory"
+	"reasonix/internal/netclient"
 	"reasonix/internal/plugin"
 	"reasonix/internal/provider"
 	"reasonix/internal/skill"
@@ -53,6 +55,8 @@ const eventChannel = "agent:event"
 // running instance. Keep it stable across releases so launcher/Dock/taskbar
 // reopen behavior remains predictable on every platform.
 const singleInstanceID = "com.reasonix.desktop"
+
+var updateBuiltInCodegraph = codegraph.UpdateWithClient
 
 // App is the Wails-bound application object: the desktop frontend's command
 // surface. Its exported methods (Submit/Cancel/Approve/…) are generated into JS
@@ -84,6 +88,9 @@ type App struct {
 	mediaTokens *mediaTokenStore
 	botInstalls map[string]*botInstallSession
 	botRuntime  *desktopBotRuntime
+
+	builtInMCPUpdatesMu sync.RWMutex
+	builtInMCPUpdates   map[string]BuiltInMCPUpdateStatus
 
 	metrics atomic.Pointer[metricsAggregator] // non-nil only when desktop.metrics is opted in; swapped live by SetDesktopMetrics
 }
@@ -284,6 +291,7 @@ func (a *App) startup(ctx context.Context) {
 
 	go a.restoreOrBuildTabs()
 	a.goSafe("refreshBotRuntime", a.refreshBotRuntime)
+	a.goSafe("checkBuiltInMCPUpdates", a.checkBuiltInMCPUpdates)
 	a.goSafe("sendStartupPing", a.sendStartupPing)
 	a.goSafe("flushMetrics", a.flushMetrics)
 	a.goSafe("flushPendingCrash", a.flushPendingCrash)
@@ -2201,6 +2209,12 @@ type ToolView struct {
 	Description string `json:"description"`
 }
 
+type BuiltInMCPUpdateResult struct {
+	Name    string `json:"name"`
+	Version string `json:"version"`
+	Path    string `json:"path"`
+}
+
 // SkillView is one discoverable skill for the drawer.
 type SkillView struct {
 	Name        string `json:"name"`
@@ -2417,6 +2431,11 @@ func withCodegraphConfig(v ServerView, c config.CodegraphConfig) ServerView {
 	v.Configured = true
 	v.AutoStart = c.ShouldAutoStart()
 	v.Tier = c.ResolvedTier()
+	v.Command = strings.TrimSpace(c.Path)
+	if v.Command == "" {
+		v.Command = "codegraph"
+	}
+	v.Args = []string{"serve", "--mcp"}
 	v.AuthStatus = mcpdiag.AuthNone
 	return v
 }
@@ -2809,6 +2828,57 @@ func (a *App) ReconnectMCPServer(name string) error {
 	delete(tab.disabledMCP, name)
 	a.mu.Unlock()
 	return nil
+}
+
+// UpdateBuiltInMCPServer downloads and activates the latest runtime for a
+// bundled MCP. It is intentionally explicit because newer MCP releases can
+// change tool schemas and prompt-cache shape.
+func (a *App) UpdateBuiltInMCPServer(name string) (BuiltInMCPUpdateResult, error) {
+	name = strings.TrimSpace(name)
+	if name != "codegraph" {
+		return BuiltInMCPUpdateResult{}, fmt.Errorf("%s is not an updatable built-in MCP server", name)
+	}
+	tab := a.activeTab()
+	if tab == nil || tab.Ctrl == nil {
+		return BuiltInMCPUpdateResult{}, fmt.Errorf("no active session")
+	}
+	cfg, err := config.LoadForRoot(tab.WorkspaceRoot)
+	if err != nil {
+		return BuiltInMCPUpdateResult{}, err
+	}
+	client, err := netclient.NewHTTPClient(cfg.NetworkProxySpec(), netclient.TransportOptions{})
+	if err != nil {
+		return BuiltInMCPUpdateResult{}, err
+	}
+	updated, err := updateBuiltInCodegraph(a.bootContext(), client, nil)
+	if err != nil {
+		return BuiltInMCPUpdateResult{}, err
+	}
+	result := BuiltInMCPUpdateResult{Name: name, Version: updated.Version, Path: updated.Path}
+	a.recordBuiltInMCPUpdateStatus(BuiltInMCPUpdateStatus{
+		Name:    name,
+		Mode:    "manual",
+		Current: codegraph.ActiveVersion(),
+		Latest:  updated.Version,
+		Phase:   "activated",
+		Path:    updated.Path,
+	})
+
+	a.mu.RLock()
+	_, sessionDisabled := tab.disabledMCP[name]
+	a.mu.RUnlock()
+	if cfg.Codegraph.Enabled && !sessionDisabled {
+		if mcpConnected(tab.Ctrl, name) {
+			tab.Ctrl.DisconnectMCPServer(name)
+		}
+		if h := tab.Ctrl.Host(); h != nil {
+			h.ClearFailure(name)
+		}
+		if _, err := tab.Ctrl.ConnectCodegraphMCPServer(cfg); err != nil {
+			recordCodegraphFailure(tab.Ctrl, cfg.Codegraph, err)
+		}
+	}
+	return result, nil
 }
 
 // ClearMCPServerAuthentication removes local auth-like config for one MCP and

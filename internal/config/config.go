@@ -13,6 +13,7 @@ import (
 	"regexp"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/BurntSushi/toml"
 
@@ -39,25 +40,26 @@ func SkillNameKey(name string) string {
 
 // Config is Reasonix's runtime configuration.
 type Config struct {
-	ConfigVersion int                 `toml:"config_version"`
-	DefaultModel  string              `toml:"default_model"`
-	Language      string              `toml:"language"` // ui/model language tag (e.g. "zh"); empty = auto-detect from $LANG / $REASONIX_LANG
-	UI            UIConfig            `toml:"ui"`
-	Desktop       DesktopConfig       `toml:"desktop"`
-	Notifications NotificationsConfig `toml:"notifications"`
-	Agent         AgentConfig         `toml:"agent"`
-	Providers     []ProviderEntry     `toml:"providers"`
-	Tools         ToolsConfig         `toml:"tools"`
-	Permissions   PermissionsConfig   `toml:"permissions"`
-	Sandbox       SandboxConfig       `toml:"sandbox"`
-	Network       NetworkConfig       `toml:"network"`
-	Plugins       []PluginEntry       `toml:"plugins"`
-	Skills        SkillsConfig        `toml:"skills"`
-	Codegraph     CodegraphConfig     `toml:"codegraph"`
-	BuiltInMCP    BuiltInMCPConfig    `toml:"builtin_mcp"`
-	Statusline    StatuslineConfig    `toml:"statusline"`
-	LSP           LSPConfig           `toml:"lsp"`
-	Bot           BotConfig           `toml:"bot"`
+	ConfigVersion     int                     `toml:"config_version"`
+	DefaultModel      string                  `toml:"default_model"`
+	Language          string                  `toml:"language"` // ui/model language tag (e.g. "zh"); empty = auto-detect from $LANG / $REASONIX_LANG
+	UI                UIConfig                `toml:"ui"`
+	Desktop           DesktopConfig           `toml:"desktop"`
+	Notifications     NotificationsConfig     `toml:"notifications"`
+	Agent             AgentConfig             `toml:"agent"`
+	Providers         []ProviderEntry         `toml:"providers"`
+	Tools             ToolsConfig             `toml:"tools"`
+	Permissions       PermissionsConfig       `toml:"permissions"`
+	Sandbox           SandboxConfig           `toml:"sandbox"`
+	Network           NetworkConfig           `toml:"network"`
+	Plugins           []PluginEntry           `toml:"plugins"`
+	Skills            SkillsConfig            `toml:"skills"`
+	Codegraph         CodegraphConfig         `toml:"codegraph"`
+	BuiltInMCP        BuiltInMCPConfig        `toml:"builtin_mcp"`
+	BuiltInMCPUpdates BuiltInMCPUpdatesConfig `toml:"builtin_mcp_updates"`
+	Statusline        StatuslineConfig        `toml:"statusline"`
+	LSP               LSPConfig               `toml:"lsp"`
+	Bot               BotConfig               `toml:"bot"`
 }
 
 // UIConfig controls CLI presentation-only settings. Desktop appearance is kept in
@@ -437,6 +439,52 @@ func (c BuiltInMCPConfig) EnabledNames() []string {
 		out = append(out, "context7")
 	}
 	return out
+}
+
+const (
+	BuiltInMCPUpdateModeOff             = "off"
+	BuiltInMCPUpdateModeNotify          = "notify"
+	BuiltInMCPUpdateModeDownload        = "download"
+	BuiltInMCPUpdateModeAutoNextSession = "auto_next_session"
+
+	defaultBuiltInMCPUpdateInterval = 24 * time.Hour
+)
+
+// BuiltInMCPUpdatesConfig controls background update checks for Reasonix-owned
+// built-in MCP runtimes. The default is notify-only so startup never silently
+// changes provider-visible MCP tool schemas.
+type BuiltInMCPUpdatesConfig struct {
+	Mode          string `toml:"mode"`
+	CheckInterval string `toml:"check_interval"`
+}
+
+func (c BuiltInMCPUpdatesConfig) ResolvedMode() string {
+	switch strings.ToLower(strings.TrimSpace(c.Mode)) {
+	case BuiltInMCPUpdateModeOff:
+		return BuiltInMCPUpdateModeOff
+	case BuiltInMCPUpdateModeDownload:
+		return BuiltInMCPUpdateModeDownload
+	case BuiltInMCPUpdateModeAutoNextSession:
+		return BuiltInMCPUpdateModeAutoNextSession
+	default:
+		return BuiltInMCPUpdateModeNotify
+	}
+}
+
+func (c BuiltInMCPUpdatesConfig) CheckIntervalDuration() time.Duration {
+	raw := strings.TrimSpace(c.CheckInterval)
+	if raw == "" {
+		return defaultBuiltInMCPUpdateInterval
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil || d <= 0 {
+		return defaultBuiltInMCPUpdateInterval
+	}
+	return d
+}
+
+func (c BuiltInMCPUpdatesConfig) ResolvedCheckInterval() string {
+	return c.CheckIntervalDuration().String()
 }
 
 // BotConfig 控制多渠道 IM bot 消息网关。
@@ -1138,6 +1186,10 @@ func Default() *Config {
 		// Time is dependency-free and bundled, so expose it by default. Context7
 		// can invoke a package runner and remains opt-in.
 		BuiltInMCP: BuiltInMCPConfig{TimeEnabled: true},
+		BuiltInMCPUpdates: BuiltInMCPUpdatesConfig{
+			Mode:          BuiltInMCPUpdateModeNotify,
+			CheckInterval: defaultBuiltInMCPUpdateInterval.String(),
+		},
 		// LSP tools on by default, but dormant until a language server is on PATH;
 		// a missing server yields an install hint rather than an error.
 		LSP:     LSPConfig{Enabled: true},

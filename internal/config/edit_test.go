@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/BurntSushi/toml"
 )
@@ -686,6 +687,23 @@ func TestBuiltInMCPDefaultsEnableOnlyTime(t *testing.T) {
 	c := Default()
 	if !c.BuiltInMCP.TimeEnabled || c.BuiltInMCP.Context7Enabled {
 		t.Fatalf("built-in MCP defaults = %+v, want time enabled and context7 disabled", c.BuiltInMCP)
+	}
+}
+
+func TestBuiltInMCPUpdateDefaultsAreNotifyOnly(t *testing.T) {
+	c := Default()
+	if got := c.BuiltInMCPUpdates.ResolvedMode(); got != BuiltInMCPUpdateModeNotify {
+		t.Fatalf("builtin MCP update mode = %q, want notify", got)
+	}
+	if got := c.BuiltInMCPUpdates.CheckIntervalDuration(); got != 24*time.Hour {
+		t.Fatalf("builtin MCP update interval = %v, want 24h", got)
+	}
+	invalid := BuiltInMCPUpdatesConfig{Mode: "surprise", CheckInterval: "-1s"}
+	if got := invalid.ResolvedMode(); got != BuiltInMCPUpdateModeNotify {
+		t.Fatalf("invalid mode resolved to %q, want notify", got)
+	}
+	if got := invalid.CheckIntervalDuration(); got != 24*time.Hour {
+		t.Fatalf("invalid interval resolved to %v, want 24h", got)
 	}
 }
 

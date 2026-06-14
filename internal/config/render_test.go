@@ -90,6 +90,7 @@ func TestRenderTOMLRoundTrips(t *testing.T) {
 	orig.Skills.DisabledSkills = []string{"review", "explore"}
 	orig.Skills.MaxDepth = 2
 	orig.Codegraph = CodegraphConfig{Enabled: true, AutoInstall: false, Path: "/opt/codegraph", Tier: "background"}
+	orig.BuiltInMCPUpdates = BuiltInMCPUpdatesConfig{Mode: BuiltInMCPUpdateModeDownload, CheckInterval: "12h"}
 	orig.Bot.ToolApprovalMode = "auto"
 	orig.Bot.Connections = []BotConnectionConfig{{
 		ID:               "feishu-lark",
@@ -232,6 +233,12 @@ func TestRenderTOMLRoundTrips(t *testing.T) {
 	}
 	if got.Codegraph.Tier != "" {
 		t.Errorf("codegraph.tier = %q, want migrated empty", got.Codegraph.Tier)
+	}
+	if got.BuiltInMCPUpdates.ResolvedMode() != BuiltInMCPUpdateModeDownload {
+		t.Errorf("builtin_mcp_updates.mode = %q, want download", got.BuiltInMCPUpdates.ResolvedMode())
+	}
+	if got.BuiltInMCPUpdates.ResolvedCheckInterval() != "12h0m0s" {
+		t.Errorf("builtin_mcp_updates.check_interval = %q, want 12h0m0s", got.BuiltInMCPUpdates.ResolvedCheckInterval())
 	}
 	if !got.LSP.Enabled {
 		t.Error("lsp.enabled = false, want true")
