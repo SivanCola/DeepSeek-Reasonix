@@ -119,19 +119,24 @@ func TestRenderSinkDoesNotFlushMidSentenceOnTimer(t *testing.T) {
 	}
 }
 
-func TestRenderSinkFlushesAtSemanticBoundary(t *testing.T) {
+func TestRenderSinkKeepsSemanticTextUntilFinalResult(t *testing.T) {
 	adapter := newFakeAdapter(PlatformWeixin, "fake-weixin")
 	sink := newRenderSink(context.Background(), adapter, "weixin-weixin", "weixin", "chat-1", ChatDM, "user-1", "msg-1", slog.New(slog.NewTextHandler(io.Discard, nil)), nil, nil)
 	sink.lastFlush = time.Now().Add(-2 * time.Second)
 
 	sink.Emit(event.Event{Kind: event.Text, Text: "第一句。"})
 
+	if sent := adapter.sentMessages(); len(sent) != 0 {
+		t.Fatalf("sent = %+v, want semantic text held until final result", sent)
+	}
+
+	sink.Emit(event.Event{Kind: event.TurnDone})
 	sent := adapter.sentMessages()
 	if len(sent) != 1 {
-		t.Fatalf("sent count = %d, want one semantic flush", len(sent))
+		t.Fatalf("sent count = %d, want final result only", len(sent))
 	}
 	if sent[0].Text != "第一句。" {
-		t.Fatalf("sent text = %q, want first sentence", sent[0].Text)
+		t.Fatalf("sent text = %q, want final result", sent[0].Text)
 	}
 }
 
@@ -165,5 +170,62 @@ func TestRenderSinkConsumesEmptyWhitespacePrefix(t *testing.T) {
 	}
 	if sent := adapter.sentMessages(); len(sent) != 0 {
 		t.Fatalf("sent = %+v, want no empty outbound message", sent)
+	}
+}
+
+func TestRenderSinkSendsProgressWithoutToolOutput(t *testing.T) {
+	adapter := newFakeAdapter(PlatformWeixin, "fake-weixin")
+	sink := newRenderSink(context.Background(), adapter, "weixin-weixin", "weixin", "chat-1", ChatDM, "user-1", "msg-1", slog.New(slog.NewTextHandler(io.Discard, nil)), nil, nil)
+
+	sink.Emit(event.Event{Kind: event.TurnStarted})
+	sink.Emit(event.Event{Kind: event.ToolDispatch, Tool: event.Tool{ID: "tool-1", Name: "read_file", ReadOnly: true}})
+	sink.Emit(event.Event{Kind: event.ToolResult, Tool: event.Tool{ID: "tool-1", Name: "read_file", Output: "secret output that should stay out of IM"}})
+	sink.Emit(event.Event{Kind: event.Text, Text: "完成。"})
+	sink.Emit(event.Event{Kind: event.TurnDone})
+
+	sent := adapter.sentMessages()
+	if len(sent) != 2 {
+		t.Fatalf("sent count = %d, want one progress message plus final result: %+v", len(sent), sent)
+	}
+	if sent[0].Text != "正在执行: read_file" {
+		t.Fatalf("progress text = %q, want concise tool status", sent[0].Text)
+	}
+	if strings.Contains(sent[0].Text, "secret output") || strings.Contains(sent[1].Text, "secret output") {
+		t.Fatalf("tool output leaked into IM messages: %+v", sent)
+	}
+	if sent[1].Text != "完成。" {
+		t.Fatalf("final text = %q, want final result only", sent[1].Text)
+	}
+}
+
+func TestRenderSinkLimitsProgressMessages(t *testing.T) {
+	adapter := newFakeAdapter(PlatformWeixin, "fake-weixin")
+	sink := newRenderSink(context.Background(), adapter, "weixin-weixin", "weixin", "chat-1", ChatDM, "user-1", "msg-1", slog.New(slog.NewTextHandler(io.Discard, nil)), nil, nil)
+
+	for i := 0; i < renderMaxProgressMessages+2; i++ {
+		sink.lastProgress = time.Now().Add(-renderProgressMinInterval)
+		sink.Emit(event.Event{Kind: event.ToolDispatch, Tool: event.Tool{ID: "tool", Name: "bash"}})
+	}
+
+	sent := adapter.sentMessages()
+	if len(sent) != renderMaxProgressMessages {
+		t.Fatalf("sent count = %d, want capped progress count %d", len(sent), renderMaxProgressMessages)
+	}
+}
+
+func TestRenderSinkSuppressesReasoning(t *testing.T) {
+	adapter := newFakeAdapter(PlatformWeixin, "fake-weixin")
+	sink := newRenderSink(context.Background(), adapter, "weixin-weixin", "weixin", "chat-1", ChatDM, "user-1", "msg-1", slog.New(slog.NewTextHandler(io.Discard, nil)), nil, nil)
+
+	sink.Emit(event.Event{Kind: event.Reasoning, Text: "internal reasoning"})
+	sink.Emit(event.Event{Kind: event.Text, Text: "可见结果"})
+	sink.Emit(event.Event{Kind: event.TurnDone})
+
+	sent := adapter.sentMessages()
+	if len(sent) != 1 {
+		t.Fatalf("sent count = %d, want one final result", len(sent))
+	}
+	if strings.Contains(sent[0].Text, "internal reasoning") {
+		t.Fatalf("reasoning leaked into IM message: %q", sent[0].Text)
 	}
 }

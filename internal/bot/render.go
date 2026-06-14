@@ -7,7 +7,6 @@ import (
 	"strings"
 	"time"
 	"unicode"
-	"unicode/utf8"
 
 	"reasonix/internal/control"
 	"reasonix/internal/event"
@@ -29,17 +28,21 @@ type renderSink struct {
 	onAsk      func(event.Ask)
 
 	// 渲染缓冲
-	buf        strings.Builder
-	thinking   strings.Builder
-	inThinking bool
-	toolNames  map[string]string // tool ID -> name
-	lastFlush  time.Time
+	buf           strings.Builder
+	thinking      strings.Builder
+	inThinking    bool
+	toolNames     map[string]string // tool ID -> name
+	lastFlush     time.Time
+	lastProgress  time.Time
+	progressCount int
 }
 
 const (
-	renderSoftFlushAfter = 1200 * time.Millisecond
-	renderMaxChunkRunes  = 1800
-	renderHardChunkRunes = 3500
+	renderSoftFlushAfter      = 1200 * time.Millisecond
+	renderMaxChunkRunes       = 1800
+	renderHardChunkRunes      = 3500
+	renderProgressMinInterval = 2 * time.Second
+	renderMaxProgressMessages = 3
 )
 
 func newRenderSink(ctx context.Context, adapter Adapter, connID, domain, chatID string, chatType ChatType, userID string, replyTo string, logger *slog.Logger, onApproval func(event.Approval), onAsk func(event.Ask)) *renderSink {
@@ -67,6 +70,8 @@ func (s *renderSink) Emit(e event.Event) {
 		s.thinking.Reset()
 		s.inThinking = false
 		s.toolNames = make(map[string]string)
+		s.progressCount = 0
+		s.lastProgress = time.Time{}
 
 	case event.Reasoning:
 		if !s.inThinking {
@@ -79,43 +84,27 @@ func (s *renderSink) Emit(e event.Event) {
 			s.inThinking = false
 		}
 		s.buf.WriteString(e.Text)
-		s.maybeFlush()
 
 	case event.Message:
 		// full message received, do nothing extra
 
 	case event.ToolDispatch:
-		s.toolNames[e.Tool.ID] = e.Tool.Name
-		txt := fmt.Sprintf("\n🔧 执行工具: %s", e.Tool.Name)
-		if e.Tool.ReadOnly {
-			txt += " (只读)"
-		}
-		s.buf.WriteString(txt)
-		s.maybeFlush()
+		name := renderToolName(e.Tool)
+		s.toolNames[e.Tool.ID] = name
+		s.sendProgress(fmt.Sprintf("正在执行: %s", name), false)
 
 	case event.ToolResult:
 		name := s.toolNames[e.Tool.ID]
 		if name == "" {
-			name = e.Tool.ID
+			name = renderToolName(e.Tool)
 		}
 		if e.Tool.Err != "" {
-			fmt.Fprintf(&s.buf, "\n❌ %s 出错: %s", name, e.Tool.Err)
-		} else {
-			// 截断输出
-			output := e.Tool.Output
-			if len(output) > 500 {
-				output = output[:500] + "\n... (已截断)"
-			}
-			fmt.Fprintf(&s.buf, "\n✅ %s 完成", name)
-			if output != "" {
-				fmt.Fprintf(&s.buf, "\n```\n%s\n```", output)
-			}
+			s.sendProgress(fmt.Sprintf("%s 执行失败，稍后会在结果中说明。", name), true)
 		}
-		s.maybeFlush()
 
 	case event.ToolProgress:
-		// 流式输出，不单独渲染
-		s.maybeFlush()
+		// Keep streaming tool output out of IM channels; the session transcript
+		// still records the complete controller turn for desktop review.
 
 	case event.ApprovalRequest:
 		// 发送审批请求
@@ -199,15 +188,6 @@ func (s *renderSink) Emit(e event.Event) {
 	}
 }
 
-func (s *renderSink) maybeFlush() {
-	if time.Since(s.lastFlush) < renderSoftFlushAfter && utf8.RuneCountInString(s.buf.String()) < renderMaxChunkRunes {
-		return
-	}
-	if idx := renderFlushIndex(s.buf.String(), time.Since(s.lastFlush)); idx > 0 {
-		s.flushPrefix(idx)
-	}
-}
-
 func (s *renderSink) flush() {
 	for strings.TrimSpace(s.buf.String()) != "" {
 		idx := renderFlushIndex(s.buf.String(), renderSoftFlushAfter)
@@ -246,6 +226,40 @@ func (s *renderSink) flushPrefix(idx int) {
 	s.buf.Reset()
 	s.buf.WriteString(remaining)
 	s.lastFlush = time.Now()
+}
+
+func (s *renderSink) sendProgress(text string, force bool) {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return
+	}
+	now := time.Now()
+	if s.progressCount >= renderMaxProgressMessages {
+		return
+	}
+	if !force && !s.lastProgress.IsZero() && now.Sub(s.lastProgress) < renderProgressMinInterval {
+		return
+	}
+	_ = s.send(OutboundMessage{
+		ConnectionID: s.connID,
+		Domain:       s.domain,
+		ChatID:       s.chatID,
+		ChatType:     s.chatType,
+		Text:         text,
+		ReplyToMsgID: s.replyTo,
+	})
+	s.progressCount++
+	s.lastProgress = now
+}
+
+func renderToolName(t event.Tool) string {
+	if name := strings.TrimSpace(t.Name); name != "" {
+		return name
+	}
+	if id := strings.TrimSpace(t.ID); id != "" {
+		return id
+	}
+	return "tool"
 }
 
 func renderFlushIndex(text string, elapsed time.Duration) int {
