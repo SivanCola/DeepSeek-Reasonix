@@ -116,15 +116,17 @@ The headless gateway uses the same config records as the desktop app:
 - `workspace_root`, `model`, and `tool_approval_mode` can be set per
   connection. This lets different IM channels route to different local projects
   or approval postures.
-- `session_mappings` are filled from inbound messages. They store the remote
-  chat ID and the local Reasonix session ID so the desktop UI can open the
-  matching conversation later.
+- `session_mappings` are filled from inbound messages with the remote chat ID
+  and scope. The desktop UI can open the matching conversation once the mapping
+  also has a local `session_id` target, such as a saved `path:` session target
+  from a desktop-managed bot runtime or a manually configured mapping.
 
 Access control is still mandatory. Either enable an allowlist under
-`[bot.allowlist]` for the relevant platform user IDs / group IDs, or set
-`allow_all = true` deliberately. Remote users go through the same controller,
-permission policy, tool approval mode, and sandbox rules as local desktop or CLI
-turns.
+`[bot.allowlist]` with at least one relevant platform user ID, or set
+`allow_all = true` deliberately. Group IDs are optional additional scoping for
+group chats; they do not replace the required user allowlist. Remote users go
+through the same controller, permission policy, tool approval mode, and sandbox
+rules as local desktop or CLI turns.
 
 ## Usage flow
 

@@ -107,13 +107,15 @@ Bot。`--dir` 用来把远端消息绑定到某个项目工作区，`--model` �
   密钥仍保存在环境变量或 Reasonix 用户凭据中。
 - `workspace_root`、`model` 和 `tool_approval_mode` 可以按连接单独设置，
   因此不同 IM 渠道可以路由到不同本地项目或审批模式。
-- `session_mappings` 会根据收到的远端消息自动填充，记录远端 chat ID 和
-  本地 Reasonix 会话 ID，之后桌面端就能打开对应会话。
+- `session_mappings` 会根据收到的远端消息自动填充远端 chat ID 和作用域。
+  只有当该映射同时具备本地 `session_id` 目标时，桌面端才能打开对应会话；
+  例如桌面端托管的 Bot runtime 保存了 `path:` 会话目标，或用户手动配置了
+  映射目标。
 
-访问控制仍然是必需项。你需要在 `[bot.allowlist]` 下为对应平台配置用户 ID /
-群 ID 白名单，或者有意设置 `allow_all = true`。远端用户进入的是同一个
-Reasonix controller、权限策略、工具审批模式和沙盒边界，和本地桌面端或 CLI
-回合一致。
+访问控制仍然是必需项。你需要在 `[bot.allowlist]` 下为对应平台至少配置一个
+用户 ID，或者有意设置 `allow_all = true`。群 ID 是群聊里的额外收窄条件，
+不能替代用户白名单。远端用户进入的是同一个 Reasonix controller、权限策略、
+工具审批模式和沙盒边界，和本地桌面端或 CLI 回合一致。
 
 ## 使用流程
 
