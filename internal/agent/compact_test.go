@@ -341,6 +341,43 @@ func TestCompactKeepsErrorMessages(t *testing.T) {
 	}
 }
 
+func TestKeepIndexesKeepsSiblingToolResultsForKeptError(t *testing.T) {
+	region := []provider.Message{
+		{Role: provider.RoleAssistant, ToolCalls: []provider.ToolCall{
+			{ID: "err", Name: "bash", Arguments: `{"cmd":"bad"}`},
+			{ID: "ok", Name: "read_file", Arguments: `{"path":"main.go"}`},
+		}},
+		{Role: provider.RoleTool, ToolCallID: "err", Name: "bash", Content: "error: command failed"},
+		{Role: provider.RoleTool, ToolCallID: "ok", Name: "read_file", Content: "package main"},
+	}
+
+	keep := keepIndexes(region, KeepErrors)
+	for i, kept := range keep {
+		if !kept {
+			t.Fatalf("keep[%d] = false, want all sibling tool-call messages kept: %v", i, keep)
+		}
+	}
+}
+
+func TestKeepIndexesScopesPolicyAfterLatestSummary(t *testing.T) {
+	priorSummary := provider.Message{Role: provider.RoleUser, Content: summaryTagOpen + "\nprior digest\n" + summaryTagClose}
+	region := []provider.Message{
+		{Role: provider.RoleAssistant, ToolCalls: []provider.ToolCall{{ID: "old", Name: "bash", Arguments: `{}`}}},
+		{Role: provider.RoleTool, ToolCallID: "old", Name: "bash", Content: "error: old failure"},
+		priorSummary,
+		{Role: provider.RoleAssistant, ToolCalls: []provider.ToolCall{{ID: "new", Name: "bash", Arguments: `{}`}}},
+		{Role: provider.RoleTool, ToolCallID: "new", Name: "bash", Content: "error: new failure"},
+	}
+
+	keep := keepIndexes(region, KeepErrors)
+	want := []bool{false, false, false, true, true}
+	for i := range want {
+		if keep[i] != want[i] {
+			t.Fatalf("keep = %v, want %v", keep, want)
+		}
+	}
+}
+
 func TestCompactKeepsUserMarkedMessages(t *testing.T) {
 	prov := &fakeProvider{reply: "- unmarked work summarized"}
 	marked := "[[keep]] exact requirement " + strings.Repeat("must stay verbatim ", 200)
@@ -369,6 +406,22 @@ func TestCompactKeepsUserMarkedMessages(t *testing.T) {
 	}
 	if strings.Contains(prov.got[1].Content, "exact requirement") {
 		t.Fatalf("marked message was still folded into summary input:\n%s", prov.got[1].Content)
+	}
+}
+
+func TestKeepUserMarkedRequiresUserPrefixMarker(t *testing.T) {
+	region := []provider.Message{
+		{Role: provider.RoleAssistant, Content: "[keep] assistant output"},
+		{Role: provider.RoleUser, Content: "ordinary prose mentioning [keep] later"},
+		{Role: provider.RoleUser, Content: "  <keep> exact requirement"},
+	}
+
+	keep := keepIndexes(region, KeepUserMarked)
+	want := []bool{false, false, true}
+	for i := range want {
+		if keep[i] != want[i] {
+			t.Fatalf("keep = %v, want %v", keep, want)
+		}
 	}
 }
 

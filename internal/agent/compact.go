@@ -398,8 +398,16 @@ func (a *Agent) partitionFold(region []provider.Message) (kept, fold []provider.
 
 func keepIndexes(region []provider.Message, policy KeepPolicy) []bool {
 	keep := make([]bool, len(region))
+	policyStart := 0
 	for i, m := range region {
-		if shouldKeepMessage(m, policy) {
+		if isCompactionSummary(m) {
+			policyStart = i + 1
+		}
+	}
+	// Retention applies only to messages since the latest digest; older kept
+	// messages are allowed to fold on the next pass so they cannot grow forever.
+	for i, m := range region {
+		if i >= policyStart && shouldKeepMessage(m, policy) {
 			keep[i] = true
 		}
 	}
@@ -410,18 +418,30 @@ func keepIndexes(region []provider.Message, policy KeepPolicy) []bool {
 		switch m.Role {
 		case provider.RoleTool:
 			if j := findToolCaller(region, i, m.ToolCallID); j >= 0 {
-				keep[j] = true
+				keepToolCallGroup(region, keep, j)
 			}
 		case provider.RoleAssistant:
-			ids := toolCallIDs(m)
-			for j := i + 1; j < len(region) && region[j].Role == provider.RoleTool; j++ {
-				if ids[region[j].ToolCallID] {
-					keep[j] = true
-				}
-			}
+			keepToolCallGroup(region, keep, i)
 		}
 	}
 	return keep
+}
+
+func keepToolCallGroup(region []provider.Message, keep []bool, assistantIndex int) {
+	if assistantIndex < 0 || assistantIndex >= len(region) {
+		return
+	}
+	m := region[assistantIndex]
+	if m.Role != provider.RoleAssistant || len(m.ToolCalls) == 0 {
+		return
+	}
+	keep[assistantIndex] = true
+	ids := toolCallIDs(m)
+	for j := assistantIndex + 1; j < len(region) && region[j].Role == provider.RoleTool; j++ {
+		if ids[region[j].ToolCallID] {
+			keep[j] = true
+		}
+	}
 }
 
 func shouldKeepMessage(m provider.Message, policy KeepPolicy) bool {
@@ -443,11 +463,14 @@ func isErrorMessage(m provider.Message) bool {
 }
 
 func isUserMarked(m provider.Message) bool {
-	content := strings.ToLower(m.Content)
-	return strings.Contains(content, "[[keep]]") ||
-		strings.Contains(content, "[keep]") ||
-		strings.Contains(content, "<keep>") ||
-		strings.Contains(content, "<!-- keep -->")
+	if m.Role != provider.RoleUser {
+		return false
+	}
+	content := strings.TrimSpace(strings.ToLower(m.Content))
+	return strings.HasPrefix(content, "[[keep]]") ||
+		strings.HasPrefix(content, "[keep]") ||
+		strings.HasPrefix(content, "<keep>") ||
+		strings.HasPrefix(content, "<!-- keep -->")
 }
 
 func findToolCaller(region []provider.Message, toolIndex int, id string) int {

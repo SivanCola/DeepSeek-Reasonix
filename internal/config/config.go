@@ -16,7 +16,6 @@ import (
 
 	"github.com/BurntSushi/toml"
 
-	"reasonix/internal/agent"
 	"reasonix/internal/netclient"
 	"reasonix/internal/provider"
 )
@@ -805,23 +804,6 @@ type AgentConfig struct {
 	// ColdResumePrune elides stale tool results when a session reopens past the
 	// provider cache window. nil = default enabled.
 	ColdResumePrune *bool `toml:"cold_resume_prune"`
-}
-
-// KeepPolicy converts the keep list to an agent.KeepPolicy bitmask.
-func (a *AgentConfig) KeepPolicy() agent.KeepPolicy {
-	if a.Keep == nil {
-		return agent.KeepErrors
-	}
-	var p agent.KeepPolicy
-	for _, k := range a.Keep {
-		switch k {
-		case "errors":
-			p |= agent.KeepErrors
-		case "user_marked":
-			p |= agent.KeepUserMarked
-		}
-	}
-	return p
 }
 
 // ProviderEntry declares a model provider instance. ContextWindow is the model's
