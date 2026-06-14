@@ -8,7 +8,7 @@
 import type * as GeneratedApp from "../../wailsjs/go/main/App";
 
 import { addBreadcrumb } from "./breadcrumbs";
-import { t } from "./i18n";
+import { getLocale, t } from "./i18n";
 import { DEFAULT_STATUS_BAR_ITEMS, normalizeStatusBarItems } from "./statusBarItems";
 import { modeWithAutoApproveTools, modeWithPlan, normalizeCollaborationMode, normalizeMode, normalizeTokenMode, normalizeToolApprovalMode } from "./types";
 
@@ -2730,6 +2730,8 @@ function makeMockApp(): AppBindings {
     },
     async ContextPanel(_tabID: string) {
       const now = Date.now();
+      const currency = getLocale().startsWith("zh") ? "¥" : "$";
+      const cost = (usd: number) => currency === "¥" ? Number((usd * 7.15).toFixed(4)) : usd;
       return {
         usedTokens: 42124,
         windowTokens: 128000,
@@ -2741,9 +2743,9 @@ function makeMockApp(): AppBindings {
         cacheMissTokens: 13000,
         requestCount: 10,
         elapsedMs: 33 * 60 * 1000,
-        sessionCost: 0.018,
-        sessionCurrency: "$",
-        sessionCostUsd: 0.018,
+        sessionCost: cost(0.018),
+        sessionCurrency: currency,
+        sessionCostUsd: cost(0.018),
         sources: {
           executor: {
             promptTokens: 24100,
@@ -2753,9 +2755,9 @@ function makeMockApp(): AppBindings {
             cacheHitTokens: 76000,
             cacheMissTokens: 9000,
             requestCount: 4,
-            sessionCost: 0.0124,
-            sessionCurrency: "$",
-            sessionCostUsd: 0.0124,
+            sessionCost: cost(0.0124),
+            sessionCurrency: currency,
+            sessionCostUsd: cost(0.0124),
           },
           planner: {
             promptTokens: 1800,
@@ -2765,9 +2767,9 @@ function makeMockApp(): AppBindings {
             cacheHitTokens: 3400,
             cacheMissTokens: 700,
             requestCount: 1,
-            sessionCost: 0.0011,
-            sessionCurrency: "$",
-            sessionCostUsd: 0.0011,
+            sessionCost: cost(0.0011),
+            sessionCurrency: currency,
+            sessionCostUsd: cost(0.0011),
           },
           subagent: {
             promptTokens: 4200,
@@ -2777,9 +2779,9 @@ function makeMockApp(): AppBindings {
             cacheHitTokens: 6100,
             cacheMissTokens: 2100,
             requestCount: 2,
-            sessionCost: 0.0032,
-            sessionCurrency: "$",
-            sessionCostUsd: 0.0032,
+            sessionCost: cost(0.0032),
+            sessionCurrency: currency,
+            sessionCostUsd: cost(0.0032),
           },
           compaction: {
             promptTokens: 2600,
@@ -2789,9 +2791,9 @@ function makeMockApp(): AppBindings {
             cacheHitTokens: 1100,
             cacheMissTokens: 900,
             requestCount: 1,
-            sessionCost: 0.0009,
-            sessionCurrency: "$",
-            sessionCostUsd: 0.0009,
+            sessionCost: cost(0.0009),
+            sessionCurrency: currency,
+            sessionCostUsd: cost(0.0009),
           },
           classifier: {
             promptTokens: 900,
@@ -2801,9 +2803,9 @@ function makeMockApp(): AppBindings {
             cacheHitTokens: 300,
             cacheMissTokens: 250,
             requestCount: 1,
-            sessionCost: 0.0003,
-            sessionCurrency: "$",
-            sessionCostUsd: 0.0003,
+            sessionCost: cost(0.0003),
+            sessionCurrency: currency,
+            sessionCostUsd: cost(0.0003),
           },
           title: {
             promptTokens: 420,
@@ -2813,9 +2815,9 @@ function makeMockApp(): AppBindings {
             cacheHitTokens: 100,
             cacheMissTokens: 50,
             requestCount: 1,
-            sessionCost: 0.0001,
-            sessionCurrency: "$",
-            sessionCostUsd: 0.0001,
+            sessionCost: cost(0.0001),
+            sessionCurrency: currency,
+            sessionCostUsd: cost(0.0001),
           },
         },
         mock: true,

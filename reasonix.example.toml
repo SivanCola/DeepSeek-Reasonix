@@ -49,7 +49,10 @@ models      = ["deepseek-v4-flash", "deepseek-v4-pro"]
 default     = "deepseek-v4-flash"   # optional; defaults to the first of `models`
 api_key_env = "DEEPSEEK_API_KEY"
 context_window = 1000000
-prices      = { "deepseek-v4-flash" = { cache_hit = 0.0028, input = 0.14, output = 0.28, currency = "$" }, "deepseek-v4-pro" = { cache_hit = 0.003625, input = 0.435, output = 0.87, currency = "$" } }   # per 1M tokens
+# Official DeepSeek prices are seeded from language defaults:
+# Chinese UI/config language -> RMB, English/default -> USD.
+# Set prices explicitly only when you want to pin a currency/rate.
+# prices = { "deepseek-v4-flash" = { cache_hit = 0.0028, input = 0.14, output = 0.28, currency = "$" }, "deepseek-v4-pro" = { cache_hit = 0.003625, input = 0.435, output = 0.87, currency = "$" } }   # per 1M tokens
 # DeepSeek thinking is always on; effort: high | max. Omit for auto (provider default).
 effort      = "high"
 

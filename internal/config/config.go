@@ -1200,10 +1200,117 @@ func deepSeekV4ProPrice() *provider.Pricing {
 }
 
 func deepSeekV4Prices() map[string]*provider.Pricing {
+	return DeepSeekV4PricesForLanguage("en")
+}
+
+func deepSeekV4FlashPriceCNY() *provider.Pricing {
+	return &provider.Pricing{CacheHit: 0.02, Input: 1, Output: 2, Currency: "¥"}
+}
+
+func deepSeekV4ProPriceCNY() *provider.Pricing {
+	return &provider.Pricing{CacheHit: 0.025, Input: 3, Output: 6, Currency: "¥"}
+}
+
+// DeepSeekV4PricesForLanguage returns official DeepSeek V4 defaults in the
+// display/billing unit expected for the selected UI language. Persisted prices
+// still win; this is only used for templates and missing-default backfills.
+func DeepSeekV4PricesForLanguage(lang string) map[string]*provider.Pricing {
+	if deepSeekUsesCNYPricing(lang) {
+		return map[string]*provider.Pricing{
+			"deepseek-v4-flash": deepSeekV4FlashPriceCNY(),
+			"deepseek-v4-pro":   deepSeekV4ProPriceCNY(),
+		}
+	}
 	return map[string]*provider.Pricing{
 		"deepseek-v4-flash": deepSeekV4FlashPrice(),
 		"deepseek-v4-pro":   deepSeekV4ProPrice(),
 	}
+}
+
+func deepSeekV4PricesForConfig(c *Config) map[string]*provider.Pricing {
+	return DeepSeekV4PricesForLanguage(c.DeepSeekOfficialPricingLanguage())
+}
+
+func deepSeekV4PriceForModel(lang, model string) *provider.Pricing {
+	return clonePricing(DeepSeekV4PricesForLanguage(lang)[strings.TrimSpace(model)])
+}
+
+// DeepSeekOfficialPricingLanguage resolves the language used when seeding
+// official DeepSeek defaults. Desktop UI language is preferred; top-level
+// language is the CLI fallback. Empty/auto remains the English/USD default.
+func (c *Config) DeepSeekOfficialPricingLanguage() string {
+	if c != nil {
+		if lang := normalizeDeepSeekPricingLanguage(c.Desktop.Language); lang != "" {
+			return lang
+		}
+		if lang := normalizeDeepSeekPricingLanguage(c.Language); lang != "" {
+			return lang
+		}
+	}
+	return "en"
+}
+
+func normalizeDeepSeekPricingLanguage(lang string) string {
+	switch strings.ToLower(strings.TrimSpace(lang)) {
+	case "zh", "zh-cn", "zh-hans", "cn", "chinese", "中文", "zh-tw", "zh-hant", "zh-hk", "zh-mo":
+		return "zh"
+	case "en", "en-us", "en-gb", "english":
+		return "en"
+	default:
+		return ""
+	}
+}
+
+func deepSeekUsesCNYPricing(lang string) bool {
+	return normalizeDeepSeekPricingLanguage(lang) == "zh"
+}
+
+// ApplyDeepSeekOfficialDefaultPricing refreshes built-in/official DeepSeek
+// prices that still match known official defaults. Custom user prices are left
+// untouched.
+func (c *Config) ApplyDeepSeekOfficialDefaultPricing() {
+	applyDeepSeekOfficialDefaultPricing(c)
+}
+
+func applyDeepSeekOfficialDefaultPricing(c *Config) {
+	if c == nil {
+		return
+	}
+	lang := c.DeepSeekOfficialPricingLanguage()
+	for i := range c.Providers {
+		p := &c.Providers[i]
+		if officialProviderKind(p) != "deepseek" {
+			continue
+		}
+		if isKnownDeepSeekOfficialPricing(p.Model, p.Price) {
+			p.Price = deepSeekV4PriceForModel(lang, p.Model)
+		}
+		for model, price := range p.Prices {
+			if isKnownDeepSeekOfficialPricing(model, price) {
+				p.Prices[model] = deepSeekV4PriceForModel(lang, model)
+			}
+		}
+	}
+}
+
+func isKnownDeepSeekOfficialPricing(model string, price *provider.Pricing) bool {
+	model = strings.TrimSpace(model)
+	if model == "" || price == nil {
+		return false
+	}
+	for _, lang := range []string{"en", "zh"} {
+		if samePricing(price, DeepSeekV4PricesForLanguage(lang)[model]) {
+			return true
+		}
+	}
+	return false
+}
+
+func samePricing(a, b *provider.Pricing) bool {
+	if a == nil || b == nil {
+		return false
+	}
+	return a.CacheHit == b.CacheHit && a.Input == b.Input && a.Output == b.Output && a.Currency == b.Currency
 }
 
 // Load builds the configuration: defaults, then user config, then project
@@ -1277,6 +1384,7 @@ func LoadForRoot(root string) (*Config, error) {
 	normalizeLegacyMCPTiers(cfg)
 	normalizeLegacyProviderModels(cfg)
 	normalizeDesktopOfficialProviderAccess(cfg)
+	applyDeepSeekOfficialDefaultPricing(cfg)
 	backfillDeepSeekOfficialPrices(cfg)
 	normalizeEffortConfig(cfg)
 	backfillDeepSeekPro(cfg)
@@ -1319,6 +1427,7 @@ func backfillDeepSeekPro(c *Config) {
 	for _, bp := range Default().Providers {
 		if bp.Name == "deepseek-pro" {
 			bp.APIKeyEnv = flash.APIKeyEnv
+			bp.Price = deepSeekV4PriceForModel(c.DeepSeekOfficialPricingLanguage(), proModel)
 			c.Providers = append(c.Providers, bp)
 			return
 		}
@@ -1329,7 +1438,7 @@ func backfillDeepSeekOfficialPrices(c *Config) {
 	if c == nil {
 		return
 	}
-	defaults := deepSeekV4Prices()
+	defaults := deepSeekV4PricesForConfig(c)
 	for i := range c.Providers {
 		p := &c.Providers[i]
 		if officialProviderKind(p) != "deepseek" {
@@ -1428,6 +1537,7 @@ func LoadForEdit(path string) *Config {
 	normalizeLegacyMCPTiers(cfg)
 	normalizeLegacyProviderModels(cfg)
 	normalizeDesktopOfficialProviderAccess(cfg)
+	applyDeepSeekOfficialDefaultPricing(cfg)
 	backfillDeepSeekOfficialPrices(cfg)
 	normalizeEffortConfig(cfg)
 	return cfg
@@ -1673,11 +1783,11 @@ func ensureDeepSeekOfficialProvider(c *Config) {
 		APIKeyEnv:     "DEEPSEEK_API_KEY",
 		BalanceURL:    "https://api.deepseek.com/user/balance",
 		ContextWindow: 1_000_000,
-		Prices:        deepSeekV4Prices(),
+		Prices:        deepSeekV4PricesForConfig(c),
 	}
 	if old, ok := c.Provider("deepseek-flash"); ok {
 		entry = officialProviderFromLegacy(entry, old)
-		entry.Prices = deepSeekV4Prices()
+		entry.Prices = deepSeekV4PricesForConfig(c)
 		entry.Models = mergeModelLists([]string{"deepseek-v4-flash", "deepseek-v4-pro"}, old.ModelList())
 		entry.Default = firstKnownModel(entry.Default, entry.Models, "deepseek-v4-flash")
 	}

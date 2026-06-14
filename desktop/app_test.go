@@ -779,6 +779,36 @@ api_key_env = "DEEPSEEK_API_KEY"
 	}
 }
 
+func TestAddOfficialProviderAccessUsesDesktopLanguagePricing(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	if err := os.MkdirAll(filepath.Dir(config.UserConfigPath()), 0o755); err != nil {
+		t.Fatalf("mkdir config dir: %v", err)
+	}
+	if err := os.WriteFile(config.UserConfigPath(), []byte(`
+[desktop]
+language = "zh"
+`), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	if err := NewApp().AddOfficialProviderAccess("deepseek", ""); err != nil {
+		t.Fatalf("AddOfficialProviderAccess: %v", err)
+	}
+	cfg := config.LoadForEdit(config.UserConfigPath())
+	p, ok := cfg.Provider("deepseek")
+	if !ok {
+		t.Fatal("deepseek provider not saved")
+	}
+	flash := p.Prices["deepseek-v4-flash"]
+	pro := p.Prices["deepseek-v4-pro"]
+	if flash == nil || flash.Output != 2 || flash.Currency != "¥" {
+		t.Fatalf("flash price = %+v, want CNY preset", flash)
+	}
+	if pro == nil || pro.Output != 6 || pro.Currency != "¥" {
+		t.Fatalf("pro price = %+v, want CNY preset", pro)
+	}
+}
+
 func TestRemoveBuiltInProviderAccessRetargetsDefaultToRemainingAccess(t *testing.T) {
 	isolateDesktopUserDirs(t)
 	if err := os.MkdirAll(filepath.Dir(config.UserConfigPath()), 0o755); err != nil {

@@ -946,6 +946,23 @@ func TestWithBuiltinFamiliesAddsMissingMiMo(t *testing.T) {
 	}
 }
 
+func TestWithBuiltinFamiliesForLanguageUsesDeepSeekPricing(t *testing.T) {
+	providers := withBuiltinFamiliesForLanguage(nil, "zh")
+	var flash *config.ProviderEntry
+	for i := range providers {
+		if providers[i].Name == "deepseek-flash" {
+			flash = &providers[i]
+			break
+		}
+	}
+	if flash == nil {
+		t.Fatal("deepseek-flash provider missing")
+	}
+	if flash.Price == nil || flash.Price.Output != 2 || flash.Price.Currency != "¥" {
+		t.Fatalf("flash price = %+v, want CNY preset", flash.Price)
+	}
+}
+
 func groupByFamilyKeys(ps []config.ProviderEntry, key string) []int {
 	_, members, _ := groupByFamily(ps)
 	return members[key]

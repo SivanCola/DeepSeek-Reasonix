@@ -30,6 +30,19 @@ func TestBackfillDeepSeekProRestoresPro(t *testing.T) {
 	}
 }
 
+func TestBackfillDeepSeekProUsesConfiguredLanguage(t *testing.T) {
+	c := &Config{Language: "zh", Providers: []ProviderEntry{
+		{Name: "deepseek-flash", Kind: "openai", BaseURL: "https://api.deepseek.com", Model: "deepseek-v4-flash", APIKeyEnv: "DEEPSEEK_API_KEY"},
+	}}
+	backfillDeepSeekPro(c)
+	pro := hasModel(c, "deepseek-v4-pro")
+	if pro == nil {
+		t.Fatal("deepseek-v4-pro not restored")
+	} else if pro.Price == nil || pro.Price.Output != 6 || pro.Price.Currency != "¥" {
+		t.Errorf("pro price = %+v, want CNY preset", pro.Price)
+	}
+}
+
 func TestBackfillDeepSeekProInheritsKeyEnv(t *testing.T) {
 	c := &Config{Providers: []ProviderEntry{
 		{Name: "deepseek-flash", Kind: "openai", BaseURL: "https://api.deepseek.com", Model: "deepseek-v4-flash", APIKeyEnv: "MY_DS_KEY"},
@@ -146,6 +159,24 @@ func TestBackfillDeepSeekOfficialPrices(t *testing.T) {
 	}
 }
 
+func TestBackfillDeepSeekOfficialPricesUsesConfiguredLanguage(t *testing.T) {
+	c := &Config{Language: "zh", Providers: []ProviderEntry{{
+		Name:    "deepseek",
+		Kind:    "openai",
+		BaseURL: "https://api.deepseek.com",
+		Models:  []string{"deepseek-v4-flash", "deepseek-v4-pro"},
+		Default: "deepseek-v4-flash",
+	}}}
+	backfillDeepSeekOfficialPrices(c)
+	p, ok := c.Provider("deepseek")
+	if !ok {
+		t.Fatal("deepseek provider missing")
+	}
+	if p.Prices["deepseek-v4-flash"].Output != 2 || p.Prices["deepseek-v4-flash"].Currency != "¥" || p.Prices["deepseek-v4-pro"].Output != 6 || p.Prices["deepseek-v4-pro"].Currency != "¥" {
+		t.Fatalf("deepseek prices = %+v, want CNY flash/pro prices", p.Prices)
+	}
+}
+
 func TestBackfillDeepSeekOfficialPricesKeepsProviderWidePrice(t *testing.T) {
 	custom := &provider.Pricing{CacheHit: 9, Input: 9, Output: 9, Currency: "$"}
 	c := &Config{Providers: []ProviderEntry{{
@@ -180,6 +211,44 @@ func TestBackfillDeepSeekOfficialPricesKeepsProviderWidePrice(t *testing.T) {
 	}
 	if flash.Price == nil || flash.Price.Output != 1 {
 		t.Fatalf("flash price = %+v, want existing per-model custom price", flash.Price)
+	}
+}
+
+func TestApplyDeepSeekOfficialDefaultPricingUsesConfiguredLanguage(t *testing.T) {
+	c := Default()
+	c.Language = "zh"
+	applyDeepSeekOfficialDefaultPricing(c)
+	flash, ok := c.Provider("deepseek-flash")
+	if !ok {
+		t.Fatal("deepseek-flash provider missing")
+	}
+	if flash.Price == nil || flash.Price.Output != 2 || flash.Price.Currency != "¥" {
+		t.Fatalf("flash price = %+v, want CNY preset", flash.Price)
+	}
+	pro, ok := c.Provider("deepseek-pro")
+	if !ok {
+		t.Fatal("deepseek-pro provider missing")
+	}
+	if pro.Price == nil || pro.Price.Output != 6 || pro.Price.Currency != "¥" {
+		t.Fatalf("pro price = %+v, want CNY preset", pro.Price)
+	}
+}
+
+func TestApplyDeepSeekOfficialDefaultPricingKeepsCustomPrice(t *testing.T) {
+	c := &Config{Language: "zh", Providers: []ProviderEntry{{
+		Name:    "deepseek-flash",
+		Kind:    "openai",
+		BaseURL: "https://api.deepseek.com",
+		Model:   "deepseek-v4-flash",
+		Price:   &provider.Pricing{CacheHit: 9, Input: 9, Output: 9, Currency: "$"},
+	}}}
+	applyDeepSeekOfficialDefaultPricing(c)
+	p, ok := c.Provider("deepseek-flash")
+	if !ok {
+		t.Fatal("deepseek-flash provider missing")
+	}
+	if p.Price == nil || p.Price.Output != 9 || p.Price.Currency != "$" {
+		t.Fatalf("custom price = %+v, want unchanged", p.Price)
 	}
 }
 
