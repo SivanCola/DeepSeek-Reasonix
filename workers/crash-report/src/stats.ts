@@ -142,8 +142,8 @@ function facetChips(rows: { label: string; users: number }[], active: string, hr
     .join("");
 }
 
-function crashGroups(rows: CrashRow[]): string {
-  if (!rows.length) return `<div class="empty">${i18n("No crash reports yet — that's the good kind of empty", "还没有崩溃报告，这是好消息")}</div>`;
+function reportGroups(rows: CrashRow[]): string {
+  if (!rows.length) return `<div class="empty">${i18n("No diagnostic reports yet — that's the good kind of empty", "还没有诊断报告，这是好消息")}</div>`;
   return `<div class="crash-list"><div class="crash-head"><span>${i18n("fingerprint", "指纹")}</span><span>${i18n("summary", "摘要")}</span><span>${i18n("scope", "范围")}</span><span>${i18n("health", "状态")}</span><span>${i18n("count", "次数")}</span></div>${rows
     .map((c) => {
       const platform = [c.last_os, c.last_arch].filter(Boolean).join("/");
@@ -200,7 +200,7 @@ export function renderStats(
   const hasFilters = Boolean(
     data.filters.status || data.filters.source || data.filters.version || data.filters.os || data.filters.platform || data.filters.newLatest || data.filters.regressed,
   );
-  const filters = `<div class="card full filter-card"><div class="filter-head"><h2>${i18n("Crash filters", "崩溃筛选")}</h2><span>${i18nHTML(`latest ${esc(data.latestVersion || "n/a")}`, `最新 ${esc(data.latestVersion || "n/a")}`)}</span></div>
+  const filters = `<div class="card full filter-card"><div class="filter-head"><h2>${i18n("Report filters", "诊断筛选")}</h2><span>${i18nHTML(`latest ${esc(data.latestVersion || "n/a")}`, `最新 ${esc(data.latestVersion || "n/a")}`)}</span></div>
 <div class="filter-tabs">
 ${filterTab("All", "全部", "/stats", !hasFilters)}
 ${filterTab("Open", "未处理", filterQS({ status: "open" }), data.filters.status === "open")}
@@ -219,8 +219,8 @@ ${filterTab("Regressed", "回归", filterQS({ regressed: data.filters.regressed 
     "Reasonix · Stats",
     "stats",
     `<h1>${i18n("Desktop stats", "桌面端统计")}</h1><p class="sub">${i18nHTML(
-      `Today: <b>${totalUsers}</b> active installs · anonymous launch pings and crash reports only`,
-      `今日：<b>${totalUsers}</b> 个活跃安装 · 仅包含匿名启动 ping 和崩溃报告`,
+      `Today: <b>${totalUsers}</b> active installs · anonymous launch pings and user-sent diagnostic reports only`,
+      `今日：<b>${totalUsers}</b> 个活跃安装 · 仅包含匿名启动 ping 和用户发送的诊断报告`,
     )}</p>
 <div class="grid">
 <div class="card full"><h2>${i18nHTML("Daily active installs <b>— 30 days</b> (solid: users, faded: opens)", "每日活跃 <b>— 30 天</b>（实线：用户，淡色：打开次数）")}</h2>
@@ -229,7 +229,7 @@ ${anyPing ? dailyChart(days) : `<div class="empty">${i18n("No pings yet — data
 <div class="card"><h2>${i18nHTML("Platforms <b>— 7 days</b>", "平台分布 <b>— 7 天</b>")}</h2>${listBars(data.platforms)}</div>
 <div class="card full"><h2>${i18nHTML("Agent signals <b>— 7 days, opt-in aggregate</b>", "运行指标 <b>— 7 天，opt-in 汇总</b>")}</h2>${metricsCards(data.metrics)}</div>
 ${filters}
-<div class="card full crash-card"><h2>${i18nHTML("Crash groups <b>— select a row for stack samples</b>", "崩溃分组 <b>— 选择一行查看堆栈样本</b>")}</h2>${crashGroups(data.crashes)}</div>
+<div class="card full crash-card"><h2>${i18nHTML("Report groups <b>— select a row for stack samples</b>", "诊断分组 <b>— 选择一行查看堆栈样本</b>")}</h2>${reportGroups(data.crashes)}</div>
 </div>`,
     userNav(user),
   );
