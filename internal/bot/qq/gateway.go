@@ -94,26 +94,6 @@ type dispatchEvent struct {
 	GroupOpenID string `json:"group_openid"`
 }
 
-type tokenExpiresIn int
-
-func (e *tokenExpiresIn) UnmarshalJSON(data []byte) error {
-	var n int
-	if err := json.Unmarshal(data, &n); err == nil {
-		*e = tokenExpiresIn(n)
-		return nil
-	}
-	var s string
-	if err := json.Unmarshal(data, &s); err != nil {
-		return err
-	}
-	parsed, err := strconv.Atoi(s)
-	if err != nil {
-		return fmt.Errorf("expires_in: %w", err)
-	}
-	*e = tokenExpiresIn(parsed)
-	return nil
-}
-
 // wsClient 管理 QQ WebSocket 连接。
 type wsClient struct {
 	mu          sync.Mutex
