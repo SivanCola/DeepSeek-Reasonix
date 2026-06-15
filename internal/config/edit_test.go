@@ -982,7 +982,7 @@ func TestSaveToScopesUserAndProjectFiles(t *testing.T) {
 	}
 }
 
-func TestLoadForRootMergesOfficialProviderAliasesByCanonicalID(t *testing.T) {
+func TestLoadForRootKeepsOfficialProviderAliasesDistinct(t *testing.T) {
 	isolateUserConfigHome(t)
 	root := t.TempDir()
 	userPath := UserConfigPath()
@@ -1022,17 +1022,19 @@ effort = "max"
 	if err != nil {
 		t.Fatalf("LoadForRoot: %v", err)
 	}
-	p, ok := cfg.Provider("deepseek")
+	userProvider, ok := cfg.Provider("deepseek")
 	if !ok {
-		t.Fatalf("canonical deepseek provider missing: %+v", cfg.Providers)
+		t.Fatalf("user deepseek provider missing: %+v", cfg.Providers)
 	}
-	if p.APIKeyEnv != "PROJECT_DEEPSEEK_KEY" || p.Effort != "max" {
-		t.Fatalf("deepseek provider = %+v, want project override", p)
+	if userProvider.APIKeyEnv != "USER_DEEPSEEK_KEY" {
+		t.Fatalf("deepseek provider = %+v, want user provider preserved", userProvider)
 	}
-	for _, p := range cfg.Providers {
-		if p.APIKeyEnv == "USER_DEEPSEEK_KEY" {
-			t.Fatalf("user deepseek provider survived canonical merge: %+v", cfg.Providers)
-		}
+	projectProvider, ok := cfg.Provider("deepseek-flash")
+	if !ok {
+		t.Fatalf("project deepseek-flash provider missing: %+v", cfg.Providers)
+	}
+	if projectProvider.APIKeyEnv != "PROJECT_DEEPSEEK_KEY" || projectProvider.Effort != "max" {
+		t.Fatalf("deepseek-flash provider = %+v, want project provider preserved", projectProvider)
 	}
 }
 

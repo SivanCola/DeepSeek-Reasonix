@@ -1501,10 +1501,10 @@ func mergeTOMLPlugins(paths []string) ([]PluginEntry, error) {
 	return merged, nil
 }
 
-// mergeTOMLProviders merges [[providers]] across TOML sources by provider key
-// (later source wins). Official desktop aliases share their canonical provider
-// key, so a project deepseek-flash entry overrides a user deepseek entry instead
-// of leaving two providers for later canonicalization to pick from.
+// mergeTOMLProviders merges [[providers]] across TOML sources by provider name
+// (later source wins). Keep official legacy aliases distinct here: they can carry
+// different default models and effort capabilities, and the later desktop
+// normalization layer handles canonical Settings access.
 func mergeTOMLProviders(paths []string) ([]ProviderEntry, map[string]providerSourceScope, bool, error) {
 	var merged []ProviderEntry
 	index := map[string]int{}
@@ -1546,31 +1546,7 @@ func providerSourceForPath(path string) providerSourceScope {
 }
 
 func providerMergeKey(p ProviderEntry) string {
-	name := strings.TrimSpace(p.Name)
-	if name == "" {
-		return ""
-	}
-	canonical := canonicalDesktopOfficialProviderName(name)
-	if canonical == name {
-		return name
-	}
-	if isOfficialProviderAliasForMerge(p, canonical) {
-		return canonical
-	}
-	return name
-}
-
-func isOfficialProviderAliasForMerge(p ProviderEntry, canonical string) bool {
-	switch canonical {
-	case "deepseek":
-		return officialProviderHost(p.BaseURL) == "api.deepseek.com"
-	case "mimo-api":
-		return officialMimoHost(p.BaseURL) == "api.xiaomimimo.com"
-	case "mimo-token-plan":
-		return officialMimoHost(p.BaseURL) == "token-plan-cn.xiaomimimo.com"
-	default:
-		return false
-	}
+	return strings.TrimSpace(p.Name)
 }
 
 // mergeTOMLProviderAccess merges desktop.provider_access across TOML sources so
