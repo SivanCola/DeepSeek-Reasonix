@@ -95,6 +95,14 @@ eq(
 );
 eq(finalDeclaration(".transcript--empty", "overflow-y"), "auto", "empty transcript can scroll instead of clipping");
 eq(finalDeclaration(".welcome", "overflow"), "visible", "welcome empty state is not clipped by its own box");
+ok(
+  hasDeclaration(".transcript--empty > .welcome", "margin-block", "auto"),
+  "empty-state auto margins apply only to the welcome content",
+);
+ok(
+  finalDeclaration(".transcript--empty > *", "margin-block") === undefined,
+  "empty-state generic children do not receive auto margins",
+);
 eq(
   finalDeclaration(":root[data-theme-style] .statusbar", "height"),
   "var(--statusbar-dock-height)",

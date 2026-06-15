@@ -2671,6 +2671,8 @@ a[href] {
 }
 .transcript--empty > * {
   max-width: none;
+}
+.transcript--empty > .welcome {
   margin-block: auto;
   margin-inline: 0;
 }
@@ -3101,7 +3103,7 @@ a[href] {
 }
 
 @container (max-height: 330px) {
-  .transcript--empty > * {
+  .transcript--empty > .welcome {
     margin-block: 0 auto;
   }
   .welcome--brand {
