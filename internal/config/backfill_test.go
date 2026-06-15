@@ -1,7 +1,10 @@
 package config
 
 import (
+	"path/filepath"
 	"testing"
+
+	"github.com/BurntSushi/toml"
 
 	"reasonix/internal/provider"
 )
@@ -304,6 +307,95 @@ func TestApplyDeepSeekOfficialDefaultPricingKeepsCustomPrice(t *testing.T) {
 	}
 	if p.Price == nil || p.Price.Output != 9 || p.Price.Currency != "$" {
 		t.Fatalf("custom price = %+v, want unchanged", p.Price)
+	}
+}
+
+func TestResetOfficialProviderPricingOnUpgradeRunsOnce(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "reasonix.toml")
+	c := &Config{
+		ConfigVersion: 2,
+		Providers: []ProviderEntry{
+			{
+				Name:    "deepseek",
+				Kind:    "openai",
+				BaseURL: "https://api.deepseek.com",
+				Models:  []string{"deepseek-v4-flash", "deepseek-v4-pro"},
+				Default: "deepseek-v4-flash",
+				Price:   &provider.Pricing{CacheHit: 9, Input: 9, Output: 9, Currency: "$"},
+				Prices: map[string]*provider.Pricing{
+					"deepseek-v4-flash": {CacheHit: 8, Input: 8, Output: 8, Currency: "$"},
+				},
+			},
+			{
+				Name:    "mimo-api",
+				Kind:    "openai",
+				BaseURL: "https://api.xiaomimimo.com/v1",
+				Models:  []string{"mimo-v2.5-pro", "mimo-v2.5", "mimo-v2-omni"},
+				Default: "mimo-v2.5-pro",
+				Price:   &provider.Pricing{CacheHit: 7, Input: 7, Output: 7, Currency: "$"},
+			},
+		},
+	}
+	if err := c.SaveTo(path); err != nil {
+		t.Fatalf("SaveTo: %v", err)
+	}
+
+	changed, err := ResetOfficialProviderPricingOnUpgrade(path)
+	if err != nil {
+		t.Fatalf("ResetOfficialProviderPricingOnUpgrade: %v", err)
+	}
+	if !changed {
+		t.Fatal("upgrade reset did not run for config_version 2")
+	}
+	var got Config
+	if _, err := toml.DecodeFile(path, &got); err != nil {
+		t.Fatalf("decode migrated config: %v", err)
+	}
+	if got.ConfigVersion != Default().ConfigVersion {
+		t.Fatalf("config_version = %d, want %d", got.ConfigVersion, Default().ConfigVersion)
+	}
+	deepseek, ok := got.Provider("deepseek")
+	if !ok {
+		t.Fatal("deepseek provider missing")
+	}
+	if deepseek.Price != nil {
+		t.Fatalf("deepseek provider-wide price = %+v, want nil after reset", deepseek.Price)
+	}
+	if p := deepseek.Prices["deepseek-v4-flash"]; p == nil || p.Currency != "¥" || p.Output != 2 {
+		t.Fatalf("deepseek flash price = %+v, want RMB default", p)
+	}
+	if p := deepseek.Prices["deepseek-v4-pro"]; p == nil || p.Currency != "¥" || p.Output != 6 {
+		t.Fatalf("deepseek pro price = %+v, want RMB default", p)
+	}
+	mimo, ok := got.Provider("mimo-api")
+	if !ok {
+		t.Fatal("mimo-api provider missing")
+	}
+	if mimo.Price != nil {
+		t.Fatalf("mimo provider-wide price = %+v, want nil after reset", mimo.Price)
+	}
+	if p := mimo.Prices["mimo-v2.5-pro"]; p == nil || p.Currency != "¥" || p.Output != 6 {
+		t.Fatalf("mimo pro price = %+v, want RMB default", p)
+	}
+
+	deepseek.Prices["deepseek-v4-flash"] = &provider.Pricing{CacheHit: 4, Input: 4, Output: 4, Currency: "$"}
+	if err := got.SaveTo(path); err != nil {
+		t.Fatalf("SaveTo after custom edit: %v", err)
+	}
+	changed, err = ResetOfficialProviderPricingOnUpgrade(path)
+	if err != nil {
+		t.Fatalf("second ResetOfficialProviderPricingOnUpgrade: %v", err)
+	}
+	if changed {
+		t.Fatal("upgrade reset ran again after config_version was updated")
+	}
+	got = Config{}
+	if _, err := toml.DecodeFile(path, &got); err != nil {
+		t.Fatalf("decode custom config: %v", err)
+	}
+	deepseek, _ = got.Provider("deepseek")
+	if p := deepseek.Prices["deepseek-v4-flash"]; p == nil || p.Output != 4 || p.Currency != "$" {
+		t.Fatalf("post-upgrade custom flash price = %+v, want preserved", p)
 	}
 }
 

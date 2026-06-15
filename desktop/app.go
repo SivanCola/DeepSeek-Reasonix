@@ -425,6 +425,7 @@ func (a *App) restoreOrBuildTabs() {
 	// freshly written config (including the user's default_model) is
 	// picked up by Load instead of falling back to built-in defaults.
 	_, _ = config.MigrateLegacyIfNeeded()
+	_, _ = config.ResetOfficialProviderPricingOnUpgrade(config.UserConfigPath())
 
 	// Load i18n from the first available config.
 	// Prefer DesktopLanguage (desktop UI setting) over Language (CLI setting),

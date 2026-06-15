@@ -1202,7 +1202,7 @@ const LanguagePolicy = `Reply in the same language the user is using in their mo
 // Default returns the built-in default configuration (DeepSeek + MiMo presets).
 func Default() *Config {
 	return &Config{
-		ConfigVersion: 2,
+		ConfigVersion: 3,
 		DefaultModel:  "deepseek-flash",
 		UI:            UIConfig{Theme: "auto"},
 		Notifications: NotificationsConfig{
@@ -1393,6 +1393,97 @@ func backfillMimoDomesticPrices(e *ProviderEntry) {
 		if e.Prices[model] == nil {
 			e.Prices[model] = clonePricing(price)
 		}
+	}
+}
+
+// ResetOfficialProviderPricingOnUpgrade resets official DeepSeek/MiMo prices to
+// the current built-in RMB defaults once for desktop upgrades. It intentionally
+// runs from the desktop app startup path, not every config Load(), so user edits
+// made after the upgrade are preserved.
+func ResetOfficialProviderPricingOnUpgrade(path string) (bool, error) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return false, nil
+	}
+	if _, err := os.Stat(path); err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	var header Config
+	if _, err := toml.DecodeFile(path, &header); err != nil {
+		return false, fmt.Errorf("config %s: %w", path, err)
+	}
+	if header.ConfigVersion >= Default().ConfigVersion {
+		return false, nil
+	}
+	cfg := LoadForEdit(path)
+	resetOfficialProviderPricingDefaults(cfg)
+	cfg.ConfigVersion = Default().ConfigVersion
+	if err := cfg.SaveTo(path); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func resetOfficialProviderPricingDefaults(c *Config) {
+	if c == nil {
+		return
+	}
+	for i := range c.Providers {
+		p := &c.Providers[i]
+		switch {
+		case officialProviderKind(p) == "deepseek":
+			resetDeepSeekOfficialPricing(p)
+		case isOfficialMimoAPIProvider(p), isOfficialMimoTokenPlanProvider(p):
+			resetMimoOfficialPricing(p)
+		}
+	}
+}
+
+func resetDeepSeekOfficialPricing(p *ProviderEntry) {
+	if p == nil {
+		return
+	}
+	defaults := deepSeekV4Prices()
+	p.Price = nil
+	if strings.TrimSpace(p.Model) != "" && len(p.Models) == 0 {
+		if price := defaults[strings.TrimSpace(p.Model)]; price != nil {
+			p.Price = clonePricing(price)
+			p.Prices = nil
+			return
+		}
+	}
+	if p.Prices == nil {
+		p.Prices = map[string]*provider.Pricing{}
+	}
+	for model, price := range defaults {
+		if p.HasModel(model) {
+			p.Prices[model] = clonePricing(price)
+		}
+	}
+}
+
+func resetMimoOfficialPricing(p *ProviderEntry) {
+	if p == nil {
+		return
+	}
+	defaults := mimoDomesticPrices(p.ModelList())
+	if len(defaults) == 0 {
+		return
+	}
+	p.Price = nil
+	if strings.TrimSpace(p.Model) != "" && len(p.Models) == 0 {
+		if price := defaults[strings.TrimSpace(p.Model)]; price != nil {
+			p.Price = clonePricing(price)
+			p.Prices = nil
+			return
+		}
+	}
+	p.Prices = map[string]*provider.Pricing{}
+	for model, price := range defaults {
+		p.Prices[model] = clonePricing(price)
 	}
 }
 
