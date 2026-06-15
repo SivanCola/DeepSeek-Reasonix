@@ -66,6 +66,7 @@ export type Item =
       truncated?: boolean;
       dataArchived?: boolean; // args/output trimmed for memory; full data available via backend
       durationMs?: number;
+      subject?: string; // stable collapsed subject from archived history payloads
       summary?: string; // stable collapsed readout kept even after args/output archive
       isShell?: boolean; // true for !-prefix shell commands (controls default expand)
       parentId?: string; // a sub-agent call nests under the `task` call with this id
@@ -282,8 +283,9 @@ export function historyMessagesToItems(messages: HistoryMessage[], idPrefix: str
         const positionalResult = tc.id ? undefined : positionalResults.get(positionalToolResultKey(messageIndex, callIndex));
         const result = tc.id ? resultByID.get(tc.id) : positionalResult?.message;
         if (tc.id) consumedToolIDs.add(tc.id);
-        const output = result?.content ?? "";
-        const error = result ? historyToolError(output) : undefined;
+        const archived = Boolean(tc.argumentsArchived || result?.toolResultArchived);
+        const output = result?.toolResultArchived ? undefined : result?.content ?? "";
+        const error = result?.toolResultError || (output ? historyToolError(output) : undefined);
         items.push({
           kind: "tool",
           id: tc.id || `${idPrefix}tool${seq}`,
@@ -293,6 +295,9 @@ export function historyMessagesToItems(messages: HistoryMessage[], idPrefix: str
           status: result ? (error ? "error" : "done") : "stopped",
           output,
           error,
+          dataArchived: archived || undefined,
+          subject: tc.subject,
+          summary: tc.summary,
           isShell: (tc.id || "").startsWith("shell-"),
         });
         seq++;
@@ -301,8 +306,8 @@ export function historyMessagesToItems(messages: HistoryMessage[], idPrefix: str
     }
     if (m.role === "tool") {
       if ((m.toolCallId && consumedToolIDs.has(m.toolCallId)) || consumedPositionalToolIndexes.has(messageIndex)) continue;
-      const output = m.content;
-      const error = historyToolError(output);
+      const output = m.toolResultArchived ? undefined : m.content;
+      const error = m.toolResultError || (output ? historyToolError(output) : undefined);
       items.push({
         kind: "tool",
         id: m.toolCallId || `${idPrefix}tool${seq}`,
@@ -312,6 +317,7 @@ export function historyMessagesToItems(messages: HistoryMessage[], idPrefix: str
         status: error ? "error" : "done",
         output,
         error,
+        dataArchived: m.toolResultArchived || undefined,
         isShell: (m.toolCallId || "").startsWith("shell-"),
       });
       seq++;
@@ -603,6 +609,7 @@ export function reducer(s: State, a: Action): State {
       const archived = items.map((it) => {
         if (it.kind !== "tool") return it;
         const t = it;
+        if (t.name === "todo_write") return it;
         const shortArgs = t.args && t.args.length > 200 ? t.args.slice(0, 200) + "…" : t.args;
         if (shortArgs === t.args && (t.output === undefined || t.output === "")) return it;
         return { ...t, args: shortArgs, output: undefined, dataArchived: true };
