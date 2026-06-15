@@ -203,6 +203,42 @@ func TestSkillLikeFlatClaudeMarkdownWithoutDescriptionWarns(t *testing.T) {
 	}
 }
 
+func TestBlankDescriptionFlatClaudeMarkdownIsSkillLike(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		content string
+	}{
+		{name: "blank", content: "---\ndescription:\n---\nbody"},
+		{name: "quoted", content: "---\ndescription: \"\"\n---\nbody"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			writeSkill(t, home, ".claude/skills/"+tc.name+".md", tc.content)
+
+			var stderr bytes.Buffer
+			st := New(Options{HomeDir: home, DisableBuiltins: true, Stderr: &stderr})
+			if _, ok := find(st.List(), tc.name); !ok {
+				t.Fatal("blank description marker should still list flat Claude markdown as skill-like")
+			}
+			if got := stderr.String(); !strings.Contains(got, "has no description") {
+				t.Fatalf("blank description listed skill should warn, got %q", got)
+			}
+
+			stderr.Reset()
+			sk, ok := st.Read(tc.name)
+			if !ok {
+				t.Fatal("blank description marker should still make flat Claude markdown skill-like")
+			}
+			if sk.Description != "" {
+				t.Fatalf("description should stay empty, got %q", sk.Description)
+			}
+			if got := stderr.String(); !strings.Contains(got, "has no description") {
+				t.Fatalf("blank description skill should warn, got %q", got)
+			}
+		})
+	}
+}
+
 func TestRunAsOnlyFlatClaudeMarkdownIsSkillLike(t *testing.T) {
 	home := t.TempDir()
 	writeSkill(t, home, ".claude/skills/sub.md", "---\nrunAs: subagent\n---\nbody")

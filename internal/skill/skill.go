@@ -442,7 +442,7 @@ func (s *Store) parseSkill(path, stem string, scope Scope, requireSkillMarker bo
 	}
 	content := strings.TrimPrefix(strings.ReplaceAll(string(b), "\r\n", "\n"), "\uFEFF")
 	fm, body := splitFrontmatter(content)
-	if requireSkillMarker && !hasSkillMarker(fm) {
+	if requireSkillMarker && !hasSkillMarker(content, fm) {
 		return Skill{}, false
 	}
 
@@ -489,9 +489,42 @@ var skillMarkerFrontmatterKeys = []string{
 	skillFrontmatterEffort,
 }
 
-func hasSkillMarker(fm map[string]string) bool {
+func hasSkillMarker(content string, fm map[string]string) bool {
 	for _, key := range skillMarkerFrontmatterKeys {
 		if strings.TrimSpace(fm[key]) != "" {
+			return true
+		}
+	}
+	return frontmatterHasSkillMarkerKey(content)
+}
+
+func frontmatterHasSkillMarkerKey(content string) bool {
+	lines := strings.Split(content, "\n")
+	if len(lines) == 0 || strings.TrimSpace(lines[0]) != "---" {
+		return false
+	}
+	end := -1
+	for i := 1; i < len(lines); i++ {
+		if strings.TrimSpace(lines[i]) == "---" {
+			end = i
+			break
+		}
+	}
+	if end < 0 {
+		return false
+	}
+	for _, line := range lines[1:end] {
+		key, _, ok := strings.Cut(line, ":")
+		if ok && isSkillMarkerFrontmatterKey(strings.ToLower(strings.TrimSpace(key))) {
+			return true
+		}
+	}
+	return false
+}
+
+func isSkillMarkerFrontmatterKey(key string) bool {
+	for _, marker := range skillMarkerFrontmatterKeys {
+		if key == marker {
 			return true
 		}
 	}
