@@ -106,7 +106,7 @@ import {
   type Theme,
 } from "./lib/theme";
 import { applyTextSize, DEFAULT_TEXT_SIZE, getTextSize, nextTextSize } from "./lib/textSize";
-import { useWindowStatePersistence } from "./lib/windowState";
+import { useViewportHeightVar, useWindowStatePersistence } from "./lib/windowState";
 import { availableWorkspacePanelWidth, resolveWorkspacePanelWidth, workspacePanelAriaMinWidth } from "./lib/workspaceLayout";
 import logoWordmark from "./assets/logo-wordmark.svg";
 
@@ -968,6 +968,7 @@ export default function App() {
 
   // Persist window geometry across launches.
   useWindowStatePersistence();
+  useViewportHeightVar();
   useEffect(() => {
     document.documentElement.setAttribute("data-platform", desktopPlatform);
   }, [desktopPlatform]);
