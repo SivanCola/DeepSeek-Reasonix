@@ -10,7 +10,7 @@ import { app, onEvent, onReady } from "./bridge";
 import { invalidateCache } from "./composerHistory";
 import { createRafBatch } from "./rafBatch";
 import { t } from "./i18n";
-import { summarize } from "./tools";
+import { fileDiffFromWire, summarize, summarizeFileDiff, type ToolFileDiff } from "./tools";
 import { modeHasAutoApproveTools } from "./types";
 import type {
   BalanceInfo,
@@ -68,6 +68,7 @@ export type Item =
       durationMs?: number;
       subject?: string; // stable collapsed subject from archived history payloads
       summary?: string; // stable collapsed readout kept even after args/output archive
+      fileDiff?: ToolFileDiff; // previewed whole-file diff from writer dispatch
       isShell?: boolean; // true for !-prefix shell commands (controls default expand)
       parentId?: string; // a sub-agent call nests under the `task` call with this id
       profile?: { model?: string; effort?: string }; // subagent model/effort from tool event
@@ -286,6 +287,7 @@ export function historyMessagesToItems(messages: HistoryMessage[], idPrefix: str
         const archived = Boolean(tc.argumentsArchived || result?.toolResultArchived);
         const output = result?.toolResultArchived ? undefined : result?.content ?? "";
         const error = result?.toolResultError || (output ? historyToolError(output) : undefined);
+        const fileDiff = fileDiffFromWire(tc);
         items.push({
           kind: "tool",
           id: tc.id || `${idPrefix}tool${seq}`,
@@ -297,7 +299,8 @@ export function historyMessagesToItems(messages: HistoryMessage[], idPrefix: str
           error,
           dataArchived: archived || undefined,
           subject: tc.subject,
-          summary: tc.summary,
+          summary: summarizeFileDiff(fileDiff) || tc.summary,
+          fileDiff,
           isShell: (tc.id || "").startsWith("shell-"),
         });
         seq++;
@@ -454,13 +457,15 @@ function applyEvent(s: State, e: WireEvent): State {
         const it = next[idx];
         if (it.kind === "tool") {
           const args = t.args ? t.args : it.args;
-          const summary = summarize(t.name, args) || (t.name === it.name && args === it.args ? it.summary : undefined);
-          next[idx] = { ...it, name: t.name, args, readOnly: t.readOnly, profile: t.profile ?? it.profile, summary };
+          const fileDiff = fileDiffFromWire(t);
+          const summary = summarizeFileDiff(fileDiff) || summarize(t.name, args) || (t.name === it.name && args === it.args ? it.summary : undefined);
+          next[idx] = { ...it, name: t.name, args, readOnly: t.readOnly, profile: t.profile ?? it.profile, summary, fileDiff };
         }
         return { ...s, items: next };
       }
       const args = t.args ?? "";
-      return { ...s, seq: s.seq + 1, items: [...s.items, { kind: "tool", id, name: t.name, args, readOnly: t.readOnly, status: "running", summary: summarize(t.name, args), isShell: id.startsWith("shell-"), parentId: t.parentId, profile: t.profile }] };
+      const fileDiff = fileDiffFromWire(t);
+      return { ...s, seq: s.seq + 1, items: [...s.items, { kind: "tool", id, name: t.name, args, readOnly: t.readOnly, status: "running", summary: summarizeFileDiff(fileDiff) || summarize(t.name, args), fileDiff, isShell: id.startsWith("shell-"), parentId: t.parentId, profile: t.profile }] };
     }
     case "tool_result": {
       const t = e.tool;
@@ -1021,6 +1026,19 @@ export function useController() {
     void refreshCheckpoints(targetTabId);
   }, [activeTabId, dispatchTo, refreshCheckpoints, waitForTabReady]);
 
+  const openChannelSession = useCallback(async (path: string, tabId: string) => {
+    if (!tabId) return;
+    await waitForTabReady(tabId);
+    const messages = asArray(
+      await app.OpenChannelSessionForTab(tabId, path).catch(() => [] as HistoryMessage[]),
+    );
+    if (messages.length === 0) return;
+    dispatchTo(tabId, { type: "reset" });
+    dispatchTo(tabId, { type: "history", messages });
+    app.ContextUsageForTab(tabId).then((context) => dispatchTo(tabId, { type: "context", context })).catch(() => {});
+    void refreshCheckpoints(tabId);
+  }, [dispatchTo, refreshCheckpoints, waitForTabReady]);
+
   const previewSession = useCallback(async (path: string): Promise<HistoryMessage[]> => asArray<HistoryMessage>(await app.PreviewSession(path).catch(() => [])), []);
   const deleteSession = useCallback((path: string) => app.DeleteSession(path).catch(() => {}).finally(() => invalidateCache()), []);
   const restoreSession = useCallback((path: string) => app.RestoreSession(path).catch(() => {}).finally(() => invalidateCache()), []);
@@ -1196,7 +1214,7 @@ export function useController() {
     state: activeState,
     activeTabId,
     send, runShell, steer, notice, cancel, approve, answerQuestion, setControllerMode, setCollaborationMode, setToolApprovalMode, setGoal, clearGoal,
-    newSession, clearSession, listSessions, listTrashedSessions, resumeSession, previewSession, deleteSession, restoreSession, purgeTrashedSession, renameSession,
+    newSession, clearSession, listSessions, listTrashedSessions, resumeSession, openChannelSession, previewSession, deleteSession, restoreSession, purgeTrashedSession, renameSession,
     refreshMeta, pickWorkspace, switchWorkspace, compact, rewind, setModel, setEffort, setTokenMode,
     fetchMemory, remember, forget, saveDoc,
     switchTab, openProjectTab, openGlobalTab, openTopicSession, ensureBlankTab, closeTab, reorderTabs,
