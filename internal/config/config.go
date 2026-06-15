@@ -1330,6 +1330,16 @@ func LoadForRoot(root string) (*Config, error) {
 		return nil, err
 	}
 	cfg.Plugins = plugins
+	if providers, ok, err := mergeTOMLProviders(tomlSources); err != nil {
+		return nil, err
+	} else if ok {
+		cfg.Providers = providers
+	}
+	if access, ok, err := mergeTOMLProviderAccess(tomlSources); err != nil {
+		return nil, err
+	} else if ok {
+		cfg.Desktop.ProviderAccess = access
+	}
 
 	// Claude Code's .mcp.json (project root) is read last and merged into
 	// [[plugins]], so a server configured for Claude works here unchanged.
@@ -1479,6 +1489,70 @@ func mergeTOMLPlugins(paths []string) ([]PluginEntry, error) {
 		}
 	}
 	return merged, nil
+}
+
+// mergeTOMLProviders merges [[providers]] across TOML sources by name (later
+// source wins). This preserves account-level desktop providers when a project
+// reasonix.toml declares its own provider table.
+func mergeTOMLProviders(paths []string) ([]ProviderEntry, bool, error) {
+	var merged []ProviderEntry
+	index := map[string]int{}
+	saw := false
+	for _, path := range paths {
+		if _, err := os.Stat(path); err != nil {
+			continue
+		}
+		var f Config
+		if _, err := toml.DecodeFile(path, &f); err != nil {
+			return nil, false, fmt.Errorf("config %s: %w", path, err)
+		}
+		if len(f.Providers) == 0 {
+			continue
+		}
+		saw = true
+		for _, p := range f.Providers {
+			normalizeProviderEffortFields(&p)
+			if i, ok := index[p.Name]; ok {
+				merged[i] = p
+				continue
+			}
+			index[p.Name] = len(merged)
+			merged = append(merged, p)
+		}
+	}
+	return merged, saw, nil
+}
+
+// mergeTOMLProviderAccess merges desktop.provider_access across TOML sources so
+// project desktop settings do not hide account-level providers from the desktop
+// model switcher.
+func mergeTOMLProviderAccess(paths []string) ([]string, bool, error) {
+	var merged []string
+	seen := map[string]bool{}
+	saw := false
+	for _, path := range paths {
+		if _, err := os.Stat(path); err != nil {
+			continue
+		}
+		var f Config
+		meta, err := toml.DecodeFile(path, &f)
+		if err != nil {
+			return nil, false, fmt.Errorf("config %s: %w", path, err)
+		}
+		if !meta.IsDefined("desktop", "provider_access") {
+			continue
+		}
+		saw = true
+		for _, name := range f.Desktop.ProviderAccess {
+			name = strings.TrimSpace(name)
+			if name == "" || seen[name] {
+				continue
+			}
+			seen[name] = true
+			merged = append(merged, name)
+		}
+	}
+	return merged, saw, nil
 }
 
 // LoadForEdit returns a config to seed the `reasonix setup` wizard when reconfiguring:
