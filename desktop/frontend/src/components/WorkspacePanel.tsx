@@ -256,6 +256,9 @@ export function WorkspacePanel({
   const lastChangeListRequestIdRef = useRef<number | null>(null);
   const dismissedChangeListRequestIdRef = useRef<number | null>(null);
   const lastWorkspaceTabIdRef = useRef(tabId ?? "");
+  const workspaceChangesRequestIdRef = useRef(0);
+  const gitHistoryRequestIdRef = useRef(0);
+  const commitDetailRequestIdRef = useRef(0);
   const recentAnchorRef = useRef<HTMLButtonElement>(null);
   const openDirsRef = useRef(openDirs);
 
@@ -269,23 +272,37 @@ export function WorkspacePanel({
   }, []);
 
   const loadGitHistory = useCallback(async () => {
+    const requestId = ++gitHistoryRequestIdRef.current;
+    const requestTabId = tabId ?? "";
     setLoadingHistory(true);
     try {
-      const result = await app.WorkspaceGitHistory(selectedPath || "");
-      setGitHistory(result || []);
+      const result = await app.WorkspaceGitHistory(requestTabId, selectedPath || "");
+      if (gitHistoryRequestIdRef.current === requestId && lastWorkspaceTabIdRef.current === requestTabId) {
+        setGitHistory(result || []);
+      }
     } catch (err) {
-      setGitHistory([]);
+      if (gitHistoryRequestIdRef.current === requestId && lastWorkspaceTabIdRef.current === requestTabId) {
+        setGitHistory([]);
+      }
     } finally {
-      setLoadingHistory(false);
+      if (gitHistoryRequestIdRef.current === requestId && lastWorkspaceTabIdRef.current === requestTabId) {
+        setLoadingHistory(false);
+      }
     }
-  }, [selectedPath]);
+  }, [selectedPath, tabId]);
 
   const loadWorkspaceChanges = useCallback(async () => {
+    const requestId = ++workspaceChangesRequestIdRef.current;
+    const requestTabId = tabId ?? "";
     try {
-      const result = await app.WorkspaceChanges(tabId ?? "");
-      setWorkspaceChanges(result.files && result.files.length > 0 ? result.files : null);
+      const result = await app.WorkspaceChanges(requestTabId);
+      if (workspaceChangesRequestIdRef.current === requestId && lastWorkspaceTabIdRef.current === requestTabId) {
+        setWorkspaceChanges(result.files && result.files.length > 0 ? result.files : null);
+      }
     } catch {
-      setWorkspaceChanges(null);
+      if (workspaceChangesRequestIdRef.current === requestId && lastWorkspaceTabIdRef.current === requestTabId) {
+        setWorkspaceChanges(null);
+      }
     }
   }, [tabId]);
 
@@ -300,26 +317,35 @@ export function WorkspacePanel({
   useEffect(() => {
     if (!open) return;
     if (expandedCommit) {
+      const requestId = ++commitDetailRequestIdRef.current;
+      const requestTabId = tabId ?? "";
       let live = true;
       setLoadingCommit(true);
       app
-        .WorkspaceGitCommitDetail(expandedCommit, selectedPath || "")
+        .WorkspaceGitCommitDetail(requestTabId, expandedCommit, selectedPath || "")
         .then((detail) => {
-          if (live) setCommitDetail(detail);
+          if (live && commitDetailRequestIdRef.current === requestId && lastWorkspaceTabIdRef.current === requestTabId) {
+            setCommitDetail(detail);
+          }
         })
         .catch(() => {
-          if (live) setCommitDetail(null);
+          if (live && commitDetailRequestIdRef.current === requestId && lastWorkspaceTabIdRef.current === requestTabId) {
+            setCommitDetail(null);
+          }
         })
         .finally(() => {
-          if (live) setLoadingCommit(false);
+          if (live && commitDetailRequestIdRef.current === requestId && lastWorkspaceTabIdRef.current === requestTabId) {
+            setLoadingCommit(false);
+          }
         });
       return () => {
         live = false;
       };
     } else {
+      commitDetailRequestIdRef.current += 1;
       setCommitDetail(null);
     }
-  }, [expandedCommit, selectedPath, open]);
+  }, [expandedCommit, selectedPath, open, tabId]);
 
   const selectFile = useCallback(
     (path: string) => {
@@ -368,6 +394,9 @@ export function WorkspacePanel({
     const nextTabId = tabId ?? "";
     if (lastWorkspaceTabIdRef.current === nextTabId) return;
     lastWorkspaceTabIdRef.current = nextTabId;
+    workspaceChangesRequestIdRef.current += 1;
+    gitHistoryRequestIdRef.current += 1;
+    commitDetailRequestIdRef.current += 1;
     setWorkspaceChanges(null);
     setGitHistory([]);
     setExpandedCommit(null);

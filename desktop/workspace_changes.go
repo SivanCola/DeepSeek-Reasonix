@@ -28,21 +28,8 @@ func (a *App) WorkspaceChanges(tabID string) WorkspaceChangesView {
 	out := WorkspaceChangesView{Files: []WorkspaceChangeView{}, GitAvailable: true}
 	tabID = strings.TrimSpace(tabID)
 
-	a.mu.RLock()
-	var tab *WorkspaceTab
-	if tabID == "" {
-		tab = a.activeTabLocked()
-	} else {
-		tab = a.tabs[tabID]
-	}
-	var workspaceRoot string
-	var ctrl *control.Controller
-	if tab != nil {
-		workspaceRoot = tab.WorkspaceRoot
-		ctrl = tab.Ctrl
-	}
-	a.mu.RUnlock()
-	if tabID != "" && tab == nil {
+	workspaceRoot, ctrl, ok := a.workspaceChangesTarget(tabID)
+	if !ok {
 		out.GitAvailable = false
 		out.GitErr = fmt.Sprintf("tab %q not found", tabID)
 		return out
@@ -121,6 +108,30 @@ func (a *App) WorkspaceChanges(tabID string) WorkspaceChangesView {
 		return strings.ToLower(a.Path) < strings.ToLower(b.Path)
 	})
 	return out
+}
+
+func (a *App) workspaceChangesTarget(tabID string) (string, *control.Controller, bool) {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	var tab *WorkspaceTab
+	if tabID == "" {
+		tab = a.activeTabLocked()
+	} else {
+		tab = a.tabs[tabID]
+	}
+	if tab == nil {
+		return "", nil, tabID == ""
+	}
+	return tab.WorkspaceRoot, tab.Ctrl, true
+}
+
+func (a *App) workspaceBaseForTab(tabID string) (string, error) {
+	tabID = strings.TrimSpace(tabID)
+	workspaceRoot, _, ok := a.workspaceChangesTarget(tabID)
+	if !ok {
+		return "", fmt.Errorf("tab %q not found", tabID)
+	}
+	return workspaceBaseFromRoot(workspaceRoot)
 }
 
 // workspaceGit builds a console-hidden git probe: CREATE_NO_WINDOW so git's own
@@ -278,8 +289,8 @@ type GitCommitDetailView struct {
 	Files []string `json:"files,omitempty"`
 }
 
-func (a *App) WorkspaceGitHistory(path string) ([]GitCommitView, error) {
-	base, err := a.activeWorkspaceBase()
+func (a *App) WorkspaceGitHistory(tabID string, path string) ([]GitCommitView, error) {
+	base, err := a.workspaceBaseForTab(tabID)
 	if err != nil {
 		return nil, err
 	}
@@ -309,8 +320,8 @@ func (a *App) WorkspaceGitHistory(path string) ([]GitCommitView, error) {
 	return out, nil
 }
 
-func (a *App) WorkspaceGitCommitDetail(hash string, path string) (GitCommitDetailView, error) {
-	base, err := a.activeWorkspaceBase()
+func (a *App) WorkspaceGitCommitDetail(tabID string, hash string, path string) (GitCommitDetailView, error) {
+	base, err := a.workspaceBaseForTab(tabID)
 	if err != nil {
 		return GitCommitDetailView{}, err
 	}

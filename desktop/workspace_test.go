@@ -986,7 +986,7 @@ func TestWorkspaceGitHistory(t *testing.T) {
 	runGit(t, "commit", "-m", "init file2")
 
 	app := &App{}
-	history, err := app.WorkspaceGitHistory("")
+	history, err := app.WorkspaceGitHistory("", "")
 	if err != nil {
 		t.Fatalf("WorkspaceGitHistory err = %v", err)
 	}
@@ -1001,7 +1001,7 @@ func TestWorkspaceGitHistory(t *testing.T) {
 	}
 
 	// Test history for specific file
-	history, err = app.WorkspaceGitHistory("file1.txt")
+	history, err = app.WorkspaceGitHistory("", "file1.txt")
 	if err != nil {
 		t.Fatalf("WorkspaceGitHistory err = %v", err)
 	}
@@ -1010,6 +1010,52 @@ func TestWorkspaceGitHistory(t *testing.T) {
 	}
 	if history[0].Message != "init file1" {
 		t.Errorf("expected commit message 'init file1', got %q", history[0].Message)
+	}
+}
+
+func TestWorkspaceGitHistoryUsesRequestedTabWorkspace(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	orig, _ := os.Getwd()
+	defer os.Chdir(orig)
+
+	makeRepo := func(name, message string) string {
+		t.Helper()
+		dir := filepath.Join(t.TempDir(), name)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chdir(dir); err != nil {
+			t.Fatal(err)
+		}
+		runGit(t, "init")
+		runGit(t, "config", "user.email", "test@example.com")
+		runGit(t, "config", "user.name", "Test User")
+		if err := os.WriteFile("file.txt", []byte(message+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		runGit(t, "add", "file.txt")
+		runGit(t, "commit", "-m", message)
+		return dir
+	}
+
+	repoA := makeRepo("a", "repo a commit")
+	repoB := makeRepo("b", "repo b commit")
+	app := &App{
+		tabs: map[string]*WorkspaceTab{
+			"a": {ID: "a", Scope: "project", WorkspaceRoot: repoA, Ready: true},
+			"b": {ID: "b", Scope: "project", WorkspaceRoot: repoB, Ready: true},
+		},
+		activeTabID: "a",
+	}
+
+	history, err := app.WorkspaceGitHistory("b", "")
+	if err != nil {
+		t.Fatalf("WorkspaceGitHistory err = %v", err)
+	}
+	if len(history) != 1 || history[0].Message != "repo b commit" {
+		t.Fatalf("history for requested tab = %+v, want repo b commit", history)
 	}
 }
 
@@ -1046,7 +1092,7 @@ func TestWorkspaceGitCommitDetail(t *testing.T) {
 	app := &App{}
 
 	// Test project level detail
-	detail, err := app.WorkspaceGitCommitDetail(hash, "")
+	detail, err := app.WorkspaceGitCommitDetail("", hash, "")
 	if err != nil {
 		t.Fatalf("WorkspaceGitCommitDetail err = %v", err)
 	}
@@ -1058,7 +1104,7 @@ func TestWorkspaceGitCommitDetail(t *testing.T) {
 	}
 
 	// Test file level detail
-	detail, err = app.WorkspaceGitCommitDetail(hash, "file1.txt")
+	detail, err = app.WorkspaceGitCommitDetail("", hash, "file1.txt")
 	if err != nil {
 		t.Fatalf("WorkspaceGitCommitDetail err = %v", err)
 	}
