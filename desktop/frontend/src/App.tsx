@@ -1977,6 +1977,10 @@ export default function App() {
 
   const handleTabChange = useCallback(async (id: string) => {
     closeTransientOverlays();
+    setWorkspaceRevealRequest(null);
+    setWorkspaceChangeRevealRequest(null);
+    setWorkspaceFileListRequest(null);
+    setWorkspaceChangeListRequest(null);
     const tabs = await switchTab(id);
     if (tabs) setTabMetas(tabs);
     setTabRevealSignal((signal) => signal + 1);
@@ -3090,6 +3094,7 @@ export default function App() {
               ) : (
                 <WorkspacePanel
                   open={workspacePanelRenderable}
+                  tabId={activeTabId}
                   cwd={state.meta?.cwd}
                   maximized={workspacePanelMaximized}
                   panelWidth={workspacePanelRenderWidth}

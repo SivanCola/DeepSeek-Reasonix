@@ -183,6 +183,7 @@ function formatCommitDate(dateStr: string): string {
 
 export function WorkspacePanel({
   open,
+  tabId,
   cwd,
   maximized,
   panelWidth,
@@ -200,6 +201,7 @@ export function WorkspacePanel({
   showViewTabs = true,
 }: {
   open: boolean;
+  tabId?: string;
   cwd?: string;
   maximized: boolean;
   panelWidth?: number;
@@ -253,6 +255,7 @@ export function WorkspacePanel({
   const dismissedFileListRequestIdRef = useRef<number | null>(null);
   const lastChangeListRequestIdRef = useRef<number | null>(null);
   const dismissedChangeListRequestIdRef = useRef<number | null>(null);
+  const lastWorkspaceTabIdRef = useRef(tabId ?? "");
   const recentAnchorRef = useRef<HTMLButtonElement>(null);
   const openDirsRef = useRef(openDirs);
 
@@ -279,12 +282,12 @@ export function WorkspacePanel({
 
   const loadWorkspaceChanges = useCallback(async () => {
     try {
-      const result = await app.WorkspaceChanges();
+      const result = await app.WorkspaceChanges(tabId ?? "");
       setWorkspaceChanges(result.files && result.files.length > 0 ? result.files : null);
     } catch {
       setWorkspaceChanges(null);
     }
-  }, []);
+  }, [tabId]);
 
   const toggleCommit = useCallback((hash: string) => {
     setExpandedCommit((prev) => {
@@ -359,6 +362,27 @@ export function WorkspacePanel({
     setTreeVisible(true);
     void loadDir("");
   }, [cwd, loadDir, open]);
+
+  useEffect(() => {
+    if (!open) return;
+    const nextTabId = tabId ?? "";
+    if (lastWorkspaceTabIdRef.current === nextTabId) return;
+    lastWorkspaceTabIdRef.current = nextTabId;
+    setWorkspaceChanges(null);
+    setGitHistory([]);
+    setExpandedCommit(null);
+    setCommitDetail(null);
+    setScopedChangeRows(null);
+    lastChangeRevealRequestIdRef.current = null;
+    dismissedChangeRevealRequestIdRef.current = null;
+    lastChangeListRequestIdRef.current = null;
+    dismissedChangeListRequestIdRef.current = null;
+    if (viewMode === "changed") {
+      setSelectedPath(null);
+      setOpenTabs([]);
+      setPreview(null);
+    }
+  }, [open, tabId]);
 
   useEffect(() => {
     if (!open) return;

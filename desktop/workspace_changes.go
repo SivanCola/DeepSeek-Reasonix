@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 
+	"reasonix/internal/control"
 	"reasonix/internal/proc"
 )
 
@@ -23,9 +24,31 @@ type workspaceChangeAccumulator struct {
 	hasGit     bool
 }
 
-func (a *App) WorkspaceChanges() WorkspaceChangesView {
-	out := WorkspaceChangesView{GitAvailable: true}
-	base, err := a.activeWorkspaceBase()
+func (a *App) WorkspaceChanges(tabID string) WorkspaceChangesView {
+	out := WorkspaceChangesView{Files: []WorkspaceChangeView{}, GitAvailable: true}
+	tabID = strings.TrimSpace(tabID)
+
+	a.mu.RLock()
+	var tab *WorkspaceTab
+	if tabID == "" {
+		tab = a.activeTabLocked()
+	} else {
+		tab = a.tabs[tabID]
+	}
+	var workspaceRoot string
+	var ctrl *control.Controller
+	if tab != nil {
+		workspaceRoot = tab.WorkspaceRoot
+		ctrl = tab.Ctrl
+	}
+	a.mu.RUnlock()
+	if tabID != "" && tab == nil {
+		out.GitAvailable = false
+		out.GitErr = fmt.Sprintf("tab %q not found", tabID)
+		return out
+	}
+
+	base, err := workspaceBaseFromRoot(workspaceRoot)
 	if err != nil {
 		out.GitAvailable = false
 		out.GitErr = err.Error()
@@ -46,9 +69,6 @@ func (a *App) WorkspaceChanges() WorkspaceChangesView {
 		return changes[path]
 	}
 
-	a.mu.RLock()
-	ctrl := a.activeCtrlLocked()
-	a.mu.RUnlock()
 	if ctrl != nil {
 		for _, meta := range ctrl.Checkpoints() {
 			for _, path := range meta.Paths {

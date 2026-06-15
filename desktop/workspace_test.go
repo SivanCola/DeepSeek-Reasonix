@@ -13,7 +13,9 @@ import (
 	"time"
 
 	"golang.org/x/text/encoding/simplifiedchinese"
+	"reasonix/internal/checkpoint"
 	"reasonix/internal/config"
+	"reasonix/internal/control"
 )
 
 // --- workspaceStatePath ---
@@ -735,12 +737,63 @@ func TestWorkspaceChangesNonGitDirectory(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got := (&App{}).WorkspaceChanges()
+	got := (&App{}).WorkspaceChanges("")
 	if got.GitAvailable {
 		t.Fatal("non-git directory should mark git unavailable")
 	}
 	if len(got.Files) != 0 {
 		t.Fatalf("files = %+v, want none", got.Files)
+	}
+}
+
+func TestWorkspaceChangesUsesRequestedTabCheckpoints(t *testing.T) {
+	workspace := t.TempDir()
+	sessionDir := t.TempDir()
+	sessionA := filepath.Join(sessionDir, "a.jsonl")
+	sessionB := filepath.Join(sessionDir, "b.jsonl")
+	content := "old"
+	now := time.Now()
+
+	for _, tc := range []struct {
+		session string
+		path    string
+		prompt  string
+	}{
+		{sessionA, "a.txt", "edit a"},
+		{sessionB, "b.txt", "edit b"},
+	} {
+		ckptDir := strings.TrimSuffix(tc.session, ".jsonl") + ".ckpt"
+		if err := os.MkdirAll(ckptDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		seedCheckpoint(t, ckptDir, checkpoint.Checkpoint{
+			Turn:   0,
+			Time:   now,
+			Prompt: tc.prompt,
+			Files:  []checkpoint.FileSnap{{Path: tc.path, Content: &content}},
+		})
+	}
+
+	ctrlA := control.New(control.Options{SessionDir: sessionDir, SessionPath: sessionA, Label: "a"})
+	ctrlB := control.New(control.Options{SessionDir: sessionDir, SessionPath: sessionB, Label: "b"})
+	app := &App{
+		tabs: map[string]*WorkspaceTab{
+			"a": {ID: "a", Scope: "project", WorkspaceRoot: workspace, Ctrl: ctrlA, Ready: true},
+			"b": {ID: "b", Scope: "project", WorkspaceRoot: workspace, Ctrl: ctrlB, Ready: true},
+		},
+		activeTabID: "a",
+	}
+
+	got := app.WorkspaceChanges("b")
+	byPath := map[string]WorkspaceChangeView{}
+	for _, file := range got.Files {
+		byPath[file.Path] = file
+	}
+	if _, ok := byPath["a.txt"]; ok {
+		t.Fatalf("requested tab b included active tab a changes: %+v", got.Files)
+	}
+	if byPath["b.txt"].LatestPrompt != "edit b" {
+		t.Fatalf("requested tab b changes = %+v, want b.txt from tab b", got.Files)
 	}
 }
 
@@ -768,7 +821,7 @@ func TestWorkspaceChangesGitStatus(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got := (&App{}).WorkspaceChanges()
+	got := (&App{}).WorkspaceChanges("")
 	if !got.GitAvailable {
 		t.Fatalf("git unavailable: %s", got.GitErr)
 	}
@@ -819,7 +872,7 @@ func TestWorkspaceChangesGitStatusFromRepoSubdirectory(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got := (&App{}).WorkspaceChanges()
+	got := (&App{}).WorkspaceChanges("")
 	if !got.GitAvailable {
 		t.Fatalf("git unavailable: %s", got.GitErr)
 	}
@@ -860,7 +913,7 @@ func TestWorkspaceChangesUntrackedDirectoryListsFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got := (&App{}).WorkspaceChanges()
+	got := (&App{}).WorkspaceChanges("")
 	byPath := map[string]WorkspaceChangeView{}
 	for _, file := range got.Files {
 		byPath[file.Path] = file
@@ -895,7 +948,7 @@ func TestWorkspaceChangesGitBranchDetachedHead(t *testing.T) {
 	short := gitOutput(t, "rev-parse", "--short", "HEAD")
 	runGit(t, "checkout", "--detach", "HEAD")
 
-	got := (&App{}).WorkspaceChanges()
+	got := (&App{}).WorkspaceChanges("")
 	if !got.GitAvailable {
 		t.Fatalf("git unavailable: %s", got.GitErr)
 	}
