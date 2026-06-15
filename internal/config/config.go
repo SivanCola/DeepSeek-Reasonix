@@ -1261,84 +1261,66 @@ func Default() *Config {
 		Providers: []ProviderEntry{
 			{Name: "deepseek-flash", Kind: "openai", BaseURL: "https://api.deepseek.com", Model: "deepseek-v4-flash", APIKeyEnv: "DEEPSEEK_API_KEY", BalanceURL: "https://api.deepseek.com/user/balance", ContextWindow: 1_000_000, Price: deepSeekV4FlashPrice()},
 			{Name: "deepseek-pro", Kind: "openai", BaseURL: "https://api.deepseek.com", Model: "deepseek-v4-pro", APIKeyEnv: "DEEPSEEK_API_KEY", BalanceURL: "https://api.deepseek.com/user/balance", ContextWindow: 1_000_000, Price: deepSeekV4ProPrice()},
-			{Name: "mimo-pro", Kind: "openai", BaseURL: "https://token-plan-cn.xiaomimimo.com/v1", Model: "mimo-v2.5-pro", APIKeyEnv: "MIMO_API_KEY", ContextWindow: 1_000_000, Price: &provider.Pricing{CacheHit: 0.025, Input: 3, Output: 6, Currency: "¥"}, NoProxy: true},
-			{Name: "mimo-flash", Kind: "openai", BaseURL: "https://token-plan-cn.xiaomimimo.com/v1", Model: "mimo-v2.5", APIKeyEnv: "MIMO_API_KEY", ContextWindow: 1_000_000, Price: &provider.Pricing{CacheHit: 0.02, Input: 1, Output: 2, Currency: "¥"}, NoProxy: true},
+			{Name: "mimo-pro", Kind: "openai", BaseURL: "https://token-plan-cn.xiaomimimo.com/v1", Model: "mimo-v2.5-pro", APIKeyEnv: "MIMO_API_KEY", ContextWindow: 1_000_000, Price: mimoV25ProPrice(), NoProxy: true},
+			{Name: "mimo-flash", Kind: "openai", BaseURL: "https://token-plan-cn.xiaomimimo.com/v1", Model: "mimo-v2.5", APIKeyEnv: "MIMO_API_KEY", ContextWindow: 1_000_000, Price: mimoV25Price(), NoProxy: true},
 		},
 	}
 }
 
 func deepSeekV4FlashPrice() *provider.Pricing {
-	return &provider.Pricing{CacheHit: 0.0028, Input: 0.14, Output: 0.28, Currency: "$"}
-}
-
-func deepSeekV4ProPrice() *provider.Pricing {
-	return &provider.Pricing{CacheHit: 0.003625, Input: 0.435, Output: 0.87, Currency: "$"}
-}
-
-func deepSeekV4Prices() map[string]*provider.Pricing {
-	return DeepSeekV4PricesForLanguage("en")
-}
-
-func deepSeekV4FlashPriceCNY() *provider.Pricing {
 	return &provider.Pricing{CacheHit: 0.02, Input: 1, Output: 2, Currency: "¥"}
 }
 
-func deepSeekV4ProPriceCNY() *provider.Pricing {
+func deepSeekV4ProPrice() *provider.Pricing {
 	return &provider.Pricing{CacheHit: 0.025, Input: 3, Output: 6, Currency: "¥"}
 }
 
-// DeepSeekV4PricesForLanguage returns official DeepSeek V4 defaults in the
-// display/billing unit expected for the selected UI language. Persisted prices
-// still win; this is only used for templates and missing-default backfills.
-func DeepSeekV4PricesForLanguage(lang string) map[string]*provider.Pricing {
-	if deepSeekUsesCNYPricing(lang) {
-		return map[string]*provider.Pricing{
-			"deepseek-v4-flash": deepSeekV4FlashPriceCNY(),
-			"deepseek-v4-pro":   deepSeekV4ProPriceCNY(),
-		}
-	}
+func deepSeekV4Prices() map[string]*provider.Pricing {
 	return map[string]*provider.Pricing{
 		"deepseek-v4-flash": deepSeekV4FlashPrice(),
 		"deepseek-v4-pro":   deepSeekV4ProPrice(),
 	}
 }
 
+func deepSeekV4FlashPriceUSD() *provider.Pricing {
+	return &provider.Pricing{CacheHit: 0.0028, Input: 0.14, Output: 0.28, Currency: "$"}
+}
+
+func deepSeekV4ProPriceUSD() *provider.Pricing {
+	return &provider.Pricing{CacheHit: 0.003625, Input: 0.435, Output: 0.87, Currency: "$"}
+}
+
+func deepSeekV4PricesUSD() map[string]*provider.Pricing {
+	return map[string]*provider.Pricing{
+		"deepseek-v4-flash": deepSeekV4FlashPriceUSD(),
+		"deepseek-v4-pro":   deepSeekV4ProPriceUSD(),
+	}
+}
+
+// DeepSeekV4PricesForLanguage keeps the settings/template call site stable while
+// official DeepSeek defaults move to RMB. Persisted prices still win; this is
+// only used for templates and missing-default backfills.
+func DeepSeekV4PricesForLanguage(lang string) map[string]*provider.Pricing {
+	_ = lang
+	return deepSeekV4Prices()
+}
+
 func deepSeekV4PricesForConfig(c *Config) map[string]*provider.Pricing {
-	return DeepSeekV4PricesForLanguage(c.DeepSeekOfficialPricingLanguage())
+	_ = c
+	return deepSeekV4Prices()
 }
 
 func deepSeekV4PriceForModel(lang, model string) *provider.Pricing {
-	return clonePricing(DeepSeekV4PricesForLanguage(lang)[strings.TrimSpace(model)])
+	_ = lang
+	return clonePricing(deepSeekV4Prices()[strings.TrimSpace(model)])
 }
 
-// DeepSeekOfficialPricingLanguage resolves the language used when seeding
-// official DeepSeek defaults. Desktop UI language is preferred; top-level
-// language is the CLI fallback. Empty/auto remains the English/USD default.
+// DeepSeekOfficialPricingLanguage is retained for settings/template compatibility.
+// Official DeepSeek providers now seed RMB prices by default; explicit user
+// prices in config still override these defaults.
 func (c *Config) DeepSeekOfficialPricingLanguage() string {
-	if c != nil {
-		if lang := normalizeDeepSeekPricingLanguage(c.Desktop.Language); lang != "" {
-			return lang
-		}
-		if lang := normalizeDeepSeekPricingLanguage(c.Language); lang != "" {
-			return lang
-		}
-	}
-	return "en"
-}
-
-func normalizeDeepSeekPricingLanguage(lang string) string {
-	switch strings.ToLower(strings.TrimSpace(lang)) {
-	case "zh", "zh-cn", "zh-hans", "cn", "chinese", "中文", "zh-tw", "zh-hant", "zh-hk", "zh-mo":
-		return "zh"
-	case "en", "en-us", "en-gb", "english":
-		return "en"
-	default:
-		return ""
-	}
-}
-
-func deepSeekUsesCNYPricing(lang string) bool {
-	return normalizeDeepSeekPricingLanguage(lang) == "zh"
+	_ = c
+	return "zh"
 }
 
 // ApplyDeepSeekOfficialDefaultPricing refreshes built-in/official DeepSeek
@@ -1369,13 +1351,58 @@ func applyDeepSeekOfficialDefaultPricing(c *Config) {
 	}
 }
 
+func mimoV25ProPrice() *provider.Pricing {
+	return &provider.Pricing{CacheHit: 0.025, Input: 3, Output: 6, Currency: "¥"}
+}
+
+func mimoV25Price() *provider.Pricing {
+	return &provider.Pricing{CacheHit: 0.02, Input: 1, Output: 2, Currency: "¥"}
+}
+
+func mimoV2FlashPrice() *provider.Pricing {
+	return &provider.Pricing{CacheHit: 0.07, Input: 0.70, Output: 2.10, Currency: "¥"}
+}
+
+func mimoDomesticPrices(models []string) map[string]*provider.Pricing {
+	prices := map[string]*provider.Pricing{}
+	for _, model := range models {
+		switch strings.TrimSpace(model) {
+		case "mimo-v2.5-pro", "mimo-v2-pro":
+			prices[model] = mimoV25ProPrice()
+		case "mimo-v2.5", "mimo-v2-omni":
+			prices[model] = mimoV25Price()
+		case "mimo-v2-flash":
+			prices[model] = mimoV2FlashPrice()
+		}
+	}
+	return prices
+}
+
+func backfillMimoDomesticPrices(e *ProviderEntry) {
+	if e == nil {
+		return
+	}
+	defaults := mimoDomesticPrices(e.ModelList())
+	if len(defaults) == 0 {
+		return
+	}
+	if e.Prices == nil {
+		e.Prices = map[string]*provider.Pricing{}
+	}
+	for model, price := range defaults {
+		if e.Prices[model] == nil {
+			e.Prices[model] = clonePricing(price)
+		}
+	}
+}
+
 func isKnownDeepSeekOfficialPricing(model string, price *provider.Pricing) bool {
 	model = strings.TrimSpace(model)
 	if model == "" || price == nil {
 		return false
 	}
-	for _, lang := range []string{"en", "zh"} {
-		if samePricing(price, DeepSeekV4PricesForLanguage(lang)[model]) {
+	for _, prices := range []map[string]*provider.Pricing{deepSeekV4Prices(), deepSeekV4PricesUSD()} {
+		if samePricing(price, prices[model]) {
 			return true
 		}
 	}
@@ -1922,6 +1949,7 @@ func ensureMimoAPIProvider(c *Config) {
 	if p, ok := c.Provider("mimo-api"); ok {
 		if isOfficialMimoAPIProvider(p) {
 			mergeCuratedModelsIntoProvider(p, models, "mimo-v2.5-pro")
+			backfillMimoDomesticPrices(p)
 		}
 		return
 	}
@@ -1933,6 +1961,7 @@ func ensureMimoAPIProvider(c *Config) {
 		Default:       "mimo-v2.5-pro",
 		APIKeyEnv:     "MIMO_API_KEY",
 		ContextWindow: 1_048_576,
+		Prices:        mimoDomesticPrices(models),
 		NoProxy:       true,
 	})
 }
@@ -1943,6 +1972,7 @@ func ensureMimoTokenPlanProvider(c *Config, includeMimoFlash bool) {
 		if isOfficialMimoTokenPlanProvider(p) {
 			mergeCuratedModelsIntoProvider(p, models, "mimo-v2.5-pro")
 			clearMixedMimoTokenPlanPrice(p)
+			backfillMimoDomesticPrices(p)
 		}
 		return
 	}
@@ -1954,6 +1984,7 @@ func ensureMimoTokenPlanProvider(c *Config, includeMimoFlash bool) {
 		Default:       "mimo-v2.5-pro",
 		APIKeyEnv:     "MIMO_API_KEY",
 		ContextWindow: 1_048_576,
+		Prices:        mimoDomesticPrices(models),
 		NoProxy:       true,
 	}
 	if old, ok := c.Provider("mimo-pro"); ok {
@@ -1969,6 +2000,7 @@ func ensureMimoTokenPlanProvider(c *Config, includeMimoFlash bool) {
 		entry.Default = firstKnownModel(entry.Default, entry.Models, entry.Default)
 	}
 	clearMixedMimoTokenPlanPrice(&entry)
+	backfillMimoDomesticPrices(&entry)
 	c.Providers = append(c.Providers, entry)
 }
 

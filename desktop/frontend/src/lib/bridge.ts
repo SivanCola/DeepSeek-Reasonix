@@ -8,7 +8,7 @@
 import type * as GeneratedApp from "../../wailsjs/go/main/App";
 
 import { addBreadcrumb } from "./breadcrumbs";
-import { getLocale, t } from "./i18n";
+import { t } from "./i18n";
 import { DEFAULT_STATUS_BAR_ITEMS, normalizeStatusBarItems } from "./statusBarItems";
 import { modeWithAutoApproveTools, modeWithPlan, normalizeCollaborationMode, normalizeMode, normalizeTokenMode, normalizeToolApprovalMode } from "./types";
 
@@ -2838,7 +2838,7 @@ function makeMockApp(): AppBindings {
     },
     async ContextPanel(_tabID: string) {
       const now = Date.now();
-      const currency = getLocale().startsWith("zh") ? "¥" : "$";
+      const currency = "¥";
       const cost = (usd: number) => currency === "¥" ? Number((usd * 7.15).toFixed(4)) : usd;
       return {
         usedTokens: 42124,
