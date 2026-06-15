@@ -147,6 +147,15 @@ func TestOfficialMimoAPITemplateIncludesVisionModels(t *testing.T) {
 	if got.DefaultModel() != "mimo-v2.5-pro" {
 		t.Fatalf("mimo-api default = %q, want mimo-v2.5-pro", got.DefaultModel())
 	}
+	if got.Prices["mimo-v2.5-pro"] == nil || got.Prices["mimo-v2.5-pro"].Currency != "¥" || got.Prices["mimo-v2.5-pro"].Output != 6 {
+		t.Fatalf("mimo-v2.5-pro price = %+v, want RMB domestic pricing", got.Prices["mimo-v2.5-pro"])
+	}
+	if got.Prices["mimo-v2.5"] == nil || got.Prices["mimo-v2.5"].Currency != "¥" || got.Prices["mimo-v2.5"].Output != 2 {
+		t.Fatalf("mimo-v2.5 price = %+v, want RMB domestic pricing", got.Prices["mimo-v2.5"])
+	}
+	if got.Prices["mimo-v2-omni"] == nil || got.Prices["mimo-v2-omni"].Currency != "¥" || got.Prices["mimo-v2-omni"].Output != 2 {
+		t.Fatalf("mimo-v2-omni price = %+v, want RMB domestic pricing", got.Prices["mimo-v2-omni"])
+	}
 }
 
 func TestSetAgentParamsPersistsStepLimitsToUserConfig(t *testing.T) {

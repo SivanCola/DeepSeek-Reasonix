@@ -2829,7 +2829,7 @@ function makeMockApp(): AppBindings {
         requestCount: 10,
         elapsedMs: 33 * 60 * 1000,
         sessionCost: 0.018,
-        sessionCurrency: "$",
+        sessionCurrency: "¥",
         sessionCostUsd: 0.018,
         sources: {
           executor: {
@@ -2841,7 +2841,7 @@ function makeMockApp(): AppBindings {
             cacheMissTokens: 9000,
             requestCount: 4,
             sessionCost: 0.0124,
-            sessionCurrency: "$",
+            sessionCurrency: "¥",
             sessionCostUsd: 0.0124,
           },
           planner: {
@@ -2853,7 +2853,7 @@ function makeMockApp(): AppBindings {
             cacheMissTokens: 700,
             requestCount: 1,
             sessionCost: 0.0011,
-            sessionCurrency: "$",
+            sessionCurrency: "¥",
             sessionCostUsd: 0.0011,
           },
           subagent: {
@@ -2865,7 +2865,7 @@ function makeMockApp(): AppBindings {
             cacheMissTokens: 2100,
             requestCount: 2,
             sessionCost: 0.0032,
-            sessionCurrency: "$",
+            sessionCurrency: "¥",
             sessionCostUsd: 0.0032,
           },
           compaction: {
@@ -2877,7 +2877,7 @@ function makeMockApp(): AppBindings {
             cacheMissTokens: 900,
             requestCount: 1,
             sessionCost: 0.0009,
-            sessionCurrency: "$",
+            sessionCurrency: "¥",
             sessionCostUsd: 0.0009,
           },
           classifier: {
@@ -2889,7 +2889,7 @@ function makeMockApp(): AppBindings {
             cacheMissTokens: 250,
             requestCount: 1,
             sessionCost: 0.0003,
-            sessionCurrency: "$",
+            sessionCurrency: "¥",
             sessionCostUsd: 0.0003,
           },
           title: {
@@ -2901,7 +2901,7 @@ function makeMockApp(): AppBindings {
             cacheMissTokens: 50,
             requestCount: 1,
             sessionCost: 0.0001,
-            sessionCurrency: "$",
+            sessionCurrency: "¥",
             sessionCostUsd: 0.0001,
           },
         },

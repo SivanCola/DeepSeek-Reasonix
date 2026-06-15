@@ -1261,24 +1261,69 @@ func Default() *Config {
 		Providers: []ProviderEntry{
 			{Name: "deepseek-flash", Kind: "openai", BaseURL: "https://api.deepseek.com", Model: "deepseek-v4-flash", APIKeyEnv: "DEEPSEEK_API_KEY", BalanceURL: "https://api.deepseek.com/user/balance", ContextWindow: 1_000_000, Price: deepSeekV4FlashPrice()},
 			{Name: "deepseek-pro", Kind: "openai", BaseURL: "https://api.deepseek.com", Model: "deepseek-v4-pro", APIKeyEnv: "DEEPSEEK_API_KEY", BalanceURL: "https://api.deepseek.com/user/balance", ContextWindow: 1_000_000, Price: deepSeekV4ProPrice()},
-			{Name: "mimo-pro", Kind: "openai", BaseURL: "https://token-plan-cn.xiaomimimo.com/v1", Model: "mimo-v2.5-pro", APIKeyEnv: "MIMO_API_KEY", ContextWindow: 1_000_000, Price: &provider.Pricing{CacheHit: 0.025, Input: 3, Output: 6, Currency: "¥"}, NoProxy: true},
-			{Name: "mimo-flash", Kind: "openai", BaseURL: "https://token-plan-cn.xiaomimimo.com/v1", Model: "mimo-v2.5", APIKeyEnv: "MIMO_API_KEY", ContextWindow: 1_000_000, Price: &provider.Pricing{CacheHit: 0.02, Input: 1, Output: 2, Currency: "¥"}, NoProxy: true},
+			{Name: "mimo-pro", Kind: "openai", BaseURL: "https://token-plan-cn.xiaomimimo.com/v1", Model: "mimo-v2.5-pro", APIKeyEnv: "MIMO_API_KEY", ContextWindow: 1_000_000, Price: mimoV25ProPrice(), NoProxy: true},
+			{Name: "mimo-flash", Kind: "openai", BaseURL: "https://token-plan-cn.xiaomimimo.com/v1", Model: "mimo-v2.5", APIKeyEnv: "MIMO_API_KEY", ContextWindow: 1_000_000, Price: mimoV25Price(), NoProxy: true},
 		},
 	}
 }
 
 func deepSeekV4FlashPrice() *provider.Pricing {
-	return &provider.Pricing{CacheHit: 0.0028, Input: 0.14, Output: 0.28, Currency: "$"}
+	return &provider.Pricing{CacheHit: 0.02, Input: 1, Output: 2, Currency: "¥"}
 }
 
 func deepSeekV4ProPrice() *provider.Pricing {
-	return &provider.Pricing{CacheHit: 0.003625, Input: 0.435, Output: 0.87, Currency: "$"}
+	return &provider.Pricing{CacheHit: 0.025, Input: 3, Output: 6, Currency: "¥"}
 }
 
 func deepSeekV4Prices() map[string]*provider.Pricing {
 	return map[string]*provider.Pricing{
 		"deepseek-v4-flash": deepSeekV4FlashPrice(),
 		"deepseek-v4-pro":   deepSeekV4ProPrice(),
+	}
+}
+
+func mimoV25ProPrice() *provider.Pricing {
+	return &provider.Pricing{CacheHit: 0.025, Input: 3, Output: 6, Currency: "¥"}
+}
+
+func mimoV25Price() *provider.Pricing {
+	return &provider.Pricing{CacheHit: 0.02, Input: 1, Output: 2, Currency: "¥"}
+}
+
+func mimoV2FlashPrice() *provider.Pricing {
+	return &provider.Pricing{CacheHit: 0.07, Input: 0.70, Output: 2.10, Currency: "¥"}
+}
+
+func mimoDomesticPrices(models []string) map[string]*provider.Pricing {
+	prices := map[string]*provider.Pricing{}
+	for _, model := range models {
+		switch strings.TrimSpace(model) {
+		case "mimo-v2.5-pro", "mimo-v2-pro":
+			prices[model] = mimoV25ProPrice()
+		case "mimo-v2.5", "mimo-v2-omni":
+			prices[model] = mimoV25Price()
+		case "mimo-v2-flash":
+			prices[model] = mimoV2FlashPrice()
+		}
+	}
+	return prices
+}
+
+func backfillMimoDomesticPrices(e *ProviderEntry) {
+	if e == nil {
+		return
+	}
+	defaults := mimoDomesticPrices(e.ModelList())
+	if len(defaults) == 0 {
+		return
+	}
+	if e.Prices == nil {
+		e.Prices = map[string]*provider.Pricing{}
+	}
+	for model, price := range defaults {
+		if e.Prices[model] == nil {
+			e.Prices[model] = clonePricing(price)
+		}
 	}
 }
 
@@ -1809,6 +1854,7 @@ func ensureMimoAPIProvider(c *Config) {
 	if p, ok := c.Provider("mimo-api"); ok {
 		if isOfficialMimoAPIProvider(p) {
 			mergeCuratedModelsIntoProvider(p, models, "mimo-v2.5-pro")
+			backfillMimoDomesticPrices(p)
 		}
 		return
 	}
@@ -1820,6 +1866,7 @@ func ensureMimoAPIProvider(c *Config) {
 		Default:       "mimo-v2.5-pro",
 		APIKeyEnv:     "MIMO_API_KEY",
 		ContextWindow: 1_048_576,
+		Prices:        mimoDomesticPrices(models),
 		NoProxy:       true,
 	})
 }
@@ -1830,6 +1877,7 @@ func ensureMimoTokenPlanProvider(c *Config, includeMimoFlash bool) {
 		if isOfficialMimoTokenPlanProvider(p) {
 			mergeCuratedModelsIntoProvider(p, models, "mimo-v2.5-pro")
 			clearMixedMimoTokenPlanPrice(p)
+			backfillMimoDomesticPrices(p)
 		}
 		return
 	}
@@ -1841,6 +1889,7 @@ func ensureMimoTokenPlanProvider(c *Config, includeMimoFlash bool) {
 		Default:       "mimo-v2.5-pro",
 		APIKeyEnv:     "MIMO_API_KEY",
 		ContextWindow: 1_048_576,
+		Prices:        mimoDomesticPrices(models),
 		NoProxy:       true,
 	}
 	if old, ok := c.Provider("mimo-pro"); ok {
@@ -1856,6 +1905,7 @@ func ensureMimoTokenPlanProvider(c *Config, includeMimoFlash bool) {
 		entry.Default = firstKnownModel(entry.Default, entry.Models, entry.Default)
 	}
 	clearMixedMimoTokenPlanPrice(&entry)
+	backfillMimoDomesticPrices(&entry)
 	c.Providers = append(c.Providers, entry)
 }
 

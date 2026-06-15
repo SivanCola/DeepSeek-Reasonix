@@ -891,31 +891,42 @@ func officialProviderTemplate(kind string) ([]config.ProviderEntry, string, erro
 			BalanceURL:    "https://api.deepseek.com/user/balance",
 			ContextWindow: 1_000_000,
 			Prices: map[string]*provider.Pricing{
-				"deepseek-v4-flash": &provider.Pricing{CacheHit: 0.0028, Input: 0.14, Output: 0.28, Currency: "$"},
-				"deepseek-v4-pro":   &provider.Pricing{CacheHit: 0.003625, Input: 0.435, Output: 0.87, Currency: "$"},
+				"deepseek-v4-flash": &provider.Pricing{CacheHit: 0.02, Input: 1, Output: 2, Currency: "¥"},
+				"deepseek-v4-pro":   &provider.Pricing{CacheHit: 0.025, Input: 3, Output: 6, Currency: "¥"},
 			},
 		}}, "DEEPSEEK_API_KEY", nil
 	case "mimo-api", "xiaomi-mimo", "xiaomi_mimo":
+		models := []string{"mimo-v2.5-pro", "mimo-v2.5", "mimo-v2-omni"}
 		return []config.ProviderEntry{{
 			Name:          "mimo-api",
 			Kind:          "openai",
 			BaseURL:       "https://api.xiaomimimo.com/v1",
-			Models:        []string{"mimo-v2.5-pro", "mimo-v2.5", "mimo-v2-omni"},
+			Models:        models,
 			Default:       "mimo-v2.5-pro",
 			APIKeyEnv:     "MIMO_API_KEY",
 			ContextWindow: 1_048_576,
-			NoProxy:       true,
+			Prices: map[string]*provider.Pricing{
+				"mimo-v2.5-pro": &provider.Pricing{CacheHit: 0.025, Input: 3, Output: 6, Currency: "¥"},
+				"mimo-v2.5":     &provider.Pricing{CacheHit: 0.02, Input: 1, Output: 2, Currency: "¥"},
+				"mimo-v2-omni":  &provider.Pricing{CacheHit: 0.02, Input: 1, Output: 2, Currency: "¥"},
+			},
+			NoProxy: true,
 		}}, "MIMO_API_KEY", nil
 	case "mimo-token-plan", "xiaomi-mimo-token-plan", "xiaomi_mimo_token_plan":
+		models := []string{"mimo-v2.5-pro", "mimo-v2.5"}
 		return []config.ProviderEntry{{
 			Name:          "mimo-token-plan",
 			Kind:          "openai",
 			BaseURL:       "https://token-plan-cn.xiaomimimo.com/v1",
-			Models:        []string{"mimo-v2.5-pro", "mimo-v2.5"},
+			Models:        models,
 			Default:       "mimo-v2.5-pro",
 			APIKeyEnv:     "MIMO_API_KEY",
 			ContextWindow: 1_048_576,
-			NoProxy:       true,
+			Prices: map[string]*provider.Pricing{
+				"mimo-v2.5-pro": &provider.Pricing{CacheHit: 0.025, Input: 3, Output: 6, Currency: "¥"},
+				"mimo-v2.5":     &provider.Pricing{CacheHit: 0.02, Input: 1, Output: 2, Currency: "¥"},
+			},
+			NoProxy: true,
 		}}, "MIMO_API_KEY", nil
 	default:
 		return nil, "", fmt.Errorf("unknown official provider template %q", kind)

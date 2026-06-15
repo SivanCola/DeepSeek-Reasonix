@@ -25,7 +25,7 @@ func TestBackfillDeepSeekProRestoresPro(t *testing.T) {
 	pro := hasModel(c, "deepseek-v4-pro")
 	if pro == nil {
 		t.Fatal("deepseek-v4-pro not restored")
-	} else if pro.Price == nil || pro.Price.Output != 0.87 || pro.Price.Currency != "$" {
+	} else if pro.Price == nil || pro.Price.Output != 6 || pro.Price.Currency != "¥" {
 		t.Errorf("pro price not the preset: %+v", pro.Price)
 	}
 }
@@ -196,7 +196,7 @@ func TestBackfillDeepSeekOfficialPrices(t *testing.T) {
 	if !ok {
 		t.Fatal("deepseek provider missing")
 	}
-	if p.Prices["deepseek-v4-flash"].Output != 0.28 || p.Prices["deepseek-v4-pro"].Output != 0.87 {
+	if p.Prices["deepseek-v4-flash"].Output != 2 || p.Prices["deepseek-v4-pro"].Output != 6 {
 		t.Fatalf("deepseek prices = %+v, want current V4 flash/pro prices", p.Prices)
 	}
 }
@@ -210,22 +210,22 @@ func TestResolveModelUsesPerModelPricing(t *testing.T) {
 		Default: "deepseek-v4-flash",
 		Price:   &provider.Pricing{CacheHit: 9, Input: 9, Output: 9, Currency: "$"},
 		Prices: map[string]*provider.Pricing{
-			"deepseek-v4-flash": &provider.Pricing{CacheHit: 0.0028, Input: 0.14, Output: 0.28, Currency: "$"},
-			"deepseek-v4-pro":   &provider.Pricing{CacheHit: 0.003625, Input: 0.435, Output: 0.87, Currency: "$"},
+			"deepseek-v4-flash": &provider.Pricing{CacheHit: 0.02, Input: 1, Output: 2, Currency: "¥"},
+			"deepseek-v4-pro":   &provider.Pricing{CacheHit: 0.025, Input: 3, Output: 6, Currency: "¥"},
 		},
 	}}}
 	pro, ok := c.ResolveModel("deepseek/deepseek-v4-pro")
 	if !ok {
 		t.Fatal("deepseek pro did not resolve")
 	}
-	if pro.Price == nil || pro.Price.Output != 0.87 {
+	if pro.Price == nil || pro.Price.Output != 6 {
 		t.Fatalf("pro price = %+v, want model-specific pro price", pro.Price)
 	}
 	flash, ok := c.ResolveModel("deepseek")
 	if !ok {
 		t.Fatal("deepseek default did not resolve")
 	}
-	if flash.Price == nil || flash.Price.Output != 0.28 {
+	if flash.Price == nil || flash.Price.Output != 2 {
 		t.Fatalf("flash price = %+v, want model-specific flash price", flash.Price)
 	}
 }
@@ -303,5 +303,11 @@ func TestNormalizeDesktopOfficialProviderAccessBackfillsExistingMimoTokenPlanAnd
 	}
 	if p.Price != nil {
 		t.Fatalf("mimo-token-plan mixed-model price = %+v, want nil", p.Price)
+	}
+	if p.Prices["mimo-v2.5-pro"] == nil || p.Prices["mimo-v2.5-pro"].Currency != "¥" || p.Prices["mimo-v2.5-pro"].Output != 6 {
+		t.Fatalf("mimo-v2.5-pro price = %+v, want RMB domestic pricing", p.Prices["mimo-v2.5-pro"])
+	}
+	if p.Prices["mimo-v2.5"] == nil || p.Prices["mimo-v2.5"].Currency != "¥" || p.Prices["mimo-v2.5"].Output != 2 {
+		t.Fatalf("mimo-v2.5 price = %+v, want RMB domestic pricing", p.Prices["mimo-v2.5"])
 	}
 }
