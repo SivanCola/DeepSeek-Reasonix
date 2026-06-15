@@ -60,7 +60,16 @@ type Config struct {
 	Statusline        StatuslineConfig        `toml:"statusline"`
 	LSP               LSPConfig               `toml:"lsp"`
 	Bot               BotConfig               `toml:"bot"`
+
+	providerSources map[string]providerSourceScope
 }
+
+type providerSourceScope string
+
+const (
+	providerSourceUser    providerSourceScope = "user"
+	providerSourceProject providerSourceScope = "project"
+)
 
 // UIConfig controls CLI presentation-only settings. Desktop appearance is kept in
 // DesktopConfig so desktop preferences cannot alter terminal output or prompts.
@@ -1330,10 +1339,11 @@ func LoadForRoot(root string) (*Config, error) {
 		return nil, err
 	}
 	cfg.Plugins = plugins
-	if providers, ok, err := mergeTOMLProviders(tomlSources); err != nil {
+	if providers, providerSources, ok, err := mergeTOMLProviders(tomlSources); err != nil {
 		return nil, err
 	} else if ok {
 		cfg.Providers = providers
+		cfg.providerSources = providerSources
 	}
 	if access, ok, err := mergeTOMLProviderAccess(tomlSources); err != nil {
 		return nil, err
@@ -1491,12 +1501,14 @@ func mergeTOMLPlugins(paths []string) ([]PluginEntry, error) {
 	return merged, nil
 }
 
-// mergeTOMLProviders merges [[providers]] across TOML sources by name (later
-// source wins). This preserves account-level desktop providers when a project
-// reasonix.toml declares its own provider table.
-func mergeTOMLProviders(paths []string) ([]ProviderEntry, bool, error) {
+// mergeTOMLProviders merges [[providers]] across TOML sources by provider key
+// (later source wins). Official desktop aliases share their canonical provider
+// key, so a project deepseek-flash entry overrides a user deepseek entry instead
+// of leaving two providers for later canonicalization to pick from.
+func mergeTOMLProviders(paths []string) ([]ProviderEntry, map[string]providerSourceScope, bool, error) {
 	var merged []ProviderEntry
 	index := map[string]int{}
+	sources := map[string]providerSourceScope{}
 	saw := false
 	for _, path := range paths {
 		if _, err := os.Stat(path); err != nil {
@@ -1504,23 +1516,61 @@ func mergeTOMLProviders(paths []string) ([]ProviderEntry, bool, error) {
 		}
 		var f Config
 		if _, err := toml.DecodeFile(path, &f); err != nil {
-			return nil, false, fmt.Errorf("config %s: %w", path, err)
+			return nil, nil, false, fmt.Errorf("config %s: %w", path, err)
 		}
 		if len(f.Providers) == 0 {
 			continue
 		}
 		saw = true
+		source := providerSourceForPath(path)
 		for _, p := range f.Providers {
 			normalizeProviderEffortFields(&p)
-			if i, ok := index[p.Name]; ok {
+			key := providerMergeKey(p)
+			if i, ok := index[key]; ok {
 				merged[i] = p
-				continue
+			} else {
+				index[key] = len(merged)
+				merged = append(merged, p)
 			}
-			index[p.Name] = len(merged)
-			merged = append(merged, p)
+			sources[key] = source
 		}
 	}
-	return merged, saw, nil
+	return merged, sources, saw, nil
+}
+
+func providerSourceForPath(path string) providerSourceScope {
+	if isUserConfigPath(path) {
+		return providerSourceUser
+	}
+	return providerSourceProject
+}
+
+func providerMergeKey(p ProviderEntry) string {
+	name := strings.TrimSpace(p.Name)
+	if name == "" {
+		return ""
+	}
+	canonical := canonicalDesktopOfficialProviderName(name)
+	if canonical == name {
+		return name
+	}
+	if isOfficialProviderAliasForMerge(p, canonical) {
+		return canonical
+	}
+	return name
+}
+
+func isOfficialProviderAliasForMerge(p ProviderEntry, canonical string) bool {
+	switch canonical {
+	case "deepseek":
+		return officialProviderHost(p.BaseURL) == "api.deepseek.com"
+	case "mimo-api":
+		return officialMimoHost(p.BaseURL) == "api.xiaomimimo.com"
+	case "mimo-token-plan":
+		return officialMimoHost(p.BaseURL) == "token-plan-cn.xiaomimimo.com"
+	default:
+		return false
+	}
 }
 
 // mergeTOMLProviderAccess merges desktop.provider_access across TOML sources so

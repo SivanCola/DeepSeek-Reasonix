@@ -982,6 +982,120 @@ func TestSaveToScopesUserAndProjectFiles(t *testing.T) {
 	}
 }
 
+func TestLoadForRootMergesOfficialProviderAliasesByCanonicalID(t *testing.T) {
+	isolateUserConfigHome(t)
+	root := t.TempDir()
+	userPath := UserConfigPath()
+	if err := os.MkdirAll(filepath.Dir(userPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(userPath, []byte(`
+config_version = 2
+default_model = "deepseek/deepseek-v4-flash"
+
+[desktop]
+provider_access = ["deepseek"]
+
+[[providers]]
+name = "deepseek"
+kind = "openai"
+base_url = "https://api.deepseek.com"
+models = ["deepseek-v4-flash", "deepseek-v4-pro"]
+default = "deepseek-v4-flash"
+api_key_env = "USER_DEEPSEEK_KEY"
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "reasonix.toml"), []byte(`
+[[providers]]
+name = "deepseek-flash"
+kind = "openai"
+base_url = "https://api.deepseek.com"
+model = "deepseek-v4-flash"
+api_key_env = "PROJECT_DEEPSEEK_KEY"
+effort = "max"
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := LoadForRoot(root)
+	if err != nil {
+		t.Fatalf("LoadForRoot: %v", err)
+	}
+	p, ok := cfg.Provider("deepseek")
+	if !ok {
+		t.Fatalf("canonical deepseek provider missing: %+v", cfg.Providers)
+	}
+	if p.APIKeyEnv != "PROJECT_DEEPSEEK_KEY" || p.Effort != "max" {
+		t.Fatalf("deepseek provider = %+v, want project override", p)
+	}
+	for _, p := range cfg.Providers {
+		if p.APIKeyEnv == "USER_DEEPSEEK_KEY" {
+			t.Fatalf("user deepseek provider survived canonical merge: %+v", cfg.Providers)
+		}
+	}
+}
+
+func TestSaveForRootDoesNotWriteUserProvidersIntoProjectConfig(t *testing.T) {
+	isolateUserConfigHome(t)
+	root := t.TempDir()
+	userPath := UserConfigPath()
+	if err := os.MkdirAll(filepath.Dir(userPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(userPath, []byte(`
+config_version = 2
+
+[[providers]]
+name = "global"
+kind = "openai"
+base_url = "https://global.example/v1"
+model = "global-model"
+api_key_env = "GLOBAL_KEY"
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	projectPath := filepath.Join(root, "reasonix.toml")
+	if err := os.WriteFile(projectPath, []byte(`
+config_version = 2
+default_model = "project-local/project-model"
+
+[[providers]]
+name = "project-local"
+kind = "openai"
+base_url = "https://project.example/v1"
+model = "project-model"
+api_key_env = "PROJECT_KEY"
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := LoadForRoot(root)
+	if err != nil {
+		t.Fatalf("LoadForRoot: %v", err)
+	}
+	if _, ok := cfg.Provider("global"); !ok {
+		t.Fatal("runtime config should include user provider before saving")
+	}
+	if _, ok := cfg.Provider("project-local"); !ok {
+		t.Fatal("runtime config should include project provider before saving")
+	}
+	if err := cfg.SaveForRoot(root); err != nil {
+		t.Fatalf("SaveForRoot: %v", err)
+	}
+
+	var got Config
+	if _, err := toml.DecodeFile(projectPath, &got); err != nil {
+		t.Fatalf("saved project config does not parse: %v", err)
+	}
+	if _, ok := got.Provider("global"); ok {
+		t.Fatalf("user provider leaked into project config: %+v", got.Providers)
+	}
+	if _, ok := got.Provider("project-local"); !ok {
+		t.Fatalf("project provider missing after save: %+v", got.Providers)
+	}
+}
+
 func TestSetNetworkRejectsIncompleteCustomProxy(t *testing.T) {
 	c := Default()
 	if err := c.SetNetwork(NetworkConfig{ProxyMode: "custom"}); err == nil {
