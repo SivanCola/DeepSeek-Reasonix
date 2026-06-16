@@ -1,6 +1,6 @@
 // Run: tsx src/__tests__/context-panel-breakdown.test.ts
 
-import { contextBreakdown, contextCostDisplay } from "../components/ContextPanel";
+import { contextBreakdown, contextCostDisplay, formatCacheHitRate } from "../components/ContextPanel";
 import { currencySymbol, formatMoney, formatMoneyLocalized } from "../lib/money";
 
 let passed = 0;
@@ -95,6 +95,12 @@ const cnyLocalized = formatMoneyLocalized(12.3, "CNY", { locale: "zh" });
 ok(/¥|CNY|CN¥/.test(cnyLocalized) && cnyLocalized.includes("12.30"), "ISO CNY cost renders with locale-aware currency formatting");
 eq(formatMoneyLocalized(0.1759, "A$", { locale: "en" }), "A$0.1759", "symbol currency remains symbol-based");
 eq(formatMoneyLocalized(0, "USD", { locale: "en", empty: "dash" }), "-", "localized money preserves dash empty state");
+
+console.log("\ncontext panel cache rate");
+
+eq(formatCacheHitRate(99_950, 50), "99.95%", "cache hit rate preserves two decimal places");
+eq(formatCacheHitRate(0, 10_000), "0.00%", "cache hit rate shows zero when usage data exists");
+eq(formatCacheHitRate(0, 0), "-", "cache hit rate stays empty before usage data exists");
 
 console.log(`\n${passed} passed, ${failed} failed, ${passed + failed} total`);
 if (failed > 0) process.exit(1);
