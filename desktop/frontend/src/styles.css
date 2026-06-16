@@ -21966,6 +21966,299 @@ a[href] {
   }
 }
 
+/* ── Creation desktop style ─────────────────────────────────────────── */
+.app--creation {
+  --creation-accent: #13a7a5;
+  --creation-warm: #e58a6b;
+  --creation-surface: color-mix(in srgb, var(--bg-elev) 76%, var(--bg));
+  --creation-surface-strong: color-mix(in srgb, var(--bg-elev-2) 76%, var(--bg));
+  --creation-hairline: color-mix(in srgb, var(--border-soft) 82%, transparent);
+  --creation-glow: 0 18px 48px color-mix(in srgb, var(--creation-accent) 12%, transparent);
+}
+
+.layout--creation {
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--chat-bg) 94%, var(--creation-accent)), var(--chat-bg) 34%),
+    var(--chat-bg);
+}
+
+.app--creation .app-chrome {
+  background: color-mix(in srgb, var(--bg-elev) 88%, var(--chat-bg));
+  border-bottom-color: var(--creation-hairline);
+}
+
+.app--creation .tabbar__tab {
+  border-radius: 8px;
+}
+
+.app--creation .tabbar__tab--active {
+  background: color-mix(in srgb, var(--creation-accent) 10%, var(--bg-elev));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--creation-accent) 22%, transparent);
+}
+
+.sidebar--creation {
+  --sidebar-workbench-border: color-mix(in srgb, var(--creation-hairline) 84%, var(--fg-faint));
+  --sidebar-workbench-fill: color-mix(in srgb, var(--creation-accent) 8%, var(--bg-elev));
+  --sidebar-workbench-fill-strong: color-mix(in srgb, var(--bg-elev) 90%, var(--creation-accent));
+  --sidebar-workbench-active: color-mix(in srgb, var(--creation-accent) 12%, var(--bg-elev));
+  --sidebar-workbench-active-border: color-mix(in srgb, var(--creation-accent) 30%, transparent);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--sidebar-bg) 86%, var(--creation-accent)), var(--sidebar-bg) 42%),
+    var(--sidebar-bg);
+  border-right: 1px solid var(--creation-hairline);
+  padding: 12px 10px calc(10px + var(--statusbar-height));
+}
+
+.sidebar--creation .sidebar__head--creation {
+  min-height: 42px;
+  display: flex;
+  align-items: center;
+  padding: 0 4px;
+}
+
+.sidebar--creation .sidebar__brand--creation {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  color: var(--fg);
+}
+
+.sidebar--creation .sidebar__brand-mark {
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--creation-accent) 17%, var(--bg-elev));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--creation-accent) 24%, transparent);
+}
+
+.sidebar--creation .sidebar__brand-logo--creation {
+  width: 18px;
+  height: 18px;
+  display: block;
+}
+
+.sidebar--creation .sidebar__brand-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 15px;
+  font-weight: 720;
+}
+
+.sidebar--creation .sidebar__quick-actions--creation {
+  padding: 10px 0 8px;
+}
+
+.sidebar--creation .sidebar__quick-action--creation {
+  width: 100%;
+  height: 38px;
+  justify-content: center;
+  border: 1px solid color-mix(in srgb, var(--creation-accent) 30%, var(--border-soft));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--creation-accent) 13%, var(--bg-elev));
+  color: var(--fg);
+  box-shadow: none;
+}
+
+.sidebar--creation .sidebar__quick-action--creation:hover {
+  background: color-mix(in srgb, var(--creation-accent) 20%, var(--bg-elev));
+  border-color: color-mix(in srgb, var(--creation-accent) 46%, var(--border));
+}
+
+.sidebar--creation .sidebar__section--projects {
+  border: 1px solid color-mix(in srgb, var(--border-soft) 64%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--bg) 35%, transparent);
+  padding: 6px;
+}
+
+.sidebar--creation .sidebar__nav--footer {
+  border-top-color: color-mix(in srgb, var(--border-soft) 68%, transparent);
+  padding-top: 10px;
+}
+
+.sidebar--creation .sidebar__utility-button {
+  border-radius: 8px;
+}
+
+.sidebar--creation.sidebar--collapsed .sidebar__brand-name,
+.sidebar--creation.sidebar--collapsed .sidebar__quick-action--creation span {
+  display: none;
+}
+
+.layout--creation .sidebar-resizer {
+  border-color: transparent;
+}
+
+.layout--creation .sidebar-resizer::after,
+.layout--creation .workspace-panel-resizer::after {
+  background: color-mix(in srgb, var(--creation-accent) 28%, var(--border-soft));
+}
+
+.app--creation .topicbar {
+  min-height: 54px;
+  border-bottom-color: var(--creation-hairline);
+  background: color-mix(in srgb, var(--chat-bg) 86%, var(--bg-elev));
+}
+
+.app--creation .topicbar h1,
+.app--creation .topicbar__title-button {
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.app--creation .topicbar__action-btn {
+  border-radius: 8px;
+}
+
+.app--creation .topicbar__action-btn--accent {
+  background: color-mix(in srgb, var(--creation-accent) 16%, var(--bg-elev));
+  border-color: color-mix(in srgb, var(--creation-accent) 34%, var(--border));
+  color: var(--fg);
+}
+
+.app--creation .main {
+  background:
+    radial-gradient(circle at 50% 0, color-mix(in srgb, var(--creation-accent) 8%, transparent), transparent 34%),
+    var(--chat-bg);
+}
+
+.app--creation .footer {
+  border-top-color: var(--creation-hairline);
+  background: linear-gradient(180deg, transparent, color-mix(in srgb, var(--chat-bg) 92%, var(--bg-elev)) 18%);
+}
+
+.app--creation .composer-card {
+  border-color: color-mix(in srgb, var(--creation-accent) 22%, var(--border-soft));
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--bg-elev) 84%, var(--chat-bg));
+  box-shadow: var(--creation-glow);
+}
+
+.app--creation .composer-card:focus-within {
+  border-color: color-mix(in srgb, var(--creation-accent) 50%, var(--border));
+  box-shadow:
+    0 0 0 3px color-mix(in srgb, var(--creation-accent) 13%, transparent),
+    var(--creation-glow);
+}
+
+.app--creation .composer-card--running {
+  border-color: color-mix(in srgb, var(--creation-warm) 42%, var(--border));
+}
+
+.app--creation .composer__input {
+  color: var(--fg);
+}
+
+.app--creation .composer__btn--send {
+  border-color: color-mix(in srgb, var(--creation-accent) 55%, var(--border));
+  background: var(--creation-accent);
+  color: #ffffff;
+}
+
+.app--creation .composer__btn--send:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--creation-accent) 82%, #ffffff);
+}
+
+.app--creation .composer-modebar,
+.app--creation .composer-action-trigger,
+.app--creation .composer-mode-chip,
+.app--creation .modelsw__trigger,
+.app--creation .effortsw__trigger {
+  border-radius: 8px;
+}
+
+.app--creation .workbench-dock {
+  background: color-mix(in srgb, var(--bg-elev) 64%, var(--chat-bg));
+  border-left-color: var(--creation-hairline);
+}
+
+.app--creation .workbench-dock__tabs {
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--bg) 58%, transparent);
+}
+
+.app--creation .workbench-dock__tab {
+  border-radius: 7px;
+}
+
+.app--creation .workbench-dock__tab--active {
+  color: var(--fg);
+  background: color-mix(in srgb, var(--creation-accent) 13%, var(--bg-elev));
+}
+
+.context-panel--creation .context-panel__overview {
+  gap: 10px;
+}
+
+.context-panel--creation .context-panel__usage-visual {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid color-mix(in srgb, var(--creation-accent) 22%, var(--border-soft));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--bg) 40%, transparent);
+}
+
+.context-panel--creation .context-panel__usage-summary {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.context-panel--creation .context-panel__usage-summary strong {
+  color: var(--fg);
+  font-size: 18px;
+  font-weight: 760;
+}
+
+.context-panel--creation .context-panel__usage-summary span,
+.context-panel--creation .context-panel__usage-summary em {
+  color: var(--fg-faint);
+  font-size: 11px;
+  font-style: normal;
+}
+
+.context-panel--creation .context-panel__usage-bar {
+  display: flex;
+  width: 100%;
+  height: 9px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--border-soft) 55%, transparent);
+}
+
+.context-panel--creation .context-panel__usage-segment--prompt {
+  background: var(--creation-accent);
+}
+
+.context-panel--creation .context-panel__usage-segment--completion {
+  background: #4f7dff;
+}
+
+.context-panel--creation .context-panel__usage-segment--reasoning {
+  background: var(--creation-warm);
+}
+
+.context-panel--creation .context-panel__usage-segment--other {
+  background: color-mix(in srgb, var(--fg-faint) 58%, transparent);
+}
+
+.context-panel--creation .context-panel__section,
+.context-panel--creation .context-panel__preview,
+.context-panel--creation .context-panel__metric {
+  border-radius: 8px;
+}
+
+.context-panel--creation .context-panel__metric--accent strong {
+  color: var(--creation-accent);
+}
+
 /* ── Toast ──────────────────────────────────────────────────────────── */
 .toast-container {
   position: fixed;

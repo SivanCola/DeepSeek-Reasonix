@@ -111,6 +111,7 @@ import { applyTextSize, DEFAULT_TEXT_SIZE, getTextSize, nextTextSize } from "./l
 import { useViewportHeightVar, useWindowStatePersistence } from "./lib/windowState";
 import { availableWorkspacePanelWidth, resolveWorkspacePanelWidth, workspacePanelAriaMinWidth } from "./lib/workspaceLayout";
 import { useGlobalShortcut } from "./lib/keyboardShortcuts";
+import logoSymbol from "./assets/logo-symbol.svg";
 import logoWordmark from "./assets/logo-wordmark.svg";
 
 const SIDEBAR_COLLAPSED_KEY = "reasonix.sidebar.collapsed";
@@ -126,10 +127,10 @@ function isThemeMode(value: string): value is Theme {
   return value === "auto" || value === "light" || value === "dark";
 }
 
-type DesktopLayoutStyle = "classic" | "workbench";
+type DesktopLayoutStyle = "classic" | "workbench" | "creation";
 
 function normalizeDesktopLayoutStyle(style: string | undefined): DesktopLayoutStyle {
-  return style === "workbench" ? "workbench" : "classic";
+  return style === "workbench" || style === "creation" ? style : "classic";
 }
 const RIGHT_DOCK_TREE_DEFAULT_WIDTH = 300;
 const RIGHT_DOCK_TREE_MIN_WIDTH = 300;
@@ -2470,10 +2471,14 @@ export default function App() {
     ? t("sidebar.im")
     : t(sidebarImExpanded ? "sidebar.imCollapse" : "sidebar.imExpand");
   const sidebarWorkbench = desktopLayoutStyle === "workbench";
+  const sidebarCreation = desktopLayoutStyle === "creation";
+  const sidebarWorkbenchLike = sidebarWorkbench || sidebarCreation;
+  const projectTreeVariant = sidebarWorkbenchLike ? "workbench" : "classic";
   const sidebarClassName = [
     "sidebar",
     sidebarCollapsed ? "sidebar--collapsed" : "",
-    sidebarWorkbench ? "sidebar--workbench" : "",
+    sidebarWorkbenchLike ? "sidebar--workbench" : "",
+    sidebarCreation ? "sidebar--creation" : "",
   ].filter(Boolean).join(" ");
   const sidebarImBlock = (
     <div className={`sidebar-im${sidebarImExpanded ? " sidebar-im--expanded" : ""}`} aria-label={t("sidebar.im")}>
@@ -2559,12 +2564,14 @@ export default function App() {
         `app--${desktopPlatform}`,
         browserPreviewChrome ? "app--browser-preview" : "",
         sidebarWorkbench ? "app--workbench" : "",
+        sidebarCreation ? "app--creation" : "",
       ].filter(Boolean).join(" ")}
     >
       <div
         className={[
           "layout",
           sidebarWorkbench ? "layout--workbench" : "",
+          sidebarCreation ? "layout--creation" : "",
           sidebarCollapsed ? "layout--sidebar-collapsed" : "",
           sidebarResizing ? "layout--resizing layout--sidebar-resizing" : "",
           workspacePanelGridOpen ? "layout--workspace-open" : "",
@@ -2626,6 +2633,30 @@ export default function App() {
                 </button>
               </div>
             </>
+          ) : sidebarCreation ? (
+            <>
+              <div className="sidebar__head sidebar__head--creation" aria-hidden={sidebarCollapsed}>
+                <div className="sidebar__brand sidebar__brand--creation">
+                  <span className="sidebar__brand-mark" aria-hidden="true">
+                    <img src={logoSymbol} alt="" className="sidebar__brand-logo sidebar__brand-logo--creation" draggable={false} />
+                  </span>
+                  <span className="sidebar__brand-name">Reasonix</span>
+                </div>
+              </div>
+
+              <div className="sidebar__quick-actions sidebar__quick-actions--creation">
+                <button
+                  className="sidebar__quick-action sidebar__quick-action--creation"
+                  type="button"
+                  onClick={() => {
+                    void handleNewTab();
+                  }}
+                >
+                  <SquarePen size={18} aria-hidden="true" />
+                  <span>{t("topbar.newSession")}</span>
+                </button>
+              </div>
+            </>
           ) : (
             <>
               <div className="sidebar__brand" aria-hidden={sidebarCollapsed}>
@@ -2662,11 +2693,11 @@ export default function App() {
               }}
               timeFilter={topicTimeFilter}
               onTimeFilterChange={setTopicTimeFilter}
-              variant={sidebarWorkbench ? "workbench" : "classic"}
+              variant={projectTreeVariant}
             />
           </section>
 
-          {sidebarWorkbench ? (
+          {sidebarWorkbench || sidebarCreation ? (
             <nav className="sidebar__nav sidebar__nav--footer">
               {sidebarImBlock}
               <div className="sidebar__utility-row" aria-label={t("sidebar.utilityActions")}>
@@ -3125,6 +3156,7 @@ export default function App() {
                   onOpenWorkspaceFileList={openRightDockFileList}
                   onOpenWorkspaceChangeList={openRightDockChangeList}
                   onOpenWorkspaceChangeFile={openRightDockChangeFile}
+                  variant={sidebarCreation ? "creation" : "default"}
                 />
               ) : (
                 <WorkspacePanel

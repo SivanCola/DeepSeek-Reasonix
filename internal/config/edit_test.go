@@ -161,6 +161,7 @@ func TestDesktopLayoutStyleNormalizes(t *testing.T) {
 		{"classic", "classic", false},
 		{" workbench ", "workbench", false},
 		{"workspace", "workbench", false},
+		{"creation", "creation", false},
 		{"later", "classic", true},
 	} {
 		c := Default()

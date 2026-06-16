@@ -18,6 +18,7 @@ interface ContextPanelProps {
   sessionCurrency?: string;
   sessionGen?: number;
   refreshKey?: number;
+  variant?: "default" | "creation";
   onOpenWorkspaceMode?: (mode: "files" | "changed") => void;
   onOpenWorkspaceFile?: (path: string) => void;
   onOpenWorkspaceFileList?: (paths: string[]) => void;
@@ -219,6 +220,7 @@ export function ContextPanel({
   sessionCurrency,
   sessionGen,
   refreshKey,
+  variant = "default",
   onOpenWorkspaceMode,
   onOpenWorkspaceFile,
   onOpenWorkspaceFileList,
@@ -293,6 +295,12 @@ export function ContextPanel({
   const donutStyle = {
     background: `conic-gradient(#13a7a5 0 ${breakdown.promptPct}%, #2f6df6 ${breakdown.promptPct}% ${breakdown.completionPct}%, #f97316 ${breakdown.completionPct}% ${breakdown.reasoningPct}%, var(--border) ${breakdown.reasoningPct}% ${breakdown.otherPct}%, var(--border-soft) ${breakdown.otherPct}% 100%)`,
   };
+  const usageSegments = [
+    { color: "prompt", pct: breakdown.promptPct },
+    { color: "completion", pct: Math.max(0, breakdown.completionPct - breakdown.promptPct) },
+    { color: "reasoning", pct: Math.max(0, breakdown.reasoningPct - breakdown.completionPct) },
+    { color: "other", pct: Math.max(0, breakdown.otherPct - breakdown.reasoningPct) },
+  ].filter((segment) => segment.pct > 0);
   const eventTimes = [
     ...readFiles.map((file) => file.time),
     ...changedFiles.map((file) => file.latestTime ?? 0),
@@ -316,21 +324,51 @@ export function ContextPanel({
     detail: asArray(f.turns).length > 0 ? `T${asArray(f.turns).join(",")}` : "",
   }));
   const health = contextHealth(usagePct, Math.round(cachePct), readRows.length);
+  const creation = variant === "creation";
 
   return (
-    <div className="context-panel">
+    <div className={`context-panel${creation ? " context-panel--creation" : ""}`}>
       <div className="context-panel__body">
         <section className="context-panel__overview">
           <section className="context-panel__usage">
             <SectionHeading title={t("context.windowTitle")} meta={t("context.windowSubtitle")} />
             <div className="context-panel__usage-visual">
-              <div className="context-panel__donut" style={donutStyle}>
-                <div className="context-panel__donut-core">
-                  <strong>{fmtTokens(usedTokens)}</strong>
-                  <span>/ {fmtTokens(windowTokens)} tokens</span>
-                </div>
-              </div>
-              <div className="context-panel__percent">{usagePct}%</div>
+              {creation ? (
+                <>
+                  <div className="context-panel__usage-summary">
+                    <strong>{fmtTokens(usedTokens)}</strong>
+                    <span>/ {fmtTokens(windowTokens)} tokens</span>
+                    <em>{usagePct}%</em>
+                  </div>
+                  <div
+                    className="context-panel__usage-bar"
+                    role="meter"
+                    aria-label={t("context.windowTitle")}
+                    aria-valuemin={0}
+                    aria-valuemax={100}
+                    aria-valuenow={usagePct}
+                  >
+                    {usageSegments.map((segment) => (
+                      <span
+                        aria-hidden="true"
+                        className={`context-panel__usage-segment context-panel__usage-segment--${segment.color}`}
+                        key={segment.color}
+                        style={{ width: `${segment.pct}%` }}
+                      />
+                    ))}
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="context-panel__donut" style={donutStyle}>
+                    <div className="context-panel__donut-core">
+                      <strong>{fmtTokens(usedTokens)}</strong>
+                      <span>/ {fmtTokens(windowTokens)} tokens</span>
+                    </div>
+                  </div>
+                  <div className="context-panel__percent">{usagePct}%</div>
+                </>
+              )}
             </div>
             <div className="context-panel__breakdown">
               <TokenLegend label={t("context.prompt")} value={breakdown.promptTokens} color="prompt" />
@@ -369,50 +407,53 @@ export function ContextPanel({
               </div>
             )}
           </section>
-          <section className="context-panel__section context-panel__section--status">
-            <SectionHeading title={t("context.sessionStatus")} />
-            <div className="context-panel__stats">
-              <MetricCard label={t("context.health")} value={t(health.shortKey, health.vars)} tone={health.tone} />
-              <MetricCard label={t("context.compaction")} value={compactPct > 0 ? `${compactPct}%` : "-"} />
-            </div>
-          </section>
-          <PreviewSection
-            title={t("context.referencedFiles")}
-            meta={t("context.readMeta", { count: readRows.length })}
-            action={t("context.viewAll")}
-            onAction={() => {
-              if (onOpenWorkspaceFileList) {
-                onOpenWorkspaceFileList(readRows.map((row) => row.path));
-                return;
-              }
-              onOpenWorkspaceMode?.("files");
-            }}
-            onRowAction={onOpenWorkspaceFile}
-            rows={readRows.slice(0, 3)}
-            empty={t("context.noReads")}
-          />
-          <PreviewSection
-            title={t("context.sessionChanges")}
-            meta={t("context.changedMeta", { count: changedRows.length })}
-            action={t("context.viewAll")}
-            onAction={() => {
-              if (onOpenWorkspaceChangeList) {
-                onOpenWorkspaceChangeList(changedRows);
-                return;
-              }
-              onOpenWorkspaceMode?.("changed");
-            }}
-            onRowAction={onOpenWorkspaceChangeFile}
-            rows={changedRows.slice(0, 3)}
-            empty={t("context.noChanges")}
-          />
+          {!creation && (
+            <>
+              <section className="context-panel__section context-panel__section--status">
+                <SectionHeading title={t("context.sessionStatus")} />
+                <div className="context-panel__stats">
+                  <MetricCard label={t("context.health")} value={t(health.shortKey, health.vars)} tone={health.tone} />
+                  <MetricCard label={t("context.compaction")} value={compactPct > 0 ? `${compactPct}%` : "-"} />
+                </div>
+              </section>
+              <PreviewSection
+                title={t("context.referencedFiles")}
+                meta={t("context.readMeta", { count: readRows.length })}
+                action={t("context.viewAll")}
+                onAction={() => {
+                  if (onOpenWorkspaceFileList) {
+                    onOpenWorkspaceFileList(readRows.map((row) => row.path));
+                    return;
+                  }
+                  onOpenWorkspaceMode?.("files");
+                }}
+                onRowAction={onOpenWorkspaceFile}
+                rows={readRows.slice(0, 3)}
+                empty={t("context.noReads")}
+              />
+              <PreviewSection
+                title={t("context.sessionChanges")}
+                meta={t("context.changedMeta", { count: changedRows.length })}
+                action={t("context.viewAll")}
+                onAction={() => {
+                  if (onOpenWorkspaceChangeList) {
+                    onOpenWorkspaceChangeList(changedRows);
+                    return;
+                  }
+                  onOpenWorkspaceMode?.("changed");
+                }}
+                onRowAction={onOpenWorkspaceChangeFile}
+                rows={changedRows.slice(0, 3)}
+                empty={t("context.noChanges")}
+              />
+            </>
+          )}
         </section>
       </div>
 
     </div>
   );
 }
-
 function SectionHeading({ title, meta }: { title: string; meta?: string }) {
   return (
     <header className="context-panel__section-head">
