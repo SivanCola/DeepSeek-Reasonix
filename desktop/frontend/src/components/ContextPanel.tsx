@@ -29,28 +29,85 @@ function fmtTokens(n: number): string {
   return String(n);
 }
 
-function fmtDuration(ms: number, t: Translator): string {
-  if (ms <= 0) return "-";
+interface DurationParts {
+  days: number;
+  hours: number;
+  minutes: number;
+  seconds: number;
+}
+
+function durationParts(ms: number): DurationParts | null {
+  if (ms <= 0) return null;
   const totalSeconds = Math.max(1, Math.round(ms / 1000));
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = totalSeconds % 60;
-  if (minutes <= 0) return t("context.durationSeconds", { seconds });
-  return t("context.durationMinutesSeconds", { minutes, seconds });
+  return {
+    days: Math.floor(totalSeconds / 86_400),
+    hours: Math.floor((totalSeconds % 86_400) / 3_600),
+    minutes: Math.floor((totalSeconds % 3_600) / 60),
+    seconds: totalSeconds % 60,
+  };
+}
+
+function fmtDurationPart(
+  unit: keyof DurationParts,
+  value: number,
+  t: Translator,
+): string {
+  switch (unit) {
+    case "days":
+      return t("context.durationPartDays", { days: value });
+    case "hours":
+      return t("context.durationPartHours", { hours: value });
+    case "minutes":
+      return t("context.durationPartMinutes", { minutes: value });
+    case "seconds":
+      return t("context.durationPartSeconds", { seconds: value });
+  }
+}
+
+function joinDurationParts(parts: string[], t: Translator): string {
+  return parts.join(t("context.durationSeparator"));
+}
+
+export function formatDurationDetailed(ms: number, t: Translator): string {
+  const parts = durationParts(ms);
+  if (!parts) return "-";
+  const values: Array<[keyof DurationParts, number]> = [
+    ["days", parts.days],
+    ["hours", parts.hours],
+    ["minutes", parts.minutes],
+    ["seconds", parts.seconds],
+  ];
+  const first = values.findIndex(([, value]) => value > 0);
+  if (first < 0) return fmtDurationPart("seconds", 0, t);
+  const last = values.reduce((index, [, value], currentIndex) => (value > 0 ? currentIndex : index), first);
+  return joinDurationParts(
+    values.slice(first, last + 1).map(([unit, value]) => fmtDurationPart(unit, value, t)),
+    t,
+  );
 }
 
 export function formatDurationCompact(ms: number, t: Translator): string {
-  if (ms <= 0) return "-";
-  const totalSeconds = Math.max(1, Math.round(ms / 1000));
-  if (totalSeconds < 60) return t("context.durationCompactSeconds", { seconds: totalSeconds });
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = totalSeconds % 60;
-  if (minutes < 60) return t("context.durationCompactMinutesSeconds", { minutes, seconds });
-  const hours = Math.floor(minutes / 60);
-  const remainingMinutes = minutes % 60;
-  if (hours < 24) return t("context.durationCompactHoursMinutes", { hours, minutes: remainingMinutes });
-  const days = Math.floor(hours / 24);
-  const remainingHours = hours % 24;
-  return t("context.durationCompactDaysHours", { days, hours: remainingHours });
+  const parts = durationParts(ms);
+  if (!parts) return "-";
+  if (parts.days > 0) {
+    return joinDurationParts([
+      fmtDurationPart("days", parts.days, t),
+      fmtDurationPart("hours", parts.hours, t),
+    ], t);
+  }
+  if (parts.hours > 0) {
+    return joinDurationParts([
+      fmtDurationPart("hours", parts.hours, t),
+      fmtDurationPart("minutes", parts.minutes, t),
+    ], t);
+  }
+  if (parts.minutes > 0) {
+    return joinDurationParts([
+      fmtDurationPart("minutes", parts.minutes, t),
+      fmtDurationPart("seconds", parts.seconds, t),
+    ], t);
+  }
+  return fmtDurationPart("seconds", parts.seconds, t);
 }
 
 function fmtOptionalTokens(tokens?: number): string {
@@ -336,7 +393,7 @@ export function ContextPanel({
   const turnCostLabel = formatMoneyLocalized(turnCost, sessionCurrency, { locale, empty: "dash" });
   const sessionCostLabel = formatMoneyLocalized(sessionCost, sessionCurrency, { locale, empty: "dash" });
   const elapsedLabel = formatDurationCompact(elapsed, t);
-  const elapsedFullLabel = fmtDuration(elapsed, t);
+  const elapsedFullLabel = formatDurationDetailed(elapsed, t);
 
   return (
     <div className="context-panel">
@@ -380,7 +437,7 @@ export function ContextPanel({
             </div>
           </section>
           <section className="context-panel__creation-grid" aria-label={t("context.overview")}>
-            <MetricCard label={t("context.time")} value={elapsedLabel} fullValue={elapsedFullLabel} />
+            <MetricCard label={t("context.time")} value={elapsedLabel} fullValue={elapsedFullLabel} alwaysTooltip />
             <MetricCard label={t("context.requests")} value={requestCount > 0 ? String(requestCount) : "-"} />
             <MetricCard label={t("status.cacheLabel")} value={fmtUsageCacheRate(usage)} tone="accent" />
             <MetricCard label={t("status.turnTokensLabel")} value={fmtOptionalTokens(turnTokens)} />
@@ -390,7 +447,7 @@ export function ContextPanel({
           <section className="context-panel__section">
             <SectionHeading title={t("context.runtimeMetrics")} />
             <div className="context-panel__stats">
-              <MetricCard label={t("context.time")} value={elapsedLabel} fullValue={elapsedFullLabel} />
+              <MetricCard label={t("context.time")} value={elapsedLabel} fullValue={elapsedFullLabel} alwaysTooltip />
               <MetricCard label={t("context.requests")} value={requestCount > 0 ? String(requestCount) : "-"} />
               <MetricCard label={t("context.sessionTokens")} value={totalTokens > 0 ? totalTokens.toLocaleString() : "-"} wide />
             </div>
@@ -459,18 +516,20 @@ function MetricCard({
   label,
   value,
   fullValue,
+  alwaysTooltip,
   tone,
   wide,
 }: {
   label: string;
   value: string;
   fullValue?: string;
+  alwaysTooltip?: boolean;
   tone?: "accent" | "good" | "notice" | "warn";
   wide?: boolean;
 }) {
   const toneClass = tone ? ` context-panel__metric--${tone}` : "";
   const wideClass = wide ? " context-panel__metric--wide" : "";
-  const title = fullValue && fullValue !== value ? `${label}: ${fullValue}` : undefined;
+  const title = fullValue && (alwaysTooltip || fullValue !== value) ? `${label}: ${fullValue}` : undefined;
   const content = (
     <div className={`context-panel__metric${toneClass}${wideClass}`}>
       <span>{label}</span>
