@@ -1049,6 +1049,10 @@ export const zhTW: Record<DictKey, string> = {
   "context.time": "耗時",
   "context.durationSeconds": "{seconds}秒",
   "context.durationMinutesSeconds": "{minutes}分{seconds}秒",
+  "context.durationCompactSeconds": "{seconds}秒",
+  "context.durationCompactMinutesSeconds": "{minutes}分{seconds}秒",
+  "context.durationCompactHoursMinutes": "{hours}小時{minutes}分",
+  "context.durationCompactDaysHours": "{days}天{hours}小時",
 
   // 崩潰兜底頁
   "crash.title": "Reasonix 遇到錯誤 —— 請截圖傳送",

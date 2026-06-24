@@ -5,6 +5,7 @@ import { asArray } from "../lib/array";
 import { app } from "../lib/bridge";
 import { useI18n, type Translator } from "../lib/i18n";
 import { formatMoneyLocalized } from "../lib/money";
+import { Tooltip } from "./Tooltip";
 import type { DictKey } from "../locales/en";
 import type { BalanceInfo, ContextInfo, ContextPanelInfo, UsageSourceStats, WireUsage } from "../lib/types";
 
@@ -35,6 +36,21 @@ function fmtDuration(ms: number, t: Translator): string {
   const seconds = totalSeconds % 60;
   if (minutes <= 0) return t("context.durationSeconds", { seconds });
   return t("context.durationMinutesSeconds", { minutes, seconds });
+}
+
+export function formatDurationCompact(ms: number, t: Translator): string {
+  if (ms <= 0) return "-";
+  const totalSeconds = Math.max(1, Math.round(ms / 1000));
+  if (totalSeconds < 60) return t("context.durationCompactSeconds", { seconds: totalSeconds });
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  if (minutes < 60) return t("context.durationCompactMinutesSeconds", { minutes, seconds });
+  const hours = Math.floor(minutes / 60);
+  const remainingMinutes = minutes % 60;
+  if (hours < 24) return t("context.durationCompactHoursMinutes", { hours, minutes: remainingMinutes });
+  const days = Math.floor(hours / 24);
+  const remainingHours = hours % 24;
+  return t("context.durationCompactDaysHours", { days, hours: remainingHours });
 }
 
 function fmtOptionalTokens(tokens?: number): string {
@@ -319,6 +335,8 @@ export function ContextPanel({
   const balanceLabel = balance?.available && balance.display ? balance.display : "-";
   const turnCostLabel = formatMoneyLocalized(turnCost, sessionCurrency, { locale, empty: "dash" });
   const sessionCostLabel = formatMoneyLocalized(sessionCost, sessionCurrency, { locale, empty: "dash" });
+  const elapsedLabel = formatDurationCompact(elapsed, t);
+  const elapsedFullLabel = fmtDuration(elapsed, t);
 
   return (
     <div className="context-panel">
@@ -362,7 +380,7 @@ export function ContextPanel({
             </div>
           </section>
           <section className="context-panel__creation-grid" aria-label={t("context.overview")}>
-            <MetricCard label={t("context.time")} value={fmtDuration(elapsed, t)} />
+            <MetricCard label={t("context.time")} value={elapsedLabel} fullValue={elapsedFullLabel} />
             <MetricCard label={t("context.requests")} value={requestCount > 0 ? String(requestCount) : "-"} />
             <MetricCard label={t("status.cacheLabel")} value={fmtUsageCacheRate(usage)} tone="accent" />
             <MetricCard label={t("status.turnTokensLabel")} value={fmtOptionalTokens(turnTokens)} />
@@ -372,7 +390,7 @@ export function ContextPanel({
           <section className="context-panel__section">
             <SectionHeading title={t("context.runtimeMetrics")} />
             <div className="context-panel__stats">
-              <MetricCard label={t("context.time")} value={fmtDuration(elapsed, t)} />
+              <MetricCard label={t("context.time")} value={elapsedLabel} fullValue={elapsedFullLabel} />
               <MetricCard label={t("context.requests")} value={requestCount > 0 ? String(requestCount) : "-"} />
               <MetricCard label={t("context.sessionTokens")} value={totalTokens > 0 ? totalTokens.toLocaleString() : "-"} wide />
             </div>
@@ -437,13 +455,34 @@ function MiniStat({ label, value }: { label: string; value: string }) {
   );
 }
 
-function MetricCard({ label, value, tone, wide }: { label: string; value: string; tone?: "accent" | "good" | "notice" | "warn"; wide?: boolean }) {
+function MetricCard({
+  label,
+  value,
+  fullValue,
+  tone,
+  wide,
+}: {
+  label: string;
+  value: string;
+  fullValue?: string;
+  tone?: "accent" | "good" | "notice" | "warn";
+  wide?: boolean;
+}) {
   const toneClass = tone ? ` context-panel__metric--${tone}` : "";
   const wideClass = wide ? " context-panel__metric--wide" : "";
-  return (
+  const title = fullValue && fullValue !== value ? `${label}: ${fullValue}` : undefined;
+  const content = (
     <div className={`context-panel__metric${toneClass}${wideClass}`}>
       <span>{label}</span>
       <strong>{value}</strong>
     </div>
+  );
+  if (!title) return content;
+  return (
+    <Tooltip label={title} block fill>
+      <div className="context-panel__metric-tooltip-target" tabIndex={0} aria-label={title}>
+        {content}
+      </div>
+    </Tooltip>
   );
 }

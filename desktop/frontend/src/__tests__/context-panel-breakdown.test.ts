@@ -1,6 +1,6 @@
 // Run: tsx src/__tests__/context-panel-breakdown.test.ts
 
-import { contextBreakdown, contextCostDisplay, formatCacheHitRate } from "../components/ContextPanel";
+import { contextBreakdown, contextCostDisplay, formatCacheHitRate, formatDurationCompact } from "../components/ContextPanel";
 import { currencySymbol, formatMoney, formatMoneyLocalized } from "../lib/money";
 
 let passed = 0;
@@ -25,6 +25,9 @@ function ok(condition: boolean, label: string) {
     failed += 1;
   }
 }
+
+const enT = (key: string, vars?: Record<string, string | number>) =>
+  key.replace(/^context\./, "").replace(/[A-Z]/g, (m) => m.toLowerCase()) + JSON.stringify(vars ?? {});
 
 console.log("\ncontext panel breakdown");
 
@@ -101,6 +104,12 @@ console.log("\ncontext panel cache rate");
 eq(formatCacheHitRate(99_950, 50), "99.95%", "cache hit rate preserves two decimal places");
 eq(formatCacheHitRate(0, 10_000), "0.00%", "cache hit rate shows zero when usage data exists");
 eq(formatCacheHitRate(0, 0), "-", "cache hit rate stays empty before usage data exists");
+
+console.log("\ncontext panel compact duration");
+
+eq(formatDurationCompact(42_000, enT as never), 'durationcompactseconds{"seconds":42}', "sub-minute duration stays in seconds");
+eq(formatDurationCompact(3_721_000, enT as never), 'durationcompacthoursminutes{"hours":1,"minutes":2}', "hour-scale duration switches to compact hour/minute form");
+eq(formatDurationCompact(190_800_000, enT as never), 'durationcompactdayshours{"days":2,"hours":5}', "day-scale duration switches to compact day/hour form");
 
 console.log(`\n${passed} passed, ${failed} failed, ${passed + failed} total`);
 if (failed > 0) process.exit(1);

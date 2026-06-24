@@ -1633,6 +1633,10 @@ export const en = {
   "context.compaction": "Compaction",
   "context.durationSeconds": "{seconds}s",
   "context.durationMinutesSeconds": "{minutes}m {seconds}s",
+  "context.durationCompactSeconds": "{seconds}s",
+  "context.durationCompactMinutesSeconds": "{minutes}m {seconds}s",
+  "context.durationCompactHoursMinutes": "{hours}h {minutes}m",
+  "context.durationCompactDaysHours": "{days}d {hours}h",
 
   // crash page
   "crash.title": "Reasonix hit an error — send us the report, or copy it",
