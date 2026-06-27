@@ -279,6 +279,9 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 				fmt.Fprintf(&b, "models_url  = %q   # auto-fetch models from this URL on startup\n", p.ModelsURL)
 			}
 			fmt.Fprintf(&b, "api_key_env = %q\n", p.APIKeyEnv)
+			if p.AuthScheme != "" {
+				fmt.Fprintf(&b, "auth_scheme = %q\n", p.AuthScheme)
+			}
 			if p.BalanceURL != "" {
 				fmt.Fprintf(&b, "balance_url = %q   # optional; wallet-balance endpoint shown in the status bar\n", p.BalanceURL)
 			}
@@ -742,6 +745,9 @@ func RenderTOMLProjectDelta(c *Config) string {
 				fmt.Fprintf(&b, "models_url  = %q\n", p.ModelsURL)
 			}
 			fmt.Fprintf(&b, "api_key_env = %q\n", p.APIKeyEnv)
+			if p.AuthScheme != "" {
+				fmt.Fprintf(&b, "auth_scheme = %q\n", p.AuthScheme)
+			}
 			if p.BalanceURL != "" {
 				fmt.Fprintf(&b, "balance_url = %q\n", p.BalanceURL)
 			}

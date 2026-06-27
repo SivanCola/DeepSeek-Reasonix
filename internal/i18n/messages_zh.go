@@ -389,6 +389,7 @@ var Chinese = Messages{
   reasonix config memory-v5 [off|on|status]             配置 Memory v5
   reasonix config reasoning-language [auto|zh|en]        配置可见思考语言
   reasonix mcp <add|remove|list|import>                 管理 reasonix.toml 里的 MCP 服务器
+  reasonix provider import cc-switch [--dry-run]         从 cc-switch 导入模型供应商
   reasonix init                                         查看如何生成项目记忆（AGENTS.md）
   reasonix doctor [--json]                              输出脱敏的本地诊断信息
   reasonix bot start|doctor|weixin-login                多渠道 IM bot 网关

@@ -386,6 +386,43 @@ func TestBaseURLNormalizedForV1Messages(t *testing.T) {
 	}
 }
 
+func TestAuthSchemeHeaders(t *testing.T) {
+	req, err := http.NewRequest(http.MethodPost, "https://anthropic.example.test/v1/messages", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	(&client{apiKey: "key-test"}).setAuthHeader(req)
+	if got := req.Header.Get("x-api-key"); got != "key-test" {
+		t.Fatalf("default x-api-key = %q", got)
+	}
+	if got := req.Header.Get("Authorization"); got != "" {
+		t.Fatalf("default Authorization = %q, want empty", got)
+	}
+
+	req, err = http.NewRequest(http.MethodPost, "https://anthropic.example.test/v1/messages", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	(&client{apiKey: "token-test", authScheme: authSchemeBearer}).setAuthHeader(req)
+	if got := req.Header.Get("Authorization"); got != "Bearer token-test" {
+		t.Fatalf("bearer Authorization = %q", got)
+	}
+	if got := req.Header.Get("x-api-key"); got != "" {
+		t.Fatalf("bearer x-api-key = %q, want empty", got)
+	}
+}
+
+func TestInvalidAuthSchemeRejected(t *testing.T) {
+	_, err := New(provider.Config{
+		Name:  "claude",
+		Model: "claude-sonnet-4-5",
+		Extra: map[string]any{"auth_scheme": "basic"},
+	})
+	if err == nil || !strings.Contains(err.Error(), "auth_scheme") {
+		t.Fatalf("New invalid auth_scheme err = %v", err)
+	}
+}
+
 // Ensure the package wires into the registry under the expected kind.
 func TestRegistered(t *testing.T) {
 	p, err := provider.New("anthropic", provider.Config{Model: "claude-opus-4-8", Name: "claude"})

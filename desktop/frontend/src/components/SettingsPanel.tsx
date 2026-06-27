@@ -45,7 +45,7 @@ import {
   shortcutDefinitions,
   type ShortcutAction,
 } from "../lib/keyboardShortcuts";
-import type { BotAllowlistView, BotConnectionDiagnostic, BotConnectionView, BotInstallStartResult, BotSettingsView, HookConfigView, HooksSettingsView, NetworkView, ProviderView, SettingsTab, SettingsView } from "../lib/types";
+import type { BotAllowlistView, BotConnectionDiagnostic, BotConnectionView, BotInstallStartResult, BotSettingsView, HookConfigView, HooksSettingsView, NetworkView, ProviderImportCandidate, ProviderView, SettingsTab, SettingsView } from "../lib/types";
 import { InlineConfirmButton } from "./InlineConfirmButton";
 import { Tooltip } from "./Tooltip";
 import { AnchoredPopover } from "./AnchoredPopover";
@@ -787,6 +787,7 @@ function normalizeProviderView(p: ProviderView): ProviderView {
     visionModels,
     visionModelsConfigured: Boolean(p.visionModelsConfigured ?? visionModels.length > 0),
     modelsUrl: p.modelsUrl ?? "",
+    authScheme: p.authScheme ?? "",
     reasoningProtocol: normalizeReasoningProtocol(p.reasoningProtocol),
     supportedEfforts: asArray(p.supportedEfforts),
     requiresKey,
@@ -3614,9 +3615,14 @@ function ProvidersSection({ s, busy, apply }: SectionProps) {
       title={t("settings.providerAccess")}
       description={t("settings.providerAccessHint")}
       actions={
-        <button className="btn btn--small" disabled={busy || adding !== null} onClick={() => setAdding("official")}>
-          {t("settings.addProvider")}
-        </button>
+        <div className="set-row">
+          <button className="btn btn--small" disabled={busy || adding !== null} onClick={() => setAdding("import")}>
+            {t("settings.importCCSwitch")}
+          </button>
+          <button className="btn btn--small" disabled={busy || adding !== null} onClick={() => setAdding("official")}>
+            {t("settings.addProvider")}
+          </button>
+        </div>
       }
     >
       <div className="provider-access-grid">
@@ -3631,6 +3637,9 @@ function ProvidersSection({ s, busy, apply }: SectionProps) {
               <button type="button" className="btn btn--small" disabled={busy} onClick={() => setAdding("custom")}>
                 {t("settings.addProvider.customChoice")}
               </button>
+              <button type="button" className="btn btn--small" disabled={busy} onClick={() => setAdding("import")}>
+                {t("settings.importCCSwitch")}
+              </button>
             </div>
           </div>
         )}
@@ -3643,6 +3652,7 @@ function ProvidersSection({ s, busy, apply }: SectionProps) {
             onCancel={() => setAdding(null)}
             onAddOfficial={(kind, key) => apply(() => app.AddOfficialProviderAccess(kind, key)).then(() => setAdding(null))}
             onAddCustom={(pv) => apply(() => app.SaveProvider(pv)).then(() => setAdding(null))}
+            onImport={(ids, replaceKeys) => apply(() => app.ImportCCSwitchProviders(ids, replaceKeys)).then(() => setAdding(null))}
           />
         )}
         {adding === null && groups.map((group) => (
@@ -3712,7 +3722,7 @@ type ProviderModelDraft = {
   visionModels: string[];
 };
 
-type AddProviderMode = null | "official" | "custom";
+type AddProviderMode = null | "official" | "custom" | "import";
 type OfficialProviderKind = "deepseek";
 
 const OFFICIAL_PROVIDER_CHOICES: Array<{ kind: OfficialProviderKind; labelKey: DictKey; descKey: DictKey; keyEnv: string }> = [
@@ -3727,6 +3737,7 @@ function AddProviderPanel({
   onCancel,
   onAddOfficial,
   onAddCustom,
+  onImport,
 }: {
   mode: AddProviderMode;
   kinds: string[];
@@ -3735,6 +3746,7 @@ function AddProviderPanel({
   onCancel: () => void;
   onAddOfficial: (kind: OfficialProviderKind, key: string) => Promise<void>;
   onAddCustom: (p: ProviderView) => void | Promise<void>;
+  onImport: (ids: string[], replaceKeys: boolean) => Promise<void>;
 }) {
   const t = useT();
   const [officialKind, setOfficialKind] = useState<OfficialProviderKind>("deepseek");
@@ -3773,6 +3785,16 @@ function AddProviderPanel({
         onClick={() => onMode("custom")}
       >
         {t("settings.addProvider.customChoice")}
+      </button>
+      <button
+        type="button"
+        role="tab"
+        aria-selected={mode === "import"}
+        className={mode === "import" ? "provider-add-segmented__item provider-add-segmented__item--active" : "provider-add-segmented__item"}
+        disabled={busy}
+        onClick={() => onMode("import")}
+      >
+        {t("settings.importCCSwitch.short")}
       </button>
     </div>
   );
@@ -3838,7 +3860,148 @@ function AddProviderPanel({
       </div>
     );
   }
+  if (mode === "import") {
+    return (
+      <div className="provider-add-panel">
+        {header}
+        {modeSwitch}
+        <ImportProvidersPanel busy={busy} onCancel={onCancel} onImport={onImport} />
+      </div>
+    );
+  }
   return null;
+}
+
+function ImportProvidersPanel({
+  busy,
+  onCancel,
+  onImport,
+}: {
+  busy: boolean;
+  onCancel: () => void;
+  onImport: (ids: string[], replaceKeys: boolean) => Promise<void>;
+}) {
+  const t = useT();
+  const [candidates, setCandidates] = useState<ProviderImportCandidate[]>([]);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [replaceKeys, setReplaceKeys] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setErr(null);
+    void app.ListCCSwitchProviderCandidates()
+      .then((items) => {
+        if (cancelled) return;
+        const normalized = items.map((item) => ({
+          ...item,
+          models: asArray(item.models),
+          reasons: asArray(item.reasons),
+          authScheme: item.authScheme ?? "",
+        }));
+        setCandidates(normalized);
+        setSelected(new Set(normalized.filter((item) => item.importable && item.recommended).map((item) => item.id)));
+      })
+      .catch((e) => {
+        if (!cancelled) setErr(String((e as Error)?.message ?? e));
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const toggle = (id: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const selectedIDs = Array.from(selected);
+  const disabled = busy || loading;
+
+  const runImport = async () => {
+    await onImport(selectedIDs, replaceKeys);
+  };
+
+  return (
+    <div className="provider-import-panel">
+      <div className="provider-add-panel__hint">{t("settings.importCCSwitch.hint")}</div>
+      {loading && <div className="provider-card-status">{t("settings.importCCSwitch.loading")}</div>}
+      {err && <div className="provider-card-status provider-card-status--warn">{err}</div>}
+      {!loading && !err && candidates.length === 0 && (
+        <div className="provider-card-status provider-card-status--warn">{t("settings.importCCSwitch.empty")}</div>
+      )}
+      {!loading && candidates.length > 0 && (
+        <div className="provider-import-list" role="list">
+          {candidates.map((candidate) => (
+            <label className={`provider-import-row${candidate.importable ? "" : " provider-import-row--disabled"}`} key={candidate.id}>
+              <input
+                type="checkbox"
+                checked={selected.has(candidate.id)}
+                disabled={disabled || !candidate.importable}
+                onChange={() => toggle(candidate.id)}
+              />
+              <span className="provider-import-row__main">
+                <span className="provider-import-row__title">
+                  <strong>{candidate.name || candidate.id}</strong>
+                  <span className={`badge ${candidate.importable ? "badge--project" : "badge--feedback"}`}>
+                    {providerImportStatusLabel(candidate, t)}
+                  </span>
+                </span>
+                <span className="provider-import-row__meta">
+                  <span>{candidate.appType || "-"}</span>
+                  <span>{candidate.kind || "-"}</span>
+                  <span>{candidate.host || "-"}</span>
+                  <span>{t("settings.importCCSwitch.modelCount", { n: candidate.models.length })}</span>
+                  <span>{candidate.keyPresent ? t("settings.importCCSwitch.keyPresent") : t("settings.importCCSwitch.keyMissing")}</span>
+                </span>
+                <span className="provider-import-row__target">{candidate.targetName || candidate.apiKeyEnv || candidate.reasons.join(", ")}</span>
+              </span>
+            </label>
+          ))}
+        </div>
+      )}
+      <label className="set-check">
+        <input
+          type="checkbox"
+          checked={replaceKeys}
+          disabled={busy}
+          onChange={(event) => setReplaceKeys(event.target.checked)}
+        />
+        {t("settings.importCCSwitch.replaceKeys")}
+      </label>
+      <div className="prov-card__actions">
+        <button type="button" className="btn btn--small" disabled={busy} onClick={onCancel}>
+          {t("common.cancel")}
+        </button>
+        <button type="button" className="btn btn--primary btn--small" disabled={disabled || selectedIDs.length === 0} onClick={() => void runImport()}>
+          {t("settings.importCCSwitch.confirm")}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function providerImportStatusLabel(candidate: ProviderImportCandidate, t: ReturnType<typeof useT>): string {
+  if (candidate.importable) return t("settings.importCCSwitch.status.ready");
+  switch (candidate.status) {
+    case "unsupported":
+      return t("settings.importCCSwitch.status.unsupported");
+    case "invalid":
+      return t("settings.importCCSwitch.status.invalid");
+    case "missing_key":
+      return t("settings.importCCSwitch.status.missingKey");
+    default:
+      return candidate.status || t("settings.importCCSwitch.status.skipped");
+  }
 }
 
 function ProviderAccessCard({
@@ -4361,6 +4524,7 @@ function ProviderEditor({
         visionModelsConfigured: false,
         default: "",
         apiKeyEnv: effectiveApiKeyEnv,
+        authScheme: initial?.authScheme ?? "",
         keySet: Boolean(keyDraft.trim()) || (initial?.keySet ?? false),
         balanceUrl: balanceUrl.trim(),
         contextWindow: Number(ctx) || 0,
@@ -4401,6 +4565,7 @@ function ProviderEditor({
       visionModelsConfigured: visionModelsConfigured || vms.length > 0,
       default: ms[0] ?? "",
       apiKeyEnv: effectiveApiKeyEnv,
+      authScheme: initial?.authScheme ?? "",
       modelsUrl,
       keySet: Boolean(keyDraft.trim()) || (initial?.keySet ?? false),
       balanceUrl: balanceUrl.trim(),

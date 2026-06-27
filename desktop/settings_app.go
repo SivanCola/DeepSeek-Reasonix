@@ -37,6 +37,7 @@ type ProviderView struct {
 	ModelsURL         string   `json:"modelsUrl"`
 	Default           string   `json:"default"`
 	APIKeyEnv         string   `json:"apiKeyEnv"`
+	AuthScheme        string   `json:"authScheme"`
 	KeySet            bool     `json:"keySet"` // the env var currently resolves to a non-empty value
 	RequiresKey       bool     `json:"requiresKey"`
 	Configured        bool     `json:"configured"` // selectable: either key is present or no key is required
@@ -308,6 +309,7 @@ func providerViewFromEntryForRootWithResolver(p config.ProviderEntry, builtIn, a
 		Name: p.Name, BuiltIn: builtIn, Added: added, Kind: p.Kind, BaseURL: p.BaseURL,
 		Models: nonNil(models), VisionModels: nonNil(providerVisionModels(models, visionModels)), VisionModelsSet: visionModelsSet, ModelsURL: p.ModelsURL, Default: p.DefaultModel(),
 		APIKeyEnv:         p.APIKeyEnv,
+		AuthScheme:        p.AuthScheme,
 		KeySet:            key.Set,
 		RequiresKey:       requiresKey,
 		Configured:        !requiresKey || key.Set,
@@ -1225,6 +1227,7 @@ func (a *App) SaveProvider(p ProviderView) error {
 		e.BaseURL = p.BaseURL
 		e.ModelsURL = p.ModelsURL
 		e.APIKeyEnv = p.APIKeyEnv
+		e.AuthScheme = strings.TrimSpace(p.AuthScheme)
 		e.BalanceURL = strings.TrimSpace(p.BalanceURL)
 		e.ContextWindow = p.ContextWindow
 		e.ReasoningProtocol = p.ReasoningProtocol
@@ -1294,6 +1297,38 @@ func (a *App) AddOfficialProviderAccess(kind, key string) (string, error) {
 		return "", err
 	}
 	return keyWarning, nil
+}
+
+func (a *App) ListCCSwitchProviderCandidates() ([]config.ProviderImportCandidate, error) {
+	candidates, err := config.LoadCCSwitchProviderCandidates()
+	if err != nil {
+		return []config.ProviderImportCandidate{}, err
+	}
+	return candidates, nil
+}
+
+func (a *App) ImportCCSwitchProviders(ids []string, replaceKeys bool) (config.ProviderImportResult, error) {
+	if err := a.ensureActiveTabRebuildAllowed("provider import"); err != nil {
+		return config.ProviderImportResult{}, err
+	}
+	cfg, path, err := a.loadDesktopUserConfigForEdit()
+	if err != nil {
+		return config.ProviderImportResult{}, err
+	}
+	result, err := config.ImportCCSwitchProvidersIntoConfig(cfg, ids, replaceKeys)
+	if err != nil {
+		return result, err
+	}
+	if result.Imported == 0 {
+		return result, nil
+	}
+	if err := cfg.SaveTo(path); err != nil {
+		return result, err
+	}
+	if err := a.rebuild(); err != nil {
+		return result, err
+	}
+	return result, nil
 }
 
 // FetchProviderModels probes the provider's OpenAI-compatible model-list

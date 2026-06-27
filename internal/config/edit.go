@@ -474,6 +474,11 @@ func validateProvider(e ProviderEntry) error {
 	case !providerHasAnyModel(e):
 		return fmt.Errorf("provider %q: model is required", e.Name)
 	}
+	switch strings.ToLower(strings.TrimSpace(e.AuthScheme)) {
+	case "", "x-api-key", "bearer":
+	default:
+		return fmt.Errorf("provider %q: auth_scheme must be empty, x-api-key, or bearer", e.Name)
+	}
 	return nil
 }
 

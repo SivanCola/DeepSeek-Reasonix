@@ -732,6 +732,7 @@ export interface ProviderView {
   modelsUrl: string; // optional override for model discovery; empty derives from baseUrl
   default: string;
   apiKeyEnv: string;
+  authScheme: string;
   keySet: boolean; // the env var currently resolves to a value
   requiresKey?: boolean; // false for explicit no-auth providers
   configured?: boolean; // selectable: key is set or no key is required
@@ -742,6 +743,43 @@ export interface ProviderView {
   reasoningProtocol: string; // auto|deepseek|openai|none; empty = auto/model registry
   supportedEfforts: string[]; // custom /effort levels; empty = use built-in Kind/BaseURL default
   defaultEffort: string; // /effort level when user picks "auto" or unset; "" = supportedEfforts[0]
+}
+
+export interface ProviderImportCandidate {
+  id: string;
+  sourceId: string;
+  appType: string;
+  name: string;
+  kind: string;
+  baseUrl: string;
+  host: string;
+  models: string[];
+  default: string;
+  targetName: string;
+  apiKeyEnv: string;
+  authScheme?: string;
+  keyPresent: boolean;
+  importable: boolean;
+  recommended: boolean;
+  status: string;
+  reasons: string[];
+}
+
+export interface ProviderImportSkipped {
+  id: string;
+  name: string;
+  reason: string;
+}
+
+export interface ProviderImportResult {
+  total: number;
+  imported: number;
+  added: number;
+  updated: number;
+  skipped: number;
+  keyImported: number;
+  keySkipped: number;
+  skippedCandidates: ProviderImportSkipped[];
 }
 
 // BalanceInfo is the wallet-balance readout (desktop/app.go Balance). available

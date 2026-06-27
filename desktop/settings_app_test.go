@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -485,6 +486,86 @@ func TestOfficialDeepSeekTemplateDefaultsToRMBPricing(t *testing.T) {
 	}
 	if got.Prices["deepseek-v4-pro"] == nil || got.Prices["deepseek-v4-pro"].Currency != "¥" || got.Prices["deepseek-v4-pro"].Output != 6 {
 		t.Fatalf("deepseek-v4-pro price = %+v, want RMB pricing", got.Prices["deepseek-v4-pro"])
+	}
+}
+
+func TestListCCSwitchProviderCandidatesDoesNotLeakKeys(t *testing.T) {
+	home := isolateDesktopUserDirs(t)
+	dbPath := createDesktopCCSwitchProviderDB(t, home)
+	desktopSQLiteExec(t, dbPath, `INSERT INTO providers (id, app_type, name, settings_config, provider_type) VALUES (
+		'work',
+		'codex',
+		'Work Gateway',
+		'{"env":{"OPENAI_MODEL":"gpt-5"},"auth":{"OPENAI_API_KEY":"sk-secret-test"}}',
+		''
+	);
+	INSERT INTO provider_endpoints (provider_id, app_type, url) VALUES ('work', 'codex', 'https://gateway.example.test/v1');`)
+
+	candidates, err := NewApp().ListCCSwitchProviderCandidates()
+	if err != nil {
+		t.Fatalf("ListCCSwitchProviderCandidates: %v", err)
+	}
+	data, err := json.Marshal(candidates)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "sk-secret-test") {
+		t.Fatalf("candidate JSON leaked API key: %s", data)
+	}
+	if len(candidates) != 1 || !candidates[0].KeyPresent || !candidates[0].Importable {
+		t.Fatalf("candidates = %+v", candidates)
+	}
+}
+
+func TestImportCCSwitchProvidersAddsAccessWithoutChangingDefaults(t *testing.T) {
+	home := isolateDesktopUserDirs(t)
+	dbPath := createDesktopCCSwitchProviderDB(t, home)
+	desktopSQLiteExec(t, dbPath, `INSERT INTO providers (id, app_type, name, settings_config, provider_type) VALUES (
+		'deepseek-official',
+		'codex',
+		'DeepSeek Official',
+		'{"env":{"OPENAI_BASE_URL":"https://api.deepseek.com/v1","OPENAI_MODEL":"deepseek-chat"},"auth":{"OPENAI_API_KEY":"sk-deepseek"}}',
+		''
+	);
+	INSERT INTO providers (id, app_type, name, settings_config, provider_type) VALUES (
+		'work',
+		'codex',
+		'Work Gateway',
+		'{"env":{"OPENAI_MODEL":"gpt-5"},"auth":{"OPENAI_API_KEY":"sk-work"}}',
+		''
+	);
+	INSERT INTO provider_endpoints (provider_id, app_type, url) VALUES ('work', 'codex', 'https://gateway.example.test/v1');`)
+
+	cfg := config.LoadForEdit(config.UserConfigPath())
+	cfg.DefaultModel = "deepseek/deepseek-v4-flash"
+	if err := cfg.SaveTo(config.UserConfigPath()); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := NewApp().ImportCCSwitchProviders(nil, false)
+	if err != nil {
+		t.Fatalf("ImportCCSwitchProviders: %v", err)
+	}
+	if result.Imported != 2 || result.Skipped != 0 {
+		t.Fatalf("result = %+v", result)
+	}
+	got := config.LoadForEdit(config.UserConfigPath())
+	if got.DefaultModel != "deepseek/deepseek-v4-flash" {
+		t.Fatalf("default model changed to %q", got.DefaultModel)
+	}
+	if _, ok := got.Provider("ccswitch-deepseek-official"); ok {
+		t.Fatal("official DeepSeek import created a custom ccswitch provider")
+	}
+	deepseek, ok := got.Provider("deepseek")
+	if !ok || deepseek.BaseURL != "https://api.deepseek.com" || deepseek.APIKeyEnv != "DEEPSEEK_API_KEY" {
+		t.Fatalf("deepseek provider = %+v ok=%v", deepseek, ok)
+	}
+	if _, ok := got.Provider("ccswitch-work-gateway"); !ok {
+		t.Fatalf("missing imported custom provider: %+v", got.Providers)
+	}
+	access := providerAccessSet(got.Desktop.ProviderAccess)
+	if !access["deepseek"] || !access["ccswitch-work-gateway"] {
+		t.Fatalf("provider_access = %+v", got.Desktop.ProviderAccess)
 	}
 }
 
@@ -999,5 +1080,38 @@ func TestSaveHooksSettingsForRootUsesDisplayedProjectRoot(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(projectB, ".reasonix", "settings.json")); err == nil {
 		t.Fatal("active project root was written instead of displayed project root")
+	}
+}
+
+func createDesktopCCSwitchProviderDB(t *testing.T, home string) string {
+	t.Helper()
+	if _, err := exec.LookPath("sqlite3"); err != nil {
+		t.Skip("sqlite3 not available")
+	}
+	root := filepath.Join(home, ".cc-switch")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	dbPath := filepath.Join(root, "cc-switch.db")
+	desktopSQLiteExec(t, dbPath, `CREATE TABLE providers (
+		id TEXT PRIMARY KEY,
+		app_type TEXT NOT NULL,
+		name TEXT NOT NULL,
+		settings_config TEXT,
+		provider_type TEXT
+	);
+	CREATE TABLE provider_endpoints (
+		provider_id TEXT NOT NULL,
+		app_type TEXT NOT NULL,
+		url TEXT NOT NULL
+	);`)
+	return dbPath
+}
+
+func desktopSQLiteExec(t *testing.T, path, query string) {
+	t.Helper()
+	out, err := exec.Command("sqlite3", path, query).CombinedOutput()
+	if err != nil {
+		t.Fatalf("sqlite3 %s: %v\n%s", path, err, out)
 	}
 }

@@ -52,6 +52,11 @@ const (
 	defaultMaxTokens = 32768
 )
 
+const (
+	authSchemeXAPIKey = "x-api-key"
+	authSchemeBearer  = "bearer"
+)
+
 func init() {
 	provider.Register("anthropic", New)
 }
@@ -71,6 +76,16 @@ func New(cfg provider.Config) (provider.Provider, error) {
 	}
 	keyEnv, _ := cfg.Extra["api_key_env"].(string) // for actionable auth errors
 	keySource, _ := cfg.Extra["api_key_source"].(string)
+	authScheme, _ := cfg.Extra["auth_scheme"].(string)
+	authScheme = strings.ToLower(strings.TrimSpace(authScheme))
+	if authScheme == "" {
+		authScheme = authSchemeXAPIKey
+	}
+	switch authScheme {
+	case authSchemeXAPIKey, authSchemeBearer:
+	default:
+		return nil, fmt.Errorf("anthropic: auth_scheme %q is not supported (want x-api-key or bearer)", authScheme)
+	}
 	thinking, _ := cfg.Extra["thinking"].(string)
 	effort, _ := cfg.Extra["effort"].(string)
 	vision, _ := cfg.Extra["vision"].(bool)
@@ -98,6 +113,7 @@ func New(cfg provider.Config) (provider.Provider, error) {
 		apiKey:      cfg.APIKey,
 		keyEnv:      keyEnv,
 		keySource:   keySource,
+		authScheme:  authScheme,
 		baseURL:     root,
 		model:       cfg.Model,
 		thinking:    thinking,
@@ -118,6 +134,7 @@ type client struct {
 	apiKey      string
 	keyEnv      string // api_key_env name, surfaced in auth errors
 	keySource   string // source of keyEnv, surfaced in auth errors
+	authScheme  string // x-api-key (default) or bearer for Anthropic-compatible gateways
 	baseURL     string
 	model       string
 	thinking    string // "adaptive" enables extended thinking; "" = off (config-driven)
@@ -164,7 +181,7 @@ func (c *client) Stream(ctx context.Context, req provider.Request) (<-chan provi
 		}
 		httpReq.Header.Set("Content-Type", "application/json")
 		httpReq.Header.Set("Accept", "text/event-stream")
-		httpReq.Header.Set("x-api-key", c.apiKey)
+		c.setAuthHeader(httpReq)
 		httpReq.Header.Set("anthropic-version", anthropicVersion)
 		return httpReq, nil
 	}
@@ -177,6 +194,15 @@ func (c *client) Stream(ctx context.Context, req provider.Request) (<-chan provi
 	out := make(chan provider.Chunk)
 	go c.readStream(ctx, resp, out)
 	return out, nil
+}
+
+func (c *client) setAuthHeader(req *http.Request) {
+	switch c.authScheme {
+	case authSchemeBearer:
+		req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	default:
+		req.Header.Set("x-api-key", c.apiKey)
+	}
 }
 
 // buildRequest converts the transport-agnostic Request into the Messages API shape:

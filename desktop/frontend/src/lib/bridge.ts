@@ -47,6 +47,8 @@ import type {
   ProjectNode,
   PromptHistoryEntry,
   PromptHistoryResult,
+  ProviderImportCandidate,
+  ProviderImportResult,
   ProviderView,
   QuestionAnswer,
   ServerView,
@@ -260,6 +262,8 @@ export interface AppBindings {
   SetDefaultToolApprovalMode(mode: string): Promise<void>;
   SaveProvider(p: ProviderView): Promise<void>;
   AddOfficialProviderAccess(kind: string, key: string): Promise<string>;
+  ListCCSwitchProviderCandidates(): Promise<ProviderImportCandidate[]>;
+  ImportCCSwitchProviders(ids: string[], replaceKeys: boolean): Promise<ProviderImportResult>;
   FetchProviderModels(p: ProviderView): Promise<string[]>;
   DeleteProvider(name: string): Promise<void>;
   RemoveProviderAccess(name: string): Promise<void>;
@@ -835,10 +839,10 @@ function makeMockApp(): AppBindings {
     subagentEffort: "",
     autoPlan: "off",
     providers: [
-      { name: "deepseek", builtIn: true, added: false, kind: "openai", baseUrl: "https://api.deepseek.com", modelsUrl: "", models: ["deepseek-v4-flash"], visionModels: [], visionModelsConfigured: false, default: "deepseek-v4-flash", apiKeyEnv: "DEEPSEEK_API_KEY", keySet: true, balanceUrl: "https://api.deepseek.com/user/balance", contextWindow: 1_000_000, reasoningProtocol: "", supportedEfforts: [], defaultEffort: "" },
+      { name: "deepseek", builtIn: true, added: false, kind: "openai", baseUrl: "https://api.deepseek.com", modelsUrl: "", models: ["deepseek-v4-flash"], visionModels: [], visionModelsConfigured: false, default: "deepseek-v4-flash", apiKeyEnv: "DEEPSEEK_API_KEY", authScheme: "", keySet: true, balanceUrl: "https://api.deepseek.com/user/balance", contextWindow: 1_000_000, reasoningProtocol: "", supportedEfforts: [], defaultEffort: "" },
     ],
     officialProviders: [
-      { name: "deepseek", builtIn: true, added: false, kind: "openai", baseUrl: "https://api.deepseek.com", modelsUrl: "", models: ["deepseek-v4-flash", "deepseek-v4-pro"], visionModels: [], visionModelsConfigured: false, default: "deepseek-v4-flash", apiKeyEnv: "DEEPSEEK_API_KEY", keySet: true, balanceUrl: "https://api.deepseek.com/user/balance", contextWindow: 1_000_000, reasoningProtocol: "", supportedEfforts: [], defaultEffort: "" },
+      { name: "deepseek", builtIn: true, added: false, kind: "openai", baseUrl: "https://api.deepseek.com", modelsUrl: "", models: ["deepseek-v4-flash", "deepseek-v4-pro"], visionModels: [], visionModelsConfigured: false, default: "deepseek-v4-flash", apiKeyEnv: "DEEPSEEK_API_KEY", authScheme: "", keySet: true, balanceUrl: "https://api.deepseek.com/user/balance", contextWindow: 1_000_000, reasoningProtocol: "", supportedEfforts: [], defaultEffort: "" },
     ],
     permissions: { mode: "ask", allow: ["ls", "read_file"], ask: [], deny: ["Bash(rm:*)"] },
     sandbox: { bash: "enforce", network: true, workspaceRoot: "", allowWrite: [], shell: "auto" },
@@ -969,10 +973,69 @@ function makeMockApp(): AppBindings {
     metrics: true,
     memoryCompilerEnabled: true,
     configPath: "~/projects/reasonix/reasonix.toml",
-    providerKinds: ["openai"],
+    providerKinds: ["openai", "anthropic"],
     autoApproveTools: false,
     bypass: false,
   };
+  const ccSwitchCandidates: ProviderImportCandidate[] = [
+    {
+      id: "codex:mock-openai",
+      sourceId: "mock-openai",
+      appType: "codex",
+      name: "Work Gateway",
+      kind: "openai",
+      baseUrl: "https://gateway.example.test/v1",
+      host: "gateway.example.test",
+      models: ["gpt-5", "gpt-5-mini"],
+      default: "gpt-5",
+      targetName: "ccswitch-work-gateway",
+      apiKeyEnv: "REASONIX_CC_SWITCH_WORK_GATEWAY_API_KEY",
+      authScheme: "",
+      keyPresent: true,
+      importable: true,
+      recommended: true,
+      status: "ready",
+      reasons: ["recommended"],
+    },
+    {
+      id: "claude:mock-claude",
+      sourceId: "mock-claude",
+      appType: "claude",
+      name: "Claude Proxy",
+      kind: "anthropic",
+      baseUrl: "https://claude-proxy.example.test",
+      host: "claude-proxy.example.test",
+      models: ["claude-sonnet-4-5"],
+      default: "claude-sonnet-4-5",
+      targetName: "ccswitch-claude-proxy",
+      apiKeyEnv: "REASONIX_CC_SWITCH_CLAUDE_PROXY_API_KEY",
+      authScheme: "bearer",
+      keyPresent: true,
+      importable: true,
+      recommended: true,
+      status: "ready",
+      reasons: ["recommended"],
+    },
+    {
+      id: "gemini:mock-gemini",
+      sourceId: "mock-gemini",
+      appType: "gemini",
+      name: "Gemini",
+      kind: "gemini",
+      baseUrl: "",
+      host: "",
+      models: ["gemini-2.5-pro"],
+      default: "gemini-2.5-pro",
+      targetName: "",
+      apiKeyEnv: "",
+      authScheme: "",
+      keyPresent: true,
+      importable: false,
+      recommended: false,
+      status: "unsupported",
+      reasons: ["gemini is not supported yet"],
+    },
+  ];
   const hookEvents = ["PreToolUse", "PostToolUse", "UserPromptSubmit", "Stop", "PostLLMCall", "SessionStart", "SessionEnd", "SubagentStop", "Notification", "PreCompact"];
   const hookSettings: Record<string, HooksSettingsView> = {
     global: {
@@ -2537,7 +2600,7 @@ function makeMockApp(): AppBindings {
     },
     async AddOfficialProviderAccess(kind: string, key: string) {
       const templates: Record<string, ProviderView> = {
-        deepseek: { name: "deepseek", builtIn: true, added: true, kind: "openai", baseUrl: "https://api.deepseek.com", modelsUrl: "", models: ["deepseek-v4-flash", "deepseek-v4-pro"], visionModels: [], visionModelsConfigured: false, default: "deepseek-v4-flash", apiKeyEnv: "DEEPSEEK_API_KEY", keySet: !!key.trim(), balanceUrl: "https://api.deepseek.com/user/balance", contextWindow: 1_000_000, reasoningProtocol: "", supportedEfforts: [], defaultEffort: "" },
+        deepseek: { name: "deepseek", builtIn: true, added: true, kind: "openai", baseUrl: "https://api.deepseek.com", modelsUrl: "", models: ["deepseek-v4-flash", "deepseek-v4-pro"], visionModels: [], visionModelsConfigured: false, default: "deepseek-v4-flash", apiKeyEnv: "DEEPSEEK_API_KEY", authScheme: "", keySet: !!key.trim(), balanceUrl: "https://api.deepseek.com/user/balance", contextWindow: 1_000_000, reasoningProtocol: "", supportedEfforts: [], defaultEffort: "" },
       };
       const next = templates[kind];
       if (!next) throw new Error(`unknown official provider template ${kind}`);
@@ -2545,6 +2608,52 @@ function makeMockApp(): AppBindings {
       if (i >= 0) settings.providers[i] = { ...settings.providers[i], ...next, keySet: next.keySet || settings.providers[i].keySet };
       else settings.providers.push(next);
       return "";
+    },
+    async ListCCSwitchProviderCandidates() {
+      return JSON.parse(JSON.stringify(ccSwitchCandidates));
+    },
+    async ImportCCSwitchProviders(ids: string[], replaceKeys: boolean) {
+      const selected = new Set(ids);
+      const result: ProviderImportResult = { total: ccSwitchCandidates.length, imported: 0, added: 0, updated: 0, skipped: 0, keyImported: 0, keySkipped: 0, skippedCandidates: [] };
+      for (const candidate of ccSwitchCandidates) {
+        if (!selected.has(candidate.id)) continue;
+        if (!candidate.importable) {
+          result.skipped += 1;
+          result.skippedCandidates.push({ id: candidate.id, name: candidate.name, reason: candidate.reasons.join(", ") || candidate.status });
+          continue;
+        }
+        const provider: ProviderView = {
+          name: candidate.targetName,
+          builtIn: candidate.targetName === "deepseek",
+          added: true,
+          kind: candidate.kind,
+          baseUrl: candidate.targetName === "deepseek" ? "https://api.deepseek.com" : candidate.baseUrl,
+          modelsUrl: "",
+          models: candidate.models,
+          visionModels: [],
+          visionModelsConfigured: false,
+          default: candidate.default || candidate.models[0] || "",
+          apiKeyEnv: candidate.apiKeyEnv,
+          authScheme: candidate.authScheme ?? "",
+          keySet: candidate.keyPresent || replaceKeys,
+          balanceUrl: candidate.targetName === "deepseek" ? "https://api.deepseek.com/user/balance" : "",
+          contextWindow: candidate.targetName === "deepseek" ? 1_000_000 : 0,
+          reasoningProtocol: "",
+          supportedEfforts: [],
+          defaultEffort: "",
+        };
+        const i = settings.providers.findIndex((x) => x.name === provider.name);
+        if (i >= 0) {
+          settings.providers[i] = { ...settings.providers[i], ...provider, keySet: provider.keySet || settings.providers[i].keySet };
+          result.updated += 1;
+        } else {
+          settings.providers.push(provider);
+          result.added += 1;
+        }
+        result.imported += 1;
+        result.keyImported += candidate.keyPresent ? 1 : 0;
+      }
+      return result;
     },
     async FetchProviderModels(p: ProviderView) {
       if (!p.baseUrl.trim()) throw new Error(t("settings.fetchModelsMissingBaseUrl"));

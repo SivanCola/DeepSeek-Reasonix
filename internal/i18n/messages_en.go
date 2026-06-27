@@ -388,6 +388,7 @@ Usage:
   reasonix config memory-v5 [off|on|status]             configure Memory v5
   reasonix config reasoning-language [auto|zh|en]        configure visible reasoning language
   reasonix mcp <add|remove|list|import>                 manage MCP servers in reasonix.toml
+  reasonix provider import cc-switch [--dry-run]         import providers from cc-switch
   reasonix init                                         show how to generate project memory (AGENTS.md)
   reasonix doctor [--json]                              print redacted local diagnostics
   reasonix bot start|doctor|weixin-login                multi-channel IM bot gateway

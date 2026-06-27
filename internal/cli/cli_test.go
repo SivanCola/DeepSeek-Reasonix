@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -422,6 +423,40 @@ command = "legacy-bin"
 		if !strings.Contains(string(body), want) {
 			t.Fatalf("migrated config missing %q:\n%s", want, body)
 		}
+	}
+}
+
+func TestProviderImportCCSwitchDryRunDoesNotWriteConfig(t *testing.T) {
+	home := isolateCLIConfigHome(t)
+	createCLICCSwitchProviderDB(t, home)
+	out := captureStdout(t, func() {
+		if rc := Run([]string{"provider", "import", "cc-switch", "--dry-run"}, "test-version"); rc != 0 {
+			t.Fatalf("provider import dry-run rc = %d, want 0", rc)
+		}
+	})
+	if !strings.Contains(out, "Work Gateway") || !strings.Contains(out, "importable") {
+		t.Fatalf("dry-run output = %q", out)
+	}
+	if _, err := os.Stat(config.UserConfigPath()); !os.IsNotExist(err) {
+		t.Fatalf("dry-run should not write config, stat err=%v", err)
+	}
+}
+
+func TestProviderImportCCSwitchWritesProvider(t *testing.T) {
+	home := isolateCLIConfigHome(t)
+	createCLICCSwitchProviderDB(t, home)
+	out := captureStdout(t, func() {
+		if rc := Run([]string{"provider", "import", "cc-switch"}, "test-version"); rc != 0 {
+			t.Fatalf("provider import rc = %d, want 0", rc)
+		}
+	})
+	if !strings.Contains(out, "imported 1 providers") {
+		t.Fatalf("import output = %q", out)
+	}
+	cfg := config.LoadForEdit("reasonix.toml")
+	p, ok := cfg.Provider("ccswitch-work-gateway")
+	if !ok || p.Kind != "openai" || p.APIKeyEnv != "REASONIX_CC_SWITCH_WORK_GATEWAY_API_KEY" {
+		t.Fatalf("imported provider = %+v ok=%v", p, ok)
 	}
 }
 
@@ -1358,6 +1393,46 @@ func captureStderr(t *testing.T, fn func()) string {
 		t.Fatal(err)
 	}
 	return string(data)
+}
+
+func createCLICCSwitchProviderDB(t *testing.T, home string) {
+	t.Helper()
+	if _, err := exec.LookPath("sqlite3"); err != nil {
+		t.Skip("sqlite3 not available")
+	}
+	root := filepath.Join(home, ".cc-switch")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	dbPath := filepath.Join(root, "cc-switch.db")
+	cliSQLiteExec(t, dbPath, `CREATE TABLE providers (
+		id TEXT PRIMARY KEY,
+		app_type TEXT NOT NULL,
+		name TEXT NOT NULL,
+		settings_config TEXT,
+		provider_type TEXT
+	);
+	CREATE TABLE provider_endpoints (
+		provider_id TEXT NOT NULL,
+		app_type TEXT NOT NULL,
+		url TEXT NOT NULL
+	);
+	INSERT INTO providers (id, app_type, name, settings_config, provider_type) VALUES (
+		'work',
+		'codex',
+		'Work Gateway',
+		'{"env":{"OPENAI_MODEL":"gpt-5"},"auth":{"OPENAI_API_KEY":"sk-work"}}',
+		''
+	);
+	INSERT INTO provider_endpoints (provider_id, app_type, url) VALUES ('work', 'codex', 'https://gateway.example.test/v1');`)
+}
+
+func cliSQLiteExec(t *testing.T, path, query string) {
+	t.Helper()
+	out, err := exec.Command("sqlite3", path, query).CombinedOutput()
+	if err != nil {
+		t.Fatalf("sqlite3 %s: %v\n%s", path, err, out)
+	}
 }
 
 func TestProvidersWithMissingKeysOnlyReferenced(t *testing.T) {

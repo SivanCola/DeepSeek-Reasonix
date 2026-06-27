@@ -868,14 +868,17 @@ func (c *Config) MemoryCompilerEnabled() bool {
 // token budget; the harness compacts older history as a turn's prompt approaches
 // it (see agent compaction). 0 disables compaction for the instance.
 type ProviderEntry struct {
-	Name           string   `toml:"name"`
-	Kind           string   `toml:"kind"`
-	BaseURL        string   `toml:"base_url"`
-	Model          string   `toml:"model"`      // a single model (back-compat)
-	Models         []string `toml:"models"`     // a vendor's model list (one base_url/key, many models)
-	ModelsURL      string   `toml:"models_url"` // auto-fetch models from this URL on startup
-	Default        string   `toml:"default"`    // default model when Models is set (else Models[0])
-	APIKeyEnv      string   `toml:"api_key_env"`
+	Name      string   `toml:"name"`
+	Kind      string   `toml:"kind"`
+	BaseURL   string   `toml:"base_url"`
+	Model     string   `toml:"model"`      // a single model (back-compat)
+	Models    []string `toml:"models"`     // a vendor's model list (one base_url/key, many models)
+	ModelsURL string   `toml:"models_url"` // auto-fetch models from this URL on startup
+	Default   string   `toml:"default"`    // default model when Models is set (else Models[0])
+	APIKeyEnv string   `toml:"api_key_env"`
+	// AuthScheme selects how APIKeyEnv is sent by provider implementations that
+	// support multiple auth headers. Empty keeps the provider default.
+	AuthScheme     string `toml:"auth_scheme"`
 	resolvedAPIKey string
 	resolvedSource CredentialSource
 	BalanceURL     string                       `toml:"balance_url"` // optional; a provider-specific wallet-balance endpoint (DeepSeek: https://api.deepseek.com/user/balance). Empty = no balance readout.

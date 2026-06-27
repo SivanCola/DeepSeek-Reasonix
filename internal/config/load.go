@@ -1016,6 +1016,7 @@ func officialProviderFromLegacy(entry ProviderEntry, old *ProviderEntry) Provide
 	entry.BaseURL = old.BaseURL
 	entry.ModelsURL = old.ModelsURL
 	entry.APIKeyEnv = old.APIKeyEnv
+	entry.AuthScheme = old.AuthScheme
 	entry.BalanceURL = old.BalanceURL
 	entry.ContextWindow = old.ContextWindow
 	entry.Price = old.Price
