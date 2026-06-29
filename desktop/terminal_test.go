@@ -1,6 +1,7 @@
 package main
 
 import (
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -25,15 +26,26 @@ func TestInteractiveShellArgv(t *testing.T) {
 }
 
 func TestResolveInteractiveShellPrefersLoginShell(t *testing.T) {
-	t.Setenv("SHELL", "/bin/zsh")
+	shellPath := os.Getenv("SHELL")
+	if shellPath == "" {
+		shellPath = "/bin/bash"
+	}
+	if _, err := os.Stat(shellPath); err != nil {
+		shellPath = "/usr/bin/bash"
+	}
+	t.Setenv("SHELL", shellPath)
 	sh := resolveInteractiveShell("auto", "", "")
-	if !strings.Contains(sh.Path, "zsh") {
-		t.Fatalf("login shell = %#v, want zsh", sh)
+	if sh.Path != shellPath {
+		t.Fatalf("login shell = %#v, want %s", sh, shellPath)
 	}
 }
 
 func TestResolveInteractiveShellSessionOverride(t *testing.T) {
-	t.Setenv("SHELL", "/bin/zsh")
+	shellPath := os.Getenv("SHELL")
+	if shellPath == "" {
+		shellPath = "/bin/bash"
+	}
+	t.Setenv("SHELL", shellPath)
 	sh := resolveInteractiveShell("auto", "", "bash")
 	if !strings.Contains(sh.Path, "bash") {
 		t.Fatalf("session override = %#v, want bash", sh)
