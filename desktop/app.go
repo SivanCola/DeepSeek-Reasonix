@@ -152,6 +152,8 @@ type App struct {
 	skillRootsCache skillRootsCache
 
 	heartbeat *HeartbeatEngine // scheduled heartbeat tasks; nil until startup
+
+	terminals *terminalManager
 }
 
 type skillRootsCache struct {
@@ -355,6 +357,7 @@ func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
 	installSystemQuitHook()
 	a.startTray()
+	a.terminals = newTerminalManager(a)
 
 	if cfg, err := config.Load(); err == nil && cfg.DesktopMetrics() && version != "dev" {
 		a.metrics.Store(newMetricsAggregator(config.MemoryUserDir()))
@@ -641,6 +644,9 @@ func (a *App) snapshotAllTabs() {
 func (a *App) shutdown(context.Context) {
 	if a.heartbeat != nil {
 		a.heartbeat.Stop()
+	}
+	if a.terminals != nil {
+		a.terminals.closeAll()
 	}
 	a.stopBotRuntime()
 	a.stopTray()
