@@ -27,6 +27,15 @@ type notifier interface {
 // dispatch.ts (the full result still goes to the model; this is display only).
 const maxResultChars = 8000
 
+type approvalOptionID string
+
+const (
+	approvalOptionAllowOnce       approvalOptionID = "allow_once"
+	approvalOptionAllowAlways     approvalOptionID = "allow_always"
+	approvalOptionAllowPersistent approvalOptionID = "allow_persistent"
+	approvalOptionRejectOnce      approvalOptionID = "reject_once"
+)
+
 // updateSink is an event.Sink bound to one session that maps the agent's typed
 // event stream onto ACP session/update notifications. It is the v2 counterpart of
 // main's dispatchKernelEvent: where main translated kernel events, we translate
@@ -246,12 +255,12 @@ func (s *updateSink) requestPermission(ctx context.Context, a event.Approval) {
 	if raw, err := s.conn.Request(ctx, "session/request_permission", params); err == nil {
 		var res PermissionRequestResult
 		if json.Unmarshal(raw, &res) == nil && res.Outcome.Outcome == "selected" {
-			switch PermissionOptionKind(res.Outcome.OptionID) {
-			case OptAllowOnce:
+			switch approvalOptionID(res.Outcome.OptionID) {
+			case approvalOptionAllowOnce:
 				allow = true
-			case OptAllowAlways:
+			case approvalOptionAllowAlways:
 				allow, session = true, true
-			case OptAllowPersistent:
+			case approvalOptionAllowPersistent:
 				allow, session, persist = true, true, true
 			}
 		}
@@ -340,10 +349,10 @@ func approvalOptionNames(tool, subject string) (session, persistent string) {
 func approvalOptions(tool, subject string) []PermissionOption {
 	allowSessionName, allowPersistentName := approvalOptionNames(tool, subject)
 	options := []PermissionOption{
-		{OptionID: string(OptAllowOnce), Name: "Allow", Kind: OptAllowOnce},
-		{OptionID: string(OptAllowAlways), Name: allowSessionName, Kind: OptAllowAlways},
-		{OptionID: string(OptAllowPersistent), Name: allowPersistentName, Kind: OptAllowPersistent},
-		{OptionID: string(OptRejectOnce), Name: "Reject", Kind: OptRejectOnce},
+		{OptionID: string(approvalOptionAllowOnce), Name: "Allow", Kind: OptAllowOnce},
+		{OptionID: string(approvalOptionAllowAlways), Name: allowSessionName, Kind: OptAllowAlways},
+		{OptionID: string(approvalOptionAllowPersistent), Name: allowPersistentName, Kind: OptAllowAlways},
+		{OptionID: string(approvalOptionRejectOnce), Name: "Reject", Kind: OptRejectOnce},
 	}
 	return options
 }

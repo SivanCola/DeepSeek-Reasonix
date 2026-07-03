@@ -189,6 +189,30 @@ type approveCall struct {
 	persist bool
 }
 
+func invalidACPv1PermissionOptionKind(options []PermissionOption) (PermissionOption, bool) {
+	// ACP v1 schema only accepts these four PermissionOptionKind values. Reasonix
+	// actions such as persistent approval must stay in optionId.
+	valid := map[PermissionOptionKind]bool{
+		OptAllowOnce:    true,
+		OptAllowAlways:  true,
+		OptRejectOnce:   true,
+		OptRejectAlways: true,
+	}
+	for _, opt := range options {
+		if !valid[opt.Kind] {
+			return opt, true
+		}
+	}
+	return PermissionOption{}, false
+}
+
+func assertACPv1PermissionOptionKinds(t *testing.T, options []PermissionOption) {
+	t.Helper()
+	if opt, ok := invalidACPv1PermissionOptionKind(options); ok {
+		t.Fatalf("permission option %q uses non-ACP-v1 kind %q", opt.OptionID, opt.Kind)
+	}
+}
+
 func TestUpdateSinkApprovalAllowAlways(t *testing.T) {
 	fn := &fakeNotifier{onReq: func(method string, params any) (json.RawMessage, error) {
 		if method != "session/request_permission" {
@@ -208,8 +232,9 @@ func TestUpdateSinkApprovalAllowAlways(t *testing.T) {
 		if p.ToolCall.ToolCallID != "gate-9" {
 			t.Errorf("toolCallId = %q, want gate-9", p.ToolCall.ToolCallID)
 		}
+		assertACPv1PermissionOptionKinds(t, p.Options)
 		res, _ := json.Marshal(PermissionRequestResult{
-			Outcome: PermissionOutcome{Outcome: "selected", OptionID: string(OptAllowAlways)},
+			Outcome: PermissionOutcome{Outcome: "selected", OptionID: string(approvalOptionAllowAlways)},
 		})
 		return res, nil
 	}}
@@ -236,13 +261,14 @@ func TestUpdateSinkApprovalBashPrefix(t *testing.T) {
 		if err := json.Unmarshal(raw, &p); err != nil {
 			t.Fatalf("permission params: %v", err)
 		}
-		// Bash with a safe prefix now uses the same standard options as any
-		// other tool (allow_always / allow_persistent); the old prefix-specific
-		// OptAllowPrefix/OptPersistPrefix are gone.
+		// Bash with a safe prefix now uses the same standard option IDs as any
+		// other tool; Reasonix-specific persistence stays in optionId, while kind
+		// stays inside ACP v1's enum.
+		assertACPv1PermissionOptionKinds(t, p.Options)
 		var hasSession, hasPersistent bool
 		for _, opt := range p.Options {
-			hasSession = hasSession || opt.OptionID == string(OptAllowAlways)
-			hasPersistent = hasPersistent || opt.OptionID == string(OptAllowPersistent)
+			hasSession = hasSession || (opt.OptionID == string(approvalOptionAllowAlways) && opt.Kind == OptAllowAlways)
+			hasPersistent = hasPersistent || (opt.OptionID == string(approvalOptionAllowPersistent) && opt.Kind == OptAllowAlways)
 		}
 		if !hasSession || !hasPersistent {
 			t.Fatalf("options = %+v, want standard session and persistent choices", p.Options)
@@ -251,7 +277,7 @@ func TestUpdateSinkApprovalBashPrefix(t *testing.T) {
 			t.Fatalf("options = %+v, want allow once, session, persistent, reject", p.Options)
 		}
 		res, _ := json.Marshal(PermissionRequestResult{
-			Outcome: PermissionOutcome{Outcome: "selected", OptionID: string(OptAllowPersistent)},
+			Outcome: PermissionOutcome{Outcome: "selected", OptionID: string(approvalOptionAllowPersistent)},
 		})
 		return res, nil
 	}}
@@ -328,6 +354,7 @@ func TestUpdateSinkAskRequestUsesPermissionChoices(t *testing.T) {
 		if len(p.Options) != 3 {
 			t.Fatalf("options = %+v, want two answers plus cancel", p.Options)
 		}
+		assertACPv1PermissionOptionKinds(t, p.Options)
 		if p.Options[0].Name != "Tests - Run the suite" || p.Options[0].Kind != OptAllowOnce {
 			t.Fatalf("first option = %+v", p.Options[0])
 		}
