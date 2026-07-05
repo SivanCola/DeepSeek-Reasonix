@@ -1,9 +1,13 @@
-import { useCallback, useEffect, useState } from "react";
+import { createContext, createElement, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
 import { app, onUpdaterProgress } from "./bridge";
 import type { UpdateInfo } from "./types";
 
 // useUpdater drives the auto-update state machine shared by the top banner and the
 // Settings panel: check, download/verify, then a separate restart/install action.
+// State is lifted into a React context (UpdaterProvider) so UpdateBanner and
+// UpdatesSection share the same lifecycle — a startup check that finds an available
+// update is visible in Settings without a separate manual check, and download
+// progress from either place is reflected everywhere.
 
 export type UpdateStatus =
   | { kind: "idle" }
@@ -30,7 +34,9 @@ function errMsg(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
 
-export function useUpdater(): Updater {
+const UpdaterContext = createContext<Updater | null>(null);
+
+function useUpdaterInternal(): Updater {
   const [status, setStatus] = useState<UpdateStatus>({ kind: "idle" });
 
   // A single long-lived subscription advances the state machine through the apply
@@ -107,4 +113,15 @@ export function useUpdater(): Updater {
   const reset = useCallback(() => setStatus({ kind: "idle" }), []);
 
   return { status, check, download, install, openDownload, reset };
+}
+
+export function UpdaterProvider({ children }: { children: ReactNode }) {
+  const updater = useUpdaterInternal();
+  return createElement(UpdaterContext.Provider, { value: updater, children });
+}
+
+export function useUpdater(): Updater {
+  const ctx = useContext(UpdaterContext);
+  if (!ctx) throw new Error("useUpdater must be used within an UpdaterProvider");
+  return ctx;
 }
