@@ -197,11 +197,14 @@ func (m *terminalManager) create(workspaceRoot, cwd, title, shellPrefer string) 
 func (m *terminalManager) write(id, data string) error {
 	m.mu.Lock()
 	s, ok := m.sessions[id]
+	// Running is read under the same lock waitLoop uses to write it on exit;
+	// reading it after unlock would race the exit transition.
+	running := ok && s.view.Running
 	m.mu.Unlock()
 	if !ok {
 		return fmt.Errorf("terminal session not found: %s", id)
 	}
-	if !s.view.Running {
+	if !running {
 		return fmt.Errorf("terminal session exited: %s", id)
 	}
 	_, err := s.pty.Write([]byte(data))

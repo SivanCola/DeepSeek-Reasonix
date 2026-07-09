@@ -123,3 +123,47 @@ func TestTerminalSessionExits(t *testing.T) {
 	list := app.terminals.list(root)
 	t.Fatalf("session did not exit cleanly: %#v", list)
 }
+
+// TestTerminalManagerWriteDuringExitIsRaceFree drives concurrent write() calls
+// against a session that is exiting at the same time, so waitLoop's locked
+// write to view.Running races with any unlocked read of it in write(). Run
+// with -race: this only fails by detector, not by assertion.
+func TestTerminalManagerWriteDuringExitIsRaceFree(t *testing.T) {
+	if testing.Short() {
+		t.Skip("spawns shell process")
+	}
+	app := &App{terminals: newTerminalManager(&App{})}
+	t.Cleanup(app.terminals.closeAll)
+	root := t.TempDir()
+	id, err := app.terminals.create(root, root, "race-test", "")
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	stop := time.Now().Add(500 * time.Millisecond)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for time.Now().Before(stop) {
+			_ = app.terminals.write(id, "echo hi\n")
+		}
+	}()
+
+	// Give the writer goroutine a head start, then exit mid-flight so its
+	// writes straddle the moment waitLoop flips Running under lock.
+	time.Sleep(20 * time.Millisecond)
+	if err := app.terminals.write(id, "exit 0\n"); err != nil {
+		t.Fatalf("write exit: %v", err)
+	}
+	<-done
+
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		list := app.terminals.list(root)
+		if len(list) == 1 && !list[0].Running {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("session did not exit within deadline")
+}

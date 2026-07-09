@@ -1000,7 +1000,14 @@ function TerminalHotkeys({
     "terminal.newSession",
     () => {
       onToggleTerminal();
-      void ensureReady().then(() => createSession());
+      // ensureReady() already creates a session when the workspace has none
+      // (using a login shell for that first session); calling createSession()
+      // unconditionally afterward would create a second one. Only chain the
+      // extra createSession() when a session already existed.
+      const hadSessions = useTerminalStore.getState().sessions.length > 0;
+      void ensureReady().then(() => {
+        if (hadSessions) void createSession();
+      });
     },
     [createSession, ensureReady, onToggleTerminal],
   );
@@ -2884,7 +2891,16 @@ export default function App() {
       { id: "cmd-memory", group: t("palette.group.commands"), title: t("palette.cmd.memory"), icon: <Brain size={15} />, compact: true, keywords: ["memory", "记忆"], run: () => setSettingsTarget("memory") },
       { id: "cmd-models", group: t("palette.group.commands"), title: t("palette.cmd.models"), icon: <Cpu size={15} />, compact: true, keywords: ["model", "模型"], run: () => setSettingsTarget("models") },
       { id: "cmd-terminal", group: t("palette.group.commands"), title: t("terminal.toggle"), icon: <TerminalSquare size={15} />, compact: true, keywords: ["terminal", "shell", "终端"], run: () => toggleTerminalDock() },
-      { id: "cmd-terminal-new", group: t("palette.group.commands"), title: t("terminal.newSession"), icon: <TerminalSquare size={15} />, compact: true, keywords: ["terminal", "new", "新建终端"], run: () => { toggleTerminalDock(); void ensureTerminalReady().then(() => useTerminalStore.getState().createSession()); } },
+      { id: "cmd-terminal-new", group: t("palette.group.commands"), title: t("terminal.newSession"), icon: <TerminalSquare size={15} />, compact: true, keywords: ["terminal", "new", "新建终端"], run: () => {
+        toggleTerminalDock();
+        // See the terminal.newSession shortcut handler: ensureTerminalReady()
+        // already creates a session when the workspace has none, so only chain
+        // an extra createSession() call when one already existed.
+        const hadSessions = useTerminalStore.getState().sessions.length > 0;
+        void ensureTerminalReady().then(() => {
+          if (hadSessions) void useTerminalStore.getState().createSession();
+        });
+      } },
     ];
     const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
     const dayLabel = (ms: number) => {

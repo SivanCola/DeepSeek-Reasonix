@@ -57,11 +57,16 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       if (!workspaceRoot) return;
       try {
         const sessions = await app.ListTerminals(workspaceRoot);
+        // Another syncWorkspace/createSession call may have moved the store on
+        // to a different workspace while this one was in flight — a stale
+        // response must not overwrite the newer workspace's state.
+        if (get().workspaceRoot !== workspaceRoot) return;
         const saved = loadTerminalActiveSession(workspaceRoot);
         const activeSessionId =
           saved && sessions.some((s) => s.id === saved) ? saved : sessions[0]?.id ?? null;
         set({ sessions, activeSessionId, cwd: nextCwd });
       } catch (err) {
+        if (get().workspaceRoot !== workspaceRoot) return;
         reportTerminalError(err);
         set({ sessions: [], activeSessionId: null, cwd: nextCwd });
       }
@@ -92,6 +97,11 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       const sessionCwd = cwdOverride ?? cwd ?? workspaceRoot;
       const id = await app.CreateTerminal(workspaceRoot, sessionCwd, title ?? "", shellPrefer ?? "");
       const sessions = await app.ListTerminals(workspaceRoot);
+      // The user may have switched to a different workspace while the
+      // terminal was being created — the new session still exists on the
+      // backend and will show up next time this workspace is revisited, but
+      // it must not clobber whatever workspace is current now.
+      if (get().workspaceRoot !== workspaceRoot) return;
       set({ sessions, activeSessionId: id, cwd: sessionCwd });
       saveTerminalActiveSession(workspaceRoot, id);
     } catch (err) {
@@ -106,6 +116,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     if (!workspaceRoot) return;
     await app.CloseTerminal(id);
     const sessions = await app.ListTerminals(workspaceRoot);
+    if (get().workspaceRoot !== workspaceRoot) return;
     let nextActive = activeSessionId;
     if (activeSessionId === id) {
       nextActive = sessions[0]?.id ?? null;
@@ -125,6 +136,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     if (!workspaceRoot) return;
     await app.RenameTerminal(id, title);
     const sessions = await app.ListTerminals(workspaceRoot);
+    if (get().workspaceRoot !== workspaceRoot) return;
     set({ sessions });
   },
 
