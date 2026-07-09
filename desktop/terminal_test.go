@@ -1,6 +1,7 @@
 package main
 
 import (
+	"io"
 	"os"
 	"strings"
 	"testing"
@@ -124,46 +125,67 @@ func TestTerminalSessionExits(t *testing.T) {
 	t.Fatalf("session did not exit cleanly: %#v", list)
 }
 
-// TestTerminalManagerWriteDuringExitIsRaceFree drives concurrent write() calls
-// against a session that is exiting at the same time, so waitLoop's locked
-// write to view.Running races with any unlocked read of it in write(). Run
-// with -race: this only fails by detector, not by assertion.
-func TestTerminalManagerWriteDuringExitIsRaceFree(t *testing.T) {
-	if testing.Short() {
-		t.Skip("spawns shell process")
-	}
-	app := &App{terminals: newTerminalManager(&App{})}
-	t.Cleanup(app.terminals.closeAll)
+// TestTerminalManagerWriteReadsRunningUnderLock drives write() while another
+// goroutine flips view.Running under terminalManager.mu, matching waitLoop's
+// exit transition without depending on a real shell/PTY drain rate. Run with
+// -race: this only fails by detector, not by assertion.
+func TestTerminalManagerWriteReadsRunningUnderLock(t *testing.T) {
+	mgr := newTerminalManager(&App{})
 	root := t.TempDir()
-	id, err := app.terminals.create(root, root, "race-test", "")
+	id := "race-test"
+	reader, writer, err := os.Pipe()
 	if err != nil {
-		t.Fatalf("create: %v", err)
+		t.Fatalf("pipe: %v", err)
 	}
+	defer reader.Close()
 
-	stop := time.Now().Add(500 * time.Millisecond)
+	drained := make(chan struct{})
+	go func() {
+		defer close(drained)
+		_, _ = io.Copy(io.Discard, reader)
+	}()
+
+	mgr.sessions[id] = &terminalSession{
+		view: TerminalSessionView{
+			ID:            id,
+			Title:         "race-test",
+			Shell:         "bash",
+			Cwd:           root,
+			WorkspaceRoot: root,
+			CreatedAt:     time.Now().UnixMilli(),
+			Running:       true,
+		},
+		pty:    writer,
+		closed: make(chan struct{}),
+	}
+	mgr.byWorkspace[root] = []string{id}
+
+	stop := time.Now().Add(200 * time.Millisecond)
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
 		for time.Now().Before(stop) {
-			_ = app.terminals.write(id, "echo hi\n")
+			_ = mgr.write(id, "x")
 		}
 	}()
 
-	// Give the writer goroutine a head start, then exit mid-flight so its
-	// writes straddle the moment waitLoop flips Running under lock.
-	time.Sleep(20 * time.Millisecond)
-	if err := app.terminals.write(id, "exit 0\n"); err != nil {
-		t.Fatalf("write exit: %v", err)
+	for time.Now().Before(stop) {
+		mgr.mu.Lock()
+		mgr.sessions[id].view.Running = !mgr.sessions[id].view.Running
+		mgr.mu.Unlock()
 	}
-	<-done
 
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		list := app.terminals.list(root)
-		if len(list) == 1 && !list[0].Running {
-			return
-		}
-		time.Sleep(10 * time.Millisecond)
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("write loop did not finish")
 	}
-	t.Fatal("session did not exit within deadline")
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close writer: %v", err)
+	}
+	select {
+	case <-drained:
+	case <-time.After(2 * time.Second):
+		t.Fatal("pipe drain did not finish")
+	}
 }
