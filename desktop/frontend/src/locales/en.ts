@@ -2102,6 +2102,11 @@ export const en = {
   "context.time": "Runtime",
   "context.durationSeconds": "{seconds}s",
   "context.durationMinutesSeconds": "{minutes}m {seconds}s",
+  "context.durationSeparator": " ",
+  "context.durationPartDays": "{days}d",
+  "context.durationPartHours": "{hours}h",
+  "context.durationPartMinutes": "{minutes}m",
+  "context.durationPartSeconds": "{seconds}s",
 
   // crash page
   "crash.title": "Reasonix hit an error — send us the report, or copy it",
