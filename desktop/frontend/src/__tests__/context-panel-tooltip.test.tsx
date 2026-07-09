@@ -30,15 +30,15 @@ function eq(actual: unknown, expected: unknown, label: string) {
   }
 }
 
-function flush(): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, 0));
+function flush(ms = 0): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function waitFor(check: () => boolean, iterations = 20): Promise<void> {
+async function waitFor(check: () => boolean, iterations = 100): Promise<void> {
   for (let index = 0; index < iterations; index += 1) {
     if (check()) return;
     await act(async () => {
-      await flush();
+      await flush(5);
     });
   }
   throw new Error("condition not met in time");

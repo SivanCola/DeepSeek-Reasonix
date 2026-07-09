@@ -133,6 +133,7 @@ func (r *desktopBotRuntime) apply(parent context.Context, cfg *config.Config, wo
 	channels, connectionChannels = desktopBotChannelsWithLegacyQQ(cfg.Bot.QQ, channels, connectionChannels)
 	gwCfg := bot.GatewayConfig{
 		Model:              modelName,
+		Version:            version,
 		ToolApprovalMode:   cfg.Bot.ToolApprovalMode,
 		MaxSteps:           cfg.Bot.MaxSteps,
 		QueueMode:          cfg.Bot.QueueMode,

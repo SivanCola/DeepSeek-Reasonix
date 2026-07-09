@@ -1324,8 +1324,9 @@ function PhaseCard({ text }: { text: string }) {
 
 function NoticeCard({ level, text, detail }: { level: NoticeItem["level"]; text: string; detail?: string }) {
   const t = useT();
+  const multiline = text.includes("\n");
   return (
-    <div className={`notice-line notice-line--${level}`} data-entrance="true">
+    <div className={`notice-line notice-line--${level}${multiline ? " notice-line--block" : ""}`} data-entrance="true">
       <span className="notice-line__icon">{level === "warn" ? "⚠ " : "ℹ "}</span>
       <div className="notice-line__text">
         {text}

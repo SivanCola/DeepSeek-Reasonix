@@ -40,6 +40,7 @@ import { asArray } from "./lib/array";
 import { clearLegacyLangPref, normalizeLangPref, readLegacyLangPref, useI18n, useT, type Translator } from "./lib/i18n";
 import { localizedBackendNoticeText, useController, type Item, type LiveStream } from "./lib/useController";
 import { app, onEvent, onProjectTreeChanged, onReady, onRuntimeRebuilt, onSessionRecovered } from "./lib/bridge";
+import { bypassesSteerWhenRunning } from "./lib/commandRouting";
 import { generativeMusic, isGenerativeMusicEnabled } from "./lib/generative-music";
 import { clearAttentionChimeKeys, playAttentionChime, playSuccessChime, shouldPlayAttentionChimeForEvent } from "./lib/sound";
 import { Transcript } from "./components/Transcript";
@@ -1837,6 +1838,14 @@ export default function App() {
           return;
         }
         notice(t("settings.themeUnknown", { name: arg }), "warn");
+        return;
+      }
+      if (bypassesSteerWhenRunning(trimmed)) {
+        try {
+          notice(await app.Doctor(activeTabId ?? ""));
+        } catch (err) {
+          notice(`doctor: ${err instanceof Error ? err.message : String(err)}`, "warn");
+        }
         return;
       }
       if (runningRef.current) { await steer(submitText.trim()); return; }

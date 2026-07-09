@@ -212,6 +212,7 @@ var English = Messages{
 	CmdClear:            "discard current context",
 	CmdCls:              "clear screen only (keep LLM context)",
 	CmdCompact:          "compact context",
+	CmdDoctor:           "show runtime diagnostics",
 	CmdRewind:           "rewind to an earlier turn",
 	CmdTree:             "show conversation branches",
 	CmdBranch:           "create a conversation branch",

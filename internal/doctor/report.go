@@ -20,8 +20,10 @@ import (
 )
 
 type Options struct {
-	Version string
-	Config  *config.Config
+	Version    string
+	Config     *config.Config
+	WorkingDir string // cwd override for workspace-scoped diagnostics; "" uses os.Getwd()
+	SessionDir string // session dir override; "" uses config.SessionDir()
 }
 
 type Report struct {
@@ -116,8 +118,14 @@ func Collect(opts Options) Report {
 			cfg = config.Default()
 		}
 	}
-	cwd, _ := os.Getwd()
+	cwd := opts.WorkingDir
+	if cwd == "" {
+		cwd, _ = os.Getwd()
+	}
 	sourcePath := config.SourcePath()
+	if opts.WorkingDir != "" {
+		sourcePath = config.SourcePathForRoot(opts.WorkingDir)
+	}
 	// Settings UIs and `reasonix config` edit the user-level config, but a
 	// project reasonix.toml outranks it. Users who toggle the sandbox off in
 	// Settings while the project file pins [sandbox] read the no-op as "bash is
@@ -128,6 +136,10 @@ func Collect(opts Options) Report {
 		}
 	}
 	userPath := config.UserConfigPath()
+	sessionDir := opts.SessionDir
+	if sessionDir == "" {
+		sessionDir = config.SessionDir()
+	}
 	if legacyPath := config.LegacyUserConfigPath(); userPath != "" && legacyPath != "" {
 		if _, userErr := os.Stat(userPath); userErr == nil {
 			if _, legacyErr := os.Stat(legacyPath); legacyErr == nil {
@@ -150,7 +162,7 @@ func Collect(opts Options) Report {
 			Enabled: cfg.LSP.Enabled,
 			Servers: len(cfg.LSP.Servers),
 		},
-		Sessions: collectSessions(config.SessionDir()),
+		Sessions: collectSessions(sessionDir),
 		Sandbox: SandboxReport{
 			Bash:       cfg.BashMode(),
 			Network:    cfg.Sandbox.Network,

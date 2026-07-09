@@ -719,7 +719,7 @@ function TokenLegend({ label, value, color }: { label: string; value: number; co
 function MiniStat({ label, value, title, tone, wide }: { label: string; value: string; title?: string; tone?: MetricTone; wide?: boolean }) {
   const toneClass = tone ? ` context-panel__mini-stat--${tone}` : "";
   const wideClass = wide ? " context-panel__mini-stat--wide" : "";
-  const exactTitle = title && title !== value ? title : undefined;
+  const exactTitle = title && title !== "-" ? title : undefined;
   const content = (
     <div className={`context-panel__mini-stat${toneClass}${wideClass}`} aria-label={exactTitle ? `${label}: ${exactTitle}` : undefined}>
       <span>{label}</span>

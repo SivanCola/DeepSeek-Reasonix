@@ -84,6 +84,7 @@ type Controller struct {
 	policy       permission.Policy
 
 	label        string
+	version      string
 	modelRef     string
 	systemPrompt string
 	sessionDir   string
@@ -328,6 +329,7 @@ type Options struct {
 	Sink          event.Sink
 	Policy        permission.Policy
 	Label         string
+	Version       string
 	ModelRef      string
 	SystemPrompt  string
 	SessionDir    string
@@ -423,6 +425,7 @@ func New(opts Options) *Controller {
 		sink:                              sink,
 		policy:                            opts.Policy,
 		label:                             opts.Label,
+		version:                           opts.Version,
 		modelRef:                          opts.ModelRef,
 		systemPrompt:                      opts.SystemPrompt,
 		sessionDir:                        opts.SessionDir,
