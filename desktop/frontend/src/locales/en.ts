@@ -13,6 +13,9 @@ export const en = {
   "common.add": "Add",
   "common.submit": "Submit",
   "common.copy": "Copy",
+  "common.cut": "Cut",
+  "common.paste": "Paste",
+  "common.selectAll": "Select all",
   "common.retry": "Retry",
   "common.expand": "Expand",
   "common.collapse": "Collapse",
@@ -432,6 +435,7 @@ export const en = {
 
   // composer
   "composer.placeholder": "Message Reasonix…  ( / commands · @ files · ! shell )",
+  "composer.inputActions": "Message input actions",
   "composer.normalMode": "chat mode",
   "composer.normalModeDesc": "Answer or work directly.",
   "composer.planMode": "plan mode",

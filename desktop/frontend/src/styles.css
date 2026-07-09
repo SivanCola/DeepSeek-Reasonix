@@ -20957,6 +20957,23 @@ body > .mermaid-diagram--fullscreen {
   min-width: 0;
 }
 
+.context-menu__shortcut {
+  margin-left: 16px;
+  color: var(--fg-muted);
+  font-size: 11px;
+  font-family: inherit;
+  pointer-events: none;
+}
+
+.context-menu__item:hover .context-menu__shortcut,
+.context-menu__item:focus-visible .context-menu__shortcut {
+  color: var(--fg-normal);
+}
+
+.context-menu--composer-input .context-menu__item {
+  padding: 0 12px;
+}
+
 .context-menu__label-with-check {
   display: flex;
   align-items: center;
@@ -30141,4 +30158,52 @@ body > .mermaid-diagram--fullscreen {
     grid-column: 1 !important;
     min-width: 0;
   }
+}
+
+/* ============================================================================
+   Windows + Creation: Vertical alignment for titlebar elements
+   ========================================================================= */
+
+/* Align sidebar logo with Windows titlebar center line */
+.app--windows.app--creation .sidebar__brand,
+:root[data-theme-style] .app--windows.app--creation .sidebar__brand {
+  margin-top: -29px !important;
+}
+
+/* Align topicbar (replaces app-chrome in Creation mode) with Windows controls */
+.app--windows.app--creation .topicbar {
+  transform: translateY(-4px) !important;
+}
+
+/* Align topicbar identity (session title) with Windows controls */
+.app--windows.app--creation .topicbar__identity {
+  transform: translateY(-2px) !important;
+}
+
+/* Reduce session title font size and weight. The rename input replaces the h1
+   while editing (App.tsx topicbarEditing), so it must carry the same size or
+   entering rename mode visibly jumps back to the 10px Creation default. */
+.app--windows.app--creation .topicbar__title-row h1,
+.app--windows.app--creation .topicbar__title-input {
+  font-size: 13.5px !important;
+  font-weight: 520 !important;
+}
+
+/* Align action buttons (not chrome buttons) */
+.app--windows.app--creation .topicbar__action-btn:not(.topicbar__chrome-btn) {
+  transform: translateY(-2px) !important;
+  align-self: center !important;
+}
+
+/* Align topicbar chrome buttons separately (they're also in actions container) */
+.app--windows.app--creation .topicbar__chrome-btn {
+  transform: translateY(-2px) !important;
+  align-self: center !important;
+}
+
+/* The alignment offset above owns the transform slot, which would otherwise
+   erase the .topicbar__chrome-btn--pressed { scale(0.94) } press feedback —
+   recombine both here. */
+.app--windows.app--creation .topicbar__chrome-btn.topicbar__chrome-btn--pressed {
+  transform: translateY(-2px) scale(0.94) !important;
 }

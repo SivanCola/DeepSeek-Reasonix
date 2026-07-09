@@ -14,6 +14,9 @@ export const zhTW: Record<DictKey, string> = {
   "common.add": "新增",
   "common.submit": "提交",
   "common.copy": "複製",
+  "common.cut": "剪下",
+  "common.paste": "貼上",
+  "common.selectAll": "全選",
   "common.retry": "重試",
   "common.expand": "展開",
   "common.collapse": "收起",
@@ -344,6 +347,7 @@ export const zhTW: Record<DictKey, string> = {
 
   // 輸入框
   "composer.placeholder": "給 Reasonix 發訊息…  ( / 命令 · @ 檔案 )",
+  "composer.inputActions": "訊息輸入框操作",
   "composer.planMode": "計畫模式",
   "composer.planModeOn": "計畫模式已開",
   "composer.planHint": "shift+tab",
