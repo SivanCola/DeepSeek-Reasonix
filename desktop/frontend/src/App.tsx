@@ -54,6 +54,7 @@ import { ClearContextCard } from "./components/ClearContextCard";
 import { StatusBar } from "./components/StatusBar";
 import { CommandPalette, type PaletteItem } from "./components/CommandPalette";
 import { UpdateBanner } from "./components/UpdateBanner";
+import { UpdaterProvider } from "./lib/useUpdater";
 import { ContextPanel } from "./components/ContextPanel";
 import { WorkspacePanel } from "./components/WorkspacePanel";
 import { TerminalPanel } from "./components/TerminalPanel";
@@ -3096,6 +3097,7 @@ export default function App() {
 
   return (
     <ShellExpandProvider>
+    <UpdaterProvider>
     <ShellHotkeys />
     <TerminalHotkeys
       terminalActive={terminalDockActive}
@@ -4019,6 +4021,7 @@ export default function App() {
       }} />
       {windowsFramelessChrome && <WindowsWindowControls />}
     </div>
+    </UpdaterProvider>
     </ShellExpandProvider>
   );
 }
