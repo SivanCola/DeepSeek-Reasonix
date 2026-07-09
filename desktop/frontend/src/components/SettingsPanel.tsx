@@ -6539,6 +6539,7 @@ function SandboxSection({ s, busy, apply }: SectionProps) {
       <SettingsField label={t("settings.shellInterpreter")}>
         <select className="mem-select set-grow" value={sb.shell || "auto"} disabled={busy} onChange={(e) => void set({ shell: e.target.value })}>
           <option value="auto">{t("settings.shellAuto")}</option>
+          <option value="zsh">{t("settings.shellZsh")}</option>
           <option value="bash">{t("settings.shellBash")}</option>
           <option value="powershell">{t("settings.shellPowershell")}</option>
           <option value="pwsh">{t("settings.shellPwsh")}</option>

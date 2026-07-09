@@ -428,6 +428,17 @@ export interface SessionReference {
   lastActivityAt?: number;
 }
 
+export interface TerminalSessionView {
+  id: string;
+  title: string;
+  shell: string;
+  cwd: string;
+  workspaceRoot: string;
+  createdAt: number;
+  exitCode?: number;
+  running: boolean;
+}
+
 export interface WorkspaceView {
   path: string;
   name: string;

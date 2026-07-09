@@ -21123,6 +21123,305 @@ body > .mermaid-diagram--fullscreen {
   border: 1px solid var(--border-soft);
 }
 
+.workbench-dock__tools-spacer {
+  flex: 1 1 auto;
+  min-width: 8px;
+}
+
+.workbench-dock__tool-btn {
+  --wails-draggable: no-drag;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fg-faint);
+  cursor: pointer;
+}
+
+.workbench-dock__tool-btn:hover,
+.workbench-dock__tool-btn:focus-visible {
+  color: var(--fg);
+  background: color-mix(in srgb, var(--fg) 6%, transparent);
+}
+
+.workbench-dock__tool-btn--active {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.chat-pane__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.chat-pane__body--terminal-open .main {
+  flex: 1 1 auto;
+  min-height: 120px;
+}
+
+.chat-pane__body--terminal-maximized .main {
+  display: none;
+}
+
+.terminal-panel-resizer {
+  --wails-draggable: no-drag;
+  flex: 0 0 auto;
+  width: 100%;
+  height: 8px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: row-resize;
+}
+
+.terminal-panel-resizer:hover,
+.terminal-panel-resizer:focus-visible,
+.layout--terminal-resizing .terminal-panel-resizer {
+  background: color-mix(in srgb, var(--accent) 28%, transparent);
+}
+
+.terminal-panel {
+  --wails-draggable: no-drag;
+  flex: 0 0 var(--terminal-height, 280px);
+  min-height: 120px;
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--border-soft);
+  background: var(--bg);
+  overflow: hidden;
+}
+
+.chat-pane__body--terminal-maximized .terminal-panel {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.terminal-panel__toolbar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  height: 34px;
+  padding: 0 10px;
+  border-bottom: 1px solid var(--border-soft);
+  background: var(--workspace-files-bg);
+}
+
+.terminal-panel__toolbar-left,
+.terminal-panel__toolbar-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.terminal-panel__toolbar-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--fg);
+}
+
+.terminal-panel__restart {
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.terminal-panel__icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fg-faint);
+  cursor: pointer;
+}
+
+.terminal-panel__icon-btn:hover,
+.terminal-panel__icon-btn:focus-visible {
+  color: var(--fg);
+  background: color-mix(in srgb, var(--fg) 6%, transparent);
+}
+
+.terminal-panel__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 160px minmax(0, 1fr);
+}
+
+.terminal-rail {
+  min-width: 0;
+  border-right: 1px solid var(--border-soft);
+  background: color-mix(in srgb, var(--bg) 92%, var(--fg) 8%);
+  display: flex;
+  flex-direction: column;
+}
+
+.terminal-rail__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.terminal-rail__title {
+  font-size: 11px;
+  color: var(--fg-dim);
+}
+
+.terminal-rail__menu-backdrop {
+  position: fixed;
+  inset: 0;
+  border: 0;
+  background: transparent;
+  z-index: var(--z-menu-backdrop);
+}
+
+.terminal-rail__menu {
+  z-index: var(--z-local-popover);
+}
+
+.terminal-rail__new {
+  width: 22px;
+  height: 22px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fg-faint);
+  cursor: pointer;
+}
+
+.terminal-rail__list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.terminal-rail__item {
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr) 18px;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.terminal-rail__item--active {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent);
+}
+
+.terminal-rail__item--exited {
+  opacity: 0.62;
+}
+
+.terminal-rail__item-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.terminal-rail__item-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  color: var(--fg-faint);
+}
+
+.terminal-rail__item:hover .terminal-rail__item-close,
+.terminal-rail__item:focus-within .terminal-rail__item-close {
+  opacity: 1;
+}
+
+.terminal-panel__views {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.terminal-panel__view-slot {
+  position: absolute;
+  inset: 0;
+  display: none;
+}
+
+.terminal-panel__view-slot--active {
+  display: block;
+}
+
+.terminal-view {
+  width: 100%;
+  height: 100%;
+  padding: 6px 8px 8px;
+}
+
+.terminal-view .xterm {
+  height: 100%;
+}
+
+.terminal-view .xterm-viewport {
+  background: transparent !important;
+}
+
+.terminal-panel__empty {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 24px;
+  color: var(--fg-dim);
+  font-size: 13px;
+}
+
+.terminal-panel__empty-action {
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  background: var(--button-bg);
+  color: var(--fg);
+  font: inherit;
+  font-size: 12px;
+  padding: 6px 12px;
+  cursor: pointer;
+}
+
+.terminal-panel--readonly .terminal-panel__empty {
+  min-height: 120px;
+}
+
 .workbench-dock__tab {
   --wails-draggable: no-drag;
   display: inline-flex;
@@ -21199,8 +21498,28 @@ body > .mermaid-diagram--fullscreen {
 }
 
 .workbench-dock__body > .context-panel,
-.workbench-dock__body > .workspace-panel {
+.workbench-dock__body > .workspace-panel,
+.workbench-dock__body > .terminal-panel {
   height: 100%;
+}
+
+.workbench-dock__body > .terminal-panel {
+  border-top: none;
+}
+
+.terminal-panel--dock {
+  flex: 1 1 auto;
+  min-height: 0;
+  height: 100%;
+  border-top: 0;
+}
+
+.workbench-dock--terminal .terminal-panel__body {
+  min-height: 0;
+}
+
+.workbench-dock--terminal .terminal-rail {
+  width: 160px;
 }
 
 .workbench-dock__body > .workspace-panel {

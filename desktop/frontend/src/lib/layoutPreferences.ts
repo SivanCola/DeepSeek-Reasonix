@@ -7,6 +7,7 @@ export type LayoutSizeKey =
   | "workspaceFileTreePanelWidth"
   | "workspaceTreeWidth"
   | "composerHeight"
+  | "terminalPanelHeight"
   | "drawerWidth"
   | "settingsDrawerWidth";
 
@@ -25,6 +26,7 @@ const LEGACY_SIZE_KEYS: Record<LayoutSizeKey, string[]> = {
   workspaceFileTreePanelWidth: [],
   workspaceTreeWidth: ["reasonix.workspaceTree.width"],
   composerHeight: ["reasonix.composerHeight"],
+  terminalPanelHeight: [],
   drawerWidth: ["reasonix.drawer.width"],
   settingsDrawerWidth: ["reasonix.settingsDrawer.width"],
 };

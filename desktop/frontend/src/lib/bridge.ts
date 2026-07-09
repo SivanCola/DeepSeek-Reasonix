@@ -11,6 +11,7 @@ import type * as GeneratedApp from "../../wailsjs/go/main/App";
 
 import { addBreadcrumb } from "./breadcrumbs";
 import { t } from "./i18n";
+import { notifyMockTerminalOutput } from "./terminalBridge";
 import { providerRequiresKey } from "./providerModels";
 import { DEFAULT_STATUS_BAR_ITEMS, normalizeStatusBarItems } from "./statusBarItems";
 import { modeHasAutoApproveTools, modeWithAutoApproveTools, modeWithPlan, normalizeCollaborationMode, normalizeMode, normalizeTokenMode, normalizeToolApprovalMode } from "./types";
@@ -77,6 +78,7 @@ import type {
   GitCommitView,
   GitCommitDetailView,
   WorkspaceView,
+  TerminalSessionView,
 } from "./types";
 
 const GLOBAL_PROJECT_ORDER_KEY = "__global__";
@@ -379,6 +381,12 @@ export interface AppBindings {
   // New native-feel bindings (added with the desktop native-feel plan).
   ConfirmAction(req: NativeConfirmRequest): Promise<boolean>;
   SaveWindowState(state: DesktopWindowState): Promise<void>;
+  CreateTerminal(workspaceRoot: string, cwd: string, title: string, shellPrefer?: string): Promise<string>;
+  WriteTerminal(id: string, data: string): Promise<void>;
+  ResizeTerminal(id: string, cols: number, rows: number): Promise<void>;
+  CloseTerminal(id: string): Promise<void>;
+  ListTerminals(workspaceRoot: string): Promise<TerminalSessionView[]>;
+  RenameTerminal(id: string, title: string): Promise<void>;
 }
 
 // Compile-time drift check. Exclude<A, B> extracts keys in A that are missing
@@ -692,6 +700,8 @@ export function openExternal(url: string): void {
 
 const listeners = new Set<(e: WireEvent) => void>();
 let mockScopedTabId: string | undefined;
+const mockTerminals = new Map<string, TerminalSessionView>();
+let mockTerminalSeq = 0;
 
 function mockSubscribe(cb: (e: WireEvent) => void): () => void {
   listeners.add(cb);
@@ -3722,9 +3732,6 @@ permissions
     async SetTopicPinned(topicID: string, pinned: boolean) {
       setMockTopicPinned(topicID, pinned);
     },
-    async SaveWindowState(_state) {
-      // no-op in browser dev — no real window geometry to persist
-    },
     async ContextPanel(_tabID: string) {
       const now = Date.now();
       const currency = "¥";
@@ -3832,6 +3839,50 @@ permissions
           { path: t("mock.changedFile2Path"), sources: ["session"], gitStatus: "added", turns: [6], latestPrompt: t("mock.changedFile2Prompt"), latestTime: now - 60 * 1000 },
         ],
       };
+    },
+    async SaveWindowState(_state) {
+      // no-op in browser dev — no real window geometry to persist
+    },
+    async CreateTerminal(workspaceRoot, cwd, title, shellPrefer = "") {
+      mockTerminalSeq += 1;
+      const id = `mock-term-${mockTerminalSeq}`;
+      const now = Date.now();
+      const shellName = (shellPrefer || "zsh").trim() || "zsh";
+      const session: TerminalSessionView = {
+        id,
+        title: title.trim() || shellName,
+        shell: shellName,
+        cwd: cwd || workspaceRoot,
+        workspaceRoot,
+        createdAt: now,
+        running: true,
+      };
+      mockTerminals.set(id, session);
+      notifyMockTerminalOutput({ id, data: btoa(`$ mock terminal (${session.title})\r\n`) });
+      return id;
+    },
+    async WriteTerminal(id, data) {
+      const session = mockTerminals.get(id);
+      if (!session) return;
+      const line = data.trim();
+      if (line === "exit" || line === "exit 0") {
+        session.running = false;
+        session.exitCode = 0;
+        return;
+      }
+      const echo = line ? `$ ${line}\r\n(mock output)\r\n` : data;
+      notifyMockTerminalOutput({ id, data: btoa(echo) });
+    },
+    async ResizeTerminal(_id, _cols, _rows) {},
+    async CloseTerminal(id) {
+      mockTerminals.delete(id);
+    },
+    async ListTerminals(workspaceRoot) {
+      return [...mockTerminals.values()].filter((s) => s.workspaceRoot === workspaceRoot);
+    },
+    async RenameTerminal(id, title) {
+      const session = mockTerminals.get(id);
+      if (session) session.title = title.trim() || session.title;
     },
   };
 }

@@ -9,6 +9,10 @@ export type ShortcutAction =
   | "settings.open"
   | "tab.close"
   | "shell.toggle"
+  | "terminal.toggle"
+  | "terminal.newSession"
+  | "terminal.closeSession"
+  | "terminal.maximize"
   | "sidebar.toggle"
   | "textSize.increase"
   | "textSize.decrease"
@@ -96,6 +100,54 @@ export const SHORTCUT_DEFINITIONS: readonly ShortcutDefinition[] = [
       darwin: { key: "b", meta: true, shift: true },
       windows: { key: "b", ctrl: true, shift: true },
       linux: { key: "b", ctrl: true, shift: true },
+    },
+    preventDefault: true,
+  },
+  {
+    action: "terminal.toggle",
+    section: "view",
+    labelKey: "shortcuts.action.terminalToggle",
+    descriptionKey: "shortcuts.desc.terminalToggle",
+    defaults: {
+      darwin: { key: "`", ctrl: true },
+      windows: { key: "`", ctrl: true },
+      linux: { key: "`", ctrl: true },
+    },
+    preventDefault: true,
+  },
+  {
+    action: "terminal.newSession",
+    section: "view",
+    labelKey: "shortcuts.action.terminalNewSession",
+    descriptionKey: "shortcuts.desc.terminalNewSession",
+    defaults: {
+      darwin: { key: "`", ctrl: true, shift: true },
+      windows: { key: "`", ctrl: true, shift: true },
+      linux: { key: "`", ctrl: true, shift: true },
+    },
+    preventDefault: true,
+  },
+  {
+    action: "terminal.closeSession",
+    section: "view",
+    labelKey: "shortcuts.action.terminalCloseSession",
+    descriptionKey: "shortcuts.desc.terminalCloseSession",
+    defaults: {
+      darwin: { key: "w", meta: true, shift: true },
+      windows: { key: "w", ctrl: true, shift: true },
+      linux: { key: "w", ctrl: true, shift: true },
+    },
+    preventDefault: true,
+  },
+  {
+    action: "terminal.maximize",
+    section: "view",
+    labelKey: "shortcuts.action.terminalMaximize",
+    descriptionKey: "shortcuts.desc.terminalMaximize",
+    defaults: {
+      darwin: { key: "m", meta: true, shift: true },
+      windows: { key: "m", ctrl: true, shift: true },
+      linux: { key: "m", ctrl: true, shift: true },
     },
     preventDefault: true,
   },

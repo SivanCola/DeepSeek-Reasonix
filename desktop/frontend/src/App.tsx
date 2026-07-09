@@ -33,6 +33,7 @@ import {
   Cpu,
   Palette,
   X,
+  TerminalSquare,
 } from "lucide-react";
 import { useToast } from "./lib/toast";
 import { useWailsResizeFix } from "./lib/useWailsResizeFix";
@@ -55,6 +56,7 @@ import { CommandPalette, type PaletteItem } from "./components/CommandPalette";
 import { UpdateBanner } from "./components/UpdateBanner";
 import { ContextPanel } from "./components/ContextPanel";
 import { WorkspacePanel } from "./components/WorkspacePanel";
+import { TerminalPanel } from "./components/TerminalPanel";
 import { Tooltip } from "./components/Tooltip";
 import { StartupSplash } from "./components/StartupSplash";
 import { OnboardingOverlay } from "./components/OnboardingOverlay";
@@ -137,6 +139,7 @@ import {
   saveSidebarWidth,
   useLayoutStore,
 } from "./store/layout";
+import { setTerminalErrorHandler, useTerminalStore } from "./store/terminal";
 import { useOverlayStore } from "./store/overlays";
 import { hydrateDisplayMode } from "./lib/displayMode";
 import { DEFAULT_STATUS_BAR_ITEMS, normalizeStatusBarItems, type StatusBarItemId } from "./lib/statusBarItems";
@@ -976,6 +979,44 @@ function ShellHotkeys() {
   return null;
 }
 
+/** Global hotkey handler for integrated terminal dock tab. */
+function TerminalHotkeys({
+  terminalActive,
+  onToggleTerminal,
+  onToggleMaximized,
+}: {
+  terminalActive: boolean;
+  onToggleTerminal: () => void;
+  onToggleMaximized: () => void;
+}) {
+  const ensureReady = useTerminalStore((s) => s.ensureReady);
+  const createSession = useTerminalStore((s) => s.createSession);
+  const closeSession = useTerminalStore((s) => s.closeSession);
+  const activeSessionId = useTerminalStore((s) => s.activeSessionId);
+
+  useGlobalShortcut("terminal.toggle", onToggleTerminal, [onToggleTerminal]);
+  useGlobalShortcut(
+    "terminal.newSession",
+    () => {
+      onToggleTerminal();
+      void ensureReady().then(() => createSession());
+    },
+    [createSession, ensureReady, onToggleTerminal],
+  );
+  useGlobalShortcut(
+    "terminal.closeSession",
+    () => {
+      if (!terminalActive || !activeSessionId) return;
+      if (!document.activeElement?.closest(".terminal-panel")) return;
+      void closeSession(activeSessionId);
+    },
+    [activeSessionId, closeSession, terminalActive],
+    terminalActive,
+  );
+  useGlobalShortcut("terminal.maximize", onToggleMaximized, [onToggleMaximized], terminalActive);
+  return null;
+}
+
 /** Global hotkey handler for text-size shortcuts (Ctrl/Cmd + Plus/Minus/0). */
 function TextSizeHotkeys() {
   useGlobalShortcut("textSize.increase", () => applyTextSize(nextTextSize(getTextSize(), 1)));
@@ -1164,6 +1205,8 @@ export default function App() {
   const layoutRef = useRef<HTMLDivElement>(null);
   const sidebarTogglePressTimerRef = useRef<number | null>(null);
   const workspaceTogglePressTimerRef = useRef<number | null>(null);
+  const syncTerminalWorkspace = useTerminalStore((s) => s.syncWorkspace);
+  const ensureTerminalReady = useTerminalStore((s) => s.ensureReady);
 
   // Persist window geometry across launches.
   useWindowStatePersistence();
@@ -1317,6 +1360,11 @@ export default function App() {
   }, [applyDesktopPreferences, t]);
 
   useEffect(() => {
+    setTerminalErrorHandler((message) => showToast(message, "error"));
+    return () => setTerminalErrorHandler(null);
+  }, [showToast]);
+
+  useEffect(() => {
     setSidebarImDetailConnectionId((current) => {
       if (!current) return "";
       return sidebarImConnections.some((connection) => connection.id === current) ? current : "";
@@ -1389,6 +1437,18 @@ export default function App() {
     () => tabMetas.find((tab) => tab.id === activeTabId) ?? tabMetas.find((tab) => tab.active),
     [activeTabId, tabMetas],
   );
+
+  useEffect(() => {
+    const workspaceRoot = state.meta?.workspaceRoot || state.meta?.cwd || null;
+    const cwd = state.meta?.cwd || workspaceRoot;
+    void syncTerminalWorkspace(workspaceRoot, cwd, Boolean(activeTab?.readOnly));
+  }, [activeTab?.readOnly, state.meta?.cwd, state.meta?.workspaceRoot, syncTerminalWorkspace]);
+
+  useEffect(() => {
+    if (rightDockMode !== "terminal" || !workspacePanelRenderable) return;
+    void ensureTerminalReady();
+  }, [activeTab?.readOnly, ensureTerminalReady, rightDockMode, state.meta?.cwd, state.meta?.workspaceRoot, workspacePanelRenderable]);
+
   const composerSessionKey = useMemo(() => {
     return composerDraftKeyForTab(activeTab, activeTabId);
   }, [activeTab, activeTabId]);
@@ -2223,6 +2283,24 @@ export default function App() {
     [openWorkspacePanel],
   );
 
+  const terminalDockActive = workspacePanelRenderable && rightDockMode === "terminal";
+
+  const toggleTerminalDock = useCallback(() => {
+    closeTransientOverlays();
+    if (terminalDockActive) {
+      closeWorkspacePanel();
+      return;
+    }
+    openRightDockMode("terminal");
+    void ensureTerminalReady();
+  }, [closeTransientOverlays, closeWorkspacePanel, ensureTerminalReady, openRightDockMode, terminalDockActive]);
+
+  const toggleTerminalDockMaximized = useCallback(() => {
+    if (!terminalDockActive) return;
+    closeTransientOverlays();
+    setWorkspacePanelMaximized((value) => !value);
+  }, [closeTransientOverlays, setWorkspacePanelMaximized, terminalDockActive]);
+
   const handleWorkspacePreviewModeChange = useCallback(
     (active: boolean) => {
       if (workspacePreviewActive === active) return;
@@ -2790,6 +2868,8 @@ export default function App() {
       { id: "cmd-appearance", group: t("palette.group.commands"), title: t("palette.cmd.appearance"), icon: <Palette size={15} />, compact: true, keywords: ["theme", "appearance", "外观", "主题"], run: () => setSettingsTarget("appearance") },
       { id: "cmd-memory", group: t("palette.group.commands"), title: t("palette.cmd.memory"), icon: <Brain size={15} />, compact: true, keywords: ["memory", "记忆"], run: () => setSettingsTarget("memory") },
       { id: "cmd-models", group: t("palette.group.commands"), title: t("palette.cmd.models"), icon: <Cpu size={15} />, compact: true, keywords: ["model", "模型"], run: () => setSettingsTarget("models") },
+      { id: "cmd-terminal", group: t("palette.group.commands"), title: t("terminal.toggle"), icon: <TerminalSquare size={15} />, compact: true, keywords: ["terminal", "shell", "终端"], run: () => toggleTerminalDock() },
+      { id: "cmd-terminal-new", group: t("palette.group.commands"), title: t("terminal.newSession"), icon: <TerminalSquare size={15} />, compact: true, keywords: ["terminal", "new", "新建终端"], run: () => { toggleTerminalDock(); void ensureTerminalReady().then(() => useTerminalStore.getState().createSession()); } },
     ];
     const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
     const dayLabel = (ms: number) => {
@@ -2809,7 +2889,7 @@ export default function App() {
       run: () => void onResumeSession(s),
     }));
     return [...cmds, ...sessionItems];
-  }, [t, paletteSessions, handleNewTab, openAllHistory, openTrash, onResumeSession]);
+  }, [t, paletteSessions, handleNewTab, openAllHistory, openTrash, onResumeSession, toggleTerminalDock, ensureTerminalReady]);
   // Delete / rename act on disk, then re-fetch so the panel reflects the change.
   const onDeleteSession = useCallback(
     async (path: string) => {
@@ -3003,6 +3083,11 @@ export default function App() {
   return (
     <ShellExpandProvider>
     <ShellHotkeys />
+    <TerminalHotkeys
+      terminalActive={terminalDockActive}
+      onToggleTerminal={toggleTerminalDock}
+      onToggleMaximized={toggleTerminalDockMaximized}
+    />
     <TextSizeHotkeys />
       <div
         ref={appRef}
@@ -3481,6 +3566,22 @@ export default function App() {
                   <span>{t("workspace.changedTab")}</span>
                 </button>
               </Tooltip>
+              <Tooltip label={t("terminal.tab")}>
+                <button
+                  className={[
+                    "topicbar__action-btn",
+                    "topicbar__action-btn--label",
+                    terminalDockActive ? "topicbar__action-btn--active" : "",
+                  ].filter(Boolean).join(" ")}
+                  type="button"
+                  aria-label={t("terminal.tab")}
+                  aria-pressed={terminalDockActive}
+                  onClick={toggleTerminalDock}
+                >
+                  <TerminalSquare size={14} />
+                  <span>{t("terminal.tab")}</span>
+                </button>
+              </Tooltip>
               <Tooltip label={t("shortcuts.cheatsheetTitle")}>
                 <button
                   className="topicbar__action-btn topicbar__action-btn--icon topicbar__action-btn--utility"
@@ -3767,6 +3868,16 @@ export default function App() {
                   <GitBranch size={13} />
                   <span className="workbench-dock__tab-label">{t("workspace.changedTab")}</span>
                 </button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={rightDockMode === "terminal"}
+                  className={`workbench-dock__tab${rightDockMode === "terminal" ? " workbench-dock__tab--active" : ""}`}
+                  onClick={() => openRightDockMode("terminal")}
+                >
+                  <TerminalSquare size={13} />
+                  <span className="workbench-dock__tab-label">{t("terminal.tab")}</span>
+                </button>
               </div>
             </div>
             <div className="workbench-dock__body">
@@ -3784,6 +3895,17 @@ export default function App() {
                   balance={state.balance}
                   sessionGen={state.sessionGen}
                   refreshKey={dockRefreshKey}
+                />
+              ) : rightDockMode === "terminal" ? (
+                <TerminalPanel
+                  variant="dock"
+                  readOnly={Boolean(activeTab?.readOnly)}
+                  maximized={workspacePanelMaximized}
+                  onToggleMaximized={() => {
+                    closeTransientOverlays();
+                    setWorkspacePanelMaximized((value) => !value);
+                  }}
+                  onClose={closeWorkspacePanel}
                 />
               ) : (
                 <WorkspacePanel
