@@ -4,6 +4,9 @@
 // and clear context; no double submit; composer remains mounted under the host.
 
 import { JSDOM } from "jsdom";
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import React from "react";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
@@ -70,6 +73,27 @@ function installDom(language = "en-US") {
 }
 
 console.log("\ndecision surface");
+
+const here = dirname(fileURLToPath(import.meta.url));
+const appSource = readFileSync(resolve(here, "../App.tsx"), "utf8");
+const footerStart = appSource.indexOf('<footer className="footer"');
+const footerEnd = appSource.indexOf("</footer>", footerStart);
+const footerSource = footerStart >= 0 && footerEnd > footerStart
+  ? appSource.slice(footerStart, footerEnd)
+  : "";
+const decisionStart = footerSource.indexOf('{decisionSurface === "tool_approval"');
+const composerHostStart = footerSource.indexOf('<div\n              className={decisionSurface');
+const decisionSource = decisionStart >= 0 && composerHostStart > decisionStart
+  ? footerSource.slice(decisionStart, composerHostStart)
+  : "";
+
+ok(footerSource.includes("<ApprovalModal"), "shared footer owns the approval decision surface");
+ok(footerSource.includes("composer-decision-host"), "shared footer owns the mounted composer host");
+ok(
+  decisionSource.includes("<ApprovalModal")
+    && !/desktopLayoutStyle|sidebarWorkbench|sidebarCreation/.test(decisionSource),
+  "decision selection is independent of desktop layout style",
+);
 
 // Tool approval: click only selects; confirm submits once; double-confirm ignored.
 {
@@ -208,6 +232,58 @@ console.log("\ndecision surface");
   ok(host.hasAttribute("inert") || (host as HTMLElement & { inert?: boolean }).inert === true, "host is inert during decision");
   eq(input.value, "draft text", "draft value survives while host is hidden");
   eq(host.getAttribute("aria-hidden"), "true", "host is aria-hidden during decision");
+
+  await act(async () => {
+    root.unmount();
+  });
+  dom.window.close();
+}
+
+// Every desktop layout uses the same footer decision surface contract.
+for (const layout of ["classic", "workbench", "creation"] as const) {
+  const dom = installDom();
+  const root = createRoot(document.getElementById("root")!);
+  const appClassName = [
+    "app",
+    layout === "workbench" ? "app--workbench" : "",
+    layout === "creation" ? "app--creation" : "",
+  ].filter(Boolean).join(" ");
+  const layoutClassName = [
+    "layout",
+    layout === "workbench" ? "layout--workbench layout--workbench-chrome-hidden" : "",
+    layout === "creation" ? "layout--creation-chrome-hidden" : "",
+  ].filter(Boolean).join(" ");
+
+  await act(async () => {
+    root.render(
+      <LocaleProvider>
+        <div className={appClassName} data-layout-style={layout}>
+          <div className={layoutClassName}>
+            <footer className="footer">
+              <ApprovalModal
+                approval={{ id: `${layout}-approval`, tool: "bash", subject: "npm run build" }}
+                onAnswer={() => undefined}
+                onStop={() => undefined}
+              />
+              <div className="composer-decision-host composer-decision-host--hidden" hidden inert aria-hidden="true">
+                <textarea id={`${layout}-composer-input`} defaultValue={`${layout} draft`} />
+              </div>
+            </footer>
+          </div>
+        </div>
+      </LocaleProvider>,
+    );
+    await flushTimers();
+  });
+
+  const footer = document.querySelector(".footer");
+  const decision = footer?.querySelector(".prompt-shelf--decision.prompt-shelf--tool-approval");
+  const host = footer?.querySelector(".composer-decision-host") as HTMLElement | null;
+  const input = document.getElementById(`${layout}-composer-input`) as HTMLTextAreaElement | null;
+  ok(decision != null, `${layout} renders tool approval in the shared footer`);
+  eq(decision?.querySelectorAll(".prompt-action").length, 4, `${layout} keeps the full approval option set`);
+  ok(host?.hasAttribute("hidden") === true, `${layout} hides the composer while approval is active`);
+  eq(input?.value, `${layout} draft`, `${layout} keeps the mounted composer draft`);
 
   await act(async () => {
     root.unmount();
