@@ -16,6 +16,11 @@ import {
   type SubmitArgs,
   newEnvelope,
 } from "../protocol/types";
+import {
+  isDangerousWrite,
+  riskFromTool,
+  type ApprovalRequest,
+} from "../lib/approval";
 
 export type SessionEventHandler = (event: unknown, seq: number) => void;
 
@@ -39,6 +44,55 @@ function newId(prefix: string): string {
   return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
+function needsDemoApproval(text: string): ApprovalRequest | null {
+  const lower = text.toLowerCase();
+  // Explicit demo trigger or tool-like dangerous intent.
+  const forced =
+    lower.includes("approve:") ||
+    lower.includes("/approve") ||
+    /\b(rm\s|delete\s|sudo\s|write_file|shell\s)/i.test(text) ||
+    text.includes("删除") ||
+    text.includes("刪除");
+  if (!forced) return null;
+
+  let tool = "shell";
+  let subject = text.slice(0, 120);
+  let command: string | undefined = text;
+  let diff: string | undefined;
+  if (/\bwrite_file\b|write\s+/i.test(text) || text.includes("写入")) {
+    tool = "write_file";
+    subject = "src/example.ts";
+    command = undefined;
+    diff = [
+      "--- a/src/example.ts",
+      "+++ b/src/example.ts",
+      "@@ -1,3 +1,4 @@",
+      " export function main() {",
+      "-  return 0",
+      "+  console.log('updated')",
+      "+  return 1",
+      " }",
+    ].join("\n");
+  } else if (/\bdelete\b|rm\s|删除|刪除/i.test(text)) {
+    tool = "delete_file";
+    subject = "tmp/scratch.log";
+    command = `rm -f ${subject}`;
+  }
+
+  const risk = riskFromTool(tool, subject);
+  return {
+    id: newId("appr"),
+    sessionId: "",
+    tool,
+    subject,
+    reason: "Local demo: tool requires confirmation before side effects.",
+    risk,
+    command,
+    diff,
+    dangerousWrite: isDangerousWrite(risk, tool),
+  };
+}
+
 /**
  * In-memory LocalBackend used until the Capacitor mobilecore plugin is wired.
  * Shape matches the Go mobilecore JSON API so the bridge swap is mechanical.
@@ -48,6 +102,10 @@ export class LocalBackend implements SessionBackend {
   private sessions = new Map<string, SessionDescriptor>();
   private handlers = new Map<string, Set<SessionEventHandler>>();
   private seq = new Map<string, number>();
+  private pending = new Map<
+    string,
+    { approvalId: string; resolve: (allow: boolean) => void }
+  >();
 
   async createSession(args: CreateSessionArgs): Promise<SessionDescriptor> {
     if (args.runtime !== "local") {
@@ -77,12 +135,58 @@ export class LocalBackend implements SessionBackend {
     const d = this.require(sessionId);
     if (!args.text.trim()) throw new Error("text is required");
     d.status = "running";
+    d.updatedAt = new Date().toISOString();
     this.emit(sessionId, { kind: "turn_started", requestId });
-    this.emit(sessionId, {
-      kind: "notice",
-      level: "info",
-      text: "local backend accepted message (mobilecore stream pending)",
-    });
+
+    const approval = needsDemoApproval(args.text);
+    if (approval) {
+      approval.sessionId = sessionId;
+      d.status = "pending_approval";
+      // Register the waiter before emit so sync subscribers can resolve immediately.
+      const allowed = await new Promise<boolean>((resolve) => {
+        this.pending.set(sessionId, { approvalId: approval.id, resolve });
+        this.emit(sessionId, {
+          kind: "approval_request",
+          approval: {
+            id: approval.id,
+            tool: approval.tool,
+            subject: approval.subject,
+            reason: approval.reason,
+            risk: approval.risk,
+            command: approval.command,
+            diff: approval.diff,
+            dangerousWrite: approval.dangerousWrite,
+          },
+        });
+      });
+      if (!allowed) {
+        this.emit(sessionId, {
+          kind: "notice",
+          level: "warn",
+          text: "approval denied — turn cancelled",
+        });
+        this.emit(sessionId, { kind: "turn_done", requestId, err: "denied" });
+        d.status = "idle";
+        d.lastEventSeq = this.seq.get(sessionId) ?? 0;
+        d.updatedAt = new Date().toISOString();
+        return;
+      }
+      this.emit(sessionId, {
+        kind: "tool_dispatch",
+        text: `${approval.tool} ${approval.subject}`,
+      });
+      this.emit(sessionId, {
+        kind: "tool_result",
+        text: `${approval.tool} completed`,
+      });
+    } else {
+      this.emit(sessionId, {
+        kind: "notice",
+        level: "info",
+        text: "local backend accepted message (mobilecore stream pending)",
+      });
+    }
+
     this.emit(sessionId, { kind: "turn_done", requestId });
     d.status = "idle";
     d.lastEventSeq = this.seq.get(sessionId) ?? 0;
@@ -91,6 +195,11 @@ export class LocalBackend implements SessionBackend {
 
   async cancel(sessionId: string, requestId: string): Promise<void> {
     const d = this.require(sessionId);
+    const p = this.pending.get(sessionId);
+    if (p) {
+      this.pending.delete(sessionId);
+      p.resolve(false);
+    }
     d.status = "idle";
     this.emit(sessionId, { kind: "notice", text: "cancel", requestId });
   }
@@ -101,7 +210,16 @@ export class LocalBackend implements SessionBackend {
     requestId: string,
   ): Promise<void> {
     this.require(sessionId);
-    this.emit(sessionId, { kind: "notice", text: `approval ${args.id} allow=${args.allow}`, requestId });
+    const p = this.pending.get(sessionId);
+    if (p && p.approvalId === args.id) {
+      this.pending.delete(sessionId);
+      p.resolve(args.allow);
+    }
+    this.emit(sessionId, {
+      kind: "notice",
+      text: `approval ${args.id} allow=${args.allow}`,
+      requestId,
+    });
   }
 
   async snapshot(sessionId: string): Promise<SnapshotPayload> {
@@ -110,7 +228,7 @@ export class LocalBackend implements SessionBackend {
       descriptor: { ...d },
       lastEventSeq: d.lastEventSeq,
       revision: d.revision,
-      running: d.status === "running",
+      running: d.status === "running" || d.status === "pending_approval",
     };
   }
 
@@ -157,6 +275,10 @@ export class RemoteBackend implements SessionBackend {
 
   constructor(baseUrl: string) {
     this.baseUrl = baseUrl.replace(/\/$/, "");
+  }
+
+  get nodeBaseUrl(): string {
+    return this.baseUrl;
   }
 
   async createSession(args: CreateSessionArgs): Promise<SessionDescriptor> {
@@ -225,7 +347,6 @@ export class RemoteBackend implements SessionBackend {
       this.handlers.set(sessionId, set);
     }
     set.add(handler);
-    // Full WebSocket subscribe lands with native shell; HTTP path is for scaffolding.
     return () => set!.delete(handler);
   }
 

@@ -8,10 +8,11 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
-    "test": "tsx src/backend/session-backend.test.ts && tsx src/protocol/protocol.test.ts"
+    "test": "tsx src/backend/session-backend.test.ts && tsx src/protocol/protocol.test.ts && tsx src/lib/paired-nodes.test.ts"
   },
   "dependencies": {
     "lucide-react": "^0.525.0",
+    "qrcode.react": "^4.2.0",
     "react": "^19.2.7",
     "react-dom": "^19.2.7"
   },

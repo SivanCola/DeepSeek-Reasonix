@@ -28,6 +28,13 @@ mobile/
 - iOS: large titles, inset grouped lists, 44pt targets.
 - Android/Web: material-height bars, full-bleed lists, FAB for new session.
 - New session sheet: pick local vs node, then create (remote hits `reasonix node`).
+- Motion: page enter, sheet open/close, message appear, stream pulse (respects reduced-motion).
+- Node pairing: QR demo + paste `reasonix://node-pair?…` / URL; fingerprint stored locally.
+- Approval bottom sheet: risk badge, command/diff, long-press allow for dangerous writes, one-tap deny.
+
+### Try approval demo
+
+In a local session send: `delete tmp/log` or `write_file example` — the approval sheet opens.
 
 ## Develop
 

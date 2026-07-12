@@ -4,6 +4,7 @@ import {
   Plus,
   Server,
   Sparkles,
+  Trash2,
 } from "lucide-react";
 import {
   LocalBackend,
@@ -13,10 +14,23 @@ import {
 import type { SessionDescriptor, SessionRuntime } from "./protocol/types";
 import { resolveLocale, t, type Locale } from "./i18n/messages";
 import { applyPlatform, detectPlatform, type Platform } from "./lib/platform";
+import {
+  loadPairedNodes,
+  savePairedNodes,
+  type PairedNode,
+} from "./lib/paired-nodes";
+import {
+  isDangerousWrite,
+  riskFromTool,
+  type ApprovalRequest,
+  type ApprovalRisk,
+} from "./lib/approval";
+import { ApprovalSheet } from "./components/ApprovalSheet";
 import { ChatView, type ChatLine } from "./components/ChatView";
 import { EmptyState } from "./components/EmptyState";
 import { IconButton } from "./components/IconButton";
 import { NewSessionSheet } from "./components/NewSessionSheet";
+import { PairNodeSheet } from "./components/PairNodeSheet";
 import { SessionList } from "./components/SessionList";
 import { SettingsPage, type ThemePref } from "./components/SettingsPage";
 import { TabBar, type Tab } from "./components/TabBar";
@@ -46,6 +60,41 @@ function useWide(): boolean {
   return wide;
 }
 
+function parseApprovalEvent(
+  sessionId: string,
+  event: unknown,
+): ApprovalRequest | null {
+  const e = event as {
+    kind?: string;
+    approval?: {
+      id?: string;
+      tool?: string;
+      subject?: string;
+      reason?: string;
+      risk?: ApprovalRisk;
+      command?: string;
+      diff?: string;
+      dangerousWrite?: boolean;
+    };
+  };
+  if (e.kind !== "approval_request" || !e.approval?.id) return null;
+  const tool = e.approval.tool || "tool";
+  const subject = e.approval.subject || "";
+  const risk = e.approval.risk || riskFromTool(tool, subject);
+  return {
+    id: e.approval.id,
+    sessionId,
+    tool,
+    subject,
+    reason: e.approval.reason,
+    risk,
+    command: e.approval.command,
+    diff: e.approval.diff,
+    dangerousWrite:
+      e.approval.dangerousWrite ?? isDangerousWrite(risk, tool),
+  };
+}
+
 export function App() {
   const [locale, setLocale] = useState<Locale>(() => resolveLocale(navigator.language));
   const [theme, setTheme] = useState<ThemePref>("system");
@@ -58,8 +107,13 @@ export function App() {
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
   const [sheetOpen, setSheetOpen] = useState(false);
+  const [pairOpen, setPairOpen] = useState(false);
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
+  const [pairedNodes, setPairedNodes] = useState<PairedNode[]>(() => loadPairedNodes());
+  const [approval, setApproval] = useState<ApprovalRequest | null>(null);
+  const [approvalOpen, setApprovalOpen] = useState(false);
+  const [approvalBusy, setApprovalBusy] = useState(false);
 
   const localBackend = useMemo(() => new LocalBackend(), []);
   const wide = useWide();
@@ -67,6 +121,9 @@ export function App() {
   const activeBackend = activeId ? backends[activeId] : undefined;
   const lines = activeId ? linesById[activeId] ?? [] : [];
   const chatOpen = Boolean(active) && (wide || tab === "sessions");
+  const pendingApproval =
+    Boolean(approval && activeId && approval.sessionId === activeId) ||
+    active?.status === "pending_approval";
 
   useEffect(() => {
     applyPlatform(platform);
@@ -80,6 +137,10 @@ export function App() {
     mq.addEventListener("change", onChange);
     return () => mq.removeEventListener("change", onChange);
   }, [theme]);
+
+  useEffect(() => {
+    savePairedNodes(pairedNodes);
+  }, [pairedNodes]);
 
   const openNewSheet = useCallback(() => {
     setCreateError(null);
@@ -130,6 +191,11 @@ export function App() {
     const sessionId = active.id;
     setDraft("");
     setSending(true);
+    setSessions((prev) =>
+      prev.map((s) =>
+        s.id === sessionId ? { ...s, status: "running", updatedAt: new Date().toISOString() } : s,
+      ),
+    );
     setLinesById((prev) => ({
       ...prev,
       [sessionId]: [
@@ -140,21 +206,33 @@ export function App() {
     const unsub = activeBackend.subscribe(sessionId, (event, seq) => {
       const e = event as { kind?: string; text?: string };
       const kind = e.kind || "event";
+      const appr = parseApprovalEvent(sessionId, event);
+      if (appr) {
+        setApproval(appr);
+        setApprovalOpen(true);
+        setSessions((prev) =>
+          prev.map((s) =>
+            s.id === sessionId ? { ...s, status: "pending_approval" } : s,
+          ),
+        );
+      }
       let role: ChatLine["role"] = "assistant";
-      if (kind === "notice" || kind.startsWith("tool_")) role = "tool";
+      if (kind === "notice" || kind.startsWith("tool_") || kind === "approval_request") {
+        role = "tool";
+      }
       if (kind === "turn_started" || kind === "turn_done") role = "system";
-      const textOut =
-        e.text ||
-        (kind === "turn_started"
-          ? "…"
-          : kind === "turn_done"
-            ? "✓"
-            : JSON.stringify(event));
+      let textOut = e.text;
+      if (!textOut) {
+        if (kind === "turn_started") textOut = "…";
+        else if (kind === "turn_done") textOut = "✓";
+        else if (kind === "approval_request") textOut = t(locale, "approval.banner");
+        else textOut = JSON.stringify(event);
+      }
       setLinesById((prev) => ({
         ...prev,
         [sessionId]: [
           ...(prev[sessionId] ?? []),
-          { id: `e-${seq}-${kind}`, kind, text: textOut, role },
+          { id: `e-${seq}-${kind}`, kind, text: textOut!, role },
         ],
       }));
     });
@@ -164,6 +242,10 @@ export function App() {
       setSessions((prev) =>
         prev.map((s) => (s.id === sessionId ? snap.descriptor : s)),
       );
+      if (snap.descriptor.status !== "pending_approval") {
+        setApproval((a) => (a?.sessionId === sessionId ? null : a));
+        setApprovalOpen(false);
+      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : "send failed";
       setLinesById((prev) => ({
@@ -177,7 +259,26 @@ export function App() {
       unsub();
       setSending(false);
     }
-  }, [active, activeBackend, draft, sending]);
+  }, [active, activeBackend, draft, sending, locale]);
+
+  const resolveApproval = useCallback(
+    async (allow: boolean) => {
+      if (!approval || !activeBackend) return;
+      setApprovalBusy(true);
+      try {
+        await activeBackend.approve(
+          approval.sessionId,
+          { id: approval.id, allow },
+          `req_appr_${Date.now()}`,
+        );
+        setApprovalOpen(false);
+        if (!allow) setApproval(null);
+      } finally {
+        setApprovalBusy(false);
+      }
+    },
+    [approval, activeBackend],
+  );
 
   const selectSession = (id: string) => {
     setActiveId(id);
@@ -188,7 +289,7 @@ export function App() {
   const iosChrome = platform === "ios";
 
   const listPane = (
-    <div className="session-list-pane">
+    <div className="session-list-pane anim-page">
       <TopBar
         title={t(locale, "sessions.title")}
         largeTitle={iosChrome}
@@ -241,9 +342,11 @@ export function App() {
         sending={sending}
         locale={locale}
         showBack={!wide}
+        pendingApproval={pendingApproval}
         onBack={() => setActiveId(null)}
         onDraftChange={setDraft}
         onSend={() => void send()}
+        onOpenApproval={() => setApprovalOpen(true)}
       />
     </div>
   ) : wide ? (
@@ -270,31 +373,119 @@ export function App() {
         )}
 
         {tab === "nodes" && (
-          <div className="page">
-            <TopBar title={t(locale, "nodes.title")} largeTitle={iosChrome} />
+          <div className="page anim-page">
+            <TopBar
+              title={t(locale, "nodes.title")}
+              largeTitle={iosChrome}
+              trailing={
+                <IconButton label={t(locale, "nodes.pair")} onClick={() => setPairOpen(true)}>
+                  <Plus size={22} strokeWidth={2.25} />
+                </IconButton>
+              }
+            />
             <div className="page-scroll">
               {iosChrome ? <h1 className="large-title">{t(locale, "nodes.title")}</h1> : null}
-              <EmptyState
-                icon={<Server size={28} strokeWidth={1.75} />}
-                title={t(locale, "nodes.emptyTitle")}
-                description={t(locale, "nodes.empty")}
-                actions={
-                  <>
-                    <button type="button" className="btn-primary" disabled>
-                      {t(locale, "nodes.pair")}
-                    </button>
-                    <p className="empty-desc" style={{ marginTop: 4 }}>
-                      {t(locale, "nodes.pairHint")}
-                    </p>
-                  </>
-                }
-              />
+              {pairedNodes.length === 0 ? (
+                <EmptyState
+                  icon={<Server size={28} strokeWidth={1.75} />}
+                  title={t(locale, "nodes.emptyTitle")}
+                  description={t(locale, "nodes.empty")}
+                  actions={
+                    <>
+                      <button
+                        type="button"
+                        className="btn-primary"
+                        onClick={() => setPairOpen(true)}
+                      >
+                        {t(locale, "nodes.pair")}
+                      </button>
+                      <p className="empty-desc" style={{ marginTop: 4 }}>
+                        {t(locale, "nodes.pairHint")}
+                      </p>
+                    </>
+                  }
+                />
+              ) : (
+                <section className="list-section anim-enter">
+                  <div className="list-group" role="list">
+                    {pairedNodes.map((n) => (
+                      <div key={n.id} className="list-row node-row" role="listitem">
+                        <span
+                          className="list-row-leading"
+                          data-runtime="remote"
+                          aria-hidden
+                        >
+                          <Server size={16} strokeWidth={2} />
+                        </span>
+                        <span className="list-row-body">
+                          <div className="list-row-title">{n.name}</div>
+                          <div className="list-row-meta">
+                            <span className="mono">{n.baseUrl}</span>
+                          </div>
+                          <div className="list-row-meta">
+                            <span className="status-label">
+                              <span
+                                className="status-dot"
+                                data-status={n.online ? "idle" : "failed"}
+                              />
+                              {n.online
+                                ? t(locale, "nodes.online")
+                                : t(locale, "nodes.offline")}
+                            </span>
+                            {n.fingerprint ? (
+                              <>
+                                <span aria-hidden>·</span>
+                                <span className="mono faint">
+                                  {t(locale, "nodes.fingerprint")}: {n.fingerprint.slice(0, 12)}
+                                </span>
+                              </>
+                            ) : null}
+                          </div>
+                          <div className="node-actions">
+                            <button
+                              type="button"
+                              className="btn-secondary btn-compact"
+                              onClick={() =>
+                                void createSession({
+                                  runtime: "remote",
+                                  nodeUrl: n.baseUrl,
+                                })
+                              }
+                            >
+                              {t(locale, "nodes.useForSession")}
+                            </button>
+                            <button
+                              type="button"
+                              className="icon-btn neutral"
+                              aria-label={t(locale, "nodes.remove")}
+                              onClick={() =>
+                                setPairedNodes((prev) => prev.filter((x) => x.id !== n.id))
+                              }
+                            >
+                              <Trash2 size={18} />
+                            </button>
+                          </div>
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                  <p className="footnote">{t(locale, "nodes.pairHint")}</p>
+                </section>
+              )}
             </div>
+            <button
+              type="button"
+              className="fab"
+              aria-label={t(locale, "nodes.pair")}
+              onClick={() => setPairOpen(true)}
+            >
+              <Plus size={26} strokeWidth={2.25} />
+            </button>
           </div>
         )}
 
         {tab === "providers" && (
-          <div className="page">
+          <div className="page anim-page">
             <TopBar title={t(locale, "providers.title")} largeTitle={iosChrome} />
             <div className="page-scroll">
               {iosChrome ? (
@@ -315,7 +506,7 @@ export function App() {
         )}
 
         {tab === "settings" && (
-          <div className="page">
+          <div className="page anim-page">
             <TopBar title={t(locale, "settings.title")} largeTitle={iosChrome} />
             <SettingsPage
               locale={locale}
@@ -344,8 +535,39 @@ export function App() {
         locale={locale}
         busy={creating}
         error={createError}
+        pairedNodes={pairedNodes}
         onClose={() => !creating && setSheetOpen(false)}
         onCreate={(input) => void createSession(input)}
+      />
+
+      <PairNodeSheet
+        open={pairOpen}
+        locale={locale}
+        onClose={() => setPairOpen(false)}
+        onPaired={(p) => {
+          const node: PairedNode = {
+            id: p.id,
+            name: p.name,
+            baseUrl: p.baseUrl,
+            fingerprint: p.fingerprint,
+            online: p.online,
+            pairedAt: new Date().toISOString(),
+          };
+          setPairedNodes((prev) => {
+            const rest = prev.filter((x) => x.id !== node.id && x.baseUrl !== node.baseUrl);
+            return [node, ...rest];
+          });
+        }}
+      />
+
+      <ApprovalSheet
+        open={approvalOpen && Boolean(approval)}
+        locale={locale}
+        request={approval}
+        busy={approvalBusy}
+        onClose={() => setApprovalOpen(false)}
+        onAllow={() => void resolveApproval(true)}
+        onDeny={() => void resolveApproval(false)}
       />
     </div>
   );

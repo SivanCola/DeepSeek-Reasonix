@@ -22,17 +22,36 @@ export type MessageKey =
   | "sessions.statusPending"
   | "sessions.statusFailed"
   | "sessions.chatEmpty"
+  | "sessions.chatEmptyHint"
   | "sessions.selectHint"
   | "sessions.nodeUrl"
   | "sessions.nodeUrlPlaceholder"
   | "sessions.create"
   | "sessions.cancel"
   | "sessions.createError"
+  | "sessions.streaming"
   | "nodes.title"
   | "nodes.empty"
   | "nodes.emptyTitle"
   | "nodes.pairHint"
   | "nodes.pair"
+  | "nodes.pairSheetDesc"
+  | "nodes.pairPaste"
+  | "nodes.pairPlaceholder"
+  | "nodes.pairConfirm"
+  | "nodes.pairing"
+  | "nodes.pairInvalid"
+  | "nodes.pairNeedInput"
+  | "nodes.pairFailed"
+  | "nodes.useDemo"
+  | "nodes.copyDemo"
+  | "nodes.qrDemoCaption"
+  | "nodes.qrPairedPreview"
+  | "nodes.online"
+  | "nodes.offline"
+  | "nodes.fingerprint"
+  | "nodes.remove"
+  | "nodes.useForSession"
   | "providers.title"
   | "providers.empty"
   | "providers.emptyTitle"
@@ -50,6 +69,24 @@ export type MessageKey =
   | "settings.platform"
   | "composer.placeholder"
   | "composer.send"
+  | "approval.title"
+  | "approval.desc"
+  | "approval.tool"
+  | "approval.target"
+  | "approval.reason"
+  | "approval.command"
+  | "approval.diff"
+  | "approval.riskLow"
+  | "approval.riskMedium"
+  | "approval.riskHigh"
+  | "approval.dangerous"
+  | "approval.allow"
+  | "approval.deny"
+  | "approval.holdAllow"
+  | "approval.holding"
+  | "approval.holdHint"
+  | "approval.banner"
+  | "approval.review"
   | "common.online"
   | "common.offline"
   | "common.back"
@@ -81,17 +118,36 @@ const en: Catalog = {
   "sessions.statusPending": "Needs approval",
   "sessions.statusFailed": "Failed",
   "sessions.chatEmpty": "Send a message to start. Tools and diffs appear in a compact timeline.",
+  "sessions.chatEmptyHint": "Tip: try “delete tmp/log” to preview the approval sheet.",
   "sessions.selectHint": "Select a session",
   "sessions.nodeUrl": "Node address",
   "sessions.nodeUrlPlaceholder": "http://127.0.0.1:8790",
   "sessions.create": "Create",
   "sessions.cancel": "Cancel",
   "sessions.createError": "Could not create session",
+  "sessions.streaming": "Streaming",
   "nodes.title": "Nodes",
-  "nodes.empty": "Scan a QR code from `reasonix node`, or enter a LAN / Tailscale address.",
+  "nodes.empty": "Scan or paste a pairing code from `reasonix node`, or enter a LAN / Tailscale address.",
   "nodes.emptyTitle": "No paired nodes",
   "nodes.pairHint": "Prefer verified LAN or Tailscale. Official relay is the fallback.",
   "nodes.pair": "Pair node",
+  "nodes.pairSheetDesc": "Paste a QR payload or URL. Fingerprint is fixed at pairing time.",
+  "nodes.pairPaste": "Pairing payload",
+  "nodes.pairPlaceholder": "reasonix://node-pair?v=1&url=…  or  http://192.168.x.x:8790",
+  "nodes.pairConfirm": "Pair & verify",
+  "nodes.pairing": "Verifying…",
+  "nodes.pairInvalid": "Could not parse pairing payload",
+  "nodes.pairNeedInput": "Paste a pairing code or URL first",
+  "nodes.pairFailed": "Pairing failed",
+  "nodes.useDemo": "Use local demo",
+  "nodes.copyDemo": "Copy demo QR text",
+  "nodes.qrDemoCaption": "Demo QR for local node (127.0.0.1:8790)",
+  "nodes.qrPairedPreview": "Pairing identity for this node",
+  "nodes.online": "Reachable",
+  "nodes.offline": "Unreachable",
+  "nodes.fingerprint": "Fingerprint",
+  "nodes.remove": "Remove",
+  "nodes.useForSession": "New remote session",
   "providers.title": "Providers",
   "providers.empty": "OpenAI-compatible or Anthropic-compatible endpoints. Keys use secure storage.",
   "providers.emptyTitle": "No providers",
@@ -109,6 +165,24 @@ const en: Catalog = {
   "settings.platform": "UI chrome",
   "composer.placeholder": "Message",
   "composer.send": "Send",
+  "approval.title": "Approval required",
+  "approval.desc": "Review the tool, target, and risk before continuing.",
+  "approval.tool": "Tool",
+  "approval.target": "Target",
+  "approval.reason": "Why",
+  "approval.command": "Command",
+  "approval.diff": "Diff",
+  "approval.riskLow": "Low risk",
+  "approval.riskMedium": "Medium risk",
+  "approval.riskHigh": "High risk",
+  "approval.dangerous": "Write",
+  "approval.allow": "Allow",
+  "approval.deny": "Deny",
+  "approval.holdAllow": "Hold to allow",
+  "approval.holding": "Keep holding…",
+  "approval.holdHint": "Dangerous writes require a long-press. Deny is always one tap.",
+  "approval.banner": "Waiting for your approval",
+  "approval.review": "Review",
   "common.online": "Online",
   "common.offline": "Offline",
   "common.back": "Back",
@@ -139,17 +213,36 @@ const zh: Catalog = {
   "sessions.statusPending": "待审批",
   "sessions.statusFailed": "失败",
   "sessions.chatEmpty": "发送消息开始对话。工具与 Diff 以紧凑时间线展示。",
+  "sessions.chatEmptyHint": "提示：发送「删除 tmp/log」可预览审批面板。",
   "sessions.selectHint": "选择一个会话",
   "sessions.nodeUrl": "节点地址",
   "sessions.nodeUrlPlaceholder": "http://127.0.0.1:8790",
   "sessions.create": "创建",
   "sessions.cancel": "取消",
   "sessions.createError": "无法创建会话",
+  "sessions.streaming": "生成中",
   "nodes.title": "节点",
-  "nodes.empty": "扫描 `reasonix node` 的二维码，或输入局域网 / Tailscale 地址。",
+  "nodes.empty": "扫描或粘贴 `reasonix node` 的配对码，或输入局域网 / Tailscale 地址。",
   "nodes.emptyTitle": "尚未配对节点",
   "nodes.pairHint": "优先已验证的局域网或 Tailscale，官方中继作为回退。",
   "nodes.pair": "配对节点",
+  "nodes.pairSheetDesc": "粘贴二维码内容或 URL。身份指纹在配对时固定。",
+  "nodes.pairPaste": "配对载荷",
+  "nodes.pairPlaceholder": "reasonix://node-pair?v=1&url=…  或  http://192.168.x.x:8790",
+  "nodes.pairConfirm": "配对并验证",
+  "nodes.pairing": "验证中…",
+  "nodes.pairInvalid": "无法解析配对内容",
+  "nodes.pairNeedInput": "请先粘贴配对码或地址",
+  "nodes.pairFailed": "配对失败",
+  "nodes.useDemo": "使用本机演示",
+  "nodes.copyDemo": "复制演示二维码文本",
+  "nodes.qrDemoCaption": "本机节点演示二维码（127.0.0.1:8790）",
+  "nodes.qrPairedPreview": "此节点的配对身份",
+  "nodes.online": "可达",
+  "nodes.offline": "不可达",
+  "nodes.fingerprint": "指纹",
+  "nodes.remove": "移除",
+  "nodes.useForSession": "新建远程会话",
   "providers.title": "供应商",
   "providers.empty": "OpenAI-compatible 或 Anthropic-compatible 端点。密钥使用安全存储。",
   "providers.emptyTitle": "尚未添加供应商",
@@ -167,6 +260,24 @@ const zh: Catalog = {
   "settings.platform": "界面风格",
   "composer.placeholder": "消息",
   "composer.send": "发送",
+  "approval.title": "需要审批",
+  "approval.desc": "继续前请确认工具、目标与风险等级。",
+  "approval.tool": "工具",
+  "approval.target": "目标",
+  "approval.reason": "原因",
+  "approval.command": "命令",
+  "approval.diff": "Diff",
+  "approval.riskLow": "低风险",
+  "approval.riskMedium": "中风险",
+  "approval.riskHigh": "高风险",
+  "approval.dangerous": "写入",
+  "approval.allow": "允许",
+  "approval.deny": "拒绝",
+  "approval.holdAllow": "长按以允许",
+  "approval.holding": "继续按住…",
+  "approval.holdHint": "危险写操作需长按确认；拒绝始终单击即可。",
+  "approval.banner": "等待你的审批",
+  "approval.review": "查看",
   "common.online": "在线",
   "common.offline": "离线",
   "common.back": "返回",
@@ -197,17 +308,36 @@ const zhTW: Catalog = {
   "sessions.statusPending": "待核准",
   "sessions.statusFailed": "失敗",
   "sessions.chatEmpty": "傳送訊息開始對話。工具與 Diff 以緊湊時間線呈現。",
+  "sessions.chatEmptyHint": "提示：傳送「刪除 tmp/log」可預覽核准面板。",
   "sessions.selectHint": "選擇一個會話",
   "sessions.nodeUrl": "節點位址",
   "sessions.nodeUrlPlaceholder": "http://127.0.0.1:8790",
   "sessions.create": "建立",
   "sessions.cancel": "取消",
   "sessions.createError": "無法建立會話",
+  "sessions.streaming": "產生中",
   "nodes.title": "節點",
-  "nodes.empty": "掃描 `reasonix node` 的 QR 碼，或輸入區域網路 / Tailscale 位址。",
+  "nodes.empty": "掃描或貼上 `reasonix node` 的配對碼，或輸入區域網路 / Tailscale 位址。",
   "nodes.emptyTitle": "尚未配對節點",
   "nodes.pairHint": "優先已驗證的區域網路或 Tailscale，官方中繼作為後備。",
   "nodes.pair": "配對節點",
+  "nodes.pairSheetDesc": "貼上 QR 內容或 URL。身分指紋在配對時固定。",
+  "nodes.pairPaste": "配對內容",
+  "nodes.pairPlaceholder": "reasonix://node-pair?v=1&url=…  或  http://192.168.x.x:8790",
+  "nodes.pairConfirm": "配對並驗證",
+  "nodes.pairing": "驗證中…",
+  "nodes.pairInvalid": "無法解析配對內容",
+  "nodes.pairNeedInput": "請先貼上配對碼或位址",
+  "nodes.pairFailed": "配對失敗",
+  "nodes.useDemo": "使用本機示範",
+  "nodes.copyDemo": "複製示範 QR 文字",
+  "nodes.qrDemoCaption": "本機節點示範 QR（127.0.0.1:8790）",
+  "nodes.qrPairedPreview": "此節點的配對身分",
+  "nodes.online": "可連線",
+  "nodes.offline": "無法連線",
+  "nodes.fingerprint": "指紋",
+  "nodes.remove": "移除",
+  "nodes.useForSession": "新建遠端會話",
   "providers.title": "供應商",
   "providers.empty": "OpenAI-compatible 或 Anthropic-compatible 端點。金鑰使用安全儲存。",
   "providers.emptyTitle": "尚未新增供應商",
@@ -225,6 +355,24 @@ const zhTW: Catalog = {
   "settings.platform": "介面風格",
   "composer.placeholder": "訊息",
   "composer.send": "傳送",
+  "approval.title": "需要核准",
+  "approval.desc": "繼續前請確認工具、目標與風險等級。",
+  "approval.tool": "工具",
+  "approval.target": "目標",
+  "approval.reason": "原因",
+  "approval.command": "命令",
+  "approval.diff": "Diff",
+  "approval.riskLow": "低風險",
+  "approval.riskMedium": "中風險",
+  "approval.riskHigh": "高風險",
+  "approval.dangerous": "寫入",
+  "approval.allow": "允許",
+  "approval.deny": "拒絕",
+  "approval.holdAllow": "長按以允許",
+  "approval.holding": "繼續按住…",
+  "approval.holdHint": "危險寫入需長按確認；拒絕始終一鍵即可。",
+  "approval.banner": "等待你的核准",
+  "approval.review": "檢視",
   "common.online": "線上",
   "common.offline": "離線",
   "common.back": "返回",

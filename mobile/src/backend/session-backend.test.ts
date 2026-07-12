@@ -28,6 +28,22 @@ async function main() {
   assert.equal(snap.descriptor.id, d.id);
   assert.ok((snap.lastEventSeq ?? 0) >= 1);
 
+  // Approval path: dangerous text pauses until approve/deny.
+  const d2 = await backend.createSession({ runtime: "local", title: "t2" });
+  let approvalId = "";
+  const unsub2 = backend.subscribe(d2.id, (e) => {
+    const ev = e as { kind?: string; approval?: { id?: string } };
+    if (ev.kind === "approval_request" && ev.approval?.id) {
+      approvalId = ev.approval.id;
+      void backend.approve(d2.id, { id: approvalId, allow: true }, "req-appr");
+    }
+  });
+  await backend.submit(d2.id, { text: "delete tmp/scratch.log" }, "req-2");
+  unsub2();
+  assert.ok(approvalId, "expected approval_request");
+  const snap2 = await backend.snapshot(d2.id);
+  assert.equal(snap2.descriptor.status, "idle");
+
   console.log("session-backend.test.ts: ok");
 }
 
