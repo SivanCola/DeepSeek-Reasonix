@@ -221,11 +221,14 @@ function emptyComposerDraft(): ComposerDraft {
   };
 }
 
+// Exact (trimmed) equality only: the consumed-steer notice carries the steer
+// text verbatim, and substring matching removed the wrong queue item when one
+// queued text contained another (#6238).
 function guidanceTextMatches(queued: string, consumed: string): boolean {
   const left = queued.trim();
   const right = consumed.trim();
   if (!left || !right) return false;
-  return left === right || left.includes(right) || right.includes(left);
+  return left === right;
 }
 
 function cloneComposerDraft(draft: ComposerDraft): ComposerDraft {
@@ -1202,8 +1205,12 @@ export function Composer({
       const idx = consumed
         ? items.findIndex((item) => guidanceTextMatches(item.submitText, consumed) || guidanceTextMatches(item.text, consumed))
         : -1;
-      const removeAt = idx >= 0 ? idx : 0;
-      return items.filter((_, index) => index !== removeAt);
+      // Only remove on a real match. Steer notices also fire for guidance this
+      // client never queued (another window, bot bridge, turn-end flush) —
+      // falling back to dropping items[0] silently deleted unrelated queued
+      // guidance (#6238).
+      if (idx < 0) return items;
+      return items.filter((_, index) => index !== idx);
     });
   }, [draftKey, guidanceDraftKey, guidanceConsumedKey, guidanceConsumedText, takeSelfDispatchedGuidance]);
 

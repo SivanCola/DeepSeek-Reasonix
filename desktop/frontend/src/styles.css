@@ -3310,6 +3310,35 @@ a[href] {
   white-space: pre-wrap;
 }
 
+/* ── Steer line (mid-turn user guidance, rendered on the user side) ── */
+.steer-line {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+}
+.steer-line__bubble {
+  display: inline-flex;
+  align-items: flex-start;
+  gap: 6px;
+  max-width: 82%;
+  padding: 6px 12px;
+  border: 1px solid var(--chat-user-border);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--chat-user-bg) 55%, transparent);
+  color: var(--chat-user-fg);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.steer-line__icon {
+  flex: 0 0 auto;
+  color: var(--fg-faint);
+}
+.steer-line__text {
+  min-width: 0;
+  word-break: break-word;
+  white-space: pre-wrap;
+}
+
 /* ── ReadOnly batch (parent fold for read/search tools) ────────────── */
 .readonly-batch {
   margin: 2px auto;
@@ -4213,10 +4242,24 @@ a[href] {
   align-items: center;
   gap: 6px;
   min-height: 24px;
+  padding: 0;
+  border: none;
+  background: transparent;
   color: var(--fg-faint);
+  font-family: inherit;
   font-size: 13px;
   font-weight: 560;
   line-height: 1.4;
+  text-align: left;
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+}
+.turn-collapse__reasoning-head:hover {
+  color: var(--fg);
+}
+.turn-collapse__reasoning-head .reasoning__chevron {
+  flex: 0 0 auto;
+  transition: transform 0.2s;
 }
 
 .turn-collapse__reasoning-head > svg:first-child {

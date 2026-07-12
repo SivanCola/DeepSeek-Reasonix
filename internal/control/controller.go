@@ -651,6 +651,19 @@ const (
 // and the desktop composer already carries a workaround gating its auto-send
 // on submitDisabled rather than turn_done (Composer.tsx).
 func (c *Controller) runGuarded(body func(ctx context.Context) error) admissionResult {
+	return c.admitGuardedTurn(body, false)
+}
+
+// runGuardedOrPark admits like runGuarded but parks the body while another
+// turn is running instead of using the deliberately-silent running drop.
+// Reserved for inputs that are the user's own words (the steer fallback):
+// the FIFO drain in finishGuardedTurn delivers them the moment the current
+// turn finishes.
+func (c *Controller) runGuardedOrPark(body func(ctx context.Context) error) admissionResult {
+	return c.admitGuardedTurn(body, true)
+}
+
+func (c *Controller) admitGuardedTurn(body func(ctx context.Context) error, parkWhileRunning bool) admissionResult {
 	c.mu.Lock()
 	if c.closed {
 		c.mu.Unlock()
@@ -662,6 +675,11 @@ func (c *Controller) runGuarded(body func(ctx context.Context) error) admissionR
 		return turnDroppedRotating
 	}
 	if c.running {
+		if parkWhileRunning {
+			c.parkedTurns = append(c.parkedTurns, body)
+			c.mu.Unlock()
+			return turnParked
+		}
 		c.mu.Unlock()
 		return turnDroppedRunning
 	}
@@ -1894,16 +1912,25 @@ func (c *Controller) Steer(text string) {
 	exec := c.executor
 	running := c.running
 	c.mu.Unlock()
-	if exec == nil {
+	if running && exec != nil && exec.Steer(text) {
 		return
 	}
-	if running {
-		exec.Steer(text)
-		return
-	}
-	// Agent not running — frontend's runningRef was stale.
-	// Convert to a new turn so the user gets a response.
-	go func() { c.SubmitDisplay(text, text) }()
+	// No active turn accepted the steer: the frontend's runningRef was stale,
+	// the turn exited between our running check and the enqueue, or no
+	// executor is bound yet. Deliver it as a regular turn instead.
+	c.submitSteerFallback(text)
+}
+
+// submitSteerFallback delivers steer text that no active turn accepted as a
+// regular turn. Steers are the user's own words, so admission parks the body
+// while another turn is running or finishing rather than dropping it — the
+// window between a turn's steer-queue flush and running=false would
+// otherwise lose the text silently. The text is submitted verbatim; steers
+// are never command-interpreted.
+func (c *Controller) submitSteerFallback(text string) admissionResult {
+	return c.runGuardedOrPark(func(ctx context.Context) error {
+		return c.runRefTurnWithResolverSync(ctx, text, text, text, "", c.ResolveRefs)
+	})
 }
 
 // SteerConsumed returns true when the steer queue is empty after the last consume.

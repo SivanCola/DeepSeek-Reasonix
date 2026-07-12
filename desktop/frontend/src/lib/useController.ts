@@ -92,6 +92,16 @@ export type Item =
 
 type ToolItem = Extract<Item, { kind: "tool" }>;
 
+// Mid-turn steer messages are recorded as info notices carrying this prefix —
+// both live (the "steer" event below) and in replayed history (desktop/app.go
+// prefixes persisted steers the same way). The prefix is the only durable
+// marker, so display code identifies steers by it.
+export const STEER_NOTICE_PREFIX = "↪ ";
+
+export function isSteerNoticeText(text: string): boolean {
+  return text.startsWith(STEER_NOTICE_PREFIX);
+}
+
 interface State {
   items: Item[];
   running: boolean;
@@ -857,7 +867,7 @@ function applyEvent(s: State, e: WireEvent): State {
       return { ...s, running: s.turnActive ? s.running : false, seq: s.seq + 1, items };
     }
     case "steer":
-      return { ...s, seq: s.seq + 1, items: [...s.items, { kind: "notice", id: `s${s.seq}`, level: "info", text: `↪ ${e.text ?? ""}` }] };
+      return { ...s, seq: s.seq + 1, items: [...s.items, { kind: "notice", id: `s${s.seq}`, level: "info", text: `${STEER_NOTICE_PREFIX}${e.text ?? ""}` }] };
     case "approval_request": {
       if (s.cancelRequested) return s;
       return beginPromptWait({

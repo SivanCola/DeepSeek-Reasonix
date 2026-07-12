@@ -32,6 +32,7 @@ import {
 } from "../lib/fontFamily";
 import { getAvailableFontFamilies, getAvailableMonoFontFamilies } from "../lib/fontAvailability";
 import { getDisplayMode, onDisplayModeChange, setDisplayMode as setLocalDisplayMode } from "../lib/displayMode";
+import { getProcessFoldPreference, onProcessFoldPreferenceChange, setProcessFoldPreference, type ProcessFoldPreference } from "../lib/processFoldPreference";
 import { DEFAULT_STATUS_BAR_ITEMS, normalizeStatusBarItems, type StatusBarItemId } from "../lib/statusBarItems";
 import { normalizeToolApprovalMode } from "../lib/types";
 import {
@@ -1415,6 +1416,7 @@ function GeneralSection({ s, busy, apply, agentRunning }: SectionProps & { agent
   const { t, setPref } = useI18n();
   const closeBehavior = normalizeCloseBehavior(s.closeBehavior);
   const [displayMode, setDisplayMode] = useState<DisplayMode>(() => normalizeDisplayMode(getDisplayMode()));
+  const [processFold, setProcessFold] = useState<ProcessFoldPreference>(getProcessFoldPreference);
   const [statusBarItemsExpanded, setStatusBarItemsExpanded] = useState(false);
   const [draggingStatusBarItem, setDraggingStatusBarItem] = useState<StatusBarItemId | null>(null);
   const [statusBarDragTarget, setStatusBarDragTargetState] = useState<StatusBarDragTarget | null>(null);
@@ -1424,6 +1426,7 @@ function GeneralSection({ s, busy, apply, agentRunning }: SectionProps & { agent
   const soundPanelId = useId();
   const statusBarItemsPanelId = useId();
   useEffect(() => onDisplayModeChange((mode) => setDisplayMode(mode)), []);
+  useEffect(() => onProcessFoldPreferenceChange((pref) => setProcessFold(pref)), []);
   useEffect(() => () => mouseDragCleanupRef.current?.(), []);
   const autoPlan = normalizeAutoPlan(s.autoPlan);
   const defaultToolApprovalMode = normalizeToolApprovalMode(s.defaultToolApprovalMode);
@@ -1641,6 +1644,19 @@ function GeneralSection({ s, busy, apply, agentRunning }: SectionProps & { agent
               }}
             >
               {t(`settings.displayMode.${mode}`)}
+            </button>
+          ))}
+        </div>
+      </SettingsField>
+      <SettingsField label={t("settings.processFold")} hint={t("settings.processFoldHint")}>
+        <div className="set-seg">
+          {(["auto", "expanded"] as const).map((pref) => (
+            <button
+              key={pref}
+              className={`set-seg__btn${processFold === pref ? " set-seg__btn--on" : ""}`}
+              onClick={() => setProcessFoldPreference(pref)}
+            >
+              {t(`settings.processFold.${pref}`)}
             </button>
           ))}
         </div>
