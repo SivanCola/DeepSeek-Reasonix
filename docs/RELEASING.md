@@ -30,17 +30,27 @@ accepted as compatibility aliases for preview.
 
 | Action | Who | Mechanism |
 |---|---|---|
-| **Cut a preview** | any maintainer (write access) | `workflow_dispatch`, runs free (open `canary` environment, reused for compatibility) |
+| **Cut a preview** | any maintainer (write access) | `workflow_dispatch`; pauses for approval on the `canary` environment (same required reviewers as `release`) |
 | **Ship `next` / stable** | **esengine only** | stable publish jobs gate on the `release` environment — esengine must approve before anything goes public |
 
-So a maintainer can dispatch a preview anytime, but a stable release — even one a
-maintainer starts by pushing a tag — pauses in the Actions UI until **esengine approves**
-the `release` environment deployment.
+Any maintainer can start either kind of release, but both pause in the Actions UI
+for environment approval before anything reaches users: stable on the `release`
+environment, preview on the `canary` environment. Preview needs the same human
+gate because the desktop Settings toggle exposes the preview pointer to **every
+user**, not just testers who manually installed a preview build.
 
-> Repo settings backing this: Environments → `release` has esengine as a required
-> reviewer; `canary` has none. (Optional hardening: a tag ruleset restricting
-> `v*`/`npm-v*`/`desktop-v*` creation to esengine, so maintainers can't even start a
-> stable release.)
+> Repo settings backing this: Environments → `release` and `canary` carry the
+> same required reviewers. `canary` historically had none; gate it (repo admin)
+> by mirroring the `release` reviewers:
+>
+> ```sh
+> gh api repos/esengine/DeepSeek-Reasonix/environments/release \
+>   --jq '{reviewers:[.protection_rules[]|select(.type=="required_reviewers")|.reviewers[]|{type:.type,id:.reviewer.id}]}' \
+>   | gh api -X PUT repos/esengine/DeepSeek-Reasonix/environments/canary --input -
+> ```
+>
+> (Optional hardening: a tag ruleset restricting `v*`/`npm-v*`/`desktop-v*`
+> creation to esengine, so maintainers can't even start a stable release.)
 
 ## The release loop
 
@@ -84,3 +94,13 @@ the `release` environment deployment.
 - Windows and Linux apply downloaded, minisign-verified artifacts in place. macOS
   applies in-app only for Developer ID signed and notarized builds; ad-hoc/local
   builds fall back to the download page.
+- Signing is identical across channels except Windows Authenticode. One minisign
+  key signs both channels' artifacts, and the client verifies that signature (then
+  the manifest SHA-256) before anything touches disk — switching channels never
+  changes the verification rules. macOS preview builds get the same Developer ID +
+  notarization as stable, so channel switches preserve Gatekeeper/TCC grants.
+  Windows preview installers are Authenticode-signed with the SignPath
+  `test-signing` policy: manual downloads can trigger SmartScreen or be blocked by
+  publisher-allowlist device policies (WDAC/AppLocker), while in-app updates are
+  unaffected (the updater already verified minisign and writes the installer
+  without a mark-of-the-web).

@@ -228,8 +228,9 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     # Stable publishes go through the `release` environment (esengine must
-    # approve); preview reuses the open `canary` environment so maintainers
-    # self-serve without requiring a repo settings migration.
+    # approve); preview goes through the `canary` environment, which must carry
+    # the same required reviewers now that the Settings toggle exposes the
+    # preview pointer to every user (see docs/RELEASING.md "Who can release").
     environment: ${{ (github.event_name == 'workflow_dispatch' && inputs.channel == 'preview') && 'canary' || 'release' }}
     steps:
       - uses: actions/checkout@v7

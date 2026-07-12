@@ -2297,7 +2297,7 @@ export const zhTW: Record<DictKey, string> = {
   "updater.autoCheckLabel": "啟動時檢測新版本",
   "updater.autoCheckHint": "關閉後，Reasonix 開啟時不會自動檢查更新；你仍可在此頁手動檢查。",
   "updater.channelSettingLabel": "更新渠道",
-  "updater.channelSettingHint": "正式版接收公開發布；預覽版更早取得測試建置，並且可隨時切回正式版。",
+  "updater.channelSettingHint": "正式版接收公開發布；預覽版更早取得測試建置，並且可隨時切回正式版。Windows 預覽版使用測試憑證簽署：手動安裝可能觸發 SmartScreen 或被依發布者放行的裝置原則攔截，應用程式內更新不受影響。",
   "updater.channelStable": "正式版",
   "updater.channelPreview": "預覽版",
   "settings.telemetryLabel": "匿名啟動統計",

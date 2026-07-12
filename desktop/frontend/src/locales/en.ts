@@ -2173,7 +2173,7 @@ export const en = {
   "updater.autoCheckLabel": "Check for updates on startup",
   "updater.autoCheckHint": "When off, Reasonix won't check automatically when it opens. You can still check manually here.",
   "updater.channelSettingLabel": "Update channel",
-  "updater.channelSettingHint": "Stable gets public releases. Preview gets test builds earlier and can switch back to Stable at any time.",
+  "updater.channelSettingHint": "Stable gets public releases. Preview gets test builds earlier and can switch back to Stable at any time. On Windows, preview builds are signed with a test certificate: manual installs can trigger SmartScreen or publisher-based device policies, while in-app updates are unaffected.",
   "updater.channelStable": "Stable",
   "updater.channelPreview": "Preview",
   "settings.telemetryLabel": "Anonymous usage ping",
