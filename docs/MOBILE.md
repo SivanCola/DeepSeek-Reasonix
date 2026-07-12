@@ -174,6 +174,16 @@ only on user turns so the provider-visible prefix stays stable.
 5. Attachments, light tools, HTTP MCP, approval, todos, Diff, tablet, three locales.
 6. Security audit, fault injection, store assets, beta roll-out, public launch.
 
+## CI (current)
+
+PR / push to `main-v2` runs job **`mobile`** in `.github/workflows/ci.yml`:
+
+- Go: `internal/mobileprotocol`, `internal/mobilecore`, `internal/node`
+- React shell: `mobile/` `npm ci`, typecheck, test, Vite production build
+
+Local: `make mobile-ci`. Native iOS/Android packaging, `gomobile bind`, and
+store publish are not wired yet.
+
 ## Release tags
 
 - Stable: `mobile-vX.Y.Z`

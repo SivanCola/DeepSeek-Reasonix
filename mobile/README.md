@@ -40,11 +40,28 @@ In a local session send: `delete tmp/log` or `write_file example` — the approv
 
 ```bash
 cd mobile
-pnpm install   # or npm install
-pnpm dev       # http://localhost:5174
-pnpm test
-pnpm build
+npm install
+npm run dev    # http://localhost:5174
+npm test
+npm run build
 ```
+
+## CI
+
+GitHub Actions job `mobile` in `.github/workflows/ci.yml` runs on every PR to
+`main-v2`:
+
+1. `gofmt` / `go vet` / `go test` for `internal/mobileprotocol`, `mobilecore`, `node`
+2. `npm ci` + `typecheck` + `test` + production `build` under `mobile/`
+
+Local mirror:
+
+```bash
+make mobile-ci
+```
+
+Not yet in CI: Capacitor native projects, `gomobile bind`, store release
+(`mobile-vX.Y.Z`).
 
 ## Node daemon (remote)
 

@@ -133,6 +133,15 @@ System-prompt-review: ...
 5. 附件、轻量工具、HTTP MCP、审批、Todos、Diff、平板、三语。
 6. 安全审计、故障注入、商店素材、Beta、公开发布。
 
+## CI（当前）
+
+面向 `main-v2` 的 PR / push 会跑 `.github/workflows/ci.yml` 中的 **`mobile`** job：
+
+- Go：`internal/mobileprotocol`、`internal/mobilecore`、`internal/node`
+- React 壳：`mobile/` 下 `npm ci`、typecheck、test、Vite 生产构建
+
+本地镜像：`make mobile-ci`。原生 iOS/Android 打包、`gomobile bind`、商店发布尚未接入。
+
 ## 发布标签
 
 - 稳定：`mobile-vX.Y.Z`
