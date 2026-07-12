@@ -160,7 +160,8 @@ export function ChatView({
             aria-label={t(locale, "composer.placeholder")}
             disabled={pendingApproval}
             onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
+              // IME composition Enter commits the candidate, not the message.
+              if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
                 e.preventDefault();
                 onSend();
               }

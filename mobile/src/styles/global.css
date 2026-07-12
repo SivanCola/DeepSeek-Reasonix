@@ -94,8 +94,7 @@ input {
   overflow: hidden;
 }
 
-.app-body > .page,
-.app-body > .sessions-root {
+.app-body > .page {
   flex: 1;
   min-height: 0;
   display: flex;
@@ -1031,26 +1030,30 @@ input {
   min-height: 0;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
+}
+
+/* Pane layout must exist at every width: below 900px only one pane is
+   visible and it has to fill the shell, or the composer/FAB float
+   mid-screen and long lists get clipped by the overflow:hidden root. */
+.session-list-pane,
+.session-detail-pane {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 @media (min-width: 900px) {
-  .sessions-split {
+  /* Match .app-body > .page specificity so display:grid wins the cascade. */
+  .app-body > .sessions-split {
     display: grid;
     grid-template-columns: minmax(300px, 360px) 1fr;
   }
 
   .sessions-split .session-list-pane {
     border-right: 0.5px solid var(--rx-hairline);
-    display: flex;
-    flex-direction: column;
-    min-height: 0;
-    overflow: hidden;
-  }
-
-  .sessions-split .session-detail-pane {
-    min-height: 0;
-    display: flex;
-    flex-direction: column;
   }
 
   .app-shell[data-chat-open="true"][data-wide="true"] .tab-bar {
