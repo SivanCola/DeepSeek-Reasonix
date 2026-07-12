@@ -326,6 +326,7 @@ export function SettingsPanel({
                     <UpdatesSection
                       configPath={s.configPath}
                       checkUpdates={s.checkUpdates}
+                      updateChannel={s.updateChannel || "stable"}
                       telemetry={s.telemetry !== false}
                       metrics={s.metrics !== false}
                       settingsBusy={busy}
@@ -1282,6 +1283,7 @@ function normalizeSettingsView(view: SettingsView | null | undefined): SettingsV
     statusBarStyle: normalizeStatusBarStyle(view.statusBarStyle),
     statusBarItems: normalizeStatusBarItems(view.statusBarItems),
     checkUpdates: view.checkUpdates !== false,
+    updateChannel: normalizeUpdateChannel(view.updateChannel),
     memoryCompilerEnabled: view.memoryCompilerEnabled !== false,
   };
 }
@@ -1290,6 +1292,10 @@ type CloseBehavior = "background" | "quit";
 
 function normalizeCloseBehavior(mode: string | undefined): CloseBehavior {
   return mode === "quit" ? "quit" : "background";
+}
+
+function normalizeUpdateChannel(channel: string | undefined): "stable" | "preview" {
+  return channel === "preview" || channel === "canary" ? "preview" : "stable";
 }
 
 type DisplayMode = "standard" | "compact";
@@ -6959,6 +6965,7 @@ const mb = (n: number) => (n / MB).toFixed(1);
 function UpdatesSection({
   configPath,
   checkUpdates,
+  updateChannel,
   telemetry,
   metrics,
   settingsBusy,
@@ -6966,17 +6973,22 @@ function UpdatesSection({
 }: {
   configPath: string;
   checkUpdates: boolean;
+  updateChannel: string;
   telemetry: boolean;
   metrics: boolean;
   settingsBusy: boolean;
   applySettings: (fn: () => Promise<void>) => Promise<void>;
 }) {
   const t = useT();
-  const { status, check, download: downloadUpdate, install: installUpdate } = useUpdater();
+  const selectedUpdateChannel = updateChannel === "preview" || updateChannel === "canary" ? "preview" : "stable";
+  const { status, check, download: downloadUpdate, install: installUpdate, reset: resetUpdate } = useUpdater(selectedUpdateChannel);
   const [version, setVersion] = useState("");
   useEffect(() => {
     app.Version().then(setVersion).catch(() => {});
   }, []);
+  useEffect(() => {
+    resetUpdate();
+  }, [resetUpdate, selectedUpdateChannel]);
 
   const updaterBusy =
     status.kind === "checking" || status.kind === "downloading" || status.kind === "verifying" || status.kind === "installing";
@@ -6993,6 +7005,24 @@ function UpdatesSection({
           disabled={settingsBusy}
           onChange={(enabled) => void applySettings(() => app.SetDesktopCheckUpdates(enabled))}
         />
+      </SettingsField>
+      <SettingsField
+        className="settings-field--wide-copy"
+        label={t("updater.channelSettingLabel")}
+        hint={t("updater.channelSettingHint")}
+      >
+        <div className="set-seg">
+          {(["stable", "preview"] as const).map((ch) => (
+            <button
+              key={ch}
+              className={`set-seg__btn${selectedUpdateChannel === ch ? " set-seg__btn--on" : ""}`}
+              disabled={settingsBusy || updaterBusy}
+              onClick={() => void applySettings(() => app.SetDesktopUpdateChannel(ch))}
+            >
+              {t(ch === "preview" ? "updater.channelPreview" : "updater.channelStable")}
+            </button>
+          ))}
+        </div>
       </SettingsField>
       <SettingsField
         className="settings-field--wide-copy"
@@ -7022,7 +7052,7 @@ function UpdatesSection({
         </button>
       </SettingsField>
       {status.kind === "available" && (
-        <div className="mem-hint">{t("updater.channelLabel", { channel: status.info.channel || "stable" })}</div>
+        <div className="mem-hint">{t("updater.channelLabel", { channel: t(status.info.channel === "preview" ? "updater.channelPreview" : "updater.channelStable") })}</div>
       )}
       {status.kind === "upToDate" && <div className="mem-hint">{t("updater.upToDate")}</div>}
       {status.kind === "available" && (

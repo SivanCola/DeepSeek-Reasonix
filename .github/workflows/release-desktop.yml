@@ -13,9 +13,10 @@ name: Release desktop
 #
 # The same build/sign/manifest pipeline serves two channels. A `desktop-v*` tag
 # (or manual stable dispatch) publishes a GitHub release and moves R2's latest/
-# pointer. A manual `channel: canary` dispatch builds with -X main.channel=canary
-# and uploads only to R2's canary/ pointer — no GitHub release, so canary never
-# shows on the releases page and never touches latest/.
+# pointer. A manual `channel: preview` dispatch builds with -X main.channel=preview
+# and uploads only to R2's preview/ pointer — no GitHub release, so preview never
+# shows on the releases page and never touches latest/. The mirror also writes the
+# legacy canary/ pointer for older clients.
 on:
   push:
     tags: ["desktop-v*"]
@@ -24,14 +25,14 @@ on:
       channel:
         description: "Release channel"
         type: choice
-        options: [stable, canary]
+        options: [stable, preview]
         default: stable
       tag:
         description: "stable: tag to publish (e.g. desktop-v1.1.0)"
         required: false
         type: string
       base_version:
-        description: "canary: intended next stable version, e.g. 1.5.0"
+        description: "preview: intended next stable version, e.g. 1.5.0"
         required: false
         type: string
 
@@ -174,12 +175,12 @@ jobs:
       # Authenticode-sign the Windows installer through SignPath. Runs BEFORE minisign:
       # the signature rewrites the installer's bytes, so the updater's minisign sig and
       # the manifest SHA must be computed over the signed build. SignPath pulls the file
-      # from the Actions artifact API, so it must be uploaded first. Canary signs with the
+      # from the Actions artifact API, so it must be uploaded first. Preview signs with the
       # test certificate; stable/rc sign with the Foundation release certificate, but only
       # once SIGNPATH_RELEASE_SIGNING_READY is set — until that cert clears CSR-pending,
       # stable ships unsigned instead of failing the whole release on an invalid policy.
       - name: Upload unsigned installer for SignPath
-        if: runner.os == 'Windows' && env.HAS_SIGNPATH == 'true' && (steps.ver.outputs.channel == 'canary' || vars.SIGNPATH_RELEASE_SIGNING_READY == 'true')
+        if: runner.os == 'Windows' && env.HAS_SIGNPATH == 'true' && (steps.ver.outputs.channel == 'preview' || vars.SIGNPATH_RELEASE_SIGNING_READY == 'true')
         id: unsigned-installer
         uses: actions/upload-artifact@v7
         with:
@@ -189,13 +190,13 @@ jobs:
           retention-days: 1
 
       - name: Submit installer for Authenticode signing
-        if: runner.os == 'Windows' && env.HAS_SIGNPATH == 'true' && (steps.ver.outputs.channel == 'canary' || vars.SIGNPATH_RELEASE_SIGNING_READY == 'true')
+        if: runner.os == 'Windows' && env.HAS_SIGNPATH == 'true' && (steps.ver.outputs.channel == 'preview' || vars.SIGNPATH_RELEASE_SIGNING_READY == 'true')
         uses: signpath/github-action-submit-signing-request@v2
         with:
           api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
           organization-id: ${{ secrets.SIGNPATH_ORGANIZATION_ID }}
           project-slug: DeepSeek-Reasonix
-          signing-policy-slug: ${{ steps.ver.outputs.channel == 'canary' && 'test-signing' || 'release-signing' }}
+          signing-policy-slug: ${{ steps.ver.outputs.channel == 'preview' && 'test-signing' || 'release-signing' }}
           artifact-configuration-slug: windows-installer
           github-artifact-id: ${{ steps.unsigned-installer.outputs.artifact-id }}
           github-token: ${{ github.token }}
@@ -206,7 +207,7 @@ jobs:
           output-artifact-directory: signed
 
       - name: Replace installer with signed build
-        if: runner.os == 'Windows' && env.HAS_SIGNPATH == 'true' && (steps.ver.outputs.channel == 'canary' || vars.SIGNPATH_RELEASE_SIGNING_READY == 'true')
+        if: runner.os == 'Windows' && env.HAS_SIGNPATH == 'true' && (steps.ver.outputs.channel == 'preview' || vars.SIGNPATH_RELEASE_SIGNING_READY == 'true')
         run: cp signed/*installer*.exe dist/
 
       - name: Sign artifacts (minisign)
@@ -227,8 +228,9 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     # Stable publishes go through the `release` environment (esengine must
-    # approve); canary uses the open `canary` environment so maintainers self-serve.
-    environment: ${{ (github.event_name == 'workflow_dispatch' && inputs.channel == 'canary') && 'canary' || 'release' }}
+    # approve); preview reuses the open `canary` environment so maintainers
+    # self-serve without requiring a repo settings migration.
+    environment: ${{ (github.event_name == 'workflow_dispatch' && inputs.channel == 'preview') && 'canary' || 'release' }}
     steps:
       - uses: actions/checkout@v7
 
@@ -261,11 +263,11 @@ jobs:
         working-directory: desktop
         run: go run ./cmd/sign manifest ../dist "${{ steps.ver.outputs.version }}" "${{ steps.ver.outputs.tag }}"
 
-      # Canary never appears on the GitHub releases page; the mirror job picks up
-      # the signed dist via the canary-dist artifact below. Stable publishes a
+      # Preview never appears on the GitHub releases page; the mirror job picks up
+      # the signed dist via the preview-dist artifact below. Stable publishes a
       # GitHub release as usual.
       - name: Publish GitHub release
-        if: steps.ver.outputs.channel != 'canary'
+        if: steps.ver.outputs.channel != 'preview'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -279,11 +281,11 @@ jobs:
           fi
           gh release create "${{ steps.ver.outputs.tag }}" dist/* "${args[@]}"
 
-      - name: Upload canary dist for mirror
-        if: steps.ver.outputs.channel == 'canary'
+      - name: Upload preview dist for mirror
+        if: steps.ver.outputs.channel == 'preview'
         uses: actions/upload-artifact@v7
         with:
-          name: canary-dist
+          name: preview-dist
           path: dist/*
           if-no-files-found: error
 
@@ -312,17 +314,17 @@ jobs:
           REF_NAME: ${{ github.ref_name }}
           RUN_NUMBER: ${{ github.run_number }}
 
-      # Canary has no GitHub release — pull the signed dist from the workflow
+      # Preview has no GitHub release — pull the signed dist from the workflow
       # artifact. Stable pulls from the published release.
-      - name: Download canary dist
-        if: env.HAS_R2 == 'true' && steps.ver.outputs.channel == 'canary'
+      - name: Download preview dist
+        if: env.HAS_R2 == 'true' && steps.ver.outputs.channel == 'preview'
         uses: actions/download-artifact@v8
         with:
-          name: canary-dist
+          name: preview-dist
           path: assets
 
       - name: Download release assets
-        if: env.HAS_R2 == 'true' && steps.ver.outputs.channel != 'canary'
+        if: env.HAS_R2 == 'true' && steps.ver.outputs.channel != 'preview'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -363,9 +365,10 @@ jobs:
         run: |
           ENDPOINT="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
           aws s3 cp assets/ "s3://${R2_BUCKET}/${TAG}/" --recursive --endpoint-url "$ENDPOINT"
-          # The pointer a release moves is its channel's alone: canary writes
-          # canary/, stable writes latest/. A stable prerelease (rc) moves neither.
-          if [ "${{ steps.ver.outputs.channel }}" = "canary" ]; then
+          # The pointer a release moves is its channel's alone: preview writes
+          # preview/ plus legacy canary/, stable writes latest/. A stable prerelease (rc) moves neither.
+          if [ "${{ steps.ver.outputs.channel }}" = "preview" ]; then
+            aws s3 cp assets/ "s3://${R2_BUCKET}/preview/" --recursive --endpoint-url "$ENDPOINT"
             aws s3 cp assets/ "s3://${R2_BUCKET}/canary/" --recursive --endpoint-url "$ENDPOINT"
           elif [ "${{ steps.ver.outputs.prerelease }}" = "true" ]; then
             echo "prerelease — leaving R2 latest/ untouched"
@@ -399,8 +402,8 @@ jobs:
 
           aws s3 cp "s3://${R2_BUCKET}/${TAG}/latest.json" /tmp/reasonix-desktop-tag-latest.json --endpoint-url "$ENDPOINT"
           jq -e --arg version "$VERSION" '.version == $version' /tmp/reasonix-desktop-tag-latest.json >/dev/null
-          if [ "$CHANNEL" = "canary" ]; then
-            pointer="canary"
+          if [ "$CHANNEL" = "preview" ]; then
+            pointer="preview"
           elif [ "$PRERELEASE" = "true" ]; then
             pointer=""
           else
@@ -409,6 +412,10 @@ jobs:
           if [ -n "$pointer" ]; then
             aws s3 cp "s3://${R2_BUCKET}/${pointer}/latest.json" /tmp/reasonix-desktop-pointer-latest.json --endpoint-url "$ENDPOINT"
             jq -e --arg version "$VERSION" '.version == $version' /tmp/reasonix-desktop-pointer-latest.json >/dev/null
+            if [ "$CHANNEL" = "preview" ]; then
+              aws s3 cp "s3://${R2_BUCKET}/canary/latest.json" /tmp/reasonix-desktop-canary-latest.json --endpoint-url "$ENDPOINT"
+              jq -e --arg version "$VERSION" '.version == $version' /tmp/reasonix-desktop-canary-latest.json >/dev/null
+            fi
           fi
 
           jq -r '.platforms[] | .url, .sig' "$f" | while IFS= read -r asset; do
@@ -437,7 +444,7 @@ jobs:
             exit 0
           fi
           chan="stable"
-          [ "$CHANNEL" = "canary" ] && chan="canary"
+          [ "$CHANNEL" = "preview" ] && chan="preview"
           url="https://crash.reasonix.io/v1/desktop/releases/${chan}/latest.json"
           # curl already prints 000 for a transport failure; || true keeps -e
           # from killing the step so the case below can route it.
@@ -464,7 +471,7 @@ jobs:
           esac
 
       - name: Attach desktop manifest to matching CLI release
-        if: env.HAS_R2 == 'true' && steps.ver.outputs.channel != 'canary' && steps.ver.outputs.prerelease != 'true'
+        if: env.HAS_R2 == 'true' && steps.ver.outputs.channel != 'preview' && steps.ver.outputs.prerelease != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.ver.outputs.version }}
@@ -479,7 +486,7 @@ jobs:
       # Stable release moved R2 latest/ — rebuild the site so its build-time baked
       # version + JSON-LD follow (site.js's runtime .rxv refresh can't touch first paint / SEO).
       - name: Refresh site to the new version
-        if: env.HAS_R2 == 'true' && steps.ver.outputs.channel != 'canary' && steps.ver.outputs.prerelease != 'true'
+        if: env.HAS_R2 == 'true' && steps.ver.outputs.channel != 'preview' && steps.ver.outputs.prerelease != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh workflow run pages.yml --ref main-v2

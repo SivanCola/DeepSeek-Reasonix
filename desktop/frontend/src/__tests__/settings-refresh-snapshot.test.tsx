@@ -134,6 +134,7 @@ function baseSettings(displayMode: "standard" | "compact" = "standard"): Setting
     statusBarItems: ["model", "workspace", "git_branch", "cache", "balance"],
     defaultToolApprovalMode: "auto",
     checkUpdates: true,
+    updateChannel: "stable",
     telemetry: true,
     metrics: true,
     memoryCompilerEnabled: true,

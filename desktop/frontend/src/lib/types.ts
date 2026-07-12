@@ -1363,6 +1363,7 @@ export interface SettingsView {
   statusBarItems: string[]; // ordered visible status bar item ids
   defaultToolApprovalMode: ToolApprovalMode | string; // default for newly-created sessions
   checkUpdates: boolean; // check for new versions on startup
+  updateChannel: "stable" | "preview" | string; // desktop update channel
   telemetry: boolean; // anonymous launch ping (install id + version + OS)
   metrics: boolean; // aggregate desktop metrics (anonymous signal/bucket counts)
   memoryCompilerEnabled: boolean; // Memory v5 execution compiler
@@ -1382,6 +1383,7 @@ export interface DesktopStartupSettingsView {
   statusBarStyle: string; // "icon" | "text"
   statusBarItems: string[]; // ordered visible status bar item ids
   checkUpdates: boolean; // check for new versions on startup
+  updateChannel: "stable" | "preview" | string; // desktop update channel
 }
 
 // Auto-updater payloads (desktop/updater.go). UpdateInfo drives the update banner;

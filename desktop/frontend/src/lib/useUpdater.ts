@@ -30,7 +30,7 @@ function errMsg(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
 
-export function useUpdater(): Updater {
+export function useUpdater(channel = ""): Updater {
   const [status, setStatus] = useState<UpdateStatus>({ kind: "idle" });
 
   // A single long-lived subscription advances the state machine through the apply
@@ -63,7 +63,7 @@ export function useUpdater(): Updater {
   const check = useCallback(async () => {
     setStatus({ kind: "checking" });
     try {
-      const info = await app.CheckUpdate();
+      const info = await app.CheckUpdate(channel);
       if (!info) {
         setStatus({ kind: "upToDate", current: "" });
         return;
@@ -80,7 +80,7 @@ export function useUpdater(): Updater {
     } catch (e) {
       setStatus({ kind: "error", message: errMsg(e) });
     }
-  }, []);
+  }, [channel]);
 
   const download = useCallback((info: UpdateInfo) => {
     if (!info.canSelfUpdate) {
@@ -88,17 +88,18 @@ export function useUpdater(): Updater {
       return;
     }
     setStatus({ kind: "downloading", received: 0, total: info.assetSize, info });
-    void app.DownloadUpdate()
+    void app.DownloadUpdate(info.channel || channel)
       .then((result) => {
         if (result) setStatus({ kind: "downloaded", info: { ...info, downloaded: true } });
       })
       .catch((e) => setStatus({ kind: "error", message: errMsg(e) }));
-  }, []);
+  }, [channel]);
 
   const install = useCallback(() => {
     setStatus((cur) => ("info" in cur ? { kind: "installing", info: cur.info } : { kind: "installing" }));
-    void app.InstallUpdate().catch((e) => setStatus({ kind: "error", message: errMsg(e) }));
-  }, []);
+    const selected = "info" in status ? status.info?.channel || channel : channel;
+    void app.InstallUpdate(selected).catch((e) => setStatus({ kind: "error", message: errMsg(e) }));
+  }, [channel, status]);
 
   const openDownload = useCallback(() => {
     void app.OpenDownloadPage();

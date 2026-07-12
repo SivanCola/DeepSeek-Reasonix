@@ -24,13 +24,14 @@ func (a *App) Version() string { return version }
 // CheckUpdate fetches the manifest (R2, then GitHub) and reports whether a newer
 // build is available for this platform. Safe to call on startup: a network error
 // surfaces in UpdateInfo.Err rather than failing, so the UI can stay quiet.
-func (a *App) CheckUpdate() (*UpdateInfo, error) {
+func (a *App) CheckUpdate(selectedChannel string) (*UpdateInfo, error) {
+	selectedChannel = targetUpdateChannel(selectedChannel)
 	c, err := httpClient()
 	if err != nil {
 		a.recordUpdateError(err)
 		return &UpdateInfo{
 			Current:       version,
-			Channel:       channel,
+			Channel:       selectedChannel,
 			CanSelfUpdate: canSelfUpdate(),
 			ManualOnly:    !canSelfUpdate(),
 			ManualReason:  manualUpdateReason(),
@@ -40,12 +41,12 @@ func (a *App) CheckUpdate() (*UpdateInfo, error) {
 	}
 	ctx, cancel := context.WithTimeout(a.reqCtx(), httpTimeout)
 	defer cancel()
-	m, err := fetchManifest(ctx, c)
+	m, err := fetchManifest(ctx, c, selectedChannel)
 	if err != nil {
 		a.recordUpdateError(err)
 		return &UpdateInfo{
 			Current:       version,
-			Channel:       channel,
+			Channel:       selectedChannel,
 			CanSelfUpdate: canSelfUpdate(),
 			ManualOnly:    !canSelfUpdate(),
 			ManualReason:  manualUpdateReason(),
@@ -53,7 +54,7 @@ func (a *App) CheckUpdate() (*UpdateInfo, error) {
 			Err:           err.Error(),
 		}, nil
 	}
-	info := evaluate(version, m)
+	info := evaluate(version, selectedChannel, m)
 	return &info, nil
 }
 
@@ -61,10 +62,11 @@ func (a *App) CheckUpdate() (*UpdateInfo, error) {
 // path and a fallback link elsewhere.
 func (a *App) OpenDownloadPage() {
 	page := downloadPage()
+	selectedChannel := targetUpdateChannel("")
 	if c, err := httpClient(); err == nil {
 		ctx, cancel := context.WithTimeout(a.reqCtx(), httpTimeout)
 		defer cancel()
-		if m, err := fetchManifest(ctx, c); err == nil && m.DownloadPage != "" {
+		if m, err := fetchManifest(ctx, c, selectedChannel); err == nil && m.DownloadPage != "" {
 			page = m.DownloadPage
 		}
 	}
@@ -76,7 +78,8 @@ func (a *App) OpenDownloadPage() {
 // DownloadUpdate downloads, verifies, and caches the latest build. Installation is
 // deliberately a separate user action so the UI can show "downloaded" before the
 // app quits to finish the update.
-func (a *App) DownloadUpdate() (*UpdateDownloadResult, error) {
+func (a *App) DownloadUpdate(selectedChannel string) (*UpdateDownloadResult, error) {
+	selectedChannel = targetUpdateChannel(selectedChannel)
 	if !canSelfUpdate() {
 		a.OpenDownloadPage()
 		return nil, nil
@@ -87,7 +90,7 @@ func (a *App) DownloadUpdate() (*UpdateDownloadResult, error) {
 	}
 	ctx, cancel := context.WithTimeout(a.reqCtx(), httpTimeout)
 	defer cancel()
-	m, err := fetchManifest(ctx, c)
+	m, err := fetchManifest(ctx, c, selectedChannel)
 	if err != nil {
 		return nil, a.failUpdate(err)
 	}
@@ -96,11 +99,11 @@ func (a *App) DownloadUpdate() (*UpdateDownloadResult, error) {
 		return nil, a.failUpdate(fmt.Errorf("no update artifact for %s", update.CurrentPlatform()))
 	}
 
-	data, err := a.downloadVerify(asset)
+	data, err := a.downloadVerify(selectedChannel, asset)
 	if err != nil {
 		return nil, a.failUpdate(err)
 	}
-	meta, err := saveCachedUpdate(m.Version, asset, data)
+	meta, err := saveCachedUpdate(selectedChannel, m.Version, asset, data)
 	if err != nil {
 		return nil, a.failUpdate(err)
 	}
@@ -115,12 +118,13 @@ func (a *App) DownloadUpdate() (*UpdateDownloadResult, error) {
 }
 
 // InstallUpdate applies the cached, verified update and then exits/relaunches.
-func (a *App) InstallUpdate() error {
+func (a *App) InstallUpdate(selectedChannel string) error {
+	selectedChannel = targetUpdateChannel(selectedChannel)
 	if !canSelfUpdate() {
 		a.OpenDownloadPage()
 		return nil
 	}
-	meta, data, err := readVerifiedCachedUpdate()
+	meta, data, err := readVerifiedCachedUpdate(selectedChannel)
 	if err != nil {
 		return a.failUpdate(err)
 	}
@@ -155,29 +159,30 @@ func (a *App) InstallUpdate() error {
 // ApplyUpdate is kept for older frontend bindings and tests. New UI code uses the
 // explicit download → install split.
 func (a *App) ApplyUpdate() error {
-	if _, err := a.DownloadUpdate(); err != nil {
+	selectedChannel := targetUpdateChannel("")
+	if _, err := a.DownloadUpdate(selectedChannel); err != nil {
 		return err
 	}
-	return a.InstallUpdate()
+	return a.InstallUpdate(selectedChannel)
 }
 
 // downloadVerify downloads the asset (streaming progress), verifies its minisign
 // signature against the embedded public key, then its sha256. It returns the
 // verified bytes and never touches disk on a bad signature.
-func (a *App) downloadVerify(asset update.Asset) ([]byte, error) {
+func (a *App) downloadVerify(selectedChannel string, asset update.Asset) ([]byte, error) {
 	c, err := httpClient()
 	if err != nil {
 		return nil, err
 	}
 	v4, _ := httpClientIPv4() // best-effort IPv4 fallback; nil just means retries reuse c
-	data, err := download(a.reqCtx(), c, v4, asset.URL, asset.Size, func(rcv, total int64) {
+	data, err := download(a.reqCtx(), c, v4, selectedChannel, asset.URL, asset.Size, func(rcv, total int64) {
 		a.emitProgress("downloading", rcv, total, "")
 	})
 	if err != nil {
 		return nil, err
 	}
 	a.emitProgress("verifying", asset.Size, asset.Size, "")
-	sig, err := fetchBytes(a.reqCtx(), c, asset.Sig)
+	sig, err := fetchBytes(a.reqCtx(), c, selectedChannel, asset.Sig)
 	if err != nil {
 		return nil, err
 	}

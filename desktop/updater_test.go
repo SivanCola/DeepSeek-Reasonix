@@ -53,27 +53,27 @@ func TestEvaluate(t *testing.T) {
 		}
 	}
 
-	if got := evaluate("v1.0.0", mk("v1.1.0")); !got.Available {
+	if got := evaluate("v1.0.0", "stable", mk("v1.1.0")); !got.Available {
 		t.Error("v1.0.0 -> v1.1.0 should be available")
 	}
-	if got := evaluate("v1.1.0", mk("v1.1.0")); got.Available {
+	if got := evaluate("v1.1.0", "stable", mk("v1.1.0")); got.Available {
 		t.Error("same version should not be available")
 	}
-	if got := evaluate("v1.2.0", mk("v1.1.0")); got.Available {
+	if got := evaluate("v1.2.0", "stable", mk("v1.1.0")); got.Available {
 		t.Error("newer-than-manifest should not be available")
 	}
 	// A dev build must never auto-prompt, even against a real release.
-	if got := evaluate("dev", mk("v1.1.0")); got.Available {
+	if got := evaluate("dev", "stable", mk("v1.1.0")); got.Available {
 		t.Error("dev build should not prompt to update")
 	}
 	// An invalid manifest version is a check error, not an update.
-	got := evaluate("v1.0.0", mk("not-a-version"))
+	got := evaluate("v1.0.0", "stable", mk("not-a-version"))
 	if got.Available || got.Err == "" {
 		t.Errorf("invalid manifest version: got %+v", got)
 	}
 	// Metadata carries through.
-	full := evaluate("v1.0.0", mk("v1.1.0"))
-	if full.Latest != "v1.1.0" || full.Notes != "notes" || full.AssetSize != 999 {
+	full := evaluate("v1.0.0", "stable", mk("v1.1.0"))
+	if full.Latest != "v1.1.0" || full.Notes != "notes" || full.Channel != "stable" || full.AssetSize != 999 {
 		t.Errorf("metadata not carried: %+v", full)
 	}
 	if full.CanSelfUpdate != (runtime.GOOS != "darwin") {
@@ -81,18 +81,31 @@ func TestEvaluate(t *testing.T) {
 	}
 }
 
+func TestEvaluateAllowsExplicitChannelSwitchToOlderStable(t *testing.T) {
+	oldChannel := channel
+	channel = "preview"
+	t.Cleanup(func() { channel = oldChannel })
+
+	m := &update.Manifest{
+		Version:   "v1.6.0",
+		Platforms: map[string]update.Asset{update.CurrentPlatform(): {Size: 999}},
+	}
+	got := evaluate("v1.7.0-preview.12", "stable", m)
+	if !got.Available {
+		t.Fatalf("stable channel switch should be available even when semver is lower: %+v", got)
+	}
+}
+
 func TestChannelSelectsDistinctPointers(t *testing.T) {
 	orig := channel
 	t.Cleanup(func() { channel = orig })
 
-	channel = "stable"
-	stable := manifestEndpoints()
-	channel = "canary"
-	canary := manifestEndpoints()
+	stable := manifestEndpoints("stable")
+	preview := manifestEndpoints("preview")
 
 	for _, u := range stable {
 		if strings.Contains(u, "canary") {
-			t.Errorf("stable endpoint leaks into canary: %q", u)
+			t.Errorf("stable endpoint leaks into preview: %q", u)
 		}
 	}
 	if !strings.Contains(stable[0], "/latest/latest.json") {
@@ -108,21 +121,27 @@ func TestChannelSelectsDistinctPointers(t *testing.T) {
 	if len(stable) != 3 || stable[2] != githubManifestFallback {
 		t.Errorf("stable endpoints = %q, want the GitHub compatibility manifest last", stable)
 	}
-	for _, u := range append(stable[:2:2], canary...) {
+	for _, u := range append(stable[:2:2], preview...) {
 		if strings.Contains(u, "/releases/latest") {
 			t.Errorf("manifest endpoint uses GitHub's repository-wide latest release: %q", u)
 		}
 	}
-	for _, u := range canary {
+	for _, u := range preview {
 		if strings.Contains(u, "/latest/") {
-			t.Errorf("canary endpoint hits the stable latest/ pointer: %q", u)
+			t.Errorf("preview endpoint hits the stable latest/ pointer: %q", u)
 		}
 	}
-	if !strings.Contains(canary[0], "/canary/latest.json") {
-		t.Errorf("canary primary = %q, want the canary/ pointer", canary[0])
+	if !strings.Contains(preview[0], "/preview/latest.json") {
+		t.Errorf("preview primary = %q, want the preview/ pointer", preview[0])
 	}
-	if canary[1] != releaseGatewayBase+"/canary/latest.json" {
-		t.Errorf("canary fallback = %q, want the release gateway", canary[1])
+	if !strings.Contains(preview[1], "/canary/latest.json") {
+		t.Errorf("preview compatibility fallback = %q, want the legacy canary pointer", preview[1])
+	}
+	if preview[2] != releaseGatewayBase+"/preview/latest.json" {
+		t.Errorf("preview gateway = %q, want the preview release gateway", preview[2])
+	}
+	if preview[3] != releaseGatewayBase+"/canary/latest.json" {
+		t.Errorf("preview gateway compatibility fallback = %q, want the canary release gateway", preview[3])
 	}
 	if strings.Contains(downloadPage(), "/releases/latest") {
 		t.Errorf("download page should not use GitHub's repository-wide latest release: %q", downloadPage())
@@ -159,17 +178,17 @@ func TestSaveCachedUpdateMarksEvaluateDownloaded(t *testing.T) {
 		Version:   "v9.9.9",
 		Platforms: map[string]update.Asset{update.CurrentPlatform(): asset},
 	}
-	if got := evaluate("v1.0.0", manifest); got.Downloaded {
+	if got := evaluate("v1.0.0", "stable", manifest); got.Downloaded {
 		t.Fatal("fresh cache should not report a downloaded update")
 	}
-	meta, err := saveCachedUpdate("v9.9.9", asset, data)
+	meta, err := saveCachedUpdate("stable", "v9.9.9", asset, data)
 	if err != nil {
 		t.Fatalf("saveCachedUpdate: %v", err)
 	}
 	if meta.Version != "v9.9.9" || meta.Channel != "stable" || meta.Platform != update.CurrentPlatform() {
 		t.Fatalf("cached metadata mismatch: %+v", meta)
 	}
-	if got := evaluate("v1.0.0", manifest); !got.Downloaded {
+	if got := evaluate("v1.0.0", "stable", manifest); !got.Downloaded {
 		t.Fatalf("evaluate did not detect cached update: %+v", got)
 	}
 }
@@ -186,17 +205,17 @@ func TestCachedUpdateRejectsTamperedArtifact(t *testing.T) {
 		Size:   int64(len(data)),
 		SHA256: sha256Hex(data),
 	}
-	meta, err := saveCachedUpdate("v9.9.9", asset, data)
+	meta, err := saveCachedUpdate("stable", "v9.9.9", asset, data)
 	if err != nil {
 		t.Fatalf("saveCachedUpdate: %v", err)
 	}
 	if err := os.WriteFile(meta.Path, []byte("tampered"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if cachedUpdateMatches("v9.9.9", asset) {
+	if cachedUpdateMatches("stable", "v9.9.9", asset) {
 		t.Fatal("tampered cached artifact should not match")
 	}
-	if _, _, err := readVerifiedCachedUpdate(); err == nil {
+	if _, _, err := readVerifiedCachedUpdate("stable"); err == nil {
 		t.Fatal("readVerifiedCachedUpdate should reject a tampered artifact")
 	}
 }
@@ -213,11 +232,10 @@ func TestCachedUpdateRejectsDifferentChannel(t *testing.T) {
 		Size:   int64(len(data)),
 		SHA256: sha256Hex(data),
 	}
-	if _, err := saveCachedUpdate("v9.9.9", asset, data); err != nil {
+	if _, err := saveCachedUpdate("stable", "v9.9.9", asset, data); err != nil {
 		t.Fatalf("saveCachedUpdate: %v", err)
 	}
-	channel = "canary"
-	if _, _, err := readVerifiedCachedUpdate(); err == nil {
+	if _, _, err := readVerifiedCachedUpdate("preview"); err == nil {
 		t.Fatal("readVerifiedCachedUpdate should reject a cache from another channel")
 	}
 }
@@ -297,7 +315,7 @@ func TestDownloadRecoversFromMidStreamReset(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	data, err := download(context.Background(), srv.Client(), nil, srv.URL, 0, nil)
+	data, err := download(context.Background(), srv.Client(), nil, "stable", srv.URL, 0, nil)
 	if err != nil {
 		t.Fatalf("download should recover after %d resets: %v", downloadAttempts-1, err)
 	}
@@ -323,7 +341,7 @@ func TestDownloadGivesUpAfterCap(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	if _, err := download(context.Background(), srv.Client(), nil, srv.URL, 0, nil); err == nil {
+	if _, err := download(context.Background(), srv.Client(), nil, "stable", srv.URL, 0, nil); err == nil {
 		t.Fatal("download should fail after exhausting retries")
 	}
 	if n := atomic.LoadInt32(&calls); n != int32(downloadAttempts) {
@@ -377,7 +395,7 @@ func TestDownloadResumesWithRange(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	data, err := download(context.Background(), srv.Client(), nil, srv.URL, 0, nil)
+	data, err := download(context.Background(), srv.Client(), nil, "stable", srv.URL, 0, nil)
 	if err != nil {
 		t.Fatalf("download: %v", err)
 	}
@@ -411,7 +429,7 @@ func TestDownloadFallsBackToSecondClient(t *testing.T) {
 		}, nil
 	})}
 
-	data, err := download(context.Background(), primary, fallback, "http://example.invalid/x", 0, nil)
+	data, err := download(context.Background(), primary, fallback, "stable", "http://example.invalid/x", 0, nil)
 	if err != nil {
 		t.Fatalf("download: %v", err)
 	}

@@ -4,18 +4,18 @@
 # context from env and writes the four outputs to $GITHUB_OUTPUT.
 #
 #   stable: from a desktop-v* tag push, or a manual dispatch with `tag`.
-#   canary: a manual dispatch with channel=canary; version is synthesized from
-#           base_version + the monotonic run_number, tag is the rolling
-#           `desktop-canary`, and it is always a prerelease.
+#   preview: a manual dispatch with channel=preview (legacy canary accepted);
+#            version is synthesized from base_version + the monotonic run_number,
+#            tag is the rolling `desktop-preview`, and it is always a prerelease.
 set -euo pipefail
 
-if [ "${EVENT_NAME:-}" = "workflow_dispatch" ] && [ "${IN_CHANNEL:-stable}" = "canary" ]; then
-	base="${IN_BASE_VERSION:?canary dispatch requires base_version}"
+if [ "${EVENT_NAME:-}" = "workflow_dispatch" ] && { [ "${IN_CHANNEL:-stable}" = "preview" ] || [ "${IN_CHANNEL:-stable}" = "canary" ]; }; then
+	base="${IN_BASE_VERSION:?preview dispatch requires base_version}"
 	base="${base#v}"
 	base="${base#desktop-v}"
-	version="v${base}-canary.${RUN_NUMBER}"
-	tag="desktop-canary"
-	channel="canary"
+	version="v${base}-preview.${RUN_NUMBER}"
+	tag="desktop-preview"
+	channel="preview"
 	prerelease="true"
 else
 	if [ "${EVENT_NAME:-}" = "workflow_dispatch" ]; then

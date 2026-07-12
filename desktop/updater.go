@@ -36,10 +36,10 @@ import (
 
 // Manifest endpoints — R2 CDN first (fast, especially in CN), then the crash
 // worker release gateway, then GitHub as the stable channel's last resort. The
-// build channel picks the rolling pointer so a canary build polls the canary
-// line and a stable build polls latest; the two never cross. The gateway still
-// avoids GitHub's repository-wide /releases/latest shortcut so the app is not
-// coupled to GitHub's homepage badge semantics.
+// selected update channel picks the rolling pointer; it is user-configurable and
+// independent from the build channel embedded for diagnostics/backcompat. The
+// gateway still avoids GitHub's repository-wide /releases/latest shortcut so the
+// app is not coupled to GitHub's homepage badge semantics.
 const (
 	r2Base             = "https://dl.reasonix.io"
 	releaseGatewayBase = "https://crash.reasonix.io/v1/desktop/releases"
@@ -57,19 +57,46 @@ const (
 // chain stays two-deep.
 const githubManifestFallback = "https://github.com/esengine/DeepSeek-Reasonix/releases/latest/download/latest.json"
 
-// manifestEndpoints returns the manifest URLs for the running build's channel,
+func normalizeUpdateChannel(ch string) string {
+	return config.NormalizeDesktopUpdateChannel(ch)
+}
+
+func configuredUpdateChannel() string {
+	cfg, err := config.Load()
+	if err != nil {
+		return "stable"
+	}
+	return cfg.DesktopUpdateChannel()
+}
+
+func targetUpdateChannel(selected string) string {
+	if strings.TrimSpace(selected) != "" {
+		return normalizeUpdateChannel(selected)
+	}
+	return configuredUpdateChannel()
+}
+
+func runningUpdateChannel() string {
+	return normalizeUpdateChannel(channel)
+}
+
+// manifestEndpoints returns the manifest URLs for the selected update channel,
 // in the order fetchManifest tries them.
-func manifestEndpoints() []string {
-	if channel == "canary" {
+func manifestEndpoints(selected string) []string {
+	switch normalizeUpdateChannel(selected) {
+	case "preview":
 		return []string{
+			r2Base + "/preview/latest.json",
 			r2Base + "/canary/latest.json",
+			releaseGatewayBase + "/preview/latest.json",
 			releaseGatewayBase + "/canary/latest.json",
 		}
-	}
-	return []string{
-		r2Base + "/latest/latest.json",
-		releaseGatewayBase + "/stable/latest.json",
-		githubManifestFallback,
+	default:
+		return []string{
+			r2Base + "/latest/latest.json",
+			releaseGatewayBase + "/stable/latest.json",
+			githubManifestFallback,
+		}
 	}
 }
 
@@ -77,8 +104,8 @@ func manifestEndpoints() []string {
 // is exactly what edge bot protection scores worst (#6005); a descriptive UA
 // lets the release edge allowlist updater requests and makes them attributable
 // in server logs.
-func updaterUserAgent() string {
-	return fmt.Sprintf("Reasonix-Updater/%s (%s/%s; %s)", version, runtime.GOOS, runtime.GOARCH, channel)
+func updaterUserAgent(selected string) string {
+	return fmt.Sprintf("Reasonix-Updater/%s (%s/%s; build=%s; update=%s)", version, runtime.GOOS, runtime.GOARCH, channel, normalizeUpdateChannel(selected))
 }
 
 // downloadPage is the human-facing releases page shown when self-update is
@@ -171,10 +198,11 @@ func normalizeVersion(v string) (string, bool) {
 // responds and decodes. Every endpoint's failure is kept — a user staring at a
 // gateway 403 (#6005) needs to see that the R2 pointer failed too, not just
 // whichever endpoint happened to die last.
-func fetchManifest(ctx context.Context, c *http.Client) (*update.Manifest, error) {
+func fetchManifest(ctx context.Context, c *http.Client, selected string) (*update.Manifest, error) {
 	var errs []error
-	for _, url := range manifestEndpoints() {
-		b, err := fetchBytes(ctx, c, url)
+	selected = normalizeUpdateChannel(selected)
+	for _, url := range manifestEndpoints(selected) {
+		b, err := fetchBytes(ctx, c, selected, url)
 		if err != nil {
 			errs = append(errs, err)
 			continue
@@ -191,7 +219,8 @@ func fetchManifest(ctx context.Context, c *http.Client) (*update.Manifest, error
 
 // evaluate compares the running version against the manifest and builds the
 // frontend-facing result. Pure (no I/O) so the comparison is unit-tested.
-func evaluate(current string, m *update.Manifest) UpdateInfo {
+func evaluate(current, selected string, m *update.Manifest) UpdateInfo {
+	selected = normalizeUpdateChannel(selected)
 	page := m.DownloadPage
 	if page == "" {
 		page = downloadPage()
@@ -200,7 +229,7 @@ func evaluate(current string, m *update.Manifest) UpdateInfo {
 		Current:       current,
 		Latest:        m.Version,
 		Notes:         m.Notes,
-		Channel:       channel,
+		Channel:       selected,
 		CanSelfUpdate: canSelfUpdate(),
 		ManualOnly:    !canSelfUpdate(),
 		ManualReason:  manualUpdateReason(),
@@ -212,13 +241,19 @@ func evaluate(current string, m *update.Manifest) UpdateInfo {
 		info.Err = "manifest has no valid version"
 		return info
 	}
-	// A dev/invalid running version never auto-prompts.
-	if okCur && semver.Compare(latest, cur) > 0 {
-		info.Available = true
+	// A dev/invalid running version never auto-prompts. Within a channel, only a
+	// newer semver is an update. Across channels, a different target latest is an
+	// explicit channel switch, so allow installing stable over a newer preview.
+	if okCur {
+		if selected != runningUpdateChannel() {
+			info.Available = latest != cur
+		} else if semver.Compare(latest, cur) > 0 {
+			info.Available = true
+		}
 	}
 	if a, ok := m.Asset(); ok {
 		info.AssetSize = a.Size
-		info.Downloaded = cachedUpdateMatches(m.Version, a)
+		info.Downloaded = cachedUpdateMatches(selected, m.Version, a)
 	}
 	return info
 }
@@ -302,7 +337,8 @@ func writeAtomic(path string, data []byte, mode os.FileMode) error {
 	return nil
 }
 
-func saveCachedUpdate(version string, asset update.Asset, data []byte) (*cachedUpdate, error) {
+func saveCachedUpdate(selected, version string, asset update.Asset, data []byte) (*cachedUpdate, error) {
+	selected = normalizeUpdateChannel(selected)
 	if err := checkSHA256(data, asset.SHA256); err != nil {
 		return nil, err
 	}
@@ -316,7 +352,7 @@ func saveCachedUpdate(version string, asset update.Asset, data []byte) (*cachedU
 	}
 	meta := &cachedUpdate{
 		Version:      version,
-		Channel:      channel,
+		Channel:      selected,
 		Platform:     update.CurrentPlatform(),
 		Path:         path,
 		Size:         int64(len(data)),
@@ -356,13 +392,14 @@ func loadCachedUpdate() (*cachedUpdate, error) {
 	return &meta, nil
 }
 
-func cachedUpdateMatches(version string, asset update.Asset) bool {
+func cachedUpdateMatches(selected, version string, asset update.Asset) bool {
+	selected = normalizeUpdateChannel(selected)
 	meta, err := loadCachedUpdate()
 	if err != nil {
 		return false
 	}
 	return meta.Version == version &&
-		meta.Channel == channel &&
+		meta.Channel == selected &&
 		meta.Platform == update.CurrentPlatform() &&
 		strings.EqualFold(meta.SHA256, asset.SHA256) &&
 		meta.Size == asset.Size &&
@@ -382,13 +419,14 @@ func fileSHA256Matches(path, want string) bool {
 	return strings.EqualFold(hex.EncodeToString(h.Sum(nil)), want)
 }
 
-func readVerifiedCachedUpdate() (*cachedUpdate, []byte, error) {
+func readVerifiedCachedUpdate(selected string) (*cachedUpdate, []byte, error) {
+	selected = normalizeUpdateChannel(selected)
 	meta, err := loadCachedUpdate()
 	if err != nil {
 		return nil, nil, err
 	}
-	if meta.Channel != channel {
-		return nil, nil, fmt.Errorf("update: cached update is for %s channel, current channel is %s", meta.Channel, channel)
+	if meta.Channel != selected {
+		return nil, nil, fmt.Errorf("update: cached update is for %s channel, selected channel is %s", meta.Channel, selected)
 	}
 	if meta.Platform != update.CurrentPlatform() {
 		return nil, nil, fmt.Errorf("update: cached update is for %s, current platform is %s", meta.Platform, update.CurrentPlatform())
@@ -436,22 +474,22 @@ func retryTransient(ctx context.Context, fetch func(attempt int) error) error {
 }
 
 // fetchBytes GETs a URL fully into memory, retrying transient transport failures.
-func fetchBytes(ctx context.Context, c *http.Client, url string) ([]byte, error) {
+func fetchBytes(ctx context.Context, c *http.Client, selected, url string) ([]byte, error) {
 	var data []byte
 	err := retryTransient(ctx, func(int) error {
 		var e error
-		data, e = fetchBytesOnce(ctx, c, url)
+		data, e = fetchBytesOnce(ctx, c, selected, url)
 		return e
 	})
 	return data, err
 }
 
-func fetchBytesOnce(ctx context.Context, c *http.Client, url string) ([]byte, error) {
+func fetchBytesOnce(ctx context.Context, c *http.Client, selected, url string) ([]byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("User-Agent", updaterUserAgent())
+	req.Header.Set("User-Agent", updaterUserAgent(selected))
 	resp, err := c.Do(req)
 	if err != nil {
 		return nil, err
@@ -468,14 +506,14 @@ func fetchBytesOnce(ctx context.Context, c *http.Client, url string) ([]byte, er
 // via a Range request instead of restarting, and switches to the IPv4 fallback
 // client (when provided) since a reset usually means the IPv6 route is the problem.
 // total is the expected size for the progress denominator (refined from the response).
-func download(ctx context.Context, c, fallback *http.Client, url string, total int64, onProgress func(received, total int64)) ([]byte, error) {
+func download(ctx context.Context, c, fallback *http.Client, selected, url string, total int64, onProgress func(received, total int64)) ([]byte, error) {
 	var buf bytes.Buffer
 	err := retryTransient(ctx, func(attempt int) error {
 		client := c
 		if attempt > 1 && fallback != nil {
 			client = fallback
 		}
-		return downloadInto(ctx, client, url, &buf, &total, onProgress)
+		return downloadInto(ctx, client, selected, url, &buf, &total, onProgress)
 	})
 	if err != nil {
 		return nil, err
@@ -488,12 +526,12 @@ func download(ctx context.Context, c, fallback *http.Client, url string, total i
 // remaining bytes; a 200 means the server ignored Range, so buf is reset and the
 // whole file re-downloaded. total is refined from the response for the progress
 // denominator (Content-Length on 200, the size field of Content-Range on 206).
-func downloadInto(ctx context.Context, c *http.Client, url string, buf *bytes.Buffer, total *int64, onProgress func(received, total int64)) error {
+func downloadInto(ctx context.Context, c *http.Client, selected, url string, buf *bytes.Buffer, total *int64, onProgress func(received, total int64)) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return err
 	}
-	req.Header.Set("User-Agent", updaterUserAgent())
+	req.Header.Set("User-Agent", updaterUserAgent(selected))
 	if buf.Len() > 0 {
 		req.Header.Set("Range", fmt.Sprintf("bytes=%d-", buf.Len()))
 	}

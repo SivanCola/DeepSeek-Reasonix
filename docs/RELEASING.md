@@ -1,6 +1,6 @@
 # Releasing
 
-How Reasonix ships, who can ship what, and the canary-before-stable flow.
+How Reasonix ships, who can ship what, and the preview-before-stable flow.
 
 ## Branch model: trunk + tags
 
@@ -10,28 +10,30 @@ How Reasonix ships, who can ship what, and the canary-before-stable flow.
 - **`v1`** is the archived 1.0/legacy line — maintenance only.
 - **Hotfix** an already-released version by branching from its tag, fixing, and tagging again.
 
-There is no separate "production" or "develop" branch by design — the canary channel
+There is no separate "production" or "develop" branch by design — the preview channel
 provides the pre-release buffer instead of a long-lived branch.
 
 ## Channels
 
 | Surface | Stable | Pre-release buffer |
 |---|---|---|
-| npm | `latest` (current 1.x stable) | `next` (rc), `canary` (`npm i reasonix@canary`) |
-| Desktop | R2 `latest/` pointer + release gateway | R2 `canary/` pointer + release gateway proxy (never on the GitHub releases page) |
+| npm | `latest` (current 1.x stable) | `next` (preview/rc), legacy `canary` compatibility |
+| Desktop | R2 `latest/` pointer + release gateway | R2 `preview/` pointer + release gateway proxy (legacy `canary/` also updated; never on the GitHub releases page) |
 
-A canary build is isolated: it **never** moves `latest` / `next` / desktop `latest/`.
-Testers opt in explicitly. (Desktop builds carry `-X main.channel=canary`; npm versions
-ending in `-canary.N` publish under the `canary` dist-tag.)
+A preview build is isolated: it **never** moves `latest` / desktop `latest/`.
+Testers opt in explicitly. Desktop builds carry `-X main.channel=preview`, and the
+desktop Settings > Updates panel lets users switch between Stable and Preview
+latest pointers at any time. Older `canary` config values and R2 pointers remain
+accepted as compatibility aliases for preview.
 
 ## Who can release what
 
 | Action | Who | Mechanism |
 |---|---|---|
-| **Cut a canary** | any maintainer (write access) | `workflow_dispatch`, runs free (open `canary` environment) |
+| **Cut a preview** | any maintainer (write access) | `workflow_dispatch`, runs free (open `canary` environment, reused for compatibility) |
 | **Ship `next` / stable** | **esengine only** | stable publish jobs gate on the `release` environment — esengine must approve before anything goes public |
 
-So a maintainer can dispatch a canary anytime, but a stable release — even one a
+So a maintainer can dispatch a preview anytime, but a stable release — even one a
 maintainer starts by pushing a tag — pauses in the Actions UI until **esengine approves**
 the `release` environment deployment.
 
@@ -43,14 +45,14 @@ the `release` environment deployment.
 ## The release loop
 
 1. **Develop** — PRs land on `main-v2` (branch auto-deletes on merge).
-2. **Cut a canary** before the intended release (e.g. heading for `1.4.0`):
-   - Desktop: Actions → **Release desktop** → `channel: canary`, `base_version: 1.4.0`
+2. **Cut a preview** before the intended release (e.g. heading for `1.4.0`):
+   - Desktop: Actions → **Release desktop** → `channel: preview`, `base_version: 1.4.0`
    - CLI: Actions → **Release npm** → `base_version: 1.4.0`
-   - Publishes `1.4.0-canary.N` to the desktop R2 `canary/` pointer (no GitHub release) and npm `@canary`.
-3. **Test** — testers install `reasonix@canary` (CLI) or grab the desktop canary
-   build from its R2 link, and report bugs.
-4. **Fix** on `main-v2` via PRs; re-cut the canary as needed (`canary.N` bumps).
-5. **Ship stable** when the canary is clean — push the three tags:
+   - Publishes `1.4.0-preview.N` to the desktop R2 `preview/` pointer (no GitHub release) and npm pre-release channel.
+3. **Test** — testers opt into Preview in desktop Settings > Updates or install
+   the CLI pre-release channel, and report bugs.
+4. **Fix** on `main-v2` via PRs; re-cut the preview as needed (`preview.N` bumps).
+5. **Ship stable** when the preview is clean — push the three tags:
    ```sh
    git tag v1.4.0         && git push origin v1.4.0          # CLI binaries + Homebrew
    git tag npm-v1.4.0     && git push origin npm-v1.4.0      # npm -> latest
@@ -64,20 +66,21 @@ the `release` environment deployment.
    `npm update -g` silently downgraded users to 0.53.2 (#5822). A pushed tag whose
    publish is still awaiting approval only warns; release-npm.yml's verify step
    owns asserting the dist-tag lands.
-6. **Next cycle** — the canary rolls on toward `1.5.0`.
+6. **Next cycle** — the preview rolls on toward `1.5.0`.
 
 ## Notes
 
-- Canary version numbers use the workflow `run_number`, so the desktop and CLI canary
-  numbers differ (e.g. `canary.11` vs `canary.2`). Only monotonicity per channel matters.
-- A stable `-rc` tag (e.g. `npm-v1.4.0-rc.1`) still ships under `next`, not `canary`.
+- Preview version numbers use the workflow `run_number`, so desktop and CLI
+  numbers may differ (e.g. `preview.11` vs `preview.2`). Only monotonicity per channel matters.
+- A stable `-rc` tag (e.g. `npm-v1.4.0-rc.1`) still ships under `next`, not stable.
 - Desktop in-app updates use R2 first, then the `crash.reasonix.io` desktop release
   gateway. The gateway resolves the `desktop-v*` release line directly and never uses
   GitHub's repository-wide `/releases/latest`, because plain `v*` tags are the CLI
   release line. Stable CLI releases also carry a compatibility `latest.json` asset so
   older desktop builds that still use GitHub `latest` do not 404.
-- Canary uses R2 plus the same gateway proxy for the `canary/` pointer; it never
-  appears on the GitHub releases page.
+- Preview uses R2 plus the same gateway proxy for the `preview/` pointer; it never
+  appears on the GitHub releases page. The legacy `canary/` pointer is updated
+  alongside preview for older clients.
 - Windows and Linux apply downloaded, minisign-verified artifacts in place. macOS
   applies in-app only for Developer ID signed and notarized builds; ad-hoc/local
   builds fall back to the download page.
