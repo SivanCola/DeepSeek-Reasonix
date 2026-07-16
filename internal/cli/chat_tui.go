@@ -2995,13 +2995,6 @@ func (m chatTUI) jobsTag() string {
 	return dim(fmt.Sprintf("⚙ %d", n))
 }
 
-func (m chatTUI) modelTag() string {
-	if strings.TrimSpace(m.label) == "" {
-		return ""
-	}
-	return dim(m.label)
-}
-
 func (m chatTUI) workModeTag() string {
 	if m.runtimeProfile == "" {
 		return ""
@@ -3369,10 +3362,6 @@ func (m *chatTUI) cycleMode() {
 
 func (m chatTUI) desktopShortcutLayout() bool {
 	return m.cfg != nil && m.cfg.UIShortcutLayout() == "desktop"
-}
-
-func (m chatTUI) cycleHint() string {
-	return i18n.M.ChatStatusCycleHint
 }
 
 func (m *chatTUI) toggleYoloMode() {
