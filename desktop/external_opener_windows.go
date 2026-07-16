@@ -127,11 +127,13 @@ func windowsAppPathExecutable(name string) string {
 }
 
 // windowsTerminalIconSource prefers a real Windows Terminal package binary for
-// SHGetFileInfo. Store installs expose only a wt.exe App Execution Alias under
-// LocalAppData\Microsoft\WindowsApps; the package binary is under
-// Program Files\WindowsApps\Microsoft.WindowsTerminal_*.
+// SHGetFileInfo. Store installs expose wt.exe as an App Execution Alias (often
+// zero bytes under LocalAppData\Microsoft\WindowsApps). The package binary may
+// live under Program Files\WindowsApps, but non-elevated processes frequently
+// cannot enumerate that protected directory — so a renderable console-host
+// fallback must win over a zero-byte alias (see pickWindowsTerminalIconSource).
 func windowsTerminalIconSource(wtPath string) string {
-	var zeroSizeFallback string
+	var resolved []windowsIconCandidate
 	for _, candidate := range windowsTerminalIconCandidatePaths(
 		wtPath,
 		os.Getenv("LOCALAPPDATA"),
@@ -150,25 +152,17 @@ func windowsTerminalIconSource(wtPath string) string {
 			if err != nil || info.IsDir() {
 				continue
 			}
-			// Prefer a real binary with content; keep zero-size aliases as a
-			// later fallback — SHGetFileInfo can still resolve Store icons.
-			if info.Size() > 0 {
-				return match
-			}
-			if zeroSizeFallback == "" {
-				zeroSizeFallback = match
-			}
+			resolved = append(resolved, windowsIconCandidate{Path: match, Size: info.Size()})
 		}
 	}
-	if zeroSizeFallback != "" {
-		return zeroSizeFallback
+	// Prefer a normal console host icon over a zero-byte wt.exe alias so the
+	// menu never ships a blank glyph when WindowsApps is unreadable.
+	renderable := firstWindowsExecutable([]string{"powershell.exe"},
+		joinWindowsInstallPath(os.Getenv("WINDIR"), "System32", "WindowsPowerShell", "v1.0", "powershell.exe"))
+	if picked := pickWindowsTerminalIconSource(resolved, renderable); picked != "" {
+		return picked
 	}
-	// Last resort: a normal console host icon rather than an empty menu glyph.
-	if ps := firstWindowsExecutable([]string{"powershell.exe"},
-		joinWindowsInstallPath(os.Getenv("WINDIR"), "System32", "WindowsPowerShell", "v1.0", "powershell.exe")); ps != "" {
-		return ps
-	}
-	return wtPath
+	return strings.TrimSpace(wtPath)
 }
 
 // shellExecuteOpenFile launches file via ShellExecuteW("open") without cmd.exe.

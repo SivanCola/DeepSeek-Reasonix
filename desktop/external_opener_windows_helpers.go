@@ -10,6 +10,10 @@ import (
 // under LocalAppData\Microsoft\WindowsApps; the real WindowsTerminal.exe lives
 // under Program Files\WindowsApps\Microsoft.WindowsTerminal_*.
 //
+// Non-elevated processes often cannot glob the protected WindowsApps package
+// directory, so callers must treat a missing package hit as normal and apply
+// pickWindowsTerminalIconSource (renderable fallback before zero-byte aliases).
+//
 // Patterns may contain filepath globs; callers expand them on the host.
 func windowsTerminalIconCandidatePaths(wtPath, localAppData, programFiles string) []string {
 	var out []string
@@ -30,6 +34,37 @@ func windowsTerminalIconCandidatePaths(wtPath, localAppData, programFiles string
 		out = append(out, wtPath)
 	}
 	return out
+}
+
+// windowsIconCandidate is a filesystem path considered for SHGetFileInfo, with
+// its observed size. Size 0 is typical for App Execution Alias reparse points.
+type windowsIconCandidate struct {
+	Path string
+	Size int64
+}
+
+// pickWindowsTerminalIconSource chooses an IconSource path for the WT menu row.
+// Order:
+//  1. first non-zero-size package/binary path (real WindowsTerminal.exe)
+//  2. renderableFallback (e.g. powershell.exe) — must beat zero-byte aliases so
+//     SHGetFileInfo is not pointed at an empty stub that yields a blank glyph
+//  3. zero-size alias / last-known path only when nothing else is available
+func pickWindowsTerminalIconSource(resolved []windowsIconCandidate, renderableFallback string) string {
+	for _, c := range resolved {
+		if strings.TrimSpace(c.Path) == "" || c.Size <= 0 {
+			continue
+		}
+		return c.Path
+	}
+	if fb := strings.TrimSpace(renderableFallback); fb != "" {
+		return fb
+	}
+	for _, c := range resolved {
+		if path := strings.TrimSpace(c.Path); path != "" {
+			return path
+		}
+	}
+	return ""
 }
 
 // windowsConsoleLaunch describes a console opener launch that never goes

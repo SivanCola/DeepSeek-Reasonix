@@ -29,11 +29,36 @@ func TestWindowsAppPathExecutableEmptyName(t *testing.T) {
 	}
 }
 
-func TestWindowsTerminalIconSourcePrefersNonZeroBinary(t *testing.T) {
-	// A non-existent path must not panic; fallback may be powershell or empty
-	// alias string. Primary Store layout is covered by the pure candidate test.
-	got := windowsTerminalIconSource(filepath.Join(t.TempDir(), "wt-missing.exe"))
-	_ = got
+func TestWindowsTerminalIconSourceSkipsZeroByteAliasForPowershell(t *testing.T) {
+	// When only a zero-byte execution alias is visible (package dir unreadable),
+	// IconSource must not stick on the alias — PowerShell is a known renderable
+	// PE that SHGetFileInfo can extract.
+	dir := t.TempDir()
+	alias := filepath.Join(dir, "wt.exe")
+	if err := os.WriteFile(alias, nil, 0o644); err != nil {
+		t.Fatalf("write zero-byte alias: %v", err)
+	}
+	// Point candidate resolution at our temp alias only by calling pick through
+	// the real resolver with overridden env via windowsTerminalIconSource on a
+	// path that will not find package globs, then assert via pick contract.
+	// Direct integration: windowsTerminalIconSource(alias) should return a
+	// non-zero file when powershell is on PATH / System32.
+	got := windowsTerminalIconSource(alias)
+	if got == "" {
+		t.Fatal("icon source empty")
+	}
+	if got == alias {
+		info, err := os.Stat(got)
+		if err != nil {
+			t.Fatalf("stat result: %v", err)
+		}
+		if info.Size() == 0 {
+			t.Fatalf("icon source stayed on zero-byte alias %q; want renderable fallback", got)
+		}
+	}
+	if info, err := os.Stat(got); err != nil || info.IsDir() || info.Size() == 0 {
+		t.Fatalf("icon source %q is not a non-zero file (err=%v)", got, err)
+	}
 }
 
 func TestWindowsConsoleLaunchDoesNotInvokeCmdStart(t *testing.T) {

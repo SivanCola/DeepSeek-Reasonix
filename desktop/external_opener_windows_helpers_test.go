@@ -64,3 +64,43 @@ func TestWindowsConsoleLaunchIsDirectRejectsEmptyFile(t *testing.T) {
 		t.Fatal("empty plan must not count as direct")
 	}
 }
+
+func TestPickWindowsTerminalIconSourcePrefersRenderableOverZeroByteAlias(t *testing.T) {
+	wtAlias := `C:\Users\x\AppData\Local\Microsoft\WindowsApps\wt.exe`
+	packageBin := `C:\Program Files\WindowsApps\Microsoft.WindowsTerminal_1.0_x64__8wekyb3d8bbwe\WindowsTerminal.exe`
+	powershell := `C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe`
+
+	t.Run("nonzero_package_wins", func(t *testing.T) {
+		got := pickWindowsTerminalIconSource([]windowsIconCandidate{
+			{Path: wtAlias, Size: 0},
+			{Path: packageBin, Size: 1_024_000},
+		}, powershell)
+		if got != packageBin {
+			t.Fatalf("got %q, want package binary", got)
+		}
+	})
+	t.Run("renderable_beats_zero_alias", func(t *testing.T) {
+		// Protected WindowsApps often cannot be globbed; only the zero-byte
+		// execution alias remains. PowerShell must win so SHGetFileInfo has a
+		// real PE to extract (blank glyph fix for #6547).
+		got := pickWindowsTerminalIconSource([]windowsIconCandidate{
+			{Path: wtAlias, Size: 0},
+		}, powershell)
+		if got != powershell {
+			t.Fatalf("got %q, want powershell renderable fallback", got)
+		}
+	})
+	t.Run("zero_alias_only_without_fallback", func(t *testing.T) {
+		got := pickWindowsTerminalIconSource([]windowsIconCandidate{
+			{Path: wtAlias, Size: 0},
+		}, "")
+		if got != wtAlias {
+			t.Fatalf("got %q, want alias when no renderable fallback exists", got)
+		}
+	})
+	t.Run("empty", func(t *testing.T) {
+		if got := pickWindowsTerminalIconSource(nil, ""); got != "" {
+			t.Fatalf("got %q, want empty", got)
+		}
+	})
+}
