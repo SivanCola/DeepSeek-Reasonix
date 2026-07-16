@@ -6,14 +6,15 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
+	"golang.org/x/sys/windows/registry"
 )
 
 const (
-	createNewConsole       = 0x00000010
 	shgfiIcon              = 0x000000100
 	shgfiLargeIcon         = 0x000000000
 	dibRGBColors           = 0
@@ -76,6 +77,9 @@ func firstWindowsExecutable(names []string, candidates ...string) string {
 		if path, err := exec.LookPath(name); err == nil {
 			return path
 		}
+		if path := windowsAppPathExecutable(name); path != "" {
+			return path
+		}
 	}
 	for _, candidate := range candidates {
 		if candidate == "" {
@@ -90,6 +94,65 @@ func firstWindowsExecutable(names []string, candidates ...string) string {
 		}
 	}
 	return ""
+}
+
+// windowsAppPathExecutable resolves an install registered under
+// HKCU/HKLM ...\App Paths\<name>. Custom VS Code / editor installs often only
+// appear there, not on PATH or under the default Program Files trees.
+func windowsAppPathExecutable(name string) string {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return ""
+	}
+	subKey := `SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\` + name
+	for _, root := range []registry.Key{registry.CURRENT_USER, registry.LOCAL_MACHINE} {
+		key, err := registry.OpenKey(root, subKey, registry.QUERY_VALUE)
+		if err != nil {
+			continue
+		}
+		raw, _, err := key.GetStringValue("")
+		key.Close()
+		if err != nil {
+			continue
+		}
+		path := strings.Trim(strings.TrimSpace(raw), `"`)
+		if path == "" {
+			continue
+		}
+		path = os.ExpandEnv(path)
+		if info, err := os.Stat(path); err == nil && !info.IsDir() {
+			return path
+		}
+	}
+	return ""
+}
+
+// windowsTerminalIconSource prefers a real Windows Terminal package binary for
+// SHGetFileInfo. Store-installed wt.exe under WindowsApps is often a zero-byte
+// execution alias that yields no icon.
+func windowsTerminalIconSource(wtPath string) string {
+	local := os.Getenv("LOCALAPPDATA")
+	if local != "" {
+		pattern := filepath.Join(local, "Microsoft", "WindowsApps", "Microsoft.WindowsTerminal*", "WindowsTerminal.exe")
+		if matches, _ := filepath.Glob(pattern); len(matches) > 0 {
+			for _, match := range matches {
+				if info, err := os.Stat(match); err == nil && !info.IsDir() && info.Size() > 0 {
+					return match
+				}
+			}
+		}
+	}
+	if wtPath != "" {
+		if info, err := os.Stat(wtPath); err == nil && !info.IsDir() && info.Size() > 0 {
+			return wtPath
+		}
+	}
+	// Fall back to a normal console host icon rather than an empty menu glyph.
+	if ps := firstWindowsExecutable([]string{"powershell.exe"},
+		joinWindowsInstallPath(os.Getenv("WINDIR"), "System32", "WindowsPowerShell", "v1.0", "powershell.exe")); ps != "" {
+		return ps
+	}
+	return wtPath
 }
 
 func platformExternalOpenerSpecs() []externalOpenerSpec {
@@ -126,7 +189,14 @@ func platformExternalOpenerSpecs() []externalOpenerSpec {
 		joinWindowsInstallPath(programFiles, "Cursor", "Cursor.exe"))
 	add("file-explorer", "File Explorer", externalOpenerFileManager, "shell-open", []string{"explorer.exe"},
 		joinWindowsInstallPath(windowsDir, "explorer.exe"))
-	add("windows-terminal", "Windows Terminal", externalOpenerTerminal, "windows-terminal", []string{"wt.exe"})
+	if wt := firstWindowsExecutable([]string{"wt.exe"}); wt != "" {
+		specs = append(specs, externalOpenerSpec{
+			View:       ExternalOpenerView{ID: "windows-terminal", Name: "Windows Terminal", Kind: externalOpenerTerminal},
+			Target:     wt,
+			LaunchMode: "windows-terminal",
+			IconSource: windowsTerminalIconSource(wt),
+		})
+	}
 	add("powershell", "PowerShell", externalOpenerTerminal, "console", []string{"pwsh.exe", "powershell.exe"},
 		joinWindowsInstallPath(windowsDir, "System32", "WindowsPowerShell", "v1.0", "powershell.exe"))
 	add("command-prompt", "Command Prompt", externalOpenerTerminal, "console", []string{"cmd.exe"},
@@ -269,9 +339,18 @@ func launchPlatformExternalOpener(spec externalOpenerSpec, path string) error {
 	case "windows-terminal":
 		cmd = exec.Command(spec.Target, "-d", path)
 	case "console":
-		cmd = exec.Command(spec.Target)
-		cmd.Dir = path
-		cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: createNewConsole}
+		// Launch through `cmd /c start` so the console is fully detached from
+		// the Wails GUI process. Direct CREATE_NEW_CONSOLE from a windowed
+		// parent often flashes and exits on Windows 10/11; HideWindow keeps
+		// the intermediate cmd shell invisible.
+		comspec := joinWindowsInstallPath(os.Getenv("WINDIR"), "System32", "cmd.exe")
+		if comspec == "" {
+			comspec = "cmd.exe"
+		}
+		// start "title" /D dir program — the quoted title is required so a
+		// path with spaces is not parsed as the window title.
+		cmd = exec.Command(comspec, "/c", "start", "Reasonix", "/D", path, spec.Target)
+		cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
 	default:
 		cmd = exec.Command(spec.Target, path)
 	}

@@ -4819,6 +4819,25 @@ func TestSetTokenModeDeliveryRebuildsAndPersistsProfile(t *testing.T) {
 	if len(saved.Tabs) != 1 || saved.Tabs[0].TokenMode != boot.TokenModeDelivery {
 		t.Fatalf("saved tabs = %+v, want delivery profile", saved.Tabs)
 	}
+
+	// Leaving delivery must clear the persisted tokenMode so a restart does not
+	// re-arm final-readiness gates (#6582).
+	if err := app.SetTokenMode(boot.TokenModeFull); err != nil {
+		t.Fatalf("SetTokenMode(full): %v", err)
+	}
+	if got := currentTabTokenMode(app.activeTab()); got != boot.TokenModeFull {
+		t.Fatalf("token mode after full = %q, want full", got)
+	}
+	if got := app.Meta().TokenMode; got != boot.TokenModeFull {
+		t.Fatalf("Meta token mode after full = %q, want full", got)
+	}
+	saved = loadTabsFile()
+	if len(saved.Tabs) != 1 {
+		t.Fatalf("saved tabs = %+v", saved.Tabs)
+	}
+	if saved.Tabs[0].TokenMode != "" {
+		t.Fatalf("saved tokenMode = %q, want omitted/empty for full", saved.Tabs[0].TokenMode)
+	}
 }
 
 func TestSetTokenModeReusesCurrentSessionLease(t *testing.T) {
