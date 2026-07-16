@@ -32,7 +32,7 @@ func windowsPOSIXShellArgvInvocation(command string, args []string) (string, []s
 }
 
 func windowsPOSIXShellArgvInvocationWith(command string, args []string, resolve func() (string, error)) (string, []string, bool, error) {
-	if !isPOSIXShellWord(command) || !hasCommandStringFlag(args) {
+	if !isBarePOSIXShellWord(command) || !hasCommandStringFlag(args) {
 		return "", nil, false, nil
 	}
 	path, err := resolve()
@@ -44,7 +44,7 @@ func windowsPOSIXShellArgvInvocationWith(command string, args []string, resolve 
 
 func windowsPOSIXShellInvocationWith(command string, resolve func() (string, error)) (string, []string, bool, error) {
 	fields, _, _, ok := parseSimpleHookCommandFields(command)
-	if !ok || len(fields) < 3 || !isPOSIXShellWord(fields[0]) || !hasCommandStringFlag(fields[1:]) {
+	if !ok || len(fields) < 3 || !isBarePOSIXShellWord(fields[0]) || !hasCommandStringFlag(fields[1:]) {
 		return "", nil, false, nil
 	}
 	path, err := resolve()
@@ -54,24 +54,54 @@ func windowsPOSIXShellInvocationWith(command string, resolve func() (string, err
 	return path, append([]string(nil), fields[1:]...), true, nil
 }
 
-func isPOSIXShellWord(word string) bool {
-	if i := strings.LastIndexAny(word, `/\`); i >= 0 {
-		word = word[i+1:]
+func isBarePOSIXShellWord(word string) bool {
+	word = strings.TrimSpace(word)
+	if strings.ContainsAny(word, `/\:`) {
+		return false
 	}
-	word = strings.ToLower(strings.TrimSpace(word))
+	word = strings.ToLower(word)
 	return word == "sh" || word == "sh.exe" || word == "bash" || word == "bash.exe"
 }
 
 func hasCommandStringFlag(args []string) bool {
-	for _, arg := range args {
-		if !strings.HasPrefix(arg, "-") || arg == "-" || arg == "--" {
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if arg == "-" || arg == "--" || !strings.HasPrefix(arg, "-") {
 			return false
 		}
-		if strings.Contains(strings.TrimLeft(arg, "-"), "c") {
-			return true
+		if strings.HasPrefix(arg, "--") {
+			name, _, hasInlineValue := strings.Cut(strings.TrimPrefix(arg, "--"), "=")
+			if !hasInlineValue && bashLongOptionNeedsOperand(name) {
+				if i+1 >= len(args) {
+					return false
+				}
+				i++
+			}
+			continue
+		}
+		options := strings.TrimPrefix(arg, "-")
+		for optionIndex := 0; optionIndex < len(options); optionIndex++ {
+			switch options[optionIndex] {
+			case 'c':
+				return i+1 < len(args)
+			case 'o', 'O':
+				// -o/-O consume an option name. Any remaining bytes in this
+				// argument are that operand, not more single-letter flags.
+				if optionIndex+1 == len(options) {
+					if i+1 >= len(args) {
+						return false
+					}
+					i++
+				}
+				optionIndex = len(options)
+			}
 		}
 	}
 	return false
+}
+
+func bashLongOptionNeedsOperand(name string) bool {
+	return name == "init-file" || name == "rcfile"
 }
 
 func cachedWindowsHookBash() (string, error) {
@@ -109,13 +139,31 @@ func missingWindowsHookBashError() error {
 // while recovering legacy Windows cmd.exe output (notably CP936/GB18030) before
 // it reaches the desktop renderer. Hook stdout/stderr are text contracts, so a
 // final valid-UTF-8 guard is safer than surfacing raw invalid bytes.
-func decodeHookOutput(raw []byte) string {
+func decodeHookOutput(raw []byte, truncated bool) string {
 	if len(raw) == 0 {
 		return ""
 	}
 	decoded := raw
 	if !utf8.Valid(raw) {
-		decoded = fileencoding.DecodeToUTF8(raw)
+		if prefix, ok := truncatedUTF8Prefix(raw, truncated); ok {
+			decoded = prefix
+		} else {
+			decoded = fileencoding.DecodeToUTF8(raw)
+		}
 	}
 	return strings.TrimSpace(strings.ToValidUTF8(string(decoded), "\uFFFD"))
+}
+
+func truncatedUTF8Prefix(raw []byte, truncated bool) ([]byte, bool) {
+	if !truncated {
+		return nil, false
+	}
+	for suffixLen := 1; suffixLen < utf8.UTFMax && suffixLen <= len(raw); suffixLen++ {
+		prefix := raw[:len(raw)-suffixLen]
+		suffix := raw[len(raw)-suffixLen:]
+		if utf8.Valid(prefix) && !utf8.FullRune(suffix) {
+			return prefix, true
+		}
+	}
+	return nil, false
 }

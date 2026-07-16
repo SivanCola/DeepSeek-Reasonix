@@ -309,15 +309,15 @@ func appendPluginHooks(out *[]ResolvedHook, reasonixHomeDir, projectRoot string)
 					}
 				}
 				env := cloneEnv(h.Env)
+				for key, value := range env {
+					env[key] = expandPluginRoot(value, pkg.Root)
+				}
 				env["REASONIX_PLUGIN_ROOT"] = pkg.Root
 				env["REASONIX_PLUGIN_NAME"] = item.Installed.Name
 				env["REASONIX_HOME"] = reasonixHomeDir
 				env["REASONIX_WORKSPACE_ROOT"] = projectRoot
 				env["CLAUDE_PROJECT_DIR"] = projectRoot
 				env["CLAUDE_PLUGIN_ROOT"] = pkg.Root
-				for key, value := range env {
-					env[key] = expandPluginRoot(value, pkg.Root)
-				}
 				if item.Installed.Version != "" {
 					env["REASONIX_PLUGIN_VERSION"] = item.Installed.Version
 				}
@@ -345,48 +345,56 @@ func appendPluginHooks(out *[]ResolvedHook, reasonixHomeDir, projectRoot string)
 
 func expandPluginRoot(value, root string) string {
 	// Plugin hook manifests are host configuration, not platform-native shell
-	// scripts. Expand both compatibility names before launch so the same package
-	// works under POSIX shells, cmd.exe, and direct exec without asking each shell
-	// to understand another platform's variable syntax.
-	for _, name := range []string{"CLAUDE_PLUGIN_ROOT", "REASONIX_PLUGIN_ROOT"} {
-		value = strings.ReplaceAll(value, "${"+name+"}", root)
-		value = replaceUnbracedPluginRoot(value, name, root)
-		value = strings.ReplaceAll(value, "%"+name+"%", root)
-	}
-	return value
-}
-
-func replaceUnbracedPluginRoot(value, name, root string) string {
-	token := "$" + name
-	searchFrom := 0
+	// scripts. Scan the manifest value once so text inside the resolved root is
+	// never mistaken for another placeholder and expanded recursively.
 	lastWrite := 0
 	replaced := false
 	var out strings.Builder
-	for searchFrom < len(value) {
-		rel := strings.Index(value[searchFrom:], token)
-		if rel < 0 {
-			break
-		}
-		start := searchFrom + rel
-		end := start + len(token)
-		if end < len(value) && isShellVariableNameByte(value[end]) {
-			searchFrom = end
+	for i := 0; i < len(value); {
+		tokenLen := pluginRootTokenLen(value[i:])
+		if tokenLen == 0 {
+			i++
 			continue
 		}
 		if !replaced {
-			out.Grow(len(value) - len(token) + len(root))
+			out.Grow(len(value) - tokenLen + len(root))
 			replaced = true
 		}
-		out.WriteString(value[lastWrite:start])
+		out.WriteString(value[lastWrite:i])
 		out.WriteString(root)
-		lastWrite = end
-		searchFrom = end
+		i += tokenLen
+		lastWrite = i
 	}
 	if !replaced {
 		return value
 	}
 	out.WriteString(value[lastWrite:])
 	return out.String()
+}
+
+var pluginRootTokens = [...]struct {
+	value         string
+	needsBoundary bool
+}{
+	{value: "${CLAUDE_PLUGIN_ROOT}"},
+	{value: "$CLAUDE_PLUGIN_ROOT", needsBoundary: true},
+	{value: "%CLAUDE_PLUGIN_ROOT%"},
+	{value: "${REASONIX_PLUGIN_ROOT}"},
+	{value: "$REASONIX_PLUGIN_ROOT", needsBoundary: true},
+	{value: "%REASONIX_PLUGIN_ROOT%"},
+}
+
+func pluginRootTokenLen(value string) int {
+	for _, token := range pluginRootTokens {
+		if !strings.HasPrefix(value, token.value) {
+			continue
+		}
+		if token.needsBoundary && len(value) > len(token.value) && isShellVariableNameByte(value[len(token.value)]) {
+			continue
+		}
+		return len(token.value)
+	}
+	return 0
 }
 
 func isShellVariableNameByte(c byte) bool {
@@ -1183,8 +1191,8 @@ func DefaultSpawner(ctx context.Context, in SpawnInput) SpawnResult {
 	err := cmd.Run()
 	res := SpawnResult{
 		ExitCode:  -1,
-		Stdout:    decodeHookOutput(outBuf.Bytes()),
-		Stderr:    decodeHookOutput(errBuf.Bytes()),
+		Stdout:    decodeHookOutput(outBuf.Bytes(), outBuf.truncated),
+		Stderr:    decodeHookOutput(errBuf.Bytes(), errBuf.truncated),
 		Truncated: outBuf.truncated || errBuf.truncated,
 	}
 	switch {

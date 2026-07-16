@@ -286,10 +286,11 @@ Reasonix 的对应实现，并不代表导入 Hook 的每一种运行时决策�
   stdin 使用 Claude 兼容的 snake_case 载荷（包括 `hook_event_name`）。宿主会在启动
   进程前展开 `${CLAUDE_PLUGIN_ROOT}` 和 `${REASONIX_PLUGIN_ROOT}`，也兼容不带花括号的
   `$NAME` 与 Windows `%NAME%` 写法，因此插件相对路径不再依赖目标 shell 的环境变量
-  语法。Windows 上显式声明的 `sh -c`/`bash -c` hook 会复用 Git for Windows Bash
-  探测，即使 Bash 不在 `cmd.exe` 的 `PATH` 中也能执行；如果机器确实没有可用 Bash，
-  hook 会返回清晰的依赖提示，而不是本地化的“无法识别 sh”乱码。旧代码页输出也会在
-  进入界面前转换为 UTF-8。`PreToolUse` 和 `UserPromptSubmit` hook 仍可
+  语法。Windows 上显式声明的裸 `sh -c`/`bash -c` hook 会复用 Git for Windows Bash
+  探测，即使 Bash 不在 `cmd.exe` 的 `PATH` 中也能执行；带目录的显式解释器路径保持
+  不变。如果机器确实没有可用 Bash，hook 会返回清晰的依赖提示，而不是本地化的
+  “无法识别 sh”乱码。旧代码页输出也会在进入界面前转换为 UTF-8。`PreToolUse` 和
+  `UserPromptSubmit` hook 仍可
   通过退出码 2 或退出码 0 时的 JSON 拒绝形态拒绝该次调用（`PreToolUse` 用
   `hookSpecificOutput.permissionDecision`，`UserPromptSubmit` 用顶层
   `decision:"block"`）；导入的 `PermissionRequest` hook 还能直接代答权限弹窗

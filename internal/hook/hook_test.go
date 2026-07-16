@@ -452,6 +452,7 @@ func TestLoadExpandsReasonixPluginRootBeforeShellLaunch(t *testing.T) {
 	home := t.TempDir()
 	reasonixHome := filepath.Join(home, ".reasonix")
 	root := filepath.Join(reasonixHome, "plugins", "impeccable")
+	projectRoot := filepath.Join(home, "$CLAUDE_PLUGIN_ROOT-project")
 	writeHookTestFile(t, filepath.Join(root, pluginpkg.NativeManifest), `{
   "name": "impeccable",
   "version": "3.9.1",
@@ -475,7 +476,7 @@ func TestLoadExpandsReasonixPluginRootBeforeShellLaunch(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got := Load(LoadOptions{HomeDir: home, ProjectRoot: "/workspace", Trusted: true})
+	got := Load(LoadOptions{HomeDir: home, ProjectRoot: projectRoot, Trusted: true})
 	if len(got) != 1 {
 		t.Fatalf("hooks = %+v, want one plugin hook", got)
 	}
@@ -488,6 +489,9 @@ func TestLoadExpandsReasonixPluginRootBeforeShellLaunch(t *testing.T) {
 	}
 	if got[0].Cwd != filepath.Join(root, "work") || got[0].Env["IMPECCABLE_CACHE"] != root+"/cache" {
 		t.Fatalf("expanded plugin cwd/env = cwd %q env %#v", got[0].Cwd, got[0].Env)
+	}
+	if got[0].Env["CLAUDE_PROJECT_DIR"] != projectRoot || got[0].Env["REASONIX_WORKSPACE_ROOT"] != projectRoot {
+		t.Fatalf("host-provided workspace paths were expanded: %#v", got[0].Env)
 	}
 }
 
@@ -525,6 +529,15 @@ func TestExpandPluginRootSupportsClaudeReasonixAndCmdAliases(t *testing.T) {
 	}
 	if got, want := expandPluginRoot(`$CLAUDE_PLUGIN_ROOT/$REASONIX_PLUGIN_ROOT`, root), root+"/"+root; got != want {
 		t.Fatalf("both root aliases = %q, want %q", got, want)
+	}
+}
+
+func TestExpandPluginRootDoesNotReprocessResolvedRoot(t *testing.T) {
+	root := `/tmp/$REASONIX_PLUGIN_ROOT/%CLAUDE_PLUGIN_ROOT%/${CLAUDE_PLUGIN_ROOT}`
+	value := `${CLAUDE_PLUGIN_ROOT}|$REASONIX_PLUGIN_ROOT|%CLAUDE_PLUGIN_ROOT%`
+	want := root + "|" + root + "|" + root
+	if got := expandPluginRoot(value, root); got != want {
+		t.Fatalf("resolved root was expanded again: got %q, want %q", got, want)
 	}
 }
 
@@ -574,6 +587,46 @@ func TestWindowsPOSIXShellExecFormUsesDiscoveredBash(t *testing.T) {
 	}
 }
 
+func TestWindowsPOSIXShellPreservesExplicitInterpreterPaths(t *testing.T) {
+	called := false
+	resolve := func() (string, error) {
+		called = true
+		return `C:\Program Files\Git\bin\bash.exe`, nil
+	}
+	command := `"C:\Custom MSYS2\usr\bin\bash.exe" -c 'printf ok'`
+	if _, _, matched, err := windowsPOSIXShellInvocationWith(command, resolve); matched || err != nil || called {
+		t.Fatalf("explicit shell command matched=%v err=%v resolver_called=%v", matched, err, called)
+	}
+	if _, _, matched, err := windowsPOSIXShellArgvInvocationWith(`C:\Custom\bin\bash.exe`, []string{"-c", "printf ok"}, resolve); matched || err != nil || called {
+		t.Fatalf("explicit shell argv matched=%v err=%v resolver_called=%v", matched, err, called)
+	}
+}
+
+func TestHasCommandStringFlagParsesBashOptions(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		want bool
+	}{
+		{name: "short", args: []string{"-c", "printf ok"}, want: true},
+		{name: "short cluster", args: []string{"-lc", "printf ok"}, want: true},
+		{name: "long option containing c", args: []string{"--norc", "script.sh"}, want: false},
+		{name: "inline set option operand", args: []string{"-oc", "script.sh"}, want: false},
+		{name: "shopt before command", args: []string{"-O", "extglob", "-c", "printf ok"}, want: true},
+		{name: "set option before command", args: []string{"-o", "pipefail", "-c", "printf ok"}, want: true},
+		{name: "rcfile before command", args: []string{"--rcfile", "custom.bashrc", "-c", "printf ok"}, want: true},
+		{name: "option terminator", args: []string{"--", "-c", "printf ok"}, want: false},
+		{name: "missing command string", args: []string{"-c"}, want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := hasCommandStringFlag(tt.args); got != tt.want {
+				t.Fatalf("hasCommandStringFlag(%q) = %v, want %v", tt.args, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestDefaultSpawnerUsesGitBashForExplicitShOnWindows(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("exercises Git for Windows Bash discovery")
@@ -591,12 +644,19 @@ func TestDefaultSpawnerUsesGitBashForExplicitShOnWindows(t *testing.T) {
 func TestDecodeHookOutputRecoversGB18030WindowsErrors(t *testing.T) {
 	want := `'sh' 不是内部或外部命令，也不是可运行的程序`
 	raw := fileencoding.Encode(want, fileencoding.GB18030)
-	if got := decodeHookOutput(raw); got != want {
+	if got := decodeHookOutput(raw, false); got != want {
 		t.Fatalf("decoded hook stderr = %q, want %q", got, want)
 	}
 	utf8Text := "Error: Cannot find module 'hook.mjs'\nNode.js v24"
-	if got := decodeHookOutput([]byte(utf8Text)); got != utf8Text {
+	if got := decodeHookOutput([]byte(utf8Text), false); got != utf8Text {
 		t.Fatalf("UTF-8 hook stderr changed: %q", got)
+	}
+}
+
+func TestDecodeHookOutputPreservesTruncatedUTF8Prefix(t *testing.T) {
+	raw := []byte("中文")[:5]
+	if got, want := decodeHookOutput(raw, true), "中"; got != want {
+		t.Fatalf("truncated UTF-8 output = %q, want %q", got, want)
 	}
 }
 
