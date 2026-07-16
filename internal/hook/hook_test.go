@@ -448,6 +448,158 @@ func TestLoadIncludesPluginClaudeCompatibilityHooks(t *testing.T) {
 	}
 }
 
+func TestLoadExpandsReasonixPluginRootBeforeShellLaunch(t *testing.T) {
+	home := t.TempDir()
+	reasonixHome := filepath.Join(home, ".reasonix")
+	root := filepath.Join(reasonixHome, "plugins", "impeccable")
+	writeHookTestFile(t, filepath.Join(root, pluginpkg.NativeManifest), `{
+  "name": "impeccable",
+  "version": "3.9.1",
+  "hooks": {
+    "PostToolUse": [{
+      "match": "edit",
+      "command": "node \"${REASONIX_PLUGIN_ROOT}/skills/impeccable/scripts/hook.mjs\"",
+      "shellCommand": true,
+      "cwd": "${REASONIX_PLUGIN_ROOT}/work",
+      "env": {"IMPECCABLE_CACHE": "%REASONIX_PLUGIN_ROOT%/cache"}
+    }]
+  }
+}`)
+	if err := pluginpkg.Upsert(reasonixHome, pluginpkg.InstalledPlugin{
+		Name:         "impeccable",
+		Root:         "plugins/impeccable",
+		Version:      "3.9.1",
+		ManifestKind: "native",
+		Enabled:      true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	got := Load(LoadOptions{HomeDir: home, ProjectRoot: "/workspace", Trusted: true})
+	if len(got) != 1 {
+		t.Fatalf("hooks = %+v, want one plugin hook", got)
+	}
+	want := `node "` + root + `/skills/impeccable/scripts/hook.mjs"`
+	if got[0].Command != want {
+		t.Fatalf("plugin command = %q, want %q", got[0].Command, want)
+	}
+	if strings.Contains(got[0].Command, "PLUGIN_ROOT") {
+		t.Fatalf("plugin root token reached the shell: %q", got[0].Command)
+	}
+	if got[0].Cwd != filepath.Join(root, "work") || got[0].Env["IMPECCABLE_CACHE"] != root+"/cache" {
+		t.Fatalf("expanded plugin cwd/env = cwd %q env %#v", got[0].Cwd, got[0].Env)
+	}
+}
+
+func TestExpandPluginRootSupportsClaudeReasonixAndCmdAliases(t *testing.T) {
+	root := `C:\Program Files\Reasonix\plugins\impeccable`
+	for _, token := range []string{
+		"${CLAUDE_PLUGIN_ROOT}", "$CLAUDE_PLUGIN_ROOT", "%CLAUDE_PLUGIN_ROOT%",
+		"${REASONIX_PLUGIN_ROOT}", "$REASONIX_PLUGIN_ROOT", "%REASONIX_PLUGIN_ROOT%",
+	} {
+		t.Run(token, func(t *testing.T) {
+			command := `node "` + token + `/skills/impeccable/scripts/hook.mjs"`
+			want := `node "` + root + `/skills/impeccable/scripts/hook.mjs"`
+			if got := expandPluginRoot(command, root); got != want {
+				t.Fatalf("expandPluginRoot(%q) = %q, want %q", token, got, want)
+			}
+		})
+	}
+	// Shell parameter expressions belong to an explicitly requested POSIX
+	// shell and must stay intact for that shell to evaluate.
+	guard := `${CLAUDE_PLUGIN_ROOT:-missing}`
+	if got := expandPluginRoot(guard, root); got != guard {
+		t.Fatalf("shell parameter expression = %q, want unchanged %q", got, guard)
+	}
+	for _, longerName := range []string{
+		"$CLAUDE_PLUGIN_ROOT_SUFFIX",
+		"$REASONIX_PLUGIN_ROOT_OLD",
+		"$CLAUDE_PLUGIN_ROOT2",
+	} {
+		if got := expandPluginRoot(longerName, root); got != longerName {
+			t.Fatalf("longer variable name %q was partially expanded to %q", longerName, got)
+		}
+	}
+	if got, want := expandPluginRoot(`$CLAUDE_PLUGIN_ROOT-child`, root), root+"-child"; got != want {
+		t.Fatalf("delimited unbraced variable = %q, want %q", got, want)
+	}
+	if got, want := expandPluginRoot(`$CLAUDE_PLUGIN_ROOT/$REASONIX_PLUGIN_ROOT`, root), root+"/"+root; got != want {
+		t.Fatalf("both root aliases = %q, want %q", got, want)
+	}
+}
+
+func TestWindowsPOSIXShellInvocationPreservesQuotedScript(t *testing.T) {
+	command := `sh -c '[ -n "${CLAUDE_PLUGIN_ROOT:-}" ] || { echo "plugin root missing" >&2; exit 1; }'`
+	wantShell := `C:\Program Files\Git\bin\bash.exe`
+	gotShell, gotArgs, matched, err := windowsPOSIXShellInvocationWith(command, func() (string, error) {
+		return wantShell, nil
+	})
+	if err != nil || !matched {
+		t.Fatalf("explicit sh command matched=%v err=%v", matched, err)
+	}
+	if gotShell != wantShell {
+		t.Fatalf("shell = %q, want %q", gotShell, wantShell)
+	}
+	wantArgs := []string{"-c", `[ -n "${CLAUDE_PLUGIN_ROOT:-}" ] || { echo "plugin root missing" >&2; exit 1; }`}
+	if !reflect.DeepEqual(gotArgs, wantArgs) {
+		t.Fatalf("args = %#v, want %#v", gotArgs, wantArgs)
+	}
+}
+
+func TestWindowsPOSIXShellInvocationRejectsMissingBashClearly(t *testing.T) {
+	_, _, matched, err := windowsPOSIXShellInvocationWith(`bash -lc 'printf ok'`, func() (string, error) {
+		return "", missingWindowsHookBashError()
+	})
+	if !matched || err == nil || !strings.Contains(err.Error(), "Git Bash") {
+		t.Fatalf("missing Bash matched=%v err=%v", matched, err)
+	}
+	called := false
+	_, _, matched, err = windowsPOSIXShellInvocationWith(`node hook.mjs`, func() (string, error) {
+		called = true
+		return "", nil
+	})
+	if matched || err != nil || called {
+		t.Fatalf("non-shell command matched=%v err=%v resolver_called=%v", matched, err, called)
+	}
+}
+
+func TestWindowsPOSIXShellExecFormUsesDiscoveredBash(t *testing.T) {
+	wantShell := `C:\Program Files\Git\bin\bash.exe`
+	wantArgs := []string{"-lc", `printf "%s" "$HOOK_TEST_MARKER"`}
+	gotShell, gotArgs, matched, err := windowsPOSIXShellArgvInvocationWith("sh", wantArgs, func() (string, error) {
+		return wantShell, nil
+	})
+	if err != nil || !matched || gotShell != wantShell || !reflect.DeepEqual(gotArgs, wantArgs) {
+		t.Fatalf("exec-form sh = shell %q args %#v matched=%v err=%v", gotShell, gotArgs, matched, err)
+	}
+}
+
+func TestDefaultSpawnerUsesGitBashForExplicitShOnWindows(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("exercises Git for Windows Bash discovery")
+	}
+	r := DefaultSpawner(context.Background(), SpawnInput{
+		Command: `sh -c 'printf "%s" "$HOOK_TEST_MARKER"'`,
+		Timeout: realSpawnTimeout,
+		Env:     map[string]string{"HOOK_TEST_MARKER": "git-bash-ok"},
+	})
+	if r.ExitCode != 0 || r.Stdout != "git-bash-ok" {
+		t.Fatalf("explicit sh hook did not run through Git Bash: %+v", r)
+	}
+}
+
+func TestDecodeHookOutputRecoversGB18030WindowsErrors(t *testing.T) {
+	want := `'sh' 不是内部或外部命令，也不是可运行的程序`
+	raw := fileencoding.Encode(want, fileencoding.GB18030)
+	if got := decodeHookOutput(raw); got != want {
+		t.Fatalf("decoded hook stderr = %q, want %q", got, want)
+	}
+	utf8Text := "Error: Cannot find module 'hook.mjs'\nNode.js v24"
+	if got := decodeHookOutput([]byte(utf8Text)); got != utf8Text {
+		t.Fatalf("UTF-8 hook stderr changed: %q", got)
+	}
+}
+
 func TestReasonixHomeOverridesGlobalHookPaths(t *testing.T) {
 	home := t.TempDir()
 	reasonixHome := filepath.Join(t.TempDir(), "rx-home")

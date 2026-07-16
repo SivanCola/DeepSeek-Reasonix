@@ -288,15 +288,25 @@ func appendPluginHooks(out *[]ResolvedHook, reasonixHomeDir, projectRoot string)
 				for _, arg := range h.Args {
 					argv = append(argv, expandPluginRoot(arg, pkg.Root))
 				}
-				contextFile := h.ContextFile
-				if contextFile != "" && !filepath.IsAbs(contextFile) {
-					contextFile = filepath.Join(pkg.Root, filepath.FromSlash(contextFile))
+				contextFile := expandPluginRoot(h.ContextFile, pkg.Root)
+				if contextFile != "" {
+					contextFile = filepath.FromSlash(contextFile)
+					if !filepath.IsAbs(contextFile) {
+						contextFile = filepath.Join(pkg.Root, contextFile)
+					} else {
+						contextFile = filepath.Clean(contextFile)
+					}
 				}
-				cwd := h.Cwd
+				cwd := expandPluginRoot(h.Cwd, pkg.Root)
 				if cwd == "" {
 					cwd = pkg.Root
-				} else if !filepath.IsAbs(cwd) {
-					cwd = filepath.Join(pkg.Root, filepath.FromSlash(cwd))
+				} else {
+					cwd = filepath.FromSlash(cwd)
+					if !filepath.IsAbs(cwd) {
+						cwd = filepath.Join(pkg.Root, cwd)
+					} else {
+						cwd = filepath.Clean(cwd)
+					}
 				}
 				env := cloneEnv(h.Env)
 				env["REASONIX_PLUGIN_ROOT"] = pkg.Root
@@ -334,8 +344,53 @@ func appendPluginHooks(out *[]ResolvedHook, reasonixHomeDir, projectRoot string)
 }
 
 func expandPluginRoot(value, root string) string {
-	value = strings.ReplaceAll(value, "${CLAUDE_PLUGIN_ROOT}", root)
-	return strings.ReplaceAll(value, "$CLAUDE_PLUGIN_ROOT", root)
+	// Plugin hook manifests are host configuration, not platform-native shell
+	// scripts. Expand both compatibility names before launch so the same package
+	// works under POSIX shells, cmd.exe, and direct exec without asking each shell
+	// to understand another platform's variable syntax.
+	for _, name := range []string{"CLAUDE_PLUGIN_ROOT", "REASONIX_PLUGIN_ROOT"} {
+		value = strings.ReplaceAll(value, "${"+name+"}", root)
+		value = replaceUnbracedPluginRoot(value, name, root)
+		value = strings.ReplaceAll(value, "%"+name+"%", root)
+	}
+	return value
+}
+
+func replaceUnbracedPluginRoot(value, name, root string) string {
+	token := "$" + name
+	searchFrom := 0
+	lastWrite := 0
+	replaced := false
+	var out strings.Builder
+	for searchFrom < len(value) {
+		rel := strings.Index(value[searchFrom:], token)
+		if rel < 0 {
+			break
+		}
+		start := searchFrom + rel
+		end := start + len(token)
+		if end < len(value) && isShellVariableNameByte(value[end]) {
+			searchFrom = end
+			continue
+		}
+		if !replaced {
+			out.Grow(len(value) - len(token) + len(root))
+			replaced = true
+		}
+		out.WriteString(value[lastWrite:start])
+		out.WriteString(root)
+		lastWrite = end
+		searchFrom = end
+	}
+	if !replaced {
+		return value
+	}
+	out.WriteString(value[lastWrite:])
+	return out.String()
+}
+
+func isShellVariableNameByte(c byte) bool {
+	return c == '_' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9'
 }
 
 func validEvent(event Event) bool {
@@ -1099,7 +1154,10 @@ func DefaultSpawner(ctx context.Context, in SpawnInput) SpawnResult {
 	cctx, cancel := context.WithTimeout(ctx, in.Timeout)
 	defer cancel()
 
-	cmd := spawnCommand(cctx, in.Command, in.Args)
+	cmd, spawnErr := spawnCommand(cctx, in.Command, in.Args)
+	if spawnErr != nil {
+		return SpawnResult{ExitCode: -1, SpawnErr: spawnErr}
+	}
 	proc.HideWindow(cmd)
 	cmd.Dir = in.Cwd
 	env := secrets.ProcessEnv()
@@ -1125,8 +1183,8 @@ func DefaultSpawner(ctx context.Context, in SpawnInput) SpawnResult {
 	err := cmd.Run()
 	res := SpawnResult{
 		ExitCode:  -1,
-		Stdout:    strings.TrimSpace(outBuf.String()),
-		Stderr:    strings.TrimSpace(errBuf.String()),
+		Stdout:    decodeHookOutput(outBuf.Bytes()),
+		Stderr:    decodeHookOutput(errBuf.Bytes()),
 		Truncated: outBuf.truncated || errBuf.truncated,
 	}
 	switch {
@@ -1156,27 +1214,43 @@ func DefaultSpawner(ctx context.Context, in SpawnInput) SpawnResult {
 //   - on Windows, a recognized node -e stdin-hook command: `cmd /c` mangles
 //     quoted JS (&, %, nested quotes), which is the breakage this repair
 //     exists for, and cmd performs no POSIX-style $ expansion to preserve.
+//   - on Windows, an explicit `sh -c` / `bash -c` command: Git Bash is often
+//     installed outside cmd.exe's PATH, and direct exec preserves its quoting.
 //
 // POSIX commands that were already well-formed keep their shell semantics
 // verbatim — normalizeStaticNodeEval's rendering escapes $ and backticks, so
 // even repaired commands re-entering here behave identically under sh -c.
-func spawnCommand(ctx context.Context, command string, argv ...[]string) *exec.Cmd {
+func spawnCommand(ctx context.Context, command string, argv ...[]string) (*exec.Cmd, error) {
 	if len(argv) > 0 && argv[0] != nil {
-		return exec.CommandContext(ctx, command, argv[0]...)
+		if runtime.GOOS == "windows" {
+			if shell, args, matched, err := windowsPOSIXShellArgvInvocation(command, argv[0]); matched {
+				if err != nil {
+					return nil, err
+				}
+				return exec.CommandContext(ctx, shell, args...), nil
+			}
+		}
+		return exec.CommandContext(ctx, command, argv[0]...), nil
 	}
 	if node, flag, script, ok := repairableNodeEvalArgs(command); ok {
-		return exec.CommandContext(ctx, node, flag, script)
+		return exec.CommandContext(ctx, node, flag, script), nil
 	}
 	if powershell, args, ok := repairablePowerShellFileArgs(command); ok {
-		return exec.CommandContext(ctx, powershell, args...)
+		return exec.CommandContext(ctx, powershell, args...), nil
 	}
 	if runtime.GOOS == "windows" {
+		if shell, args, matched, err := windowsPOSIXShellInvocation(command); matched {
+			if err != nil {
+				return nil, err
+			}
+			return exec.CommandContext(ctx, shell, args...), nil
+		}
 		if node, flag, script, ok := directNodeEvalArgs(command); ok {
-			return exec.CommandContext(ctx, node, flag, script)
+			return exec.CommandContext(ctx, node, flag, script), nil
 		}
 	}
 	name, args := shellInvocation(command)
-	return exec.CommandContext(ctx, name, args...)
+	return exec.CommandContext(ctx, name, args...), nil
 }
 
 func shellInvocation(command string) (string, []string) {
@@ -1209,6 +1283,7 @@ func (c *cappedBuffer) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
+func (c *cappedBuffer) Bytes() []byte  { return c.buf.Bytes() }
 func (c *cappedBuffer) String() string { return c.buf.String() }
 
 func reasonixHome(override string) string {
