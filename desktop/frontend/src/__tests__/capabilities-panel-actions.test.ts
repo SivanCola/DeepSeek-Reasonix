@@ -67,6 +67,16 @@ ok(
   summarizeServerError(refusedRegistryError) === "fs: npm ECONNREFUSED · registry.npmjs.org → 127.0.0.1:7890",
   "npm connection failures should identify both the registry and the refused endpoint",
 );
+const legacyNpmRefusedRegistryError = [
+  'plugin "fs": read EOF: stderr:',
+  "npm ERR! code ECONNREFUSED",
+  "npm ERR! syscall connect",
+  "npm ERR! FetchError: request to https://registry.npmjs.org/@modelcontextprotocol%2fserver-filesystem failed, reason: connect ECONNREFUSED 127.0.0.1:7890",
+].join("\n");
+ok(
+  summarizeServerError(legacyNpmRefusedRegistryError) === "fs: npm ECONNREFUSED · registry.npmjs.org → 127.0.0.1:7890",
+  "legacy npm ERR! failures should identify both the registry and the refused endpoint",
+);
 const credentialedRegistryError =
   'plugin "private": stderr: npm error code ECONNREFUSED npm error request to https://build-user:registry-secret@packages.example.test/npm failed, reason: connect ECONNREFUSED proxy.internal.test:8443';
 const credentialedRegistrySummary = summarizeServerError(credentialedRegistryError);

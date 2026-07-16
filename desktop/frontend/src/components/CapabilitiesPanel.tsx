@@ -1274,7 +1274,7 @@ function serverStatusLabel(s: ServerView, t: ReturnType<typeof useT>): string {
 export function summarizeServerError(error: string): string {
   const normalized = error.replace(/\s+/g, " ").trim();
   const plugin = normalized.match(/plugin "([^"]+)"/i)?.[1];
-  const npmCode = normalized.match(/\bnpm error code ([A-Z0-9_]+)/i)?.[1];
+  const npmCode = normalized.match(/\bnpm (?:error|ERR!) code ([A-Z0-9_]+)/i)?.[1];
   const errno = normalized.match(/\berrno (-?\d+)/i)?.[1];
   const networkContext = npmCode ? npmNetworkContext(normalized, npmCode) : "";
   const reason = npmCode
