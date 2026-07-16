@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import React from "react";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
-import { MCPServersSettingsPage, PluginsSettingsPage, mcpServerDraftJSON, parseMCPServerJSON, withExplicitMCPClears } from "../components/CapabilitiesPanel";
+import { MCPServersSettingsPage, PluginsSettingsPage, failureKind, mcpServerDraftJSON, parseMCPServerJSON, summarizeServerError, withExplicitMCPClears } from "../components/CapabilitiesPanel";
 import { slashCommandGroup, slashCommandKindTag, sortSlashCommandsForMenu } from "../components/SlashMenu";
 import { selectToolsOnFirstCustomUse } from "../components/SubagentsPanel";
 import type { AppBindings } from "../lib/bridge";
@@ -56,6 +56,26 @@ const sparseEdit = withExplicitMCPClears(parseMCPServerJSON(JSON.stringify({ adm
 ok(sparseEdit.callTimeoutSeconds === 0 && sparseEdit.defaultToolsApprovalMode === "" && sparseEdit.approvalsReviewer === "", "editing an existing server with fields removed must clear those settings");
 ok(sparseEdit.autoStart === true && Object.keys(sparseEdit.toolTimeoutSeconds ?? { x: 1 }).length === 0 && sparseEdit.trustedReadOnlyTools === undefined && Object.keys(sparseEdit.tools ?? { x: 1 }).length === 0, "removed collection fields must clear while legacy trust stays absent");
 ok(sparseEdit.env === null && sparseEdit.headers === null, "absent env/headers must stay preserve-on-absent because their values are never seeded into the editor");
+
+const refusedRegistryError = [
+  'plugin "fs": read EOF: stderr:',
+  "npm error code ECONNREFUSED",
+  "npm error syscall connect",
+  "npm error FetchError: request to https://registry.npmjs.org/@modelcontextprotocol%2fserver-filesystem failed, reason: connect ECONNREFUSED 127.0.0.1:7890",
+].join("\n");
+ok(
+  summarizeServerError(refusedRegistryError) === "fs: npm ECONNREFUSED · registry.npmjs.org → 127.0.0.1:7890",
+  "npm connection failures should identify both the registry and the refused endpoint",
+);
+const credentialedRegistryError =
+  'plugin "private": stderr: npm error code ECONNREFUSED npm error request to https://build-user:registry-secret@packages.example.test/npm failed, reason: connect ECONNREFUSED proxy.internal.test:8443';
+const credentialedRegistrySummary = summarizeServerError(credentialedRegistryError);
+ok(credentialedRegistrySummary.includes("packages.example.test → proxy.internal.test:8443"), "private registries should keep actionable hosts");
+ok(!credentialedRegistrySummary.includes("build-user") && !credentialedRegistrySummary.includes("registry-secret"), "registry credentials must not appear in the summary");
+ok(
+  failureKind({ ...server("failed"), error: refusedRegistryError }) === "network",
+  "npm connection refusal should be grouped as a network/proxy issue",
+);
 
 const subagentTools = [
   { name: "read_file", description: "Read files" },

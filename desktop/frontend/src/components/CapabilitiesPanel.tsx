@@ -1271,21 +1271,49 @@ function serverStatusLabel(s: ServerView, t: ReturnType<typeof useT>): string {
   }
 }
 
-function summarizeServerError(error: string): string {
+export function summarizeServerError(error: string): string {
   const normalized = error.replace(/\s+/g, " ").trim();
   const plugin = normalized.match(/plugin "([^"]+)"/i)?.[1];
   const npmCode = normalized.match(/\bnpm error code ([A-Z0-9_]+)/i)?.[1];
   const errno = normalized.match(/\berrno (-?\d+)/i)?.[1];
+  const networkContext = npmCode ? npmNetworkContext(normalized, npmCode) : "";
   const reason = npmCode
-    ? `npm ${npmCode}${errno ? ` (${errno})` : ""}`
+    ? `npm ${npmCode}${errno ? ` (${errno})` : ""}${networkContext}`
     : normalized.split(/(?:\.\s+|\n)/)[0];
   const summary = plugin ? `${plugin}: ${reason}` : reason;
   return summary.length > 180 ? `${summary.slice(0, 176).trim()}…` : summary;
 }
 
-type FailureKind = "auth" | "missing-command" | "command-unavailable" | "network" | "other";
+function npmNetworkContext(error: string, code: string): string {
+  if (!/^(?:ECONNREFUSED|ECONNRESET|ENETUNREACH|ETIMEDOUT|EAI_AGAIN|ENOTFOUND)$/i.test(code)) return "";
 
-function failureKind(server: ServerView): FailureKind {
+  let registry = "";
+  const requestURL = error.match(/\brequest to (https?:\/\/[^\s]+)/i)?.[1]?.replace(/[),.;]+$/, "");
+  if (requestURL) {
+    try {
+      registry = new URL(requestURL).host;
+    } catch {
+      registry = "";
+    }
+  }
+
+  let endpoint = error.match(
+    /\b(?:connect\s+)?(?:ECONNREFUSED|ECONNRESET|ENETUNREACH|ETIMEDOUT|EAI_AGAIN|ENOTFOUND)\s+((?:\[[0-9a-f:]+\]|[a-z0-9._-]+):\d{1,5})\b/i,
+  )?.[1] ?? "";
+  if (!endpoint) {
+    const address = error.match(/\baddress\s+([^\s,;]+)/i)?.[1];
+    const port = error.match(/\bport\s+(\d{1,5})\b/i)?.[1];
+    if (address && port) endpoint = `${address}:${port}`;
+  }
+
+  if (registry && endpoint && registry.toLowerCase() !== endpoint.toLowerCase()) return ` · ${registry} → ${endpoint}`;
+  if (registry || endpoint) return ` · ${registry || endpoint}`;
+  return "";
+}
+
+export type FailureKind = "auth" | "missing-command" | "command-unavailable" | "network" | "other";
+
+export function failureKind(server: ServerView): FailureKind {
   if (server.authStatus === "required") return "auth";
   const err = (server.error || "").toLowerCase();
   if (err.includes("command is required")) return "missing-command";
@@ -1303,7 +1331,13 @@ function failureKind(server: ServerView): FailureKind {
     err.includes("unauthorized") ||
     err.includes("forbidden") ||
     err.includes("timeout") ||
-    err.includes("network")
+    err.includes("network") ||
+    err.includes("econnrefused") ||
+    err.includes("econnreset") ||
+    err.includes("enetunreach") ||
+    err.includes("etimedout") ||
+    err.includes("eai_again") ||
+    err.includes("enotfound")
   ) {
     return "network";
   }
