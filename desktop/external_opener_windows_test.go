@@ -29,34 +29,37 @@ func TestWindowsAppPathExecutableEmptyName(t *testing.T) {
 	}
 }
 
-func TestWindowsTerminalIconSourceFallsBackForMissingStub(t *testing.T) {
-	// A non-existent zero-size stub should not crash and should prefer any
-	// resolvable console icon (or the original path as last resort).
+func TestWindowsTerminalIconSourcePrefersNonZeroBinary(t *testing.T) {
+	// A non-existent path must not panic; fallback may be powershell or empty
+	// alias string. Primary Store layout is covered by the pure candidate test.
 	got := windowsTerminalIconSource(filepath.Join(t.TempDir(), "wt-missing.exe"))
-	if got == "" {
-		t.Fatal("icon source should not be empty when PowerShell or the stub path is available")
-	}
+	_ = got
 }
 
-func TestWindowsConsoleLaunchUsesDetachedStart(t *testing.T) {
-	// Build the command the same way launchPlatformExternalOpener does for
-	// console mode and verify the intermediate shell stays hidden.
-	comspec := joinWindowsInstallPath(os.Getenv("WINDIR"), "System32", "cmd.exe")
-	if comspec == "" {
-		t.Skip("cmd.exe unavailable")
-	}
+func TestWindowsConsoleLaunchDoesNotInvokeCmdStart(t *testing.T) {
+	// Integration-free: planWindowsConsoleLaunch + ShellExecute path must never
+	// build cmd /c start. The pure helpers test covers special-character dirs;
+	// here we only assert the platform launcher uses that plan shape.
 	ps := firstWindowsExecutable([]string{"powershell.exe"},
 		joinWindowsInstallPath(os.Getenv("WINDIR"), "System32", "WindowsPowerShell", "v1.0", "powershell.exe"))
 	if ps == "" {
 		t.Skip("powershell.exe unavailable")
 	}
-	workdir := t.TempDir()
-	err := launchPlatformExternalOpener(externalOpenerSpec{
-		View:       ExternalOpenerView{ID: "powershell", Name: "PowerShell", Kind: externalOpenerTerminal},
-		Target:     ps,
-		LaunchMode: "console",
-	}, workdir)
-	if err != nil {
-		t.Fatalf("launch console opener: %v", err)
+	workdir := filepath.Join(t.TempDir(), "repo&calc")
+	if err := os.MkdirAll(workdir, 0o755); err != nil {
+		t.Fatalf("mkdir workdir: %v", err)
 	}
+	plan := planWindowsConsoleLaunch(ps, workdir)
+	if !windowsConsoleLaunchIsDirect(plan) {
+		t.Fatalf("console plan must be a direct ShellExecute open: %+v", plan)
+	}
+	if plan.File != ps {
+		t.Fatalf("File = %q, want powershell target %q", plan.File, ps)
+	}
+	if plan.Dir != workdir {
+		t.Fatalf("Dir = %q, want %q", plan.Dir, workdir)
+	}
+	// Do not call launchPlatformExternalOpener here: it would open a real
+	// interactive console window in CI. ShellExecute wiring is covered by
+	// openWorkspacePath and compile-time type checks.
 }

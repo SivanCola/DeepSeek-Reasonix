@@ -7,7 +7,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -128,31 +127,76 @@ func windowsAppPathExecutable(name string) string {
 }
 
 // windowsTerminalIconSource prefers a real Windows Terminal package binary for
-// SHGetFileInfo. Store-installed wt.exe under WindowsApps is often a zero-byte
-// execution alias that yields no icon.
+// SHGetFileInfo. Store installs expose only a wt.exe App Execution Alias under
+// LocalAppData\Microsoft\WindowsApps; the package binary is under
+// Program Files\WindowsApps\Microsoft.WindowsTerminal_*.
 func windowsTerminalIconSource(wtPath string) string {
-	local := os.Getenv("LOCALAPPDATA")
-	if local != "" {
-		pattern := filepath.Join(local, "Microsoft", "WindowsApps", "Microsoft.WindowsTerminal*", "WindowsTerminal.exe")
-		if matches, _ := filepath.Glob(pattern); len(matches) > 0 {
-			for _, match := range matches {
-				if info, err := os.Stat(match); err == nil && !info.IsDir() && info.Size() > 0 {
-					return match
-				}
+	var zeroSizeFallback string
+	for _, candidate := range windowsTerminalIconCandidatePaths(
+		wtPath,
+		os.Getenv("LOCALAPPDATA"),
+		os.Getenv("ProgramFiles"),
+	) {
+		matches := []string{candidate}
+		if strings.ContainsAny(candidate, `*?[`) {
+			globbed, err := filepath.Glob(candidate)
+			if err != nil || len(globbed) == 0 {
+				continue
+			}
+			matches = globbed
+		}
+		for _, match := range matches {
+			info, err := os.Stat(match)
+			if err != nil || info.IsDir() {
+				continue
+			}
+			// Prefer a real binary with content; keep zero-size aliases as a
+			// later fallback — SHGetFileInfo can still resolve Store icons.
+			if info.Size() > 0 {
+				return match
+			}
+			if zeroSizeFallback == "" {
+				zeroSizeFallback = match
 			}
 		}
 	}
-	if wtPath != "" {
-		if info, err := os.Stat(wtPath); err == nil && !info.IsDir() && info.Size() > 0 {
-			return wtPath
-		}
+	if zeroSizeFallback != "" {
+		return zeroSizeFallback
 	}
-	// Fall back to a normal console host icon rather than an empty menu glyph.
+	// Last resort: a normal console host icon rather than an empty menu glyph.
 	if ps := firstWindowsExecutable([]string{"powershell.exe"},
 		joinWindowsInstallPath(os.Getenv("WINDIR"), "System32", "WindowsPowerShell", "v1.0", "powershell.exe")); ps != "" {
 		return ps
 	}
 	return wtPath
+}
+
+// shellExecuteOpenFile launches file via ShellExecuteW("open") without cmd.exe.
+// parameters and directory are optional; directory becomes the process CWD.
+func shellExecuteOpenFile(file, parameters, directory string) error {
+	verb, err := windows.UTF16PtrFromString("open")
+	if err != nil {
+		return err
+	}
+	filePtr, err := windows.UTF16PtrFromString(file)
+	if err != nil {
+		return err
+	}
+	var paramsPtr *uint16
+	if parameters != "" {
+		paramsPtr, err = windows.UTF16PtrFromString(parameters)
+		if err != nil {
+			return err
+		}
+	}
+	var dirPtr *uint16
+	if directory != "" {
+		dirPtr, err = windows.UTF16PtrFromString(directory)
+		if err != nil {
+			return err
+		}
+	}
+	return windows.ShellExecute(0, verb, filePtr, paramsPtr, dirPtr, windows.SW_SHOWNORMAL)
 }
 
 func platformExternalOpenerSpecs() []externalOpenerSpec {
@@ -337,20 +381,18 @@ func launchPlatformExternalOpener(spec externalOpenerSpec, path string) error {
 	case "path":
 		cmd = exec.Command(spec.Target, path)
 	case "windows-terminal":
+		// exec.Command uses CreateProcess argument escaping, not cmd.exe, so
+		// workspace paths with shell metacharacters stay a single -d argument.
 		cmd = exec.Command(spec.Target, "-d", path)
 	case "console":
-		// Launch through `cmd /c start` so the console is fully detached from
-		// the Wails GUI process. Direct CREATE_NEW_CONSOLE from a windowed
-		// parent often flashes and exits on Windows 10/11; HideWindow keeps
-		// the intermediate cmd shell invisible.
-		comspec := joinWindowsInstallPath(os.Getenv("WINDIR"), "System32", "cmd.exe")
-		if comspec == "" {
-			comspec = "cmd.exe"
+		// Never route console openers through cmd.exe / start: working-directory
+		// text would be re-parsed as shell syntax (& | ^ etc.). ShellExecute
+		// opens the binary with lpDirectory set to the workspace path.
+		plan := planWindowsConsoleLaunch(spec.Target, path)
+		if plan.File == "" {
+			return os.ErrNotExist
 		}
-		// start "title" /D dir program — the quoted title is required so a
-		// path with spaces is not parsed as the window title.
-		cmd = exec.Command(comspec, "/c", "start", "Reasonix", "/D", path, spec.Target)
-		cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+		return shellExecuteOpenFile(plan.File, "", plan.Dir)
 	default:
 		cmd = exec.Command(spec.Target, path)
 	}
