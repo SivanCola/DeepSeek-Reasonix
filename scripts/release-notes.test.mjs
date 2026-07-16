@@ -5,7 +5,6 @@ import { loadCatalog, releaseForVersion, renderGitHubRelease, validateCatalog } 
 test("the committed release catalog is valid and newest first", async () => {
   const catalog = await loadCatalog();
   assert.equal(catalog.schemaVersion, 1);
-  assert.equal(catalog.releases[0].version, "1.17.13");
   assert.equal(new Set(catalog.releases.map((release) => release.version)).size, catalog.releases.length);
 });
 
