@@ -218,11 +218,11 @@ func TestApplyTextareaThemeHonorsCursorShape(t *testing.T) {
 		in   string
 		want tea.CursorShape
 	}{
-		{name: "default", in: "", want: tea.CursorUnderline},
+		{name: "default", in: "", want: tea.CursorBar},
 		{name: "underline", in: "underline", want: tea.CursorUnderline},
 		{name: "block", in: "block", want: tea.CursorBlock},
 		{name: "bar", in: "bar", want: tea.CursorBar},
-		{name: "unknown", in: "unknown", want: tea.CursorUnderline},
+		{name: "unknown", in: "unknown", want: tea.CursorBar},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			cliCursorShape = tt.in
@@ -232,6 +232,29 @@ func TestApplyTextareaThemeHonorsCursorShape(t *testing.T) {
 				t.Fatalf("cursor shape = %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestComposerBorderStaysNeutralWhileCursorUsesAccent(t *testing.T) {
+	t.Setenv("COLORTERM", "")
+	t.Setenv("TERM_PROGRAM", "")
+	t.Setenv("REASONIX_THEME", "")
+	t.Setenv("REASONIX_THEME_STYLE", "")
+	defer restoreThemeForTest(colorEnabled, activeCLITheme)
+	colorEnabled = true
+	configureCLITheme("dark")
+
+	if got, want := inputBoxStyle.GetBorderTopForeground(), themeLipColor(activeCLITheme.border); !reflect.DeepEqual(got, want) {
+		t.Fatalf("composer border color = %v, want neutral theme border %v", got, want)
+	}
+	if got := inputBoxStyle.GetBorderTopForeground(); reflect.DeepEqual(got, themeLipColor(activeCLITheme.accent)) {
+		t.Fatalf("composer border should not compete with accent cursor/prompt: %v", got)
+	}
+
+	ti := textarea.New()
+	applyTextareaTheme(&ti)
+	if got, want := ti.Styles().Cursor.Color, themeLipColor(activeCLITheme.accent); !reflect.DeepEqual(got, want) {
+		t.Fatalf("composer cursor color = %v, want accent %v", got, want)
 	}
 }
 

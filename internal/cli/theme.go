@@ -31,6 +31,8 @@ type cliPalette struct {
 	warn         cliColor
 	err          cliColor
 	danger       cliColor
+	info         cliColor
+	secondary    cliColor
 	border       cliColor
 	selection    cliColor
 	userBubbleBG cliColor
@@ -58,6 +60,8 @@ var (
 		warn:         cliColor{"#d9a441", 179},
 		err:          cliColor{"#e0696a", 167},
 		danger:       cliColor{"#e5484d", 167},
+		info:         cliColor{"#56b6c2", 80},
+		secondary:    cliColor{"#b18cff", 141},
 		border:       cliColor{"#343945", 237},
 		selection:    cliColor{"#d97757", 173},
 		userBubbleBG: cliColor{"#222631", 235},
@@ -76,6 +80,8 @@ var (
 		warn:         cliColor{"#b68120", 136},
 		err:          cliColor{"#b94b4d", 131},
 		danger:       cliColor{"#e5484d", 167},
+		info:         cliColor{"#2f5fa8", 25},
+		secondary:    cliColor{"#7d63c8", 104},
 		border:       cliColor{"#ded4c6", 252},
 		selection:    cliColor{"#6f91d9", 68},
 		userBubbleBG: cliColor{"#f5f0e8", 255},
@@ -99,8 +105,8 @@ var (
 )
 
 // cliCursorShape is the active cursor shape for the textarea input, configured
-// via [ui] cursor_shape. Defaults to "underline".
-var cliCursorShape = "underline"
+// via [ui] cursor_shape. Defaults to the slim bar used by the chat composer.
+var cliCursorShape = "bar"
 
 func configureCLITheme(mode string) {
 	configureCLIThemeWithStyle(mode, "")
@@ -378,7 +384,7 @@ func init() {
 
 func refreshCLIStyles() {
 	inputBoxStyle = withThemeBorderFG(lipgloss.NewStyle().
-		Border(lipgloss.NormalBorder(), true, false, true, false), activeCLITheme.accent).
+		Border(lipgloss.NormalBorder(), true, false, true, false), activeCLITheme.border).
 		PaddingLeft(1)
 	todoPanelStyle = withThemeBorderFG(lipgloss.NewStyle().
 		Border(lipgloss.NormalBorder(), true, false, false, false), activeCLITheme.border).
@@ -429,10 +435,10 @@ func applyTextareaTheme(ti *textarea.Model) {
 	switch cliCursorShape {
 	case "block":
 		styles.Cursor.Shape = tea.CursorBlock
-	case "bar":
-		styles.Cursor.Shape = tea.CursorBar
-	default:
+	case "underline":
 		styles.Cursor.Shape = tea.CursorUnderline
+	default:
+		styles.Cursor.Shape = tea.CursorBar
 	}
 	ti.SetStyles(styles)
 }

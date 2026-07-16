@@ -213,6 +213,14 @@ The footer shows the active composer mode. See
 [Keyboard shortcuts](./GUIDE.md#keyboard-shortcuts) for transcript navigation,
 multiline input, rewind, and clipboard controls.
 
+Clipboard actions are deliberately split by content type. Local transcript
+selection uses the native system clipboard and reports success only after that
+write completes; SSH falls back to an explicitly labelled OSC 52 request. Text
+paste remains the terminal's bracketed-paste action (`Cmd+V` on macOS and the
+terminal's configured shortcut elsewhere). Image paste is application-owned:
+use `Ctrl+V` on macOS/Linux, `Alt+V` on Windows, or `/paste-image`; the footer
+shows `Pasting image…` until the attachment token is ready.
+
 ## In-session commands
 
 Type `/help` in an interactive session for the complete command list. Slash

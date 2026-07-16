@@ -49,7 +49,7 @@ default_model = "deepseek-flash"   # 执行器；设 [agent].planner_model 可�
 
 [ui]
 # shortcut_layout = "desktop"      # classic|desktop；兼容旧配置
-# cursor_shape = "underline"       # block|underline|bar；CLI/TUI 输入光标
+# cursor_shape = "bar"             # block|underline|bar；CLI/TUI 输入光标
 
 [agent]
 reasoning_language = "auto"      # 可见思考过程语言：auto|zh|en
@@ -284,9 +284,9 @@ Thinking 覆盖选项：
 `[ui].shortcut_layout` 仍被接受以兼容旧配置，但下面的快捷键行为已经跨布局统一。
 
 CLI/TUI 文本输入可通过 `[ui].cursor_shape` 设置光标形状，支持 `underline`、`block`
-和 `bar`。默认值是 `underline`，因为部分终端中的 block 光标会在中英混排输入时覆盖
-CJK 双宽字符，造成视觉错位。想保留旧的终端块状光标可设为 `block`，想使用细插入线可设为
-`bar`。该设置不影响桌面端或 Web 输入框。
+和 `bar`。默认值是 `bar`：位置清晰，同时不会在中英混排输入时覆盖 CJK 双宽字符。
+想使用传统终端块状光标可设为 `block`，偏好更弱的下划线光标可设为 `underline`。
+该设置不影响桌面端或 Web 输入框。
 
 ### 桌面端 GUI
 
@@ -346,11 +346,13 @@ CJK 双宽字符，造成视觉错位。想保留旧的终端块状光标可设�
 | `Ctrl+L` 或 `/cls` | 只清空可见 transcript | LLM 上下文、session 文件、工具、记忆和插件都保持加载；想丢弃对话上下文时用 `/clear`。 |
 | `Esc` | 退出当前最具体的动作 | 可在无回复前撤回刚提交的 turn、取消运行中的 turn，或清空非空输入。 |
 | 空闲且输入为空时双击 `Esc` | 打开 rewind 选择器 | 和 `/rewind` 是同一个入口。 |
-| 终端原生选择 | 复制 transcript 文本 | Reasonix 默认不启用鼠标报告，因此终端自己的选择/复制仍可使用。 |
-| `Ctrl+C` | 取消、清空或退出 | 取消运行中的 turn、清空非空输入；空输入下连按两次退出。 |
+| transcript 文本选择 | 复制 transcript 文本 | 应用内拖选松开后，本地会话通过可验证的系统剪贴板路径写入（macOS `pbcopy`、Linux 可用的 Wayland/X11 工具、Windows 系统剪贴板）；SSH 才回退到 OSC 52，并明确标记为回退而不是宣称原生复制成功。`Ctrl+C`/`Super+C`/`Meta+C` 或右键当前选区可再次复制。 |
+| `/mouse` | 切换应用内鼠标接管 | 关闭后由终端处理原生拖选和右键菜单，但会失去应用内选区、滚动条和滚轮。可用 `REASONIX_DISABLE_MOUSE=1` 让每次会话默认关闭。 |
+| `Ctrl+C` | 复制、取消、清空或退出 | 有活动选区时优先复制；否则取消运行中的 turn、清空非空输入，或在空输入下连按两次退出。 |
 | `Ctrl+D` | 退出 TUI | 立即退出。 |
-| `Ctrl+V`、`Ctrl+Shift+V`、`Meta+V` 或 `Super+V` | 粘贴剪贴板内容 | CLI 会先尝试图片，再回退到文本或文件引用。 |
-| `/paste-image` | 粘贴剪贴板图片 | 适合只想贴图片，或终端应用自己接管文本粘贴的场景。 |
+| 终端的文本粘贴快捷键 | 粘贴文本 | 文本保持终端原生 bracketed-paste 路径：macOS 通常是 `Cmd+V`，Linux 通常是 `Ctrl+Shift+V`，其它环境使用终端自身配置。Reasonix 只消费收到的文本粘贴事件，不会先探测图片。 |
+| macOS/Linux `Ctrl+V`；Windows `Alt+V` | 粘贴剪贴板图片 | 图片粘贴是独立的应用动作。读取期间底栏显示“正在粘贴图片…”，完成后在光标处插入可编辑的 `[image #N]` 标记。 |
+| `/paste-image` | 粘贴剪贴板图片 | 与图片快捷键相同的纯图片命令入口。 |
 | 以 `!` 开头的一行 | 直接运行 shell 命令 | 命令在本地执行，不经过模型。 |
 
 模式与显示：
