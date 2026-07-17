@@ -20,6 +20,14 @@ on:
         description: "Existing CLI tag selected by the approved release orchestrator"
         required: true
         type: string
+      approved_cli_tag:
+        description: "Stable CLI tag recorded by the approved orchestrator"
+        required: true
+        type: string
+      approved_sha:
+        description: "Immutable commit recorded by the approved orchestrator"
+        required: true
+        type: string
       orchestrated:
         description: "True only when called by release-stable.yml after approval"
         required: false
@@ -34,12 +42,27 @@ jobs:
     name: verify approved orchestrator
     if: ${{ inputs.orchestrated }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
-      - name: Verify caller workflow
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          ref: ${{ inputs.approved_sha }}
+      - name: Verify caller and approved release ref
         env:
-          ACTUAL: ${{ github.workflow_ref }}
-          EXPECTED: ${{ format('{0}/.github/workflows/release-stable.yml@{1}', github.repository, github.ref) }}
-        run: test "$ACTUAL" = "$EXPECTED"
+          ACTUAL_CALLER_WORKFLOW_REF: ${{ github.workflow_ref }}
+          EXPECTED_CALLER_WORKFLOW_REF: ${{ format('{0}/.github/workflows/release-stable.yml@{1}', github.repository, github.ref) }}
+          CALLER_EVENT_NAME: ${{ github.event_name }}
+          CALLER_REF: ${{ github.ref }}
+          CALLER_REF_PROTECTED: ${{ github.ref_protected }}
+          CALLER_WORKFLOW_SHA: ${{ github.workflow_sha }}
+          APPROVED_CLI_TAG: ${{ inputs.approved_cli_tag }}
+          APPROVED_SHA: ${{ inputs.approved_sha }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          bash scripts/verify-release-authorization.sh
+          bash scripts/verify-release-tag.sh
 
   release-gate:
     name: approve standalone CLI release
@@ -59,7 +82,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ inputs.tag || github.ref }}
+          ref: ${{ inputs.approved_sha || inputs.tag || github.ref }}
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
@@ -77,7 +100,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-          ref: ${{ inputs.tag || github.ref }}
+          ref: ${{ inputs.approved_sha || inputs.tag || github.ref }}
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
@@ -89,6 +112,12 @@ jobs:
         env:
           RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
         run: node scripts/release-notes.mjs render --version "$RELEASE_TAG" --output /tmp/release-notes.md
+      - name: Revalidate approved release ref
+        if: ${{ inputs.orchestrated }}
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+          APPROVED_SHA: ${{ inputs.approved_sha }}
+        run: bash scripts/verify-release-tag.sh
       - uses: goreleaser/goreleaser-action@v7
         with:
           version: '~> v2'

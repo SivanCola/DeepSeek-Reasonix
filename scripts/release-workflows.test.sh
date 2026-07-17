@@ -16,6 +16,9 @@ trap cleanup EXIT
 [ "$(rg -c '^    environment: release$' "$repo_root/.github/workflows/release-stable.yml")" = "1" ]
 for workflow in release.yml release-npm.yml release-desktop.yml; do
 	rg -q 'github\.workflow_ref' "$repo_root/.github/workflows/$workflow"
+	rg -q 'github\.ref_protected' "$repo_root/.github/workflows/$workflow"
+	rg -q 'inputs\.approved_sha' "$repo_root/.github/workflows/$workflow"
+	rg -q 'verify-release-tag\.sh' "$repo_root/.github/workflows/$workflow"
 	rg -q 'release-stable\.yml' "$repo_root/.github/workflows/$workflow"
 done
 
@@ -36,6 +39,24 @@ git clone -q "$test_root/remote.git" "$test_root/repo"
 	GITHUB_OUTPUT="$test_root/stable.out" RELEASE_TAG=v1.2.3 "$repo_root/scripts/resolve-stable-release.sh"
 	rg -q '^version=1\.2\.3$' "$test_root/stable.out"
 	rg -q '^desktop_tag=desktop-v1\.2\.3$' "$test_root/stable.out"
+	approved_sha="$(git rev-parse HEAD)"
+	ACTUAL_CALLER_WORKFLOW_REF='example/reasonix/.github/workflows/release-stable.yml@refs/tags/v1.2.3' \
+		EXPECTED_CALLER_WORKFLOW_REF='example/reasonix/.github/workflows/release-stable.yml@refs/tags/v1.2.3' \
+		CALLER_EVENT_NAME=push CALLER_REF=refs/tags/v1.2.3 CALLER_REF_PROTECTED=true \
+		CALLER_WORKFLOW_SHA="$approved_sha" APPROVED_CLI_TAG=v1.2.3 APPROVED_SHA="$approved_sha" \
+		"$repo_root/scripts/verify-release-authorization.sh"
+	RELEASE_TAG=desktop-v1.2.3 APPROVED_SHA="$approved_sha" \
+		"$repo_root/scripts/verify-release-tag.sh"
+
+	if ACTUAL_CALLER_WORKFLOW_REF='example/reasonix/.github/workflows/release-stable.yml@refs/heads/topic' \
+		EXPECTED_CALLER_WORKFLOW_REF='example/reasonix/.github/workflows/release-stable.yml@refs/heads/topic' \
+		CALLER_EVENT_NAME=workflow_dispatch CALLER_REF=refs/heads/topic CALLER_REF_PROTECTED=false \
+		CALLER_WORKFLOW_SHA="$approved_sha" APPROVED_CLI_TAG=v1.2.3 APPROVED_SHA="$approved_sha" \
+		"$repo_root/scripts/verify-release-authorization.sh" >"$test_root/unprotected.log" 2>&1; then
+		echo "unprotected caller unexpectedly passed release authorization" >&2
+		exit 1
+	fi
+	rg -q 'caller ref is not protected' "$test_root/unprotected.log"
 
 	git tag v1.2.4
 	git tag npm-v1.2.4
@@ -47,6 +68,17 @@ git clone -q "$test_root/remote.git" "$test_root/repo"
 	rg -q 'required stable release tag is missing: desktop-v1\.2\.4' "$test_root/missing.log"
 
 	other_sha="$(git commit-tree HEAD^{tree} -p HEAD -m "other")"
+	git tag -f desktop-v1.2.3 "$other_sha" >/dev/null
+	git push -q -f origin desktop-v1.2.3
+	if RELEASE_TAG=desktop-v1.2.3 APPROVED_SHA="$approved_sha" \
+		"$repo_root/scripts/verify-release-tag.sh" >"$test_root/moved-tag.log" 2>&1; then
+		echo "moved release tag unexpectedly passed approved SHA validation" >&2
+		exit 1
+	fi
+	rg -q 'moved to .* after approval' "$test_root/moved-tag.log"
+	git tag -f desktop-v1.2.3 "$approved_sha" >/dev/null
+	git push -q -f origin desktop-v1.2.3
+
 	git tag v1.2.5
 	git tag npm-v1.2.5 "$other_sha"
 	git tag desktop-v1.2.5

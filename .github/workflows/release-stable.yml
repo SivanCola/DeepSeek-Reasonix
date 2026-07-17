@@ -99,6 +99,8 @@ jobs:
     uses: ./.github/workflows/release.yml
     with:
       tag: ${{ needs.authorize.outputs.cli_tag }}
+      approved_cli_tag: ${{ needs.authorize.outputs.cli_tag }}
+      approved_sha: ${{ needs.authorize.outputs.sha }}
       orchestrated: true
     secrets: inherit
 
@@ -110,6 +112,8 @@ jobs:
       channel: stable
       base_version: ${{ needs.authorize.outputs.version }}
       tag: ${{ needs.authorize.outputs.npm_tag }}
+      approved_cli_tag: ${{ needs.authorize.outputs.cli_tag }}
+      approved_sha: ${{ needs.authorize.outputs.sha }}
       orchestrated: true
     secrets: inherit
 
@@ -120,5 +124,7 @@ jobs:
     with:
       channel: stable
       tag: ${{ needs.authorize.outputs.desktop_tag }}
+      approved_cli_tag: ${{ needs.authorize.outputs.cli_tag }}
+      approved_sha: ${{ needs.authorize.outputs.sha }}
       orchestrated: true
     secrets: inherit

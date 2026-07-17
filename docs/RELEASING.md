@@ -29,8 +29,8 @@ ending in `-canary.N` publish under the `canary` dist-tag.)
 | Action | Who | Mechanism |
 |---|---|---|
 | **Cut a canary** | any maintainer (write access) | `workflow_dispatch`, runs without a production approval |
-| **Ship stable** | configured release reviewers | atomically push the three stable tags; the **Release stable** workflow requests one `release`-environment approval before every channel publishes |
-| **Ship a standalone RC** | configured release reviewers | push the surface-specific prerelease tag; that one standalone workflow requests one `release` approval |
+| **Ship stable** | release-tag creators + one configured reviewer | atomically push the three stable tags; the **Release stable** workflow requests one `release`-environment approval before every channel publishes |
+| **Ship a standalone RC** | release-tag creators + one configured reviewer | push the surface-specific prerelease tag; that one standalone workflow requests one `release` approval |
 
 So a maintainer can dispatch a canary anytime. A stable release pauses once in
 the **Release stable** run until a configured reviewer approves the `release`
@@ -41,6 +41,20 @@ environment; the CLI, npm, and Desktop jobs then continue without asking again.
 > `v*`/`npm-v*`/`desktop-v*` creation, update, and deletion. Only the
 > orchestrator and standalone RC/recovery paths reference the protected
 > environment.
+
+The reusable publishers additionally require the stable orchestrator to run on
+the protected stable tag (or protected `main-v2` recovery ref), bind the caller
+workflow commit to the approved SHA, check out that SHA, and revalidate each
+remote release tag immediately before publication. An unprotected branch cannot
+claim that it already passed the approval job.
+
+Repository `write` access remains a privileged role: GitHub Actions workflows on
+repository branches can access repository-level Actions secrets. Do not grant
+`write` to someone who must be technically unable to publish. A stricter trust
+separation requires moving external publication credentials to protected
+environment secrets or provider-side OIDC/trusted-publishing policies; the
+workflow approval and tag ruleset primarily protect the supported release path
+from accidental or unauthorized invocation.
 
 ## The release loop
 
@@ -74,7 +88,8 @@ environment; the CLI, npm, and Desktop jobs then continue without asking again.
    tags to exist on the exact current `main-v2` commit, renders the reviewed
    release notes, and runs the cache guard. It then **waits once for a configured
    reviewer to approve the `release` environment** before invoking all three
-   publishers.
+   publishers. The approval records the immutable release commit; every
+   publisher checks out that SHA and fails if its remote tag moves afterward.
    A stable `npm-v*` publish moves the `latest` dist-tag automatically (build.mjs)
    and release-npm.yml verifies it landed. **Do not skip the npm tag**: the stable
    preflight fails when the matching `npm-v*` or `desktop-v*` tag is missing or
