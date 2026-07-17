@@ -239,6 +239,7 @@ export const zhTW: Record<DictKey, string> = {
   "caps.isolationNotApplicable": "不適用程序隔離",
   "caps.trustTitle": "信任 {name}？",
   "caps.trustExplanation": "信任僅適用於下方精確的伺服器身分和唯讀工具快照；寫入工具仍需審批。",
+  "caps.projectLaunchExplanation": "此 MCP 伺服器來自目前專案。Reasonix 會在啟動前確認其精確命令或位址；設定變更後需要重新確認。",
   "caps.unisolatedWarning": "系統沙箱不可用。該伺服器將無隔離執行，啟動階段可能產生副作用。",
   "caps.identityChanged": "伺服器程式或連線身分已變更。",
   "caps.changedTools": "發生變更的工具：{tools}",

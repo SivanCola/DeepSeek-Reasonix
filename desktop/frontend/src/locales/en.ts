@@ -327,6 +327,7 @@ export const en = {
   "caps.isolationNotApplicable": "Process isolation not applicable",
   "caps.trustTitle": "Trust {name}?",
   "caps.trustExplanation": "Trust applies only to the exact server identity and reader snapshots below. Writer tools still require approval.",
+  "caps.projectLaunchExplanation": "This MCP server comes from the current project. Authorize its exact command or endpoint before Reasonix starts it; changes require authorization again.",
   "caps.unisolatedWarning": "The OS sandbox is unavailable. This server will run unisolated and may have startup side effects.",
   "caps.identityChanged": "The server program or connection identity changed.",
   "caps.changedTools": "Changed tools: {tools}",

@@ -4258,6 +4258,7 @@ func (c *Controller) ConnectMCPServer(e config.PluginEntry) (int, error) {
 // overrides scoped to the workspace, and connects it live via the mcp manager.
 func (c *Controller) connectMCPServer(e config.PluginEntry) (int, error) {
 	exp := e.ExpandedPlugin()
+	configSource := strings.TrimSpace(string(exp.Source))
 	spec := plugin.ApplyKnownOverrides(plugin.Spec{
 		Name:                     exp.Name,
 		Type:                     exp.Type,
@@ -4273,6 +4274,10 @@ func (c *Controller) connectMCPServer(e config.PluginEntry) (int, error) {
 		DefaultToolsApprovalMode: exp.DefaultToolsApprovalMode,
 		ToolApprovalModes:        controllerMCPToolApprovalModes(exp.Tools),
 		ApprovalsReviewer:        exp.ApprovalsReviewer,
+		ConfigSource:             configSource,
+		AutoTrust:                exp.Source.UserAuthorized(),
+		ImplicitApproval:         exp.Source.UserAuthorized(),
+		RequireLaunchApproval:    exp.Source.RequiresLaunchApproval(),
 	}, c.WorkspaceRoot())
 	if c.mcpConfigureSpec != nil {
 		c.mcpConfigureSpec(&spec)

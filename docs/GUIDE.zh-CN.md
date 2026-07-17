@@ -475,8 +475,18 @@ reasonix doctor capabilities --live --timeout 5s
 
 Reasonix 是一个 MCP 客户端。`[[plugins]]` 的 `type` 选择传输：`stdio`（默认）启动本地子进
 程（`command`/`args`/`env`）；`http`（Streamable HTTP）连接远程 `url`，可带静态
-`headers`（`${VAR}` / `${VAR:-default}` 从环境展开，密钥不入文件）。工具以
-`mcp__<server>__<tool>` 暴露给模型，与 Claude Code 一致；声明 MCP `readOnlyHint: true`
+`headers`（`${VAR}` / `${VAR:-default}` 从环境展开，密钥不入文件）。
+
+普通配置流程现在只有一步：在桌面端或用户全局配置中添加 server，就表示用户授权该
+server；保存后会立即连接、信任当前能力快照，普通调用无需再配置一套 MCP 专用审批。
+显式 deny 仍然优先，destructive 工具仍需每次由用户确认，Plan 与只读 subagent 的边界也
+不变。仓库控制的 `reasonix.toml` 和 `.mcp.json` 不会直接执行：Reasonix 会在启动其进程或
+访问其地址之前，对精确身份确认一次；命令、可执行文件或地址变化后会重新确认。
+
+stdio server 从初始化到读写都复用同一个进程，因此浏览器等有状态 MCP 能保留会话和
+已打开页面。
+
+工具以 `mcp__<server>__<tool>` 暴露给模型，与 Claude Code 一致；声明 MCP `readOnlyHint: true`
 的工具会参与并行调度并命中普通权限层的只读默认放行。这个标注来自第三方 server，主 Plan 只把它
 当作普通权限分类；它不会让工具进入独立 planner 或只读研究 subagent。已审计的 reader 应写入本地
 `trusted_read_only_tools`。没有 `readOnlyHint` 的工具仍按写工具处理。计划期间，内置 writer 仍走
@@ -505,7 +515,8 @@ approvals_reviewer = "auto_review"     # user|auto_review
 trusted_read_only_tools = ["issue_read", "pull_request_read"]
 ```
 
-`auto` 交给全局 Ask/Auto/YOLO；`prompt` 每次调用都审查；`writes` 只审查写工具；`approve`
+用户已授权的 server 若省略这些高级审批字段，普通调用会直接放行。显式配置后，`auto`
+交给全局 Ask/Auto/YOLO；`prompt` 每次调用都审查；`writes` 只审查写工具；`approve`
 放行普通调用。显式 deny 永远优先，`destructiveHint` 永远强制一次新审查，`tools` 中的 raw tool
 配置覆盖 server 默认值。`trusted_read_only_tools` 继续作为兼容字段和本地信任声明，用于已审计、
 但没有可靠 annotation 的 reader。

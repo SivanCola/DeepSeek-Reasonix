@@ -389,8 +389,10 @@ func mergeTOMLPlugins(paths []string) ([]PluginEntry, error) {
 		for _, p := range f.Plugins {
 			p, _ = NormalizePluginCommandLine(p)
 			if isUserConfigPath(path) {
+				p.Source = MCPSourceUserConfig
 				userApprovalPolicies[p.Name] = p
 			} else {
+				p.Source = MCPSourceProjectConfig
 				p = restrictProjectMCPApprovalPolicy(p)
 				if userPolicy, ok := userApprovalPolicies[p.Name]; ok {
 					p = inheritUserMCPApprovalPolicy(p, userPolicy)

@@ -647,6 +647,7 @@ console.log("capabilities panel MCP actions");
     cwd: "/tmp/reasonix-test",
   }];
   let addedInput: MCPServerInput | undefined;
+  let inspectCalls = 0;
   let servers: ServerView[] = [
     {
       name: "github",
@@ -695,6 +696,10 @@ console.log("capabilities panel MCP actions");
             resources: 0,
           }];
           return 0;
+        },
+        InspectMCPTrust: async () => {
+          inspectCalls++;
+          throw new Error("new user servers should not need a second trust prompt");
         },
       } as Partial<AppBindings> as AppBindings,
     },
@@ -780,6 +785,7 @@ console.log("capabilities panel MCP actions");
   ok(addedInput?.command === "npx", "valid MCP JSON keeps the executable separate from its arguments");
   ok(addedInput?.args?.[2] === "hello world", "valid MCP JSON passes structured arguments to AddMCPServer");
   ok(addedInput?.env?.TOKEN === "test-token", "valid MCP JSON passes environment variables to AddMCPServer");
+  ok(inspectCalls === 0, "adding a user MCP server does not open a second trust inspection");
 
   await act(async () => {
     root.unmount();

@@ -6891,7 +6891,7 @@ func TestCapabilitiesIncludesInstalledPlugins(t *testing.T) {
 	}
 }
 
-func TestDesktopSharedHostBackgroundMCPAutoConnectsOnBoot(t *testing.T) {
+func TestDesktopSharedHostProjectMCPWaitsForLaunchApproval(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping background MCP boot integration test in short mode")
 	}
@@ -6927,11 +6927,15 @@ url = %q
 	defer ctrl.Close()
 
 	deadline := time.Now().Add(3 * time.Second)
-	for !sharedHost.HasClient("h") && time.Now().Before(deadline) {
+	for len(sharedHost.Failures()) == 0 && time.Now().Before(deadline) {
 		time.Sleep(25 * time.Millisecond)
 	}
-	if !sharedHost.HasClient("h") {
-		t.Fatalf("background MCP did not auto-connect; connecting=%v failures=%+v", sharedHost.ConnectingServers(), sharedHost.Failures())
+	if sharedHost.HasClient("h") {
+		t.Fatal("project MCP connected before launch approval")
+	}
+	failures := sharedHost.Failures()
+	if len(failures) != 1 || !failures[0].RequiresReverification || !strings.Contains(failures[0].Error, "until the user authorizes") {
+		t.Fatalf("project MCP failure = %+v", failures)
 	}
 
 	app := NewApp()
@@ -6949,8 +6953,8 @@ url = %q
 	app.activeTabID = "test"
 
 	view := app.MCPServers()
-	if len(view) != 1 || view[0].Name != "h" || view[0].Status != "connected" || view[0].StartIntent != "automatic" || view[0].RuntimeState != "ready" || view[0].Tools != 1 {
-		t.Fatalf("MCPServers() = %+v, want h connected automatic ready with one tool", view)
+	if len(view) != 1 || view[0].Name != "h" || view[0].Status != "failed" || view[0].RuntimeState != "issue" || !view[0].RequiresLaunchApproval || !view[0].RequiresReverification {
+		t.Fatalf("MCPServers() = %+v, want project h awaiting launch approval", view)
 	}
 }
 

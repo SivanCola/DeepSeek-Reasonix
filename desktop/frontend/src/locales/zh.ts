@@ -328,6 +328,7 @@ export const zh: Record<DictKey, string> = {
   "caps.isolationNotApplicable": "不适用进程隔离",
   "caps.trustTitle": "信任 {name}？",
   "caps.trustExplanation": "信任仅适用于下方精确的服务器身份和只读工具快照；写入工具仍需审批。",
+  "caps.projectLaunchExplanation": "此 MCP 服务器来自当前项目。Reasonix 会在启动前确认其精确命令或地址；配置发生变化后需要重新确认。",
   "caps.unisolatedWarning": "系统沙箱不可用。该服务器将无隔离运行，启动阶段可能产生副作用。",
   "caps.identityChanged": "服务器程序或连接身份已变化。",
   "caps.changedTools": "发生变化的工具：{tools}",

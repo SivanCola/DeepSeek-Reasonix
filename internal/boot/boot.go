@@ -1494,7 +1494,9 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 				return
 			}
 			spec.TrustManager = pluginSpecOptions.TrustManager
-			spec.ConfigSource = pluginSpecOptions.ConfigSource
+			if strings.TrimSpace(spec.ConfigSource) == "" {
+				spec.ConfigSource = pluginSpecOptions.ConfigSource
+			}
 			applyMCPIsolation(spec, root, pluginSpecOptions)
 			applyOfficialMCPTrust(spec, pluginSpecOptions)
 		},
@@ -2169,6 +2171,10 @@ func PluginSpecsForRootWithOptions(entries []config.PluginEntry, workspaceRoot s
 
 func pluginSpecFromEntryWithOptions(e config.PluginEntry, workspaceRoot string, opts PluginSpecOptions) plugin.Spec {
 	e = e.ExpandedPlugin() // resolve ${VAR} / ${VAR:-default} from the environment
+	configSource := strings.TrimSpace(string(e.Source))
+	if configSource == "" {
+		configSource = opts.ConfigSource
+	}
 	spec := plugin.ApplyKnownOverrides(plugin.Spec{
 		Name:                     e.Name,
 		Type:                     e.Type,
@@ -2185,7 +2191,10 @@ func pluginSpecFromEntryWithOptions(e config.PluginEntry, workspaceRoot string, 
 		ToolApprovalModes:        mcpToolApprovalModes(e.Tools),
 		ApprovalsReviewer:        e.ApprovalsReviewer,
 		TrustManager:             opts.TrustManager,
-		ConfigSource:             opts.ConfigSource,
+		ConfigSource:             configSource,
+		AutoTrust:                e.Source.UserAuthorized(),
+		ImplicitApproval:         e.Source.UserAuthorized(),
+		RequireLaunchApproval:    e.Source.RequiresLaunchApproval(),
 	}, workspaceRoot)
 	applyMCPIsolation(&spec, workspaceRoot, opts)
 	applyOfficialMCPTrust(&spec, opts)
@@ -2206,6 +2215,9 @@ func applyOfficialMCPTrust(spec *plugin.Spec, opts PluginSpecOptions) {
 		spec.PackageRoot = official.PackageRoot
 		spec.VerifiedVersion = official.Version
 		spec.CatalogSequence = official.CatalogSequence
+		spec.AutoTrust = true
+		spec.ImplicitApproval = true
+		spec.RequireLaunchApproval = false
 		spec.ReaderSandbox.Network = official.Network
 		spec.WriterSandbox.Network = official.Network
 	}

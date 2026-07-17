@@ -582,8 +582,22 @@ Reasonix is an MCP client. A `[[plugins]]` entry's `type` selects the transport:
 `stdio` (default) launches a local subprocess (`command`/`args`/`env`); `http`
 (Streamable HTTP) connects to a remote `url` with optional static `headers`
 (`${VAR}` / `${VAR:-default}` expanded from the environment, so tokens stay out
-of the file). Tools surface to the model as `mcp__<server>__<tool>`; a tool
-declaring MCP's `readOnlyHint: true` joins parallel dispatch and the ordinary
+of the file).
+
+The normal setup path is intentionally one step: adding a server in Desktop or
+the user config means you authorize that server, so it connects immediately,
+trusts its current capability snapshot, and ordinary calls do not need another
+MCP-specific approval setting. Explicit deny rules still win, destructive tools
+still require a fresh human decision, and Plan/read-only sub-agent boundaries
+remain unchanged. Repository-controlled `reasonix.toml` and `.mcp.json` entries
+are different: Reasonix shows one launch confirmation for the exact command or
+endpoint before starting it, and asks again if that identity changes.
+
+stdio servers keep one process for initialize, reads, and writes, so stateful
+servers such as browsers retain sessions and open pages.
+
+Tools surface to the model as `mcp__<server>__<tool>`. A tool declaring MCP's
+`readOnlyHint: true` joins parallel dispatch and the ordinary
 permission reader-default. Because the annotation is supplied by a third-party
 server, it is accepted by the main Plan workflow only as ordinary permission
 classification; it does not grant access to the dedicated planner or read-only
@@ -620,7 +634,9 @@ approvals_reviewer = "auto_review"     # user|auto_review
 trusted_read_only_tools = ["issue_read", "pull_request_read"]
 ```
 
-`auto` delegates to the global Ask/Auto/YOLO permission posture; `prompt`
+For a user-authorized server, omitting these advanced approval fields permits
+ordinary calls directly. If a field is present, `auto` delegates to the global
+Ask/Auto/YOLO permission posture; `prompt`
 reviews every call; `writes` reviews only writer-classified calls; and `approve`
 allows ordinary calls. Explicit deny rules always win, and `destructiveHint`
 always forces a new review. A raw-tool `tools` entry overrides the server

@@ -90,6 +90,9 @@ type Spec struct {
 	// ConfigSource disambiguates otherwise identical server names coming from
 	// workspace config, a host transport, or a verified plugin package.
 	ConfigSource           string
+	AutoTrust              bool
+	ImplicitApproval       bool
+	RequireLaunchApproval  bool
 	OfficialCatalogEntryID string
 	OfficialReaderNames    []string
 	PackageDigest          string
@@ -103,12 +106,12 @@ type Spec struct {
 	LauncherLocator         string
 	LauncherResolvedVersion string
 	LauncherDigest          string
-	// ReaderSandbox confines the long-lived initialize/list/read lane. The
-	// writer profile is used only by one-shot, post-approval stdio calls.
+	// ReaderSandbox and WriterSandbox describe the host isolation policy used
+	// for trust evaluation. The persistent stdio process runs with WriterSandbox
+	// so one stateful session is preserved across reads and writes.
 	ReaderSandbox sandbox.Spec
 	WriterSandbox sandbox.Spec
 	StateDir      string
-	OneShot       bool
 	// AllowIdentityDriftPreflight is set only by explicit user verification.
 	// Ordinary/lazy starts stop a changed server before creating its process.
 	AllowIdentityDriftPreflight bool
@@ -632,10 +635,11 @@ type SecurityStatus struct {
 // session or workspace trust. It contains names and safety classes, never args,
 // environment/header values, URLs, or credentials.
 type TrustInspection struct {
-	Security    SecurityStatus
-	Readers     []string
-	Writers     []string
-	Destructive []string
+	Security               SecurityStatus
+	Readers                []string
+	Writers                []string
+	Destructive            []string
+	RequiresLaunchApproval bool
 }
 
 // ServerStatus summarises one connected server for the /mcp command.
@@ -665,9 +669,22 @@ func (e *identityChangedError) Error() string {
 	return fmt.Sprintf("MCP server %q identity changed; blocked before process or network startup and requires explicit re-verification", e.server)
 }
 
+type launchApprovalError struct {
+	server  string
+	changed bool
+}
+
+func (e *launchApprovalError) Error() string {
+	if e.changed {
+		return fmt.Sprintf("project-provided MCP server %q changed; blocked before process or network startup and requires explicit re-authorization", e.server)
+	}
+	return fmt.Sprintf("project-provided MCP server %q is blocked before process or network startup until the user authorizes it", e.server)
+}
+
 func requiresReverification(err error) bool {
-	var target *identityChangedError
-	return errors.As(err, &target)
+	var identityTarget *identityChangedError
+	var launchTarget *launchApprovalError
+	return errors.As(err, &identityTarget) || errors.As(err, &launchTarget)
 }
 
 // Servers returns a status summary per connected server, in connection order.
@@ -745,6 +762,45 @@ func (h *Host) InspectTrust(name string) (TrustInspection, error) {
 // closes it without invoking any tool. Callers use this for an unconnected
 // server before presenting the trust decision.
 func InspectSpec(ctx context.Context, spec Spec) (TrustInspection, error) {
+	var err error
+	spec, err = applyStoredLauncherLock(spec)
+	if err != nil {
+		return TrustInspection{}, err
+	}
+	identity, err := specIdentityFingerprint(ctx, spec)
+	if err != nil {
+		return TrustInspection{}, err
+	}
+	if spec.TrustManager != nil {
+		if _, err := migrateLegacyIdentity(spec, identity, nil); err != nil {
+			return TrustInspection{}, err
+		}
+	}
+	if spec.RequireLaunchApproval {
+		if spec.TrustManager == nil {
+			return TrustInspection{}, fmt.Errorf("MCP trust store is unavailable")
+		}
+		authorized, changed, err := spec.TrustManager.LaunchAuthorized(spec.Name, trustConfigSource(spec), identity)
+		if err != nil {
+			return TrustInspection{}, err
+		}
+		if !authorized {
+			state := mcptrust.TrustUntrusted
+			if changed {
+				state = mcptrust.TrustChanged
+			}
+			return TrustInspection{
+				Security: SecurityStatus{
+					Name:            spec.Name,
+					TrustState:      state,
+					IdentityChanged: changed,
+					Identity:        identity,
+					IsolationState:  isolationStateForSpec(spec),
+				},
+				RequiresLaunchApproval: true,
+			}, nil
+		}
+	}
 	spec.AllowIdentityDriftPreflight = true
 	client, err := start(ctx, ctx, spec)
 	if err != nil {
@@ -804,6 +860,23 @@ func SetSpecTrust(ctx context.Context, spec Spec, decision string) error {
 			return fmt.Errorf("persistent trust is unavailable; use session trust or make the launcher immutable: %w", err)
 		}
 	}
+	spec, err := applyStoredLauncherLock(spec)
+	if err != nil {
+		return err
+	}
+	identity, err := specIdentityFingerprint(ctx, spec)
+	if err != nil {
+		return err
+	}
+	if spec.RequireLaunchApproval {
+		scope := mcptrust.ScopeSession
+		if decision == "workspace" {
+			scope = mcptrust.ScopeWorkspace
+		}
+		if err := manager.TrustLaunch(scope, spec.Name, trustConfigSource(spec), identity); err != nil {
+			return err
+		}
+	}
 	spec.AllowIdentityDriftPreflight = true
 	client, err := start(ctx, ctx, spec)
 	if err != nil {
@@ -815,7 +888,7 @@ func SetSpecTrust(ctx context.Context, spec Spec, decision string) error {
 		return err
 	}
 	client.toolsMu.Lock()
-	identity := client.identityFingerprint
+	identity = client.identityFingerprint
 	capabilities := append([]mcptrust.Capability(nil), client.capabilities...)
 	cache := CachedSchema{
 		SpecHash: SpecFingerprint(spec),
@@ -1366,10 +1439,41 @@ func start(lifeCtx, callCtx context.Context, s Spec) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
+	if s.TrustManager != nil {
+		configSource := trustConfigSource(s)
+		hasCurrent, currentChanged, checkErr := s.TrustManager.IdentityChanged(s.Name, configSource, identity)
+		if checkErr != nil {
+			return nil, checkErr
+		}
+		hasLegacySource := false
+		if configSource != "workspace_config" {
+			hasLegacySource, checkErr = s.TrustManager.HasReceipt(s.Name, "workspace_config")
+			if checkErr != nil {
+				return nil, checkErr
+			}
+		}
+		if currentChanged || (!hasCurrent && hasLegacySource) {
+			if _, migrateErr := migrateLegacyIdentity(s, identity, nil); migrateErr != nil {
+				return nil, migrateErr
+			}
+		}
+	}
+	if s.RequireLaunchApproval {
+		if s.TrustManager == nil {
+			return nil, fmt.Errorf("MCP trust store is unavailable")
+		}
+		authorized, changed, checkErr := s.TrustManager.LaunchAuthorized(s.Name, trustConfigSource(s), identity)
+		if checkErr != nil {
+			return nil, checkErr
+		}
+		if !authorized {
+			return nil, &launchApprovalError{server: s.Name, changed: changed}
+		}
+	}
 	if s.TrustManager != nil && !s.AllowIdentityDriftPreflight {
 		if _, changed, checkErr := s.TrustManager.IdentityChanged(s.Name, trustConfigSource(s), identity); checkErr != nil {
 			return nil, checkErr
-		} else if changed && !migrateLegacyIdentity(s, identity) {
+		} else if changed && !s.AutoTrust {
 			// A receipt that exactly matches this spec's legacy URL fingerprint
 			// migrated above instead of blocking: eager and cache-miss servers
 			// must reach the credential-aware rollout too, not only paths that
@@ -1561,6 +1665,9 @@ func (s Spec) toolApprovalMode(rawName string) string {
 	if mode := strings.TrimSpace(s.ToolApprovalModes[rawName]); mode != "" {
 		return tool.NormalizeMCPApprovalMode(mode)
 	}
+	if strings.TrimSpace(s.DefaultToolsApprovalMode) == "" && s.ImplicitApproval {
+		return tool.MCPApprovalApprove
+	}
 	return tool.NormalizeMCPApprovalMode(s.DefaultToolsApprovalMode)
 }
 
@@ -1680,10 +1787,8 @@ func (c *Client) listToolsRaw(ctx context.Context) ([]mcpTool, error) {
 	return out.Tools, nil
 }
 
-// listToolsRawSettled gives dynamically registering servers the same bounded
-// startup window in both the long-lived reader lane and a fresh one-shot writer
-// lane. Without this, a writer that is present a few milliseconds after
-// initialize can appear in the UI but then fail every approved invocation.
+// listToolsRawSettled gives dynamically registering servers a bounded startup
+// window before their initial tool catalog is considered complete.
 func (c *Client) listToolsRawSettled(ctx context.Context) ([]mcpTool, error) {
 	out, err := c.listToolsRaw(ctx)
 	if err != nil || !c.hasTools || len(out) > 0 {
@@ -1930,14 +2035,12 @@ func (t *remoteTool) ExecuteWithImages(ctx context.Context, args json.RawMessage
 		// Final, linearizable check for a reader-authorized call: the snapshot
 		// above and every trust mutation (catalog revocations, live security
 		// reconciliation) serialize on the owning client's toolsMu. A call that
-		// was approved as a non-destructive reader must never promote itself
-		// into the one-shot writer lane or execute after trust changed — state
-		// drift here returns an actionable error instead of dispatching.
+		// was approved as a non-destructive reader must never execute after trust
+		// changed — state drift here returns an actionable error instead of
+		// dispatching.
 		if !readOnly || destructive || (intent.CapabilityFingerprint != "" && fingerprint != "" && fingerprint != intent.CapabilityFingerprint) {
 			return "", nil, fmt.Errorf("MCP server %q no longer classifies tool %q as a trusted reader; the call was blocked before dispatch — re-verify the server and request fresh approval before retrying", t.client.name, t.rawName)
 		}
-	} else if t.client != nil && t.client.usesOneShotWriterLane() && (!readOnly || destructive) {
-		return t.client.callOneShotTool(ctx, t, argMap)
 	}
 	res, err := t.client.call(ctx, "tools/call", map[string]any{
 		"name":      t.rawName,
@@ -1945,51 +2048,6 @@ func (t *remoteTool) ExecuteWithImages(ctx context.Context, args json.RawMessage
 	})
 	if err != nil {
 		return "", nil, err
-	}
-	return parseToolResult(res)
-}
-
-func (c *Client) usesOneShotWriterLane() bool {
-	transport := strings.ToLower(strings.TrimSpace(c.spec.Type))
-	return (transport == "" || transport == "stdio") && (c.spec.WriterSandbox.Enforce() || strings.TrimSpace(c.spec.StateDir) != "")
-}
-
-func (c *Client) callOneShotTool(ctx context.Context, expected *remoteTool, args map[string]any) (string, []string, error) {
-	spec := c.spec
-	spec.OneShot = true
-	writer, err := start(ctx, ctx, spec)
-	if err != nil {
-		return "", nil, fmt.Errorf("start isolated one-shot MCP writer %q: %w", c.name, err)
-	}
-	defer writer.close()
-	tools, err := writer.listToolsRawSettled(ctx)
-	if err != nil {
-		return "", nil, fmt.Errorf("revalidate one-shot MCP writer %q: %w", c.name, err)
-	}
-	if err := validateMCPToolNames(tools); err != nil {
-		return "", nil, fmt.Errorf("revalidate one-shot MCP writer %q: %w", c.name, err)
-	}
-	var live *mcpTool
-	for i := range tools {
-		if tools[i].Name == expected.rawName {
-			live = &tools[i]
-			break
-		}
-	}
-	if live == nil {
-		return "", nil, fmt.Errorf("MCP server %q no longer exposes tool %q; current call was blocked before execution", c.name, expected.rawName)
-	}
-	schema, err := normalizeAndValidateToolSchema(live.InputSchema)
-	if err != nil {
-		return "", nil, fmt.Errorf("MCP server %q returned an invalid schema for %q; current call was blocked before execution: %w", c.name, expected.rawName, err)
-	}
-	liveFingerprint := capabilityFingerprint(capabilityOf(spec, *live, schema))
-	if expected.capabilityFingerprint == "" || liveFingerprint != expected.capabilityFingerprint {
-		return "", nil, fmt.Errorf("MCP server %q changed the security schema for tool %q; current call was blocked before execution and requires review", c.name, expected.rawName)
-	}
-	res, err := writer.call(ctx, "tools/call", map[string]any{"name": expected.rawName, "arguments": args})
-	if err != nil {
-		return "", nil, fmt.Errorf("one-shot MCP writer %q failed (stateful writers are not supported): %w", expected.rawName, err)
 	}
 	return parseToolResult(res)
 }

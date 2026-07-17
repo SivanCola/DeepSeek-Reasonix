@@ -2911,16 +2911,16 @@ function MCPTrustModal({
 		<div className="modal-backdrop" role="presentation">
 			<div className="modal" role="dialog" aria-modal="true" aria-labelledby="mcp-trust-title">
 				<div className="modal__title" id="mcp-trust-title">{t("caps.trustTitle", { name: inspection.name })}</div>
-				<p>{t("caps.trustExplanation")}</p>
+				<p>{t(inspection.requiresLaunchApproval ? "caps.projectLaunchExplanation" : "caps.trustExplanation")}</p>
 				{inspection.isolationState === "unavailable_unconfined" && <div className="banner banner--warn">{t("caps.unisolatedWarning")}</div>}
 				{inspection.isolationState === "unavailable_unconfined" && inspection.isolationReason && <div className="drawer__summary">{inspection.isolationReason}</div>}
 				{inspection.identityChanged && <div className="banner banner--warn">{t("caps.identityChanged")}</div>}
 				{mcpToolChangeMessages(inspection.toolChanges, inspection.changedTools, t).map((message) => <div className="banner banner--warn" key={message}>{message}</div>)}
-				<div className="modal__subject">
+				{!inspection.requiresLaunchApproval && <div className="modal__subject">
 					<div>{t("caps.readerTools", { count: inspection.readers.length })}: {inspection.readers.join(", ") || "—"}</div>
 					<div>{t("caps.writerTools", { count: inspection.writers.length })}: {inspection.writers.join(", ") || "—"}</div>
 					<div>{t("caps.destructiveTools", { count: inspection.destructive.length })}: {inspection.destructive.join(", ") || "—"}</div>
-				</div>
+				</div>}
 				<div className="modal__actions">
 					<button className="btn btn--small" type="button" disabled={busy} onClick={onCancel}>{t("common.cancel")}</button>
 					<button className="btn btn--small" type="button" disabled={busy} onClick={() => onDecision("session")}>{t("caps.trustSessionAction")}</button>
@@ -3101,7 +3101,7 @@ export function MCPServersSettingsPage() {
 					<MCPServerSettingsEditor
 						busy={busy}
 						onCancel={() => setScreen({ kind: "list" })}
-						onSubmit={(input) => void mutate(() => app.AddMCPServer(input)).then((ok) => { if (ok) { setScreen({ kind: "list" }); void inspectTrust(input.name); } })}
+						onSubmit={(input) => void mutate(() => app.AddMCPServer(input)).then((ok) => { if (ok) setScreen({ kind: "list" }); })}
 					/>
 				</div>
 			)}
@@ -3112,7 +3112,7 @@ export function MCPServersSettingsPage() {
 						server={selectedServer}
 						busy={busy}
 						onCancel={() => setScreen({ kind: "detail", name: selectedServer.name })}
-						onSubmit={(input) => void mutate(() => app.UpdateMCPServer(selectedServer.name, input)).then((ok) => { if (ok) { setScreen({ kind: "detail", name: selectedServer.name }); void inspectTrust(selectedServer.name); } })}
+						onSubmit={(input) => void mutate(() => app.UpdateMCPServer(selectedServer.name, input)).then((ok) => { if (ok) setScreen({ kind: "detail", name: selectedServer.name }); })}
 					/>
 				</div>
 			)}
@@ -3128,7 +3128,7 @@ export function MCPServersSettingsPage() {
 							</details>
 						</div>
 					)}
-					<div className="cap-mcp-detail-error">
+					{(selectedServer.requiresLaunchApproval || selectedServer.requiresReverification || selectedServer.trustState === "changed") && <div className="cap-mcp-detail-error">
 						<div className="drawer__summary">{mcpTrustLabel(selectedServer, t)} · {mcpIsolationLabel(selectedServer, t)}</div>
 						{selectedServer.isolationState === "unavailable_unconfined" && selectedServer.isolationReason && <div className="drawer__summary">{selectedServer.isolationReason}</div>}
 						{mcpToolChangeMessages(selectedServer.toolChanges, selectedServer.changedTools, t).map((message) => <div className="banner banner--warn" key={message}>{message}</div>)}
@@ -3136,7 +3136,7 @@ export function MCPServersSettingsPage() {
 							<button className="btn btn--small" disabled={actionBusy} type="button" onClick={() => void inspectTrust(selectedServer.name)}>{t("caps.reverify")}</button>
 							{selectedServer.trustState !== "untrusted" && <button className="btn btn--small" disabled={actionBusy} type="button" onClick={() => void mutate(() => app.SetMCPTrust(selectedServer.name, "revoke"))}>{t("caps.revokeTrust")}</button>}
 						</div>
-					</div>
+					</div>}
 					<ServerDetails
 						s={selectedServer}
 						tools={selectedServer.toolList ?? []}

@@ -6008,6 +6008,7 @@ type ServerView struct {
 	DefaultToolsApprovalMode string                          `json:"defaultToolsApprovalMode,omitempty"`
 	ToolPolicies             map[string]config.MCPToolPolicy `json:"toolPolicies,omitempty"`
 	ApprovalsReviewer        string                          `json:"approvalsReviewer,omitempty"`
+	RequiresLaunchApproval   bool                            `json:"requiresLaunchApproval,omitempty"`
 	AuthStatus               string                          `json:"authStatus,omitempty"`
 	AuthURL                  string                          `json:"authUrl,omitempty"`
 	AuthConfigured           bool                            `json:"authConfigured,omitempty"`
@@ -6034,18 +6035,19 @@ type ToolView struct {
 }
 
 type MCPTrustInspectionView struct {
-	Name            string                   `json:"name"`
-	TrustState      string                   `json:"trustState"`
-	TrustSource     string                   `json:"trustSource,omitempty"`
-	TrustScope      string                   `json:"trustScope,omitempty"`
-	IsolationState  string                   `json:"isolationState"`
-	IsolationReason string                   `json:"isolationReason,omitempty"`
-	IdentityChanged bool                     `json:"identityChanged,omitempty"`
-	ChangedTools    []string                 `json:"changedTools"`
-	ToolChanges     []MCPToolTrustChangeView `json:"toolChanges"`
-	Readers         []string                 `json:"readers"`
-	Writers         []string                 `json:"writers"`
-	Destructive     []string                 `json:"destructive"`
+	Name                   string                   `json:"name"`
+	TrustState             string                   `json:"trustState"`
+	TrustSource            string                   `json:"trustSource,omitempty"`
+	TrustScope             string                   `json:"trustScope,omitempty"`
+	IsolationState         string                   `json:"isolationState"`
+	IsolationReason        string                   `json:"isolationReason,omitempty"`
+	IdentityChanged        bool                     `json:"identityChanged,omitempty"`
+	ChangedTools           []string                 `json:"changedTools"`
+	ToolChanges            []MCPToolTrustChangeView `json:"toolChanges"`
+	Readers                []string                 `json:"readers"`
+	Writers                []string                 `json:"writers"`
+	Destructive            []string                 `json:"destructive"`
+	RequiresLaunchApproval bool                     `json:"requiresLaunchApproval,omitempty"`
 }
 
 type MCPToolTrustChangeView struct {
@@ -6407,6 +6409,7 @@ func mcpTrustInspectionView(in plugin.TrustInspection) MCPTrustInspectionView {
 		ChangedTools: append([]string{}, in.Security.ChangedTools...), Readers: append([]string{}, in.Readers...),
 		ToolChanges: mcpToolTrustChangeViews(in.Security.ToolChanges),
 		Writers:     append([]string{}, in.Writers...), Destructive: append([]string{}, in.Destructive...),
+		RequiresLaunchApproval: in.RequiresLaunchApproval,
 	}
 }
 
@@ -6734,6 +6737,7 @@ func withPluginConfig(v ServerView, p config.PluginEntry) ServerView {
 	v.DefaultToolsApprovalMode = p.DefaultToolsApprovalMode
 	v.ToolPolicies = cloneMCPToolPolicies(p.Tools)
 	v.ApprovalsReviewer = p.ApprovalsReviewer
+	v.RequiresLaunchApproval = p.Source.RequiresLaunchApproval()
 	v.AuthConfigured = mcpdiag.HasAuthConfig(p.Headers, p.Env, p.URL)
 	v.EnvKeys = nil
 	v.HeaderKeys = nil
@@ -7198,6 +7202,7 @@ func (a *App) AddMCPServer(in MCPServerInput) (int, error) {
 		DefaultToolsApprovalMode: mcpStringValue(in.DefaultToolsApprovalMode),
 		Tools:                    cloneMCPToolPolicies(in.ToolPolicies),
 		ApprovalsReviewer:        mcpStringValue(in.ApprovalsReviewer),
+		Source:                   config.MCPSourceUserConfig,
 	}
 	entry, _ = config.NormalizePluginCommandLine(entry)
 	if err := a.saveDesktopMCPServer(entry); err != nil {
@@ -7209,8 +7214,8 @@ func (a *App) AddMCPServer(in MCPServerInput) (int, error) {
 // UpdateMCPServer edits a persisted external MCP server. The name is the stable
 // identity; callers must remove + add if they want to rename a server.
 func (a *App) UpdateMCPServer(name string, in MCPServerInput) error {
-	ctrl := a.activeCtrl()
-	if ctrl == nil {
+	tab, ctrl := a.activeTabAndCtrl()
+	if tab == nil || ctrl == nil {
 		return fmt.Errorf("no active session")
 	}
 	if controllerHasActiveRuntimeWork(ctrl) {
@@ -7268,10 +7273,10 @@ func (a *App) UpdateMCPServer(name string, in MCPServerInput) error {
 	}
 
 	a.mu.RLock()
-	tab := a.activeTabLocked()
+	activeTab := a.activeTabLocked()
 	sessionDisabled := false
-	if tab != nil {
-		_, sessionDisabled = tab.disabledMCP[name]
+	if activeTab != nil {
+		_, sessionDisabled = activeTab.disabledMCP[name]
 	}
 	a.mu.RUnlock()
 	wasConnected := mcpConnected(ctrl, name)
@@ -7279,7 +7284,19 @@ func (a *App) UpdateMCPServer(name string, in MCPServerInput) error {
 		ctrl.DisconnectMCPServer(name)
 	}
 	if !sessionDisabled {
-		if _, err := ctrl.ConnectMCPServer(updated); err != nil {
+		spec, specErr := a.mcpTrustSpec(name)
+		if specErr != nil {
+			return specErr
+		}
+		if spec.RequireLaunchApproval {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			if err := plugin.SetSpecTrust(ctx, spec, "workspace"); err != nil {
+				recordMCPFailure(ctrl, updated, err)
+				return nil
+			}
+		}
+		if _, err := a.connectConfiguredMCPServerForTab(tab, name); err != nil {
 			recordMCPFailure(ctrl, updated, err)
 			return nil
 		}

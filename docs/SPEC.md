@@ -141,6 +141,15 @@ interface (`call` / `notify` / `close`) abstracts that, so the MCP-level logic
   and `headers` so secrets come from the environment, not the config file.
 - Lifecycle: `initialize` → `notifications/initialized` → `tools/list`;
   invocation via `tools/call {name, arguments}`.
+- A stdio server uses one persistent transport for initialize, reads, and
+  writes, preserving state such as browser sessions across tool calls.
+- Configuration provenance is runtime metadata. User config, legacy user MCP,
+  and verified plugin-package servers are authorized by installation: the host
+  records their current trust snapshot automatically and ordinary calls default
+  to direct approval. Project `reasonix.toml` and `.mcp.json` servers require a
+  session/workspace launch grant for the exact stable identity before any
+  process or network transport is created. Existing receipts count as launch
+  grants for backward compatibility; identity changes invalidate the grant.
 - Each remote tool is adapted to the `Tool` interface and injected into the run
   registry, namespaced `mcp__<server>__<tool>` (spaces normalised to `_`) to
   match Claude Code and avoid clashes.
@@ -305,7 +314,8 @@ func (p Policy) Decide(toolName string, readOnly bool, args json.RawMessage) Dec
 - **MCP approval policy.** Installed MCP tools may set a server default and raw
   tool overrides using `auto|prompt|writes|approve`. Precedence is explicit deny,
   `destructiveHint`, raw-tool mode, server default, then global Ask/Auto/YOLO.
-  `auto` delegates to the ordinary permission decision; `prompt` reviews every
+  A user-authorized server with no explicit MCP approval fields defaults to
+  `approve`; project-provided servers retain `auto`. `auto` delegates to the ordinary permission decision; `prompt` reviews every
   call; `writes` reviews writers only; and `approve` allows ordinary calls.
   `approvals_reviewer = "user"` uses the interactive user, while `auto_review`
   sends the calls that need review (`prompt`, writer hits under `writes`, and
@@ -637,7 +647,6 @@ args    = []
 # default_tools_approval_mode = "auto"   # auto|prompt|writes|approve
 # tools = { "delete_all" = { approval_mode = "prompt" } }
 # approvals_reviewer = "user"            # user|auto_review
-
 # [[plugins]]                   # a remote MCP server over Streamable HTTP
 # name    = "stripe"
 # type    = "http"             # "stdio" (default) | "http" | "sse"
