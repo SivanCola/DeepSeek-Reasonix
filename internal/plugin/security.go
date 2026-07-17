@@ -148,7 +148,7 @@ func buildSpecIdentity(ctx context.Context, s Spec) (mcptrust.Identity, error) {
 }
 
 // MCPStateDir returns a stable, server-scoped host directory outside the
-// workspace. MCP sandboxes permit writes only here in the reader lane.
+// workspace for state that must survive across calls and sessions.
 func MCPStateDir(reasonixHome, workspace, server string) string {
 	if strings.TrimSpace(reasonixHome) == "" {
 		return ""

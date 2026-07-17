@@ -343,6 +343,7 @@ export const en = {
   "caps.destructiveTools": "Destructive tools ({count})",
   "caps.trustSessionAction": "Only this connection",
   "caps.trustWorkspaceAction": "Trust this workspace",
+  "caps.authorizeAndConnect": "Authorize and connect",
   "caps.reverify": "Reverify",
   "caps.revokeTrust": "Revoke trust",
   "caps.refreshCatalog": "Refresh catalog",

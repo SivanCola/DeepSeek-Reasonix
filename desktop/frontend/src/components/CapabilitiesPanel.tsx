@@ -2923,8 +2923,14 @@ function MCPTrustModal({
 				</div>}
 				<div className="modal__actions">
 					<button className="btn btn--small" type="button" disabled={busy} onClick={onCancel}>{t("common.cancel")}</button>
-					<button className="btn btn--small" type="button" disabled={busy} onClick={() => onDecision("session")}>{t("caps.trustSessionAction")}</button>
-					<button className="btn btn--primary btn--small" type="button" disabled={busy} onClick={() => onDecision("workspace")}>{t("caps.trustWorkspaceAction")}</button>
+					{inspection.requiresLaunchApproval ? (
+						<button className="btn btn--primary btn--small" type="button" disabled={busy} onClick={() => onDecision("workspace")}>{t("caps.authorizeAndConnect")}</button>
+					) : (
+						<>
+							<button className="btn btn--small" type="button" disabled={busy} onClick={() => onDecision("session")}>{t("caps.trustSessionAction")}</button>
+							<button className="btn btn--primary btn--small" type="button" disabled={busy} onClick={() => onDecision("workspace")}>{t("caps.trustWorkspaceAction")}</button>
+						</>
+					)}
 				</div>
 			</div>
 		</div>

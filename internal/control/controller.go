@@ -4230,6 +4230,10 @@ func (c *Controller) HookRunner() *hook.Runner { return c.hooks }
 // of tools the server exposed. A save failure after a successful connect is
 // reported but non-fatal: the server still works this session.
 func (c *Controller) AddMCPServer(e config.PluginEntry) (int, error) {
+	// AddMCPServer is an explicit user action. Mark the live entry with the same
+	// provenance it will receive when the saved user config is loaded next time,
+	// so /mcp add is add-and-use in the current session too.
+	e.Source = config.MCPSourceUserConfig
 	n, err := c.connectMCPServer(e)
 	if err != nil {
 		return 0, err

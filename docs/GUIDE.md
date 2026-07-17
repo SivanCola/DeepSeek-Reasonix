@@ -588,13 +588,17 @@ The normal setup path is intentionally one step: adding a server in Desktop or
 the user config means you authorize that server, so it connects immediately,
 trusts its current capability snapshot, and ordinary calls do not need another
 MCP-specific approval setting. Explicit deny rules still win, destructive tools
-still require a fresh human decision, and Plan/read-only sub-agent boundaries
-remain unchanged. Repository-controlled `reasonix.toml` and `.mcp.json` entries
-are different: Reasonix shows one launch confirmation for the exact command or
-endpoint before starting it, and asks again if that identity changes.
+still require a fresh human decision, and Plan/read-only sub-agents still expose
+only eligible tool identities. Repository-controlled `reasonix.toml` and
+`.mcp.json` entries are different: Reasonix shows one launch confirmation for
+the exact command or endpoint before starting it, and asks again if that
+identity changes.
 
 stdio servers keep one process for initialize, reads, and writes, so stateful
-servers such as browsers retain sessions and open pages.
+servers such as browsers retain sessions and open pages. Because an OS sandbox
+is fixed when a process starts, this shared process uses the server's normal
+writer sandbox for every call; `readOnlyHint` and read-only sub-agent filtering
+are dispatch policy, not a second per-call process sandbox.
 
 Tools surface to the model as `mcp__<server>__<tool>`. A tool declaring MCP's
 `readOnlyHint: true` joins parallel dispatch and the ordinary

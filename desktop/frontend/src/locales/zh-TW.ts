@@ -255,6 +255,7 @@ export const zhTW: Record<DictKey, string> = {
   "caps.destructiveTools": "破壞性工具（{count}）",
   "caps.trustSessionAction": "僅本次連線",
   "caps.trustWorkspaceAction": "信任目前工作區",
+  "caps.authorizeAndConnect": "授權並連線",
   "caps.reverify": "重新驗證",
   "caps.revokeTrust": "撤銷信任",
   "caps.refreshCatalog": "重新整理驗證目錄",

@@ -6737,7 +6737,11 @@ func withPluginConfig(v ServerView, p config.PluginEntry) ServerView {
 	v.DefaultToolsApprovalMode = p.DefaultToolsApprovalMode
 	v.ToolPolicies = cloneMCPToolPolicies(p.Tools)
 	v.ApprovalsReviewer = p.ApprovalsReviewer
-	v.RequiresLaunchApproval = p.Source.RequiresLaunchApproval()
+	// Source says whether this server is governed by the project launch gate;
+	// the view flag says whether that gate is blocking it right now. Keeping the
+	// two distinct prevents an already-authorized connected server from showing
+	// a permanent reauthorization warning.
+	v.RequiresLaunchApproval = p.Source.RequiresLaunchApproval() && v.RequiresReverification
 	v.AuthConfigured = mcpdiag.HasAuthConfig(p.Headers, p.Env, p.URL)
 	v.EnvKeys = nil
 	v.HeaderKeys = nil

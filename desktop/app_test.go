@@ -6958,6 +6958,21 @@ url = %q
 	}
 }
 
+func TestProjectMCPLaunchApprovalViewOnlyShowsWhileBlocked(t *testing.T) {
+	entry := config.PluginEntry{Name: "project", Source: config.MCPSourceProjectConfig}
+	connected := withPluginConfig(ServerView{Name: entry.Name, Status: "connected"}, entry)
+	if connected.RequiresLaunchApproval {
+		t.Fatalf("connected project MCP still requires launch approval: %+v", connected)
+	}
+
+	blocked := withPluginConfig(ServerView{
+		Name: entry.Name, Status: "failed", RequiresReverification: true,
+	}, entry)
+	if !blocked.RequiresLaunchApproval {
+		t.Fatalf("blocked project MCP lost launch approval action: %+v", blocked)
+	}
+}
+
 func TestMCPServersMatchesCapabilitiesServerProjection(t *testing.T) {
 	isolateDesktopUserDirs(t)
 	dir := robustTempDir(t)

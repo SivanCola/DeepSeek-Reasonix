@@ -76,7 +76,8 @@ type Spec struct {
 	// normalized MCP tool names back into raw server-local names.
 	ReadOnlyModelToolNames map[string]bool
 	// DefaultToolsApprovalMode controls MCP approval when no raw-tool override
-	// exists: auto|prompt|writes|approve. Empty is auto.
+	// exists: auto|prompt|writes|approve. Empty uses auto unless the composition
+	// root marks this explicitly user-authorized server for implicit approval.
 	DefaultToolsApprovalMode string
 	// ToolApprovalModes overrides approval behavior by raw server-local tool name.
 	ToolApprovalModes map[string]string

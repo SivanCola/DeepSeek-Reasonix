@@ -479,12 +479,14 @@ Reasonix 是一个 MCP 客户端。`[[plugins]]` 的 `type` 选择传输：`stdi
 
 普通配置流程现在只有一步：在桌面端或用户全局配置中添加 server，就表示用户授权该
 server；保存后会立即连接、信任当前能力快照，普通调用无需再配置一套 MCP 专用审批。
-显式 deny 仍然优先，destructive 工具仍需每次由用户确认，Plan 与只读 subagent 的边界也
-不变。仓库控制的 `reasonix.toml` 和 `.mcp.json` 不会直接执行：Reasonix 会在启动其进程或
-访问其地址之前，对精确身份确认一次；命令、可执行文件或地址变化后会重新确认。
+显式 deny 仍然优先，destructive 工具仍需每次由用户确认，Plan 与只读 subagent 仍只暴露
+符合条件的工具身份。仓库控制的 `reasonix.toml` 和 `.mcp.json` 不会直接执行：Reasonix 会在
+启动其进程或访问其地址之前，对精确身份确认一次；命令、可执行文件或地址变化后会重新确认。
 
 stdio server 从初始化到读写都复用同一个进程，因此浏览器等有状态 MCP 能保留会话和
-已打开页面。
+已打开页面。由于进程启动后无法按调用切换 OS 沙箱，这个共享进程始终使用该 server 的普通
+writer 沙箱；`readOnlyHint` 与只读 subagent 过滤属于调用分发策略，不再对应第二个按调用隔离
+的进程沙箱。
 
 工具以 `mcp__<server>__<tool>` 暴露给模型，与 Claude Code 一致；声明 MCP `readOnlyHint: true`
 的工具会参与并行调度并命中普通权限层的只读默认放行。这个标注来自第三方 server，主 Plan 只把它

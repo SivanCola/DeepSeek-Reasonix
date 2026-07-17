@@ -344,6 +344,7 @@ export const zh: Record<DictKey, string> = {
   "caps.destructiveTools": "破坏性工具（{count}）",
   "caps.trustSessionAction": "仅本次连接",
   "caps.trustWorkspaceAction": "信任当前工作区",
+  "caps.authorizeAndConnect": "授权并连接",
   "caps.reverify": "重新验证",
   "caps.revokeTrust": "撤销信任",
   "caps.refreshCatalog": "刷新验证目录",

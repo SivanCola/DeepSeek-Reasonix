@@ -356,6 +356,7 @@ console.log("capabilities panel MCP actions");
   }];
   let trustDecision = "";
   let reconnectCount = 0;
+  let projectLaunch = false;
   let servers: ServerView[] = [{
     name: "github",
     transport: "stdio",
@@ -386,7 +387,17 @@ console.log("capabilities panel MCP actions");
         Meta: async () => meta,
         ListTabs: async () => tabs,
         MCPServers: async () => servers,
-        InspectMCPTrust: async () => ({
+        InspectMCPTrust: async () => projectLaunch ? ({
+          name: "github",
+          trustState: "untrusted",
+          isolationState: "enforced",
+          changedTools: [],
+          toolChanges: [],
+          readers: [],
+          writers: [],
+          destructive: [],
+          requiresLaunchApproval: true,
+        }) : ({
           name: "github",
           trustState: "changed",
           trustSource: "user",
@@ -452,6 +463,36 @@ console.log("capabilities panel MCP actions");
   );
   ok(!document.querySelector('[role="dialog"]'), "successful trust closes the combined confirmation modal");
   ok(Boolean(document.querySelector('[data-status="connected"]')), "failed server reconnects after explicit re-verification");
+
+  projectLaunch = true;
+  trustDecision = "";
+  servers = servers.map((item) => ({
+    ...item,
+    status: "failed",
+    runtimeState: "issue",
+    error: "project-provided MCP server is blocked until the user authorizes it",
+    requiresLaunchApproval: true,
+    requiresReverification: true,
+    trustState: "untrusted",
+  }));
+  await act(async () => {
+    refreshCatalog.click();
+    await flush();
+  });
+  await waitFor("project MCP authorization action", () => Boolean(findButton("Reverify")));
+  await act(async () => {
+    findButton("Reverify")?.click();
+    await flush();
+  });
+  await waitFor("project MCP launch modal", () => Boolean(findButton("Authorize and connect")));
+  ok(!findButton("Only this connection"), "project launch uses one durable authorization action instead of a scope choice");
+  ok(document.body.textContent?.includes("comes from the current project") ?? false, "project launch modal explains why authorization is required");
+  await act(async () => {
+    findButton("Authorize and connect")?.click();
+    await flush();
+  });
+  await waitFor("durable project launch authorization", () => trustDecision === "workspace" && Boolean(document.querySelector('[data-status="connected"]')));
+  projectLaunch = false;
 
   servers = servers.map((item) => ({
     ...item,

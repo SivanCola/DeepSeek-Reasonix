@@ -1518,7 +1518,9 @@ type PluginEntry struct {
 	// audited readers. Third-party readOnlyHint alone is not a Plan-mode trust
 	// boundary.
 	TrustedReadOnlyTools []string `toml:"trusted_read_only_tools"`
-	// DefaultToolsApprovalMode is auto|prompt|writes|approve. Empty is auto.
+	// DefaultToolsApprovalMode is auto|prompt|writes|approve. Empty uses the
+	// source-aware runtime default (direct for user-authorized servers, auto for
+	// project-provided servers).
 	DefaultToolsApprovalMode string `toml:"default_tools_approval_mode"`
 	// Tools overrides approval policy by raw server-local tool name.
 	Tools map[string]MCPToolPolicy `toml:"tools"`

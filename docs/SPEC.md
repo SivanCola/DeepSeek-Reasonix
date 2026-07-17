@@ -142,7 +142,10 @@ interface (`call` / `notify` / `close`) abstracts that, so the MCP-level logic
 - Lifecycle: `initialize` → `notifications/initialized` → `tools/list`;
   invocation via `tools/call {name, arguments}`.
 - A stdio server uses one persistent transport for initialize, reads, and
-  writes, preserving state such as browser sessions across tool calls.
+  writes, preserving state such as browser sessions across tool calls. The
+  process uses the server's writer sandbox because process confinement cannot
+  change per RPC; read-only eligibility and destructive approval remain local
+  dispatch gates rather than separate process sandboxes.
 - Configuration provenance is runtime metadata. User config, legacy user MCP,
   and verified plugin-package servers are authorized by installation: the host
   records their current trust snapshot automatically and ordinary calls default

@@ -72,6 +72,10 @@ func newStdioTransport(ctx context.Context, s Spec) (*stdioTransport, error) {
 	if err != nil {
 		return nil, err
 	}
+	// A stateful stdio process cannot switch its OS sandbox after launch. Keep
+	// one process in the server's normal writer sandbox; local permission, Plan,
+	// read-only-child, and destructive-call gates still decide which tools may
+	// be dispatched over the shared transport.
 	processSandbox := s.WriterSandbox
 	processSandbox.MinimalWrites = true
 	processSandbox, env, err = prepareMCPPrivateState(s, processSandbox, env)

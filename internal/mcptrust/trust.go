@@ -1349,7 +1349,7 @@ func acquireFileLock(path string, wait time.Duration) (func(), error) {
 			}
 			return func() { removeOwnedFileLock(path, owner) }, nil
 		}
-		if !errors.Is(err, os.ErrExist) {
+		if !errors.Is(err, os.ErrExist) && !trustLockContention(err) {
 			return nil, err
 		}
 		if info, statErr := os.Stat(path); statErr == nil && time.Since(info.ModTime()) > 30*time.Second {
