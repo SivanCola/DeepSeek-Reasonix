@@ -355,7 +355,8 @@ trust model are documented in [the Chinese desktop hooks guide](./DESKTOP_HOOKS.
 Shortcuts are documented by client because users usually look for the keys that
 work in the surface they are using. Desktop keeps its Plan toggle, while the CLI
 cycles Ask, Auto, and Plan with `Shift+Tab`. `Ctrl/Cmd+Y` controls YOLO, and
-paste stays on the platform paste key.
+desktop paste stays on the platform paste key. In the CLI, terminal-native text
+paste and application-owned image paste use separate shortcuts.
 
 `[ui].shortcut_layout` is still accepted for old configs, but the shortcut
 behavior below is unified across layouts.
@@ -414,6 +415,22 @@ Menus and controls:
 
 ### CLI / TUI
 
+The composer uses theme-coloured top and bottom borders and a slim bar cursor by
+default. Long drafts grow to the available maximum height; once they overflow,
+wheel events inside the composer scroll the draft without moving the insertion
+cursor, while wheel events in the transcript keep scrolling the conversation.
+Use `/theme auto|light|dark` to select the background mode, or `/theme <style>`
+to select one of the named accent palettes shown by bare `/theme`.
+
+The responsive footer keeps the active Ask/Auto/Plan or YOLO posture and current
+interaction state on the left. On wider terminals, model, effort, and work mode
+stay together on the right; a second row shows available Git identity, cache hit
+rate, context use, compaction headroom, jobs, and balance. `ready` is the idle
+composer state, not a model-health check. Pickers, approvals, image paste, shell
+mode, and other active interactions replace it. Narrow terminals move, wrap, or
+compact whole groups; labels and displayed work-mode values follow `/language`,
+while `/work-mode` command arguments remain the stable English identifiers.
+
 Chat and transcript shortcuts:
 
 | Key or command | What it does | Notes |
@@ -443,6 +460,7 @@ Mode and display shortcuts:
 | `Ctrl+Y` | Toggles YOLO on/off | Turning YOLO off restores the previous Ask/Auto base when known. Terminals that forward Command/Super may also send `Cmd+Y`, but `Ctrl+Y` is the reliable terminal shortcut. |
 | `--yolo`, `--dangerously-skip-permissions` | Starts chat in YOLO | Same runtime mode as `Ctrl+Y`. |
 | `/work-mode [economy|balanced|delivery]` | Shows or switches the current session's work mode | `/profile` is a compatibility alias. Switching rebuilds the runtime atomically, preserves the conversation and approval posture, and is blocked while work is active. |
+| `/theme [auto|light|dark|style]` | Shows or switches the CLI theme | Bare `/theme` lists background modes and named accent palettes. The choice is saved to the user config; `REASONIX_THEME` and `REASONIX_THEME_STYLE` can override it for one run. |
 | `Ctrl+O` | Toggles verbose reasoning display | Also available through `/verbose`. |
 | `Ctrl+B` | Expands or collapses long shell output | Long shell-output hint lines can also be clicked in the transcript; text selection is handled in-app while the full-screen TUI has mouse reporting enabled. |
 | `/goal <objective>`, `/goal --research <objective>`, `/goal --simple <objective>`, `/goal status`, `/goal clear` | Starts, checks, or clears Goal | Goal is not in any keyboard cycle; clearly long-horizon goals automatically enable AutoResearch. Ordinary prompts with strong AutoResearch signals are also upgraded into Goal. |
