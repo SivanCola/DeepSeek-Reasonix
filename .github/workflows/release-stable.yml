@@ -1,10 +1,12 @@
 name: Release stable
 run-name: Release stable ${{ inputs.tag || github.ref_name }}
 
-# Stable publication has exactly one human gate. Push the CLI, npm, and desktop
-# tags atomically; the vX.Y.Z tag starts this workflow, preflight verifies that
-# all three tags point to the current main-v2 commit, and one approval releases
-# every channel. Prerelease and canary workflows remain independently callable.
+# Stable publication has exactly one GitHub environment gate. Push the CLI,
+# npm, and desktop tags atomically; the vX.Y.Z tag starts this workflow,
+# preflight verifies that all three tags point to the current main-v2 commit,
+# and one GitHub approval releases every channel. SignPath intentionally keeps
+# its separate manual confirmations. Prerelease and canary workflows remain
+# independently callable.
 on:
   push:
     tags:

@@ -1,9 +1,9 @@
 name: Release npm
 
 # npm line. Stable releases are called by release-stable.yml after its single
-# approval. Direct tag pushes are retained only for prereleases so npm `next`
-# can still ship independently without touching the stable Homebrew cask. Bump a
-# prerelease with:
+# GitHub environment approval. Direct tag pushes are retained only for
+# prereleases so npm `next` can still ship independently without touching the
+# stable Homebrew cask. Bump a prerelease with:
 #   git tag npm-vX.Y.Z-rc.N     # prerelease -> publishes under `next`
 #   git push origin <tag>
 #
@@ -123,8 +123,9 @@ jobs:
     name: publish npm packages
     needs: cache-guard
     runs-on: ubuntu-latest
-    # The stable caller has already passed the single release approval. Direct
-    # prereleases/manual stable recovery pass release-gate above; canaries run free.
+    # The stable caller has already passed the single GitHub release approval.
+    # Direct prereleases/manual stable recovery pass release-gate above; canaries
+    # run free.
     steps:
       - uses: actions/checkout@v7
         with:

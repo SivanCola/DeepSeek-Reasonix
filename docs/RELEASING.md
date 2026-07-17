@@ -29,12 +29,14 @@ ending in `-canary.N` publish under the `canary` dist-tag.)
 | Action | Who | Mechanism |
 |---|---|---|
 | **Cut a canary** | any maintainer (write access) | `workflow_dispatch`, runs without a production approval |
-| **Ship stable** | release-tag creators + one configured reviewer | atomically push the three stable tags; the **Release stable** workflow requests one `release`-environment approval before every channel publishes |
+| **Ship stable** | release-tag creators + one configured reviewer | atomically push the three stable tags; the **Release stable** workflow requests one GitHub `release`-environment approval before every channel publishes |
 | **Ship a standalone RC** | release-tag creators + one configured reviewer | push the surface-specific prerelease tag; that one standalone workflow requests one `release` approval |
 
 So a maintainer can dispatch a canary anytime. A stable release pauses once in
-the **Release stable** run until a configured reviewer approves the `release`
-environment; the CLI, npm, and Desktop jobs then continue without asking again.
+the **Release stable** run until a configured reviewer approves the GitHub
+`release` environment; the CLI, npm, and Desktop jobs then continue without
+another GitHub environment prompt. Windows signing intentionally retains
+separate SignPath confirmations for the AMD64 and ARM64 requests.
 
 > Repo settings backing this: Environments → `release` has the release owners as
 > required reviewers, and the release-tag ruleset restricts
@@ -87,9 +89,11 @@ from accidental or unauthorized invocation.
    The `v1.4.0` tag starts **Release stable**. Its preflight requires all three
    tags to exist on the exact current `main-v2` commit, renders the reviewed
    release notes, and runs the cache guard. It then **waits once for a configured
-   reviewer to approve the `release` environment** before invoking all three
-   publishers. The approval records the immutable release commit; every
+   reviewer to approve the GitHub `release` environment** before invoking all
+   three publishers. The approval records the immutable release commit; every
    publisher checks out that SHA and fails if its remote tag moves afterward.
+   The two Windows signing requests then retain their manual SignPath
+   confirmations as a separate control.
    A stable `npm-v*` publish moves the `latest` dist-tag automatically (build.mjs)
    and release-npm.yml verifies it landed. **Do not skip the npm tag**: the stable
    preflight fails when the matching `npm-v*` or `desktop-v*` tag is missing or
@@ -105,11 +109,10 @@ from accidental or unauthorized invocation.
 - Canary version numbers use the workflow `run_number`, so the desktop and CLI canary
   numbers differ (e.g. `canary.11` vs `canary.2`). Only monotonicity per channel matters.
 - A stable `-rc` tag (e.g. `npm-v1.4.0-rc.1`) still ships under `next`, not `canary`.
-- Windows release signing is expected to use SignPath trusted-build and origin
-  verification. A SignPath configurator must clear **Use approval process** on
-  `release-signing` while leaving both verification controls enabled. Both Windows
-  architectures then finish without an additional click; keep a separate manual
-  policy for exceptional rebuilds.
+- Windows release signing uses SignPath trusted-build and origin verification.
+  Keep **Use approval process** enabled on `release-signing`: the AMD64 and ARM64
+  requests can each require a manual confirmation after the single GitHub
+  release-environment approval.
 - Desktop in-app updates use R2 first, then the `crash.reasonix.io` desktop release
   gateway. The gateway resolves the `desktop-v*` release line directly and never uses
   GitHub's repository-wide `/releases/latest`, because plain `v*` tags are the CLI

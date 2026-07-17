@@ -1,8 +1,9 @@
 name: Release desktop
 
 # Desktop (Wails) release line. Stable releases are called by
-# release-stable.yml after its single approval. Direct tag pushes are retained
-# only for desktop prereleases so they can still ship independently.
+# release-stable.yml after its single GitHub environment approval. Direct tag
+# pushes are retained only for desktop prereleases so they can still ship
+# independently.
 #
 # Wails cannot cross-compile a CGO/WebKit binary, so build/ fans out to one native
 # runner per platform. Artifacts are minisign-signed (MINISIGN_* secrets), a
@@ -250,8 +251,8 @@ jobs:
       # from the Actions artifact API, so it must be uploaded first. Canary signs with the
       # test certificate; stable/rc sign with the Foundation release certificate, but only
       # once SIGNPATH_RELEASE_SIGNING_READY is set. The release-signing policy verifies the
-      # trusted GitHub origin; configure that verified normal path without manual approval.
-      # Exceptional/manual rebuilds should use a separate approval policy.
+      # trusted GitHub origin and intentionally retains its manual approval process as a
+      # second-party control. Each Windows architecture can require its own confirmation.
       - name: Upload unsigned installer for SignPath
         if: runner.os == 'Windows' && env.HAS_SIGNPATH == 'true' && (steps.ver.outputs.channel == 'canary' || vars.SIGNPATH_RELEASE_SIGNING_READY == 'true')
         id: unsigned-installer
@@ -274,8 +275,8 @@ jobs:
           github-artifact-id: ${{ steps.unsigned-installer.outputs.artifact-id }}
           github-token: ${{ github.token }}
           wait-for-completion: true
-          # Leave headroom for origin verification, malware scanning, and signing. Normal
-          # releases do not wait for a second human approval after the GitHub release gate.
+          # Leave headroom for the manual SignPath confirmation, origin verification,
+          # malware scanning, and signing.
           wait-for-completion-timeout-in-seconds: 1800
           output-artifact-directory: signed
 
@@ -300,8 +301,9 @@ jobs:
     name: publish release
     needs: build
     runs-on: ubuntu-latest
-    # The stable caller has already passed the single release approval. Direct
-    # prereleases/manual stable recovery pass release-gate; canaries run free.
+    # The stable caller has already passed the single GitHub release approval.
+    # Direct prereleases/manual stable recovery pass release-gate; canaries run
+    # free. Windows signing retains its separate SignPath confirmations.
     steps:
       - uses: actions/checkout@v7
         with:

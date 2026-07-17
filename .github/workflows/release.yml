@@ -1,10 +1,10 @@
 name: Release
 
 # CLI binary line. Stable releases are called by release-stable.yml after its
-# single `release`-environment approval. Direct tag pushes are retained only for
-# CLI prereleases so they can still ship independently; those runs keep their own
-# approval gate. goreleaser auto-skips the cask upload for prereleases (brew has
-# no prerelease channel — see .goreleaser.yaml).
+# single GitHub `release`-environment approval. Direct tag pushes are retained
+# only for CLI prereleases so they can still ship independently; those runs keep
+# their own approval gate. goreleaser auto-skips the cask upload for prereleases
+# (brew has no prerelease channel — see .goreleaser.yaml).
 on:
   push:
     tags: ['v*-*']
@@ -93,9 +93,9 @@ jobs:
     name: archives + checksums + homebrew tap
     needs: cache-guard
     runs-on: ubuntu-latest
-    # The stable caller has already passed the single release approval. Standalone
-    # prereleases pass release-gate above. This job therefore must not add a second
-    # environment approval.
+    # The stable caller has already passed the single GitHub release approval.
+    # Standalone prereleases pass release-gate above. This job therefore must not
+    # add a second GitHub environment approval.
     steps:
       - uses: actions/checkout@v7
         with:
