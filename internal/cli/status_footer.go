@@ -269,6 +269,7 @@ func (m chatTUI) renderStatusBlock(primary string, width int) string {
 	if width <= 0 {
 		width = 1
 	}
+	primary = hideStatusHintWhenKeyNamesCannotFit(primary, width)
 	modelWork := m.statusModelWorkGroup(max(width-visibleWidth(statusFooterIndent), 1))
 	first := layoutStatusSides(primary, modelWork, width)
 	second := m.layoutGitTelemetry(width)
@@ -276,6 +277,20 @@ func (m chatTUI) renderStatusBlock(primary string, width int) string {
 		second = statusFooterIndent
 	}
 	return first + "\n" + statusFooterDivider(width) + "\n" + second
+}
+
+// hideStatusHintWhenKeyNamesCannotFit keeps the readable Shift+Tab/Ctrl+Y
+// spelling on normal terminals without hard-wrapping a single shortcut on an
+// extremely narrow terminal. In that case the idle state remains visible and
+// the optional shortcut help yields space to the composer.
+func hideStatusHintWhenKeyNamesCannotFit(primary string, width int) string {
+	hint := i18n.M.ChatStatusCycleHintCompact
+	for _, group := range strings.Split(hint, " · ") {
+		if visibleWidth(statusFooterIndent+group) > width {
+			return strings.Replace(primary, " · "+footerHint(hint), "", 1)
+		}
+	}
+	return primary
 }
 
 func statusFooterDivider(width int) string {

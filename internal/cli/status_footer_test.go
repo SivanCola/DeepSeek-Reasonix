@@ -268,14 +268,14 @@ func TestStatusFooterNoColorKeepsSemanticLabels(t *testing.T) {
 	}
 }
 
-func TestStatusFooterUsesCompactLocalizedHint(t *testing.T) {
+func TestStatusFooterUsesReadableLocalizedHintAndWrapsCleanly(t *testing.T) {
 	defer i18n.DetectLanguage("en")
 	for _, tt := range []struct {
 		lang, compact, session string
 	}{
-		{lang: "en", compact: "⇧Tab ask/auto/plan · ^Y YOLO", session: "MODEL deepseek-v4-flash   EFFORT auto   WORK balanced"},
-		{lang: "zh", compact: "⇧Tab 询问/自动/计划 · ^Y YOLO", session: "模型 deepseek-v4-flash   强度 auto   模式 balanced"},
-		{lang: "zh-TW", compact: "⇧Tab 詢問/自動/計畫 · ^Y YOLO", session: "模型 deepseek-v4-flash   強度 auto   模式 balanced"},
+		{lang: "en", compact: "Shift+Tab ask/auto/plan · Ctrl+Y YOLO", session: "MODEL deepseek-v4-flash   EFFORT auto   WORK balanced"},
+		{lang: "zh", compact: "Shift+Tab 询问/自动/计划 · Ctrl+Y YOLO", session: "模型 deepseek-v4-flash   强度 auto   模式 balanced"},
+		{lang: "zh-TW", compact: "Shift+Tab 詢問/自動/計畫 · Ctrl+Y YOLO", session: "模型 deepseek-v4-flash   強度 auto   模式 balanced"},
 	} {
 		t.Run(tt.lang, func(t *testing.T) {
 			i18n.DetectLanguage(tt.lang)
@@ -288,11 +288,27 @@ func TestStatusFooterUsesCompactLocalizedHint(t *testing.T) {
 			primary := m.primaryStatusLine(" Auto ", false, false)
 			block := ansi.Strip(m.renderStatusBlock(primary, 104))
 			lines := strings.Split(block, "\n")
-			if len(lines) != 3 {
-				t.Fatalf("localized footer rows = %d, want two data rows plus divider:\n%s", len(lines), block)
+			if len(lines) != 4 {
+				t.Fatalf("localized footer rows = %d, want wrapped primary/session rows plus divider and telemetry:\n%s", len(lines), block)
 			}
-			if !strings.Contains(lines[0], tt.compact) || !strings.Contains(lines[0], tt.session) {
-				t.Fatalf("localized footer did not compact in place:\n%s", block)
+			if !strings.Contains(lines[0], tt.compact) || !strings.Contains(lines[1], tt.session) {
+				t.Fatalf("localized footer did not keep readable shortcut and session groups:\n%s", block)
+			}
+			if strings.Contains(block, "⇧Tab") || strings.Contains(block, "^Y") {
+				t.Fatalf("localized footer fell back to symbolic shortcut notation:\n%s", block)
+			}
+			for row, line := range lines {
+				if width := visibleWidth(line); width > 104 {
+					t.Fatalf("localized footer row %d width = %d, want <= 104: %q", row, width, line)
+				}
+			}
+
+			narrow := ansi.Strip(m.renderStatusBlock(primary, 24))
+			if strings.Contains(narrow, "Shift+Tab") || strings.Contains(narrow, "Ctrl+Y") {
+				t.Fatalf("shortcut help should yield when readable key names cannot fit:\n%s", narrow)
+			}
+			if !strings.Contains(narrow, ansi.Strip(footerValue(i18n.M.ChatStatusIdle))) {
+				t.Fatalf("narrow footer should preserve the idle state:\n%s", narrow)
 			}
 		})
 	}
