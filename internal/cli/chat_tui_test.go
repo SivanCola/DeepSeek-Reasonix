@@ -71,19 +71,11 @@ func (r *stubbornTurnRunner) Run(ctx context.Context, _ string) error {
 }
 
 type recordingTurnRunner struct {
-	inputs               []string
-	memoryCompilerInputs []string
+	inputs []string
 }
 
 func (r *recordingTurnRunner) Run(ctx context.Context, input string) error {
 	r.inputs = append(r.inputs, input)
-	// The memory compiler's source_event is set by the orchestrator from the
-	// controller's `raw` value. Capture it so we can prove the CLI passes the
-	// EXPANDED paste (not the folded label) — the label would starve the model
-	// of the pasted content once the compiler's contract replaces the user turn.
-	if source, ok := agent.MemoryCompilerSourceInputFromContext(ctx); ok {
-		r.memoryCompilerInputs = append(r.memoryCompilerInputs, source)
-	}
 	return nil
 }
 
@@ -1816,33 +1808,6 @@ func TestReasoningLanguageCommandWritesUserConfigNotProjectConfig(t *testing.T) 
 	}
 }
 
-func TestMemoryV5CommandWritesUserConfigNotProjectConfig(t *testing.T) {
-	isolateUserConfig(t)
-	projectPath := filepath.Join(mustGetwd(t), "reasonix.toml")
-	if err := os.WriteFile(projectPath, []byte("[agent]\nmemory_compiler = { enabled = true }\n"), 0o644); err != nil {
-		t.Fatalf("write project config: %v", err)
-	}
-
-	m := newTestChatTUI()
-	m.ctrl = control.New(control.Options{})
-	m.runMemoryV5Command("/memory-v5 off")
-
-	userBody, err := os.ReadFile(config.UserConfigPath())
-	if err != nil {
-		t.Fatalf("read user config: %v", err)
-	}
-	if !strings.Contains(string(userBody), `memory_compiler = { enabled = false, verbosity = "observe" }`) {
-		t.Fatalf("user config missing memory_compiler off:\n%s", userBody)
-	}
-	projectBody, err := os.ReadFile(projectPath)
-	if err != nil {
-		t.Fatalf("read project config: %v", err)
-	}
-	if string(projectBody) != "[agent]\nmemory_compiler = { enabled = true }\n" {
-		t.Fatalf("/memory-v5 should not rewrite project config:\n%s", projectBody)
-	}
-}
-
 func TestLanguageCommandSwitchesImmediatelyAndPersists(t *testing.T) {
 	isolateUserConfig(t)
 	i18n.DetectLanguage("en")
@@ -2658,22 +2623,6 @@ func TestPasteFoldExpandOnSubmit(t *testing.T) {
 	}
 	if !strings.Contains(sentToRunner, "--- End [Pasted text #1") {
 		t.Fatalf("missing End marker in runner input.\nGot: %q", sentToRunner)
-	}
-
-	// The memory compiler (enabled by default) replaces the user turn with an
-	// execution contract whose source_event is the controller's `raw` value.
-	// If `raw` were the folded label, the model would only ever see
-	// "[Pasted text #1 · N lines]" and never the pasted content. Assert the
-	// source_event carries the EXPANDED content.
-	if len(r.memoryCompilerInputs) == 0 {
-		t.Fatal("memory compiler source input was not set on the context")
-	}
-	mcSource := r.memoryCompilerInputs[0]
-	if strings.Contains(mcSource, "[Pasted text #1") && !strings.Contains(mcSource, "line of pasted content") {
-		t.Fatalf("memory compiler source_event has the folded label but not the expanded content:\n%q", mcSource)
-	}
-	if !strings.Contains(mcSource, "line of pasted content") {
-		t.Fatalf("memory compiler source_event must contain the expanded paste content, got:\n%q", mcSource)
 	}
 }
 

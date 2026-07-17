@@ -44,7 +44,6 @@ import (
 	"reasonix/internal/i18n"
 	"reasonix/internal/jobs"
 	"reasonix/internal/memory"
-	"reasonix/internal/memorycompiler"
 	"reasonix/internal/nilutil"
 	"reasonix/internal/permission"
 	"reasonix/internal/plugin"
@@ -2158,26 +2157,6 @@ func (c *Controller) SetReasoningLanguage(lang string) {
 	}
 }
 
-// SetMemoryCompilerEnabled updates the Memory v5 runtime for subsequent turns
-// without rebuilding the controller or changing the stable provider prefix.
-func (c *Controller) SetMemoryCompilerEnabled(enabled bool) {
-	if c == nil || c.executor == nil {
-		return
-	}
-	var rt *memorycompiler.Runtime
-	if enabled {
-		rt = memorycompiler.New(config.MemoryCompilerDir(c.workspaceRoot))
-	}
-	c.executor.SetMemoryCompiler(rt)
-}
-
-func (c *Controller) SetMemoryCompilerVerbosity(verbosity string) {
-	if c == nil || c.executor == nil {
-		return
-	}
-	c.executor.SetMemoryCompilerVerbosity(verbosity)
-}
-
 // PlanMode reports whether outgoing turns currently receive the plan-mode
 // marker. Frontends use it after Compose because auto-plan may flip the mode.
 func (c *Controller) PlanMode() bool {
@@ -4230,6 +4209,10 @@ func (c *Controller) HookRunner() *hook.Runner { return c.hooks }
 // of tools the server exposed. A save failure after a successful connect is
 // reported but non-fatal: the server still works this session.
 func (c *Controller) AddMCPServer(e config.PluginEntry) (int, error) {
+	// AddMCPServer is an explicit user action. Mark the live entry with the same
+	// provenance it will receive when the saved user config is loaded next time,
+	// so /mcp add is add-and-use in the current session too.
+	e.Source = config.MCPSourceUserConfig
 	n, err := c.connectMCPServer(e)
 	if err != nil {
 		return 0, err
@@ -4258,6 +4241,7 @@ func (c *Controller) ConnectMCPServer(e config.PluginEntry) (int, error) {
 // overrides scoped to the workspace, and connects it live via the mcp manager.
 func (c *Controller) connectMCPServer(e config.PluginEntry) (int, error) {
 	exp := e.ExpandedPlugin()
+	configSource := strings.TrimSpace(string(exp.Source))
 	spec := plugin.ApplyKnownOverrides(plugin.Spec{
 		Name:                     exp.Name,
 		Type:                     exp.Type,
@@ -4273,6 +4257,10 @@ func (c *Controller) connectMCPServer(e config.PluginEntry) (int, error) {
 		DefaultToolsApprovalMode: exp.DefaultToolsApprovalMode,
 		ToolApprovalModes:        controllerMCPToolApprovalModes(exp.Tools),
 		ApprovalsReviewer:        exp.ApprovalsReviewer,
+		ConfigSource:             configSource,
+		AutoTrust:                exp.Source.UserAuthorized(),
+		ImplicitApproval:         exp.Source.UserAuthorized(),
+		RequireLaunchApproval:    exp.Source.RequiresLaunchApproval(),
 	}, c.WorkspaceRoot())
 	if c.mcpConfigureSpec != nil {
 		c.mcpConfigureSpec(&spec)

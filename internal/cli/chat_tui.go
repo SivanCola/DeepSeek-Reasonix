@@ -1484,11 +1484,9 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, finalize(m, cmds)
 			}
 
-			// `raw` is the un-resolved user prompt used for auto-plan scoring AND the
-			// memory compiler's source_event. It must be the EXPANDED paste content
-			// (sentLine), not the folded label (line) — otherwise the memory compiler's
-			// execution contract replaces the user turn with one whose source_event is
-			// just the placeholder label, and the model never sees the pasted content.
+			// `raw` is the un-resolved user prompt used for auto-plan scoring. It must
+			// be the EXPANDED paste content (sentLine), not the folded label (line), so
+			// downstream consumers of the raw turn never see just the placeholder label.
 			cmds = append(cmds, m.startTurnWithRaw(sentLine, sentLine, line, sentLine))
 			return m, finalize(m, cmds)
 		}
@@ -1645,7 +1643,7 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		// raw = msg.display (the expanded paste content, without resolved @-ref
 		// payloads) — NOT msg.restore (the folded label). See the non-refs branch
-		// above for why the memory compiler's source_event needs the expansion.
+		// above for why raw needs the expansion.
 		cmds = append(cmds, m.startTurnWithRaw(sent, msg.display, msg.restore, msg.display))
 
 	case clipboardImageMsg:
@@ -3846,9 +3844,6 @@ func (m *chatTUI) runSlashCommand(input string) tea.Cmd {
 	case "/reasoning-language":
 		m.echoLocalCommand(input)
 		m.runReasoningLanguageCommand(input)
-	case "/memory-v5":
-		m.echoLocalCommand(input)
-		m.runMemoryV5Command(input)
 	case "/rewind":
 		m.echoLocalCommand(input)
 		m.openRewind()

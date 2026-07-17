@@ -12,7 +12,7 @@ import (
 
 var reservedSubagentSlashNames = map[string]bool{
 	"new": true, "clear": true, "compact": true, "model": true, "provider": true,
-	"effort": true, "memory": true, "memory-v5": true, "migrate": true, "migration": true,
+	"effort": true, "memory": true, "migrate": true, "migration": true,
 	"goal": true, "remember": true, "mcp": true, "hooks": true, "plugin": true, "plugins": true,
 	"theme": true, "skill": true, "skills": true, "reload-cmd": true, "tree": true,
 	"branch": true, "switch": true, "rewind": true, "plan-exec": true, "prometheus": true,

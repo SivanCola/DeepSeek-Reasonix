@@ -146,7 +146,7 @@ var ChineseTraditional = Messages{
 	SlashUnavailable:   "當前建構不支援該命令",
 	SlashUnknown:       "未知命令",
 	SlashTodoCleared:   "已清除任務清單",
-	SlashHelp:          "命令：/compact · /new（/clear）· /resume · /rewind · /tree · /branch · /switch · /todo · /verbose · /model（切換模型）· /effort · /theme · /language · /mcp · /skills · /plugins · /hooks · /paste-image · /memory · /memory-v5 · /migrate · /remember · /quit · /help · 以及 skills（/init、/explore …）",
+	SlashHelp:          "命令：/compact · /new（/clear）· /resume · /rewind · /tree · /branch · /switch · /todo · /verbose · /model（切換模型）· /effort · /theme · /language · /mcp · /skills · /plugins · /hooks · /paste-image · /memory · /migrate · /remember · /quit · /help · 以及 skills（/init、/explore …）",
 
 	SkillPickerTitle:             "Skills",
 	SkillPickerAvailableFmt:      "%d 個可用",
@@ -241,7 +241,6 @@ var ChineseTraditional = Messages{
 	CmdMouse:            "切換滑鼠接管（關閉後由終端原生處理選取/右鍵）",
 	CmdAutoPlan:         "設定自動計畫模式",
 	CmdReasonLang:       "設定可見思考語言",
-	CmdMemoryV5:         "切換 Memory v5",
 	CmdHelp:             "檢視命令列表",
 	CmdTodo:             "清除任務清單",
 	CmdQuit:             "退出會話",
@@ -447,7 +446,6 @@ var ChineseTraditional = Messages{
   reasonix acp [--model NAME]                           透過 stdio 提供 Agent Client Protocol（也可用：reasonix --acp）
   reasonix setup [path]                                 互動式設定精靈；生成 reasonix.toml（及 .env）
   reasonix config auto-plan [off|on]                    設定自動計畫模式
-  reasonix config memory-v5 [off|observe|compact|on|status]  設定 Memory v5
   reasonix config reasoning-language [auto|zh|en]        設定可見思考語言
   reasonix mcp <add|remove|list|import>                 管理 reasonix.toml 裡的 MCP 伺服器
   reasonix subagent <list|create|edit|delete|try|run>   管理和執行隔離子智慧體 profile

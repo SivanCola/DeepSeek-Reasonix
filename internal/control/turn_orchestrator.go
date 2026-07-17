@@ -50,7 +50,7 @@ func (o *turnOrchestrator) runSyntheticTurnWithRawDisplay(ctx context.Context, i
 
 func (o *turnOrchestrator) runComposedSyntheticTurn(ctx context.Context, text string) error {
 	c := o.c
-	return c.runner.Run(agent.WithMemoryCompilerSkip(ctx), c.ComposeSynthetic(text))
+	return c.runner.Run(ctx, c.ComposeSynthetic(text))
 }
 
 // runSubagentSkillGoalLoop executes a slash-invoked runAs=subagent skill as a
@@ -161,15 +161,6 @@ func (o *turnOrchestrator) runOrchestratedTurn(ctx context.Context, turn orchest
 	ctx = agent.WithParentSession(ctx, parentSession)
 	ctx = jobs.WithSession(ctx, parentSession)
 	ctx = agent.WithUserImages(ctx, c.inputImages(turn.input))
-	// Synthetic, controller-injected turns (goal-loop continuation,
-	// plan-approved execution, …) must not be Memory v5-compiled: compiling them
-	// re-injects a contract the model echoes back, which spins the goal loop
-	// forever (#5342, #5329). Only genuine user turns supply a compiler source.
-	if turn.synthetic || IsSyntheticUserMessage(turn.raw) {
-		ctx = agent.WithMemoryCompilerSkip(ctx)
-	} else {
-		ctx = agent.WithMemoryCompilerSourceInput(ctx, turn.raw)
-	}
 	input := c.compose(turn.input, turn.raw, !turn.synthetic)
 	startMessages := c.messageCount()
 	defer c.snapshotActivityIfChanged(startMessages)

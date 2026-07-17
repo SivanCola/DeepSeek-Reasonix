@@ -356,6 +356,7 @@ console.log("capabilities panel MCP actions");
   }];
   let trustDecision = "";
   let reconnectCount = 0;
+  let projectLaunch = false;
   let servers: ServerView[] = [{
     name: "github",
     transport: "stdio",
@@ -386,7 +387,17 @@ console.log("capabilities panel MCP actions");
         Meta: async () => meta,
         ListTabs: async () => tabs,
         MCPServers: async () => servers,
-        InspectMCPTrust: async () => ({
+        InspectMCPTrust: async () => projectLaunch ? ({
+          name: "github",
+          trustState: "untrusted",
+          isolationState: "enforced",
+          changedTools: [],
+          toolChanges: [],
+          readers: [],
+          writers: [],
+          destructive: [],
+          requiresLaunchApproval: true,
+        }) : ({
           name: "github",
           trustState: "changed",
           trustSource: "user",
@@ -453,6 +464,36 @@ console.log("capabilities panel MCP actions");
   ok(!document.querySelector('[role="dialog"]'), "successful trust closes the combined confirmation modal");
   ok(Boolean(document.querySelector('[data-status="connected"]')), "failed server reconnects after explicit re-verification");
 
+  projectLaunch = true;
+  trustDecision = "";
+  servers = servers.map((item) => ({
+    ...item,
+    status: "failed",
+    runtimeState: "issue",
+    error: "project-provided MCP server is blocked until the user authorizes it",
+    requiresLaunchApproval: true,
+    requiresReverification: true,
+    trustState: "untrusted",
+  }));
+  await act(async () => {
+    refreshCatalog.click();
+    await flush();
+  });
+  await waitFor("project MCP authorization action", () => Boolean(findButton("Reverify")));
+  await act(async () => {
+    findButton("Reverify")?.click();
+    await flush();
+  });
+  await waitFor("project MCP launch modal", () => Boolean(findButton("Authorize and connect")));
+  ok(!findButton("Only this connection"), "project launch uses one durable authorization action instead of a scope choice");
+  ok(document.body.textContent?.includes("comes from the current project") ?? false, "project launch modal explains why authorization is required");
+  await act(async () => {
+    findButton("Authorize and connect")?.click();
+    await flush();
+  });
+  await waitFor("durable project launch authorization", () => trustDecision === "workspace" && Boolean(document.querySelector('[data-status="connected"]')));
+  projectLaunch = false;
+
   servers = servers.map((item) => ({
     ...item,
     status: "failed",
@@ -484,6 +525,35 @@ console.log("capabilities panel MCP actions");
   });
   await waitFor("ordinary retry action", () => Boolean(findButton("Retry")));
   ok(!findButton("Reverify"), "ordinary startup failures must keep the retry action");
+
+  trustDecision = "";
+  servers = servers.map((item) => ({
+    ...item,
+    status: "connected",
+    runtimeState: "ready",
+    error: "",
+    requiresLaunchApproval: false,
+    requiresReverification: false,
+    launchApprovalGoverned: true,
+    trustState: "workspace",
+  }));
+  await act(async () => {
+    findButton("Refresh catalog")?.click();
+    await flush();
+  });
+  await waitFor("authorized project server row", () => Boolean(document.querySelector('[data-status="connected"]')));
+  await act(async () => {
+    (document.querySelector(".cap-mcp-list-row__main") as HTMLButtonElement | null)?.click();
+    await flush();
+  });
+  await waitFor("revocable persistent grant entry", () => Boolean(findButton("Revoke trust")));
+  ok(!findButton("Reverify"), "an authorized connected project server must not show the reauthorization alarm");
+  await act(async () => {
+    findButton("Revoke trust")?.click();
+    await flush();
+  });
+  await waitFor("persistent launch grant revoked", () => trustDecision === "revoke");
+  ok(!findButton("Revoke trust"), "revoking clears the persistent grant entry");
 
   await act(async () => {
     root.unmount();
@@ -647,6 +717,7 @@ console.log("capabilities panel MCP actions");
     cwd: "/tmp/reasonix-test",
   }];
   let addedInput: MCPServerInput | undefined;
+  let inspectCalls = 0;
   let servers: ServerView[] = [
     {
       name: "github",
@@ -695,6 +766,10 @@ console.log("capabilities panel MCP actions");
             resources: 0,
           }];
           return 0;
+        },
+        InspectMCPTrust: async () => {
+          inspectCalls++;
+          throw new Error("new user servers should not need a second trust prompt");
         },
       } as Partial<AppBindings> as AppBindings,
     },
@@ -780,6 +855,7 @@ console.log("capabilities panel MCP actions");
   ok(addedInput?.command === "npx", "valid MCP JSON keeps the executable separate from its arguments");
   ok(addedInput?.args?.[2] === "hello world", "valid MCP JSON passes structured arguments to AddMCPServer");
   ok(addedInput?.env?.TOKEN === "test-token", "valid MCP JSON passes environment variables to AddMCPServer");
+  ok(inspectCalls === 0, "adding a user MCP server does not open a second trust inspection");
 
   await act(async () => {
     root.unmount();

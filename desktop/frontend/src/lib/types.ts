@@ -20,7 +20,6 @@ export type EventKind =
   | "mcp_surface_ready"
   | "retrying"
   | "steer"
-  | "memory_compiler_stats"
   | "guardian_assessment";
 
 export interface WireCompaction {
@@ -154,23 +153,6 @@ export interface MemoryCitation {
   kind?: string;
 }
 
-export interface MemoryCompilerStats {
-  injected: boolean;
-  usefulIR: boolean;
-  compiledTokens: number;
-  irOverheadTokens: number;
-  memoryReferences: number;
-  constraints: number;
-  riskNotes: number;
-  executionSteps: number;
-  totalNodes: number;
-  highSignalNodes: number;
-  toolResultNodes: number;
-  decisionNodes: number;
-  strategyCount: number;
-  learningCount: number;
-}
-
 export interface WireEvent {
   kind: EventKind;
   text?: string;
@@ -179,7 +161,6 @@ export interface WireEvent {
   code?: string;
   reasoning?: string;
   memoryCitations?: MemoryCitation[];
-  memoryCompiler?: MemoryCompilerStats;
   level?: "info" | "warn";
   tool?: WireTool;
   usage?: WireUsage;
@@ -736,6 +717,8 @@ export interface ServerView {
   defaultToolsApprovalMode?: MCPApprovalMode;
   toolPolicies?: Record<string, MCPToolPolicy>;
   approvalsReviewer?: MCPApprovalsReviewer;
+  requiresLaunchApproval?: boolean;
+  launchApprovalGoverned?: boolean;
   authStatus?: "none" | "possible" | "required" | string;
   authUrl?: string;
   authConfigured?: boolean;
@@ -783,6 +766,7 @@ export interface MCPTrustInspectionView {
   readers: string[];
   writers: string[];
   destructive: string[];
+  requiresLaunchApproval?: boolean;
 }
 
 export interface MCPCatalogRefreshView {
@@ -1494,7 +1478,6 @@ export interface SettingsView {
   checkUpdates: boolean; // check for new versions on startup
   telemetry: boolean; // anonymous launch ping (install id + version + OS)
   metrics: boolean; // aggregate desktop metrics (anonymous signal/bucket counts)
-  memoryCompilerEnabled: boolean; // Memory v5 execution compiler
   configPath: string;
   providerKinds: string[]; // provider implementations the kernel registered (for the kind picker)
   autoApproveTools: boolean;

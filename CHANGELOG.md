@@ -53,6 +53,12 @@ branch.
 
 ### Fixed
 
+- Restored stateful MCP behavior after the v1.17.13 regression: compatible
+  trust receipts migrate instead of prompting again, user-added servers work
+  without extra trust settings (including delivery-mode on-demand calls), and
+  stdio tools reuse one persistent process so browser sessions survive across
+  calls without repeated startup latency. Authorized project servers keep a
+  revoke entry in the desktop server details page.
 - Localized persistent-footer labels and displayed work-mode values in English,
   Simplified Chinese, and Traditional Chinese, while keeping command arguments
   stable.

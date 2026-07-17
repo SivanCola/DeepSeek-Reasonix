@@ -2339,6 +2339,21 @@ func TestDisconnectMCPServerRemovesLazyPlaceholder(t *testing.T) {
 	}
 }
 
+func TestAddMCPServerAuthorizesExplicitUserAddBeforeConnecting(t *testing.T) {
+	var configured plugin.Spec
+	c := New(Options{
+		MCPConfigureSpec: func(spec *plugin.Spec) { configured = *spec },
+	})
+
+	if _, err := c.AddMCPServer(config.PluginEntry{Name: "user-added"}); err == nil {
+		t.Fatal("AddMCPServer without a command unexpectedly succeeded")
+	}
+	if configured.ConfigSource != string(config.MCPSourceUserConfig) ||
+		!configured.AutoTrust || !configured.ImplicitApproval || configured.RequireLaunchApproval {
+		t.Fatalf("configured spec = %+v, want user-authorized add-and-use policy", configured)
+	}
+}
+
 func TestConnectMCPServerAppliesConfiguredCallTimeouts(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var req struct {

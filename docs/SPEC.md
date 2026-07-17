@@ -141,6 +141,18 @@ interface (`call` / `notify` / `close`) abstracts that, so the MCP-level logic
   and `headers` so secrets come from the environment, not the config file.
 - Lifecycle: `initialize` → `notifications/initialized` → `tools/list`;
   invocation via `tools/call {name, arguments}`.
+- A stdio server uses one persistent transport for initialize, reads, and
+  writes, preserving state such as browser sessions across tool calls. The
+  process uses the server's writer sandbox because process confinement cannot
+  change per RPC; read-only eligibility and destructive approval remain local
+  dispatch gates rather than separate process sandboxes.
+- Configuration provenance is runtime metadata. User config, legacy user MCP,
+  and verified plugin-package servers are authorized by installation: the host
+  records their current trust snapshot automatically and ordinary calls default
+  to direct approval. Project `reasonix.toml` and `.mcp.json` servers require a
+  session/workspace launch grant for the exact stable identity before any
+  process or network transport is created. Existing receipts count as launch
+  grants for backward compatibility; identity changes invalidate the grant.
 - Each remote tool is adapted to the `Tool` interface and injected into the run
   registry, namespaced `mcp__<server>__<tool>` (spaces normalised to `_`) to
   match Claude Code and avoid clashes.
@@ -305,7 +317,8 @@ func (p Policy) Decide(toolName string, readOnly bool, args json.RawMessage) Dec
 - **MCP approval policy.** Installed MCP tools may set a server default and raw
   tool overrides using `auto|prompt|writes|approve`. Precedence is explicit deny,
   `destructiveHint`, raw-tool mode, server default, then global Ask/Auto/YOLO.
-  `auto` delegates to the ordinary permission decision; `prompt` reviews every
+  A user-authorized server with no explicit MCP approval fields defaults to
+  `approve`; project-provided servers retain `auto`. `auto` delegates to the ordinary permission decision; `prompt` reviews every
   call; `writes` reviews writers only; and `approve` allows ordinary calls.
   `approvals_reviewer = "user"` uses the interactive user, while `auto_review`
   sends the calls that need review (`prompt`, writer hits under `writes`, and
@@ -549,8 +562,7 @@ Reasonix's global `<Reasonix home>/.env`, shared by CLI and desktop. Project
 `.env`, home `.env`, inherited shell environment variables, legacy credentials,
 and the OS keyring are not provider-key runtime fallbacks. Project `.env` still
 feeds workspace-scoped, non-provider `${VAR}` expansion for MCP/plugin settings
-without importing provider keys or Reasonix control variables. Project
-`reasonix.toml` does not override the user-level Memory v5 compiler switch.
+without importing provider keys or Reasonix control variables.
 
 ```toml
 default_model = "deepseek"   # provider name (→ its default model) or "provider/model"
@@ -563,7 +575,6 @@ default_model = "deepseek"   # provider name (→ its default model) or "provide
 [agent]
 system_prompt = "You are Reasonix, a coding agent..."  # or system_prompt_file = "..."
 temperature       = 0.0
-memory_compiler = { enabled = true, verbosity = "observe" }   # user/global only; observe|compact; CLI: reasonix config memory-v5 off|observe|compact|on|status
 reasoning_language = "auto"       # visible reasoning text: auto|zh|en
 # plan_mode_allowed_tools = ["mcp__legacy__reader"]   # legacy MCP read-only trust alias; does not change Plan availability
 # plan_mode_read_only_commands = ["gh issue view"]   # legacy compatibility only; Plan bash uses Permissions
@@ -637,7 +648,6 @@ args    = []
 # default_tools_approval_mode = "auto"   # auto|prompt|writes|approve
 # tools = { "delete_all" = { approval_mode = "prompt" } }
 # approvals_reviewer = "user"            # user|auto_review
-
 # [[plugins]]                   # a remote MCP server over Streamable HTTP
 # name    = "stripe"
 # type    = "http"             # "stdio" (default) | "http" | "sse"
