@@ -3010,7 +3010,7 @@ func (m chatTUI) effortTag() string {
 	if m.effortLevel != "auto" {
 		value = themeStyle(activeCLITheme.info).Bold(true).Render(m.effortLevel)
 	}
-	return footerMetric("EFFORT", value)
+	return footerMetric(i18n.M.ChatStatusEffortLabel, value)
 }
 
 // mouseTag is a persistent status-line marker while mouseCaptureOff is on, so

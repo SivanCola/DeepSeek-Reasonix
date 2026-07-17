@@ -154,7 +154,7 @@ func (m chatTUI) statusModelWorkGroup(maxWidth int) string {
 		tail = append(tail, effort)
 	}
 	if work != "" {
-		tail = append(tail, footerMetric("WORK", footerSecondary(work)))
+		tail = append(tail, footerMetric(i18n.M.ChatStatusWorkLabel, footerSecondary(work)))
 	}
 	if model == "" && len(tail) == 0 {
 		return ""
@@ -162,7 +162,7 @@ func (m chatTUI) statusModelWorkGroup(maxWidth int) string {
 
 	fields := append([]string(nil), tail...)
 	if model != "" {
-		fields = append([]string{footerMetric("MODEL", footerInfo(model))}, fields...)
+		fields = append([]string{footerMetric(i18n.M.ChatStatusModelLabel, footerInfo(model))}, fields...)
 	}
 	full := strings.Join(fields, separator)
 	if visibleWidth(full) <= maxWidth {
@@ -176,9 +176,9 @@ func (m chatTUI) statusModelWorkGroup(maxWidth int) string {
 		if len(tail) > 0 {
 			tailWidth += visibleWidth(separator)
 		}
-		modelBudget := maxWidth - tailWidth - visibleWidth("MODEL ")
+		modelBudget := maxWidth - tailWidth - visibleWidth(i18n.M.ChatStatusModelLabel+" ")
 		if modelBudget >= 4 {
-			modelField := footerMetric("MODEL", footerInfo(compactMiddle(model, modelBudget)))
+			modelField := footerMetric(i18n.M.ChatStatusModelLabel, footerInfo(compactMiddle(model, modelBudget)))
 			if len(tail) == 0 {
 				return modelField
 			}
@@ -215,7 +215,7 @@ func renderContextStatusGroups(used, window int, ratio float64) []string {
 		case pct >= 60:
 			color = activeCLITheme.warn
 		}
-		return []string{footerMetric("CTX", themeFg(color, ctxValue))}
+		return []string{footerMetric(i18n.M.ChatStatusContextLabel, themeFg(color, ctxValue))}
 	}
 
 	threshold := int(ratio * 100)
@@ -233,8 +233,8 @@ func renderContextStatusGroups(used, window int, ratio float64) []string {
 		compactColor = activeCLITheme.warn
 	}
 	return []string{
-		footerMetric("CTX", themeFg(ctxColor, ctxValue)),
-		footerMetric("COMPACT", themeFg(compactColor, fmt.Sprintf("%d%%", left))),
+		footerMetric(i18n.M.ChatStatusContextLabel, themeFg(ctxColor, ctxValue)),
+		footerMetric(i18n.M.ChatStatusCompactLabel, themeFg(compactColor, fmt.Sprintf("%d%%", left))),
 	}
 }
 
@@ -248,16 +248,16 @@ func (m chatTUI) statusTelemetryGroups() []string {
 	var data []string
 	if m.ctrl != nil {
 		if body, rate, ok := m.cacheStatus(); ok {
-			data = append(data, footerMetric("CACHE", themeFg(cacheStatusColor(rate), body)))
+			data = append(data, footerMetric(i18n.M.ChatStatusCacheLabel, themeFg(cacheStatusColor(rate), body)))
 		}
 		used, window := m.ctrl.ContextSnapshot()
 		data = append(data, renderContextStatusGroups(used, window, m.ctrl.CompactRatio())...)
 		if jt := m.jobsTag(); jt != "" {
-			data = append(data, footerMetric("JOBS", footerInfo(ansi.Strip(jt))))
+			data = append(data, footerMetric(i18n.M.ChatStatusJobsLabel, footerInfo(ansi.Strip(jt))))
 		}
 	}
 	if m.balance != "" {
-		data = append(data, footerMetric("BAL", footerValue(m.balance)))
+		data = append(data, footerMetric(i18n.M.ChatStatusBalanceLabel, footerValue(m.balance)))
 	}
 	return data
 }

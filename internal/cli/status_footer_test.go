@@ -271,11 +271,11 @@ func TestStatusFooterNoColorKeepsSemanticLabels(t *testing.T) {
 func TestStatusFooterUsesCompactLocalizedHint(t *testing.T) {
 	defer i18n.DetectLanguage("en")
 	for _, tt := range []struct {
-		lang, compact string
+		lang, compact, session string
 	}{
-		{lang: "en", compact: "⇧Tab ask/auto/plan · ^Y YOLO"},
-		{lang: "zh", compact: "⇧Tab 询问/自动/计划 · ^Y YOLO"},
-		{lang: "zh-TW", compact: "⇧Tab 詢問/自動/計畫 · ^Y YOLO"},
+		{lang: "en", compact: "⇧Tab ask/auto/plan · ^Y YOLO", session: "MODEL deepseek-v4-flash   EFFORT auto   WORK balanced"},
+		{lang: "zh", compact: "⇧Tab 询问/自动/计划 · ^Y YOLO", session: "模型 deepseek-v4-flash   强度 auto   模式 balanced"},
+		{lang: "zh-TW", compact: "⇧Tab 詢問/自動/計畫 · ^Y YOLO", session: "模型 deepseek-v4-flash   強度 auto   模式 balanced"},
 	} {
 		t.Run(tt.lang, func(t *testing.T) {
 			i18n.DetectLanguage(tt.lang)
@@ -291,8 +291,59 @@ func TestStatusFooterUsesCompactLocalizedHint(t *testing.T) {
 			if len(lines) != 3 {
 				t.Fatalf("localized footer rows = %d, want two data rows plus divider:\n%s", len(lines), block)
 			}
-			if !strings.Contains(lines[0], tt.compact) || !strings.Contains(lines[0], "MODEL deepseek-v4-flash   EFFORT auto   WORK balanced") {
+			if !strings.Contains(lines[0], tt.compact) || !strings.Contains(lines[0], tt.session) {
 				t.Fatalf("localized footer did not compact in place:\n%s", block)
+			}
+		})
+	}
+}
+
+func TestStatusFooterLocalizesMetricLabelsAndKeepsNarrowRows(t *testing.T) {
+	defer i18n.DetectLanguage("en")
+	for _, tt := range []struct {
+		lang      string
+		session   string
+		telemetry []string
+	}{
+		{
+			lang:      "zh",
+			session:   "模型 deepseek-v4-flash   强度 auto   模式 balanced",
+			telemetry: []string{"缓存", "上下文", "压缩", "任务", "余额"},
+		},
+		{
+			lang:      "zh-TW",
+			session:   "模型 deepseek-v4-flash   強度 auto   模式 balanced",
+			telemetry: []string{"快取", "上下文", "壓縮", "任務", "餘額"},
+		},
+	} {
+		t.Run(tt.lang, func(t *testing.T) {
+			i18n.DetectLanguage(tt.lang)
+			m := newTestChatTUI()
+			m.label = "deepseek-v4-flash"
+			m.effortLevel = "auto"
+			m.runtimeProfile = "full"
+			if got := ansi.Strip(m.statusModelWorkGroup(80)); got != tt.session {
+				t.Fatalf("localized session metrics = %q, want %q", got, tt.session)
+			}
+
+			groups := []string{
+				footerMetric(i18n.M.ChatStatusCacheLabel, footerValue("90%")),
+			}
+			groups = append(groups, renderContextStatusGroups(75, 100, .8)...)
+			groups = append(groups,
+				footerMetric(i18n.M.ChatStatusJobsLabel, footerInfo("2")),
+				footerMetric(i18n.M.ChatStatusBalanceLabel, footerValue("¥12.34")),
+			)
+			packed := ansi.Strip(packStatusGroups(groups, 22))
+			for _, label := range tt.telemetry {
+				if !strings.Contains(packed, label+" ") {
+					t.Fatalf("localized telemetry missing %q:\n%s", label, packed)
+				}
+			}
+			for row, line := range strings.Split(packed, "\n") {
+				if width := visibleWidth(line); width > 22 {
+					t.Fatalf("localized telemetry row %d width = %d, want <= 22: %q", row, width, line)
+				}
 			}
 		})
 	}

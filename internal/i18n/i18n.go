@@ -79,6 +79,14 @@ type Messages struct {
 	ChatStatusCycleHint                    string // plan-toggle shortcut hint shown when no modal prompt owns the status row
 	ChatStatusCycleHintCompact             string // terminal-native compact hint used by the persistent footer
 	ChatTurnReceiptLabel                   string // compact per-turn usage receipt attached to the completed assistant response
+	ChatStatusModelLabel                   string
+	ChatStatusEffortLabel                  string
+	ChatStatusWorkLabel                    string
+	ChatStatusCacheLabel                   string
+	ChatStatusContextLabel                 string
+	ChatStatusCompactLabel                 string
+	ChatStatusJobsLabel                    string
+	ChatStatusBalanceLabel                 string
 	ChatStatusCacheNowFmt                  string // cache status tag, "%s" = latest-turn hit rate with percent sign
 	ChatStatusCacheAvgFmt                  string // cache status tag, "%s" = session-average hit rate with percent sign
 	ChatStatusPlanApproval                 string // shortcuts hint while a plan is pending
