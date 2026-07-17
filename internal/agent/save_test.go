@@ -2333,6 +2333,13 @@ func TestReconcileOverlongMigratesDiagnosticSidecars(t *testing.T) {
 		[]byte(`{"outcome":"forked_recovery_branch"}`+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	// The salvage sidecar holds raw session bytes; orphaning it under the
+	// retired stem would leave unreachable transcript content behind (#6613
+	// review follow-up).
+	if err := os.WriteFile(store.SessionEventLogDamaged(oldPath),
+		[]byte(`{"damaged_tail":true}`+"\ntorn bytes\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	if err := ReconcileSessionSidecars(dir); err != nil {
 		t.Fatalf("ReconcileSessionSidecars: %v", err)
@@ -2345,10 +2352,13 @@ func TestReconcileOverlongMigratesDiagnosticSidecars(t *testing.T) {
 	if _, err := os.Stat(store.SessionEventLog(newPath)); err != nil {
 		t.Fatalf("event log not migrated with the rename: %v", err)
 	}
+	if _, err := os.Stat(store.SessionEventLogDamaged(newPath)); err != nil {
+		t.Fatalf("damaged salvage sidecar not migrated with the rename: %v", err)
+	}
 	if _, err := os.Stat(store.SessionConflictLog(newPath)); err != nil {
 		t.Fatalf("conflict log not migrated with the rename: %v", err)
 	}
-	for _, gone := range []string{oldPath, store.SessionEventLog(oldPath), store.SessionConflictLog(oldPath)} {
+	for _, gone := range []string{oldPath, store.SessionEventLog(oldPath), store.SessionEventLogDamaged(oldPath), store.SessionConflictLog(oldPath)} {
 		if _, err := os.Stat(gone); !os.IsNotExist(err) {
 			t.Fatalf("%s still present under the retired stem (err=%v)", filepath.Base(gone), err)
 		}
