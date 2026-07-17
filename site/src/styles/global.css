@@ -936,6 +936,9 @@ footer { background: var(--bg); border-top: 1px solid var(--line); margin-top: 0
 @media (max-width: 640px) {
   .nav-inner { padding: 0 16px; gap: 10px; }
   .nav-sign-in { display: none; }
+  /* logo-only brand + compact theme buttons keep the nav within 390px */
+  .nav .brand span { display: none; }
+  .theme-switch button { padding: 6px 9px; }
   .docs-path-grid { grid-template-columns: 1fr; }
   .docs-main h1 { font-size: 34px; }
   .hero-install { --hero-action-width: 100%; }

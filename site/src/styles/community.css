@@ -220,3 +220,10 @@ a.tag:hover { color: var(--accent); background: var(--accent-soft); }
   .topic .stat, .topic .last { display: none; }
   .wrap { padding: 0 20px; }
 }
+
+@media (max-width: 640px) {
+  /* drop the Community tag + tighten controls so the nav fits 390px */
+  .nav-inner { padding: 0 20px; gap: 12px; }
+  .brand .ctag { display: none; }
+  .theme-switch button { padding: 6px 9px; }
+}
