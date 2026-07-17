@@ -1573,13 +1573,15 @@ func TestProjectLaunchApprovalBlocksBeforeProcessStart(t *testing.T) {
 }
 
 func TestLegacyPolicyCoupledIdentityAndWorkspaceSourceMigrate(t *testing.T) {
-	manager := mcptrust.NewManager(filepath.Join(t.TempDir(), mcptrust.StateFilename), "/workspace")
+	workspace := t.TempDir()
+	secret := t.TempDir()
+	manager := mcptrust.NewManager(filepath.Join(t.TempDir(), mcptrust.StateFilename), workspace)
 	spec := Spec{
 		Name: "legacy-policy", Command: os.Args[0], Args: []string{"-test.run=TestHelperProcess", "--"},
 		Env:          map[string]string{"GO_WANT_HELPER_PROCESS": "1"},
 		ConfigSource: "project_config", TrustManager: manager, RequireLaunchApproval: true,
-		ReaderSandbox: sandbox.Spec{Mode: "enforce", ReadRoots: []string{"/workspace"}, ForbidReadRoots: []string{"/secret"}},
-		WriterSandbox: sandbox.Spec{Mode: "enforce", WriteRoots: []string{"/workspace"}},
+		ReaderSandbox: sandbox.Spec{Mode: "enforce", ReadRoots: []string{workspace}, ForbidReadRoots: []string{secret}},
+		WriterSandbox: sandbox.Spec{Mode: "enforce", WriteRoots: []string{workspace}},
 	}
 	identity, err := buildSpecIdentity(context.Background(), spec)
 	if err != nil {
