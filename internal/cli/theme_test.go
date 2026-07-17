@@ -235,26 +235,41 @@ func TestApplyTextareaThemeHonorsCursorShape(t *testing.T) {
 	}
 }
 
-func TestComposerBorderStaysNeutralWhileCursorUsesAccent(t *testing.T) {
+func TestComposerBorderAndCursorTrackThemeAccent(t *testing.T) {
 	t.Setenv("COLORTERM", "")
 	t.Setenv("TERM_PROGRAM", "")
 	t.Setenv("REASONIX_THEME", "")
 	t.Setenv("REASONIX_THEME_STYLE", "")
 	defer restoreThemeForTest(colorEnabled, activeCLITheme)
 	colorEnabled = true
+
+	for _, theme := range cliThemeStyles {
+		t.Run(theme.name, func(t *testing.T) {
+			configureCLITheme(theme.name)
+			want := themeLipColor(activeCLITheme.accent)
+			if got := inputBoxStyle.GetBorderTopForeground(); !reflect.DeepEqual(got, want) {
+				t.Fatalf("composer top border color = %v, want theme accent %v", got, want)
+			}
+			if got := inputBoxStyle.GetBorderBottomForeground(); !reflect.DeepEqual(got, want) {
+				t.Fatalf("composer bottom border color = %v, want theme accent %v", got, want)
+			}
+
+			ti := textarea.New()
+			applyTextareaTheme(&ti)
+			if got := ti.Styles().Cursor.Color; !reflect.DeepEqual(got, want) {
+				t.Fatalf("composer cursor color = %v, want theme accent %v", got, want)
+			}
+		})
+	}
+
+	colorEnabled = false
 	configureCLITheme("dark")
-
-	if got, want := inputBoxStyle.GetBorderTopForeground(), themeLipColor(activeCLITheme.border); !reflect.DeepEqual(got, want) {
-		t.Fatalf("composer border color = %v, want neutral theme border %v", got, want)
+	empty := lipgloss.NewStyle().GetBorderTopForeground()
+	if got := inputBoxStyle.GetBorderTopForeground(); !reflect.DeepEqual(got, empty) {
+		t.Fatalf("NO_COLOR composer top border color = %v, want no color", got)
 	}
-	if got := inputBoxStyle.GetBorderTopForeground(); reflect.DeepEqual(got, themeLipColor(activeCLITheme.accent)) {
-		t.Fatalf("composer border should not compete with accent cursor/prompt: %v", got)
-	}
-
-	ti := textarea.New()
-	applyTextareaTheme(&ti)
-	if got, want := ti.Styles().Cursor.Color, themeLipColor(activeCLITheme.accent); !reflect.DeepEqual(got, want) {
-		t.Fatalf("composer cursor color = %v, want accent %v", got, want)
+	if got := inputBoxStyle.GetBorderBottomForeground(); !reflect.DeepEqual(got, empty) {
+		t.Fatalf("NO_COLOR composer bottom border color = %v, want no color", got)
 	}
 }
 

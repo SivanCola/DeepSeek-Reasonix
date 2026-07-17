@@ -387,7 +387,7 @@ func init() {
 
 func refreshCLIStyles() {
 	inputBoxStyle = withThemeBorderFG(lipgloss.NewStyle().
-		Border(lipgloss.NormalBorder(), true, false, true, false), activeCLITheme.border).
+		Border(lipgloss.NormalBorder(), true, false, true, false), activeCLITheme.accent).
 		PaddingLeft(1)
 	todoPanelStyle = withThemeBorderFG(lipgloss.NewStyle().
 		Border(lipgloss.NormalBorder(), true, false, false, false), activeCLITheme.border).
