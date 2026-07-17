@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"math"
 	"strconv"
 	"strings"
@@ -132,9 +131,4 @@ func suggestFGForBG(bg string, mode string) string {
 
 func round2(v float64) float64 {
 	return math.Round(v*100) / 100
-}
-
-// Format helper kept for potential notice strings.
-func formatContrastWarning(w ThemeContrastWarning) string {
-	return fmt.Sprintf("%s %s contrast %.2f < %.1f (try %s)", w.Mode, w.Pair, w.Ratio, w.Minimum, w.Suggest)
 }

@@ -4,7 +4,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -444,5 +443,3 @@ func resolveThemeImageAbs(id, imageName string) (string, error) {
 	}
 	return resolved, nil
 }
-
-var errThemeNotFound = errors.New("theme not found")

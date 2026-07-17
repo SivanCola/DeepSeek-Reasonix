@@ -33491,6 +33491,13 @@ body > .mermaid-diagram--fullscreen {
 .theme-editor__scene-controls { display: flex; flex-direction: column; gap: 10px; margin-top: 10px; }
 .theme-editor__scene-controls .theme-editor__setting-row { margin: 0; }
 .theme-editor__scene-controls .theme-editor__setting-row > span { flex-basis: 86px; }
+.theme-editor__setting-block { min-width: 0; }
+.theme-editor__setting-hint {
+  margin: 5px 0 0 98px;
+  color: var(--fg-faint);
+  font-size: var(--text-2xs, 0.6875rem);
+  line-height: 1.45;
+}
 .theme-editor__range { display: flex; flex-direction: column; gap: 5px; color: var(--fg-dim); font-size: var(--text-xs, 0.75rem); }
 .theme-editor__range span { display: flex; justify-content: space-between; }
 .theme-editor__range b { color: var(--fg); font-variant-numeric: tabular-nums; }
@@ -33526,6 +33533,7 @@ body > .mermaid-diagram--fullscreen {
   .theme-editor__recipe-groups { grid-template-columns: 1fr; }
   .theme-editor__setting-row { align-items: flex-start; flex-direction: column; }
   .theme-editor__setting-row > span { flex-basis: auto; }
+  .theme-editor__setting-hint { margin-left: 0; }
 }
 
 /* Restore-default control must stay readable even under broken packs */

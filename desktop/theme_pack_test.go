@@ -298,7 +298,7 @@ func TestBuiltinCannotDeleteOrOverwrite(t *testing.T) {
 	}
 	staging, err := writeThemeStaging(m, "", nil)
 	if err != nil {
-		// validate allows builtin id in manifest itself; publish must refuse.
+		t.Fatalf("stage builtin theme: %v", err)
 	}
 	if staging != "" {
 		defer os.RemoveAll(staging)

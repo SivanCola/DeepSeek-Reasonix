@@ -1153,11 +1153,14 @@ function SceneImageEditor({
       </div>
       {present ? (
         <div className="theme-editor__scene-controls">
-          <div className="theme-editor__setting-row">
-            <span>{t("settings.themeEditor.safeArea")}</span>
-            <div className="set-seg">
-              {(["left", "center", "right"] as const).map((area) => <button key={area} type="button" className={`set-seg__btn${safeArea === area ? " set-seg__btn--on" : ""}`} onClick={() => onPatch({ safeArea: area })}>{t(`settings.themeEditor.safeArea.${area}` as never)}</button>)}
+          <div className="theme-editor__setting-block">
+            <div className="theme-editor__setting-row">
+              <span>{t("settings.themeEditor.safeArea")}</span>
+              <div className="set-seg" role="radiogroup" aria-label={t("settings.themeEditor.safeArea")}>
+                {(["left", "center", "right"] as const).map((area) => <button key={area} type="button" role="radio" aria-checked={safeArea === area} className={`set-seg__btn${safeArea === area ? " set-seg__btn--on" : ""}`} onClick={() => onPatch({ safeArea: area })}>{t(`settings.themeEditor.safeArea.${area}` as never)}</button>)}
+              </div>
             </div>
+            <p className="theme-editor__setting-hint">{t("settings.themeEditor.safeAreaHint")}</p>
           </div>
           <label className="theme-editor__range"><span>{t("settings.themeEditor.opacity")} <b>{Math.round(opacity * 100)}%</b></span><input type="range" min={0} max={opacityMax} step={0.01} value={opacity} onChange={(e) => onPatch({ opacity: Number(e.target.value) })} /></label>
           <label className="theme-editor__range"><span>{t("settings.themeLibrary.overlayStrength")} <b>{Math.round(overlayStrength * 100)}%</b></span><input type="range" min={0} max={1} step={0.01} value={overlayStrength} onChange={(e) => onPatch({ overlayStrength: Number(e.target.value) })} /></label>

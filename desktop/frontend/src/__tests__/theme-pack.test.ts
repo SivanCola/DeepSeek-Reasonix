@@ -308,6 +308,7 @@ ok((gallerySource.match(/role="menuitem"/g) || []).length === 1 && gallerySource
 ok(gallerySource.includes("defaultTaskBackground") && gallerySource.includes("taskBackgroundDataUrl"), "editor supports an independent workspace image");
 ok(gallerySource.includes("themeTokenKeys()") && gallerySource.includes('type="color"'), "editor exposes semantic theme colors");
 ok(gallerySource.includes('type="range"') && gallerySource.includes("settings.themeEditor.opacity"), "editor exposes scene opacity controls");
+ok(gallerySource.includes('aria-checked={safeArea === area}') && gallerySource.includes("settings.themeEditor.safeAreaHint"), "content-area control exposes radio semantics and guidance");
 ok(gallerySource.includes("beginThemePreview(draft)"), "editor changes are previewed live");
 ok(bridgeSource.includes("GetThemeExperience"), "bridge exposes GetThemeExperience");
 ok(bridgeSource.includes("ActivateBaseStyle"), "bridge exposes ActivateBaseStyle");
@@ -350,6 +351,7 @@ for (const key of [
   "settings.themeGallery.scenePreviewHint",
   "settings.themeGallery.tabAll",
   "settings.themeGallery.sectionFlagship",
+  "settings.themeEditor.safeAreaHint",
 ]) {
   ok(localeEn.includes(`"${key}"`) && localeZh.includes(`"${key}"`) && localeZhTW.includes(`"${key}"`), `gallery key ${key} in all locales`);
 }
@@ -369,6 +371,8 @@ ok(localeZh.includes('"settings.themeGallery.subtitle": "点击主题即可全�
 ok(stylesSource.includes(".theme-gallery__detail-user-actions") && stylesSource.includes("grid-template-columns: repeat(2, minmax(0, 1fr))"), "user theme edit and export actions share a balanced row");
 ok(stylesSource.includes(".theme-gallery__rail-section-head") && stylesSource.includes(".theme-gallery__rail-section-items"), "immersive rail groups have lightweight headings and item stacks");
 ok(stylesSource.includes(".theme-gallery__detail-status"), "active status has dedicated non-button styling");
+ok(stylesSource.includes(".theme-editor__setting-hint"), "content-area guidance has dedicated responsive styling");
+ok(localeZh.includes('"settings.themeEditor.safeArea": "界面内容区域"') && localeZh.includes('"settings.themeEditor.safeAreaHint": "选择文字和卡片主要显示的位置；建议避开图片主体。"'), "Chinese content-area copy explains foreground placement");
 
 // Pack overlay stays at :root — Workbench/Creation element-scoped auto-light
 // selectors must keep winning in their subtree (theme never overrides them).

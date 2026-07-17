@@ -294,10 +294,6 @@ func validateThemePackManifest(m *ThemePackManifest) error {
 	if !themePackIDRe.MatchString(id) {
 		return fmt.Errorf("invalid theme id %q (use lowercase letters, digits, hyphens)", m.ID)
 	}
-	if isBuiltinThemeID(id) {
-		// User packs must not collide with reserved built-in ids on import/save.
-		// Built-in virtual packs are constructed in code, not parsed from user JSON.
-	}
 	m.ID = id
 	name := strings.TrimSpace(m.Name)
 	if name == "" || len(name) > themePackMaxNameLen {
