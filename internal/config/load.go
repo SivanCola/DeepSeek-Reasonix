@@ -799,21 +799,7 @@ func migrateLegacyAgentStepLimitsFile(path string) (bool, error) {
 }
 
 func stripLegacyAgentStepLimitLines(raw string) (string, bool) {
-	lines := strings.Split(raw, "\n")
-	section := ""
-	changed := false
-	out := make([]string, 0, len(lines))
-	for _, line := range lines {
-		if header := tomlSectionHeader(line); header != "" {
-			section = header
-		}
-		if section == "agent" && (isTOMLKeyAssignment(line, "max_steps") || isTOMLKeyAssignment(line, "planner_max_steps")) {
-			changed = true
-			continue
-		}
-		out = append(out, line)
-	}
-	return strings.Join(out, "\n"), changed
+	return stripTOMLKeyLines(raw, "agent", "max_steps", "planner_max_steps")
 }
 
 // MigrateLegacyRedactToolOutputForRoot removes the retired
@@ -876,21 +862,7 @@ func migrateLegacyRedactToolOutputFile(path string) (bool, error) {
 }
 
 func stripLegacyRedactToolOutputLines(raw string) (string, bool) {
-	lines := strings.Split(raw, "\n")
-	section := ""
-	changed := false
-	out := make([]string, 0, len(lines))
-	for _, line := range lines {
-		if header := tomlSectionHeader(line); header != "" {
-			section = header
-		}
-		if section == "secrets" && isTOMLKeyAssignment(line, "redact_tool_output") {
-			changed = true
-			continue
-		}
-		out = append(out, line)
-	}
-	return strings.Join(out, "\n"), changed
+	return stripTOMLKeyLines(raw, "secrets", "redact_tool_output")
 }
 
 // MigrateLegacyMemoryCompilerForRoot removes the retired
@@ -953,21 +925,7 @@ func migrateLegacyMemoryCompilerFile(path string) (bool, error) {
 }
 
 func stripLegacyMemoryCompilerLines(raw string) (string, bool) {
-	lines := strings.Split(raw, "\n")
-	section := ""
-	changed := false
-	out := make([]string, 0, len(lines))
-	for _, line := range lines {
-		if header := tomlSectionHeader(line); header != "" {
-			section = header
-		}
-		if section == "agent" && isTOMLKeyAssignment(line, "memory_compiler") {
-			changed = true
-			continue
-		}
-		out = append(out, line)
-	}
-	return strings.Join(out, "\n"), changed
+	return stripTOMLKeyLines(raw, "agent", "memory_compiler")
 }
 
 func migrateLegacyMCPTiersFile(path string) error {
@@ -987,19 +945,122 @@ func migrateLegacyMCPTiersFile(path string) error {
 }
 
 func stripLegacyMCPTierLines(raw string) (string, bool) {
+	return stripTOMLKeyLines(raw, "plugins", "tier")
+}
+
+// tomlStringState tracks whether a line-oriented scan is currently inside a
+// TOML multiline string, so retired-key strippers never treat prose inside a
+// `"""..."""` or `”'...”'` value (e.g. a config example quoted in a
+// system_prompt) as a section header or key assignment.
+type tomlStringState int
+
+const (
+	tomlOutside tomlStringState = iota
+	tomlInMultilineBasic
+	tomlInMultilineLiteral
+)
+
+// advanceTOMLStringState scans one raw line and returns the multiline-string
+// state after it. Outside strings it honours single-line strings and `#`
+// comments so quote delimiters inside them cannot open a multiline state.
+// The scan is intentionally conservative: on malformed input it prefers
+// staying/returning outside, which makes callers keep lines rather than
+// delete them.
+func advanceTOMLStringState(state tomlStringState, line string) tomlStringState {
+	i := 0
+	for i < len(line) {
+		switch state {
+		case tomlInMultilineBasic:
+			if line[i] == '\\' {
+				i += 2
+				continue
+			}
+			if strings.HasPrefix(line[i:], `"""`) {
+				state = tomlOutside
+				i += 3
+				continue
+			}
+			i++
+		case tomlInMultilineLiteral:
+			if strings.HasPrefix(line[i:], "'''") {
+				state = tomlOutside
+				i += 3
+				continue
+			}
+			i++
+		default: // tomlOutside
+			switch {
+			case line[i] == '#':
+				return state // rest of the line is a comment
+			case strings.HasPrefix(line[i:], `"""`):
+				state = tomlInMultilineBasic
+				i += 3
+			case strings.HasPrefix(line[i:], "'''"):
+				state = tomlInMultilineLiteral
+				i += 3
+			case line[i] == '"': // single-line basic string
+				i++
+				for i < len(line) && line[i] != '"' {
+					if line[i] == '\\' {
+						i++
+					}
+					i++
+				}
+				i++ // closing quote (or line end on malformed input)
+			case line[i] == '\'': // single-line literal string
+				i++
+				for i < len(line) && line[i] != '\'' {
+					i++
+				}
+				i++
+			default:
+				i++
+			}
+		}
+	}
+	return state
+}
+
+// stripTOMLKeyLines removes top-level `key = ...` assignment lines under the
+// named section while leaving every line inside a TOML multiline string
+// untouched. All retired-config-key migrations share it so none of them can
+// corrupt a multiline value (such as a system_prompt quoting a config
+// example). A dropped line is first checked to not itself open a multiline
+// value; if it would, the line is kept — for these retired keys that never
+// happens (their values are single-line), and keeping a stale line is always
+// safer than truncating a string the user wrote.
+func stripTOMLKeyLines(raw, section string, keys ...string) (string, bool) {
 	lines := strings.Split(raw, "\n")
-	section := ""
+	current := ""
+	state := tomlOutside
 	changed := false
 	out := make([]string, 0, len(lines))
 	for _, line := range lines {
-		if header := tomlSectionHeader(line); header != "" {
-			section = header
-		}
-		if section == "plugins" && isTOMLKeyAssignment(line, "tier") {
-			changed = true
+		if state != tomlOutside {
+			// Inside a multiline string: never a section header or key line.
+			out = append(out, line)
+			state = advanceTOMLStringState(state, line)
 			continue
 		}
+		if header := tomlSectionHeader(line); header != "" {
+			current = header
+		}
+		next := advanceTOMLStringState(tomlOutside, line)
+		if current == section && next == tomlOutside {
+			dropped := false
+			for _, key := range keys {
+				if isTOMLKeyAssignment(line, key) {
+					changed = true
+					dropped = true
+					break
+				}
+			}
+			if dropped {
+				continue
+			}
+		}
 		out = append(out, line)
+		state = next
 	}
 	return strings.Join(out, "\n"), changed
 }

@@ -312,44 +312,6 @@ func (m *metricsAggregator) observe(e event.Event) {
 	}
 }
 
-func tokenSizeBucket(n int) string {
-	if n <= 0 {
-		return "t_0"
-	}
-	switch {
-	case n <= 250:
-		return "t_1_250"
-	case n <= 750:
-		return "t_251_750"
-	case n <= 1500:
-		return "t_751_1500"
-	case n <= 3000:
-		return "t_1501_3000"
-	default:
-		return "t_3001_plus"
-	}
-}
-
-func memorySizeBucket(n int) string {
-	if n <= 0 {
-		return "n_0"
-	}
-	switch {
-	case n <= 5:
-		return "n_1_5"
-	case n <= 20:
-		return "n_6_20"
-	case n <= 50:
-		return "n_21_50"
-	case n <= 100:
-		return "n_51_100"
-	case n <= 300:
-		return "n_101_300"
-	default:
-		return "n_301_plus"
-	}
-}
-
 func cacheBucket(hit, miss int) string {
 	pct := float64(hit) / float64(hit+miss) * 100
 	switch {
