@@ -520,16 +520,16 @@ func TestMCPApprovalPolicyDoesNotChangeProviderSchemas(t *testing.T) {
 
 func TestUserAuthorizedMCPDefaultsToDirectApprovalWithoutChangingOverrides(t *testing.T) {
 	spec := Spec{Name: "user-server", ImplicitApproval: true}
-	if got := spec.toolApprovalMode("write"); got != tool.MCPApprovalApprove {
+	if got := spec.ToolApprovalMode("write"); got != tool.MCPApprovalApprove {
 		t.Fatalf("implicit user approval mode = %q, want approve", got)
 	}
 	spec.ToolApprovalModes = map[string]string{"write": "prompt"}
-	if got := spec.toolApprovalMode("write"); got != tool.MCPApprovalPrompt {
+	if got := spec.ToolApprovalMode("write"); got != tool.MCPApprovalPrompt {
 		t.Fatalf("explicit per-tool policy = %q, want prompt", got)
 	}
 	spec.ToolApprovalModes = nil
 	spec.DefaultToolsApprovalMode = "writes"
-	if got := spec.toolApprovalMode("write"); got != tool.MCPApprovalWrites {
+	if got := spec.ToolApprovalMode("write"); got != tool.MCPApprovalWrites {
 		t.Fatalf("explicit server policy = %q, want writes", got)
 	}
 }

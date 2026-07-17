@@ -1662,7 +1662,13 @@ func (s Spec) toolReadOnlyOverride(rawName, visibleName string) bool {
 	return s.ReadOnlyToolNames[rawName] || s.ReadOnlyModelToolNames[toolName(s.Name, visibleName)]
 }
 
-func (s Spec) toolApprovalMode(rawName string) string {
+// ToolApprovalMode resolves the effective approval mode for one raw tool
+// name: an explicit per-tool override wins, an unset server default becomes
+// direct approval for user-authorized (implicit approval) sources, and the
+// normalized server default applies otherwise. Every approval surface,
+// including proxies outside this package, must use this resolution instead of
+// re-deriving the policy from Spec fields.
+func (s Spec) ToolApprovalMode(rawName string) string {
 	if mode := strings.TrimSpace(s.ToolApprovalModes[rawName]); mode != "" {
 		return tool.NormalizeMCPApprovalMode(mode)
 	}
@@ -1999,7 +2005,7 @@ func (t *remoteTool) MCPApprovalMode() string {
 	if t.client == nil {
 		return tool.MCPApprovalAuto
 	}
-	return t.client.spec.toolApprovalMode(t.rawName)
+	return t.client.spec.ToolApprovalMode(t.rawName)
 }
 
 func (t *remoteTool) MCPApprovalReviewer() string {
