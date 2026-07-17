@@ -165,4 +165,3 @@ func themeBackgroundURL(themeID, imageName string) string {
 	}
 	return themeAssetURLPrefix + themeID + "/" + digest + "/" + filepath.Base(imageName)
 }
-
