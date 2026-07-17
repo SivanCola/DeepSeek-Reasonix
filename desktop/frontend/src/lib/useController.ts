@@ -3053,6 +3053,13 @@ export function useController() {
     refreshMeta, pickWorkspace, switchWorkspace, compact, rewind, rewindForTab, setModel, setEffort, setTokenMode,
     fetchMemory, remember, forget, saveDoc,
     switchTab, openProjectTab, openGlobalTab, openTopicSession, ensureBlankTab, activateTopic, ensureBlankSurface, createDeliveryWorktree, closeTab, reorderTabs,
+    // Invalidate in-flight navigation completions (activateTopic's stale
+    // guard) from outside the hook. The App-level navigation queue must call
+    // this at ENQUEUE time: a queued click does not run — and so does not
+    // advance this epoch — until the running request finishes, which would
+    // let the running stale activation pass the guard and prune the state of
+    // the surface the user just clicked.
+    noteNavigationIntent: beginActiveNavigation,
     syncActiveTab: syncActiveTabFromBackend,
   };
 }

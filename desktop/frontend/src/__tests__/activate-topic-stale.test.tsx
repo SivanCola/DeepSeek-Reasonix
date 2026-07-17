@@ -6,10 +6,12 @@
 // last click nor delete the newer surface's cached state (the single-surface
 // prune removes every other tab state, blanking the visible transcript).
 
+import { readFileSync } from "node:fs";
 import { JSDOM } from "jsdom";
 import React, { act } from "react";
 import { createRoot } from "react-dom/client";
 import type { AppBindings } from "../lib/bridge";
+import { enqueueNavigationRequest, type NavigationCoalescingRefs } from "../lib/openTopicCoalescing";
 import { useController } from "../lib/useController";
 import type { BalanceInfo, CheckpointMeta, ContextInfo, EffortInfo, HistoryMessage, JobView, Meta, TabMeta } from "../lib/types";
 
@@ -132,7 +134,8 @@ const tabA = tabMeta("tab-a", { active: true });
 const tabX = tabMeta("tab-x");
 const tabY = tabMeta("tab-y");
 let backendActiveId = "tab-a";
-const activateXGate = deferred<void>();
+// Per-tab holds so any activation can be stalled mid-flight and released.
+const activationHolds = new Map<string, Promise<void>>();
 const tabsById = new Map([tabA, tabX, tabY].map((tab) => [tab.id, tab]));
 
 function currentTabs(): TabMeta[] {
@@ -165,7 +168,8 @@ window.go = {
       HistoryCheckpointTurnsForTab: async () => [],
       ActivateTopic: async (_scope: string, workspaceRoot: string, topicId: string) => {
         const target = Array.from(tabsById.values()).find((tab) => tab.workspaceRoot === workspaceRoot && tab.topicId === topicId) ?? tabA;
-        if (target.id === "tab-x") await activateXGate.promise;
+        const hold = activationHolds.get(target.id);
+        if (hold) await hold;
         backendActiveId = target.id;
         return { ...target, active: true };
       },
@@ -196,6 +200,8 @@ await act(async () => {
 await waitFor("initial active tab", () => controller?.activeTabId === "tab-a");
 
 // Click topic X: the backend call hangs (slow prune / disk).
+const activateXGate = deferred<void>();
+activationHolds.set("tab-x", activateXGate.promise);
 let activateX: Promise<TabMeta> | undefined;
 await act(async () => {
   activateX = controller?.activateTopic("project", tabX.workspaceRoot, tabX.topicId ?? "");
@@ -214,6 +220,7 @@ await waitFor("Y is active with its history", () =>
 // X's stale completion lands after Y applied. Last click must win.
 await act(async () => {
   activateXGate.resolve();
+  activationHolds.delete("tab-x");
   await activateX;
   await flushPromises();
 });
@@ -230,6 +237,70 @@ await act(async () => {
   await flushPromises();
 });
 await waitFor("X activates cleanly on a fresh click", () => controller?.activeTabId === "tab-x");
+
+// --- Through the REAL production navigation queue (#6613 review P1) ---
+//
+// App.enqueueNavigation serializes clicks: a click made while another request
+// runs only becomes a pending queue entry — it does NOT run activateTopic, so
+// the controller epoch does not advance by itself. The App wiring must bump
+// the epoch at ENQUEUE time (noteNavigationIntent), otherwise the running
+// stale activation passes the guard, flips the tab, and prunes cached state.
+type NavInput = { workspaceRoot: string; topicId: string };
+const navRefs: NavigationCoalescingRefs<NavInput> = {
+  seqRef: { current: 0 },
+  runningRef: { current: false },
+  pendingRef: { current: null },
+};
+const enqueueNav = (workspaceRoot: string, topicId: string): Promise<void> => {
+  controller?.noteNavigationIntent(); // the App.tsx wiring under test
+  return enqueueNavigationRequest(navRefs, { workspaceRoot, topicId }, async (request) => {
+    await controller?.activateTopic("project", request.workspaceRoot, request.topicId);
+  });
+};
+
+const gateY = deferred<void>();
+activationHolds.set("tab-y", gateY.promise);
+const gateA = deferred<void>();
+activationHolds.set("tab-a", gateA.promise);
+
+let queuedFirst: Promise<void> | undefined;
+let queuedSecond: Promise<void> | undefined;
+await act(async () => {
+  queuedFirst = enqueueNav(tabY.workspaceRoot, tabY.topicId ?? ""); // runs, held mid-flight
+  await flushPromises();
+});
+await act(async () => {
+  queuedSecond = enqueueNav(tabA.workspaceRoot, tabA.topicId ?? ""); // queued, does not run yet
+  await flushPromises();
+});
+
+// The first (now stale) activation resolves while the second is still queued.
+await act(async () => {
+  gateY.resolve();
+  activationHolds.delete("tab-y");
+  await queuedFirst;
+  await flushPromises();
+});
+eq(controller?.activeTabId, "tab-x", "queued click invalidates the running activation (no flip to tab-y)");
+ok(controller?.state.items.some((item) => item.kind === "user" && item.text === "history X") === true,
+  "queued click keeps the visible tab's cached state intact");
+
+// The queued request then runs and lands on the user's last click.
+await act(async () => {
+  gateA.resolve();
+  activationHolds.delete("tab-a");
+  await queuedSecond;
+  await flushPromises();
+});
+await waitFor("queued last click applies once it runs", () => controller?.activeTabId === "tab-a");
+
+// Wiring lock: App.enqueueNavigation must invalidate in-flight activations at
+// enqueue time — the queue-based scenario above only proves the mechanism.
+const appSource = readFileSync(new URL("../App.tsx", import.meta.url), "utf8");
+ok(
+  /const enqueueNavigation = useCallback\(\(input: DesktopNavigationInput\)[\s\S]{0,700}?noteNavigationIntent\(\);[\s\S]{0,700}?enqueueNavigationRequest\(/.test(appSource),
+  "App.enqueueNavigation calls noteNavigationIntent() before enqueueNavigationRequest",
+);
 
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);

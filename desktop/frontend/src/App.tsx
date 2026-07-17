@@ -1042,6 +1042,7 @@ export default function App() {
     reorderTabs,
     openTopicSession,
     activateTopic,
+    noteNavigationIntent,
     syncActiveTab,
     ensureBlankTab,
     ensureBlankSurface,
@@ -2952,11 +2953,20 @@ export default function App() {
     }
   }, [activateTopic, createDeliveryWorktree, ensureBlankSurface, ensureBlankTab, openChannelSession, openGlobalTab, openProjectTab, openTopicSession, refreshHistoryView, resumeSession, seedActiveTabMeta, showToast, singleSurfaceLayout, t]);
 
-  const enqueueNavigation = useCallback((input: DesktopNavigationInput): Promise<void> => enqueueNavigationRequest(
-    { seqRef: navigationSeqRef, runningRef: navigationRunningRef, pendingRef: navigationPendingRef },
-    input,
-    runNavigationRequest,
-  ), [runNavigationRequest]);
+  const enqueueNavigation = useCallback((input: DesktopNavigationInput): Promise<void> => {
+    // Invalidate any in-flight activation's stale apply at ENQUEUE time. The
+    // queue serializes requests, so a click made while another request runs
+    // only advances the controller's navigation epoch when it eventually
+    // starts — too late: the running request's ActivateTopic would resolve,
+    // pass the controller-local guard, flip the visible tab, and prune the
+    // newer surface's cached state (#6613 review).
+    noteNavigationIntent();
+    return enqueueNavigationRequest(
+      { seqRef: navigationSeqRef, runningRef: navigationRunningRef, pendingRef: navigationPendingRef },
+      input,
+      runNavigationRequest,
+    );
+  }, [noteNavigationIntent, runNavigationRequest]);
 
   const openBlankSession = useCallback((scope: string, workspaceRoot: string): Promise<void> =>
     enqueueNavigation({ kind: "blank", scope, workspaceRoot: scope === "project" ? workspaceRoot : "" }),
