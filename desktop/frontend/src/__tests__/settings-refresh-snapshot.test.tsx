@@ -136,7 +136,6 @@ function baseSettings(displayMode: "standard" | "compact" = "standard"): Setting
     checkUpdates: true,
     telemetry: true,
     metrics: true,
-    memoryCompilerEnabled: true,
     configPath: "/tmp/reasonix/config.toml",
     providerKinds: [],
     autoApproveTools: false,

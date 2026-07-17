@@ -205,8 +205,6 @@ type Input interface {
 type Settings interface {
 	SetResponseLanguage(lang string)
 	SetReasoningLanguage(lang string)
-	SetMemoryCompilerEnabled(enabled bool)
-	SetMemoryCompilerVerbosity(verbosity string)
 	SetDisplayRecorder(fn func(content, display string))
 }
 

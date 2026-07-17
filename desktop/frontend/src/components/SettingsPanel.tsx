@@ -1282,7 +1282,6 @@ function normalizeSettingsView(view: SettingsView | null | undefined): SettingsV
     statusBarStyle: normalizeStatusBarStyle(view.statusBarStyle),
     statusBarItems: normalizeStatusBarItems(view.statusBarItems),
     checkUpdates: view.checkUpdates !== false,
-    memoryCompilerEnabled: view.memoryCompilerEnabled !== false,
   };
 }
 
@@ -1430,7 +1429,6 @@ function GeneralSection({ s, busy, apply, agentRunning }: SectionProps & { agent
   useEffect(() => () => mouseDragCleanupRef.current?.(), []);
   const autoPlan = normalizeAutoPlan(s.autoPlan);
   const defaultToolApprovalMode = normalizeToolApprovalMode(s.defaultToolApprovalMode);
-  const memoryCompilerEnabled = s.memoryCompilerEnabled !== false;
   const languagePref = normalizeLangPref(s.desktopLanguage);
   const desktopLayoutStyle = normalizeDesktopLayoutStyle(s.desktopLayoutStyle);
   const [genMusicPreset, setGenMusicPreset] = useState<GenerativePreset>(getGenerativePreset());
@@ -1688,13 +1686,6 @@ function GeneralSection({ s, busy, apply, agentRunning }: SectionProps & { agent
             </button>
           ))}
         </div>
-      </SettingsField>
-      <SettingsField label={t("settings.memoryCompiler")} hint={t("settings.memoryCompilerHint")}>
-        <ToggleSegment
-          value={memoryCompilerEnabled}
-          disabled={busy}
-          onChange={(enabled) => void apply(() => app.SetMemoryCompilerEnabled(enabled))}
-        />
       </SettingsField>
       <SettingsField label={t("settings.sound")} hint={t("settings.soundHint")} stacked>
         <div className={`settings-sound-editor${soundExpanded ? " settings-sound-editor--expanded" : ""}`}>

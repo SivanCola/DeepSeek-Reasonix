@@ -137,29 +137,6 @@ described above. The variables below are process-level advanced switches; set
 them before launching Reasonix. Project `.env` files are not a runtime source for
 Reasonix control variables.
 
-`REASONIX_MEMORY_COMPILER_LLM_CLASSIFICATION=true` enables the optional LLM
-task/chat classifier for Memory v5. By default it is disabled, and Reasonix uses
-the local heuristic classifier without extra provider calls. When enabled, cache
-misses may send a small classifier request through the configured provider before
-deciding whether a user input is task-like or conversational; this can add a
-little latency, provider usage, and token cost. The classifier result is cached
-per session for a short time. Only the exact trimmed value `true` enables it;
-unset, `false`, `1`, and `TRUE` keep the default heuristic path.
-
-```bash
-REASONIX_MEMORY_COMPILER_LLM_CLASSIFICATION=true reasonix
-```
-
-For development runs, prefix the command that starts the process, for example:
-
-```bash
-REASONIX_MEMORY_COMPILER_LLM_CLASSIFICATION=true wails dev -forcebuild
-```
-
-Packaged desktop apps launched from the OS app launcher may not inherit variables
-from your interactive terminal; start the app from an environment-managed launcher
-when you intentionally want this advanced switch enabled.
-
 ## Serve web frontend
 
 `reasonix serve` starts the same local engine behind a browser UI. Use it when
@@ -691,7 +668,7 @@ convenient.
 
 In an interactive `reasonix` session, built-in commands (`/compact`, `/new`, `/clear`, `/rewind`,
 `/tree`, `/branch`, `/switch`, `/todo`, `/model`, `/work-mode`, `/mcp`, `/skills`, `/hooks`,
-`/memory`, `/memory-v5`, `/goal`, `/output-style`, `/sandbox`, `/language`,
+`/memory`, `/goal`, `/output-style`, `/sandbox`, `/language`,
 `/auto-plan`, `/reasoning-language`, `/help`) run
 locally — `/help` lists them all. Built-in **skills** such as `/init`,
 `/explore`, `/test`, and `/reasonix-guide` also appear in the slash menu and via
@@ -756,47 +733,14 @@ Guardian review cannot answer for the user; non-interactive runs refuse these
 tools instead of auto-approving them.
 Retrieval keeps the top BM25 result while trimming weak common-word matches, and
 0-result responses suggest narrower, more distinctive follow-up searches.
-Memory v5 is enabled by default across the CLI/TUI, `reasonix serve`, and the
-desktop app because they all share the same local controller. It records local,
-project-scoped execution traces and compiler state under Reasonix home, then
-compiles the next user turn into a compact execution contract only when prior
-outcomes produce actionable constraints. Early turns may only write traces and
-inject nothing. The default `verbosity = "observe"` keeps this as local learning
-and content-free metrics only; it does not send `<memory-compiler-execution>` to
-the provider-visible user turn. Opt into `verbosity = "compact"` (or the legacy
-`on` command) when you explicitly want compact execution-contract injection,
-including selected compact memory references in the provider-visible user turn.
-Memory v5 never bypasses memory approvals and never mutates the cache-stable
-system prompt, provider prefix, or tool schemas.
-
-Toggle future turns with `/memory-v5 off|observe|compact|on|status` inside an
-interactive session, or with `reasonix config memory-v5 off|observe|compact|on|status`
-from a shell/script.
-Desktop users can also use Settings → General → Memory v5. Settings → Updates →
-Share aggregate quality metrics controls the optional aggregate upload. When
-enabled, that upload may include only anonymous
-count/size buckets such as injection on/off, compiled-token bucket, IR-overhead
-bucket, memory-reference count, constraint/risk/step counts, and memory-graph
-size buckets. It never includes memory text, prompts, tool outputs, file paths,
-IDs, keys, base URLs, or file contents.
-
-CLI/TUI and `reasonix serve` use the same user/global config. Project
-`reasonix.toml` files cannot override this user/global setting. The CLI command
-updates this underlying config; advanced users may also edit it manually under
-Reasonix home:
-
-```toml
-[agent]
-memory_compiler = { enabled = true, verbosity = "observe" }
-```
-
-The CLI can use Memory v5 for local turns, but it does not run the desktop
-aggregate metrics upload pipeline. When `reasonix run --metrics <path>` is used,
-the JSON also includes content-free `memory_compiler_*` summary fields and a
-`memory_compiler_turn_details` array with per-turn injection state, compiled token
-and IR-overhead estimates, referenced-memory/constraint/risk/step counts, and
-current memory-graph counts.
-For implementation details, see
+The Memory v5 execution compiler has been removed. Earlier releases (up to
+v1.17.x) could compile a user turn into a `<memory-compiler-execution>` contract
+and store local compiler state; current releases never do either, the
+`[agent].memory_compiler` config key is retired (a one-time migration removes it
+from existing configs), and transcripts recorded by those older releases still
+display normally — the original prompt is recovered from the legacy contract
+block for previews and history.
+For implementation details of session memory retrieval, see
 [`SESSION_MEMORY_RETRIEVAL.md`](SESSION_MEMORY_RETRIEVAL.md).
 
 ```markdown
@@ -1011,8 +955,7 @@ inputs and falls back to the heuristic if classification fails. Use
 only; `agent.auto_plan` in a project `reasonix.toml` is ignored. The visible
 reasoning language uses a similar shape: `/reasoning-language auto|zh|en` in the
 session, or `reasonix config reasoning-language auto|zh|en` in a shell/script.
-Memory v5 uses `/memory-v5 off|observe|compact|on|status` or
-`reasonix config memory-v5 off|observe|compact|on|status` and is user-level only. Pass `--local`
+Pass `--local`
 to the reasoning-language shell command only when you intentionally want a
 project-local override.
 

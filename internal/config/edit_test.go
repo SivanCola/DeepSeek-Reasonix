@@ -398,47 +398,6 @@ func TestLoadForEditMissingDesktopApprovalDefaultsAuto(t *testing.T) {
 	}
 }
 
-func TestSetMemoryCompilerEnabled(t *testing.T) {
-	c := Default()
-	if err := c.SetMemoryCompilerEnabled(false); err != nil {
-		t.Fatalf("SetMemoryCompilerEnabled(false): %v", err)
-	}
-	if c.MemoryCompilerEnabled() {
-		t.Fatal("memory compiler explicit false = true, want false")
-	}
-	if err := c.SetMemoryCompilerEnabled(true); err != nil {
-		t.Fatalf("SetMemoryCompilerEnabled(true): %v", err)
-	}
-	if !c.MemoryCompilerEnabled() {
-		t.Fatal("memory compiler explicit true = false, want true")
-	}
-}
-
-func TestSetMemoryCompilerVerbosity(t *testing.T) {
-	c := Default()
-	if err := c.SetMemoryCompilerVerbosity("compact"); err != nil {
-		t.Fatalf("SetMemoryCompilerVerbosity(compact): %v", err)
-	}
-	if got := c.MemoryCompilerVerbosity(); got != MemoryCompilerVerbosityCompact {
-		t.Fatalf("memory compiler verbosity = %q, want compact", got)
-	}
-	if err := c.SetMemoryCompilerVerbosity("on"); err != nil {
-		t.Fatalf("SetMemoryCompilerVerbosity(on): %v", err)
-	}
-	if got := c.MemoryCompilerVerbosity(); got != MemoryCompilerVerbosityCompact {
-		t.Fatalf("memory compiler verbosity after on = %q, want compact", got)
-	}
-	if err := c.SetMemoryCompilerVerbosity("observe"); err != nil {
-		t.Fatalf("SetMemoryCompilerVerbosity(observe): %v", err)
-	}
-	if got := c.MemoryCompilerVerbosity(); got != MemoryCompilerVerbosityObserve {
-		t.Fatalf("memory compiler verbosity = %q, want observe", got)
-	}
-	if err := c.SetMemoryCompilerVerbosity("verbose"); err == nil {
-		t.Fatal("expected error for invalid memory compiler verbosity")
-	}
-}
-
 func TestSetUIShortcutLayout(t *testing.T) {
 	c := Default()
 	if got := c.UIShortcutLayout(); got != "classic" {

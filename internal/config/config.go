@@ -1083,53 +1083,6 @@ type AgentConfig struct {
 	// PlanModeReadOnlyCommands is retained for old config/session round trips. Main
 	// Plan bash calls now use the ordinary Permissions classifier and Sandbox.
 	PlanModeReadOnlyCommands []string `toml:"plan_mode_read_only_commands"`
-	// MemoryCompiler controls the v5 execution-memory compiler. Missing configs
-	// default to enabled so users get the self-improving planner unless they opt
-	// out explicitly.
-	MemoryCompiler MemoryCompilerConfig `toml:"memory_compiler"`
-}
-
-// MemoryCompilerConfig controls the v5 execution-memory compiler.
-type MemoryCompilerConfig struct {
-	Enabled   *bool  `toml:"enabled"`
-	Verbosity string `toml:"verbosity"`
-}
-
-const (
-	MemoryCompilerVerbosityObserve = "observe"
-	MemoryCompilerVerbosityCompact = "compact"
-)
-
-// MemoryCompilerEnabled reports whether the v5 execution-memory compiler should
-// participate in future turns. Missing config defaults to true.
-func (c *Config) MemoryCompilerEnabled() bool {
-	if c == nil || c.Agent.MemoryCompiler.Enabled == nil {
-		return true
-	}
-	return *c.Agent.MemoryCompiler.Enabled
-}
-
-// MemoryCompilerVerbosity reports how much Memory v5 state should be injected
-// into model-facing turns. The default observes and learns without prompt
-// injection, so Memory v5 IR is not provider-visible unless opted in.
-func (c *Config) MemoryCompilerVerbosity() string {
-	if c == nil {
-		return MemoryCompilerVerbosityObserve
-	}
-	return NormalizeMemoryCompilerVerbosity(c.Agent.MemoryCompiler.Verbosity)
-}
-
-// NormalizeMemoryCompilerVerbosity accepts current and legacy spellings for the
-// Memory v5 injection mode.
-func NormalizeMemoryCompilerVerbosity(v string) string {
-	switch strings.ToLower(strings.TrimSpace(v)) {
-	case "", "observe", "observed", "silent", "minimal", "none":
-		return MemoryCompilerVerbosityObserve
-	case "compact", "inject", "injected", "contract", "on":
-		return MemoryCompilerVerbosityCompact
-	default:
-		return MemoryCompilerVerbosityObserve
-	}
 }
 
 // ProviderEntry declares a model provider instance. ContextWindow is the model's

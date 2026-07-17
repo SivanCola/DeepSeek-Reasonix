@@ -243,7 +243,6 @@ type Messages struct {
 	CmdMouse            string // /mouse
 	CmdAutoPlan         string // /auto-plan
 	CmdReasonLang       string // /reasoning-language
-	CmdMemoryV5         string // /memory-v5
 	CmdHelp             string // /help
 	CmdTodo             string // /todo
 	CmdQuit             string // /quit (also accepts /exit as hidden alias)

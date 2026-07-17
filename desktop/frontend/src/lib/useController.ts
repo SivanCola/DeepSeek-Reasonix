@@ -750,7 +750,7 @@ function applyEvent(s: State, e: WireEvent): State {
     if (e.kind === "turn_done") return { ...s, discardTurn: false, running: false, turnActive: false, pendingPrompt: false, cancelRequested: false, cancellable: false, currentAssistant: undefined, live: undefined };
     return s;
   }
-  if (e.kind === "memory_compiler_stats" || e.kind === "mcp_surface_ready") {
+  if (e.kind === "mcp_surface_ready") {
     // Background-only events must not confirm an optimistic user bubble.
     return s;
   }

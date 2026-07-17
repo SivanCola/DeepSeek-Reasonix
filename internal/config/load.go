@@ -71,7 +71,6 @@ func loadForRoot(root string, migrateOnDisk bool) (*Config, error) {
 		}
 		userDefaultModelExplicit = tomlFileDefinesKey(uc, "default_model")
 	}
-	globalMemoryCompiler := cfg.Agent.MemoryCompiler
 	userDefaultModel := cfg.DefaultModel
 	globalSecrets := cfg.Secrets
 
@@ -79,7 +78,6 @@ func loadForRoot(root string, migrateOnDisk bool) (*Config, error) {
 	if err := mergeTOML(cfg, projectTOML); err != nil {
 		return nil, err
 	}
-	cfg.Agent.MemoryCompiler = globalMemoryCompiler
 	// Secret protection is a user-global security control: a cloned repo's
 	// reasonix.toml must not be able to flip on the workflow-breaking env/path
 	// protections.
@@ -887,6 +885,83 @@ func stripLegacyRedactToolOutputLines(raw string) (string, bool) {
 			section = header
 		}
 		if section == "secrets" && isTOMLKeyAssignment(line, "redact_tool_output") {
+			changed = true
+			continue
+		}
+		out = append(out, line)
+	}
+	return strings.Join(out, "\n"), changed
+}
+
+// MigrateLegacyMemoryCompilerForRoot removes the retired
+// [agent].memory_compiler setting from the user and project configs chosen for
+// root. The Memory v5 execution compiler was removed; stripping the key avoids
+// leaving values on disk that falsely suggest compiler behavior (especially a
+// stale verbosity = "compact") is still active.
+func MigrateLegacyMemoryCompilerForRoot(root string) (bool, error) {
+	root = resolveRoot(root)
+	paths := make([]string, 0, 2)
+	if userPath := userConfigLoadPath(); userPath != "" {
+		paths = append(paths, userPath)
+	}
+	projectPath := "reasonix.toml"
+	if root != "." {
+		projectPath = filepath.Join(root, "reasonix.toml")
+	}
+	paths = append(paths, projectPath)
+
+	changedAny := false
+	seen := make(map[string]struct{}, len(paths))
+	for _, path := range paths {
+		clean := filepath.Clean(path)
+		if _, ok := seen[clean]; ok {
+			continue
+		}
+		seen[clean] = struct{}{}
+		changed, err := migrateLegacyMemoryCompilerFile(path)
+		if err != nil {
+			return changedAny, fmt.Errorf("migrate deprecated memory_compiler in %s: %w", path, err)
+		}
+		changedAny = changedAny || changed
+	}
+	return changedAny, nil
+}
+
+func migrateLegacyMemoryCompilerFile(path string) (bool, error) {
+	retiredConfigKeyMigrationMu.Lock()
+	defer retiredConfigKeyMigrationMu.Unlock()
+
+	info, err := os.Stat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	raw, err := fileencoding.ReadFileUTF8(path)
+	if err != nil {
+		return false, err
+	}
+	next, changed := stripLegacyMemoryCompilerLines(string(raw))
+	if !changed {
+		return false, nil
+	}
+	if err := fileutil.AtomicWriteFile(path, []byte(next), info.Mode().Perm()); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func stripLegacyMemoryCompilerLines(raw string) (string, bool) {
+	lines := strings.Split(raw, "\n")
+	section := ""
+	changed := false
+	out := make([]string, 0, len(lines))
+	for _, line := range lines {
+		if header := tomlSectionHeader(line); header != "" {
+			section = header
+		}
+		if section == "agent" && isTOMLKeyAssignment(line, "memory_compiler") {
 			changed = true
 			continue
 		}

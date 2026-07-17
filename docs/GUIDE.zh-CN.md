@@ -125,25 +125,6 @@ bash allowlist 或信任提示。Plan 与常规模式使用相同的 Permissions
 多数日常设置应写在 `config.toml` 或前文提到的 Reasonix 全局 `.env` 中。下面这些变量是进程级高级开关；
 需要在启动 Reasonix 之前设置。项目 `.env` 不是 Reasonix 控制变量的运行时来源。
 
-`REASONIX_MEMORY_COMPILER_LLM_CLASSIFICATION=true` 会为 Memory v5 启用可选的 LLM 任务/聊天分类器。
-默认关闭，此时 Reasonix 使用本地 heuristic classifier，不会产生额外 provider 调用。开启后，分类缓存未命中时，
-Reasonix 可能先通过已配置 provider 发送一个很小的分类请求，再决定用户输入是任务还是普通对话；这会增加少量延迟、
-provider 用量和 token 成本。分类结果会在单个 session 内短时间缓存。只有去掉首尾空白后精确等于 `true`
-才会启用；未设置、`false`、`1`、`TRUE` 都会保持默认 heuristic 路径。
-
-```bash
-REASONIX_MEMORY_COMPILER_LLM_CLASSIFICATION=true reasonix
-```
-
-开发运行时，把变量放在启动进程的命令前，例如：
-
-```bash
-REASONIX_MEMORY_COMPILER_LLM_CLASSIFICATION=true wails dev -forcebuild
-```
-
-从系统图形界面直接启动的打包桌面端通常不会继承交互式终端里的环境变量；如果确实要开启这个高级开关，
-请从受环境变量管理的启动方式打开应用。
-
 ## Serve Web 前端
 
 `reasonix serve` 会用同一个本地 Reasonix 引擎启动浏览器 UI。适合不安装桌面端但想用可视化界面、
@@ -562,7 +543,7 @@ headers = { Authorization = "Bearer ${STRIPE_KEY}" }
 
 ## 斜杠命令
 
-交互式 `reasonix` 会话里，内置命令（`/compact`、`/new`、`/clear`、`/rewind`、`/tree`、`/branch`、`/switch`、`/todo`、`/model`、`/work-mode`、`/mcp`、`/skills`、`/hooks`、`/memory`、`/memory-v5`、`/goal`、`/output-style`、`/sandbox`、`/language`、`/auto-plan`、`/reasoning-language`、`/help`）在本地执行——`/help` 可列出全部。
+交互式 `reasonix` 会话里，内置命令（`/compact`、`/new`、`/clear`、`/rewind`、`/tree`、`/branch`、`/switch`、`/todo`、`/model`、`/work-mode`、`/mcp`、`/skills`、`/hooks`、`/memory`、`/goal`、`/output-style`、`/sandbox`、`/language`、`/auto-plan`、`/reasoning-language`、`/help`）在本地执行——`/help` 可列出全部。
 内置 **Skill**（如 `/init`、`/explore`、`/test`、`/reasonix-guide`）也会出现在斜杠菜单，
 并可通过 `run_skill` 调用（正文按需加载；只有索引行进入缓存稳定前缀）。配置或能力排障时
 用 `/reasonix-guide`，它会引导运行 `reasonix doctor capabilities`（见
@@ -610,36 +591,11 @@ compaction archive 和已保存事实；这些动态内容不会被塞进稳定�
 agent 发起的 `remember` 和 `forget` 每次都会要求新的人工确认，并在执行前展示将保存或归档的记忆摘要；
 Guardian 审查不能代替用户批准，非交互运行会拒绝这类工具而不是自动批准。
 0 结果会提示 agent 改用更少、更有区分度的词继续查。
-Memory v5 在 CLI/TUI、`reasonix serve` 和桌面端默认开启，因为这些入口共用同一套本地
-controller。它会把本地、按项目隔离的执行轨迹和编译器状态写在 Reasonix home 下，并且只有
-历史结果产生可行动约束时，才把下一轮用户输入编译成精简 execution contract。早期轮次可能
-只写入轨迹而不注入任何内容。默认的 `verbosity = "observe"` 只做本地学习和内容无关指标，
-不会把 `<memory-compiler-execution>` 发送到 provider 可见的用户轮次；只有显式切到
-`verbosity = "compact"`（或旧的 `on` 命令别名）时才恢复精简 execution contract 注入，
-并把选中的精简 memory reference 放进 provider 可见的用户轮次。Memory v5 不会绕过
-memory 审批，也不会修改 cache-stable system prompt、Provider 前缀或工具 schema。
-
-交互式会话里可用 `/memory-v5 off|observe|compact|on|status` 控制后续轮次，也可在 shell/脚本里用
-`reasonix config memory-v5 off|observe|compact|on|status`。桌面端还可以在设置 → 通用 → Memory v5 中控制。
-设置 → 更新 → 共享聚合质量指标控制可选的聚合上报；开启后只会上报匿名计数/大小桶，例如是否
-注入、编译后 token 大小桶、IR overhead 大小桶、memory reference 数量、constraint/risk/step
-数量，以及记忆图规模桶。它不会包含记忆正文、提示词、工具输出、文件路径、ID、密钥、base URL
-或文件内容。
-
-CLI/TUI 和 `reasonix serve` 使用同一个 user/global 配置。项目内的 `reasonix.toml` 不能覆盖
-这个 user/global 设置。CLI 命令会更新底层配置；高级用户也可以手动编辑 Reasonix home 下的
-用户配置：
-
-```toml
-[agent]
-memory_compiler = { enabled = true, verbosity = "observe" }
-```
-
-CLI 可以在本地轮次使用 Memory v5，但不会运行桌面端的聚合指标上传管线。使用
-`reasonix run --metrics <path>` 时，JSON 还会输出内容无关的 `memory_compiler_*` 汇总字段，
-以及 `memory_compiler_turn_details` 逐轮明细数组，包含是否注入、编译后 token 和 IR overhead
-估算、引用记忆/constraint/risk/step 数量，以及当前记忆图计数。
-技术实现细节见 [`SESSION_MEMORY_RETRIEVAL.md`](SESSION_MEMORY_RETRIEVAL.md)。
+Memory v5 执行编译器已经移除。早期版本（至 v1.17.x）可能把用户轮次编译成
+`<memory-compiler-execution>` contract 并写入本地编译器状态；当前版本不再有这两种行为，
+`[agent].memory_compiler` 配置键已退役（一次性迁移会从既有配置中清除），那些旧版本录制的
+会话转写仍能正常显示——预览和历史会从 legacy contract 块中恢复原始提示词。
+会话记忆检索的技术实现细节见 [`SESSION_MEMORY_RETRIEVAL.md`](SESSION_MEMORY_RETRIEVAL.md)。
 
 ```markdown
 ---
@@ -793,8 +749,7 @@ system contract 和工具 Schema 在后续轮次保持稳定；轻量模式下�
 `reasonix config auto-plan off|on`。Auto-plan 只认用户级设置；项目
 `reasonix.toml` 里的 `agent.auto_plan` 会被忽略。可见思考语言也采用类似形态：
 会话里用 `/reasoning-language auto|zh|en`，shell/脚本里用
-`reasonix config reasoning-language auto|zh|en`。Memory v5 使用 `/memory-v5 off|observe|compact|on|status`
-或 `reasonix config memory-v5 off|observe|compact|on|status`，并且只认用户级设置。只有明确想为
+`reasonix config reasoning-language auto|zh|en`。只有明确想为
 reasoning-language 写项目级覆盖时，才给 shell 命令加 `--local`。
 
 桌面端“协作方式”菜单里的计划模式、目标模式和“轻量 / 均衡 / 交付优先”三档运行模式的使用方法与注意事项，

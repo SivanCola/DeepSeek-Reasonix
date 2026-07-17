@@ -39,7 +39,6 @@ import (
 	"reasonix/internal/mcpcatalog"
 	"reasonix/internal/mcptrust"
 	"reasonix/internal/memory"
-	"reasonix/internal/memorycompiler"
 	"reasonix/internal/migration"
 	"reasonix/internal/netclient"
 	"reasonix/internal/outputstyle"
@@ -180,10 +179,13 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	var stepLimitMigErr error
 	var redactToolOutputMigrated bool
 	var redactToolOutputMigErr error
+	var memoryCompilerMigrated bool
+	var memoryCompilerMigErr error
 	if !config.SafeModeRequested() {
 		migrated, migErr = config.MigrateLegacyIfNeededForRoot(root)
 		stepLimitsMigrated, stepLimitMigErr = config.MigrateLegacyAgentStepLimitsForRoot(root)
 		redactToolOutputMigrated, redactToolOutputMigErr = config.MigrateLegacyRedactToolOutputForRoot(root)
+		memoryCompilerMigrated, memoryCompilerMigErr = config.MigrateLegacyMemoryCompilerForRoot(root)
 	}
 	cfg, err := config.LoadForRoot(root)
 	if err != nil {
@@ -266,6 +268,17 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 			level = event.LevelWarn
 			text = "Deprecated redact_tool_output setting was ignored."
 			detail += " The old key could not be removed: " + redactToolOutputMigErr.Error()
+		}
+		sink.Emit(event.Event{Kind: event.Notice, Level: level, Text: text, Detail: detail})
+	}
+	if memoryCompilerMigrated || memoryCompilerMigErr != nil {
+		level := event.LevelInfo
+		text := "Deprecated memory_compiler setting was removed."
+		detail := "The Memory v5 execution compiler has been removed from Reasonix: [agent].memory_compiler no longer has any effect, user turns are never replaced by compiled execution contracts, and no compiler state is written. Old transcripts containing compiled turns still display normally."
+		if memoryCompilerMigErr != nil {
+			level = event.LevelWarn
+			text = "Deprecated memory_compiler setting was ignored."
+			detail += " The old key could not be removed: " + memoryCompilerMigErr.Error()
 		}
 		sink.Emit(event.Event{Kind: event.Notice, Level: level, Text: text, Detail: detail})
 	}
@@ -1372,41 +1385,32 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	})
 
 	execSess := agent.NewSession(sysPrompt)
-	var memCompiler *memorycompiler.Runtime
-	// Safe Mode is a recovery boundary: Memory v5 learning state stays untouched,
-	// matching the memory/session gates above.
-	if cfg.MemoryCompilerEnabled() && !cfg.SafeMode() {
-		memCompiler = memorycompiler.New(config.MemoryCompilerDir(root))
-	}
 	executor := agent.New(execProv, reg, execSess, agent.Options{
-		MaxSteps:                           maxSteps,
-		MaxStepsKey:                        opts.MaxStepsKey,
-		Temperature:                        cfg.Agent.Temperature,
-		Pricing:                            entry.Price,
-		Gate:                               headlessGate,
-		Hooks:                              hookRunner,
-		Jobs:                               jm,
-		ProjectChecks:                      projectChecks,
-		DeliveryProfile:                    tokenDelivery,
-		WorkspaceLease:                     workspaceLease,
-		CapabilityLedger:                   capLedger,
-		CapabilityAudit:                    capAudit,
-		ContextWindow:                      entry.ContextWindow,
-		SoftCompactRatio:                   cfg.Agent.SoftCompactRatio,
-		ToolResultSnipRatio:                cfg.Agent.ToolResultSnipRatio,
-		CompactRatio:                       cfg.Agent.CompactRatio,
-		CompactForceRatio:                  cfg.Agent.CompactForceRatio,
-		RecentKeep:                         cfg.Agent.RecentKeep,
-		ArchiveDir:                         config.ArchiveDir(),
-		KeepPolicy:                         keepPolicy,
-		ReasoningLanguage:                  cfg.ReasoningLanguage(),
-		PlanModeAllowedTools:               cfg.Agent.PlanModeAllowedTools,
-		PlanModeReadOnlyCommands:           cfg.Agent.PlanModeReadOnlyCommands,
-		SubagentDepth:                      0,
-		MaxSubagentDepth:                   maxSubagentDepth,
-		MemoryCompiler:                     memCompiler,
-		MemoryCompilerVerbosity:            cfg.MemoryCompilerVerbosity(),
-		UseMemoryCompilerLLMClassification: strings.TrimSpace(os.Getenv("REASONIX_MEMORY_COMPILER_LLM_CLASSIFICATION")) == "true",
+		MaxSteps:                 maxSteps,
+		MaxStepsKey:              opts.MaxStepsKey,
+		Temperature:              cfg.Agent.Temperature,
+		Pricing:                  entry.Price,
+		Gate:                     headlessGate,
+		Hooks:                    hookRunner,
+		Jobs:                     jm,
+		ProjectChecks:            projectChecks,
+		DeliveryProfile:          tokenDelivery,
+		WorkspaceLease:           workspaceLease,
+		CapabilityLedger:         capLedger,
+		CapabilityAudit:          capAudit,
+		ContextWindow:            entry.ContextWindow,
+		SoftCompactRatio:         cfg.Agent.SoftCompactRatio,
+		ToolResultSnipRatio:      cfg.Agent.ToolResultSnipRatio,
+		CompactRatio:             cfg.Agent.CompactRatio,
+		CompactForceRatio:        cfg.Agent.CompactForceRatio,
+		RecentKeep:               cfg.Agent.RecentKeep,
+		ArchiveDir:               config.ArchiveDir(),
+		KeepPolicy:               keepPolicy,
+		ReasoningLanguage:        cfg.ReasoningLanguage(),
+		PlanModeAllowedTools:     cfg.Agent.PlanModeAllowedTools,
+		PlanModeReadOnlyCommands: cfg.Agent.PlanModeReadOnlyCommands,
+		SubagentDepth:            0,
+		MaxSubagentDepth:         maxSubagentDepth,
 	}, sink)
 
 	var runner agent.Runner = executor
