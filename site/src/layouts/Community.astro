@@ -24,7 +24,7 @@ const canonical = new URL(Astro.url.pathname, Astro.site).href;
 <body data-lang="en">
   <header class="nav">
     <div class="nav-inner">
-      <a class="brand" href="/community/"><span class="mark">R</span>Reasonix<span class="ctag"><span class="l-en">Community</span><span class="l-zh">社区</span></span></a>
+      <a class="brand" href="/community/" aria-label="Reasonix Community"><span class="mark" aria-hidden="true">R</span><span class="brand-name">Reasonix</span><span class="ctag"><span class="l-en">Community</span><span class="l-zh">社区</span></span></a>
       <nav class="nav-links">
         <a class={active === "discussions" ? "here" : ""} href="/community/"><span class="l-en">Discussions</span><span class="l-zh">讨论</span></a>
         <a href="/community/?category=skills"><span class="l-en">Skills</span><span class="l-zh">技能</span></a>

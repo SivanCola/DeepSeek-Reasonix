@@ -952,6 +952,14 @@ footer { background: var(--bg); border-top: 1px solid var(--line); margin-top: 0
   .hero-install .install button { flex-basis: 100%; }
 }
 
+@media (max-width: 360px) {
+  /* Keep logo, language, theme, and install visible at 320px. */
+  .nav-inner { padding: 0 12px; gap: 6px; }
+  .lang-switch button { padding: 6px 8px; }
+  .theme-switch button { padding: 6px 7px; }
+  .nav .btn { padding: 9px 14px; }
+}
+
 /* account / auth pages */
 .auth-nav { background: color-mix(in oklch, var(--bg) 92%, transparent); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); box-shadow: 0 1px 0 var(--line); }
 .auth-main { min-height: 100vh; display: grid; place-items: center; padding: 116px 24px 72px; }

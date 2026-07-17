@@ -222,8 +222,19 @@ a.tag:hover { color: var(--accent); background: var(--accent-soft); }
 }
 
 @media (max-width: 640px) {
-  /* drop the Community tag + tighten controls so the nav fits 390px */
-  .nav-inner { padding: 0 20px; gap: 12px; }
+  /* drop the Community tag and tighten the shared controls */
+  .nav-inner { padding: 0 16px; gap: 10px; }
   .brand .ctag { display: none; }
   .theme-switch button { padding: 6px 9px; }
+}
+
+@media (max-width: 440px) {
+  /* Include the async account control in the narrow-header budget. */
+  .nav-inner { padding: 0 12px; gap: 8px; }
+  .nav .brand { gap: 0; }
+  .nav .brand-name { display: none; }
+  .nav-right { gap: 8px; }
+  .lang-switch button { padding: 6px 8px; }
+  .theme-switch button { padding: 6px 7px; }
+  #nav-account .btn { padding: 7px 10px; }
 }
