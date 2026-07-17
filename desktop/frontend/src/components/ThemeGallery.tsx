@@ -35,6 +35,7 @@ import {
 } from "../lib/themeExperience";
 import { useToast } from "../lib/toast";
 import { themePreviewPalette } from "../lib/themePreviewPalette";
+import { useConfirmDialog } from "./ConfirmDialog";
 import { ThemePreviewSurface } from "./ThemePreviewSurface";
 import { Tooltip } from "./Tooltip";
 
@@ -225,6 +226,7 @@ export function ThemeGallery({
 }) {
   const t = useT();
   const { showToast } = useToast();
+  const { confirm, dialog: confirmDialog } = useConfirmDialog();
   const [packs, setPacks] = useState<ThemePackView[]>([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -239,6 +241,7 @@ export function ThemeGallery({
   );
   const [menuOpen, setMenuOpen] = useState(false);
   const selectionSeeded = useRef(false);
+  const moreActionsRef = useRef<HTMLButtonElement>(null);
 
   const reload = useCallback(async () => {
     setLoading(true);
@@ -386,8 +389,18 @@ export function ThemeGallery({
 
   const removeSelected = async () => {
     if (!selectedPack || themePackKind(selectedPack) !== "user") return;
-    const ok = window.confirm(t("settings.themeLibrary.confirmDelete", { name: packDisplayName(selectedPack, t) }));
-    if (!ok) return;
+    const ok = await confirm({
+      title: t("settings.themeLibrary.confirmDeleteTitle"),
+      message: t("settings.themeLibrary.confirmDelete", { name: packDisplayName(selectedPack, t) }),
+      confirmLabel: t("common.delete"),
+      cancelLabel: t("common.cancel"),
+      tone: "danger",
+    });
+    setMenuOpen(false);
+    if (!ok) {
+      requestAnimationFrame(() => moreActionsRef.current?.focus());
+      return;
+    }
     setBusy(true);
     try {
       await app.DeleteThemePack(selectedPack.id);
@@ -410,7 +423,12 @@ export function ThemeGallery({
   const exportSelected = async () => {
     if (!selectedPack || themePackKind(selectedPack) !== "user") return;
     try {
-      const ok = window.confirm(t("settings.themeLibrary.exportRights"));
+      const ok = await confirm({
+        title: t("settings.themeLibrary.exportRightsTitle"),
+        message: t("settings.themeLibrary.exportRights"),
+        confirmLabel: t("settings.themeLibrary.exportConfirm"),
+        cancelLabel: t("common.cancel"),
+      });
       if (!ok) return;
       const path = await app.ExportThemePack(selectedPack.id, "");
       if (path) showToast(t("settings.themeLibrary.exported"), "info");
@@ -464,7 +482,12 @@ export function ThemeGallery({
       const result = await app.ImportThemePack("", false);
       if (!result) return;
       if (result.needsReplace) {
-        const ok = window.confirm(t("settings.themeLibrary.confirmReplaceImport"));
+        const ok = await confirm({
+          title: t("settings.themeLibrary.confirmReplaceImportTitle"),
+          message: t("settings.themeLibrary.confirmReplaceImport"),
+          confirmLabel: t("settings.themeLibrary.replaceConfirm"),
+          cancelLabel: t("common.cancel"),
+        });
         if (!ok) return;
         const confirmed = await app.ImportThemePack("", true);
         if (confirmed?.pack) {
@@ -614,6 +637,7 @@ export function ThemeGallery({
             </div>
           </aside>
         </div>
+        {confirmDialog}
       </div>
     );
   }
@@ -792,7 +816,7 @@ export function ThemeGallery({
                   </button>
                   {themePackKind(selectedPack) === "user" ? (
                     <div className="theme-gallery__more theme-gallery__detail-more">
-                      <button type="button" className="btn btn--small" onClick={() => setMenuOpen((v) => !v)} aria-expanded={menuOpen}>
+                      <button ref={moreActionsRef} type="button" className="btn btn--small" onClick={() => setMenuOpen((v) => !v)} aria-expanded={menuOpen}>
                         <MoreHorizontal size={14} /> {t("settings.themeGallery.moreActions")}
                       </button>
                       {menuOpen ? (
@@ -825,6 +849,7 @@ export function ThemeGallery({
           onSave={(activate) => void saveEditor(activate)}
         />
       ) : null}
+      {confirmDialog}
     </div>
   );
 }

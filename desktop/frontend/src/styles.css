@@ -7375,6 +7375,24 @@ body > .mermaid-diagram--fullscreen {
   justify-content: flex-end;
   flex-wrap: wrap;
 }
+.reasonix-confirm-backdrop {
+  --wails-draggable: no-drag;
+  z-index: var(--z-overlay-backdrop);
+}
+.reasonix-confirm-dialog {
+  max-width: 420px;
+  color: var(--fg);
+}
+.reasonix-confirm-dialog__title { margin-bottom: 8px; }
+.reasonix-confirm-dialog__message {
+  margin-bottom: 18px;
+  color: var(--fg-dim);
+  font-size: var(--font-control);
+  line-height: 1.55;
+  white-space: pre-wrap;
+}
+.reasonix-confirm-dialog__actions .btn { min-width: 84px; }
+.reasonix-confirm-dialog__actions .btn--danger { font-weight: 600; }
 .btn {
   display: inline-flex;
   align-items: center;

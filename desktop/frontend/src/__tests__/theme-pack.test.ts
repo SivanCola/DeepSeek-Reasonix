@@ -26,6 +26,7 @@ const stylesSource = readFileSync(resolve(testDir, "../styles.css"), "utf8");
 const appSource = readFileSync(resolve(testDir, "../App.tsx"), "utf8");
 const librarySource = readFileSync(resolve(testDir, "../components/ThemeLibrary.tsx"), "utf8");
 const gallerySource = readFileSync(resolve(testDir, "../components/ThemeGallery.tsx"), "utf8");
+const confirmDialogSource = readFileSync(resolve(testDir, "../components/ConfirmDialog.tsx"), "utf8");
 const overviewSource = readFileSync(resolve(testDir, "../components/AppearanceOverview.tsx"), "utf8");
 const settingsSource = readFileSync(resolve(testDir, "../components/SettingsPanel.tsx"), "utf8");
 const experienceSource = readFileSync(resolve(testDir, "../lib/themeExperience.ts"), "utf8");
@@ -229,6 +230,16 @@ ok(
 );
 ok(librarySource.includes("needsReplace"), "import handles needsReplace result");
 
+// Theme confirmations stay inside the Reasonix UI instead of opening native
+// browser/system prompts.
+ok(!gallerySource.includes("window.confirm"), "ThemeGallery does not use native confirm dialogs");
+ok(!librarySource.includes("window.confirm"), "ThemeLibrary does not use native confirm dialogs");
+ok(gallerySource.includes("useConfirmDialog") && librarySource.includes("useConfirmDialog"), "theme flows share the Reasonix confirm dialog");
+ok(confirmDialogSource.includes('role="dialog"') && confirmDialogSource.includes('aria-modal="true"'), "confirm dialog exposes accessible modal semantics");
+ok(confirmDialogSource.includes('request.tone === "danger"') && confirmDialogSource.includes("btn--danger"), "destructive confirmations use danger styling");
+ok(confirmDialogSource.includes('event.key === "Escape"') && confirmDialogSource.includes("restoreFocusRef"), "confirm dialog supports Escape and focus restoration");
+ok(gallerySource.includes("moreActionsRef") && gallerySource.includes("moreActionsRef.current?.focus()"), "gallery cancellation restores focus after closing its overflow menu");
+
 // Source contracts
 ok(packSource.includes("reasonix-theme-pack-overlay"), "overlay style id stable");
 ok(packSource.includes("appendChild(el)"), "overlay style appended last for priority");
@@ -352,6 +363,11 @@ for (const key of [
   "settings.themeGallery.tabAll",
   "settings.themeGallery.sectionFlagship",
   "settings.themeEditor.safeAreaHint",
+  "settings.themeLibrary.confirmDeleteTitle",
+  "settings.themeLibrary.confirmReplaceImportTitle",
+  "settings.themeLibrary.replaceConfirm",
+  "settings.themeLibrary.exportRightsTitle",
+  "settings.themeLibrary.exportConfirm",
 ]) {
   ok(localeEn.includes(`"${key}"`) && localeZh.includes(`"${key}"`) && localeZhTW.includes(`"${key}"`), `gallery key ${key} in all locales`);
 }

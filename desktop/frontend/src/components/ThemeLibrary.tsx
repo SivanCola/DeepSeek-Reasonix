@@ -22,6 +22,7 @@ import {
   themeTokenKeys,
 } from "../lib/themePack";
 import { useToast } from "../lib/toast";
+import { useConfirmDialog } from "./ConfirmDialog";
 
 type EditorState = {
   mode: "create" | "edit";
@@ -104,6 +105,7 @@ function emptyEditor(): EditorState {
 export function ThemeLibrarySection() {
   const t = useT();
   const { showToast } = useToast();
+  const { confirm, dialog: confirmDialog } = useConfirmDialog();
   const [packs, setPacks] = useState<ThemePackView[]>([]);
   const [loading, setLoading] = useState(true);
   const [editor, setEditor] = useState<EditorState | null>(null);
@@ -224,7 +226,13 @@ export function ThemeLibrarySection() {
 
   const remove = async (pack: ThemePackView) => {
     if (themePackKind(pack) !== "user") return;
-    const ok = window.confirm(t("settings.themeLibrary.confirmDelete", { name: packDisplayName(pack, t) }));
+    const ok = await confirm({
+      title: t("settings.themeLibrary.confirmDeleteTitle"),
+      message: t("settings.themeLibrary.confirmDelete", { name: packDisplayName(pack, t) }),
+      confirmLabel: t("common.delete"),
+      cancelLabel: t("common.cancel"),
+      tone: "danger",
+    });
     if (!ok) return;
     setBusy(true);
     try {
@@ -248,7 +256,12 @@ export function ThemeLibrarySection() {
       const result = await app.ImportThemePack("", replace);
       if (!result) return;
       if (result.needsReplace) {
-        const ok = window.confirm(t("settings.themeLibrary.confirmReplaceImport"));
+        const ok = await confirm({
+          title: t("settings.themeLibrary.confirmReplaceImportTitle"),
+          message: t("settings.themeLibrary.confirmReplaceImport"),
+          confirmLabel: t("settings.themeLibrary.replaceConfirm"),
+          cancelLabel: t("common.cancel"),
+        });
         if (!ok) return;
         const confirmed = await app.ImportThemePack("", true);
         if (!confirmed?.pack?.id) return;
@@ -272,7 +285,12 @@ export function ThemeLibrarySection() {
 
   const doExport = async (pack: ThemePackView) => {
     if (pack.hasBackground) {
-      const ok = window.confirm(t("settings.themeLibrary.exportRights"));
+      const ok = await confirm({
+        title: t("settings.themeLibrary.exportRightsTitle"),
+        message: t("settings.themeLibrary.exportRights"),
+        confirmLabel: t("settings.themeLibrary.exportConfirm"),
+        cancelLabel: t("common.cancel"),
+      });
       if (!ok) return;
     }
     setBusy(true);
@@ -436,6 +454,7 @@ export function ThemeLibrarySection() {
           onSave={(activateAfter) => void saveEditor(activateAfter)}
         />
       )}
+      {confirmDialog}
     </div>
   );
 }
