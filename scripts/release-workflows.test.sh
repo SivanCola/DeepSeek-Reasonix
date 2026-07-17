@@ -13,13 +13,13 @@ trap cleanup EXIT
 
 # Stable tags have one entrypoint and one protected environment. Reusable
 # publishers must verify that only that entrypoint can claim prior approval.
-[ "$(rg -c '^    environment: release$' "$repo_root/.github/workflows/release-stable.yml")" = "1" ]
+[ "$(grep -Ec '^    environment: release$' "$repo_root/.github/workflows/release-stable.yml")" = "1" ]
 for workflow in release.yml release-npm.yml release-desktop.yml; do
-	rg -q 'github\.workflow_ref' "$repo_root/.github/workflows/$workflow"
-	rg -q 'github\.ref_protected' "$repo_root/.github/workflows/$workflow"
-	rg -q 'inputs\.approved_sha' "$repo_root/.github/workflows/$workflow"
-	rg -q 'verify-release-tag\.sh' "$repo_root/.github/workflows/$workflow"
-	rg -q 'release-stable\.yml' "$repo_root/.github/workflows/$workflow"
+	grep -Eq 'github\.workflow_ref' "$repo_root/.github/workflows/$workflow"
+	grep -Eq 'github\.ref_protected' "$repo_root/.github/workflows/$workflow"
+	grep -Eq 'inputs\.approved_sha' "$repo_root/.github/workflows/$workflow"
+	grep -Eq 'verify-release-tag\.sh' "$repo_root/.github/workflows/$workflow"
+	grep -Eq 'release-stable\.yml' "$repo_root/.github/workflows/$workflow"
 done
 
 git init --bare -q "$test_root/remote.git"
@@ -37,8 +37,8 @@ git clone -q "$test_root/remote.git" "$test_root/repo"
 	git tag -a desktop-v1.2.3 -m "desktop release"
 	git push -q origin v1.2.3 npm-v1.2.3 desktop-v1.2.3
 	GITHUB_OUTPUT="$test_root/stable.out" RELEASE_TAG=v1.2.3 "$repo_root/scripts/resolve-stable-release.sh"
-	rg -q '^version=1\.2\.3$' "$test_root/stable.out"
-	rg -q '^desktop_tag=desktop-v1\.2\.3$' "$test_root/stable.out"
+	grep -Eq '^version=1\.2\.3$' "$test_root/stable.out"
+	grep -Eq '^desktop_tag=desktop-v1\.2\.3$' "$test_root/stable.out"
 	approved_sha="$(git rev-parse HEAD)"
 	ACTUAL_CALLER_WORKFLOW_REF='example/reasonix/.github/workflows/release-stable.yml@refs/tags/v1.2.3' \
 		EXPECTED_CALLER_WORKFLOW_REF='example/reasonix/.github/workflows/release-stable.yml@refs/tags/v1.2.3' \
@@ -56,7 +56,7 @@ git clone -q "$test_root/remote.git" "$test_root/repo"
 		echo "unprotected caller unexpectedly passed release authorization" >&2
 		exit 1
 	fi
-	rg -q 'caller ref is not protected' "$test_root/unprotected.log"
+	grep -Eq 'caller ref is not protected' "$test_root/unprotected.log"
 
 	git tag v1.2.4
 	git tag npm-v1.2.4
@@ -65,7 +65,7 @@ git clone -q "$test_root/remote.git" "$test_root/repo"
 		echo "missing sibling tag unexpectedly passed" >&2
 		exit 1
 	fi
-	rg -q 'required stable release tag is missing: desktop-v1\.2\.4' "$test_root/missing.log"
+	grep -Eq 'required stable release tag is missing: desktop-v1\.2\.4' "$test_root/missing.log"
 
 	other_sha="$(git commit-tree HEAD^{tree} -p HEAD -m "other")"
 	git tag -f desktop-v1.2.3 "$other_sha" >/dev/null
@@ -75,7 +75,7 @@ git clone -q "$test_root/remote.git" "$test_root/repo"
 		echo "moved release tag unexpectedly passed approved SHA validation" >&2
 		exit 1
 	fi
-	rg -q 'moved to .* after approval' "$test_root/moved-tag.log"
+	grep -Eq 'moved to .* after approval' "$test_root/moved-tag.log"
 	git tag -f desktop-v1.2.3 "$approved_sha" >/dev/null
 	git push -q -f origin desktop-v1.2.3
 
@@ -87,27 +87,27 @@ git clone -q "$test_root/remote.git" "$test_root/repo"
 		echo "mismatched sibling tag unexpectedly passed" >&2
 		exit 1
 	fi
-	rg -q 'npm-v1\.2\.5 points to .* expected' "$test_root/mismatch.log"
+	grep -Eq 'npm-v1\.2\.5 points to .* expected' "$test_root/mismatch.log"
 
 	if RELEASE_TAG=v1.2.3-rc.1 "$repo_root/scripts/resolve-stable-release.sh" >"$test_root/prerelease.log" 2>&1; then
 		echo "prerelease tag unexpectedly passed stable validation" >&2
 		exit 1
 	fi
-	rg -q 'stable release tag must be vMAJOR.MINOR.PATCH' "$test_root/prerelease.log"
+	grep -Eq 'stable release tag must be vMAJOR.MINOR.PATCH' "$test_root/prerelease.log"
 )
 
 EVENT_NAME=push IN_CHANNEL=stable IN_TAG=desktop-v1.2.3 REF_NAME=v1.2.3 RUN_NUMBER=10 \
 	GITHUB_OUTPUT="$test_root/desktop-stable.out" bash "$repo_root/scripts/resolve-desktop-release.sh"
-rg -q '^tag=desktop-v1\.2\.3$' "$test_root/desktop-stable.out"
-rg -q '^version=v1\.2\.3$' "$test_root/desktop-stable.out"
+grep -Eq '^tag=desktop-v1\.2\.3$' "$test_root/desktop-stable.out"
+grep -Eq '^version=v1\.2\.3$' "$test_root/desktop-stable.out"
 
 EVENT_NAME=workflow_dispatch IN_CHANNEL=canary IN_BASE_VERSION=1.3.0 IN_TAG='' REF_NAME=main-v2 RUN_NUMBER=42 \
 	GITHUB_OUTPUT="$test_root/desktop-canary.out" bash "$repo_root/scripts/resolve-desktop-release.sh"
-rg -q '^version=v1\.3\.0-canary\.42$' "$test_root/desktop-canary.out"
+grep -Eq '^version=v1\.3\.0-canary\.42$' "$test_root/desktop-canary.out"
 
 EVENT_NAME=push IN_CHANNEL='' IN_TAG='' REF_NAME=desktop-v1.4.0-rc.1 RUN_NUMBER=50 \
 	GITHUB_OUTPUT="$test_root/desktop-rc.out" bash "$repo_root/scripts/resolve-desktop-release.sh"
-rg -q '^prerelease=true$' "$test_root/desktop-rc.out"
+grep -Eq '^prerelease=true$' "$test_root/desktop-rc.out"
 
 if EVENT_NAME=workflow_dispatch IN_CHANNEL=stable IN_TAG='' REF_NAME=main-v2 RUN_NUMBER=50 \
 	GITHUB_OUTPUT="$test_root/desktop-missing-tag.out" bash "$repo_root/scripts/resolve-desktop-release.sh" \
@@ -115,17 +115,17 @@ if EVENT_NAME=workflow_dispatch IN_CHANNEL=stable IN_TAG='' REF_NAME=main-v2 RUN
 	echo "tag-less desktop stable dispatch unexpectedly passed" >&2
 	exit 1
 fi
-rg -q 'stable dispatch requires tag' "$test_root/desktop-missing-tag.log"
+grep -Eq 'stable dispatch requires tag' "$test_root/desktop-missing-tag.log"
 
 EVENT_NAME=push IN_ORCHESTRATED=false IN_CHANNEL='' IN_BASE_VERSION='' IN_TAG='' \
 	REF_NAME=npm-v1.4.0-rc.1 RUN_NUMBER=50 GITHUB_OUTPUT="$test_root/npm-rc.out" \
 	bash "$repo_root/scripts/resolve-npm-release.sh"
-rg -q '^arg=npm-v1\.4\.0-rc\.1$' "$test_root/npm-rc.out"
+grep -Eq '^arg=npm-v1\.4\.0-rc\.1$' "$test_root/npm-rc.out"
 
 EVENT_NAME=push IN_ORCHESTRATED=true IN_CHANNEL=stable IN_BASE_VERSION=1.5.0 \
 	IN_TAG=npm-v1.5.0 REF_NAME=v1.5.0 RUN_NUMBER=51 GITHUB_OUTPUT="$test_root/npm-stable.out" \
 	bash "$repo_root/scripts/resolve-npm-release.sh"
-rg -q '^arg=v1\.5\.0$' "$test_root/npm-stable.out"
+grep -Eq '^arg=v1\.5\.0$' "$test_root/npm-stable.out"
 
 if EVENT_NAME=workflow_dispatch IN_ORCHESTRATED=false IN_CHANNEL=stable IN_BASE_VERSION=1.5.0 \
 	IN_TAG=npm-v1.5.1 REF_NAME=main-v2 RUN_NUMBER=52 GITHUB_OUTPUT="$test_root/npm-mismatch.out" \
@@ -133,6 +133,6 @@ if EVENT_NAME=workflow_dispatch IN_ORCHESTRATED=false IN_CHANNEL=stable IN_BASE_
 	echo "mismatched npm stable dispatch unexpectedly passed" >&2
 	exit 1
 fi
-rg -q 'does not match requested version' "$test_root/npm-mismatch.log"
+grep -Eq 'does not match requested version' "$test_root/npm-mismatch.log"
 
 echo "release workflow contract tests: PASS"
