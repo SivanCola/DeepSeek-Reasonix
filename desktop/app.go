@@ -6009,6 +6009,7 @@ type ServerView struct {
 	ToolPolicies             map[string]config.MCPToolPolicy `json:"toolPolicies,omitempty"`
 	ApprovalsReviewer        string                          `json:"approvalsReviewer,omitempty"`
 	RequiresLaunchApproval   bool                            `json:"requiresLaunchApproval,omitempty"`
+	LaunchApprovalGoverned   bool                            `json:"launchApprovalGoverned,omitempty"`
 	AuthStatus               string                          `json:"authStatus,omitempty"`
 	AuthURL                  string                          `json:"authUrl,omitempty"`
 	AuthConfigured           bool                            `json:"authConfigured,omitempty"`
@@ -6738,10 +6739,12 @@ func withPluginConfig(v ServerView, p config.PluginEntry) ServerView {
 	v.ToolPolicies = cloneMCPToolPolicies(p.Tools)
 	v.ApprovalsReviewer = p.ApprovalsReviewer
 	// Source says whether this server is governed by the project launch gate;
-	// the view flag says whether that gate is blocking it right now. Keeping the
-	// two distinct prevents an already-authorized connected server from showing
-	// a permanent reauthorization warning.
-	v.RequiresLaunchApproval = p.Source.RequiresLaunchApproval() && v.RequiresReverification
+	// RequiresLaunchApproval says whether that gate is blocking it right now.
+	// Keeping the two distinct prevents an already-authorized connected server
+	// from showing a permanent reauthorization warning, while the static flag
+	// keeps a revoke entry for the persistent grant reachable.
+	v.LaunchApprovalGoverned = p.Source.RequiresLaunchApproval()
+	v.RequiresLaunchApproval = v.LaunchApprovalGoverned && v.RequiresReverification
 	v.AuthConfigured = mcpdiag.HasAuthConfig(p.Headers, p.Env, p.URL)
 	v.EnvKeys = nil
 	v.HeaderKeys = nil

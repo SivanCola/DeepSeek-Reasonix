@@ -6964,12 +6964,23 @@ func TestProjectMCPLaunchApprovalViewOnlyShowsWhileBlocked(t *testing.T) {
 	if connected.RequiresLaunchApproval {
 		t.Fatalf("connected project MCP still requires launch approval: %+v", connected)
 	}
+	// The static governance flag must survive a successful authorization so the
+	// UI can keep a revoke entry for the persistent grant.
+	if !connected.LaunchApprovalGoverned {
+		t.Fatalf("connected project MCP lost launch governance flag: %+v", connected)
+	}
 
 	blocked := withPluginConfig(ServerView{
 		Name: entry.Name, Status: "failed", RequiresReverification: true,
 	}, entry)
-	if !blocked.RequiresLaunchApproval {
+	if !blocked.RequiresLaunchApproval || !blocked.LaunchApprovalGoverned {
 		t.Fatalf("blocked project MCP lost launch approval action: %+v", blocked)
+	}
+
+	user := withPluginConfig(ServerView{Name: "user", Status: "connected"},
+		config.PluginEntry{Name: "user", Source: config.MCPSourceUserConfig})
+	if user.LaunchApprovalGoverned || user.RequiresLaunchApproval {
+		t.Fatalf("user-config MCP must not be launch-gate governed: %+v", user)
 	}
 }
 

@@ -737,6 +737,7 @@ export interface ServerView {
   toolPolicies?: Record<string, MCPToolPolicy>;
   approvalsReviewer?: MCPApprovalsReviewer;
   requiresLaunchApproval?: boolean;
+  launchApprovalGoverned?: boolean;
   authStatus?: "none" | "possible" | "required" | string;
   authUrl?: string;
   authConfigured?: boolean;

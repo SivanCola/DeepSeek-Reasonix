@@ -2321,6 +2321,18 @@ function mcpTrustLabel(server: ServerView, t: ReturnType<typeof useT>): string {
 	return t("caps.trustUntrusted");
 }
 
+function mcpTrustActionRequired(server: ServerView): boolean {
+	return Boolean(server.requiresLaunchApproval || server.requiresReverification || server.trustState === "changed");
+}
+
+// A launch-gate-governed server whose grant is currently established. Revoking
+// is only offered where it sticks: user-config and official sources auto-trust
+// again on the next evaluation, so a revoke entry there would be misleading.
+function mcpRevocableLaunchGrant(server: ServerView): boolean {
+	return !mcpTrustActionRequired(server) && Boolean(server.launchApprovalGoverned)
+		&& (server.trustState === "workspace" || server.trustState === "session");
+}
+
 function mcpIsolationLabel(server: ServerView, t: ReturnType<typeof useT>): string {
 	if (server.isolationState === "unavailable_unconfined") return t("caps.unisolated");
 	if (server.isolationState === "not_applicable") return t("caps.isolationNotApplicable");
@@ -3134,13 +3146,19 @@ export function MCPServersSettingsPage() {
 							</details>
 						</div>
 					)}
-					{(selectedServer.requiresLaunchApproval || selectedServer.requiresReverification || selectedServer.trustState === "changed") && <div className="cap-mcp-detail-error">
+					{mcpTrustActionRequired(selectedServer) && <div className="cap-mcp-detail-error">
 						<div className="drawer__summary">{mcpTrustLabel(selectedServer, t)} · {mcpIsolationLabel(selectedServer, t)}</div>
 						{selectedServer.isolationState === "unavailable_unconfined" && selectedServer.isolationReason && <div className="drawer__summary">{selectedServer.isolationReason}</div>}
 						{mcpToolChangeMessages(selectedServer.toolChanges, selectedServer.changedTools, t).map((message) => <div className="banner banner--warn" key={message}>{message}</div>)}
 						<div className="cap-mcp-editor__actions">
 							<button className="btn btn--small" disabled={actionBusy} type="button" onClick={() => void inspectTrust(selectedServer.name)}>{t("caps.reverify")}</button>
 							{selectedServer.trustState !== "untrusted" && <button className="btn btn--small" disabled={actionBusy} type="button" onClick={() => void mutate(() => app.SetMCPTrust(selectedServer.name, "revoke"))}>{t("caps.revokeTrust")}</button>}
+						</div>
+					</div>}
+					{mcpRevocableLaunchGrant(selectedServer) && <div className="cap-mcp-detail-trust">
+						<div className="drawer__summary">{mcpTrustLabel(selectedServer, t)} · {mcpIsolationLabel(selectedServer, t)}</div>
+						<div className="cap-mcp-editor__actions">
+							<button className="btn btn--small" disabled={actionBusy} type="button" onClick={() => void mutate(() => app.SetMCPTrust(selectedServer.name, "revoke"))}>{t("caps.revokeTrust")}</button>
 						</div>
 					</div>}
 					<ServerDetails

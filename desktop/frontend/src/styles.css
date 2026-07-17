@@ -11327,6 +11327,9 @@ body > .mermaid-diagram--fullscreen {
 .cap-mcp-detail-error {
   margin-bottom: 14px;
 }
+.cap-mcp-detail-trust {
+  margin-bottom: 14px;
+}
 .cap-mcp-detail-error details {
   margin-top: 7px;
   color: var(--fg-faint);

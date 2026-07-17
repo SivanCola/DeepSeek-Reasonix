@@ -526,6 +526,35 @@ console.log("capabilities panel MCP actions");
   await waitFor("ordinary retry action", () => Boolean(findButton("Retry")));
   ok(!findButton("Reverify"), "ordinary startup failures must keep the retry action");
 
+  trustDecision = "";
+  servers = servers.map((item) => ({
+    ...item,
+    status: "connected",
+    runtimeState: "ready",
+    error: "",
+    requiresLaunchApproval: false,
+    requiresReverification: false,
+    launchApprovalGoverned: true,
+    trustState: "workspace",
+  }));
+  await act(async () => {
+    findButton("Refresh catalog")?.click();
+    await flush();
+  });
+  await waitFor("authorized project server row", () => Boolean(document.querySelector('[data-status="connected"]')));
+  await act(async () => {
+    (document.querySelector(".cap-mcp-list-row__main") as HTMLButtonElement | null)?.click();
+    await flush();
+  });
+  await waitFor("revocable persistent grant entry", () => Boolean(findButton("Revoke trust")));
+  ok(!findButton("Reverify"), "an authorized connected project server must not show the reauthorization alarm");
+  await act(async () => {
+    findButton("Revoke trust")?.click();
+    await flush();
+  });
+  await waitFor("persistent launch grant revoked", () => trustDecision === "revoke");
+  ok(!findButton("Revoke trust"), "revoking clears the persistent grant entry");
+
   await act(async () => {
     root.unmount();
   });
