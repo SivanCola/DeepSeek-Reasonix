@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -299,7 +300,7 @@ func TestComposerSelectionDoesNotTurnCommandShortcutIntoText(t *testing.T) {
 	}
 }
 
-func TestComposerCtrlVKeepsSelectionUntilImageArrives(t *testing.T) {
+func TestComposerImagePasteShortcutKeepsSelectionUntilImageArrives(t *testing.T) {
 	m := newComposerMouseTestTUI(t, 40, 12)
 	m.input.SetValue("alpha beta")
 	x, y, _ := m.composerOrigin()
@@ -307,18 +308,24 @@ func TestComposerCtrlVKeepsSelectionUntilImageArrives(t *testing.T) {
 	m = updateComposerMouseTestTUI(t, m, tea.MouseMotionMsg{X: x + 10, Y: y, Button: tea.MouseLeft})
 	m = updateComposerMouseTestTUI(t, m, tea.MouseReleaseMsg{X: x + 10, Y: y, Button: tea.MouseLeft})
 
-	// Ctrl+V is image-only. The asynchronous clipboard read must preserve the
-	// selection until the attachment result can replace it.
-	next, cmd := m.Update(tea.KeyPressMsg{Code: 'v', Mod: tea.ModCtrl})
+	shortcut := tea.KeyPressMsg{Code: 'v', Mod: tea.ModCtrl}
+	shortcutName := "Ctrl+V"
+	if runtime.GOOS == "windows" {
+		shortcut.Mod = tea.ModAlt
+		shortcutName = "Alt+V"
+	}
+	// The platform image-only shortcut must preserve the selection until the
+	// asynchronous attachment result can replace it.
+	next, cmd := m.Update(shortcut)
 	m = next.(chatTUI)
 	if cmd == nil {
-		t.Fatal("Ctrl+V should issue an async image clipboard read")
+		t.Fatalf("%s should issue an async image clipboard read", shortcutName)
 	}
 	if !m.clipboardImagePending {
-		t.Fatal("Ctrl+V should show the image paste as pending")
+		t.Fatalf("%s should show the image paste as pending", shortcutName)
 	}
 	if got := m.selectedComposerText(); got != "beta" {
-		t.Fatalf("Ctrl+V should keep the selection until the clipboard arrives, got %q", got)
+		t.Fatalf("%s should keep the selection until the clipboard arrives, got %q", shortcutName, got)
 	}
 
 	m = updateComposerMouseTestTUI(t, m, clipboardImageMsg{path: ".reasonix/attachments/test.png"})
