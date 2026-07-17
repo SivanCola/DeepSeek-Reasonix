@@ -21,6 +21,91 @@ func touch(path string, t time.Time) error {
 	return os.Chtimes(path, t, t)
 }
 
+// TestSnapshotUpToDateFastPath locks in the #6607 switch-lag fix: a snapshot
+// of a session that has not changed since its last save to the same path must
+// be a pure in-memory no-op — no serialize, no digest, no disk access. The
+// desktop snapshots defensively on every tab/session switch, and on large
+// transcripts the redundant full-save work is seconds of UI freeze.
+func TestSnapshotUpToDateFastPath(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "session.jsonl")
+	s := NewSession("sys")
+	s.Add(provider.Message{Role: provider.RoleUser, Content: "hello"})
+	s.Add(provider.Message{Role: provider.RoleAssistant, Content: "hi"})
+	if err := s.SaveSnapshot(path); err != nil {
+		t.Fatalf("initial SaveSnapshot: %v", err)
+	}
+	if !s.snapshotUpToDate(path) {
+		t.Fatal("snapshotUpToDate = false right after a successful save")
+	}
+	if s.snapshotUpToDate(filepath.Join(t.TempDir(), "other.jsonl")) {
+		t.Fatal("snapshotUpToDate = true for a different path")
+	}
+
+	// Deterministic proof the disk is untouched: scribble on the event log and
+	// snapshot again. The fast path skips entirely, so the scribble survives; a
+	// full save would detect and repair/truncate it.
+	logPath := store.SessionEventLog(path)
+	f, err := os.OpenFile(logPath, os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		t.Fatalf("open log: %v", err)
+	}
+	if _, err := f.Write([]byte("{torn")); err != nil {
+		t.Fatalf("scribble: %v", err)
+	}
+	f.Close()
+	before, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read log: %v", err)
+	}
+	if err := s.SaveSnapshot(path); err != nil {
+		t.Fatalf("no-op SaveSnapshot: %v", err)
+	}
+	after, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read log after no-op save: %v", err)
+	}
+	if string(before) != string(after) {
+		t.Fatal("no-op snapshot touched the disk — fast path did not fire")
+	}
+
+	// Any transcript change re-arms the full path, which heals the scribble
+	// and persists the new turn.
+	s.Add(provider.Message{Role: provider.RoleUser, Content: "again"})
+	if s.snapshotUpToDate(path) {
+		t.Fatal("snapshotUpToDate = true after Add")
+	}
+	if err := s.SaveSnapshot(path); err != nil {
+		t.Fatalf("SaveSnapshot after Add: %v", err)
+	}
+	if !s.snapshotUpToDate(path) {
+		t.Fatal("snapshotUpToDate = false after the follow-up save")
+	}
+	loaded, err := LoadSession(path)
+	if err != nil {
+		t.Fatalf("LoadSession: %v", err)
+	}
+	if loaded.eventLogDamaged {
+		t.Fatal("follow-up save left the log damaged")
+	}
+	if got := loaded.Messages[len(loaded.Messages)-1].Content; got != "again" {
+		t.Fatalf("reloaded tail = %q, want %q", got, "again")
+	}
+	// A load-adopted baseline must NOT arm the fast path: the ledger can lag
+	// the transcript after an interrupted save, and the first save after a
+	// load is the one that heals it (see
+	// TestSameContentSaveHealsStaleLedgerDigest).
+	if loaded.snapshotUpToDate(path) {
+		t.Fatal("snapshotUpToDate = true for a freshly loaded session")
+	}
+
+	// A pending rewrite (compaction/rewind) also disarms the fast path.
+	s.Replace(append([]provider.Message(nil), loaded.Messages[:2]...))
+	s.IncrementRewrite()
+	if s.snapshotUpToDate(path) {
+		t.Fatal("snapshotUpToDate = true with a pending rewrite")
+	}
+}
+
 // TestSaveLoadRoundTrip is the contract `reasonix --resume` depends on: a
 // session written to disk reloads byte-for-byte, including tool calls and
 // reasoning content (which the model wants to keep across resumes for cache
@@ -912,7 +997,7 @@ func TestSaveSnapshotAllowsExactAppendFromStaleRevisionBaseline(t *testing.T) {
 	}
 
 	s.Add(provider.Message{Role: provider.RoleUser, Content: "two"})
-	s.setPersistedBaseline(path, staleBaseline.digest, staleBaseline.version, staleBaseline.revision, true, 0)
+	s.setPersistedBaseline(path, staleBaseline.digest, staleBaseline.version, staleBaseline.revision, true, true, 0)
 	if err := s.SaveSnapshot(path); err != nil {
 		t.Fatalf("SaveSnapshot exact append from stale revision baseline: %v", err)
 	}
@@ -960,7 +1045,7 @@ func TestSaveSnapshotAllowsCompatibleSystemAppendFromStaleRevisionBaseline(t *te
 	msgs[0] = provider.Message{Role: provider.RoleSystem, Content: "sys v2"}
 	msgs = append(msgs, provider.Message{Role: provider.RoleUser, Content: "two"})
 	s.Replace(msgs)
-	s.setPersistedBaseline(path, staleBaseline.digest, staleBaseline.version, staleBaseline.revision, true, 0)
+	s.setPersistedBaseline(path, staleBaseline.digest, staleBaseline.version, staleBaseline.revision, true, true, 0)
 	if err := s.SaveSnapshot(path); err != nil {
 		t.Fatalf("SaveSnapshot compatible-system append from stale baseline: %v", err)
 	}

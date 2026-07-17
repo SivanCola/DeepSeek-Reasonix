@@ -73,7 +73,15 @@ type sessionPersistState struct {
 	// stale-runtime conflict. CAS checks fall back to digest+version until a
 	// successful save re-learns the revision.
 	revisionKnown bool
-	ok            bool
+	// saveVerified marks a baseline established by a completed save in this
+	// process, whose write path verified transcript and ledger agree. A
+	// baseline adopted at load time pairs the disk transcript with whatever
+	// the meta sidecar said — which can lag the transcript after an
+	// interrupted save — so only save-verified baselines may arm the
+	// snapshot no-op fast path; the first save after a load must run in full
+	// and heal a stale ledger.
+	saveVerified bool
+	ok           bool
 }
 
 type sessionSaveMode int
@@ -196,6 +204,21 @@ func (s *Session) save(path string, mode sessionSaveMode) error {
 		return fmt.Errorf("lock session file: %w", err)
 	}
 	defer unlockFile()
+	if mode == sessionSaveSnapshot && s.snapshotUpToDate(path) {
+		// Nothing changed since the last successful save to this exact path:
+		// skip the rest of the save — including the full transcript serialize
+		// + digest + disk probe the up-to-date decision below would still
+		// pay. Desktop switch/close/prune paths snapshot defensively on every
+		// navigation, and on large sessions that per-save cost is the
+		// user-visible seconds of UI freeze in #6607. Version bookkeeping
+		// makes this exact: any Add/Replace/preview update bumps version, any
+		// rewrite bumps rewriteVersion, and load-time repairs or log damage
+		// disarm the fast path until a real save persists them. The check
+		// runs under the save locks, not before them, so a saver that waited
+		// on a concurrent writer still re-evaluates against the state it must
+		// persist when it finally enters the critical section.
+		return nil
+	}
 	// Capture the snapshot only while holding the save locks. Concurrent
 	// in-process savers (turn-end snapshot, periodic autosave, shutdown
 	// snapshot) that captured before locking could land out of order: the
@@ -799,6 +822,27 @@ func (s *Session) ownsPersistedState(path string, existingDigest [sha256.Size]by
 	return existingLedgerDigest == digestString(existingDigest)
 }
 
+// snapshotUpToDate reports whether a snapshot save to path is a provable
+// no-op from in-memory bookkeeping alone: the last successful save went to
+// this same path with a known ledger revision, the transcript version and
+// rewrite version have not moved since, and no load-time repair or event-log
+// damage is waiting to be persisted. Every one of these flags fails open —
+// when any is unset or stale the caller falls through to the full save path,
+// which re-derives the truth from disk.
+func (s *Session) snapshotUpToDate(path string) bool {
+	key := canonicalSessionSavePath(path)
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.persisted.ok &&
+		s.persisted.saveVerified &&
+		s.persisted.path == key &&
+		s.persisted.version == s.version &&
+		s.persisted.revisionKnown &&
+		s.rewriteVersion == s.persistedRewriteVersion &&
+		!s.normalizedDirty &&
+		!s.eventLogDamaged
+}
+
 func (s *Session) persistState(path string) sessionPersistState {
 	key := canonicalSessionSavePath(path)
 	s.mu.RLock()
@@ -810,7 +854,16 @@ func (s *Session) persistState(path string) sessionPersistState {
 }
 
 func (s *Session) markPersisted(path string, digest [sha256.Size]byte, version uint64, revision int64, rewriteVersion int) {
-	s.setPersistedBaseline(path, digest, version, revision, true, rewriteVersion)
+	s.setPersistedBaseline(path, digest, version, revision, true, true, rewriteVersion)
+}
+
+// markPersistedFromLoad anchors the baseline a loader learned from disk. The
+// ledger revision is real, but the pairing of transcript and ledger was not
+// verified by a write — an interrupted earlier save can leave the ledger
+// describing older content — so the baseline never arms the snapshot no-op
+// fast path.
+func (s *Session) markPersistedFromLoad(path string, digest [sha256.Size]byte, version uint64, revision int64, rewriteVersion int) {
+	s.setPersistedBaseline(path, digest, version, revision, true, false, rewriteVersion)
 }
 
 // markPersistedRevisionUnknown records a baseline whose ledger revision could
@@ -818,10 +871,10 @@ func (s *Session) markPersisted(path string, digest [sha256.Size]byte, version u
 // version still anchor ownership checks; revision-based CAS stays disarmed
 // until a successful save records the real revision via markPersisted.
 func (s *Session) markPersistedRevisionUnknown(path string, digest [sha256.Size]byte, version uint64, rewriteVersion int) {
-	s.setPersistedBaseline(path, digest, version, 0, false, rewriteVersion)
+	s.setPersistedBaseline(path, digest, version, 0, false, false, rewriteVersion)
 }
 
-func (s *Session) setPersistedBaseline(path string, digest [sha256.Size]byte, version uint64, revision int64, revisionKnown bool, rewriteVersion int) {
+func (s *Session) setPersistedBaseline(path string, digest [sha256.Size]byte, version uint64, revision int64, revisionKnown, saveVerified bool, rewriteVersion int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.persisted = sessionPersistState{
@@ -830,6 +883,7 @@ func (s *Session) setPersistedBaseline(path string, digest [sha256.Size]byte, ve
 		version:       version,
 		revision:      revision,
 		revisionKnown: revisionKnown,
+		saveVerified:  saveVerified,
 		ok:            true,
 	}
 	// rewriteVersion was captured together with the persisted snapshot; only
@@ -1152,7 +1206,7 @@ func loadSessionUnlocked(path string) (*Session, error) {
 			if ok {
 				revision = meta.Revision
 			}
-			s.markPersisted(path, digest, s.version, revision, s.rewriteVersion)
+			s.markPersistedFromLoad(path, digest, s.version, revision, s.rewriteVersion)
 		}
 	}
 	return s, nil
