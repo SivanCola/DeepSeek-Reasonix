@@ -1,58 +1,69 @@
 import { useMemo, type CSSProperties } from "react";
-import type { ThemePackView } from "../lib/themePack";
-import { isThemeStyle, type ThemeStyle } from "../lib/theme";
+import { themePackKind, type ThemePackView } from "../lib/themePack";
+import { baseStyleForPreview, themePreviewPalette } from "../lib/themePreviewPalette";
 
 /** Isolated mini Reasonix surface for gallery detail — does not touch :root. */
 export function ThemePreviewSurface({
   pack,
   mode,
   scene,
+  variant = "full",
 }: {
   pack: ThemePackView | null;
   mode: "light" | "dark";
   scene: "home" | "task";
+  variant?: "full" | "thumbnail";
 }) {
+  const isBasePreview = Boolean(pack && themePackKind(pack) === "base");
+  const baseStyle = baseStyleForPreview(pack);
   const style = useMemo(() => {
+    const palette = themePreviewPalette(pack, mode);
     const tokens = mode === "light" ? pack?.tokens?.light : pack?.tokens?.dark;
-    const bg = tokens?.bg || (mode === "light" ? "#f4f3ef" : "#0c0d10");
-    const panel = tokens?.panel || tokens?.bgElev || (mode === "light" ? "#ffffff" : "#1a1b1f");
-    const sidebar = tokens?.sidebar || (mode === "light" ? "#f0efe9" : "#14151a");
-    const fg = tokens?.fg || (mode === "light" ? "#111827" : "#f1f1ef");
-    const fgDim = tokens?.fgDim || (mode === "light" ? "#6b7280" : "#9ca3af");
-    const accent = tokens?.accent || "#ff6a3d";
-    const accentFg = tokens?.accentFg || "#ffffff";
-    const border = tokens?.border || (mode === "light" ? "#e5e2da" : "#2a2b31");
-    const chat = tokens?.chat || bg;
-    const base = isThemeStyle(pack?.baseStyle) ? (pack!.baseStyle as ThemeStyle) : "graphite";
-    const focusX = pack?.background?.focusX ?? 0.72;
-    const focusY = pack?.background?.focusY ?? 0.45;
+    const chat = tokens?.chat || palette.bg;
+    const sceneBackground = scene === "task" ? pack?.taskBackground || pack?.background : pack?.background;
+    const focusX = sceneBackground?.focusX ?? 0.72;
+    const focusY = sceneBackground?.focusY ?? 0.45;
     const opacity =
       scene === "home"
         ? pack?.background?.homeOpacity ?? 1
-        : pack?.background?.taskOpacity ?? 0.28;
-    const overlay = pack?.background?.overlayStrength ?? 0.62;
+        : pack?.taskBackground?.opacity ?? pack?.background?.taskOpacity ?? 0.28;
+    const overlay = scene === "task"
+      ? pack?.taskBackground?.overlayStrength ?? pack?.background?.overlayStrength ?? 0.62
+      : pack?.background?.overlayStrength ?? 0.62;
     return {
-      ["--tp-bg" as string]: bg,
-      ["--tp-panel" as string]: panel,
-      ["--tp-sidebar" as string]: sidebar,
-      ["--tp-fg" as string]: fg,
-      ["--tp-fg-dim" as string]: fgDim,
-      ["--tp-accent" as string]: accent,
-      ["--tp-accent-fg" as string]: accentFg,
-      ["--tp-border" as string]: border,
+      ["--tp-bg" as string]: palette.bg,
+      ["--tp-panel" as string]: palette.panel,
+      ["--tp-sidebar" as string]: palette.sidebar,
+      ["--tp-fg" as string]: palette.fg,
+      ["--tp-fg-dim" as string]: palette.fgDim,
+      ["--tp-accent" as string]: palette.accent,
+      ["--tp-accent-fg" as string]: palette.accentFg,
+      ["--tp-border" as string]: palette.border,
+      ["--tp-radius" as string]: palette.radius,
       ["--tp-chat" as string]: chat,
       ["--tp-focus-x" as string]: `${focusX * 100}%`,
       ["--tp-focus-y" as string]: `${focusY * 100}%`,
       ["--tp-bg-opacity" as string]: String(opacity),
       ["--tp-overlay" as string]: String(overlay),
-      ["--tp-base" as string]: base,
     } as CSSProperties;
   }, [pack, mode, scene]);
 
-  const bgUrl = pack?.previewUrl || pack?.backgroundUrl || "";
+  const bgUrl = isBasePreview
+    ? ""
+    : scene === "task"
+      ? pack?.taskBackgroundUrl || pack?.previewUrl || pack?.backgroundUrl || ""
+      : pack?.previewUrl || pack?.backgroundUrl || "";
 
   return (
-    <div className="theme-preview-surface" data-mode={mode} data-scene={scene} style={style}>
+    <div
+      className="theme-preview-surface"
+      data-mode={mode}
+      data-scene={scene}
+      data-preview-kind={isBasePreview ? "base" : "pack"}
+      data-base-style={baseStyle}
+      data-variant={variant}
+      style={style}
+    >
       {bgUrl ? (
         <div
           className="theme-preview-surface__bg"
@@ -60,7 +71,10 @@ export function ThemePreviewSurface({
           aria-hidden="true"
         />
       ) : (
-        <div className="theme-preview-surface__bg theme-preview-surface__bg--swatch" aria-hidden="true" />
+        <div
+          className={`theme-preview-surface__bg ${isBasePreview ? "theme-preview-surface__bg--base" : "theme-preview-surface__bg--swatch"}`}
+          aria-hidden="true"
+        />
       )}
       <div className="theme-preview-surface__overlay" aria-hidden="true" />
       <div className="theme-preview-surface__chrome">

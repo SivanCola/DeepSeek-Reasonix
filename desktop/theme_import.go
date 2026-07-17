@@ -59,8 +59,7 @@ func importThemePackZIP(zipPath string) (manifest *ThemePackManifest, staging st
 func extractThemeZip(zr *zip.Reader) (*ThemePackManifest, string, error) {
 	seen := map[string]struct{}{}
 	var manifestEntry *zip.File
-	var imageEntry *zip.File
-	var imageName string
+	imageEntries := map[string]*zip.File{}
 
 	for _, zf := range zr.File {
 		name := sanitizeZipEntryName(zf.Name)
@@ -94,11 +93,10 @@ func extractThemeZip(zr *zip.Reader) (*ThemePackManifest, string, error) {
 			continue
 		}
 		if themePackImageRe.MatchString(name) {
-			if imageEntry != nil {
-				return nil, "", fmt.Errorf("theme package may contain at most one background image")
+			if len(imageEntries) >= 2 {
+				return nil, "", fmt.Errorf("theme package may contain at most two scene images")
 			}
-			imageEntry = zf
-			imageName = name
+			imageEntries[strings.ToLower(name)] = zf
 			continue
 		}
 		return nil, "", fmt.Errorf("theme package contains disallowed file %q", name)
@@ -120,19 +118,22 @@ func extractThemeZip(zr *zip.Reader) (*ThemePackManifest, string, error) {
 		return nil, "", fmt.Errorf("cannot import over built-in theme id %q", m.ID)
 	}
 
-	// Background consistency.
+	expectedImages := map[string]string{}
 	if m.Background != nil && m.Background.Image != "" {
-		if imageEntry == nil {
-			return nil, "", fmt.Errorf("manifest references background image %q but ZIP has none", m.Background.Image)
+		expectedImages[strings.ToLower(m.Background.Image)] = m.Background.Image
+	}
+	if m.TaskBackground != nil && m.TaskBackground.Image != "" {
+		expectedImages[strings.ToLower(m.TaskBackground.Image)] = m.TaskBackground.Image
+	}
+	for key, manifestName := range expectedImages {
+		if imageEntries[key] == nil {
+			return nil, "", fmt.Errorf("manifest references scene image %q but ZIP has none", manifestName)
 		}
-		if !strings.EqualFold(m.Background.Image, imageName) {
-			// Allow case-insensitive match but normalize to manifest name on extract.
-			if strings.ToLower(m.Background.Image) != strings.ToLower(imageName) {
-				return nil, "", fmt.Errorf("background image name mismatch: manifest %q vs ZIP %q", m.Background.Image, imageName)
-			}
+	}
+	for key := range imageEntries {
+		if _, ok := expectedImages[key]; !ok {
+			return nil, "", fmt.Errorf("ZIP contains scene image not referenced by manifest")
 		}
-	} else if imageEntry != nil {
-		return nil, "", fmt.Errorf("ZIP contains background image but manifest has no background.image")
 	}
 
 	staging, err := os.MkdirTemp("", "reasonix-theme-import-*")
@@ -155,12 +156,12 @@ func extractThemeZip(zr *zip.Reader) (*ThemePackManifest, string, error) {
 		return nil, "", err
 	}
 
-	if imageEntry != nil && m.Background != nil {
-		imgData, err := readZipFileLimited(imageEntry, themePackMaxImageBytes)
+	for key, manifestName := range expectedImages {
+		imgData, err := readZipFileLimited(imageEntries[key], themePackMaxImageBytes)
 		if err != nil {
 			return nil, "", err
 		}
-		imgPath := filepath.Join(staging, m.Background.Image)
+		imgPath := filepath.Join(staging, manifestName)
 		if err := os.WriteFile(imgPath, imgData, 0o644); err != nil {
 			return nil, "", err
 		}
@@ -224,6 +225,7 @@ func exportThemePackZIP(id, destPath string) error {
 		return err
 	}
 	var img []byte
+	var taskImg []byte
 	if m.Background != nil && m.Background.Image != "" {
 		imgPath, err := resolveThemeImageAbs(id, m.Background.Image)
 		if err != nil {
@@ -234,7 +236,17 @@ func exportThemePackZIP(id, destPath string) error {
 			return err
 		}
 	}
-	return writeThemeZip(destPath, m, img)
+	if m.TaskBackground != nil && m.TaskBackground.Image != "" {
+		imgPath, err := resolveThemeImageAbs(id, m.TaskBackground.Image)
+		if err != nil {
+			return err
+		}
+		taskImg, err = os.ReadFile(imgPath)
+		if err != nil {
+			return err
+		}
+	}
+	return writeThemeZip(destPath, m, img, taskImg)
 }
 
 func findBuiltinManifest(id string) *ThemePackManifest {
@@ -247,7 +259,7 @@ func findBuiltinManifest(id string) *ThemePackManifest {
 	return nil
 }
 
-func writeThemeZip(destPath string, m *ThemePackManifest, imageBytes []byte) error {
+func writeThemeZip(destPath string, m *ThemePackManifest, imageBytes []byte, taskImageBytes ...[]byte) error {
 	if err := validateThemePackManifest(m); err != nil {
 		return err
 	}
@@ -293,6 +305,22 @@ func writeThemeZip(destPath string, m *ThemePackManifest, imageBytes []byte) err
 			return err
 		}
 		if _, err := iw.Write(imageBytes); err != nil {
+			return err
+		}
+	}
+	if m.TaskBackground != nil && m.TaskBackground.Image != "" {
+		var data []byte
+		if len(taskImageBytes) > 0 {
+			data = taskImageBytes[0]
+		}
+		if len(data) == 0 {
+			return fmt.Errorf("missing task background image bytes")
+		}
+		iw, err := zw.Create(m.TaskBackground.Image)
+		if err != nil {
+			return err
+		}
+		if _, err := iw.Write(data); err != nil {
 			return err
 		}
 	}

@@ -1,15 +1,24 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { ArrowLeft, Check, Copy, Download, MoreHorizontal, Pencil, Plus, Trash2, Upload } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { ArrowLeft, Check, CircleHelp, Copy, Download, ImagePlus, MoreHorizontal, Pencil, Plus, Trash2, Upload, X } from "lucide-react";
 import { app } from "../lib/bridge";
 import { useT } from "../lib/i18n";
 import { THEME_STYLES, type ThemeStyle, isThemeStyle } from "../lib/theme";
 import {
   type ThemePackView,
   type ThemeSaveInput,
+  type ThemePackBackground,
+  type ThemePackSceneBackground,
+  type ThemePackRecipes,
+  type ThemePackTokens,
+  beginThemePreview,
   cancelThemePreview,
+  defaultBackground,
+  defaultTaskBackground,
   draftPackView,
   emptyThemeTokens,
+  isSafeHex,
   themePackKind,
+  themeTokenKeys,
 } from "../lib/themePack";
 import {
   type GalleryTab,
@@ -25,7 +34,9 @@ import {
   startGlobalPreview,
 } from "../lib/themeExperience";
 import { useToast } from "../lib/toast";
+import { themePreviewPalette } from "../lib/themePreviewPalette";
 import { ThemePreviewSurface } from "./ThemePreviewSurface";
+import { Tooltip } from "./Tooltip";
 
 type EditorState = {
   mode: "create" | "edit";
@@ -35,13 +46,23 @@ type EditorState = {
   description: string;
   license: string;
   baseStyle: ThemeStyle;
-  tokens: ThemePackView["tokens"];
-  recipes: ThemePackView["recipes"];
-  background: ThemePackView["background"];
+  tokens: ThemePackTokens;
+  recipes: ThemePackRecipes;
+  background: ThemePackBackground | null;
   backgroundDataUrl: string;
   existingBackgroundUrl: string;
+  taskBackground: ThemePackSceneBackground | null;
+  taskBackgroundDataUrl: string;
+  existingTaskBackgroundUrl: string;
+  tokenMode: "light" | "dark";
   originalId: string;
 };
+
+const TOKEN_GROUPS: { labelKey: string; keys: string[] }[] = [
+  { labelKey: "settings.themeTokens.surfaces", keys: ["bg", "bgSoft", "bgElev", "panel", "sidebar", "chat", "workspace", "workspaceFiles"] },
+  { labelKey: "settings.themeTokens.borderText", keys: ["border", "borderSoft", "fg", "fgDim", "fgFaint"] },
+  { labelKey: "settings.themeTokens.accentStatus", keys: ["accent", "accentFg", "ok", "warn", "err"] },
+];
 
 function slugifyId(name: string): string {
   const s = name
@@ -63,12 +84,142 @@ function packDescription(pack: ThemePackView, t: (key: never, vars?: Record<stri
   return pack.description || "";
 }
 
+function createEditorState(baseStyle: ThemeStyle): EditorState {
+  return {
+    mode: "create",
+    id: "my-theme",
+    name: "My Theme",
+    author: "",
+    description: "",
+    license: "",
+    baseStyle,
+    tokens: emptyThemeTokens(),
+    recipes: { density: "comfortable", corners: "soft" },
+    background: null,
+    backgroundDataUrl: "",
+    existingBackgroundUrl: "",
+    taskBackground: null,
+    taskBackgroundDataUrl: "",
+    existingTaskBackgroundUrl: "",
+    tokenMode: "dark",
+    originalId: "",
+  };
+}
+
+function handlePreviewRadioKey<T extends string>(
+  event: ReactKeyboardEvent<HTMLButtonElement>,
+  values: readonly T[],
+  current: T,
+  onChange: (value: T) => void,
+) {
+  const direction =
+    event.key === "ArrowRight" || event.key === "ArrowDown"
+      ? 1
+      : event.key === "ArrowLeft" || event.key === "ArrowUp"
+        ? -1
+        : 0;
+  if (!direction) return;
+  event.preventDefault();
+  const currentIndex = values.indexOf(current);
+  const nextIndex = (currentIndex + direction + values.length) % values.length;
+  onChange(values[nextIndex]);
+  const radios = event.currentTarget
+    .closest('[role="radiogroup"]')
+    ?.querySelectorAll<HTMLButtonElement>('[role="radio"]');
+  radios?.[nextIndex]?.focus();
+}
+
+function ThemePreviewControls({
+  mode,
+  scene,
+  onModeChange,
+  onSceneChange,
+}: {
+  mode: "light" | "dark";
+  scene: "home" | "task";
+  onModeChange: (mode: "light" | "dark") => void;
+  onSceneChange: (scene: "home" | "task") => void;
+}) {
+  const t = useT();
+  return (
+    <div className="theme-gallery__preview-controls">
+      <div className="theme-gallery__preview-control">
+        <span className="theme-gallery__preview-label">{t("settings.themeGallery.appearancePreview")}</span>
+        <div className="set-seg" role="radiogroup" aria-label={t("settings.themeGallery.appearancePreview")}>
+          <button
+            type="button"
+            role="radio"
+            aria-checked={mode === "light"}
+            tabIndex={mode === "light" ? 0 : -1}
+            className={`set-seg__btn${mode === "light" ? " set-seg__btn--on" : ""}`}
+            onClick={() => onModeChange("light")}
+            onKeyDown={(event) => handlePreviewRadioKey(event, ["light", "dark"], mode, onModeChange)}
+          >
+            {t("settings.themeLight")}
+          </button>
+          <button
+            type="button"
+            role="radio"
+            aria-checked={mode === "dark"}
+            tabIndex={mode === "dark" ? 0 : -1}
+            className={`set-seg__btn${mode === "dark" ? " set-seg__btn--on" : ""}`}
+            onClick={() => onModeChange("dark")}
+            onKeyDown={(event) => handlePreviewRadioKey(event, ["light", "dark"], mode, onModeChange)}
+          >
+            {t("settings.themeDark")}
+          </button>
+        </div>
+      </div>
+      <div className="theme-gallery__preview-control">
+        <span className="theme-gallery__preview-label">
+          {t("settings.themeGallery.scenePreview")}
+          <Tooltip label={t("settings.themeGallery.scenePreviewHint")} side="top">
+            <button
+              type="button"
+              className="theme-gallery__preview-help"
+              aria-label={t("settings.themeGallery.scenePreviewHint")}
+            >
+              <CircleHelp size={13} aria-hidden="true" />
+            </button>
+          </Tooltip>
+        </span>
+        <div className="set-seg" role="radiogroup" aria-label={t("settings.themeGallery.scenePreview")}>
+          <button
+            type="button"
+            role="radio"
+            aria-checked={scene === "home"}
+            tabIndex={scene === "home" ? 0 : -1}
+            className={`set-seg__btn${scene === "home" ? " set-seg__btn--on" : ""}`}
+            onClick={() => onSceneChange("home")}
+            onKeyDown={(event) => handlePreviewRadioKey(event, ["home", "task"], scene, onSceneChange)}
+          >
+            {t("settings.themeGallery.sceneHome")}
+          </button>
+          <button
+            type="button"
+            role="radio"
+            aria-checked={scene === "task"}
+            tabIndex={scene === "task" ? 0 : -1}
+            className={`set-seg__btn${scene === "task" ? " set-seg__btn--on" : ""}`}
+            onClick={() => onSceneChange("task")}
+            onKeyDown={(event) => handlePreviewRadioKey(event, ["home", "task"], scene, onSceneChange)}
+          >
+            {t("settings.themeGallery.sceneTask")}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function ThemeGallery({
   experience,
+  initialCreateBaseStyle,
   onExperienceChange,
   onBack,
 }: {
   experience: ThemeExperienceView;
+  initialCreateBaseStyle?: ThemeStyle;
   onExperienceChange: (view: ThemeExperienceView) => void;
   onBack: () => void;
 }) {
@@ -77,13 +228,17 @@ export function ThemeGallery({
   const [packs, setPacks] = useState<ThemePackView[]>([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
-  const [tab, setTab] = useState<GalleryTab>("official");
+  const [tab, setTab] = useState<GalleryTab>("catalog");
   const [selected, setSelected] = useState<ThemeSelection | null>(null);
   const [detailMode, setDetailMode] = useState<"light" | "dark">("dark");
   const [detailScene, setDetailScene] = useState<"home" | "task">("home");
   const [immersive, setImmersive] = useState(false);
-  const [editor, setEditor] = useState<EditorState | null>(null);
+  const [previewingId, setPreviewingId] = useState<string | null>(null);
+  const [editor, setEditor] = useState<EditorState | null>(() =>
+    initialCreateBaseStyle ? createEditorState(initialCreateBaseStyle) : null,
+  );
   const [menuOpen, setMenuOpen] = useState(false);
+  const selectionSeeded = useRef(false);
 
   const reload = useCallback(async () => {
     setLoading(true);
@@ -106,29 +261,79 @@ export function ThemeGallery({
   }, [reload]);
 
   const groups = useMemo(() => groupThemePacks(packs), [packs]);
-  const visible = tab === "official" ? groups.official : tab === "user" ? groups.user : groups.base;
+  const catalogPacks = useMemo(() => [...groups.official, ...groups.base], [groups.official, groups.base]);
+  const visible = tab === "catalog" ? catalogPacks : groups.user;
+  const visibleSections =
+    tab === "catalog"
+      ? [
+          { id: "official", label: t("settings.themeGallery.sectionFlagship"), packs: groups.official },
+          { id: "base", label: t("settings.themeGallery.tabBase"), packs: groups.base },
+        ]
+      : [{ id: "user", label: "", packs: groups.user }];
+
+  const changeTab = (nextTab: GalleryTab) => {
+    const nextPacks = nextTab === "catalog" ? catalogPacks : groups.user;
+    if (nextTab !== tab) {
+      cancelGlobalPreview();
+      setPreviewingId(null);
+    }
+    setTab(nextTab);
+    setMenuOpen(false);
+    if (selected && nextPacks.some((pack) => pack.id === selected.id)) return;
+    const nextSelection =
+      nextPacks.find((pack) => isSelectionActive(selectionFromPack(pack), experience)) || nextPacks[0] || null;
+    setSelected(nextSelection ? selectionFromPack(nextSelection) : null);
+  };
 
   // Seed selection from active experience.
   useEffect(() => {
-    if (selected || packs.length === 0) return;
+    if (selectionSeeded.current || packs.length === 0) return;
+    selectionSeeded.current = true;
     if (experience.activePack) {
       setSelected(selectionFromPack(experience.activePack));
-      setTab(themePackKind(experience.activePack) === "user" ? "user" : "official");
+      setTab(themePackKind(experience.activePack) === "user" ? "user" : "catalog");
       return;
     }
     const base = groups.base.find((p) => p.id === experience.baseStyle) || groups.base[0] || groups.official[0];
     if (base) {
       setSelected(selectionFromPack(base));
-      if (themePackKind(base) === "base") setTab("base");
+      setTab("catalog");
     }
   }, [packs, experience, selected, groups.base, groups.official]);
 
   const selectedPack = selected?.pack || (selected?.kind === "base" ? groups.base.find((p) => p.id === selected.id) : null) || null;
   const isActive = isSelectionActive(selected, experience);
 
+  const previewPackGlobally = useCallback((pack: ThemePackView) => {
+    if (themePackKind(pack) === "base") {
+      const draft = draftPackView({
+        id: pack.id,
+        name: pack.name,
+        baseStyle: pack.id,
+        tokens: emptyThemeTokens(),
+        recipes: { density: "comfortable", corners: "soft" },
+      });
+      startGlobalPreview(draft);
+      return;
+    }
+    startGlobalPreview(pack);
+  }, []);
+
+  // Entering immersive mode is the explicit opt-in to a live, reversible
+  // preview. Every rail selection replaces that preview until Back restores it
+  // or Apply persists it.
+  useEffect(() => {
+    if (!immersive || !selectedPack) return;
+    previewPackGlobally(selectedPack);
+  }, [immersive, selectedPack, previewPackGlobally]);
+
   const onSelectPack = (pack: ThemePackView) => {
     setSelected(selectionFromPack(pack));
     setMenuOpen(false);
+    if (tab === "catalog" && !immersive) {
+      previewPackGlobally(pack);
+      setPreviewingId(pack.id);
+    }
   };
 
   const applySelected = async () => {
@@ -145,6 +350,7 @@ export function ThemeGallery({
         commitGlobalPreview(view.activePack ?? null);
         showToast(t("settings.themeGallery.applied", { name: packDisplayName(selected.pack, t) }), "info");
       }
+      setPreviewingId(null);
       await reload();
     } catch (err) {
       showToast(err instanceof Error ? err.message : String(err), "error");
@@ -153,22 +359,10 @@ export function ThemeGallery({
     }
   };
 
-  const previewSelected = () => {
-    if (!selectedPack || selected?.kind === "base") {
-      // Base styles: apply temporarily via empty pack draft with baseStyle.
-      if (selected?.kind === "base") {
-        const draft = draftPackView({
-          id: selected.id,
-          name: selected.id,
-          baseStyle: selected.id,
-          tokens: emptyThemeTokens(),
-          recipes: { density: "comfortable", corners: "soft" },
-        });
-        startGlobalPreview(draft);
-      }
-      return;
-    }
-    startGlobalPreview(selectedPack);
+  const closeImmersivePreview = () => {
+    cancelGlobalPreview();
+    setPreviewingId(null);
+    setImmersive(false);
   };
 
   const copySelected = async () => {
@@ -179,6 +373,8 @@ export function ThemeGallery({
       const created = await app.CopyThemePack(selectedPack.id, newId, `${packDisplayName(selectedPack, t)} Copy`);
       showToast(t("settings.themeLibrary.copied", { name: created.name }), "info");
       await reload();
+      cancelGlobalPreview();
+      setPreviewingId(null);
       setTab("user");
       setSelected(selectionFromPack(created));
     } catch (err) {
@@ -225,25 +421,15 @@ export function ThemeGallery({
   };
 
   const openCreate = () => {
-    setEditor({
-      mode: "create",
-      id: "my-theme",
-      name: "My Theme",
-      author: "",
-      description: "",
-      license: "",
-      baseStyle: isThemeStyle(experience.baseStyle) ? experience.baseStyle : "graphite",
-      tokens: emptyThemeTokens(),
-      recipes: { density: "comfortable", corners: "soft" },
-      background: null,
-      backgroundDataUrl: "",
-      existingBackgroundUrl: "",
-      originalId: "",
-    });
+    cancelGlobalPreview();
+    setPreviewingId(null);
+    setEditor(createEditorState(isThemeStyle(experience.baseStyle) ? experience.baseStyle : "graphite"));
   };
 
   const openEdit = () => {
     if (!selectedPack || themePackKind(selectedPack) !== "user") return;
+    cancelGlobalPreview();
+    setPreviewingId(null);
     setEditor({
       mode: "edit",
       id: selectedPack.id,
@@ -263,6 +449,10 @@ export function ThemeGallery({
       background: selectedPack.background ? { ...selectedPack.background } : null,
       backgroundDataUrl: "",
       existingBackgroundUrl: selectedPack.backgroundUrl || "",
+      taskBackground: selectedPack.taskBackground ? { ...selectedPack.taskBackground } : null,
+      taskBackgroundDataUrl: "",
+      existingTaskBackgroundUrl: selectedPack.taskBackgroundUrl || "",
+      tokenMode: "dark",
       originalId: selectedPack.id,
     });
     setMenuOpen(false);
@@ -284,6 +474,8 @@ export function ThemeGallery({
         showToast(t("settings.themeLibrary.imported", { name: result.pack.name }), "info");
       }
       await reload();
+      cancelGlobalPreview();
+      setPreviewingId(null);
       setTab("user");
     } catch (err) {
       showToast(err instanceof Error ? err.message : String(err), "error");
@@ -308,11 +500,15 @@ export function ThemeGallery({
         background: editor.background || undefined,
         backgroundDataUrl: editor.backgroundDataUrl || undefined,
         clearBackground: !editor.background && !editor.backgroundDataUrl && !editor.existingBackgroundUrl,
+        taskBackground: editor.taskBackground || undefined,
+        taskBackgroundDataUrl: editor.taskBackgroundDataUrl || undefined,
+        clearTaskBackground: !editor.taskBackground && !editor.taskBackgroundDataUrl && !editor.existingTaskBackgroundUrl,
         replace: editor.mode === "edit",
         activate,
       };
       const saved = await app.SaveThemePack(input);
       showToast(t("settings.themeLibrary.saved", { name: saved.name }), "info");
+      cancelThemePreview();
       setEditor(null);
       await reload();
       setTab("user");
@@ -332,7 +528,7 @@ export function ThemeGallery({
     return (
       <div className="theme-gallery theme-gallery--immersive">
         <header className="theme-gallery__top">
-          <button type="button" className="btn btn--small" onClick={() => setImmersive(false)}>
+          <button type="button" className="btn btn--small" onClick={closeImmersivePreview}>
             <ArrowLeft size={14} /> {t("settings.themeGallery.back")}
           </button>
           <h2 className="theme-gallery__title">{t("settings.themeGallery.previewTitle")}</h2>
@@ -346,62 +542,75 @@ export function ThemeGallery({
           </div>
         </header>
         <div className="theme-gallery__immersive-toolbar">
-          <div className="set-seg">
-            <button type="button" className={`set-seg__btn${detailScene === "home" ? " set-seg__btn--on" : ""}`} onClick={() => setDetailScene("home")}>
-              {t("settings.themeGallery.sceneHome")}
-            </button>
-            <button type="button" className={`set-seg__btn${detailScene === "task" ? " set-seg__btn--on" : ""}`} onClick={() => setDetailScene("task")}>
-              {t("settings.themeGallery.sceneTask")}
-            </button>
-          </div>
-          <div className="set-seg">
-            <button type="button" className={`set-seg__btn${detailMode === "light" ? " set-seg__btn--on" : ""}`} onClick={() => setDetailMode("light")}>
-              {t("settings.themeLight")}
-            </button>
-            <button type="button" className={`set-seg__btn${detailMode === "dark" ? " set-seg__btn--on" : ""}`} onClick={() => setDetailMode("dark")}>
-              {t("settings.themeDark")}
-            </button>
-          </div>
+          <ThemePreviewControls
+            mode={detailMode}
+            scene={detailScene}
+            onModeChange={setDetailMode}
+            onSceneChange={setDetailScene}
+          />
         </div>
         <div className="theme-gallery__immersive-body">
           <ThemePreviewSurface pack={selectedPack} mode={detailMode} scene={detailScene} />
           <aside className="theme-gallery__immersive-rail">
             <div className="theme-gallery__detail-head">
-              <h3>{packDisplayName(selectedPack, t)}</h3>
-              <span className="theme-gallery__badge">{t("settings.themeLibrary.groupOfficial").replace("Reasonix ", "")}</span>
+              <div className="theme-gallery__detail-title-row">
+                <h3>{packDisplayName(selectedPack, t)}</h3>
+                {isActive ? (
+                  <span className="theme-gallery__detail-status">
+                    <Check size={12} strokeWidth={3} /> {t("settings.themeGallery.current")}
+                  </span>
+                ) : null}
+              </div>
+              <span className="theme-gallery__badge">
+                {themePackKind(selectedPack) === "official"
+                  ? t("settings.themeGallery.kindOfficial")
+                  : themePackKind(selectedPack) === "base"
+                    ? t("settings.themeGallery.kindBase")
+                    : t("settings.themeGallery.kindUser")}
+              </span>
             </div>
             <p className="theme-gallery__detail-desc">{packDescription(selectedPack, t)}</p>
-            <button type="button" className="btn btn--primary" disabled={busy || isActive} onClick={() => void applySelected()}>
-              {isActive ? t("settings.themeLibrary.active") : t("settings.themeGallery.apply")}
-            </button>
-            <button type="button" className="btn" disabled={busy} onClick={previewSelected}>
-              {t("settings.themeGallery.tempPreview")}
-            </button>
+            {!isActive ? (
+              <button type="button" className="btn btn--primary" disabled={busy} onClick={() => void applySelected()}>
+                {t("settings.themeGallery.apply")}
+              </button>
+            ) : null}
             <div className="theme-gallery__rail-list" role="listbox" aria-label={t("settings.themeGallery.title")}>
-              {groups.official.map((p) => (
-                <button
-                  key={p.id}
-                  type="button"
-                  role="option"
-                  aria-selected={selected?.id === p.id}
-                  className={`theme-gallery__rail-card${selected?.id === p.id ? " theme-gallery__rail-card--on" : ""}`}
-                  onClick={() => onSelectPack(p)}
-                >
-                  {p.previewUrl || p.backgroundUrl ? (
-                    <img src={p.previewUrl || p.backgroundUrl} alt="" loading="lazy" />
-                  ) : (
-                    <span className="theme-gallery__rail-fallback" />
-                  )}
-                  <span>{packDisplayName(p, t)}</span>
-                </button>
-              ))}
-            </div>
-            <div className="theme-gallery__tabs theme-gallery__tabs--compact">
-              {(["official", "user", "base"] as GalleryTab[]).map((id) => (
-                <button key={id} type="button" className={`theme-gallery__tab${tab === id ? " theme-gallery__tab--on" : ""}`} onClick={() => setTab(id)}>
-                  {id === "official" ? t("settings.themeLibrary.groupOfficial") : id === "user" ? t("settings.themeLibrary.groupUser") : t("settings.themeGallery.tabBase")}
-                </button>
-              ))}
+              {[
+                { id: "official", label: t("settings.themeLibrary.groupOfficial"), packs: groups.official },
+                { id: "user", label: t("settings.themeLibrary.groupUser"), packs: groups.user },
+                { id: "base", label: t("settings.themeGallery.tabBase"), packs: groups.base },
+              ]
+                .filter((section) => section.packs.length > 0)
+                .map((section) => (
+                  <div key={section.id} className="theme-gallery__rail-section" role="group" aria-label={section.label}>
+                    <div className="theme-gallery__rail-section-head" aria-hidden="true">
+                      <span>{section.label}</span>
+                      <span className="theme-gallery__rail-section-count">{section.packs.length}</span>
+                    </div>
+                    <div className="theme-gallery__rail-section-items">
+                      {section.packs.map((p) => (
+                        <button
+                          key={p.id}
+                          type="button"
+                          role="option"
+                          aria-selected={selected?.id === p.id}
+                          className={`theme-gallery__rail-card${selected?.id === p.id ? " theme-gallery__rail-card--on" : ""}`}
+                          onClick={() => onSelectPack(p)}
+                        >
+                          {themePackKind(p) === "base" ? (
+                            <ThemePreviewSurface pack={p} mode={detailMode} scene={detailScene} variant="thumbnail" />
+                          ) : p.previewUrl || p.backgroundUrl ? (
+                            <img src={p.previewUrl || p.backgroundUrl} alt="" loading="lazy" />
+                          ) : (
+                            <span className="theme-gallery__rail-fallback" />
+                          )}
+                          <span>{packDisplayName(p, t)}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ))}
             </div>
           </aside>
         </div>
@@ -435,9 +644,8 @@ export function ThemeGallery({
       <div className="theme-gallery__tabs" role="tablist">
         {(
           [
-            ["official", t("settings.themeLibrary.groupOfficial"), groups.official.length],
+            ["catalog", t("settings.themeGallery.tabAll"), catalogPacks.length],
             ["user", t("settings.themeLibrary.groupUser"), groups.user.length],
-            ["base", t("settings.themeGallery.tabBase"), groups.base.length],
           ] as const
         ).map(([id, label, count]) => (
           <button
@@ -446,7 +654,7 @@ export function ThemeGallery({
             role="tab"
             aria-selected={tab === id}
             className={`theme-gallery__tab${tab === id ? " theme-gallery__tab--on" : ""}`}
-            onClick={() => setTab(id)}
+            onClick={() => changeTab(id)}
           >
             {label} <span className="theme-gallery__tab-count">{count}</span>
           </button>
@@ -460,44 +668,57 @@ export function ThemeGallery({
           ) : visible.length === 0 ? (
             <div className="theme-lib-card__sub">{tab === "user" ? t("settings.themeLibrary.emptyUser") : t("settings.themeGallery.empty")}</div>
           ) : (
-            visible.map((pack) => {
-              const name = packDisplayName(pack, t);
-              const active = isSelectionActive(selectionFromPack(pack), experience);
-              const sel = selected?.id === pack.id;
-              const light = pack.tokens?.light?.bg || "#f4f3ef";
-              const accent = pack.tokens?.dark?.accent || pack.tokens?.light?.accent || "#ff6a3d";
-              return (
-                <button
-                  key={pack.id}
-                  type="button"
-                  role="option"
-                  aria-selected={sel}
-                  className={`theme-gallery-card${sel ? " theme-gallery-card--selected" : ""}${active ? " theme-gallery-card--active" : ""}`}
-                  onClick={() => onSelectPack(pack)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" || e.key === " ") {
-                      e.preventDefault();
-                      onSelectPack(pack);
-                    }
-                  }}
-                >
-                  <div className="theme-gallery-card__thumb">
-                    {pack.previewUrl || pack.backgroundUrl ? (
-                      <img src={pack.previewUrl || pack.backgroundUrl} alt={name} loading="lazy" decoding="async" />
-                    ) : (
-                      <div className="theme-gallery-card__swatches" style={{ background: `linear-gradient(120deg, ${light}, ${accent})` }} />
-                    )}
-                    {active ? (
-                      <span className="theme-gallery-card__check" aria-hidden="true">
-                        <Check size={14} strokeWidth={3} />
-                      </span>
-                    ) : null}
+            visibleSections.map((section) => (
+              <div key={section.id} className="theme-gallery__grid-section" role="group" aria-label={section.label || undefined}>
+                {section.label ? (
+                  <div className="theme-gallery__section-head">
+                    <h3>{section.label}</h3>
+                    <span>{section.packs.length}</span>
                   </div>
-                  <div className="theme-gallery-card__name">{name}</div>
-                  {active ? <div className="theme-gallery-card__status">{t("settings.themeGallery.current")}</div> : null}
-                </button>
-              );
-            })
+                ) : null}
+                {section.packs.map((pack) => {
+                  const name = packDisplayName(pack, t);
+                  const active = isSelectionActive(selectionFromPack(pack), experience);
+                  const sel = selected?.id === pack.id;
+                  return (
+                    <button
+                      key={pack.id}
+                      type="button"
+                      role="option"
+                      aria-selected={sel}
+                      className={`theme-gallery-card${sel ? " theme-gallery-card--selected" : ""}${active ? " theme-gallery-card--active" : ""}`}
+                      onClick={() => onSelectPack(pack)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          onSelectPack(pack);
+                        }
+                      }}
+                    >
+                      <div className="theme-gallery-card__thumb">
+                        {themePackKind(pack) === "base" ? (
+                          <ThemePreviewSurface pack={pack} mode={detailMode} scene={detailScene} variant="thumbnail" />
+                        ) : pack.previewUrl || pack.backgroundUrl ? (
+                          <img src={pack.previewUrl || pack.backgroundUrl} alt={name} loading="lazy" decoding="async" />
+                        ) : (
+                          <div
+                            className="theme-gallery-card__swatches"
+                            style={{ background: `linear-gradient(120deg, ${pack.tokens?.light?.bg || "#f4f3ef"}, ${pack.tokens?.dark?.accent || pack.tokens?.light?.accent || "#ff6a3d"})` }}
+                          />
+                        )}
+                        {active ? (
+                          <span className="theme-gallery-card__check" aria-hidden="true">
+                            <Check size={14} strokeWidth={3} />
+                          </span>
+                        ) : null}
+                      </div>
+                      <div className="theme-gallery-card__name">{name}</div>
+                      {active ? <div className="theme-gallery-card__status">{t("settings.themeGallery.current")}</div> : null}
+                    </button>
+                  );
+                })}
+              </div>
+            ))
           )}
         </div>
 
@@ -508,7 +729,20 @@ export function ThemeGallery({
                 <ThemePreviewSurface pack={selectedPack} mode={detailMode} scene={detailScene} />
               </div>
               <div className="theme-gallery__detail-meta">
-                <h3 className="theme-gallery__detail-name">{packDisplayName(selectedPack, t)}</h3>
+                <div className="theme-gallery__detail-head">
+                  <div className="theme-gallery__detail-title-row">
+                    <h3 className="theme-gallery__detail-name">{packDisplayName(selectedPack, t)}</h3>
+                    {isActive ? (
+                      <span className="theme-gallery__detail-status">
+                        <Check size={12} strokeWidth={3} /> {t("settings.themeGallery.current")}
+                      </span>
+                    ) : previewingId === selectedPack.id ? (
+                      <span className="theme-gallery__detail-status theme-gallery__detail-status--preview">
+                        {t("settings.themeGallery.previewing")}
+                      </span>
+                    ) : null}
+                  </div>
+                </div>
                 <div className="theme-gallery__detail-tags">
                   <span className="theme-gallery__badge">
                     {themePackKind(selectedPack) === "official"
@@ -520,53 +754,49 @@ export function ThemeGallery({
                   {selectedPack.license ? <span className="theme-gallery__badge theme-gallery__badge--muted">{selectedPack.license}</span> : null}
                 </div>
                 <p className="theme-gallery__detail-desc">{packDescription(selectedPack, t)}</p>
-                <div className="theme-gallery__detail-swatches" aria-hidden="true">
-                  <span style={{ background: selectedPack.tokens?.light?.bg || "#f4f3ef" }} />
-                  <span style={{ background: selectedPack.tokens?.light?.accent || "#ccc" }} />
-                  <span style={{ background: selectedPack.tokens?.dark?.accent || "#888" }} />
+                <div className="theme-gallery__detail-palette">
+                  <span className="theme-gallery__preview-label">{t("settings.themeGallery.paletteLabel")}</span>
+                  <div className="theme-gallery__detail-swatches" aria-hidden="true">
+                    <span style={{ background: themePreviewPalette(selectedPack, detailMode).bg }} />
+                    <span style={{ background: themePreviewPalette(selectedPack, detailMode).panel }} />
+                    <span style={{ background: themePreviewPalette(selectedPack, detailMode).accent }} />
+                  </div>
                 </div>
-                <div className="set-seg theme-gallery__detail-toggles">
-                  <button type="button" className={`set-seg__btn${detailMode === "light" ? " set-seg__btn--on" : ""}`} onClick={() => setDetailMode("light")}>
-                    {t("settings.themeLight")}
+                <ThemePreviewControls
+                  mode={detailMode}
+                  scene={detailScene}
+                  onModeChange={setDetailMode}
+                  onSceneChange={setDetailScene}
+                />
+                {!isActive ? (
+                  <button type="button" className="btn btn--primary theme-gallery__apply" disabled={busy} onClick={() => void applySelected()}>
+                    {t("settings.themeGallery.apply")}
                   </button>
-                  <button type="button" className={`set-seg__btn${detailMode === "dark" ? " set-seg__btn--on" : ""}`} onClick={() => setDetailMode("dark")}>
-                    {t("settings.themeDark")}
-                  </button>
-                </div>
-                <div className="set-seg theme-gallery__detail-toggles">
-                  <button type="button" className={`set-seg__btn${detailScene === "home" ? " set-seg__btn--on" : ""}`} onClick={() => setDetailScene("home")}>
-                    {t("settings.themeGallery.sceneHome")}
-                  </button>
-                  <button type="button" className={`set-seg__btn${detailScene === "task" ? " set-seg__btn--on" : ""}`} onClick={() => setDetailScene("task")}>
-                    {t("settings.themeGallery.sceneTask")}
-                  </button>
-                </div>
-                <button type="button" className="btn btn--primary theme-gallery__apply" disabled={busy || isActive} onClick={() => void applySelected()}>
-                  {isActive ? t("settings.themeLibrary.active") : t("settings.themeGallery.apply")}
-                </button>
+                ) : null}
                 <div className="theme-gallery__detail-actions">
-                  <button type="button" className="btn btn--small" disabled={busy} onClick={() => setImmersive(true)}>
+                  <button type="button" className="btn btn--small theme-gallery__open-preview" disabled={busy} onClick={() => setImmersive(true)}>
                     {t("settings.themeGallery.openPreview")}
                   </button>
-                  <button type="button" className="btn btn--small" disabled={busy} onClick={previewSelected}>
-                    {t("settings.themeGallery.tempPreview")}
-                  </button>
-                  <button type="button" className="btn btn--small" disabled={busy} onClick={() => void copySelected()}>
+                  {themePackKind(selectedPack) === "user" ? (
+                    <div className="theme-gallery__detail-user-actions">
+                      <button type="button" className="btn btn--small" disabled={busy} onClick={openEdit}>
+                        <Pencil size={12} /> {t("settings.themeLibrary.edit")}
+                      </button>
+                      <button type="button" className="btn btn--small" disabled={busy} onClick={() => void exportSelected()}>
+                        <Download size={12} /> {t("settings.themeLibrary.export")}
+                      </button>
+                    </div>
+                  ) : null}
+                  <button type="button" className="btn btn--small theme-gallery__detail-copy" disabled={busy} onClick={() => void copySelected()}>
                     <Copy size={12} /> {t("settings.themeLibrary.copyFrom")}
                   </button>
                   {themePackKind(selectedPack) === "user" ? (
-                    <div className="theme-gallery__more">
+                    <div className="theme-gallery__more theme-gallery__detail-more">
                       <button type="button" className="btn btn--small" onClick={() => setMenuOpen((v) => !v)} aria-expanded={menuOpen}>
-                        <MoreHorizontal size={14} />
+                        <MoreHorizontal size={14} /> {t("settings.themeGallery.moreActions")}
                       </button>
                       {menuOpen ? (
                         <div className="theme-gallery__menu" role="menu">
-                          <button type="button" role="menuitem" onClick={openEdit}>
-                            <Pencil size={12} /> {t("settings.themeLibrary.edit")}
-                          </button>
-                          <button type="button" role="menuitem" onClick={() => void exportSelected()}>
-                            <Download size={12} /> {t("settings.themeLibrary.export")}
-                          </button>
                           <button type="button" role="menuitem" className="theme-gallery__menu-danger" onClick={() => void removeSelected()}>
                             <Trash2 size={12} /> {t("settings.themeLibrary.delete")}
                           </button>
@@ -588,7 +818,10 @@ export function ThemeGallery({
           state={editor}
           busy={busy}
           onChange={(patch) => setEditor((s) => (s ? { ...s, ...patch } : s))}
-          onCancel={() => setEditor(null)}
+          onCancel={() => {
+            cancelThemePreview();
+            setEditor(null);
+          }}
           onSave={(activate) => void saveEditor(activate)}
         />
       ) : null}
@@ -610,27 +843,223 @@ function ThemeEditorInline({
   onSave: (activate: boolean) => void;
 }) {
   const t = useT();
+  const { showToast } = useToast();
+  const [previewMode, setPreviewMode] = useState<"light" | "dark">("dark");
+  const [previewScene, setPreviewScene] = useState<"home" | "task">("home");
+
+  const homeUrl = state.backgroundDataUrl || state.existingBackgroundUrl;
+  const taskUrl = state.taskBackgroundDataUrl || state.existingTaskBackgroundUrl;
+  const draft = useMemo(
+    () =>
+      draftPackView({
+        id: state.id || "preview",
+        name: state.name || "Preview",
+        baseStyle: state.baseStyle,
+        tokens: state.tokens,
+        recipes: state.recipes,
+        background: state.background,
+        backgroundUrl: homeUrl,
+        taskBackground: state.taskBackground,
+        taskBackgroundUrl: taskUrl,
+      }),
+    [homeUrl, state.baseStyle, state.background, state.id, state.name, state.recipes, state.taskBackground, state.tokens, taskUrl],
+  );
+
+  useEffect(() => {
+    beginThemePreview(draft);
+  }, [draft]);
+
+  useEffect(() => () => cancelThemePreview(), []);
+
+  const setToken = (key: string, value: string) => {
+    const next = {
+      ...state.tokens,
+      [state.tokenMode]: { ...(state.tokens[state.tokenMode] || {}) },
+    };
+    if (value) next[state.tokenMode]![key] = value;
+    else delete next[state.tokenMode]![key];
+    onChange({ tokens: next });
+  };
+
+  const pickBackground = async (scene: "home" | "task") => {
+    try {
+      const dataUrl = await app.PickThemeBackground();
+      if (!dataUrl) return;
+      if (scene === "home") {
+        onChange({
+          background: state.background ? { ...state.background } : defaultBackground(),
+          backgroundDataUrl: dataUrl,
+          existingBackgroundUrl: "",
+        });
+      } else {
+        onChange({
+          taskBackground: state.taskBackground ? { ...state.taskBackground } : defaultTaskBackground(),
+          taskBackgroundDataUrl: dataUrl,
+          existingTaskBackgroundUrl: "",
+        });
+      }
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : String(err), "error");
+    }
+  };
+
+  const warnings = useMemo(() => {
+    const out: string[] = [];
+    for (const mode of ["light", "dark"] as const) {
+      const fg = state.tokens[mode]?.fg;
+      const bg = state.tokens[mode]?.bg;
+      if (fg && bg && isSafeHex(fg) && isSafeHex(bg)) {
+        const ratio = themeContrastRatio(fg, bg);
+        if (ratio < 4.5) out.push(`${mode} fg/bg ${ratio.toFixed(2)} < 4.5`);
+      }
+    }
+    return out;
+  }, [state.tokens]);
+
   return (
     <div className="theme-gallery__editor-overlay" role="dialog" aria-modal="true">
       <div className="theme-editor theme-gallery__editor">
-        <strong>{state.mode === "create" ? t("settings.themeLibrary.editorCreate") : t("settings.themeLibrary.editorEdit")}</strong>
-        <div className="theme-editor__row">
-          <div className="theme-editor__label">{t("settings.themeLibrary.fieldId")}</div>
-          <div className="theme-editor__fields">
-            <input value={state.id} disabled={state.mode === "edit" || busy} onChange={(e) => onChange({ id: e.target.value })} />
-            <input value={state.name} disabled={busy} placeholder={t("settings.themeLibrary.fieldName")} onChange={(e) => onChange({ name: e.target.value })} />
+        <header className="theme-editor__header">
+          <div>
+            <strong>{state.mode === "create" ? t("settings.themeLibrary.editorCreate") : t("settings.themeLibrary.editorEdit")}</strong>
+            <p>{t("settings.themeEditor.subtitle")}</p>
           </div>
-        </div>
-        <div className="theme-editor__row">
-          <div className="theme-editor__label">{t("settings.themeLibrary.fieldBase")}</div>
-          <div className="set-seg">
-            {THEME_STYLES.map((s) => (
-              <button key={s} type="button" className={`set-seg__btn${state.baseStyle === s ? " set-seg__btn--on" : ""}`} disabled={busy} onClick={() => onChange({ baseStyle: s })}>
-                {s}
-              </button>
-            ))}
+          <button type="button" className="btn btn--icon" aria-label={t("common.close")} disabled={busy} onClick={onCancel}>
+            <X size={16} />
+          </button>
+        </header>
+
+        <div className="theme-editor__body">
+          <div className="theme-editor__controls">
+            <section className="theme-editor__section">
+              <h3>{t("settings.themeEditor.metadata")}</h3>
+              <div className="theme-editor__fields theme-editor__fields--grid">
+                <label><span>{t("settings.themeLibrary.fieldId")}</span><input value={state.id} disabled={state.mode === "edit" || busy} onChange={(e) => onChange({ id: e.target.value })} /></label>
+                <label><span>{t("settings.themeLibrary.fieldName")}</span><input value={state.name} disabled={busy} onChange={(e) => onChange({ name: e.target.value })} /></label>
+                <label><span>{t("settings.themeLibrary.fieldAuthor")}</span><input value={state.author} disabled={busy} onChange={(e) => onChange({ author: e.target.value })} /></label>
+                <label><span>{t("settings.themeEditor.license")}</span><input value={state.license} disabled={busy} placeholder="MIT" onChange={(e) => onChange({ license: e.target.value })} /></label>
+                <label className="theme-editor__wide"><span>{t("settings.themeEditor.description")}</span><textarea value={state.description} disabled={busy} rows={2} onChange={(e) => onChange({ description: e.target.value })} /></label>
+              </div>
+            </section>
+
+            <section className="theme-editor__section">
+              <h3>{t("settings.themeEditor.layout")}</h3>
+              <div className="theme-editor__setting-row">
+                <span>{t("settings.themeLibrary.fieldBase")}</span>
+                <div className="set-seg theme-editor__base-styles">
+                  {THEME_STYLES.map((s) => (
+                    <button key={s} type="button" className={`set-seg__btn${state.baseStyle === s ? " set-seg__btn--on" : ""}`} disabled={busy} onClick={() => onChange({ baseStyle: s })}>{t(`settings.style.${s}.zh` as never)}</button>
+                  ))}
+                </div>
+              </div>
+              <div className="theme-editor__setting-row">
+                <span>{t("settings.themeLibrary.fieldRecipes")}</span>
+                <div className="theme-editor__recipe-groups">
+                  <div className="set-seg">
+                    {(["comfortable", "compact"] as const).map((density) => (
+                      <button key={density} type="button" className={`set-seg__btn${state.recipes.density === density ? " set-seg__btn--on" : ""}`} onClick={() => onChange({ recipes: { ...state.recipes, density } })}>{t(`settings.themeEditor.density.${density}` as never)}</button>
+                    ))}
+                  </div>
+                  <div className="set-seg">
+                    {(["square", "soft", "round"] as const).map((corners) => (
+                      <button key={corners} type="button" className={`set-seg__btn${state.recipes.corners === corners ? " set-seg__btn--on" : ""}`} onClick={() => onChange({ recipes: { ...state.recipes, corners } })}>{t(`settings.themeEditor.corners.${corners}` as never)}</button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            <section className="theme-editor__section">
+              <div className="theme-editor__section-head">
+                <h3>{t("settings.themeEditor.colors")}</h3>
+                <div className="set-seg">
+                  {(["light", "dark"] as const).map((mode) => (
+                    <button key={mode} type="button" className={`set-seg__btn${state.tokenMode === mode ? " set-seg__btn--on" : ""}`} onClick={() => onChange({ tokenMode: mode })}>{mode === "light" ? t("settings.themeLight") : t("settings.themeDark")}</button>
+                  ))}
+                </div>
+              </div>
+              {TOKEN_GROUPS.map((group) => (
+                <div key={group.labelKey} className="theme-editor__token-group">
+                  <h4>{t(group.labelKey as never)}</h4>
+                  <div className="theme-editor__color-grid">
+                    {group.keys.filter((key) => themeTokenKeys().includes(key)).map((key) => {
+                      const value = state.tokens[state.tokenMode]?.[key] || "";
+                      return (
+                        <label key={key} className="theme-editor__color">
+                          <span className="theme-editor__token-label"><span>{t(`settings.themeTokens.key.${key}` as never)}</span><code>{key}</code></span>
+                          <div className="theme-editor__color-control">
+                            <input type="color" value={isSafeHex(value) ? value.slice(0, 7) : "#888888"} disabled={busy} onChange={(e) => setToken(key, e.target.value)} />
+                            <input type="text" value={value} placeholder="#RRGGBB" disabled={busy} onChange={(e) => setToken(key, e.target.value.trim())} />
+                          </div>
+                        </label>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
+            </section>
+
+            <section className="theme-editor__section">
+              <h3>{t("settings.themeEditor.scenes")}</h3>
+              <p className="theme-editor__section-help">{t("settings.themeEditor.scenesHint")}</p>
+              <div className="theme-editor__scene-grid">
+                <SceneImageEditor
+                  title={t("settings.themeEditor.homeBackground")}
+                  hint={t("settings.themeEditor.homeBackgroundHint")}
+                  url={homeUrl}
+                  present={Boolean(state.background)}
+                  focusX={state.background?.focusX ?? 0.5}
+                  focusY={state.background?.focusY ?? 0.5}
+                  safeArea={state.background?.safeArea || "center"}
+                  opacity={state.background?.homeOpacity ?? 1}
+                  opacityMax={1}
+                  overlayStrength={state.background?.overlayStrength ?? 0.62}
+                  busy={busy}
+                  onPick={() => void pickBackground("home")}
+                  onClear={() => onChange({ background: null, backgroundDataUrl: "", existingBackgroundUrl: "" })}
+                  onPatch={(patch) => {
+                    const { opacity: nextOpacity, ...rest } = patch;
+                    onChange({ background: { ...(state.background || defaultBackground()), ...rest, homeOpacity: nextOpacity ?? state.background?.homeOpacity ?? 1 } });
+                  }}
+                />
+                <SceneImageEditor
+                  title={t("settings.themeEditor.taskBackground")}
+                  hint={state.taskBackground ? t("settings.themeEditor.taskBackgroundHint") : t("settings.themeEditor.taskBackgroundFallback")}
+                  url={taskUrl || homeUrl}
+                  present={Boolean(state.taskBackground)}
+                  focusX={state.taskBackground?.focusX ?? state.background?.focusX ?? 0.5}
+                  focusY={state.taskBackground?.focusY ?? state.background?.focusY ?? 0.5}
+                  safeArea={state.taskBackground?.safeArea || state.background?.safeArea || "center"}
+                  opacity={state.taskBackground?.opacity ?? state.background?.taskOpacity ?? 0.28}
+                  opacityMax={0.45}
+                  overlayStrength={state.taskBackground?.overlayStrength ?? state.background?.overlayStrength ?? 0.62}
+                  busy={busy}
+                  onPick={() => void pickBackground("task")}
+                  onClear={() => onChange({ taskBackground: null, taskBackgroundDataUrl: "", existingTaskBackgroundUrl: "" })}
+                  onPatch={(patch) => onChange({ taskBackground: { ...(state.taskBackground || defaultTaskBackground()), ...patch, opacity: patch.opacity ?? state.taskBackground?.opacity ?? 0.28 } })}
+                />
+              </div>
+            </section>
+
+            {warnings.length > 0 ? (
+              <div className="theme-editor__warn">
+                {t("settings.themeLibrary.contrastWarn")}
+                <ul>{warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul>
+              </div>
+            ) : null}
           </div>
+
+          <aside className="theme-editor__live">
+            <div className="theme-editor__live-head">
+              <strong>{t("settings.themeEditor.livePreview")}</strong>
+              <span>{previewScene === "home" ? t("settings.themeGallery.sceneHome") : t("settings.themeGallery.sceneTask")}</span>
+            </div>
+            <ThemePreviewControls mode={previewMode} scene={previewScene} onModeChange={setPreviewMode} onSceneChange={setPreviewScene} />
+            <ThemePreviewSurface pack={draft} mode={previewMode} scene={previewScene} />
+            <p>{t("settings.themeEditor.livePreviewHint")}</p>
+          </aside>
         </div>
+
         <div className="theme-editor__actions">
           <button type="button" className="btn" disabled={busy} onClick={onCancel}>
             {t("common.cancel")}
@@ -645,4 +1074,107 @@ function ThemeEditorInline({
       </div>
     </div>
   );
+}
+
+type ScenePatch = {
+  focusX?: number;
+  focusY?: number;
+  safeArea?: "left" | "center" | "right";
+  opacity?: number;
+  overlayStrength?: number;
+};
+
+function SceneImageEditor({
+  title,
+  hint,
+  url,
+  present,
+  focusX,
+  focusY,
+  safeArea,
+  opacity,
+  opacityMax,
+  overlayStrength,
+  busy,
+  onPick,
+  onClear,
+  onPatch,
+}: {
+  title: string;
+  hint: string;
+  url: string;
+  present: boolean;
+  focusX: number;
+  focusY: number;
+  safeArea: string;
+  opacity: number;
+  opacityMax: number;
+  overlayStrength: number;
+  busy: boolean;
+  onPick: () => void;
+  onClear: () => void;
+  onPatch: (patch: ScenePatch) => void;
+}) {
+  const t = useT();
+  const previewRef = useRef<HTMLDivElement>(null);
+  const dragging = useRef(false);
+  const updateFocus = (clientX: number, clientY: number) => {
+    const rect = previewRef.current?.getBoundingClientRect();
+    if (!rect || !present) return;
+    onPatch({
+      focusX: Math.min(1, Math.max(0, (clientX - rect.left) / rect.width)),
+      focusY: Math.min(1, Math.max(0, (clientY - rect.top) / rect.height)),
+    });
+  };
+
+  return (
+    <div className={`theme-editor__scene${present ? " theme-editor__scene--ready" : ""}`}>
+      <div className="theme-editor__scene-head">
+        <div><strong>{title}</strong><p>{hint}</p></div>
+        <div className="theme-editor__scene-actions">
+          <button type="button" className="btn btn--small" disabled={busy} onClick={onPick}><ImagePlus size={13} /> {t("settings.themeLibrary.pickImage")}</button>
+          {present ? <button type="button" className="btn btn--small" disabled={busy} onClick={onClear}>{t("settings.themeLibrary.clearImage")}</button> : null}
+        </div>
+      </div>
+      <div
+        ref={previewRef}
+        className="theme-editor__bg-preview"
+        style={url ? { backgroundImage: `url("${url}")`, opacity } : undefined}
+        onPointerDown={(event) => {
+          dragging.current = true;
+          event.currentTarget.setPointerCapture?.(event.pointerId);
+          updateFocus(event.clientX, event.clientY);
+        }}
+        onPointerMove={(event) => dragging.current && updateFocus(event.clientX, event.clientY)}
+        onPointerUp={() => { dragging.current = false; }}
+      >
+        {!url ? <div className="theme-editor__scene-empty"><ImagePlus size={22} /><span>{t("settings.themeEditor.uploadPrompt")}</span></div> : null}
+        {present ? <span className="theme-editor__focus" style={{ left: `${focusX * 100}%`, top: `${focusY * 100}%` }} /> : null}
+      </div>
+      {present ? (
+        <div className="theme-editor__scene-controls">
+          <div className="theme-editor__setting-row">
+            <span>{t("settings.themeEditor.safeArea")}</span>
+            <div className="set-seg">
+              {(["left", "center", "right"] as const).map((area) => <button key={area} type="button" className={`set-seg__btn${safeArea === area ? " set-seg__btn--on" : ""}`} onClick={() => onPatch({ safeArea: area })}>{t(`settings.themeEditor.safeArea.${area}` as never)}</button>)}
+            </div>
+          </div>
+          <label className="theme-editor__range"><span>{t("settings.themeEditor.opacity")} <b>{Math.round(opacity * 100)}%</b></span><input type="range" min={0} max={opacityMax} step={0.01} value={opacity} onChange={(e) => onPatch({ opacity: Number(e.target.value) })} /></label>
+          <label className="theme-editor__range"><span>{t("settings.themeLibrary.overlayStrength")} <b>{Math.round(overlayStrength * 100)}%</b></span><input type="range" min={0} max={1} step={0.01} value={overlayStrength} onChange={(e) => onPatch({ overlayStrength: Number(e.target.value) })} /></label>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function themeContrastRatio(a: string, b: string): number {
+  const luminance = (hex: string) => {
+    const raw = hex.slice(1, 7);
+    const channels = [0, 2, 4].map((index) => parseInt(raw.slice(index, index + 2), 16) / 255)
+      .map((value) => (value <= 0.03928 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4));
+    return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2];
+  };
+  const la = luminance(a);
+  const lb = luminance(b);
+  return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05);
 }

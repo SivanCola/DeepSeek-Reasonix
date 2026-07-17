@@ -98,7 +98,11 @@ func (a *App) ListThemePacks() ([]ThemePackView, error) {
 		if m.Background != nil && m.Background.Image != "" {
 			bgURL = themeBackgroundURL(id, m.Background.Image)
 		}
-		out = append(out, manifestToView(m, themeKindUser, activeID == id, bgURL, ""))
+		taskURL := ""
+		if m.TaskBackground != nil && m.TaskBackground.Image != "" {
+			taskURL = themeBackgroundURL(id, m.TaskBackground.Image)
+		}
+		out = append(out, manifestToView(m, themeKindUser, activeID == id, bgURL, "", taskURL))
 	}
 	return out, nil
 }
@@ -201,7 +205,11 @@ func (a *App) loadThemeViewLocked(id string, active bool) (ThemePackView, error)
 	if m.Background != nil && m.Background.Image != "" {
 		bgURL = themeBackgroundURL(id, m.Background.Image)
 	}
-	return manifestToView(m, themeKindUser, active, bgURL, ""), nil
+	taskURL := ""
+	if m.TaskBackground != nil && m.TaskBackground.Image != "" {
+		taskURL = themeBackgroundURL(id, m.TaskBackground.Image)
+	}
+	return manifestToView(m, themeKindUser, active, bgURL, "", taskURL), nil
 }
 
 // ActivateThemePack enables an official or user theme. Empty id clears the pack
@@ -353,16 +361,25 @@ func (a *App) SaveThemePack(input ThemeSaveInput) (ThemePackView, error) {
 		return ThemePackView{}, fmt.Errorf("safe mode cannot save themes")
 	}
 	m := &ThemePackManifest{
-		SchemaVersion: themePackSchemaVersion,
-		ID:            strings.TrimSpace(input.ID),
-		Name:          input.Name,
-		Author:        input.Author,
-		Description:   input.Description,
-		License:       input.License,
-		BaseStyle:     input.BaseStyle,
-		Tokens:        input.Tokens,
-		Recipes:       input.Recipes,
-		Background:    input.Background,
+		SchemaVersion:  themePackSchemaVersion,
+		ID:             strings.TrimSpace(input.ID),
+		Name:           input.Name,
+		Author:         input.Author,
+		Description:    input.Description,
+		License:        input.License,
+		BaseStyle:      input.BaseStyle,
+		Tokens:         input.Tokens,
+		Recipes:        input.Recipes,
+		Background:     input.Background,
+		TaskBackground: input.TaskBackground,
+	}
+	// Preserve editor tuning while validation runs before the data URL has been
+	// decoded into its final file name. The placeholder is replaced below.
+	if !input.ClearBackground && strings.TrimSpace(input.BackgroundDataURL) != "" && m.Background != nil && m.Background.Image == "" {
+		m.Background.Image = "background.webp"
+	}
+	if !input.ClearTaskBackground && strings.TrimSpace(input.TaskBackgroundDataURL) != "" && m.TaskBackground != nil && m.TaskBackground.Image == "" {
+		m.TaskBackground.Image = "background-task.webp"
 	}
 	if err := validateThemePackManifest(m); err != nil {
 		return ThemePackView{}, err
@@ -372,7 +389,6 @@ func (a *App) SaveThemePack(input ThemeSaveInput) (ThemePackView, error) {
 	}
 
 	var imageBytes []byte
-	var imageName string
 	keepExistingImage := false
 
 	if input.ClearBackground {
@@ -383,12 +399,11 @@ func (a *App) SaveThemePack(input ThemeSaveInput) (ThemePackView, error) {
 			return ThemePackView{}, err
 		}
 		imageBytes = data
-		imageName = name
 		if m.Background == nil {
 			bg := defaultThemePackBackground()
 			m.Background = &bg
 		}
-		m.Background.Image = imageName
+		m.Background.Image = name
 		// Re-validate after image assignment.
 		bg, err := normalizeThemeBackground(m.Background)
 		if err != nil {
@@ -404,22 +419,59 @@ func (a *App) SaveThemePack(input ThemeSaveInput) (ThemePackView, error) {
 		}
 	}
 
+	var taskImageBytes []byte
+	keepExistingTaskImage := false
+	if input.ClearTaskBackground {
+		m.TaskBackground = nil
+	} else if strings.TrimSpace(input.TaskBackgroundDataURL) != "" {
+		name, data, err := decodeDataURLImage(input.TaskBackgroundDataURL)
+		if err != nil {
+			return ThemePackView{}, err
+		}
+		taskImageBytes = data
+		if m.TaskBackground == nil {
+			bg := defaultThemePackTaskBackground()
+			m.TaskBackground = &bg
+		}
+		m.TaskBackground.Image = taskBackgroundImageName(name)
+		bg, err := normalizeThemeSceneBackground(m.TaskBackground)
+		if err != nil {
+			return ThemePackView{}, err
+		}
+		m.TaskBackground = bg
+	} else if m.TaskBackground != nil && m.TaskBackground.Image != "" {
+		if userThemeExists(m.ID) {
+			keepExistingTaskImage = true
+		} else {
+			return ThemePackView{}, fmt.Errorf("task background image data is required for new themes with a task background")
+		}
+	}
+
 	var staging string
 	var err error
+	var homeSource themeStagingImage
 	if keepExistingImage {
 		existing, err := resolveThemeImageAbs(m.ID, m.Background.Image)
 		if err != nil {
 			return ThemePackView{}, err
 		}
-		staging, err = writeThemeStaging(m, existing, nil)
-		if err != nil {
-			return ThemePackView{}, err
-		}
+		homeSource.path = existing
 	} else {
-		staging, err = writeThemeStaging(m, "", imageBytes)
+		homeSource.bytes = imageBytes
+	}
+	var taskSource themeStagingImage
+	if keepExistingTaskImage {
+		existing, err := resolveThemeImageAbs(m.ID, m.TaskBackground.Image)
 		if err != nil {
 			return ThemePackView{}, err
 		}
+		taskSource.path = existing
+	} else {
+		taskSource.bytes = taskImageBytes
+	}
+	staging, err = writeThemeStaging(m, homeSource.path, homeSource.bytes, taskSource)
+	if err != nil {
+		return ThemePackView{}, err
 	}
 	defer os.RemoveAll(staging)
 
@@ -482,6 +534,7 @@ func (a *App) CopyThemePack(sourceID, newID, newName string) (ThemePackView, err
 
 	var m *ThemePackManifest
 	var imageBytes []byte
+	var taskImageBytes []byte
 	if isBuiltinThemeID(sourceID) {
 		src := findBuiltinManifest(sourceID)
 		if src == nil {
@@ -515,6 +568,16 @@ func (a *App) CopyThemePack(sourceID, newID, newName string) (ThemePackView, err
 				return ThemePackView{}, err
 			}
 		}
+		if m.TaskBackground != nil && m.TaskBackground.Image != "" {
+			p, err := resolveThemeImageAbs(sourceID, m.TaskBackground.Image)
+			if err != nil {
+				return ThemePackView{}, err
+			}
+			taskImageBytes, err = os.ReadFile(p)
+			if err != nil {
+				return ThemePackView{}, err
+			}
+		}
 	}
 	m.ID = newID
 	if strings.TrimSpace(newName) != "" {
@@ -525,7 +588,7 @@ func (a *App) CopyThemePack(sourceID, newID, newName string) (ThemePackView, err
 	if err := validateThemePackManifest(m); err != nil {
 		return ThemePackView{}, err
 	}
-	staging, err := writeThemeStaging(m, "", imageBytes)
+	staging, err := writeThemeStaging(m, "", imageBytes, themeStagingImage{bytes: taskImageBytes})
 	if err != nil {
 		return ThemePackView{}, err
 	}

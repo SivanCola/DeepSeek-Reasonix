@@ -13,10 +13,12 @@ import {
   isSafeBackgroundURL,
   isSafeHex,
   isThemeTokenKey,
+  registerTrustedThemeBackgroundURLs,
   setBaseAppearance,
   themePackKind,
 } from "../lib/themePack";
 import { applyTheme, getThemeStyle } from "../lib/theme";
+import { BASE_STYLE_PREVIEW_PALETTES, themePreviewPalette } from "../lib/themePreviewPalette";
 
 const testDir = dirname(fileURLToPath(import.meta.url));
 const packSource = readFileSync(resolve(testDir, "../lib/themePack.ts"), "utf8");
@@ -25,8 +27,10 @@ const appSource = readFileSync(resolve(testDir, "../App.tsx"), "utf8");
 const librarySource = readFileSync(resolve(testDir, "../components/ThemeLibrary.tsx"), "utf8");
 const gallerySource = readFileSync(resolve(testDir, "../components/ThemeGallery.tsx"), "utf8");
 const overviewSource = readFileSync(resolve(testDir, "../components/AppearanceOverview.tsx"), "utf8");
+const settingsSource = readFileSync(resolve(testDir, "../components/SettingsPanel.tsx"), "utf8");
 const experienceSource = readFileSync(resolve(testDir, "../lib/themeExperience.ts"), "utf8");
 const bridgeSource = readFileSync(resolve(testDir, "../lib/bridge.ts"), "utf8");
+const viteSource = readFileSync(resolve(testDir, "../../vite.config.ts"), "utf8");
 const localeEn = readFileSync(resolve(testDir, "../locales/en.ts"), "utf8");
 const localeZh = readFileSync(resolve(testDir, "../locales/zh.ts"), "utf8");
 const localeZhTW = readFileSync(resolve(testDir, "../locales/zh-TW.ts"), "utf8");
@@ -108,6 +112,7 @@ const headChildren: unknown[] = [];
 
 (globalThis as unknown as { window: unknown }).window = {
   matchMedia: () => ({ matches: false, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {} }),
+  location: { href: "http://127.0.0.1:5197/", origin: "http://127.0.0.1:5197" },
   runtime: undefined,
 };
 
@@ -122,6 +127,10 @@ ok(isThemeTokenKey("accent") && !isThemeTokenKey("hack"), "token whitelist");
 ok(isSafeBackgroundURL("/__reasonix_theme_asset/my-theme/abc/background.png"), "asset URL allowed");
 ok(isSafeBackgroundURL("data:image/png;base64,aaa"), "data URL allowed");
 ok(!isSafeBackgroundURL("https://evil.example/bg.png"), "remote URL rejected");
+const bundledOfficialBackground = "http://127.0.0.1:5197/@fs/workspace/desktop/themes/official/official-rose-dawn/background.webp";
+registerTrustedThemeBackgroundURLs([bundledOfficialBackground, "https://evil.example/assets/background-fake.webp"]);
+ok(isSafeBackgroundURL(bundledOfficialBackground), "registered same-origin official dev background allowed");
+ok(!isSafeBackgroundURL("https://evil.example/assets/background-fake.webp"), "cross-origin bundled background rejected");
 
 const draft = draftPackView({
   id: "preview-pack",
@@ -146,6 +155,16 @@ ok(attrs.get("data-theme-has-bg") === "true", "marks background present");
 ok(styleProps.has("--theme-bg-image"), "sets background image var");
 ok((styleEl as { textContent: string }).textContent.includes("--accent:#ff0000"), "injects dark accent override");
 ok((styleEl as { textContent: string }).textContent.includes("--r:14px"), "applies round corners recipe");
+
+const twoSceneDraft = draftPackView({
+  ...draft,
+  taskBackground: { focusX: 0.8, focusY: 0.3, safeArea: "right", opacity: 0.35, overlayStrength: 0.7 },
+  taskBackgroundUrl: "/__reasonix_theme_asset/preview-pack/deadbeef/background-task.png",
+});
+applyThemePack(twoSceneDraft);
+ok(styleProps.get("--theme-bg-task-image")?.includes("background-task.png") === true, "sets independent task image var");
+ok(styleProps.get("--theme-bg-task-opacity") === "0.35", "sets independent task opacity");
+ok(attrs.get("data-theme-safe-area") === "right", "task background controls safe area");
 
 applyThemeScene("task");
 ok(attrs.get("data-theme-scene") === "task", "scene task on root");
@@ -242,21 +261,64 @@ ok(themePackKind({ builtin: false }) === "user", "legacy builtin=false falls bac
 ok(overviewSource.includes("appearance-overview"), "appearance overview present");
 ok(overviewSource.includes("settings.themeGallery.browse"), "overview has browse themes");
 ok(overviewSource.includes("settings.themeGallery.disable") || overviewSource.includes("handleDisable"), "overview can disable pack");
+ok(settingsSource.includes('tab !== "appearance"'), "appearance renders a single page header");
+ok(overviewSource.includes("initialCreateBaseStyle"), "base-style copy opens a prefilled theme editor");
+ok(overviewSource.includes('role="radiogroup"') && overviewSource.includes("aria-checked"), "overview segmented controls expose selection semantics");
+ok(overviewSource.includes("appearance-overview__segmented--theme"), "theme-mode control uses compact settings width");
+ok(overviewSource.includes("appearance-overview__segmented--text-size"), "text-size control uses its wider compact settings width");
+ok(stylesSource.includes("--appearance-segmented-width: 300px") && stylesSource.includes("--appearance-segmented-width: 420px"), "overview segmented controls use intentional widths");
+ok(stylesSource.includes(".appearance-overview__segmented { justify-self: stretch; width: 100%; }"), "overview segmented controls expand on narrow screens");
+ok(overviewSource.includes("appearance-base-style-help"), "active pack explains why base style is locked");
 ok(gallerySource.includes('role="listbox"') || gallerySource.includes("role=\"listbox\""), "gallery cards are listbox options");
 ok(gallerySource.includes("settings.themeGallery.apply"), "apply lives in gallery detail");
 ok(gallerySource.includes("setSelected") || gallerySource.includes("onSelectPack"), "card click selects without applying");
+ok(gallerySource.includes("changeTab") && gallerySource.includes("nextPacks[0]"), "changing gallery groups synchronizes the selected detail");
 ok(gallerySource.includes("ActivateThemePack") || experienceSource.includes("activateThemePack"), "apply path uses activate API");
 ok(experienceSource.includes("ActivateBaseStyle") || experienceSource.includes("activateBaseStyle"), "base style API wired");
 ok(experienceSource.includes("selectedThemeId") || gallerySource.includes("selected"), "selection is frontend state");
 ok(gallerySource.includes("loading=\"lazy\"") || gallerySource.includes('loading="lazy"'), "gallery thumbs lazy-load");
 ok(gallerySource.includes("ThemePreviewSurface") || gallerySource.includes("theme-preview-surface"), "isolated detail preview");
-ok(gallerySource.includes("tempPreview") || gallerySource.includes("startGlobalPreview"), "temporary global preview entry");
+ok(gallerySource.includes('themePackKind(pack) === "base"') && gallerySource.includes('variant="thumbnail"'), "base gallery cards render semantic UI thumbnails");
+ok(gallerySource.includes('themePackKind(p) === "base"'), "immersive rail renders base-style thumbnails");
+for (const style of ["graphite", "aurora", "slate", "carbon", "nocturne", "amber"] as const) {
+  const basePack = { id: style, name: style, baseStyle: style, builtin: true, kind: "base" as const, active: false, hasBackground: false, tokens: {}, recipes: {} };
+  for (const mode of ["light", "dark"] as const) {
+    const palette = themePreviewPalette(basePack, mode);
+    ok(palette === BASE_STYLE_PREVIEW_PALETTES[style][mode], `${style} ${mode} uses its canonical preview palette`);
+  }
+}
+ok(new Set(Object.values(BASE_STYLE_PREVIEW_PALETTES).map((modes) => modes.dark.accent)).size === 6, "six base previews have distinct dark accents");
+ok(gallerySource.includes('tab === "catalog" && !immersive') && gallerySource.includes("previewPackGlobally(pack)"), "catalog card clicks immediately start a global preview");
+ok(gallerySource.includes("setPreviewingId(pack.id)"), "catalog preview state is visible in theme details");
+ok(gallerySource.includes("nextTab !== tab") && gallerySource.includes("cancelGlobalPreview();"), "leaving all themes restores the prior appearance");
+ok(gallerySource.includes("ThemePreviewControls"), "detail and immersive views share preview controls");
+ok((gallerySource.match(/role="radiogroup"/g) || []).length >= 2, "appearance and scene previews are separate radio groups");
+ok(gallerySource.includes("aria-checked={mode ===") && gallerySource.includes("aria-checked={scene ==="), "preview controls expose selected values");
+ok(gallerySource.includes("handlePreviewRadioKey") && gallerySource.includes("tabIndex={mode ==="), "preview radios support arrow keys and roving focus");
+ok(gallerySource.includes("if (!immersive || !selectedPack) return") && gallerySource.includes("previewPackGlobally(selectedPack)"), "immersive selection automatically starts a global preview");
+ok(gallerySource.includes("closeImmersivePreview") && gallerySource.includes("cancelGlobalPreview();"), "leaving immersive preview restores the prior appearance");
+ok(!gallerySource.includes("settings.themeGallery.tempPreview"), "redundant global-trial button is removed");
+ok(gallerySource.includes("theme-gallery__rail-section") && gallerySource.includes("packs: groups.official") && gallerySource.includes("packs: groups.user") && gallerySource.includes("packs: groups.base"), "immersive rail includes official, user, and base theme groups");
+ok(gallerySource.includes("filter((section) => section.packs.length > 0)"), "immersive rail hides empty groups");
+ok(!gallerySource.includes("theme-gallery__tabs--compact"), "immersive rail has no duplicate bottom tab navigation");
+ok(gallerySource.includes("theme-gallery__detail-status"), "active theme uses a status badge");
+ok(!gallerySource.includes("disabled={busy || isActive}"), "active status is not rendered as a disabled primary action");
+ok(gallerySource.includes("theme-gallery__detail-user-actions"), "user theme edit and export actions are visible outside the overflow menu");
+ok((gallerySource.match(/role="menuitem"/g) || []).length === 1 && gallerySource.includes("settings.themeLibrary.delete"), "user theme overflow menu keeps only delete");
+ok(gallerySource.includes("defaultTaskBackground") && gallerySource.includes("taskBackgroundDataUrl"), "editor supports an independent workspace image");
+ok(gallerySource.includes("themeTokenKeys()") && gallerySource.includes('type="color"'), "editor exposes semantic theme colors");
+ok(gallerySource.includes('type="range"') && gallerySource.includes("settings.themeEditor.opacity"), "editor exposes scene opacity controls");
+ok(gallerySource.includes("beginThemePreview(draft)"), "editor changes are previewed live");
 ok(bridgeSource.includes("GetThemeExperience"), "bridge exposes GetThemeExperience");
 ok(bridgeSource.includes("ActivateBaseStyle"), "bridge exposes ActivateBaseStyle");
 ok(bridgeSource.includes("DisableThemePack"), "bridge exposes DisableThemePack");
 
-// Gallery tabs: official / user / base (not two competing base pickers on home).
-ok(gallerySource.includes('"official"') && gallerySource.includes('"user"') && gallerySource.includes('"base"'), "gallery has three tabs");
+// Gallery navigation merges built-in choices while keeping their semantics.
+ok(gallerySource.includes('["catalog", t("settings.themeGallery.tabAll"), catalogPacks.length]'), "gallery combines official and base packs in all themes");
+ok(gallerySource.includes('id: "official"') && gallerySource.includes('id: "base"'), "all themes keeps flagship and base sections");
+ok(gallerySource.includes('role="group"') && gallerySource.includes("theme-gallery__section-head"), "catalog sections retain accessible grouping");
+ok(!gallerySource.includes('["base", t("settings.themeGallery.tabBase"), groups.base.length]'), "base styles are no longer a separate top-level tab");
+ok(gallerySource.includes("selectionSeeded.current") && gallerySource.includes("packs.length === 0"), "empty user tab is not overwritten by selection seeding");
 ok(!overviewSource.includes("theme-card-grid"), "overview no longer renders long style card grid");
 
 // Localized official names/descriptions in all three locales.
@@ -278,13 +340,35 @@ for (const id of OFFICIAL_IDS) {
     ok(localeZhTW.includes(`"${key}"`), `zh-TW has ${key}`);
   }
 }
-for (const key of ["settings.themeGallery.title", "settings.themeGallery.apply", "settings.themeGallery.browse"]) {
+for (const key of [
+  "settings.themeGallery.title",
+  "settings.themeGallery.apply",
+  "settings.themeGallery.browse",
+  "settings.themeGallery.paletteLabel",
+  "settings.themeGallery.appearancePreview",
+  "settings.themeGallery.scenePreview",
+  "settings.themeGallery.scenePreviewHint",
+  "settings.themeGallery.tabAll",
+  "settings.themeGallery.sectionFlagship",
+]) {
   ok(localeEn.includes(`"${key}"`) && localeZh.includes(`"${key}"`) && localeZhTW.includes(`"${key}"`), `gallery key ${key} in all locales`);
 }
 
 // Mock parity: 6 base + 8 official mock packs so browser dev matches the shell.
 ok((bridgeSource.match(/kind: "base"/g) || []).length === 6, "mock has 6 base packs");
 ok((bridgeSource.match(/kind: "official"/g) || []).length === 8, "mock has 8 official packs");
+ok((bridgeSource.match(/previewUrl: new URL\("\.\.\/\.\.\/\.\.\/themes\/official\//g) || []).length === 8, "browser mock has 8 real official previews");
+ok((bridgeSource.match(/backgroundUrl: new URL\("\.\.\/\.\.\/\.\.\/themes\/official\//g) || []).length === 8, "browser mock has 8 real official backgrounds");
+ok(viteSource.includes('resolve(configDir, "../themes/official")'), "Vite dev server permits only the official theme asset directory");
+ok(stylesSource.includes("container: theme-gallery / inline-size"), "gallery establishes its own responsive container");
+ok(stylesSource.includes("@container theme-gallery (max-width: 760px)"), "gallery collapses from its content width");
+ok(stylesSource.includes(".theme-gallery__preview-control"), "preview dimensions have labeled layout styling");
+ok(gallerySource.includes("settings.themeGallery.scenePreviewHint") && gallerySource.includes("theme-gallery__preview-help"), "scene preview explains home and workspace behavior");
+ok(localeZh.includes('"settings.themeGallery.sceneHome": "首页展示"') && localeZh.includes('"settings.themeGallery.sceneTask": "工作区展示"'), "scene options use explicit Chinese labels");
+ok(localeZh.includes('"settings.themeGallery.subtitle": "点击主题即可全局预览，应用后才会保存"'), "gallery explains click-to-preview and apply-to-save semantics");
+ok(stylesSource.includes(".theme-gallery__detail-user-actions") && stylesSource.includes("grid-template-columns: repeat(2, minmax(0, 1fr))"), "user theme edit and export actions share a balanced row");
+ok(stylesSource.includes(".theme-gallery__rail-section-head") && stylesSource.includes(".theme-gallery__rail-section-items"), "immersive rail groups have lightweight headings and item stacks");
+ok(stylesSource.includes(".theme-gallery__detail-status"), "active status has dedicated non-button styling");
 
 // Pack overlay stays at :root — Workbench/Creation element-scoped auto-light
 // selectors must keep winning in their subtree (theme never overrides them).

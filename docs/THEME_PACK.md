@@ -1,8 +1,10 @@
-# Reasonix Theme Pack V1
+# Reasonix Theme Pack V2
 
 Native theme packs for the Reasonix desktop app. Packs are controlled skins:
-semantic color tokens, density/corner recipes, and an optional local background
-image. They **cannot** run CSS, JavaScript, fonts, remote URLs, or SVG scripts.
+semantic color tokens, density/corner recipes, and optional local images for
+the home and task/workspace scenes. They **cannot** run CSS, JavaScript, fonts,
+remote URLs, or SVG scripts. V1 packs remain valid and use the home image in
+both scenes.
 
 > Chinese: [THEME_PACK.zh-CN.md](./THEME_PACK.zh-CN.md)
 
@@ -82,15 +84,16 @@ Distribute as a `.reasonix-theme` ZIP. The archive root may contain **only**:
 | File | Required | Notes |
 | --- | --- | --- |
 | `theme.json` | yes | Manifest (≤ 1 MiB) |
-| `background.png` / `.jpg` / `.jpeg` / `.webp` | no | Single image ≤ 16 MiB, ≤ 8192×8192 |
+| `background.png` / `.jpg` / `.jpeg` / `.webp` | no | Home image ≤ 16 MiB, ≤ 8192×8192 |
+| `background-task.png` / `.jpg` / `.jpeg` / `.webp` | no | Independent task/workspace image ≤ 16 MiB, ≤ 8192×8192 (V2) |
 
-ZIP limits: package ≤ 20 MiB; no nested directories, no symlinks, no duplicate entries, no path traversal.
+ZIP limits: package ≤ 36 MiB; no nested directories, no symlinks, no duplicate entries, no path traversal.
 
 ### `theme.json` example
 
 ```json
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "id": "my-theme",
   "name": "My Theme",
   "author": "",
@@ -121,6 +124,14 @@ ZIP limits: package ≤ 20 MiB; no nested directories, no symlinks, no duplicate
     "homeOpacity": 1,
     "taskOpacity": 0.28,
     "overlayStrength": 0.62
+  },
+  "taskBackground": {
+    "image": "background-task.webp",
+    "focusX": 0.5,
+    "focusY": 0.5,
+    "safeArea": "right",
+    "opacity": 0.28,
+    "overlayStrength": 0.62
   }
 }
 ```
@@ -131,7 +142,7 @@ JSON Schema: [theme-pack.schema.json](./theme-pack.schema.json)
 
 | Field | Rules |
 | --- | --- |
-| `schemaVersion` | Must be `1` |
+| `schemaVersion` | `1` or `2`; `taskBackground` requires `2` |
 | `id` | Lowercase `[a-z][a-z0-9-]*`, reserved: `graphite`, `aurora`, `slate`, `carbon`, `nocturne`, `amber` |
 | `baseStyle` | One of the six built-in directions; uncovered tokens inherit it |
 | `tokens.light` / `tokens.dark` | Optional maps of semantic keys → `#RRGGBB` or `#RRGGBBAA` only |
@@ -143,6 +154,11 @@ JSON Schema: [theme-pack.schema.json](./theme-pack.schema.json)
 | `background.homeOpacity` | 0–1 |
 | `background.taskOpacity` | 0–0.45 (hard cap) |
 | `background.overlayStrength` | 0–1 |
+| `taskBackground.image` | Optional independent task/workspace image; bare local file name only |
+| `taskBackground.focusX/Y` | 0–1 focal point |
+| `taskBackground.safeArea` | `left` \| `right` \| `center` |
+| `taskBackground.opacity` | 0–0.45 (hard cap) |
+| `taskBackground.overlayStrength` | 0–1 |
 
 ### Allowed token keys
 
@@ -164,7 +180,7 @@ Colors must **not** include `url()`, gradients, or arbitrary CSS.
 | Path under Reasonix home | Purpose |
 | --- | --- |
 | `desktop-theme-state.json` | Versioned active theme pointer (not `config.toml`) |
-| `themes/<id>/` | User theme library (`theme.json` + optional image) |
+| `themes/<id>/` | User theme library (`theme.json` + up to two optional scene images) |
 
 Legacy installs without theme state keep the previous appearance. Old app versions ignore the new directory. CLI theme, prompts, provider requests, and cache keys are unchanged.
 

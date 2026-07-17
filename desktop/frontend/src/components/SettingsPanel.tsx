@@ -353,10 +353,12 @@ function SettingsPageShell({ s: _s, tab, children }: { s: SettingsView | null; t
   const desc = t(descKey as any);
   return (
     <div className={`settings-page settings-page--${settingsPageKind(tab)} settings-page--${tab}`}>
-      <div className="settings-page__header">
-        <h2 className="settings-page__title">{settingsTabPageTitle(tab, t)}</h2>
-        {typeof desc === "string" && desc !== `settings.pageDesc.${tab}` && <p className="settings-page__desc">{desc}</p>}
-      </div>
+      {tab !== "appearance" ? (
+        <div className="settings-page__header">
+          <h2 className="settings-page__title">{settingsTabPageTitle(tab, t)}</h2>
+          {typeof desc === "string" && desc !== `settings.pageDesc.${tab}` && <p className="settings-page__desc">{desc}</p>}
+        </div>
+      ) : null}
       {children}
     </div>
   );

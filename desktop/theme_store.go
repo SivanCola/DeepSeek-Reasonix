@@ -119,7 +119,7 @@ func userThemeExists(id string) bool {
 }
 
 // publishThemeDir atomically replaces themes/<id> with the prepared staging directory.
-// stagingDir must already contain a validated theme.json and optional background image.
+// stagingDir must already contain a validated theme.json and optional scene images.
 func publishThemeDir(id, stagingDir string, replace bool) error {
 	id = strings.TrimSpace(id)
 	if !themePackIDRe.MatchString(id) {
@@ -171,6 +171,12 @@ func publishThemeDir(id, stagingDir string, replace bool) error {
 			return err
 		}
 	}
+	if m.TaskBackground != nil && m.TaskBackground.Image != "" {
+		imgPath := filepath.Join(parentStaging, m.TaskBackground.Image)
+		if err := validateThemeImageFile(imgPath); err != nil {
+			return err
+		}
+	}
 
 	// Replace destination atomically: rename old aside, rename new in, remove old.
 	backup := ""
@@ -214,7 +220,7 @@ func copyThemeTree(src, dst string) error {
 		if rel == "." {
 			return nil
 		}
-		// Only allow root-level files (theme.json + one image).
+		// Only allow root-level files (theme.json + up to two scene images).
 		if strings.Contains(rel, string(os.PathSeparator)) || strings.Contains(rel, "/") || strings.Contains(rel, "\\") {
 			return fmt.Errorf("theme package may only contain root-level files, found %q", rel)
 		}
@@ -330,7 +336,12 @@ func themeFileDigest(path string) (string, error) {
 	return hex.EncodeToString(h.Sum(nil))[:16], nil
 }
 
-func writeThemeStaging(m *ThemePackManifest, imagePath string, imageBytes []byte) (staging string, err error) {
+type themeStagingImage struct {
+	path  string
+	bytes []byte
+}
+
+func writeThemeStaging(m *ThemePackManifest, imagePath string, imageBytes []byte, taskImages ...themeStagingImage) (staging string, err error) {
 	if err := validateThemePackManifest(m); err != nil {
 		return "", err
 	}
@@ -345,8 +356,7 @@ func writeThemeStaging(m *ThemePackManifest, imagePath string, imageBytes []byte
 		}
 	}()
 
-	// Optionally place background image first so we can confirm names match.
-	if m.Background != nil && m.Background.Image != "" {
+	writeImage := func(imageName, imagePath string, imageBytes []byte, label string) error {
 		var data []byte
 		switch {
 		case len(imageBytes) > 0:
@@ -354,19 +364,36 @@ func writeThemeStaging(m *ThemePackManifest, imagePath string, imageBytes []byte
 		case imagePath != "":
 			data, err = os.ReadFile(imagePath)
 			if err != nil {
-				return "", fmt.Errorf("read background image: %w", err)
+				return fmt.Errorf("read %s image: %w", label, err)
 			}
 		default:
-			return "", fmt.Errorf("background image data is required")
+			return fmt.Errorf("%s image data is required", label)
 		}
 		if int64(len(data)) > themePackMaxImageBytes {
-			return "", fmt.Errorf("background image exceeds %d bytes", themePackMaxImageBytes)
+			return fmt.Errorf("%s image exceeds %d bytes", label, themePackMaxImageBytes)
 		}
-		imgDest := filepath.Join(staging, m.Background.Image)
+		imgDest := filepath.Join(staging, imageName)
 		if err := os.WriteFile(imgDest, data, 0o644); err != nil {
-			return "", err
+			return err
 		}
 		if err := validateThemeImageFile(imgDest); err != nil {
+			return err
+		}
+		return nil
+	}
+
+	// Place scene images first so names and image content are re-validated.
+	if m.Background != nil && m.Background.Image != "" {
+		if err := writeImage(m.Background.Image, imagePath, imageBytes, "home background"); err != nil {
+			return "", err
+		}
+	}
+	if m.TaskBackground != nil && m.TaskBackground.Image != "" {
+		var task themeStagingImage
+		if len(taskImages) > 0 {
+			task = taskImages[0]
+		}
+		if err := writeImage(m.TaskBackground.Image, task.path, task.bytes, "task background"); err != nil {
 			return "", err
 		}
 	}

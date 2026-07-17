@@ -56,7 +56,8 @@ func TestParseThemePackManifestRejects(t *testing.T) {
 		name string
 		raw  string
 	}{
-		{"bad schema", `{"schemaVersion":2,"id":"a","name":"A","baseStyle":"graphite"}`},
+		{"bad schema", `{"schemaVersion":3,"id":"a","name":"A","baseStyle":"graphite"}`},
+		{"v1 task background", `{"schemaVersion":1,"id":"a","name":"A","baseStyle":"graphite","taskBackground":{"image":"task.png"}}`},
 		{"bad id", `{"schemaVersion":1,"id":"Bad_ID","name":"A","baseStyle":"graphite"}`},
 		{"unknown token", `{"schemaVersion":1,"id":"a","name":"A","baseStyle":"graphite","tokens":{"light":{"hack":"#ffffff"}}}`},
 		{"css url color", `{"schemaVersion":1,"id":"a","name":"A","baseStyle":"graphite","tokens":{"light":{"bg":"url(x)"}}}`},
@@ -73,6 +74,59 @@ func TestParseThemePackManifestRejects(t *testing.T) {
 				t.Fatal("expected error")
 			}
 		})
+	}
+}
+
+func TestThemePackV2IndependentSceneImagesRoundTrip(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("REASONIX_HOME", home)
+	assets := t.TempDir()
+	homeImage := writeTestPNG(t, filepath.Join(assets, "home.png"), 32, 24)
+	taskImage := writeTestPNG(t, filepath.Join(assets, "task.png"), 40, 30)
+	m := &ThemePackManifest{
+		SchemaVersion: 2,
+		ID:            "two-scenes",
+		Name:          "Two Scenes",
+		BaseStyle:     "nocturne",
+		Recipes:       defaultThemePackRecipes(),
+		Background: &ThemePackBackground{
+			Image: "background.png", FocusX: 0.25, FocusY: 0.4, SafeArea: "left",
+			HomeOpacity: 0.9, TaskOpacity: 0.2, OverlayStrength: 0.5,
+		},
+		TaskBackground: &ThemePackSceneBackground{
+			Image: "background-task.png", FocusX: 0.75, FocusY: 0.6, SafeArea: "right",
+			Opacity: 0.35, OverlayStrength: 0.7,
+		},
+	}
+	staging, err := writeThemeStaging(m, homeImage, nil, themeStagingImage{path: taskImage})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(staging)
+	if err := publishThemeDir(m.ID, staging, false); err != nil {
+		t.Fatal(err)
+	}
+
+	exportPath := filepath.Join(t.TempDir(), "two-scenes.reasonix-theme")
+	if err := exportThemePackZIP(m.ID, exportPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := deleteUserTheme(m.ID); err != nil {
+		t.Fatal(err)
+	}
+	imported, importedStage, err := importThemePackZIP(exportPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(importedStage)
+	if imported.SchemaVersion != 2 || imported.TaskBackground == nil {
+		t.Fatalf("missing V2 task background: %+v", imported)
+	}
+	if imported.TaskBackground.SafeArea != "right" || imported.TaskBackground.Opacity != 0.35 {
+		t.Fatalf("unexpected task background: %+v", imported.TaskBackground)
+	}
+	if _, err := os.Stat(filepath.Join(importedStage, imported.TaskBackground.Image)); err != nil {
+		t.Fatalf("task scene image missing: %v", err)
 	}
 }
 

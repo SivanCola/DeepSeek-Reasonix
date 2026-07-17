@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Check, Copy, Images, Minus, Plus, RotateCcw } from "lucide-react";
+import { Check, Copy, Images, LockKeyhole, Minus, Plus, RotateCcw } from "lucide-react";
 import { app } from "../lib/bridge";
 import { useT, type DictKey } from "../lib/i18n";
 import { THEME_STYLES, type Theme, type ThemeStyle, isThemeStyle } from "../lib/theme";
@@ -20,13 +20,13 @@ import {
 import { useToast } from "../lib/toast";
 import { ThemeGallery } from "./ThemeGallery";
 
-const STYLE_META: Record<ThemeStyle, { name: string; zh: DictKey }> = {
-  graphite: { name: "Graphite", zh: "settings.style.graphite.zh" },
-  aurora: { name: "Aurora", zh: "settings.style.aurora.zh" },
-  slate: { name: "Slate", zh: "settings.style.slate.zh" },
-  carbon: { name: "Carbon", zh: "settings.style.carbon.zh" },
-  nocturne: { name: "Nocturne", zh: "settings.style.nocturne.zh" },
-  amber: { name: "Amber", zh: "settings.style.amber.zh" },
+const STYLE_NAME_KEY: Record<ThemeStyle, DictKey> = {
+  graphite: "settings.style.graphite.zh",
+  aurora: "settings.style.aurora.zh",
+  slate: "settings.style.slate.zh",
+  carbon: "settings.style.carbon.zh",
+  nocturne: "settings.style.nocturne.zh",
+  amber: "settings.style.amber.zh",
 };
 
 function textSizeLabel(size: TextSize, t: (key: never) => string): string {
@@ -91,6 +91,7 @@ export function AppearanceOverview({
   const t = useT();
   const { showToast } = useToast();
   const [view, setView] = useState<"overview" | "gallery">("overview");
+  const [galleryIntent, setGalleryIntent] = useState<"browse" | "copy-base">("browse");
   const [experience, setExperience] = useState<ThemeExperienceView | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -139,13 +140,13 @@ export function AppearanceOverview({
 
   const pack = experience?.activePack ?? null;
   const baseStyle = (isThemeStyle(experience?.baseStyle) ? experience!.baseStyle : themeStyle) as ThemeStyle;
-  const styleMeta = STYLE_META[baseStyle] || STYLE_META.graphite;
+  const styleNameKey = STYLE_NAME_KEY[baseStyle] || STYLE_NAME_KEY.graphite;
 
   const currentTitle = pack
     ? pack.nameKey
       ? t(pack.nameKey as never)
       : pack.name
-    : `${styleMeta.name} ${t(styleMeta.zh)}`;
+    : t(styleNameKey);
   const kindLabel = pack
     ? pack.kind === "user" || (!pack.builtin && pack.kind !== "official")
       ? t("settings.themeGallery.kindUser")
@@ -160,12 +161,14 @@ export function AppearanceOverview({
 
   const thumbUrl = pack?.previewUrl || pack?.backgroundUrl || "";
 
-  const handleBrowse = () => setView("gallery");
+  const handleBrowse = () => {
+    setGalleryIntent("browse");
+    setView("gallery");
+  };
 
   const handleCopy = async () => {
     if (!pack) {
-      // Copy current base as user theme via gallery path is out of scope here —
-      // open gallery on base tab instead.
+      setGalleryIntent("copy-base");
       setView("gallery");
       return;
     }
@@ -223,6 +226,7 @@ export function AppearanceOverview({
     return (
       <ThemeGallery
         experience={experience}
+        initialCreateBaseStyle={galleryIntent === "copy-base" ? baseStyle : undefined}
         onExperienceChange={(exp) => {
           setExperience(exp);
           if (isThemeStyle(exp.baseStyle)) onThemeStyle(exp.baseStyle);
@@ -232,6 +236,7 @@ export function AppearanceOverview({
         }}
         onBack={() => {
           cancelGlobalPreview();
+          setGalleryIntent("browse");
           setView("overview");
           void refresh();
         }}
@@ -255,7 +260,7 @@ export function AppearanceOverview({
             {thumbUrl ? (
               <img src={thumbUrl} alt="" loading="lazy" />
             ) : (
-              <div className="appearance-overview__thumb-base" data-theme-style-card={baseStyle}>
+              <div className="appearance-overview__thumb-base theme-card__swatches" data-theme-style-card={baseStyle}>
                 <span className="theme-card__swatch theme-card__swatch--bg" />
                 <span className="theme-card__swatch theme-card__swatch--surface" />
                 <span className="theme-card__swatch theme-card__swatch--accent" />
@@ -296,10 +301,21 @@ export function AppearanceOverview({
 
       <div className="appearance-overview__rows">
         <div className="appearance-overview__row">
-          <div className="appearance-overview__row-label">{t("settings.theme")}</div>
-          <div className="set-seg">
+          <div id="appearance-theme-mode-label" className="appearance-overview__row-label">{t("settings.theme")}</div>
+          <div
+            className="set-seg appearance-overview__segmented appearance-overview__segmented--theme"
+            role="radiogroup"
+            aria-labelledby="appearance-theme-mode-label"
+          >
             {(["auto", "light", "dark"] as Theme[]).map((opt) => (
-              <button key={opt} type="button" className={`set-seg__btn${theme === opt ? " set-seg__btn--on" : ""}`} onClick={() => void handleThemeMode(opt)}>
+              <button
+                key={opt}
+                type="button"
+                role="radio"
+                aria-checked={theme === opt}
+                className={`set-seg__btn${theme === opt ? " set-seg__btn--on" : ""}`}
+                onClick={() => void handleThemeMode(opt)}
+              >
                 {opt === "auto" ? t("settings.themeAuto") : opt === "light" ? t("settings.themeLight") : t("settings.themeDark")}
               </button>
             ))}
@@ -307,27 +323,47 @@ export function AppearanceOverview({
         </div>
 
         <div className="appearance-overview__row">
-          <div className="appearance-overview__row-label">{t("settings.themeGallery.baseStyle")}</div>
-          <select
-            className="appearance-overview__select"
-            value={baseStyle}
-            disabled={busy || !!pack}
-            title={pack ? t("settings.themeGallery.baseLockedByPack") : undefined}
-            onChange={(e) => void handleBaseChange(e.target.value as ThemeStyle)}
-          >
-            {THEME_STYLES.map((s) => (
-              <option key={s} value={s}>
-                {STYLE_META[s].name} {t(STYLE_META[s].zh)}
-              </option>
-            ))}
-          </select>
+          <div id="appearance-base-style-label" className="appearance-overview__row-label">{t("settings.themeGallery.baseStyle")}</div>
+          <div className="appearance-overview__control-stack">
+            <select
+              className="appearance-overview__select"
+              value={baseStyle}
+              disabled={busy || !!pack}
+              aria-labelledby="appearance-base-style-label"
+              aria-describedby={pack ? "appearance-base-style-help" : undefined}
+              onChange={(e) => void handleBaseChange(e.target.value as ThemeStyle)}
+            >
+              {THEME_STYLES.map((s) => (
+                <option key={s} value={s}>
+                  {t(STYLE_NAME_KEY[s])}
+                </option>
+              ))}
+            </select>
+            {pack ? (
+              <span id="appearance-base-style-help" className="appearance-overview__lock-note">
+                <LockKeyhole size={12} aria-hidden="true" />
+                {t("settings.themeGallery.baseLockedByPack")}
+              </span>
+            ) : null}
+          </div>
         </div>
 
         <div className="appearance-overview__row">
-          <div className="appearance-overview__row-label">{t("settings.textSize")}</div>
-          <div className="set-seg">
+          <div id="appearance-text-size-label" className="appearance-overview__row-label">{t("settings.textSize")}</div>
+          <div
+            className="set-seg appearance-overview__segmented appearance-overview__segmented--text-size"
+            role="radiogroup"
+            aria-labelledby="appearance-text-size-label"
+          >
             {TEXT_SIZES.map((size) => (
-              <button key={size} type="button" className={`set-seg__btn${textSize === size ? " set-seg__btn--on" : ""}`} onClick={() => onTextSize(size)}>
+              <button
+                key={size}
+                type="button"
+                role="radio"
+                aria-checked={textSize === size}
+                className={`set-seg__btn${textSize === size ? " set-seg__btn--on" : ""}`}
+                onClick={() => onTextSize(size)}
+              >
                 {textSizeLabel(size, t)}
               </button>
             ))}
@@ -335,8 +371,13 @@ export function AppearanceOverview({
         </div>
 
         <div className="appearance-overview__row">
-          <div className="appearance-overview__row-label">{t("settings.fontFamily")}</div>
-          <select className="appearance-overview__select" value={fontFamily} onChange={(e) => onFontFamily(e.target.value as FontFamily)}>
+          <div id="appearance-font-family-label" className="appearance-overview__row-label">{t("settings.fontFamily")}</div>
+          <select
+            className="appearance-overview__select"
+            value={fontFamily}
+            aria-labelledby="appearance-font-family-label"
+            onChange={(e) => onFontFamily(e.target.value as FontFamily)}
+          >
             {availableFontFamilies.map((f) => (
               <option key={f} value={f}>
                 {f === "system" ? t("settings.fontFamilySystem") : f === "custom" ? customFontName || t("settings.fontFamilyCustom") : f}
@@ -346,8 +387,13 @@ export function AppearanceOverview({
         </div>
 
         <div className="appearance-overview__row">
-          <div className="appearance-overview__row-label">{t("settings.monoFontFamily")}</div>
-          <select className="appearance-overview__select" value={monoFontFamily} onChange={(e) => onMonoFontFamily(e.target.value as MonoFontFamily)}>
+          <div id="appearance-mono-font-family-label" className="appearance-overview__row-label">{t("settings.monoFontFamily")}</div>
+          <select
+            className="appearance-overview__select"
+            value={monoFontFamily}
+            aria-labelledby="appearance-mono-font-family-label"
+            onChange={(e) => onMonoFontFamily(e.target.value as MonoFontFamily)}
+          >
             {availableMonoFontFamilies.map((f) => (
               <option key={f} value={f}>
                 {f === "system" ? t("settings.fontFamilySystem") : f === "custom" ? customMonoFontName || t("settings.fontFamilyCustom") : f}
@@ -421,9 +467,13 @@ export function AppearanceOverview({
         ) : null}
 
         <div className="appearance-overview__row appearance-overview__row--footer">
+          <span id="appearance-restore-help" className="appearance-overview__reset-hint">
+            {t("settings.themeGallery.restoreGraphiteHint")}
+          </span>
           <button
             type="button"
             className="btn btn--small"
+            aria-describedby="appearance-restore-help"
             disabled={busy}
             onClick={() => {
               void (async () => {

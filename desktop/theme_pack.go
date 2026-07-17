@@ -9,26 +9,28 @@ import (
 	"unicode"
 )
 
-// Theme Pack V1 is a controlled, non-executable desktop skin.
+// Theme Pack V2 is a controlled, non-executable desktop skin. V1 manifests
+// remain readable and fall back to one shared scene image.
 // See docs/THEME_PACK.md for the public contract.
 
 const (
-	themePackSchemaVersion = 1
-	themePackMaxZipBytes   = 20 << 20 // 20 MiB
-	themePackMaxManifest   = 1 << 20  // 1 MiB
-	themePackMaxImageBytes = 16 << 20 // 16 MiB
-	themePackMaxImageEdge  = 8192
-	themePackMaxIDLen      = 64
-	themePackMaxNameLen    = 80
-	themePackMaxTextLen    = 240
-	themePackManifestName  = "theme.json"
-	themePackExt           = ".reasonix-theme"
-	themeStateFileName     = "desktop-theme-state.json"
+	themePackSchemaVersion    = 2
+	themePackMinSchemaVersion = 1
+	themePackMaxZipBytes      = 36 << 20 // two bounded scene images + manifest
+	themePackMaxManifest      = 1 << 20  // 1 MiB
+	themePackMaxImageBytes    = 16 << 20 // 16 MiB
+	themePackMaxImageEdge     = 8192
+	themePackMaxIDLen         = 64
+	themePackMaxNameLen       = 80
+	themePackMaxTextLen       = 240
+	themePackManifestName     = "theme.json"
+	themePackExt              = ".reasonix-theme"
+	themeStateFileName        = "desktop-theme-state.json"
 	// Schema v2: activeThemeId may only reference official or user packs.
 	// Base style ids (graphite/…) live exclusively in desktop.theme_style.
-	themeStateSchemaVer    = 2
-	themeStateSchemaVerV1  = 1
-	themeDirName           = "themes"
+	themeStateSchemaVer   = 2
+	themeStateSchemaVerV1 = 1
+	themeDirName          = "themes"
 )
 
 // Allowed base styles match the existing desktop theme directions.
@@ -71,17 +73,18 @@ var (
 
 // ThemePackManifest is the on-disk theme.json contract.
 type ThemePackManifest struct {
-	SchemaVersion int                    `json:"schemaVersion"`
-	ID            string                 `json:"id"`
-	Name          string                 `json:"name"`
-	Author        string                 `json:"author,omitempty"`
-	Description   string                 `json:"description,omitempty"`
-	License       string                 `json:"license,omitempty"`
-	BaseStyle     string                 `json:"baseStyle"`
-	Tokens        ThemePackTokens        `json:"tokens"`
-	Recipes       ThemePackRecipes       `json:"recipes"`
-	Background    *ThemePackBackground   `json:"background,omitempty"`
-	Extra         map[string]interface{} `json:"-"` // rejected on parse when present as unknown top-level
+	SchemaVersion  int                       `json:"schemaVersion"`
+	ID             string                    `json:"id"`
+	Name           string                    `json:"name"`
+	Author         string                    `json:"author,omitempty"`
+	Description    string                    `json:"description,omitempty"`
+	License        string                    `json:"license,omitempty"`
+	BaseStyle      string                    `json:"baseStyle"`
+	Tokens         ThemePackTokens           `json:"tokens"`
+	Recipes        ThemePackRecipes          `json:"recipes"`
+	Background     *ThemePackBackground      `json:"background,omitempty"`
+	TaskBackground *ThemePackSceneBackground `json:"taskBackground,omitempty"`
+	Extra          map[string]interface{}    `json:"-"` // rejected on parse when present as unknown top-level
 }
 
 // ThemePackTokens holds optional light/dark semantic color overrides.
@@ -107,6 +110,17 @@ type ThemePackBackground struct {
 	OverlayStrength float64 `json:"overlayStrength"`
 }
 
+// ThemePackSceneBackground optionally overrides the task/workspace scene.
+// V1 packs omit it and continue using Background with TaskOpacity.
+type ThemePackSceneBackground struct {
+	Image           string  `json:"image,omitempty"`
+	FocusX          float64 `json:"focusX"`
+	FocusY          float64 `json:"focusY"`
+	SafeArea        string  `json:"safeArea,omitempty"` // left|right|center
+	Opacity         float64 `json:"opacity"`
+	OverlayStrength float64 `json:"overlayStrength"`
+}
+
 // ThemeDesktopState is the versioned active-theme pointer (not config.toml).
 type ThemeDesktopState struct {
 	SchemaVersion int    `json:"schemaVersion"`
@@ -115,70 +129,75 @@ type ThemeDesktopState struct {
 
 // ThemePackView is the frontend-safe summary of a theme (base, official or user).
 type ThemePackView struct {
-	ID              string               `json:"id"`
-	Name            string               `json:"name"`
-	Author          string               `json:"author,omitempty"`
-	Description     string               `json:"description,omitempty"`
-	License         string               `json:"license,omitempty"`
-	BaseStyle       string               `json:"baseStyle"`
-	Builtin         bool                 `json:"builtin"`
-	Kind            string               `json:"kind"` // "base" | "official" | "user"
-	Active          bool                 `json:"active"`
-	HasBackground   bool                 `json:"hasBackground"`
-	BackgroundURL   string               `json:"backgroundUrl,omitempty"`
-	PreviewURL      string               `json:"previewUrl,omitempty"`
-	NameKey         string               `json:"nameKey,omitempty"`
-	DescriptionKey  string               `json:"descriptionKey,omitempty"`
-	Tokens          ThemePackTokens      `json:"tokens"`
-	Recipes         ThemePackRecipes     `json:"recipes"`
-	Background      *ThemePackBackground `json:"background,omitempty"`
-	ContrastWarnings []ThemeContrastWarning `json:"contrastWarnings,omitempty"`
+	ID                string                    `json:"id"`
+	Name              string                    `json:"name"`
+	Author            string                    `json:"author,omitempty"`
+	Description       string                    `json:"description,omitempty"`
+	License           string                    `json:"license,omitempty"`
+	BaseStyle         string                    `json:"baseStyle"`
+	Builtin           bool                      `json:"builtin"`
+	Kind              string                    `json:"kind"` // "base" | "official" | "user"
+	Active            bool                      `json:"active"`
+	HasBackground     bool                      `json:"hasBackground"`
+	BackgroundURL     string                    `json:"backgroundUrl,omitempty"`
+	TaskBackgroundURL string                    `json:"taskBackgroundUrl,omitempty"`
+	PreviewURL        string                    `json:"previewUrl,omitempty"`
+	NameKey           string                    `json:"nameKey,omitempty"`
+	DescriptionKey    string                    `json:"descriptionKey,omitempty"`
+	Tokens            ThemePackTokens           `json:"tokens"`
+	Recipes           ThemePackRecipes          `json:"recipes"`
+	Background        *ThemePackBackground      `json:"background,omitempty"`
+	TaskBackground    *ThemePackSceneBackground `json:"taskBackground,omitempty"`
+	ContrastWarnings  []ThemeContrastWarning    `json:"contrastWarnings,omitempty"`
 }
 
 // ThemeContrastWarning surfaces WCAG contrast issues without blocking save.
 type ThemeContrastWarning struct {
-	Mode    string `json:"mode"`    // light|dark
-	Pair    string `json:"pair"`    // e.g. fg/bg
+	Mode    string  `json:"mode"` // light|dark
+	Pair    string  `json:"pair"` // e.g. fg/bg
 	Ratio   float64 `json:"ratio"`
 	Minimum float64 `json:"minimum"`
-	Suggest string `json:"suggest,omitempty"`
+	Suggest string  `json:"suggest,omitempty"`
 }
 
 // ThemeActiveView is what the frontend needs to apply a pack + scene styling.
 type ThemeActiveView struct {
-	ActiveThemeID string          `json:"activeThemeId,omitempty"`
-	Pack          *ThemePackView  `json:"pack,omitempty"`
-	SafeMode      bool            `json:"safeMode"`
+	ActiveThemeID string         `json:"activeThemeId,omitempty"`
+	Pack          *ThemePackView `json:"pack,omitempty"`
+	SafeMode      bool           `json:"safeMode"`
 }
 
 // ThemeExperienceView is the unified appearance state for the redesigned
 // settings overview + theme gallery. One call supplies everything the UI needs
 // without inferring which style is actually effective.
 type ThemeExperienceView struct {
-	ThemeMode      string         `json:"themeMode"`                // auto|light|dark
-	BaseStyle      string         `json:"baseStyle"`                // graphite|aurora|…
-	EffectiveStyle string         `json:"effectiveStyle"`           // pack.baseStyle when pack active, else baseStyle
-	ActiveThemeID  string         `json:"activeThemeId,omitempty"`  // official/user only; never a base id
+	ThemeMode      string         `json:"themeMode"`               // auto|light|dark
+	BaseStyle      string         `json:"baseStyle"`               // graphite|aurora|…
+	EffectiveStyle string         `json:"effectiveStyle"`          // pack.baseStyle when pack active, else baseStyle
+	ActiveThemeID  string         `json:"activeThemeId,omitempty"` // official/user only; never a base id
 	ActivePack     *ThemePackView `json:"activePack,omitempty"`
 	SafeMode       bool           `json:"safeMode"`
 }
 
 // ThemeSaveInput is the editor payload for creating/updating a user theme.
 type ThemeSaveInput struct {
-	ID          string               `json:"id"`
-	Name        string               `json:"name"`
-	Author      string               `json:"author,omitempty"`
-	Description string               `json:"description,omitempty"`
-	License     string               `json:"license,omitempty"`
-	BaseStyle   string               `json:"baseStyle"`
-	Tokens      ThemePackTokens      `json:"tokens"`
-	Recipes     ThemePackRecipes     `json:"recipes"`
-	Background  *ThemePackBackground `json:"background,omitempty"`
+	ID             string                    `json:"id"`
+	Name           string                    `json:"name"`
+	Author         string                    `json:"author,omitempty"`
+	Description    string                    `json:"description,omitempty"`
+	License        string                    `json:"license,omitempty"`
+	BaseStyle      string                    `json:"baseStyle"`
+	Tokens         ThemePackTokens           `json:"tokens"`
+	Recipes        ThemePackRecipes          `json:"recipes"`
+	Background     *ThemePackBackground      `json:"background,omitempty"`
+	TaskBackground *ThemePackSceneBackground `json:"taskBackground,omitempty"`
 	// BackgroundDataURL is an optional data:image/... payload used when the
 	// editor picked a new local image. Empty keeps the existing image.
-	BackgroundDataURL string `json:"backgroundDataUrl,omitempty"`
+	BackgroundDataURL     string `json:"backgroundDataUrl,omitempty"`
+	TaskBackgroundDataURL string `json:"taskBackgroundDataUrl,omitempty"`
 	// ClearBackground removes any existing background image.
-	ClearBackground bool `json:"clearBackground,omitempty"`
+	ClearBackground     bool `json:"clearBackground,omitempty"`
+	ClearTaskBackground bool `json:"clearTaskBackground,omitempty"`
 	// Replace allows overwriting an existing user theme with the same ID.
 	Replace bool `json:"replace,omitempty"`
 	// Activate enables the theme after a successful save.
@@ -211,6 +230,16 @@ func defaultThemePackBackground() ThemePackBackground {
 	}
 }
 
+func defaultThemePackTaskBackground() ThemePackSceneBackground {
+	return ThemePackSceneBackground{
+		FocusX:          0.5,
+		FocusY:          0.5,
+		SafeArea:        "center",
+		Opacity:         0.28,
+		OverlayStrength: 0.62,
+	}
+}
+
 func parseThemePackManifest(data []byte) (*ThemePackManifest, error) {
 	if len(data) == 0 {
 		return nil, fmt.Errorf("theme manifest is empty")
@@ -218,22 +247,23 @@ func parseThemePackManifest(data []byte) (*ThemePackManifest, error) {
 	if len(data) > themePackMaxManifest {
 		return nil, fmt.Errorf("theme manifest exceeds %d bytes", themePackMaxManifest)
 	}
-	// Reject top-level keys outside the V1 allow-list.
+	// Reject top-level keys outside the versioned allow-list.
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return nil, fmt.Errorf("theme manifest JSON: %w", err)
 	}
 	allowed := map[string]struct{}{
-		"schemaVersion": {},
-		"id":            {},
-		"name":          {},
-		"author":        {},
-		"description":   {},
-		"license":       {},
-		"baseStyle":     {},
-		"tokens":        {},
-		"recipes":       {},
-		"background":    {},
+		"schemaVersion":  {},
+		"id":             {},
+		"name":           {},
+		"author":         {},
+		"description":    {},
+		"license":        {},
+		"baseStyle":      {},
+		"tokens":         {},
+		"recipes":        {},
+		"background":     {},
+		"taskBackground": {},
 	}
 	for k := range raw {
 		if _, ok := allowed[k]; !ok {
@@ -254,8 +284,11 @@ func validateThemePackManifest(m *ThemePackManifest) error {
 	if m == nil {
 		return fmt.Errorf("theme manifest is nil")
 	}
-	if m.SchemaVersion != themePackSchemaVersion {
-		return fmt.Errorf("unsupported theme schemaVersion %d (want %d)", m.SchemaVersion, themePackSchemaVersion)
+	if m.SchemaVersion < themePackMinSchemaVersion || m.SchemaVersion > themePackSchemaVersion {
+		return fmt.Errorf("unsupported theme schemaVersion %d (supported %d-%d)", m.SchemaVersion, themePackMinSchemaVersion, themePackSchemaVersion)
+	}
+	if m.SchemaVersion < 2 && m.TaskBackground != nil {
+		return fmt.Errorf("taskBackground requires theme schemaVersion 2")
 	}
 	id := strings.TrimSpace(m.ID)
 	if !themePackIDRe.MatchString(id) {
@@ -317,6 +350,16 @@ func validateThemePackManifest(m *ThemePackManifest) error {
 		}
 		m.Background = bg
 	}
+	if m.TaskBackground != nil {
+		bg, err := normalizeThemeSceneBackground(m.TaskBackground)
+		if err != nil {
+			return err
+		}
+		m.TaskBackground = bg
+	}
+	if m.Background != nil && m.TaskBackground != nil && strings.EqualFold(m.Background.Image, m.TaskBackground.Image) {
+		return fmt.Errorf("background and taskBackground must use different image names")
+	}
 	return nil
 }
 
@@ -376,6 +419,42 @@ func normalizeThemeBackground(in *ThemePackBackground) (*ThemePackBackground, er
 	out.TaskOpacity = clampFloat(in.TaskOpacity, 0, 0.45, 0.28)
 	out.OverlayStrength = clampFloat(in.OverlayStrength, 0, 1, 0.62)
 	// Empty image means token-only pack — drop background block.
+	if out.Image == "" {
+		return nil, nil
+	}
+	return &out, nil
+}
+
+func normalizeThemeSceneBackground(in *ThemePackSceneBackground) (*ThemePackSceneBackground, error) {
+	if in == nil {
+		return nil, nil
+	}
+	out := defaultThemePackTaskBackground()
+	if in.Image != "" {
+		raw := strings.TrimSpace(in.Image)
+		raw = strings.ReplaceAll(raw, "\\", "/")
+		if raw == "" || strings.Contains(raw, "/") || strings.Contains(raw, "..") || filepath.Base(raw) != raw {
+			return nil, fmt.Errorf("taskBackground.image must be a plain file name")
+		}
+		if !themePackImageRe.MatchString(raw) {
+			return nil, fmt.Errorf("taskBackground.image must be a local png/jpeg/webp file name")
+		}
+		out.Image = raw
+	}
+	out.FocusX = clamp01(in.FocusX, 0.5)
+	out.FocusY = clamp01(in.FocusY, 0.5)
+	safe := strings.ToLower(strings.TrimSpace(in.SafeArea))
+	if safe == "" {
+		safe = "center"
+	}
+	switch safe {
+	case "left", "right", "center":
+		out.SafeArea = safe
+	default:
+		return nil, fmt.Errorf("taskBackground.safeArea must be left|right|center")
+	}
+	out.Opacity = clampFloat(in.Opacity, 0, 0.45, 0.28)
+	out.OverlayStrength = clampFloat(in.OverlayStrength, 0, 1, 0.62)
 	if out.Image == "" {
 		return nil, nil
 	}
@@ -460,20 +539,25 @@ func builtinThemePacks() []ThemePackManifest {
 	return out
 }
 
-func manifestToView(m *ThemePackManifest, kind string, active bool, backgroundURL, previewURL string) ThemePackView {
+func manifestToView(m *ThemePackManifest, kind string, active bool, backgroundURL, previewURL string, taskBackgroundURLs ...string) ThemePackView {
+	taskBackgroundURL := ""
+	if len(taskBackgroundURLs) > 0 {
+		taskBackgroundURL = taskBackgroundURLs[0]
+	}
 	v := ThemePackView{
-		ID:            m.ID,
-		Name:          m.Name,
-		Author:        m.Author,
-		Description:   m.Description,
-		License:       m.License,
-		BaseStyle:     m.BaseStyle,
-		Builtin:       kind != themeKindUser,
-		Kind:          kind,
-		Active:        active,
-		HasBackground: m.Background != nil && m.Background.Image != "",
-		BackgroundURL: backgroundURL,
-		PreviewURL:    previewURL,
+		ID:                m.ID,
+		Name:              m.Name,
+		Author:            m.Author,
+		Description:       m.Description,
+		License:           m.License,
+		BaseStyle:         m.BaseStyle,
+		Builtin:           kind != themeKindUser,
+		Kind:              kind,
+		Active:            active,
+		HasBackground:     (m.Background != nil && m.Background.Image != "") || (m.TaskBackground != nil && m.TaskBackground.Image != ""),
+		BackgroundURL:     backgroundURL,
+		TaskBackgroundURL: taskBackgroundURL,
+		PreviewURL:        previewURL,
 		Tokens: ThemePackTokens{
 			Light: copyStringMap(m.Tokens.Light),
 			Dark:  copyStringMap(m.Tokens.Dark),
@@ -487,6 +571,10 @@ func manifestToView(m *ThemePackManifest, kind string, active bool, backgroundUR
 	if m.Background != nil {
 		bg := *m.Background
 		v.Background = &bg
+	}
+	if m.TaskBackground != nil {
+		bg := *m.TaskBackground
+		v.TaskBackground = &bg
 	}
 	v.ContrastWarnings = computeContrastWarnings(m)
 	return v

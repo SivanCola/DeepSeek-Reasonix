@@ -24,7 +24,7 @@ export type ThemeExperienceView = {
   safeMode: boolean;
 };
 
-export type GalleryTab = "official" | "user" | "base";
+export type GalleryTab = "catalog" | "user";
 
 export type ThemeSelection =
   | { kind: "base"; id: ThemeStyle; pack?: ThemePackView }

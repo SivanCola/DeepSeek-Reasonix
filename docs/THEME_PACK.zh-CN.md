@@ -1,6 +1,6 @@
-# Reasonix 主题包 V1
+# Reasonix 主题包 V2
 
-Reasonix 桌面端原生主题包。主题是**受控皮肤**：语义颜色令牌、密度/圆角配方，以及可选的本地背景图。主题**不能**执行 CSS、JavaScript、加载字体、远程 URL 或 SVG 脚本。
+Reasonix 桌面端原生主题包。主题是**受控皮肤**：语义颜色令牌、密度/圆角配方，以及首页与任务/工作区可独立配置的本地背景图。主题**不能**执行 CSS、JavaScript、加载字体、远程 URL 或 SVG 脚本。V1 主题继续兼容，并在两个场景共用首页图片。
 
 > English: [THEME_PACK.md](./THEME_PACK.md)
 
@@ -69,15 +69,16 @@ Reasonix 桌面端原生主题包。主题是**受控皮肤**：语义颜色令�
 | 文件 | 必需 | 说明 |
 | --- | --- | --- |
 | `theme.json` | 是 | 清单（≤ 1 MiB） |
-| `background.png` / `.jpg` / `.jpeg` / `.webp` | 否 | 单张图片 ≤ 16 MiB，边长 ≤ 8192 |
+| `background.png` / `.jpg` / `.jpeg` / `.webp` | 否 | 首页图片 ≤ 16 MiB，边长 ≤ 8192 |
+| `background-task.png` / `.jpg` / `.jpeg` / `.webp` | 否 | 独立任务/工作区图片 ≤ 16 MiB，边长 ≤ 8192（V2） |
 
-ZIP 限制：包体 ≤ 20 MiB；禁止子目录、符号链接、重复条目与路径穿越。
+ZIP 限制：包体 ≤ 36 MiB；禁止子目录、符号链接、重复条目与路径穿越。
 
 ### `theme.json` 示例
 
 ```json
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "id": "my-theme",
   "name": "My Theme",
   "author": "",
@@ -108,6 +109,14 @@ ZIP 限制：包体 ≤ 20 MiB；禁止子目录、符号链接、重复条目�
     "homeOpacity": 1,
     "taskOpacity": 0.28,
     "overlayStrength": 0.62
+  },
+  "taskBackground": {
+    "image": "background-task.webp",
+    "focusX": 0.5,
+    "focusY": 0.5,
+    "safeArea": "right",
+    "opacity": 0.28,
+    "overlayStrength": 0.62
   }
 }
 ```
@@ -118,7 +127,7 @@ JSON Schema： [theme-pack.schema.json](./theme-pack.schema.json)
 
 | 字段 | 规则 |
 | --- | --- |
-| `schemaVersion` | 必须为 `1` |
+| `schemaVersion` | `1` 或 `2`；使用 `taskBackground` 时必须为 `2` |
 | `id` | 小写 `[a-z][a-z0-9-]*`；保留：`graphite`/`aurora`/`slate`/`carbon`/`nocturne`/`amber` |
 | `baseStyle` | 六套内置方向之一；未覆盖令牌继承该方向 |
 | `tokens.light` / `tokens.dark` | 可选；键 → `#RRGGBB` 或 `#RRGGBBAA` |
@@ -130,6 +139,11 @@ JSON Schema： [theme-pack.schema.json](./theme-pack.schema.json)
 | `background.homeOpacity` | 0–1 |
 | `background.taskOpacity` | 0–0.45（硬上限） |
 | `background.overlayStrength` | 0–1 |
+| `taskBackground.image` | 可选的独立任务/工作区图片，仅允许本地裸文件名 |
+| `taskBackground.focusX/Y` | 0–1 焦点 |
+| `taskBackground.safeArea` | `left` \| `right` \| `center` |
+| `taskBackground.opacity` | 0–0.45（硬上限） |
+| `taskBackground.overlayStrength` | 0–1 |
 
 ### 允许的令牌键
 
@@ -151,7 +165,7 @@ JSON Schema： [theme-pack.schema.json](./theme-pack.schema.json)
 | Reasonix 主目录路径 | 用途 |
 | --- | --- |
 | `desktop-theme-state.json` | 版本化的当前主题指针（**不**改 `config.toml`） |
-| `themes/<id>/` | 用户主题库（`theme.json` + 可选图片） |
+| `themes/<id>/` | 用户主题库（`theme.json` + 最多两张可选场景图片） |
 
 旧配置缺少主题状态时保持原行为；旧版本忽略新目录。CLI 主题、提示词、Provider 请求与缓存键均不变。
 

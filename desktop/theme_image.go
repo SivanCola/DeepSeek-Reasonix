@@ -168,3 +168,8 @@ func decodeDataURLImage(dataURL string) (filename string, data []byte, err error
 	}
 	return "background" + ext, raw, nil
 }
+
+func taskBackgroundImageName(decodedName string) string {
+	ext := strings.ToLower(filepath.Ext(filepath.Base(decodedName)))
+	return "background-task" + ext
+}

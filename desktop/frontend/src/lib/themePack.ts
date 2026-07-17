@@ -1,4 +1,4 @@
-// themePack.ts applies controlled Theme Pack V1 overlays on top of the existing
+// themePack.ts applies controlled Theme Pack V1/V2 overlays on top of the existing
 // auto/light/dark + baseStyle system. Packs cannot execute CSS/JS or load remote
 // resources — only semantic tokens, recipe enums, and local background images.
 
@@ -21,6 +21,15 @@ export type ThemePackBackground = {
   safeArea?: "left" | "right" | "center" | string;
   homeOpacity: number;
   taskOpacity: number;
+  overlayStrength: number;
+};
+
+export type ThemePackSceneBackground = {
+  image?: string;
+  focusX: number;
+  focusY: number;
+  safeArea?: "left" | "right" | "center" | string;
+  opacity: number;
   overlayStrength: number;
 };
 
@@ -47,12 +56,14 @@ export type ThemePackView = {
   active: boolean;
   hasBackground: boolean;
   backgroundUrl?: string;
+  taskBackgroundUrl?: string;
   previewUrl?: string;
   nameKey?: string;
   descriptionKey?: string;
   tokens: ThemePackTokens;
   recipes: ThemePackRecipes;
   background?: ThemePackBackground | null;
+  taskBackground?: ThemePackSceneBackground | null;
   contrastWarnings?: ThemeContrastWarning[];
 };
 
@@ -81,8 +92,11 @@ export type ThemeSaveInput = {
   tokens: ThemePackTokens;
   recipes: ThemePackRecipes;
   background?: ThemePackBackground | null;
+  taskBackground?: ThemePackSceneBackground | null;
   backgroundDataUrl?: string;
+  taskBackgroundDataUrl?: string;
   clearBackground?: boolean;
+  clearTaskBackground?: boolean;
   replace?: boolean;
   activate?: boolean;
 };
@@ -149,6 +163,27 @@ let previewSnapshot: {
   style: ThemeStyle;
   baseAppearance: { theme: Theme; style: ThemeStyle } | null;
 } | null = null;
+
+// Browser development uses Vite-bundled copies of the same official images
+// that Wails serves through /__reasonix_theme_asset/. Only exact, internally
+// registered URLs may cross the background URL safety boundary.
+const trustedBundledThemeBackgroundURLs = new Set<string>();
+
+export function registerTrustedThemeBackgroundURLs(urls: readonly string[]): void {
+  if (typeof window === "undefined" || !window.location) return;
+  for (const raw of urls) {
+    try {
+      const parsed = new URL(raw, window.location.href);
+      if (parsed.origin !== window.location.origin) continue;
+      const path = decodeURIComponent(parsed.pathname);
+      const viteDevOfficial = /\/desktop\/themes\/official\/official-[a-z0-9-]+\/background\.webp$/.test(path);
+      const viteBuiltOfficial = /^\/assets\/background-[a-zA-Z0-9_-]+\.webp$/.test(path);
+      if (viteDevOfficial || viteBuiltOfficial) trustedBundledThemeBackgroundURLs.add(parsed.href);
+    } catch {
+      // Ignore malformed candidates; they remain outside the allow-list.
+    }
+  }
+}
 
 export function getActiveThemePack(): ThemePackView | null {
   return activePack;
@@ -377,30 +412,57 @@ function recipeDecls(recipes?: ThemePackRecipes): string {
 }
 
 function applyBackgroundCSSVars(root: HTMLElement, pack: ThemePackView): void {
-  const bg = pack.background;
-  const url = pack.backgroundUrl || "";
-  if (!bg || !url || !pack.hasBackground) {
+  const home = pack.background;
+  const homeUrl = pack.backgroundUrl || "";
+  const task = pack.taskBackground;
+  const taskUrl = pack.taskBackgroundUrl || "";
+  const safeHomeUrl = Boolean(home && homeUrl && isSafeBackgroundURL(homeUrl));
+  const safeTaskUrl = Boolean(task && taskUrl && isSafeBackgroundURL(taskUrl));
+  if ((!safeHomeUrl && !safeTaskUrl) || !pack.hasBackground) {
     clearBackgroundCSSVars(root);
     return;
   }
-  // Only allow app-served asset paths or blob/data previews — never remote http(s).
-  if (!isSafeBackgroundURL(url)) {
-    clearBackgroundCSSVars(root);
-    return;
+
+  if (safeHomeUrl && home) {
+    root.style.setProperty("--theme-bg-home-image", `url("${cssUrlEscape(homeUrl)}")`);
+    root.style.setProperty("--theme-bg-home-focus-x", `${clamp01(home.focusX) * 100}%`);
+    root.style.setProperty("--theme-bg-home-focus-y", `${clamp01(home.focusY) * 100}%`);
+    root.style.setProperty("--theme-bg-home-opacity", String(clamp01(home.homeOpacity ?? 1)));
+    // Legacy aliases keep V1 tests and third-party diagnostics stable.
+    root.style.setProperty("--theme-bg-image", `url("${cssUrlEscape(homeUrl)}")`);
+    root.style.setProperty("--theme-bg-focus-x", `${clamp01(home.focusX) * 100}%`);
+    root.style.setProperty("--theme-bg-focus-y", `${clamp01(home.focusY) * 100}%`);
+  } else {
+    root.style.setProperty("--theme-bg-home-image", "none");
   }
-  root.style.setProperty("--theme-bg-image", `url("${cssUrlEscape(url)}")`);
-  root.style.setProperty("--theme-bg-focus-x", `${clamp01(bg.focusX) * 100}%`);
-  root.style.setProperty("--theme-bg-focus-y", `${clamp01(bg.focusY) * 100}%`);
-  root.style.setProperty("--theme-bg-home-opacity", String(clamp01(bg.homeOpacity ?? 1)));
-  // Task opacity is hard-capped for readability.
-  root.style.setProperty("--theme-bg-task-opacity", String(Math.min(0.45, clamp01(bg.taskOpacity ?? 0.28))));
-  root.style.setProperty("--theme-bg-overlay", String(clamp01(bg.overlayStrength ?? 0.62)));
-  const safe = bg.safeArea === "left" || bg.safeArea === "right" ? bg.safeArea : "center";
+
+  const taskSource = safeTaskUrl && task ? task : home;
+  const effectiveTaskUrl = safeTaskUrl ? taskUrl : safeHomeUrl ? homeUrl : "";
+  if (taskSource && effectiveTaskUrl) {
+    root.style.setProperty("--theme-bg-task-image", `url("${cssUrlEscape(effectiveTaskUrl)}")`);
+    root.style.setProperty("--theme-bg-task-focus-x", `${clamp01(taskSource.focusX) * 100}%`);
+    root.style.setProperty("--theme-bg-task-focus-y", `${clamp01(taskSource.focusY) * 100}%`);
+  } else {
+    root.style.setProperty("--theme-bg-task-image", "none");
+  }
+  const taskOpacity = task ? task.opacity : home?.taskOpacity;
+  const taskOverlay = task ? task.overlayStrength : home?.overlayStrength;
+  root.style.setProperty("--theme-bg-task-opacity", String(Math.min(0.45, clamp01(taskOpacity ?? 0.28))));
+  root.style.setProperty("--theme-bg-task-overlay", String(clamp01(taskOverlay ?? 0.62)));
+  root.style.setProperty("--theme-bg-overlay", String(clamp01(taskOverlay ?? 0.62)));
+  const safe = taskSource?.safeArea === "left" || taskSource?.safeArea === "right" ? taskSource.safeArea : "center";
   root.setAttribute("data-theme-safe-area", safe);
   root.setAttribute("data-theme-has-bg", "true");
 }
 
 function clearBackgroundCSSVars(root: HTMLElement): void {
+  root.style.removeProperty("--theme-bg-home-image");
+  root.style.removeProperty("--theme-bg-home-focus-x");
+  root.style.removeProperty("--theme-bg-home-focus-y");
+  root.style.removeProperty("--theme-bg-task-image");
+  root.style.removeProperty("--theme-bg-task-focus-x");
+  root.style.removeProperty("--theme-bg-task-focus-y");
+  root.style.removeProperty("--theme-bg-task-overlay");
   root.style.removeProperty("--theme-bg-image");
   root.style.removeProperty("--theme-bg-focus-x");
   root.style.removeProperty("--theme-bg-focus-y");
@@ -424,6 +486,7 @@ export function isSafeBackgroundURL(url: string): boolean {
   if (u.startsWith("data:image/jpg;base64,")) return true;
   if (u.startsWith("data:image/webp;base64,")) return true;
   if (u.startsWith("blob:")) return true;
+  if (trustedBundledThemeBackgroundURLs.has(u)) return true;
   return false;
 }
 
@@ -449,6 +512,8 @@ export function draftPackView(input: {
   recipes: ThemePackRecipes;
   background?: ThemePackBackground | null;
   backgroundUrl?: string;
+  taskBackground?: ThemePackSceneBackground | null;
+  taskBackgroundUrl?: string;
 }): ThemePackView {
   return {
     id: input.id || "preview",
@@ -456,11 +521,13 @@ export function draftPackView(input: {
     baseStyle: input.baseStyle || "graphite",
     builtin: false,
     active: false,
-    hasBackground: Boolean(input.backgroundUrl && input.background),
+    hasBackground: Boolean((input.backgroundUrl && input.background) || (input.taskBackgroundUrl && input.taskBackground)),
     backgroundUrl: input.backgroundUrl,
+    taskBackgroundUrl: input.taskBackgroundUrl,
     tokens: input.tokens || {},
     recipes: input.recipes || { density: "comfortable", corners: "soft" },
     background: input.background ?? undefined,
+    taskBackground: input.taskBackground ?? undefined,
   };
 }
 
@@ -475,6 +542,16 @@ export function defaultBackground(): ThemePackBackground {
     safeArea: "center",
     homeOpacity: 1,
     taskOpacity: 0.28,
+    overlayStrength: 0.62,
+  };
+}
+
+export function defaultTaskBackground(): ThemePackSceneBackground {
+  return {
+    focusX: 0.5,
+    focusY: 0.5,
+    safeArea: "center",
+    opacity: 0.28,
     overlayStrength: 0.62,
   };
 }
