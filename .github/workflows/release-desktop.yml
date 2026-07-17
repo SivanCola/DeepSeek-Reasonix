@@ -1,9 +1,8 @@
 name: Release desktop
 
-# Desktop (Wails) release line. Tag namespace `desktop-v<semver>` triggers this —
-# plain `v<semver>` tags are the CLI release (release.yml) and intentionally do NOT
-# trigger here (GitHub glob `v*` does not match `desktop-v*`). Bump with:
-#   git tag desktop-vX.Y.Z && git push origin desktop-vX.Y.Z
+# Desktop (Wails) release line. Stable releases are called by
+# release-stable.yml after its single approval. Direct tag pushes are retained
+# only for desktop prereleases so they can still ship independently.
 #
 # Wails cannot cross-compile a CGO/WebKit binary, so build/ fans out to one native
 # runner per platform. Artifacts are minisign-signed (MINISIGN_* secrets), a
@@ -11,14 +10,15 @@ name: Release desktop
 # release and mirrored to R2 (the updater reads R2 first, then the crash worker
 # release gateway; stable desktop releases own GitHub's repository-wide "latest").
 #
-# The same build/sign/manifest pipeline serves two channels. A `desktop-v*` tag
-# (or manual stable dispatch) publishes a GitHub release and moves R2's latest/
-# pointer. A manual `channel: canary` dispatch builds with -X main.channel=canary
+# The same build/sign/manifest pipeline serves two channels. An orchestrated
+# `desktop-v*` tag (or manual stable recovery) publishes a GitHub release and
+# moves R2's latest/ pointer. A manual `channel: canary` dispatch builds with
+# -X main.channel=canary
 # and uploads only to R2's canary/ pointer — no GitHub release, so canary never
 # shows on the releases page and never touches latest/.
 on:
   push:
-    tags: ["desktop-v*"]
+    tags: ["desktop-v*-*"]
   workflow_dispatch:
     inputs:
       channel:
@@ -34,16 +34,62 @@ on:
         description: "canary: intended next stable version, e.g. 1.5.0"
         required: false
         type: string
+  workflow_call:
+    inputs:
+      channel:
+        description: "Release channel selected by the approved orchestrator"
+        required: true
+        type: string
+      tag:
+        description: "Existing desktop tag to publish"
+        required: false
+        default: ""
+        type: string
+      base_version:
+        description: "Base version used for canary builds"
+        required: false
+        default: ""
+        type: string
+      orchestrated:
+        description: "True only when called by release-stable.yml after approval"
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: write # create the release and upload artifacts
 
 jobs:
+  orchestration-guard:
+    name: verify approved orchestrator
+    if: ${{ inputs.orchestrated }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify caller workflow
+        env:
+          ACTUAL: ${{ github.workflow_ref }}
+          EXPECTED: ${{ format('{0}/.github/workflows/release-stable.yml@{1}', github.repository, github.ref) }}
+        run: test "$ACTUAL" = "$EXPECTED"
+
+  release-gate:
+    name: approve standalone desktop release
+    if: ${{ !inputs.orchestrated && !(github.event_name == 'workflow_dispatch' && inputs.channel == 'canary') }}
+    runs-on: ubuntu-latest
+    environment: release
+    steps:
+      - env:
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+        run: echo "Approved standalone desktop release $RELEASE_TAG"
+
   cache-guard:
     name: cache hit guard
+    needs: [orchestration-guard, release-gate]
+    if: ${{ always() && !cancelled() && ((inputs.orchestrated && needs.orchestration-guard.result == 'success') || (!inputs.orchestrated && ((github.event_name == 'workflow_dispatch' && inputs.channel == 'canary') || needs.release-gate.result == 'success'))) }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag || github.ref }}
 
       - uses: actions/setup-go@v6
         with:
@@ -79,6 +125,8 @@ jobs:
         shell: bash # desktop-build.sh is bash; windows runners default to pwsh otherwise
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag || github.ref }}
 
       - uses: actions/setup-go@v6
         with:
@@ -174,8 +222,9 @@ jobs:
       # the manifest SHA must be computed over the signed build. SignPath pulls the file
       # from the Actions artifact API, so it must be uploaded first. Canary signs with the
       # test certificate; stable/rc sign with the Foundation release certificate, but only
-      # once SIGNPATH_RELEASE_SIGNING_READY is set — until that cert clears CSR-pending,
-      # stable ships unsigned instead of failing the whole release on an invalid policy.
+      # once SIGNPATH_RELEASE_SIGNING_READY is set. The release-signing policy verifies the
+      # trusted GitHub origin; configure that verified normal path without manual approval.
+      # Exceptional/manual rebuilds should use a separate approval policy.
       - name: Upload unsigned installer for SignPath
         if: runner.os == 'Windows' && env.HAS_SIGNPATH == 'true' && (steps.ver.outputs.channel == 'canary' || vars.SIGNPATH_RELEASE_SIGNING_READY == 'true')
         id: unsigned-installer
@@ -198,8 +247,8 @@ jobs:
           github-artifact-id: ${{ steps.unsigned-installer.outputs.artifact-id }}
           github-token: ${{ github.token }}
           wait-for-completion: true
-          # The policy uses an approval process — leave headroom for a human to approve
-          # the request (the approver gets an email on submit) before the job gives up.
+          # Leave headroom for origin verification, malware scanning, and signing. Normal
+          # releases do not wait for a second human approval after the GitHub release gate.
           wait-for-completion-timeout-in-seconds: 1800
           output-artifact-directory: signed
 
@@ -224,11 +273,12 @@ jobs:
     name: publish release
     needs: build
     runs-on: ubuntu-latest
-    # Stable publishes go through the `release` environment (esengine must
-    # approve); canary uses the open `canary` environment so maintainers self-serve.
-    environment: ${{ (github.event_name == 'workflow_dispatch' && inputs.channel == 'canary') && 'canary' || 'release' }}
+    # The stable caller has already passed the single release approval. Direct
+    # prereleases/manual stable recovery pass release-gate; canaries run free.
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag || github.ref }}
 
       - uses: actions/setup-go@v6
         with:
@@ -306,6 +356,8 @@ jobs:
       HAS_R2: ${{ secrets.R2_ACCESS_KEY_ID != '' && secrets.R2_SECRET_ACCESS_KEY != '' && secrets.R2_ACCOUNT_ID != '' && secrets.R2_BUCKET != '' }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag || github.ref }}
 
       - name: Resolve version
         id: ver
