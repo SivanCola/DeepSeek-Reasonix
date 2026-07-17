@@ -17,7 +17,11 @@ const (
 )
 
 func footerLabel(label string) string {
-	return themeFg(activeCLITheme.faint, label)
+	return themeFg(activeCLITheme.subtle, label)
+}
+
+func footerHint(hint string) string {
+	return themeFg(activeCLITheme.subtle, hint)
 }
 
 func footerValue(value string) string {
@@ -69,7 +73,7 @@ func renderTurnReceipt(u *provider.Usage, p *provider.Pricing, d *event.CacheDia
 		groups = append(groups, fmt.Sprintf("%s%.4f", p.Symbol(), p.Cost(u)))
 	}
 
-	separator := themeFg(activeCLITheme.faint, " │ ")
+	separator := footerHint(" · ")
 	styled := make([]string, 0, len(groups))
 	for _, group := range groups {
 		styled = append(styled, footerValue(group))
@@ -118,12 +122,9 @@ func (m chatTUI) primaryStatusLine(modeTag string, shellMode, cancelRequested bo
 	case shellMode:
 		status += " · " + i18n.M.ShellModeHint
 	case m.ctrl != nil && m.ctrl.AutoApproveTools():
-		status += " · " + i18n.M.ChatStatusYoloIdle + " · " + dim(i18n.M.ChatStatusCycleHintCompact)
+		status += " · " + footerValue(i18n.M.ChatStatusYoloIdle) + " · " + footerHint(i18n.M.ChatStatusCycleHintCompact)
 	default:
-		status += " · " + i18n.M.ChatStatusIdle + " · " + dim(i18n.M.ChatStatusCycleHintCompact)
-	}
-	if et := m.effortTag(); et != "" {
-		status += " · " + et
+		status += " · " + footerValue(i18n.M.ChatStatusIdle) + " · " + footerHint(i18n.M.ChatStatusCycleHintCompact)
 	}
 	if mt := m.mouseTag(); mt != "" {
 		status += " · " + mt
@@ -143,28 +144,48 @@ func (m chatTUI) statusModelWorkGroup(maxWidth int) string {
 	if m.runtimeProfile != "" {
 		work = runtimeProfileDisplay(m.runtimeProfile)
 	}
-	if model == "" && work == "" {
-		return ""
-	}
 	if maxWidth <= 0 {
 		maxWidth = 1
 	}
 
-	if model == "" {
-		return footerLabel("WORK") + " " + footerSecondary(compactMiddle(work, max(maxWidth-visibleWidth("WORK "), 1)))
+	const separator = "   "
+	tail := make([]string, 0, 2)
+	if effort := m.effortTag(); effort != "" {
+		tail = append(tail, effort)
 	}
-	if work == "" {
-		return footerLabel("MODEL") + " " + footerInfo(compactMiddle(model, max(maxWidth-visibleWidth("MODEL "), 1)))
+	if work != "" {
+		tail = append(tail, footerMetric("WORK", footerSecondary(work)))
+	}
+	if model == "" && len(tail) == 0 {
+		return ""
 	}
 
-	const separator = "   "
-	fixedWidth := visibleWidth("MODEL ") + visibleWidth(separator) + visibleWidth("WORK ") + visibleWidth(work)
-	modelBudget := maxWidth - fixedWidth
-	if modelBudget >= 4 {
-		return footerLabel("MODEL") + " " + footerInfo(compactMiddle(model, modelBudget)) + separator +
-			footerLabel("WORK") + " " + footerSecondary(work)
+	fields := append([]string(nil), tail...)
+	if model != "" {
+		fields = append([]string{footerMetric("MODEL", footerInfo(model))}, fields...)
 	}
-	return dim(compactMiddle("MODEL "+model+separator+"WORK "+work, maxWidth))
+	full := strings.Join(fields, separator)
+	if visibleWidth(full) <= maxWidth {
+		return full
+	}
+
+	// Model names own the flexible slot. Keep effort and work intact while they
+	// fit, and compact only the model before falling back to a bounded plain group.
+	if model != "" {
+		tailWidth := visibleWidth(strings.Join(tail, separator))
+		if len(tail) > 0 {
+			tailWidth += visibleWidth(separator)
+		}
+		modelBudget := maxWidth - tailWidth - visibleWidth("MODEL ")
+		if modelBudget >= 4 {
+			modelField := footerMetric("MODEL", footerInfo(compactMiddle(model, modelBudget)))
+			if len(tail) == 0 {
+				return modelField
+			}
+			return modelField + separator + strings.Join(tail, separator)
+		}
+	}
+	return footerHint(compactMiddle(ansi.Strip(full), maxWidth))
 }
 
 func cacheStatusColor(rate float64) cliColor {

@@ -120,13 +120,13 @@ func renderTurnReceiptBand(receipt string, contentWidth int) string {
 	contentWidth = max(contentWidth, 1)
 	if contentWidth <= visibleWidth(statusFooterIndent) {
 		rule := themeFg(activeCLITheme.border, strings.Repeat("─", contentWidth))
-		return rule + "\n" + wrapTranscript(receipt, contentWidth) + "\n" + rule
+		return rule + "\n" + wrapTranscript(receipt, contentWidth)
 	}
 	indent := statusFooterIndent
 	innerWidth := contentWidth - visibleWidth(indent)
 	rule := indent + themeFg(activeCLITheme.border, strings.Repeat("─", innerWidth))
 	body := wrapTranscript(receipt, contentWidth)
-	return rule + "\n" + body + "\n" + rule
+	return rule + "\n" + body
 }
 
 func (m *chatTUI) reflowTranscript(terminalWidth int) {

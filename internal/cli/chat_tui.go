@@ -3008,7 +3008,7 @@ func (m chatTUI) effortTag() string {
 	}
 	value := footerValue(m.effortLevel)
 	if m.effortLevel != "auto" {
-		value = lipgloss.NewStyle().Foreground(lipgloss.Color("#2563eb")).Bold(true).Render(m.effortLevel)
+		value = themeStyle(activeCLITheme.info).Bold(true).Render(m.effortLevel)
 	}
 	return footerMetric("EFFORT", value)
 }

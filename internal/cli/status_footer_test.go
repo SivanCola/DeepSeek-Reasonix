@@ -74,26 +74,56 @@ func TestTurnReceiptIgnoresEmptyUsage(t *testing.T) {
 	}
 }
 
-func TestTurnReceiptBandHasIndependentBoundaries(t *testing.T) {
+func TestTurnReceiptBandUsesSingleQuietBoundary(t *testing.T) {
 	defer restoreThemeForTest(colorEnabled, activeCLITheme)
 	colorEnabled = false
 	configureCLITheme("dark")
 
-	band := renderTurnReceiptBand("  TURN  14.0K tok │ in 13.6K", 48)
+	band := renderTurnReceiptBand("  TURN  14.0K tok · in 13.6K", 48)
 	lines := strings.Split(band, "\n")
-	if len(lines) != 3 {
-		t.Fatalf("turn receipt band rows = %d, want top rule, receipt, bottom rule:\n%s", len(lines), band)
+	if len(lines) != 2 {
+		t.Fatalf("turn receipt band rows = %d, want top rule and receipt:\n%s", len(lines), band)
 	}
-	if strings.Trim(lines[0], "─ ") != "" || strings.Trim(lines[2], "─ ") != "" {
-		t.Fatalf("turn receipt band boundaries are not rules:\n%s", band)
+	if strings.Trim(lines[0], "─ ") != "" {
+		t.Fatalf("turn receipt band boundary is not a rule:\n%s", band)
 	}
-	for _, row := range []int{0, 2} {
-		if got := visibleWidth(lines[row]); got != 48 {
-			t.Fatalf("receipt rule %d width = %d, want 48: %q", row, got, lines[row])
-		}
+	if got := visibleWidth(lines[0]); got != 48 {
+		t.Fatalf("receipt rule width = %d, want 48: %q", got, lines[0])
 	}
 	if !strings.Contains(lines[1], "TURN  14.0K tok") {
-		t.Fatalf("receipt body missing from independent band:\n%s", band)
+		t.Fatalf("receipt body missing from quiet band:\n%s", band)
+	}
+}
+
+func TestTurnReceiptAdaptsContrastAcrossThemes(t *testing.T) {
+	t.Setenv("COLORTERM", "")
+	t.Setenv("TERM_PROGRAM", "")
+	defer restoreThemeForTest(colorEnabled, activeCLITheme)
+	defer i18n.DetectLanguage("en")
+	colorEnabled = true
+	i18n.DetectLanguage("en")
+
+	for _, tt := range []struct {
+		mode, borderSGR, labelSGR, valueSGR string
+	}{
+		{mode: "dark", borderSGR: "\033[38;5;237m", labelSGR: "\033[38;5;248m", valueSGR: "\033[38;5;251m"},
+		{mode: "light", borderSGR: "\033[38;5;252m", labelSGR: "\033[38;5;241m", valueSGR: "\033[38;5;239m"},
+	} {
+		t.Run(tt.mode, func(t *testing.T) {
+			configureCLITheme(tt.mode)
+			receipt := renderTurnReceipt(&provider.Usage{
+				PromptTokens: 900, CompletionTokens: 100, TotalTokens: 1_000,
+			}, nil, nil)
+			band := renderTurnReceiptBand(receipt, 80)
+			for _, want := range []string{tt.borderSGR + "─", tt.labelSGR + "TURN", tt.valueSGR + "1.0K tok"} {
+				if !strings.Contains(band, want) {
+					t.Fatalf("%s receipt %q missing semantic style %q", tt.mode, band, want)
+				}
+			}
+			if strings.Count(ansi.Strip(band), "\n") != 1 {
+				t.Fatalf("%s receipt should keep one rule and one body row: %q", tt.mode, ansi.Strip(band))
+			}
+		})
 	}
 }
 
@@ -106,20 +136,23 @@ func TestStatusFooterSemanticPaletteAcrossThemes(t *testing.T) {
 	colorEnabled = true
 
 	for _, tt := range []struct {
-		mode, labelSGR, infoSGR, secondarySGR string
+		mode, labelSGR, valueSGR, infoSGR, secondarySGR string
 	}{
-		{mode: "dark", labelSGR: "\033[38;5;245m", infoSGR: "\033[38;5;80m", secondarySGR: "\033[38;5;141m"},
-		{mode: "light", labelSGR: "\033[38;5;243m", infoSGR: "\033[38;5;25m", secondarySGR: "\033[38;5;104m"},
+		{mode: "dark", labelSGR: "\033[38;5;248m", valueSGR: "\033[38;5;251m", infoSGR: "\033[38;5;80m", secondarySGR: "\033[38;5;141m"},
+		{mode: "light", labelSGR: "\033[38;5;241m", valueSGR: "\033[38;5;239m", infoSGR: "\033[38;5;25m", secondarySGR: "\033[38;5;104m"},
 	} {
 		t.Run(tt.mode, func(t *testing.T) {
 			configureCLITheme(tt.mode)
 			m := newTestChatTUI()
 			m.label = "deepseek-v4-flash"
+			m.effortLevel = "auto"
 			m.runtimeProfile = "full"
 			got := m.statusModelWorkGroup(80)
 			for _, want := range []string{
 				tt.labelSGR + "MODEL",
 				tt.infoSGR + "deepseek-v4-flash",
+				tt.labelSGR + "EFFORT",
+				tt.valueSGR + "auto",
 				tt.labelSGR + "WORK",
 				tt.secondarySGR + "balanced",
 			} {
@@ -127,7 +160,39 @@ func TestStatusFooterSemanticPaletteAcrossThemes(t *testing.T) {
 					t.Fatalf("model/work group %q missing semantic style %q", got, want)
 				}
 			}
+			primary := m.primaryStatusLine(" Auto ", false, false)
+			if !strings.Contains(primary, tt.valueSGR+i18n.M.ChatStatusIdle) ||
+				!strings.Contains(primary, tt.labelSGR+i18n.M.ChatStatusCycleHintCompact) {
+				t.Fatalf("%s interaction hints should use readable semantic contrast: %q", tt.mode, primary)
+			}
 		})
+	}
+}
+
+func TestStatusFooterThemesKeepIdenticalGeometry(t *testing.T) {
+	t.Setenv("COLORTERM", "")
+	t.Setenv("TERM_PROGRAM", "")
+	defer restoreThemeForTest(colorEnabled, activeCLITheme)
+
+	m := newTestChatTUI()
+	m.ctrl = control.New(control.Options{})
+	m.label = "deepseek-v4-flash"
+	m.effortLevel = "max"
+	m.runtimeProfile = "full"
+	m.balance = "¥12.34"
+	m.gitStatus = gitStatus{Repo: "DeepSeek-Reasonix", Branch: "feature/theme-footer", Added: 3}
+
+	render := func(mode string, colors bool) string {
+		colorEnabled = colors
+		configureCLITheme(mode)
+		primary := m.primaryStatusLine(" Auto ", false, false)
+		return ansi.Strip(m.renderStatusBlock(primary, 132))
+	}
+	dark := render("dark", true)
+	light := render("light", true)
+	plain := render("dark", false)
+	if dark != light || dark != plain {
+		t.Fatalf("theme modes changed footer geometry:\ndark:\n%s\nlight:\n%s\nplain:\n%s", dark, light, plain)
 	}
 }
 
@@ -167,12 +232,12 @@ func TestContextFooterColorsOnlyValuesByUrgency(t *testing.T) {
 	configureCLITheme("dark")
 
 	normal := strings.Join(renderContextStatusGroups(10, 100, .8), " ")
-	if !strings.Contains(normal, "\033[38;5;245mCTX") || !strings.Contains(normal, "\033[38;5;251m10 (10%)") {
-		t.Fatalf("normal context should use faint label and neutral value: %q", normal)
+	if !strings.Contains(normal, "\033[38;5;248mCTX") || !strings.Contains(normal, "\033[38;5;251m10 (10%)") {
+		t.Fatalf("normal context should use subtle label and neutral value: %q", normal)
 	}
 
 	warning := strings.Join(renderContextStatusGroups(75, 100, .8), " ")
-	if !strings.Contains(warning, "\033[38;5;245mCOMPACT") || !strings.Contains(warning, "\033[38;5;179m5%") {
+	if !strings.Contains(warning, "\033[38;5;248mCOMPACT") || !strings.Contains(warning, "\033[38;5;179m5%") {
 		t.Fatalf("near-threshold context should warn only on values: %q", warning)
 	}
 
@@ -189,13 +254,14 @@ func TestStatusFooterNoColorKeepsSemanticLabels(t *testing.T) {
 
 	m := newTestChatTUI()
 	m.label = "deepseek-v4-flash"
+	m.effortLevel = "auto"
 	m.runtimeProfile = "full"
 	m.balance = "¥12.34"
 	block := m.renderStatusBlock(m.primaryStatusLine(" Auto ", false, false), 120)
 	if strings.Contains(block, "\033[") {
 		t.Fatalf("NO_COLOR footer contains escapes: %q", block)
 	}
-	for _, want := range []string{"MODEL deepseek-v4-flash", "WORK balanced", "BAL ¥12.34"} {
+	for _, want := range []string{"MODEL deepseek-v4-flash", "EFFORT auto", "WORK balanced", "BAL ¥12.34"} {
 		if !strings.Contains(block, want) {
 			t.Fatalf("NO_COLOR footer missing %q:\n%s", want, block)
 		}
@@ -225,7 +291,7 @@ func TestStatusFooterUsesCompactLocalizedHint(t *testing.T) {
 			if len(lines) != 3 {
 				t.Fatalf("localized footer rows = %d, want two data rows plus divider:\n%s", len(lines), block)
 			}
-			if !strings.Contains(lines[0], tt.compact) || !strings.Contains(lines[0], "MODEL deepseek-v4-flash   WORK balanced") {
+			if !strings.Contains(lines[0], tt.compact) || !strings.Contains(lines[0], "MODEL deepseek-v4-flash   EFFORT auto   WORK balanced") {
 				t.Fatalf("localized footer did not compact in place:\n%s", block)
 			}
 		})
@@ -254,8 +320,8 @@ func TestStatusFooterSwapsModelAndGitGroups(t *testing.T) {
 	if len(lines) != 3 {
 		t.Fatalf("wide status block lines = %d, want two data rows plus divider:\n%s", len(lines), strings.Join(lines, "\n"))
 	}
-	if !strings.Contains(lines[0], "EFFORT auto") || !strings.Contains(lines[0], "MODEL deepseek-v4-flash   WORK balanced") {
-		t.Fatalf("first row should contain interaction and model/work groups:\n%s", strings.Join(lines, "\n"))
+	if !strings.Contains(lines[0], "MODEL deepseek-v4-flash   EFFORT auto   WORK balanced") {
+		t.Fatalf("first row should keep model, effort, and work in one session group:\n%s", strings.Join(lines, "\n"))
 	}
 	if strings.Contains(lines[0], "DeepSeek-Reasonix@") {
 		t.Fatalf("first row should not contain Git identity:\n%s", strings.Join(lines, "\n"))
@@ -298,8 +364,9 @@ func TestStatusFooterMediumLayoutLeftAlignsModelWork(t *testing.T) {
 		t.Fatalf("medium footer should place model/work on a deliberate row before the divider:\n%s", strings.Join(lines, "\n"))
 	}
 	modelRow := lines[divider-1]
-	if !strings.HasPrefix(modelRow, statusFooterIndent+"MODEL deepseek-v4-flash") {
-		t.Fatalf("medium model/work row should be left aligned, got %q:\n%s", modelRow, strings.Join(lines, "\n"))
+	if !strings.HasPrefix(modelRow, statusFooterIndent+"MODEL deepseek-v4-flash") ||
+		!strings.Contains(modelRow, "EFFORT auto   WORK balanced") {
+		t.Fatalf("medium model/effort/work row should be left aligned, got %q:\n%s", modelRow, strings.Join(lines, "\n"))
 	}
 	if strings.Count(strings.TrimLeft(modelRow, " "), "MODEL") != 1 {
 		t.Fatalf("medium model/work row should remain a single semantic group: %q", modelRow)

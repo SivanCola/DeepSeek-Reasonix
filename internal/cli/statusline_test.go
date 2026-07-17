@@ -199,11 +199,8 @@ func TestStatuslineShowsEffortInPersistentFooter(t *testing.T) {
 	if len(lines) != 3 {
 		t.Fatalf("status block lines = %d, want 3:\n%s", len(lines), strings.Join(lines, "\n"))
 	}
-	if !strings.Contains(lines[0], "EFFORT auto") {
-		t.Fatalf("mode row should show effort:\n%s", strings.Join(lines, "\n"))
-	}
-	if !strings.Contains(lines[0], "MODEL deepseek-v4-flash") {
-		t.Fatalf("mode row should right-anchor the model group:\n%s", strings.Join(lines, "\n"))
+	if !strings.Contains(lines[0], "MODEL deepseek-v4-flash   EFFORT auto") {
+		t.Fatalf("session row should keep effort beside the model:\n%s", strings.Join(lines, "\n"))
 	}
 }
 
@@ -231,8 +228,8 @@ func TestStatuslineShowsGitAndEffortInPersistentFooter(t *testing.T) {
 	if len(lines) != 3 {
 		t.Fatalf("status block lines = %d, want 3:\n%s", len(lines), strings.Join(lines, "\n"))
 	}
-	if !strings.Contains(lines[0], "EFFORT auto") || !strings.Contains(lines[0], "MODEL deepseek-v4-flash") {
-		t.Fatalf("mode row should include effort and model:\n%s", strings.Join(lines, "\n"))
+	if !strings.Contains(lines[0], "MODEL deepseek-v4-flash   EFFORT auto") {
+		t.Fatalf("session row should keep effort beside the model:\n%s", strings.Join(lines, "\n"))
 	}
 	if !strings.Contains(lines[2], "Reasonix@codex/demo  +3 -1 ?2") {
 		t.Fatalf("telemetry row should start with git identity:\n%s", strings.Join(lines, "\n"))
@@ -260,18 +257,31 @@ func TestStatuslineShowsWorkModeAndBalanceInPersistentFooter(t *testing.T) {
 	}
 }
 
-func TestEffortTagExplicitValueUsesBlue(t *testing.T) {
+func TestEffortTagExplicitValueUsesThemeInfo(t *testing.T) {
 	i18n.DetectLanguage("en")
+	t.Setenv("COLORTERM", "")
+	t.Setenv("TERM_PROGRAM", "")
+	defer restoreThemeForTest(colorEnabled, activeCLITheme)
+	colorEnabled = true
 
-	m := newTestChatTUI()
-	m.effortLevel = "max"
-	content := m.effortTag()
-	plain := ansi.Strip(content)
-	if !strings.Contains(plain, "EFFORT max") {
-		t.Fatalf("status data line should show explicit effort:\n%s", plain)
-	}
-	if !strings.Contains(content, "\x1b[1;38;2;37;99;235m") {
-		t.Fatalf("explicit effort should use blue foreground, got:\n%q", content)
+	for _, tt := range []struct {
+		mode, infoSGR string
+	}{
+		{mode: "dark", infoSGR: "\033[1;38;5;80m"},
+		{mode: "light", infoSGR: "\033[1;38;5;25m"},
+	} {
+		t.Run(tt.mode, func(t *testing.T) {
+			configureCLITheme(tt.mode)
+			m := newTestChatTUI()
+			m.effortLevel = "max"
+			content := m.effortTag()
+			if !strings.Contains(ansi.Strip(content), "EFFORT max") {
+				t.Fatalf("status data line should show explicit effort:\n%s", ansi.Strip(content))
+			}
+			if !strings.Contains(content, tt.infoSGR+"max") {
+				t.Fatalf("%s explicit effort should use theme info colour, got:\n%q", tt.mode, content)
+			}
+		})
 	}
 }
 

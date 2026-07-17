@@ -27,6 +27,7 @@ type cliPalette struct {
 	accent       cliColor
 	muted        cliColor
 	faint        cliColor
+	subtle       cliColor
 	success      cliColor
 	warn         cliColor
 	err          cliColor
@@ -56,6 +57,7 @@ var (
 		accent:       cliColor{"#d97757", 173},
 		muted:        cliColor{"#c0c4cc", 251},
 		faint:        cliColor{"#858b96", 245},
+		subtle:       cliColor{"#a4a9b3", 248},
 		success:      cliColor{"#74b87a", 108},
 		warn:         cliColor{"#d9a441", 179},
 		err:          cliColor{"#e0696a", 167},
@@ -76,6 +78,7 @@ var (
 		accent:       cliColor{"#2f5fa8", 25},
 		muted:        cliColor{"#555049", 239},
 		faint:        cliColor{"#82796f", 243},
+		subtle:       cliColor{"#6f675f", 241},
 		success:      cliColor{"#5d9b66", 65},
 		warn:         cliColor{"#b68120", 136},
 		err:          cliColor{"#b94b4d", 131},
