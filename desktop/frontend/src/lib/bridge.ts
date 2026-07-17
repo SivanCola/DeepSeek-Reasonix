@@ -367,6 +367,16 @@ export interface AppBindings {
   SetStatusBarItems(items: string[]): Promise<void>;
   SetDesktopLanguage(lang: string): Promise<void>;
   SetDesktopAppearance(theme: string, style: string): Promise<void>;
+  ListThemePacks(): Promise<import("./themePack").ThemePackView[]>;
+  GetActiveThemePack(): Promise<import("./themePack").ThemeActiveView>;
+  ActivateThemePack(id: string): Promise<void>;
+  ResetThemePack(): Promise<void>;
+  SaveThemePack(input: import("./themePack").ThemeSaveInput): Promise<import("./themePack").ThemePackView>;
+  DeleteThemePack(id: string): Promise<void>;
+  CopyThemePack(sourceID: string, newID: string, newName: string): Promise<import("./themePack").ThemePackView>;
+  ImportThemePack(sourcePath: string, replace: boolean): Promise<import("./themePack").ThemeImportResult>;
+  ExportThemePack(id: string, destPath: string): Promise<string>;
+  PickThemeBackground(): Promise<string>;
   SetDesktopLayoutStyle(style: string): Promise<void>;
   SetDesktopZoomFactor(factor: number): Promise<void>;
   GetDesktopZoomFactor(): Promise<number>;
@@ -971,6 +981,15 @@ function makeMockApp(): AppBindings {
   let workspaces = freshMock ? [] : ["~/projects/joyquant-db", "~/projects/joyquant-sys", "~/projects/reasonix", "~/projects/blade"];
   let mockEffort = "auto";
   let mockDesktopZoomFactor = 1.0;
+  let mockActiveThemeId = "";
+  let mockThemePacks: import("./themePack").ThemePackView[] = [
+    { id: "graphite", name: "Graphite", author: "Reasonix", baseStyle: "graphite", builtin: true, active: false, hasBackground: false, tokens: {}, recipes: { density: "comfortable", corners: "soft" } },
+    { id: "aurora", name: "Aurora", author: "Reasonix", baseStyle: "aurora", builtin: true, active: false, hasBackground: false, tokens: {}, recipes: { density: "comfortable", corners: "soft" } },
+    { id: "slate", name: "Slate", author: "Reasonix", baseStyle: "slate", builtin: true, active: false, hasBackground: false, tokens: {}, recipes: { density: "comfortable", corners: "soft" } },
+    { id: "carbon", name: "Carbon", author: "Reasonix", baseStyle: "carbon", builtin: true, active: false, hasBackground: false, tokens: {}, recipes: { density: "comfortable", corners: "soft" } },
+    { id: "nocturne", name: "Nocturne", author: "Reasonix", baseStyle: "nocturne", builtin: true, active: false, hasBackground: false, tokens: {}, recipes: { density: "comfortable", corners: "soft" } },
+    { id: "amber", name: "Amber", author: "Reasonix", baseStyle: "amber", builtin: true, active: false, hasBackground: false, tokens: {}, recipes: { density: "comfortable", corners: "soft" } },
+  ];
   const day = 86_400_000;
   const t0 = Date.now();
   // Mutable so MCP add/remove/retry are observable in browser dev.
@@ -3667,6 +3686,71 @@ function makeMockApp(): AppBindings {
         async SetDesktopAppearance(theme: string, style: string) {
           settings.desktopTheme = theme === "auto" || theme === "light" ? theme : "dark";
           settings.desktopThemeStyle = style;
+        },
+        async ListThemePacks() {
+          return mockThemePacks.map((p) => ({ ...p, active: p.id === mockActiveThemeId, tokens: { light: { ...(p.tokens.light || {}) }, dark: { ...(p.tokens.dark || {}) } }, recipes: { ...p.recipes } }));
+        },
+        async GetActiveThemePack() {
+          const pack = mockActiveThemeId ? mockThemePacks.find((p) => p.id === mockActiveThemeId) : null;
+          return { activeThemeId: mockActiveThemeId || "", pack: pack ? { ...pack, active: true } : null, safeMode: false };
+        },
+        async ActivateThemePack(id: string) {
+          mockActiveThemeId = String(id || "").trim();
+        },
+        async ResetThemePack() {
+          mockActiveThemeId = "";
+        },
+        async SaveThemePack(input: import("./themePack").ThemeSaveInput) {
+          const pack: import("./themePack").ThemePackView = {
+            id: input.id,
+            name: input.name,
+            author: input.author,
+            description: input.description,
+            license: input.license,
+            baseStyle: input.baseStyle,
+            builtin: false,
+            active: Boolean(input.activate),
+            hasBackground: Boolean(input.background && (input.backgroundDataUrl || input.background.image)),
+            backgroundUrl: input.backgroundDataUrl || "",
+            tokens: input.tokens || {},
+            recipes: input.recipes || { density: "comfortable", corners: "soft" },
+            background: input.background ?? undefined,
+          };
+          const idx = mockThemePacks.findIndex((p) => p.id === pack.id);
+          if (idx >= 0) mockThemePacks[idx] = pack;
+          else mockThemePacks.push(pack);
+          if (input.activate) mockActiveThemeId = pack.id;
+          return pack;
+        },
+        async DeleteThemePack(id: string) {
+          mockThemePacks = mockThemePacks.filter((p) => p.id !== id || p.builtin);
+          if (mockActiveThemeId === id) mockActiveThemeId = "";
+        },
+        async CopyThemePack(sourceID: string, newID: string, newName: string) {
+          const src = mockThemePacks.find((p) => p.id === sourceID);
+          if (!src) throw new Error("source theme not found");
+          const pack: import("./themePack").ThemePackView = {
+            ...src,
+            id: newID,
+            name: newName || `${src.name} Copy`,
+            builtin: false,
+            active: false,
+          };
+          mockThemePacks.push(pack);
+          return pack;
+        },
+        async ImportThemePack(_sourcePath: string, replace: boolean) {
+          if (replace) {
+            return { pack: mockThemePacks[0], replaced: true };
+          }
+          // Simulate conflict path without re-prompting for a file on confirm.
+          return { pack: mockThemePacks[0], replaced: false, needsReplace: true, pendingId: "pending-mock" };
+        },
+        async ExportThemePack(_id: string, _destPath: string) {
+          return "";
+        },
+        async PickThemeBackground() {
+          return "";
         },
         async SetDesktopLayoutStyle(style: string) {
           settings.desktopLayoutStyle = style === "workbench" || style === "creation" ? style : "classic";

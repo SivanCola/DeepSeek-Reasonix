@@ -48,6 +48,8 @@ import {
   type ShortcutAction,
 } from "../lib/keyboardShortcuts";
 import type { BotAccessView, BotAllowlistView, BotConnectionDiagnostic, BotConnectionView, BotInstallStartResult, BotRouteView, BotSettingsView, HookConfigView, HooksSettingsView, NetworkView, ProviderPresetView, ProviderView, SettingsTab, SettingsView } from "../lib/types";
+import { ThemeLibrarySection } from "./ThemeLibrary";
+import { applyThemePack, getActiveThemePack, setBaseAppearance } from "../lib/themePack";
 import { InlineConfirmButton } from "./InlineConfirmButton";
 import { Tooltip } from "./Tooltip";
 import { AnchoredPopover } from "./AnchoredPopover";
@@ -288,11 +290,18 @@ export function SettingsPanel({
                       onTheme={(nextTheme) => {
                         applyTheme(nextTheme, themeStyle, { persist: false });
                         setThemeState(nextTheme);
+                        // Config appearance is the restore-default target (not pack baseStyle).
+                        setBaseAppearance(nextTheme, themeStyle);
+                        const pack = getActiveThemePack();
+                        if (pack) applyThemePack(pack);
                         void apply(() => app.SetDesktopAppearance(nextTheme, themeStyle));
                       }}
                       onThemeStyle={(style) => {
                         applyTheme(theme, style, { persist: false });
                         setThemeStyleState(style);
+                        setBaseAppearance(theme, style);
+                        const pack = getActiveThemePack();
+                        if (pack) applyThemePack(pack);
                         void apply(() => app.SetDesktopAppearance(theme, style));
                       }}
                       onTextSize={(size) => {
@@ -6670,6 +6679,9 @@ function AppearanceSection({
             );
           })}
         </div>
+      </SettingsField>
+      <SettingsField label={t("settings.themeLibrary.title")} stacked>
+        <ThemeLibrarySection />
       </SettingsField>
       <SettingsField label={t("settings.textSize")}>
         <div className="set-seg">

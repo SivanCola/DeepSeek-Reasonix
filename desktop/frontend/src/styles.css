@@ -90,6 +90,8 @@
   --shadow-2: 0 14px 40px rgba(0, 0, 0, 0.28);
 
   /* z-index scale */
+  --z-theme-bg: 0;
+  --z-app-content: 1;
   --z-local-raised: 2;
   --z-local-handle: 4;
   --z-local-handle-active: 5;
@@ -32288,4 +32290,362 @@ body > .mermaid-diagram--fullscreen {
   flex: 0 0 auto;
   color: var(--accent, #ff6b35);
   vertical-align: middle;
+}
+
+/* ==========================================================================
+   Theme Pack V1 — background layer, scene, library editor
+   Overlay CSS variables are injected last by themePack.ts so pack tokens win
+   over base style sheets and Creation-local variables.
+   ========================================================================== */
+
+.theme-bg {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-theme-bg);
+  pointer-events: none;
+  overflow: hidden;
+  display: none;
+}
+
+:root[data-theme-has-bg="true"] .theme-bg {
+  display: block;
+}
+
+.theme-bg__image {
+  position: absolute;
+  inset: -4%;
+  background-image: var(--theme-bg-image, none);
+  background-repeat: no-repeat;
+  background-size: cover;
+  background-position: var(--theme-bg-focus-x, 50%) var(--theme-bg-focus-y, 50%);
+  opacity: var(--theme-bg-home-opacity, 1);
+  transition: opacity 180ms ease;
+}
+
+/* Task scene: reduce background strength for chat readability */
+:root[data-theme-scene="task"] .theme-bg__image {
+  opacity: var(--theme-bg-task-opacity, 0.28);
+}
+
+.theme-bg__overlay {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  transition: opacity 180ms ease;
+  background: transparent;
+}
+
+:root[data-theme-scene="task"] .theme-bg__overlay {
+  opacity: 1;
+}
+
+/* Directional readable safe-area wash (no backdrop-filter) */
+:root[data-theme-scene="task"][data-theme-safe-area="left"] .theme-bg__overlay {
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--bg) calc(var(--theme-bg-overlay, 0.62) * 100%), transparent) 0%,
+    color-mix(in srgb, var(--bg) calc(var(--theme-bg-overlay, 0.62) * 55%), transparent) 42%,
+    transparent 78%
+  );
+}
+
+:root[data-theme-scene="task"][data-theme-safe-area="right"] .theme-bg__overlay {
+  background: linear-gradient(
+    270deg,
+    color-mix(in srgb, var(--bg) calc(var(--theme-bg-overlay, 0.62) * 100%), transparent) 0%,
+    color-mix(in srgb, var(--bg) calc(var(--theme-bg-overlay, 0.62) * 55%), transparent) 42%,
+    transparent 78%
+  );
+}
+
+:root[data-theme-scene="task"][data-theme-safe-area="center"] .theme-bg__overlay,
+:root[data-theme-scene="task"]:not([data-theme-safe-area]) .theme-bg__overlay {
+  background: radial-gradient(
+    ellipse 70% 70% at 50% 45%,
+    color-mix(in srgb, var(--bg) calc(var(--theme-bg-overlay, 0.62) * 70%), transparent) 0%,
+    color-mix(in srgb, var(--bg) calc(var(--theme-bg-overlay, 0.62) * 40%), transparent) 55%,
+    transparent 100%
+  );
+}
+
+/* Keep chrome readable above the decorative layer */
+.app > .layout,
+.app > .theme-bg + .layout {
+  position: relative;
+  z-index: var(--z-app-content);
+}
+
+.app {
+  position: relative;
+  isolation: isolate;
+}
+
+/*
+  Background visibility: .layout paints opaque var(--bg) by default, which fully
+  covers .theme-bg underneath. When a pack background is active, make the layout
+  shell transparent so the image can show through; panes keep their own fills.
+*/
+:root[data-theme-has-bg="true"] .layout {
+  background: transparent;
+}
+
+/* Home: semi-transparent panes so the full-strength image reads through */
+:root[data-theme-has-bg="true"][data-theme-scene="home"] .chat-pane,
+:root[data-theme-has-bg="true"][data-theme-scene="home"] .welcome {
+  background-color: color-mix(in srgb, var(--chat-bg, var(--bg)) 72%, transparent);
+}
+
+:root[data-theme-has-bg="true"][data-theme-scene="home"] .sidebar {
+  background-color: color-mix(in srgb, var(--sidebar-bg) 78%, transparent);
+}
+
+/* Task: more opaque panes for readability while the dimmed image remains visible at edges */
+:root[data-theme-has-bg="true"][data-theme-scene="task"] .chat-pane {
+  background-color: color-mix(in srgb, var(--chat-bg, var(--bg)) 88%, transparent);
+}
+
+:root[data-theme-has-bg="true"][data-theme-scene="task"] .sidebar {
+  background-color: color-mix(in srgb, var(--sidebar-bg) 90%, transparent);
+}
+
+/* Density recipe consumers — pack overlay sets --theme-density-* / --theme-row-h */
+:root {
+  --theme-density-pad: 10px;
+  --theme-density-gap: 10px;
+  --theme-row-h: 34px;
+}
+
+:root[data-theme-pack] {
+  --list-row-height: var(--theme-row-h);
+  --list-row-gap: var(--theme-density-gap);
+  --tree-row-height: calc(var(--theme-row-h) - 4px);
+}
+
+/* Theme library cards */
+.theme-library {
+  display: flex;
+  flex-direction: column;
+  gap: var(--theme-density-gap, 12px);
+  width: 100%;
+}
+
+.theme-library__toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--theme-density-gap, 8px);
+  align-items: center;
+}
+
+.theme-library__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
+  gap: var(--theme-density-gap, 10px);
+}
+
+.theme-lib-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--theme-density-gap, 8px);
+  text-align: left;
+  padding: var(--theme-density-pad, 10px);
+  border-radius: var(--r, 8px);
+  border: 1px solid var(--border-soft, var(--border));
+  background: var(--bg-elev, var(--panel));
+  color: inherit;
+  cursor: pointer;
+  min-height: calc(var(--theme-row-h, 34px) * 3.5);
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+
+.theme-lib-card:hover {
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
+}
+
+.theme-lib-card--on {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent);
+}
+
+.theme-lib-card__thumb {
+  height: 56px;
+  border-radius: calc(var(--r, 8px) - 2px);
+  background:
+    linear-gradient(135deg, var(--thumb-light, #eee), var(--thumb-dark, #333));
+  background-size: cover;
+  background-position: center;
+  border: 1px solid var(--border-soft, transparent);
+}
+
+.theme-lib-card__meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.theme-lib-card__name {
+  font-size: 13px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.theme-lib-card__sub {
+  font-size: 11px;
+  color: var(--fg-faint, var(--text-3));
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.theme-lib-card__swatches {
+  display: flex;
+  gap: 4px;
+}
+
+.theme-lib-card__swatch {
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--fg) 12%, transparent);
+}
+
+.theme-lib-card__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: auto;
+}
+
+.theme-lib-card__actions .btn {
+  font-size: 11px;
+  padding: 2px 6px;
+  height: auto;
+}
+
+/* Editor shell */
+.theme-editor {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--theme-density-gap, 10px) + 4px);
+  padding: calc(var(--theme-density-pad, 10px) + 2px);
+  border: 1px solid var(--border-soft, var(--border));
+  border-radius: var(--r, 8px);
+  background: var(--bg-soft, var(--bg-elev-2));
+}
+
+.theme-editor__row {
+  display: grid;
+  grid-template-columns: 120px 1fr;
+  gap: var(--theme-density-gap, 10px);
+  align-items: start;
+}
+
+.theme-editor__label {
+  font-size: 12px;
+  color: var(--fg-dim, var(--text-2));
+  padding-top: 6px;
+}
+
+.theme-editor__fields {
+  display: flex;
+  flex-direction: column;
+  gap: var(--theme-density-gap, 8px);
+  min-width: 0;
+}
+
+.theme-editor__color-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: var(--theme-density-gap, 8px);
+}
+
+.theme-editor__color {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--fg-dim);
+}
+
+.theme-editor__color input[type="color"] {
+  width: 100%;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--border-soft);
+  border-radius: 4px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.theme-editor__color input[type="text"] {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 11px;
+  padding: 4px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--border-soft);
+  background: var(--bg-elev);
+  color: var(--fg);
+}
+
+.theme-editor__bg-preview {
+  position: relative;
+  height: 140px;
+  border-radius: var(--r, 8px);
+  border: 1px solid var(--border-soft);
+  background: var(--bg-soft);
+  background-size: cover;
+  background-position: center;
+  overflow: hidden;
+  cursor: crosshair;
+  user-select: none;
+}
+
+.theme-editor__focus {
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  margin: -7px 0 0 -7px;
+  border-radius: 50%;
+  border: 2px solid #fff;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.55);
+  pointer-events: none;
+}
+
+.theme-editor__warn {
+  font-size: 12px;
+  color: var(--warn);
+  background: color-mix(in srgb, var(--warn) 12%, transparent);
+  border-radius: 6px;
+  padding: 8px 10px;
+}
+
+.theme-editor__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+/* Restore-default control must stay readable even under broken packs */
+.theme-reset-btn {
+  color: #111827 !important;
+  background: #f3f4f6 !important;
+  border: 1px solid #d1d5db !important;
+}
+:root[data-theme="dark"] .theme-reset-btn,
+:root:not([data-theme]) .theme-reset-btn {
+  color: #f9fafb !important;
+  background: #1f2937 !important;
+  border-color: #4b5563 !important;
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme]) .theme-reset-btn {
+    color: #111827 !important;
+    background: #f3f4f6 !important;
+    border: 1px solid #d1d5db !important;
+  }
 }
