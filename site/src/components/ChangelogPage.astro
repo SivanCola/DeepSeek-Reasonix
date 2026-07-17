@@ -3,6 +3,7 @@ import Base from '../layouts/Base.astro';
 import SiteHeader from './SiteHeader.astro';
 import type { ReleaseItem, ReleaseRecord } from '../data/releases';
 import { releasePath } from '../data/releases';
+import { isThematicTitle } from '../scripts/release-title.js';
 import '../styles/changelog.css';
 
 const { release, releases, canonical } = Astro.props as {
@@ -14,9 +15,10 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 const repo = 'https://github.com/esengine/DeepSeek-Reasonix';
 const prHref = (ref: number) => `${repo}/pull/${ref}`;
 
-/* A title that is just the version string ("Reasonix 1.17.14") means a patch
-   release — it gets the compact hero; thematic titles get the full one. */
-const isThematic = !/^reasonix\s+v?\d+\.\d+\.\d+/i.test(release.title.en.trim());
+/* A title that is exactly the version string ("Reasonix 1.17.14") means a
+   patch release — it gets the compact hero; anything else (including
+   "Reasonix 1.18.0 — Better agents") keeps the full hero. */
+const isThematic = isThematicTitle(release.title.en, release.version);
 
 const kindLabel = (kind: string) => ({
   new: { en: 'New', zh: '新增' },
