@@ -274,8 +274,8 @@ func TestStatusFooterUsesReadableLocalizedHintAndWrapsCleanly(t *testing.T) {
 		lang, compact, session string
 	}{
 		{lang: "en", compact: "Shift+Tab ask/auto/plan · Ctrl+Y YOLO", session: "MODEL deepseek-v4-flash   EFFORT auto   WORK balanced"},
-		{lang: "zh", compact: "Shift+Tab 询问/自动/计划 · Ctrl+Y YOLO", session: "模型 deepseek-v4-flash   强度 auto   模式 balanced"},
-		{lang: "zh-TW", compact: "Shift+Tab 詢問/自動/計畫 · Ctrl+Y YOLO", session: "模型 deepseek-v4-flash   強度 auto   模式 balanced"},
+		{lang: "zh", compact: "Shift+Tab 询问/自动/计划 · Ctrl+Y YOLO", session: "模型 deepseek-v4-flash   强度 auto   模式 均衡"},
+		{lang: "zh-TW", compact: "Shift+Tab 詢問/自動/計畫 · Ctrl+Y YOLO", session: "模型 deepseek-v4-flash   強度 auto   模式 均衡"},
 	} {
 		t.Run(tt.lang, func(t *testing.T) {
 			i18n.DetectLanguage(tt.lang)
@@ -286,7 +286,7 @@ func TestStatusFooterUsesReadableLocalizedHintAndWrapsCleanly(t *testing.T) {
 			m.effortLevel = "auto"
 
 			primary := m.primaryStatusLine(" Auto ", false, false)
-			block := ansi.Strip(m.renderStatusBlock(primary, 104))
+			block := ansi.Strip(m.renderStatusBlock(primary, 100))
 			lines := strings.Split(block, "\n")
 			if len(lines) != 4 {
 				t.Fatalf("localized footer rows = %d, want wrapped primary/session rows plus divider and telemetry:\n%s", len(lines), block)
@@ -298,8 +298,8 @@ func TestStatusFooterUsesReadableLocalizedHintAndWrapsCleanly(t *testing.T) {
 				t.Fatalf("localized footer fell back to symbolic shortcut notation:\n%s", block)
 			}
 			for row, line := range lines {
-				if width := visibleWidth(line); width > 104 {
-					t.Fatalf("localized footer row %d width = %d, want <= 104: %q", row, width, line)
+				if width := visibleWidth(line); width > 100 {
+					t.Fatalf("localized footer row %d width = %d, want <= 100: %q", row, width, line)
 				}
 			}
 
@@ -323,12 +323,12 @@ func TestStatusFooterLocalizesMetricLabelsAndKeepsNarrowRows(t *testing.T) {
 	}{
 		{
 			lang:      "zh",
-			session:   "模型 deepseek-v4-flash   强度 auto   模式 balanced",
+			session:   "模型 deepseek-v4-flash   强度 auto   模式 均衡",
 			telemetry: []string{"缓存", "上下文", "压缩", "任务", "余额"},
 		},
 		{
 			lang:      "zh-TW",
-			session:   "模型 deepseek-v4-flash   強度 auto   模式 balanced",
+			session:   "模型 deepseek-v4-flash   強度 auto   模式 均衡",
 			telemetry: []string{"快取", "上下文", "壓縮", "任務", "餘額"},
 		},
 	} {
