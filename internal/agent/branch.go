@@ -65,6 +65,11 @@ type BranchMeta struct {
 	Turns        int               `json:"turns,omitempty"`
 	Preview      string            `json:"preview,omitempty"`
 	InFlightTurn *InFlightTurnMeta `json:"in_flight_turn,omitempty"`
+	// RuntimeContract pins tool surface, edit protocol, and prompt layout for
+	// the life of this session. Omitted on legacy sidecars → legacy-v1 triple.
+	// Fork/Branch/Continue/model-switch inherit; only "new task" creates a fresh
+	// contract from current config. Mid-session switches are forbidden.
+	RuntimeContract *RuntimeContract `json:"runtime_contract,omitempty"`
 }
 
 // BranchMetaCountsVersion is stamped into BranchMeta.SchemaVersion whenever a
@@ -417,11 +422,26 @@ func SetBranchModelPreserveUpdated(sessionPath, model string) error {
 // false preserves it (used to backfill legacy sessions during a read). An empty
 // model leaves the stored model untouched.
 func UpdateSessionMeta(sessionPath, model, preview string, turns int, markActivity bool) error {
+	return UpdateSessionMetaWithContract(sessionPath, model, preview, turns, markActivity, nil)
+}
+
+// UpdateSessionMetaWithContract is like UpdateSessionMeta but also stamps
+// RuntimeContract on first write. Existing contracts are never overwritten.
+//
+// Rules (no silent upgrade of old sessions):
+//   - Meta already has RuntimeContract → leave it.
+//   - Meta file already existed without the field → pin legacy (old session).
+//   - Brand-new meta created by EnsureBranchMeta → stamp the live contract.
+func UpdateSessionMetaWithContract(sessionPath, model, preview string, turns int, markActivity bool, contract *RuntimeContract) error {
 	if sessionPath == "" {
 		return fmt.Errorf("empty session path")
 	}
 	unlock := lockSessionSavePath(sessionPath)
 	defer unlock()
+	_, existed, loadErr := LoadBranchMeta(sessionPath)
+	if loadErr != nil {
+		return loadErr
+	}
 	m, err := EnsureBranchMeta(sessionPath)
 	if err != nil {
 		return err
@@ -434,5 +454,13 @@ func UpdateSessionMeta(sessionPath, model, preview string, turns int, markActivi
 	// These counts were derived from the current content, so mark them
 	// authoritative — listing can then trust Turns (even 0) without re-decoding.
 	m.SchemaVersion = BranchMetaCountsVersion
+	if m.RuntimeContract == nil {
+		if existed {
+			// Pre-contract sidecar: never upgrade to process config defaults.
+			m.RuntimeContract = LegacyDefaultRuntimeContract().Clone()
+		} else if contract != nil {
+			m.RuntimeContract = contract.Clone()
+		}
+	}
 	return saveBranchMeta(sessionPath, m, markActivity)
 }

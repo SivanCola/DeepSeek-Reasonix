@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"regexp"
 	"strings"
+
+	"reasonix/internal/provider"
 )
 
 var reTransientUserBlock = regexp.MustCompile(`(?s)^\s*<(?:response-language|reasoning-language|memory-update|background-jobs|active-goal|hook-context|capability-route)(?:\s+[^>]*)?>.*?</(?:response-language|reasoning-language|memory-update|background-jobs|active-goal|hook-context|capability-route)>\s*\n?`)
@@ -158,7 +160,8 @@ var SyntheticUserPrefixes = []string{
 }
 
 // IsSyntheticUserText reports whether a persisted user-role message is a
-// host-injected synthetic turn rather than user-authored input.
+// host-injected synthetic turn rather than user-authored input (text-prefix
+// path only). Prefer IsSyntheticUserMessage when the Message is available.
 func IsSyntheticUserText(content string) bool {
 	trimmed := strings.TrimSpace(StripTransientUserBlocks(content))
 	for _, prefix := range SyntheticUserPrefixes {
@@ -166,7 +169,31 @@ func IsSyntheticUserText(content string) bool {
 			return true
 		}
 	}
+	// Session-context and capability-delta tags are pinned synthetic messages.
+	if strings.HasPrefix(trimmed, "<session-context") || strings.HasPrefix(trimmed, "<capability-delta") ||
+		strings.HasPrefix(trimmed, "<compaction-state") {
+		return true
+	}
 	return false
+}
+
+// IsSyntheticUserMessage prefers provider.Message.SyntheticReason metadata, then
+// falls back to legacy text-prefix recognition so old sessions still classify
+// correctly after a downgrade/upgrade cycle.
+func IsSyntheticUserMessage(m provider.Message) bool {
+	if m.Role != provider.RoleUser {
+		return false
+	}
+	if m.IsSyntheticUser() {
+		return true
+	}
+	return IsSyntheticUserText(m.Content)
+}
+
+// SyntheticUser builds a host-injected user message with SyntheticReason set.
+// Content may still carry legacy prefixes for downgrade compatibility.
+func SyntheticUser(reason provider.SyntheticReason, content string) provider.Message {
+	return provider.SyntheticUser(reason, content)
 }
 
 // IsUserAuthoredTurn reports whether a persisted user-role message counts as a
@@ -178,6 +205,20 @@ func IsUserAuthoredTurn(content string) bool {
 		return false
 	}
 	if _, isSteer := SteerText(content); isSteer {
+		return false
+	}
+	return true
+}
+
+// IsUserAuthoredMessage is the Message-aware form of IsUserAuthoredTurn.
+func IsUserAuthoredMessage(m provider.Message) bool {
+	if m.Role != provider.RoleUser {
+		return false
+	}
+	if IsSyntheticUserMessage(m) {
+		return false
+	}
+	if _, isSteer := SteerText(m.Content); isSteer {
 		return false
 	}
 	return true

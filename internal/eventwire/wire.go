@@ -84,8 +84,17 @@ func ToWire(e event.Event) Event {
 		w.Ask = ToWireAsk(e.Ask)
 	case event.CompactionStarted, event.CompactionDone:
 		w.Compaction = &Compaction{
-			Trigger: e.Compaction.Trigger, Messages: e.Compaction.Messages,
-			Summary: e.Compaction.Summary, Archive: e.Compaction.Archive,
+			Trigger:      e.Compaction.Trigger,
+			Messages:     e.Compaction.Messages,
+			Summary:      e.Compaction.Summary,
+			Archive:      e.Compaction.Archive,
+			Stage:        e.Compaction.Stage,
+			Attempts:     e.Compaction.Attempts,
+			PrefixReused: e.Compaction.PrefixReused,
+			FailureClass: e.Compaction.FailureClass,
+			StateBytes:   e.Compaction.StateBytes,
+			BeforeTokens: e.Compaction.BeforeTokens,
+			AfterTokens:  e.Compaction.AfterTokens,
 		}
 	case event.GuardianAssessment:
 		w.Guardian = ToWireGuardian(e.Guardian)
@@ -139,11 +148,19 @@ func ToWireMemoryCitations(in []provider.MemoryCitation) []MemoryCitation {
 }
 
 // Compaction is the JSON form of an event.Compaction.
+// Compaction mirrors event.Compaction for the wire protocol.
 type Compaction struct {
-	Trigger  string `json:"trigger,omitempty"`
-	Messages int    `json:"messages,omitempty"`
-	Summary  string `json:"summary,omitempty"`
-	Archive  string `json:"archive,omitempty"`
+	Trigger      string `json:"trigger,omitempty"`
+	Messages     int    `json:"messages,omitempty"`
+	Summary      string `json:"summary,omitempty"`
+	Archive      string `json:"archive,omitempty"`
+	Stage        string `json:"stage,omitempty"`
+	Attempts     int    `json:"attempts,omitempty"`
+	PrefixReused bool   `json:"prefix_reused,omitempty"`
+	FailureClass string `json:"failure_class,omitempty"`
+	StateBytes   int    `json:"state_bytes,omitempty"`
+	BeforeTokens int    `json:"before_tokens,omitempty"`
+	AfterTokens  int    `json:"after_tokens,omitempty"`
 }
 
 // AskOption is one JSON-formatted choice in a structured ask request.

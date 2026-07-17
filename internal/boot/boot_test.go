@@ -1551,12 +1551,20 @@ model = "x"
 	if strings.Replace(deliverySystem, "\n\n"+tokenDeliveryPrompt, "", 1) != fullSystem {
 		t.Fatal("delivery profile changed the full system prompt beyond its stable contract")
 	}
-	// Delivery keeps the full surface and adds one stable proxy tool.
+	// Delivery keeps the full surface and adds the stable use_capability proxy
+	// (legacy Delivery shape). search_capabilities is capability-v2 only and must
+	// not pollute the pure legacy Full/Delivery provider schema.
 	if !requestHasTool(deliveryReq, "use_capability") {
 		t.Fatal("delivery profile must expose the stable use_capability proxy")
 	}
+	if requestHasTool(deliveryReq, "search_capabilities") {
+		t.Fatal("legacy delivery must not expose search_capabilities (capability-v2 only)")
+	}
 	if requestHasTool(fullReq, "use_capability") {
 		t.Fatal("balanced/full profile must not expose use_capability")
+	}
+	if requestHasTool(fullReq, "search_capabilities") {
+		t.Fatal("balanced/full profile must not expose search_capabilities")
 	}
 	fullNames := toolSchemaNames(fullReq.Tools)
 	deliveryNames := toolSchemaNames(deliveryReq.Tools)

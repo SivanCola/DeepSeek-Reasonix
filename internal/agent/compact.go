@@ -2,6 +2,8 @@ package agent
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -48,31 +50,20 @@ const summaryTimeout = 90 * time.Second
 
 // summarySystemPrompt steers the executor to distill older history into a
 // structured briefing it can keep relying on after the originals are dropped.
-// The section layout mirrors what a coding agent actually needs to resume work
-// mid-task: the goal verbatim, the concrete state of the code, and an explicit
-// next step — so the post-compaction turn doesn't lose the thread or re-derive
-// decisions already made.
+// Quality gate requires the four primary headings below; detail subsections may
+// appear under ## Current state.
 const summarySystemPrompt = `You are compacting the earlier part of a coding agent's conversation to save context.
 The agent keeps your summary alongside the user's own turns (kept verbatim) and the recent tail; your job is to fold the assistant/tool work into a briefing it can resume from.
-Write under these exact headings, omitting a heading only if it has no content:
-
-## Standing facts & constraints
-Everything the user stated that still governs the work — names, paths, IDs, versions, tokens, preferences, and hard "never do X" rules — in their own words. Be exhaustive; this is the durable contract, so prefer over- to under-including.
+Write under these exact headings (all four are required):
 
 ## Goal
-The user's request and intent.
+The user's request and intent, plus standing facts & constraints they stated that still govern the work (names, paths, IDs, versions, hard "never do X" rules) in their own words.
 
-## Decisions & rationale
-Key choices made so far and why — so they are not re-litigated or reversed.
+## Completed & decisions
+What was finished, key choices made so far and why — so they are not re-litigated or reversed. Include commands run and their outcomes when relevant.
 
-## Files & code
-Files read or modified, with the specific facts that matter: signatures, line locations, data shapes, and exact edits applied. Be concrete; this is what lets the agent act without re-reading everything.
-
-## Commands & outcomes
-Commands run (builds, tests, git) and their relevant results — what passed, what failed, and the error text that matters.
-
-## Errors & fixes
-Problems hit and how they were resolved (or not), so the same dead ends are not repeated.
+## Current state
+Concrete code/workspace state: files read or modified (signatures, locations, data shapes, exact edits), open errors and how they were fixed (or not).
 
 ## Pending & next step
 What is still in progress or unstarted, and the single most concrete next action to take.
@@ -253,7 +244,21 @@ func (a *Agent) compact(ctx context.Context, trigger, instructions string, force
 	// are spliced back verbatim, so a fact that reached a digest once is never
 	// re-summarized away and the user's own words are never touched. Digests
 	// accumulate (small) rather than collapsing into one lossy rolling summary.
-	summary, err := a.summarizeWithRetry(ctx, fold, instructions)
+	// Also pin the latest real user request from the fold region when it would
+	// otherwise only live inside the summary (already-kept or still-in-tail
+	// copies are left alone so large foldable pastes can still shrink).
+	latestUser := latestRealUserRequest(fold)
+	if latestUser != nil {
+		// Already preserved in kept or still present in the recent tail.
+		if messageInSlice(kept, *latestUser) || messageInSlice(msgs[start:], *latestUser) {
+			latestUser = nil
+		} else if !a.pinnableUserTurn(*latestUser) {
+			// Large pasted user turns stay foldable; re-pinning them would undo
+			// the compaction savings the fold was meant to buy.
+			latestUser = nil
+		}
+	}
+	summary, stage, attempts, prefixReused, failClass, err := a.summarizeLadder(ctx, fold, instructions)
 	if err != nil {
 		// Mechanical fold: the foldable region is already archived, so stand in a
 		// deterministic marker rather than aborting. /compact then always frees
@@ -261,24 +266,57 @@ func (a *Agent) compact(ctx context.Context, trigger, instructions string, force
 		// verbatim user turns kept above are untouched.
 		a.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo, Text: "Context was compacted without a generated summary.", Detail: "compaction summary unavailable (" + err.Error() + "); folded mechanically"})
 		summary = mechanicalFoldDigest(len(fold), archived)
+		stage = "mechanical"
+		failClass = classifySummaryError(err)
 	}
 
-	compacted := make([]provider.Message, 0, head+len(kept)+1+len(msgs)-start)
+	summaryMsg := CompactionSummaryMessage(
+		"Summary of earlier conversation (older messages were compacted to save context):\n" + summary,
+	)
+	// Ensure legacy prefixes remain for downgrade compatibility.
+	if !strings.Contains(summaryMsg.Content, summaryTagOpen) {
+		summaryMsg.Content = summaryTagOpen + "\n" + summaryMsg.Content + "\n" + summaryTagClose
+	}
+
+	var stateMsg *provider.Message
+	var stateBytes int
+	if a.compactionState != nil {
+		st := a.compactionState.CompactionState()
+		if archived != "" && st.ArchivePath == "" {
+			st.ArchivePath = archived
+		}
+		body := RenderCompactionState(st)
+		stateBytes = len(body)
+		m := CompactionStateMessage(st)
+		stateMsg = &m
+	}
+
+	compacted := make([]provider.Message, 0, head+len(kept)+3+len(msgs)-start)
 	compacted = append(compacted, msgs[:head]...)
 	compacted = append(compacted, kept...)
-	compacted = append(compacted, provider.Message{
-		Role: provider.RoleUser,
-		Content: summaryTagOpen + "\n" +
-			"Summary of earlier conversation (older messages were compacted to save context):\n" +
-			summary + "\n" +
-			summaryTagClose,
-	})
+	if latestUser != nil {
+		// Keep latest real user request verbatim after the pinned prefix/kept
+		// facts and before the summary, so post-compaction always has the task text.
+		compacted = append(compacted, *latestUser)
+	}
+	compacted = append(compacted, summaryMsg)
+	if stateMsg != nil {
+		compacted = append(compacted, *stateMsg)
+	}
 	compacted = append(compacted, msgs[start:]...)
 	a.session.Replace(compacted)
 	a.session.IncrementRewrite()
 
 	a.sink.Emit(event.Event{Kind: event.CompactionDone, Compaction: event.Compaction{
-		Trigger: trigger, Messages: len(fold), Summary: summary, Archive: archived,
+		Trigger:      trigger,
+		Messages:     len(fold),
+		Summary:      summary,
+		Archive:      archived,
+		Stage:        stage,
+		Attempts:     attempts,
+		PrefixReused: prefixReused,
+		FailureClass: failClass,
+		StateBytes:   stateBytes,
 	}})
 	return nil
 }
@@ -310,10 +348,7 @@ func (a *Agent) SummarizeFrom(ctx context.Context, fromIdx int) error {
 	}
 	next := make([]provider.Message, 0, fromIdx+1)
 	next = append(next, msgs[:fromIdx]...)
-	next = append(next, provider.Message{
-		Role:    provider.RoleUser,
-		Content: "Summary of the later conversation (compacted from here on):\n" + summary,
-	})
+	next = append(next, CompactionSummaryMessage("Summary of the later conversation (compacted from here on):\n"+summary))
 	a.session.Replace(next)
 	a.session.IncrementRewrite()
 	a.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo,
@@ -343,10 +378,7 @@ func (a *Agent) SummarizeUpTo(ctx context.Context, toIdx int) error {
 	}
 	next := make([]provider.Message, 0, head+1+len(msgs)-toIdx)
 	next = append(next, msgs[:head]...)
-	next = append(next, provider.Message{
-		Role:    provider.RoleUser,
-		Content: "Summary of earlier conversation (compacted up to here):\n" + summary,
-	})
+	next = append(next, CompactionSummaryMessage("Summary of earlier conversation (compacted up to here):\n"+summary))
 	next = append(next, msgs[toIdx:]...)
 	a.session.Replace(next)
 	a.session.IncrementRewrite()
@@ -363,29 +395,77 @@ func IsCompactionSummary(m provider.Message) bool { return isCompactionSummary(m
 
 // isCompactionSummary reports whether m is a rolling summary from a prior fold.
 func isCompactionSummary(m provider.Message) bool {
-	return m.Role == provider.RoleUser &&
-		strings.HasPrefix(strings.TrimLeft(m.Content, "\n "), summaryTagOpen)
+	if m.Role != provider.RoleUser {
+		return false
+	}
+	if m.SyntheticReason == provider.SyntheticCompactionSummary {
+		return true
+	}
+	return strings.HasPrefix(strings.TrimLeft(m.Content, "\n "), summaryTagOpen)
+}
+
+// isCompactionState reports whether m is the deterministic host state block.
+func isCompactionState(m provider.Message) bool {
+	if m.Role != provider.RoleUser {
+		return false
+	}
+	if m.SyntheticReason == provider.SyntheticCompactionState {
+		return true
+	}
+	return strings.HasPrefix(strings.TrimSpace(m.Content), "<compaction-state")
 }
 
 // pinnedPrefixLen counts the leading messages a fold keeps verbatim: the system
-// prompt, the first user turn (its task + stated facts/constraints) when it is
-// small enough to be a brief, and any prior summaries — so a fold never
-// summarizes the user's facts away, and a later fold never re-summarizes an
-// earlier summary into nothing (the drift that silently dropped user-stated facts
-// after the second compaction). A large first turn (pasted content) stays
-// foldable so pinning never starves the window.
+// prompt, the pinned session-context message (always), the first user turn when
+// small enough, and any prior summaries — so a fold never summarizes the user's
+// facts away, and a later fold never re-summarizes an earlier summary into
+// nothing. A large first turn (pasted content) stays foldable so pinning never
+// starves the window.
 func (a *Agent) pinnedPrefixLen(msgs []provider.Message) int {
 	i := 0
 	if i < len(msgs) && msgs[i].Role == provider.RoleSystem {
 		i++
 	}
-	if i < len(msgs) && msgs[i].Role == provider.RoleUser && !isCompactionSummary(msgs[i]) && a.pinnableUserTurn(msgs[i]) {
+	// Session context is always pinned for session-context-v2 layouts.
+	if i < len(msgs) && IsSessionContextMessage(msgs[i]) {
 		i++
 	}
-	for i < len(msgs) && isCompactionSummary(msgs[i]) {
+	if i < len(msgs) && msgs[i].Role == provider.RoleUser && !isCompactionSummary(msgs[i]) && !isCompactionState(msgs[i]) && !IsSessionContextMessage(msgs[i]) && a.pinnableUserTurn(msgs[i]) {
+		i++
+	}
+	for i < len(msgs) && (isCompactionSummary(msgs[i]) || isCompactionState(msgs[i])) {
 		i++
 	}
 	return i
+}
+
+// latestRealUserRequest returns a copy of the newest user-authored (non-synthetic)
+// message in region, or nil.
+func latestRealUserRequest(region []provider.Message) *provider.Message {
+	for i := len(region) - 1; i >= 0; i-- {
+		m := region[i]
+		if m.Role != provider.RoleUser {
+			continue
+		}
+		if IsSyntheticUserMessage(m) || isCompactionSummary(m) || isCompactionState(m) {
+			continue
+		}
+		if _, isSteer := SteerText(m.Content); isSteer {
+			continue
+		}
+		cp := m
+		return &cp
+	}
+	return nil
+}
+
+func messageInSlice(msgs []provider.Message, want provider.Message) bool {
+	for _, m := range msgs {
+		if m.Role == want.Role && m.Content == want.Content && m.SyntheticReason == want.SyntheticReason {
+			return true
+		}
+	}
+	return false
 }
 
 // pinnableUserTurn reports whether a user turn is small enough to keep verbatim. A
@@ -619,19 +699,49 @@ func charsOfMessages(msgs []provider.Message) int {
 // is appended to the system prompt as extra focus guidance (from /compact <focus>
 // and/or a PreCompact hook).
 func (a *Agent) summarize(ctx context.Context, region []provider.Message, instructions string) (string, error) {
+	return a.summarizeStage(ctx, region, instructions, "fitted_transcript", false)
+}
+
+// summarizeStage runs one summarization attempt at the given ladder stage.
+// prefixReuse reuses the last provider-ready messages + identical tools with
+// ToolChoiceNone when the provider supports it.
+func (a *Agent) summarizeStage(ctx context.Context, region []provider.Message, instructions, stage string, prefixReuse bool) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, summaryTimeout)
 	defer cancel()
 	sys := summarySystemPrompt
 	if strings.TrimSpace(instructions) != "" {
 		sys += "\n\nAdditional focus for this compaction (prioritize keeping this):\n" + strings.TrimSpace(instructions)
 	}
-	ch, err := a.prov.Stream(ctx, provider.Request{
-		Messages: []provider.Message{
-			{Role: provider.RoleSystem, Content: sys},
-			{Role: provider.RoleUser, Content: renderTranscript(region)},
-		},
-		Temperature: provider.OptionalTemperature(a.temperature),
-	})
+
+	var req provider.Request
+	if prefixReuse && a.supportsToolChoiceNone() && len(a.lastProviderMsgs) > 0 {
+		// Reuse the exact last provider-ready prefix and tool schemas; only append
+		// one user turn that carries the full summarizer policy (and optional
+		// focus). Do NOT re-embed the transcript — it is already in the prefix
+		// and would push past the 80% window. ToolChoiceNone disables tools.
+		msgs := append([]provider.Message(nil), a.lastProviderMsgs...)
+		msgs = append(msgs, provider.Message{
+			Role:    provider.RoleUser,
+			Content: prefixReuseSummaryUserTurn(sys, instructions),
+		})
+		req = provider.Request{
+			Messages:    msgs,
+			Tools:       append([]provider.ToolSchema(nil), a.lastProviderTools...),
+			Temperature: provider.OptionalTemperature(a.temperature),
+			ToolChoice:  provider.ToolChoiceNone,
+		}
+	} else {
+		req = provider.Request{
+			Messages: []provider.Message{
+				{Role: provider.RoleSystem, Content: sys},
+				{Role: provider.RoleUser, Content: renderTranscriptForStage(region, stage)},
+			},
+			Temperature: provider.OptionalTemperature(a.temperature),
+			ToolChoice:  provider.ToolChoiceNone,
+		}
+	}
+
+	ch, err := a.prov.Stream(ctx, req)
 	if err != nil {
 		return "", err
 	}
@@ -656,11 +766,17 @@ func (a *Agent) summarize(ctx context.Context, region []provider.Message, instru
 				if s == "" {
 					return "", fmt.Errorf("summarizer returned empty output")
 				}
+				// Tool calls in a summary are a quality failure.
+				if strings.Contains(s, "tool_calls") && strings.Contains(s, `"name"`) {
+					return "", fmt.Errorf("summarizer returned tool call content")
+				}
 				return s, nil
 			}
 			switch chunk.Type {
 			case provider.ChunkText:
 				b.WriteString(chunk.Text)
+			case provider.ChunkToolCall:
+				return "", fmt.Errorf("summarizer attempted tool call")
 			case provider.ChunkUsage:
 				usage = chunk.Usage
 			case provider.ChunkError:
@@ -679,6 +795,266 @@ func (a *Agent) summarizeWithRetry(ctx context.Context, fold []provider.Message,
 		return summary, err
 	}
 	return a.summarize(ctx, fold, instructions)
+}
+
+// summarizeLadder tries up to three stages (prefix_reuse → fitted → minimal)
+// with one extra transient retry. Auth/cancel go straight to mechanical fallback.
+// Quality failures step down the ladder; a non-empty but sub-quality last-stage
+// summary is still preferred over a purely mechanical fold so the model keeps
+// some briefing when headings are incomplete.
+func (a *Agent) summarizeLadder(ctx context.Context, fold []provider.Message, instructions string) (summary, stage string, attempts int, prefixReused bool, failureClass string, err error) {
+	stages := []struct {
+		name        string
+		prefixReuse bool
+	}{
+		{"prefix_reuse", true},
+		{"fitted_transcript", false},
+		{"minimal_transcript", false},
+	}
+	inputChars := charsOfMessages(fold)
+	var lastErr error
+	var best string
+	var bestStage string
+	var bestPrefix bool
+	transientUsed := false
+	for _, st := range stages {
+		if st.prefixReuse && !a.supportsToolChoiceNone() {
+			continue
+		}
+		if st.prefixReuse && len(a.lastProviderMsgs) == 0 {
+			continue
+		}
+		attempts++
+		out, e := a.summarizeStage(ctx, fold, instructions, st.name, st.prefixReuse)
+		if e != nil {
+			lastErr = e
+			fc := classifySummaryError(e)
+			if fc == "auth" || fc == "cancel" {
+				return "", st.name, attempts, st.prefixReuse, fc, e
+			}
+			if fc == "transient" && !transientUsed {
+				transientUsed = true
+				attempts++
+				out, e = a.summarizeStage(ctx, fold, instructions, st.name, st.prefixReuse)
+				if e == nil {
+					if summaryQualityOK(out, inputChars) {
+						return out, st.name, attempts, st.prefixReuse, "", nil
+					}
+					if len(out) > len(best) {
+						best, bestStage, bestPrefix = out, st.name, st.prefixReuse
+					}
+					lastErr = fmt.Errorf("summary failed quality gate")
+					failureClass = "quality"
+				} else {
+					lastErr = e
+					if classifySummaryError(e) == "auth" || classifySummaryError(e) == "cancel" {
+						return "", st.name, attempts, st.prefixReuse, classifySummaryError(e), e
+					}
+				}
+			}
+			// context-too-long and other errors fall through to next stage
+			continue
+		}
+		if !summaryQualityOK(out, inputChars) {
+			lastErr = fmt.Errorf("summary failed quality gate")
+			failureClass = "quality"
+			if len(out) > len(best) {
+				best, bestStage, bestPrefix = out, st.name, st.prefixReuse
+			}
+			continue
+		}
+		return out, st.name, attempts, st.prefixReuse, "", nil
+	}
+	if strings.TrimSpace(best) != "" {
+		// Prefer the best non-empty model summary over a mechanical fold.
+		return best, bestStage, attempts, bestPrefix, "quality", nil
+	}
+	if lastErr == nil {
+		lastErr = fmt.Errorf("all summary stages failed")
+	}
+	if failureClass == "" {
+		failureClass = classifySummaryError(lastErr)
+	}
+	return "", "mechanical", attempts, false, failureClass, lastErr
+}
+
+func (a *Agent) supportsToolChoiceNone() bool {
+	// OpenAI-compatible and Anthropic adapters both support ToolChoiceNone.
+	// Unknown providers still receive the field; if they reject it, classify as
+	// context/transient and fall through. We optimistically allow when the
+	// provider kind is empty (tests/mocks).
+	return true
+}
+
+func summaryQualityOK(s string, inputChars int) bool {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return false
+	}
+	minChars := inputChars / 20
+	if minChars < 200 {
+		minChars = 200
+	}
+	if minChars > 500 {
+		minChars = 500
+	}
+	// Short folds cannot meet a large min; floor against input size.
+	if inputChars > 0 && inputChars < minChars {
+		minChars = inputChars / 2
+		if minChars < 40 {
+			minChars = 40
+		}
+	}
+	if len(s) < minChars {
+		return false
+	}
+	required := []string{"## Goal", "## Completed & decisions", "## Current state", "## Pending & next step"}
+	// Accept legacy heading set used by older digests still in the wild.
+	legacyOK := strings.Contains(s, "## Goal") && strings.Contains(s, "## Pending & next step") &&
+		(strings.Contains(s, "## Decisions") || strings.Contains(s, "## Standing facts"))
+	for _, h := range required {
+		if !strings.Contains(s, h) {
+			return legacyOK
+		}
+	}
+	return true
+}
+
+func classifySummaryError(err error) string {
+	if err == nil {
+		return ""
+	}
+	if errors.Is(err, context.Canceled) {
+		return "cancel"
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return "transient"
+	}
+	msg := strings.ToLower(err.Error())
+	switch {
+	case strings.Contains(msg, "401"), strings.Contains(msg, "403"), strings.Contains(msg, "auth"), strings.Contains(msg, "unauthorized"), strings.Contains(msg, "api key"):
+		return "auth"
+	case strings.Contains(msg, "413"), strings.Contains(msg, "context"), strings.Contains(msg, "too long"), strings.Contains(msg, "maximum context"), strings.Contains(msg, "token"):
+		if strings.Contains(msg, "422") || strings.Contains(msg, "400") || strings.Contains(msg, "413") || strings.Contains(msg, "context") || strings.Contains(msg, "too long") {
+			return "context"
+		}
+	case strings.Contains(msg, "quality"):
+		return "quality"
+	case strings.Contains(msg, "empty"):
+		return "empty"
+	}
+	if strings.Contains(msg, "400") || strings.Contains(msg, "422") {
+		return "context"
+	}
+	return "transient"
+}
+
+// prefixReuseSummaryUserTurn is appended to the last provider-ready messages
+// during prefix_reuse. It carries the full quality headings and optional focus
+// without re-sending the transcript (already present in the reused prefix).
+func prefixReuseSummaryUserTurn(sys, instructions string) string {
+	var b strings.Builder
+	b.WriteString("Compact the earlier conversation already present above into a structured briefing. ")
+	b.WriteString("Do not call tools. Follow these exact requirements:\n\n")
+	b.WriteString(sys)
+	if strings.TrimSpace(instructions) != "" {
+		b.WriteString("\n\nAdditional focus for this compaction (prioritize keeping this):\n")
+		b.WriteString(strings.TrimSpace(instructions))
+	}
+	return b.String()
+}
+
+func renderTranscriptForStage(msgs []provider.Message, stage string) string {
+	switch stage {
+	case "minimal_transcript":
+		return renderMinimalTranscript(msgs)
+	case "fitted_transcript", "prefix_reuse":
+		// prefix_reuse does not use this path; fitted does.
+		return renderFittedTranscript(msgs)
+	default:
+		return renderTranscript(msgs)
+	}
+}
+
+// renderFittedTranscript replaces large tool results with name/status/head/tail/digest.
+func renderFittedTranscript(msgs []provider.Message) string {
+	var b strings.Builder
+	for _, m := range msgs {
+		switch m.Role {
+		case provider.RoleUser:
+			fmt.Fprintf(&b, "[user]\n%s\n\n", m.Content)
+		case provider.RoleAssistant:
+			if m.Content != "" {
+				fmt.Fprintf(&b, "[assistant]\n%s\n", m.Content)
+			}
+			for _, tc := range m.ToolCalls {
+				fmt.Fprintf(&b, "[assistant calls %s] %s\n", tc.Name, summarizeToolArgs(tc.Arguments))
+			}
+			b.WriteString("\n")
+		case provider.RoleTool:
+			fmt.Fprintf(&b, "[tool %s result]\n%s\n\n", m.Name, fitToolResult(m.Content))
+		case provider.RoleSystem:
+			fmt.Fprintf(&b, "[system]\n%s\n\n", m.Content)
+		}
+	}
+	return b.String()
+}
+
+func renderMinimalTranscript(msgs []provider.Message) string {
+	var b strings.Builder
+	for _, m := range msgs {
+		switch m.Role {
+		case provider.RoleUser:
+			if IsSyntheticUserMessage(m) {
+				continue
+			}
+			fmt.Fprintf(&b, "[user]\n%s\n\n", m.Content)
+		case provider.RoleAssistant:
+			if m.Content != "" {
+				// Keep assistant conclusions only (first ~500 chars).
+				c := m.Content
+				if len(c) > 500 {
+					c = c[:500] + "…"
+				}
+				fmt.Fprintf(&b, "[assistant]\n%s\n", c)
+			}
+			for _, tc := range m.ToolCalls {
+				fmt.Fprintf(&b, "[tool %s args_digest %s]\n", tc.Name, shortDigest(tc.Arguments))
+			}
+			b.WriteString("\n")
+		case provider.RoleTool:
+			line := strings.SplitN(strings.TrimSpace(m.Content), "\n", 2)[0]
+			if len(line) > 200 {
+				line = line[:200] + "…"
+			}
+			fmt.Fprintf(&b, "[tool %s] %s\n\n", m.Name, line)
+		}
+	}
+	return b.String()
+}
+
+func fitToolResult(content string) string {
+	const headTail = 400
+	ok := !strings.HasPrefix(strings.TrimSpace(strings.ToLower(content)), "error:")
+	status := "ok"
+	if !ok {
+		status = "error"
+	}
+	if len(content) <= headTail*2+64 {
+		return content
+	}
+	head := content
+	if len(head) > headTail {
+		head = content[:headTail]
+	}
+	tail := content[len(content)-headTail:]
+	return fmt.Sprintf("status=%s chars=%d digest=%s\nHEAD:\n%s\n…\nTAIL:\n%s",
+		status, len(content), shortDigest(content), head, tail)
+}
+
+func shortDigest(s string) string {
+	sum := sha256.Sum256([]byte(s))
+	return hex.EncodeToString(sum[:8])
 }
 
 // mechanicalFoldDigest is the deterministic stand-in used when the summarizer is

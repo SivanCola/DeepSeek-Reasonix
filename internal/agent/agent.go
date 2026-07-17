@@ -419,6 +419,20 @@ type Agent struct {
 	// failed turn's receipts once; an ordinary user turn still resets evidence.
 	deliveryRecoveryPending bool
 
+	// runtimeContract pins tool surface / edit protocol / prompt layout for
+	// this session. Idle-only ApplyRuntimeContract switches the provider registry.
+	runtimeContract RuntimeContract
+	// registryBundle holds legacy/capability-classic/capability-hashline
+	// provider surfaces plus the shared execution registry for Resume switches.
+	registryBundle *RegistryBundle
+	// compactionState, when non-nil, supplies deterministic Goal/Todo/Job/path
+	// state for post-compaction recovery (never model-summarized).
+	compactionState CompactionStateProvider
+	// lastProviderMsgs/Tools cache the most recent provider-ready request so
+	// compaction prefix_reuse can append a tool-disabled summary turn.
+	lastProviderMsgs  []provider.Message
+	lastProviderTools []provider.ToolSchema
+
 	// capabilityLedger tracks require/prefer outcomes for this user turn only.
 	// Never serialized into prompts or session state.
 	capabilityLedger *capability.Ledger
@@ -528,6 +542,99 @@ func (a *Agent) SetTools(tools *tool.Registry) {
 		return
 	}
 	a.tools = tools
+	// Registry swaps reset session-level cache diagnostics counters so a new
+	// surface does not inherit stale hit/miss attribution. History is untouched.
+	a.sessCacheHit.Store(0)
+	a.sessCacheMiss.Store(0)
+	a.haveLastPrefixShape = false
+	a.lastProviderMsgs = nil
+	a.lastProviderTools = nil
+}
+
+// SetRuntimeContract atomically installs the session contract while idle.
+// Callers must not invoke this mid-turn. Prefer ApplyRuntimeContract when a
+// RegistryBundle is available so the provider registry switches with the contract.
+func (a *Agent) SetRuntimeContract(c RuntimeContract) error {
+	if a == nil {
+		return fmt.Errorf("nil agent")
+	}
+	c = NormalizeRuntimeContract(&c)
+	if err := ValidateRuntimeContract(c); err != nil {
+		return err
+	}
+	a.runtimeContract = c
+	return nil
+}
+
+// ApplyRuntimeContract installs the contract and switches the provider tool
+// registry from bundle. Idle-only; mid-turn calls are undefined. Returns an
+// error when the bundle cannot supply a registry for the contract.
+func (a *Agent) ApplyRuntimeContract(c RuntimeContract, bundle *RegistryBundle) error {
+	if a == nil {
+		return fmt.Errorf("nil agent")
+	}
+	c = NormalizeRuntimeContract(&c)
+	if err := ValidateRuntimeContract(c); err != nil {
+		return err
+	}
+	if bundle != nil {
+		reg := bundle.ProviderRegistry(c)
+		if reg == nil {
+			return fmt.Errorf("no provider registry for contract %s/%s", c.ToolSurface, c.EditProtocol)
+		}
+		a.SetTools(reg)
+		// Keep use_capability / search_capabilities wired to the execution registry.
+		if exec := bundle.ExecutionRegistry(); exec != nil {
+			if t, ok := reg.Get("use_capability"); ok {
+				if proxy, ok := t.(*UseCapabilityTool); ok {
+					proxy.WithExecutionRegistry(exec)
+					proxy.WithEditProtocol(c.EditProtocol)
+					if sk, ok := exec.Get("run_skill"); ok {
+						proxy.WithSkillRunner(sk)
+					}
+				}
+			}
+		}
+	}
+	a.runtimeContract = c
+	return nil
+}
+
+// RuntimeContract returns the session-stable contract (legacy default when unset).
+func (a *Agent) RuntimeContract() RuntimeContract {
+	if a == nil {
+		return LegacyDefaultRuntimeContract()
+	}
+	if a.runtimeContract.ToolSurface == "" {
+		return LegacyDefaultRuntimeContract()
+	}
+	return NormalizeRuntimeContract(&a.runtimeContract)
+}
+
+// SetRegistryBundle stores the boot-built surface bundle for idle-time Resume
+// switches. Nil clears the bundle.
+func (a *Agent) SetRegistryBundle(b *RegistryBundle) {
+	if a == nil {
+		return
+	}
+	a.registryBundle = b
+}
+
+// RegistryBundle returns the boot-built tool surface bundle, if any.
+func (a *Agent) RegistryBundle() *RegistryBundle {
+	if a == nil {
+		return nil
+	}
+	return a.registryBundle
+}
+
+// SetCompactionStateProvider attaches the Controller-side deterministic state
+// snapshot used during compaction. nil disables state messages.
+func (a *Agent) SetCompactionStateProvider(p CompactionStateProvider) {
+	if a == nil {
+		return
+	}
+	a.compactionState = p
 }
 
 // SetReasoningLanguage updates the visible reasoning language preference for
@@ -1168,10 +1275,10 @@ func (a *Agent) Run(ctx context.Context, input string) (runErr error) {
 						WorkDurationMs:     workDurationMs(),
 					})
 				}
-				a.session.Add(provider.Message{
-					Role:    provider.RoleUser,
-					Content: a.withTurnPreferences(streamRecoveryMessage(hasVisibleFinalAnswer(text), partialToolStarted)),
-				})
+				a.session.Add(SyntheticUser(
+					provider.SyntheticStreamRecovery,
+					a.withTurnPreferences(streamRecoveryMessage(hasVisibleFinalAnswer(text), partialToolStarted)),
+				))
 				a.sink.Emit(event.Event{Kind: event.Retrying, RetryAttempt: streamRecoveries, RetryMax: maxStreamRecoveries})
 				step-- // recovery retries do not consume the tool-round maxSteps budget
 				continue
@@ -2187,9 +2294,13 @@ func (a *Agent) stream(ctx context.Context, turn int) (string, string, string, [
 	for i := range requestMessages {
 		requestMessages[i].CreatedAt = 0
 	}
+	tools := a.tools.Schemas()
+	// Snapshot provider-ready messages for compaction prefix_reuse (same tools).
+	a.lastProviderMsgs = append([]provider.Message(nil), requestMessages...)
+	a.lastProviderTools = append([]provider.ToolSchema(nil), tools...)
 	ch, err := a.prov.Stream(ctx, provider.Request{
 		Messages:    requestMessages,
-		Tools:       a.tools.Schemas(),
+		Tools:       tools,
 		Temperature: provider.OptionalTemperature(a.temperature),
 	})
 	if err != nil {

@@ -148,7 +148,77 @@ func loadForRoot(root string, migrateOnDisk bool) (*Config, error) {
 	cfg.CredentialsStore = credentialsStoreMode()
 	cfg.setExpansionEnv(expansionEnv)
 	resolveProviderCredentialsForRoot(root, cfg)
+	if err := validateRuntimeContractConfig(cfg); err != nil {
+		return nil, err
+	}
 	return cfg, nil
+}
+
+// validateRuntimeContractConfig rejects illegal capability_surface / edit_protocol /
+// prompt_layout enums. Values are not silently corrected — misconfiguration must
+// fail at load so new-session contracts stay intentional.
+func validateRuntimeContractConfig(cfg *Config) error {
+	if cfg == nil {
+		return nil
+	}
+	surface := strings.ToLower(strings.TrimSpace(cfg.Tools.CapabilitySurface))
+	switch surface {
+	case "", "stable", "legacy":
+	default:
+		return fmt.Errorf("tools.capability_surface: invalid value %q (want stable|legacy)", cfg.Tools.CapabilitySurface)
+	}
+	edit := strings.ToLower(strings.TrimSpace(cfg.Tools.EditProtocol))
+	switch edit {
+	case "", "classic", "hashline":
+	default:
+		return fmt.Errorf("tools.edit_protocol: invalid value %q (want classic|hashline)", cfg.Tools.EditProtocol)
+	}
+	layout := strings.ToLower(strings.TrimSpace(cfg.Agent.PromptLayout))
+	switch layout {
+	case "", "session_context", "legacy_system":
+	default:
+		return fmt.Errorf("agent.prompt_layout: invalid value %q (want session_context|legacy_system)", cfg.Agent.PromptLayout)
+	}
+	if edit == "hashline" && surface == "legacy" {
+		return fmt.Errorf("tools.edit_protocol=hashline requires tools.capability_surface=stable")
+	}
+	return nil
+}
+
+// NewSessionRuntimeContract maps config enums to the wire RuntimeContract values
+// used by agent/boot. Empty fields keep the pre-gate legacy triple so existing
+// sessions and tests stay stable until the release gate flips product defaults
+// to capability-v2 / session-context-v2 (see capability upgrade plan §6).
+// Explicit stable|session_context enables the new surfaces. Does not mutate cfg.
+func (c *Config) NewSessionRuntimeContract() (toolSurface, editProtocol, promptLayout string, err error) {
+	if c == nil {
+		return "legacy-v1", "classic-v1", "system-v1", nil
+	}
+	if err := validateRuntimeContractConfig(c); err != nil {
+		return "", "", "", err
+	}
+	switch strings.ToLower(strings.TrimSpace(c.Tools.CapabilitySurface)) {
+	case "stable":
+		toolSurface = "capability-v2"
+	default: // "" | "legacy"
+		toolSurface = "legacy-v1"
+	}
+	switch strings.ToLower(strings.TrimSpace(c.Tools.EditProtocol)) {
+	case "hashline":
+		editProtocol = "hashline-v1"
+	default:
+		editProtocol = "classic-v1"
+	}
+	switch strings.ToLower(strings.TrimSpace(c.Agent.PromptLayout)) {
+	case "session_context":
+		promptLayout = "session-context-v2"
+	default: // "" | "legacy_system"
+		promptLayout = "system-v1"
+	}
+	if editProtocol == "hashline-v1" && toolSurface != "capability-v2" {
+		return "", "", "", fmt.Errorf("tools.edit_protocol=hashline requires tools.capability_surface=stable")
+	}
+	return toolSurface, editProtocol, promptLayout, nil
 }
 
 // SafeModeRequested reports whether this process should ignore user/project

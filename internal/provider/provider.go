@@ -26,6 +26,27 @@ const (
 	RoleTool      Role = "tool"
 )
 
+// SyntheticReason marks a host-injected user-role message. It is persisted in
+// JSONL/event logs/forks but never sent on the provider wire. Prefer this over
+// fragile text-prefix detection; empty values fall back to legacy prefixes.
+type SyntheticReason string
+
+const (
+	SyntheticSessionContext    SyntheticReason = "session_context"
+	SyntheticCompactionSummary SyntheticReason = "compaction_summary"
+	SyntheticCompactionState   SyntheticReason = "compaction_state"
+	SyntheticPlanTransition    SyntheticReason = "plan_transition"
+	SyntheticReadinessRetry    SyntheticReason = "readiness_retry"
+	SyntheticStreamRecovery    SyntheticReason = "stream_recovery"
+	SyntheticGoalContinue      SyntheticReason = "goal_continue"
+	SyntheticGoalCompletion    SyntheticReason = "goal_completion"
+	SyntheticAutoContinue      SyntheticReason = "auto_continue"
+	SyntheticBackgroundUpdate  SyntheticReason = "background_update"
+	SyntheticCapabilityDelta   SyntheticReason = "capability_delta"
+	SyntheticSystemReminder    SyntheticReason = "system_reminder"
+	SyntheticLazinessNudge     SyntheticReason = "laziness_nudge"
+)
+
 // Message is a single conversation message.
 type Message struct {
 	Role             Role     `json:"role"`
@@ -46,6 +67,21 @@ type Message struct {
 	CreatedAt          int64            `json:"createdAt,omitempty"`       // local UI metadata; unix milliseconds; stripped before provider requests
 	Edited             bool             `json:"edited,omitempty"`          // local UI metadata; provider requests ignore it
 	Original           string           `json:"original,omitempty"`        // user prompt before inline edit
+	// SyntheticReason is host metadata only. OpenAI/Anthropic adapters must omit
+	// it from wire payloads so provider-visible bytes stay stable.
+	SyntheticReason SyntheticReason `json:"synthetic_reason,omitempty"`
+}
+
+// SyntheticUser builds a user-role host injection with a non-empty SyntheticReason.
+func SyntheticUser(reason SyntheticReason, content string) Message {
+	return Message{Role: RoleUser, Content: content, SyntheticReason: reason}
+}
+
+// IsSyntheticUser reports whether m is a host-injected user message. Non-empty
+// SyntheticReason always wins (including unknown future reasons for forward
+// compatibility). Empty reason falls through to text-prefix checks at the call site.
+func (m Message) IsSyntheticUser() bool {
+	return m.Role == RoleUser && strings.TrimSpace(string(m.SyntheticReason)) != ""
 }
 
 // MemoryCitation is local display metadata for memories that influenced an
@@ -95,12 +131,26 @@ type ToolSchema struct {
 	Parameters  json.RawMessage `json:"parameters"`
 }
 
+// ToolChoice controls whether the model may invoke tools for this request.
+// Empty keeps the provider default (tools available when present). ToolChoiceNone
+// disables tool use for summarization / prefix-reuse compaction stages.
+type ToolChoice string
+
+const (
+	ToolChoiceDefault ToolChoice = ""
+	ToolChoiceNone    ToolChoice = "none"
+)
+
 // Request is a single completion request.
 type Request struct {
 	Messages    []Message
 	Tools       []ToolSchema
 	Temperature *float64 // nil = omit; non-nil = send the value, including 0
 	MaxTokens   int
+	// ToolChoice is omitted from the wire when empty. OpenAI-compatible adapters
+	// send tool_choice:"none"; Anthropic sends {"type":"none"}. Providers that
+	// cannot safely disable tools must leave this unsupported and skip prefix_reuse.
+	ToolChoice ToolChoice
 }
 
 // TemperaturePtr wraps v in a pointer so callers that explicitly want a

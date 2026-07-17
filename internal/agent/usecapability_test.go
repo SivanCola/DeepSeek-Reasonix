@@ -907,6 +907,147 @@ func TestCapabilityGateAppliesToReadOnlyTasks(t *testing.T) {
 	}
 }
 
+func TestUseCapabilityToolCallUsesTargetReadOnly(t *testing.T) {
+	exec := tool.NewRegistry()
+	exec.Add(fakeTool{name: "write_file", readOnly: false})
+	exec.Add(fakeTool{name: "grep", readOnly: true})
+	// Provider-visible registry does not include the writer — execution does.
+	providerReg := tool.NewRegistry()
+	uc := NewUseCapabilityTool(context.Background(), nil, nil, providerReg, capability.NewLedger(), nil, nil).
+		WithExecutionRegistry(exec)
+
+	writer, err := uc.ResolveCall(context.Background(), json.RawMessage(`{"action":"call","capability_id":"tool:write_file","arguments":{"path":"a.go","content":"x"}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if writer.ReadOnly {
+		t.Fatal("writer tool:* ResolvedCall must not inherit use_capability ReadOnly=true")
+	}
+	if writer.TargetName != "write_file" || writer.Target == nil {
+		t.Fatalf("writer resolve = %+v", writer)
+	}
+	if writer.Target.ReadOnly() {
+		t.Fatal("target itself must remain a writer")
+	}
+
+	reader, err := uc.ResolveCall(context.Background(), json.RawMessage(`{"action":"call","capability_id":"tool:grep","arguments":{"pattern":"x"}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reader.ReadOnly || reader.TargetName != "grep" {
+		t.Fatalf("reader resolve = %+v", reader)
+	}
+}
+
+func TestUseCapabilitySkillInjectsImmutableName(t *testing.T) {
+	var gotArgs string
+	runner := skillCaptureTool{onExec: func(args json.RawMessage) {
+		gotArgs = string(args)
+	}}
+	uc := NewUseCapabilityTool(context.Background(), nil, nil, tool.NewRegistry(), capability.NewLedger(), nil, nil).
+		WithSkillRunner(runner)
+
+	resolved, err := uc.ResolveCall(context.Background(), json.RawMessage(`{"action":"call","capability_id":"skill:review","arguments":{"name":"evil","arguments":"look at auth"}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved.TargetName != "run_skill" || resolved.Target == nil {
+		t.Fatalf("resolve = %+v", resolved)
+	}
+	if _, err := resolved.Target.Execute(context.Background(), resolved.Args); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(gotArgs, `"name":"review"`) || strings.Contains(gotArgs, `"name":"evil"`) {
+		t.Fatalf("skill name not pinned: %s", gotArgs)
+	}
+	// Even if Execute is handed a retargeted payload, the wrapper re-injects.
+	if _, err := resolved.Target.Execute(context.Background(), json.RawMessage(`{"name":"other"}`)); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(gotArgs, `"name":"review"`) {
+		t.Fatalf("re-inject failed: %s", gotArgs)
+	}
+}
+
+func TestUseCapabilityRejectsCrossProtocolFileTools(t *testing.T) {
+	exec := tool.NewRegistry()
+	exec.Add(fakeTool{name: "edit_file", readOnly: false})
+	exec.Add(fakeTool{name: "hashline_edit", readOnly: false})
+	exec.Add(fakeTool{name: "bash", readOnly: false})
+	uc := NewUseCapabilityTool(context.Background(), nil, nil, tool.NewRegistry(), capability.NewLedger(), nil, nil).
+		WithExecutionRegistry(exec).
+		WithEditProtocol(EditProtocolHashline)
+
+	if _, err := uc.ResolveCall(context.Background(), json.RawMessage(`{"action":"call","capability_id":"tool:edit_file","arguments":{}}`)); err == nil || !strings.Contains(err.Error(), "classic") {
+		t.Fatalf("hashline session must reject classic edit_file, err=%v", err)
+	}
+	// hashline_edit is allowed under hashline.
+	if _, err := uc.ResolveCall(context.Background(), json.RawMessage(`{"action":"call","capability_id":"tool:hashline_edit","arguments":{}}`)); err != nil {
+		t.Fatalf("hashline should allow hashline_edit: %v", err)
+	}
+	// Shared tools remain allowed.
+	if _, err := uc.ResolveCall(context.Background(), json.RawMessage(`{"action":"call","capability_id":"tool:bash","arguments":{}}`)); err != nil {
+		t.Fatalf("shared tool bash should be allowed: %v", err)
+	}
+
+	classic := NewUseCapabilityTool(context.Background(), nil, nil, tool.NewRegistry(), capability.NewLedger(), nil, nil).
+		WithExecutionRegistry(exec).
+		WithEditProtocol(EditProtocolClassic)
+	if _, err := classic.ResolveCall(context.Background(), json.RawMessage(`{"action":"call","capability_id":"tool:hashline_edit","arguments":{}}`)); err == nil || !strings.Contains(err.Error(), "hashline") {
+		t.Fatalf("classic session must reject hashline_edit, err=%v", err)
+	}
+}
+
+func TestFileEditCapabilityProtocolHelper(t *testing.T) {
+	if got := FileEditCapabilityProtocol("tool:edit_file"); got != "classic" {
+		t.Fatalf("edit_file = %q", got)
+	}
+	if got := FileEditCapabilityProtocol("tool:hashline_edit"); got != "hashline" {
+		t.Fatalf("hashline_edit = %q", got)
+	}
+	if got := FileEditCapabilityProtocol("tool:bash"); got != "" {
+		t.Fatalf("bash = %q", got)
+	}
+	if err := RejectCrossProtocolFileCapability("tool:write_file", EditProtocolHashline); err == nil {
+		t.Fatal("expected reject")
+	}
+	if err := RejectCrossProtocolFileCapability("skill:review", EditProtocolHashline); err != nil {
+		t.Fatalf("non-file tool should pass: %v", err)
+	}
+	// grep is classic-only under hashline per ClassicExcludedFromHashline.
+	if err := RejectCrossProtocolFileCapability("tool:grep", EditProtocolHashline); err == nil {
+		t.Fatal("expected grep rejected under hashline")
+	}
+}
+
+func TestUseCapabilityRejectIDsHook(t *testing.T) {
+	uc := NewUseCapabilityTool(context.Background(), nil, nil, tool.NewRegistry(), capability.NewLedger(), nil, nil).
+		WithRejectIDs(func(id string) error {
+			if id == "tool:bash" {
+				return fmt.Errorf("bash blocked by policy")
+			}
+			return nil
+		})
+	if _, err := uc.ResolveCall(context.Background(), json.RawMessage(`{"action":"inspect","capability_id":"tool:bash"}`)); err == nil || !strings.Contains(err.Error(), "bash blocked") {
+		t.Fatalf("reject hook not applied: %v", err)
+	}
+}
+
+type skillCaptureTool struct {
+	onExec func(args json.RawMessage)
+}
+
+func (skillCaptureTool) Name() string            { return "run_skill" }
+func (skillCaptureTool) Description() string     { return "run skill" }
+func (skillCaptureTool) Schema() json.RawMessage { return json.RawMessage(`{"type":"object"}`) }
+func (skillCaptureTool) ReadOnly() bool          { return false }
+func (s skillCaptureTool) Execute(_ context.Context, args json.RawMessage) (string, error) {
+	if s.onExec != nil {
+		s.onExec(args)
+	}
+	return "ok", nil
+}
+
 func TestStrictReadOnlyFailsClosedWithoutTrustAuthority(t *testing.T) {
 	host := plugin.NewHost()
 	defer host.Close()

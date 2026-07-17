@@ -2,6 +2,8 @@ package control
 
 import (
 	"fmt"
+	"sort"
+	"strings"
 	"sync"
 
 	"reasonix/internal/checkpoint"
@@ -107,6 +109,32 @@ func (m *checkpointManager) list() []checkpoint.Meta {
 		return nil
 	}
 	return store.List()
+}
+
+// editedPaths returns the sorted union of paths snapshotted across all
+// checkpoints (current session). Used by compaction state recovery.
+func (m *checkpointManager) editedPaths() []string {
+	metas := m.list()
+	if len(metas) == 0 {
+		return nil
+	}
+	seen := map[string]struct{}{}
+	var out []string
+	for _, meta := range metas {
+		for _, p := range meta.Paths {
+			p = strings.TrimSpace(p)
+			if p == "" {
+				continue
+			}
+			if _, ok := seen[p]; ok {
+				continue
+			}
+			seen[p] = struct{}{}
+			out = append(out, p)
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 // restoreCode reverts every file changed at or after turn to its pre-turn

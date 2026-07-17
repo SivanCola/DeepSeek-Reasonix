@@ -142,26 +142,187 @@ func New(mode string, allow, ask, deny []string) Policy {
 // is the raw JSON the model sent, from which the call's subject is extracted
 // for glob matching. Calls with multiple subjects, such as move_file's source
 // and destination paths, must be safe for every subject before the call is
-// allowed. Precedence: deny > ask > allow > fallback (Allow for readers, Mode
-// for writers). SessionAllow sits between deny and configured ask rules.
+// allowed. Precedence: deny > ask > session allow > allow > fallback (Allow for
+// readers, Mode for writers). Hashline calls are evaluated across an identity
+// set (e.g. hashline_edit + edit_file, or hashline_edit + write_file for sole
+// write) so deny=["hashline_edit"] and deny=["write_file"] both apply.
 func (p Policy) Decide(toolName string, readOnly bool, args json.RawMessage) Decision {
-	return p.DecideSubjects(toolName, readOnly, Subjects(args))
+	ids := PermissionIdentitiesForCall(toolName, args)
+	return p.DecideSubjectsAcross(ids, readOnly, Subjects(args))
 }
 
 // ExplicitlyDenies reports only configured deny-rule matches. It deliberately
 // excludes the fallback Mode so higher-priority local MCP policy can be applied
 // before the global posture.
 func (p Policy) ExplicitlyDenies(toolName string, args json.RawMessage) bool {
+	ids := PermissionIdentitiesForCall(toolName, args)
 	subjects := Subjects(args)
 	if len(subjects) == 0 {
 		subjects = []string{""}
 	}
+	for _, id := range ids {
+		for _, subject := range subjects {
+			if matchAnyExact(p.Deny, id, subject) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// PermissionIdentitiesForCall returns every policy identity that should be
+// checked for this call. Sole-write hashline_edit maps to write_file (not
+// edit_file); other hashline_edit ops map to edit_file. The original tool name
+// is always included so deny=["hashline_edit"] still matches.
+func PermissionIdentitiesForCall(toolName string, args json.RawMessage) []string {
+	toolName = strings.TrimSpace(toolName)
+	switch toolName {
+	case "hashline_read":
+		return []string{"hashline_read", "read_file"}
+	case "hashline_grep":
+		return []string{"hashline_grep", "grep"}
+	case "hashline_edit":
+		if hashlineEditIsSoleWrite(args) {
+			return []string{"hashline_edit", "write_file"}
+		}
+		return []string{"hashline_edit", "edit_file"}
+	default:
+		return []string{toolName}
+	}
+}
+
+// DecideSubjectsAcross evaluates policy across a set of tool identities and
+// subjects. Deny on any identity wins; Ask wins over Allow; explicit allow on
+// any identity allows; otherwise readOnly/Mode fallback.
+func (p Policy) DecideSubjectsAcross(ids []string, readOnly bool, subjects []string) Decision {
+	if len(ids) == 0 {
+		ids = []string{""}
+	}
+	if len(subjects) == 0 {
+		subjects = []string{""}
+	}
+	// Bash keeps its segment-aware path when bash is among identities.
+	for _, id := range ids {
+		if canonicalRuleTool(id) == "bash" {
+			out := Allow
+			for _, subject := range subjects {
+				switch p.DecideSubject(id, readOnly, subject) {
+				case Deny:
+					return Deny
+				case Ask:
+					out = Ask
+				}
+			}
+			return out
+		}
+	}
+	out := Allow
 	for _, subject := range subjects {
-		if matchAny(p.Deny, toolName, subject) {
+		switch p.decideAcrossIdentities(ids, readOnly, subject) {
+		case Deny:
+			return Deny
+		case Ask:
+			out = Ask
+		}
+	}
+	return out
+}
+
+func (p Policy) decideAcrossIdentities(ids []string, readOnly bool, subject string) Decision {
+	// deny > session allow > ask > allow > fallback — any identity can match.
+	if matchAnyAcrossExact(p.Deny, ids, subject) {
+		return Deny
+	}
+	if matchAnyAcrossExact(p.SessionAllow, ids, subject) {
+		return Allow
+	}
+	if matchAnyAcrossExact(p.Ask, ids, subject) {
+		return Ask
+	}
+	if matchAnyAcrossExact(p.Allow, ids, subject) {
+		return Allow
+	}
+	if readOnly {
+		return Allow
+	}
+	return p.Mode
+}
+
+func matchAnyAcrossExact(rules []Rule, ids []string, subject string) bool {
+	for _, id := range ids {
+		if matchAnyExact(rules, id, subject) {
 			return true
 		}
 	}
 	return false
+}
+
+// matchAnyExact matches rules against a single tool identity without further
+// Hashline alias expansion (aliases are expanded by the caller).
+func matchAnyExact(rules []Rule, toolName, subject string) bool {
+	for _, r := range rules {
+		if !ruleToolMatchesExact(r.Tool, toolName) {
+			continue
+		}
+		if r.Subject == "" {
+			return true
+		}
+		if subject == "" {
+			continue
+		}
+		if ruleSubjectMatches(r, subject) {
+			return true
+		}
+	}
+	return false
+}
+
+func ruleToolMatchesExact(ruleTool, toolName string) bool {
+	ruleTool = canonicalRuleTool(ruleTool)
+	toolName = strings.TrimSpace(toolName)
+	if ruleTool == toolName {
+		return true
+	}
+	return ruleTool == "file_mutation" && IsFileMutationTool(toolName)
+}
+
+func hashlineEditIsSoleWrite(args json.RawMessage) bool {
+	if len(args) == 0 {
+		return false
+	}
+	var raw struct {
+		Edits json.RawMessage `json:"edits"`
+	}
+	if err := json.Unmarshal(args, &raw); err != nil || len(raw.Edits) == 0 {
+		return false
+	}
+	// Accept array, single object, or double-encoded string — mirror hashline.ParseEdits lightly.
+	var v any
+	if err := json.Unmarshal(raw.Edits, &v); err != nil {
+		return false
+	}
+	if s, ok := v.(string); ok {
+		if err := json.Unmarshal([]byte(s), &v); err != nil {
+			return false
+		}
+	}
+	switch t := v.(type) {
+	case map[string]any:
+		op, _ := t["op"].(string)
+		return strings.EqualFold(strings.TrimSpace(op), "write")
+	case []any:
+		if len(t) != 1 {
+			return false
+		}
+		m, ok := t[0].(map[string]any)
+		if !ok {
+			return false
+		}
+		op, _ := m["op"].(string)
+		return strings.EqualFold(strings.TrimSpace(op), "write")
+	default:
+		return false
+	}
 }
 
 // DecideSubject evaluates a tool call when the caller already extracted the
@@ -268,19 +429,11 @@ func (p Policy) DecideSubjects(toolName string, readOnly bool, subjects []string
 }
 
 // matchAny reports whether any rule matches the (toolName, subject) pair. A
-// subject-specific rule cannot match a call that exposes no subject.
+// subject-specific rule cannot match a call that exposes no subject. Hashline
+// tools also match their classic aliases via PermissionIdentities (no-args).
 func matchAny(rules []Rule, toolName, subject string) bool {
-	for _, r := range rules {
-		if !ruleToolMatches(r.Tool, toolName) {
-			continue
-		}
-		if r.Subject == "" {
-			return true
-		}
-		if subject == "" {
-			continue
-		}
-		if ruleSubjectMatches(r, subject) {
+	for _, id := range PermissionIdentities(toolName) {
+		if matchAnyExact(rules, id, subject) {
 			return true
 		}
 	}
@@ -712,20 +865,67 @@ func isPackageManagerRun(base string) bool {
 // IsFileMutationTool reports whether a built-in tool mutates workspace files.
 func IsFileMutationTool(toolName string) bool {
 	switch toolName {
-	case "write_file", "edit_file", "multi_edit", "move_file", "notebook_edit", "delete_range", "delete_symbol":
+	case "write_file", "edit_file", "multi_edit", "move_file", "notebook_edit", "delete_range", "delete_symbol",
+		// hashline_edit covers replace/insert (edit_file-like) and write (write_file-like).
+		"hashline_edit":
 		return true
 	default:
 		return false
 	}
 }
 
+// PermissionIdentity returns the canonical permission identity for a tool name.
+// Hashline tools map onto their classic counterparts so deny/allow/ask rules
+// written for read_file/edit_file/write_file/grep also cover Hashline.
+func PermissionIdentity(toolName string) string {
+	switch strings.TrimSpace(toolName) {
+	case "hashline_read":
+		return "read_file"
+	case "hashline_grep":
+		return "grep"
+	case "hashline_edit":
+		// Anchor edits map to edit_file; whole-file write still uses the same
+		// tool name today. file_mutation rules also cover hashline_edit via
+		// IsFileMutationTool. Precise write_file-only rules need op-aware
+		// resolution at call time (see Gate when args include op=write).
+		return "edit_file"
+	default:
+		return toolName
+	}
+}
+
+// PermissionIdentities returns all identities that should participate in rule
+// matching for toolName without call args (actual name + classic alias).
+// For arg-sensitive mapping (hashline sole-write → write_file) use
+// PermissionIdentitiesForCall.
+func PermissionIdentities(toolName string) []string {
+	toolName = strings.TrimSpace(toolName)
+	alias := PermissionIdentity(toolName)
+	if alias == toolName || alias == "" {
+		return []string{toolName}
+	}
+	return []string{toolName, alias}
+}
+
 func ruleToolMatches(ruleTool, toolName string) bool {
-	ruleTool = canonicalRuleTool(ruleTool)
-	return ruleTool == toolName || (ruleTool == "file_mutation" && IsFileMutationTool(toolName))
+	// Expand no-arg identities so config rules like edit_file cover hashline_edit.
+	for _, id := range PermissionIdentities(toolName) {
+		if ruleToolMatchesExact(ruleTool, id) {
+			return true
+		}
+	}
+	return false
 }
 
 func ruleToolCompatible(existingTool, candidateTool string) bool {
 	existingTool = canonicalRuleTool(existingTool)
+	for _, id := range PermissionIdentities(candidateTool) {
+		id = canonicalRuleTool(id)
+		if existingTool == id ||
+			(existingTool == "file_mutation" && (id == "file_mutation" || IsFileMutationTool(id))) {
+			return true
+		}
+	}
 	candidateTool = canonicalRuleTool(candidateTool)
 	return existingTool == candidateTool ||
 		(existingTool == "file_mutation" && (candidateTool == "file_mutation" || IsFileMutationTool(candidateTool)))

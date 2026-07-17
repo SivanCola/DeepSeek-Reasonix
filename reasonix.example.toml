@@ -37,6 +37,10 @@ soft_compact_ratio  = 0.5   # notice only; keeps the cache-first prefix intact
 tool_result_snip_ratio = 0.6   # snip stale tool results before summary compaction
 compact_ratio       = 0.8   # try compacting when prompt reaches this fraction
 compact_force_ratio = 0.9   # force compacting at this high-water mark
+# prompt_layout = "legacy_system"   # new sessions: session_context | legacy_system
+#                                     # (default legacy_system until release gate; set
+#                                     # session_context for workspace/env/skills as a
+#                                     # pinned synthetic user message)
 # planner_model = "deepseek-pro"   # optional: enable two-model collaboration
 # subagent_model = "deepseek-pro"   # optional default for runAs=subagent skills
 # subagent_models = { review = "deepseek-pro", security_review = "deepseek-pro" }   # per-skill overrides
@@ -114,6 +118,9 @@ enabled = true   # inject a stable startup summary of OS, shell, and common tool
 enabled = []   # empty = all built-in tools
 bash_timeout_seconds = 120   # foreground safety cap; set 0 for no tool-local cap
 mcp_call_timeout_seconds = 300   # default MCP call safety cap; per-plugin/tool overrides may raise it
+# capability_surface = "legacy"   # new sessions: stable | legacy (default legacy until
+#                                   # release gate; stable = capability-v2 proxy for optional tools)
+# edit_protocol = "classic"       # new sessions: classic | hashline (Beta; requires stable)
 
 [tools.background_jobs]
 stalled_warning_seconds = 900   # warn once per background job after this many quiet seconds; 0 disables

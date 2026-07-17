@@ -1204,6 +1204,16 @@ func (a *Agent) EvidenceSummary() evidence.ChildEvidenceSummary {
 	return a.evidence.Summary()
 }
 
+// EvidenceEditedPaths returns distinct paths from successful write/mutation
+// receipts in the current turn ledger (for compaction state recovery).
+func (a *Agent) EvidenceEditedPaths() []string {
+	if a == nil || a.evidence == nil {
+		return nil
+	}
+	// -1 means include all mutations since the start of the ledger.
+	return a.evidence.PathsSince(-1)
+}
+
 func isFreshSubagentSession(sess *Session) bool {
 	if sess == nil {
 		return false

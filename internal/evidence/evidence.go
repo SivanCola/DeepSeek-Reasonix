@@ -1027,7 +1027,7 @@ func (l *Ledger) HasSuccessfulAnchorRefreshReadAfter(paths []string, after int) 
 }
 
 func anchorRefreshRead(r Receipt) bool {
-	if r.ToolName != "read_file" || !r.Read {
+	if (r.ToolName != "read_file" && r.ToolName != "hashline_read") || !r.Read {
 		return false
 	}
 	var fields map[string]json.RawMessage
@@ -2032,7 +2032,8 @@ func isReadReceipt(name string, readOnly bool) bool {
 
 func isWriterTool(name string) bool {
 	switch name {
-	case "write_file", "edit_file", "multi_edit", "move_file", "notebook_edit", "delete_range", "delete_symbol":
+	case "write_file", "edit_file", "multi_edit", "move_file", "notebook_edit", "delete_range", "delete_symbol",
+		"hashline_edit":
 		return true
 	default:
 		return false
@@ -2041,7 +2042,7 @@ func isWriterTool(name string) bool {
 
 func isReaderTool(name string) bool {
 	switch name {
-	case "read_file", "ls", "grep":
+	case "read_file", "ls", "grep", "hashline_read", "hashline_grep":
 		return true
 	default:
 		return false

@@ -54,7 +54,7 @@ const (
 type lazySpawn struct {
 	spec       Spec
 	host       *Host
-	reg        *tool.Registry
+	reg        lazyRegistry
 	ctx        context.Context // session-scoped — outlives any single turn
 	generation uint64
 
@@ -69,6 +69,15 @@ type lazySpawn struct {
 	// same names as the real tools, so reg.Add overwrites in place and no
 	// prefix removal is needed.
 	removePrefix string
+}
+
+// lazyRegistry is the minimal publication surface a lazy cache-miss handshake
+// needs. Boot supplies a runtime router so post-clone swaps reach Execution and
+// Legacy without ever mutating capability provider registries; ordinary callers
+// can keep passing *tool.Registry.
+type lazyRegistry interface {
+	Add(tool.Tool)
+	RemovePrefix(string) int
 }
 
 // kick starts the spawn if it has not yet started. Background registration calls
@@ -474,7 +483,7 @@ func destructiveHintChangedError(server, rawTool string) error {
 // real tools land after a successful spawn. sessionCtx must outlive any
 // single Execute (use the controller's PluginCtx) — a turn-scoped ctx would
 // kill the stdio child between turns.
-func LazyToolset(spec Spec, cs *CachedSchema, host *Host, reg *tool.Registry, sessionCtx context.Context, kick bool) []tool.Tool {
+func LazyToolset(spec Spec, cs *CachedSchema, host *Host, reg lazyRegistry, sessionCtx context.Context, kick bool) []tool.Tool {
 	spawnCtx, cancel := context.WithCancel(sessionCtx)
 	shared := &lazySpawn{
 		spec: spec,

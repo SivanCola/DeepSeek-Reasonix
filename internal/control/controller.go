@@ -386,9 +386,13 @@ type Options struct {
 	BalanceClient *http.Client
 	// Jobs is the session-scoped background-job manager (nil disables background jobs).
 	Jobs *jobs.Manager
-	// Registry is the executor's live tool set, and PluginCtx the session-scoped
-	// context; both are needed for hot-adding MCP servers via AddMCPServer.
-	Registry  *tool.Registry
+	// Registry is the fallback single tool registry (tests / no bundle). Prefer
+	// RegistryBundle for production boots so MCP mutations route correctly.
+	Registry *tool.Registry
+	// RegistryBundle, when set, routes MCP tool mutations to Execution (+ Legacy
+	// mirror) and never to capability provider surfaces.
+	RegistryBundle *agent.RegistryBundle
+	// PluginCtx is the session-scoped context for hot-added MCP subprocesses.
 	PluginCtx context.Context
 	// MCPDefaultCallTimeout is the global MCP call cap used by hot-connected
 	// servers when they do not declare a server- or tool-specific override.
@@ -509,6 +513,14 @@ func New(opts Options) *Controller {
 		externalFolderToolRefs:            opts.ExternalFolderToolRefs,
 		approval:                          newApprovalManager(opts.Policy, ToolApprovalAsk, opts.ApprovalTimeout),
 	}
+	// Route MCP mutations via the boot RegistryBundle (Execution + Legacy mirror).
+	if opts.RegistryBundle != nil {
+		c.mcp.setBundle(opts.RegistryBundle)
+	} else if c.executor != nil {
+		if b := c.executor.RegistryBundle(); b != nil {
+			c.mcp.setBundle(b)
+		}
+	}
 	if strings.TrimSpace(opts.WorkspaceRoot) != "" {
 		c.autoResearch = autoresearch.NewStore(opts.WorkspaceRoot)
 	}
@@ -553,11 +565,26 @@ func (c *Controller) ToolContractEntries() []tool.ContractEntry {
 	if c == nil {
 		return nil
 	}
-	reg := c.mcp.registry()
-	if reg == nil {
+	if reg := c.providerRegistry(); reg != nil {
+		return reg.ContractEntries()
+	}
+	return nil
+}
+
+// providerRegistry returns the active provider-visible tool registry for the
+// current RuntimeContract (via RegistryBundle), falling back to the single reg.
+func (c *Controller) providerRegistry() *tool.Registry {
+	if c == nil {
 		return nil
 	}
-	return reg.ContractEntries()
+	if c.executor != nil {
+		if b := c.executor.RegistryBundle(); b != nil {
+			if reg := b.ProviderRegistry(c.executor.RuntimeContract()); reg != nil {
+				return reg
+			}
+		}
+	}
+	return c.mcp.registry()
 }
 
 func (c *Controller) recordDisplayForNewUser(startMessages int, display string) {
@@ -2924,6 +2951,7 @@ func (c *Controller) forkNamed(turn int, name string, switchToFork bool) (string
 		Preview:          forkPreview,
 		Turns:            forkTurns,
 		SchemaVersion:    agent.BranchMetaCountsVersion,
+		RuntimeContract:  c.inheritRuntimeContract(parentPath),
 	}); err != nil {
 		return "", c.rewindFail(err)
 	}
@@ -2946,6 +2974,21 @@ func (c *Controller) forkNamed(turn int, name string, switchToFork bool) (string
 	c.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo,
 		Text: fmt.Sprintf("forked conversation at turn %d into a new session", turn)})
 	return newPath, nil
+}
+
+// inheritRuntimeContract copies the parent session's contract for Fork/Branch.
+// Missing parent meta falls back to the live executor contract, then legacy.
+func (c *Controller) inheritRuntimeContract(parentPath string) *agent.RuntimeContract {
+	if parentPath != "" {
+		if meta, ok, err := agent.LoadBranchMeta(parentPath); err == nil && ok && meta.RuntimeContract != nil {
+			return meta.RuntimeContract.Clone()
+		}
+	}
+	if c != nil && c.executor != nil {
+		rc := c.executor.RuntimeContract()
+		return rc.Clone()
+	}
+	return agent.LegacyDefaultRuntimeContract().Clone()
 }
 
 func (c *Controller) CheckpointHasBoundary(turn int) bool {
@@ -3004,6 +3047,7 @@ func (c *Controller) Branch(name string) (string, error) {
 		Preview:          branchPreview,
 		Turns:            branchTurns,
 		SchemaVersion:    agent.BranchMetaCountsVersion,
+		RuntimeContract:  c.inheritRuntimeContract(parentPath),
 	}); err != nil {
 		return "", c.rewindFail(err)
 	}
@@ -3181,13 +3225,22 @@ func (c *Controller) summarizeAt(ctx context.Context, turn int, from bool) error
 }
 
 // Resume seeds the session from a loaded transcript and pins the active file to
-// its path so auto-save keeps appending there.
+// its path so auto-save keeps appending there. Before the next provider request
+// it restores the session RuntimeContract (tool surface / edit protocol / prompt
+// layout) from BranchMeta — never the current process config — and switches the
+// provider registry via the boot RegistryBundle when available.
 func (c *Controller) Resume(s *agent.Session, path string) {
 	// See snapshotMu: the swap must not interleave with an in-flight save.
 	// recoverInterruptedTurn and maybeColdResumePrune snapshot on their own,
 	// so they stay outside the locked section (snapshotMu is not reentrant).
 	c.snapshotMu.Lock()
 	if c.executor != nil {
+		// Apply saved contract before binding the session so the first resumed
+		// turn uses the correct tools. applySavedRuntimeContract always applies
+		// a contract (legacy on failure); non-nil err is diagnostic only.
+		if err := c.applySavedRuntimeContract(path, s); err != nil {
+			slog.Warn("controller: resume runtime contract", "path", path, "err", err)
+		}
 		c.executor.SetSession(s)
 	}
 	c.ResetPlannerSession()
@@ -3206,6 +3259,65 @@ func (c *Controller) Resume(s *agent.Session, path string) {
 	c.snapshotMu.Unlock()
 	c.recoverInterruptedTurn(path)
 	c.maybeColdResumePrune(path)
+}
+
+// applySavedRuntimeContract loads BranchMeta.runtime_contract and switches the
+// executor registry. Never upgrades old sessions to process-wide config defaults.
+//
+//	| state                              | applied contract              |
+//	|------------------------------------|-------------------------------|
+//	| sidecar has valid contract         | saved value                   |
+//	| sidecar exists but no contract     | legacy (permanent)            |
+//	| sidecar missing                    | strict transcript infer / legacy |
+//	| sidecar corrupt / unreadable       | legacy + error for diagnostics|
+func (c *Controller) applySavedRuntimeContract(path string, s *agent.Session) error {
+	if c == nil || c.executor == nil {
+		return nil
+	}
+	rc := agent.LegacyDefaultRuntimeContract()
+	var applyErr error
+
+	meta, ok, err := agent.LoadBranchMeta(path)
+	switch {
+	case err != nil:
+		// Corrupt/unreadable sidecar: force legacy immediately; still report.
+		rc = agent.LegacyDefaultRuntimeContract()
+		applyErr = fmt.Errorf("sidecar unreadable: %w", err)
+	case ok && meta.RuntimeContract != nil:
+		rc = agent.NormalizeRuntimeContract(meta.RuntimeContract)
+		if vErr := agent.ValidateRuntimeContract(rc); vErr != nil {
+			rc = agent.LegacyDefaultRuntimeContract()
+			applyErr = fmt.Errorf("sidecar contract invalid: %w", vErr)
+		}
+	case ok && meta.RuntimeContract == nil:
+		// Pre-contract sidecar: permanent legacy. Do NOT infer from transcript
+		// (would flip process surface to v2 while next write pins legacy).
+		rc = agent.LegacyDefaultRuntimeContract()
+	default:
+		// Sidecar file missing: strict transcript inference only, else legacy.
+		if s != nil {
+			if inferred, ok := agent.InferRuntimeContractFromMessages(s.Snapshot()); ok {
+				rc = inferred
+			}
+		}
+	}
+
+	bundle := c.executor.RegistryBundle()
+	var switchErr error
+	if bundle != nil {
+		switchErr = c.executor.ApplyRuntimeContract(rc, bundle)
+	} else {
+		switchErr = c.executor.SetRuntimeContract(rc)
+	}
+	if switchErr != nil {
+		// Last resort: force legacy surface so Resume never leaves a stale v2 set.
+		_ = c.executor.ApplyRuntimeContract(agent.LegacyDefaultRuntimeContract(), bundle)
+		if applyErr != nil {
+			return fmt.Errorf("%v; also failed to apply contract: %w", applyErr, switchErr)
+		}
+		return switchErr
+	}
+	return applyErr
 }
 
 func (c *Controller) loadGuardianSession() {
@@ -3408,7 +3520,12 @@ func (c *Controller) snapshot(markActivity, forceRewrite bool) error {
 	// like SetBranchModelPreserveUpdated. The single write subsumes the old
 	// EnsureBranchMeta / SetBranchModel / TouchBranchMeta sequence.
 	preview, turns := agent.SessionPreviewFromMessages(s.Snapshot())
-	if err := agent.UpdateSessionMeta(path, modelRef, preview, turns, markActivity); err != nil {
+	var contract *agent.RuntimeContract
+	if c.executor != nil {
+		rc := c.executor.RuntimeContract()
+		contract = rc.Clone()
+	}
+	if err := agent.UpdateSessionMetaWithContract(path, modelRef, preview, turns, markActivity, contract); err != nil {
 		return err
 	}
 	return nil
@@ -5498,7 +5615,9 @@ func (c *Controller) approvalRequestEvent(approval event.Approval) event.Event {
 }
 
 func (c *Controller) mcpTrustApprovalPayload(toolName string) *event.MCPTrust {
-	registry := c.mcp.registry()
+	// MCP tools live on Execution (and Legacy mirror), never on capability
+	// provider surfaces — look them up where ConnectMCPServer registered them.
+	registry := c.mcp.executionRegistry()
 	if registry == nil {
 		return nil
 	}

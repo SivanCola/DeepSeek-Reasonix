@@ -10,6 +10,7 @@ package boot
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -51,6 +52,7 @@ import (
 	"reasonix/internal/skill"
 	"reasonix/internal/tool"
 	"reasonix/internal/tool/builtin"
+	"reasonix/internal/tool/builtin/hashline"
 	"reasonix/internal/tool/sessiontool"
 	"reasonix/internal/workspacelease"
 )
@@ -154,6 +156,16 @@ type Options struct {
 	// schemas stay byte-identical, so the provider-visible surface is unchanged.
 	FileOverlay    builtin.FileOverlay
 	TerminalRunner builtin.TerminalRunner
+	// RuntimeContract, when non-nil, pins the session tool surface / edit protocol
+	// / prompt layout (new task or resume). Nil means derive from config for a
+	// new session. Resume/fork paths must pass the saved contract so the schema
+	// and prompt layout never drift mid-session.
+	RuntimeContract *agent.RuntimeContract
+	// EditProtocolOverride is a CLI/Desktop new-session override for classic|
+	// hashline (wire values classic-v1|hashline-v1). Empty keeps config/default.
+	// Resume rejects overrides that conflict with a saved contract (callers
+	// must validate before Build).
+	EditProtocolOverride string
 }
 
 // Build loads config, resolves the model(s), and returns a Controller wrapping a
@@ -348,6 +360,14 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	}
 	shell := sandbox.ResolveShell(cfg.Tools.Shell.Prefer, cfg.Tools.Shell.Path, stderr)
 
+	// Resolve the session-stable runtime contract once. Old sessions pass their
+	// saved contract; new sessions derive from config (+ optional CLI override).
+	runtimeContract, err := resolveRuntimeContract(cfg, opts)
+	if err != nil {
+		return nil, err
+	}
+	sessionCtxLayout := runtimeContract.IsSessionContextLayout()
+
 	sysPrompt, err := cfg.ResolveSystemPromptForRoot(root)
 	if err != nil {
 		return nil, err
@@ -360,20 +380,32 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	}
 	sysPrompt += "\n\n" + config.UserDecisionPolicy
 	sysPrompt += "\n\n" + config.LanguagePolicy
-	if workspaceLine := currentWorkspacePromptLine(root); workspaceLine != "" {
-		sysPrompt += "\n\n" + workspaceLine
-	}
+	// Profile static policy always stays in system (cache-stable across workspaces).
 	if tokenEconomy {
 		sysPrompt += "\n\n" + tokenEconomyPrompt
 	} else if tokenDelivery {
 		sysPrompt += "\n\n" + tokenDeliveryPrompt
 	}
+
+	// Session-context sections (workspace/env/memory/skills). On session-context-v2
+	// they become a pinned synthetic user message; on system-v1 they stay in system.
+	var sessionCtx agent.SessionContextSections
+	workspaceLine := currentWorkspacePromptLine(root)
+	if !sessionCtxLayout {
+		if workspaceLine != "" {
+			sysPrompt += "\n\n" + workspaceLine
+		}
+	} else {
+		sessionCtx.Workspace = workspaceLine
+	}
+
+	var envSection string
 	if cfg.EnvironmentEnabled() {
 		shellLabel := shell.Kind.String()
 		if strings.TrimSpace(cfg.Tools.Shell.Path) != "" {
 			shellLabel = shell.Path
 		}
-		envSection := environment.FormatSection(
+		envSection = environment.FormatSection(
 			environment.RunProbesWithOptions(ctx, environment.DefaultProbes(), environment.ProbeOptions{
 				Overrides: cfg.Environment.Tools,
 				DenyRoots: []string{root},
@@ -387,22 +419,29 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 			shellLabel,
 			cfg.Environment.Tools,
 		)
-		if envSection != "" {
+		if envSection != "" && !sessionCtxLayout {
 			sysPrompt += "\n\n" + envSection
 		}
 	}
+	if sessionCtxLayout {
+		sessionCtx.Environment = envSection
+	}
 
-	// Persistent memory (REASONIX.md / AGENTS.md hierarchy + auto-memory index)
-	// folds into the system prompt exactly here, once: it becomes part of the
-	// durable, cache-stable prefix every turn reuses, so memory costs nothing per
-	// turn. Mid-session changes never touch this prefix — they ride the
-	// controller's transient turn-injection and fold in on the next session.
+	// Persistent memory (REASONIX.md / AGENTS.md hierarchy + auto-memory index).
+	// system-v1: folds into the system prompt once (cache-stable prefix).
+	// session-context-v2: pinned synthetic user message; mid-session updates still
+	// use turn-tail injection and only re-enter context on the next new session.
 	mem := &memory.Set{CWD: root}
 	if !cfg.SafeMode() {
 		mem = memory.Load(memory.Options{CWD: root, UserDir: config.MemoryUserDir()})
 	}
 	projectChecks := instruction.ExtractHostChecks(mem.Docs)
-	sysPrompt = memory.Compose(sysPrompt, mem)
+	if sessionCtxLayout {
+		// Compose with empty base so only the memory/instruction body is stored.
+		sessionCtx.Instructions = strings.TrimSpace(memory.Compose("", mem))
+	} else {
+		sysPrompt = memory.Compose(sysPrompt, mem)
+	}
 
 	// Skills: discover playbooks (built-in + project/custom/global) and fold their
 	// one-liner index into the same cache-stable prefix — names + descriptions
@@ -430,10 +469,17 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	}
 	allSkills := allSkillStore.List()
 	if !tokenEconomy && !cfg.SafeMode() {
-		sysPrompt = skill.ApplyIndex(sysPrompt, skills)
+		if sessionCtxLayout {
+			sessionCtx.Skills = strings.TrimSpace(skill.ApplyIndex("", skills))
+		} else {
+			sysPrompt = skill.ApplyIndex(sysPrompt, skills)
+		}
 	}
 
 	reg := tool.NewRegistry()
+	// Runtime MCP publications begin on the bootstrap registry, then atomically
+	// switch to Execution + Legacy when those snapshots are built below.
+	runtimeMCP := newRuntimeMCPRegistry(reg)
 	writeRoots := cfg.WriteRootsForRoot(root)
 	writeRoots = appendUniquePaths(writeRoots, additionalDirs...)
 	forbidReadRoots := RuntimeForbidReadRoots(cfg, root)
@@ -638,12 +684,12 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 				// Shared host relies on Host's spawn guard to avoid duplicate
 				// processes across tabs for the same workspace root.
 				cs, _ := plugin.LoadCachedSchemaForSpec(s)
-				for _, t := range plugin.LazyToolset(s, cs, pluginHost, reg, ctx, true) {
+				for _, t := range plugin.LazyToolset(s, cs, pluginHost, runtimeMCP, ctx, true) {
 					reg.Add(t)
 				}
 			} else {
 				cs, _ := plugin.LoadCachedSchemaForSpec(s)
-				for _, t := range plugin.LazyToolset(s, cs, pluginHost, reg, ctx, true) {
+				for _, t := range plugin.LazyToolset(s, cs, pluginHost, runtimeMCP, ctx, true) {
 					reg.Add(t)
 				}
 			}
@@ -1106,15 +1152,12 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 				if err != nil {
 					return installsource.MCPConnectResult{}, err
 				}
-				reg.RemovePrefix(plugin.ToolPrefix(spec.Name))
-				for _, t := range tools {
-					reg.Add(t)
-				}
+				runtimeMCP.replacePrefix(plugin.ToolPrefix(spec.Name), tools)
 				// Disconnect closes the server and drops its namespaced tools.
 				// Used by the install_source rollback path when SaveTo fails.
 				disconnect := func() {
 					if prefix, ok := pluginHost.Remove(spec.Name); ok {
-						reg.RemovePrefix(prefix)
+						runtimeMCP.RemovePrefix(prefix)
 					}
 				}
 				return installsource.MCPConnectResult{
@@ -1124,7 +1167,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 			},
 			OnDisconnect: func(serverName string) bool {
 				if prefix, ok := pluginHost.Remove(serverName); ok {
-					reg.RemovePrefix(prefix)
+					runtimeMCP.RemovePrefix(prefix)
 					return true
 				}
 				return false
@@ -1284,8 +1327,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 						if err2 != nil {
 							return "", err2
 						}
-						reg.RemovePrefix(plugin.ToolPrefix(spec.Name))
-						names := addTools(reg, tools)
+						names := runtimeMCP.replacePrefix(plugin.ToolPrefix(spec.Name), tools)
 						if len(names) == 0 {
 							return fmt.Sprintf("MCP server %q connected but exposed no tools.", spec.Name), nil
 						}
@@ -1293,8 +1335,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 					}
 					return "", err
 				}
-				reg.RemovePrefix(plugin.ToolPrefix(spec.Name))
-				names := addTools(reg, tools)
+				names := runtimeMCP.replacePrefix(plugin.ToolPrefix(spec.Name), tools)
 				if len(names) == 0 {
 					return fmt.Sprintf("MCP server %q connected but exposed no tools.", spec.Name), nil
 				}
@@ -1304,56 +1345,130 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		})
 	}
 
-	// Delivery-only stable capability proxy. Registered before agent.New so the
-	// tool schema is part of the Delivery cache prefix and never changes when
-	// on-demand MCP servers connect through the proxy.
+	// Snapshot pure legacy + execution registries while runtime MCP publication
+	// is paused. Once both clones exist, lazy/hot MCP mutations are mirrored to
+	// them and can no longer land in the abandoned bootstrap registry.
+	var legacyReg, execution *tool.Registry
+	runtimeMCP.bindSnapshot(func() []*tool.Registry {
+		legacyReg = reg.Clone()
+		execution = legacyReg.Clone()
+		return []*tool.Registry{execution, legacyReg}
+	})
+
 	var capLedger *capability.Ledger
 	var capAudit *capability.Audit
 	capSpecs := PluginSpecsForRootWithOptions(cfg.Plugins, root, pluginSpecOptions)
 	cachedTools, cacheHashOK := capability.LoadCachedToolsForSpecs(capSpecs)
 	var capProxy *agent.UseCapabilityTool
-	if tokenDelivery {
-		capLedger = capability.NewLedger()
-		capAudit = &capability.Audit{}
-		failed := map[string]string{}
-		if pluginHost != nil {
-			for _, f := range pluginHost.Failures() {
-				failed[f.Name] = f.Error
-			}
+	// catalogTools feeds search/use_capability catalogs (execution registry).
+	catalogTools := legacyReg
+
+	// Always build capability infrastructure so Boot→Resume can switch surfaces
+	// regardless of the process-start contract.
+	capLedger = capability.NewLedger()
+	capAudit = &capability.Audit{}
+	failed := map[string]string{}
+	if pluginHost != nil {
+		for _, f := range pluginHost.Failures() {
+			failed[f.Name] = f.Error
 		}
-		// The proxy and the catalog share the boot-converted specs (env
-		// expansion, workspace overrides, timeouts, trusted read-only tools) —
-		// every configured server, including auto_start=false, is proxy-callable.
-		catalogFn := func() capability.Catalog {
-			conn := map[string]bool{}
-			if pluginHost != nil {
-				for _, n := range pluginHost.ServerNames() {
-					conn[n] = true
-				}
-			}
-			catOpts := capability.CatalogOptions{
-				Tools:       reg.ContractEntries(),
-				Skills:      skillStore.List(),
-				Plugins:     cfg.Plugins,
-				Profile:     capability.ProfileDelivery,
-				Connected:   conn,
-				Failed:      failed,
-				CachedTools: cachedTools,
-				CacheHashOK: cacheHashOK,
-			}
-			// Live proxy-observed tools keep mcp-tool entries routable after an
-			// on-demand connect (proxied tools never enter the registry).
-			if capProxy != nil {
-				catOpts.ProxyTools = capProxy.ConnectedProxyTools()
-			}
-			return capability.BuildCatalog(catOpts)
-		}
-		// ctx is the session-scoped boot context (the lifetime PluginCtx hands
-		// the controller): on-demand MCP children must survive the tool call
-		// that starts them and die with the session, not a resolve timeout.
-		capProxy = agent.NewUseCapabilityTool(ctx, pluginHost, capSpecs, reg, capLedger, capAudit, catalogFn)
-		reg.Add(capProxy)
 	}
+	profileForCatalog := runtimeProfile
+	if tokenDelivery {
+		profileForCatalog = capability.ProfileDelivery
+	}
+	// Proxies attach to the execution registry (built below), not legacyReg.
+	// catalogFn is closed over catalogTools + capProxy after they are assigned.
+	catalogFn := func() capability.Catalog {
+		conn := map[string]bool{}
+		if pluginHost != nil {
+			for _, n := range pluginHost.ServerNames() {
+				conn[n] = true
+			}
+		}
+		src := catalogTools
+		if src == nil {
+			src = legacyReg
+		}
+		entries := src.ContractEntries()
+		// Filter cross-protocol edit tools using the live proxy edit protocol
+		// (updated by ApplyRuntimeContract on Resume).
+		editProto := agent.EditProtocolClassic
+		if capProxy != nil {
+			editProto = capProxy.EditProtocol()
+		}
+		entries = filterContractEntriesByEditProtocol(entries, editProto)
+		catOpts := capability.CatalogOptions{
+			Tools:       entries,
+			Skills:      skillStore.List(),
+			Plugins:     cfg.Plugins,
+			Profile:     profileForCatalog,
+			Connected:   conn,
+			Failed:      failed,
+			CachedTools: cachedTools,
+			CacheHashOK: cacheHashOK,
+		}
+		if capProxy != nil {
+			catOpts.ProxyTools = capProxy.ConnectedProxyTools()
+		}
+		return capability.BuildCatalog(catOpts)
+	}
+	capProxy = agent.NewUseCapabilityTool(ctx, pluginHost, capSpecs, legacyReg, capLedger, capAudit, catalogFn)
+	capProxy.WithEditProtocol(runtimeContract.EditProtocol)
+	schemaFn := func() map[string]json.RawMessage {
+		src := catalogTools
+		if src == nil {
+			src = legacyReg
+		}
+		live := agent.SchemasFromContractEntries(src.ContractEntries())
+		cached := agent.SchemasFromCachedMCPTools(cachedTools)
+		var proxy map[string][]plugin.CachedTool
+		if capProxy != nil {
+			proxy = capProxy.ConnectedProxyTools()
+		}
+		return agent.MergeSchemaMaps(live, cached, agent.SchemasFromCachedMCPTools(proxy))
+	}
+	searchCap := agent.NewSearchCapabilitiesToolDynamic(catalogFn, schemaFn)
+
+	execution, classicProv, hashlineProv := buildCapabilitySurfaces(
+		execution, root, writeRoots, forbidReadRoots, readPathResolver, sessionGuard, managedConfig, opts.FileOverlay, searchSpec, bashSpec,
+		capProxy, searchCap,
+	)
+	catalogTools = execution
+	capProxy.WithExecutionRegistry(execution)
+	if sk, ok := execution.Get("run_skill"); ok {
+		capProxy.WithSkillRunner(sk)
+	}
+
+	// Delivery legacy always exposed use_capability (not search_capabilities).
+	// Keep that on the pure legacy snapshot so Delivery cache shape stays stable.
+	if tokenDelivery {
+		deliveryProxy := agent.NewUseCapabilityTool(ctx, pluginHost, capSpecs, legacyReg, capLedger, capAudit, catalogFn)
+		deliveryProxy.WithEditProtocol(agent.EditProtocolClassic)
+		deliveryProxy.WithExecutionRegistry(execution)
+		if sk, ok := execution.Get("run_skill"); ok {
+			deliveryProxy.WithSkillRunner(sk)
+		}
+		legacyReg.Add(deliveryProxy)
+	}
+
+	registryBundle := &agent.RegistryBundle{
+		Legacy:             legacyReg,
+		Execution:          execution,
+		CapabilityClassic:  classicProv,
+		CapabilityHashline: hashlineProv,
+	}
+
+	if runtimeContract.IsCapabilitySurface() {
+		reg = registryBundle.ProviderRegistry(runtimeContract)
+		if reg == nil {
+			reg = classicProv
+		}
+		capProxy.WithEditProtocol(runtimeContract.EditProtocol)
+	} else {
+		reg = legacyReg
+	}
+
 	skillStore.ConfigureInvocationPolicy(string(runtimeProfile), func(requires []string) []string {
 		connected := map[string]bool{}
 		failed := map[string]string{}
@@ -1369,8 +1484,13 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		if capProxy != nil {
 			proxyTools = capProxy.ConnectedProxyTools()
 		}
+		// Use execution/catalogTools so hidden-but-callable tools are not reported missing.
+		src := catalogTools
+		if src == nil {
+			src = legacyReg
+		}
 		catalog := capability.BuildCatalog(capability.CatalogOptions{
-			Tools:       reg.ContractEntries(),
+			Tools:       src.ContractEntries(),
 			Skills:      skillStore.List(),
 			Plugins:     cfg.Plugins,
 			Profile:     runtimeProfile,
@@ -1385,6 +1505,12 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	})
 
 	execSess := agent.NewSession(sysPrompt)
+	if sessionCtxLayout {
+		// Pin session context immediately so Resume never re-probes env or
+		// re-assembles workspace/skills. Mid-session Memory/Skill changes still
+		// use turn-tail injection; the next new session regenerates context.
+		execSess.Add(agent.SessionContextMessage(runtimeContract, sessionCtx))
+	}
 	executor := agent.New(execProv, reg, execSess, agent.Options{
 		MaxSteps:                 maxSteps,
 		MaxStepsKey:              opts.MaxStepsKey,
@@ -1412,6 +1538,10 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		SubagentDepth:            0,
 		MaxSubagentDepth:         maxSubagentDepth,
 	}, sink)
+	_ = executor.SetRuntimeContract(runtimeContract)
+	if registryBundle != nil {
+		executor.SetRegistryBundle(registryBundle)
+	}
 
 	var runner agent.Runner = executor
 	label := entry.Model
@@ -1491,6 +1621,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		BalanceClient:         balanceClient,
 		Jobs:                  jm,
 		Registry:              reg,
+		RegistryBundle:        registryBundle,
 		PluginCtx:             ctx,
 		MCPDefaultCallTimeout: pluginSpecOptions.DefaultCallTimeout,
 		MCPConfigureSpec: func(spec *plugin.Spec) {
@@ -1547,6 +1678,8 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		ctrlOpts.Classifier = classifier
 	}
 	ctrl := control.New(ctrlOpts)
+	// Deterministic Goal/Todo compaction state — never model-summarized.
+	executor.SetCompactionStateProvider(ctrl)
 	refreshMCPCatalogInBackground(pluginHost)
 	if tokenDelivery {
 		var router *capability.SemanticRouter
@@ -2503,4 +2636,133 @@ func providerNames(cfg *config.Config) string {
 		names[i] = p.Name
 	}
 	return strings.Join(names, "/")
+}
+
+// resolveRuntimeContract returns the session-stable contract for this Build.
+// Prefer opts.RuntimeContract (resume/fork); otherwise derive from config with
+// optional EditProtocolOverride for new sessions only.
+func resolveRuntimeContract(cfg *config.Config, opts Options) (agent.RuntimeContract, error) {
+	if opts.RuntimeContract != nil {
+		c := agent.NormalizeRuntimeContract(opts.RuntimeContract)
+		if err := agent.ValidateRuntimeContract(c); err != nil {
+			return agent.RuntimeContract{}, err
+		}
+		if override := strings.TrimSpace(opts.EditProtocolOverride); override != "" {
+			if override != c.EditProtocol {
+				return agent.RuntimeContract{}, fmt.Errorf("resume --edit-protocol %q conflicts with saved session edit_protocol %q", override, c.EditProtocol)
+			}
+		}
+		return c, nil
+	}
+	surface, edit, layout, err := cfg.NewSessionRuntimeContract()
+	if err != nil {
+		return agent.RuntimeContract{}, err
+	}
+	c := agent.RuntimeContract{
+		ToolSurface:  surface,
+		EditProtocol: edit,
+		PromptLayout: layout,
+	}
+	if override := strings.TrimSpace(opts.EditProtocolOverride); override != "" {
+		c.EditProtocol = override
+	}
+	if err := agent.ValidateRuntimeContract(c); err != nil {
+		return agent.RuntimeContract{}, err
+	}
+	return c, nil
+}
+
+// buildCapabilitySurfaces extends the pre-snapshotted execution registry with
+// hashline tools + capability proxies, then builds classic/hashline provider
+// surfaces for Resume switches.
+func buildCapabilitySurfaces(
+	baseExecution *tool.Registry,
+	root string,
+	writeRoots, forbidReadRoots []string,
+	paths *builtin.PathResolver,
+	guard builtin.SessionDataGuard,
+	managed builtin.ManagedConfigPaths,
+	overlay builtin.FileOverlay,
+	search builtin.SearchSpec,
+	bash sandbox.Spec,
+	capProxy *agent.UseCapabilityTool,
+	searchCap tool.Tool,
+) (execution, classic, hashlineReg *tool.Registry) {
+	execution = baseExecution
+	if execution == nil {
+		execution = tool.NewRegistry()
+	}
+	classic = tool.NewRegistry()
+	hashlineReg = tool.NewRegistry()
+
+	// Hashline tools are not in Builtins(); always attach for hashline sessions
+	// and use_capability dispatch.
+	hlCfg := hashline.Config{
+		WorkDir:     root,
+		WriteRoots:  writeRoots,
+		ForbidRoots: forbidReadRoots,
+		Paths:       paths,
+		Guard:       guard,
+		Managed:     managed,
+		Overlay:     overlay,
+		Search:      search,
+		Sandbox:     bash,
+	}
+	for _, t := range hlCfg.Tools() {
+		execution.Add(t)
+	}
+	// Capability proxies live only on execution + capability provider surfaces.
+	if capProxy != nil {
+		execution.Add(capProxy)
+		capProxy.WithExecutionRegistry(execution)
+		if sk, ok := execution.Get("run_skill"); ok {
+			capProxy.WithSkillRunner(sk)
+		}
+	}
+	if searchCap != nil {
+		execution.Add(searchCap)
+	}
+
+	classicAllow := agent.AllowSet(agent.CoreCapabilityToolNames...)
+	for _, n := range agent.ClassicEditToolNames {
+		classicAllow[n] = true
+	}
+	hashAllow := agent.AllowSet(agent.CoreCapabilityToolNames...)
+	for _, n := range agent.HashlineEditToolNames {
+		hashAllow[n] = true
+	}
+	// Hashline provider surface excludes classic file primitives that overlap.
+	hashDeny := agent.AllowSet(agent.ClassicExcludedFromHashline...)
+
+	for _, name := range execution.Names() {
+		t, ok := execution.Get(name)
+		if !ok {
+			continue
+		}
+		if classicAllow[name] {
+			classic.Add(t)
+		}
+		if hashAllow[name] && !hashDeny[name] {
+			hashlineReg.Add(t)
+		}
+	}
+	return execution, classic, hashlineReg
+}
+
+// filterContractEntriesByEditProtocol drops cross-protocol file tools so
+// search_capabilities never recommends IDs that use_capability will reject.
+// editProtocol accepts classic|hashline|classic-v1|hashline-v1; empty keeps all
+// entries (same as use_capability when protocol is unset).
+func filterContractEntriesByEditProtocol(entries []tool.ContractEntry, editProtocol string) []tool.ContractEntry {
+	if len(entries) == 0 {
+		return entries
+	}
+	out := make([]tool.ContractEntry, 0, len(entries))
+	for _, e := range entries {
+		if agent.IsCrossProtocolTool(editProtocol, e.Name) {
+			continue
+		}
+		out = append(out, e)
+	}
+	return out
 }

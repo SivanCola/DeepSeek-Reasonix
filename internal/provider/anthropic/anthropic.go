@@ -342,6 +342,9 @@ func (c *client) buildRequest(req provider.Request) anthRequest {
 		Tools:     tools,
 		Stream:    true,
 	}
+	if req.ToolChoice == provider.ToolChoiceNone {
+		r.ToolChoice = map[string]string{"type": "none"}
+	}
 	// Extended thinking is opt-in and provider-specific. Anthropic proper uses
 	// type=adaptive plus display/output_config. LongCat-style compatible gateways
 	// use the simpler enabled|disabled knob and do not accept output_config.
@@ -596,11 +599,13 @@ type cacheControl struct {
 }
 
 type anthRequest struct {
-	Model        string          `json:"model"`
-	MaxTokens    int             `json:"max_tokens"`
-	System       []textBlock     `json:"system,omitempty"`
-	Messages     []anthMessage   `json:"messages"`
-	Tools        []anthTool      `json:"tools,omitempty"`
+	Model     string        `json:"model"`
+	MaxTokens int           `json:"max_tokens"`
+	System    []textBlock   `json:"system,omitempty"`
+	Messages  []anthMessage `json:"messages"`
+	Tools     []anthTool    `json:"tools,omitempty"`
+	// ToolChoice is {"type":"none"} when summarization must not invoke tools.
+	ToolChoice   any             `json:"tool_choice,omitempty"`
 	Thinking     *thinkingConfig `json:"thinking,omitempty"`
 	OutputConfig *outputConfig   `json:"output_config,omitempty"`
 	Stream       bool            `json:"stream"`

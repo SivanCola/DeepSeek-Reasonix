@@ -15,9 +15,10 @@ import (
 	"reasonix/internal/tool"
 )
 
-// UseCapabilityTool is the Delivery-only stable proxy for inspecting, calling,
-// or declining catalog capabilities. Call never adds dynamic MCP tools to the
-// main registry — subsequent calls keep using this stable schema.
+// UseCapabilityTool is the stable proxy for inspecting, calling, or declining
+// catalog capabilities (tool:*, skill:*, mcp-tool:*, mcp-server:*). Call never
+// adds dynamic MCP tools to the provider-visible registry — subsequent calls
+// keep using this stable schema.
 type UseCapabilityTool struct {
 	mu sync.Mutex
 
@@ -30,11 +31,25 @@ type UseCapabilityTool struct {
 	// specs are the boot-converted plugin specs (env expansion, workspace
 	// overrides, timeouts, trusted read-only tools). The proxy never rebuilds
 	// specs from raw config entries — that would fork the conversion logic.
-	specs    []plugin.Spec
-	registry *tool.Registry // live registry for already-exposed MCP tools
-	ledger   *capability.Ledger
-	audit    *capability.Audit
-	catalog  func() capability.Catalog
+	specs []plugin.Spec
+	// registry is the provider-visible registry (already-exposed MCP tools).
+	registry *tool.Registry
+	// execution is the full execution registry used for tool:* resolution. It
+	// may include tools that are not provider-visible (hidden under capability
+	// surface). When nil, tool:* falls back to registry.
+	execution *tool.Registry
+	// skillRunner is the hidden run_skill tool used for skill:* calls. When
+	// nil, skill:* looks up "run_skill" on execution then registry.
+	skillRunner tool.Tool
+	// rejectIDs optionally hard-rejects a capability_id before resolution
+	// (e.g. protocol or policy filters).
+	rejectIDs func(id string) error
+	// editProtocol is classic-v1|hashline-v1 (or classic|hashline). When set,
+	// cross-protocol file-edit capability IDs are rejected.
+	editProtocol string
+	ledger       *capability.Ledger
+	audit        *capability.Audit
+	catalog      func() capability.Catalog
 	// proxyClients holds on-demand connected clients that must not pollute the
 	// provider-visible registry. Tools are looked up via host.ToolsFor.
 	connected map[string]bool
@@ -44,9 +59,11 @@ type UseCapabilityTool struct {
 	liveTools map[string][]plugin.CachedTool
 }
 
-// NewUseCapabilityTool builds the Delivery-only capability proxy. lifeCtx is
-// the session-scoped context that owns on-demand MCP subprocess lifetimes;
-// specs must be the same boot-converted specs used for auto-started servers.
+// NewUseCapabilityTool builds the capability proxy. lifeCtx is the
+// session-scoped context that owns on-demand MCP subprocess lifetimes; specs
+// must be the same boot-converted specs used for auto-started servers.
+// Optional execution registry, skill runner, and protocol filters are set via
+// With* methods after construction.
 func NewUseCapabilityTool(lifeCtx context.Context, host *plugin.Host, specs []plugin.Spec, reg *tool.Registry, ledger *capability.Ledger, audit *capability.Audit, catalog func() capability.Catalog) *UseCapabilityTool {
 	return &UseCapabilityTool{
 		host:      host,
@@ -60,10 +77,43 @@ func NewUseCapabilityTool(lifeCtx context.Context, host *plugin.Host, specs []pl
 	}
 }
 
+// WithExecutionRegistry sets the registry used for tool:* resolution.
+func (t *UseCapabilityTool) WithExecutionRegistry(reg *tool.Registry) *UseCapabilityTool {
+	t.execution = reg
+	return t
+}
+
+// WithSkillRunner sets the hidden run_skill tool used for skill:* calls.
+func (t *UseCapabilityTool) WithSkillRunner(tl tool.Tool) *UseCapabilityTool {
+	t.skillRunner = tl
+	return t
+}
+
+// WithRejectIDs installs a hard-reject hook for capability IDs.
+func (t *UseCapabilityTool) WithRejectIDs(fn func(id string) error) *UseCapabilityTool {
+	t.rejectIDs = fn
+	return t
+}
+
+// WithEditProtocol sets classic/hashline filtering for file-edit capabilities.
+func (t *UseCapabilityTool) WithEditProtocol(protocol string) *UseCapabilityTool {
+	t.editProtocol = strings.TrimSpace(protocol)
+	return t
+}
+
+// EditProtocol returns the live edit protocol used for cross-protocol rejection
+// and catalog search filtering.
+func (t *UseCapabilityTool) EditProtocol() string {
+	if t == nil {
+		return ""
+	}
+	return t.editProtocol
+}
+
 func (*UseCapabilityTool) Name() string { return "use_capability" }
 
 func (*UseCapabilityTool) Description() string {
-	return "Delivery profile capability proxy: inspect Skill/MCP metadata, call MCP tools (including auto_start=false servers) without changing the provider tool schema, or decline a prefer capability with a non-empty reason. Skills still use run_skill; this tool only proxies MCP calls."
+	return "Capability proxy: inspect catalog metadata, call tool:*, skill:*, mcp-tool:*, or mcp-server:* capabilities without changing the provider tool schema, or decline a prefer capability with a non-empty reason. MCP servers with auto_start=false connect on demand after approval. Prefer search_capabilities to discover IDs first."
 }
 
 func (*UseCapabilityTool) ReadOnly() bool { return true }
@@ -104,6 +154,9 @@ func (t *UseCapabilityTool) ResolveCall(ctx context.Context, args json.RawMessag
 		ProxyAction:  action,
 		CapabilityID: id,
 		Args:         p.Arguments,
+	}
+	if err := t.allowCapabilityID(id); err != nil {
+		return tool.ResolvedCall{}, err
 	}
 	switch action {
 	case "inspect":
@@ -302,12 +355,17 @@ func (t *UseCapabilityTool) resolveCall(ctx context.Context, id string, args jso
 	if server, ok := parseMCPServerCapabilityID(id); ok {
 		return t.resolveServerConnect(ctx, server, base)
 	}
+	if name, ok := parseToolCapabilityID(id); ok {
+		return t.resolveToolCall(name, args, base)
+	}
+	if name, ok := parseSkillCapabilityID(id); ok {
+		return t.resolveSkillCall(name, args, base)
+	}
+	if strings.HasPrefix(id, "source:") {
+		return tool.ResolvedCall{}, fmt.Errorf("%q is a legacy source id; use tool:*, skill:*, mcp-tool:*, or mcp-server:* capability ids", id)
+	}
 	server, raw, err := parseMCPCapabilityID(id)
 	if err != nil {
-		// Skills must use run_skill.
-		if strings.HasPrefix(id, "skill:") {
-			return tool.ResolvedCall{}, fmt.Errorf("call only proxies MCP tools; use run_skill for %s", id)
-		}
 		return tool.ResolvedCall{}, err
 	}
 	// Prefer already-exposed registry tool (auto-started MCP). The model name
@@ -744,8 +802,210 @@ func parseMCPCapabilityID(id string) (server, raw string, err error) {
 	case strings.HasPrefix(id, "mcp-server:"):
 		return "", "", fmt.Errorf("%q is a server id; call it directly to connect and list tools, or use mcp-tool:<server>/<tool>", id)
 	default:
-		return "", "", fmt.Errorf("action=call requires an mcp-tool capability id, got %q", id)
+		return "", "", fmt.Errorf("action=call requires tool:*, skill:*, mcp-tool:*, or mcp-server:* capability id, got %q", id)
 	}
+}
+
+func parseToolCapabilityID(id string) (name string, ok bool) {
+	if !strings.HasPrefix(id, "tool:") {
+		return "", false
+	}
+	name = strings.TrimSpace(strings.TrimPrefix(id, "tool:"))
+	return name, name != ""
+}
+
+func parseSkillCapabilityID(id string) (name string, ok bool) {
+	if !strings.HasPrefix(id, "skill:") {
+		return "", false
+	}
+	name = strings.TrimSpace(strings.TrimPrefix(id, "skill:"))
+	return name, name != ""
+}
+
+// allowCapabilityID applies RejectIDs and edit-protocol cross filters before
+// any permission/plan/hook/evidence path sees the call.
+func (t *UseCapabilityTool) allowCapabilityID(id string) error {
+	if t.rejectIDs != nil {
+		if err := t.rejectIDs(id); err != nil {
+			return err
+		}
+	}
+	return RejectCrossProtocolFileCapability(id, t.editProtocol)
+}
+
+// FileEditCapabilityProtocol returns "classic", "hashline", or "" when the id
+// is not a cross-protocol file tool (see ClassicExcludedFromHashline /
+// HashlineExcludedFromClassic).
+func FileEditCapabilityProtocol(id string) string {
+	name, ok := parseToolCapabilityID(id)
+	if !ok {
+		// Also accept bare tool names for callers that strip the prefix.
+		name = strings.TrimSpace(id)
+	}
+	for _, n := range ClassicExcludedFromHashline {
+		if n == name {
+			return "classic"
+		}
+	}
+	for _, n := range HashlineExcludedFromClassic {
+		if n == name {
+			return "hashline"
+		}
+	}
+	return ""
+}
+
+// RejectCrossProtocolFileCapability hard-rejects classic file tools under a
+// hashline contract and hashline file tools under a classic contract.
+// editProtocol accepts classic|hashline|classic-v1|hashline-v1; empty skips.
+func RejectCrossProtocolFileCapability(id, editProtocol string) error {
+	proto := normalizeEditProtocol(editProtocol)
+	if proto == "" {
+		return nil
+	}
+	name, ok := parseToolCapabilityID(id)
+	if !ok {
+		name = strings.TrimSpace(strings.TrimPrefix(id, "tool:"))
+	}
+	if name == "" || !IsCrossProtocolTool(proto, name) {
+		return nil
+	}
+	toolProto := FileEditCapabilityProtocol("tool:" + name)
+	if toolProto == "" {
+		toolProto = "other"
+	}
+	return fmt.Errorf("capability %q belongs to the %s edit protocol and is not allowed under %s", id, toolProto, proto)
+}
+
+func normalizeEditProtocol(editProtocol string) string {
+	switch strings.ToLower(strings.TrimSpace(editProtocol)) {
+	case "", "classic", EditProtocolClassic:
+		if strings.TrimSpace(editProtocol) == "" {
+			return ""
+		}
+		return EditProtocolClassic
+	case "hashline", EditProtocolHashline:
+		return EditProtocolHashline
+	default:
+		return ""
+	}
+}
+
+// resolveToolCall maps tool:<name> onto the execution registry. ResolvedCall
+// uses the target's own ReadOnly classification — never inherits the proxy's
+// ReadOnly=true.
+func (t *UseCapabilityTool) resolveToolCall(name string, args json.RawMessage, base tool.ResolvedCall) (tool.ResolvedCall, error) {
+	id := "tool:" + name
+	reg := t.execution
+	if reg == nil {
+		reg = t.registry
+	}
+	if reg == nil {
+		return t.resolveUnavailable(base, id, name, fmt.Sprintf("tool %q is unavailable (no execution registry)", name)), nil
+	}
+	tl, ok := reg.Get(name)
+	if !ok || tl == nil {
+		return t.resolveUnavailable(base, id, name, fmt.Sprintf("tool %q is not registered", name)), nil
+	}
+	base.Target = tl
+	base.TargetName = tl.Name()
+	base.ReadOnly = tl.ReadOnly()
+	if len(args) == 0 {
+		base.Args = json.RawMessage(`{}`)
+	} else {
+		base.Args = args
+	}
+	return base, nil
+}
+
+// resolveSkillCall maps skill:<name> onto the hidden run_skill runner with an
+// immutable injected skill name so the model cannot retarget the capability.
+func (t *UseCapabilityTool) resolveSkillCall(name string, args json.RawMessage, base tool.ResolvedCall) (tool.ResolvedCall, error) {
+	id := "skill:" + name
+	runner := t.skillRunner
+	if runner == nil {
+		if t.execution != nil {
+			if tl, ok := t.execution.Get("run_skill"); ok {
+				runner = tl
+			}
+		}
+		if runner == nil && t.registry != nil {
+			if tl, ok := t.registry.Get("run_skill"); ok {
+				runner = tl
+			}
+		}
+	}
+	if runner == nil {
+		return t.resolveUnavailable(base, id, "run_skill", fmt.Sprintf("skill runner unavailable for %s", id)), nil
+	}
+	injected := forceSkillNameArgs(args, name)
+	target := &skillRunnerTarget{runner: runner, skillName: name}
+	base.Target = target
+	base.TargetName = "run_skill"
+	base.ReadOnly = runner.ReadOnly()
+	base.Args = injected
+	return base, nil
+}
+
+func forceSkillNameArgs(args json.RawMessage, name string) json.RawMessage {
+	var m map[string]any
+	if len(args) > 0 && string(args) != "null" {
+		if err := json.Unmarshal(args, &m); err != nil || m == nil {
+			m = map[string]any{}
+			// Preserve free-form string payloads as run_skill's arguments field.
+			var s string
+			if err := json.Unmarshal(args, &s); err == nil {
+				m["arguments"] = s
+			}
+		}
+	}
+	if m == nil {
+		m = map[string]any{}
+	}
+	m["name"] = name
+	b, err := json.Marshal(m)
+	if err != nil {
+		fallback, _ := json.Marshal(map[string]string{"name": name})
+		return fallback
+	}
+	return b
+}
+
+// skillRunnerTarget wraps run_skill and re-injects the capability skill name on
+// every Execute so permission/hooks see run_skill while the skill id stays fixed.
+type skillRunnerTarget struct {
+	runner    tool.Tool
+	skillName string
+}
+
+func (s *skillRunnerTarget) Name() string { return "run_skill" }
+
+func (s *skillRunnerTarget) Description() string {
+	if s.runner != nil {
+		return s.runner.Description()
+	}
+	return "run skill " + s.skillName
+}
+
+func (s *skillRunnerTarget) Schema() json.RawMessage {
+	if s.runner != nil {
+		return s.runner.Schema()
+	}
+	return json.RawMessage(`{"type":"object"}`)
+}
+
+func (s *skillRunnerTarget) ReadOnly() bool {
+	if s.runner != nil {
+		return s.runner.ReadOnly()
+	}
+	return false
+}
+
+func (s *skillRunnerTarget) Execute(ctx context.Context, args json.RawMessage) (string, error) {
+	if s.runner == nil {
+		return "", fmt.Errorf("skill runner unavailable")
+	}
+	return s.runner.Execute(ctx, forceSkillNameArgs(args, s.skillName))
 }
 
 // Ensure UseCapabilityTool satisfies the tool contracts used by the agent.

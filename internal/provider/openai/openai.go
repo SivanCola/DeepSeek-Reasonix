@@ -541,6 +541,9 @@ func (c *client) buildRequest(req provider.Request) chatRequest {
 		ReasoningEffort: c.effort,
 		ExtraBody:       c.extraBody,
 	}
+	if req.ToolChoice == provider.ToolChoiceNone {
+		out.ToolChoice = "none"
+	}
 	switch {
 	case c.deepseek:
 		// DeepSeek's CoT is controlled by `thinking` plus `reasoning_effort` for
@@ -836,9 +839,11 @@ func normaliseUsage(u *wireUsage) *provider.Usage {
 // --- OpenAI-compatible wire protocol ---
 
 type chatRequest struct {
-	Model           string         `json:"model"`
-	Messages        []chatMessage  `json:"messages"`
-	Tools           []chatTool     `json:"tools,omitempty"`
+	Model    string        `json:"model"`
+	Messages []chatMessage `json:"messages"`
+	Tools    []chatTool    `json:"tools,omitempty"`
+	// ToolChoice is "none" when summarization must not invoke tools; omitted otherwise.
+	ToolChoice      any            `json:"tool_choice,omitempty"`
 	Stream          bool           `json:"stream"`
 	StreamOptions   *streamOptions `json:"stream_options,omitempty"`
 	Temperature     *float64       `json:"temperature,omitempty"`

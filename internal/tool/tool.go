@@ -285,6 +285,33 @@ func NewRegistry() *Registry {
 	return &Registry{tools: map[string]Tool{}, canon: map[string]json.RawMessage{}, suspended: map[string]bool{}}
 }
 
+// Clone returns a shallow copy of the registry: the same Tool instances are
+// shared, but order/canon maps are independent so later Add/Remove on either
+// side does not mutate the other. Suspended prefixes are not copied.
+func (r *Registry) Clone() *Registry {
+	if r == nil {
+		return NewRegistry()
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	out := NewRegistry()
+	for _, name := range r.order {
+		if r.suspended[name] {
+			continue
+		}
+		t := r.tools[name]
+		if t == nil {
+			continue
+		}
+		out.tools[name] = t
+		out.order = append(out.order, name)
+		if c, ok := r.canon[name]; ok {
+			out.canon[name] = append(json.RawMessage(nil), c...)
+		}
+	}
+	return out
+}
+
 // Add inserts (or replaces) a tool, preserving first-seen order. The schema is
 // canonicalized once here — it never changes after registration, so Schemas()
 // (called every turn) reuses the result instead of re-marshaling.

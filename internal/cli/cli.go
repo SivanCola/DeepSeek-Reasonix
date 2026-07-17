@@ -235,6 +235,8 @@ type cliBuildOverrides struct {
 	AdditionalDirs       []string
 	WorkspaceRoot        string
 	HeadlessApprovalMode string
+	EditProtocolOverride string
+	RuntimeContract      *agent.RuntimeContract
 }
 
 func setupProfileWithOverrides(ctx context.Context, modelName string, maxStepsOverride int, requireKey bool, sink event.Sink, profile string, overrides cliBuildOverrides) (*control.Controller, error) {
@@ -252,6 +254,8 @@ func setupProfileWithOverrides(ctx context.Context, modelName string, maxStepsOv
 		PermissionAllow:      overrides.PermissionAllow,
 		AdditionalDirs:       overrides.AdditionalDirs,
 		HeadlessApprovalMode: overrides.HeadlessApprovalMode,
+		EditProtocolOverride: overrides.EditProtocolOverride,
+		RuntimeContract:      overrides.RuntimeContract,
 	})
 }
 
@@ -418,6 +422,7 @@ func runAgent(args []string) int {
 	resume := fs.String("resume", "", "resume a specific session file (non-interactive; takes precedence over --continue)")
 	copySession := fs.Bool("copy", false, "with --resume/--continue: duplicate the session and continue in the copy (escape hatch when the original is held by another Reasonix process)")
 	effort := fs.String("effort", "", "session reasoning effort override")
+	editProtocolFlag := fs.String("edit-protocol", "", "new-session edit protocol: classic | hashline (default from config; resume must match saved contract)")
 	permissionMode := fs.String("permission-mode", "ask", "permission mode: manual | ask | auto | acceptEdits | dontAsk | plan | bypassPermissions")
 	printOnly := fs.BoolP("print", "p", false, "print only the final response")
 	outputFormat := fs.String("output-format", "text", "output format: text | json | stream-json")
@@ -429,6 +434,16 @@ func runAgent(args []string) int {
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
+	var editProtocolOverride string
+	if strings.TrimSpace(*editProtocolFlag) != "" {
+		ep, err := agent.ParseEditProtocolFlag(*editProtocolFlag)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
+			return 2
+		}
+		editProtocolOverride = ep
+	}
+	// editProtocolOverride is applied on new sessions via cliBuildOverrides
 	allowedTools, err := splitAllowedToolRules(allowedToolValues)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
@@ -578,7 +593,31 @@ func runAgent(args []string) int {
 	// executor, not just the top-level one. Default/ask and acceptEdits already
 	// keep the default headless gate (ask decisions resolve to allow); only
 	// auto/dontAsk/yolo need the explicit contract.
-	overrides := cliBuildOverrides{Effort: effortOverride, PermissionAllow: allowedTools, AdditionalDirs: additionalDirs, WorkspaceRoot: workspaceRoot, HeadlessApprovalMode: permissions.approval}
+	overrides := cliBuildOverrides{Effort: effortOverride, PermissionAllow: allowedTools, AdditionalDirs: additionalDirs, WorkspaceRoot: workspaceRoot, HeadlessApprovalMode: permissions.approval, EditProtocolOverride: editProtocolOverride}
+	// Resume/fork must rebuild with the saved RuntimeContract so tool schemas
+	// and prompt layout never drift. New sessions leave RuntimeContract nil
+	// and derive from config (+ optional --edit-protocol).
+	if resumePath != "" {
+		if meta, ok, err := agent.LoadBranchMeta(resumePath); err == nil && ok {
+			rc := agent.ResolveRuntimeContractFromMeta(meta)
+			// If sidecar is missing contract, try inferring from session context.
+			if meta.RuntimeContract == nil && resumeSession != nil {
+				if inferred, ok := agent.InferRuntimeContractFromMessages(resumeSession.Snapshot()); ok {
+					rc = inferred
+				}
+			}
+			overrides.RuntimeContract = rc.Clone()
+			// Resume rejects --edit-protocol that conflicts with the saved contract.
+			if editProtocolOverride != "" && editProtocolOverride != rc.EditProtocol {
+				fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix,
+					"--edit-protocol conflicts with the saved session contract; start a new task instead of overriding resume")
+				return 2
+			}
+			// Clear override so boot does not double-check as a false conflict
+			// when the values already match.
+			overrides.EditProtocolOverride = ""
+		}
+	}
 	ctrl, err := setupProfileWithOverrides(ctx, *model, *maxSteps, true, sink, profile, overrides)
 	if err != nil {
 		if resultOutput != nil && format != runOutputText {
@@ -946,6 +985,19 @@ func chatREPL(args []string) int {
 		effortOverride = effort
 	}
 	overrides := cliBuildOverrides{Effort: effortOverride, PermissionAllow: allowedTools, AdditionalDirs: additionalDirs, WorkspaceRoot: workspaceRoot}
+	if resumePath != "" {
+		if meta, ok, err := agent.LoadBranchMeta(resumePath); err == nil && ok {
+			rc := agent.ResolveRuntimeContractFromMeta(meta)
+			if meta.RuntimeContract == nil {
+				if loaded, lerr := agent.LoadSession(resumePath); lerr == nil && loaded != nil {
+					if inferred, ok := agent.InferRuntimeContractFromMessages(loaded.Snapshot()); ok {
+						rc = inferred
+					}
+				}
+			}
+			overrides.RuntimeContract = rc.Clone()
+		}
+	}
 	ctrl, err := setupProfileWithOverrides(ctx, *model, *maxSteps, false, sink, profile, overrides)
 	if err != nil && errors.Is(err, boot.ErrUnknownModel) && isInteractive() && config.SourcePath() == "" {
 		// True first run whose default model can't resolve: guide setup, then retry.

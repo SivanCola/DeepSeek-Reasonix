@@ -221,6 +221,14 @@ type Compaction struct {
 	Messages int    // Done: how many messages were folded into the summary
 	Summary  string // Done: the briefing the agent keeps relying on
 	Archive  string // Done: path the dropped originals were archived to ("" if none)
+	// Optional telemetry for the capability-upgrade compaction ladder.
+	Stage        string `json:"stage,omitempty"` // prefix_reuse | fitted_transcript | minimal_transcript | mechanical
+	Attempts     int    `json:"attempts,omitempty"`
+	PrefixReused bool   `json:"prefix_reused,omitempty"`
+	FailureClass string `json:"failure_class,omitempty"` // quality | context | auth | cancel | transient | empty
+	StateBytes   int    `json:"state_bytes,omitempty"`
+	BeforeTokens int    `json:"before_tokens,omitempty"`
+	AfterTokens  int    `json:"after_tokens,omitempty"`
 }
 
 // GuardianResult carries the outcome of a guardian sub-agent safety review.

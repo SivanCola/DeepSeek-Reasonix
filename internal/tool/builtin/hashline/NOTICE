@@ -1,0 +1,29 @@
+Hashline v1 for Reasonix
+========================
+
+This package contains code adapted from xAI grok-build's `grok_build_hashline`
+implementation (baseline commit c68e39f), originally under:
+
+  crates/codegen/xai-grok-tools/src/implementations/grok_build_hashline/
+
+Original work:
+  Copyright 2024–2026 xAI
+  Licensed under the Apache License, Version 2.0
+  Full license text: LICENSE-Apache-2.0 (this directory)
+
+This is a modified/adapted derivative work for Reasonix (Go port).
+
+Modifications for Reasonix:
+- Ported from Rust to Go
+- Fixed Anchor v1 constants (chunk size 8, hash length 3, search radius ±15)
+- Integrated with Reasonix path resolution, read confinement, session-data
+  write guards, file encoding (UTF-8 BOM / UTF-16 / GBK), CRLF preservation,
+  and host file overlays
+- Tools are NOT auto-registered into the classic builtin surface; constructors
+  are exported for hashline-protocol sessions only
+
+Reasonix-authored integration code in this package is dual-noted under the
+repository MIT License where it is original; algorithm and protocol material
+adapted from grok-build remains under Apache-2.0 as required by that license.
+
+Source file headers mark adapted modules with "modified/adapted from grok-build".

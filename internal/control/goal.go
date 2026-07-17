@@ -155,6 +155,16 @@ func (g *goalMachine) active() bool {
 }
 
 // statusForDisplay maps the empty zero status to "stopped" for frontends.
+// blockReasonText returns the last host-recorded block reason, if any.
+func (g *goalMachine) blockReasonText() string {
+	if g == nil {
+		return ""
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return strings.TrimSpace(g.block)
+}
+
 func (g *goalMachine) statusForDisplay() string {
 	g.mu.Lock()
 	defer g.mu.Unlock()

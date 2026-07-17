@@ -9,6 +9,7 @@ import (
 
 	"reasonix/internal/agent"
 	"reasonix/internal/planmode"
+	"reasonix/internal/provider"
 	"reasonix/internal/skill"
 )
 
@@ -119,6 +120,9 @@ func StripReferencedContextPrefix(content string) string {
 // synthetic user messages injected by the controller or agent loop (plan
 // approval, stream recovery, readiness retry, etc.). These should not be shown
 // in the chat UI.
+//
+// Prefer IsSyntheticUserProviderMessage when the full Message (with
+// SyntheticReason metadata) is available.
 func IsSyntheticUserMessage(content string) bool {
 	if trimmed := strings.TrimSpace(agent.StripTransientUserBlocks(content)); trimmed == planApprovedMessage {
 		return true
@@ -127,6 +131,15 @@ func IsSyntheticUserMessage(content string) bool {
 	// preview/title/turn-count derivations there share the exact same filter
 	// (#3653).
 	return agent.IsSyntheticUserText(content)
+}
+
+// IsSyntheticUserProviderMessage prefers SyntheticReason metadata, then legacy
+// text-prefix detection.
+func IsSyntheticUserProviderMessage(m provider.Message) bool {
+	if m.IsSyntheticUser() {
+		return true
+	}
+	return IsSyntheticUserMessage(m.Content)
 }
 
 // Compose applies the plan-mode marker to a turn's text when plan mode is on,

@@ -1083,6 +1083,12 @@ type AgentConfig struct {
 	// PlanModeReadOnlyCommands is retained for old config/session round trips. Main
 	// Plan bash calls now use the ordinary Permissions classifier and Sandbox.
 	PlanModeReadOnlyCommands []string `toml:"plan_mode_read_only_commands"`
+	// PromptLayout selects the new-session system/context split:
+	// "session_context" (default) keeps only static policy in system and pins
+	// workspace/env/memory/skills as a synthetic user message; "legacy_system"
+	// keeps the pre-upgrade layout. Illegal values are rejected at load time.
+	// Existing sessions ignore this and keep their RuntimeContract.
+	PromptLayout string `toml:"prompt_layout"`
 }
 
 // ProviderEntry declares a model provider instance. ContextWindow is the model's
@@ -1339,6 +1345,15 @@ type ToolsConfig struct {
 	BackgroundJobs        BackgroundJobsConfig `toml:"background_jobs"`
 	Search                SearchConfig         `toml:"search"`
 	Shell                 ShellConfig          `toml:"shell"`
+	// CapabilitySurface selects the new-session provider tool surface:
+	// "stable" (default) = capability-v2 proxy for optional tools;
+	// "legacy" keeps Full/Economy/Delivery dynamic schema behavior.
+	// Illegal values are rejected at load time. Existing sessions keep their
+	// RuntimeContract and never re-read this mid-session.
+	CapabilitySurface string `toml:"capability_surface"`
+	// EditProtocol selects the new-session file-edit protocol:
+	// "classic" (default) or "hashline" (Beta). Hashline requires stable surface.
+	EditProtocol string `toml:"edit_protocol"`
 }
 
 const (
