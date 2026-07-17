@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -709,6 +710,23 @@ func TestStartAvailableKeepsGoodServers(t *testing.T) {
 	failures := host.Failures()
 	if len(failures) != 1 || failures[0].Name != "bad" {
 		t.Fatalf("failures = %+v, want bad", failures)
+	}
+}
+
+func TestRecordFailurePreservesReverificationAction(t *testing.T) {
+	host := NewHost()
+	host.RecordFailure(Spec{Name: "changed", Type: "stdio"}, fmt.Errorf("connect changed MCP: %w", &identityChangedError{server: "changed"}))
+	host.RecordFailure(Spec{Name: "ordinary", Type: "stdio"}, errors.New("connection refused"))
+
+	failures := host.Failures()
+	if len(failures) != 2 {
+		t.Fatalf("failures = %+v, want two", failures)
+	}
+	if !failures[0].RequiresReverification {
+		t.Fatalf("identity drift failure = %+v, want re-verification action", failures[0])
+	}
+	if failures[1].RequiresReverification {
+		t.Fatalf("ordinary failure = %+v, must remain retryable", failures[1])
 	}
 }
 

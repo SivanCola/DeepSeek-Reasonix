@@ -2390,20 +2390,30 @@ function MCPSettingsServerRow({
 	busy,
 	onOpen,
 	onRetry,
+	onReverify,
 	onToggle,
 }: {
 	server: ServerView;
 	busy: boolean;
 	onOpen: () => void;
 	onRetry: () => void;
+	onReverify: () => void;
 	onToggle: (enabled: boolean) => void;
 }) {
 	const t = useT();
 	const lifecycle = mcpServerLifecycleActions(server);
 	const target = serverCommand(server);
-	const actionLabel = serverActionLabel(server, t);
+	const opensAuth = shouldOpenAuth(server);
+	const requiresReverification = !opensAuth && server.status !== "disabled" && Boolean(
+		server.requiresReverification || server.identityChanged || server.trustState === "changed",
+	);
+	const actionLabel = requiresReverification ? t("caps.reverify") : serverActionLabel(server, t);
 	const handlePrimaryAction = () => {
-		if (shouldOpenAuth(server)) {
+		if (requiresReverification) {
+			onReverify();
+			return;
+		}
+		if (opensAuth) {
 			openExternal((server.authUrl || "").trim());
 			return;
 		}
@@ -2436,7 +2446,7 @@ function MCPSettingsServerRow({
 				<ChevronRight className="cap-mcp-list-row__chevron" aria-hidden size={16} />
 			</button>
 			<div className="cap-mcp-list-row__actions">
-				{lifecycle.showRetryInRow ? (
+				{requiresReverification || lifecycle.showRetryInRow ? (
 					<button className="btn btn--small" disabled={busy} type="button" onClick={handlePrimaryAction}>
 						{actionLabel}
 					</button>
@@ -2465,6 +2475,7 @@ function MCPSettingsServerGroup({
 	busy,
 	onOpen,
 	onRetry,
+	onReverify,
 	onToggle,
 }: {
 	title: string;
@@ -2473,6 +2484,7 @@ function MCPSettingsServerGroup({
 	busy: boolean;
 	onOpen: (name: string) => void;
 	onRetry: (name: string) => void;
+	onReverify: (name: string) => void;
 	onToggle: (name: string, enabled: boolean) => void;
 }) {
 	if (servers.length === 0) return null;
@@ -2492,6 +2504,7 @@ function MCPSettingsServerGroup({
 						busy={busy}
 						onOpen={() => onOpen(server.name)}
 						onRetry={() => onRetry(server.name)}
+						onReverify={() => onReverify(server.name)}
 						onToggle={(enabled) => onToggle(server.name, enabled)}
 					/>
 				))}
@@ -2984,8 +2997,11 @@ export function MCPServersSettingsPage() {
 	const decideTrust = async (decision: "workspace" | "session") => {
 		if (!trustInspection) return;
 		const name = trustInspection.name;
+		const reconnectAfterTrust = servers?.some((server) => server.name === name && server.runtimeState === "issue") ?? false;
 		const ok = await mutate(() => app.SetMCPTrust(name, decision));
-		if (ok) setTrustInspection(null);
+		if (!ok) return;
+		setTrustInspection(null);
+		if (reconnectAfterTrust) await mutate(() => app.ReconnectMCPServer(name));
 	};
 	const refreshCatalog = async () => {
 		setBusy(true);
@@ -3064,6 +3080,7 @@ export function MCPServersSettingsPage() {
 						busy={actionBusy}
 						onOpen={(name) => setScreen({ kind: "detail", name })}
 						onRetry={(name) => void mutate(() => app.ReconnectMCPServer(name))}
+						onReverify={(name) => void inspectTrust(name)}
 						onToggle={(name, enabled) => void mutate(() => app.SetMCPServerEnabled(name, enabled))}
 					/>
 					<MCPSettingsServerGroup
@@ -3073,6 +3090,7 @@ export function MCPServersSettingsPage() {
 						busy={actionBusy}
 						onOpen={(name) => setScreen({ kind: "detail", name })}
 						onRetry={(name) => void mutate(() => app.ReconnectMCPServer(name))}
+						onReverify={(name) => void inspectTrust(name)}
 						onToggle={(name, enabled) => void mutate(() => app.SetMCPServerEnabled(name, enabled))}
 					/>
 				</>

@@ -6000,6 +6000,7 @@ type ServerView struct {
 	Resources                int                             `json:"resources"`
 	HasTools                 bool                            `json:"hasTools,omitempty"`
 	Error                    string                          `json:"error,omitempty"`
+	RequiresReverification   bool                            `json:"requiresReverification,omitempty"`
 	ToolList                 []ToolView                      `json:"toolList,omitempty"`
 	TrustedReadOnlyTools     []string                        `json:"trustedReadOnlyTools,omitempty"`
 	CallTimeoutSeconds       int                             `json:"callTimeoutSeconds,omitempty"`
@@ -6583,6 +6584,7 @@ func (a *App) mcpServersView() []ServerView {
 			seen[f.Name] = true
 			view := ServerView{
 				Name: f.Name, Transport: f.Transport, Status: "failed", RuntimeState: "issue", Error: f.Error,
+				RequiresReverification: f.RequiresReverification,
 			}
 			applyMCPTrustStatus(&view, securityByName[f.Name])
 			if p, ok := configured[f.Name]; ok {
@@ -7742,7 +7744,10 @@ func findMCPServerView(ctrl control.SessionAPI, name string) (ServerView, bool) 
 	}
 	for _, f := range ctrl.Host().Failures() {
 		if f.Name == name {
-			return ServerView{Name: f.Name, Transport: f.Transport, Status: "failed", Error: f.Error}, true
+			return ServerView{
+				Name: f.Name, Transport: f.Transport, Status: "failed", Error: f.Error,
+				RequiresReverification: f.RequiresReverification,
+			}, true
 		}
 	}
 	return ServerView{}, false

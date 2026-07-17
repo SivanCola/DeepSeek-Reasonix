@@ -651,9 +651,23 @@ type ServerStatus struct {
 
 // Failure records one MCP server that was configured but could not connect.
 type Failure struct {
-	Name      string
-	Transport string
-	Error     string
+	Name                   string
+	Transport              string
+	Error                  string
+	RequiresReverification bool
+}
+
+type identityChangedError struct {
+	server string
+}
+
+func (e *identityChangedError) Error() string {
+	return fmt.Sprintf("MCP server %q identity changed; blocked before process or network startup and requires explicit re-verification", e.server)
+}
+
+func requiresReverification(err error) bool {
+	var target *identityChangedError
+	return errors.As(err, &target)
 }
 
 // Servers returns a status summary per connected server, in connection order.
@@ -984,7 +998,10 @@ func (h *Host) RecordFailure(s Spec, err error) {
 	if tt == "" {
 		tt = "stdio"
 	}
-	f := Failure{Name: s.Name, Transport: tt, Error: summarizeFailureError(err)}
+	f := Failure{
+		Name: s.Name, Transport: tt, Error: summarizeFailureError(err),
+		RequiresReverification: requiresReverification(err),
+	}
 	for i := range h.failures {
 		if h.failures[i].Name == s.Name {
 			h.failures[i] = f
@@ -1357,7 +1374,7 @@ func start(lifeCtx, callCtx context.Context, s Spec) (*Client, error) {
 			// migrated above instead of blocking: eager and cache-miss servers
 			// must reach the credential-aware rollout too, not only paths that
 			// get as far as a post-handshake evaluation.
-			return nil, fmt.Errorf("MCP server %q identity changed; blocked before process or network startup and requires explicit re-verification", s.Name)
+			return nil, &identityChangedError{server: s.Name}
 		}
 	}
 	t, err := newTransport(lifeCtx, s)

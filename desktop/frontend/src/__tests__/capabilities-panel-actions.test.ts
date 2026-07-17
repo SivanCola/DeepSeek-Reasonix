@@ -355,19 +355,23 @@ console.log("capabilities panel MCP actions");
     cwd: "/tmp/reasonix-test",
   }];
   let trustDecision = "";
+  let reconnectCount = 0;
   let servers: ServerView[] = [{
     name: "github",
     transport: "stdio",
-    status: "connected",
+    status: "failed",
+    runtimeState: "issue",
     configured: true,
     autoStart: true,
-    tools: 3,
+    tools: 0,
     prompts: 0,
     resources: 0,
-    trustState: "changed",
-    identityChanged: true,
-    changedTools: ["issue_read"],
-    toolChanges: [{ name: "issue_read", kind: "reader_to_writer" }],
+    error: 'MCP server "github" identity changed; blocked before process or network startup and requires explicit re-verification',
+    requiresReverification: true,
+    trustState: "untrusted",
+    identityChanged: false,
+    changedTools: [],
+    toolChanges: [],
     isolationState: "unavailable_unconfined",
     isolationReason: "sandbox-exec is unavailable on PATH",
     toolList: [
@@ -400,6 +404,10 @@ console.log("capabilities panel MCP actions");
           trustDecision = decision;
           servers = servers.map((item) => ({ ...item, trustState: decision, identityChanged: false, changedTools: [], toolChanges: [] }));
         },
+        ReconnectMCPServer: async () => {
+          reconnectCount += 1;
+          servers = servers.map((item) => ({ ...item, status: "connected", runtimeState: "ready", requiresReverification: false, error: "" }));
+        },
         RefreshMCPCatalog: async () => ({ source: "cached", sequence: 3, offline: true, stale: true }),
       } as Partial<AppBindings> as AppBindings,
     },
@@ -409,7 +417,7 @@ console.log("capabilities panel MCP actions");
     root.render(React.createElement(LocaleProvider, null, React.createElement(MCPServersSettingsPage)));
     await flush();
   });
-  await waitFor("changed MCP trust badge", () => Boolean(document.body.textContent?.includes("Security changed")));
+  await waitFor("untrusted MCP badge", () => Boolean(document.body.textContent?.includes("Not trusted")));
   ok(document.body.textContent?.includes("Unisolated") ?? false, "server list keeps an unisolated warning visible");
   const refreshCatalog = findButton("Refresh catalog");
   if (!refreshCatalog) throw new Error("missing catalog refresh action");
@@ -419,14 +427,9 @@ console.log("capabilities panel MCP actions");
   });
   await waitFor("offline catalog result", () => Boolean(document.body.textContent?.includes("Catalog sequence 3")));
   ok(document.body.textContent?.includes("Offline verified snapshot") && document.body.textContent?.includes("older than 30 days"), "catalog refresh reports verified LKG fallback and staleness without disabling plugins");
-  const openServer = document.querySelector<HTMLButtonElement>(".cap-mcp-list-row__main");
-  if (!openServer) throw new Error("missing changed MCP details button");
-  await act(async () => {
-    openServer.click();
-    await flush();
-  });
   const reverify = findButton("Reverify");
-  if (!reverify) throw new Error("missing MCP reverify action");
+  if (!reverify) throw new Error("missing MCP reverify action in failed server row");
+  ok(!findButton("Retry"), "identity drift must not offer a retry action that will hit the same preflight block");
   await act(async () => {
     reverify.click();
     await flush();
@@ -443,8 +446,44 @@ console.log("capabilities panel MCP actions");
     trustWorkspace.click();
     await flush();
   });
-  await waitFor("workspace trust decision", () => trustDecision === "workspace");
+  await waitFor(
+    "workspace trust decision and reconnect",
+    () => trustDecision === "workspace" && reconnectCount === 1 && Boolean(document.querySelector('[data-status="connected"]')),
+  );
   ok(!document.querySelector('[role="dialog"]'), "successful trust closes the combined confirmation modal");
+  ok(Boolean(document.querySelector('[data-status="connected"]')), "failed server reconnects after explicit re-verification");
+
+  servers = servers.map((item) => ({
+    ...item,
+    status: "failed",
+    runtimeState: "issue",
+    error: "authentication required",
+    requiresReverification: true,
+    authStatus: "required",
+    authUrl: "https://mcp.example.test/authorize",
+  }));
+  await act(async () => {
+    refreshCatalog.click();
+    await flush();
+  });
+  await waitFor("authorization action", () => Boolean(findButton("Reauthorize")));
+  ok(!findButton("Reverify"), "an actionable OAuth failure must take precedence over identity re-verification");
+
+  servers = servers.map((item) => ({
+    ...item,
+    status: "failed",
+    runtimeState: "issue",
+    error: "connection refused",
+    requiresReverification: false,
+    authStatus: "none",
+    authUrl: "",
+  }));
+  await act(async () => {
+    refreshCatalog.click();
+    await flush();
+  });
+  await waitFor("ordinary retry action", () => Boolean(findButton("Retry")));
+  ok(!findButton("Reverify"), "ordinary startup failures must keep the retry action");
 
   await act(async () => {
     root.unmount();
