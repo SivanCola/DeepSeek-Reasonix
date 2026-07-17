@@ -14,6 +14,7 @@ import {
   isSafeHex,
   isThemeTokenKey,
   setBaseAppearance,
+  themePackKind,
 } from "../lib/themePack";
 import { applyTheme, getThemeStyle } from "../lib/theme";
 
@@ -22,6 +23,13 @@ const packSource = readFileSync(resolve(testDir, "../lib/themePack.ts"), "utf8")
 const stylesSource = readFileSync(resolve(testDir, "../styles.css"), "utf8");
 const appSource = readFileSync(resolve(testDir, "../App.tsx"), "utf8");
 const librarySource = readFileSync(resolve(testDir, "../components/ThemeLibrary.tsx"), "utf8");
+const gallerySource = readFileSync(resolve(testDir, "../components/ThemeGallery.tsx"), "utf8");
+const overviewSource = readFileSync(resolve(testDir, "../components/AppearanceOverview.tsx"), "utf8");
+const experienceSource = readFileSync(resolve(testDir, "../lib/themeExperience.ts"), "utf8");
+const bridgeSource = readFileSync(resolve(testDir, "../lib/bridge.ts"), "utf8");
+const localeEn = readFileSync(resolve(testDir, "../locales/en.ts"), "utf8");
+const localeZh = readFileSync(resolve(testDir, "../locales/zh.ts"), "utf8");
+const localeZhTW = readFileSync(resolve(testDir, "../locales/zh-TW.ts"), "utf8");
 
 let passed = 0;
 let failed = 0;
@@ -220,6 +228,71 @@ ok(appSource.includes("applyThemeScene"), "App wires scene from session content"
 ok(appSource.includes("ThemeBackground"), "App mounts background layer");
 ok(appSource.includes("setBaseAppearance"), "App seeds base appearance from config");
 ok(appSource.includes("ResetThemePack") || appSource.includes("theme reset") || appSource.includes('arg === "reset"'), "reset entry exists");
+
+console.log("\nofficial themes (kind/grouping/i18n)");
+
+// kind resolution with legacy fallback.
+ok(themePackKind({ kind: "official", builtin: true }) === "official", "kind official passthrough");
+ok(themePackKind({ kind: "base", builtin: true }) === "base", "kind base passthrough");
+ok(themePackKind({ kind: "user", builtin: false }) === "user", "kind user passthrough");
+ok(themePackKind({ builtin: true }) === "base", "legacy builtin=true falls back to base");
+ok(themePackKind({ builtin: false }) === "user", "legacy builtin=false falls back to user");
+
+// Redesigned experience: overview home + independent gallery (select ≠ apply).
+ok(overviewSource.includes("appearance-overview"), "appearance overview present");
+ok(overviewSource.includes("settings.themeGallery.browse"), "overview has browse themes");
+ok(overviewSource.includes("settings.themeGallery.disable") || overviewSource.includes("handleDisable"), "overview can disable pack");
+ok(gallerySource.includes('role="listbox"') || gallerySource.includes("role=\"listbox\""), "gallery cards are listbox options");
+ok(gallerySource.includes("settings.themeGallery.apply"), "apply lives in gallery detail");
+ok(gallerySource.includes("setSelected") || gallerySource.includes("onSelectPack"), "card click selects without applying");
+ok(gallerySource.includes("ActivateThemePack") || experienceSource.includes("activateThemePack"), "apply path uses activate API");
+ok(experienceSource.includes("ActivateBaseStyle") || experienceSource.includes("activateBaseStyle"), "base style API wired");
+ok(experienceSource.includes("selectedThemeId") || gallerySource.includes("selected"), "selection is frontend state");
+ok(gallerySource.includes("loading=\"lazy\"") || gallerySource.includes('loading="lazy"'), "gallery thumbs lazy-load");
+ok(gallerySource.includes("ThemePreviewSurface") || gallerySource.includes("theme-preview-surface"), "isolated detail preview");
+ok(gallerySource.includes("tempPreview") || gallerySource.includes("startGlobalPreview"), "temporary global preview entry");
+ok(bridgeSource.includes("GetThemeExperience"), "bridge exposes GetThemeExperience");
+ok(bridgeSource.includes("ActivateBaseStyle"), "bridge exposes ActivateBaseStyle");
+ok(bridgeSource.includes("DisableThemePack"), "bridge exposes DisableThemePack");
+
+// Gallery tabs: official / user / base (not two competing base pickers on home).
+ok(gallerySource.includes('"official"') && gallerySource.includes('"user"') && gallerySource.includes('"base"'), "gallery has three tabs");
+ok(!overviewSource.includes("theme-card-grid"), "overview no longer renders long style card grid");
+
+// Localized official names/descriptions in all three locales.
+const OFFICIAL_IDS = [
+  "official-rose-dawn",
+  "official-fortune-forge",
+  "official-crimson-horizon",
+  "official-sage-breeze",
+  "official-spark-notebook",
+  "official-violet-starlight",
+  "official-cyan-stage",
+  "official-noir-gold",
+];
+for (const id of OFFICIAL_IDS) {
+  for (const suffix of ["name", "description"]) {
+    const key = `settings.themes.official.${id}.${suffix}`;
+    ok(localeEn.includes(`"${key}"`), `en has ${key}`);
+    ok(localeZh.includes(`"${key}"`), `zh has ${key}`);
+    ok(localeZhTW.includes(`"${key}"`), `zh-TW has ${key}`);
+  }
+}
+for (const key of ["settings.themeGallery.title", "settings.themeGallery.apply", "settings.themeGallery.browse"]) {
+  ok(localeEn.includes(`"${key}"`) && localeZh.includes(`"${key}"`) && localeZhTW.includes(`"${key}"`), `gallery key ${key} in all locales`);
+}
+
+// Mock parity: 6 base + 8 official mock packs so browser dev matches the shell.
+ok((bridgeSource.match(/kind: "base"/g) || []).length === 6, "mock has 6 base packs");
+ok((bridgeSource.match(/kind: "official"/g) || []).length === 8, "mock has 8 official packs");
+
+// Pack overlay stays at :root — Workbench/Creation element-scoped auto-light
+// selectors must keep winning in their subtree (theme never overrides them).
+ok(!packSource.includes(".app--"), "pack overlay never targets layout-scoped selectors");
+ok(packSource.includes("prefers-color-scheme: light"), "auto mode follows system light/dark");
+
+// Keep ThemeLibrary available for any residual editor helpers.
+ok(librarySource.includes("ThemeLibrary") || librarySource.includes("ThemeEditor"), "ThemeLibrary module retained for editor/helpers");
 
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);

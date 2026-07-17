@@ -24,7 +24,10 @@ const (
 	themePackManifestName  = "theme.json"
 	themePackExt           = ".reasonix-theme"
 	themeStateFileName     = "desktop-theme-state.json"
-	themeStateSchemaVer    = 1
+	// Schema v2: activeThemeId may only reference official or user packs.
+	// Base style ids (graphite/…) live exclusively in desktop.theme_style.
+	themeStateSchemaVer    = 2
+	themeStateSchemaVerV1  = 1
 	themeDirName           = "themes"
 )
 
@@ -110,7 +113,7 @@ type ThemeDesktopState struct {
 	ActiveThemeID string `json:"activeThemeId,omitempty"`
 }
 
-// ThemePackView is the frontend-safe summary of a theme (built-in or user).
+// ThemePackView is the frontend-safe summary of a theme (base, official or user).
 type ThemePackView struct {
 	ID              string               `json:"id"`
 	Name            string               `json:"name"`
@@ -119,9 +122,13 @@ type ThemePackView struct {
 	License         string               `json:"license,omitempty"`
 	BaseStyle       string               `json:"baseStyle"`
 	Builtin         bool                 `json:"builtin"`
+	Kind            string               `json:"kind"` // "base" | "official" | "user"
 	Active          bool                 `json:"active"`
 	HasBackground   bool                 `json:"hasBackground"`
 	BackgroundURL   string               `json:"backgroundUrl,omitempty"`
+	PreviewURL      string               `json:"previewUrl,omitempty"`
+	NameKey         string               `json:"nameKey,omitempty"`
+	DescriptionKey  string               `json:"descriptionKey,omitempty"`
 	Tokens          ThemePackTokens      `json:"tokens"`
 	Recipes         ThemePackRecipes     `json:"recipes"`
 	Background      *ThemePackBackground `json:"background,omitempty"`
@@ -142,6 +149,18 @@ type ThemeActiveView struct {
 	ActiveThemeID string          `json:"activeThemeId,omitempty"`
 	Pack          *ThemePackView  `json:"pack,omitempty"`
 	SafeMode      bool            `json:"safeMode"`
+}
+
+// ThemeExperienceView is the unified appearance state for the redesigned
+// settings overview + theme gallery. One call supplies everything the UI needs
+// without inferring which style is actually effective.
+type ThemeExperienceView struct {
+	ThemeMode      string         `json:"themeMode"`                // auto|light|dark
+	BaseStyle      string         `json:"baseStyle"`                // graphite|aurora|…
+	EffectiveStyle string         `json:"effectiveStyle"`           // pack.baseStyle when pack active, else baseStyle
+	ActiveThemeID  string         `json:"activeThemeId,omitempty"`  // official/user only; never a base id
+	ActivePack     *ThemePackView `json:"activePack,omitempty"`
+	SafeMode       bool           `json:"safeMode"`
 }
 
 // ThemeSaveInput is the editor payload for creating/updating a user theme.
@@ -441,7 +460,7 @@ func builtinThemePacks() []ThemePackManifest {
 	return out
 }
 
-func manifestToView(m *ThemePackManifest, builtin, active bool, backgroundURL string) ThemePackView {
+func manifestToView(m *ThemePackManifest, kind string, active bool, backgroundURL, previewURL string) ThemePackView {
 	v := ThemePackView{
 		ID:            m.ID,
 		Name:          m.Name,
@@ -449,15 +468,21 @@ func manifestToView(m *ThemePackManifest, builtin, active bool, backgroundURL st
 		Description:   m.Description,
 		License:       m.License,
 		BaseStyle:     m.BaseStyle,
-		Builtin:       builtin,
+		Builtin:       kind != themeKindUser,
+		Kind:          kind,
 		Active:        active,
 		HasBackground: m.Background != nil && m.Background.Image != "",
 		BackgroundURL: backgroundURL,
+		PreviewURL:    previewURL,
 		Tokens: ThemePackTokens{
 			Light: copyStringMap(m.Tokens.Light),
 			Dark:  copyStringMap(m.Tokens.Dark),
 		},
 		Recipes: m.Recipes,
+	}
+	if kind == themeKindOfficial {
+		v.NameKey = "settings.themes.official." + m.ID + ".name"
+		v.DescriptionKey = "settings.themes.official." + m.ID + ".description"
 	}
 	if m.Background != nil {
 		bg := *m.Background

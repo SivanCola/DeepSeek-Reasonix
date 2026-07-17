@@ -1349,18 +1349,25 @@ export default function App() {
       hydrateDisplayMode(settings.displayMode);
       setSidebarImConnections(sidebarImConnectionsFromBot(settings.bot, t, runtimeStatus));
       setImTopicSources(sidebarImTopicSourcesFromBot(settings.bot, t));
-      // Load active theme pack after base appearance so overlay tokens win.
+      // Load unified theme experience after base appearance so pack tokens win.
       if (settings.safeMode === true) {
         clearThemePack();
       } else {
         try {
-          const active = await app.GetActiveThemePack();
+          const { loadThemeExperience, applyExperienceToDOM } = await import("./lib/themeExperience");
+          const exp = await loadThemeExperience();
           if (cancelled) return;
-          if (active?.pack) applyThemePack(active.pack);
-          else clearThemePack();
+          applyExperienceToDOM(exp);
         } catch (err) {
-          console.warn("theme pack load failed", err);
-          clearThemePack();
+          console.warn("theme experience load failed", err);
+          try {
+            const active = await app.GetActiveThemePack();
+            if (cancelled) return;
+            if (active?.pack) applyThemePack(active.pack);
+            else clearThemePack();
+          } catch {
+            clearThemePack();
+          }
         }
       }
     };

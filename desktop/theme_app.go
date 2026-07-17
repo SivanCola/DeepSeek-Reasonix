@@ -8,6 +8,8 @@ import (
 	"strings"
 	"sync"
 
+	"reasonix/internal/config"
+
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
@@ -55,28 +57,33 @@ func takePendingThemeImport() *stagedThemeImport {
 	return p
 }
 
-// ListThemePacks returns built-in directions plus user themes from the local library.
+// ListThemePacks returns base directions, official themes and user themes.
+// Base packs are never "active" as theme packs; their "active" flag means
+// "this is the configured base style and no pack is applied".
 func (a *App) ListThemePacks() ([]ThemePackView, error) {
 	themeMu.Lock()
 	defer themeMu.Unlock()
 
-	st := loadThemeDesktopState()
+	st := a.migrateThemeDesktopStateLocked()
 	activeID := resolveActiveThemeID(st)
-	// If the stored active theme is corrupt/missing, clear it and fall back.
-	if st.ActiveThemeID != "" && activeID == "" {
-		st.ActiveThemeID = ""
-		_ = saveThemeDesktopState(st)
-	}
+	baseStyle := a.desktopBaseStyleLocked()
 
 	safe := a.themeSafeMode()
 	var out []ThemePackView
 	for _, m := range builtinThemePacks() {
 		cp := m
-		v := manifestToView(&cp, true, !safe && activeID == m.ID, "")
-		out = append(out, v)
+		// Base "active" = no pack applied and this is the configured base style.
+		baseActive := !safe && activeID == "" && baseStyle == m.ID
+		out = append(out, manifestToView(&cp, themeKindBase, baseActive, "", ""))
 	}
 	if safe {
 		return out, nil
+	}
+	for _, ot := range officialThemes() {
+		m := ot.manifest
+		bgURL := officialAssetURL(m.ID, m.Background.Image)
+		pvURL := officialAssetURL(m.ID, officialPreviewName)
+		out = append(out, manifestToView(&m, themeKindOfficial, activeID == m.ID, bgURL, pvURL))
 	}
 	ids, err := listUserThemeIDs()
 	if err != nil {
@@ -91,24 +98,26 @@ func (a *App) ListThemePacks() ([]ThemePackView, error) {
 		if m.Background != nil && m.Background.Image != "" {
 			bgURL = themeBackgroundURL(id, m.Background.Image)
 		}
-		out = append(out, manifestToView(m, false, activeID == id, bgURL))
+		out = append(out, manifestToView(m, themeKindUser, activeID == id, bgURL, ""))
 	}
 	return out, nil
 }
 
 // GetActiveThemePack returns the currently enabled pack (nil pack when none / safe mode).
+// Safe mode suppresses pack application but does not delete the stored id.
 func (a *App) GetActiveThemePack() (ThemeActiveView, error) {
 	themeMu.Lock()
 	defer themeMu.Unlock()
 
 	view := ThemeActiveView{SafeMode: a.themeSafeMode()}
+	st := a.migrateThemeDesktopStateLocked()
 	if view.SafeMode {
+		// Do not clear ActiveThemeID — safe mode only blocks loading.
 		return view, nil
 	}
-	st := loadThemeDesktopState()
 	activeID := resolveActiveThemeID(st)
 	if st.ActiveThemeID != "" && activeID == "" {
-		// Auto-fallback Graphite: clear broken pointer.
+		// Broken or migrated-away pointer: clear so the next launch is clean.
 		st.ActiveThemeID = ""
 		_ = saveThemeDesktopState(st)
 		return view, nil
@@ -128,13 +137,61 @@ func (a *App) GetActiveThemePack() (ThemeActiveView, error) {
 	return view, nil
 }
 
+// GetThemeExperience returns the unified appearance state for overview + gallery.
+func (a *App) GetThemeExperience() (ThemeExperienceView, error) {
+	themeMu.Lock()
+	defer themeMu.Unlock()
+
+	safe := a.themeSafeMode()
+	// Migrate first so a v1 base-style activeThemeId lands in desktop.theme_style
+	// before we read appearance.
+	st := a.migrateThemeDesktopStateLocked()
+	themeMode, baseStyle := a.desktopAppearanceLocked()
+	view := ThemeExperienceView{
+		ThemeMode:      themeMode,
+		BaseStyle:      baseStyle,
+		EffectiveStyle: baseStyle,
+		SafeMode:       safe,
+	}
+	if safe {
+		return view, nil
+	}
+	activeID := resolveActiveThemeID(st)
+	if st.ActiveThemeID != "" && activeID == "" {
+		st.ActiveThemeID = ""
+		_ = saveThemeDesktopState(st)
+		return view, nil
+	}
+	if activeID == "" {
+		return view, nil
+	}
+	pack, err := a.loadThemeViewLocked(activeID, true)
+	if err != nil {
+		st.ActiveThemeID = ""
+		_ = saveThemeDesktopState(st)
+		return view, nil
+	}
+	view.ActiveThemeID = activeID
+	view.ActivePack = &pack
+	if pack.BaseStyle != "" {
+		view.EffectiveStyle = pack.BaseStyle
+	}
+	return view, nil
+}
+
 func (a *App) loadThemeViewLocked(id string, active bool) (ThemePackView, error) {
 	if isBuiltinThemeID(id) {
 		m := findBuiltinManifest(id)
 		if m == nil {
 			return ThemePackView{}, fmt.Errorf("unknown built-in theme %q", id)
 		}
-		return manifestToView(m, true, active, ""), nil
+		return manifestToView(m, themeKindBase, active, "", ""), nil
+	}
+	if ot := findOfficialTheme(id); ot != nil {
+		m := ot.manifest
+		bgURL := officialAssetURL(m.ID, m.Background.Image)
+		pvURL := officialAssetURL(m.ID, officialPreviewName)
+		return manifestToView(&m, themeKindOfficial, active, bgURL, pvURL), nil
 	}
 	m, err := loadUserThemeManifest(id)
 	if err != nil {
@@ -144,10 +201,11 @@ func (a *App) loadThemeViewLocked(id string, active bool) (ThemePackView, error)
 	if m.Background != nil && m.Background.Image != "" {
 		bgURL = themeBackgroundURL(id, m.Background.Image)
 	}
-	return manifestToView(m, false, active, bgURL), nil
+	return manifestToView(m, themeKindUser, active, bgURL, ""), nil
 }
 
-// ActivateThemePack enables a built-in or user theme. Empty id clears the pack.
+// ActivateThemePack enables an official or user theme. Empty id clears the pack
+// (same as DisableThemePack). Base style ids are rejected — use ActivateBaseStyle.
 func (a *App) ActivateThemePack(id string) error {
 	themeMu.Lock()
 	defer themeMu.Unlock()
@@ -156,14 +214,15 @@ func (a *App) ActivateThemePack(id string) error {
 	if a.themeSafeMode() && id != "" {
 		return fmt.Errorf("safe mode does not load external themes")
 	}
-	st := loadThemeDesktopState()
+	st := a.migrateThemeDesktopStateLocked()
 	if id == "" {
 		st.ActiveThemeID = ""
 		return saveThemeDesktopState(st)
 	}
 	if isBuiltinThemeID(id) {
-		// Activating a built-in pack means "use this base style as the active pack
-		// identity" — tokens stay empty so CSS falls through to style sheets.
+		return fmt.Errorf("base style %q is not a theme pack; use ActivateBaseStyle", id)
+	}
+	if findOfficialTheme(id) != nil {
 		st.ActiveThemeID = id
 		return saveThemeDesktopState(st)
 	}
@@ -174,9 +233,115 @@ func (a *App) ActivateThemePack(id string) error {
 	return saveThemeDesktopState(st)
 }
 
-// ResetThemePack clears the active theme pack (restore default / Graphite path).
+// ActivateBaseStyle writes the base color direction and clears any active pack.
+// Theme mode (auto/light/dark), fonts and zoom are preserved.
+func (a *App) ActivateBaseStyle(style string) error {
+	themeMu.Lock()
+	defer themeMu.Unlock()
+
+	style = strings.TrimSpace(strings.ToLower(style))
+	if !isBuiltinThemeID(style) {
+		return fmt.Errorf("unknown base style %q", style)
+	}
+	themeMode, _ := a.desktopAppearanceLocked()
+	if err := a.SetDesktopAppearance(themeMode, style); err != nil {
+		return err
+	}
+	st := a.migrateThemeDesktopStateLocked()
+	st.ActiveThemeID = ""
+	return saveThemeDesktopState(st)
+}
+
+// DisableThemePack clears the active pack and restores the configured base style.
+// Theme mode, fonts and zoom are preserved.
+func (a *App) DisableThemePack() error {
+	themeMu.Lock()
+	defer themeMu.Unlock()
+	st := a.migrateThemeDesktopStateLocked()
+	st.ActiveThemeID = ""
+	return saveThemeDesktopState(st)
+}
+
+// RestoreGraphiteAppearance disables any pack and sets base style to Graphite.
+// Theme mode, fonts and zoom are preserved.
+func (a *App) RestoreGraphiteAppearance() error {
+	themeMu.Lock()
+	defer themeMu.Unlock()
+	themeMode, _ := a.desktopAppearanceLocked()
+	if err := a.SetDesktopAppearance(themeMode, "graphite"); err != nil {
+		return err
+	}
+	st := a.migrateThemeDesktopStateLocked()
+	st.ActiveThemeID = ""
+	return saveThemeDesktopState(st)
+}
+
+// ResetThemePack is a compatibility wrapper for older frontends.
+// Prefer DisableThemePack or RestoreGraphiteAppearance.
 func (a *App) ResetThemePack() error {
-	return a.ActivateThemePack("")
+	return a.DisableThemePack()
+}
+
+// migrateThemeDesktopStateLocked upgrades v1 state and clears invalid ids.
+// Caller must hold themeMu. Side effect: may write desktop.theme_style when a
+// v1 base-style activeThemeId is migrated.
+func (a *App) migrateThemeDesktopStateLocked() ThemeDesktopState {
+	st := loadThemeDesktopState()
+	changed := false
+	id := strings.TrimSpace(st.ActiveThemeID)
+
+	// v1 stored base styles as activeThemeId — move them to desktop.theme_style.
+	if isBuiltinThemeID(id) {
+		themeMode, _ := a.desktopAppearanceLocked()
+		_ = a.SetDesktopAppearance(themeMode, id)
+		st.ActiveThemeID = ""
+		changed = true
+	} else if id != "" && resolveActiveThemeID(st) == "" {
+		// Missing / corrupt official or user pack — clear pointer only.
+		st.ActiveThemeID = ""
+		changed = true
+	}
+	if st.SchemaVersion != themeStateSchemaVer {
+		st.SchemaVersion = themeStateSchemaVer
+		changed = true
+	}
+	if changed {
+		_ = saveThemeDesktopState(st)
+		st = loadThemeDesktopState()
+	}
+	return st
+}
+
+func (a *App) desktopAppearanceLocked() (themeMode, baseStyle string) {
+	// Read-only snapshot of user desktop prefs. applyConfigOnly serializes
+	// writers; a concurrent save may race, which is acceptable for UI display.
+	cfg := config.LoadForEdit(config.UserConfigPath())
+	themeMode = cfg.DesktopTheme()
+	if themeMode == "" {
+		themeMode = "auto"
+	}
+	baseStyle = cfg.DesktopThemeStyle()
+	// Frontend maps legacy aliases; for API consumers normalize known bases.
+	if !isBuiltinThemeID(baseStyle) {
+		switch baseStyle {
+		case "ember":
+			baseStyle = "carbon"
+		case "midnight", "porcelain":
+			baseStyle = "nocturne"
+		case "sandstone", "linen":
+			baseStyle = "amber"
+		case "glacier":
+			baseStyle = "slate"
+		default:
+			baseStyle = "graphite"
+		}
+	}
+	return themeMode, baseStyle
+}
+
+func (a *App) desktopBaseStyleLocked() string {
+	_, style := a.desktopAppearanceLocked()
+	return style
 }
 
 // SaveThemePack creates or updates a user theme from the editor payload.
@@ -202,7 +367,7 @@ func (a *App) SaveThemePack(input ThemeSaveInput) (ThemePackView, error) {
 	if err := validateThemePackManifest(m); err != nil {
 		return ThemePackView{}, err
 	}
-	if isBuiltinThemeID(m.ID) {
+	if isReservedThemeID(m.ID) {
 		return ThemePackView{}, fmt.Errorf("built-in theme ids are reserved")
 	}
 
@@ -284,7 +449,7 @@ func (a *App) DeleteThemePack(id string) error {
 	defer themeMu.Unlock()
 
 	id = strings.TrimSpace(id)
-	if isBuiltinThemeID(id) {
+	if isReservedThemeID(id) {
 		return fmt.Errorf("built-in themes cannot be deleted")
 	}
 	if err := deleteUserTheme(id); err != nil {
@@ -298,7 +463,7 @@ func (a *App) DeleteThemePack(id string) error {
 	return nil
 }
 
-// CopyThemePack duplicates a built-in or user theme into a new user theme id.
+// CopyThemePack duplicates a base, official or user theme into a new user theme id.
 func (a *App) CopyThemePack(sourceID, newID, newName string) (ThemePackView, error) {
 	themeMu.Lock()
 	defer themeMu.Unlock()
@@ -308,7 +473,7 @@ func (a *App) CopyThemePack(sourceID, newID, newName string) (ThemePackView, err
 	}
 	sourceID = strings.TrimSpace(sourceID)
 	newID = strings.TrimSpace(newID)
-	if !themePackIDRe.MatchString(newID) || isBuiltinThemeID(newID) {
+	if !themePackIDRe.MatchString(newID) || isReservedThemeID(newID) {
 		return ThemePackView{}, fmt.Errorf("invalid new theme id")
 	}
 	if userThemeExists(newID) {
@@ -324,6 +489,16 @@ func (a *App) CopyThemePack(sourceID, newID, newName string) (ThemePackView, err
 		}
 		cp := *src
 		m = &cp
+	} else if ot := findOfficialTheme(sourceID); ot != nil {
+		// Copying an official theme embeds a private copy of its background so the
+		// duplicate becomes an ordinary editable user theme.
+		cp := ot.manifest
+		m = &cp
+		data, _, err := readOfficialAsset(sourceID, cp.Background.Image)
+		if err != nil {
+			return ThemePackView{}, fmt.Errorf("read official background: %w", err)
+		}
+		imageBytes = data
 	} else {
 		src, err := loadUserThemeManifest(sourceID)
 		if err != nil {
@@ -418,7 +593,7 @@ func (a *App) ImportThemePack(sourcePath string, replace bool) (ThemeImportResul
 	exists := userThemeExists(m.ID)
 	if exists && !replace {
 		// Stage for confirmation — do not delete staging; pending owns it.
-		pack := manifestToView(m, false, false, "")
+		pack := manifestToView(m, themeKindUser, false, "", "")
 		pendingID := setPendingThemeImport(m.ID, staging, pack)
 		return ThemeImportResult{
 			Pack:         pack,

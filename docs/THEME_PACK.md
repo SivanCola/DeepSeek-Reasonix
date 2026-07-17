@@ -13,6 +13,68 @@ image. They **cannot** run CSS, JavaScript, fonts, remote URLs, or SVG scripts.
 - Works with Classic / Workbench / Creation and `auto` / `light` / `dark`
 - **No** online marketplace, cloud sync, or script plugins
 
+## Theme experience (settings IA)
+
+Appearance is split into two surfaces (no third entry):
+
+1. **Appearance overview** — current theme summary, light/dark mode, **one** base-style
+   control, fonts and zoom. Primary action: **Browse themes**.
+2. **Theme gallery** — official / my themes / base styles tabs, select-to-inspect cards,
+   detail panel with isolated preview, temporary full-app preview, and a single
+   **Apply theme** action. Immersive preview is part of the gallery detail flow.
+
+State model (schema v2 of `desktop-theme-state.json`):
+
+| State | Meaning | Persistence |
+| --- | --- | --- |
+| `themeMode` | auto / light / dark | desktop config |
+| `baseStyle` | Graphite…Amber | desktop config (`theme_style`) |
+| `activeThemeId` | official or user pack only | `desktop-theme-state.json` |
+| `selectedThemeId` / `previewThemeId` | gallery selection / temp preview | frontend memory only |
+
+- `activeThemeId` **must not** store base style ids. Choosing a base style clears the pack.
+- Applying a pack keeps `baseStyle` as the disable/fallback value.
+- Light/dark mode is independent of the pack.
+
+## Theme kinds
+
+The gallery has three groups:
+
+| Kind | Source | Editable | Deletable | Exportable |
+| --- | --- | --- | --- | --- |
+| **Base styles** | Six visual directions (Graphite, Aurora, Slate, Carbon, Nocturne, Amber), token-less | no (duplicate first) | no | no |
+| **Official themes** | Eight read-only packs embedded in the installer (manifest + original background + thumbnail, MIT) | no (duplicate first) | no | no |
+| **User themes** | Created in the editor, duplicated, or imported as `.reasonix-theme` | yes | yes | yes |
+
+- All 14 built-in ids (6 base + 8 official) are **reserved**: save, import, copy-over
+  and delete all refuse collisions.
+- Activating an official theme stores only its id in `desktop-theme-state.json` —
+  assets are read from the embedded copy at runtime.
+- "Duplicate" on a base/official theme creates an ordinary editable user theme
+  (the official background is copied into the user library); the duplicate can
+  then be edited or exported.
+- v1 states that stored a base id as `activeThemeId` are migrated to `desktop.theme_style`
+  and cleared on load.
+
+### The eight official themes
+
+| ID | Name | Base style | Artwork |
+| --- | --- | --- | --- |
+| `official-rose-dawn` | Rose Dawn / 玫瑰晨光 | graphite | Ivory dawn, soft roses, original illustrated muse |
+| `official-fortune-forge` | Fortune Forge / 鸿运工坊 | amber | Vermilion/gold/jade workshop, original lucky programmer |
+| `official-crimson-horizon` | Crimson Horizon / 赤曜新城 | graphite | Coral-red future city skyline, no people |
+| `official-sage-breeze` | Sage Breeze / 鼠尾草清风 | slate | Cream paper, sage sprigs, original reader |
+| `official-spark-notebook` | Spark Notebook / 灵感手账 | aurora | Notebook grid with stationery, original anime adult |
+| `official-violet-starlight` | Violet Starlight / 紫曜星夜 | nocturne | Blue-violet starfield, butterflies, silhouette muse |
+| `official-cyan-stage` | Cyan Stage / 青岚舞台 | carbon | Cyan stage, light rings, original digital performer |
+| `official-noir-gold` | Noir Gold / 黑金序曲 | carbon | Black velvet, gold spotlights, original gentleman |
+
+Previews are shown inside the app's theme library (Settings → Appearance) from
+real Reasonix builds. **Screenshots of the app must not be imported as theme
+backgrounds.** Asset provenance, hashes and licence ledger:
+[THEME_ASSETS.md](./THEME_ASSETS.md) · generator scripts in
+`scripts/official-theme-art/` (procedural, fixed seeds, reproducible).
+
 ## Package format
 
 Distribute as a `.reasonix-theme` ZIP. The archive root may contain **only**:

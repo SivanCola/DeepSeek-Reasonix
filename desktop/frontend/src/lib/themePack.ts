@@ -32,6 +32,8 @@ export type ThemeContrastWarning = {
   suggest?: string;
 };
 
+export type ThemePackKind = "base" | "official" | "user";
+
 export type ThemePackView = {
   id: string;
   name: string;
@@ -40,14 +42,28 @@ export type ThemePackView = {
   license?: string;
   baseStyle: string;
   builtin: boolean;
+  /** New in the official-themes release; old backends/mocks may omit it. */
+  kind?: ThemePackKind;
   active: boolean;
   hasBackground: boolean;
   backgroundUrl?: string;
+  previewUrl?: string;
+  nameKey?: string;
+  descriptionKey?: string;
   tokens: ThemePackTokens;
   recipes: ThemePackRecipes;
   background?: ThemePackBackground | null;
   contrastWarnings?: ThemeContrastWarning[];
 };
+
+/**
+ * Resolve the pack group. Older mocks/responses without `kind` fall back to
+ * the historical builtin flag: builtin ? "base" : "user".
+ */
+export function themePackKind(pack: Pick<ThemePackView, "kind" | "builtin">): ThemePackKind {
+  if (pack.kind === "base" || pack.kind === "official" || pack.kind === "user") return pack.kind;
+  return pack.builtin ? "base" : "user";
+}
 
 export type ThemeActiveView = {
   activeThemeId?: string;

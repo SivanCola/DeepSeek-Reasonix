@@ -42,7 +42,7 @@ func loadThemeDesktopState() ThemeDesktopState {
 		return ThemeDesktopState{SchemaVersion: themeStateSchemaVer}
 	}
 	if st.SchemaVersion == 0 {
-		st.SchemaVersion = themeStateSchemaVer
+		st.SchemaVersion = themeStateSchemaVerV1
 	}
 	st.ActiveThemeID = strings.TrimSpace(st.ActiveThemeID)
 	return st
@@ -51,6 +51,10 @@ func loadThemeDesktopState() ThemeDesktopState {
 func saveThemeDesktopState(st ThemeDesktopState) error {
 	st.SchemaVersion = themeStateSchemaVer
 	st.ActiveThemeID = strings.TrimSpace(st.ActiveThemeID)
+	// Hard rule for v2: never persist base style ids as the active pack.
+	if isBuiltinThemeID(st.ActiveThemeID) {
+		st.ActiveThemeID = ""
+	}
 	dir := filepath.Dir(themeStatePath())
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
@@ -73,7 +77,7 @@ func loadUserThemeManifest(id string) (*ThemePackManifest, error) {
 	if !themePackIDRe.MatchString(id) {
 		return nil, fmt.Errorf("invalid theme id")
 	}
-	if isBuiltinThemeID(id) {
+	if isReservedThemeID(id) {
 		return nil, fmt.Errorf("built-in theme %q has no user directory", id)
 	}
 	data, err := os.ReadFile(themeManifestPath(id))
@@ -98,7 +102,7 @@ func listUserThemeIDs() ([]string, error) {
 			continue
 		}
 		id := e.Name()
-		if !themePackIDRe.MatchString(id) || isBuiltinThemeID(id) {
+		if !themePackIDRe.MatchString(id) || isReservedThemeID(id) {
 			continue
 		}
 		if _, err := os.Stat(themeManifestPath(id)); err != nil {
@@ -121,7 +125,7 @@ func publishThemeDir(id, stagingDir string, replace bool) error {
 	if !themePackIDRe.MatchString(id) {
 		return fmt.Errorf("invalid theme id")
 	}
-	if isBuiltinThemeID(id) {
+	if isReservedThemeID(id) {
 		return fmt.Errorf("built-in themes cannot be overwritten")
 	}
 	dest := themeDir(id)
@@ -278,7 +282,7 @@ func deleteUserTheme(id string) error {
 	if !themePackIDRe.MatchString(id) {
 		return fmt.Errorf("invalid theme id")
 	}
-	if isBuiltinThemeID(id) {
+	if isReservedThemeID(id) {
 		return fmt.Errorf("built-in themes cannot be deleted")
 	}
 	dest := themeDir(id)
@@ -294,16 +298,18 @@ func deleteUserTheme(id string) error {
 	return os.RemoveAll(dest)
 }
 
+// resolveActiveThemeID returns a loadable official/user theme id, or empty.
+// Base style ids are never active packs under schema v2.
 func resolveActiveThemeID(st ThemeDesktopState) string {
 	id := strings.TrimSpace(st.ActiveThemeID)
-	if id == "" {
+	if id == "" || isBuiltinThemeID(id) {
 		return ""
 	}
-	if isBuiltinThemeID(id) {
+	if isOfficialThemeID(id) {
 		return id
 	}
 	if userThemeExists(id) {
-		// Quick re-validate; corrupt themes fall back to none (caller falls to Graphite).
+		// Quick re-validate; corrupt themes fall back to none (caller falls to base style).
 		if _, err := loadUserThemeManifest(id); err == nil {
 			return id
 		}
@@ -382,7 +388,7 @@ func writeThemeStaging(m *ThemePackManifest, imagePath string, imageBytes []byte
 func resolveThemeImageAbs(id, imageName string) (string, error) {
 	id = strings.TrimSpace(id)
 	imageName = filepath.Base(strings.TrimSpace(imageName))
-	if !themePackIDRe.MatchString(id) || isBuiltinThemeID(id) {
+	if !themePackIDRe.MatchString(id) || isReservedThemeID(id) {
 		return "", fmt.Errorf("invalid theme id")
 	}
 	if !themePackImageRe.MatchString(imageName) {

@@ -18,6 +18,7 @@ import {
   draftPackView,
   emptyThemeTokens,
   isSafeHex,
+  themePackKind,
   themeTokenKeys,
 } from "../lib/themePack";
 import { useToast } from "../lib/toast";
@@ -161,8 +162,8 @@ export function ThemeLibrarySection() {
   };
 
   const openEdit = (pack: ThemePackView) => {
-    if (pack.builtin) {
-      // Editing a built-in means copying into a user theme.
+    if (themePackKind(pack) !== "user") {
+      // Editing a base style means copying into a user theme.
       const state = packToEditor(pack, "create");
       setEditor(state);
       schedulePreview(state);
@@ -222,8 +223,8 @@ export function ThemeLibrarySection() {
   };
 
   const remove = async (pack: ThemePackView) => {
-    if (pack.builtin) return;
-    const ok = window.confirm(t("settings.themeLibrary.confirmDelete", { name: pack.name }));
+    if (themePackKind(pack) !== "user") return;
+    const ok = window.confirm(t("settings.themeLibrary.confirmDelete", { name: packDisplayName(pack, t) }));
     if (!ok) return;
     setBusy(true);
     try {
@@ -331,6 +332,18 @@ export function ThemeLibrarySection() {
   };
 
   const activeId = useMemo(() => packs.find((p) => p.active)?.id ?? "", [packs]);
+  const groups = useMemo(() => {
+    const official: ThemePackView[] = [];
+    const base: ThemePackView[] = [];
+    const user: ThemePackView[] = [];
+    for (const p of packs) {
+      const kind = themePackKind(p);
+      if (kind === "official") official.push(p);
+      else if (kind === "base") base.push(p);
+      else user.push(p);
+    }
+    return { official, base, user };
+  }, [packs]);
 
   return (
     <div className="theme-library">
@@ -349,21 +362,69 @@ export function ThemeLibrarySection() {
       {loading ? (
         <div className="theme-lib-card__sub">{t("settings.themeLibrary.loading")}</div>
       ) : (
-        <div className="theme-library__grid">
-          {packs.map((pack) => (
-            <ThemeLibCard
-              key={pack.id}
-              pack={pack}
-              active={pack.id === activeId}
-              busy={busy}
-              onActivate={() => void activate(pack)}
-              onEdit={() => openEdit(pack)}
-              onCopy={() => void openCopy(pack)}
-              onExport={() => void doExport(pack)}
-              onDelete={() => void remove(pack)}
-            />
-          ))}
-        </div>
+        <>
+          {groups.official.length > 0 && (
+            <section className="theme-library__group" data-group="official">
+              <h4 className="theme-library__heading">{t("settings.themeLibrary.groupOfficial")}</h4>
+              <div className="theme-library__grid theme-library__grid--official">
+                {groups.official.map((pack) => (
+                  <OfficialThemeCard
+                    key={pack.id}
+                    pack={pack}
+                    active={pack.id === activeId}
+                    busy={busy}
+                    onActivate={() => void activate(pack)}
+                    onCopy={() => void openCopy(pack)}
+                  />
+                ))}
+              </div>
+            </section>
+          )}
+
+          {groups.base.length > 0 && (
+            <section className="theme-library__group" data-group="base">
+              <h4 className="theme-library__heading">{t("settings.themeLibrary.groupBase")}</h4>
+              <div className="theme-library__grid theme-library__grid--base">
+                {groups.base.map((pack) => (
+                  <ThemeLibCard
+                    key={pack.id}
+                    pack={pack}
+                    active={pack.id === activeId}
+                    busy={busy}
+                    onActivate={() => void activate(pack)}
+                    onEdit={() => openEdit(pack)}
+                    onCopy={() => void openCopy(pack)}
+                    onExport={() => void doExport(pack)}
+                    onDelete={() => void remove(pack)}
+                  />
+                ))}
+              </div>
+            </section>
+          )}
+
+          <section className="theme-library__group" data-group="user">
+            <h4 className="theme-library__heading">{t("settings.themeLibrary.groupUser")}</h4>
+            {groups.user.length === 0 ? (
+              <div className="theme-lib-card__sub">{t("settings.themeLibrary.emptyUser")}</div>
+            ) : (
+              <div className="theme-library__grid">
+                {groups.user.map((pack) => (
+                  <ThemeLibCard
+                    key={pack.id}
+                    pack={pack}
+                    active={pack.id === activeId}
+                    busy={busy}
+                    onActivate={() => void activate(pack)}
+                    onEdit={() => openEdit(pack)}
+                    onCopy={() => void openCopy(pack)}
+                    onExport={() => void doExport(pack)}
+                    onDelete={() => void remove(pack)}
+                  />
+                ))}
+              </div>
+            )}
+          </section>
+        </>
       )}
 
       {editor && (
@@ -375,6 +436,70 @@ export function ThemeLibrarySection() {
           onSave={(activateAfter) => void saveEditor(activateAfter)}
         />
       )}
+    </div>
+  );
+}
+
+function packDisplayName(pack: ThemePackView, t: (key: never, vars?: Record<string, string | number>) => string): string {
+  return pack.nameKey ? t(pack.nameKey as never) : pack.name;
+}
+
+function packDescription(pack: ThemePackView, t: (key: never, vars?: Record<string, string | number>) => string): string {
+  if (pack.descriptionKey) return t(pack.descriptionKey as never);
+  return pack.description || "";
+}
+
+function OfficialThemeCard({
+  pack,
+  active,
+  busy,
+  onActivate,
+  onCopy,
+}: {
+  pack: ThemePackView;
+  active: boolean;
+  busy: boolean;
+  onActivate: () => void;
+  onCopy: () => void;
+}) {
+  const t = useT();
+  const name = packDisplayName(pack, t);
+  const desc = packDescription(pack, t);
+  const lightBg = pack.tokens?.light?.bg || "#f4f3ef";
+  const darkBg = pack.tokens?.dark?.bg || "#0c0d10";
+  const accent = pack.tokens?.dark?.accent || pack.tokens?.light?.accent || "#ff6a3d";
+
+  return (
+    <div className={`theme-lib-card theme-lib-card--official${active ? " theme-lib-card--on" : ""}`}>
+      <div className="theme-lib-card__thumb theme-lib-card__thumb--img">
+        {pack.previewUrl ? (
+          <img src={pack.previewUrl} alt={name} loading="lazy" decoding="async" />
+        ) : (
+          <div className="theme-lib-card__thumb-fallback" style={{ background: `linear-gradient(120deg, ${lightBg} 0%, ${lightBg} 55%, ${accent} 140%)` }} />
+        )}
+      </div>
+      <div className="theme-lib-card__meta">
+        <div className="theme-lib-card__name">
+          {name} {active ? <Check size={12} style={{ display: "inline", verticalAlign: "middle" }} /> : null}
+        </div>
+        {desc ? <div className="theme-lib-card__desc">{desc}</div> : null}
+        <div className="theme-lib-card__sub">
+          {pack.license || "MIT"} · {pack.author || "Reasonix Contributors"}
+        </div>
+      </div>
+      <div className="theme-lib-card__swatches" aria-hidden="true">
+        <span className="theme-lib-card__swatch" style={{ background: lightBg }} />
+        <span className="theme-lib-card__swatch" style={{ background: darkBg }} />
+        <span className="theme-lib-card__swatch" style={{ background: accent }} />
+      </div>
+      <div className="theme-lib-card__actions">
+        <button type="button" className="btn btn--small btn--primary" disabled={busy || active} onClick={onActivate}>
+          {active ? t("settings.themeLibrary.active") : t("settings.themeLibrary.enable")}
+        </button>
+        <button type="button" className="btn btn--small" disabled={busy} onClick={onCopy}>
+          <Copy size={12} /> {t("settings.themeLibrary.copyFrom")}
+        </button>
+      </div>
     </div>
   );
 }
@@ -399,6 +524,7 @@ function ThemeLibCard({
   onDelete: () => void;
 }) {
   const t = useT();
+  const kind = themePackKind(pack);
   const lightBg = pack.tokens?.light?.bg || "#f4f3ef";
   const darkBg = pack.tokens?.dark?.bg || "#0c0d10";
   const accent = pack.tokens?.dark?.accent || pack.tokens?.light?.accent || "#ff6a3d";
@@ -414,7 +540,7 @@ function ThemeLibCard({
           {pack.name} {active ? <Check size={12} style={{ display: "inline", verticalAlign: "middle" }} /> : null}
         </div>
         <div className="theme-lib-card__sub">
-          {pack.builtin ? t("settings.themeLibrary.builtin") : pack.author || t("settings.themeLibrary.userTheme")}
+          {kind === "base" ? t("settings.themeLibrary.builtin") : pack.author || t("settings.themeLibrary.userTheme")}
           {" · "}
           {pack.baseStyle}
         </div>
@@ -428,19 +554,23 @@ function ThemeLibCard({
         <button type="button" className="btn btn--small btn--primary" disabled={busy || active} onClick={onActivate}>
           {active ? t("settings.themeLibrary.active") : t("settings.themeLibrary.enable")}
         </button>
-        <button type="button" className="btn btn--small" disabled={busy} onClick={onEdit} title={t("settings.themeLibrary.edit")}>
-          <Pencil size={12} />
-        </button>
+        {kind === "user" && (
+          <button type="button" className="btn btn--small" disabled={busy} onClick={onEdit} title={t("settings.themeLibrary.edit")}>
+            <Pencil size={12} />
+          </button>
+        )}
         <button type="button" className="btn btn--small" disabled={busy} onClick={onCopy} title={t("settings.themeLibrary.copy")}>
           <Copy size={12} />
         </button>
-        <button type="button" className="btn btn--small" disabled={busy} onClick={onExport} title={t("settings.themeLibrary.export")}>
-          <Download size={12} />
-        </button>
-        {!pack.builtin && (
-          <button type="button" className="btn btn--small" disabled={busy} onClick={onDelete} title={t("settings.themeLibrary.delete")}>
-            <Trash2 size={12} />
-          </button>
+        {kind === "user" && (
+          <>
+            <button type="button" className="btn btn--small" disabled={busy} onClick={onExport} title={t("settings.themeLibrary.export")}>
+              <Download size={12} />
+            </button>
+            <button type="button" className="btn btn--small" disabled={busy} onClick={onDelete} title={t("settings.themeLibrary.delete")}>
+              <Trash2 size={12} />
+            </button>
+          </>
         )}
       </div>
     </div>

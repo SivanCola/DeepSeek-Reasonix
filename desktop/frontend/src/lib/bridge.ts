@@ -369,7 +369,11 @@ export interface AppBindings {
   SetDesktopAppearance(theme: string, style: string): Promise<void>;
   ListThemePacks(): Promise<import("./themePack").ThemePackView[]>;
   GetActiveThemePack(): Promise<import("./themePack").ThemeActiveView>;
+  GetThemeExperience(): Promise<import("./themeExperience").ThemeExperienceView>;
   ActivateThemePack(id: string): Promise<void>;
+  ActivateBaseStyle(style: string): Promise<void>;
+  DisableThemePack(): Promise<void>;
+  RestoreGraphiteAppearance(): Promise<void>;
   ResetThemePack(): Promise<void>;
   SaveThemePack(input: import("./themePack").ThemeSaveInput): Promise<import("./themePack").ThemePackView>;
   DeleteThemePack(id: string): Promise<void>;
@@ -982,13 +986,23 @@ function makeMockApp(): AppBindings {
   let mockEffort = "auto";
   let mockDesktopZoomFactor = 1.0;
   let mockActiveThemeId = "";
+  let mockBaseStyle = "graphite";
+  let mockThemeMode: "auto" | "light" | "dark" = "dark";
   let mockThemePacks: import("./themePack").ThemePackView[] = [
-    { id: "graphite", name: "Graphite", author: "Reasonix", baseStyle: "graphite", builtin: true, active: false, hasBackground: false, tokens: {}, recipes: { density: "comfortable", corners: "soft" } },
-    { id: "aurora", name: "Aurora", author: "Reasonix", baseStyle: "aurora", builtin: true, active: false, hasBackground: false, tokens: {}, recipes: { density: "comfortable", corners: "soft" } },
-    { id: "slate", name: "Slate", author: "Reasonix", baseStyle: "slate", builtin: true, active: false, hasBackground: false, tokens: {}, recipes: { density: "comfortable", corners: "soft" } },
-    { id: "carbon", name: "Carbon", author: "Reasonix", baseStyle: "carbon", builtin: true, active: false, hasBackground: false, tokens: {}, recipes: { density: "comfortable", corners: "soft" } },
-    { id: "nocturne", name: "Nocturne", author: "Reasonix", baseStyle: "nocturne", builtin: true, active: false, hasBackground: false, tokens: {}, recipes: { density: "comfortable", corners: "soft" } },
-    { id: "amber", name: "Amber", author: "Reasonix", baseStyle: "amber", builtin: true, active: false, hasBackground: false, tokens: {}, recipes: { density: "comfortable", corners: "soft" } },
+    { id: "graphite", name: "Graphite", author: "Reasonix", baseStyle: "graphite", builtin: true, kind: "base", active: false, hasBackground: false, tokens: {}, recipes: { density: "comfortable", corners: "soft" } },
+    { id: "aurora", name: "Aurora", author: "Reasonix", baseStyle: "aurora", builtin: true, kind: "base", active: false, hasBackground: false, tokens: {}, recipes: { density: "comfortable", corners: "soft" } },
+    { id: "slate", name: "Slate", author: "Reasonix", baseStyle: "slate", builtin: true, kind: "base", active: false, hasBackground: false, tokens: {}, recipes: { density: "comfortable", corners: "soft" } },
+    { id: "carbon", name: "Carbon", author: "Reasonix", baseStyle: "carbon", builtin: true, kind: "base", active: false, hasBackground: false, tokens: {}, recipes: { density: "comfortable", corners: "soft" } },
+    { id: "nocturne", name: "Nocturne", author: "Reasonix", baseStyle: "nocturne", builtin: true, kind: "base", active: false, hasBackground: false, tokens: {}, recipes: { density: "comfortable", corners: "soft" } },
+    { id: "amber", name: "Amber", author: "Reasonix", baseStyle: "amber", builtin: true, kind: "base", active: false, hasBackground: false, tokens: {}, recipes: { density: "comfortable", corners: "soft" } },
+    { id: "official-rose-dawn", name: "Rose Dawn", author: "Reasonix Contributors", license: "MIT", baseStyle: "graphite", builtin: true, kind: "official", active: false, hasBackground: true, nameKey: "settings.themes.official.official-rose-dawn.name", descriptionKey: "settings.themes.official.official-rose-dawn.description", tokens: { light: { bg: "#FFF7F8", fg: "#3A252C", accent: "#B43F65" }, dark: { bg: "#1E1419", fg: "#FFF3F6", accent: "#E26D91" } }, recipes: { density: "comfortable", corners: "round" }, background: { focusX: 0.72, focusY: 0.43, safeArea: "left", homeOpacity: 1, taskOpacity: 0.2, overlayStrength: 0.68 } },
+    { id: "official-fortune-forge", name: "Fortune Forge", author: "Reasonix Contributors", license: "MIT", baseStyle: "amber", builtin: true, kind: "official", active: false, hasBackground: true, nameKey: "settings.themes.official.official-fortune-forge.name", descriptionKey: "settings.themes.official.official-fortune-forge.description", tokens: { light: { bg: "#FFF8E8", fg: "#382116", accent: "#A92D22" }, dark: { bg: "#1D140D", fg: "#FFF2D1", accent: "#E8AD38" } }, recipes: { density: "comfortable", corners: "soft" }, background: { focusX: 0.74, focusY: 0.44, safeArea: "left", homeOpacity: 1, taskOpacity: 0.2, overlayStrength: 0.7 } },
+    { id: "official-crimson-horizon", name: "Crimson Horizon", author: "Reasonix Contributors", license: "MIT", baseStyle: "graphite", builtin: true, kind: "official", active: false, hasBackground: true, nameKey: "settings.themes.official.official-crimson-horizon.name", descriptionKey: "settings.themes.official.official-crimson-horizon.description", tokens: { light: { bg: "#FFF8F7", fg: "#301D1D", accent: "#B92B38" }, dark: { bg: "#190D11", fg: "#FFF1F2", accent: "#FF6772" } }, recipes: { density: "comfortable", corners: "soft" }, background: { focusX: 0.75, focusY: 0.45, safeArea: "left", homeOpacity: 0.98, taskOpacity: 0.22, overlayStrength: 0.66 } },
+    { id: "official-sage-breeze", name: "Sage Breeze", author: "Reasonix Contributors", license: "MIT", baseStyle: "slate", builtin: true, kind: "official", active: false, hasBackground: true, nameKey: "settings.themes.official.official-sage-breeze.name", descriptionKey: "settings.themes.official.official-sage-breeze.description", tokens: { light: { bg: "#F7F7EF", fg: "#26332D", accent: "#47735F" }, dark: { bg: "#101814", fg: "#EEF6F0", accent: "#84CBA7" } }, recipes: { density: "comfortable", corners: "soft" }, background: { focusX: 0.73, focusY: 0.44, safeArea: "left", homeOpacity: 1, taskOpacity: 0.2, overlayStrength: 0.68 } },
+    { id: "official-spark-notebook", name: "Spark Notebook", author: "Reasonix Contributors", license: "MIT", baseStyle: "aurora", builtin: true, kind: "official", active: false, hasBackground: true, nameKey: "settings.themes.official.official-spark-notebook.name", descriptionKey: "settings.themes.official.official-spark-notebook.description", tokens: { light: { bg: "#FFF9ED", fg: "#2B2F35", accent: "#007B78" }, dark: { bg: "#14171A", fg: "#F8F5E9", accent: "#42D1C6" } }, recipes: { density: "comfortable", corners: "round" }, background: { focusX: 0.74, focusY: 0.46, safeArea: "left", homeOpacity: 0.98, taskOpacity: 0.2, overlayStrength: 0.68 } },
+    { id: "official-violet-starlight", name: "Violet Starlight", author: "Reasonix Contributors", license: "MIT", baseStyle: "nocturne", builtin: true, kind: "official", active: false, hasBackground: true, nameKey: "settings.themes.official.official-violet-starlight.name", descriptionKey: "settings.themes.official.official-violet-starlight.description", tokens: { light: { bg: "#F7F4FF", fg: "#251F3C", accent: "#6242C7" }, dark: { bg: "#0C1022", fg: "#F4F2FF", accent: "#9B86FF" } }, recipes: { density: "comfortable", corners: "round" }, background: { focusX: 0.73, focusY: 0.44, safeArea: "left", homeOpacity: 0.96, taskOpacity: 0.18, overlayStrength: 0.72 } },
+    { id: "official-cyan-stage", name: "Cyan Stage", author: "Reasonix Contributors", license: "MIT", baseStyle: "carbon", builtin: true, kind: "official", active: false, hasBackground: true, nameKey: "settings.themes.official.official-cyan-stage.name", descriptionKey: "settings.themes.official.official-cyan-stage.description", tokens: { light: { bg: "#F1FCFD", fg: "#173238", accent: "#007C92" }, dark: { bg: "#07181D", fg: "#E9FCFF", accent: "#37D7E4" } }, recipes: { density: "comfortable", corners: "round" }, background: { focusX: 0.74, focusY: 0.45, safeArea: "left", homeOpacity: 0.96, taskOpacity: 0.18, overlayStrength: 0.72 } },
+    { id: "official-noir-gold", name: "Noir Gold", author: "Reasonix Contributors", license: "MIT", baseStyle: "carbon", builtin: true, kind: "official", active: false, hasBackground: true, nameKey: "settings.themes.official.official-noir-gold.name", descriptionKey: "settings.themes.official.official-noir-gold.description", tokens: { light: { bg: "#FCF8EE", fg: "#2A241B", accent: "#7A5A16" }, dark: { bg: "#0D0B09", fg: "#F8F1DF", accent: "#D9B45B" } }, recipes: { density: "comfortable", corners: "soft" }, background: { focusX: 0.73, focusY: 0.43, safeArea: "left", homeOpacity: 0.94, taskOpacity: 0.18, overlayStrength: 0.74 } },
   ];
   const day = 86_400_000;
   const t0 = Date.now();
@@ -3686,16 +3700,62 @@ function makeMockApp(): AppBindings {
         async SetDesktopAppearance(theme: string, style: string) {
           settings.desktopTheme = theme === "auto" || theme === "light" ? theme : "dark";
           settings.desktopThemeStyle = style;
+          mockThemeMode = settings.desktopTheme as "auto" | "light" | "dark";
+          if (["graphite","aurora","slate","carbon","nocturne","amber"].includes(style)) {
+            mockBaseStyle = style;
+          }
         },
         async ListThemePacks() {
-          return mockThemePacks.map((p) => ({ ...p, active: p.id === mockActiveThemeId, tokens: { light: { ...(p.tokens.light || {}) }, dark: { ...(p.tokens.dark || {}) } }, recipes: { ...p.recipes } }));
+          const baseActive = !mockActiveThemeId;
+          return mockThemePacks.map((p) => {
+            const kind = p.kind || (p.builtin ? "base" : "user");
+            let active = false;
+            if (kind === "base") active = baseActive && p.id === mockBaseStyle;
+            else active = p.id === mockActiveThemeId;
+            return { ...p, active, tokens: { light: { ...(p.tokens.light || {}) }, dark: { ...(p.tokens.dark || {}) } }, recipes: { ...p.recipes } };
+          });
         },
         async GetActiveThemePack() {
-          const pack = mockActiveThemeId ? mockThemePacks.find((p) => p.id === mockActiveThemeId) : null;
-          return { activeThemeId: mockActiveThemeId || "", pack: pack ? { ...pack, active: true } : null, safeMode: false };
+          // Base style ids are never active packs in the redesigned model.
+          const pack = mockActiveThemeId && !["graphite","aurora","slate","carbon","nocturne","amber"].includes(mockActiveThemeId)
+            ? mockThemePacks.find((p) => p.id === mockActiveThemeId)
+            : null;
+          return { activeThemeId: pack ? mockActiveThemeId : "", pack: pack ? { ...pack, active: true } : null, safeMode: false };
+        },
+        async GetThemeExperience() {
+          const pack = mockActiveThemeId && !["graphite","aurora","slate","carbon","nocturne","amber"].includes(mockActiveThemeId)
+            ? mockThemePacks.find((p) => p.id === mockActiveThemeId)
+            : null;
+          return {
+            themeMode: mockThemeMode,
+            baseStyle: mockBaseStyle,
+            effectiveStyle: pack?.baseStyle || mockBaseStyle,
+            activeThemeId: pack ? mockActiveThemeId : "",
+            activePack: pack ? { ...pack, active: true } : null,
+            safeMode: false,
+          };
         },
         async ActivateThemePack(id: string) {
-          mockActiveThemeId = String(id || "").trim();
+          const next = String(id || "").trim();
+          if (["graphite","aurora","slate","carbon","nocturne","amber"].includes(next)) {
+            throw new Error(`base style ${next} is not a theme pack; use ActivateBaseStyle`);
+          }
+          mockActiveThemeId = next;
+        },
+        async ActivateBaseStyle(style: string) {
+          const s = String(style || "").trim().toLowerCase();
+          if (!["graphite","aurora","slate","carbon","nocturne","amber"].includes(s)) {
+            throw new Error(`unknown base style ${s}`);
+          }
+          mockBaseStyle = s;
+          mockActiveThemeId = "";
+        },
+        async DisableThemePack() {
+          mockActiveThemeId = "";
+        },
+        async RestoreGraphiteAppearance() {
+          mockBaseStyle = "graphite";
+          mockActiveThemeId = "";
         },
         async ResetThemePack() {
           mockActiveThemeId = "";
@@ -3709,6 +3769,7 @@ function makeMockApp(): AppBindings {
             license: input.license,
             baseStyle: input.baseStyle,
             builtin: false,
+            kind: "user",
             active: Boolean(input.activate),
             hasBackground: Boolean(input.background && (input.backgroundDataUrl || input.background.image)),
             backgroundUrl: input.backgroundDataUrl || "",
@@ -3734,6 +3795,9 @@ function makeMockApp(): AppBindings {
             id: newID,
             name: newName || `${src.name} Copy`,
             builtin: false,
+            kind: "user",
+            nameKey: undefined,
+            descriptionKey: undefined,
             active: false,
           };
           mockThemePacks.push(pack);

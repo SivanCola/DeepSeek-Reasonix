@@ -116,7 +116,7 @@ func extractThemeZip(zr *zip.Reader) (*ThemePackManifest, string, error) {
 	if err != nil {
 		return nil, "", err
 	}
-	if isBuiltinThemeID(m.ID) {
+	if isReservedThemeID(m.ID) {
 		return nil, "", fmt.Errorf("cannot import over built-in theme id %q", m.ID)
 	}
 
@@ -212,15 +212,12 @@ func readZipFileLimited(zf *zip.File, max int64) ([]byte, error) {
 }
 
 // exportThemePackZIP writes a validated user theme to a ZIP path.
+// Reserved ids (base styles + official themes) are refused: an exported pack
+// could never be re-imported because the id is reserved. Duplicate first.
 func exportThemePackZIP(id, destPath string) error {
 	id = strings.TrimSpace(id)
-	if isBuiltinThemeID(id) {
-		// Export built-in as a token-less pack template.
-		m := findBuiltinManifest(id)
-		if m == nil {
-			return fmt.Errorf("unknown built-in theme %q", id)
-		}
-		return writeThemeZip(destPath, m, nil)
+	if isReservedThemeID(id) {
+		return fmt.Errorf("built-in themes cannot be exported; create a copy first")
 	}
 	m, err := loadUserThemeManifest(id)
 	if err != nil {
