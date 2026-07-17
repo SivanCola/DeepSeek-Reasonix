@@ -32731,6 +32731,12 @@ body > .mermaid-diagram--fullscreen {
   color: var(--fg);
   font-size: var(--text-base, 0.875rem);
 }
+.appearance-overview__font-input {
+  justify-self: stretch;
+  min-width: 0;
+  width: 100%;
+  resize: vertical;
+}
 .appearance-overview__control-stack {
   display: flex;
   min-width: 0;

@@ -333,7 +333,7 @@ export function ThemeGallery({
   const onSelectPack = (pack: ThemePackView) => {
     setSelected(selectionFromPack(pack));
     setMenuOpen(false);
-    if (tab === "catalog" && !immersive) {
+    if (!immersive) {
       previewPackGlobally(pack);
       setPreviewingId(pack.id);
     }

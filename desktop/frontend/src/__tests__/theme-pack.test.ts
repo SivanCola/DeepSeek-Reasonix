@@ -279,6 +279,18 @@ ok(overviewSource.includes("appearance-overview__segmented--theme"), "theme-mode
 ok(overviewSource.includes("appearance-overview__segmented--text-size"), "text-size control uses its wider compact settings width");
 ok(stylesSource.includes("--appearance-segmented-width: 300px") && stylesSource.includes("--appearance-segmented-width: 420px"), "overview segmented controls use intentional widths");
 ok(stylesSource.includes(".appearance-overview__segmented { justify-self: stretch; width: 100%; }"), "overview segmented controls expand on narrow screens");
+ok(
+  overviewSource.includes('fontFamily === "custom"') && overviewSource.includes("onCustomFontNameChange(e.target.value)"),
+  "custom UI font selection exposes an editable font name",
+);
+ok(
+  overviewSource.includes('monoFontFamily === "custom"') && overviewSource.includes("onCustomMonoFontNameChange(e.target.value)"),
+  "custom monospace font selection exposes an editable font name",
+);
+ok(
+  overviewSource.includes("fontFamilyLabel(f, t)") && overviewSource.includes("monoFontFamilyLabel(f, t)"),
+  "font family selectors render localized names",
+);
 ok(overviewSource.includes("appearance-base-style-help"), "active pack explains why base style is locked");
 ok(gallerySource.includes('role="listbox"') || gallerySource.includes("role=\"listbox\""), "gallery cards are listbox options");
 ok(gallerySource.includes("settings.themeGallery.apply"), "apply lives in gallery detail");
@@ -299,8 +311,13 @@ for (const style of ["graphite", "aurora", "slate", "carbon", "nocturne", "amber
   }
 }
 ok(new Set(Object.values(BASE_STYLE_PREVIEW_PALETTES).map((modes) => modes.dark.accent)).size === 6, "six base previews have distinct dark accents");
-ok(gallerySource.includes('tab === "catalog" && !immersive') && gallerySource.includes("previewPackGlobally(pack)"), "catalog card clicks immediately start a global preview");
-ok(gallerySource.includes("setPreviewingId(pack.id)"), "catalog preview state is visible in theme details");
+ok(
+  !gallerySource.includes('tab === "catalog" && !immersive') &&
+    gallerySource.includes("if (!immersive)") &&
+    gallerySource.includes("previewPackGlobally(pack)"),
+  "all gallery card clicks immediately start a global preview",
+);
+ok(gallerySource.includes("setPreviewingId(pack.id)"), "gallery preview state is visible in theme details");
 ok(gallerySource.includes("nextTab !== tab") && gallerySource.includes("cancelGlobalPreview();"), "leaving all themes restores the prior appearance");
 ok(gallerySource.includes("ThemePreviewControls"), "detail and immersive views share preview controls");
 ok((gallerySource.match(/role="radiogroup"/g) || []).length >= 2, "appearance and scene previews are separate radio groups");

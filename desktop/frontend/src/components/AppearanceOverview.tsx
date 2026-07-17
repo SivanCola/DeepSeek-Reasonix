@@ -46,6 +46,36 @@ function textSizeLabel(size: TextSize, t: (key: never) => string): string {
   }
 }
 
+function fontFamilyLabel(font: FontFamily, t: ReturnType<typeof useT>): string {
+  switch (font) {
+    case "system":
+      return t("settings.fontFamilySystem");
+    case "yahei":
+      return t("settings.fontFamilyYaHei");
+    case "pingfang":
+      return t("settings.fontFamilyPingFang");
+    case "noto":
+      return t("settings.fontFamilyNoto");
+    case "custom":
+      return t("settings.fontFamilyCustom");
+  }
+}
+
+function monoFontFamilyLabel(font: MonoFontFamily, t: ReturnType<typeof useT>): string {
+  switch (font) {
+    case "system":
+      return t("settings.monoFontFamilySystem");
+    case "cascadia":
+      return t("settings.monoFontFamilyCascadia");
+    case "jetbrains":
+      return t("settings.monoFontFamilyJetBrains");
+    case "sfmono":
+      return t("settings.monoFontFamilySFMono");
+    case "custom":
+      return t("settings.monoFontFamilyCustom");
+  }
+}
+
 // Re-export field shells used by SettingsPanel (defined there as local helpers).
 // AppearanceOverview is rendered inside SettingsPageShell and uses the same CSS.
 
@@ -65,8 +95,8 @@ export function AppearanceOverview({
   onRestartZoom,
   onFontFamily,
   onMonoFontFamily,
-  onCustomFontNameChange: _onCustomFontNameChange,
-  onCustomMonoFontNameChange: _onCustomMonoFontNameChange,
+  onCustomFontNameChange,
+  onCustomMonoFontNameChange,
 }: {
   theme: Theme;
   themeStyle: ThemeStyle;
@@ -86,8 +116,6 @@ export function AppearanceOverview({
   onCustomFontNameChange: (name: string) => void;
   onCustomMonoFontNameChange: (name: string) => void;
 }) {
-  void _onCustomFontNameChange;
-  void _onCustomMonoFontNameChange;
   const t = useT();
   const { showToast } = useToast();
   const [view, setView] = useState<"overview" | "gallery">("overview");
@@ -380,11 +408,27 @@ export function AppearanceOverview({
           >
             {availableFontFamilies.map((f) => (
               <option key={f} value={f}>
-                {f === "system" ? t("settings.fontFamilySystem") : f === "custom" ? customFontName || t("settings.fontFamilyCustom") : f}
+                {fontFamilyLabel(f, t)}
               </option>
             ))}
           </select>
         </div>
+
+        {fontFamily === "custom" ? (
+          <div className="appearance-overview__row">
+            <div id="appearance-custom-font-name-label" className="appearance-overview__row-label">
+              {t("settings.fontFamilyCustomName")}
+            </div>
+            <textarea
+              className="mem-input appearance-overview__font-input"
+              rows={2}
+              aria-labelledby="appearance-custom-font-name-label"
+              placeholder={t("settings.fontFamilyCustomPlaceholder")}
+              value={customFontName}
+              onChange={(e) => onCustomFontNameChange(e.target.value)}
+            />
+          </div>
+        ) : null}
 
         <div className="appearance-overview__row">
           <div id="appearance-mono-font-family-label" className="appearance-overview__row-label">{t("settings.monoFontFamily")}</div>
@@ -396,11 +440,27 @@ export function AppearanceOverview({
           >
             {availableMonoFontFamilies.map((f) => (
               <option key={f} value={f}>
-                {f === "system" ? t("settings.fontFamilySystem") : f === "custom" ? customMonoFontName || t("settings.fontFamilyCustom") : f}
+                {monoFontFamilyLabel(f, t)}
               </option>
             ))}
           </select>
         </div>
+
+        {monoFontFamily === "custom" ? (
+          <div className="appearance-overview__row">
+            <div id="appearance-custom-mono-font-name-label" className="appearance-overview__row-label">
+              {t("settings.monoFontFamilyCustomName")}
+            </div>
+            <textarea
+              className="mem-input appearance-overview__font-input"
+              rows={2}
+              aria-labelledby="appearance-custom-mono-font-name-label"
+              placeholder={t("settings.monoFontFamilyCustomPlaceholder")}
+              value={customMonoFontName}
+              onChange={(e) => onCustomMonoFontNameChange(e.target.value)}
+            />
+          </div>
+        ) : null}
 
         {showDisplayZoom ? (
           <div className="appearance-overview__row">
