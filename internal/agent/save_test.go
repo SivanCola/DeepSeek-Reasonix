@@ -106,6 +106,60 @@ func TestSnapshotUpToDateFastPath(t *testing.T) {
 	}
 }
 
+// TestRepairedSessionArmsFastPath (#6613 review P2): a session loaded with a
+// damaged event log — or carrying a load-time normalization repair — must
+// re-arm the snapshot no-op fast path once a successful save persists the
+// repair. Before the fix the flags were never cleared, so a repaired session
+// paid a full serialize + digest on every defensive snapshot until restart.
+func TestRepairedSessionArmsFastPath(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "session.jsonl")
+	sessionWithTurns(t, path, 2)
+
+	// Tear the event log so the next load marks it damaged.
+	logPath := store.SessionEventLog(path)
+	f, err := os.OpenFile(logPath, os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		t.Fatalf("open log: %v", err)
+	}
+	if _, err := f.Write([]byte(`{"schema_version":1,"type":"ap`)); err != nil {
+		t.Fatalf("write torn tail: %v", err)
+	}
+	f.Close()
+
+	s, err := LoadSession(path)
+	if err != nil {
+		t.Fatalf("LoadSession: %v", err)
+	}
+	if !s.eventLogDamaged {
+		t.Fatal("test setup: session should load damaged")
+	}
+	if s.snapshotUpToDate(path) {
+		t.Fatal("snapshotUpToDate = true for a damaged, unsaved session")
+	}
+
+	// The healing save persists the repair; the fast path must arm afterwards.
+	s.Add(provider.Message{Role: provider.RoleUser, Content: "heal"})
+	if err := s.SaveSnapshot(path); err != nil {
+		t.Fatalf("healing SaveSnapshot: %v", err)
+	}
+	if !s.snapshotUpToDate(path) {
+		t.Fatal("snapshotUpToDate = false after the healing save — repaired session never re-arms the fast path")
+	}
+
+	// A pending normalization repair also disarms, and a successful save that
+	// lands it re-arms.
+	s.normalizedDirty = true
+	if s.snapshotUpToDate(path) {
+		t.Fatal("snapshotUpToDate = true with a pending normalization repair")
+	}
+	if err := s.SaveSnapshot(path); err != nil {
+		t.Fatalf("SaveSnapshot with normalization flag: %v", err)
+	}
+	if !s.snapshotUpToDate(path) {
+		t.Fatal("snapshotUpToDate = false after the save persisted the normalization repair")
+	}
+}
+
 // TestSaveLoadRoundTrip is the contract `reasonix --resume` depends on: a
 // session written to disk reloads byte-for-byte, including tool calls and
 // reasoning content (which the model wants to keep across resumes for cache

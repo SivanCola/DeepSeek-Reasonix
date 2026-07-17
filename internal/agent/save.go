@@ -892,6 +892,20 @@ func (s *Session) setPersistedBaseline(path string, digest [sha256.Size]byte, ve
 	if rewriteVersion > s.persistedRewriteVersion {
 		s.persistedRewriteVersion = rewriteVersion
 	}
+	if saveVerified {
+		// A completed save landed the current transcript — including any
+		// load-time normalization repair — and healed the on-disk event log
+		// (tail repair runs on every save; a damaged log forces the
+		// rewrite-and-compact shape). Leaving these flags set would disarm
+		// the snapshot no-op fast path for the rest of the process lifetime,
+		// so a session that was repaired once kept paying a full serialize +
+		// digest on every defensive snapshot. Nothing reads the live
+		// session's copies after a save: checkSnapshotWrite re-loads the
+		// on-disk state and consults that object's flags, not these.
+		s.normalizedDirty = false
+		s.rawMessages = nil
+		s.eventLogDamaged = false
+	}
 }
 
 // sessionContentRevision reads the CAS ledger (revision + content digest) from
