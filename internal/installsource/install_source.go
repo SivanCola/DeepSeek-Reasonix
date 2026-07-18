@@ -188,8 +188,20 @@ func (t *installSourceTool) Execute(ctx context.Context, raw json.RawMessage) (s
 
 	actions, warnings, err := t.plan(ctx, req)
 	if err != nil {
+		if errors.Is(err, ErrNoCompatibleCapabilities) {
+			return marshalJSON(response{
+				OK: false, Status: "blocked", Op: req.Op, Applied: false,
+				Source: req.Source, Kind: "plugin", Scope: req.Scope, Mode: req.Mode,
+				Warnings: warnings, Error: err.Error(),
+				Next: "Choose a plugin that exports a supported skill, command, agent, hook, or MCP server.",
+			}), nil
+		}
 		return "", err
 	}
+	// Marketplace planning may keep one temporary clone alive so apply can
+	// reuse the exact approved snapshot. Clean it on every exit path, including
+	// plan-ID mismatch or host approval denial before executeApply runs.
+	defer cleanupActionResources(actions)
 	planID := computePlanID(req, actions)
 	if len(actions) == 0 {
 		out := response{
@@ -303,6 +315,15 @@ func (t *installSourceTool) executeApply(ctx context.Context, req request, actio
 		Warnings: warnings,
 		Next:     next,
 	})
+}
+
+func cleanupActionResources(actions []action) {
+	for i := range actions {
+		if actions[i].cleanup != nil {
+			actions[i].cleanup()
+			actions[i].cleanup = nil
+		}
+	}
 }
 
 // executeUninstall handles op=uninstall. It locates the named entry in the

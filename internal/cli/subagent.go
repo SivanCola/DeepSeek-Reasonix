@@ -19,8 +19,8 @@ import (
 	"reasonix/internal/skill"
 )
 
-var setupSubagentCommand = func(ctx context.Context, modelName string, maxStepsOverride int, requireKey bool, sink event.Sink) (*control.Controller, error) {
-	return setupProfile(ctx, modelName, maxStepsOverride, requireKey, sink, "")
+var setupSubagentCommand = func(ctx context.Context, modelName string, maxStepsOverride int, requireKey bool, sink event.Sink, workspaceRoot string) (*control.Controller, error) {
+	return setupProfile(ctx, modelName, maxStepsOverride, requireKey, sink, "", workspaceRoot)
 }
 
 const subagentUsageText = `usage:
@@ -74,7 +74,7 @@ func subagentListCommand(args []string) int {
 	if rc := chdirTo(*dir); rc != 0 {
 		return rc
 	}
-	profiles := subagentProfiles(newCLISubagentStore().List())
+	profiles := subagentProfiles(newCLISubagentStore().SlashList())
 	cfg, _ := config.Load()
 	if len(profiles) == 0 {
 		fmt.Println("no subagent profiles found")
@@ -104,7 +104,7 @@ func subagentListCommand(args []string) int {
 		if effort != "" {
 			attributes = append(attributes, "effort="+effort)
 		}
-		fmt.Printf("%-24s %-28s %s\n", sk.Name, "["+strings.Join(attributes, ", ")+"]", sk.Description)
+		fmt.Printf("%-40s %-28s %s\n", sk.SlashName(), "["+strings.Join(attributes, ", ")+"]", sk.Description)
 	}
 	return 0
 }
@@ -329,6 +329,11 @@ func subagentRunCommand(args []string, readOnly bool) int {
 	if rc := chdirTo(*dir); rc != 0 {
 		return rc
 	}
+	workspaceRoot, err := workspaceRootForDir(*dir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "subagent %s: %v\n", verb, err)
+		return 1
+	}
 	task := strings.TrimSpace(strings.Join(fs.Args(), " "))
 	if task == "" {
 		task = readStdin()
@@ -339,7 +344,7 @@ func subagentRunCommand(args []string, readOnly bool) int {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	defer stop()
-	ctrl, err := setupSubagentCommand(ctx, *model, *maxSteps, true, event.Discard)
+	ctrl, err := setupSubagentCommand(ctx, *model, *maxSteps, true, event.Discard, workspaceRoot)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "subagent %s: %v\n", verb, err)
 		return 1
@@ -365,13 +370,19 @@ func namedSubagentArgs(args []string) (string, []string, bool) {
 func newCLISubagentStore() *skill.Store {
 	cwd, _ := os.Getwd()
 	var custom, excluded []string
+	var pluginPaths, pluginAgentPaths map[string][]string
 	maxDepth := 3
 	if cfg, err := config.Load(); err == nil {
 		custom = cfg.SkillCustomPaths()
 		excluded = cfg.SkillExcludedPaths()
+		pluginPaths = cfg.PluginPackageSkillOwners()
+		pluginAgentPaths = cfg.PluginPackageAgentOwners()
 		maxDepth = cfg.SkillMaxDepth()
 	}
-	return skill.New(skill.Options{ProjectRoot: cwd, CustomPaths: custom, ExcludedPaths: excluded, MaxDepth: maxDepth})
+	return skill.New(skill.Options{
+		ProjectRoot: cwd, CustomPaths: custom, PluginPaths: pluginPaths,
+		PluginAgentPaths: pluginAgentPaths, ExcludedPaths: excluded, MaxDepth: maxDepth,
+	})
 }
 
 func subagentProfiles(skills []skill.Skill) []skill.Skill {

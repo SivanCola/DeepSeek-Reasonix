@@ -81,7 +81,8 @@ make cross      # -> dist/（darwin|linux|windows × amd64|arm64）
 ## 快速开始
 
 ```sh
-reasonix setup                      # 配置向导 → ./reasonix.toml
+reasonix setup                      # 管理用户配置中的 provider
+reasonix setup --local              # 可选：管理 ./reasonix.toml
 export DEEPSEEK_API_KEY=sk-...      # 也可以让 setup 保存到 Reasonix 全局 .env
 reasonix                            # 然后在会话里运行 /init 生成 AGENTS.md（项目记忆）
 reasonix run "把 main.go 里的 TODO 实现掉"
@@ -115,6 +116,8 @@ provider key 的运行时 fallback，但仍会作为当前 workspace 范围内�
 
 ## 文档
 
+- **[CLI 命令参考](./docs/CLI.zh-CN.md)** —— 交互与一次性命令、结构化输出、
+  会话恢复、权限模式和可搜索选择器。
 - **[指南](./docs/GUIDE.zh-CN.md)** —— 配置、权限与沙盒、插件(MCP)、斜杠命令、
   `@` 引用、双模型协同。
 - **[子智能体 Profile](./docs/SUBAGENT_PROFILES.zh-CN.md)** —— 在桌面端或 CLI
@@ -122,6 +125,8 @@ provider key 的运行时 fallback，但仍会作为当前 workspace 范围内�
 - **[能力诊断](./docs/CAPABILITY_DIAGNOSTICS.zh-CN.md)** ——
   `reasonix doctor capabilities`、桌面端 **设置 → 诊断**，以及内置 Skill
   `/reasonix-guide`，用于 skills / hooks / MCP / 插件排障。
+- **[恢复与安全模式](./docs/RECOVERY.zh-CN.md)** —— Guard 诊断、配置快照、
+  原生恢复、更新回滚和可选 AI 修复计划。
 - **[机器人使用指南](./docs/BOT_GUIDE.zh-CN.md)** —— 桌面端连接飞书、Lark、微信
   Bot，以及 IM 里的审批、YOLO 和命令交互。
 - **[规格](./docs/SPEC.md)** —— 工程契约:架构、registry、数据类型与路线图。

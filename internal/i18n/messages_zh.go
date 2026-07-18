@@ -51,7 +51,17 @@ var Chinese = Messages{
 	ChatStatusCancellingFmt:                "%s 正在停止… (%d 秒 · Ctrl+C 退出)",
 	ChatStatusIdle:                         "就绪",
 	ChatStatusYoloIdle:                     "已跳过工具批准",
-	ChatStatusCycleHint:                    "shift+tab 切换计划 · ctrl+y yolo",
+	ChatStatusCycleHint:                    "Shift+Tab 循环询问/自动/计划 · Ctrl+Y YOLO",
+	ChatStatusCycleHintCompact:             "Shift+Tab 询问/自动/计划 · Ctrl+Y YOLO",
+	ChatTurnReceiptLabel:                   "本轮",
+	ChatStatusModelLabel:                   "模型",
+	ChatStatusEffortLabel:                  "强度",
+	ChatStatusWorkLabel:                    "模式",
+	ChatStatusCacheLabel:                   "缓存",
+	ChatStatusContextLabel:                 "上下文",
+	ChatStatusCompactLabel:                 "压缩",
+	ChatStatusJobsLabel:                    "任务",
+	ChatStatusBalanceLabel:                 "余额",
 	ChatStatusCacheNowFmt:                  "本次命中 %s",
 	ChatStatusCacheAvgFmt:                  "平均 %s",
 	ChatStatusPlanApproval:                 "Enter/y 批准并执行 · n/Esc 继续规划 · PgUp/PgDn/Ctrl+Home/End 滚动",
@@ -90,17 +100,18 @@ var Chinese = Messages{
 	MemoryApprovalSaveUpdate:               "保存/更新记忆",
 	MemoryApprovalBodyLabel:                "正文",
 	MemoryApprovalArchiveFmt:               "归档记忆 %q",
-	PlanModeMCPTrustMetadataMissing:        "这个 MCP 工具没有暴露足够的元数据，无法记住只读信任决策。",
-	PlanModeMCPTrustSubjectFmt:             "将 MCP %s/%s 作为计划/研究只读工具信任",
-	PlanModeMCPTrustReason:                 "这个 MCP 工具声明自己是只读的，但外部只读提示需要你确认后，计划模式才能使用。选择总是允许可为后续计划和只读研究记住这份信任。",
-	PlanModeMCPTrustDeclined:               "用户拒绝信任这个 MCP 只读提示；不要重试它，请继续使用其它已信任的只读工具，或询问用户希望如何继续。",
+	MCPDestructiveSubjectFmt:               "MCP %s 声明包含破坏性副作用",
+	MCPDestructiveReason:                   "这个已安装的 MCP 工具声明包含破坏性副作用。允许前请核对目标和参数；自动/YOLO 审批不能代答这个决定。",
+	MCPDestructiveDeclined:                 "用户拒绝了这个破坏性 MCP 工具调用；不要重试，请询问用户希望如何继续。",
+	MCPReviewerUnavailableReason:           "配置的自动审批 reviewer 不可用或未给出结论。本次调用需要用户当场决定；自动/YOLO 审批与会话授权不能代答。",
+	MCPReviewerUnavailableDeclined:         "自动 reviewer 不可用后，用户拒绝了这个 MCP 工具调用；不要重试，请询问用户希望如何继续。",
 	PlanModeBashTrustSubjectFmt:            "在计划模式中信任 %q 为只读命令前缀\n命令：%s",
 	PlanModeBashTrustReason:                "这条 bash 命令不在 Reasonix 内置只读集合中。只有在确认这个精确前缀用于计划和研究时是只读的，才应批准。自动/YOLO 审批不能回答这个信任提示。",
 	PlanModeBashTrustDeclined:              "用户拒绝将这条 bash 命令信任为计划模式只读命令；不要重试它，请继续使用其它已信任的只读工具，或询问用户希望如何继续。",
 	SandboxEscapeSubjectFallback:           "仅本次不进沙箱运行 shell 命令",
 	SandboxEscapeSubjectPrefix:             "仅本次不进沙箱运行：",
-	SandboxEscapeWrapReason:                "Windows 沙箱无法包装这条命令。是否仅本次不进 OS 沙箱运行？这会只对此命令绕过 OS 沙箱。",
-	SandboxEscapeRuntimeReason:             "Windows 沙箱启动这条命令时失败。是否仅本次不进 OS 沙箱运行？这会只对此命令绕过 OS 沙箱。",
+	SandboxEscapeWrapReason:                "Windows 不提供这条命令所需的 OS 级 Bash 沙箱。是否仅本次不受限运行？这只会对此命令绕过 OS 隔离。",
+	SandboxEscapeRuntimeReason:             "OS 沙箱无法启动这条命令。是否仅本次不受限运行？这只会对此命令绕过 OS 隔离。",
 	SandboxEscapeDeclined:                  "用户拒绝在没有 OS 沙箱的情况下运行这条命令；不要不进沙箱重试，请询问用户希望如何继续。",
 	ApprovalToolLabelConfigWrite:           "Reasonix 配置写入审批",
 	ConfigWriteSubjectPrefix:               "写入 Reasonix 配置：",
@@ -110,9 +121,6 @@ var Chinese = Messages{
 	PermissionSavedFmt:                     "授权已保存到 %s：%s",
 	PermissionAlreadyAllowedFmt:            "授权已由 %s 中的规则覆盖：%s",
 	PermissionSaveFailedFmt:                "保存授权 %s 失败：%v",
-	MCPReadOnlyTrustSavedFmt:               "MCP 只读信任已保存到 %s：%s/%s",
-	MCPReadOnlyTrustAlreadyFmt:             "MCP 只读信任已保存在 %s：%s/%s",
-	MCPReadOnlyTrustFailedFmt:              "保存 MCP 只读信任 %s/%s 失败：%v",
 	PlanModeReadOnlyCommandTrustSavedFmt:   "计划模式只读命令信任已保存到 %s：%s",
 	PlanModeReadOnlyCommandTrustAlreadyFmt: "计划模式只读命令信任已保存在 %s：%s",
 	PlanModeReadOnlyCommandTrustFailedFmt:  "保存计划模式只读命令信任 %s 失败：%v",
@@ -148,7 +156,7 @@ var Chinese = Messages{
 	SlashUnavailable:   "当前构建不支持该命令",
 	SlashUnknown:       "未知命令",
 	SlashTodoCleared:   "已清除任务清单",
-	SlashHelp:          "命令：/compact · /new · /clear · /resume · /rewind · /tree · /branch · /switch · /todo · /verbose · /model（切换模型）· /effort · /theme · /language · /mcp · /skills · /plugins · /hooks · /paste-image · /memory · /memory-v5 · /migrate · /goal · /remember · /quit · /help · 以及 skills（/init、/explore …）",
+	SlashHelp:          "命令：/compact · /new · /clear · /resume · /rewind · /tree · /branch · /switch · /todo · /verbose · /model（切换模型）· /effort · /theme · /language · /mcp · /skills · /plugins · /hooks · /paste-image · /memory · /migrate · /goal · /remember · /quit · /help · 以及 skills（/init、/explore …）",
 
 	SkillPickerTitle:             "Skills",
 	SkillPickerAvailableFmt:      "%d 个可用",
@@ -200,6 +208,10 @@ var Chinese = Messages{
 	CompHintSlash:                "↑/↓ 移动 · Tab/Enter 选中 · Esc 关闭",
 	CompHintFile:                 "↑/↓ 移动 · Tab/Enter 进入文件夹或选中文件 · Esc 关闭",
 	MouseCopiedHint:              "已复制到剪贴板",
+	ClipboardCopyOSC52Hint:       "已通过 OSC 52 请求复制 — 可能需要终端授权",
+	ClipboardCopyFallbackHint:    "系统剪贴板不可用 — 已回退到 OSC 52",
+	ClipboardImagePastingHint:    "正在粘贴图片…",
+	ClipboardImagePasteFailedFmt: "粘贴图片失败：%v",
 	MouseCaptureOnHint:           "鼠标接管已开启 — 应用内拖拽选中/滚动条/滚轮生效",
 	MouseCaptureOffHint:          "鼠标接管已关闭 — 由终端原生处理选中和右键菜单",
 	MouseCaptureTag:              "终端原生鼠标",
@@ -220,6 +232,7 @@ var Chinese = Messages{
 	CmdResume:           "恢复已保存的会话",
 	CmdRename:           "重命名会话",
 	CmdModel:            "切换模型",
+	CmdStatus:           "显示会话状态",
 	CmdWorkMode:         "切换工作模式",
 	CmdMemory:           "查看记忆文件",
 	CmdMigrate:          "重试旧数据迁移",
@@ -242,7 +255,6 @@ var Chinese = Messages{
 	CmdMouse:            "切换鼠标接管（关闭后由终端原生处理选中/右键）",
 	CmdAutoPlan:         "配置自动计划模式",
 	CmdReasonLang:       "设置可见思考语言",
-	CmdMemoryV5:         "切换 Memory v5",
 	CmdHelp:             "查看命令列表",
 	CmdTodo:             "清除任务清单",
 	CmdQuit:             "退出会话",
@@ -311,6 +323,9 @@ var Chinese = Messages{
 	WorkModeStatusFmt:         "工作 %s",
 	WorkModeListHeaderFmt:     "工作模式（当前：%s）",
 	WorkModeListHint:          "使用 /work-mode economy|balanced|delivery 切换（/profile 为兼容别名）",
+	WorkModeEconomyLabel:      "轻量",
+	WorkModeBalancedLabel:     "均衡",
+	WorkModeDeliveryLabel:     "交付",
 	WorkModeEconomyDesc:       "降低 Token 消耗，按需连接可选工具源",
 	WorkModeBalancedDesc:      "完整工具面，由模型判断所需工作量",
 	WorkModeDeliveryDesc:      "强调完整验证和交付，增强 skill 与插件调用",
@@ -333,17 +348,50 @@ var Chinese = Messages{
 	RewindApplyHint:           "↑/↓ · Enter 应用 · Esc 返回",
 	RewindEmpty:               "(空)",
 
-	SelectProvidersLabel:  "选择要启用的 provider",
-	EnterAPIKeysHeader:    "输入 API key（回车跳过、稍后再设）：",
-	MissingKeyIntro:       "reasonix.toml 已配置好 — 只差一个 API key 就可以开始。",
-	WroteFileFmt:          "已写入 %s",
-	SetupComplete:         "设置完成。",
-	SetupCancelled:        "设置已取消。",
-	TryHintFmt:            "试试: %s",
-	NextHint:              "下一步：设置 API key（运行 `reasonix setup` 或 export DEEPSEEK_API_KEY=...），然后运行 `reasonix run \"你的任务\"`。",
-	ConfirmReconfigureFmt: "%s 已存在。重新配置并覆盖？",
-	KeepingExisting:       "保留原配置不变。",
-	NotOverwritingFmt:     "%s 已存在，不覆盖",
+	SelectProvidersLabel:     "选择要启用的 provider",
+	EnterAPIKeysHeader:       "输入 API key（回车跳过、稍后再设）：",
+	MissingKeyIntro:          "reasonix.toml 已配置好 — 只差一个 API key 就可以开始。",
+	WroteFileFmt:             "已写入 %s",
+	SetupComplete:            "设置完成。",
+	SetupCancelled:           "设置已取消。",
+	TryHintFmt:               "试试: %s",
+	NextHint:                 "下一步：设置 API key（运行 `reasonix setup` 或 export DEEPSEEK_API_KEY=...），然后运行 `reasonix run \"你的任务\"`。",
+	ConfirmReconfigureFmt:    "%s 已存在。重新配置并覆盖？",
+	KeepingExisting:          "保留原配置不变。",
+	NotOverwritingFmt:        "%s 已存在，不覆盖",
+	SetupManagerTitle:        "供应商配置",
+	SetupAddOpenAI:           "添加 OpenAI 兼容供应商",
+	SetupAddAnthropic:        "添加 Anthropic 兼容供应商",
+	SetupProviderExistsFmt:   "供应商 %q 已存在。请进入现有供应商管理来编辑模型或设置。",
+	SetupSaveExit:            "保存并退出",
+	SetupSaveExitDesc:        "写入当前暂存的修改",
+	SetupCancel:              "取消",
+	SetupCancelDesc:          "放弃全部暂存修改",
+	SetupModelsUnit:          "个模型",
+	SetupKeySet:              "已设置 Key",
+	SetupKeyMissing:          "缺少 Key",
+	SetupDefaultBadge:        "默认",
+	SetupProviderActionsFmt:  "管理 %s",
+	SetupEditProvider:        "编辑供应商",
+	SetupUpdateKey:           "更新 API Key",
+	SetupTestRefresh:         "测试连接 / 刷新模型列表",
+	SetupSetDefault:          "设置默认模型",
+	SetupRemoveProvider:      "删除供应商",
+	SetupBack:                "返回",
+	SetupPromptModels:        "模型列表（用逗号分隔）",
+	SetupSharedKeyWarningFmt: "%s 已被 %s（%s）使用。确认共享这项凭据？",
+	SetupPromptAPIKeyFmt:     "输入 %s 的新值",
+	SetupSelectDefaultModel:  "选择默认模型",
+	SetupConfirmRemoveFmt:    "确认删除供应商 %s？",
+	SetupSummaryTitle:        "待保存修改：",
+	SetupSummaryAddedFmt:     "新增：%s",
+	SetupSummaryEditedFmt:    "编辑：%s",
+	SetupSummaryRemovedFmt:   "删除：%s",
+	SetupSummaryDefaultFmt:   "默认模型：%s",
+	SetupSummaryKeysFmt:      "更新 API Key：%d 项",
+	SetupSummaryNoChanges:    "没有修改",
+	SetupConfirmSave:         "保存这些修改？",
+	SetupConcurrentChangeFmt: "setup 打开期间配置已被修改（%s）。本次暂存修改未写入，请重新运行 setup 检查最新配置。",
 
 	// model fetching
 	FetchingModelsFmt:          "正在获取 %s 的模型列表...",
@@ -358,6 +406,8 @@ var Chinese = Messages{
 	SkipStaleCustomEntryFmt:    "跳过 reasonix.toml 里的旧 %q 条目（指向 %s）— 请手动从 [[providers]] 里删除",
 	APIKeyAlreadySetFmt:        "复用已设置的 %s",
 	APIKeyResetPromptFmt:       "重新输入 %s？",
+	InvalidAPIKeyEnvFmt:        "%q 不是有效的 API Key 变量名。只能使用字母、数字和下划线（例如 MY_PROVIDER_API_KEY）；这里不要填写模型名。",
+	RepairedAPIKeyEnvFmt:       "provider %s：已将无效的 API Key 变量名 %q 修复为 %q",
 
 	// custom provider
 	CustomProviderLabel:  "自定义模型",
@@ -367,7 +417,7 @@ var Chinese = Messages{
 	CustomMethodURL:      "从 URL 获取模型列表",
 	CustomPromptModel:    "请输入模型名称",
 	CustomPromptBaseURL:  "请输入 Base URL",
-	CustomPromptKeyEnv:   "请输入 API Key 环境变量名",
+	CustomPromptKeyEnv:   "API Key 变量名（直接回车使用默认值，不是模型名）",
 	CustomPromptAPIKey:   "请输入 API Key",
 	CustomAddedFmt:       "已添加自定义模型: %s",
 
@@ -379,7 +429,7 @@ var Chinese = Messages{
 	AnthropicMethodURL:             "从 URL 获取模型列表",
 	AnthropicPromptModel:           "请输入模型名称",
 	AnthropicPromptBaseURL:         "请输入 Base URL",
-	AnthropicPromptKeyEnv:          "请输入 API Key 环境变量名",
+	AnthropicPromptKeyEnv:          "API Key 变量名（直接回车使用默认值，不是模型名）",
 	AnthropicPromptAPIKey:          "请输入 API Key",
 	AnthropicAddedFmt:              "已添加 Anthropic 兼容模型: %s",
 	AnthropicFetchingModelsFmt:     "正在获取 %s 的模型列表...",
@@ -388,7 +438,7 @@ var Chinese = Messages{
 	AnthropicSelectModelsLabel:     "选择要启用的 %s 模型",
 
 	UnknownCommandFmt:         "未知命令 %q",
-	UsageRunHint:              "用法：reasonix run [--model NAME] <task>",
+	UsageRunHint:              "用法：reasonix -p [--model NAME] <task>",
 	ErrorPrefix:               "错误：",
 	ReconfigureOnUnknownModel: "配置的模型已不可用 —— 重新运行引导配置。",
 	WriteConfigErr:            "写入配置失败：",
@@ -440,15 +490,15 @@ var Chinese = Messages{
 	UsageBody: `reasonix — 由配置和插件驱动的 coding agent（多模型）
 
 用法：
-  reasonix [--model NAME] [-c|--continue] [--resume] [--copy] [--yolo] [--dir PATH]   交互式会话（多轮；-c 恢复最近一次，--resume 选择一个，--copy 在副本中继续）
-  reasonix run  [--model NAME] [--max-steps N] [-c|--continue] [--resume PATH] [--copy] <task>   执行单次任务后退出
+  reasonix [--model NAME] [-c|--continue] [-r|--resume [QUERY]] [--permission-mode MODE] [--effort LEVEL] [--add-dir PATH]   交互式会话
+  reasonix -p|--print [--model NAME] [--output-format text|json|stream-json] [--allowed-tools RULES] [--add-dir PATH] <task>
+  reasonix run [--model NAME] [--max-steps N] [-c|--continue] [--resume PATH] [--copy] [--output-format FORMAT] <task>
   reasonix review [--base BRANCH] [--commit SHA] [--model NAME]  AI 代码审查（基于本地 diff）
   reasonix serve [--model NAME] [--addr HOST:PORT] [--auth none|token|password] [--token STR] [--password STR] [--hash-password]  通过 HTTP+SSE 提供服务（支持可选认证）
   reasonix node [--addr HOST:PORT] [--id NODE_ID]       多会话移动 Node（WebSocket 远程 Runtime）
   reasonix acp [--model NAME]                           通过 stdio 提供 Agent Client Protocol（也可用：reasonix --acp）
   reasonix setup [path]                                 交互式配置向导；生成 reasonix.toml（及 .env）
   reasonix config auto-plan [off|on]                    配置自动计划模式
-  reasonix config memory-v5 [off|observe|compact|on|status]  配置 Memory v5
   reasonix config reasoning-language [auto|zh|en]        配置可见思考语言
   reasonix mcp <add|remove|list|import>                 管理 reasonix.toml 里的 MCP 服务器
   reasonix subagent <list|create|edit|delete|try|run>   管理和运行隔离子智能体 profile
@@ -463,8 +513,10 @@ var Chinese = Messages{
 示例：
   reasonix
   reasonix --continue
+  reasonix --resume provider-config
   reasonix run "把 main.go 里的 TODO 实现掉"
   reasonix run --model mimo-pro "给这个函数补单元测试"
+  reasonix -p "总结这个仓库" --output-format json
   reasonix subagent run review "审查当前改动"
   echo "解释这段代码" | reasonix run
 

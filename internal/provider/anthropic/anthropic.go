@@ -364,8 +364,8 @@ func (c *client) buildRequest(req provider.Request) anthRequest {
 // readStream parses the Messages API SSE stream into Chunks. Text deltas emit live;
 // each tool_use content block emits a ChunkToolCallStart when its id+name are known
 // and a complete ChunkToolCall when the block closes; usage is assembled from
-// message_start (input/cache) + message_delta (output + stop_reason) and emitted
-// once before ChunkDone.
+// message_start/message_delta usage (compatible gateways may put every counter
+// in the final delta) and emitted once before ChunkDone.
 func (c *client) readStream(ctx context.Context, resp *http.Response, out chan<- provider.Chunk) {
 	defer resp.Body.Close()
 	defer close(out)
@@ -413,9 +413,25 @@ func (c *client) readStream(ctx context.Context, resp *http.Response, out chan<-
 	}
 
 	tools := map[int]*provider.ToolCall{} // tool_use blocks, keyed by content index
+	argBuckets := map[int]int{}           // last emitted 2KB progress bucket per block
 	var inTok, outTok, cacheCreate, cacheRead int
 	var stopReason string
 	haveUsage := false
+	mergeUsage := func(usage *wireUsage) {
+		if usage == nil {
+			return
+		}
+		// The native Anthropic stream reports input/cache counters in
+		// message_start and output_tokens in message_delta. Compatible gateways
+		// such as LongCat report all counters in message_delta instead. Counters
+		// are cumulative and non-negative, so retaining the largest value also
+		// tolerates gateways that repeat partial usage in both events.
+		inTok = max(inTok, usage.InputTokens)
+		outTok = max(outTok, usage.OutputTokens)
+		cacheCreate = max(cacheCreate, usage.CacheCreationInputTokens)
+		cacheRead = max(cacheRead, usage.CacheReadInputTokens)
+		haveUsage = true
+	}
 
 	scanner := bufio.NewScanner(resp.Body)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
@@ -445,10 +461,7 @@ func (c *client) readStream(ctx context.Context, resp *http.Response, out chan<-
 		switch ev.Type {
 		case "message_start":
 			if ev.Message != nil && ev.Message.Usage != nil {
-				inTok = ev.Message.Usage.InputTokens
-				cacheCreate = ev.Message.Usage.CacheCreationInputTokens
-				cacheRead = ev.Message.Usage.CacheReadInputTokens
-				haveUsage = true
+				mergeUsage(ev.Message.Usage)
 			}
 		case "content_block_start":
 			if ev.ContentBlock != nil && ev.ContentBlock.Type == "tool_use" {
@@ -484,6 +497,14 @@ func (c *client) readStream(ctx context.Context, resp *http.Response, out chan<-
 			case "input_json_delta":
 				if tc := tools[ev.Index]; tc != nil {
 					tc.Arguments += ev.Delta.PartialJSON
+					// Progress ticks for large streaming argument payloads, one
+					// per 2KB bucket (see the openai provider for rationale).
+					if bucket := len(tc.Arguments) / 2048; bucket > argBuckets[ev.Index] {
+						argBuckets[ev.Index] = bucket
+						if !send(provider.Chunk{Type: provider.ChunkToolCallArgsDelta, ToolCall: &provider.ToolCall{ID: tc.ID, Name: tc.Name}, ArgChars: len(tc.Arguments)}) {
+							return
+						}
+					}
 				}
 			}
 		case "content_block_stop":
@@ -497,10 +518,7 @@ func (c *client) readStream(ctx context.Context, resp *http.Response, out chan<-
 			if ev.Delta != nil && ev.Delta.StopReason != "" {
 				stopReason = ev.Delta.StopReason
 			}
-			if ev.Usage != nil {
-				outTok = ev.Usage.OutputTokens
-				haveUsage = true
-			}
+			mergeUsage(ev.Usage)
 		case "message_stop":
 			// Stream complete; fall through to finalize below.
 		case "error":

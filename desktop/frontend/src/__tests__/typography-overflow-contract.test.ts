@@ -172,6 +172,10 @@ eq(finalDeclaration(".composer-meta__control--intent", "max-width"), "72px", "ta
 eq(finalDeclaration(".composer-task-mode-trigger__value", "text-overflow"), "ellipsis", "task method selector truncates its value only when constrained");
 eq(finalDeclaration(".composer-meta .modelsw__trigger", "font-weight"), "var(--composer-control-font-weight)", "model selector uses the shared control weight");
 eq(finalDeclaration(".composer-meta__divider", "height"), "18px", "execution policy and model settings have a compact visual divider");
+ok(
+  /@container \(max-width: 560px\)\s*\{[\s\S]*?\.composer-meta__control--more\s*\{[\s\S]*?flex-basis:\s*38px;/.test(styles),
+  "composer enters icon-only mode before model and effort controls overlap",
+);
 eq(finalDeclaration(".composer-modebar--approval", "--composer-modebar-active-bg"), "var(--mode-auto-bg)", "ask approval restores the solid semantic fill");
 eq(finalDeclaration('.composer-modebar--approval[data-mode="auto"]', "--composer-modebar-active-fg"), "#fff", "auto approval keeps high-contrast text on its solid fill");
 eq(finalDeclaration('.composer-modebar--approval[data-mode="yolo"]', "--composer-modebar-active-bg"), "var(--mode-yolo-bg)", "yolo approval restores the solid warning fill");
@@ -186,6 +190,29 @@ eq(finalDeclaration(".composer-task-mode-trigger:focus-visible", "box-shadow"), 
 eq(finalDeclaration(".composer-profile-trigger:focus-visible", "box-shadow"), "var(--focus-ring)", "work mode selector uses the shared keyboard focus ring");
 eq(finalDeclaration(".composer-meta .modelsw__trigger:focus-visible", "box-shadow"), "var(--focus-ring)", "model and effort selectors use the shared keyboard focus ring");
 eq(finalDeclaration(":root[data-theme-style] .composer-modebar__item--active:focus-visible", "box-shadow"), "var(--focus-ring)", "active permission options retain keyboard focus feedback");
+eq(
+  finalDeclaration(".app--creation .msg--assistant .msg__body", "font-size"),
+  "calc(14px * var(--font-scale))",
+  "creation assistant body text follows interface text size",
+);
+eq(
+  finalDeclaration(".app--creation .composer__input", "font-size"),
+  "calc(14.5px * var(--font-scale))",
+  "creation composer input follows interface text size",
+);
+ok(
+  !/\.app--creation[^{]*\{[^}]*font-size:\s*[0-9.]+px\s*(?:!important\s*)?;/.test(styles),
+  "creation rules do not hardcode bare px font sizes (except font-size:0)",
+);
+eq(
+  finalDeclaration(".context-ring-popover__title", "font-size"),
+  "calc(14px * var(--font-scale))",
+  "creation context-ring popover (portaled to body) follows interface text size",
+);
+ok(
+  !/\.context-ring-popover[^{]*\{[^}]*font-size:\s*[0-9.]+px\s*(?:!important\s*)?;/.test(styles),
+  "context-ring popover rules do not hardcode bare px font sizes (except font-size:0)",
+);
 eq(
   finalDeclaration(".app--creation .tool:not(.tool--open) > .tool__body", "height"),
   "0 !important",

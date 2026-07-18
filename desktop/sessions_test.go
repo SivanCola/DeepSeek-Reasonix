@@ -502,6 +502,10 @@ func TestRestoreTrashedSessionFile(t *testing.T) {
 	if err := os.WriteFile(eventIndexPath, []byte(`{"schema_version":1,"message_count":1}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	damagedPath := store.SessionEventLogDamaged(sessionPath)
+	if err := os.WriteFile(damagedPath, []byte(`{"damaged_tail":true}`+"\ntorn bytes\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	conflictLogPath := store.SessionConflictLog(sessionPath)
 	if err := os.WriteFile(conflictLogPath, []byte(`{"outcome":"forked_recovery_branch"}`+"\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -531,7 +535,16 @@ func TestRestoreTrashedSessionFile(t *testing.T) {
 	if err := deleteSessionFile(dir, sessionPath); err != nil {
 		t.Fatalf("trash: %v", err)
 	}
+	// The raw salvage sidecar holds session content; deletion must move it out
+	// of the live directory with the rest of the transcript artifacts (#6613
+	// review: it used to be left behind, and purging the trash never removed it).
+	if _, err := os.Stat(damagedPath); !os.IsNotExist(err) {
+		t.Fatalf("damaged salvage sidecar should leave the live dir on delete, stat err = %v", err)
+	}
 	trashPath := filepath.Join(dir, sessionTrashDir, "session.jsonl", "session.jsonl")
+	if _, err := os.Stat(filepath.Join(dir, sessionTrashDir, "session.jsonl", "session.events.jsonl.damaged")); err != nil {
+		t.Fatalf("damaged salvage sidecar should be in the trash: %v", err)
+	}
 	if err := restoreTrashedSessionFile(dir, trashPath); err != nil {
 		t.Fatalf("restore: %v", err)
 	}
@@ -550,6 +563,9 @@ func TestRestoreTrashedSessionFile(t *testing.T) {
 	}
 	if _, err := os.Stat(eventIndexPath); err != nil {
 		t.Fatalf("session event index should be restored: %v", err)
+	}
+	if _, err := os.Stat(damagedPath); err != nil {
+		t.Fatalf("damaged salvage sidecar should be restored: %v", err)
 	}
 	if _, err := os.Stat(conflictLogPath); err != nil {
 		t.Fatalf("session conflict log should be restored: %v", err)

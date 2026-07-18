@@ -117,9 +117,6 @@ func (a *App) MemorySuggestionsForTab(tabID string) MemorySuggestionsView {
 
 	sessions := loadSuggestionSessions(sessionDir, suggestionSessionLimit)
 	view.Memories = suggestMemories(set, sessions)
-	// Stable Memory v5 execution learnings join the same candidate list and
-	// the same explicit-confirmation flow as history-derived suggestions.
-	view.Memories = append(view.Memories, suggestCompilerMemories(workspaceRoot, set, view.Memories)...)
 	view.Skills = suggestSkills(workspaceRoot, ctrl.AllSkills(), sessions)
 	return view
 }
@@ -482,19 +479,22 @@ func skillStoreForWorkspace(workspaceRoot string) *skill.Store {
 	cfg, err := config.LoadForRoot(workspaceRoot)
 	var custom, excluded []string
 	var pluginPaths map[string][]string
+	var pluginAgentPaths map[string][]string
 	maxDepth := 3
 	if err == nil && cfg != nil {
 		custom = cfg.SkillCustomPaths()
 		excluded = cfg.SkillExcludedPaths()
 		pluginPaths = cfg.PluginPackageSkillOwners()
+		pluginAgentPaths = cfg.PluginPackageAgentOwners()
 		maxDepth = cfg.SkillMaxDepth()
 	}
 	return skill.New(skill.Options{
-		ProjectRoot:   strings.TrimSpace(workspaceRoot),
-		CustomPaths:   custom,
-		PluginPaths:   pluginPaths,
-		ExcludedPaths: excluded,
-		MaxDepth:      maxDepth,
+		ProjectRoot:      strings.TrimSpace(workspaceRoot),
+		CustomPaths:      custom,
+		PluginPaths:      pluginPaths,
+		PluginAgentPaths: pluginAgentPaths,
+		ExcludedPaths:    excluded,
+		MaxDepth:         maxDepth,
 	})
 }
 

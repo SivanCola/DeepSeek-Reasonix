@@ -17,6 +17,7 @@ import (
 	"reasonix/internal/agent"
 	"reasonix/internal/boot"
 	"reasonix/internal/config"
+	"reasonix/internal/control"
 	"reasonix/internal/event"
 	"reasonix/internal/i18n"
 	"reasonix/internal/notify"
@@ -267,7 +268,7 @@ func TestMetadataCommandsDoNotProbeTerminalTheme(t *testing.T) {
 	if !strings.Contains(out, "Usage:") && !strings.Contains(out, "用法：") {
 		t.Fatalf("help output missing usage:\n%s", out)
 	}
-	if !strings.Contains(out, "reasonix run  [--model NAME] [--max-steps N] [-c|--continue] [--resume PATH] [--copy] <task>") {
+	if !strings.Contains(out, "reasonix run [--model NAME] [--max-steps N] [-c|--continue] [--resume PATH] [--copy] [--output-format FORMAT] <task>") {
 		t.Fatalf("help output missing run resume flags:\n%s", out)
 	}
 }
@@ -347,8 +348,11 @@ func TestRunRoutesBareInteractiveFlagsToSession(t *testing.T) {
 		{"--continue=true"},
 		{"-c=true"},
 		{"--resume=true"},
+		{"-r=true"},
 		{"--yolo=true"},
 		{"--dangerously-skip-permissions=true"},
+		{"--permission-mode=plan"},
+		{"--effort=max"},
 	} {
 		var gotArgs []string
 		runInteractiveSession = func(args []string) int {
@@ -361,6 +365,56 @@ func TestRunRoutesBareInteractiveFlagsToSession(t *testing.T) {
 		}
 		if !reflect.DeepEqual(gotArgs, args) {
 			t.Fatalf("interactive args = %#v, want %#v", gotArgs, args)
+		}
+	}
+}
+
+func TestRunPrintAliasDispatchesRunFlags(t *testing.T) {
+	isolateCLIConfigHome(t)
+	errOut := captureStderr(t, func() {
+		if rc := Run([]string{"-p", "-h"}, "test-version"); rc != 2 {
+			t.Fatalf("Run(-p -h) rc = %d, want 2", rc)
+		}
+	})
+	if !strings.Contains(errOut, "Usage of run:") {
+		t.Fatalf("-p should dispatch to one-shot run flags, got:\n%s", errOut)
+	}
+}
+
+// TestRunPrintFlagAfterLeadingFlagsDispatchesRun covers `reasonix --model X -p`:
+// a print flag trailing other top-level flags must still route to `run --print`,
+// not into the interactive session parser (which has no -p and returns 2).
+func TestRunPrintFlagAfterLeadingFlagsDispatchesRun(t *testing.T) {
+	isolateCLIConfigHome(t)
+	prev := runInteractiveSession
+	t.Cleanup(func() { runInteractiveSession = prev })
+	runInteractiveSession = func([]string) int {
+		t.Fatal("print flag after leading flags must not route to the interactive session")
+		return 0
+	}
+	errOut := captureStderr(t, func() {
+		if rc := Run([]string{"--model", "x", "-p", "-h"}, "test-version"); rc != 2 {
+			t.Fatalf("Run(--model x -p -h) rc = %d, want 2", rc)
+		}
+	})
+	if !strings.Contains(errOut, "Usage of run:") {
+		t.Fatalf("--model x -p should dispatch to one-shot run flags, got:\n%s", errOut)
+	}
+}
+
+func TestParsePermissionModeClaudeAliases(t *testing.T) {
+	tests := map[string]cliPermissionMode{
+		"ask":               {approval: control.ToolApprovalAsk},
+		"manual":            {approval: control.ToolApprovalAsk},
+		"acceptEdits":       {approval: control.ToolApprovalAsk, allow: []string{"write_file", "edit_file", "multi_edit", "move_file", "notebook_edit", "delete_range", "delete_symbol"}},
+		"dontAsk":           {approval: control.ToolApprovalDontAsk},
+		"plan":              {approval: control.ToolApprovalAsk, plan: true},
+		"bypassPermissions": {approval: control.ToolApprovalYolo},
+	}
+	for input, want := range tests {
+		got, err := parsePermissionMode(input)
+		if err != nil || !reflect.DeepEqual(got, want) {
+			t.Errorf("parsePermissionMode(%q) = (%+v, %v), want %+v", input, got, err, want)
 		}
 	}
 }
@@ -521,67 +575,6 @@ func TestConfigAutoPlanLocalIsRejected(t *testing.T) {
 	}
 	if cfg.Agent.AutoPlan != "off" {
 		t.Fatalf("auto_plan = %q, want global off", cfg.Agent.AutoPlan)
-	}
-}
-
-func TestConfigMemoryV5CommandWritesUserConfig(t *testing.T) {
-	isolateCLIConfigHome(t)
-
-	out := captureStdout(t, func() {
-		if rc := Run([]string{"config", "memory-v5", "off"}, "test-version"); rc != 0 {
-			t.Fatalf("config memory-v5 rc = %d, want 0", rc)
-		}
-	})
-	if !strings.Contains(out, "memory_compiler.enabled = false") {
-		t.Fatalf("config memory-v5 output = %q", out)
-	}
-	if !strings.Contains(out, `memory_compiler.verbosity = "observe"`) {
-		t.Fatalf("config memory-v5 output missing verbosity = %q", out)
-	}
-	cfg := config.LoadForEdit(config.UserConfigPath())
-	if cfg.MemoryCompilerEnabled() {
-		t.Fatalf("saved memory_compiler.enabled = true, want false")
-	}
-	if got := cfg.MemoryCompilerVerbosity(); got != config.MemoryCompilerVerbosityObserve {
-		t.Fatalf("saved memory_compiler.verbosity = %q, want observe", got)
-	}
-
-	out = captureStdout(t, func() {
-		if rc := Run([]string{"config", "memory-v5", "status"}, "test-version"); rc != 0 {
-			t.Fatalf("config memory-v5 status rc = %d, want 0", rc)
-		}
-	})
-	if !strings.Contains(out, "memory_compiler.enabled = false") {
-		t.Fatalf("config memory-v5 status output = %q", out)
-	}
-	if !strings.Contains(out, `memory_compiler.verbosity = "observe"`) {
-		t.Fatalf("config memory-v5 status output = %q", out)
-	}
-
-	out = captureStdout(t, func() {
-		if rc := Run([]string{"config", "memory-v5", "compact"}, "test-version"); rc != 0 {
-			t.Fatalf("config memory-v5 compact rc = %d, want 0", rc)
-		}
-	})
-	if !strings.Contains(out, "memory_compiler.enabled = true") ||
-		!strings.Contains(out, `memory_compiler.verbosity = "compact"`) {
-		t.Fatalf("config memory-v5 compact output = %q", out)
-	}
-}
-
-func TestConfigMemoryV5LocalIsRejected(t *testing.T) {
-	isolateCLIConfigHome(t)
-
-	errOut := captureStderr(t, func() {
-		if rc := Run([]string{"config", "memory-v5", "--local", "off"}, "test-version"); rc != 2 {
-			t.Fatalf("config memory-v5 --local rc = %d, want 2", rc)
-		}
-	})
-	if !strings.Contains(errOut, "--local is not supported") {
-		t.Fatalf("config memory-v5 --local stderr = %q", errOut)
-	}
-	if _, err := os.Stat("reasonix.toml"); !os.IsNotExist(err) {
-		t.Fatalf("reasonix.toml should not be written, stat err=%v", err)
 	}
 }
 
@@ -1266,8 +1259,8 @@ func TestAPIKeyEnvFromProviderName(t *testing.T) {
 }
 
 func TestPromptCustomProviderManualDefaultsKeyEnvFromBaseURL(t *testing.T) {
-	entries, err := promptCustomProviderManualWith(
-		bufio.NewScanner(strings.NewReader("\n\nsensenova-chat\n")),
+	result, err := promptCustomProviderManualWith(
+		bufio.NewScanner(strings.NewReader("sensenova-chat\n\n\n")),
 		"https://token.sensenova.cn/v1",
 		"",
 		"",
@@ -1275,6 +1268,7 @@ func TestPromptCustomProviderManualDefaultsKeyEnvFromBaseURL(t *testing.T) {
 	if err != nil {
 		t.Fatalf("promptCustomProviderManualWith: %v", err)
 	}
+	entries := result.entries
 	if len(entries) != 1 {
 		t.Fatalf("entries = %d, want 1", len(entries))
 	}
@@ -1284,8 +1278,8 @@ func TestPromptCustomProviderManualDefaultsKeyEnvFromBaseURL(t *testing.T) {
 }
 
 func TestPromptCustomProviderManualPreservesExplicitKeyEnv(t *testing.T) {
-	entries, err := promptCustomProviderManualWith(
-		bufio.NewScanner(strings.NewReader("\nmanual-chat\n")),
+	result, err := promptCustomProviderManualWith(
+		bufio.NewScanner(strings.NewReader("manual-chat\n\n")),
 		"https://token.sensenova.cn/v1",
 		"CUSTOM_API_KEY",
 		"",
@@ -1293,11 +1287,107 @@ func TestPromptCustomProviderManualPreservesExplicitKeyEnv(t *testing.T) {
 	if err != nil {
 		t.Fatalf("promptCustomProviderManualWith: %v", err)
 	}
+	entries := result.entries
 	if len(entries) != 1 {
 		t.Fatalf("entries = %d, want 1", len(entries))
 	}
 	if got := entries[0].APIKeyEnv; got != "CUSTOM_API_KEY" {
 		t.Errorf("APIKeyEnv = %q, want explicit CUSTOM_API_KEY", got)
+	}
+}
+
+func TestPromptAPIKeyEnvNameRejectsModelName(t *testing.T) {
+	i18n.DetectLanguage("en")
+	var out bytes.Buffer
+	got := promptAPIKeyEnvName(
+		bufio.NewScanner(strings.NewReader("grok-4.5\n\n")),
+		&out,
+		i18n.M.CustomPromptKeyEnv,
+		"CUSTOM_API_YAIROUTER_COM_API_KEY",
+	)
+	if got != "CUSTOM_API_YAIROUTER_COM_API_KEY" {
+		t.Fatalf("key env = %q, want generated default", got)
+	}
+	if text := out.String(); !strings.Contains(text, "not a valid API Key variable name") || !strings.Contains(text, "do not enter a model name") {
+		t.Fatalf("validation guidance missing from prompt output: %q", text)
+	}
+}
+
+func TestPromptCustomProviderManualAsksForModelBeforeCredentialName(t *testing.T) {
+	result, err := promptCustomProviderManualWith(
+		bufio.NewScanner(strings.NewReader("grok-4.5\ngrok-4.5\n\n\n")),
+		"https://api.example.com/v1",
+		"",
+		"",
+	)
+	if err != nil {
+		t.Fatalf("promptCustomProviderManualWith: %v", err)
+	}
+	entries := result.entries
+	if got := entries[0].Model; got != "grok-4.5" {
+		t.Fatalf("model = %q, want grok-4.5", got)
+	}
+	if got := entries[0].APIKeyEnv; got != "CUSTOM_API_EXAMPLE_COM_API_KEY" {
+		t.Fatalf("APIKeyEnv = %q, want generated default after invalid model-like input", got)
+	}
+}
+
+func TestPromptCustomProviderStagesExplicitKeyEvenWhenProcessEnvMatches(t *testing.T) {
+	const key = "CUSTOM_API_EXAMPLE_COM_API_KEY"
+	t.Setenv(key, "same-secret")
+	result, err := promptCustomProviderManualWith(
+		bufio.NewScanner(strings.NewReader("grok-4.5\n")),
+		"https://api.example.com/v1",
+		key,
+		"same-secret",
+	)
+	if err != nil {
+		t.Fatalf("promptCustomProviderManualWith: %v", err)
+	}
+	if got := result.credentials[key]; got != "same-secret" {
+		t.Fatalf("staged credential = %q, want explicitly entered value", got)
+	}
+	if got := os.Getenv(key); got != "same-secret" {
+		t.Fatalf("prompt changed process environment to %q", got)
+	}
+	result, err = promptCustomProviderManualWith(
+		bufio.NewScanner(strings.NewReader("grok-4.5\n")),
+		"https://api.example.com/v1",
+		key,
+		"new-secret",
+	)
+	if err != nil {
+		t.Fatalf("promptCustomProviderManualWith with replacement key: %v", err)
+	}
+	if got := result.credentials[key]; got != "new-secret" {
+		t.Fatalf("replacement staged credential = %q", got)
+	}
+	if got := os.Getenv(key); got != "same-secret" {
+		t.Fatalf("prompt leaked replacement credential into process environment: %q", got)
+	}
+}
+
+func TestRepairInvalidProviderKeyEnvs(t *testing.T) {
+	original := []config.ProviderEntry{
+		{Name: "custom-relay-example-com", APIKeyEnv: "grok-4.5"},
+		{Name: "valid", APIKeyEnv: "VALID_API_KEY"},
+		{Name: "no-auth"},
+	}
+	got, repairs := repairInvalidProviderKeyEnvs(original)
+	if len(repairs) != 1 {
+		t.Fatalf("repairs = %+v, want one", repairs)
+	}
+	if got[0].APIKeyEnv != "CUSTOM_RELAY_EXAMPLE_COM_API_KEY" {
+		t.Fatalf("repaired key env = %q", got[0].APIKeyEnv)
+	}
+	if repairs[0].old != "grok-4.5" || repairs[0].new != got[0].APIKeyEnv {
+		t.Fatalf("repair detail = %+v", repairs[0])
+	}
+	if got[1].APIKeyEnv != "VALID_API_KEY" || got[2].APIKeyEnv != "" {
+		t.Fatalf("valid/no-auth providers changed: %+v", got)
+	}
+	if original[0].APIKeyEnv != "grok-4.5" {
+		t.Fatalf("repair mutated caller input: %+v", original[0])
 	}
 }
 

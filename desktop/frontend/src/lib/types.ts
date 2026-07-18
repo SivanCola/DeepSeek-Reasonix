@@ -20,7 +20,6 @@ export type EventKind =
   | "mcp_surface_ready"
   | "retrying"
   | "steer"
-  | "memory_compiler_stats"
   | "guardian_assessment";
 
 export interface WireCompaction {
@@ -45,6 +44,8 @@ export interface WireTool {
   truncated?: boolean;
   durationMs?: number;
   partial?: boolean; // an early dispatch (name only) — a full one with args follows
+  argChars?: number; // partial only: cumulative argument chars streamed so far
+  refreshed?: boolean; // same-ID full dispatch with a preview recomputed after an earlier write
   parentId?: string; // set on a sub-agent's calls — the parent `task` call's id
   diff?: string;
   added?: number;
@@ -88,6 +89,23 @@ export interface WireApproval {
   tool: string;
   subject: string;
   reason?: string;
+  fresh?: boolean;
+  mcpTrust?: WireMCPTrust;
+}
+
+export interface WireMCPTrust {
+  server: string;
+  trustState: string;
+  trustSource?: string;
+  trustScope?: string;
+  isolationState: string;
+  isolationReason?: string;
+  identityChanged?: boolean;
+  changedTools: string[];
+  toolChanges: MCPToolTrustChangeView[];
+  readers: string[];
+  writers: string[];
+  destructive: string[];
 }
 
 export interface WireGuardian {
@@ -135,30 +153,14 @@ export interface MemoryCitation {
   kind?: string;
 }
 
-export interface MemoryCompilerStats {
-  injected: boolean;
-  usefulIR: boolean;
-  compiledTokens: number;
-  irOverheadTokens: number;
-  memoryReferences: number;
-  constraints: number;
-  riskNotes: number;
-  executionSteps: number;
-  totalNodes: number;
-  highSignalNodes: number;
-  toolResultNodes: number;
-  decisionNodes: number;
-  strategyCount: number;
-  learningCount: number;
-}
-
 export interface WireEvent {
   kind: EventKind;
   text?: string;
   detail?: string;
+  // Stable notice id for localization; empty/absent = localize by text match.
+  code?: string;
   reasoning?: string;
   memoryCitations?: MemoryCitation[];
-  memoryCompiler?: MemoryCompilerStats;
   level?: "info" | "warn";
   tool?: WireTool;
   usage?: WireUsage;
@@ -167,6 +169,8 @@ export interface WireEvent {
   compaction?: WireCompaction;
   guardian?: WireGuardian;
   err?: string;
+  outcome?: "final_readiness";
+  readiness?: WireFinalReadiness;
   retryAttempt?: number;
   retryMax?: number;
   // Tab routing: set by the Go-side tabEventSink so multi-tab frontends
@@ -180,6 +184,11 @@ export interface WireEvent {
   sessionCostUsd?: number;
 }
 
+export interface WireFinalReadiness {
+  attempts?: number;
+  missing?: string[];
+}
+
 // Tab management types (desktop/tabs.go).
 export interface TabMeta {
   id: string;
@@ -189,6 +198,7 @@ export interface TabMeta {
   workspaceName: string;
   workspacePath?: string;
   gitBranch?: string;
+  isolatedWorktree?: boolean;
   topicId: string;
   topicTitle: string;
   sessionPath?: string;
@@ -237,7 +247,25 @@ export interface ProjectNode {
   recoveryReason?: string;
   recoveryDigest?: string;
   recoveryParentId?: string;
+  isolatedWorktree?: boolean;
   children?: ProjectNode[];
+}
+
+export interface DeliveryWorktreeAvailability {
+  available: boolean;
+  reason?: string;
+  repoRoot?: string;
+  branch?: string;
+  sourceDirty?: boolean;
+}
+
+export interface DeliveryWorktreeOpenResult {
+  workspaceRoot: string;
+  worktreeRoot: string;
+  sourceRoot: string;
+  branch: string;
+  sourceDirty: boolean;
+  tab: TabMeta;
 }
 
 export type ProjectTopicStatus = "thinking" | "streaming" | "waiting_confirmation" | "background_job" | "paused" | "error";
@@ -326,6 +354,7 @@ export interface HistoryMessage {
   role: string;
   content: string;
   detail?: string;
+  code?: string;
   submitText?: string;
   checkpointTurn?: number;
   createdAt?: number;
@@ -552,7 +581,7 @@ export function normalizeTokenMode(mode?: string): TokenMode {
 }
 
 // Mode is the compatibility string for two independent composer axes:
-// plan (read-only/user-plan gate) and yolo/full access (tool auto-approval).
+// plan (plan-first workflow) and yolo (tool auto-approval).
 export type Mode = "normal" | "plan" | "yolo" | "plan-yolo";
 
 export function normalizeMode(mode?: string): Mode {
@@ -680,17 +709,71 @@ export interface ServerView {
   resources: number;
   hasTools?: boolean;
   error?: string;
+  requiresReverification?: boolean;
   toolList?: MCPToolView[];
   trustedReadOnlyTools?: string[];
+  callTimeoutSeconds?: number;
+  toolTimeoutSeconds?: Record<string, number>;
+  defaultToolsApprovalMode?: MCPApprovalMode;
+  toolPolicies?: Record<string, MCPToolPolicy>;
+  approvalsReviewer?: MCPApprovalsReviewer;
+  requiresLaunchApproval?: boolean;
+  launchApprovalGoverned?: boolean;
   authStatus?: "none" | "possible" | "required" | string;
   authUrl?: string;
   authConfigured?: boolean;
   managedByPlugin?: string;
+  trustState?: "official" | "workspace" | "session" | "changed" | "untrusted" | string;
+  trustSource?: "user" | "official_catalog" | "legacy_import" | string;
+  trustScope?: "session" | "workspace" | "global" | string;
+  isolationState?: "enforced" | "unavailable_unconfined" | "not_applicable" | string;
+  isolationReason?: string;
+  identityChanged?: boolean;
+  changedTools?: string[];
+  toolChanges?: MCPToolTrustChangeView[];
+  catalogSequence?: number;
+  verifiedVersion?: string;
+}
+export type MCPApprovalMode = "auto" | "prompt" | "writes" | "approve";
+export type MCPApprovalsReviewer = "user" | "auto_review";
+export interface MCPToolPolicy {
+  approval_mode: MCPApprovalMode;
 }
 export interface MCPToolView {
   name: string;
   description: string;
   readOnlyHint?: boolean;
+  destructiveHint?: boolean;
+  schemaError?: string;
+  trustedReader?: boolean;
+}
+
+export interface MCPToolTrustChangeView {
+  name: string;
+  kind: "added" | "reader_to_writer" | "reader_to_destructive" | "writer_to_reader" | "safety_changed" | "name_changed" | "schema_changed" | string;
+}
+
+export interface MCPTrustInspectionView {
+  name: string;
+  trustState: string;
+  trustSource?: string;
+  trustScope?: string;
+  isolationState: string;
+  isolationReason?: string;
+  identityChanged?: boolean;
+  changedTools: string[];
+  toolChanges?: MCPToolTrustChangeView[];
+  readers: string[];
+  writers: string[];
+  destructive: string[];
+  requiresLaunchApproval?: boolean;
+}
+
+export interface MCPCatalogRefreshView {
+  source: string;
+  sequence: number;
+  offline: boolean;
+  stale?: boolean;
 }
 export interface SkillView {
   name: string;
@@ -764,12 +847,37 @@ export interface PluginView {
   commands?: number;
   hooks: number;
   mcpServers: number;
+  agents?: number;
+  compatibility?: "full" | "partial" | "none" | string;
+  mappedCapabilities?: string[];
+  skippedCapabilities?: PluginCompatibilityIssue[];
   skillDetails?: PluginSkillView[];
+  agentDetails?: PluginAgentView[];
   commandDetails?: PluginCommandView[];
   hookDetails?: PluginHookView[];
   mcpServerDetails?: PluginMCPServerView[];
   warnings?: string[];
   error?: string;
+  verification?: {
+    catalogEntryId: string;
+    commit: string;
+    packageSha256: string;
+    verifiedAt: string;
+    catalogSequence: number;
+  };
+}
+export interface PluginCompatibilityIssue {
+  capability: string;
+  path?: string;
+  reason: string;
+}
+export interface PluginAgentView {
+  name: string;
+  description?: string;
+  path?: string;
+  invocation?: string;
+  model?: string;
+  allowedTools?: string[];
 }
 export interface PluginSkillView {
   name: string;
@@ -796,9 +904,12 @@ export interface PluginHookView {
 }
 export interface PluginMCPServerView {
   name: string;
+  displayName?: string;
+  description?: string;
   transport?: string;
   command?: string;
   url?: string;
+  autoStart?: boolean;
 }
 export interface PluginInstallOptions {
   dryRun?: boolean;
@@ -815,6 +926,12 @@ export interface MCPServerInput {
   env?: Record<string, string> | null;
   headers?: Record<string, string> | null;
   trustedReadOnlyTools?: string[];
+  autoStart?: boolean | null;
+  callTimeoutSeconds?: number | null;
+  toolTimeoutSeconds?: Record<string, number> | null;
+  defaultToolsApprovalMode?: MCPApprovalMode | "" | null;
+  tools?: Record<string, MCPToolPolicy> | null;
+  approvalsReviewer?: MCPApprovalsReviewer | "" | null;
 }
 
 export interface ModelInfo {
@@ -1361,7 +1478,6 @@ export interface SettingsView {
   checkUpdates: boolean; // check for new versions on startup
   telemetry: boolean; // anonymous launch ping (install id + version + OS)
   metrics: boolean; // aggregate desktop metrics (anonymous signal/bucket counts)
-  memoryCompilerEnabled: boolean; // Memory v5 execution compiler
   configPath: string;
   providerKinds: string[]; // provider implementations the kernel registered (for the kind picker)
   autoApproveTools: boolean;
@@ -1378,6 +1494,21 @@ export interface DesktopStartupSettingsView {
   statusBarStyle: string; // "icon" | "text"
   statusBarItems: string[]; // ordered visible status bar item ids
   checkUpdates: boolean; // check for new versions on startup
+  safeMode?: boolean; // recovery startup with external integrations disabled
+}
+
+export type ExternalOpenerKind = "file-manager" | "editor" | "terminal";
+
+export interface ExternalOpenerView {
+  id: string;
+  name: string;
+  kind: ExternalOpenerKind;
+  iconDataUrl?: string;
+}
+
+export interface ExternalOpenersView {
+  openers: ExternalOpenerView[];
+  preferred: string;
 }
 
 // Auto-updater payloads (desktop/updater.go). UpdateInfo drives the update banner;

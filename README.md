@@ -86,7 +86,8 @@ make cross      # -> dist/ (darwin|linux|windows × amd64|arm64)
 ## Quick start
 
 ```sh
-reasonix setup                      # config wizard → ./reasonix.toml
+reasonix setup                      # manage providers in the user config
+reasonix setup --local              # optional: manage ./reasonix.toml
 export DEEPSEEK_API_KEY=sk-...      # or let setup save it to Reasonix home .env
 reasonix                            # then run /init to generate AGENTS.md (project memory)
 reasonix run "implement the TODOs in main.go"
@@ -125,6 +126,8 @@ commands, `@` references, and two-model setup are all in the
 
 ## Documentation
 
+- **[CLI reference](./docs/CLI.md)** — interactive and one-shot commands,
+  structured output, resume, permission modes, and searchable pickers.
 - **[Guide](./docs/GUIDE.md)** — configuration, permissions & sandbox, plugins
   (MCP), slash commands, `@` references, two-model collaboration.
 - **[Subagent profiles](./docs/SUBAGENT_PROFILES.md)** — create, share, preview,
@@ -132,6 +135,9 @@ commands, `@` references, and two-model setup are all in the
 - **[Capability diagnostics](./docs/CAPABILITY_DIAGNOSTICS.md)** —
   `reasonix doctor capabilities`, desktop Settings → Diagnostics, and the
   `/reasonix-guide` skill for skills/hooks/MCP/plugin troubleshooting.
+- **[Recovery and Safe Mode](./docs/RECOVERY.md)** — Guard diagnostics,
+  configuration snapshots, native recovery, update rollback, and optional
+  AI-assisted repair plans.
 - **[Bot guide](./docs/BOT_GUIDE.md)** — connect Feishu, Lark, and WeChat bots
   from the desktop app, then use approvals, YOLO, and commands from IM.
 - **[Spec](./docs/SPEC.md)** — engineering contract: architecture, registries,

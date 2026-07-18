@@ -46,6 +46,11 @@ Legacy 迁移、OS home 约定目录扫描以及其他 fallback 路径都会跳�
 Reasonix 写入用户配置的 provider、plugin、UI、desktop、tool、skill、sandbox、
 bot 和 agent 设置。Provider 条目只保存 `api_key_env` 里的凭据变量名，不保存真实密钥值。
 
+已保存的 provider 与 bot 凭据变量不会进入任何由模型控制的子进程环境。Reasonix 的
+文件读取工具、受沙盒保护的 shell 命令和 MCP server 也无法读取全局凭据 `.env`；
+项目自身的普通 `.env` 可见性保持不变。Windows 的 shell 命令仍不具备 OS 级沙箱，
+详见《使用指南》，因此只应为可信任务批准 shell 权限。
+
 示例：
 
 ```toml
@@ -56,14 +61,13 @@ credentials_store = "auto"   # 旧兼容字段；provider key 保存在 .env
 
 [ui]
 theme = "auto"
-cursor_shape = "underline"   # CLI/TUI 输入光标：underline|block|bar
+cursor_shape = "bar"         # CLI/TUI 输入光标：underline|block|bar
 
 [desktop]
 provider_access = ["deepseek"]
 
 [agent]
 auto_plan = "off"
-max_steps = 0
 
 [[providers]]
 name        = "deepseek"
@@ -81,8 +85,8 @@ command = "example-mcp-server"
 不要把 API key 的真实值写进 `config.toml`。这个文件是普通配置：可以查看、编辑、
 迁移，也可以在常规脱敏后用于诊断。密钥值属于下面的全局 `.env`。
 
-`[ui].cursor_shape` 只影响 CLI/TUI 的输入框。默认值 `underline` 用来避免终端块状光标在
-CJK 双宽字符上造成视觉覆盖；如果偏好其它形状，可以设为 `block` 或 `bar`。
+`[ui].cursor_shape` 只影响 CLI/TUI 的输入框。默认值 `bar` 清晰可见，同时不会覆盖
+CJK 双宽字符；如果偏好其它形状，可以设为 `block` 或 `underline`。
 
 ### 自定义 provider 的 `api_key_env` 命名
 

@@ -43,6 +43,7 @@ type Message struct {
 	Name               string           `json:"name,omitempty"`            // tool message: tool name
 	MemoryCitations    []MemoryCitation `json:"memoryCitations,omitempty"` // local UI metadata; provider requests ignore it
 	WorkDurationMs     int64            `json:"workDurationMs,omitempty"`  // local UI metadata; provider requests ignore it
+	CreatedAt          int64            `json:"createdAt,omitempty"`       // local UI metadata; unix milliseconds; stripped before provider requests
 	Edited             bool             `json:"edited,omitempty"`          // local UI metadata; provider requests ignore it
 	Original           string           `json:"original,omitempty"`        // user prompt before inline edit
 }
@@ -464,13 +465,14 @@ func idDistinct(calls []ToolCall) bool {
 type ChunkType int
 
 const (
-	ChunkText          ChunkType = iota // text delta
-	ChunkReasoning                      // thinking-mode reasoning delta (before the visible answer)
-	ChunkToolCallStart                  // a tool call has begun (ToolCall: ID+Name; args still streaming)
-	ChunkToolCall                       // one complete tool call
-	ChunkUsage                          // token usage for the completion
-	ChunkDone                           // completion finished normally
-	ChunkError                          // an error occurred
+	ChunkText              ChunkType = iota // text delta
+	ChunkReasoning                          // thinking-mode reasoning delta (before the visible answer)
+	ChunkToolCallStart                      // a tool call has begun (ToolCall: ID+Name; args still streaming)
+	ChunkToolCallArgsDelta                  // progress while a call's arguments stream (ToolCall: ID+Name; ArgChars: cumulative)
+	ChunkToolCall                           // one complete tool call
+	ChunkUsage                              // token usage for the completion
+	ChunkDone                               // completion finished normally
+	ChunkError                              // an error occurred
 )
 
 // Usage reports token accounting for a completion. Cache hit/miss come from
@@ -576,7 +578,8 @@ type Chunk struct {
 	Type      ChunkType
 	Text      string    // ChunkText, ChunkReasoning
 	Signature string    // ChunkReasoning: opaque proof for the reasoning (Anthropic thinking signature), when issued
-	ToolCall  *ToolCall // ChunkToolCallStart (ID+Name only), ChunkToolCall (complete)
+	ToolCall  *ToolCall // ChunkToolCallStart (ID+Name only), ChunkToolCallArgsDelta (ID+Name), ChunkToolCall (complete)
+	ArgChars  int       // ChunkToolCallArgsDelta: cumulative argument characters received for this call
 	Usage     *Usage    // ChunkUsage
 	Err       error     // ChunkError
 }

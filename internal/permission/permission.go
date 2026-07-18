@@ -114,6 +114,17 @@ type Policy struct {
 	Allow []Rule
 	Ask   []Rule
 	Deny  []Rule
+	// SessionAllow is an explicit frontend/session override such as Claude
+	// Code's --allowed-tools. Deny rules still win, while these rules override
+	// configured Ask entries for the current process only.
+	SessionAllow []Rule
+}
+
+// WithSessionAllow returns a copy of p with additional ephemeral allow rules.
+// Malformed entries are ignored consistently with New.
+func (p Policy) WithSessionAllow(rules []string) Policy {
+	p.SessionAllow = append(append([]Rule(nil), p.SessionAllow...), parseRules(rules)...)
+	return p
 }
 
 // New builds a Policy from config string slices and a mode string ("ask" by
@@ -132,9 +143,25 @@ func New(mode string, allow, ask, deny []string) Policy {
 // for glob matching. Calls with multiple subjects, such as move_file's source
 // and destination paths, must be safe for every subject before the call is
 // allowed. Precedence: deny > ask > allow > fallback (Allow for readers, Mode
-// for writers).
+// for writers). SessionAllow sits between deny and configured ask rules.
 func (p Policy) Decide(toolName string, readOnly bool, args json.RawMessage) Decision {
 	return p.DecideSubjects(toolName, readOnly, Subjects(args))
+}
+
+// ExplicitlyDenies reports only configured deny-rule matches. It deliberately
+// excludes the fallback Mode so higher-priority local MCP policy can be applied
+// before the global posture.
+func (p Policy) ExplicitlyDenies(toolName string, args json.RawMessage) bool {
+	subjects := Subjects(args)
+	if len(subjects) == 0 {
+		subjects = []string{""}
+	}
+	for _, subject := range subjects {
+		if matchAny(p.Deny, toolName, subject) {
+			return true
+		}
+	}
+	return false
 }
 
 // DecideSubject evaluates a tool call when the caller already extracted the
@@ -144,6 +171,8 @@ func (p Policy) DecideSubject(toolName string, readOnly bool, subject string) De
 		switch {
 		case matchAny(p.Deny, toolName, subject):
 			return Deny
+		case matchAny(p.SessionAllow, toolName, subject):
+			return Allow
 		case matchAny(p.Ask, toolName, subject):
 			return Ask
 		case matchAny(p.Allow, toolName, subject):
@@ -156,6 +185,8 @@ func (p Policy) DecideSubject(toolName string, readOnly bool, subject string) De
 	switch {
 	case matchAny(p.Deny, toolName, subject):
 		return Deny
+	case matchAny(p.SessionAllow, toolName, subject):
+		return Allow
 	case matchAny(p.Ask, toolName, subject):
 		return Ask
 	case matchAny(p.Allow, toolName, subject):
@@ -192,6 +223,8 @@ func (p Policy) decideBashSegments(readOnly bool, parts []string) Decision {
 		switch {
 		case matchAny(p.Deny, "bash", sub):
 			return Deny
+		case matchAny(p.SessionAllow, "bash", sub):
+			// covered by the explicit session allowlist
 		case matchAny(p.Ask, "bash", sub):
 			out = Ask
 		case matchAny(p.Allow, "bash", sub):
@@ -411,6 +444,20 @@ type ReasonedApprover interface {
 	ApproveWithReason(ctx context.Context, toolName, subject string, args json.RawMessage) (allow, remember bool, reason string, err error)
 }
 
+// FreshApprover handles safety decisions that must come from a current human
+// and cannot be satisfied by an allow rule, Auto/YOLO, or a remembered choice.
+type FreshApprover interface {
+	ApproveFresh(ctx context.Context, toolName, subject string, args json.RawMessage) (allow bool, reason string, err error)
+}
+
+// MCPApprover resolves an MCP approval through the configured reviewer. It is
+// separate from Approver because prompt/writes modes outrank the controller's
+// global Auto/YOLO posture, and destructive calls must never reuse a remembered
+// grant. reviewer is "user", "auto_review", or empty for legacy routing.
+type MCPApprover interface {
+	ApproveMCP(ctx context.Context, toolName, subject string, args json.RawMessage, destructive, forced bool, reviewer string) (allow bool, reason string, err error)
+}
+
 // Gate is what the agent consults at execute time: a Policy plus an optional
 // Approver. It satisfies the agent's Gate interface structurally.
 type Gate struct {
@@ -430,8 +477,7 @@ func NewGate(p Policy, a Approver) *Gate { return &Gate{Policy: p, Approver: a} 
 // reason the agent feeds back to the model.
 func (g *Gate) Check(ctx context.Context, toolName string, args json.RawMessage, readOnly bool) (bool, string, error) {
 	if toolName == "bash" && !readOnly {
-		subject := Subject(args)
-		if isReadOnlyBashSubject(subject) {
+		if BashCommandIsReadOnly(args) {
 			readOnly = true
 		}
 	}
@@ -471,6 +517,99 @@ func (g *Gate) Check(ctx context.Context, toolName string, args json.RawMessage,
 		return true, "", nil
 	default:
 		return true, "", nil
+	}
+}
+
+// CheckFresh preserves explicit deny precedence, then requires a fresh approver
+// regardless of ordinary allow/ask/fallback posture. It deliberately never
+// persists or installs an in-memory allow rule.
+func (g *Gate) CheckFresh(ctx context.Context, toolName, subject string, args json.RawMessage, readOnly bool) (bool, string, error) {
+	if g.Policy.Decide(toolName, readOnly, args) == Deny {
+		return false, "denied by permission policy — this tool/command is on the deny list. Do not retry it; choose another approach or stop and explain.", nil
+	}
+	approver, ok := g.Approver.(FreshApprover)
+	if !ok {
+		return false, "this tool requires fresh human approval and cannot run in a non-interactive session.", nil
+	}
+	allow, reason, err := approver.ApproveFresh(ctx, toolName, subject, args)
+	if err != nil {
+		return false, "approval aborted", err
+	}
+	if !allow {
+		if strings.TrimSpace(reason) == "" {
+			reason = "the user declined this tool call"
+		}
+		return false, reason, nil
+	}
+	return true, "", nil
+}
+
+// CheckMCP applies MCP-local approval policy. Precedence is explicit deny,
+// destructive fresh review, per-tool/server mode, then the ordinary global
+// permission posture. Local prompt/writes decisions require an MCPApprover and
+// therefore fail closed in headless and sub-agent sessions.
+func (g *Gate) CheckMCP(ctx context.Context, toolName, subject string, args json.RawMessage, readOnly, destructive bool, mode, reviewer string) (bool, string, error) {
+	if g.Policy.ExplicitlyDenies(toolName, args) {
+		return false, "denied by permission policy — this tool/command is on the deny list. Do not retry it; choose another approach or stop and explain.", nil
+	}
+	if destructive {
+		return g.approveMCP(ctx, toolName, subject, args, true, true, reviewer)
+	}
+
+	switch normalizeMCPApprovalMode(mode) {
+	case "approve":
+		return true, "", nil
+	case "prompt":
+		return g.approveMCP(ctx, toolName, subject, args, false, true, reviewer)
+	case "writes":
+		if readOnly {
+			return true, "", nil
+		}
+		return g.approveMCP(ctx, toolName, subject, args, false, true, reviewer)
+	default: // auto preserves the existing global policy and posture.
+		switch g.Policy.Decide(toolName, readOnly, args) {
+		case Deny:
+			return g.Check(ctx, toolName, args, readOnly)
+		case Ask:
+			if strings.TrimSpace(reviewer) != "" {
+				return g.approveMCP(ctx, toolName, subject, args, false, false, reviewer)
+			}
+			return g.Check(ctx, toolName, args, readOnly)
+		default:
+			return true, "", nil
+		}
+	}
+}
+
+func (g *Gate) approveMCP(ctx context.Context, toolName, subject string, args json.RawMessage, destructive, forced bool, reviewer string) (bool, string, error) {
+	approver, ok := g.Approver.(MCPApprover)
+	if !ok {
+		return false, "this MCP tool requires an approval reviewer and cannot run in a non-interactive session.", nil
+	}
+	allow, reason, err := approver.ApproveMCP(ctx, toolName, subject, args, destructive, forced, reviewer)
+	if err != nil {
+		if strings.TrimSpace(reason) == "" {
+			reason = "approval review aborted"
+		}
+		return false, reason, err
+	}
+	if !allow {
+		if strings.TrimSpace(reason) == "" {
+			reason = "the MCP approval reviewer declined this tool call"
+		}
+		return false, reason, nil
+	}
+	return true, "", nil
+}
+
+func normalizeMCPApprovalMode(mode string) string {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "", "auto":
+		return "auto"
+	case "approve", "prompt", "writes":
+		return strings.ToLower(strings.TrimSpace(mode))
+	default:
+		return "prompt"
 	}
 }
 

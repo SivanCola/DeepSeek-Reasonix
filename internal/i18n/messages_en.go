@@ -50,7 +50,17 @@ var English = Messages{
 	ChatStatusCancellingFmt:                "%s stopping… (%ds · Ctrl+C exits)",
 	ChatStatusIdle:                         "ready",
 	ChatStatusYoloIdle:                     "tool approvals skipped",
-	ChatStatusCycleHint:                    "shift+tab toggles plan · ctrl+y yolo",
+	ChatStatusCycleHint:                    "Shift+Tab ask/auto/plan · Ctrl+Y YOLO",
+	ChatStatusCycleHintCompact:             "Shift+Tab ask/auto/plan · Ctrl+Y YOLO",
+	ChatTurnReceiptLabel:                   "TURN",
+	ChatStatusModelLabel:                   "MODEL",
+	ChatStatusEffortLabel:                  "EFFORT",
+	ChatStatusWorkLabel:                    "WORK",
+	ChatStatusCacheLabel:                   "CACHE",
+	ChatStatusContextLabel:                 "CTX",
+	ChatStatusCompactLabel:                 "COMPACT",
+	ChatStatusJobsLabel:                    "JOBS",
+	ChatStatusBalanceLabel:                 "BAL",
 	ChatStatusCacheNowFmt:                  "turn hit %s",
 	ChatStatusCacheAvgFmt:                  "avg %s",
 	ChatStatusPlanApproval:                 "Enter/y approves & executes · n/Esc keeps planning · PgUp/PgDn/Ctrl+Home/End scrolls",
@@ -89,17 +99,18 @@ var English = Messages{
 	MemoryApprovalSaveUpdate:               "Save/update memory",
 	MemoryApprovalBodyLabel:                "body",
 	MemoryApprovalArchiveFmt:               "Archive memory %q",
-	PlanModeMCPTrustMetadataMissing:        "this MCP tool did not expose enough metadata to remember a read-only trust decision.",
-	PlanModeMCPTrustSubjectFmt:             "MCP %s/%s as read-only for planning and research",
-	PlanModeMCPTrustReason:                 "This MCP tool reports read-only, but external read-only hints need your confirmation before plan mode can use them. Choose always allow to remember this trust for future planning and read-only research.",
-	PlanModeMCPTrustDeclined:               "the user declined to trust this MCP read-only hint - do not retry it; continue with other trusted read-only tools or ask how to proceed.",
+	MCPDestructiveSubjectFmt:               "MCP %s declares destructive side effects",
+	MCPDestructiveReason:                   "This installed MCP tool declares destructive side effects. Review the target and arguments before allowing this call. Auto/YOLO approval cannot answer this decision.",
+	MCPDestructiveDeclined:                 "the user declined this destructive MCP tool call - do not retry it; ask how they would like to proceed.",
+	MCPReviewerUnavailableReason:           "The configured automatic approval reviewer is unavailable or returned no verdict. This call needs a fresh human decision; Auto/YOLO approval and session grants cannot answer it.",
+	MCPReviewerUnavailableDeclined:         "the user declined this MCP tool call after the automatic reviewer was unavailable - do not retry it; ask how they would like to proceed.",
 	PlanModeBashTrustSubjectFmt:            "Trust %q as a read-only command prefix while planning\nCommand: %s",
 	PlanModeBashTrustReason:                "This bash command is not in Reasonix's built-in read-only set. Confirm only if this exact prefix is read-only for planning and research. Auto/YOLO approval cannot answer this trust prompt.",
 	PlanModeBashTrustDeclined:              "the user declined to trust this bash command as read-only for plan mode - do not retry it; continue with other trusted read-only tools or ask how to proceed.",
 	SandboxEscapeSubjectFallback:           "run shell command unconfined once",
 	SandboxEscapeSubjectPrefix:             "run unconfined once: ",
-	SandboxEscapeWrapReason:                "Windows sandbox could not wrap this command. Run it unconfined one time? This bypasses the OS sandbox for this command only.",
-	SandboxEscapeRuntimeReason:             "Windows sandbox failed while starting this command. Run it unconfined one time? This bypasses the OS sandbox for this command only.",
+	SandboxEscapeWrapReason:                "Windows does not provide an OS-level Bash sandbox for this command. Run it unconfined one time? This bypasses OS isolation for this command only.",
+	SandboxEscapeRuntimeReason:             "The OS sandbox could not start this command. Run it unconfined one time? This bypasses OS isolation for this command only.",
 	SandboxEscapeDeclined:                  "the user declined to run this command without the OS sandbox - do not retry it unconfined; ask how they would like to proceed.",
 	ApprovalToolLabelConfigWrite:           "Reasonix config write",
 	ConfigWriteSubjectPrefix:               "write Reasonix config: ",
@@ -109,9 +120,6 @@ var English = Messages{
 	PermissionSavedFmt:                     "permission saved to %s: %s",
 	PermissionAlreadyAllowedFmt:            "permission already covered in %s: %s",
 	PermissionSaveFailedFmt:                "permission save failed for %s: %v",
-	MCPReadOnlyTrustSavedFmt:               "MCP read-only trust saved to %s: %s/%s",
-	MCPReadOnlyTrustAlreadyFmt:             "MCP read-only trust already saved in %s: %s/%s",
-	MCPReadOnlyTrustFailedFmt:              "MCP read-only trust save failed for %s/%s: %v",
 	PlanModeReadOnlyCommandTrustSavedFmt:   "plan-mode read-only command trust saved to %s: %s",
 	PlanModeReadOnlyCommandTrustAlreadyFmt: "plan-mode read-only command trust already saved in %s: %s",
 	PlanModeReadOnlyCommandTrustFailedFmt:  "plan-mode read-only command trust save failed for %s: %v",
@@ -147,7 +155,7 @@ var English = Messages{
 	SlashUnavailable:   "command unavailable in this build",
 	SlashUnknown:       "unknown command",
 	SlashTodoCleared:   "task list dismissed",
-	SlashHelp:          "commands: /compact · /new · /clear · /resume · /rewind · /tree · /branch · /switch · /todo · /verbose · /model (switch model) · /effort · /theme · /language · /mcp · /skills · /plugins · /hooks · /paste-image · /memory · /memory-v5 · /migrate · /goal · /remember · /quit · /help · plus skills (/init, /explore, …)",
+	SlashHelp:          "commands: /compact · /new · /clear · /resume · /rewind · /tree · /branch · /switch · /todo · /verbose · /model (switch model) · /effort · /theme · /language · /mcp · /skills · /plugins · /hooks · /paste-image · /memory · /migrate · /goal · /remember · /quit · /help · plus skills (/init, /explore, …)",
 
 	SkillPickerTitle:             "Skills",
 	SkillPickerAvailableFmt:      "%d available",
@@ -199,6 +207,10 @@ var English = Messages{
 	CompHintSlash:                "↑/↓ move · Tab/Enter select · Esc close",
 	CompHintFile:                 "↑/↓ move · Tab/Enter open folder or pick file · Esc close",
 	MouseCopiedHint:              "copied to clipboard",
+	ClipboardCopyOSC52Hint:       "copy sent via OSC 52 — terminal permission may be required",
+	ClipboardCopyFallbackHint:    "native clipboard unavailable — copy sent via OSC 52",
+	ClipboardImagePastingHint:    "Pasting image…",
+	ClipboardImagePasteFailedFmt: "paste image failed: %v",
 	MouseCaptureOnHint:           "mouse capture on — in-app drag-select/scrollbar/wheel active",
 	MouseCaptureOffHint:          "mouse capture off — your terminal now handles selection and right-click",
 	MouseCaptureTag:              "native mouse",
@@ -219,6 +231,7 @@ var English = Messages{
 	CmdResume:           "resume a saved session",
 	CmdRename:           "rename a session",
 	CmdModel:            "switch model",
+	CmdStatus:           "show session status",
 	CmdWorkMode:         "switch work mode",
 	CmdMemory:           "show memory files",
 	CmdMigrate:          "retry legacy data migration",
@@ -241,7 +254,6 @@ var English = Messages{
 	CmdMouse:            "toggle in-app mouse capture (off = native terminal selection/right-click)",
 	CmdAutoPlan:         "configure automatic plan mode",
 	CmdReasonLang:       "set visible reasoning language",
-	CmdMemoryV5:         "toggle Memory v5",
 	CmdHelp:             "list commands",
 	CmdTodo:             "dismiss the task list",
 	CmdQuit:             "exit the session",
@@ -310,6 +322,9 @@ var English = Messages{
 	WorkModeStatusFmt:         "work %s",
 	WorkModeListHeaderFmt:     "work modes (current: %s)",
 	WorkModeListHint:          "switch with /work-mode economy|balanced|delivery (/profile is an alias)",
+	WorkModeEconomyLabel:      "economy",
+	WorkModeBalancedLabel:     "balanced",
+	WorkModeDeliveryLabel:     "delivery",
 	WorkModeEconomyDesc:       "lower token use; optional tool sources connect on demand",
 	WorkModeBalancedDesc:      "full tool surface; model decides how much work is needed",
 	WorkModeDeliveryDesc:      "complete, verified delivery; stronger skill and plugin use",
@@ -332,17 +347,50 @@ var English = Messages{
 	RewindApplyHint:           "↑/↓ · Enter apply · Esc back",
 	RewindEmpty:               "(empty)",
 
-	SelectProvidersLabel:  "Select providers to enable",
-	EnterAPIKeysHeader:    "Enter API keys (Enter to skip and set later):",
-	MissingKeyIntro:       "reasonix.toml is ready — just an API key away.",
-	WroteFileFmt:          "Wrote %s",
-	SetupComplete:         "Setup complete.",
-	SetupCancelled:        "setup cancelled.",
-	TryHintFmt:            "Try: %s",
-	NextHint:              "Next: set your API key (run `reasonix setup` or export DEEPSEEK_API_KEY=...), then run `reasonix run \"your task\"`.",
-	ConfirmReconfigureFmt: "%s already exists. Reconfigure and overwrite?",
-	KeepingExisting:       "Keeping existing config.",
-	NotOverwritingFmt:     "%s already exists; not overwriting",
+	SelectProvidersLabel:     "Select providers to enable",
+	EnterAPIKeysHeader:       "Enter API keys (Enter to skip and set later):",
+	MissingKeyIntro:          "reasonix.toml is ready — just an API key away.",
+	WroteFileFmt:             "Wrote %s",
+	SetupComplete:            "Setup complete.",
+	SetupCancelled:           "setup cancelled.",
+	TryHintFmt:               "Try: %s",
+	NextHint:                 "Next: set your API key (run `reasonix setup` or export DEEPSEEK_API_KEY=...), then run `reasonix run \"your task\"`.",
+	ConfirmReconfigureFmt:    "%s already exists. Reconfigure and overwrite?",
+	KeepingExisting:          "Keeping existing config.",
+	NotOverwritingFmt:        "%s already exists; not overwriting",
+	SetupManagerTitle:        "Provider configuration",
+	SetupAddOpenAI:           "Add OpenAI-compatible provider",
+	SetupAddAnthropic:        "Add Anthropic-compatible provider",
+	SetupProviderExistsFmt:   "Provider %q already exists. Manage the existing provider to edit its models or settings.",
+	SetupSaveExit:            "Save and exit",
+	SetupSaveExitDesc:        "write staged changes",
+	SetupCancel:              "Cancel",
+	SetupCancelDesc:          "discard all staged changes",
+	SetupModelsUnit:          "models",
+	SetupKeySet:              "key set",
+	SetupKeyMissing:          "key missing",
+	SetupDefaultBadge:        "default",
+	SetupProviderActionsFmt:  "Manage %s",
+	SetupEditProvider:        "Edit provider",
+	SetupUpdateKey:           "Update API key",
+	SetupTestRefresh:         "Test connection / refresh models",
+	SetupSetDefault:          "Set default model",
+	SetupRemoveProvider:      "Remove provider",
+	SetupBack:                "Back",
+	SetupPromptModels:        "Models (comma-separated)",
+	SetupSharedKeyWarningFmt: "%s is also used by %s at %s. Share this credential?",
+	SetupPromptAPIKeyFmt:     "Enter new value for %s",
+	SetupSelectDefaultModel:  "Select default model",
+	SetupConfirmRemoveFmt:    "Remove provider %s?",
+	SetupSummaryTitle:        "Pending changes:",
+	SetupSummaryAddedFmt:     "Added: %s",
+	SetupSummaryEditedFmt:    "Edited: %s",
+	SetupSummaryRemovedFmt:   "Removed: %s",
+	SetupSummaryDefaultFmt:   "Default model: %s",
+	SetupSummaryKeysFmt:      "API keys updated: %d",
+	SetupSummaryNoChanges:    "No changes",
+	SetupConfirmSave:         "Save these changes?",
+	SetupConcurrentChangeFmt: "Configuration changed while setup was open (%s). No staged setup changes were saved; run setup again to review the latest configuration.",
 
 	// model fetching
 	FetchingModelsFmt:          "Fetching models for %s...",
@@ -357,6 +405,8 @@ var English = Messages{
 	SkipStaleCustomEntryFmt:    "skipping stale %q entry from reasonix.toml (pointing at %s) — please remove it from [[providers]]",
 	APIKeyAlreadySetFmt:        "reusing existing value for %s",
 	APIKeyResetPromptFmt:       "Re-enter %s?",
+	InvalidAPIKeyEnvFmt:        "%q is not a valid API Key variable name. Use letters, numbers, and underscores (for example, MY_PROVIDER_API_KEY); do not enter a model name.",
+	RepairedAPIKeyEnvFmt:       "provider %s: replaced invalid API Key variable name %q with %q",
 
 	// custom provider
 	CustomProviderLabel:  "Custom Model",
@@ -366,7 +416,7 @@ var English = Messages{
 	CustomMethodURL:      "Fetch models from URL",
 	CustomPromptModel:    "Enter model name",
 	CustomPromptBaseURL:  "Enter Base URL",
-	CustomPromptKeyEnv:   "Enter API Key env var name",
+	CustomPromptKeyEnv:   "API Key variable name (press Enter to use the default; not the model name)",
 	CustomPromptAPIKey:   "Enter API Key",
 	CustomAddedFmt:       "Added custom model: %s",
 
@@ -378,7 +428,7 @@ var English = Messages{
 	AnthropicMethodURL:             "Fetch models from URL",
 	AnthropicPromptModel:           "Enter model name",
 	AnthropicPromptBaseURL:         "Enter Base URL",
-	AnthropicPromptKeyEnv:          "Enter API Key env var name",
+	AnthropicPromptKeyEnv:          "API Key variable name (press Enter to use the default; not the model name)",
 	AnthropicPromptAPIKey:          "Enter API Key",
 	AnthropicAddedFmt:              "Added Anthropic compatible model: %s",
 	AnthropicFetchingModelsFmt:     "Fetching models for %s...",
@@ -387,7 +437,7 @@ var English = Messages{
 	AnthropicSelectModelsLabel:     "Select models to enable for %s",
 
 	UnknownCommandFmt:         "unknown command %q",
-	UsageRunHint:              "usage: reasonix run [--model NAME] <task>",
+	UsageRunHint:              "usage: reasonix -p [--model NAME] <task>",
 	ErrorPrefix:               "error:",
 	ReconfigureOnUnknownModel: "Configured model is no longer available — re-running setup.",
 	WriteConfigErr:            "write config:",
@@ -439,15 +489,15 @@ var English = Messages{
 	UsageBody: `reasonix — a config- and plugin-driven coding agent (multi-model)
 
 Usage:
-  reasonix [--model NAME] [-c|--continue] [--resume] [--copy] [--yolo] [--dir PATH]   interactive session (multi-turn; -c resumes the latest, --resume picks one, --copy continues in a duplicate)
-  reasonix run  [--model NAME] [--max-steps N] [-c|--continue] [--resume PATH] [--copy] <task>   run one task and exit
+  reasonix [--model NAME] [-c|--continue] [-r|--resume [QUERY]] [--permission-mode MODE] [--effort LEVEL] [--add-dir PATH]   interactive session
+  reasonix -p|--print [--model NAME] [--output-format text|json|stream-json] [--allowed-tools RULES] [--add-dir PATH] <task>
+  reasonix run [--model NAME] [--max-steps N] [-c|--continue] [--resume PATH] [--copy] [--output-format FORMAT] <task>
   reasonix review [--base BRANCH] [--commit SHA] [--model NAME]  AI-powered code review on local diffs
   reasonix serve [--model NAME] [--addr HOST:PORT] [--auth none|token|password] [--token STR] [--password STR] [--hash-password]  serve over HTTP+SSE (with optional auth)
   reasonix node [--addr HOST:PORT] [--id NODE_ID]       multi-session mobile node (WebSocket remote runtime)
   reasonix acp [--model NAME]                           serve Agent Client Protocol over stdio (also: reasonix --acp)
   reasonix setup [path]                                 interactive config wizard; writes reasonix.toml (+ .env)
   reasonix config auto-plan [off|on]                    configure automatic plan mode
-  reasonix config memory-v5 [off|observe|compact|on|status]  configure Memory v5
   reasonix config reasoning-language [auto|zh|en]        configure visible reasoning language
   reasonix mcp <add|remove|list|import>                 manage MCP servers in reasonix.toml
   reasonix subagent <list|create|edit|delete|try|run>   manage and run isolated subagent profiles
@@ -462,8 +512,10 @@ Usage:
 Examples:
   reasonix
   reasonix --continue
+  reasonix --resume provider-config
   reasonix run "implement the TODOs in main.go"
   reasonix run --model mimo-pro "add unit tests for this function"
+  reasonix -p "summarize this repository" --output-format json
   reasonix subagent run review "review the current changes"
   echo "explain this code" | reasonix run
 

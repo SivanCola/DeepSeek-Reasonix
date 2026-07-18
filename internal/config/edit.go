@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
+	"regexp"
 	"runtime"
 	"strings"
 
@@ -15,6 +17,8 @@ import (
 	"reasonix/internal/netclient"
 	"reasonix/internal/permission"
 )
+
+var validDesktopExternalOpenerID = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)
 
 // edit.go is the programmatic mutation surface a settings UI drives: change the
 // default model, add/remove a provider, set the planner, edit permission rules,
@@ -66,7 +70,7 @@ func (c *Config) SetPlannerModel(name string) error {
 }
 
 // SetAutoPlan sets the interactive auto-plan gate. "off" keeps plan mode manual;
-// "on" opts into automatic read-only planning for complex-looking turns.
+// "on" opts into the automatic plan-first workflow for complex-looking turns.
 // "ask" is accepted as a legacy synonym for "on" but is never written back.
 func (c *Config) SetAutoPlan(mode string) error {
 	switch strings.ToLower(strings.TrimSpace(mode)) {
@@ -93,27 +97,6 @@ func (c *Config) SetDesktopDefaultToolApprovalMode(mode string) error {
 	default:
 		return fmt.Errorf("default_tool_approval_mode %q: must be ask|auto|yolo", mode)
 	}
-	return nil
-}
-
-// SetMemoryCompilerEnabled toggles the v5 execution-memory compiler.
-func (c *Config) SetMemoryCompilerEnabled(enabled bool) error {
-	c.Agent.MemoryCompiler.Enabled = &enabled
-	return nil
-}
-
-// SetMemoryCompilerVerbosity controls whether Memory v5 only observes turns or
-// also injects compact execution contracts into provider-visible messages.
-func (c *Config) SetMemoryCompilerVerbosity(verbosity string) error {
-	normalized := NormalizeMemoryCompilerVerbosity(verbosity)
-	if strings.TrimSpace(verbosity) != "" && normalized == MemoryCompilerVerbosityObserve {
-		switch strings.ToLower(strings.TrimSpace(verbosity)) {
-		case "observe", "observed", "silent", "minimal", "none":
-		default:
-			return fmt.Errorf("memory_compiler.verbosity %q: must be observe|compact", verbosity)
-		}
-	}
-	c.Agent.MemoryCompiler.Verbosity = normalized
 	return nil
 }
 
@@ -148,6 +131,34 @@ func (c *Config) UpsertProvider(e ProviderEntry) error {
 	}
 	c.Providers = append(c.Providers, e)
 	return nil
+}
+
+// UpsertProviderPreservingRuntime applies persisted provider fields while
+// retaining credentials and capability state resolved by the latest config
+// load. It is used when replaying an optimistic edit log onto fresh state.
+func (c *Config) UpsertProviderPreservingRuntime(e ProviderEntry) error {
+	if current, ok := c.Provider(e.Name); ok && strings.TrimSpace(current.APIKeyEnv) == strings.TrimSpace(e.APIKeyEnv) {
+		e.resolvedAPIKey = current.resolvedAPIKey
+		e.resolvedSource = current.resolvedSource
+		e.visionOverride = current.visionOverride
+	}
+	return c.UpsertProvider(e)
+}
+
+// ProviderEntryConfigSnapshot strips process-only state from a provider copy so
+// optimistic edit logs never retain resolved credential values.
+func ProviderEntryConfigSnapshot(entry ProviderEntry) ProviderEntry {
+	entry.resolvedAPIKey = ""
+	entry.resolvedSource = CredentialSource{}
+	entry.visionOverride = nil
+	return entry
+}
+
+// ProviderEntriesConfigEqual compares persisted provider configuration while
+// ignoring credentials and capability state resolved only for the current
+// process. Setup uses it for optimistic conflict detection during replay.
+func ProviderEntriesConfigEqual(a, b ProviderEntry) bool {
+	return reflect.DeepEqual(ProviderEntryConfigSnapshot(a), ProviderEntryConfigSnapshot(b))
 }
 
 // SetProviderEffort updates a provider's provider-specific thinking effort knob.
@@ -248,6 +259,22 @@ func (c *Config) SetDesktopLayoutStyle(style string) error {
 	default:
 		return fmt.Errorf("desktop layout style %q: must be classic|workbench|creation", style)
 	}
+	return nil
+}
+
+// SetDesktopExternalOpener stores the stable id selected by the desktop Open
+// control. Availability is deliberately checked by the native desktop shell,
+// because config is shared across operating systems and installations.
+func (c *Config) SetDesktopExternalOpener(id string) error {
+	id = strings.ToLower(strings.TrimSpace(id))
+	if id == "" {
+		c.Desktop.ExternalOpener = ""
+		return nil
+	}
+	if !validDesktopExternalOpenerID.MatchString(id) {
+		return fmt.Errorf("external opener %q: invalid id", id)
+	}
+	c.Desktop.ExternalOpener = id
 	return nil
 }
 
@@ -491,6 +518,8 @@ func validateProvider(e ProviderEntry) error {
 		return fmt.Errorf("provider %q: base_url is required", e.Name)
 	case !providerHasAnyModel(e):
 		return fmt.Errorf("provider %q: model is required", e.Name)
+	case strings.TrimSpace(e.APIKeyEnv) != "" && !IsValidCredentialKey(e.APIKeyEnv):
+		return fmt.Errorf("provider %q: api_key_env %q is not a valid environment variable name", e.Name, e.APIKeyEnv)
 	}
 	return nil
 }
@@ -752,35 +781,6 @@ func (c *Config) ClearPluginAuthentication(name string) (PluginEntry, bool, erro
 	return PluginEntry{}, false, fmt.Errorf("clear plugin authentication: no plugin %q", name)
 }
 
-// TrustPluginReadOnlyTool adds one raw MCP tool name to a plugin's trusted
-// read-only list. It reports changed=false when the entry already contains it.
-func (c *Config) TrustPluginReadOnlyTool(name, toolName string) (PluginEntry, bool, error) {
-	name = strings.TrimSpace(name)
-	toolName = strings.TrimSpace(toolName)
-	if name == "" {
-		return PluginEntry{}, false, fmt.Errorf("trust plugin read-only tool: plugin name is required")
-	}
-	if toolName == "" {
-		return PluginEntry{}, false, fmt.Errorf("trust plugin read-only tool: tool name is required")
-	}
-	for i := range c.Plugins {
-		if c.Plugins[i].Name != name {
-			continue
-		}
-		trusted := uniqueStrings(c.Plugins[i].TrustedReadOnlyTools)
-		for _, existing := range trusted {
-			if existing == toolName {
-				c.Plugins[i].TrustedReadOnlyTools = trusted
-				return c.Plugins[i], false, nil
-			}
-		}
-		trusted = append(trusted, toolName)
-		c.Plugins[i].TrustedReadOnlyTools = trusted
-		return c.Plugins[i], true, nil
-	}
-	return PluginEntry{}, false, fmt.Errorf("trust plugin read-only tool: no plugin %q", name)
-}
-
 // ClearPluginAuthenticationInSource clears auth material in the file that actually
 // owns the MCP server. Load() merges user/project TOML and project .mcp.json into
 // one Config, so callers must not mutate that merged view and Save() it back: a
@@ -810,6 +810,26 @@ func ClearPluginAuthenticationInSource(name string) (PluginEntry, bool, string, 
 
 func pluginTOMLSourcePath(name string) string {
 	return pluginTOMLSourcePathForRoot(".", name)
+}
+
+func pluginTOMLSourcePathForRoot(root, name string) string {
+	projectTOML := "reasonix.toml"
+	if resolved := resolveRoot(root); resolved != "." {
+		projectTOML = filepath.Join(resolved, "reasonix.toml")
+	}
+	paths := append([]string{projectTOML}, userConfigCandidatePaths()...)
+	for _, path := range paths {
+		if strings.TrimSpace(path) == "" {
+			continue
+		}
+		cfg := LoadForEdit(path)
+		for _, p := range cfg.Plugins {
+			if p.Name == name {
+				return path
+			}
+		}
+	}
+	return ""
 }
 
 type configSourceEdit struct {
@@ -1049,58 +1069,6 @@ func RemovePluginFromSourcesForRoot(root, name string) (bool, error) {
 	return true, nil
 }
 
-// TrustPluginReadOnlyToolInSourceForRoot persists one trusted MCP read-only tool
-// into the file that owns the server for root. TOML declarations win over
-// .mcp.json, matching LoadForRoot merge precedence.
-func TrustPluginReadOnlyToolInSourceForRoot(root, name, toolName string) (PluginEntry, bool, string, error) {
-	if path := pluginTOMLSourcePathForRoot(root, name); path != "" {
-		cfg := LoadForEdit(path)
-		updated, changed, err := cfg.TrustPluginReadOnlyTool(name, toolName)
-		if err != nil {
-			return PluginEntry{}, false, path, err
-		}
-		if changed {
-			if err := cfg.SaveTo(path); err != nil {
-				return PluginEntry{}, false, path, err
-			}
-		}
-		return updated, changed, path, nil
-	}
-	mcpPath := mcpJSONFile
-	if resolved := resolveRoot(root); resolved != "." {
-		mcpPath = filepath.Join(resolved, mcpJSONFile)
-	}
-	updated, changed, err := trustMCPJSONReadOnlyTool(mcpPath, name, toolName)
-	if err != nil {
-		return PluginEntry{}, false, mcpPath, err
-	}
-	return updated, changed, mcpPath, nil
-}
-
-func TrustPluginReadOnlyToolInSource(name, toolName string) (PluginEntry, bool, string, error) {
-	return TrustPluginReadOnlyToolInSourceForRoot(".", name, toolName)
-}
-
-func pluginTOMLSourcePathForRoot(root, name string) string {
-	projectTOML := "reasonix.toml"
-	if resolved := resolveRoot(root); resolved != "." {
-		projectTOML = filepath.Join(resolved, "reasonix.toml")
-	}
-	paths := append([]string{projectTOML}, userConfigCandidatePaths()...)
-	for _, path := range paths {
-		if strings.TrimSpace(path) == "" {
-			continue
-		}
-		cfg := LoadForEdit(path)
-		for _, p := range cfg.Plugins {
-			if p.Name == name {
-				return path
-			}
-		}
-	}
-	return ""
-}
-
 // validatePlugin checks a plugin entry by transport. An empty Type means stdio.
 func validatePlugin(e PluginEntry) error {
 	if strings.TrimSpace(e.Name) == "" {
@@ -1117,6 +1085,22 @@ func validatePlugin(e PluginEntry) error {
 			return fmt.Errorf("plugin %q: tool_timeout_seconds[%q] must be >= 0", e.Name, name)
 		}
 	}
+	if !validMCPApprovalMode(e.DefaultToolsApprovalMode, true) {
+		return fmt.Errorf("plugin %q: unknown default_tools_approval_mode %q (want auto|prompt|writes|approve)", e.Name, e.DefaultToolsApprovalMode)
+	}
+	for name, policy := range e.Tools {
+		if strings.TrimSpace(name) == "" {
+			return fmt.Errorf("plugin %q: tools contains an empty tool name", e.Name)
+		}
+		if !validMCPApprovalMode(policy.ApprovalMode, false) {
+			return fmt.Errorf("plugin %q: tools[%q].approval_mode must be auto|prompt|writes|approve", e.Name, name)
+		}
+	}
+	switch strings.ToLower(strings.TrimSpace(e.ApprovalsReviewer)) {
+	case "", "user", "auto_review":
+	default:
+		return fmt.Errorf("plugin %q: unknown approvals_reviewer %q (want user|auto_review)", e.Name, e.ApprovalsReviewer)
+	}
 	switch strings.ToLower(strings.TrimSpace(e.Type)) {
 	case "", "stdio":
 		if strings.TrimSpace(e.Command) == "" {
@@ -1130,6 +1114,17 @@ func validatePlugin(e PluginEntry) error {
 		return fmt.Errorf("plugin %q: unknown type %q (want stdio|http|sse)", e.Name, e.Type)
 	}
 	return nil
+}
+
+func validMCPApprovalMode(mode string, allowEmpty bool) bool {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "auto", "prompt", "writes", "approve":
+		return true
+	case "":
+		return allowEmpty
+	default:
+		return false
+	}
 }
 
 // SaveTo writes the configuration to path as annotated TOML, atomically: it
@@ -1184,7 +1179,8 @@ func (c *Config) saveProjectIncremental(path string) error {
 	}
 	removePlugins := len(c.Plugins) == 0 && tomlBodyHasSection(body, "plugins")
 	removeSandboxBash := shouldRemoveIneffectiveProjectSandboxBash(body, c)
-	if strings.TrimSpace(delta) == "" && !removePlugins && !removeSandboxBash {
+	writeProviderAccess := c.Desktop.ProviderAccess != nil
+	if strings.TrimSpace(delta) == "" && !removePlugins && !removeSandboxBash && !writeProviderAccess {
 		return nil // no changes to write
 	}
 
@@ -1197,6 +1193,9 @@ func (c *Config) saveProjectIncremental(path string) error {
 	}
 	if removeSandboxBash {
 		body = removeTOMLSectionKey(body, "sandbox", "bash")
+	}
+	if writeProviderAccess {
+		body = upsertTOMLSectionKey(body, "desktop", "provider_access", "provider_access = "+renderStringArray(c.Desktop.ProviderAccess))
 	}
 	return writeConfigFile(path, body)
 }
@@ -1390,6 +1389,40 @@ func replaceTOMLSection(body, sectionName, newContent string) string {
 		return body[:span.start] + newContent + body[end:]
 	}
 	return strings.TrimRight(body, "\n") + "\n\n" + newContent
+}
+
+func upsertTOMLSectionKey(body, sectionName, key, line string) string {
+	line = strings.TrimRight(line, "\r\n") + "\n"
+	spans := tomlLineSpans(body)
+	sectionIdx := -1
+	sectionEnd := len(body)
+	for i, span := range spans {
+		name, isArray, ok := tomlEditSectionHeader(span.text)
+		if ok {
+			if sectionIdx >= 0 {
+				sectionEnd = span.start
+				break
+			}
+			if !isArray && name == sectionName {
+				sectionIdx = i
+			}
+			continue
+		}
+		if sectionIdx >= 0 {
+			if got, _, ok := tomlKeyValue(span.text); ok && got == key {
+				return body[:span.start] + line + body[span.end:]
+			}
+		}
+	}
+	if sectionIdx < 0 {
+		block := fmt.Sprintf("[%s]\n%s", sectionName, line)
+		return replaceTOMLSection(body, sectionName, block)
+	}
+	prefix := body[:sectionEnd]
+	if prefix != "" && !strings.HasSuffix(prefix, "\n") {
+		prefix += "\n"
+	}
+	return prefix + line + body[sectionEnd:]
 }
 
 func removeTOMLSection(body, sectionName string) string {
@@ -1621,6 +1654,12 @@ func isUserConfigPath(path string) bool {
 		}
 	}
 	return false
+}
+
+// IsUserConfigPath reports whether path is one of Reasonix's current or legacy
+// user-global config locations. Other paths use project-scoped rendering.
+func IsUserConfigPath(path string) bool {
+	return isUserConfigPath(path)
 }
 
 // Save writes the configuration back to the file it was loaded from

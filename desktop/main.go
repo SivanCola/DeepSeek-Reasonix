@@ -22,22 +22,12 @@ import (
 
 	// Blank imports wire compile-time built-ins into their registries, exactly as
 	// cmd/reasonix does — boot.Build resolves providers/tools from these registries.
+	"reasonix/internal/config"
 	_ "reasonix/internal/provider/anthropic"
 	_ "reasonix/internal/provider/openai"
-	"reasonix/internal/sandbox"
+	"reasonix/internal/repair"
 	_ "reasonix/internal/tool/builtin"
 )
-
-// runWindowsSandboxHelperIfRequested reports whether argv (os.Args-shaped, so
-// argv[0] is the program name) asks this process to act as the hidden Windows
-// sandbox helper, and runs it when so. Split from main so tests can pin that
-// the desktop binary keeps the helper route the sandbox wrapper depends on.
-func runWindowsSandboxHelperIfRequested(argv []string) (int, bool) {
-	if len(argv) > 1 && argv[1] == sandbox.WindowsHelperCommand {
-		return sandbox.RunWindowsSandboxHelper(argv[2:], os.Stdin, os.Stdout, os.Stderr), true
-	}
-	return 0, false
-}
 
 // assets embeds the built frontend. `all:` so dotfiles (e.g. the dist .gitkeep
 // that keeps this directive compilable before the first `pnpm build`) are
@@ -102,17 +92,28 @@ func linuxWebviewGpuPolicy(pattern string) linux.WebviewGpuPolicy {
 }
 
 func main() {
-	// The Windows bash sandbox relaunches the current executable as a hidden
-	// helper process. Dispatch it before any Wails or single-instance setup:
-	// otherwise every sandboxed command starts a second GUI instance that
-	// forwards to the running app and exits 0 with no output, so bash silently
-	// returns empty on Windows (#6051, #6067, #6072).
-	if code, ok := runWindowsSandboxHelperIfRequested(os.Args); ok {
-		os.Exit(code)
+	launch := parseDesktopLaunchArgs(os.Args[1:])
+	if config.SafeModeRequested() {
+		launch.SafeMode = true
 	}
-	sandbox.RegisterHelperDispatch()
+	tracker := repair.NewStartupTracker("")
+	if tracker.SafeModeRecommended() {
+		launch.SafeMode = true
+	}
+	if launch.SafeMode {
+		_ = os.Setenv("REASONIX_SAFE_MODE", "1")
+	}
+	// Begin runs before the Wails single-instance gate, but it refuses to
+	// overwrite the recorded state while its owner PID is alive, so a duplicate
+	// launch — which Wails terminates via os.Exit without OnShutdown — never
+	// counts as a crash toward the Safe Mode threshold.
+	startupState, _ := tracker.Begin(version, launch.SafeMode)
+	trackerOwned := startupState.PID == os.Getpid()
 
 	app := NewApp()
+	if trackerOwned {
+		app.startupTracker = tracker
+	}
 
 	// Restore saved window size, or fall back to the default.
 	width, height := 1240, 720
@@ -140,8 +141,15 @@ func main() {
 		MinHeight: 480,
 		// Match the dark UI shell so the initial webview background doesn't flash
 		// white before CSS loads — particularly visible on WebKitGTK.
-		BackgroundColour:   &options.RGBA{R: 26, G: 26, B: 46, A: 255},
-		AssetServer:        &assetserver.Options{Assets: assets, Middleware: app.workspaceMediaMiddleware()},
+		BackgroundColour: &options.RGBA{R: 26, G: 26, B: 46, A: 255},
+		AssetServer: &assetserver.Options{
+			Assets: assets,
+			Middleware: assetserver.ChainMiddleware(
+				app.jsProfilingMiddleware(),
+				app.workspaceMediaMiddleware(),
+				app.themeAssetMiddleware(),
+			),
+		},
 		OnStartup:          app.startup,
 		OnDomReady:         app.domReady,
 		OnBeforeClose:      app.beforeClose,
@@ -189,6 +197,23 @@ func main() {
 		},
 	})
 	if err != nil {
+		if trackerOwned {
+			_ = tracker.MarkFailed(err)
+		}
 		println("Error:", err.Error())
 	}
+}
+
+type desktopLaunchOptions struct {
+	SafeMode bool
+}
+
+func parseDesktopLaunchArgs(args []string) desktopLaunchOptions {
+	var out desktopLaunchOptions
+	for _, arg := range args {
+		if arg == "--safe-mode" {
+			out.SafeMode = true
+		}
+	}
+	return out
 }

@@ -35,38 +35,6 @@ func TestTurnOrchestratorRunsForegroundUnit(t *testing.T) {
 	}
 }
 
-func TestTurnOrchestratorSkipsMemoryCompilerForSyntheticTurns(t *testing.T) {
-	// A genuine user turn supplies a Memory v5 source and is not skipped; a
-	// synthetic controller-injected turn (the goal-loop continuation) is marked
-	// to bypass compilation so its contract can't be re-injected and loop
-	// (#5342, #5329).
-	runner := &fakeTurnRunner{}
-	c := New(Options{Runner: runner})
-	o := newTurnOrchestrator(c)
-
-	real := "fix the login bug"
-	if err := o.runTurnWithRawDisplay(context.Background(), real, real, ""); err != nil {
-		t.Fatal(err)
-	}
-	if err := o.runTurnWithRawDisplay(context.Background(), goalContinueTurn, goalContinueTurn, ""); err != nil {
-		t.Fatal(err)
-	}
-
-	if len(runner.memoryCompilerSkips) != 2 {
-		t.Fatalf("runs = %d, want 2", len(runner.memoryCompilerSkips))
-	}
-	if runner.memoryCompilerSkips[0] {
-		t.Fatalf("genuine user turn was marked skip-compile")
-	}
-	if !runner.memoryCompilerSkips[1] {
-		t.Fatalf("synthetic goal-continuation turn was NOT marked skip-compile")
-	}
-	// The genuine turn supplies a source; the synthetic one must not.
-	if len(runner.memoryCompilerInputs) != 1 || runner.memoryCompilerInputs[0] != real {
-		t.Fatalf("memory compiler sources = %v, want exactly [%q]", runner.memoryCompilerInputs, real)
-	}
-}
-
 func TestTurnOrchestratorTypedSyntheticTurnDoesNotDependOnPrefix(t *testing.T) {
 	runner := &fakeTurnRunner{}
 	c := New(Options{AutoPlan: "on", Runner: runner})
@@ -85,28 +53,6 @@ func TestTurnOrchestratorTypedSyntheticTurnDoesNotDependOnPrefix(t *testing.T) {
 	}
 	if strings.HasPrefix(runner.inputs[0], PlanModeMarker) {
 		t.Fatalf("typed synthetic turn should not be auto-planned, got %q", runner.inputs[0])
-	}
-	if len(runner.memoryCompilerSkips) != 1 || !runner.memoryCompilerSkips[0] {
-		t.Fatalf("typed synthetic turn was not marked skip-compile: %+v", runner.memoryCompilerSkips)
-	}
-	if len(runner.memoryCompilerInputs) != 0 {
-		t.Fatalf("typed synthetic turn supplied Memory v5 source input: %+v", runner.memoryCompilerInputs)
-	}
-}
-
-func TestTurnOrchestratorLegacySyntheticPrefixStillSkipsMemoryCompiler(t *testing.T) {
-	runner := &fakeTurnRunner{}
-	c := New(Options{Runner: runner})
-	o := newTurnOrchestrator(c)
-
-	if err := o.runTurnWithRawDisplay(context.Background(), goalContinueTurn, goalContinueTurn, ""); err != nil {
-		t.Fatal(err)
-	}
-	if len(runner.memoryCompilerSkips) != 1 || !runner.memoryCompilerSkips[0] {
-		t.Fatalf("legacy synthetic prefix was not marked skip-compile: %+v", runner.memoryCompilerSkips)
-	}
-	if len(runner.memoryCompilerInputs) != 0 {
-		t.Fatalf("legacy synthetic prefix supplied Memory v5 source input: %+v", runner.memoryCompilerInputs)
 	}
 }
 
@@ -145,16 +91,47 @@ func TestTurnOrchestratorStopHookIgnoresCanceledTurnContext(t *testing.T) {
 }
 
 type recordingSessionRunner struct {
-	session              *agent.Session
-	inputs               []string
-	memoryCompilerInputs []string
+	session *agent.Session
+	inputs  []string
+}
+
+type deliveryScopeErrorRunner struct {
+	scopes []agent.DeliveryExecutionScope
+}
+
+func (r *deliveryScopeErrorRunner) Run(ctx context.Context, _ string) error {
+	if scope, ok := agent.DeliveryExecutionScopeFromContext(ctx); ok {
+		r.scopes = append(r.scopes, scope)
+	}
+	return &agent.FinalReadinessError{Attempts: 3, Reason: "missing verification"}
+}
+
+func TestGoalReadinessFailureBlocksAndKeepsDeliveryScope(t *testing.T) {
+	runner := &deliveryScopeErrorRunner{}
+	c := New(Options{Runner: runner})
+	c.SetGoal("ship the integration")
+
+	err := newTurnOrchestrator(c).runGoalLoopWithRawDisplay(context.Background(), "start", "start", "")
+	var readiness *agent.FinalReadinessError
+	if !errors.As(err, &readiness) {
+		t.Fatalf("run err = %v, want FinalReadinessError", err)
+	}
+	if got := c.GoalStatus(); got != GoalStatusBlocked {
+		t.Fatalf("GoalStatus = %q, want blocked", got)
+	}
+	if len(runner.scopes) != 1 || runner.scopes[0].ID == "" || runner.scopes[0].TaskText != "ship the integration" {
+		t.Fatalf("delivery scopes = %+v", runner.scopes)
+	}
+	if !c.ResumeGoal() || c.GoalStatus() != GoalStatusRunning {
+		t.Fatal("blocked Goal should resume with its existing scope")
+	}
+	if id, task, ok := c.goals.deliveryScope(); !ok || id != runner.scopes[0].ID || task != "ship the integration" {
+		t.Fatalf("resumed scope = (%q, %q, %v), want preserved id/task", id, task, ok)
+	}
 }
 
 func (r *recordingSessionRunner) Run(ctx context.Context, input string) error {
 	r.inputs = append(r.inputs, input)
-	if source, ok := agent.MemoryCompilerSourceInputFromContext(ctx); ok {
-		r.memoryCompilerInputs = append(r.memoryCompilerInputs, source)
-	}
 	r.session.Add(provider.Message{Role: provider.RoleUser, Content: input})
 	return nil
 }
@@ -290,9 +267,6 @@ func TestTurnOrchestratorRefTurnRecordsVisibleDisplay(t *testing.T) {
 	if !strings.Contains(runner.inputs[0], "Referenced context:") || !strings.Contains(runner.inputs[0], "referenced evidence") {
 		t.Fatalf("model input should include resolved reference context, got %q", runner.inputs[0])
 	}
-	if len(runner.memoryCompilerInputs) != 1 || runner.memoryCompilerInputs[0] != visible {
-		t.Fatalf("memory compiler source input = %+v, want %q", runner.memoryCompilerInputs, visible)
-	}
 	if gotDisplay != visible {
 		t.Fatalf("display recorder display = %q, want visible prompt %q", gotDisplay, visible)
 	}
@@ -417,13 +391,13 @@ func TestTurnOrchestratorSyntheticTurnDoesNotCreateCheckpoint(t *testing.T) {
 	}
 }
 
-func TestTurnOrchestratorStopHookCancelledContext(t *testing.T) {
+func TestTurnOrchestratorStopFailureHookCancelledContext(t *testing.T) {
 	prov := &scriptedTurns{turns: [][]provider.Chunk{textTurn("done")}}
 	ag := agent.New(prov, tool.NewRegistry(), agent.NewSession(""), agent.Options{}, event.Discard)
 	var stopCalls int
 	hooks := hook.NewRunner([]hook.ResolvedHook{{
 		HookConfig: hook.HookConfig{Command: "stop"},
-		Event:      hook.Stop,
+		Event:      hook.StopFailure,
 		Scope:      hook.ScopeProject,
 	}}, "", func(ctx context.Context, in hook.SpawnInput) hook.SpawnResult {
 		if ctx.Err() != nil {
@@ -431,7 +405,10 @@ func TestTurnOrchestratorStopHookCancelledContext(t *testing.T) {
 		}
 		var p hook.Payload
 		json.Unmarshal([]byte(in.Stdin), &p)
-		if p.Event == hook.Stop {
+		if p.Event == hook.StopFailure {
+			if p.Error == "" || !p.IsInterrupt {
+				t.Errorf("failure payload = %+v", p)
+			}
 			stopCalls++
 		}
 		return hook.SpawnResult{ExitCode: 0}
@@ -444,7 +421,7 @@ func TestTurnOrchestratorStopHookCancelledContext(t *testing.T) {
 		t.Fatal(err)
 	}
 	if stopCalls != 1 {
-		t.Fatalf("Stop hooks called = %d; want 1", stopCalls)
+		t.Fatalf("StopFailure hooks called = %d; want 1", stopCalls)
 	}
 }
 
