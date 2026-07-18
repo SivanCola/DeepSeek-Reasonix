@@ -116,8 +116,9 @@ func pasteClipboardImage() tea.Cmd {
 }
 
 type clipboardTextPasteMsg struct {
-	text string
-	err  error
+	text   string
+	err    error
+	remote bool
 }
 
 var readNativeClipboardText = clipboard.ReadAll
@@ -127,6 +128,9 @@ var readNativeClipboardText = clipboard.ReadAll
 // is deliberately text-only so right-click never probes for an image first.
 func pasteClipboardText() tea.Cmd {
 	return func() tea.Msg {
+		if remoteClipboardSession() {
+			return clipboardTextPasteMsg{remote: true}
+		}
 		text, err := readNativeClipboardText()
 		return clipboardTextPasteMsg{text: text, err: err}
 	}

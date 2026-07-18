@@ -1665,6 +1665,10 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case clipboardTextPasteMsg:
+		if msg.remote {
+			m.notice(i18n.M.ClipboardTextPasteRemoteHint)
+			break
+		}
 		if msg.err != nil {
 			m.notice(fmt.Sprintf(i18n.M.ClipboardTextPasteFailedFmt, msg.err))
 			break
