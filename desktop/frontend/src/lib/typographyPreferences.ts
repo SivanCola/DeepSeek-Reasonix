@@ -63,7 +63,11 @@ export function createDefaultTypographyPreferences(): TypographyPreferences {
 export function sanitizeCustomFontName(value: unknown): string {
   if (typeof value !== "string") return "";
   const compact = value.trim().replace(/\s+/g, " ").slice(0, 200);
-  return /[;{}<>]/.test(compact) ? "" : compact;
+  return isSafeCustomFontNameInput(compact) ? compact : "";
+}
+
+export function isSafeCustomFontNameInput(value: unknown): value is string {
+  return typeof value === "string" && !/[;{}<>]/.test(value);
 }
 
 export function normalizeTypographyPreferences(value: unknown): TypographyPreferences {
@@ -113,13 +117,16 @@ export function applyTypographyPreferences(preferences: TypographyPreferences): 
   for (const region of TYPOGRAPHY_REGIONS) {
     const preference = normalized[region];
     const scaleProperty = `--typography-${region}-scale`;
+    const sizeProperty = `--typography-${region}-size`;
     const fontProperty = `--typography-${region}-font`;
     if (preference.followGlobal) {
       root.style.removeProperty(scaleProperty);
+      root.style.removeProperty(sizeProperty);
       root.style.removeProperty(fontProperty);
       continue;
     }
     root.style.setProperty(scaleProperty, String(preference.fontSize / TYPOGRAPHY_REGION_META[region].baseSize));
+    root.style.setProperty(sizeProperty, `${preference.fontSize}px`);
     const fontStack = fontStackForPreference(preference);
     if (fontStack) root.style.setProperty(fontProperty, fontStack);
     else root.style.removeProperty(fontProperty);

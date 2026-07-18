@@ -7,6 +7,8 @@ import {
   applyTypographyPreferences,
   createDefaultTypographyPreferences,
   getTypographyPreferences,
+  isSafeCustomFontNameInput,
+  sanitizeCustomFontName,
   type RegionFontFamily,
   type TypographyPreferences,
   type TypographyRegion,
@@ -155,7 +157,14 @@ export function TypographySettings({ onBack }: { onBack: () => void }) {
                   type="text"
                   value={preference.customFontName}
                   placeholder={t("settings.fontFamilyCustomPlaceholder")}
-                  onChange={(event) => updateSelected({ customFontName: event.target.value })}
+                  onChange={(event) => {
+                    const value = event.target.value.slice(0, 200);
+                    if (isSafeCustomFontNameInput(value)) updateSelected({ customFontName: value });
+                  }}
+                  onBlur={() => {
+                    const normalized = sanitizeCustomFontName(preference.customFontName);
+                    if (normalized !== preference.customFontName) updateSelected({ customFontName: normalized });
+                  }}
                 />
               </label>
             ) : null}

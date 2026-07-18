@@ -401,6 +401,18 @@ ok(stylesSource.includes(".theme-gallery__preview-control"), "preview dimensions
 ok(gallerySource.includes("settings.themeGallery.scenePreviewHint") && gallerySource.includes("theme-gallery__preview-help"), "scene preview explains home and workspace behavior");
 ok(localeZh.includes('"settings.themeGallery.sceneHome": "首页展示"') && localeZh.includes('"settings.themeGallery.sceneTask": "工作区展示"'), "scene options use explicit Chinese labels");
 ok(localeZh.includes('"settings.themeGallery.subtitle": "点击主题即可全局预览，应用后才会保存"'), "gallery explains click-to-preview and apply-to-save semantics");
+ok(
+  localeEn.includes('"settings.themeGallery.restoreGraphite": "Restore Graphite appearance"') &&
+    localeEn.includes("detailed typography are preserved"),
+  "English restore copy names Graphite and preserves detailed typography",
+);
+ok(
+  localeZh.includes('"settings.themeGallery.restoreGraphite": "恢复石墨基础外观"') &&
+    localeZh.includes("保留明暗模式、字体、字号及详细排版设置") &&
+    localeZhTW.includes('"settings.themeGallery.restoreGraphite": "恢復石墨基礎外觀"') &&
+    localeZhTW.includes("保留明暗模式、字型、字號及詳細排版設定"),
+  "Chinese restore copy localizes Graphite as 石墨 and preserves detailed typography",
+);
 ok(stylesSource.includes(".theme-gallery__detail-user-actions") && stylesSource.includes("grid-template-columns: repeat(2, minmax(0, 1fr))"), "user theme edit and export actions share a balanced row");
 ok(stylesSource.includes(".theme-gallery__rail-section-head") && stylesSource.includes(".theme-gallery__rail-section-items"), "immersive rail groups have lightweight headings and item stacks");
 ok(stylesSource.includes(".theme-gallery__detail-status"), "active status has dedicated non-button styling");

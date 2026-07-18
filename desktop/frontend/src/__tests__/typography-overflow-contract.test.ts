@@ -212,8 +212,47 @@ eq(
 );
 eq(
   finalDeclaration(".app--creation .composer__input", "font-size"),
-  "calc(14.5px * var(--font-scale))",
-  "creation composer input follows interface text size",
+  "var(--font-content)",
+  "creation composer input follows the composer text size",
+);
+eq(
+  finalDeclaration("body", "--text-base"),
+  "var(--typography-interface-size, calc(14px * var(--font-scale)))",
+  "interface text resolves its own exact regional size",
+);
+eq(
+  finalDeclaration(".transcript", "--text-base"),
+  "var(--typography-conversation-size, calc(14px * var(--font-scale)))",
+  "conversation text resolves its own exact regional size",
+);
+eq(
+  finalDeclaration(".composer-wrap", "--text-base"),
+  "var(--typography-composer-size, calc(14px * var(--font-scale)))",
+  "composer text resolves its own exact regional size",
+);
+eq(
+  finalDeclaration(".code", "--font-code"),
+  "var(--typography-code-size, calc(12px * var(--font-scale)))",
+  "code text resolves its own exact regional size",
+);
+eq(finalDeclaration(".code", "font-family"), "var(--font-code-family)", "code blocks keep the regional code font");
+eq(finalDeclaration(".md-code", "font-family"), "var(--font-code-family)", "inline code keeps the regional code font");
+eq(finalDeclaration(".msg-meta", "font-size"), "var(--font-status)", "message metadata keeps its regional size");
+eq(
+  finalDeclaration(".composer-meta", "font-family"),
+  "var(--font-metadata-family)",
+  "composer metadata keeps the regional font",
+);
+eq(finalDeclaration(".statusbar", "font-family"), "var(--font-metadata-family)", "status bar keeps the regional font");
+eq(
+  finalDeclaration(".app--creation .reasoning__body", "font-family"),
+  "var(--font-content-family)",
+  "creation reasoning keeps the conversation font",
+);
+eq(
+  finalDeclaration(".app--creation .tool__name", "font-family"),
+  "var(--font-code-family)",
+  "creation tool names keep the code font",
 );
 ok(
   !/\.app--creation[^{]*\{[^}]*font-size:\s*[0-9.]+px\s*(?:!important\s*)?;/.test(styles),

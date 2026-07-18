@@ -1898,6 +1898,8 @@ html {
 }
 body {
   --font-scale: var(--typography-interface-scale, var(--global-font-scale));
+  --text-base: var(--typography-interface-size, calc(14px * var(--font-scale)));
+  --font-content: var(--text-base);
   background: var(--bg);
   color: var(--fg);
   font-family: var(--typography-interface-font, var(--font-content-family));
@@ -1920,26 +1922,67 @@ textarea {
    back to the global appearance settings, preserving existing installations. */
 .transcript {
   --font-scale: var(--typography-conversation-scale, var(--global-font-scale));
+  --text-base: var(--typography-conversation-size, calc(14px * var(--font-scale)));
+  --font-content: var(--text-base);
   --font-content-family: var(--typography-conversation-font, var(--font-ui));
   font-family: var(--font-content-family);
+  font-size: var(--font-content);
 }
 .composer-wrap {
   --font-scale: var(--typography-composer-scale, var(--global-font-scale));
+  --text-base: var(--typography-composer-size, calc(14px * var(--font-scale)));
+  --font-content: var(--text-base);
   --font-content-family: var(--typography-composer-font, var(--font-ui));
   font-family: var(--font-content-family);
+  font-size: var(--font-content);
 }
 .code,
 .md-code,
-.tool {
+.tool,
+.tool-group,
+.readonly-batch {
   --font-scale: var(--typography-code-scale, var(--global-font-scale));
-  font-family: var(--typography-code-font, var(--font-mono));
+  --text-sm: var(--typography-code-size, calc(12px * var(--font-scale)));
+  --font-code: var(--typography-code-size, calc(12px * var(--font-scale)));
+  --font-code-family: var(--typography-code-font, var(--font-mono));
+  font-family: var(--font-code-family);
+  font-size: var(--font-code);
 }
 .statusbar,
 .msg-meta,
 .composer-meta,
 .compaction__meta {
   --font-scale: var(--typography-metadata-scale, var(--global-font-scale));
-  font-family: var(--typography-metadata-font, var(--font-ui));
+  --font-status: var(--typography-metadata-size, calc(12px * var(--font-scale)));
+  --font-metadata-family: var(--typography-metadata-font, var(--font-ui));
+  font-family: var(--font-metadata-family);
+  font-size: var(--font-status);
+}
+
+/* Root typography tokens are computed before inheritance, so a descendant
+   --font-scale cannot retroactively change them. Re-declare the proportional
+   tokens at each semantic region root to make independent scaling real. */
+body,
+.transcript,
+.composer-wrap,
+.code,
+.md-code,
+.tool,
+.tool-group,
+.readonly-batch,
+.statusbar,
+.msg-meta,
+.composer-meta,
+.compaction__meta {
+  --text-2xs: calc(10px * var(--font-scale));
+  --text-xs: calc(11px * var(--font-scale));
+  --text-sm: calc(12px * var(--font-scale));
+  --text-md: calc(13px * var(--font-scale));
+  --text-lg: calc(15px * var(--font-scale));
+  --text-xl: calc(18px * var(--font-scale));
+  --font-caption: var(--text-xs);
+  --font-control: var(--text-md);
+  --font-control-small: var(--text-sm);
 }
 
 /* Only real hyperlinks get the pointer cursor; everything else (buttons, tabs,
@@ -3820,7 +3863,7 @@ a[href] {
   margin-top: 4px;
   margin-right: 10px;
   color: var(--fg-faint);
-  font-size: 12px;
+  font-size: var(--font-status);
   line-height: 1;
   user-select: none;
   -webkit-user-select: none;
@@ -4663,8 +4706,8 @@ a[href] {
   margin: 18px 0;
 }
 .md-code {
-  font-family: var(--font-mono);
-  font-size: 0.88em;
+  font-family: var(--font-code-family);
+  font-size: var(--font-code);
   background: var(--bg-elev-2);
   border: 1px solid var(--border-soft);
   border-radius: 5px;
@@ -4699,7 +4742,7 @@ a[href] {
   background: var(--bg-soft);
   border: 1px solid var(--border-soft);
   border-radius: 8px;
-  font-family: var(--font-mono);
+  font-family: var(--font-code-family);
   font-size: var(--font-code);
   line-height: 1.55;
   overflow: auto;
@@ -5157,8 +5200,8 @@ body > .mermaid-diagram--fullscreen {
   background: var(--bg-soft);
   border: 1px solid var(--border-soft);
   border-radius: 8px;
-  font-family: var(--mono);
-  font-size: 12.5px;
+  font-family: var(--typography-code-font, var(--font-mono));
+  font-size: var(--typography-code-size, 12.5px);
   line-height: 1.55;
   overflow: auto;
 }
@@ -5214,7 +5257,7 @@ body > .mermaid-diagram--fullscreen {
 }
 .diff__text {
   flex: 1 0 auto;
-  font-family: var(--mono);
+  font-family: var(--typography-code-font, var(--font-mono));
   padding: 0 12px 0 8px;
 }
 
@@ -5234,7 +5277,7 @@ body > .mermaid-diagram--fullscreen {
   border: none;
   color: var(--fg-faint);
   font: inherit;
-  font-size: 13px;
+  font-size: var(--font-code);
   text-align: left;
   cursor: pointer;
   border-radius: 4px;
@@ -5307,7 +5350,7 @@ body > .mermaid-diagram--fullscreen {
   opacity: 0.82;
 }
 .tool__name {
-  font-family: var(--mono);
+  font-family: var(--font-code-family);
   font-size: var(--font-code);
   font-weight: 600;
   color: inherit;
@@ -5325,7 +5368,7 @@ body > .mermaid-diagram--fullscreen {
 .tool__summary {
   color: inherit;
   flex-shrink: 0;
-  font-family: var(--mono);
+  font-family: var(--font-code-family);
   font-size: var(--font-caption);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
@@ -5339,7 +5382,7 @@ body > .mermaid-diagram--fullscreen {
   white-space: nowrap;
 }
 .tool__profile {
-  font-family: var(--mono);
+  font-family: var(--font-code-family);
   font-size: var(--font-caption);
   color: inherit;
   overflow: hidden;
@@ -5352,8 +5395,8 @@ body > .mermaid-diagram--fullscreen {
   align-items: center;
   gap: 4px;
   min-width: 34px;
-  font-family: var(--mono);
-  font-size: 11px;
+  font-family: var(--font-code-family);
+  font-size: var(--font-caption);
   color: color-mix(in srgb, var(--fg-dim) 86%, var(--fg));
   font-variant-numeric: tabular-nums;
   flex-shrink: 0;
@@ -5365,7 +5408,7 @@ body > .mermaid-diagram--fullscreen {
   flex: 0 0 auto;
 }
 .tool__status-icon {
-  font-size: 13px;
+  font-size: var(--font-code);
   line-height: 1;
   flex-shrink: 0;
 }
@@ -5403,7 +5446,7 @@ body > .mermaid-diagram--fullscreen {
   display: inline-block;
   margin-top: 4px;
   padding: 2px 8px;
-  font-size: 11px;
+  font-size: var(--font-caption);
   color: var(--accent);
   background: var(--accent-soft);
   border: none;
@@ -5420,8 +5463,8 @@ body > .mermaid-diagram--fullscreen {
   background: var(--del-bg);
   color: var(--err);
   border-radius: 6px;
-  font-family: var(--mono);
-  font-size: 12px;
+  font-family: var(--font-code-family);
+  font-size: var(--font-code);
   white-space: pre-wrap;
 }
 .tool__err--compact {
@@ -6120,7 +6163,7 @@ body > .mermaid-diagram--fullscreen {
 .composer-meta {
   --composer-control-height: 32px;
   --composer-control-radius: 7px;
-  --composer-control-font-size: 12px;
+  --composer-control-font-size: var(--font-status);
   --composer-control-font-weight: 620;
   display: flex;
   align-items: center;
@@ -6131,8 +6174,8 @@ body > .mermaid-diagram--fullscreen {
   padding: 5px 14px 6px;
   overflow: hidden;
   color: var(--fg-dim);
-  font-family: var(--sans);
-  font-size: 12px;
+  font-family: var(--font-metadata-family);
+  font-size: var(--font-status);
 }
 
 .composer-meta__params {
@@ -7005,7 +7048,7 @@ body > .mermaid-diagram--fullscreen {
   display: flex;
   align-items: center;
   gap: 0;
-  font-family: var(--font-ui);
+  font-family: var(--font-metadata-family);
   font-size: var(--font-status);
   font-variant-numeric: tabular-nums;
   line-height: 1.35;
@@ -7121,7 +7164,7 @@ body > .mermaid-diagram--fullscreen {
   text-overflow: ellipsis;
   white-space: nowrap;
   min-width: 0;
-  font-family: var(--font-ui);
+  font-family: inherit;
 }
 .statusbar__tooltip-stack {
   display: inline-flex;
@@ -26020,7 +26063,7 @@ body > .mermaid-diagram--fullscreen {
 }
 
 :root[data-theme-style] .composer__input {
-  font-size: 14px;
+  font-size: var(--font-content);
   line-height: 1.6;
 }
 
@@ -28982,7 +29025,7 @@ body > .mermaid-diagram--fullscreen {
 .app--creation .composer__input,
 :root[data-theme-style] .app--creation .composer__input {
   color: var(--fg);
-  font-size: calc(14.5px * var(--font-scale));
+  font-size: var(--font-content);
   line-height: 1.55;
 }
 
@@ -30259,8 +30302,8 @@ body > .mermaid-diagram--fullscreen {
 
 .app--creation .msg--assistant .md .md-plain-block__diagram .code:not([data-lang]),
 :root[data-theme-style] .app--creation .msg--assistant .md .md-plain-block__diagram .code:not([data-lang]) {
-  font-family: var(--font-mono);
-  font-size: calc(12.5px * var(--font-scale));
+  font-family: var(--font-code-family);
+  font-size: var(--font-code);
   letter-spacing: 0;
   line-height: 1.58;
   white-space: pre;
@@ -30282,9 +30325,7 @@ body > .mermaid-diagram--fullscreen {
   gap: 11px;
   align-items: start;
   color: color-mix(in srgb, var(--fg) 92%, var(--bg));
-  font-family: "Source Han Sans CN", "Source Han Sans SC", "Noto Sans CJK SC",
-    "Source Han Sans", "思源黑体", "Source Han Sans HC", "Microsoft YaHei UI",
-    "Microsoft YaHei", sans-serif;
+  font-family: var(--font-content-family);
   font-size: calc(13.25px * var(--font-scale));
   font-weight: 500;
   letter-spacing: 0.006em;
@@ -30322,10 +30363,8 @@ body > .mermaid-diagram--fullscreen {
     color-mix(in srgb, var(--bg) 0%, transparent) 78%
   );
   color: color-mix(in srgb, var(--fg) 92%, var(--bg));
-  font-family: "Source Han Sans CN", "Source Han Sans SC", "Noto Sans CJK SC",
-    "Source Han Sans", "思源黑体", "Source Han Sans HC", "Microsoft YaHei UI",
-    "Microsoft YaHei", sans-serif;
-  font-size: calc(12.75px * var(--font-scale));
+  font-family: var(--font-code-family);
+  font-size: var(--font-code);
   font-variant-numeric: tabular-nums;
   font-weight: 500;
   letter-spacing: 0.01em;
@@ -30656,9 +30695,7 @@ body > .mermaid-diagram--fullscreen {
 .app--creation .turn-collapse__inline-reasoning,
 :root[data-theme-style] .app--creation .reasoning__body,
 :root[data-theme-style] .app--creation .turn-collapse__inline-reasoning {
-  font-family: "Source Han Sans CN", "Source Han Sans SC", "Noto Sans CJK SC",
-    "Source Han Sans", "思源黑体", "Source Han Sans HC", "Microsoft YaHei UI",
-    "Microsoft YaHei", sans-serif;
+  font-family: var(--font-content-family);
   font-style: normal;
 }
 
@@ -30739,8 +30776,8 @@ body > .mermaid-diagram--fullscreen {
   display: none;
 }
 
-/* 工具信息流统一思源黑体：工具头全部元素 + 工具体代码/文本。
-   仅 .app--creation 作用域，不改全局 --font-ui token。 */
+/* Tool and process typography follows the semantic region preferences in every
+   layout; Creation only changes spacing and color treatment. */
 .app--creation .tool,
 .app--creation .tool__head,
 .app--creation .tool__name,
@@ -30783,9 +30820,7 @@ body > .mermaid-diagram--fullscreen {
 :root[data-theme-style] .app--creation .phase,
 :root[data-theme-style] .app--creation .notice-line,
 :root[data-theme-style] .app--creation .compaction {
-  font-family: "Source Han Sans CN", "Source Han Sans SC", "Noto Sans CJK SC",
-    "Source Han Sans", "思源黑体", "Source Han Sans HC", "Microsoft YaHei UI",
-    "Microsoft YaHei", sans-serif;
+  font-family: var(--font-code-family, inherit);
 }
 
 /* 工具卡片内的代码块（命令参数/输出/diff）与 diff 标签、错误/提示统一思源黑体。
@@ -30803,9 +30838,7 @@ body > .mermaid-diagram--fullscreen {
 :root[data-theme-style] .app--creation .tool__err,
 :root[data-theme-style] .app--creation .tool__note,
 :root[data-theme-style] .app--creation .tool__showall {
-  font-family: "Source Han Sans CN", "Source Han Sans SC", "Noto Sans CJK SC",
-    "Noto Sans SC", "Source Han Sans", "思源黑体", "Microsoft YaHei UI",
-    "Microsoft YaHei", sans-serif;
+  font-family: var(--font-code-family);
 }
 
 /* 工具错误信息：Creation 下去掉醒目的红底块（base 用 --del-bg），
@@ -30884,9 +30917,7 @@ body > .mermaid-diagram--fullscreen {
 :root[data-theme-style] .app--creation .tool__duration,
 :root[data-theme-style] .app--creation .tool__profile,
 :root[data-theme-style] .app--creation .tool__nested-count {
-  font-family: "Source Han Sans CN", "Source Han Sans SC", "Noto Sans CJK SC",
-    "Source Han Sans", "思源黑体", "Source Han Sans HC", "Microsoft YaHei UI",
-    "Microsoft YaHei", sans-serif;
+  font-family: var(--font-code-family);
 }
 
 .app--creation .turn-actions,
