@@ -493,7 +493,7 @@ func (r *ReadOnlyTaskTool) Execute(ctx context.Context, args json.RawMessage) (s
 		Writer: false,
 		Nested: SubagentDepth(ctx) > 0,
 		Label:  firstNonEmpty(p.Description, "read_only_task"),
-	}, false)
+	})
 	if err != nil {
 		return "", err
 	}
@@ -691,7 +691,7 @@ func (t *TaskTool) RunProfileSpec(ctx context.Context, spec ProfileExecSpec) (st
 		return "", err
 	}
 
-	toolNames, err := IntersectToolLists(spec.ProfileTools, spec.CallTools)
+	toolNames, err := IntersectToolLists(t.parentReg, spec.ProfileTools, spec.CallTools)
 	if err != nil {
 		return "", err
 	}
@@ -804,7 +804,7 @@ func (t *TaskTool) RunProfileSpec(ctx context.Context, spec ProfileExecSpec) (st
 			}()
 			// Queue for a concurrency/write slot here — not before Start —
 			// so the parent tool call returns a job id immediately.
-			releaseSlot, slotErr := t.acquireSlot(jobCtx, slotReq, true)
+			releaseSlot, slotErr := t.acquireSlot(jobCtx, slotReq)
 			if slotErr != nil {
 				return FormatSubagentRunResult("", run, true), errors.Join(slotErr, t.transcripts.SaveFailed(run))
 			}
@@ -830,7 +830,7 @@ func (t *TaskTool) RunProfileSpec(ctx context.Context, spec ProfileExecSpec) (st
 	}
 
 	// Foreground: acquire a slot (queue if needed), then run synchronously.
-	releaseSlot, err := t.acquireSlot(ctx, acquireReq, false)
+	releaseSlot, err := t.acquireSlot(ctx, acquireReq)
 	if err != nil {
 		run.Release()
 		return "", err
@@ -850,15 +850,10 @@ func (t *TaskTool) RunProfileSpec(ctx context.Context, spec ProfileExecSpec) (st
 	return GuardSubagentHostDecisionText(answer), nil
 }
 
-func (t *TaskTool) acquireSlot(ctx context.Context, req AcquireRequest, background bool) (func(), error) {
+func (t *TaskTool) acquireSlot(ctx context.Context, req AcquireRequest) (func(), error) {
 	noop := func() {}
 	if t.scheduler == nil {
 		return noop, nil
-	}
-	// Foreground read-only work without claims still counts toward total
-	// concurrency so parallel_tasks / fleet cannot oversubscribe the pool.
-	if !req.Writer && req.WritePaths.Empty() && !background {
-		// Always acquire a total slot for every sub-agent run.
 	}
 	return t.scheduler.Acquire(ctx, req)
 }
@@ -914,10 +909,6 @@ func (t *TaskTool) prepareTranscriptRunWithPrompt(subReg *tool.Registry, modelRe
 		return t.transcripts.PrepareLegacyForkFrom(legacyForkFrom, spec)
 	}
 	return t.transcripts.PrepareFresh(spec)
-}
-
-func (t *TaskTool) prepareTranscriptRun(subReg *tool.Registry, modelRef, effortRef, parentSession, parentID, continueFrom, legacyForkFrom string) (*SubagentRun, error) {
-	return t.prepareTranscriptRunWithPrompt(subReg, modelRef, effortRef, parentSession, parentID, continueFrom, legacyForkFrom, t.sysPrompt, "task", "task")
 }
 
 func (t *TaskTool) effectiveIdentity(modelRef, effort string) (string, string) {

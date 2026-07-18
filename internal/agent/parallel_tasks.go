@@ -161,7 +161,7 @@ func (p *ParallelTasksTool) Execute(ctx context.Context, args json.RawMessage) (
 				Writer: false,
 				Nested: SubagentDepth(ctx) > 0,
 				Label:  label,
-			}, false)
+			})
 			if slotErr != nil {
 				sink.Emit(event.Event{
 					Kind: event.ToolResult,

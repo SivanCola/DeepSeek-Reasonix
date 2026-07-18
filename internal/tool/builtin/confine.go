@@ -32,9 +32,9 @@ func ConfineBash(spec sandbox.Spec, guard SessionDataGuard, timeout ...time.Dura
 	return b
 }
 
-// RebindBashWriteRoots returns a copy of bash with WriteRoots replaced by
-// roots. ok is false when tl is not a confined bash tool, when the sandbox is
-// not enforcing (cannot honour narrower roots), or when roots is empty.
+// RebindBashWriteRoots returns a copy of bash with its complete write surface
+// narrowed to roots. ok is false when tl is not a confined bash tool, when the
+// sandbox is not enforcing (cannot honour narrower roots), or when roots is empty.
 // Callers that wrap bash (e.g. foreground-only subagent wrappers) must unwrap
 // before calling and re-wrap the result.
 func RebindBashWriteRoots(tl tool.Tool, roots []string) (tool.Tool, bool) {
@@ -48,6 +48,9 @@ func RebindBashWriteRoots(tl tool.Tool, roots []string) (tool.Tool, bool) {
 	}
 	spec := b.sb
 	spec.WriteRoots = rs
+	// Sub-agent claims are strict capability boundaries. Do not add the normal
+	// build-cache and temporary-directory allowances outside the claimed roots.
+	spec.MinimalWrites = true
 	// Do not inherit a wider AppContainer write lane from the parent workspace
 	// confinement — the claim roots are the only allowed write surface.
 	spec.AppContainerWriteRoots = append([]string(nil), rs...)

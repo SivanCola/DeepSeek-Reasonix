@@ -3,6 +3,8 @@ package agent
 import (
 	"fmt"
 	"strings"
+
+	"reasonix/internal/tool"
 )
 
 // ProfileDefinition is the resolved, runtime-facing shape of a runAs=subagent
@@ -99,8 +101,9 @@ func ResolveProfileDefinition(lookup ProfileLookup, name string) (ProfileDefinit
 //   - both empty → nil (meaning "all tools allowed by the registry builder")
 //   - profile empty, call set → call list
 //   - call empty, profile set → profile list
-//   - both set → intersection; empty intersection is an error
-func IntersectToolLists(profileTools, callTools []string) ([]string, error) {
+//   - both set → expand patterns against parent, then intersect; empty
+//     intersection is an error
+func IntersectToolLists(parent *tool.Registry, profileTools, callTools []string) ([]string, error) {
 	profileTools = cleanToolList(profileTools)
 	callTools = cleanToolList(callTools)
 	if len(profileTools) == 0 {
@@ -108,6 +111,13 @@ func IntersectToolLists(profileTools, callTools []string) ([]string, error) {
 	}
 	if len(callTools) == 0 {
 		return profileTools, nil
+	}
+	// Imported profiles support wildcard tool names. Resolve both sides against
+	// the same live registry before comparing them so a profile pattern can be
+	// narrowed by a concrete call tool (and vice versa).
+	if parent != nil {
+		profileTools = expandToolPatterns(parent, profileTools)
+		callTools = expandToolPatterns(parent, callTools)
 	}
 	allowed := map[string]bool{}
 	for _, t := range profileTools {
