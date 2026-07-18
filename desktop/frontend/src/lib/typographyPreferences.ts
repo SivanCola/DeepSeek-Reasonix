@@ -32,7 +32,7 @@ export const TYPOGRAPHY_REGION_META: Record<TypographyRegion, { baseSize: number
   conversation: { baseSize: 14, min: 12, max: 24 },
   composer: { baseSize: 14, min: 12, max: 24 },
   code: { baseSize: 12, min: 10, max: 22 },
-  metadata: { baseSize: 11, min: 9, max: 18 },
+  metadata: { baseSize: 12, min: 9, max: 18 },
 };
 
 const FONT_STACKS: Record<RegionFontFamily, string> = {

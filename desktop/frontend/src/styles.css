@@ -33099,7 +33099,7 @@ body > .mermaid-diagram--fullscreen {
 }
 .typography-settings__undo:disabled { color: var(--fg-faint); }
 .typography-settings__preview {
-  --preview-scale: var(--typography-conversation-scale, var(--global-font-scale));
+  --preview-size: var(--typography-conversation-size, calc(14px * var(--global-font-scale)));
   --preview-font: var(--typography-conversation-font, var(--font-content-family));
   margin-top: 14px;
   overflow: hidden;
@@ -33107,10 +33107,10 @@ body > .mermaid-diagram--fullscreen {
   border-radius: 10px;
   background: var(--bg);
 }
-.typography-settings__preview--interface { --preview-scale: var(--typography-interface-scale, var(--global-font-scale)); --preview-font: var(--typography-interface-font, var(--font-ui)); }
-.typography-settings__preview--composer { --preview-scale: var(--typography-composer-scale, var(--global-font-scale)); --preview-font: var(--typography-composer-font, var(--font-content-family)); }
-.typography-settings__preview--code { --preview-scale: var(--typography-code-scale, var(--global-font-scale)); --preview-font: var(--typography-code-font, var(--font-mono)); }
-.typography-settings__preview--metadata { --preview-scale: var(--typography-metadata-scale, var(--global-font-scale)); --preview-font: var(--typography-metadata-font, var(--font-ui)); }
+.typography-settings__preview--interface { --preview-size: var(--typography-interface-size, calc(14px * var(--global-font-scale))); --preview-font: var(--typography-interface-font, var(--font-ui)); }
+.typography-settings__preview--composer { --preview-size: var(--typography-composer-size, calc(14px * var(--global-font-scale))); --preview-font: var(--typography-composer-font, var(--font-content-family)); }
+.typography-settings__preview--code { --preview-size: var(--typography-code-size, calc(12px * var(--global-font-scale))); --preview-font: var(--typography-code-font, var(--font-mono)); }
+.typography-settings__preview--metadata { --preview-size: var(--typography-metadata-size, calc(12px * var(--global-font-scale))); --preview-font: var(--typography-metadata-font, var(--font-ui)); }
 .typography-settings__preview-head {
   justify-content: space-between;
   gap: 10px;
@@ -33134,7 +33134,7 @@ body > .mermaid-diagram--fullscreen {
   border-top: 1px solid var(--border-soft);
   color: var(--fg-dim);
   font-family: var(--preview-font);
-  font-size: calc(14px * var(--preview-scale));
+  font-size: var(--preview-size);
   line-height: 1.65;
 }
 .typography-settings__preview-body h4 { margin: 0 0 7px; color: var(--fg); font-size: 1.05em; }

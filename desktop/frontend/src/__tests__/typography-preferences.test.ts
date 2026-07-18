@@ -29,6 +29,7 @@ console.log("\nregional typography preferences");
 const defaults = createDefaultTypographyPreferences();
 eq(defaults.conversation.followGlobal, true, "regions follow global by default");
 eq(defaults.code.fontSize, TYPOGRAPHY_REGION_META.code.baseSize, "code uses its semantic base size");
+eq(defaults.metadata.fontSize, 12, "metadata defaults to the existing 12px supporting-text size");
 
 const normalized = normalizeTypographyPreferences({
   conversation: { followGlobal: false, fontFamily: "pingfang", fontSize: 99 },
@@ -65,9 +66,12 @@ Object.defineProperty(globalThis, "localStorage", {
 const custom = createDefaultTypographyPreferences();
 custom.conversation = { followGlobal: false, fontFamily: "pingfang", customFontName: "", fontSize: 24 };
 custom.code = { followGlobal: false, fontFamily: "jetbrains", customFontName: "", fontSize: 15 };
+custom.metadata = { followGlobal: false, fontFamily: "inherit", customFontName: "", fontSize: defaults.metadata.fontSize };
 applyTypographyPreferences(custom);
 eq(applied.get("--typography-conversation-size"), "24px", "custom regions expose an exact CSS size");
 eq(applied.get("--typography-code-size"), "15px", "code exposes an exact CSS size independent of root tokens");
+eq(applied.get("--typography-metadata-size"), "12px", "disabling metadata follow-global preserves its rendered size");
+eq(applied.get("--typography-metadata-scale"), "1", "metadata uses the same base as the global supporting-text token");
 eq(applied.has("--typography-interface-size"), false, "follow-global regions clear stale exact sizes");
 eq(stored.has(TYPOGRAPHY_STORAGE_KEY), true, "applied preferences remain persisted");
 

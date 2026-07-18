@@ -245,6 +245,36 @@ eq(
 );
 eq(finalDeclaration(".statusbar", "font-family"), "var(--font-metadata-family)", "status bar keeps the regional font");
 eq(
+  finalDeclaration(".typography-settings__preview", "--preview-size"),
+  "var(--typography-conversation-size, calc(14px * var(--global-font-scale)))",
+  "conversation preview uses the exact conversation size",
+);
+eq(
+  finalDeclaration(".typography-settings__preview--interface", "--preview-size"),
+  "var(--typography-interface-size, calc(14px * var(--global-font-scale)))",
+  "interface preview uses the exact interface size",
+);
+eq(
+  finalDeclaration(".typography-settings__preview--composer", "--preview-size"),
+  "var(--typography-composer-size, calc(14px * var(--global-font-scale)))",
+  "composer preview uses the exact composer size",
+);
+eq(
+  finalDeclaration(".typography-settings__preview--code", "--preview-size"),
+  "var(--typography-code-size, calc(12px * var(--global-font-scale)))",
+  "code preview uses the exact code size",
+);
+eq(
+  finalDeclaration(".typography-settings__preview--metadata", "--preview-size"),
+  "var(--typography-metadata-size, calc(12px * var(--global-font-scale)))",
+  "metadata preview uses the exact supporting-text size",
+);
+eq(
+  finalDeclaration(".typography-settings__preview-body", "font-size"),
+  "var(--preview-size)",
+  "live preview renders the selected region's exact size",
+);
+eq(
   finalDeclaration(".app--creation .reasoning__body", "font-family"),
   "var(--font-content-family)",
   "creation reasoning keeps the conversation font",
