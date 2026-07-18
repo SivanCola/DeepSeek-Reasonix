@@ -287,6 +287,7 @@ func TestComposerSelectionPasteAndCopyTakePrecedence(t *testing.T) {
 }
 
 func TestComposerDragReleaseAutoCopies(t *testing.T) {
+	setLocalClipboardSession(t)
 	m := newComposerMouseTestTUI(t, 40, 12)
 	m.input.SetValue("alpha beta")
 	x, y, _ := m.composerOrigin()

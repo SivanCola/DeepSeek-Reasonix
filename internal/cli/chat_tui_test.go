@@ -1452,7 +1452,15 @@ func clipboardTextPasteResultFromCmd(t *testing.T, cmd tea.Cmd) clipboardTextPas
 	return clipboardTextPasteMsg{}
 }
 
+func setLocalClipboardSession(t *testing.T) {
+	t.Helper()
+	t.Setenv("SSH_CONNECTION", "")
+	t.Setenv("SSH_CLIENT", "")
+	t.Setenv("SSH_TTY", "")
+}
+
 func TestMouseRightClickWithoutSelectionPastesClipboardText(t *testing.T) {
+	setLocalClipboardSession(t)
 	m := newComposerMouseTestTUI(t, 60, 16)
 	m.input.SetValue("before ")
 
@@ -1504,6 +1512,7 @@ func TestMouseRightClickPasteOverSSHDoesNotReadRemoteClipboard(t *testing.T) {
 }
 
 func TestMouseRightClickPasteUsesCanonicalFoldedPastePath(t *testing.T) {
+	setLocalClipboardSession(t)
 	m := newComposerMouseTestTUI(t, 60, 16)
 	pasted := "one\ntwo\nthree\nfour\nfive"
 
@@ -1531,6 +1540,7 @@ func TestMouseRightClickPasteUsesCanonicalFoldedPastePath(t *testing.T) {
 // so a follow-up right-click can still re-copy it, and arms the transient
 // "copied to clipboard" status-line notice.
 func TestMouseDragReleaseAutoCopies(t *testing.T) {
+	setLocalClipboardSession(t)
 	m := newTestChatTUI()
 	m.transcript = []string{"hello world"}
 	m.wrappedLines = []string{"hello world"}
