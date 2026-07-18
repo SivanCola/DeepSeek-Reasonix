@@ -237,6 +237,11 @@ eq(
 );
 eq(finalDeclaration(".code", "font-family"), "var(--font-code-family)", "code blocks keep the regional code font");
 eq(finalDeclaration(".md-code", "font-family"), "var(--font-code-family)", "inline code keeps the regional code font");
+eq(
+  finalDeclaration(".diff", "font-size"),
+  "var(--typography-code-size, calc(12.5px * var(--global-font-scale)))",
+  "diff text follows the global scale until the code region is customized",
+);
 eq(finalDeclaration(".msg-meta", "font-size"), "var(--font-status)", "message metadata keeps its regional size");
 eq(
   finalDeclaration(".composer-meta", "font-family"),

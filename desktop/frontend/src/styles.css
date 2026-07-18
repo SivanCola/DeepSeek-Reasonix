@@ -5201,7 +5201,7 @@ body > .mermaid-diagram--fullscreen {
   border: 1px solid var(--border-soft);
   border-radius: 8px;
   font-family: var(--typography-code-font, var(--font-mono));
-  font-size: var(--typography-code-size, 12.5px);
+  font-size: var(--typography-code-size, calc(12.5px * var(--global-font-scale)));
   line-height: 1.55;
   overflow: auto;
 }
