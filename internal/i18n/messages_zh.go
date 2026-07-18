@@ -210,6 +210,7 @@ var Chinese = Messages{
 	MouseCopiedHint:              "已复制到剪贴板",
 	ClipboardCopyOSC52Hint:       "已通过 OSC 52 请求复制 — 可能需要终端授权",
 	ClipboardCopyFallbackHint:    "系统剪贴板不可用 — 已回退到 OSC 52",
+	ClipboardTextPasteFailedFmt:  "粘贴文本失败：%v",
 	ClipboardImagePastingHint:    "正在粘贴图片…",
 	ClipboardImagePasteFailedFmt: "粘贴图片失败：%v",
 	MouseCaptureOnHint:           "鼠标接管已开启 — 应用内拖拽选中/滚动条/滚轮生效",

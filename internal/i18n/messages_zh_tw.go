@@ -200,6 +200,7 @@ var ChineseTraditional = Messages{
 	MouseCopiedHint:              "已複製到剪貼簿",
 	ClipboardCopyOSC52Hint:       "已透過 OSC 52 請求複製 — 可能需要終端授權",
 	ClipboardCopyFallbackHint:    "系統剪貼簿無法使用 — 已改用 OSC 52",
+	ClipboardTextPasteFailedFmt:  "貼上文字失敗：%v",
 	ClipboardImagePastingHint:    "正在貼上圖片…",
 	ClipboardImagePasteFailedFmt: "貼上圖片失敗：%v",
 	MouseCaptureOnHint:           "滑鼠接管已開啟 — 應用內拖拽選取/捲軸/滾輪生效",

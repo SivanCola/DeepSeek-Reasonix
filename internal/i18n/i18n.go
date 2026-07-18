@@ -195,6 +195,7 @@ type Messages struct {
 	MouseCopiedHint              string // transient status-line hint after a mouse/Ctrl+C selection copy
 	ClipboardCopyOSC52Hint       string // copy was sent through OSC 52 because the session is remote
 	ClipboardCopyFallbackHint    string // native clipboard failed and copy fell back to OSC 52
+	ClipboardTextPasteFailedFmt  string // text clipboard read failed, one %v
 	ClipboardImagePastingHint    string // shown while an image is being read from the system clipboard
 	ClipboardImagePasteFailedFmt string // image clipboard read failed, one %v
 	MouseCaptureOnHint           string // "/mouse" turned in-app mouse handling back on
