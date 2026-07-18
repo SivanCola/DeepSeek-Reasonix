@@ -120,7 +120,9 @@ func (f *FleetTool) Execute(ctx context.Context, args json.RawMessage) (string, 
 	}
 
 	specs := make([]ProfileExecSpec, len(params.Tasks))
-	claims := make([]WritePathSet, 0, len(params.Tasks))
+	// Keep one claim slot per original task so preflight errors report the
+	// caller-visible task numbers even when read-only items are interleaved.
+	claims := make([]WritePathSet, len(params.Tasks))
 	for i, item := range params.Tasks {
 		if strings.TrimSpace(item.Prompt) == "" {
 			return "", fmt.Errorf("task %d: prompt is required", i+1)
@@ -146,7 +148,7 @@ func (f *FleetTool) Execute(ctx context.Context, args json.RawMessage) (string, 
 		}
 		specs[i] = spec
 		if !spec.ReadOnly {
-			claims = append(claims, spec.WritePaths)
+			claims[i] = spec.WritePaths
 		}
 	}
 	if err := ValidateNonOverlappingWriteClaims(claims); err != nil {
@@ -191,7 +193,6 @@ func (f *FleetTool) runFleet(ctx context.Context, sink event.Sink, specs []Profi
 	}
 
 	var wg sync.WaitGroup
-	var mu sync.Mutex
 	doneCh := make(chan fleetItemResult, n)
 
 	startOne := func(idx int) {
@@ -241,52 +242,43 @@ func (f *FleetTool) runFleet(ctx context.Context, sink event.Sink, specs []Profi
 		}()
 	}
 
-	// Cancel path: mark not-yet-started items skipped after ctx is done.
-	// Items are started immediately; the scheduler queues excess concurrency.
+	// Mark only genuinely unstarted items skipped. Started items always publish
+	// a terminal result, including after cancellation, so partial writer work is
+	// never misreported as a task that did not run.
+	started := 0
 	for i := range specs {
 		if ctx.Err() != nil {
-			mu.Lock()
 			for j := i; j < n; j++ {
-				if results[j].status == fleetItemPending {
-					results[j].status = fleetItemSkipped
-					results[j].err = ctx.Err()
-				}
+				results[j].status = fleetItemSkipped
+				results[j].err = ctx.Err()
 			}
-			mu.Unlock()
 			break
 		}
 		startOne(i)
+		started++
 	}
 
 	completed := 0
-	for completed < n {
+	cancelled := false
+	for completed < started && !cancelled {
 		select {
 		case r := <-doneCh:
 			results[r.index] = r
 			completed++
 		case <-ctx.Done():
-		drain:
-			for {
-				select {
-				case r := <-doneCh:
-					results[r.index] = r
-					completed++
-				default:
-					break drain
-				}
-			}
-			for i := range results {
-				if results[i].status == fleetItemPending {
-					results[i].status = fleetItemSkipped
-					results[i].err = ctx.Err()
-				}
-			}
-			wg.Wait()
-			return formatFleetAggregate(results, true), ctx.Err()
+			cancelled = true
 		}
 	}
+	// doneCh is buffered for every item, so workers can always publish their
+	// terminal result while this goroutine waits. Once they stop, drain exactly
+	// the outstanding started items and preserve their real completed/cancelled
+	// status instead of replacing it with skipped.
 	wg.Wait()
-	cancelled := false
+	for completed < started {
+		r := <-doneCh
+		results[r.index] = r
+		completed++
+	}
 	for _, r := range results {
 		if r.status == fleetItemCancelled || r.status == fleetItemSkipped {
 			cancelled = true
