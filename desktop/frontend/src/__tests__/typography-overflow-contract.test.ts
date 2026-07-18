@@ -192,8 +192,23 @@ eq(finalDeclaration(".composer-meta .modelsw__trigger:focus-visible", "box-shado
 eq(finalDeclaration(":root[data-theme-style] .composer-modebar__item--active:focus-visible", "box-shadow"), "var(--focus-ring)", "active permission options retain keyboard focus feedback");
 eq(
   finalDeclaration(".app--creation .msg--assistant .msg__body", "font-size"),
-  "calc(14px * var(--font-scale))",
-  "creation assistant body text follows interface text size",
+  "var(--font-content)",
+  "creation assistant body text follows the conversation text size",
+);
+eq(
+  finalDeclaration(":root[data-theme-style] .msg--assistant .msg__body", "font-size"),
+  "var(--font-content)",
+  "themed assistant body text follows the conversation text size",
+);
+eq(
+  finalDeclaration(".app--creation .msg--assistant .msg__body", "font-family"),
+  "var(--font-content-family)",
+  "creation assistant body follows the conversation font family",
+);
+eq(
+  finalDeclaration(".app--creation .md", "font-family"),
+  "var(--font-content-family)",
+  "creation markdown follows the conversation font family",
 );
 eq(
   finalDeclaration(".app--creation .composer__input", "font-size"),

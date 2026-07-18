@@ -19,6 +19,7 @@ import {
 } from "../lib/themeExperience";
 import { useToast } from "../lib/toast";
 import { ThemeGallery } from "./ThemeGallery";
+import { TypographySettings } from "./TypographySettings";
 
 const STYLE_NAME_KEY: Record<ThemeStyle, DictKey> = {
   graphite: "settings.style.graphite.zh",
@@ -118,7 +119,7 @@ export function AppearanceOverview({
 }) {
   const t = useT();
   const { showToast } = useToast();
-  const [view, setView] = useState<"overview" | "gallery">("overview");
+  const [view, setView] = useState<"overview" | "gallery" | "typography">("overview");
   const [galleryIntent, setGalleryIntent] = useState<"browse" | "copy-base">("browse");
   const [experience, setExperience] = useState<ThemeExperienceView | null>(null);
   const [busy, setBusy] = useState(false);
@@ -270,6 +271,10 @@ export function AppearanceOverview({
         }}
       />
     );
+  }
+
+  if (view === "typography") {
+    return <TypographySettings onBack={() => setView("overview")} />;
   }
 
   return (
@@ -461,6 +466,16 @@ export function AppearanceOverview({
             />
           </div>
         ) : null}
+
+        <div className="appearance-overview__row appearance-overview__row--typography">
+          <div>
+            <div className="appearance-overview__row-label">{t("settings.typography.title")}</div>
+            <div className="appearance-overview__row-note">{t("settings.typography.entrySummary")}</div>
+          </div>
+          <button type="button" className="btn btn--small" onClick={() => setView("typography")}>
+            {t("settings.typography.open")}
+          </button>
+        </div>
 
         {showDisplayZoom ? (
           <div className="appearance-overview__row">

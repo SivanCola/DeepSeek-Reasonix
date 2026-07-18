@@ -372,6 +372,7 @@ function settingsPageKind(tab: SettingsTab): "form" | "manager" {
     case "subagents":
     case "plugins":
     case "memory":
+    case "appearance":
       return "manager";
     default:
       return "form";
