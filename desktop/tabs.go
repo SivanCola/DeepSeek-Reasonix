@@ -2315,6 +2315,12 @@ func (a *App) ReorderTabs(tabIDs []string) error {
 func (a *App) CloseTab(tabID string) error {
 	a.sessionRemovalMu.Lock()
 	defer a.sessionRemovalMu.Unlock()
+	// Enter the lifecycle barrier before snapshotting or unlinking the runtime.
+	// If an MCP writer already owns the barrier, leaving the tab visible lets its
+	// Host-wide gate snapshot include and inspect any running turn. If CloseTab
+	// enters first, the writer waits until the runtime is detached or closed.
+	a.runtimeAdmissionMu.RLock()
+	defer a.runtimeAdmissionMu.RUnlock()
 
 	a.mu.Lock()
 	tab, ok := a.tabs[tabID]
@@ -2390,7 +2396,8 @@ func (a *App) CloseTab(tabID string) error {
 	closeSink := tab.sink
 	a.mu.Unlock()
 
-	// Tear down outside the lock.
+	// Tear down outside App.mu while retaining the lifecycle barrier acquired
+	// before the tab binding was removed.
 	discardPath, discardTransientBlank := a.transientBlankSessionArtifactPath(tab)
 	if closeCtrl != nil {
 		if controllerHasActiveRuntimeWork(closeCtrl) && a.detachSessionRuntime(tab) {
@@ -2431,6 +2438,8 @@ func (a *App) keepOnlyVisibleTab(tabID string) (TabMeta, error) {
 	meta, err := func() (TabMeta, error) {
 		a.sessionRemovalMu.Lock()
 		defer a.sessionRemovalMu.Unlock()
+		a.runtimeAdmissionMu.RLock()
+		defer a.runtimeAdmissionMu.RUnlock()
 
 		a.mu.Lock()
 		active := a.tabs[tabID]
@@ -2496,7 +2505,7 @@ func (a *App) keepOnlyVisibleTab(tabID string) (TabMeta, error) {
 		a.mu.Unlock()
 
 		for _, tab := range removed {
-			a.removeVisibleTabRuntime(tab)
+			a.removeVisibleTabRuntimeAdmissionHeld(tab)
 		}
 		return meta, nil
 	}()
@@ -2536,6 +2545,12 @@ func (a *App) applySingleSurfaceTabPolicy() error {
 }
 
 func (a *App) removeVisibleTabRuntime(tab *WorkspaceTab) {
+	a.runtimeAdmissionMu.RLock()
+	defer a.runtimeAdmissionMu.RUnlock()
+	a.removeVisibleTabRuntimeAdmissionHeld(tab)
+}
+
+func (a *App) removeVisibleTabRuntimeAdmissionHeld(tab *WorkspaceTab) {
 	if tab == nil {
 		return
 	}
@@ -2550,7 +2565,7 @@ func (a *App) removeVisibleTabRuntime(tab *WorkspaceTab) {
 		return
 	}
 	a.markTabRemoved(tab)
-	a.closeTabRuntime(tab)
+	a.closeTabRuntimeAdmissionHeld(tab)
 	if discardTransientBlank {
 		discardTransientBlankSessionArtifacts(discardPath)
 	}
@@ -2682,6 +2697,12 @@ func (a *App) clearTabBuildCancel(tab *WorkspaceTab, generation uint64, cancel c
 }
 
 func (a *App) closeTabRuntime(tab *WorkspaceTab) {
+	a.runtimeAdmissionMu.RLock()
+	defer a.runtimeAdmissionMu.RUnlock()
+	a.closeTabRuntimeAdmissionHeld(tab)
+}
+
+func (a *App) closeTabRuntimeAdmissionHeld(tab *WorkspaceTab) {
 	if tab == nil {
 		return
 	}
@@ -2728,6 +2749,10 @@ func (a *App) buildTabController(tab *WorkspaceTab) {
 	a.buildTabControllerWithLoadedSession(tab, loadedTabSession{})
 }
 
+func (a *App) buildTabControllerAdmissionHeld(tab *WorkspaceTab) {
+	a.buildTabControllerWithLoadedSessionAdmissionHeld(tab, loadedTabSession{})
+}
+
 type loadedTabSession struct {
 	Path    string
 	Session *agent.Session
@@ -2739,6 +2764,10 @@ func (s loadedTabSession) matches(path string) bool {
 
 func (a *App) buildTabControllerWithLoadedSession(tab *WorkspaceTab, loadedSession loadedTabSession) {
 	a.buildTabControllerWithContext(tab, loadedSession, a.bootContext(), 0, nil)
+}
+
+func (a *App) buildTabControllerWithLoadedSessionAdmissionHeld(tab *WorkspaceTab, loadedSession loadedTabSession) {
+	a.buildTabControllerWithContextAdmissionHeld(tab, loadedSession, a.bootContext(), 0, nil)
 }
 
 func (a *App) desktopNotificationSender() notify.Sender {
@@ -2782,16 +2811,17 @@ func clearTabStartupError(tab *WorkspaceTab) {
 }
 
 func (a *App) buildTabControllerWithContext(tab *WorkspaceTab, loadedSession loadedTabSession, buildCtx context.Context, buildGeneration uint64, buildCancel context.CancelFunc) {
-	defer a.recoverToPending("buildTabController")
-	// Runtime work-admission barrier (shared side): an MCP trust preflight or
-	// plugin uninstall holding the write side must not race this build's
-	// shared-Host attach and controller swap — a late build could relaunch a
-	// single-instance server mid-preflight or attach a registry the mutation
-	// never saw. Safe under runtimeRebuildMu-holding callers too: the write
-	// side is only ever acquired while holding runtimeRebuildMu, so it cannot
-	// be pending then. Never acquire runtimeRebuildMu while this is held.
 	a.runtimeAdmissionMu.RLock()
 	defer a.runtimeAdmissionMu.RUnlock()
+	a.buildTabControllerWithContextAdmissionHeld(tab, loadedSession, buildCtx, buildGeneration, buildCancel)
+}
+
+// buildTabControllerWithContextAdmissionHeld is the build core for callers
+// that already hold either side of runtimeAdmissionMu. Keeping acquisition in
+// the outer wrapper prevents recursive RLock deadlocks when foreground turn
+// admission repairs a stale workspace while an MCP lifecycle writer is queued.
+func (a *App) buildTabControllerWithContextAdmissionHeld(tab *WorkspaceTab, loadedSession loadedTabSession, buildCtx context.Context, buildGeneration uint64, buildCancel context.CancelFunc) {
+	defer a.recoverToPending("buildTabController")
 	keepBuildContext := false
 	defer func() {
 		a.clearTabBuildCancel(tab, buildGeneration, buildCancel, keepBuildContext)
@@ -6512,6 +6542,8 @@ func (a *App) trashTopic(topicID string) error {
 	if err := func() error {
 		a.sessionRemovalMu.Lock()
 		defer a.sessionRemovalMu.Unlock()
+		a.runtimeAdmissionMu.RLock()
+		defer a.runtimeAdmissionMu.RUnlock()
 
 		targets, err := a.topicTrashTargets(topicID)
 		if err != nil {
@@ -6520,17 +6552,17 @@ func (a *App) trashTopic(topicID string) error {
 		removed, nextFallback := a.removeTopicRuntimeBindings(topicID)
 		fallback = nextFallback
 		if err := a.prepareRemovedSessionRuntimes(removed); err != nil {
-			a.closeRemovedSessionRuntimes(removed)
+			a.closeRemainingRemovedSessionRuntimesAdmissionHeld(removed, map[control.SessionAPI]bool{})
 			return err
 		}
 		destroyBegun := false
 		closedRemoved := map[control.SessionAPI]bool{}
 		defer func() {
 			if destroyBegun {
-				a.closeRemainingRemovedSessionRuntimesAfterDestroy(removed, closedRemoved)
+				a.closeRemainingRemovedSessionRuntimesAfterDestroyAdmissionHeld(removed, closedRemoved)
 				return
 			}
-			a.closeRemovedSessionRuntimes(removed)
+			a.closeRemainingRemovedSessionRuntimesAdmissionHeld(removed, closedRemoved)
 		}()
 
 		for _, target := range targets {
@@ -6539,7 +6571,7 @@ func (a *App) trashTopic(topicID string) error {
 				destroyBegun = true
 			}
 			teardownTimedOut := waitDestroyHandles(destroys)
-			a.closeRemovedSessionRuntimesForSessionAfterDestroy(removed, target.dir, target.sessionPath, closedRemoved)
+			a.closeRemovedSessionRuntimesForSessionAfterDestroyAdmissionHeld(removed, target.dir, target.sessionPath, closedRemoved)
 			if teardownTimedOut {
 				if err := agent.MarkCleanupPending(target.sessionPath, "delete"); err != nil {
 					return err
