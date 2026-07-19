@@ -1875,28 +1875,46 @@ export default function App() {
       try {
         if (format === "json") {
           const path = await app.PickExportFile(`${base}.json`, "application/json");
-          if (path) await app.SaveExportFile(path, getSessionJson(), false);
+          if (path) {
+            await app.SaveExportFile(path, getSessionJson(), false);
+            showToast(t("topicBar.exportSuccess", { count: 1 }), "info");
+          }
         } else if (format === "pdf") {
           const path = await app.PickExportFile(`${base}.pdf`, "application/pdf");
           if (!path) return;
           const { blobToBase64, renderSessionPdfBlob } = await import("./lib/sessionExport");
           const blob = await renderSessionPdfBlob(getSessionMarkdown(), sessionTitle);
           await app.SaveExportFile(path, await blobToBase64(blob), true);
+          showToast(t("topicBar.exportSuccess", { count: 1 }), "info");
         } else if (format === "image") {
           const path = await app.PickExportFile(`${base}.png`, "image/png");
           if (!path) return;
-          const { blobToBase64, renderSessionImageBlob } = await import("./lib/sessionExport");
-          const blob = await renderSessionImageBlob(getSessionMarkdown());
-          await app.SaveExportFile(path, await blobToBase64(blob), true);
+          const { renderSessionImageBase64Payloads } = await import("./lib/sessionExport");
+          const payloads = await renderSessionImageBase64Payloads(getSessionMarkdown());
+          await app.SaveExportImageFiles(path, payloads);
+          showToast(
+            payloads.length > 1
+              ? t("topicBar.exportImageParts", { count: payloads.length })
+              : t("topicBar.exportSuccess", { count: 1 }),
+            "info",
+          );
         } else {
           const path = await app.PickExportFile(`${base}.md`, "text/markdown");
-          if (path) await app.SaveExportFile(path, getSessionMarkdown(), false);
+          if (path) {
+            await app.SaveExportFile(path, getSessionMarkdown(), false);
+            showToast(t("topicBar.exportSuccess", { count: 1 }), "info");
+          }
         }
       } catch (err) {
         console.error("Failed to export session", err);
+        showToast(
+          t("topicBar.exportFailed", { error: err instanceof Error ? err.message : String(err) }),
+          "error",
+          { durationMs: 8000 },
+        );
       }
     },
-    [getSessionJson, getSessionMarkdown, sessionTitle],
+    [getSessionJson, getSessionMarkdown, sessionTitle, showToast, t],
   );
 
   useEffect(() => {
