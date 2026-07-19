@@ -4873,9 +4873,9 @@ func (g gateApprover) ApproveMCP(ctx context.Context, toolName, subject string, 
 	if !forced && g.c.approval.preApproved(toolName, subject, args) {
 		return true, "", nil
 	}
-	// A destructive MCP call always requires a fresh user decision. This check
-	// deliberately precedes Guardian/auto_review so no reviewer, session grant,
-	// Auto, or YOLO posture can authorize it.
+	// A destructive MCP call routed here by the permission gate requires a fresh
+	// user decision. This check deliberately precedes Guardian/auto_review so no
+	// reviewer, session grant, Auto, or YOLO posture can authorize it.
 	if destructive {
 		return g.ApproveFresh(ctx, toolName, subject, args)
 	}

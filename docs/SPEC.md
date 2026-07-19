@@ -150,7 +150,7 @@ interface (`call` / `notify` / `close`) abstracts that, so the MCP-level logic
   user config, Desktop, `/mcp add`, or `install_source` is authorization: the
   host connects the server immediately when installation happens in a live
   session, records a durable exact command/endpoint launch grant for
-  project-scoped installs, and ordinary calls default to direct approval.
+  project-scoped installs, and calls default to direct approval.
   Project `reasonix.toml` and `.mcp.json` servers that are only
   discovered from the repository require one durable launch confirmation before
   any process or network transport is created. Confirmation records the exact
@@ -324,20 +324,26 @@ func (p Policy) Decide(toolName string, readOnly bool, args json.RawMessage) Dec
   hard block in *every* mode: the tool never executes and the model receives a
   "blocked" result it can adapt to (the same shape as a plan-mode refusal).
 - **MCP approval policy.** Installed MCP tools may set a server default and raw
-  tool overrides using `auto|prompt|writes|approve`. Precedence is explicit deny,
-  `destructiveHint`, raw-tool mode, server default, then global Ask/Auto/YOLO.
+  tool overrides using `auto|prompt|writes|approve`. A raw-tool mode overrides
+  the server or source-aware default; explicit deny still wins, `approve`
+  permits the call directly, and `destructiveHint` requires a fresh review for
+  every remaining mode before global Ask/Auto/YOLO is considered.
   A user-authorized server with no explicit MCP approval fields defaults to
-  `approve`; project-provided servers retain `auto`. `auto` delegates to the ordinary permission decision; `prompt` reviews every
-  call; `writes` reviews writers only; and `approve` allows ordinary calls.
+  `approve`; repository-provided servers retain `auto` until their exact launch
+  is authorized, then the same source-aware default applies. `auto` delegates
+  to the ordinary permission decision; `prompt` reviews every call; `writes`
+  reviews writers only; and `approve` allows all calls directly.
   `approvals_reviewer = "user"` uses the interactive user, while `auto_review`
   sends the calls that need review (`prompt`, writer hits under `writes`, and
   `auto` calls the global posture would Ask about) to the session Guardian; a
   successful allow/deny verdict is final. A missing, timed-out, failed, or
   indeterminate reviewer degrades to fresh human approval — a prompt that
   Auto/YOLO, the approved-plan window, and session grants cannot answer — and
-  non-interactive sessions fail closed. A destructive call always requires a
-  fresh human approval on every invocation: no reviewer, session grant, or
-  Auto/YOLO posture can authorize it. All of this is local metadata and is
+  non-interactive sessions fail closed. For `auto`, `prompt`, and `writes`, a
+  destructive call requires fresh human approval on every invocation: no
+  reviewer, session grant, or Auto/YOLO posture can authorize it. An effective
+  `approve` mode represents the user's install/authorization decision and
+  permits destructive calls directly. All of this is local metadata and is
   absent from provider-visible tool schemas.
 - **Relationship to plan mode.** Plan mode (§3.4) is a plan-first collaboration
   workflow, not an all-tools read-only mode. Before Permissions/Sandbox, the

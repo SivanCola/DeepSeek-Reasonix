@@ -525,7 +525,7 @@ func (o *onDemandMCPTool) Execute(ctx context.Context, args json.RawMessage) (st
 }
 
 func destructiveMCPDiscoveryError(server, rawTool string) error {
-	return fmt.Errorf("MCP server %q marks tool %q as destructive; retry so Reasonix can request fresh approval before execution", server, rawTool)
+	return fmt.Errorf("MCP server %q marks tool %q as destructive; retry so Reasonix can apply the current approval policy before execution", server, rawTool)
 }
 
 func (t *UseCapabilityTool) ensureServerTools(ctx context.Context, server string) ([]tool.Tool, error) {

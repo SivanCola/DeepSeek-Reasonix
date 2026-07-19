@@ -459,7 +459,7 @@ func (lt *lazyTool) reconcileLiveSafety(real tool.Tool) error {
 }
 
 func destructiveHintChangedError(server, rawTool string) error {
-	return fmt.Errorf("MCP server %q now marks tool %q as destructive; retry so Reasonix can request fresh approval before execution", server, rawTool)
+	return fmt.Errorf("MCP server %q now marks tool %q as destructive; retry so Reasonix can apply the current approval policy before execution", server, rawTool)
 }
 
 // LazyToolset returns the placeholder tools to register for one background spec.

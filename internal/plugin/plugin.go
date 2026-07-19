@@ -1191,8 +1191,8 @@ func applyEstablishedLaunchGrant(s Spec, identity string) (Spec, error) {
 		return s, &launchApprovalError{server: s.Name, changed: changed}
 	}
 	// A matching exact-identity launch grant is the user's authorization for
-	// this project server. Ordinary calls proceed like an explicit install;
-	// explicit policies and destructiveHint remain stricter and still win.
+	// this project server. Calls proceed like an explicit install;
+	// explicit policies still override the source-aware approval default.
 	s.ImplicitApproval = true
 	return s, nil
 }
@@ -1347,8 +1347,8 @@ type mcpTool struct {
 	InputSchema  json.RawMessage `json:"inputSchema"`
 	OutputSchema json.RawMessage `json:"outputSchema,omitempty"`
 	// Annotations carries MCP's optional tool hints. readOnlyHint controls reader
-	// classification; destructiveHint requires a fresh human approval even when
-	// another hint claims the tool is read-only.
+	// classification; destructiveHint remains destructive even when another hint
+	// claims the tool is read-only. Approval policy is applied separately.
 	Annotations *struct {
 		ReadOnlyHint    bool `json:"readOnlyHint"`
 		DestructiveHint bool `json:"destructiveHint"`
@@ -1633,8 +1633,9 @@ type remoteTool struct {
 	// readOnlyTrusted is true only when local configuration, not the server hint,
 	// classified the tool as read-only.
 	readOnlyTrusted bool
-	// destructive is the MCP destructiveHint. It always requires a fresh human
-	// approval and takes precedence over a conflicting readOnlyHint.
+	// destructive is the MCP destructiveHint. It takes precedence over a
+	// conflicting readOnlyHint; the effective MCP approval mode decides whether
+	// it needs a fresh review.
 	destructive bool
 }
 

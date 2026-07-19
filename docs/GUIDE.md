@@ -578,8 +578,10 @@ The normal setup path is intentionally one step. Use Desktop's **Add and
 connect**, `/mcp add`, or ask Reasonix to install a package, URL, or `.mcp.json`.
 That explicit install is also authorization: the server is saved and connected
 in the current session, and no second trust step appears now or on the next
-startup. Explicit deny rules still win, destructive tools still require a fresh
-human decision, and Plan/read-only sub-agents still expose only eligible tool
+startup. Explicit deny rules still win. With no advanced approval override, the
+installed server's calls run directly, including tools that declare
+`destructiveHint`; choose `auto`, `prompt`, or `writes` when those calls should
+retain fresh review. Plan/read-only sub-agents still expose only eligible tool
 identities. A server merely discovered in repository-controlled
 `reasonix.toml` or `.mcp.json` is different: Reasonix asks once to confirm the
 exact command or endpoint, records that decision without launching a temporary
@@ -603,10 +605,12 @@ writers keep the ordinary permission posture; installed MCP and proxy-resolved
 MCP writers, destructive targets, and untrusted readers are hard-blocked before
 any approval and return to their normal approval flow once Plan exits.
 
-MCP `destructiveHint: true` is stricter than both classifications. Every call
-requires a fresh human approval, even if the tool also reports `readOnlyHint`,
-the current posture is Auto/YOLO, or an allow rule was saved — Guardian,
-`auto_review`, and session grants can never authorize a destructive call.
+MCP `destructiveHint: true` is stricter than the read-only classification. Under
+`auto`, `prompt`, or `writes`, every destructive call requires fresh human
+approval even if the tool also reports `readOnlyHint`, the current posture is
+Auto/YOLO, or an allow rule was saved — Guardian, `auto_review`, and session
+grants cannot authorize it. An effective `approve` mode records that the user
+authorized the server or tool and permits the call directly.
 
 `approvals_reviewer = "auto_review"` routes the calls that actually need a
 review — `prompt` mode, writer hits under `writes`, and `auto` calls the global
@@ -631,14 +635,14 @@ trusted_read_only_tools = ["issue_read", "pull_request_read"]
 ```
 
 For a user-authorized server, omitting these advanced approval fields permits
-ordinary calls directly. If a field is present, `auto` delegates to the global
+all calls directly. If a field is present, `auto` delegates to the global
 Ask/Auto/YOLO permission posture; `prompt`
 reviews every call; `writes` reviews only writer-classified calls; and `approve`
-allows ordinary calls. Explicit deny rules always win, and `destructiveHint`
-always forces a new review. A raw-tool `tools` entry overrides the server
-default. `trusted_read_only_tools` remains a compatibility field and explicit
-local declaration for audited readers on servers that omit or cannot reliably
-maintain annotations.
+allows calls directly, including destructive calls. Explicit deny rules always
+win; `destructiveHint` forces a new review for every mode except `approve`. A
+raw-tool `tools` entry overrides the server default. `trusted_read_only_tools`
+remains a compatibility field and explicit local declaration for audited
+readers on servers that omit or cannot reliably maintain annotations.
 
 Two boundaries are worth knowing. `writes` trusts the server's read-only
 classification, so a server that mislabels a writer as `readOnlyHint` escapes
@@ -649,7 +653,8 @@ pre-screens the call and may allow it without a human prompt; set
 `approvals_reviewer = "user"` when every review must reach a person. A
 project's `.mcp.json` merges these fields into the session, so review
 `approve`/`writes` policies in a repository you did not author like any other
-code — explicit deny rules and `destructiveHint` reviews still apply.
+code — explicit deny rules still apply, and destructive reviews apply unless
+the effective mode is `approve`.
 
 A server's **prompts** surface as `/mcp__<server>__<prompt>` slash commands
 (positional args after the command); its **resources** are pulled in by writing

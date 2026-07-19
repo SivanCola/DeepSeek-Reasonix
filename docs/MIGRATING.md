@@ -105,7 +105,7 @@ and DeepSeek prefix-cache–oriented design.
   migrate once into that launch grant; its tool snapshot is ignored.
 - **MCP setup is now add-and-use.** Servers added by the user (Desktop, user
   config, legacy user import, or an installed verified plugin package) connect
-  immediately and permit ordinary calls when no explicit
+  immediately and permit all calls when no explicit
   MCP approval policy is configured. Repository `reasonix.toml` / `.mcp.json`
   servers instead require one pre-launch confirmation for their exact stable
   identity, before a subprocess or network request exists. Host sandbox,
@@ -131,9 +131,10 @@ and DeepSeek prefix-cache–oriented design.
   writer-classified. New optional MCP-local fields
   (`default_tools_approval_mode`, `tools.<raw>.approval_mode`, and
   `approvals_reviewer`) override the new source-aware default when present. MCP tools
-  declaring `destructiveHint: true` require a fresh human approval on every
-  call — the configured reviewer is never consulted for them — and
-  non-interactive sessions fail closed.
+  declaring `destructiveHint: true` require fresh human approval on every call
+  under `auto`, `prompt`, or `writes` — the configured reviewer is never
+  consulted for them — while an effective `approve` mode permits them directly.
+  Non-interactive sessions fail closed whenever a fresh review is required.
 - **Read-only subagent research**: use `read_only_task` for generic isolated
   research in plan mode, or `read_only_skill` when the work should follow an
   existing skill. Both expose only read-only tools and safe foreground bash, do
