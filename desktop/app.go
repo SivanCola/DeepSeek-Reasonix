@@ -6348,6 +6348,33 @@ func (a *App) mcpControllersSharingHost(host *plugin.Host, name string, preferre
 	return targets
 }
 
+// disconnectMCPServerAllRuntimes removes an uninstalled MCP server from every
+// live runtime: all visible and detached runtime tabs, across every shared
+// Host — a global plugin uninstall must not leave sibling tabs exposing stale
+// provider-visible tools or other workspaces running the removed server.
+// DisconnectMCPServer stops the shared client once per Host and drops the tool
+// prefix from every other controller's registry.
+func (a *App) disconnectMCPServerAllRuntimes(serverName string) bool {
+	a.mu.RLock()
+	ctrls := make([]control.SessionAPI, 0, len(a.tabs)+len(a.detachedSessions))
+	seen := make(map[control.SessionAPI]bool, len(a.tabs)+len(a.detachedSessions))
+	for _, tab := range a.runtimeTabsLocked() {
+		if tab == nil || tab.Ctrl == nil || seen[tab.Ctrl] {
+			continue
+		}
+		seen[tab.Ctrl] = true
+		ctrls = append(ctrls, tab.Ctrl)
+	}
+	a.mu.RUnlock()
+	disconnected := false
+	for _, ctrl := range ctrls {
+		if ctrl.DisconnectMCPServer(serverName) {
+			disconnected = true
+		}
+	}
+	return disconnected
+}
+
 func (a *App) RefreshMCPCatalog() (MCPCatalogRefreshView, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()

@@ -7491,6 +7491,132 @@ func TestRemovePluginSerializesWithTrustPreflight(t *testing.T) {
 	}
 }
 
+// installGatedTestPluginPackage registers an installed plugin package whose
+// manifest declares the gated fixture's MCP server, so RemovePlugin exercises
+// the real uninstall and MCP disconnect flow. Returns the plugin root.
+func installGatedTestPluginPackage(t *testing.T, mcpServerName string) string {
+	t.Helper()
+	reasonixHome := config.ReasonixHomeDir()
+	root := filepath.Join(reasonixHome, "plugins", "review-helper")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, pluginpkg.NativeManifest), []byte(fmt.Sprintf(`{
+  "name": "review-helper",
+  "version": "1.0.0",
+  "mcpServers": {
+    %q: { "type": "stdio", "command": "helper" }
+  }
+}`, mcpServerName)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := pluginpkg.Upsert(reasonixHome, pluginpkg.InstalledPlugin{
+		Name:         "review-helper",
+		Root:         "plugins/review-helper",
+		Version:      "1.0.0",
+		ManifestKind: "reasonix",
+		Enabled:      true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	return root
+}
+
+func installedPluginNamed(t *testing.T, name string) bool {
+	t.Helper()
+	st, err := pluginpkg.LoadState(config.ReasonixHomeDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range st.Plugins {
+		if p.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+// A global plugin uninstall must clean every runtime, not only the active tab:
+// sibling registries on the shared Host would otherwise keep provider-visible
+// tools backed by the closed client, and other workspaces would keep running
+// the uninstalled server.
+func TestRemovePluginDisconnectsEveryRuntime(t *testing.T) {
+	fixture := newGatedDesktopMCPTrustFixture(t, "")
+	pluginRoot := installGatedTestPluginPackage(t, "h")
+
+	if err := fixture.app.RemovePlugin("review-helper"); err != nil {
+		t.Fatalf("RemovePlugin(review-helper): %v", err)
+	}
+	if fixture.sharedHost.HasClient("h") {
+		t.Fatal("uninstall left the shared MCP client connected")
+	}
+	for name, reg := range map[string]*tool.Registry{
+		"active":   fixture.activeRegistry,
+		"sibling":  fixture.siblingRegistry,
+		"disabled": fixture.disabledRegistry,
+	} {
+		if _, found := reg.Get("mcp__h__greet"); found {
+			t.Fatalf("%s registry still exposes the uninstalled MCP tool", name)
+		}
+	}
+	if _, err := os.Stat(pluginRoot); !os.IsNotExist(err) {
+		t.Fatalf("plugin root still present after uninstall (err=%v)", err)
+	}
+	if installedPluginNamed(t, "review-helper") {
+		t.Fatal("plugin state still lists the uninstalled plugin")
+	}
+}
+
+// The pre-lock active-work check can go stale during the lifecycle-lock wait.
+// Work that starts mid-wait must fail the removal before anything is deleted;
+// the old order deleted the plugin first and only then reported the failure.
+func TestRemovePluginRechecksActiveWorkUnderLock(t *testing.T) {
+	releasePreflight := make(chan struct{})
+	gateAddr, attempts := newDesktopMCPStartGate(t, func(attempt int, conn net.Conn) {
+		if attempt == 2 {
+			<-releasePreflight
+		}
+		_, _ = conn.Write([]byte{1})
+	})
+	fixture := newGatedDesktopMCPTrustFixture(t, gateAddr)
+	installGatedTestPluginPackage(t, "h")
+
+	removeEntered := make(chan struct{})
+	var removeOnce sync.Once
+	fixture.app.mcpMutationBeforeLockHook = func(operation string) {
+		if operation == "remove-plugin" {
+			removeOnce.Do(func() { close(removeEntered) })
+		}
+	}
+	trustDone := make(chan error, 1)
+	go func() { trustDone <- fixture.app.SetMCPTrust("h", "workspace") }()
+	waitForDesktopMCPStartAttempt(t, attempts, 2)
+	removeDone := make(chan error, 1)
+	go func() { removeDone <- fixture.app.RemovePlugin("review-helper") }()
+	select {
+	case <-removeEntered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("RemovePlugin did not reach the MCP lifecycle lock")
+	}
+	// While RemovePlugin waits for the lock, background work starts on the
+	// active tab — exactly the window the pre-lock check cannot see.
+	busy := newBackgroundJobController(t, "remove-plugin-active-work")
+	fixture.app.mu.Lock()
+	fixture.app.tabs["active"].Ctrl = busy
+	fixture.app.mu.Unlock()
+	close(releasePreflight)
+	if err := <-trustDone; err != nil {
+		t.Fatalf("SetMCPTrust(h,workspace): %v", err)
+	}
+	err := <-removeDone
+	if err == nil || !strings.Contains(err.Error(), "stop background jobs") {
+		t.Fatalf("RemovePlugin during background work error = %v, want active-work guard", err)
+	}
+	if !installedPluginNamed(t, "review-helper") {
+		t.Fatal("active-work guard fired only after the plugin was already uninstalled")
+	}
+}
+
 func TestSetMCPServerEnabledRejectsBackgroundJobs(t *testing.T) {
 	isolateDesktopUserDirs(t)
 

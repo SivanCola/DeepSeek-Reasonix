@@ -246,25 +246,37 @@ func (a *App) RemovePlugin(name string) error {
 	// Uninstall disconnects the plugin's MCP servers, so the whole flow holds
 	// the MCP lifecycle lock: an unlocked disconnect can interleave with a
 	// trust preflight, which would then relaunch the just-removed server from
-	// its stale snapshot. rebuildSettingLocked runs the rebuild without
-	// re-acquiring runtimeRebuildMu.
+	// its stale snapshot.
 	defer a.lockMCPMutation("remove-plugin")()
+	// The lock wait can outlast the pre-lock check. Re-check under the active
+	// tab's turn gate and hold it through the uninstall and rebuild: work that
+	// started mid-wait must fail the removal before anything is deleted, and a
+	// turn must not start against a half-removed plugin.
+	tab := a.activeTab()
+	if tab == nil {
+		if a.ctx != nil {
+			return fmt.Errorf("no active tab")
+		}
+	} else {
+		tab.turnStartMu.Lock()
+		defer tab.turnStartMu.Unlock()
+		if controllerHasActiveRuntimeWork(a.controllerForTab(tab)) {
+			return rebuildControllerActiveWorkError("plugins")
+		}
+	}
 	raw, _ := json.Marshal(map[string]any{"op": "uninstall", "kind": "plugin", "name": strings.TrimSpace(name), "scope": "global"})
 	tl := installsource.NewTool(installsource.Options{
-		ProjectRoot: a.activeWorkspaceRoot(),
-		OnDisconnect: func(serverName string) bool {
-			tab := a.activeTab()
-			if tab == nil || tab.Ctrl == nil {
-				return false
-			}
-			return tab.Ctrl.DisconnectMCPServer(serverName)
-		},
+		ProjectRoot:  a.activeWorkspaceRoot(),
+		OnDisconnect: a.disconnectMCPServerAllRuntimes,
 	})
 	if _, err := tl.Execute(context.Background(), raw); err != nil {
 		return err
 	}
 	a.invalidateSkillRootsCache()
-	if err := a.rebuildSettingLocked("plugins"); err != nil {
+	if tab == nil || a.ctx == nil {
+		return nil
+	}
+	if err := a.rebuildSettingTurnLocked("plugins", tab); err != nil {
 		if _, ok := a.deferredRebuildWarning("plugins", err); ok {
 			return nil
 		}

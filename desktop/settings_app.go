@@ -1541,6 +1541,16 @@ func (a *App) rebuildSettingLocked(setting string) error {
 	}
 	tab.turnStartMu.Lock()
 	defer tab.turnStartMu.Unlock()
+	return a.rebuildSettingTurnLocked(setting, tab)
+}
+
+// rebuildSettingTurnLocked is rebuildSettingLocked's body; callers must hold
+// runtimeRebuildMu and the passed tab's turnStartMu. RemovePlugin calls this
+// directly because it holds the turn gate across the plugin uninstall.
+func (a *App) rebuildSettingTurnLocked(setting string, tab *WorkspaceTab) error {
+	if a.ctx == nil {
+		return nil
+	}
 	if controllerHasActiveRuntimeWork(a.controllerForTab(tab)) {
 		return rebuildControllerActiveWorkError(setting)
 	}
