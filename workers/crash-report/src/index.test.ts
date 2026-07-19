@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  groupFingerprintFromPath,
   isDevelopmentReport,
   effectiveGroupSeverity,
+  isDevelopmentGroup,
   isKnownNonCrashDiagnostic,
+  namespaceReportFingerprint,
   normalizeForFingerprint,
   severityForReport,
 } from "./index";
@@ -43,20 +46,72 @@ describe("diagnostic classification", () => {
   it("reclassifies historical groups before dashboard prioritization", () => {
     expect(
       effectiveGroupSeverity({
+        fingerprint: "a".repeat(64),
         severity: "high",
         title: "[window.error] ResizeObserver loop limit exceeded",
+        first_version: "v1.8.0",
         last_version: "v1.8.1",
         last_channel: "stable",
       }),
     ).toBe("low");
     expect(
       effectiveGroupSeverity({
+        fingerprint: `dev:${"b".repeat(64)}`,
         severity: "critical",
         title: "[window.error] ResizeObserver loop limit exceeded",
+        first_version: "dev",
         last_version: "dev",
         last_channel: "DEV",
       }),
     ).toBe("critical");
+  });
+
+  it("does not classify mixed release/development history as development-only", () => {
+    const fingerprint = "c".repeat(64);
+    const stableThenDevelopment = {
+      fingerprint,
+      severity: "high",
+      title: "[window.error] actionable release crash",
+      first_version: "v1.17.15",
+      last_version: "dev-32bit",
+      last_channel: "dev",
+    };
+    const developmentThenStable = {
+      ...stableThenDevelopment,
+      first_version: "dev-32bit",
+      last_version: "v1.17.15",
+      last_channel: "stable",
+    };
+    expect(isDevelopmentGroup(stableThenDevelopment)).toBe(false);
+    expect(effectiveGroupSeverity(stableThenDevelopment)).toBe("high");
+    expect(isDevelopmentGroup(developmentThenStable)).toBe(false);
+    expect(effectiveGroupSeverity(developmentThenStable)).toBe("high");
+  });
+});
+
+describe("development fingerprint namespace", () => {
+  const hash = "d".repeat(64);
+
+  it("preserves stable fingerprints and isolates development reports", () => {
+    expect(namespaceReportFingerprint(hash, false)).toBe(hash);
+    expect(namespaceReportFingerprint(hash, true)).toBe(`dev:${hash}`);
+  });
+
+  it("recognizes namespaced development groups independently of version labels", () => {
+    expect(
+      isDevelopmentGroup({
+        fingerprint: `dev:${hash}`,
+        first_version: "v1.17.15",
+        last_version: "v1.17.15",
+        last_channel: "stable",
+      }),
+    ).toBe(true);
+  });
+
+  it("keeps namespaced fingerprints reachable from dashboard links", () => {
+    expect(groupFingerprintFromPath(`/stats/group/dev:${hash}`)).toBe(`dev:${hash}`);
+    expect(groupFingerprintFromPath(`/stats/group/${hash}`)).toBe(hash);
+    expect(groupFingerprintFromPath("/stats/group/dev:not-a-hash")).toBe(null);
   });
 });
 
@@ -114,7 +169,15 @@ describe("diagnostics dashboard lanes", () => {
       crashes: [
         row,
         { ...row, fingerprint: "perf", kind: "performance", title: "performance-only", severity: "medium" },
-        { ...row, fingerprint: "dev", title: "development-only", last_version: "dev-32bit", last_channel: "DEV", severity: "low" },
+        {
+          ...row,
+          fingerprint: `dev:${"e".repeat(64)}`,
+          title: "development-only",
+          last_version: "dev-32bit",
+          last_channel: "DEV",
+          severity: "low",
+          development: true,
+        },
         { ...row, fingerprint: "notice", title: "browser-notice-only", severity: "low" },
       ],
       metrics: [],

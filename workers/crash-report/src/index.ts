@@ -26,6 +26,8 @@ import { desktopReleaseChannel, handleDesktopReleaseManifest } from "./desktop_r
 
 const MAX_BODY_BYTES = 96 * 1024;
 const LATEST_SAMPLES_PER_GROUP = 5;
+const DEVELOPMENT_FINGERPRINT_PREFIX = "dev:";
+const GROUP_PATH_RE = /^\/stats\/group\/((?:dev:)?[0-9a-f]{64})$/;
 
 const Device = z
   .object({
@@ -270,6 +272,14 @@ export function isDevelopmentReport(input: SeverityInput): boolean {
   return input.channel?.trim().toLowerCase() === "dev" || input.version?.trim().toLowerCase().startsWith("dev") === true;
 }
 
+export function namespaceReportFingerprint(hash: string, development: boolean): string {
+  return development ? `${DEVELOPMENT_FINGERPRINT_PREFIX}${hash}` : hash;
+}
+
+export function groupFingerprintFromPath(path: string): string | null {
+  return path.match(GROUP_PATH_RE)?.[1] ?? null;
+}
+
 export function isKnownNonCrashDiagnostic(input: SeverityInput): boolean {
   const message = input.errorMessage.trim();
   return (
@@ -362,7 +372,6 @@ async function handleReport(request: Request, env: Env): Promise<Response> {
         fingerprintHint,
       })
     : normalizeForFingerprint(r.kind, message);
-  const fingerprint = await sha256Hex(fingerprintBasis);
   const now = new Date().toISOString();
   const title = crashTitle(message);
   const source = r.source ?? "legacy";
@@ -370,7 +379,7 @@ async function handleReport(request: Request, env: Env): Promise<Response> {
   const errorType = r.errorType ?? "";
   const buildCommit = r.buildCommit ?? "";
   const channel = r.channel ?? "";
-  const severity = severityForReport({
+  const severityInput = {
     kind: r.kind,
     version: r.version,
     source,
@@ -379,7 +388,10 @@ async function handleReport(request: Request, env: Env): Promise<Response> {
     errorMessage,
     topFrame,
     channel,
-  });
+  };
+  const development = isDevelopmentReport(severityInput);
+  const fingerprint = namespaceReportFingerprint(await sha256Hex(fingerprintBasis), development);
+  const severity = severityForReport(severityInput);
   try {
     const prior = await env.DB.prepare("SELECT status FROM groups WHERE fingerprint = ?1")
       .bind(fingerprint)
@@ -606,8 +618,7 @@ async function crashGroups(env: Env, filters: StatsFilters, latestVersion: strin
       CASE WHEN status = 'open' THEN 0 ELSE 1 END,
       CASE
         WHEN severity = 'critical' THEN 0
-        WHEN lower(trim(COALESCE(last_channel, ''))) = 'dev'
-          OR lower(trim(COALESCE(last_version, ''))) LIKE 'dev%'
+        WHEN ${developmentGroupSQL}
           OR title = '[window.error] Script error.'
           OR title LIKE '%ResizeObserver loop %'
           OR title LIKE '%Minified React error #520%'
@@ -644,12 +655,13 @@ async function crashGroups(env: Env, filters: StatsFilters, latestVersion: strin
     regressed_at: string;
   }>();
   result.results = result.results
-    .map((row) => ({ ...row, severity: effectiveGroupSeverity(row) }))
+    .map((row) => ({ ...row, severity: effectiveGroupSeverity(row), development: isDevelopmentGroup(row) }))
     .sort((a, b) => compareDiagnosticPriority(a, b, latestVersion));
   return result;
 }
 
 type GroupPriorityRow = {
+  fingerprint: string;
   status: string;
   severity: string;
   regressed_at: string;
@@ -661,11 +673,27 @@ type GroupPriorityRow = {
   last_channel: string;
 };
 
-export function isDevelopmentGroup(row: Pick<GroupPriorityRow, "last_version" | "last_channel">): boolean {
-  return row.last_channel.trim().toLowerCase() === "dev" || row.last_version.trim().toLowerCase().startsWith("dev");
+const developmentGroupSQL = `(fingerprint LIKE 'dev:%' OR (
+  lower(trim(COALESCE(first_version, ''))) LIKE 'dev%'
+  AND (
+    lower(trim(COALESCE(last_channel, ''))) = 'dev'
+    OR lower(trim(COALESCE(last_version, ''))) LIKE 'dev%'
+  )
+))`;
+
+export function isDevelopmentGroup(
+  row: Pick<GroupPriorityRow, "fingerprint" | "first_version" | "last_version" | "last_channel">,
+): boolean {
+  if (row.fingerprint.startsWith(DEVELOPMENT_FINGERPRINT_PREFIX)) return true;
+  const firstWasDevelopment = row.first_version.trim().toLowerCase().startsWith("dev");
+  const lastWasDevelopment =
+    row.last_channel.trim().toLowerCase() === "dev" || row.last_version.trim().toLowerCase().startsWith("dev");
+  return firstWasDevelopment && lastWasDevelopment;
 }
 
-export function effectiveGroupSeverity(row: Pick<GroupPriorityRow, "severity" | "title" | "last_version" | "last_channel">): string {
+export function effectiveGroupSeverity(
+  row: Pick<GroupPriorityRow, "fingerprint" | "severity" | "title" | "first_version" | "last_version" | "last_channel">,
+): string {
   if (row.severity === "critical") return row.severity;
   if (isDevelopmentGroup(row)) return "low";
   if (
@@ -766,8 +794,7 @@ async function diagnosticOverview(env: Env, latestVersion: string, days: 7 | 30)
   const criticalActionable = `(severity = 'critical' OR (
     severity = 'high'
     AND kind <> 'performance'
-    AND lower(trim(COALESCE(last_channel, ''))) <> 'dev'
-    AND lower(trim(COALESCE(last_version, ''))) NOT LIKE 'dev%'
+    AND NOT ${developmentGroupSQL}
     AND title <> '[window.error] Script error.'
     AND title NOT LIKE '%ResizeObserver loop %'
     AND title NOT LIKE '%Minified React error #520%'
@@ -1295,14 +1322,14 @@ export default {
 
     if (path === "/account" && method === "GET") return user ? html(renderAccount(user)) : redirect(login);
 
-    const groupMatch = path.match(/^\/stats\/group\/([0-9a-f]{64})$/);
+    const groupFingerprint = groupFingerprintFromPath(path);
     const statsModuleMatch = path.match(/^\/stats\/(diagnostics|usage|preferences|health)$/);
     if ((path === "/stats" || statsModuleMatch) && method === "GET")
       return requireViewer(user, login) ?? handleStats(request, env, user as User, (statsModuleMatch?.[1] as StatsModule | undefined) ?? "usage");
-    if (groupMatch && method === "GET") return requireViewer(user, login) ?? handleGroup(env, groupMatch[1], user as User);
-    if (groupMatch && method === "POST") {
+    if (groupFingerprint && method === "GET") return requireViewer(user, login) ?? handleGroup(env, groupFingerprint, user as User);
+    if (groupFingerprint && method === "POST") {
       if (user?.role !== "admin") return new Response("forbidden", { status: 403 });
-      return handleGroupAction(request, env, user, groupMatch[1]);
+      return handleGroupAction(request, env, user, groupFingerprint);
     }
 
     if (path === "/admin" && method === "GET") {

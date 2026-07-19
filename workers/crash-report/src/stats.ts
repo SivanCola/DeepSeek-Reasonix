@@ -450,6 +450,7 @@ type CrashRow = {
   last_arch: string;
   last_channel: string;
   regressed_at: string;
+  development?: boolean;
 };
 
 function clip(s: string, n: number): string {
@@ -605,7 +606,9 @@ export function renderStats(
 </div>`;
   const overviewTone = topSeverityTone(data.overview.openReports, data.overview.regressedReports, data.overview.criticalOpenReports);
   const isDevelopmentDiagnostic = (row: CrashRow) =>
-    row.last_channel.trim().toLowerCase() === "dev" || row.last_version.trim().toLowerCase().startsWith("dev");
+    row.development ??
+    (row.first_version.trim().toLowerCase().startsWith("dev") &&
+      (row.last_channel.trim().toLowerCase() === "dev" || row.last_version.trim().toLowerCase().startsWith("dev")));
   const releaseCrashes = data.crashes.filter(
     (row) => row.kind !== "performance" && row.severity !== "low" && !isDevelopmentDiagnostic(row),
   );
