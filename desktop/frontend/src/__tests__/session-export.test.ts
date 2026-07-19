@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import {
   createRasterPdf,
+  isSafeInlineExportImage,
   neutralizeExternalCssResources,
-  numberedExportPath,
   planRasterSlices,
 } from "../lib/sessionExportCore";
 
@@ -27,9 +27,14 @@ assert.deepEqual(planRasterSlices(25_000, 8_000, [7_000, 14_200, 23_000]), [
   { offset: 22_200, height: 2_800 },
 ]);
 
-assert.equal(numberedExportPath("C:\\Exports\\chat.png", 0, 3), "C:\\Exports\\chat-1-of-3.png");
-assert.equal(numberedExportPath("/tmp/chat.archive.png", 2, 3), "/tmp/chat.archive-3-of-3.png");
-assert.equal(numberedExportPath("chat.png", 0, 1), "chat.png");
+assert.equal(isSafeInlineExportImage("data:image/png;base64,iVBORw0KGgo="), true);
+assert.equal(isSafeInlineExportImage(" DATA:IMAGE/JPEG;BASE64,/9j/4AAQ "), true);
+assert.equal(isSafeInlineExportImage("data:image/webp;base64,UklGRg=="), true);
+assert.equal(isSafeInlineExportImage("data:image/gif;base64,R0lGODlh"), true);
+assert.equal(isSafeInlineExportImage("https://example.com/image.png"), false);
+assert.equal(isSafeInlineExportImage("file:///tmp/image.png"), false);
+assert.equal(isSafeInlineExportImage("data:image/svg+xml;base64,PHN2Zz4="), false);
+assert.equal(isSafeInlineExportImage("data:image/png,not-base64"), false);
 
 const pdf = createRasterPdf(
   [

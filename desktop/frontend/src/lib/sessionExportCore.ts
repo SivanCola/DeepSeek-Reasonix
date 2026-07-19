@@ -53,14 +53,8 @@ export function neutralizeExternalCssResources(css: string): string {
   return css.replace(/url\(\s*(?:"[^"]*"|'[^']*'|[^)]*)\s*\)/gi, "none");
 }
 
-export function numberedExportPath(path: string, partIndex: number, partCount: number): string {
-  if (partCount <= 1) return path;
-  const slash = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
-  const dot = path.lastIndexOf(".");
-  const extensionStart = dot > slash ? dot : path.length;
-  const stem = path.slice(0, extensionStart);
-  const extension = path.slice(extensionStart);
-  return `${stem}-${partIndex + 1}-of-${partCount}${extension}`;
+export function isSafeInlineExportImage(src: string | undefined): boolean {
+  return /^data:image\/(?:png|jpe?g|webp|gif);base64,/i.test(src?.trim() ?? "");
 }
 
 function bytesFromString(value: string): Uint8Array {

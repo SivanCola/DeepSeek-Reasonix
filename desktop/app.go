@@ -9212,6 +9212,162 @@ func (a *App) SaveExportFile(path, payload string, base64Encoded bool) error {
 	return nil
 }
 
+// SaveExportImageFiles writes one or more base64-encoded image parts. A single
+// image keeps the native save dialog's normal overwrite semantics. Multi-part
+// exports use numbered sibling paths and never overwrite an existing sibling;
+// every payload is staged before any target is committed, and a failed commit
+// removes only files created by this call.
+func (a *App) SaveExportImageFiles(path string, payloads []string) error {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return nil
+	}
+	if len(payloads) == 0 {
+		return errors.New("no image payloads to export")
+	}
+	if len(payloads) == 1 {
+		return a.SaveExportFile(path, payloads[0], true)
+	}
+
+	data := make([][]byte, len(payloads))
+	targets := make([]string, len(payloads))
+	for i, payload := range payloads {
+		decoded, err := base64.StdEncoding.DecodeString(payload)
+		if err != nil {
+			return fmt.Errorf("decode export image part %d: %w", i+1, err)
+		}
+		data[i] = decoded
+		targets[i] = numberedExportPath(path, i, len(payloads))
+	}
+
+	return saveExclusiveExportFiles(targets, data)
+}
+
+type stagedExportFile struct {
+	targetPath string
+	tempPath   string
+}
+
+type committedExportFile struct {
+	path string
+	info os.FileInfo
+}
+
+func numberedExportPath(path string, partIndex, partCount int) string {
+	if partCount <= 1 {
+		return path
+	}
+	ext := filepath.Ext(path)
+	stem := strings.TrimSuffix(path, ext)
+	return fmt.Sprintf("%s-%d-of-%d%s", stem, partIndex+1, partCount, ext)
+}
+
+func saveExclusiveExportFiles(targets []string, payloads [][]byte) error {
+	if len(targets) == 0 || len(targets) != len(payloads) {
+		return errors.New("invalid export image batch")
+	}
+	for _, target := range targets {
+		if _, err := os.Lstat(target); err == nil {
+			return fmt.Errorf("export file already exists: %s", filepath.Base(target))
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("inspect export target %s: %w", filepath.Base(target), err)
+		}
+	}
+
+	staged := make([]stagedExportFile, 0, len(targets))
+	defer func() {
+		for _, file := range staged {
+			_ = os.Remove(file.tempPath)
+		}
+	}()
+	for i, target := range targets {
+		file, err := os.CreateTemp(filepath.Dir(target), ".reasonix-export-*")
+		if err != nil {
+			return fmt.Errorf("stage export file %s: %w", filepath.Base(target), err)
+		}
+		tempPath := file.Name()
+		staged = append(staged, stagedExportFile{targetPath: target, tempPath: tempPath})
+		if _, err = file.Write(payloads[i]); err == nil {
+			err = file.Sync()
+		}
+		if closeErr := file.Close(); err == nil {
+			err = closeErr
+		}
+		if err != nil {
+			return fmt.Errorf("stage export file %s: %w", filepath.Base(target), err)
+		}
+	}
+
+	committed := make([]committedExportFile, 0, len(staged))
+	for _, file := range staged {
+		info, err := commitStagedExportFile(file.tempPath, file.targetPath)
+		if err != nil {
+			rollbackCommittedExportFiles(committed)
+			return fmt.Errorf("save export file %s: %w", filepath.Base(file.targetPath), err)
+		}
+		committed = append(committed, committedExportFile{path: file.targetPath, info: info})
+	}
+	return nil
+}
+
+func commitStagedExportFile(tempPath, targetPath string) (os.FileInfo, error) {
+	// A hard link publishes a fully written staged file atomically and fails if
+	// the target already exists. Some filesystems do not support hard links, so
+	// fall back to an exclusive create while preserving the no-overwrite rule.
+	if err := os.Link(tempPath, targetPath); err == nil {
+		info, statErr := os.Lstat(targetPath)
+		if statErr != nil {
+			_ = os.Remove(targetPath)
+			return nil, statErr
+		}
+		return info, nil
+	}
+
+	source, err := os.Open(tempPath)
+	if err != nil {
+		return nil, err
+	}
+	defer source.Close()
+	target, err := os.OpenFile(targetPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	if err != nil {
+		return nil, err
+	}
+	info, statErr := target.Stat()
+	if statErr == nil {
+		_, err = io.Copy(target, source)
+	}
+	if err == nil && statErr == nil {
+		err = target.Sync()
+	}
+	if closeErr := target.Close(); err == nil && statErr == nil {
+		err = closeErr
+	}
+	if statErr != nil {
+		err = statErr
+	}
+	if err != nil {
+		removeExportFileIfSame(targetPath, info)
+		return nil, err
+	}
+	return info, nil
+}
+
+func rollbackCommittedExportFiles(files []committedExportFile) {
+	for _, file := range files {
+		removeExportFileIfSame(file.path, file.info)
+	}
+}
+
+func removeExportFileIfSame(path string, created os.FileInfo) {
+	if created == nil {
+		return
+	}
+	current, err := os.Lstat(path)
+	if err == nil && os.SameFile(current, created) {
+		_ = os.Remove(path)
+	}
+}
+
 func safeExportFilename(name string) string {
 	name = strings.TrimSpace(name)
 	if name == "" {

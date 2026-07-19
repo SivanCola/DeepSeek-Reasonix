@@ -9,8 +9,8 @@ import { highlightToHtml } from "./highlight";
 import { normalizeMath } from "../components/mathNormalize";
 import {
   createRasterPdf,
+  isSafeInlineExportImage,
   neutralizeExternalCssResources,
-  numberedExportPath,
   PDF_CONTENT_ASPECT,
   planRasterSlices,
   type RasterSlice,
@@ -221,6 +221,12 @@ const staticMarkdownComponents: Components = {
     );
   },
   a: ({ href, children }) => <a href={href}>{children}</a>,
+  img: ({ src, alt, title }) => {
+    if (isSafeInlineExportImage(src)) {
+      return <img src={src} alt={alt ?? ""} title={title} />;
+    }
+    return <span className="export-media-placeholder">[{alt || title || "image"}]</span>;
+  },
 };
 
 function StaticMarkdown({ text }: { text: string }) {
@@ -258,6 +264,32 @@ function nextFrame(): Promise<void> {
   return new Promise((resolve) => requestAnimationFrame(() => resolve()));
 }
 
+async function waitForInlineImages(surface: HTMLElement): Promise<void> {
+  await Promise.all(
+    Array.from(surface.querySelectorAll("img")).map(async (image) => {
+      if (typeof image.decode === "function") {
+        try {
+          await image.decode();
+        } catch {
+          // Broken inline data stays as the browser's normal missing-image UI.
+        }
+        return;
+      }
+      if (image.complete) return;
+      await new Promise<void>((resolve) => {
+        const done = () => {
+          image.removeEventListener("load", done);
+          image.removeEventListener("error", done);
+          resolve();
+        };
+        image.addEventListener("load", done, { once: true });
+        image.addEventListener("error", done, { once: true });
+        if (image.complete) done();
+      });
+    }),
+  );
+}
+
 async function renderExportSurface(markdown: string): Promise<RenderedExport> {
   const host = document.createElement("div");
   host.style.position = "fixed";
@@ -282,6 +314,9 @@ async function renderExportSurface(markdown: string): Promise<RenderedExport> {
     host.remove();
     throw new Error("Export surface was not rendered");
   }
+
+  await waitForInlineImages(surface);
+  await nextFrame();
 
   return { root, host, surface };
 }
@@ -311,7 +346,7 @@ function loadImage(url: string): Promise<HTMLImageElement> {
 
 function replaceExternalMedia(root: HTMLElement): void {
   root.querySelectorAll("img, video, audio, iframe, object, embed").forEach((element) => {
-    if (element instanceof HTMLImageElement && element.src.startsWith("data:image/")) return;
+    if (element instanceof HTMLImageElement && isSafeInlineExportImage(element.getAttribute("src") ?? undefined)) return;
     const placeholder = document.createElement("span");
     placeholder.className = "export-media-placeholder";
     const label = element.getAttribute("alt") || element.getAttribute("title") || element.tagName.toLowerCase();
@@ -476,5 +511,3 @@ export async function renderSessionPdfBlob(markdown: string, title: string): Pro
     disposeExport(rendered);
   }
 }
-
-export { numberedExportPath };

@@ -1862,15 +1862,10 @@ export default function App() {
         } else if (format === "image") {
           const path = await app.PickExportFile(`${base}.png`, "image/png");
           if (!path) return;
-          const { blobToBase64, numberedExportPath, renderSessionImageBlobs } = await import("./lib/sessionExport");
+          const { blobToBase64, renderSessionImageBlobs } = await import("./lib/sessionExport");
           const blobs = await renderSessionImageBlobs(getSessionMarkdown());
-          for (let index = 0; index < blobs.length; index++) {
-            await app.SaveExportFile(
-              numberedExportPath(path, index, blobs.length),
-              await blobToBase64(blobs[index]),
-              true,
-            );
-          }
+          const payloads = await Promise.all(blobs.map((blob) => blobToBase64(blob)));
+          await app.SaveExportImageFiles(path, payloads);
           showToast(
             blobs.length > 1
               ? t("topicBar.exportImageParts", { count: blobs.length })
