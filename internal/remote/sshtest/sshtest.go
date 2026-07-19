@@ -236,7 +236,13 @@ func (s *Server) runExec(ch ssh.Channel, cmd string) {
 }
 
 func (s *Server) runSFTP(ch ssh.Channel) {
-	server, err := sftp.NewServer(ch)
+	var server *sftp.Server
+	var err error
+	if s.sftpRoot != "" {
+		server, err = sftp.NewServer(ch, sftp.WithServerWorkingDirectory(s.sftpRoot))
+	} else {
+		server, err = sftp.NewServer(ch)
+	}
 	if err != nil {
 		return
 	}
