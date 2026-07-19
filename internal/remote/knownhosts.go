@@ -1,6 +1,8 @@
 package remote
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"fmt"
 	"net"
@@ -73,10 +75,11 @@ func (p *HostKeyPolicy) Callback(ctx context.Context, host string) (ssh.HostKeyC
 	}, nil
 }
 
-// HostKeyAlgorithms returns the secure host-key algorithms in negotiation
-// order, preferring algorithms compatible with keys already recorded for
-// hostname. The strict callback remains the authority: this only steers key
-// exchange toward a known identity on servers that expose multiple host keys.
+// HostKeyAlgorithms returns host-key algorithms in negotiation order,
+// preferring algorithms compatible with ordinary host identities already
+// recorded for hostname. Certificate-authority records are deliberately not
+// treated as host keys: the CA algorithm does not describe the certified host
+// key. The strict callback remains the authority for every negotiated key.
 func (p *HostKeyPolicy) HostKeyAlgorithms(hostname string, remote net.Addr) ([]string, error) {
 	base, _, err := p.loadCallback()
 	if err != nil || base == nil {
@@ -99,19 +102,31 @@ func (p *HostKeyPolicy) HostKeyAlgorithms(hostname string, remote net.Addr) ([]s
 		if known.Key == nil {
 			continue
 		}
+		marker, err := knownHostMarker(known)
+		if err != nil {
+			return nil, err
+		}
+		if marker != "" {
+			continue
+		}
 		keyType := known.Key.Type()
 		preferred[keyType] = true
-		if keyType == ssh.KeyAlgoRSA {
+		switch keyType {
+		case ssh.KeyAlgoRSA:
 			// An ssh-rsa public key can use the SHA-2 signature algorithms;
-			// do not re-enable the insecure SHA-1 ssh-rsa algorithm.
 			preferred[ssh.KeyAlgoRSASHA512] = true
 			preferred[ssh.KeyAlgoRSASHA256] = true
+		case ssh.CertAlgoRSAv01:
+			// RSA host certificates likewise support SHA-2 signature
+			// algorithms even though their public key format is ssh-rsa.
+			preferred[ssh.CertAlgoRSASHA512v01] = true
+			preferred[ssh.CertAlgoRSASHA256v01] = true
 		}
 	}
 
-	supported := ssh.SupportedAlgorithms().HostKeys
-	ordered := make([]string, 0, len(supported))
-	for _, algorithm := range supported {
+	candidates := hostKeyAlgorithmCandidates()
+	ordered := make([]string, 0, len(candidates))
+	for _, algorithm := range candidates {
 		if preferred[algorithm] {
 			ordered = append(ordered, algorithm)
 		}
@@ -119,12 +134,64 @@ func (p *HostKeyPolicy) HostKeyAlgorithms(hostname string, remote net.Addr) ([]s
 	if len(ordered) == 0 {
 		return nil, nil
 	}
-	for _, algorithm := range supported {
+	for _, algorithm := range candidates {
 		if !preferred[algorithm] {
 			ordered = append(ordered, algorithm)
 		}
 	}
 	return ordered, nil
+}
+
+// hostKeyAlgorithmCandidates preserves the algorithms in the Go SSH default
+// policy while keeping secure algorithms ahead of legacy fallbacks. Legacy
+// algorithms are only promoted when their exact public key format is already
+// recorded; the host-key callback must still verify the key material.
+func hostKeyAlgorithmCandidates() []string {
+	secure := ssh.SupportedAlgorithms().HostKeys
+	legacy := ssh.InsecureAlgorithms().HostKeys
+	algorithms := make([]string, 0, len(secure)+len(legacy))
+	seen := make(map[string]bool, cap(algorithms))
+	for _, algorithm := range append(secure, legacy...) {
+		if !seen[algorithm] {
+			seen[algorithm] = true
+			algorithms = append(algorithms, algorithm)
+		}
+	}
+	return algorithms
+}
+
+// knownHostMarker reads the original matching record so @cert-authority and
+// @revoked entries cannot be mistaken for ordinary host identities. KnownKey
+// exposes the exact file and line selected by knownhosts.New; ParseKnownHosts
+// supplies OpenSSH marker semantics without duplicating its parser.
+func knownHostMarker(known knownhosts.KnownKey) (string, error) {
+	if known.Filename == "" || known.Line <= 0 {
+		return "", fmt.Errorf("known_hosts record has no source location")
+	}
+	f, err := os.Open(known.Filename)
+	if err != nil {
+		return "", fmt.Errorf("open known_hosts record %s:%d: %w", known.Filename, known.Line, err)
+	}
+	defer f.Close()
+
+	scanner := bufio.NewScanner(f)
+	for line := 1; scanner.Scan(); line++ {
+		if line != known.Line {
+			continue
+		}
+		marker, _, key, _, _, err := ssh.ParseKnownHosts(scanner.Bytes())
+		if err != nil {
+			return "", fmt.Errorf("parse known_hosts record %s:%d: %w", known.Filename, known.Line, err)
+		}
+		if key == nil || known.Key == nil || !bytes.Equal(key.Marshal(), known.Key.Marshal()) {
+			return "", fmt.Errorf("known_hosts record changed while connecting: %s:%d", known.Filename, known.Line)
+		}
+		return marker, nil
+	}
+	if err := scanner.Err(); err != nil {
+		return "", fmt.Errorf("read known_hosts record %s:%d: %w", known.Filename, known.Line, err)
+	}
+	return "", fmt.Errorf("known_hosts record no longer exists: %s:%d", known.Filename, known.Line)
 }
 
 // hostKeyLookupProbe deliberately cannot equal a parsed OpenSSH public key.

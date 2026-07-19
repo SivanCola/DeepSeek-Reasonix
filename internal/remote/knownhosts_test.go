@@ -6,10 +6,13 @@ import (
 	"crypto/ed25519"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/rsa"
 	"errors"
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -38,20 +41,75 @@ func TestNewSSHClientPrefersRecordedHostKeyAlgorithm(t *testing.T) {
 		},
 	}
 
-	_, hostName, port, err := ParseTarget(server.Addr)
+	client := connectTestServer(t, server, policy)
+	defer client.Close()
+}
+
+func TestNewSSHClientReconnectsToRecordedLegacyRSAHost(t *testing.T) {
+	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		t.Fatal(err)
 	}
-	conn, err := net.DialTimeout("tcp", server.Addr, time.Second)
+	signer, err := ssh.NewSignerFromKey(privateKey)
 	if err != nil {
 		t.Fatal(err)
 	}
-	client, err := newSSHClient(context.Background(), conn, ResolvedHost{
-		Name: server.Addr, HostName: hostName, Port: port, User: "test",
-	}, &AuthOptions{DisableAgent: true}, policy, time.Second)
+	restricted, err := ssh.NewSignerWithAlgorithms(signer.(ssh.AlgorithmSigner), []string{ssh.KeyAlgoRSA})
 	if err != nil {
-		t.Fatalf("connect to multi-algorithm host: %v", err)
+		t.Fatal(err)
 	}
+	server := sshtest.Start(t, sshtest.Options{HostKeys: []ssh.Signer{restricted}})
+	prompted := 0
+	policy := &HostKeyPolicy{
+		SystemKnownHosts: []string{filepath.Join(t.TempDir(), "missing")},
+		ManagedPath:      filepath.Join(t.TempDir(), "known_hosts"),
+		Prompt: func(context.Context, HostKeyQuestion) (bool, error) {
+			prompted++
+			return true, nil
+		},
+	}
+
+	client := connectTestServer(t, server, policy)
+	_ = client.Close()
+	client = connectTestServer(t, server, policy)
+	defer client.Close()
+	if prompted != 1 {
+		t.Fatalf("prompt count = %d, want 1", prompted)
+	}
+}
+
+func TestNewSSHClientPrefersTrustedHostCertificate(t *testing.T) {
+	caSigner := generateED25519Signer(t)
+	hostSigner := generateECDSASigner(t)
+	certificate := &ssh.Certificate{
+		Key:             hostSigner.PublicKey(),
+		CertType:        ssh.HostCert,
+		ValidPrincipals: []string{"127.0.0.1"},
+		ValidBefore:     ssh.CertTimeInfinity,
+	}
+	if err := certificate.SignCert(rand.Reader, caSigner); err != nil {
+		t.Fatal(err)
+	}
+	certificateSigner, err := ssh.NewCertSigner(certificate, hostSigner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherED25519 := generateED25519Signer(t)
+	server := sshtest.Start(t, sshtest.Options{
+		HostKeys: []ssh.Signer{otherED25519, certificateSigner},
+	})
+	systemPath := filepath.Join(t.TempDir(), "known_hosts")
+	writeKnownHostAuthority(t, systemPath, server.Addr, caSigner.PublicKey())
+	policy := &HostKeyPolicy{
+		SystemKnownHosts: []string{systemPath},
+		ManagedPath:      filepath.Join(t.TempDir(), "known_hosts"),
+		Prompt: func(context.Context, HostKeyQuestion) (bool, error) {
+			t.Fatal("certified host must not prompt")
+			return false, nil
+		},
+	}
+
+	client := connectTestServer(t, server, policy)
 	defer client.Close()
 }
 
@@ -121,6 +179,34 @@ func writeKnownHost(t *testing.T, path, hostname string, key ssh.PublicKey) {
 	if err := os.WriteFile(path, []byte(line+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func writeKnownHostAuthority(t *testing.T, path, hostname string, key ssh.PublicKey) {
+	t.Helper()
+	keyText := strings.TrimSpace(string(ssh.MarshalAuthorizedKey(key)))
+	line := fmt.Sprintf("@cert-authority %s %s\n", knownhosts.Normalize(hostname), keyText)
+	if err := os.WriteFile(path, []byte(line), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func connectTestServer(t *testing.T, server *sshtest.Server, policy *HostKeyPolicy) *ssh.Client {
+	t.Helper()
+	_, hostName, port, err := ParseTarget(server.Addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	conn, err := net.DialTimeout("tcp", server.Addr, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, err := newSSHClient(context.Background(), conn, ResolvedHost{
+		Name: server.Addr, HostName: hostName, Port: port, User: "test",
+	}, &AuthOptions{DisableAgent: true}, policy, time.Second)
+	if err != nil {
+		t.Fatalf("connect to test SSH server: %v", err)
+	}
+	return client
 }
 
 func generateED25519Signer(t *testing.T) ssh.Signer {
