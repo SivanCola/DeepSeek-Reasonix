@@ -1551,14 +1551,8 @@ func TestAuthorizeProjectSpecLaunchLocksMutableLauncherWithoutStartingServer(t *
 	if runtime.GOOS == "windows" {
 		launcher += ".exe"
 	}
-	if err := os.Link(os.Args[0], launcher); err != nil {
-		body, readErr := os.ReadFile(os.Args[0])
-		if readErr != nil {
-			t.Fatal(readErr)
-		}
-		if writeErr := os.WriteFile(launcher, body, 0o755); writeErr != nil {
-			t.Fatal(writeErr)
-		}
+	if err := os.WriteFile(launcher, []byte("launcher fixture"), 0o755); err != nil {
+		t.Fatal(err)
 	}
 	commit := "0123456789abcdef0123456789abcdef01234567"
 	locator := "git+https://example.invalid/server.git@" + commit
