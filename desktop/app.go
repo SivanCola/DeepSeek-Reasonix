@@ -197,6 +197,11 @@ type App struct {
 
 	runtimeEvents asyncRuntimeEmitter
 
+	// Remote SSH module: the manager is created lazily on the first remote
+	// binding call and closed on shutdown.
+	remoteMu      sync.Mutex
+	remoteRuntime remoteKernel
+
 	// promptHistoryTape is a lazy, cursor-addressed view of prompt history. It
 	// stores session order and per-session parsed entries only after that session is
 	// reached by ↑ navigation. See ScanPromptHistory.
@@ -782,6 +787,7 @@ func (a *App) shutdown(context.Context) {
 		a.heartbeat.Stop()
 	}
 	a.stopBotRuntime()
+	a.stopRemoteRuntime()
 	a.stopTray()
 	// Save window geometry synchronously from Go so it's persisted even if the
 	// frontend's beforeunload promise hasn't resolved yet.
