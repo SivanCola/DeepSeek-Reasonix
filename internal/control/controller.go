@@ -891,6 +891,7 @@ func (c *Controller) runTurnWithRawDisplay(ctx context.Context, input, raw, disp
 }
 
 func (c *Controller) runSubagentSkillSlash(sk skill.Skill, task, raw, display string) {
+	sk = c.skills.prepare(sk)
 	c.runGuarded(func(ctx context.Context) error {
 		planMode := c.PlanMode()
 		runner := c.skillRunner
@@ -1011,7 +1012,7 @@ func (c *Controller) submitInvocations(input, display string, requests []Invocat
 
 	parts := make([]string, 0, len(inline)+1)
 	for _, sk := range inline {
-		parts = append(parts, skill.Render(sk, ""))
+		parts = append(parts, c.skills.render(sk, ""))
 	}
 	if strings.TrimSpace(input) != "" {
 		parts = append(parts, input)
@@ -1233,7 +1234,7 @@ func (c *Controller) submitCommandOrTurn(trimmed, input, display string, scopedR
 				c.runSubagentSkillSlash(sk, task, trimmed, display)
 				return
 			}
-			sent := skill.Render(sk, task)
+			sent := c.skills.render(sk, task)
 			c.runGuarded(func(ctx context.Context) error {
 				return runGoalLoop(ctx, sent, sent, display)
 			})
@@ -4158,7 +4159,7 @@ func (c *Controller) ReloadCommands(ctx context.Context) error {
 		entries = append(entries, command.SlashEntry{
 			Name:        sk.SlashName(),
 			Description: sk.Description,
-			Render:      func(args []string) string { return skill.Render(sk, strings.Join(args, " ")) },
+			Render:      func(args []string) string { return c.skills.render(sk, strings.Join(args, " ")) },
 		})
 	}
 	for _, cmd := range cmds {

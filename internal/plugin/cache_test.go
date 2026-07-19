@@ -281,6 +281,7 @@ func TestSpecFingerprintIgnoresHostLocalTrustAndIsolation(t *testing.T) {
 	changed := base
 	changed.LaunchManager = mcplaunch.NewManager(filepath.Join(t.TempDir(), mcplaunch.StateFilename), "/workspace")
 	changed.ConfigSource = "project:.mcp.json"
+	changed.Package = "figma"
 	changed.OfficialCatalogEntryID = "plugin@example.com@1.0.0"
 	changed.OfficialReaderNames = []string{"search"}
 	changed.PackageDigest = "sha256:package"

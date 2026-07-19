@@ -40,7 +40,10 @@ const defaultCallTimeout = 300 * time.Second
 // (default) runs Command/Args/Env as a subprocess; "http" / "streamable-http"
 // and "sse" connect to URL with optional static Headers.
 type Spec struct {
-	Name    string
+	Name string
+	// Package is the installed plugin package that contributed this server.
+	// It is host-only provenance and intentionally excluded from fingerprints.
+	Package string
 	Type    string
 	Command string
 	Args    []string
@@ -1430,6 +1433,7 @@ func (c *Client) listTools(ctx context.Context) ([]tool.Tool, error) {
 			client:                c,
 			name:                  toolName(c.name, visibleName),
 			rawName:               t.Name,
+			visibleName:           visibleName,
 			desc:                  t.Description,
 			schema:                schema,
 			outputSchema:          t.OutputSchema,
@@ -1537,9 +1541,9 @@ func (c *Client) cachedTools() ([]tool.Tool, bool) {
 	return append([]tool.Tool(nil), c.toolAdapters...), true
 }
 
-// toolName builds the model-visible namespaced name "mcp__<server>__<tool>",
-// matching Claude Code. Spaces in either part are normalised to underscores so
-// the name is a clean identifier the model can call.
+// toolName builds Reasonix's canonical model-visible name
+// "mcp__<server>__<tool>". The registry separately resolves unique portable
+// and Claude plugin-qualified references without exposing duplicate schemas.
 func toolName(server, raw string) string {
 	return ToolPrefix(server) + normalizeName(raw)
 }
@@ -1624,6 +1628,7 @@ type remoteTool struct {
 	client                *Client
 	name                  string // namespaced "mcp__<server>__<tool>"
 	rawName               string // original name for tools/call
+	visibleName           string // raw name after configured prefix stripping
 	desc                  string
 	schema                json.RawMessage
 	outputSchema          json.RawMessage
@@ -1647,7 +1652,14 @@ func (t *remoteTool) MCPServerName() string {
 	}
 	return t.client.name
 }
-func (t *remoteTool) MCPRawToolName() string { return t.rawName }
+func (t *remoteTool) MCPRawToolName() string     { return t.rawName }
+func (t *remoteTool) MCPVisibleToolName() string { return t.visibleName }
+func (t *remoteTool) MCPPackageName() string {
+	if t.client == nil {
+		return ""
+	}
+	return t.client.spec.Package
+}
 
 // ReadOnlyExecutionAuthority reports whether this adapter's reader
 // classification comes from explicit local or signed package policy. Without a LaunchManager the

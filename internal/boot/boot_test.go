@@ -30,6 +30,7 @@ import (
 	"reasonix/internal/provider"
 	"reasonix/internal/sandbox"
 	"reasonix/internal/secrets"
+	"reasonix/internal/skill"
 	"reasonix/internal/tool"
 	"reasonix/internal/tool/builtin"
 
@@ -3840,6 +3841,33 @@ func TestPluginSpecsMapMCPSourceDefaults(t *testing.T) {
 	}
 	if specs[1].ImplicitApproval || !specs[1].RequireLaunchApproval || specs[1].ConfigSource != string(config.MCPSourceProjectConfig) {
 		t.Fatalf("project source defaults = %+v", specs[1])
+	}
+}
+
+func TestPluginSpecsCarryPluginPackageProvenance(t *testing.T) {
+	specs := PluginSpecsForRootWithOptions([]config.PluginEntry{{Name: "figma"}}, "/workspace", PluginSpecOptions{
+		PackageOwners: map[string]string{"figma": "design-plugin"},
+	})
+	if len(specs) != 1 || specs[0].Package != "design-plugin" {
+		t.Fatalf("plugin package provenance = %+v, want design-plugin", specs)
+	}
+}
+
+func TestSkillMCPBindingsUseOnlyValidOwnedCache(t *testing.T) {
+	specs := []plugin.Spec{
+		{Name: "figma", Package: "design-plugin", StripRawPrefix: "figma_"},
+		{Name: "other", Package: "other-plugin"},
+	}
+	cached := map[string][]plugin.CachedTool{
+		"figma": {{Name: "figma_get_design_context"}},
+		"other": {{Name: "search"}},
+	}
+	got := skillMCPBindings(skill.Skill{Plugin: "design-plugin"}, nil, specs, cached, map[string]bool{"figma": true, "other": true})
+	if len(got) != 1 || got[0].VisibleName != "get_design_context" || got[0].CallableName != plugin.ModelToolName("figma", "get_design_context") || got[0].CapabilityID != "mcp-tool:figma/figma_get_design_context" {
+		t.Fatalf("cached skill bindings = %+v", got)
+	}
+	if stale := skillMCPBindings(skill.Skill{Plugin: "design-plugin"}, nil, specs, cached, map[string]bool{"figma": false}); len(stale) != 0 {
+		t.Fatalf("stale cache supplied skill bindings: %+v", stale)
 	}
 }
 

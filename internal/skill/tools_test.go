@@ -11,7 +11,45 @@ import (
 	"time"
 
 	"reasonix/internal/event"
+	"reasonix/internal/tool"
 )
+
+func TestPreparePluginSkillBindsMCPNamesAndAllowedTools(t *testing.T) {
+	store := New(Options{HomeDir: t.TempDir(), DisableBuiltins: true})
+	bindings := []tool.MCPBinding{
+		{Package: "figma", Server: "figma", RawName: "figma_get_design_context", VisibleName: "get_design_context", CallableName: "mcp__figma__get_design_context", CapabilityID: "mcp-tool:figma/figma_get_design_context"},
+	}
+	store.ConfigureToolBindings(func(Skill) []tool.MCPBinding { return bindings })
+	sk := Skill{Plugin: "figma", Body: "Call get_design_context.", AllowedTools: []string{"mcp__plugin_figma_figma__get_design_context"}}
+
+	got := store.Prepare(sk)
+	if !strings.Contains(got.Body, "## Runtime MCP tool bindings") || !strings.Contains(got.Body, "`mcp__figma__get_design_context`") {
+		t.Fatalf("runtime binding missing:\n%s", got.Body)
+	}
+	if len(got.AllowedTools) != 1 || got.AllowedTools[0] != "mcp__figma__get_design_context" {
+		t.Fatalf("AllowedTools = %v, want canonical name", got.AllowedTools)
+	}
+	if twice := store.Prepare(got); twice.Body != got.Body {
+		t.Fatalf("Prepare is not idempotent:\n%s", twice.Body)
+	}
+	if plain := store.Prepare(Skill{Body: "unchanged"}); plain.Body != "unchanged" {
+		t.Fatalf("non-plugin skill changed: %q", plain.Body)
+	}
+}
+
+func TestPreparePluginSkillDoesNotWidenAmbiguousAllowedTool(t *testing.T) {
+	store := New(Options{HomeDir: t.TempDir(), DisableBuiltins: true})
+	store.ConfigureToolBindings(func(Skill) []tool.MCPBinding {
+		return []tool.MCPBinding{
+			{Server: "one", RawName: "search", VisibleName: "search", CallableName: "mcp__one__search", CapabilityID: "mcp-tool:one/search"},
+			{Server: "two", RawName: "search", VisibleName: "search", CallableName: "mcp__two__search", CapabilityID: "mcp-tool:two/search"},
+		}
+	})
+	got := store.Prepare(Skill{Plugin: "pkg", Body: "Search.", AllowedTools: []string{"search"}})
+	if len(got.AllowedTools) != 1 || got.AllowedTools[0] != "search" {
+		t.Fatalf("ambiguous literal widened permissions: %v", got.AllowedTools)
+	}
+}
 
 func TestRunSkillInline(t *testing.T) {
 	home := t.TempDir()

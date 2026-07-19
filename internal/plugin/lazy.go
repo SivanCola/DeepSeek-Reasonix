@@ -197,6 +197,7 @@ type lazyTool struct {
 	shared                *lazySpawn
 	name                  string // namespaced "mcp__<server>__<tool>"
 	rawName               string // original server-local tool name, when cached
+	visibleName           string // raw name after configured prefix stripping
 	desc                  string
 	schema                json.RawMessage
 	capabilityFingerprint string
@@ -231,7 +232,14 @@ func (lt *lazyTool) MCPServerName() string {
 	}
 	return lt.shared.spec.Name
 }
-func (lt *lazyTool) MCPRawToolName() string { return lt.rawName }
+func (lt *lazyTool) MCPRawToolName() string     { return lt.rawName }
+func (lt *lazyTool) MCPVisibleToolName() string { return lt.visibleName }
+func (lt *lazyTool) MCPPackageName() string {
+	if lt.shared == nil {
+		return ""
+	}
+	return lt.shared.spec.Package
+}
 
 // ReadOnlyExecutionAuthority mirrors remoteTool: reader classification
 // counts for strict read-only execution only when launch state is available.
@@ -544,6 +552,7 @@ func LazyToolset(spec Spec, cs *CachedSchema, host *Host, reg *tool.Registry, se
 				shared:                shared,
 				name:                  toolName(spec.Name, visibleName),
 				rawName:               ct.Name,
+				visibleName:           visibleName,
 				desc:                  ct.Description,
 				schema:                ct.Schema,
 				capabilityFingerprint: capabilityFingerprint(cachedCapabilities[ct.Name]),

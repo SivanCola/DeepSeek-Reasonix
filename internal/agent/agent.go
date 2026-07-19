@@ -2425,7 +2425,8 @@ func (a *Agent) executeBatch(ctx context.Context, calls []provider.ToolCall) ([]
 	// The first writer stays on the single-preview fast path.
 	earlierWriterRan := false
 	run := func(i int) {
-		t, known := a.tools.Get(calls[i].Name)
+		t, _, ambiguous := a.tools.ResolveCall(calls[i].Name)
+		known := t != nil && len(ambiguous) == 0
 		writer := known && !t.ReadOnly()
 		if earlierWriterRan && writer {
 			if refreshed, changed := refreshCurrentFileDiff(t, calls[i]); changed {
@@ -2509,7 +2510,8 @@ func (a *Agent) executeBatch(ctx context.Context, calls []provider.ToolCall) ([]
 
 	for i, c := range calls {
 		o := outcomes[i]
-		t, ok := a.tools.Get(c.Name)
+		t, _, ambiguous := a.tools.ResolveCall(c.Name)
+		ok := t != nil && len(ambiguous) == 0
 		a.sink.Emit(event.Event{Kind: event.ToolResult, Tool: event.Tool{
 			ID:         c.ID,
 			Name:       c.Name,
@@ -2535,7 +2537,8 @@ func (a *Agent) executeBatch(ctx context.Context, calls []provider.ToolCall) ([]
 }
 
 func (a *Agent) emitFullToolDispatch(c provider.ToolCall, refreshed bool) {
-	t, ok := a.tools.Get(c.Name)
+	t, _, ambiguous := a.tools.ResolveCall(c.Name)
+	ok := t != nil && len(ambiguous) == 0
 	ev := event.Tool{ID: c.ID, Name: c.Name, Args: c.Arguments, ReadOnly: ok && t.ReadOnly(), Refreshed: refreshed}
 	ev.FileDiff = event.FileDiff{Diff: c.Diff, Added: c.Added, Removed: c.Removed}
 	if ok && ev.Diff == "" && ev.Added == 0 && ev.Removed == 0 {
@@ -2585,7 +2588,8 @@ func (a *Agent) withPreviewFileDiffs(calls []provider.ToolCall) []provider.ToolC
 		if out[i].Diff != "" || out[i].Added != 0 || out[i].Removed != 0 {
 			continue
 		}
-		t, ok := a.tools.Get(out[i].Name)
+		t, _, ambiguous := a.tools.ResolveCall(out[i].Name)
+		ok := t != nil && len(ambiguous) == 0
 		if !ok {
 			continue
 		}
@@ -2634,8 +2638,8 @@ func parallelisable(r *tool.Registry, name string) bool {
 	case "complete_step", "todo_write", "wait", "bash_output":
 		return false
 	}
-	t, ok := r.Get(name)
-	return ok && t.ReadOnly()
+	t, _, ambiguous := r.ResolveCall(name)
+	return t != nil && len(ambiguous) == 0 && t.ReadOnly()
 }
 
 func runParallel(ctx context.Context, start, end int, run func(int)) int {
@@ -2842,8 +2846,15 @@ type toolOutcome struct {
 // — the caller emits ToolDispatch/ToolResult — so it is safe to invoke from
 // parallel goroutines.
 func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutcome {
-	t, ok := a.tools.Get(call.Name)
-	if !ok {
+	t, canonicalName, ambiguous := a.tools.ResolveCall(call.Name)
+	if len(ambiguous) > 0 {
+		msg := fmt.Sprintf("ambiguous MCP tool reference %q; use one of: %s", call.Name, strings.Join(ambiguous, ", "))
+		return toolOutcome{
+			output: "error: " + msg,
+			errMsg: msg,
+		}
+	}
+	if t == nil {
 		return toolOutcome{
 			output: fmt.Sprintf("error: unknown tool %q", call.Name),
 			errMsg: fmt.Sprintf("unknown tool %q", call.Name),
@@ -2874,7 +2885,7 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 				safety = planmode.PlanSafetyUnsafe
 			}
 		}
-		if decision := a.planModeDecision(call.Name, t.ReadOnly(), planModeUntrustedReadOnly(t), safety, json.RawMessage(call.Arguments)); decision.Blocked {
+		if decision := a.planModeDecision(canonicalName, t.ReadOnly(), planModeUntrustedReadOnly(t), safety, json.RawMessage(call.Arguments)); decision.Blocked {
 			return toolOutcome{
 				output:  decision.Message,
 				blocked: true,
@@ -2884,11 +2895,11 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 	}
 	// Resolve proxy tools (use_capability) to the real MCP target before
 	// permission, hooks, and evidence. Provider transcript keeps call.Name.
-	permName := call.Name
+	permName := canonicalName
 	permArgs := json.RawMessage(call.Arguments)
 	execTool := t
 	execArgs := json.RawMessage(call.Arguments)
-	evidenceName := call.Name
+	evidenceName := canonicalName
 	evidenceArgs := json.RawMessage(call.Arguments)
 	readOnly := t.ReadOnly()
 	var resolved tool.ResolvedCall
@@ -3641,8 +3652,8 @@ func isBackgroundTaskCall(args string) bool {
 // toolReadOnly reports a tool's ReadOnly classification by name (false for an
 // unknown tool), for stamping early ToolDispatch events.
 func (a *Agent) toolReadOnly(name string) bool {
-	t, ok := a.tools.Get(name)
-	return ok && t.ReadOnly()
+	t, _, ambiguous := a.tools.ResolveCall(name)
+	return t != nil && len(ambiguous) == 0 && t.ReadOnly()
 }
 
 // firstLine returns s up to its first newline — a one-line failure summary for

@@ -488,6 +488,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		ForbidReadRoots:      forbidReadRoots,
 		Network:              cfg.Sandbox.Network,
 		OfficialServers:      LoadVerifiedMCPPackages(ctx, cfg),
+		PackageOwners:        pluginPackageOwners(cfg),
 	}
 	autoStartEntries := cfg.AutoStartPlugins()
 	eagerEntries, bgEntries := partitionByTier(autoStartEntries)
@@ -780,6 +781,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		if !ok || sk.RunAs != skill.RunSubagent {
 			return agent.ProfileDefinition{}, false
 		}
+		sk = skillStore.Prepare(sk)
 		return agent.ProfileDefinition{
 			Name:         sk.Name,
 			Body:         sk.Body,
@@ -1146,7 +1148,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 				slashEntries = append(slashEntries, command.SlashEntry{
 					Name:        sk.SlashName(),
 					Description: sk.Description,
-					Render:      func(args []string) string { return skill.Render(sk, strings.Join(args, " ")) },
+					Render:      func(args []string) string { return skillStore.Render(sk, strings.Join(args, " ")) },
 				})
 			}
 		}
@@ -1410,6 +1412,9 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	var capAudit *capability.Audit
 	capSpecs := PluginSpecsForRootWithOptions(cfg.Plugins, root, pluginSpecOptions)
 	cachedTools, cacheHashOK := capability.LoadCachedToolsForSpecs(capSpecs)
+	skillStore.ConfigureToolBindings(func(sk skill.Skill) []tool.MCPBinding {
+		return skillMCPBindings(sk, reg, capSpecs, cachedTools, cacheHashOK)
+	})
 	var capProxy *agent.UseCapabilityTool
 	if tokenDelivery {
 		capLedger = capability.NewLedger()
@@ -2243,6 +2248,7 @@ type PluginSpecOptions struct {
 	ForbidReadRoots      []string
 	Network              bool
 	OfficialServers      map[string]VerifiedMCPPackage
+	PackageOwners        map[string]string
 }
 
 type VerifiedMCPPackage struct {
@@ -2284,6 +2290,7 @@ func pluginSpecFromEntryWithOptions(e config.PluginEntry, workspaceRoot string, 
 	}
 	spec := plugin.ApplyKnownOverrides(plugin.Spec{
 		Name:                     e.Name,
+		Package:                  strings.TrimSpace(opts.PackageOwners[e.Name]),
 		Type:                     e.Type,
 		Command:                  e.Command,
 		Args:                     e.Args,
@@ -2305,6 +2312,55 @@ func pluginSpecFromEntryWithOptions(e config.PluginEntry, workspaceRoot string, 
 	applyMCPIsolation(&spec, workspaceRoot, opts)
 	applyVerifiedMCPPackage(&spec, opts)
 	return spec
+}
+
+func pluginPackageOwners(cfg *config.Config) map[string]string {
+	out := map[string]string{}
+	if cfg == nil {
+		return out
+	}
+	for _, configured := range cfg.Plugins {
+		if owner, ok := cfg.PluginPackageOwner(configured.Name); ok {
+			out[configured.Name] = owner
+		}
+	}
+	return out
+}
+
+func skillMCPBindings(sk skill.Skill, reg *tool.Registry, specs []plugin.Spec, cachedTools map[string][]plugin.CachedTool, cacheHashOK map[string]bool) []tool.MCPBinding {
+	var out []tool.MCPBinding
+	if reg != nil {
+		bindings := reg.MCPBindings()
+		out = make([]tool.MCPBinding, 0, len(bindings))
+		for _, binding := range bindings {
+			if binding.Package == sk.Plugin {
+				out = append(out, binding)
+			}
+		}
+	}
+	// A valid cached schema also supplies stable bindings for an on-demand
+	// package server before it is connected. The skill can then route through
+	// use_capability without inventing Reasonix's canonical name.
+	for _, spec := range specs {
+		if spec.Package != sk.Plugin || !cacheHashOK[spec.Name] {
+			continue
+		}
+		for _, cached := range cachedTools[spec.Name] {
+			visible := cached.Name
+			if spec.StripRawPrefix != "" {
+				visible = strings.TrimPrefix(visible, spec.StripRawPrefix)
+			}
+			out = append(out, tool.MCPBinding{
+				Package:      spec.Package,
+				Server:       spec.Name,
+				RawName:      cached.Name,
+				VisibleName:  visible,
+				CallableName: plugin.ModelToolName(spec.Name, visible),
+				CapabilityID: "mcp-tool:" + spec.Name + "/" + cached.Name,
+			})
+		}
+	}
+	return out
 }
 
 func applyVerifiedMCPPackage(spec *plugin.Spec, opts PluginSpecOptions) {

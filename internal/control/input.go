@@ -630,7 +630,7 @@ func (c *Controller) RunSkill(input string) (sent string, found bool) {
 	if !ok {
 		return "", false
 	}
-	return skill.Render(sk, task), true
+	return c.skills.render(sk, task), true
 }
 
 // MCPPrompt resolves a "/mcp__server__prompt args…" line: it maps the positional
