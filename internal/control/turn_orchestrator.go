@@ -118,6 +118,7 @@ func (o *turnOrchestrator) runSubagentSkillTurns(ctx context.Context, skills []s
 	c.executor.Session().Add(provider.Message{Role: provider.RoleUser, Content: input, Images: images, CreatedAt: time.Now().UnixMilli()})
 
 	for _, sk := range skills {
+		sk = c.skills.prepare(sk)
 		callID := fmt.Sprintf("slash-skill-%d", c.slashSkillSeq.Add(1))
 		args, _ := json.Marshal(map[string]string{"name": sk.Name, "arguments": task})
 		toolEvent := event.Tool{

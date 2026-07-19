@@ -1693,6 +1693,7 @@ func (c *Controller) RunSubagentProfile(ctx context.Context, name, task string, 
 	if sk.RunAs != skill.RunSubagent {
 		return "", fmt.Errorf("skill %q is not runAs=subagent", name)
 	}
+	sk = c.skills.prepare(sk)
 	runner := c.skillRunner
 	if readOnly {
 		runner = c.readOnlySkillRunner
