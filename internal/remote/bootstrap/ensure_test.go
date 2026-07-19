@@ -47,15 +47,23 @@ func (f *fakeConn) ranContaining(sub string) bool {
 	return false
 }
 
-func newFakeConn(t *testing.T, root string, handler func(cmd string) (remote.ExecResult, error)) *fakeConn {
+// skipOnWindows guards the EnsureServe integration tests. They model a POSIX
+// remote — pathsFor uses path.Join and the slug maps a POSIX home, while the
+// SFTP harness serves the local FS. On Windows the temp-dir "remote home" is a
+// drive path, so both the test's own pathsFor pre-writes and the harness break.
+// This is a harness limitation, not a product one (V1 remotes are Linux/macOS);
+// Linux/macOS CI covers these flows. Call it first thing in each such test,
+// before any pathsFor/os setup.
+func skipOnWindows(t *testing.T) {
 	t.Helper()
-	// EnsureServe targets POSIX remotes (paths via path.Join, sh -c launch). This
-	// harness runs the SFTP server against the local FS, so on Windows the remote
-	// home resolves to a Windows drive path and the POSIX path derivation breaks —
-	// a harness limitation, not a product one. Linux/macOS CI covers these flows.
 	if runtime.GOOS == "windows" {
 		t.Skip("EnsureServe harness models a POSIX remote; exercised on Linux/macOS")
 	}
+}
+
+func newFakeConn(t *testing.T, root string, handler func(cmd string) (remote.ExecResult, error)) *fakeConn {
+	t.Helper()
+	skipOnWindows(t)
 	srv := sshtest.Start(t, sshtest.Options{SFTPRoot: root})
 	cfg := &ssh.ClientConfig{User: "t", HostKeyCallback: ssh.InsecureIgnoreHostKey(), Timeout: 5 * time.Second}
 	cl, err := ssh.Dial("tcp", srv.Addr, cfg)
@@ -78,6 +86,7 @@ func ok(stdout string) (remote.ExecResult, error) {
 // TestEnsureServeLaunchesWhenAbsent drives a full cold start: no prior state,
 // reasonix already on PATH, serve writes its port file.
 func TestEnsureServeLaunchesWhenAbsent(t *testing.T) {
+	skipOnWindows(t)
 	root := t.TempDir()
 	var portFile string
 	conn := newFakeConn(t, root, func(cmd string) (remote.ExecResult, error) {
@@ -141,6 +150,7 @@ func TestEnsureServeLaunchesWhenAbsent(t *testing.T) {
 // TestEnsureServeReusesLiveProcess: a recorded, alive pid short-circuits to
 // reuse without detecting/launching.
 func TestEnsureServeReusesLiveProcess(t *testing.T) {
+	skipOnWindows(t)
 	root := t.TempDir()
 	paths := pathsFor(root, root)
 	// Pre-write state + token as if a serve is already running.
@@ -184,6 +194,7 @@ func TestEnsureServeReusesLiveProcess(t *testing.T) {
 // TestEnsureServeRelaunchesDeadProcess: a recorded but dead pid triggers a
 // fresh launch.
 func TestEnsureServeRelaunchesDeadProcess(t *testing.T) {
+	skipOnWindows(t)
 	root := t.TempDir()
 	paths := pathsFor(root, root)
 	if err := os.MkdirAll(paths.Dir, 0o755); err != nil {
@@ -224,6 +235,7 @@ func TestEnsureServeRelaunchesDeadProcess(t *testing.T) {
 
 // TestEnsureServeInstallNeverErrorsWhenAbsent.
 func TestEnsureServeInstallNeverErrorsWhenAbsent(t *testing.T) {
+	skipOnWindows(t)
 	root := t.TempDir()
 	conn := newFakeConn(t, root, func(cmd string) (remote.ExecResult, error) {
 		switch {
@@ -242,6 +254,7 @@ func TestEnsureServeInstallNeverErrorsWhenAbsent(t *testing.T) {
 }
 
 func TestStopRemovesStateFiles(t *testing.T) {
+	skipOnWindows(t)
 	root := t.TempDir()
 	paths := pathsFor(root, root)
 	_ = os.MkdirAll(paths.Dir, 0o755)
