@@ -527,19 +527,26 @@ export function ThemeGallery({
         taskBackgroundDataUrl: editor.taskBackgroundDataUrl || undefined,
         clearTaskBackground: !editor.taskBackground && !editor.taskBackgroundDataUrl && !editor.existingTaskBackgroundUrl,
         replace: editor.mode === "edit",
-        activate,
+        // Keep save and activation separate. The activation path below is the
+        // sole owner of the active-theme pointer, so a failed activation leaves
+        // the previous theme selected and the preview snapshot reversible.
+        activate: false,
       };
       const saved = await app.SaveThemePack(input);
       showToast(t("settings.themeLibrary.saved", { name: saved.name }), "info");
-      cancelThemePreview();
+      if (activate) {
+        // Commit activation before unmounting the editor. ThemeEditorInline's
+        // cleanup cancels any remaining preview, so closing it earlier would
+        // briefly restore the old snapshot while reload() is in flight.
+        const view = await activateThemePack(saved.id);
+        onExperienceChange(view);
+      } else {
+        cancelThemePreview();
+      }
       setEditor(null);
       await reload();
       setTab("user");
       setSelected(selectionFromPack(saved));
-      if (activate) {
-        const view = await activateThemePack(saved.id);
-        onExperienceChange(view);
-      }
     } catch (err) {
       showToast(err instanceof Error ? err.message : String(err), "error");
     } finally {
@@ -1039,6 +1046,7 @@ function ThemeEditorInline({
                   opacity={state.background?.homeOpacity ?? 1}
                   opacityMax={1}
                   overlayStrength={state.background?.overlayStrength ?? 0.62}
+                  paneOpacity={state.background?.paneOpacity ?? 0.72}
                   busy={busy}
                   onPick={() => void pickBackground("home")}
                   onClear={() => onChange({ background: null, backgroundDataUrl: "", existingBackgroundUrl: "" })}
@@ -1056,8 +1064,9 @@ function ThemeEditorInline({
                   focusY={state.taskBackground?.focusY ?? state.background?.focusY ?? 0.5}
                   safeArea={state.taskBackground?.safeArea || state.background?.safeArea || "center"}
                   opacity={state.taskBackground?.opacity ?? state.background?.taskOpacity ?? 0.28}
-                  opacityMax={0.45}
+                  opacityMax={1}
                   overlayStrength={state.taskBackground?.overlayStrength ?? state.background?.overlayStrength ?? 0.62}
+                  paneOpacity={state.taskBackground?.paneOpacity ?? state.background?.paneOpacity ?? 0.80}
                   busy={busy}
                   onPick={() => void pickBackground("task")}
                   onClear={() => onChange({ taskBackground: null, taskBackgroundDataUrl: "", existingTaskBackgroundUrl: "" })}
@@ -1107,6 +1116,7 @@ type ScenePatch = {
   safeArea?: "left" | "center" | "right";
   opacity?: number;
   overlayStrength?: number;
+  paneOpacity?: number;
 };
 
 function SceneImageEditor({
@@ -1120,6 +1130,7 @@ function SceneImageEditor({
   opacity,
   opacityMax,
   overlayStrength,
+  paneOpacity,
   busy,
   onPick,
   onClear,
@@ -1135,6 +1146,7 @@ function SceneImageEditor({
   opacity: number;
   opacityMax: number;
   overlayStrength: number;
+  paneOpacity: number;
   busy: boolean;
   onPick: () => void;
   onClear: () => void;
@@ -1189,6 +1201,7 @@ function SceneImageEditor({
           </div>
           <label className="theme-editor__range"><span>{t("settings.themeEditor.opacity")} <b>{Math.round(opacity * 100)}%</b></span><input type="range" min={0} max={opacityMax} step={0.01} value={opacity} onChange={(e) => onPatch({ opacity: Number(e.target.value) })} /></label>
           <label className="theme-editor__range"><span>{t("settings.themeLibrary.overlayStrength")} <b>{Math.round(overlayStrength * 100)}%</b></span><input type="range" min={0} max={1} step={0.01} value={overlayStrength} onChange={(e) => onPatch({ overlayStrength: Number(e.target.value) })} /></label>
+          <label className="theme-editor__range"><span>{t("settings.themeEditor.paneOpacity")} <b>{Math.round(paneOpacity * 100)}%</b></span><input type="range" min={0} max={1} step={0.01} value={paneOpacity} onChange={(e) => onPatch({ paneOpacity: Number(e.target.value) })} /></label>
         </div>
       ) : null}
     </div>
