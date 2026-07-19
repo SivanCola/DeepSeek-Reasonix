@@ -217,7 +217,7 @@ ok(!attrs.has("data-theme-pack"), "cancel restores cleared pack");
 clearThemePack();
 applyTheme("dark", "graphite", { persist: false });
 startGlobalPreview(draft);
-const testWindow = window as typeof window & {
+const testWindow = window as unknown as {
   go?: { main?: { App?: { ActivateThemePack: (id: string) => Promise<void> } } };
 };
 testWindow.go = {
