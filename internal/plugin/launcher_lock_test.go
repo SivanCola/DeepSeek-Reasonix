@@ -120,6 +120,34 @@ func TestStoredLauncherEnforcementFlagPreservesAuthorizedIdentity(t *testing.T) 
 	}
 }
 
+func TestStoredUVXFromLauncherLockKeepsFromValueAdjacent(t *testing.T) {
+	manager := mcptrust.NewManager(filepath.Join(t.TempDir(), mcptrust.StateFilename), "/workspace")
+	lock := mcptrust.LauncherLock{
+		Server: "python-tools", Locator: digestText("python-tools"),
+		ResolvedVersion: "python-tools==3.2.1", ContentSHA256: digestText("integrity"),
+	}
+	if err := manager.PutLauncherLock(lock); err != nil {
+		t.Fatal(err)
+	}
+	spec := Spec{
+		Name: "python-tools", Command: "uvx",
+		Args:         []string{"--from", "python-tools", "python-tools-server", "--stdio"},
+		TrustManager: manager,
+	}
+	locked, err := applyStoredLauncherLock(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantLaunch := []string{"--offline", "--from", "python-tools==3.2.1", "python-tools-server", "--stdio"}
+	if !reflect.DeepEqual(locked.LaunchArgs, wantLaunch) {
+		t.Fatalf("launch args = %v, want %v", locked.LaunchArgs, wantLaunch)
+	}
+	wantIdentity := []string{"--from", "python-tools==3.2.1", "python-tools-server", "--stdio"}
+	if !reflect.DeepEqual(locked.LauncherIdentityArgs, wantIdentity) {
+		t.Fatalf("launcher identity args = %v, want %v", locked.LauncherIdentityArgs, wantIdentity)
+	}
+}
+
 func stringSliceContains(values []string, want string) bool {
 	for _, value := range values {
 		if value == want {

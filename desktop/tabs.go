@@ -2596,14 +2596,12 @@ func (a *App) ReorderTabs(tabIDs []string) error {
 // background work, the controller is detached so closing a view does not destroy
 // the session runtime.
 func (a *App) CloseTab(tabID string) error {
+	defer a.lockRuntimeMutation("close-tab")()
 	a.sessionRemovalMu.Lock()
 	defer a.sessionRemovalMu.Unlock()
-	// Enter the lifecycle barrier before snapshotting or unlinking the runtime.
-	// If an MCP writer already owns the barrier, leaving the tab visible lets its
-	// Host-wide gate snapshot include and inspect any running turn. If CloseTab
-	// enters first, the writer waits until the runtime is detached or closed.
-	a.runtimeAdmissionMu.RLock()
-	defer a.runtimeAdmissionMu.RUnlock()
+	// The runtime mutation barrier is acquired before sessionRemovalMu. This waits
+	// for a turn whose admission is already in progress, blocks later turns/builds,
+	// and leaves the tab visible until an earlier MCP Host-wide gate completes.
 
 	a.mu.Lock()
 	tab, ok := a.tabs[tabID]
@@ -2719,10 +2717,9 @@ func (a *App) keepOnlyVisibleTab(tabID string) (TabMeta, error) {
 	// project-tree event stays outside so a listener can never re-enter a
 	// removal path while the lock is held.
 	meta, err := func() (TabMeta, error) {
+		defer a.lockRuntimeMutation("prune-visible-tabs")()
 		a.sessionRemovalMu.Lock()
 		defer a.sessionRemovalMu.Unlock()
-		a.runtimeAdmissionMu.RLock()
-		defer a.runtimeAdmissionMu.RUnlock()
 
 		a.mu.Lock()
 		active := a.tabs[tabID]
@@ -6811,10 +6808,9 @@ func (a *App) trashTopic(topicID string) error {
 
 	var fallback fallbackRuntimeTarget
 	if err := func() error {
+		defer a.lockRuntimeMutation("trash-topic")()
 		a.sessionRemovalMu.Lock()
 		defer a.sessionRemovalMu.Unlock()
-		a.runtimeAdmissionMu.RLock()
-		defer a.runtimeAdmissionMu.RUnlock()
 
 		targets, err := a.topicTrashTargets(topicID)
 		if err != nil {

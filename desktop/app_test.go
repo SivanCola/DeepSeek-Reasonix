@@ -7339,6 +7339,29 @@ func TestSetMCPTrustWorkspaceRefreshesEverySharedHostRegistry(t *testing.T) {
 	}
 }
 
+func TestSetMCPTrustRevokeDisconnectsEverySharedHostRegistry(t *testing.T) {
+	fixture := newGatedDesktopMCPTrustFixture(t, "")
+
+	if err := fixture.app.SetMCPTrust("h", "revoke"); err != nil {
+		t.Fatalf("SetMCPTrust(h,revoke): %v", err)
+	}
+	if fixture.sharedHost.HasClient("h") {
+		t.Fatal("shared host kept h connected after its launch trust was revoked")
+	}
+	for label, registry := range map[string]*tool.Registry{
+		"active": fixture.activeRegistry, "sibling": fixture.siblingRegistry, "disabled": fixture.disabledRegistry,
+	} {
+		if _, found := registry.Get("mcp__h__greet"); found {
+			t.Fatalf("%s registry retained h tools after its launch trust was revoked", label)
+		}
+	}
+	view := fixture.app.MCPServers()
+	if len(view) != 1 || view[0].Name != "h" || view[0].Status != "failed" ||
+		!view[0].RequiresLaunchApproval || !view[0].RequiresReverification {
+		t.Fatalf("MCPServers after revoke = %+v, want h awaiting launch approval", view)
+	}
+}
+
 func TestSetMCPTrustReconnectUsesEffectiveProjectConfigWhenUserNameIsShadowed(t *testing.T) {
 	fixture := newGatedDesktopMCPTrustFixture(t, "")
 	userCfg := config.LoadForEdit(config.UserConfigPath())
@@ -8177,6 +8200,41 @@ func TestSetMCPTrustSerializesCloseOfCapturedRuntime(t *testing.T) {
 	}
 	if err := <-closeDone; err != nil {
 		t.Fatalf("CloseTab(active) after trust: %v", err)
+	}
+}
+
+func TestCloseTabWaitsForPendingTurnAdmission(t *testing.T) {
+	fixture := newGatedDesktopMCPTrustFixture(t, "")
+	admission, _, err := fixture.app.beginTabTurn("active", false)
+	if err != nil {
+		t.Fatalf("beginTabTurn(active): %v", err)
+	}
+	released := false
+	defer func() {
+		if !released {
+			admission.abort()
+		}
+	}()
+
+	closeDone := make(chan error, 1)
+	go func() { closeDone <- fixture.app.CloseTab("active") }()
+	select {
+	case err := <-closeDone:
+		admission.abort()
+		released = true
+		t.Fatalf("CloseTab bypassed a pending turn admission and closed its controller: %v", err)
+	case <-time.After(300 * time.Millisecond):
+	}
+
+	admission.abort()
+	released = true
+	select {
+	case err := <-closeDone:
+		if err != nil {
+			t.Fatalf("CloseTab(active) after turn admission release: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("CloseTab did not resume after the pending turn admission was released")
 	}
 }
 

@@ -204,7 +204,16 @@ func applyLauncherResolution(spec *Spec, locator launcherLocator, lock mcptrust.
 		if locator.kind == "bunx" {
 			flag = "--no-install"
 		}
-		args = append(args[:locator.arg], append([]string{flag}, args[locator.arg:]...)...)
+		insertAt := locator.arg
+		// For `uvx --from package command`, locator.arg points at the value of
+		// --from. Inserting there would split the option from its value and produce
+		// `--from --offline package`. Keep the pair adjacent by placing the
+		// enforcement flag before --from. The --from=package form already points at
+		// the whole option and needs no adjustment.
+		if locator.kind == "uvx" && insertAt > 0 && args[insertAt-1] == "--from" {
+			insertAt--
+		}
+		args = append(args[:insertAt], append([]string{flag}, args[insertAt:]...)...)
 	}
 	spec.LaunchArgs = args
 	spec.LauncherLocator = lock.Locator

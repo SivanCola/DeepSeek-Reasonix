@@ -1089,6 +1089,13 @@ func (h *Host) RecordFailure(s Spec, err error) {
 	h.failures = append(h.failures, f)
 }
 
+// RecordLaunchApprovalRequired keeps an intentionally disconnected project MCP
+// visible as awaiting authorization. This is used after an explicit trust
+// revocation, where no failed connection attempt exists to create the status.
+func (h *Host) RecordLaunchApprovalRequired(s Spec) {
+	h.RecordFailure(s, &launchApprovalError{server: s.Name})
+}
+
 // ClearFailure drops a recorded startup/connection failure for status UIs.
 func (h *Host) ClearFailure(name string) {
 	h.mu.Lock()

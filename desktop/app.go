@@ -150,10 +150,10 @@ type App struct {
 	// -> Host/Registry.
 	runtimeRebuildMu sync.Mutex
 	// runtimeAdmissionMu is the runtime lifecycle barrier. Foreground turn-start
-	// tokens, controller builds, and ordinary runtime teardown hold the read side;
-	// exclusive teardown and MCP lifecycle mutations hold the write side so their
-	// captured controller/Host cannot be replaced or closed in flight. Writers already hold
-	// runtimeRebuildMu, making them mutually exclusive. Read holders must never
+	// tokens and controller builds hold the read side; runtime teardown and MCP
+	// lifecycle mutations hold the write side so their captured controller/Host
+	// cannot be replaced, closed, or handed a late turn in flight. Writers already
+	// hold runtimeRebuildMu, making them mutually exclusive. Read holders must never
 	// acquire runtimeRebuildMu, or a queued writer would deadlock the pair.
 	runtimeAdmissionMu sync.RWMutex
 	// runtimeMutationBeforeLockHook is test-only. Set it before starting concurrent
@@ -2698,10 +2698,9 @@ func (a *App) deleteSession(path string, requireRedundantRecovery bool) error {
 	}
 	var fallback fallbackRuntimeTarget
 	if err := func() error {
+		defer a.lockRuntimeMutation("delete-session")()
 		a.sessionRemovalMu.Lock()
 		defer a.sessionRemovalMu.Unlock()
-		a.runtimeAdmissionMu.RLock()
-		defer a.runtimeAdmissionMu.RUnlock()
 		if requireRedundantRecovery && !agent.RecoveryBranchCoveredByParent(sessionPath, dir) {
 			return errRecoveryCopyNotRedundant
 		}
@@ -3006,8 +3005,7 @@ func delayedDesktopSessionTrash(dir, sessionPath, key string, destroys []control
 }
 
 func (a *App) closeRemovedSessionRuntimes(removed []removedSessionRuntime) {
-	a.runtimeAdmissionMu.RLock()
-	defer a.runtimeAdmissionMu.RUnlock()
+	defer a.lockRuntimeMutation("close-removed-session-runtimes")()
 	a.closeRemainingRemovedSessionRuntimesAdmissionHeld(removed, map[control.SessionAPI]bool{})
 }
 
@@ -4184,10 +4182,9 @@ func (a *App) RemoveWorkspace(dir string) error {
 	// the lock is released. Project bookkeeping, the fallback controller build,
 	// and notifications run after release.
 	if err := func() error {
+		defer a.lockRuntimeMutation("remove-workspace")()
 		a.sessionRemovalMu.Lock()
 		defer a.sessionRemovalMu.Unlock()
-		a.runtimeAdmissionMu.RLock()
-		defer a.runtimeAdmissionMu.RUnlock()
 
 		type workspaceTabCandidate struct {
 			id  string
@@ -6326,6 +6323,19 @@ func (a *App) SetMCPTrust(name, decision string) error {
 	if decision != "workspace" && host != nil && host.HasClient(name) {
 		if err := host.SetTrust(name, decision); err != nil {
 			return err
+		}
+		// Revoking a project launch grant must take effect immediately. Merely
+		// updating the trust receipt would leave the already-authorized process
+		// and its provider-visible tools alive until the next session restart.
+		if decision == "revoke" {
+			disconnectMCPServerControllers(name, ctrl, controllers)
+			// A revocation is intentional, so there is no failed reconnect to
+			// populate Host.Failures. Preserve an actionable blocked status for
+			// project-config servers instead of making the authorization button
+			// disappear until the user tries (and fails) to reconnect manually.
+			if entry, found, loadErr := desktopEffectiveMCPServer(root, name); loadErr == nil && found && entry.Source.RequiresLaunchApproval() {
+				host.RecordLaunchApprovalRequired(plugin.Spec{Name: entry.Name, Type: entry.Type})
+			}
 		}
 		a.recordMCPSecurityMetric("mcp_trust_source", decision)
 		return nil
