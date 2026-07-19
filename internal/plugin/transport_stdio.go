@@ -37,7 +37,8 @@ type stdioTransport struct {
 	stdout *bufio.Reader
 	stderr *tailBuffer
 
-	callMu sync.Mutex // one in-flight request/response at a time over the shared pipe
+	callMu  sync.Mutex // one in-flight request/response at a time over the shared pipe
+	writeMu sync.Mutex // client calls and server-request replies share stdin
 
 	mu      sync.Mutex
 	nextID  int
@@ -493,39 +494,66 @@ func mergePathLists(primary, secondary string) string {
 }
 
 // readLoop owns stdout for the transport's lifetime: it reads one JSON-RPC
-// message per line, drops server-initiated notifications/requests (they carry a
-// method), and hands each response to the call waiting on its id. On any read
-// error it fails every pending call and exits.
+// message per line, ignores server notifications, answers server requests, and
+// hands each response to the call waiting on its id. On any read error it fails
+// every pending call and exits.
 func (t *stdioTransport) readLoop() {
 	for {
-		line, err := t.stdout.ReadBytes('\n')
-		if err != nil {
-			t.failAll(err)
+		line, readErr := t.stdout.ReadBytes('\n')
+		line = bytes.TrimSpace(line)
+		if len(line) > 0 {
+			if err := t.handleInboundLine(line); err != nil {
+				t.failAll(err)
+				return
+			}
+		}
+		if readErr != nil {
+			t.failAll(readErr)
 			return
 		}
-		line = bytes.TrimSpace(line)
-		if len(line) == 0 {
-			continue
-		}
-		var probe struct {
-			Method string `json:"method"`
-		}
-		_ = json.Unmarshal(line, &probe)
-		if probe.Method != "" {
-			continue // server notification/request, not a response to one of our calls
-		}
-		var resp rpcResponse
-		if err := json.Unmarshal(line, &resp); err != nil {
-			continue // unparseable line with no id — can't route it, skip
-		}
-		t.mu.Lock()
-		ch := t.pending[resp.ID]
-		delete(t.pending, resp.ID)
-		t.mu.Unlock()
-		if ch != nil {
-			ch <- resp // buffered(1): never blocks, even if the caller already left
-		}
 	}
+}
+
+func (t *stdioTransport) handleInboundLine(line []byte) error {
+	var probe struct {
+		JSONRPC string          `json:"jsonrpc"`
+		ID      json.RawMessage `json:"id"`
+		Method  string          `json:"method"`
+	}
+	if err := json.Unmarshal(line, &probe); err != nil {
+		return nil // unparseable line cannot be routed; keep the transport alive
+	}
+	if probe.Method != "" {
+		id := bytes.TrimSpace(probe.ID)
+		if len(id) == 0 || bytes.Equal(id, []byte("null")) {
+			return nil // server notification
+		}
+		response := struct {
+			JSONRPC string          `json:"jsonrpc"`
+			ID      json.RawMessage `json:"id"`
+			Result  any             `json:"result,omitempty"`
+			Error   *rpcError       `json:"error,omitempty"`
+		}{JSONRPC: "2.0", ID: append(json.RawMessage(nil), id...)}
+		if probe.Method == "ping" {
+			response.Result = map[string]any{}
+		} else {
+			response.Error = &rpcError{Code: -32601, Message: "Method not found"}
+		}
+		return t.write(response)
+	}
+
+	var resp rpcResponse
+	if err := json.Unmarshal(line, &resp); err != nil {
+		return nil
+	}
+	t.mu.Lock()
+	ch := t.pending[resp.ID]
+	delete(t.pending, resp.ID)
+	t.mu.Unlock()
+	if ch != nil {
+		ch <- resp // buffered(1): never blocks, even if the caller already left
+	}
+	return nil
 }
 
 // failAll records the terminal read error and unblocks every pending call by
@@ -591,6 +619,8 @@ func (t *stdioTransport) write(v any) error {
 	if err != nil {
 		return err
 	}
+	t.writeMu.Lock()
+	defer t.writeMu.Unlock()
 	if _, err = t.stdin.Write(append(b, '\n')); err != nil {
 		return t.withStderr(err)
 	}

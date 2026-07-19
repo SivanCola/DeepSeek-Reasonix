@@ -2325,6 +2325,11 @@ function mcpTrustActionRequired(server: ServerView): boolean {
 	return Boolean(server.requiresLaunchApproval || server.requiresReverification || server.trustState === "changed");
 }
 
+function mcpTrustActionLabel(server: ServerView, t: ReturnType<typeof useT>): string {
+	const hasDrift = Boolean(server.identityChanged || server.trustState === "changed" || server.changedTools?.length || server.toolChanges?.length);
+	return server.requiresLaunchApproval && !hasDrift ? t("caps.authorizeAndConnect") : t("caps.reverify");
+}
+
 // A launch-gate-governed server whose grant is currently established. Revoking
 // is only offered where it sticks: user-config and official sources auto-trust
 // again on the next evaluation, so a revoke entry there would be misleading.
@@ -2419,7 +2424,7 @@ function MCPSettingsServerRow({
 	const requiresReverification = !opensAuth && server.status !== "disabled" && Boolean(
 		server.requiresReverification || server.identityChanged || server.trustState === "changed",
 	);
-	const actionLabel = requiresReverification ? t("caps.reverify") : serverActionLabel(server, t);
+	const actionLabel = requiresReverification ? mcpTrustActionLabel(server, t) : serverActionLabel(server, t);
 	const handlePrimaryAction = () => {
 		if (requiresReverification) {
 			onReverify();
@@ -3151,7 +3156,7 @@ export function MCPServersSettingsPage() {
 						{selectedServer.isolationState === "unavailable_unconfined" && selectedServer.isolationReason && <div className="drawer__summary">{selectedServer.isolationReason}</div>}
 						{mcpToolChangeMessages(selectedServer.toolChanges, selectedServer.changedTools, t).map((message) => <div className="banner banner--warn" key={message}>{message}</div>)}
 						<div className="cap-mcp-editor__actions">
-							<button className="btn btn--small" disabled={actionBusy} type="button" onClick={() => void inspectTrust(selectedServer.name)}>{t("caps.reverify")}</button>
+							<button className="btn btn--small" disabled={actionBusy} type="button" onClick={() => void inspectTrust(selectedServer.name)}>{mcpTrustActionLabel(selectedServer, t)}</button>
 							{selectedServer.trustState !== "untrusted" && <button className="btn btn--small" disabled={actionBusy} type="button" onClick={() => void mutate(() => app.SetMCPTrust(selectedServer.name, "revoke"))}>{t("caps.revokeTrust")}</button>}
 						</div>
 					</div>}

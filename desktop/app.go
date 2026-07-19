@@ -6200,37 +6200,68 @@ func (a *App) SetMCPTrust(name, decision string) error {
 		a.recordMCPSecurityMetric("mcp_trust_source", decision)
 		return nil
 	}
+	wasConnected := decision == "workspace" && host != nil && host.HasClient(name)
+	var entry config.PluginEntry
+	if wasConnected {
+		var found bool
+		var err error
+		entry, found, err = a.desktopMCPServerForEdit(name)
+		if err != nil {
+			return err
+		}
+		if !found {
+			return fmt.Errorf("could not reload configuration for connected MCP server %q", name)
+		}
+		// Workspace re-verification performs an exact preflight by starting the
+		// configured launcher. Stop the existing process first: many MCPs are
+		// single-instance and reject the otherwise concurrent second launch.
+		for _, target := range controllers {
+			target.ctrl.UnregisterMCPServerTools(name)
+		}
+		ctrl.DisconnectMCPServer(name)
+	}
 	spec, err := a.mcpTrustSpec(name)
 	if err != nil {
+		if wasConnected {
+			if restoreErr := reconnectMCPServerControllers(entry, controllers); restoreErr != nil {
+				recordMCPFailure(ctrl, entry, restoreErr)
+				return fmt.Errorf("loading MCP trust settings failed: %w; restoring the previous connection also failed: %v", err, restoreErr)
+			}
+		}
 		return err
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	if err := plugin.SetSpecTrust(ctx, spec, decision); err != nil {
+		if wasConnected {
+			if restoreErr := reconnectMCPServerControllers(entry, controllers); restoreErr != nil {
+				recordMCPFailure(ctrl, entry, restoreErr)
+				return fmt.Errorf("re-verifying MCP server failed: %w; restoring the previous connection also failed: %v", err, restoreErr)
+			}
+		}
 		return err
 	}
-	if decision != "workspace" || host == nil || !host.HasClient(name) {
+	if !wasConnected {
 		a.recordMCPSecurityMetric("mcp_trust_source", decision)
 		return nil
 	}
-	entry, found, err := a.desktopMCPServerForEdit(name)
-	if err != nil {
-		return err
+	if err := reconnectMCPServerControllers(entry, controllers); err != nil {
+		recordMCPFailure(ctrl, entry, err)
+		return fmt.Errorf("MCP trust was saved, but reconnecting the exact locked server failed: %w", err)
 	}
-	if !found {
-		return fmt.Errorf("trusted MCP server %q but could not reload its configuration", name)
-	}
-	// Every controller sharing this Host has its own provider-visible Registry.
-	// Hide the old tools in all of them before replacing the one shared client;
-	// otherwise sibling tabs keep remoteTool values backed by the closed client.
-	for _, target := range controllers {
-		target.ctrl.UnregisterMCPServerTools(name)
-	}
-	ctrl.DisconnectMCPServer(name)
+	a.recordMCPSecurityMetric("mcp_trust_source", decision)
+	return nil
+}
 
-	// Establish the exact locked server once, then have every enabled sibling
-	// attach to that shared client and refresh its own Registry. Per-tab disabled
-	// state is preserved: those registries remain suspended.
+type mcpControllerTarget struct {
+	ctrl    control.SessionAPI
+	enabled bool
+}
+
+// reconnectMCPServerControllers establishes one shared client, then refreshes
+// every enabled controller's provider-visible Registry. Disabled tabs remain
+// suspended and reconnect only when explicitly enabled.
+func reconnectMCPServerControllers(entry config.PluginEntry, controllers []mcpControllerTarget) error {
 	var startErrors []error
 	connectedTarget := -1
 	for i, target := range controllers {
@@ -6245,15 +6276,9 @@ func (a *App) SetMCPTrust(name, decision string) error {
 		break
 	}
 	if connectedTarget < 0 {
-		if len(startErrors) == 0 {
-			// All tabs disabled this server. Keeping it disconnected preserves
-			// their explicit UI state; enabling a tab will reconnect on demand.
-			a.recordMCPSecurityMetric("mcp_trust_source", decision)
-			return nil
-		}
-		err := errors.Join(startErrors...)
-		recordMCPFailure(ctrl, entry, err)
-		return fmt.Errorf("MCP trust was saved, but reconnecting the exact locked server failed: %w", err)
+		// All tabs may have disabled this server. Keeping it disconnected
+		// preserves their explicit state.
+		return errors.Join(startErrors...)
 	}
 
 	var refreshErrors []error
@@ -6265,18 +6290,7 @@ func (a *App) SetMCPTrust(name, decision string) error {
 			refreshErrors = append(refreshErrors, err)
 		}
 	}
-	if len(refreshErrors) > 0 {
-		err := errors.Join(refreshErrors...)
-		recordMCPFailure(ctrl, entry, err)
-		return fmt.Errorf("MCP trust was saved, but refreshing one or more tabs failed: %w", err)
-	}
-	a.recordMCPSecurityMetric("mcp_trust_source", decision)
-	return nil
-}
-
-type mcpControllerTarget struct {
-	ctrl    control.SessionAPI
-	enabled bool
+	return errors.Join(refreshErrors...)
 }
 
 // mcpControllersSharingHost snapshots visible and detached runtimes before

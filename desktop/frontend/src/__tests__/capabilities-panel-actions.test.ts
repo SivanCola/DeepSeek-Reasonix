@@ -479,9 +479,10 @@ console.log("capabilities panel MCP actions");
     refreshCatalog.click();
     await flush();
   });
-  await waitFor("project MCP authorization action", () => Boolean(findButton("Reverify")));
+  await waitFor("project MCP authorization action", () => Boolean(findButton("Authorize and connect")));
+  ok(!findButton("Reverify"), "first-time project MCP approval must not be mislabeled as re-verification");
   await act(async () => {
-    findButton("Reverify")?.click();
+    findButton("Authorize and connect")?.click();
     await flush();
   });
   await waitFor("project MCP launch modal", () => Boolean(findButton("Authorize and connect")));

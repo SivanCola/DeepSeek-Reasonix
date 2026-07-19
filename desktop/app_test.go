@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -88,6 +89,16 @@ func desktopMCPHTTPServer(t *testing.T) *httptest.Server {
 func TestDesktopMCPHelperProcess(t *testing.T) {
 	if os.Getenv("GO_WANT_DESKTOP_MCP_HELPER") != "1" {
 		return
+	}
+	var instanceListener net.Listener
+	if addr := os.Getenv("DESKTOP_MCP_SINGLE_INSTANCE_ADDR"); addr != "" {
+		var err error
+		instanceListener, err = net.Listen("tcp", addr)
+		if err != nil {
+			_, _ = fmt.Fprintf(os.Stderr, "another MCP instance is already using %s: %v\n", addr, err)
+			os.Exit(23)
+		}
+		defer instanceListener.Close()
 	}
 	dec := json.NewDecoder(os.Stdin)
 	enc := json.NewEncoder(os.Stdout)
@@ -7148,6 +7159,14 @@ func TestSetMCPTrustWorkspaceRefreshesEverySharedHostRegistry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	singleInstanceAddr := listener.Addr().String()
+	if err := listener.Close(); err != nil {
+		t.Fatal(err)
+	}
 	helperArgs := []string{"-test.run=TestDesktopMCPHelperProcess", "--"}
 	if err := os.WriteFile(filepath.Join(dir, "reasonix.toml"), []byte(fmt.Sprintf(`
 [[plugins]]
@@ -7157,14 +7176,21 @@ args = ["-test.run=TestDesktopMCPHelperProcess", "--"]
 
 [plugins.env]
 GO_WANT_DESKTOP_MCP_HELPER = "1"
-`, exe)), 0o644); err != nil {
+DESKTOP_MCP_SINGLE_INSTANCE_ADDR = %q
+
+[sandbox]
+network = true
+`, exe, singleInstanceAddr)), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
 	manager := mcptrust.ForWorkspace(config.ReasonixHomeDir(), dir)
 	entry := config.PluginEntry{
 		Name: "h", Command: exe, Args: helperArgs,
-		Env: map[string]string{"GO_WANT_DESKTOP_MCP_HELPER": "1"},
+		Env: map[string]string{
+			"GO_WANT_DESKTOP_MCP_HELPER":       "1",
+			"DESKTOP_MCP_SINGLE_INSTANCE_ADDR": singleInstanceAddr,
+		},
 	}
 	cfg, err := config.LoadForRoot(dir)
 	if err != nil {
