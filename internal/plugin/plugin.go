@@ -645,7 +645,7 @@ func authorizeSpecLaunch(ctx context.Context, spec Spec, lockMutableLauncher boo
 	if manager == nil {
 		return fmt.Errorf("MCP launch authorization store is unavailable")
 	}
-	prepared := spec
+	var prepared Spec
 	var launcherLock *mcplaunch.LauncherLock
 	var err error
 	if lockMutableLauncher {
