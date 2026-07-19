@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -414,16 +415,26 @@ func (s *Server) Run(addr string) error {
 // the provided context and drains active connections for up to 10 seconds
 // before returning.
 func (s *Server) RunGraceful(ctx context.Context, addr string) error {
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		return err
+	}
+	return s.RunGracefulListener(ctx, ln)
+}
+
+// RunGracefulListener is RunGraceful over a caller-supplied listener. Callers
+// that need the real bound address (e.g. --addr 127.0.0.1:0 with --port-file)
+// listen first, record ln.Addr(), then hand the listener here.
+func (s *Server) RunGracefulListener(ctx context.Context, ln net.Listener) error {
 	s.ctl().EnableInteractiveApproval()
 	srv := &http.Server{
-		Addr:              addr,
 		Handler:           s.Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       120 * time.Second,
 	}
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- srv.ListenAndServe()
+		errCh <- srv.Serve(ln)
 	}()
 	select {
 	case err := <-errCh:
