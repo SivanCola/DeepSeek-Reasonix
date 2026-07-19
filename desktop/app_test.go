@@ -28,7 +28,7 @@ import (
 	"reasonix/internal/control"
 	"reasonix/internal/event"
 	"reasonix/internal/jobs"
-	"reasonix/internal/mcptrust"
+	"reasonix/internal/mcplaunch"
 	"reasonix/internal/memory"
 	"reasonix/internal/plugin"
 	"reasonix/internal/pluginpkg"
@@ -7107,7 +7107,7 @@ url = %q
 		t.Fatal("project MCP connected before launch approval")
 	}
 	failures := sharedHost.Failures()
-	if len(failures) != 1 || !failures[0].RequiresReverification || !strings.Contains(failures[0].Error, "until the user authorizes") {
+	if len(failures) != 1 || !failures[0].RequiresLaunchApproval || !strings.Contains(failures[0].Error, "until the user authorizes") {
 		t.Fatalf("project MCP failure = %+v", failures)
 	}
 
@@ -7126,7 +7126,7 @@ url = %q
 	app.activeTabID = "test"
 
 	view := app.MCPServers()
-	if len(view) != 1 || view[0].Name != "h" || view[0].Status != "failed" || view[0].RuntimeState != "issue" || !view[0].RequiresLaunchApproval || !view[0].RequiresReverification {
+	if len(view) != 1 || view[0].Name != "h" || view[0].Status != "failed" || view[0].RuntimeState != "issue" || !view[0].RequiresLaunchApproval {
 		t.Fatalf("MCPServers() = %+v, want project h awaiting launch approval", view)
 	}
 }
@@ -7137,22 +7137,16 @@ func TestProjectMCPLaunchApprovalViewOnlyShowsWhileBlocked(t *testing.T) {
 	if connected.RequiresLaunchApproval {
 		t.Fatalf("connected project MCP still requires launch approval: %+v", connected)
 	}
-	// The static governance flag must survive a successful authorization so the
-	// UI can keep a revoke entry for the persistent grant.
-	if !connected.LaunchApprovalGoverned {
-		t.Fatalf("connected project MCP lost launch governance flag: %+v", connected)
-	}
-
 	blocked := withPluginConfig(ServerView{
-		Name: entry.Name, Status: "failed", RequiresReverification: true,
+		Name: entry.Name, Status: "failed", RequiresLaunchApproval: true,
 	}, entry)
-	if !blocked.RequiresLaunchApproval || !blocked.LaunchApprovalGoverned {
+	if !blocked.RequiresLaunchApproval {
 		t.Fatalf("blocked project MCP lost launch approval action: %+v", blocked)
 	}
 
 	user := withPluginConfig(ServerView{Name: "user", Status: "connected"},
 		config.PluginEntry{Name: "user", Source: config.MCPSourceUserConfig})
-	if user.LaunchApprovalGoverned || user.RequiresLaunchApproval {
+	if user.RequiresLaunchApproval {
 		t.Fatalf("user-config MCP must not be launch-gate governed: %+v", user)
 	}
 }
@@ -7312,77 +7306,43 @@ url = %q
 	}
 }
 
-func TestSetMCPTrustWorkspaceRefreshesEverySharedHostRegistry(t *testing.T) {
-	fixture := newGatedDesktopMCPTrustFixture(t, "")
+func TestAuthorizeAndConnectMCPServerStartsProjectOnlyOnce(t *testing.T) {
+	gateAddr, attempts := newDesktopMCPStartGate(t, func(_ int, conn net.Conn) {
+		_, _ = conn.Write([]byte{1})
+	})
+	fixture := newGatedDesktopMCPLaunchFixture(t, gateAddr)
+	waitForDesktopMCPStartAttempt(t, attempts, 1)
 	oldSiblingTool, found := fixture.siblingRegistry.Get("mcp__h__greet")
 	if !found {
 		t.Fatal("sibling registry missing initial h tool")
 	}
-	if err := fixture.app.SetMCPTrust("h", "workspace"); err != nil {
-		t.Fatalf("SetMCPTrust(h,workspace): %v", err)
+
+	if err := fixture.app.AuthorizeAndConnectMCPServer("h"); err != nil {
+		t.Fatalf("AuthorizeAndConnectMCPServer(h): %v", err)
+	}
+	waitForDesktopMCPStartAttempt(t, attempts, 2)
+	select {
+	case attempt := <-attempts:
+		t.Fatalf("project authorization started a temporary connection process (unexpected attempt %d)", attempt)
+	case <-time.After(250 * time.Millisecond):
 	}
 	if !fixture.sharedHost.HasClient("h") {
-		t.Fatal("shared host did not reconnect h after workspace trust")
+		t.Fatal("project authorization did not leave h connected")
 	}
 	if _, found := fixture.activeRegistry.Get("mcp__h__greet"); !found {
-		t.Fatal("active registry was not refreshed after workspace trust")
+		t.Fatal("active registry was not refreshed after project authorization")
 	}
 	newSiblingTool, found := fixture.siblingRegistry.Get("mcp__h__greet")
-	if !found {
-		t.Fatal("sibling registry was not refreshed after workspace trust")
-	}
-	if newSiblingTool == oldSiblingTool {
-		t.Fatal("sibling registry retained a tool backed by the disconnected client")
+	if !found || newSiblingTool == oldSiblingTool {
+		t.Fatal("sibling registry did not receive the single new project connection")
 	}
 	if _, found := fixture.disabledRegistry.Get("mcp__h__greet"); found {
-		t.Fatal("workspace trust re-enabled h in a tab where the user disabled it")
-	}
-}
-
-func TestSetMCPTrustRevokeDisconnectsEverySharedHostRegistry(t *testing.T) {
-	fixture := newGatedDesktopMCPTrustFixture(t, "")
-
-	if err := fixture.app.SetMCPTrust("h", "revoke"); err != nil {
-		t.Fatalf("SetMCPTrust(h,revoke): %v", err)
-	}
-	if fixture.sharedHost.HasClient("h") {
-		t.Fatal("shared host kept h connected after its launch trust was revoked")
-	}
-	for label, registry := range map[string]*tool.Registry{
-		"active": fixture.activeRegistry, "sibling": fixture.siblingRegistry, "disabled": fixture.disabledRegistry,
-	} {
-		if _, found := registry.Get("mcp__h__greet"); found {
-			t.Fatalf("%s registry retained h tools after its launch trust was revoked", label)
-		}
-	}
-	view := fixture.app.MCPServers()
-	if len(view) != 1 || view[0].Name != "h" || view[0].Status != "failed" ||
-		!view[0].RequiresLaunchApproval || !view[0].RequiresReverification {
-		t.Fatalf("MCPServers after revoke = %+v, want h awaiting launch approval", view)
-	}
-}
-
-func TestSetMCPTrustReconnectUsesEffectiveProjectConfigWhenUserNameIsShadowed(t *testing.T) {
-	fixture := newGatedDesktopMCPTrustFixture(t, "")
-	userCfg := config.LoadForEdit(config.UserConfigPath())
-	userCfg.Plugins = []config.PluginEntry{{Name: "h", Command: "shadowed-user-command-that-must-not-run"}}
-	if err := userCfg.SaveTo(config.UserConfigPath()); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := fixture.app.SetMCPTrust("h", "workspace"); err != nil {
-		t.Fatalf("SetMCPTrust(h,workspace): %v", err)
-	}
-	if !fixture.sharedHost.HasClient("h") {
-		t.Fatal("workspace trust did not reconnect the effective project MCP")
-	}
-	if _, found := fixture.activeRegistry.Get("mcp__h__greet"); !found {
-		t.Fatal("workspace trust did not restore the effective project MCP tools")
+		t.Fatal("project authorization re-enabled h in a disabled sibling tab")
 	}
 }
 
 func TestReconnectMCPServerRefreshesEverySharedHostRegistry(t *testing.T) {
-	fixture := newGatedDesktopMCPTrustFixture(t, "")
+	fixture := newGatedDesktopMCPLaunchFixture(t, "")
 	oldSiblingTool, found := fixture.siblingRegistry.Get("mcp__h__greet")
 	if !found {
 		t.Fatal("sibling registry missing initial h tool")
@@ -7436,7 +7396,6 @@ url = %q
 			// This test isolates effective-source selection from the project launch
 			// approval flow, which has its own end-to-end coverage.
 			spec.RequireLaunchApproval = false
-			spec.AutoTrust = true
 			spec.ImplicitApproval = true
 		},
 	})
@@ -7461,7 +7420,7 @@ url = %q
 }
 
 func TestUpdateMCPServerRefreshesEverySharedHostRegistry(t *testing.T) {
-	fixture := newGatedDesktopMCPTrustFixture(t, "")
+	fixture := newGatedDesktopMCPLaunchFixture(t, "")
 	oldSiblingTool, found := fixture.siblingRegistry.Get("mcp__h__greet")
 	if !found {
 		t.Fatal("sibling registry missing initial h tool")
@@ -7496,7 +7455,7 @@ func TestUpdateMCPServerRefreshesEverySharedHostRegistry(t *testing.T) {
 }
 
 func TestClearMCPServerAuthenticationClearsEverySharedHostRegistry(t *testing.T) {
-	fixture := newGatedDesktopMCPTrustFixture(t, "")
+	fixture := newGatedDesktopMCPLaunchFixture(t, "")
 	if err := fixture.app.ClearMCPServerAuthentication("h"); err != nil {
 		t.Fatalf("ClearMCPServerAuthentication(h): %v", err)
 	}
@@ -7513,7 +7472,7 @@ func TestClearMCPServerAuthenticationClearsEverySharedHostRegistry(t *testing.T)
 }
 
 func TestRemoveMCPServerClearsEverySharedHostRegistry(t *testing.T) {
-	fixture := newGatedDesktopMCPTrustFixture(t, "")
+	fixture := newGatedDesktopMCPLaunchFixture(t, "")
 	if err := fixture.app.RemoveMCPServer("h"); err != nil {
 		t.Fatalf("RemoveMCPServer(h): %v", err)
 	}
@@ -7534,7 +7493,7 @@ func TestRemoveMCPServerClearsEverySharedHostRegistry(t *testing.T) {
 	}
 }
 
-type gatedDesktopMCPTrustFixture struct {
+type gatedDesktopMCPLaunchFixture struct {
 	app              *App
 	sharedHost       *plugin.Host
 	activeRegistry   *tool.Registry
@@ -7542,7 +7501,7 @@ type gatedDesktopMCPTrustFixture struct {
 	disabledRegistry *tool.Registry
 }
 
-func newGatedDesktopMCPTrustFixture(t *testing.T, startGateAddr string) gatedDesktopMCPTrustFixture {
+func newGatedDesktopMCPLaunchFixture(t *testing.T, startGateAddr string) gatedDesktopMCPLaunchFixture {
 	t.Helper()
 	isolateDesktopUserDirs(t)
 	dir := robustTempDir(t)
@@ -7597,7 +7556,7 @@ network = true
 	}
 	runtimeSpecs := boot.PluginSpecsForRootWithOptions([]config.PluginEntry{entry}, dir, boot.PluginSpecOptions{
 		DefaultCallTimeout: time.Duration(cfg.MCPCallTimeoutSeconds()) * time.Second,
-		TrustManager:       mcptrust.ForWorkspace(config.ReasonixHomeDir(), dir),
+		LaunchManager:      mcplaunch.ForWorkspace(config.ReasonixHomeDir(), dir),
 		ConfigSource:       "workspace_config",
 		StateHome:          config.ReasonixHomeDir(),
 		WriterRoots:        cfg.WriteRootsForRoot(dir),
@@ -7658,7 +7617,7 @@ network = true
 		},
 	}
 	app.activeTabID = "active"
-	return gatedDesktopMCPTrustFixture{
+	return gatedDesktopMCPLaunchFixture{
 		app: app, sharedHost: sharedHost,
 		activeRegistry: activeRegistry, siblingRegistry: siblingRegistry, disabledRegistry: disabledRegistry,
 	}
@@ -7702,15 +7661,15 @@ func waitForDesktopMCPStartAttempt(t *testing.T, attempts <-chan int, want int) 
 	}
 }
 
-func TestSetMCPTrustSerializesConcurrentDisable(t *testing.T) {
-	releasePreflight := make(chan struct{})
+func TestAuthorizeAndConnectMCPServerSerializesConcurrentDisable(t *testing.T) {
+	releaseConnection := make(chan struct{})
 	gateAddr, attempts := newDesktopMCPStartGate(t, func(attempt int, conn net.Conn) {
 		if attempt == 2 {
-			<-releasePreflight
+			<-releaseConnection
 		}
 		_, _ = conn.Write([]byte{1})
 	})
-	fixture := newGatedDesktopMCPTrustFixture(t, gateAddr)
+	fixture := newGatedDesktopMCPLaunchFixture(t, gateAddr)
 
 	disableEntered := make(chan struct{})
 	var disableOnce sync.Once
@@ -7719,8 +7678,8 @@ func TestSetMCPTrustSerializesConcurrentDisable(t *testing.T) {
 			disableOnce.Do(func() { close(disableEntered) })
 		}
 	}
-	trustDone := make(chan error, 1)
-	go func() { trustDone <- fixture.app.SetMCPTrust("h", "workspace") }()
+	authorizeDone := make(chan error, 1)
+	go func() { authorizeDone <- fixture.app.AuthorizeAndConnectMCPServer("h") }()
 	waitForDesktopMCPStartAttempt(t, attempts, 2)
 	disableDone := make(chan error, 1)
 	go func() { disableDone <- fixture.app.SetMCPServerEnabled("h", false) }()
@@ -7731,18 +7690,18 @@ func TestSetMCPTrustSerializesConcurrentDisable(t *testing.T) {
 	}
 	select {
 	case err := <-disableDone:
-		t.Fatalf("concurrent disable bypassed trust serialization: %v", err)
+		t.Fatalf("concurrent disable bypassed authorization serialization: %v", err)
 	case <-time.After(200 * time.Millisecond):
 	}
-	close(releasePreflight)
-	if err := <-trustDone; err != nil {
-		t.Fatalf("SetMCPTrust(h,workspace): %v", err)
+	close(releaseConnection)
+	if err := <-authorizeDone; err != nil {
+		t.Fatalf("AuthorizeAndConnectMCPServer(h): %v", err)
 	}
 	if err := <-disableDone; err != nil {
 		t.Fatalf("SetMCPServerEnabled(h,false): %v", err)
 	}
 	if _, found := fixture.activeRegistry.Get("mcp__h__greet"); found {
-		t.Fatal("trust reconnect overrode the later per-tab disable")
+		t.Fatal("authorization reconnect overrode the later per-tab disable")
 	}
 	if _, disabled := fixture.app.tabs["active"].disabledMCP["h"]; !disabled {
 		t.Fatal("active tab did not retain the later disable decision")
@@ -7752,49 +7711,20 @@ func TestSetMCPTrustSerializesConcurrentDisable(t *testing.T) {
 	}
 }
 
-func TestSetMCPTrustRestoresConnectionAfterPreflightFailure(t *testing.T) {
-	gateAddr, _ := newDesktopMCPStartGate(t, func(attempt int, conn net.Conn) {
-		if attempt != 2 {
-			_, _ = conn.Write([]byte{1})
-		}
-	})
-	fixture := newGatedDesktopMCPTrustFixture(t, gateAddr)
-
-	err := fixture.app.SetMCPTrust("h", "workspace")
-	if err == nil {
-		t.Fatal("SetMCPTrust unexpectedly succeeded after the preflight process failed")
-	}
-	if strings.Contains(err.Error(), "restoring the previous connection also failed") {
-		t.Fatalf("SetMCPTrust restoration unexpectedly failed: %v", err)
-	}
-	if !fixture.sharedHost.HasClient("h") {
-		t.Fatal("failed trust preflight did not restore the previous shared connection")
-	}
-	if _, found := fixture.activeRegistry.Get("mcp__h__greet"); !found {
-		t.Fatal("failed trust preflight did not restore the active registry")
-	}
-	if _, found := fixture.siblingRegistry.Get("mcp__h__greet"); !found {
-		t.Fatal("failed trust preflight did not restore the sibling registry")
-	}
-	if _, found := fixture.disabledRegistry.Get("mcp__h__greet"); found {
-		t.Fatal("failed trust preflight re-enabled a previously disabled registry")
-	}
-}
-
 // RemovePlugin disconnects the uninstalled plugin's MCP servers, so it must
 // serialize on the MCP lifecycle lock: an unlocked disconnect interleaving
-// with a trust preflight lets the trust reconnect relaunch the just-removed
+// with authorization lets the reconnect relaunch the just-removed
 // server from its stale snapshot. The plugin does not need to exist — the
 // lock is taken before the uninstall runs, which is the contract under test.
-func TestRemovePluginSerializesWithTrustPreflight(t *testing.T) {
-	releasePreflight := make(chan struct{})
+func TestRemovePluginSerializesWithMCPAuthorization(t *testing.T) {
+	releaseConnection := make(chan struct{})
 	gateAddr, attempts := newDesktopMCPStartGate(t, func(attempt int, conn net.Conn) {
 		if attempt == 2 {
-			<-releasePreflight
+			<-releaseConnection
 		}
 		_, _ = conn.Write([]byte{1})
 	})
-	fixture := newGatedDesktopMCPTrustFixture(t, gateAddr)
+	fixture := newGatedDesktopMCPLaunchFixture(t, gateAddr)
 
 	removeEntered := make(chan struct{})
 	var removeOnce sync.Once
@@ -7803,8 +7733,8 @@ func TestRemovePluginSerializesWithTrustPreflight(t *testing.T) {
 			removeOnce.Do(func() { close(removeEntered) })
 		}
 	}
-	trustDone := make(chan error, 1)
-	go func() { trustDone <- fixture.app.SetMCPTrust("h", "workspace") }()
+	authorizeDone := make(chan error, 1)
+	go func() { authorizeDone <- fixture.app.AuthorizeAndConnectMCPServer("h") }()
 	waitForDesktopMCPStartAttempt(t, attempts, 2)
 	removeDone := make(chan error, 1)
 	go func() { removeDone <- fixture.app.RemovePlugin("not-an-installed-plugin") }()
@@ -7815,22 +7745,22 @@ func TestRemovePluginSerializesWithTrustPreflight(t *testing.T) {
 	}
 	select {
 	case err := <-removeDone:
-		t.Fatalf("RemovePlugin bypassed trust serialization: %v", err)
+		t.Fatalf("RemovePlugin bypassed authorization serialization: %v", err)
 	case <-time.After(200 * time.Millisecond):
 	}
-	close(releasePreflight)
-	if err := <-trustDone; err != nil {
-		t.Fatalf("SetMCPTrust(h,workspace): %v", err)
+	close(releaseConnection)
+	if err := <-authorizeDone; err != nil {
+		t.Fatalf("AuthorizeAndConnectMCPServer(h): %v", err)
 	}
 	// The uninstall itself is expected to fail (the plugin is not installed);
 	// only the ordering matters. It must complete once the lock is free.
 	select {
 	case <-removeDone:
 	case <-time.After(5 * time.Second):
-		t.Fatal("RemovePlugin did not complete after the trust preflight released the lock")
+		t.Fatal("RemovePlugin did not complete after the trust connection released the lock")
 	}
 	if _, found := fixture.activeRegistry.Get("mcp__h__greet"); !found {
-		t.Fatal("trust reconnect result was lost after the serialized RemovePlugin")
+		t.Fatal("authorization reconnect result was lost after the serialized RemovePlugin")
 	}
 }
 
@@ -7884,7 +7814,7 @@ func installedPluginNamed(t *testing.T, name string) bool {
 // tools backed by the closed client, and other workspaces would keep running
 // the uninstalled server.
 func TestRemovePluginDisconnectsEveryRuntime(t *testing.T) {
-	fixture := newGatedDesktopMCPTrustFixture(t, "")
+	fixture := newGatedDesktopMCPLaunchFixture(t, "")
 	pluginRoot := installGatedTestPluginPackage(t, "h")
 
 	if err := fixture.app.RemovePlugin("review-helper"); err != nil {
@@ -7914,14 +7844,14 @@ func TestRemovePluginDisconnectsEveryRuntime(t *testing.T) {
 // Work that starts mid-wait must fail the removal before anything is deleted;
 // the old order deleted the plugin first and only then reported the failure.
 func TestRemovePluginRechecksActiveWorkUnderLock(t *testing.T) {
-	releasePreflight := make(chan struct{})
+	releaseConnection := make(chan struct{})
 	gateAddr, attempts := newDesktopMCPStartGate(t, func(attempt int, conn net.Conn) {
 		if attempt == 2 {
-			<-releasePreflight
+			<-releaseConnection
 		}
 		_, _ = conn.Write([]byte{1})
 	})
-	fixture := newGatedDesktopMCPTrustFixture(t, gateAddr)
+	fixture := newGatedDesktopMCPLaunchFixture(t, gateAddr)
 	installGatedTestPluginPackage(t, "h")
 
 	removeEntered := make(chan struct{})
@@ -7931,8 +7861,8 @@ func TestRemovePluginRechecksActiveWorkUnderLock(t *testing.T) {
 			removeOnce.Do(func() { close(removeEntered) })
 		}
 	}
-	trustDone := make(chan error, 1)
-	go func() { trustDone <- fixture.app.SetMCPTrust("h", "workspace") }()
+	authorizeDone := make(chan error, 1)
+	go func() { authorizeDone <- fixture.app.AuthorizeAndConnectMCPServer("h") }()
 	waitForDesktopMCPStartAttempt(t, attempts, 2)
 	removeDone := make(chan error, 1)
 	go func() { removeDone <- fixture.app.RemovePlugin("review-helper") }()
@@ -7947,9 +7877,9 @@ func TestRemovePluginRechecksActiveWorkUnderLock(t *testing.T) {
 	fixture.app.mu.Lock()
 	fixture.app.tabs["active"].Ctrl = busy
 	fixture.app.mu.Unlock()
-	close(releasePreflight)
-	if err := <-trustDone; err != nil {
-		t.Fatalf("SetMCPTrust(h,workspace): %v", err)
+	close(releaseConnection)
+	if err := <-authorizeDone; err != nil {
+		t.Fatalf("AuthorizeAndConnectMCPServer(h): %v", err)
 	}
 	err := <-removeDone
 	if err == nil || !strings.Contains(err.Error(), "stop background jobs") {
@@ -7964,7 +7894,7 @@ func TestRemovePluginRechecksActiveWorkUnderLock(t *testing.T) {
 // every runtime too: a background job on a sibling tab must fail the removal
 // before anything is deleted, not silently lose its plugin MCP mid-run.
 func TestRemovePluginRejectsBusySiblingRuntime(t *testing.T) {
-	fixture := newGatedDesktopMCPTrustFixture(t, "")
+	fixture := newGatedDesktopMCPLaunchFixture(t, "")
 	installGatedTestPluginPackage(t, "h")
 	busy := newBackgroundJobController(t, "sibling-busy")
 	fixture.app.mu.Lock()
@@ -7989,7 +7919,7 @@ func TestRemovePluginRejectsBusySiblingRuntime(t *testing.T) {
 // Detached runtimes keep running after their tab is closed; the uninstall busy
 // guard must see them through the same gate sweep as visible tabs.
 func TestRemovePluginRejectsBusyDetachedRuntime(t *testing.T) {
-	fixture := newGatedDesktopMCPTrustFixture(t, "")
+	fixture := newGatedDesktopMCPLaunchFixture(t, "")
 	installGatedTestPluginPackage(t, "h")
 	busy := newBackgroundJobController(t, "detached-busy")
 	fixture.app.mu.Lock()
@@ -8012,30 +7942,30 @@ func TestRemovePluginRejectsBusyDetachedRuntime(t *testing.T) {
 
 // A turn start holds its tab's turn gate before the controller reports active
 // work, so an idle check done without the gate can go stale immediately. The
-// reverify must wait on the sibling's gate — never disconnect first — and must
+// authorization must wait on the sibling's gate — never disconnect first — and must
 // fail once the gated re-check sees the started work.
-func TestSetMCPTrustWaitsForSiblingTurnGate(t *testing.T) {
+func TestAuthorizeAndConnectMCPServerWaitsForSiblingTurnGate(t *testing.T) {
 	gateAddr, attempts := newDesktopMCPStartGate(t, func(attempt int, conn net.Conn) {
 		_, _ = conn.Write([]byte{1})
 	})
-	fixture := newGatedDesktopMCPTrustFixture(t, gateAddr)
+	fixture := newGatedDesktopMCPLaunchFixture(t, gateAddr)
 	waitForDesktopMCPStartAttempt(t, attempts, 1) // drain the fixture's initial connect
 	sibling := fixture.app.tabs["sibling"]
 
 	// Simulate the racing turn: it takes the gate first, and only transitions
 	// its controller to busy while holding it.
 	sibling.turnStartMu.Lock()
-	trustDone := make(chan error, 1)
-	go func() { trustDone <- fixture.app.SetMCPTrust("h", "workspace") }()
+	authorizeDone := make(chan error, 1)
+	go func() { authorizeDone <- fixture.app.AuthorizeAndConnectMCPServer("h") }()
 	select {
 	case got := <-attempts:
-		t.Fatalf("trust preflight launched (attempt %d) while a sibling turn gate was held", got)
-	case err := <-trustDone:
-		t.Fatalf("SetMCPTrust returned %v without waiting for the sibling turn gate", err)
+		t.Fatalf("trust connection launched (attempt %d) while a sibling turn gate was held", got)
+	case err := <-authorizeDone:
+		t.Fatalf("AuthorizeAndConnectMCPServer returned %v without waiting for the sibling turn gate", err)
 	case <-time.After(700 * time.Millisecond):
 	}
 	if !fixture.sharedHost.HasClient("h") {
-		t.Fatal("reverify disconnected the shared client while a sibling turn gate was held")
+		t.Fatal("authorization disconnected the shared client while a sibling turn gate was held")
 	}
 	busy := newBackgroundJobController(t, "sibling-turn")
 	fixture.app.mu.Lock()
@@ -8043,18 +7973,18 @@ func TestSetMCPTrustWaitsForSiblingTurnGate(t *testing.T) {
 	fixture.app.mu.Unlock()
 	sibling.turnStartMu.Unlock()
 
-	err := <-trustDone
+	err := <-authorizeDone
 	if err == nil || !strings.Contains(err.Error(), "stop background jobs") {
-		t.Fatalf("SetMCPTrust after sibling turn start error = %v, want active-work guard", err)
+		t.Fatalf("AuthorizeAndConnectMCPServer after sibling turn start error = %v, want active-work guard", err)
 	}
 	if !fixture.sharedHost.HasClient("h") {
-		t.Fatal("failed reverify left the shared client disconnected")
+		t.Fatal("failed authorization left the shared client disconnected")
 	}
 	if _, found := fixture.siblingRegistry.Get("mcp__h__greet"); !found {
-		t.Fatal("reverify stripped the busy sibling of its MCP tools")
+		t.Fatal("authorization stripped the busy sibling of its MCP tools")
 	}
 	if _, found := fixture.activeRegistry.Get("mcp__h__greet"); !found {
-		t.Fatal("reverify stripped the active tab of its MCP tools")
+		t.Fatal("authorization stripped the active tab of its MCP tools")
 	}
 }
 
@@ -8075,7 +8005,7 @@ func waitForRuntimeAdmissionBarrier(t *testing.T, app *App) {
 }
 
 func TestBridgeDriveReleasesRuntimeAdmissionWhenTakeoverWasReclaimed(t *testing.T) {
-	fixture := newGatedDesktopMCPTrustFixture(t, "")
+	fixture := newGatedDesktopMCPLaunchFixture(t, "")
 	fixture.app.tabs["active"].sink = &tabEventSink{tabID: "active", app: fixture.app}
 	fixture.app.botBridge = &botBridgeHub{
 		takeovers:    make(map[string]bot.DesktopWatchRoute),
@@ -8153,15 +8083,15 @@ func TestBeginTabTurnWorkspaceRepairDoesNotRecursivelyLockAdmission(t *testing.T
 	}
 }
 
-func TestSetMCPTrustSerializesCloseOfCapturedRuntime(t *testing.T) {
-	releasePreflight := make(chan struct{})
+func TestAuthorizeAndConnectMCPServerSerializesCloseOfCapturedRuntime(t *testing.T) {
+	releaseConnection := make(chan struct{})
 	gateAddr, attempts := newDesktopMCPStartGate(t, func(attempt int, conn net.Conn) {
 		if attempt == 2 {
-			<-releasePreflight
+			<-releaseConnection
 		}
 		_, _ = conn.Write([]byte{1})
 	})
-	fixture := newGatedDesktopMCPTrustFixture(t, gateAddr)
+	fixture := newGatedDesktopMCPLaunchFixture(t, gateAddr)
 	waitForDesktopMCPStartAttempt(t, attempts, 1)
 
 	dir := fixture.app.tabs["active"].WorkspaceRoot
@@ -8183,8 +8113,8 @@ func TestSetMCPTrustSerializesCloseOfCapturedRuntime(t *testing.T) {
 		dir: {host: fixture.sharedHost, refs: 1},
 	}
 
-	trustDone := make(chan error, 1)
-	go func() { trustDone <- fixture.app.SetMCPTrust("h", "workspace") }()
+	authorizeDone := make(chan error, 1)
+	go func() { authorizeDone <- fixture.app.AuthorizeAndConnectMCPServer("h") }()
 	waitForDesktopMCPStartAttempt(t, attempts, 2)
 	closeDone := make(chan error, 1)
 	go func() { closeDone <- fixture.app.CloseTab("active") }()
@@ -8194,9 +8124,9 @@ func TestSetMCPTrustSerializesCloseOfCapturedRuntime(t *testing.T) {
 	case <-time.After(300 * time.Millisecond):
 	}
 
-	close(releasePreflight)
-	if err := <-trustDone; err != nil {
-		t.Fatalf("SetMCPTrust(h,workspace): %v", err)
+	close(releaseConnection)
+	if err := <-authorizeDone; err != nil {
+		t.Fatalf("AuthorizeAndConnectMCPServer(h): %v", err)
 	}
 	if err := <-closeDone; err != nil {
 		t.Fatalf("CloseTab(active) after trust: %v", err)
@@ -8204,7 +8134,7 @@ func TestSetMCPTrustSerializesCloseOfCapturedRuntime(t *testing.T) {
 }
 
 func TestCloseTabWaitsForPendingTurnAdmission(t *testing.T) {
-	fixture := newGatedDesktopMCPTrustFixture(t, "")
+	fixture := newGatedDesktopMCPLaunchFixture(t, "")
 	admission, _, err := fixture.app.beginTabTurn("active", false)
 	if err != nil {
 		t.Fatalf("beginTabTurn(active): %v", err)
@@ -8239,12 +8169,12 @@ func TestCloseTabWaitsForPendingTurnAdmission(t *testing.T) {
 }
 
 func TestCloseTabRemainsVisibleToPendingMCPHostGateSnapshot(t *testing.T) {
-	fixture := newGatedDesktopMCPTrustFixture(t, "")
+	fixture := newGatedDesktopMCPLaunchFixture(t, "")
 	active := fixture.app.tabs["active"]
 	active.turnStartMu.Lock()
 
-	trustDone := make(chan error, 1)
-	go func() { trustDone <- fixture.app.SetMCPTrust("h", "workspace") }()
+	authorizeDone := make(chan error, 1)
+	go func() { authorizeDone <- fixture.app.AuthorizeAndConnectMCPServer("h") }()
 	waitForRuntimeAdmissionBarrier(t, fixture.app)
 
 	closeDone := make(chan error, 1)
@@ -8265,16 +8195,16 @@ func TestCloseTabRemainsVisibleToPendingMCPHostGateSnapshot(t *testing.T) {
 	}
 
 	active.turnStartMu.Unlock()
-	if err := <-trustDone; err != nil {
-		t.Fatalf("SetMCPTrust(h,workspace): %v", err)
+	if err := <-authorizeDone; err != nil {
+		t.Fatalf("AuthorizeAndConnectMCPServer(h): %v", err)
 	}
 	if err := <-closeDone; err != nil {
 		t.Fatalf("CloseTab(active): %v", err)
 	}
 }
 
-func TestSetMCPTrustKeepsInvokingWorkspaceWhenActiveTabChanges(t *testing.T) {
-	fixture := newGatedDesktopMCPTrustFixture(t, "")
+func TestAuthorizeAndConnectMCPServerKeepsInvokingWorkspaceWhenActiveTabChanges(t *testing.T) {
+	fixture := newGatedDesktopMCPLaunchFixture(t, "")
 	otherRoot := robustTempDir(t)
 	otherCtrl := control.New(control.Options{Host: plugin.NewHost(), WorkspaceRoot: otherRoot})
 	t.Cleanup(otherCtrl.Close)
@@ -8286,8 +8216,8 @@ func TestSetMCPTrustKeepsInvokingWorkspaceWhenActiveTabChanges(t *testing.T) {
 
 	sibling := fixture.app.tabs["sibling"]
 	sibling.turnStartMu.Lock()
-	trustDone := make(chan error, 1)
-	go func() { trustDone <- fixture.app.SetMCPTrust("h", "workspace") }()
+	authorizeDone := make(chan error, 1)
+	go func() { authorizeDone <- fixture.app.AuthorizeAndConnectMCPServer("h") }()
 	waitForRuntimeAdmissionBarrier(t, fixture.app)
 	if err := fixture.app.SetActiveTab("other"); err != nil {
 		sibling.turnStartMu.Unlock()
@@ -8295,8 +8225,8 @@ func TestSetMCPTrustKeepsInvokingWorkspaceWhenActiveTabChanges(t *testing.T) {
 	}
 	sibling.turnStartMu.Unlock()
 
-	if err := <-trustDone; err != nil {
-		t.Fatalf("trust operation drifted from its invoking workspace: %v", err)
+	if err := <-authorizeDone; err != nil {
+		t.Fatalf("authorization operation drifted from its invoking workspace: %v", err)
 	}
 }
 
@@ -8305,7 +8235,7 @@ func TestSetMCPTrustKeepsInvokingWorkspaceWhenActiveTabChanges(t *testing.T) {
 // uninstall holds the barrier. The late turn goes through the real
 // beginTabTurn admission path and must only be admitted after the uninstall.
 func TestRemovePluginBlocksLateTurnAdmission(t *testing.T) {
-	fixture := newGatedDesktopMCPTrustFixture(t, "")
+	fixture := newGatedDesktopMCPLaunchFixture(t, "")
 	installGatedTestPluginPackage(t, "h")
 	dir := fixture.app.tabs["active"].WorkspaceRoot
 
@@ -8355,26 +8285,26 @@ func TestRemovePluginBlocksLateTurnAdmission(t *testing.T) {
 	}
 }
 
-// A tab created during the 30s trust preflight must not complete its async
-// controller build — attaching to the shared Host mid-preflight can relaunch a
-// single-instance server or leave a registry the reverify never saw. The build
+// A tab created during the 30s trust connection must not complete its async
+// controller build — attaching to the shared Host mid-connection can relaunch a
+// single-instance server or leave a registry the authorization never saw. The build
 // goes through the real startTabControllerBuild path and must only run after
-// the reverify releases the barrier.
-func TestSetMCPTrustBlocksLateControllerBuild(t *testing.T) {
-	releasePreflight := make(chan struct{})
+// the authorization releases the barrier.
+func TestAuthorizeAndConnectMCPServerBlocksLateControllerBuild(t *testing.T) {
+	releaseConnection := make(chan struct{})
 	gateAddr, attempts := newDesktopMCPStartGate(t, func(attempt int, conn net.Conn) {
 		if attempt == 2 {
-			<-releasePreflight
+			<-releaseConnection
 		}
 		_, _ = conn.Write([]byte{1})
 	})
-	fixture := newGatedDesktopMCPTrustFixture(t, gateAddr)
+	fixture := newGatedDesktopMCPLaunchFixture(t, gateAddr)
 	waitForDesktopMCPStartAttempt(t, attempts, 1) // drain the fixture's initial connect
 	dir := fixture.app.tabs["active"].WorkspaceRoot
 
-	trustDone := make(chan error, 1)
-	go func() { trustDone <- fixture.app.SetMCPTrust("h", "workspace") }()
-	waitForDesktopMCPStartAttempt(t, attempts, 2) // preflight launched: gates held
+	authorizeDone := make(chan error, 1)
+	go func() { authorizeDone <- fixture.app.AuthorizeAndConnectMCPServer("h") }()
+	waitForDesktopMCPStartAttempt(t, attempts, 2) // connection launched: gates held
 
 	late := &WorkspaceTab{
 		ID: "late", Scope: "global", WorkspaceRoot: dir,
@@ -8393,21 +8323,21 @@ func TestSetMCPTrustBlocksLateControllerBuild(t *testing.T) {
 	}()
 	select {
 	case <-buildDone:
-		t.Fatal("late controller build completed while the trust preflight held the admission barrier")
+		t.Fatal("late controller build completed while the trust connection held the admission barrier")
 	case <-time.After(400 * time.Millisecond):
 	}
 
-	close(releasePreflight)
-	if err := <-trustDone; err != nil {
-		t.Fatalf("SetMCPTrust(h,workspace): %v", err)
+	close(releaseConnection)
+	if err := <-authorizeDone; err != nil {
+		t.Fatalf("AuthorizeAndConnectMCPServer(h): %v", err)
 	}
 	select {
 	case <-buildDone:
 	case <-time.After(10 * time.Second):
-		t.Fatal("late controller build never ran after the reverify released the barrier")
+		t.Fatal("late controller build never ran after the authorization released the barrier")
 	}
 	if !fixture.sharedHost.HasClient("h") {
-		t.Fatal("reverify did not leave the shared client reconnected")
+		t.Fatal("authorization did not leave the shared client reconnected")
 	}
 }
 

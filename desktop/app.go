@@ -42,16 +42,14 @@ import (
 	fileenc "reasonix/internal/fileutil/encoding"
 	"reasonix/internal/i18n"
 	"reasonix/internal/jobs"
-	"reasonix/internal/mcpcatalog"
 	"reasonix/internal/mcpdiag"
-	"reasonix/internal/mcptrust"
+	"reasonix/internal/mcplaunch"
 	"reasonix/internal/memory"
 	"reasonix/internal/notify"
 	"reasonix/internal/plugin"
 	"reasonix/internal/pluginpkg"
 	"reasonix/internal/provider"
 	"reasonix/internal/repair"
-	"reasonix/internal/sandbox"
 	"reasonix/internal/skill"
 	"reasonix/internal/store"
 	"reasonix/internal/tool"
@@ -144,7 +142,7 @@ type App struct {
 
 	// runtimeRebuildMu serializes controller rebuilds (build + swap), teardown,
 	// and MCP lifecycle mutations. Two concurrent rebuilds of the same tab both
-	// pass the tab-identity check at swap time, while an MCP trust preflight racing
+	// pass the tab-identity check at swap time, while MCP launch authorization racing
 	// a toggle/reconnect can restore stale tools or launch a second single-instance
 	// server. Keep the lock order runtimeRebuildMu -> runtimeAdmissionMu -> App.mu
 	// -> Host/Registry.
@@ -798,7 +796,7 @@ func (a *App) shutdown(context.Context) {
 	// frontend's beforeunload promise hasn't resolved yet.
 	a.saveWindowStateSync()
 	// Serialize shutdown with controller rebuilds and live MCP mutations. This
-	// uses the same lifecycle lock order as lockMCPMutation so a trust preflight
+	// uses the same lifecycle lock order as lockMCPMutation so launch authorization
 	// or reconnect cannot have its captured Host closed underneath it.
 	a.runtimeRebuildMu.Lock()
 	defer a.runtimeRebuildMu.Unlock()
@@ -982,7 +980,7 @@ func (a *App) beginTabTurn(tabID string, reclaim bool) (*tabTurnAdmission, contr
 	}
 	// Runtime work-admission barrier: held (shared) from here until the turn is
 	// observably running and the returned admission token releases it, so an MCP
-	// preflight or plugin uninstall holding the write side either waits out
+	// MCP authorization or plugin uninstall holding the write side either waits out
 	// this admission or sees its work in the gated re-check. Never acquire
 	// runtimeRebuildMu while this read lock is held.
 	a.runtimeAdmissionMu.RLock()
@@ -1245,7 +1243,7 @@ func (a *App) activeTabAndCtrl() (*WorkspaceTab, control.SessionAPI) {
 
 // activeMCPRuntime snapshots the complete target of a Wails MCP action in one
 // critical section. MCP operations may outlive a frontend tab switch; carrying
-// the invoking workspace root prevents config/trust reads from drifting to the
+// the invoking workspace root prevents config/authorization reads from drifting to the
 // newly active tab while controller calls still target the original runtime.
 func (a *App) activeMCPRuntime() (*WorkspaceTab, control.SessionAPI, string) {
 	a.mu.RLock()
@@ -6103,7 +6101,6 @@ type ServerView struct {
 	Resources                int                             `json:"resources"`
 	HasTools                 bool                            `json:"hasTools,omitempty"`
 	Error                    string                          `json:"error,omitempty"`
-	RequiresReverification   bool                            `json:"requiresReverification,omitempty"`
 	ToolList                 []ToolView                      `json:"toolList,omitempty"`
 	TrustedReadOnlyTools     []string                        `json:"trustedReadOnlyTools,omitempty"`
 	CallTimeoutSeconds       int                             `json:"callTimeoutSeconds,omitempty"`
@@ -6112,21 +6109,10 @@ type ServerView struct {
 	ToolPolicies             map[string]config.MCPToolPolicy `json:"toolPolicies,omitempty"`
 	ApprovalsReviewer        string                          `json:"approvalsReviewer,omitempty"`
 	RequiresLaunchApproval   bool                            `json:"requiresLaunchApproval,omitempty"`
-	LaunchApprovalGoverned   bool                            `json:"launchApprovalGoverned,omitempty"`
 	AuthStatus               string                          `json:"authStatus,omitempty"`
 	AuthURL                  string                          `json:"authUrl,omitempty"`
 	AuthConfigured           bool                            `json:"authConfigured,omitempty"`
 	ManagedByPlugin          string                          `json:"managedByPlugin,omitempty"`
-	TrustState               string                          `json:"trustState"`
-	TrustSource              string                          `json:"trustSource,omitempty"`
-	TrustScope               string                          `json:"trustScope,omitempty"`
-	IsolationState           string                          `json:"isolationState"`
-	IsolationReason          string                          `json:"isolationReason,omitempty"`
-	IdentityChanged          bool                            `json:"identityChanged,omitempty"`
-	ChangedTools             []string                        `json:"changedTools"`
-	ToolChanges              []MCPToolTrustChangeView        `json:"toolChanges"`
-	CatalogSequence          uint64                          `json:"catalogSequence,omitempty"`
-	VerifiedVersion          string                          `json:"verifiedVersion,omitempty"`
 }
 
 type ToolView struct {
@@ -6135,35 +6121,6 @@ type ToolView struct {
 	ReadOnlyHint    bool   `json:"readOnlyHint,omitempty"`
 	DestructiveHint bool   `json:"destructiveHint,omitempty"`
 	SchemaError     string `json:"schemaError,omitempty"`
-	TrustedReader   bool   `json:"trustedReader,omitempty"`
-}
-
-type MCPTrustInspectionView struct {
-	Name                   string                   `json:"name"`
-	TrustState             string                   `json:"trustState"`
-	TrustSource            string                   `json:"trustSource,omitempty"`
-	TrustScope             string                   `json:"trustScope,omitempty"`
-	IsolationState         string                   `json:"isolationState"`
-	IsolationReason        string                   `json:"isolationReason,omitempty"`
-	IdentityChanged        bool                     `json:"identityChanged,omitempty"`
-	ChangedTools           []string                 `json:"changedTools"`
-	ToolChanges            []MCPToolTrustChangeView `json:"toolChanges"`
-	Readers                []string                 `json:"readers"`
-	Writers                []string                 `json:"writers"`
-	Destructive            []string                 `json:"destructive"`
-	RequiresLaunchApproval bool                     `json:"requiresLaunchApproval,omitempty"`
-}
-
-type MCPToolTrustChangeView struct {
-	Name string `json:"name"`
-	Kind string `json:"kind"`
-}
-
-type MCPCatalogRefreshView struct {
-	Source   string `json:"source"`
-	Sequence uint64 `json:"sequence"`
-	Offline  bool   `json:"offline"`
-	Stale    bool   `json:"stale"`
 }
 
 // SkillView is one discoverable skill for the drawer. Also backs the
@@ -6264,133 +6221,62 @@ func (a *App) lockMCPMutation(operation string) func() {
 	return a.lockRuntimeMutation(operation)
 }
 
-// InspectMCPTrust performs only initialize/tools-list when the server is not
-// already connected. No MCP tool is invoked.
-func (a *App) InspectMCPTrust(name string) (MCPTrustInspectionView, error) {
-	defer a.lockMCPMutation("inspect-trust")()
+// AuthorizeAndConnectMCPServer is the normal repository-config flow: record
+// durable consent for the exact command or endpoint, then establish one live
+// connection. Unlike the removed multi-step API it never starts a temporary MCP
+// process to inspect tools before connecting the real runtime.
+func (a *App) AuthorizeAndConnectMCPServer(name string) error {
+	defer a.lockMCPMutation("authorize-connect")()
 
-	_, ctrl, root := a.activeMCPRuntime()
-	if ctrl == nil {
-		return MCPTrustInspectionView{}, fmt.Errorf("no active session")
-	}
-	var inspection plugin.TrustInspection
-	var err error
-	if host := ctrl.Host(); host != nil && host.HasClient(name) {
-		inspection, err = host.InspectTrust(name)
-	} else {
-		var spec plugin.Spec
-		spec, err = a.mcpTrustSpec(root, name)
-		if err == nil {
-			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			defer cancel()
-			inspection, err = plugin.InspectSpec(ctx, spec)
-		}
-	}
-	if err != nil {
-		return MCPTrustInspectionView{}, err
-	}
-	a.recordMCPSecurityMetric("mcp_trust_prompt", "total")
-	if inspection.Security.IdentityChanged {
-		a.recordMCPSecurityMetric("mcp_trust_drift", "identity")
-	} else if len(inspection.Security.ChangedTools) > 0 {
-		a.recordMCPSecurityMetric("mcp_trust_drift", "capability")
-	}
-	if inspection.Security.IsolationState == mcptrust.IsolationUnavailableUnconfined {
-		a.recordMCPSecurityMetric("mcp_isolation", "unavailable_unconfined")
-	}
-	return mcpTrustInspectionView(inspection), nil
-}
-
-// SetMCPTrust grants session/workspace trust or revokes it. The receipt remains
-// host-local and never modifies the project MCP configuration.
-func (a *App) SetMCPTrust(name, decision string) error {
-	defer a.lockMCPMutation("set-trust")()
-
-	_, ctrl, root := a.activeMCPRuntime()
-	if ctrl == nil {
+	tab, ctrl, root := a.activeMCPRuntime()
+	if tab == nil || ctrl == nil {
 		return fmt.Errorf("no active session")
 	}
-	decision = strings.ToLower(strings.TrimSpace(decision))
-	// Gate every tab whose controller shares this Host and hold the gates
-	// through preflight, restore, and reconnect: a lock-free idle check could
-	// go stale before UnregisterMCPServerTools/DisconnectMCPServer and strip a
-	// just-started turn of its MCP tools mid-flight. The predicate runs inside
-	// the gate snapshot — after the admission barrier — so controllers that
-	// attached right before the barrier are included; the controllers list is
-	// computed after the gates for the same reason.
-	host, releaseGates, err := a.lockMCPHostTurnGates("MCP trust", ctrl)
+	host, releaseGates, err := a.lockMCPHostTurnGates("MCP authorization", ctrl)
 	if err != nil {
 		return err
 	}
 	defer releaseGates()
-	controllers := a.mcpControllersSharingHost(host, name, ctrl)
-	if decision != "workspace" && host != nil && host.HasClient(name) {
-		if err := host.SetTrust(name, decision); err != nil {
-			return err
-		}
-		// Revoking a project launch grant must take effect immediately. Merely
-		// updating the trust receipt would leave the already-authorized process
-		// and its provider-visible tools alive until the next session restart.
-		if decision == "revoke" {
-			disconnectMCPServerControllers(name, ctrl, controllers)
-			// A revocation is intentional, so there is no failed reconnect to
-			// populate Host.Failures. Preserve an actionable blocked status for
-			// project-config servers instead of making the authorization button
-			// disappear until the user tries (and fails) to reconnect manually.
-			if entry, found, loadErr := desktopEffectiveMCPServer(root, name); loadErr == nil && found && entry.Source.RequiresLaunchApproval() {
-				host.RecordLaunchApprovalRequired(plugin.Spec{Name: entry.Name, Type: entry.Type})
-			}
-		}
-		a.recordMCPSecurityMetric("mcp_trust_source", decision)
-		return nil
-	}
-	wasConnected := decision == "workspace" && host != nil && host.HasClient(name)
-	var entry config.PluginEntry
-	if wasConnected {
-		var found bool
-		var err error
-		entry, found, err = desktopEffectiveMCPServer(root, name)
-		if err != nil {
-			return err
-		}
-		if !found {
-			return fmt.Errorf("could not reload configuration for connected MCP server %q", name)
-		}
-		// Workspace re-verification performs an exact preflight by starting the
-		// configured launcher. Stop the existing process first: many MCPs are
-		// single-instance and reject the otherwise concurrent second launch.
-		disconnectMCPServerControllers(name, ctrl, controllers)
-	}
-	spec, err := a.mcpTrustSpec(root, name)
+	entry, found, err := desktopEffectiveMCPServer(root, name)
 	if err != nil {
-		if wasConnected {
-			if restoreErr := reconnectMCPServerControllers(entry, controllers); restoreErr != nil {
-				recordMCPFailure(ctrl, entry, restoreErr)
-				return fmt.Errorf("loading MCP trust settings failed: %w; restoring the previous connection also failed: %v", err, restoreErr)
-			}
-		}
 		return err
+	}
+	if !found {
+		return fmt.Errorf("no configured MCP server named %q", name)
+	}
+	spec, err := a.mcpLaunchSpec(root, name)
+	if err != nil {
+		return err
+	}
+	if !spec.RequireLaunchApproval {
+		return fmt.Errorf("MCP server %q was explicitly installed and does not need project authorization", name)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	if err := plugin.SetSpecTrust(ctx, spec, decision); err != nil {
-		if wasConnected {
-			if restoreErr := reconnectMCPServerControllers(entry, controllers); restoreErr != nil {
-				recordMCPFailure(ctrl, entry, restoreErr)
-				return fmt.Errorf("re-verifying MCP server failed: %w; restoring the previous connection also failed: %v", err, restoreErr)
-			}
-		}
+	if err := plugin.AuthorizeProjectSpecLaunch(ctx, spec); err != nil {
 		return err
 	}
-	if !wasConnected {
-		a.recordMCPSecurityMetric("mcp_trust_source", decision)
-		return nil
+
+	controllers := a.mcpControllersSharingHost(host, name, ctrl)
+	for i := range controllers {
+		if controllers[i].ctrl == ctrl {
+			controllers[i].enabled = true
+		}
+	}
+	// A connected process can only represent the previous approved identity.
+	// Drop it after the new grant is durable, then start the configured server
+	// once and refresh every enabled registry sharing this Host.
+	disconnectMCPServerControllers(name, ctrl, controllers)
+	if host != nil {
+		host.ClearFailure(name)
 	}
 	if err := reconnectMCPServerControllers(entry, controllers); err != nil {
 		recordMCPFailure(ctrl, entry, err)
-		return fmt.Errorf("MCP trust was saved, but reconnecting the exact locked server failed: %w", err)
+		return err
 	}
-	a.recordMCPSecurityMetric("mcp_trust_source", decision)
+	a.mu.Lock()
+	delete(tab.disabledMCP, name)
+	a.mu.Unlock()
 	return nil
 }
 
@@ -6527,7 +6413,7 @@ func (a *App) mcpControllersSharingHost(host *plugin.Host, name string, preferre
 
 // lockRuntimeTurnGates locks the turn gate of every runtime tab selected by
 // affected (nil selects all visible and detached runtime tabs) in stable tab-ID
-// order, then re-verifies under the gates that no gated controller has active
+// order, then verifies under the gates that no gated controller has active
 // runtime work. Callers must hold runtimeRebuildMu and the write side of
 // runtimeAdmissionMu (normally through lockMCPMutation), which freezes new turn
 // admission, controller builds, and runtime teardown before this snapshot.
@@ -6596,58 +6482,7 @@ func (a *App) disconnectMCPServerAllRuntimes(serverName string) bool {
 	return disconnected
 }
 
-func (a *App) RefreshMCPCatalog() (MCPCatalogRefreshView, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-	result, err := (mcpcatalog.Loader{CacheDir: config.CacheDir()}).Load(ctx, true)
-	if err != nil {
-		a.recordMCPSecurityMetric("mcp_catalog_verify", "failed")
-		return MCPCatalogRefreshView{}, err
-	}
-	if result.Source == mcpcatalog.SourceRemote {
-		a.recordMCPSecurityMetric("mcp_catalog_verify", "remote_valid")
-	} else {
-		a.recordMCPSecurityMetric("mcp_catalog_verify", "offline_snapshot")
-	}
-	// Fetching and verifying the catalog does not touch live MCP state. Acquire
-	// the lifecycle lock only for the revocation snapshot/apply phase so a slow
-	// network request does not block unrelated settings or connector changes.
-	defer a.lockMCPMutation("refresh-catalog")()
-	// A manual refresh is an explicit security action, so apply newly fetched
-	// revocations to every live shared host immediately instead of waiting for a
-	// restart or the six-hour background refresh window.
-	a.mu.RLock()
-	controllers := make([]control.SessionAPI, 0, len(a.tabs)+len(a.detachedSessions))
-	for _, tab := range a.runtimeTabsLocked() {
-		if tab != nil && tab.Ctrl != nil {
-			controllers = append(controllers, tab.Ctrl)
-		}
-	}
-	a.mu.RUnlock()
-	hosts := map[*plugin.Host]struct{}{}
-	for _, ctrl := range controllers {
-		if host := ctrl.Host(); host != nil {
-			hosts[host] = struct{}{}
-		}
-	}
-	revoked := result.Index.RevokedEntryIDs()
-	for host := range hosts {
-		host.ApplyCatalogRevocations(revoked)
-	}
-	return MCPCatalogRefreshView{Source: string(result.Source), Sequence: result.Index.Sequence, Offline: result.Offline, Stale: result.Stale}, nil
-}
-
-func (a *App) recordMCPSecurityMetric(signal, bucket string) {
-	if version == "dev" {
-		return
-	}
-	if metrics := a.metrics.Load(); metrics != nil {
-		metrics.inc(signal, bucket)
-		metrics.persist()
-	}
-}
-
-func (a *App) mcpTrustSpec(root, name string) (plugin.Spec, error) {
+func (a *App) mcpLaunchSpec(root, name string) (plugin.Spec, error) {
 	cfg, err := config.LoadForRoot(root)
 	if err != nil {
 		return plugin.Spec{}, err
@@ -6664,36 +6499,16 @@ func (a *App) mcpTrustSpec(root, name string) (plugin.Spec, error) {
 	}
 	specs := boot.PluginSpecsForRootWithOptions([]config.PluginEntry{*entry}, root, boot.PluginSpecOptions{
 		DefaultCallTimeout: time.Duration(cfg.MCPCallTimeoutSeconds()) * time.Second,
-		TrustManager:       mcptrust.ForWorkspace(config.ReasonixHomeDir(), root),
+		LaunchManager:      mcplaunch.ForWorkspace(config.ReasonixHomeDir(), root),
 		ConfigSource:       "workspace_config", StateHome: config.ReasonixHomeDir(),
 		WriterRoots: cfg.WriteRootsForRoot(root), ForbidReadRoots: boot.RuntimeForbidReadRoots(cfg, root),
 		Network:         cfg.Sandbox.Network,
-		OfficialServers: boot.LoadOfficialMCPTrust(context.Background(), cfg),
+		OfficialServers: boot.LoadVerifiedMCPPackages(context.Background(), cfg),
 	})
 	if len(specs) != 1 {
 		return plugin.Spec{}, fmt.Errorf("failed to build MCP server %q", name)
 	}
 	return specs[0], nil
-}
-
-func mcpTrustInspectionView(in plugin.TrustInspection) MCPTrustInspectionView {
-	return MCPTrustInspectionView{
-		Name: in.Security.Name, TrustState: string(in.Security.TrustState),
-		TrustSource: string(in.Security.TrustSource), TrustScope: string(in.Security.TrustScope),
-		IsolationState: string(in.Security.IsolationState), IsolationReason: in.Security.IsolationReason, IdentityChanged: in.Security.IdentityChanged,
-		ChangedTools: append([]string{}, in.Security.ChangedTools...), Readers: append([]string{}, in.Readers...),
-		ToolChanges: mcpToolTrustChangeViews(in.Security.ToolChanges),
-		Writers:     append([]string{}, in.Writers...), Destructive: append([]string{}, in.Destructive...),
-		RequiresLaunchApproval: in.RequiresLaunchApproval,
-	}
-}
-
-func mcpToolTrustChangeViews(changes []mcptrust.ToolChange) []MCPToolTrustChangeView {
-	out := make([]MCPToolTrustChangeView, 0, len(changes))
-	for _, change := range changes {
-		out = append(out, MCPToolTrustChangeView{Name: change.Name, Kind: change.Kind})
-	}
-	return out
 }
 
 // SkillsSettings returns the skills management snapshot without MCP status.
@@ -6826,10 +6641,6 @@ func (a *App) mcpServersView() []ServerView {
 		}
 	}
 	if h := ctrl.Host(); h != nil {
-		securityByName := map[string]plugin.SecurityStatus{}
-		for _, status := range h.SecurityStatuses() {
-			securityByName[status.Name] = status
-		}
 		for _, s := range h.Servers() {
 			if disabledView, ok := disabled[s.Name]; ok {
 				disabledView.Status = "disabled"
@@ -6853,7 +6664,6 @@ func (a *App) mcpServersView() []ServerView {
 				HasTools: s.HasTools,
 				ToolList: pluginToolsToView(s.ToolList),
 			}
-			applyMCPTrustStatus(&view, securityByName[s.Name])
 			if p, ok := configured[s.Name]; ok {
 				view = withPluginConfig(view, p)
 			}
@@ -6863,9 +6673,8 @@ func (a *App) mcpServersView() []ServerView {
 			seen[f.Name] = true
 			view := ServerView{
 				Name: f.Name, Transport: f.Transport, Status: "failed", RuntimeState: "issue", Error: f.Error,
-				RequiresReverification: f.RequiresReverification,
+				RequiresLaunchApproval: f.RequiresLaunchApproval,
 			}
-			applyMCPTrustStatus(&view, securityByName[f.Name])
 			if p, ok := configured[f.Name]; ok {
 				view = withPluginConfig(view, p)
 			}
@@ -6915,24 +6724,6 @@ func (a *App) mcpServersView() []ServerView {
 	out = orderServerViews(out, order)
 	for i := range out {
 		out[i].ManagedByPlugin = managedByPlugin[out[i].Name]
-		if out[i].TrustState == "" {
-			out[i].TrustState = string(mcptrust.TrustUntrusted)
-		}
-		if out[i].IsolationState == "" {
-			if out[i].Transport == "http" || out[i].Transport == "streamable-http" || out[i].Transport == "streamable_http" {
-				out[i].IsolationState = string(mcptrust.IsolationNotApplicable)
-			} else if sandbox.Available() {
-				out[i].IsolationState = string(mcptrust.IsolationEnforced)
-			} else {
-				out[i].IsolationState = string(mcptrust.IsolationUnavailableUnconfined)
-			}
-		}
-		if out[i].ChangedTools == nil {
-			out[i].ChangedTools = []string{}
-		}
-		if out[i].ToolChanges == nil {
-			out[i].ToolChanges = []MCPToolTrustChangeView{}
-		}
 	}
 
 	a.mu.Lock()
@@ -6945,25 +6736,6 @@ func (a *App) mcpServersView() []ServerView {
 	}
 	a.mu.Unlock()
 	return out
-}
-
-func applyMCPTrustStatus(view *ServerView, status plugin.SecurityStatus) {
-	if view == nil || status.Name == "" {
-		return
-	}
-	view.TrustState = string(status.TrustState)
-	view.TrustSource = string(status.TrustSource)
-	view.TrustScope = string(status.TrustScope)
-	view.IsolationState = string(status.IsolationState)
-	view.IsolationReason = status.IsolationReason
-	view.IdentityChanged = status.IdentityChanged
-	view.ChangedTools = append([]string{}, status.ChangedTools...)
-	view.ToolChanges = mcpToolTrustChangeViews(status.ToolChanges)
-	view.CatalogSequence = status.CatalogSequence
-	view.VerifiedVersion = status.VerifiedVersion
-	if status.TrustError != "" && view.Error == "" {
-		view.Error = status.TrustError
-	}
 }
 
 func mcpStartIntent(p config.PluginEntry) string {
@@ -7013,13 +6785,8 @@ func withPluginConfig(v ServerView, p config.PluginEntry) ServerView {
 	v.DefaultToolsApprovalMode = p.DefaultToolsApprovalMode
 	v.ToolPolicies = cloneMCPToolPolicies(p.Tools)
 	v.ApprovalsReviewer = p.ApprovalsReviewer
-	// Source says whether this server is governed by the project launch gate;
-	// RequiresLaunchApproval says whether that gate is blocking it right now.
-	// Keeping the two distinct prevents an already-authorized connected server
-	// from showing a permanent reauthorization warning, while the static flag
-	// keeps a revoke entry for the persistent grant reachable.
-	v.LaunchApprovalGoverned = p.Source.RequiresLaunchApproval()
-	v.RequiresLaunchApproval = v.LaunchApprovalGoverned && v.RequiresReverification
+	// Only a current project launch-gate failure exposes the authorization action.
+	v.RequiresLaunchApproval = p.Source.RequiresLaunchApproval() && v.RequiresLaunchApproval
 	v.AuthConfigured = mcpdiag.HasAuthConfig(p.Headers, p.Env, p.URL)
 	v.EnvKeys = nil
 	v.HeaderKeys = nil
@@ -7570,14 +7337,17 @@ func (a *App) UpdateMCPServer(name string, in MCPServerInput) error {
 		disconnectMCPServerControllers(name, ctrl, controllers)
 	}
 	if enabled {
-		spec, specErr := a.mcpTrustSpec(root, name)
+		spec, specErr := a.mcpLaunchSpec(root, name)
 		if specErr != nil {
 			return specErr
 		}
 		if spec.RequireLaunchApproval {
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
-			if err := plugin.SetSpecTrust(ctx, spec, "workspace"); err != nil {
+			// Editing project-owned configuration is an explicit user action.
+			// Record the exact launch grant without starting a temporary process
+			// process; reconnectMCPServerControllers performs the single real start.
+			if err := plugin.AuthorizeProjectSpecLaunch(ctx, spec); err != nil {
 				recordMCPFailure(ctrl, updated, err)
 				return nil
 			}
@@ -8057,15 +7827,8 @@ func findMCPServerView(ctrl control.SessionAPI, name string) (ServerView, bool) 
 			view := ServerView{
 				Name: s.Name, Transport: s.Transport, Status: "connected",
 				Tools: s.Tools, Prompts: s.Prompts, Resources: s.Resources,
-				HasTools:     s.HasTools,
-				ToolList:     pluginToolsToView(s.ToolList),
-				ChangedTools: []string{},
-			}
-			for _, status := range ctrl.Host().SecurityStatuses() {
-				if status.Name == name {
-					applyMCPTrustStatus(&view, status)
-					break
-				}
+				HasTools: s.HasTools,
+				ToolList: pluginToolsToView(s.ToolList),
 			}
 			return view, true
 		}
@@ -8074,7 +7837,7 @@ func findMCPServerView(ctrl control.SessionAPI, name string) (ServerView, bool) 
 		if f.Name == name {
 			return ServerView{
 				Name: f.Name, Transport: f.Transport, Status: "failed", Error: f.Error,
-				RequiresReverification: f.RequiresReverification,
+				RequiresLaunchApproval: f.RequiresLaunchApproval,
 			}, true
 		}
 	}
@@ -8088,7 +7851,7 @@ func pluginToolsToView(tools []plugin.ToolInfo) []ToolView {
 	out := make([]ToolView, 0, len(tools))
 	for _, t := range tools {
 		out = append(out, ToolView{
-			Name: t.Name, Description: t.Description, ReadOnlyHint: t.ReadOnlyHint, DestructiveHint: t.DestructiveHint, SchemaError: t.SchemaError, TrustedReader: t.TrustedReader,
+			Name: t.Name, Description: t.Description, ReadOnlyHint: t.ReadOnlyHint, DestructiveHint: t.DestructiveHint, SchemaError: t.SchemaError,
 		})
 	}
 	return out

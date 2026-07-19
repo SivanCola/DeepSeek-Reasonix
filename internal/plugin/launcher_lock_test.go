@@ -11,18 +11,18 @@ import (
 	"strings"
 	"testing"
 
-	"reasonix/internal/mcptrust"
+	"reasonix/internal/mcplaunch"
 )
 
 func TestStoredNPXLauncherLockUsesExactOfflinePackage(t *testing.T) {
-	manager := mcptrust.NewManager(filepath.Join(t.TempDir(), mcptrust.StateFilename), "/workspace")
-	lock := mcptrust.LauncherLock{
+	manager := mcplaunch.NewManager(filepath.Join(t.TempDir(), mcplaunch.StateFilename), "/workspace")
+	lock := mcplaunch.LauncherLock{
 		Server: "search", Locator: digestText("@scope/server"), ResolvedVersion: "@scope/server@1.2.3", ContentSHA256: digestText("integrity"),
 	}
 	if err := manager.PutLauncherLock(lock); err != nil {
 		t.Fatal(err)
 	}
-	spec := Spec{Name: "search", Command: "npx", Args: []string{"-y", "@scope/server", "--stdio"}, TrustManager: manager}
+	spec := Spec{Name: "search", Command: "npx", Args: []string{"-y", "@scope/server", "--stdio"}, LaunchManager: manager}
 	locked, err := applyStoredLauncherLock(spec)
 	if err != nil {
 		t.Fatal(err)
@@ -73,15 +73,15 @@ func TestStoredLauncherEnforcementFlagPreservesAuthorizedIdentity(t *testing.T) 
 			if err := os.WriteFile(command, []byte("test launcher"), 0o755); err != nil {
 				t.Fatal(err)
 			}
-			manager := mcptrust.NewManager(filepath.Join(t.TempDir(), mcptrust.StateFilename), dir)
-			lock := mcptrust.LauncherLock{
+			manager := mcplaunch.NewManager(filepath.Join(t.TempDir(), mcplaunch.StateFilename), dir)
+			lock := mcplaunch.LauncherLock{
 				Server: tc.server, Locator: digestText(tc.locator),
 				ResolvedVersion: tc.resolved, ContentSHA256: digestText("integrity"),
 				Workspace: manager.WorkspaceFingerprint(),
 			}
 			spec := Spec{
 				Name: tc.server, Command: command, Args: tc.args,
-				TrustManager: manager, ConfigSource: "project_config", RequireLaunchApproval: true,
+				LaunchManager: manager, ConfigSource: "project_config", RequireLaunchApproval: true,
 			}
 			locator, mutable := mutableLauncherLocator(spec)
 			if !mutable {
@@ -93,7 +93,7 @@ func TestStoredLauncherEnforcementFlagPreservesAuthorizedIdentity(t *testing.T) 
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := manager.TrustLaunch(mcptrust.ScopeWorkspace, spec.Name, spec.ConfigSource, approvedIdentity); err != nil {
+			if err := manager.Authorize(spec.Name, spec.ConfigSource, approvedIdentity); err != nil {
 				t.Fatal(err)
 			}
 			if err := manager.PutLauncherLock(lock); err != nil {
@@ -121,8 +121,8 @@ func TestStoredLauncherEnforcementFlagPreservesAuthorizedIdentity(t *testing.T) 
 }
 
 func TestStoredUVXFromLauncherLockKeepsFromValueAdjacent(t *testing.T) {
-	manager := mcptrust.NewManager(filepath.Join(t.TempDir(), mcptrust.StateFilename), "/workspace")
-	lock := mcptrust.LauncherLock{
+	manager := mcplaunch.NewManager(filepath.Join(t.TempDir(), mcplaunch.StateFilename), "/workspace")
+	lock := mcplaunch.LauncherLock{
 		Server: "python-tools", Locator: digestText("python-tools"),
 		ResolvedVersion: "python-tools==3.2.1", ContentSHA256: digestText("integrity"),
 	}
@@ -131,8 +131,8 @@ func TestStoredUVXFromLauncherLockKeepsFromValueAdjacent(t *testing.T) {
 	}
 	spec := Spec{
 		Name: "python-tools", Command: "uvx",
-		Args:         []string{"--from", "python-tools", "python-tools-server", "--stdio"},
-		TrustManager: manager,
+		Args:          []string{"--from", "python-tools", "python-tools-server", "--stdio"},
+		LaunchManager: manager,
 	}
 	locked, err := applyStoredLauncherLock(spec)
 	if err != nil {
@@ -228,10 +228,10 @@ func TestResolveExactGitLocatorDoesNotNeedNetwork(t *testing.T) {
 
 func TestGitLauncherLockDoesNotPersistCredentialedLocator(t *testing.T) {
 	home := t.TempDir()
-	manager := mcptrust.NewManager(filepath.Join(home, mcptrust.StateFilename), "/workspace")
+	manager := mcplaunch.NewManager(filepath.Join(home, mcplaunch.StateFilename), "/workspace")
 	locator := "git+https://user:secret-token@example.test/server.git@main"
 	commit := "0123456789abcdef0123456789abcdef01234567"
-	lock := mcptrust.LauncherLock{
+	lock := mcplaunch.LauncherLock{
 		Server: "git-server", Locator: digestText(locator), ResolvedVersion: commit, ContentSHA256: digestText(commit),
 	}
 	if err := manager.PutLauncherLock(lock); err != nil {
@@ -244,7 +244,7 @@ func TestGitLauncherLockDoesNotPersistCredentialedLocator(t *testing.T) {
 	if strings.Contains(string(body), "secret-token") || strings.Contains(string(body), "user:") {
 		t.Fatal("launcher security state persisted URL credentials")
 	}
-	spec := Spec{Name: "git-server", Command: "npx", Args: []string{locator}, TrustManager: manager}
+	spec := Spec{Name: "git-server", Command: "npx", Args: []string{locator}, LaunchManager: manager}
 	got, err := applyStoredLauncherLock(spec)
 	if err != nil {
 		t.Fatal(err)

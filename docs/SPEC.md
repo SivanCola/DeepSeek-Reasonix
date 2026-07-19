@@ -153,9 +153,12 @@ interface (`call` / `notify` / `close`) abstracts that, so the MCP-level logic
   project-scoped installs, and ordinary calls default to direct approval.
   Project `reasonix.toml` and `.mcp.json` servers that are only
   discovered from the repository require one durable launch confirmation before
-  any process or network transport is created; matching grants reconnect
-  automatically and identity changes require confirmation again. Existing
-  receipts count as launch grants for backward compatibility.
+  any process or network transport is created. Confirmation records the exact
+  identity without a temporary initialize/tools-list preflight, so the normal
+  runtime starts the server only once; matching grants reconnect automatically
+  and identity changes require confirmation again. During the compatibility
+  window, an exact old workspace receipt may migrate only into this launch
+  grant; its former tool-level authority is ignored.
 - Each remote tool is adapted to the `Tool` interface and injected into the run
   registry, namespaced `mcp__<server>__<tool>` (spaces normalised to `_`) to
   match Claude Code and avoid clashes.
@@ -346,11 +349,11 @@ func (p Policy) Decide(toolName string, readOnly bool, args json.RawMessage) Dec
   Ordinary built-in and Bash calls then use the same Ask/Auto/YOLO, explicit
   `ask`/`deny`, and Sandbox path as Standard mode; blocked MCP writers regain
   their normal approval flow after Plan exits. A third-party MCP `readOnlyHint` affects ordinary permission and dispatch
-  classification, but it does not grant trust to the dedicated planner or
+  classification, but it does not grant access to the dedicated planner or
   read-only sub-agent registries; use a locally audited
   `trusted_read_only_tools` entry for those. The legacy
   `[agent].plan_mode_allowed_tools` field is still decoded and can act as a
-  concrete MCP read-only trust alias, while `plan_mode_read_only_commands` is
+  concrete MCP read-only compatibility alias, while `plan_mode_read_only_commands` is
   retained for config/session round trips. Neither field grants or revokes calls
   in the main Plan workflow. `read_only_task` and `read_only_skill` remain strict
   read-only capabilities with their own tool registry and safe foreground Bash;
@@ -591,7 +594,7 @@ default_model = "deepseek"   # provider name (→ its default model) or "provide
 system_prompt = "You are Reasonix, a coding agent..."  # or system_prompt_file = "..."
 temperature       = 0.0
 reasoning_language = "auto"       # visible reasoning text: auto|zh|en
-# plan_mode_allowed_tools = ["mcp__legacy__reader"]   # legacy MCP read-only trust alias; does not change Plan availability
+# plan_mode_allowed_tools = ["mcp__legacy__reader"]   # legacy MCP read-only alias; does not change Plan availability
 # plan_mode_read_only_commands = ["gh issue view"]   # legacy compatibility only; Plan bash uses Permissions
 # planner_model = "deepseek-pro"   # optional: two-model collaboration (low-frequency planner)
 # subagent_model = "deepseek-pro"   # optional default for runAs=subagent skills

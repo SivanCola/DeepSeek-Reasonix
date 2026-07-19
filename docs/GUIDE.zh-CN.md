@@ -474,7 +474,8 @@ Reasonix 是一个 MCP 客户端。`[[plugins]]` 的 `type` 选择传输：`stdi
 会话连接，现在和下次启动都不会再弹出第二套信任步骤。显式 deny 仍然优先，destructive
 工具仍需每次由用户确认，Plan 与只读 subagent 仍只暴露符合条件的工具身份。只有被动从仓库
 `reasonix.toml` 或 `.mcp.json` 发现的 server 会在第一次启动前，请用户确认一次精确命令或
-地址；内容不变时以后自动连接，发生变化时才重新确认。
+地址；Reasonix 会先记录该决定而不启动临时检查进程，然后只启动一次正式连接。内容不变时
+以后自动连接，发生变化时才重新确认。
 
 stdio server 从初始化到读写都复用同一个进程，因此浏览器等有状态 MCP 能保留会话和
 已打开页面。由于进程启动后无法按调用切换 OS 沙箱，这个共享进程始终使用该 server 的普通
@@ -513,7 +514,7 @@ trusted_read_only_tools = ["issue_read", "pull_request_read"]
 用户已授权的 server 若省略这些高级审批字段，普通调用会直接放行。显式配置后，`auto`
 交给全局 Ask/Auto/YOLO；`prompt` 每次调用都审查；`writes` 只审查写工具；`approve`
 放行普通调用。显式 deny 永远优先，`destructiveHint` 永远强制一次新审查，`tools` 中的 raw tool
-配置覆盖 server 默认值。`trusted_read_only_tools` 继续作为兼容字段和本地信任声明，用于已审计、
+配置覆盖 server 默认值。`trusted_read_only_tools` 继续作为兼容字段和显式本地声明，用于已审计、
 但没有可靠 annotation 的 reader。
 
 两条边界值得注意：`writes` 信任 server 自己的只读分类，把写工具谎报成 `readOnlyHint`
@@ -720,9 +721,9 @@ source 也可在 Plan 中加载，后续 writer 调用仍通过 Permissions/Sand
 所有严格只读子会话都经过同一对共享构造入口——批处理子会话用
 `RunReadOnlySubAgentWithSession`，交互式双模型 planner 用 `NewReadOnlyAgent`——
 两者都会把子会话标记为永久只读并做最终 registry 过滤：移除 writer、destructive MCP
-目标、外部自报但未信任的 reader、没有正向信任背书的 MCP reader（分类必须有 receipt
-存储支撑，server hint 不算），以及一切会改变 host capability 的工具；会启动 host 的
-目标同样被移除，唯一例外是 receipt 匹配的受信 reader 仍可按需启动。严格只读入口一览：
+目标、只有第三方 server hint 的 reader，以及一切会改变 host capability 的工具。MCP reader
+只有在本地配置中显式声明，或由当前已验证的官方签名 package 声明时才符合条件；符合条件的
+reader 仍可按需启动。严格只读入口一览：
 
 | 入口 | 用途 |
 | --- | --- |
@@ -735,9 +736,9 @@ source 也可在 Plan 中加载，后续 writer 调用仍通过 Permissions/Sand
 | 双模型 planner | 独立 planner 的只读 registry |
 
 在严格只读子会话内：`use_capability` 在 Commit/permission/hook/执行前会对解析出的
-真实目标再次校验；未连接的受信 MCP reader 只有在 receipt、identity 与缓存 capability
-指纹全部匹配时才能按需启动一次（子会话不能创建、升级或重新验证 trust）；
-initialize/tools-list 之后发现 live 指纹漂移则零执行，并提示交回父会话重新验证。
+真实目标再次校验；未连接且符合条件的 MCP reader 可从当前 schema cache 按需启动，
+initialize/tools-list 后会在 `tools/call` 前核对缓存与 live security 指纹；发现 schema 或
+safety 漂移则零执行，普通重试会使用当前策略。
 `auto_review` 在这里不能提升权限；需要本地人工审批的 reader 直接 fail-closed。
 这一层比主 Plan 更严格：Plan 在整个规划阶段硬阻断 MCP writer/destructive 目标——
 审批也不能放行，退出 Plan 后才恢复——内置 writer 仍走 Permissions/Sandbox，

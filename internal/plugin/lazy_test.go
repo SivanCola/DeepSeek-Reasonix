@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"reasonix/internal/mcptrust"
+	"reasonix/internal/mcplaunch"
 	"reasonix/internal/tool"
 )
 
@@ -26,10 +26,10 @@ type mutableLazyTarget struct {
 }
 
 func TestLazyAuthorizedProjectPlaceholderUsesDirectApproval(t *testing.T) {
-	manager := mcptrust.NewManager(filepath.Join(t.TempDir(), mcptrust.StateFilename), t.TempDir())
+	manager := mcplaunch.NewManager(filepath.Join(t.TempDir(), mcplaunch.StateFilename), t.TempDir())
 	spec := Spec{
 		Name: "project-http", Type: "http", URL: "https://mcp.example.com/mcp",
-		ConfigSource: "project_config", TrustManager: manager, RequireLaunchApproval: true,
+		ConfigSource: "project_config", LaunchManager: manager, RequireLaunchApproval: true,
 	}
 	if err := AuthorizeSpecLaunch(context.Background(), spec); err != nil {
 		t.Fatalf("AuthorizeSpecLaunch: %v", err)

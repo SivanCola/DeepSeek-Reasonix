@@ -59,7 +59,7 @@ default_model = "deepseek-flash"   # executor; set [agent].planner_model to add 
 
 [agent]
 reasoning_language = "auto"      # visible reasoning text: auto|zh|en
-# plan_mode_allowed_tools = ["mcp__legacy__reader"]   # legacy MCP read-only trust alias; does not change Plan availability
+# plan_mode_allowed_tools = ["mcp__legacy__reader"]   # legacy MCP read-only alias; does not change Plan availability
 # plan_mode_read_only_commands = ["gh issue view"]   # legacy compatibility only; Plan bash now uses Permissions
 # planner_model = "deepseek-pro"      # optional low-frequency planner
 # subagent_model = "deepseek-pro"     # optional default for runAs=subagent skills
@@ -582,8 +582,9 @@ startup. Explicit deny rules still win, destructive tools still require a fresh
 human decision, and Plan/read-only sub-agents still expose only eligible tool
 identities. A server merely discovered in repository-controlled
 `reasonix.toml` or `.mcp.json` is different: Reasonix asks once to confirm the
-exact command or endpoint before starting it, reconnects it automatically while
-that value is unchanged, and asks again only after a change.
+exact command or endpoint, records that decision without launching a temporary
+inspection process, then starts the server once. It reconnects automatically
+while that value is unchanged and asks again only after a change.
 
 stdio servers keep one process for initialize, reads, and writes, so stateful
 servers such as browsers retain sessions and open pages. Because an OS sandbox
@@ -635,8 +636,8 @@ Ask/Auto/YOLO permission posture; `prompt`
 reviews every call; `writes` reviews only writer-classified calls; and `approve`
 allows ordinary calls. Explicit deny rules always win, and `destructiveHint`
 always forces a new review. A raw-tool `tools` entry overrides the server
-default. `trusted_read_only_tools` remains a compatibility and local-trust
-override for audited readers on servers that omit or cannot be trusted to
+default. `trusted_read_only_tools` remains a compatibility field and explicit
+local declaration for audited readers on servers that omit or cannot reliably
 maintain annotations.
 
 Two boundaries are worth knowing. `writes` trusts the server's read-only
@@ -912,11 +913,11 @@ Every strict read-only child is built through one shared construction
 pairing — `RunReadOnlySubAgentWithSession` for batch children and
 `NewReadOnlyAgent` for the interactive two-model planner — which marks the
 child permanently read-only and applies a final registry filter. The filter
-removes writers, destructive MCP targets, externally self-reported but
-untrusted readers, MCP readers with no positive trust authority (a receipt
-store must stand behind the classification, never a server hint), and every
-host-mutating tool. Host-starting targets are removed too unless they are
-receipt-matched trusted readers, which may still start on demand. These are
+removes writers, destructive MCP targets, MCP readers backed only by a
+third-party server hint, and every host-mutating tool. An MCP reader is
+eligible only when explicitly declared in local configuration or declared by
+a currently verified signed official package. Eligible readers may still
+start on demand. These are
 the strict read-only entrances:
 
 | Entrance | Purpose |
@@ -930,11 +931,11 @@ the strict read-only entrances:
 | Two-model planner | The dedicated planner's read-only registry |
 
 Inside a strict child, `use_capability` re-checks the resolved target before
-commit/permission/hooks/execution, an unconnected trusted MCP reader may start
-on demand only while its receipt, identity, and cached capability fingerprint
-all match (the child can never create, upgrade, or re-verify trust), and any
-live drift detected after initialize/tools-list means zero executions with a
-hand-back to the parent for re-verification. `auto_review` cannot raise
+commit/permission/hooks/execution. An unconnected eligible MCP reader may start
+on demand from the current schema cache; its cached security fingerprint is
+checked against the live initialize/tools-list result before `tools/call`.
+Schema or safety drift means zero executions and a normal retry with current
+policy. `auto_review` cannot raise
 privileges there; a reader that would need a local prompt fails closed. This
 is a stricter layer than the main Plan workflow: Plan hard-blocks MCP
 writer/destructive targets for the entire planning phase — no approval can
