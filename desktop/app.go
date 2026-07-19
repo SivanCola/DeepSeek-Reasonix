@@ -2996,12 +2996,6 @@ func (a *App) closeRemovedSessionRuntimes(removed []removedSessionRuntime) {
 	a.closeRemainingRemovedSessionRuntimesAdmissionHeld(removed, map[control.SessionAPI]bool{})
 }
 
-func (a *App) closeRemovedSessionRuntimesForSessionAfterDestroy(removed []removedSessionRuntime, dir, sessionPath string, closed map[control.SessionAPI]bool) {
-	a.runtimeAdmissionMu.RLock()
-	defer a.runtimeAdmissionMu.RUnlock()
-	a.closeRemovedSessionRuntimesForSessionAfterDestroyAdmissionHeld(removed, dir, sessionPath, closed)
-}
-
 func (a *App) closeRemovedSessionRuntimesForSessionAfterDestroyAdmissionHeld(removed []removedSessionRuntime, dir, sessionPath string, closed map[control.SessionAPI]bool) {
 	releasedTabs := map[*WorkspaceTab]bool{}
 	for _, item := range removed {
@@ -3012,23 +3006,11 @@ func (a *App) closeRemovedSessionRuntimesForSessionAfterDestroyAdmissionHeld(rem
 	}
 }
 
-func (a *App) closeRemainingRemovedSessionRuntimes(removed []removedSessionRuntime, closed map[control.SessionAPI]bool) {
-	a.runtimeAdmissionMu.RLock()
-	defer a.runtimeAdmissionMu.RUnlock()
-	a.closeRemainingRemovedSessionRuntimesAdmissionHeld(removed, closed)
-}
-
 func (a *App) closeRemainingRemovedSessionRuntimesAdmissionHeld(removed []removedSessionRuntime, closed map[control.SessionAPI]bool) {
 	releasedTabs := map[*WorkspaceTab]bool{}
 	for _, item := range removed {
 		a.closeRemovedSessionRuntime(item, closed, releasedTabs, false)
 	}
-}
-
-func (a *App) closeRemainingRemovedSessionRuntimesAfterDestroy(removed []removedSessionRuntime, closed map[control.SessionAPI]bool) {
-	a.runtimeAdmissionMu.RLock()
-	defer a.runtimeAdmissionMu.RUnlock()
-	a.closeRemainingRemovedSessionRuntimesAfterDestroyAdmissionHeld(removed, closed)
 }
 
 func (a *App) closeRemainingRemovedSessionRuntimesAfterDestroyAdmissionHeld(removed []removedSessionRuntime, closed map[control.SessionAPI]bool) {

@@ -7871,11 +7871,13 @@ func TestBeginTabTurnWorkspaceRepairDoesNotRecursivelyLockAdmission(t *testing.T
 	}
 
 	writerRebuildLocked := make(chan struct{})
+	writerAdmissionLocked := make(chan struct{})
 	writerDone := make(chan struct{})
 	go func() {
 		fixture.app.runtimeRebuildMu.Lock()
 		close(writerRebuildLocked)
 		fixture.app.runtimeAdmissionMu.Lock()
+		close(writerAdmissionLocked)
 		fixture.app.runtimeAdmissionMu.Unlock()
 		fixture.app.runtimeRebuildMu.Unlock()
 		close(writerDone)
@@ -7894,6 +7896,11 @@ func TestBeginTabTurnWorkspaceRepairDoesNotRecursivelyLockAdmission(t *testing.T
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("workspace repair recursively waited on runtimeAdmissionMu with a writer pending")
+	}
+	select {
+	case <-writerAdmissionLocked:
+	case <-time.After(5 * time.Second):
+		t.Fatal("lifecycle writer never acquired runtimeAdmissionMu after repaired turn admission")
 	}
 	select {
 	case <-writerDone:

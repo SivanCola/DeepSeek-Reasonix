@@ -2544,12 +2544,6 @@ func (a *App) applySingleSurfaceTabPolicy() error {
 	return err
 }
 
-func (a *App) removeVisibleTabRuntime(tab *WorkspaceTab) {
-	a.runtimeAdmissionMu.RLock()
-	defer a.runtimeAdmissionMu.RUnlock()
-	a.removeVisibleTabRuntimeAdmissionHeld(tab)
-}
-
 func (a *App) removeVisibleTabRuntimeAdmissionHeld(tab *WorkspaceTab) {
 	if tab == nil {
 		return
@@ -2694,12 +2688,6 @@ func (a *App) clearTabBuildCancel(tab *WorkspaceTab, generation uint64, cancel c
 		tab.buildCancel = nil
 	}
 	a.mu.Unlock()
-}
-
-func (a *App) closeTabRuntime(tab *WorkspaceTab) {
-	a.runtimeAdmissionMu.RLock()
-	defer a.runtimeAdmissionMu.RUnlock()
-	a.closeTabRuntimeAdmissionHeld(tab)
 }
 
 func (a *App) closeTabRuntimeAdmissionHeld(tab *WorkspaceTab) {
