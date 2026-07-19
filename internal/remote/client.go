@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"math/rand"
 	"sync"
 	"time"
@@ -20,6 +21,7 @@ import (
 type Options struct {
 	Host        ResolvedHost
 	Auth        AuthOptions
+	JumpHosts   []JumpHostOptions // resolved ProxyJump hosts in chain order
 	HostKeys    *HostKeyPolicy
 	Dialer      netclient.StreamDialer // first-hop transport; nil => direct
 	DialTimeout time.Duration          // default 15s
@@ -27,6 +29,13 @@ type Options struct {
 	Backoff     BackoffPolicy
 	Clock       Clock // nil => real clock
 	Rand        *rand.Rand
+}
+
+// JumpHostOptions binds one resolved ProxyJump host to credentials owned by
+// that hop. Target credentials are never inherited implicitly.
+type JumpHostOptions struct {
+	Host ResolvedHost
+	Auth AuthOptions
 }
 
 // Client is a supervised SSH connection: it dials, verifies the host key,
@@ -39,14 +48,16 @@ type Client struct {
 	hub      *statusHub
 	forwards *forward.Set
 
-	mu         sync.Mutex
-	ssh        *ssh.Client
-	hops       []*ssh.Client
-	sftp       *sftpfs.FS
-	generation uint64 // bumps on every (re)connect; SFTP handles carry it
-	status     Status
-	closed     bool
-	hopAuths   map[string]*AuthOptions // per-jump-host auth, keyed by addr; persists across reconnects
+	mu          sync.Mutex
+	ssh         *ssh.Client
+	hops        []*ssh.Client
+	sftp        *sftpfs.FS
+	generation  uint64 // bumps on every (re)connect; SFTP handles carry it
+	status      Status
+	closed      bool
+	hopHosts    map[string]ResolvedHost
+	hopAuths    map[string]*AuthOptions // fallback auth cache, keyed by user+addr
+	hopRawAuths map[string]*AuthOptions // configured auth by alias; aliases may share an endpoint
 
 	cancel context.CancelFunc
 	done   chan struct{}
@@ -63,7 +74,7 @@ func (c *Client) hopAuthFor(hop ResolvedHost) *AuthOptions {
 	if c.hopAuths == nil {
 		c.hopAuths = map[string]*AuthOptions{}
 	}
-	key := hop.Addr()
+	key := hopAuthKey(hop)
 	if a, ok := c.hopAuths[key]; ok {
 		return a
 	}
@@ -73,6 +84,27 @@ func (c *Client) hopAuthFor(hop ResolvedHost) *AuthOptions {
 	}
 	c.hopAuths[key] = a
 	return a
+}
+
+func hopAuthKey(hop ResolvedHost) string { return hop.User + "\x00" + hop.Addr() }
+
+// resolveHop returns the pre-resolved config/ssh_config host when the assembly
+// layer supplied one, with a conservative ad-hoc fallback for low-level users.
+func (c *Client) resolveHop(raw string) (ResolvedHost, *AuthOptions, error) {
+	c.mu.Lock()
+	hop, ok := c.hopHosts[raw]
+	auth := c.hopRawAuths[raw]
+	c.mu.Unlock()
+	if ok {
+		return hop, auth, nil
+	}
+	userName, hostName, port, err := ParseTarget(raw)
+	if err != nil {
+		return ResolvedHost{}, nil, err
+	}
+	hop = ResolvedHost{Name: raw, HostName: hostName, Port: port, User: userName}
+	applyHostDefaults(&hop)
+	return hop, c.hopAuthFor(hop), nil
 }
 
 // New creates a Client. It does not dial; call Start.
@@ -92,12 +124,27 @@ func New(opts Options) (*Client, error) {
 		rng = rand.New(rand.NewSource(time.Now().UnixNano()))
 	}
 	c := &Client{
-		opts:   opts,
-		clock:  clock,
-		rng:    rng,
-		hub:    newStatusHub(),
-		status: StatusIdle,
-		done:   make(chan struct{}),
+		opts:        opts,
+		clock:       clock,
+		rng:         rng,
+		hub:         newStatusHub(),
+		status:      StatusIdle,
+		done:        make(chan struct{}),
+		hopHosts:    map[string]ResolvedHost{},
+		hopAuths:    map[string]*AuthOptions{},
+		hopRawAuths: map[string]*AuthOptions{},
+	}
+	if len(opts.JumpHosts) > 0 && len(opts.JumpHosts) != len(opts.Host.ProxyJump) {
+		return nil, fmt.Errorf("remote: %d resolved jump hosts for %d ProxyJump entries", len(opts.JumpHosts), len(opts.Host.ProxyJump))
+	}
+	for i, jump := range opts.JumpHosts {
+		if jump.Host.HostName == "" {
+			return nil, fmt.Errorf("remote: ProxyJump %d has no hostname", i+1)
+		}
+		raw := opts.Host.ProxyJump[i]
+		auth := jump.Auth
+		c.hopHosts[raw] = jump.Host
+		c.hopRawAuths[raw] = &auth
 	}
 	c.forwards = forward.NewSet(nil)
 	return c, nil
@@ -264,7 +311,7 @@ func (c *Client) supervise(ctx context.Context, firstResult chan<- error) {
 		cl, hops, err := dialSSH(ctx, dialConfig{
 			host:        c.opts.Host,
 			auth:        &c.opts.Auth,
-			hopAuth:     c.hopAuthFor,
+			resolveHop:  c.resolveHop,
 			hostKeys:    c.opts.HostKeys,
 			dialer:      c.opts.Dialer,
 			dialTimeout: c.opts.DialTimeout,

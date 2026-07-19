@@ -27,9 +27,10 @@ export type RemoteState = {
 
   applyStatus: (s: RemoteConnectionStatus) => void;
   setStatuses: (list: RemoteConnectionStatus[]) => void;
+  hydrateStatuses: (list: RemoteConnectionStatus[]) => void;
   setForwards: (hostId: string, forwards: RemoteForwardView[]) => void;
   setServer: (s: RemoteServerView) => void;
-  clearPendingFingerprint: () => void;
+  clearPendingFingerprint: (expected?: RemoteFingerprintView) => void;
   openExplorer: (hostId: string) => void;
   closeExplorer: () => void;
   setExplorerTab: (tab: RemoteExplorerTab) => void;
@@ -65,13 +66,29 @@ export const useRemoteStore = create<RemoteState>((set) => ({
       return { statuses };
     }),
 
+  hydrateStatuses: (list) =>
+    set((state) => {
+      const statuses = { ...state.statuses };
+      for (const s of list) {
+        if (!statuses[s.hostId]) statuses[s.hostId] = s;
+      }
+      return { statuses };
+    }),
+
   setForwards: (hostId, forwards) =>
     set((state) => ({ forwards: { ...state.forwards, [hostId]: forwards } })),
 
   setServer: (s) =>
     set((state) => ({ servers: { ...state.servers, [s.hostId]: s } })),
 
-  clearPendingFingerprint: () => set({ pendingFingerprint: null }),
+  clearPendingFingerprint: (expected) =>
+    set((state) => {
+      if (expected && (
+        state.pendingFingerprint?.hostId !== expected.hostId ||
+        state.pendingFingerprint?.sha256 !== expected.sha256
+      )) return state;
+      return { pendingFingerprint: null };
+    }),
 
   openExplorer: (hostId) => set({ explorerOpen: true, explorerHostId: hostId }),
   closeExplorer: () => set({ explorerOpen: false }),

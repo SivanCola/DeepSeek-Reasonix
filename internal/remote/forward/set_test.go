@@ -141,6 +141,85 @@ func TestDuplicateForwardRejected(t *testing.T) {
 	}
 }
 
+func TestReplaceSwapsLiveForwardAfterReplacementStarts(t *testing.T) {
+	srv := sshtest.Start(t, sshtest.Options{})
+	cl := dialSSHClient(t, srv)
+	firstTarget := echoServer(t)
+	secondTarget := echoServer(t)
+	set := NewSet(nil)
+	defer set.Close()
+	if err := set.Attach(cl); err != nil {
+		t.Fatal(err)
+	}
+	firstBound, err := set.Add(Spec{Name: "serve", Direction: Local, BindAddr: "127.0.0.1:0", TargetAddr: firstTarget})
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondBound, err := set.Replace(Spec{Name: "serve", Direction: Local, BindAddr: "127.0.0.1:0", TargetAddr: secondTarget})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if firstBound == secondBound {
+		t.Fatalf("replacement reused old listener %q", firstBound)
+	}
+	entries := set.List()
+	if len(entries) != 1 || entries[0].Spec.TargetAddr != secondTarget || !entries[0].Up {
+		t.Fatalf("replacement registry = %+v", entries)
+	}
+	if conn, err := net.DialTimeout("tcp", firstBound, 100*time.Millisecond); err == nil {
+		_ = conn.Close()
+		t.Fatalf("old listener %q is still accepting", firstBound)
+	}
+	conn, err := net.Dial("tcp", secondBound)
+	if err != nil {
+		t.Fatalf("dial replacement: %v", err)
+	}
+	_ = conn.Close()
+}
+
+func TestReplaceFailurePreservesExistingForward(t *testing.T) {
+	srv := sshtest.Start(t, sshtest.Options{})
+	cl := dialSSHClient(t, srv)
+	target := echoServer(t)
+	occupied, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer occupied.Close()
+	set := NewSet(nil)
+	defer set.Close()
+	if err := set.Attach(cl); err != nil {
+		t.Fatal(err)
+	}
+	bound, err := set.Add(Spec{Name: "serve", Direction: Local, BindAddr: "127.0.0.1:0", TargetAddr: target})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := set.Replace(Spec{Name: "serve", Direction: Local, BindAddr: occupied.Addr().String(), TargetAddr: "other:80"}); err == nil {
+		t.Fatal("Replace unexpectedly bound an occupied address")
+	}
+	entries := set.List()
+	if len(entries) != 1 || entries[0].BoundAddr != bound || entries[0].Spec.TargetAddr != target || !entries[0].Up {
+		t.Fatalf("failed replacement disturbed existing forward: %+v", entries)
+	}
+}
+
+func TestReplaceWhileDetachedPreservesExistingForward(t *testing.T) {
+	set := NewSet(nil)
+	defer set.Close()
+	old := Spec{Name: "serve", Direction: Local, BindAddr: "127.0.0.1:0", TargetAddr: "old:80"}
+	if _, err := set.Add(old); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := set.Replace(Spec{Name: "serve", Direction: Local, BindAddr: "127.0.0.1:0", TargetAddr: "new:80"}); err != ErrNotAttached {
+		t.Fatalf("Replace error = %v, want ErrNotAttached", err)
+	}
+	entries := set.List()
+	if len(entries) != 1 || entries[0].Spec.TargetAddr != old.TargetAddr {
+		t.Fatalf("detached replacement disturbed old forward: %+v", entries)
+	}
+}
+
 func TestBindBusyReported(t *testing.T) {
 	srv := sshtest.Start(t, sshtest.Options{})
 	cl := dialSSHClient(t, srv)

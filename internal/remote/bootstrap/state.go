@@ -52,6 +52,8 @@ func pathsFor(home, workspace string) StatePaths {
 		LogFile:   path.Join(dir, store.RemoteServeLogName(slug)),
 		PortFile:  path.Join(dir, store.RemoteServePortName(slug)),
 		PidFile:   path.Join(dir, store.RemoteServePidName(slug)),
+		LockDir:   path.Join(dir, store.RemoteServeLockName(slug)),
+		LockOwner: path.Join(dir, store.RemoteServeLockName(slug), "owner"),
 	}
 }
 

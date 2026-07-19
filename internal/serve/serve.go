@@ -438,6 +438,9 @@ func (s *Server) RunGracefulListener(ctx context.Context, ln net.Listener) error
 	}()
 	select {
 	case err := <-errCh:
+		if errors.Is(err, http.ErrServerClosed) {
+			return nil
+		}
 		return err
 	case <-ctx.Done():
 		slog.Info("serve: shutting down gracefully")
@@ -446,7 +449,11 @@ func (s *Server) RunGracefulListener(ctx context.Context, ln net.Listener) error
 		if err := srv.Shutdown(shutdownCtx); err != nil {
 			slog.Warn("serve: graceful shutdown failed", "err", err)
 		}
-		return <-errCh
+		err := <-errCh
+		if errors.Is(err, http.ErrServerClosed) {
+			return nil
+		}
+		return err
 	}
 }
 

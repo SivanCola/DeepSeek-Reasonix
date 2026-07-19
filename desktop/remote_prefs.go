@@ -4,9 +4,13 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"sync"
 
 	"reasonix/internal/config"
+	"reasonix/internal/fileutil"
 )
+
+var remotePrefsMu sync.Mutex
 
 // remotePrefs is desktop-only remote UI state, stored beside the other desktop
 // JSON prefs (desktop-workspaces.json, desktop-tabs.json). All fields are
@@ -47,17 +51,16 @@ func saveRemotePrefs(p remotePrefs) {
 	if path == "" {
 		return
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return
-	}
 	data, err := json.MarshalIndent(p, "", "  ")
 	if err != nil {
 		return
 	}
-	_ = os.WriteFile(path, data, 0o644)
+	_ = fileutil.AtomicWriteFile(path, data, 0o600)
 }
 
 func (a *App) saveLastRemoteWorkspace(hostID, workspace string) {
+	remotePrefsMu.Lock()
+	defer remotePrefsMu.Unlock()
 	p := loadRemotePrefs()
 	if p.LastWorkspaceByHost == nil {
 		p.LastWorkspaceByHost = map[string]string{}
@@ -70,5 +73,7 @@ func (a *App) saveLastRemoteWorkspace(hostID, workspace string) {
 // RemoteLastWorkspace returns the last opened workspace for hostID (bound so
 // the frontend can prefill the server card).
 func (a *App) RemoteLastWorkspace(hostID string) string {
+	remotePrefsMu.Lock()
+	defer remotePrefsMu.Unlock()
 	return loadRemotePrefs().LastWorkspaceByHost[hostID]
 }

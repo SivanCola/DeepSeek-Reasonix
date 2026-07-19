@@ -13,6 +13,7 @@ export function RemoteHostKeyDialog() {
   const fp = useRemoteStore((s) => s.pendingFingerprint);
   const clear = useRemoteStore((s) => s.clearPendingFingerprint);
   const acceptRef = useRef<HTMLButtonElement>(null);
+  const resolvingRef = useRef(false);
 
   useEffect(() => {
     if (fp) acceptRef.current?.focus();
@@ -34,10 +35,13 @@ export function RemoteHostKeyDialog() {
   if (!fp) return null;
 
   const resolve = async (accept: boolean) => {
+    if (resolvingRef.current) return;
+    resolvingRef.current = true;
     try {
       await app.ConfirmRemoteHostKey(fp.hostId, accept);
     } finally {
-      clear();
+      clear(fp);
+      resolvingRef.current = false;
     }
   };
 

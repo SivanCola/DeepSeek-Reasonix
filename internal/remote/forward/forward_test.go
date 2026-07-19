@@ -15,6 +15,8 @@ func TestParseShorthand(t *testing.T) {
 		{":8080:svc:80", "127.0.0.1:8080", "svc:80", false},
 		{"8080:svc:", "", "", true},
 		{"8080::80", "", "", true},
+		{"0", "", "", true},
+		{"8080:svc:0", "", "", true},
 		{"", "", "", true},
 		{"a:b:c:d:e", "", "", true},
 	}
@@ -32,6 +34,23 @@ func TestParseShorthand(t *testing.T) {
 		}
 		if s.BindAddr != c.bind || s.TargetAddr != c.targ {
 			t.Errorf("ParseShorthand(%q) = bind %q target %q, want %q / %q", c.in, s.BindAddr, s.TargetAddr, c.bind, c.targ)
+		}
+	}
+}
+
+func TestSpecValidate(t *testing.T) {
+	valid := Spec{Direction: Local, BindAddr: "127.0.0.1:0", TargetAddr: "svc:80"}
+	if err := valid.Validate(); err != nil {
+		t.Fatalf("valid spec rejected: %v", err)
+	}
+	for _, spec := range []Spec{
+		{Direction: Local, BindAddr: "127.0.0.1", TargetAddr: "svc:80"},
+		{Direction: Local, BindAddr: "127.0.0.1:8000", TargetAddr: "svc"},
+		{Direction: Local, BindAddr: "127.0.0.1:8000", TargetAddr: "svc:0"},
+		{Direction: Direction(99), BindAddr: "127.0.0.1:8000", TargetAddr: "svc:80"},
+	} {
+		if err := spec.Validate(); err == nil {
+			t.Errorf("invalid spec accepted: %+v", spec)
 		}
 	}
 }

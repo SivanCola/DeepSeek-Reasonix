@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"runtime"
 	"strconv"
@@ -14,16 +15,27 @@ import (
 // secret never appears in argv (visible via ps). The file must hold a single
 // non-empty line and, on POSIX systems, must not be group/world accessible.
 func readServeTokenFile(path string) (string, error) {
-	fi, err := os.Stat(path)
+	f, err := os.Open(path)
 	if err != nil {
 		return "", err
+	}
+	defer f.Close()
+	fi, err := f.Stat()
+	if err != nil {
+		return "", err
+	}
+	if !fi.Mode().IsRegular() {
+		return "", fmt.Errorf("token file %s must be a regular file", path)
 	}
 	if runtime.GOOS != "windows" && fi.Mode().Perm()&0o077 != 0 {
 		return "", fmt.Errorf("token file %s must not be group/world accessible (chmod 600)", path)
 	}
-	b, err := os.ReadFile(path)
+	b, err := io.ReadAll(io.LimitReader(f, (64<<10)+1))
 	if err != nil {
 		return "", err
+	}
+	if len(b) > 64<<10 {
+		return "", fmt.Errorf("token file %s is too large", path)
 	}
 	tok := strings.TrimSpace(string(b))
 	if tok == "" {

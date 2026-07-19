@@ -1044,6 +1044,7 @@ export type RemoteServerState =
   | "starting"
   | "detect"
   | "install"
+  | "waiting_lock"
   | "launch"
   | "health_check"
   | "ready"

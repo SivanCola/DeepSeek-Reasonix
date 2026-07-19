@@ -64,6 +64,10 @@ func RemoteServePortName(slug string) string { return "serve-" + slug + ".port" 
 // RemoteServePidName receives the server pid via --pid-file.
 func RemoteServePidName(slug string) string { return "serve-" + slug + ".pid" }
 
+// RemoteServeLockName is the cross-client bootstrap lock directory. Directory
+// creation is atomic on SFTP servers, including the Linux/macOS targets.
+func RemoteServeLockName(slug string) string { return "serve-" + slug + ".lock" }
+
 // boundRemoteComponent mirrors config.boundFilenameComponent (this package is
 // a stdlib-only leaf and cannot import config): inputs at or under the budget
 // pass through byte-identical; longer ones are truncated at a rune boundary

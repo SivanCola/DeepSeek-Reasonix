@@ -102,6 +102,8 @@ func TestEnsureServeLaunchesWhenAbsent(t *testing.T) {
 				_ = os.WriteFile(portFile, []byte("127.0.0.1:44321\n"), 0o600)
 			}
 			return ok("54321\n")
+		case strings.Contains(cmd, "ps -p 54321"):
+			return ok("1\n")
 		default:
 			return ok("")
 		}
@@ -216,6 +218,8 @@ func TestEnsureServeRelaunchesDeadProcess(t *testing.T) {
 		case strings.Contains(cmd, "nohup"):
 			_ = os.WriteFile(paths.PortFile, []byte("127.0.0.1:6001\n"), 0o600)
 			return ok("999\n")
+		case strings.Contains(cmd, "ps -p 999"):
+			return ok("1\n")
 		default:
 			return ok("")
 		}

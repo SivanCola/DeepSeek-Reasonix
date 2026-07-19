@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
 
-import { app, onRemoteStatus } from "../lib/bridge";
+import { app } from "../lib/bridge";
 import { useT } from "../lib/i18n";
 import { useRemoteStore } from "../store/remote";
-import type { RemoteHostInput, RemoteHostView, RemoteConnState } from "../lib/types";
+import type { RemoteConnectionStatus, RemoteHostInput, RemoteHostView, RemoteConnState } from "../lib/types";
 
 const EMPTY_INPUT: RemoteHostInput = {
   label: "",
@@ -26,8 +26,7 @@ export function RemoteHostsPage() {
   const [hosts, setHosts] = useState<RemoteHostView[]>([]);
   const [screen, setScreen] = useState<Screen>({ kind: "list" });
   const statuses = useRemoteStore((s) => s.statuses);
-  const setStatuses = useRemoteStore((s) => s.setStatuses);
-  const applyStatus = useRemoteStore((s) => s.applyStatus);
+  const hydrateStatuses = useRemoteStore((s) => s.hydrateStatuses);
   const openExplorer = useRemoteStore((s) => s.openExplorer);
 
   const refresh = useCallback(async () => {
@@ -36,10 +35,8 @@ export function RemoteHostsPage() {
 
   useEffect(() => {
     void refresh();
-    void app.RemoteConnectionStatuses().then(setStatuses);
-    const off = onRemoteStatus((s) => applyStatus(s));
-    return off;
-  }, [refresh, setStatuses, applyStatus]);
+    void app.RemoteConnectionStatuses().then(hydrateStatuses);
+  }, [refresh, hydrateStatuses]);
 
   if (screen.kind === "add" || screen.kind === "edit") {
     const initial =
@@ -89,9 +86,9 @@ export function RemoteHostsPage() {
             <RemoteHostRow
               key={h.id}
               host={h}
-              state={statuses[h.id]?.state}
-              onConnect={() => void app.ConnectRemoteHost(h.id)}
-              onDisconnect={() => void app.DisconnectRemoteHost(h.id)}
+              status={statuses[h.id]}
+              onConnect={() => void app.ConnectRemoteHost(h.id).catch(() => {})}
+              onDisconnect={() => void app.DisconnectRemoteHost(h.id).catch(() => {})}
               onOpen={() => openExplorer(h.id)}
               onEdit={() => setScreen({ kind: "edit", id: h.id })}
               onRemove={async () => {
@@ -108,7 +105,7 @@ export function RemoteHostsPage() {
 
 function RemoteHostRow(props: {
   host: RemoteHostView;
-  state?: RemoteConnState;
+  status?: RemoteConnectionStatus;
   onConnect: () => void;
   onDisconnect: () => void;
   onOpen: () => void;
@@ -116,7 +113,8 @@ function RemoteHostRow(props: {
   onRemove: () => void;
 }) {
   const t = useT();
-  const { host, state } = props;
+  const { host } = props;
+  const state = props.status?.state;
   const target = `${host.user ? host.user + "@" : ""}${host.host}${host.port && host.port !== 22 ? ":" + host.port : ""}`;
   const connected = state === "connected" || state === "degraded";
   return (
@@ -125,6 +123,7 @@ function RemoteHostRow(props: {
         <span className="remote-host-row__name">{host.label}</span>
         <span className="remote-host-row__target">{target}</span>
         {state && <RemoteStatusChip state={state} />}
+        {props.status?.error && <span className="remote-panel__error">{props.status.error}</span>}
       </div>
       <div className="remote-host-row__actions">
         {connected ? (
@@ -206,7 +205,11 @@ function RemoteHostForm(props: {
       </label>
       <label>
         {t("remote.host.port")}
-        <input type="number" value={form.port} onChange={(e) => set("port", Number(e.target.value) || 0)} />
+        <input type="number" min={1} max={65535} value={form.port} onChange={(e) => set("port", Number(e.target.value) || 0)} />
+      </label>
+      <label>
+        <input type="checkbox" checked={form.useSSHConfig} onChange={(e) => set("useSSHConfig", e.target.checked)} />
+        {t("remote.host.useSSHConfig")}
       </label>
       <label>
         {t("remote.host.user")}
@@ -236,7 +239,7 @@ function RemoteHostForm(props: {
       {err && <p className="remote-host-form__error" role="alert">{err}</p>}
       <div className="remote-host-form__actions">
         <button className="btn" onClick={props.onCancel}>{t("remote.host.cancel")}</button>
-        <button className="btn btn--primary" disabled={busy || !form.label || !form.host} onClick={submit}>
+        <button className="btn btn--primary" disabled={busy || !form.label.trim() || !form.host.trim() || form.port < 1 || form.port > 65535} onClick={() => void submit()}>
           {t("remote.host.save")}
         </button>
       </div>
@@ -249,18 +252,22 @@ function RemoteSSHConfigImport(props: { onDone: () => void; onCancel: () => void
   const [candidates, setCandidates] = useState<RemoteHostInput[]>([]);
   const [selected, setSelected] = useState<Record<string, boolean>>({});
   const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
 
   useEffect(() => {
-    void app.ScanSSHConfig().then(setCandidates);
+    void app.ScanSSHConfig().then(setCandidates).catch((e) => setErr(String(e)));
   }, []);
 
   const importSelected = async () => {
     setBusy(true);
+    setErr("");
     try {
       for (const c of candidates) {
         if (selected[c.label]) await app.AddRemoteHost(c);
       }
       props.onDone();
+    } catch (e) {
+      setErr(String(e));
     } finally {
       setBusy(false);
     }
@@ -268,6 +275,7 @@ function RemoteSSHConfigImport(props: { onDone: () => void; onCancel: () => void
 
   return (
     <div className="remote-import">
+      {err && <p className="remote-host-form__error" role="alert">{err}</p>}
       {candidates.length === 0 ? (
         <p className="remote-hosts__empty">{t("remote.hosts.importEmpty")}</p>
       ) : (
@@ -288,7 +296,7 @@ function RemoteSSHConfigImport(props: { onDone: () => void; onCancel: () => void
       )}
       <div className="remote-host-form__actions">
         <button className="btn" onClick={props.onCancel}>{t("remote.host.cancel")}</button>
-        <button className="btn btn--primary" disabled={busy} onClick={importSelected}>
+        <button className="btn btn--primary" disabled={busy || !Object.values(selected).some(Boolean)} onClick={() => void importSelected()}>
           {t("remote.hosts.importSelected")}
         </button>
       </div>

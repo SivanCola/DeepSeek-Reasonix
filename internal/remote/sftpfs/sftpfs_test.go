@@ -149,6 +149,21 @@ func TestSFTPWriteAtomicAndMkdirRenameRemove(t *testing.T) {
 	if err != nil || string(got) != "content" {
 		t.Fatalf("written content = %q err=%v", got, err)
 	}
+	uploaded := filepath.Join(root, "uploaded.txt")
+	n, err := fsys.UploadAtomic(ctx, uploaded, strings.NewReader("streamed"), 0o600)
+	if err != nil || n != 8 {
+		t.Fatalf("UploadAtomic = %d, %v", n, err)
+	}
+	if got, err := os.ReadFile(uploaded); err != nil || string(got) != "streamed" {
+		t.Fatalf("uploaded content = %q err=%v", got, err)
+	}
+	info, err := os.Stat(uploaded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("uploaded mode = %v", info.Mode().Perm())
+	}
 
 	// Overwrite existing (exercises rename-over-existing path).
 	if err := fsys.WriteFileAtomic(ctx, target, []byte("v2"), 0o644); err != nil {

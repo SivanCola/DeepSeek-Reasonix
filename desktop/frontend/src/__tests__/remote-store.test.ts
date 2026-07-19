@@ -33,10 +33,20 @@ useRemoteStore.getState().applyStatus({
 });
 eq(useRemoteStore.getState().pendingFingerprint?.sha256, "AAAA", "pending_hostkey sets fingerprint");
 
+// A stale dialog completion must not clear a newer fingerprint.
+const oldFingerprint = useRemoteStore.getState().pendingFingerprint!;
+useRemoteStore.getState().applyStatus({
+  hostId: "other",
+  state: "pending_hostkey",
+  fingerprint: { hostId: "other", address: "2.3.4.5:22", keyType: "ssh-ed25519", sha256: "BBBB" },
+});
+useRemoteStore.getState().clearPendingFingerprint(oldFingerprint);
+eq(useRemoteStore.getState().pendingFingerprint?.sha256, "BBBB", "stale dialog cannot clear newer fingerprint");
+
 // A subsequent non-pending status for the same host clears the fingerprint.
-useRemoteStore.getState().applyStatus({ hostId: "box", state: "connected" });
+useRemoteStore.getState().applyStatus({ hostId: "other", state: "connected" });
 eq(useRemoteStore.getState().pendingFingerprint, null, "resolution clears fingerprint");
-eq(useRemoteStore.getState().statuses["box"]?.state, "connected", "status recorded");
+eq(useRemoteStore.getState().statuses["other"]?.state, "connected", "status recorded");
 
 // setStatuses replaces the whole map (mount hydration).
 useRemoteStore.getState().setStatuses([
@@ -45,6 +55,15 @@ useRemoteStore.getState().setStatuses([
 ]);
 eq(Object.keys(useRemoteStore.getState().statuses).sort(), ["a", "b"], "setStatuses hydrates");
 eq(useRemoteStore.getState().statuses["b"]?.attempt, 2, "attempt preserved");
+
+// Late hydration fills missing hosts without overwriting a newer live event.
+useRemoteStore.getState().applyStatus({ hostId: "live", state: "connected" });
+useRemoteStore.getState().hydrateStatuses([
+  { hostId: "live", state: "connecting" },
+  { hostId: "snapshot-only", state: "connected" },
+]);
+eq(useRemoteStore.getState().statuses["live"]?.state, "connected", "hydration preserves newer live status");
+eq(useRemoteStore.getState().statuses["snapshot-only"]?.state, "connected", "hydration fills missing status");
 
 // The bridge mock fan-out delivers remote:status to subscribers.
 (function testMockFanout() {

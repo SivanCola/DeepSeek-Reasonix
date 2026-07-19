@@ -15,8 +15,8 @@ import (
 // needs. It is assembled by Client.Start from Options.
 type dialConfig struct {
 	host        ResolvedHost
-	auth        *AuthOptions                    // target auth (holds the target's credentials + cache)
-	hopAuth     func(ResolvedHost) *AuthOptions // per-jump-host auth; nil => ephemeral, credential-free
+	auth        *AuthOptions // target auth (holds the target's credentials + cache)
+	resolveHop  func(string) (ResolvedHost, *AuthOptions, error)
 	hostKeys    *HostKeyPolicy
 	dialer      netclient.StreamDialer // first-hop transport; nil => direct
 	dialTimeout time.Duration
@@ -26,10 +26,20 @@ type dialConfig struct {
 // target's Password/Passphrase closures: a jump host must not be authenticated
 // with the target's stored credentials.
 func (cfg dialConfig) hopAuthFor(hop ResolvedHost) *AuthOptions {
-	if cfg.hopAuth != nil {
-		return cfg.hopAuth(hop)
-	}
 	return &AuthOptions{SecretPrompt: cfg.auth.SecretPrompt, DisableAgent: cfg.auth.DisableAgent}
+}
+
+func (cfg dialConfig) resolvedHop(raw string) (ResolvedHost, *AuthOptions, error) {
+	if cfg.resolveHop != nil {
+		return cfg.resolveHop(raw)
+	}
+	userName, hostName, port, err := ParseTarget(raw)
+	if err != nil {
+		return ResolvedHost{}, nil, err
+	}
+	hop := ResolvedHost{Name: raw, HostName: hostName, Port: port, User: userName}
+	applyHostDefaults(&hop)
+	return hop, cfg.hopAuthFor(hop), nil
 }
 
 // dialSSH establishes an *ssh.Client to cfg.host, walking any ProxyJump chain
@@ -51,26 +61,24 @@ func dialSSH(ctx context.Context, cfg dialConfig) (*ssh.Client, []*ssh.Client, e
 
 	var hops []*ssh.Client
 	// dialThrough dials addr using either the base transport (first hop) or the
-	// previous SSH hop's Dial.
+	// previous SSH hop's context-aware Dial.
 	dialThrough := func(prev *ssh.Client, addr string) (net.Conn, error) {
+		dctx, cancel := context.WithTimeout(ctx, timeout)
+		defer cancel()
 		if prev == nil {
-			dctx, cancel := context.WithTimeout(ctx, timeout)
-			defer cancel()
 			return base.DialContext(dctx, "tcp", addr)
 		}
-		return prev.Dial("tcp", addr)
+		return prev.DialContext(dctx, "tcp", addr)
 	}
 
 	var prev *ssh.Client
 	// Resolve and connect each jump host in order.
 	for i, jump := range cfg.host.ProxyJump {
-		ju, jhost, jport, err := ParseTarget(jump)
+		hop, hopAuth, err := cfg.resolvedHop(jump)
 		if err != nil {
 			closeAll(hops)
 			return nil, nil, fmt.Errorf("proxy jump %q: %w", jump, err)
 		}
-		hop := ResolvedHost{Name: jump, HostName: jhost, Port: jport, User: ju}
-		applyHostDefaults(&hop)
 		conn, derr := dialThrough(prev, hop.Addr())
 		if derr != nil {
 			closeAll(hops)
@@ -78,7 +86,7 @@ func dialSSH(ctx context.Context, cfg dialConfig) (*ssh.Client, []*ssh.Client, e
 		}
 		// Each jump host authenticates with its own credential-free auth, so the
 		// target's password_env is never sent upstream to a jump host.
-		client, cerr := newSSHClient(ctx, conn, hop, cfg.hopAuthFor(hop), cfg.hostKeys, timeout)
+		client, cerr := newSSHClient(ctx, conn, hop, hopAuth, cfg.hostKeys, timeout)
 		if cerr != nil {
 			closeAll(hops)
 			return nil, nil, fmt.Errorf("proxy jump %d (%s): %w", i+1, hop.Label(), cerr)
@@ -105,11 +113,12 @@ func dialSSH(ctx context.Context, cfg dialConfig) (*ssh.Client, []*ssh.Client, e
 // dial, not the version/key exchange, so a host that accepts TCP but never
 // sends a banner would otherwise hang NewClientConn — and Close — forever).
 func newSSHClient(ctx context.Context, conn net.Conn, host ResolvedHost, auth *AuthOptions, hostKeys *HostKeyPolicy, timeout time.Duration) (*ssh.Client, error) {
-	methods, err := buildAuthMethods(ctx, host, auth)
+	methods, cleanupAuth, err := buildAuthMethods(ctx, host, auth)
 	if err != nil {
 		conn.Close()
 		return nil, err
 	}
+	defer cleanupAuth()
 	hkCallback, err := hostKeys.Callback(ctx, host.Label())
 	if err != nil {
 		conn.Close()
@@ -121,14 +130,28 @@ func newSSHClient(ctx context.Context, conn net.Conn, host ResolvedHost, auth *A
 		HostKeyCallback: hkCallback,
 		Timeout:         timeout,
 	}
-	// Bound the handshake: prefer the caller's context deadline, else the dial
-	// timeout. Cleared on success so normal session I/O is not deadline-limited.
-	deadline := time.Now().Add(handshakeTimeout(timeout))
-	if d, ok := ctx.Deadline(); ok && d.Before(deadline) {
-		deadline = d
+	// Bound the handshake even for ProxyJump channel connections, whose
+	// SetDeadline method returns "deadline not supported". A watcher closes the
+	// connection on timeout/cancellation; the acknowledgement prevents a late
+	// watcher from closing a successfully established client.
+	hsCtx, cancel := context.WithTimeout(ctx, handshakeTimeout(timeout))
+	stopWatch := make(chan struct{})
+	watchDone := make(chan struct{})
+	go func() {
+		defer close(watchDone)
+		select {
+		case <-hsCtx.Done():
+			_ = conn.Close()
+		case <-stopWatch:
+		}
+	}()
+	if deadline, ok := hsCtx.Deadline(); ok {
+		_ = conn.SetDeadline(deadline)
 	}
-	_ = conn.SetDeadline(deadline)
 	c, chans, reqs, err := ssh.NewClientConn(conn, host.Addr(), clientCfg)
+	close(stopWatch)
+	<-watchDone
+	cancel()
 	if err != nil {
 		conn.Close()
 		return nil, classifyDialError(err)

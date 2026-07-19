@@ -14,7 +14,10 @@ func TestDesktopPackagesUseGuardAsDefaultLauncher(t *testing.T) {
 	}
 	build := string(buildData)
 	for _, want := range []string{
+		`CLINAME="reasonix"`,
+		`./cmd/reasonix`,
 		`cp "$guard_out" "$app/Contents/MacOS/$GUARDNAME"`,
+		`cp "$cli_out" "$app/Contents/MacOS/$CLINAME"`,
 		`Set :CFBundleExecutable $GUARDNAME`,
 		`Print :CFBundleIconFile`,
 		`Contents/Resources/$bundle_icon`,
@@ -25,6 +28,8 @@ func TestDesktopPackagesUseGuardAsDefaultLauncher(t *testing.T) {
 		`stamp_windows_executable "build/windows/installer/$UPDATE_HELPER" "Reasonix Update Helper"`,
 		`cp "$launcher_out" "$staging/${APPNAME}.exe"`,
 		`cp "$guard_out" "$staging/$GUARDNAME.exe"`,
+		`cp "build/windows/installer/$CLINAME.exe" "$staging/$CLINAME.exe"`,
+		`"$BINNAME" "$GUARDNAME" "$CLINAME"`,
 	} {
 		if !strings.Contains(build, want) {
 			t.Errorf("desktop-build.sh missing guard launcher contract %q", want)
@@ -77,6 +82,7 @@ func TestDesktopPackagesUseGuardAsDefaultLauncher(t *testing.T) {
 		}
 	}
 	for _, want := range []string{
+		"/usr/bin/reasonix",
 		"/usr/share/applications/reasonix.desktop",
 		"/usr/share/pixmaps/reasonix-desktop.png",
 		"/usr/share/icons/hicolor/scalable/apps/reasonix-desktop.svg",
@@ -92,6 +98,7 @@ func TestDesktopPackagesUseGuardAsDefaultLauncher(t *testing.T) {
 	}
 	windows := string(windowsData)
 	for _, want := range []string{
+		`File "/oname=${REASONIX_CLI}" "${REASONIX_CLI}"`,
 		`CreateShortcut "$SMPROGRAMS\${INFO_PRODUCTNAME}.lnk" "$INSTDIR\${REASONIX_LAUNCHER}" "launch --detach" "$INSTDIR\${PRODUCT_EXECUTABLE}" 0`,
 		`CreateShortCut "$DESKTOP\${INFO_PRODUCTNAME}.lnk" "$INSTDIR\${REASONIX_LAUNCHER}" "launch --detach" "$INSTDIR\${PRODUCT_EXECUTABLE}" 0`,
 	} {

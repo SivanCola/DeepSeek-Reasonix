@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 
-import { app, onRemoteForwards, onRemoteServer, onRemoteStatus } from "../lib/bridge";
+import { app } from "../lib/bridge";
 import { useT } from "../lib/i18n";
 import { useOverlayStore } from "../store/overlays";
 import { useRemoteStore, type RemoteExplorerTab } from "../store/remote";
-import type { RemoteDirEntry, RemoteForwardView, RemoteServerView } from "../lib/types";
+import type { RemoteDirEntry, RemoteForwardView } from "../lib/types";
 import { CodeViewer } from "./CodeViewer";
 import { RemoteStatusChip } from "./RemoteHostsPage";
 
@@ -17,13 +17,7 @@ export function RemotePanel() {
   const setTab = useRemoteStore((s) => s.setExplorerTab);
   const closeExplorer = useRemoteStore((s) => s.closeExplorer);
   const status = useRemoteStore((s) => (hostId ? s.statuses[hostId] : undefined));
-  const applyStatus = useRemoteStore((s) => s.applyStatus);
   const setSettingsTarget = useOverlayStore((s) => s.setSettingsTarget);
-
-  useEffect(() => {
-    const off = onRemoteStatus((s) => applyStatus(s));
-    return off;
-  }, [applyStatus]);
 
   if (!hostId) return null;
   const connected = status?.state === "connected" || status?.state === "degraded";
@@ -248,22 +242,34 @@ function RemotePortsTab({ hostId, connected }: { hostId: string; connected: bool
   const [remoteHost, setRemoteHost] = useState("127.0.0.1");
   const [remotePort, setRemotePort] = useState(80);
   const [label, setLabel] = useState("");
+  const [actionErr, setActionErr] = useState("");
 
   useEffect(() => {
     if (connected) void app.RemoteForwards(hostId).then((f) => setForwards(hostId, f));
-    const off = onRemoteForwards((e) => {
-      if (e.hostId === hostId) setForwards(hostId, e.forwards);
-    });
-    return off;
   }, [hostId, connected, setForwards]);
 
   const add = async () => {
-    await app.AddRemoteForward(hostId, { localPort, remoteHost, remotePort, label });
-    setLabel("");
+    try {
+      await app.AddRemoteForward(hostId, { localPort, remoteHost, remotePort, label });
+      setLabel("");
+      setActionErr("");
+    } catch (e) {
+      setActionErr(String(e));
+    }
+  };
+
+  const remove = async (forwardId: string) => {
+    try {
+      await app.RemoveRemoteForward(hostId, forwardId);
+      setActionErr("");
+    } catch (e) {
+      setActionErr(String(e));
+    }
   };
 
   return (
     <div className="remote-ports">
+      {actionErr && <p className="remote-panel__error" role="alert">{actionErr}</p>}
       {forwards.length === 0 ? (
         <p className="remote-panel__hint">{t("remote.ports.empty")}</p>
       ) : (
@@ -273,7 +279,7 @@ function RemotePortsTab({ hostId, connected }: { hostId: string; connected: bool
               <span className={`remote-dot remote-dot--${f.state}`} aria-hidden />
               <span>{f.label || f.id}</span>
               {f.error && <span className="remote-panel__error">{f.error}</span>}
-              <button className="btn btn--ghost" onClick={() => void app.RemoveRemoteForward(hostId, f.id)}>
+              <button className="btn btn--ghost" onClick={() => void remove(f.id)}>
                 {t("remote.ports.remove")}
               </button>
             </li>
@@ -281,11 +287,11 @@ function RemotePortsTab({ hostId, connected }: { hostId: string; connected: bool
         </ul>
       )}
       <div className="remote-ports__form">
-        <input type="number" aria-label={t("remote.ports.localPort")} value={localPort} onChange={(e) => setLocalPort(Number(e.target.value) || 0)} />
+        <input type="number" min={1} max={65535} aria-label={t("remote.ports.localPort")} value={localPort} onChange={(e) => setLocalPort(Number(e.target.value) || 0)} />
         <input aria-label={t("remote.ports.remoteHost")} value={remoteHost} onChange={(e) => setRemoteHost(e.target.value)} />
-        <input type="number" aria-label={t("remote.ports.remotePort")} value={remotePort} onChange={(e) => setRemotePort(Number(e.target.value) || 0)} />
+        <input type="number" min={1} max={65535} aria-label={t("remote.ports.remotePort")} value={remotePort} onChange={(e) => setRemotePort(Number(e.target.value) || 0)} />
         <input aria-label={t("remote.ports.label")} placeholder={t("remote.ports.label")} value={label} onChange={(e) => setLabel(e.target.value)} />
-        <button className="btn btn--primary" disabled={!connected} onClick={add}>{t("remote.ports.add")}</button>
+        <button className="btn btn--primary" disabled={!connected || !remoteHost.trim() || localPort < 1 || localPort > 65535 || remotePort < 1 || remotePort > 65535} onClick={() => void add()}>{t("remote.ports.add")}</button>
       </div>
     </div>
   );
@@ -299,23 +305,53 @@ function RemoteServerTab({ hostId, connected }: { hostId: string; connected: boo
   const setServer = useRemoteStore((s) => s.setServer);
   const [workspace, setWorkspace] = useState("");
   const [logs, setLogs] = useState("");
+  const [actionErr, setActionErr] = useState("");
   const logsOpen = useRef(false);
 
   useEffect(() => {
     void app.RemoteLastWorkspace(hostId).then((w) => setWorkspace((cur) => cur || w));
     void app.RemoteServerStatus(hostId).then(setServer);
-    const off = onRemoteServer((s: RemoteServerView) => {
-      if (s.hostId === hostId) setServer(s);
-    });
-    return off;
   }, [hostId, setServer]);
 
   const refreshLogs = async () => {
     logsOpen.current = true;
-    setLogs(await app.RemoteServerLogs(hostId, 200));
+    try {
+      setLogs(await app.RemoteServerLogs(hostId, 200));
+      setActionErr("");
+    } catch (e) {
+      setLogs("");
+      setActionErr(String(e));
+    }
+  };
+
+  const start = async () => {
+    try {
+      setActionErr("");
+      await app.OpenRemoteWorkspace(hostId, workspace);
+    } catch (e) {
+      setActionErr(String(e));
+    }
+  };
+
+  const stop = async () => {
+    try {
+      setActionErr("");
+      await app.StopRemoteServer(hostId);
+    } catch (e) {
+      setActionErr(String(e));
+    }
   };
 
   const state = server?.state ?? "stopped";
+  const busy = ["starting", "detect", "install", "waiting_lock", "launch", "health_check", "reuse"].includes(state);
+  const stateLabel = state === "ready"
+    ? t("remote.server.state.ready")
+    : state === "error"
+      ? t("remote.server.state.error")
+      : busy
+        ? t("remote.server.state.starting")
+        : t("remote.server.state.stopped");
+  const canManageServer = connected && Boolean(server?.workspace) && state !== "stopped";
   return (
     <div className="remote-server">
       <label className="remote-server__ws">
@@ -323,12 +359,13 @@ function RemoteServerTab({ hostId, connected }: { hostId: string; connected: boo
         <input value={workspace} onChange={(e) => setWorkspace(e.target.value)} placeholder="~/project" />
       </label>
       <div className="remote-server__status">
-        {t(state === "ready" ? "remote.server.state.ready" : state === "error" ? "remote.server.state.error" : "remote.server.state.stopped")}
+        {stateLabel}
         {server?.message ? ` — ${server.message}` : ""}
         {server?.error ? ` — ${server.error}` : ""}
+        {actionErr ? ` — ${actionErr}` : ""}
       </div>
       <div className="remote-server__actions">
-        <button className="btn btn--primary" disabled={!connected || !workspace} onClick={() => void app.OpenRemoteWorkspace(hostId, workspace)}>
+        <button className="btn btn--primary" disabled={!connected || !workspace || busy} onClick={() => void start()}>
           {t("remote.server.start")}
         </button>
         {server?.localUrl && (
@@ -336,17 +373,17 @@ function RemoteServerTab({ hostId, connected }: { hostId: string; connected: boo
             {t("remote.server.openBrowser")}
           </button>
         )}
-        <button className="btn" disabled={!connected} onClick={() => void app.StopRemoteServer(hostId)}>
+        <button className="btn" disabled={!canManageServer || busy} onClick={() => void stop()}>
           {t("remote.server.stop")}
         </button>
-        <button className="btn btn--ghost" disabled={!connected} onClick={refreshLogs}>
+        <button className="btn btn--ghost" disabled={!canManageServer} onClick={() => void refreshLogs()}>
           {t("remote.server.logs")}
         </button>
       </div>
       {logsOpen.current && (
         <pre className="remote-server__logs">
           {logs}
-          <button className="btn btn--ghost" onClick={refreshLogs}>{t("remote.server.refreshLogs")}</button>
+          <button className="btn btn--ghost" onClick={() => void refreshLogs()}>{t("remote.server.refreshLogs")}</button>
         </pre>
       )}
     </div>

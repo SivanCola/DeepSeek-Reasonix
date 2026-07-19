@@ -117,19 +117,23 @@ func TestShellQuote(t *testing.T) {
 }
 
 func TestStopAndServeAliveCommands(t *testing.T) {
-	stop := StopCommand(4321)
+	paths := StatePaths{TokenFile: "/state/ws.token", PortFile: "/state/ws.port"}
+	stop := StopCommand(4321, paths)
 	for _, want := range []string{"kill -TERM 4321", "kill -0 4321", "kill -KILL 4321"} {
 		if !strings.Contains(stop, want) {
 			t.Errorf("StopCommand missing %q: %s", want, stop)
 		}
 	}
-	alive := ServeAliveCommand(99)
+	alive := ServeAliveCommand(99, paths)
 	// Must check liveness AND that the process is a reasonix serve (guards PID
 	// reuse), not just kill -0.
-	for _, want := range []string{"kill -0 99", "ps -p 99", "*reasonix*serve*"} {
+	for _, want := range []string{"kill -0 99", "ps -p 99", "*reasonix*serve*", paths.TokenFile, paths.PortFile} {
 		if !strings.Contains(alive, want) {
 			t.Errorf("ServeAliveCommand missing %q: %s", want, alive)
 		}
+	}
+	if strings.Count(stop, "ours") < 3 {
+		t.Fatalf("StopCommand must revalidate ownership during TERM/KILL wait: %s", stop)
 	}
 }
 
@@ -143,6 +147,9 @@ func TestLaunchCommandDetachAndLogHardening(t *testing.T) {
 		if !strings.Contains(cmd, want) {
 			t.Errorf("LaunchCommand missing %q:\n%s", want, cmd)
 		}
+	}
+	if !strings.Contains(cmd, "rm -f '/d/p' '/d/i'") {
+		t.Fatalf("LaunchCommand does not clear stale port/pid files before launch:\n%s", cmd)
 	}
 	if strings.Contains(cmd, "setsid nohup") {
 		t.Errorf("setsid must be conditional, not hard-wired:\n%s", cmd)

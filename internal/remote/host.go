@@ -122,6 +122,24 @@ func ResolveHost(cfg *config.Config, nameOrTarget string, sshCfg *SSHConfigSourc
 	return r, nil
 }
 
+// ResolveJumpHosts resolves every ProxyJump token through the same Reasonix
+// host table and ~/.ssh/config layers as the final target. A jump entry's own
+// ProxyJump is deliberately cleared: the caller-provided chain is already the
+// complete left-to-right route, and recursively expanding nested chains would
+// make ordering and credential ownership ambiguous.
+func ResolveJumpHosts(cfg *config.Config, chain []string, sshCfg *SSHConfigSource) ([]ResolvedHost, error) {
+	out := make([]ResolvedHost, 0, len(chain))
+	for i, raw := range chain {
+		hop, err := ResolveHost(cfg, raw, sshCfg)
+		if err != nil {
+			return nil, fmt.Errorf("proxy jump %d (%q): %w", i+1, raw, err)
+		}
+		hop.ProxyJump = nil
+		out = append(out, hop)
+	}
+	return out, nil
+}
+
 func resolveEntry(e config.RemoteHostEntry, sshCfg *SSHConfigSource) (ResolvedHost, error) {
 	r := ResolvedHost{
 		Name:          e.Name,

@@ -55,6 +55,9 @@ type runner struct {
 // Add registers spec and starts it if the Set is attached. Returns the bound
 // address (useful for ":0" local forwards).
 func (s *Set) Add(spec Spec) (string, error) {
+	if err := spec.Validate(); err != nil {
+		return "", err
+	}
 	name := spec.DefaultName()
 	spec.Name = name
 	s.mu.Lock()
@@ -71,6 +74,41 @@ func (s *Set) Add(spec Spec) (string, error) {
 	if err != nil {
 		delete(s.runs, name)
 		return "", err
+	}
+	return bound, nil
+}
+
+// Replace atomically swaps the named registration after the replacement has
+// started successfully. If startup fails, the existing forward remains live.
+// This is primarily used when a remote serve moves to a new workspace/port.
+func (s *Set) Replace(spec Spec) (string, error) {
+	if err := spec.Validate(); err != nil {
+		return "", err
+	}
+	name := spec.DefaultName()
+	spec.Name = name
+	s.mu.Lock()
+	old := s.runs[name]
+	if s.ssh == nil {
+		s.mu.Unlock()
+		return "", ErrNotAttached
+	}
+	replacement := &runner{spec: spec, stop: make(chan struct{})}
+	bound := ""
+	bound, err := s.startLocked(replacement, s.ssh)
+	if err != nil {
+		s.mu.Unlock()
+		return "", err
+	}
+	s.runs[name] = replacement
+	if old != nil {
+		// The replacement's Up event is authoritative; suppress a later Down event
+		// from retiring the old runner with the same name.
+		old.up = false
+	}
+	s.mu.Unlock()
+	if old != nil {
+		s.stopRunner(old, true)
 	}
 	return bound, nil
 }
@@ -256,9 +294,11 @@ func (s *Set) stopRunner(r *runner, closeLocal bool) {
 	}
 	if closeLocal && r.local != nil {
 		_ = r.local.Close()
-		r.local = nil
 	}
 	r.acceptWG.Wait()
+	if closeLocal {
+		r.local = nil
+	}
 	if r.up {
 		r.up = false
 		s.emit(Event{Spec: r.spec, Up: false})

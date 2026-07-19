@@ -61,7 +61,10 @@ func TestRunGracefulListenerServesOnProvidedListener(t *testing.T) {
 
 	cancel()
 	select {
-	case <-done:
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("RunGracefulListener returned a shutdown error: %v", err)
+		}
 	case <-time.After(15 * time.Second):
 		t.Fatal("RunGracefulListener did not return after ctx cancel")
 	}
@@ -87,7 +90,10 @@ func TestRunGracefulStillListensFromAddr(t *testing.T) {
 
 	cancel()
 	select {
-	case <-done:
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("RunGraceful returned a shutdown error: %v", err)
+		}
 	case <-time.After(15 * time.Second):
 		t.Fatal("RunGraceful did not return after ctx cancel")
 	}

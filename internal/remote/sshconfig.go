@@ -1,6 +1,7 @@
 package remote
 
 import (
+	"bufio"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -14,8 +15,9 @@ import (
 // underlying parser; ImportedHost.HasMatchRules is unset because such stanzas
 // are simply invisible here — `remote import` notes that limitation.
 type SSHConfigSource struct {
-	cfg  *ssh_config.Config
-	path string
+	cfg     *ssh_config.Config
+	path    string
+	aliases []string
 }
 
 // LoadUserSSHConfig parses ~/.ssh/config. A missing file yields an empty
@@ -42,7 +44,8 @@ func LoadSSHConfig(path string) (*SSHConfigSource, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &SSHConfigSource{cfg: cfg, path: path}, nil
+	aliases, _ := discoverSSHAliases(path, 0, map[string]bool{})
+	return &SSHConfigSource{cfg: cfg, path: path, aliases: aliases}, nil
 }
 
 // Path is the file this source was parsed from (may not exist).
@@ -121,20 +124,13 @@ func (s *SSHConfigSource) Aliases() []ImportedHost {
 		return nil
 	}
 	seen := map[string]bool{}
-	var order []string
-	for _, host := range s.cfg.Hosts {
-		for _, pat := range host.Patterns {
-			p := pat.String()
-			if p == "" || strings.ContainsAny(p, "*?!") || seen[p] {
-				continue
-			}
-			seen[p] = true
-			order = append(order, p)
-		}
-	}
 	// File order is meaningful to users, so it is preserved as-is.
-	out := make([]ImportedHost, 0, len(order))
-	for _, alias := range order {
+	out := make([]ImportedHost, 0, len(s.aliases))
+	for _, alias := range s.aliases {
+		if alias == "" || strings.ContainsAny(alias, "*?!") || seen[alias] {
+			continue
+		}
+		seen[alias] = true
 		out = append(out, ImportedHost{
 			Alias:        alias,
 			HostName:     s.HostName(alias),
@@ -145,6 +141,85 @@ func (s *SSHConfigSource) Aliases() []ImportedHost {
 		})
 	}
 	return out
+}
+
+// discoverSSHAliases walks Host and Include directives in file order. The
+// upstream parser resolves values through Include nodes but does not expose
+// included Host declarations, so import discovery needs this small read-only
+// pass to avoid hiding the common ~/.ssh/config.d/* layout.
+func discoverSSHAliases(filename string, depth int, seen map[string]bool) ([]string, error) {
+	if depth > 5 {
+		return nil, nil
+	}
+	abs, err := filepath.Abs(filename)
+	if err == nil {
+		filename = abs
+	}
+	if seen[filename] {
+		return nil, nil
+	}
+	seen[filename] = true
+	f, err := os.Open(filename)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	var out []string
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		line = strings.TrimSpace(stripSSHComment(line))
+		if eq := strings.IndexByte(line, '='); eq >= 0 {
+			if space := strings.IndexAny(line, " \t"); space < 0 || eq < space {
+				line = line[:eq] + " " + line[eq+1:]
+			}
+		}
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+		switch strings.ToLower(fields[0]) {
+		case "host":
+			for _, alias := range fields[1:] {
+				out = append(out, strings.Trim(alias, `"'`))
+			}
+		case "include":
+			for _, directive := range fields[1:] {
+				directive = expandHome(strings.Trim(directive, `"'`))
+				if !filepath.IsAbs(directive) {
+					if home, homeErr := os.UserHomeDir(); homeErr == nil {
+						directive = filepath.Join(home, ".ssh", directive)
+					}
+				}
+				matches, _ := filepath.Glob(directive)
+				for _, match := range matches {
+					aliases, includeErr := discoverSSHAliases(match, depth+1, seen)
+					if includeErr == nil {
+						out = append(out, aliases...)
+					}
+				}
+			}
+		}
+	}
+	return out, scanner.Err()
+}
+
+func stripSSHComment(line string) string {
+	var quote rune
+	for i, r := range line {
+		switch {
+		case quote != 0 && r == quote:
+			quote = 0
+		case quote == 0 && (r == '\'' || r == '"'):
+			quote = r
+		case quote == 0 && r == '#':
+			return line[:i]
+		}
+	}
+	return line
 }
 
 func expandHome(p string) string {

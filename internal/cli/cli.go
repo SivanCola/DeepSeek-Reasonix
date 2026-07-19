@@ -836,7 +836,7 @@ func runServe(args []string) int {
 		// into a file readable by other same-machine users. The supervisor
 		// already holds the token (it wrote --token-file), so suppress the share
 		// URL and print only the token-file reference.
-		if *portFile != "" {
+		if *portFile != "" && *tokenFile != "" {
 			fmt.Printf("  share: http://%s/ (token in %s)\n", displayAddr, *tokenFile)
 		} else {
 			fmt.Printf("  share: http://%s/?token=%s\n", displayAddr, srv.AuthToken())

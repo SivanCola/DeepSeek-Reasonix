@@ -2,6 +2,8 @@ package config
 
 import (
 	"fmt"
+	"net"
+	"strconv"
 	"strings"
 )
 
@@ -97,8 +99,10 @@ func validateRemoteHost(e RemoteHostEntry) error {
 	default:
 		return fmt.Errorf("remote host %q: serve_install must be one of auto|npm|upload|never", e.Name)
 	}
+	seenBinds := map[string]bool{}
 	for _, f := range e.Forwards {
-		switch strings.ToLower(strings.TrimSpace(f.Type)) {
+		kind := strings.ToLower(strings.TrimSpace(f.Type))
+		switch kind {
 		case "local", "remote":
 		default:
 			return fmt.Errorf("remote host %q: forward type must be \"local\" or \"remote\"", e.Name)
@@ -106,8 +110,39 @@ func validateRemoteHost(e RemoteHostEntry) error {
 		if strings.TrimSpace(f.Bind) == "" || strings.TrimSpace(f.Target) == "" {
 			return fmt.Errorf("remote host %q: forward needs both bind and target", e.Name)
 		}
+		bind, err := validateRemoteForwardAddress(f.Bind, true)
+		if err != nil {
+			return fmt.Errorf("remote host %q: invalid forward bind %q: %w", e.Name, f.Bind, err)
+		}
+		if _, err := validateRemoteForwardAddress(f.Target, false); err != nil {
+			return fmt.Errorf("remote host %q: invalid forward target %q: %w", e.Name, f.Target, err)
+		}
+		key := kind + "\x00" + bind
+		if seenBinds[key] {
+			return fmt.Errorf("remote host %q: duplicate %s forward bind %q", e.Name, kind, f.Bind)
+		}
+		seenBinds[key] = true
 	}
 	return nil
+}
+
+func validateRemoteForwardAddress(addr string, bind bool) (string, error) {
+	addr = strings.TrimSpace(addr)
+	if bind && !strings.Contains(addr, ":") {
+		addr = net.JoinHostPort("127.0.0.1", addr)
+	}
+	host, portText, err := net.SplitHostPort(addr)
+	if err != nil {
+		return "", err
+	}
+	if !bind && strings.TrimSpace(host) == "" {
+		return "", fmt.Errorf("host is required")
+	}
+	port, err := strconv.Atoi(portText)
+	if err != nil || port < 0 || port > 65535 || (!bind && port == 0) {
+		return "", fmt.Errorf("port out of range")
+	}
+	return net.JoinHostPort(host, strconv.Itoa(port)), nil
 }
 
 // RemoteHost looks up a configured host by name.

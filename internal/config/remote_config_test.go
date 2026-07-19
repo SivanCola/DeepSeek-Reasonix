@@ -182,6 +182,9 @@ func TestUpsertRemoteHostValidates(t *testing.T) {
 		{Name: "ok", Host: "h", ServeInstall: "curlpipe"},
 		{Name: "ok", Host: "h", Forwards: []RemoteForwardEntry{{Type: "dynamic", Bind: "1", Target: "2"}}},
 		{Name: "ok", Host: "h", Forwards: []RemoteForwardEntry{{Type: "local", Bind: "", Target: "2"}}},
+		{Name: "ok", Host: "h", Forwards: []RemoteForwardEntry{{Type: "local", Bind: "abc", Target: "svc:80"}}},
+		{Name: "ok", Host: "h", Forwards: []RemoteForwardEntry{{Type: "local", Bind: "8080", Target: "svc:0"}}},
+		{Name: "ok", Host: "h", Forwards: []RemoteForwardEntry{{Type: "local", Bind: "8080", Target: "svc:80"}, {Type: "local", Bind: "127.0.0.1:8080", Target: "other:80"}}},
 	}
 	for i, e := range bad {
 		if err := cfg.UpsertRemoteHost(e); err == nil {

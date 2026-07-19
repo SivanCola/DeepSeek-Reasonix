@@ -47,17 +47,21 @@ func TestWindowsInstallerScriptWaitsBeforeCopyingExecutable(t *testing.T) {
 		`!define REASONIX_UPDATE_HELPER "reasonix-update-helper.exe"`,
 		`!define REASONIX_GUARD "reasonix-guard.exe"`,
 		`!define REASONIX_LAUNCHER "reasonix-launcher.exe"`,
+		`!define REASONIX_CLI "reasonix.exe"`,
 		`!define REASONIX_PORTABLE_ENTRY "Reasonix.exe"`,
 		"Function reasonix.waitForExecutableUnlock",
 		`FileOpen $1 "$INSTDIR\${PRODUCT_EXECUTABLE}" a`,
 		`FileOpen $1 "$INSTDIR\${REASONIX_GUARD}" a`,
 		`FileOpen $1 "$INSTDIR\${REASONIX_LAUNCHER}" a`,
+		`FileOpen $1 "$INSTDIR\${REASONIX_CLI}" a`,
 		`FileOpen $1 "$INSTDIR\${REASONIX_PORTABLE_ENTRY}" a`,
 		"SetErrorLevel 1618",
 		"Call reasonix.waitForExecutableUnlock",
 		`File "/oname=${REASONIX_UPDATE_HELPER}" "${REASONIX_UPDATE_HELPER}"`,
+		`File "/oname=${REASONIX_CLI}" "${REASONIX_CLI}"`,
 		`File "/oname=${REASONIX_PORTABLE_ENTRY}" "${REASONIX_LAUNCHER}"`,
 		`Delete "$INSTDIR\${REASONIX_UPDATE_HELPER}"`,
+		`Delete "$INSTDIR\${REASONIX_CLI}"`,
 	} {
 		if !strings.Contains(script, want) {
 			t.Fatalf("project.nsi missing %q", want)

@@ -37,6 +37,37 @@ type Spec struct {
 	TargetAddr string // "127.0.0.1:80"
 }
 
+// Validate rejects malformed bind/target addresses before a listener is
+// registered. Target port zero is never dialable; bind port zero remains
+// valid for an ephemeral local/remote listener.
+func (s Spec) Validate() error {
+	if s.Direction != Local && s.Direction != Remote {
+		return fmt.Errorf("forward: invalid direction %d", s.Direction)
+	}
+	if err := validateAddress(s.BindAddr, true); err != nil {
+		return fmt.Errorf("forward: invalid bind address %q: %w", s.BindAddr, err)
+	}
+	if err := validateAddress(s.TargetAddr, false); err != nil {
+		return fmt.Errorf("forward: invalid target address %q: %w", s.TargetAddr, err)
+	}
+	return nil
+}
+
+func validateAddress(addr string, allowZero bool) error {
+	host, portText, err := net.SplitHostPort(strings.TrimSpace(addr))
+	if err != nil {
+		return err
+	}
+	if host == "" && !allowZero {
+		return errors.New("host is required")
+	}
+	port, err := strconv.Atoi(portText)
+	if err != nil || port < 0 || port > 65535 || (!allowZero && port == 0) {
+		return errors.New("port must be between 1 and 65535")
+	}
+	return nil
+}
+
 // Typed errors.
 var (
 	ErrBindBusy         = errors.New("forward: bind address in use")
@@ -86,7 +117,7 @@ func ParseShorthand(dir Direction, s string) (Spec, error) {
 	parts := strings.Split(s, ":")
 	switch len(parts) {
 	case 1:
-		p, err := parsePort(parts[0])
+		p, err := parseTargetPort(parts[0])
 		if err != nil {
 			return Spec{}, err
 		}
@@ -98,7 +129,7 @@ func ParseShorthand(dir Direction, s string) (Spec, error) {
 		if err != nil {
 			return Spec{}, err
 		}
-		tp, err := parsePort(parts[2])
+		tp, err := parseTargetPort(parts[2])
 		if err != nil {
 			return Spec{}, err
 		}
@@ -116,7 +147,7 @@ func ParseShorthand(dir Direction, s string) (Spec, error) {
 		if err != nil {
 			return Spec{}, err
 		}
-		tp, err := parsePort(parts[3])
+		tp, err := parseTargetPort(parts[3])
 		if err != nil {
 			return Spec{}, err
 		}
@@ -159,6 +190,14 @@ func parsePort(s string) (int, error) {
 	p, err := strconv.Atoi(strings.TrimSpace(s))
 	if err != nil || p < 0 || p > 65535 {
 		return 0, fmt.Errorf("forward: invalid port %q", s)
+	}
+	return p, nil
+}
+
+func parseTargetPort(s string) (int, error) {
+	p, err := parsePort(s)
+	if err != nil || p == 0 {
+		return 0, fmt.Errorf("forward: invalid target port %q", s)
 	}
 	return p, nil
 }

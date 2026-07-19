@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
@@ -51,22 +52,25 @@ type secretCache struct {
 // buildAuthMethods assembles ssh.AuthMethod values in OpenSSH-like order:
 // agent, explicit identity file, default identities, password,
 // keyboard-interactive. host is the display label used in prompts.
-func buildAuthMethods(ctx context.Context, h ResolvedHost, opts *AuthOptions) ([]ssh.AuthMethod, error) {
+func buildAuthMethods(ctx context.Context, h ResolvedHost, opts *AuthOptions) ([]ssh.AuthMethod, func(), error) {
 	if opts.cache == nil {
 		opts.cache = &secretCache{}
 	}
 	var methods []ssh.AuthMethod
+	cleanup := func() {}
 
 	if !opts.DisableAgent {
-		if am := agentAuth(); am != nil {
+		if am, closeAgent := agentAuth(); am != nil {
 			methods = append(methods, am)
+			cleanup = closeAgent
 		}
 	}
 
 	if h.IdentityFile != "" {
 		am, err := keyAuth(ctx, h, opts, h.IdentityFile)
 		if err != nil {
-			return nil, err
+			cleanup()
+			return nil, func() {}, err
 		}
 		if am != nil {
 			methods = append(methods, am)
@@ -87,21 +91,35 @@ func buildAuthMethods(ctx context.Context, h ResolvedHost, opts *AuthOptions) ([
 
 	methods = append(methods, passwordAuth(ctx, h, opts))
 	methods = append(methods, keyboardInteractiveAuth(ctx, h, opts))
-	return methods, nil
+	return methods, cleanup, nil
 }
 
-func agentAuth() ssh.AuthMethod {
+func agentAuth() (ssh.AuthMethod, func()) {
 	sock := os.Getenv("SSH_AUTH_SOCK")
 	if sock == "" {
-		return nil
+		return nil, func() {}
 	}
-	return ssh.PublicKeysCallback(func() ([]ssh.Signer, error) {
+	var mu sync.Mutex
+	var conns []interface{ Close() error }
+	method := ssh.PublicKeysCallback(func() ([]ssh.Signer, error) {
 		conn, err := dialAgent(sock)
 		if err != nil {
 			return nil, err
 		}
+		mu.Lock()
+		conns = append(conns, conn)
+		mu.Unlock()
 		return agent.NewClient(conn).Signers()
 	})
+	return method, func() {
+		mu.Lock()
+		owned := conns
+		conns = nil
+		mu.Unlock()
+		for _, conn := range owned {
+			_ = conn.Close()
+		}
+	}
 }
 
 // keyAuth loads a private key, resolving a passphrase from the credential
@@ -168,18 +186,17 @@ func passwordAuth(ctx context.Context, h ResolvedHost, opts *AuthOptions) ssh.Au
 
 func keyboardInteractiveAuth(ctx context.Context, h ResolvedHost, opts *AuthOptions) ssh.AuthMethod {
 	return ssh.KeyboardInteractive(func(name, instruction string, questions []string, echos []bool) ([]string, error) {
-		answers := make([]string, len(questions))
-		for i := range questions {
-			// Echoed prompts are typically usernames/OTPs the server labels;
-			// non-echoed are passwords. Reuse the cached password for the
-			// common single-password challenge.
-			pw, err := resolvePassword(ctx, h, opts)
-			if err != nil {
-				return nil, err
-			}
-			answers[i] = pw
+		// Never copy a password into echoed, OTP, or multi-question prompts.
+		// The current callback models only a password secret, so support the
+		// common single hidden-password challenge and fail closed otherwise.
+		if len(questions) != 1 || len(echos) != 1 || echos[0] {
+			return nil, fmt.Errorf("remote: unsupported keyboard-interactive challenge from %s", h.Label())
 		}
-		return answers, nil
+		pw, err := resolvePassword(ctx, h, opts)
+		if err != nil {
+			return nil, err
+		}
+		return []string{pw}, nil
 	})
 }
 

@@ -9,7 +9,7 @@
 #            Reasonix-darwin-universal.dmg               (drag-to-install; human download)
 #   Windows: Reasonix-windows-<arch>-installer.exe       (NSIS per-user installer; updater channel)
 #            Reasonix-windows-<arch>.zip                 (portable human download)
-#   Linux:   Reasonix-linux-<arch>.tar.gz                (bare binary; updater channel)
+#   Linux:   Reasonix-linux-<arch>.tar.gz                (desktop + guard + CLI; updater channel)
 #            Reasonix-linux-<arch>.deb                   (Debian/Ubuntu package; human download)
 #
 # Usage: scripts/desktop-build.sh <os/arch> <version> [channel]
@@ -27,6 +27,7 @@ arch="${PLATFORM#*/}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 APPNAME="Reasonix"            # wails.json productName -> Reasonix.app
 BINNAME="reasonix-desktop"    # wails.json outputfilename -> linux binary name
+CLINAME="reasonix"            # bundled CLI sidecar used for remote serve upload
 GUARDNAME="reasonix-guard"
 LAUNCHERNAME="reasonix-launcher"
 windows_resource_tool_dir=""
@@ -51,6 +52,20 @@ build_guard() {
 		rm -rf "$guard_tmp"
 	else
 		(cd "$ROOT" && GOOS="$os" GOARCH="$arch" CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.version=$VERSION" -o "$guard_out" ./cmd/reasonix-guard)
+	fi
+}
+
+build_cli() {
+	echo "==> go build Reasonix CLI sidecar"
+	mkdir -p "$(dirname "$cli_out")"
+	if [ "$arch" = universal ]; then
+		cli_tmp=$(mktemp -d)
+		(cd "$ROOT" && GOOS=darwin GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.version=$VERSION" -o "$cli_tmp/amd64" ./cmd/reasonix)
+		(cd "$ROOT" && GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.version=$VERSION" -o "$cli_tmp/arm64" ./cmd/reasonix)
+		lipo -create "$cli_tmp/amd64" "$cli_tmp/arm64" -output "$cli_out"
+		rm -rf "$cli_tmp"
+	else
+		(cd "$ROOT" && GOOS="$os" GOARCH="$arch" CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.version=$VERSION" -o "$cli_out" ./cmd/reasonix)
 	fi
 }
 
@@ -97,6 +112,9 @@ if [ "$os" = windows ]; then
 	GOOS=windows GOARCH="$arch" go build -trimpath -ldflags="-s -w" \
 		-o "build/windows/installer/$UPDATE_HELPER" ./cmd/update-helper
 	stamp_windows_executable "build/windows/installer/$UPDATE_HELPER" "Reasonix Update Helper" "reasonix-update-helper" "$UPDATE_HELPER"
+	cli_out="$ROOT/desktop/build/windows/installer/$CLINAME.exe"
+	build_cli
+	stamp_windows_executable "$cli_out" "Reasonix CLI" "$CLINAME" "$CLINAME.exe"
 fi
 build_args=()
 [ "${DESKTOP_BUILD_CLEAN:-1}" != "0" ] && build_args+=(-clean)
@@ -111,6 +129,8 @@ wails build "${build_args[@]}"
 if [ "$os" != windows ]; then
 	guard_out="$ROOT/desktop/build/bin/$GUARDNAME"
 	build_guard
+	cli_out="$ROOT/desktop/build/bin/$CLINAME"
+	build_cli
 fi
 
 mkdir -p "$ROOT/dist"
@@ -123,6 +143,7 @@ darwin)
 	app="$staging/${APPNAME}.app"
 	cp -R "build/bin/reasonix-desktop.app" "$app"
 	cp "$guard_out" "$app/Contents/MacOS/$GUARDNAME"
+	cp "$cli_out" "$app/Contents/MacOS/$CLINAME"
 	/usr/libexec/PlistBuddy -c "Set :CFBundleExecutable $GUARDNAME" "$app/Contents/Info.plist"
 	bundle_executable=$(/usr/libexec/PlistBuddy -c "Print :CFBundleExecutable" "$app/Contents/Info.plist")
 	[ "$bundle_executable" = "$GUARDNAME" ] || { echo "macOS bundle executable is $bundle_executable, want $GUARDNAME" >&2; exit 1; }
@@ -219,6 +240,7 @@ windows)
 	cp "$launcher_out" "$staging/${APPNAME}.exe"
 	cp "$launcher_out" "$staging/$LAUNCHERNAME.exe"
 	cp "$guard_out" "$staging/$GUARDNAME.exe"
+	cp "build/windows/installer/$CLINAME.exe" "$staging/$CLINAME.exe"
 	staging_win=$(cygpath -w "$staging")
 	zip_win=$(cygpath -w "$ROOT/dist/${APPNAME}-windows-${arch}.zip")
 	powershell.exe -NoProfile -Command "Compress-Archive -Force -Path '$staging_win\\*' -DestinationPath '$zip_win'"
@@ -231,7 +253,7 @@ linux)
 		'StartupWMClass=reasonix-desktop'; do
 		grep -F -x -q "$desktop_contract" build/linux/reasonix.desktop || { echo "Linux desktop entry missing: $desktop_contract" >&2; exit 1; }
 	done
-	tar -czf "$ROOT/dist/${APPNAME}-linux-${arch}.tar.gz" -C build/bin "$BINNAME" "$GUARDNAME"
+	tar -czf "$ROOT/dist/${APPNAME}-linux-${arch}.tar.gz" -C build/bin "$BINNAME" "$GUARDNAME" "$CLINAME"
 	# Also build a .deb for Debian/Ubuntu users (goreleaser/nfpm; see
 	# desktop/build/linux/nfpm.yaml). Human-download only: the Linux updater channel
 	# stays the tarball and cmd/sign's manifest skips .deb files. nfpm reads

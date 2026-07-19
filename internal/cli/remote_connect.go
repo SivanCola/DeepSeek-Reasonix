@@ -42,18 +42,17 @@ func buildRemoteClient(nameOrTarget string) (*remote.Client, func(), error) {
 		return nil, nil, err
 	}
 
-	auth := remote.AuthOptions{
-		SecretPrompt: terminalSecretPrompt,
+	auth := remoteAuthForHost(host, terminalSecretPrompt)
+	resolvedJumps, err := remote.ResolveJumpHosts(cfg, host.ProxyJump, sshCfg)
+	if err != nil {
+		return nil, nil, err
 	}
-	if entry, ok := cfg.RemoteHost(host.Name); ok {
-		if entry.PassphraseEnv != "" {
-			env := entry.PassphraseEnv
-			auth.Passphrase = func() (string, error) { return config.ResolveCredential(env).Value, nil }
-		}
-		if entry.PasswordEnv != "" {
-			env := entry.PasswordEnv
-			auth.Password = func() (string, error) { return config.ResolveCredential(env).Value, nil }
-		}
+	jumpHosts := make([]remote.JumpHostOptions, 0, len(resolvedJumps))
+	for _, jump := range resolvedJumps {
+		jumpHosts = append(jumpHosts, remote.JumpHostOptions{
+			Host: jump,
+			Auth: remoteAuthForHost(jump, terminalSecretPrompt),
+		})
 	}
 
 	policy := &remote.HostKeyPolicy{Prompt: terminalHostKeyPrompt}
@@ -66,15 +65,29 @@ func buildRemoteClient(nameOrTarget string) (*remote.Client, func(), error) {
 		return nil, nil, fmt.Errorf("remote: network proxy is misconfigured: %w", derr)
 	}
 	client, err := remote.New(remote.Options{
-		Host:     host,
-		Auth:     auth,
-		HostKeys: policy,
-		Dialer:   dialer,
+		Host:      host,
+		Auth:      auth,
+		JumpHosts: jumpHosts,
+		HostKeys:  policy,
+		Dialer:    dialer,
 	})
 	if err != nil {
 		return nil, nil, err
 	}
 	return client, func() {}, nil
+}
+
+func remoteAuthForHost(host remote.ResolvedHost, prompt func(context.Context, remote.SecretKind, string) (string, error)) remote.AuthOptions {
+	auth := remote.AuthOptions{SecretPrompt: prompt}
+	if host.PassphraseEnv != "" {
+		env := host.PassphraseEnv
+		auth.Passphrase = func() (string, error) { return config.ResolveCredential(env).Value, nil }
+	}
+	if host.PasswordEnv != "" {
+		env := host.PasswordEnv
+		auth.Password = func() (string, error) { return config.ResolveCredential(env).Value, nil }
+	}
+	return auth
 }
 
 func terminalSecretPrompt(_ context.Context, kind remote.SecretKind, host string) (string, error) {
@@ -128,7 +141,11 @@ func remoteConnectCLI(args []string, version string) int {
 	}
 	name := rest[0]
 
-	cfg, _ := config.Load()
+	cfg, err := config.Load()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
+		return 1
+	}
 	entry, _ := cfg.RemoteHost(name)
 	ws := *workspace
 	if ws == "" {
@@ -269,7 +286,11 @@ func remoteServeCLI(args []string) int {
 		return 2
 	}
 	name := args[1]
-	cfg, _ := config.Load()
+	cfg, err := config.Load()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
+		return 1
+	}
 	entry, _ := cfg.RemoteHost(name)
 	ws := *workspace
 	if ws == "" {
@@ -375,7 +396,11 @@ func remoteForwardCLI(args []string) int {
 }
 
 func remoteForwardLs(host string) int {
-	cfg, _ := config.Load()
+	cfg, err := config.Load()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
+		return 1
+	}
 	entry, ok := cfg.RemoteHost(host)
 	if !ok {
 		fmt.Fprintf(os.Stderr, "no remote host named %q\n", host)
@@ -541,7 +566,7 @@ func remoteFSLs(operand string) int {
 }
 
 func remoteFSGet(args []string) int {
-	if len(args) < 1 {
+	if len(args) < 1 || len(args) > 2 {
 		fmt.Fprintln(os.Stderr, "usage: reasonix remote fs get <name>:<remote> [local]")
 		return 2
 	}
@@ -592,22 +617,24 @@ func remoteFSPut(args []string) int {
 		fmt.Fprintln(os.Stderr, "usage: reasonix remote fs put <local> <name>:<remote>")
 		return 2
 	}
-	data, err := os.ReadFile(localPath)
+	in, err := os.Open(localPath)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
 		return 1
 	}
+	defer in.Close()
 	return withRemoteFS(host, func(ctx context.Context, client *remote.Client) int {
 		fsys, err := client.SFTP()
 		if err != nil {
 			fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
 			return 1
 		}
-		if err := fsys.WriteFileAtomic(ctx, remotePath, data, 0o644); err != nil {
+		n, err := fsys.UploadAtomic(ctx, remotePath, in, 0o644)
+		if err != nil {
 			fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
 			return 1
 		}
-		fmt.Printf("uploaded %s -> %s (%d bytes)\n", localPath, remotePath, len(data))
+		fmt.Printf("uploaded %s -> %s (%d bytes)\n", localPath, remotePath, n)
 		return 0
 	})
 }

@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"strconv"
 	"strings"
 	"time"
@@ -94,7 +95,7 @@ func EnsureServe(ctx context.Context, conn Conn, opts Options) (Result, error) {
 	paths := pathsFor(home, workspace)
 
 	// 1. Reuse a live process if the recorded pid is still running.
-	if st, tok, ok := tryReuse(ctx, conn, fs, paths); ok {
+	if st, tok, ok := tryReuse(ctx, conn, fs, paths, workspace); ok {
 		opts.progress("reuse", st.Addr)
 		return Result{State: st, Token: tok, Reused: true}, nil
 	}
@@ -116,7 +117,21 @@ func EnsureServe(ctx context.Context, conn Conn, opts Options) (Result, error) {
 		return Result{}, err
 	}
 
-	// 4. Generate token, write it 0600, and launch detached serve.
+	// 4. Serialize only the short launch/publish section across every client.
+	// Another caller may have completed while this one was locating/installing,
+	// so re-check state after acquiring the remote lock.
+	opts.progress("waiting_lock", "")
+	lock, err := acquireServeLock(ctx, fs, paths, opts.clock())
+	if err != nil {
+		return Result{}, err
+	}
+	defer lock.release()
+	if st, tok, ok := tryReuse(ctx, conn, fs, paths, workspace); ok {
+		opts.progress("reuse", st.Addr)
+		return Result{State: st, Token: tok, Reused: true}, nil
+	}
+
+	// 5. Generate token, write it 0600, and launch detached serve.
 	token, err := generateToken()
 	if err != nil {
 		return Result{}, err
@@ -130,15 +145,25 @@ func EnsureServe(ctx context.Context, conn Conn, opts Options) (Result, error) {
 	opts.progress("launch", "")
 	launchRes, err := conn.Exec(ctx, LaunchCommand(bin, workspace, paths))
 	if err != nil {
+		cleanupFailedLaunch(conn, fs, paths, 0)
 		return Result{}, fmt.Errorf("bootstrap: launch: %w", err)
 	}
 	pid, _ := strconv.Atoi(strings.TrimSpace(string(launchRes.Stdout)))
 
-	// 5. Poll the port file for the real bound address.
+	// 6. Poll the newly-created port file for the real bound address. The launch
+	// command removes stale port/pid files before forking.
 	opts.progress("health_check", "")
 	addr, err := pollPortFile(ctx, fs, paths.PortFile, opts.clock())
 	if err != nil {
+		cleanupFailedLaunch(conn, fs, paths, pid)
 		return Result{}, err
+	}
+	if filePID, perr := readPIDFile(ctx, fs, paths.PidFile); perr == nil {
+		pid = filePID // --pid-file is authoritative when available.
+	}
+	if pid <= 0 || !pidIsServe(ctx, conn, pid, paths) {
+		cleanupFailedLaunch(conn, fs, paths, pid)
+		return Result{}, errors.New("bootstrap: launched process did not become the expected reasonix serve")
 	}
 
 	st := ServeState{
@@ -152,9 +177,11 @@ func EnsureServe(ctx context.Context, conn Conn, opts Options) (Result, error) {
 	}
 	data, err := MarshalState(st)
 	if err != nil {
+		cleanupFailedLaunch(conn, fs, paths, pid)
 		return Result{}, err
 	}
 	if err := fs.WriteFileAtomic(ctx, paths.StateJSON, data, 0o600); err != nil {
+		cleanupFailedLaunch(conn, fs, paths, pid)
 		return Result{}, fmt.Errorf("bootstrap: write state: %w", err)
 	}
 	opts.progress("ready", addr)
@@ -180,7 +207,7 @@ func Status(ctx context.Context, conn Conn, workspace string) (ServeState, bool,
 	if err != nil {
 		return ServeState{}, false, nil // no state => not running
 	}
-	alive := pidIsServe(ctx, conn, st.PID)
+	alive := st.Workspace == ws && validServeAddr(st.Addr) && pidIsServe(ctx, conn, st.PID, paths)
 	return st, alive, nil
 }
 
@@ -205,8 +232,8 @@ func Stop(ctx context.Context, conn Conn, workspace string) error {
 	}
 	// Only signal the pid if it is still OUR serve: a recycled PID now owned by
 	// an unrelated process must never be TERM/KILLed.
-	if st.PID > 0 && pidIsServe(ctx, conn, st.PID) {
-		if _, err := conn.Exec(ctx, StopCommand(st.PID)); err != nil {
+	if st.PID > 0 {
+		if _, err := conn.Exec(ctx, StopCommand(st.PID, paths)); err != nil {
 			return fmt.Errorf("bootstrap: stop pid %d: %w", st.PID, err)
 		}
 	}
@@ -240,15 +267,20 @@ func Logs(ctx context.Context, conn Conn, workspace string, n int, w io.Writer) 
 	return err
 }
 
-func tryReuse(ctx context.Context, conn Conn, fs *sftpfs.FS, paths StatePaths) (ServeState, string, bool) {
+func tryReuse(ctx context.Context, conn Conn, fs *sftpfs.FS, paths StatePaths, workspace ...string) (ServeState, string, bool) {
 	st, err := readState(ctx, fs, paths.StateJSON)
 	if err != nil || st.PID <= 0 || st.Addr == "" {
 		return ServeState{}, "", false
 	}
-	if !pidIsServe(ctx, conn, st.PID) {
+	if len(workspace) > 0 && st.Workspace != workspace[0] {
 		return ServeState{}, "", false
 	}
-	tok, err := readToken(ctx, fs, st.TokenFile)
+	if !validServeAddr(st.Addr) || !pidIsServe(ctx, conn, st.PID, paths) {
+		return ServeState{}, "", false
+	}
+	// The state record is informational; the workspace-derived path is the
+	// authority, so a tampered record cannot make us read an arbitrary file.
+	tok, err := readToken(ctx, fs, paths.TokenFile)
 	if err != nil {
 		return ServeState{}, "", false
 	}
@@ -257,11 +289,11 @@ func tryReuse(ctx context.Context, conn Conn, fs *sftpfs.FS, paths StatePaths) (
 
 // pidIsServe reports whether pid is running AND is a reasonix serve process,
 // so PID reuse cannot make an unrelated process look like a live serve.
-func pidIsServe(ctx context.Context, conn Conn, pid int) bool {
+func pidIsServe(ctx context.Context, conn Conn, pid int, paths StatePaths) bool {
 	if pid <= 0 {
 		return false
 	}
-	res, err := conn.Exec(ctx, ServeAliveCommand(pid))
+	res, err := conn.Exec(ctx, ServeAliveCommand(pid, paths))
 	if err != nil {
 		return false
 	}
@@ -294,7 +326,7 @@ func pollPortFile(ctx context.Context, fs *sftpfs.FS, portFile string, clock fun
 		data, _, _, err := fs.ReadFile(ctx, portFile, 128)
 		if err == nil {
 			addr := strings.TrimSpace(string(data))
-			if addr != "" {
+			if validServeAddr(addr) {
 				return addr, nil
 			}
 		}
@@ -307,6 +339,42 @@ func pollPortFile(ctx context.Context, fs *sftpfs.FS, portFile string, clock fun
 		case <-time.After(250 * time.Millisecond):
 		}
 	}
+}
+
+func validServeAddr(addr string) bool {
+	host, portText, err := net.SplitHostPort(strings.TrimSpace(addr))
+	if err != nil || host != "127.0.0.1" {
+		return false
+	}
+	port, err := strconv.Atoi(portText)
+	return err == nil && port > 0 && port <= 65535
+}
+
+func readPIDFile(ctx context.Context, fs *sftpfs.FS, pidFile string) (int, error) {
+	data, _, _, err := fs.ReadFile(ctx, pidFile, 64)
+	if err != nil {
+		return 0, err
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil || pid <= 0 {
+		return 0, errors.New("bootstrap: invalid serve pid file")
+	}
+	return pid, nil
+}
+
+func cleanupFailedLaunch(conn Conn, fs *sftpfs.FS, paths StatePaths, pid int) {
+	ctx, cancel := context.WithTimeout(context.Background(), 7*time.Second)
+	defer cancel()
+	if pid <= 0 {
+		pid, _ = readPIDFile(ctx, fs, paths.PidFile)
+	}
+	if pid > 0 {
+		_, _ = conn.Exec(ctx, StopCommand(pid, paths))
+	}
+	_ = fs.Remove(ctx, paths.StateJSON, false)
+	_ = fs.Remove(ctx, paths.TokenFile, false)
+	_ = fs.Remove(ctx, paths.PortFile, false)
+	_ = fs.Remove(ctx, paths.PidFile, false)
 }
 
 func resolveWorkspace(ctx context.Context, fs *sftpfs.FS, workspace, home string) (string, error) {

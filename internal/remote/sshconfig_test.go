@@ -72,6 +72,29 @@ func TestSSHConfigAliasesSkipWildcards(t *testing.T) {
 	}
 }
 
+func TestSSHConfigAliasesIncludeImportedFiles(t *testing.T) {
+	dir := t.TempDir()
+	included := filepath.Join(dir, "hosts.conf")
+	if err := os.WriteFile(included, []byte("Host included-box\n  HostName 192.0.2.10\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	main := filepath.Join(dir, "config")
+	if err := os.WriteFile(main, []byte("Include "+included+"\nHost direct-box\n  HostName 192.0.2.9\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	src, err := LoadSSHConfig(main)
+	if err != nil {
+		t.Fatal(err)
+	}
+	aliases := src.Aliases()
+	if len(aliases) != 2 || aliases[0].Alias != "included-box" || aliases[1].Alias != "direct-box" {
+		t.Fatalf("included aliases = %+v", aliases)
+	}
+	if aliases[0].HostName != "192.0.2.10" {
+		t.Fatalf("included host was not resolved: %+v", aliases[0])
+	}
+}
+
 func TestSSHConfigMissingFileIsEmpty(t *testing.T) {
 	src, err := LoadSSHConfig(filepath.Join(t.TempDir(), "does-not-exist"))
 	if err != nil {

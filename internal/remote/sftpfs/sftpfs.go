@@ -7,6 +7,7 @@
 package sftpfs
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -180,32 +181,46 @@ func (f *FS) Download(ctx context.Context, p string, w io.Writer) (int64, error)
 // WriteFileAtomic writes data to p via a temp file in the same directory
 // followed by a rename, so a concurrent reader never sees a partial file.
 func (f *FS) WriteFileAtomic(ctx context.Context, p string, data []byte, perm fs.FileMode) error {
-	_, err := run(ctx, func() (struct{}, error) {
+	_, err := f.writeFileAtomic(ctx, p, bytes.NewReader(data), perm)
+	return err
+}
+
+// UploadAtomic streams r into a same-directory temporary file and publishes it
+// with the same atomic-write contract as WriteFileAtomic.
+func (f *FS) UploadAtomic(ctx context.Context, p string, r io.Reader, perm fs.FileMode) (int64, error) {
+	return f.writeFileAtomic(ctx, p, r, perm)
+}
+
+func (f *FS) writeFileAtomic(ctx context.Context, p string, r io.Reader, perm fs.FileMode) (int64, error) {
+	return run(ctx, func() (int64, error) {
 		dir := path.Dir(p)
 		tmp := path.Join(dir, "."+path.Base(p)+".reasonix-tmp-"+randSuffix())
 		fh, oerr := f.client.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC)
 		if oerr != nil {
-			return struct{}{}, oerr
+			return 0, oerr
 		}
-		if _, werr := fh.Write(data); werr != nil {
+		n, werr := io.Copy(fh, r)
+		if werr != nil {
 			_ = fh.Close()
 			_ = f.client.Remove(tmp)
-			return struct{}{}, werr
+			return n, werr
 		}
 		if cerr := fh.Close(); cerr != nil {
 			_ = f.client.Remove(tmp)
-			return struct{}{}, cerr
+			return n, cerr
 		}
 		if perm != 0 {
-			_ = f.client.Chmod(tmp, perm)
+			if cerr := f.client.Chmod(tmp, perm); cerr != nil {
+				_ = f.client.Remove(tmp)
+				return n, cerr
+			}
 		}
 		if rerr := f.rename(tmp, p); rerr != nil {
 			_ = f.client.Remove(tmp)
-			return struct{}{}, rerr
+			return n, rerr
 		}
-		return struct{}{}, nil
+		return n, nil
 	})
-	return err
 }
 
 // rename prefers the POSIX atomic rename extension, falling back to
@@ -230,6 +245,15 @@ func (f *FS) rename(oldPath, newPath string) error {
 func (f *FS) MkdirAll(ctx context.Context, p string) error {
 	_, err := run(ctx, func() (struct{}, error) {
 		return struct{}{}, f.client.MkdirAll(p)
+	})
+	return err
+}
+
+// MkdirExclusive creates exactly p and fails when it already exists. It is the
+// atomic primitive used by cross-client remote bootstrap locks.
+func (f *FS) MkdirExclusive(ctx context.Context, p string) error {
+	_, err := run(ctx, func() (struct{}, error) {
+		return struct{}{}, f.client.Mkdir(p)
 	})
 	return err
 }
