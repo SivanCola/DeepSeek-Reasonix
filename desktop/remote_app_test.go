@@ -46,6 +46,18 @@ func TestRemoteConnectionErrorDetailsPreserveHostKeyMismatch(t *testing.T) {
 	}
 }
 
+func TestRemoteConnectionErrorDetailsPreserveDegradedState(t *testing.T) {
+	view := RemoteConnectionStatusView{HostID: "box", State: "degraded"}
+	applyRemoteConnectionError(&view, errors.New("forward attach failed"))
+
+	if view.ErrorDetails != nil {
+		t.Fatalf("degraded error must not be classified as a connection failure: %+v", view.ErrorDetails)
+	}
+	if view.Error != "forward attach failed" {
+		t.Fatalf("raw error = %q", view.Error)
+	}
+}
+
 func (f *fakeRemoteKernel) Hosts() ([]RemoteHostView, error) { return f.hosts, nil }
 func (f *fakeRemoteKernel) AddHost(in RemoteHostInput) (RemoteHostView, error) {
 	v := RemoteHostView{ID: in.Label, Label: in.Label, Host: in.Host}

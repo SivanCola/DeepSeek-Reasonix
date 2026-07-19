@@ -56,7 +56,7 @@ type DecisionSurfaceKind = "tool_approval" | "plan_approval" | "ask" | "clear_co
 import { StatusBar } from "./components/StatusBar";
 import { RemoteHostKeyDialog } from "./components/RemoteHostKeyDialog";
 import { onRemoteStatus, onRemoteForwards, onRemoteServer } from "./lib/bridge";
-import { useRemoteStore, waitForRemoteConnection } from "./store/remote";
+import { RemoteConnectionTimeoutError, useRemoteStore, waitForRemoteConnection } from "./store/remote";
 import { CommandPalette, type PaletteItem } from "./components/CommandPalette";
 import { UpdateBanner } from "./components/UpdateBanner";
 import { ContextPanel } from "./components/ContextPanel";
@@ -2569,7 +2569,7 @@ export default function App() {
     });
   }, [launchRemoteWorkspace, showToast]);
 
-  const connectAndOpenRemoteWorkspace = useCallback((host: RemoteHostView) => {
+  const connectAndOpenRemoteWorkspace = useCallback(function connectRemoteWorkspace(host: RemoteHostView) {
     void (async () => {
       try {
         const status = useRemoteStore.getState().statuses[host.id]?.state;
@@ -2581,7 +2581,19 @@ export default function App() {
           await app.ConnectRemoteHost(host.id);
           await waitForRemoteConnection(host.id);
         }
-      } catch {
+      } catch (err) {
+        if (err instanceof RemoteConnectionTimeoutError) {
+          showToast(t("remote.error.timeout", { host: host.label }), "error", {
+            actionLabel: t("remote.error.stopAndRetry"),
+            durationMs: 10_000,
+            onAction: () => {
+              void app.DisconnectRemoteHost(host.id)
+                .catch(() => undefined)
+                .then(() => connectRemoteWorkspace(host));
+            },
+          });
+          return;
+        }
         // Connection failures are host-scoped. Keep the persistent error and its
         // recovery actions beside the Remote SSH status entry instead of
         // stretching a raw backend error across the native titlebar.
@@ -2595,7 +2607,7 @@ export default function App() {
         showToast(err instanceof Error ? err.message : String(err), "error", { durationMs: 6000 });
       }
     })();
-  }, [launchRemoteWorkspace, requestRemoteStatusPopover, showToast]);
+  }, [launchRemoteWorkspace, requestRemoteStatusPopover, showToast, t]);
 
   const handleWorkspacePreviewModeChange = useCallback(
     (active: boolean) => {

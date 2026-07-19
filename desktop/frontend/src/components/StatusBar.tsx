@@ -6,7 +6,7 @@ import { Tooltip } from "./Tooltip";
 import { useI18n, type Translator } from "../lib/i18n";
 import { formatMoneyLocalized } from "../lib/money";
 import { normalizeStatusBarItems, type StatusBarItemId } from "../lib/statusBarItems";
-import { isRemoteHostKeyMismatch, remoteConnectionErrorSummaryKey } from "../lib/remoteErrors";
+import { isRemoteDegradedWarning, isRemoteHostKeyMismatch, isRemoteTerminalFailure, remoteConnectionErrorSummaryKey } from "../lib/remoteErrors";
 import { type BalanceInfo, type ContextInfo, type RemoteConnectionStatus, type RemoteHostView, type UsageSourceStats, type WireUsage } from "../lib/types";
 import { useRemoteStore } from "../store/remote";
 
@@ -408,13 +408,13 @@ function RemoteStatusBarChip({
 
   const entries = hosts.map((host) => statuses[host.id] ?? { hostId: host.id, state: "stopped" as const });
   const worst = entries.reduce((a, b) => {
-    const aSeverity = a.error ? 6 : REMOTE_STATE_SEVERITY[a.state] ?? 0;
-    const bSeverity = b.error ? 6 : REMOTE_STATE_SEVERITY[b.state] ?? 0;
+    const aSeverity = isRemoteTerminalFailure(a) ? 6 : REMOTE_STATE_SEVERITY[a.state] ?? 0;
+    const bSeverity = isRemoteTerminalFailure(b) ? 6 : REMOTE_STATE_SEVERITY[b.state] ?? 0;
     return bSeverity > aSeverity ? b : a;
   });
   const worstHost = hosts.find((host) => host.id === worst.hostId) ?? hosts[0];
-  const triggerState = worst.error ? "error" : worst.state;
-  const triggerStatus = worst.error ? t("remote.status.failed") : t(`remote.status.${worst.state}`);
+  const triggerState = isRemoteTerminalFailure(worst) ? "error" : worst.state;
+  const triggerStatus = isRemoteTerminalFailure(worst) ? t("remote.status.failed") : t(`remote.status.${worst.state}`);
   const triggerLabel = worst.state === "stopped" && !worst.error
     ? t("remote.statusBar.disconnected")
     : t("remote.statusBar.summary", { host: worstHost.label, status: triggerStatus });
@@ -458,8 +458,10 @@ function RemoteStatusBarChip({
               const status = statuses[host.id] ?? { hostId: host.id, state: "stopped" as const };
               const connected = status.state === "connected" || status.state === "degraded";
               const busy = status.state === "connecting" || status.state === "reconnecting" || status.state === "pending_hostkey";
-              const stateClass = status.error ? "error" : status.state;
-              const stateLabel = status.error ? t("remote.status.failed") : t(`remote.status.${status.state}`);
+              const terminalFailure = isRemoteTerminalFailure(status);
+              const degradedWarning = isRemoteDegradedWarning(status);
+              const stateClass = terminalFailure ? "error" : status.state;
+              const stateLabel = terminalFailure ? t("remote.status.failed") : t(`remote.status.${status.state}`);
               const errorSummary = status.error ? t(remoteConnectionErrorSummaryKey(status), { host: host.label }) : "";
               const target = `${host.user ? `${host.user}@` : ""}${host.host}${host.port && host.port !== 22 ? `:${host.port}` : ""}`;
               return (
@@ -493,7 +495,7 @@ function RemoteStatusBarChip({
                         }
                       }}
                     >
-                      {connected ? t("remote.openWorkspace") : busy ? stateLabel : status.error ? t("remote.error.retry") : t("remote.connectAndOpen")}
+                      {connected ? t("remote.openWorkspace") : busy ? stateLabel : terminalFailure ? t("remote.error.retry") : t("remote.connectAndOpen")}
                     </button>
                     {connected && (
                       <button
@@ -507,9 +509,9 @@ function RemoteStatusBarChip({
                       </button>
                     )}
                   </span>
-                  {status.error && (
-                    <div className="remote-switcher__error-card" role="alert">
-                      <strong>{t("remote.status.failed")}</strong>
+                  {(terminalFailure || degradedWarning) && (
+                    <div className={`remote-switcher__error-card ${degradedWarning ? "remote-switcher__error-card--warning" : ""}`} role="alert">
+                      <strong>{t(degradedWarning ? "remote.status.degraded" : "remote.status.failed")}</strong>
                       <span>{errorSummary}</span>
                       <div className="remote-switcher__error-actions">
                         <button

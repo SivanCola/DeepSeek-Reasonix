@@ -270,6 +270,9 @@ func applyRemoteConnectionError(view *RemoteConnectionStatusView, err error) {
 		return
 	}
 	view.Error = err.Error()
+	if view.State == "degraded" {
+		return
+	}
 	details := &RemoteConnectionErrorDetailsView{Code: "connection_failed"}
 	switch {
 	case errors.Is(err, remote.ErrHostKeyMismatch):

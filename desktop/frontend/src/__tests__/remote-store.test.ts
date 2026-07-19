@@ -3,7 +3,7 @@
 // Tests for the remote store's status/fingerprint reconciliation and the
 // bridge mock's remote:* event fan-out.
 
-import { useRemoteStore, waitForRemoteConnection } from "../store/remote";
+import { RemoteConnectionTimeoutError, useRemoteStore, waitForRemoteConnection } from "../store/remote";
 import { onRemoteStatus, __emitMockRemote } from "../lib/bridge";
 import { isRemoteHostKeyMismatch, remoteConnectionErrorSummaryKey } from "../lib/remoteErrors";
 import type { RemoteConnectionStatus } from "../lib/types";
@@ -94,6 +94,11 @@ const mismatchStatus: RemoteConnectionStatus = {
 };
 eq(isRemoteHostKeyMismatch(mismatchStatus), true, "structured mismatch is recognized without parsing raw error text");
 eq(remoteConnectionErrorSummaryKey(mismatchStatus), "remote.error.summary.host_key_mismatch", "mismatch uses the localized safe summary");
+eq(
+  remoteConnectionErrorSummaryKey({ hostId: "legacy", state: "degraded", error: "forward attach failed" }),
+  "remote.error.summary.degraded",
+  "legacy degraded status falls back to the warning summary",
+);
 
 const connectionReady = waitForRemoteConnection("waiting", 1_000);
 useRemoteStore.getState().applyStatus({ hostId: "waiting", state: "connected" });
@@ -108,6 +113,16 @@ try {
   failedConnection = err instanceof Error ? err.message : String(err);
 }
 eq(failedConnection, "handshake failed", "connection waiter rejects the host error without waiting for timeout");
+
+useRemoteStore.getState().applyStatus({ hostId: "timeout", state: "connecting" });
+let timeoutError: unknown;
+try {
+  await waitForRemoteConnection("timeout", 1);
+} catch (err) {
+  timeoutError = err;
+}
+eq(timeoutError instanceof RemoteConnectionTimeoutError, true, "connection waiter exposes a typed timeout for recovery UI");
+eq(useRemoteStore.getState().statuses.timeout?.state, "connecting", "connection timeout does not forge a backend terminal state");
 
 // The bridge mock fan-out delivers remote:status to subscribers.
 (function testMockFanout() {

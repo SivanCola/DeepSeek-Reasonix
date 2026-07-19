@@ -34274,6 +34274,9 @@ body > .mermaid-diagram--fullscreen {
   color: var(--danger);
   font-size: var(--text-sm);
 }
+.remote-panel__error--warning {
+  color: var(--warn);
+}
 .remote-panel {
   display: flex;
   flex-direction: column;
@@ -34325,6 +34328,11 @@ body > .mermaid-diagram--fullscreen {
   background: color-mix(in srgb, var(--danger) 10%, var(--bg));
   color: var(--danger);
   font-size: var(--text-xs);
+}
+.remote-panel__error-banner--warning {
+  border-bottom-color: color-mix(in srgb, var(--warn) 30%, var(--border-soft));
+  background: color-mix(in srgb, var(--warn) 10%, var(--bg));
+  color: var(--warn);
 }
 .remote-panel__banner {
   padding: 6px 12px;
@@ -34663,6 +34671,13 @@ body > .mermaid-diagram--fullscreen {
 .remote-switcher__error-card strong {
   color: var(--danger);
   font-size: var(--text-sm);
+}
+.remote-switcher__error-card--warning {
+  border-color: color-mix(in srgb, var(--warn) 28%, var(--border-soft));
+  background: color-mix(in srgb, var(--warn) 9%, var(--bg));
+}
+.remote-switcher__error-card--warning strong {
+  color: var(--warn);
 }
 .remote-switcher__error-actions {
   display: flex;

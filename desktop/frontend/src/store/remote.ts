@@ -21,6 +21,16 @@ export type RemoteStatusPopoverRequest = {
   nonce: number;
 };
 
+export class RemoteConnectionTimeoutError extends Error {
+  readonly hostId: string;
+
+  constructor(hostId: string) {
+    super(`Timed out connecting to ${hostId}`);
+    this.name = "RemoteConnectionTimeoutError";
+    this.hostId = hostId;
+  }
+}
+
 export type RemoteState = {
   hosts: RemoteHostView[];
   statuses: Record<string, RemoteConnectionStatus>;
@@ -146,6 +156,6 @@ export function waitForRemoteConnection(hostId: string, timeoutMs = 60_000): Pro
       if (connected(status?.state)) finish();
       else if (status?.state === "stopped" && status.error) finish(new Error(status.error));
     });
-    const timer = setTimeout(() => finish(new Error(`Timed out connecting to ${hostId}`)), timeoutMs);
+    const timer = setTimeout(() => finish(new RemoteConnectionTimeoutError(hostId)), timeoutMs);
   });
 }

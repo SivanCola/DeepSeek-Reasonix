@@ -64,6 +64,11 @@ const status: RemoteConnectionStatus = {
     knownHostRecords: [{ path: "/home/dev/.ssh/known_hosts", line: 7 }],
   },
 };
+const degradedStatus: RemoteConnectionStatus = {
+  hostId: "box",
+  state: "degraded",
+  error: "forward attach failed",
+};
 
 useRemoteStore.setState({ statusPopoverRequest: null });
 const rootEl = document.getElementById("root");
@@ -102,6 +107,28 @@ const dialog = document.querySelector<HTMLElement>(".remote-connection-error-dia
 ok(Boolean(dialog), "key-details action opens the security dialog");
 ok(dialog?.textContent?.includes("SHA256:new") === true, "security dialog shows the presented fingerprint");
 ok(dialog?.textContent?.includes("/home/dev/.ssh/known_hosts:7") === true, "security dialog shows the conflicting known_hosts record");
+
+const closeButton = Array.from(dialog?.querySelectorAll("button") ?? []).find((button) => button.textContent?.includes("Close"));
+await act(async () => {
+  closeButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  root.render(
+    <LocaleProvider>
+      <StatusBar
+        context={{ used: 0, window: 0, sessionTokens: 0 }}
+        running={false}
+        remoteHosts={[host]}
+        remoteStatuses={{ box: degradedStatus }}
+      />
+    </LocaleProvider>,
+  );
+  useRemoteStore.getState().requestStatusPopover("box");
+  await new Promise((resolve) => requestAnimationFrame(() => resolve(undefined)));
+});
+
+const warningCard = document.querySelector<HTMLElement>(".remote-switcher__error-card--warning");
+ok(Boolean(warningCard), "degraded connection uses a warning card");
+ok(warningCard?.textContent?.includes("SSH is connected") === true, "degraded warning explains that SSH remains connected");
+ok(warningCard?.textContent?.includes("Connection failed") === false, "degraded warning does not claim the connection failed");
 
 await act(async () => root.unmount());
 dom.window.close();
