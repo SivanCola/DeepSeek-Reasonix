@@ -73,6 +73,7 @@ func loadForRoot(root string, migrateOnDisk bool) (*Config, error) {
 	}
 	userDefaultModel := cfg.DefaultModel
 	globalSecrets := cfg.Secrets
+	globalRemote := cfg.Remote.Clone()
 
 	tomlSources = append(tomlSources, projectTOML)
 	if err := mergeTOML(cfg, projectTOML); err != nil {
@@ -82,6 +83,10 @@ func loadForRoot(root string, migrateOnDisk bool) (*Config, error) {
 	// reasonix.toml must not be able to flip on the workflow-breaking env/path
 	// protections.
 	cfg.Secrets = globalSecrets
+	// Remote SSH hosts are equally user-global: a cloned repo's reasonix.toml
+	// must not be able to inject hosts, jump chains, or port forwards that
+	// steer where Reasonix opens connections.
+	cfg.Remote = globalRemote
 	// TOML decoding replaces [[plugins]] wholesale, so cfg.Plugins now holds
 	// only the last file's. Re-merge by name across all sources (later wins) so a
 	// project reasonix.toml doesn't drop the global config's MCP servers.
