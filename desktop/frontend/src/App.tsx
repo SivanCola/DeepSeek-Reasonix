@@ -53,6 +53,9 @@ import { ClearContextCard } from "./components/ClearContextCard";
 /** Footer decision surface kinds. Priority: tool/plan approval > ask > clear context. */
 type DecisionSurfaceKind = "tool_approval" | "plan_approval" | "ask" | "clear_context";
 import { StatusBar } from "./components/StatusBar";
+import { RemoteHostKeyDialog } from "./components/RemoteHostKeyDialog";
+import { onRemoteStatus, onRemoteForwards, onRemoteServer } from "./lib/bridge";
+import { useRemoteStore } from "./store/remote";
 import { CommandPalette, type PaletteItem } from "./components/CommandPalette";
 import { UpdateBanner } from "./components/UpdateBanner";
 import { ContextPanel } from "./components/ContextPanel";
@@ -254,6 +257,7 @@ function NoticePreviewPanel() {
 
 const HistoryPanel = lazy(() => import("./components/HistoryPanel").then((module) => ({ default: module.HistoryPanel })));
 const SettingsPanel = lazy(() => import("./components/SettingsPanel").then((module) => ({ default: module.SettingsPanel })));
+const RemotePanel = lazy(() => import("./components/RemotePanel").then((module) => ({ default: module.RemotePanel })));
 
 const CHAT_MIN_WIDTH = 400;
 const CHAT_COMFORT_MIN_WIDTH = 560;
@@ -1101,6 +1105,10 @@ export default function App() {
   const [histView, setHistView] = useState<HistoryViewState | null>(null);
   const paletteOpen = useOverlayStore((s) => s.paletteOpen);
   const setPaletteOpen = useOverlayStore((s) => s.setPaletteOpen);
+  const remoteExplorerOpen = useRemoteStore((s) => s.explorerOpen);
+  const applyRemoteStatus = useRemoteStore((s) => s.applyStatus);
+  const setRemoteForwards = useRemoteStore((s) => s.setForwards);
+  const setRemoteServer = useRemoteStore((s) => s.setServer);
   const shortcutsOpen = useOverlayStore((s) => s.shortcutsOpen);
   const setShortcutsOpen = useOverlayStore((s) => s.setShortcutsOpen);
   const paletteSessions = useOverlayStore((s) => s.paletteSessions);
@@ -2160,6 +2168,19 @@ export default function App() {
       void refreshTabMetas();
     });
   }, [refreshTabMetas]);
+
+  // Bridge remote:* events into the remote store once, app-wide, so the
+  // StatusBar chip, host manager, and explorer all see the same live state.
+  useEffect(() => {
+    const offStatus = onRemoteStatus((s) => applyRemoteStatus(s));
+    const offForwards = onRemoteForwards((e) => setRemoteForwards(e.hostId, e.forwards));
+    const offServer = onRemoteServer((s) => setRemoteServer(s));
+    return () => {
+      offStatus();
+      offForwards();
+      offServer();
+    };
+  }, [applyRemoteStatus, setRemoteForwards, setRemoteServer]);
 
   useEffect(() => {
     let cancelled = false;
@@ -4281,6 +4302,13 @@ export default function App() {
           />
         </Suspense>
       )}
+
+      {remoteExplorerOpen && (
+        <Suspense fallback={null}>
+          <RemotePanel />
+        </Suspense>
+      )}
+      <RemoteHostKeyDialog />
 
       <CommandPalette
         open={paletteOpen}

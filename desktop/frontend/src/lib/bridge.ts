@@ -21,6 +21,16 @@ import type {
   AutoResearchFindingView,
   AutoResearchEvidenceView,
   AutoResearchStatusView,
+  RemoteHostView,
+  RemoteHostInput,
+  RemoteConnectionStatus,
+  RemoteDirEntry,
+  RemoteFilePreview,
+  RemoteWriteResult,
+  RemoteForwardInput,
+  RemoteForwardView,
+  RemoteServerView,
+  RemoteForwardsEvent,
   BalanceInfo,
   BotConnectionDiagnostic,
   BotInstallPollResult,
@@ -440,6 +450,31 @@ export interface AppBindings {
   // New native-feel bindings (added with the desktop native-feel plan).
   ConfirmAction(req: NativeConfirmRequest): Promise<boolean>;
   SaveWindowState(state: DesktopWindowState): Promise<void>;
+  // ── Remote (SSH) ──
+  RemoteHosts(): Promise<RemoteHostView[]>;
+  AddRemoteHost(input: RemoteHostInput): Promise<RemoteHostView>;
+  UpdateRemoteHost(id: string, input: RemoteHostInput): Promise<RemoteHostView>;
+  RemoveRemoteHost(id: string): Promise<void>;
+  ScanSSHConfig(): Promise<RemoteHostInput[]>;
+  ConnectRemoteHost(id: string): Promise<void>;
+  DisconnectRemoteHost(id: string): Promise<void>;
+  RemoteConnectionStatuses(): Promise<RemoteConnectionStatus[]>;
+  ConfirmRemoteHostKey(hostId: string, accept: boolean): Promise<void>;
+  ListRemoteDir(hostId: string, path: string): Promise<RemoteDirEntry[]>;
+  ReadRemoteFile(hostId: string, path: string): Promise<RemoteFilePreview>;
+  WriteRemoteFile(hostId: string, path: string, body: string, expectMtimeUnix: number): Promise<RemoteWriteResult>;
+  MkdirRemote(hostId: string, path: string): Promise<void>;
+  RenameRemotePath(hostId: string, oldPath: string, newPath: string): Promise<void>;
+  DeleteRemotePath(hostId: string, path: string, recursive: boolean): Promise<void>;
+  RemoteForwards(hostId: string): Promise<RemoteForwardView[]>;
+  AddRemoteForward(hostId: string, input: RemoteForwardInput): Promise<RemoteForwardView>;
+  RemoveRemoteForward(hostId: string, forwardId: string): Promise<void>;
+  EnsureRemoteServer(hostId: string, workspace: string): Promise<void>;
+  OpenRemoteWorkspace(hostId: string, workspace: string): Promise<void>;
+  StopRemoteServer(hostId: string): Promise<void>;
+  RemoteServerStatus(hostId: string): Promise<RemoteServerView>;
+  RemoteServerLogs(hostId: string, tailLines: number): Promise<string>;
+  RemoteLastWorkspace(hostId: string): Promise<string>;
 }
 
 // Compile-time drift check. Exclude<A, B> extracts keys in A that are missing
@@ -674,6 +709,43 @@ export function onSessionRecoveryFailed(cb: (payload: SessionRecoveryFailedEvent
     return window.runtime.EventsOn("session:recovery-failed", (payload?: unknown) => cb((payload ?? {}) as SessionRecoveryFailedEvent));
   }
   return () => {};
+}
+
+export function onRemoteStatus(cb: (s: RemoteConnectionStatus) => void): () => void {
+  if (realApp() && typeof window !== "undefined" && window.runtime) {
+    return window.runtime.EventsOn("remote:status", (payload?: unknown) => cb((payload ?? {}) as RemoteConnectionStatus));
+  }
+  return registerMockRemoteListener("status", cb as (v: unknown) => void);
+}
+
+export function onRemoteForwards(cb: (e: RemoteForwardsEvent) => void): () => void {
+  if (realApp() && typeof window !== "undefined" && window.runtime) {
+    return window.runtime.EventsOn("remote:forwards", (payload?: unknown) => cb((payload ?? {}) as RemoteForwardsEvent));
+  }
+  return registerMockRemoteListener("forwards", cb as (v: unknown) => void);
+}
+
+export function onRemoteServer(cb: (s: RemoteServerView) => void): () => void {
+  if (realApp() && typeof window !== "undefined" && window.runtime) {
+    return window.runtime.EventsOn("remote:server", (payload?: unknown) => cb((payload ?? {}) as RemoteServerView));
+  }
+  return registerMockRemoteListener("server", cb as (v: unknown) => void);
+}
+
+// Mock event fan-out so browser-dev and tsx tests can drive remote:* events
+// without a Wails runtime.
+type MockRemoteChannel = "status" | "forwards" | "server";
+const mockRemoteListeners: Record<MockRemoteChannel, Set<(v: unknown) => void>> = {
+  status: new Set(),
+  forwards: new Set(),
+  server: new Set(),
+};
+function registerMockRemoteListener(ch: MockRemoteChannel, cb: (v: unknown) => void): () => void {
+  mockRemoteListeners[ch].add(cb);
+  return () => mockRemoteListeners[ch].delete(cb);
+}
+export function __emitMockRemote(ch: MockRemoteChannel, payload: unknown): void {
+  for (const cb of mockRemoteListeners[ch]) cb(payload);
 }
 
 // app proxies each call to the live binding (or the dev mock only when truly
@@ -4354,5 +4426,102 @@ function makeMockApp(): AppBindings {
         ],
       };
     },
+
+    // ── Remote (SSH) mock ──
+    async RemoteHosts() {
+      return mockRemoteHosts.slice();
+    },
+    async AddRemoteHost(input) {
+      const view: RemoteHostView = { id: input.label, ...input };
+      mockRemoteHosts = [...mockRemoteHosts.filter((h) => h.id !== view.id), view];
+      return view;
+    },
+    async UpdateRemoteHost(id, input) {
+      const view: RemoteHostView = { id, ...input };
+      mockRemoteHosts = mockRemoteHosts.map((h) => (h.id === id ? view : h));
+      return view;
+    },
+    async RemoveRemoteHost(id) {
+      mockRemoteHosts = mockRemoteHosts.filter((h) => h.id !== id);
+      delete mockRemoteConn[id];
+    },
+    async ScanSSHConfig() {
+      return [
+        { label: "gpu-box", host: "203.0.113.7", port: 22, user: "dev", identityFile: "~/.ssh/id_ed25519", proxyJump: "", defaultWorkspace: "", serveInstall: "auto", useSSHConfig: true },
+      ];
+    },
+    async ConnectRemoteHost(id) {
+      mockRemoteConn[id] = "connecting";
+      __emitMockRemote("status", { hostId: id, state: "connecting" });
+      setTimeout(() => {
+        mockRemoteConn[id] = "connected";
+        __emitMockRemote("status", { hostId: id, state: "connected" });
+      }, 300);
+    },
+    async DisconnectRemoteHost(id) {
+      mockRemoteConn[id] = "stopped";
+      __emitMockRemote("status", { hostId: id, state: "stopped" });
+    },
+    async RemoteConnectionStatuses() {
+      return Object.entries(mockRemoteConn).map(([hostId, state]) => ({ hostId, state: state as RemoteConnectionStatus["state"] }));
+    },
+    async ConfirmRemoteHostKey(hostId, accept) {
+      mockRemoteConn[hostId] = accept ? "connected" : "stopped";
+      __emitMockRemote("status", { hostId, state: mockRemoteConn[hostId] });
+    },
+    async ListRemoteDir(_hostId, path) {
+      const base = path.replace(/\/$/, "");
+      return [
+        { name: "src", path: `${base}/src`, isDir: true, size: 0, mtimeUnix: 1_700_000_000, symlink: false },
+        { name: "README.md", path: `${base}/README.md`, isDir: false, size: 1024, mtimeUnix: 1_700_000_500, symlink: false },
+      ];
+    },
+    async ReadRemoteFile(_hostId, path) {
+      return { path, body: `# Mock remote file\n${path}\n`, size: 40, mtimeUnix: 1_700_000_500, truncated: false, binary: false };
+    },
+    async WriteRemoteFile(_hostId, _path, _body, _expectMtimeUnix) {
+      return { ok: true, conflict: false, newMtimeUnix: 1_700_000_900 };
+    },
+    async MkdirRemote() {},
+    async RenameRemotePath() {},
+    async DeleteRemotePath() {},
+    async RemoteForwards(hostId) {
+      return mockRemoteForwards[hostId] ?? [];
+    },
+    async AddRemoteForward(hostId, input) {
+      const view: RemoteForwardView = { id: `L:${input.localPort}`, hostId, ...input, state: "active" };
+      mockRemoteForwards[hostId] = [...(mockRemoteForwards[hostId] ?? []), view];
+      __emitMockRemote("forwards", { hostId, forwards: mockRemoteForwards[hostId] });
+      return view;
+    },
+    async RemoveRemoteForward(hostId, forwardId) {
+      mockRemoteForwards[hostId] = (mockRemoteForwards[hostId] ?? []).filter((f) => f.id !== forwardId);
+      __emitMockRemote("forwards", { hostId, forwards: mockRemoteForwards[hostId] });
+    },
+    async EnsureRemoteServer(hostId, workspace) {
+      for (const state of ["starting", "detect", "launch", "ready"] as const) {
+        __emitMockRemote("server", { hostId, workspace, state, localUrl: state === "ready" ? "http://127.0.0.1:44321/" : "" });
+      }
+    },
+    async OpenRemoteWorkspace() {},
+    async StopRemoteServer(hostId) {
+      __emitMockRemote("server", { hostId, workspace: "", state: "stopped" });
+    },
+    async RemoteServerStatus(hostId) {
+      return { hostId, workspace: "~/app", state: "stopped" };
+    },
+    async RemoteServerLogs() {
+      return "mock serve log line 1\nmock serve log line 2\n";
+    },
+    async RemoteLastWorkspace() {
+      return "~/app";
+    },
   };
 }
+
+// Mock remote state, module-scoped so it survives across mock method calls.
+let mockRemoteHosts: RemoteHostView[] = [
+  { id: "demo", label: "demo", host: "192.168.1.10", port: 22, user: "dev", identityFile: "", proxyJump: "", defaultWorkspace: "~/app", serveInstall: "auto", useSSHConfig: false },
+];
+const mockRemoteConn: Record<string, RemoteConnectionStatus["state"]> = {};
+const mockRemoteForwards: Record<string, RemoteForwardView[]> = {};

@@ -5,6 +5,7 @@ import { useI18n, type Translator } from "../lib/i18n";
 import { formatMoneyLocalized } from "../lib/money";
 import { normalizeStatusBarItems, type StatusBarItemId } from "../lib/statusBarItems";
 import { type BalanceInfo, type ContextInfo, type UsageSourceStats, type WireUsage } from "../lib/types";
+import { useRemoteStore } from "../store/remote";
 
 type StatusBarLabelStyle = "icon" | "text";
 
@@ -330,7 +331,42 @@ export function StatusBar({
             {node}
           </span>
         ))}
+        <RemoteStatusBarChip />
       </div>
     </div>
+  );
+}
+
+// RemoteStatusBarChip surfaces the worst live remote connection state as a
+// persistent, one-click entry point to the remote explorer. It renders nothing
+// while every host is stopped/absent, so users who never use Remote never see it.
+const REMOTE_STATE_SEVERITY: Record<string, number> = {
+  error: 5,
+  reconnecting: 4,
+  pending_hostkey: 4,
+  connecting: 3,
+  degraded: 2,
+  connected: 1,
+  stopped: 0,
+};
+
+function RemoteStatusBarChip() {
+  const { t } = useI18n();
+  const statuses = useRemoteStore((s) => s.statuses);
+  const openExplorer = useRemoteStore((s) => s.openExplorer);
+  const entries = Object.values(statuses).filter((s) => s.state !== "stopped");
+  if (entries.length === 0) return null;
+  const worst = entries.reduce((a, b) =>
+    (REMOTE_STATE_SEVERITY[b.state] ?? 0) > (REMOTE_STATE_SEVERITY[a.state] ?? 0) ? b : a,
+  );
+  return (
+    <button
+      className={`statusbar__item statusbar__remote remote-chip remote-chip--${worst.state}`}
+      onClick={() => openExplorer(worst.hostId)}
+      aria-label={t(`remote.status.${worst.state}`)}
+      title={`${worst.hostId} — ${t(`remote.status.${worst.state}`)}`}
+    >
+      {worst.hostId}
+    </button>
   );
 }

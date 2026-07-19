@@ -63,11 +63,12 @@ import { getSuccessPreference, setSuccessPreference, getAttentionPreference, set
 import { ModalCloseButton } from "./ModalCloseButton";
 import { ShortcutComboDisplay } from "./ShortcutComboDisplay";
 
-const SETTINGS_TABS: SettingsTab[] = ["general", "models", "bots", "mcp", "skills", "subagents", "plugins", "memory", "hooks", "diagnostics", "shortcuts", "permissions", "sandbox", "network", "appearance", "updates"];
+const SETTINGS_TABS: SettingsTab[] = ["general", "models", "bots", "mcp", "remote", "skills", "subagents", "plugins", "memory", "hooks", "diagnostics", "shortcuts", "permissions", "sandbox", "network", "appearance", "updates"];
 export type SettingsInitialFocus = { target: "bot-allowlist"; connectionId?: string };
 type DesktopPlatform = "darwin" | "windows" | "linux";
 
 const MCPServersSettingsPage = lazy(() => import("./CapabilitiesPanel").then((module) => ({ default: module.MCPServersSettingsPage })));
+const RemoteHostsPage = lazy(() => import("./RemoteHostsPage").then((module) => ({ default: module.RemoteHostsPage })));
 const SkillsSettingsPage = lazy(() => import("./CapabilitiesPanel").then((module) => ({ default: module.SkillsSettingsPage })));
 const PluginsSettingsPage = lazy(() => import("./CapabilitiesPanel").then((module) => ({ default: module.PluginsSettingsPage })));
 const MemorySettingsPage = lazy(() => import("./MemoryPanel").then((module) => ({ default: module.MemorySettingsPage })));
@@ -268,6 +269,7 @@ export function SettingsPanel({
                 {tab === "models" && s && <SettingsPageShell key={tab} s={s} tab={tab} busy={busy} apply={apply}><ModelsSection s={s} busy={busy} apply={apply} backgroundApply={backgroundApply} /></SettingsPageShell>}
                 {tab === "bots" && s && <SettingsPageShell key={tab} s={s} tab={tab} busy={busy} apply={apply}><BotsSection s={s} busy={busy} apply={apply} initialFocus={initialFocus} /></SettingsPageShell>}
                 {tab === "mcp" && <SettingsPageShell key={tab} s={s} tab={tab} busy={false} apply={apply}><Suspense fallback={lazySettingsPageFallback}><MCPServersSettingsPage /></Suspense></SettingsPageShell>}
+                {tab === "remote" && <SettingsPageShell key={tab} s={s} tab={tab} busy={false} apply={apply}><Suspense fallback={lazySettingsPageFallback}><RemoteHostsPage /></Suspense></SettingsPageShell>}
                 {tab === "skills" && <SettingsPageShell key={tab} s={s} tab={tab} busy={false} apply={apply}><Suspense fallback={lazySettingsPageFallback}><SkillsSettingsPage /></Suspense></SettingsPageShell>}
                 {tab === "subagents" && s && <SettingsPageShell key={tab} s={s} tab={tab} busy={busy} apply={apply}><Suspense fallback={lazySettingsPageFallback}><SubagentsSettingsPage s={s} onUseInChat={(command) => {
                   pendingSubagentCommandRef.current = command;
@@ -382,6 +384,7 @@ function settingsPageKind(tab: SettingsTab): "form" | "manager" {
   switch (tab) {
     case "models":
     case "mcp":
+    case "remote":
     case "skills":
     case "subagents":
     case "plugins":
@@ -499,6 +502,8 @@ function settingsTabLabel(id: SettingsTab, t: ReturnType<typeof useT>): string {
       return t("settings.tab.bots");
     case "mcp":
       return t("settings.tab.mcp");
+    case "remote":
+      return t("settings.tab.remote");
     case "skills":
       return t("settings.tab.skills");
     case "subagents":
@@ -538,6 +543,8 @@ function settingsTabMeta(id: SettingsTab, s: SettingsView, t: ReturnType<typeof 
       return botSettingsMeta(s.bot, t);
     case "mcp":
       return t("caps.connectorsTab");
+    case "remote":
+      return t("remote.tabHint");
     case "skills":
       return t("caps.skillsTab");
     case "subagents":

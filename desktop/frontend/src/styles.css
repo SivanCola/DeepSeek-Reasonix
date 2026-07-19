@@ -34144,3 +34144,324 @@ body > .mermaid-diagram--fullscreen {
     border: 1px solid #d1d5db !important;
   }
 }
+
+/* ── Remote SSH module ──────────────────────────────────────────────────── */
+.remote-hosts__toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.remote-hosts__actions {
+  display: flex;
+  gap: 8px;
+}
+.remote-hosts__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.remote-hosts__empty,
+.remote-panel__hint {
+  color: var(--fg-faint);
+  font-size: var(--text-sm);
+}
+.remote-host-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  background: var(--bg-elev);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
+}
+.remote-host-row__main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.remote-host-row__name {
+  font-weight: 600;
+}
+.remote-host-row__target {
+  color: var(--fg-faint);
+  font-size: var(--text-sm);
+}
+.remote-host-row__actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.remote-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: var(--text-xs);
+  border: 1px solid var(--border);
+  color: var(--fg-dim);
+  background: var(--bg-soft);
+}
+.remote-chip--connected {
+  color: var(--ok);
+  border-color: color-mix(in srgb, var(--ok) 50%, var(--border));
+}
+.remote-chip--connecting {
+  color: var(--fg-dim);
+}
+.remote-chip--reconnecting,
+.remote-chip--pending_hostkey,
+.remote-chip--degraded {
+  color: var(--warn);
+  border-color: color-mix(in srgb, var(--warn) 50%, var(--border));
+}
+.remote-chip--error {
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 50%, var(--border));
+}
+.remote-host-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-width: 480px;
+}
+.remote-host-form label,
+.remote-server__ws {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: var(--text-sm);
+  color: var(--fg-dim);
+}
+.remote-host-form input,
+.remote-host-form select,
+.remote-server__ws input,
+.remote-ports__form input {
+  background: var(--bg-soft);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--fg);
+  padding: 6px 8px;
+}
+.remote-host-form__actions,
+.remote-server__actions,
+.remote-ports__form {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.remote-host-form__error,
+.remote-panel__error {
+  color: var(--danger);
+  font-size: var(--text-sm);
+}
+.remote-panel {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: min(560px, 92vw);
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-elev);
+  border-left: 1px solid var(--border);
+  z-index: var(--z-drawer-backdrop);
+}
+.remote-panel__header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border-soft);
+}
+.remote-panel__host {
+  font-weight: 600;
+}
+.remote-panel__header-actions {
+  margin-left: auto;
+  display: flex;
+  gap: 6px;
+}
+.remote-panel__banner {
+  padding: 6px 12px;
+  background: color-mix(in srgb, var(--warn) 18%, var(--bg-elev));
+  color: var(--warn);
+  font-size: var(--text-sm);
+}
+.remote-panel__tabs {
+  display: flex;
+  gap: 2px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border-soft);
+}
+.remote-panel__tab {
+  background: transparent;
+  border: none;
+  color: var(--fg-faint);
+  padding: 4px 10px;
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+.remote-panel__tab.is-active {
+  background: var(--bg-elev-2);
+  color: var(--fg);
+}
+.remote-panel__body {
+  flex: 1;
+  overflow: auto;
+  padding: 10px 12px;
+}
+.remote-files {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  height: 100%;
+}
+.remote-files__tree ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.remote-tree__row {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: none;
+  color: var(--fg-dim);
+  padding: 2px 4px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: var(--text-sm);
+}
+.remote-tree__row.is-selected {
+  background: var(--bg-elev-2);
+  color: var(--fg);
+}
+.remote-tree__empty {
+  color: var(--fg-faint);
+  font-size: var(--text-xs);
+  padding: 2px 4px;
+}
+.remote-file-view__toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.remote-file-view__path {
+  font-family: monospace;
+  font-size: var(--text-xs);
+  color: var(--fg-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.remote-file-view__editor {
+  width: 100%;
+  min-height: 320px;
+  font-family: monospace;
+  font-size: var(--font-code);
+  background: var(--bg-soft);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 8px;
+}
+.remote-file-view__conflict {
+  margin-top: 8px;
+  padding: 10px;
+  border: 1px solid color-mix(in srgb, var(--warn) 50%, var(--border));
+  border-radius: var(--radius);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.remote-ports__list {
+  list-style: none;
+  margin: 0 0 10px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.remote-ports__row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.remote-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--fg-faint);
+}
+.remote-dot--active {
+  background: var(--ok);
+}
+.remote-dot--error {
+  background: var(--danger);
+}
+.remote-server__status {
+  margin: 8px 0;
+  color: var(--fg-dim);
+  font-size: var(--text-sm);
+}
+.remote-server__logs {
+  margin-top: 10px;
+  max-height: 220px;
+  overflow: auto;
+  background: var(--bg-soft);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
+  padding: 8px;
+  font-size: var(--text-xs);
+}
+.remote-hostkey-overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.5);
+  z-index: var(--z-modal);
+}
+.remote-hostkey-dialog {
+  width: min(460px, 92vw);
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 18px;
+}
+.remote-hostkey-dialog__title {
+  margin: 0 0 8px;
+  font-size: var(--text-lg);
+}
+.remote-hostkey-dialog__facts {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 10px;
+  margin: 10px 0;
+  font-size: var(--text-sm);
+}
+.remote-hostkey-dialog__fp {
+  font-family: monospace;
+  word-break: break-all;
+}
+.remote-hostkey-dialog__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 12px;
+}
+.statusbar__remote {
+  cursor: pointer;
+  border: 1px solid var(--border);
+}
