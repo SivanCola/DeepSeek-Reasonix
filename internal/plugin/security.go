@@ -95,9 +95,13 @@ func buildSpecIdentity(ctx context.Context, s Spec) (mcptrust.Identity, error) {
 			return mcptrust.Identity{}, fmt.Errorf("official MCP package for %q changed after verification; blocked before process or network startup", s.Name)
 		}
 	}
+	launchArgs := effectiveLaunchArgs(s)
+	if s.LauncherIdentityArgs != nil {
+		launchArgs = s.LauncherIdentityArgs
+	}
 	identity := mcptrust.Identity{
 		Server: s.Name, Transport: transport, ConfigSource: s.ConfigSource,
-		Dir: s.Dir, Args: append([]string(nil), effectiveLaunchArgs(s)...),
+		Dir: s.Dir, Args: append([]string(nil), launchArgs...),
 		EnvKeys: sortedMapKeys(s.Env), HeaderKeys: sortedMapKeys(s.Headers),
 		Network: s.ReaderSandbox.Network || s.WriterSandbox.Network,
 		WriteRoots: append(append(append([]string(nil), s.ReaderSandbox.WriteRoots...),

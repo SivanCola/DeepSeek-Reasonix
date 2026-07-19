@@ -4,9 +4,49 @@ import (
 	"context"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"reasonix/internal/repair"
 )
+
+func TestShutdownWaitsForRuntimeLifecycleMutation(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	app := NewApp()
+	app.runtimeAdmissionMu.Lock()
+	admissionHeld := true
+	defer func() {
+		if admissionHeld {
+			app.runtimeAdmissionMu.Unlock()
+		}
+	}()
+
+	done := make(chan struct{})
+	go func() {
+		app.shutdown(context.Background())
+		close(done)
+	}()
+	deadline := time.Now().Add(5 * time.Second)
+	for app.runtimeRebuildMu.TryLock() {
+		app.runtimeRebuildMu.Unlock()
+		if time.Now().After(deadline) {
+			t.Fatal("shutdown did not enter the runtime lifecycle barrier")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	select {
+	case <-done:
+		t.Fatal("shutdown bypassed an in-flight runtime lifecycle mutation")
+	default:
+	}
+
+	app.runtimeAdmissionMu.Unlock()
+	admissionHeld = false
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("shutdown did not resume after the runtime lifecycle mutation completed")
+	}
+}
 
 // TestShutdownDoesNotBlessStartupBeforeReady pins the recovery contract that a
 // clean exit before the window ever reached domReady keeps the incomplete

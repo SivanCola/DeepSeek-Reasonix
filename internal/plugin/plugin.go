@@ -101,9 +101,13 @@ type Spec struct {
 	VerifiedVersion        string
 	CatalogSequence        uint64
 	// LaunchArgs and launcher metadata are host-local immutable resolutions for
-	// mutable package launchers. They never contribute to SpecFingerprint or the
+	// mutable package launchers. LauncherIdentityArgs is the same exact package
+	// resolution without an automatically injected offline/no-install flag: that
+	// enforcement-only flag changes process invocation but not the server identity
+	// the user approved. These fields never contribute to SpecFingerprint or the
 	// provider-visible tool surface; Args remains the user's stable config.
 	LaunchArgs              []string
+	LauncherIdentityArgs    []string
 	LauncherLocator         string
 	LauncherResolvedVersion string
 	LauncherDigest          string

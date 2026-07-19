@@ -50,6 +50,10 @@ func TestPluginToolsToViewPreservesSchemaError(t *testing.T) {
 }
 
 func desktopMCPHTTPServer(t *testing.T) *httptest.Server {
+	return desktopMCPHTTPServerWithTool(t, "h", "greet")
+}
+
+func desktopMCPHTTPServerWithTool(t *testing.T, serverName, toolName string) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
@@ -70,11 +74,11 @@ func desktopMCPHTTPServer(t *testing.T) *httptest.Server {
 		case "initialize":
 			result = map[string]any{
 				"protocolVersion": "2024-11-05",
-				"serverInfo":      map[string]any{"name": "h", "version": "0"},
+				"serverInfo":      map[string]any{"name": serverName, "version": "0"},
 			}
 		case "tools/list":
 			result = map[string]any{"tools": []map[string]any{{
-				"name":        "greet",
+				"name":        toolName,
 				"description": "Greet someone.",
 				"inputSchema": map[string]any{"type": "object"},
 			}}}
@@ -4476,6 +4480,149 @@ func TestDeleteProviderRejectsRunningAffectedTab(t *testing.T) {
 	ctrl.Close()
 }
 
+func TestDeleteProviderRechecksWorkAfterWaitingForRuntimeMutation(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	setDesktopTestCredential(t, "REASONIX_TEST_KEY", "sk-test")
+	cfg := config.Default()
+	cfg.DefaultModel = "prov-a/model-a1"
+	cfg.Providers = []config.ProviderEntry{
+		{Name: "prov-a", Kind: "openai", BaseURL: "https://a.example.com", Model: "model-a1", APIKeyEnv: "REASONIX_TEST_KEY"},
+		{Name: "prov-b", Kind: "openai", BaseURL: "https://b.example.com", Model: "model-b1", APIKeyEnv: "REASONIX_TEST_KEY"},
+	}
+	if err := cfg.SaveTo(config.UserConfigPath()); err != nil {
+		t.Fatalf("save config: %v", err)
+	}
+
+	runner := &blockingRunner{started: make(chan struct{}), release: make(chan struct{})}
+	app := NewApp()
+	app.setTestCtrl(control.New(control.Options{Runner: runner}), "prov-a/model-a1")
+	ctrl := app.activeCtrl()
+	app.runtimeRebuildMu.Lock()
+	rebuildHeld := true
+	defer func() {
+		if rebuildHeld {
+			app.runtimeRebuildMu.Unlock()
+		}
+	}()
+	deleteEntered := make(chan struct{})
+	var enteredOnce sync.Once
+	app.runtimeMutationBeforeLockHook = func(operation string) {
+		if operation == "delete-provider" {
+			enteredOnce.Do(func() { close(deleteEntered) })
+		}
+	}
+	deleteDone := make(chan error, 1)
+	go func() { deleteDone <- app.DeleteProvider("prov-a") }()
+	select {
+	case <-deleteEntered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("provider deletion did not reach the runtime lifecycle lock")
+	}
+
+	ctrl.Submit("work")
+	select {
+	case <-runner.started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("turn did not start while provider deletion waited for the lifecycle lock")
+	}
+	app.runtimeRebuildMu.Unlock()
+	rebuildHeld = false
+	select {
+	case err := <-deleteDone:
+		if err == nil || !strings.Contains(err.Error(), "active work") {
+			t.Fatalf("DeleteProvider after late turn error = %v, want active-work guard", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("provider deletion did not re-check runtime work after acquiring the lock")
+	}
+	if _, ok := config.LoadForEdit(config.UserConfigPath()).Provider("prov-a"); !ok {
+		t.Fatal("provider was deleted after a turn started while deletion waited")
+	}
+
+	close(runner.release)
+	waitNotRunning(t, ctrl)
+	ctrl.Close()
+}
+
+func TestDeleteProviderReleasesAffectedTabSharedHostReference(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	setDesktopTestCredential(t, "REASONIX_TEST_KEY", "sk-test")
+	cfg := config.Default()
+	cfg.DefaultModel = "prov-a/model-a1"
+	cfg.Providers = []config.ProviderEntry{
+		{Name: "prov-a", Kind: "openai", BaseURL: "https://a.example.com", Model: "model-a1", APIKeyEnv: "REASONIX_TEST_KEY"},
+		{Name: "prov-b", Kind: "openai", BaseURL: "https://b.example.com", Model: "model-b1", APIKeyEnv: "REASONIX_TEST_KEY"},
+	}
+	if err := cfg.SaveTo(config.UserConfigPath()); err != nil {
+		t.Fatalf("save config: %v", err)
+	}
+
+	app := NewApp()
+	hostKey := "provider-shared-host"
+	host := app.acquireSharedHost(hostKey)
+	ctrl := control.New(control.Options{Host: host})
+	tab := &WorkspaceTab{
+		ID: "affected", Scope: "global", Ready: true, Ctrl: ctrl,
+		model: "prov-a/model-a1", SharedHostKey: hostKey, disabledMCP: map[string]ServerView{},
+	}
+	app.tabs = map[string]*WorkspaceTab{tab.ID: tab}
+	app.tabOrder = []string{tab.ID}
+	app.activeTabID = tab.ID
+
+	if err := app.DeleteProvider("prov-a"); err != nil {
+		t.Fatalf("DeleteProvider: %v", err)
+	}
+	if tab.SharedHostKey != "" {
+		t.Fatalf("affected tab retained shared host key %q", tab.SharedHostKey)
+	}
+	app.sharedHostsMu.Lock()
+	_, retained := app.sharedHosts[hostKey]
+	app.sharedHostsMu.Unlock()
+	if retained {
+		t.Fatal("provider deletion leaked the affected tab's shared host reference")
+	}
+}
+
+func TestRemoveBuiltInProviderAccessReleasesAffectedTabSharedHostReference(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	setDesktopTestCredential(t, "REASONIX_TEST_KEY", "sk-test")
+	cfg := config.Default()
+	cfg.DefaultModel = "deepseek/deepseek-chat"
+	cfg.Providers = []config.ProviderEntry{
+		{Name: "deepseek", Kind: "openai", BaseURL: "https://api.deepseek.com", Model: "deepseek-chat", APIKeyEnv: "REASONIX_TEST_KEY"},
+		{Name: "prov-b", Kind: "openai", BaseURL: "https://b.example.com", Model: "model-b1", APIKeyEnv: "REASONIX_TEST_KEY"},
+	}
+	cfg.Desktop.ProviderAccess = []string{"deepseek", "prov-b"}
+	if err := cfg.SaveTo(config.UserConfigPath()); err != nil {
+		t.Fatalf("save config: %v", err)
+	}
+
+	app := NewApp()
+	hostKey := "provider-access-shared-host"
+	host := app.acquireSharedHost(hostKey)
+	ctrl := control.New(control.Options{Host: host})
+	tab := &WorkspaceTab{
+		ID: "affected", Scope: "global", Ready: true, Ctrl: ctrl,
+		model: "deepseek/deepseek-chat", SharedHostKey: hostKey, disabledMCP: map[string]ServerView{},
+	}
+	app.tabs = map[string]*WorkspaceTab{tab.ID: tab}
+	app.tabOrder = []string{tab.ID}
+	app.activeTabID = tab.ID
+
+	if err := app.RemoveProviderAccess("deepseek"); err != nil {
+		t.Fatalf("RemoveProviderAccess: %v", err)
+	}
+	if tab.SharedHostKey != "" {
+		t.Fatalf("affected tab retained shared host key %q", tab.SharedHostKey)
+	}
+	app.sharedHostsMu.Lock()
+	_, retained := app.sharedHosts[hostKey]
+	app.sharedHostsMu.Unlock()
+	if retained {
+		t.Fatal("provider access removal leaked the affected tab's shared host reference")
+	}
+}
+
 func TestDeleteProviderRejectsAffectedBackgroundJobs(t *testing.T) {
 	isolateDesktopUserDirs(t)
 	setDesktopTestCredential(t, "REASONIX_TEST_KEY", "sk-test")
@@ -7192,6 +7339,25 @@ func TestSetMCPTrustWorkspaceRefreshesEverySharedHostRegistry(t *testing.T) {
 	}
 }
 
+func TestSetMCPTrustReconnectUsesEffectiveProjectConfigWhenUserNameIsShadowed(t *testing.T) {
+	fixture := newGatedDesktopMCPTrustFixture(t, "")
+	userCfg := config.LoadForEdit(config.UserConfigPath())
+	userCfg.Plugins = []config.PluginEntry{{Name: "h", Command: "shadowed-user-command-that-must-not-run"}}
+	if err := userCfg.SaveTo(config.UserConfigPath()); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := fixture.app.SetMCPTrust("h", "workspace"); err != nil {
+		t.Fatalf("SetMCPTrust(h,workspace): %v", err)
+	}
+	if !fixture.sharedHost.HasClient("h") {
+		t.Fatal("workspace trust did not reconnect the effective project MCP")
+	}
+	if _, found := fixture.activeRegistry.Get("mcp__h__greet"); !found {
+		t.Fatal("workspace trust did not restore the effective project MCP tools")
+	}
+}
+
 func TestReconnectMCPServerRefreshesEverySharedHostRegistry(t *testing.T) {
 	fixture := newGatedDesktopMCPTrustFixture(t, "")
 	oldSiblingTool, found := fixture.siblingRegistry.Get("mcp__h__greet")
@@ -7213,6 +7379,61 @@ func TestReconnectMCPServerRefreshesEverySharedHostRegistry(t *testing.T) {
 	}
 	if _, found := fixture.disabledRegistry.Get("mcp__h__greet"); found {
 		t.Fatal("reconnect re-enabled a tab where the server was disabled")
+	}
+}
+
+func TestReconnectMCPServerUsesEffectiveProjectConfigWhenUserNameIsShadowed(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	dir := robustTempDir(t)
+	userServer := desktopMCPHTTPServerWithTool(t, "user-shadow", "user_tool")
+	defer userServer.Close()
+	projectServer := desktopMCPHTTPServerWithTool(t, "project-effective", "project_tool")
+	defer projectServer.Close()
+
+	userCfg := config.LoadForEdit(config.UserConfigPath())
+	userCfg.Plugins = []config.PluginEntry{{Name: "h", Type: "http", URL: userServer.URL}}
+	if err := userCfg.SaveTo(config.UserConfigPath()); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "reasonix.toml"), []byte(fmt.Sprintf(`
+[[plugins]]
+name = "h"
+type = "http"
+url = %q
+`, projectServer.URL)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	host := plugin.NewHost()
+	t.Cleanup(host.Close)
+	registry := tool.NewRegistry()
+	ctrl := control.New(control.Options{
+		Host: host, Registry: registry, PluginCtx: context.Background(), WorkspaceRoot: dir,
+		MCPConfigureSpec: func(spec *plugin.Spec) {
+			// This test isolates effective-source selection from the project launch
+			// approval flow, which has its own end-to-end coverage.
+			spec.RequireLaunchApproval = false
+			spec.AutoTrust = true
+			spec.ImplicitApproval = true
+		},
+	})
+	app := NewApp()
+	app.tabs = map[string]*WorkspaceTab{
+		"active": {
+			ID: "active", Scope: "global", WorkspaceRoot: dir, Ready: true,
+			Ctrl: ctrl, disabledMCP: map[string]ServerView{},
+		},
+	}
+	app.activeTabID = "active"
+
+	if err := app.ReconnectMCPServer("h"); err != nil {
+		t.Fatalf("ReconnectMCPServer(h): %v", err)
+	}
+	if _, found := registry.Get("mcp__h__project_tool"); !found {
+		t.Fatal("reconnect did not use the effective project MCP configuration")
+	}
+	if _, found := registry.Get("mcp__h__user_tool"); found {
+		t.Fatal("reconnect used the shadowed user MCP configuration")
 	}
 }
 
@@ -7470,7 +7691,7 @@ func TestSetMCPTrustSerializesConcurrentDisable(t *testing.T) {
 
 	disableEntered := make(chan struct{})
 	var disableOnce sync.Once
-	fixture.app.mcpMutationBeforeLockHook = func(operation string) {
+	fixture.app.runtimeMutationBeforeLockHook = func(operation string) {
 		if operation == "set-enabled" {
 			disableOnce.Do(func() { close(disableEntered) })
 		}
@@ -7554,7 +7775,7 @@ func TestRemovePluginSerializesWithTrustPreflight(t *testing.T) {
 
 	removeEntered := make(chan struct{})
 	var removeOnce sync.Once
-	fixture.app.mcpMutationBeforeLockHook = func(operation string) {
+	fixture.app.runtimeMutationBeforeLockHook = func(operation string) {
 		if operation == "remove-plugin" {
 			removeOnce.Do(func() { close(removeEntered) })
 		}
@@ -7682,7 +7903,7 @@ func TestRemovePluginRechecksActiveWorkUnderLock(t *testing.T) {
 
 	removeEntered := make(chan struct{})
 	var removeOnce sync.Once
-	fixture.app.mcpMutationBeforeLockHook = func(operation string) {
+	fixture.app.runtimeMutationBeforeLockHook = func(operation string) {
 		if operation == "remove-plugin" {
 			removeOnce.Do(func() { close(removeEntered) })
 		}

@@ -2410,6 +2410,13 @@ func retargetProviderReferences(c *config.Config, name, fallbackRef string) {
 }
 
 func (a *App) removeBuiltInProviderAccessAndRetargetTabs(name string) error {
+	defer a.lockRuntimeMutation("remove-provider-access")()
+	releaseGates, err := a.lockRuntimeTurnGates("provider access", nil)
+	if err != nil {
+		return err
+	}
+	defer releaseGates()
+
 	// This first load is a read-only planning copy (fallback ref + affected-tab
 	// scan); it loads credentials because the fallback choice depends on which
 	// providers resolve a key. The saved edit below reloads under the config
@@ -2475,7 +2482,7 @@ func (a *App) removeBuiltInProviderAccessAndRetargetTabs(name string) error {
 		return err
 	}
 	if len(affected) == 0 {
-		if err := a.rebuild(); err != nil {
+		if err := a.rebuildActiveSettingRuntimeMutationLocked("provider access"); err != nil {
 			if _, ok := a.deferredRebuildWarning("provider access", err); ok {
 				return nil
 			}
@@ -2490,6 +2497,7 @@ func (a *App) removeBuiltInProviderAccessAndRetargetTabs(name string) error {
 	}
 
 	var rebuildTabs []*WorkspaceTab
+	var releasedHostKeys []string
 	a.mu.Lock()
 	for _, item := range affected {
 		tab := a.tabs[item.id]
@@ -2502,6 +2510,9 @@ func (a *App) removeBuiltInProviderAccessAndRetargetTabs(name string) error {
 			continue
 		}
 		tab.Ctrl = nil
+		if key := takeTabSharedHostKey(tab); key != "" {
+			releasedHostKeys = append(releasedHostKeys, key)
+		}
 		// Supersede any in-flight startup build: it was planned against the
 		// removed provider and would otherwise finish later, pass its
 		// generation check, and reinstall a controller for it.
@@ -2516,6 +2527,9 @@ func (a *App) removeBuiltInProviderAccessAndRetargetTabs(name string) error {
 	}
 	a.saveTabsLocked()
 	a.mu.Unlock()
+	for _, key := range releasedHostKeys {
+		a.releaseSharedHost(key)
+	}
 
 	for _, tab := range rebuildTabs {
 		go a.buildTabController(tab)
@@ -2528,6 +2542,13 @@ func (a *App) deleteProviderAndRetargetTabs(name string) error {
 	if name == "" {
 		return fmt.Errorf("remove provider: empty provider name")
 	}
+	defer a.lockRuntimeMutation("delete-provider")()
+	releaseGates, err := a.lockRuntimeTurnGates("provider", nil)
+	if err != nil {
+		return err
+	}
+	defer releaseGates()
+
 	// Read-only planning copy (with credentials — the fallback choice depends
 	// on which providers resolve a key); the saved edit below reloads under the
 	// config edit lock (see removeBuiltInProviderAccessAndRetargetTabs).
@@ -2594,7 +2615,7 @@ func (a *App) deleteProviderAndRetargetTabs(name string) error {
 	}
 
 	if len(affected) == 0 {
-		if err := a.rebuild(); err != nil {
+		if err := a.rebuildActiveSettingRuntimeMutationLocked("provider"); err != nil {
 			if _, ok := a.deferredRebuildWarning("provider", err); ok {
 				return nil
 			}
@@ -2609,6 +2630,7 @@ func (a *App) deleteProviderAndRetargetTabs(name string) error {
 	}
 
 	var rebuildTabs []*WorkspaceTab
+	var releasedHostKeys []string
 	a.mu.Lock()
 	for _, item := range affected {
 		tab := a.tabs[item.id]
@@ -2621,6 +2643,9 @@ func (a *App) deleteProviderAndRetargetTabs(name string) error {
 			continue
 		}
 		tab.Ctrl = nil
+		if key := takeTabSharedHostKey(tab); key != "" {
+			releasedHostKeys = append(releasedHostKeys, key)
+		}
 		// Supersede any in-flight startup build: it was planned against the
 		// removed provider and would otherwise finish later, pass its
 		// generation check, and reinstall a controller for it.
@@ -2635,11 +2660,27 @@ func (a *App) deleteProviderAndRetargetTabs(name string) error {
 	}
 	a.saveTabsLocked()
 	a.mu.Unlock()
+	for _, key := range releasedHostKeys {
+		a.releaseSharedHost(key)
+	}
 
 	for _, tab := range rebuildTabs {
 		go a.buildTabController(tab)
 	}
 	return nil
+}
+
+// rebuildActiveSettingRuntimeMutationLocked refreshes the active controller
+// while lockRuntimeMutation and all runtime turn gates are held.
+func (a *App) rebuildActiveSettingRuntimeMutationLocked(setting string) error {
+	tab := a.activeTab()
+	if tab == nil {
+		if a.ctx == nil {
+			return nil
+		}
+		return fmt.Errorf("no active tab")
+	}
+	return a.rebuildSettingTurnLocked(setting, tab, true)
 }
 
 // SetProviderKey writes a secret to Reasonix's global .env under the given

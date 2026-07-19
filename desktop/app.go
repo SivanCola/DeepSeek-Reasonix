@@ -142,23 +142,23 @@ type App struct {
 	// topic/workspace removal trash the same files while it is in flight.
 	sessionRemovalMu sync.Mutex
 
-	// runtimeRebuildMu serializes controller rebuilds (build + swap) and MCP
-	// lifecycle mutations. Two concurrent rebuilds of the same tab both pass the
-	// tab-identity check at swap time, while an MCP trust preflight racing a
-	// toggle/reconnect can restore stale tools or launch a second single-instance
-	// server. Keep the lock order runtimeRebuildMu -> runtimeAdmissionMu ->
-	// App.mu -> Host/Registry.
+	// runtimeRebuildMu serializes controller rebuilds (build + swap), teardown,
+	// and MCP lifecycle mutations. Two concurrent rebuilds of the same tab both
+	// pass the tab-identity check at swap time, while an MCP trust preflight racing
+	// a toggle/reconnect can restore stale tools or launch a second single-instance
+	// server. Keep the lock order runtimeRebuildMu -> runtimeAdmissionMu -> App.mu
+	// -> Host/Registry.
 	runtimeRebuildMu sync.Mutex
 	// runtimeAdmissionMu is the runtime lifecycle barrier. Foreground turn-start
-	// tokens, controller builds, and runtime teardown hold the read side; MCP
-	// lifecycle mutations hold the write side so their captured controller/Host
-	// cannot be replaced or closed in flight. Writers already hold
+	// tokens, controller builds, and ordinary runtime teardown hold the read side;
+	// exclusive teardown and MCP lifecycle mutations hold the write side so their
+	// captured controller/Host cannot be replaced or closed in flight. Writers already hold
 	// runtimeRebuildMu, making them mutually exclusive. Read holders must never
 	// acquire runtimeRebuildMu, or a queued writer would deadlock the pair.
 	runtimeAdmissionMu sync.RWMutex
-	// mcpMutationBeforeLockHook is test-only. Set it before starting concurrent
+	// runtimeMutationBeforeLockHook is test-only. Set it before starting concurrent
 	// calls and never mutate it afterward.
-	mcpMutationBeforeLockHook func(string)
+	runtimeMutationBeforeLockHook func(string)
 
 	// tryRunMu guards tryRunCancel — the cancel handle for the single
 	// in-flight settings-page subagent try run (TrySubagentProfile /
@@ -797,7 +797,15 @@ func (a *App) shutdown(context.Context) {
 	// Save window geometry synchronously from Go so it's persisted even if the
 	// frontend's beforeunload promise hasn't resolved yet.
 	a.saveWindowStateSync()
-	// Close every shared plugin host on exit, even if a tab cleanup panics.
+	// Serialize shutdown with controller rebuilds and live MCP mutations. This
+	// uses the same lifecycle lock order as lockMCPMutation so a trust preflight
+	// or reconnect cannot have its captured Host closed underneath it.
+	a.runtimeRebuildMu.Lock()
+	defer a.runtimeRebuildMu.Unlock()
+	a.runtimeAdmissionMu.Lock()
+	defer a.runtimeAdmissionMu.Unlock()
+	// Close every shared plugin host before releasing the lifecycle barrier,
+	// even if a tab cleanup panics.
 	defer a.closeAllSharedHosts()
 
 	a.mu.RLock()
@@ -6227,13 +6235,12 @@ func (a *App) MCPServers() []ServerView {
 	return a.mcpServersView()
 }
 
-// lockMCPMutation serializes every Wails-exposed operation that can inspect,
-// connect, disconnect, or change trust on a live MCP server. It also freezes
-// runtime admission so controller builds and teardown cannot replace or close
-// the operation's Host while it is in flight. The caller must not hold App.mu;
-// the order is runtimeRebuildMu -> runtimeAdmissionMu -> App/Host/Registry.
-func (a *App) lockMCPMutation(operation string) func() {
-	if hook := a.mcpMutationBeforeLockHook; hook != nil {
+// lockRuntimeMutation serializes controller rebuild/teardown operations and
+// freezes runtime admission so a captured controller or Host cannot be replaced
+// or closed in flight. The caller must not hold App.mu; the lock order is
+// runtimeRebuildMu -> runtimeAdmissionMu -> App/Host/Registry.
+func (a *App) lockRuntimeMutation(operation string) func() {
+	if hook := a.runtimeMutationBeforeLockHook; hook != nil {
 		hook(operation)
 	}
 	a.runtimeRebuildMu.Lock()
@@ -6242,6 +6249,11 @@ func (a *App) lockMCPMutation(operation string) func() {
 		a.runtimeAdmissionMu.Unlock()
 		a.runtimeRebuildMu.Unlock()
 	}
+}
+
+// lockMCPMutation is the MCP-specific spelling retained at lifecycle call sites.
+func (a *App) lockMCPMutation(operation string) func() {
+	return a.lockRuntimeMutation(operation)
 }
 
 // InspectMCPTrust performs only initialize/tools-list when the server is not
@@ -6316,7 +6328,7 @@ func (a *App) SetMCPTrust(name, decision string) error {
 	if wasConnected {
 		var found bool
 		var err error
-		entry, found, err = a.desktopMCPServerForEdit(root, name)
+		entry, found, err = desktopEffectiveMCPServer(root, name)
 		if err != nil {
 			return err
 		}
@@ -7604,7 +7616,7 @@ func (a *App) ReconnectMCPServer(name string) error {
 		return err
 	}
 	defer releaseGates()
-	entry, found, err := a.desktopMCPServerForEdit(root, name)
+	entry, found, err := desktopEffectiveMCPServer(root, name)
 	if err != nil {
 		return err
 	}
@@ -7676,7 +7688,7 @@ func (a *App) SetMCPServerEnabled(name string, enabled bool) error {
 	if controllerHasActiveRuntimeWork(ctrl) {
 		return rebuildControllerActiveWorkError("MCP server")
 	}
-	configuredEntry, hasConfiguredEntry, err := a.desktopMCPServerForEdit(root, name)
+	configuredEntry, hasConfiguredEntry, err := desktopEffectiveMCPServer(root, name)
 	if err != nil {
 		return err
 	}
@@ -7796,6 +7808,20 @@ func (a *App) desktopMCPServerForEdit(root, name string) (config.PluginEntry, bo
 		}
 	}
 	return config.PluginEntry{}, false, nil
+}
+
+// desktopEffectiveMCPServer returns the same merged entry the runtime starts.
+// Connection lifecycle paths must not use desktopMCPServerForEdit: a project
+// entry intentionally shadows a same-name user entry, while edit paths may
+// promote project configuration into the user config before removing the
+// project override.
+func desktopEffectiveMCPServer(root, name string) (config.PluginEntry, bool, error) {
+	cfg, err := config.LoadForRoot(root)
+	if err != nil {
+		return config.PluginEntry{}, false, err
+	}
+	p, ok := findPluginEntry(cfg.Plugins, name)
+	return p, ok, nil
 }
 
 func (a *App) saveDesktopMCPServer(root string, entry config.PluginEntry) error {
@@ -8191,7 +8217,7 @@ func controllerHasActiveRuntimeWork(ctrl control.SessionAPI) bool {
 type rebuildBusyError struct{ setting string }
 
 func (e *rebuildBusyError) Error() string {
-	return fmt.Sprintf("finish or cancel the current turn, answer pending prompts, and stop background jobs before changing %s", e.setting)
+	return fmt.Sprintf("active work is still running; finish or cancel the current turn, answer pending prompts, and stop background jobs before changing %s", e.setting)
 }
 
 func rebuildControllerActiveWorkError(setting string) error {

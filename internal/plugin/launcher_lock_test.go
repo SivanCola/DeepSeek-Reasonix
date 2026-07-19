@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -30,12 +31,102 @@ func TestStoredNPXLauncherLockUsesExactOfflinePackage(t *testing.T) {
 	if !reflect.DeepEqual(locked.LaunchArgs, want) {
 		t.Fatalf("launch args = %v, want %v", locked.LaunchArgs, want)
 	}
+	if wantIdentity := []string{"-y", "@scope/server@1.2.3", "--stdio"}; !reflect.DeepEqual(locked.LauncherIdentityArgs, wantIdentity) {
+		t.Fatalf("launcher identity args = %v, want %v", locked.LauncherIdentityArgs, wantIdentity)
+	}
 	if locked.LauncherDigest == "" {
 		t.Fatal("launcher digest is empty")
 	}
 	if SpecFingerprint(locked) != SpecFingerprint(spec) {
 		t.Fatal("host-local launcher lock changed provider cache fingerprint")
 	}
+}
+
+func TestStoredLauncherEnforcementFlagPreservesAuthorizedIdentity(t *testing.T) {
+	cases := []struct {
+		name, command, server, locator, resolved, enforcementFlag string
+		args                                                      []string
+	}{
+		{
+			name: "npx", command: "npx", server: "chrome-devtools",
+			locator: "chrome-devtools-mcp@latest", resolved: "chrome-devtools-mcp@1.6.0",
+			enforcementFlag: "--offline", args: []string{"-y", "chrome-devtools-mcp@latest", "--slim"},
+		},
+		{
+			name: "bunx", command: "bunx", server: "browser",
+			locator: "browser-mcp@latest", resolved: "browser-mcp@2.3.4",
+			enforcementFlag: "--no-install", args: []string{"browser-mcp@latest", "--stdio"},
+		},
+		{
+			name: "uvx", command: "uvx", server: "python-tools",
+			locator: "python-tools", resolved: "python-tools==3.2.1",
+			enforcementFlag: "--offline", args: []string{"python-tools", "--stdio"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			command := filepath.Join(dir, tc.command)
+			if runtime.GOOS == "windows" {
+				command += ".exe"
+			}
+			if err := os.WriteFile(command, []byte("test launcher"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			manager := mcptrust.NewManager(filepath.Join(t.TempDir(), mcptrust.StateFilename), dir)
+			lock := mcptrust.LauncherLock{
+				Server: tc.server, Locator: digestText(tc.locator),
+				ResolvedVersion: tc.resolved, ContentSHA256: digestText("integrity"),
+				Workspace: manager.WorkspaceFingerprint(),
+			}
+			spec := Spec{
+				Name: tc.server, Command: command, Args: tc.args,
+				TrustManager: manager, ConfigSource: "project_config", RequireLaunchApproval: true,
+			}
+			locator, mutable := mutableLauncherLocator(spec)
+			if !mutable {
+				t.Fatalf("%s launcher was not recognized as mutable", tc.command)
+			}
+			preflight := spec
+			applyLauncherResolution(&preflight, locator, lock, false)
+			approvedIdentity, err := specIdentityFingerprint(context.Background(), preflight)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := manager.TrustLaunch(mcptrust.ScopeWorkspace, spec.Name, spec.ConfigSource, approvedIdentity); err != nil {
+				t.Fatal(err)
+			}
+			if err := manager.PutLauncherLock(lock); err != nil {
+				t.Fatal(err)
+			}
+			locked, err := applyStoredLauncherLock(spec)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !stringSliceContains(locked.LaunchArgs, tc.enforcementFlag) || stringSliceContains(locked.LauncherIdentityArgs, tc.enforcementFlag) {
+				t.Fatalf("launch args = %v, identity args = %v, enforcement flag = %q", locked.LaunchArgs, locked.LauncherIdentityArgs, tc.enforcementFlag)
+			}
+			restartIdentity, err := specIdentityFingerprint(context.Background(), locked)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if restartIdentity != approvedIdentity {
+				t.Fatalf("stored-lock identity changed after enforcement: approved=%s restart=%s", approvedIdentity, restartIdentity)
+			}
+			if authorized, changed, err := manager.LaunchAuthorized(spec.Name, spec.ConfigSource, restartIdentity); err != nil || !authorized || changed {
+				t.Fatalf("stored-lock launch authorization = (authorized=%v, changed=%v, err=%v)", authorized, changed, err)
+			}
+		})
+	}
+}
+
+func stringSliceContains(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }
 
 func TestMutableLauncherRejectsAmbiguousFlagValue(t *testing.T) {
