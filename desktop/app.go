@@ -142,12 +142,15 @@ type App struct {
 	// topic/workspace removal trash the same files while it is in flight.
 	sessionRemovalMu sync.Mutex
 
-	// runtimeRebuildMu serializes controller rebuilds (build + swap) across
-	// rebuildSetting, SetModelForTab, and the deferred-rebuild retry loop. Two
-	// concurrent rebuilds of the same tab both pass the tab-identity check at
-	// swap time (the tab pointer is unchanged), so the loser's controller
-	// would replace the winner's and leak it without Close.
+	// runtimeRebuildMu serializes controller rebuilds (build + swap) and MCP
+	// lifecycle mutations. Two concurrent rebuilds of the same tab both pass the
+	// tab-identity check at swap time, while an MCP trust preflight racing a
+	// toggle/reconnect can restore stale tools or launch a second single-instance
+	// server. Keep the lock order runtimeRebuildMu -> App.mu -> Host/Registry.
 	runtimeRebuildMu sync.Mutex
+	// mcpMutationBeforeLockHook is test-only. Set it before starting concurrent
+	// calls and never mutate it afterward.
+	mcpMutationBeforeLockHook func(string)
 
 	// tryRunMu guards tryRunCancel — the cancel handle for the single
 	// in-flight settings-page subagent try run (TrySubagentProfile /
@@ -6140,9 +6143,22 @@ func (a *App) MCPServers() []ServerView {
 	return a.mcpServersView()
 }
 
+// lockMCPMutation serializes every Wails-exposed operation that can inspect,
+// connect, disconnect, or change trust on a live MCP server. The caller must not
+// hold App.mu; the shared runtime lock always precedes App/Host/Registry locks.
+func (a *App) lockMCPMutation(operation string) func() {
+	if hook := a.mcpMutationBeforeLockHook; hook != nil {
+		hook(operation)
+	}
+	a.runtimeRebuildMu.Lock()
+	return a.runtimeRebuildMu.Unlock
+}
+
 // InspectMCPTrust performs only initialize/tools-list when the server is not
 // already connected. No MCP tool is invoked.
 func (a *App) InspectMCPTrust(name string) (MCPTrustInspectionView, error) {
+	defer a.lockMCPMutation("inspect-trust")()
+
 	ctrl := a.activeCtrl()
 	if ctrl == nil {
 		return MCPTrustInspectionView{}, fmt.Errorf("no active session")
@@ -6178,8 +6194,7 @@ func (a *App) InspectMCPTrust(name string) (MCPTrustInspectionView, error) {
 // SetMCPTrust grants session/workspace trust or revokes it. The receipt remains
 // host-local and never modifies the project MCP configuration.
 func (a *App) SetMCPTrust(name, decision string) error {
-	a.runtimeRebuildMu.Lock()
-	defer a.runtimeRebuildMu.Unlock()
+	defer a.lockMCPMutation("set-trust")()
 
 	ctrl := a.activeCtrl()
 	if ctrl == nil {
@@ -6346,6 +6361,10 @@ func (a *App) RefreshMCPCatalog() (MCPCatalogRefreshView, error) {
 	} else {
 		a.recordMCPSecurityMetric("mcp_catalog_verify", "offline_snapshot")
 	}
+	// Fetching and verifying the catalog does not touch live MCP state. Acquire
+	// the lifecycle lock only for the revocation snapshot/apply phase so a slow
+	// network request does not block unrelated settings or connector changes.
+	defer a.lockMCPMutation("refresh-catalog")()
 	// A manual refresh is an explicit security action, so apply newly fetched
 	// revocations to every live shared host immediately instead of waiting for a
 	// restart or the six-hour background refresh window.
@@ -7205,6 +7224,8 @@ type MCPServerInput struct {
 // AddMCPServer connects a server live and persists it to config (Customize → MCP →
 // Add). Returns the number of tools it exposed.
 func (a *App) AddMCPServer(in MCPServerInput) (int, error) {
+	defer a.lockMCPMutation("add")()
+
 	ctrl := a.activeCtrl()
 	if ctrl == nil {
 		return 0, fmt.Errorf("no active session")
@@ -7239,6 +7260,8 @@ func (a *App) AddMCPServer(in MCPServerInput) (int, error) {
 // UpdateMCPServer edits a persisted external MCP server. The name is the stable
 // identity; callers must remove + add if they want to rename a server.
 func (a *App) UpdateMCPServer(name string, in MCPServerInput) error {
+	defer a.lockMCPMutation("update")()
+
 	tab, ctrl := a.activeTabAndCtrl()
 	if tab == nil || ctrl == nil {
 		return fmt.Errorf("no active session")
@@ -7331,6 +7354,8 @@ func (a *App) UpdateMCPServer(name string, in MCPServerInput) error {
 
 // RemoveMCPServer disconnects a live server and drops it from config (the row's ✕).
 func (a *App) RemoveMCPServer(name string) error {
+	defer a.lockMCPMutation("remove")()
+
 	tab, ctrl := a.activeTabAndCtrl()
 	if tab == nil || ctrl == nil {
 		return fmt.Errorf("no active session")
@@ -7363,6 +7388,8 @@ func (a *App) RemoveMCPServer(name string) error {
 // a fresh handshake and tool re-registration), then reconnects.  Failures are
 // recorded on the Host so the UI can render them.
 func (a *App) ReconnectMCPServer(name string) error {
+	defer a.lockMCPMutation("reconnect")()
+
 	tab, ctrl := a.activeTabAndCtrl()
 	if tab == nil || ctrl == nil {
 		return fmt.Errorf("no active session")
@@ -7399,6 +7426,8 @@ func (a *App) ReconnectMCPServer(name string) error {
 // clears the current session's cached connection failure. It does not remove the
 // server itself or try to sign the user out of the third-party browser session.
 func (a *App) ClearMCPServerAuthentication(name string) error {
+	defer a.lockMCPMutation("clear-auth")()
+
 	tab, ctrl := a.activeTabAndCtrl()
 	if tab == nil || ctrl == nil {
 		return fmt.Errorf("no active session")
@@ -7423,6 +7452,8 @@ func (a *App) ClearMCPServerAuthentication(name string) error {
 // for this session, off disconnects it (config untouched either way — like Claude
 // Code's per-conversation enable/disable, it resets on the next session start).
 func (a *App) SetMCPServerEnabled(name string, enabled bool) error {
+	defer a.lockMCPMutation("set-enabled")()
+
 	a.mu.RLock()
 	tab := a.activeTabLocked()
 	var ctrl control.SessionAPI
@@ -7506,6 +7537,8 @@ func (a *App) connectConfiguredMCPServerForTab(tab *WorkspaceTab, name string) (
 // SetMCPServerTier is kept for old desktop bindings. New config writes drop the
 // retired tier field.
 func (a *App) SetMCPServerTier(name, tier string) error {
+	defer a.lockMCPMutation("set-tier")()
+
 	tier = normalizeMCPTier(tier)
 	tab, ctrl := a.activeTabAndCtrl()
 	if tab != nil && controllerHasActiveRuntimeWork(ctrl) {

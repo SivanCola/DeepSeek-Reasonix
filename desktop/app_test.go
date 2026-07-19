@@ -90,6 +90,20 @@ func TestDesktopMCPHelperProcess(t *testing.T) {
 	if os.Getenv("GO_WANT_DESKTOP_MCP_HELPER") != "1" {
 		return
 	}
+	if addr := os.Getenv("DESKTOP_MCP_START_GATE_ADDR"); addr != "" {
+		conn, err := net.Dial("tcp", addr)
+		if err != nil {
+			_, _ = fmt.Fprintf(os.Stderr, "connect MCP start gate %s: %v\n", addr, err)
+			os.Exit(24)
+		}
+		var release [1]byte
+		if _, err := io.ReadFull(conn, release[:]); err != nil {
+			_ = conn.Close()
+			_, _ = fmt.Fprintf(os.Stderr, "wait for MCP start gate %s: %v\n", addr, err)
+			os.Exit(25)
+		}
+		_ = conn.Close()
+	}
 	var instanceListener net.Listener
 	if addr := os.Getenv("DESKTOP_MCP_SINGLE_INSTANCE_ADDR"); addr != "" {
 		var err error
@@ -7151,6 +7165,42 @@ url = %q
 }
 
 func TestSetMCPTrustWorkspaceRefreshesEverySharedHostRegistry(t *testing.T) {
+	fixture := newGatedDesktopMCPTrustFixture(t, "")
+	oldSiblingTool, found := fixture.siblingRegistry.Get("mcp__h__greet")
+	if !found {
+		t.Fatal("sibling registry missing initial h tool")
+	}
+	if err := fixture.app.SetMCPTrust("h", "workspace"); err != nil {
+		t.Fatalf("SetMCPTrust(h,workspace): %v", err)
+	}
+	if !fixture.sharedHost.HasClient("h") {
+		t.Fatal("shared host did not reconnect h after workspace trust")
+	}
+	if _, found := fixture.activeRegistry.Get("mcp__h__greet"); !found {
+		t.Fatal("active registry was not refreshed after workspace trust")
+	}
+	newSiblingTool, found := fixture.siblingRegistry.Get("mcp__h__greet")
+	if !found {
+		t.Fatal("sibling registry was not refreshed after workspace trust")
+	}
+	if newSiblingTool == oldSiblingTool {
+		t.Fatal("sibling registry retained a tool backed by the disconnected client")
+	}
+	if _, found := fixture.disabledRegistry.Get("mcp__h__greet"); found {
+		t.Fatal("workspace trust re-enabled h in a tab where the user disabled it")
+	}
+}
+
+type gatedDesktopMCPTrustFixture struct {
+	app              *App
+	sharedHost       *plugin.Host
+	activeRegistry   *tool.Registry
+	siblingRegistry  *tool.Registry
+	disabledRegistry *tool.Registry
+}
+
+func newGatedDesktopMCPTrustFixture(t *testing.T, startGateAddr string) gatedDesktopMCPTrustFixture {
+	t.Helper()
 	isolateDesktopUserDirs(t)
 	dir := robustTempDir(t)
 	t.Chdir(dir)
@@ -7167,6 +7217,10 @@ func TestSetMCPTrustWorkspaceRefreshesEverySharedHostRegistry(t *testing.T) {
 	if err := listener.Close(); err != nil {
 		t.Fatal(err)
 	}
+	gateConfig := ""
+	if startGateAddr != "" {
+		gateConfig = fmt.Sprintf("DESKTOP_MCP_START_GATE_ADDR = %q\n", startGateAddr)
+	}
 	helperArgs := []string{"-test.run=TestDesktopMCPHelperProcess", "--"}
 	if err := os.WriteFile(filepath.Join(dir, "reasonix.toml"), []byte(fmt.Sprintf(`
 [[plugins]]
@@ -7177,14 +7231,13 @@ args = ["-test.run=TestDesktopMCPHelperProcess", "--"]
 [plugins.env]
 GO_WANT_DESKTOP_MCP_HELPER = "1"
 DESKTOP_MCP_SINGLE_INSTANCE_ADDR = %q
-
+%s
 [sandbox]
 network = true
-`, exe, singleInstanceAddr)), 0o644); err != nil {
+`, exe, singleInstanceAddr, gateConfig)), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
-	manager := mcptrust.ForWorkspace(config.ReasonixHomeDir(), dir)
 	entry := config.PluginEntry{
 		Name: "h", Command: exe, Args: helperArgs,
 		Env: map[string]string{
@@ -7192,13 +7245,16 @@ network = true
 			"DESKTOP_MCP_SINGLE_INSTANCE_ADDR": singleInstanceAddr,
 		},
 	}
+	if startGateAddr != "" {
+		entry.Env["DESKTOP_MCP_START_GATE_ADDR"] = startGateAddr
+	}
 	cfg, err := config.LoadForRoot(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
 	runtimeSpecs := boot.PluginSpecsForRootWithOptions([]config.PluginEntry{entry}, dir, boot.PluginSpecOptions{
 		DefaultCallTimeout: time.Duration(cfg.MCPCallTimeoutSeconds()) * time.Second,
-		TrustManager:       manager,
+		TrustManager:       mcptrust.ForWorkspace(config.ReasonixHomeDir(), dir),
 		ConfigSource:       "workspace_config",
 		StateHome:          config.ReasonixHomeDir(),
 		WriterRoots:        cfg.WriteRootsForRoot(dir),
@@ -7209,14 +7265,14 @@ network = true
 		t.Fatalf("runtime specs = %d, want 1", len(runtimeSpecs))
 	}
 	runtimeSpec := runtimeSpecs[0]
-	configure := func(spec *plugin.Spec) {
-		*spec = runtimeSpec
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
+	configure := func(spec *plugin.Spec) { *spec = runtimeSpec }
+	lifeCtx, lifeCancel := context.WithCancel(context.Background())
+	t.Cleanup(lifeCancel)
+	callCtx, callCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer callCancel()
 	sharedHost := plugin.NewHost()
-	defer sharedHost.Close()
-	tools, err := sharedHost.Add(ctx, runtimeSpec)
+	t.Cleanup(sharedHost.Close)
+	tools, err := sharedHost.AddWithLifecycle(lifeCtx, callCtx, runtimeSpec)
 	if err != nil {
 		t.Fatalf("sharedHost.Add: %v", err)
 	}
@@ -7229,20 +7285,16 @@ network = true
 		siblingRegistry.Add(mt)
 		disabledRegistry.Add(mt)
 	}
-	oldSiblingTool, found := siblingRegistry.Get("mcp__h__greet")
-	if !found {
-		t.Fatal("sibling registry missing initial h tool")
-	}
 	activeCtrl := control.New(control.Options{
-		Host: sharedHost, Registry: activeRegistry, PluginCtx: context.Background(),
+		Host: sharedHost, Registry: activeRegistry, PluginCtx: lifeCtx,
 		MCPConfigureSpec: configure, WorkspaceRoot: dir,
 	})
 	siblingCtrl := control.New(control.Options{
-		Host: sharedHost, Registry: siblingRegistry, PluginCtx: context.Background(),
+		Host: sharedHost, Registry: siblingRegistry, PluginCtx: lifeCtx,
 		MCPConfigureSpec: configure, WorkspaceRoot: dir,
 	})
 	disabledCtrl := control.New(control.Options{
-		Host: sharedHost, Registry: disabledRegistry, PluginCtx: context.Background(),
+		Host: sharedHost, Registry: disabledRegistry, PluginCtx: lifeCtx,
 		MCPConfigureSpec: configure, WorkspaceRoot: dir,
 	})
 	disabledCtrl.UnregisterMCPServerTools("h")
@@ -7263,25 +7315,126 @@ network = true
 		},
 	}
 	app.activeTabID = "active"
+	return gatedDesktopMCPTrustFixture{
+		app: app, sharedHost: sharedHost,
+		activeRegistry: activeRegistry, siblingRegistry: siblingRegistry, disabledRegistry: disabledRegistry,
+	}
+}
 
-	if err := app.SetMCPTrust("h", "workspace"); err != nil {
+func newDesktopMCPStartGate(t *testing.T, handle func(attempt int, conn net.Conn)) (string, <-chan int) {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = listener.Close() })
+	attempts := make(chan int, 8)
+	go func() {
+		for attempt := 1; ; attempt++ {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			attempts <- attempt
+			handle(attempt, conn)
+			_ = conn.Close()
+		}
+	}()
+	return listener.Addr().String(), attempts
+}
+
+func waitForDesktopMCPStartAttempt(t *testing.T, attempts <-chan int, want int) {
+	t.Helper()
+	deadline := time.NewTimer(5 * time.Second)
+	defer deadline.Stop()
+	for {
+		select {
+		case got := <-attempts:
+			if got == want {
+				return
+			}
+		case <-deadline.C:
+			t.Fatalf("timed out waiting for MCP start attempt %d", want)
+		}
+	}
+}
+
+func TestSetMCPTrustSerializesConcurrentDisable(t *testing.T) {
+	releasePreflight := make(chan struct{})
+	gateAddr, attempts := newDesktopMCPStartGate(t, func(attempt int, conn net.Conn) {
+		if attempt == 2 {
+			<-releasePreflight
+		}
+		_, _ = conn.Write([]byte{1})
+	})
+	fixture := newGatedDesktopMCPTrustFixture(t, gateAddr)
+
+	disableEntered := make(chan struct{})
+	var disableOnce sync.Once
+	fixture.app.mcpMutationBeforeLockHook = func(operation string) {
+		if operation == "set-enabled" {
+			disableOnce.Do(func() { close(disableEntered) })
+		}
+	}
+	trustDone := make(chan error, 1)
+	go func() { trustDone <- fixture.app.SetMCPTrust("h", "workspace") }()
+	waitForDesktopMCPStartAttempt(t, attempts, 2)
+	disableDone := make(chan error, 1)
+	go func() { disableDone <- fixture.app.SetMCPServerEnabled("h", false) }()
+	select {
+	case <-disableEntered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("concurrent disable did not reach the MCP lifecycle lock")
+	}
+	select {
+	case err := <-disableDone:
+		t.Fatalf("concurrent disable bypassed trust serialization: %v", err)
+	case <-time.After(200 * time.Millisecond):
+	}
+	close(releasePreflight)
+	if err := <-trustDone; err != nil {
 		t.Fatalf("SetMCPTrust(h,workspace): %v", err)
 	}
-	if !sharedHost.HasClient("h") {
-		t.Fatal("shared host did not reconnect h after workspace trust")
+	if err := <-disableDone; err != nil {
+		t.Fatalf("SetMCPServerEnabled(h,false): %v", err)
 	}
-	if _, found := activeRegistry.Get("mcp__h__greet"); !found {
-		t.Fatal("active registry was not refreshed after workspace trust")
+	if _, found := fixture.activeRegistry.Get("mcp__h__greet"); found {
+		t.Fatal("trust reconnect overrode the later per-tab disable")
 	}
-	newSiblingTool, found := siblingRegistry.Get("mcp__h__greet")
-	if !found {
-		t.Fatal("sibling registry was not refreshed after workspace trust")
+	if _, disabled := fixture.app.tabs["active"].disabledMCP["h"]; !disabled {
+		t.Fatal("active tab did not retain the later disable decision")
 	}
-	if newSiblingTool == oldSiblingTool {
-		t.Fatal("sibling registry retained a tool backed by the disconnected client")
+	if _, found := fixture.siblingRegistry.Get("mcp__h__greet"); !found {
+		t.Fatal("active-tab disable removed the shared MCP from its enabled sibling")
 	}
-	if _, found := disabledRegistry.Get("mcp__h__greet"); found {
-		t.Fatal("workspace trust re-enabled h in a tab where the user disabled it")
+}
+
+func TestSetMCPTrustRestoresConnectionAfterPreflightFailure(t *testing.T) {
+	gateAddr, _ := newDesktopMCPStartGate(t, func(attempt int, conn net.Conn) {
+		if attempt != 2 {
+			_, _ = conn.Write([]byte{1})
+		}
+	})
+	fixture := newGatedDesktopMCPTrustFixture(t, gateAddr)
+
+	err := fixture.app.SetMCPTrust("h", "workspace")
+	if err == nil {
+		t.Fatal("SetMCPTrust unexpectedly succeeded after the preflight process failed")
+	}
+	if strings.Contains(err.Error(), "restoring the previous connection also failed") {
+		t.Fatalf("SetMCPTrust restoration unexpectedly failed: %v", err)
+	}
+	if !fixture.sharedHost.HasClient("h") {
+		t.Fatal("failed trust preflight did not restore the previous shared connection")
+	}
+	if _, found := fixture.activeRegistry.Get("mcp__h__greet"); !found {
+		t.Fatal("failed trust preflight did not restore the active registry")
+	}
+	if _, found := fixture.siblingRegistry.Get("mcp__h__greet"); !found {
+		t.Fatal("failed trust preflight did not restore the sibling registry")
+	}
+	if _, found := fixture.disabledRegistry.Get("mcp__h__greet"); found {
+		t.Fatal("failed trust preflight re-enabled a previously disabled registry")
 	}
 }
 

@@ -129,9 +129,9 @@ type Spec struct {
 
 // transport carries JSON-RPC messages to and from one MCP server. call sends a
 // request and returns its result (correlating by id internally); notify sends a
-// fire-and-forget notification; close releases resources. Server-initiated
-// messages (notifications, requests like roots/list) are ignored — Reasonix is a
-// tools/prompts/resources consumer, not a sampling/roots provider (see SPEC §9).
+// fire-and-forget notification; close releases resources. Server notifications
+// are ignored. Transports answer ping requests and reject unsupported client
+// capabilities such as roots or sampling with JSON-RPC method-not-found.
 type transport interface {
 	call(ctx context.Context, method string, params any) (json.RawMessage, error)
 	notify(ctx context.Context, method string, params any) error
