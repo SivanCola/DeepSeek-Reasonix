@@ -3,7 +3,6 @@ package remote
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"reasonix/internal/config"
@@ -12,6 +11,7 @@ import (
 func TestResolveJumpHostsUsesConfiguredAliasesAndSSHConfig(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	sshDir := filepath.Join(home, ".ssh")
 	if err := os.MkdirAll(sshDir, 0o700); err != nil {
 		t.Fatal(err)
@@ -20,7 +20,7 @@ func TestResolveJumpHostsUsesConfiguredAliasesAndSSHConfig(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(sshDir, "config"), []byte(text), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	sshCfg, err := LoadUserSSHConfig()
+	sshCfg, err := LoadSSHConfig(filepath.Join(sshDir, "config"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -33,7 +33,7 @@ func TestResolveJumpHostsUsesConfiguredAliasesAndSSHConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := hops[0]; got.HostName != "10.0.0.8" || got.User != "jump-user" || got.Port != 2202 || !strings.HasSuffix(got.IdentityFile, "/.ssh/jump_key") {
+	if got := hops[0]; got.HostName != "10.0.0.8" || got.User != "jump-user" || got.Port != 2202 || got.IdentityFile != filepath.Join(home, ".ssh", "jump_key") {
 		t.Fatalf("ssh_config jump was not fully resolved: %+v", got)
 	}
 	if got := hops[1]; got.PasswordEnv != "SECOND_PASSWORD" || len(got.ProxyJump) != 0 {

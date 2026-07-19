@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -252,7 +253,11 @@ func TestStopServerRejectsEmptyWorkspace(t *testing.T) {
 
 func TestDesktopCLIBinaryPathFallsBackToPATH(t *testing.T) {
 	dir := t.TempDir()
-	cli := filepath.Join(dir, "reasonix")
+	name := "reasonix"
+	if runtime.GOOS == "windows" {
+		name += ".exe"
+	}
+	cli := filepath.Join(dir, name)
 	if err := os.WriteFile(cli, []byte("test"), 0o755); err != nil {
 		t.Fatal(err)
 	}
