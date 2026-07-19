@@ -55,12 +55,13 @@ type WorkspaceTab struct {
 	StartupErrLeaseHeld bool               // true when StartupErr can be retried after a session lease releases
 	sessionLease        *agent.SessionLease
 	sessionLeaseMu      sync.Mutex
-	sink                *tabEventSink      // routes events with this tab's ID
-	buildCancel         context.CancelFunc // cancels in-flight boot for tabs removed before Ready
-	buildGeneration     uint64             // identifies the current in-flight build
-	removed             bool               // set when the visible tab is pruned/closed before build completes
-	reconcileMu         sync.Mutex         // serializes stale controller workspace repair for this tab
-	turnStartMu         sync.Mutex         // serializes foreground turn admission for this tab
+	sessionLeaseKey     atomic.Pointer[string] // lock-free mirror; updated with sessionLease under sessionLeaseMu
+	sink                *tabEventSink          // routes events with this tab's ID
+	buildCancel         context.CancelFunc     // cancels in-flight boot for tabs removed before Ready
+	buildGeneration     uint64                 // identifies the current in-flight build
+	removed             bool                   // set when the visible tab is pruned/closed before build completes
+	reconcileMu         sync.Mutex             // serializes stale controller workspace repair for this tab
+	turnStartMu         sync.Mutex             // serializes foreground turn admission for this tab
 
 	ActivityStatus string // transient project-tree status for the in-flight turn
 
@@ -239,12 +240,22 @@ func (t *WorkspaceTab) currentSessionPath() string {
 	if t == nil {
 		return ""
 	}
+	tabPath := strings.TrimSpace(t.SessionPath)
+	// Recovery handoff is two-phase: the desktop callback acquires the new
+	// lease and updates SessionPath before Controller commits its own path. The
+	// lease-backed tab path is authoritative during that window; otherwise a
+	// concurrent, newer tab-layout save can overwrite the recovery anchor with
+	// the controller's old path. Outside a handoff, keep the controller-first
+	// behavior so an unleased/stale tab field cannot mask the live runtime.
+	if tabPath != "" && sessionRuntimeKey(tabPath) == t.sessionLeaseRuntimeKey() {
+		return tabPath
+	}
 	if t.Ctrl != nil {
 		if path := strings.TrimSpace(t.Ctrl.SessionPath()); path != "" {
 			return path
 		}
 	}
-	return strings.TrimSpace(t.SessionPath)
+	return tabPath
 }
 
 func (t *WorkspaceTab) hasActiveRuntimeWork() bool {
@@ -277,6 +288,7 @@ func (t *WorkspaceTab) ensureSessionLease(path string) error {
 	}
 	t.sessionLeaseMu.Lock()
 	if t.sessionLease != nil && sessionRuntimeKey(t.sessionLease.Path()) == key {
+		t.storeSessionLeaseRuntimeKey(key)
 		t.sessionLeaseMu.Unlock()
 		return nil
 	}
@@ -290,6 +302,7 @@ func (t *WorkspaceTab) ensureSessionLease(path string) error {
 	}
 	old := t.sessionLease
 	t.sessionLease = lease
+	t.storeSessionLeaseRuntimeKey(key)
 	t.sessionLeaseMu.Unlock()
 	if old != nil {
 		old.Release()
@@ -304,6 +317,7 @@ func (t *WorkspaceTab) releaseSessionLease() {
 	t.sessionLeaseMu.Lock()
 	lease := t.sessionLease
 	t.sessionLease = nil
+	t.storeSessionLeaseRuntimeKey("")
 	t.sessionLeaseMu.Unlock()
 	if lease != nil {
 		lease.Release()
@@ -321,6 +335,7 @@ func (t *WorkspaceTab) takeSessionLease() *agent.SessionLease {
 	t.sessionLeaseMu.Lock()
 	lease := t.sessionLease
 	t.sessionLease = nil
+	t.storeSessionLeaseRuntimeKey("")
 	t.sessionLeaseMu.Unlock()
 	return lease
 }
@@ -338,26 +353,41 @@ func (t *WorkspaceTab) adoptSessionLease(lease *agent.SessionLease) {
 	t.sessionLeaseMu.Lock()
 	old := t.sessionLease
 	t.sessionLease = lease
+	key := ""
+	if lease != nil {
+		key = sessionRuntimeKey(lease.Path())
+	}
+	t.storeSessionLeaseRuntimeKey(key)
 	t.sessionLeaseMu.Unlock()
 	if old != nil && old != lease {
 		old.Release()
 	}
 }
 
+func (t *WorkspaceTab) storeSessionLeaseRuntimeKey(key string) {
+	if t == nil || key == "" {
+		if t != nil {
+			t.sessionLeaseKey.Store(nil)
+		}
+		return
+	}
+	stored := key
+	t.sessionLeaseKey.Store(&stored)
+}
+
 // sessionLeaseRuntimeKey reports the runtime key of the currently held lease,
-// or "" when no lease is held. Safe to call while holding App.mu: the lock
-// order App.mu → sessionLeaseMu has no reverse path (the lease helpers never
-// touch App state while holding sessionLeaseMu).
+// or "" when no lease is held. The mirror is lock-free so callers holding
+// App.mu never wait on a concurrent lease acquisition (whose test hook and
+// platform file operations run under sessionLeaseMu).
 func (t *WorkspaceTab) sessionLeaseRuntimeKey() string {
 	if t == nil {
 		return ""
 	}
-	t.sessionLeaseMu.Lock()
-	defer t.sessionLeaseMu.Unlock()
-	if t.sessionLease == nil {
+	key := t.sessionLeaseKey.Load()
+	if key == nil {
 		return ""
 	}
-	return sessionRuntimeKey(t.sessionLease.Path())
+	return *key
 }
 
 // releaseSessionLeaseForKey releases the tab's lease only when it is bound to
@@ -377,6 +407,7 @@ func (t *WorkspaceTab) releaseSessionLeaseForKey(key string) {
 		return
 	}
 	t.sessionLease = nil
+	t.storeSessionLeaseRuntimeKey("")
 	t.sessionLeaseMu.Unlock()
 	lease.Release()
 }
