@@ -312,6 +312,28 @@ func appendUniquePath(paths []string, path string) []string {
 // unavailable.
 func ReasonixHomeDir() string { return reasonixHomeDir() }
 
+// RemoteStateDir is local state for the remote-SSH module (the managed
+// known_hosts file, cached host metadata): <Reasonix home>/remote. Routed
+// through the home resolver so REASONIX_HOME isolation holds.
+func RemoteStateDir() string {
+	home := reasonixHomeDir()
+	if strings.TrimSpace(home) == "" {
+		return ""
+	}
+	return filepath.Join(home, "remote")
+}
+
+// RemoteKnownHostsPath is the Reasonix-managed known_hosts file (OpenSSH
+// format) that records TOFU-accepted host keys. The user's own
+// ~/.ssh/known_hosts is only ever read, never written.
+func RemoteKnownHostsPath() string {
+	dir := RemoteStateDir()
+	if dir == "" {
+		return ""
+	}
+	return filepath.Join(dir, "known_hosts")
+}
+
 // WorkspaceLeaseDir stores cross-process Delivery writer locks outside user
 // workspaces. It intentionally follows the cache root rather than project or
 // session state: taking a lease must never dirty the repository it protects.

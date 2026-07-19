@@ -60,6 +60,7 @@ type Config struct {
 	Bot              BotConfig           `toml:"bot"`
 	Serve            ServeConfig         `toml:"serve"`
 	Secrets          SecretsConfig       `toml:"secrets"`
+	Remote           RemoteConfig        `toml:"remote"`
 
 	providerSources            map[string]providerSourceScope
 	shadowedProjectProviders   []ProviderEntry

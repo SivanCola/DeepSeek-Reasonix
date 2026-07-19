@@ -181,6 +181,62 @@ Goal、由 `todo_write` 工具驱动的实时 Todo 面板，以及已配置 prov
 协作方式使用“询问 + 常规”。为兼容旧版混合 mode 列表，`session/set_mode` 仍接受
 `default`（常规 + 询问）和 `auto`（常规 + Yolo），新客户端应使用拆分后的独立选择器。
 
+## 远程 SSH
+
+远程模块让 Reasonix 在远端主机上运行,并通过你自己的 SSH 连接访问它 —— 即 VS Code
+Remote-SSH 式的体验。它在远端主机上引导一个常驻的 headless `reasonix serve`,把本地一个
+回环端口转发过去,再经隧道打开现有的 serve Web 客户端。agent、工具与文件全部原生运行在远端
+主机上,保真度 100%,不经过有损的文件代理。V1 支持 Linux 与 macOS 远端主机。
+
+主机保存在 `config.toml` 的用户级 `[remote]` 段。与 `[secrets]` 一样,项目级
+`reasonix.toml` 无法注入或覆盖远程主机 —— 克隆的仓库永远无法左右 Reasonix 向何处发起 SSH
+连接。凭据沿用 provider 惯例:主机只记录环境变量名(`passphrase_env`、`password_env`),其值
+存放在 Reasonix 全局 `.env` 中;私钥内容本身从不存储 —— `identity_file` 只是路径。
+
+```toml
+[remote]
+[[remote.hosts]]
+name          = "gpu-box"
+host          = "203.0.113.7"
+user          = "dev"
+identity_file = "~/.ssh/id_ed25519"
+workspace     = "~/projects/app"
+serve_install = "auto"            # auto | npm | upload | never
+
+[[remote.hosts.forwards]]
+type   = "local"                  # local (-L) | remote (-R)
+bind   = "127.0.0.1:5432"
+target = "127.0.0.1:5432"
+```
+
+命令行:
+
+```bash
+reasonix remote add gpu-box dev@203.0.113.7 --workspace '~/projects/app'
+reasonix remote import --all              # 从 ~/.ssh/config 导入(跳过 Match 块)
+reasonix remote test gpu-box              # 拨号 + 认证 + 主机密钥确认
+reasonix remote connect gpu-box --open    # 引导 serve、建隧道、打开 URL
+reasonix remote serve status gpu-box
+reasonix remote fs ls gpu-box:'~/projects/app'
+```
+
+`connect` 是前台守护(相当于 `ssh -N` 加上 serve 引导):它保持隧道与已配置的转发存活,断线时
+以指数退避自动重连,并在重连后重新挂载转发。Ctrl-C 只断开本地一侧 —— 远端 serve 继续运行,
+下次 `connect` 会复用它。V1 无后台守护进程。
+
+主机密钥会对照你的 OpenSSH `~/.ssh/known_hosts`(只读)以及 Reasonix 托管的
+`~/.reasonix/remote/known_hosts` 校验。首次见到的密钥会提示 TOFU 确认并记入托管文件;与已记录
+密钥冲突的密钥会硬失败并指明出错的行,绝不自动接受。
+
+远端侧状态位于远端主机的 `~/.reasonix/remote/`:`serve-<工作区 slug>.json`(pid、绑定的回环
+地址、工作区)、`serve-<slug>.token`(0600;认证 token,经 `--token-file` 传给 serve,因此不会
+出现在 `ps` 中)、`serve-<slug>.log`。
+
+在桌面端,于 **设置 -> 远程 SSH** 管理主机,再通过状态栏徽标或主机行的 **远程浏览器** 按钮经
+SFTP 浏览与编辑文件、管理端口转发、启动/打开远程工作区。打开工作区时会创建一个类似 VS Code
+Remote SSH 的独立 Reasonix 原生窗口。主窗口持有 SSH 隧道；远程窗口是隔离的轻量外壳，不会恢复
+或抢占本地对话会话。
+
 ## 自定义 OpenAI-compatible provider
 
 在桌面端打开 **设置 -> 模型 -> 接入 -> 添加模型服务 -> 自定义供应商**，用于接入代理、

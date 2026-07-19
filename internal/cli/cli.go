@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/url"
 	"os"
 	"os/signal"
@@ -119,6 +120,9 @@ func Run(args []string, version string) int {
 	case "mcp":
 		configureCLIThemeFromConfigNoProbe()
 		return mcpCommand(rest)
+	case "remote":
+		configureCLIThemeFromConfigNoProbe()
+		return remoteCommand(rest, version)
 	case "plugin":
 		configureCLIThemeFromConfigNoProbe()
 		return pluginCommand(rest)
@@ -169,7 +173,7 @@ func isDefaultInteractiveFlag(arg string) bool {
 
 func shouldMigrateLegacyConfigForCLI(cmd string) bool {
 	switch cmd {
-	case "", "run", "chat", "code", "serve", "setup", "config", "init", "acp", "mcp", "plugin", "subagent", "doctor", "bot", "upgrade", "update":
+	case "", "run", "chat", "code", "serve", "setup", "config", "init", "acp", "mcp", "remote", "plugin", "subagent", "doctor", "bot", "upgrade", "update":
 		return true
 	default:
 		return false
@@ -667,6 +671,9 @@ func runServe(args []string) int {
 	password := fs.String("password", "", "password for auth=password (use --hash-password to store a hash instead)")
 	hashPassword := fs.Bool("hash-password", false, "print a bcrypt hash of --password and exit")
 	behindProxy := fs.Bool("behind-proxy", false, "trust X-Forwarded-For / X-Forwarded-Proto headers from a reverse proxy")
+	portFile := fs.String("port-file", "", "write the actual bound listen address (host:port) to this file after binding")
+	tokenFile := fs.String("token-file", "", "read the auth=token pre-shared token from this file (overrides --token; keeps the secret out of argv)")
+	pidFile := fs.String("pid-file", "", "write the server process id to this file")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -702,6 +709,14 @@ func runServe(args []string) int {
 	}
 	if *token != "" {
 		serveCfg.Token = *token
+	}
+	if *tokenFile != "" {
+		tok, err := readServeTokenFile(*tokenFile)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
+			return 1
+		}
+		serveCfg.Token = tok
 	}
 	if *behindProxy {
 		serveCfg.BehindProxy = true
@@ -781,14 +796,55 @@ func runServe(args []string) int {
 
 	srv := serve.New(ctrl, bc, serveCfg)
 	srv.SetSessionLeases(leases)
-	fmt.Printf("reasonix serve — %s on http://%s\n", ctrl.Label(), *addr)
+
+	// With --port-file the supervisor needs the real bound port (--addr may be
+	// 127.0.0.1:0), so listen first, record the address, then serve on the
+	// existing listener.
+	var ln net.Listener
+	displayAddr := *addr
+	if *portFile != "" {
+		var lerr error
+		ln, lerr = net.Listen("tcp", *addr)
+		if lerr != nil {
+			fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, lerr)
+			return 1
+		}
+		displayAddr = ln.Addr().String()
+		if err := writeServeAddrFile(*portFile, displayAddr); err != nil {
+			_ = ln.Close()
+			fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
+			return 1
+		}
+		defer os.Remove(*portFile)
+	}
+	if *pidFile != "" {
+		if err := writeServePidFile(*pidFile); err != nil {
+			if ln != nil {
+				_ = ln.Close()
+			}
+			fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
+			return 1
+		}
+		defer os.Remove(*pidFile)
+	}
+
+	fmt.Printf("reasonix serve — %s on http://%s\n", ctrl.Label(), displayAddr)
 	if srv.AuthMode() == "token" {
 		fmt.Printf("  auth: token\n")
-		fmt.Printf("  share: http://%s/?token=%s\n", *addr, srv.AuthToken())
+		// Under --port-file the process is supervised (e.g. remote bootstrap):
+		// stdout is redirected to a log, so printing the token here would leak it
+		// into a file readable by other same-machine users. The supervisor
+		// already holds the token (it wrote --token-file), so suppress the share
+		// URL and print only the token-file reference.
+		if *portFile != "" && *tokenFile != "" {
+			fmt.Printf("  share: http://%s/ (token in %s)\n", displayAddr, *tokenFile)
+		} else {
+			fmt.Printf("  share: http://%s/?token=%s\n", displayAddr, srv.AuthToken())
+		}
 	} else if srv.AuthMode() == "password" {
-		fmt.Printf("  auth: password (login at http://%s/login)\n", *addr)
+		fmt.Printf("  auth: password (login at http://%s/login)\n", displayAddr)
 	}
-	if warning := serve.PlainHTTPAuthWarning(serveCfg, *addr); warning != "" {
+	if warning := serve.PlainHTTPAuthWarning(serveCfg, displayAddr); warning != "" {
 		fmt.Fprintf(os.Stderr, "  %s\n", warning)
 	}
 	// Diagnostic: check whether balance endpoint is reachable
@@ -803,6 +859,13 @@ func runServe(args []string) int {
 	// Use graceful shutdown so SIGINT/SIGTERM drain active connections.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	if ln != nil {
+		if err := srv.RunGracefulListener(ctx, ln); err != nil {
+			fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
+			return 1
+		}
+		return 0
+	}
 	if err := srv.RunGraceful(ctx, *addr); err != nil {
 		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
 		return 1

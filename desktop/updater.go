@@ -599,9 +599,16 @@ func applyLinux(targz []byte) error {
 	if err != nil {
 		return err
 	}
+	cli, err := extractBinary(targz, "reasonix")
+	if err != nil {
+		return err
+	}
 	exe := currentExecutablePath()
 	if exe == "" {
 		return fmt.Errorf("update: current executable path is unavailable")
+	}
+	if err := writeAtomic(filepath.Join(filepath.Dir(exe), "reasonix"), cli, 0o700); err != nil {
+		return fmt.Errorf("update CLI sidecar: %w", err)
 	}
 	if err := writeAtomic(filepath.Join(filepath.Dir(exe), "reasonix-guard"), guard, 0o700); err != nil {
 		return fmt.Errorf("update Guard: %w", err)
@@ -657,9 +664,9 @@ func updateSiblingArtifacts() []string {
 func updateSiblingNames(goos string) []string {
 	switch goos {
 	case "windows":
-		return []string{"reasonix-guard.exe", "reasonix-launcher.exe", "reasonix-update-helper.exe", "Reasonix.exe"}
+		return []string{"reasonix-guard.exe", "reasonix-launcher.exe", "reasonix-update-helper.exe", "reasonix.exe", "Reasonix.exe"}
 	case "linux":
-		return []string{"reasonix-guard"}
+		return []string{"reasonix-guard", "reasonix"}
 	default:
 		return nil
 	}

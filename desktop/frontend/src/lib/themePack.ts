@@ -216,6 +216,17 @@ export function setBaseAppearance(theme: Theme, style: ThemeStyle): void {
   baseAppearance = { theme, style };
 }
 
+/**
+ * Apply a configured appearance without replacing an active pack's live base
+ * style. The configured values remain the restore target when the pack is
+ * cleared, while the pack continues to own the effective visual direction.
+ */
+export function applyConfiguredBaseAppearance(theme: Theme, style: ThemeStyle): void {
+  setBaseAppearance(theme, style);
+  applyTheme(theme, style, { persist: false });
+  if (activePack) applyThemePack(activePack);
+}
+
 /** Apply or clear the active theme pack overlay. Pass null only clears overlay attrs — prefer clearThemePack(). */
 export function applyThemePack(pack: ThemePackView | null | undefined, options?: { preview?: boolean }): void {
   if (typeof document === "undefined") return;

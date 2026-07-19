@@ -80,6 +80,7 @@ OutFile "..\..\bin\${INFO_PROJECTNAME}-${ARCH}-installer.exe" # Name of the inst
 !define REASONIX_UPDATE_HELPER "reasonix-update-helper.exe"
 !define REASONIX_GUARD "reasonix-guard.exe"
 !define REASONIX_LAUNCHER "reasonix-launcher.exe"
+!define REASONIX_CLI "reasonix.exe"
 !define REASONIX_PORTABLE_ENTRY "Reasonix.exe"
 !define REASONIX_UNLOCK_RETRIES 60
 InstallDirRegKey HKCU "${UNINST_KEY}" "InstallLocation" # Reuse the previous install path on update; .onInit falls back to the default on first install.
@@ -154,11 +155,18 @@ check_guard:
    FileClose $1
 
 check_launcher:
-   IfFileExists "$INSTDIR\${REASONIX_LAUNCHER}" 0 check_portable_entry
-   ClearErrors
-   FileOpen $1 "$INSTDIR\${REASONIX_LAUNCHER}" a
-   IfErrors locked
-   FileClose $1
+	IfFileExists "$INSTDIR\${REASONIX_LAUNCHER}" 0 check_cli
+	ClearErrors
+	FileOpen $1 "$INSTDIR\${REASONIX_LAUNCHER}" a
+	IfErrors locked
+	FileClose $1
+
+check_cli:
+	IfFileExists "$INSTDIR\${REASONIX_CLI}" 0 check_portable_entry
+	ClearErrors
+	FileOpen $1 "$INSTDIR\${REASONIX_CLI}" a
+	IfErrors locked
+	FileClose $1
 
 check_portable_entry:
    IfFileExists "$INSTDIR\${REASONIX_PORTABLE_ENTRY}" 0 done
@@ -226,6 +234,11 @@ reasonix_no_portable_entry:
     CreateShortcut "$SMPROGRAMS\${INFO_PRODUCTNAME}.lnk" "$INSTDIR\${PRODUCT_EXECUTABLE}"
     CreateShortCut "$DESKTOP\${INFO_PRODUCTNAME}.lnk" "$INSTDIR\${PRODUCT_EXECUTABLE}"
     !endif
+    !if /FileExists "${REASONIX_CLI}"
+    File "/oname=${REASONIX_CLI}" "${REASONIX_CLI}"
+    !else
+    !warning "${REASONIX_CLI} was not found; remote upload installation will be unavailable."
+    !endif
 
     !insertmacro wails.associateFiles
     !insertmacro wails.associateCustomProtocols
@@ -243,6 +256,7 @@ Section "uninstall"
     Delete "$INSTDIR\${REASONIX_UPDATE_HELPER}"
     Delete "$INSTDIR\${REASONIX_GUARD}"
     Delete "$INSTDIR\${REASONIX_LAUNCHER}"
+    Delete "$INSTDIR\${REASONIX_CLI}"
     Delete "$INSTDIR\${REASONIX_PORTABLE_ENTRY}"
 
     Delete "$SMPROGRAMS\${INFO_PRODUCTNAME}.lnk"

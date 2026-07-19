@@ -203,6 +203,74 @@ Ask + Normal. For compatibility with clients built against the old mixed mode
 list, `session/set_mode` still accepts `default` as Normal + Ask and `auto` as
 Normal + Yolo, but new clients should use the independent selectors.
 
+## Remote SSH
+
+The remote module runs Reasonix on a remote host and reaches it over your own
+SSH connection — VS Code Remote-SSH style. It bootstraps a persistent headless
+`reasonix serve` on the remote host, forwards a local loopback port to it, and
+opens the existing serve web client through that tunnel. The agent, its tools,
+and its files all live on the remote host at full fidelity; nothing runs through
+a lossy file proxy. V1 supports Linux and macOS remote hosts.
+
+Hosts live in a user-global `[remote]` section of `config.toml`. Like
+`[secrets]`, a project `reasonix.toml` cannot inject or override remote hosts —
+a cloned repo can never steer where Reasonix opens SSH connections. Credentials
+follow the provider idiom: the host names an env var (`passphrase_env`,
+`password_env`) whose value lives in Reasonix's global `.env`; key material
+itself is never stored — `identity_file` is a path.
+
+```toml
+[remote]
+[[remote.hosts]]
+name          = "gpu-box"
+host          = "203.0.113.7"
+user          = "dev"
+identity_file = "~/.ssh/id_ed25519"
+workspace     = "~/projects/app"
+serve_install = "auto"            # auto | npm | upload | never
+
+[[remote.hosts.forwards]]
+type   = "local"                  # local (-L) | remote (-R)
+bind   = "127.0.0.1:5432"
+target = "127.0.0.1:5432"
+```
+
+CLI:
+
+```bash
+reasonix remote add gpu-box dev@203.0.113.7 --workspace '~/projects/app'
+reasonix remote import --all              # from ~/.ssh/config (Match blocks skipped)
+reasonix remote test gpu-box              # dial + auth + host-key confirmation
+reasonix remote connect gpu-box --open    # bootstrap serve, tunnel, open the URL
+reasonix remote serve status gpu-box
+reasonix remote fs ls gpu-box:'~/projects/app'
+```
+
+`connect` is a foreground supervisor (like `ssh -N` plus the serve bootstrap):
+it keeps the tunnel and configured forwards alive, auto-reconnects with
+exponential backoff if the link drops, and re-attaches forwards on reconnect.
+Ctrl-C disconnects the local side only — the remote serve keeps running, so the
+next `connect` reuses it. There is no background daemon in V1.
+
+Host keys are verified against your OpenSSH `~/.ssh/known_hosts` (read-only)
+plus a Reasonix-managed `~/.reasonix/remote/known_hosts`. A first-seen key
+prompts for trust-on-first-use and is recorded in the managed file; a key that
+contradicts a recorded one is a hard error that names the offending line and is
+never auto-accepted.
+
+Remote-side state lives under the remote host's `~/.reasonix/remote/`:
+`serve-<workspace-slug>.json` (pid, bound loopback address, workspace),
+`serve-<slug>.token` (0600; the auth token, passed to serve via `--token-file`
+so it never appears in `ps`), and `serve-<slug>.log`.
+
+In the desktop app, manage hosts under **Settings -> Remote SSH**, then use the
+status-bar chip or the host row's **Remote explorer** button to browse and edit
+files over SFTP, manage port forwards, and start/open the remote workspace.
+Opening a workspace creates a separate native Reasonix window, similar to a
+VS Code Remote SSH window. The primary window owns the SSH tunnel; the remote
+window is an isolated, lightweight shell and does not restore or acquire local
+conversation sessions.
+
 ## Custom OpenAI-compatible providers
 
 In the desktop app, open **Settings -> Model -> Access -> Add model service ->

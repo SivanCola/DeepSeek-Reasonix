@@ -973,7 +973,126 @@ export interface MemoryView {
 }
 
 // SettingsTab is the top-level navigation item in the Settings Centre modal.
-export type SettingsTab = "general" | "models" | "providers" | "bots" | "mcp" | "skills" | "subagents" | "plugins" | "memory" | "hooks" | "diagnostics" | "shortcuts" | "permissions" | "sandbox" | "network" | "appearance" | "updates";
+export type SettingsTab = "general" | "models" | "providers" | "bots" | "mcp" | "remote" | "skills" | "subagents" | "plugins" | "memory" | "hooks" | "diagnostics" | "shortcuts" | "permissions" | "sandbox" | "network" | "appearance" | "updates";
+
+// ── Remote SSH module (mirrors desktop/remote_app.go view structs) ──
+
+export type RemoteConnState =
+  | "connecting"
+  | "connected"
+  | "reconnecting"
+  | "degraded"
+  | "pending_hostkey"
+  | "stopped";
+
+export type RemoteServerState =
+  | "starting"
+  | "detect"
+  | "install"
+  | "waiting_lock"
+  | "launch"
+  | "health_check"
+  | "ready"
+  | "error"
+  | "stopped"
+  | "reuse";
+
+export interface RemoteHostView {
+  id: string;
+  label: string;
+  host: string;
+  port: number;
+  user: string;
+  identityFile: string;
+  proxyJump: string;
+  defaultWorkspace: string;
+  serveInstall: string;
+  useSSHConfig: boolean;
+}
+
+export interface RemoteHostInput {
+  label: string;
+  host: string;
+  port: number;
+  user: string;
+  identityFile: string;
+  proxyJump: string;
+  defaultWorkspace: string;
+  serveInstall: string;
+  useSSHConfig: boolean;
+}
+
+export interface RemoteFingerprintView {
+  hostId: string;
+  address: string;
+  keyType: string;
+  sha256: string;
+}
+
+export interface RemoteConnectionStatus {
+  hostId: string;
+  state: RemoteConnState;
+  error?: string;
+  fingerprint?: RemoteFingerprintView;
+  attempt?: number;
+}
+
+export interface RemoteDirEntry {
+  name: string;
+  path: string;
+  isDir: boolean;
+  size: number;
+  mtimeUnix: number;
+  symlink: boolean;
+}
+
+export interface RemoteFilePreview {
+  path: string;
+  body: string;
+  size: number;
+  mtimeUnix: number;
+  truncated: boolean;
+  binary: boolean;
+  err?: string;
+}
+
+export interface RemoteWriteResult {
+  ok: boolean;
+  conflict: boolean;
+  newMtimeUnix: number;
+}
+
+export interface RemoteForwardInput {
+  localPort: number;
+  remoteHost: string;
+  remotePort: number;
+  label: string;
+}
+
+export interface RemoteForwardView {
+  id: string;
+  hostId: string;
+  localPort: number;
+  remoteHost: string;
+  remotePort: number;
+  label: string;
+  state: string;
+  error?: string;
+}
+
+export interface RemoteServerView {
+  hostId: string;
+  workspace: string;
+  state: RemoteServerState;
+  message?: string;
+  localUrl?: string;
+  error?: string;
+}
+
+export interface RemoteForwardsEvent {
+  hostId: string;
+  forwards: RemoteForwardView[];
+}
 
 /** Capability diagnostics report from App.CapabilityDiagnostics (capdiag.Report). */
 export interface CapabilityDiagnosticsReport {
