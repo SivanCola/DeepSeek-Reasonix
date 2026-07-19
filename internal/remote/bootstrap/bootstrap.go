@@ -37,6 +37,11 @@ const (
 	InstallNever  = "never"
 )
 
+// MinServeVersion is the first reasonix release shipping serve's --port-file
+// and --token-file flags. A remote binary older than this is treated as
+// missing so it gets upgraded before launch.
+const MinServeVersion = "1.0.0"
+
 // Options configures EnsureServe.
 type Options struct {
 	Workspace   string                    // remote workspace path (may start with ~)
