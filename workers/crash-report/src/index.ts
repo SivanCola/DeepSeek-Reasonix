@@ -673,26 +673,16 @@ type GroupPriorityRow = {
   last_channel: string;
 };
 
-const developmentGroupSQL = `(fingerprint LIKE 'dev:%' OR (
-  lower(trim(COALESCE(first_version, ''))) LIKE 'dev%'
-  AND (
-    lower(trim(COALESCE(last_channel, ''))) = 'dev'
-    OR lower(trim(COALESCE(last_version, ''))) LIKE 'dev%'
-  )
-))`;
+const developmentGroupSQL = `fingerprint LIKE 'dev:%'`;
 
-export function isDevelopmentGroup(
-  row: Pick<GroupPriorityRow, "fingerprint" | "first_version" | "last_version" | "last_channel">,
-): boolean {
-  if (row.fingerprint.startsWith(DEVELOPMENT_FINGERPRINT_PREFIX)) return true;
-  const firstWasDevelopment = row.first_version.trim().toLowerCase().startsWith("dev");
-  const lastWasDevelopment =
-    row.last_channel.trim().toLowerCase() === "dev" || row.last_version.trim().toLowerCase().startsWith("dev");
-  return firstWasDevelopment && lastWasDevelopment;
+export function isDevelopmentGroup(row: Pick<GroupPriorityRow, "fingerprint">): boolean {
+  // Legacy hashes can contain release observations between retained development
+  // samples, so only the explicit namespace proves that a group is dev-only.
+  return row.fingerprint.startsWith(DEVELOPMENT_FINGERPRINT_PREFIX);
 }
 
 export function effectiveGroupSeverity(
-  row: Pick<GroupPriorityRow, "fingerprint" | "severity" | "title" | "first_version" | "last_version" | "last_channel">,
+  row: Pick<GroupPriorityRow, "fingerprint" | "severity" | "title">,
 ): string {
   if (row.severity === "critical") return row.severity;
   if (isDevelopmentGroup(row)) return "low";

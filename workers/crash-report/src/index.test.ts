@@ -49,9 +49,6 @@ describe("diagnostic classification", () => {
         fingerprint: "a".repeat(64),
         severity: "high",
         title: "[window.error] ResizeObserver loop limit exceeded",
-        first_version: "v1.8.0",
-        last_version: "v1.8.1",
-        last_channel: "stable",
       }),
     ).toBe("low");
     expect(
@@ -59,14 +56,11 @@ describe("diagnostic classification", () => {
         fingerprint: `dev:${"b".repeat(64)}`,
         severity: "critical",
         title: "[window.error] ResizeObserver loop limit exceeded",
-        first_version: "dev",
-        last_version: "dev",
-        last_channel: "DEV",
       }),
     ).toBe("critical");
   });
 
-  it("does not classify mixed release/development history as development-only", () => {
+  it("keeps ambiguous legacy history out of the development-only lane", () => {
     const fingerprint = "c".repeat(64);
     const stableThenDevelopment = {
       fingerprint,
@@ -82,10 +76,20 @@ describe("diagnostic classification", () => {
       last_version: "v1.17.15",
       last_channel: "stable",
     };
+    // A retained first/last summary cannot distinguish a dev-only group from
+    // dev -> stable -> dev once the middle release sample has been pruned.
+    const developmentAroundStable = {
+      ...stableThenDevelopment,
+      first_version: "dev-32bit",
+      last_version: "dev-32bit",
+      last_channel: "dev",
+    };
     expect(isDevelopmentGroup(stableThenDevelopment)).toBe(false);
     expect(effectiveGroupSeverity(stableThenDevelopment)).toBe("high");
     expect(isDevelopmentGroup(developmentThenStable)).toBe(false);
     expect(effectiveGroupSeverity(developmentThenStable)).toBe("high");
+    expect(isDevelopmentGroup(developmentAroundStable)).toBe(false);
+    expect(effectiveGroupSeverity(developmentAroundStable)).toBe("high");
   });
 });
 
@@ -101,9 +105,6 @@ describe("development fingerprint namespace", () => {
     expect(
       isDevelopmentGroup({
         fingerprint: `dev:${hash}`,
-        first_version: "v1.17.15",
-        last_version: "v1.17.15",
-        last_channel: "stable",
       }),
     ).toBe(true);
   });

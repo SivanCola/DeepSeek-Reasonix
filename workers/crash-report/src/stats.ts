@@ -605,10 +605,7 @@ export function renderStats(
   )}">${i18n("Opens", "按启动")}</a>
 </div>`;
   const overviewTone = topSeverityTone(data.overview.openReports, data.overview.regressedReports, data.overview.criticalOpenReports);
-  const isDevelopmentDiagnostic = (row: CrashRow) =>
-    row.development ??
-    (row.first_version.trim().toLowerCase().startsWith("dev") &&
-      (row.last_channel.trim().toLowerCase() === "dev" || row.last_version.trim().toLowerCase().startsWith("dev")));
+  const isDevelopmentDiagnostic = (row: CrashRow) => row.development ?? row.fingerprint.startsWith("dev:");
   const releaseCrashes = data.crashes.filter(
     (row) => row.kind !== "performance" && row.severity !== "low" && !isDevelopmentDiagnostic(row),
   );
