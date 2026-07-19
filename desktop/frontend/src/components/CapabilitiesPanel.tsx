@@ -2624,7 +2624,7 @@ function mcpToolPolicies(value: unknown): Record<string, MCPToolPolicy> | undefi
 	return out;
 }
 
-export function parseMCPServerJSON(raw: string, fixedName?: string): { input: MCPServerInput; draft: MCPServerEditorDraft } {
+export function parseMCPServerJSON(raw: string, fixedName?: string, options?: { allowIncomplete?: boolean }): { input: MCPServerInput; draft: MCPServerEditorDraft } {
 	let parsed: unknown;
 	try {
 		parsed = JSON.parse(raw);
@@ -2656,7 +2656,7 @@ export function parseMCPServerJSON(raw: string, fixedName?: string): { input: MC
 	if (value.args != null && (!Array.isArray(value.args) || !value.args.every((arg) => typeof arg === "string"))) throw new Error("invalid" satisfies MCPServerJSONError);
 	const args = value.args ? value.args as string[] : [];
 	const url = typeof value.url === "string" ? value.url.trim() : "";
-	if ((transport === "stdio" && !command) || (transport !== "stdio" && !url)) {
+	if (!options?.allowIncomplete && ((transport === "stdio" && !command) || (transport !== "stdio" && !url))) {
 		throw new Error("required" satisfies MCPServerJSONError);
 	}
 	let env: Record<string, string> | null;
@@ -2757,8 +2757,13 @@ function MCPServerSettingsEditor({
 			setMode("json");
 			return;
 		}
+		if (json === mcpServerDraftJSON(draft)) {
+			setJSONError("");
+			setMode("form");
+			return;
+		}
 		try {
-			const parsed = parseMCPServerJSON(json, server?.name);
+			const parsed = parseMCPServerJSON(json, server?.name, { allowIncomplete: true });
 			setDraft(parsed.draft);
 			setJSONError("");
 			setMode("form");

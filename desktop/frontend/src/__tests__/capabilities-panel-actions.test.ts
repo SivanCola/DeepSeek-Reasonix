@@ -43,6 +43,16 @@ try {
   unsupportedMCPFieldRejected = error instanceof Error && error.message === "unsupported";
 }
 ok(unsupportedMCPFieldRejected, "unsupported advanced JSON fields should fail explicitly");
+const incompleteMCPJSON = JSON.stringify({ admin: { type: "stdio", command: "" } });
+let incompleteMCPRejected = false;
+try {
+  parseMCPServerJSON(incompleteMCPJSON);
+} catch (error) {
+  incompleteMCPRejected = error instanceof Error && error.message === "required";
+}
+ok(incompleteMCPRejected, "submitting incomplete MCP JSON must still require a command or URL");
+const incompleteMCPDraft = parseMCPServerJSON(incompleteMCPJSON, undefined, { allowIncomplete: true });
+ok(incompleteMCPDraft.draft.name === "admin" && incompleteMCPDraft.draft.command === "", "mode switching may recover an incomplete MCP draft for form editing");
 const clearedMCPPolicy = parseMCPServerJSON(JSON.stringify({ admin: { command: "admin-mcp", default_tools_approval_mode: "", approvals_reviewer: "" } }));
 ok(clearedMCPPolicy.input.defaultToolsApprovalMode === "" && clearedMCPPolicy.input.approvalsReviewer === "", "empty advanced policy values should clear saved overrides");
 let nullToolTimeoutRejected = false;
@@ -707,7 +717,35 @@ console.log("capabilities panel MCP actions");
   const initialJSONEditor = document.querySelector<HTMLTextAreaElement>(".cap-mcp-json-editor__input");
   if (!initialJSONEditor) throw new Error("missing MCP JSON editor");
   await act(async () => {
-    setTextareaValue(initialJSONEditor, "{");
+    findButton("Form")?.click();
+    await flush();
+  });
+  ok(Boolean(document.querySelector(".cap-mcp-form-grid")), "the untouched empty MCP template can switch back to the form editor");
+  ok(document.querySelector<HTMLInputElement>(".cap-mcp-field--name input")?.value === "", "returning from the untouched template preserves the empty server name");
+  await act(async () => {
+    findButton("JSON")?.click();
+    await flush();
+  });
+  const incompleteJSONEditor = document.querySelector<HTMLTextAreaElement>(".cap-mcp-json-editor__input");
+  if (!incompleteJSONEditor) throw new Error("missing MCP JSON editor after returning from the empty form");
+  await act(async () => {
+    setTextareaValue(incompleteJSONEditor, JSON.stringify({ "yakit-next": { type: "stdio", command: "" } }, null, 2));
+    await flush();
+  });
+  await act(async () => {
+    findButton("Form")?.click();
+    await flush();
+  });
+  ok(Boolean(document.querySelector(".cap-mcp-form-grid")), "an incomplete but structured MCP draft can switch back to the form editor");
+  ok(document.querySelector<HTMLInputElement>(".cap-mcp-field--name input")?.value === "yakit-next", "switching an incomplete JSON draft preserves its server name");
+  await act(async () => {
+    findButton("JSON")?.click();
+    await flush();
+  });
+  const invalidJSONEditor = document.querySelector<HTMLTextAreaElement>(".cap-mcp-json-editor__input");
+  if (!invalidJSONEditor) throw new Error("missing MCP JSON editor after incomplete draft round trip");
+  await act(async () => {
+    setTextareaValue(invalidJSONEditor, "{");
     await flush();
   });
   await act(async () => {
@@ -727,7 +765,7 @@ console.log("capabilities panel MCP actions");
     },
   }, null, 2);
   await act(async () => {
-    setTextareaValue(initialJSONEditor, validJSON);
+    setTextareaValue(invalidJSONEditor, validJSON);
     await flush();
   });
   await act(async () => {
