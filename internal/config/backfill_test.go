@@ -192,6 +192,88 @@ func TestLoadForEditPersistsLegacyStepFunBaseURLMigration(t *testing.T) {
 	}
 }
 
+func TestNormalizeLegacyLongCatContextWindowsMigratesOnlyOfficialPresets(t *testing.T) {
+	c := &Config{Providers: []ProviderEntry{
+		{
+			Name:          "longcat-openai",
+			Kind:          "openai",
+			BaseURL:       "https://api.longcat.chat/openai/v1",
+			PresetID:      "longcat-openai",
+			ContextWindow: legacyLongCat20ContextWindow,
+		},
+		{
+			Name:          "longcat-anthropic",
+			Kind:          "anthropic",
+			BaseURL:       "https://api.longcat.chat/anthropic",
+			PresetID:      "longcat-anthropic",
+			ContextWindow: legacyLongCat20ContextWindow,
+		},
+		{
+			Name:          "custom-longcat",
+			Kind:          "openai",
+			BaseURL:       "https://api.longcat.chat/openai/v1",
+			ContextWindow: legacyLongCat20ContextWindow,
+		},
+		{
+			Name:          "longcat-custom-window",
+			Kind:          "openai",
+			BaseURL:       "https://api.longcat.chat/openai/v1",
+			PresetID:      "longcat-openai",
+			ContextWindow: 262_144,
+		},
+	}}
+
+	if !normalizeLegacyLongCatContextWindows(c) {
+		t.Fatal("legacy LongCat context-window migration did not report a change")
+	}
+	if got := c.Providers[0].ContextWindow; got != longCat20ContextWindow {
+		t.Fatalf("longcat-openai context_window = %d, want %d", got, longCat20ContextWindow)
+	}
+	if got := c.Providers[1].ContextWindow; got != longCat20ContextWindow {
+		t.Fatalf("longcat-anthropic context_window = %d, want %d", got, longCat20ContextWindow)
+	}
+	if got := c.Providers[2].ContextWindow; got != legacyLongCat20ContextWindow {
+		t.Fatalf("custom LongCat context_window = %d, want unchanged %d", got, legacyLongCat20ContextWindow)
+	}
+	if got := c.Providers[3].ContextWindow; got != 262_144 {
+		t.Fatalf("customized preset context_window = %d, want unchanged 262144", got)
+	}
+}
+
+func TestLoadForEditPersistsLegacyLongCatContextWindowMigration(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	cfg := Default()
+	for _, id := range []string{"longcat-openai", "longcat-anthropic"} {
+		preset, ok := CuratedProviderPreset(id)
+		if !ok || len(preset.Entries) != 1 {
+			t.Fatalf("missing %s preset", id)
+		}
+		entry := preset.Entries[0]
+		entry.ContextWindow = legacyLongCat20ContextWindow
+		cfg.Providers = append(cfg.Providers, entry)
+	}
+	if err := cfg.SaveTo(path); err != nil {
+		t.Fatalf("SaveTo: %v", err)
+	}
+
+	loaded := LoadForEdit(path)
+	for _, id := range []string{"longcat-openai", "longcat-anthropic"} {
+		if got, _ := loaded.Provider(id); got == nil || got.ContextWindow != longCat20ContextWindow {
+			t.Fatalf("loaded %s = %+v, want context_window %d", id, got, longCat20ContextWindow)
+		}
+	}
+
+	var disk Config
+	if _, err := toml.DecodeFile(path, &disk); err != nil {
+		t.Fatalf("decode persisted config: %v", err)
+	}
+	for _, id := range []string{"longcat-openai", "longcat-anthropic"} {
+		if got, _ := disk.Provider(id); got == nil || got.ContextWindow != longCat20ContextWindow {
+			t.Fatalf("persisted %s = %+v, want context_window %d", id, got, longCat20ContextWindow)
+		}
+	}
+}
+
 func TestNormalizeDesktopOfficialProviderAccessCanonicalizesOnlyDeepSeekIDs(t *testing.T) {
 	c := Default()
 	c.DefaultModel = "deepseek-flash/deepseek-v4-pro"

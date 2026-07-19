@@ -133,6 +133,7 @@ func loadForRoot(root string, migrateOnDisk bool) (*Config, error) {
 	cfg.ignoredLegacyStepLimits = normalizeLegacyAgentStepLimits(cfg)
 	normalizeLegacyMCPTiers(cfg)
 	normalizeLegacyStepFunBaseURLs(cfg)
+	normalizeLegacyLongCatContextWindows(cfg)
 	normalizeLegacyMimoCustomProviders(cfg)
 	normalizeLegacyProviderModels(cfg)
 	normalizeDesktopOfficialProviderAccess(cfg)
@@ -670,6 +671,7 @@ func normalizeConfigForEdit(cfg *Config) bool {
 	normalizeLegacyAgentStepLimits(cfg)
 	normalizeLegacyMCPTiers(cfg)
 	changed := normalizeLegacyStepFunBaseURLs(cfg)
+	changed = normalizeLegacyLongCatContextWindows(cfg) || changed
 	changed = normalizeLegacyMimoCustomProviders(cfg) || changed
 	normalizeLegacyProviderModels(cfg)
 	normalizeDesktopOfficialProviderAccess(cfg)
@@ -1148,6 +1150,34 @@ func isLegacyStepFunPresetProvider(p ProviderEntry, id, kind string) bool {
 
 func normalizedBaseURLForMigration(raw string) string {
 	return strings.TrimRight(strings.TrimSpace(raw), "/")
+}
+
+func normalizeLegacyLongCatContextWindows(c *Config) bool {
+	if c == nil {
+		return false
+	}
+	changed := false
+	for i := range c.Providers {
+		p := &c.Providers[i]
+		if p.ContextWindow != legacyLongCat20ContextWindow || officialProviderHost(p.BaseURL) != "api.longcat.chat" {
+			continue
+		}
+		switch strings.TrimSpace(p.PresetID) {
+		case "longcat-openai":
+			if !strings.EqualFold(strings.TrimSpace(p.Kind), "openai") {
+				continue
+			}
+		case "longcat-anthropic":
+			if !strings.EqualFold(strings.TrimSpace(p.Kind), "anthropic") {
+				continue
+			}
+		default:
+			continue
+		}
+		p.ContextWindow = longCat20ContextWindow
+		changed = true
+	}
+	return changed
 }
 
 func normalizeLegacyMimoProviderCatalogs(c *Config) bool {

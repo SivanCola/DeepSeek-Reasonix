@@ -17,7 +17,11 @@ type ProviderPreset struct {
 	Entries     []ProviderEntry
 }
 
-const ProviderPresetVersion = 1
+const (
+	ProviderPresetVersion        = 1
+	longCat20ContextWindow       = 1_048_576
+	legacyLongCat20ContextWindow = 131_072
+)
 
 // CuratedProviderPresets returns one-click provider templates for common
 // OpenAI-compatible and Anthropic-compatible coding-plan services. These are
@@ -109,7 +113,7 @@ var curatedProviderPresets = []ProviderPreset{
 			Models:           longCat20Models,
 			Default:          "LongCat-2.0",
 			APIKeyEnv:        "LONGCAT_API_KEY",
-			ContextWindow:    131072,
+			ContextWindow:    longCat20ContextWindow,
 			Prices:           longCat20Prices(longCat20Models),
 			Thinking:         "enabled",
 			SupportedEfforts: []string{"enabled", "disabled"},
@@ -133,7 +137,7 @@ var curatedProviderPresets = []ProviderPreset{
 			Thinking:         "enabled",
 			SupportedEfforts: []string{"enabled", "disabled"},
 			DefaultEffort:    "enabled",
-			ContextWindow:    131072,
+			ContextWindow:    longCat20ContextWindow,
 			Prices:           longCat20Prices(longCat20Models),
 		}},
 	},
