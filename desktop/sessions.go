@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -936,6 +937,11 @@ type plannerDisplayTurn struct {
 	Messages []HistoryMessage `json:"messages"`
 }
 
+// The planner display sidecar is shared by every session in one directory.
+// Serialize its load-modify-save cycle so two tabs finishing together cannot
+// publish maps that each drop the other tab's newly appended turn.
+var sessionPlannerDisplayMu sync.Mutex
+
 func messageDisplayKey(content string) string {
 	sum := sha256.Sum256([]byte(content))
 	return fmt.Sprintf("%x", sum[:])
@@ -997,6 +1003,8 @@ func recordSessionPlannerDisplay(dir, sessionPath, userContent string, messages 
 	if strings.TrimSpace(sessionPath) == "" || strings.TrimSpace(userContent) == "" || len(messages) == 0 {
 		return nil
 	}
+	sessionPlannerDisplayMu.Lock()
+	defer sessionPlannerDisplayMu.Unlock()
 	m := loadSessionPlannerDisplays(dir)
 	key := filepath.Base(sessionPath)
 	turn := plannerDisplayTurn{

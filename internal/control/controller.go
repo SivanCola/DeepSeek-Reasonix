@@ -745,6 +745,7 @@ func (c *Controller) spawnGuardedTurn(ctx context.Context, cancel context.Cancel
 // finishing directly into running.
 func (c *Controller) finishGuardedTurn(err error) {
 	c.mu.Lock()
+	cancelRequested := c.canceling
 	c.running = false
 	c.finishing = true
 	c.cancel = nil
@@ -770,7 +771,7 @@ func (c *Controller) finishGuardedTurn(err error) {
 		c.mu.Unlock()
 		c.spawnGuardedTurn(ctx, cancel, next)
 	}()
-	done := event.Event{Kind: event.TurnDone, Err: err, Outcome: turnOutcome(err)}
+	done := event.Event{Kind: event.TurnDone, Err: err, Cancelled: cancelRequested, Outcome: turnOutcome(err)}
 	var readinessErr *agent.FinalReadinessError
 	if errors.As(err, &readinessErr) {
 		done.Readiness = &event.FinalReadiness{Attempts: readinessErr.Attempts, Missing: append([]string(nil), readinessErr.Missing...)}
@@ -3786,6 +3787,7 @@ func (c *Controller) stripCancelledVisibleTurnMessagesAfter(idx int) {
 		if _, ok := agent.SteerText(m.Content); ok {
 			continue
 		}
+		m.Content = StripComposePrefixes(m.Content)
 		next = append(next, m)
 		break
 	}

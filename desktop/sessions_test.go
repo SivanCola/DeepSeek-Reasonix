@@ -3,9 +3,11 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"reasonix/internal/agent"
@@ -1173,6 +1175,44 @@ func TestSessionDisplayRoundTrip(t *testing.T) {
 	}
 	if got := resolveSessionDisplay(dir, sessionPath, "other"); got != "other" {
 		t.Fatalf("unknown content should pass through, got %q", got)
+	}
+}
+
+func TestRecordSessionPlannerDisplayConcurrentPreservesEverySession(t *testing.T) {
+	dir := t.TempDir()
+	const writers = 32
+	start := make(chan struct{})
+	errs := make(chan error, writers)
+	var wg sync.WaitGroup
+	for i := 0; i < writers; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			path := filepath.Join(dir, fmt.Sprintf("session-%02d.jsonl", i))
+			errs <- recordSessionPlannerDisplay(dir, path, fmt.Sprintf("prompt-%02d", i), []HistoryMessage{{
+				Role: "assistant", Content: fmt.Sprintf("answer-%02d", i),
+			}})
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("record planner display: %v", err)
+		}
+	}
+
+	got := loadSessionPlannerDisplays(dir)
+	if len(got) != writers {
+		t.Fatalf("planner display sessions = %d, want %d", len(got), writers)
+	}
+	for i := 0; i < writers; i++ {
+		key := fmt.Sprintf("session-%02d.jsonl", i)
+		if len(got[key]) != 1 || len(got[key][0].Messages) != 1 || got[key][0].Messages[0].Content != fmt.Sprintf("answer-%02d", i) {
+			t.Fatalf("planner display %s = %+v", key, got[key])
+		}
 	}
 }
 
