@@ -21,7 +21,7 @@ func tryLockSessionFile(path string) (func(), error) {
 	if err := unix.Flock(int(f.Fd()), unix.LOCK_EX|unix.LOCK_NB); err != nil {
 		_ = f.Close()
 		if errors.Is(err, unix.EWOULDBLOCK) || errors.Is(err, unix.EAGAIN) {
-			return nil, errSessionFileLockHeld
+			return nil, ErrSessionFileLockHeld
 		}
 		return nil, err
 	}
@@ -38,7 +38,7 @@ type sessionLockFile struct {
 }
 
 // tryTakeSessionLockFile opens lockPath and takes its exclusive flock without
-// blocking. A live holder surfaces as errSessionFileLockHeld.
+// blocking. A live holder surfaces as ErrSessionFileLockHeld.
 func tryTakeSessionLockFile(lockPath string) (*sessionLockFile, error) {
 	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
@@ -47,7 +47,7 @@ func tryTakeSessionLockFile(lockPath string) (*sessionLockFile, error) {
 	if err := unix.Flock(int(f.Fd()), unix.LOCK_EX|unix.LOCK_NB); err != nil {
 		_ = f.Close()
 		if errors.Is(err, unix.EWOULDBLOCK) || errors.Is(err, unix.EAGAIN) {
-			return nil, errSessionFileLockHeld
+			return nil, ErrSessionFileLockHeld
 		}
 		return nil, err
 	}
