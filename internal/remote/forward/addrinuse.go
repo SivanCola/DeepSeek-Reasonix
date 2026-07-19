@@ -1,3 +1,5 @@
+//go:build !windows
+
 package forward
 
 import (
@@ -5,8 +7,8 @@ import (
 	"syscall"
 )
 
-// isAddrInUse reports whether err is an "address already in use" bind error,
-// across platforms (EADDRINUSE on Unix, WSAEADDRINUSE on Windows).
+// isAddrInUse reports whether err is an "address already in use" bind error.
+// Unix reports EADDRINUSE.
 func isAddrInUse(err error) bool {
 	return errors.Is(err, syscall.EADDRINUSE)
 }

@@ -310,7 +310,7 @@ const (
 func (c *Client) watch(ctx context.Context, cl *ssh.Client) watchReason {
 	closed := make(chan struct{})
 	go func() {
-		cl.Wait()
+		_ = cl.Wait() // always non-nil at disconnect; the signal is the return itself
 		close(closed)
 	}()
 

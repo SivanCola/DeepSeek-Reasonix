@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -48,6 +49,13 @@ func (f *fakeConn) ranContaining(sub string) bool {
 
 func newFakeConn(t *testing.T, root string, handler func(cmd string) (remote.ExecResult, error)) *fakeConn {
 	t.Helper()
+	// EnsureServe targets POSIX remotes (paths via path.Join, sh -c launch). This
+	// harness runs the SFTP server against the local FS, so on Windows the remote
+	// home resolves to a Windows drive path and the POSIX path derivation breaks —
+	// a harness limitation, not a product one. Linux/macOS CI covers these flows.
+	if runtime.GOOS == "windows" {
+		t.Skip("EnsureServe harness models a POSIX remote; exercised on Linux/macOS")
+	}
 	srv := sshtest.Start(t, sshtest.Options{SFTPRoot: root})
 	cfg := &ssh.ClientConfig{User: "t", HostKeyCallback: ssh.InsecureIgnoreHostKey(), Timeout: 5 * time.Second}
 	cl, err := ssh.Dial("tcp", srv.Addr, cfg)
