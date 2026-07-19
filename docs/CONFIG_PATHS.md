@@ -37,6 +37,7 @@ non-destructively when `<Reasonix home>/.env` is missing them.
 | Global skills | `<Reasonix home>/skills/` |
 | Global hooks | `<Reasonix home>/settings.json` |
 | Hook trust store | `<Reasonix home>/trust.json` |
+| Remote-SSH managed known_hosts | `<Reasonix home>/remote/known_hosts` |
 | Sessions | `<state root>/sessions/` |
 | Archives | `<state root>/archive/` |
 | Memory | `<state root>/memory/` and `<state root>/projects/` |

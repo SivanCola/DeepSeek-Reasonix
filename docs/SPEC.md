@@ -44,12 +44,20 @@ reasonix/
     ├── permission/          # per-call Policy: allow/ask/deny rules → Decision
     ├── command/             # custom slash commands loaded from .reasonix/commands/*.md
     ├── plugin/              # stdio JSON-RPC (MCP) client; adapts remote tools
+    ├── remote/              # SSH transport for the Remote-SSH module
+    │   ├── forward/         # -L / -R port-forward lifecycle
+    │   ├── sftpfs/          # SFTP file layer (quarantines pkg/sftp)
+    │   └── bootstrap/       # detached `reasonix serve` bootstrap over SSH
     └── agent/               # Session + harness loop
 ```
 
 Dependency direction (acyclic): `cli → {agent, plugin, config} → {tool, provider}`.
 Built-in subpackages (`provider/openai`, `tool/builtin`) import their parent to
-self-register; parents never import children.
+self-register; parents never import children. The Remote-SSH module layers
+`cli → remote/bootstrap → remote → {remote/forward, remote/sftpfs, config,
+netclient}`; `remote` and its subpackages never import `cli`, `agent`, or
+`serve`, and all interactivity flows through callbacks (host-key / secret
+prompts) so the desktop module consumes the same surface. See §Remote below.
 
 ## 3. Core Abstractions
 

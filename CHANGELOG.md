@@ -8,6 +8,18 @@ branch.
 
 ### Added
 
+- Added a **Remote SSH** module (VS Code Remote-SSH style): a user-global
+  `[remote]` host config, `reasonix remote` CLI (add/list/remove/import/test/
+  connect/status/forward/serve/fs) and `/remote` slash command, an SSH transport
+  with trust-on-first-use host-key verification, keepalive + exponential-backoff
+  reconnect, `-L`/`-R` port forwarding, and SFTP file access. `connect`
+  bootstraps a persistent `reasonix serve` on the remote host and tunnels its
+  loopback port so the full agent runs remotely. The desktop app adds a
+  **Settings -> Remote SSH** host manager, a remote file browser/editor, a
+  port-forwarding panel, and a status-bar connection chip. Linux/macOS remotes.
+- Added `reasonix serve --port-file/--token-file/--pid-file` so a supervised
+  headless serve can bind an ephemeral port and read its auth token from a file
+  (keeping it out of `ps`).
 - Added Claude Code-style searchable CLI pickers for models, providers, and
   sessions, with arrow, Vim, and `Ctrl+P` / `Ctrl+N` navigation.
 - Added `-p` / `--print`, `text`, `json`, and `stream-json` output modes for
