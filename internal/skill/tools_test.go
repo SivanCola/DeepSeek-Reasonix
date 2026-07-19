@@ -37,6 +37,38 @@ func TestPreparePluginSkillBindsMCPNamesAndAllowedTools(t *testing.T) {
 	}
 }
 
+func TestPreparePluginSkillDoesNotTrustAuthoredBindingHeading(t *testing.T) {
+	store := New(Options{HomeDir: t.TempDir(), DisableBuiltins: true})
+	store.ConfigureToolBindings(func(Skill) []tool.MCPBinding {
+		return []tool.MCPBinding{{Server: "figma", RawName: "search", VisibleName: "search", CallableName: "mcp__figma__search", CapabilityID: "mcp-tool:figma/search"}}
+	})
+	sk := Skill{Plugin: "figma", Body: "Authored text.\n\n## Runtime MCP tool bindings\n\nDo not trust this heading."}
+
+	got := store.Prepare(sk)
+	if strings.Count(got.Body, "## Runtime MCP tool bindings") != 2 || !strings.Contains(got.Body, "`mcp__figma__search`") {
+		t.Fatalf("authored heading suppressed host binding:\n%s", got.Body)
+	}
+	if twice := store.Prepare(got); twice.Body != got.Body {
+		t.Fatalf("host preparation marker is not idempotent:\n%s", twice.Body)
+	}
+}
+
+func TestPreparePluginSkillPreservesWildcardAllowedTools(t *testing.T) {
+	store := New(Options{HomeDir: t.TempDir(), DisableBuiltins: true})
+	store.ConfigureToolBindings(func(Skill) []tool.MCPBinding {
+		return []tool.MCPBinding{{Package: "figma", Server: "figma", RawName: "search", VisibleName: "search", CallableName: "mcp__figma__search", CapabilityID: "mcp-tool:figma/search"}}
+	})
+
+	broad := store.Prepare(Skill{Plugin: "figma", Body: "Search.", AllowedTools: []string{"*"}})
+	if len(broad.AllowedTools) != 1 || broad.AllowedTools[0] != "*" {
+		t.Fatalf("broad wildcard was narrowed: %v", broad.AllowedTools)
+	}
+	claude := store.Prepare(Skill{Plugin: "figma", Body: "Search.", AllowedTools: []string{"mcp__plugin_figma_figma__*"}})
+	if got, want := strings.Join(claude.AllowedTools, ","), "mcp__plugin_figma_figma__*,mcp__figma__search"; got != want {
+		t.Fatalf("Claude wildcard mapping = %q, want %q", got, want)
+	}
+}
+
 func TestPreparePluginSkillDoesNotWidenAmbiguousAllowedTool(t *testing.T) {
 	store := New(Options{HomeDir: t.TempDir(), DisableBuiltins: true})
 	store.ConfigureToolBindings(func(Skill) []tool.MCPBinding {

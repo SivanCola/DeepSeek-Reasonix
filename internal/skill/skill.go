@@ -69,6 +69,9 @@ type Skill struct {
 	Scope       Scope  // where it came from
 	Path        string // absolute path to the SKILL.md / <name>.md, or "(builtin)"
 	Plugin      string // installed plugin package name; empty for non-plugin skills
+	// runtimeBindingsPrepared is session-local invocation state. It must not be
+	// inferred from untrusted Markdown content or persisted skill metadata.
+	runtimeBindingsPrepared bool
 	// SlashPrefix overrides Plugin only for the user-facing invocation name.
 	// Imported Claude agents use <plugin>:agent so an agent and skill may safely
 	// share the same upstream name.
@@ -249,7 +252,7 @@ func (s *Store) ConfigureToolBindings(resolve func(Skill) []tool.MCPBinding) {
 // exact callable names. Non-plugin skills and sessions without bindings are
 // returned byte-for-byte unchanged.
 func (s *Store) Prepare(sk Skill) Skill {
-	if s == nil || s.toolBindings == nil || strings.TrimSpace(sk.Plugin) == "" {
+	if s == nil || s.toolBindings == nil || strings.TrimSpace(sk.Plugin) == "" || sk.runtimeBindingsPrepared {
 		return sk
 	}
 	bindings := append([]tool.MCPBinding(nil), s.toolBindings(sk)...)
@@ -271,9 +274,7 @@ func (s *Store) Prepare(sk Skill) Skill {
 		return sk
 	}
 	sk.AllowedTools = bindAllowedTools(sk.AllowedTools, bindings)
-	if strings.Contains(sk.Body, "\n## Runtime MCP tool bindings\n") {
-		return sk
-	}
+	sk.runtimeBindingsPrepared = true
 
 	var b strings.Builder
 	b.WriteString(strings.TrimRight(sk.Body, " \t\r\n"))
@@ -317,13 +318,25 @@ func bindAllowedTools(refs []string, bindings []tool.MCPBinding) []string {
 				}
 			}
 		}
-		if len(matches) == 1 || isPattern && len(matches) > 0 {
+		if isPattern {
+			// Preserve the original pattern so an existing broad allowlist such as
+			// "*" keeps all of its prior tools. Add only canonical MCP names the
+			// upstream/Claude pattern itself cannot match in Reasonix.
+			appendOne(ref)
 			names := make([]string, 0, len(matches))
 			for name := range matches {
 				names = append(names, name)
 			}
 			sort.Strings(names)
 			for _, name := range names {
+				if matched, err := path.Match(ref, name); err != nil || !matched {
+					appendOne(name)
+				}
+			}
+			continue
+		}
+		if len(matches) == 1 {
+			for name := range matches {
 				appendOne(name)
 			}
 			continue

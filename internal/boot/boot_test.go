@@ -3869,6 +3869,19 @@ func TestSkillMCPBindingsUseOnlyValidOwnedCache(t *testing.T) {
 	if stale := skillMCPBindings(skill.Skill{Plugin: "design-plugin"}, nil, specs, cached, map[string]bool{"figma": false}); len(stale) != 0 {
 		t.Fatalf("stale cache supplied skill bindings: %+v", stale)
 	}
+
+	reg := tool.NewRegistry()
+	host := plugin.NewHost()
+	t.Cleanup(host.Close)
+	liveTools := plugin.LazyToolset(specs[0], &plugin.CachedSchema{Tools: []plugin.CachedTool{{Name: "figma_current_tool"}}}, host, reg, context.Background(), false)
+	for _, live := range liveTools {
+		reg.Add(live)
+	}
+	oldCache := map[string][]plugin.CachedTool{"figma": {{Name: "figma_removed_tool"}}}
+	got = skillMCPBindings(skill.Skill{Plugin: "design-plugin"}, reg, specs, oldCache, map[string]bool{"figma": true})
+	if len(got) != 1 || got[0].RawName != "figma_current_tool" {
+		t.Fatalf("live registry did not supersede stale boot cache: %+v", got)
+	}
 }
 
 func TestVerifiedMCPPackageRequiresMatchingTransport(t *testing.T) {

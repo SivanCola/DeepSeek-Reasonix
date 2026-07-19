@@ -2329,10 +2329,12 @@ func pluginPackageOwners(cfg *config.Config) map[string]string {
 
 func skillMCPBindings(sk skill.Skill, reg *tool.Registry, specs []plugin.Spec, cachedTools map[string][]plugin.CachedTool, cacheHashOK map[string]bool) []tool.MCPBinding {
 	var out []tool.MCPBinding
+	liveServers := map[string]bool{}
 	if reg != nil {
 		bindings := reg.MCPBindings()
 		out = make([]tool.MCPBinding, 0, len(bindings))
 		for _, binding := range bindings {
+			liveServers[binding.Server] = true
 			if binding.Package == sk.Plugin {
 				out = append(out, binding)
 			}
@@ -2342,7 +2344,7 @@ func skillMCPBindings(sk skill.Skill, reg *tool.Registry, specs []plugin.Spec, c
 	// package server before it is connected. The skill can then route through
 	// use_capability without inventing Reasonix's canonical name.
 	for _, spec := range specs {
-		if spec.Package != sk.Plugin || !cacheHashOK[spec.Name] {
+		if spec.Package != sk.Plugin || liveServers[spec.Name] || !cacheHashOK[spec.Name] {
 			continue
 		}
 		for _, cached := range cachedTools[spec.Name] {
