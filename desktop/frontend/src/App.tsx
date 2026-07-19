@@ -172,7 +172,7 @@ import {
   type Theme,
 } from "./lib/theme";
 import { applyConversationWidth } from "./lib/conversationWidth";
-import { applyThemePack, applyThemeScene, clearThemePack, setBaseAppearance } from "./lib/themePack";
+import { applyConfiguredBaseAppearance, applyThemePack, applyThemeScene, clearThemePack } from "./lib/themePack";
 import { ThemeBackground } from "./components/ThemeBackground";
 import { applyTextSize, DEFAULT_TEXT_SIZE, getTextSize, nextTextSize } from "./lib/textSize";
 import { useViewportHeightVar, useWindowStatePersistence } from "./lib/windowState";
@@ -1359,10 +1359,8 @@ export default function App() {
     (settings: Pick<SettingsView, "desktopTheme" | "desktopThemeStyle" | "desktopLayoutStyle" | "desktopLanguage" | "checkUpdates" | "statusBarStyle" | "statusBarItems" | "conversationWidth">) => {
       const nextTheme = normalizeThemePreference(settings.desktopTheme);
       const nextStyle = normalizeThemeStyleForTheme(settings.desktopThemeStyle, nextTheme);
-      applyTheme(nextTheme, nextStyle, { persist: false });
+      applyConfiguredBaseAppearance(nextTheme, nextStyle);
       applyConversationWidth(settings.conversationWidth);
-      // Config appearance is the restore target for clearThemePack / restore-default.
-      setBaseAppearance(nextTheme, nextStyle);
       const nextLayoutStyle = normalizeDesktopLayoutStyle(settings.desktopLayoutStyle);
       setDesktopLayoutStyle(nextLayoutStyle);
       applyLayoutStyleDefaults(nextLayoutStyle);

@@ -4,12 +4,15 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  applyConfiguredBaseAppearance,
   applyThemePack,
   applyThemeScene,
   beginThemePreview,
   cancelThemePreview,
   clearThemePack,
   draftPackView,
+  getActiveThemePack,
+  getBaseAppearance,
   isSafeBackgroundURL,
   isSafeHex,
   isThemeTokenKey,
@@ -273,6 +276,20 @@ clearThemePack();
 ok(!attrs.has("data-theme-pack"), "clear removes data-theme-pack");
 ok(getThemeStyle() === "graphite", "clear restores config graphite style");
 
+// Generic settings refreshes must update the configured restore target without
+// replacing an active pack's effective style in the live DOM.
+applyThemePack(aurora);
+applyConfiguredBaseAppearance("light", "slate");
+ok(getActiveThemePack()?.id === "aurora", "settings refresh preserves the active pack");
+ok(attrs.get("data-theme-pack") === "aurora", "settings refresh preserves the pack DOM marker");
+ok(getThemeStyle() === "aurora", "settings refresh preserves the pack effective style");
+ok(
+  getBaseAppearance()?.theme === "light" && getBaseAppearance()?.style === "slate",
+  "settings refresh updates the configured restore appearance",
+);
+clearThemePack();
+ok(getThemeStyle() === "slate", "clear restores the configured appearance after settings refresh");
+
 // React owners must not replace the configured base style with a pack's
 // effective style. Direct reset entry points depend on this restore snapshot.
 const activeAuroraExperience = {
@@ -361,7 +378,7 @@ ok(
 ok(themeBgSlice.includes(".theme-bg__overlay"), "overlay wash element styled");
 ok(appSource.includes("applyThemeScene"), "App wires scene from session content");
 ok(appSource.includes("ThemeBackground"), "App mounts background layer");
-ok(appSource.includes("setBaseAppearance"), "App seeds base appearance from config");
+ok(appSource.includes("applyConfiguredBaseAppearance"), "App applies configured appearance without replacing an active pack");
 ok(appSource.includes("ResetThemePack") || appSource.includes("theme reset") || appSource.includes('arg === "reset"'), "reset entry exists");
 
 console.log("\nofficial themes (kind/grouping/i18n)");

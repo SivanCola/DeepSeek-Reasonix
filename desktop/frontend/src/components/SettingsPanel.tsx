@@ -53,7 +53,7 @@ import {
 } from "../lib/keyboardShortcuts";
 import type { BotAccessView, BotAllowlistView, BotConnectionDiagnostic, BotConnectionView, BotInstallStartResult, BotRouteView, BotSettingsView, HookConfigView, HooksSettingsView, NetworkView, ProviderPresetView, ProviderView, SettingsTab, SettingsView } from "../lib/types";
 import { AppearanceOverview } from "./AppearanceOverview";
-import { applyThemePack, getActiveThemePack, setBaseAppearance } from "../lib/themePack";
+import { applyConfiguredBaseAppearance, setBaseAppearance } from "../lib/themePack";
 import { InlineConfirmButton } from "./InlineConfirmButton";
 import { Tooltip } from "./Tooltip";
 import { AnchoredPopover } from "./AnchoredPopover";
@@ -297,11 +297,8 @@ export function SettingsPanel({
                       customFontName={customFontName}
                       customMonoFontName={customMonoFontName}
                       onTheme={(nextTheme) => {
-                        applyTheme(nextTheme, themeStyle, { persist: false });
+                        applyConfiguredBaseAppearance(nextTheme, themeStyle);
                         setThemeState(nextTheme);
-                        setBaseAppearance(nextTheme, themeStyle);
-                        const pack = getActiveThemePack();
-                        if (pack) applyThemePack(pack);
                         void apply(() => app.SetDesktopAppearance(nextTheme, themeStyle));
                       }}
                       onConversationWidth={(width) => {
