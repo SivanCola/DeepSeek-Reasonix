@@ -574,15 +574,16 @@ Reasonix is an MCP client. A `[[plugins]]` entry's `type` selects the transport:
 (`${VAR}` / `${VAR:-default}` expanded from the environment, so tokens stay out
 of the file).
 
-The normal setup path is intentionally one step: adding a server in Desktop or
-the user config means you authorize that server, so it connects immediately,
-trusts its current capability snapshot, and ordinary calls do not need another
-MCP-specific approval setting. Explicit deny rules still win, destructive tools
-still require a fresh human decision, and Plan/read-only sub-agents still expose
-only eligible tool identities. Repository-controlled `reasonix.toml` and
-`.mcp.json` entries are different: Reasonix shows one launch confirmation for
-the exact command or endpoint before starting it, and asks again if that
-identity changes.
+The normal setup path is intentionally one step. Use Desktop's **Add and
+connect**, `/mcp add`, or ask Reasonix to install a package, URL, or `.mcp.json`.
+That explicit install is also authorization: the server is saved and connected
+in the current session, and no second trust step appears now or on the next
+startup. Explicit deny rules still win, destructive tools still require a fresh
+human decision, and Plan/read-only sub-agents still expose only eligible tool
+identities. A server merely discovered in repository-controlled
+`reasonix.toml` or `.mcp.json` is different: Reasonix asks once to confirm the
+exact command or endpoint before starting it, reconnects it automatically while
+that value is unchanged, and asks again only after a change.
 
 stdio servers keep one process for initialize, reads, and writes, so stateful
 servers such as browsers retain sessions and open pages. Because an OS sandbox

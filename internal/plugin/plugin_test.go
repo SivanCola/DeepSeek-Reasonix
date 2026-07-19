@@ -1562,13 +1562,89 @@ func TestProjectLaunchApprovalBlocksBeforeProcessStart(t *testing.T) {
 	if got := readHelperCounter(t, startCount); got != 1 {
 		t.Fatalf("authorized preflight starts = %d, want 1", got)
 	}
-	host, _, err := StartAll(ctx, []Spec{spec})
+	host, tools, err := StartAll(ctx, []Spec{spec})
 	if err != nil {
 		t.Fatal(err)
+	}
+	if len(tools) == 0 {
+		t.Fatal("authorized project server returned no tools")
+	}
+	policy, ok := tools[0].(tool.MCPApprovalPolicy)
+	if !ok {
+		t.Fatalf("authorized project tool %T does not expose MCP approval policy", tools[0])
+	}
+	if got := policy.MCPApprovalMode(); got != tool.MCPApprovalApprove {
+		t.Fatalf("authorized project tool approval = %q, want direct approval", got)
 	}
 	host.Close()
 	if got := readHelperCounter(t, startCount); got != 2 {
 		t.Fatalf("post-authorization starts = %d, want 2", got)
+	}
+}
+
+func TestAuthorizeSpecLaunchRecordsInstallConsentWithoutStartingServer(t *testing.T) {
+	redirectCache(t)
+	startCount := filepath.Join(t.TempDir(), "starts")
+	manager := mcptrust.NewManager(filepath.Join(t.TempDir(), mcptrust.StateFilename), "/workspace")
+	spec := Spec{
+		Name: "installed-project-server", Command: os.Args[0], Args: []string{"-test.run=TestHelperProcess", "--"},
+		Env: map[string]string{
+			"GO_WANT_HELPER_PROCESS":     "1",
+			"GO_WANT_HELPER_START_COUNT": startCount,
+		},
+		TrustManager: manager, ConfigSource: "project_config", RequireLaunchApproval: true,
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	if err := AuthorizeSpecLaunch(ctx, spec); err != nil {
+		t.Fatalf("AuthorizeSpecLaunch: %v", err)
+	}
+	if got := readHelperCounter(t, startCount); got != 0 {
+		t.Fatalf("install authorization started server %d times, want 0", got)
+	}
+	identity, err := specIdentityFingerprint(ctx, spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	authorized, changed, err := manager.LaunchAuthorized(spec.Name, spec.ConfigSource, identity)
+	if err != nil || !authorized || changed {
+		t.Fatalf("installed launch grant = (authorized=%v changed=%v err=%v)", authorized, changed, err)
+	}
+	host, tools, err := StartAll(ctx, []Spec{spec})
+	if err != nil {
+		t.Fatalf("start installed project server: %v", err)
+	}
+	defer host.Close()
+	if len(tools) == 0 {
+		t.Fatal("installed project server returned no tools")
+	}
+	policy, ok := tools[0].(tool.MCPApprovalPolicy)
+	if !ok {
+		t.Fatalf("installed project tool %T does not expose MCP approval policy", tools[0])
+	}
+	if got := policy.MCPApprovalMode(); got != tool.MCPApprovalApprove {
+		t.Fatalf("installed project tool approval = %q, want direct approval", got)
+	}
+}
+
+func TestAuthorizeSpecLaunchDoesNotAddPersistentTransportRestrictions(t *testing.T) {
+	manager := mcptrust.NewManager(filepath.Join(t.TempDir(), mcptrust.StateFilename), "/workspace")
+	spec := Spec{
+		Name: "installed-local-http", Type: "http", URL: "http://127.0.0.1:8080/mcp",
+		TrustManager: manager, ConfigSource: "project_config", RequireLaunchApproval: true,
+	}
+	ctx := context.Background()
+	if err := AuthorizeSpecLaunch(ctx, spec); err != nil {
+		t.Fatalf("explicit install authorization: %v", err)
+	}
+	identity, err := specIdentityFingerprint(ctx, spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	authorized, changed, err := manager.LaunchAuthorized(spec.Name, spec.ConfigSource, identity)
+	if err != nil || !authorized || changed {
+		t.Fatalf("installed local HTTP grant = (authorized=%v changed=%v err=%v)", authorized, changed, err)
 	}
 }
 

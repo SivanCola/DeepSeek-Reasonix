@@ -146,13 +146,16 @@ interface (`call` / `notify` / `close`) abstracts that, so the MCP-level logic
   process uses the server's writer sandbox because process confinement cannot
   change per RPC; read-only eligibility and destructive approval remain local
   dispatch gates rather than separate process sandboxes.
-- Configuration provenance is runtime metadata. User config, legacy user MCP,
-  and verified plugin-package servers are authorized by installation: the host
-  records their current trust snapshot automatically and ordinary calls default
-  to direct approval. Project `reasonix.toml` and `.mcp.json` servers require a
-  session/workspace launch grant for the exact stable identity before any
-  process or network transport is created. Existing receipts count as launch
-  grants for backward compatibility; identity changes invalidate the grant.
+- Configuration provenance is runtime metadata. Explicit installation from the
+  user config, Desktop, `/mcp add`, or `install_source` is authorization: the
+  host connects the server immediately when installation happens in a live
+  session, records a durable exact command/endpoint launch grant for
+  project-scoped installs, and ordinary calls default to direct approval.
+  Project `reasonix.toml` and `.mcp.json` servers that are only
+  discovered from the repository require one durable launch confirmation before
+  any process or network transport is created; matching grants reconnect
+  automatically and identity changes require confirmation again. Existing
+  receipts count as launch grants for backward compatibility.
 - Each remote tool is adapted to the `Tool` interface and injected into the run
   registry, namespaced `mcp__<server>__<tool>` (spaces normalised to `_`) to
   match Claude Code and avoid clashes.

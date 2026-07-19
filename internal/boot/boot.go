@@ -1181,8 +1181,25 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 				if opts.Stderr != nil {
 					spec.Stderr = opts.Stderr
 				}
+				// Applying an install plan is already an explicit user decision.
+				// Project-scoped installs retain project provenance, but record the
+				// exact durable launch grant now so neither this connection nor the
+				// next session asks the user to authorize the same install again.
+				launchAuthorized := false
+				if spec.RequireLaunchApproval {
+					if err := plugin.AuthorizeSpecLaunch(ctx, spec); err != nil {
+						return installsource.MCPConnectResult{}, err
+					}
+					launchAuthorized = true
+				}
 				tools, err := pluginHost.Add(ctx, spec)
 				if err != nil {
+					// The install did not complete, so do not retain consent for a
+					// server that never connected. Replacement rollback reauthorizes
+					// the previous project entry before reconnecting it.
+					if launchAuthorized && spec.TrustManager != nil {
+						_ = spec.TrustManager.Revoke(spec.Name)
+					}
 					return installsource.MCPConnectResult{}, err
 				}
 				reg.RemovePrefix(plugin.ToolPrefix(spec.Name))
@@ -1194,6 +1211,9 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 				disconnect := func() {
 					if prefix, ok := pluginHost.Remove(spec.Name); ok {
 						reg.RemovePrefix(prefix)
+					}
+					if spec.TrustManager != nil {
+						_ = spec.TrustManager.Revoke(spec.Name)
 					}
 				}
 				return installsource.MCPConnectResult{

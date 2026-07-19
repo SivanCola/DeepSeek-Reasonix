@@ -469,11 +469,12 @@ Reasonix 是一个 MCP 客户端。`[[plugins]]` 的 `type` 选择传输：`stdi
 程（`command`/`args`/`env`）；`http`（Streamable HTTP）连接远程 `url`，可带静态
 `headers`（`${VAR}` / `${VAR:-default}` 从环境展开，密钥不入文件）。
 
-普通配置流程现在只有一步：在桌面端或用户全局配置中添加 server，就表示用户授权该
-server；保存后会立即连接、信任当前能力快照，普通调用无需再配置一套 MCP 专用审批。
-显式 deny 仍然优先，destructive 工具仍需每次由用户确认，Plan 与只读 subagent 仍只暴露
-符合条件的工具身份。仓库控制的 `reasonix.toml` 和 `.mcp.json` 不会直接执行：Reasonix 会在
-启动其进程或访问其地址之前，对精确身份确认一次；命令、可执行文件或地址变化后会重新确认。
+普通配置流程现在只有一步：使用桌面端的“添加并连接”、`/mcp add`，或直接让 Reasonix
+安装一个 package、URL 或 `.mcp.json`。这次明确安装本身就是授权：server 会保存并在当前
+会话连接，现在和下次启动都不会再弹出第二套信任步骤。显式 deny 仍然优先，destructive
+工具仍需每次由用户确认，Plan 与只读 subagent 仍只暴露符合条件的工具身份。只有被动从仓库
+`reasonix.toml` 或 `.mcp.json` 发现的 server 会在第一次启动前，请用户确认一次精确命令或
+地址；内容不变时以后自动连接，发生变化时才重新确认。
 
 stdio server 从初始化到读写都复用同一个进程，因此浏览器等有状态 MCP 能保留会话和
 已打开页面。由于进程启动后无法按调用切换 OS 沙箱，这个共享进程始终使用该 server 的普通

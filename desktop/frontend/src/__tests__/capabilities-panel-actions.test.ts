@@ -356,7 +356,6 @@ console.log("capabilities panel MCP actions");
   }];
   let trustDecision = "";
   let reconnectCount = 0;
-  let projectLaunch = false;
   let servers: ServerView[] = [{
     name: "github",
     transport: "stdio",
@@ -387,17 +386,7 @@ console.log("capabilities panel MCP actions");
         Meta: async () => meta,
         ListTabs: async () => tabs,
         MCPServers: async () => servers,
-        InspectMCPTrust: async () => projectLaunch ? ({
-          name: "github",
-          trustState: "untrusted",
-          isolationState: "enforced",
-          changedTools: [],
-          toolChanges: [],
-          readers: [],
-          writers: [],
-          destructive: [],
-          requiresLaunchApproval: true,
-        }) : ({
+        InspectMCPTrust: async () => ({
           name: "github",
           trustState: "changed",
           trustSource: "user",
@@ -419,7 +408,6 @@ console.log("capabilities panel MCP actions");
           reconnectCount += 1;
           servers = servers.map((item) => ({ ...item, status: "connected", runtimeState: "ready", requiresReverification: false, error: "" }));
         },
-        RefreshMCPCatalog: async () => ({ source: "cached", sequence: 3, offline: true, stale: true }),
       } as Partial<AppBindings> as AppBindings,
     },
   };
@@ -428,31 +416,32 @@ console.log("capabilities panel MCP actions");
     root.render(React.createElement(LocaleProvider, null, React.createElement(MCPServersSettingsPage)));
     await flush();
   });
-  await waitFor("untrusted MCP badge", () => Boolean(document.body.textContent?.includes("Not trusted")));
-  ok(document.body.textContent?.includes("Unisolated") ?? false, "server list keeps an unisolated warning visible");
-  const refreshCatalog = findButton("Refresh catalog");
-  if (!refreshCatalog) throw new Error("missing catalog refresh action");
-  await act(async () => {
-    refreshCatalog.click();
-    await flush();
-  });
-  await waitFor("offline catalog result", () => Boolean(document.body.textContent?.includes("Catalog sequence 3")));
-  ok(document.body.textContent?.includes("Offline verified snapshot") && document.body.textContent?.includes("older than 30 days"), "catalog refresh reports verified LKG fallback and staleness without disabling plugins");
-  const reverify = findButton("Reverify");
-  if (!reverify) throw new Error("missing MCP reverify action in failed server row");
+  const refreshStatus = async () => {
+    const refresh = document.querySelector<HTMLButtonElement>('button[aria-label="Refresh MCP status"]');
+    if (!refresh) throw new Error("missing MCP status refresh action");
+    await act(async () => {
+      refresh.click();
+      await flush();
+    });
+  };
+  await waitFor("MCP change review action", () => Boolean(findButton("Review changes")));
+  ok(!document.body.textContent?.includes("Not trusted"), "the server list does not expose trust-state jargon");
+  ok(!document.body.textContent?.includes("Unisolated"), "the server list does not alarm on isolation internals during normal use");
+  ok(!findButton("Refresh catalog"), "catalog maintenance is not part of the normal MCP workflow");
+  const reverify = findButton("Review changes");
+  if (!reverify) throw new Error("missing MCP change review action in failed server row");
   ok(!findButton("Retry"), "identity drift must not offer a retry action that will hit the same preflight block");
   await act(async () => {
     reverify.click();
     await flush();
   });
   await waitFor("MCP trust modal", () => Boolean(document.querySelector('[role="dialog"]')));
-  ok(document.body.textContent?.includes("Trust github?") ?? false, "trust modal identifies the server");
+  ok(document.body.textContent?.includes("Review changes for github") ?? false, "change review identifies the server");
   ok(document.body.textContent?.includes("may have startup side effects") ?? false, "trust modal explains the unisolated startup risk");
   ok(document.body.textContent?.includes("sandbox-exec is unavailable on PATH") ?? false, "trust modal includes the backend diagnostic without requiring configuration");
   ok(document.body.textContent?.includes("Reader became writer: issue_read") ?? false, "trust modal explains the exact safety transition");
-  ok(document.body.textContent?.includes("issue_read") && document.body.textContent?.includes("issue_write") && document.body.textContent?.includes("wipe"), "trust modal separates reader, writer, and destructive tools");
-  const trustWorkspace = findButton("Trust this workspace");
-  if (!trustWorkspace) throw new Error("missing workspace trust action");
+  const trustWorkspace = findButton("Authorize and connect");
+  if (!trustWorkspace) throw new Error("missing authorize and connect action");
   await act(async () => {
     trustWorkspace.click();
     await flush();
@@ -464,7 +453,6 @@ console.log("capabilities panel MCP actions");
   ok(!document.querySelector('[role="dialog"]'), "successful trust closes the combined confirmation modal");
   ok(Boolean(document.querySelector('[data-status="connected"]')), "failed server reconnects after explicit re-verification");
 
-  projectLaunch = true;
   trustDecision = "";
   servers = servers.map((item) => ({
     ...item,
@@ -475,25 +463,15 @@ console.log("capabilities panel MCP actions");
     requiresReverification: true,
     trustState: "untrusted",
   }));
-  await act(async () => {
-    refreshCatalog.click();
-    await flush();
-  });
+  await refreshStatus();
   await waitFor("project MCP authorization action", () => Boolean(findButton("Authorize and connect")));
-  ok(!findButton("Reverify"), "first-time project MCP approval must not be mislabeled as re-verification");
-  await act(async () => {
-    findButton("Authorize and connect")?.click();
-    await flush();
-  });
-  await waitFor("project MCP launch modal", () => Boolean(findButton("Authorize and connect")));
-  ok(!findButton("Only this connection"), "project launch uses one durable authorization action instead of a scope choice");
-  ok(document.body.textContent?.includes("comes from the current project") ?? false, "project launch modal explains why authorization is required");
+  ok(!findButton("Review changes"), "first-time project MCP approval must not be mislabeled as a change review");
   await act(async () => {
     findButton("Authorize and connect")?.click();
     await flush();
   });
   await waitFor("durable project launch authorization", () => trustDecision === "workspace" && Boolean(document.querySelector('[data-status="connected"]')));
-  projectLaunch = false;
+  ok(!document.querySelector('[role="dialog"]'), "first project confirmation connects directly without a second modal");
 
   servers = servers.map((item) => ({
     ...item,
@@ -504,12 +482,9 @@ console.log("capabilities panel MCP actions");
     authStatus: "required",
     authUrl: "https://mcp.example.test/authorize",
   }));
-  await act(async () => {
-    refreshCatalog.click();
-    await flush();
-  });
-  await waitFor("authorization action", () => Boolean(findButton("Reauthorize")));
-  ok(!findButton("Reverify"), "an actionable OAuth failure must take precedence over identity re-verification");
+  await refreshStatus();
+  await waitFor("sign-in action", () => Boolean(findButton("Sign in")));
+  ok(!findButton("Review changes"), "an actionable OAuth failure must take precedence over identity change review");
 
   servers = servers.map((item) => ({
     ...item,
@@ -520,12 +495,9 @@ console.log("capabilities panel MCP actions");
     authStatus: "none",
     authUrl: "",
   }));
-  await act(async () => {
-    refreshCatalog.click();
-    await flush();
-  });
+  await refreshStatus();
   await waitFor("ordinary retry action", () => Boolean(findButton("Retry")));
-  ok(!findButton("Reverify"), "ordinary startup failures must keep the retry action");
+  ok(!findButton("Review changes"), "ordinary startup failures must keep the retry action");
 
   trustDecision = "";
   servers = servers.map((item) => ({
@@ -538,23 +510,15 @@ console.log("capabilities panel MCP actions");
     launchApprovalGoverned: true,
     trustState: "workspace",
   }));
-  await act(async () => {
-    findButton("Refresh catalog")?.click();
-    await flush();
-  });
+  await refreshStatus();
   await waitFor("authorized project server row", () => Boolean(document.querySelector('[data-status="connected"]')));
   await act(async () => {
     (document.querySelector(".cap-mcp-list-row__main") as HTMLButtonElement | null)?.click();
     await flush();
   });
-  await waitFor("revocable persistent grant entry", () => Boolean(findButton("Revoke trust")));
-  ok(!findButton("Reverify"), "an authorized connected project server must not show the reauthorization alarm");
-  await act(async () => {
-    findButton("Revoke trust")?.click();
-    await flush();
-  });
-  await waitFor("persistent launch grant revoked", () => trustDecision === "revoke");
-  ok(!findButton("Revoke trust"), "revoking clears the persistent grant entry");
+  await waitFor("connected project server detail", () => Boolean(document.querySelector(".cap-mcp-subpage")));
+  ok(!findButton("Review changes"), "an authorized connected project server does not show a change alarm");
+  ok(!findButton("Revoke trust"), "normal MCP details do not expose a second trust-management workflow");
 
   await act(async () => {
     root.unmount();
@@ -815,7 +779,7 @@ console.log("capabilities panel MCP actions");
     await flush();
   });
   await act(async () => {
-    findButton("Add")?.click();
+    findButton("Add and connect")?.click();
     await flush();
   });
   ok(document.querySelector('[role="alert"]')?.textContent?.includes("Enter valid JSON") ?? false, "invalid MCP JSON shows a focused validation error");
@@ -848,7 +812,7 @@ console.log("capabilities panel MCP actions");
   const roundTripped = JSON.parse(roundTripJSONEditor.value) as Record<string, { args?: string[] }>;
   ok(roundTripped["yakit-next"]?.args?.[2] === "hello world", "form and JSON mode round trip preserves structured MCP arguments");
   await act(async () => {
-    findButton("Add")?.click();
+    findButton("Add and connect")?.click();
     await flush();
   });
   await waitFor("AddMCPServer call", () => Boolean(addedInput));

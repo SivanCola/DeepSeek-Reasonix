@@ -530,10 +530,6 @@ Usage:
   reasonix mcp add <name> --sse  <url>               remote (legacy SSE)
   reasonix mcp import                                import MCP servers from cc-switch
   reasonix mcp remove <name>
-  reasonix mcp verify <name>
-  reasonix mcp trust <name> --session|--workspace
-  reasonix mcp untrust <name>
-  reasonix mcp catalog refresh
 
 Flags for add:
   --http <url> | --sse <url>   remote transport (omit for a stdio command)
@@ -544,11 +540,11 @@ Examples:
   reasonix mcp add fs npx -y @modelcontextprotocol/server-filesystem .
   reasonix mcp add stripe --http https://mcp.stripe.com --header "Authorization=Bearer $STRIPE_KEY"
 
-Changes take effect on the next session; inside a running chat, use /mcp add to
-connect a server live.
+CLI config changes take effect on the next session. Inside a running chat, use
+/mcp add to save and connect a server immediately. Installing a server is also
+its authorization; there is no separate trust step.
 
-Third-party readOnlyHint metadata becomes reader authority only after the exact
-server identity and tool snapshot is trusted. MCP writers are blocked in Plan;
-destructive tools require a fresh user decision on every call. stdio servers run
-inside the MCP sandbox when available and are reported as unisolated otherwise.`)
+Servers merely discovered in project configuration ask once for confirmation of
+the exact command or endpoint, then reconnect automatically while it is unchanged.
+Explicit tool policies and destructive calls can still require approval.`)
 }

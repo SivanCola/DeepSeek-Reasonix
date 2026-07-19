@@ -658,6 +658,32 @@ type ServerStatus struct {
 	ToolList  []ToolInfo
 }
 
+// AuthorizeSpecLaunch records durable consent for an explicitly user-installed
+// project MCP without starting it a second time. The normal project discovery
+// path still requires a user action; install_source calls this only while
+// applying a plan the user already requested. Reuse an existing launcher lock
+// when one exists, but do not add a second network/version-resolution step to an
+// explicit install: the durable grant follows the exact configured command or
+// endpoint and future changes still invalidate it.
+func AuthorizeSpecLaunch(ctx context.Context, spec Spec) error {
+	if !spec.RequireLaunchApproval {
+		return nil
+	}
+	manager := spec.TrustManager
+	if manager == nil {
+		return fmt.Errorf("MCP trust store is unavailable")
+	}
+	prepared, err := applyStoredLauncherLock(spec)
+	if err != nil {
+		return err
+	}
+	identity, err := specIdentityFingerprint(ctx, prepared)
+	if err != nil {
+		return err
+	}
+	return manager.TrustLaunch(mcptrust.ScopeWorkspace, prepared.Name, trustConfigSource(prepared), identity)
+}
+
 // Failure records one MCP server that was configured but could not connect.
 type Failure struct {
 	Name                   string
@@ -1470,17 +1496,9 @@ func start(lifeCtx, callCtx context.Context, s Spec) (*Client, error) {
 			}
 		}
 	}
-	if s.RequireLaunchApproval {
-		if s.TrustManager == nil {
-			return nil, fmt.Errorf("MCP trust store is unavailable")
-		}
-		authorized, changed, checkErr := s.TrustManager.LaunchAuthorized(s.Name, trustConfigSource(s), identity)
-		if checkErr != nil {
-			return nil, checkErr
-		}
-		if !authorized {
-			return nil, &launchApprovalError{server: s.Name, changed: changed}
-		}
+	s, err = applyEstablishedLaunchGrant(s, identity)
+	if err != nil {
+		return nil, err
 	}
 	if s.TrustManager != nil && !s.AllowIdentityDriftPreflight {
 		if _, changed, checkErr := s.TrustManager.IdentityChanged(s.Name, trustConfigSource(s), identity); checkErr != nil {
@@ -1507,6 +1525,30 @@ func start(lifeCtx, callCtx context.Context, s Spec) (*Client, error) {
 		return nil, err
 	}
 	return c, nil
+}
+
+func applyEstablishedLaunchGrant(s Spec, identity string) (Spec, error) {
+	if !s.RequireLaunchApproval {
+		return s, nil
+	}
+	if s.TrustManager == nil {
+		return s, fmt.Errorf("MCP trust store is unavailable")
+	}
+	authorized, changed, err := s.TrustManager.LaunchAuthorized(s.Name, trustConfigSource(s), identity)
+	if err != nil {
+		return s, err
+	}
+	if !authorized {
+		return s, &launchApprovalError{server: s.Name, changed: changed}
+	}
+	// A matching exact-identity launch grant is the user's authorization for
+	// this project server. Treat the resulting connection like an explicit user
+	// install: refresh its capability snapshot automatically and allow ordinary
+	// calls without another MCP-specific prompt. Explicit policies and
+	// destructiveHint remain stricter and still win.
+	s.AutoTrust = true
+	s.ImplicitApproval = true
+	return s, nil
 }
 
 // newTransport builds the transport for a spec's declared type. Empty / unknown

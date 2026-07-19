@@ -475,6 +475,19 @@ func destructiveHintChangedError(server, rawTool string) error {
 // single Execute (use the controller's PluginCtx) — a turn-scoped ctx would
 // kill the stdio child between turns.
 func LazyToolset(spec Spec, cs *CachedSchema, host *Host, reg *tool.Registry, sessionCtx context.Context, kick bool) []tool.Tool {
+	// Resolve an already-authorized project server before constructing cached
+	// placeholders. Their approval policy is consulted before the background
+	// handshake finishes, so leaving the original project Spec here would cause
+	// one redundant approval even though the exact launch grant already exists.
+	if spec.RequireLaunchApproval {
+		if locked, err := applyStoredLauncherLock(spec); err == nil {
+			if identity, err := specIdentityFingerprint(sessionCtx, locked); err == nil {
+				if authorized, err := applyEstablishedLaunchGrant(locked, identity); err == nil {
+					spec = authorized
+				}
+			}
+		}
+	}
 	spawnCtx, cancel := context.WithCancel(sessionCtx)
 	shared := &lazySpawn{
 		spec: spec,
