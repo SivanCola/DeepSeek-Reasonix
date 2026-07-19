@@ -40,24 +40,35 @@ func ensureBinary(ctx context.Context, conn Conn, fs *sftpfs.FS, opts Options, h
 	}
 }
 
-// locate finds an existing reasonix and returns it only if it meets MinVersion.
+// locate finds an existing reasonix and returns it only if its serve command
+// supports --port-file (the bootstrap contract). A binary that lacks the flag —
+// including every currently-released version — is reported as missing so the
+// install/upload path replaces it. minVersion is accepted for signature
+// stability but the flag probe is authoritative.
 func locate(ctx context.Context, conn Conn, uploaded, minVersion string) (bin, version string) {
+	_ = minVersion
 	res, err := conn.Exec(ctx, LocateCommand(uploaded))
 	if err != nil {
 		return "", ""
 	}
-	lines := strings.SplitN(strings.TrimRight(string(res.Stdout), "\n"), "\n", 2)
+	lines := strings.Split(strings.TrimRight(string(res.Stdout), "\n"), "\n")
 	path := strings.TrimSpace(lines[0])
 	if path == "" {
 		return "", ""
 	}
-	if len(lines) > 1 {
-		if v, verr := ParseVersion(lines[1]); verr == nil {
+	supportsPortFile := false
+	for _, ln := range lines[1:] {
+		ln = strings.TrimSpace(ln)
+		if ln == "portfile:yes" {
+			supportsPortFile = true
+		} else if ln == "portfile:no" {
+			supportsPortFile = false
+		} else if v, verr := ParseVersion(ln); verr == nil {
 			version = v
 		}
 	}
-	if minVersion != "" && (version == "" || CompareVersions(version, minVersion) < 0) {
-		// Too old (or unknown): treat as missing so it gets upgraded.
+	if !supportsPortFile {
+		// Missing the --port-file flag: treat as unusable so it is upgraded.
 		return "", ""
 	}
 	return path, version

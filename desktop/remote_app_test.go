@@ -142,6 +142,67 @@ func TestStopRemoteRuntimeClosesKernel(t *testing.T) {
 	}
 }
 
+// TestUpdateHostPreservesHiddenFields pins the data-loss fix: editing a host in
+// the desktop UI (whose input lacks passphrase_env/password_env/forwards) must
+// not wipe those stored fields.
+func TestUpdateHostPreservesHiddenFields(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("REASONIX_HOME", home)
+	t.Setenv("HOME", home)
+
+	mgr := newDesktopRemoteManager(&App{})
+	// Seed a host with credential refs + a forward via the kernel config API.
+	if err := editUserConfig(func(c *config.Config) error {
+		return c.UpsertRemoteHost(config.RemoteHostEntry{
+			Name: "box", Host: "10.0.0.9", User: "dev",
+			PassphraseEnv: "REMOTE_BOX_PASSPHRASE",
+			PasswordEnv:   "REMOTE_BOX_PASSWORD",
+			Forwards:      []config.RemoteForwardEntry{{Type: "local", Bind: "127.0.0.1:8080", Target: "127.0.0.1:80"}},
+		})
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Edit via the desktop input (no hidden fields), changing only the user.
+	if _, err := mgr.UpdateHost("box", RemoteHostInput{Label: "box", Host: "10.0.0.9", Port: 22, User: "ops", ServeInstall: "auto"}); err != nil {
+		t.Fatalf("UpdateHost: %v", err)
+	}
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	h, ok := cfg.RemoteHost("box")
+	if !ok {
+		t.Fatal("host missing after edit")
+	}
+	if h.User != "ops" {
+		t.Fatalf("edit did not apply: user=%q", h.User)
+	}
+	if h.PassphraseEnv != "REMOTE_BOX_PASSPHRASE" || h.PasswordEnv != "REMOTE_BOX_PASSWORD" {
+		t.Fatalf("edit wiped credential env refs: %+v", h)
+	}
+	if len(h.Forwards) != 1 || h.Forwards[0].Bind != "127.0.0.1:8080" {
+		t.Fatalf("edit wiped persisted forwards: %+v", h.Forwards)
+	}
+}
+
+// TestScanSSHConfigReturnsNonNil pins the JSON-contract fix: an empty scan must
+// encode as [] (not null), which the React import page iterates safely.
+func TestScanSSHConfigReturnsNonNil(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("REASONIX_HOME", home)
+	t.Setenv("HOME", home) // no ~/.ssh/config here => empty result
+	mgr := newDesktopRemoteManager(&App{})
+	out, err := mgr.ScanSSHConfig()
+	if err != nil {
+		t.Fatalf("ScanSSHConfig: %v", err)
+	}
+	if out == nil {
+		t.Fatal("ScanSSHConfig returned nil slice (would encode as JSON null and crash the import page)")
+	}
+}
+
 func TestOpenRemoteWorkspacePersistsLastWorkspace(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("REASONIX_HOME", home)

@@ -95,7 +95,7 @@ func TestLaunchCommandQuotesHostilePaths(t *testing.T) {
 		t.Fatalf("workspace broke out of quoting:\n%s", cmd)
 	}
 	// Sanity: the essential flags are present.
-	for _, want := range []string{"--addr 127.0.0.1:0", "--auth token", "--token-file", "--port-file", "setsid nohup", "echo $!"} {
+	for _, want := range []string{"--addr 127.0.0.1:0", "--auth token", "--token-file", "--port-file", "$SX nohup", "echo $!"} {
 		if !strings.Contains(cmd, want) {
 			t.Errorf("launch command missing %q:\n%s", want, cmd)
 		}
@@ -116,14 +116,44 @@ func TestShellQuote(t *testing.T) {
 	}
 }
 
-func TestStopAndAliveCommands(t *testing.T) {
+func TestStopAndServeAliveCommands(t *testing.T) {
 	stop := StopCommand(4321)
 	for _, want := range []string{"kill -TERM 4321", "kill -0 4321", "kill -KILL 4321"} {
 		if !strings.Contains(stop, want) {
 			t.Errorf("StopCommand missing %q: %s", want, stop)
 		}
 	}
-	if !strings.Contains(AliveCommand(99), "kill -0 99") {
-		t.Errorf("AliveCommand wrong: %s", AliveCommand(99))
+	alive := ServeAliveCommand(99)
+	// Must check liveness AND that the process is a reasonix serve (guards PID
+	// reuse), not just kill -0.
+	for _, want := range []string{"kill -0 99", "ps -p 99", "*reasonix*serve*"} {
+		if !strings.Contains(alive, want) {
+			t.Errorf("ServeAliveCommand missing %q: %s", want, alive)
+		}
+	}
+}
+
+func TestLaunchCommandDetachAndLogHardening(t *testing.T) {
+	cmd := LaunchCommand("/usr/bin/reasonix", "/ws", StatePaths{
+		Dir: "/d", TokenFile: "/d/t", PortFile: "/d/p", PidFile: "/d/i", LogFile: "/d/l",
+	})
+	// setsid must be optional (macOS lacks it) and the log created 0600 so the
+	// serve token line (already suppressed under --port-file) can't leak.
+	for _, want := range []string{"command -v setsid", "$SX nohup", "chmod 600", "umask 077", "--port-file"} {
+		if !strings.Contains(cmd, want) {
+			t.Errorf("LaunchCommand missing %q:\n%s", want, cmd)
+		}
+	}
+	if strings.Contains(cmd, "setsid nohup") {
+		t.Errorf("setsid must be conditional, not hard-wired:\n%s", cmd)
+	}
+}
+
+func TestLocateCommandProbesPortFileFlag(t *testing.T) {
+	cmd := LocateCommand("/home/x/.reasonix/remote/bin/reasonix")
+	for _, want := range []string{"serve --help", "port-file", "portfile:yes", "portfile:no"} {
+		if !strings.Contains(cmd, want) {
+			t.Errorf("LocateCommand missing %q:\n%s", want, cmd)
+		}
 	}
 }

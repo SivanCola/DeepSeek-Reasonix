@@ -3,6 +3,7 @@ package netclient
 import (
 	"bufio"
 	"context"
+	"crypto/tls"
 	"fmt"
 	"net"
 	"net/http"
@@ -83,13 +84,30 @@ func dialSOCKS5(ctx context.Context, pu *url.URL, fwd *net.Dialer, network, addr
 	return d.Dial(network, addr)
 }
 
-// dialHTTPConnect opens a CONNECT tunnel through an http/https proxy. This is
-// intentionally minimal: the SSH client speaks its own protocol over the
-// established stream, so only the tunnel handshake lives here.
+// dialHTTPConnect opens a CONNECT tunnel through an http/https proxy. For an
+// https proxy the connection to the proxy itself must be TLS: the CONNECT
+// request (including Proxy-Authorization credentials) is sent inside that TLS
+// session, not in cleartext. The SSH client then speaks its own protocol over
+// the established stream, so only the tunnel handshake lives here.
 func dialHTTPConnect(ctx context.Context, pu *url.URL, base *net.Dialer, target string) (net.Conn, error) {
 	conn, err := base.DialContext(ctx, "tcp", pu.Host)
 	if err != nil {
 		return nil, err
+	}
+	if strings.EqualFold(pu.Scheme, "https") {
+		host := pu.Hostname()
+		tconn := tls.Client(conn, &tls.Config{ServerName: host})
+		hsCtx := ctx
+		if _, ok := ctx.Deadline(); !ok {
+			var cancel context.CancelFunc
+			hsCtx, cancel = context.WithTimeout(ctx, 30*time.Second)
+			defer cancel()
+		}
+		if herr := tconn.HandshakeContext(hsCtx); herr != nil {
+			_ = conn.Close()
+			return nil, fmt.Errorf("netclient: TLS handshake to https proxy %s: %w", pu.Host, herr)
+		}
+		conn = tconn
 	}
 	if deadline, ok := ctx.Deadline(); ok {
 		_ = conn.SetDeadline(deadline)

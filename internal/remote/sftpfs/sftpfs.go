@@ -162,6 +162,21 @@ func (f *FS) ReadFile(ctx context.Context, p string, maxSize int64) (data []byte
 	return r.data, r.truncated, r.kind, nil
 }
 
+// Download streams the entire remote file p to w with no size cap. Use this for
+// `fs get`-style whole-file transfers; ReadFile is the capped preview path and
+// must not be used to download files (it silently truncates at DefaultReadCap).
+// Returns the number of bytes copied.
+func (f *FS) Download(ctx context.Context, p string, w io.Writer) (int64, error) {
+	return run(ctx, func() (int64, error) {
+		fh, oerr := f.client.Open(p)
+		if oerr != nil {
+			return 0, oerr
+		}
+		defer fh.Close()
+		return io.Copy(w, fh)
+	})
+}
+
 // WriteFileAtomic writes data to p via a temp file in the same directory
 // followed by a rename, so a concurrent reader never sees a partial file.
 func (f *FS) WriteFileAtomic(ctx context.Context, p string, data []byte, perm fs.FileMode) error {

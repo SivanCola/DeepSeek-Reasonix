@@ -95,8 +95,8 @@ func TestEnsureServeLaunchesWhenAbsent(t *testing.T) {
 			return ok("Linux x86_64\n")
 		case strings.Contains(cmd, "command -v reasonix"):
 			// LocateCommand: report a path and a fresh version.
-			return ok("/usr/bin/reasonix\nreasonix v9.9.0\n")
-		case strings.Contains(cmd, "setsid nohup"):
+			return ok("/usr/bin/reasonix\nreasonix v9.9.0\nportfile:yes\n")
+		case strings.Contains(cmd, "nohup"):
 			// Simulate serve writing the port file, then echo the pid.
 			if portFile != "" {
 				_ = os.WriteFile(portFile, []byte("127.0.0.1:44321\n"), 0o600)
@@ -170,7 +170,7 @@ func TestEnsureServeReusesLiveProcess(t *testing.T) {
 		if strings.Contains(cmd, "kill -0 777") {
 			return ok("1\n") // alive
 		}
-		if strings.Contains(cmd, "uname") || strings.Contains(cmd, "setsid nohup") {
+		if strings.Contains(cmd, "uname") || strings.Contains(cmd, "nohup") {
 			t.Errorf("reuse path should not detect/launch; ran: %s", cmd)
 		}
 		return ok("")
@@ -186,7 +186,7 @@ func TestEnsureServeReusesLiveProcess(t *testing.T) {
 	if res.Token != "existing-token" {
 		t.Fatalf("token = %q, want existing-token", res.Token)
 	}
-	if conn.ranContaining("setsid nohup") {
+	if conn.ranContaining("nohup") {
 		t.Fatal("reuse path launched a new serve")
 	}
 }
@@ -212,8 +212,8 @@ func TestEnsureServeRelaunchesDeadProcess(t *testing.T) {
 		case strings.Contains(cmd, "uname"):
 			return ok("Linux aarch64\n")
 		case strings.Contains(cmd, "command -v reasonix"):
-			return ok("/usr/bin/reasonix\nreasonix v9.9.0\n")
-		case strings.Contains(cmd, "setsid nohup"):
+			return ok("/usr/bin/reasonix\nreasonix v9.9.0\nportfile:yes\n")
+		case strings.Contains(cmd, "nohup"):
 			_ = os.WriteFile(paths.PortFile, []byte("127.0.0.1:6001\n"), 0o600)
 			return ok("999\n")
 		default:
@@ -265,8 +265,15 @@ func TestStopRemovesStateFiles(t *testing.T) {
 
 	stopped := false
 	conn := newFakeConn(t, root, func(cmd string) (remote.ExecResult, error) {
+		// Order matters: StopCommand also contains "kill -0 555" in its wait
+		// loop, so match the TERM (the stop signal) before the serve-alive probe.
 		if strings.Contains(cmd, "kill -TERM 555") {
 			stopped = true
+			return ok("")
+		}
+		// Stop verifies the pid is our serve (ServeAliveCommand) before signalling.
+		if strings.Contains(cmd, "ps -p 555") {
+			return ok("1\n")
 		}
 		return ok("")
 	})

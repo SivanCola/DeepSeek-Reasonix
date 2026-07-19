@@ -25,15 +25,26 @@ const RemoteBinDirName = "bin"
 
 // RemoteWorkspaceSlug flattens a remote (POSIX) workspace path into a
 // filename component, mirroring config.WorkspaceSlug's shape. Remote targets
-// are Linux/macOS only, so no case folding applies; overlong results are
-// truncated with an FNV-1a suffix so distinct deep paths cannot collide.
+// are Linux/macOS only, so no case folding applies. A readable prefix derived
+// from the path is always suffixed with an FNV-1a hash of the exact original
+// path, so lossy separator replacement can never make two distinct workspaces
+// share serve state: "/srv/a-b" and "/srv/a/b" both reduce to the readable
+// stem "srv-a-b" but hash differently, yielding distinct slugs (and thus
+// distinct pid/token/log/state files).
 func RemoteWorkspaceSlug(remotePath string) string {
-	slug := strings.NewReplacer("/", "-", ":", "-").Replace(strings.TrimSuffix(remotePath, "/"))
-	slug = strings.Trim(slug, "-")
-	if slug == "" {
-		slug = "root"
+	clean := strings.TrimSuffix(remotePath, "/")
+	stem := strings.NewReplacer("/", "-", ":", "-").Replace(clean)
+	stem = strings.Trim(stem, "-")
+	if stem == "" {
+		stem = "root"
 	}
-	return boundRemoteComponent(slug, 200) // room for the serve-<slug>.token wrapper
+	h := fnv.New64a()
+	_, _ = h.Write([]byte(clean))
+	sum := fmt.Sprintf("%016x", h.Sum64())
+	// Cap the readable stem so the whole slug (stem + "-" + 16 hex) fits the
+	// per-workspace filename budget with room for the serve-<slug>.token wrapper.
+	stem = boundRemoteComponent(stem, 180)
+	return stem + "-" + sum
 }
 
 // RemoteServeStateName is the per-workspace serve state JSON: pid, addr,

@@ -37,10 +37,12 @@ const (
 	InstallNever  = "never"
 )
 
-// MinServeVersion is the first reasonix release shipping serve's --port-file
-// and --token-file flags. A remote binary older than this is treated as
-// missing so it gets upgraded before launch.
-const MinServeVersion = "1.0.0"
+// MinServeVersion is retained for display/informational use only. Usability is
+// decided by probing `serve --help` for the --port-file flag (see locate), not
+// by a version number: --port-file/--token-file ship in this change, so no
+// released version satisfies a numeric gate, and the release number this change
+// lands in is unknown at authoring time.
+const MinServeVersion = "flag:port-file"
 
 // Options configures EnsureServe.
 type Options struct {
@@ -178,7 +180,7 @@ func Status(ctx context.Context, conn Conn, workspace string) (ServeState, bool,
 	if err != nil {
 		return ServeState{}, false, nil // no state => not running
 	}
-	alive := pidAlive(ctx, conn, st.PID)
+	alive := pidIsServe(ctx, conn, st.PID)
 	return st, alive, nil
 }
 
@@ -201,7 +203,9 @@ func Stop(ctx context.Context, conn Conn, workspace string) error {
 	if err != nil {
 		return nil // nothing recorded
 	}
-	if st.PID > 0 {
+	// Only signal the pid if it is still OUR serve: a recycled PID now owned by
+	// an unrelated process must never be TERM/KILLed.
+	if st.PID > 0 && pidIsServe(ctx, conn, st.PID) {
 		if _, err := conn.Exec(ctx, StopCommand(st.PID)); err != nil {
 			return fmt.Errorf("bootstrap: stop pid %d: %w", st.PID, err)
 		}
@@ -241,7 +245,7 @@ func tryReuse(ctx context.Context, conn Conn, fs *sftpfs.FS, paths StatePaths) (
 	if err != nil || st.PID <= 0 || st.Addr == "" {
 		return ServeState{}, "", false
 	}
-	if !pidAlive(ctx, conn, st.PID) {
+	if !pidIsServe(ctx, conn, st.PID) {
 		return ServeState{}, "", false
 	}
 	tok, err := readToken(ctx, fs, st.TokenFile)
@@ -251,11 +255,13 @@ func tryReuse(ctx context.Context, conn Conn, fs *sftpfs.FS, paths StatePaths) (
 	return st, tok, true
 }
 
-func pidAlive(ctx context.Context, conn Conn, pid int) bool {
+// pidIsServe reports whether pid is running AND is a reasonix serve process,
+// so PID reuse cannot make an unrelated process look like a live serve.
+func pidIsServe(ctx context.Context, conn Conn, pid int) bool {
 	if pid <= 0 {
 		return false
 	}
-	res, err := conn.Exec(ctx, AliveCommand(pid))
+	res, err := conn.Exec(ctx, ServeAliveCommand(pid))
 	if err != nil {
 		return false
 	}

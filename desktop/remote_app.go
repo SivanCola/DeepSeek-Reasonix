@@ -11,6 +11,7 @@ import (
 	wruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 
 	"reasonix/internal/config"
+	"reasonix/internal/netclient"
 	"reasonix/internal/remote"
 	"reasonix/internal/remote/bootstrap"
 	"reasonix/internal/remote/forward"
@@ -430,7 +431,8 @@ type managedHost struct {
 	status   RemoteConnectionStatusView
 	server   RemoteServerView
 	token    string
-	fpAnswer chan bool // TOFU resolution channel; non-nil while a prompt is pending
+	fpAnswer chan bool  // TOFU resolution channel; non-nil while a prompt is pending
+	serveMu  sync.Mutex // serializes EnsureServer/StopServer for this host
 }
 
 type desktopRemoteManager struct {
@@ -465,12 +467,24 @@ func (m *desktopRemoteManager) AddHost(in RemoteHostInput) (RemoteHostView, erro
 }
 
 func (m *desktopRemoteManager) UpdateHost(id string, in RemoteHostInput) (RemoteHostView, error) {
-	entry := inputToHostEntry(in)
-	entry.Name = id
-	if err := editUserConfig(func(c *config.Config) error { return c.UpsertRemoteHost(entry) }); err != nil {
+	var merged config.RemoteHostEntry
+	if err := editUserConfig(func(c *config.Config) error {
+		entry := inputToHostEntry(in)
+		entry.Name = id
+		// Preserve fields the desktop input does not model, so editing a host in
+		// the UI never drops its stored credential references or persisted
+		// forwards (RemoteHostInput has no passphrase_env/password_env/forwards).
+		if existing, ok := c.RemoteHost(id); ok {
+			entry.PassphraseEnv = existing.PassphraseEnv
+			entry.PasswordEnv = existing.PasswordEnv
+			entry.Forwards = existing.Forwards
+		}
+		merged = entry
+		return c.UpsertRemoteHost(entry)
+	}); err != nil {
 		return RemoteHostView{}, err
 	}
-	return hostEntryToView(entry), nil
+	return hostEntryToView(merged), nil
 }
 
 func (m *desktopRemoteManager) RemoveHost(id string) error {
@@ -493,7 +507,9 @@ func (m *desktopRemoteManager) ScanSSHConfig() ([]RemoteHostInput, error) {
 	if err != nil {
 		return nil, err
 	}
-	var out []RemoteHostInput
+	// Non-nil so Wails encodes an empty result as [] (not null), which the React
+	// import page iterates safely.
+	out := []RemoteHostInput{}
 	for _, cand := range src.Aliases() {
 		host := cand.HostName
 		if host == "" {
@@ -523,15 +539,6 @@ func (m *desktopRemoteManager) Connect(hostID string) error {
 		return err
 	}
 
-	m.mu.Lock()
-	if mh, ok := m.hosts[hostID]; ok && mh.client != nil {
-		m.mu.Unlock()
-		return nil // already connecting/connected
-	}
-	mh := &managedHost{}
-	m.hosts[hostID] = mh
-	m.mu.Unlock()
-
 	auth := remote.AuthOptions{}
 	if entry, ok := cfg.RemoteHost(hostID); ok {
 		if entry.PassphraseEnv != "" {
@@ -544,24 +551,47 @@ func (m *desktopRemoteManager) Connect(hostID string) error {
 		}
 	}
 
+	// Honor the user's proxy settings for the SSH dial, same as the CLI.
+	dialer, derr := netclient.NewStreamDialer(cfg.NetworkProxySpec())
+	if derr != nil {
+		return fmt.Errorf("remote: network proxy is misconfigured: %w", derr)
+	}
+
 	policy := &remote.HostKeyPolicy{Prompt: m.hostKeyPrompt(hostID)}
-	client, err := remote.New(remote.Options{Host: host, Auth: auth, HostKeys: policy})
+	client, err := remote.New(remote.Options{Host: host, Auth: auth, HostKeys: policy, Dialer: dialer})
 	if err != nil {
 		return err
 	}
-
 	ctx, cancel := context.WithCancel(context.Background())
+
+	// Insert a fully-populated managed host under the lock so a concurrent
+	// Disconnect always finds a closeable client (never a half-built entry), and
+	// the "already connecting" check is atomic with insertion.
+	mh := &managedHost{client: client, cancel: cancel}
 	m.mu.Lock()
-	mh.client = client
-	mh.cancel = cancel
+	if existing, ok := m.hosts[hostID]; ok && existing.client != nil {
+		m.mu.Unlock()
+		cancel()
+		_ = client.Close()
+		return nil // already connecting/connected
+	}
+	m.hosts[hostID] = mh
 	m.mu.Unlock()
 
 	client.Subscribe(func(ev remote.StatusEvent) { m.onClientStatus(hostID, ev) })
-	client.Forwards() // ensure set exists
 
 	go func() {
 		if err := client.Start(ctx); err != nil {
-			// Start's error is already reflected via the Stopped status event.
+			// Connect failed (auth/network/host-key). Drop this managed host so
+			// the next Connect starts fresh instead of being treated as
+			// already-connected; the status event already reported the failure.
+			m.mu.Lock()
+			if m.hosts[hostID] == mh {
+				delete(m.hosts, hostID)
+			}
+			m.mu.Unlock()
+			cancel()
+			_ = client.Close()
 			return
 		}
 		m.applyConfiguredForwards(hostID, cfg)
@@ -872,18 +902,30 @@ func (m *desktopRemoteManager) emitForwards(hostID string) {
 	}
 }
 
+const serveForwardName = "serve"
+
 func (m *desktopRemoteManager) EnsureServer(ctx context.Context, hostID, workspace string) (RemoteServerView, string, error) {
-	c := m.client(hostID)
-	if c == nil {
+	mh := m.managed(hostID)
+	if mh == nil || mh.client == nil {
 		return RemoteServerView{}, "", fmt.Errorf("host %q is not connected", hostID)
 	}
+	// Serialize per-host so two concurrent EnsureServer calls cannot both miss
+	// the state and launch duplicate/orphan serve processes.
+	mh.serveMu.Lock()
+	defer mh.serveMu.Unlock()
+	c := mh.client
+
 	cfg, _ := config.Load()
 	entry, _ := cfg.RemoteHost(hostID)
 	m.emitServer(RemoteServerView{HostID: hostID, Workspace: workspace, State: "starting"})
 	res, err := bootstrap.EnsureServe(ctx, c, bootstrap.Options{
-		Workspace:   workspace,
-		Install:     entry.ServeInstallMode(),
-		LocalBinary: currentExecutablePath(),
+		Workspace: workspace,
+		Install:   entry.ServeInstallMode(),
+		// Do NOT upload the desktop binary as the remote CLI: os.Executable() is
+		// reasonix-desktop, which has no `serve` subcommand. Leaving LocalBinary
+		// empty makes the upload strategy fail clearly (directing to npm) instead
+		// of uploading a binary that cannot serve.
+		LocalBinary: "",
 		LocalGOOS:   runtime.GOOS,
 		LocalGOARCH: runtime.GOARCH,
 		MinVersion:  bootstrap.MinServeVersion,
@@ -896,29 +938,25 @@ func (m *desktopRemoteManager) EnsureServer(ctx context.Context, hostID, workspa
 		m.emitServer(view)
 		return view, "", err
 	}
-	// Forward the serve port locally.
+	// Re-bind the serve forward to the CURRENT serve address. Removing any prior
+	// "serve" forward first guarantees the local port maps to res.State.Addr
+	// (a stale forward from a previous workspace/port would otherwise be reused,
+	// pointing the browser at the wrong serve with a mismatched token).
+	_ = c.Forwards().Remove(serveForwardName)
 	bound, ferr := c.Forwards().Add(forward.Spec{
-		Name: "serve", Direction: forward.Local, BindAddr: "127.0.0.1:0", TargetAddr: res.State.Addr,
+		Name: serveForwardName, Direction: forward.Local, BindAddr: "127.0.0.1:0", TargetAddr: res.State.Addr,
 	})
-	if ferr != nil && !strings.Contains(ferr.Error(), "duplicate") {
+	if ferr != nil {
 		view := RemoteServerView{HostID: hostID, Workspace: workspace, State: "error", Error: ferr.Error()}
 		m.emitServer(view)
 		return view, "", ferr
 	}
-	if bound == "" {
-		// Already had a serve forward; find its bound address.
-		for _, e := range c.Forwards().List() {
-			if e.Spec.Name == "serve" {
-				bound = e.BoundAddr
-			}
-		}
-	}
 	localURL := fmt.Sprintf("http://%s/", bound)
 	view := RemoteServerView{HostID: hostID, Workspace: workspace, State: "ready", LocalURL: localURL}
 	m.mu.Lock()
-	if mh := m.hosts[hostID]; mh != nil {
-		mh.server = view
-		mh.token = res.Token
+	if h := m.hosts[hostID]; h != nil {
+		h.server = view
+		h.token = res.Token
 	}
 	m.mu.Unlock()
 	m.emitServer(view)
@@ -926,18 +964,30 @@ func (m *desktopRemoteManager) EnsureServer(ctx context.Context, hostID, workspa
 }
 
 func (m *desktopRemoteManager) StopServer(hostID string) error {
-	c := m.client(hostID)
-	if c == nil {
+	mh := m.managed(hostID)
+	if mh == nil || mh.client == nil {
 		return fmt.Errorf("host %q is not connected", hostID)
 	}
+	mh.serveMu.Lock()
+	defer mh.serveMu.Unlock()
+	c := mh.client
 	m.mu.Lock()
-	ws := m.hosts[hostID].server.Workspace
+	ws := mh.server.Workspace
 	m.mu.Unlock()
 	if err := bootstrap.Stop(context.Background(), c, ws); err != nil {
 		return err
 	}
+	// Tear down the local serve tunnel so a stale forward can't linger.
+	_ = c.Forwards().Remove(serveForwardName)
 	m.emitServer(RemoteServerView{HostID: hostID, Workspace: ws, State: "stopped"})
 	return nil
+}
+
+// managed returns the managed host record for hostID, or nil.
+func (m *desktopRemoteManager) managed(hostID string) *managedHost {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.hosts[hostID]
 }
 
 func (m *desktopRemoteManager) ServerStatus(hostID string) RemoteServerView {

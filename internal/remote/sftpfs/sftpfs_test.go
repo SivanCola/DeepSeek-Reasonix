@@ -1,6 +1,7 @@
 package sftpfs
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"path/filepath"
@@ -83,6 +84,32 @@ func TestSFTPListStatRead(t *testing.T) {
 	}
 	if string(data) != "hi there" || truncated || kind != KindText {
 		t.Fatalf("read = %q truncated=%v kind=%v", data, truncated, kind)
+	}
+}
+
+// TestSFTPDownloadStreamsFullFile pins the fs-get fix: Download must return the
+// whole file, not the 4 MiB preview cap ReadFile enforces.
+func TestSFTPDownloadStreamsFullFile(t *testing.T) {
+	root := t.TempDir()
+	big := strings.Repeat("x", (DefaultReadCap)+5000) // > preview cap
+	if err := os.WriteFile(filepath.Join(root, "big.bin"), []byte(big), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	fsys := dialFS(t, root)
+
+	// ReadFile truncates at the cap...
+	_, truncated, _, err := fsys.ReadFile(context.Background(), filepath.Join(root, "big.bin"), 0)
+	if err != nil || !truncated {
+		t.Fatalf("expected ReadFile to report truncation (err=%v truncated=%v)", err, truncated)
+	}
+	// ...but Download returns every byte.
+	var buf bytes.Buffer
+	n, err := fsys.Download(context.Background(), filepath.Join(root, "big.bin"), &buf)
+	if err != nil {
+		t.Fatalf("Download: %v", err)
+	}
+	if n != int64(len(big)) || buf.Len() != len(big) {
+		t.Fatalf("Download got %d bytes, want %d (must not truncate)", n, len(big))
 	}
 }
 

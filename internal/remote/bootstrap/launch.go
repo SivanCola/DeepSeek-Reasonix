@@ -28,13 +28,22 @@ func shellQuote(s string) string {
 // binary path and every operand are single-quote-escaped so hostile paths
 // (spaces, quotes, `; rm -rf ~`) cannot break out.
 //
-// It echoes the shell's $! so the caller can record the pid immediately, and
-// redirects stdin from /dev/null so the process fully detaches.
+// Detachment: `setsid` fully divorces the process from any session, but it is
+// absent on stock macOS, so it is used only when present (`$SX`); `nohup` +
+// backgrounding + `</dev/null` is sufficient over a non-interactive SSH exec.
+// The log is created 0600 (umask 077 + explicit chmod) so a same-machine user
+// cannot read serve output; serve is launched with `--port-file`, which
+// suppresses its token share line, so the token never reaches the log.
+// It echoes the shell's $! so the caller can record the pid immediately.
 func LaunchCommand(bin, workspace string, p StatePaths) string {
 	return fmt.Sprintf(
-		"mkdir -p %s && cd %s && setsid nohup %s serve --addr 127.0.0.1:0 --auth token --token-file %s --port-file %s --pid-file %s </dev/null >>%s 2>&1 & echo $!",
+		"mkdir -p %s && cd %s && umask 077 && : >>%s && chmod 600 %s && "+
+			"SX=; command -v setsid >/dev/null 2>&1 && SX=setsid; "+
+			"$SX nohup %s serve --addr 127.0.0.1:0 --auth token --token-file %s --port-file %s --pid-file %s </dev/null >>%s 2>&1 & echo $!",
 		shellQuote(p.Dir),
 		shellQuote(workspace),
+		shellQuote(p.LogFile),
+		shellQuote(p.LogFile),
 		shellQuote(bin),
 		shellQuote(p.TokenFile),
 		shellQuote(p.PortFile),
@@ -44,7 +53,9 @@ func LaunchCommand(bin, workspace string, p StatePaths) string {
 }
 
 // StopCommand builds a script that TERMs the pid, waits up to ~5s, then KILLs
-// if still alive. pid is validated numeric by the caller.
+// if still alive. pid is validated numeric by the caller, and the caller has
+// already confirmed (ServeAliveCommand) that the pid is our serve, so PID reuse
+// cannot cause an unrelated process to be signalled.
 func StopCommand(pid int) string {
 	return fmt.Sprintf(
 		"kill -TERM %d 2>/dev/null; for i in 1 2 3 4 5; do kill -0 %d 2>/dev/null || exit 0; sleep 1; done; kill -KILL %d 2>/dev/null; exit 0",
@@ -52,9 +63,17 @@ func StopCommand(pid int) string {
 	)
 }
 
-// AliveCommand reports whether pid is running (prints "1" if alive).
-func AliveCommand(pid int) string {
-	return fmt.Sprintf("kill -0 %d 2>/dev/null && echo 1 || echo 0", pid)
+// ServeAliveCommand prints "1" only when pid is running AND its command line
+// looks like a reasonix serve process. Checking the args (not just `kill -0`)
+// prevents a recycled PID — now owned by an unrelated process — from being
+// mistaken for the serve and later signalled by StopCommand.
+func ServeAliveCommand(pid int) string {
+	return fmt.Sprintf(
+		"kill -0 %d 2>/dev/null || { echo 0; exit 0; }; "+
+			"A=$(ps -p %d -o args= 2>/dev/null || ps -p %d -o command= 2>/dev/null); "+
+			"case \"$A\" in *reasonix*serve*) echo 1;; *) echo 0;; esac",
+		pid, pid, pid,
+	)
 }
 
 // LogsCommand tails n lines of the log file (n<=0 => 200).
@@ -65,14 +84,25 @@ func LogsCommand(logFile string, n int) string {
 	return fmt.Sprintf("tail -n %d %s 2>/dev/null || true", n, shellQuote(logFile))
 }
 
-// LocateCommand probes for a usable reasonix binary and its version. It prints
-// two lines: the resolved path (or empty) and the `--version` output.
+// servePortFileMarker is what LocateCommand greps for in `serve --help` to
+// decide the located binary supports --port-file/--token-file. It must match
+// the flag name registered in runServe.
+const servePortFileMarker = "port-file"
+
+// LocateCommand probes for a usable reasonix binary. It prints three lines:
+// the resolved path (or empty), the `--version` output, and "portfile:yes" when
+// `serve --help` advertises the --port-file flag. The bootstrap gates on the
+// flag, not the version number, because --port-file/--token-file ship in this
+// change: a version gate cannot know its own future release number, and any
+// already-released binary would pass a numeric gate yet still lack the flags.
 func LocateCommand(uploadedBin string) string {
 	return fmt.Sprintf(
 		"BIN=\"$(command -v reasonix 2>/dev/null)\"; "+
 			"if [ -z \"$BIN\" ] && [ -x %s ]; then BIN=%s; fi; "+
 			"if [ -z \"$BIN\" ]; then P=\"$(npm prefix -g 2>/dev/null)\"; if [ -n \"$P\" ] && [ -x \"$P/bin/reasonix\" ]; then BIN=\"$P/bin/reasonix\"; fi; fi; "+
-			"echo \"$BIN\"; if [ -n \"$BIN\" ]; then \"$BIN\" --version 2>/dev/null; fi",
-		shellQuote(uploadedBin), shellQuote(uploadedBin),
+			"echo \"$BIN\"; "+
+			"if [ -n \"$BIN\" ]; then \"$BIN\" --version 2>/dev/null; "+
+			"if \"$BIN\" serve --help 2>&1 | grep -q -- %s; then echo portfile:yes; else echo portfile:no; fi; fi",
+		shellQuote(uploadedBin), shellQuote(uploadedBin), shellQuote(servePortFileMarker),
 	)
 }

@@ -58,9 +58,12 @@ func buildRemoteClient(nameOrTarget string) (*remote.Client, func(), error) {
 
 	policy := &remote.HostKeyPolicy{Prompt: terminalHostKeyPrompt}
 
+	// A misconfigured proxy is surfaced, not silently bypassed: a proxy is often
+	// a policy requirement, and quietly dialing direct could exfiltrate the
+	// connection around it.
 	dialer, derr := netclient.NewStreamDialer(cfg.NetworkProxySpec())
 	if derr != nil {
-		dialer = nil // fall back to direct dialing on a bad proxy spec
+		return nil, nil, fmt.Errorf("remote: network proxy is misconfigured: %w", derr)
 	}
 	client, err := remote.New(remote.Options{
 		Host:     host,
@@ -557,16 +560,23 @@ func remoteFSGet(args []string) int {
 			fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
 			return 1
 		}
-		data, _, _, err := fsys.ReadFile(ctx, remotePath, 0)
+		// Stream the full file to disk — never the capped preview reader, which
+		// would silently truncate large downloads.
+		out, err := os.Create(localPath)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
 			return 1
 		}
-		if err := os.WriteFile(localPath, data, 0o644); err != nil {
+		n, err := fsys.Download(ctx, remotePath, out)
+		if cerr := out.Close(); cerr != nil && err == nil {
+			err = cerr
+		}
+		if err != nil {
+			_ = os.Remove(localPath)
 			fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
 			return 1
 		}
-		fmt.Printf("wrote %s (%d bytes)\n", localPath, len(data))
+		fmt.Printf("wrote %s (%d bytes)\n", localPath, n)
 		return 0
 	})
 }

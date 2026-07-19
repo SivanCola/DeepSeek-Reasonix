@@ -6,16 +6,31 @@ import (
 )
 
 func TestRemoteWorkspaceSlug(t *testing.T) {
-	cases := map[string]string{
-		"/home/dev/projects/app":  "home-dev-projects-app",
-		"/home/dev/projects/app/": "home-dev-projects-app",
-		"/":                       "root",
-		"~/work":                  "~-work",
+	// The slug carries a readable stem plus a hash of the exact path. Assert the
+	// readable prefix and that a trailing slash is normalized to the same slug.
+	if got := RemoteWorkspaceSlug("/home/dev/projects/app"); !strings.HasPrefix(got, "home-dev-projects-app-") {
+		t.Errorf("slug = %q, want home-dev-projects-app-<hash> prefix", got)
 	}
-	for in, want := range cases {
-		if got := RemoteWorkspaceSlug(in); got != want {
-			t.Errorf("RemoteWorkspaceSlug(%q) = %q, want %q", in, got, want)
-		}
+	if RemoteWorkspaceSlug("/home/dev/projects/app") != RemoteWorkspaceSlug("/home/dev/projects/app/") {
+		t.Error("trailing slash produced a different slug")
+	}
+	if got := RemoteWorkspaceSlug("/"); !strings.HasPrefix(got, "root-") {
+		t.Errorf("root slug = %q, want root-<hash>", got)
+	}
+}
+
+// TestRemoteWorkspaceSlugNoCollision is the reviewer's reproduction: distinct
+// paths that reduce to the same separator-replaced stem must not share serve
+// state files.
+func TestRemoteWorkspaceSlugNoCollision(t *testing.T) {
+	a := RemoteWorkspaceSlug("/srv/a-b")
+	b := RemoteWorkspaceSlug("/srv/a/b")
+	if a == b {
+		t.Fatalf("/srv/a-b and /srv/a/b collided to the same slug %q", a)
+	}
+	// Same path (idempotent).
+	if RemoteWorkspaceSlug("/srv/a/b") != b {
+		t.Error("slug is not deterministic")
 	}
 }
 

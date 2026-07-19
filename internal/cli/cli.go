@@ -831,7 +831,16 @@ func runServe(args []string) int {
 	fmt.Printf("reasonix serve — %s on http://%s\n", ctrl.Label(), displayAddr)
 	if srv.AuthMode() == "token" {
 		fmt.Printf("  auth: token\n")
-		fmt.Printf("  share: http://%s/?token=%s\n", displayAddr, srv.AuthToken())
+		// Under --port-file the process is supervised (e.g. remote bootstrap):
+		// stdout is redirected to a log, so printing the token here would leak it
+		// into a file readable by other same-machine users. The supervisor
+		// already holds the token (it wrote --token-file), so suppress the share
+		// URL and print only the token-file reference.
+		if *portFile != "" {
+			fmt.Printf("  share: http://%s/ (token in %s)\n", displayAddr, *tokenFile)
+		} else {
+			fmt.Printf("  share: http://%s/?token=%s\n", displayAddr, srv.AuthToken())
+		}
 	} else if srv.AuthMode() == "password" {
 		fmt.Printf("  auth: password (login at http://%s/login)\n", displayAddr)
 	}

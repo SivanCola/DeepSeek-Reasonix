@@ -46,9 +46,33 @@ type Client struct {
 	generation uint64 // bumps on every (re)connect; SFTP handles carry it
 	status     Status
 	closed     bool
+	hopAuths   map[string]*AuthOptions // per-jump-host auth, keyed by addr; persists across reconnects
 
 	cancel context.CancelFunc
 	done   chan struct{}
+}
+
+// hopAuthFor returns a persistent AuthOptions for a jump host. It deliberately
+// omits the target's Password/Passphrase closures and gives each jump host its
+// own secret cache, so the target's password_env is never sent to a jump host
+// and one hop's typed secret is never reused for another. The instance persists
+// for the Client's lifetime so reconnects do not re-prompt for jump secrets.
+func (c *Client) hopAuthFor(hop ResolvedHost) *AuthOptions {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.hopAuths == nil {
+		c.hopAuths = map[string]*AuthOptions{}
+	}
+	key := hop.Addr()
+	if a, ok := c.hopAuths[key]; ok {
+		return a
+	}
+	a := &AuthOptions{
+		SecretPrompt: c.opts.Auth.SecretPrompt,
+		DisableAgent: c.opts.Auth.DisableAgent,
+	}
+	c.hopAuths[key] = a
+	return a
 }
 
 // New creates a Client. It does not dial; call Start.
@@ -240,6 +264,7 @@ func (c *Client) supervise(ctx context.Context, firstResult chan<- error) {
 		cl, hops, err := dialSSH(ctx, dialConfig{
 			host:        c.opts.Host,
 			auth:        &c.opts.Auth,
+			hopAuth:     c.hopAuthFor,
 			hostKeys:    c.opts.HostKeys,
 			dialer:      c.opts.Dialer,
 			dialTimeout: c.opts.DialTimeout,
