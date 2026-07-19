@@ -34208,10 +34208,15 @@ body > .mermaid-diagram--fullscreen {
   border: 1px solid var(--border);
   color: var(--fg-dim);
   background: var(--bg-soft);
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 .remote-chip--connected {
   color: var(--ok);
   border-color: color-mix(in srgb, var(--ok) 50%, var(--border));
+}
+.remote-chip--stopped {
+  color: var(--fg-faint);
 }
 .remote-chip--connecting {
   color: var(--fg-dim);
@@ -34264,31 +34269,56 @@ body > .mermaid-diagram--fullscreen {
   font-size: var(--text-sm);
 }
 .remote-panel {
-  position: fixed;
-  top: 0;
-  right: 0;
-  bottom: 0;
-  width: min(560px, 92vw);
   display: flex;
   flex-direction: column;
-  background: var(--bg-elev);
-  border-left: 1px solid var(--border);
-  z-index: var(--z-drawer-backdrop);
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  background: var(--bg);
 }
 .remote-panel__header {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
-  padding: 10px 12px;
+  min-height: 54px;
+  padding: 9px 12px;
   border-bottom: 1px solid var(--border-soft);
+}
+.remote-panel__host-copy {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  flex: 1;
+  gap: 1px;
 }
 .remote-panel__host {
   font-weight: 600;
 }
+.remote-panel__target {
+  max-width: 220px;
+  overflow: hidden;
+  color: var(--fg-faint);
+  font-size: var(--text-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .remote-panel__header-actions {
-  margin-left: auto;
+  width: 100%;
+  margin-left: 0;
   display: flex;
+  justify-content: flex-end;
   gap: 6px;
+}
+.remote-panel__error-banner {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 12px;
+  border-bottom: 1px solid color-mix(in srgb, var(--danger) 30%, var(--border-soft));
+  background: color-mix(in srgb, var(--danger) 10%, var(--bg));
+  color: var(--danger);
+  font-size: var(--text-xs);
 }
 .remote-panel__banner {
   padding: 6px 12px;
@@ -34318,6 +34348,9 @@ body > .mermaid-diagram--fullscreen {
   flex: 1;
   overflow: auto;
   padding: 10px 12px;
+}
+.workbench-dock__body > .remote-panel {
+  min-height: 0;
 }
 .remote-files {
   display: flex;
@@ -34462,6 +34495,186 @@ body > .mermaid-diagram--fullscreen {
   margin-top: 12px;
 }
 .statusbar__remote {
+  display: inline-flex;
+  align-items: center;
+  max-width: 190px;
+  gap: 4px;
+  padding: 1px 7px;
   cursor: pointer;
   border: 1px solid var(--border);
+  font: inherit;
+  white-space: nowrap;
+}
+.statusbar__remote > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.statusbar__remote-wrap {
+  display: inline-flex;
+  min-width: 0;
+}
+.remote-switcher {
+  z-index: var(--z-local-popover);
+  width: min(390px, calc(100vw - 16px));
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--bg-elev);
+  box-shadow: 0 16px 44px rgba(0, 0, 0, 0.48);
+  color: var(--fg);
+  font-family: var(--font-ui);
+}
+.remote-switcher__header {
+  padding: 11px 12px 8px;
+  color: var(--fg);
+  font-size: var(--text-sm);
+  font-weight: 650;
+}
+.remote-switcher__local,
+.remote-switcher__host {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin: 0 6px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+}
+.remote-switcher__local {
+  min-height: 50px;
+  padding: 7px 9px;
+  border-color: var(--border-soft);
+  background: var(--bg-soft);
+}
+.remote-switcher__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 7px;
+  background: var(--bg-elev-2);
+  color: var(--fg-dim);
+}
+.remote-switcher__copy {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  text-align: left;
+}
+.remote-switcher__copy strong,
+.remote-switcher__copy small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.remote-switcher__copy strong {
+  color: var(--fg);
+  font-size: var(--text-sm);
+  font-weight: 620;
+}
+.remote-switcher__copy small {
+  color: var(--fg-faint);
+  font-size: var(--text-xs);
+}
+.remote-switcher__check {
+  color: var(--ok);
+}
+.remote-switcher__section-label {
+  padding: 12px 12px 5px;
+  color: var(--fg-faint);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.remote-switcher__hosts {
+  display: flex;
+  max-height: min(320px, 45vh);
+  flex-direction: column;
+  gap: 3px;
+  overflow-y: auto;
+  padding-bottom: 5px;
+}
+.remote-switcher__host {
+  min-height: 54px;
+  padding: 4px 6px 4px 9px;
+}
+.remote-switcher__actions {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 4px;
+}
+.remote-switcher__disconnect {
+  display: inline-flex;
+  width: 28px;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: transparent;
+  color: var(--fg-faint);
+  cursor: pointer;
+}
+.remote-switcher__disconnect:hover,
+.remote-switcher__disconnect:focus-visible {
+  outline: none;
+  border-color: var(--border-strong);
+  background: var(--bg-soft);
+  color: var(--fg);
+}
+.remote-switcher__host:hover,
+.remote-switcher__host:focus-within {
+  border-color: var(--border-soft);
+  background: var(--bg-elev-2);
+}
+.remote-switcher__host-main {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: center;
+  gap: 9px;
+  padding: 4px 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.remote-switcher__state {
+  width: 8px;
+  height: 8px;
+  flex: 0 0 8px;
+  border-radius: 50%;
+  background: var(--fg-faint);
+}
+.remote-switcher__state--connected { background: var(--ok); }
+.remote-switcher__state--connecting,
+.remote-switcher__state--reconnecting,
+.remote-switcher__state--pending_hostkey,
+.remote-switcher__state--degraded { background: var(--warn); }
+.remote-switcher__state--error { background: var(--danger); }
+.remote-switcher__manage {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 7px;
+  padding: 10px 12px;
+  border: 0;
+  border-top: 1px solid var(--border-soft);
+  background: transparent;
+  color: var(--accent-strong);
+  font: inherit;
+  font-size: var(--text-sm);
+  text-align: left;
+  cursor: pointer;
+}
+.remote-switcher__manage:hover,
+.remote-switcher__manage:focus-visible {
+  outline: none;
+  background: var(--bg-elev-2);
 }

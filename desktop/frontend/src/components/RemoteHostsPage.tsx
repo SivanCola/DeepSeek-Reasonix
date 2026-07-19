@@ -26,12 +26,15 @@ export function RemoteHostsPage() {
   const [hosts, setHosts] = useState<RemoteHostView[]>([]);
   const [screen, setScreen] = useState<Screen>({ kind: "list" });
   const statuses = useRemoteStore((s) => s.statuses);
+  const setStoreHosts = useRemoteStore((s) => s.setHosts);
   const hydrateStatuses = useRemoteStore((s) => s.hydrateStatuses);
   const openExplorer = useRemoteStore((s) => s.openExplorer);
 
   const refresh = useCallback(async () => {
-    setHosts(await app.RemoteHosts());
-  }, []);
+    const next = await app.RemoteHosts();
+    setHosts(next);
+    setStoreHosts(next);
+  }, [setStoreHosts]);
 
   useEffect(() => {
     void refresh();

@@ -1,9 +1,8 @@
-// remote owns the transient state of the Remote-SSH surfaces: per-host
-// connection status, forward snapshots, server-bootstrap state, the pending
-// host-key fingerprint that drives the global confirm dialog, and the explorer
-// drawer's open/host/tab selection. None of it is persisted — the kernel is the
-// source of truth and hydrates it via RemoteConnectionStatuses on mount plus
-// remote:* events thereafter.
+// remote mirrors the kernel-owned Remote-SSH surfaces: configured hosts,
+// per-host connection status, forward snapshots, server-bootstrap state, the
+// pending host-key fingerprint, and the dock's host/tab selection. None of it
+// is persisted here — the kernel hydrates hosts/statuses on mount and emits
+// remote:* updates thereafter.
 
 import { create } from "zustand";
 
@@ -11,12 +10,14 @@ import type {
   RemoteConnectionStatus,
   RemoteFingerprintView,
   RemoteForwardView,
+  RemoteHostView,
   RemoteServerView,
 } from "../lib/types";
 
 export type RemoteExplorerTab = "files" | "ports" | "server";
 
 export type RemoteState = {
+  hosts: RemoteHostView[];
   statuses: Record<string, RemoteConnectionStatus>;
   forwards: Record<string, RemoteForwardView[]>;
   servers: Record<string, RemoteServerView>;
@@ -25,6 +26,7 @@ export type RemoteState = {
   explorerHostId: string | null;
   explorerTab: RemoteExplorerTab;
 
+  setHosts: (hosts: RemoteHostView[]) => void;
   applyStatus: (s: RemoteConnectionStatus) => void;
   setStatuses: (list: RemoteConnectionStatus[]) => void;
   hydrateStatuses: (list: RemoteConnectionStatus[]) => void;
@@ -37,6 +39,7 @@ export type RemoteState = {
 };
 
 export const useRemoteStore = create<RemoteState>((set) => ({
+  hosts: [],
   statuses: {},
   forwards: {},
   servers: {},
@@ -44,6 +47,8 @@ export const useRemoteStore = create<RemoteState>((set) => ({
   explorerOpen: false,
   explorerHostId: null,
   explorerTab: "files",
+
+  setHosts: (hosts) => set({ hosts }),
 
   applyStatus: (s) =>
     set((state) => {
@@ -94,3 +99,28 @@ export const useRemoteStore = create<RemoteState>((set) => ({
   closeExplorer: () => set({ explorerOpen: false }),
   setExplorerTab: (tab) => set({ explorerTab: tab }),
 }));
+
+export function waitForRemoteConnection(hostId: string, timeoutMs = 60_000): Promise<void> {
+  const connected = (state?: RemoteConnectionStatus["state"]) => state === "connected" || state === "degraded";
+  const current = useRemoteStore.getState().statuses[hostId];
+  if (connected(current?.state)) return Promise.resolve();
+  if (current?.state === "stopped" && current.error) return Promise.reject(new Error(current.error));
+
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const finish = (err?: Error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      unsubscribe();
+      if (err) reject(err);
+      else resolve();
+    };
+    const unsubscribe = useRemoteStore.subscribe((state) => {
+      const status = state.statuses[hostId];
+      if (connected(status?.state)) finish();
+      else if (status?.state === "stopped" && status.error) finish(new Error(status.error));
+    });
+    const timer = setTimeout(() => finish(new Error(`Timed out connecting to ${hostId}`)), timeoutMs);
+  });
+}

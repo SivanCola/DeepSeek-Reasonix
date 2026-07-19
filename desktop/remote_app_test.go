@@ -212,9 +212,20 @@ func TestOpenRemoteWorkspacePersistsLastWorkspace(t *testing.T) {
 		ensureToken: "tok",
 	}
 	a := appWithFakeKernel(fake)
-	// No ctx window => openExternalURL errors, but persistence happens first.
-	a.ctx = nil
-	_ = a.OpenRemoteWorkspace("box", "/home/dev/app")
+	var opened remoteWindowLaunch
+	a.remoteWindowOpener = func(launch remoteWindowLaunch) error {
+		opened = launch
+		return nil
+	}
+	if err := a.OpenRemoteWorkspace("box", "/home/dev/app"); err != nil {
+		t.Fatal(err)
+	}
+	if opened.URL != "http://127.0.0.1:5000?token=tok" {
+		t.Fatalf("opened URL = %q", opened.URL)
+	}
+	if opened.Title != "Reasonix [SSH: box]" {
+		t.Fatalf("opened title = %q", opened.Title)
+	}
 
 	got := a.RemoteLastWorkspace("box")
 	if got != "/home/dev/app" {

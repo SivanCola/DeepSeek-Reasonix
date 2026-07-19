@@ -3,7 +3,7 @@
 // Tests for the remote store's status/fingerprint reconciliation and the
 // bridge mock's remote:* event fan-out.
 
-import { useRemoteStore } from "../store/remote";
+import { useRemoteStore, waitForRemoteConnection } from "../store/remote";
 import { onRemoteStatus, __emitMockRemote } from "../lib/bridge";
 import type { RemoteConnectionStatus } from "../lib/types";
 
@@ -21,8 +21,13 @@ function eq(a: unknown, b: unknown, label: string) {
 }
 
 function reset() {
-  useRemoteStore.setState({ statuses: {}, pendingFingerprint: null });
+  useRemoteStore.setState({ hosts: [], statuses: {}, pendingFingerprint: null });
 }
+
+useRemoteStore.getState().setHosts([
+  { id: "box", label: "box", host: "box.test", port: 22, user: "dev", identityFile: "", proxyJump: "", defaultWorkspace: "/srv/app", serveInstall: "auto", useSSHConfig: false },
+]);
+eq(useRemoteStore.getState().hosts[0]?.defaultWorkspace, "/srv/app", "configured hosts hydrate persistent UI state");
 
 // pending_hostkey status sets the pending fingerprint that drives the dialog.
 reset();
@@ -64,6 +69,20 @@ useRemoteStore.getState().hydrateStatuses([
 ]);
 eq(useRemoteStore.getState().statuses["live"]?.state, "connected", "hydration preserves newer live status");
 eq(useRemoteStore.getState().statuses["snapshot-only"]?.state, "connected", "hydration fills missing status");
+
+const connectionReady = waitForRemoteConnection("waiting", 1_000);
+useRemoteStore.getState().applyStatus({ hostId: "waiting", state: "connected" });
+await connectionReady;
+eq(useRemoteStore.getState().statuses["waiting"]?.state, "connected", "connection waiter resolves on live connected status");
+
+useRemoteStore.getState().applyStatus({ hostId: "failed", state: "stopped", error: "handshake failed" });
+let failedConnection = "";
+try {
+  await waitForRemoteConnection("failed", 1_000);
+} catch (err) {
+  failedConnection = err instanceof Error ? err.message : String(err);
+}
+eq(failedConnection, "handshake failed", "connection waiter rejects the host error without waiting for timeout");
 
 // The bridge mock fan-out delivers remote:status to subscribers.
 (function testMockFanout() {

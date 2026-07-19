@@ -12,8 +12,6 @@ import (
 	"sync"
 	"time"
 
-	wruntime "github.com/wailsapp/wails/v2/pkg/runtime"
-
 	"reasonix/internal/config"
 	"reasonix/internal/netclient"
 	"reasonix/internal/remote"
@@ -376,7 +374,7 @@ func (a *App) OpenRemoteWorkspace(hostID, workspace string) error {
 		url = fmt.Sprintf("%s?token=%s", strings.TrimRight(url, "/"), token)
 	}
 	a.saveLastRemoteWorkspace(hostID, workspace)
-	return a.openExternalURL(url)
+	return a.openRemoteWindow(url, hostID)
 }
 
 func (a *App) StopRemoteServer(hostID string) error {
@@ -401,15 +399,6 @@ func (a *App) RemoteServerLogs(hostID string, tailLines int) (string, error) {
 		return "", err
 	}
 	return rt.ServerLogs(a.bootContext(), hostID, tailLines)
-}
-
-// openExternalURL opens url in the system browser via Wails.
-func (a *App) openExternalURL(url string) error {
-	if a.ctx == nil {
-		return fmt.Errorf("no window context to open %s", url)
-	}
-	wruntime.BrowserOpenURL(a.ctx, url)
-	return nil
 }
 
 // editUserConfig runs mutate against the user-global config under the edit lock

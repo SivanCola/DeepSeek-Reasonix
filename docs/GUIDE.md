@@ -266,6 +266,10 @@ so it never appears in `ps`), and `serve-<slug>.log`.
 In the desktop app, manage hosts under **Settings -> Remote SSH**, then use the
 status-bar chip or the host row's **Remote explorer** button to browse and edit
 files over SFTP, manage port forwards, and start/open the remote workspace.
+Opening a workspace creates a separate native Reasonix window, similar to a
+VS Code Remote SSH window. The primary window owns the SSH tunnel; the remote
+window is an isolated, lightweight shell and does not restore or acquire local
+conversation sessions.
 
 ## Custom OpenAI-compatible providers
 

@@ -14,6 +14,7 @@ import {
   Download,
   Minus,
   Search,
+  Server,
   Square,
   SquarePen,
   PanelLeft,
@@ -55,7 +56,7 @@ type DecisionSurfaceKind = "tool_approval" | "plan_approval" | "ask" | "clear_co
 import { StatusBar } from "./components/StatusBar";
 import { RemoteHostKeyDialog } from "./components/RemoteHostKeyDialog";
 import { onRemoteStatus, onRemoteForwards, onRemoteServer } from "./lib/bridge";
-import { useRemoteStore } from "./store/remote";
+import { useRemoteStore, waitForRemoteConnection } from "./store/remote";
 import { CommandPalette, type PaletteItem } from "./components/CommandPalette";
 import { UpdateBanner } from "./components/UpdateBanner";
 import { ContextPanel } from "./components/ContextPanel";
@@ -91,6 +92,7 @@ import {
   type Mode,
   modeHasPlan,
   type ProjectNode,
+  type RemoteHostView,
   type SessionMeta,
   type SettingsView,
   type TabMeta,
@@ -1106,6 +1108,13 @@ export default function App() {
   const paletteOpen = useOverlayStore((s) => s.paletteOpen);
   const setPaletteOpen = useOverlayStore((s) => s.setPaletteOpen);
   const remoteExplorerOpen = useRemoteStore((s) => s.explorerOpen);
+  const remoteExplorerHostId = useRemoteStore((s) => s.explorerHostId);
+  const remoteHosts = useRemoteStore((s) => s.hosts);
+  const remoteStatuses = useRemoteStore((s) => s.statuses);
+  const setRemoteHosts = useRemoteStore((s) => s.setHosts);
+  const hydrateRemoteStatuses = useRemoteStore((s) => s.hydrateStatuses);
+  const requestRemoteExplorer = useRemoteStore((s) => s.openExplorer);
+  const closeRemoteExplorerRequest = useRemoteStore((s) => s.closeExplorer);
   const applyRemoteStatus = useRemoteStore((s) => s.applyStatus);
   const setRemoteForwards = useRemoteStore((s) => s.setForwards);
   const setRemoteServer = useRemoteStore((s) => s.setServer);
@@ -2184,6 +2193,23 @@ export default function App() {
 
   useEffect(() => {
     let cancelled = false;
+    void app.RemoteHosts()
+      .then((hosts) => {
+        if (!cancelled) setRemoteHosts(hosts);
+      })
+      .catch(() => {});
+    void app.RemoteConnectionStatuses()
+      .then((statuses) => {
+        if (!cancelled) hydrateRemoteStatuses(statuses);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [hydrateRemoteStatuses, setRemoteHosts]);
+
+  useEffect(() => {
+    let cancelled = false;
     (async () => {
       try {
         const needs = await app.NeedsOnboarding();
@@ -2502,6 +2528,61 @@ export default function App() {
     },
     [openWorkspacePanel],
   );
+
+  useEffect(() => {
+    if (!remoteExplorerOpen) return;
+    openRightDockMode("remote");
+    closeRemoteExplorerRequest();
+  }, [closeRemoteExplorerRequest, openRightDockMode, remoteExplorerOpen]);
+
+  useEffect(() => {
+    if (remoteHosts.length > 0 || rightDockMode !== "remote") return;
+    setRightDockMode("files");
+  }, [remoteHosts.length, rightDockMode, setRightDockMode]);
+
+  const openRemoteDock = useCallback(() => {
+    const fallback = remoteHosts.find((host) => {
+      const state = useRemoteStore.getState().statuses[host.id]?.state;
+      return state === "connected" || state === "degraded";
+    }) ?? remoteHosts[0];
+    const hostId = remoteExplorerHostId && remoteHosts.some((host) => host.id === remoteExplorerHostId)
+      ? remoteExplorerHostId
+      : fallback?.id;
+    if (hostId) requestRemoteExplorer(hostId);
+  }, [remoteExplorerHostId, remoteHosts, requestRemoteExplorer]);
+
+  const launchRemoteWorkspace = useCallback(async (host: RemoteHostView) => {
+    const workspace = host.defaultWorkspace.trim();
+    if (!workspace) {
+      useRemoteStore.getState().setExplorerTab("server");
+      requestRemoteExplorer(host.id);
+      return;
+    }
+    await app.OpenRemoteWorkspace(host.id, workspace);
+  }, [requestRemoteExplorer]);
+
+  const openRemoteWorkspaceFromStatus = useCallback((host: RemoteHostView) => {
+    void launchRemoteWorkspace(host).catch((err) => {
+      showToast(err instanceof Error ? err.message : String(err), "error", { durationMs: 6000 });
+    });
+  }, [launchRemoteWorkspace, showToast]);
+
+  const connectAndOpenRemoteWorkspace = useCallback((host: RemoteHostView) => {
+    void (async () => {
+      const status = useRemoteStore.getState().statuses[host.id]?.state;
+      if (status !== "connected" && status !== "degraded") {
+        // Clear any stale failure before the new generation starts; otherwise a
+        // previous stopped+error snapshot could make the waiter reject before
+        // the kernel's fresh connecting event reaches the frontend.
+        useRemoteStore.getState().applyStatus({ hostId: host.id, state: "connecting" });
+        await app.ConnectRemoteHost(host.id);
+        await waitForRemoteConnection(host.id);
+      }
+      await launchRemoteWorkspace(host);
+    })().catch((err) => {
+      showToast(err instanceof Error ? err.message : String(err), "error", { durationMs: 6000 });
+    });
+  }, [launchRemoteWorkspace, showToast]);
 
   const handleWorkspacePreviewModeChange = useCallback(
     (active: boolean) => {
@@ -3199,8 +3280,27 @@ export default function App() {
       badge: t(s.turns === 1 ? "history.turnOne" : "history.turnOther", { n: s.turns }),
       run: () => void onResumeSession(s),
     }));
-    return [...cmds, ...sessionItems];
-  }, [t, paletteSessions, handleNewTab, openTrash, onResumeSession]);
+    const remoteItems: PaletteItem[] = remoteHosts.map((host) => {
+      const status = remoteStatuses[host.id];
+      const connected = status?.state === "connected" || status?.state === "degraded";
+      const target = `${host.user ? `${host.user}@` : ""}${host.host}${host.port && host.port !== 22 ? `:${host.port}` : ""}`;
+      return {
+        id: `remote-${host.id}`,
+        group: t("palette.group.remote"),
+        title: connected
+          ? t("palette.remote.open", { host: host.label })
+          : t("palette.remote.connect", { host: host.label }),
+        hint: host.defaultWorkspace || target,
+        icon: <Server size={15} />,
+        keywords: ["ssh", "remote", "远程", "连接", host.label, host.host],
+        run: () => {
+          if (connected) openRemoteWorkspaceFromStatus(host);
+          else connectAndOpenRemoteWorkspace(host);
+        },
+      };
+    });
+    return [...cmds, ...remoteItems, ...sessionItems];
+  }, [t, paletteSessions, remoteHosts, remoteStatuses, handleNewTab, openTrash, onResumeSession, openRemoteWorkspaceFromStatus, connectAndOpenRemoteWorkspace]);
   // Delete / rename act on disk, then re-fetch so the panel reflects the change.
   const onDeleteSession = useCallback(
     async (path: string) => {
@@ -4143,6 +4243,13 @@ export default function App() {
 	              workspacePath={state.meta?.workspacePath || state.meta?.workspaceRoot || state.meta?.cwd}
 	              workspaceName={state.meta?.workspaceName}
 	              gitBranch={state.meta?.gitBranch}
+              onConnectRemote={connectAndOpenRemoteWorkspace}
+              onDisconnectRemote={(hostId) => void app.DisconnectRemoteHost(hostId).catch(() => {})}
+              onManageRemote={() => setSettingsTarget("remote")}
+              onOpenRemote={requestRemoteExplorer}
+              onOpenRemoteWorkspace={openRemoteWorkspaceFromStatus}
+              remoteHosts={remoteHosts}
+              remoteStatuses={remoteStatuses}
             />
           </footer>
           )}
@@ -4207,10 +4314,26 @@ export default function App() {
                   <GitBranch size={13} />
                   <span className="workbench-dock__tab-label">{t("workspace.changedTab")}</span>
                 </button>
+                {remoteHosts.length > 0 && (
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={rightDockMode === "remote"}
+                    className={`workbench-dock__tab${rightDockMode === "remote" ? " workbench-dock__tab--active" : ""}`}
+                    onClick={openRemoteDock}
+                  >
+                    <Server size={13} />
+                    <span className="workbench-dock__tab-label">{t("rightDock.remote")}</span>
+                  </button>
+                )}
               </div>
             </div>
             <div className="workbench-dock__body">
-              {rightDockMode === "context" && desktopLayoutStyle !== "creation" ? (
+              {rightDockMode === "remote" ? (
+                <Suspense fallback={null}>
+                  <RemotePanel onClose={() => setWorkspacePanel(false)} />
+                </Suspense>
+              ) : rightDockMode === "context" && desktopLayoutStyle !== "creation" ? (
                 <ContextPanel
                   tabId={activeTabId}
                   context={state.context}
@@ -4303,11 +4426,6 @@ export default function App() {
         </Suspense>
       )}
 
-      {remoteExplorerOpen && (
-        <Suspense fallback={null}>
-          <RemotePanel />
-        </Suspense>
-      )}
       <RemoteHostKeyDialog />
 
       <CommandPalette

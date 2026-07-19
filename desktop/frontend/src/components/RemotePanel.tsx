@@ -8,34 +8,57 @@ import type { RemoteDirEntry, RemoteForwardView } from "../lib/types";
 import { CodeViewer } from "./CodeViewer";
 import { RemoteStatusChip } from "./RemoteHostsPage";
 
-/** RemotePanel is the remote-explorer drawer: a host header with status, and
- *  Files / Ports / Server tabs. Opened from the StatusBar chip or a host row. */
-export function RemotePanel() {
+const EMPTY_REMOTE_FORWARDS: RemoteForwardView[] = [];
+
+/** RemotePanel is the right-dock remote work surface: a host header with
+ *  Files / Ports / Server tabs. */
+export function RemotePanel({ onClose }: { onClose: () => void }) {
   const t = useT();
   const hostId = useRemoteStore((s) => s.explorerHostId);
+  const host = useRemoteStore((s) => s.hosts.find((item) => item.id === hostId));
   const tab = useRemoteStore((s) => s.explorerTab);
   const setTab = useRemoteStore((s) => s.setExplorerTab);
-  const closeExplorer = useRemoteStore((s) => s.closeExplorer);
   const status = useRemoteStore((s) => (hostId ? s.statuses[hostId] : undefined));
   const setSettingsTarget = useOverlayStore((s) => s.setSettingsTarget);
 
   if (!hostId) return null;
   const connected = status?.state === "connected" || status?.state === "degraded";
+  const busy = status?.state === "connecting" || status?.state === "reconnecting" || status?.state === "pending_hostkey";
+  const target = host ? `${host.user ? `${host.user}@` : ""}${host.host}${host.port && host.port !== 22 ? `:${host.port}` : ""}` : hostId;
 
   return (
-    <aside className="remote-panel" aria-label={t("remote.explorer")}>
+    <section className="remote-panel" aria-label={t("remote.explorer")}>
       <header className="remote-panel__header">
-        <span className="remote-panel__host">{hostId}</span>
-        {status && <RemoteStatusChip state={status.state} />}
+        <span className="remote-panel__host-copy">
+          <span className="remote-panel__host">{host?.label || hostId}</span>
+          <span className="remote-panel__target">{target}</span>
+        </span>
+        <RemoteStatusChip state={status?.state ?? "stopped"} />
         <div className="remote-panel__header-actions">
+          {connected ? (
+            <button className="btn btn--small" onClick={() => void app.DisconnectRemoteHost(hostId).catch(() => {})}>
+              {t("remote.disconnect")}
+            </button>
+          ) : (
+            <button className="btn btn--small btn--primary" disabled={busy} onClick={() => void app.ConnectRemoteHost(hostId).catch(() => {})}>
+              {busy ? t(`remote.status.${status?.state ?? "connecting"}`) : t("remote.connect")}
+            </button>
+          )}
           <button className="btn btn--ghost" onClick={() => setSettingsTarget("remote")}>
             {t("remote.manageHosts")}
           </button>
-          <button className="btn btn--ghost" onClick={closeExplorer} aria-label="Close">
+          <button className="btn btn--ghost" onClick={onClose} aria-label={t("rightDock.collapse")}>
             ×
           </button>
         </div>
       </header>
+
+      {status?.error && (
+        <div className="remote-panel__error-banner" role="alert">
+          <strong>{t("remote.status.failed")}</strong>
+          <span>{status.error}</span>
+        </div>
+      )}
 
       {status?.state === "reconnecting" && (
         <div className="remote-panel__banner" role="status">
@@ -62,7 +85,7 @@ export function RemotePanel() {
         {tab === "ports" && <RemotePortsTab hostId={hostId} connected={connected} />}
         {tab === "server" && <RemoteServerTab hostId={hostId} connected={connected} />}
       </div>
-    </aside>
+    </section>
   );
 }
 
@@ -236,7 +259,7 @@ function RemoteFileView({ hostId, path, connected }: { hostId: string; path: str
 
 function RemotePortsTab({ hostId, connected }: { hostId: string; connected: boolean }) {
   const t = useT();
-  const forwards = useRemoteStore((s) => s.forwards[hostId] ?? []);
+  const forwards = useRemoteStore((s) => s.forwards[hostId] ?? EMPTY_REMOTE_FORWARDS);
   const setForwards = useRemoteStore((s) => s.setForwards);
   const [localPort, setLocalPort] = useState(8080);
   const [remoteHost, setRemoteHost] = useState("127.0.0.1");

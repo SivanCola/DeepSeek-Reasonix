@@ -96,28 +96,59 @@ func main() {
 	if config.SafeModeRequested() {
 		launch.SafeMode = true
 	}
-	tracker := repair.NewStartupTracker("")
-	if tracker.SafeModeRecommended() {
-		launch.SafeMode = true
+	var remoteLaunch *remoteWindowLaunch
+	if launch.RemoteWindowTicket != "" {
+		var err error
+		remoteLaunch, err = consumeRemoteWindowLaunch(launch.RemoteWindowTicket)
+		if err != nil {
+			println("Error:", err.Error())
+			return
+		}
 	}
-	if launch.SafeMode {
-		_ = os.Setenv("REASONIX_SAFE_MODE", "1")
+
+	var tracker *repair.StartupTracker
+	trackerOwned := false
+	if remoteLaunch == nil {
+		tracker = repair.NewStartupTracker("")
+		if tracker.SafeModeRecommended() {
+			launch.SafeMode = true
+		}
+		if launch.SafeMode {
+			_ = os.Setenv("REASONIX_SAFE_MODE", "1")
+		}
+		// Begin runs before the Wails single-instance gate, but it refuses to
+		// overwrite the recorded state while its owner PID is alive, so a duplicate
+		// launch — which Wails terminates via os.Exit without OnShutdown — never
+		// counts as a crash toward the Safe Mode threshold.
+		startupState, _ := tracker.Begin(version, launch.SafeMode)
+		trackerOwned = startupState.PID == os.Getpid()
 	}
 	// Keep WebKit acceleration enabled during normal Linux launches. If the
 	// startup tracker selects Safe Mode after a crash loop (or the user requests
 	// it explicitly), NVIDIA systems use the broader renderer fallback before
 	// Wails creates the WebKit process. Other platforms provide a no-op.
 	configureWebKitRendererRecovery(launch.SafeMode)
-	// Begin runs before the Wails single-instance gate, but it refuses to
-	// overwrite the recorded state while its owner PID is alive, so a duplicate
-	// launch — which Wails terminates via os.Exit without OnShutdown — never
-	// counts as a crash toward the Safe Mode threshold.
-	startupState, _ := tracker.Begin(version, launch.SafeMode)
-	trackerOwned := startupState.PID == os.Getpid()
 
 	app := NewApp()
+	app.remoteWindow = remoteLaunch
 	if trackerOwned {
 		app.startupTracker = tracker
+	}
+	title := "Reasonix"
+	singleInstance := singleInstanceLock(app)
+	appMenu := app.createAppMenu()
+	dragAndDrop := &options.DragAndDrop{EnableFileDrop: true}
+	bindings := []any{app}
+	if remoteLaunch != nil {
+		if remoteLaunch.Title != "" {
+			title = remoteLaunch.Title
+		}
+		// Wails v2 has one native window per process. A remote shell must bypass
+		// the primary single-instance lock and must not expose local-only menus.
+		singleInstance = nil
+		appMenu = nil
+		dragAndDrop = &options.DragAndDrop{DisableWebViewDrop: true}
+		bindings = nil
 	}
 
 	// Restore saved window size, or fall back to the default.
@@ -142,7 +173,7 @@ func main() {
 	scheduleWebKitSignalHandlerRepair()
 
 	err := wails.Run(&options.App{
-		Title:     "Reasonix",
+		Title:     title,
 		Width:     width,
 		Height:    height,
 		Frameless: goruntime.GOOS == "windows",
@@ -154,6 +185,7 @@ func main() {
 		AssetServer: &assetserver.Options{
 			Assets: assets,
 			Middleware: assetserver.ChainMiddleware(
+				app.remoteWindowAssetMiddleware(),
 				app.jsProfilingMiddleware(),
 				app.workspaceMediaMiddleware(),
 				app.themeAssetMiddleware(),
@@ -163,20 +195,20 @@ func main() {
 		OnDomReady:         app.domReady,
 		OnBeforeClose:      app.beforeClose,
 		OnShutdown:         app.shutdown,
-		Bind:               []any{app},
-		SingleInstanceLock: singleInstanceLock(app),
+		Bind:               bindings,
+		SingleInstanceLock: singleInstance,
 
 		// Start hidden — domReady positions and shows the window after restoring
 		// geometry, so the user never sees the default size/position flash.
 		StartHidden: true,
 
 		// Native application menu (File > Settings, Edit, Window).
-		Menu: app.createAppMenu(),
+		Menu: appMenu,
 
 		// Native OS file drops: the webview withholds dropped files' paths from the
 		// HTML drop event, so the frontend (composer) reads them via runtime.OnFileDrop
 		// against the --wails-drop-target element instead.
-		DragAndDrop: &options.DragAndDrop{EnableFileDrop: true},
+		DragAndDrop: dragAndDrop,
 
 		// --- per-platform adaptation (see desktop/README.md for the rationale) ---
 		Mac: &mac.Options{
@@ -214,14 +246,18 @@ func main() {
 }
 
 type desktopLaunchOptions struct {
-	SafeMode bool
+	SafeMode           bool
+	RemoteWindowTicket string
 }
 
 func parseDesktopLaunchArgs(args []string) desktopLaunchOptions {
 	var out desktopLaunchOptions
 	for _, arg := range args {
-		if arg == "--safe-mode" {
+		switch {
+		case arg == "--safe-mode":
 			out.SafeMode = true
+		case strings.HasPrefix(arg, remoteWindowTicketArgPrefix):
+			out.RemoteWindowTicket = strings.TrimPrefix(arg, remoteWindowTicketArgPrefix)
 		}
 	}
 	return out
