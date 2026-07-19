@@ -16,12 +16,18 @@ import type {
 
 export type RemoteExplorerTab = "files" | "ports" | "server";
 
+export type RemoteStatusPopoverRequest = {
+  hostId: string;
+  nonce: number;
+};
+
 export type RemoteState = {
   hosts: RemoteHostView[];
   statuses: Record<string, RemoteConnectionStatus>;
   forwards: Record<string, RemoteForwardView[]>;
   servers: Record<string, RemoteServerView>;
   pendingFingerprint: RemoteFingerprintView | null;
+  statusPopoverRequest: RemoteStatusPopoverRequest | null;
   explorerOpen: boolean;
   explorerHostId: string | null;
   explorerTab: RemoteExplorerTab;
@@ -33,6 +39,8 @@ export type RemoteState = {
   setForwards: (hostId: string, forwards: RemoteForwardView[]) => void;
   setServer: (s: RemoteServerView) => void;
   clearPendingFingerprint: (expected?: RemoteFingerprintView) => void;
+  requestStatusPopover: (hostId: string) => void;
+  clearStatusPopoverRequest: (expected: RemoteStatusPopoverRequest) => void;
   openExplorer: (hostId: string) => void;
   closeExplorer: () => void;
   setExplorerTab: (tab: RemoteExplorerTab) => void;
@@ -44,6 +52,7 @@ export const useRemoteStore = create<RemoteState>((set) => ({
   forwards: {},
   servers: {},
   pendingFingerprint: null,
+  statusPopoverRequest: null,
   explorerOpen: false,
   explorerHostId: null,
   explorerTab: "files",
@@ -94,6 +103,22 @@ export const useRemoteStore = create<RemoteState>((set) => ({
       )) return state;
       return { pendingFingerprint: null };
     }),
+
+  requestStatusPopover: (hostId) =>
+    set((state) => ({
+      statusPopoverRequest: {
+        hostId,
+        nonce: (state.statusPopoverRequest?.nonce ?? 0) + 1,
+      },
+    })),
+
+  clearStatusPopoverRequest: (expected) =>
+    set((state) => (
+      state.statusPopoverRequest?.hostId === expected.hostId &&
+      state.statusPopoverRequest.nonce === expected.nonce
+        ? { statusPopoverRequest: null }
+        : state
+    )),
 
   openExplorer: (hostId) => set({ explorerOpen: true, explorerHostId: hostId }),
   closeExplorer: () => set({ explorerOpen: false }),

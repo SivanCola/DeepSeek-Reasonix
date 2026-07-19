@@ -5,6 +5,7 @@
 
 import { useRemoteStore, waitForRemoteConnection } from "../store/remote";
 import { onRemoteStatus, __emitMockRemote } from "../lib/bridge";
+import { isRemoteHostKeyMismatch, remoteConnectionErrorSummaryKey } from "../lib/remoteErrors";
 import type { RemoteConnectionStatus } from "../lib/types";
 
 let passed = 0;
@@ -21,7 +22,7 @@ function eq(a: unknown, b: unknown, label: string) {
 }
 
 function reset() {
-  useRemoteStore.setState({ hosts: [], statuses: {}, pendingFingerprint: null });
+  useRemoteStore.setState({ hosts: [], statuses: {}, pendingFingerprint: null, statusPopoverRequest: null });
 }
 
 useRemoteStore.getState().setHosts([
@@ -69,6 +70,30 @@ useRemoteStore.getState().hydrateStatuses([
 ]);
 eq(useRemoteStore.getState().statuses["live"]?.state, "connected", "hydration preserves newer live status");
 eq(useRemoteStore.getState().statuses["snapshot-only"]?.state, "connected", "hydration fills missing status");
+
+useRemoteStore.getState().requestStatusPopover("box");
+const firstReveal = useRemoteStore.getState().statusPopoverRequest!;
+eq(firstReveal.hostId, "box", "connection failures can request the anchored status popover");
+useRemoteStore.getState().requestStatusPopover("box");
+const secondReveal = useRemoteStore.getState().statusPopoverRequest!;
+eq(secondReveal.nonce > firstReveal.nonce, true, "repeated failures create a fresh popover request");
+useRemoteStore.getState().clearStatusPopoverRequest(firstReveal);
+eq(useRemoteStore.getState().statusPopoverRequest?.nonce, secondReveal.nonce, "stale popover completion cannot clear a newer request");
+useRemoteStore.getState().clearStatusPopoverRequest(secondReveal);
+eq(useRemoteStore.getState().statusPopoverRequest, null, "matching popover request is consumed");
+
+const mismatchStatus: RemoteConnectionStatus = {
+  hostId: "box",
+  state: "stopped",
+  error: "raw path-bearing backend error",
+  errorDetails: {
+    code: "host_key_mismatch",
+    presentedSha256: "SHA256:new",
+    knownHostRecords: [{ path: "/home/dev/.ssh/known_hosts", line: 7 }],
+  },
+};
+eq(isRemoteHostKeyMismatch(mismatchStatus), true, "structured mismatch is recognized without parsing raw error text");
+eq(remoteConnectionErrorSummaryKey(mismatchStatus), "remote.error.summary.host_key_mismatch", "mismatch uses the localized safe summary");
 
 const connectionReady = waitForRemoteConnection("waiting", 1_000);
 useRemoteStore.getState().applyStatus({ hostId: "waiting", state: "connected" });

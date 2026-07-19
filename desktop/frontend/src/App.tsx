@@ -1116,6 +1116,7 @@ export default function App() {
   const requestRemoteExplorer = useRemoteStore((s) => s.openExplorer);
   const closeRemoteExplorerRequest = useRemoteStore((s) => s.closeExplorer);
   const applyRemoteStatus = useRemoteStore((s) => s.applyStatus);
+  const requestRemoteStatusPopover = useRemoteStore((s) => s.requestStatusPopover);
   const setRemoteForwards = useRemoteStore((s) => s.setForwards);
   const setRemoteServer = useRemoteStore((s) => s.setServer);
   const shortcutsOpen = useOverlayStore((s) => s.shortcutsOpen);
@@ -2179,7 +2180,10 @@ export default function App() {
   // Bridge remote:* events into the remote store once, app-wide, so the
   // StatusBar chip, host manager, and explorer all see the same live state.
   useEffect(() => {
-    const offStatus = onRemoteStatus((s) => applyRemoteStatus(s));
+    const offStatus = onRemoteStatus((s) => {
+      applyRemoteStatus(s);
+      if (s.state === "stopped" && s.error) requestRemoteStatusPopover(s.hostId);
+    });
     const offForwards = onRemoteForwards((e) => setRemoteForwards(e.hostId, e.forwards));
     const offServer = onRemoteServer((s) => setRemoteServer(s));
     return () => {
@@ -2187,7 +2191,7 @@ export default function App() {
       offForwards();
       offServer();
     };
-  }, [applyRemoteStatus, setRemoteForwards, setRemoteServer]);
+  }, [applyRemoteStatus, requestRemoteStatusPopover, setRemoteForwards, setRemoteServer]);
 
   useEffect(() => {
     let cancelled = false;
@@ -2567,20 +2571,31 @@ export default function App() {
 
   const connectAndOpenRemoteWorkspace = useCallback((host: RemoteHostView) => {
     void (async () => {
-      const status = useRemoteStore.getState().statuses[host.id]?.state;
-      if (status !== "connected" && status !== "degraded") {
-        // Clear any stale failure before the new generation starts; otherwise a
-        // previous stopped+error snapshot could make the waiter reject before
-        // the kernel's fresh connecting event reaches the frontend.
-        useRemoteStore.getState().applyStatus({ hostId: host.id, state: "connecting" });
-        await app.ConnectRemoteHost(host.id);
-        await waitForRemoteConnection(host.id);
+      try {
+        const status = useRemoteStore.getState().statuses[host.id]?.state;
+        if (status !== "connected" && status !== "degraded") {
+          // Clear any stale failure before the new generation starts; otherwise a
+          // previous stopped+error snapshot could make the waiter reject before
+          // the kernel's fresh connecting event reaches the frontend.
+          useRemoteStore.getState().applyStatus({ hostId: host.id, state: "connecting" });
+          await app.ConnectRemoteHost(host.id);
+          await waitForRemoteConnection(host.id);
+        }
+      } catch {
+        // Connection failures are host-scoped. Keep the persistent error and its
+        // recovery actions beside the Remote SSH status entry instead of
+        // stretching a raw backend error across the native titlebar.
+        requestRemoteStatusPopover(host.id);
+        return;
       }
-      await launchRemoteWorkspace(host);
-    })().catch((err) => {
-      showToast(err instanceof Error ? err.message : String(err), "error", { durationMs: 6000 });
-    });
-  }, [launchRemoteWorkspace, showToast]);
+
+      try {
+        await launchRemoteWorkspace(host);
+      } catch (err) {
+        showToast(err instanceof Error ? err.message : String(err), "error", { durationMs: 6000 });
+      }
+    })();
+  }, [launchRemoteWorkspace, requestRemoteStatusPopover, showToast]);
 
   const handleWorkspacePreviewModeChange = useCallback(
     (active: boolean) => {

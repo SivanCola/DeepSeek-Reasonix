@@ -66,6 +66,7 @@ console.log("\nstatus bar workspace");
     remoteStatuses: { demo: { hostId: "demo", state: "stopped", error: "handshake failed" } },
   });
   ok(failed.includes("demo · Connection failed"), "SSH entry keeps a recoverable failure summary visible");
+  ok(!failed.includes("handshake failed"), "status entry keeps raw connection diagnostics out of primary chrome");
 }
 
 {

@@ -2,12 +2,14 @@ package main
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
 	"reasonix/internal/config"
+	"reasonix/internal/remote"
 )
 
 // fakeRemoteKernel implements remoteKernel for binding-layer tests.
@@ -20,6 +22,28 @@ type fakeRemoteKernel struct {
 	ensureErr    error
 	resolveCalls []bool
 	closed       bool
+}
+
+func TestRemoteConnectionErrorDetailsPreserveHostKeyMismatch(t *testing.T) {
+	root := &remote.HostKeyMismatchError{
+		Host:                 "dev@example.test:2222",
+		PresentedFingerprint: "SHA256:new",
+		Locations: []remote.KnownHostLocation{
+			{Filename: "/home/dev/.ssh/known_hosts", Line: 7},
+		},
+	}
+	view := RemoteConnectionStatusView{HostID: "box", State: "stopped"}
+	applyRemoteConnectionError(&view, errors.Join(errors.New("ssh handshake failed"), root))
+
+	if view.ErrorDetails == nil || view.ErrorDetails.Code != "host_key_mismatch" {
+		t.Fatalf("error details = %+v", view.ErrorDetails)
+	}
+	if view.ErrorDetails.PresentedSHA256 != "SHA256:new" {
+		t.Fatalf("presented fingerprint = %q", view.ErrorDetails.PresentedSHA256)
+	}
+	if got := view.ErrorDetails.KnownHostRecords; len(got) != 1 || got[0].Path != "/home/dev/.ssh/known_hosts" || got[0].Line != 7 {
+		t.Fatalf("known_hosts records = %+v", got)
+	}
 }
 
 func (f *fakeRemoteKernel) Hosts() ([]RemoteHostView, error) { return f.hosts, nil }

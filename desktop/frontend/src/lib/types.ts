@@ -1084,10 +1084,22 @@ export interface RemoteFingerprintView {
   sha256: string;
 }
 
+export interface RemoteKnownHostLocation {
+  path: string;
+  line: number;
+}
+
+export interface RemoteConnectionErrorDetails {
+  code: "connection_failed" | "auth_failed" | "host_key_rejected" | "host_key_mismatch";
+  presentedSha256?: string;
+  knownHostRecords?: RemoteKnownHostLocation[];
+}
+
 export interface RemoteConnectionStatus {
   hostId: string;
   state: RemoteConnState;
   error?: string;
+  errorDetails?: RemoteConnectionErrorDetails;
   fingerprint?: RemoteFingerprintView;
   attempt?: number;
 }
