@@ -106,6 +106,37 @@ func TestSnapshotUpToDateFastPath(t *testing.T) {
 	}
 }
 
+func TestSaveSnapshotBoundsCrossProcessFileLockWait(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "session.jsonl")
+	lock, err := tryTakeSessionLockFile(store.SessionLockFile(path))
+	if err != nil {
+		t.Fatalf("take competing session lock: %v", err)
+	}
+	defer lock.Unlock()
+
+	prevWait, prevPoll := sessionFileLockWait, sessionFileLockPollInterval
+	sessionFileLockWait = 40 * time.Millisecond
+	sessionFileLockPollInterval = 5 * time.Millisecond
+	defer func() {
+		sessionFileLockWait = prevWait
+		sessionFileLockPollInterval = prevPoll
+	}()
+
+	s := NewSession("sys")
+	s.Add(provider.Message{Role: provider.RoleUser, Content: "must stay in memory"})
+	started := time.Now()
+	err = s.SaveSnapshot(path)
+	if !errors.Is(err, errSessionFileLockHeld) {
+		t.Fatalf("SaveSnapshot error = %v, want errSessionFileLockHeld", err)
+	}
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("SaveSnapshot waited %v for a held cross-process lock; want a bounded failure", elapsed)
+	}
+	if got := s.Snapshot(); len(got) != 2 || got[1].Content != "must stay in memory" {
+		t.Fatalf("failed save changed in-memory transcript: %+v", got)
+	}
+}
+
 // TestRepairedSessionArmsFastPath (#6613 review P2): a session loaded with a
 // damaged event log — or carrying a load-time normalization repair — must
 // re-arm the snapshot no-op fast path once a successful save persists the

@@ -43,7 +43,15 @@ const (
 )
 
 var (
-	sessionSaveLocks            sync.Map
+	sessionSaveLocks sync.Map
+	// sessionFileLockWait bounds cross-process save-lock acquisition. Session
+	// leases normally prevent competing writers, but CLI/legacy writers and a
+	// stalled process can still hold the compatibility .lock file. Navigation
+	// and desktop shutdown snapshot synchronously; waiting forever here wedges
+	// the UI and keeps the session lease (and WebView) alive indefinitely.
+	// Package vars let focused tests shorten the wait without slowing the suite.
+	sessionFileLockWait         = 5 * time.Second
+	sessionFileLockPollInterval = 25 * time.Millisecond
 	ErrSessionSnapshotConflict  = errors.New("session snapshot conflicts with newer transcript")
 	ErrSessionRecoveryNotNeeded = errors.New("session recovery not needed")
 	// ErrSessionRecoveryDepthExceeded refuses a recovery fork whose parent is
@@ -1130,6 +1138,37 @@ func lockSessionSavePath(path string) func() {
 	mu := v.(*sync.Mutex)
 	mu.Lock()
 	return mu.Unlock
+}
+
+// lockSessionFile waits briefly for the cross-process compatibility save lock.
+// A short overlap with a legitimate writer is allowed to settle, but an
+// stalled or indefinitely held lock fails the save instead of freezing tab
+// switching or application shutdown. The caller keeps its in-memory transcript
+// and can retry through the existing autosave/recovery paths.
+func lockSessionFile(path string) (func(), error) {
+	wait := sessionFileLockWait
+	poll := sessionFileLockPollInterval
+	if poll <= 0 {
+		poll = time.Millisecond
+	}
+	deadline := time.Now().Add(wait)
+	for {
+		unlock, err := tryLockSessionFile(path)
+		if err == nil {
+			return unlock, nil
+		}
+		if !errors.Is(err, errSessionFileLockHeld) {
+			return nil, err
+		}
+		remaining := time.Until(deadline)
+		if wait <= 0 || remaining <= 0 {
+			return nil, errSessionFileLockHeld
+		}
+		if poll > remaining {
+			poll = remaining
+		}
+		time.Sleep(poll)
+	}
 }
 
 // LockSessionMetaPath serializes a read-modify-write cycle on a session's
