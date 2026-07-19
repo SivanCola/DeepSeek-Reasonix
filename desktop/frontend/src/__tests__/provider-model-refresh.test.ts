@@ -199,6 +199,12 @@ eq(
 );
 
 eq(
+  providerApiKeyEnvForSave("9router", "", "sk-test"),
+  "CUSTOM_9ROUTER_API_KEY",
+  "creates a valid key env for a digit-leading custom provider",
+);
+
+eq(
   providerApiKeyEnvForSave("Local Gateway", "GATEWAY_KEY", ""),
   "GATEWAY_KEY",
   "preserves an explicitly configured key env",
@@ -206,11 +212,12 @@ eq(
 
 eq(
   [
+    apiKeyEnvFromProviderName("9router"),
     apiKeyEnvFromProviderName("商汤"),
     apiKeyEnvFromProviderName("通义千问"),
   ],
-  ["CUSTOM_d39b9067_API_KEY", "CUSTOM_e995c4c9_API_KEY"],
-  "generates distinct stable key envs for non-ASCII provider names",
+  ["CUSTOM_9ROUTER_API_KEY", "CUSTOM_d39b9067_API_KEY", "CUSTOM_e995c4c9_API_KEY"],
+  "generates valid stable key envs for digit-leading and non-ASCII provider names",
 );
 
 eq(

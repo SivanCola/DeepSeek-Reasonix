@@ -114,7 +114,9 @@ Reasonix derives the default from the provider name. Names that normalize to
 ASCII keep readable env names such as `LOCAL_GATEWAY_API_KEY`; names made
 entirely of non-ASCII characters get a stable hash suffix such as
 `CUSTOM_d39b9067_API_KEY` so two Chinese provider names do not share
-`CUSTOM_API_KEY`.
+`CUSTOM_API_KEY`. Names beginning with a digit get a `CUSTOM_` prefix so the
+generated environment variable remains valid; for example, `9router` becomes
+`CUSTOM_9ROUTER_API_KEY`.
 
 In the CLI custom-provider wizard, the provider name is generated from the base
 URL first, then the same provider-name rule is applied. For example
