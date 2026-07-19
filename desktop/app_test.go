@@ -7438,6 +7438,59 @@ func TestSetMCPTrustRestoresConnectionAfterPreflightFailure(t *testing.T) {
 	}
 }
 
+// RemovePlugin disconnects the uninstalled plugin's MCP servers, so it must
+// serialize on the MCP lifecycle lock: an unlocked disconnect interleaving
+// with a trust preflight lets the trust reconnect relaunch the just-removed
+// server from its stale snapshot. The plugin does not need to exist — the
+// lock is taken before the uninstall runs, which is the contract under test.
+func TestRemovePluginSerializesWithTrustPreflight(t *testing.T) {
+	releasePreflight := make(chan struct{})
+	gateAddr, attempts := newDesktopMCPStartGate(t, func(attempt int, conn net.Conn) {
+		if attempt == 2 {
+			<-releasePreflight
+		}
+		_, _ = conn.Write([]byte{1})
+	})
+	fixture := newGatedDesktopMCPTrustFixture(t, gateAddr)
+
+	removeEntered := make(chan struct{})
+	var removeOnce sync.Once
+	fixture.app.mcpMutationBeforeLockHook = func(operation string) {
+		if operation == "remove-plugin" {
+			removeOnce.Do(func() { close(removeEntered) })
+		}
+	}
+	trustDone := make(chan error, 1)
+	go func() { trustDone <- fixture.app.SetMCPTrust("h", "workspace") }()
+	waitForDesktopMCPStartAttempt(t, attempts, 2)
+	removeDone := make(chan error, 1)
+	go func() { removeDone <- fixture.app.RemovePlugin("not-an-installed-plugin") }()
+	select {
+	case <-removeEntered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("RemovePlugin did not reach the MCP lifecycle lock")
+	}
+	select {
+	case err := <-removeDone:
+		t.Fatalf("RemovePlugin bypassed trust serialization: %v", err)
+	case <-time.After(200 * time.Millisecond):
+	}
+	close(releasePreflight)
+	if err := <-trustDone; err != nil {
+		t.Fatalf("SetMCPTrust(h,workspace): %v", err)
+	}
+	// The uninstall itself is expected to fail (the plugin is not installed);
+	// only the ordering matters. It must complete once the lock is free.
+	select {
+	case <-removeDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("RemovePlugin did not complete after the trust preflight released the lock")
+	}
+	if _, found := fixture.activeRegistry.Get("mcp__h__greet"); !found {
+		t.Fatal("trust reconnect result was lost after the serialized RemovePlugin")
+	}
+}
+
 func TestSetMCPServerEnabledRejectsBackgroundJobs(t *testing.T) {
 	isolateDesktopUserDirs(t)
 

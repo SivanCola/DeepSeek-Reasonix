@@ -243,6 +243,12 @@ func (a *App) RemovePlugin(name string) error {
 	if err := a.ensureActiveTabRebuildAllowed("plugins"); err != nil {
 		return err
 	}
+	// Uninstall disconnects the plugin's MCP servers, so the whole flow holds
+	// the MCP lifecycle lock: an unlocked disconnect can interleave with a
+	// trust preflight, which would then relaunch the just-removed server from
+	// its stale snapshot. rebuildSettingLocked runs the rebuild without
+	// re-acquiring runtimeRebuildMu.
+	defer a.lockMCPMutation("remove-plugin")()
 	raw, _ := json.Marshal(map[string]any{"op": "uninstall", "kind": "plugin", "name": strings.TrimSpace(name), "scope": "global"})
 	tl := installsource.NewTool(installsource.Options{
 		ProjectRoot: a.activeWorkspaceRoot(),
@@ -258,7 +264,7 @@ func (a *App) RemovePlugin(name string) error {
 		return err
 	}
 	a.invalidateSkillRootsCache()
-	if err := a.rebuild(); err != nil {
+	if err := a.rebuildSettingLocked("plugins"); err != nil {
 		if _, ok := a.deferredRebuildWarning("plugins", err); ok {
 			return nil
 		}
