@@ -1159,19 +1159,23 @@ func normalizeLegacyLongCatContextWindows(c *Config) bool {
 	changed := false
 	for i := range c.Providers {
 		p := &c.Providers[i]
-		if p.ContextWindow != legacyLongCat20ContextWindow || officialProviderHost(p.BaseURL) != "api.longcat.chat" {
+		if p.ContextWindow != legacyLongCat20ContextWindow {
 			continue
 		}
+		var kind, baseURL string
 		switch strings.TrimSpace(p.PresetID) {
 		case "longcat-openai":
-			if !strings.EqualFold(strings.TrimSpace(p.Kind), "openai") {
-				continue
-			}
+			kind, baseURL = "openai", longCatOpenAIBaseURL
 		case "longcat-anthropic":
-			if !strings.EqualFold(strings.TrimSpace(p.Kind), "anthropic") {
-				continue
-			}
+			kind, baseURL = "anthropic", longCatAnthropicBaseURL
 		default:
+			continue
+		}
+		if !strings.EqualFold(strings.TrimSpace(p.Kind), kind) ||
+			normalizedBaseURLForMigration(p.BaseURL) != baseURL ||
+			!stringSlicesEqual(p.Models, longCat20Models) ||
+			p.Model != "" ||
+			p.Default != longCat20Models[0] {
 			continue
 		}
 		p.ContextWindow = longCat20ContextWindow

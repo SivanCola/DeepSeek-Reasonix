@@ -21,6 +21,8 @@ const (
 	ProviderPresetVersion        = 1
 	longCat20ContextWindow       = 1_048_576
 	legacyLongCat20ContextWindow = 131_072
+	longCatOpenAIBaseURL         = "https://api.longcat.chat/openai/v1"
+	longCatAnthropicBaseURL      = "https://api.longcat.chat/anthropic"
 )
 
 // CuratedProviderPresets returns one-click provider templates for common
@@ -108,7 +110,7 @@ var curatedProviderPresets = []ProviderPreset{
 		Entries: []ProviderEntry{{
 			Name:             "longcat-openai",
 			Kind:             "openai",
-			BaseURL:          "https://api.longcat.chat/openai/v1",
+			BaseURL:          longCatOpenAIBaseURL,
 			ModelsURL:        "https://api.longcat.chat/openai/v1/models",
 			Models:           longCat20Models,
 			Default:          "LongCat-2.0",
@@ -128,7 +130,7 @@ var curatedProviderPresets = []ProviderPreset{
 		Entries: []ProviderEntry{{
 			Name:             "longcat-anthropic",
 			Kind:             "anthropic",
-			BaseURL:          "https://api.longcat.chat/anthropic",
+			BaseURL:          longCatAnthropicBaseURL,
 			ModelsURL:        "https://api.longcat.chat/anthropic/v1/models",
 			Models:           longCat20Models,
 			Default:          "LongCat-2.0",
