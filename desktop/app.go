@@ -9207,7 +9207,7 @@ func (a *App) SaveExportFile(path, payload string, base64Encoded bool) error {
 		data = []byte(payload)
 	}
 	if err := os.WriteFile(path, data, 0o644); err != nil {
-		return err
+		return exportOperationError("save export file", path, err)
 	}
 	return nil
 }
@@ -9218,8 +9218,7 @@ func (a *App) SaveExportFile(path, payload string, base64Encoded bool) error {
 // every payload is staged before any target is committed, and a failed commit
 // removes only files created by this call.
 func (a *App) SaveExportImageFiles(path string, payloads []string) error {
-	path = strings.TrimSpace(path)
-	if path == "" {
+	if strings.TrimSpace(path) == "" {
 		return nil
 	}
 	if len(payloads) == 0 {
@@ -9229,18 +9228,18 @@ func (a *App) SaveExportImageFiles(path string, payloads []string) error {
 		return a.SaveExportFile(path, payloads[0], true)
 	}
 
-	data := make([][]byte, len(payloads))
 	targets := make([]string, len(payloads))
-	for i, payload := range payloads {
-		decoded, err := base64.StdEncoding.DecodeString(payload)
-		if err != nil {
-			return fmt.Errorf("decode export image part %d: %w", i+1, err)
-		}
-		data[i] = decoded
+	for i := range payloads {
 		targets[i] = numberedExportPath(path, i, len(payloads))
 	}
 
-	return saveExclusiveExportFiles(targets, data)
+	return saveExclusiveExportPayloads(targets, len(payloads), func(index int) ([]byte, error) {
+		decoded, err := base64.StdEncoding.DecodeString(payloads[index])
+		if err != nil {
+			return nil, fmt.Errorf("decode export image part %d: %w", index+1, err)
+		}
+		return decoded, nil
+	})
 }
 
 type stagedExportFile struct {
@@ -9253,6 +9252,8 @@ type committedExportFile struct {
 	info os.FileInfo
 }
 
+const exportTempCreateAttempts = 100
+
 func numberedExportPath(path string, partIndex, partCount int) string {
 	if partCount <= 1 {
 		return path
@@ -9263,14 +9264,20 @@ func numberedExportPath(path string, partIndex, partCount int) string {
 }
 
 func saveExclusiveExportFiles(targets []string, payloads [][]byte) error {
-	if len(targets) == 0 || len(targets) != len(payloads) {
+	return saveExclusiveExportPayloads(targets, len(payloads), func(index int) ([]byte, error) {
+		return payloads[index], nil
+	})
+}
+
+func saveExclusiveExportPayloads(targets []string, payloadCount int, payloadAt func(int) ([]byte, error)) error {
+	if len(targets) == 0 || len(targets) != payloadCount || payloadAt == nil {
 		return errors.New("invalid export image batch")
 	}
 	for _, target := range targets {
 		if _, err := os.Lstat(target); err == nil {
 			return fmt.Errorf("export file already exists: %s", filepath.Base(target))
 		} else if !errors.Is(err, os.ErrNotExist) {
-			return fmt.Errorf("inspect export target %s: %w", filepath.Base(target), err)
+			return exportOperationError("inspect export target", target, err)
 		}
 	}
 
@@ -9281,20 +9288,32 @@ func saveExclusiveExportFiles(targets []string, payloads [][]byte) error {
 		}
 	}()
 	for i, target := range targets {
-		file, err := os.CreateTemp(filepath.Dir(target), ".reasonix-export-*")
+		payload, err := payloadAt(i)
 		if err != nil {
-			return fmt.Errorf("stage export file %s: %w", filepath.Base(target), err)
+			return err
+		}
+		file, finalMode, err := createExportTempFile(filepath.Dir(target))
+		if err != nil {
+			return exportOperationError("stage export file", target, err)
 		}
 		tempPath := file.Name()
 		staged = append(staged, stagedExportFile{targetPath: target, tempPath: tempPath})
-		if _, err = file.Write(payloads[i]); err == nil {
+		if _, err = file.Write(payload); err == nil {
+			err = file.Sync()
+		}
+		// Keep staged payloads private while they are incomplete, then restore
+		// the same umask-adjusted mode used by SaveExportFile before publishing.
+		if err == nil {
+			err = file.Chmod(finalMode)
+		}
+		if err == nil {
 			err = file.Sync()
 		}
 		if closeErr := file.Close(); err == nil {
 			err = closeErr
 		}
 		if err != nil {
-			return fmt.Errorf("stage export file %s: %w", filepath.Base(target), err)
+			return exportOperationError("stage export file", target, err)
 		}
 	}
 
@@ -9303,24 +9322,63 @@ func saveExclusiveExportFiles(targets []string, payloads [][]byte) error {
 		info, err := commitStagedExportFile(file.tempPath, file.targetPath)
 		if err != nil {
 			rollbackCommittedExportFiles(committed)
-			return fmt.Errorf("save export file %s: %w", filepath.Base(file.targetPath), err)
+			return exportOperationError("save export file", file.targetPath, err)
 		}
 		committed = append(committed, committedExportFile{path: file.targetPath, info: info})
 	}
 	return nil
 }
 
+// createExportTempFile reserves a cryptographically random sibling path with
+// the same requested mode as a normal export. It immediately narrows the mode
+// while bytes are staged; the caller restores finalMode only after the payload
+// has been completely written and synced.
+func createExportTempFile(dir string) (*os.File, os.FileMode, error) {
+	for attempt := 0; attempt < exportTempCreateAttempts; attempt++ {
+		var suffix [12]byte
+		if _, err := rand.Read(suffix[:]); err != nil {
+			return nil, 0, fmt.Errorf("generate export temp name: %w", err)
+		}
+		path := filepath.Join(dir, ".reasonix-export-"+hex.EncodeToString(suffix[:]))
+		file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+		if errors.Is(err, os.ErrExist) {
+			continue
+		}
+		if err != nil {
+			return nil, 0, err
+		}
+		info, err := file.Stat()
+		if err == nil {
+			err = file.Chmod(0o600)
+		}
+		if err != nil {
+			_ = file.Close()
+			_ = os.Remove(path)
+			return nil, 0, err
+		}
+		return file, info.Mode().Perm(), nil
+	}
+	return nil, 0, errors.New("could not reserve a unique export temp file")
+}
+
 func commitStagedExportFile(tempPath, targetPath string) (os.FileInfo, error) {
+	stagedInfo, err := os.Lstat(tempPath)
+	if err != nil {
+		return nil, err
+	}
 	// A hard link publishes a fully written staged file atomically and fails if
 	// the target already exists. Some filesystems do not support hard links, so
 	// fall back to an exclusive create while preserving the no-overwrite rule.
 	if err := os.Link(tempPath, targetPath); err == nil {
-		info, statErr := os.Lstat(targetPath)
+		current, statErr := os.Lstat(targetPath)
 		if statErr != nil {
-			_ = os.Remove(targetPath)
+			removeExportFileIfSame(targetPath, stagedInfo)
 			return nil, statErr
 		}
-		return info, nil
+		if !os.SameFile(current, stagedInfo) {
+			return nil, errors.New("export target changed while it was being saved")
+		}
+		return stagedInfo, nil
 	}
 
 	source, err := os.Open(tempPath)
@@ -9366,6 +9424,14 @@ func removeExportFileIfSame(path string, created os.FileInfo) {
 	if err == nil && os.SameFile(current, created) {
 		_ = os.Remove(path)
 	}
+}
+
+func exportOperationError(operation, path string, err error) error {
+	var pathErr *os.PathError
+	if errors.As(err, &pathErr) {
+		return fmt.Errorf("%s %s: %v", operation, filepath.Base(path), pathErr.Err)
+	}
+	return fmt.Errorf("%s %s: %w", operation, filepath.Base(path), err)
 }
 
 func safeExportFilename(name string) string {

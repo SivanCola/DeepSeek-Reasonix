@@ -1889,13 +1889,12 @@ export default function App() {
         } else if (format === "image") {
           const path = await app.PickExportFile(`${base}.png`, "image/png");
           if (!path) return;
-          const { blobToBase64, renderSessionImageBlobs } = await import("./lib/sessionExport");
-          const blobs = await renderSessionImageBlobs(getSessionMarkdown());
-          const payloads = await Promise.all(blobs.map((blob) => blobToBase64(blob)));
+          const { renderSessionImageBase64Payloads } = await import("./lib/sessionExport");
+          const payloads = await renderSessionImageBase64Payloads(getSessionMarkdown());
           await app.SaveExportImageFiles(path, payloads);
           showToast(
-            blobs.length > 1
-              ? t("topicBar.exportImageParts", { count: blobs.length })
+            payloads.length > 1
+              ? t("topicBar.exportImageParts", { count: payloads.length })
               : t("topicBar.exportSuccess", { count: 1 }),
             "info",
           );

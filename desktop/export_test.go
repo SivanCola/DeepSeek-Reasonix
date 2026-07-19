@@ -6,6 +6,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
+	"sync"
 	"testing"
 )
 
@@ -52,6 +55,48 @@ func TestSaveExportFileRejectsInvalidBase64(t *testing.T) {
 	}
 }
 
+func TestExportErrorsDoNotExposeSelectedDirectory(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	missingDir := filepath.Join(dir, "private-export-directory")
+	payload := base64.StdEncoding.EncodeToString([]byte("image"))
+	tests := []struct {
+		name string
+		path string
+		run  func(string) error
+	}{
+		{
+			name: "single file",
+			path: filepath.Join(missingDir, "session.pdf"),
+			run: func(path string) error {
+				return (&App{}).SaveExportFile(path, payload, true)
+			},
+		},
+		{
+			name: "multipart image",
+			path: filepath.Join(missingDir, "session.png"),
+			run: func(path string) error {
+				return (&App{}).SaveExportImageFiles(path, []string{payload, payload})
+			},
+		},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			err := test.run(test.path)
+			if err == nil {
+				t.Fatal("expected missing export directory to fail")
+			}
+			if strings.Contains(err.Error(), dir) {
+				t.Fatalf("export error exposed selected directory: %q", err)
+			}
+			if !strings.Contains(err.Error(), "session") {
+				t.Fatalf("export error should retain a safe file name: %q", err)
+			}
+		})
+	}
+}
+
 func TestSaveExportImageFilesWritesNumberedParts(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -77,6 +122,58 @@ func TestSaveExportImageFilesWritesNumberedParts(t *testing.T) {
 	}
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
 		t.Fatalf("multi-part export should not write the selected base path, stat error = %v", err)
+	}
+}
+
+func TestSaveExportImageFilesPreservesSelectedPath(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows normalizes trailing spaces in file names")
+	}
+	dir := t.TempDir()
+	selectedPath := filepath.Join(dir, "session.png ")
+	neighborPath := filepath.Join(dir, "session.png")
+	if err := os.WriteFile(neighborPath, []byte("keep me"), 0o644); err != nil {
+		t.Fatalf("seed neighboring file: %v", err)
+	}
+	payload := base64.StdEncoding.EncodeToString([]byte("new image"))
+
+	if err := (&App{}).SaveExportImageFiles(selectedPath, []string{payload}); err != nil {
+		t.Fatalf("save exact selected path: %v", err)
+	}
+	if got, err := os.ReadFile(selectedPath); err != nil || string(got) != "new image" {
+		t.Fatalf("selected path data = %q, err = %v", got, err)
+	}
+	if got, err := os.ReadFile(neighborPath); err != nil || string(got) != "keep me" {
+		t.Fatalf("neighboring file changed: data=%q err=%v", got, err)
+	}
+}
+
+func TestSaveExportImageFilesMatchesNormalExportPermissions(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	referencePath := filepath.Join(dir, "reference.png")
+	if err := (&App{}).SaveExportFile(referencePath, base64.StdEncoding.EncodeToString([]byte("reference")), true); err != nil {
+		t.Fatalf("save reference export: %v", err)
+	}
+	payload := base64.StdEncoding.EncodeToString([]byte("image"))
+	if err := (&App{}).SaveExportImageFiles(filepath.Join(dir, "session.png"), []string{payload, payload}); err != nil {
+		t.Fatalf("save multipart export: %v", err)
+	}
+
+	referenceInfo, err := os.Stat(referencePath)
+	if err != nil {
+		t.Fatalf("stat reference export: %v", err)
+	}
+	partInfo, err := os.Stat(filepath.Join(dir, "session-1-of-2.png"))
+	if err != nil {
+		t.Fatalf("stat multipart export: %v", err)
+	}
+	if got, want := partInfo.Mode().Perm(), referenceInfo.Mode().Perm(); got != want {
+		t.Fatalf("multipart permissions = %v, want normal export permissions %v", got, want)
+	}
+	if matches, err := filepath.Glob(filepath.Join(dir, ".reasonix-export-*")); err != nil || len(matches) != 0 {
+		t.Fatalf("staged files remain after successful export: matches=%v err=%v", matches, err)
 	}
 }
 
@@ -120,6 +217,9 @@ func TestSaveExportImageFilesDecodesAllPartsBeforeWriting(t *testing.T) {
 			t.Fatalf("invalid payload should leave no image part %d, stat error = %v", i, statErr)
 		}
 	}
+	if matches, globErr := filepath.Glob(filepath.Join(dir, ".reasonix-export-*")); globErr != nil || len(matches) != 0 {
+		t.Fatalf("invalid payload left staged files: matches=%v err=%v", matches, globErr)
+	}
 }
 
 func TestSaveExclusiveExportFilesRollsBackCommittedTargets(t *testing.T) {
@@ -135,6 +235,96 @@ func TestSaveExclusiveExportFilesRollsBackCommittedTargets(t *testing.T) {
 	}
 	if _, statErr := os.Stat(target); !os.IsNotExist(statErr) {
 		t.Fatalf("failed batch should roll back its committed target, stat error = %v", statErr)
+	}
+}
+
+func TestRollbackDoesNotRemoveReplacedExportTarget(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	tempPath := filepath.Join(dir, ".staged.png")
+	targetPath := filepath.Join(dir, "session.png")
+	if err := os.WriteFile(tempPath, []byte("staged"), 0o644); err != nil {
+		t.Fatalf("write staged file: %v", err)
+	}
+	created, err := commitStagedExportFile(tempPath, targetPath)
+	if err != nil {
+		t.Fatalf("commit staged file: %v", err)
+	}
+	tempInfo, err := os.Lstat(tempPath)
+	if err != nil {
+		t.Fatalf("stat staged file: %v", err)
+	}
+	if !os.SameFile(created, tempInfo) {
+		t.Fatal("commit must return the staged inode identity")
+	}
+	if err := os.Remove(targetPath); err != nil {
+		t.Fatalf("replace committed target: %v", err)
+	}
+	if err := os.WriteFile(targetPath, []byte("replacement"), 0o644); err != nil {
+		t.Fatalf("write replacement target: %v", err)
+	}
+
+	rollbackCommittedExportFiles([]committedExportFile{{path: targetPath, info: created}})
+	if got, err := os.ReadFile(targetPath); err != nil || string(got) != "replacement" {
+		t.Fatalf("rollback removed replacement: data=%q err=%v", got, err)
+	}
+}
+
+func TestConcurrentMultipartExportsHaveSingleCompleteWinner(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "session.png")
+	encode := func(values ...string) []string {
+		encoded := make([]string, len(values))
+		for i, value := range values {
+			encoded[i] = base64.StdEncoding.EncodeToString([]byte(value))
+		}
+		return encoded
+	}
+	batches := [][]string{
+		encode("a-1", "a-2", "a-3"),
+		encode("b-1", "b-2", "b-3"),
+	}
+	start := make(chan struct{})
+	errs := make(chan error, len(batches))
+	var ready sync.WaitGroup
+	ready.Add(len(batches))
+	for _, batch := range batches {
+		batch := batch
+		go func() {
+			ready.Done()
+			<-start
+			errs <- (&App{}).SaveExportImageFiles(path, batch)
+		}()
+	}
+	ready.Wait()
+	close(start)
+
+	successes := 0
+	for range batches {
+		if err := <-errs; err == nil {
+			successes++
+		}
+	}
+	if successes != 1 {
+		t.Fatalf("successful concurrent exports = %d, want exactly one", successes)
+	}
+	first, err := os.ReadFile(filepath.Join(dir, "session-1-of-3.png"))
+	if err != nil {
+		t.Fatalf("read winning first part: %v", err)
+	}
+	winner := string(first[:1])
+	for i := 1; i <= 3; i++ {
+		got, err := os.ReadFile(filepath.Join(dir, fmt.Sprintf("session-%d-of-3.png", i)))
+		if err != nil {
+			t.Fatalf("read winning part %d: %v", i, err)
+		}
+		if want := fmt.Sprintf("%s-%d", winner, i); string(got) != want {
+			t.Fatalf("winning part %d = %q, want %q from one batch", i, got, want)
+		}
+	}
+	if matches, globErr := filepath.Glob(filepath.Join(dir, ".reasonix-export-*")); globErr != nil || len(matches) != 0 {
+		t.Fatalf("concurrent export left staged files: matches=%v err=%v", matches, globErr)
 	}
 }
 

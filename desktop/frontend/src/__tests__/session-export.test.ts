@@ -4,6 +4,7 @@ import {
   isSafeInlineExportImage,
   neutralizeExternalCssResources,
   planRasterSlices,
+  transformExportMarkdownUrl,
 } from "../lib/sessionExportCore";
 
 const css = neutralizeExternalCssResources(`
@@ -26,6 +27,17 @@ assert.deepEqual(planRasterSlices(25_000, 8_000, [7_000, 14_200, 23_000]), [
   { offset: 14_200, height: 8_000 },
   { offset: 22_200, height: 2_800 },
 ]);
+assert.deepEqual(planRasterSlices(1_400, 1_354, [1_352], 1_352), [
+  { offset: 0, height: 1_354 },
+]);
+assert.deepEqual(planRasterSlices(1_048, 1_000, [1_000], 1_000), [
+  { offset: 0, height: 1_000 },
+]);
+assert.deepEqual(planRasterSlices(2_048, 1_000, [900, 1_950], 1_950), [
+  { offset: 0, height: 900 },
+  { offset: 900, height: 1_000 },
+  { offset: 1_900, height: 148 },
+]);
 
 assert.equal(isSafeInlineExportImage("data:image/png;base64,iVBORw0KGgo="), true);
 assert.equal(isSafeInlineExportImage(" DATA:IMAGE/JPEG;BASE64,/9j/4AAQ "), true);
@@ -35,6 +47,22 @@ assert.equal(isSafeInlineExportImage("https://example.com/image.png"), false);
 assert.equal(isSafeInlineExportImage("file:///tmp/image.png"), false);
 assert.equal(isSafeInlineExportImage("data:image/svg+xml;base64,PHN2Zz4="), false);
 assert.equal(isSafeInlineExportImage("data:image/png,not-base64"), false);
+assert.equal(isSafeInlineExportImage("data:image/png;base64,not base64"), false);
+assert.equal(isSafeInlineExportImage("data:image/png;base64,invalid!"), false);
+
+const fallbackUrlTransform = (value: string) => `filtered:${value}`;
+assert.equal(
+  transformExportMarkdownUrl(" data:image/png;base64,iVBORw0KGgo= ", "src", fallbackUrlTransform),
+  "data:image/png;base64,iVBORw0KGgo=",
+);
+assert.equal(
+  transformExportMarkdownUrl("data:image/png;base64,iVBORw0KGgo=", "href", fallbackUrlTransform),
+  "filtered:data:image/png;base64,iVBORw0KGgo=",
+);
+assert.equal(
+  transformExportMarkdownUrl("https://example.com/image.png", "src", fallbackUrlTransform),
+  "filtered:https://example.com/image.png",
+);
 
 const pdf = createRasterPdf(
   [

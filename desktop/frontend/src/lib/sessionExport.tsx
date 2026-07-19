@@ -1,5 +1,5 @@
 import { createRoot, type Root } from "react-dom/client";
-import ReactMarkdown from "react-markdown";
+import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import type { Components } from "react-markdown";
 import rehypeKatex from "rehype-katex";
 import katexCss from "katex/dist/katex.min.css?inline";
@@ -13,6 +13,7 @@ import {
   neutralizeExternalCssResources,
   PDF_CONTENT_ASPECT,
   planRasterSlices,
+  transformExportMarkdownUrl,
   type RasterSlice,
 } from "./sessionExportCore";
 
@@ -236,6 +237,7 @@ function StaticMarkdown({ text }: { text: string }) {
         remarkPlugins={[remarkGfm, remarkMath]}
         rehypePlugins={[rehypeKatex]}
         components={staticMarkdownComponents}
+        urlTransform={(value, key) => transformExportMarkdownUrl(value, key, defaultUrlTransform)}
       >
         {normalizeMath(text)}
       </ReactMarkdown>
@@ -419,6 +421,15 @@ function naturalPageBreaks(surface: HTMLElement): number[] {
   return Array.from(markdown.children).map((node) => Math.ceil(node.getBoundingClientRect().bottom - surfaceTop));
 }
 
+function planSurfaceSlices(surface: HTMLElement, maxSliceHeight: number): RasterSlice[] {
+  const height = Math.max(1, Math.ceil(surface.scrollHeight || surface.getBoundingClientRect().height || 1));
+  const breakpoints = naturalPageBreaks(surface);
+  const contentEnd = breakpoints.length > 0
+    ? breakpoints.reduce((maximum, value) => Math.max(maximum, value), 1)
+    : height;
+  return planRasterSlices(height, maxSliceHeight, breakpoints, contentEnd);
+}
+
 async function renderSurfaceSliceToCanvas(
   surface: HTMLElement,
   slice: RasterSlice,
@@ -464,26 +475,33 @@ export function blobToBase64(blob: Blob): Promise<string> {
   });
 }
 
-export async function renderSessionImageBlobs(markdown: string): Promise<Blob[]> {
+async function renderSessionImages<T>(markdown: string, encode: (blob: Blob) => Promise<T>): Promise<T[]> {
   const rendered = await renderExportSurface(markdown);
   try {
     const scale = exportScale();
-    const height = Math.max(1, Math.ceil(rendered.surface.scrollHeight || rendered.surface.getBoundingClientRect().height || 1));
-    const slices = planRasterSlices(height, Math.floor(MAX_CANVAS_SIDE / scale), naturalPageBreaks(rendered.surface));
-    const blobs: Blob[] = [];
+    const slices = planSurfaceSlices(rendered.surface, Math.floor(MAX_CANVAS_SIDE / scale));
+    const images: T[] = [];
     for (const slice of slices) {
       const canvas = await renderSurfaceSliceToCanvas(rendered.surface, slice, scale);
       try {
-        blobs.push(await canvasToBlob(canvas, "image/png"));
+        images.push(await encode(await canvasToBlob(canvas, "image/png")));
       } finally {
         canvas.width = 1;
         canvas.height = 1;
       }
     }
-    return blobs;
+    return images;
   } finally {
     disposeExport(rendered);
   }
+}
+
+export function renderSessionImageBlobs(markdown: string): Promise<Blob[]> {
+  return renderSessionImages(markdown, async (blob) => blob);
+}
+
+export function renderSessionImageBase64Payloads(markdown: string): Promise<string[]> {
+  return renderSessionImages(markdown, blobToBase64);
 }
 
 export async function renderSessionPdfBlob(markdown: string, title: string): Promise<Blob> {
@@ -491,9 +509,8 @@ export async function renderSessionPdfBlob(markdown: string, title: string): Pro
   try {
     const scale = exportScale();
     const width = Math.max(1, Math.ceil(rendered.surface.scrollWidth || rendered.surface.getBoundingClientRect().width || EXPORT_WIDTH));
-    const height = Math.max(1, Math.ceil(rendered.surface.scrollHeight || rendered.surface.getBoundingClientRect().height || 1));
     const pageHeight = Math.max(1, Math.floor(width * PDF_CONTENT_ASPECT));
-    const slices = planRasterSlices(height, pageHeight, naturalPageBreaks(rendered.surface));
+    const slices = planSurfaceSlices(rendered.surface, pageHeight);
     const images = [];
     for (const slice of slices) {
       const canvas = await renderSurfaceSliceToCanvas(rendered.surface, slice, scale);

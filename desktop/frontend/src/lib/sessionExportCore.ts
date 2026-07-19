@@ -20,19 +20,27 @@ export function planRasterSlices(
   totalHeight: number,
   maxSliceHeight: number,
   naturalBreakpoints: number[] = [],
+  contentEnd?: number,
 ): RasterSlice[] {
   const total = Math.max(1, Math.ceil(Number.isFinite(totalHeight) ? totalHeight : 1));
   const limit = Math.max(1, Math.floor(Number.isFinite(maxSliceHeight) ? maxSliceHeight : 1));
+  // contentEnd lets callers distinguish meaningful content from trailing
+  // container whitespace. Plan pages through the content first, then retain
+  // only the trailing whitespace that still fits on the final content page.
+  const plannedTotal = Math.max(
+    1,
+    Math.min(total, Math.ceil(contentEnd !== undefined && Number.isFinite(contentEnd) ? contentEnd : total)),
+  );
   const breakpoints = naturalBreakpoints
-    .filter((value) => Number.isFinite(value) && value > 0 && value < total)
+    .filter((value) => Number.isFinite(value) && value > 0 && value < plannedTotal)
     .map((value) => Math.floor(value))
     .sort((a, b) => a - b);
   const slices: RasterSlice[] = [];
   let offset = 0;
-  while (offset < total) {
-    const target = Math.min(total, offset + limit);
+  while (offset < plannedTotal) {
+    const target = Math.min(plannedTotal, offset + limit);
     let end = target;
-    if (target < total) {
+    if (target < plannedTotal) {
       const earliestNaturalBreak = offset + Math.floor(limit * 0.55);
       for (const breakpoint of breakpoints) {
         if (breakpoint > target) break;
@@ -42,6 +50,10 @@ export function planRasterSlices(
     if (end <= offset) end = target;
     slices.push({ offset, height: end - offset });
     offset = end;
+  }
+  const last = slices[slices.length - 1];
+  if (last && plannedTotal < total && last.height < limit) {
+    last.height += Math.min(total - plannedTotal, limit - last.height);
   }
   return slices;
 }
@@ -54,7 +66,17 @@ export function neutralizeExternalCssResources(css: string): string {
 }
 
 export function isSafeInlineExportImage(src: string | undefined): boolean {
-  return /^data:image\/(?:png|jpe?g|webp|gif);base64,/i.test(src?.trim() ?? "");
+  return /^data:image\/(?:png|jpe?g|webp|gif);base64,[a-z0-9+/]+={0,2}$/i.test(src?.trim() ?? "");
+}
+
+export function transformExportMarkdownUrl(
+  value: string,
+  key: string,
+  fallback: (value: string) => string,
+): string {
+  const trimmed = value.trim();
+  if (key === "src" && isSafeInlineExportImage(trimmed)) return trimmed;
+  return fallback(value);
 }
 
 function bytesFromString(value: string): Uint8Array {
