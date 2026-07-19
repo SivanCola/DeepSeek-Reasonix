@@ -3561,11 +3561,11 @@ func TestSetModelForTabReattachesDetachedRuntime(t *testing.T) {
 		Ctrl:           oldCtrl,
 		Ready:          true,
 		model:          "old/old-model",
-		sessionLease:   lease,
 		disabledMCP:    map[string]ServerView{},
 		SharedHostKey:  "detached-host",
 		ActivityStatus: "",
 	}
+	detached.adoptSessionLease(lease)
 	tab := &WorkspaceTab{
 		ID:          "tab_a",
 		Scope:       "global",

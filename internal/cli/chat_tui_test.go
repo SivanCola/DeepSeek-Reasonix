@@ -22,6 +22,7 @@ import (
 	"reasonix/internal/i18n"
 	"reasonix/internal/provider"
 	"reasonix/internal/skill"
+	"reasonix/internal/testenv"
 )
 
 type blockingTurnRunner struct{ started chan struct{} }
@@ -36,6 +37,10 @@ const tinyPNGBase64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42
 func TestMain(m *testing.M) {
 	old := detectTermuxTerminal
 	detectTermuxTerminal = func() bool { return false }
+	cleanupUserState, err := testenv.IsolateUserState()
+	if err != nil {
+		panic(err)
+	}
 
 	// Pin the UI language for the whole cli test binary. Production code
 	// (cli.Run) calls i18n.DetectLanguage("") which resolves the host locale from
@@ -55,6 +60,7 @@ func TestMain(m *testing.M) {
 
 	code := m.Run()
 	detectTermuxTerminal = old
+	cleanupUserState()
 	os.Exit(code)
 }
 

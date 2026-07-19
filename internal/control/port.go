@@ -182,6 +182,7 @@ type Status interface {
 // state.
 type SessionPersistence interface {
 	Snapshot() error
+	SnapshotForShutdown() error
 	SnapshotActivity() error
 	SessionCache() (hit, miss int)
 	BeginDestroySession(sessionPath string) SessionDestroyHandle
