@@ -81,16 +81,28 @@ func (p *HostKeyPolicy) Callback(ctx context.Context, host string) (ssh.HostKeyC
 			if !asKeyError(err, &keyErr) {
 				return err
 			}
-			if len(keyErr.Want) > 0 {
-				// A different key is on record for this host: hard fail, never
-				// promptable. Name the file:line so the user can inspect it.
+			if hasKnownKeyType(keyErr, key.Type()) {
+				// The same key algorithm is already on record with different
+				// material: hard fail, never promptable. Keys of another
+				// algorithm are independent host identities and go through the
+				// normal TOFU confirmation below.
 				return fmt.Errorf("%w for %s: presented %s; known_hosts records a different key%s",
 					ErrHostKeyMismatch, host, ssh.FingerprintSHA256(key), knownHostsLocations(keyErr))
 			}
-			// len(Want)==0 => host unknown. Fall through to TOFU.
+			// No record, or records only for other algorithms: fall through
+			// to TOFU so the user can inspect and persist this key type.
 		}
 		return p.tofu(ctx, host, hostname, remote, key, managed)
 	}, nil
+}
+
+func hasKnownKeyType(e *knownhosts.KeyError, keyType string) bool {
+	for _, known := range e.Want {
+		if known.Key != nil && known.Key.Type() == keyType {
+			return true
+		}
+	}
+	return false
 }
 
 func (p *HostKeyPolicy) tofu(ctx context.Context, host, hostname string, remote net.Addr, key ssh.PublicKey, managed string) error {
