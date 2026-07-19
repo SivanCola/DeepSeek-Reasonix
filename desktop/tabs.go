@@ -2783,6 +2783,15 @@ func clearTabStartupError(tab *WorkspaceTab) {
 
 func (a *App) buildTabControllerWithContext(tab *WorkspaceTab, loadedSession loadedTabSession, buildCtx context.Context, buildGeneration uint64, buildCancel context.CancelFunc) {
 	defer a.recoverToPending("buildTabController")
+	// Runtime work-admission barrier (shared side): an MCP trust preflight or
+	// plugin uninstall holding the write side must not race this build's
+	// shared-Host attach and controller swap — a late build could relaunch a
+	// single-instance server mid-preflight or attach a registry the mutation
+	// never saw. Safe under runtimeRebuildMu-holding callers too: the write
+	// side is only ever acquired while holding runtimeRebuildMu, so it cannot
+	// be pending then. Never acquire runtimeRebuildMu while this is held.
+	a.runtimeAdmissionMu.RLock()
+	defer a.runtimeAdmissionMu.RUnlock()
 	keepBuildContext := false
 	defer func() {
 		a.clearTabBuildCancel(tab, buildGeneration, buildCancel, keepBuildContext)

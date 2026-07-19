@@ -7715,6 +7715,133 @@ func TestSetMCPTrustWaitsForSiblingTurnGate(t *testing.T) {
 	}
 }
 
+// waitForRuntimeAdmissionBarrier polls until the work-admission write lock is
+// held, marking the point where a lifecycle mutation froze new admissions.
+func waitForRuntimeAdmissionBarrier(t *testing.T, app *App) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if app.runtimeAdmissionMu.TryRLock() {
+			app.runtimeAdmissionMu.RUnlock()
+			time.Sleep(2 * time.Millisecond)
+			continue
+		}
+		return
+	}
+	t.Fatal("lifecycle mutation never acquired the work-admission barrier")
+}
+
+// Work admission — not tab-set stability — is the gate invariant: a runtime
+// added after the gate snapshot must not be able to start a turn while the
+// uninstall holds the barrier. The late turn goes through the real
+// beginTabTurn admission path and must only be admitted after the uninstall.
+func TestRemovePluginBlocksLateTurnAdmission(t *testing.T) {
+	fixture := newGatedDesktopMCPTrustFixture(t, "")
+	installGatedTestPluginPackage(t, "h")
+	dir := fixture.app.tabs["active"].WorkspaceRoot
+
+	// Hold an existing tab's gate so the uninstall blocks mid-acquisition
+	// with the admission barrier already held.
+	sibling := fixture.app.tabs["sibling"]
+	sibling.turnStartMu.Lock()
+	removeDone := make(chan error, 1)
+	go func() { removeDone <- fixture.app.RemovePlugin("review-helper") }()
+	waitForRuntimeAdmissionBarrier(t, fixture.app)
+
+	lateCtrl := control.New(control.Options{Host: plugin.NewHost(), WorkspaceRoot: dir})
+	t.Cleanup(lateCtrl.Close)
+	fixture.app.mu.Lock()
+	fixture.app.tabs["late"] = &WorkspaceTab{
+		ID: "late", Scope: "global", WorkspaceRoot: dir, Ready: true,
+		Ctrl: lateCtrl, disabledMCP: map[string]ServerView{},
+	}
+	fixture.app.mu.Unlock()
+	type admission struct {
+		tab  *WorkspaceTab
+		ctrl control.SessionAPI
+		err  error
+	}
+	admitted := make(chan admission, 1)
+	go func() {
+		tab, ctrl, err := fixture.app.beginTabTurn("late", false)
+		admitted <- admission{tab: tab, ctrl: ctrl, err: err}
+	}()
+	select {
+	case got := <-admitted:
+		t.Fatalf("late turn was admitted (err=%v) while the uninstall held the admission barrier", got.err)
+	case <-time.After(300 * time.Millisecond):
+	}
+
+	sibling.turnStartMu.Unlock()
+	if err := <-removeDone; err != nil {
+		t.Fatalf("RemovePlugin(review-helper): %v", err)
+	}
+	got := <-admitted
+	if got.err != nil {
+		t.Fatalf("late turn admission after uninstall: %v", got.err)
+	}
+	fixture.app.finishTabTurnStart(got.tab, nil)
+	if installedPluginNamed(t, "review-helper") {
+		t.Fatal("uninstall did not complete before the late turn was admitted")
+	}
+}
+
+// A tab created during the 30s trust preflight must not complete its async
+// controller build — attaching to the shared Host mid-preflight can relaunch a
+// single-instance server or leave a registry the reverify never saw. The build
+// goes through the real startTabControllerBuild path and must only run after
+// the reverify releases the barrier.
+func TestSetMCPTrustBlocksLateControllerBuild(t *testing.T) {
+	releasePreflight := make(chan struct{})
+	gateAddr, attempts := newDesktopMCPStartGate(t, func(attempt int, conn net.Conn) {
+		if attempt == 2 {
+			<-releasePreflight
+		}
+		_, _ = conn.Write([]byte{1})
+	})
+	fixture := newGatedDesktopMCPTrustFixture(t, gateAddr)
+	waitForDesktopMCPStartAttempt(t, attempts, 1) // drain the fixture's initial connect
+	dir := fixture.app.tabs["active"].WorkspaceRoot
+
+	trustDone := make(chan error, 1)
+	go func() { trustDone <- fixture.app.SetMCPTrust("h", "workspace") }()
+	waitForDesktopMCPStartAttempt(t, attempts, 2) // preflight launched: gates held
+
+	late := &WorkspaceTab{
+		ID: "late", Scope: "global", WorkspaceRoot: dir,
+		disabledMCP: map[string]ServerView{},
+	}
+	late.sink = &tabEventSink{tabID: "late", app: fixture.app}
+	fixture.app.mu.Lock()
+	fixture.app.tabs["late"] = late
+	fixture.app.mu.Unlock()
+	buildDone := make(chan struct{})
+	go func() {
+		// a.ctx is nil in this fixture, so the build runs synchronously on
+		// this goroutine — through the real buildTabControllerWithContext.
+		fixture.app.startTabControllerBuild(late)
+		close(buildDone)
+	}()
+	select {
+	case <-buildDone:
+		t.Fatal("late controller build completed while the trust preflight held the admission barrier")
+	case <-time.After(400 * time.Millisecond):
+	}
+
+	close(releasePreflight)
+	if err := <-trustDone; err != nil {
+		t.Fatalf("SetMCPTrust(h,workspace): %v", err)
+	}
+	select {
+	case <-buildDone:
+	case <-time.After(10 * time.Second):
+		t.Fatal("late controller build never ran after the reverify released the barrier")
+	}
+	if !fixture.sharedHost.HasClient("h") {
+		t.Fatal("reverify did not leave the shared client reconnected")
+	}
+}
+
 func TestSetMCPServerEnabledRejectsBackgroundJobs(t *testing.T) {
 	isolateDesktopUserDirs(t)
 

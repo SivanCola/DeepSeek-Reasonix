@@ -148,6 +148,15 @@ type App struct {
 	// toggle/reconnect can restore stale tools or launch a second single-instance
 	// server. Keep the lock order runtimeRebuildMu -> App.mu -> Host/Registry.
 	runtimeRebuildMu sync.Mutex
+	// runtimeAdmissionMu is the runtime work-admission barrier. Turn admission
+	// (beginTabTurn through finishTabTurnStart) and async tab controller builds
+	// hold the read side; lockRuntimeTurnGates holds the write side so no new
+	// work can be admitted and no controller can attach to a shared Host while
+	// an MCP lifecycle mutation is in flight. Writers must already hold
+	// runtimeRebuildMu (which makes writer acquisition mutually exclusive);
+	// read holders must never acquire runtimeRebuildMu, or a waiting writer
+	// would deadlock the pair.
+	runtimeAdmissionMu sync.RWMutex
 	// mcpMutationBeforeLockHook is test-only. Set it before starting concurrent
 	// calls and never mutate it afterward.
 	mcpMutationBeforeLockHook func(string)
@@ -924,9 +933,19 @@ func (a *App) beginTabTurn(tabID string, reclaim bool) (*WorkspaceTab, control.S
 	if tab == nil || ctrl == nil {
 		return nil, nil, a.workspaceNotReadyErr(tab)
 	}
+	// Runtime work-admission barrier: held (shared) from here until the turn is
+	// observably running and finishTabTurnStart releases it, so an MCP trust
+	// preflight or plugin uninstall holding the write side either waits out
+	// this admission or sees its work in the gated re-check. Never acquire
+	// runtimeRebuildMu while this read lock is held.
+	a.runtimeAdmissionMu.RLock()
+	abort := func() {
+		tab.turnStartMu.Unlock()
+		a.runtimeAdmissionMu.RUnlock()
+	}
 	tab.turnStartMu.Lock()
 	if a.tabIsReadOnly(tab) {
-		tab.turnStartMu.Unlock()
+		abort()
 		return nil, nil, readOnlyChannelErr()
 	}
 	if reclaim && a.botBridge != nil {
@@ -934,20 +953,20 @@ func (a *App) beginTabTurn(tabID string, reclaim bool) (*WorkspaceTab, control.S
 	}
 	ctrl = a.controllerForTab(tab)
 	if ctrl == nil {
-		tab.turnStartMu.Unlock()
+		abort()
 		return nil, nil, a.workspaceNotReadyErr(tab)
 	}
 	if err := a.ensureTabControllerWorkspace(tab); err != nil {
-		tab.turnStartMu.Unlock()
+		abort()
 		return nil, nil, err
 	}
 	ctrl = a.controllerForTab(tab)
 	if ctrl == nil {
-		tab.turnStartMu.Unlock()
+		abort()
 		return nil, nil, a.workspaceNotReadyErr(tab)
 	}
 	if ctrl.RuntimeStatus().Running || (tab.sink != nil && !tab.sink.tryBeginTurn()) {
-		tab.turnStartMu.Unlock()
+		abort()
 		return nil, nil, control.ErrTurnRunning
 	}
 	return tab, ctrl, nil
@@ -960,6 +979,7 @@ func (a *App) finishTabTurnStart(tab *WorkspaceTab, ctrl control.SessionAPI) boo
 	}
 	if tab != nil {
 		tab.turnStartMu.Unlock()
+		a.runtimeAdmissionMu.RUnlock()
 	}
 	return started
 }
@@ -6202,22 +6222,24 @@ func (a *App) SetMCPTrust(name, decision string) error {
 	}
 	decision = strings.ToLower(strings.TrimSpace(decision))
 	host := ctrl.Host()
-	controllers := a.mcpControllersSharingHost(host, name, ctrl)
 	// Gate every tab whose controller shares this Host and hold the gates
 	// through preflight, restore, and reconnect: a lock-free idle check could
 	// go stale before UnregisterMCPServerTools/DisconnectMCPServer and strip a
-	// just-started turn of its MCP tools mid-flight.
-	affected := make(map[control.SessionAPI]bool, len(controllers))
-	for _, target := range controllers {
-		affected[target.ctrl] = true
-	}
+	// just-started turn of its MCP tools mid-flight. The predicate runs inside
+	// the gate snapshot — after the admission barrier — so controllers that
+	// attached right before the barrier are included; the controllers list is
+	// computed after the gates for the same reason.
 	releaseGates, err := a.lockRuntimeTurnGates("MCP trust", func(tab *WorkspaceTab) bool {
-		return affected[tab.Ctrl]
+		if host == nil {
+			return tab.Ctrl == ctrl
+		}
+		return tab.Ctrl != nil && tab.Ctrl.Host() == host
 	})
 	if err != nil {
 		return err
 	}
 	defer releaseGates()
+	controllers := a.mcpControllersSharingHost(host, name, ctrl)
 	if decision != "workspace" && host != nil && host.HasClient(name) {
 		if err := host.SetTrust(name, decision); err != nil {
 			return err
@@ -6358,16 +6380,23 @@ func (a *App) mcpControllersSharingHost(host *plugin.Host, name string, preferre
 	return targets
 }
 
-// lockRuntimeTurnGates locks the turn gate of every runtime tab selected by
-// affected (nil selects all visible and detached runtime tabs) in stable tab-ID
-// order, then re-verifies under the gates that no gated controller has active
-// runtime work — a lock-free idle check can go stale before the mutation it
-// guards. Callers must hold runtimeRebuildMu so the tab set cannot change while
-// the gates are held; the lock order runtimeRebuildMu → turnStartMu matches
-// every rebuild path, and no path acquires them in reverse. On success the
+// lockRuntimeTurnGates freezes runtime work admission, locks the turn gate of
+// every runtime tab selected by affected (nil selects all visible and detached
+// runtime tabs) in stable tab-ID order, then re-verifies under the gates that
+// no gated controller has active runtime work — a lock-free idle check can go
+// stale before the mutation it guards.
+//
+// The work-admission write lock — not tab-set stability — is the invariant:
+// tabs can still be created while the gates are held, but they cannot attach a
+// controller (async builds hold the read side) or admit a turn (beginTabTurn
+// holds the read side), so every runtime that can possibly be busy is in the
+// snapshot below, and anything newer stays inert until release. Callers must
+// hold runtimeRebuildMu; the order runtimeRebuildMu → runtimeAdmissionMu →
+// turnStartMu → App.mu is acquired in that direction only. On success the
 // returned release func unlocks in reverse order; on error everything is
 // already unlocked.
 func (a *App) lockRuntimeTurnGates(setting string, affected func(*WorkspaceTab) bool) (func(), error) {
+	a.runtimeAdmissionMu.Lock()
 	a.mu.RLock()
 	all := a.runtimeTabsLocked()
 	tabs := make([]*WorkspaceTab, 0, len(all))
@@ -6384,6 +6413,7 @@ func (a *App) lockRuntimeTurnGates(setting string, affected func(*WorkspaceTab) 
 		for i := locked - 1; i >= 0; i-- {
 			tabs[i].turnStartMu.Unlock()
 		}
+		a.runtimeAdmissionMu.Unlock()
 	}
 	for _, tab := range tabs {
 		tab.turnStartMu.Lock()
