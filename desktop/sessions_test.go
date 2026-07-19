@@ -786,8 +786,16 @@ func TestPurgeTrashedSessionFile(t *testing.T) {
 	if err := recordSessionDisplay(dir, sessionPath, "expanded prompt", "[Pasted text #1 · 5 lines]"); err != nil {
 		t.Fatal(err)
 	}
+	if err := recordSessionPlannerDisplay(dir, sessionPath, "prompt", []HistoryMessage{{
+		Role: "tool", ToolName: "read_file", Content: "sensitive cancelled output",
+	}}); err != nil {
+		t.Fatal(err)
+	}
 	if err := deleteSessionFile(dir, sessionPath); err != nil {
 		t.Fatalf("trash: %v", err)
+	}
+	if got := sessionPlannerDisplayTurns(dir, sessionPath); len(got) != 1 {
+		t.Fatalf("planner display should remain available while session is in trash: %+v", got)
 	}
 	trashPath := filepath.Join(dir, sessionTrashDir, "session.jsonl", "session.jsonl")
 	if err := purgeTrashedSessionFile(dir, trashPath); err != nil {
@@ -810,6 +818,9 @@ func TestPurgeTrashedSessionFile(t *testing.T) {
 	}
 	if got := resolveSessionDisplay(dir, sessionPath, "expanded prompt"); got != "expanded prompt" {
 		t.Fatalf("display sidecar should be removed after purge, got %q", got)
+	}
+	if got := sessionPlannerDisplayTurns(dir, sessionPath); len(got) != 0 {
+		t.Fatalf("planner display sidecar should be removed after purge: %+v", got)
 	}
 }
 
@@ -1212,6 +1223,67 @@ func TestRecordSessionPlannerDisplayConcurrentPreservesEverySession(t *testing.T
 		key := fmt.Sprintf("session-%02d.jsonl", i)
 		if len(got[key]) != 1 || len(got[key][0].Messages) != 1 || got[key][0].Messages[0].Content != fmt.Sprintf("answer-%02d", i) {
 			t.Fatalf("planner display %s = %+v", key, got[key])
+		}
+	}
+}
+
+func TestRemoveDesktopSessionArtifactsPrunesPlannerDisplay(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "session.jsonl")
+	if err := os.WriteFile(path, []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := recordSessionPlannerDisplay(dir, path, "prompt", []HistoryMessage{{
+		Role: "tool", ToolName: "read_file", Content: "sensitive cancelled output",
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := removeDesktopSessionArtifacts(path); err != nil {
+		t.Fatal(err)
+	}
+	if got := sessionPlannerDisplayTurns(dir, path); len(got) != 0 {
+		t.Fatalf("planner display retained after permanent session removal: %+v", got)
+	}
+	if _, err := os.Stat(sessionPlannerDisplayPath(dir)); !os.IsNotExist(err) {
+		t.Fatalf("empty planner display sidecar should be removed, stat err = %v", err)
+	}
+}
+
+func TestPruneSessionPlannerDisplaysRemovesOnlyOrphans(t *testing.T) {
+	dir := t.TempDir()
+	turn := []plannerDisplayTurn{{UserHash: messageDisplayKey("prompt"), Messages: []HistoryMessage{{Role: "assistant", Content: "display"}}}}
+	if err := saveSessionPlannerDisplays(dir, sessionPlannerDisplayMap{
+		"live.jsonl":           turn,
+		"trashed.jsonl":        turn,
+		"protected.jsonl":      turn,
+		"missing.jsonl":        turn,
+		"sidecar.events.jsonl": turn,
+	}); err != nil {
+		t.Fatalf("save planner displays: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "live.jsonl"), []byte("data"), 0o644); err != nil {
+		t.Fatalf("write live session: %v", err)
+	}
+	trashDir := filepath.Join(dir, sessionTrashDir, "trashed.jsonl")
+	if err := os.MkdirAll(trashDir, 0o755); err != nil {
+		t.Fatalf("mkdir trash: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(trashDir, "trashed.jsonl"), []byte("data"), 0o644); err != nil {
+		t.Fatalf("write trashed session: %v", err)
+	}
+
+	if err := pruneSessionPlannerDisplays(dir, map[string]struct{}{"protected.jsonl": {}}); err != nil {
+		t.Fatalf("prune planner displays: %v", err)
+	}
+	got := loadSessionPlannerDisplays(dir)
+	for _, key := range []string{"live.jsonl", "trashed.jsonl", "protected.jsonl"} {
+		if got[key] == nil {
+			t.Fatalf("%s planner display should be retained; got %#v", key, got)
+		}
+	}
+	for _, key := range []string{"missing.jsonl", "sidecar.events.jsonl"} {
+		if got[key] != nil {
+			t.Fatalf("%s planner display should be pruned; got %#v", key, got)
 		}
 	}
 }

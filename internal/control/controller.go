@@ -3769,14 +3769,26 @@ func (c *Controller) stripTurnMessagesAfter(idx int) {
 // stripCancelledVisibleTurnMessagesAfter removes assistant/tool remnants from a
 // cancelled visible turn while preserving the real user prompt that started it.
 func (c *Controller) stripCancelledVisibleTurnMessagesAfter(idx int) {
+	c.stripCancelledVisibleTurnMessagesAfterWithFallback(idx, provider.Message{})
+}
+
+// stripCancelledVisibleTurnMessagesAfterWithFallback also covers coordinator
+// cancellation before the executor has appended the visible user message. The
+// orchestrator owns that input, so it supplies the exact message rather than
+// letting cancellation infer the current turn from older transcript history.
+func (c *Controller) stripCancelledVisibleTurnMessagesAfterWithFallback(idx int, fallback provider.Message) {
 	if c.executor == nil {
 		return
 	}
 	msgs := c.executor.Session().Snapshot()
-	if len(msgs) <= idx {
-		return
+	if idx < 0 {
+		idx = 0
+	}
+	if idx > len(msgs) {
+		idx = len(msgs)
 	}
 	next := append([]provider.Message{}, msgs[:idx]...)
+	keptUser := false
 	for _, m := range msgs[idx:] {
 		if m.Role != provider.RoleUser {
 			continue
@@ -3789,7 +3801,19 @@ func (c *Controller) stripCancelledVisibleTurnMessagesAfter(idx int) {
 		}
 		m.Content = StripComposePrefixes(m.Content)
 		next = append(next, m)
+		keptUser = true
 		break
+	}
+	if !keptUser && fallback.Role == provider.RoleUser {
+		fallback.Content = StripComposePrefixes(fallback.Content)
+		if strings.TrimSpace(fallback.Content) != "" {
+			fallback.Images = append([]string(nil), fallback.Images...)
+			next = append(next, fallback)
+			keptUser = true
+		}
+	}
+	if !keptUser && len(msgs) <= idx {
+		return
 	}
 	c.replaceSessionAfterCancel(next)
 }

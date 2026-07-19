@@ -603,6 +603,9 @@ func purgeTrashedSessionFile(dir, path string) error {
 	if err := removeSessionDisplayKey(dir, key); err != nil {
 		return err
 	}
+	if err := removeSessionPlannerDisplay(dir, key); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -999,6 +1002,17 @@ func saveSessionPlannerDisplays(dir string, m sessionPlannerDisplayMap) error {
 	return fileutil.ReplaceFile(tmpPath, sessionPlannerDisplayPath(dir))
 }
 
+func saveOrRemoveSessionPlannerDisplays(dir string, m sessionPlannerDisplayMap) error {
+	if len(m) == 0 {
+		err := os.Remove(sessionPlannerDisplayPath(dir))
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	return saveSessionPlannerDisplays(dir, m)
+}
+
 func recordSessionPlannerDisplay(dir, sessionPath, userContent string, messages []HistoryMessage) error {
 	if strings.TrimSpace(sessionPath) == "" || strings.TrimSpace(userContent) == "" || len(messages) == 0 {
 		return nil
@@ -1013,6 +1027,42 @@ func recordSessionPlannerDisplay(dir, sessionPath, userContent string, messages 
 	}
 	m[key] = append(m[key], turn)
 	return saveSessionPlannerDisplays(dir, m)
+}
+
+func removeSessionPlannerDisplay(dir, sessionPath string) error {
+	if strings.TrimSpace(sessionPath) == "" {
+		return nil
+	}
+	sessionPlannerDisplayMu.Lock()
+	defer sessionPlannerDisplayMu.Unlock()
+	m := loadSessionPlannerDisplays(dir)
+	key := filepath.Base(sessionPath)
+	if _, ok := m[key]; !ok {
+		return nil
+	}
+	delete(m, key)
+	return saveOrRemoveSessionPlannerDisplays(dir, m)
+}
+
+func pruneSessionPlannerDisplays(dir string, protected map[string]struct{}) error {
+	sessionPlannerDisplayMu.Lock()
+	defer sessionPlannerDisplayMu.Unlock()
+	m := loadSessionPlannerDisplays(dir)
+	if len(m) == 0 {
+		return nil
+	}
+	changed := false
+	for key := range m {
+		if sessionDisplayKeyStillOwned(dir, key, protected) {
+			continue
+		}
+		delete(m, key)
+		changed = true
+	}
+	if !changed {
+		return nil
+	}
+	return saveOrRemoveSessionPlannerDisplays(dir, m)
 }
 
 func sessionPlannerDisplayTurns(dir, sessionPath string) []plannerDisplayTurn {

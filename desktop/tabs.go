@@ -35,6 +35,18 @@ import (
 
 // --- WorkspaceTab -----------------------------------------------------------
 
+// tabDisplayState follows one live runtime across visible, detached, and
+// reattached WorkspaceTab wrappers. Keeping one shared state pointer closes the
+// handoff window where an event already routed to the old wrapper could append
+// after a clone copied its buffers.
+type tabDisplayState struct {
+	mu               sync.Mutex
+	plannerMessages  []HistoryMessage
+	plannerTools     map[string]string
+	executorMessages []HistoryMessage
+	executorTools    map[string]string
+}
+
 // WorkspaceTab is one open conversation tab in the desktop. Each tab owns an
 // independent controller (its own agent, session, tool registry, plugin host,
 // memory, permissions) scoped to a workspace root, so multiple projects and
@@ -95,15 +107,11 @@ type WorkspaceTab struct {
 	telemetrySessionKey string
 	telemMu             sync.Mutex
 
-	// Display-only output for the in-flight turn. The executor session remains
-	// the model-facing transcript; these buffers let history restore planner
-	// cards and user-cancelled executor output without replaying either to the
-	// model after a rebuild/reload.
-	plannerDisplay       []HistoryMessage
-	plannerDisplayTools  map[string]string
-	executorDisplay      []HistoryMessage
-	executorDisplayTools map[string]string
-	displayMu            sync.Mutex
+	// Display-only output belongs to the live runtime, not a particular visible
+	// tab wrapper. detach/reattach paths share this state before rebinding the
+	// event sink so output cannot fall into a discarded wrapper.
+	displayStateMu sync.Mutex
+	displayState   *tabDisplayState
 
 	model            string // active model ref (for meta)
 	effort           *string
@@ -491,6 +499,7 @@ func cloneDetachedRuntimeTab(tab *WorkspaceTab, key, path string) *WorkspaceTab 
 		readTelemetry:       readTelemetry,
 		usageTelemetry:      usageTelemetry,
 		telemetrySessionKey: telemetrySessionKey,
+		displayState:        tab.displayBufferState(),
 		model:               tab.model,
 		effort:              cloneStringPtr(tab.effort),
 		tokenMode:           tab.tokenMode,
@@ -564,6 +573,10 @@ func applyRuntimeTab(target, source *WorkspaceTab, path string, wailsCtx context
 	telemetrySessionKey := source.telemetrySessionKey
 	source.telemMu.Unlock()
 
+	// Share the runtime-owned display state before rebinding the sink. An event
+	// already routed to source and one arriving on target after setBinding then
+	// append under the same state lock instead of straddling two buffers.
+	target.adoptDisplayState(source.displayBufferState())
 	if source.sink != nil {
 		source.sink.setBinding(target.ID, app)
 		source.sink.setContext(wailsCtx)
@@ -774,26 +787,46 @@ func (t *WorkspaceTab) syncTelemetryToSession(sessionPath string) {
 }
 
 func (t *WorkspaceTab) resetDisplayTurn() {
-	t.displayMu.Lock()
-	if len(t.plannerDisplay) == 0 {
-		t.plannerDisplayTools = nil
+	state := t.displayBufferState()
+	state.mu.Lock()
+	if len(state.plannerMessages) == 0 {
+		state.plannerTools = nil
 	}
-	if len(t.executorDisplay) == 0 {
-		t.executorDisplayTools = nil
+	if len(state.executorMessages) == 0 {
+		state.executorTools = nil
 	}
-	t.displayMu.Unlock()
+	state.mu.Unlock()
 }
 
 func (t *WorkspaceTab) recordDisplayEvent(e event.Event) {
-	t.displayMu.Lock()
-	defer t.displayMu.Unlock()
-	messages := &t.executorDisplay
-	tools := &t.executorDisplayTools
+	state := t.displayBufferState()
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	messages := &state.executorMessages
+	tools := &state.executorTools
 	if strings.TrimSpace(e.Source) == event.UsageSourcePlanner {
-		messages = &t.plannerDisplay
-		tools = &t.plannerDisplayTools
+		messages = &state.plannerMessages
+		tools = &state.plannerTools
 	}
 	recordHistoryDisplayEvent(messages, tools, e)
+}
+
+func (t *WorkspaceTab) displayBufferState() *tabDisplayState {
+	t.displayStateMu.Lock()
+	defer t.displayStateMu.Unlock()
+	if t.displayState == nil {
+		t.displayState = &tabDisplayState{}
+	}
+	return t.displayState
+}
+
+func (t *WorkspaceTab) adoptDisplayState(state *tabDisplayState) {
+	if t == nil || state == nil {
+		return
+	}
+	t.displayStateMu.Lock()
+	t.displayState = state
+	t.displayStateMu.Unlock()
 }
 
 func recordHistoryDisplayEvent(messages *[]HistoryMessage, tools *map[string]string, e event.Event) {
@@ -914,11 +947,12 @@ func plannerToolResultDisplay(content string, failed bool) (display, errPreview 
 }
 
 func (t *WorkspaceTab) takeDisplayTurn(cancelled bool) []HistoryMessage {
-	t.displayMu.Lock()
-	defer t.displayMu.Unlock()
-	out := cloneHistoryMessages(t.plannerDisplay)
+	state := t.displayBufferState()
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	out := cloneHistoryMessages(state.plannerMessages)
 	if cancelled {
-		out = append(out, cloneHistoryMessages(t.executorDisplay)...)
+		out = append(out, cloneHistoryMessages(state.executorMessages)...)
 		if len(out) > 0 {
 			out = append(out, HistoryMessage{
 				Role:    "notice",
@@ -928,10 +962,10 @@ func (t *WorkspaceTab) takeDisplayTurn(cancelled bool) []HistoryMessage {
 			})
 		}
 	}
-	t.plannerDisplay = nil
-	t.plannerDisplayTools = nil
-	t.executorDisplay = nil
-	t.executorDisplayTools = nil
+	state.plannerMessages = nil
+	state.plannerTools = nil
+	state.executorMessages = nil
+	state.executorTools = nil
 	return out
 }
 
