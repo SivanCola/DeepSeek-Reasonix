@@ -6203,11 +6203,21 @@ func (a *App) SetMCPTrust(name, decision string) error {
 	decision = strings.ToLower(strings.TrimSpace(decision))
 	host := ctrl.Host()
 	controllers := a.mcpControllersSharingHost(host, name, ctrl)
+	// Gate every tab whose controller shares this Host and hold the gates
+	// through preflight, restore, and reconnect: a lock-free idle check could
+	// go stale before UnregisterMCPServerTools/DisconnectMCPServer and strip a
+	// just-started turn of its MCP tools mid-flight.
+	affected := make(map[control.SessionAPI]bool, len(controllers))
 	for _, target := range controllers {
-		if controllerHasActiveRuntimeWork(target.ctrl) {
-			return rebuildControllerActiveWorkError("MCP trust")
-		}
+		affected[target.ctrl] = true
 	}
+	releaseGates, err := a.lockRuntimeTurnGates("MCP trust", func(tab *WorkspaceTab) bool {
+		return affected[tab.Ctrl]
+	})
+	if err != nil {
+		return err
+	}
+	defer releaseGates()
 	if decision != "workspace" && host != nil && host.HasClient(name) {
 		if err := host.SetTrust(name, decision); err != nil {
 			return err
@@ -6346,6 +6356,51 @@ func (a *App) mcpControllersSharingHost(host *plugin.Host, name string, preferre
 		targets[0], targets[idx] = targets[idx], targets[0]
 	}
 	return targets
+}
+
+// lockRuntimeTurnGates locks the turn gate of every runtime tab selected by
+// affected (nil selects all visible and detached runtime tabs) in stable tab-ID
+// order, then re-verifies under the gates that no gated controller has active
+// runtime work — a lock-free idle check can go stale before the mutation it
+// guards. Callers must hold runtimeRebuildMu so the tab set cannot change while
+// the gates are held; the lock order runtimeRebuildMu → turnStartMu matches
+// every rebuild path, and no path acquires them in reverse. On success the
+// returned release func unlocks in reverse order; on error everything is
+// already unlocked.
+func (a *App) lockRuntimeTurnGates(setting string, affected func(*WorkspaceTab) bool) (func(), error) {
+	a.mu.RLock()
+	all := a.runtimeTabsLocked()
+	tabs := make([]*WorkspaceTab, 0, len(all))
+	for _, tab := range all {
+		if tab == nil || (affected != nil && !affected(tab)) {
+			continue
+		}
+		tabs = append(tabs, tab)
+	}
+	a.mu.RUnlock()
+	sort.Slice(tabs, func(i, j int) bool { return tabs[i].ID < tabs[j].ID })
+	locked := 0
+	release := func() {
+		for i := locked - 1; i >= 0; i-- {
+			tabs[i].turnStartMu.Unlock()
+		}
+	}
+	for _, tab := range tabs {
+		tab.turnStartMu.Lock()
+		locked++
+	}
+	// Read tab.Ctrl under a.mu rather than through controllerForTab: detached
+	// runtimes live in detachedSessions, not a.tabs, and their work counts too.
+	a.mu.RLock()
+	for _, tab := range tabs {
+		if controllerHasActiveRuntimeWork(tab.Ctrl) {
+			a.mu.RUnlock()
+			release()
+			return nil, rebuildControllerActiveWorkError(setting)
+		}
+	}
+	a.mu.RUnlock()
+	return release, nil
 }
 
 // disconnectMCPServerAllRuntimes removes an uninstalled MCP server from every

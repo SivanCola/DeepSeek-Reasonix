@@ -7617,6 +7617,104 @@ func TestRemovePluginRechecksActiveWorkUnderLock(t *testing.T) {
 	}
 }
 
+// A global uninstall disconnects every runtime, so the busy guard must cover
+// every runtime too: a background job on a sibling tab must fail the removal
+// before anything is deleted, not silently lose its plugin MCP mid-run.
+func TestRemovePluginRejectsBusySiblingRuntime(t *testing.T) {
+	fixture := newGatedDesktopMCPTrustFixture(t, "")
+	installGatedTestPluginPackage(t, "h")
+	busy := newBackgroundJobController(t, "sibling-busy")
+	fixture.app.mu.Lock()
+	fixture.app.tabs["sibling"].Ctrl = busy
+	fixture.app.mu.Unlock()
+
+	err := fixture.app.RemovePlugin("review-helper")
+	if err == nil || !strings.Contains(err.Error(), "stop background jobs") {
+		t.Fatalf("RemovePlugin with busy sibling error = %v, want active-work guard", err)
+	}
+	if !installedPluginNamed(t, "review-helper") {
+		t.Fatal("plugin was uninstalled despite a busy sibling runtime")
+	}
+	if !fixture.sharedHost.HasClient("h") {
+		t.Fatal("busy-sibling guard still disconnected the shared MCP client")
+	}
+	if _, found := fixture.activeRegistry.Get("mcp__h__greet"); !found {
+		t.Fatal("busy-sibling guard still removed active registry tools")
+	}
+}
+
+// Detached runtimes keep running after their tab is closed; the uninstall busy
+// guard must see them through the same gate sweep as visible tabs.
+func TestRemovePluginRejectsBusyDetachedRuntime(t *testing.T) {
+	fixture := newGatedDesktopMCPTrustFixture(t, "")
+	installGatedTestPluginPackage(t, "h")
+	busy := newBackgroundJobController(t, "detached-busy")
+	fixture.app.mu.Lock()
+	fixture.app.detachedSessions = map[string]*WorkspaceTab{
+		"detached": {
+			ID: "detached", Scope: "global", Ready: true,
+			Ctrl: busy, disabledMCP: map[string]ServerView{},
+		},
+	}
+	fixture.app.mu.Unlock()
+
+	err := fixture.app.RemovePlugin("review-helper")
+	if err == nil || !strings.Contains(err.Error(), "stop background jobs") {
+		t.Fatalf("RemovePlugin with busy detached runtime error = %v, want active-work guard", err)
+	}
+	if !installedPluginNamed(t, "review-helper") {
+		t.Fatal("plugin was uninstalled despite a busy detached runtime")
+	}
+}
+
+// A turn start holds its tab's turn gate before the controller reports active
+// work, so an idle check done without the gate can go stale immediately. The
+// reverify must wait on the sibling's gate — never disconnect first — and must
+// fail once the gated re-check sees the started work.
+func TestSetMCPTrustWaitsForSiblingTurnGate(t *testing.T) {
+	gateAddr, attempts := newDesktopMCPStartGate(t, func(attempt int, conn net.Conn) {
+		_, _ = conn.Write([]byte{1})
+	})
+	fixture := newGatedDesktopMCPTrustFixture(t, gateAddr)
+	waitForDesktopMCPStartAttempt(t, attempts, 1) // drain the fixture's initial connect
+	sibling := fixture.app.tabs["sibling"]
+
+	// Simulate the racing turn: it takes the gate first, and only transitions
+	// its controller to busy while holding it.
+	sibling.turnStartMu.Lock()
+	trustDone := make(chan error, 1)
+	go func() { trustDone <- fixture.app.SetMCPTrust("h", "workspace") }()
+	select {
+	case got := <-attempts:
+		t.Fatalf("trust preflight launched (attempt %d) while a sibling turn gate was held", got)
+	case err := <-trustDone:
+		t.Fatalf("SetMCPTrust returned %v without waiting for the sibling turn gate", err)
+	case <-time.After(700 * time.Millisecond):
+	}
+	if !fixture.sharedHost.HasClient("h") {
+		t.Fatal("reverify disconnected the shared client while a sibling turn gate was held")
+	}
+	busy := newBackgroundJobController(t, "sibling-turn")
+	fixture.app.mu.Lock()
+	sibling.Ctrl = busy
+	fixture.app.mu.Unlock()
+	sibling.turnStartMu.Unlock()
+
+	err := <-trustDone
+	if err == nil || !strings.Contains(err.Error(), "stop background jobs") {
+		t.Fatalf("SetMCPTrust after sibling turn start error = %v, want active-work guard", err)
+	}
+	if !fixture.sharedHost.HasClient("h") {
+		t.Fatal("failed reverify left the shared client disconnected")
+	}
+	if _, found := fixture.siblingRegistry.Get("mcp__h__greet"); !found {
+		t.Fatal("reverify stripped the busy sibling of its MCP tools")
+	}
+	if _, found := fixture.activeRegistry.Get("mcp__h__greet"); !found {
+		t.Fatal("reverify stripped the active tab of its MCP tools")
+	}
+}
+
 func TestSetMCPServerEnabledRejectsBackgroundJobs(t *testing.T) {
 	isolateDesktopUserDirs(t)
 

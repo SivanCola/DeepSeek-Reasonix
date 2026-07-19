@@ -248,21 +248,20 @@ func (a *App) RemovePlugin(name string) error {
 	// trust preflight, which would then relaunch the just-removed server from
 	// its stale snapshot.
 	defer a.lockMCPMutation("remove-plugin")()
-	// The lock wait can outlast the pre-lock check. Re-check under the active
-	// tab's turn gate and hold it through the uninstall and rebuild: work that
-	// started mid-wait must fail the removal before anything is deleted, and a
-	// turn must not start against a half-removed plugin.
+	// A global uninstall touches every runtime, so gate every visible and
+	// detached tab — not only the active one — and hold the gates through the
+	// uninstall and rebuild. The re-check runs under the gates because the
+	// lifecycle-lock wait can outlast the pre-lock check: work that started
+	// mid-wait must fail the removal before anything is deleted, and no tab
+	// may start a turn against a half-removed plugin.
+	releaseGates, err := a.lockRuntimeTurnGates("plugins", nil)
+	if err != nil {
+		return err
+	}
+	defer releaseGates()
 	tab := a.activeTab()
-	if tab == nil {
-		if a.ctx != nil {
-			return fmt.Errorf("no active tab")
-		}
-	} else {
-		tab.turnStartMu.Lock()
-		defer tab.turnStartMu.Unlock()
-		if controllerHasActiveRuntimeWork(a.controllerForTab(tab)) {
-			return rebuildControllerActiveWorkError("plugins")
-		}
+	if tab == nil && a.ctx != nil {
+		return fmt.Errorf("no active tab")
 	}
 	raw, _ := json.Marshal(map[string]any{"op": "uninstall", "kind": "plugin", "name": strings.TrimSpace(name), "scope": "global"})
 	tl := installsource.NewTool(installsource.Options{
