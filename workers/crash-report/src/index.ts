@@ -51,6 +51,7 @@ const Report = z.object({
   stack: z.string().max(16 * 1024).optional(),
   componentStack: z.string().max(16 * 1024).optional(),
   topFrame: z.string().max(300).optional(),
+  fingerprintHint: z.string().max(300).optional(),
   buildCommit: z.string().max(64).optional(),
   channel: z.string().max(32).optional(),
   language: z.string().max(64).optional(),
@@ -158,6 +159,7 @@ type FingerprintInput = {
   errorType?: string;
   errorMessage?: string;
   topFrame?: string;
+  fingerprintHint?: string;
 };
 
 export function scrubSensitiveText(input: string): string {
@@ -214,6 +216,7 @@ export function normalizeForFingerprint(inputOrKind: FingerprintInput | string, 
     "\n" +
     normalizeStackFrame(input.topFrame || "") +
     "\n" +
+    (input.fingerprintHint ? `${input.fingerprintHint}\n` : "") +
     normalizeFingerprintText(head)
   );
 }
@@ -228,6 +231,7 @@ function hasStructuredCrashFields(r: ReportPayload): boolean {
       r.stack ||
       r.componentStack ||
       r.topFrame ||
+      r.fingerprintHint ||
       r.buildCommit ||
       r.channel ||
       r.language ||
@@ -251,12 +255,29 @@ export function crashTitle(message: string): string {
 
 type SeverityInput = {
   kind: string;
+  version?: string;
   source: string;
   label: string;
   errorType: string;
   errorMessage: string;
   topFrame: string;
+  channel?: string;
 };
+
+const RESIZE_OBSERVER_NOTICE_RE = /^ResizeObserver loop (?:limit exceeded|completed with undelivered notifications\.?)$/;
+
+export function isDevelopmentReport(input: SeverityInput): boolean {
+  return input.channel?.trim().toLowerCase() === "dev" || input.version?.trim().toLowerCase().startsWith("dev") === true;
+}
+
+export function isKnownNonCrashDiagnostic(input: SeverityInput): boolean {
+  const message = input.errorMessage.trim();
+  return (
+    RESIZE_OBSERVER_NOTICE_RE.test(message) ||
+    /Minified React error #520\b/.test(message) ||
+    message.includes("additional File object is not a file on the disk")
+  );
+}
 
 export function isOpaqueScriptErrorReport(input: SeverityInput): boolean {
   return (
@@ -278,7 +299,7 @@ function severityForKind(kind: string): string {
 }
 
 export function severityForReport(input: SeverityInput): string {
-  if (isOpaqueScriptErrorReport(input)) return "low";
+  if (isDevelopmentReport(input) || isOpaqueScriptErrorReport(input) || isKnownNonCrashDiagnostic(input)) return "low";
   return severityForKind(input.kind);
 }
 
@@ -322,6 +343,7 @@ async function handleReport(request: Request, env: Env): Promise<Response> {
   const stack = scrubSensitiveText(r.stack ?? "");
   const componentStack = scrubSensitiveText(r.componentStack ?? "");
   const topFrame = scrubSensitiveText(r.topFrame ?? "");
+  const fingerprintHint = scrubSensitiveText(r.fingerprintHint ?? "");
   const view = scrubSensitiveText(r.view ?? "");
   const breadcrumbs = (r.breadcrumbs ?? []).map((b) => ({
     ...b,
@@ -337,6 +359,7 @@ async function handleReport(request: Request, env: Env): Promise<Response> {
         errorType: r.errorType,
         errorMessage,
         topFrame,
+        fingerprintHint,
       })
     : normalizeForFingerprint(r.kind, message);
   const fingerprint = await sha256Hex(fingerprintBasis);
@@ -347,7 +370,16 @@ async function handleReport(request: Request, env: Env): Promise<Response> {
   const errorType = r.errorType ?? "";
   const buildCommit = r.buildCommit ?? "";
   const channel = r.channel ?? "";
-  const severity = severityForReport({ kind: r.kind, source, label, errorType, errorMessage, topFrame });
+  const severity = severityForReport({
+    kind: r.kind,
+    version: r.version,
+    source,
+    label,
+    errorType,
+    errorMessage,
+    topFrame,
+    channel,
+  });
   try {
     const prior = await env.DB.prepare("SELECT status FROM groups WHERE fingerprint = ?1")
       .bind(fingerprint)
@@ -370,6 +402,7 @@ async function handleReport(request: Request, env: Env): Promise<Response> {
          label = ?7,
          error_type = ?8,
          top_frame = ?9,
+         severity = CASE WHEN severity = 'critical' THEN severity WHEN ?10 = 'low' THEN 'low' ELSE severity END,
          last_os = ?11,
          last_arch = ?12,
          last_build_commit = ?13,
@@ -567,19 +600,31 @@ async function crashGroups(env: Env, filters: StatsFilters, latestVersion: strin
     binds.push(latestVersion);
   }
   const sql = `SELECT fingerprint, kind, count, first_version, last_version, substr(last_seen, 1, 10) AS seen,
-      status, title, source, label, error_type, top_frame, severity, last_os, last_arch, regressed_at
+      status, title, source, label, error_type, top_frame, severity, last_os, last_arch, last_channel, regressed_at
     FROM groups ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
     ORDER BY
       CASE WHEN status = 'open' THEN 0 ELSE 1 END,
-      CASE WHEN regressed_at <> '' THEN 0 ELSE 1 END,
+      CASE
+        WHEN severity = 'critical' THEN 0
+        WHEN lower(trim(COALESCE(last_channel, ''))) = 'dev'
+          OR lower(trim(COALESCE(last_version, ''))) LIKE 'dev%'
+          OR title = '[window.error] Script error.'
+          OR title LIKE '%ResizeObserver loop %'
+          OR title LIKE '%Minified React error #520%'
+          OR title LIKE '%additional File object is not a file on the disk%'
+          THEN 3
+        WHEN severity = 'high' THEN 1
+        WHEN severity = 'medium' THEN 2
+        ELSE 3
+      END,
       ${latestOrder}
-      CASE severity WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END,
+      CASE WHEN regressed_at <> '' THEN 0 ELSE 1 END,
       count DESC,
       last_seen DESC
     LIMIT 50`;
   const stmt = env.DB.prepare(sql);
   const query = binds.length ? stmt.bind(...binds) : stmt;
-  return query.all<{
+  const result = await query.all<{
     fingerprint: string;
     kind: string;
     count: number;
@@ -595,8 +640,56 @@ async function crashGroups(env: Env, filters: StatsFilters, latestVersion: strin
     severity: string;
     last_os: string;
     last_arch: string;
+    last_channel: string;
     regressed_at: string;
   }>();
+  result.results = result.results
+    .map((row) => ({ ...row, severity: effectiveGroupSeverity(row) }))
+    .sort((a, b) => compareDiagnosticPriority(a, b, latestVersion));
+  return result;
+}
+
+type GroupPriorityRow = {
+  status: string;
+  severity: string;
+  regressed_at: string;
+  first_version: string;
+  count: number;
+  seen: string;
+  title: string;
+  last_version: string;
+  last_channel: string;
+};
+
+export function isDevelopmentGroup(row: Pick<GroupPriorityRow, "last_version" | "last_channel">): boolean {
+  return row.last_channel.trim().toLowerCase() === "dev" || row.last_version.trim().toLowerCase().startsWith("dev");
+}
+
+export function effectiveGroupSeverity(row: Pick<GroupPriorityRow, "severity" | "title" | "last_version" | "last_channel">): string {
+  if (row.severity === "critical") return row.severity;
+  if (isDevelopmentGroup(row)) return "low";
+  if (
+    row.title === "[window.error] Script error." ||
+    row.title.includes("ResizeObserver loop ") ||
+    row.title.includes("Minified React error #520") ||
+    row.title.includes("additional File object is not a file on the disk")
+  ) {
+    return "low";
+  }
+  return row.severity;
+}
+
+function compareDiagnosticPriority(a: GroupPriorityRow, b: GroupPriorityRow, latestVersion: string): number {
+  const statusRank = (value: string) => (value === "open" ? 0 : 1);
+  const severityRank = (value: string) => ({ critical: 0, high: 1, medium: 2, low: 3 })[value] ?? 4;
+  return (
+    statusRank(a.status) - statusRank(b.status) ||
+    severityRank(a.severity) - severityRank(b.severity) ||
+    Number(b.first_version === latestVersion) - Number(a.first_version === latestVersion) ||
+    Number(Boolean(b.regressed_at)) - Number(Boolean(a.regressed_at)) ||
+    b.count - a.count ||
+    b.seen.localeCompare(a.seen)
+  );
 }
 
 type ParsedVersion = {
@@ -667,13 +760,26 @@ async function latestAdoptionPct(env: Env, latestVersion: string, days: 7 | 30):
 }
 
 async function diagnosticOverview(env: Env, latestVersion: string, days: 7 | 30): Promise<OverviewCounts> {
+  // Keep the overview's red state aligned with the effective severity used by
+  // the diagnostics list. Historical rows retain their stored severity, so
+  // known browser notices and development builds must be discounted here too.
+  const criticalActionable = `(severity = 'critical' OR (
+    severity = 'high'
+    AND kind <> 'performance'
+    AND lower(trim(COALESCE(last_channel, ''))) <> 'dev'
+    AND lower(trim(COALESCE(last_version, ''))) NOT LIKE 'dev%'
+    AND title <> '[window.error] Script error.'
+    AND title NOT LIKE '%ResizeObserver loop %'
+    AND title NOT LIKE '%Minified React error #520%'
+    AND title NOT LIKE '%additional File object is not a file on the disk%'
+  ))`;
   const diagnosticCounts = latestVersion
     ? env.DB.prepare(
         `SELECT
           SUM(CASE WHEN status = 'open' THEN 1 ELSE 0 END) AS open_reports,
           SUM(CASE WHEN first_version = ?1 THEN 1 ELSE 0 END) AS new_latest_reports,
           SUM(CASE WHEN regressed_at <> '' THEN 1 ELSE 0 END) AS regressed_reports,
-          SUM(CASE WHEN status = 'open' AND severity IN ('critical', 'high') THEN 1 ELSE 0 END) AS critical_open_reports
+          SUM(CASE WHEN status = 'open' AND ${criticalActionable} THEN 1 ELSE 0 END) AS critical_open_reports
         FROM groups`,
       )
         .bind(latestVersion)
@@ -683,7 +789,7 @@ async function diagnosticOverview(env: Env, latestVersion: string, days: 7 | 30)
           SUM(CASE WHEN status = 'open' THEN 1 ELSE 0 END) AS open_reports,
           0 AS new_latest_reports,
           SUM(CASE WHEN regressed_at <> '' THEN 1 ELSE 0 END) AS regressed_reports,
-          SUM(CASE WHEN status = 'open' AND severity IN ('critical', 'high') THEN 1 ELSE 0 END) AS critical_open_reports
+          SUM(CASE WHEN status = 'open' AND ${criticalActionable} THEN 1 ELSE 0 END) AS critical_open_reports
         FROM groups`,
       ).first<{ open_reports: number; new_latest_reports: number; regressed_reports: number; critical_open_reports: number }>();
   const [row, adoptionPct] = await Promise.all([
@@ -813,6 +919,7 @@ async function handleStats(request: Request, env: Env, user: User, activeModule:
 async function handleGroup(env: Env, fingerprint: string, user: User): Promise<Response> {
   const group = await env.DB.prepare("SELECT * FROM groups WHERE fingerprint = ?1").bind(fingerprint).first<Group>();
   if (!group) return new Response("not found", { status: 404 });
+  group.severity = effectiveGroupSeverity(group);
   const reports = await env.DB.prepare(
     `SELECT version, os, arch, message, device, created_at, source, label, error_type, error_message,
       top_frame, build_commit, channel, language, view, breadcrumbs, component_stack, stack, occurred_at
