@@ -303,7 +303,7 @@ func bindAllowedTools(refs []string, bindings []tool.MCPBinding) []string {
 		}
 	}
 	for _, ref := range refs {
-		matches := map[string]bool{}
+		matches := map[string]tool.MCPBinding{}
 		isPattern := strings.ContainsAny(ref, "*?[")
 		for _, binding := range bindings {
 			aliases := append(tool.MCPBindingAliases(binding), binding.CallableName)
@@ -313,7 +313,7 @@ func bindAllowedTools(refs []string, bindings []tool.MCPBinding) []string {
 					matched, _ = path.Match(ref, alias)
 				}
 				if matched {
-					matches[binding.CallableName] = true
+					matches[binding.CallableName] = binding
 					break
 				}
 			}
@@ -332,12 +332,20 @@ func bindAllowedTools(refs []string, bindings []tool.MCPBinding) []string {
 				if matched, err := path.Match(ref, name); err != nil || !matched {
 					appendOne(name)
 				}
+				// Capability IDs are host-only allowlist entries consumed when the
+				// session exposes this MCP tool solely through use_capability. Do not
+				// add one when the authored pattern already grants the proxy itself.
+				proxyMatched, _ := path.Match(ref, "use_capability")
+				if !proxyMatched {
+					appendOne(matches[name].CapabilityID)
+				}
 			}
 			continue
 		}
 		if len(matches) == 1 {
-			for name := range matches {
+			for name, binding := range matches {
 				appendOne(name)
+				appendOne(binding.CapabilityID)
 			}
 			continue
 		}

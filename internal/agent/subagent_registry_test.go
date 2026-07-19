@@ -16,6 +16,29 @@ type subagentRegistryTool struct {
 	result   string
 }
 
+type subagentCapabilityProxy struct {
+	subagentRegistryTool
+}
+
+type subagentMCPTool struct {
+	subagentRegistryTool
+	server string
+	raw    string
+}
+
+func (t subagentMCPTool) MCPServerName() string  { return t.server }
+func (t subagentMCPTool) MCPRawToolName() string { return t.raw }
+
+func (t subagentCapabilityProxy) ResolveCall(_ context.Context, args json.RawMessage) (tool.ResolvedCall, error) {
+	var p struct {
+		CapabilityID string `json:"capability_id"`
+	}
+	if err := json.Unmarshal(args, &p); err != nil {
+		return tool.ResolvedCall{}, err
+	}
+	return tool.ResolvedCall{DisplayName: t.Name(), CapabilityID: p.CapabilityID, ReadOnly: true, SkipExecute: true, Result: p.CapabilityID}, nil
+}
+
 func (t subagentRegistryTool) Name() string { return t.name }
 func (t subagentRegistryTool) Description() string {
 	return "Execute a command in the shell and return combined stdout/stderr."
@@ -104,6 +127,48 @@ func TestSubagentToolRegistryFiltersUnavailableToolsAndWrapsBash(t *testing.T) {
 	}
 	if _, err := bash.Execute(context.Background(), json.RawMessage(`{"command":"sleep 1","run_in_background":true}`)); err == nil || !strings.Contains(err.Error(), "background bash is unavailable in subagents") {
 		t.Fatalf("background bash should return a subagent-specific error, got %v", err)
+	}
+}
+
+func TestSubagentToolRegistryRestrictsCapabilityProxyToAllowedMCPIDs(t *testing.T) {
+	parent := tool.NewRegistry()
+	parent.Add(subagentCapabilityProxy{subagentRegistryTool{name: "use_capability", readOnly: true}})
+	allowedID := "mcp-tool:figma/search"
+
+	for _, sub := range []*tool.Registry{
+		SubagentToolRegistry(parent, []string{allowedID}),
+		ReadOnlySubagentToolRegistry(parent, []string{allowedID}),
+	} {
+		proxy, ok := sub.Get("use_capability")
+		if !ok {
+			t.Fatalf("restricted capability proxy missing: %v", sub.Names())
+		}
+		resolver, ok := proxy.(tool.CallResolver)
+		if !ok {
+			t.Fatalf("restricted proxy does not resolve calls: %T", proxy)
+		}
+		if _, err := resolver.ResolveCall(context.Background(), json.RawMessage(`{"action":"call","capability_id":"mcp-tool:figma/search"}`)); err != nil {
+			t.Fatalf("allowed capability was rejected: %v", err)
+		}
+		if _, err := resolver.ResolveCall(context.Background(), json.RawMessage(`{"action":"call","capability_id":"mcp-tool:other/delete"}`)); err == nil || !strings.Contains(err.Error(), "outside this subagent's allowed-tools") {
+			t.Fatalf("disallowed capability was not rejected: %v", err)
+		}
+		if _, err := proxy.Execute(context.Background(), json.RawMessage(`{"action":"call","capability_id":"mcp-tool:other/delete"}`)); err == nil {
+			t.Fatal("direct execution bypassed the restricted capability allowlist")
+		}
+	}
+
+	parent.Add(subagentMCPTool{
+		subagentRegistryTool: subagentRegistryTool{name: "mcp__figma__search", readOnly: true},
+		server:               "figma",
+		raw:                  "search",
+	})
+	direct := SubagentToolRegistry(parent, []string{"mcp__figma__search", allowedID})
+	if _, ok := direct.Get("mcp__figma__search"); !ok {
+		t.Fatalf("direct MCP tool missing: %v", direct.Names())
+	}
+	if _, ok := direct.Get("use_capability"); ok {
+		t.Fatalf("restricted proxy should not duplicate an available direct MCP tool: %v", direct.Names())
 	}
 }
 

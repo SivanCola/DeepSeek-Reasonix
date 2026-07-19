@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime/debug"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -986,7 +987,97 @@ func FilterRegistry(parent *tool.Registry, names []string, exclude ...string) *t
 			sub.Add(tl)
 		}
 	}
+	addRestrictedCapabilityProxy(parent, sub, names, ex, false)
 	return sub
+}
+
+// restrictedCapabilityProxy preserves a subagent allowed-tools boundary when
+// an MCP tool is available only through use_capability. The pseudo
+// mcp-tool:<server>/<raw> entries never become provider tools themselves; they
+// select one proxy schema whose resolver rejects every capability outside the
+// exact allowlist.
+type restrictedCapabilityProxy struct {
+	tool.Tool
+	resolver tool.CallResolver
+	allowed  map[string]bool
+	ids      []string
+}
+
+func (t *restrictedCapabilityProxy) Description() string {
+	base := strings.TrimSpace(t.Tool.Description())
+	if base != "" {
+		base += " "
+	}
+	return base + "This subagent is restricted to capability IDs: " + strings.Join(t.ids, ", ") + "."
+}
+
+func (t *restrictedCapabilityProxy) check(args json.RawMessage) error {
+	var p struct {
+		CapabilityID string `json:"capability_id"`
+	}
+	if err := json.Unmarshal(args, &p); err != nil {
+		return fmt.Errorf("invalid args: %w", err)
+	}
+	id := strings.TrimSpace(p.CapabilityID)
+	if id == "" {
+		return fmt.Errorf("capability_id is required")
+	}
+	if !t.allowed[id] {
+		return fmt.Errorf("capability %q is outside this subagent's allowed-tools", id)
+	}
+	return nil
+}
+
+func (t *restrictedCapabilityProxy) ResolveCall(ctx context.Context, args json.RawMessage) (tool.ResolvedCall, error) {
+	if err := t.check(args); err != nil {
+		return tool.ResolvedCall{}, err
+	}
+	return t.resolver.ResolveCall(ctx, args)
+}
+
+func (t *restrictedCapabilityProxy) Execute(ctx context.Context, args json.RawMessage) (string, error) {
+	if err := t.check(args); err != nil {
+		return "", err
+	}
+	return t.Tool.Execute(ctx, args)
+}
+
+func addRestrictedCapabilityProxy(parent, sub *tool.Registry, names []string, excluded map[string]bool, requireReadOnly bool) {
+	if parent == nil || sub == nil || excluded["use_capability"] {
+		return
+	}
+	if _, ok := sub.Get("use_capability"); ok {
+		// An explicit name or wildcard already granted the ordinary proxy.
+		return
+	}
+	direct := map[string]bool{}
+	for _, binding := range parent.MCPBindings() {
+		direct[binding.CapabilityID] = true
+	}
+	allowed := map[string]bool{}
+	for _, name := range names {
+		name = strings.TrimSpace(name)
+		if strings.HasPrefix(name, "mcp-tool:") && !direct[name] {
+			allowed[name] = true
+		}
+	}
+	if len(allowed) == 0 {
+		return
+	}
+	inner, ok := parent.Get("use_capability")
+	if !ok || requireReadOnly && (!inner.ReadOnly() || planModeUntrustedReadOnly(inner) || mcpDestructiveHint(inner)) {
+		return
+	}
+	resolver, ok := inner.(tool.CallResolver)
+	if !ok {
+		return
+	}
+	ids := make([]string, 0, len(allowed))
+	for id := range allowed {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	sub.Add(&restrictedCapabilityProxy{Tool: inner, resolver: resolver, allowed: allowed, ids: ids})
 }
 
 var plannerNonResearchTools = []string{
@@ -1062,6 +1153,7 @@ func ReadOnlySubagentToolRegistryForDepth(parent *tool.Registry, names []string,
 		}
 		sub.Add(tl)
 	}
+	addRestrictedCapabilityProxy(parent, sub, names, ex, true)
 	return sub
 }
 

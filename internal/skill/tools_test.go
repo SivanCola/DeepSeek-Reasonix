@@ -26,8 +26,8 @@ func TestPreparePluginSkillBindsMCPNamesAndAllowedTools(t *testing.T) {
 	if !strings.Contains(got.Body, "## Runtime MCP tool bindings") || !strings.Contains(got.Body, "`mcp__figma__get_design_context`") {
 		t.Fatalf("runtime binding missing:\n%s", got.Body)
 	}
-	if len(got.AllowedTools) != 1 || got.AllowedTools[0] != "mcp__figma__get_design_context" {
-		t.Fatalf("AllowedTools = %v, want canonical name", got.AllowedTools)
+	if got, want := strings.Join(got.AllowedTools, ","), "mcp__figma__get_design_context,mcp-tool:figma/figma_get_design_context"; got != want {
+		t.Fatalf("AllowedTools = %q, want %q", got, want)
 	}
 	if twice := store.Prepare(got); twice.Body != got.Body {
 		t.Fatalf("Prepare is not idempotent:\n%s", twice.Body)
@@ -64,7 +64,7 @@ func TestPreparePluginSkillPreservesWildcardAllowedTools(t *testing.T) {
 		t.Fatalf("broad wildcard was narrowed: %v", broad.AllowedTools)
 	}
 	claude := store.Prepare(Skill{Plugin: "figma", Body: "Search.", AllowedTools: []string{"mcp__plugin_figma_figma__*"}})
-	if got, want := strings.Join(claude.AllowedTools, ","), "mcp__plugin_figma_figma__*,mcp__figma__search"; got != want {
+	if got, want := strings.Join(claude.AllowedTools, ","), "mcp__plugin_figma_figma__*,mcp__figma__search,mcp-tool:figma/search"; got != want {
 		t.Fatalf("Claude wildcard mapping = %q, want %q", got, want)
 	}
 }
