@@ -493,19 +493,28 @@ func mergePathLists(primary, secondary string) string {
 	return strings.Join(out, string(os.PathListSeparator))
 }
 
+// stdioReplyQueueBound caps buffered server-request replies. The queue only
+// backs up while the reply writer is stuck behind a jammed stdin pipe, so a
+// small bound is plenty; overflow drops the reply instead of blocking readLoop.
+const stdioReplyQueueBound = 16
+
 // readLoop owns stdout for the transport's lifetime: it reads one JSON-RPC
 // message per line, ignores server notifications, answers server requests, and
 // hands each response to the call waiting on its id. On any read error it fails
 // every pending call and exits.
 func (t *stdioTransport) readLoop() {
+	// Server-request replies go through replyLoop, never directly to stdin:
+	// readLoop is the only goroutine draining stdout, and blocking it on
+	// writeMu behind a client call whose own stdin write is jammed would
+	// deadlock both pipes once the server also blocks writing stdout.
+	replies := make(chan any, stdioReplyQueueBound)
+	defer close(replies)
+	go t.replyLoop(replies)
 	for {
 		line, readErr := t.stdout.ReadBytes('\n')
 		line = bytes.TrimSpace(line)
 		if len(line) > 0 {
-			if err := t.handleInboundLine(line); err != nil {
-				t.failAll(err)
-				return
-			}
+			t.handleInboundLine(line, replies)
 		}
 		if readErr != nil {
 			t.failAll(readErr)
@@ -514,19 +523,35 @@ func (t *stdioTransport) readLoop() {
 	}
 }
 
-func (t *stdioTransport) handleInboundLine(line []byte) error {
+// replyLoop serialises server-request replies onto the shared stdin pipe. A
+// write failure is not terminal for the transport — the read side may still be
+// healthy, and pipe errors surface through the next client call's own write —
+// but it stops further replies and keeps draining so readLoop never blocks.
+func (t *stdioTransport) replyLoop(replies <-chan any) {
+	var dead bool
+	for msg := range replies {
+		if dead {
+			continue
+		}
+		if t.write(msg) != nil {
+			dead = true
+		}
+	}
+}
+
+func (t *stdioTransport) handleInboundLine(line []byte, replies chan<- any) {
 	var probe struct {
 		JSONRPC string          `json:"jsonrpc"`
 		ID      json.RawMessage `json:"id"`
 		Method  string          `json:"method"`
 	}
 	if err := json.Unmarshal(line, &probe); err != nil {
-		return nil // unparseable line cannot be routed; keep the transport alive
+		return // unparseable line cannot be routed; keep the transport alive
 	}
 	if probe.Method != "" {
 		id := bytes.TrimSpace(probe.ID)
 		if len(id) == 0 || bytes.Equal(id, []byte("null")) {
-			return nil // server notification
+			return // server notification
 		}
 		response := struct {
 			JSONRPC string          `json:"jsonrpc"`
@@ -539,12 +564,19 @@ func (t *stdioTransport) handleInboundLine(line []byte) error {
 		} else {
 			response.Error = &rpcError{Code: -32601, Message: "Method not found"}
 		}
-		return t.write(response)
+		select {
+		case replies <- response:
+		default:
+			// The reply writer is stalled behind a full stdin pipe. An
+			// unanswered request degrades to the server's own timeout; a
+			// blocked readLoop could deadlock both pipes.
+		}
+		return
 	}
 
 	var resp rpcResponse
 	if err := json.Unmarshal(line, &resp); err != nil {
-		return nil
+		return
 	}
 	t.mu.Lock()
 	ch := t.pending[resp.ID]
@@ -553,7 +585,6 @@ func (t *stdioTransport) handleInboundLine(line []byte) error {
 	if ch != nil {
 		ch <- resp // buffered(1): never blocks, even if the caller already left
 	}
-	return nil
 }
 
 // failAll records the terminal read error and unblocks every pending call by

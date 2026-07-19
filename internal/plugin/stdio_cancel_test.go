@@ -203,3 +203,52 @@ func TestStdioInitializeHandlesNotificationsAndServerPing(t *testing.T) {
 		t.Fatal("server did not complete the MCP initialization handshake")
 	}
 }
+
+// readLoop is the only goroutine draining stdout, so it must never block on
+// the shared stdin pipe: with both pipe buffers full, waiting on writeMu would
+// deadlock against a client call whose own stdin write is jammed. Replies to
+// server requests therefore go through a bounded queue that drops on overflow.
+func TestStdioReadLoopStaysLiveWhenReplyWriterIsBlocked(t *testing.T) {
+	stdinReads, stdinWrites := io.Pipe() // nobody reads: reply writes block forever
+	stdoutReads, stdoutWrites := io.Pipe()
+	t.Cleanup(func() {
+		_ = stdinReads.Close()
+		_ = stdinWrites.Close()
+		_ = stdoutReads.Close()
+		_ = stdoutWrites.Close()
+	})
+
+	tr := &stdioTransport{
+		name:    "jammed",
+		stdin:   stdinWrites,
+		stdout:  bufio.NewReader(stdoutReads),
+		stderr:  &tailBuffer{limit: 1024},
+		pending: map[int]chan rpcResponse{},
+	}
+	waiting := make(chan rpcResponse, 1)
+	tr.pending[7] = waiting
+	go tr.readLoop()
+
+	// Flood well past the reply queue bound while the reply writer is stuck in
+	// its first stdin write; overflow must drop, not block readLoop. The writes
+	// run off the test goroutine so a deadlocked readLoop fails the timeout
+	// below instead of hanging the whole package; Cleanup unblocks the writer.
+	go func() {
+		for i := 0; i < 2*stdioReplyQueueBound; i++ {
+			line := fmt.Sprintf(`{"jsonrpc":"2.0","id":"srv-%d","method":"ping"}`+"\n", i)
+			if _, err := io.WriteString(stdoutWrites, line); err != nil {
+				return
+			}
+		}
+		_, _ = io.WriteString(stdoutWrites, `{"jsonrpc":"2.0","id":7,"result":{}}`+"\n")
+	}()
+
+	select {
+	case resp := <-waiting:
+		if resp.ID != 7 {
+			t.Fatalf("routed response id = %d, want 7", resp.ID)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("readLoop stopped routing responses while the reply writer was blocked")
+	}
+}
