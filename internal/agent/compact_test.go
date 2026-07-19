@@ -784,6 +784,22 @@ func TestRenderTranscriptRedactsToolCallArgs(t *testing.T) {
 	}
 }
 
+func TestInterruptedDisplayStaysVerbatimAndOutOfCompactionPrompt(t *testing.T) {
+	local := provider.Message{
+		Role: provider.RoleTool, ToolCallID: provider.LocalOnlyToolID, Name: provider.LocalOnlyToolName,
+		LocalOnly: true, Content: "partial visible answer", ReasoningContent: "private partial reasoning",
+		InterruptedTurn: &provider.InterruptedTurnRecovery{Pending: true},
+	}
+	a := &Agent{}
+	kept, fold := a.partitionFold([]provider.Message{local})
+	if len(kept) != 1 || !kept[0].LocalOnly || len(fold) != 0 {
+		t.Fatalf("compaction partition kept=%+v fold=%+v, want local display kept verbatim", kept, fold)
+	}
+	if transcript := renderTranscript([]provider.Message{local}); transcript != "" {
+		t.Fatalf("local interrupted output leaked into compaction prompt: %q", transcript)
+	}
+}
+
 func TestSummarizeToolArgs(t *testing.T) {
 	tests := []struct {
 		name    string

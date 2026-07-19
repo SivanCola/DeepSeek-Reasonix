@@ -815,11 +815,11 @@ func TestRecoverInterruptedTurnSparesTurnContinuedOnRecoveryBranch(t *testing.T)
 	}
 }
 
-// TestRecoverInterruptedTurnStripsGenuineCrash pins the crash-recovery
+// TestRecoverInterruptedTurnPreservesGenuineCrashDisplay pins the crash-recovery
 // behavior the recovery-child guard must not swallow: with no recovery branch
 // in sight, an in-flight marker means the runtime died mid-turn and the
-// partial tail is stripped (preserving the user prompt).
-func TestRecoverInterruptedTurnStripsGenuineCrash(t *testing.T) {
+// partial tail becomes provider-excluded display history.
+func TestRecoverInterruptedTurnPreservesGenuineCrashDisplay(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "session.jsonl")
 
@@ -841,8 +841,12 @@ func TestRecoverInterruptedTurnStripsGenuineCrash(t *testing.T) {
 	c := New(Options{Executor: exec, SessionDir: dir, SessionPath: path, Label: "test"})
 	c.recoverInterruptedTurn(path)
 
-	if got := c.executor.Session().Len(); got != 2 {
-		t.Fatalf("message count after crash recovery = %d, want 2 (sys + preserved user prompt)", got)
+	if got := c.executor.Session().Len(); got != 3 {
+		t.Fatalf("message count after crash recovery = %d, want system + user + local recovery", got)
+	}
+	recovery := c.executor.Session().Snapshot()[2]
+	if !recovery.LocalOnly || recovery.Content != "partial" || recovery.InterruptedTurn == nil || !recovery.InterruptedTurn.Pending {
+		t.Fatalf("crash display/recovery was not retained safely: %+v", recovery)
 	}
 	meta, ok, err := agent.LoadBranchMeta(path)
 	if err != nil || !ok {

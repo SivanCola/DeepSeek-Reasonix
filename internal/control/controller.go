@@ -3832,8 +3832,9 @@ func (c *Controller) stripTurnMessagesAfter(idx int) {
 	c.replaceSessionAfterCancel(msgs[:idx])
 }
 
-// stripCancelledVisibleTurnMessagesAfter removes assistant/tool remnants from a
-// cancelled visible turn while preserving the real user prompt that started it.
+// stripCancelledVisibleTurnMessagesAfter preserves the real user prompt and
+// fully paired tool rounds from a cancelled visible turn. Unsafe assistant/tool
+// fragments are retained as provider-excluded display history.
 func (c *Controller) stripCancelledVisibleTurnMessagesAfter(idx int) {
 	c.stripCancelledVisibleTurnMessagesAfterWithFallback(idx, provider.Message{})
 }
@@ -3855,7 +3856,8 @@ func (c *Controller) stripCancelledVisibleTurnMessagesAfterWithFallback(idx int,
 	}
 	next := append([]provider.Message{}, msgs[:idx]...)
 	keptUser := false
-	for _, m := range msgs[idx:] {
+	userEnd := idx
+	for i, m := range msgs[idx:] {
 		if m.Role != provider.RoleUser {
 			continue
 		}
@@ -3868,6 +3870,7 @@ func (c *Controller) stripCancelledVisibleTurnMessagesAfterWithFallback(idx int,
 		m.Content = StripComposePrefixes(m.Content)
 		next = append(next, m)
 		keptUser = true
+		userEnd = idx + i + 1
 		break
 	}
 	if !keptUser && fallback.Role == provider.RoleUser {
@@ -3876,12 +3879,191 @@ func (c *Controller) stripCancelledVisibleTurnMessagesAfterWithFallback(idx int,
 			fallback.Images = append([]string(nil), fallback.Images...)
 			next = append(next, fallback)
 			keptUser = true
+			userEnd = idx
 		}
 	}
 	if !keptUser && len(msgs) <= idx {
 		return
 	}
+	recovery := &provider.InterruptedTurnRecovery{Pending: true}
+	localIndexes := make([]int, 0, 1)
+	for i := userEnd; i < len(msgs); {
+		m := msgs[i]
+		if m.LocalOnly {
+			m.Role = provider.RoleTool
+			m.ToolCallID = provider.LocalOnlyToolID
+			m.Name = provider.LocalOnlyToolName
+			m.InterruptedTurn = nil
+			m.ToolCalls = displayOnlyToolCalls(m.ToolCalls)
+			next = append(next, m)
+			localIndexes = append(localIndexes, len(next)-1)
+			recovery.DroppedPartialText = recovery.DroppedPartialText || strings.TrimSpace(m.Content) != ""
+			recovery.DroppedPartialReasoning = recovery.DroppedPartialReasoning || strings.TrimSpace(m.ReasoningContent) != ""
+			for _, call := range m.ToolCalls {
+				recovery.InterruptedTools = appendUniqueString(recovery.InterruptedTools, call.Name)
+			}
+			i++
+			continue
+		}
+		if end, ok := completeToolTurnEnd(msgs, i); ok {
+			next = append(next, msgs[i:end]...)
+			for k, call := range m.ToolCalls {
+				if toolResultWasInterrupted(msgs[i+1+k].Content) {
+					recovery.InterruptedTools = appendUniqueString(recovery.InterruptedTools, call.Name)
+					continue
+				}
+				recovery.CompletedTools = append(recovery.CompletedTools, interruptedToolSummary(call))
+			}
+			i = end
+			continue
+		}
+		switch m.Role {
+		case provider.RoleAssistant:
+			local := m
+			local.Role = provider.RoleTool
+			local.LocalOnly = true
+			local.ToolCallID = provider.LocalOnlyToolID
+			local.Name = provider.LocalOnlyToolName
+			local.InterruptedTurn = nil
+			local.ReasoningSignature = ""
+			local.ToolCalls = displayOnlyToolCalls(local.ToolCalls)
+			next = append(next, local)
+			localIndexes = append(localIndexes, len(next)-1)
+			recovery.DroppedPartialText = recovery.DroppedPartialText || strings.TrimSpace(local.Content) != ""
+			recovery.DroppedPartialReasoning = recovery.DroppedPartialReasoning || strings.TrimSpace(local.ReasoningContent) != ""
+			for _, call := range local.ToolCalls {
+				recovery.InterruptedTools = appendUniqueString(recovery.InterruptedTools, call.Name)
+			}
+		case provider.RoleTool:
+			local := m
+			local.LocalOnly = true
+			local.ToolCalls = []provider.ToolCall{{ID: m.ToolCallID, Name: m.Name}}
+			recovery.InterruptedTools = appendUniqueString(recovery.InterruptedTools, m.Name)
+			local.ToolCallID = provider.LocalOnlyToolID
+			local.Name = provider.LocalOnlyToolName
+			next = append(next, local)
+			localIndexes = append(localIndexes, len(next)-1)
+		}
+		i++
+	}
+	if len(localIndexes) == 0 {
+		next = append(next, provider.Message{
+			Role: provider.RoleTool, ToolCallID: provider.LocalOnlyToolID,
+			Name: provider.LocalOnlyToolName, LocalOnly: true,
+		})
+		localIndexes = append(localIndexes, len(next)-1)
+	}
+	next[localIndexes[len(localIndexes)-1]].InterruptedTurn = recovery
 	c.replaceSessionAfterCancel(next)
+}
+
+func (c *Controller) hasInterruptedDisplayAfter(idx int) bool {
+	if c.executor == nil {
+		return false
+	}
+	msgs := c.executor.Session().Snapshot()
+	idx = max(0, min(idx, len(msgs)))
+	for _, m := range msgs[idx:] {
+		if m.LocalOnly && m.InterruptedTurn != nil {
+			return true
+		}
+	}
+	return false
+}
+
+func completeToolTurnEnd(msgs []provider.Message, i int) (int, bool) {
+	if i < 0 || i >= len(msgs) {
+		return i, false
+	}
+	m := msgs[i]
+	if m.LocalOnly || m.Role != provider.RoleAssistant || len(m.ToolCalls) == 0 {
+		return i, false
+	}
+	end := i + 1
+	for end < len(msgs) && msgs[end].Role == provider.RoleTool && !msgs[end].LocalOnly {
+		end++
+	}
+	results := msgs[i+1 : end]
+	if len(results) != len(m.ToolCalls) {
+		return i, false
+	}
+	for k, call := range m.ToolCalls {
+		if strings.TrimSpace(call.Name) == "" || (call.Arguments != "" && !json.Valid([]byte(call.Arguments))) {
+			return i, false
+		}
+		if results[k].ToolCallID != call.ID || results[k].Name != call.Name {
+			return i, false
+		}
+	}
+	return end, true
+}
+
+func toolResultWasInterrupted(content string) bool {
+	content = strings.ToLower(strings.TrimSpace(content))
+	return strings.HasPrefix(content, "cancelled:") || strings.Contains(content, "context canceled") || strings.Contains(content, "context cancelled")
+}
+
+func displayOnlyToolCalls(calls []provider.ToolCall) []provider.ToolCall {
+	out := make([]provider.ToolCall, 0, len(calls))
+	for _, call := range calls {
+		out = append(out, provider.ToolCall{ID: call.ID, Name: strings.TrimSpace(call.Name)})
+	}
+	return out
+}
+
+func appendUniqueString(dst []string, value string) []string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return dst
+	}
+	for _, existing := range dst {
+		if existing == value {
+			return dst
+		}
+	}
+	return append(dst, value)
+}
+
+func interruptedToolSummary(call provider.ToolCall) provider.InterruptedToolSummary {
+	summary := provider.InterruptedToolSummary{
+		ID: call.ID, Name: strings.TrimSpace(call.Name), Added: call.Added, Removed: call.Removed,
+	}
+	addFile := func(path string) {
+		path = strings.TrimSpace(path)
+		if path == "" || path == "/dev/null" || len(summary.Files) >= 8 {
+			return
+		}
+		for _, existing := range summary.Files {
+			if existing == path {
+				return
+			}
+		}
+		summary.Files = append(summary.Files, path)
+	}
+	var args map[string]any
+	if json.Unmarshal([]byte(call.Arguments), &args) == nil {
+		for _, key := range []string{"path", "file", "file_path", "filename"} {
+			if value, ok := args[key].(string); ok && strings.TrimSpace(value) != "" {
+				addFile(value)
+			}
+		}
+	}
+	for _, line := range strings.Split(call.Diff, "\n") {
+		line = strings.TrimSpace(line)
+		switch {
+		case strings.HasPrefix(line, "+++ b/"):
+			addFile(strings.TrimPrefix(line, "+++ b/"))
+		case strings.HasPrefix(line, "--- a/"):
+			addFile(strings.TrimPrefix(line, "--- a/"))
+		case strings.HasPrefix(line, "*** Update File: "):
+			addFile(strings.TrimPrefix(line, "*** Update File: "))
+		case strings.HasPrefix(line, "*** Add File: "):
+			addFile(strings.TrimPrefix(line, "*** Add File: "))
+		case strings.HasPrefix(line, "*** Delete File: "):
+			addFile(strings.TrimPrefix(line, "*** Delete File: "))
+		}
+	}
+	return summary
 }
 
 func (c *Controller) replaceSessionAfterCancel(msgs []provider.Message) {

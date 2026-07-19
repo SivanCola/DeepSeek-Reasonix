@@ -4454,12 +4454,27 @@ func (m *chatTUI) runMCPPrompt(input string) tea.Cmd {
 	}
 }
 
-// replaySectionsFor turns a loaded session into scrollback blocks: user bubbles
-// and assistant markdown. Tool messages are dropped — needed in session state
-// but noise in the visible transcript on resume.
+// replaySectionsFor turns a loaded session into scrollback blocks. Normal tool
+// results remain quiet, while interrupted-turn reasoning and tool cards replay
+// from provider-excluded LocalOnly records so restart matches the live view.
 func replaySectionsFor(history []provider.Message, width int) []string {
 	var out []string
 	for _, m := range history {
+		if m.LocalOnly {
+			if reasoning := strings.TrimSpace(m.ReasoningContent); reasoning != "" {
+				out = append(out, dim("  ▎ "+i18n.M.ChatThinking)+"\n"+reasoningBlock(reasoning, width, 0)+"\n\n")
+			}
+			if body := strings.TrimSpace(m.Content); body != "" {
+				out = append(out, renderAssistantMarkdown(body, width)+"\n\n")
+			}
+			for _, call := range m.ToolCalls {
+				out = append(out, toolCard(call.Name, "", width)+"\n\n")
+			}
+			if m.InterruptedTurn != nil {
+				out = append(out, fmt.Sprintf("  · %s\n\n", interruptedTurnDisplayNotice()))
+			}
+			continue
+		}
 		switch m.Role {
 		case provider.RoleUser:
 			// Steer messages are surfaced as a notice line, not a user bubble.
@@ -4470,14 +4485,23 @@ func replaySectionsFor(history []provider.Message, width int) []string {
 			content := control.StripComposePrefixes(m.Content)
 			out = append(out, renderUserBubble(content, width, false)+"\n\n")
 		case provider.RoleAssistant:
-			body := strings.TrimSpace(m.Content)
-			if body == "" {
-				continue
+			if reasoning := strings.TrimSpace(m.ReasoningContent); reasoning != "" {
+				out = append(out, dim("  ▎ "+i18n.M.ChatThinking)+"\n"+reasoningBlock(reasoning, width, 0)+"\n\n")
 			}
-			out = append(out, renderAssistantMarkdown(body, width)+"\n\n")
+			body := strings.TrimSpace(m.Content)
+			if body != "" {
+				out = append(out, renderAssistantMarkdown(body, width)+"\n\n")
+			}
+			for _, call := range m.ToolCalls {
+				out = append(out, toolCard(call.Name, call.Arguments, width)+"\n\n")
+			}
 		}
 	}
 	return out
+}
+
+func interruptedTurnDisplayNotice() string {
+	return i18n.M.InterruptedRecovery
 }
 
 // renderTUIBanner is the title + tip + optional missing-key warning printed once

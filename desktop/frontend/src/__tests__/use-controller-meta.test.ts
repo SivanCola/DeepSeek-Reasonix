@@ -237,7 +237,7 @@ console.log("\nuse controller meta");
   );
   eq(
     localizedNoticeText("reworded cancelled-turn copy", "cancelled_turn_display"),
-    "This turn was interrupted. Partial output is kept for reference but is not included in the model's next-turn history; inspect the workspace before continuing or reverting changes.",
+    "This turn was interrupted. Partial output is kept for reference; only completed tool pairs and a bounded recovery summary enter the next model turn. Inspect the workspace before continuing or reverting changes.",
     "cancelled turn history explains the model-context boundary",
   );
   eq(

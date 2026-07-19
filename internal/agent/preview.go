@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-var reTransientUserBlock = regexp.MustCompile(`(?s)^\s*<(?:response-language|reasoning-language|memory-update|background-jobs|active-goal|hook-context|capability-route)(?:\s+[^>]*)?>.*?</(?:response-language|reasoning-language|memory-update|background-jobs|active-goal|hook-context|capability-route)>\s*\n?`)
+var reTransientUserBlock = regexp.MustCompile(`(?s)^\s*<(?:response-language|reasoning-language|memory-update|background-jobs|active-goal|hook-context|capability-route|interrupted-turn-recovery)(?:\s+[^>]*)?>.*?</(?:response-language|reasoning-language|memory-update|background-jobs|active-goal|hook-context|capability-route|interrupted-turn-recovery)>\s*\n?`)
 
 // stripTrailingDeliveryRuntime removes the exact delivery-runtime marker the
 // agent appends to user turns in delivery mode (agent.go DeliveryRuntimeMarker).

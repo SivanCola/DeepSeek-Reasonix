@@ -4625,7 +4625,14 @@ func historyMessagesWithPlannerDisplaysAndLookups(
 ) []HistoryMessage {
 	out := make([]HistoryMessage, 0, len(msgs))
 	plannerByUserHash := plannerTurnsByUserHash(plannerTurns)
+	suppressCanonicalTurn := false
 	for index, m := range msgs {
+		if suppressCanonicalTurn {
+			if m.Role != provider.RoleUser || !agent.IsUserAuthoredTurn(m.Content) {
+				continue
+			}
+			suppressCanonicalTurn = false
+		}
 		content := m.Content
 		var checkpointTurn *int
 		if m.Role == provider.RoleUser {
@@ -4649,10 +4656,14 @@ func historyMessagesWithPlannerDisplaysAndLookups(
 			}
 		}
 		reasoning := ""
-		if m.Role == provider.RoleAssistant {
+		if m.Role == provider.RoleAssistant || m.LocalOnly {
 			reasoning = m.ReasoningContent
 		}
-		hm := HistoryMessage{Role: string(m.Role), Content: content, CheckpointTurn: checkpointTurn, CreatedAt: m.CreatedAt, Reasoning: reasoning, WorkDurationMs: m.WorkDurationMs}
+		displayRole := string(m.Role)
+		if m.LocalOnly {
+			displayRole = "assistant"
+		}
+		hm := HistoryMessage{Role: displayRole, Content: content, CheckpointTurn: checkpointTurn, CreatedAt: m.CreatedAt, Reasoning: reasoning, WorkDurationMs: m.WorkDurationMs}
 		if m.Role == provider.RoleAssistant && len(m.MemoryCitations) > 0 {
 			hm.MemoryCitations = append([]provider.MemoryCitation(nil), m.MemoryCitations...)
 		}
@@ -4668,7 +4679,7 @@ func historyMessagesWithPlannerDisplaysAndLookups(
 				hm.SubmitText = m.Content
 			}
 		}
-		if m.Role == provider.RoleAssistant && len(m.ToolCalls) > 0 {
+		if (m.Role == provider.RoleAssistant || m.LocalOnly) && len(m.ToolCalls) > 0 {
 			hm.ToolCalls = make([]HistoryToolCall, len(m.ToolCalls))
 			for i, tc := range m.ToolCalls {
 				args := tc.Arguments
@@ -4680,20 +4691,39 @@ func historyMessagesWithPlannerDisplaysAndLookups(
 				hm.ToolCalls[i] = historyToolCall(tc, args, toolResults[tc.ID])
 			}
 		}
-		if m.Role == provider.RoleTool {
+		if m.Role == provider.RoleTool && !m.LocalOnly {
 			hm.ToolCallID = m.ToolCallID
 			hm.ToolName = m.Name
 			hm.Content, hm.ToolResultArchived, hm.ToolResultError = historyToolResultContent(m.Content, m.ToolCallID != "")
 		}
-		out = append(out, hm)
+		hasVisibleLocalContent := strings.TrimSpace(hm.Content) != "" || strings.TrimSpace(hm.Reasoning) != "" || len(hm.ToolCalls) > 0 || (!m.LocalOnly && m.Role == provider.RoleTool)
+		if !m.LocalOnly || hasVisibleLocalContent {
+			out = append(out, hm)
+		}
+		if m.LocalOnly && m.InterruptedTurn != nil {
+			out = append(out, HistoryMessage{
+				Role: "notice", Level: "info", Code: event.NoticeCodeCancelledTurn,
+				Content: "This turn was interrupted. Partial output is kept for reference; only completed tool pairs and a bounded recovery summary enter the next model turn. Inspect the workspace before continuing or reverting changes.",
+			})
+		}
 		if m.Role == provider.RoleUser {
 			if turns := plannerByUserHash[messageDisplayKey(m.Content)]; len(turns) > 0 {
 				out = append(out, cloneHistoryMessages(turns[0].Messages)...)
+				suppressCanonicalTurn = plannerDisplaySuppressesCanonical(turns[0])
 				plannerByUserHash[messageDisplayKey(m.Content)] = turns[1:]
 			}
 		}
 	}
 	return out
+}
+
+func plannerDisplaySuppressesCanonical(turn plannerDisplayTurn) bool {
+	for _, message := range turn.Messages {
+		if message.Role == "notice" && message.Code == event.NoticeCodeCancelledTurn {
+			return true
+		}
+	}
+	return false
 }
 
 func historyPageFromProviderMessages(

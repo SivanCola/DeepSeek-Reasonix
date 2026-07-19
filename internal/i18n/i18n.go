@@ -48,11 +48,12 @@ type Messages struct {
 	HelpFooter     string // dim footer linking to reasonix help
 
 	// chat REPL
-	ChatTip           string // tip line under the chat banner
-	TurnCancelled     string // shown when Ctrl-C aborts the in-flight turn but the chat keeps running
-	NoSessionToResume string // shown when --continue / --resume finds nothing
-	ResumeRequiresTTY string // shown when --resume runs piped instead of on a terminal
-	PickSessionLabel  string // header on the --resume picker
+	ChatTip             string // tip line under the chat banner
+	TurnCancelled       string // shown when Ctrl-C aborts the in-flight turn but the chat keeps running
+	InterruptedRecovery string // replay notice for a durable interrupted turn
+	NoSessionToResume   string // shown when --continue / --resume finds nothing
+	ResumeRequiresTTY   string // shown when --resume runs piped instead of on a terminal
+	PickSessionLabel    string // header on the --resume picker
 
 	// in-chat /resume command
 	ResumeListHeader    string // header above the /resume session list

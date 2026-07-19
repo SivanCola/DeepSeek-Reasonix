@@ -53,6 +53,28 @@ func TestReplaySectionsKeepAssistantIdentity(t *testing.T) {
 	}
 }
 
+func TestReplaySectionsRestoreInterruptedLocalOutput(t *testing.T) {
+	defer restoreThemeForTest(colorEnabled, activeCLITheme)
+	colorEnabled = false
+	configureCLITheme("dark")
+
+	sections := replaySectionsFor([]provider.Message{
+		{Role: provider.RoleUser, Content: "change config"},
+		{
+			Role: provider.RoleTool, ToolCallID: provider.LocalOnlyToolID, Name: provider.LocalOnlyToolName,
+			LocalOnly: true, Content: "partial answer", ReasoningContent: "checking config",
+			ToolCalls:       []provider.ToolCall{{ID: "p1", Name: "write_file"}},
+			InterruptedTurn: &provider.InterruptedTurnRecovery{Pending: true},
+		},
+	}, 64)
+	plain := ansi.Strip(strings.Join(sections, ""))
+	for _, want := range []string{"change config", "checking config", "partial answer", "Write", "bounded recovery summary"} {
+		if !strings.Contains(plain, want) {
+			t.Fatalf("replayed interrupted history missing %q:\n%s", want, plain)
+		}
+	}
+}
+
 func TestScrollbarThumb(t *testing.T) {
 	if _, size := scrollbarThumb(10, 0, 5); size != 0 {
 		t.Errorf("content within viewport should have no thumb, got size %d", size)

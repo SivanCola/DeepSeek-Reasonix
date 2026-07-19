@@ -1106,7 +1106,7 @@ func (t *WorkspaceTab) takeDisplayTurn(cancelled bool) []HistoryMessage {
 				Role:    "notice",
 				Level:   "info",
 				Code:    event.NoticeCodeCancelledTurn,
-				Content: "This turn was interrupted. Partial output is kept for reference but is not included in the model's next-turn history; inspect the workspace before continuing or reverting changes.",
+				Content: "This turn was interrupted. Partial output is kept for reference; only completed tool pairs and a bounded recovery summary enter the next model turn. Inspect the workspace before continuing or reverting changes.",
 			})
 		}
 	}
@@ -1675,7 +1675,7 @@ func (s *tabEventSink) flushDisplay(cancelRequested bool) {
 		return
 	}
 	history := ctrl.History()
-	keepExecutorDisplay := cancelRequested && len(history) > 0 && history[len(history)-1].Role == provider.RoleUser
+	keepExecutorDisplay := cancelRequested && (lastHistoryMessageIsUser(history) || hasPendingInterruptedRecovery(history))
 	messages := tab.takeDisplayTurn(keepExecutorDisplay)
 	if len(messages) == 0 {
 		return
@@ -1695,6 +1695,23 @@ func (s *tabEventSink) flushDisplay(cancelRequested bool) {
 		messages:    messages,
 		persist:     recordSessionPlannerDisplay,
 	})
+}
+
+func lastHistoryMessageIsUser(history []provider.Message) bool {
+	return len(history) > 0 && history[len(history)-1].Role == provider.RoleUser
+}
+
+func hasPendingInterruptedRecovery(history []provider.Message) bool {
+	for i := len(history) - 1; i >= 0; i-- {
+		m := history[i]
+		if m.LocalOnly && m.InterruptedTurn != nil {
+			return m.InterruptedTurn.Pending
+		}
+		if m.Role == provider.RoleUser {
+			return false
+		}
+	}
+	return false
 }
 
 func (s *tabEventSink) eventTabAndController() (*WorkspaceTab, control.SessionAPI) {

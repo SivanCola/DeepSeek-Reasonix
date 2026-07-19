@@ -158,6 +158,9 @@ func foldEconomics(region []provider.Message) bool {
 func estimateMessagesTokens(msgs []provider.Message) int {
 	total := 0
 	for _, m := range msgs {
+		if m.LocalOnly {
+			continue
+		}
 		total += 4 // chat-message framing overhead
 		total += estimateTextTokens(m.Content)
 		total += estimateTextTokens(m.ReasoningContent)
@@ -408,7 +411,7 @@ func (a *Agent) pinnableUserTurn(m provider.Message) bool {
 func (a *Agent) partitionFold(region []provider.Message) (kept, fold []provider.Message) {
 	policyKeep := keepIndexes(region, a.keepPolicy)
 	for i, m := range region {
-		if policyKeep[i] || isCompactionSummary(m) || (m.Role == provider.RoleUser && a.pinnableUserTurn(m)) {
+		if m.LocalOnly || policyKeep[i] || isCompactionSummary(m) || (m.Role == provider.RoleUser && a.pinnableUserTurn(m)) {
 			kept = append(kept, m)
 		} else {
 			fold = append(fold, m)
@@ -599,6 +602,9 @@ func (a *Agent) tokPerChar() float64 {
 // content plus tool-call names and arguments, but not reasoning (stripped on
 // send).
 func msgChars(m provider.Message) int {
+	if m.LocalOnly {
+		return 0
+	}
 	n := len(m.Content)
 	for _, tc := range m.ToolCalls {
 		n += len(tc.Name) + len(tc.Arguments)
@@ -696,6 +702,9 @@ func mechanicalFoldDigest(n int, archive string) string {
 func renderTranscript(msgs []provider.Message) string {
 	var b strings.Builder
 	for _, m := range msgs {
+		if m.LocalOnly {
+			continue
+		}
 		switch m.Role {
 		case provider.RoleUser:
 			fmt.Fprintf(&b, "[user]\n%s\n\n", m.Content)

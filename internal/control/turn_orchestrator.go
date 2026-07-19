@@ -213,12 +213,10 @@ func (o *turnOrchestrator) runOrchestratedTurn(ctx context.Context, turn orchest
 		c.clearInFlightTurn()
 	} else {
 		c.appendAutoResearchHeartbeat(autoResearchTaskID, autoresearch.HeartbeatWarning, err.Error())
-		// When the user explicitly cancels (Ctrl+C), the incomplete turn's
-		// assistant messages and tool results are already saved to the
-		// session. If they stay, the next turn's model sees leftover
-		// in-progress todo items and partial tool calls and may re-execute
-		// the interrupted work. Keep the real user prompt for visible turns so
-		// follow-up questions and resumes do not lose the user's context (#5499).
+		// When the user explicitly cancels, keep the real prompt and any fully
+		// paired tool work. Partial reasoning/output remains durable for display
+		// but is marked local-only, and a bounded recovery summary is folded into
+		// the next real user turn (#5499, #6680).
 		if errors.Is(err, context.Canceled) && c.CancelRequested() {
 			if turn.synthetic || IsSyntheticUserMessage(turn.raw) {
 				c.stripTurnMessagesAfter(startMessages)
@@ -230,6 +228,16 @@ func (o *turnOrchestrator) runOrchestratedTurn(ctx context.Context, turn orchest
 					CreatedAt: time.Now().UnixMilli(),
 				})
 			}
+		} else if !turn.synthetic && !IsSyntheticUserMessage(turn.raw) && c.hasInterruptedDisplayAfter(startMessages) {
+			// Provider/API failures use the same safe recovery path as an explicit
+			// stop once the agent has recorded a partial stream. Completed tool
+			// pairs survive; unsafe stream fragments stay local-only.
+			c.stripCancelledVisibleTurnMessagesAfterWithFallback(startMessages, provider.Message{
+				Role:      provider.RoleUser,
+				Content:   input,
+				Images:    append([]string(nil), userImages...),
+				CreatedAt: time.Now().UnixMilli(),
+			})
 		}
 		c.clearInFlightTurn()
 		return err

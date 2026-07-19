@@ -393,8 +393,8 @@ func TestHistoryForTabRestoresCancelledExecutorDisplayAfterReload(t *testing.T) 
 	waitNotRunning(t, ctrl)
 	waitForAutosaveIdle(t, tab)
 
-	if got := ctrl.History(); len(got) != 2 {
-		t.Fatalf("model transcript length = %d, want system + user only: %+v", len(got), got)
+	if got := ctrl.History(); len(got) != 5 || !got[4].LocalOnly {
+		t.Fatalf("stored transcript should retain user + completed pair + local recovery: %+v", got)
 	}
 	got := app.HistoryForTab(tab.ID)
 	if len(got) != 5 {
@@ -441,8 +441,8 @@ func TestHistoryForTabRestoresPlannerDisplayWhenCancelledBeforeExecutorStarts(t 
 	waitForAutosaveIdle(t, tab)
 
 	canonical := ctrl.History()
-	if len(canonical) != 2 || canonical[1].Role != provider.RoleUser || canonical[1].Content != "new question" {
-		t.Fatalf("canonical history = %+v, want system + prefix-free current user", canonical)
+	if len(canonical) != 3 || canonical[1].Role != provider.RoleUser || canonical[1].Content != "new question" || !canonical[2].LocalOnly {
+		t.Fatalf("canonical history = %+v, want user plus provider-excluded recovery marker", canonical)
 	}
 	visible := app.HistoryForTab(tab.ID)
 	if len(visible) != 4 {

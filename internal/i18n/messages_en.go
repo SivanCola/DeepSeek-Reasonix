@@ -24,11 +24,12 @@ var English = Messages{
 	StepRunDesc:    "one-shot task",
 	HelpFooter:     "reasonix help · all commands",
 
-	ChatTip:           "Context is kept across turns. Type 'exit' or Ctrl-D to quit.",
-	TurnCancelled:     "cancelled — back to prompt",
-	NoSessionToResume: "no saved session to resume — start a new one with `reasonix`",
-	ResumeRequiresTTY: "--resume needs an interactive terminal; pass --continue for the most recent session",
-	PickSessionLabel:  "Resume which session?",
+	ChatTip:             "Context is kept across turns. Type 'exit' or Ctrl-D to quit.",
+	TurnCancelled:       "cancelled — back to prompt",
+	InterruptedRecovery: "This turn was interrupted. Partial output is kept for reference; only completed tool pairs and a bounded recovery summary enter the next model turn. Inspect the workspace before continuing or reverting changes.",
+	NoSessionToResume:   "no saved session to resume — start a new one with `reasonix`",
+	ResumeRequiresTTY:   "--resume needs an interactive terminal; pass --continue for the most recent session",
+	PickSessionLabel:    "Resume which session?",
 
 	ResumeListHeader:    "sessions (/resume <n> to switch)",
 	ResumeBusy:          "finish or cancel the current turn before resuming",
