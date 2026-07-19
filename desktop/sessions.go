@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
@@ -9,13 +10,13 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"syscall"
 	"time"
 
 	"reasonix/internal/agent"
 	"reasonix/internal/config"
 	"reasonix/internal/control"
+	"reasonix/internal/filelock"
 	"reasonix/internal/fileutil"
 	"reasonix/internal/store"
 )
@@ -940,10 +941,15 @@ type plannerDisplayTurn struct {
 	Messages []HistoryMessage `json:"messages"`
 }
 
-// The planner display sidecar is shared by every session in one directory.
-// Serialize its load-modify-save cycle so two tabs finishing together cannot
-// publish maps that each drop the other tab's newly appended turn.
-var sessionPlannerDisplayMu sync.Mutex
+var (
+	sessionPlannerDisplayLockTimeout = 750 * time.Millisecond
+	errCorruptSessionPlannerDisplay  = errors.New("corrupt planner display sidecar")
+)
+
+// sessionPlannerDisplayUpdateAfterLoad is a subprocess-test seam. Production
+// leaves it nil; tests use it to force two independent processes into the old
+// stale read-modify-write window without relying on scheduler timing.
+var sessionPlannerDisplayUpdateAfterLoad func()
 
 func messageDisplayKey(content string) string {
 	sum := sha256.Sum256([]byte(content))
@@ -975,6 +981,24 @@ func loadSessionPlannerDisplays(dir string) sessionPlannerDisplayMap {
 	}
 	_ = json.Unmarshal(b, &m)
 	return m
+}
+
+func loadSessionPlannerDisplaysForUpdate(dir string) (sessionPlannerDisplayMap, error) {
+	m := sessionPlannerDisplayMap{}
+	b, err := readFileUTF8(sessionPlannerDisplayPath(dir))
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return m, nil
+		}
+		return nil, err
+	}
+	if err := json.Unmarshal(b, &m); err != nil {
+		return nil, fmt.Errorf("%w: %v", errCorruptSessionPlannerDisplay, err)
+	}
+	if m == nil {
+		m = sessionPlannerDisplayMap{}
+	}
+	return m, nil
 }
 
 func saveSessionPlannerDisplays(dir string, m sessionPlannerDisplayMap) error {
@@ -1013,56 +1037,84 @@ func saveOrRemoveSessionPlannerDisplays(dir string, m sessionPlannerDisplayMap) 
 	return saveSessionPlannerDisplays(dir, m)
 }
 
+func updateSessionPlannerDisplays(dir string, recoverCorrupt bool, mutate func(sessionPlannerDisplayMap) bool) error {
+	if strings.TrimSpace(dir) == "" {
+		return errors.New("planner display directory is empty")
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), sessionPlannerDisplayLockTimeout)
+	defer cancel()
+	release, err := filelock.Acquire(ctx, sessionPlannerDisplayPath(dir)+".lock")
+	if err != nil {
+		return fmt.Errorf("lock planner display sidecar: %w", err)
+	}
+	defer release()
+
+	m, err := loadSessionPlannerDisplaysForUpdate(dir)
+	if err != nil {
+		if !recoverCorrupt || !errors.Is(err, errCorruptSessionPlannerDisplay) {
+			return err
+		}
+		// A corrupt shared map cannot be edited safely. Destructive cleanup is
+		// allowed to retire the unreadable sidecar so deleted-session display
+		// data does not linger and later records can start from a valid map.
+		if removeErr := os.Remove(sessionPlannerDisplayPath(dir)); removeErr != nil && !os.IsNotExist(removeErr) {
+			return errors.Join(err, removeErr)
+		}
+		m = sessionPlannerDisplayMap{}
+	}
+	if sessionPlannerDisplayUpdateAfterLoad != nil {
+		sessionPlannerDisplayUpdateAfterLoad()
+	}
+	if !mutate(m) {
+		return nil
+	}
+	return saveOrRemoveSessionPlannerDisplays(dir, m)
+}
+
 func recordSessionPlannerDisplay(dir, sessionPath, userContent string, messages []HistoryMessage) error {
 	if strings.TrimSpace(sessionPath) == "" || strings.TrimSpace(userContent) == "" || len(messages) == 0 {
 		return nil
 	}
-	sessionPlannerDisplayMu.Lock()
-	defer sessionPlannerDisplayMu.Unlock()
-	m := loadSessionPlannerDisplays(dir)
 	key := filepath.Base(sessionPath)
 	turn := plannerDisplayTurn{
 		UserHash: messageDisplayKey(userContent),
 		Messages: cloneHistoryMessages(messages),
 	}
-	m[key] = append(m[key], turn)
-	return saveSessionPlannerDisplays(dir, m)
+	return updateSessionPlannerDisplays(dir, false, func(m sessionPlannerDisplayMap) bool {
+		m[key] = append(m[key], turn)
+		return true
+	})
 }
 
 func removeSessionPlannerDisplay(dir, sessionPath string) error {
 	if strings.TrimSpace(sessionPath) == "" {
 		return nil
 	}
-	sessionPlannerDisplayMu.Lock()
-	defer sessionPlannerDisplayMu.Unlock()
-	m := loadSessionPlannerDisplays(dir)
 	key := filepath.Base(sessionPath)
-	if _, ok := m[key]; !ok {
-		return nil
-	}
-	delete(m, key)
-	return saveOrRemoveSessionPlannerDisplays(dir, m)
+	return updateSessionPlannerDisplays(dir, true, func(m sessionPlannerDisplayMap) bool {
+		if _, ok := m[key]; !ok {
+			return false
+		}
+		delete(m, key)
+		return true
+	})
 }
 
 func pruneSessionPlannerDisplays(dir string, protected map[string]struct{}) error {
-	sessionPlannerDisplayMu.Lock()
-	defer sessionPlannerDisplayMu.Unlock()
-	m := loadSessionPlannerDisplays(dir)
-	if len(m) == 0 {
-		return nil
-	}
-	changed := false
-	for key := range m {
-		if sessionDisplayKeyStillOwned(dir, key, protected) {
-			continue
+	return updateSessionPlannerDisplays(dir, true, func(m sessionPlannerDisplayMap) bool {
+		changed := false
+		for key := range m {
+			if sessionDisplayKeyStillOwned(dir, key, protected) {
+				continue
+			}
+			delete(m, key)
+			changed = true
 		}
-		delete(m, key)
-		changed = true
-	}
-	if !changed {
-		return nil
-	}
-	return saveOrRemoveSessionPlannerDisplays(dir, m)
+		return changed
+	})
 }
 
 func sessionPlannerDisplayTurns(dir, sessionPath string) []plannerDisplayTurn {
