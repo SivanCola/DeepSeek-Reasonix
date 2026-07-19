@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"reasonix/internal/agent"
 	"reasonix/internal/event"
@@ -530,6 +531,58 @@ func TestTurnOrchestratorProviderErrorPreservesCompletedPairAndLocalPartial(t *t
 	}
 }
 
+func TestTurnOrchestratorInterruptedAfterCompactionRelocatesVisibleTurn(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		err    error
+		cancel bool
+	}{
+		{name: "cancel", err: context.Canceled, cancel: true},
+		{name: "provider error", err: errors.New("provider connection reset")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sess := agent.NewSession("system")
+			for i := 0; i < 3; i++ {
+				sess.Add(provider.Message{Role: provider.RoleUser, Content: "old task"})
+				sess.Add(provider.Message{Role: provider.RoleAssistant, Content: "old answer"})
+			}
+			start := sess.Len()
+			runner := &compactingErrorRunner{session: sess, err: tc.err}
+			c := New(Options{Runner: runner, Executor: agent.New(nil, nil, sess, agent.Options{}, event.Discard)})
+			if tc.cancel {
+				c.mu.Lock()
+				c.canceling = true
+				c.mu.Unlock()
+			}
+
+			err := newTurnOrchestrator(c).runTurnWithRawDisplay(context.Background(), "update a.txt", "update a.txt", "")
+			if !errors.Is(err, tc.err) {
+				t.Fatalf("run error = %v, want %v", err, tc.err)
+			}
+			msgs := sess.Snapshot()
+			if start <= len(msgs) {
+				t.Fatalf("test setup did not shrink transcript below stale boundary: start=%d len=%d", start, len(msgs))
+			}
+			userCount := 0
+			for _, m := range msgs {
+				if m.Role == provider.RoleUser && StripComposePrefixes(m.Content) == "update a.txt" {
+					userCount++
+				}
+			}
+			if userCount != 1 {
+				t.Fatalf("current user occurrences = %d, want 1: %+v", userCount, msgs)
+			}
+			if len(msgs) != 6 || !agent.IsCompactionSummary(msgs[1]) || msgs[3].Role != provider.RoleAssistant || msgs[4].Role != provider.RoleTool || !msgs[5].LocalOnly {
+				t.Fatalf("recovered compacted transcript = %+v", msgs)
+			}
+			recovery := msgs[5].InterruptedTurn
+			if recovery == nil || !recovery.Pending || len(recovery.CompletedTools) != 1 || recovery.CompletedTools[0].Name != "write_file" {
+				t.Fatalf("recovery metadata = %+v", recovery)
+			}
+		})
+	}
+}
+
 func TestTurnOrchestratorCancelClassifiesCancelledToolResultAsInterrupted(t *testing.T) {
 	sess := agent.NewSession("system")
 	runner := &cancelStrippingRunner{
@@ -761,6 +814,11 @@ type cancelStrippingRunner struct {
 	err     error
 }
 
+type compactingErrorRunner struct {
+	session *agent.Session
+	err     error
+}
+
 type cancelBeforeUserRunner struct{}
 
 func (cancelBeforeUserRunner) Run(context.Context, string) error {
@@ -772,5 +830,21 @@ func (r *cancelStrippingRunner) Run(ctx context.Context, input string) error {
 	for _, m := range r.add {
 		r.session.Add(m)
 	}
+	return r.err
+}
+
+func (r *compactingErrorRunner) Run(_ context.Context, input string) error {
+	r.session.Replace([]provider.Message{
+		{Role: provider.RoleSystem, Content: "system"},
+		{Role: provider.RoleUser, Content: "<compaction-summary>\nold work\n</compaction-summary>"},
+		{Role: provider.RoleUser, Content: input, CreatedAt: time.Now().UnixMilli()},
+		{Role: provider.RoleAssistant, ToolCalls: []provider.ToolCall{{ID: "write-1", Name: "write_file", Arguments: `{"path":"a.txt","content":"ok"}`}}},
+		{Role: provider.RoleTool, ToolCallID: "write-1", Name: "write_file", Content: "wrote a.txt"},
+		{
+			Role: provider.RoleTool, ToolCallID: provider.LocalOnlyToolID, Name: provider.LocalOnlyToolName,
+			LocalOnly: true, Content: "partial final answer", ReasoningContent: "private partial reasoning",
+			InterruptedTurn: &provider.InterruptedTurnRecovery{Pending: true},
+		},
+	})
 	return r.err
 }

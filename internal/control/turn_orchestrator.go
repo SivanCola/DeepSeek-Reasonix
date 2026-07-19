@@ -219,7 +219,7 @@ func (o *turnOrchestrator) runOrchestratedTurn(ctx context.Context, turn orchest
 		// the next real user turn (#5499, #6680).
 		if errors.Is(err, context.Canceled) && c.CancelRequested() {
 			if turn.synthetic || IsSyntheticUserMessage(turn.raw) {
-				c.stripTurnMessagesAfter(startMessages)
+				c.stripInterruptedSyntheticTurnMessagesAfter(startMessages)
 			} else {
 				c.stripCancelledVisibleTurnMessagesAfterWithFallback(startMessages, provider.Message{
 					Role:      provider.RoleUser,
@@ -228,7 +228,9 @@ func (o *turnOrchestrator) runOrchestratedTurn(ctx context.Context, turn orchest
 					CreatedAt: time.Now().UnixMilli(),
 				})
 			}
-		} else if !turn.synthetic && !IsSyntheticUserMessage(turn.raw) && c.hasInterruptedDisplayAfter(startMessages) {
+		} else if !turn.synthetic && !IsSyntheticUserMessage(turn.raw) && c.hasInterruptedDisplayAfter(startMessages, provider.Message{
+			Role: provider.RoleUser, Content: input,
+		}) {
 			// Provider/API failures use the same safe recovery path as an explicit
 			// stop once the agent has recorded a partial stream. Completed tool
 			// pairs survive; unsafe stream fragments stay local-only.
@@ -284,7 +286,7 @@ func (o *turnOrchestrator) runOrchestratedTurn(ctx context.Context, turn orchest
 	}()
 	if err != nil {
 		if errors.Is(err, context.Canceled) && c.CancelRequested() {
-			c.stripTurnMessagesAfter(execStart)
+			c.stripInterruptedSyntheticTurnMessagesAfter(execStart)
 		}
 		return err
 	}

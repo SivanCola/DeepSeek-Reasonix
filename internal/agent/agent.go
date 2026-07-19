@@ -471,6 +471,11 @@ type Agent struct {
 	keepPolicy          KeepPolicy
 	compactStuck        bool
 	consecutiveCompacts int
+	// activeTurnCreatedAt identifies the real/synthetic user message that began
+	// the currently running turn. Compaction may rewrite older history while a
+	// tool loop is active, but it must keep this message and everything after it
+	// verbatim so cancellation/crash recovery can retain completed tool pairs.
+	activeTurnCreatedAt atomic.Int64
 
 	// stormSig / stormCount track a run of turns that keep failing or getting
 	// blocked the same way so the loop can break a death-spiral. The signature is
@@ -1163,7 +1168,10 @@ func (a *Agent) Run(ctx context.Context, input string) (runErr error) {
 	a.loopGuardReceiptMark = 0
 	a.sink.Emit(event.Event{Kind: event.TurnStarted})
 	input = a.withTurnPreferences(rawInput)
-	a.session.Add(provider.Message{Role: provider.RoleUser, Content: input, Images: userImages(ctx), CreatedAt: time.Now().UnixMilli()})
+	userCreatedAt := time.Now().UnixMilli()
+	a.activeTurnCreatedAt.Store(userCreatedAt)
+	defer a.activeTurnCreatedAt.Store(0)
+	a.session.Add(provider.Message{Role: provider.RoleUser, Content: input, Images: userImages(ctx), CreatedAt: userCreatedAt})
 
 	finalReadinessBlocks := 0
 	seenReadinessStates := make(map[string]struct{})

@@ -3741,7 +3741,7 @@ func (c *Controller) transplantInFlightTurnMarker(fromPath, toPath string) {
 		return
 	}
 	marker := meta.InFlightTurn
-	if err := agent.MarkSessionInFlightTurn(toPath, marker.StartMessageIndex, marker.PreserveUser); err != nil {
+	if err := agent.SetSessionInFlightTurn(toPath, *marker); err != nil {
 		// Keep the original marker: a turn boundary on the wrong branch beats
 		// no boundary anywhere if the runtime dies before the turn completes.
 		slog.Warn("controller: transplant in-flight turn marker", "path", toPath, "err", err)
@@ -3777,12 +3777,13 @@ func (c *Controller) recoverInterruptedTurn(path string) {
 		return
 	}
 	msgs := c.executor.Session().Snapshot()
-	changed := marker.StartMessageIndex >= 0 && len(msgs) > marker.StartMessageIndex
+	start, found := resolveInterruptedTurnStart(msgs, marker.StartMessageIndex, marker.PreserveUser, marker.StartedAt, provider.Message{})
+	changed := found && len(msgs) > start
 	if changed {
 		if marker.PreserveUser {
-			c.stripCancelledVisibleTurnMessagesAfter(marker.StartMessageIndex)
+			c.stripCancelledVisibleTurnMessagesAfterWithFallbackAt(start, provider.Message{}, marker.StartedAt)
 		} else {
-			c.stripTurnMessagesAfter(marker.StartMessageIndex)
+			c.stripTurnMessagesAfter(start)
 		}
 		if err := c.snapshot(false, true, false); err != nil {
 			slog.Warn("controller: post-interrupted-turn snapshot", "err", err)
@@ -3832,6 +3833,21 @@ func (c *Controller) stripTurnMessagesAfter(idx int) {
 	c.replaceSessionAfterCancel(msgs[:idx])
 }
 
+// stripInterruptedSyntheticTurnMessagesAfter relocates a synthetic turn after
+// an in-turn compaction has rewritten the pre-turn message index, then drops
+// that whole controller-created turn.
+func (c *Controller) stripInterruptedSyntheticTurnMessagesAfter(idx int) {
+	if c.executor == nil {
+		return
+	}
+	msgs := c.executor.Session().Snapshot()
+	startedAt := c.inFlightTurnStartedAt()
+	if start, ok := resolveInterruptedTurnStart(msgs, idx, false, startedAt, provider.Message{}); ok {
+		idx = start
+	}
+	c.stripTurnMessagesAfter(idx)
+}
+
 // stripCancelledVisibleTurnMessagesAfter preserves the real user prompt and
 // fully paired tool rounds from a cancelled visible turn. Unsafe assistant/tool
 // fragments are retained as provider-excluded display history.
@@ -3844,10 +3860,17 @@ func (c *Controller) stripCancelledVisibleTurnMessagesAfter(idx int) {
 // orchestrator owns that input, so it supplies the exact message rather than
 // letting cancellation infer the current turn from older transcript history.
 func (c *Controller) stripCancelledVisibleTurnMessagesAfterWithFallback(idx int, fallback provider.Message) {
+	c.stripCancelledVisibleTurnMessagesAfterWithFallbackAt(idx, fallback, c.inFlightTurnStartedAt())
+}
+
+func (c *Controller) stripCancelledVisibleTurnMessagesAfterWithFallbackAt(idx int, fallback provider.Message, startedAt time.Time) {
 	if c.executor == nil {
 		return
 	}
 	msgs := c.executor.Session().Snapshot()
+	if start, ok := resolveInterruptedTurnStart(msgs, idx, true, startedAt, fallback); ok {
+		idx = start
+	}
 	if idx < 0 {
 		idx = 0
 	}
@@ -3905,6 +3928,15 @@ func (c *Controller) stripCancelledVisibleTurnMessagesAfterWithFallback(idx int,
 			i++
 			continue
 		}
+		// Auto-compaction can install a digest between the pinned current user
+		// message and its recent tool tail. It summarizes pre-turn/current work
+		// that is no longer present verbatim, so keep it provider-visible rather
+		// than silently dropping context during recovery.
+		if agent.IsCompactionSummary(m) {
+			next = append(next, m)
+			i++
+			continue
+		}
 		if end, ok := completeToolTurnEnd(msgs, i); ok {
 			next = append(next, msgs[i:end]...)
 			for k, call := range m.ToolCalls {
@@ -3957,11 +3989,78 @@ func (c *Controller) stripCancelledVisibleTurnMessagesAfterWithFallback(idx int,
 	c.replaceSessionAfterCancel(next)
 }
 
-func (c *Controller) hasInterruptedDisplayAfter(idx int) bool {
+func (c *Controller) inFlightTurnStartedAt() time.Time {
+	path := c.SessionPath()
+	if path == "" {
+		return time.Time{}
+	}
+	meta, ok, err := agent.LoadBranchMeta(path)
+	if err != nil || !ok || meta.InFlightTurn == nil {
+		return time.Time{}
+	}
+	return meta.InFlightTurn.StartedAt
+}
+
+// resolveInterruptedTurnStart turns the pre-run array index into a stable
+// boundary after compaction. New user messages carry a creation timestamp set
+// after the marker, and graceful cleanup also has the exact composed prompt as
+// a fallback. We only fall back to the legacy index when it still points at a
+// plausible turn-start user message, keeping recovery data-safe for older
+// sidecars without timestamps.
+func resolveInterruptedTurnStart(msgs []provider.Message, idx int, preserveUser bool, startedAt time.Time, fallback provider.Message) (int, bool) {
+	fallbackContent := ""
+	if fallback.Role == provider.RoleUser {
+		fallbackContent = StripComposePrefixes(fallback.Content)
+	}
+	matchesKind := func(m provider.Message) bool {
+		if m.Role != provider.RoleUser {
+			return false
+		}
+		if preserveUser {
+			if IsSyntheticUserMessage(m.Content) {
+				return false
+			}
+			if _, ok := agent.SteerText(m.Content); ok {
+				return false
+			}
+			if fallbackContent != "" && StripComposePrefixes(m.Content) != fallbackContent {
+				return false
+			}
+		}
+		return true
+	}
+	startedMillis := startedAt.UnixMilli()
+	if !startedAt.IsZero() {
+		for i, m := range msgs {
+			if matchesKind(m) && m.CreatedAt >= startedMillis {
+				return i, true
+			}
+		}
+	}
+	// Tests/headless runners may not persist an in-flight sidecar. The exact
+	// graceful fallback still distinguishes the current visible turn; search
+	// backward so a repeated prompt selects the newest occurrence.
+	if fallbackContent != "" {
+		for i := len(msgs) - 1; i >= 0; i-- {
+			if matchesKind(msgs[i]) {
+				return i, true
+			}
+		}
+	}
+	if idx >= 0 && idx < len(msgs) && matchesKind(msgs[idx]) {
+		return idx, true
+	}
+	return 0, false
+}
+
+func (c *Controller) hasInterruptedDisplayAfter(idx int, fallback provider.Message) bool {
 	if c.executor == nil {
 		return false
 	}
 	msgs := c.executor.Session().Snapshot()
+	if start, ok := resolveInterruptedTurnStart(msgs, idx, true, c.inFlightTurnStartedAt(), fallback); ok {
+		idx = start
+	}
 	idx = max(0, min(idx, len(msgs)))
 	for _, m := range msgs[idx:] {
 		if m.LocalOnly && m.InterruptedTurn != nil {
