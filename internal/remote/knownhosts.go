@@ -46,29 +46,9 @@ type HostKeyPolicy struct {
 // Callback builds an ssh.HostKeyCallback enforcing this policy for host (the
 // display label used in prompts). ctx bounds any interactive prompt.
 func (p *HostKeyPolicy) Callback(ctx context.Context, host string) (ssh.HostKeyCallback, error) {
-	files := p.systemFiles()
-	managed := p.managedPath()
-	if managed != "" {
-		if err := os.MkdirAll(filepath.Dir(managed), 0o700); err != nil {
-			return nil, err
-		}
-		// knownhosts.New requires each file to exist; create an empty managed
-		// file on first use.
-		if _, err := os.Stat(managed); os.IsNotExist(err) {
-			if err := os.WriteFile(managed, nil, 0o600); err != nil {
-				return nil, err
-			}
-		}
-		files = append(files, managed)
-	}
-
-	var base ssh.HostKeyCallback
-	if len(files) > 0 {
-		var err error
-		base, err = knownhosts.New(files...)
-		if err != nil {
-			return nil, fmt.Errorf("load known_hosts: %w", err)
-		}
+	base, managed, err := p.loadCallback()
+	if err != nil {
+		return nil, err
 	}
 
 	return func(hostname string, remote net.Addr, key ssh.PublicKey) error {
@@ -81,28 +61,109 @@ func (p *HostKeyPolicy) Callback(ctx context.Context, host string) (ssh.HostKeyC
 			if !asKeyError(err, &keyErr) {
 				return err
 			}
-			if hasKnownKeyType(keyErr, key.Type()) {
-				// The same key algorithm is already on record with different
-				// material: hard fail, never promptable. Keys of another
-				// algorithm are independent host identities and go through the
-				// normal TOFU confirmation below.
+			if len(keyErr.Want) > 0 {
+				// A different key is on record for this host: hard fail, never
+				// promptable. Name the file:line so the user can inspect it.
 				return fmt.Errorf("%w for %s: presented %s; known_hosts records a different key%s",
 					ErrHostKeyMismatch, host, ssh.FingerprintSHA256(key), knownHostsLocations(keyErr))
 			}
-			// No record, or records only for other algorithms: fall through
-			// to TOFU so the user can inspect and persist this key type.
+			// len(Want)==0 => host unknown. Fall through to TOFU.
 		}
 		return p.tofu(ctx, host, hostname, remote, key, managed)
 	}, nil
 }
 
-func hasKnownKeyType(e *knownhosts.KeyError, keyType string) bool {
-	for _, known := range e.Want {
-		if known.Key != nil && known.Key.Type() == keyType {
-			return true
+// HostKeyAlgorithms returns the secure host-key algorithms in negotiation
+// order, preferring algorithms compatible with keys already recorded for
+// hostname. The strict callback remains the authority: this only steers key
+// exchange toward a known identity on servers that expose multiple host keys.
+func (p *HostKeyPolicy) HostKeyAlgorithms(hostname string, remote net.Addr) ([]string, error) {
+	base, _, err := p.loadCallback()
+	if err != nil || base == nil {
+		return nil, err
+	}
+	err = base(hostname, remote, hostKeyLookupProbe{})
+	if err == nil {
+		return nil, nil
+	}
+	var keyErr *knownhosts.KeyError
+	if !asKeyError(err, &keyErr) {
+		return nil, err
+	}
+	if len(keyErr.Want) == 0 {
+		return nil, nil
+	}
+
+	preferred := make(map[string]bool, len(keyErr.Want))
+	for _, known := range keyErr.Want {
+		if known.Key == nil {
+			continue
+		}
+		keyType := known.Key.Type()
+		preferred[keyType] = true
+		if keyType == ssh.KeyAlgoRSA {
+			// An ssh-rsa public key can use the SHA-2 signature algorithms;
+			// do not re-enable the insecure SHA-1 ssh-rsa algorithm.
+			preferred[ssh.KeyAlgoRSASHA512] = true
+			preferred[ssh.KeyAlgoRSASHA256] = true
 		}
 	}
-	return false
+
+	supported := ssh.SupportedAlgorithms().HostKeys
+	ordered := make([]string, 0, len(supported))
+	for _, algorithm := range supported {
+		if preferred[algorithm] {
+			ordered = append(ordered, algorithm)
+		}
+	}
+	if len(ordered) == 0 {
+		return nil, nil
+	}
+	for _, algorithm := range supported {
+		if !preferred[algorithm] {
+			ordered = append(ordered, algorithm)
+		}
+	}
+	return ordered, nil
+}
+
+// hostKeyLookupProbe deliberately cannot equal a parsed OpenSSH public key.
+// Passing it through knownhosts.New lets us reuse the library's exact hostname,
+// wildcard, hashed-host, port, and file matching and inspect KeyError.Want.
+type hostKeyLookupProbe struct{}
+
+func (hostKeyLookupProbe) Type() string    { return "reasonix-host-key-lookup-probe" }
+func (hostKeyLookupProbe) Marshal() []byte { return []byte("reasonix-host-key-lookup-probe") }
+func (hostKeyLookupProbe) Verify([]byte, *ssh.Signature) error {
+	return fmt.Errorf("host-key lookup probe cannot verify signatures")
+}
+
+func (p *HostKeyPolicy) loadCallback() (ssh.HostKeyCallback, string, error) {
+	files := p.systemFiles()
+	managed := p.managedPath()
+	if managed != "" {
+		if err := os.MkdirAll(filepath.Dir(managed), 0o700); err != nil {
+			return nil, "", err
+		}
+		// knownhosts.New requires each file to exist; create an empty managed
+		// file on first use.
+		if _, err := os.Stat(managed); os.IsNotExist(err) {
+			if err := os.WriteFile(managed, nil, 0o600); err != nil {
+				return nil, "", err
+			}
+		}
+		files = append(files, managed)
+	}
+
+	var base ssh.HostKeyCallback
+	if len(files) > 0 {
+		var err error
+		base, err = knownhosts.New(files...)
+		if err != nil {
+			return nil, "", fmt.Errorf("load known_hosts: %w", err)
+		}
+	}
+	return base, managed, nil
 }
 
 func (p *HostKeyPolicy) tofu(ctx context.Context, host, hostname string, remote net.Addr, key ssh.PublicKey, managed string) error {

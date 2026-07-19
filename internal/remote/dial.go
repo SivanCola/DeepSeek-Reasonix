@@ -124,11 +124,17 @@ func newSSHClient(ctx context.Context, conn net.Conn, host ResolvedHost, auth *A
 		conn.Close()
 		return nil, err
 	}
+	hostKeyAlgorithms, err := hostKeys.HostKeyAlgorithms(host.Addr(), conn.RemoteAddr())
+	if err != nil {
+		conn.Close()
+		return nil, err
+	}
 	clientCfg := &ssh.ClientConfig{
-		User:            host.User,
-		Auth:            methods,
-		HostKeyCallback: hkCallback,
-		Timeout:         timeout,
+		User:              host.User,
+		Auth:              methods,
+		HostKeyCallback:   hkCallback,
+		HostKeyAlgorithms: hostKeyAlgorithms,
+		Timeout:           timeout,
 	}
 	// Bound the handshake even for ProxyJump channel connections, whose
 	// SetDeadline method returns "deadline not supported". A watcher closes the

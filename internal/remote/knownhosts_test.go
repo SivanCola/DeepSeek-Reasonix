@@ -11,12 +11,51 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/knownhosts"
+
+	"reasonix/internal/remote/sshtest"
 )
 
-func TestHostKeyPolicyPromptsForNewKeyAlgorithm(t *testing.T) {
+func TestNewSSHClientPrefersRecordedHostKeyAlgorithm(t *testing.T) {
+	knownED25519 := generateED25519Signer(t)
+	otherECDSA := generateECDSASigner(t)
+	server := sshtest.Start(t, sshtest.Options{
+		HostKeys: []ssh.Signer{otherECDSA, knownED25519},
+	})
+	systemPath := filepath.Join(t.TempDir(), "known_hosts")
+	managedPath := filepath.Join(t.TempDir(), "known_hosts")
+	writeKnownHost(t, systemPath, server.Addr, knownED25519.PublicKey())
+
+	policy := &HostKeyPolicy{
+		SystemKnownHosts: []string{systemPath},
+		ManagedPath:      managedPath,
+		Prompt: func(context.Context, HostKeyQuestion) (bool, error) {
+			t.Fatal("known multi-algorithm host must not prompt")
+			return false, nil
+		},
+	}
+
+	_, hostName, port, err := ParseTarget(server.Addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	conn, err := net.DialTimeout("tcp", server.Addr, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, err := newSSHClient(context.Background(), conn, ResolvedHost{
+		Name: server.Addr, HostName: hostName, Port: port, User: "test",
+	}, &AuthOptions{DisableAgent: true}, policy, time.Second)
+	if err != nil {
+		t.Fatalf("connect to multi-algorithm host: %v", err)
+	}
+	defer client.Close()
+}
+
+func TestHostKeyPolicyRejectsChangedKeyAcrossAlgorithms(t *testing.T) {
 	hostname := "example.test:2222"
 	knownED25519 := generateED25519Signer(t)
 	presentedECDSA := generateECDSASigner(t)
@@ -24,42 +63,25 @@ func TestHostKeyPolicyPromptsForNewKeyAlgorithm(t *testing.T) {
 	managedPath := filepath.Join(t.TempDir(), "known_hosts")
 	writeKnownHost(t, systemPath, hostname, knownED25519.PublicKey())
 
-	prompted := 0
+	prompted := false
 	policy := &HostKeyPolicy{
 		SystemKnownHosts: []string{systemPath},
 		ManagedPath:      managedPath,
-		Prompt: func(_ context.Context, q HostKeyQuestion) (bool, error) {
-			prompted++
-			if q.KeyType != presentedECDSA.PublicKey().Type() {
-				t.Fatalf("prompt key type = %q, want %q", q.KeyType, presentedECDSA.PublicKey().Type())
-			}
+		Prompt: func(context.Context, HostKeyQuestion) (bool, error) {
+			prompted = true
 			return true, nil
 		},
 	}
-
 	callback, err := policy.Callback(context.Background(), "example")
 	if err != nil {
 		t.Fatal(err)
 	}
-	remoteAddr := &net.TCPAddr{IP: net.ParseIP("192.0.2.10"), Port: 2222}
-	if err := callback(hostname, remoteAddr, presentedECDSA.PublicKey()); err != nil {
-		t.Fatalf("new key algorithm: %v", err)
+	err = callback(hostname, &net.TCPAddr{IP: net.ParseIP("192.0.2.10"), Port: 2222}, presentedECDSA.PublicKey())
+	if !errors.Is(err, ErrHostKeyMismatch) {
+		t.Fatalf("error = %v, want ErrHostKeyMismatch", err)
 	}
-	if prompted != 1 {
-		t.Fatalf("prompt count = %d, want 1", prompted)
-	}
-
-	// The accepted algorithm is persisted, so a fresh callback trusts the same
-	// key without prompting again.
-	callback, err = policy.Callback(context.Background(), "example")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := callback(hostname, remoteAddr, presentedECDSA.PublicKey()); err != nil {
-		t.Fatalf("persisted key algorithm: %v", err)
-	}
-	if prompted != 1 {
-		t.Fatalf("persisted key re-prompted; count = %d", prompted)
+	if prompted {
+		t.Fatal("cross-algorithm mismatch must not be promptable")
 	}
 }
 

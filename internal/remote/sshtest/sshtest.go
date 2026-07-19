@@ -35,6 +35,9 @@ type Server struct {
 
 // Options configures a test server.
 type Options struct {
+	// HostKeys, when non-empty, are offered by the server. The first key is
+	// also exposed as Server.HostKey. Empty generates one ed25519 key.
+	HostKeys []ssh.Signer
 	// Password, when non-empty, enables password auth accepting (any user,
 	// this password).
 	Password string
@@ -49,12 +52,21 @@ type Options struct {
 // Start launches a server on 127.0.0.1:0.
 func Start(t *testing.T, opts Options) *Server {
 	t.Helper()
-	hostKey, err := generateHostKey()
-	if err != nil {
-		t.Fatalf("host key: %v", err)
+	hostKeys := opts.HostKeys
+	if len(hostKeys) == 0 {
+		hostKey, err := generateHostKey()
+		if err != nil {
+			t.Fatalf("host key: %v", err)
+		}
+		hostKeys = []ssh.Signer{hostKey}
 	}
 	cfg := &ssh.ServerConfig{}
-	cfg.AddHostKey(hostKey)
+	for _, hostKey := range hostKeys {
+		if hostKey == nil {
+			t.Fatal("host key must not be nil")
+		}
+		cfg.AddHostKey(hostKey)
+	}
 	if opts.Password != "" {
 		cfg.PasswordCallback = func(conn ssh.ConnMetadata, pass []byte) (*ssh.Permissions, error) {
 			if string(pass) == opts.Password {
@@ -82,7 +94,7 @@ func Start(t *testing.T, opts Options) *Server {
 	}
 	s := &Server{
 		Addr:      ln.Addr().String(),
-		HostKey:   hostKey,
+		HostKey:   hostKeys[0],
 		config:    cfg,
 		listener:  ln,
 		execFunc:  opts.Exec,
