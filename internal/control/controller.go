@@ -3848,14 +3848,10 @@ func (c *Controller) stripInterruptedSyntheticTurnMessagesAfter(idx int) {
 	c.stripTurnMessagesAfter(idx)
 }
 
-// stripCancelledVisibleTurnMessagesAfter preserves the real user prompt and
-// fully paired tool rounds from a cancelled visible turn. Unsafe assistant/tool
-// fragments are retained as provider-excluded display history.
-func (c *Controller) stripCancelledVisibleTurnMessagesAfter(idx int) {
-	c.stripCancelledVisibleTurnMessagesAfterWithFallback(idx, provider.Message{})
-}
-
-// stripCancelledVisibleTurnMessagesAfterWithFallback also covers coordinator
+// stripCancelledVisibleTurnMessagesAfterWithFallback preserves the real user
+// prompt and fully paired tool rounds from a cancelled visible turn. Unsafe
+// assistant/tool fragments are retained as provider-excluded display history.
+// It also covers coordinator
 // cancellation before the executor has appended the visible user message. The
 // orchestrator owns that input, so it supplies the exact message rather than
 // letting cancellation infer the current turn from older transcript history.
