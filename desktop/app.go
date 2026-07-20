@@ -1883,6 +1883,12 @@ func (a *App) NewSessionForTab(tabID string) error {
 	if err := ctrl.NewSession(); err != nil {
 		return err
 	}
+	recoveryEnabled := ctrl.RecoveryCheckpointEnabled()
+	a.mu.Lock()
+	if current := a.tabs[tab.ID]; current == tab && tab.Ctrl == ctrl {
+		tab.recoveryCheckpointEnabled = recoveryEnabled
+	}
+	a.mu.Unlock()
 	// The rotated session starts with zero spend: without this reset the tab
 	// telemetry keeps the previous session's totals and the status bar 会话费用
 	// silently turns into an all-sessions running total (#5850).
@@ -1993,6 +1999,12 @@ func (a *App) ClearSessionForTab(tabID string) error {
 	if err := ctrl.ClearSession(); err != nil {
 		return err
 	}
+	recoveryEnabled := ctrl.RecoveryCheckpointEnabled()
+	a.mu.Lock()
+	if current := a.tabs[tab.ID]; current == tab && tab.Ctrl == ctrl {
+		tab.recoveryCheckpointEnabled = recoveryEnabled
+	}
+	a.mu.Unlock()
 	if err := tab.ensureSessionLease(ctrl.SessionPath()); err != nil {
 		// Wails bridge return: a raw lease error would carry the session path
 		// and holder id across to the frontend.
@@ -2109,6 +2121,7 @@ func (a *App) clearActiveSessionRuntime(tab *WorkspaceTab, oldCtrl control.Sessi
 	newCtrl.EnableInteractiveApproval()
 	applyTabModeToController(newCtrl, snap.mode)
 	applyTabToolApprovalModeToController(newCtrl, snap.toolApprovalMode)
+	newCtrl.SetRecoveryCheckpointDefaultEnabled(desktopDefaultRecoveryCheckpointForRoot(snap.workspaceRoot))
 	// Clearing the session clears the active goal too (same contract as
 	// Controller.ClearSession): the snapshot's goal belongs to the destroyed
 	// conversation and must not seed the replacement.
@@ -2119,7 +2132,7 @@ func (a *App) clearActiveSessionRuntime(tab *WorkspaceTab, oldCtrl control.Sessi
 		// path/pid/writer id out of it.
 		return userFacingSessionLeaseError("", err)
 	}
-	newCtrl.SetSessionPath(path)
+	newCtrl.SetFreshSessionPath(path)
 
 	a.mu.Lock()
 	if current := a.tabs[tab.ID]; current != tab {
@@ -2137,6 +2150,7 @@ func (a *App) clearActiveSessionRuntime(tab *WorkspaceTab, oldCtrl control.Sessi
 	tab.sink = newSink
 	tab.SessionPath = path
 	tab.Label = newCtrl.Label()
+	tab.recoveryCheckpointEnabled = newCtrl.RecoveryCheckpointEnabled()
 	tab.Ready = true
 	clearTabStartupError(tab)
 	tab.goal = ""
@@ -2149,6 +2163,7 @@ func (a *App) clearActiveSessionRuntime(tab *WorkspaceTab, oldCtrl control.Sessi
 	// Same contract as ClearSession's non-running path: the replacement
 	// session starts with zero spend.
 	tab.resetTelemetry(path)
+	a.persistTabSessionPath(tab, path)
 	oldCtrl.CloseAfterDestroy()
 	a.emitProjectTreeChanged()
 	a.notifyTabRuntimeRebuilt(tab)

@@ -27,6 +27,18 @@ func (c *Controller) SetRecoveryCheckpointEnabled(enabled bool) {
 	c.persistRecoveryEnabled(enabled)
 }
 
+// SetRecoveryCheckpointDefaultEnabled changes the default sampled only when
+// this controller rotates to a fresh session. It deliberately leaves the
+// current session preference untouched.
+func (c *Controller) SetRecoveryCheckpointDefaultEnabled(enabled bool) {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	c.recoveryDefaultEnabled = enabled
+	c.mu.Unlock()
+}
+
 // RecoveryCheckpointEnabled reports the session preference (not whether Auto
 // is currently active).
 func (c *Controller) RecoveryCheckpointEnabled() bool {
@@ -165,6 +177,25 @@ func (c *Controller) loadRecoveryState(path string) {
 		// Missing, empty, or unreadable sidecars must still replace the old
 		// in-memory state; otherwise a session switch carries its checkpoint.
 		gate.Restore(snap)
+	}
+}
+
+// resetRecoveryForNewSession clears any failure checkpoint inherited from the
+// previous path and reapplies the configured new-session default. Metadata is
+// not created here: richer frontends still need to attach topic/scope ownership
+// before the first sidecar write, and ordinary snapshots persist the preference.
+func (c *Controller) resetRecoveryForNewSession(path string) {
+	if c == nil {
+		return
+	}
+	c.loadRecoveryState(path)
+	c.mu.Lock()
+	enabled := c.recoveryDefaultEnabled
+	c.recoveryEnabled = enabled
+	gate := c.recoveryGate
+	c.mu.Unlock()
+	if gate != nil {
+		gate.SetEnabled(enabled)
 	}
 }
 

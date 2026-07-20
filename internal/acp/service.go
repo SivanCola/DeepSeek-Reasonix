@@ -645,7 +645,7 @@ func (s *service) sessionNew(ctx context.Context, raw json.RawMessage) (any, err
 			return nil, sessionLeaseBindError("session/new", err)
 		}
 		sess.lease = lease
-		ctrl.SetSessionPath(sess.transcript)
+		ctrl.SetFreshSessionPath(sess.transcript)
 	}
 
 	s.mu.Lock()

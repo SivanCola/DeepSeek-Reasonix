@@ -277,7 +277,7 @@ func TestRecoveryPromptCanResolveSynchronouslyFromSink(t *testing.T) {
 	}
 }
 
-func TestSetSessionPathClearsRecoveryState(t *testing.T) {
+func TestSetFreshSessionPathClearsRecoveryState(t *testing.T) {
 	dir := t.TempDir()
 	oldPath := filepath.Join(dir, "old.jsonl")
 	newPath := filepath.Join(dir, "new.jsonl")
@@ -297,8 +297,9 @@ func TestSetSessionPathClearsRecoveryState(t *testing.T) {
 	if st := gate.Snapshot().Tasks["root"]; st == nil || st.Failure == nil {
 		t.Fatal("test setup did not arm recovery")
 	}
+	c.SetRecoveryCheckpointEnabled(false)
 
-	c.SetSessionPath(newPath)
+	c.SetFreshSessionPath(newPath)
 	if got := gate.Snapshot().Tasks; len(got) != 0 {
 		t.Fatalf("new session retained old recovery state: %+v", got)
 	}
@@ -330,6 +331,9 @@ func TestSetSessionPathClearsRecoveryState(t *testing.T) {
 	if len(newSnap.Tasks) != 0 {
 		t.Fatalf("old recovery snapshot landed on new session: %+v", newSnap.Tasks)
 	}
+	if !c.RecoveryCheckpointEnabled() {
+		t.Fatal("fresh session path did not restore the configured recovery default")
+	}
 }
 
 func TestFreshSessionRotationsClearRecoveryState(t *testing.T) {
@@ -353,6 +357,7 @@ func TestFreshSessionRotationsClearRecoveryState(t *testing.T) {
 				Runner: ag, Executor: ag, SessionDir: dir, SessionPath: path,
 				RecoveryCheckpointEnabled: true,
 			})
+			defer c.Close()
 			c.SetToolApprovalMode(ToolApprovalAuto)
 			c.mu.Lock()
 			gate := c.recoveryGate
@@ -361,6 +366,10 @@ func TestFreshSessionRotationsClearRecoveryState(t *testing.T) {
 				Tool: "bash", Verification: true,
 				Args: json.RawMessage(`{"command":"go test ./..."}`), ErrSummary: "fail",
 			})
+			c.SetRecoveryCheckpointEnabled(false)
+			if c.RecoveryCheckpointEnabled() {
+				t.Fatal("test setup did not disable the current session preference")
+			}
 			if err := tc.rotate(c); err != nil {
 				t.Fatalf("rotate: %v", err)
 			}
@@ -369,6 +378,9 @@ func TestFreshSessionRotationsClearRecoveryState(t *testing.T) {
 			}
 			if c.SessionPath() == path {
 				t.Fatalf("session path did not rotate: %q", path)
+			}
+			if !c.RecoveryCheckpointEnabled() {
+				t.Fatal("fresh session did not restore the configured recovery default")
 			}
 		})
 	}
@@ -397,5 +409,11 @@ func TestResumeLegacySessionDefaultsRecoveryDisabled(t *testing.T) {
 	c.Resume(loaded, path)
 	if c.RecoveryCheckpointEnabled() {
 		t.Fatal("legacy session without metadata field resumed with recovery enabled")
+	}
+	if err := c.NewSession(); err != nil {
+		t.Fatalf("NewSession: %v", err)
+	}
+	if !c.RecoveryCheckpointEnabled() {
+		t.Fatal("fresh session inherited the legacy session's disabled compatibility preference")
 	}
 }

@@ -1113,6 +1113,31 @@ func TestSaveToRoundTrips(t *testing.T) {
 	}
 }
 
+func TestRecoverySettingsRoundTripThroughUserSave(t *testing.T) {
+	isolateUserConfigHome(t)
+	c := Default()
+	if err := c.SetDesktopDefaultAutoRecoveryCheckpoint(false); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.SetAutoRecoveryCheckpoint("off"); err != nil {
+		t.Fatal(err)
+	}
+	c.Agent.RecoveryModel = "deepseek-pro"
+	c.Agent.RecoveryTemperature = 0.25
+
+	path := UserConfigPath()
+	if err := c.SaveTo(path); err != nil {
+		t.Fatalf("SaveTo: %v", err)
+	}
+	got := LoadForEdit(path)
+	if got.Desktop.DefaultAutoRecoveryCheckpoint == nil || *got.Desktop.DefaultAutoRecoveryCheckpoint {
+		t.Fatalf("desktop.default_auto_recovery_checkpoint = %+v, want false", got.Desktop.DefaultAutoRecoveryCheckpoint)
+	}
+	if got.Agent.AutoRecoveryCheckpoint != "off" || got.Agent.RecoveryModel != "deepseek-pro" || got.Agent.RecoveryTemperature != 0.25 {
+		t.Fatalf("agent recovery settings not preserved: %+v", got.Agent)
+	}
+}
+
 func TestSaveToScopesUserAndProjectFiles(t *testing.T) {
 	home := isolateUserConfigHome(t)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "xdg"))

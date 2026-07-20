@@ -1974,9 +1974,27 @@ func (a *App) SetDefaultToolApprovalMode(mode string) error {
 // SetDefaultAutoRecoveryCheckpoint updates the new-session default for Auto-mode
 // failure recovery confirmation ("report after failures").
 func (a *App) SetDefaultAutoRecoveryCheckpoint(enabled bool) error {
-	return a.applyConfigOnly(func(c *config.Config) error {
+	if err := a.applyConfigOnly(func(c *config.Config) error {
 		return c.SetDesktopDefaultAutoRecoveryCheckpoint(enabled)
-	})
+	}); err != nil {
+		return err
+	}
+	// Existing sessions retain their current preference, but controller-side
+	// /new must observe the updated default without requiring a rebuild.
+	a.mu.RLock()
+	ctrls := make([]control.SessionAPI, 0, len(a.tabs))
+	for _, tab := range a.tabs {
+		if tab != nil && tab.Ctrl != nil {
+			ctrls = append(ctrls, tab.Ctrl)
+		}
+	}
+	a.mu.RUnlock()
+	for _, ctrl := range ctrls {
+		if setter, ok := ctrl.(interface{ SetRecoveryCheckpointDefaultEnabled(bool) }); ok {
+			setter.SetRecoveryCheckpointDefaultEnabled(enabled)
+		}
+	}
+	return nil
 }
 
 func desktopAutoPlanMode(mode string) string {

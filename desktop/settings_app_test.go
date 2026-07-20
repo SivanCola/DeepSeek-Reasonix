@@ -1119,6 +1119,50 @@ func TestSetDefaultToolApprovalModePersistsToUserConfig(t *testing.T) {
 	}
 }
 
+func TestSetDefaultAutoRecoveryCheckpointPersistsAndUpdatesNewSessions(t *testing.T) {
+	isolateDesktopUserDirs(t)
+
+	dir := config.SessionDir()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir session dir: %v", err)
+	}
+	ctrl := control.New(control.Options{
+		SessionDir: dir, SessionPath: filepath.Join(dir, "recovery-settings-old.jsonl"),
+		RecoveryCheckpointEnabled: true,
+	})
+	ctrl.SetRecoveryCheckpointEnabled(true)
+	defer ctrl.Close()
+	app := NewApp()
+	app.setTestCtrl(ctrl, "deepseek-flash/deepseek-v4-flash")
+	if !app.Settings().DefaultAutoRecoveryCheckpoint {
+		t.Fatal("Settings().DefaultAutoRecoveryCheckpoint default = false, want true")
+	}
+	if err := app.SetDefaultAutoRecoveryCheckpoint(false); err != nil {
+		t.Fatalf("SetDefaultAutoRecoveryCheckpoint: %v", err)
+	}
+	if app.Settings().DefaultAutoRecoveryCheckpoint {
+		t.Fatal("Settings().DefaultAutoRecoveryCheckpoint = true, want false")
+	}
+	if !ctrl.RecoveryCheckpointEnabled() {
+		t.Fatal("changing the default modified the current session preference")
+	}
+	ctrl.SetFreshSessionPath(filepath.Join(dir, "recovery-settings-new.jsonl"))
+	if ctrl.RecoveryCheckpointEnabled() {
+		t.Fatal("new session did not observe the updated recovery default")
+	}
+	cfg := config.LoadForEdit(config.UserConfigPath())
+	if cfg.Desktop.DefaultAutoRecoveryCheckpoint == nil || *cfg.Desktop.DefaultAutoRecoveryCheckpoint {
+		t.Fatalf("desktop.default_auto_recovery_checkpoint = %+v, want false", cfg.Desktop.DefaultAutoRecoveryCheckpoint)
+	}
+	project := t.TempDir()
+	if err := os.WriteFile(filepath.Join(project, "reasonix.toml"), []byte("[desktop]\ndefault_auto_recovery_checkpoint = true\n"), 0o644); err != nil {
+		t.Fatalf("write project config: %v", err)
+	}
+	if desktopDefaultRecoveryCheckpointForRoot(project) {
+		t.Fatal("project config overrode the user-global desktop recovery default")
+	}
+}
+
 func TestSetDesktopMetricsDefaultsOnAndPersistsOff(t *testing.T) {
 	isolateDesktopUserDirs(t)
 

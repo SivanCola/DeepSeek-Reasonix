@@ -130,6 +130,9 @@ func configureControllerRuntime(ctrl, oldCtrl control.SessionAPI, runtime normal
 		return
 	}
 	ctrl.EnableInteractiveApproval()
+	if setter, ok := ctrl.(interface{ SetRecoveryCheckpointDefaultEnabled(bool) }); ok {
+		setter.SetRecoveryCheckpointDefaultEnabled(desktopDefaultRecoveryCheckpointForRoot(ctrl.WorkspaceRoot()))
+	}
 	applyTabModeToController(ctrl, runtime.tabMode())
 	applyTabToolApprovalModeToController(ctrl, runtime.toolApprovalMode)
 	if next, ok := ctrl.(*control.Controller); ok {

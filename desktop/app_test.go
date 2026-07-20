@@ -5435,6 +5435,16 @@ func TestClearSessionCancelsRunningRuntimeAndKeepsTopic(t *testing.T) {
 	if got := tab.currentSessionPath(); got == "" || got == path {
 		t.Fatalf("new session path = %q, want fresh path", got)
 	}
+	if !tab.Ctrl.RecoveryCheckpointEnabled() || !tab.recoveryCheckpointEnabled {
+		t.Fatal("replacement controller did not use the desktop recovery default")
+	}
+	meta, ok, err := agent.LoadBranchMeta(tab.currentSessionPath())
+	if err != nil || !ok {
+		t.Fatalf("load replacement session metadata: ok=%v err=%v", ok, err)
+	}
+	if meta.RecoveryCheckpointEnabled == nil || !*meta.RecoveryCheckpointEnabled {
+		t.Fatalf("replacement recovery preference = %+v, want true", meta.RecoveryCheckpointEnabled)
+	}
 }
 
 func TestClearSessionRemovesRunningJobArtifacts(t *testing.T) {

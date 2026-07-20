@@ -83,10 +83,11 @@ type Controller struct {
 	guardianPath string            // persisted guardian session file ("" when disabled)
 	// recoveryGate is the shared Auto-mode failure recovery checkpoint.
 	// nil when the feature is not wired for this controller.
-	recoveryGate    *recovery.Gate
-	recoveryEnabled bool // session preference; effective only in Auto mode
-	sink            event.Sink
-	policy          permission.Policy
+	recoveryGate           *recovery.Gate
+	recoveryEnabled        bool // session preference; effective only in Auto mode
+	recoveryDefaultEnabled bool // configured default sampled by fresh session rotations
+	sink                   event.Sink
+	policy                 permission.Policy
 	// subagentGate is the shared gate every headless-only sub-agent surface
 	// reads from (see Options.SubagentGate). Nil when the caller didn't build
 	// one — sub-agents then keep whatever gate they were constructed with.
@@ -488,6 +489,7 @@ func New(opts Options) *Controller {
 		executor:                          opts.Executor,
 		guardianSess:                      opts.Guardian,
 		guardianPath:                      guardian.PathFor(opts.SessionPath),
+		recoveryDefaultEnabled:            opts.RecoveryCheckpointEnabled,
 		sink:                              sink,
 		policy:                            opts.Policy,
 		subagentGate:                      opts.SubagentGate,
@@ -2679,7 +2681,7 @@ func (c *Controller) NewSession() error {
 	c.ResetPlannerSession()
 	freshPath := c.SessionPath()
 	c.rebindCheckpoints(freshPath)
-	c.loadRecoveryState(freshPath)
+	c.resetRecoveryForNewSession(freshPath)
 	c.snapshotMu.Unlock()
 	// A new session starts with no active goal: without this, a running goal's
 	// text kept injecting into the fresh session's first turns. The old
@@ -2753,7 +2755,7 @@ func (c *Controller) ClearSession() error {
 	c.ResetPlannerSession()
 	freshPath := c.SessionPath()
 	c.rebindCheckpoints(freshPath)
-	c.loadRecoveryState(freshPath)
+	c.resetRecoveryForNewSession(freshPath)
 	c.snapshotMu.Unlock()
 	// Same contract as NewSession: the fresh session starts with no active goal.
 	c.ClearGoal()
@@ -4290,9 +4292,20 @@ func (c *Controller) snapshotActivityIfChanged(startMessages int) {
 	}
 }
 
-// SetSessionPath pins where auto-save lands (a fresh session file minted by the
-// caller when no resume path applies).
+// SetSessionPath rebinds auto-save without changing the current session
+// preference. Callers creating a genuinely fresh conversation should use
+// SetFreshSessionPath; callers resuming history should use Resume.
 func (c *Controller) SetSessionPath(p string) {
+	c.setSessionPath(p, false)
+}
+
+// SetFreshSessionPath binds a path that is known to belong to a newly-created
+// session and samples the configured new-session recovery default.
+func (c *Controller) SetFreshSessionPath(p string) {
+	c.setSessionPath(p, true)
+}
+
+func (c *Controller) setSessionPath(p string, fresh bool) {
 	// See snapshotMu: the swap must not interleave with an in-flight save.
 	c.snapshotMu.Lock()
 	defer c.snapshotMu.Unlock()
@@ -4302,7 +4315,11 @@ func (c *Controller) SetSessionPath(p string) {
 	c.mu.Unlock()
 	c.setActiveJobSession(p)
 	c.rebindCheckpoints(p)
-	c.loadRecoveryState(p)
+	if fresh {
+		c.resetRecoveryForNewSession(p)
+	} else {
+		c.loadRecoveryState(p)
+	}
 }
 
 // SessionDestroyHandle separates waiting for cancelled jobs from ending the

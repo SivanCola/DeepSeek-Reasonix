@@ -113,6 +113,7 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 		fmt.Fprintf(&b, "status_bar_style = %q   # desktop: icon|text metric labels in the bottom status bar\n", c.DesktopStatusBarStyle())
 		fmt.Fprintf(&b, "status_bar_items = %s   # desktop: ordered visible bottom status bar items\n", renderStringArray(c.DesktopStatusBarItems()))
 		fmt.Fprintf(&b, "default_tool_approval_mode = %q   # desktop: Ask/Auto/YOLO default for newly-created sessions\n", c.DesktopDefaultToolApprovalMode())
+		fmt.Fprintf(&b, "default_auto_recovery_checkpoint = %v   # desktop: failure recovery default for newly-created sessions\n", c.DesktopDefaultAutoRecoveryCheckpoint())
 		fmt.Fprintf(&b, "check_updates = %v   # desktop: check for new versions on startup\n", c.DesktopCheckUpdates())
 		fmt.Fprintf(&b, "telemetry = %v   # desktop: anonymous launch ping (install id + version + OS); never content\n", c.DesktopTelemetry())
 		fmt.Fprintf(&b, "metrics = %v   # desktop: aggregate desktop metrics (anonymous signal/bucket counts); never content\n", c.DesktopMetrics())
@@ -205,6 +206,13 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 		b.WriteString("# system_prompt_file = \"prompts/system.md\"   # overrides system_prompt when set\n")
 	}
 	fmt.Fprintf(&b, "temperature       = %s\n", formatFloat(c.Agent.Temperature))
+	fmt.Fprintf(&b, "auto_recovery_checkpoint = %q   # on|off; default for newly-created sessions\n", NormalizeAutoRecoveryCheckpoint(c.Agent.AutoRecoveryCheckpoint))
+	if strings.TrimSpace(c.Agent.RecoveryModel) != "" {
+		fmt.Fprintf(&b, "recovery_model = %q   # optional independent failure-recovery reviewer\n", c.Agent.RecoveryModel)
+	} else {
+		b.WriteString("# recovery_model = \"deepseek-pro\"   # optional; falls back to guardian then main model\n")
+	}
+	fmt.Fprintf(&b, "recovery_temperature = %s\n", formatFloat(c.Agent.RecoveryTemperature))
 	if scope != RenderScopeProject {
 		autoPlan := c.Agent.AutoPlan
 		switch strings.ToLower(strings.TrimSpace(autoPlan)) {
@@ -877,6 +885,18 @@ func RenderTOMLProjectDelta(c *Config) string {
 	}
 	if c.Agent.Temperature != d.Agent.Temperature {
 		fmt.Fprintf(&agentBuf, "temperature = %s\n", formatFloat(c.Agent.Temperature))
+		anyAgent = true
+	}
+	if NormalizeAutoRecoveryCheckpoint(c.Agent.AutoRecoveryCheckpoint) != NormalizeAutoRecoveryCheckpoint(d.Agent.AutoRecoveryCheckpoint) {
+		fmt.Fprintf(&agentBuf, "auto_recovery_checkpoint = %q\n", NormalizeAutoRecoveryCheckpoint(c.Agent.AutoRecoveryCheckpoint))
+		anyAgent = true
+	}
+	if c.Agent.RecoveryModel != "" && c.Agent.RecoveryModel != d.Agent.RecoveryModel {
+		fmt.Fprintf(&agentBuf, "recovery_model = %q\n", c.Agent.RecoveryModel)
+		anyAgent = true
+	}
+	if c.Agent.RecoveryTemperature != d.Agent.RecoveryTemperature {
+		fmt.Fprintf(&agentBuf, "recovery_temperature = %s\n", formatFloat(c.Agent.RecoveryTemperature))
 		anyAgent = true
 	}
 	if c.Agent.ReasoningLanguage != d.Agent.ReasoningLanguage {

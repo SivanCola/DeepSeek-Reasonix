@@ -40,6 +40,7 @@ func (c *tabScopedActionController) Goal() string           { return "" }
 func (c *tabScopedActionController) ToolApprovalMode() string {
 	return control.ToolApprovalAsk
 }
+func (c *tabScopedActionController) RecoveryCheckpointEnabled() bool { return true }
 func (c *tabScopedActionController) History() []provider.Message {
 	return append([]provider.Message(nil), c.history...)
 }

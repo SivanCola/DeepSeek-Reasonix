@@ -2439,10 +2439,20 @@ func createEmptySessionFile(dir, model string) (string, error) {
 // desktopDefaultRecoveryCheckpoint is the new-session default for Auto-mode
 // failure recovery. Missing config means on.
 func desktopDefaultRecoveryCheckpoint() bool {
-	cfg, err := config.Load()
-	if err != nil || cfg == nil {
-		return true
+	return desktopDefaultRecoveryCheckpointForRoot("")
+}
+
+func desktopDefaultRecoveryCheckpointForRoot(root string) bool {
+	path := config.UserConfigPath()
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		// Before the user config is migrated, Desktop settings intentionally
+		// come from the legacy workspace config. Once the user file exists,
+		// project config must not override this user-global preference.
+		if legacyPath := config.SourcePathForRoot(root); legacyPath != "" {
+			path = legacyPath
+		}
 	}
+	cfg := config.LoadForEditWithoutCredentials(path)
 	return cfg.DesktopDefaultAutoRecoveryCheckpoint()
 }
 
@@ -8014,20 +8024,22 @@ func (a *App) saveTabSessionMeta(tab *WorkspaceTab, path string) error {
 	a.mu.RLock()
 	ctrl := tab.Ctrl
 	snap := tabSessionMetaSnapshot{
-		path:             path,
-		scope:            tab.Scope,
-		workspaceRoot:    tab.WorkspaceRoot,
-		topicID:          tab.TopicID,
-		topicTitle:       tab.TopicTitle,
-		tokenMode:        boot.NormalizeTokenMode(tab.tokenMode),
-		mode:             normalizeTabMode(tab.mode),
-		toolApprovalMode: normalizeToolApprovalMode(tab.toolApprovalMode),
-		goal:             strings.TrimSpace(tab.goal),
+		path:                      path,
+		scope:                     tab.Scope,
+		workspaceRoot:             tab.WorkspaceRoot,
+		topicID:                   tab.TopicID,
+		topicTitle:                tab.TopicTitle,
+		tokenMode:                 boot.NormalizeTokenMode(tab.tokenMode),
+		mode:                      normalizeTabMode(tab.mode),
+		toolApprovalMode:          normalizeToolApprovalMode(tab.toolApprovalMode),
+		recoveryCheckpointEnabled: tab.recoveryCheckpointEnabled,
+		goal:                      strings.TrimSpace(tab.goal),
 	}
 	a.mu.RUnlock()
 	if ctrl != nil {
 		snap.mode = tabModeFromAxes(ctrl.PlanMode(), ctrl.AutoApproveTools())
 		snap.toolApprovalMode = normalizeToolApprovalMode(ctrl.ToolApprovalMode())
+		snap.recoveryCheckpointEnabled = ctrl.RecoveryCheckpointEnabled()
 		if goal := strings.TrimSpace(ctrl.Goal()); goal != "" && ctrl.GoalStatus() == control.GoalStatusRunning {
 			snap.goal = goal
 		} else {
@@ -8038,15 +8050,16 @@ func (a *App) saveTabSessionMeta(tab *WorkspaceTab, path string) error {
 }
 
 type tabSessionMetaSnapshot struct {
-	path             string
-	scope            string
-	workspaceRoot    string
-	topicID          string
-	topicTitle       string
-	tokenMode        string
-	mode             string
-	toolApprovalMode string
-	goal             string
+	path                      string
+	scope                     string
+	workspaceRoot             string
+	topicID                   string
+	topicTitle                string
+	tokenMode                 string
+	mode                      string
+	toolApprovalMode          string
+	recoveryCheckpointEnabled bool
+	goal                      string
 }
 
 func (a *App) saveTabSessionMetaForCurrentSession(tab *WorkspaceTab) error {
@@ -8076,6 +8089,7 @@ func (a *App) tabSessionMetaSnapshotForCurrentSession(tab *WorkspaceTab) (tabSes
 	tokenMode := boot.NormalizeTokenMode(tab.tokenMode)
 	mode := normalizeTabMode(tab.mode)
 	toolApprovalMode := normalizeToolApprovalMode(tab.toolApprovalMode)
+	recoveryCheckpointEnabled := tab.recoveryCheckpointEnabled
 	goal := strings.TrimSpace(tab.goal)
 	a.mu.RUnlock()
 	if readOnly {
@@ -8094,6 +8108,7 @@ func (a *App) tabSessionMetaSnapshotForCurrentSession(tab *WorkspaceTab) (tabSes
 		activeWork = status.Running || status.PendingPrompt || status.BackgroundJobs > 0
 		mode = tabModeFromAxes(ctrl.PlanMode(), ctrl.AutoApproveTools())
 		toolApprovalMode = normalizeToolApprovalMode(ctrl.ToolApprovalMode())
+		recoveryCheckpointEnabled = ctrl.RecoveryCheckpointEnabled()
 		if ctrl.GoalStatus() == control.GoalStatusRunning {
 			goal = strings.TrimSpace(ctrl.Goal())
 		} else {
@@ -8129,15 +8144,16 @@ func (a *App) tabSessionMetaSnapshotForCurrentSession(tab *WorkspaceTab) (tabSes
 		return tabSessionMetaSnapshot{}, false
 	}
 	return tabSessionMetaSnapshot{
-		path:             path,
-		scope:            scope,
-		workspaceRoot:    workspaceRoot,
-		topicID:          topicID,
-		topicTitle:       topicTitle,
-		tokenMode:        tokenMode,
-		mode:             mode,
-		toolApprovalMode: toolApprovalMode,
-		goal:             goal,
+		path:                      path,
+		scope:                     scope,
+		workspaceRoot:             workspaceRoot,
+		topicID:                   topicID,
+		topicTitle:                topicTitle,
+		tokenMode:                 tokenMode,
+		mode:                      mode,
+		toolApprovalMode:          toolApprovalMode,
+		recoveryCheckpointEnabled: recoveryCheckpointEnabled,
+		goal:                      goal,
 	}, true
 }
 
@@ -8175,6 +8191,8 @@ func saveTabSessionMetaSnapshot(snap tabSessionMetaSnapshot) error {
 	m.TokenMode = persistedTabTokenMode(snap.tokenMode)
 	m.Mode = persistedTabMode(snap.mode)
 	m.ToolApprovalMode = persistedToolApprovalMode(snap.toolApprovalMode)
+	recoveryEnabled := snap.recoveryCheckpointEnabled
+	m.RecoveryCheckpointEnabled = &recoveryEnabled
 	m.Goal = strings.TrimSpace(snap.goal)
 	if err := agent.SaveBranchMetaPreserveUpdated(snap.path, m); err != nil {
 		return err
