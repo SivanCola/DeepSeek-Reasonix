@@ -300,7 +300,11 @@ func TestClientFallsBackFromStoredPassphraseToPerIdentityPrompt(t *testing.T) {
 		},
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	// This handshake performs three passphrase KDFs (stored + prompted for the
+	// first identity, then stored for the second). Under full -race package
+	// parallelism on a constrained CI runner, ten seconds is too close to the CPU
+	// bound work even though the in-process SSH server remains responsive.
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	if err := c.Start(ctx); err != nil {
 		t.Fatalf("Start with stored and per-identity passphrases: %v", err)
