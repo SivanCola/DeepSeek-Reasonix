@@ -172,8 +172,6 @@ func serveRemoteMarkdownImage(
 
 	// The URL and every redirect are restricted to public HTTP(S) targets; direct dials re-check and
 	// pin resolved IPs, while proxy DNS follows the same explicit trust boundary as web_fetch.
-	// codeql[go/request-forgery]
-	// lgtm[go/request-forgery]
 	resp, err := client.Do(req)
 	if err != nil {
 		http.Error(w, "remote image fetch failed", http.StatusBadGateway)
