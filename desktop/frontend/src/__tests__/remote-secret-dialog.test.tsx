@@ -44,10 +44,10 @@ const [{ createRoot }, { RemoteSecretDialog }, { LocaleProvider }, { useRemoteSt
   import("../store/remote"),
 ]);
 
-const calls: Array<{ hostId: string; secret: string; accept: boolean }> = [];
+const calls: Array<{ hostId: string; promptId: string; secret: string; accept: boolean }> = [];
 window.go = { main: { App: {
-  async ConfirmRemoteSecret(hostId: string, secret: string, accept: boolean) {
-    calls.push({ hostId, secret, accept });
+  async ConfirmRemoteSecret(hostId: string, promptId: string, secret: string, accept: boolean) {
+    calls.push({ hostId, promptId, secret, accept });
   },
 } as Partial<AppBindings> as AppBindings } };
 
@@ -60,7 +60,7 @@ await act(async () => {
   useRemoteStore.getState().applyStatus({
     hostId: "box",
     state: "pending_secret",
-    secretPrompt: { hostId: "box", host: "dev@box.test", kind: "password" },
+    secretPrompt: { promptId: "prompt-1", hostId: "box", host: "dev@box.test", kind: "password" },
   });
 });
 const input = document.querySelector<HTMLInputElement>('input[type="password"]');
@@ -80,7 +80,7 @@ await act(async () => {
   input.closest("form")?.dispatchEvent(new dom.window.Event("submit", { bubbles: true, cancelable: true }));
   await Promise.resolve();
 });
-ok(calls.length === 1 && calls[0]?.secret === "one-shot-secret" && calls[0]?.accept === true, "submit sends the secret once to the native bridge");
+ok(calls.length === 1 && calls[0]?.promptId === "prompt-1" && calls[0]?.secret === "one-shot-secret" && calls[0]?.accept === true, "submit sends the prompt ID and secret once to the native bridge");
 ok(useRemoteStore.getState().pendingSecretPrompt === null, "resolved prompt is removed from shared UI state");
 ok(document.body.textContent?.includes("one-shot-secret") === false, "secret plaintext is never rendered into the page");
 

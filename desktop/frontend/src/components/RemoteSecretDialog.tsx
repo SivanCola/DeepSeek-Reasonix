@@ -27,7 +27,7 @@ export function RemoteSecretDialog() {
     if (resolvingRef.current) return;
     resolvingRef.current = true;
     try {
-      await app.ConfirmRemoteSecret(prompt.hostId, accept ? secret : "", accept);
+      await app.ConfirmRemoteSecret(prompt.hostId, prompt.promptId, accept ? secret : "", accept);
     } finally {
       clear(prompt);
       setSecret("");

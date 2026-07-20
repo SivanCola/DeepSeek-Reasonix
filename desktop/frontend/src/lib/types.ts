@@ -1027,6 +1027,7 @@ export interface RemoteHostInput {
   keyPassphrase?: string;
   clearPassword?: boolean;
   clearPassphrase?: boolean;
+  preserveExistingSettings?: boolean;
 }
 
 export interface RemoteFingerprintView {
@@ -1037,6 +1038,7 @@ export interface RemoteFingerprintView {
 }
 
 export interface RemoteSecretPromptView {
+  promptId: string;
   hostId: string;
   host: string;
   kind: "password" | "passphrase";

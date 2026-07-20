@@ -3,6 +3,7 @@ package remote
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -22,22 +23,25 @@ import (
 type SSHConfigSource struct {
 	cfg             *ssh_config.Config
 	path            string
+	openSSHPath     string
 	aliases         []string
 	resolveOpenSSH  func(context.Context, string, string) ([]byte, error)
 	effectiveMu     sync.Mutex
 	effectiveByHost map[string]EffectiveSSHConfig
+	effectiveErr    map[string]error
 }
 
 // EffectiveSSHConfig is the subset of `ssh -G` output consumed by Reasonix.
 // Keeping every IdentityFile is important: OpenSSH permits the directive to be
 // repeated and probes the resulting identities in order.
 type EffectiveSSHConfig struct {
-	HostName       string
-	User           string
-	Port           int
-	IdentityFiles  []string
-	ProxyJump      string
-	IdentitiesOnly bool
+	HostName         string
+	User             string
+	Port             int
+	IdentityFiles    []string
+	IdentityFileNone bool
+	ProxyJump        string
+	IdentitiesOnly   bool
 }
 
 // LoadUserSSHConfig parses ~/.ssh/config. A missing file yields an empty
@@ -47,7 +51,14 @@ func LoadUserSSHConfig() (*SSHConfigSource, error) {
 	if err != nil {
 		return newSSHConfigSource(nil, "", nil), nil
 	}
-	return LoadSSHConfig(filepath.Join(home, ".ssh", "config"))
+	src, err := LoadSSHConfig(filepath.Join(home, ".ssh", "config"))
+	if src != nil {
+		// An empty -F argument means normal OpenSSH resolution: the default
+		// per-user file plus the system ssh_config. Passing the default user path
+		// explicitly with -F would incorrectly suppress the system configuration.
+		src.openSSHPath = ""
+	}
+	return src, err
 }
 
 // LoadSSHConfig parses one OpenSSH client config file.
@@ -71,9 +82,10 @@ func LoadSSHConfig(path string) (*SSHConfigSource, error) {
 
 func newSSHConfigSource(cfg *ssh_config.Config, path string, aliases []string) *SSHConfigSource {
 	return &SSHConfigSource{
-		cfg: cfg, path: path, aliases: aliases,
+		cfg: cfg, path: path, openSSHPath: path, aliases: aliases,
 		resolveOpenSSH:  runOpenSSHEffectiveConfig,
 		effectiveByHost: map[string]EffectiveSSHConfig{},
+		effectiveErr:    map[string]error{},
 	}
 }
 
@@ -94,43 +106,59 @@ func (s *SSHConfigSource) get(alias, key string) string {
 // Effective resolves alias through the user's installed OpenSSH client. This
 // is the same source of truth used by VS Code Remote-SSH and covers Include,
 // Host wildcards, Match rules, token expansion, and OpenSSH's precedence. If
-// ssh is unavailable or rejects the config, Reasonix falls back to its embedded
-// parser so existing installations keep working.
+// ssh is unavailable, Reasonix falls back to its embedded parser so existing
+// installations without the executable keep working.
 func (s *SSHConfigSource) Effective(alias string) EffectiveSSHConfig {
+	effective, _ := s.EffectiveWithError(alias)
+	return effective
+}
+
+// EffectiveWithError resolves alias without hiding an installed OpenSSH
+// client's timeout or configuration error. The embedded parser is used only
+// when ssh is genuinely unavailable (or a test explicitly disables it).
+func (s *SSHConfigSource) EffectiveWithError(alias string) (EffectiveSSHConfig, error) {
 	if s == nil || strings.TrimSpace(alias) == "" {
-		return EffectiveSSHConfig{}
+		return EffectiveSSHConfig{}, nil
 	}
 	alias = strings.TrimSpace(alias)
 	s.effectiveMu.Lock()
 	if s.effectiveByHost == nil {
 		s.effectiveByHost = map[string]EffectiveSSHConfig{}
 	}
+	if s.effectiveErr == nil {
+		s.effectiveErr = map[string]error{}
+	}
 	if cfg, ok := s.effectiveByHost[alias]; ok {
+		err := s.effectiveErr[alias]
 		s.effectiveMu.Unlock()
-		return cloneEffectiveSSHConfig(cfg)
+		return cloneEffectiveSSHConfig(cfg), err
 	}
 	s.effectiveMu.Unlock()
 
 	var effective EffectiveSSHConfig
+	var resolveErr error
 	if s.resolveOpenSSH != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-		output, err := s.resolveOpenSSH(ctx, s.path, alias)
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		output, err := s.resolveOpenSSH(ctx, s.openSSHPath, alias)
 		cancel()
 		if err == nil {
 			effective, err = parseOpenSSHEffectiveConfig(output, alias)
 			if err != nil {
-				effective = EffectiveSSHConfig{}
+				resolveErr = fmt.Errorf("parse OpenSSH config for %q: %w", alias, err)
 			}
+		} else if !errors.Is(err, exec.ErrNotFound) {
+			resolveErr = fmt.Errorf("resolve OpenSSH config for %q: %w", alias, err)
 		}
 	}
-	if effective.HostName == "" {
+	if resolveErr == nil && effective.HostName == "" {
 		effective = s.parserEffective(alias)
 	}
 
 	s.effectiveMu.Lock()
 	s.effectiveByHost[alias] = cloneEffectiveSSHConfig(effective)
+	s.effectiveErr[alias] = resolveErr
 	s.effectiveMu.Unlock()
-	return cloneEffectiveSSHConfig(effective)
+	return cloneEffectiveSSHConfig(effective), resolveErr
 }
 
 // HasAlias reports whether alias was declared as a concrete Host entry. It is
@@ -188,7 +216,9 @@ func parseOpenSSHEffectiveConfig(output []byte, alias string) (EffectiveSSHConfi
 				effective.Port = port
 			}
 		case "identityfile":
-			if value != "" && !strings.EqualFold(value, "none") {
+			if strings.EqualFold(value, "none") {
+				effective.IdentityFileNone = true
+			} else if value != "" {
 				effective.IdentityFiles = append(effective.IdentityFiles, expandHome(value))
 			}
 		case "proxyjump":
@@ -217,10 +247,15 @@ func (s *SSHConfigSource) parserEffective(alias string) EffectiveSSHConfig {
 		hostName = alias
 	}
 	var identities []string
+	identityFileNone := false
 	if vals, err := s.cfg.GetAll(alias, "IdentityFile"); err == nil {
 		for _, value := range vals {
 			value = strings.TrimSpace(value)
-			if value == "" || value == ssh_config.Default("IdentityFile") || strings.EqualFold(value, "none") {
+			if strings.EqualFold(value, "none") {
+				identityFileNone = true
+				continue
+			}
+			if value == "" || value == ssh_config.Default("IdentityFile") {
 				continue
 			}
 			identities = append(identities, expandHome(value))
@@ -234,7 +269,7 @@ func (s *SSHConfigSource) parserEffective(alias string) EffectiveSSHConfig {
 	}
 	return EffectiveSSHConfig{
 		HostName: hostName, User: s.get(alias, "User"), Port: port,
-		IdentityFiles: identities, ProxyJump: s.get(alias, "ProxyJump"),
+		IdentityFiles: identities, IdentityFileNone: identityFileNone, ProxyJump: s.get(alias, "ProxyJump"),
 		IdentitiesOnly: strings.EqualFold(s.get(alias, "IdentitiesOnly"), "yes"),
 	}
 }
@@ -277,6 +312,10 @@ func (s *SSHConfigSource) IdentityFiles(alias string) []string {
 	return append([]string(nil), s.Effective(alias).IdentityFiles...)
 }
 
+func (s *SSHConfigSource) IdentityFileNone(alias string) bool {
+	return s.Effective(alias).IdentityFileNone
+}
+
 func (s *SSHConfigSource) ProxyJump(alias string) string { return s.Effective(alias).ProxyJump }
 
 func (s *SSHConfigSource) IdentitiesOnly(alias string) bool {
@@ -294,7 +333,8 @@ type ImportedHost struct {
 }
 
 // Aliases lists concrete (non-wildcard, non-negated) Host aliases in file
-// order, deduplicated, each resolved through the full config.
+// order without executing ssh -G or Match exec. Effective values are resolved
+// only for a selected connection target.
 func (s *SSHConfigSource) Aliases() []ImportedHost {
 	if s == nil {
 		return nil
@@ -307,27 +347,7 @@ func (s *SSHConfigSource) Aliases() []ImportedHost {
 			continue
 		}
 		seen[alias] = true
-		effective := s.Effective(alias)
-		identity := ""
-		if len(effective.IdentityFiles) > 0 {
-			identity = effective.IdentityFiles[0]
-		}
-		hostName := effective.HostName
-		if hostName == alias {
-			hostName = ""
-		}
-		port := effective.Port
-		if port == 22 {
-			port = 0
-		}
-		out = append(out, ImportedHost{
-			Alias:        alias,
-			HostName:     hostName,
-			User:         effective.User,
-			Port:         port,
-			IdentityFile: identity,
-			ProxyJump:    effective.ProxyJump,
-		})
+		out = append(out, ImportedHost{Alias: alias})
 	}
 	return out
 }

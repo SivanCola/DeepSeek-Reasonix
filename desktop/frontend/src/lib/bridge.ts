@@ -456,7 +456,7 @@ export interface AppBindings {
   DisconnectRemoteHost(id: string): Promise<void>;
   RemoteConnectionStatuses(): Promise<RemoteConnectionStatus[]>;
   ConfirmRemoteHostKey(hostId: string, accept: boolean): Promise<void>;
-  ConfirmRemoteSecret(hostId: string, secret: string, accept: boolean): Promise<void>;
+  ConfirmRemoteSecret(hostId: string, promptId: string, secret: string, accept: boolean): Promise<void>;
   ListRemoteDir(hostId: string, path: string): Promise<RemoteDirEntry[]>;
   ReadRemoteFile(hostId: string, path: string): Promise<RemoteFilePreview>;
   WriteRemoteFile(hostId: string, path: string, body: string, expectMtimeUnix: number): Promise<RemoteWriteResult>;
@@ -4429,7 +4429,7 @@ function makeMockApp(): AppBindings {
     },
     async ScanSSHConfig() {
       return [
-        { label: "gpu-box", host: "203.0.113.7", port: 22, user: "dev", identityFile: "~/.ssh/id_ed25519", proxyJump: "", defaultWorkspace: "", serveInstall: "auto", useSSHConfig: true },
+        { label: "gpu-box", host: "gpu-box", port: 0, user: "", identityFile: "", proxyJump: "", defaultWorkspace: "", serveInstall: "auto", useSSHConfig: true, preserveExistingSettings: true },
       ];
     },
     async ConnectRemoteHost(id) {
@@ -4451,7 +4451,7 @@ function makeMockApp(): AppBindings {
       mockRemoteConn[hostId] = accept ? "connected" : "stopped";
       __emitMockRemote("status", { hostId, state: mockRemoteConn[hostId] });
     },
-    async ConfirmRemoteSecret(hostId, _secret, accept) {
+    async ConfirmRemoteSecret(hostId, _promptId, _secret, accept) {
       mockRemoteConn[hostId] = accept ? "connected" : "stopped";
       __emitMockRemote("status", { hostId, state: mockRemoteConn[hostId] });
     },

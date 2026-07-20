@@ -56,6 +56,7 @@ func TestDesktopSecretPromptPublishesMetadataAndReturnsOneShotSecret(t *testing.
 		result <- promptResult{secret: secret, err: err}
 	}()
 
+	var promptID string
 	select {
 	case status := <-sink.statuses:
 		if status.State != "pending_secret" || status.SecretPrompt == nil {
@@ -64,11 +65,18 @@ func TestDesktopSecretPromptPublishesMetadataAndReturnsOneShotSecret(t *testing.
 		if status.SecretPrompt.Host != "dev@box.test" || status.SecretPrompt.Kind != "password" {
 			t.Fatalf("prompt metadata = %+v", status.SecretPrompt)
 		}
+		promptID = status.SecretPrompt.PromptID
+		if promptID == "" {
+			t.Fatal("prompt ID was empty")
+		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("secret prompt status was not emitted")
 	}
 
-	if err := mgr.ResolveSecret("box", "one-shot-secret", true); err != nil {
+	if err := mgr.ResolveSecret("box", "stale-prompt", "wrong-secret", true); err == nil {
+		t.Fatal("stale prompt ID resolved the active credential request")
+	}
+	if err := mgr.ResolveSecret("box", promptID, "one-shot-secret", true); err != nil {
 		t.Fatal(err)
 	}
 	select {

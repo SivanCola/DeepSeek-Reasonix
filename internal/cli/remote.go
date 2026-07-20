@@ -225,6 +225,8 @@ func remoteImportCLI(args []string) int {
 			if existing, ok := c.RemoteHost(entry.Name); ok {
 				entry.PassphraseEnv = existing.PassphraseEnv
 				entry.PasswordEnv = existing.PasswordEnv
+				entry.Workspace = existing.Workspace
+				entry.ServeInstall = existing.ServeInstall
 				entry.Forwards = append([]config.RemoteForwardEntry(nil), existing.Forwards...)
 			}
 			if err := c.UpsertRemoteHost(entry); err != nil {

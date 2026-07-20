@@ -15,15 +15,16 @@ import (
 
 // fakeRemoteKernel implements remoteKernel for binding-layer tests.
 type fakeRemoteKernel struct {
-	hosts        []RemoteHostView
-	statuses     []RemoteConnectionStatusView
-	writeResult  RemoteWriteResult
-	ensureView   RemoteServerView
-	ensureToken  string
-	ensureErr    error
-	resolveCalls []bool
-	secretCalls  []remoteSecretAnswer
-	closed       bool
+	hosts           []RemoteHostView
+	statuses        []RemoteConnectionStatusView
+	writeResult     RemoteWriteResult
+	ensureView      RemoteServerView
+	ensureToken     string
+	ensureErr       error
+	resolveCalls    []bool
+	secretCalls     []remoteSecretAnswer
+	secretPromptIDs []string
+	closed          bool
 }
 
 func TestRemoteConnectionErrorDetailsPreserveHostKeyMismatch(t *testing.T) {
@@ -78,7 +79,8 @@ func (f *fakeRemoteKernel) ResolveHostKey(hostID string, accept bool) error {
 	f.resolveCalls = append(f.resolveCalls, accept)
 	return nil
 }
-func (f *fakeRemoteKernel) ResolveSecret(hostID, secret string, accept bool) error {
+func (f *fakeRemoteKernel) ResolveSecret(hostID, promptID, secret string, accept bool) error {
+	f.secretPromptIDs = append(f.secretPromptIDs, promptID)
 	f.secretCalls = append(f.secretCalls, remoteSecretAnswer{secret: secret, accept: accept})
 	return nil
 }
@@ -150,10 +152,10 @@ func TestConfirmRemoteHostKeyDelegates(t *testing.T) {
 func TestConfirmRemoteSecretDelegatesWithoutPersisting(t *testing.T) {
 	fake := &fakeRemoteKernel{}
 	a := appWithFakeKernel(fake)
-	if err := a.ConfirmRemoteSecret("box", "one-shot-secret", true); err != nil {
+	if err := a.ConfirmRemoteSecret("box", "prompt-7", "one-shot-secret", true); err != nil {
 		t.Fatal(err)
 	}
-	if len(fake.secretCalls) != 1 || fake.secretCalls[0].secret != "one-shot-secret" || !fake.secretCalls[0].accept {
+	if len(fake.secretCalls) != 1 || fake.secretCalls[0].secret != "one-shot-secret" || !fake.secretCalls[0].accept || fake.secretPromptIDs[0] != "prompt-7" {
 		t.Fatalf("secret calls = %+v", fake.secretCalls)
 	}
 }
@@ -236,6 +238,42 @@ func TestUpdateHostPreservesHiddenFields(t *testing.T) {
 	}
 	if len(h.Forwards) != 1 || h.Forwards[0].Bind != "127.0.0.1:8080" {
 		t.Fatalf("edit wiped persisted forwards: %+v", h.Forwards)
+	}
+}
+
+func TestSSHConfigReimportPreservesReasonixSettings(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("REASONIX_HOME", home)
+	t.Setenv("HOME", home)
+	if err := editUserConfig(func(c *config.Config) error {
+		return c.UpsertRemoteHost(config.RemoteHostEntry{
+			Name: "box", Host: "old.example", Workspace: "/srv/app", ServeInstall: "never",
+			PasswordEnv: "REMOTE_BOX_PASSWORD",
+			Forwards:    []config.RemoteForwardEntry{{Type: "local", Bind: "127.0.0.1:8080", Target: "127.0.0.1:80"}},
+		})
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	mgr := newDesktopRemoteManager(&App{})
+	if _, err := mgr.AddHost(RemoteHostInput{
+		Label: "box", Host: "box", UseSSHConfig: true, PreserveExistingSettings: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	host, ok := cfg.RemoteHost("box")
+	if !ok {
+		t.Fatal("reimported host is missing")
+	}
+	if host.Host != "box" || !host.UseSSHConfig || host.Workspace != "/srv/app" || host.ServeInstall != "never" {
+		t.Fatalf("reimported host settings = %+v", host)
+	}
+	if host.PasswordEnv != "REMOTE_BOX_PASSWORD" || len(host.Forwards) != 1 {
+		t.Fatalf("reimport wiped hidden settings: %+v", host)
 	}
 }
 
@@ -425,7 +463,7 @@ func TestScanSSHConfigPreservesAliasInsteadOfSnapshottingEffectiveFields(t *test
 		t.Fatalf("scan = %+v", out)
 	}
 	got := out[0]
-	if got.Label != "live-box" || got.Host != "live-box" || !got.UseSSHConfig {
+	if got.Label != "live-box" || got.Host != "live-box" || !got.UseSSHConfig || !got.PreserveExistingSettings {
 		t.Fatalf("alias was not preserved: %+v", got)
 	}
 	if got.Port != 0 || got.User != "" || got.IdentityFile != "" || got.ProxyJump != "" {

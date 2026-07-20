@@ -125,6 +125,43 @@ func TestRemoteAddReplacementCleansDroppedGeneratedCredentials(t *testing.T) {
 	}
 }
 
+func TestRemoteImportPreservesReasonixSettings(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("REASONIX_HOME", home)
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	sshDir := filepath.Join(home, ".ssh")
+	if err := os.MkdirAll(sshDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sshDir, "config"), []byte("Host box\n  HostName 192.0.2.44\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := editUserConfig(func(c *config.Config) error {
+		return c.UpsertRemoteHost(config.RemoteHostEntry{
+			Name: "box", Host: "old.example", Workspace: "/srv/app", ServeInstall: "never",
+			PasswordEnv: "REMOTE_BOX_PASSWORD",
+			Forwards:    []config.RemoteForwardEntry{{Type: "local", Bind: "127.0.0.1:8080", Target: "127.0.0.1:80"}},
+		})
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if got := remoteImportCLI([]string{"box"}); got != 0 {
+		t.Fatalf("import exit = %d", got)
+	}
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	host, ok := cfg.RemoteHost("box")
+	if !ok || host.Host != "box" || !host.UseSSHConfig || host.Workspace != "/srv/app" || host.ServeInstall != "never" {
+		t.Fatalf("imported host = %+v, exists=%v", host, ok)
+	}
+	if host.PasswordEnv != "REMOTE_BOX_PASSWORD" || len(host.Forwards) != 1 {
+		t.Fatalf("import wiped hidden settings: %+v", host)
+	}
+}
+
 func TestRemoteForwardAddPersists(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("REASONIX_HOME", home)

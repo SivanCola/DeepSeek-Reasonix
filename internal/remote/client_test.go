@@ -94,6 +94,34 @@ func TestClientConnectPublicKeyAuth(t *testing.T) {
 	}
 }
 
+func TestIdentityFileNoneSuppressesDefaultKeys(t *testing.T) {
+	pemBytes, pub, err := sshtest.GenerateKeyPEM()
+	if err != nil {
+		t.Fatal(err)
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	sshDir := filepath.Join(home, ".ssh")
+	if err := os.MkdirAll(sshDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeFile0600(filepath.Join(sshDir, "id_ed25519"), pemBytes); err != nil {
+		t.Fatal(err)
+	}
+	srv := sshtest.Start(t, sshtest.Options{AuthorizedKey: pub})
+	c := newTestClient(t, srv, Options{Auth: AuthOptions{DisableAgent: true}})
+	c.opts.Host.IdentityFileNone = true
+	c.opts.Host.IdentitiesOnly = true
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := c.Start(ctx); err == nil {
+		defer c.Close()
+		t.Fatal("IdentityFile none unexpectedly offered a default private key")
+	}
+}
+
 func TestClientTriesMultipleIdentityFilesInOrder(t *testing.T) {
 	wrongPEM, _, err := sshtest.GenerateKeyPEM()
 	if err != nil {

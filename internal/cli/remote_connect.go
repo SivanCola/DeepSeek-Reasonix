@@ -37,7 +37,10 @@ func buildRemoteClient(nameOrTarget string) (*remote.Client, func(), error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	sshCfg, _ := remote.LoadUserSSHConfig()
+	sshCfg, err := remote.LoadUserSSHConfig()
+	if err != nil {
+		return nil, nil, fmt.Errorf("load SSH config: %w", err)
+	}
 	host, err := remote.ResolveHost(cfg, nameOrTarget, sshCfg)
 	if err != nil {
 		return nil, nil, err

@@ -2,6 +2,7 @@ package remote
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -81,8 +82,15 @@ func TestSSHConfigMatchExecUsesOpenSSHEvenWhenFallbackRejectsIt(t *testing.T) {
 		return []byte("hostname 192.0.2.10\nuser matched-user\nport 22\nidentitiesonly no\n"), nil
 	}
 	aliases := src.Aliases()
-	if len(aliases) != 1 || aliases[0].Alias != "matched-box" || aliases[0].User != "matched-user" {
+	if len(aliases) != 1 || aliases[0].Alias != "matched-box" {
 		t.Fatalf("Match exec aliases = %+v", aliases)
+	}
+	got, err := src.EffectiveWithError("matched-box")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.User != "matched-user" {
+		t.Fatalf("Match exec effective config = %+v", got)
 	}
 }
 
@@ -163,8 +171,145 @@ func TestSSHConfigAliasesIncludeImportedFiles(t *testing.T) {
 	if len(aliases) != 2 || aliases[0].Alias != "included-box" || aliases[1].Alias != "direct-box" {
 		t.Fatalf("included aliases = %+v", aliases)
 	}
-	if aliases[0].HostName != "192.0.2.10" {
-		t.Fatalf("included host was not resolved: %+v", aliases[0])
+	got, err := src.EffectiveWithError("included-box")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.HostName != "192.0.2.10" {
+		t.Fatalf("included host was not resolved on demand: %+v", got)
+	}
+}
+
+func TestSSHAliasesDoNotResolveEveryHost(t *testing.T) {
+	src, err := LoadSSHConfig(writeSampleConfig(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls := 0
+	src.resolveOpenSSH = func(context.Context, string, string) ([]byte, error) {
+		calls++
+		return nil, nil
+	}
+	if got := src.Aliases(); len(got) != 2 {
+		t.Fatalf("aliases = %+v", got)
+	}
+	if calls != 0 {
+		t.Fatalf("alias discovery invoked ssh -G %d times", calls)
+	}
+}
+
+func TestEffectiveSSHConfigPreservesIdentityFileNone(t *testing.T) {
+	src, err := LoadSSHConfig(writeSampleConfig(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	src.resolveOpenSSH = func(context.Context, string, string) ([]byte, error) {
+		return []byte("hostname host.test\nidentityfile none\nidentityfile ~/.ssh/explicit\n"), nil
+	}
+	got, err := src.EffectiveWithError("gpu")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.IdentityFileNone || len(got.IdentityFiles) != 1 || filepath.Base(got.IdentityFiles[0]) != "explicit" {
+		t.Fatalf("identity settings = %+v", got)
+	}
+}
+
+func TestEmbeddedSSHConfigPreservesIdentityFileNone(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config")
+	if err := os.WriteFile(path, []byte("Host none-box\n  IdentityFile none\n  IdentitiesOnly yes\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	src, err := LoadSSHConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	src.resolveOpenSSH = nil
+	got, err := src.EffectiveWithError("none-box")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.IdentityFileNone || len(got.IdentityFiles) != 0 || !got.IdentitiesOnly {
+		t.Fatalf("embedded identity settings = %+v", got)
+	}
+}
+
+func TestEffectiveSSHConfigPropagatesInstalledOpenSSHErrors(t *testing.T) {
+	src, err := LoadSSHConfig(writeSampleConfig(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := context.DeadlineExceeded
+	src.resolveOpenSSH = func(context.Context, string, string) ([]byte, error) { return nil, want }
+	if _, err := src.EffectiveWithError("gpu"); !errors.Is(err, want) {
+		t.Fatalf("EffectiveWithError error = %v, want %v", err, want)
+	}
+}
+
+func TestResolveHostPropagatesInstalledOpenSSHErrors(t *testing.T) {
+	src, err := LoadSSHConfig(writeSampleConfig(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := context.DeadlineExceeded
+	src.resolveOpenSSH = func(context.Context, string, string) ([]byte, error) { return nil, want }
+	cfg := config.Default()
+	if err := cfg.UpsertRemoteHost(config.RemoteHostEntry{Name: "gpu", Host: "gpu", UseSSHConfig: true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ResolveHost(cfg, "gpu", src); !errors.Is(err, want) {
+		t.Fatalf("ResolveHost error = %v, want %v", err, want)
+	}
+}
+
+func TestEffectiveSSHConfigFallsBackOnlyWhenOpenSSHUnavailable(t *testing.T) {
+	src, err := LoadSSHConfig(writeSampleConfig(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	src.resolveOpenSSH = func(context.Context, string, string) ([]byte, error) { return nil, exec.ErrNotFound }
+	got, err := src.EffectiveWithError("gpu")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.HostName != "203.0.113.9" || got.User != "dev" {
+		t.Fatalf("embedded fallback = %+v", got)
+	}
+}
+
+func TestMissingOpenSSHExecutableIsDetectable(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	_, err := runOpenSSHEffectiveConfig(context.Background(), "", "missing-ssh-box")
+	if !errors.Is(err, exec.ErrNotFound) {
+		t.Fatalf("missing ssh error = %v, want exec.ErrNotFound", err)
+	}
+}
+
+func TestLoadUserSSHConfigUsesNormalOpenSSHConfigStack(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	if runtime.GOOS == "windows" {
+		t.Setenv("USERPROFILE", home)
+	}
+	sshDir := filepath.Join(home, ".ssh")
+	if err := os.MkdirAll(sshDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sshDir, "config"), []byte("Host user-box\n  HostName 192.0.2.55\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	src, err := LoadUserSSHConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	src.resolveOpenSSH = func(_ context.Context, path, alias string) ([]byte, error) {
+		if path != "" || alias != "user-box" {
+			t.Fatalf("normal ssh -G request = path %q alias %q", path, alias)
+		}
+		return []byte("hostname 192.0.2.55\n"), nil
+	}
+	if _, err := src.EffectiveWithError("user-box"); err != nil {
+		t.Fatal(err)
 	}
 }
 

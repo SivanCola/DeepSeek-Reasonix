@@ -59,7 +59,7 @@ reset();
 useRemoteStore.getState().applyStatus({
   hostId: "box",
   state: "pending_secret",
-  secretPrompt: { hostId: "box", host: "dev@box.test", kind: "password" },
+  secretPrompt: { promptId: "prompt-1", hostId: "box", host: "dev@box.test", kind: "password" },
 });
 eq(useRemoteStore.getState().pendingSecretPrompt?.kind, "password", "pending_secret opens the one-shot credential dialog");
 eq(JSON.stringify(useRemoteStore.getState().statuses.box).includes("secret-value"), false, "status contains no credential plaintext");
@@ -67,21 +67,29 @@ const oldSecretPrompt = useRemoteStore.getState().pendingSecretPrompt!;
 useRemoteStore.getState().applyStatus({
   hostId: "other",
   state: "pending_secret",
-  secretPrompt: { hostId: "other", host: "other.test", kind: "passphrase" },
+  secretPrompt: { promptId: "prompt-2", hostId: "other", host: "other.test", kind: "passphrase" },
 });
 useRemoteStore.getState().clearPendingSecretPrompt(oldSecretPrompt);
 eq(useRemoteStore.getState().pendingSecretPrompt?.hostId, "other", "stale credential dialog cannot clear a newer prompt");
 const firstIdentityPrompt = {
-  hostId: "other", host: "other.test", kind: "passphrase" as const, identity: "id_first",
+  promptId: "prompt-3", hostId: "other", host: "other.test", kind: "passphrase" as const, identity: "id_first",
 };
 useRemoteStore.getState().applyStatus({ hostId: "other", state: "pending_secret", secretPrompt: firstIdentityPrompt });
 useRemoteStore.getState().applyStatus({
   hostId: "other",
   state: "pending_secret",
-  secretPrompt: { hostId: "other", host: "other.test", kind: "passphrase", identity: "id_second" },
+  secretPrompt: { promptId: "prompt-4", hostId: "other", host: "other.test", kind: "passphrase", identity: "id_second" },
 });
 useRemoteStore.getState().clearPendingSecretPrompt(firstIdentityPrompt);
 eq(useRemoteStore.getState().pendingSecretPrompt?.identity, "id_second", "one key prompt cannot clear the next key prompt");
+const oldSameMetadataPrompt = useRemoteStore.getState().pendingSecretPrompt!;
+useRemoteStore.getState().applyStatus({
+  hostId: "other",
+  state: "pending_secret",
+  secretPrompt: { promptId: "prompt-5", hostId: "other", host: "other.test", kind: "passphrase", identity: "id_second" },
+});
+useRemoteStore.getState().clearPendingSecretPrompt(oldSameMetadataPrompt);
+eq(useRemoteStore.getState().pendingSecretPrompt?.promptId, "prompt-5", "opaque prompt ID protects sequential prompts with identical metadata");
 useRemoteStore.getState().applyStatus({ hostId: "other", state: "connecting" });
 eq(useRemoteStore.getState().pendingSecretPrompt, null, "credential resolution clears the prompt");
 

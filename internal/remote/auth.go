@@ -1,10 +1,12 @@
 package remote
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	"golang.org/x/crypto/ssh"
@@ -72,17 +74,21 @@ func buildAuthMethods(ctx context.Context, h ResolvedHost, opts *AuthOptions) ([
 	var fallback []ssh.AuthMethod
 	cleanup := func() {}
 
-	if !opts.DisableAgent && !h.IdentitiesOnly {
-		if am, closeAgent := agentAuth(); am != nil {
+	identityFiles := append([]string(nil), h.IdentityFiles...)
+	if len(identityFiles) == 0 && h.IdentityFile != "" {
+		identityFiles = []string{h.IdentityFile}
+	}
+	if len(identityFiles) == 0 && !h.IdentityFileNone {
+		identityFiles = defaultIdentityFiles()
+	}
+
+	if !opts.DisableAgent {
+		if am, closeAgent := agentAuth(identityFiles, h.IdentitiesOnly); am != nil {
 			publicKeys = append(publicKeys, am)
 			cleanup = closeAgent
 		}
 	}
 
-	identityFiles := append([]string(nil), h.IdentityFiles...)
-	if len(identityFiles) == 0 && h.IdentityFile != "" {
-		identityFiles = []string{h.IdentityFile}
-	}
 	if len(identityFiles) > 0 {
 		for _, identityFile := range identityFiles {
 			am, err := keyAuth(ctx, h, opts, identityFile, len(identityFiles) > 1)
@@ -93,19 +99,6 @@ func buildAuthMethods(ctx context.Context, h ResolvedHost, opts *AuthOptions) ([
 					cleanup()
 					return nil, nil, func() {}, err
 				}
-				continue
-			}
-			if am != nil {
-				publicKeys = append(publicKeys, am)
-			}
-		}
-	} else {
-		defaultFiles := defaultIdentityFiles()
-		for _, path := range defaultFiles {
-			am, err := keyAuth(ctx, h, opts, path, len(defaultFiles) > 1)
-			if err != nil {
-				// A default key that exists but fails to parse shouldn't abort
-				// the whole chain — skip it and try the next.
 				continue
 			}
 			if am != nil {
@@ -149,7 +142,7 @@ func containsAuthMethod(methods []string, want string) bool {
 	return false
 }
 
-func agentAuth() (ssh.AuthMethod, func()) {
+func agentAuth(identityFiles []string, identitiesOnly bool) (ssh.AuthMethod, func()) {
 	sock := os.Getenv("SSH_AUTH_SOCK")
 	if sock == "" {
 		return nil, func() {}
@@ -164,7 +157,14 @@ func agentAuth() (ssh.AuthMethod, func()) {
 		mu.Lock()
 		conns = append(conns, conn)
 		mu.Unlock()
-		return agent.NewClient(conn).Signers()
+		signers, err := agent.NewClient(conn).Signers()
+		if err != nil {
+			return nil, err
+		}
+		if identitiesOnly {
+			signers = filterAgentSigners(signers, identityFiles)
+		}
+		return signers, nil
 	})
 	return method, func() {
 		mu.Lock()
@@ -175,6 +175,84 @@ func agentAuth() (ssh.AuthMethod, func()) {
 			_ = conn.Close()
 		}
 	}
+}
+
+// filterAgentSigners implements OpenSSH's IdentitiesOnly behavior: agent keys
+// remain available when they correspond to a configured IdentityFile, but
+// unrelated agent keys are not offered to the server.
+func filterAgentSigners(signers []ssh.Signer, identityFiles []string) []ssh.Signer {
+	allowed := make([]ssh.PublicKey, 0, len(identityFiles))
+	for _, path := range identityFiles {
+		allowed = append(allowed, identityPublicKeys(path)...)
+	}
+	if len(allowed) == 0 {
+		return nil
+	}
+	filtered := make([]ssh.Signer, 0, len(signers))
+	for _, signer := range signers {
+		for _, key := range allowed {
+			if publicKeysEqual(signer.PublicKey(), key) {
+				filtered = append(filtered, signer)
+				break
+			}
+		}
+	}
+	return filtered
+}
+
+func identityPublicKeys(path string) []ssh.PublicKey {
+	path = expandHome(path)
+	candidates := []string{path}
+	if !strings.HasSuffix(strings.ToLower(path), ".pub") {
+		candidates = append(candidates, path+".pub")
+	}
+	seen := map[string]bool{}
+	var keys []ssh.PublicKey
+	for _, candidate := range candidates {
+		data, err := os.ReadFile(candidate)
+		if err != nil {
+			continue
+		}
+		if key, _, _, _, err := ssh.ParseAuthorizedKey(data); err == nil {
+			id := string(normalizePublicKey(key).Marshal())
+			if !seen[id] {
+				seen[id] = true
+				keys = append(keys, key)
+			}
+			continue
+		}
+		if signer, err := ssh.ParsePrivateKey(data); err == nil {
+			key := signer.PublicKey()
+			id := string(normalizePublicKey(key).Marshal())
+			if !seen[id] {
+				seen[id] = true
+				keys = append(keys, key)
+			}
+			continue
+		} else {
+			var missing *ssh.PassphraseMissingError
+			if isPassphraseMissing(err, &missing) && missing.PublicKey != nil {
+				key := missing.PublicKey
+				id := string(normalizePublicKey(key).Marshal())
+				if !seen[id] {
+					seen[id] = true
+					keys = append(keys, key)
+				}
+			}
+		}
+	}
+	return keys
+}
+
+func publicKeysEqual(a, b ssh.PublicKey) bool {
+	return bytes.Equal(normalizePublicKey(a).Marshal(), normalizePublicKey(b).Marshal())
+}
+
+func normalizePublicKey(key ssh.PublicKey) ssh.PublicKey {
+	if cert, ok := key.(*ssh.Certificate); ok {
+		return cert.Key
+	}
+	return key
 }
 
 // keyAuth loads a private key, resolving a passphrase from the credential
@@ -192,6 +270,11 @@ func keyAuth(ctx context.Context, h ResolvedHost, opts *AuthOptions, path string
 	signer, err := ssh.ParsePrivateKey(pem)
 	if err == nil {
 		return ssh.PublicKeys(signer), nil
+	}
+	// OpenSSH permits IdentityFile to name a public key when the matching
+	// private key lives in ssh-agent. The filtered agent method above handles it.
+	if _, _, _, _, publicErr := ssh.ParseAuthorizedKey(pem); publicErr == nil {
+		return nil, nil
 	}
 	var missing *ssh.PassphraseMissingError
 	if !isPassphraseMissing(err, &missing) {
