@@ -102,7 +102,6 @@ const METRIC_SIGNALS = [
   "settings_theme_style",
   "settings_close_behavior",
   "settings_display_mode",
-  "settings_auto_plan",
   "settings_status_bar_style",
   "settings_status_bar_items_count",
   "settings_check_updates",

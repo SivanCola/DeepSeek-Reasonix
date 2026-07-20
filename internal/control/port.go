@@ -106,7 +106,6 @@ type Goals interface {
 	ResetPlannerSession()
 	PlanMode() bool
 	SetPlanMode(v bool)
-	SetAutoPlan(mode string)
 }
 
 // SessionHistory covers checkpoint/rewind, branch/fork, and the log-restructuring
