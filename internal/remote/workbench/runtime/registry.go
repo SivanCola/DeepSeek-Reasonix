@@ -131,8 +131,14 @@ func (s *Server) restoreSessionRecord(ctx context.Context, record runtimeSession
 	effort := record.Effort
 	sink := &sessionSink{server: s, sessionID: record.ID}
 	ctrl, err := s.buildController(ctx, record.Model, &effort, sink, normalizedTokenMode(record.TokenMode))
-	if err != nil || ctrl == nil {
+	if err != nil {
+		if ctrl != nil {
+			ctrl.Close()
+		}
 		return nil, fmt.Errorf("restore session %s controller: %w", record.ID, err)
+	}
+	if ctrl == nil {
+		return nil, fmt.Errorf("restore session %s controller: builder returned nil", record.ID)
 	}
 	loaded, loadErr := agent.LoadSession(record.Path)
 	switch {
@@ -169,7 +175,7 @@ func (s *Server) restoreSessionRecord(ctx context.Context, record runtimeSession
 }
 
 func (s *Server) validateSessionRecord(record runtimeSessionRecord) error {
-	if !strings.HasPrefix(string(record.ID), "session_") || !strings.HasPrefix(string(record.TopicID), "topic_") {
+	if !strings.HasPrefix(string(record.ID), "session_") || strings.TrimSpace(string(record.TopicID)) == "" {
 		return fmt.Errorf("invalid Remote session identity")
 	}
 	if strings.TrimSpace(record.Model) == "" {
@@ -202,6 +208,12 @@ func containedSessionPath(dir, path string) (string, error) {
 	rel, err := filepath.Rel(absDir, absPath)
 	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
 		return "", errors.New("path escapes the session directory")
+	}
+	// Remote runtime transcripts are minted directly in SessionDir. Rejecting
+	// nested paths also prevents an edited registry from traversing an in-tree
+	// directory symlink to a file outside the persistence root.
+	if filepath.Dir(absPath) != absDir {
+		return "", errors.New("path must be a direct child of the session directory")
 	}
 	if info, err := os.Lstat(absPath); err == nil && info.Mode()&os.ModeSymlink != 0 {
 		return "", errors.New("session transcript may not be a symbolic link")

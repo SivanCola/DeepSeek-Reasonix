@@ -247,8 +247,12 @@ func TestRuntimeSessionCreateAndFileList(t *testing.T) {
 	// Short absolute socket path — macOS rejects long unix paths.
 	sock := filepath.Join(t.TempDir(), "r.sock")
 	if len(sock) > 100 {
-		sock = filepath.Join("/tmp", "rx-wb-"+t.Name()+".sock")
-		t.Cleanup(func() { _ = os.Remove(sock) })
+		shortDir, err := os.MkdirTemp("/tmp", "rx-wb-")
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = os.RemoveAll(shortDir) })
+		sock = filepath.Join(shortDir, "r.sock")
 	}
 	srv := New(Options{Workspace: ws, Version: "test", SessionDir: sessionDir, RegistryPath: registryPath, BuildController: func(_ context.Context, model string, _ *string, _ event.Sink) (SessionController, error) {
 		return &persistentFakeController{fakeController: &fakeController{model: model}, sessionDir: sessionDir}, nil
@@ -436,6 +440,22 @@ func TestRuntimeEarlyShutdownDoesNotOverwriteUnreadRegistry(t *testing.T) {
 	}
 	if string(after) != string(original) {
 		t.Fatalf("early shutdown replaced unread registry:\n%s", after)
+	}
+}
+
+func TestRuntimeSessionRegistryAcceptsOpaqueTopicAndRejectsNestedPath(t *testing.T) {
+	sessionDir := t.TempDir()
+	srv := New(Options{Workspace: t.TempDir(), SessionDir: sessionDir})
+	record := runtimeSessionRecord{
+		ID: "session_valid", TopicID: "customer-topic-id", Model: "local/model",
+		Path: filepath.Join(sessionDir, "session.jsonl"),
+	}
+	if err := srv.validateSessionRecord(record); err != nil {
+		t.Fatalf("valid opaque topic record rejected: %v", err)
+	}
+	record.Path = filepath.Join(sessionDir, "nested", "session.jsonl")
+	if err := srv.validateSessionRecord(record); err == nil {
+		t.Fatal("nested transcript path accepted")
 	}
 }
 
