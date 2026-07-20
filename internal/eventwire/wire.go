@@ -7,12 +7,14 @@ import (
 )
 
 // Event is the JSON-friendly form shared by event frontends.
+// externalizable:"true" marks large string payloads the Remote protocol may
+// offload via content refs without changing provider-visible semantics.
 type Event struct {
 	Kind            string           `json:"kind"`
-	Text            string           `json:"text,omitempty"`
-	Detail          string           `json:"detail,omitempty"`
+	Text            string           `json:"text,omitempty" externalizable:"true"`
+	Detail          string           `json:"detail,omitempty" externalizable:"true"`
 	Code            string           `json:"code,omitempty"`
-	Reasoning       string           `json:"reasoning,omitempty"`
+	Reasoning       string           `json:"reasoning,omitempty" externalizable:"true"`
 	MemoryCitations []MemoryCitation `json:"memoryCitations,omitempty"`
 	Level           string           `json:"level,omitempty"`
 	Tool            *Tool            `json:"tool,omitempty"`
@@ -21,7 +23,7 @@ type Event struct {
 	Ask             *Ask             `json:"ask,omitempty"`
 	Compaction      *Compaction      `json:"compaction,omitempty"`
 	Guardian        *Guardian        `json:"guardian,omitempty"`
-	Err             string           `json:"err,omitempty"`
+	Err             string           `json:"err,omitempty" externalizable:"true"`
 	Outcome         string           `json:"outcome,omitempty"`
 	Readiness       *FinalReadiness  `json:"readiness,omitempty"`
 	RetryAttempt    int              `json:"retryAttempt,omitempty"`
@@ -139,21 +141,21 @@ func ToWireMemoryCitations(in []provider.MemoryCitation) []MemoryCitation {
 type Compaction struct {
 	Trigger  string `json:"trigger,omitempty"`
 	Messages int    `json:"messages,omitempty"`
-	Summary  string `json:"summary,omitempty"`
-	Archive  string `json:"archive,omitempty"`
+	Summary  string `json:"summary,omitempty" externalizable:"true"`
+	Archive  string `json:"archive,omitempty" externalizable:"true"`
 }
 
 // AskOption is one JSON-formatted choice in a structured ask request.
 type AskOption struct {
 	Label       string `json:"label"`
-	Description string `json:"description,omitempty"`
+	Description string `json:"description,omitempty" externalizable:"true"`
 }
 
 // AskQuestion is one JSON-formatted structured ask question.
 type AskQuestion struct {
 	ID      string      `json:"id"`
 	Header  string      `json:"header,omitempty"`
-	Prompt  string      `json:"prompt"`
+	Prompt  string      `json:"prompt" externalizable:"true"`
 	Options []AskOption `json:"options"`
 	Multi   bool        `json:"multi,omitempty"`
 }
@@ -174,9 +176,9 @@ type Profile struct {
 type Tool struct {
 	ID         string   `json:"id,omitempty"`
 	Name       string   `json:"name"`
-	Args       string   `json:"args,omitempty"`
-	Output     string   `json:"output,omitempty"`
-	Err        string   `json:"err,omitempty"`
+	Args       string   `json:"args,omitempty" externalizable:"true"`
+	Output     string   `json:"output,omitempty" externalizable:"true"`
+	Err        string   `json:"err,omitempty" externalizable:"true"`
 	ReadOnly   bool     `json:"readOnly"`
 	Truncated  bool     `json:"truncated,omitempty"`
 	DurationMs int64    `json:"durationMs,omitempty"`
@@ -184,7 +186,7 @@ type Tool struct {
 	ArgChars   int      `json:"argChars,omitempty"`
 	Refreshed  bool     `json:"refreshed,omitempty"`
 	ParentID   string   `json:"parentId,omitempty"`
-	Diff       string   `json:"diff,omitempty"`
+	Diff       string   `json:"diff,omitempty" externalizable:"true"`
 	Added      int      `json:"added,omitempty"`
 	Removed    int      `json:"removed,omitempty"`
 	Profile    *Profile `json:"profile,omitempty"`
@@ -226,8 +228,8 @@ type CacheDiagnostics struct {
 type Approval struct {
 	ID      string `json:"id"`
 	Tool    string `json:"tool"`
-	Subject string `json:"subject"`
-	Reason  string `json:"reason,omitempty"`
+	Subject string `json:"subject" externalizable:"true"`
+	Reason  string `json:"reason,omitempty" externalizable:"true"`
 	Fresh   bool   `json:"fresh,omitempty"`
 }
 
@@ -239,7 +241,7 @@ type Guardian struct {
 	Outcome           string `json:"outcome"`
 	RiskLevel         string `json:"risk_level,omitempty"`
 	UserAuthorization string `json:"user_authorization,omitempty"`
-	Rationale         string `json:"rationale,omitempty"`
+	Rationale         string `json:"rationale,omitempty" externalizable:"true"`
 	DurationMs        int64  `json:"duration_ms,omitempty"`
 	Usage             *Usage `json:"usage,omitempty"`
 }
@@ -298,6 +300,19 @@ func ToWireCacheDiagnostics(d *event.CacheDiagnostics) *CacheDiagnostics {
 		CacheMissTokens:     d.CacheMissTokens,
 		CacheHitTokens:      d.CacheHitTokens,
 	}
+}
+
+// KindNames returns every stable frontend event kind in event.Kind order. It is
+// the protocol-neutral source used by consumers such as the Remote schema
+// generator; callers receive a copy and may sort it without mutating eventwire.
+func KindNames() []string {
+	names := make([]string, 0, int(event.KindCount))
+	for kind := event.Kind(0); kind < event.KindCount; kind++ {
+		if name, ok := kindNames[kind]; ok {
+			names = append(names, name)
+		}
+	}
+	return names
 }
 
 var kindNames = map[event.Kind]string{
