@@ -22,7 +22,7 @@ const base = {
 };
 
 describe("metrics compatibility", () => {
-  it("accepts the retired auto-plan signal from released desktop clients", () => {
+  it("drops unknown signals without rejecting known counters in the batch", () => {
     const payload = {
       version: "v1.17.16",
       os: "darwin",
@@ -32,11 +32,30 @@ describe("metrics compatibility", () => {
       ],
     };
 
-    expect(Metrics.safeParse(payload).success).toBe(true);
+    const parsed = Metrics.safeParse(payload);
+    expect(parsed.success).toBe(true);
+    if (!parsed.success) return;
+    expect(parsed.data.counters).toEqual([{ signal: "cache_hit", bucket: "90_100", count: 1 }]);
+  });
+
+  it("accepts an all-unknown batch as an empty no-op", () => {
+    const parsed = Metrics.safeParse({
+      version: "v1.18.0",
+      os: "darwin",
+      counters: [{ signal: "future_signal", arbitrary: "future payload" }],
+    });
+
+    expect(parsed.success).toBe(true);
+    if (!parsed.success) return;
+    expect(parsed.data.counters).toEqual([]);
+  });
+
+  it("still rejects malformed counters for known signals", () => {
     expect(
       Metrics.safeParse({
-        ...payload,
-        counters: [{ signal: "arbitrary_untrusted_signal", bucket: "off", count: 1 }],
+        version: "v1.18.0",
+        os: "darwin",
+        counters: [{ signal: "cache_hit", bucket: "not allowed", count: 1 }],
       }).success,
     ).toBe(false);
   });
