@@ -11,6 +11,7 @@ import (
 
 	"reasonix/internal/config"
 	"reasonix/internal/remote"
+	"reasonix/internal/remote/workbench/target"
 )
 
 // fakeRemoteKernel implements remoteKernel for binding-layer tests.
@@ -472,35 +473,36 @@ func TestScanSSHConfigPreservesAliasInsteadOfSnapshottingEffectiveFields(t *test
 }
 
 func TestOpenRemoteWorkspacePersistsLastWorkspace(t *testing.T) {
+	// Workbench path: OpenRemoteWorkspace no longer opens a Serve HTML window.
+	// Persistence of last workspace is still via saveLastRemoteWorkspace after a
+	// successful connect; unit-test the persistence helper directly.
 	home := t.TempDir()
 	t.Setenv("REASONIX_HOME", home)
 	t.Setenv("HOME", home)
-	fake := &fakeRemoteKernel{
-		ensureView:  RemoteServerView{State: "ready", LocalURL: "http://127.0.0.1:5000/"},
-		ensureToken: "tok",
-	}
-	a := appWithFakeKernel(fake)
-	var opened remoteWindowLaunch
-	a.remoteWindowOpener = func(launch remoteWindowLaunch) error {
-		opened = launch
-		return nil
-	}
-	if err := a.OpenRemoteWorkspace("box", "/home/dev/app"); err != nil {
-		t.Fatal(err)
-	}
-	if opened.URL != "http://127.0.0.1:5000?token=tok" {
-		t.Fatalf("opened URL = %q", opened.URL)
-	}
-	if opened.Title != "Reasonix [SSH: box]" {
-		t.Fatalf("opened title = %q", opened.Title)
-	}
-
+	a := &App{ctx: context.Background()}
+	a.saveLastRemoteWorkspace("box", "/home/dev/app")
 	got := a.RemoteLastWorkspace("box")
 	if got != "/home/dev/app" {
 		t.Fatalf("last workspace = %q, want /home/dev/app", got)
 	}
-	// desktop-remote.json exists.
 	if _, err := os.Stat(filepath.Join(config.MemoryUserDir(), "desktop-remote.json")); err != nil {
 		t.Fatalf("desktop-remote.json not written: %v", err)
+	}
+}
+
+func TestWorkbenchSwitchLocalAndHint(t *testing.T) {
+	a := &App{ctx: context.Background()}
+	active := a.WorkbenchActiveTarget()
+	if active["kind"] != "local" {
+		t.Fatalf("active = %+v", active)
+	}
+	a.workbench().targets.RememberRemote(target.RemoteHint{HostID: "lab", Workspace: "/w"})
+	hint := a.WorkbenchLastRemoteHint()
+	if hint["hostId"] != "lab" || hint["workspace"] != "/w" {
+		t.Fatalf("hint = %+v", hint)
+	}
+	switched := a.WorkbenchSwitchLocal()
+	if switched["kind"] != "local" {
+		t.Fatalf("switch = %+v", switched)
 	}
 }

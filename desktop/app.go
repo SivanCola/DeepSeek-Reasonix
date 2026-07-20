@@ -215,8 +215,9 @@ type App struct {
 
 	// Remote SSH module: the manager is created lazily on the first remote
 	// binding call and closed on shutdown.
-	remoteMu      sync.Mutex
-	remoteRuntime remoteKernel
+	remoteMu        sync.Mutex
+	remoteRuntime   remoteKernel
+	workbenchKernel *workbenchKernel // Local + Remote workbench adapters
 
 	// promptHistoryTape is a lazy, cursor-addressed view of prompt history. It
 	// stores session order and per-session parsed entries only after that session is

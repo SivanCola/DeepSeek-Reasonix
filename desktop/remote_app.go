@@ -433,24 +433,10 @@ func (a *App) EnsureRemoteServer(hostID, workspace string) error {
 	return nil
 }
 
+// OpenRemoteWorkspace opens the Remote Workbench path: SSH stdio attach-workspace
+// + local Provider Broker. It does not open a Serve HTML child window.
 func (a *App) OpenRemoteWorkspace(hostID, workspace string) error {
-	rt, err := a.remoteRT()
-	if err != nil {
-		return err
-	}
-	view, token, err := rt.EnsureServer(a.bootContext(), hostID, workspace)
-	if err != nil {
-		return err
-	}
-	if view.LocalURL == "" {
-		return fmt.Errorf("remote serve did not report a local URL")
-	}
-	url := view.LocalURL
-	if token != "" && !strings.Contains(url, "token=") {
-		url = fmt.Sprintf("%s?token=%s", strings.TrimRight(url, "/"), token)
-	}
-	a.saveLastRemoteWorkspace(hostID, workspace)
-	return a.openRemoteWindow(url, hostID)
+	return a.WorkbenchConnectRemote(hostID, workspace)
 }
 
 func (a *App) StopRemoteServer(hostID string) error {

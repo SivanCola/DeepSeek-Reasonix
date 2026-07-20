@@ -40,6 +40,10 @@ func remoteCommand(args []string, version string) int {
 		return remoteServeCLI(args[1:])
 	case "fs":
 		return remoteFSCLI(args[1:])
+	case "attach-workspace":
+		return remoteAttachWorkspaceCLI(args[1:], version)
+	case "runtime-workbench":
+		return remoteRuntimeWorkbenchCLI(args[1:], version)
 	case "help", "-h", "--help":
 		remoteUsage()
 		return 0
