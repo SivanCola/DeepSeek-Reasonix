@@ -213,25 +213,10 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 		b.WriteString("# recovery_model = \"deepseek-pro\"   # optional; falls back to guardian then main model\n")
 	}
 	fmt.Fprintf(&b, "recovery_temperature = %s\n", formatFloat(c.Agent.RecoveryTemperature))
-	if scope != RenderScopeProject {
-		autoPlan := c.Agent.AutoPlan
-		switch strings.ToLower(strings.TrimSpace(autoPlan)) {
-		case "on", "ask":
-			autoPlan = "on"
-		default:
-			autoPlan = "off"
-		}
-		fmt.Fprintf(&b, "auto_plan   = %q   # user-level only: off|on; off keeps plan mode manual\n", autoPlan)
-	}
 	if lang := c.ReasoningLanguage(); lang != "auto" {
 		fmt.Fprintf(&b, "reasoning_language = %q   # visible reasoning language: auto|zh|en\n", lang)
 	} else {
 		b.WriteString("# reasoning_language = \"zh\"   # visible reasoning language: auto|zh|en\n")
-	}
-	if c.Agent.AutoPlanClassifier != "" {
-		fmt.Fprintf(&b, "auto_plan_classifier = %q   # optional provider/model for borderline auto-plan decisions\n", c.Agent.AutoPlanClassifier)
-	} else {
-		b.WriteString("# auto_plan_classifier = \"deepseek-flash\"   # optional; only used for borderline tasks\n")
 	}
 	fmt.Fprintf(&b, "soft_compact_ratio  = %s   # notice only; keeps cache-first prefix intact\n", formatFloat(c.Agent.SoftCompactRatio))
 	fmt.Fprintf(&b, "tool_result_snip_ratio = %s   # snip stale tool results at this fraction before summary compaction\n", formatFloat(c.Agent.ToolResultSnipRatio))
@@ -904,10 +889,6 @@ func RenderTOMLProjectDelta(c *Config) string {
 			fmt.Fprintf(&agentBuf, "reasoning_language = %q\n", l)
 			anyAgent = true
 		}
-	}
-	if c.Agent.AutoPlanClassifier != "" && c.Agent.AutoPlanClassifier != d.Agent.AutoPlanClassifier {
-		fmt.Fprintf(&agentBuf, "auto_plan_classifier = %q\n", c.Agent.AutoPlanClassifier)
-		anyAgent = true
 	}
 	if c.Agent.SoftCompactRatio != d.Agent.SoftCompactRatio {
 		fmt.Fprintf(&agentBuf, "soft_compact_ratio = %s\n", formatFloat(c.Agent.SoftCompactRatio))

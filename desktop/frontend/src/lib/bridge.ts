@@ -91,6 +91,7 @@ import type {
   UpdateInfo,
   UpdateProgress,
   WireEvent,
+  WorkspaceChangeDetailView,
   WorkspaceChangesView,
   GitCommitView,
   GitCommitDetailView,
@@ -290,6 +291,7 @@ export interface AppBindings {
   ReadFile(rel: string): Promise<FilePreview>;
   ReadFileForTab(tabID: string, rel: string): Promise<FilePreview>;
   WorkspaceChanges(tabID: string): Promise<WorkspaceChangesView>;
+  WorkspaceChangeDetail(tabID: string, path: string): Promise<WorkspaceChangeDetailView>;
   GitBranches(): Promise<string[]>;
   GitCheckout(branch: string): Promise<void>;
   WorkspaceGitHistory(tabID: string, path: string): Promise<GitCommitView[]>;
@@ -3327,6 +3329,14 @@ function makeMockApp(): AppBindings {
         ],
       };
     },
+    async WorkspaceChangeDetail(_tabID: string, path: string) {
+      return {
+        source: "git" as const,
+        added: 2,
+        removed: 1,
+        diff: `diff --git a/${path} b/${path}\n--- a/${path}\n+++ b/${path}\n@@ -1,2 +1,3 @@\n-old line\n+new line\n context\n+another line`,
+      };
+    },
     async GitBranches() {
       return ["main", "dev", "feature/branch-switcher"];
     },
@@ -3648,7 +3658,8 @@ function makeMockApp(): AppBindings {
       settings.agent = { ...settings.agent, maxParallelWriters: writers };
     },
     async SetAutoPlan(mode: string) {
-      settings.autoPlan = mode;
+      if (mode !== "off") throw new Error("Automatic plan mode has been retired; use Plan Mode explicitly.");
+      settings.autoPlan = "off";
     },
     async SetDefaultToolApprovalMode(mode: string) {
       settings.defaultToolApprovalMode = normalizeToolApprovalMode(mode);

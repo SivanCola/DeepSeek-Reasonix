@@ -67,8 +67,6 @@ reasoning_language = "auto"      # visible reasoning text: auto|zh|en
 # max_subagent_depth = 2              # nested delegation depth; set 1 for the old single-layer boundary
 # max_subagent_concurrency = 6        # session-wide sub-agent concurrency (task/fleet/skills)
 # max_parallel_writers = 3            # concurrent writers with non-overlapping write_paths
-auto_plan = "off"                  # user-level only; off|on; off keeps plan mode manual
-# auto_plan_classifier = "deepseek-flash"   # optional; only borderline tasks call it
 tool_result_snip_ratio = 0.6       # shorten stale tool output before summary compaction
 
 [[providers]]
@@ -514,7 +512,7 @@ Mode and display shortcuts:
 | `/theme [auto|light|dark|style]` | Shows or switches the CLI theme | Bare `/theme` lists background modes and named accent palettes. The choice is saved to the user config; `REASONIX_THEME` and `REASONIX_THEME_STYLE` can override it for one run. |
 | `Ctrl+O` | Toggles verbose reasoning display | Also available through `/verbose`. |
 | `Ctrl+B` | Expands or collapses long shell output | Long shell-output hint lines can also be clicked in the transcript; text selection is handled in-app while the full-screen TUI has mouse reporting enabled. |
-| `/goal <objective>`, `/goal --research <objective>`, `/goal --simple <objective>`, `/goal status`, `/goal clear` | Starts, checks, or clears Goal | Goal is not in any keyboard cycle; clearly long-horizon goals automatically enable AutoResearch. Ordinary prompts with strong AutoResearch signals are also upgraded into Goal. |
+| `/goal <objective>`, `/goal --research <objective>`, `/goal --simple <objective>`, `/goal status`, `/goal clear` | Starts, checks, or clears Goal | Goal is not in any keyboard cycle; clearly long-horizon goals automatically enable AutoResearch after Goal is explicitly started. |
 | `/migrate`, `/migrate --from <legacy-dir>` | Retries legacy migration or imports sessions from a chosen v0.x source | Use `--from` for custom Windows v0.52 install/data directories; it imports sessions only. See [Configuration paths](./CONFIG_PATHS.md). |
 
 Picker and approval shortcuts:
@@ -770,7 +768,7 @@ convenient.
 In an interactive `reasonix` session, built-in commands (`/compact`, `/new`, `/clear`, `/rewind`,
 `/tree`, `/branch`, `/switch`, `/todo`, `/model`, `/work-mode`, `/mcp`, `/skills`, `/hooks`,
 `/memory`, `/goal`, `/output-style`, `/sandbox`, `/language`,
-`/auto-plan`, `/reasoning-language`, `/help`) run
+`/reasoning-language`, `/help`) run
 locally — `/help` lists them all. Built-in **skills** such as `/init`,
 `/explore`, `/test`, and `/reasonix-guide` also appear in the slash menu and via
 `run_skill` (bodies load on demand; only the index line is cache-stable). Use
@@ -862,9 +860,9 @@ objectives stay lightweight: Reasonix keeps working until the goal is complete,
 blocked, or cleared. When a goal is clearly long-horizon, Goal automatically
 enables the AutoResearch strategy instead of requiring a separate
 `/auto-research` skill; `auto-research` is not listed as a standalone built-in
-skill in Settings -> Skills or the slash menu. If an ordinary chat prompt has a
-very strong long-horizon signal, the host also upgrades it into the equivalent
-of `/goal --research <original prompt>`.
+skill in Settings -> Skills or the slash menu. Ordinary chat never changes the
+collaboration mode implicitly; choose Goal in the composer or use `/goal` to
+start a long-running objective.
 
 For complex work, write the objective as a
 [task contract](./TASK_CONTRACT.md): Context, Request, Output format,
@@ -881,10 +879,8 @@ phases such as research/diagnosis, implementation/fixing, verification/testing,
 optimization/documentation/release, or when the user names an existing
 `.reasonix/autoresearch/<task-id>/` directory. Advanced users can force it with
 `/goal --research <objective>` or force lightweight Goal with
-`/goal --simple <objective>`. Ordinary-chat auto-upgrade is more conservative
-than `/goal`'s internal classification: standalone phrases such as "long term",
-"optimize", "research this", or "verify this" do not create AutoResearch tasks
-by themselves.
+`/goal --simple <objective>`. Outside an explicitly started Goal, those signals
+remain ordinary chat text and do not create durable AutoResearch state.
 
 Once AutoResearch is active, the agent treats the goal as a stateful research
 loop instead of a chat-only continuation. It creates or reuses a project-local
@@ -1045,17 +1041,14 @@ surface changes again.
 Desktop tabs expose the same three choices and persist Economy or Delivery;
 legacy empty/`full` values remain Balanced.
 
-For interactive frontends, plan mode is manual by default. Set
-`agent.auto_plan = "on"` to make complex-looking tasks enter plan mode
-automatically: Reasonix first drafts a plan, then waits for approval before the
-workflow switches to implementation. Tool calls made while drafting still use
-the current Permissions and Sandbox. `auto_plan_classifier` can
-name a cheap provider such as `deepseek-flash`; it is only called for borderline
-inputs and falls back to the heuristic if classification fails. Use
-`/auto-plan off|on` inside `reasonix` to change the user-level setting, or
-`reasonix config auto-plan off|on` from a shell/script. Auto-plan is user-level
-only; `agent.auto_plan` in a project `reasonix.toml` is ignored. The visible
-reasoning language uses a similar shape: `/reasoning-language auto|zh|en` in the
+For interactive frontends, Plan Mode is always an explicit user choice. Select
+Plan in the desktop collaboration-mode control or cycle to Plan with
+`Shift+Tab` in the CLI. Reasonix first drafts a plan, then waits for approval
+before the workflow switches to implementation. Tool calls made while drafting
+still use the current Permissions and Sandbox. Legacy `agent.auto_plan` and
+`agent.auto_plan_classifier` values are ignored and removed from the user config
+during upgrade. The visible reasoning language can be changed with
+`/reasoning-language auto|zh|en` in the
 session, or `reasonix config reasoning-language auto|zh|en` in a shell/script.
 Pass `--local`
 to the reasoning-language shell command only when you intentionally want a

@@ -451,6 +451,7 @@ func (a *App) Platform() string {
 // off the initialization in a background goroutine so the webview loads immediately.
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
+	a.startWindowsWebView2StartupFallback(ctx)
 	if a.remoteWindow != nil {
 		return
 	}
@@ -8773,6 +8774,15 @@ type WorkspaceChangesView struct {
 	GitAvailable bool                  `json:"gitAvailable"`
 	GitErr       string                `json:"gitErr,omitempty"`
 	GitBranch    string                `json:"gitBranch,omitempty"`
+}
+
+type WorkspaceChangeDetailView struct {
+	Diff      *string `json:"diff,omitempty"`
+	Source    string  `json:"source,omitempty"`
+	Added     int     `json:"added,omitempty"`
+	Removed   int     `json:"removed,omitempty"`
+	Binary    bool    `json:"binary,omitempty"`
+	Truncated bool    `json:"truncated,omitempty"`
 }
 
 // workspaceNoiseNames are local cache/vendor entries hidden from the file tree

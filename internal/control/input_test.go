@@ -2,7 +2,6 @@ package control
 
 import (
 	"context"
-	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -20,18 +19,6 @@ import (
 	"reasonix/internal/skill"
 	"reasonix/internal/tool"
 )
-
-type fakeAutoPlanClassifier struct {
-	needsPlan bool
-	reason    string
-	err       error
-	calls     int
-}
-
-func (f *fakeAutoPlanClassifier) NeedsPlan(ctx context.Context, input string, score int) (bool, string, error) {
-	f.calls++
-	return f.needsPlan, f.reason, f.err
-}
 
 type fakeTurnRunner struct {
 	inputs []string
@@ -796,31 +783,6 @@ func TestGoalCommandPreservesResearchModeFlags(t *testing.T) {
 	}
 }
 
-func TestAutoStartResearchGoalUsesOnlyStrongSignals(t *testing.T) {
-	for _, input := range []string{
-		"持续排查这个线上卡顿直到根因明确，并验证修复",
-		"不要原地打转，把这个方向完整做成方案并验证",
-		"thoroughly implement, test, optimize, and document this feature",
-		"继续 .reasonix/autoresearch/20260618-224530-cache-audit/ 这个任务",
-	} {
-		if !shouldAutoStartResearchGoal(input) {
-			t.Fatalf("shouldAutoStartResearchGoal(%q) = false, want true", input)
-		}
-	}
-
-	for _, input := range []string{
-		"长期来看这个模块怎么优化？",
-		"研究一下这个函数怎么用",
-		"验证一下这个小修复",
-		"/goal 持续排查直到根因明确",
-		"!go test ./...",
-	} {
-		if shouldAutoStartResearchGoal(input) {
-			t.Fatalf("shouldAutoStartResearchGoal(%q) = true, want false", input)
-		}
-	}
-}
-
 func TestParseGoalCommandResearchFlags(t *testing.T) {
 	cmd, ok := ParseGoalCommand("/goal --research fix the typo")
 	if !ok || cmd.Action != GoalCommandSet || cmd.Text != "fix the typo" || cmd.ResearchMode != GoalResearchOn {
@@ -983,8 +945,7 @@ func TestSubmitHashNumberStartsTurn(t *testing.T) {
 	runner := &fakeTurnRunner{}
 	events := make(chan event.Event, 4)
 	c := New(Options{
-		AutoPlan: "off",
-		Runner:   runner,
+		Runner: runner,
 		Sink: event.FuncSink(func(e event.Event) {
 			events <- e
 		}),
@@ -1014,8 +975,7 @@ func TestSubmitSlashPathDiagnosticStartsTurnWithFileContext(t *testing.T) {
 	runner := &fakeTurnRunner{}
 	events := make(chan event.Event, 4)
 	c := New(Options{
-		AutoPlan: "off",
-		Runner:   runner,
+		Runner: runner,
 		Sink: event.FuncSink(func(e event.Event) {
 			events <- e
 		}),
@@ -1041,8 +1001,7 @@ func TestSubmitMissingSlashPathDiagnosticStartsTurn(t *testing.T) {
 	runner := &fakeTurnRunner{}
 	events := make(chan event.Event, 4)
 	c := New(Options{
-		AutoPlan: "off",
-		Runner:   runner,
+		Runner: runner,
 		Sink: event.FuncSink(func(e event.Event) {
 			events <- e
 		}),
@@ -1061,8 +1020,7 @@ func TestSubmitBlockCommentPrefixStartsTurn(t *testing.T) {
 	runner := &fakeTurnRunner{}
 	events := make(chan event.Event, 4)
 	c := New(Options{
-		AutoPlan: "off",
-		Runner:   runner,
+		Runner: runner,
 		Sink: event.FuncSink(func(e event.Event) {
 			events <- e
 		}),
@@ -1081,8 +1039,7 @@ func TestSubmitUnknownSlashCommandStillReportsNotice(t *testing.T) {
 	runner := &fakeTurnRunner{}
 	events := make(chan event.Event, 4)
 	c := New(Options{
-		AutoPlan: "off",
-		Runner:   runner,
+		Runner: runner,
 		Sink: event.FuncSink(func(e event.Event) {
 			events <- e
 		}),
@@ -1107,8 +1064,7 @@ func TestSubmitUserTurnBypassesCommandDispatch(t *testing.T) {
 	runner := &fakeTurnRunner{}
 	events := make(chan event.Event, 4)
 	c := New(Options{
-		AutoPlan: "off",
-		Runner:   runner,
+		Runner: runner,
 		Sink: event.FuncSink(func(e event.Event) {
 			events <- e
 		}),
@@ -1187,164 +1143,6 @@ func waitForTurnDone(t *testing.T, events <-chan event.Event) {
 		case <-deadline:
 			t.Fatal("timed out waiting for turn_done")
 		}
-	}
-}
-
-func TestRunTurnAutoPlanComplexTask(t *testing.T) {
-	var notices []string
-	runner := &fakeTurnRunner{}
-	c := New(Options{
-		AutoPlan: "on",
-		Runner:   runner,
-		Sink: event.FuncSink(func(e event.Event) {
-			if e.Kind == event.Notice {
-				notices = append(notices, e.Text)
-			}
-		}),
-	})
-
-	input := "实现 GitHub issue #2395：\n- 新增配置项\n- 自动判断复杂任务\n- 补测试和文档"
-	if err := c.runTurn(context.Background(), input); err != nil {
-		t.Fatal(err)
-	}
-	if len(runner.inputs) != 1 || !strings.HasPrefix(agent.StripTransientUserBlocks(runner.inputs[0]), PlanModeMarker) {
-		t.Fatalf("complex task should auto-enter plan mode, inputs=%q", runner.inputs)
-	}
-	if !c.PlanMode() {
-		t.Fatal("controller plan mode should be on after auto-plan")
-	}
-	if len(notices) != 1 || notices[0] != "Planning mode enabled for this multi-step task." {
-		t.Fatalf("notice = %v, want one auto-plan notice", notices)
-	}
-}
-
-func TestRunTurnAutoPlanSkipsSimpleQuestion(t *testing.T) {
-	runner := &fakeTurnRunner{}
-	c := New(Options{AutoPlan: "on", Runner: runner})
-
-	if err := c.runTurn(context.Background(), "解释一下这个函数做什么？"); err != nil {
-		t.Fatal(err)
-	}
-	if len(runner.inputs) != 1 || strings.HasPrefix(agent.StripTransientUserBlocks(runner.inputs[0]), PlanModeMarker) {
-		t.Fatalf("simple question should not auto-plan: inputs=%q", runner.inputs)
-	}
-	if c.PlanMode() {
-		t.Fatal("controller plan mode should remain off")
-	}
-}
-
-func TestRunTurnAutoPlanOff(t *testing.T) {
-	runner := &fakeTurnRunner{}
-	c := New(Options{AutoPlan: "off", Runner: runner})
-
-	input := "实现 GitHub issue #2395：\n- 新增配置项\n- 自动判断复杂任务\n- 补测试和文档"
-	if err := c.runTurn(context.Background(), input); err != nil {
-		t.Fatal(err)
-	}
-	if len(runner.inputs) != 1 || StripComposePrefixes(runner.inputs[0]) != input {
-		t.Fatalf("auto_plan=off should compose verbatim, inputs=%q", runner.inputs)
-	}
-	if c.PlanMode() {
-		t.Fatal("controller plan mode should remain off")
-	}
-}
-
-func TestSetAutoPlanAffectsNextTurn(t *testing.T) {
-	runner := &fakeTurnRunner{}
-	c := New(Options{AutoPlan: "off", Runner: runner})
-	c.SetAutoPlan("on")
-
-	input := "实现 GitHub issue #2395：\n- 新增配置项\n- 自动判断复杂任务\n- 补测试和文档"
-	if err := c.runTurn(context.Background(), input); err != nil {
-		t.Fatal(err)
-	}
-	if len(runner.inputs) != 1 || !strings.HasPrefix(agent.StripTransientUserBlocks(runner.inputs[0]), PlanModeMarker) {
-		t.Fatalf("SetAutoPlan should affect next turn, inputs=%q", runner.inputs)
-	}
-}
-
-func TestRunTurnAutoPlanClassifierBorderlineTrue(t *testing.T) {
-	classifier := &fakeAutoPlanClassifier{needsPlan: true, reason: "borderline multi-step"}
-	runner := &fakeTurnRunner{}
-	c := New(Options{AutoPlan: "on", Classifier: classifier, Runner: runner})
-
-	if err := c.runTurn(context.Background(), "实现一个小的配置入口"); err != nil {
-		t.Fatal(err)
-	}
-	if len(runner.inputs) != 1 || !strings.HasPrefix(agent.StripTransientUserBlocks(runner.inputs[0]), PlanModeMarker) {
-		t.Fatalf("classifier true should auto-plan, inputs=%q", runner.inputs)
-	}
-	if classifier.calls != 1 {
-		t.Fatalf("classifier calls = %d, want 1", classifier.calls)
-	}
-}
-
-func TestRunTurnAutoPlanClassifierBorderlineFalse(t *testing.T) {
-	classifier := &fakeAutoPlanClassifier{needsPlan: false, reason: "single obvious edit"}
-	runner := &fakeTurnRunner{}
-	c := New(Options{AutoPlan: "on", Classifier: classifier, Runner: runner})
-
-	if err := c.runTurn(context.Background(), "实现一个小的配置入口"); err != nil {
-		t.Fatal(err)
-	}
-	if len(runner.inputs) != 1 || strings.HasPrefix(agent.StripTransientUserBlocks(runner.inputs[0]), PlanModeMarker) {
-		t.Fatalf("classifier false should skip auto-plan, inputs=%q", runner.inputs)
-	}
-	if c.PlanMode() {
-		t.Fatal("controller plan mode should remain off")
-	}
-	if classifier.calls != 1 {
-		t.Fatalf("classifier calls = %d, want 1", classifier.calls)
-	}
-}
-
-func TestRunTurnAutoPlanClassifierFallback(t *testing.T) {
-	classifier := &fakeAutoPlanClassifier{err: errors.New("bad json")}
-	runner := &fakeTurnRunner{}
-	c := New(Options{AutoPlan: "on", Classifier: classifier, Runner: runner})
-
-	if err := c.runTurn(context.Background(), "实现 README 文档更新"); err != nil {
-		t.Fatal(err)
-	}
-	if len(runner.inputs) != 1 || !strings.HasPrefix(agent.StripTransientUserBlocks(runner.inputs[0]), PlanModeMarker) {
-		t.Fatalf("score 2 should fall back to heuristic auto-plan, inputs=%q", runner.inputs)
-	}
-	if classifier.calls != 1 {
-		t.Fatalf("classifier calls = %d, want 1", classifier.calls)
-	}
-}
-
-func TestRunTurnAutoPlanTypedNilClassifierFallsBack(t *testing.T) {
-	var classifier *ProviderAutoPlanClassifier
-	runner := &fakeTurnRunner{}
-	c := New(Options{AutoPlan: "on", Classifier: classifier, Runner: runner})
-
-	if err := c.runTurn(context.Background(), "实现 README 文档更新"); err != nil {
-		t.Fatal(err)
-	}
-	if len(runner.inputs) != 1 || !strings.HasPrefix(agent.StripTransientUserBlocks(runner.inputs[0]), PlanModeMarker) {
-		t.Fatalf("typed nil classifier should fall back to heuristic auto-plan, inputs=%q", runner.inputs)
-	}
-}
-
-func TestRunTurnAutoPlanScoresRawPromptNotResolvedRefs(t *testing.T) {
-	runner := &fakeTurnRunner{}
-	c := New(Options{AutoPlan: "on", Runner: runner})
-
-	resolved := "Referenced context:\n\n" +
-		strings.Repeat("实现 重构 配置 测试 文档 多个文件\n", 20) +
-		"\n\n解释 @foo.go"
-	if err := c.runTurnWithRaw(context.Background(), resolved, "解释 @foo.go"); err != nil {
-		t.Fatal(err)
-	}
-	if len(runner.inputs) != 1 {
-		t.Fatalf("runner inputs = %d, want 1", len(runner.inputs))
-	}
-	if strings.HasPrefix(agent.StripTransientUserBlocks(runner.inputs[0]), PlanModeMarker) {
-		t.Fatalf("resolved context should not trigger auto-plan when raw prompt is simple: %q", runner.inputs[0])
-	}
-	if c.PlanMode() {
-		t.Fatal("controller plan mode should remain off")
 	}
 }
 

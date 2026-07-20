@@ -61,8 +61,6 @@ reasoning_language = "auto"      # 可见思考过程语言：auto|zh|en
 # max_subagent_depth = 2              # 子代理嵌套委派深度；设为 1 可恢复旧的单层边界
 # max_subagent_concurrency = 6        # 会话级子代理总并发（task/fleet/skills）
 # max_parallel_writers = 3            # 互不重叠 write_paths 时的并行写入上限
-auto_plan = "off"                  # 仅用户级生效；off|on；off 表示计划模式仅手动开启
-# auto_plan_classifier = "deepseek-flash"   # 可选；只在边界任务上调用
 tool_result_snip_ratio = 0.6       # 在摘要 compaction 前先缩短旧工具输出
 
 [[providers]]
@@ -422,7 +420,7 @@ CLI/TUI 文本输入可通过 `[ui].cursor_shape` 设置光标形状，支持 `u
 | `/theme [auto|light|dark|style]` | 查看或切换 CLI 主题 | 不带参数会列出背景模式和命名配色。选择会保存到用户配置；单次运行可用 `REASONIX_THEME` 和 `REASONIX_THEME_STYLE` 覆盖。 |
 | `Ctrl+O` | 切换详细 reasoning 显示 | 也可通过 `/verbose` 使用。 |
 | `Ctrl+B` | 展开或收起较长 shell 输出 | 较长 shell 输出的提示行也可点击；全屏 TUI 开启鼠标接管时，文本选区由应用内处理。 |
-| `/goal <目标>`、`/goal --research <目标>`、`/goal --simple <目标>`、`/goal status`、`/goal clear` | 启动、查看或清除 Goal | Goal 不进入任何快捷键循环；明显长周期目标会自动启用 AutoResearch。普通输入命中强 AutoResearch 信号时也会自动升级为 Goal。 |
+| `/goal <目标>`、`/goal --research <目标>`、`/goal --simple <目标>`、`/goal status`、`/goal clear` | 启动、查看或清除 Goal | Goal 不进入任何快捷键循环；显式启动 Goal 后，明显长周期目标会自动启用 AutoResearch。 |
 | `/migrate`、`/migrate --from <旧目录>` | 重试旧数据迁移，或从指定 v0.x 来源导入 sessions | Windows v0.52 自定义安装/数据目录用 `--from`；该形式只导入 sessions。详见[配置路径](./CONFIG_PATHS.zh-CN.md)。 |
 
 选择器与审批：
@@ -623,7 +621,7 @@ headers = { Authorization = "Bearer ${STRIPE_KEY}" }
 
 ## 斜杠命令
 
-交互式 `reasonix` 会话里，内置命令（`/compact`、`/new`、`/clear`、`/rewind`、`/tree`、`/branch`、`/switch`、`/todo`、`/model`、`/work-mode`、`/mcp`、`/skills`、`/hooks`、`/memory`、`/goal`、`/output-style`、`/sandbox`、`/language`、`/auto-plan`、`/reasoning-language`、`/help`）在本地执行——`/help` 可列出全部。
+交互式 `reasonix` 会话里，内置命令（`/compact`、`/new`、`/clear`、`/rewind`、`/tree`、`/branch`、`/switch`、`/todo`、`/model`、`/work-mode`、`/mcp`、`/skills`、`/hooks`、`/memory`、`/goal`、`/output-style`、`/sandbox`、`/language`、`/reasoning-language`、`/help`）在本地执行——`/help` 可列出全部。
 内置 **Skill**（如 `/init`、`/explore`、`/test`、`/reasonix-guide`）也会出现在斜杠菜单，
 并可通过 `run_skill` 调用（正文按需加载；只有索引行进入缓存稳定前缀）。配置或能力排障时
 用 `/reasonix-guide`，它会引导运行 `reasonix doctor capabilities`（见
@@ -693,8 +691,8 @@ Review the staged diff. Focus on $ARGUMENTS, list bugs with file:line.
 Goal 是长期目标的统一运行机制。普通 `/goal` 继续走轻量 Goal：Reasonix 会持续推进，直到
 完成、阻塞或被清除。对于明显长周期的目标，Goal 会自动进入 AutoResearch 策略，而不是
 要求用户单独运行 `/auto-research` skill；`auto-research` 也不会作为独立 builtin skill 出现在
-Settings -> Skills 或斜杠菜单里。普通聊天输入如果命中很强的长周期信号，也会被 host 自动
-升级为等价的 `/goal --research <原输入>`。
+Settings -> Skills 或斜杠菜单里。普通聊天不会隐式改变协作模式；需要长目标时，请在输入框中
+明确选择 Goal，或使用 `/goal` 启动。
 
 复杂任务建议把目标写成[任务合约](./TASK_CONTRACT.zh-CN.md)：Context、Request、
 Output format、Constraints 和 Pause policy。Goal 模式会把这些部分当作自主执行的边界；
@@ -705,8 +703,7 @@ AutoResearch 会在这些目标里自动启用：包含“持续”“长期”�
 研究/排查、实现/修复、验证/测试、优化/文档/发布等多个阶段；或者用户明确给出
 `.reasonix/autoresearch/<task-id>/` 任务目录。高级用户可以用
 `/goal --research <目标>` 强制启用，也可以用 `/goal --simple <目标>` 强制保持轻量 Goal。
-普通聊天里的自动升级比 `/goal` 内部判断更保守：单独说“长期”“优化”“研究一下”或
-“验证一下”不会自动创建 AutoResearch 任务。
+未显式启动 Goal 时，这些信号只作为普通聊天文本处理，不会创建持久化 AutoResearch 任务。
 
 进入 AutoResearch 后，agent 会把目标当成有状态的研究循环，而不是只靠聊天上下文续写。
 它会创建或复用项目级 `.reasonix/autoresearch/<task-id>/` 目录。新任务默认使用
@@ -822,13 +819,10 @@ system contract 和工具 Schema 在后续轮次保持稳定；轻量模式下�
 桌面端标签页提供相同三档并持久化轻量或交付优先
 模式；旧的空值/`full` 继续解释为均衡模式。
 
-交互式前端中，计划模式默认手动开启。设置 `agent.auto_plan = "on"` 后，看起来复杂
-的任务会自动进入 plan mode：Reasonix 先生成计划，待用户批准后工作流才切换到实施；规划期间的
-工具调用仍遵守当前 Permissions 与 Sandbox。`auto_plan_classifier` 可以指定便宜的 provider，例如
-`deepseek-flash`；它只在边界输入上调用，分类失败会回退到启发式规则。也可以用
-在 `reasonix` 会话里用 `/auto-plan off|on` 修改用户级设置，或在 shell/脚本里用
-`reasonix config auto-plan off|on`。Auto-plan 只认用户级设置；项目
-`reasonix.toml` 里的 `agent.auto_plan` 会被忽略。可见思考语言也采用类似形态：
+交互式前端中的计划模式始终由用户显式选择：桌面端在“协作方式”中选择计划模式，CLI 用
+`Shift+Tab` 切换到 Plan。Reasonix 先生成计划，待用户批准后工作流才切换到实施；规划期间的
+工具调用仍遵守当前 Permissions 与 Sandbox。旧的 `agent.auto_plan` 与
+`agent.auto_plan_classifier` 会被忽略，并在升级时从用户配置中移除。可见思考语言可通过以下方式修改：
 会话里用 `/reasoning-language auto|zh|en`，shell/脚本里用
 `reasonix config reasoning-language auto|zh|en`。只有明确想为
 reasoning-language 写项目级覆盖时，才给 shell 命令加 `--local`。
