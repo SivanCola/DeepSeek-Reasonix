@@ -25,9 +25,10 @@ type StreamOpener func(ctx context.Context, ref, effort string, req provider.Req
 
 // Desktop is the Desktop-side Broker endpoint bound to one SSH/rpcwire connection.
 type Desktop struct {
-	conn    *rpcwire.Conn
-	catalog CatalogSource
-	open    StreamOpener
+	conn      *rpcwire.Conn
+	catalog   CatalogSource
+	open      StreamOpener
+	authorize func() error
 
 	mu      sync.Mutex
 	streams map[string]*streamState
@@ -57,8 +58,12 @@ const (
 
 // Options configures a Desktop Broker endpoint.
 type Options struct {
-	Catalog       CatalogSource
-	Open          StreamOpener
+	Catalog CatalogSource
+	Open    StreamOpener
+	// Authorize runs immediately before the endpoint becomes active. Desktop
+	// transports use it to bind the Broker capability to the authenticated SSH
+	// peer; returning an error keeps every Broker method unavailable.
+	Authorize     func() error
 	MaxConcurrent int
 }
 
@@ -79,6 +84,7 @@ func Attach(conn *rpcwire.Conn, opts Options) (*Desktop, error) {
 		conn:            conn,
 		catalog:         opts.Catalog,
 		open:            opts.Open,
+		authorize:       opts.Authorize,
 		streams:         map[string]*streamState{},
 		maxConcurrent:   max,
 		closed:          make(chan struct{}),
@@ -94,6 +100,11 @@ func Attach(conn *rpcwire.Conn, opts Options) (*Desktop, error) {
 // Activate makes Broker methods available after the Remote initialize
 // handshake and its protocol/schema checks have succeeded.
 func (d *Desktop) Activate() error {
+	if d.authorize != nil {
+		if err := d.authorize(); err != nil {
+			return fmt.Errorf("broker: authorization failed: %w", err)
+		}
+	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	select {

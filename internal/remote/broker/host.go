@@ -30,19 +30,26 @@ type Host struct {
 }
 
 type hostStream struct {
-	generation  uint64
-	conn        *rpcwire.Conn
-	out         chan provider.Chunk
-	done        chan struct{}
-	nextSeq     int64
-	pending     map[int64]provider.Chunk
-	ended       bool
-	endSeq      int64
-	endError    string
-	interrupted bool
-	gapTimer    bool
-	closeOnce   sync.Once
+	generation    uint64
+	conn          *rpcwire.Conn
+	out           chan provider.Chunk
+	done          chan struct{}
+	nextSeq       int64
+	pending       map[int64]provider.Chunk
+	ended         bool
+	endSeq        int64
+	endError      string
+	interrupted   bool
+	gapTimer      bool
+	closeOnce     sync.Once
+	delivery      []provider.Chunk
+	deliveryWake  chan struct{}
+	deliveryFinal bool
 }
+
+// Keep delivery bounded without ever applying output backpressure while the
+// Host-wide mutex is held. One slot is reserved for a terminal error.
+const hostDeliveryQueueLimit = 256
 
 func NewHost() *Host { return &Host{streams: make(map[string]*hostStream)} }
 
@@ -197,9 +204,15 @@ func (h *Host) open(ctx context.Context, ref string, effort *string, request pro
 		return nil, fmt.Errorf("provider broker is not attached")
 	}
 	id := "bs_" + randomID(12)
-	stream := &hostStream{generation: generation, conn: conn, out: make(chan provider.Chunk, 64), done: make(chan struct{}), nextSeq: 1, pending: make(map[int64]provider.Chunk)}
+	stream := &hostStream{
+		generation: generation, conn: conn,
+		out: make(chan provider.Chunk, 64), done: make(chan struct{}),
+		deliveryWake: make(chan struct{}, 1),
+		nextSeq:      1, pending: make(map[int64]provider.Chunk),
+	}
 	h.streams[id] = stream
 	h.mu.Unlock()
+	go h.deliverStream(stream)
 
 	effortValue := ""
 	if effort != nil {
@@ -303,7 +316,10 @@ func (h *Host) flushLocked(id string, stream *hostStream) {
 		}
 		delete(stream.pending, stream.nextSeq)
 		stream.nextSeq++
-		stream.out <- chunk
+		if !h.enqueueDeliveryLocked(stream, chunk) {
+			h.finishLocked(id, stream, provider.Chunk{Type: provider.ChunkError, Err: &provider.StreamInterruptedError{Err: errors.New("provider broker stream output overflow")}})
+			return
+		}
 	}
 	if !stream.ended || stream.nextSeq <= stream.endSeq {
 		return
@@ -326,10 +342,11 @@ func (h *Host) finishLocked(id string, stream *hostStream, terminal provider.Chu
 	delete(h.streams, id)
 	stream.closeOnce.Do(func() {
 		if terminal.Err != nil || terminal.Type != 0 {
-			stream.out <- terminal
+			stream.delivery = append(stream.delivery, terminal)
 		}
+		stream.deliveryFinal = true
 		close(stream.done)
-		close(stream.out)
+		h.signalDeliveryLocked(stream)
 	})
 }
 
@@ -337,8 +354,48 @@ func (h *Host) removeStream(id string, stream *hostStream) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if h.streams[id] == stream {
-		delete(h.streams, id)
-		stream.closeOnce.Do(func() { close(stream.done); close(stream.out) })
+		h.finishLocked(id, stream, provider.Chunk{})
+	}
+}
+
+func (h *Host) enqueueDeliveryLocked(stream *hostStream, chunk provider.Chunk) bool {
+	if stream.deliveryFinal || len(stream.delivery) >= hostDeliveryQueueLimit-1 {
+		return false
+	}
+	stream.delivery = append(stream.delivery, chunk)
+	h.signalDeliveryLocked(stream)
+	return true
+}
+
+func (h *Host) signalDeliveryLocked(stream *hostStream) {
+	select {
+	case stream.deliveryWake <- struct{}{}:
+	default:
+	}
+}
+
+// deliverStream is the sole sender and closer of stream.out. It may wait for a
+// slow provider consumer, but never while holding h.mu, so reconnect, detach,
+// cancellation, gap expiry, and unrelated streams continue to make progress.
+func (h *Host) deliverStream(stream *hostStream) {
+	defer close(stream.out)
+	for {
+		h.mu.Lock()
+		if len(stream.delivery) > 0 {
+			chunk := stream.delivery[0]
+			stream.delivery[0] = provider.Chunk{}
+			stream.delivery = stream.delivery[1:]
+			h.mu.Unlock()
+			stream.out <- chunk
+			continue
+		}
+		if stream.deliveryFinal {
+			h.mu.Unlock()
+			return
+		}
+		wake := stream.deliveryWake
+		h.mu.Unlock()
+		<-wake
 	}
 }
 

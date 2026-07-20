@@ -48,6 +48,41 @@ func TestDesktopBrokerUnavailableUntilActivatedAndAfterClose(t *testing.T) {
 	}
 }
 
+func TestDesktopBrokerAuthorizationMustSucceedBeforeActivation(t *testing.T) {
+	var allow atomic.Bool
+	conn := rpcwire.NewConn(strings.NewReader(""), io.Discard, rpcwire.Options{})
+	d, err := Attach(conn, Options{
+		Catalog: func(context.Context, map[string]struct{}) ([]protocol.BrokerProviderDescriptor, error) {
+			return nil, nil
+		},
+		Open: func(context.Context, string, string, provider.Request) (<-chan provider.Chunk, error) {
+			return nil, nil
+		},
+		Authorize: func() error {
+			if !allow.Load() {
+				return errors.New("peer identity mismatch")
+			}
+			return nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := d.Activate(); err == nil {
+		t.Fatal("Broker activated before peer authorization")
+	}
+	if _, err := d.handleCatalog(context.Background(), json.RawMessage(`{}`)); rpcCode(err) != ErrorNotReady {
+		t.Fatalf("catalog after rejected authorization error = %v, want not ready", err)
+	}
+	allow.Store(true)
+	if err := d.Activate(); err != nil {
+		t.Fatalf("Activate after peer authorization: %v", err)
+	}
+	if _, err := d.handleCatalog(context.Background(), json.RawMessage(`{}`)); err != nil {
+		t.Fatalf("catalog after authorization: %v", err)
+	}
+}
+
 func TestDesktopBrokerNeverReturnsProviderErrorDetails(t *testing.T) {
 	const secret = "sk-provider-secret-canary"
 	conn := rpcwire.NewConn(strings.NewReader(""), io.Discard, rpcwire.Options{})

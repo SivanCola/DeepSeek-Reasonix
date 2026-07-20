@@ -48,6 +48,36 @@ func TestAskPassOwnedStreamClosesBrokerWithTransport(t *testing.T) {
 	}
 }
 
+func TestAuthorizeWorkbenchPeerFailsClosed(t *testing.T) {
+	factory := &peerIdentityFactory{}
+	if err := authorizeWorkbenchPeer(factory, "SHA256:trusted"); err == nil {
+		t.Fatal("missing live peer identity was authorized")
+	}
+	factory.peer = workbenchPeerIdentity{KeyType: "ssh-ed25519", Fingerprint: "SHA256:other"}
+	if err := authorizeWorkbenchPeer(factory, "SHA256:trusted"); err == nil {
+		t.Fatal("changed peer identity was authorized")
+	}
+	factory.peer.Fingerprint = "SHA256:trusted"
+	if err := authorizeWorkbenchPeer(factory, "SHA256:trusted"); err != nil {
+		t.Fatalf("trusted live peer was rejected: %v", err)
+	}
+	if err := authorizeWorkbenchPeer(transport.FactoryFunc(func(context.Context) (transport.Stream, error) {
+		return nil, nil
+	}), "SHA256:trusted"); err == nil {
+		t.Fatal("transport without peer identity reporting was authorized")
+	}
+}
+
+type peerIdentityFactory struct {
+	peer workbenchPeerIdentity
+}
+
+func (*peerIdentityFactory) Open(context.Context) (transport.Stream, error) { return nil, nil }
+
+func (f *peerIdentityFactory) PeerIdentity() (workbenchPeerIdentity, bool) {
+	return f.peer, f.peer.Fingerprint != ""
+}
+
 type closeTrackingStream struct{ closed bool }
 
 func (*closeTrackingStream) Read([]byte) (int, error)    { return 0, io.EOF }

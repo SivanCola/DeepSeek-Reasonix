@@ -216,6 +216,9 @@ func (a *App) WorkbenchConnectRemote(hostID, workspace string) error {
 		return fail(err)
 	}
 	brokerOpts := broker.Options{
+		Authorize: func() error {
+			return authorizeWorkbenchPeer(factory, fp)
+		},
 		Catalog: func(ctx context.Context, filter map[string]struct{}) ([]protocol.BrokerProviderDescriptor, error) {
 			return catalogDescriptors(cfg, allowed, filter)
 		},
@@ -242,14 +245,6 @@ func (a *App) WorkbenchConnectRemote(hostID, workspace string) error {
 			cli.Close()
 		}
 	}()
-	if source, ok := factory.(interface {
-		PeerIdentity() (workbenchPeerIdentity, bool)
-	}); ok {
-		peer, havePeer := source.PeerIdentity()
-		if !havePeer || peer.Fingerprint != fp {
-			return fail(fmt.Errorf("authenticated workbench peer identity changed during connection"))
-		}
-	}
 	model := strings.TrimSpace(cfg.DefaultModel)
 	if entry, ok := cfg.ResolveModel(model); ok {
 		model = entry.Name + "/" + entry.Model
@@ -326,6 +321,22 @@ func (a *App) WorkbenchConnectRemote(hostID, workspace string) error {
 	a.emitWorkbenchTarget("connected", activeID, activeGen, requestSeq, "")
 	a.emitReady(a.ctx, tabID)
 	a.emitRuntimeEvent("runtime:rebuilt", tabID)
+	return nil
+}
+
+type workbenchPeerIdentitySource interface {
+	PeerIdentity() (workbenchPeerIdentity, bool)
+}
+
+func authorizeWorkbenchPeer(factory transport.Factory, expectedFingerprint string) error {
+	source, ok := factory.(workbenchPeerIdentitySource)
+	if !ok {
+		return fmt.Errorf("workbench transport cannot report its authenticated peer identity")
+	}
+	peer, havePeer := source.PeerIdentity()
+	if !havePeer || strings.TrimSpace(peer.Fingerprint) == "" || peer.Fingerprint != expectedFingerprint {
+		return fmt.Errorf("authenticated workbench peer identity changed during connection")
+	}
 	return nil
 }
 
