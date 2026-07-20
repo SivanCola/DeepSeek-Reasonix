@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"reasonix/internal/config"
+	"reasonix/internal/remote/mirror"
 	"reasonix/internal/remote/protocol"
 	"reasonix/internal/remote/target"
 )
@@ -29,6 +30,9 @@ type Session struct {
 	HostID       string
 	Workspace    string
 	ConnectionID string
+	// Token authenticates this window only; revoked when the session is released.
+	// Never log or put in argv/DOM.
+	Token string
 	// RemoteBase is the local-forwarded remote-runtime base URL (loopback).
 	RemoteBase string
 	// RemoteToken authenticates to remote-runtime.
@@ -74,23 +78,24 @@ type WriteResult struct {
 
 // WorkspaceBackend is optional parent-process access to remote files/Git via
 // the live SSH connection. Nil disables /gateway/v1/fs and /gateway/v1/git.
+// Callers must pass Session.Workspace so backends can enforce containment.
 type WorkspaceBackend interface {
-	ListDir(ctx context.Context, hostID, path string) ([]DirEntry, error)
-	ReadFile(ctx context.Context, hostID, path string) (FilePreview, error)
-	WriteFile(ctx context.Context, hostID, path, body string, expectMtime int64) (WriteResult, error)
+	ListDir(ctx context.Context, hostID, workspace, path string) ([]DirEntry, error)
+	ReadFile(ctx context.Context, hostID, workspace, path string) (FilePreview, error)
+	WriteFile(ctx context.Context, hostID, workspace, path, body string, expectMtime int64) (WriteResult, error)
 	GitStatus(ctx context.Context, hostID, workspace string) (string, error)
 	GitDiff(ctx context.Context, hostID, workspace string) (string, error)
 }
 
 // Server is the local loopback gateway for remote AppBridge children.
 type Server struct {
-	mu       sync.Mutex
-	sessions map[string]*Session
-	tickets  map[string]*ticket // ticket id → session id (one-shot)
-	token    string             // long-lived child auth token for this process
-	ln       net.Listener
-	srv      *http.Server
-	backend  WorkspaceBackend
+	mu        sync.Mutex
+	sessions  map[string]*Session
+	tickets   map[string]*ticket // ticket id → session id (one-shot)
+	ln        net.Listener
+	srv       *http.Server
+	backend   WorkspaceBackend
+	onRelease func(sessionID string) // optional: parent revokes broker capability
 }
 
 type ticket struct {
@@ -100,12 +105,21 @@ type ticket struct {
 
 // New creates a gateway server.
 func New() *Server {
-	tok, _ := randomHex(32)
 	return &Server{
 		sessions: map[string]*Session{},
 		tickets:  map[string]*ticket{},
-		token:    tok,
 	}
+}
+
+// SetOnRelease registers a callback invoked when a window session is released
+// (child close or explicit ReleaseSession). Used to revoke Provider Broker tokens.
+func (s *Server) SetOnRelease(fn func(sessionID string)) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	s.onRelease = fn
+	s.mu.Unlock()
 }
 
 // SetWorkspaceBackend attaches SFTP/Git accessors from the parent desktop process.
@@ -147,12 +161,34 @@ func (s *Server) Close() {
 	s.tickets = map[string]*ticket{}
 }
 
-// Token returns the gateway process token used by child windows (never log it).
+// TokenFor returns the per-window gateway token for sessionID (never log it).
+func (s *Server) TokenFor(sessionID string) string {
+	if s == nil {
+		return ""
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if sess, ok := s.sessions[sessionID]; ok {
+		return sess.Token
+	}
+	return ""
+}
+
+// Token returns a token for tests/legacy callers when exactly one session exists.
+// Prefer TokenFor(sessionID). Empty when zero or multiple sessions.
 func (s *Server) Token() string {
 	if s == nil {
 		return ""
 	}
-	return s.token
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.sessions) != 1 {
+		return ""
+	}
+	for _, sess := range s.sessions {
+		return sess.Token
+	}
+	return ""
 }
 
 // RegisterSession records a remote window session and returns a one-shot ticket
@@ -164,6 +200,13 @@ func (s *Server) RegisterSession(sess Session) (ticketPath string, err error) {
 			return "", err
 		}
 		sess.ID = "gws_" + id
+	}
+	if strings.TrimSpace(sess.Token) == "" {
+		tok, err := randomHex(32)
+		if err != nil {
+			return "", err
+		}
+		sess.Token = tok
 	}
 	if sess.CreatedAt.IsZero() {
 		sess.CreatedAt = time.Now().UTC()
@@ -182,7 +225,7 @@ func (s *Server) RegisterSession(sess Session) (ticketPath string, err error) {
 	}
 	path := filepath.Join(dir, ticketName)
 	payload := map[string]string{
-		"gatewayToken": s.token,
+		"gatewayToken": sess.Token,
 		"sessionId":    sess.ID,
 		"hostId":       sess.HostID,
 		"workspace":    sess.Workspace,
@@ -202,11 +245,22 @@ func (s *Server) RegisterSession(sess Session) (ticketPath string, err error) {
 	return path, nil
 }
 
-// ReleaseSession drops one window's gateway session without affecting others.
+// ReleaseSession drops one window's gateway session without affecting others and
+// invokes the optional onRelease hook (broker capability revoke).
 func (s *Server) ReleaseSession(id string) {
+	if s == nil || strings.TrimSpace(id) == "" {
+		return
+	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	delete(s.sessions, id)
+	_, ok := s.sessions[id]
+	if ok {
+		delete(s.sessions, id)
+	}
+	fn := s.onRelease
+	s.mu.Unlock()
+	if ok && fn != nil {
+		fn(id)
+	}
 }
 
 // Get returns a session by id.
@@ -232,6 +286,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /gateway/v1/hello", s.handleHello)
 	mux.HandleFunc("GET /gateway/v1/session", s.handleSession)
 	mux.HandleFunc("POST /gateway/v1/session/active", s.handleSetActiveRemote)
+	mux.HandleFunc("POST /gateway/v1/session/release", s.handleReleaseSession)
+	mux.HandleFunc("POST /gateway/v1/mirror/pull", s.handleMirrorPull)
 	// Catch-all remote-runtime proxy: /gateway/v1/remote/... → /remote/v1/...
 	mux.HandleFunc("/gateway/v1/remote/", s.proxyRemoteCatchAll)
 	// Workspace file/Git (parent SSH).
@@ -256,7 +312,23 @@ func (s *Server) authorize(r *http.Request) bool {
 			tok = strings.TrimSpace(auth[7:])
 		}
 	}
-	return tok != "" && tok == s.token
+	if tok == "" {
+		return false
+	}
+	sid := strings.TrimSpace(r.Header.Get("X-Reasonix-Session-Id"))
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if sid != "" {
+		sess, ok := s.sessions[sid]
+		return ok && sess.Token != "" && sess.Token == tok
+	}
+	// Token-only (e.g. hello before session header): accept any live session token.
+	for _, sess := range s.sessions {
+		if sess.Token != "" && sess.Token == tok {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Server) handleHello(w http.ResponseWriter, r *http.Request) {
@@ -301,6 +373,95 @@ func (s *Server) handleSetActiveRemote(w http.ResponseWriter, r *http.Request) {
 	}
 	s.SetActiveRemoteSession(sid, strings.TrimSpace(body.RemoteSessionID))
 	_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+}
+
+func (s *Server) handleReleaseSession(w http.ResponseWriter, r *http.Request) {
+	sid := strings.TrimSpace(r.Header.Get("X-Reasonix-Session-Id"))
+	if sid == "" {
+		http.Error(w, "session id required", http.StatusBadRequest)
+		return
+	}
+	// ReleaseSession is idempotent; token is invalidated after this returns.
+	s.ReleaseSession(sid)
+	_ = json.NewEncoder(w).Encode(map[string]string{"status": "released"})
+}
+
+// handleMirrorPull downloads the remote-runtime checkpoint for the active remote
+// session and applies it into the local read-only mirror store (digest-aligned).
+func (s *Server) handleMirrorPull(w http.ResponseWriter, r *http.Request) {
+	sess := s.sessionFrom(r)
+	if sess == nil {
+		http.Error(w, "session not found", http.StatusNotFound)
+		return
+	}
+	remoteSID := strings.TrimSpace(sess.ActiveRemoteSession)
+	if bodySID := r.URL.Query().Get("remoteSessionId"); bodySID != "" {
+		remoteSID = strings.TrimSpace(bodySID)
+	}
+	if remoteSID == "" {
+		var body struct {
+			RemoteSessionID string `json:"remoteSessionId"`
+		}
+		_ = json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&body)
+		remoteSID = strings.TrimSpace(body.RemoteSessionID)
+	}
+	if remoteSID == "" {
+		http.Error(w, "remote session id required", http.StatusBadRequest)
+		return
+	}
+	url := strings.TrimRight(sess.RemoteBase, "/") + protocol.APIPrefix + "/sessions/" + remoteSID + "/checkpoint"
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, url, nil)
+	if err != nil {
+		http.Error(w, "proxy error", http.StatusBadGateway)
+		return
+	}
+	req.Header.Set("X-Reasonix-Remote-Token", sess.RemoteToken)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		http.Error(w, "remote unavailable", http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		http.Error(w, "checkpoint fetch failed", resp.StatusCode)
+		return
+	}
+	var payload struct {
+		Manifest  protocol.CheckpointManifest `json:"manifest"`
+		Artifacts map[string]string           `json:"artifacts"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 32<<20)).Decode(&payload); err != nil {
+		http.Error(w, "bad checkpoint payload", http.StatusBadGateway)
+		return
+	}
+	arts := map[string][]byte{}
+	for path, hexBody := range payload.Artifacts {
+		raw, derr := hex.DecodeString(hexBody)
+		if derr != nil {
+			http.Error(w, "artifact decode failed", http.StatusBadGateway)
+			return
+		}
+		arts[path] = raw
+	}
+	fp := sess.Fingerprint
+	if fp == "" {
+		fp = sess.HostID
+	}
+	result, err := mirror.Store{}.ApplyCheckpoint(fp, sess.Workspace, payload.Manifest, arts)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusConflict)
+		return
+	}
+	s.mu.Lock()
+	if live, ok := s.sessions[sess.ID]; ok {
+		live.MirrorRevision = payload.Manifest.Revision
+	}
+	s.mu.Unlock()
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"status":   string(result),
+		"revision": payload.Manifest.Revision,
+		"digest":   payload.Manifest.Digest,
+	})
 }
 
 // proxyRemoteCatchAll maps /gateway/v1/remote/<rest> → <RemoteBase>/remote/v1/<rest>
@@ -395,7 +556,7 @@ func (s *Server) handleFSList(w http.ResponseWriter, r *http.Request) {
 	if path == "" {
 		path = sess.Workspace
 	}
-	entries, err := b.ListDir(r.Context(), sess.HostID, path)
+	entries, err := b.ListDir(r.Context(), sess.HostID, sess.Workspace, path)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -411,7 +572,7 @@ func (s *Server) handleFSRead(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	path := r.URL.Query().Get("path")
-	prev, err := b.ReadFile(r.Context(), sess.HostID, path)
+	prev, err := b.ReadFile(r.Context(), sess.HostID, sess.Workspace, path)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -435,7 +596,7 @@ func (s *Server) handleFSWrite(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
-	res, err := b.WriteFile(r.Context(), sess.HostID, body.Path, body.Body, body.ExpectMtime)
+	res, err := b.WriteFile(r.Context(), sess.HostID, sess.Workspace, body.Path, body.Body, body.ExpectMtime)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return

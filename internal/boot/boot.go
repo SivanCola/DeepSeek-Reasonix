@@ -754,7 +754,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	// executor uses, so the model surfaces it like any other tool.
 	resolveSubagentProvider := func(modelRef, effort string) (provider.Provider, *provider.Pricing, int, error) {
 		me := *entry
-		selRef := modelName
+		var selRef string
 		if strings.TrimSpace(modelRef) != "" {
 			if resolved, ok := cfg.ResolveModel(modelRef); ok {
 				me = *resolved

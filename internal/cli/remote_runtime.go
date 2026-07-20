@@ -20,7 +20,7 @@ import (
 // separate directory from `reasonix serve` so PID/port/token never collide.
 func runRemoteRuntime(args []string, version string) int {
 	fs := flag.NewFlagSet("remote-runtime", flag.ContinueOnError)
-	addr := fs.String("addr", "127.0.0.1:0", "listen address (loopback only)")
+	addr := fs.String("addr", "127.0.0.1:0", "listen address (loopback only; 0.0.0.0 rejected)")
 	workspace := fs.String("workspace", "", "remote workspace root (required)")
 	tokenFile := fs.String("token-file", "", "path to auth token file (mode 0600)")
 	portFile := fs.String("port-file", "", "write bound host:port after listen")
@@ -44,14 +44,19 @@ func runRemoteRuntime(args []string, version string) int {
 		ws = abs
 	}
 
-	token := ""
-	if *tokenFile != "" {
-		data, err := os.ReadFile(*tokenFile)
-		if err != nil {
-			fmt.Fprintln(os.Stderr, "remote-runtime: read token-file:", err)
-			return 1
-		}
-		token = strings.TrimSpace(string(data))
+	if strings.TrimSpace(*tokenFile) == "" {
+		fmt.Fprintln(os.Stderr, "remote-runtime: --token-file is required (auth cannot be disabled)")
+		return 2
+	}
+	data, err := os.ReadFile(*tokenFile)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "remote-runtime: read token-file:", err)
+		return 1
+	}
+	token := strings.TrimSpace(string(data))
+	if token == "" {
+		fmt.Fprintln(os.Stderr, "remote-runtime: token-file is empty")
+		return 1
 	}
 
 	var resolver provider.Resolver

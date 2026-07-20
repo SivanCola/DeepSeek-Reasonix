@@ -29,14 +29,14 @@ const APIPrefix = "/remote/v1"
 // Capability bits returned by hello / capabilities. Values are stable once
 // published; new bits must be appended.
 const (
-	CapSessions     uint64 = 1 << iota // multi-session registry
-	CapEvents                          // unified SSE event stream
-	CapCheckpoint                      // session checkpoint download
-	CapRestore                         // restore-from-mirror as new session
-	CapBroker                          // provider broker reverse tunnel
-	CapTools                           // tool/skill/MCP surface reporting
-	CapAttachments                     // attachment upload path
-	CapShell                           // ! shell / PTY support announced
+	CapSessions    uint64 = 1 << iota // multi-session registry
+	CapEvents                         // unified SSE event stream
+	CapCheckpoint                     // session checkpoint download
+	CapRestore                        // restore-from-mirror as new session
+	CapBroker                         // provider broker reverse tunnel
+	CapTools                          // tool/skill/MCP surface reporting
+	CapAttachments                    // attachment upload path
+	CapShell                          // ! shell / PTY support announced
 )
 
 // RequiredCapabilities is the minimum bitset a desktop of this version needs.

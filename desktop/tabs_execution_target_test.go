@@ -64,3 +64,45 @@ func TestDesktopTabEntrySSHRoundTripStripsConnectionID(t *testing.T) {
 		t.Fatalf("remote session = %q", again.RemoteSessionID)
 	}
 }
+
+// TestSaveTabsCollectLockedPersistsExecutionTarget proves the real save path
+// (not a hand-built struct) writes ExecutionTarget and RemoteSessionID.
+func TestSaveTabsCollectLockedPersistsExecutionTarget(t *testing.T) {
+	app := &App{
+		tabs: map[string]*WorkspaceTab{
+			"tab_ssh": {
+				ID:            "tab_ssh",
+				Scope:         "project",
+				WorkspaceRoot: "/unused",
+				TopicID:       "main",
+				ExecutionTarget: target.ExecutionTarget{
+					Kind:         target.KindSSH,
+					HostID:       "lab",
+					Workspace:    "/home/u/work",
+					ConnectionID: "must-strip",
+				},
+				RemoteSessionID: "rs_live",
+				model:           "deepseek/chat",
+			},
+		},
+		tabOrder:    []string{"tab_ssh"},
+		activeTabID: "tab_ssh",
+	}
+	_, entries, _, _ := app.saveTabsCollectLocked()
+	if len(entries) != 1 {
+		t.Fatalf("entries = %d", len(entries))
+	}
+	e := entries[0]
+	if e.ExecutionTarget == nil || !e.ExecutionTarget.IsSSH() {
+		t.Fatalf("execution target not saved: %+v", e.ExecutionTarget)
+	}
+	if e.ExecutionTarget.ConnectionID != "" {
+		t.Fatalf("connectionId must be stripped on save: %q", e.ExecutionTarget.ConnectionID)
+	}
+	if e.ExecutionTarget.HostID != "lab" || e.ExecutionTarget.Workspace != "/home/u/work" {
+		t.Fatalf("target fields = %+v", e.ExecutionTarget)
+	}
+	if e.RemoteSessionID != "rs_live" {
+		t.Fatalf("remoteSessionId = %q", e.RemoteSessionID)
+	}
+}

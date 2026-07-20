@@ -16,7 +16,6 @@ import (
 	"reasonix/internal/remote/broker"
 	"reasonix/internal/remote/gateway"
 	"reasonix/internal/remote/protocol"
-	"reasonix/internal/remote/target"
 )
 
 // remoteNativeKernel holds parent-process remote desktop services.
@@ -48,6 +47,11 @@ func (k *remoteNativeKernel) ensureServices(ctx context.Context) (*gateway.Serve
 	resolver := boot.NewLocalProviderResolver(cfg, cfg.NetworkProxySpec())
 	b := broker.NewServer(broker.Options{Resolver: resolver})
 	g := gateway.New()
+	// When a remote child releases its gateway session, drop the Broker token so
+	// the remote host cannot keep consuming local model quota after the window closes.
+	g.SetOnRelease(func(sessionID string) {
+		k.revokeSession(sessionID)
+	})
 	svcCtx, cancel := context.WithCancel(context.Background())
 	baddr, err := b.ListenAndServe(svcCtx, "127.0.0.1:0")
 	if err != nil {
@@ -243,14 +247,19 @@ func (a *App) openNativeRemoteWorkspace(hostID, workspace string) error {
 		return err
 	}
 	appRemoteNative.rememberToken(sess.ID, tok)
+	gwToken := gw.TokenFor(sess.ID)
+	if gwToken == "" {
+		gw.ReleaseSession(sess.ID)
+		brk.Revoke(tok)
+		return fmt.Errorf("gateway session token missing after register")
+	}
 
 	a.saveLastRemoteWorkspace(hostID, workspace)
-	_ = target.ExecutionTarget{Kind: target.KindSSH, HostID: hostID, Workspace: workspace}
 
 	return a.openRemoteGatewayWindow(remoteWindowLaunch{
 		Mode:         "gateway",
 		GatewayURL:   appRemoteNative.gatewayBaseLocked(),
-		GatewayToken: gw.Token(),
+		GatewayToken: gwToken,
 		SessionID:    sess.ID,
 		HostID:       hostID,
 		Workspace:    workspace,

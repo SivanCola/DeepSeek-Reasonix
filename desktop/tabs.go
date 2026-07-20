@@ -152,13 +152,13 @@ func (b *displayTurnBuffer) materialize() []HistoryMessage {
 // memory, permissions) scoped to a workspace root, so multiple projects and
 // topics can be active concurrently without interfering.
 type WorkspaceTab struct {
-	ID                  string             // stable random id
-	Scope               string             // "project" | "global"
-	WorkspaceRoot       string             // project root dir (empty for global)
-	SharedHostKey       string             // opaque key for the shared plugin host (set by buildTabController)
-	TopicID             string             // topic within the project
-	TopicTitle          string             // display title
-	SessionPath         string             // exact .jsonl file this tab continues
+	ID            string // stable random id
+	Scope         string // "project" | "global"
+	WorkspaceRoot string // project root dir (empty for global)
+	SharedHostKey string // opaque key for the shared plugin host (set by buildTabController)
+	TopicID       string // topic within the project
+	TopicTitle    string // display title
+	SessionPath   string // exact .jsonl file this tab continues
 	// ExecutionTarget selects local vs SSH remote execution. Missing/empty is
 	// local. Remote tabs bind a remote-runtime session ID, never a local Controller.
 	ExecutionTarget     target.ExecutionTarget
@@ -1842,10 +1842,10 @@ type TabMeta struct {
 	RemoteSessionID string `json:"remoteSessionId,omitempty"`
 	// RemoteHost / RemoteWorkspace / BrokerStatus / MirrorRevision are display
 	// fields for the remote status bar (never secrets).
-	RemoteHost       string `json:"remoteHost,omitempty"`
-	RemoteWorkspace  string `json:"remoteWorkspace,omitempty"`
-	BrokerStatus     string `json:"brokerStatus,omitempty"`
-	MirrorRevision   int64  `json:"mirrorRevision,omitempty"`
+	RemoteHost      string `json:"remoteHost,omitempty"`
+	RemoteWorkspace string `json:"remoteWorkspace,omitempty"`
+	BrokerStatus    string `json:"brokerStatus,omitempty"`
+	MirrorRevision  int64  `json:"mirrorRevision,omitempty"`
 }
 
 func enrichTabMeta(meta TabMeta) TabMeta {
@@ -4233,7 +4233,7 @@ type desktopTabEntry struct {
 	// ExecutionTarget uses omitempty; missing means local. ConnectionID is
 	// never persisted (see target.ExecutionTarget.Persistable).
 	ExecutionTarget *target.ExecutionTarget `json:"executionTarget,omitempty"`
-	RemoteSessionID string                 `json:"remoteSessionId,omitempty"`
+	RemoteSessionID string                  `json:"remoteSessionId,omitempty"`
 }
 
 type desktopTabsFile struct {
@@ -4284,7 +4284,7 @@ func (a *App) saveTabsCollectLocked() (string, []desktopTabEntry, string, uint64
 	var entries []desktopTabEntry
 	for _, id := range a.orderedTabIDsLocked() {
 		if tab := a.tabs[id]; tab != nil {
-			entries = append(entries, desktopTabEntry{
+			entry := desktopTabEntry{
 				ID:               tab.ID,
 				Scope:            tab.Scope,
 				WorkspaceRoot:    tab.WorkspaceRoot,
@@ -4297,7 +4297,14 @@ func (a *App) saveTabsCollectLocked() (string, []desktopTabEntry, string, uint64
 				Mode:             persistedTabMode(currentTabMode(tab)),
 				Goal:             persistedTabGoal(tab),
 				ToolApprovalMode: persistedToolApprovalMode(currentTabToolApprovalMode(tab)),
-			})
+				RemoteSessionID:  tab.RemoteSessionID,
+			}
+			// Persist SSH target without ConnectionID (ephemeral; see Persistable).
+			if tab.ExecutionTarget.IsSSH() {
+				pt := tab.ExecutionTarget.Persistable()
+				entry.ExecutionTarget = &pt
+			}
+			entries = append(entries, entry)
 		}
 	}
 	a.tabsSaveVersion++

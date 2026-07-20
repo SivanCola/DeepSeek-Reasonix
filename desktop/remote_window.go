@@ -259,3 +259,32 @@ func (a *App) IsRemoteWindow() bool {
 	return a.remoteWindow != nil
 }
 
+// releaseRemoteGatewaySession notifies the parent gateway that this child is
+// closing so the session token and Provider Broker capability are revoked.
+func (a *App) releaseRemoteGatewaySession() {
+	if a == nil || a.remoteWindow == nil {
+		return
+	}
+	base := strings.TrimRight(strings.TrimSpace(a.remoteWindow.GatewayURL), "/")
+	token := strings.TrimSpace(a.remoteWindow.GatewayToken)
+	sid := strings.TrimSpace(a.remoteWindow.SessionID)
+	if base == "" || token == "" || sid == "" {
+		return
+	}
+	if !isSafeRemoteWindowURL(base) {
+		return
+	}
+	client := &http.Client{Timeout: 3 * time.Second}
+	req, err := http.NewRequest(http.MethodPost, base+"/gateway/v1/session/release", strings.NewReader("{}"))
+	if err != nil {
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Reasonix-Gateway-Token", token)
+	req.Header.Set("X-Reasonix-Session-Id", sid)
+	resp, err := client.Do(req)
+	if err != nil {
+		return
+	}
+	_ = resp.Body.Close()
+}

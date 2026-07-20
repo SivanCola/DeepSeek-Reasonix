@@ -39,7 +39,7 @@ func TestGatewayAuthAndSession(t *testing.T) {
 	s.mu.Unlock()
 
 	req := httptest.NewRequest(http.MethodGet, "/gateway/v1/session", nil)
-	req.Header.Set("X-Reasonix-Gateway-Token", s.token)
+	req.Header.Set("X-Reasonix-Gateway-Token", s.TokenFor(sid))
 	req.Header.Set("X-Reasonix-Session-Id", sid)
 	rr := httptest.NewRecorder()
 	s.Handler().ServeHTTP(rr, req)

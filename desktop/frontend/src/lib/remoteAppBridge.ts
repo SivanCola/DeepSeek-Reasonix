@@ -16,6 +16,7 @@ export type RemoteGatewaySession = {
   workspace: string;
   remoteSessionId?: string;
   modelRef?: string;
+  effort?: string | null;
   ready: boolean;
 };
 
@@ -167,11 +168,78 @@ export async function remoteRewind(turn: number, scope?: string): Promise<void> 
 
 export async function remoteSetModel(model: string, effort?: string | null): Promise<void> {
   const body: { model: string; effort?: string } = { model };
-  if (effort != null) body.effort = effort;
+  if (effort != null && effort !== "") body.effort = effort;
   const resp = await withSession("/model", { method: "POST", body: JSON.stringify(body) });
   if (!resp.ok) throw new Error(`set model failed: ${resp.status}`);
   const sess = await loadRemoteGatewaySession();
-  if (sess) sess.modelRef = model;
+  if (sess) {
+    sess.modelRef = model;
+    if (effort !== undefined) sess.effort = effort;
+  }
+}
+
+/** Effort switch rebuilds the remote controller with the active model + effort. */
+export async function remoteSetEffort(level: string): Promise<void> {
+  const sess = await loadRemoteGatewaySession();
+  const model = sess?.modelRef || "";
+  if (!model) {
+    // Without a known model ref we cannot rebuild; surface failure instead of
+    // a silent no-op that leaves the UI believing effort changed.
+    throw new Error("cannot set effort: remote model is not known yet");
+  }
+  await remoteSetModel(model, level || null);
+}
+
+export async function remoteHistoryPage(beforeTurn = 0, limit = 50): Promise<unknown> {
+  const q = new URLSearchParams();
+  if (beforeTurn > 0) q.set("beforeTurn", String(beforeTurn));
+  if (limit > 0) q.set("limit", String(limit));
+  const suffix = q.toString() ? `/history?${q}` : "/history";
+  const resp = await withSession(suffix);
+  if (!resp.ok) throw new Error(`history failed: ${resp.status}`);
+  return resp.json();
+}
+
+export async function remoteMeta(): Promise<unknown> {
+  const resp = await withSession("/meta");
+  if (!resp.ok) throw new Error(`meta failed: ${resp.status}`);
+  const body = (await resp.json()) as Record<string, unknown>;
+  const sess = await loadRemoteGatewaySession();
+  if (sess && typeof body.modelRef === "string" && body.modelRef) {
+    sess.modelRef = body.modelRef;
+  }
+  return body;
+}
+
+export async function remoteContext(): Promise<unknown> {
+  const resp = await withSession("/context");
+  if (!resp.ok) throw new Error(`context failed: ${resp.status}`);
+  return resp.json();
+}
+
+export async function remoteJobs(): Promise<unknown> {
+  const resp = await withSession("/jobs");
+  if (!resp.ok) throw new Error(`jobs failed: ${resp.status}`);
+  return resp.json();
+}
+
+export async function remoteCheckpoints(): Promise<unknown> {
+  const resp = await withSession("/checkpoints");
+  if (!resp.ok) throw new Error(`checkpoints failed: ${resp.status}`);
+  const body = (await resp.json()) as { checkpoints?: unknown };
+  return body.checkpoints ?? body;
+}
+
+export async function remoteListModels(): Promise<unknown> {
+  const resp = await gatewayFetch("/gateway/v1/remote/models");
+  if (!resp.ok) throw new Error(`models failed: ${resp.status}`);
+  const body = (await resp.json()) as { models?: unknown };
+  return body.models ?? body;
+}
+
+export async function remoteEffort(): Promise<string> {
+  const sess = await loadRemoteGatewaySession();
+  return sess?.effort || "auto";
 }
 
 /** Synthetic single tab for the remote workspace (remote child has no local tabs). */
@@ -192,6 +260,7 @@ export async function remoteListTabs(): Promise<TabMeta[]> {
         model = match.modelRef || model;
         running = !!match.running;
         sess.remoteSessionId = remoteId;
+        if (model) sess.modelRef = model;
       }
     }
   } catch {
@@ -203,6 +272,16 @@ export async function remoteListTabs(): Promise<TabMeta[]> {
     } catch {
       remoteId = "remote-pending";
     }
+  }
+  // Best-effort meta refresh so modelRef is real before hydrate.
+  try {
+    const meta = (await remoteMeta()) as { modelRef?: string; ready?: boolean };
+    if (meta?.modelRef) {
+      model = meta.modelRef;
+      sess.modelRef = model;
+    }
+  } catch {
+    // keep shell values
   }
   const host = sess.hostId || "remote";
   const ws = sess.workspace || "";
@@ -277,9 +356,36 @@ export async function remoteGitDiff(): Promise<string> {
   return body.diff ?? "";
 }
 
+export async function remoteWorkspaceChanges(): Promise<unknown> {
+  // Build a minimal WorkspaceChangesView from git status + remote checkpoints.
+  let status = "";
+  try {
+    status = await remoteGitStatus();
+  } catch {
+    return { files: [], gitAvailable: false };
+  }
+  let checkpoints: unknown[] = [];
+  try {
+    const cp = await remoteCheckpoints();
+    checkpoints = Array.isArray(cp) ? cp : [];
+  } catch {
+    checkpoints = [];
+  }
+  const files: Array<Record<string, unknown>> = [];
+  for (const line of status.split("\n")) {
+    if (!line || line.startsWith("##")) continue;
+    const path = line.slice(3).trim();
+    if (!path) continue;
+    files.push({ path, status: line.slice(0, 2).trim() || "M" });
+  }
+  return { files, gitAvailable: true, branch: "", checkpoints };
+}
+
 /**
  * Subscribe to remote SSE and forward frames as agent:event-shaped WireEvents
  * when possible so useController can render the stream.
+ * Checkpoint envelopes are applied to local mirror via gateway when payload
+ * carries downloadable artifacts; otherwise a notice is shown.
  */
 export async function ensureRemoteEventPump(
   emit: (e: Record<string, unknown>) => void,
@@ -288,14 +394,28 @@ export async function ensureRemoteEventPump(
   eventsStarted = true;
   const unsub = await remoteSubscribeEvents((raw) => {
     if (!raw || typeof raw !== "object") return;
-    const env = raw as { kind?: string; payload?: unknown; sessionId?: string };
-    // Session/checkpoint notices become UI notices; wire events carry payload.kind.
-    if (env.kind === "checkpoint" || env.kind === "session" || env.kind === "notice") {
+    const env = raw as { kind?: string; payload?: unknown; sessionId?: string; revision?: number };
+    if (env.kind === "checkpoint") {
+      // Parent gateway downloads artifacts and writes the local mirror.
+      const sid = env.sessionId || "";
+      void gatewayFetch("/gateway/v1/mirror/pull", {
+        method: "POST",
+        body: JSON.stringify({ remoteSessionId: sid }),
+      }).catch(() => undefined);
       emit({
         kind: "notice",
         level: "info",
-        text: env.kind === "checkpoint" ? "Remote session checkpoint" : String(env.kind),
-        tabId: (raw as { sessionId?: string }).sessionId,
+        text: `Remote checkpoint r${env.revision ?? "?"} mirrored`,
+        tabId: sid,
+      });
+      return;
+    }
+    if (env.kind === "session" || env.kind === "notice") {
+      emit({
+        kind: "notice",
+        level: "info",
+        text: String((env.payload as { text?: string } | undefined)?.text || env.kind),
+        tabId: env.sessionId,
       });
       return;
     }
@@ -346,6 +466,18 @@ export async function remoteSubscribeEvents(onEvent: (raw: unknown) => void): Pr
   return () => ctrl.abort();
 }
 
+/** Best-effort session release when the child window unloads. */
+export async function remoteReleaseSession(): Promise<void> {
+  const sess = await loadRemoteGatewaySession();
+  if (!sess) return;
+  try {
+    await gatewayFetch("/gateway/v1/session/release", { method: "POST", body: "{}" });
+  } catch {
+    // ignore
+  }
+  clearRemoteGatewaySessionCache();
+}
+
 export async function shouldUseRemoteAppBridge(): Promise<boolean> {
   if (!isRemoteDesktopWindow()) return false;
   return (await loadRemoteGatewaySession()) != null;
@@ -392,18 +524,56 @@ export function dispatchRemoteBridgeMethod(method: string, args: unknown[]): Pro
     case "SetModelForTab":
       return remoteSetModel(String(args[1] ?? ""));
     case "SetEffort":
+      return remoteSetEffort(String(args[0] ?? ""));
     case "SetEffortForTab":
-      // Effort-only switch needs a full model rebuild on remote; no-op until the
-      // child tracks the active model ref for a combined model+effort call.
-      return Promise.resolve();
+      return remoteSetEffort(String(args[1] ?? args[0] ?? ""));
+    case "Effort":
+    case "EffortForTab":
+      return remoteEffort();
+    case "History":
+    case "HistoryForTab":
+      return remoteHistoryPage(0, 200).then((page) => {
+        const p = page as { messages?: unknown };
+        return p.messages ?? page;
+      });
+    case "HistoryPage":
+    case "HistoryPageForTab": {
+      const before = Number(args[method === "HistoryPage" ? 0 : 1] ?? 0);
+      const limit = Number(args[method === "HistoryPage" ? 1 : 2] ?? 50);
+      return remoteHistoryPage(before, limit);
+    }
+    case "Meta":
+    case "MetaForTab":
+      return remoteMeta();
+    case "ContextUsage":
+    case "ContextUsageForTab":
+      return remoteContext();
+    case "Jobs":
+    case "JobsForTab":
+      return remoteJobs();
+    case "Checkpoints":
+    case "CheckpointsForTab":
+      return remoteCheckpoints();
+    case "ListModels":
+    case "AvailableModels":
+      return remoteListModels();
     case "ListTabs":
       return remoteListTabs();
+    case "WorkspaceChanges":
+      return remoteWorkspaceChanges();
     case "ListRemoteDir":
+    case "ListDir":
       return remoteListDir(String(args[1] ?? args[0] ?? ""));
     case "ReadRemoteFile":
+    case "ReadFile":
       return remoteReadFile(String(args[1] ?? args[0] ?? ""));
     case "WriteRemoteFile":
+    case "WriteFile":
       return remoteWriteFile(String(args[1] ?? ""), String(args[2] ?? ""), Number(args[3] ?? 0));
+    case "GitStatus":
+      return remoteGitStatus();
+    case "GitDiff":
+      return remoteGitDiff();
     case "IsRemoteWindow":
       return Promise.resolve(true);
     // Local-only surfaces: no-op safely in remote windows.

@@ -247,7 +247,10 @@ type memFS struct {
 	files map[string]string
 }
 
-func (m *memFS) ListDir(_ context.Context, _, path string) ([]gateway.DirEntry, error) {
+func (m *memFS) ListDir(_ context.Context, _, workspace, path string) ([]gateway.DirEntry, error) {
+	if path == "" {
+		path = workspace
+	}
 	prefix := strings.TrimRight(path, "/") + "/"
 	var out []gateway.DirEntry
 	for p, body := range m.files {
@@ -263,7 +266,8 @@ func (m *memFS) ListDir(_ context.Context, _, path string) ([]gateway.DirEntry, 
 	return out, nil
 }
 
-func (m *memFS) ReadFile(_ context.Context, _, path string) (gateway.FilePreview, error) {
+func (m *memFS) ReadFile(_ context.Context, _, workspace, path string) (gateway.FilePreview, error) {
+	_ = workspace
 	body, ok := m.files[path]
 	if !ok {
 		return gateway.FilePreview{Err: "not found"}, nil
@@ -271,7 +275,8 @@ func (m *memFS) ReadFile(_ context.Context, _, path string) (gateway.FilePreview
 	return gateway.FilePreview{Path: path, Body: body, Size: int64(len(body))}, nil
 }
 
-func (m *memFS) WriteFile(_ context.Context, _, path, body string, _ int64) (gateway.WriteResult, error) {
+func (m *memFS) WriteFile(_ context.Context, _, workspace, path, body string, _ int64) (gateway.WriteResult, error) {
+	_ = workspace
 	m.files[path] = body
 	return gateway.WriteResult{OK: true, NewMtimeUnix: time.Now().Unix()}, nil
 }

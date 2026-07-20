@@ -73,10 +73,10 @@ func (s Store) SessionDir(fingerprint, workspace, sessionID string) string {
 
 // WorkspaceManifest tracks mirrored sessions at the workspace level.
 type WorkspaceManifest struct {
-	HostFingerprint string                    `json:"hostFingerprint"`
-	Workspace       string                    `json:"workspace"`
-	Sessions        map[string]SessionMirror  `json:"sessions,omitempty"`
-	UpdatedAt       time.Time                 `json:"updatedAt"`
+	HostFingerprint string                   `json:"hostFingerprint"`
+	Workspace       string                   `json:"workspace"`
+	Sessions        map[string]SessionMirror `json:"sessions,omitempty"`
+	UpdatedAt       time.Time                `json:"updatedAt"`
 }
 
 // SessionMirror is the local index entry for one remote session.

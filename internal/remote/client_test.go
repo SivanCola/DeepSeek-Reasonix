@@ -300,7 +300,8 @@ func TestClientFallsBackFromStoredPassphraseToPerIdentityPrompt(t *testing.T) {
 		},
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	// Race builds slow public-key + encrypted-key probes; keep a generous bound.
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
 	if err := c.Start(ctx); err != nil {
 		t.Fatalf("Start with stored and per-identity passphrases: %v", err)

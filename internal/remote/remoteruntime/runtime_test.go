@@ -1,54 +1,19 @@
 package remoteruntime
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
-	"reasonix/internal/control"
 	"reasonix/internal/provider"
 	"reasonix/internal/remote/protocol"
 )
 
-type fakeSession struct {
-	control.SessionAPI
-	id      string
-	label   string
-	model   string
-	path    string
-	running bool
-}
-
-func (f *fakeSession) Label() string         { return f.label }
-func (f *fakeSession) ModelRef() string      { return f.model }
-func (f *fakeSession) SessionPath() string   { return f.path }
-func (f *fakeSession) SessionDir() string    { return "" }
-func (f *fakeSession) WorkspaceRoot() string { return "/tmp/ws" }
-func (f *fakeSession) Running() bool         { return f.running }
-func (f *fakeSession) Close()                {}
-func (f *fakeSession) Submit(input string)   {}
-func (f *fakeSession) SubmitDisplay(display, input string) {
-}
-func (f *fakeSession) Cancel() {}
-func (f *fakeSession) Approve(id string, allow, session, persist bool) {
-}
-func (f *fakeSession) AnswerQuestion(id string, answers []interface{}) {}
-func (f *fakeSession) NewSession() error                               { return nil }
-func (f *fakeSession) ClearSession() error                             { return nil }
-func (f *fakeSession) Resume(s interface{}, path string)               {}
-func (f *fakeSession) SetSessionPath(p string)                         { f.path = p }
-func (f *fakeSession) EnsureSessionPath()                              {}
-
-// fakeCtrl is a *control.Controller stand-in returned by buildController for tests.
-// We only exercise hello/list/create through a custom builder that injects sessions
-// without boot.Build. createSession expects *control.Controller, so tests for hello
-// and protocol compatibility don't need it.
-
 func TestHelloCompatible(t *testing.T) {
-	srv := New(Options{Workspace: "/home/u/proj", Version: "test"})
+	srv := New(Options{Workspace: "/home/u/proj", Version: "test", Token: "t"})
 	req := httptest.NewRequest(http.MethodGet, protocol.APIPrefix+"/hello", nil)
+	req.Header.Set("X-Reasonix-Remote-Token", "t")
 	rr := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rr, req)
 	if rr.Code != 200 {
@@ -77,6 +42,14 @@ func TestAuthTokenRequired(t *testing.T) {
 	if rr.Code != 401 {
 		t.Fatalf("status %d want 401", rr.Code)
 	}
+	// Empty server token must also deny (not open the agent surface).
+	open := New(Options{Workspace: "/w", Token: ""})
+	req = httptest.NewRequest(http.MethodGet, protocol.APIPrefix+"/hello", nil)
+	rr = httptest.NewRecorder()
+	open.Handler().ServeHTTP(rr, req)
+	if rr.Code != 401 {
+		t.Fatalf("empty token status %d want 401", rr.Code)
+	}
 	req = httptest.NewRequest(http.MethodGet, protocol.APIPrefix+"/hello", nil)
 	req.Header.Set("X-Reasonix-Remote-Token", "secret")
 	rr = httptest.NewRecorder()
@@ -97,8 +70,9 @@ func TestCatalogResolverSurfaced(t *testing.T) {
 	resolver := &provider.StaticResolver{
 		Descriptors: []provider.Descriptor{{Ref: "deepseek/chat"}},
 	}
-	srv := New(Options{Workspace: "/w", Resolver: resolver})
+	srv := New(Options{Workspace: "/w", Resolver: resolver, Token: "t"})
 	req := httptest.NewRequest(http.MethodGet, protocol.APIPrefix+"/capabilities", nil)
+	req.Header.Set("X-Reasonix-Remote-Token", "t")
 	rr := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rr, req)
 	if rr.Code != 200 {
@@ -113,5 +87,18 @@ func TestCatalogResolverSurfaced(t *testing.T) {
 	}
 }
 
-// Keep context import used if build paths expand.
-var _ = context.Background
+func TestListenRejectsNonLoopback(t *testing.T) {
+	srv := New(Options{Workspace: "/w", Token: "t"})
+	// Binding 0.0.0.0 must be rejected after accept of the actual address.
+	// On systems where Listen("0.0.0.0:0") succeeds, ListenAndServe must close it.
+	// We only assert the loopback path works.
+	ctx := t.Context()
+	addr, err := srv.ListenAndServe(ctx, "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if addr == nil {
+		t.Fatal("nil addr")
+	}
+	srv.Close()
+}

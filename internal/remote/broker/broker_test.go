@@ -100,6 +100,37 @@ func TestTrustStoreAuthorizeAndFingerprintChange(t *testing.T) {
 	}
 }
 
+func TestBrokerRemoteProviderPropagatesToolCallReasoning(t *testing.T) {
+	resolver := &provider.StaticResolver{
+		Descriptors: []provider.Descriptor{{
+			Ref: "deepseek/chat", ToolCallReasoning: true,
+		}},
+		Providers: map[string]provider.Provider{"deepseek/chat": stubProv{name: "deepseek"}},
+	}
+	srv := NewServer(Options{Resolver: resolver})
+	tok, err := srv.Issue(Scope{
+		HostID: "lab", Fingerprint: "fp", Workspace: "/w",
+		AllowedRefs: map[string]struct{}{"deepseek/chat": {}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	addr, err := srv.ListenAndServe(ctx, "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := &Client{BaseURL: "http://" + addr.String(), Token: tok}
+	p, err := client.Resolve(provider.Selection{Ref: "deepseek/chat"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !provider.RequiresToolCallReasoning(p) {
+		t.Fatal("broker-backed provider must advertise RequiresToolCallReasoning from catalog")
+	}
+}
+
 func TestStreamAllowedProvider(t *testing.T) {
 	resolver := &provider.StaticResolver{
 		Descriptors: []provider.Descriptor{{Ref: "deepseek/chat"}},

@@ -138,13 +138,17 @@ func EnsureRemoteRuntime(ctx context.Context, conn Conn, opts RuntimeOptions) (R
 	paths := runtimePathsFor(home, workspace)
 
 	// 1. Reuse a live remote-runtime when possible.
+	// When a Provider Broker reverse tunnel is involved, never reuse: the running
+	// process cached broker URL/token at start, so rewriting the token file alone
+	// would leave streams aimed at the previous reverse-bound port.
 	if st, tok, ok := tryReuseRuntime(ctx, conn, fs, paths, workspace); ok {
-		// Refresh broker token file when reconnecting with a new capability.
-		if err := writeBrokerTokenFile(ctx, fs, home, workspace, opts.BrokerToken); err != nil {
-			return Result{}, err
+		if strings.TrimSpace(opts.BrokerURL) != "" || strings.TrimSpace(opts.BrokerToken) != "" {
+			opts.progress("restart_broker", "broker endpoint changed; restarting remote-runtime")
+			_ = StopRemoteRuntime(ctx, conn, workspace)
+		} else {
+			opts.progress("reuse", st.Addr)
+			return Result{State: st, Token: tok, Reused: true}, nil
 		}
-		opts.progress("reuse", st.Addr)
-		return Result{State: st, Token: tok, Reused: true}, nil
 	}
 
 	// 2. Detect remote platform.
@@ -172,11 +176,13 @@ func EnsureRemoteRuntime(ctx context.Context, conn Conn, opts RuntimeOptions) (R
 	}
 	defer lock.release()
 	if st, tok, ok := tryReuseRuntime(ctx, conn, fs, paths, workspace); ok {
-		if err := writeBrokerTokenFile(ctx, fs, home, workspace, opts.BrokerToken); err != nil {
-			return Result{}, err
+		if strings.TrimSpace(opts.BrokerURL) != "" || strings.TrimSpace(opts.BrokerToken) != "" {
+			opts.progress("restart_broker", "broker endpoint changed; restarting remote-runtime")
+			_ = StopRemoteRuntime(ctx, conn, workspace)
+		} else {
+			opts.progress("reuse", st.Addr)
+			return Result{State: st, Token: tok, Reused: true}, nil
 		}
-		opts.progress("reuse", st.Addr)
-		return Result{State: st, Token: tok, Reused: true}, nil
 	}
 
 	// 5. Write runtime auth token + optional broker token.

@@ -56,7 +56,16 @@ func (c *Client) Resolve(selection provider.Selection) (provider.Provider, error
 	if ref == "" {
 		return nil, fmt.Errorf("provider selection ref is required")
 	}
-	return &remoteProvider{client: c, ref: ref, effort: selection.Effort}, nil
+	p := &remoteProvider{client: c, ref: ref, effort: selection.Effort}
+	// Propagate non-secret protocol policy from the catalog so Agent request
+	// construction (e.g. DeepSeek tool-call reasoning replay) matches local mode.
+	for _, d := range c.Catalog() {
+		if d.Ref == ref || strings.HasPrefix(d.Ref, ref+"/") || strings.HasSuffix(d.Ref, "/"+ref) {
+			p.toolCallReasoning = d.ToolCallReasoning
+			break
+		}
+	}
+	return p, nil
 }
 
 func (c *Client) authorize(req *http.Request) {
@@ -73,9 +82,10 @@ func (c *Client) http() *http.Client {
 
 // remoteProvider implements provider.Provider over the broker NDJSON stream.
 type remoteProvider struct {
-	client *Client
-	ref    string
-	effort *string
+	client            *Client
+	ref               string
+	effort            *string
+	toolCallReasoning bool
 }
 
 func (p *remoteProvider) Name() string {
@@ -84,6 +94,13 @@ func (p *remoteProvider) Name() string {
 		return p.ref[:i]
 	}
 	return p.ref
+}
+
+// RequiresToolCallReasoning mirrors the local provider policy advertised in the
+// catalog (DeepSeek thinking mode). Without this, Agent request construction
+// drops reasoning_content on tool_calls turns under Broker mode.
+func (p *remoteProvider) RequiresToolCallReasoning() bool {
+	return p != nil && p.toolCallReasoning
 }
 
 func (p *remoteProvider) Stream(ctx context.Context, req provider.Request) (<-chan provider.Chunk, error) {

@@ -804,6 +804,9 @@ func (a *App) snapshotAllTabs() {
 // shutdown snapshots all tabs, saves the final window geometry, and closes tabs.
 func (a *App) shutdown(context.Context) {
 	if a.remoteWindow != nil {
+		// Child remote windows must release the gateway session so the parent
+		// revokes the Provider Broker capability and drops session state.
+		a.releaseRemoteGatewaySession()
 		return
 	}
 	a.stopDeferredRebuildRetry()

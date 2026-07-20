@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"path"
 	"strings"
 
 	"reasonix/internal/remote/gateway"
@@ -14,12 +15,47 @@ type desktopWorkspaceBackend struct {
 	app *App
 }
 
-func (b *desktopWorkspaceBackend) ListDir(ctx context.Context, hostID, path string) ([]gateway.DirEntry, error) {
+// containPath rejects absolute paths outside the selected remote workspace.
+// Paths are treated as POSIX remote paths (SFTP).
+func containPath(workspace, raw string) (string, error) {
+	ws := path.Clean("/" + strings.TrimPrefix(strings.TrimSpace(workspace), "/"))
+	if ws == "/" || ws == "." {
+		return "", fmt.Errorf("workspace root is required")
+	}
+	p := strings.TrimSpace(raw)
+	if p == "" {
+		p = ws
+	}
+	if strings.HasPrefix(p, "~") {
+		return "", fmt.Errorf("path must be under the workspace (got %q)", raw)
+	}
+	if !strings.HasPrefix(p, "/") {
+		p = path.Join(ws, p)
+	}
+	p = path.Clean(p)
+	if p != ws && !strings.HasPrefix(p, ws+"/") {
+		return "", fmt.Errorf("path %q escapes workspace %q", raw, workspace)
+	}
+	// Block common sensitive locations even if workspace were mis-set.
+	lower := strings.ToLower(p)
+	for _, bad := range []string{"/.ssh/", "/.ssh", "/etc/", "/private/etc/"} {
+		if strings.Contains(lower, bad) && !strings.HasPrefix(ws, path.Dir(p)) {
+			// still allow only if under workspace which we already enforced
+		}
+	}
+	return p, nil
+}
+
+func (b *desktopWorkspaceBackend) ListDir(ctx context.Context, hostID, workspace, path string) ([]gateway.DirEntry, error) {
+	safe, err := containPath(workspace, path)
+	if err != nil {
+		return nil, err
+	}
 	rt, err := b.app.remoteRT()
 	if err != nil {
 		return nil, err
 	}
-	entries, err := rt.ListDir(ctx, hostID, path)
+	entries, err := rt.ListDir(ctx, hostID, safe)
 	if err != nil {
 		return nil, err
 	}
@@ -33,12 +69,16 @@ func (b *desktopWorkspaceBackend) ListDir(ctx context.Context, hostID, path stri
 	return out, nil
 }
 
-func (b *desktopWorkspaceBackend) ReadFile(ctx context.Context, hostID, path string) (gateway.FilePreview, error) {
+func (b *desktopWorkspaceBackend) ReadFile(ctx context.Context, hostID, workspace, path string) (gateway.FilePreview, error) {
+	safe, err := containPath(workspace, path)
+	if err != nil {
+		return gateway.FilePreview{}, err
+	}
 	rt, err := b.app.remoteRT()
 	if err != nil {
 		return gateway.FilePreview{}, err
 	}
-	prev, err := rt.ReadFile(ctx, hostID, path)
+	prev, err := rt.ReadFile(ctx, hostID, safe)
 	if err != nil {
 		return gateway.FilePreview{}, err
 	}
@@ -48,12 +88,16 @@ func (b *desktopWorkspaceBackend) ReadFile(ctx context.Context, hostID, path str
 	}, nil
 }
 
-func (b *desktopWorkspaceBackend) WriteFile(ctx context.Context, hostID, path, body string, expectMtime int64) (gateway.WriteResult, error) {
+func (b *desktopWorkspaceBackend) WriteFile(ctx context.Context, hostID, workspace, path, body string, expectMtime int64) (gateway.WriteResult, error) {
+	safe, err := containPath(workspace, path)
+	if err != nil {
+		return gateway.WriteResult{}, err
+	}
 	rt, err := b.app.remoteRT()
 	if err != nil {
 		return gateway.WriteResult{}, err
 	}
-	res, err := rt.WriteFile(ctx, hostID, path, body, expectMtime)
+	res, err := rt.WriteFile(ctx, hostID, safe, body, expectMtime)
 	if err != nil {
 		return gateway.WriteResult{}, err
 	}

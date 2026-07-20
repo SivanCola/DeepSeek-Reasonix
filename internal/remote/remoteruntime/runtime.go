@@ -68,12 +68,12 @@ type sessionEntry struct {
 
 // Options configures a remote-runtime Server.
 type Options struct {
-	Workspace        string
-	Version          string
-	Resolver         provider.Resolver
-	Token            string
-	Logger           *slog.Logger
-	BuildController  func(ctx context.Context, model, resume string) (*control.Controller, error)
+	Workspace       string
+	Version         string
+	Resolver        provider.Resolver
+	Token           string
+	Logger          *slog.Logger
+	BuildController func(ctx context.Context, model, resume string) (*control.Controller, error)
 }
 
 // New builds a Server. BuildController defaults to boot.Build with the injected resolver.
@@ -135,6 +135,12 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST "+protocol.APIPrefix+"/sessions/{id}/fork", s.handleFork)
 	mux.HandleFunc("POST "+protocol.APIPrefix+"/sessions/{id}/model", s.handleSetModel)
 	mux.HandleFunc("GET "+protocol.APIPrefix+"/sessions/{id}/checkpoint", s.handleCheckpoint)
+	mux.HandleFunc("GET "+protocol.APIPrefix+"/sessions/{id}/history", s.handleHistory)
+	mux.HandleFunc("GET "+protocol.APIPrefix+"/sessions/{id}/meta", s.handleMeta)
+	mux.HandleFunc("GET "+protocol.APIPrefix+"/sessions/{id}/context", s.handleContext)
+	mux.HandleFunc("GET "+protocol.APIPrefix+"/sessions/{id}/jobs", s.handleJobs)
+	mux.HandleFunc("GET "+protocol.APIPrefix+"/sessions/{id}/checkpoints", s.handleCheckpoints)
+	mux.HandleFunc("GET "+protocol.APIPrefix+"/models", s.handleModels)
 	mux.HandleFunc("GET "+protocol.APIPrefix+"/events", s.handleEvents)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !s.authorize(r) {
@@ -151,9 +157,14 @@ func (s *Server) ListenAndServe(ctx context.Context, addr string) (net.Addr, err
 	if err != nil {
 		return nil, err
 	}
-	if tcp, ok := ln.Addr().(*net.TCPAddr); ok && tcp.IP != nil && !tcp.IP.IsLoopback() && tcp.IP.String() != "0.0.0.0" {
-		_ = ln.Close()
-		return nil, fmt.Errorf("remote-runtime must bind loopback, got %s", ln.Addr())
+	if tcp, ok := ln.Addr().(*net.TCPAddr); ok {
+		// Reject non-loopback including 0.0.0.0 / :: so the agent surface cannot
+		// be exposed on the LAN. Bind must be 127.0.0.1 or ::1.
+		ip := tcp.IP
+		if ip == nil || ip.IsUnspecified() || !ip.IsLoopback() {
+			_ = ln.Close()
+			return nil, fmt.Errorf("remote-runtime must bind loopback only, got %s", ln.Addr())
+		}
 	}
 	srv := &http.Server{Handler: s.Handler()}
 	go func() {
@@ -179,8 +190,10 @@ func (s *Server) Close() {
 }
 
 func (s *Server) authorize(r *http.Request) bool {
+	// Empty token means the server was misconfigured: deny all access rather than
+	// open the agent surface unauthenticated.
 	if s.token == "" {
-		return true
+		return false
 	}
 	tok := strings.TrimSpace(r.Header.Get("X-Reasonix-Remote-Token"))
 	if tok == "" {
@@ -266,24 +279,55 @@ func (s *Server) handleRestoreSession(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, protocol.CodeInvalidRequest, "malformed restore body")
 		return
 	}
-	// Always allocate a new session ID — never overwrite existing remote IDs.
-	entry, err := s.createSession(r.Context(), protocol.CreateSessionRequest{Label: req.Label})
+	// Restore payload is {manifest, artifacts} as produced by handleCheckpoint /
+	// local mirrors. Always allocate a NEW session ID.
+	var payload struct {
+		Manifest  protocol.CheckpointManifest `json:"manifest"`
+		Artifacts map[string]string           `json:"artifacts"` // path -> hex
+		// Also accept flat RestoreSessionRequest.Checkpoint as raw manifest+arts.
+	}
+	// req.Checkpoint may be the full {manifest,artifacts} blob or just a manifest.
+	if len(req.Checkpoint) > 0 {
+		_ = json.Unmarshal(req.Checkpoint, &payload)
+		if payload.Manifest.SessionID == "" {
+			var man protocol.CheckpointManifest
+			if err := json.Unmarshal(req.Checkpoint, &man); err == nil {
+				payload.Manifest = man
+			}
+		}
+	}
+	entry, err := s.createSession(r.Context(), protocol.CreateSessionRequest{Label: req.Label, Model: payload.Manifest.ModelRef})
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, protocol.CodeInternal, redact(err))
 		return
 	}
-	// Best-effort: if checkpoint contains a session.jsonl, resume it under the
-	// new controller path without reusing the old ID.
-	if len(req.Checkpoint) > 0 {
-		var man protocol.CheckpointManifest
-		if err := json.Unmarshal(req.Checkpoint, &man); err == nil && man.SessionID != "" {
-			s.publish(protocol.EventEnvelope{
-				SessionID: entry.id,
-				Kind:      "notice",
-				Payload:   mustJSON(map[string]string{"text": "restored from mirror", "sourceSessionId": man.SessionID, "sourceHint": req.SourceHint}),
-			})
+	if hexBody, ok := payload.Artifacts["session.jsonl"]; ok && hexBody != "" {
+		raw, derr := hex.DecodeString(hexBody)
+		if derr == nil && entry.ctrl != nil {
+			// Write to a new path under session dir then Resume.
+			dir := entry.ctrl.SessionDir()
+			if dir == "" {
+				dir = filepath.Join(os.TempDir(), "reasonix-restore")
+			}
+			_ = os.MkdirAll(dir, 0o700)
+			path := filepath.Join(dir, entry.id+".jsonl")
+			if werr := os.WriteFile(path, raw, 0o600); werr == nil {
+				if sess, lerr := agent.LoadSession(path); lerr == nil {
+					entry.ctrl.Resume(sess, path)
+				}
+			}
 		}
 	}
+	src := payload.Manifest.SessionID
+	if src == "" {
+		src = "mirror"
+	}
+	s.publish(protocol.EventEnvelope{
+		SessionID: entry.id,
+		Kind:      "notice",
+		Payload:   mustJSON(map[string]string{"text": "restored from mirror as new session", "sourceSessionId": src, "sourceHint": req.SourceHint}),
+	})
+	s.bumpCheckpoint(entry)
 	writeJSON(w, http.StatusOK, protocol.CreateSessionResponse{Session: entry.summary()})
 }
 
@@ -448,12 +492,13 @@ func (s *Server) handleFork(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleSetModel(w http.ResponseWriter, r *http.Request) {
-	// Model switch on remote rebuilds the controller; full implementation is
-	// deferred to boot rebuild. For v1 we accept and report not-implemented if
-	// the controller cannot switch in place.
 	e := s.getSession(r.PathValue("id"))
 	if e == nil {
 		writeErr(w, http.StatusNotFound, protocol.CodeNotFound, "session not found")
+		return
+	}
+	if e.ctrl != nil && e.ctrl.Running() {
+		writeErr(w, http.StatusConflict, protocol.CodeSessionBusy, "cannot switch model while a turn is running")
 		return
 	}
 	var req protocol.SetModelRequest
@@ -461,7 +506,54 @@ func (s *Server) handleSetModel(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, protocol.CodeInvalidRequest, "malformed body")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"status": "accepted", "model": req.Model})
+	model := strings.TrimSpace(req.Model)
+	if model == "" {
+		writeErr(w, http.StatusBadRequest, protocol.CodeInvalidRequest, "model is required")
+		return
+	}
+	// Snapshot current transcript path, then rebuild controller with the new model.
+	oldPath := ""
+	if e.ctrl != nil {
+		oldPath = e.ctrl.SessionPath()
+		type snapshotter interface{ Snapshot() error }
+		if snap, ok := e.ctrl.(snapshotter); ok {
+			_ = snap.Snapshot()
+		}
+	}
+	sink := &sessionSink{server: s, sessionID: e.id}
+	var effortPtr *string
+	if req.Effort != nil {
+		effortPtr = req.Effort
+	}
+	ctrl, err := boot.Build(r.Context(), boot.Options{
+		Model:            model,
+		RequireKey:       false,
+		WorkspaceRoot:    s.workspace,
+		ProviderResolver: s.resolver,
+		EffortOverride:   effortPtr,
+		Sink:             sink,
+	})
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, protocol.CodeInvalidRequest, redact(err))
+		return
+	}
+	if oldPath != "" {
+		if sess, loadErr := agent.LoadSession(oldPath); loadErr == nil {
+			ctrl.Resume(sess, oldPath)
+		} else {
+			ctrl.SetSessionPath(oldPath)
+		}
+	} else {
+		ctrl.EnsureSessionPath()
+	}
+	old := e.ctrl
+	e.ctrl = ctrl
+	e.sink = sink
+	if old != nil {
+		old.Close()
+	}
+	s.bumpCheckpoint(e)
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "model": ctrl.ModelRef()})
 }
 
 func (s *Server) handleCheckpoint(w http.ResponseWriter, r *http.Request) {
@@ -611,8 +703,8 @@ func (s *Server) bumpCheckpoint(e *sessionEntry) {
 	digest := ""
 	if path != "" {
 		if data, err := os.ReadFile(path); err == nil {
-			sum := sha256.Sum256(data)
-			digest = hex.EncodeToString(sum[:])
+			// Match mirror.DigestArtifacts: path + content sha for session.jsonl.
+			digest = digestArtifacts(map[string][]byte{"session.jsonl": data})
 		}
 	}
 	e.revision = rev
@@ -637,7 +729,7 @@ func (s *Server) buildCheckpoint(e *sessionEntry) (protocol.CheckpointManifest, 
 			artifacts["session.jsonl"] = data
 		}
 	}
-	digest := sha256Hex(artifacts["session.jsonl"])
+	digest := digestArtifacts(artifacts)
 	if len(artifacts) == 0 {
 		digest = e.digest
 	}
@@ -772,6 +864,103 @@ func redact(err error) string {
 	return msg
 }
 
+func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
+	e := s.getSession(r.PathValue("id"))
+	if e == nil || e.ctrl == nil {
+		writeErr(w, http.StatusNotFound, protocol.CodeNotFound, "session not found")
+		return
+	}
+	msgs := e.ctrl.History()
+	writeJSON(w, http.StatusOK, map[string]any{
+		"messages":   msgs,
+		"startTurn":  0,
+		"endTurn":    e.ctrl.Turn(),
+		"totalTurns": e.ctrl.Turn(),
+	})
+}
+
+func (s *Server) handleMeta(w http.ResponseWriter, r *http.Request) {
+	e := s.getSession(r.PathValue("id"))
+	if e == nil || e.ctrl == nil {
+		writeErr(w, http.StatusNotFound, protocol.CodeNotFound, "session not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"label":         e.ctrl.Label(),
+		"ready":         true,
+		"eventChannel":  "remote",
+		"cwd":           e.ctrl.WorkspaceRoot(),
+		"workspaceRoot": e.ctrl.WorkspaceRoot(),
+		"sessionPath":   e.ctrl.SessionPath(),
+		"modelRef":      e.ctrl.ModelRef(),
+	})
+}
+
+func (s *Server) handleContext(w http.ResponseWriter, r *http.Request) {
+	e := s.getSession(r.PathValue("id"))
+	if e == nil {
+		writeErr(w, http.StatusNotFound, protocol.CodeNotFound, "session not found")
+		return
+	}
+	// Minimal context shell; desktop can refresh after turns via usage events.
+	writeJSON(w, http.StatusOK, map[string]any{
+		"used": 0, "window": 0, "promptTokens": 0, "completionTokens": 0,
+	})
+}
+
+func (s *Server) handleJobs(w http.ResponseWriter, r *http.Request) {
+	e := s.getSession(r.PathValue("id"))
+	if e == nil {
+		writeErr(w, http.StatusNotFound, protocol.CodeNotFound, "session not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, []any{})
+}
+
+func (s *Server) handleCheckpoints(w http.ResponseWriter, r *http.Request) {
+	e := s.getSession(r.PathValue("id"))
+	if e == nil || e.ctrl == nil {
+		writeErr(w, http.StatusNotFound, protocol.CodeNotFound, "session not found")
+		return
+	}
+	// SessionAPI embeds SessionHistory.Checkpoints().
+	writeJSON(w, http.StatusOK, map[string]any{"checkpoints": e.ctrl.Checkpoints()})
+}
+
+func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {
+	var out []provider.Descriptor
+	if s.resolver != nil {
+		out = s.resolver.Catalog()
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"models": out})
+}
+
+// digestArtifacts matches mirror.DigestArtifacts so checkpoint digests validate.
+func digestArtifacts(artifacts map[string][]byte) string {
+	if len(artifacts) == 0 {
+		return ""
+	}
+	h := sha256.New()
+	paths := make([]string, 0, len(artifacts))
+	for p := range artifacts {
+		paths = append(paths, p)
+	}
+	for i := 0; i < len(paths); i++ {
+		for j := i + 1; j < len(paths); j++ {
+			if paths[j] < paths[i] {
+				paths[i], paths[j] = paths[j], paths[i]
+			}
+		}
+	}
+	for _, p := range paths {
+		_, _ = h.Write([]byte(p))
+		_, _ = h.Write([]byte{0})
+		sum := sha256.Sum256(artifacts[p])
+		_, _ = h.Write(sum[:])
+	}
+	return hex.EncodeToString(h.Sum(nil))
+}
+
 func mustJSON(v any) json.RawMessage {
 	b, _ := json.Marshal(v)
 	return b
@@ -791,4 +980,3 @@ func WritePortFile(path, addr string) error {
 	}
 	return os.WriteFile(path, []byte(addr+"\n"), 0o600)
 }
-
