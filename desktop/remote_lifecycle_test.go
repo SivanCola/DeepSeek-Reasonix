@@ -347,13 +347,30 @@ func TestHostKeyPromptsAreSerializedForGlobalDialog(t *testing.T) {
 	sink := &lifecycleEventSink{statuses: make(chan RemoteConnectionStatusView, 2)}
 	mgr := newDesktopRemoteManager(sink)
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	var wg sync.WaitGroup
+	t.Cleanup(func() {
+		cancel()
+		wg.Wait()
+	})
+	type pendingPrompt struct {
+		hostID string
+		prompt remote.HostKeyPrompt
+	}
+	prompts := make([]pendingPrompt, 0, 2)
 	for _, hostID := range []string{"a", "b"} {
 		mh := &managedHost{ctx: ctx, cancel: cancel, client: newLifecycleSSHClient(nil)}
 		mgr.hosts[hostID] = mh
-		prompt := mgr.hostKeyPrompt(hostID, mh)
+		prompts = append(prompts, pendingPrompt{hostID: hostID, prompt: mgr.hostKeyPrompt(hostID, mh)})
+	}
+	for _, pending := range prompts {
+		wg.Add(1)
 		go func() {
-			_, _ = prompt(ctx, remote.HostKeyQuestion{Address: hostID + ":22", KeyType: "ssh-ed25519", Fingerprint: hostID})
+			defer wg.Done()
+			_, _ = pending.prompt(ctx, remote.HostKeyQuestion{
+				Address:     pending.hostID + ":22",
+				KeyType:     "ssh-ed25519",
+				Fingerprint: pending.hostID,
+			})
 		}()
 	}
 
