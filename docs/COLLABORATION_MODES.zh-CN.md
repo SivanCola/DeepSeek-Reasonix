@@ -67,8 +67,8 @@ Goal 模式会把这些部分当作任务边界；除非下一步涉及不可逆
 - 如果目标过大或边界不清，Reasonix 可能需要更多探索轮次，也会消耗更多 token。
 - AutoResearch 是 Goal 的自动持久化策略，不是独立的后台 daemon，也不是 Settings 里的全局 skill。
   可以用 `/goal --research <目标>` 强制启用，或用 `/goal --simple <目标>` 强制保持轻量 Goal。
-- 普通聊天里命中非常强的长周期信号时，Reasonix 会自动升级为 Goal + AutoResearch；弱表达
-  如“长期来看”“优化一下”“研究一下”不会触发。
+- 普通聊天不会因为目标文本看起来复杂或长周期而自动切换模式。只有明确选择“目标”或使用
+  `/goal` 后，Reasonix 才会进入 Goal，并在 Goal 内判断是否采用 AutoResearch。
 - 目标模式和计划模式是同一协作轴。切到计划模式时，会退出目标草稿/目标显示状态；运行模式不会因此改变。
 
 ## 运行模式

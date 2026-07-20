@@ -1485,11 +1485,6 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 			sentLine := m.expandPastedBlocks(line)
 			m.input.Reset()
-			if goal, ok := m.ctrl.AutoStartResearchGoal(sentLine); ok {
-				m.pastedBlocks = nil
-				cmds = append(cmds, m.startTurnWithRaw("Start pursuing the active goal now.", line, line, goal))
-				return m, finalize(m, cmds)
-			}
 
 			// @references (local files / MCP resources, including inline image
 			// attachments) are resolved off the event loop by the controller; the turn
