@@ -877,7 +877,6 @@ func (a *App) domReady(_ context.Context) {
 
 	if a.remoteWindow != nil {
 		a.domReadyRemoteWindow()
-		a.startupReady.Store(true)
 		return
 	}
 	state, ok := loadWindowState()
