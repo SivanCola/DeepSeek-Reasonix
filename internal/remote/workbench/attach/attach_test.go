@@ -50,6 +50,42 @@ func TestAttachRejectsSchemaMismatch(t *testing.T) {
 	}
 }
 
+func TestAttachRejectsWorkspaceDifferentFromAttachTarget(t *testing.T) {
+	var out bytes.Buffer
+	configuredWorkspace := t.TempDir()
+	requestedWorkspace := t.TempDir()
+	params, _ := json.Marshal(map[string]any{
+		"buildId": map[string]any{
+			"productVersion":  "test",
+			"sourceRevision":  strings.Repeat("a", 40),
+			"schemaHash":      protocol.SchemaHash(),
+			"protocolVersion": protocol.ProtocolVersion,
+		},
+		"clientInstanceId": "desktop-test",
+		"workspace":        requestedWorkspace,
+	})
+	frame, _ := json.Marshal(map[string]any{
+		"jsonrpc": "2.0", "id": 1, "method": "remote/initialize", "params": json.RawMessage(params),
+	})
+	r, w := io.Pipe()
+	go func() {
+		_, _ = w.Write(append(frame, '\n'))
+		_ = w.Close()
+	}()
+
+	err := Run(context.Background(), r, &out, Options{
+		Workspace: configuredWorkspace,
+		Version:   "t",
+		InProcess: true,
+	})
+	if err != nil {
+		t.Fatalf("Run returned transport error: %v", err)
+	}
+	if !strings.Contains(out.String(), "workspace does not match attach target") {
+		t.Fatalf("out=%q", out.String())
+	}
+}
+
 func TestAttachInProcessInitializeOK(t *testing.T) {
 	ws := t.TempDir()
 	params, _ := json.Marshal(map[string]any{

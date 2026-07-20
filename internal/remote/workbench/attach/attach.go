@@ -54,8 +54,9 @@ func Run(ctx context.Context, stdin io.ReadCloser, stdout io.Writer, opts Option
 	if ws == "" {
 		return errors.New("workspace is required")
 	}
-	if abs, err := filepath.Abs(ws); err == nil {
-		ws = abs
+	configuredWorkspace, err := filepath.Abs(ws)
+	if err != nil {
+		return fmt.Errorf("resolve workspace: %w", err)
 	}
 	home := strings.TrimSpace(opts.Home)
 	if home == "" {
@@ -88,11 +89,14 @@ func Run(ctx context.Context, stdin io.ReadCloser, stdout io.Writer, opts Option
 		return writeRPCError(stdout, frame.ID, rpcwire.ErrInvalidParams, "invalid remote/initialize params")
 	}
 	init := decoded.(protocol.InitializeParams)
-	ws = strings.TrimSpace(init.Workspace)
-	if abs, absErr := filepath.Abs(ws); absErr == nil {
+	requestedWorkspace := strings.TrimSpace(init.Workspace)
+	if abs, absErr := filepath.Abs(requestedWorkspace); absErr == nil {
 		ws = abs
 	} else {
 		return writeRPCError(stdout, frame.ID, rpcwire.ErrInvalidParams, "invalid Remote workspace")
+	}
+	if filepath.Clean(ws) != filepath.Clean(configuredWorkspace) {
+		return writeRPCError(stdout, frame.ID, rpcwire.ErrInvalidParams, "Remote workspace does not match attach target")
 	}
 	peerHash := strings.TrimSpace(init.BuildID.SchemaHash)
 	if !strings.EqualFold(peerHash, schemaHash) {
