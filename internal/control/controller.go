@@ -1242,68 +1242,8 @@ func (c *Controller) submitCommandOrTurn(trimmed, input, display string, scopedR
 		}
 		c.notice("unknown command: " + trimmed)
 	default:
-		if c.maybeAutoStartResearchGoal(input, display, editedOriginal) {
-			return
-		}
 		runRefTurn(input, display)
 	}
-}
-
-func (c *Controller) maybeAutoStartResearchGoal(input, display, editedOriginal string) bool {
-	goal, ok := c.autoStartResearchGoalCandidate(input)
-	if !ok {
-		return false
-	}
-	if c.runner != nil {
-		displayText := display
-		if strings.TrimSpace(displayText) == "" {
-			displayText = goal
-		}
-		c.runGuarded(func(ctx context.Context) error {
-			c.SetGoalWithResearchMode(goal, GoalResearchOn)
-			c.notice(fmt.Sprintf(i18n.M.GoalSetFmt, ShortGoalForNotice(goal)))
-			block, errs := c.ResolveRefs(ctx, goal)
-			for _, e := range errs {
-				c.notice(e)
-			}
-			sent := "Start pursuing the active goal now."
-			if block != "" {
-				sent = "Referenced context:\n\n" + block + "\n\n" + sent
-			}
-			if strings.TrimSpace(editedOriginal) != "" {
-				return c.runEditedGoalLoopWithRawDisplay(ctx, sent, goal, displayText, editedOriginal)
-			}
-			return c.runGoalLoopWithRawDisplay(ctx, sent, goal, displayText)
-		})
-	}
-	return true
-}
-
-// AutoStartResearchGoal upgrades a strong long-horizon ordinary prompt into a
-// Goal + AutoResearch run for frontends that already accepted an idle turn.
-func (c *Controller) AutoStartResearchGoal(input string) (string, bool) {
-	goal, ok := c.autoStartResearchGoalCandidate(input)
-	if !ok {
-		return "", false
-	}
-	c.SetGoalWithResearchMode(goal, GoalResearchOn)
-	c.notice(fmt.Sprintf(i18n.M.GoalSetFmt, ShortGoalForNotice(goal)))
-	return goal, true
-}
-
-func (c *Controller) autoStartResearchGoalCandidate(input string) (string, bool) {
-	goal := strings.TrimSpace(input)
-	if !shouldAutoStartResearchGoal(goal) {
-		return "", false
-	}
-	c.mu.Lock()
-	plan := c.planMode
-	running := c.running
-	c.mu.Unlock()
-	if plan || running || c.goals.active() {
-		return "", false
-	}
-	return goal, true
 }
 
 func (c *Controller) rememberProjectNote(note string) {

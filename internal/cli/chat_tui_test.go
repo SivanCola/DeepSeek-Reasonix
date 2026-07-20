@@ -2974,6 +2974,34 @@ func TestPasteFoldExpandOnSubmit(t *testing.T) {
 	}
 }
 
+func TestStrongResearchPromptStaysInOrdinaryMode(t *testing.T) {
+	r := &recordingTurnRunner{}
+	events := make(chan event.Event, 8)
+	ctrl := control.New(control.Options{
+		AutoPlan: "off",
+		Runner:   r,
+		Sink:     event.FuncSink(func(e event.Event) { events <- e }),
+	})
+	m := newTestChatTUI()
+	m.ctrl = ctrl
+	input := "持续排查这个线上卡顿直到根因明确，并验证修复"
+	m.input.SetValue(input)
+
+	model, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = model.(chatTUI)
+	waitForCLIEvent(t, events, event.TurnDone)
+
+	if len(r.inputs) != 1 || !strings.HasSuffix(r.inputs[0], input) {
+		t.Fatalf("ordinary prompt was not sent unchanged at the user boundary: %q", r.inputs)
+	}
+	if strings.Contains(r.inputs[0], "<active-goal>") || strings.Contains(r.inputs[0], "AutoResearch protocol") {
+		t.Fatalf("ordinary TUI prompt should not enter Goal or AutoResearch:\n%s", r.inputs[0])
+	}
+	if ctrl.GoalStatus() != control.GoalStatusStopped {
+		t.Fatalf("GoalStatus() = %q, want stopped", ctrl.GoalStatus())
+	}
+}
+
 func TestSlashCodeCommentSubmitStartsTurn(t *testing.T) {
 	for _, input := range []string{
 		"// explain this",

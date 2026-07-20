@@ -796,31 +796,6 @@ func TestGoalCommandPreservesResearchModeFlags(t *testing.T) {
 	}
 }
 
-func TestAutoStartResearchGoalUsesOnlyStrongSignals(t *testing.T) {
-	for _, input := range []string{
-		"持续排查这个线上卡顿直到根因明确，并验证修复",
-		"不要原地打转，把这个方向完整做成方案并验证",
-		"thoroughly implement, test, optimize, and document this feature",
-		"继续 .reasonix/autoresearch/20260618-224530-cache-audit/ 这个任务",
-	} {
-		if !shouldAutoStartResearchGoal(input) {
-			t.Fatalf("shouldAutoStartResearchGoal(%q) = false, want true", input)
-		}
-	}
-
-	for _, input := range []string{
-		"长期来看这个模块怎么优化？",
-		"研究一下这个函数怎么用",
-		"验证一下这个小修复",
-		"/goal 持续排查直到根因明确",
-		"!go test ./...",
-	} {
-		if shouldAutoStartResearchGoal(input) {
-			t.Fatalf("shouldAutoStartResearchGoal(%q) = true, want false", input)
-		}
-	}
-}
-
 func TestParseGoalCommandResearchFlags(t *testing.T) {
 	cmd, ok := ParseGoalCommand("/goal --research fix the typo")
 	if !ok || cmd.Action != GoalCommandSet || cmd.Text != "fix the typo" || cmd.ResearchMode != GoalResearchOn {

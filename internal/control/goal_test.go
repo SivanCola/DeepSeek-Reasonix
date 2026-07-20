@@ -111,9 +111,9 @@ func TestGoalModeSkipsAutoPlanApproval(t *testing.T) {
 	}
 }
 
-func TestPlainInputWithStrongResearchSignalAutoStartsGoal(t *testing.T) {
+func TestPlainInputWithStrongResearchSignalStaysNormal(t *testing.T) {
 	prov := &scriptedTurns{turns: [][]provider.Chunk{
-		textTurn("AutoResearch started and completed.\n\n[goal:complete]"),
+		textTurn("Here is the normal response."),
 	}}
 	ag := agent.New(prov, tool.NewRegistry(), agent.NewSession(""), agent.Options{}, event.Discard)
 	events := make(chan event.Event, 8)
@@ -134,30 +134,24 @@ func TestPlainInputWithStrongResearchSignalAutoStartsGoal(t *testing.T) {
 		t.Fatalf("provider calls = %d, want 1", prov.call)
 	}
 	first := firstUserMessage(ag.Session().Messages)
-	for _, want := range []string{
-		"<active-goal>\n持续排查这个线上卡顿直到根因明确，并验证修复",
-		"AutoResearch protocol",
-		".reasonix/autoresearch/<task-id>/",
-	} {
-		if !strings.Contains(first, want) {
-			t.Fatalf("auto-started goal turn missing %q:\n%s", want, first)
-		}
+	if !strings.HasSuffix(first, "持续排查这个线上卡顿直到根因明确，并验证修复") {
+		t.Fatalf("ordinary turn should preserve the original prompt suffix: %q", first)
 	}
-	if strings.HasPrefix(first, PlanModeMarker) {
-		t.Fatalf("auto-started research goal should not enter plan mode, got %q", first)
+	if strings.Contains(first, "<active-goal>") || strings.Contains(first, "AutoResearch protocol") {
+		t.Fatalf("ordinary prompt should not enter Goal or AutoResearch:\n%s", first)
 	}
-	if got := c.GoalStatus(); got != GoalStatusComplete {
-		t.Fatalf("GoalStatus() = %q, want complete", got)
+	if got := c.GoalStatus(); got != GoalStatusStopped {
+		t.Fatalf("GoalStatus() = %q, want stopped", got)
 	}
 }
 
-func TestPlainInputAutoStartedGoalPreservesRefs(t *testing.T) {
+func TestPlainInputWithStrongResearchSignalPreservesRefsWithoutStartingGoal(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "notes.txt"), []byte("important referenced evidence"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	prov := &scriptedTurns{turns: [][]provider.Chunk{
-		textTurn("AutoResearch started and completed.\n\n[goal:complete]"),
+		textTurn("Referenced normal response."),
 	}}
 	ag := agent.New(prov, tool.NewRegistry(), agent.NewSession(""), agent.Options{}, event.Discard)
 	events := make(chan event.Event, 8)
@@ -177,14 +171,41 @@ func TestPlainInputAutoStartedGoalPreservesRefs(t *testing.T) {
 
 	first := firstUserMessage(ag.Session().Messages)
 	for _, want := range []string{
-		"<active-goal>\n持续排查直到根因明确，并验证 @notes.txt",
-		"Referenced context:",
 		"important referenced evidence",
-		"AutoResearch protocol",
 	} {
 		if !strings.Contains(first, want) {
-			t.Fatalf("auto-started goal with refs missing %q:\n%s", want, first)
+			t.Fatalf("ordinary turn with refs missing %q:\n%s", want, first)
 		}
+	}
+	if strings.Contains(first, "<active-goal>") || strings.Contains(first, "AutoResearch protocol") {
+		t.Fatalf("ordinary prompt with refs should not enter Goal or AutoResearch:\n%s", first)
+	}
+	if got := c.GoalStatus(); got != GoalStatusStopped {
+		t.Fatalf("GoalStatus() = %q, want stopped", got)
+	}
+	if _, err := os.Stat(filepath.Join(root, ".reasonix", "autoresearch")); !os.IsNotExist(err) {
+		t.Fatalf("ordinary prompt created AutoResearch state: err=%v", err)
+	}
+}
+
+func TestPlainAutoResearchTaskPathDoesNotResumeGoal(t *testing.T) {
+	root := t.TempDir()
+	c := New(Options{WorkspaceRoot: root})
+	defer c.Close()
+	c.SetGoalWithResearchMode("seed resumable task", GoalResearchOn)
+	taskID := c.goals.currentAutoResearchTaskID()
+	if taskID == "" {
+		t.Fatal("expected seeded AutoResearch task")
+	}
+	c.ClearGoal()
+
+	c.Submit("继续 .reasonix/autoresearch/" + taskID + "/ 这个任务")
+
+	if got := c.Goal(); got != "" {
+		t.Fatalf("ordinary task path should not resume Goal, got %q", got)
+	}
+	if got := c.GoalStatus(); got != GoalStatusStopped {
+		t.Fatalf("GoalStatus() = %q, want stopped", got)
 	}
 }
 
@@ -670,23 +691,7 @@ func TestResearchGoalBlockedMarksAutoResearchTaskBlocked(t *testing.T) {
 	}
 }
 
-func TestPlainInputAutoStartDoesNotMutateGoalWhenTurnRunning(t *testing.T) {
-	c := New(Options{})
-	c.mu.Lock()
-	c.running = true
-	c.mu.Unlock()
-
-	c.Submit("持续排查这个线上卡顿直到根因明确，并验证修复")
-
-	if got := c.Goal(); got != "" {
-		t.Fatalf("rejected concurrent auto-start should not set goal, got %q", got)
-	}
-	if got := c.GoalStatus(); got != GoalStatusStopped {
-		t.Fatalf("GoalStatus() = %q, want stopped", got)
-	}
-}
-
-func TestPlainInputWithWeakResearchSignalDoesNotAutoStartGoal(t *testing.T) {
+func TestPlainInputWithWeakResearchSignalStaysNormal(t *testing.T) {
 	prov := &scriptedTurns{turns: [][]provider.Chunk{
 		textTurn("Here is a normal answer."),
 	}}
@@ -707,7 +712,7 @@ func TestPlainInputWithWeakResearchSignalDoesNotAutoStartGoal(t *testing.T) {
 
 	first := firstUserMessage(ag.Session().Messages)
 	if strings.Contains(first, "<active-goal>") || strings.Contains(first, "AutoResearch protocol") {
-		t.Fatalf("weak ordinary prompt should not auto-start AutoResearch:\n%s", first)
+		t.Fatalf("ordinary prompt should stay outside Goal and AutoResearch:\n%s", first)
 	}
 	if got := c.GoalStatus(); got != GoalStatusStopped {
 		t.Fatalf("GoalStatus() = %q, want stopped", got)
