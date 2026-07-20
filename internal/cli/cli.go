@@ -102,6 +102,10 @@ func Run(args []string, version string) int {
 		return runInteractiveSession(rest)
 	case "serve":
 		return runServe(rest)
+	case "remote-runtime":
+		// Headless multi-session runtime for SSH remote desktop. Not the same
+		// as `reasonix serve` (single-session HTML UI).
+		return runRemoteRuntime(rest, version)
 	case "setup":
 		configureCLIThemeFromConfigForTTYOutput()
 		return setupConfig(rest)
