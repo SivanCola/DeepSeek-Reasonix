@@ -82,7 +82,9 @@ agent 核心延续了原有能力：循环、读写编辑与 glob/grep/bash 等�
 - `[agent].plan_mode_allowed_tools` 与 `plan_mode_read_only_commands` 仍可解析和保存，以兼容旧配置，但不再决定主 Plan 流程能否调用工具。需要可信读取能力时，应在 `trusted_read_only_tools` 中声明已审计的原始 MCP 工具名。
 - 使用 `read_only_task` / `read_only_skill` 创建技术上只读的子智能体；普通 `task` / `run_skill` 仍可写入，并受权限与 Sandbox 控制。第三方 MCP 的 `readOnlyHint` 只影响常规权限和调度，不会自动获得专用 planner 或只读子智能体的信任。
 - MCP 可通过 `default_tools_approval_mode`、`tools.<raw>.approval_mode` 和 `approvals_reviewer` 覆盖默认审批策略。标记 `destructiveHint: true` 的调用在 `auto`、`prompt` 或 `writes` 下每次都需要人工重新批准；有效的 `approve` 模式则直接允许。
-- **不再提供 Web dashboard**：v2 设计为终端 + 桌面端（Wails）。
+- **Web Dashboard 仍然可用，桌面端更推荐**：需要浏览器访问时，可运行
+  `reasonix serve` 启动本地 Web UI；日常可视化使用优先选择 Wails 桌面端，
+  终端工作流继续使用 CLI/TUI。
 - 一些细粒度 v1 工具被合并，例如文件管理操作改由 `bash` 完成；少数工具尚未移植，进度在 Discussions 中跟踪。
 
 ## 文件编码
