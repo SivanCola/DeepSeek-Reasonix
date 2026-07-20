@@ -2466,6 +2466,10 @@ func TestReconcileOverlongMigratesDiagnosticSidecars(t *testing.T) {
 		[]byte(`{"outcome":"forked_recovery_branch"}`+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(store.SessionRecoveryState(oldPath),
+		[]byte(`{"tasks":{"root":{"phase":"diagnosing"}}}`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	// The salvage sidecar holds raw session bytes; orphaning it under the
 	// retired stem would leave unreachable transcript content behind (#6613
 	// review follow-up).
@@ -2491,7 +2495,10 @@ func TestReconcileOverlongMigratesDiagnosticSidecars(t *testing.T) {
 	if _, err := os.Stat(store.SessionConflictLog(newPath)); err != nil {
 		t.Fatalf("conflict log not migrated with the rename: %v", err)
 	}
-	for _, gone := range []string{oldPath, store.SessionEventLog(oldPath), store.SessionEventLogDamaged(oldPath), store.SessionConflictLog(oldPath)} {
+	if _, err := os.Stat(store.SessionRecoveryState(newPath)); err != nil {
+		t.Fatalf("recovery state not migrated with the rename: %v", err)
+	}
+	for _, gone := range []string{oldPath, store.SessionEventLog(oldPath), store.SessionEventLogDamaged(oldPath), store.SessionConflictLog(oldPath), store.SessionRecoveryState(oldPath)} {
 		if _, err := os.Stat(gone); !os.IsNotExist(err) {
 			t.Fatalf("%s still present under the retired stem (err=%v)", filepath.Base(gone), err)
 		}

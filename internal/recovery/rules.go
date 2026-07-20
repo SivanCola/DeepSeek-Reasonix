@@ -329,19 +329,13 @@ func ScopeExpanded(failure *FailureEvent, proposal Proposal) bool {
 	return false
 }
 
-// StrategyChanged reports a tool/method change vs the failed call.
+// StrategyChanged reports an explicit semantic method change. A tool-name
+// transition is not enough: the normal recovery flow after a failing verifier
+// is to inspect the evidence and edit the diagnosed code. Risk and scope have
+// deterministic classifiers; ambiguous method changes are left to the reviewer.
 func StrategyChanged(failure *FailureEvent, proposal Proposal) bool {
-	if proposal.StrategyChanged {
-		return true
-	}
-	if failure == nil {
-		return false
-	}
-	if strings.TrimSpace(failure.Tool) != strings.TrimSpace(proposal.Tool) {
-		// Switching from a failing test command to an edit is a strategy change.
-		return true
-	}
-	return false
+	_ = failure
+	return proposal.StrategyChanged
 }
 
 func uniqueStrings(in []string) []string {

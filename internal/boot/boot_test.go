@@ -22,6 +22,7 @@ import (
 	"reasonix/internal/agent"
 	"reasonix/internal/agent/testutil"
 	"reasonix/internal/config"
+	"reasonix/internal/control"
 	"reasonix/internal/event"
 	"reasonix/internal/memory"
 	"reasonix/internal/netclient"
@@ -1054,6 +1055,21 @@ model = "x"
 	}
 	if written := runTaskWriteOnce(t, "yolo"); !written {
 		t.Fatal("yolo: task sub-agent did not write sub.txt, want the ask rule bypassed")
+	}
+}
+
+func TestRecoveryHeadlessModeUsesExplicitFrontendCapability(t *testing.T) {
+	if recoveryHeadlessMode(Options{}) {
+		t.Fatal("interactive frontend without HeadlessApprovalMode must remain answerable")
+	}
+	if recoveryHeadlessMode(Options{ApprovalTimeout: time.Minute}) {
+		t.Fatal("a bounded bot approval timeout must not make recovery headless")
+	}
+	if !recoveryHeadlessMode(Options{HeadlessApprovalMode: control.ToolApprovalAuto}) {
+		t.Fatal("reasonix run Auto mode must fail closed instead of waiting for a card")
+	}
+	if !recoveryHeadlessMode(Options{HeadlessApprovalMode: control.ToolApprovalAsk}) {
+		t.Fatal("all explicit headless permission modes must use the non-waiting recovery path")
 	}
 }
 

@@ -36,9 +36,12 @@ Rules:
 - outcome=continue ONLY with change_kind=same_strategy when the next action is
   clearly the same method and scope, without higher risk.
 - Prefer confirm when unsure.
-- Changing tools, expanding write paths, deleting, installing dependencies,
-  editing config, or external/network writes must be confirm with the matching
-  change_kind.
+- A tool-name change alone is not a strategy change. In particular, moving from
+  a failed verifier to a targeted edit in the diagnosed scope can be the same
+  strategy.
+- Expanding write paths, changing the implementation method, deleting,
+  installing dependencies, editing config, or external/network writes must be
+  confirm with the matching change_kind.
 - Do not invent facts beyond the provided failure, diagnosis, and proposal.`
 
 // Session is a long-lived recovery reviewer with its own agent session,
@@ -55,22 +58,19 @@ type Session struct {
 // NewSession creates a recovery reviewer. temperature should be 0 for
 // deterministic JSON. sink is discarded for reviewer chatter.
 func NewSession(prov provider.Provider, modelRef string, temperature float64, pricing *provider.Pricing) *Session {
-	_ = modelRef // caller selects provider; modelRef kept for API symmetry with guardian
+	_ = modelRef              // caller selects provider; modelRef kept for API symmetry with guardian
 	reg := tool.NewRegistry() // empty: no tools
 	sess := agent.NewSession(PolicyPrompt)
 	ag := agent.New(prov, reg, sess, agent.Options{
 		MaxSteps:            1,
 		Temperature:         temperature,
+		Pricing:             pricing,
 		ContextWindow:       32_000,
 		CompactRatio:        0.9,
 		SoftCompactRatio:    0.7,
 		ToolResultSnipRatio: 0.6,
 		CompactForceRatio:   0.95,
 	}, event.Discard)
-	if pricing != nil {
-		// pricing is optional telemetry; agent.Options already accepted via New
-		_ = pricing
-	}
 	return &Session{
 		prov:    prov,
 		agent:   ag,
@@ -95,9 +95,8 @@ func (s *Session) Review(ctx context.Context, failure *FailureEvent, diagnosis [
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// Keep a short rolling transcript: system prompt stays fixed; each review
-	// is a fresh user message. Reset session messages except system to bound
-	// growth while preserving the stable system prefix.
+	// Each review is independent. Reset to the fixed system message so content
+	// never leaks between tasks while the provider can still cache that prefix.
 	s.sess.Replace([]provider.Message{
 		{Role: provider.RoleSystem, Content: PolicyPrompt},
 	})
@@ -129,19 +128,19 @@ func buildReviewPrompt(failure *FailureEvent, diagnosis []string, proposal Propo
 	}
 	if failure != nil {
 		b.WriteString("Failure:\n")
-		b.WriteString(fmt.Sprintf("- tool: %s\n", failure.Tool))
+		fmt.Fprintf(&b, "- tool: %s\n", failure.Tool)
 		if failure.Subject != "" {
-			b.WriteString(fmt.Sprintf("- subject: %s\n", failure.Subject))
+			fmt.Fprintf(&b, "- subject: %s\n", failure.Subject)
 		}
 		if failure.ErrSummary != "" {
-			b.WriteString(fmt.Sprintf("- error: %s\n", failure.ErrSummary))
+			fmt.Fprintf(&b, "- error: %s\n", failure.ErrSummary)
 		}
 		if failure.ArgsSummary != "" {
-			b.WriteString(fmt.Sprintf("- args: %s\n", failure.ArgsSummary))
+			fmt.Fprintf(&b, "- args: %s\n", failure.ArgsSummary)
 		}
-		b.WriteString(fmt.Sprintf("- verification: %v\n", failure.Verification))
-		b.WriteString(fmt.Sprintf("- mutates: %v\n", failure.Mutates))
-		b.WriteString(fmt.Sprintf("- repeat_count: %d\n", failure.RepeatCount))
+		fmt.Fprintf(&b, "- verification: %v\n", failure.Verification)
+		fmt.Fprintf(&b, "- mutates: %v\n", failure.Mutates)
+		fmt.Fprintf(&b, "- repeat_count: %d\n", failure.RepeatCount)
 		if failure.OutputExcerpt != "" {
 			b.WriteString("- output excerpt:\n")
 			b.WriteString(failure.OutputExcerpt)
@@ -159,21 +158,21 @@ func buildReviewPrompt(failure *FailureEvent, diagnosis []string, proposal Propo
 		b.WriteString("\n")
 	}
 	b.WriteString("Proposed next mutation:\n")
-	b.WriteString(fmt.Sprintf("- tool: %s\n", proposal.Tool))
+	fmt.Fprintf(&b, "- tool: %s\n", proposal.Tool)
 	if proposal.Subject != "" {
-		b.WriteString(fmt.Sprintf("- subject: %s\n", proposal.Subject))
+		fmt.Fprintf(&b, "- subject: %s\n", proposal.Subject)
 	}
 	if proposal.Preview != "" {
-		b.WriteString(fmt.Sprintf("- preview: %s\n", proposal.Preview))
+		fmt.Fprintf(&b, "- preview: %s\n", proposal.Preview)
 	}
 	if len(proposal.Args) > 0 {
-		b.WriteString(fmt.Sprintf("- args: %s\n", ArgsSummary(proposal.Args, 400)))
+		fmt.Fprintf(&b, "- args: %s\n", ArgsSummary(proposal.Args, 400))
 	}
-	b.WriteString(fmt.Sprintf("- mutates: %v\n", proposal.Mutates))
-	b.WriteString(fmt.Sprintf("- verification: %v\n", proposal.Verification))
-	b.WriteString(fmt.Sprintf("- high_risk: %v\n", proposal.HighRisk))
-	b.WriteString(fmt.Sprintf("- expanded_scope: %v\n", proposal.ExpandedScope))
-	b.WriteString(fmt.Sprintf("- strategy_changed: %v\n", proposal.StrategyChanged))
+	fmt.Fprintf(&b, "- mutates: %v\n", proposal.Mutates)
+	fmt.Fprintf(&b, "- verification: %v\n", proposal.Verification)
+	fmt.Fprintf(&b, "- high_risk: %v\n", proposal.HighRisk)
+	fmt.Fprintf(&b, "- expanded_scope: %v\n", proposal.ExpandedScope)
+	fmt.Fprintf(&b, "- strategy_changed: %v\n", proposal.StrategyChanged)
 	b.WriteString("\nRespond with JSON only.")
 	return b.String()
 }

@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"os"
 	"strings"
 
 	"reasonix/internal/agent"
@@ -40,8 +39,8 @@ func (c *Controller) RecoveryCheckpointEnabled() bool {
 }
 
 // ResolveRecovery applies a user decision on a recovery confirmation card.
-// action is continue|revise|stop. For revise, feedback is steered into the
-// agent and the pending mutation is refused in the same operation.
+// action is continue|revise|stop. For revise, feedback is returned in the
+// blocked tool result so the same agent sees it exactly once before retrying.
 func (c *Controller) ResolveRecovery(id string, action agent.RecoveryAction, feedback string) error {
 	if c == nil {
 		return fmt.Errorf("controller is nil")
@@ -84,11 +83,6 @@ func (c *Controller) ResolveRecovery(id string, action agent.RecoveryAction, fee
 	if gate == nil {
 		return fmt.Errorf("recovery checkpoint is not active")
 	}
-	if action == agent.RecoveryActionRevise && strings.TrimSpace(feedback) != "" {
-		// Atomically inject steer so the next model request sees the revision
-		// before any further mutation attempt.
-		c.Steer(strings.TrimSpace(feedback))
-	}
 	return gate.Resolve(id, recovery.Action(action), feedback)
 }
 
@@ -98,11 +92,6 @@ func (c *Controller) initRecoveryGate(enabled bool, reviewer recovery.Reviewer, 
 	if c == nil || c.executor == nil {
 		return
 	}
-	if rs, ok := reviewer.(*recovery.Session); ok {
-		c.mu.Lock()
-		c.recoveryReviewer = rs
-		c.mu.Unlock()
-	}
 	gate := recovery.NewGate(recovery.Options{
 		Enabled:  enabled,
 		Headless: headless,
@@ -111,14 +100,6 @@ func (c *Controller) initRecoveryGate(enabled bool, reviewer recovery.Reviewer, 
 		},
 		EmitPrompt: c.emitRecoveryPrompt,
 		Reviewer:   reviewer,
-		InjectTail: func(_, message string) {
-			if strings.TrimSpace(message) == "" {
-				return
-			}
-			// Steer is the mid-turn user-tail channel; it does not touch the
-			// stable system prompt or tool schemas.
-			c.Steer(message)
-		},
 		Cancel: func() {
 			c.Cancel()
 		},
@@ -162,14 +143,13 @@ func (c *Controller) persistRecoverySnapshot(snap recovery.Snapshot) {
 	}
 }
 
-// loadRecoveryState restores gate + reviewer sidecars for a session path.
+// loadRecoveryState restores the recovery gate sidecar for a session path.
 func (c *Controller) loadRecoveryState(path string) {
 	if c == nil || strings.TrimSpace(path) == "" {
 		return
 	}
 	c.mu.Lock()
 	gate := c.recoveryGate
-	reviewer := c.recoveryReviewer
 	c.mu.Unlock()
 	if gate != nil {
 		snap, err := recovery.LoadSnapshot(path)
@@ -179,30 +159,22 @@ func (c *Controller) loadRecoveryState(path string) {
 			gate.Restore(snap)
 		}
 	}
-	if reviewer != nil {
-		if err := reviewer.Load(recovery.ReviewerPathFor(path)); err != nil && !os.IsNotExist(err) {
-			slog.Warn("controller: load recovery reviewer", "err", err)
-		}
-	}
 }
 
-// saveRecoveryState persists gate + reviewer sidecars.
+// saveRecoveryState persists the recovery gate sidecar. The independent
+// reviewer resets to its fixed system prompt before every review, so persisting
+// its transient conversation adds no cache warmth and only creates a second
+// transcript-shaped file beside the real session.
 func (c *Controller) saveRecoveryState(path string) {
 	if c == nil || strings.TrimSpace(path) == "" {
 		return
 	}
 	c.mu.Lock()
 	gate := c.recoveryGate
-	reviewer := c.recoveryReviewer
 	c.mu.Unlock()
 	if gate != nil {
 		if err := recovery.SaveSnapshot(path, gate.Snapshot()); err != nil {
 			slog.Warn("controller: recovery snapshot", "err", err)
-		}
-	}
-	if reviewer != nil {
-		if err := reviewer.Save(recovery.ReviewerPathFor(path)); err != nil {
-			slog.Warn("controller: recovery reviewer snapshot", "err", err)
 		}
 	}
 }
@@ -329,21 +301,6 @@ func (c *Controller) persistRecoveryEnabled(enabled bool) {
 	v := enabled
 	meta.RecoveryCheckpointEnabled = &v
 	_ = agent.SaveBranchMeta(path, meta)
-}
-
-// attachRecoveryToAgent shares the controller recovery gate with a child agent.
-func (c *Controller) attachRecoveryToAgent(child *agent.Agent, agentID, taskID string) {
-	if c == nil || child == nil {
-		return
-	}
-	c.mu.Lock()
-	gate := c.recoveryGate
-	c.mu.Unlock()
-	if gate == nil {
-		return
-	}
-	child.SetRecoveryGate(gate)
-	child.SetRecoveryIdentity(agentID, taskID)
 }
 
 func recoveryFirstNonEmpty(vals ...string) string {

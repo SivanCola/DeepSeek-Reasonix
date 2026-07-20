@@ -83,11 +83,10 @@ type Controller struct {
 	guardianPath string            // persisted guardian session file ("" when disabled)
 	// recoveryGate is the shared Auto-mode failure recovery checkpoint.
 	// nil when the feature is not wired for this controller.
-	recoveryGate     *recovery.Gate
-	recoveryReviewer *recovery.Session // optional independent reviewer session
-	recoveryEnabled  bool              // session preference; effective only in Auto mode
-	sink             event.Sink
-	policy           permission.Policy
+	recoveryGate    *recovery.Gate
+	recoveryEnabled bool // session preference; effective only in Auto mode
+	sink            event.Sink
+	policy          permission.Policy
 	// subagentGate is the shared gate every headless-only sub-agent surface
 	// reads from (see Options.SubagentGate). Nil when the caller didn't build
 	// one — sub-agents then keep whatever gate they were constructed with.
@@ -3486,7 +3485,7 @@ func (c *Controller) snapshot(markActivity, forceRewrite, shutdownRecovery bool)
 			}
 		}
 	}
-	// Persist recovery gate + reviewer sidecars so checkpoints survive restart.
+	// Persist recovery gate state so unresolved checkpoints survive restart.
 	c.saveRecoveryState(path)
 	// Record the listing-only sidecar fields (model, preview, user-turn count)
 	// straight from the in-memory conversation, so the sidebar and resume picker

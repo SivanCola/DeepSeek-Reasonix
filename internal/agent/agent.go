@@ -330,6 +330,10 @@ type Agent struct {
 	// recoveryTaskID isolates recovery state across concurrent top-level tasks.
 	// Empty shares the root task bucket.
 	recoveryTaskID string
+	// recoveryTaskSummary is the bounded task text for this Agent.Run. It lets a
+	// shared recovery gate review sub-agent mutations against the child task,
+	// rather than the root controller transcript.
+	recoveryTaskSummary string
 
 	// planModeReadOnlyTrust is retained for legacy controller wiring. The main
 	// Plan execution path no longer consults it.
@@ -1127,6 +1131,11 @@ func (a *Agent) Run(ctx context.Context, input string) (runErr error) {
 	a.steerConsumed = false
 	a.steerRunActive = true
 	a.steerMu.Unlock()
+	if a.recoveryGate != nil {
+		if guidance := strings.TrimSpace(a.recoveryGate.ConsumeGuidance(a.recoveryTaskID)); guidance != "" {
+			_ = a.Steer(guidance)
+		}
+	}
 	scope, scoped := DeliveryExecutionScopeFromContext(ctx)
 	preserveEvidence := a.preserveEvidenceOnce
 	if a.evidence != nil {
@@ -1211,6 +1220,7 @@ func (a *Agent) Run(ctx context.Context, input string) (runErr error) {
 	}
 	a.deliveryTaskExpected = deliveryTaskNeedsEvidence(classifierInput)
 	a.deliveryMutationExpected = deliveryTaskNeedsMutation(classifierInput) && registryHasWriterTools(a.tools)
+	a.recoveryTaskSummary = boundedRecoveryTaskSummary(classifierInput)
 	// A cancelled/error turn leaves a provider-excluded recovery record at the
 	// transcript tail. Fold its bounded facts into this new user turn exactly
 	// once; the user's raw text remains the classifier source above.
@@ -3148,6 +3158,7 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 		dec, rerr := a.recoveryGate.BeforeMutation(ctx, RecoveryProposal{
 			AgentID:      a.recoveryAgentID,
 			TaskID:       a.recoveryTaskID,
+			TaskSummary:  a.recoveryTaskSummary,
 			Tool:         evidenceName,
 			Args:         evidenceArgs,
 			Subject:      subject,

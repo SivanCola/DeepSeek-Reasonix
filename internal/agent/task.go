@@ -518,7 +518,7 @@ func (r *ReadOnlyTaskTool) Execute(ctx context.Context, args json.RawMessage) (s
 	if err != nil {
 		return "", fmt.Errorf("read-only sub-agent profile: %w", err)
 	}
-	answer, err := r.task.runReadOnlySubSession(ctx, p.Prompt, subReg, subSink(ctx), maxSteps, prov, pricing, ctxWin, NewSession(DefaultReadOnlyTaskSystemPrompt), childDepth)
+	answer, err := r.task.runReadOnlySubSession(ctx, p.Prompt, subReg, subSink(ctx), maxSteps, prov, pricing, ctxWin, NewSession(DefaultReadOnlyTaskSystemPrompt), childDepth, subagentRecoveryTaskID(ctx, ""))
 	if err != nil {
 		return "", err
 	}
@@ -753,10 +753,11 @@ func (t *TaskTool) RunProfileSpec(ctx context.Context, spec ProfileExecSpec) (st
 	}
 
 	runSession := func(runCtx context.Context, sink event.Sink) (string, error) {
+		recoveryTaskID := subagentRecoveryTaskID(runCtx, run.Ref)
 		if spec.ReadOnly {
-			return t.runReadOnlySubSession(runCtx, spec.Prompt, subReg, sink, maxSteps, prov, pricing, ctxWin, run.Session, childDepth)
+			return t.runReadOnlySubSession(runCtx, spec.Prompt, subReg, sink, maxSteps, prov, pricing, ctxWin, run.Session, childDepth, recoveryTaskID)
 		}
-		return t.runSubSession(runCtx, spec.Prompt, subReg, sink, maxSteps, prov, pricing, ctxWin, run.Session, childDepth)
+		return t.runSubSession(runCtx, spec.Prompt, subReg, sink, maxSteps, prov, pricing, ctxWin, run.Session, childDepth, recoveryTaskID)
 	}
 
 	if spec.RunInBackground {
@@ -1228,8 +1229,8 @@ func (t *TaskTool) resolveSubSessionRuntime(modelRef, effort string) (provider.P
 	return prov, pricing, ctxWin, nil
 }
 
-func (t *TaskTool) runSubSession(ctx context.Context, prompt string, subReg *tool.Registry, sink event.Sink, maxSteps int, prov provider.Provider, pricing *provider.Pricing, ctxWin int, sess *Session, childDepth int) (string, error) {
-	opts := t.subagentOptions(ctx, maxSteps, pricing, ctxWin, childDepth)
+func (t *TaskTool) runSubSession(ctx context.Context, prompt string, subReg *tool.Registry, sink event.Sink, maxSteps int, prov provider.Provider, pricing *provider.Pricing, ctxWin int, sess *Session, childDepth int, recoveryTaskID string) (string, error) {
+	opts := t.subagentOptions(ctx, maxSteps, pricing, ctxWin, childDepth, recoveryTaskID)
 	// Capture the pristine task before host framing is prepended: delivery
 	// intent classification must judge the task, not the wrapper.
 	opts.ClassifierTaskText = prompt
@@ -1237,8 +1238,8 @@ func (t *TaskTool) runSubSession(ctx context.Context, prompt string, subReg *too
 	return RunSubAgentWithSession(ctx, prov, subReg, sess, prompt, opts, sink)
 }
 
-func (t *TaskTool) runReadOnlySubSession(ctx context.Context, prompt string, subReg *tool.Registry, sink event.Sink, maxSteps int, prov provider.Provider, pricing *provider.Pricing, ctxWin int, sess *Session, childDepth int) (string, error) {
-	opts := t.subagentOptions(ctx, maxSteps, pricing, ctxWin, childDepth)
+func (t *TaskTool) runReadOnlySubSession(ctx context.Context, prompt string, subReg *tool.Registry, sink event.Sink, maxSteps int, prov provider.Provider, pricing *provider.Pricing, ctxWin int, sess *Session, childDepth int, recoveryTaskID string) (string, error) {
+	opts := t.subagentOptions(ctx, maxSteps, pricing, ctxWin, childDepth, recoveryTaskID)
 	// Capture the pristine task before host framing is prepended: delivery
 	// intent classification must judge the task, not the wrapper.
 	opts.ClassifierTaskText = prompt
@@ -1250,7 +1251,7 @@ func (t *TaskTool) runReadOnlySubSession(ctx context.Context, prompt string, sub
 // sub-agent spawned through this tool shares (task, read_only_task, and
 // parallel_tasks children). Compaction, language preferences, and depth limits
 // must stay uniform across those paths — add new fields here, not at call sites.
-func (t *TaskTool) subagentOptions(ctx context.Context, maxSteps int, pricing *provider.Pricing, ctxWin, childDepth int) Options {
+func (t *TaskTool) subagentOptions(ctx context.Context, maxSteps int, pricing *provider.Pricing, ctxWin, childDepth int, recoveryTaskID string) Options {
 	return Options{
 		MaxSteps:            maxSteps,
 		Temperature:         t.temperature,
@@ -1273,7 +1274,18 @@ func (t *TaskTool) subagentOptions(ctx context.Context, maxSteps int, pricing *p
 		WorkspaceLease:      t.workspaceLease,
 		RecoveryGate:        t.recoveryGate,
 		RecoveryAgentID:     "subagent",
+		RecoveryTaskID:      recoveryTaskID,
 	}
+}
+
+func subagentRecoveryTaskID(ctx context.Context, ref string) string {
+	if ref = strings.TrimSpace(ref); ref != "" {
+		return "subagent:" + ref
+	}
+	if callID, _, _, ok := CallContext(ctx); ok && strings.TrimSpace(callID) != "" {
+		return "subagent:" + strings.TrimSpace(callID)
+	}
+	return "subagent"
 }
 
 // WithRecoveryGate shares the session recovery checkpoint with spawned sub-agents.

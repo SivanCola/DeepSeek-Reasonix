@@ -29,10 +29,6 @@ type Reviewer interface {
 	Review(ctx context.Context, failure *FailureEvent, diagnosis []string, proposal Proposal, taskSummary string) (ReviewVerdict, error)
 }
 
-// TailInjector injects a one-shot dynamic user-tail after a failure arms the
-// checkpoint. Hard constraints still come from this gate.
-type TailInjector func(taskID, message string)
-
 // CancelFunc cancels the root agent and all current-task sub-agents.
 type CancelFunc func()
 
@@ -42,7 +38,6 @@ type Options struct {
 	Mode           ModeProvider
 	EmitPrompt     EmitPromptFunc
 	Reviewer       Reviewer
-	InjectTail     TailInjector
 	Cancel         CancelFunc
 	TaskSummary    func() string
 	MaxDiagRepeats int // reserved for identical diagnostic-failure threshold
@@ -65,6 +60,13 @@ type Gate struct {
 	metrics Metrics
 	waiters map[string]chan resolvePayload // keyed by approval id
 	taskOf  map[string]string              // approval id -> task id
+
+	// persistMu orders asynchronous snapshots. A newer state may be scheduled
+	// before an older goroutine reaches disk; sequence checks prevent that older
+	// snapshot from overwriting the newer checkpoint.
+	persistMu   sync.Mutex
+	persistSeq  uint64
+	persistDone uint64
 }
 
 type resolvePayload struct {
@@ -129,19 +131,9 @@ func (g *Gate) Snapshot() Snapshot {
 	defer g.mu.Unlock()
 	out := Snapshot{Tasks: map[string]*TaskState{}}
 	for id, st := range g.tasks {
-		if st == nil {
-			continue
+		if cp := cloneTaskState(st); cp != nil && !taskStateEmpty(cp) {
+			out.Tasks[id] = cp
 		}
-		cp := *st
-		if st.Failure != nil {
-			f := *st.Failure
-			cp.Failure = &f
-		}
-		if st.Pending != nil {
-			p := *st.Pending
-			cp.Pending = &p
-		}
-		out.Tasks[id] = &cp
 	}
 	return out
 }
@@ -162,14 +154,9 @@ func (g *Gate) Restore(snap Snapshot) {
 		if st == nil {
 			continue
 		}
-		cp := *st
-		if st.Failure != nil {
-			f := *st.Failure
-			cp.Failure = &f
-		}
-		if st.Pending != nil {
-			p := *st.Pending
-			cp.Pending = &p
+		cp := cloneTaskState(st)
+		if cp == nil {
+			continue
 		}
 		if cp.Phase == PhaseAwaitingDecision || cp.Phase == PhaseApprovedOnce {
 			// Drop one-shot grants and live waiters across process death.
@@ -179,12 +166,11 @@ func (g *Gate) Restore(snap Snapshot) {
 			// Keep Pending for ReplayUnresolved so the UI can re-show the card.
 		}
 		if cp.Failure == nil {
-			cp.Phase = PhaseIdle
-			cp.Pending = nil
+			continue
 		} else if cp.Phase == PhaseIdle {
 			cp.Phase = PhaseDiagnosing
 		}
-		g.tasks[id] = &cp
+		g.tasks[id] = cp
 	}
 }
 
@@ -213,14 +199,17 @@ func (g *Gate) UnresolvedForReplay() []struct {
 		if st.Phase != PhaseDiagnosing && st.Phase != PhaseAwaitingDecision {
 			continue
 		}
+		cp := cloneTaskState(st)
+		if cp == nil || cp.Failure == nil {
+			continue
+		}
 		item := struct {
 			TaskID  string
 			Failure FailureEvent
 			Pending *PendingProposal
-		}{TaskID: id, Failure: *st.Failure}
-		if st.Pending != nil {
-			p := *st.Pending
-			item.Pending = &p
+		}{TaskID: id, Failure: *cp.Failure}
+		if cp.Pending != nil {
+			item.Pending = cp.Pending
 		}
 		out = append(out, item)
 	}
@@ -253,8 +242,8 @@ func (g *Gate) BindApprovalID(taskID, approvalID string) {
 }
 
 // Resolve applies a user decision to a pending recovery approval.
-// action is continue|revise|stop. For revise, feedback is injected as steer
-// and the current mutation is refused in the same operation.
+// action is continue|revise|stop. For revise, feedback is returned through the
+// blocked tool result and the current mutation is refused in the same operation.
 func (g *Gate) Resolve(id string, action Action, feedback string) error {
 	if g == nil {
 		return fmt.Errorf("recovery gate is nil")
@@ -263,7 +252,7 @@ func (g *Gate) Resolve(id string, action Action, feedback string) error {
 	g.mu.Lock()
 	ch := g.waiters[id]
 	taskID := g.taskOf[id]
-	if ch == nil || taskID == "" {
+	if taskID == "" {
 		g.mu.Unlock()
 		return fmt.Errorf("unknown recovery approval %q", id)
 	}
@@ -276,17 +265,17 @@ func (g *Gate) Resolve(id string, action Action, feedback string) error {
 		} else {
 			st.Phase = PhaseDiagnosing
 		}
+		st.Pending = nil
 		g.metrics.HumanContinues++
 	case ActionRevise:
 		st.Phase = PhaseDiagnosing
 		st.ApprovedFinger = ""
 		st.Pending = nil
+		if ch == nil {
+			st.PendingGuidance = revisionGuidance(feedback)
+		}
 		g.metrics.HumanRevises++
 	case ActionStop:
-		st.Phase = PhaseIdle
-		st.Failure = nil
-		st.Pending = nil
-		st.ApprovedFinger = ""
 		g.metrics.HumanStops++
 	default:
 		g.mu.Unlock()
@@ -295,11 +284,16 @@ func (g *Gate) Resolve(id string, action Action, feedback string) error {
 	st.ApprovalID = ""
 	delete(g.waiters, id)
 	delete(g.taskOf, id)
+	if action == ActionStop {
+		delete(g.tasks, taskID)
+	}
 	g.mu.Unlock()
 
-	select {
-	case ch <- resolvePayload{action: action, feedback: feedback}:
-	default:
+	if ch != nil {
+		select {
+		case ch <- resolvePayload{action: action, feedback: feedback}:
+		default:
+		}
 	}
 	if action == ActionStop && g.opts.Cancel != nil {
 		g.opts.Cancel()
@@ -308,35 +302,64 @@ func (g *Gate) Resolve(id string, action Action, feedback string) error {
 	return nil
 }
 
-// ObserveResult implements agent.RecoveryGate.
-func (g *Gate) ObserveResult(_ context.Context, obs Observation) {
+// ConsumeGuidance implements agent.RecoveryGate. Replayed recovery cards have
+// no blocked Agent.Run to receive a Revise result, so Resolve stores that
+// feedback for the matching root/sub-agent's next turn. Live waiters receive
+// feedback through their blocked tool result instead and never populate this.
+func (g *Gate) ConsumeGuidance(taskID string) string {
+	if g == nil {
+		return ""
+	}
+	taskID = normalizeTaskID(taskID)
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	st := g.tasks[taskID]
+	if st == nil || strings.TrimSpace(st.PendingGuidance) == "" {
+		return ""
+	}
+	guidance := strings.TrimSpace(st.PendingGuidance)
+	st.PendingGuidance = ""
+	g.persistUnlocked()
+	return guidance
+}
+
+// ObserveResult implements agent.RecoveryGate. It returns one-shot guidance
+// for the caller to enqueue on the exact Agent.Run that observed the failure.
+func (g *Gate) ObserveResult(_ context.Context, obs Observation) string {
 	if g == nil || !g.enabled.Load() || !g.activeMode() {
-		return
+		return ""
 	}
 	taskID := normalizeTaskID(obs.TaskID)
 
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	st := g.taskLocked(taskID)
+	st := g.tasks[taskID]
 
 	// Successful host-recognized verification clears the failure event.
 	if obs.Success && obs.Verification {
-		g.clearFailureLocked(st)
-		g.persistUnlocked()
-		return
+		if st != nil {
+			delete(g.tasks, taskID)
+			g.persistUnlocked()
+		}
+		return ""
 	}
 	// Any successful mutation ends the current failure event.
 	if obs.Success && obs.Mutates {
-		g.clearFailureLocked(st)
-		g.persistUnlocked()
-		return
+		if st != nil {
+			delete(g.tasks, taskID)
+			g.persistUnlocked()
+		}
+		return ""
 	}
 	// Diagnostic read successes do not clear failure state.
 	if obs.Success {
-		return
+		return ""
 	}
 	if !QualifyingFailure(obs) {
-		return
+		return ""
+	}
+	if st == nil {
+		st = g.taskLocked(taskID)
 	}
 
 	// Already recovering and another recovery op failed: raise repeat count.
@@ -349,8 +372,9 @@ func (g *Gate) ObserveResult(_ context.Context, obs Observation) {
 		st.ApprovedFinger = ""
 		st.Pending = nil
 		g.metrics.FailureEvents++
-		g.maybeInjectTailLocked(taskID, st)
-		return
+		guidance := g.recoveryGuidanceLocked(st)
+		g.persistUnlocked()
+		return guidance
 	}
 
 	fp := CallFingerprint(obs.Tool, obs.Subject, "", obs.Args)
@@ -377,7 +401,9 @@ func (g *Gate) ObserveResult(_ context.Context, obs Observation) {
 	st.Pending = nil
 	st.TailInjected = false
 	g.metrics.FailureEvents++
-	g.maybeInjectTailLocked(taskID, st)
+	guidance := g.recoveryGuidanceLocked(st)
+	g.persistUnlocked()
+	return guidance
 }
 
 // BeforeMutation implements agent.RecoveryGate.
@@ -397,7 +423,11 @@ func (g *Gate) BeforeMutation(ctx context.Context, proposal Proposal) (Decision,
 	fp := CallFingerprint(proposal.Tool, proposal.Subject, proposal.Preview, proposal.Args)
 
 	g.mu.Lock()
-	st := g.taskLocked(taskID)
+	st := g.tasks[taskID]
+	if st == nil {
+		g.mu.Unlock()
+		return Decision{Allow: true}, nil
+	}
 	if st.Phase == PhaseIdle || st.Failure == nil {
 		g.mu.Unlock()
 		return Decision{Allow: true}, nil
@@ -408,11 +438,13 @@ func (g *Gate) BeforeMutation(ctx context.Context, proposal Proposal) (Decision,
 		if fp == st.ApprovedFinger {
 			st.ApprovedFinger = ""
 			st.Phase = PhaseDiagnosing
+			st.Pending = nil
 			g.mu.Unlock()
 			return Decision{Allow: true, ConsumedApprovedOnce: true}, nil
 		}
 		st.Phase = PhaseDiagnosing
 		st.ApprovedFinger = ""
+		st.Pending = nil
 	}
 
 	failure := *st.Failure
@@ -450,8 +482,8 @@ func (g *Gate) BeforeMutation(ctx context.Context, proposal Proposal) (Decision,
 	if !forceConfirm {
 		if g.opts.Reviewer != nil {
 			start := g.opts.Now()
-			taskSummary := ""
-			if g.opts.TaskSummary != nil {
+			taskSummary := strings.TrimSpace(proposal.TaskSummary)
+			if taskSummary == "" && g.opts.TaskSummary != nil {
 				taskSummary = g.opts.TaskSummary()
 			}
 			v, err := g.opts.Reviewer.Review(ctx, &failure, diagNotes, proposal, taskSummary)
@@ -464,7 +496,6 @@ func (g *Gate) BeforeMutation(ctx context.Context, proposal Proposal) (Decision,
 			}
 			g.mu.Unlock()
 			if err != nil {
-				forceConfirm = true
 				verdict = ReviewVerdict{
 					Outcome:        ReviewConfirm,
 					ChangeKind:     ChangeUncertain,
@@ -482,10 +513,8 @@ func (g *Gate) BeforeMutation(ctx context.Context, proposal Proposal) (Decision,
 					return Decision{Allow: true}, nil
 				}
 				// Any non-continue or non-same-strategy outcome needs a human.
-				forceConfirm = true
 			}
 		} else {
-			forceConfirm = true
 			verdict = ReviewVerdict{
 				Outcome:        ReviewConfirm,
 				ChangeKind:     ChangeUncertain,
@@ -622,6 +651,7 @@ func (g *Gate) decisionFromResolve(taskID, fp string, payload resolvePayload) (D
 		if st.Phase == PhaseApprovedOnce && st.ApprovedFinger == fp {
 			st.ApprovedFinger = ""
 			st.Phase = PhaseDiagnosing
+			st.Pending = nil
 			g.mu.Unlock()
 			return Decision{Allow: true, ConsumedApprovedOnce: true}, nil
 		}
@@ -633,9 +663,6 @@ func (g *Gate) decisionFromResolve(taskID, fp string, payload resolvePayload) (D
 		msg := "blocked: user requested a revised recovery plan"
 		if strings.TrimSpace(payload.feedback) != "" {
 			msg += ": " + strings.TrimSpace(payload.feedback)
-			if g.opts.InjectTail != nil {
-				g.opts.InjectTail(taskID, "Recovery revision from the user (apply before the next mutation):\n"+strings.TrimSpace(payload.feedback))
-			}
 		}
 		return Decision{Allow: false, Blocked: true, Message: msg}, nil
 	case ActionStop:
@@ -652,7 +679,10 @@ func (g *Gate) RecordDiagnosis(taskID, note string) {
 	}
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	st := g.taskLocked(normalizeTaskID(taskID))
+	st := g.tasks[normalizeTaskID(taskID)]
+	if st == nil {
+		return
+	}
 	if st.Failure == nil {
 		return
 	}
@@ -678,34 +708,22 @@ func (g *Gate) taskLocked(taskID string) *TaskState {
 	return st
 }
 
-func (g *Gate) clearFailureLocked(st *TaskState) {
-	st.Phase = PhaseIdle
-	st.Failure = nil
-	st.Pending = nil
-	st.ApprovedFinger = ""
-	st.ApprovalID = ""
-	st.ConsecutiveFails = 0
-	st.DiagnosingReads = 0
-	st.TailInjected = false
-}
-
-func (g *Gate) maybeInjectTailLocked(taskID string, st *TaskState) {
-	if st.TailInjected || g.opts.InjectTail == nil {
-		return
+func (g *Gate) recoveryGuidanceLocked(st *TaskState) string {
+	if st.TailInjected {
+		return ""
 	}
 	st.TailInjected = true
-	msg := "A recovery checkpoint is active after a tool/verification failure. " +
+	return "A recovery checkpoint is active after a tool/verification failure. " +
 		"Diagnose with read-only tools first (read logs, search code, inspect the failing command output). " +
 		"Before changing strategy, scope, or risk of the next write, explain the diagnosis and the proposed recovery step. " +
 		"The host will pause unconfirmed strategy/scope/risk changes automatically."
-	go g.opts.InjectTail(taskID, msg)
 }
 
 func (g *Gate) persist() {
 	if g == nil || g.opts.Persist == nil {
 		return
 	}
-	g.opts.Persist(g.Snapshot())
+	g.schedulePersist(g.Snapshot(), false)
 }
 
 func (g *Gate) persistUnlocked() {
@@ -715,22 +733,67 @@ func (g *Gate) persistUnlocked() {
 	}
 	out := Snapshot{Tasks: map[string]*TaskState{}}
 	for id, st := range g.tasks {
-		if st == nil {
-			continue
+		if cp := cloneTaskState(st); cp != nil && !taskStateEmpty(cp) {
+			out.Tasks[id] = cp
 		}
-		cp := *st
-		if st.Failure != nil {
-			f := *st.Failure
-			cp.Failure = &f
-		}
-		if st.Pending != nil {
-			p := *st.Pending
-			cp.Pending = &p
-		}
-		out.Tasks[id] = &cp
 	}
-	// Persist outside lock to avoid deadlocks if Persist re-enters.
-	go g.opts.Persist(out)
+	// Persist outside the state lock to avoid deadlocks if Persist re-enters.
+	g.schedulePersist(out, true)
+}
+
+func (g *Gate) schedulePersist(snap Snapshot, async bool) {
+	if g == nil || g.opts.Persist == nil {
+		return
+	}
+	g.persistMu.Lock()
+	g.persistSeq++
+	seq := g.persistSeq
+	g.persistMu.Unlock()
+	write := func() {
+		g.persistMu.Lock()
+		defer g.persistMu.Unlock()
+		if seq < g.persistDone {
+			return
+		}
+		g.opts.Persist(snap)
+		g.persistDone = seq
+	}
+	if async {
+		go write()
+		return
+	}
+	write()
+}
+
+func cloneTaskState(st *TaskState) *TaskState {
+	if st == nil {
+		return nil
+	}
+	cp := *st
+	if st.Failure != nil {
+		failure := *st.Failure
+		failure.Args = append(json.RawMessage(nil), st.Failure.Args...)
+		failure.DiagnosisNotes = append([]string(nil), st.Failure.DiagnosisNotes...)
+		cp.Failure = &failure
+	}
+	if st.Pending != nil {
+		pending := *st.Pending
+		pending.Args = append(json.RawMessage(nil), st.Pending.Args...)
+		cp.Pending = &pending
+	}
+	return &cp
+}
+
+func taskStateEmpty(st *TaskState) bool {
+	return st == nil || (st.Failure == nil && st.Pending == nil && st.ApprovedFinger == "" && st.ApprovalID == "" && st.PendingGuidance == "")
+}
+
+func revisionGuidance(feedback string) string {
+	feedback = strings.TrimSpace(feedback)
+	if feedback == "" {
+		return "The user rejected the previous recovery change. Diagnose again and propose a revised recovery plan before making another mutation."
+	}
+	return "The user rejected the previous recovery change and requested this revision: " + feedback
 }
 
 func normalizeTaskID(id string) string {

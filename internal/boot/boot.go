@@ -157,6 +157,10 @@ type Options struct {
 	TerminalRunner builtin.TerminalRunner
 }
 
+func recoveryHeadlessMode(opts Options) bool {
+	return strings.TrimSpace(opts.HeadlessApprovalMode) != ""
+}
+
 // Build loads config, resolves the model(s), and returns a Controller wrapping a
 // single Agent, or a two-model Coordinator when agent.planner_model is set. The
 // returned controller owns plugin subprocesses; call Close (via Controller.Close)
@@ -1675,10 +1679,10 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		// New controller sessions default from config; callers that restore a
 		// session overwrite via SetRecoveryCheckpointEnabled after New.
 		ctrlOpts.RecoveryCheckpointEnabled = cfg.AutoRecoveryCheckpointEnabled()
-		if opts.ApprovalTimeout > 0 {
-			// Bot/headless-style bounded approval implies no indefinite wait.
-			ctrlOpts.RecoveryHeadless = false
-		}
+		// HeadlessApprovalMode is an explicit declaration that this frontend has
+		// no decision channel (`reasonix run`). ApprovalTimeout is not a proxy for
+		// that capability: bots have a bounded timeout and can still answer cards.
+		ctrlOpts.RecoveryHeadless = recoveryHeadlessMode(opts)
 	}
 	if classifier != nil {
 		ctrlOpts.Classifier = classifier

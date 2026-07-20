@@ -1775,6 +1775,7 @@ func migrateSessionSidecars(oldPath, newPath, newID string) error {
 		{store.SessionEventLogDamaged(oldPath), store.SessionEventLogDamaged(newPath)},
 		{store.SessionEventIndex(oldPath), store.SessionEventIndex(newPath)},
 		{store.SessionConflictLog(oldPath), store.SessionConflictLog(newPath)},
+		{store.SessionRecoveryState(oldPath), store.SessionRecoveryState(newPath)},
 		{store.SessionCheckpointDir(oldPath), store.SessionCheckpointDir(newPath)},
 		{store.SessionJobsDir(oldPath), store.SessionJobsDir(newPath)},
 	} {

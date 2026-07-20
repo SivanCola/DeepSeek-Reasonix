@@ -166,8 +166,11 @@ export interface AppBindings {
   CancelTab(tabID: string): Promise<void>;
   Approve(id: string, allow: boolean, session: boolean, persist: boolean): Promise<void>;
   ApproveTab(tabID: string, id: string, allow: boolean, session: boolean, persist: boolean): Promise<void>;
+  ResolveRecovery(id: string, action: string, feedback: string): Promise<void>;
   ResolveRecoveryTab(tabID: string, id: string, action: string, feedback: string): Promise<void>;
+  SetRecoveryCheckpointEnabled(enabled: boolean): Promise<void>;
   SetRecoveryCheckpointEnabledTab(tabID: string, enabled: boolean): Promise<void>;
+  RecoveryCheckpointEnabled(): Promise<boolean>;
   RecoveryCheckpointEnabledTab(tabID: string): Promise<boolean>;
   AnswerQuestion(id: string, answers: QuestionAnswer[]): Promise<void>;
   AnswerQuestionForTab(tabID: string, id: string, answers: QuestionAnswer[]): Promise<void>;
@@ -2038,6 +2041,34 @@ function makeMockApp(): AppBindings {
         });
         return;
       }
+      if (trimmedInput === "/recovery-preview" || trimmedInput === "recovery preview" || trimmedInput === "恢复预览") {
+        pendingApprovalPreview = true;
+        pendingApprovalPreviewPrompt = { id: "mock-recovery-preview", tool: "write_file" };
+        await delay(250);
+        if (cancelled) return;
+        emit({
+          kind: "approval_request",
+          approval: {
+            id: "mock-recovery-preview",
+            tool: "write_file",
+            subject: "internal/recovery/gate.go",
+            reason: "The proposed recovery changes the implementation method after a failing verification.",
+            fresh: true,
+            kind: "recovery",
+            recovery: {
+              source_agent: "root",
+              failed_tool: "bash",
+              failed_summary: "go test ./internal/recovery failed",
+              diagnosis: "The failure is isolated to recovery state persistence.",
+              next_tool: "write_file",
+              next_action: "Update internal/recovery/gate.go",
+              change_kind: "strategy",
+              change_rationale: "The proposed edit changes the recovery method and needs a fresh decision.",
+            },
+          },
+        });
+        return;
+      }
       if (
         trimmedInput === "/sandbox-escape-preview" ||
         trimmedInput === "sandbox escape preview" ||
@@ -2355,6 +2386,10 @@ function makeMockApp(): AppBindings {
         async ApproveTab(_tabID, id, allow, session, persist) {
           await withMockTabScope(_tabID, () => this.Approve(id, allow, session, persist));
         },
+        async ResolveRecovery(id, action, feedback) {
+          const active = mockTabs.find((tab) => tab.active);
+          await this.ResolveRecoveryTab(active?.id ?? "", id, action, feedback);
+        },
         async ResolveRecoveryTab(_tabID, id, action, feedback) {
           void id;
           void feedback;
@@ -2366,7 +2401,15 @@ function makeMockApp(): AppBindings {
           });
           emitMockTurnDone();
         },
+        async SetRecoveryCheckpointEnabled(enabled) {
+          const active = mockTabs.find((tab) => tab.active);
+          await this.SetRecoveryCheckpointEnabledTab(active?.id ?? "", enabled);
+        },
         async SetRecoveryCheckpointEnabledTab(_tabID, _enabled) {},
+        async RecoveryCheckpointEnabled() {
+          const active = mockTabs.find((tab) => tab.active);
+          return this.RecoveryCheckpointEnabledTab(active?.id ?? "");
+        },
         async RecoveryCheckpointEnabledTab(_tabID) {
           return true;
         },

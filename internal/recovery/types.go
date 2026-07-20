@@ -40,12 +40,12 @@ const (
 
 // ReviewVerdict is the strict JSON shape the recovery reviewer must produce.
 type ReviewVerdict struct {
-	Outcome         ReviewOutcome `json:"outcome"`
-	ChangeKind      ChangeKind    `json:"change_kind"`
-	FailureSummary  string        `json:"failure_summary"`
-	Diagnosis       string        `json:"diagnosis"`
-	ProposedAction  string        `json:"proposed_action"`
-	Rationale       string        `json:"rationale"`
+	Outcome        ReviewOutcome `json:"outcome"`
+	ChangeKind     ChangeKind    `json:"change_kind"`
+	FailureSummary string        `json:"failure_summary"`
+	Diagnosis      string        `json:"diagnosis"`
+	ProposedAction string        `json:"proposed_action"`
+	Rationale      string        `json:"rationale"`
 }
 
 // FailureEvent records the active failure that armed the checkpoint.
@@ -85,14 +85,15 @@ type PendingProposal struct {
 
 // TaskState is the recovery state for one task.
 type TaskState struct {
-	Phase            Phase           `json:"phase"`
-	Failure          *FailureEvent   `json:"failure,omitempty"`
+	Phase            Phase            `json:"phase"`
+	Failure          *FailureEvent    `json:"failure,omitempty"`
 	Pending          *PendingProposal `json:"pending,omitempty"`
-	ApprovedFinger   string          `json:"approved_fingerprint,omitempty"`
-	ApprovalID       string          `json:"approval_id,omitempty"`
-	ConsecutiveFails int             `json:"consecutive_fails,omitempty"`
-	DiagnosingReads  int             `json:"diagnosing_reads,omitempty"`
-	TailInjected     bool            `json:"tail_injected,omitempty"`
+	ApprovedFinger   string           `json:"approved_fingerprint,omitempty"`
+	ApprovalID       string           `json:"approval_id,omitempty"`
+	PendingGuidance  string           `json:"pending_guidance,omitempty"`
+	ConsecutiveFails int              `json:"consecutive_fails,omitempty"`
+	DiagnosingReads  int              `json:"diagnosing_reads,omitempty"`
+	TailInjected     bool             `json:"tail_injected,omitempty"`
 }
 
 // Snapshot is the persistable form of all task recovery state.
@@ -127,15 +128,15 @@ const (
 // ToEventApproval builds the event payload for a recovery confirmation card.
 func ToEventApproval(id string, pending PendingProposal, failure *FailureEvent) event.Approval {
 	rec := &event.RecoveryApproval{
-		SourceAgent:      pending.SourceAgent,
-		FailedTool:       "",
-		FailedSummary:    pending.Failure,
-		Diagnosis:        pending.Diagnosis,
-		NextTool:         pending.Tool,
-		NextAction:       firstNonEmpty(pending.Proposed, pending.Subject, pending.Preview),
-		ChangeKind:       string(pending.ChangeKind),
-		ChangeRationale:  pending.Rationale,
-		ReviewRationale:  pending.Rationale,
+		SourceAgent:     pending.SourceAgent,
+		FailedTool:      "",
+		FailedSummary:   pending.Failure,
+		Diagnosis:       pending.Diagnosis,
+		NextTool:        pending.Tool,
+		NextAction:      firstNonEmpty(pending.Proposed, pending.Subject, pending.Preview),
+		ChangeKind:      string(pending.ChangeKind),
+		ChangeRationale: pending.Rationale,
+		ReviewRationale: pending.Rationale,
 	}
 	if failure != nil {
 		rec.FailedTool = failure.Tool

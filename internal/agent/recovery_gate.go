@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 
 	"reasonix/internal/evidence"
@@ -18,8 +19,14 @@ import (
 // and workspace write-lock acquisition, so a waiting recovery prompt never holds
 // a write lease.
 type RecoveryGate interface {
-	ObserveResult(ctx context.Context, result RecoveryObservation)
+	// ObserveResult records a completed call and returns optional guidance for
+	// the same agent's active turn. The caller, not the gate, owns delivery so a
+	// root or sub-agent failure can never start a concurrent controller turn.
+	ObserveResult(ctx context.Context, result RecoveryObservation) string
 	BeforeMutation(ctx context.Context, proposal RecoveryProposal) (RecoveryDecision, error)
+	// ConsumeGuidance returns and clears recovery feedback queued while no Agent
+	// turn was live (for example, Revise on a cold-start replayed card).
+	ConsumeGuidance(taskID string) string
 }
 
 // RecoveryObservation is one finished tool call the checkpoint may react to.
@@ -67,8 +74,12 @@ type RecoveryObservation struct {
 // RecoveryProposal is the next candidate mutation the agent wants to run while
 // a recovery checkpoint may be active.
 type RecoveryProposal struct {
-	AgentID      string
-	TaskID       string
+	AgentID string
+	TaskID  string
+	// TaskSummary is the bounded task text for the agent proposing the action.
+	// Sub-agents must carry their own task instead of borrowing the root
+	// controller session's latest user message.
+	TaskSummary  string
 	Tool         string
 	Args         json.RawMessage
 	Subject      string
@@ -126,7 +137,11 @@ func (a *Agent) observeRecoveryResult(ctx context.Context, toolName string, args
 	} else if blocked {
 		errSummary = firstLine(result)
 	}
-	a.recoveryGate.ObserveResult(ctx, RecoveryObservation{
+	cancelled := errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
+	if ctx != nil && ctx.Err() != nil {
+		cancelled = true
+	}
+	guidance := a.recoveryGate.ObserveResult(ctx, RecoveryObservation{
 		AgentID:      a.recoveryAgentID,
 		TaskID:       a.recoveryTaskID,
 		Tool:         toolName,
@@ -138,10 +153,18 @@ func (a *Agent) observeRecoveryResult(ctx context.Context, toolName string, args
 		Success:      success,
 		Blocked:      blocked,
 		UserRejected: userRejected,
+		Cancelled:    cancelled,
 		EmptySearch:  emptySearch,
 		ErrSummary:   errSummary,
 		Output:       result,
 	})
+	if strings.TrimSpace(guidance) != "" {
+		// Tool execution happens inside Agent.Run, so this targets the exact root
+		// or sub-agent turn that failed. Never fall back to Controller.Steer here:
+		// synchronous headless Run does not participate in controller admission,
+		// and a fallback would start a second Agent.Run concurrently.
+		_ = a.Steer(guidance)
+	}
 }
 
 func bashCommandFromArgs(args json.RawMessage) string {
@@ -200,4 +223,14 @@ func recoveryEmptySearch(toolName, output string) bool {
 		}
 	}
 	return false
+}
+
+func boundedRecoveryTaskSummary(task string) string {
+	task = strings.TrimSpace(task)
+	const maxRunes = 800
+	runes := []rune(task)
+	if len(runes) <= maxRunes {
+		return task
+	}
+	return string(runes[:maxRunes]) + "…"
 }

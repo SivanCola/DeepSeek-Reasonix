@@ -3,6 +3,7 @@ package control
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -23,10 +24,10 @@ type recoveryWriteTool struct {
 	failed   bool
 }
 
-func (t *recoveryWriteTool) Name() string                             { return t.name }
-func (t *recoveryWriteTool) Description() string                      { return "test tool" }
-func (t *recoveryWriteTool) Schema() json.RawMessage                  { return json.RawMessage(`{"type":"object"}`) }
-func (t *recoveryWriteTool) ReadOnly() bool                           { return t.readOnly }
+func (t *recoveryWriteTool) Name() string            { return t.name }
+func (t *recoveryWriteTool) Description() string     { return "test tool" }
+func (t *recoveryWriteTool) Schema() json.RawMessage { return json.RawMessage(`{"type":"object"}`) }
+func (t *recoveryWriteTool) ReadOnly() bool          { return t.readOnly }
 func (t *recoveryWriteTool) Execute(context.Context, json.RawMessage) (string, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -151,6 +152,13 @@ func TestRecoveryReviseBlocksWrite(t *testing.T) {
 	if write.runs != 0 {
 		t.Fatalf("write must not run after revise, runs=%d", write.runs)
 	}
+	if len(prov.requests) == 0 {
+		t.Fatal("expected provider requests")
+	}
+	last := requestMessagesText(prov.requests[len(prov.requests)-1].Messages)
+	if got := strings.Count(last, "only edit tests"); got != 1 {
+		t.Fatalf("revision feedback occurrences = %d, want exactly one\n%s", got, last)
+	}
 }
 
 func TestRecoveryInactiveUnderYolo(t *testing.T) {
@@ -188,5 +196,40 @@ func TestRecoveryInactiveUnderYolo(t *testing.T) {
 		if st := gate.Snapshot().Tasks["root"]; st != nil && st.Failure != nil {
 			t.Fatalf("yolo must not arm recovery failure: %+v", st)
 		}
+	}
+}
+
+func TestRecoveryHeadlessBlocksInsteadOfWaiting(t *testing.T) {
+	bash := &recoveryWriteTool{name: "bash", failOnce: true}
+	write := &recoveryWriteTool{name: "write_file"}
+	reg := tool.NewRegistry()
+	reg.Add(bash)
+	reg.Add(write)
+	prov := &recordingProvider{streams: [][]provider.Chunk{
+		{{Type: provider.ChunkToolCall, ToolCall: &provider.ToolCall{ID: "1", Name: "bash", Arguments: `{"command":"go test ./..."}`}}},
+		{{Type: provider.ChunkToolCall, ToolCall: &provider.ToolCall{ID: "2", Name: "write_file", Arguments: `{"path":"a.go","content":"x"}`}}},
+		{{Type: provider.ChunkText, Text: "reported blocker"}},
+	}}
+	sess := agent.NewSession("sys")
+	ag := agent.New(prov, reg, sess, agent.Options{MaxSteps: 6}, event.Discard)
+	c := New(Options{
+		Runner:                    ag,
+		Executor:                  ag,
+		Policy:                    permission.Policy{Mode: permission.Allow},
+		RecoveryCheckpointEnabled: true,
+		RecoveryHeadless:          true,
+	})
+	c.SetToolApprovalMode(ToolApprovalAuto)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := c.Run(ctx, "test then fix"); err != nil {
+		t.Fatalf("headless Run: %v", err)
+	}
+	if write.runs != 0 {
+		t.Fatalf("headless recovery must block the write, runs=%d", write.runs)
+	}
+	if got := requestMessagesText(prov.requests[len(prov.requests)-1].Messages); !strings.Contains(got, "no decision channel") {
+		t.Fatalf("final provider request lacks structured blocker:\n%s", got)
 	}
 }
