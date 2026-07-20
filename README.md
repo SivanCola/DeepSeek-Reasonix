@@ -72,6 +72,16 @@ brew install esengine/reasonix/reasonix   # macOS
 Prebuilt archives (`darwin|linux|windows × amd64|arm64`) and `SHA256SUMS` are on
 every [GitHub release](https://github.com/esengine/DeepSeek-Reasonix/releases).
 
+### VS Code extension
+
+Use Reasonix directly in VS Code with native chat, editor context, tool-call
+approvals, model selection, and workspace sessions. The extension connects to
+your local `reasonix acp` backend, so install and configure Reasonix first.
+
+[Install from Visual Studio Marketplace](https://marketplace.visualstudio.com/items?itemName=SivanLiu.reasonix-agent)
+·
+[Install from Open VSX Registry](https://open-vsx.org/extension/SivanLiu/reasonix-agent)
+
 ### Code signing
 
 Windows builds are code-signed with a free certificate provided by the

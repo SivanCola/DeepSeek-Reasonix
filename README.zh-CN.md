@@ -68,6 +68,16 @@ brew install esengine/reasonix/reasonix   # macOS
 预编译归档(`darwin|linux|windows × amd64|arm64`)和 `SHA256SUMS` 见每个
 [GitHub release](https://github.com/esengine/DeepSeek-Reasonix/releases)。
 
+### VS Code 扩展
+
+在 VS Code 中使用原生聊天、编辑器上下文、工具调用审批、模型选择和
+工作区会话。扩展会连接本机的 `reasonix acp` 后端，因此请先安装并配置
+Reasonix。
+
+[从 Visual Studio Marketplace 安装](https://marketplace.visualstudio.com/items?itemName=SivanLiu.reasonix-agent)
+·
+[从 Open VSX Registry 安装](https://open-vsx.org/extension/SivanLiu/reasonix-agent)
+
 ### 代码签名
 
 Windows 构建使用 [SignPath 基金会](https://signpath.org/) 提供的免费代码签名证书,

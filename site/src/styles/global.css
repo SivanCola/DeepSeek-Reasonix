@@ -610,6 +610,15 @@ body.how-flat .how-stage { position: static; min-height: 0; display: block; }
 }
 .os-card .alt a { color: var(--accent); text-decoration: none; font-weight: 500; }
 .os-card .alt a:hover { text-decoration: underline; }
+.editor-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); max-width: 760px; }
+.editor-card { min-height: 190px; }
+.editor-card--primary {
+  background: linear-gradient(180deg, color-mix(in oklch, var(--accent) 10%, var(--card)), var(--card) 82%);
+  border: 1px solid color-mix(in oklch, var(--accent) 24%, var(--line));
+}
+.editor-card .btn { margin-top: auto; align-self: flex-start; }
+.editor-note { max-width: 820px; margin-inline: auto; line-height: 1.65; }
+.editor-note code { font-family: var(--font-mono); font-size: 12px; color: var(--ink-2); }
 .btn-light { background: var(--accent-soft); color: var(--accent); }
 .btn-light:hover { background: color-mix(in oklch, var(--accent) 16%, var(--bg)); }
 .dl-help {
@@ -942,6 +951,10 @@ footer { background: var(--bg); border-top: 1px solid var(--line); margin-top: 0
   .theme-switch button { padding: 6px 9px; }
   .docs-path-grid { grid-template-columns: 1fr; }
   .docs-main h1 { font-size: 34px; }
+  .dl-tabs {
+    display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
+    width: 100%; max-width: 360px; border-radius: var(--radius-sm);
+  }
   .hero-install { --hero-action-width: 100%; }
   .install-option { padding: 18px; }
   .hero-install .install {
