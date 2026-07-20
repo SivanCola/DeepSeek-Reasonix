@@ -133,12 +133,9 @@ CLI 进阶用法和详细配置见 **[CLI 命令参考](./docs/CLI.zh-CN.md)**�
 - **功能与排障：** [子智能体 Profile](./docs/SUBAGENT_PROFILES.zh-CN.md) ·
   [能力诊断](./docs/CAPABILITY_DIAGNOSTICS.zh-CN.md) ·
   [恢复与安全模式](./docs/RECOVERY.zh-CN.md) ·
-  [机器人使用指南](./docs/BOT_GUIDE.zh-CN.md) ·
-  [Checkpoints 与 rewind（英文）](./docs/CHECKPOINTS.md)
-- **工程与迁移：** [规格（英文）](./docs/SPEC.md) ·
-  [任务合约与暂停策略](./docs/TASK_CONTRACT.zh-CN.md) ·
-  [工具合约](./docs/TOOL_CONTRACT.zh-CN.md) ·
-  [从 0.x 迁移（英文）](./docs/MIGRATING.md)
+  [机器人使用指南](./docs/BOT_GUIDE.zh-CN.md)
+- **工程参考：** [任务合约与暂停策略](./docs/TASK_CONTRACT.zh-CN.md) ·
+  [工具合约](./docs/TOOL_CONTRACT.zh-CN.md)
 
 ## Star 趋势
 
