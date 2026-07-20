@@ -27,11 +27,49 @@ type workbenchKernel struct {
 	remoteGen         uint64
 	remoteTabID       string
 	remoteFingerprint string
+	providerAccess    *workbenchProviderAccess
 	snapshot          protocol.SessionSnapshot
 	catalog           protocol.WorkspaceCatalogResult
 	sessionCatalog    protocol.SessionCatalogResult
 	pendingTrust      *ProviderTrustPromptView
 	trustAnswer       chan bool
+}
+
+type workbenchProviderAccess struct {
+	mu      sync.RWMutex
+	allowed map[string]struct{}
+}
+
+func newWorkbenchProviderAccess(allowed map[string]struct{}) *workbenchProviderAccess {
+	access := &workbenchProviderAccess{}
+	access.replace(allowed)
+	return access
+}
+
+func (a *workbenchProviderAccess) snapshot() map[string]struct{} {
+	if a == nil {
+		return map[string]struct{}{}
+	}
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	out := make(map[string]struct{}, len(a.allowed))
+	for ref := range a.allowed {
+		out[ref] = struct{}{}
+	}
+	return out
+}
+
+func (a *workbenchProviderAccess) replace(allowed map[string]struct{}) {
+	if a == nil {
+		return
+	}
+	next := make(map[string]struct{}, len(allowed))
+	for ref := range allowed {
+		next[ref] = struct{}{}
+	}
+	a.mu.Lock()
+	a.allowed = next
+	a.mu.Unlock()
 }
 
 const workbenchTargetEvent = "remote:workbench-target"
@@ -45,6 +83,34 @@ type WorkbenchTargetStateView struct {
 	RequestSeq  uint64            `json:"requestSeq,omitempty"`
 	Error       string            `json:"error,omitempty"`
 	Reconnect   target.RemoteHint `json:"reconnect"`
+}
+
+// withWorkbenchLocalNavigation serializes a visible Local navigation against
+// Remote connect/reactivation. The later caller wins: Remote stays connected in
+// the background, while its callbacks stop projecting into the Local surface.
+func (a *App) withWorkbenchLocalNavigation(run func() (TabMeta, error)) (meta TabMeta, err error) {
+	k := a.workbench()
+	k.transitionMu.Lock()
+	active, _, _ := k.targets.Active()
+	switched := active.Kind == target.KindRemote
+	var id target.Identity
+	var gen, seq uint64
+	if switched {
+		id, gen, seq = k.targets.SwitchLocal()
+	}
+	defer func() {
+		if switched {
+			tabID := meta.ID
+			if tabID == "" {
+				tabID = a.workbenchProjectionTabID()
+			}
+			a.emitWorkbenchTarget("disconnected", id, gen, seq, "")
+			a.emitReady(a.ctx, tabID)
+			a.emitRuntimeEvent("runtime:rebuilt", tabID)
+		}
+		k.transitionMu.Unlock()
+	}()
+	return run()
 }
 
 // ProviderTrustPromptView is the Wails-facing Provider Broker authorization UI.
@@ -140,12 +206,15 @@ func (a *App) WorkbenchConnectRemote(hostID, workspace string) error {
 		if err != nil {
 			return err
 		}
+		tabID := a.workbenchProjectionTabID()
 		k.mu.Lock()
-		cli, tabID := k.remote, k.remoteTabID
+		cli := k.remote
+		k.remoteTabID = tabID
 		k.mu.Unlock()
 		if cli == nil || cli.Generation() != remote.Generation {
 			return fmt.Errorf("Remote adapter is unavailable; reconnect the host")
 		}
+		cli.SetCallbacks(a.workbenchClientCallbacks(remote.Generation, tabID))
 		a.workbenchRefreshSnapshot(remote.Generation, tabID)
 		a.workbenchRefreshCatalog(remote.Generation)
 		a.emitWorkbenchTarget("connected", activeID, activeGen, requestSeq, "")
@@ -200,16 +269,21 @@ func (a *App) WorkbenchConnectRemote(hostID, workspace string) error {
 			return fail(err)
 		}
 	}
-	rec, _, _ := store.Get(hostID, fp)
+	rec, found, err := store.Get(hostID, fp)
+	if err != nil {
+		return fail(err)
+	}
+	if !found {
+		return fail(fmt.Errorf("provider authorization was not persisted for host %q", hostID))
+	}
 	allowed := map[string]struct{}{}
 	for _, r := range rec.AllowedProviderRefs {
 		allowed[r] = struct{}{}
 	}
 	if len(allowed) == 0 {
-		for _, r := range refs {
-			allowed[r] = struct{}{}
-		}
+		return fail(fmt.Errorf("no provider model is authorized for host %q", hostID))
 	}
+	providerAccess := newWorkbenchProviderAccess(allowed)
 
 	factory, err := a.workbenchTransportFactory(hostID, entry)
 	if err != nil {
@@ -220,13 +294,21 @@ func (a *App) WorkbenchConnectRemote(hostID, workspace string) error {
 			return authorizeWorkbenchPeer(factory, fp)
 		},
 		Catalog: func(ctx context.Context, filter map[string]struct{}) ([]protocol.BrokerProviderDescriptor, error) {
-			return catalogDescriptors(cfg, allowed, filter)
+			current, err := config.Load()
+			if err != nil {
+				return nil, err
+			}
+			return catalogDescriptors(current, providerAccess.snapshot(), filter)
 		},
 		Open: func(ctx context.Context, ref, effort string, req provider.Request) (<-chan provider.Chunk, error) {
-			if _, ok := allowed[ref]; !ok {
+			if _, ok := providerAccess.snapshot()[ref]; !ok {
 				return nil, fmt.Errorf("provider %q not authorized for this host", ref)
 			}
-			return openLocalProviderStream(ctx, cfg, ref, effort, req)
+			current, err := config.Load()
+			if err != nil {
+				return nil, err
+			}
+			return openLocalProviderStream(ctx, current, ref, effort, req)
 		},
 	}
 	currentBuild := protocol.CurrentBuildID(version)
@@ -305,6 +387,7 @@ func (a *App) WorkbenchConnectRemote(hostID, workspace string) error {
 	k.remoteGen = gen
 	k.remoteTabID = tabID
 	k.remoteFingerprint = fp
+	k.providerAccess = providerAccess
 	k.snapshot = subscribed.Snapshot
 	k.catalog = catalog
 	k.sessionCatalog = sessionCatalog
@@ -356,6 +439,7 @@ func (a *App) WorkbenchDisconnectRemote() error {
 	k.remoteGen = 0
 	k.remoteTabID = ""
 	k.remoteFingerprint = ""
+	k.providerAccess = nil
 	k.snapshot = protocol.SessionSnapshot{}
 	k.catalog = protocol.WorkspaceCatalogResult{}
 	k.sessionCatalog = protocol.SessionCatalogResult{}
@@ -363,6 +447,80 @@ func (a *App) WorkbenchDisconnectRemote() error {
 	id, gen, seq := k.targets.Active()
 	a.emitWorkbenchTarget("disconnected", id, gen, seq, "")
 	return nil
+}
+
+// refreshWorkbenchProviderBroker applies the current Desktop provider config to
+// an existing Remote capability. Removed providers stop opening immediately;
+// newly added refs require an explicit trust decision before the Host sees them.
+func (a *App) refreshWorkbenchProviderBroker() error {
+	k := a.workbench()
+	k.transitionMu.Lock()
+	defer k.transitionMu.Unlock()
+	remote := k.targets.Remote()
+	if remote == nil || !remote.Connected {
+		return nil
+	}
+	k.mu.Lock()
+	cli, access, fp := k.remote, k.providerAccess, k.remoteFingerprint
+	gen := k.remoteGen
+	k.mu.Unlock()
+	if cli == nil || access == nil || cli.Generation() != remote.Generation || gen != remote.Generation {
+		return nil
+	}
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+	refs := localProviderRefs(cfg)
+	store := trust.DefaultStore()
+	missing, err := store.MissingRefs(remote.Identity.HostID, fp, refs)
+	if err != nil {
+		return err
+	}
+	var trustErr error
+	if len(missing) > 0 {
+		liveFingerprint, keyType, hostLabel, identityErr := a.workbenchHostIdentity(remote.Identity.HostID)
+		if identityErr != nil {
+			trustErr = identityErr
+		} else if liveFingerprint != fp {
+			trustErr = fmt.Errorf("authenticated workbench peer identity changed during provider refresh")
+		} else if requestErr := a.workbenchRequestTrust(remote.Identity.HostID, hostLabel, keyType, fp, remote.Identity.Workspace, missing); requestErr != nil {
+			trustErr = requestErr
+		} else if authorizeErr := store.AuthorizeAll(remote.Identity.HostID, keyType, fp, missing); authorizeErr != nil {
+			trustErr = authorizeErr
+		}
+	}
+	record, _, getErr := store.Get(remote.Identity.HostID, fp)
+	if getErr != nil {
+		return getErr
+	}
+	configured := make(map[string]struct{}, len(refs))
+	for _, ref := range refs {
+		configured[ref] = struct{}{}
+	}
+	allowed := make(map[string]struct{}, len(record.AllowedProviderRefs))
+	for _, ref := range record.AllowedProviderRefs {
+		if _, ok := configured[ref]; ok {
+			allowed[ref] = struct{}{}
+		}
+	}
+	access.replace(allowed)
+	if notifyErr := cli.NotifyProviderCatalogChanged(); notifyErr != nil {
+		return notifyErr
+	}
+	go a.workbenchRefreshCatalog(gen)
+	return trustErr
+}
+
+func (a *App) refreshWorkbenchProviderBrokerAsync() {
+	if a == nil || a.ctx == nil {
+		return
+	}
+	go func() {
+		if err := a.refreshWorkbenchProviderBroker(); err != nil {
+			a.warnForTab(a.workbenchProjectionTabID(), "Remote provider access was not refreshed: "+err.Error())
+		}
+	}()
 }
 
 // WorkbenchRemoteRequest proxies a RuntimeAPI method to the connected remote.
@@ -529,10 +687,8 @@ func localProviderRefs(cfg *config.Config) []string {
 func catalogDescriptors(cfg *config.Config, allowed, filter map[string]struct{}) ([]protocol.BrokerProviderDescriptor, error) {
 	var out []protocol.BrokerProviderDescriptor
 	for _, ref := range localProviderRefs(cfg) {
-		if len(allowed) > 0 {
-			if _, ok := allowed[ref]; !ok {
-				continue
-			}
+		if _, ok := allowed[ref]; !ok {
+			continue
 		}
 		if len(filter) > 0 {
 			if _, ok := filter[ref]; !ok {
@@ -548,7 +704,7 @@ func catalogDescriptors(cfg *config.Config, allowed, filter map[string]struct{})
 			out = append(out, protocol.BrokerProviderDescriptor{Ref: ref, DisplayName: pe.Name, Model: pe.Model})
 			continue
 		}
-		out = append(out, broker.DescriptorFromProvider(ref, pe.Name, pe.Model, p, pe.SupportedEfforts, config.EffectiveEffort(pe), config.EffectiveVision(pe)))
+		out = append(out, broker.DescriptorFromProvider(ref, pe.Name, pe.Model, p, pe.SupportedEfforts, config.EffectiveEffort(pe), config.EffectiveVision(pe), pe.ContextWindow, pe.Price))
 	}
 	return out, nil
 }

@@ -34,6 +34,7 @@ func (r *LocalProviderResolver) Catalog() []provider.Descriptor {
 		}
 		if price := e.PriceForModel(e.Model); price != nil {
 			d.PricingCurrency = price.Currency
+			d.CacheHitPerMillion = price.CacheHit
 			d.InputPerMillion = price.Input
 			d.OutputPerMillion = price.Output
 		}
@@ -86,29 +87,30 @@ func modelRefFromEntry(e *config.ProviderEntry) string {
 }
 
 // resolveModelEntry synthesizes only non-secret metadata from the Broker
-// catalog when the Host has no matching provider configuration.
+// catalog. A caller-owned resolver is authoritative even when the credential-
+// free Host happens to contain a provider with the same ref.
 func resolveModelEntry(opts Options, cfg *config.Config, modelName string) (*config.ProviderEntry, string, error) {
-	if entry, ok := cfg.ResolveModel(modelName); ok {
-		return entry, modelRefFromEntry(entry), nil
-	}
 	if opts.ProviderResolver != nil {
 		entry := syntheticEntryFromResolver(opts.ProviderResolver, modelName)
 		if strings.TrimSpace(entry.Name) != "" {
 			return entry, modelRefFromEntry(entry), nil
 		}
 	}
+	if entry, ok := cfg.ResolveModel(modelName); ok {
+		return entry, modelRefFromEntry(entry), nil
+	}
 	return nil, "", fmt.Errorf("%w %q (configured: %s); note: defining [[providers]] replaces the built-in presets, so add a [[providers]] entry for it or use a configured name, or run `reasonix setup` to reconfigure", ErrUnknownModel, modelName, providerNames(cfg))
 }
 
 func resolveOptionalEntry(opts Options, cfg *config.Config, ref string) (*config.ProviderEntry, bool) {
-	if entry, ok := cfg.ResolveModel(ref); ok {
-		return entry, true
+	if opts.ProviderResolver != nil {
+		entry := syntheticEntryFromResolver(opts.ProviderResolver, ref)
+		if strings.TrimSpace(entry.Name) != "" {
+			return entry, true
+		}
 	}
-	if opts.ProviderResolver == nil {
-		return nil, false
-	}
-	entry := syntheticEntryFromResolver(opts.ProviderResolver, ref)
-	return entry, strings.TrimSpace(entry.Name) != ""
+	entry, ok := cfg.ResolveModel(ref)
+	return entry, ok
 }
 
 func syntheticEntryFromResolver(r provider.Resolver, ref string) *config.ProviderEntry {
@@ -143,8 +145,8 @@ func syntheticEntryFromResolver(r provider.Resolver, ref string) *config.Provide
 		SupportedEfforts: append([]string(nil), match.Efforts...),
 		DefaultEffort:    match.DefaultEffort, Vision: match.Vision,
 	}
-	if match.InputPerMillion > 0 || match.OutputPerMillion > 0 {
-		entry.Price = &provider.Pricing{Input: match.InputPerMillion, Output: match.OutputPerMillion, Currency: match.PricingCurrency}
+	if match.CacheHitPerMillion > 0 || match.InputPerMillion > 0 || match.OutputPerMillion > 0 {
+		entry.Price = &provider.Pricing{CacheHit: match.CacheHitPerMillion, Input: match.InputPerMillion, Output: match.OutputPerMillion, Currency: match.PricingCurrency}
 	}
 	return entry
 }

@@ -1545,8 +1545,10 @@ func (a *App) rebuildSetting(setting string) error {
 	// concurrent build+swap sequences on the same tab leak the first-swapped
 	// controller and double-close the old one.
 	a.runtimeRebuildMu.Lock()
-	defer a.runtimeRebuildMu.Unlock()
-	return a.rebuildSettingLocked(setting)
+	err := a.rebuildSettingLocked(setting)
+	a.runtimeRebuildMu.Unlock()
+	a.refreshWorkbenchProviderBrokerAsync()
+	return err
 }
 
 // rebuildSettingLocked is rebuildSetting's body; callers must already hold
@@ -2289,7 +2291,11 @@ func (a *App) FetchProviderModels(p ProviderView) ([]string, error) {
 
 // DeleteProvider removes a provider and retargets open idle tabs that used it.
 func (a *App) DeleteProvider(name string) error {
-	return a.deleteProviderAndRetargetTabs(name)
+	err := a.deleteProviderAndRetargetTabs(name)
+	if err == nil {
+		a.refreshWorkbenchProviderBrokerAsync()
+	}
+	return err
 }
 
 // RemoveProviderAccess hides a provider from Settings > Model > Access and from
@@ -2297,7 +2303,12 @@ func (a *App) DeleteProvider(name string) error {
 // for back-compat, but visible defaults and idle tabs are retargeted away from
 // the removed access entry when another accessed provider is available. Custom
 // providers are deleted outright.
-func (a *App) RemoveProviderAccess(name string) error {
+func (a *App) RemoveProviderAccess(name string) (err error) {
+	defer func() {
+		if err == nil {
+			a.refreshWorkbenchProviderBrokerAsync()
+		}
+	}()
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return fmt.Errorf("remove provider access: empty provider name")

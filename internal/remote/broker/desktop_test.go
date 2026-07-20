@@ -83,6 +83,17 @@ func TestDesktopBrokerAuthorizationMustSucceedBeforeActivation(t *testing.T) {
 	}
 }
 
+func TestDescriptorFromProviderPreservesCompactionAndPricingMetadata(t *testing.T) {
+	descriptor := DescriptorFromProvider(
+		"local/model", "Local", "model", stubProvider{}, []string{"high"}, "high", true,
+		1_000_000, &provider.Pricing{CacheHit: 0.1, Input: 1.25, Output: 4.5, Currency: "$"},
+	)
+	if descriptor.ContextWindow != 1_000_000 || descriptor.PricingCurrency != "$" ||
+		descriptor.CacheHitPerMillion != 0.1 || descriptor.InputPerMillion != 1.25 || descriptor.OutputPerMillion != 4.5 {
+		t.Fatalf("descriptor metadata = %+v", descriptor)
+	}
+}
+
 func TestDesktopBrokerNeverReturnsProviderErrorDetails(t *testing.T) {
 	const secret = "sk-provider-secret-canary"
 	conn := rpcwire.NewConn(strings.NewReader(""), io.Discard, rpcwire.Options{})
@@ -227,7 +238,7 @@ func TestDesktopBrokerCatalogAndStreamRoundTrip(t *testing.T) {
 	d, err := Attach(desktopConn, Options{
 		Catalog: func(ctx context.Context, allowed map[string]struct{}) ([]protocol.BrokerProviderDescriptor, error) {
 			return []protocol.BrokerProviderDescriptor{
-				DescriptorFromProvider("deepseek/chat", "DeepSeek", "chat", prov, nil, "", false),
+				DescriptorFromProvider("deepseek/chat", "DeepSeek", "chat", prov, nil, "", false, 128_000, &provider.Pricing{CacheHit: 0.1, Input: 1, Output: 2, Currency: "$"}),
 			}, nil
 		},
 		Open: func(ctx context.Context, ref, effort string, req provider.Request) (<-chan provider.Chunk, error) {

@@ -108,6 +108,7 @@ func (a *App) workbenchClientCallbacks(generation uint64, tabID string) client.C
 			k.remoteGen = 0
 			k.remoteTabID = ""
 			k.remoteFingerprint = ""
+			k.providerAccess = nil
 			k.snapshot = protocol.SessionSnapshot{}
 			k.catalog = protocol.WorkspaceCatalogResult{}
 			k.sessionCatalog = protocol.SessionCatalogResult{}

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"reasonix/internal/config"
+	"reasonix/internal/provider"
 	"reasonix/internal/remote/workbench/transport"
 )
 
@@ -65,6 +66,44 @@ func TestAuthorizeWorkbenchPeerFailsClosed(t *testing.T) {
 		return nil, nil
 	}), "SHA256:trusted"); err == nil {
 		t.Fatal("transport without peer identity reporting was authorized")
+	}
+}
+
+func TestWorkbenchProviderCatalogUsesReplacedAccessAndCurrentMetadata(t *testing.T) {
+	access := newWorkbenchProviderAccess(map[string]struct{}{"first/model-a": {}})
+	first := &config.Config{
+		Desktop: config.DesktopConfig{ProviderAccess: []string{"first"}},
+		Providers: []config.ProviderEntry{{
+			Name: "first", Kind: "openai", BaseURL: "http://127.0.0.1:11434/v1", Models: []string{"model-a"},
+			ContextWindow: 64_000, Price: &provider.Pricing{Input: 1, Output: 2, Currency: "$"},
+		}},
+	}
+	catalog, err := catalogDescriptors(first, access.snapshot(), nil)
+	if err != nil || len(catalog) != 1 || catalog[0].Ref != "first/model-a" || catalog[0].ContextWindow != 64_000 {
+		t.Fatalf("first catalog = %+v err=%v", catalog, err)
+	}
+
+	access.replace(map[string]struct{}{"second/model-b": {}})
+	second := &config.Config{
+		Desktop: config.DesktopConfig{ProviderAccess: []string{"second"}},
+		Providers: []config.ProviderEntry{{
+			Name: "second", Kind: "openai", BaseURL: "http://127.0.0.1:11434/v1", Models: []string{"model-b"},
+			ContextWindow: 1_000_000, Price: &provider.Pricing{CacheHit: 0.1, Input: 1.25, Output: 4.5, Currency: "USD"},
+		}},
+	}
+	catalog, err = catalogDescriptors(second, access.snapshot(), nil)
+	if err != nil || len(catalog) != 1 || catalog[0].Ref != "second/model-b" {
+		t.Fatalf("replaced catalog = %+v err=%v", catalog, err)
+	}
+	got := catalog[0]
+	if got.ContextWindow != 1_000_000 || got.PricingCurrency != "USD" || got.CacheHitPerMillion != 0.1 || got.InputPerMillion != 1.25 || got.OutputPerMillion != 4.5 {
+		t.Fatalf("replaced catalog metadata = %+v", got)
+	}
+
+	access.replace(map[string]struct{}{})
+	catalog, err = catalogDescriptors(second, access.snapshot(), nil)
+	if err != nil || len(catalog) != 0 {
+		t.Fatalf("revoked catalog = %+v err=%v, want no providers", catalog, err)
 	}
 }
 

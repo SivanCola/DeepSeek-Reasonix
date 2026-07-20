@@ -168,6 +168,19 @@ func (c *Client) SetCallbacks(callbacks Callbacks) {
 	c.mu.Unlock()
 }
 
+// NotifyProviderCatalogChanged invalidates the Host-side Broker catalog after
+// Desktop configuration or authorization changes. The Broker remains the sole
+// owner of provider credentials and transport details.
+func (c *Client) NotifyProviderCatalogChanged() error {
+	c.mu.Lock()
+	closed, desktopBroker := c.closed, c.broker
+	c.mu.Unlock()
+	if closed || desktopBroker == nil {
+		return fmt.Errorf("Remote provider broker is unavailable")
+	}
+	return desktopBroker.NotifyCatalogChanged()
+}
+
 // SelectSession adopts a Host-advertised session before Subscribe. It is used
 // after transport reconnect so the detached runtime and transcript are reused
 // instead of silently creating a fresh conversation.

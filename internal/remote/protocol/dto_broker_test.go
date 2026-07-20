@@ -35,6 +35,27 @@ func TestBrokerProviderRequestRoundTripIsLossless(t *testing.T) {
 	}
 }
 
+func TestBrokerProviderDescriptorRoundTripPreservesRuntimeMetadata(t *testing.T) {
+	want := BrokerProviderDescriptor{
+		Ref: "local/model", DisplayName: "Local", Model: "model",
+		ContextWindow: 1_000_000, PricingCurrency: "$",
+		CacheHitPerMillion: 0.1, InputPerMillion: 1.25, OutputPerMillion: 4.5,
+		SupportsVision: true, SupportedEfforts: []string{"low", "high"}, DefaultEffort: "high",
+	}
+	raw, err := json.Marshal(BrokerCatalogResult{Providers: []BrokerProviderDescriptor{want}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := DecodeBrokerResult(MethodBrokerCatalog, raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := decoded.(BrokerCatalogResult).Providers
+	if len(got) != 1 || !reflect.DeepEqual(got[0], want) {
+		t.Fatalf("descriptor metadata changed\n got: %#v\nwant: %#v", got, want)
+	}
+}
+
 func TestBrokerRequestStrictlyRejectsUnknownAndNonObjectToolSchema(t *testing.T) {
 	unknown := json.RawMessage(`{"streamId":"s","providerRef":"p","request":{"messages":[{"role":"user","unknown":true}],"tools":[],"maxTokens":0}}`)
 	if _, err := DecodeBrokerRequestParams(MethodBrokerStreamOpen, unknown); err == nil {

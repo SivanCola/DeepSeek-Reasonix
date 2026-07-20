@@ -14,6 +14,7 @@ type Descriptor struct {
 	Model                          string   `json:"model,omitempty"`
 	ContextWindow                  int      `json:"contextWindow,omitempty"`
 	PricingCurrency                string   `json:"pricingCurrency,omitempty"`
+	CacheHitPerMillion             float64  `json:"cacheHitPerMillion,omitempty"`
 	InputPerMillion                float64  `json:"inputPerMillion,omitempty"`
 	OutputPerMillion               float64  `json:"outputPerMillion,omitempty"`
 	Vision                         bool     `json:"vision,omitempty"`

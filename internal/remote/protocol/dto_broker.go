@@ -24,6 +24,11 @@ type BrokerProviderDescriptor struct {
 	Ref                            string   `json:"ref" validate:"nonempty"`
 	DisplayName                    string   `json:"displayName,omitempty"`
 	Model                          string   `json:"model,omitempty"`
+	ContextWindow                  int      `json:"contextWindow,omitempty" validate:"min=0"`
+	PricingCurrency                string   `json:"pricingCurrency,omitempty"`
+	CacheHitPerMillion             float64  `json:"cacheHitPerMillion,omitempty" validate:"min=0"`
+	InputPerMillion                float64  `json:"inputPerMillion,omitempty" validate:"min=0"`
+	OutputPerMillion               float64  `json:"outputPerMillion,omitempty" validate:"min=0"`
 	SupportsVision                 bool     `json:"supportsVision,omitempty"`
 	SupportedEfforts               []string `json:"supportedEfforts,omitempty"`
 	DefaultEffort                  string   `json:"defaultEffort,omitempty"`

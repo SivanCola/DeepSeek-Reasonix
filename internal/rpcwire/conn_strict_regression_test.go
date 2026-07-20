@@ -79,17 +79,42 @@ func TestInboundLimitAcceptsFrameAtExactBoundary(t *testing.T) {
 	}
 }
 
+type busyResponseWriter struct {
+	mu   sync.Mutex
+	buf  bytes.Buffer
+	busy chan struct{}
+}
+
+func (w *busyResponseWriter) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	n, err := w.buf.Write(p)
+	if bytes.Contains(p, []byte(`"message":"server busy"`)) {
+		select {
+		case w.busy <- struct{}{}:
+		default:
+		}
+	}
+	return n, err
+}
+
+func (w *busyResponseWriter) Bytes() []byte {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return append([]byte(nil), w.buf.Bytes()...)
+}
+
 func TestInboundHandlerConcurrencyIsBoundedWithoutBlockingResponses(t *testing.T) {
 	var input strings.Builder
 	for id := 1; id <= 5; id++ {
 		fmt.Fprintf(&input, "{\"jsonrpc\":\"2.0\",\"id\":%d,\"method\":\"block\",\"params\":{}}\n", id)
 	}
-	var out bytes.Buffer
+	out := &busyResponseWriter{busy: make(chan struct{}, 3)}
 	release := make(chan struct{})
 	started := make(chan struct{}, 2)
 	var running atomic.Int32
 	var maximum atomic.Int32
-	conn := NewConn(strings.NewReader(input.String()), &out, Options{
+	conn := NewConn(strings.NewReader(input.String()), out, Options{
 		StrictJSONRPC: true, MaxConcurrentHandlers: 2,
 	})
 	conn.Handle("block", func(context.Context, json.RawMessage) (any, error) {
@@ -114,6 +139,13 @@ func TestInboundHandlerConcurrencyIsBoundedWithoutBlockingResponses(t *testing.T
 			t.Fatal("bounded handlers did not start")
 		}
 	}
+	for i := 0; i < 3; i++ {
+		select {
+		case <-out.busy:
+		case <-time.After(time.Second):
+			t.Fatal("overload responses were blocked behind active handlers")
+		}
+	}
 	close(release)
 	if err := <-done; err != nil {
 		t.Fatal(err)
@@ -121,7 +153,8 @@ func TestInboundHandlerConcurrencyIsBoundedWithoutBlockingResponses(t *testing.T
 	if got := maximum.Load(); got != 2 {
 		t.Fatalf("maximum concurrent handlers = %d, want 2", got)
 	}
-	frames := decodeStrictTestResponses(t, out.Bytes())
+	raw := out.Bytes()
+	frames := decodeStrictTestResponses(t, raw)
 	busy := 0
 	for _, frame := range frames {
 		if frame.Error != nil && frame.Error.Code == ErrServerBusy && frame.Error.Message == "server busy" {
@@ -129,7 +162,7 @@ func TestInboundHandlerConcurrencyIsBoundedWithoutBlockingResponses(t *testing.T
 		}
 	}
 	if len(frames) != 5 || busy != 3 {
-		t.Fatalf("responses=%d busy=%d, want 5/3; raw=%q", len(frames), busy, out.String())
+		t.Fatalf("responses=%d busy=%d, want 5/3; raw=%q", len(frames), busy, raw)
 	}
 }
 

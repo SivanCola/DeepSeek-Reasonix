@@ -612,7 +612,7 @@ func TestRuntimeControllerUsesDesktopBrokerWithoutHostKey(t *testing.T) {
 	desktopBroker, err := remotebroker.Attach(desktopWire, remotebroker.Options{
 		Catalog: func(context.Context, map[string]struct{}) ([]protocol.BrokerProviderDescriptor, error) {
 			return []protocol.BrokerProviderDescriptor{
-				remotebroker.DescriptorFromProvider("local/stub", "Local stub", "stub", stub, []string{"high"}, "high", false),
+				remotebroker.DescriptorFromProvider("local/stub", "Local stub", "stub", stub, []string{"high"}, "high", false, 128_000, nil),
 			}, nil
 		},
 		Open: func(ctx context.Context, ref, _ string, request provider.Request) (<-chan provider.Chunk, error) {

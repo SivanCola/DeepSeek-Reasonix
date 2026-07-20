@@ -300,8 +300,8 @@ func (d *Desktop) operationContext(request context.Context) (context.Context, co
 
 // DescriptorFromProvider builds a non-secret catalog row from a live Provider
 // and a configured model ref. Does not include base URLs or credentials.
-func DescriptorFromProvider(ref, display, model string, p provider.Provider, efforts []string, defaultEffort string, vision bool) protocol.BrokerProviderDescriptor {
-	return protocol.BrokerProviderDescriptor{
+func DescriptorFromProvider(ref, display, model string, p provider.Provider, efforts []string, defaultEffort string, vision bool, contextWindow int, pricing *provider.Pricing) protocol.BrokerProviderDescriptor {
+	descriptor := protocol.BrokerProviderDescriptor{
 		Ref:                            ref,
 		DisplayName:                    display,
 		Model:                          model,
@@ -310,5 +310,13 @@ func DescriptorFromProvider(ref, display, model string, p provider.Provider, eff
 		DefaultEffort:                  defaultEffort,
 		ToolCallReasoning:              provider.RequiresToolCallReasoning(p),
 		WarnOnMissingToolCallReasoning: provider.WarnOnMissingToolCallReasoning(p),
+		ContextWindow:                  contextWindow,
 	}
+	if pricing != nil {
+		descriptor.PricingCurrency = pricing.Currency
+		descriptor.CacheHitPerMillion = pricing.CacheHit
+		descriptor.InputPerMillion = pricing.Input
+		descriptor.OutputPerMillion = pricing.Output
+	}
+	return descriptor
 }
