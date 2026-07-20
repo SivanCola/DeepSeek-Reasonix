@@ -7,6 +7,7 @@ import {
   isKnownNonCrashDiagnostic,
   namespaceReportFingerprint,
   normalizeForFingerprint,
+  Metrics,
   severityForReport,
 } from "./index";
 import { renderStats } from "./stats";
@@ -19,6 +20,27 @@ const base = {
   errorMessage: "boom",
   topFrame: "at render (assets/index.js:1:2)",
 };
+
+describe("metrics compatibility", () => {
+  it("accepts the retired auto-plan signal from released desktop clients", () => {
+    const payload = {
+      version: "v1.17.16",
+      os: "darwin",
+      counters: [
+        { signal: "settings_auto_plan", bucket: "off", count: 1 },
+        { signal: "cache_hit", bucket: "90_100", count: 1 },
+      ],
+    };
+
+    expect(Metrics.safeParse(payload).success).toBe(true);
+    expect(
+      Metrics.safeParse({
+        ...payload,
+        counters: [{ signal: "arbitrary_untrusted_signal", bucket: "off", count: 1 }],
+      }).success,
+    ).toBe(false);
+  });
+});
 
 describe("diagnostic classification", () => {
   it("keeps development reports out of release crash priority", () => {

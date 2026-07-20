@@ -2135,12 +2135,45 @@ func configCommand(args []string) int {
 		return 2
 	}
 	switch args[0] {
+	case "auto-plan":
+		return configAutoPlanCompatibilityCommand(args[1:])
 	case "reasoning-language":
 		return configReasoningLanguageCommand(args[1:])
 	default:
 		configUsage()
 		return 2
 	}
+}
+
+// configAutoPlanCompatibilityCommand preserves the released shell interface
+// without restoring Automatic Plan Mode. Reading and writing "off" are safe
+// no-ops; every attempt to enable the retired feature is rejected.
+func configAutoPlanCompatibilityCommand(args []string) int {
+	fs := flag.NewFlagSet("config auto-plan", flag.ContinueOnError)
+	local := fs.Bool("local", false, "unsupported; automatic plan mode is retired")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if *local {
+		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, "auto-plan is user-level only; --local is not supported")
+		return 2
+	}
+	rest := fs.Args()
+	if len(rest) > 1 {
+		configAutoPlanCompatibilityUsage()
+		return 2
+	}
+	if len(rest) == 0 {
+		fmt.Println(`auto_plan = "off"`)
+		return 0
+	}
+	cfg := config.Default()
+	if err := cfg.SetAutoPlan(rest[0]); err != nil {
+		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
+		return 2
+	}
+	fmt.Println(`auto_plan = "off"`)
+	return 0
 }
 
 func configReasoningLanguageCommand(args []string) int {
@@ -2213,6 +2246,12 @@ func configReasoningLanguageCommand(args []string) int {
 func configUsage() {
 	fmt.Print(`Usage:
   reasonix config reasoning-language [--local] [auto|zh|en]
+`)
+}
+
+func configAutoPlanCompatibilityUsage() {
+	fmt.Print(`Usage:
+  reasonix config auto-plan [off]
 `)
 }
 

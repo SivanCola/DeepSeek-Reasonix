@@ -562,6 +562,58 @@ func TestConfigLoadIgnoresRetiredAutoPlan(t *testing.T) {
 	}
 }
 
+func TestConfigAutoPlanCompatibilityCommandKeepsOffAsNoOp(t *testing.T) {
+	isolateCLIConfigHome(t)
+	path := config.UserConfigPath()
+	cfg := config.Default()
+	cfg.Agent.Temperature = 0.4
+	if err := cfg.SaveTo(path); err != nil {
+		t.Fatalf("write user config: %v", err)
+	}
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read user config before command: %v", err)
+	}
+
+	out := captureStdout(t, func() {
+		if rc := Run([]string{"config", "auto-plan", "off"}, "test-version"); rc != 0 {
+			t.Fatalf("config auto-plan off rc = %d, want 0", rc)
+		}
+	})
+	if out != "auto_plan = \"off\"\n" {
+		t.Fatalf("config auto-plan off output = %q", out)
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read user config after command: %v", err)
+	}
+	if !bytes.Equal(after, before) {
+		t.Fatalf("config auto-plan off must not rewrite user config\nbefore:\n%s\nafter:\n%s", before, after)
+	}
+
+	out = captureStdout(t, func() {
+		if rc := Run([]string{"config", "auto-plan"}, "test-version"); rc != 0 {
+			t.Fatalf("config auto-plan query rc = %d, want 0", rc)
+		}
+	})
+	if out != "auto_plan = \"off\"\n" {
+		t.Fatalf("config auto-plan query output = %q", out)
+	}
+}
+
+func TestConfigAutoPlanCompatibilityCommandRejectsEnable(t *testing.T) {
+	isolateCLIConfigHome(t)
+
+	errOut := captureStderr(t, func() {
+		if rc := Run([]string{"config", "auto-plan", "on"}, "test-version"); rc != 2 {
+			t.Fatalf("config auto-plan on rc = %d, want 2", rc)
+		}
+	})
+	if !strings.Contains(errOut, "automatic plan mode has been retired") {
+		t.Fatalf("config auto-plan on stderr = %q", errOut)
+	}
+}
+
 func TestConfigReasoningLanguageCommandWritesUserConfig(t *testing.T) {
 	isolateCLIConfigHome(t)
 

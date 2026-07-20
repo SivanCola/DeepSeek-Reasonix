@@ -102,6 +102,9 @@ const METRIC_SIGNALS = [
   "settings_theme_style",
   "settings_close_behavior",
   "settings_display_mode",
+  // Deprecated input-only signal kept for released desktop clients. New
+  // clients no longer emit it, but removing it would reject their whole batch.
+  "settings_auto_plan",
   "settings_status_bar_style",
   "settings_status_bar_items_count",
   "settings_check_updates",
@@ -129,7 +132,7 @@ const METRIC_SIGNALS = [
   "settings_bot_connection_approval",
 ] as const;
 
-const Metrics = z.object({
+export const Metrics = z.object({
   installId: z
     .string()
     .regex(/^[0-9a-f]{32}$/)
