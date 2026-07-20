@@ -10,7 +10,13 @@ BIN="${BIN_DIR}/reasonix"
 echo "==> Build reasonix with remote-runtime"
 mkdir -p "$BIN_DIR"
 (cd "$ROOT" && go build -o "$BIN" ./cmd/reasonix)
-"$BIN" remote-runtime --help >/dev/null
+# flag help exits 2; use a missing-flag path that still proves the command exists.
+out="$("$BIN" remote-runtime 2>&1 || true)"
+if ! echo "$out" | grep -qi 'workspace'; then
+  echo "    error: remote-runtime subcommand missing from $BIN"
+  echo "$out" | head -5
+  exit 1
+fi
 echo "    binary: $BIN"
 
 echo "==> Seed workspace $WS"
