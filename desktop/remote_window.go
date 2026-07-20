@@ -27,11 +27,21 @@ const (
 )
 
 // remoteWindowLaunch is a one-shot handoff from the primary Reasonix process to
-// a lightweight native window process. The URL contains the local tunnel token,
-// so the descriptor lives in a mode-0600 file instead of the process arguments.
+// a native remote-desktop child window. Secrets live in a mode-0600 ticket file
+// (never argv, URL query, logs, or DOM). Mode "gateway" loads the full desktop
+// frontend and talks to the parent Remote Gateway over loopback RPC.
 type remoteWindowLaunch struct {
-	URL   string `json:"url"`
-	Title string `json:"title,omitempty"`
+	// Mode is "gateway" for the native remote desktop kernel. Empty is rejected
+	// (legacy Serve HTML remote windows are removed).
+	Mode         string `json:"mode"`
+	GatewayURL   string `json:"gatewayUrl,omitempty"`
+	GatewayToken string `json:"gatewayToken,omitempty"`
+	SessionID    string `json:"sessionId,omitempty"`
+	HostID       string `json:"hostId,omitempty"`
+	Workspace    string `json:"workspace,omitempty"`
+	Title        string `json:"title,omitempty"`
+	// URL is retained only for isSafeRemoteWindowURL validation of GatewayURL.
+	URL string `json:"url,omitempty"`
 }
 
 func remoteWindowTicketPath(ticket string) (string, error) {
@@ -46,8 +56,14 @@ func remoteWindowTicketPath(ticket string) (string, error) {
 }
 
 func writeRemoteWindowLaunch(launch remoteWindowLaunch) (string, error) {
-	if !isSafeRemoteWindowURL(launch.URL) {
-		return "", fmt.Errorf("remote window URL must use HTTP on loopback")
+	if launch.Mode != "gateway" {
+		return "", fmt.Errorf("remote window requires gateway mode (serve HTML remote entry removed)")
+	}
+	if !isSafeRemoteWindowURL(launch.GatewayURL) {
+		return "", fmt.Errorf("remote gateway URL must use HTTP on loopback")
+	}
+	if strings.TrimSpace(launch.GatewayToken) == "" || strings.TrimSpace(launch.SessionID) == "" {
+		return "", fmt.Errorf("remote window ticket missing gateway credentials")
 	}
 	dir := config.MemoryUserDir()
 	if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -111,8 +127,11 @@ func consumeRemoteWindowLaunch(ticket string) (*remoteWindowLaunch, error) {
 	if err := json.Unmarshal(data, &launch); err != nil {
 		return nil, fmt.Errorf("decode remote window ticket: %w", err)
 	}
-	if !isSafeRemoteWindowURL(launch.URL) {
-		return nil, fmt.Errorf("remote window URL must use HTTP on loopback")
+	if launch.Mode != "gateway" {
+		return nil, fmt.Errorf("legacy serve remote window tickets are no longer supported")
+	}
+	if !isSafeRemoteWindowURL(launch.GatewayURL) {
+		return nil, fmt.Errorf("remote gateway URL must use HTTP on loopback")
 	}
 	return &launch, nil
 }
@@ -128,17 +147,6 @@ func isSafeRemoteWindowURL(raw string) bool {
 	}
 	ip := net.ParseIP(host)
 	return ip != nil && ip.IsLoopback()
-}
-
-func remoteWindowNavigationJS(raw string) (string, error) {
-	if !isSafeRemoteWindowURL(raw) {
-		return "", fmt.Errorf("remote window URL must use HTTP on loopback")
-	}
-	encoded, err := json.Marshal(raw)
-	if err != nil {
-		return "", err
-	}
-	return "window.location.replace(" + string(encoded) + ");", nil
 }
 
 func spawnRemoteWindow(launch remoteWindowLaunch) error {
@@ -183,25 +191,25 @@ func remoteWindowTitle(hostID string) string {
 	return "Reasonix [SSH: " + hostID + "]"
 }
 
-func (a *App) openRemoteWindow(rawURL, hostID string) error {
-	launch := remoteWindowLaunch{URL: rawURL, Title: remoteWindowTitle(hostID)}
+func (a *App) openRemoteGatewayWindow(launch remoteWindowLaunch) error {
 	if a.remoteWindowOpener != nil {
 		return a.remoteWindowOpener(launch)
 	}
 	return spawnRemoteWindow(launch)
 }
 
+// openRemoteWindow is retained for tests that inject remoteWindowOpener; production
+// remote desktop uses openRemoteGatewayWindow only.
+func (a *App) openRemoteWindow(rawURL, hostID string) error {
+	return fmt.Errorf("serve HTML remote windows are removed; use the native remote desktop gateway")
+}
+
 func (a *App) remoteWindowAssetMiddleware() func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if a.remoteWindow == nil || (r.URL.Path != "/" && r.URL.Path != "/index.html") {
-				next.ServeHTTP(w, r)
-				return
-			}
-			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			w.Header().Set("Cache-Control", "no-store")
-			w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'")
-			_, _ = w.Write([]byte(`<!doctype html><html><head><meta charset="utf-8"><style>html{background:#1a1a2e}</style></head><body></body></html>`))
+			// Gateway-mode remote windows load the full desktop frontend assets.
+			// Do not replace index.html with a blank shell that navigates to Serve.
+			next.ServeHTTP(w, r)
 		})
 	}
 }
@@ -214,10 +222,40 @@ func (a *App) domReadyRemoteWindow() {
 		if a.remoteWindow.Title != "" {
 			runtime.WindowSetTitle(a.ctx, a.remoteWindow.Title)
 		}
-		if js, err := remoteWindowNavigationJS(a.remoteWindow.URL); err == nil {
-			runtime.WindowExecJS(a.ctx, js)
-		}
+		// Inject non-secret remote chrome context for the frontend status bar.
+		// Token stays in Go memory only (bound methods), never in DOM/JS strings
+		// beyond what Wails bindings already isolate.
+		payload, _ := json.Marshal(map[string]any{
+			"mode":      "gateway",
+			"hostId":    a.remoteWindow.HostID,
+			"workspace": a.remoteWindow.Workspace,
+			"sessionId": a.remoteWindow.SessionID,
+		})
+		js := fmt.Sprintf("window.__REASONIX_REMOTE__=%s;", string(payload))
+		runtime.WindowExecJS(a.ctx, js)
 	}
 	runtime.WindowCenter(a.ctx)
 	runtime.WindowShow(a.ctx)
 }
+
+// RemoteWindowInfo returns the child's gateway binding for the remote AppBridge.
+// Secrets are returned only over Wails IPC (not URL/DOM).
+func (a *App) RemoteWindowInfo() map[string]string {
+	if a.remoteWindow == nil {
+		return nil
+	}
+	return map[string]string{
+		"mode":         a.remoteWindow.Mode,
+		"gatewayUrl":   a.remoteWindow.GatewayURL,
+		"gatewayToken": a.remoteWindow.GatewayToken,
+		"sessionId":    a.remoteWindow.SessionID,
+		"hostId":       a.remoteWindow.HostID,
+		"workspace":    a.remoteWindow.Workspace,
+	}
+}
+
+// IsRemoteWindow reports whether this process is a remote desktop child.
+func (a *App) IsRemoteWindow() bool {
+	return a.remoteWindow != nil
+}
+

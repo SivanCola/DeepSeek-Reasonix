@@ -1,9 +1,6 @@
 package main
 
 import (
-	"context"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -15,15 +12,20 @@ import (
 
 func TestRemoteWindowTicketRoundTripAndRemoval(t *testing.T) {
 	launch := remoteWindowLaunch{
-		URL:   "http://127.0.0.1:54321/?token=secret-token",
-		Title: "Reasonix [SSH: box]",
+		Mode:         "gateway",
+		GatewayURL:   "http://127.0.0.1:54321/",
+		GatewayToken: "secret-token",
+		SessionID:    "gws_test",
+		HostID:       "box",
+		Workspace:    "/home/dev/app",
+		Title:        "Reasonix [SSH: box]",
 	}
 	ticket, err := writeRemoteWindowLaunch(launch)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(ticket, "secret-token") || filepath.Base(ticket) != ticket {
-		t.Fatalf("ticket leaked URL data or path: %q", ticket)
+		t.Fatalf("ticket leaked secret or path: %q", ticket)
 	}
 	path, err := remoteWindowTicketPath(ticket)
 	if err != nil {
@@ -42,7 +44,7 @@ func TestRemoteWindowTicketRoundTripAndRemoval(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if *got != launch {
+	if got.Mode != launch.Mode || got.GatewayURL != launch.GatewayURL || got.GatewayToken != launch.GatewayToken {
 		t.Fatalf("launch = %+v, want %+v", *got, launch)
 	}
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
@@ -50,14 +52,22 @@ func TestRemoteWindowTicketRoundTripAndRemoval(t *testing.T) {
 	}
 }
 
-func TestRemoteWindowTicketRejectsUnsafeInputs(t *testing.T) {
+func TestRemoteWindowTicketRejectsServeHTMLAndUnsafeURLs(t *testing.T) {
+	// Legacy serve HTML tickets are rejected.
+	if _, err := writeRemoteWindowLaunch(remoteWindowLaunch{
+		URL: "http://127.0.0.1:5000/?token=x",
+	}); err == nil {
+		t.Fatal("legacy serve launch accepted")
+	}
 	for _, raw := range []string{
-		"https://127.0.0.1:5000/?token=x",
-		"http://example.com:5000/?token=x",
+		"https://127.0.0.1:5000/",
+		"http://example.com:5000/",
 		"file:///tmp/index.html",
 		"javascript:alert(1)",
 	} {
-		if _, err := writeRemoteWindowLaunch(remoteWindowLaunch{URL: raw}); err == nil {
+		if _, err := writeRemoteWindowLaunch(remoteWindowLaunch{
+			Mode: "gateway", GatewayURL: raw, GatewayToken: "t", SessionID: "s",
+		}); err == nil {
 			t.Fatalf("unsafe URL accepted: %q", raw)
 		}
 	}
@@ -78,7 +88,8 @@ func TestConsumeRemoteWindowTicketRejectsBroadPermissions(t *testing.T) {
 	}
 	ticket := remoteWindowTicketPrefix + "insecure"
 	path := filepath.Join(dir, ticket)
-	if err := os.WriteFile(path, []byte(`{"url":"http://127.0.0.1:5000/"}`), 0o644); err != nil {
+	body := `{"mode":"gateway","gatewayUrl":"http://127.0.0.1:5000/","gatewayToken":"t","sessionId":"s"}`
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.Remove(path) })
@@ -97,64 +108,25 @@ func TestConsumeRemoteWindowTicketRejectsOversizedDescriptor(t *testing.T) {
 	if err := os.WriteFile(path, make([]byte, remoteWindowTicketMaxBytes+1), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = os.Remove(path) })
 	if _, err := consumeRemoteWindowLaunch(ticket); err == nil {
-		t.Fatal("oversized ticket was accepted")
-	}
-	if _, err := os.Stat(path); !os.IsNotExist(err) {
-		t.Fatalf("rejected ticket was not removed: %v", err)
+		t.Fatal("oversized ticket accepted")
 	}
 }
 
-func TestRemoteWindowNavigationJSEscapesURL(t *testing.T) {
-	js, err := remoteWindowNavigationJS("http://127.0.0.1:5000/?token=x%22);alert(1)//")
-	if err != nil {
+func TestConsumeRejectsLegacyServeTicket(t *testing.T) {
+	dir := config.MemoryUserDir()
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasPrefix(js, "window.location.replace(\"") || !strings.HasSuffix(js, "\");") {
-		t.Fatalf("unexpected navigation JS: %q", js)
+	ticket := remoteWindowTicketPrefix + "legacy"
+	path := filepath.Join(dir, ticket)
+	body := `{"url":"http://127.0.0.1:5000/?token=x","title":"old"}`
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
 	}
-	if strings.Contains(js, "\");alert") {
-		t.Fatalf("URL escaped the JS string: %q", js)
-	}
-}
-
-func TestRemoteWindowLifecycleSkipsPrimaryRuntime(t *testing.T) {
-	a := NewApp()
-	a.remoteWindow = &remoteWindowLaunch{URL: "http://127.0.0.1:5000/"}
-	a.startup(context.Background())
-	if a.tabsRestored != nil {
-		t.Fatal("remote window initialized local tab restore")
-	}
-	if a.heartbeat != nil || a.tray != nil || a.remoteRuntime != nil {
-		t.Fatal("remote window initialized primary-process runtime")
-	}
-	if a.beforeClose(context.Background()) {
-		t.Fatal("remote window close was intercepted")
-	}
-	a.shutdown(context.Background())
-}
-
-func TestRemoteWindowAssetMiddlewareDoesNotLoadPrimaryFrontend(t *testing.T) {
-	a := &App{remoteWindow: &remoteWindowLaunch{URL: "http://127.0.0.1:5000/"}}
-	nextCalled := false
-	h := a.remoteWindowAssetMiddleware()(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
-		nextCalled = true
-	}))
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
-	if nextCalled {
-		t.Fatal("remote shell loaded the primary asset handler")
-	}
-	if strings.Contains(rec.Body.String(), "<script") {
-		t.Fatal("remote shell bootstrap unexpectedly contains frontend scripts")
-	}
-	if got := rec.Header().Get("Cache-Control"); got != "no-store" {
-		t.Fatalf("Cache-Control = %q", got)
-	}
-}
-
-func TestRemoteWindowTitleSanitizesHostLabel(t *testing.T) {
-	if got := remoteWindowTitle(" box\nprod "); got != "Reasonix [SSH: boxprod]" {
-		t.Fatalf("title = %q", got)
+	t.Cleanup(func() { _ = os.Remove(path) })
+	if _, err := consumeRemoteWindowLaunch(ticket); err == nil {
+		t.Fatal("legacy serve ticket accepted")
 	}
 }

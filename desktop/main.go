@@ -145,10 +145,11 @@ func main() {
 		}
 		// Wails v2 has one native window per process. A remote shell must bypass
 		// the primary single-instance lock and must not expose local-only menus.
+		// Bindings stay enabled so the Remote AppBridge can read gateway session
+		// info over Wails IPC (token never appears in URL/DOM).
 		singleInstance = nil
 		appMenu = nil
 		dragAndDrop = &options.DragAndDrop{DisableWebViewDrop: true}
-		bindings = nil
 	}
 
 	// Restore saved window size, or fall back to the default.

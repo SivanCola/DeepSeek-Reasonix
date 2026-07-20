@@ -478,6 +478,14 @@ func TestOpenRemoteWorkspacePersistsLastWorkspace(t *testing.T) {
 	fake := &fakeRemoteKernel{
 		ensureView:  RemoteServerView{State: "ready", LocalURL: "http://127.0.0.1:5000/"},
 		ensureToken: "tok",
+		// Pretend already connected so Connect is a no-op success path.
+		statuses: []RemoteConnectionStatusView{{
+			HostID: "box",
+			State:  "connected",
+			Fingerprint: &RemoteFingerprintView{
+				HostID: "box", KeyType: "ssh-ed25519", SHA256: "SHA256:testfp",
+			},
+		}},
 	}
 	a := appWithFakeKernel(fake)
 	var opened remoteWindowLaunch
@@ -488,18 +496,27 @@ func TestOpenRemoteWorkspacePersistsLastWorkspace(t *testing.T) {
 	if err := a.OpenRemoteWorkspace("box", "/home/dev/app"); err != nil {
 		t.Fatal(err)
 	}
-	if opened.URL != "http://127.0.0.1:5000?token=tok" {
-		t.Fatalf("opened URL = %q", opened.URL)
+	if opened.Mode != "gateway" {
+		t.Fatalf("mode = %q, want gateway", opened.Mode)
+	}
+	if !strings.HasPrefix(opened.GatewayURL, "http://127.0.0.1:") {
+		t.Fatalf("gateway URL = %q", opened.GatewayURL)
+	}
+	if opened.GatewayToken == "" || opened.SessionID == "" {
+		t.Fatalf("missing gateway credentials: %+v", opened)
 	}
 	if opened.Title != "Reasonix [SSH: box]" {
 		t.Fatalf("opened title = %q", opened.Title)
+	}
+	// Token must not appear in the gateway URL.
+	if strings.Contains(opened.GatewayURL, opened.GatewayToken) {
+		t.Fatalf("token leaked into gateway URL: %q", opened.GatewayURL)
 	}
 
 	got := a.RemoteLastWorkspace("box")
 	if got != "/home/dev/app" {
 		t.Fatalf("last workspace = %q, want /home/dev/app", got)
 	}
-	// desktop-remote.json exists.
 	if _, err := os.Stat(filepath.Join(config.MemoryUserDir(), "desktop-remote.json")); err != nil {
 		t.Fatalf("desktop-remote.json not written: %v", err)
 	}

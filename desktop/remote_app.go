@@ -434,23 +434,11 @@ func (a *App) EnsureRemoteServer(hostID, workspace string) error {
 }
 
 func (a *App) OpenRemoteWorkspace(hostID, workspace string) error {
-	rt, err := a.remoteRT()
-	if err != nil {
-		return err
-	}
-	view, token, err := rt.EnsureServer(a.bootContext(), hostID, workspace)
-	if err != nil {
-		return err
-	}
-	if view.LocalURL == "" {
-		return fmt.Errorf("remote serve did not report a local URL")
-	}
-	url := view.LocalURL
-	if token != "" && !strings.Contains(url, "token=") {
-		url = fmt.Sprintf("%s?token=%s", strings.TrimRight(url, "/"), token)
-	}
-	a.saveLastRemoteWorkspace(hostID, workspace)
-	return a.openRemoteWindow(url, hostID)
+	// Native remote desktop: ensure SSH + remote-runtime, open Provider Broker,
+	// start local Remote Gateway, then spawn a full-desktop child window that
+	// talks to the gateway over loopback RPC. The legacy Serve HTML remote
+	// window entry is intentionally removed (no fallback).
+	return a.openNativeRemoteWorkspace(hostID, workspace)
 }
 
 func (a *App) StopRemoteServer(hostID string) error {
