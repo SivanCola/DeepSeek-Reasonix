@@ -48,7 +48,12 @@ type Options struct {
 	Version         string
 	SourceRevision  string
 	BuildController ControllerBuilder
-	Logger          io.Writer
+	// SessionDir and RegistryPath are injectable for tests. Production defaults
+	// keep transcripts in the normal Reasonix session directory and the Remote
+	// registry beside the per-workspace runtime socket.
+	SessionDir   string
+	RegistryPath string
+	Logger       io.Writer
 }
 
 type SessionController interface {
@@ -87,6 +92,11 @@ type Server struct {
 	ln          net.Listener
 	socket      string
 	lockPath    string
+
+	registryMu   sync.Mutex
+	registryRead bool
+	dormant      map[protocol.SessionID]runtimeSessionRecord
+	shutdownOnce sync.Once
 }
 
 type session struct {
@@ -141,6 +151,7 @@ func New(opts Options) *Server {
 		subs: make(map[protocol.SubscriptionID]*subscription), wires: make(map[uint64]*rpcwire.Conn),
 		explicitGen: make(map[uint64]bool), broker: broker.NewHost(),
 		contents:    make(map[protocol.ContentRef]contentObject),
+		dormant:     make(map[protocol.SessionID]runtimeSessionRecord),
 		hostEpoch:   protocol.HostEpoch("host_" + randomHex(12)),
 		workspaceID: protocol.WorkspaceID("workspace_" + hex.EncodeToString(sum[:8])),
 		buildID:     currentBuildID(opts),
@@ -291,7 +302,9 @@ func (s *Server) handlers(gen uint64, conn net.Conn) protocol.HandlerSet {
 		protocol.MethodCatalogSession: func(ctx context.Context, value any) (any, error) {
 			return s.sessionCatalog(ctx, value.(protocol.SessionCatalogParams))
 		},
-		protocol.MethodSessionList: func(ctx context.Context, value any) (any, error) { return s.list(value.(protocol.SessionListParams)) },
+		protocol.MethodSessionList: func(ctx context.Context, value any) (any, error) {
+			return s.list(ctx, value.(protocol.SessionListParams))
+		},
 		protocol.MethodSessionCreate: func(ctx context.Context, value any) (any, error) {
 			return s.create(ctx, value.(protocol.SessionCreateParams))
 		},
@@ -518,9 +531,12 @@ func (s *Server) sessionCatalog(ctx context.Context, p protocol.SessionCatalogPa
 	return buildSessionCatalog(ctx, sess.ctrl), nil
 }
 
-func (s *Server) list(p protocol.SessionListParams) (protocol.SessionListResult, error) {
+func (s *Server) list(ctx context.Context, p protocol.SessionListParams) (protocol.SessionListResult, error) {
 	if err := s.checkHostWorkspace(p.ExpectedHostEpoch, p.WorkspaceID); err != nil {
 		return protocol.SessionListResult{}, err
+	}
+	if err := s.ensureSessionsRestored(ctx); err != nil {
+		return protocol.SessionListResult{}, protocol.MustRemoteError(protocol.ErrSessionPersistFailed, protocol.ErrorOptions{})
 	}
 	s.mu.Lock()
 	items := make([]protocol.SessionSummary, 0, len(s.sessions))
@@ -535,6 +551,9 @@ func (s *Server) list(p protocol.SessionListParams) (protocol.SessionListResult,
 func (s *Server) create(ctx context.Context, p protocol.SessionCreateParams) (protocol.SessionCreateResult, error) {
 	if err := s.checkHostWorkspace(p.ExpectedHostEpoch, p.WorkspaceID); err != nil {
 		return protocol.SessionCreateResult{}, err
+	}
+	if err := s.ensureSessionsRestored(ctx); err != nil {
+		return protocol.SessionCreateResult{}, protocol.MustRemoteError(protocol.ErrSessionPersistFailed, protocol.ErrorOptions{})
 	}
 	model := ""
 	if p.Profile.Model != nil {
@@ -603,6 +622,15 @@ func (s *Server) create(ctx context.Context, p protocol.SessionCreateParams) (pr
 	s.mu.Lock()
 	s.sessions[id] = sess
 	s.mu.Unlock()
+	if err := s.persistSessionRegistry(); err != nil {
+		s.mu.Lock()
+		if s.sessions[id] == sess {
+			delete(s.sessions, id)
+		}
+		s.mu.Unlock()
+		ctrl.Close()
+		return protocol.SessionCreateResult{}, protocol.MustRemoteError(protocol.ErrSessionPersistFailed, protocol.ErrorOptions{})
+	}
 	return protocol.SessionCreateResult{
 		Target: s.target(id), RuntimeEpoch: sess.runtimeEpoch,
 		TopicID: topicID, TopicTitle: title, ResolvedProfile: resolvedProfile(sess),
@@ -616,6 +644,7 @@ func (s *Server) buildController(ctx context.Context, model string, effort *stri
 	return boot.Build(ctx, boot.Options{
 		Model: model, EffortOverride: effort, RequireKey: false,
 		WorkspaceRoot: s.opts.Workspace, ProviderResolver: s.broker, Sink: sink, TokenMode: string(tokenMode),
+		SessionDir: s.sessionDir(),
 	})
 }
 
@@ -633,12 +662,25 @@ func (s *Server) closeSession(p protocol.SessionCloseParams) (protocol.SessionCl
 		return protocol.SessionCloseResult{Disposition: protocol.SessionAlreadyClosed}, nil
 	}
 	delete(s.sessions, sess.id)
+	removedSubs := make(map[protocol.SubscriptionID]*subscription)
 	for id, sub := range s.subs {
 		if sub.sessionID == sess.id {
+			removedSubs[id] = sub
 			delete(s.subs, id)
 		}
 	}
 	s.mu.Unlock()
+	if err := s.persistSessionRegistry(); err != nil {
+		s.mu.Lock()
+		if s.sessions[sess.id] == nil {
+			s.sessions[sess.id] = sess
+			for id, sub := range removedSubs {
+				s.subs[id] = sub
+			}
+		}
+		s.mu.Unlock()
+		return protocol.SessionCloseResult{}, protocol.MustRemoteError(protocol.ErrSessionPersistFailed, protocol.ErrorOptions{})
+	}
 	sess.ctrl.Close()
 	return protocol.SessionCloseResult{Disposition: protocol.SessionReleased}, nil
 }
@@ -879,8 +921,12 @@ func (s *Server) newSession(p protocol.SessionNewParams) (protocol.SessionNewRes
 	s.mu.Lock()
 	sess.runtimeEpoch = protocol.RuntimeEpoch("runtime_" + randomHex(12))
 	sess.currentTurn = ""
+	sess.updatedAt = time.Now().UnixMilli()
 	epoch := sess.runtimeEpoch
 	s.mu.Unlock()
+	if err := s.persistSessionRegistry(); err != nil {
+		return protocol.SessionNewResult{}, protocol.MustRemoteError(protocol.ErrSessionPersistFailed, protocol.ErrorOptions{Target: &p.Target})
+	}
 	return protocol.SessionNewResult{SourceTarget: p.Target, Target: p.Target, RuntimeEpoch: epoch, Disposition: "created", SnapshotRequired: true}, nil
 }
 
@@ -899,8 +945,12 @@ func (s *Server) clearSession(p protocol.SessionClearParams) (protocol.SessionCl
 	s.mu.Lock()
 	sess.runtimeEpoch = protocol.RuntimeEpoch("runtime_" + randomHex(12))
 	sess.currentTurn = ""
+	sess.updatedAt = time.Now().UnixMilli()
 	epoch := sess.runtimeEpoch
 	s.mu.Unlock()
+	if err := s.persistSessionRegistry(); err != nil {
+		return protocol.SessionClearResult{}, protocol.MustRemoteError(protocol.ErrSessionPersistFailed, protocol.ErrorOptions{Target: &p.Target})
+	}
 	return protocol.SessionClearResult{PreviousTarget: p.Target, Target: p.Target, RuntimeEpoch: epoch, Disposition: protocol.SessionCleared, SnapshotRequired: true}, nil
 }
 
@@ -969,6 +1019,9 @@ func (s *Server) setProfile(ctx context.Context, p protocol.SessionProfileSetPar
 		profile, epoch := resolvedProfile(sess), sess.runtimeEpoch
 		s.mu.Unlock()
 		applyControllerProfile(sess.ctrl, collaboration, toolApproval)
+		if err := s.persistSessionRegistry(); err != nil {
+			return protocol.SessionProfileSetResult{}, protocol.MustRemoteError(protocol.ErrSessionPersistFailed, protocol.ErrorOptions{Target: &p.Target})
+		}
 		return protocol.SessionProfileSetResult{
 			ResolvedProfile: profile, RuntimeEpoch: epoch,
 			Disposition: protocol.ProfileUpdated, AutoResolvedPromptIDs: []protocol.PromptID{},
@@ -997,6 +1050,9 @@ func (s *Server) setProfile(ctx context.Context, p protocol.SessionProfileSetPar
 	profile, epoch := resolvedProfile(sess), sess.runtimeEpoch
 	s.mu.Unlock()
 	old.Close()
+	if err := s.persistSessionRegistry(); err != nil {
+		return protocol.SessionProfileSetResult{}, protocol.MustRemoteError(protocol.ErrSessionPersistFailed, protocol.ErrorOptions{Target: &p.Target})
+	}
 	return protocol.SessionProfileSetResult{
 		ResolvedProfile: profile, RuntimeEpoch: epoch,
 		Disposition: protocol.ProfileRebuilt, AutoResolvedPromptIDs: []protocol.PromptID{},
@@ -1457,6 +1513,7 @@ func (sink *sessionSink) Emit(e event.Event) {
 			sess.liveEvents = nil
 		}
 	}
+	persistRegistry := e.Kind == event.TurnDone
 	ready := make([]struct {
 		conn  *rpcwire.Conn
 		event protocol.SessionEvent
@@ -1481,6 +1538,13 @@ func (sink *sessionSink) Emit(e event.Event) {
 		}{sub.conn, envelope})
 	}
 	s.mu.Unlock()
+	if persistRegistry {
+		go func() {
+			if err := s.persistSessionRegistry(); err != nil {
+				s.logRegistryError("persist completed turn", err)
+			}
+		}()
+	}
 	for _, notification := range ready {
 		_ = notification.conn.Notify(string(protocol.MethodSessionEvent), notification.event)
 	}
@@ -1519,19 +1583,24 @@ func (s *Server) hasBusyLocked() bool {
 }
 
 func (s *Server) snapshotAndClose() {
-	s.mu.Lock()
-	controllers := make([]SessionController, 0, len(s.sessions))
-	for _, sess := range s.sessions {
-		if sess.ctrl != nil {
-			controllers = append(controllers, sess.ctrl)
+	s.shutdownOnce.Do(func() {
+		if err := s.persistSessionRegistry(); err != nil {
+			s.logRegistryError("persist before shutdown", err)
 		}
-	}
-	s.sessions = make(map[protocol.SessionID]*session)
-	s.subs = make(map[protocol.SubscriptionID]*subscription)
-	s.mu.Unlock()
-	for _, ctrl := range controllers {
-		ctrl.Close()
-	}
+		s.mu.Lock()
+		controllers := make([]SessionController, 0, len(s.sessions))
+		for _, sess := range s.sessions {
+			if sess.ctrl != nil {
+				controllers = append(controllers, sess.ctrl)
+			}
+		}
+		s.sessions = make(map[protocol.SessionID]*session)
+		s.subs = make(map[protocol.SubscriptionID]*subscription)
+		s.mu.Unlock()
+		for _, ctrl := range controllers {
+			ctrl.Close()
+		}
+	})
 }
 
 func (s *Server) Close() {

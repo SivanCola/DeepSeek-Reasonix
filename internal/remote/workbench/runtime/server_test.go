@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"reasonix/internal/agent"
 	"reasonix/internal/checkpoint"
 	"reasonix/internal/command"
 	"reasonix/internal/control"
@@ -29,6 +30,28 @@ type fakeController struct {
 	model   string
 	history []provider.Message
 }
+
+type persistentFakeController struct {
+	*fakeController
+	sessionDir  string
+	sessionPath string
+	closed      bool
+}
+
+func (c *persistentFakeController) SessionPath() string { return c.sessionPath }
+func (c *persistentFakeController) SetSessionPath(path string) {
+	c.sessionPath = path
+}
+func (c *persistentFakeController) EnsureSessionPath() {
+	if c.sessionPath == "" {
+		c.sessionPath = filepath.Join(c.sessionDir, "remote-session.jsonl")
+	}
+}
+func (c *persistentFakeController) AdoptHistory(history []provider.Message, path string) {
+	c.history = append([]provider.Message(nil), history...)
+	c.sessionPath = path
+}
+func (c *persistentFakeController) Close() { c.closed = true }
 
 type projectionController struct {
 	*fakeController
@@ -219,14 +242,16 @@ func TestRuntimeOperationKeepsDetachedServerBusy(t *testing.T) {
 
 func TestRuntimeSessionCreateAndFileList(t *testing.T) {
 	ws := t.TempDir()
+	sessionDir := filepath.Join(t.TempDir(), "sessions")
+	registryPath := filepath.Join(t.TempDir(), "remote-sessions.json")
 	// Short absolute socket path — macOS rejects long unix paths.
 	sock := filepath.Join(t.TempDir(), "r.sock")
 	if len(sock) > 100 {
 		sock = filepath.Join("/tmp", "rx-wb-"+t.Name()+".sock")
 		t.Cleanup(func() { _ = os.Remove(sock) })
 	}
-	srv := New(Options{Workspace: ws, Version: "test", BuildController: func(_ context.Context, model string, _ *string, _ event.Sink) (SessionController, error) {
-		return &fakeController{model: model}, nil
+	srv := New(Options{Workspace: ws, Version: "test", SessionDir: sessionDir, RegistryPath: registryPath, BuildController: func(_ context.Context, model string, _ *string, _ event.Sink) (SessionController, error) {
+		return &persistentFakeController{fakeController: &fakeController{model: model}, sessionDir: sessionDir}, nil
 	}})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -317,6 +342,100 @@ func TestRuntimeGraceDetach(t *testing.T) {
 	srv.ForceDetachForTest()
 	if srv.Attached() {
 		t.Fatal("expected detached")
+	}
+}
+
+func TestRuntimeRestoresSessionRegistryAfterProcessRestart(t *testing.T) {
+	workspace := t.TempDir()
+	sessionDir := filepath.Join(t.TempDir(), "sessions")
+	registryPath := filepath.Join(t.TempDir(), "remote-sessions.json")
+	build := func(_ context.Context, model string, _ *string, _ event.Sink) (SessionController, error) {
+		return &persistentFakeController{
+			fakeController: &fakeController{model: model},
+			sessionDir:     sessionDir,
+		}, nil
+	}
+	first := New(Options{
+		Workspace: workspace, SessionDir: sessionDir, RegistryPath: registryPath,
+		BuildController: build,
+	})
+	model := "local/test-model"
+	created, err := first.create(context.Background(), protocol.SessionCreateParams{
+		HostMutation: protocol.HostMutation{ExpectedHostEpoch: first.hostEpoch},
+		WorkspaceID:  first.workspaceID,
+		Topic:        protocol.TopicSelection{Kind: protocol.TopicNew, Title: "Persisted Remote chat"},
+		Profile:      protocol.ProfileSelection{Model: &model},
+	})
+	if err != nil {
+		t.Fatalf("create first runtime session: %v", err)
+	}
+	first.mu.Lock()
+	firstSession := first.sessions[created.Target.SessionID]
+	first.mu.Unlock()
+	if firstSession == nil {
+		t.Fatal("created session missing from first runtime")
+	}
+	transcript := agent.NewSession("system")
+	transcript.Add(provider.Message{Role: provider.RoleUser, Content: "resume me after restart"})
+	if err := transcript.Save(firstSession.ctrl.SessionPath()); err != nil {
+		t.Fatalf("save transcript: %v", err)
+	}
+	first.snapshotAndClose()
+
+	second := New(Options{
+		Workspace: workspace, SessionDir: sessionDir, RegistryPath: registryPath,
+		BuildController: build,
+	})
+	listed, err := second.list(context.Background(), protocol.SessionListParams{
+		ExpectedHostEpoch: second.hostEpoch,
+		WorkspaceID:       second.workspaceID,
+	})
+	if err != nil {
+		t.Fatalf("list second runtime sessions: %v", err)
+	}
+	if len(listed.Items) != 1 || listed.Items[0].Target.SessionID != created.Target.SessionID {
+		t.Fatalf("restored sessions = %+v, want %s", listed.Items, created.Target.SessionID)
+	}
+	if listed.Items[0].Runtime == nil || listed.Items[0].Runtime.RuntimeEpoch == created.RuntimeEpoch {
+		t.Fatalf("restored runtime epoch = %+v, want a rebuilt runtime", listed.Items[0].Runtime)
+	}
+	second.mu.Lock()
+	restored := second.sessions[created.Target.SessionID]
+	second.mu.Unlock()
+	if restored == nil || restored.title != "Persisted Remote chat" {
+		t.Fatalf("restored session = %+v", restored)
+	}
+	history := restored.ctrl.History()
+	if len(history) != 2 || history[1].Content != "resume me after restart" {
+		t.Fatalf("restored history = %+v", history)
+	}
+	second.snapshotAndClose()
+	second.snapshotAndClose()
+
+	data, err := os.ReadFile(registryPath)
+	if err != nil {
+		t.Fatalf("read registry after repeated shutdown: %v", err)
+	}
+	var registry runtimeSessionRegistry
+	if err := json.Unmarshal(data, &registry); err != nil || len(registry.Sessions) != 1 {
+		t.Fatalf("registry after shutdown = %s err=%v", data, err)
+	}
+}
+
+func TestRuntimeEarlyShutdownDoesNotOverwriteUnreadRegistry(t *testing.T) {
+	registryPath := filepath.Join(t.TempDir(), "remote-sessions.json")
+	original := []byte(`{"version":99,"workspace":"future","sessions":[{"future":true}]}` + "\n")
+	if err := os.WriteFile(registryPath, original, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	srv := New(Options{Workspace: t.TempDir(), RegistryPath: registryPath})
+	srv.Close()
+	after, err := os.ReadFile(registryPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != string(original) {
+		t.Fatalf("early shutdown replaced unread registry:\n%s", after)
 	}
 }
 

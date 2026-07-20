@@ -53,6 +53,9 @@ func (s *Server) rewindSession(p protocol.SessionRewindParams) (protocol.Session
 	s.mu.Lock()
 	sess.updatedAt = time.Now().UnixMilli()
 	s.mu.Unlock()
+	if err := s.persistSessionRegistry(); err != nil {
+		return protocol.SessionRewindResult{}, protocol.MustRemoteError(protocol.ErrSessionPersistFailed, protocol.ErrorOptions{Target: &p.Target})
+	}
 	s.notifyStateChanged(sess.id)
 	return protocol.SessionRewindResult{
 		WorkspaceChanged:      p.Scope == protocol.RewindCode || p.Scope == protocol.RewindBoth,
@@ -111,6 +114,15 @@ func (s *Server) forkSession(ctx context.Context, p protocol.SessionForkParams) 
 	}
 	s.sessions[childID] = child
 	s.mu.Unlock()
+	if err := s.persistSessionRegistry(); err != nil {
+		s.mu.Lock()
+		if s.sessions[childID] == child {
+			delete(s.sessions, childID)
+		}
+		s.mu.Unlock()
+		childCtrl.Close()
+		return protocol.SessionForkResult{}, protocol.MustRemoteError(protocol.ErrSessionPersistFailed, protocol.ErrorOptions{Target: &p.Target})
+	}
 	return protocol.SessionForkResult{
 		SourceTarget: p.Target, SourceRuntimeEpoch: sess.runtimeEpoch,
 		ChildTarget: s.target(childID), ChildRuntimeEpoch: child.runtimeEpoch,
@@ -199,6 +211,11 @@ func (s *Server) finishOperation(sessionID protocol.SessionID, operationID proto
 	sess.currentOp = nil
 	sess.updatedAt = time.Now().UnixMilli()
 	s.mu.Unlock()
+	go func() {
+		if err := s.persistSessionRegistry(); err != nil {
+			s.logRegistryError("persist completed operation", err)
+		}
+	}()
 	s.notifyStateChanged(sessionID)
 }
 
