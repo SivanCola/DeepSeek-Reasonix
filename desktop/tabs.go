@@ -2577,7 +2577,6 @@ func (a *App) indexedBlankTopicIDLocked(scope, workspaceRoot string) string {
 func (a *App) SetActiveTab(tabID string) error {
 	a.mu.RLock()
 	_, ok := a.tabs[tabID]
-	active := a.tabs[a.activeTabID]
 	alreadyActive := a.activeTabID == tabID
 	a.mu.RUnlock()
 	if !ok {
@@ -2594,7 +2593,7 @@ func (a *App) SetActiveTab(tabID string) error {
 	// same-tab SetActiveTab call; that is not a user request to leave Remote.
 	a.mu.RLock()
 	_, ok = a.tabs[tabID]
-	active = a.tabs[a.activeTabID]
+	active := a.tabs[a.activeTabID]
 	alreadyActive = a.activeTabID == tabID
 	a.mu.RUnlock()
 	if !ok {

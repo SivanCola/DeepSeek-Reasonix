@@ -1,7 +1,9 @@
 package main
 
 import (
+	"context"
 	"testing"
+	"time"
 
 	"reasonix/internal/eventwire"
 	"reasonix/internal/remote/protocol"
@@ -52,5 +54,48 @@ func TestWorkbenchContextProjectionPreservesAllSourceTotals(t *testing.T) {
 	}
 	if context.Sources["executor"].RequestCount != 2 {
 		t.Fatalf("sources = %+v", context.Sources)
+	}
+}
+
+func TestWorkbenchLateCallbackUsesCurrentProjectionTab(t *testing.T) {
+	app := testAppWithOrderedTabs(t, "b", "a", "b")
+	app.ctx = context.Background()
+	events := make(chan wireEventTab, 1)
+	app.runtimeEvents.emit = func(_ context.Context, name string, payload ...interface{}) {
+		if name == "agent:event" && len(payload) == 1 {
+			if event, ok := payload[0].(wireEventTab); ok {
+				events <- event
+			}
+		}
+	}
+	k := app.workbench()
+	_, generation, err := k.targets.BeginRemoteConnect("remote-host", "/srv/work")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := k.targets.MarkRemoteConnected(generation); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err := k.targets.ActivateRemote(generation); err != nil {
+		t.Fatal(err)
+	}
+	k.mu.Lock()
+	k.remoteGen = generation
+	k.remoteTabID = "b"
+	k.mu.Unlock()
+
+	// This callback was captured while tab A was projected, but completes after
+	// Remote was rebound to tab B. It must route through the current binding.
+	callbacks := app.workbenchClientCallbacks(generation, "a")
+	callbacks.OnSessionEvent(protocol.SessionEvent{
+		Seq: 1, Event: eventwire.Event{Kind: "text", Text: "late"},
+	})
+	select {
+	case got := <-events:
+		if got.TabID != "b" {
+			t.Fatalf("late callback tab = %q, want current projection b", got.TabID)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("late callback was not projected")
 	}
 }

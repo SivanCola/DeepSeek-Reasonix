@@ -202,21 +202,31 @@ func (a *App) WorkbenchConnectRemote(hostID, workspace string) error {
 	defer k.transitionMu.Unlock()
 	if remote := k.targets.Remote(); remote != nil && remote.Connected &&
 		remote.Identity.HostID == hostID && remote.Identity.Workspace == workspace {
-		activeID, activeGen, requestSeq, err := k.targets.ActivateRemote(remote.Generation)
-		if err != nil {
-			return err
-		}
 		tabID := a.workbenchProjectionTabID()
 		k.mu.Lock()
-		cli := k.remote
-		k.remoteTabID = tabID
+		cli, previousTabID := k.remote, k.remoteTabID
+		if cli != nil && cli.Generation() == remote.Generation {
+			k.remoteTabID = tabID
+		}
 		k.mu.Unlock()
 		if cli == nil || cli.Generation() != remote.Generation {
 			return fmt.Errorf("Remote adapter is unavailable; reconnect the host")
 		}
+		// Rebind the projection before activation. Until ActivateRemote succeeds,
+		// callbacks still observe Local and cannot leak into the previous tab.
 		cli.SetCallbacks(a.workbenchClientCallbacks(remote.Generation, tabID))
-		a.workbenchRefreshSnapshot(remote.Generation, tabID)
-		a.workbenchRefreshCatalog(remote.Generation)
+		activeID, activeGen, requestSeq, err := k.targets.ActivateRemote(remote.Generation)
+		if err != nil {
+			k.mu.Lock()
+			if k.remote == cli && k.remoteGen == remote.Generation && k.remoteTabID == tabID {
+				k.remoteTabID = previousTabID
+			}
+			k.mu.Unlock()
+			cli.SetCallbacks(a.workbenchClientCallbacks(remote.Generation, previousTabID))
+			return err
+		}
+		go a.workbenchRefreshSnapshot(remote.Generation, tabID)
+		go a.workbenchRefreshCatalog(remote.Generation)
 		a.emitWorkbenchTarget("connected", activeID, activeGen, requestSeq, "")
 		a.emitReady(a.ctx, tabID)
 		a.emitRuntimeEvent("runtime:rebuilt", tabID)

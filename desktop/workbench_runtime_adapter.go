@@ -71,6 +71,7 @@ func (a *App) workbenchClientCallbacks(generation uint64, tabID string) client.C
 			if busyChanged {
 				k.targets.SetRemoteBusy(busy)
 			}
+			k.transitionMu.Lock()
 			active, identityGen, requestSeq := k.targets.Active()
 			visible := active.Kind == target.KindRemote && active.HostID != "" && active.Workspace != ""
 			if !visible {
@@ -78,13 +79,26 @@ func (a *App) workbenchClientCallbacks(generation uint64, tabID string) client.C
 				case "approval_request", "ask_request", "turn_done":
 					a.emitWorkbenchTarget("background_activity", active, identityGen, requestSeq, "Remote session has background activity.")
 				}
+				k.transitionMu.Unlock()
 				return
 			}
-			if a.ctx != nil {
-				a.runtimeEvents.Emit(a.ctx, "agent:event", wireEventTab{Event: notification.Event, TabID: tabID})
+			k.mu.Lock()
+			projectionTabID := k.remoteTabID
+			generationCurrent := k.remoteGen == generation
+			k.mu.Unlock()
+			if !generationCurrent {
+				k.transitionMu.Unlock()
+				return
 			}
+			if projectionTabID == "" {
+				projectionTabID = tabID
+			}
+			if a.ctx != nil {
+				a.runtimeEvents.Emit(a.ctx, "agent:event", wireEventTab{Event: notification.Event, TabID: projectionTabID})
+			}
+			k.transitionMu.Unlock()
 			if notification.Event.Kind == "turn_done" {
-				go a.workbenchRefreshSnapshot(generation, tabID)
+				go a.workbenchRefreshSnapshot(generation, projectionTabID)
 			}
 		},
 		OnResyncRequired: func(protocol.SessionResyncRequired) {
@@ -104,6 +118,10 @@ func (a *App) workbenchClientCallbacks(generation uint64, tabID string) client.C
 				k.mu.Unlock()
 				return
 			}
+			projectionTabID := k.remoteTabID
+			if projectionTabID == "" {
+				projectionTabID = tabID
+			}
 			k.remote = nil
 			k.remoteGen = 0
 			k.remoteTabID = ""
@@ -114,8 +132,8 @@ func (a *App) workbenchClientCallbacks(generation uint64, tabID string) client.C
 			k.sessionCatalog = protocol.SessionCatalogResult{}
 			k.mu.Unlock()
 			a.emitWorkbenchTarget("disconnected", id, identityGen, requestSeq, "Remote transport closed; reconnect to resume the Host session.")
-			a.emitReady(a.ctx, tabID)
-			a.emitRuntimeEvent("runtime:rebuilt", tabID)
+			a.emitReady(a.ctx, projectionTabID)
+			a.emitRuntimeEvent("runtime:rebuilt", projectionTabID)
 		},
 	}
 }
@@ -264,9 +282,21 @@ func (a *App) workbenchRefreshSnapshot(generation uint64, tabID string) {
 	}
 	result := decoded.(protocol.SessionSubscribeResult)
 	k := a.workbench()
+	k.transitionMu.Lock()
+	defer k.transitionMu.Unlock()
+	active, _, _ := k.targets.Active()
+	if active.Kind != target.KindRemote {
+		return
+	}
 	k.mu.Lock()
 	if k.remote == cli && k.remoteGen == generation {
 		k.snapshot = result.Snapshot
+		if k.remoteTabID != "" {
+			tabID = k.remoteTabID
+		}
+	} else {
+		k.mu.Unlock()
+		return
 	}
 	k.mu.Unlock()
 	go a.workbenchMirrorSnapshot(cli, result.Snapshot)
