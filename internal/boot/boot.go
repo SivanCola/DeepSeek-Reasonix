@@ -154,6 +154,11 @@ type Options struct {
 	// schemas stay byte-identical, so the provider-visible surface is unchanged.
 	FileOverlay    builtin.FileOverlay
 	TerminalRunner builtin.TerminalRunner
+	// ProviderResolver, when set, replaces direct NewProviderWithProxy calls for
+	// the main executor, planner, classifier, guardian, and subagent factories.
+	// Remote-runtime boots inject a Broker-backed resolver so API keys never
+	// leave the local machine. Nil keeps the historical local config path.
+	ProviderResolver provider.Resolver
 }
 
 // Build loads config, resolves the model(s), and returns a Controller wrapping a
@@ -213,18 +218,19 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		runtimeProfile = capability.ProfileDelivery
 	}
 	keepPolicy := agentKeepPolicy(cfg.Agent.Keep)
-	entry, ok := cfg.ResolveModel(modelName)
-	if !ok {
-		return nil, fmt.Errorf("%w %q (configured: %s); note: defining [[providers]] replaces the built-in presets, so add a [[providers]] entry for it or use a configured name, or run `reasonix setup` to reconfigure", ErrUnknownModel, modelName, providerNames(cfg))
+	entry, modelRef, err := resolveModelEntry(opts, cfg, modelName)
+	if err != nil {
+		return nil, err
 	}
-	modelRef := entry.Name + "/" + entry.Model
 	if opts.EffortOverride != nil {
 		entry.Effort = *opts.EffortOverride
 		if entry.Kind == "anthropic" && strings.TrimSpace(entry.Effort) != "" && strings.TrimSpace(entry.Thinking) == "" {
 			entry.Thinking = "adaptive"
 		}
 	}
-	if opts.RequireKey {
+	// Broker-backed resolvers never hold local keys; skip key validation so a
+	// remote-runtime host without DEEPSEEK_API_KEY can still boot.
+	if opts.RequireKey && opts.ProviderResolver == nil {
 		if err := cfg.Validate(modelName); err != nil {
 			return nil, err
 		}
@@ -342,9 +348,14 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		return nil, err
 	}
 
-	execProv, err := NewProviderWithProxy(entry, proxySpec)
+	execProv, err := resolveProvider(opts, cfg, proxySpec, provider.Selection{Ref: modelRef, Effort: opts.EffortOverride})
 	if err != nil {
-		return nil, err
+		// Fall back to the pre-resolved entry name when modelRef lookup fails
+		// for legacy single-name configs.
+		execProv, err = resolveProvider(opts, cfg, proxySpec, provider.Selection{Ref: modelName, Effort: opts.EffortOverride})
+		if err != nil {
+			return nil, err
+		}
 	}
 	shell := sandbox.ResolveShell(cfg.Tools.Shell.Prefer, cfg.Tools.Shell.Path, stderr)
 
@@ -743,24 +754,40 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	// executor uses, so the model surfaces it like any other tool.
 	resolveSubagentProvider := func(modelRef, effort string) (provider.Provider, *provider.Pricing, int, error) {
 		me := *entry
+		selRef := modelName
 		if strings.TrimSpace(modelRef) != "" {
-			resolved, ok := cfg.ResolveModel(modelRef)
-			if !ok {
+			if resolved, ok := cfg.ResolveModel(modelRef); ok {
+				me = *resolved
+				selRef = resolved.Name + "/" + resolved.Model
+				if strings.TrimSpace(resolved.Model) == "" {
+					selRef = resolved.Name
+				}
+			} else if opts.ProviderResolver != nil {
+				selRef = modelRef
+				me = *syntheticEntryFromResolver(opts.ProviderResolver, modelRef)
+			} else {
 				return nil, nil, 0, fmt.Errorf("unknown model %q", modelRef)
 			}
-			me = *resolved
+		} else {
+			selRef = modelRefFromEntry(entry)
 		}
+		var effortPtr *string
 		if strings.TrimSpace(effort) != "" {
 			normalized, err := config.NormalizeEffort(&me, effort)
 			if err != nil {
-				return nil, nil, 0, err
+				// Broker descriptors may not carry full effort metadata; pass through.
+				if opts.ProviderResolver == nil {
+					return nil, nil, 0, err
+				}
+				normalized = effort
 			}
 			me.Effort = normalized
+			effortPtr = &normalized
 			if me.Kind == "anthropic" && strings.TrimSpace(me.Effort) != "" && strings.TrimSpace(me.Thinking) == "" {
 				me.Thinking = "adaptive"
 			}
 		}
-		p, err := NewProviderWithProxy(&me, proxySpec)
+		p, err := resolveProvider(opts, cfg, proxySpec, provider.Selection{Ref: selRef, Effort: effortPtr})
 		if err != nil {
 			return nil, nil, 0, err
 		}
@@ -1527,11 +1554,11 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 
 	if !tokenEconomy && !strings.EqualFold(strings.TrimSpace(cfg.Agent.AutoPlan), "off") && cfg.Agent.AutoPlanClassifier != "" {
 		cm := cfg.Agent.AutoPlanClassifier
-		ce, ok := cfg.ResolveModel(cm)
+		ce, ok := resolveOptionalEntry(opts, cfg, cm)
 		if !ok {
 			return nil, fmt.Errorf("auto_plan_classifier %q is not a configured provider", cm)
 		}
-		classifierProv, err := NewProviderWithProxy(ce, proxySpec)
+		classifierProv, err := resolveProvider(opts, cfg, proxySpec, provider.Selection{Ref: modelRefFromEntry(ce)})
 		if err != nil {
 			return nil, fmt.Errorf("auto_plan_classifier %q: %w", cm, err)
 		}
@@ -1543,12 +1570,12 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	// planner gets the same standing memory context and a filtered read-only
 	// research tool set, so it can inspect rules/code without side effects.
 	if pm := cfg.Agent.PlannerModel; pm != "" && !tokenEconomy {
-		pe, ok := cfg.ResolveModel(pm)
+		pe, ok := resolveOptionalEntry(opts, cfg, pm)
 		if !ok {
 			return nil, fmt.Errorf("planner_model %q is not a configured provider", pm)
 		}
 		if pe.Model != entry.Model {
-			plannerProv, err := NewProviderWithProxy(pe, proxySpec)
+			plannerProv, err := resolveProvider(opts, cfg, proxySpec, provider.Selection{Ref: modelRefFromEntry(pe)})
 			if err != nil {
 				return nil, fmt.Errorf("planner %q: %w", pm, err)
 			}
@@ -1635,12 +1662,12 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	// that can auto-allow safe Ask decisions and annotate risky ones before
 	// escalating to the human approval prompt.
 	if guardianModel := cfg.Agent.GuardianModel; guardianModel != "" {
-		ge, ok := cfg.ResolveModel(guardianModel)
+		ge, ok := resolveOptionalEntry(opts, cfg, guardianModel)
 		if !ok {
 			slog.Warn("guardian model is not a configured provider — guardian disabled", "model", guardianModel)
 			sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelWarn, Text: "Guardian was disabled because its model was not found.", Detail: fmt.Sprintf("guardian_model %q not found — guardian disabled", guardianModel)})
 		} else {
-			pProv, err := NewProviderWithProxy(ge, proxySpec)
+			pProv, err := resolveProvider(opts, cfg, proxySpec, provider.Selection{Ref: modelRefFromEntry(ge)})
 			if err != nil {
 				slog.Warn("guardian provider construction failed — guardian disabled", "model", guardianModel, "err", err)
 				sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelWarn, Text: "Guardian was disabled because it could not start.", Detail: fmt.Sprintf("guardian construction failed: %v — guardian disabled", err)})

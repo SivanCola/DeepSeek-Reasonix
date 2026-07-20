@@ -174,6 +174,15 @@ export interface WireFinalReadiness {
 }
 
 // Tab management types (desktop/tabs.go).
+/** Where chat/tools execute. Missing/undefined means local (backward compatible). */
+export interface ExecutionTarget {
+  kind?: "local" | "ssh";
+  hostId?: string;
+  workspace?: string;
+  /** Runtime-only; never persisted. */
+  connectionId?: string;
+}
+
 export interface TabMeta {
   id: string;
   tabType?: "session" | "file";
@@ -210,6 +219,13 @@ export interface TabMeta {
   startupErr?: string;
   active: boolean;
   cwd: string;
+  /** Omitted for local tabs. */
+  executionTarget?: ExecutionTarget;
+  remoteSessionId?: string;
+  remoteHost?: string;
+  remoteWorkspace?: string;
+  brokerStatus?: string;
+  mirrorRevision?: number;
 }
 
 export interface ProjectNode {

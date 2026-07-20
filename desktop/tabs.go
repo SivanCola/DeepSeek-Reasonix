@@ -29,6 +29,7 @@ import (
 	"reasonix/internal/fileutil"
 	"reasonix/internal/notify"
 	"reasonix/internal/provider"
+	"reasonix/internal/remote/target"
 	"reasonix/internal/store"
 	"reasonix/internal/worktree"
 )
@@ -158,8 +159,12 @@ type WorkspaceTab struct {
 	TopicID             string             // topic within the project
 	TopicTitle          string             // display title
 	SessionPath         string             // exact .jsonl file this tab continues
+	// ExecutionTarget selects local vs SSH remote execution. Missing/empty is
+	// local. Remote tabs bind a remote-runtime session ID, never a local Controller.
+	ExecutionTarget     target.ExecutionTarget
+	RemoteSessionID     string             // remote-runtime session id when KindSSH
 	ReadOnly            bool               // true for external channel transcripts opened for browsing
-	Ctrl                control.SessionAPI // nil while booting / on error
+	Ctrl                control.SessionAPI // nil while booting / on error; nil for remote tabs
 	Label               string             // model label (for the tab badge)
 	Ready               bool               // true once boot.Build completes
 	StartupErr          string             // build error, surfaced to the frontend
@@ -1831,6 +1836,16 @@ type TabMeta struct {
 	StartupErr        string                   `json:"startupErr,omitempty"`
 	Active            bool                     `json:"active"`
 	Cwd               string                   `json:"cwd"`
+	// ExecutionTarget is omitted for local tabs (backward compatible).
+	ExecutionTarget *target.ExecutionTarget `json:"executionTarget,omitempty"`
+	// RemoteSessionID is the remote-runtime session when ExecutionTarget is ssh.
+	RemoteSessionID string `json:"remoteSessionId,omitempty"`
+	// RemoteHost / RemoteWorkspace / BrokerStatus / MirrorRevision are display
+	// fields for the remote status bar (never secrets).
+	RemoteHost       string `json:"remoteHost,omitempty"`
+	RemoteWorkspace  string `json:"remoteWorkspace,omitempty"`
+	BrokerStatus     string `json:"brokerStatus,omitempty"`
+	MirrorRevision   int64  `json:"mirrorRevision,omitempty"`
 }
 
 func enrichTabMeta(meta TabMeta) TabMeta {
@@ -4215,6 +4230,10 @@ type desktopTabEntry struct {
 	Mode             string  `json:"mode,omitempty"`
 	Goal             string  `json:"goal,omitempty"`
 	ToolApprovalMode string  `json:"toolApprovalMode,omitempty"`
+	// ExecutionTarget uses omitempty; missing means local. ConnectionID is
+	// never persisted (see target.ExecutionTarget.Persistable).
+	ExecutionTarget *target.ExecutionTarget `json:"executionTarget,omitempty"`
+	RemoteSessionID string                 `json:"remoteSessionId,omitempty"`
 }
 
 type desktopTabsFile struct {
