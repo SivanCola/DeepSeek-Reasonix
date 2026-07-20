@@ -127,40 +127,22 @@ CLI 进阶用法和详细配置见 **[CLI 命令参考](./docs/CLI.zh-CN.md)**�
 
 ## 文档
 
-- **[CLI 命令参考](./docs/CLI.zh-CN.md)** —— 交互与一次性命令、结构化输出、
-  会话恢复、权限模式和可搜索选择器。
-- **[指南](./docs/GUIDE.zh-CN.md)** —— 配置、权限与沙盒、插件(MCP)、斜杠命令、
-  `@` 引用、双模型协同。
-- **[ACP 编辑器接入](./docs/ACP.zh-CN.md)** —— 从 ACP host 启动 Reasonix、管理
-  会话与配置，并接入回合中引导。
-- **[子智能体 Profile](./docs/SUBAGENT_PROFILES.zh-CN.md)** —— 在桌面端或 CLI
-  创建、共享、预览、运行、编辑和安全删除隔离智能体 Profile。
-- **[能力诊断](./docs/CAPABILITY_DIAGNOSTICS.zh-CN.md)** ——
-  `reasonix doctor capabilities`、桌面端 **设置 → 诊断**，以及内置 Skill
-  `/reasonix-guide`，用于 skills / hooks / MCP / 插件排障。
-- **[恢复与安全模式](./docs/RECOVERY.zh-CN.md)** —— Guard 诊断、配置快照、
-  原生恢复、更新回滚和可选 AI 修复计划。
-- **[机器人使用指南](./docs/BOT_GUIDE.zh-CN.md)** —— 桌面端连接飞书、Lark、微信
-  Bot，以及 IM 里的审批、YOLO 和命令交互。
-- **[规格](./docs/SPEC.md)** —— 工程契约:架构、registry、数据类型与路线图。
-- **[任务合约与暂停策略](./docs/TASK_CONTRACT.zh-CN.md)** —— 用背景、输出边界、约束和暂停条件组织复杂请求。
-- **[工具合约](./docs/TOOL_CONTRACT.zh-CN.md)** —— provider 可见的内置工具名、
-  read-only 标记和 schema 快照保护。
-- **[从 0.x 迁移](./docs/MIGRATING.md)** —— 从 legacy TypeScript 版本迁到 1.0 Go 重写版。
-- **[Checkpoints 与 rewind](./docs/CHECKPOINTS.md)** —— 基于快照的编辑安全网
-  (Esc-Esc / `/rewind`)。
-
-<br/>
+- **开始使用：** [指南](./docs/GUIDE.zh-CN.md) ·
+  [CLI 命令参考](./docs/CLI.zh-CN.md) · [配置路径](./docs/CONFIG_PATHS.zh-CN.md) ·
+  [ACP 编辑器接入](./docs/ACP.zh-CN.md)
+- **功能与排障：** [子智能体 Profile](./docs/SUBAGENT_PROFILES.zh-CN.md) ·
+  [能力诊断](./docs/CAPABILITY_DIAGNOSTICS.zh-CN.md) ·
+  [恢复与安全模式](./docs/RECOVERY.zh-CN.md) ·
+  [机器人使用指南](./docs/BOT_GUIDE.zh-CN.md) ·
+  [Checkpoints 与 rewind（英文）](./docs/CHECKPOINTS.md)
+- **工程与迁移：** [规格（英文）](./docs/SPEC.md) ·
+  [任务合约与暂停策略](./docs/TASK_CONTRACT.zh-CN.md) ·
+  [工具合约](./docs/TOOL_CONTRACT.zh-CN.md) ·
+  [从 0.x 迁移（英文）](./docs/MIGRATING.md)
 
 ## Star 趋势
 
-<a href="https://www.star-history.com/?repos=esengine%2FDeepSeek-Reasonix&type=date&legend=top-left">
- <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=esengine/DeepSeek-Reasonix&type=date&theme=dark&legend=top-left" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=esengine/DeepSeek-Reasonix&type=date&legend=top-left" />
-   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=esengine/DeepSeek-Reasonix&type=date&legend=top-left" />
- </picture>
-</a>
+[在 Star History 查看 Reasonix 趋势](https://www.star-history.com/?repos=esengine%2FDeepSeek-Reasonix&type=date&legend=top-left)
 
 ## 致谢
 

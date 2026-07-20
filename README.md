@@ -136,44 +136,19 @@ For advanced CLI usage and configuration, see the **[CLI reference](./docs/CLI.m
 
 ## Documentation
 
-- **[CLI reference](./docs/CLI.md)** — interactive and one-shot commands,
-  structured output, resume, permission modes, and searchable pickers.
-- **[Guide](./docs/GUIDE.md)** — configuration, permissions & sandbox, plugins
-  (MCP), slash commands, `@` references, two-model collaboration.
-- **[ACP editor integration](./docs/ACP.md)** — launch Reasonix from an ACP
-  host, manage sessions and configuration, and integrate mid-turn steering.
-- **[Subagent profiles](./docs/SUBAGENT_PROFILES.md)** — create, share, preview,
-  run, edit, and safely delete isolated agent profiles from desktop or CLI.
-- **[Capability diagnostics](./docs/CAPABILITY_DIAGNOSTICS.md)** —
-  `reasonix doctor capabilities`, desktop Settings → Diagnostics, and the
-  `/reasonix-guide` skill for skills/hooks/MCP/plugin troubleshooting.
-- **[Recovery and Safe Mode](./docs/RECOVERY.md)** — Guard diagnostics,
-  configuration snapshots, native recovery, update rollback, and optional
-  AI-assisted repair plans.
-- **[Bot guide](./docs/BOT_GUIDE.md)** — connect Feishu, Lark, and WeChat bots
-  from the desktop app, then use approvals, YOLO, and commands from IM.
-- **[Spec](./docs/SPEC.md)** — engineering contract: architecture, registries,
-  data types, and roadmap.
-- **[Task contracts & pause policy](./docs/TASK_CONTRACT.md)** — structure
-  complex requests with context, output boundaries, constraints, and when to ask.
-- **[Tool contract](./docs/TOOL_CONTRACT.md)** — provider-visible built-in tool
-  names, read-only flags, and schema snapshot guard.
-- **[Migrating from 0.x](./docs/MIGRATING.md)** — moving from the legacy
-  TypeScript releases to the 1.0 Go rewrite.
-- **[Checkpoints & rewind](./docs/CHECKPOINTS.md)** — the snapshot-based edit
-  safety net (Esc-Esc / `/rewind`).
-
-<br/>
+- **Getting started:** [Guide](./docs/GUIDE.md) · [CLI reference](./docs/CLI.md) ·
+  [Configuration paths](./docs/CONFIG_PATHS.md) · [ACP editor integration](./docs/ACP.md)
+- **Features & troubleshooting:** [Subagent profiles](./docs/SUBAGENT_PROFILES.md) ·
+  [Capability diagnostics](./docs/CAPABILITY_DIAGNOSTICS.md) ·
+  [Recovery and Safe Mode](./docs/RECOVERY.md) · [Bot guide](./docs/BOT_GUIDE.md) ·
+  [Checkpoints & rewind](./docs/CHECKPOINTS.md)
+- **Engineering & migration:** [Spec](./docs/SPEC.md) ·
+  [Task contracts & pause policy](./docs/TASK_CONTRACT.md) ·
+  [Tool contract](./docs/TOOL_CONTRACT.md) · [Migrating from 0.x](./docs/MIGRATING.md)
 
 ## Star History
 
-<a href="https://www.star-history.com/?repos=esengine%2FDeepSeek-Reasonix&type=date&legend=top-left">
- <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=esengine/DeepSeek-Reasonix&type=date&theme=dark&legend=top-left" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=esengine/DeepSeek-Reasonix&type=date&legend=top-left" />
-   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=esengine/DeepSeek-Reasonix&type=date&legend=top-left" />
- </picture>
-</a>
+[View Reasonix on Star History](https://www.star-history.com/?repos=esengine%2FDeepSeek-Reasonix&type=date&legend=top-left)
 
 ## Acknowledgments
 
