@@ -205,6 +205,7 @@ export const zh: Record<DictKey, string> = {
   "workspace.currentChangesSourceGit": "Git HEAD 到当前工作区",
   "workspace.currentChangesSourceSession": "会话首次修改前到当前文件",
   "workspace.changeDetailUnavailable": "无法读取当前改动",
+  "workspace.changeDetailTooLarge": "当前差异过大，无法显示。",
   "workspace.binaryChange": "当前改动包含二进制内容，无法显示文本差异。",
   "workspace.noCurrentDiff": "当前文件没有可显示的文本差异。",
   "workspace.commitHistory": "提交历史",

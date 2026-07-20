@@ -1459,6 +1459,84 @@ func TestWorkspaceChangeDetailSynthesizesUntrackedFile(t *testing.T) {
 	}
 }
 
+func TestWorkspaceChangeDetailBoundsTrackedPatch(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	repo := t.TempDir()
+	runGitIn(t, repo, "init")
+	runGitIn(t, repo, "config", "user.email", "test@example.com")
+	runGitIn(t, repo, "config", "user.name", "Test User")
+	path := filepath.Join(repo, "large.txt")
+	if err := os.WriteFile(path, []byte(strings.Repeat("a", workspaceChangeDetailLimit+128)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGitIn(t, repo, "add", "large.txt")
+	runGitIn(t, repo, "commit", "-m", "initial")
+	if err := os.WriteFile(path, []byte(strings.Repeat("b", workspaceChangeDetailLimit+128)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	app := &App{tabs: map[string]*WorkspaceTab{"tab": {ID: "tab", WorkspaceRoot: repo}}}
+	detail, err := app.WorkspaceChangeDetail("tab", "large.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if detail.Source != "git" || !detail.Truncated || detail.Diff != nil {
+		t.Fatalf("large tracked detail = %+v, want bounded git result", detail)
+	}
+}
+
+func TestWorkspaceChangeDetailBoundsUntrackedFile(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	repo := t.TempDir()
+	runGitIn(t, repo, "init")
+	if err := os.WriteFile(filepath.Join(repo, "large.txt"), []byte(strings.Repeat("x", workspaceChangeDetailLimit+1)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	app := &App{tabs: map[string]*WorkspaceTab{"tab": {ID: "tab", WorkspaceRoot: repo}}}
+	detail, err := app.WorkspaceChangeDetail("tab", "large.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if detail.Source != "git" || !detail.Truncated || detail.Diff != nil {
+		t.Fatalf("large untracked detail = %+v, want bounded git result", detail)
+	}
+}
+
+func TestWorkspaceChangeDetailBoundsCheckpointSnapshot(t *testing.T) {
+	workspace := t.TempDir()
+	sessionDir := t.TempDir()
+	sessionPath := filepath.Join(sessionDir, "session.jsonl")
+	checkpointDir := strings.TrimSuffix(sessionPath, ".jsonl") + ".ckpt"
+	if err := os.MkdirAll(checkpointDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	original := strings.Repeat("before", workspaceChangeDetailLimit/6+1)
+	seedCheckpoint(t, checkpointDir, checkpoint.Checkpoint{
+		Turn:  0,
+		Time:  time.Now(),
+		Files: []checkpoint.FileSnap{{Path: filepath.Join(workspace, "large.txt"), Content: &original}},
+	})
+	if err := os.WriteFile(filepath.Join(workspace, "large.txt"), []byte("after\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ctrl := control.New(control.Options{
+		SessionDir: sessionDir, SessionPath: sessionPath, WorkspaceRoot: workspace, Label: "session",
+	})
+	app := &App{tabs: map[string]*WorkspaceTab{"tab": {ID: "tab", WorkspaceRoot: workspace, Ctrl: ctrl}}}
+	detail, err := app.WorkspaceChangeDetail("tab", "large.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if detail.Source != "session" || !detail.Truncated || detail.Diff != nil {
+		t.Fatalf("large checkpoint detail = %+v, want bounded session result", detail)
+	}
+}
+
 func TestWorkspaceChangeDetailFallsBackToRequestedTabCheckpoint(t *testing.T) {
 	workspace := t.TempDir()
 	sessionDir := t.TempDir()

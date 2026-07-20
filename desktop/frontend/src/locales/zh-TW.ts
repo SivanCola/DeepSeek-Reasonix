@@ -128,6 +128,7 @@ export const zhTW: Record<DictKey, string> = {
   "workspace.currentChangesSourceGit": "Git HEAD 到目前工作區",
   "workspace.currentChangesSourceSession": "會話首次修改前到目前檔案",
   "workspace.changeDetailUnavailable": "無法讀取目前變更",
+  "workspace.changeDetailTooLarge": "目前差異過大，無法顯示。",
   "workspace.binaryChange": "目前變更包含二進位內容，無法顯示文字差異。",
   "workspace.noCurrentDiff": "目前檔案沒有可顯示的文字差異。",
   "workspace.commitHistory": "提交記錄",

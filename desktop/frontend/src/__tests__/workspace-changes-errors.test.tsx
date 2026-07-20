@@ -303,6 +303,29 @@ console.log("\nworkspace changes git errors");
 }
 
 {
+  const { dom, root } = await renderWorkspace(
+    {
+      files: [{ path: "generated/large.txt", sources: ["git"], gitStatus: "M" }],
+      gitAvailable: true,
+    },
+    { detail: { source: "git", truncated: true } },
+  );
+  await waitFor("large working change", () => document.body.textContent?.includes("large.txt") === true);
+  const changeButton = document.querySelector<HTMLButtonElement>(".workspace-change");
+  await act(async () => {
+    changeButton?.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+    await flushPromises();
+  });
+  await waitFor("bounded change detail", () => document.body.textContent?.includes("too large to display") === true);
+  ok(document.body.textContent?.includes("too large to display") === true, "oversized workspace diffs render a bounded-state message");
+  ok(document.body.textContent?.includes("no text diff") === false, "oversized workspace diffs are not reported as empty");
+  await act(async () => {
+    root.unmount();
+  });
+  dom.window.close();
+}
+
+{
   const { dom, root } = await renderFilesWorkspace({
     ListDirForTab: async (_tabId, dir) => {
       if (dir === "") {

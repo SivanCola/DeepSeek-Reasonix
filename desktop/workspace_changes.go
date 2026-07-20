@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -29,7 +30,12 @@ type workspaceChangeAccumulator struct {
 	hasGit     bool
 }
 
-const workspaceGitBranchCacheTTL = 2 * time.Second
+const (
+	workspaceGitBranchCacheTTL = 2 * time.Second
+	// Bound both decoded file contents and rendered patches before they cross
+	// the Wails bridge; generated files must not turn a preview click into OOM.
+	workspaceChangeDetailLimit = 2 * 1024 * 1024
+)
 
 type workspaceGitBranchCacheEntry struct {
 	branch     string
@@ -220,9 +226,12 @@ func workspaceGitChangeDetail(base, rel string) (WorkspaceChangeDetailView, bool
 	if entry.OldPath != "" && entry.OldPath != rel {
 		args = append(args, filepath.FromSlash(entry.OldPath))
 	}
-	raw, err := workspaceGit(args...).Output()
+	raw, truncated, err := workspaceGitDiffOutput(args...)
 	if err != nil {
 		return WorkspaceChangeDetailView{}, false
+	}
+	if truncated {
+		return WorkspaceChangeDetailView{Source: "git", Truncated: true}, true
 	}
 	patch := strings.TrimSpace(string(raw))
 	if patch == "" {
@@ -237,6 +246,41 @@ func workspaceGitHasHead(base string) bool {
 	return workspaceGit("-C", base, "rev-parse", "--verify", "HEAD").Run() == nil
 }
 
+func workspaceGitDiffOutput(args ...string) ([]byte, bool, error) {
+	cmd := workspaceGit(args...)
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, false, err
+	}
+	cmd.Stderr = io.Discard
+	if err := cmd.Start(); err != nil {
+		_ = stdout.Close()
+		return nil, false, err
+	}
+	raw, readErr := io.ReadAll(io.LimitReader(stdout, workspaceChangeDetailLimit+1))
+	if readErr != nil {
+		_ = stdout.Close()
+		if cmd.Process != nil {
+			_ = cmd.Process.Kill()
+		}
+		_ = cmd.Wait()
+		return nil, false, readErr
+	}
+	if len(raw) > workspaceChangeDetailLimit {
+		_ = stdout.Close()
+		if cmd.Process != nil {
+			_ = cmd.Process.Kill()
+		}
+		_ = cmd.Wait()
+		return nil, true, nil
+	}
+	waitErr := cmd.Wait()
+	if waitErr != nil {
+		return nil, false, waitErr
+	}
+	return raw, false, nil
+}
+
 func workspaceCheckpointChangeDetail(base, rel string, old *string) (WorkspaceChangeDetailView, error) {
 	path, ok, err := workspacePathForBase(base, filepath.FromSlash(rel))
 	if err != nil || !ok {
@@ -244,11 +288,17 @@ func workspaceCheckpointChangeDetail(base, rel string, old *string) (WorkspaceCh
 	}
 	oldText := ""
 	if old != nil {
+		if len(*old) > workspaceChangeDetailLimit {
+			return WorkspaceChangeDetailView{Source: "session", Truncated: true}, nil
+		}
 		oldText = *old
 	}
-	newText, exists, err := workspaceCurrentText(path)
+	newText, exists, truncated, err := workspaceCurrentText(path)
 	if err != nil {
 		return WorkspaceChangeDetailView{}, err
+	}
+	if truncated {
+		return WorkspaceChangeDetailView{Source: "session", Truncated: true}, nil
 	}
 	kind := diff.Modify
 	if old == nil {
@@ -257,6 +307,9 @@ func workspaceCheckpointChangeDetail(base, rel string, old *string) (WorkspaceCh
 		kind = diff.Delete
 	}
 	change := diff.Build(rel, oldText, newText, kind)
+	if len(change.Diff) > workspaceChangeDetailLimit {
+		return WorkspaceChangeDetailView{Source: "session", Truncated: true}, nil
+	}
 	if change.Diff == "" && !change.Binary {
 		return WorkspaceChangeDetailView{Source: "session"}, nil
 	}
@@ -270,23 +323,23 @@ func workspaceCheckpointChangeDetail(base, rel string, old *string) (WorkspaceCh
 	}, nil
 }
 
-func workspaceCurrentText(path string) (string, bool, error) {
+func workspaceCurrentText(path string) (string, bool, bool, error) {
 	info, err := os.Lstat(path)
 	if os.IsNotExist(err) {
-		return "", false, nil
+		return "", false, false, nil
 	}
 	if err != nil {
-		return "", false, err
+		return "", false, false, err
 	}
 	if info.Mode()&os.ModeSymlink != 0 {
 		target, err := os.Readlink(path)
-		return target, true, err
+		return target, true, false, err
 	}
 	if !info.Mode().IsRegular() {
-		return "", true, fmt.Errorf("workspace change path %q is not a regular file", path)
+		return "", true, false, fmt.Errorf("workspace change path %q is not a regular file", path)
 	}
-	raw, err := readFileUTF8(path)
-	return string(raw), true, err
+	raw, truncated, err := readFileUTF8Limit(path, workspaceChangeDetailLimit)
+	return string(raw), true, truncated, err
 }
 
 func tallyUnifiedPatch(patch string) (added, removed int) {

@@ -204,6 +204,7 @@ export const en = {
   "workspace.currentChangesSourceGit": "Git HEAD to current workspace",
   "workspace.currentChangesSourceSession": "Before the session's first edit to current file",
   "workspace.changeDetailUnavailable": "Current changes could not be loaded",
+  "workspace.changeDetailTooLarge": "The current diff is too large to display.",
   "workspace.binaryChange": "The current change contains binary content and has no text diff.",
   "workspace.noCurrentDiff": "This file has no text diff to display.",
   "workspace.commitHistory": "Commit history",

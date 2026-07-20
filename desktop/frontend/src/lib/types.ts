@@ -659,6 +659,7 @@ export interface WorkspaceChangeDetailView {
   added?: number;
   removed?: number;
   binary?: boolean;
+  truncated?: boolean;
 }
 
 export interface GitCommitView {

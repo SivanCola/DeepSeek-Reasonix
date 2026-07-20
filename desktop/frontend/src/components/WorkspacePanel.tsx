@@ -1643,6 +1643,8 @@ export function WorkspacePanel({
                     <div className="workspace-empty">{t("workspace.loading")}</div>
                   ) : changeDetailErr ? (
                     <div className="workspace-empty workspace-empty--error">{t("workspace.changeDetailUnavailable")}: {changeDetailErr}</div>
+                  ) : changeDetail?.truncated ? (
+                    <div className="workspace-empty">{t("workspace.changeDetailTooLarge")}</div>
                   ) : changeDetail?.binary ? (
                     <div className="workspace-empty">{t("workspace.binaryChange")}</div>
                   ) : changeDetail?.diff ? (
