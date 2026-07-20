@@ -232,8 +232,9 @@ for designing the project logo, and to
   <sub>Built by the community at <a href="https://github.com/esengine/DeepSeek-Reasonix/graphs/contributors">esengine/DeepSeek-Reasonix</a></sub>
 </p>
 
-<details>
-<summary><sub>Support this project</sub></summary>
+---
+
+<p align="center"><sub><strong>Support this project</strong></sub></p>
 
 If Reasonix has been useful and you'd like to say thanks, you can. It stays a
 coffee, not a contract — donations don't buy feature priority or change how
@@ -245,5 +246,3 @@ issues get triaged.
 <p align="center">
   <img src=".github/sponsor/wechat-pay.jpg" alt="WeChat Pay QR code" width="180"/>
 </p>
-
-</details>

@@ -215,8 +215,9 @@ provider key 的运行时 fallback，但仍会作为当前 workspace 范围内�
   <sub>由 <a href="https://github.com/esengine/DeepSeek-Reasonix/graphs/contributors">esengine/DeepSeek-Reasonix</a> 社区共建</sub>
 </p>
 
-<details>
-<summary><sub>支持本项目</sub></summary>
+---
+
+<p align="center"><sub><strong>支持本项目</strong></sub></p>
 
 如果 Reasonix 帮你省了时间或 token，欢迎请杯咖啡。捐助不会换来 feature
 优先级，也不会影响 issue 的处理顺序——就是「谢谢」。
@@ -227,5 +228,3 @@ provider key 的运行时 fallback，但仍会作为当前 workspace 范围内�
 <p align="center">
   <img src=".github/sponsor/wechat-pay.jpg" alt="微信支付收款码" width="180"/>
 </p>
-
-</details>
