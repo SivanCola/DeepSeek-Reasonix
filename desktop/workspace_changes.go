@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"sort"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"reasonix/internal/control"
+	"reasonix/internal/diff"
 	"reasonix/internal/proc"
 )
 
@@ -150,6 +152,158 @@ func (a *App) workspaceBaseForTab(tabID string) (string, error) {
 		return "", fmt.Errorf("tab %q not found", tabID)
 	}
 	return workspaceBaseFromRoot(workspaceRoot)
+}
+
+// WorkspaceChangeDetail returns the current patch for one file in the
+// requested tab. Git is authoritative when available because HEAD -> worktree
+// includes both staged and unstaged edits. Session checkpoints provide a
+// git-free fallback and cover files edited by Reasonix before Git notices them.
+func (a *App) WorkspaceChangeDetail(tabID, path string) (WorkspaceChangeDetailView, error) {
+	workspaceRoot, ctrl, ok := a.workspaceChangesTarget(strings.TrimSpace(tabID))
+	if !ok {
+		return WorkspaceChangeDetailView{}, fmt.Errorf("tab %q not found", tabID)
+	}
+	base, err := workspaceBaseFromRoot(workspaceRoot)
+	if err != nil {
+		return WorkspaceChangeDetailView{}, err
+	}
+	rel := normalizeWorkspaceRelPath(base, path)
+	if rel == "" {
+		return WorkspaceChangeDetailView{}, os.ErrInvalid
+	}
+	if _, ok, err := workspacePathForBase(base, filepath.FromSlash(rel)); err != nil || !ok {
+		if err != nil {
+			return WorkspaceChangeDetailView{}, err
+		}
+		return WorkspaceChangeDetailView{}, os.ErrInvalid
+	}
+
+	if detail, found := workspaceGitChangeDetail(base, rel); found {
+		return detail, nil
+	}
+	if ctrl != nil {
+		if state, found := ctrl.CheckpointFileState(rel); found {
+			return workspaceCheckpointChangeDetail(base, rel, state.Content)
+		}
+	}
+	return WorkspaceChangeDetailView{}, nil
+}
+
+func workspaceGitChangeDetail(base, rel string) (WorkspaceChangeDetailView, bool) {
+	entries, err := workspaceGitStatus(base)
+	if err != nil {
+		return WorkspaceChangeDetailView{}, false
+	}
+	var entry *gitStatusEntry
+	for i := range entries {
+		if entries[i].Path == rel {
+			entry = &entries[i]
+			break
+		}
+	}
+	if entry == nil {
+		return WorkspaceChangeDetailView{}, false
+	}
+
+	// Untracked files are omitted by git diff. In an unborn repository HEAD is
+	// absent as well, so synthesize the same create/delete patch from disk.
+	if entry.Status == "??" || !workspaceGitHasHead(base) {
+		detail, err := workspaceCheckpointChangeDetail(base, rel, nil)
+		if err != nil {
+			return WorkspaceChangeDetailView{}, false
+		}
+		detail.Source = "git"
+		return detail, true
+	}
+
+	args := []string{"-C", base, "diff", "--no-ext-diff", "--no-textconv", "--relative", "HEAD", "--", filepath.FromSlash(rel)}
+	if entry.OldPath != "" && entry.OldPath != rel {
+		args = append(args, filepath.FromSlash(entry.OldPath))
+	}
+	raw, err := workspaceGit(args...).Output()
+	if err != nil {
+		return WorkspaceChangeDetailView{}, false
+	}
+	patch := strings.TrimSpace(string(raw))
+	if patch == "" {
+		return WorkspaceChangeDetailView{}, false
+	}
+	added, removed := tallyUnifiedPatch(patch)
+	binary := strings.Contains(patch, "Binary files ") || strings.Contains(patch, "GIT binary patch")
+	return WorkspaceChangeDetailView{Diff: &patch, Source: "git", Added: added, Removed: removed, Binary: binary}, true
+}
+
+func workspaceGitHasHead(base string) bool {
+	return workspaceGit("-C", base, "rev-parse", "--verify", "HEAD").Run() == nil
+}
+
+func workspaceCheckpointChangeDetail(base, rel string, old *string) (WorkspaceChangeDetailView, error) {
+	path, ok, err := workspacePathForBase(base, filepath.FromSlash(rel))
+	if err != nil || !ok {
+		return WorkspaceChangeDetailView{}, err
+	}
+	oldText := ""
+	if old != nil {
+		oldText = *old
+	}
+	newText, exists, err := workspaceCurrentText(path)
+	if err != nil {
+		return WorkspaceChangeDetailView{}, err
+	}
+	kind := diff.Modify
+	if old == nil {
+		kind = diff.Create
+	} else if !exists {
+		kind = diff.Delete
+	}
+	change := diff.Build(rel, oldText, newText, kind)
+	if change.Diff == "" && !change.Binary {
+		return WorkspaceChangeDetailView{Source: "session"}, nil
+	}
+	patch := change.Diff
+	return WorkspaceChangeDetailView{
+		Diff:    &patch,
+		Source:  "session",
+		Added:   change.Added,
+		Removed: change.Removed,
+		Binary:  change.Binary,
+	}, nil
+}
+
+func workspaceCurrentText(path string) (string, bool, error) {
+	info, err := os.Lstat(path)
+	if os.IsNotExist(err) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		target, err := os.Readlink(path)
+		return target, true, err
+	}
+	if !info.Mode().IsRegular() {
+		return "", true, fmt.Errorf("workspace change path %q is not a regular file", path)
+	}
+	raw, err := readFileUTF8(path)
+	return string(raw), true, err
+}
+
+func tallyUnifiedPatch(patch string) (added, removed int) {
+	inHunk := false
+	for _, line := range strings.Split(patch, "\n") {
+		switch {
+		case strings.HasPrefix(line, "@@"):
+			inHunk = true
+		case strings.HasPrefix(line, "diff --git "):
+			inHunk = false
+		case inHunk && strings.HasPrefix(line, "+"):
+			added++
+		case inHunk && strings.HasPrefix(line, "-"):
+			removed++
+		}
+	}
+	return added, removed
 }
 
 // workspaceGit builds a console-hidden git probe: CREATE_NO_WINDOW so git's own

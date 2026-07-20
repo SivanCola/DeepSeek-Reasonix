@@ -2793,6 +2793,10 @@ func (c *Controller) Checkpoints() []checkpoint.Meta {
 	return c.checkpoints.list()
 }
 
+func (c *Controller) CheckpointFileState(path string) (checkpoint.FileState, bool) {
+	return c.checkpoints.fileState(path)
+}
+
 func (c *Controller) CheckpointTurnsByMessageIndex() map[int]int {
 	return c.checkpoints.turnsByMessageIndex()
 }

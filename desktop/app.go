@@ -8705,6 +8705,14 @@ type WorkspaceChangesView struct {
 	GitBranch    string                `json:"gitBranch,omitempty"`
 }
 
+type WorkspaceChangeDetailView struct {
+	Diff    *string `json:"diff,omitempty"`
+	Source  string  `json:"source,omitempty"`
+	Added   int     `json:"added,omitempty"`
+	Removed int     `json:"removed,omitempty"`
+	Binary  bool    `json:"binary,omitempty"`
+}
+
 // workspaceNoiseNames are local cache/vendor entries hidden from the file tree
 // and "@" menu regardless of where they appear.
 var workspaceNoiseNames = map[string]bool{
