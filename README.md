@@ -59,6 +59,14 @@
 
 ## Install
 
+Choose the path that matches how you want to use Reasonix. The CLI/TUI,
+desktop app, and VS Code extension all use the same local Reasonix engine.
+
+### Path A: CLI / TUI
+
+Install the native binary through npm on any supported platform, or use
+Homebrew on macOS:
+
 ```sh
 npm i -g reasonix                  # any OS; pulls the prebuilt native binary
 brew install esengine/reasonix/reasonix   # macOS
@@ -67,36 +75,52 @@ brew install esengine/reasonix/reasonix   # macOS
 Prebuilt archives (`darwin|linux|windows × amd64|arm64`) and `SHA256SUMS` are on
 every [GitHub release](https://github.com/esengine/DeepSeek-Reasonix/releases).
 
-### VS Code extension
+### Path B: Desktop app
 
-Use Reasonix directly in VS Code with native chat, editor context, tool-call
-approvals, model selection, and workspace sessions. The extension connects to
-your local `reasonix acp` backend, so install and configure Reasonix first.
+Use the [official download page](https://reasonix.io/?download=desktop#start)
+for the latest desktop build.
 
-[Install from Visual Studio Marketplace](https://marketplace.visualstudio.com/items?itemName=SivanLiu.reasonix-agent)
-·
-[Install from Open VSX Registry](https://open-vsx.org/extension/SivanLiu/reasonix-agent)
+| Platform | Package | Architecture |
+| --- | --- | --- |
+| macOS | Universal `.dmg` or `.zip` | Apple Silicon / Intel |
+| Windows | Installer `.exe` or portable `.zip` | x64 / ARM64 |
+| Linux | `.deb` or `.tar.gz` | x64 |
 
-### Code signing
+Windows installers are code-signed through [SignPath.io](https://signpath.io/)
+with a free certificate provided by the [SignPath Foundation](https://signpath.org/).
 
-Windows builds are code-signed with a free certificate provided by the
-[SignPath Foundation](https://signpath.org/), with signing through
-[SignPath.io](https://signpath.io/).
+### Path C: VS Code extension
 
-### Build from source
+Complete Path A first. The extension does not bundle the CLI; it starts your
+local `reasonix acp` backend and adds native chat, editor context, tool-call
+approvals, model selection, and workspace sessions.
+
+- **VS Code:** [install from Visual Studio Marketplace](https://marketplace.visualstudio.com/items?itemName=SivanLiu.reasonix-agent)
+- **VSCodium / Eclipse Theia:** [install from Open VSX Registry](https://open-vsx.org/extension/SivanLiu/reasonix-agent)
+- **Extension ID:** `SivanLiu.reasonix-agent` · [source and usage guide](https://github.com/SivanCola/reasonix-vscode)
+
+### Path D: Build from source
 
 ```sh
+git clone https://github.com/esengine/DeepSeek-Reasonix.git
+cd DeepSeek-Reasonix
 make build      # -> bin/reasonix(.exe)
 make cross      # -> dist/ (darwin|linux|windows × amd64|arm64)
 ```
 
 ## Quick start
 
+After installation:
+
+1. Run `reasonix setup` to configure a provider and model.
+2. Start `reasonix`, then use `/init` to create project instructions when needed.
+3. Use `reasonix run` for one-off or scripted tasks.
+
 ```sh
 reasonix setup                      # manage providers in the user config
 reasonix setup --local              # optional: manage ./reasonix.toml
 export DEEPSEEK_API_KEY=sk-...      # or let setup save it to Reasonix home .env
-reasonix                            # then run /init to generate AGENTS.md (project memory)
+reasonix                            # interactive CLI / TUI
 reasonix run "implement the TODOs in main.go"
 reasonix run --model deepseek-pro "add unit tests for this function"
 echo "explain this code" | reasonix run
@@ -172,21 +196,6 @@ commands, `@` references, and two-model setup are all in the
  </picture>
 </a>
 
-<br/>
-
-## Support
-
-If Reasonix has been useful and you'd like to say thanks, you can. It stays a coffee, not a contract — donations don't buy feature priority or change how issues get triaged.
-
-- **International** — PayPal: [paypal.me/yuhuahui](https://paypal.me/yuhuahui)
-- **国内** — 微信支付（扫码）
-
-<p align="center">
-  <img src=".github/sponsor/wechat-pay.jpg" alt="WeChat Pay QR code" width="240"/>
-</p>
-
-<br/>
-
 ## Acknowledgments
 
 A small list of folks whose work has shaped Reasonix the most — the current top
@@ -222,3 +231,19 @@ for designing the project logo, and to
   <br/>
   <sub>Built by the community at <a href="https://github.com/esengine/DeepSeek-Reasonix/graphs/contributors">esengine/DeepSeek-Reasonix</a></sub>
 </p>
+
+<details>
+<summary><sub>Support this project</sub></summary>
+
+If Reasonix has been useful and you'd like to say thanks, you can. It stays a
+coffee, not a contract — donations don't buy feature priority or change how
+issues get triaged.
+
+- **International** — PayPal: [paypal.me/yuhuahui](https://paypal.me/yuhuahui)
+- **国内** — 微信支付（扫码）
+
+<p align="center">
+  <img src=".github/sponsor/wechat-pay.jpg" alt="WeChat Pay QR code" width="180"/>
+</p>
+
+</details>

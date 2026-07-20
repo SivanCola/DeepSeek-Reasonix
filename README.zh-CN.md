@@ -55,6 +55,13 @@
 
 ## 安装
 
+选择适合你的使用路径。CLI/TUI、桌面端和 VS Code 扩展都使用同一套本地
+Reasonix 引擎。
+
+### 路径 A：CLI / TUI
+
+任意支持的平台都可以通过 npm 安装原生二进制；macOS 也可以使用 Homebrew：
+
 ```sh
 npm i -g reasonix                  # 任意系统;自动拉取对应平台的原生二进制
 brew install esengine/reasonix/reasonix   # macOS
@@ -63,35 +70,50 @@ brew install esengine/reasonix/reasonix   # macOS
 预编译归档(`darwin|linux|windows × amd64|arm64`)和 `SHA256SUMS` 见每个
 [GitHub release](https://github.com/esengine/DeepSeek-Reasonix/releases)。
 
-### VS Code 扩展
+### 路径 B：桌面端
 
-在 VS Code 中使用原生聊天、编辑器上下文、工具调用审批、模型选择和
-工作区会话。扩展会连接本机的 `reasonix acp` 后端，因此请先安装并配置
-Reasonix。
+前往[官方下载页](https://reasonix.io/?download=desktop#start)获取最新桌面版本。
 
-[从 Visual Studio Marketplace 安装](https://marketplace.visualstudio.com/items?itemName=SivanLiu.reasonix-agent)
-·
-[从 Open VSX Registry 安装](https://open-vsx.org/extension/SivanLiu/reasonix-agent)
+| 平台 | 安装包 | 架构 |
+| --- | --- | --- |
+| macOS | 通用 `.dmg` 或 `.zip` | Apple Silicon / Intel |
+| Windows | 安装器 `.exe` 或便携 `.zip` | x64 / ARM64 |
+| Linux | `.deb` 或 `.tar.gz` | x64 |
 
-### 代码签名
+Windows 安装器通过 [SignPath.io](https://signpath.io/) 完成代码签名，证书由
+[SignPath 基金会](https://signpath.org/) 免费提供。
 
-Windows 构建使用 [SignPath 基金会](https://signpath.org/) 提供的免费代码签名证书,
-通过 [SignPath.io](https://signpath.io/) 完成签名。
+### 路径 C：VS Code 扩展
 
-### 从源码构建
+请先完成路径 A。扩展不内置 CLI，而是启动本机的 `reasonix acp` 后端，
+并提供原生聊天、编辑器上下文、工具调用审批、模型选择和工作区会话。
+
+- **VS Code：** [从 Visual Studio Marketplace 安装](https://marketplace.visualstudio.com/items?itemName=SivanLiu.reasonix-agent)
+- **VSCodium / Eclipse Theia：** [从 Open VSX Registry 安装](https://open-vsx.org/extension/SivanLiu/reasonix-agent)
+- **扩展 ID：** `SivanLiu.reasonix-agent` · [源码与使用说明](https://github.com/SivanCola/reasonix-vscode)
+
+### 路径 D：从源码构建
 
 ```sh
+git clone https://github.com/esengine/DeepSeek-Reasonix.git
+cd DeepSeek-Reasonix
 make build      # -> bin/reasonix(.exe)
 make cross      # -> dist/（darwin|linux|windows × amd64|arm64）
 ```
 
 ## 快速开始
 
+安装完成后：
+
+1. 运行 `reasonix setup` 配置 provider 和模型。
+2. 启动 `reasonix`；需要项目指令时，在会话中运行 `/init`。
+3. 一次性任务或脚本调用使用 `reasonix run`。
+
 ```sh
 reasonix setup                      # 管理用户配置中的 provider
 reasonix setup --local              # 可选：管理 ./reasonix.toml
 export DEEPSEEK_API_KEY=sk-...      # 也可以让 setup 保存到 Reasonix 全局 .env
-reasonix                            # 然后在会话里运行 /init 生成 AGENTS.md（项目记忆）
+reasonix                            # 交互式 CLI / TUI
 reasonix run "把 main.go 里的 TODO 实现掉"
 reasonix run --model deepseek-pro "给这个函数补单元测试"
 echo "解释这段代码" | reasonix run
@@ -158,21 +180,6 @@ provider key 的运行时 fallback，但仍会作为当前 workspace 范围内�
  </picture>
 </a>
 
-<br/>
-
-## 支持本项目
-
-如果 Reasonix 帮你省了时间或 token，欢迎请杯咖啡。捐助不会换来 feature 优先级，也不会影响 issue 的处理顺序——就是「谢谢」。
-
-- **国内** — 微信支付（扫下方二维码）
-- **海外** — PayPal: [paypal.me/yuhuahui](https://paypal.me/yuhuahui)
-
-<p align="center">
-  <img src=".github/sponsor/wechat-pay.jpg" alt="微信支付收款码" width="240"/>
-</p>
-
-<br/>
-
 ## 致谢
 
 下面这些朋友的工作塑造了 Reasonix 今天的样子 —— 当前按 commit 数统计的前 20 名贡献者。
@@ -207,3 +214,18 @@ provider key 的运行时 fallback，但仍会作为当前 workspace 范围内�
   <br/>
   <sub>由 <a href="https://github.com/esengine/DeepSeek-Reasonix/graphs/contributors">esengine/DeepSeek-Reasonix</a> 社区共建</sub>
 </p>
+
+<details>
+<summary><sub>支持本项目</sub></summary>
+
+如果 Reasonix 帮你省了时间或 token，欢迎请杯咖啡。捐助不会换来 feature
+优先级，也不会影响 issue 的处理顺序——就是「谢谢」。
+
+- **国内** — 微信支付（扫下方二维码）
+- **海外** — PayPal: [paypal.me/yuhuahui](https://paypal.me/yuhuahui)
+
+<p align="center">
+  <img src=".github/sponsor/wechat-pay.jpg" alt="微信支付收款码" width="180"/>
+</p>
+
+</details>
