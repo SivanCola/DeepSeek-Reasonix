@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -18,15 +17,6 @@ import (
 	"reasonix/internal/provider"
 	"reasonix/internal/sandbox"
 )
-
-type captureTurnRunner struct {
-	inputs []string
-}
-
-func (r *captureTurnRunner) Run(_ context.Context, input string) error {
-	r.inputs = append(r.inputs, input)
-	return nil
-}
 
 func TestWithFreshSystemPromptReplacesExistingSystemMessage(t *testing.T) {
 	msgs := []provider.Message{
