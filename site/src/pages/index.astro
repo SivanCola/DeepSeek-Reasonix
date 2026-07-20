@@ -79,7 +79,32 @@ const ld = {
           <span class="install"><span class="ps1">$</span>npm i -g reasonix<button data-copy="npm i -g reasonix">Copy</button></span>
         </div>
       </div>
-      <div class="also reveal" style="--d:0.22s"><span class="l-en">Use VS Code? <a href="?download=vscode#start" data-goto="vscode">Install the Reasonix extension</a>. Prefer package managers? Use <a href="#start" data-goto="brew">Homebrew</a>. Need a local browser UI? Run <code>reasonix serve</code>. Integrating another editor? Start <code>reasonix acp</code> and read the <a href={`${base}/docs/#acp`}>ACP guide</a>.</span><span class="l-zh">使用 VS Code? <a href="?download=vscode#start" data-goto="vscode">安装 Reasonix 扩展</a>。偏好包管理器? 可用 <a href="#start" data-goto="brew">Homebrew</a>。需要本地浏览器 UI? 运行 <code>reasonix serve</code>。接入其他编辑器时启动 <code>reasonix acp</code>，并查看 <a href={`${base}/docs/#acp`}>ACP 指南</a>。</span></div>
+      <nav class="also reveal" style="--d:0.22s" aria-label="More ways to use Reasonix / 更多使用方式">
+        <span class="l-en also-row">
+          <strong class="also-label">More ways to use Reasonix:</strong>
+          <span class="also-links">
+            <a href="?download=vscode#start" data-goto="vscode">Editor extension</a>
+            <span class="also-sep" aria-hidden="true">·</span>
+            <a href="#start" data-goto="brew">Homebrew</a>
+            <span class="also-sep" aria-hidden="true">·</span>
+            <span>Local Web UI: <code>reasonix serve</code></span>
+            <span class="also-sep" aria-hidden="true">·</span>
+            <a href={`${base}/docs/#acp`}>ACP editor integration</a>
+          </span>
+        </span>
+        <span class="l-zh also-row">
+          <strong class="also-label">更多使用方式：</strong>
+          <span class="also-links">
+            <a href="?download=vscode#start" data-goto="vscode">编辑器扩展</a>
+            <span class="also-sep" aria-hidden="true">·</span>
+            <a href="#start" data-goto="brew">Homebrew</a>
+            <span class="also-sep" aria-hidden="true">·</span>
+            <span>本地 Web UI：<code>reasonix serve</code></span>
+            <span class="also-sep" aria-hidden="true">·</span>
+            <a href={`${base}/docs/#acp`}>ACP 编辑器接入</a>
+          </span>
+        </span>
+      </nav>
 
       <div class="term-stage reveal" style="--d:0.26s">
         <div class="fig"><span class="l-en">fig. 01 — a live session, cache still warm</span><span class="l-zh">图 01 —— 一场实时会话,缓存依然温热</span></div>

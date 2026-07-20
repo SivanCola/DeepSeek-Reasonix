@@ -10,6 +10,9 @@ test("homepage presents one VS Code extension through both registries", async ()
   assert.match(page, /data-pane="vscode"/);
   assert.match(page, /data-pane="desktop"[\s\S]*data-pane="npm"[\s\S]*data-pane="brew"[\s\S]*data-pane="vscode"/);
   assert.match(page, /Editor extension[\s\S]*编辑器扩展/);
+  assert.match(page, /More ways to use Reasonix:[\s\S]*更多使用方式：/);
+  assert.match(page, /Local Web UI:[\s\S]*reasonix serve[\s\S]*本地 Web UI：/);
+  assert.match(page, /ACP editor integration[\s\S]*ACP 编辑器接入/);
   assert.match(page, /SivanLiu\.reasonix-agent/);
   assert.match(page, /marketplace\.visualstudio\.com\/items\?itemName=SivanLiu\.reasonix-agent/);
   assert.match(page, /open-vsx\.org\/extension\/SivanLiu\/reasonix-agent/);
