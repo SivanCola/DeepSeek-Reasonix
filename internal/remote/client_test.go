@@ -300,7 +300,9 @@ func TestClientFallsBackFromStoredPassphraseToPerIdentityPrompt(t *testing.T) {
 		},
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	// This path performs three encrypted-key KDF/decrypt operations. Keep the
+	// hang guard comfortably above the repo-wide race job's CPU-contended cost.
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	if err := c.Start(ctx); err != nil {
 		t.Fatalf("Start with stored and per-identity passphrases: %v", err)
