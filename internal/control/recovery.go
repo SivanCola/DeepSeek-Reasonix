@@ -103,8 +103,9 @@ func (c *Controller) initRecoveryGate(enabled bool, reviewer recovery.Reviewer, 
 		Cancel: func() {
 			c.Cancel()
 		},
-		Persist: func(snap recovery.Snapshot) {
-			c.persistRecoverySnapshot(snap)
+		PersistenceKey: c.SessionPath,
+		Persist: func(path string, snap recovery.Snapshot) {
+			c.persistRecoverySnapshot(path, snap)
 		},
 		TaskSummary: func() string {
 			if c.executor == nil || c.executor.Session() == nil {
@@ -130,11 +131,10 @@ func (c *Controller) initRecoveryGate(enabled bool, reviewer recovery.Reviewer, 
 	c.executor.SetRecoveryGate(gate)
 }
 
-func (c *Controller) persistRecoverySnapshot(snap recovery.Snapshot) {
+func (c *Controller) persistRecoverySnapshot(path string, snap recovery.Snapshot) {
 	if c == nil {
 		return
 	}
-	path := c.SessionPath()
 	if strings.TrimSpace(path) == "" {
 		return
 	}
@@ -145,19 +145,55 @@ func (c *Controller) persistRecoverySnapshot(snap recovery.Snapshot) {
 
 // loadRecoveryState restores the recovery gate sidecar for a session path.
 func (c *Controller) loadRecoveryState(path string) {
-	if c == nil || strings.TrimSpace(path) == "" {
+	if c == nil {
+		return
+	}
+	c.approval.clearKind(recovery.ApprovalKindRecovery)
+	c.mu.Lock()
+	gate := c.recoveryGate
+	c.mu.Unlock()
+	if gate != nil {
+		snap := recovery.Snapshot{}
+		if strings.TrimSpace(path) != "" {
+			loaded, err := recovery.LoadSnapshot(path)
+			if err != nil {
+				slog.Warn("controller: load recovery snapshot", "err", err)
+			} else {
+				snap = loaded
+			}
+		}
+		// Missing, empty, or unreadable sidecars must still replace the old
+		// in-memory state; otherwise a session switch carries its checkpoint.
+		gate.Restore(snap)
+	}
+}
+
+// carryRecoveryState moves a tip branch onto a new session identity without
+// carrying live approval channels or one-shot grants across the boundary.
+func (c *Controller) carryRecoveryState(path string) {
+	if c == nil {
+		return
+	}
+	c.approval.clearKind(recovery.ApprovalKindRecovery)
+	c.mu.Lock()
+	gate := c.recoveryGate
+	c.mu.Unlock()
+	if gate == nil {
+		return
+	}
+	gate.Restore(gate.Snapshot())
+	c.saveRecoveryState(path)
+}
+
+func (c *Controller) flushRecoveryPersistence(path string) {
+	if c == nil {
 		return
 	}
 	c.mu.Lock()
 	gate := c.recoveryGate
 	c.mu.Unlock()
 	if gate != nil {
-		snap, err := recovery.LoadSnapshot(path)
-		if err != nil {
-			slog.Warn("controller: load recovery snapshot", "err", err)
-		} else if len(snap.Tasks) > 0 {
-			gate.Restore(snap)
-		}
+		gate.FlushPersistence(path)
 	}
 }
 
@@ -220,7 +256,7 @@ func (c *Controller) ReplayUnresolvedRecoveries() {
 		}
 		pending := *item.Pending
 		ev := recovery.ToEventApproval("", pending, &item.Failure)
-		id, reply := c.approval.registerDecisionKind(
+		id, _ := c.approval.registerDecisionKind(
 			pending.Tool,
 			recoveryFirstNonEmpty(pending.Subject, pending.Tool),
 			recoveryFirstNonEmpty(pending.Rationale, "recovery checkpoint"),
@@ -230,11 +266,6 @@ func (c *Controller) ReplayUnresolvedRecoveries() {
 		)
 		ev.ID = id
 		gate.BindApprovalID(item.TaskID, id)
-		// Keep the reply channel so ResolveRecovery can unblock a concurrent
-		// BeforeMutation waiter if one re-attaches; otherwise drain quietly.
-		go func(ch chan approvalReply) {
-			<-ch
-		}(reply)
 		c.sink.Emit(c.approvalRequestEvent(ev))
 	}
 }
@@ -259,6 +290,14 @@ func (c *Controller) emitRecoveryPrompt(ctx context.Context, taskID string, pend
 		ev.Recovery,
 	)
 	ev.ID = id
+	c.mu.Lock()
+	gate := c.recoveryGate
+	c.mu.Unlock()
+	if gate != nil {
+		// Bind before Emit: some sinks synchronously resolve the event from
+		// inside Emit, so binding afterwards loses that decision.
+		gate.BindApprovalID(taskID, id)
+	}
 	// Drain the ordinary approval reply when ResolveRecovery/Approve fires so
 	// the channel never leaks; the gate is the real waiter.
 	go func() {
@@ -275,10 +314,28 @@ func (c *Controller) emitRecoveryPrompt(ctx context.Context, taskID string, pend
 	if c.hooks != nil {
 		go c.hooks.Notification(ctx, "Recovery checkpoint: confirm the next change", "permission_prompt")
 	}
-	if c.recoveryGate != nil {
-		c.recoveryGate.BindApprovalID(taskID, id)
-	}
 	return id, nil
+}
+
+// loadRecoveryEnabled restores the per-session preference. Legacy metadata or
+// a missing field is deliberately false; config defaults only seed new files.
+func (c *Controller) loadRecoveryEnabled(path string) {
+	enabled := false
+	if strings.TrimSpace(path) != "" {
+		meta, ok, err := agent.LoadBranchMeta(path)
+		if err != nil {
+			slog.Warn("controller: load recovery preference", "err", err)
+		} else if ok && meta.RecoveryCheckpointEnabled != nil {
+			enabled = *meta.RecoveryCheckpointEnabled
+		}
+	}
+	c.mu.Lock()
+	c.recoveryEnabled = enabled
+	gate := c.recoveryGate
+	c.mu.Unlock()
+	if gate != nil {
+		gate.SetEnabled(enabled)
+	}
 }
 
 func (c *Controller) persistRecoveryEnabled(enabled bool) {
@@ -300,7 +357,7 @@ func (c *Controller) persistRecoveryEnabled(enabled bool) {
 	}
 	v := enabled
 	meta.RecoveryCheckpointEnabled = &v
-	_ = agent.SaveBranchMeta(path, meta)
+	_ = agent.SaveBranchMetaPreserveUpdated(path, meta)
 }
 
 func recoveryFirstNonEmpty(vals ...string) string {

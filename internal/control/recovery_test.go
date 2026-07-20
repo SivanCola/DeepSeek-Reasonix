@@ -3,6 +3,7 @@ package control
 import (
 	"context"
 	"encoding/json"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -12,6 +13,7 @@ import (
 	"reasonix/internal/event"
 	"reasonix/internal/permission"
 	"reasonix/internal/provider"
+	"reasonix/internal/recovery"
 	"reasonix/internal/tool"
 )
 
@@ -231,5 +233,169 @@ func TestRecoveryHeadlessBlocksInsteadOfWaiting(t *testing.T) {
 	}
 	if got := requestMessagesText(prov.requests[len(prov.requests)-1].Messages); !strings.Contains(got, "no decision channel") {
 		t.Fatalf("final provider request lacks structured blocker:\n%s", got)
+	}
+}
+
+func TestRecoveryPromptCanResolveSynchronouslyFromSink(t *testing.T) {
+	ag := agent.New(nil, tool.NewRegistry(), agent.NewSession("sys"), agent.Options{}, event.Discard)
+	var c *Controller
+	var resolveErr error
+	c = New(Options{
+		Runner: ag, Executor: ag,
+		Policy:                    permission.Policy{Mode: permission.Allow},
+		RecoveryCheckpointEnabled: true,
+		Sink: event.FuncSink(func(e event.Event) {
+			if e.Kind == event.ApprovalRequest && e.Approval.Kind == recovery.ApprovalKindRecovery {
+				resolveErr = c.ResolveRecovery(e.Approval.ID, agent.RecoveryActionContinue, "")
+			}
+		}),
+	})
+	c.SetToolApprovalMode(ToolApprovalAuto)
+	c.EnableInteractiveApproval()
+
+	c.mu.Lock()
+	gate := c.recoveryGate
+	c.mu.Unlock()
+	gate.ObserveResult(context.Background(), recovery.Observation{
+		Tool: "bash", Verification: true, Subject: "go test ./...",
+		Args: json.RawMessage(`{"command":"go test ./..."}`), ErrSummary: "fail",
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	dec, err := gate.BeforeMutation(ctx, recovery.Proposal{
+		Tool: "write_file", Subject: "a.go", Mutates: true, StrategyChanged: true,
+		Args: json.RawMessage(`{"path":"a.go","content":"fixed"}`),
+	})
+	if resolveErr != nil {
+		t.Fatalf("synchronous ResolveRecovery: %v", resolveErr)
+	}
+	if err != nil || !dec.Allow {
+		t.Fatalf("BeforeMutation = (%+v, %v), want synchronous continue", dec, err)
+	}
+	if st := gate.Snapshot().Tasks["root"]; st != nil && st.ApprovalID != "" {
+		t.Fatalf("resolved approval was re-created: %+v", st)
+	}
+}
+
+func TestSetSessionPathClearsRecoveryState(t *testing.T) {
+	dir := t.TempDir()
+	oldPath := filepath.Join(dir, "old.jsonl")
+	newPath := filepath.Join(dir, "new.jsonl")
+	ag := agent.New(nil, tool.NewRegistry(), agent.NewSession("sys"), agent.Options{}, event.Discard)
+	c := New(Options{
+		Runner: ag, Executor: ag, SessionDir: dir, SessionPath: oldPath,
+		RecoveryCheckpointEnabled: true,
+	})
+	c.SetToolApprovalMode(ToolApprovalAuto)
+	c.mu.Lock()
+	gate := c.recoveryGate
+	c.mu.Unlock()
+	gate.ObserveResult(context.Background(), recovery.Observation{
+		Tool: "bash", Verification: true,
+		Args: json.RawMessage(`{"command":"go test ./..."}`), ErrSummary: "fail",
+	})
+	if st := gate.Snapshot().Tasks["root"]; st == nil || st.Failure == nil {
+		t.Fatal("test setup did not arm recovery")
+	}
+
+	c.SetSessionPath(newPath)
+	if got := gate.Snapshot().Tasks; len(got) != 0 {
+		t.Fatalf("new session retained old recovery state: %+v", got)
+	}
+	// The async write scheduled above captured oldPath; it must not create a
+	// failing checkpoint beside the newly selected session.
+	deadline := time.Now().Add(time.Second)
+	oldPersisted := false
+	for {
+		oldSnap, err := recovery.LoadSnapshot(oldPath)
+		if err != nil {
+			t.Fatalf("LoadSnapshot(old): %v", err)
+		}
+		if len(oldSnap.Tasks) > 0 {
+			oldPersisted = true
+			break
+		}
+		if time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if !oldPersisted {
+		t.Fatal("old-session recovery snapshot was not persisted")
+	}
+	newSnap, err := recovery.LoadSnapshot(newPath)
+	if err != nil {
+		t.Fatalf("LoadSnapshot(new): %v", err)
+	}
+	if len(newSnap.Tasks) != 0 {
+		t.Fatalf("old recovery snapshot landed on new session: %+v", newSnap.Tasks)
+	}
+}
+
+func TestFreshSessionRotationsClearRecoveryState(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		rotate func(*Controller) error
+	}{
+		{name: "new", rotate: func(c *Controller) error { return c.NewSession() }},
+		{name: "clear", rotate: func(c *Controller) error { return c.ClearSession() }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "old.jsonl")
+			sess := agent.NewSession("sys")
+			sess.Add(provider.Message{Role: provider.RoleUser, Content: "hello"})
+			if err := sess.Save(path); err != nil {
+				t.Fatalf("Save session: %v", err)
+			}
+			ag := agent.New(nil, tool.NewRegistry(), sess, agent.Options{}, event.Discard)
+			c := New(Options{
+				Runner: ag, Executor: ag, SessionDir: dir, SessionPath: path,
+				RecoveryCheckpointEnabled: true,
+			})
+			c.SetToolApprovalMode(ToolApprovalAuto)
+			c.mu.Lock()
+			gate := c.recoveryGate
+			c.mu.Unlock()
+			gate.ObserveResult(context.Background(), recovery.Observation{
+				Tool: "bash", Verification: true,
+				Args: json.RawMessage(`{"command":"go test ./..."}`), ErrSummary: "fail",
+			})
+			if err := tc.rotate(c); err != nil {
+				t.Fatalf("rotate: %v", err)
+			}
+			if got := gate.Snapshot().Tasks; len(got) != 0 {
+				t.Fatalf("fresh session retained recovery state: %+v", got)
+			}
+			if c.SessionPath() == path {
+				t.Fatalf("session path did not rotate: %q", path)
+			}
+		})
+	}
+}
+
+func TestResumeLegacySessionDefaultsRecoveryDisabled(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "legacy.jsonl")
+	sess := agent.NewSession("sys")
+	sess.Add(provider.Message{Role: provider.RoleUser, Content: "hello"})
+	if err := sess.Save(path); err != nil {
+		t.Fatalf("Save legacy session: %v", err)
+	}
+	if err := agent.SaveBranchMeta(path, agent.BranchMeta{Name: "legacy"}); err != nil {
+		t.Fatalf("SaveBranchMeta: %v", err)
+	}
+	loaded, err := agent.LoadSession(path)
+	if err != nil {
+		t.Fatalf("LoadSession: %v", err)
+	}
+	ag := agent.New(nil, tool.NewRegistry(), agent.NewSession("sys"), agent.Options{}, event.Discard)
+	c := New(Options{
+		Runner: ag, Executor: ag, SessionDir: dir,
+		RecoveryCheckpointEnabled: true,
+	})
+	c.Resume(loaded, path)
+	if c.RecoveryCheckpointEnabled() {
+		t.Fatal("legacy session without metadata field resumed with recovery enabled")
 	}
 }

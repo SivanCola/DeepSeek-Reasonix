@@ -45,8 +45,12 @@ type Options struct {
 	// Headless, when true, never waits for a human: blocks the mutation with a
 	// structured blocker message instead.
 	Headless bool
+	// PersistenceKey is sampled synchronously when a state change is scheduled.
+	// Persist receives that captured key so an asynchronous write cannot follow
+	// a later session switch and land in the wrong sidecar.
+	PersistenceKey func() string
 	// Persist is invoked after meaningful state changes (optional).
-	Persist func(Snapshot)
+	Persist func(key string, snapshot Snapshot)
 }
 
 // Gate is the shared recovery state machine for one controller session.
@@ -66,7 +70,11 @@ type Gate struct {
 	// snapshot from overwriting the newer checkpoint.
 	persistMu   sync.Mutex
 	persistSeq  uint64
-	persistDone uint64
+	persistCond *sync.Cond
+	// persistPending and persistDone are tracked per session key so old and new
+	// sessions can drain independently without retaining keys after completion.
+	persistPending map[string]int
+	persistDone    map[string]uint64
 }
 
 type resolvePayload struct {
@@ -87,11 +95,14 @@ func NewGate(opts Options) *Gate {
 		opts.MaxDiagRepeats = 3
 	}
 	g := &Gate{
-		opts:    opts,
-		tasks:   map[string]*TaskState{},
-		waiters: map[string]chan resolvePayload{},
-		taskOf:  map[string]string{},
+		opts:           opts,
+		tasks:          map[string]*TaskState{},
+		waiters:        map[string]chan resolvePayload{},
+		taskOf:         map[string]string{},
+		persistPending: map[string]int{},
+		persistDone:    map[string]uint64{},
 	}
+	g.persistCond = sync.NewCond(&g.persistMu)
 	g.enabled.Store(opts.Enabled)
 	return g
 }
@@ -122,6 +133,20 @@ func (g *Gate) Metrics() Metrics {
 	return g.metrics
 }
 
+// FlushPersistence waits until every snapshot already scheduled for key has
+// finished. Session destruction uses this before removing sidecars so a late
+// asynchronous write cannot resurrect an artifact that was just deleted.
+func (g *Gate) FlushPersistence(key string) {
+	if g == nil || g.opts.Persist == nil {
+		return
+	}
+	g.persistMu.Lock()
+	for g.persistPending[key] > 0 {
+		g.persistCond.Wait()
+	}
+	g.persistMu.Unlock()
+}
+
 // Snapshot returns a copy of task state for persistence.
 func (g *Gate) Snapshot() Snapshot {
 	if g == nil {
@@ -150,6 +175,8 @@ func (g *Gate) Restore(snap Snapshot) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	g.tasks = map[string]*TaskState{}
+	g.waiters = map[string]chan resolvePayload{}
+	g.taskOf = map[string]string{}
 	for id, st := range snap.Tasks {
 		if st == nil {
 			continue
@@ -611,17 +638,25 @@ func (g *Gate) BeforeMutation(ctx context.Context, proposal Proposal) (Decision,
 	}
 
 	g.mu.Lock()
-	delete(g.waiters, provisional)
-	delete(g.taskOf, provisional)
-	// If Resolve already re-keyed via BindApprovalID, keep the live waiter.
-	if existing, ok := g.waiters[approvalID]; ok && existing != nil {
+	// EmitPrompt implementations may bind the real id before emitting, which
+	// lets a synchronous frontend resolve the card before EmitPrompt returns.
+	// Only re-key a waiter that is still provisional; if both mappings are gone,
+	// Resolve already completed and its buffered payload is waiting on reply.
+	if provisionalReply, ok := g.waiters[provisional]; ok && provisionalReply != nil {
+		delete(g.waiters, provisional)
+		delete(g.taskOf, provisional)
+		if existing, exists := g.waiters[approvalID]; exists && existing != nil {
+			reply = existing
+		} else {
+			reply = provisionalReply
+			g.waiters[approvalID] = reply
+			g.taskOf[approvalID] = taskID
+			st = g.taskLocked(taskID)
+			st.ApprovalID = approvalID
+		}
+	} else if existing, ok := g.waiters[approvalID]; ok && existing != nil {
 		reply = existing
-	} else {
-		g.waiters[approvalID] = reply
 	}
-	st = g.taskLocked(taskID)
-	st.ApprovalID = approvalID
-	g.taskOf[approvalID] = taskID
 	g.mu.Unlock()
 	g.persist()
 
@@ -745,18 +780,31 @@ func (g *Gate) schedulePersist(snap Snapshot, async bool) {
 	if g == nil || g.opts.Persist == nil {
 		return
 	}
+	key := ""
+	if g.opts.PersistenceKey != nil {
+		key = g.opts.PersistenceKey()
+	}
 	g.persistMu.Lock()
 	g.persistSeq++
 	seq := g.persistSeq
+	g.persistPending[key]++
 	g.persistMu.Unlock()
 	write := func() {
 		g.persistMu.Lock()
 		defer g.persistMu.Unlock()
-		if seq < g.persistDone {
+		defer func() {
+			g.persistPending[key]--
+			if g.persistPending[key] == 0 {
+				delete(g.persistPending, key)
+				delete(g.persistDone, key)
+				g.persistCond.Broadcast()
+			}
+		}()
+		if seq < g.persistDone[key] {
 			return
 		}
-		g.opts.Persist(snap)
-		g.persistDone = seq
+		g.opts.Persist(key, snap)
+		g.persistDone[key] = seq
 	}
 	if async {
 		go write()

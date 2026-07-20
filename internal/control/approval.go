@@ -357,6 +357,19 @@ func (a *approvalManager) clearAll() {
 	clear(a.asks)
 }
 
+// clearKind drops pending approvals of one specialized kind. Session recovery
+// state uses this during rotations so a card from the previous session cannot
+// be answered against the newly active one.
+func (a *approvalManager) clearKind(kind string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	for id, pending := range a.approvals {
+		if pending.kind == kind {
+			delete(a.approvals, id)
+		}
+	}
+}
+
 // hasPending reports whether any prompt is awaiting a user decision.
 func (a *approvalManager) hasPending() bool {
 	a.mu.Lock()

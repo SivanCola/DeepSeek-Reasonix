@@ -47,7 +47,7 @@ func TestQualifyingFailureReturnsGuidanceAndPersistsArmedState(t *testing.T) {
 	persisted := make(chan Snapshot, 1)
 	g := NewGate(Options{
 		Enabled: true,
-		Persist: func(s Snapshot) { persisted <- s },
+		Persist: func(_ string, s Snapshot) { persisted <- s },
 	})
 	guidance := g.ObserveResult(context.Background(), Observation{
 		Tool: "bash", Subject: "go test ./...", Verification: true,
@@ -65,6 +65,31 @@ func TestQualifyingFailureReturnsGuidanceAndPersistsArmedState(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("armed recovery state was not persisted")
+	}
+}
+
+func TestAsyncPersistenceCapturesKeyWhenScheduled(t *testing.T) {
+	key := "old-session"
+	written := make(chan string, 1)
+	g := NewGate(Options{
+		Enabled:        true,
+		PersistenceKey: func() string { return key },
+		Persist: func(captured string, _ Snapshot) {
+			written <- captured
+		},
+	})
+	g.ObserveResult(context.Background(), Observation{
+		Tool: "bash", Verification: true,
+		Args: json.RawMessage(`{"command":"go test ./..."}`), ErrSummary: "fail",
+	})
+	key = "new-session"
+	select {
+	case got := <-written:
+		if got != "old-session" {
+			t.Fatalf("persistence key = %q, want captured old session", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("recovery persistence did not run")
 	}
 }
 
@@ -191,6 +216,38 @@ func TestHighRiskForcesConfirm(t *testing.T) {
 	}
 	if got.ChangeKind != ChangeRisk && got.ChangeKind != ChangeStrategy {
 		t.Fatalf("change_kind = %q", got.ChangeKind)
+	}
+}
+
+func TestDeleteMutationsForceHumanConfirmationBeforeReviewer(t *testing.T) {
+	for _, tool := range []string{"delete_range", "delete_symbol"} {
+		t.Run(tool, func(t *testing.T) {
+			var reviews atomic.Int32
+			g := NewGate(Options{
+				Enabled:  true,
+				Headless: true,
+				Reviewer: reviewerFunc(func(context.Context, *FailureEvent, []string, Proposal, string) (ReviewVerdict, error) {
+					reviews.Add(1)
+					return ReviewVerdict{Outcome: ReviewContinue, ChangeKind: ChangeSameStrategy}, nil
+				}),
+			})
+			args := json.RawMessage(`{"path":"a.go"}`)
+			g.ObserveResult(context.Background(), Observation{
+				Tool: tool, Subject: "a.go", Mutates: true, Args: args, ErrSummary: "fail",
+			})
+			dec, err := g.BeforeMutation(context.Background(), Proposal{
+				Tool: tool, Subject: "a.go", Mutates: true, Args: args,
+			})
+			if err != nil {
+				t.Fatalf("BeforeMutation: %v", err)
+			}
+			if dec.Allow || !dec.Blocked {
+				t.Fatalf("delete mutation = %+v, want human-confirmation blocker", dec)
+			}
+			if got := reviews.Load(); got != 0 {
+				t.Fatalf("reviewer calls = %d, want deterministic high-risk rule", got)
+			}
+		})
 	}
 }
 
@@ -497,6 +554,12 @@ type staticReviewer struct{ v ReviewVerdict }
 
 func (s staticReviewer) Review(context.Context, *FailureEvent, []string, Proposal, string) (ReviewVerdict, error) {
 	return s.v, nil
+}
+
+type reviewerFunc func(context.Context, *FailureEvent, []string, Proposal, string) (ReviewVerdict, error)
+
+func (f reviewerFunc) Review(ctx context.Context, failure *FailureEvent, diagnosis []string, proposal Proposal, taskSummary string) (ReviewVerdict, error) {
+	return f(ctx, failure, diagnosis, proposal, taskSummary)
 }
 
 type capturingReviewer struct {

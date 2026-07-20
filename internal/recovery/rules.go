@@ -75,7 +75,7 @@ func IsHighRiskMutation(proposal Proposal) bool {
 	}
 	tool := strings.TrimSpace(proposal.Tool)
 	switch tool {
-	case "move_file":
+	case "move_file", "delete_range", "delete_symbol":
 		return true
 	}
 	if strings.HasPrefix(tool, "mcp__") || strings.Contains(tool, "mcp") {

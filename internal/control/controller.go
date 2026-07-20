@@ -2677,7 +2677,9 @@ func (c *Controller) NewSession() error {
 		c.guardianSess.Reset()
 	}
 	c.ResetPlannerSession()
-	c.rebindCheckpoints(c.SessionPath())
+	freshPath := c.SessionPath()
+	c.rebindCheckpoints(freshPath)
+	c.loadRecoveryState(freshPath)
 	c.snapshotMu.Unlock()
 	// A new session starts with no active goal: without this, a running goal's
 	// text kept injecting into the fresh session's first turns. The old
@@ -2718,6 +2720,11 @@ func (c *Controller) ClearSession() error {
 			return err
 		}
 	}
+	// Retire the old recovery state before deleting its artifacts. Async gate
+	// snapshots are path-bound, so wait for every already-scheduled old-path
+	// write; otherwise one can recreate the sidecar after removeSessionArtifacts.
+	c.loadRecoveryState("")
+	c.flushRecoveryPersistence(oldPath)
 	// Hold snapshotMu from artifact removal through the swap: a save slipping
 	// in between would resurrect the just-removed transcript, and one that
 	// overlapped the swap could pair the old path with the fresh session.
@@ -2744,7 +2751,9 @@ func (c *Controller) ClearSession() error {
 		c.guardianSess.Reset()
 	}
 	c.ResetPlannerSession()
-	c.rebindCheckpoints(c.SessionPath())
+	freshPath := c.SessionPath()
+	c.rebindCheckpoints(freshPath)
+	c.loadRecoveryState(freshPath)
 	c.snapshotMu.Unlock()
 	// Same contract as NewSession: the fresh session starts with no active goal.
 	c.ClearGoal()
@@ -2967,15 +2976,17 @@ func (c *Controller) forkNamed(turn int, name string, switchToFork bool) (string
 	if err := sess.Save(newPath); err != nil {
 		return "", c.rewindFail(err)
 	}
+	recoveryEnabled := c.RecoveryCheckpointEnabled()
 	forkPreview, forkTurns := agent.SessionPreviewFromMessages(forked)
 	if err := agent.SaveBranchMeta(newPath, agent.BranchMeta{
-		Name:             strings.TrimSpace(name),
-		ParentID:         parentID,
-		ForkTurn:         turn,
-		ForkMessageIndex: boundary,
-		Preview:          forkPreview,
-		Turns:            forkTurns,
-		SchemaVersion:    agent.BranchMetaCountsVersion,
+		Name:                      strings.TrimSpace(name),
+		ParentID:                  parentID,
+		ForkTurn:                  turn,
+		ForkMessageIndex:          boundary,
+		Preview:                   forkPreview,
+		Turns:                     forkTurns,
+		SchemaVersion:             agent.BranchMetaCountsVersion,
+		RecoveryCheckpointEnabled: &recoveryEnabled,
 	}); err != nil {
 		return "", c.rewindFail(err)
 	}
@@ -2990,6 +3001,9 @@ func (c *Controller) forkNamed(turn int, name string, switchToFork bool) (string
 		c.mu.Unlock()
 		c.setActiveJobSession(newPath)
 		c.rebindCheckpoints(newPath)
+		// A historical fork rewinds before later failures, so it starts with no
+		// active recovery event even though it inherits the session preference.
+		c.loadRecoveryState(newPath)
 		if c.guardianSess != nil {
 			c.guardianSess.Reset()
 		}
@@ -3047,15 +3061,17 @@ func (c *Controller) Branch(name string) (string, error) {
 	if err := sess.Save(newPath); err != nil {
 		return "", c.rewindFail(err)
 	}
+	recoveryEnabled := c.RecoveryCheckpointEnabled()
 	branchPreview, branchTurns := agent.SessionPreviewFromMessages(branched)
 	if err := agent.SaveBranchMeta(newPath, agent.BranchMeta{
-		Name:             strings.TrimSpace(name),
-		ParentID:         parentID,
-		ForkTurn:         -1,
-		ForkMessageIndex: len(branched),
-		Preview:          branchPreview,
-		Turns:            branchTurns,
-		SchemaVersion:    agent.BranchMetaCountsVersion,
+		Name:                      strings.TrimSpace(name),
+		ParentID:                  parentID,
+		ForkTurn:                  -1,
+		ForkMessageIndex:          len(branched),
+		Preview:                   branchPreview,
+		Turns:                     branchTurns,
+		SchemaVersion:             agent.BranchMetaCountsVersion,
+		RecoveryCheckpointEnabled: &recoveryEnabled,
 	}); err != nil {
 		return "", c.rewindFail(err)
 	}
@@ -3072,6 +3088,7 @@ func (c *Controller) Branch(name string) (string, error) {
 	if c.guardianSess != nil {
 		c.guardianSess.Reset()
 	}
+	c.carryRecoveryState(newPath)
 	c.snapshotMu.Unlock()
 	c.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo,
 		Text: fmt.Sprintf("created branch %s", agent.BranchID(newPath))})
@@ -3132,6 +3149,7 @@ func (c *Controller) SwitchBranch(ref string) (agent.BranchInfo, error) {
 	c.rebindCheckpoints(match.Path)
 	c.restoreTerminalGoalTodos(match.Path)
 	c.loadGuardianSession()
+	c.loadRecoveryEnabled(match.Path)
 	c.loadRecoveryState(match.Path)
 	c.snapshotMu.Unlock()
 	c.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo,
@@ -3256,6 +3274,7 @@ func (c *Controller) Resume(s *agent.Session, path string) {
 	}
 	c.restoreTerminalGoalTodos(path)
 	c.loadGuardianSession()
+	c.loadRecoveryEnabled(path)
 	c.loadRecoveryState(path)
 	c.snapshotMu.Unlock()
 	c.recoverInterruptedTurn(path)
@@ -3487,6 +3506,9 @@ func (c *Controller) snapshot(markActivity, forceRewrite, shutdownRecovery bool)
 	}
 	// Persist recovery gate state so unresolved checkpoints survive restart.
 	c.saveRecoveryState(path)
+	// New metadata always records an explicit preference, while a resumed
+	// legacy session is normalized to its compatibility default on next save.
+	c.persistRecoveryEnabled(c.RecoveryCheckpointEnabled())
 	// Record the listing-only sidecar fields (model, preview, user-turn count)
 	// straight from the in-memory conversation, so the sidebar and resume picker
 	// never have to decode the whole .jsonl just to show them. markActivity bumps
@@ -3638,6 +3660,8 @@ func (c *Controller) recoverSnapshotConflict(path string, saveErr error, forceRe
 	if c.sessionRecoveryMeta != nil {
 		meta = c.sessionRecoveryMeta(req)
 	}
+	recoveryEnabled := c.RecoveryCheckpointEnabled()
+	meta.RecoveryCheckpointEnabled = &recoveryEnabled
 	info, err := c.executor.Session().SaveRecoveryBranch(agent.RecoveryBranchOptions{
 		OriginalPath: path,
 		Reason:       reason,
@@ -3697,6 +3721,8 @@ func (c *Controller) recoverShutdownSnapshot(path string, saveErr error) (string
 	if c.sessionRecoveryMeta != nil {
 		meta = c.sessionRecoveryMeta(req)
 	}
+	recoveryEnabled := c.RecoveryCheckpointEnabled()
+	meta.RecoveryCheckpointEnabled = &recoveryEnabled
 	info, err := c.executor.Session().SaveShutdownRecoveryBranch(agent.RecoveryBranchOptions{
 		OriginalPath: path,
 		Reason:       reason,
@@ -4276,6 +4302,7 @@ func (c *Controller) SetSessionPath(p string) {
 	c.mu.Unlock()
 	c.setActiveJobSession(p)
 	c.rebindCheckpoints(p)
+	c.loadRecoveryState(p)
 }
 
 // SessionDestroyHandle separates waiting for cancelled jobs from ending the
