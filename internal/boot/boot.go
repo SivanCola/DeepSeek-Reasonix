@@ -1653,8 +1653,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		if recoveryModel != "" {
 			if re, ok := cfg.ResolveModel(recoveryModel); ok {
 				if rProv, err := NewProviderWithProxy(re, proxySpec); err == nil {
-					temp := cfg.Agent.RecoveryTemperature
-					ctrlOpts.RecoveryReviewer = recovery.NewSession(rProv, recoveryModel, temp, re.Price)
+					ctrlOpts.RecoveryReviewer = recovery.NewSession(rProv, re.Price)
 				} else {
 					slog.Warn("recovery reviewer provider construction failed — rule-only recovery", "model", recoveryModel, "err", err)
 				}

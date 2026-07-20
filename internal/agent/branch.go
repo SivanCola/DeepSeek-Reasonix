@@ -34,9 +34,8 @@ type BranchMeta struct {
 	TokenMode        string    `json:"token_mode,omitempty"`
 	Mode             string    `json:"mode,omitempty"`
 	ToolApprovalMode string    `json:"tool_approval_mode,omitempty"`
-	// RecoveryCheckpointEnabled records whether Auto-mode failure recovery is
-	// armed for this session. nil means the field was absent (pre-upgrade
-	// sessions): treat as false. New sessions write an explicit true/false.
+	// RecoveryCheckpointEnabled records whether Auto Guard is armed for this
+	// session. nil defaults on; explicit legacy true/false remains honored.
 	RecoveryCheckpointEnabled *bool  `json:"recovery_checkpoint_enabled,omitempty"`
 	Goal                      string `json:"goal,omitempty"`
 	Recovered                 bool   `json:"recovered,omitempty"`

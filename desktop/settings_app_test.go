@@ -1024,8 +1024,8 @@ func TestSetDefaultAutoRecoveryCheckpointPersistsAndUpdatesNewSessions(t *testin
 		t.Fatal("new session did not observe the updated recovery default")
 	}
 	cfg := config.LoadForEdit(config.UserConfigPath())
-	if cfg.Desktop.DefaultAutoRecoveryCheckpoint == nil || *cfg.Desktop.DefaultAutoRecoveryCheckpoint {
-		t.Fatalf("desktop.default_auto_recovery_checkpoint = %+v, want false", cfg.Desktop.DefaultAutoRecoveryCheckpoint)
+	if cfg.Desktop.DefaultAutoRecoveryCheckpoint != nil || cfg.Agent.AutoRecoveryCheckpoint != "off" {
+		t.Fatalf("Auto Guard config was not consolidated: desktop=%+v agent=%q", cfg.Desktop.DefaultAutoRecoveryCheckpoint, cfg.Agent.AutoRecoveryCheckpoint)
 	}
 	project := t.TempDir()
 	if err := os.WriteFile(filepath.Join(project, "reasonix.toml"), []byte("[desktop]\ndefault_auto_recovery_checkpoint = true\n"), 0o644); err != nil {

@@ -1124,11 +1124,33 @@ func TestRecoverySettingsRoundTripThroughUserSave(t *testing.T) {
 		t.Fatalf("SaveTo: %v", err)
 	}
 	got := LoadForEdit(path)
-	if got.Desktop.DefaultAutoRecoveryCheckpoint == nil || *got.Desktop.DefaultAutoRecoveryCheckpoint {
-		t.Fatalf("desktop.default_auto_recovery_checkpoint = %+v, want false", got.Desktop.DefaultAutoRecoveryCheckpoint)
+	if got.Desktop.DefaultAutoRecoveryCheckpoint != nil {
+		t.Fatalf("legacy desktop.default_auto_recovery_checkpoint survived migration: %+v", got.Desktop.DefaultAutoRecoveryCheckpoint)
 	}
-	if got.Agent.AutoRecoveryCheckpoint != "off" || got.Agent.RecoveryModel != "deepseek-pro" || got.Agent.RecoveryTemperature != 0.25 {
+	if got.Agent.AutoRecoveryCheckpoint != "off" || got.Agent.RecoveryModel != "deepseek-pro" || got.Agent.RecoveryTemperature != 0 {
 		t.Fatalf("agent recovery settings not preserved: %+v", got.Agent)
+	}
+}
+
+func TestLegacyDesktopAutoGuardDefaultMigratesToUnifiedSwitch(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "reasonix.toml")
+	if err := os.WriteFile(path, []byte("[desktop]\ndefault_auto_recovery_checkpoint = false\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c := LoadForEdit(path)
+	if c.Desktop.DefaultAutoRecoveryCheckpoint != nil || c.Agent.AutoRecoveryCheckpoint != "off" {
+		t.Fatalf("legacy Auto Guard config not migrated: desktop=%+v agent=%q", c.Desktop.DefaultAutoRecoveryCheckpoint, c.Agent.AutoRecoveryCheckpoint)
+	}
+	if err := c.SaveTo(path); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(raw)
+	if strings.Contains(text, "default_auto_recovery_checkpoint") || !strings.Contains(text, `auto_recovery_checkpoint = "off"`) {
+		t.Fatalf("migrated config was not consolidated:\n%s", text)
 	}
 }
 

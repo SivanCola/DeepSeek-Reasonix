@@ -74,15 +74,10 @@ func IsHighRiskMutation(proposal Proposal) bool {
 		return true
 	}
 	tool := strings.TrimSpace(proposal.Tool)
-	switch tool {
-	case "move_file", "delete_range", "delete_symbol":
-		return true
-	}
 	if strings.HasPrefix(tool, "mcp__") || strings.Contains(tool, "mcp") {
-		// MCP mutations are treated as elevated risk for recovery.
-		if proposal.Mutates {
-			return true
-		}
+		// MCP already has a richer policy/destructive-hint gate. Duplicating that
+		// prompt here would create two human decisions for one call.
+		return false
 	}
 	if tool == "bash" {
 		cmd := commandFromArgs(proposal.Args)

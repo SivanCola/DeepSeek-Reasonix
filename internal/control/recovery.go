@@ -10,8 +10,8 @@ import (
 	"reasonix/internal/recovery"
 )
 
-// SetRecoveryCheckpointEnabled arms or disarms the Auto-mode failure recovery
-// checkpoint for this session. The preference is retained under Ask/YOLO but
+// SetRecoveryCheckpointEnabled arms or disarms Auto Guard for compatibility.
+// The preference is retained under Ask/YOLO but
 // only takes effect while the tool approval mode is Auto.
 func (c *Controller) SetRecoveryCheckpointEnabled(enabled bool) {
 	if c == nil {
@@ -50,8 +50,8 @@ func (c *Controller) RecoveryCheckpointEnabled() bool {
 	return c.recoveryEnabled
 }
 
-// ResolveRecovery applies a user decision on a recovery confirmation card.
-// action is continue|revise|stop. For revise, feedback is returned in the
+// ResolveRecovery applies a user decision on an Auto Guard card.
+// action is continue|revise. For revise, feedback is returned in the
 // blocked tool result so the same agent sees it exactly once before retrying.
 func (c *Controller) ResolveRecovery(id string, action agent.RecoveryAction, feedback string) error {
 	if c == nil {
@@ -62,7 +62,7 @@ func (c *Controller) ResolveRecovery(id string, action agent.RecoveryAction, fee
 		return fmt.Errorf("empty recovery approval id")
 	}
 	switch action {
-	case agent.RecoveryActionContinue, agent.RecoveryActionRevise, agent.RecoveryActionStop:
+	case agent.RecoveryActionContinue, agent.RecoveryActionRevise:
 	default:
 		// Accept plain strings from wire clients.
 		switch strings.ToLower(strings.TrimSpace(string(action))) {
@@ -71,7 +71,12 @@ func (c *Controller) ResolveRecovery(id string, action agent.RecoveryAction, fee
 		case "revise":
 			action = agent.RecoveryActionRevise
 		case "stop":
-			action = agent.RecoveryActionStop
+			// Compatibility for older clients: cancel this proposed mutation.
+			// Whole-task cancellation remains on the app's ordinary Stop control.
+			action = agent.RecoveryActionRevise
+			if strings.TrimSpace(feedback) == "" {
+				feedback = "cancel this proposed action"
+			}
 		default:
 			return fmt.Errorf("unknown recovery action %q", action)
 		}
@@ -93,7 +98,7 @@ func (c *Controller) ResolveRecovery(id string, action agent.RecoveryAction, fee
 	gate := c.recoveryGate
 	c.mu.Unlock()
 	if gate == nil {
-		return fmt.Errorf("recovery checkpoint is not active")
+		return fmt.Errorf("Auto Guard is not active")
 	}
 	return gate.Resolve(id, recovery.Action(action), feedback)
 }
@@ -110,11 +115,8 @@ func (c *Controller) initRecoveryGate(enabled bool, reviewer recovery.Reviewer, 
 		Mode: func() string {
 			return c.ToolApprovalMode()
 		},
-		EmitPrompt: c.emitRecoveryPrompt,
-		Reviewer:   reviewer,
-		Cancel: func() {
-			c.Cancel()
-		},
+		EmitPrompt:     c.emitRecoveryPrompt,
+		Reviewer:       reviewer,
 		PersistenceKey: c.SessionPath,
 		Persist: func(path string, snap recovery.Snapshot) {
 			c.persistRecoverySnapshot(path, snap)
@@ -260,45 +262,11 @@ func (c *Controller) RecoveryMetrics() recovery.Metrics {
 	return gate.Metrics()
 }
 
-// ReplayUnresolvedRecoveries re-emits recovery cards for active failures that
-// still have a pending proposal (e.g. after a frontend reconnect). Live waiters
-// remain owned by BeforeMutation; this only restores the UI card via the same
-// ApprovalRequest infrastructure as ordinary pending prompts.
+// ReplayUnresolvedRecoveries is retained for frontend/API compatibility.
+// Live prompts are replayed by the ordinary approval manager. After process
+// death, the next proposed action is classified again instead of replaying a
+// stale one-call authorization.
 func (c *Controller) ReplayUnresolvedRecoveries() {
-	if c == nil {
-		return
-	}
-	c.mu.Lock()
-	gate := c.recoveryGate
-	c.mu.Unlock()
-	if gate == nil || !gate.Enabled() || c.ToolApprovalMode() != ToolApprovalAuto {
-		return
-	}
-	// Prefer ordinary ReplayPendingPrompts when the approval manager still has
-	// the live prompt (in-process reconnect). Only synthesize cards for
-	// restored failures that still carry a pending proposal and have no live id.
-	for _, item := range gate.UnresolvedForReplay() {
-		if item.Pending == nil || strings.TrimSpace(item.Pending.Fingerprint) == "" {
-			continue
-		}
-		// Skip if a live approval is already pending for this recovery.
-		if c.approval.hasPending() {
-			continue
-		}
-		pending := *item.Pending
-		ev := recovery.ToEventApproval("", pending, &item.Failure)
-		id, _ := c.approval.registerDecisionKind(
-			pending.Tool,
-			recoveryFirstNonEmpty(pending.Subject, pending.Tool),
-			recoveryFirstNonEmpty(pending.Rationale, "recovery checkpoint"),
-			true,
-			recovery.ApprovalKindRecovery,
-			ev.Recovery,
-		)
-		ev.ID = id
-		gate.BindApprovalID(item.TaskID, id)
-		c.sink.Emit(c.approvalRequestEvent(ev))
-	}
 }
 
 func (c *Controller) emitRecoveryPrompt(ctx context.Context, taskID string, pending recovery.PendingProposal, failure *recovery.FailureEvent) (string, error) {
@@ -315,7 +283,7 @@ func (c *Controller) emitRecoveryPrompt(ctx context.Context, taskID string, pend
 	id, reply := c.approval.registerDecisionKind(
 		pending.Tool,
 		recoveryFirstNonEmpty(pending.Subject, pending.Tool),
-		recoveryFirstNonEmpty(pending.Rationale, "recovery checkpoint"),
+		recoveryFirstNonEmpty(pending.Rationale, "Auto Guard"),
 		true,
 		recovery.ApprovalKindRecovery,
 		ev.Recovery,
@@ -343,15 +311,16 @@ func (c *Controller) emitRecoveryPrompt(ctx context.Context, taskID string, pend
 	c.approval.promptMu.Unlock()
 
 	if c.hooks != nil {
-		go c.hooks.Notification(ctx, "Recovery checkpoint: confirm the next change", "permission_prompt")
+		go c.hooks.Notification(ctx, "Auto Guard: confirm the next action", "permission_prompt")
 	}
 	return id, nil
 }
 
-// loadRecoveryEnabled restores the per-session preference. Legacy metadata or
-// a missing field is deliberately false; config defaults only seed new files.
+// loadRecoveryEnabled restores the per-session preference. Missing metadata
+// enables Auto Guard because it is built into Auto; explicit legacy opt-outs
+// remain honored.
 func (c *Controller) loadRecoveryEnabled(path string) {
-	enabled := false
+	enabled := true
 	if strings.TrimSpace(path) != "" {
 		meta, ok, err := agent.LoadBranchMeta(path)
 		if err != nil {

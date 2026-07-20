@@ -17,7 +17,6 @@ theme = "auto"   # auto|dark|light; controls CLI colors only; REASONIX_THEME can
 layout_style = "classic"   # classic|workbench|creation; desktop layout style
 # theme = "auto"   # desktop only: auto|dark|light
 # theme_style = "graphite"   # graphite|aurora|slate|carbon|nocturne|amber and legacy aliases
-# default_auto_recovery_checkpoint = true   # new-session default for Auto-mode failure recovery confirm
 
 [notifications]
 enabled = false   # system notifications for CLI and desktop turns; default off
@@ -29,9 +28,8 @@ ask_request = true   # notify when a question is waiting
 # system_prompt = "You are ..."   # custom persona/prompt; unset or empty = built-in default
 # system_prompt_file = "prompts/system.md"   # overrides system_prompt when set
 temperature       = 0.0
-# auto_recovery_checkpoint = "on"   # on|off; new sessions default on; missing session field = off
-# recovery_model = ""               # optional dedicated recovery reviewer; falls back to guardian_model then main model
-# recovery_temperature = 0
+# auto_recovery_checkpoint = "on"   # advanced Auto Guard kill switch; on|off
+# recovery_model = ""               # optional dedicated Auto Guard reviewer; falls back to guardian_model then main model
 # reasoning_language = "auto"   # visible reasoning text: auto|zh|en
 # plan_mode_allowed_tools = ["mcp__legacy__reader"]   # legacy MCP read-only trust alias; does not change Plan availability
 # plan_mode_read_only_commands = ["gh issue view"]   # legacy compatibility only; Plan bash uses Permissions

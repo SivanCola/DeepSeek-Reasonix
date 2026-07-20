@@ -497,7 +497,6 @@ export function Composer({
   running,
   collaborationMode,
   toolApprovalMode,
-  recoveryCheckpointEnabled = true,
   tokenMode,
   goal,
   cwd,
@@ -512,7 +511,6 @@ export function Composer({
   onSetMode,
   onSetCollaborationMode,
   onSetToolApprovalMode,
-  onSetRecoveryCheckpointEnabled,
   onToggleYoloApprovalMode,
   onClearGoal,
   onSwitchModel,
@@ -552,7 +550,6 @@ export function Composer({
   running: boolean;
   collaborationMode: CollaborationMode;
   toolApprovalMode: ToolApprovalMode;
-  recoveryCheckpointEnabled?: boolean;
   tokenMode: TokenMode;
   goal?: string;
   cwd?: string;
@@ -570,7 +567,6 @@ export function Composer({
   onSetMode: (mode: Mode) => void;
   onSetCollaborationMode: (mode: CollaborationMode) => void;
   onSetToolApprovalMode: (mode: ToolApprovalMode) => void;
-  onSetRecoveryCheckpointEnabled?: (enabled: boolean) => void;
   onToggleYoloApprovalMode: () => void;
   onClearGoal: () => void;
   onSwitchModel: (name: string) => void;
@@ -3778,34 +3774,20 @@ export function Composer({
                   <ShieldCheck size={14} />
                   <span>{t("composer.modeNormal")}</span>
                 </button>
-                <button
-                  type="button"
-                  className={`composer-modebar__item composer-modebar__item--yolo${toolApprovalMode === "yolo" ? " composer-modebar__item--active" : ""}`}
-                  onClick={() => chooseApprovalMode("yolo")}
-                  disabled={approvalBarDisabled}
-                  aria-pressed={toolApprovalMode === "yolo"}
-                  title={t("composer.accessYoloTitle")}
-                >
-                  <ShieldAlert size={14} />
-                  <span>{t("composer.modeYolo")}</span>
-                </button>
+                {toolApprovalMode === "yolo" && (
+                  <button
+                    type="button"
+                    className="composer-modebar__item composer-modebar__item--yolo composer-modebar__item--active"
+                    onClick={() => chooseApprovalMode("auto")}
+                    disabled={approvalBarDisabled}
+                    aria-pressed="true"
+                    title={t("composer.accessYoloTitle")}
+                  >
+                    <ShieldAlert size={14} />
+                    <span>{t("composer.modeYolo")}</span>
+                  </button>
+                )}
               </div>
-              {onSetRecoveryCheckpointEnabled && (
-                <button
-                  type="button"
-                  className={`composer-recovery-toggle${recoveryCheckpointEnabled ? " composer-recovery-toggle--on" : ""}${toolApprovalMode !== "auto" ? " composer-recovery-toggle--inactive" : ""}`}
-                  onClick={() => onSetRecoveryCheckpointEnabled(!recoveryCheckpointEnabled)}
-                  disabled={approvalBarDisabled}
-                  aria-pressed={recoveryCheckpointEnabled}
-                  title={
-                    toolApprovalMode === "auto"
-                      ? t("approval.recoveryToggleHint")
-                      : t("approval.recoveryToggleInactive")
-                  }
-                >
-                  <span>{t("approval.recoveryToggle")}</span>
-                </button>
-              )}
             </div>
             <span className="composer-meta__divider" aria-hidden="true" />
             <div className="composer-meta__control composer-meta__control--model">

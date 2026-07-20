@@ -274,8 +274,7 @@ type SettingsView struct {
 	StatusBarStyle          string               `json:"statusBarStyle"`
 	StatusBarItems          []string             `json:"statusBarItems"`
 	DefaultToolApprovalMode string               `json:"defaultToolApprovalMode"`
-	// DefaultAutoRecoveryCheckpoint is the new-session default for Auto-mode
-	// failure recovery confirmation.
+	// DefaultAutoRecoveryCheckpoint is the legacy new-session Auto Guard default.
 	DefaultAutoRecoveryCheckpoint bool   `json:"defaultAutoRecoveryCheckpoint"`
 	CheckUpdates                  bool   `json:"checkUpdates"`
 	Telemetry                     bool   `json:"telemetry"`
@@ -1940,8 +1939,8 @@ func (a *App) SetDefaultToolApprovalMode(mode string) error {
 	})
 }
 
-// SetDefaultAutoRecoveryCheckpoint updates the new-session default for Auto-mode
-// failure recovery confirmation ("report after failures").
+// SetDefaultAutoRecoveryCheckpoint updates the legacy Auto Guard default. The
+// setting is retained for API/config compatibility but hidden from the main UI.
 func (a *App) SetDefaultAutoRecoveryCheckpoint(enabled bool) error {
 	if err := a.applyConfigOnly(func(c *config.Config) error {
 		return c.SetDesktopDefaultAutoRecoveryCheckpoint(enabled)

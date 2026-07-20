@@ -9,8 +9,8 @@ import (
 	"reasonix/internal/evidence"
 )
 
-// RecoveryGate is the host-side failure-recovery checkpoint consulted by the
-// agent around tool execution. It is independent of the permission Gate and of
+// RecoveryGate is the host-side Auto Guard consulted by the agent around tool
+// execution. It is independent of the permission Gate and of
 // how the Controller surfaces confirmations (desktop card, bot prompt, headless
 // blocker). A nil gate means the feature is off for this agent.
 //
@@ -24,9 +24,6 @@ type RecoveryGate interface {
 	// root or sub-agent failure can never start a concurrent controller turn.
 	ObserveResult(ctx context.Context, result RecoveryObservation) string
 	BeforeMutation(ctx context.Context, proposal RecoveryProposal) (RecoveryDecision, error)
-	// ConsumeGuidance returns and clears recovery feedback queued while no Agent
-	// turn was live (for example, Revise on a cold-start replayed card).
-	ConsumeGuidance(taskID string) string
 }
 
 // RecoveryObservation is one finished tool call the checkpoint may react to.
@@ -71,8 +68,7 @@ type RecoveryObservation struct {
 	Output string
 }
 
-// RecoveryProposal is the next candidate mutation the agent wants to run while
-// a recovery checkpoint may be active.
+// RecoveryProposal is the next candidate action Auto Guard may classify.
 type RecoveryProposal struct {
 	AgentID string
 	TaskID  string
@@ -103,13 +99,11 @@ type RecoveryProposal struct {
 type RecoveryDecision struct {
 	// Allow continues without a user card.
 	Allow bool
-	// Blocked is true when the mutation must not run (user revise/stop, or
+	// Blocked is true when the mutation must not run (reviewer/user revise, or
 	// headless blocker). Message is fed back to the model.
 	Blocked bool
 	// Message is model-facing text when Blocked is true.
 	Message string
-	// ConsumedApprovedOnce is true when a one-shot fingerprint grant was used.
-	ConsumedApprovedOnce bool
 }
 
 // RecoveryAction is the user decision for a recovery confirmation card.
@@ -118,7 +112,6 @@ type RecoveryAction string
 const (
 	RecoveryActionContinue RecoveryAction = "continue"
 	RecoveryActionRevise   RecoveryAction = "revise"
-	RecoveryActionStop     RecoveryAction = "stop"
 )
 
 func (a *Agent) observeRecoveryResult(ctx context.Context, toolName string, args json.RawMessage, readOnly, mutates bool, result string, err error, blocked, userRejected bool) {

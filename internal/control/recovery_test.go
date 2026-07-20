@@ -386,7 +386,7 @@ func TestFreshSessionRotationsClearRecoveryState(t *testing.T) {
 	}
 }
 
-func TestResumeLegacySessionDefaultsRecoveryDisabled(t *testing.T) {
+func TestResumeLegacySessionDefaultsAutoGuardEnabled(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "legacy.jsonl")
 	sess := agent.NewSession("sys")
@@ -407,13 +407,13 @@ func TestResumeLegacySessionDefaultsRecoveryDisabled(t *testing.T) {
 		RecoveryCheckpointEnabled: true,
 	})
 	c.Resume(loaded, path)
-	if c.RecoveryCheckpointEnabled() {
-		t.Fatal("legacy session without metadata field resumed with recovery enabled")
+	if !c.RecoveryCheckpointEnabled() {
+		t.Fatal("legacy session without metadata field resumed with Auto Guard disabled")
 	}
 	if err := c.NewSession(); err != nil {
 		t.Fatalf("NewSession: %v", err)
 	}
 	if !c.RecoveryCheckpointEnabled() {
-		t.Fatal("fresh session inherited the legacy session's disabled compatibility preference")
+		t.Fatal("fresh session did not keep Auto Guard enabled")
 	}
 }

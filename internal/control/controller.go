@@ -81,7 +81,7 @@ type Controller struct {
 	executor     *agent.Agent
 	guardianSess *guardian.Session // nil when guardian is disabled
 	guardianPath string            // persisted guardian session file ("" when disabled)
-	// recoveryGate is the shared Auto-mode failure recovery checkpoint.
+	// recoveryGate is the shared Auto Guard state for this controller.
 	// nil when the feature is not wired for this controller.
 	recoveryGate           *recovery.Gate
 	recoveryEnabled        bool // session preference; effective only in Auto mode
@@ -353,9 +353,7 @@ type Options struct {
 	// RecoveryReviewer is the optional independent recovery reviewer (nil =
 	// rule-only path with fail-closed human confirmation for ambiguous cases).
 	RecoveryReviewer recovery.Reviewer
-	// RecoveryCheckpointEnabled arms the Auto-mode failure recovery checkpoint
-	// for this session. New sessions default true; pre-upgrade sessions missing
-	// the field should pass false.
+	// RecoveryCheckpointEnabled arms Auto Guard for this session.
 	RecoveryCheckpointEnabled bool
 	// RecoveryHeadless blocks mutations that need confirmation instead of
 	// waiting forever when no human decision channel exists.
@@ -2072,7 +2070,7 @@ func (c *Controller) ReplayPendingPrompts() {
 	for _, a := range asks {
 		c.sink.Emit(event.Event{Kind: event.AskRequest, Ask: a})
 	}
-	// Re-surface restored recovery checkpoints when no live approval remains.
+	// Retained compatibility hook; live Auto Guard cards are ordinary approvals.
 	if len(approvals) == 0 {
 		c.ReplayUnresolvedRecoveries()
 	}

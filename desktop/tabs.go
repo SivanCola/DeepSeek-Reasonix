@@ -220,9 +220,8 @@ type WorkspaceTab struct {
 	mode             string // "normal" | "plan" | "yolo" | "plan-yolo"; yolo/full access is runtime-only
 	goal             string
 	toolApprovalMode string
-	// recoveryCheckpointEnabled is the session preference for Auto-mode failure
-	// recovery. New sessions default true; pre-upgrade sessions missing the
-	// branch-meta field stay false.
+	// recoveryCheckpointEnabled is the compatibility preference for Auto Guard.
+	// Missing branch metadata defaults to enabled.
 	recoveryCheckpointEnabled bool
 	disabledMCP               map[string]ServerView
 	mcpOrder                  []string
@@ -1834,8 +1833,8 @@ type TabMeta struct {
 	Mode              string `json:"mode"`
 	CollaborationMode string `json:"collaborationMode"`
 	ToolApprovalMode  string `json:"toolApprovalMode"`
-	// RecoveryCheckpointEnabled is the session preference for Auto-mode
-	// failure recovery. It is retained under Ask/YOLO but only takes effect
+	// RecoveryCheckpointEnabled is the compatibility preference for Auto Guard.
+	// It is retained under Ask/YOLO but only takes effect
 	// while tool approval mode is Auto.
 	RecoveryCheckpointEnabled bool                     `json:"recoveryCheckpointEnabled"`
 	TokenMode                 string                   `json:"tokenMode"`
@@ -2420,8 +2419,7 @@ func createEmptySessionFile(dir, model string) (string, error) {
 			if closeErr := f.Close(); closeErr != nil {
 				return "", closeErr
 			}
-			// New sessions explicitly write the recovery default so pre-upgrade
-			// sessions (field missing → off) stay distinguishable.
+			// New sessions explicitly write the configured Auto Guard default.
 			enabled := desktopDefaultRecoveryCheckpoint()
 			meta, _ := agent.EnsureBranchMeta(path)
 			meta.RecoveryCheckpointEnabled = &enabled
@@ -2436,8 +2434,8 @@ func createEmptySessionFile(dir, model string) (string, error) {
 	return "", fmt.Errorf("create empty session file: exhausted filename retries")
 }
 
-// desktopDefaultRecoveryCheckpoint is the new-session default for Auto-mode
-// failure recovery. Missing config means on.
+// desktopDefaultRecoveryCheckpoint is the legacy new-session Auto Guard
+// default. Missing config means on.
 func desktopDefaultRecoveryCheckpoint() bool {
 	return desktopDefaultRecoveryCheckpointForRoot("")
 }
@@ -2457,10 +2455,10 @@ func desktopDefaultRecoveryCheckpointForRoot(root string) bool {
 }
 
 // recoveryCheckpointFromMeta interprets BranchMeta.RecoveryCheckpointEnabled:
-// missing field (pre-upgrade) → false; explicit true/false honored.
+// missing field enables built-in Auto Guard; explicit true/false is honored.
 func recoveryCheckpointFromMeta(meta agent.BranchMeta) bool {
 	if meta.RecoveryCheckpointEnabled == nil {
-		return false
+		return true
 	}
 	return *meta.RecoveryCheckpointEnabled
 }
@@ -3360,9 +3358,8 @@ func (a *App) buildTabControllerWithContextAdmissionHeld(tab *WorkspaceTab, load
 
 	a.bindControllerDisplayRecorder(ctrl)
 	configureControllerRuntime(ctrl, nil, buildRuntime)
-	// Restore session recovery preference: new sessions write true; pre-upgrade
-	// metas missing the field stay off. Tab field is set when the session path
-	// is bound (below) or at new-tab creation.
+	// Restore the Auto Guard preference. Missing metadata defaults on. Tab state
+	// is set when the session path is bound (below) or at new-tab creation.
 	a.mu.RLock()
 	recoveryEnabled := tab.recoveryCheckpointEnabled
 	a.mu.RUnlock()

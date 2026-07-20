@@ -122,6 +122,50 @@ console.log("\ndecision surface");
   dom.window.close();
 }
 
+// Auto Guard reuses the decision shelf with one-call continue or revision. Task
+// cancellation stays on the ordinary Stop control instead of becoming a third
+// recovery-specific branch.
+{
+  const dom = installDom();
+  const root = createRoot(document.getElementById("root")!);
+  const decisions: string[] = [];
+  const approval: WireApproval = {
+    id: "guard-1",
+    tool: "bash",
+    subject: "git push origin feature",
+    kind: "recovery",
+    recovery: { next_action: "git push origin feature", change_kind: "risk" },
+  };
+
+  await act(async () => {
+    root.render(
+      <LocaleProvider>
+        <ApprovalModal
+          approval={approval}
+          onAnswer={() => undefined}
+          onResolveRecovery={(action) => decisions.push(action)}
+          onStop={() => undefined}
+        />
+      </LocaleProvider>,
+    );
+    await flushTimers();
+  });
+
+  const actions = [...document.querySelectorAll(".prompt-shelf__actions .prompt-action")] as HTMLButtonElement[];
+  eq(actions.length, 2, "Auto Guard has continue-once and revise actions");
+  ok(!actions.some((action) => action.textContent?.includes("Stop task")), "Auto Guard does not add a third Stop decision");
+  await act(async () => {
+    (document.querySelector(".decision-confirm-bar__confirm") as HTMLButtonElement).click();
+    await flushTimers(220);
+  });
+  eq(decisions[0], "continue", "Auto Guard continue resolves only the waiting action");
+
+  await act(async () => {
+    root.unmount();
+  });
+  dom.window.close();
+}
+
 // Destructive MCP approval is one-shot even though the tool name is dynamic.
 {
   const dom = installDom();

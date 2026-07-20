@@ -1,6 +1,6 @@
 # Tool permissions: Ask, Auto, and Yolo
 
-The Ask / Auto / Yolo control under the desktop composer sets how Reasonix handles tool permission approvals. It decides whether writing files, running commands, or calling permission-gated tools pauses for your approval first.
+The Ask / Auto control under the desktop composer sets how Reasonix handles tool permission approvals. Yolo remains an advanced setting and is shown in the composer only while it is active.
 
 Tool permission is independent of collaboration mode:
 
@@ -40,18 +40,20 @@ Auto still respects:
 - MCP destructive calls when the effective policy is `auto`, `prompt`, or `writes`.
 - Ask questions (never auto-answered).
 
-### Failure recovery checkpoint (optional)
+### Auto Guard
 
-Auto can enable **report after failures**:
+Auto includes **Auto Guard**, a host-side safety boundary:
 
-- On the success path there are no extra confirmations and no extra model calls.
+- Ordinary workspace reads and edits stay on the fast path with no extra model calls.
+- Deterministically high-risk mutations are checked before execution, even when no earlier tool failed. This includes destructive operations, dependency/configuration changes, installs, external mutations, and publish/push-style commands.
 - After a tool or verification failure, read-only diagnosis may continue; one host-proven same-strategy verification retry can run automatically.
-- If the next write changes method, expands scope, or raises risk, a recovery card appears: **Continue this change** / **Revise the plan** / **Stop task**.
-- **Continue** authorizes only the single write shown on the card. **Revise** refuses that write and injects your follow-up requirements. **Stop** cancels the root agent and current-task sub-agents.
-- Effective only in Auto. Ask / Yolo keep the preference but do not apply it.
-- New sessions default **on**. Pre-upgrade sessions missing the field default **off**.
+- After a failure, an isolated reviewer evaluates ambiguous changes. A rejection is first returned to the same root or sub-agent with the reason so it can diagnose or narrow the action; three consecutive rejected proposals escalate to a human.
+- High-risk, expanded-scope, explicit strategy changes, repeated recovery failures, and reviewer escalation show one card: **Continue once** / **Revise action**. Whole-task cancellation remains the ordinary Stop control.
+- **Continue once** authorizes only the waiting call. Grants and stale cards are never replayed after a restart; the next call is classified again.
+- Headless runs fail closed when a human decision is required.
+- Effective only in Auto. The legacy `auto_recovery_checkpoint = "off"` setting remains as an advanced compatibility kill switch.
 
-This is not the same as plan confirmation: plan confirmation decides whether to start execution; the failure recovery checkpoint handles strategy changes during execution.
+Auto Guard is not a filesystem checkpoint or rollback mechanism. Use a clean Git branch or disposable worktree when changes must be reversible. Plan confirmation decides whether to start execution; Auto Guard evaluates action boundaries during execution.
 
 ## Yolo mode
 
@@ -59,8 +61,8 @@ Yolo maximizes continuous execution. Ordinary tool permission prompts are skippe
 
 ### How to enable
 
-- Click **Yolo** in the tool-permission control.
-- Or toggle with `Ctrl+Y` / `Cmd+Y`.
+- Select it in the advanced default-approval setting, or toggle with `Ctrl+Y` / `Cmd+Y`.
+- While active, a Yolo warning item appears in the composer and returns to Auto when clicked.
 - When entered via shortcut, Reasonix remembers the previous Ask/Auto baseline and restores it on the next toggle.
 
 ## Combining with collaboration modes
@@ -76,6 +78,6 @@ Yolo maximizes continuous execution. Ordinary tool permission prompts are skippe
 
 ## Recommended defaults
 
-- Prefer **Auto** for trusted day-to-day work, with failure recovery **on** for new sessions.
+- Prefer **Auto** with built-in Auto Guard for trusted day-to-day work.
 - Use **Ask** when the workspace, data, or operation risk is unclear.
 - Use **Yolo** only after the plan is confirmed and the tree is disposable or easily rolled back.

@@ -146,8 +146,8 @@ type DesktopConfig struct {
 	StatusBarStyle          string   `toml:"status_bar_style"`           // icon|text; desktop status bar metric labels
 	StatusBarItems          []string `toml:"status_bar_items"`           // ordered visible desktop status bar items
 	DefaultToolApprovalMode string   `toml:"default_tool_approval_mode"` // ask|auto|yolo; defaults to auto for newly-created desktop sessions
-	// DefaultAutoRecoveryCheckpoint is the new-session default for Auto-mode
-	// failure recovery confirmation. nil means enabled (on) for new sessions.
+	// DefaultAutoRecoveryCheckpoint is the legacy new-session Auto Guard default.
+	// nil means enabled.
 	DefaultAutoRecoveryCheckpoint *bool    `toml:"default_auto_recovery_checkpoint"`
 	CheckUpdates                  *bool    `toml:"check_updates"`      // startup update checks; nil keeps the default enabled
 	Telemetry                     *bool    `toml:"telemetry"`          // anonymous launch ping (install id + version + OS); nil keeps the default enabled
@@ -369,7 +369,7 @@ func (c *Config) DesktopDefaultToolApprovalMode() string {
 }
 
 // NormalizeAutoRecoveryCheckpoint returns "on" or "off". Empty defaults to "on"
-// so newly created sessions enable failure recovery by default.
+// so Auto mode includes Auto Guard by default.
 func NormalizeAutoRecoveryCheckpoint(v string) string {
 	switch strings.ToLower(strings.TrimSpace(v)) {
 	case "off", "false", "0", "no":
@@ -379,8 +379,7 @@ func NormalizeAutoRecoveryCheckpoint(v string) string {
 	}
 }
 
-// AutoRecoveryCheckpointEnabled reports whether [agent].auto_recovery_checkpoint
-// defaults new sessions to the failure recovery checkpoint.
+// AutoRecoveryCheckpointEnabled reports the advanced Auto Guard kill switch.
 func (c *Config) AutoRecoveryCheckpointEnabled() bool {
 	if c == nil {
 		return true
@@ -388,15 +387,11 @@ func (c *Config) AutoRecoveryCheckpointEnabled() bool {
 	return NormalizeAutoRecoveryCheckpoint(c.Agent.AutoRecoveryCheckpoint) == "on"
 }
 
-// DesktopDefaultAutoRecoveryCheckpoint is the new-session default for Auto-mode
-// failure recovery confirmation. Missing desktop field falls back to the agent
-// config (default on).
+// DesktopDefaultAutoRecoveryCheckpoint is the legacy Desktop-facing alias for
+// the unified agent-level Auto Guard switch.
 func (c *Config) DesktopDefaultAutoRecoveryCheckpoint() bool {
 	if c == nil {
 		return true
-	}
-	if c.Desktop.DefaultAutoRecoveryCheckpoint != nil {
-		return *c.Desktop.DefaultAutoRecoveryCheckpoint
 	}
 	return c.AutoRecoveryCheckpointEnabled()
 }
@@ -1090,14 +1085,14 @@ type AgentConfig struct {
 	PlannerModel        string  `toml:"planner_model"`
 	GuardianModel       string  `toml:"guardian_model"`
 	GuardianTemperature float64 `toml:"guardian_temperature"`
-	// AutoRecoveryCheckpoint controls whether new sessions default the Auto-mode
-	// failure recovery checkpoint on. Values: "on" | "off". Empty defaults to "on".
-	// Per-session state still decides whether an existing session is armed;
-	// missing session fields keep the pre-upgrade default (off).
+	// AutoRecoveryCheckpoint is the advanced compatibility kill switch for Auto
+	// Guard. Values: "on" | "off". Empty defaults to "on".
 	AutoRecoveryCheckpoint string `toml:"auto_recovery_checkpoint"`
 	// RecoveryModel optionally names a dedicated model for the independent
 	// recovery reviewer. Empty falls back to GuardianModel, then the main model.
-	RecoveryModel       string            `toml:"recovery_model"`
+	RecoveryModel string `toml:"recovery_model"`
+	// RecoveryTemperature is accepted from older configs but ignored. Auto
+	// Guard review is deterministic at temperature zero.
 	RecoveryTemperature float64           `toml:"recovery_temperature"`
 	SubagentModel       string            `toml:"subagent_model"`
 	SubagentModels      map[string]string `toml:"subagent_models"`

@@ -1539,8 +1539,8 @@ func (a *App) ApproveTab(tabID, id string, allow, session, persist bool) {
 	}
 }
 
-// ResolveRecovery answers an Auto-mode failure recovery checkpoint card.
-// action is continue|revise|stop. For revise, feedback is steered into the
+// ResolveRecovery answers an Auto Guard card. action is continue|revise. For
+// revise, feedback is steered into the
 // agent and the pending mutation is refused in the same operation.
 func (a *App) ResolveRecovery(id, action, feedback string) error {
 	return a.ResolveRecoveryTab("", id, action, feedback)
@@ -1555,7 +1555,7 @@ func (a *App) ResolveRecoveryTab(tabID, id, action, feedback string) error {
 	return ctrl.ResolveRecovery(id, agent.RecoveryAction(action), feedback)
 }
 
-// SetRecoveryCheckpointEnabled arms or disarms Auto-mode failure recovery for
+// SetRecoveryCheckpointEnabled arms or disarms Auto Guard for
 // the active tab. The preference is retained under Ask/YOLO but only takes
 // effect while tool approval mode is Auto.
 func (a *App) SetRecoveryCheckpointEnabled(enabled bool) {

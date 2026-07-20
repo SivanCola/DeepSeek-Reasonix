@@ -223,7 +223,7 @@ func (a *approvalManager) registerDecision(tool, subject, reason string, fresh b
 }
 
 // registerDecisionKind is registerDecision with optional Kind/Recovery payload
-// so recovery cards survive ReplayPendingPrompts.
+// so Auto Guard cards survive ReplayPendingPrompts.
 func (a *approvalManager) registerDecisionKind(tool, subject, reason string, fresh bool, kind string, rec *event.RecoveryApproval) (string, chan approvalReply) {
 	a.mu.Lock()
 	defer a.mu.Unlock()

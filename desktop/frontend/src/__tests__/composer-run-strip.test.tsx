@@ -210,7 +210,7 @@ console.log("\ncomposer run strip");
 }
 
 // Runtime controller transitions disable every mode axis and submit together,
-// so rapid Goal + Delivery + YOLO clicks cannot mutate a half-rebuilt runtime.
+// so rapid Goal + Delivery + approval-mode clicks cannot mutate a half-rebuilt runtime.
 {
   const dom = installDom();
   const { root } = await renderComposer({ disabled: true, goal: "ship it", collaborationMode: "goal" });
@@ -220,7 +220,7 @@ console.log("\ncomposer run strip");
   const send = document.querySelector<HTMLButtonElement>(".composer__btn--send");
   ok(Boolean(profile?.disabled), "runtime transition disables Delivery profile changes");
   ok(Boolean(task?.disabled), "runtime transition disables Goal mode changes");
-  ok(approvals.length === 3 && approvals.every((button) => button.disabled), "runtime transition disables Ask/Auto/YOLO changes");
+  ok(approvals.length === 2 && approvals.every((button) => button.disabled), "runtime transition disables Ask/Auto changes");
   ok(Boolean(send?.disabled), "runtime transition disables submit");
 
   await act(async () => {
@@ -272,7 +272,7 @@ console.log("\ncomposer run strip");
   ok(document.querySelector(".composer-card--waiting") !== null, "waiting card takes the waiting modifier");
 
   const modeButtons = [...document.querySelectorAll(".composer-modebar--approval .composer-modebar__item")] as HTMLButtonElement[];
-  ok(modeButtons.length === 3 && modeButtons.every((b) => !b.disabled), "approval bar stays usable while its own prompt disables the composer");
+  ok(modeButtons.length === 2 && modeButtons.every((b) => !b.disabled), "approval bar stays usable while its own prompt disables the composer");
 
   await rerender({ pendingApprovalLabel: null, pendingAsk: true });
   eq(

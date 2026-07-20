@@ -321,7 +321,7 @@ type Agent struct {
 	// Plan workflows. nil disables gating entirely.
 	gate Gate
 
-	// recoveryGate, when non-nil, is the Auto-mode failure recovery checkpoint.
+	// recoveryGate, when non-nil, is the Auto Guard boundary for Auto mode.
 	// Shared by root and sub-agents for the same controller task. nil disables
 	// recovery checks (Ask/YOLO, headless without wiring, or feature off).
 	recoveryGate RecoveryGate
@@ -588,8 +588,8 @@ func (a *Agent) SetGate(g Gate) {
 	a.gate = g
 }
 
-// SetRecoveryGate installs the Auto-mode failure recovery checkpoint. Safe to
-// call before the run loop starts; nil disables recovery checks.
+// SetRecoveryGate installs Auto Guard. Safe to call before the run loop starts;
+// nil disables its checks.
 func (a *Agent) SetRecoveryGate(g RecoveryGate) {
 	if a == nil {
 		return
@@ -609,7 +609,7 @@ func (a *Agent) SetRecoveryIdentity(agentID, taskID string) {
 	a.recoveryTaskID = strings.TrimSpace(taskID)
 }
 
-// RecoveryGate returns the attached recovery checkpoint (may be nil).
+// RecoveryGate returns the attached Auto Guard (may be nil).
 func (a *Agent) RecoveryGate() RecoveryGate {
 	if a == nil {
 		return nil
@@ -960,9 +960,9 @@ type Options struct {
 	// Plan execution classifies bash through Permissions instead.
 	PlanModeReadOnlyCommands []string
 
-	// RecoveryGate is the optional Auto-mode failure recovery checkpoint.
-	// When set, mutations after a qualifying failure are reviewed before
-	// permission approval and write-lock acquisition.
+	// RecoveryGate is the optional Auto Guard boundary. It checks deterministic
+	// high-risk mutations and failure recovery before permission approval and
+	// write-lock acquisition.
 	RecoveryGate RecoveryGate
 	// RecoveryAgentID labels this agent on recovery cards (empty = root).
 	RecoveryAgentID string
@@ -1131,11 +1131,6 @@ func (a *Agent) Run(ctx context.Context, input string) (runErr error) {
 	a.steerConsumed = false
 	a.steerRunActive = true
 	a.steerMu.Unlock()
-	if a.recoveryGate != nil {
-		if guidance := strings.TrimSpace(a.recoveryGate.ConsumeGuidance(a.recoveryTaskID)); guidance != "" {
-			_ = a.Steer(guidance)
-		}
-	}
 	scope, scoped := DeliveryExecutionScopeFromContext(ctx)
 	preserveEvidence := a.preserveEvidenceOnce
 	if a.evidence != nil {
@@ -3145,7 +3140,7 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 			errMsg:  "blocked: active delivery todo required",
 		}
 	}
-	// Recovery checkpoint: after resolution/mutation classification, before
+	// Auto Guard: after resolution/mutation classification, before
 	// permission approval and workspace write-lock acquisition, so a waiting
 	// recovery card never holds a write lease.
 	verification := evidenceName == "bash" && evidence.IsDeliveryVerificationCommand(bashCommandFromArgs(evidenceArgs))
@@ -3169,15 +3164,15 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 		})
 		if rerr != nil && !dec.Blocked {
 			return toolOutcome{
-				output:  fmt.Sprintf("blocked: recovery checkpoint error: %v", rerr),
+				output:  fmt.Sprintf("blocked: Auto Guard error: %v", rerr),
 				blocked: true,
-				errMsg:  "blocked: recovery checkpoint error",
+				errMsg:  "blocked: Auto Guard error",
 			}
 		}
 		if dec.Blocked || !dec.Allow {
 			msg := strings.TrimSpace(dec.Message)
 			if msg == "" {
-				msg = "blocked: recovery checkpoint declined this mutation"
+				msg = "blocked: Auto Guard declined this mutation"
 			}
 			if !strings.HasPrefix(msg, "blocked:") {
 				msg = "blocked: " + msg
@@ -3185,7 +3180,7 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 			return toolOutcome{
 				output:  msg,
 				blocked: true,
-				errMsg:  "blocked by recovery checkpoint",
+				errMsg:  "blocked by Auto Guard",
 			}
 		}
 	}

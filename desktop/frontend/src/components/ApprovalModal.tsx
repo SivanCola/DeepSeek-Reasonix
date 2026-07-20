@@ -159,7 +159,7 @@ export function ApprovalModal({
 }: {
   approval: WireApproval;
   onAnswer: (allow: boolean, session: boolean, persist: boolean) => void;
-  onResolveRecovery?: (action: "continue" | "revise" | "stop", feedback?: string) => void;
+  onResolveRecovery?: (action: "continue" | "revise", feedback?: string) => void;
   onRevisePlan?: (text: string) => void;
   onExitPlan?: () => void;
   onStop: () => void;
@@ -241,17 +241,6 @@ export function ApprovalModal({
           label: t("approval.recoveryRevise"),
           desc: t("approval.recoveryReviseDesc"),
           kind: "toggle-revision",
-        },
-        {
-          key: "3",
-          label: t("approval.recoveryStop"),
-          desc: t("approval.recoveryStopDesc"),
-          tone: "danger",
-          kind: "submit",
-          run: () => {
-            if (onResolveRecovery) onResolveRecovery("stop");
-            else onStop();
-          },
         },
       ]
     : isPlanApproval

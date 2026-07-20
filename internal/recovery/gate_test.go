@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -21,6 +22,50 @@ func TestNoFailureAllowsMutation(t *testing.T) {
 	}
 	if g.Metrics().HumanPrompts != 0 {
 		t.Fatalf("unexpected prompt")
+	}
+}
+
+func TestHighRiskMutationPromptsBeforeAnyFailure(t *testing.T) {
+	g := NewGate(Options{Enabled: true, Mode: func() string { return "auto" }})
+	var prompted atomic.Bool
+	g.opts.EmitPrompt = func(_ context.Context, _ string, pending PendingProposal, failure *FailureEvent) (string, error) {
+		prompted.Store(true)
+		if failure != nil {
+			t.Fatalf("pre-action guard unexpectedly carried a failure: %+v", failure)
+		}
+		if pending.ChangeKind != ChangeRisk {
+			t.Fatalf("change kind = %q, want risk", pending.ChangeKind)
+		}
+		go func() { _ = g.Resolve("pre-1", ActionContinue, "") }()
+		return "pre-1", nil
+	}
+	dec, err := g.BeforeMutation(context.Background(), Proposal{
+		Tool: "write_file", Subject: "package.json", Mutates: true,
+		Args: json.RawMessage(`{"path":"package.json","content":"{}"}`),
+	})
+	if err != nil || !dec.Allow || !prompted.Load() {
+		t.Fatalf("pre-action decision = %+v, %v; prompted=%v", dec, err, prompted.Load())
+	}
+}
+
+func TestHighRiskClassifierKeepsOrdinaryAndMCPPermissionPathsSeparate(t *testing.T) {
+	tests := []struct {
+		name string
+		p    Proposal
+		want bool
+	}{
+		{name: "git push", p: Proposal{Tool: "bash", Mutates: true, Args: json.RawMessage(`{"command":"git push origin feature"}`)}, want: true},
+		{name: "dependency config", p: Proposal{Tool: "edit_file", Mutates: true, Args: json.RawMessage(`{"path":"go.mod"}`)}, want: true},
+		{name: "ordinary source edit", p: Proposal{Tool: "edit_file", Mutates: true, Args: json.RawMessage(`{"path":"internal/a.go"}`)}},
+		{name: "targeted source delete", p: Proposal{Tool: "delete_symbol", Mutates: true, Args: json.RawMessage(`{"path":"internal/a.go"}`)}},
+		{name: "MCP owns its approval", p: Proposal{Tool: "mcp__github__create_issue", Mutates: true}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := IsHighRiskMutation(tt.p); got != tt.want {
+				t.Fatalf("IsHighRiskMutation = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }
 
@@ -219,7 +264,7 @@ func TestHighRiskForcesConfirm(t *testing.T) {
 	}
 }
 
-func TestDeleteMutationsForceHumanConfirmationBeforeReviewer(t *testing.T) {
+func TestRoutineWorkspaceEditsStayOnReviewerPath(t *testing.T) {
 	for _, tool := range []string{"delete_range", "delete_symbol"} {
 		t.Run(tool, func(t *testing.T) {
 			var reviews atomic.Int32
@@ -241,17 +286,17 @@ func TestDeleteMutationsForceHumanConfirmationBeforeReviewer(t *testing.T) {
 			if err != nil {
 				t.Fatalf("BeforeMutation: %v", err)
 			}
-			if dec.Allow || !dec.Blocked {
-				t.Fatalf("delete mutation = %+v, want human-confirmation blocker", dec)
+			if err != nil || !dec.Allow {
+				t.Fatalf("workspace edit = %+v, %v; want reviewer fast path", dec, err)
 			}
-			if got := reviews.Load(); got != 0 {
-				t.Fatalf("reviewer calls = %d, want deterministic high-risk rule", got)
+			if got := reviews.Load(); got != 1 {
+				t.Fatalf("reviewer calls = %d, want one", got)
 			}
 		})
 	}
 }
 
-func TestContinueConsumesFingerprintOnce(t *testing.T) {
+func TestContinueAppliesOnlyToWaitingCall(t *testing.T) {
 	g := NewGate(Options{Enabled: true})
 	g.ObserveResult(context.Background(), Observation{
 		Tool: "bash", Subject: "go test", Verification: true,
@@ -272,7 +317,7 @@ func TestContinueConsumesFingerprintOnce(t *testing.T) {
 		return "c1", nil
 	}
 	dec, err := g.BeforeMutation(context.Background(), prop)
-	if err != nil || !dec.Allow || !dec.ConsumedApprovedOnce {
+	if err != nil || !dec.Allow {
 		t.Fatalf("first continue = %+v %v", dec, err)
 	}
 
@@ -293,38 +338,6 @@ func TestContinueConsumesFingerprintOnce(t *testing.T) {
 	}
 	if atomic.LoadInt32(&prompts) != 1 {
 		t.Fatalf("expected re-prompt after fingerprint consumption")
-	}
-}
-
-func TestStopCancels(t *testing.T) {
-	var cancelled atomic.Bool
-	g := NewGate(Options{
-		Enabled: true,
-		Cancel:  func() { cancelled.Store(true) },
-	})
-	g.ObserveResult(context.Background(), Observation{
-		Tool: "bash", Verification: true, Subject: "go test",
-		Args: json.RawMessage(`{"command":"go test"}`), ErrSummary: "fail",
-	})
-	g.opts.EmitPrompt = func(ctx context.Context, taskID string, pending PendingProposal, failure *FailureEvent) (string, error) {
-		go func() {
-			time.Sleep(5 * time.Millisecond)
-			_ = g.Resolve("s1", ActionStop, "")
-		}()
-		return "s1", nil
-	}
-	dec, err := g.BeforeMutation(context.Background(), Proposal{
-		Tool: "write_file", Subject: "a.go", Mutates: true,
-		Args: json.RawMessage(`{"path":"a.go"}`),
-	})
-	if !errors.Is(err, ErrStopped) {
-		t.Fatalf("err = %v, want ErrStopped", err)
-	}
-	if dec.Allow {
-		t.Fatal("stop must not allow mutation")
-	}
-	if !cancelled.Load() {
-		t.Fatal("expected cancel callback")
 	}
 }
 
@@ -355,6 +368,40 @@ func TestReviewerContinueSkipsPrompt(t *testing.T) {
 	}
 	if prompted.Load() {
 		t.Fatal("targeted edit after verifier failure must be reviewable without a prompt")
+	}
+}
+
+func TestReviewerBlockReturnsReasonThenEscalates(t *testing.T) {
+	g := NewGate(Options{
+		Enabled: true,
+		Reviewer: staticReviewer{ReviewVerdict{
+			Outcome: ReviewConfirm, ChangeKind: ChangeUncertain,
+			Diagnosis: "scope is not yet proven", Rationale: "inspect the failing package first",
+		}},
+	})
+	g.ObserveResult(context.Background(), Observation{
+		Tool: "bash", Verification: true, Subject: "go test ./foo",
+		Args: json.RawMessage(`{"command":"go test ./foo"}`), ErrSummary: "fail",
+	})
+	prompts := 0
+	g.opts.EmitPrompt = func(_ context.Context, _ string, _ PendingProposal, _ *FailureEvent) (string, error) {
+		prompts++
+		go func() { _ = g.Resolve("review-3", ActionContinue, "") }()
+		return "review-3", nil
+	}
+	proposal := Proposal{
+		Tool: "write_file", Subject: "foo/a.go", Mutates: true,
+		Args: json.RawMessage(`{"path":"foo/a.go","content":"fix"}`),
+	}
+	for attempt := 1; attempt < 3; attempt++ {
+		dec, err := g.BeforeMutation(context.Background(), proposal)
+		if err != nil || dec.Allow || !dec.Blocked || !strings.Contains(dec.Message, "attempt "+fmt.Sprint(attempt)+"/3") {
+			t.Fatalf("attempt %d decision = %+v, %v", attempt, dec, err)
+		}
+	}
+	dec, err := g.BeforeMutation(context.Background(), proposal)
+	if err != nil || !dec.Allow || prompts != 1 {
+		t.Fatalf("escalated decision = %+v, %v; prompts=%d", dec, err, prompts)
 	}
 }
 
@@ -492,7 +539,7 @@ func TestSuccessfulCallsDoNotAccumulateEmptyTaskSlots(t *testing.T) {
 	}
 }
 
-func TestReplayedRecoveryReviseQueuesGuidanceForNextTurn(t *testing.T) {
+func TestRestoreDropsStalePendingAuthorization(t *testing.T) {
 	g := NewGate(Options{Enabled: true})
 	g.Restore(Snapshot{Tasks: map[string]*TaskState{
 		"root": {
@@ -501,39 +548,12 @@ func TestReplayedRecoveryReviseQueuesGuidanceForNextTurn(t *testing.T) {
 			Pending: &PendingProposal{Tool: "write_file", Fingerprint: "fingerprint"},
 		},
 	}})
-	g.BindApprovalID("root", "replayed-1")
-	if err := g.Resolve("replayed-1", ActionRevise, "only edit the failing package"); err != nil {
-		t.Fatalf("Resolve replayed revise: %v", err)
+	st := g.Snapshot().Tasks["root"]
+	if st == nil || st.Failure == nil || st.Phase != PhaseDiagnosing {
+		t.Fatalf("restored failure = %+v", st)
 	}
-	guidance := g.ConsumeGuidance("root")
-	if !strings.Contains(guidance, "only edit the failing package") {
-		t.Fatalf("queued guidance = %q", guidance)
-	}
-	if duplicate := g.ConsumeGuidance("root"); duplicate != "" {
-		t.Fatalf("guidance was not one-shot: %q", duplicate)
-	}
-}
-
-func TestReplayedRecoveryContinueRestoresOneShotFingerprint(t *testing.T) {
-	args := json.RawMessage(`{"path":"a.go","content":"fixed"}`)
-	fingerprint := CallFingerprint("write_file", "a.go", "a.go", args)
-	g := NewGate(Options{Enabled: true})
-	g.Restore(Snapshot{Tasks: map[string]*TaskState{
-		"root": {
-			Phase:   PhaseAwaitingDecision,
-			Failure: &FailureEvent{Tool: "bash", ErrSummary: "tests failed"},
-			Pending: &PendingProposal{Tool: "write_file", Subject: "a.go", Preview: "a.go", Args: args, Fingerprint: fingerprint},
-		},
-	}})
-	g.BindApprovalID("root", "replayed-2")
-	if err := g.Resolve("replayed-2", ActionContinue, ""); err != nil {
-		t.Fatalf("Resolve replayed continue: %v", err)
-	}
-	dec, err := g.BeforeMutation(context.Background(), Proposal{
-		Tool: "write_file", Subject: "a.go", Preview: "a.go", Args: args, Mutates: true,
-	})
-	if err != nil || !dec.Allow || !dec.ConsumedApprovedOnce {
-		t.Fatalf("replayed one-shot decision = %+v, %v", dec, err)
+	if st.Pending != nil || st.ApprovalID != "" {
+		t.Fatalf("stale authorization survived restore: %+v", st)
 	}
 }
 

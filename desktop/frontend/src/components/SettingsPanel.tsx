@@ -1502,7 +1502,6 @@ function GeneralSection({ s, busy, apply, agentRunning }: SectionProps & { agent
   useEffect(() => onProcessFoldPreferenceChange((pref) => setProcessFold(pref)), []);
   useEffect(() => () => mouseDragCleanupRef.current?.(), []);
   const defaultToolApprovalMode = normalizeToolApprovalMode(s.defaultToolApprovalMode);
-  const defaultAutoRecoveryCheckpoint = s.defaultAutoRecoveryCheckpoint !== false;
   const languagePref = normalizeLangPref(s.desktopLanguage);
   const desktopLayoutStyle = normalizeDesktopLayoutStyle(s.desktopLayoutStyle);
   const [genMusicPreset, setGenMusicPreset] = useState<GenerativePreset>(getGenerativePreset());
@@ -1745,27 +1744,6 @@ function GeneralSection({ s, busy, apply, agentRunning }: SectionProps & { agent
               {t(`settings.defaultToolApprovalMode.${mode}`)}
             </button>
           ))}
-        </div>
-      </SettingsField>
-      <SettingsField
-        label={t("settings.defaultAutoRecoveryCheckpoint")}
-        hint={t("settings.defaultAutoRecoveryCheckpointHint")}
-      >
-        <div className="set-seg">
-          <button
-            className={`set-seg__btn${defaultAutoRecoveryCheckpoint ? " set-seg__btn--on" : ""}`}
-            disabled={busy}
-            onClick={() => void apply(() => app.SetDefaultAutoRecoveryCheckpoint(true))}
-          >
-            {t("settings.defaultAutoRecoveryCheckpoint.on")}
-          </button>
-          <button
-            className={`set-seg__btn${!defaultAutoRecoveryCheckpoint ? " set-seg__btn--on" : ""}`}
-            disabled={busy}
-            onClick={() => void apply(() => app.SetDefaultAutoRecoveryCheckpoint(false))}
-          >
-            {t("settings.defaultAutoRecoveryCheckpoint.off")}
-          </button>
         </div>
       </SettingsField>
       <SettingsField label={t("settings.sound")} hint={t("settings.soundHint")} stacked>

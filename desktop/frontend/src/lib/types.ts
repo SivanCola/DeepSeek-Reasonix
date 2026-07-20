@@ -1598,7 +1598,7 @@ export interface SettingsView {
   statusBarStyle: string; // "icon" | "text"
   statusBarItems: string[]; // ordered visible status bar item ids
   defaultToolApprovalMode: ToolApprovalMode | string; // default for newly-created sessions
-  defaultAutoRecoveryCheckpoint?: boolean; // new-session default for Auto failure recovery
+  defaultAutoRecoveryCheckpoint?: boolean; // legacy new-session Auto Guard default
   checkUpdates: boolean; // check for new versions on startup
   telemetry: boolean; // anonymous launch ping (install id + version + OS)
   metrics: boolean; // aggregate desktop metrics (anonymous signal/bucket counts)

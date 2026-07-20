@@ -97,14 +97,18 @@ func (c *Config) SetDesktopDefaultToolApprovalMode(mode string) error {
 	return nil
 }
 
-// SetDesktopDefaultAutoRecoveryCheckpoint sets whether newly created desktop
-// sessions enable Auto-mode failure recovery confirmation by default.
+// SetDesktopDefaultAutoRecoveryCheckpoint is the legacy Desktop API for the
+// unified agent-level Auto Guard switch.
 func (c *Config) SetDesktopDefaultAutoRecoveryCheckpoint(enabled bool) error {
 	if c == nil {
 		return fmt.Errorf("config is nil")
 	}
-	v := enabled
-	c.Desktop.DefaultAutoRecoveryCheckpoint = &v
+	if enabled {
+		c.Agent.AutoRecoveryCheckpoint = "on"
+	} else {
+		c.Agent.AutoRecoveryCheckpoint = "off"
+	}
+	c.Desktop.DefaultAutoRecoveryCheckpoint = nil
 	return nil
 }
 
@@ -1226,8 +1230,10 @@ func (c *Config) saveProjectIncremental(path string) error {
 	}
 	removePlugins := len(c.Plugins) == 0 && tomlBodyHasSection(body, "plugins")
 	removeSandboxBash := shouldRemoveIneffectiveProjectSandboxBash(body, c)
+	_, hasLegacyAutoGuard := tomlSectionKeyValue(body, "desktop", "default_auto_recovery_checkpoint")
+	removeLegacyAutoGuard := c.Desktop.DefaultAutoRecoveryCheckpoint == nil && hasLegacyAutoGuard
 	writeProviderAccess := c.Desktop.ProviderAccess != nil
-	if strings.TrimSpace(delta) == "" && !removePlugins && !removeSandboxBash && !writeProviderAccess {
+	if strings.TrimSpace(delta) == "" && !removePlugins && !removeSandboxBash && !removeLegacyAutoGuard && !writeProviderAccess {
 		return nil // no changes to write
 	}
 
@@ -1240,6 +1246,9 @@ func (c *Config) saveProjectIncremental(path string) error {
 	}
 	if removeSandboxBash {
 		body = removeTOMLSectionKey(body, "sandbox", "bash")
+	}
+	if removeLegacyAutoGuard {
+		body = removeTOMLSectionKey(body, "desktop", "default_auto_recovery_checkpoint")
 	}
 	if writeProviderAccess {
 		body = upsertTOMLSectionKey(body, "desktop", "provider_access", "provider_access = "+renderStringArray(c.Desktop.ProviderAccess))

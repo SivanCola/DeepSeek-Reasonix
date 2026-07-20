@@ -1146,8 +1146,6 @@ func recoveryShortcutCommand(text string) (string, bool) {
 		return "/recovery-continue", true
 	case "2", "修改", "修改方案", "revise":
 		return "/recovery-revise", true
-	case "3", "0", "n", "no", "停止", "停止任务", "stop":
-		return "/recovery-stop", true
 	default:
 		return "", false
 	}
@@ -1402,6 +1400,8 @@ func (gw *BotGateway) handleSlashCommand(ctx context.Context, adapter Adapter, k
 		}
 
 	case strings.HasPrefix(msg.Text, "/recovery-stop"):
+		// Backward compatibility for cards rendered by an older client: reject
+		// the proposed mutation but leave task cancellation to ordinary /stop.
 		if !gw.requireCommandRole(ctx, adapter, msg, "approver") {
 			return
 		}
@@ -1414,12 +1414,12 @@ func (gw *BotGateway) handleSlashCommand(ctx context.Context, adapter Adapter, k
 		state, ok := gw.controllers[key]
 		gw.mu.Unlock()
 		if ok && state.ctrl != nil {
-			if err := state.ctrl.ResolveRecovery(parts[1], agent.RecoveryActionStop, ""); err != nil {
-				_ = gw.sendText(ctx, adapter, msg, "停止任务失败: "+err.Error())
+			if err := state.ctrl.ResolveRecovery(parts[1], agent.RecoveryActionRevise, "cancel this proposed action"); err != nil {
+				_ = gw.sendText(ctx, adapter, msg, "取消变更失败: "+err.Error())
 				return
 			}
 			gw.forgetPendingApproval(key, parts[1])
-			_ = gw.sendText(ctx, adapter, msg, "已停止任务。")
+			_ = gw.sendText(ctx, adapter, msg, "已取消当前变更；如需停止整个任务，请使用 /stop。")
 		} else {
 			_ = gw.sendText(ctx, adapter, msg, "没有找到当前会话中的恢复检查点。")
 		}

@@ -12,7 +12,7 @@ import (
 )
 
 // TestRecoveryWiringPreservesSuccessPathCacheShape pins the product rule that
-// enabling the Auto recovery checkpoint must not change the provider-visible
+// enabling Auto Guard must not change the provider-visible
 // system prompt or tool schemas on the success path. Only failure-path dynamic
 // user-tail and the independent reviewer session may add tokens.
 func TestRecoveryWiringPreservesSuccessPathCacheShape(t *testing.T) {
@@ -50,7 +50,7 @@ func TestRecoveryWiringPreservesSuccessPathCacheShape(t *testing.T) {
 	}
 
 	// Reviewer uses an isolated policy prompt — must not leak into main agent.
-	reviewer := recovery.NewSession(nil, "reviewer", 0, nil)
+	reviewer := recovery.NewSession(nil, nil)
 	if reviewer == nil {
 		t.Fatal("expected reviewer session")
 	}

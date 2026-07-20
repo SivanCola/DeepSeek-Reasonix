@@ -135,6 +135,7 @@ func loadForRoot(root string, migrateOnDisk bool) (*Config, error) {
 	_ = mergeInstalledPluginPackages(cfg, root)
 	normalizePluginCommandLines(cfg)
 	normalizeLegacyEffort(cfg)
+	normalizeLegacyAutoGuardConfig(cfg)
 	cfg.ignoredLegacyStepLimits = normalizeLegacyAgentStepLimits(cfg)
 	normalizeRetiredAutoPlan(cfg)
 	normalizeLegacyMCPTiers(cfg)
@@ -662,6 +663,7 @@ func normalizeConfigForEdit(cfg *Config) bool {
 	normalizeLegacyEffort(cfg)
 	normalizeLegacyAgentStepLimits(cfg)
 	changed := normalizeRetiredAutoPlan(cfg)
+	changed = normalizeLegacyAutoGuardConfig(cfg) || changed
 	normalizeLegacyMCPTiers(cfg)
 	changed = normalizeLegacyStepFunBaseURLs(cfg) || changed
 	changed = normalizeLegacyLongCatContextWindows(cfg) || changed
@@ -672,6 +674,24 @@ func normalizeConfigForEdit(cfg *Config) bool {
 	backfillDeepSeekOfficialPrices(cfg)
 	normalizeEffortConfig(cfg)
 	return changed
+}
+
+// normalizeLegacyAutoGuardConfig collapses the short-lived desktop default into
+// the single agent-level Auto Guard switch. The old field remains decodable so
+// configs written by earlier builds keep their intent.
+func normalizeLegacyAutoGuardConfig(c *Config) bool {
+	if c == nil || c.Desktop.DefaultAutoRecoveryCheckpoint == nil {
+		return false
+	}
+	if strings.TrimSpace(c.Agent.AutoRecoveryCheckpoint) == "" {
+		if *c.Desktop.DefaultAutoRecoveryCheckpoint {
+			c.Agent.AutoRecoveryCheckpoint = "on"
+		} else {
+			c.Agent.AutoRecoveryCheckpoint = "off"
+		}
+	}
+	c.Desktop.DefaultAutoRecoveryCheckpoint = nil
+	return true
 }
 
 // normalizeRetiredAutoPlan keeps pre-v5 configs readable while enforcing the

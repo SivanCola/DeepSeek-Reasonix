@@ -19,8 +19,6 @@ func (*recordingRecoveryGate) BeforeMutation(context.Context, RecoveryProposal) 
 	return RecoveryDecision{Allow: true}, nil
 }
 
-func (*recordingRecoveryGate) ConsumeGuidance(string) string { return "" }
-
 func TestObserveRecoveryResultMarksCancellation(t *testing.T) {
 	gate := &recordingRecoveryGate{}
 	a := &Agent{recoveryGate: gate}

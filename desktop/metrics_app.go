@@ -389,7 +389,6 @@ func (m *metricsAggregator) observeRecoveryMetrics(stats recovery.Metrics) {
 	add("recovery_human_prompt", stats.HumanPrompts)
 	add("recovery_human_continue", stats.HumanContinues)
 	add("recovery_human_revise", stats.HumanRevises)
-	add("recovery_human_stop", stats.HumanStops)
 	add("recovery_review_error", stats.ReviewErrors)
 	add("recovery_repeat_prompt", stats.RepeatPrompts)
 	if stats.ReviewLatencyCount > 0 {

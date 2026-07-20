@@ -517,7 +517,6 @@ func recoveryKeyboard(id string) *InlineKeyboard {
 		Buttons: []InlineKeyboardButton{
 			{ID: "recovery_continue", Label: "1 继续此变更", Style: 1, CallbackID: "/recovery-continue " + id},
 			{ID: "recovery_revise", Label: "2 修改方案", Style: 0, CallbackID: "/recovery-revise " + id},
-			{ID: "recovery_stop", Label: "3 停止任务", Style: 2, CallbackID: "/recovery-stop " + id},
 		},
 	}}}
 }
@@ -536,7 +535,7 @@ func renderApprovalText(a event.Approval) string {
 
 func renderRecoveryText(a event.Approval) string {
 	var b strings.Builder
-	b.WriteString("🛟 失败恢复检查点\n")
+	b.WriteString("🛟 Auto Guard 自动防护\n")
 	rec := a.Recovery
 	if rec != nil {
 		if rec.FailedSummary != "" {
@@ -567,8 +566,8 @@ func renderRecoveryText(a event.Approval) string {
 	} else {
 		fmt.Fprintf(&b, "工具: %s\n操作: %s\n", a.Tool, a.Subject)
 	}
-	fmt.Fprintf(&b, "\nID: `%s`\n回复 1 继续此变更，2 修改方案，3 停止任务。\n也可用 /recovery-continue %s、/recovery-revise %s [说明]、/recovery-stop %s。",
-		a.ID, a.ID, a.ID, a.ID)
+	fmt.Fprintf(&b, "\nID: `%s`\n回复 1 继续此变更，2 修改方案。\n也可用 /recovery-continue %s、/recovery-revise %s [说明]。",
+		a.ID, a.ID, a.ID)
 	return b.String()
 }
 
@@ -589,14 +588,13 @@ func approvalCard(a event.Approval, chatType ChatType, userID string) *Interacti
 
 func recoveryCard(a event.Approval, chatType ChatType, userID string) *InteractiveCard {
 	return &InteractiveCard{
-		Header: "失败恢复检查点",
+		Header: "Auto Guard 自动防护",
 		Elements: []InteractiveCardElement{
 			{Tag: "markdown", Content: renderRecoveryText(a)},
 			{Tag: "action", Extra: map[string]any{
 				"actions": []map[string]any{
 					{"tag": "button", "text": map[string]string{"tag": "plain_text", "content": "继续此变更"}, "type": "primary", "value": cardActionValue("/recovery-continue "+a.ID, chatType, userID)},
 					{"tag": "button", "text": map[string]string{"tag": "plain_text", "content": "修改方案"}, "type": "default", "value": cardActionValue("/recovery-revise "+a.ID, chatType, userID)},
-					{"tag": "button", "text": map[string]string{"tag": "plain_text", "content": "停止任务"}, "type": "danger", "value": cardActionValue("/recovery-stop "+a.ID, chatType, userID)},
 				},
 			}},
 		},

@@ -1037,7 +1037,6 @@ export default function App() {
     cancel,
     approve,
     resolveRecovery,
-    setRecoveryCheckpointEnabled,
     answerQuestion,
     setControllerMode,
     setCollaborationMode: setControllerCollaborationMode,
@@ -4205,7 +4204,6 @@ export default function App() {
               running={state.running || rewindCommitting}
               collaborationMode={collaborationMode}
               toolApprovalMode={toolApprovalMode}
-              recoveryCheckpointEnabled={state.meta?.recoveryCheckpointEnabled !== false}
               tokenMode={tokenMode}
               goal={goal}
               cwd={state.meta?.cwd}
@@ -4221,9 +4219,6 @@ export default function App() {
               onSetMode={applyMode}
               onSetCollaborationMode={applyCollaborationMode}
               onSetToolApprovalMode={applyToolApprovalMode}
-              onSetRecoveryCheckpointEnabled={(enabled) => {
-                void setRecoveryCheckpointEnabled(enabled);
-              }}
               onToggleYoloApprovalMode={toggleYoloApprovalMode}
               onClearGoal={() => applyGoal("")}
               onSwitchModel={switchModel}

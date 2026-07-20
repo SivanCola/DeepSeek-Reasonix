@@ -15,7 +15,6 @@ const (
 	PhaseIdle             Phase = "idle"
 	PhaseDiagnosing       Phase = "diagnosing"
 	PhaseAwaitingDecision Phase = "awaiting_decision"
-	PhaseApprovedOnce     Phase = "approved_once"
 )
 
 // ChangeKind classifies how the proposed recovery action differs from the
@@ -88,11 +87,9 @@ type TaskState struct {
 	Phase            Phase            `json:"phase"`
 	Failure          *FailureEvent    `json:"failure,omitempty"`
 	Pending          *PendingProposal `json:"pending,omitempty"`
-	ApprovedFinger   string           `json:"approved_fingerprint,omitempty"`
 	ApprovalID       string           `json:"approval_id,omitempty"`
-	PendingGuidance  string           `json:"pending_guidance,omitempty"`
 	ConsecutiveFails int              `json:"consecutive_fails,omitempty"`
-	DiagnosingReads  int              `json:"diagnosing_reads,omitempty"`
+	ReviewBlocks     int              `json:"review_blocks,omitempty"`
 	TailInjected     bool             `json:"tail_injected,omitempty"`
 }
 
@@ -109,7 +106,6 @@ type Metrics struct {
 	HumanPrompts       int64
 	HumanContinues     int64
 	HumanRevises       int64
-	HumanStops         int64
 	ReviewErrors       int64
 	ReviewLatencyMsSum int64
 	ReviewLatencyCount int64
@@ -148,7 +144,7 @@ func ToEventApproval(id string, pending PendingProposal, failure *FailureEvent) 
 		}
 	}
 	subject := firstNonEmpty(pending.Subject, pending.Preview, pending.Tool)
-	reason := firstNonEmpty(pending.Rationale, pending.Diagnosis, "recovery checkpoint requires confirmation")
+	reason := firstNonEmpty(pending.Rationale, pending.Diagnosis, "Auto Guard requires confirmation")
 	return event.Approval{
 		ID:       id,
 		Tool:     pending.Tool,
@@ -169,7 +165,6 @@ type Action = agent.RecoveryAction
 const (
 	ActionContinue = agent.RecoveryActionContinue
 	ActionRevise   = agent.RecoveryActionRevise
-	ActionStop     = agent.RecoveryActionStop
 )
 
 func firstNonEmpty(vals ...string) string {

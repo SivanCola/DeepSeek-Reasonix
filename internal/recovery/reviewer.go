@@ -15,9 +15,9 @@ import (
 	"reasonix/internal/tool"
 )
 
-// PolicyPrompt is the fixed recovery-reviewer system prompt. It is stable so
+// PolicyPrompt is the fixed Auto Guard reviewer system prompt. It is stable so
 // the reviewer session can keep a cacheable prefix across reviews.
-const PolicyPrompt = `You are an independent recovery reviewer for a coding agent.
+const PolicyPrompt = `You are an independent Auto Guard reviewer for a coding agent.
 You do not execute tools and you do not write code. Your only job is to decide
 whether the agent's next proposed mutation after a failure is the same safe
 strategy, or whether a human must confirm because strategy, scope, or risk changed.
@@ -39,9 +39,10 @@ Rules:
 - A tool-name change alone is not a strategy change. In particular, moving from
   a failed verifier to a targeted edit in the diagnosed scope can be the same
   strategy.
-- Expanding write paths, changing the implementation method, deleting,
-  installing dependencies, editing config, or external/network writes must be
-  confirm with the matching change_kind.
+- Expanding write paths, changing the implementation method, broad destructive
+  deletion, installing dependencies, editing config, or external/network writes
+  must be confirm with the matching change_kind. A targeted source deletion in
+  the diagnosed scope can remain same_strategy.
 - Do not invent facts beyond the provided failure, diagnosis, and proposal.`
 
 // Session is a long-lived recovery reviewer with its own agent session,
@@ -55,15 +56,13 @@ type Session struct {
 	timeout time.Duration
 }
 
-// NewSession creates a recovery reviewer. temperature should be 0 for
-// deterministic JSON. sink is discarded for reviewer chatter.
-func NewSession(prov provider.Provider, modelRef string, temperature float64, pricing *provider.Pricing) *Session {
-	_ = modelRef              // caller selects provider; modelRef kept for API symmetry with guardian
+// NewSession creates an Auto Guard reviewer with deterministic temperature zero.
+func NewSession(prov provider.Provider, pricing *provider.Pricing) *Session {
 	reg := tool.NewRegistry() // empty: no tools
 	sess := agent.NewSession(PolicyPrompt)
 	ag := agent.New(prov, reg, sess, agent.Options{
 		MaxSteps:            1,
-		Temperature:         temperature,
+		Temperature:         0,
 		Pricing:             pricing,
 		ContextWindow:       32_000,
 		CompactRatio:        0.9,
