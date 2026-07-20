@@ -24,7 +24,15 @@ const (
 
 type remoteMarkdownImageClientFactory func(netclient.ProxySpec) (*http.Client, error)
 
+type remoteMarkdownImageLookupIP func(context.Context, string) ([]net.IPAddr, error)
+
+type remoteMarkdownImageDialerFactory func(*url.URL) (netclient.StreamDialer, error)
+
 func newRemoteMarkdownImageClient(spec netclient.ProxySpec) (*http.Client, error) {
+	return newRemoteMarkdownImageClientWithLookup(spec, net.DefaultResolver.LookupIPAddr)
+}
+
+func newRemoteMarkdownImageClientWithLookup(spec netclient.ProxySpec, lookupIP remoteMarkdownImageLookupIP) (*http.Client, error) {
 	options := netclient.TransportOptions{
 		DialTimeout:           10 * time.Second,
 		TLSHandshakeTimeout:   10 * time.Second,
@@ -34,69 +42,138 @@ func newRemoteMarkdownImageClient(spec netclient.ProxySpec) (*http.Client, error
 	if err != nil {
 		return nil, err
 	}
-	directTransport, err := netclient.NewTransport(netclient.ProxySpec{Mode: netclient.ModeOff}, options)
-	if err != nil {
-		return nil, err
-	}
-	directTransport.DialContext = remoteMarkdownImageDirectDialContext
 	if proxyFor == nil {
-		return &http.Client{Transport: directTransport}, nil
-	}
-	proxiedTransport, err := netclient.NewTransport(spec, options)
-	if err != nil {
-		return nil, err
+		proxyFor = func(*http.Request) (*url.URL, error) { return nil, nil }
 	}
 	return &http.Client{Transport: remoteMarkdownImageRoundTripper{
-		proxyFor: proxyFor,
-		direct:   directTransport,
-		proxied:  proxiedTransport,
+		proxyFor:       proxyFor,
+		lookupIP:       lookupIP,
+		dialerForProxy: newRemoteMarkdownImageStreamDialer,
+		options:        options,
 	}}, nil
 }
 
 type remoteMarkdownImageRoundTripper struct {
-	proxyFor func(*http.Request) (*url.URL, error)
-	direct   http.RoundTripper
-	proxied  http.RoundTripper
+	proxyFor       func(*http.Request) (*url.URL, error)
+	lookupIP       remoteMarkdownImageLookupIP
+	dialerForProxy remoteMarkdownImageDialerFactory
+	options        netclient.TransportOptions
 }
 
 func (rt remoteMarkdownImageRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	addresses, err := resolveRemoteMarkdownImageAddresses(req.Context(), req.URL.Hostname(), rt.lookupIP)
+	if err != nil {
+		return nil, err
+	}
+
+	// Resolve the route once. The fixed dialer below cannot fall back from a
+	// proxy decision to an unguarded direct connection if PAC/system state changes.
 	proxyURL, err := rt.proxyFor(req)
 	if err != nil {
 		return nil, err
 	}
-	if proxyURL == nil {
-		return rt.direct.RoundTrip(req)
-	}
-	return rt.proxied.RoundTrip(req)
-}
-
-func remoteMarkdownImageDirectDialContext(ctx context.Context, network, address string) (net.Conn, error) {
-	host, port, err := net.SplitHostPort(address)
+	proxyURL, err = normalizedRemoteMarkdownImageProxyURL(proxyURL)
 	if err != nil {
 		return nil, err
 	}
-	addresses, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+	dialer, err := rt.dialerForProxy(proxyURL)
+	if err != nil {
+		return nil, err
+	}
+	transport, err := netclient.NewTransport(netclient.ProxySpec{Mode: netclient.ModeOff}, rt.options)
+	if err != nil {
+		return nil, err
+	}
+	// Every RoundTrip owns its transport, so retaining an idle connection cannot
+	// improve reuse and would keep one transport alive per rendered image.
+	transport.DisableKeepAlives = true
+	transport.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
+		_, port, splitErr := net.SplitHostPort(address)
+		if splitErr != nil {
+			return nil, splitErr
+		}
+		var lastErr error
+		for _, resolved := range addresses {
+			dialCtx := ctx
+			cancel := func() {}
+			if rt.options.DialTimeout > 0 {
+				dialCtx, cancel = context.WithTimeout(ctx, rt.options.DialTimeout)
+			}
+			conn, dialErr := dialer.DialContext(dialCtx, network, net.JoinHostPort(resolved.IP.String(), port))
+			cancel()
+			if dialErr == nil {
+				return conn, nil
+			}
+			lastErr = dialErr
+		}
+		return nil, lastErr
+	}
+	resp, err := transport.RoundTrip(req)
+	if err != nil {
+		transport.CloseIdleConnections()
+		return nil, err
+	}
+	resp.Body = &remoteMarkdownImageResponseBody{ReadCloser: resp.Body, closeTransport: transport.CloseIdleConnections}
+	return resp, nil
+}
+
+type remoteMarkdownImageResponseBody struct {
+	io.ReadCloser
+	closeTransport func()
+}
+
+func (b *remoteMarkdownImageResponseBody) Close() error {
+	err := b.ReadCloser.Close()
+	b.closeTransport()
+	return err
+}
+
+func newRemoteMarkdownImageStreamDialer(proxyURL *url.URL) (netclient.StreamDialer, error) {
+	if proxyURL == nil {
+		direct := &net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}
+		return netclient.DialerFunc(direct.DialContext), nil
+	}
+	// The route was already selected for the original hostname. Convert it to a
+	// fixed custom proxy so the stream dialer connects that exact proxy to the
+	// vetted IP instead of resolving or re-evaluating the target route again.
+	return netclient.NewStreamDialer(netclient.ProxySpec{Mode: netclient.ModeCustom, URL: proxyURL.String()})
+}
+
+func normalizedRemoteMarkdownImageProxyURL(proxyURL *url.URL) (*url.URL, error) {
+	if proxyURL == nil {
+		return nil, nil
+	}
+	proxyCopy := *proxyURL
+	proxyCopy.Scheme = strings.ToLower(proxyCopy.Scheme)
+	if proxyCopy.Scheme == "" {
+		proxyCopy.Scheme = "http"
+	}
+	defaultPort, ok := map[string]string{
+		"http": "80", "https": "443", "socks5": "1080", "socks5h": "1080",
+	}[proxyCopy.Scheme]
+	if !ok || proxyCopy.Hostname() == "" {
+		return nil, fmt.Errorf("remote image proxy URL is invalid")
+	}
+	if proxyCopy.Port() == "" {
+		proxyCopy.Host = net.JoinHostPort(proxyCopy.Hostname(), defaultPort)
+	}
+	return &proxyCopy, nil
+}
+
+func resolveRemoteMarkdownImageAddresses(ctx context.Context, host string, lookupIP remoteMarkdownImageLookupIP) ([]net.IPAddr, error) {
+	addresses, err := lookupIP(ctx, host)
 	if err != nil {
 		return nil, err
 	}
 	if len(addresses) == 0 {
 		return nil, fmt.Errorf("remote image host resolved to no addresses")
 	}
-	for _, resolved := range addresses {
-		if blockedRemoteMarkdownImageIP(resolved.IP) {
+	for _, address := range addresses {
+		if blockedRemoteMarkdownImageIP(address.IP) {
 			return nil, fmt.Errorf("remote image host resolved to a non-public address")
 		}
 	}
-	dialer := &net.Dialer{Timeout: 10 * time.Second}
-	var lastErr error
-	for _, resolved := range addresses {
-		conn, dialErr := dialer.DialContext(ctx, network, net.JoinHostPort(resolved.IP.String(), port))
-		if dialErr == nil {
-			return conn, nil
-		}
-		lastErr = dialErr
-	}
-	return nil, lastErr
+	return addresses, nil
 }
 
 // remoteMarkdownImageMiddleware keeps external images out of the WebView2
@@ -145,10 +222,6 @@ func serveRemoteMarkdownImage(
 		http.Error(w, "invalid remote image URL", http.StatusBadRequest)
 		return
 	}
-	if err := guardRemoteMarkdownImageTarget(req, spec); err != nil {
-		http.Error(w, "remote image target is unavailable", http.StatusBadGateway)
-		return
-	}
 	req.Header.Set("Accept", "image/webp,image/png,image/jpeg,image/gif,image/bmp,image/svg+xml;q=0.9,*/*;q=0.1")
 	req.Header.Set("User-Agent", "Reasonix-Desktop/1.0")
 
@@ -167,11 +240,11 @@ func serveRemoteMarkdownImage(
 		if _, err := validateRemoteMarkdownImageURL(req.URL.String()); err != nil {
 			return err
 		}
-		return guardRemoteMarkdownImageTarget(req, spec)
+		return nil
 	}
 
-	// The URL and every redirect are restricted to public HTTP(S) targets; direct dials re-check and
-	// pin resolved IPs, while proxy DNS follows the same explicit trust boundary as web_fetch.
+	// The production transport resolves every initial and redirected target to
+	// public IPs and pins direct/proxied dials to those vetted addresses.
 	resp, err := client.Do(req)
 	if err != nil {
 		http.Error(w, "remote image fetch failed", http.StatusBadGateway)
@@ -239,41 +312,7 @@ func blockedRemoteMarkdownImageHost(host string) bool {
 }
 
 func blockedRemoteMarkdownImageIP(ip net.IP) bool {
-	return ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() ||
-		ip.IsLinkLocalMulticast() || ip.IsUnspecified() || ip.IsMulticast() ||
-		remoteMarkdownImageCGNAT.Contains(ip)
-}
-
-// guardRemoteMarkdownImageTarget resolves and checks direct targets before the
-// transport dials them. Proxy-routed hostnames deliberately stay unresolved on
-// the client so HTTP/SOCKS proxies remain usable in DNS-restricted networks.
-func guardRemoteMarkdownImageTarget(req *http.Request, spec netclient.ProxySpec) error {
-	proxyFor, err := netclient.ProxyFunc(spec)
-	if err != nil {
-		return err
-	}
-	if proxyFor != nil {
-		proxyURL, err := proxyFor(req)
-		if err != nil {
-			return err
-		}
-		if proxyURL != nil {
-			return nil
-		}
-	}
-	addresses, err := net.DefaultResolver.LookupIPAddr(req.Context(), req.URL.Hostname())
-	if err != nil {
-		return err
-	}
-	if len(addresses) == 0 {
-		return fmt.Errorf("remote image host resolved to no addresses")
-	}
-	for _, address := range addresses {
-		if blockedRemoteMarkdownImageIP(address.IP) {
-			return fmt.Errorf("remote image host resolved to a non-public address")
-		}
-	}
-	return nil
+	return ip == nil || !ip.IsGlobalUnicast() || ip.IsPrivate() || remoteMarkdownImageCGNAT.Contains(ip)
 }
 
 var remoteMarkdownImageCGNAT = mustRemoteMarkdownImageCIDR("100.64.0.0/10")
@@ -328,7 +367,9 @@ var remoteMarkdownSVGForbiddenElements = map[string]bool{
 
 func sanitizeRemoteMarkdownSVG(body []byte) ([]byte, bool) {
 	trimmed := bytes.TrimSpace(body)
-	if len(trimmed) == 0 || (!bytes.HasPrefix(trimmed, []byte("<svg")) && !bytes.HasPrefix(trimmed, []byte("<?xml"))) {
+	trimmed = bytes.TrimPrefix(trimmed, []byte{0xef, 0xbb, 0xbf})
+	trimmed = bytes.TrimSpace(trimmed)
+	if len(trimmed) == 0 {
 		return nil, false
 	}
 
