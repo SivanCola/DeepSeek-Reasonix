@@ -332,13 +332,6 @@ func ClassifyRemoteAskPassPrompt(prompt string) RemoteAskPassPromptKind {
 	}
 }
 
-// sanitizeRemoteAskPassPrompt strips terminal control sequences and control
-// characters before any SSH-provided text reaches the Desktop UI. Printable
-// fingerprint punctuation remains intact.
-func sanitizeRemoteAskPassPrompt(prompt string) string {
-	return truncateRemoteAskPassPrompt(sanitizeRemoteAskPassPromptLimit(prompt, remoteAskPassMaxPromptBytes), 4096)
-}
-
 func sanitizeRemoteAskPassPromptLimit(prompt string, maxVisibleBytes int) string {
 	var builder strings.Builder
 	builder.Grow(min(len(prompt), maxVisibleBytes))

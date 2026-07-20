@@ -49,5 +49,3 @@ func (p *remoteSSHProcess) kill(cmd *exec.Cmd) bool {
 	})
 	return killed
 }
-
-func (*remoteSSHProcess) finish() {}

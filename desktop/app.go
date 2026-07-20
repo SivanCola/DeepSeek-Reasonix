@@ -108,13 +108,6 @@ type PromptHistoryResult struct {
 type App struct {
 	ctx context.Context
 
-	// remoteWindow marks the lightweight native shell used for an SSH-backed
-	// workspace. It deliberately skips local tab/session runtime startup so a
-	// second window never competes for the primary process's session leases.
-	remoteWindow          *remoteWindowLaunch
-	remoteWindowNavigated atomic.Bool
-	remoteWindowOpener    func(remoteWindowLaunch) error // test-only injection
-
 	// mu protects the tab map, tabOrder, activeTabID, and per-tab fields that are read
 	// from bound methods. All bound methods that touch a controller use activeCtrl().
 	mu          sync.RWMutex
@@ -454,9 +447,6 @@ func (a *App) Platform() string {
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
 	a.startWindowsWebView2StartupFallback(ctx)
-	if a.remoteWindow != nil {
-		return
-	}
 	installSystemQuitHook()
 	a.startTray()
 	a.enableDeferredRebuildRetry()
@@ -491,9 +481,6 @@ func (a *App) startup(ctx context.Context) {
 }
 
 func (a *App) beforeClose(ctx context.Context) bool {
-	if a.remoteWindow != nil {
-		return false
-	}
 	if a.forceQuit.Swap(false) || consumeSystemQuitRequested() {
 		return false
 	}
@@ -806,9 +793,6 @@ func (a *App) snapshotAllTabs() {
 
 // shutdown snapshots all tabs, saves the final window geometry, and closes tabs.
 func (a *App) shutdown(context.Context) {
-	if a.remoteWindow != nil {
-		return
-	}
 	a.stopDeferredRebuildRetry()
 	a.stopMainThreadWatchdog()
 	if a.heartbeat != nil {
@@ -877,10 +861,6 @@ func (a *App) domReady(_ context.Context) {
 	// SA_ONSTACK flags required by Go; this is a no-op outside Linux.
 	repairWebKitSignalHandlers()
 
-	if a.remoteWindow != nil {
-		a.domReadyRemoteWindow()
-		return
-	}
 	state, ok := loadWindowState()
 	if ok {
 		// Validate saved position against current screens. Wails v2 doesn't
