@@ -148,7 +148,15 @@ For advanced CLI usage and configuration, see the **[CLI reference](./docs/CLI.m
 
 ## Star History
 
-[View Reasonix on Star History](https://www.star-history.com/?repos=esengine%2FDeepSeek-Reasonix&type=date&legend=top-left)
+<a href="https://www.star-history.com/?repos=esengine%2FDeepSeek-Reasonix&type=date&legend=top-left">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=esengine/DeepSeek-Reasonix&type=date&theme=dark&legend=top-left" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=esengine/DeepSeek-Reasonix&type=date&legend=top-left" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=esengine/DeepSeek-Reasonix&type=date&legend=top-left" />
+ </picture>
+</a>
+
+<br/>
 
 ## Acknowledgments
 
