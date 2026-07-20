@@ -190,7 +190,21 @@ func TestPlainInputWithStrongResearchSignalPreservesRefsWithoutStartingGoal(t *t
 
 func TestPlainAutoResearchTaskPathDoesNotResumeGoal(t *testing.T) {
 	root := t.TempDir()
-	c := New(Options{WorkspaceRoot: root})
+	prov := &scriptedTurns{turns: [][]provider.Chunk{
+		textTurn("Handled as an ordinary turn."),
+	}}
+	ag := agent.New(prov, tool.NewRegistry(), agent.NewSession(""), agent.Options{}, event.Discard)
+	events := make(chan event.Event, 8)
+	c := New(Options{
+		WorkspaceRoot: root,
+		Runner:        ag,
+		Executor:      ag,
+		Sink: event.FuncSink(func(e event.Event) {
+			if e.Kind == event.TurnDone || e.Kind == event.Notice {
+				events <- e
+			}
+		}),
+	})
 	defer c.Close()
 	c.SetGoalWithResearchMode("seed resumable task", GoalResearchOn)
 	taskID := c.goals.currentAutoResearchTaskID()
@@ -199,8 +213,20 @@ func TestPlainAutoResearchTaskPathDoesNotResumeGoal(t *testing.T) {
 	}
 	c.ClearGoal()
 
-	c.Submit("继续 .reasonix/autoresearch/" + taskID + "/ 这个任务")
+	input := "继续 .reasonix/autoresearch/" + taskID + "/ 这个任务"
+	c.Submit(input)
+	waitForTurnDone(t, events)
 
+	if prov.call != 1 {
+		t.Fatalf("provider calls = %d, want 1", prov.call)
+	}
+	first := firstUserMessage(ag.Session().Messages)
+	if !strings.HasSuffix(first, input) {
+		t.Fatalf("ordinary task path should preserve the original prompt suffix: %q", first)
+	}
+	if strings.Contains(first, "<active-goal>") || strings.Contains(first, "AutoResearch protocol") {
+		t.Fatalf("ordinary task path should not enter Goal or AutoResearch:\n%s", first)
+	}
 	if got := c.Goal(); got != "" {
 		t.Fatalf("ordinary task path should not resume Goal, got %q", got)
 	}
