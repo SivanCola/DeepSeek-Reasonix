@@ -14,18 +14,19 @@ import (
 // ResolvedHost is a fully resolved dial target: explicit [remote] TOML fields
 // layered over ~/.ssh/config values (when use_ssh_config) over defaults.
 type ResolvedHost struct {
-	Name          string // config entry name, or the raw target for ad-hoc dials
-	HostName      string // network address to dial
-	Port          int
-	User          string
-	IdentityFile  string   // explicit key path; empty => agent/default identities
-	IdentityFiles []string // ordered effective ssh_config identities
-	PassphraseEnv string   // credential env var name for the key passphrase
-	PasswordEnv   string   // credential env var name for password auth
-	ProxyJump     []string // resolved jump chain, in dial order
-	Workspace     string   // default remote workspace directory
-	ServeInstall  string   // auto|npm|upload|never
-	Forwards      []config.RemoteForwardEntry
+	Name           string // config entry name, or the raw target for ad-hoc dials
+	HostName       string // network address to dial
+	Port           int
+	User           string
+	IdentityFile   string   // explicit key path; empty => agent/default identities
+	IdentityFiles  []string // ordered effective ssh_config identities
+	IdentitiesOnly bool     // ssh_config IdentitiesOnly: never offer unrelated agent keys
+	PassphraseEnv  string   // credential env var name for the key passphrase
+	PasswordEnv    string   // credential env var name for password auth
+	ProxyJump      []string // resolved jump chain, in dial order
+	Workspace      string   // default remote workspace directory
+	ServeInstall   string   // auto|npm|upload|never
+	Forwards       []config.RemoteForwardEntry
 }
 
 // Addr is the host:port dial string.
@@ -158,15 +159,10 @@ func resolveEntry(e config.RemoteHostEntry, sshCfg *SSHConfigSource) (ResolvedHo
 		r.ProxyJump = splitJumpChain(j)
 	}
 	if e.UseSSHConfig {
-		// New imports keep Host equal to the original alias. Older imports saved
-		// the resolved hostname, but their Name still preserves the alias. Only
-		// treat Name as the lookup key when it is a concrete config alias: `ssh -G`
-		// also succeeds for arbitrary display labels by returning defaults.
-		alias := r.HostName
-		if sshCfg != nil && sshCfg.HasAlias(e.Name) {
-			alias = strings.TrimSpace(e.Name)
-		}
-		applySSHConfig(&r, alias, sshCfg)
+		// Host is the persisted lookup key. New imports store the SSH alias here;
+		// legacy imports store a resolved hostname snapshot. Never substitute Name:
+		// it is a user-facing label and may collide with an unrelated SSH alias.
+		applySSHConfig(&r, r.HostName, sshCfg)
 	}
 	applyHostDefaults(&r)
 	if r.HostName == "" {
@@ -204,6 +200,7 @@ func applySSHConfig(r *ResolvedHost, alias string, sshCfg *SSHConfigSource) {
 			r.ProxyJump = splitJumpChain(j)
 		}
 	}
+	r.IdentitiesOnly = sshCfg.IdentitiesOnly(alias)
 }
 
 func applyHostDefaults(r *ResolvedHost) {

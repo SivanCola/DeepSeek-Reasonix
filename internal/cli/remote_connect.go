@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"syscall"
@@ -77,7 +78,7 @@ func buildRemoteClient(nameOrTarget string) (*remote.Client, func(), error) {
 	return client, func() {}, nil
 }
 
-func remoteAuthForHost(host remote.ResolvedHost, prompt func(context.Context, remote.SecretKind, string) (string, error)) remote.AuthOptions {
+func remoteAuthForHost(host remote.ResolvedHost, prompt remote.SecretPrompt) remote.AuthOptions {
 	auth := remote.AuthOptions{SecretPrompt: prompt}
 	if host.PassphraseEnv != "" {
 		env := host.PassphraseEnv
@@ -90,13 +91,16 @@ func remoteAuthForHost(host remote.ResolvedHost, prompt func(context.Context, re
 	return auth
 }
 
-func terminalSecretPrompt(_ context.Context, kind remote.SecretKind, host string) (string, error) {
+func terminalSecretPrompt(_ context.Context, kind remote.SecretKind, host, identityFile string) (string, error) {
 	var label string
 	switch kind {
 	case remote.SecretPassword:
 		label = fmt.Sprintf(i18n.M.RemotePasswordPromptFmt, host)
 	default:
 		label = fmt.Sprintf(i18n.M.RemotePassphrasePromptFmt, host)
+		if identityFile != "" {
+			label += " (" + filepath.Base(identityFile) + ")"
+		}
 	}
 	fmt.Fprint(os.Stderr, label+" ")
 	if !term.IsTerminal(int(os.Stdin.Fd())) {

@@ -29,7 +29,7 @@ func (k SecretKind) String() string {
 // SecretPrompt obtains a one-shot credential without persisting or publishing
 // it. Implementations should respect ctx cancellation when the connection is
 // stopped or superseded.
-type SecretPrompt func(ctx context.Context, kind SecretKind, host string) (string, error)
+type SecretPrompt func(ctx context.Context, kind SecretKind, host, identityFile string) (string, error)
 
 // AuthOptions supplies credential resolution for a dial. Passphrase and
 // Password return already-resolved credential-store values (nil when none is
@@ -48,10 +48,9 @@ type AuthOptions struct {
 }
 
 type secretCache struct {
-	passphrase string
-	password   string
-	havePass   bool
-	havePw     bool
+	passphrases map[string]string
+	password    string
+	havePw      bool
 }
 
 // buildAuthMethods assembles authentication in OpenSSH-like order: agent,
@@ -73,7 +72,7 @@ func buildAuthMethods(ctx context.Context, h ResolvedHost, opts *AuthOptions) ([
 	var fallback []ssh.AuthMethod
 	cleanup := func() {}
 
-	if !opts.DisableAgent {
+	if !opts.DisableAgent && !h.IdentitiesOnly {
 		if am, closeAgent := agentAuth(); am != nil {
 			publicKeys = append(publicKeys, am)
 			cleanup = closeAgent
@@ -86,7 +85,7 @@ func buildAuthMethods(ctx context.Context, h ResolvedHost, opts *AuthOptions) ([
 	}
 	if len(identityFiles) > 0 {
 		for _, identityFile := range identityFiles {
-			am, err := keyAuth(ctx, h, opts, identityFile)
+			am, err := keyAuth(ctx, h, opts, identityFile, len(identityFiles) > 1)
 			if err != nil {
 				// Preserve the old explicit-single-key behavior, but let an
 				// OpenSSH identity list continue to its remaining candidates.
@@ -101,8 +100,9 @@ func buildAuthMethods(ctx context.Context, h ResolvedHost, opts *AuthOptions) ([
 			}
 		}
 	} else {
-		for _, path := range defaultIdentityFiles() {
-			am, err := keyAuth(ctx, h, opts, path)
+		defaultFiles := defaultIdentityFiles()
+		for _, path := range defaultFiles {
+			am, err := keyAuth(ctx, h, opts, path, len(defaultFiles) > 1)
 			if err != nil {
 				// A default key that exists but fails to parse shouldn't abort
 				// the whole chain — skip it and try the next.
@@ -180,7 +180,7 @@ func agentAuth() (ssh.AuthMethod, func()) {
 // keyAuth loads a private key, resolving a passphrase from the credential
 // store then the interactive prompt when the key is encrypted. Returns nil
 // (no method, no error) when the key file simply does not exist.
-func keyAuth(ctx context.Context, h ResolvedHost, opts *AuthOptions, path string) (ssh.AuthMethod, error) {
+func keyAuth(ctx context.Context, h ResolvedHost, opts *AuthOptions, path string, allowDecryptSkip bool) (ssh.AuthMethod, error) {
 	path = expandHome(path)
 	pem, err := os.ReadFile(path)
 	if err != nil {
@@ -200,21 +200,44 @@ func keyAuth(ctx context.Context, h ResolvedHost, opts *AuthOptions, path string
 	// Encrypted key: return a lazy method so the passphrase is only resolved
 	// if the server actually offers publickey with this key.
 	return ssh.PublicKeysCallback(func() ([]ssh.Signer, error) {
-		pass, perr := resolvePassphrase(ctx, h, opts)
+		pass, perr := resolvePassphrase(ctx, h, opts, path)
 		if perr != nil {
 			return nil, perr
 		}
 		s, serr := ssh.ParsePrivateKeyWithPassphrase(pem, []byte(pass))
+		if serr != nil && opts.SecretPrompt != nil {
+			// A host-level stored passphrase may unlock only one member of an
+			// IdentityFile list. Give this identity its own one-shot prompt before
+			// deciding that it is unavailable.
+			delete(opts.cache.passphrases, path)
+			pass, perr = opts.SecretPrompt(ctx, SecretPassphrase, h.Label(), path)
+			if perr != nil {
+				return nil, perr
+			}
+			opts.cache.passphrases[path] = pass
+			s, serr = ssh.ParsePrivateKeyWithPassphrase(pem, []byte(pass))
+		}
 		if serr != nil {
+			delete(opts.cache.passphrases, path)
+			// A configured identity list may contain encrypted keys with different
+			// passphrases. Treat a failed decryption like an unavailable identity so
+			// the next key can still be attempted; preserve the focused error for an
+			// explicit single-key configuration.
+			if allowDecryptSkip {
+				return nil, nil
+			}
 			return nil, fmt.Errorf("decrypt key %s: %w", path, serr)
 		}
 		return []ssh.Signer{s}, nil
 	}), nil
 }
 
-func resolvePassphrase(ctx context.Context, h ResolvedHost, opts *AuthOptions) (string, error) {
-	if opts.cache.havePass {
-		return opts.cache.passphrase, nil
+func resolvePassphrase(ctx context.Context, h ResolvedHost, opts *AuthOptions, identityFile string) (string, error) {
+	if opts.cache.passphrases == nil {
+		opts.cache.passphrases = map[string]string{}
+	}
+	if passphrase, ok := opts.cache.passphrases[identityFile]; ok {
+		return passphrase, nil
 	}
 	if opts.Passphrase != nil {
 		v, err := opts.Passphrase()
@@ -222,18 +245,18 @@ func resolvePassphrase(ctx context.Context, h ResolvedHost, opts *AuthOptions) (
 			return "", err
 		}
 		if v != "" {
-			opts.cache.passphrase, opts.cache.havePass = v, true
+			opts.cache.passphrases[identityFile] = v
 			return v, nil
 		}
 	}
 	if opts.SecretPrompt == nil {
 		return "", fmt.Errorf("remote: key passphrase required but no prompt available")
 	}
-	v, err := opts.SecretPrompt(ctx, SecretPassphrase, h.Label())
+	v, err := opts.SecretPrompt(ctx, SecretPassphrase, h.Label(), identityFile)
 	if err != nil {
 		return "", err
 	}
-	opts.cache.passphrase, opts.cache.havePass = v, true
+	opts.cache.passphrases[identityFile] = v
 	return v, nil
 }
 
@@ -276,7 +299,7 @@ func resolvePassword(ctx context.Context, h ResolvedHost, opts *AuthOptions) (st
 	if opts.SecretPrompt == nil {
 		return "", fmt.Errorf("remote: password required but no prompt available")
 	}
-	v, err := opts.SecretPrompt(ctx, SecretPassword, h.Label())
+	v, err := opts.SecretPrompt(ctx, SecretPassword, h.Label(), "")
 	if err != nil {
 		return "", err
 	}

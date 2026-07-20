@@ -1040,6 +1040,7 @@ export interface RemoteSecretPromptView {
   hostId: string;
   host: string;
   kind: "password" | "passphrase";
+  identity?: string;
 }
 
 export interface RemoteKnownHostLocation {

@@ -71,6 +71,17 @@ useRemoteStore.getState().applyStatus({
 });
 useRemoteStore.getState().clearPendingSecretPrompt(oldSecretPrompt);
 eq(useRemoteStore.getState().pendingSecretPrompt?.hostId, "other", "stale credential dialog cannot clear a newer prompt");
+const firstIdentityPrompt = {
+  hostId: "other", host: "other.test", kind: "passphrase" as const, identity: "id_first",
+};
+useRemoteStore.getState().applyStatus({ hostId: "other", state: "pending_secret", secretPrompt: firstIdentityPrompt });
+useRemoteStore.getState().applyStatus({
+  hostId: "other",
+  state: "pending_secret",
+  secretPrompt: { hostId: "other", host: "other.test", kind: "passphrase", identity: "id_second" },
+});
+useRemoteStore.getState().clearPendingSecretPrompt(firstIdentityPrompt);
+eq(useRemoteStore.getState().pendingSecretPrompt?.identity, "id_second", "one key prompt cannot clear the next key prompt");
 useRemoteStore.getState().applyStatus({ hostId: "other", state: "connecting" });
 eq(useRemoteStore.getState().pendingSecretPrompt, null, "credential resolution clears the prompt");
 

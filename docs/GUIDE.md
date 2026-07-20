@@ -239,12 +239,17 @@ CLI:
 
 ```bash
 reasonix remote add gpu-box dev@203.0.113.7 --workspace '~/projects/app'
-reasonix remote import --all              # from ~/.ssh/config (Match blocks skipped)
+reasonix remote import --all              # import aliases; ssh -G resolves Include/Match rules when connecting
 reasonix remote test gpu-box              # dial + auth + host-key confirmation
 reasonix remote connect gpu-box --open    # bootstrap serve, tunnel, open the URL
 reasonix remote serve status gpu-box
 reasonix remote fs ls gpu-box:'~/projects/app'
 ```
+
+Hosts with `use_ssh_config` enabled resolve the final effective configuration
+through the local OpenSSH `ssh -G`, including `Include`, wildcard `Host`,
+`Match` (including `Match exec`), repeated `IdentityFile`, `ProxyJump`, and
+`IdentitiesOnly`. Import stores the original alias instead of a stale snapshot.
 
 `connect` is a foreground supervisor (like `ssh -N` plus the serve bootstrap):
 it keeps the tunnel and configured forwards alive, auto-reconnects with

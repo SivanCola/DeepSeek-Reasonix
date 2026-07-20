@@ -265,8 +265,8 @@ func TestRemoteHostCredentialsStayOutOfConfigAndCanBeCleared(t *testing.T) {
 	if !ok {
 		t.Fatal("saved host missing")
 	}
-	wantPasswordEnv := remoteCredentialEnvName("secure-box", remotePasswordCredentialKind)
-	wantPassphraseEnv := remoteCredentialEnvName("secure-box", remotePassphraseCredentialKind)
+	wantPasswordEnv := config.RemotePasswordCredentialEnvName("secure-box")
+	wantPassphraseEnv := config.RemotePassphraseCredentialEnvName("secure-box")
 	if host.PasswordEnv != wantPasswordEnv || host.PassphraseEnv != wantPassphraseEnv {
 		t.Fatalf("credential refs = password:%q passphrase:%q", host.PasswordEnv, host.PassphraseEnv)
 	}
@@ -368,8 +368,8 @@ func TestRemoteHostCredentialWriteRollsBackOnFailure(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected credential validation failure")
 	}
-	passwordEnv := remoteCredentialEnvName("rollback-box", remotePasswordCredentialKind)
-	passphraseEnv := remoteCredentialEnvName("rollback-box", remotePassphraseCredentialKind)
+	passwordEnv := config.RemotePasswordCredentialEnvName("rollback-box")
+	passphraseEnv := config.RemotePassphraseCredentialEnvName("rollback-box")
 	t.Cleanup(func() {
 		_ = config.RemoveCredential(passwordEnv)
 		_ = config.RemoveCredential(passphraseEnv)
@@ -392,6 +392,7 @@ func TestScanSSHConfigReturnsNonNil(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("REASONIX_HOME", home)
 	t.Setenv("HOME", home) // no ~/.ssh/config here => empty result
+	t.Setenv("USERPROFILE", home)
 	mgr := newDesktopRemoteManager(&App{})
 	out, err := mgr.ScanSSHConfig()
 	if err != nil {
@@ -406,6 +407,7 @@ func TestScanSSHConfigPreservesAliasInsteadOfSnapshottingEffectiveFields(t *test
 	home := t.TempDir()
 	t.Setenv("REASONIX_HOME", home)
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	sshDir := filepath.Join(home, ".ssh")
 	if err := os.MkdirAll(sshDir, 0o700); err != nil {
 		t.Fatal(err)

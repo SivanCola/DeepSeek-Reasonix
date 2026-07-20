@@ -52,7 +52,7 @@ func TestDesktopSecretPromptPublishesMetadataAndReturnsOneShotSecret(t *testing.
 	}
 	result := make(chan promptResult, 1)
 	go func() {
-		secret, err := mgr.secretPrompt("box", generation)(ctx, remote.SecretPassword, "dev@box.test")
+		secret, err := mgr.secretPrompt("box", generation)(ctx, remote.SecretPassword, "dev@box.test", "")
 		result <- promptResult{secret: secret, err: err}
 	}()
 

@@ -48,6 +48,9 @@ export function RemoteSecretDialog() {
           {t(`remote.secret.${prompt.kind}.title`)}
         </h2>
         <p>{t(`remote.secret.${prompt.kind}.body`, { host: prompt.host })}</p>
+        {prompt.kind === "passphrase" && prompt.identity ? (
+          <p>{t("remote.secret.passphrase.identity", { identity: prompt.identity })}</p>
+        ) : null}
         <input
           ref={inputRef}
           className="remote-secret-dialog__input"

@@ -55,6 +55,76 @@ func TestRemoteAddListRemoveRoundTrip(t *testing.T) {
 	}
 }
 
+func TestRemoteRemoveCleansGeneratedCredentialsButKeepsUserManagedOnes(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("REASONIX_HOME", home)
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	passwordKey := config.RemotePasswordCredentialEnvName("secure-box")
+	passphraseKey := config.RemotePassphraseCredentialEnvName("secure-box")
+	const sharedKey = "TEAM_SHARED_SSH_PASSWORD"
+	for key, value := range map[string]string{
+		passwordKey: "generated-password", passphraseKey: "generated-passphrase", sharedKey: "shared-password",
+	} {
+		if _, err := config.SetCredential(key, value); err != nil {
+			t.Fatal(err)
+		}
+		key := key
+		t.Cleanup(func() { _ = config.RemoveCredential(key) })
+	}
+	if err := editUserConfig(func(c *config.Config) error {
+		if err := c.UpsertRemoteHost(config.RemoteHostEntry{
+			Name: "secure-box", Host: "192.0.2.20", PasswordEnv: passwordKey, PassphraseEnv: passphraseKey,
+		}); err != nil {
+			return err
+		}
+		return c.UpsertRemoteHost(config.RemoteHostEntry{
+			Name: "shared-box", Host: "192.0.2.21", PasswordEnv: sharedKey,
+		})
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := remoteRemoveCLI([]string{"secure-box"}); got != 0 {
+		t.Fatalf("remove generated host exit = %d", got)
+	}
+	if got := config.ResolveCredentialForRootGlobalFirst(home, passwordKey); got.Set {
+		t.Fatal("generated password remained after CLI host removal")
+	}
+	if got := config.ResolveCredentialForRootGlobalFirst(home, passphraseKey); got.Set {
+		t.Fatal("generated passphrase remained after CLI host removal")
+	}
+	if got := remoteRemoveCLI([]string{"shared-box"}); got != 0 {
+		t.Fatalf("remove shared host exit = %d", got)
+	}
+	if got := config.ResolveCredentialForRootGlobalFirst(home, sharedKey); !got.Set || got.Value != "shared-password" {
+		t.Fatalf("user-managed credential was removed: %+v", got)
+	}
+}
+
+func TestRemoteAddReplacementCleansDroppedGeneratedCredentials(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("REASONIX_HOME", home)
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	passwordKey := config.RemotePasswordCredentialEnvName("box")
+	if _, err := config.SetCredential(passwordKey, "generated-password"); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = config.RemoveCredential(passwordKey) })
+	if err := editUserConfig(func(c *config.Config) error {
+		return c.UpsertRemoteHost(config.RemoteHostEntry{Name: "box", Host: "192.0.2.30", PasswordEnv: passwordKey})
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if got := remoteAddCLI([]string{"box", "dev@192.0.2.31"}); got != 0 {
+		t.Fatalf("replace exit = %d", got)
+	}
+	if got := config.ResolveCredentialForRootGlobalFirst(home, passwordKey); got.Set {
+		t.Fatal("generated credential remained after CLI replacement dropped its reference")
+	}
+}
+
 func TestRemoteForwardAddPersists(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("REASONIX_HOME", home)

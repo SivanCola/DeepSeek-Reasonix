@@ -3,6 +3,7 @@ package remote
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -180,6 +181,105 @@ func TestClientConnectEncryptedPublicKeyAuth(t *testing.T) {
 	defer c.Close()
 	if c.Status().Status != StatusConnected {
 		t.Fatalf("status = %v, want connected", c.Status().Status)
+	}
+}
+
+func TestClientPromptsPerEncryptedIdentity(t *testing.T) {
+	wrongPEM, _, err := sshtest.GenerateEncryptedKeyPEM("first-key-passphrase")
+	if err != nil {
+		t.Fatal(err)
+	}
+	correctPEM, authorized, err := sshtest.GenerateEncryptedKeyPEM("second-key-passphrase")
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := sshtest.Start(t, sshtest.Options{AuthorizedKey: authorized})
+	dir := t.TempDir()
+	wrongPath := filepath.Join(dir, "id_wrong_encrypted")
+	correctPath := filepath.Join(dir, "id_correct_encrypted")
+	if err := writeFile0600(wrongPath, wrongPEM); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeFile0600(correctPath, correctPEM); err != nil {
+		t.Fatal(err)
+	}
+	prompts := map[string]int{}
+	c := newTestClient(t, srv, Options{})
+	c.opts.Host.IdentityFile = wrongPath
+	c.opts.Host.IdentityFiles = []string{wrongPath, correctPath}
+	c.opts.Auth = AuthOptions{
+		DisableAgent: true,
+		SecretPrompt: func(_ context.Context, kind SecretKind, _ string, identityFile string) (string, error) {
+			if kind != SecretPassphrase {
+				t.Fatalf("prompt kind = %v, want passphrase", kind)
+			}
+			prompts[identityFile]++
+			switch identityFile {
+			case wrongPath:
+				return "first-key-passphrase", nil
+			case correctPath:
+				return "second-key-passphrase", nil
+			default:
+				return "", fmt.Errorf("unexpected identity %q", identityFile)
+			}
+		},
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := c.Start(ctx); err != nil {
+		t.Fatalf("Start with separately encrypted identities: %v", err)
+	}
+	defer c.Close()
+	if prompts[wrongPath] != 1 || prompts[correctPath] != 1 {
+		t.Fatalf("passphrase prompts = %v, want one per identity", prompts)
+	}
+}
+
+func TestClientFallsBackFromStoredPassphraseToPerIdentityPrompt(t *testing.T) {
+	wrongPEM, _, err := sshtest.GenerateEncryptedKeyPEM("first-key-passphrase")
+	if err != nil {
+		t.Fatal(err)
+	}
+	correctPEM, authorized, err := sshtest.GenerateEncryptedKeyPEM("second-key-passphrase")
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := sshtest.Start(t, sshtest.Options{AuthorizedKey: authorized})
+	dir := t.TempDir()
+	wrongPath := filepath.Join(dir, "id_wrong_encrypted")
+	correctPath := filepath.Join(dir, "id_correct_encrypted")
+	if err := writeFile0600(wrongPath, wrongPEM); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeFile0600(correctPath, correctPEM); err != nil {
+		t.Fatal(err)
+	}
+	var prompted []string
+	c := newTestClient(t, srv, Options{})
+	c.opts.Host.IdentityFile = wrongPath
+	c.opts.Host.IdentityFiles = []string{wrongPath, correctPath}
+	c.opts.Auth = AuthOptions{
+		DisableAgent: true,
+		// The saved host-level value unlocks the second key only.
+		Passphrase: func() (string, error) { return "second-key-passphrase", nil },
+		SecretPrompt: func(_ context.Context, kind SecretKind, _ string, identityFile string) (string, error) {
+			if kind != SecretPassphrase || identityFile != wrongPath {
+				return "", fmt.Errorf("unexpected prompt kind=%v identity=%q", kind, identityFile)
+			}
+			prompted = append(prompted, identityFile)
+			return "first-key-passphrase", nil
+		},
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := c.Start(ctx); err != nil {
+		t.Fatalf("Start with stored and per-identity passphrases: %v", err)
+	}
+	defer c.Close()
+	if len(prompted) != 1 || prompted[0] != wrongPath {
+		t.Fatalf("identity prompts = %v, want only %q", prompted, wrongPath)
 	}
 }
 

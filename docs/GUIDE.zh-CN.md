@@ -213,12 +213,16 @@ target = "127.0.0.1:5432"
 
 ```bash
 reasonix remote add gpu-box dev@203.0.113.7 --workspace '~/projects/app'
-reasonix remote import --all              # 从 ~/.ssh/config 导入(跳过 Match 块)
+reasonix remote import --all              # 导入别名；连接时通过 ssh -G 解析 Include/Match 等规则
 reasonix remote test gpu-box              # 拨号 + 认证 + 主机密钥确认
 reasonix remote connect gpu-box --open    # 引导 serve、建隧道、打开 URL
 reasonix remote serve status gpu-box
 reasonix remote fs ls gpu-box:'~/projects/app'
 ```
+
+启用 `use_ssh_config` 的主机会通过本机 OpenSSH `ssh -G` 获取最终有效配置，因此支持
+`Include`、通配 `Host`、`Match`（包括 `Match exec`）、多个 `IdentityFile`、`ProxyJump` 和
+`IdentitiesOnly`。导入时只保存原始别名，不复制一份容易过期的解析结果。
 
 `connect` 是前台守护(相当于 `ssh -N` 加上 serve 引导):它保持隧道与已配置的转发存活,断线时
 以指数退避自动重连,并在重连后重新挂载转发。Ctrl-C 只断开本地一侧 —— 远端 serve 继续运行,

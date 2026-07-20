@@ -127,7 +127,8 @@ export const useRemoteStore = create<RemoteState>((set) => ({
     set((state) => {
       if (expected && (
         state.pendingSecretPrompt?.hostId !== expected.hostId ||
-        state.pendingSecretPrompt?.kind !== expected.kind
+        state.pendingSecretPrompt?.kind !== expected.kind ||
+        state.pendingSecretPrompt?.identity !== expected.identity
       )) return state;
       return { pendingSecretPrompt: null };
     }),

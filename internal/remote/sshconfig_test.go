@@ -3,8 +3,9 @@ package remote
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
-	"strings"
+	"runtime"
 	"testing"
 
 	"reasonix/internal/config"
@@ -46,15 +47,64 @@ func TestEffectiveSSHConfigUsesOpenSSHOutputAndKeepsAllIdentities(t *testing.T) 
 		if path != src.Path() || alias != "gpu" {
 			t.Fatalf("ssh -G request = path %q alias %q", path, alias)
 		}
-		return []byte("hostname resolved.example\nuser effective-user\nport 2207\nidentityfile ~/.ssh/first\nidentityfile ~/.ssh/second\nproxyjump jump-a,jump-b\n"), nil
+		return []byte("hostname resolved.example\nuser effective-user\nport 2207\nidentityfile ~/.ssh/first\nidentityfile ~/.ssh/second\nproxyjump jump-a,jump-b\nidentitiesonly yes\n"), nil
 	}
 
 	got := src.Effective("gpu")
-	if got.HostName != "resolved.example" || got.User != "effective-user" || got.Port != 2207 || got.ProxyJump != "jump-a,jump-b" {
+	if got.HostName != "resolved.example" || got.User != "effective-user" || got.Port != 2207 || got.ProxyJump != "jump-a,jump-b" || !got.IdentitiesOnly {
 		t.Fatalf("effective config = %+v", got)
 	}
-	if len(got.IdentityFiles) != 2 || !strings.HasSuffix(got.IdentityFiles[0], "/.ssh/first") || !strings.HasSuffix(got.IdentityFiles[1], "/.ssh/second") {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantIdentities := []string{filepath.Join(home, ".ssh", "first"), filepath.Join(home, ".ssh", "second")}
+	if len(got.IdentityFiles) != 2 || got.IdentityFiles[0] != wantIdentities[0] || got.IdentityFiles[1] != wantIdentities[1] {
 		t.Fatalf("identity files = %v", got.IdentityFiles)
+	}
+}
+
+func TestSSHConfigMatchExecUsesOpenSSHEvenWhenFallbackRejectsIt(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config")
+	contents := "Host matched-box\n  HostName 192.0.2.10\nMatch exec \"true\"\n  User matched-user\n"
+	if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	src, err := LoadSSHConfig(path)
+	if err != nil {
+		t.Fatalf("valid OpenSSH Match exec config was rejected: %v", err)
+	}
+	src.resolveOpenSSH = func(_ context.Context, gotPath, alias string) ([]byte, error) {
+		if gotPath != path || alias != "matched-box" {
+			t.Fatalf("ssh -G request = path %q alias %q", gotPath, alias)
+		}
+		return []byte("hostname 192.0.2.10\nuser matched-user\nport 22\nidentitiesonly no\n"), nil
+	}
+	aliases := src.Aliases()
+	if len(aliases) != 1 || aliases[0].Alias != "matched-box" || aliases[0].User != "matched-user" {
+		t.Fatalf("Match exec aliases = %+v", aliases)
+	}
+}
+
+func TestSSHConfigMatchExecRealOpenSSH(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Match exec command is shell-dependent on Windows")
+	}
+	if _, err := exec.LookPath("ssh"); err != nil {
+		t.Skip("OpenSSH client is not installed")
+	}
+	path := filepath.Join(t.TempDir(), "config")
+	contents := "Host real-match-box\n  HostName 192.0.2.11\nMatch exec \"true\"\n  User real-match-user\n"
+	if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	src, err := LoadSSHConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := src.Effective("real-match-box")
+	if got.HostName != "192.0.2.11" || got.User != "real-match-user" {
+		t.Fatalf("real ssh -G Match exec result = %+v", got)
 	}
 }
 
@@ -162,7 +212,7 @@ func TestResolveHostLayersSSHConfig(t *testing.T) {
 	}
 }
 
-func TestResolveHostPreservesLegacyImportedAliasButNotDisplayLabel(t *testing.T) {
+func TestResolveHostUsesPersistedHostAsTheSSHConfigLookupKey(t *testing.T) {
 	src, err := LoadSSHConfig(writeSampleConfig(t))
 	if err != nil {
 		t.Fatal(err)
@@ -170,10 +220,11 @@ func TestResolveHostPreservesLegacyImportedAliasButNotDisplayLabel(t *testing.T)
 	// Make the test independent of the local OpenSSH executable.
 	src.resolveOpenSSH = nil
 
-	t.Run("legacy import name is concrete alias", func(t *testing.T) {
+	t.Run("legacy import remains a snapshot", func(t *testing.T) {
 		cfg := config.Default()
 		if err := cfg.UpsertRemoteHost(config.RemoteHostEntry{
-			Name: "gpu", Host: "203.0.113.9", UseSSHConfig: true,
+			Name: "gpu", Host: "203.0.113.9", User: "legacy-user", Port: 2201,
+			IdentityFile: "/legacy/id", UseSSHConfig: true,
 		}); err != nil {
 			t.Fatal(err)
 		}
@@ -181,8 +232,8 @@ func TestResolveHostPreservesLegacyImportedAliasButNotDisplayLabel(t *testing.T)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if h.User != "dev" || h.Port != 2222 {
-			t.Fatalf("legacy alias was not resolved live: %+v", h)
+		if h.HostName != "203.0.113.9" || h.User != "legacy-user" || h.Port != 2201 || h.IdentityFile != "/legacy/id" {
+			t.Fatalf("legacy snapshot was redirected through its display label: %+v", h)
 		}
 	})
 
@@ -199,6 +250,22 @@ func TestResolveHostPreservesLegacyImportedAliasButNotDisplayLabel(t *testing.T)
 		}
 		if h.HostName != "203.0.113.9" || h.User != "dev" {
 			t.Fatalf("saved Host alias was lost: %+v", h)
+		}
+	})
+
+	t.Run("display label collision cannot redirect saved alias", func(t *testing.T) {
+		cfg := config.Default()
+		if err := cfg.UpsertRemoteHost(config.RemoteHostEntry{
+			Name: "gpu", Host: "viajump", UseSSHConfig: true,
+		}); err != nil {
+			t.Fatal(err)
+		}
+		h, err := ResolveHost(cfg, "gpu", src)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if h.HostName != "10.1.1.1" || h.ProxyJump[0] != "bastion-1" {
+			t.Fatalf("display label collision redirected the saved Host alias: %+v", h)
 		}
 	})
 }

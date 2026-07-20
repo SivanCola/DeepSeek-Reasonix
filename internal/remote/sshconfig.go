@@ -32,11 +32,12 @@ type SSHConfigSource struct {
 // Keeping every IdentityFile is important: OpenSSH permits the directive to be
 // repeated and probes the resulting identities in order.
 type EffectiveSSHConfig struct {
-	HostName      string
-	User          string
-	Port          int
-	IdentityFiles []string
-	ProxyJump     string
+	HostName       string
+	User           string
+	Port           int
+	IdentityFiles  []string
+	ProxyJump      string
+	IdentitiesOnly bool
 }
 
 // LoadUserSSHConfig parses ~/.ssh/config. A missing file yields an empty
@@ -51,19 +52,20 @@ func LoadUserSSHConfig() (*SSHConfigSource, error) {
 
 // LoadSSHConfig parses one OpenSSH client config file.
 func LoadSSHConfig(path string) (*SSHConfigSource, error) {
-	f, err := os.Open(path)
+	contents, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return newSSHConfigSource(nil, path, nil), nil
 		}
 		return nil, err
 	}
-	defer f.Close()
-	cfg, err := ssh_config.Decode(f)
-	if err != nil {
-		return nil, err
-	}
 	aliases, _ := discoverSSHAliases(path, 0, map[string]bool{})
+	// The embedded parser is only a fallback. It intentionally rejects valid
+	// OpenSSH constructs such as `Match exec`, while the installed OpenSSH
+	// client accepts and evaluates them. Keep the discovered aliases and let
+	// `ssh -G` remain authoritative even when the fallback cannot decode the
+	// file.
+	cfg, _ := ssh_config.Decode(strings.NewReader(string(contents)))
 	return newSSHConfigSource(cfg, path, aliases), nil
 }
 
@@ -193,6 +195,8 @@ func parseOpenSSHEffectiveConfig(output []byte, alias string) (EffectiveSSHConfi
 			if !strings.EqualFold(value, "none") {
 				effective.ProxyJump = value
 			}
+		case "identitiesonly":
+			effective.IdentitiesOnly = strings.EqualFold(value, "yes")
 		}
 	}
 	if err := scanner.Err(); err != nil {
@@ -231,6 +235,7 @@ func (s *SSHConfigSource) parserEffective(alias string) EffectiveSSHConfig {
 	return EffectiveSSHConfig{
 		HostName: hostName, User: s.get(alias, "User"), Port: port,
 		IdentityFiles: identities, ProxyJump: s.get(alias, "ProxyJump"),
+		IdentitiesOnly: strings.EqualFold(s.get(alias, "IdentitiesOnly"), "yes"),
 	}
 }
 
@@ -274,6 +279,10 @@ func (s *SSHConfigSource) IdentityFiles(alias string) []string {
 
 func (s *SSHConfigSource) ProxyJump(alias string) string { return s.Effective(alias).ProxyJump }
 
+func (s *SSHConfigSource) IdentitiesOnly(alias string) bool {
+	return s.Effective(alias).IdentitiesOnly
+}
+
 // ImportedHost is one concrete Host alias surfaced by `remote import`.
 type ImportedHost struct {
 	Alias        string
@@ -287,7 +296,7 @@ type ImportedHost struct {
 // Aliases lists concrete (non-wildcard, non-negated) Host aliases in file
 // order, deduplicated, each resolved through the full config.
 func (s *SSHConfigSource) Aliases() []ImportedHost {
-	if s == nil || s.cfg == nil {
+	if s == nil {
 		return nil
 	}
 	seen := map[string]bool{}
