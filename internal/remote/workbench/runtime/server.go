@@ -384,6 +384,9 @@ func (s *Server) handlers(gen uint64, conn net.Conn) protocol.HandlerSet {
 		protocol.MethodWorkspaceChanges: func(ctx context.Context, value any) (any, error) {
 			return s.workspaceChanges(value.(protocol.WorkspaceChangesParams))
 		},
+		protocol.MethodWorkspaceChangeDetail: func(ctx context.Context, value any) (any, error) {
+			return s.workspaceChangeDetail(value.(protocol.WorkspaceChangeDetailParams))
+		},
 		protocol.MethodGitHistory: func(ctx context.Context, value any) (any, error) {
 			return s.gitHistory(value.(protocol.GitHistoryParams))
 		},

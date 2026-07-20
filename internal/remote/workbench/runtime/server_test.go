@@ -373,6 +373,20 @@ func TestRuntimeWorkspaceGitQueriesAndSnapshotProjection(t *testing.T) {
 	if trackedChange == nil || len(trackedChange.Sources) != 2 || trackedChange.LatestPrompt != "edit it" {
 		t.Fatalf("tracked change = %+v", trackedChange)
 	}
+	trackedDetail, err := srv.workspaceChangeDetail(protocol.WorkspaceChangeDetailParams{RuntimeQuery: query, Path: "tracked.txt"})
+	if err != nil || trackedDetail.Source == nil || *trackedDetail.Source != protocol.ChangeGit || trackedDetail.Diff == nil ||
+		!strings.Contains(*trackedDetail.Diff, "before") || !strings.Contains(*trackedDetail.Diff, "after") ||
+		trackedDetail.Added != 1 || trackedDetail.Removed != 1 {
+		t.Fatalf("tracked detail = %+v err=%v", trackedDetail, err)
+	}
+	untrackedDetail, err := srv.workspaceChangeDetail(protocol.WorkspaceChangeDetailParams{RuntimeQuery: query, Path: "untracked.txt"})
+	if err != nil || untrackedDetail.Source == nil || *untrackedDetail.Source != protocol.ChangeGit ||
+		untrackedDetail.Diff == nil || !strings.Contains(*untrackedDetail.Diff, "+new") {
+		t.Fatalf("untracked detail = %+v err=%v", untrackedDetail, err)
+	}
+	if _, err := srv.workspaceChangeDetail(protocol.WorkspaceChangeDetailParams{RuntimeQuery: query, Path: "../outside.txt"}); err == nil {
+		t.Fatal("workspace change detail accepted an escaping path")
+	}
 
 	history, err := srv.gitHistory(protocol.GitHistoryParams{RuntimeQuery: query})
 	if err != nil || len(history.Commits) != 1 || history.Commits[0].Hash != hash {

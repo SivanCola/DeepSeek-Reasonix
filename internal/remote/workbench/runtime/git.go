@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"sort"
@@ -14,8 +15,11 @@ import (
 	"time"
 
 	"reasonix/internal/checkpoint"
+	"reasonix/internal/diff"
+	fileencoding "reasonix/internal/fileutil/encoding"
 	"reasonix/internal/proc"
 	"reasonix/internal/remote/protocol"
+	"reasonix/internal/remote/workbench/files"
 )
 
 type runtimeGitStatus struct {
@@ -101,6 +105,158 @@ func (s *Server) workspaceChanges(p protocol.WorkspaceChangesParams) (protocol.W
 	}
 	page, more, next := pageChangedFiles(filesOut, offset, limit, "changes")
 	return protocol.WorkspaceChangesResult{Files: page, GitAvailable: gitErr == nil, GitBranch: branch, HasMore: more, NextCursor: next}, nil
+}
+
+func (s *Server) workspaceChangeDetail(p protocol.WorkspaceChangeDetailParams) (protocol.WorkspaceChangeDetailResult, error) {
+	sess, err := s.sessionForQuery(p.ExpectedHostEpoch, p.Target, p.ExpectedRuntimeEpoch)
+	if err != nil {
+		return protocol.WorkspaceChangeDetailResult{}, err
+	}
+	rel := normalizeGitPath(p.Path)
+	if rel == "" {
+		return protocol.WorkspaceChangeDetailResult{}, protocol.MustRemoteError(protocol.ErrPathNotFound, protocol.ErrorOptions{Target: &p.Target})
+	}
+	if _, err := files.ResolveRel(s.opts.Workspace, rel); err != nil {
+		return protocol.WorkspaceChangeDetailResult{}, protocol.MustRemoteError(protocol.ErrPathNotFound, protocol.ErrorOptions{Target: &p.Target})
+	}
+
+	if entries, _, gitErr := s.gitStatus(); gitErr == nil {
+		for i := range entries {
+			if entries[i].path != rel {
+				continue
+			}
+			if detail, found := s.gitWorkspaceChangeDetail(rel, entries[i]); found {
+				return detail, nil
+			}
+			break
+		}
+	}
+	if controller, ok := sess.ctrl.(interface {
+		CheckpointFileState(string) (checkpoint.FileState, bool)
+	}); ok {
+		if state, found := controller.CheckpointFileState(rel); found {
+			return s.checkpointWorkspaceChangeDetail(rel, state.Content, protocol.ChangeSession)
+		}
+	}
+	return protocol.WorkspaceChangeDetailResult{}, nil
+}
+
+func (s *Server) gitWorkspaceChangeDetail(rel string, entry runtimeGitStatus) (protocol.WorkspaceChangeDetailResult, bool) {
+	if entry.status == "??" || !s.gitHasHead() {
+		detail, err := s.checkpointWorkspaceChangeDetail(rel, nil, protocol.ChangeGit)
+		return detail, err == nil
+	}
+	args := []string{"diff", "--no-ext-diff", "--no-textconv", "--relative", "HEAD", "--", filepath.FromSlash(rel)}
+	if entry.oldPath != "" && entry.oldPath != rel {
+		args = append(args, filepath.FromSlash(entry.oldPath))
+	}
+	raw, truncated, err := s.gitOutputBounded(protocol.GitPatchBytes, args...)
+	if err != nil {
+		return protocol.WorkspaceChangeDetailResult{}, false
+	}
+	source := protocol.ChangeGit
+	if truncated {
+		return protocol.WorkspaceChangeDetailResult{Source: &source, Truncated: true}, true
+	}
+	patch := strings.TrimSpace(string(raw))
+	if patch == "" {
+		return protocol.WorkspaceChangeDetailResult{}, false
+	}
+	added, removed := tallyRuntimeUnifiedPatch(patch)
+	binary := strings.Contains(patch, "Binary files ") || strings.Contains(patch, "GIT binary patch")
+	return protocol.WorkspaceChangeDetailResult{
+		Diff: &patch, Source: &source, Added: added, Removed: removed, Binary: binary,
+	}, true
+}
+
+func (s *Server) gitHasHead() bool {
+	_, err := s.gitOutput(1024, "rev-parse", "--verify", "HEAD")
+	return err == nil
+}
+
+func (s *Server) checkpointWorkspaceChangeDetail(rel string, old *string, source protocol.ChangeSource) (protocol.WorkspaceChangeDetailResult, error) {
+	if old != nil && len(*old) > protocol.GitPatchBytes {
+		return protocol.WorkspaceChangeDetailResult{Source: &source, Truncated: true}, nil
+	}
+	oldText := ""
+	if old != nil {
+		oldText = *old
+	}
+	newText, exists, truncated, err := runtimeWorkspaceText(s.opts.Workspace, rel, protocol.GitPatchBytes)
+	if err != nil {
+		return protocol.WorkspaceChangeDetailResult{}, err
+	}
+	if truncated {
+		return protocol.WorkspaceChangeDetailResult{Source: &source, Truncated: true}, nil
+	}
+	kind := diff.Modify
+	if old == nil {
+		kind = diff.Create
+	} else if !exists {
+		kind = diff.Delete
+	}
+	change := diff.Build(rel, oldText, newText, kind)
+	if len(change.Diff) > protocol.GitPatchBytes {
+		return protocol.WorkspaceChangeDetailResult{Source: &source, Truncated: true}, nil
+	}
+	if change.Diff == "" && !change.Binary {
+		return protocol.WorkspaceChangeDetailResult{Source: &source}, nil
+	}
+	patch := change.Diff
+	return protocol.WorkspaceChangeDetailResult{
+		Diff: &patch, Source: &source, Added: change.Added, Removed: change.Removed, Binary: change.Binary,
+	}, nil
+}
+
+func runtimeWorkspaceText(workspace, rel string, limit int64) (string, bool, bool, error) {
+	path, err := files.ResolveRel(workspace, rel)
+	if err != nil {
+		return "", false, false, err
+	}
+	info, err := os.Lstat(path)
+	if os.IsNotExist(err) {
+		return "", false, false, nil
+	}
+	if err != nil {
+		return "", false, false, err
+	}
+	if !info.Mode().IsRegular() {
+		return "", true, false, fmt.Errorf("workspace change path %q is not a regular file", rel)
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return "", true, false, err
+	}
+	defer f.Close()
+	raw, err := io.ReadAll(io.LimitReader(f, limit+1))
+	if err != nil {
+		return "", true, false, err
+	}
+	if int64(len(raw)) > limit {
+		return "", true, true, nil
+	}
+	decoded := fileencoding.DecodeToUTF8(raw)
+	if int64(len(decoded)) > limit {
+		return "", true, true, nil
+	}
+	return string(decoded), true, false, nil
+}
+
+func tallyRuntimeUnifiedPatch(patch string) (added, removed int) {
+	inHunk := false
+	for _, line := range strings.Split(patch, "\n") {
+		switch {
+		case strings.HasPrefix(line, "@@"):
+			inHunk = true
+		case strings.HasPrefix(line, "diff --git "):
+			inHunk = false
+		case inHunk && strings.HasPrefix(line, "+"):
+			added++
+		case inHunk && strings.HasPrefix(line, "-"):
+			removed++
+		}
+	}
+	return added, removed
 }
 
 func (s *Server) gitStatus() ([]runtimeGitStatus, string, error) {
@@ -222,6 +378,17 @@ func (s *Server) gitCommitDetail(p protocol.GitCommitDetailParams) (protocol.Git
 }
 
 func (s *Server) gitOutput(limit int64, args ...string) ([]byte, error) {
+	raw, truncated, err := s.gitOutputBounded(limit, args...)
+	if err != nil {
+		return nil, err
+	}
+	if truncated {
+		return nil, errors.New("git output exceeded protocol limit")
+	}
+	return raw, nil
+}
+
+func (s *Server) gitOutputBounded(limit int64, args ...string) ([]byte, bool, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	fullArgs := append([]string{"-c", "core.fsmonitor=false", "-c", "maintenance.auto=false", "-c", "core.quotepath=false", "-C", s.opts.Workspace}, args...)
@@ -229,25 +396,25 @@ func (s *Server) gitOutput(limit int64, args ...string) ([]byte, error) {
 	proc.HideWindow(cmd)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	if err := cmd.Start(); err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	raw, readErr := io.ReadAll(io.LimitReader(stdout, limit+1))
 	if int64(len(raw)) > limit {
 		_ = cmd.Process.Kill()
 		_ = cmd.Wait()
-		return nil, errors.New("git output exceeded protocol limit")
+		return nil, true, nil
 	}
 	waitErr := cmd.Wait()
 	if readErr != nil {
-		return nil, readErr
+		return nil, false, readErr
 	}
 	if waitErr != nil {
-		return nil, waitErr
+		return nil, false, waitErr
 	}
-	return raw, nil
+	return raw, false, nil
 }
 
 func normalizeGitPath(path string) string {

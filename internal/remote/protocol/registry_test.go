@@ -14,7 +14,7 @@ func TestFrozenRegistryExactSurface(t *testing.T) {
 	}
 	want := strings.Fields(`
 remote/initialize remote/ping remote/detach host/capabilities host/configSummary
-workspace/browse workspace/open workspace/list workspace/close workspace/changes
+workspace/browse workspace/open workspace/list workspace/close workspace/changes workspace/changeDetail
 catalog/workspace catalog/session topic/list topic/create topic/rename topic/delete topic/trash
 session/list session/create session/rename session/close session/trashList session/trash session/restore session/purge
 session/subscribe session/unsubscribe session/history session/content session/event session/resync_required catalog/changed
@@ -47,7 +47,7 @@ broker/catalog broker/stream/open broker/stream/cancel broker/stream/chunk broke
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("method surface mismatch\n got: %v\nwant: %v", got, want)
 	}
-	if clientReq != 68 || hostNotif != 3 || hostReq != 3 || clientNotif != 3 {
+	if clientReq != 69 || hostNotif != 3 || hostReq != 3 || clientNotif != 3 {
 		t.Fatalf("directions = clientReq=%d hostNotif=%d hostReq=%d clientNotif=%d", clientReq, hostNotif, hostReq, clientNotif)
 	}
 }

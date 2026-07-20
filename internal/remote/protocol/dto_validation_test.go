@@ -208,6 +208,24 @@ func TestFrozenCapabilitiesAndLeaseTiming(t *testing.T) {
 	}
 }
 
+func TestWorkspaceChangeDetailResultInvariants(t *testing.T) {
+	source := ChangeGit
+	patch := "@@ -1 +1 @@\n-old\n+new"
+	valid := WorkspaceChangeDetailResult{Diff: &patch, Source: &source, Added: 1, Removed: 1}
+	if err := validateDecoded(valid); err != nil {
+		t.Fatalf("valid workspace change detail rejected: %v", err)
+	}
+	if err := validateDecoded(WorkspaceChangeDetailResult{Diff: &patch}); err == nil {
+		t.Fatal("workspace change detail without source was accepted")
+	}
+	if err := validateDecoded(WorkspaceChangeDetailResult{Diff: &patch, Source: &source, Truncated: true}); err == nil {
+		t.Fatal("truncated workspace change detail with a patch was accepted")
+	}
+	if err := validateDecoded(WorkspaceChangeDetailResult{Source: &source, Truncated: true}); err != nil {
+		t.Fatalf("valid truncated workspace change detail rejected: %v", err)
+	}
+}
+
 func TestCapabilitiesValidateEveryFixedFeatureAndLimit(t *testing.T) {
 	for _, memory := range []bool{false, true} {
 		for _, research := range []bool{false, true} {

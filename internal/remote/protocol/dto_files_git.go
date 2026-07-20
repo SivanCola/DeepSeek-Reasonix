@@ -91,6 +91,33 @@ type WorkspaceChangesResult struct {
 	NextCursor   Cursor        `json:"nextCursor,omitempty"`
 }
 
+type WorkspaceChangeDetailParams struct {
+	RuntimeQuery
+	Path string `json:"path" validate:"relativePath,nonempty"`
+}
+
+type WorkspaceChangeDetailResult struct {
+	Diff      *string       `json:"diff,omitempty"`
+	Source    *ChangeSource `json:"source,omitempty"`
+	Added     int           `json:"added,omitempty" validate:"min=0"`
+	Removed   int           `json:"removed,omitempty" validate:"min=0"`
+	Binary    bool          `json:"binary,omitempty"`
+	Truncated bool          `json:"truncated,omitempty"`
+}
+
+func (r WorkspaceChangeDetailResult) Validate() error {
+	if r.Source == nil {
+		if r.Diff != nil || r.Added != 0 || r.Removed != 0 || r.Binary || r.Truncated {
+			return validationError("workspace change detail without source must be empty")
+		}
+		return nil
+	}
+	if r.Truncated && (r.Diff != nil || r.Added != 0 || r.Removed != 0 || r.Binary) {
+		return validationError("truncated workspace change detail must omit patch fields")
+	}
+	return nil
+}
+
 type GitHistoryParams struct {
 	RuntimeQuery
 	Path string `json:"path,omitempty" validate:"relativePath"`

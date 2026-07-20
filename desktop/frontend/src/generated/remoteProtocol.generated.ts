@@ -2,7 +2,7 @@
 
 export const REMOTE_SCHEMA_FORMAT = "reasonix.remote.schema.v1" as const;
 export const REMOTE_PROTOCOL_VERSION = "1" as const;
-export const REMOTE_SCHEMA_HASH = "sha256:4928d1eeb1fad16d509ab13f72613209d46082a89e3f68ab85dea123b42e11da" as const;
+export const REMOTE_SCHEMA_HASH = "sha256:c2dc2df4b7db595a5479d7d53c80ff7e0e0017c029f084e05b8b6d73fbb34fdd" as const;
 
 export const REMOTE_FIXED_RESOURCES = {
   "protocol": {
@@ -5171,6 +5171,42 @@ export type WorkspaceCatalogResultHydrated = {
   "toolApprovalModes": Array<"ask" | "auto" | "yolo">;
 };
 
+export type WorkspaceChangeDetailParamsRaw = {
+  "expectedHostEpoch": string;
+  "expectedRuntimeEpoch": string;
+  "path": string;
+  "target": {
+    "sessionId": string;
+    "workspaceId": string;
+  };
+};
+export type WorkspaceChangeDetailParamsHydrated = {
+  "expectedHostEpoch": string;
+  "expectedRuntimeEpoch": string;
+  "path": string;
+  "target": {
+    "sessionId": string;
+    "workspaceId": string;
+  };
+};
+
+export type WorkspaceChangeDetailResultRaw = {
+  "added"?: number;
+  "binary"?: boolean;
+  "diff"?: string;
+  "removed"?: number;
+  "source"?: "git" | "session";
+  "truncated"?: boolean;
+};
+export type WorkspaceChangeDetailResultHydrated = {
+  "added"?: number;
+  "binary"?: boolean;
+  "diff"?: string;
+  "removed"?: number;
+  "source"?: "git" | "session";
+  "truncated"?: boolean;
+};
+
 export type WorkspaceChangesParamsRaw = {
   "cursor"?: string;
   "expectedHostEpoch": string;
@@ -5373,6 +5409,7 @@ export const REMOTE_METHODS = [
   { method: "turn/cancel", direction: "client_to_host_request", class: "session_mutation" },
   { method: "turn/steer", direction: "client_to_host_request", class: "session_mutation" },
   { method: "workspace/browse", direction: "client_to_host_request", class: "host_query" },
+  { method: "workspace/changeDetail", direction: "client_to_host_request", class: "session_query" },
   { method: "workspace/changes", direction: "client_to_host_request", class: "session_query" },
   { method: "workspace/close", direction: "client_to_host_request", class: "host_mutation" },
   { method: "workspace/list", direction: "client_to_host_request", class: "host_query" },
@@ -5446,6 +5483,7 @@ export interface RemoteRequestParamsRawByMethod {
   "turn/cancel": TurnCancelParamsRaw;
   "turn/steer": TurnSteerParamsRaw;
   "workspace/browse": WorkspaceBrowseParamsRaw;
+  "workspace/changeDetail": WorkspaceChangeDetailParamsRaw;
   "workspace/changes": WorkspaceChangesParamsRaw;
   "workspace/close": WorkspaceCloseParamsRaw;
   "workspace/list": WorkspaceListParamsRaw;
@@ -5517,6 +5555,7 @@ export interface RemoteRequestParamsHydratedByMethod {
   "turn/cancel": TurnCancelParamsHydrated;
   "turn/steer": TurnSteerParamsHydrated;
   "workspace/browse": WorkspaceBrowseParamsHydrated;
+  "workspace/changeDetail": WorkspaceChangeDetailParamsHydrated;
   "workspace/changes": WorkspaceChangesParamsHydrated;
   "workspace/close": WorkspaceCloseParamsHydrated;
   "workspace/list": WorkspaceListParamsHydrated;
@@ -5588,6 +5627,7 @@ export interface RemoteRequestResultRawByMethod {
   "turn/cancel": TurnCancelResultRaw;
   "turn/steer": TurnSteerResultRaw;
   "workspace/browse": WorkspaceBrowseResultRaw;
+  "workspace/changeDetail": WorkspaceChangeDetailResultRaw;
   "workspace/changes": WorkspaceChangesResultRaw;
   "workspace/close": WorkspaceCloseResultRaw;
   "workspace/list": WorkspaceListResultRaw;
@@ -5659,6 +5699,7 @@ export interface RemoteRequestResultHydratedByMethod {
   "turn/cancel": TurnCancelResultHydrated;
   "turn/steer": TurnSteerResultHydrated;
   "workspace/browse": WorkspaceBrowseResultHydrated;
+  "workspace/changeDetail": WorkspaceChangeDetailResultHydrated;
   "workspace/changes": WorkspaceChangesResultHydrated;
   "workspace/close": WorkspaceCloseResultHydrated;
   "workspace/list": WorkspaceListResultHydrated;

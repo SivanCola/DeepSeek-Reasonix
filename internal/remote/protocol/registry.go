@@ -20,6 +20,7 @@ const (
 	MethodWorkspaceList          Method = "workspace/list"
 	MethodWorkspaceClose         Method = "workspace/close"
 	MethodWorkspaceChanges       Method = "workspace/changes"
+	MethodWorkspaceChangeDetail  Method = "workspace/changeDetail"
 	MethodCatalogWorkspace       Method = "catalog/workspace"
 	MethodCatalogSession         Method = "catalog/session"
 	MethodTopicList              Method = "topic/list"
@@ -128,6 +129,7 @@ var frozenRegistry = []MethodSpec{
 	request[WorkspaceListParams, WorkspaceListResult](MethodWorkspaceList, ClassHostQuery),
 	request[WorkspaceCloseParams, WorkspaceCloseResult](MethodWorkspaceClose, ClassHostMutation),
 	request[WorkspaceChangesParams, WorkspaceChangesResult](MethodWorkspaceChanges, ClassSessionQuery),
+	request[WorkspaceChangeDetailParams, WorkspaceChangeDetailResult](MethodWorkspaceChangeDetail, ClassSessionQuery),
 	request[WorkspaceCatalogParams, WorkspaceCatalogResult](MethodCatalogWorkspace, ClassHostQuery),
 	request[SessionCatalogParams, SessionCatalogResult](MethodCatalogSession, ClassSessionQuery),
 	request[TopicListParams, TopicListResult](MethodTopicList, ClassHostQuery),
@@ -325,8 +327,8 @@ func ValidateRegistry() error {
 		}
 	}
 	// Workbench RuntimeAPI (71 methods from Remote V1 surface) + 6 Provider Broker methods.
-	if len(frozenRegistry) != 77 || clientReq != 68 || hostNotif != 3 || hostReq != 3 || clientNotif != 3 {
-		return fmt.Errorf("registry count = total=%d clientReq=%d hostNotif=%d hostReq=%d clientNotif=%d, want 77/68/3/3/3",
+	if len(frozenRegistry) != 78 || clientReq != 69 || hostNotif != 3 || hostReq != 3 || clientNotif != 3 {
+		return fmt.Errorf("registry count = total=%d clientReq=%d hostNotif=%d hostReq=%d clientNotif=%d, want 78/69/3/3/3",
 			len(frozenRegistry), clientReq, hostNotif, hostReq, clientNotif)
 	}
 	return nil

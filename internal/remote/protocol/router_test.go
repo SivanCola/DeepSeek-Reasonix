@@ -47,7 +47,7 @@ func TestRouterSupportsRealPartialPhaseAndFinalCoverageGate(t *testing.T) {
 		}
 	}
 	if err := ValidateHandlerCoverage(complete); err != nil {
-		t.Fatalf("68-handler coverage rejected: %v", err)
+		t.Fatalf("69-handler coverage rejected: %v", err)
 	}
 }
 

@@ -190,6 +190,25 @@ func (a *App) workspaceBaseForTab(tabID string) (string, error) {
 // includes both staged and unstaged edits. Session checkpoints provide a
 // git-free fallback and cover files edited by Reasonix before Git notices them.
 func (a *App) WorkspaceChangeDetail(tabID, path string) (WorkspaceChangeDetailView, error) {
+	if _, _, _, _, ok := a.activeRemoteWorkbench(); ok {
+		raw, err := a.workbenchRequest(protocol.MethodWorkspaceChangeDetail, protocol.WorkspaceChangeDetailParams{Path: path})
+		if err != nil {
+			return WorkspaceChangeDetailView{}, err
+		}
+		decoded, err := protocol.DecodeResult(protocol.MethodWorkspaceChangeDetail, raw)
+		if err != nil {
+			return WorkspaceChangeDetailView{}, err
+		}
+		result := decoded.(protocol.WorkspaceChangeDetailResult)
+		out := WorkspaceChangeDetailView{
+			Diff: result.Diff, Added: result.Added, Removed: result.Removed,
+			Binary: result.Binary, Truncated: result.Truncated,
+		}
+		if result.Source != nil {
+			out.Source = string(*result.Source)
+		}
+		return out, nil
+	}
 	workspaceRoot, ctrl, ok := a.workspaceChangesTarget(strings.TrimSpace(tabID))
 	if !ok {
 		return WorkspaceChangeDetailView{}, fmt.Errorf("tab %q not found", tabID)

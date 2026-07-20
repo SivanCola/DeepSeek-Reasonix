@@ -48,6 +48,9 @@ func buildCustomSchemaContracts() map[reflect.Type]SchemaValidation {
 				variant([]string{string(GitDetailPatch)}, []string{"path", "body", "sizeBytes", "returnedBytes", "truncated"}, []string{"files", "hasMore", "nextCursor"}, nil, nil),
 			),
 		},
+		typeOf[WorkspaceChangeDetailResult](): {
+			Invariants: rules("source_absent:forbids(diff,added,removed,binary,truncated)", "truncated:requires(source)", "truncated:forbids(diff,added,removed,binary)"),
+		},
 		typeOf[FilePreviewResult](): {
 			Invariants: rules("text:returnedBytes<=sizeBytes", "text:truncated=iff(sizeBytes>returnedBytes)", "text:truncationReason=byte_limit_iff_truncated", "nontext:returnedBytes=0", "nontext:truncated=false"),
 			Discriminator: discriminator("kind",
