@@ -223,7 +223,10 @@ handled here, and what to reach for if a target misbehaves:
   setting; the installer embeds the WebView2 bootstrapper. Canary builds disable
   WebView2 GPU acceleration by default to smoke-test blank-window reports; set
   `REASONIX_DESKTOP_DISABLE_WEBVIEW2_GPU=1` or `0` to force the fallback on or
-  off.
+  off. The WebView2 shell always uses a direct connection for embedded assets
+  and loopback remote-workspace pages; provider and other outbound traffic keeps
+  using Reasonix's own proxy configuration. If the DOM is still not ready after
+  15 seconds, the hidden startup window is shown with a native recovery prompt.
 - **macOS / WebKit** — inset/hidden title bar (`TitleBarHiddenInset`); the CSS
   marks the top bar as an OS drag region (`--wails-draggable: drag`) and leaves
   room for the traffic lights.

@@ -65,6 +65,10 @@ branch.
 
 ### Fixed
 
+- Isolated the Windows desktop WebView2 shell from stale system proxies, so an
+  exited proxy client cannot leave the embedded UI hidden during startup. If
+  WebView2 still does not reach DOM-ready within 15 seconds, Reasonix now shows
+  the native window with a recovery prompt instead of appearing not to launch.
 - Restored captured-mouse right-click text paste, made composer drag selection
   copy through the verified native clipboard path, and kept non-Git footer
   telemetry left-aligned without reserving an empty data band.
