@@ -29,6 +29,7 @@ import (
 	"reasonix/internal/fileutil"
 	"reasonix/internal/notify"
 	"reasonix/internal/provider"
+	"reasonix/internal/recovery"
 	"reasonix/internal/store"
 	"reasonix/internal/worktree"
 )
@@ -219,8 +220,12 @@ type WorkspaceTab struct {
 	mode             string // "normal" | "plan" | "yolo" | "plan-yolo"; yolo/full access is runtime-only
 	goal             string
 	toolApprovalMode string
-	disabledMCP      map[string]ServerView
-	mcpOrder         []string
+	// recoveryCheckpointEnabled is the session preference for Auto-mode failure
+	// recovery. New sessions default true; pre-upgrade sessions missing the
+	// branch-meta field stay false.
+	recoveryCheckpointEnabled bool
+	disabledMCP               map[string]ServerView
+	mcpOrder                  []string
 }
 
 const (
@@ -727,6 +732,7 @@ func applyRuntimeTab(target, source *WorkspaceTab, path string, wailsCtx context
 	target.mode = source.mode
 	target.goal = source.goal
 	target.toolApprovalMode = source.toolApprovalMode
+	target.recoveryCheckpointEnabled = source.recoveryCheckpointEnabled
 	target.disabledMCP = cloneServerViewMap(source.disabledMCP)
 	target.mcpOrder = append([]string(nil), source.mcpOrder...)
 	target.readTelemetry = readTelemetry
@@ -1244,6 +1250,14 @@ func (s *tabEventSink) Emit(e event.Event) {
 		if m := app.metrics.Load(); m != nil {
 			m.observe(e)
 			if e.Kind == event.TurnDone {
+				// Content-free recovery counters only (no failure text).
+				if tab := app.tabByID(tabID); tab != nil && tab.Ctrl != nil {
+					if rm, ok := tab.Ctrl.(interface {
+						RecoveryMetrics() recovery.Metrics
+					}); ok {
+						m.observeRecoveryMetrics(rm.RecoveryMetrics())
+					}
+				}
 				m.persist()
 			}
 		}
@@ -1820,8 +1834,12 @@ type TabMeta struct {
 	Mode              string                   `json:"mode"`
 	CollaborationMode string                   `json:"collaborationMode"`
 	ToolApprovalMode  string                   `json:"toolApprovalMode"`
-	TokenMode         string                   `json:"tokenMode"`
-	Goal              string                   `json:"goal,omitempty"`
+	// RecoveryCheckpointEnabled is the session preference for Auto-mode
+	// failure recovery. It is retained under Ask/YOLO but only takes effect
+	// while tool approval mode is Auto.
+	RecoveryCheckpointEnabled bool   `json:"recoveryCheckpointEnabled"`
+	TokenMode                 string `json:"tokenMode"`
+	Goal                      string `json:"goal,omitempty"`
 	GoalStatus        string                   `json:"goalStatus,omitempty"`
 	AutoResearch      *AutoResearchCompactView `json:"autoResearch,omitempty"`
 	Recovered         bool                     `json:"recovered,omitempty"`
@@ -1864,15 +1882,16 @@ func (a *App) tabMeta(tab *WorkspaceTab, active bool) TabMeta {
 		Ready:             tab.Ready,
 		Mode:              currentTabMode(tab),
 		CollaborationMode: currentTabCollaborationMode(tab),
-		ToolApprovalMode:  currentTabToolApprovalMode(tab),
-		TokenMode:         currentTabTokenMode(tab),
-		Goal:              currentTabGoal(tab),
-		GoalStatus:        currentTabGoalStatus(tab),
-		AutoResearch:      compactAutoResearch(tab),
-		StartupErr:        tab.StartupErr,
-		Active:            active,
-		Cwd:               tab.WorkspaceRoot,
-		IsolatedWorktree:  worktree.IsManagedPath(tab.WorkspaceRoot, config.DeliveryWorktreeDir()),
+		ToolApprovalMode:          currentTabToolApprovalMode(tab),
+		RecoveryCheckpointEnabled: currentTabRecoveryCheckpointEnabled(tab),
+		TokenMode:                 currentTabTokenMode(tab),
+		Goal:                      currentTabGoal(tab),
+		GoalStatus:                currentTabGoalStatus(tab),
+		AutoResearch:              compactAutoResearch(tab),
+		StartupErr:                tab.StartupErr,
+		Active:                    active,
+		Cwd:                       tab.WorkspaceRoot,
+		IsolatedWorktree:          worktree.IsManagedPath(tab.WorkspaceRoot, config.DeliveryWorktreeDir()),
 	}
 	switch tab.Scope {
 	case "global":
@@ -2283,18 +2302,19 @@ func (a *App) ensureBlankTab(scope, workspaceRoot, forcedTokenMode string) (TabM
 		tabID := a.newUniqueTabIDLocked()
 		topicTitle := topicTitleForTab(scope, workspaceRoot, topicID)
 		created = &WorkspaceTab{
-			ID:               tabID,
-			Scope:            scope,
-			WorkspaceRoot:    actualRoot,
-			TopicID:          topicID,
-			TopicTitle:       topicTitle,
-			model:            inheritedModel,
-			effort:           inheritedEffort,
-			tokenMode:        inheritedTokenMode,
-			mode:             inheritedMode,
-			toolApprovalMode: inheritedToolApprovalMode,
-			disabledMCP:      inheritedDisabledMCP,
-			mcpOrder:         inheritedMCPOrder,
+			ID:                        tabID,
+			Scope:                     scope,
+			WorkspaceRoot:             actualRoot,
+			TopicID:                   topicID,
+			TopicTitle:                topicTitle,
+			model:                     inheritedModel,
+			effort:                    inheritedEffort,
+			tokenMode:                 inheritedTokenMode,
+			mode:                      inheritedMode,
+			toolApprovalMode:          inheritedToolApprovalMode,
+			recoveryCheckpointEnabled: desktopDefaultRecoveryCheckpoint(),
+			disabledMCP:               inheritedDisabledMCP,
+			mcpOrder:                  inheritedMCPOrder,
 		}
 		created.sink = &tabEventSink{tabID: tabID, app: a}
 		a.tabs[tabID] = created
@@ -2332,18 +2352,19 @@ func (a *App) ensureBlankTab(scope, workspaceRoot, forcedTokenMode string) (TabM
 
 	tabID := a.newUniqueTabIDLocked()
 	created = &WorkspaceTab{
-		ID:               tabID,
-		Scope:            scope,
-		WorkspaceRoot:    actualRoot,
-		TopicID:          topicID,
-		TopicTitle:       topicTitleForTab(scope, workspaceRoot, topicID),
-		model:            inheritedModel,
-		effort:           inheritedEffort,
-		tokenMode:        inheritedTokenMode,
-		mode:             inheritedMode,
-		toolApprovalMode: inheritedToolApprovalMode,
-		disabledMCP:      inheritedDisabledMCP,
-		mcpOrder:         inheritedMCPOrder,
+		ID:                        tabID,
+		Scope:                     scope,
+		WorkspaceRoot:             actualRoot,
+		TopicID:                   topicID,
+		TopicTitle:                topicTitleForTab(scope, workspaceRoot, topicID),
+		model:                     inheritedModel,
+		effort:                    inheritedEffort,
+		tokenMode:                 inheritedTokenMode,
+		mode:                      inheritedMode,
+		toolApprovalMode:          inheritedToolApprovalMode,
+		recoveryCheckpointEnabled: desktopDefaultRecoveryCheckpoint(),
+		disabledMCP:               inheritedDisabledMCP,
+		mcpOrder:                  inheritedMCPOrder,
 	}
 	created.sink = &tabEventSink{tabID: tabID, app: a}
 	a.tabs[tabID] = created
@@ -2399,6 +2420,12 @@ func createEmptySessionFile(dir, model string) (string, error) {
 			if closeErr := f.Close(); closeErr != nil {
 				return "", closeErr
 			}
+			// New sessions explicitly write the recovery default so pre-upgrade
+			// sessions (field missing → off) stay distinguishable.
+			enabled := desktopDefaultRecoveryCheckpoint()
+			meta, _ := agent.EnsureBranchMeta(path)
+			meta.RecoveryCheckpointEnabled = &enabled
+			_ = agent.SaveBranchMeta(path, meta)
 			return path, nil
 		}
 		if os.IsExist(err) {
@@ -2407,6 +2434,25 @@ func createEmptySessionFile(dir, model string) (string, error) {
 		return "", err
 	}
 	return "", fmt.Errorf("create empty session file: exhausted filename retries")
+}
+
+// desktopDefaultRecoveryCheckpoint is the new-session default for Auto-mode
+// failure recovery. Missing config means on.
+func desktopDefaultRecoveryCheckpoint() bool {
+	cfg, err := config.Load()
+	if err != nil || cfg == nil {
+		return true
+	}
+	return cfg.DesktopDefaultAutoRecoveryCheckpoint()
+}
+
+// recoveryCheckpointFromMeta interprets BranchMeta.RecoveryCheckpointEnabled:
+// missing field (pre-upgrade) → false; explicit true/false honored.
+func recoveryCheckpointFromMeta(meta agent.BranchMeta) bool {
+	if meta.RecoveryCheckpointEnabled == nil {
+		return false
+	}
+	return *meta.RecoveryCheckpointEnabled
 }
 
 func blankTabSessionPathHasNoContent(tab *WorkspaceTab) bool {
@@ -3304,6 +3350,13 @@ func (a *App) buildTabControllerWithContextAdmissionHeld(tab *WorkspaceTab, load
 
 	a.bindControllerDisplayRecorder(ctrl)
 	configureControllerRuntime(ctrl, nil, buildRuntime)
+	// Restore session recovery preference: new sessions write true; pre-upgrade
+	// metas missing the field stay off. Tab field is set when the session path
+	// is bound (below) or at new-tab creation.
+	a.mu.RLock()
+	recoveryEnabled := tab.recoveryCheckpointEnabled
+	a.mu.RUnlock()
+	ctrl.SetRecoveryCheckpointEnabled(recoveryEnabled)
 
 	acquiredLeaseKey := ""
 	restoredRuntime := buildRuntime
@@ -3431,6 +3484,16 @@ func (a *App) buildTabControllerWithContextAdmissionHeld(tab *WorkspaceTab, load
 				return
 			}
 			a.persistTabSessionPath(tab, path)
+			// Prefer the session meta's recovery preference over the tab default
+			// when resuming an existing conversation.
+			if meta, ok, err := agent.LoadBranchMeta(path); err == nil && ok {
+				a.mu.Lock()
+				if !a.tabBuildSupersededLocked(tab, buildGeneration) {
+					tab.recoveryCheckpointEnabled = recoveryCheckpointFromMeta(meta)
+					ctrl.SetRecoveryCheckpointEnabled(tab.recoveryCheckpointEnabled)
+				}
+				a.mu.Unlock()
+			}
 			a.mu.RLock()
 			indexScope := tab.Scope
 			indexRoot := tab.WorkspaceRoot
@@ -7587,6 +7650,16 @@ func currentTabToolApprovalMode(tab *WorkspaceTab) string {
 		return tab.Ctrl.ToolApprovalMode()
 	}
 	return normalizeToolApprovalMode(tab.toolApprovalMode)
+}
+
+func currentTabRecoveryCheckpointEnabled(tab *WorkspaceTab) bool {
+	if tab == nil {
+		return false
+	}
+	if tab.Ctrl != nil {
+		return tab.Ctrl.RecoveryCheckpointEnabled()
+	}
+	return tab.recoveryCheckpointEnabled
 }
 
 func currentTabTokenMode(tab *WorkspaceTab) string {

@@ -219,6 +219,12 @@ func (a *approvalManager) register(tool, subject, reason string) (string, chan a
 // permission or a fresh user decision. Fresh decisions are not auto-drained when
 // the user switches to auto/yolo tool approval while the prompt is visible.
 func (a *approvalManager) registerDecision(tool, subject, reason string, fresh bool) (string, chan approvalReply) {
+	return a.registerDecisionKind(tool, subject, reason, fresh, "", nil)
+}
+
+// registerDecisionKind is registerDecision with optional Kind/Recovery payload
+// so recovery cards survive ReplayPendingPrompts.
+func (a *approvalManager) registerDecisionKind(tool, subject, reason string, fresh bool, kind string, rec *event.RecoveryApproval) (string, chan approvalReply) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.nextID++
@@ -228,7 +234,10 @@ func (a *approvalManager) registerDecision(tool, subject, reason string, fresh b
 	if !fresh {
 		autoDrain = a.autoApprovalWouldAllowLocked(tool, subject)
 	}
-	a.approvals[id] = pendingApproval{tool: tool, subject: subject, reason: reason, fresh: fresh, autoDrain: autoDrain, reply: reply}
+	a.approvals[id] = pendingApproval{
+		tool: tool, subject: subject, reason: reason, fresh: fresh,
+		autoDrain: autoDrain, kind: kind, recovery: rec, reply: reply,
+	}
 	return id, reply
 }
 
@@ -400,7 +409,10 @@ func (a *approvalManager) snapshotPrompts() ([]event.Approval, []event.Ask) {
 	defer a.mu.Unlock()
 	approvals := make([]event.Approval, 0, len(a.approvals))
 	for id, p := range a.approvals {
-		approvals = append(approvals, event.Approval{ID: id, Tool: p.tool, Subject: p.subject, Reason: p.reason, Fresh: p.fresh})
+		approvals = append(approvals, event.Approval{
+			ID: id, Tool: p.tool, Subject: p.subject, Reason: p.reason, Fresh: p.fresh,
+			Kind: p.kind, Recovery: p.recovery,
+		})
 	}
 	asks := make([]event.Ask, 0, len(a.asks))
 	for id, p := range a.asks {

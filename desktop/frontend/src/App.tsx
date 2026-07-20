@@ -1039,6 +1039,8 @@ export default function App() {
     notice,
     cancel,
     approve,
+    resolveRecovery,
+    setRecoveryCheckpointEnabled,
     answerQuestion,
     setControllerMode,
     setCollaborationMode: setControllerCollaborationMode,
@@ -4155,6 +4157,9 @@ export default function App() {
                   if (state.approval!.tool === "exit_plan_mode" && allow) await applyCollaborationMode("normal");
                   approve(state.approval!.id, allow, session, persist);
                 }}
+                onResolveRecovery={(action, feedback) => {
+                  resolveRecovery(state.approval!.id, action, feedback ?? "");
+                }}
                 onRevisePlan={(text) => {
                   if (activeTabId) {
                     setPendingPlanRevisionsByTab((current) => ({ ...current, [activeTabId]: text }));
@@ -4203,6 +4208,7 @@ export default function App() {
               running={state.running || rewindCommitting}
               collaborationMode={collaborationMode}
               toolApprovalMode={toolApprovalMode}
+              recoveryCheckpointEnabled={state.meta?.recoveryCheckpointEnabled !== false}
               tokenMode={tokenMode}
               goal={goal}
               cwd={state.meta?.cwd}
@@ -4218,6 +4224,9 @@ export default function App() {
               onSetMode={applyMode}
               onSetCollaborationMode={applyCollaborationMode}
               onSetToolApprovalMode={applyToolApprovalMode}
+              onSetRecoveryCheckpointEnabled={(enabled) => {
+                void setRecoveryCheckpointEnabled(enabled);
+              }}
               onToggleYoloApprovalMode={toggleYoloApprovalMode}
               onClearGoal={() => applyGoal("")}
               onSwitchModel={switchModel}

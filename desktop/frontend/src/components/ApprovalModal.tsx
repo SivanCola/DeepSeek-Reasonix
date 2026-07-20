@@ -146,6 +146,7 @@ type DecisionAction = {
 export function ApprovalModal({
   approval,
   onAnswer,
+  onResolveRecovery,
   onRevisePlan,
   onExitPlan,
   onStop,
@@ -158,6 +159,7 @@ export function ApprovalModal({
 }: {
   approval: WireApproval;
   onAnswer: (allow: boolean, session: boolean, persist: boolean) => void;
+  onResolveRecovery?: (action: "continue" | "revise" | "stop", feedback?: string) => void;
   onRevisePlan?: (text: string) => void;
   onExitPlan?: () => void;
   onStop: () => void;
@@ -170,8 +172,9 @@ export function ApprovalModal({
 }) {
   const t = useT();
   const isPlanApproval = approval.tool === "exit_plan_mode";
-  const toolLabel = approvalToolLabel(approval.tool, t);
-  const isFreshHumanApproval = approval.fresh === true || requiresFreshHumanApproval(approval.tool);
+  const isRecoveryApproval = approval.kind === "recovery" || Boolean(approval.recovery);
+  const toolLabel = isRecoveryApproval ? t("approval.toolLabelRecovery") : approvalToolLabel(approval.tool, t);
+  const isFreshHumanApproval = approval.fresh === true || requiresFreshHumanApproval(approval.tool) || isRecoveryApproval;
   const hasFreshSessionGrant = approval.tool === "sandbox_escape" || approval.tool === "config_write";
   // Switching the approval segmented control to a more permissive mode does not
   // resolve an already-pending request; say so on the card instead of leaving
@@ -224,7 +227,34 @@ export function ApprovalModal({
     }
   };
 
-  const toolActions: DecisionAction[] = isPlanApproval
+  const toolActions: DecisionAction[] = isRecoveryApproval
+    ? [
+        {
+          key: "1",
+          label: t("approval.recoveryContinue"),
+          desc: t("approval.recoveryContinueDesc"),
+          kind: "submit",
+          run: () => (onResolveRecovery ?? ((a) => onAnswer(a === "continue", false, false)))("continue"),
+        },
+        {
+          key: "2",
+          label: t("approval.recoveryRevise"),
+          desc: t("approval.recoveryReviseDesc"),
+          kind: "toggle-revision",
+        },
+        {
+          key: "3",
+          label: t("approval.recoveryStop"),
+          desc: t("approval.recoveryStopDesc"),
+          tone: "danger",
+          kind: "submit",
+          run: () => {
+            if (onResolveRecovery) onResolveRecovery("stop");
+            else onStop();
+          },
+        },
+      ]
+    : isPlanApproval
     ? [
         {
           key: "1",
@@ -444,32 +474,53 @@ export function ApprovalModal({
       inputRef.current?.focus();
       return;
     }
+    if (isRecoveryApproval) {
+      answerWithExit(() => (onResolveRecovery ?? (() => onAnswer(false, false, false)))("revise", text));
+      return;
+    }
     answerWithExit(() => onRevisePlan?.(text));
   };
+
+  const recovery = approval.recovery;
+  const recoveryMeta = isRecoveryApproval
+    ? [
+        recovery?.failed_summary && t("approval.recoveryFailed", { summary: recovery.failed_summary }),
+        recovery?.diagnosis && t("approval.recoveryDiagnosis", { diagnosis: recovery.diagnosis }),
+        recovery?.next_action && t("approval.recoveryNext", { action: recovery.next_action }),
+        (recovery?.change_rationale || recovery?.review_rationale) &&
+          t("approval.recoveryWhy", { why: recovery.change_rationale || recovery.review_rationale || "" }),
+        recovery?.source_agent && t("approval.recoverySource", { agent: recovery.source_agent }),
+      ]
+        .filter(Boolean)
+        .join(" · ")
+    : "";
 
   const confirmIsDanger = selectedAction?.tone === "danger";
   const confirmLabel =
     selectedAction?.kind === "toggle-revision"
       ? revisionOpen
         ? t("common.cancel")
-        : t("approval.revisePlan")
+        : isRecoveryApproval
+          ? t("approval.recoveryRevise")
+          : t("approval.revisePlan")
       : t("decision.confirm");
 
   return (
     <div ref={shelfRef}>
       <PromptShelf
         decision
-        className={isPlanApproval ? "prompt-shelf--plan-approval" : "prompt-shelf--tool-approval"}
+        className={isPlanApproval ? "prompt-shelf--plan-approval" : isRecoveryApproval ? "prompt-shelf--recovery-approval" : "prompt-shelf--tool-approval"}
         barRef={cardRef}
-        titleId={isPlanApproval ? "plan-approval-title" : "tool-approval-title"}
-        title={isPlanApproval ? t("approval.planReady") : t("approval.toolPending")}
+        titleId={isPlanApproval ? "plan-approval-title" : isRecoveryApproval ? "recovery-approval-title" : "tool-approval-title"}
+        title={isPlanApproval ? t("approval.planReady") : isRecoveryApproval ? t("approval.recoveryPending") : t("approval.toolPending")}
         badges={
           <>
             {!isPlanApproval && <PromptBadge tone="amber">{toolLabel}</PromptBadge>}
             {isPlanApproval && revisionOpen && <PromptBadge>{t("approval.revisePlan")}</PromptBadge>}
+            {isRecoveryApproval && revisionOpen && <PromptBadge>{t("approval.recoveryRevise")}</PromptBadge>}
           </>
         }
-        meta={toolMeta}
+        meta={isRecoveryApproval ? (recoveryMeta || toolMeta) : toolMeta}
         headerActions={
           <>
             {!isPlanApproval && hasToolDetails && reason && (
@@ -522,25 +573,59 @@ export function ApprovalModal({
           />
         }
       >
-        {(approvalModeRelaxed || (!isPlanApproval && (subject || (reasonOpen && reason))) || (isPlanApproval && revisionOpen)) && (
+        {(approvalModeRelaxed ||
+          isRecoveryApproval ||
+          (!isPlanApproval && (subject || (reasonOpen && reason))) ||
+          ((isPlanApproval || isRecoveryApproval) && revisionOpen)) && (
           <>
-            {approvalModeRelaxed && (
+            {approvalModeRelaxed && !isRecoveryApproval && (
               <div className="approval-mode-hint">{t("approval.modeSwitchPendingHint")}</div>
             )}
-            {!isPlanApproval && subject && (
+            {isRecoveryApproval && recovery && (
+              <div className="approval-details recovery-details">
+                {recovery.failed_summary && (
+                  <div className="approval-reason">
+                    <strong>{t("approval.recoveryFailedLabel")}</strong> {recovery.failed_tool ? `${recovery.failed_tool}: ` : ""}
+                    {recovery.failed_summary}
+                  </div>
+                )}
+                {recovery.diagnosis && (
+                  <div className="approval-reason">
+                    <strong>{t("approval.recoveryDiagnosisLabel")}</strong> {recovery.diagnosis}
+                  </div>
+                )}
+                {(recovery.next_action || recovery.next_tool) && (
+                  <pre className="approval-subject">
+                    {recovery.next_tool ? `${recovery.next_tool}: ` : ""}
+                    {recovery.next_action || subject}
+                  </pre>
+                )}
+                {(recovery.change_rationale || recovery.review_rationale) && (
+                  <div className="approval-reason">
+                    <strong>{t("approval.recoveryWhyLabel")}</strong> {recovery.change_rationale || recovery.review_rationale}
+                  </div>
+                )}
+                {recovery.source_agent && (
+                  <div className="approval-reason">
+                    <strong>{t("approval.recoverySourceLabel")}</strong> {recovery.source_agent}
+                  </div>
+                )}
+              </div>
+            )}
+            {!isPlanApproval && !isRecoveryApproval && subject && (
               <div className="approval-details">
                 <pre className="approval-subject">{subject}</pre>
                 {reasonOpen && reason && <div className="approval-reason">{reason}</div>}
               </div>
             )}
-            {isPlanApproval && revisionOpen && (
+            {(isPlanApproval || isRecoveryApproval) && revisionOpen && (
               <div className="plan-revision">
                 <textarea
                   ref={inputRef}
                   className="plan-revision__input"
                   value={revisionText}
                   rows={3}
-                  placeholder={t("approval.revisePlanPlaceholder")}
+                  placeholder={isRecoveryApproval ? t("approval.recoveryRevisePlaceholder") : t("approval.revisePlanPlaceholder")}
                   onChange={(event) => setRevisionText(event.target.value)}
                   onFocus={() => onRevisionActiveChange?.(true)}
                   onKeyDown={onRevisionKeyDown}

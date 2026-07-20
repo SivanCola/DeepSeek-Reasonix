@@ -14,7 +14,18 @@ import (
 )
 
 func TestApprovalCardCarriesChatType(t *testing.T) {
-	card := approvalCard(event.Approval{ID: "approval-1"}, ChatDM, "allowed-user")
+	if got := renderApprovalText(event.Approval{
+		ID: "r1", Tool: "write_file", Subject: "a.go", Kind: "recovery",
+		Recovery: &event.RecoveryApproval{
+			FailedTool: "bash", FailedSummary: "exit 1", Diagnosis: "nil pointer",
+			NextTool: "write_file", NextAction: "edit a.go", ChangeRationale: "strategy change",
+			SourceAgent: "subagent",
+		},
+	}); !strings.Contains(got, "失败恢复检查点") || !strings.Contains(got, "recovery-continue") {
+		t.Fatalf("recovery text = %q", got)
+	}
+
+	card := approvalCard(event.Approval{ID: "approval-1", Tool: "bash", Subject: "ls"}, ChatDM, "allowed-user")
 	if len(card.Elements) < 2 {
 		t.Fatalf("approval card elements = %d, want at least 2", len(card.Elements))
 	}

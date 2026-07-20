@@ -76,7 +76,24 @@ func ToWire(e event.Event) Event {
 			}
 		}
 	case event.ApprovalRequest:
-		w.Approval = &Approval{ID: e.Approval.ID, Tool: e.Approval.Tool, Subject: e.Approval.Subject, Reason: e.Approval.Reason, Fresh: e.Approval.Fresh}
+		w.Approval = &Approval{
+			ID: e.Approval.ID, Tool: e.Approval.Tool, Subject: e.Approval.Subject,
+			Reason: e.Approval.Reason, Fresh: e.Approval.Fresh, Kind: e.Approval.Kind,
+		}
+		if e.Approval.Recovery != nil {
+			r := e.Approval.Recovery
+			w.Approval.Recovery = &RecoveryApproval{
+				SourceAgent:     r.SourceAgent,
+				FailedTool:      r.FailedTool,
+				FailedSummary:   r.FailedSummary,
+				Diagnosis:       r.Diagnosis,
+				NextTool:        r.NextTool,
+				NextAction:      r.NextAction,
+				ChangeKind:      r.ChangeKind,
+				ChangeRationale: r.ChangeRationale,
+				ReviewRationale: r.ReviewRationale,
+			}
+		}
 	case event.AskRequest:
 		w.Ask = ToWireAsk(e.Ask)
 	case event.CompactionStarted, event.CompactionDone:
@@ -224,11 +241,26 @@ type CacheDiagnostics struct {
 
 // Approval is the JSON form of an event.Approval.
 type Approval struct {
-	ID      string `json:"id"`
-	Tool    string `json:"tool"`
-	Subject string `json:"subject"`
-	Reason  string `json:"reason,omitempty"`
-	Fresh   bool   `json:"fresh,omitempty"`
+	ID       string            `json:"id"`
+	Tool     string            `json:"tool"`
+	Subject  string            `json:"subject"`
+	Reason   string            `json:"reason,omitempty"`
+	Fresh    bool              `json:"fresh,omitempty"`
+	Kind     string            `json:"kind,omitempty"` // tool | plan | recovery
+	Recovery *RecoveryApproval `json:"recovery,omitempty"`
+}
+
+// RecoveryApproval is the JSON form of an event.RecoveryApproval.
+type RecoveryApproval struct {
+	SourceAgent     string `json:"source_agent,omitempty"`
+	FailedTool      string `json:"failed_tool,omitempty"`
+	FailedSummary   string `json:"failed_summary,omitempty"`
+	Diagnosis       string `json:"diagnosis,omitempty"`
+	NextTool        string `json:"next_tool,omitempty"`
+	NextAction      string `json:"next_action,omitempty"`
+	ChangeKind      string `json:"change_kind,omitempty"`
+	ChangeRationale string `json:"change_rationale,omitempty"`
+	ReviewRationale string `json:"review_rationale,omitempty"`
 }
 
 // Guardian is the JSON form of an event.GuardianResult.

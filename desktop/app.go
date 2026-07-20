@@ -1538,6 +1538,61 @@ func (a *App) ApproveTab(tabID, id string, allow, session, persist bool) {
 	}
 }
 
+// ResolveRecovery answers an Auto-mode failure recovery checkpoint card.
+// action is continue|revise|stop. For revise, feedback is steered into the
+// agent and the pending mutation is refused in the same operation.
+func (a *App) ResolveRecovery(id, action, feedback string) error {
+	return a.ResolveRecoveryTab("", id, action, feedback)
+}
+
+// ResolveRecoveryTab is like ResolveRecovery but scoped to a specific tab.
+func (a *App) ResolveRecoveryTab(tabID, id, action, feedback string) error {
+	ctrl := a.ctrlByTabID(tabID)
+	if ctrl == nil {
+		return fmt.Errorf("no active session")
+	}
+	return ctrl.ResolveRecovery(id, agent.RecoveryAction(action), feedback)
+}
+
+// SetRecoveryCheckpointEnabled arms or disarms Auto-mode failure recovery for
+// the active tab. The preference is retained under Ask/YOLO but only takes
+// effect while tool approval mode is Auto.
+func (a *App) SetRecoveryCheckpointEnabled(enabled bool) {
+	a.SetRecoveryCheckpointEnabledTab("", enabled)
+}
+
+// SetRecoveryCheckpointEnabledTab is like SetRecoveryCheckpointEnabled for a tab.
+func (a *App) SetRecoveryCheckpointEnabledTab(tabID string, enabled bool) {
+	ctrl := a.ctrlByTabID(tabID)
+	if ctrl != nil {
+		ctrl.SetRecoveryCheckpointEnabled(enabled)
+	}
+	a.mu.Lock()
+	if tab := a.tabByIDLocked(tabID); tab != nil {
+		tab.recoveryCheckpointEnabled = enabled
+	}
+	a.mu.Unlock()
+}
+
+// RecoveryCheckpointEnabled reports the active tab's recovery preference.
+func (a *App) RecoveryCheckpointEnabled() bool {
+	return a.RecoveryCheckpointEnabledTab("")
+}
+
+// RecoveryCheckpointEnabledTab reports a tab's recovery preference.
+func (a *App) RecoveryCheckpointEnabledTab(tabID string) bool {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	tab := a.tabByIDLocked(tabID)
+	if tab == nil {
+		return false
+	}
+	if tab.Ctrl != nil {
+		return tab.Ctrl.RecoveryCheckpointEnabled()
+	}
+	return tab.recoveryCheckpointEnabled
+}
+
 // ReplayPendingPrompts asks every tab's controller to re-emit any approval/ask
 // prompt that is currently blocking its run loop. The frontend calls this once
 // its event subscription is live (on load/reconnect) so a session that was

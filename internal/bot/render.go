@@ -132,8 +132,7 @@ func (s *renderSink) Emit(e event.Event) {
 		if s.onApproval != nil {
 			s.onApproval(e.Approval)
 		}
-		approvalText := fmt.Sprintf("⚠️ 需要批准操作:\n工具: %s\n操作: %s\n\nID: `%s`\n回复 1 批准，回复 2 拒绝；也可用 /approve %s 或 /deny %s。",
-			e.Approval.Tool, e.Approval.Subject, e.Approval.ID, e.Approval.ID, e.Approval.ID)
+		approvalText := renderApprovalText(e.Approval)
 		msg := OutboundMessage{
 			ConnectionID: s.connID,
 			Domain:       s.domain,
@@ -144,9 +143,17 @@ func (s *renderSink) Emit(e event.Event) {
 		}
 		switch s.adapter.Platform() {
 		case PlatformQQ:
-			msg.Keyboard = approvalKeyboard(e.Approval.ID)
+			if isRecoveryApproval(e.Approval) {
+				msg.Keyboard = recoveryKeyboard(e.Approval.ID)
+			} else {
+				msg.Keyboard = approvalKeyboard(e.Approval.ID)
+			}
 		case PlatformFeishu:
-			msg.Card = approvalCard(e.Approval, s.chatType, s.userID)
+			if isRecoveryApproval(e.Approval) {
+				msg.Card = recoveryCard(e.Approval, s.chatType, s.userID)
+			} else {
+				msg.Card = approvalCard(e.Approval, s.chatType, s.userID)
+			}
 		}
 		_ = s.send(msg)
 
@@ -505,6 +512,66 @@ func approvalKeyboard(id string) *InlineKeyboard {
 	}}}
 }
 
+func recoveryKeyboard(id string) *InlineKeyboard {
+	return &InlineKeyboard{Rows: []InlineKeyboardRow{{
+		Buttons: []InlineKeyboardButton{
+			{ID: "recovery_continue", Label: "1 继续此变更", Style: 1, CallbackID: "/recovery-continue " + id},
+			{ID: "recovery_revise", Label: "2 修改方案", Style: 0, CallbackID: "/recovery-revise " + id},
+			{ID: "recovery_stop", Label: "3 停止任务", Style: 2, CallbackID: "/recovery-stop " + id},
+		},
+	}}}
+}
+
+func isRecoveryApproval(a event.Approval) bool {
+	return strings.EqualFold(strings.TrimSpace(a.Kind), "recovery") || a.Recovery != nil
+}
+
+func renderApprovalText(a event.Approval) string {
+	if isRecoveryApproval(a) {
+		return renderRecoveryText(a)
+	}
+	return fmt.Sprintf("⚠️ 需要批准操作:\n工具: %s\n操作: %s\n\nID: `%s`\n回复 1 批准，回复 2 拒绝；也可用 /approve %s 或 /deny %s。",
+		a.Tool, a.Subject, a.ID, a.ID, a.ID)
+}
+
+func renderRecoveryText(a event.Approval) string {
+	var b strings.Builder
+	b.WriteString("🛟 失败恢复检查点\n")
+	rec := a.Recovery
+	if rec != nil {
+		if rec.FailedSummary != "" {
+			fmt.Fprintf(&b, "失败: %s", rec.FailedSummary)
+			if rec.FailedTool != "" {
+				fmt.Fprintf(&b, "（%s）", rec.FailedTool)
+			}
+			b.WriteString("\n")
+		}
+		if rec.Diagnosis != "" {
+			fmt.Fprintf(&b, "诊断: %s\n", rec.Diagnosis)
+		}
+		next := firstNonEmptyBot(rec.NextAction, a.Subject, a.Tool)
+		if next != "" {
+			fmt.Fprintf(&b, "下一步: %s", next)
+			if rec.NextTool != "" && rec.NextTool != next {
+				fmt.Fprintf(&b, "（%s）", rec.NextTool)
+			}
+			b.WriteString("\n")
+		}
+		why := firstNonEmptyBot(rec.ChangeRationale, rec.ReviewRationale, a.Reason)
+		if why != "" {
+			fmt.Fprintf(&b, "为何确认: %s\n", why)
+		}
+		if rec.SourceAgent != "" {
+			fmt.Fprintf(&b, "来源: %s\n", rec.SourceAgent)
+		}
+	} else {
+		fmt.Fprintf(&b, "工具: %s\n操作: %s\n", a.Tool, a.Subject)
+	}
+	fmt.Fprintf(&b, "\nID: `%s`\n回复 1 继续此变更，2 修改方案，3 停止任务。\n也可用 /recovery-continue %s、/recovery-revise %s [说明]、/recovery-stop %s。",
+		a.ID, a.ID, a.ID, a.ID)
+	return b.String()
+}
+
 func approvalCard(a event.Approval, chatType ChatType, userID string) *InteractiveCard {
 	return &InteractiveCard{
 		Header: "需要批准操作",
@@ -518,6 +585,31 @@ func approvalCard(a event.Approval, chatType ChatType, userID string) *Interacti
 			}},
 		},
 	}
+}
+
+func recoveryCard(a event.Approval, chatType ChatType, userID string) *InteractiveCard {
+	return &InteractiveCard{
+		Header: "失败恢复检查点",
+		Elements: []InteractiveCardElement{
+			{Tag: "markdown", Content: renderRecoveryText(a)},
+			{Tag: "action", Extra: map[string]any{
+				"actions": []map[string]any{
+					{"tag": "button", "text": map[string]string{"tag": "plain_text", "content": "继续此变更"}, "type": "primary", "value": cardActionValue("/recovery-continue "+a.ID, chatType, userID)},
+					{"tag": "button", "text": map[string]string{"tag": "plain_text", "content": "修改方案"}, "type": "default", "value": cardActionValue("/recovery-revise "+a.ID, chatType, userID)},
+					{"tag": "button", "text": map[string]string{"tag": "plain_text", "content": "停止任务"}, "type": "danger", "value": cardActionValue("/recovery-stop "+a.ID, chatType, userID)},
+				},
+			}},
+		},
+	}
+}
+
+func firstNonEmptyBot(vals ...string) string {
+	for _, v := range vals {
+		if strings.TrimSpace(v) != "" {
+			return strings.TrimSpace(v)
+		}
+	}
+	return ""
 }
 
 func cardActionValue(command string, chatType ChatType, userID string) map[string]string {

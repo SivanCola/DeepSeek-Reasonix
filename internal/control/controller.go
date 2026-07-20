@@ -49,6 +49,7 @@ import (
 	"reasonix/internal/plugin"
 	"reasonix/internal/proc"
 	"reasonix/internal/provider"
+	"reasonix/internal/recovery"
 	"reasonix/internal/sandbox"
 	"reasonix/internal/skill"
 	"reasonix/internal/store"
@@ -80,8 +81,13 @@ type Controller struct {
 	executor     *agent.Agent
 	guardianSess *guardian.Session // nil when guardian is disabled
 	guardianPath string            // persisted guardian session file ("" when disabled)
-	sink         event.Sink
-	policy       permission.Policy
+	// recoveryGate is the shared Auto-mode failure recovery checkpoint.
+	// nil when the feature is not wired for this controller.
+	recoveryGate     *recovery.Gate
+	recoveryReviewer *recovery.Session // optional independent reviewer session
+	recoveryEnabled  bool              // session preference; effective only in Auto mode
+	sink             event.Sink
+	policy           permission.Policy
 	// subagentGate is the shared gate every headless-only sub-agent surface
 	// reads from (see Options.SubagentGate). Nil when the caller didn't build
 	// one — sub-agents then keep whatever gate they were constructed with.
@@ -255,6 +261,8 @@ type pendingApproval struct {
 	reason    string
 	fresh     bool
 	autoDrain bool
+	kind      string // tool | plan | recovery; empty = tool
+	recovery  *event.RecoveryApproval
 	reply     chan approvalReply
 }
 
@@ -348,8 +356,18 @@ type Options struct {
 	Runner   agent.Runner
 	Executor *agent.Agent
 	Guardian *guardian.Session
-	Sink     event.Sink
-	Policy   permission.Policy
+	// RecoveryReviewer is the optional independent recovery reviewer (nil =
+	// rule-only path with fail-closed human confirmation for ambiguous cases).
+	RecoveryReviewer recovery.Reviewer
+	// RecoveryCheckpointEnabled arms the Auto-mode failure recovery checkpoint
+	// for this session. New sessions default true; pre-upgrade sessions missing
+	// the field should pass false.
+	RecoveryCheckpointEnabled bool
+	// RecoveryHeadless blocks mutations that need confirmation instead of
+	// waiting forever when no human decision channel exists.
+	RecoveryHeadless bool
+	Sink             event.Sink
+	Policy           permission.Policy
 	// SubagentGate is the shared, mutable gate every headless-only sub-agent
 	// surface (task, writer-capable skill sub-agents, planner) reads from. Nil
 	// disables gating for those surfaces same as before this field existed.
@@ -523,6 +541,9 @@ func New(opts Options) *Controller {
 		})
 		c.executor.SetMemoryQueue(c)
 	}
+	// Always wire the recovery gate so SetRecoveryCheckpointEnabled can arm it
+	// later. Effectiveness still requires Auto mode + enabled preference.
+	c.initRecoveryGate(opts.RecoveryCheckpointEnabled, opts.RecoveryReviewer, opts.RecoveryHeadless)
 	return c
 }
 
@@ -1810,6 +1831,26 @@ func (c *Controller) Turn() int {
 // also remembers a grant for the rest of the session so the same approval scope
 // is not re-prompted. Unknown/expired IDs are ignored.
 func (c *Controller) Approve(id string, allow, session, persist bool) {
+	// Recovery cards are strict fresh decisions. Prefer ResolveRecovery so a
+	// continue/deny from an old client that only knows Approve still maps onto
+	// the recovery state machine (allow=continue, deny=revise without feedback).
+	// Session/persist grants are intentionally ignored for recovery.
+	c.mu.Lock()
+	gate := c.recoveryGate
+	c.mu.Unlock()
+	if gate != nil {
+		snap := gate.Snapshot()
+		for _, st := range snap.Tasks {
+			if st != nil && st.ApprovalID == id {
+				action := agent.RecoveryActionRevise
+				if allow {
+					action = agent.RecoveryActionContinue
+				}
+				_ = c.ResolveRecovery(id, action, "")
+				return
+			}
+		}
+	}
 	pending := c.approval.resolve(id)
 	if pending.reply != nil {
 		pending.reply <- approvalReply{allow: allow, session: session, persist: persist} // buffered, never blocks
@@ -2107,6 +2148,10 @@ func (c *Controller) ReplayPendingPrompts() {
 	}
 	for _, a := range asks {
 		c.sink.Emit(event.Event{Kind: event.AskRequest, Ask: a})
+	}
+	// Re-surface restored recovery checkpoints when no live approval remains.
+	if len(approvals) == 0 {
+		c.ReplayUnresolvedRecoveries()
 	}
 }
 
@@ -3088,6 +3133,7 @@ func (c *Controller) SwitchBranch(ref string) (agent.BranchInfo, error) {
 	c.rebindCheckpoints(match.Path)
 	c.restoreTerminalGoalTodos(match.Path)
 	c.loadGuardianSession()
+	c.loadRecoveryState(match.Path)
 	c.snapshotMu.Unlock()
 	c.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo,
 		Text: fmt.Sprintf("switched to branch %s", branchDisplayName(match))})
@@ -3211,6 +3257,7 @@ func (c *Controller) Resume(s *agent.Session, path string) {
 	}
 	c.restoreTerminalGoalTodos(path)
 	c.loadGuardianSession()
+	c.loadRecoveryState(path)
 	c.snapshotMu.Unlock()
 	c.recoverInterruptedTurn(path)
 	c.maybeColdResumePrune(path)
@@ -3439,6 +3486,8 @@ func (c *Controller) snapshot(markActivity, forceRewrite, shutdownRecovery bool)
 			}
 		}
 	}
+	// Persist recovery gate + reviewer sidecars so checkpoints survive restart.
+	c.saveRecoveryState(path)
 	// Record the listing-only sidecar fields (model, preview, user-turn count)
 	// straight from the in-memory conversation, so the sidebar and resume picker
 	// never have to decode the whole .jsonl just to show them. markActivity bumps

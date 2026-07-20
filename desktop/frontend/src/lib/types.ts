@@ -84,12 +84,26 @@ export interface WireUsage {
   costUsd?: number;
 }
 
+export interface WireRecoveryApproval {
+  source_agent?: string;
+  failed_tool?: string;
+  failed_summary?: string;
+  diagnosis?: string;
+  next_tool?: string;
+  next_action?: string;
+  change_kind?: string;
+  change_rationale?: string;
+  review_rationale?: string;
+}
+
 export interface WireApproval {
   id: string;
   tool: string;
   subject: string;
   reason?: string;
   fresh?: boolean;
+  kind?: "tool" | "plan" | "recovery" | string;
+  recovery?: WireRecoveryApproval;
 }
 
 export interface WireGuardian {
@@ -199,6 +213,7 @@ export interface TabMeta {
   mode: Mode;
   collaborationMode?: CollaborationMode;
   toolApprovalMode?: ToolApprovalMode;
+  recoveryCheckpointEnabled?: boolean;
   tokenMode?: TokenMode;
   goal?: string;
   goalStatus?: GoalStatus;
@@ -477,6 +492,7 @@ export interface Meta {
   bypass?: boolean; // legacy JSON key for YOLO/full-access tool auto-approval
   collaborationMode?: CollaborationMode;
   toolApprovalMode?: ToolApprovalMode;
+  recoveryCheckpointEnabled?: boolean;
   tokenMode?: TokenMode;
   goal?: string;
   goalStatus?: GoalStatus;
@@ -1573,6 +1589,7 @@ export interface SettingsView {
   statusBarStyle: string; // "icon" | "text"
   statusBarItems: string[]; // ordered visible status bar item ids
   defaultToolApprovalMode: ToolApprovalMode | string; // default for newly-created sessions
+  defaultAutoRecoveryCheckpoint?: boolean; // new-session default for Auto failure recovery
   checkUpdates: boolean; // check for new versions on startup
   telemetry: boolean; // anonymous launch ping (install id + version + OS)
   metrics: boolean; // aggregate desktop metrics (anonymous signal/bucket counts)

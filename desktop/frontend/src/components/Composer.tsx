@@ -497,6 +497,7 @@ export function Composer({
   running,
   collaborationMode,
   toolApprovalMode,
+  recoveryCheckpointEnabled = true,
   tokenMode,
   goal,
   cwd,
@@ -511,6 +512,7 @@ export function Composer({
   onSetMode,
   onSetCollaborationMode,
   onSetToolApprovalMode,
+  onSetRecoveryCheckpointEnabled,
   onToggleYoloApprovalMode,
   onClearGoal,
   onSwitchModel,
@@ -550,6 +552,7 @@ export function Composer({
   running: boolean;
   collaborationMode: CollaborationMode;
   toolApprovalMode: ToolApprovalMode;
+  recoveryCheckpointEnabled?: boolean;
   tokenMode: TokenMode;
   goal?: string;
   cwd?: string;
@@ -567,6 +570,7 @@ export function Composer({
   onSetMode: (mode: Mode) => void;
   onSetCollaborationMode: (mode: CollaborationMode) => void;
   onSetToolApprovalMode: (mode: ToolApprovalMode) => void;
+  onSetRecoveryCheckpointEnabled?: (enabled: boolean) => void;
   onToggleYoloApprovalMode: () => void;
   onClearGoal: () => void;
   onSwitchModel: (name: string) => void;
@@ -3786,6 +3790,22 @@ export function Composer({
                   <span>{t("composer.modeYolo")}</span>
                 </button>
               </div>
+              {onSetRecoveryCheckpointEnabled && (
+                <button
+                  type="button"
+                  className={`composer-recovery-toggle${recoveryCheckpointEnabled ? " composer-recovery-toggle--on" : ""}${toolApprovalMode !== "auto" ? " composer-recovery-toggle--inactive" : ""}`}
+                  onClick={() => onSetRecoveryCheckpointEnabled(!recoveryCheckpointEnabled)}
+                  disabled={approvalBarDisabled}
+                  aria-pressed={recoveryCheckpointEnabled}
+                  title={
+                    toolApprovalMode === "auto"
+                      ? t("approval.recoveryToggleHint")
+                      : t("approval.recoveryToggleInactive")
+                  }
+                >
+                  <span>{t("approval.recoveryToggle")}</span>
+                </button>
+              )}
             </div>
             <span className="composer-meta__divider" aria-hidden="true" />
             <div className="composer-meta__control composer-meta__control--model">

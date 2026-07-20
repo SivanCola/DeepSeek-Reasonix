@@ -17,6 +17,7 @@ theme = "auto"   # auto|dark|light; controls CLI colors only; REASONIX_THEME can
 layout_style = "classic"   # classic|workbench|creation; desktop layout style
 # theme = "auto"   # desktop only: auto|dark|light
 # theme_style = "graphite"   # graphite|aurora|slate|carbon|nocturne|amber and legacy aliases
+# default_auto_recovery_checkpoint = true   # new-session default for Auto-mode failure recovery confirm
 
 [notifications]
 enabled = false   # system notifications for CLI and desktop turns; default off
@@ -29,6 +30,9 @@ ask_request = true   # notify when a question is waiting
 # system_prompt_file = "prompts/system.md"   # overrides system_prompt when set
 temperature       = 0.0
 auto_plan         = "off"   # user-level only; ignored in project reasonix.toml
+# auto_recovery_checkpoint = "on"   # on|off; new sessions default on; missing session field = off
+# recovery_model = ""               # optional dedicated recovery reviewer; falls back to guardian_model then main model
+# recovery_temperature = 0
 # reasoning_language = "auto"   # visible reasoning text: auto|zh|en
 # auto_plan_classifier = "deepseek-flash"   # optional; only used for borderline tasks
 # plan_mode_allowed_tools = ["mcp__legacy__reader"]   # legacy MCP read-only trust alias; does not change Plan availability

@@ -274,12 +274,15 @@ type SettingsView struct {
 	StatusBarStyle          string               `json:"statusBarStyle"`
 	StatusBarItems          []string             `json:"statusBarItems"`
 	DefaultToolApprovalMode string               `json:"defaultToolApprovalMode"`
-	CheckUpdates            bool                 `json:"checkUpdates"`
-	Telemetry               bool                 `json:"telemetry"`
-	Metrics                 bool                 `json:"metrics"`
-	ExpandThinking          bool                 `json:"expandThinking"`
-	ConversationWidth       string               `json:"conversationWidth,omitempty"`
-	ConfigPath              string               `json:"configPath"`
+	// DefaultAutoRecoveryCheckpoint is the new-session default for Auto-mode
+	// failure recovery confirmation.
+	DefaultAutoRecoveryCheckpoint bool `json:"defaultAutoRecoveryCheckpoint"`
+	CheckUpdates                  bool   `json:"checkUpdates"`
+	Telemetry                     bool   `json:"telemetry"`
+	Metrics                       bool   `json:"metrics"`
+	ExpandThinking                bool   `json:"expandThinking"`
+	ConversationWidth             string `json:"conversationWidth,omitempty"`
+	ConfigPath                    string `json:"configPath"`
 	// ProviderKinds lists the provider implementations the kernel actually
 	// registered (provider.Kinds()), so the editor's "kind" picker offers only
 	// kinds that resolve — selecting an unregistered one would fail the rebuild.
@@ -903,16 +906,17 @@ func (a *App) Settings() SettingsView {
 		DisplayMode:             cfg.DesktopDisplayMode(),
 		StatusBarStyle:          cfg.DesktopStatusBarStyle(),
 		StatusBarItems:          cfg.DesktopStatusBarItems(),
-		DefaultToolApprovalMode: cfg.DesktopDefaultToolApprovalMode(),
-		CheckUpdates:            cfg.DesktopCheckUpdates(),
-		Telemetry:               cfg.DesktopTelemetry(),
-		Metrics:                 cfg.DesktopMetrics(),
-		ExpandThinking:          cfg.Desktop.ExpandThinking,
-		ConversationWidth:       cfg.DesktopConversationWidth(),
-		ConfigPath:              cfgPath,
-		ProviderKinds:           nonNil(provider.Kinds()),
-		AutoApproveTools:        ctrl != nil && ctrl.AutoApproveTools(),
-		Bypass:                  ctrl != nil && ctrl.AutoApproveTools(),
+		DefaultToolApprovalMode:       cfg.DesktopDefaultToolApprovalMode(),
+		DefaultAutoRecoveryCheckpoint: cfg.DesktopDefaultAutoRecoveryCheckpoint(),
+		CheckUpdates:                  cfg.DesktopCheckUpdates(),
+		Telemetry:                     cfg.DesktopTelemetry(),
+		Metrics:                       cfg.DesktopMetrics(),
+		ExpandThinking:                cfg.Desktop.ExpandThinking,
+		ConversationWidth:             cfg.DesktopConversationWidth(),
+		ConfigPath:                    cfgPath,
+		ProviderKinds:                 nonNil(provider.Kinds()),
+		AutoApproveTools:              ctrl != nil && ctrl.AutoApproveTools(),
+		Bypass:                        ctrl != nil && ctrl.AutoApproveTools(),
 	}
 	added := providerAccessSet(cfg.Desktop.ProviderAccess)
 	resolver := config.NewCredentialResolverForRoot(root)
@@ -1964,6 +1968,14 @@ func (a *App) SetAutoPlan(mode string) error {
 func (a *App) SetDefaultToolApprovalMode(mode string) error {
 	return a.applyConfigOnly(func(c *config.Config) error {
 		return c.SetDesktopDefaultToolApprovalMode(mode)
+	})
+}
+
+// SetDefaultAutoRecoveryCheckpoint updates the new-session default for Auto-mode
+// failure recovery confirmation ("report after failures").
+func (a *App) SetDefaultAutoRecoveryCheckpoint(enabled bool) error {
+	return a.applyConfigOnly(func(c *config.Config) error {
+		return c.SetDesktopDefaultAutoRecoveryCheckpoint(enabled)
 	})
 }
 

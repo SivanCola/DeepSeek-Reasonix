@@ -46,6 +46,7 @@ import (
 	"reasonix/internal/plugin"
 	"reasonix/internal/pluginpkg"
 	"reasonix/internal/provider"
+	"reasonix/internal/recovery"
 	"reasonix/internal/sandbox"
 	"reasonix/internal/secrets"
 	"reasonix/internal/skill"
@@ -1651,10 +1652,45 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 			}
 		}
 	}
+	// Recovery reviewer: prefer recovery_model, then guardian_model, then the
+	// active main model with an isolated session/policy.
+	{
+		recoveryModel := strings.TrimSpace(cfg.Agent.RecoveryModel)
+		if recoveryModel == "" {
+			recoveryModel = strings.TrimSpace(cfg.Agent.GuardianModel)
+		}
+		if recoveryModel == "" {
+			recoveryModel = modelRef
+		}
+		if recoveryModel != "" {
+			if re, ok := cfg.ResolveModel(recoveryModel); ok {
+				if rProv, err := NewProviderWithProxy(re, proxySpec); err == nil {
+					temp := cfg.Agent.RecoveryTemperature
+					ctrlOpts.RecoveryReviewer = recovery.NewSession(rProv, recoveryModel, temp, re.Price)
+				} else {
+					slog.Warn("recovery reviewer provider construction failed — rule-only recovery", "model", recoveryModel, "err", err)
+				}
+			}
+		}
+		// New controller sessions default from config; callers that restore a
+		// session overwrite via SetRecoveryCheckpointEnabled after New.
+		ctrlOpts.RecoveryCheckpointEnabled = cfg.AutoRecoveryCheckpointEnabled()
+		if opts.ApprovalTimeout > 0 {
+			// Bot/headless-style bounded approval implies no indefinite wait.
+			ctrlOpts.RecoveryHeadless = false
+		}
+	}
 	if classifier != nil {
 		ctrlOpts.Classifier = classifier
 	}
 	ctrl := control.New(ctrlOpts)
+	// Share the recovery checkpoint with task/fleet sub-agents so background
+	// writers observe the same failure state as the root agent.
+	if taskTool != nil {
+		if g := ctrl.Executor(); g != nil {
+			taskTool.WithRecoveryGate(g.RecoveryGate())
+		}
+	}
 	refreshMCPPackageRevocationsInBackground(pluginHost)
 	if tokenDelivery {
 		var router *capability.SemanticRouter

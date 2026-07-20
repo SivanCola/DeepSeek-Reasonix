@@ -6298,9 +6298,57 @@ body > .mermaid-diagram--fullscreen {
 }
 
 .composer-meta__control--approval {
-  flex: 0 0 232px;
+  flex: 0 1 auto;
   min-width: 216px;
-  max-width: min(232px, 34vw);
+  max-width: min(420px, 48vw);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.composer-meta__control--approval .composer-modebar--approval {
+  flex: 0 0 232px;
+  min-width: 200px;
+  max-width: 232px;
+}
+
+.composer-recovery-toggle {
+  --wails-draggable: no-drag;
+  flex: 0 1 auto;
+  max-width: 9.5rem;
+  height: var(--composer-control-height);
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 600;
+  line-height: 1.1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+
+.composer-recovery-toggle:hover:not(:disabled) {
+  color: var(--fg);
+  border-color: color-mix(in srgb, var(--border) 40%, var(--fg));
+}
+
+.composer-recovery-toggle--on {
+  background: color-mix(in srgb, var(--ok) 18%, var(--surface-2));
+  border-color: color-mix(in srgb, var(--ok) 55%, var(--border));
+  color: var(--fg);
+}
+
+.composer-recovery-toggle--inactive {
+  opacity: 0.72;
+}
+
+.composer-recovery-toggle:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
 }
 
 .composer-modebar {

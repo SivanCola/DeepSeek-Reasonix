@@ -75,6 +75,11 @@ type TurnControl interface {
 // posture (ask/auto/yolo). It mirrors the approvalManager surface.
 type Approvals interface {
 	Approve(id string, allow, session, persist bool)
+	// ResolveRecovery answers an Auto-mode failure recovery card:
+	// continue|revise|stop. Revise refuses the mutation and steers feedback.
+	ResolveRecovery(id string, action agent.RecoveryAction, feedback string) error
+	SetRecoveryCheckpointEnabled(enabled bool)
+	RecoveryCheckpointEnabled() bool
 	AnswerQuestion(id string, answers []event.AskAnswer)
 	Ask(ctx context.Context, questions []event.AskQuestion) ([]event.AskAnswer, error)
 	ReplayPendingPrompts()

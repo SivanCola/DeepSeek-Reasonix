@@ -100,6 +100,33 @@ func (c *Config) SetDesktopDefaultToolApprovalMode(mode string) error {
 	return nil
 }
 
+// SetDesktopDefaultAutoRecoveryCheckpoint sets whether newly created desktop
+// sessions enable Auto-mode failure recovery confirmation by default.
+func (c *Config) SetDesktopDefaultAutoRecoveryCheckpoint(enabled bool) error {
+	if c == nil {
+		return fmt.Errorf("config is nil")
+	}
+	v := enabled
+	c.Desktop.DefaultAutoRecoveryCheckpoint = &v
+	return nil
+}
+
+// SetAutoRecoveryCheckpoint sets [agent].auto_recovery_checkpoint to on|off.
+func (c *Config) SetAutoRecoveryCheckpoint(value string) error {
+	if c == nil {
+		return fmt.Errorf("config is nil")
+	}
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "on", "true", "1", "yes":
+		c.Agent.AutoRecoveryCheckpoint = "on"
+	case "off", "false", "0", "no":
+		c.Agent.AutoRecoveryCheckpoint = "off"
+	default:
+		return fmt.Errorf("auto_recovery_checkpoint %q: must be on|off", value)
+	}
+	return nil
+}
+
 // SetUIShortcutLayout selects the CLI keyboard shortcut layout. "classic" keeps
 // historical behavior; "desktop" enables the two-axis desktop-style shortcuts.
 func (c *Config) SetUIShortcutLayout(layout string) error {

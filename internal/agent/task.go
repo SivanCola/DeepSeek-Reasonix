@@ -245,6 +245,9 @@ type TaskTool struct {
 	// bashSandboxEnforced reports whether OS sandbox can honour write roots
 	// for bash inside path-bound writer sub-agents.
 	bashSandboxEnforced func() bool
+	// recoveryGate is the shared Auto-mode failure recovery checkpoint for
+	// this session (root + sub-agents). nil disables recovery in children.
+	recoveryGate RecoveryGate
 }
 
 // NewTaskTool wires a task tool to the parent agent's environment so its
@@ -1268,7 +1271,18 @@ func (t *TaskTool) subagentOptions(ctx context.Context, maxSteps int, pricing *p
 		MaxSubagentDepth:    t.maxDepth(),
 		DeliveryProfile:     t.deliveryProfile,
 		WorkspaceLease:      t.workspaceLease,
+		RecoveryGate:        t.recoveryGate,
+		RecoveryAgentID:     "subagent",
 	}
+}
+
+// WithRecoveryGate shares the session recovery checkpoint with spawned sub-agents.
+func (t *TaskTool) WithRecoveryGate(g RecoveryGate) *TaskTool {
+	if t == nil {
+		return nil
+	}
+	t.recoveryGate = g
+	return t
 }
 
 func (t *TaskTool) withWorkspaceContext(prompt string) string {

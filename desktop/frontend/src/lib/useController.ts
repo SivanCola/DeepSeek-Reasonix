@@ -295,6 +295,8 @@ export function metaFromTab(tab: TabMeta, existing?: Meta): Meta {
     bypass: autoApproveTools,
     collaborationMode: tab.collaborationMode ?? existing?.collaborationMode ?? "normal",
     toolApprovalMode,
+    recoveryCheckpointEnabled:
+      tab.recoveryCheckpointEnabled ?? existing?.recoveryCheckpointEnabled ?? true,
     tokenMode: tab.tokenMode ?? existing?.tokenMode ?? "full",
     goal: tab.goal ?? existing?.goal,
     goalStatus: tab.goalStatus ?? existing?.goalStatus,
@@ -324,6 +326,7 @@ export function sameMeta(a?: Meta, b?: Meta): boolean {
     a.bypass === b.bypass &&
     a.collaborationMode === b.collaborationMode &&
     a.toolApprovalMode === b.toolApprovalMode &&
+    a.recoveryCheckpointEnabled === b.recoveryCheckpointEnabled &&
     a.tokenMode === b.tokenMode &&
     a.goal === b.goal &&
     a.goalStatus === b.goalStatus
@@ -2449,6 +2452,34 @@ export function useController() {
     });
   }, [activeTabId, dispatchTo]);
 
+  const resolveRecovery = useCallback((id: string, action: "continue" | "revise" | "stop", feedback = "") => {
+    if (!activeTabId) return;
+    const tabId = activeTabId;
+    const epoch = statesRef.current.get(tabId)?.promptEpoch ?? 0;
+    dispatchTo(tabId, { type: "clearApproval" });
+    app.ResolveRecoveryTab(tabId, id, action, feedback).catch(() => {
+      dispatchTo(tabId, { type: "submit_prompt_failed", id, epoch });
+      replayPendingPromptsForActiveTab(tabId);
+    });
+  }, [activeTabId, dispatchTo]);
+
+  const setRecoveryCheckpointEnabled = useCallback((enabled: boolean) => {
+    if (!activeTabId) return Promise.resolve();
+    const tabId = activeTabId;
+    const prev = statesRef.current.get(tabId)?.meta;
+    if (prev) {
+      dispatchTo(tabId, {
+        type: "optimistic_meta",
+        meta: { ...prev, recoveryCheckpointEnabled: enabled },
+      });
+    }
+    return app.SetRecoveryCheckpointEnabledTab(tabId, enabled).catch(() => {
+      if (prev) {
+        dispatchTo(tabId, { type: "optimistic_meta", meta: prev });
+      }
+    });
+  }, [activeTabId, dispatchTo]);
+
   const answerQuestion = useCallback((id: string, answers: QuestionAnswer[]) => {
     if (!activeTabId) return;
     const tabId = activeTabId;
@@ -3047,7 +3078,7 @@ export function useController() {
   return {
     state: activeState,
     activeTabId,
-    send, sendToTab, recoverDeliveryToTab, runShell, runShellForTab, steer, steerForTab, notice, cancel, approve, answerQuestion, setControllerMode,
+    send, sendToTab, recoverDeliveryToTab, runShell, runShellForTab, steer, steerForTab, notice, cancel, approve, resolveRecovery, setRecoveryCheckpointEnabled, answerQuestion, setControllerMode,
     setCollaborationMode, setCollaborationModeForTab, setToolApprovalMode, setToolApprovalModeForTab, setGoal, setGoalForTab, clearGoal, clearGoalForTab, resumeGoal, resumeGoalForTab,
     newSession, clearSession, listSessions, listTrashedSessions, resumeSession, openChannelSession, previewSession, deleteSession, restoreSession, purgeTrashedSession, renameSession,
     loadOlderHistory,

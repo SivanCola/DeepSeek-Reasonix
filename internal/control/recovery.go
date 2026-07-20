@@ -1,0 +1,356 @@
+package control
+
+import (
+	"context"
+	"fmt"
+	"log/slog"
+	"os"
+	"strings"
+
+	"reasonix/internal/agent"
+	"reasonix/internal/recovery"
+)
+
+// SetRecoveryCheckpointEnabled arms or disarms the Auto-mode failure recovery
+// checkpoint for this session. The preference is retained under Ask/YOLO but
+// only takes effect while the tool approval mode is Auto.
+func (c *Controller) SetRecoveryCheckpointEnabled(enabled bool) {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	c.recoveryEnabled = enabled
+	gate := c.recoveryGate
+	c.mu.Unlock()
+	if gate != nil {
+		gate.SetEnabled(enabled)
+	}
+	c.persistRecoveryEnabled(enabled)
+}
+
+// RecoveryCheckpointEnabled reports the session preference (not whether Auto
+// is currently active).
+func (c *Controller) RecoveryCheckpointEnabled() bool {
+	if c == nil {
+		return false
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.recoveryEnabled
+}
+
+// ResolveRecovery applies a user decision on a recovery confirmation card.
+// action is continue|revise|stop. For revise, feedback is steered into the
+// agent and the pending mutation is refused in the same operation.
+func (c *Controller) ResolveRecovery(id string, action agent.RecoveryAction, feedback string) error {
+	if c == nil {
+		return fmt.Errorf("controller is nil")
+	}
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return fmt.Errorf("empty recovery approval id")
+	}
+	switch action {
+	case agent.RecoveryActionContinue, agent.RecoveryActionRevise, agent.RecoveryActionStop:
+	default:
+		// Accept plain strings from wire clients.
+		switch strings.ToLower(strings.TrimSpace(string(action))) {
+		case "continue":
+			action = agent.RecoveryActionContinue
+		case "revise":
+			action = agent.RecoveryActionRevise
+		case "stop":
+			action = agent.RecoveryActionStop
+		default:
+			return fmt.Errorf("unknown recovery action %q", action)
+		}
+	}
+
+	// Also resolve any matching approvalManager entry so legacy Approve paths
+	// and ReplayPending do not keep a stale prompt.
+	pending := c.approval.resolve(id)
+	if pending.reply != nil {
+		switch action {
+		case agent.RecoveryActionContinue:
+			pending.reply <- approvalReply{allow: true}
+		default:
+			pending.reply <- approvalReply{allow: false}
+		}
+	}
+
+	c.mu.Lock()
+	gate := c.recoveryGate
+	c.mu.Unlock()
+	if gate == nil {
+		return fmt.Errorf("recovery checkpoint is not active")
+	}
+	if action == agent.RecoveryActionRevise && strings.TrimSpace(feedback) != "" {
+		// Atomically inject steer so the next model request sees the revision
+		// before any further mutation attempt.
+		c.Steer(strings.TrimSpace(feedback))
+	}
+	return gate.Resolve(id, recovery.Action(action), feedback)
+}
+
+// initRecoveryGate constructs the shared recovery gate and attaches it to the
+// executor. Called from New when recovery is available.
+func (c *Controller) initRecoveryGate(enabled bool, reviewer recovery.Reviewer, headless bool) {
+	if c == nil || c.executor == nil {
+		return
+	}
+	if rs, ok := reviewer.(*recovery.Session); ok {
+		c.mu.Lock()
+		c.recoveryReviewer = rs
+		c.mu.Unlock()
+	}
+	gate := recovery.NewGate(recovery.Options{
+		Enabled:  enabled,
+		Headless: headless,
+		Mode: func() string {
+			return c.ToolApprovalMode()
+		},
+		EmitPrompt: c.emitRecoveryPrompt,
+		Reviewer:   reviewer,
+		InjectTail: func(_, message string) {
+			if strings.TrimSpace(message) == "" {
+				return
+			}
+			// Steer is the mid-turn user-tail channel; it does not touch the
+			// stable system prompt or tool schemas.
+			c.Steer(message)
+		},
+		Cancel: func() {
+			c.Cancel()
+		},
+		Persist: func(snap recovery.Snapshot) {
+			c.persistRecoverySnapshot(snap)
+		},
+		TaskSummary: func() string {
+			if c.executor == nil || c.executor.Session() == nil {
+				return ""
+			}
+			msgs := c.executor.Session().Snapshot()
+			for i := len(msgs) - 1; i >= 0; i-- {
+				if string(msgs[i].Role) == "user" && strings.TrimSpace(msgs[i].Content) != "" {
+					text := strings.TrimSpace(msgs[i].Content)
+					if len(text) > 800 {
+						return text[:800] + "…"
+					}
+					return text
+				}
+			}
+			return ""
+		},
+	})
+	c.mu.Lock()
+	c.recoveryGate = gate
+	c.recoveryEnabled = enabled
+	c.mu.Unlock()
+	c.executor.SetRecoveryGate(gate)
+}
+
+func (c *Controller) persistRecoverySnapshot(snap recovery.Snapshot) {
+	if c == nil {
+		return
+	}
+	path := c.SessionPath()
+	if strings.TrimSpace(path) == "" {
+		return
+	}
+	if err := recovery.SaveSnapshot(path, snap); err != nil {
+		slog.Warn("controller: recovery snapshot", "err", err)
+	}
+}
+
+// loadRecoveryState restores gate + reviewer sidecars for a session path.
+func (c *Controller) loadRecoveryState(path string) {
+	if c == nil || strings.TrimSpace(path) == "" {
+		return
+	}
+	c.mu.Lock()
+	gate := c.recoveryGate
+	reviewer := c.recoveryReviewer
+	c.mu.Unlock()
+	if gate != nil {
+		snap, err := recovery.LoadSnapshot(path)
+		if err != nil {
+			slog.Warn("controller: load recovery snapshot", "err", err)
+		} else if len(snap.Tasks) > 0 {
+			gate.Restore(snap)
+		}
+	}
+	if reviewer != nil {
+		if err := reviewer.Load(recovery.ReviewerPathFor(path)); err != nil && !os.IsNotExist(err) {
+			slog.Warn("controller: load recovery reviewer", "err", err)
+		}
+	}
+}
+
+// saveRecoveryState persists gate + reviewer sidecars.
+func (c *Controller) saveRecoveryState(path string) {
+	if c == nil || strings.TrimSpace(path) == "" {
+		return
+	}
+	c.mu.Lock()
+	gate := c.recoveryGate
+	reviewer := c.recoveryReviewer
+	c.mu.Unlock()
+	if gate != nil {
+		if err := recovery.SaveSnapshot(path, gate.Snapshot()); err != nil {
+			slog.Warn("controller: recovery snapshot", "err", err)
+		}
+	}
+	if reviewer != nil {
+		if err := reviewer.Save(recovery.ReviewerPathFor(path)); err != nil {
+			slog.Warn("controller: recovery reviewer snapshot", "err", err)
+		}
+	}
+}
+
+// RecoveryMetrics returns content-free recovery counters for export/observation.
+func (c *Controller) RecoveryMetrics() recovery.Metrics {
+	if c == nil {
+		return recovery.Metrics{}
+	}
+	c.mu.Lock()
+	gate := c.recoveryGate
+	c.mu.Unlock()
+	if gate == nil {
+		return recovery.Metrics{}
+	}
+	return gate.Metrics()
+}
+
+// ReplayUnresolvedRecoveries re-emits recovery cards for active failures that
+// still have a pending proposal (e.g. after a frontend reconnect). Live waiters
+// remain owned by BeforeMutation; this only restores the UI card via the same
+// ApprovalRequest infrastructure as ordinary pending prompts.
+func (c *Controller) ReplayUnresolvedRecoveries() {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	gate := c.recoveryGate
+	c.mu.Unlock()
+	if gate == nil || !gate.Enabled() || c.ToolApprovalMode() != ToolApprovalAuto {
+		return
+	}
+	// Prefer ordinary ReplayPendingPrompts when the approval manager still has
+	// the live prompt (in-process reconnect). Only synthesize cards for
+	// restored failures that still carry a pending proposal and have no live id.
+	for _, item := range gate.UnresolvedForReplay() {
+		if item.Pending == nil || strings.TrimSpace(item.Pending.Fingerprint) == "" {
+			continue
+		}
+		// Skip if a live approval is already pending for this recovery.
+		if c.approval.hasPending() {
+			continue
+		}
+		pending := *item.Pending
+		ev := recovery.ToEventApproval("", pending, &item.Failure)
+		id, reply := c.approval.registerDecisionKind(
+			pending.Tool,
+			recoveryFirstNonEmpty(pending.Subject, pending.Tool),
+			recoveryFirstNonEmpty(pending.Rationale, "recovery checkpoint"),
+			true,
+			recovery.ApprovalKindRecovery,
+			ev.Recovery,
+		)
+		ev.ID = id
+		gate.BindApprovalID(item.TaskID, id)
+		// Keep the reply channel so ResolveRecovery can unblock a concurrent
+		// BeforeMutation waiter if one re-attaches; otherwise drain quietly.
+		go func(ch chan approvalReply) {
+			<-ch
+		}(reply)
+		c.sink.Emit(c.approvalRequestEvent(ev))
+	}
+}
+
+func (c *Controller) emitRecoveryPrompt(ctx context.Context, taskID string, pending recovery.PendingProposal, failure *recovery.FailureEvent) (string, error) {
+	if c == nil {
+		return "", fmt.Errorf("controller is nil")
+	}
+	// Strict fresh decision: never session/persist grants, never auto-drain on
+	// mode switch.
+	c.approval.promptMu.Lock()
+	// Hold promptMu for the duration of registration+emit only; waiting happens
+	// in the recovery gate on its own channel. We deliberately do not block here
+	// on the approval reply — ResolveRecovery unblocks the gate.
+	ev := recovery.ToEventApproval("", pending, failure)
+	id, reply := c.approval.registerDecisionKind(
+		pending.Tool,
+		recoveryFirstNonEmpty(pending.Subject, pending.Tool),
+		recoveryFirstNonEmpty(pending.Rationale, "recovery checkpoint"),
+		true,
+		recovery.ApprovalKindRecovery,
+		ev.Recovery,
+	)
+	ev.ID = id
+	// Drain the ordinary approval reply when ResolveRecovery/Approve fires so
+	// the channel never leaks; the gate is the real waiter.
+	go func() {
+		select {
+		case <-reply:
+		case <-ctx.Done():
+			c.approval.cancel(id)
+		}
+	}()
+
+	c.sink.Emit(c.approvalRequestEvent(ev))
+	c.approval.promptMu.Unlock()
+
+	if c.hooks != nil {
+		go c.hooks.Notification(ctx, "Recovery checkpoint: confirm the next change", "permission_prompt")
+	}
+	if c.recoveryGate != nil {
+		c.recoveryGate.BindApprovalID(taskID, id)
+	}
+	return id, nil
+}
+
+func (c *Controller) persistRecoveryEnabled(enabled bool) {
+	if c == nil {
+		return
+	}
+	path := c.SessionPath()
+	if strings.TrimSpace(path) == "" {
+		return
+	}
+	unlock := agent.LockSessionMetaPath(path)
+	defer unlock()
+	meta, ok, err := agent.LoadBranchMeta(path)
+	if err != nil {
+		return
+	}
+	if !ok {
+		meta = agent.BranchMeta{}
+	}
+	v := enabled
+	meta.RecoveryCheckpointEnabled = &v
+	_ = agent.SaveBranchMeta(path, meta)
+}
+
+// attachRecoveryToAgent shares the controller recovery gate with a child agent.
+func (c *Controller) attachRecoveryToAgent(child *agent.Agent, agentID, taskID string) {
+	if c == nil || child == nil {
+		return
+	}
+	c.mu.Lock()
+	gate := c.recoveryGate
+	c.mu.Unlock()
+	if gate == nil {
+		return
+	}
+	child.SetRecoveryGate(gate)
+	child.SetRecoveryIdentity(agentID, taskID)
+}
+
+func recoveryFirstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if strings.TrimSpace(v) != "" {
+			return strings.TrimSpace(v)
+		}
+	}
+	return ""
+}

@@ -1,0 +1,117 @@
+package control
+
+import (
+	"context"
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"reasonix/internal/agent"
+	"reasonix/internal/event"
+	"reasonix/internal/permission"
+	"reasonix/internal/provider"
+	"reasonix/internal/recovery"
+	"reasonix/internal/tool"
+)
+
+// End-to-end: scripted provider fails verification, runs read-only diagnosis,
+// then a strategy-changing write waits for Continue before executing.
+// Also verifies recovery sidecar persistence and content-free metrics.
+func TestRecoveryCheckpointScriptedE2E(t *testing.T) {
+	dir := t.TempDir()
+	sessionPath := filepath.Join(dir, "session.jsonl")
+
+	bash := &recoveryWriteTool{name: "bash", failOnce: true}
+	read := &recoveryWriteTool{name: "read_file", readOnly: true}
+	write := &recoveryWriteTool{name: "write_file"}
+	reg := tool.NewRegistry()
+	reg.Add(bash)
+	reg.Add(read)
+	reg.Add(write)
+
+	prov := &recordingProvider{streams: [][]provider.Chunk{
+		{{Type: provider.ChunkToolCall, ToolCall: &provider.ToolCall{ID: "1", Name: "bash", Arguments: `{"command":"go test ./..."}`}}},
+		{{Type: provider.ChunkToolCall, ToolCall: &provider.ToolCall{ID: "2", Name: "read_file", Arguments: `{"path":"main.go"}`}}},
+		{{Type: provider.ChunkToolCall, ToolCall: &provider.ToolCall{ID: "3", Name: "write_file", Arguments: `{"path":"fixed.go","content":"x"}`}}},
+		{{Type: provider.ChunkText, Text: "done"}},
+	}}
+
+	sess := agent.NewSession("You are a test agent.")
+	ag := agent.New(prov, reg, sess, agent.Options{MaxSteps: 10}, event.Discard)
+	// Leave SessionPath empty so autosave does not hold file locks on dir.
+	c := New(Options{
+		Runner:                    ag,
+		Executor:                  ag,
+		Policy:                    permission.Policy{Mode: permission.Allow},
+		RecoveryCheckpointEnabled: true,
+	})
+	t.Cleanup(func() { c.Close() })
+	c.SetToolApprovalMode(ToolApprovalAuto)
+	c.EnableInteractiveApproval()
+
+	go func() {
+		deadline := time.Now().Add(3 * time.Second)
+		for time.Now().Before(deadline) {
+			c.mu.Lock()
+			gate := c.recoveryGate
+			c.mu.Unlock()
+			if gate == nil {
+				time.Sleep(5 * time.Millisecond)
+				continue
+			}
+			for _, st := range gate.Snapshot().Tasks {
+				if st != nil && st.ApprovalID != "" {
+					// Card visible: write must not have executed yet.
+					if write.runs != 0 {
+						return
+					}
+					_ = c.ResolveRecovery(st.ApprovalID, agent.RecoveryActionContinue, "")
+					return
+				}
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+	}()
+
+	if err := c.Run(context.Background(), "test then fix"); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	if write.runs != 1 {
+		t.Fatalf("write runs = %d, want 1 after continue", write.runs)
+	}
+	if read.runs < 1 {
+		t.Fatalf("expected read-only diagnosis, runs=%d", read.runs)
+	}
+	if bash.runs < 1 {
+		t.Fatalf("expected failing verification, bash runs=%d", bash.runs)
+	}
+
+	// Sidecar persistence (write a synthetic session path under temp dir).
+	c.mu.Lock()
+	gate := c.recoveryGate
+	c.mu.Unlock()
+	if gate != nil {
+		gate.ObserveResult(context.Background(), agent.RecoveryObservation{
+			Tool: "bash", Verification: true, ErrSummary: "exit 1",
+			Args: json.RawMessage(`{"command":"go test"}`),
+		})
+		if err := recovery.SaveSnapshot(sessionPath, gate.Snapshot()); err != nil {
+			t.Fatalf("SaveSnapshot: %v", err)
+		}
+	}
+	if _, err := os.Stat(recovery.PathFor(sessionPath)); err != nil {
+		t.Fatalf("recovery sidecar: %v", err)
+	}
+	snap, err := recovery.LoadSnapshot(sessionPath)
+	if err != nil || len(snap.Tasks) == 0 {
+		t.Fatalf("LoadSnapshot: err=%v tasks=%d", err, len(snap.Tasks))
+	}
+
+	m := c.RecoveryMetrics()
+	if m.FailureEvents == 0 || m.HumanPrompts == 0 || m.HumanContinues == 0 {
+		t.Fatalf("metrics = %+v", m)
+	}
+}

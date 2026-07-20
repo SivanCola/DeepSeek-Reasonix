@@ -1349,6 +1349,7 @@ function normalizeSettingsView(view: SettingsView | null | undefined): SettingsV
     bot: normalizeBotSettings(view.bot),
     autoPlan: normalizeAutoPlan(view.autoPlan),
     defaultToolApprovalMode: normalizeToolApprovalMode(view.defaultToolApprovalMode),
+    defaultAutoRecoveryCheckpoint: view.defaultAutoRecoveryCheckpoint !== false,
     autoApproveTools: Boolean(view.autoApproveTools ?? view.bypass),
     bypass: Boolean(view.autoApproveTools ?? view.bypass),
     desktopLanguage: normalizeLangPref(view.desktopLanguage),
@@ -1508,6 +1509,7 @@ function GeneralSection({ s, busy, apply, agentRunning }: SectionProps & { agent
   useEffect(() => () => mouseDragCleanupRef.current?.(), []);
   const autoPlan = normalizeAutoPlan(s.autoPlan);
   const defaultToolApprovalMode = normalizeToolApprovalMode(s.defaultToolApprovalMode);
+  const defaultAutoRecoveryCheckpoint = s.defaultAutoRecoveryCheckpoint !== false;
   const languagePref = normalizeLangPref(s.desktopLanguage);
   const desktopLayoutStyle = normalizeDesktopLayoutStyle(s.desktopLayoutStyle);
   const [genMusicPreset, setGenMusicPreset] = useState<GenerativePreset>(getGenerativePreset());
@@ -1750,6 +1752,27 @@ function GeneralSection({ s, busy, apply, agentRunning }: SectionProps & { agent
               {t(`settings.defaultToolApprovalMode.${mode}`)}
             </button>
           ))}
+        </div>
+      </SettingsField>
+      <SettingsField
+        label={t("settings.defaultAutoRecoveryCheckpoint")}
+        hint={t("settings.defaultAutoRecoveryCheckpointHint")}
+      >
+        <div className="set-seg">
+          <button
+            className={`set-seg__btn${defaultAutoRecoveryCheckpoint ? " set-seg__btn--on" : ""}`}
+            disabled={busy}
+            onClick={() => void apply(() => app.SetDefaultAutoRecoveryCheckpoint(true))}
+          >
+            {t("settings.defaultAutoRecoveryCheckpoint.on")}
+          </button>
+          <button
+            className={`set-seg__btn${!defaultAutoRecoveryCheckpoint ? " set-seg__btn--on" : ""}`}
+            disabled={busy}
+            onClick={() => void apply(() => app.SetDefaultAutoRecoveryCheckpoint(false))}
+          >
+            {t("settings.defaultAutoRecoveryCheckpoint.off")}
+          </button>
         </div>
       </SettingsField>
       <SettingsField label={t("settings.autoPlan")}>
