@@ -4,16 +4,19 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 
 	"reasonix/internal/boot"
 	"reasonix/internal/config"
 	"reasonix/internal/remote/broker"
 	"reasonix/internal/remote/gateway"
 	"reasonix/internal/remote/protocol"
+	"reasonix/internal/remote/target"
 )
 
 // remoteNativeKernel holds parent-process remote desktop services.
@@ -21,21 +24,26 @@ type remoteNativeKernel struct {
 	mu          sync.Mutex
 	gateway     *gateway.Server
 	broker      *broker.Server
+	brokerAddr  string // host:port of local broker listener
 	gatewayBase string
 	svcCancel   context.CancelFunc
+	// tokensBySession revokes broker tokens when a remote window closes.
+	tokensBySession map[string]broker.CapabilityToken
 }
 
-var appRemoteNative = &remoteNativeKernel{}
+var appRemoteNative = &remoteNativeKernel{
+	tokensBySession: map[string]broker.CapabilityToken{},
+}
 
-func (k *remoteNativeKernel) ensureServices(ctx context.Context) (*gateway.Server, *broker.Server, error) {
+func (k *remoteNativeKernel) ensureServices(ctx context.Context) (*gateway.Server, *broker.Server, string, error) {
 	k.mu.Lock()
 	defer k.mu.Unlock()
-	if k.gateway != nil && k.broker != nil {
-		return k.gateway, k.broker, nil
+	if k.gateway != nil && k.broker != nil && k.brokerAddr != "" {
+		return k.gateway, k.broker, k.brokerAddr, nil
 	}
 	cfg, err := config.Load()
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, "", err
 	}
 	resolver := boot.NewLocalProviderResolver(cfg, cfg.NetworkProxySpec())
 	b := broker.NewServer(broker.Options{Resolver: resolver})
@@ -44,20 +52,48 @@ func (k *remoteNativeKernel) ensureServices(ctx context.Context) (*gateway.Serve
 	baddr, err := b.ListenAndServe(svcCtx, "127.0.0.1:0")
 	if err != nil {
 		cancel()
-		return nil, nil, fmt.Errorf("start provider broker: %w", err)
+		return nil, nil, "", fmt.Errorf("start provider broker: %w", err)
 	}
-	_ = baddr
 	gaddr, err := g.ListenAndServe(svcCtx)
 	if err != nil {
 		cancel()
 		b.Close()
-		return nil, nil, fmt.Errorf("start remote gateway: %w", err)
+		return nil, nil, "", fmt.Errorf("start remote gateway: %w", err)
 	}
 	k.gateway = g
 	k.broker = b
+	k.brokerAddr = baddr.String()
 	k.gatewayBase = "http://" + gaddr.String()
 	k.svcCancel = cancel
-	return g, b, nil
+	return g, b, k.brokerAddr, nil
+}
+
+func (k *remoteNativeKernel) gatewayBaseLocked() string {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	return k.gatewayBase
+}
+
+func (k *remoteNativeKernel) rememberToken(sessionID string, tok broker.CapabilityToken) {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	if k.tokensBySession == nil {
+		k.tokensBySession = map[string]broker.CapabilityToken{}
+	}
+	k.tokensBySession[sessionID] = tok
+}
+
+func (k *remoteNativeKernel) revokeSession(sessionID string) {
+	k.mu.Lock()
+	tok, ok := k.tokensBySession[sessionID]
+	if ok {
+		delete(k.tokensBySession, sessionID)
+	}
+	brk := k.broker
+	k.mu.Unlock()
+	if ok && brk != nil {
+		brk.Revoke(tok)
+	}
 }
 
 func (a *App) openNativeRemoteWorkspace(hostID, workspace string) error {
@@ -70,6 +106,7 @@ func (a *App) openNativeRemoteWorkspace(hostID, workspace string) error {
 	if err != nil {
 		return err
 	}
+	// SSH connect
 	if err := rt.Connect(hostID); err != nil {
 		st := rt.Statuses()
 		connected := false
@@ -84,18 +121,35 @@ func (a *App) openNativeRemoteWorkspace(hostID, workspace string) error {
 		}
 	}
 
-	var fingerprint, keyType string
+	var fingerprint, keyType, hostLabel string
 	for _, s := range rt.Statuses() {
-		if s.HostID == hostID && s.Fingerprint != nil {
+		if s.HostID != hostID {
+			continue
+		}
+		if s.Fingerprint != nil {
 			fingerprint = s.Fingerprint.SHA256
 			keyType = s.Fingerprint.KeyType
+			hostLabel = s.Fingerprint.Address
+		}
+	}
+	if hostLabel == "" {
+		if hosts, herr := rt.Hosts(); herr == nil {
+			for _, h := range hosts {
+				if h.ID == hostID {
+					hostLabel = h.Host
+					if h.User != "" {
+						hostLabel = h.User + "@" + h.Host
+					}
+					break
+				}
+			}
 		}
 	}
 	if fingerprint == "" {
-		fingerprint = "pending:" + hostID
+		return fmt.Errorf("host key fingerprint unavailable; accept the host key first")
 	}
 
-	gw, brk, err := appRemoteNative.ensureServices(a.bootContext())
+	gw, brk, brokerAddr, err := appRemoteNative.ensureServices(a.bootContext())
 	if err != nil {
 		return err
 	}
@@ -112,13 +166,31 @@ func (a *App) openNativeRemoteWorkspace(hostID, workspace string) error {
 		refs = append(refs, d.Ref)
 		allowed[d.Ref] = struct{}{}
 	}
+
+	// Provider trust: missing refs require explicit user confirmation.
 	trust := broker.DefaultTrustStore()
-	if !strings.HasPrefix(fingerprint, "pending:") {
-		if miss := trust.MissingRefs(hostID, fingerprint, refs); len(miss) > 0 {
-			if err := trust.AuthorizeAll(hostID, keyType, fingerprint, refs); err != nil {
-				return fmt.Errorf("provider authorization: %w", err)
+	missing := trust.MissingRefs(hostID, fingerprint, refs)
+	if len(missing) > 0 {
+		if mgr, ok := rt.(*desktopRemoteManager); ok {
+			if err := mgr.RequestProviderTrust(hostID, hostLabel, keyType, fingerprint, workspace, missing); err != nil {
+				return err
 			}
 		}
+		if err := trust.AuthorizeAll(hostID, keyType, fingerprint, missing); err != nil {
+			return fmt.Errorf("provider authorization: %w", err)
+		}
+	}
+	// Refresh allowed set from durable trust (may be a subset after partial auth).
+	if rec, ok, _ := trust.Get(hostID, fingerprint); ok {
+		allowed = map[string]struct{}{}
+		refs = refs[:0]
+		for _, r := range rec.AllowedProviderRefs {
+			allowed[r] = struct{}{}
+			refs = append(refs, r)
+		}
+	}
+	if len(allowed) == 0 {
+		return fmt.Errorf("no providers authorized for remote host %q", hostID)
 	}
 
 	tok, err := brk.Issue(broker.Scope{
@@ -131,22 +203,23 @@ func (a *App) openNativeRemoteWorkspace(hostID, workspace string) error {
 		return err
 	}
 
-	// Bootstrap remote binary + local forward. The long-term remote-runtime
-	// launch replaces serve; during the transition we still use EnsureServer for
-	// install/forward plumbing, then refuse Serve HTML and require /remote/v1.
-	view, remoteToken, err := rt.EnsureServer(a.bootContext(), hostID, workspace)
+	// Pure remote-runtime bootstrap + Broker -R + local forward.
+	view, remoteToken, err := rt.EnsureRemoteRuntime(a.bootContext(), hostID, workspace, brokerAddr, tok.String())
 	if err != nil {
 		brk.Revoke(tok)
-		return fmt.Errorf("start remote runtime (bootstrap): %w", err)
+		return fmt.Errorf("start remote-runtime: %w", err)
 	}
 	remoteBase := strings.TrimRight(view.LocalURL, "/")
 	if remoteBase == "" {
 		brk.Revoke(tok)
-		return fmt.Errorf("remote runtime did not report a local URL")
+		return fmt.Errorf("remote-runtime did not report a local URL")
 	}
 
-	// Best-effort protocol probe; continue so the native window can show status.
-	_ = probeRemoteProtocol(a.bootContext(), remoteBase, remoteToken)
+	// Protocol handshake is required — no Serve HTML fallback.
+	if err := probeRemoteProtocol(a.bootContext(), remoteBase, remoteToken); err != nil {
+		brk.Revoke(tok)
+		return fmt.Errorf("remote protocol handshake failed (upgrade remote reasonix): %w", err)
+	}
 
 	connID, err := randomHexID(8)
 	if err != nil {
@@ -167,8 +240,11 @@ func (a *App) openNativeRemoteWorkspace(hostID, workspace string) error {
 		brk.Revoke(tok)
 		return err
 	}
+	appRemoteNative.rememberToken(sess.ID, tok)
 
 	a.saveLastRemoteWorkspace(hostID, workspace)
+	_ = target.ExecutionTarget{Kind: target.KindSSH, HostID: hostID, Workspace: workspace}
+
 	return a.openRemoteGatewayWindow(remoteWindowLaunch{
 		Mode:         "gateway",
 		GatewayURL:   appRemoteNative.gatewayBaseLocked(),
@@ -180,13 +256,9 @@ func (a *App) openNativeRemoteWorkspace(hostID, workspace string) error {
 	})
 }
 
-func (k *remoteNativeKernel) gatewayBaseLocked() string {
-	k.mu.Lock()
-	defer k.mu.Unlock()
-	return k.gatewayBase
-}
-
 func probeRemoteProtocol(ctx context.Context, base, token string) error {
+	ctx, cancel := context.WithTimeout(ctx, 8*time.Second)
+	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(base, "/")+protocol.APIPrefix+"/hello", nil)
 	if err != nil {
 		return err
@@ -200,9 +272,13 @@ func probeRemoteProtocol(ctx context.Context, base, token string) error {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("%w: remote-runtime hello status %d", protocol.ErrProtocolMismatch, resp.StatusCode)
+		return fmt.Errorf("%w: hello status %d", protocol.ErrProtocolMismatch, resp.StatusCode)
 	}
-	return nil
+	var hello protocol.HelloResponse
+	if err := json.NewDecoder(resp.Body).Decode(&hello); err != nil {
+		return fmt.Errorf("%w: decode hello: %v", protocol.ErrInvalidResponse, err)
+	}
+	return hello.Compatible()
 }
 
 func randomHexID(n int) (string, error) {

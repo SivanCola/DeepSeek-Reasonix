@@ -56,6 +56,7 @@ type DecisionSurfaceKind = "tool_approval" | "plan_approval" | "ask" | "clear_co
 import { StatusBar } from "./components/StatusBar";
 import { RemoteHostKeyDialog } from "./components/RemoteHostKeyDialog";
 import { RemoteSecretDialog } from "./components/RemoteSecretDialog";
+import { RemoteProviderTrustDialog } from "./components/RemoteProviderTrustDialog";
 import { onRemoteStatus, onRemoteForwards, onRemoteServer } from "./lib/bridge";
 import { RemoteConnectionTimeoutError, useRemoteStore, waitForRemoteConnection } from "./store/remote";
 import { CommandPalette, type PaletteItem } from "./components/CommandPalette";
@@ -4454,6 +4455,7 @@ export default function App() {
 
       <RemoteHostKeyDialog />
       <RemoteSecretDialog />
+      <RemoteProviderTrustDialog />
 
       <CommandPalette
         open={paletteOpen}

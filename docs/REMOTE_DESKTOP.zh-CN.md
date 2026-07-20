@@ -23,12 +23,17 @@ Reasonix 远程工作区会打开**完整原生桌面窗口**。聊天、命令�
 2. 校验 Host Key 指纹与 Provider 信任记录。
 3. 安装/校验匹配版本的远端 Reasonix。
 4. 远端 loopback 启动 `reasonix remote-runtime`（`/remote/v1`）。
+   状态目录为 `~/.reasonix/remote-runtime/`（与 serve 分离）。
 5. 本机 Provider Broker 签发 capability token（绑定主机+工作区+已授权 Provider）；
-   SSH 反向转发仅监听远端 `127.0.0.1`。
+   SSH 反向转发（`-R`）仅监听远端 `127.0.0.1`。新增 Provider 首次使用会弹出授权确认。
 6. 本机 Remote Gateway 提供子窗口 loopback RPC；单次 mode-0600 ticket 传递令牌
    （不出现在 argv/URL/DOM）。
-7. 子窗口加载完整桌面前端并连接 Gateway。
+7. 子窗口加载完整桌面前端；Remote AppBridge 将 submit/cancel 等经 Gateway 转发。
 8. Ready 后消息与工具在远端 Controller 执行。
+
+缓存稳定性：同一 `provider.Request` 在本机直连与 Broker 模式下必须生成相同的
+Provider 请求体（`TestBrokerPreservesProviderRequestBytes`，已纳入
+`scripts/cache-guard.sh`）。
 
 ## 安全边界
 

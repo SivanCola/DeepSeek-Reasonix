@@ -2,7 +2,10 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,6 +14,7 @@ import (
 
 	"reasonix/internal/config"
 	"reasonix/internal/remote"
+	"reasonix/internal/remote/broker"
 )
 
 // fakeRemoteKernel implements remoteKernel for binding-layer tests.
@@ -104,7 +108,11 @@ func (f *fakeRemoteKernel) RemoveForward(string, string) error { return nil }
 func (f *fakeRemoteKernel) EnsureServer(context.Context, string, string) (RemoteServerView, string, error) {
 	return f.ensureView, f.ensureToken, f.ensureErr
 }
+func (f *fakeRemoteKernel) EnsureRemoteRuntime(_ context.Context, _, _, _, _ string) (RemoteServerView, string, error) {
+	return f.ensureView, f.ensureToken, f.ensureErr
+}
 func (f *fakeRemoteKernel) StopServer(string) error              { return nil }
+func (f *fakeRemoteKernel) StopRemoteRuntime(string) error       { return nil }
 func (f *fakeRemoteKernel) ServerStatus(string) RemoteServerView { return f.ensureView }
 func (f *fakeRemoteKernel) ServerLogs(context.Context, string, int) (string, error) {
 	return "log line", nil
@@ -475,15 +483,37 @@ func TestOpenRemoteWorkspacePersistsLastWorkspace(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("REASONIX_HOME", home)
 	t.Setenv("HOME", home)
+
+	// Fake remote-runtime hello for protocol probe.
+	helloSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/remote/v1/hello" {
+			http.NotFound(w, r)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"protocolVersion": "1.0",
+			"protocolMajor":   1,
+			"protocolMinor":   0,
+			"reasonixVersion": "test",
+			"goos":            "linux",
+			"goarch":          "amd64",
+			"workspace":       "/home/dev/app",
+			"capabilities":    0x3f, // RequiredCapabilities + extras
+		})
+	}))
+	t.Cleanup(helloSrv.Close)
+
+	// Pre-authorize providers so open path does not block on trust UI.
+	_ = broker.DefaultTrustStore().AuthorizeAll("box", "ssh-ed25519", "SHA256:testfp", []string{"deepseek-flash/deepseek-v4-flash"})
+
 	fake := &fakeRemoteKernel{
-		ensureView:  RemoteServerView{State: "ready", LocalURL: "http://127.0.0.1:5000/"},
+		ensureView:  RemoteServerView{State: "ready", LocalURL: helloSrv.URL + "/"},
 		ensureToken: "tok",
-		// Pretend already connected so Connect is a no-op success path.
 		statuses: []RemoteConnectionStatusView{{
 			HostID: "box",
 			State:  "connected",
 			Fingerprint: &RemoteFingerprintView{
-				HostID: "box", KeyType: "ssh-ed25519", SHA256: "SHA256:testfp",
+				HostID: "box", KeyType: "ssh-ed25519", SHA256: "SHA256:testfp", Address: "dev@box",
 			},
 		}},
 	}
@@ -508,7 +538,6 @@ func TestOpenRemoteWorkspacePersistsLastWorkspace(t *testing.T) {
 	if opened.Title != "Reasonix [SSH: box]" {
 		t.Fatalf("opened title = %q", opened.Title)
 	}
-	// Token must not appear in the gateway URL.
 	if strings.Contains(opened.GatewayURL, opened.GatewayToken) {
 		t.Fatalf("token leaked into gateway URL: %q", opened.GatewayURL)
 	}

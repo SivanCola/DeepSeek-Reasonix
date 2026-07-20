@@ -19,6 +19,10 @@ import (
 // managed known_hosts file.
 const RemoteDirName = "remote"
 
+// RemoteRuntimeDirName holds remote-runtime state (separate from serve so
+// PID/port/token files never collide).
+const RemoteRuntimeDirName = "remote-runtime"
+
 // RemoteBinDirName holds an uploaded reasonix binary on the remote host:
 // ~/.reasonix/remote/bin/reasonix.
 const RemoteBinDirName = "bin"
@@ -67,6 +71,18 @@ func RemoteServePidName(slug string) string { return "serve-" + slug + ".pid" }
 // RemoteServeLockName is the cross-client bootstrap lock directory. Directory
 // creation is atomic on SFTP servers, including the Linux/macOS targets.
 func RemoteServeLockName(slug string) string { return "serve-" + slug + ".lock" }
+
+// Remote-runtime per-workspace filenames (under ~/.reasonix/remote-runtime/).
+
+func RemoteRuntimeStateName(slug string) string { return "runtime-" + slug + ".json" }
+func RemoteRuntimeTokenName(slug string) string { return "runtime-" + slug + ".token" }
+func RemoteRuntimeLogName(slug string) string   { return "runtime-" + slug + ".log" }
+func RemoteRuntimePortName(slug string) string  { return "runtime-" + slug + ".port" }
+func RemoteRuntimePidName(slug string) string   { return "runtime-" + slug + ".pid" }
+func RemoteRuntimeLockName(slug string) string  { return "runtime-" + slug + ".lock" }
+func RemoteRuntimeBrokerTokenName(slug string) string {
+	return "runtime-" + slug + ".broker-token"
+}
 
 // boundRemoteComponent mirrors config.boundFilenameComponent (this package is
 // a stdlib-only leaf and cannot import config): inputs at or under the budget

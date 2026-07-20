@@ -1000,6 +1000,7 @@ export type RemoteConnState =
   | "degraded"
   | "pending_hostkey"
   | "pending_secret"
+  | "pending_provider_trust"
   | "stopped";
 
 export type RemoteServerState =
@@ -1061,6 +1062,16 @@ export interface RemoteSecretPromptView {
   identity?: string;
 }
 
+export interface RemoteProviderTrustPromptView {
+  hostId: string;
+  host: string;
+  keyType: string;
+  fingerprint: string;
+  workspace: string;
+  providerRefs: string[];
+  warning?: string;
+}
+
 export interface RemoteKnownHostLocation {
   path: string;
   line: number;
@@ -1079,6 +1090,7 @@ export interface RemoteConnectionStatus {
   errorDetails?: RemoteConnectionErrorDetails;
   fingerprint?: RemoteFingerprintView;
   secretPrompt?: RemoteSecretPromptView;
+  providerTrust?: RemoteProviderTrustPromptView;
   attempt?: number;
 }
 

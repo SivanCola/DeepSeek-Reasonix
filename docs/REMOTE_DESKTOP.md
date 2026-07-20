@@ -26,12 +26,19 @@ fallback.
 2. Host key fingerprint is checked against Provider trust records.
 3. Matching Reasonix binary is installed/verified on the remote host.
 4. `reasonix remote-runtime` starts on remote loopback (`/remote/v1` protocol).
+   State lives under `~/.reasonix/remote-runtime/` (never collides with serve).
 5. Local Provider Broker issues a capability token scoped to host + workspace +
-   authorized provider refs; SSH reverse-forwards it to remote `127.0.0.1` only.
+   authorized provider refs; SSH reverse-forwards (`-R`) it to remote
+   `127.0.0.1` only. First use of new providers shows an authorization dialog.
 6. Local Remote Gateway binds loopback RPC for the child window; a one-shot
    mode-0600 ticket carries the gateway token (never argv/URL/DOM).
-7. Child window loads the full desktop frontend and talks to the gateway.
+7. Child window loads the full desktop frontend; the Remote AppBridge routes
+   submit/cancel (and session APIs) through the gateway.
 8. After Ready, messages and tools execute on the remote Controller.
+
+Cache stability: the same `provider.Request` must produce identical provider
+request bodies in local and Broker modes (`TestBrokerPreservesProviderRequestBytes`,
+included in `scripts/cache-guard.sh`).
 
 ## Security boundaries
 

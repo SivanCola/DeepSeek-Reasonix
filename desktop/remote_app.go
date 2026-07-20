@@ -62,13 +62,14 @@ type RemoteFingerprintView struct {
 }
 
 type RemoteConnectionStatusView struct {
-	HostID       string                            `json:"hostId"`
-	State        string                            `json:"state"`
-	Error        string                            `json:"error,omitempty"`
-	ErrorDetails *RemoteConnectionErrorDetailsView `json:"errorDetails,omitempty"`
-	Fingerprint  *RemoteFingerprintView            `json:"fingerprint,omitempty"`
-	SecretPrompt *RemoteSecretPromptView           `json:"secretPrompt,omitempty"`
-	Attempt      int                               `json:"attempt,omitempty"`
+	HostID         string                            `json:"hostId"`
+	State          string                            `json:"state"`
+	Error          string                            `json:"error,omitempty"`
+	ErrorDetails   *RemoteConnectionErrorDetailsView `json:"errorDetails,omitempty"`
+	Fingerprint    *RemoteFingerprintView            `json:"fingerprint,omitempty"`
+	SecretPrompt   *RemoteSecretPromptView           `json:"secretPrompt,omitempty"`
+	ProviderTrust  *RemoteProviderTrustPromptView    `json:"providerTrust,omitempty"`
+	Attempt        int                               `json:"attempt,omitempty"`
 }
 
 // RemoteSecretPromptView contains prompt metadata only. Secret text travels
@@ -79,6 +80,19 @@ type RemoteSecretPromptView struct {
 	Host     string `json:"host"`
 	Kind     string `json:"kind"` // password | passphrase
 	Identity string `json:"identity,omitempty"`
+}
+
+// RemoteProviderTrustPromptView asks the user to authorize local Provider
+// Broker access for a remote host. No API keys are included.
+type RemoteProviderTrustPromptView struct {
+	HostID             string   `json:"hostId"`
+	Host               string   `json:"host"`
+	KeyType            string   `json:"keyType"`
+	Fingerprint        string   `json:"fingerprint"`
+	Workspace          string   `json:"workspace"`
+	ProviderRefs       []string `json:"providerRefs"`
+	// Warning explains that the remote host can consume local model quota.
+	Warning string `json:"warning"`
 }
 
 type RemoteKnownHostLocationView struct {
@@ -173,7 +187,11 @@ type remoteKernel interface {
 	RemoveForward(hostID, forwardID string) error
 
 	EnsureServer(ctx context.Context, hostID, workspace string) (RemoteServerView, string, error)
+	// EnsureRemoteRuntime starts remote-runtime (not serve) with optional broker
+	// reverse tunnel credentials. Returns local-forwarded base URL and auth token.
+	EnsureRemoteRuntime(ctx context.Context, hostID, workspace, brokerLocalAddr, brokerToken string) (RemoteServerView, string, error)
 	StopServer(hostID string) error
+	StopRemoteRuntime(hostID string) error
 	ServerStatus(hostID string) RemoteServerView
 	ServerLogs(ctx context.Context, hostID string, tailLines int) (string, error)
 
@@ -350,6 +368,18 @@ func (a *App) ConfirmRemoteSecret(hostID, promptID, secret string, accept bool) 
 	return rt.ResolveSecret(hostID, promptID, secret, accept)
 }
 
+// ConfirmRemoteProviderTrust resolves the Provider Broker authorization prompt.
+func (a *App) ConfirmRemoteProviderTrust(hostID string, accept bool) error {
+	rt, err := a.remoteRT()
+	if err != nil {
+		return err
+	}
+	if mgr, ok := rt.(*desktopRemoteManager); ok {
+		return mgr.ResolveProviderTrust(hostID, accept)
+	}
+	return fmt.Errorf("provider trust confirmation is only available on the live remote manager")
+}
+
 func (a *App) ListRemoteDir(hostID, path string) ([]RemoteDirEntry, error) {
 	rt, err := a.remoteRT()
 	if err != nil {
@@ -496,6 +526,7 @@ type managedHost struct {
 	fpAnswer       chan bool               // TOFU resolution channel; non-nil while pending
 	secretAnswer   chan remoteSecretAnswer // one-shot credential channel; non-nil while pending
 	secretPromptID string                  // opaque ID prevents a stale dialog resolving a later prompt
+	trustAnswer    chan bool               // provider trust prompt; non-nil while pending
 	serveMu        sync.Mutex              // serializes EnsureServer/StopServer for this host
 }
 
@@ -520,7 +551,9 @@ type desktopRemoteManager struct {
 
 	newClient   func(remote.Options) (desktopSSHClient, error)
 	ensureServe func(context.Context, bootstrap.Conn, bootstrap.Options) (bootstrap.Result, error)
+	ensureRuntime func(context.Context, bootstrap.Conn, bootstrap.RuntimeOptions) (bootstrap.Result, error)
 	stopServe   func(context.Context, bootstrap.Conn, string) error
+	stopRuntime func(context.Context, bootstrap.Conn, string) error
 	serveLogs   func(context.Context, bootstrap.Conn, string, int, *strings.Builder) error
 	localBinary func() string
 	promptGate  chan struct{}
@@ -535,7 +568,9 @@ func newDesktopRemoteManager(sink remoteEventSink) *desktopRemoteManager {
 			return remote.New(opts)
 		},
 		ensureServe: bootstrap.EnsureServe,
+		ensureRuntime: bootstrap.EnsureRemoteRuntime,
 		stopServe:   bootstrap.Stop,
+		stopRuntime: bootstrap.StopRemoteRuntime,
 		serveLogs: func(ctx context.Context, conn bootstrap.Conn, workspace string, n int, out *strings.Builder) error {
 			return bootstrap.Logs(ctx, conn, workspace, n, out)
 		},
@@ -1171,7 +1206,11 @@ func (m *desktopRemoteManager) emitForwardsFor(hostID string, generation *manage
 	}
 }
 
-const serveForwardName = "serve"
+const (
+	serveForwardName         = "serve"
+	remoteRuntimeForwardName = "remote-runtime"
+	brokerReverseForwardName = "provider-broker"
+)
 
 func (m *desktopRemoteManager) EnsureServer(ctx context.Context, hostID, workspace string) (RemoteServerView, string, error) {
 	mh := m.managed(hostID)
@@ -1251,6 +1290,213 @@ func (m *desktopRemoteManager) EnsureServer(ctx context.Context, hostID, workspa
 		return RemoteServerView{}, "", fmt.Errorf("host %q connection was replaced", hostID)
 	}
 	return view, res.Token, nil
+}
+
+// EnsureRemoteRuntime starts remote-runtime on the host (not serve), registers
+// a local forward to its loopback API, and optionally establishes an SSH reverse
+// forward from remote 127.0.0.1 to the local Provider Broker.
+func (m *desktopRemoteManager) EnsureRemoteRuntime(ctx context.Context, hostID, workspace, brokerLocalAddr, brokerToken string) (RemoteServerView, string, error) {
+	mh := m.managed(hostID)
+	if mh == nil || mh.client == nil {
+		return RemoteServerView{}, "", fmt.Errorf("host %q is not connected", hostID)
+	}
+	mh.serveMu.Lock()
+	defer mh.serveMu.Unlock()
+	m.mu.Lock()
+	if m.hosts[hostID] != mh {
+		m.mu.Unlock()
+		return RemoteServerView{}, "", fmt.Errorf("host %q connection was replaced", hostID)
+	}
+	previousServer := mh.server
+	m.mu.Unlock()
+	c := mh.client
+	opCtx, cancel := managedOperationContext(ctx, mh)
+	defer cancel()
+
+	cfg, err := config.Load()
+	if err != nil {
+		return RemoteServerView{}, "", err
+	}
+	entry, _ := cfg.RemoteHost(hostID)
+	starting := RemoteServerView{HostID: hostID, Workspace: workspace, State: "starting"}
+	if !m.publishServerIfCurrent(hostID, mh, starting, "") {
+		return RemoteServerView{}, "", fmt.Errorf("host %q connection was replaced", hostID)
+	}
+
+	// Broker reverse tunnel (-R): remote listens on 127.0.0.1:0, dials local broker.
+	brokerURL := ""
+	if strings.TrimSpace(brokerLocalAddr) != "" && strings.TrimSpace(brokerToken) != "" {
+		// Target is the local broker address as seen by the local machine.
+		target := strings.TrimSpace(brokerLocalAddr)
+		if !strings.Contains(target, ":") {
+			target = "127.0.0.1:" + target
+		}
+		boundRemote, rerr := c.Forwards().Replace(forward.Spec{
+			Name:       brokerReverseForwardName,
+			Direction:  forward.Remote,
+			BindAddr:   "127.0.0.1:0",
+			TargetAddr: target,
+		})
+		if rerr != nil {
+			view := RemoteServerView{HostID: hostID, Workspace: workspace, State: "error", Error: "broker reverse tunnel: " + rerr.Error()}
+			m.publishServerIfCurrent(hostID, mh, view, "")
+			return view, "", rerr
+		}
+		// Remote side sees the broker at the reverse-bound address.
+		brokerURL = "http://" + boundRemote
+	}
+
+	res, err := m.ensureRuntime(opCtx, c, bootstrap.RuntimeOptions{
+		Options: bootstrap.Options{
+			Workspace:   workspace,
+			Install:     entry.ServeInstallMode(),
+			LocalBinary: m.localBinary(),
+			LocalGOOS:   runtime.GOOS,
+			LocalGOARCH: runtime.GOARCH,
+			Progress: func(step, detail string) {
+				view := RemoteServerView{HostID: hostID, Workspace: workspace, State: step, Message: detail}
+				m.publishServerIfCurrent(hostID, mh, view, "")
+			},
+		},
+		BrokerURL:   brokerURL,
+		BrokerToken: brokerToken,
+	})
+	if err != nil {
+		_ = c.Forwards().Remove(brokerReverseForwardName)
+		view := RemoteServerView{HostID: hostID, Workspace: workspace, State: "error", Error: err.Error()}
+		m.publishServerIfCurrent(hostID, mh, view, "")
+		return view, "", err
+	}
+	if !m.isCurrent(hostID, mh) {
+		return RemoteServerView{}, "", fmt.Errorf("host %q connection was replaced", hostID)
+	}
+	if res.Reused && previousServer.State == "ready" && previousServer.Workspace == workspace &&
+		hasUsableNamedForward(c.Forwards().List(), remoteRuntimeForwardName, res.State.Addr, previousServer.LocalURL) {
+		if !m.publishServerIfCurrent(hostID, mh, previousServer, res.Token) {
+			return RemoteServerView{}, "", fmt.Errorf("host %q connection was replaced", hostID)
+		}
+		return previousServer, res.Token, nil
+	}
+	bound, ferr := c.Forwards().Replace(forward.Spec{
+		Name: remoteRuntimeForwardName, Direction: forward.Local, BindAddr: "127.0.0.1:0", TargetAddr: res.State.Addr,
+	})
+	if ferr != nil {
+		if !res.Reused {
+			cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			_ = m.stopRuntime(cleanupCtx, c, workspace)
+			cleanupCancel()
+		}
+		view := RemoteServerView{HostID: hostID, Workspace: workspace, State: "error", Error: ferr.Error()}
+		m.publishServerIfCurrent(hostID, mh, view, "")
+		return view, "", ferr
+	}
+	localURL := fmt.Sprintf("http://%s/", bound)
+	view := RemoteServerView{HostID: hostID, Workspace: workspace, State: "ready", LocalURL: localURL}
+	if !m.publishServerIfCurrent(hostID, mh, view, res.Token) {
+		_ = c.Forwards().Remove(remoteRuntimeForwardName)
+		return RemoteServerView{}, "", fmt.Errorf("host %q connection was replaced", hostID)
+	}
+	return view, res.Token, nil
+}
+
+// RequestProviderTrust blocks until the user accepts or rejects Broker access
+// for hostID+fingerprint+refs. Returns nil on accept.
+func (m *desktopRemoteManager) RequestProviderTrust(hostID, hostLabel, keyType, fingerprint, workspace string, refs []string) error {
+	mh := m.managed(hostID)
+	if mh == nil {
+		return fmt.Errorf("host %q is not connected", hostID)
+	}
+	answer := make(chan bool, 1)
+	m.mu.Lock()
+	if mh.trustAnswer != nil {
+		m.mu.Unlock()
+		return fmt.Errorf("provider trust prompt already pending for %q", hostID)
+	}
+	mh.trustAnswer = answer
+	prompt := &RemoteProviderTrustPromptView{
+		HostID:       hostID,
+		Host:         hostLabel,
+		KeyType:      keyType,
+		Fingerprint:  fingerprint,
+		Workspace:    workspace,
+		ProviderRefs: append([]string(nil), refs...),
+		Warning:      "This remote host will be able to consume your local model API quota through the Provider Broker until the connection closes. API keys never leave this machine.",
+	}
+	mh.status = RemoteConnectionStatusView{
+		HostID:        hostID,
+		State:         "pending_provider_trust",
+		Fingerprint:   mh.status.Fingerprint,
+		ProviderTrust: prompt,
+	}
+	status := mh.status
+	m.mu.Unlock()
+	if m.sink != nil {
+		m.sink.onStatus(status)
+	}
+	select {
+	case accept := <-answer:
+		if !accept {
+			return fmt.Errorf("provider trust declined for host %q", hostID)
+		}
+		return nil
+	case <-mh.ctx.Done():
+		return fmt.Errorf("connection closed while waiting for provider trust")
+	}
+}
+
+// ResolveProviderTrust answers a pending trust prompt.
+func (m *desktopRemoteManager) ResolveProviderTrust(hostID string, accept bool) error {
+	mh := m.managed(hostID)
+	if mh == nil {
+		return fmt.Errorf("host %q is not connected", hostID)
+	}
+	m.mu.Lock()
+	ch := mh.trustAnswer
+	mh.trustAnswer = nil
+	if mh.status.State == "pending_provider_trust" {
+		mh.status.State = "connected"
+		mh.status.ProviderTrust = nil
+	}
+	status := mh.status
+	m.mu.Unlock()
+	if ch == nil {
+		return fmt.Errorf("no pending provider trust prompt for %q", hostID)
+	}
+	select {
+	case ch <- accept:
+	default:
+	}
+	if m.sink != nil {
+		m.sink.onStatus(status)
+	}
+	return nil
+}
+
+func (m *desktopRemoteManager) StopRemoteRuntime(hostID string) error {
+	mh := m.managed(hostID)
+	if mh == nil || mh.client == nil {
+		return fmt.Errorf("host %q is not connected", hostID)
+	}
+	mh.serveMu.Lock()
+	defer mh.serveMu.Unlock()
+	if !m.isCurrent(hostID, mh) {
+		return fmt.Errorf("host %q connection was replaced", hostID)
+	}
+	c := mh.client
+	m.mu.Lock()
+	ws := mh.server.Workspace
+	m.mu.Unlock()
+	if strings.TrimSpace(ws) == "" {
+		return fmt.Errorf("host %q has no managed remote-runtime workspace", hostID)
+	}
+	opCtx, cancel := managedOperationContext(context.Background(), mh)
+	defer cancel()
+	_ = m.stopRuntime(opCtx, c, ws)
+	_ = c.Forwards().Remove(remoteRuntimeForwardName)
+	_ = c.Forwards().Remove(brokerReverseForwardName)
+	view := RemoteServerView{HostID: hostID, Workspace: ws, State: "stopped"}
+	m.publishServerIfCurrent(hostID, mh, view, "")
+	return nil
 }
 
 func (m *desktopRemoteManager) StopServer(hostID string) error {
@@ -1389,8 +1635,12 @@ func (m *desktopRemoteManager) publishServerIfCurrent(hostID string, generation 
 }
 
 func hasUsableServeForward(entries []forward.Entry, targetAddr, localURL string) bool {
+	return hasUsableNamedForward(entries, serveForwardName, targetAddr, localURL)
+}
+
+func hasUsableNamedForward(entries []forward.Entry, name, targetAddr, localURL string) bool {
 	for _, entry := range entries {
-		if entry.Spec.Name == serveForwardName && entry.Up && entry.Spec.TargetAddr == targetAddr && entry.BoundAddr != "" {
+		if entry.Spec.Name == name && entry.Up && entry.Spec.TargetAddr == targetAddr && entry.BoundAddr != "" {
 			return localURL == fmt.Sprintf("http://%s/", entry.BoundAddr)
 		}
 	}

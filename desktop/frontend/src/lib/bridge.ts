@@ -16,6 +16,7 @@ import { providerRequiresKey } from "./providerModels";
 import { DEFAULT_STATUS_BAR_ITEMS, normalizeStatusBarItems } from "./statusBarItems";
 import { registerTrustedThemeBackgroundURLs } from "./themePack";
 import { modeHasAutoApproveTools, modeWithAutoApproveTools, modeWithPlan, normalizeCollaborationMode, normalizeMode, normalizeTokenMode, normalizeToolApprovalMode } from "./types";
+import { remoteCancel, remoteSubmit } from "./remoteAppBridge";
 
 import type {
   AutoResearchFindingView,
@@ -457,6 +458,9 @@ export interface AppBindings {
   RemoteConnectionStatuses(): Promise<RemoteConnectionStatus[]>;
   ConfirmRemoteHostKey(hostId: string, accept: boolean): Promise<void>;
   ConfirmRemoteSecret(hostId: string, promptId: string, secret: string, accept: boolean): Promise<void>;
+  ConfirmRemoteProviderTrust(hostId: string, accept: boolean): Promise<void>;
+  IsRemoteWindow(): Promise<boolean>;
+  RemoteWindowInfo(): Promise<Record<string, string> | null>;
   ListRemoteDir(hostId: string, path: string): Promise<RemoteDirEntry[]>;
   ReadRemoteFile(hostId: string, path: string): Promise<RemoteFilePreview>;
   WriteRemoteFile(hostId: string, path: string, body: string, expectMtimeUnix: number): Promise<RemoteWriteResult>;
@@ -784,7 +788,10 @@ export const app: AppBindings = new Proxy({} as AppBindings, {
       const startedAt = crumb ? (typeof performance !== "undefined" ? performance.now() : Date.now()) : 0;
       if (crumb) addBreadcrumb("bridge", crumb);
       try {
-        const result = (v as (...a: unknown[]) => unknown).apply(target, args);
+        // Remote AppBridge: route chat turn commands through the parent gateway
+        // instead of a local Controller in the child process.
+        const remote = tryRemoteAppBridge(method, args);
+        const result = remote ?? (v as (...a: unknown[]) => unknown).apply(target, args);
         if (result && typeof (result as Promise<unknown>).then === "function") {
           return (result as Promise<unknown>).then(
             (value) => {
@@ -806,6 +813,23 @@ export const app: AppBindings = new Proxy({} as AppBindings, {
     };
   },
 });
+
+/** Returns a Promise for remote-handled methods, or null to fall through. */
+function tryRemoteAppBridge(method: string, args: unknown[]): Promise<unknown> | null {
+  if (typeof window === "undefined" || window.__REASONIX_REMOTE__?.mode !== "gateway") {
+    return null;
+  }
+  switch (method) {
+    case "Submit":
+      return remoteSubmit(String(args[0] ?? ""));
+    case "SubmitDisplay":
+      return remoteSubmit(String(args[1] ?? ""), String(args[0] ?? ""));
+    case "Cancel":
+      return remoteCancel();
+    default:
+      return null;
+  }
+}
 
 // openExternal opens a URL in the system browser (so links in rendered markdown
 // don't navigate the webview away from the app). Falls back to window.open in the
@@ -4454,6 +4478,16 @@ function makeMockApp(): AppBindings {
     async ConfirmRemoteSecret(hostId, _promptId, _secret, accept) {
       mockRemoteConn[hostId] = accept ? "connected" : "stopped";
       __emitMockRemote("status", { hostId, state: mockRemoteConn[hostId] });
+    },
+    async ConfirmRemoteProviderTrust(hostId, accept) {
+      mockRemoteConn[hostId] = accept ? "connected" : "stopped";
+      __emitMockRemote("status", { hostId, state: mockRemoteConn[hostId] });
+    },
+    async IsRemoteWindow() {
+      return false;
+    },
+    async RemoteWindowInfo() {
+      return null;
     },
     async ListRemoteDir(_hostId, path) {
       const base = path.replace(/\/$/, "");

@@ -34229,7 +34229,32 @@ body > .mermaid-diagram--fullscreen {
 }
 .remote-chip--reconnecting,
 .remote-chip--pending_hostkey,
+.remote-provider-trust__workspace,
+.remote-provider-trust__fp {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 0.85em;
+  word-break: break-all;
+  opacity: 0.9;
+}
+.remote-provider-trust__providers {
+  margin: 0.75rem 0;
+  max-height: 10rem;
+  overflow: auto;
+}
+.remote-provider-trust__providers-label {
+  font-weight: 600;
+  margin-bottom: 0.25rem;
+}
+.remote-provider-trust__providers ul {
+  margin: 0;
+  padding-left: 1.25rem;
+}
+.remote-provider-trust__warning {
+  color: var(--danger, #e06c75);
+  font-size: 0.9em;
+}
 .remote-chip--pending_secret,
+.remote-chip--pending_provider_trust,
 .remote-chip--degraded {
   color: var(--warn);
   border-color: color-mix(in srgb, var(--warn) 50%, var(--border));

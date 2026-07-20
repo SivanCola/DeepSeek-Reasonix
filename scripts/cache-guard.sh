@@ -13,6 +13,15 @@ if [ "$status" -ne 0 ]; then
   exit "$status"
 fi
 
+# Broker vs local provider.Request must stay byte-identical (remote desktop kernel).
+set +e
+go test ./internal/remote/broker -run '^TestBrokerPreservesProviderRequestBytes$' -v -count=1 2>&1 | tee -a "$tmp"
+broker_status=${PIPESTATUS[0]}
+set -e
+if [ "$broker_status" -ne 0 ]; then
+  exit "$broker_status"
+fi
+
 if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
   {
     echo "### Cache guard"
