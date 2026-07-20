@@ -176,6 +176,9 @@ export function StatusBar({
   onOpenRemoteWorkspace,
   remoteHosts = [],
   remoteStatuses = {},
+  executionRemoteHost,
+  executionRemoteWorkspace,
+  brokerStatus,
 }: {
   context: ContextInfo;
   usage?: WireUsage;
@@ -200,6 +203,10 @@ export function StatusBar({
   onOpenRemoteWorkspace?: (host: RemoteHostView) => void;
   remoteHosts?: RemoteHostView[];
   remoteStatuses?: Record<string, RemoteConnectionStatus>;
+  /** When set, chat/tools execute on this SSH host (avoid local misread). */
+  executionRemoteHost?: string;
+  executionRemoteWorkspace?: string;
+  brokerStatus?: string;
 }) {
   const { locale, t } = useI18n();
   const pct = context.window ? Math.min(100, Math.round((context.used / context.window) * 100)) : null;
@@ -224,6 +231,8 @@ export function StatusBar({
   const visibleItems = normalizeStatusBarItems(items);
   const cacheTooltip = sourceCacheTooltip(t, t("status.cacheTitle"), context);
   const avgCacheTooltip = sourceCacheTooltip(t, t("status.cacheAvgTitle"), context);
+  const remoteExecLabel = (executionRemoteHost || "").trim();
+  const remoteWsLabel = compactPath(executionRemoteWorkspace || "");
   const itemRenderers: Record<StatusBarItemId, ReactNode> = {
     model: (
       <Tooltip label={t("status.modelTitle")}>
@@ -343,6 +352,17 @@ export function StatusBar({
   return (
     <div className={`statusbar statusbar--${metricLabelStyle}`}>
       <div className="statusbar__group statusbar__group--items">
+        {remoteExecLabel ? (
+          <Tooltip
+            label={`${t("status.remoteExecTitle")}: ${remoteExecLabel}${remoteWsLabel ? ` · ${executionRemoteWorkspace}` : ""}${brokerStatus ? ` · broker ${brokerStatus}` : ""}`}
+            className="statusbar__metric statusbar__metric--remote-exec"
+          >
+            <span className="stat statusbar__remote-exec remote-chip remote-chip--connected" data-statusbar-item="remote-exec">
+              <span className="stat__label stat__label--icon" aria-hidden="true"><Server size={12} /></span>
+              <b>SSH:{remoteExecLabel}{remoteWsLabel ? `/${remoteWsLabel}` : ""}</b>
+            </span>
+          </Tooltip>
+        ) : null}
         <RemoteStatusBarChip
           hosts={remoteHosts}
           statuses={remoteStatuses}
@@ -369,6 +389,7 @@ const REMOTE_STATE_SEVERITY: Record<string, number> = {
   reconnecting: 4,
   pending_hostkey: 4,
   pending_secret: 4,
+  pending_provider_trust: 4,
   connecting: 3,
   degraded: 2,
   connected: 1,

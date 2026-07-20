@@ -1259,6 +1259,7 @@ export const en = {
   "remote.providerTrust.decline": "Decline",
   "remote.providerTrust.authorize": "Authorize",
   "remote.status.pending_provider_trust": "Waiting for provider authorization",
+  "status.remoteExecTitle": "Remote execution",
   "remote.tab.files": "Files",
   "remote.tab.ports": "Ports",
   "remote.tab.server": "Server",

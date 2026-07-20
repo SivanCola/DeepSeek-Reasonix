@@ -1261,6 +1261,7 @@ export const zh: Record<DictKey, string> = {
   "remote.providerTrust.decline": "拒绝",
   "remote.providerTrust.authorize": "授权",
   "remote.status.pending_provider_trust": "等待 Provider 授权",
+  "status.remoteExecTitle": "远程执行位置",
   "remote.tab.files": "文件",
   "remote.tab.ports": "端口",
   "remote.tab.server": "服务",

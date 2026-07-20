@@ -65,6 +65,7 @@ func (k *remoteNativeKernel) ensureServices(ctx context.Context) (*gateway.Serve
 	k.brokerAddr = baddr.String()
 	k.gatewayBase = "http://" + gaddr.String()
 	k.svcCancel = cancel
+	// Workspace backend is attached when a.App is known (open path).
 	return g, b, k.brokerAddr, nil
 }
 
@@ -153,6 +154,7 @@ func (a *App) openNativeRemoteWorkspace(hostID, workspace string) error {
 	if err != nil {
 		return err
 	}
+	appRemoteNative.attachGatewayWorkspaceBackend(a)
 
 	cfg, err := config.Load()
 	if err != nil {

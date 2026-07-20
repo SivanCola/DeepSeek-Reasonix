@@ -16,7 +16,7 @@ import { providerRequiresKey } from "./providerModels";
 import { DEFAULT_STATUS_BAR_ITEMS, normalizeStatusBarItems } from "./statusBarItems";
 import { registerTrustedThemeBackgroundURLs } from "./themePack";
 import { modeHasAutoApproveTools, modeWithAutoApproveTools, modeWithPlan, normalizeCollaborationMode, normalizeMode, normalizeTokenMode, normalizeToolApprovalMode } from "./types";
-import { remoteCancel, remoteSubmit } from "./remoteAppBridge";
+import { dispatchRemoteBridgeMethod, ensureRemoteEventPump } from "./remoteAppBridge";
 
 import type {
   AutoResearchFindingView,
@@ -546,6 +546,10 @@ function getMock(): AppBindings {
 
 // onEvent subscribes to the agent's typed event stream; returns an unsubscribe.
 export function onEvent(cb: (e: WireEvent) => void): () => void {
+  // Remote child: also pump gateway SSE into the same callback path.
+  if (typeof window !== "undefined" && window.__REASONIX_REMOTE__?.mode === "gateway") {
+    void ensureRemoteEventPump((e) => cb(e as unknown as WireEvent));
+  }
   if (realApp() && typeof window !== "undefined" && window.runtime) {
     return window.runtime.EventsOn(EVENT_CHANNEL, (payload) => cb(payload as WireEvent));
   }
@@ -816,19 +820,7 @@ export const app: AppBindings = new Proxy({} as AppBindings, {
 
 /** Returns a Promise for remote-handled methods, or null to fall through. */
 function tryRemoteAppBridge(method: string, args: unknown[]): Promise<unknown> | null {
-  if (typeof window === "undefined" || window.__REASONIX_REMOTE__?.mode !== "gateway") {
-    return null;
-  }
-  switch (method) {
-    case "Submit":
-      return remoteSubmit(String(args[0] ?? ""));
-    case "SubmitDisplay":
-      return remoteSubmit(String(args[1] ?? ""), String(args[0] ?? ""));
-    case "Cancel":
-      return remoteCancel();
-    default:
-      return null;
-  }
+  return dispatchRemoteBridgeMethod(method, args);
 }
 
 // openExternal opens a URL in the system browser (so links in rendered markdown

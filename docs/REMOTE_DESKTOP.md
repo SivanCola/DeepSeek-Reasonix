@@ -33,8 +33,22 @@ fallback.
 6. Local Remote Gateway binds loopback RPC for the child window; a one-shot
    mode-0600 ticket carries the gateway token (never argv/URL/DOM).
 7. Child window loads the full desktop frontend; the Remote AppBridge routes
-   submit/cancel (and session APIs) through the gateway.
-8. After Ready, messages and tools execute on the remote Controller.
+   submit/cancel/approve/answer/compact/rewind/model, `ListTabs`, and remote
+   file/Git calls through the gateway. Bot, Heartbeat, and Update UI are hidden.
+8. After Ready, messages and tools execute on the remote Controller. The status
+   bar shows `SSH:host/workspace` so execution location is never ambiguous.
+
+### Automated acceptance (CI / local)
+
+| Check | Command |
+| --- | --- |
+| Gateway + runtime + FS/Git proxy E2E | `go test ./internal/remote/gateway -run E2E` |
+| SSH `-L` / `-R` forwards | `go test ./internal/remote -run TestSSHLocalAndReverseForwardsE2E` |
+| Broker request cache equivalence | `go test ./internal/remote/broker -run TestBrokerPreservesProviderRequestBytes` |
+| Frontend AppBridge dispatch | `pnpm --dir desktop/frontend test:remote` |
+
+Real Windows→Linux hardware validation remains a release checklist item (no API
+keys on remote, multi-turn tools, disconnect/reconnect, host-key change).
 
 Cache stability: the same `provider.Request` must produce identical provider
 request bodies in local and Broker modes (`TestBrokerPreservesProviderRequestBytes`,

@@ -28,8 +28,22 @@ Reasonix 远程工作区会打开**完整原生桌面窗口**。聊天、命令�
    SSH 反向转发（`-R`）仅监听远端 `127.0.0.1`。新增 Provider 首次使用会弹出授权确认。
 6. 本机 Remote Gateway 提供子窗口 loopback RPC；单次 mode-0600 ticket 传递令牌
    （不出现在 argv/URL/DOM）。
-7. 子窗口加载完整桌面前端；Remote AppBridge 将 submit/cancel 等经 Gateway 转发。
-8. Ready 后消息与工具在远端 Controller 执行。
+7. 子窗口加载完整桌面前端；Remote AppBridge 将 submit/cancel/approve/answer/
+   compact/rewind/model、`ListTabs` 以及远端文件/Git 经 Gateway 转发。
+   远程窗口隐藏 Bot、Heartbeat 与更新入口。
+8. Ready 后消息与工具在远端 Controller 执行；状态栏显示 `SSH:主机/工作区`，
+   避免误判执行位置。
+
+### 自动化验收（CI / 本地）
+
+| 检查 | 命令 |
+| --- | --- |
+| Gateway + runtime + FS/Git 代理 E2E | `go test ./internal/remote/gateway -run E2E` |
+| SSH `-L` / `-R` 转发 | `go test ./internal/remote -run TestSSHLocalAndReverseForwardsE2E` |
+| Broker 请求缓存等价 | `go test ./internal/remote/broker -run TestBrokerPreservesProviderRequestBytes` |
+| 前端 AppBridge 分发 | `pnpm --dir desktop/frontend test:remote` |
+
+Windows→Linux 真机验收仍是发版清单项（远端无 Key、多轮工具、断线重连、Host Key 变更）。
 
 缓存稳定性：同一 `provider.Request` 在本机直连与 Broker 模式下必须生成相同的
 Provider 请求体（`TestBrokerPreservesProviderRequestBytes`，已纳入

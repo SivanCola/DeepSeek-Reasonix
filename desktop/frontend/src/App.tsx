@@ -58,6 +58,7 @@ import { RemoteHostKeyDialog } from "./components/RemoteHostKeyDialog";
 import { RemoteSecretDialog } from "./components/RemoteSecretDialog";
 import { RemoteProviderTrustDialog } from "./components/RemoteProviderTrustDialog";
 import { onRemoteStatus, onRemoteForwards, onRemoteServer } from "./lib/bridge";
+import { isRemoteDesktopWindow } from "./lib/remoteWindow";
 import { RemoteConnectionTimeoutError, useRemoteStore, waitForRemoteConnection } from "./store/remote";
 import { CommandPalette, type PaletteItem } from "./components/CommandPalette";
 import { UpdateBanner } from "./components/UpdateBanner";
@@ -4062,13 +4063,15 @@ export default function App() {
             <div className="banner banner--warning">{t("guard.safeMode")}</div>
           )}
 
-          <UpdateBanner
-            enabled={startupUpdateChecksEnabled === true}
-            onShowReleaseNotes={(latest) => {
-              const version = latest.replace(/^(?:desktop-)?v/, "");
-              void openExternal(`https://reasonix.io/changelog/v${version}/`);
-            }}
-          />
+          {!isRemoteDesktopWindow() && (
+            <UpdateBanner
+              enabled={startupUpdateChecksEnabled === true}
+              onShowReleaseNotes={(latest) => {
+                const version = latest.replace(/^(?:desktop-)?v/, "");
+                void openExternal(`https://reasonix.io/changelog/v${version}/`);
+              }}
+            />
+          )}
 
           <main className="main">
             {sidebarImDetailConnection ? (
@@ -4277,6 +4280,9 @@ export default function App() {
               onOpenRemoteWorkspace={openRemoteWorkspaceFromStatus}
               remoteHosts={remoteHosts}
               remoteStatuses={remoteStatuses}
+              executionRemoteHost={activeTab?.remoteHost || activeTab?.executionTarget?.hostId}
+              executionRemoteWorkspace={activeTab?.remoteWorkspace || activeTab?.executionTarget?.workspace}
+              brokerStatus={activeTab?.brokerStatus}
             />
           </footer>
           )}
@@ -4478,9 +4484,11 @@ export default function App() {
 
       {needsOnboarding && <OnboardingOverlay onComplete={() => setNeedsOnboarding(false)} />}
 
-      <HeartbeatPanel open={heartbeatOpen} onClose={() => setHeartbeatOpen(false)} onOpenTopic={(scope, workspaceRoot, topicId) => {
-        void handleOpenTopic(scope, workspaceRoot, topicId);
-      }} />
+      {!isRemoteDesktopWindow() && (
+        <HeartbeatPanel open={heartbeatOpen} onClose={() => setHeartbeatOpen(false)} onOpenTopic={(scope, workspaceRoot, topicId) => {
+          void handleOpenTopic(scope, workspaceRoot, topicId);
+        }} />
+      )}
       <TranscriptSelectionMenu
         enabled={Boolean(activeTabId && !activeTab?.readOnly && !decisionSurface && !sidebarImDetailConnection && !hydratePlaceholderActive)}
         resetKey={activeTabId ?? ""}

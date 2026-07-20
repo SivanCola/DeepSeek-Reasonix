@@ -39,7 +39,47 @@ type Session struct {
 	BrokerStatus string
 	// MirrorRevision is the latest applied local mirror revision (0 if none).
 	MirrorRevision int64
-	CreatedAt      time.Time
+	// ActiveRemoteSession is the last remote-runtime session id used by the child.
+	ActiveRemoteSession string
+	CreatedAt           time.Time
+}
+
+// DirEntry is a workspace directory listing entry (SFTP-backed).
+type DirEntry struct {
+	Name      string `json:"name"`
+	Path      string `json:"path"`
+	IsDir     bool   `json:"isDir"`
+	Size      int64  `json:"size"`
+	MtimeUnix int64  `json:"mtimeUnix"`
+	Symlink   bool   `json:"symlink"`
+}
+
+// FilePreview is a workspace file read result.
+type FilePreview struct {
+	Path      string `json:"path"`
+	Body      string `json:"body"`
+	Size      int64  `json:"size"`
+	MtimeUnix int64  `json:"mtimeUnix"`
+	Truncated bool   `json:"truncated"`
+	Binary    bool   `json:"binary"`
+	Err       string `json:"err,omitempty"`
+}
+
+// WriteResult reports a workspace write outcome.
+type WriteResult struct {
+	OK           bool  `json:"ok"`
+	Conflict     bool  `json:"conflict"`
+	NewMtimeUnix int64 `json:"newMtimeUnix"`
+}
+
+// WorkspaceBackend is optional parent-process access to remote files/Git via
+// the live SSH connection. Nil disables /gateway/v1/fs and /gateway/v1/git.
+type WorkspaceBackend interface {
+	ListDir(ctx context.Context, hostID, path string) ([]DirEntry, error)
+	ReadFile(ctx context.Context, hostID, path string) (FilePreview, error)
+	WriteFile(ctx context.Context, hostID, path, body string, expectMtime int64) (WriteResult, error)
+	GitStatus(ctx context.Context, hostID, workspace string) (string, error)
+	GitDiff(ctx context.Context, hostID, workspace string) (string, error)
 }
 
 // Server is the local loopback gateway for remote AppBridge children.
@@ -50,6 +90,7 @@ type Server struct {
 	token    string             // long-lived child auth token for this process
 	ln       net.Listener
 	srv      *http.Server
+	backend  WorkspaceBackend
 }
 
 type ticket struct {
@@ -65,6 +106,16 @@ func New() *Server {
 		tickets:  map[string]*ticket{},
 		token:    tok,
 	}
+}
+
+// SetWorkspaceBackend attaches SFTP/Git accessors from the parent desktop process.
+func (s *Server) SetWorkspaceBackend(b WorkspaceBackend) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	s.backend = b
+	s.mu.Unlock()
 }
 
 // ListenAndServe binds a loopback port and serves until ctx cancel.
@@ -136,7 +187,6 @@ func (s *Server) RegisterSession(sess Session) (ticketPath string, err error) {
 		"hostId":       sess.HostID,
 		"workspace":    sess.Workspace,
 	}
-	// Child also needs the gateway base URL; parent fills after listen.
 	data, err := json.Marshal(payload)
 	if err != nil {
 		return "", err
@@ -167,17 +217,29 @@ func (s *Server) Get(id string) (*Session, bool) {
 	return sess, ok
 }
 
+// SetActiveRemoteSession remembers which remote-runtime session the child is driving.
+func (s *Server) SetActiveRemoteSession(gatewaySessionID, remoteSessionID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if sess, ok := s.sessions[gatewaySessionID]; ok {
+		sess.ActiveRemoteSession = remoteSessionID
+	}
+}
+
 // Handler serves gateway RPC.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /gateway/v1/hello", s.handleHello)
 	mux.HandleFunc("GET /gateway/v1/session", s.handleSession)
-	mux.HandleFunc("GET /gateway/v1/remote/hello", s.proxyRemote("GET", protocol.APIPrefix+"/hello"))
-	mux.HandleFunc("GET /gateway/v1/remote/sessions", s.proxyRemote("GET", protocol.APIPrefix+"/sessions"))
-	mux.HandleFunc("POST /gateway/v1/remote/sessions", s.proxyRemote("POST", protocol.APIPrefix+"/sessions"))
-	mux.HandleFunc("POST /gateway/v1/remote/sessions/{id}/submit", s.proxyRemotePath)
-	mux.HandleFunc("POST /gateway/v1/remote/sessions/{id}/cancel", s.proxyRemotePath)
-	mux.HandleFunc("GET /gateway/v1/remote/events", s.proxyEvents)
+	mux.HandleFunc("POST /gateway/v1/session/active", s.handleSetActiveRemote)
+	// Catch-all remote-runtime proxy: /gateway/v1/remote/... → /remote/v1/...
+	mux.HandleFunc("/gateway/v1/remote/", s.proxyRemoteCatchAll)
+	// Workspace file/Git (parent SSH).
+	mux.HandleFunc("GET /gateway/v1/fs/list", s.handleFSList)
+	mux.HandleFunc("GET /gateway/v1/fs/read", s.handleFSRead)
+	mux.HandleFunc("POST /gateway/v1/fs/write", s.handleFSWrite)
+	mux.HandleFunc("GET /gateway/v1/git/status", s.handleGitStatus)
+	mux.HandleFunc("GET /gateway/v1/git/diff", s.handleGitDiff)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !s.authorize(r) {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
@@ -212,12 +274,13 @@ func (s *Server) handleSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = json.NewEncoder(w).Encode(map[string]any{
-		"id":             sess.ID,
-		"hostId":         sess.HostID,
-		"workspace":      sess.Workspace,
-		"connectionId":   sess.ConnectionID,
-		"brokerStatus":   sess.BrokerStatus,
-		"mirrorRevision": sess.MirrorRevision,
+		"id":                  sess.ID,
+		"hostId":              sess.HostID,
+		"workspace":           sess.Workspace,
+		"connectionId":        sess.ConnectionID,
+		"brokerStatus":        sess.BrokerStatus,
+		"mirrorRevision":      sess.MirrorRevision,
+		"activeRemoteSession": sess.ActiveRemoteSession,
 		"executionTarget": target.ExecutionTarget{
 			Kind:         target.KindSSH,
 			HostID:       sess.HostID,
@@ -227,35 +290,34 @@ func (s *Server) handleSession(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (s *Server) proxyRemote(method, path string) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		sess := s.sessionFrom(r)
-		if sess == nil {
-			http.Error(w, "session not found", http.StatusNotFound)
-			return
-		}
-		s.doProxy(w, r, sess, method, path)
+func (s *Server) handleSetActiveRemote(w http.ResponseWriter, r *http.Request) {
+	sid := strings.TrimSpace(r.Header.Get("X-Reasonix-Session-Id"))
+	var body struct {
+		RemoteSessionID string `json:"remoteSessionId"`
 	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&body); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	s.SetActiveRemoteSession(sid, strings.TrimSpace(body.RemoteSessionID))
+	_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 }
 
-func (s *Server) proxyRemotePath(w http.ResponseWriter, r *http.Request) {
+// proxyRemoteCatchAll maps /gateway/v1/remote/<rest> → <RemoteBase>/remote/v1/<rest>
+// including nested session control paths and SSE events.
+func (s *Server) proxyRemoteCatchAll(w http.ResponseWriter, r *http.Request) {
 	sess := s.sessionFrom(r)
 	if sess == nil {
 		http.Error(w, "session not found", http.StatusNotFound)
 		return
 	}
-	// Map /gateway/v1/remote/sessions/{id}/... → /remote/v1/sessions/{id}/...
-	suffix := strings.TrimPrefix(r.URL.Path, "/gateway/v1/remote")
-	s.doProxy(w, r, sess, r.Method, protocol.APIPrefix+suffix)
-}
-
-func (s *Server) proxyEvents(w http.ResponseWriter, r *http.Request) {
-	sess := s.sessionFrom(r)
-	if sess == nil {
-		http.Error(w, "session not found", http.StatusNotFound)
-		return
+	rest := strings.TrimPrefix(r.URL.Path, "/gateway/v1/remote")
+	// Preserve leading slash; empty → hello not used.
+	if rest == "" || rest == "/" {
+		rest = ""
 	}
-	s.doProxy(w, r, sess, http.MethodGet, protocol.APIPrefix+"/events")
+	path := protocol.APIPrefix + rest
+	s.doProxy(w, r, sess, r.Method, path)
 }
 
 func (s *Server) sessionFrom(r *http.Request) *Session {
@@ -278,21 +340,28 @@ func (s *Server) doProxy(w http.ResponseWriter, r *http.Request, sess *Session, 
 		return
 	}
 	req.Header.Set("X-Reasonix-Remote-Token", sess.RemoteToken)
-	req.Header.Set("Content-Type", r.Header.Get("Content-Type"))
-	resp, err := http.DefaultClient.Do(req)
+	if ct := r.Header.Get("Content-Type"); ct != "" {
+		req.Header.Set("Content-Type", ct)
+	}
+	// Long-lived SSE: no client timeout.
+	client := &http.Client{Timeout: 0}
+	resp, err := client.Do(req)
 	if err != nil {
 		http.Error(w, "remote unavailable", http.StatusBadGateway)
 		return
 	}
 	defer resp.Body.Close()
 	for k, vs := range resp.Header {
+		// Avoid double chunked encoding issues.
+		if strings.EqualFold(k, "Transfer-Encoding") {
+			continue
+		}
 		for _, v := range vs {
 			w.Header().Add(k, v)
 		}
 	}
 	w.WriteHeader(resp.StatusCode)
 	if flusher, ok := w.(http.Flusher); ok {
-		// Stream SSE / large bodies without buffering the whole response.
 		buf := make([]byte, 32*1024)
 		for {
 			nr, err := resp.Body.Read(buf)
@@ -307,6 +376,101 @@ func (s *Server) doProxy(w http.ResponseWriter, r *http.Request, sess *Session, 
 		return
 	}
 	_, _ = io.Copy(w, resp.Body)
+}
+
+func (s *Server) backendOrNil() WorkspaceBackend {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.backend
+}
+
+func (s *Server) handleFSList(w http.ResponseWriter, r *http.Request) {
+	b := s.backendOrNil()
+	sess := s.sessionFrom(r)
+	if b == nil || sess == nil {
+		http.Error(w, "fs unavailable", http.StatusNotImplemented)
+		return
+	}
+	path := r.URL.Query().Get("path")
+	if path == "" {
+		path = sess.Workspace
+	}
+	entries, err := b.ListDir(r.Context(), sess.HostID, path)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	_ = json.NewEncoder(w).Encode(map[string]any{"entries": entries})
+}
+
+func (s *Server) handleFSRead(w http.ResponseWriter, r *http.Request) {
+	b := s.backendOrNil()
+	sess := s.sessionFrom(r)
+	if b == nil || sess == nil {
+		http.Error(w, "fs unavailable", http.StatusNotImplemented)
+		return
+	}
+	path := r.URL.Query().Get("path")
+	prev, err := b.ReadFile(r.Context(), sess.HostID, path)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	_ = json.NewEncoder(w).Encode(prev)
+}
+
+func (s *Server) handleFSWrite(w http.ResponseWriter, r *http.Request) {
+	b := s.backendOrNil()
+	sess := s.sessionFrom(r)
+	if b == nil || sess == nil {
+		http.Error(w, "fs unavailable", http.StatusNotImplemented)
+		return
+	}
+	var body struct {
+		Path        string `json:"path"`
+		Body        string `json:"body"`
+		ExpectMtime int64  `json:"expectMtime"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 16<<20)).Decode(&body); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	res, err := b.WriteFile(r.Context(), sess.HostID, body.Path, body.Body, body.ExpectMtime)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	_ = json.NewEncoder(w).Encode(res)
+}
+
+func (s *Server) handleGitStatus(w http.ResponseWriter, r *http.Request) {
+	b := s.backendOrNil()
+	sess := s.sessionFrom(r)
+	if b == nil || sess == nil {
+		http.Error(w, "git unavailable", http.StatusNotImplemented)
+		return
+	}
+	out, err := b.GitStatus(r.Context(), sess.HostID, sess.Workspace)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	_ = json.NewEncoder(w).Encode(map[string]string{"status": out})
+}
+
+func (s *Server) handleGitDiff(w http.ResponseWriter, r *http.Request) {
+	b := s.backendOrNil()
+	sess := s.sessionFrom(r)
+	if b == nil || sess == nil {
+		http.Error(w, "git unavailable", http.StatusNotImplemented)
+		return
+	}
+	out, err := b.GitDiff(r.Context(), sess.HostID, sess.Workspace)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	_ = json.NewEncoder(w).Encode(map[string]string{"diff": out})
 }
 
 func randomHex(n int) (string, error) {
