@@ -147,6 +147,9 @@ func buildSchemaType(typ reflect.Type) (SchemaType, error) {
 		nullable = true
 		typ = typ.Elem()
 	}
+	if typ == reflect.TypeOf(json.RawMessage{}) {
+		return SchemaType{Type: "json", Nullable: nullable}, nil
+	}
 	if allowed, ok := enumTypes[typ]; ok {
 		values := append([]string(nil), allowed...)
 		sort.Strings(values)

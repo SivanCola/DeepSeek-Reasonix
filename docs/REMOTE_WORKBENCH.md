@@ -26,7 +26,7 @@ remote-runtime --broker RPC→ Desktop Provider Broker → local Provider / API 
   - `desktop/frontend/src/generated/remoteProtocol.generated.ts`
 - Regenerate: `go run ./cmd/remote-protocol-gen -root .`
 - Check: `go run ./cmd/remote-protocol-gen -check -root .`
-- Handshake uses Build ID fields including **Schema Hash**. Schema mismatch rejects and may trigger one auto-upgrade; Build/source revision differences with the same Schema are allowed (diagnostic only).
+- Handshake compares the complete **Build ID** (`productVersion`, source revision, protocol version, and Schema Hash). Any mismatch is rejected before the Provider Broker is activated. V1 does not auto-install or auto-upgrade the Host CLI.
 
 ## Provider Broker
 
@@ -58,6 +58,7 @@ Catalog entries are non-secret and include `toolCallReasoning` / `warnOnMissingT
 - Remote child windows, HTTP Gateway, SFTP as workbench data plane
 - Full AppBindings parity beyond the workbench RuntimeAPI surface
 - Multiple simultaneous Remote hosts
+- Remote fork into a second Desktop tab, mirror upload/restore, and direct Git branch mutation
 
 ## SSH transports
 
@@ -78,18 +79,18 @@ Remote argv is fixed (`reasonix remote attach-workspace --stdio`). Workspace is 
 
 ## Provider Trust
 
-Durable store: `<Reasonix home>/remote-provider-trust.json`  
-Key: `HostID + fingerprint SHA-256` → allowed provider refs.  
-Never stores API keys, base URLs, headers, env names, or passwords.  
+Durable store: `<Reasonix home>/remote-provider-trust.json`
+Key: `HostID + fingerprint SHA-256` → allowed provider refs.
+Never stores API keys, base URLs, headers, env names, or passwords.
 New provider refs require re-confirmation; catalog-changed is only sent after re-auth.
 
 ## File containment
 
-Clients send relative refs only. Host resolves under workspace, rejects `..`, absolute paths, and symlink leaves; writes use same-dir temp + rename.
+Clients send relative refs only. Host resolves under workspace and rejects `..`, absolute paths, and symlink leaves. Runtime file APIs are read-only; agent tool writes still execute on the Host under the normal approval policy.
 
 ## Mirror
 
-Local read-only copies under `remote-mirrors/`. Apply requires matching digest and `session.jsonl`. Restore-as-new-session re-validates digest before creating a new session.
+Completed snapshots pull a digest-checked, read-only `session.jsonl` copy under `remote-mirrors/`. Upload/restore is intentionally not exposed in V1.
 
 ## Real acceptance matrix (Windows Desktop → Linux Host)
 
@@ -97,14 +98,14 @@ Record SHA evidence before merge:
 
 1. Host has no `DEEPSEEK_API_KEY` / no local Provider config.
 2. First Host Key, password/passphrase, Provider trust dialog.
-3. Auto-install or preinstalled matching npm version (dev: preinstall only).
+3. Preinstalled Host CLI with an exact matching Build ID; mismatch fails closed before Broker activation.
 4. Local DeepSeek chat + tool-call loop via Broker.
 5. History reasoning/tool cards; model/effort switch rebuild.
-6. File list/search/preview/write + Git status.
+6. File list/search/preview, agent tool writes, Git status/history/commit detail.
 7. Local + Remote concurrent; hidden target badge/Toast only.
 8. Mid-stream disconnect: no tool replay; recovery record; reconnect continues.
-9. Schema mismatch auto-upgrade once; no loop on failure.
-10. Mirror pull + restore-as-new-session.
+9. Build/schema mismatch fails closed without sending Provider credentials or activating Broker traffic.
+10. Mirror pull and digest verification.
 11. Clean Desktop exit / force-kill: no orphan ssh/AskPass; remote runtime exits within 5 minutes.
 
 ## Repository co-contributors (source PRs)
@@ -124,7 +125,7 @@ Note: only public GitHub noreply emails in commit trailers create effective co-a
 | --- | --- |
 | PR #6722 (@SivanCola) | Local Provider Broker idea, trust model, remote runtime without host keys, checkpoint/mirror direction |
 | PR #6725 (@taibai233) | `rpcwire`, generative protocol schema, RuntimeAPI registry approach, Windows AskPass/Job Object direction, target fencing ideas |
-| Not adopted | #6725 Host provider credentials, systemd daemon, Build ID hard-fail, full 71-method host implementation as-is |
+| Not adopted | #6725 Host provider credentials, systemd daemon, and the full 71-method Host implementation as-is; strict Build ID failure was adopted |
 | Not retained from #6722 | Remote sub-windows, HTTP Gateway, SSH port-forward Broker, SFTP workbench I/O |
 
 ## Cache impact

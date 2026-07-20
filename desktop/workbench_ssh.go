@@ -4,12 +4,17 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
+	"time"
 
 	"golang.org/x/crypto/ssh"
 
 	"reasonix/internal/config"
+	"reasonix/internal/netclient"
 	"reasonix/internal/remote"
 	"reasonix/internal/remote/workbench/transport"
 )
@@ -17,24 +22,103 @@ import (
 // newWorkbenchSSHFactory returns a transport factory for the workbench path.
 // Windows uses system OpenSSH + AskPass + Job Object; other platforms use Go SSH
 // stdio running `reasonix remote attach-workspace --stdio`.
-func newWorkbenchSSHFactory(entry config.RemoteHostEntry) (transport.Factory, error) {
+func newWorkbenchSSHFactory(entry config.RemoteHostEntry, askPassHandler RemoteAskPassHandler) (transport.Factory, error) {
 	if runtime.GOOS == "windows" {
-		return newWindowsWorkbenchSSHFactory(entry)
+		return newWindowsWorkbenchSSHFactory(entry, askPassHandler)
 	}
-	return transport.FactoryFunc(func(ctx context.Context) (transport.Stream, error) {
-		return openGoSSHAttachWorkspace(ctx, entry)
-	}), nil
+	return newGoSSHWorkbenchFactory(entry, askPassHandler)
 }
 
-func newWindowsWorkbenchSSHFactory(entry config.RemoteHostEntry) (transport.Factory, error) {
-	factory := &RemoteSSHTransportFactory{
-		AskPass: &RemoteAskPassBroker{},
+type windowsWorkbenchSSHFactory struct {
+	entry      config.RemoteHostEntry
+	boundEntry RemoteHostEntry
+	helperPath string
+	handler    RemoteAskPassHandler
+	mu         sync.Mutex
+	transport  *RemoteSSHTransport
+}
+
+func newWindowsWorkbenchSSHFactory(entry config.RemoteHostEntry, handler RemoteAskPassHandler) (transport.Factory, error) {
+	if handler == nil {
+		return nil, fmt.Errorf("AskPass handler is required")
 	}
 	hostEntry, err := mapConfigHostToWorkbenchEntry(entry)
 	if err != nil {
 		return nil, err
 	}
-	return NewRemoteSSHHostTransportFactory(factory, hostEntry)
+	helperPath, err := os.Executable()
+	if err != nil {
+		return nil, fmt.Errorf("locate Desktop AskPass helper: %w", err)
+	}
+	helperPath, err = filepath.Abs(helperPath)
+	if err != nil {
+		return nil, fmt.Errorf("resolve Desktop AskPass helper: %w", err)
+	}
+	return &windowsWorkbenchSSHFactory{entry: entry, boundEntry: hostEntry, helperPath: helperPath, handler: handler}, nil
+}
+
+func (f *windowsWorkbenchSSHFactory) Open(ctx context.Context) (transport.Stream, error) {
+	broker, err := StartRemoteAskPassBroker(ctx, 10*time.Minute, f.handler)
+	if err != nil {
+		return nil, err
+	}
+	sshFactory := &RemoteSSHTransportFactory{AskPass: broker, AskPassHelper: f.helperPath}
+	var stream transport.Stream
+	if f.entry.UseSSHConfig {
+		stream, err = sshFactory.StartConfigured(
+			ctx, f.entry.Host, f.entry.User, f.entry.Port, f.entry.IdentityFile, f.entry.ProxyJump,
+		)
+	} else {
+		var bound RemoteSSHHostTransportFactory
+		bound, err = NewRemoteSSHHostTransportFactory(sshFactory, f.boundEntry)
+		if err == nil {
+			stream, err = bound.Open(ctx)
+		}
+	}
+	if err != nil {
+		_ = broker.Close()
+		return nil, err
+	}
+	sshStream, ok := stream.(*RemoteSSHTransport)
+	if !ok {
+		_ = stream.Close()
+		_ = broker.Close()
+		return nil, fmt.Errorf("system OpenSSH factory returned an unexpected stream")
+	}
+	f.mu.Lock()
+	f.transport = sshStream
+	f.mu.Unlock()
+	return &askPassOwnedStream{Stream: stream, broker: broker}, nil
+}
+
+func (f *windowsWorkbenchSSHFactory) PeerIdentity() (workbenchPeerIdentity, bool) {
+	f.mu.Lock()
+	stream := f.transport
+	f.mu.Unlock()
+	if stream == nil {
+		return workbenchPeerIdentity{}, false
+	}
+	keyType, fingerprint, ok := stream.PeerIdentity()
+	return workbenchPeerIdentity{KeyType: keyType, Fingerprint: fingerprint}, ok
+}
+
+type askPassOwnedStream struct {
+	transport.Stream
+	broker *RemoteAskPassBroker
+	once   sync.Once
+}
+
+func (s *askPassOwnedStream) Close() error {
+	var streamErr error
+	s.once.Do(func() {
+		if s.Stream != nil {
+			streamErr = s.Stream.Close()
+		}
+		if s.broker != nil {
+			_ = s.broker.Close()
+		}
+	})
+	return streamErr
 }
 
 func mapConfigHostToWorkbenchEntry(entry config.RemoteHostEntry) (RemoteHostEntry, error) {
@@ -43,7 +127,7 @@ func mapConfigHostToWorkbenchEntry(entry config.RemoteHostEntry) (RemoteHostEntr
 		label = entry.User + "@" + entry.Host
 	}
 	port := entry.PortOrDefault()
-	if entry.UseSSHConfig && entry.Host != "" && !strings.Contains(entry.Host, ".") && entry.User == "" {
+	if entry.UseSSHConfig {
 		return NewRemoteHostEntry(entry.Host, label)
 	}
 	dest := entry.Host
@@ -51,6 +135,42 @@ func mapConfigHostToWorkbenchEntry(entry config.RemoteHostEntry) (RemoteHostEntr
 		dest = entry.User + "@" + entry.Host
 	}
 	return NewRemoteDirectHostEntry(dest, port, label)
+}
+
+type goSSHWorkbenchFactory struct {
+	entry   config.RemoteHostEntry
+	handler RemoteAskPassHandler
+	mu      sync.Mutex
+	peer    remote.HostKeyQuestion
+}
+
+type workbenchPeerIdentity struct {
+	KeyType     string
+	Fingerprint string
+}
+
+func newGoSSHWorkbenchFactory(entry config.RemoteHostEntry, handler RemoteAskPassHandler) (*goSSHWorkbenchFactory, error) {
+	if strings.TrimSpace(entry.Name) == "" {
+		return nil, fmt.Errorf("remote host name is required")
+	}
+	if handler == nil {
+		return nil, fmt.Errorf("SSH secret prompt handler is required")
+	}
+	return &goSSHWorkbenchFactory{entry: entry, handler: handler}, nil
+}
+
+func (f *goSSHWorkbenchFactory) Open(ctx context.Context) (transport.Stream, error) {
+	return openGoSSHAttachWorkspace(ctx, f.entry, f.handler, func(q remote.HostKeyQuestion) {
+		f.mu.Lock()
+		f.peer = q
+		f.mu.Unlock()
+	})
+}
+
+func (f *goSSHWorkbenchFactory) PeerIdentity() (workbenchPeerIdentity, bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return workbenchPeerIdentity{KeyType: f.peer.KeyType, Fingerprint: f.peer.Fingerprint}, strings.TrimSpace(f.peer.Fingerprint) != ""
 }
 
 // goSSHStream adapts a Go SSH session's stdio to transport.Stream.
@@ -80,27 +200,67 @@ func (s *goSSHStream) Close() error {
 	return nil
 }
 
-func openGoSSHAttachWorkspace(ctx context.Context, entry config.RemoteHostEntry) (transport.Stream, error) {
-	resolved, err := remote.ResolveHost(nil, entry.Name, nil)
+func openGoSSHAttachWorkspace(ctx context.Context, entry config.RemoteHostEntry, handler RemoteAskPassHandler, verified func(remote.HostKeyQuestion)) (transport.Stream, error) {
+	cfg, err := config.Load()
 	if err != nil {
-		// Ad-hoc from fields.
-		target := entry.Host
-		if entry.User != "" {
-			target = entry.User + "@" + entry.Host
-		}
-		if entry.Port > 0 && entry.Port != 22 {
-			target = fmt.Sprintf("%s:%d", target, entry.Port)
-		}
-		resolved, err = remote.ResolveHost(nil, target, nil)
-		if err != nil {
-			return nil, err
-		}
+		return nil, err
 	}
-	if entry.IdentityFile != "" {
-		resolved.IdentityFile = entry.IdentityFile
-		resolved.IdentityFiles = []string{entry.IdentityFile}
+	sshCfg, err := remote.LoadUserSSHConfig()
+	if err != nil {
+		return nil, fmt.Errorf("load SSH config: %w", err)
 	}
-	opts := remote.Options{Host: resolved}
+	resolved, err := remote.ResolveHost(cfg, entry.Name, sshCfg)
+	if err != nil {
+		return nil, err
+	}
+	resolvedJumps, err := remote.ResolveJumpHosts(cfg, resolved.ProxyJump, sshCfg)
+	if err != nil {
+		return nil, err
+	}
+	dialer, err := netclient.NewStreamDialer(cfg.NetworkProxySpec())
+	if err != nil {
+		return nil, fmt.Errorf("remote: network proxy is misconfigured: %w", err)
+	}
+	secretPrompt := func(promptCtx context.Context, kind remote.SecretKind, host, identityFile string) (string, error) {
+		var env string
+		if kind == remote.SecretPassphrase {
+			env = resolved.PassphraseEnv
+		} else {
+			env = resolved.PasswordEnv
+		}
+		if env == "" {
+			promptKind := RemoteAskPassPassword
+			if kind == remote.SecretPassphrase {
+				promptKind = RemoteAskPassKeyPassphrase
+			}
+			answer, promptErr := handler(promptCtx, RemoteAskPassPrompt{
+				Kind: promptKind, Message: kind.String(), HostLabel: host,
+			})
+			if promptErr != nil {
+				return "", promptErr
+			}
+			if !answer.Accepted {
+				return "", fmt.Errorf("remote: %s prompt rejected", kind)
+			}
+			return answer.Value, nil
+		}
+		value := config.ResolveCredential(env).Value
+		if value == "" {
+			return "", fmt.Errorf("remote: configured %s credential is empty", kind)
+		}
+		return value, nil
+	}
+	auth := desktopAuthForHost(resolved, secretPrompt)
+	jumpHosts := make([]remote.JumpHostOptions, 0, len(resolvedJumps))
+	for _, jump := range resolvedJumps {
+		jumpHosts = append(jumpHosts, remote.JumpHostOptions{Host: jump, Auth: desktopAuthForHost(jump, secretPrompt)})
+	}
+	policy := &remote.HostKeyPolicy{Verified: func(q remote.HostKeyQuestion) {
+		if q.Host == resolved.Label() && verified != nil {
+			verified(q)
+		}
+	}}
+	opts := remote.Options{Host: resolved, Auth: auth, JumpHosts: jumpHosts, HostKeys: policy, Dialer: dialer}
 	c, err := remote.New(opts)
 	if err != nil {
 		return nil, err

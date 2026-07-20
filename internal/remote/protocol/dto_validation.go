@@ -99,9 +99,9 @@ func (s SessionSnapshot) Validate() error {
 
 func (r SessionResyncRequired) Validate() error {
 	switch r.Reason {
-	case ResyncQueueOverflow:
+	case ResyncQueueOverflow, ResyncStateChanged:
 		if r.ReplacementTarget != nil || r.ReplacementRuntimeEpoch != "" {
-			return validationError("queue_overflow forbids replacement identity")
+			return validationError("resync reason forbids replacement identity")
 		}
 	case ResyncRuntimeReplaced:
 		if r.ReplacementTarget != nil || r.ReplacementRuntimeEpoch == "" {

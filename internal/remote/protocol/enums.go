@@ -181,6 +181,7 @@ const (
 	ResyncQueueOverflow   ResyncReason = "queue_overflow"
 	ResyncRuntimeReplaced ResyncReason = "runtime_replaced"
 	ResyncTargetReplaced  ResyncReason = "target_replaced"
+	ResyncStateChanged    ResyncReason = "state_changed"
 )
 
 type SessionOutcome string

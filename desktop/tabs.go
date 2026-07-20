@@ -1548,10 +1548,10 @@ func (a *App) emitReady(ctx context.Context, tabID ...string) {
 	}
 	if ctx != nil {
 		if len(tabID) > 0 && strings.TrimSpace(tabID[0]) != "" {
-			runtime.EventsEmit(ctx, "agent:ready", strings.TrimSpace(tabID[0]))
+			a.runtimeEvents.Emit(ctx, "agent:ready", strings.TrimSpace(tabID[0]))
 			return
 		}
-		runtime.EventsEmit(ctx, "agent:ready")
+		a.runtimeEvents.Emit(ctx, "agent:ready")
 	}
 }
 
@@ -1913,7 +1913,7 @@ func (a *App) ListTabs() []TabMeta {
 	}
 	a.mu.RUnlock()
 	if !needsRepair {
-		return enrichTabMetas(out)
+		return a.workbenchProjectTabMetas(enrichTabMetas(out))
 	}
 
 	a.mu.Lock()
@@ -1924,7 +1924,7 @@ func (a *App) ListTabs() []TabMeta {
 		}
 	}
 	a.mu.Unlock()
-	return enrichTabMetas(out)
+	return a.workbenchProjectTabMetas(enrichTabMetas(out))
 }
 
 // syncTabWorkspaceRootSpellings repoints open project tabs at the registry's

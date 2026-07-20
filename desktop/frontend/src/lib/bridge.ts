@@ -9,6 +9,7 @@
 // typecheck green by falling back to a disabled drift check below.
 import type * as GeneratedApp from "../../wailsjs/go/main/App";
 import type { InvocationRequest } from "./invocationDisplay";
+import type { ProviderTrustPrompt, WorkbenchActiveTarget, WorkbenchRemoteHint } from "./workbenchTarget";
 
 import { addBreadcrumb } from "./breadcrumbs";
 import { t } from "./i18n";
@@ -474,6 +475,15 @@ export interface AppBindings {
   RemoteServerStatus(hostId: string): Promise<RemoteServerView>;
   RemoteServerLogs(hostId: string, tailLines: number): Promise<string>;
   RemoteLastWorkspace(hostId: string): Promise<string>;
+  // ── Native Remote Workbench (same main window) ──
+  WorkbenchActiveTarget(): Promise<WorkbenchActiveTarget>;
+  WorkbenchLastRemoteHint(): Promise<WorkbenchRemoteHint>;
+  WorkbenchSwitchLocal(): Promise<WorkbenchActiveTarget>;
+  WorkbenchConnectRemote(hostId: string, workspace: string): Promise<void>;
+  WorkbenchDisconnectRemote(): Promise<void>;
+  WorkbenchRemoteRequest(method: string, paramsJSON: string): Promise<string>;
+  WorkbenchResolveProviderTrust(accept: boolean): Promise<void>;
+  WorkbenchPendingProviderTrust(): Promise<ProviderTrustPrompt | null>;
 }
 
 // Compile-time drift check. Exclude<A, B> extracts keys in A that are missing
@@ -729,6 +739,24 @@ export function onRemoteServer(cb: (s: RemoteServerView) => void): () => void {
     return window.runtime.EventsOn("remote:server", (payload?: unknown) => cb((payload ?? {}) as RemoteServerView));
   }
   return registerMockRemoteListener("server", cb as (v: unknown) => void);
+}
+
+/** Provider authorization is a Desktop-only prompt. The payload is deliberately
+ * secret-free; the one-shot answer returns through the typed Wails binding. */
+export function onProviderTrust(cb: (prompt: ProviderTrustPrompt) => void): () => void {
+  if (realApp() && typeof window !== "undefined" && window.runtime) {
+    return window.runtime.EventsOn("remote:provider-trust", (payload?: unknown) => cb((payload ?? {}) as ProviderTrustPrompt));
+  }
+  return () => {};
+}
+
+/** Committed Local/Remote projection changes. Generation lets consumers drop
+ * stale async hydration when the user switches targets quickly. */
+export function onWorkbenchTarget(cb: (target: WorkbenchActiveTarget) => void): () => void {
+  if (realApp() && typeof window !== "undefined" && window.runtime) {
+    return window.runtime.EventsOn("remote:workbench-target", (payload?: unknown) => cb((payload ?? { kind: "local" }) as WorkbenchActiveTarget));
+  }
+  return () => {};
 }
 
 // Mock event fan-out so browser-dev and tsx tests can drive remote:* events
@@ -4512,6 +4540,37 @@ function makeMockApp(): AppBindings {
     async RemoteLastWorkspace() {
       return "~/app";
     },
+    async WorkbenchActiveTarget() {
+      return { ...mockWorkbenchTarget };
+    },
+    async WorkbenchLastRemoteHint() {
+      return mockWorkbenchTarget.kind === "ssh"
+        ? { hostId: mockWorkbenchTarget.hostId, workspace: mockWorkbenchTarget.workspace, label: mockWorkbenchTarget.hostId }
+        : {};
+    },
+    async WorkbenchSwitchLocal() {
+      mockWorkbenchTarget = { kind: "local", identityGen: (mockWorkbenchTarget.identityGen ?? 0) + 1, requestSeq: 1 };
+      return { ...mockWorkbenchTarget };
+    },
+    async WorkbenchConnectRemote(hostId, workspace) {
+      mockWorkbenchTarget = {
+        kind: "ssh",
+        hostId,
+        workspace,
+        identityGen: (mockWorkbenchTarget.identityGen ?? 0) + 1,
+        requestSeq: 1,
+      };
+    },
+    async WorkbenchDisconnectRemote() {
+      mockWorkbenchTarget = { kind: "local", identityGen: (mockWorkbenchTarget.identityGen ?? 0) + 1, requestSeq: 1 };
+    },
+    async WorkbenchRemoteRequest(_method, _paramsJSON) {
+      return "{}";
+    },
+    async WorkbenchResolveProviderTrust() {},
+    async WorkbenchPendingProviderTrust() {
+      return null;
+    },
   };
 }
 
@@ -4538,3 +4597,4 @@ let mockRemoteHosts: RemoteHostView[] = [
 ];
 const mockRemoteConn: Record<string, RemoteConnectionStatus["state"]> = {};
 const mockRemoteForwards: Record<string, RemoteForwardView[]> = {};
+let mockWorkbenchTarget: WorkbenchActiveTarget = { kind: "local", identityGen: 1, requestSeq: 1 };

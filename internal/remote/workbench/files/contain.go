@@ -27,11 +27,15 @@ func ResolveRel(workspace, rel string) (string, error) {
 	if rel == "" {
 		return absWS, nil
 	}
-	if filepath.IsAbs(rel) {
+	// The same protocol payload may be produced on Windows and consumed on a
+	// Unix Host (or vice versa). filepath.IsAbs only understands the current
+	// OS, so reject rooted paths from both path families before cleaning.
+	if filepath.IsAbs(rel) || filepath.VolumeName(rel) != "" || strings.HasPrefix(rel, "/") || strings.HasPrefix(rel, `\`) {
 		return "", fmt.Errorf("path must be relative to workspace")
 	}
-	// Reject Windows volume paths on any platform.
-	if len(rel) >= 2 && rel[1] == ':' {
+	// filepath.VolumeName("C:\\x") is empty on Unix. Keep an explicit drive
+	// prefix check so Windows paths are rejected on every Host platform.
+	if len(rel) >= 2 && rel[1] == ':' && ((rel[0] >= 'a' && rel[0] <= 'z') || (rel[0] >= 'A' && rel[0] <= 'Z')) {
 		return "", fmt.Errorf("path must be relative to workspace")
 	}
 	cleaned := filepath.Clean(rel)
@@ -41,7 +45,7 @@ func ResolveRel(workspace, rel string) (string, error) {
 	joined := filepath.Join(absWS, cleaned)
 	// Ensure joined stays under absWS even before symlink evaluation.
 	relToWS, err := filepath.Rel(absWS, joined)
-	if err != nil || strings.HasPrefix(relToWS, "..") {
+	if err != nil || relToWS == ".." || strings.HasPrefix(relToWS, ".."+string(filepath.Separator)) || filepath.IsAbs(relToWS) {
 		return "", fmt.Errorf("path escapes workspace")
 	}
 	// If path exists as a symlink leaf, reject. Otherwise return the clean

@@ -15,11 +15,16 @@ import (
 
 func TestAttachRejectsSchemaMismatch(t *testing.T) {
 	var out bytes.Buffer
+	workspace := t.TempDir()
 	params, _ := json.Marshal(map[string]any{
 		"buildId": map[string]any{
-			"schemaHash":      "sha256:deadbeef",
+			"productVersion":  "test",
+			"sourceRevision":  strings.Repeat("a", 40),
+			"schemaHash":      "sha256:" + strings.Repeat("0", 64),
 			"protocolVersion": protocol.ProtocolVersion,
 		},
+		"clientInstanceId": "desktop-test",
+		"workspace":        workspace,
 	})
 	frame, _ := json.Marshal(map[string]any{
 		"jsonrpc": "2.0", "id": 1, "method": "remote/initialize", "params": json.RawMessage(params),
@@ -32,7 +37,7 @@ func TestAttachRejectsSchemaMismatch(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	err := Run(ctx, r, &out, Options{
-		Workspace: t.TempDir(), Version: "t", InProcess: true,
+		Workspace: workspace, Version: "t", InProcess: true,
 		SchemaHash: protocol.SchemaHash(),
 	})
 	// Schema mismatch returns nil error from Run after writing RPC error, or an error.
@@ -49,10 +54,13 @@ func TestAttachInProcessInitializeOK(t *testing.T) {
 	ws := t.TempDir()
 	params, _ := json.Marshal(map[string]any{
 		"buildId": map[string]any{
+			"productVersion":  "test",
+			"sourceRevision":  strings.Repeat("a", 40),
 			"schemaHash":      protocol.SchemaHash(),
 			"protocolVersion": protocol.ProtocolVersion,
 		},
-		"workspace": ws,
+		"clientInstanceId": "desktop-test",
+		"workspace":        ws,
 	})
 	frame, _ := json.Marshal(map[string]any{
 		"jsonrpc": "2.0", "id": 1, "method": "remote/initialize", "params": json.RawMessage(params),

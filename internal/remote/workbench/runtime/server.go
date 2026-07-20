@@ -1,101 +1,158 @@
-// Package runtime implements the per-workspace remote-runtime that attach
-// proxies dial over a private Unix socket. Controllers and sessions live here;
-// SSH attach only owns the Desktop/Broker channel generation.
+// Package runtime implements the detached, per-workspace Remote Workbench
+// runtime. Session controllers live here across SSH reconnects; provider calls
+// are delegated over the active Desktop Broker connection.
 package runtime
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"io"
 	"net"
 	"os"
 	"path/filepath"
 	goruntime "runtime"
+	"runtime/debug"
+	"sort"
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
+	"reasonix/internal/billing"
+	"reasonix/internal/boot"
+	"reasonix/internal/event"
+	"reasonix/internal/eventwire"
+	"reasonix/internal/fileref"
+	"reasonix/internal/jobs"
+	"reasonix/internal/provider"
+	"reasonix/internal/remote/broker"
 	"reasonix/internal/remote/protocol"
 	"reasonix/internal/remote/workbench/files"
 	"reasonix/internal/rpcwire"
 )
 
 const (
-	// GracePeriod is how long a runtime stays alive after unexpected detach.
-	GracePeriod = 5 * time.Minute
-	// DefaultSocketDir is under ~/.reasonix/workbench-runtime/
+	GracePeriod          = 5 * time.Minute
 	defaultSocketDirName = "workbench-runtime"
 )
 
-// Options configures a workspace runtime.
+type ControllerBuilder func(context.Context, string, *string, event.Sink) (SessionController, error)
+
 type Options struct {
-	Workspace string
-	Version   string
-	// BuildController is optional; when nil, session create still works for
-	// protocol smoke tests but Submit returns unavailable.
-	BuildController func(ctx context.Context, model string) (SessionController, error)
-	// Broker is optional Host-side broker client (calls Desktop over reverse RPC).
-	// When nil, model turns fail with CAPABILITY_UNAVAILABLE.
-	Logger io.Writer
+	Workspace       string
+	Version         string
+	SourceRevision  string
+	BuildController ControllerBuilder
+	Logger          io.Writer
 }
 
-// SessionController is the minimal control surface used by the runtime.
 type SessionController interface {
 	ModelRef() string
 	Label() string
-	History() []map[string]any
+	History() []provider.Message
+	Turn() int
 	Running() bool
-	Submit(input string) error
+	Submit(string)
 	Cancel()
 	Close()
 	SessionPath() string
-	SetSessionPath(path string)
+	SetSessionPath(string)
+	EnsureSessionPath()
+	AdoptHistory([]provider.Message, string)
 }
 
-// Server is one workspace runtime process endpoint.
 type Server struct {
 	opts Options
 
-	mu       sync.Mutex
-	sessions map[string]*session
-	gen      uint64 // current attach generation
-	// lastDetach is when the last attach generation closed; zero if attached.
-	lastDetach time.Time
-	attached   bool
-	closing    bool
+	mu          sync.Mutex
+	sessions    map[protocol.SessionID]*session
+	subs        map[protocol.SubscriptionID]*subscription
+	wires       map[uint64]*rpcwire.Conn
+	gen         uint64
+	attached    bool
+	lastDetach  time.Time
+	activeConn  net.Conn
+	explicitGen map[uint64]bool
 
-	ln     net.Listener
-	socket string
+	hostEpoch   protocol.HostEpoch
+	workspaceID protocol.WorkspaceID
+	buildID     protocol.BuildID
+	broker      *broker.Host
+	contents    map[protocol.ContentRef]contentObject
+	ln          net.Listener
+	socket      string
+	lockPath    string
 }
 
 type session struct {
-	id     string
-	ctrl   SessionController
-	model  string
-	rev    int64
-	digest string
+	id            protocol.SessionID
+	ctrl          SessionController
+	model         string
+	effort        string
+	collaboration protocol.CollaborationMode
+	tokenMode     protocol.TokenMode
+	toolApproval  protocol.ToolApprovalMode
+	topicID       protocol.TopicID
+	title         string
+	runtimeEpoch  protocol.RuntimeEpoch
+	createdAt     int64
+	updatedAt     int64
+	currentTurn   protocol.TurnID
+	currentOp     *protocol.OperationState
+	operationStop context.CancelFunc
+	lastOutcome   protocol.SessionOutcome
+	lastError     string
+	pendingPrompt *protocol.PendingPrompt
+	liveEvents    []eventwire.Event
+	sink          *sessionSink
 }
 
-// New creates a runtime server (does not listen yet).
+type subscription struct {
+	id        protocol.SubscriptionID
+	gen       uint64
+	conn      *rpcwire.Conn
+	sessionID protocol.SessionID
+	seq       uint64
+	active    bool
+	pending   []protocol.SessionEvent
+}
+
+type sessionSink struct {
+	server    *Server
+	sessionID protocol.SessionID
+}
+
+type contentObject struct {
+	data      []byte
+	sha256    string
+	createdAt time.Time
+}
+
 func New(opts Options) *Server {
+	workspace := strings.TrimSpace(opts.Workspace)
+	sum := sha256.Sum256([]byte(workspace))
 	return &Server{
-		opts:     opts,
-		sessions: map[string]*session{},
+		opts: opts, sessions: make(map[protocol.SessionID]*session),
+		subs: make(map[protocol.SubscriptionID]*subscription), wires: make(map[uint64]*rpcwire.Conn),
+		explicitGen: make(map[uint64]bool), broker: broker.NewHost(),
+		contents:    make(map[protocol.ContentRef]contentObject),
+		hostEpoch:   protocol.HostEpoch("host_" + randomHex(12)),
+		workspaceID: protocol.WorkspaceID("workspace_" + hex.EncodeToString(sum[:8])),
+		buildID:     currentBuildID(opts),
 	}
 }
 
-// SocketPath returns the private Unix socket path for this workspace.
 func SocketPath(home, workspace string) string {
 	sum := sha256.Sum256([]byte(strings.TrimSpace(workspace)))
 	dir := filepath.Join(home, ".reasonix", defaultSocketDirName, hex.EncodeToString(sum[:8]))
 	return filepath.Join(dir, "runtime.sock")
 }
 
-// ListenAndServe binds the workspace socket and serves attach connections.
 func (s *Server) ListenAndServe(ctx context.Context, socket string) error {
 	if strings.TrimSpace(s.opts.Workspace) == "" {
 		return errors.New("workspace required")
@@ -103,47 +160,1345 @@ func (s *Server) ListenAndServe(ctx context.Context, socket string) error {
 	if err := os.MkdirAll(filepath.Dir(socket), 0o700); err != nil {
 		return err
 	}
-	_ = os.Remove(socket)
+	lockPath := socket + ".lock"
+	if err := acquireRuntimeLock(ctx, socket, lockPath); err != nil {
+		return err
+	}
+	defer func() {
+		_ = os.Remove(socket)
+		_ = os.Remove(lockPath)
+	}()
+	if err := os.Remove(socket); err != nil && !os.IsNotExist(err) {
+		return err
+	}
 	ln, err := net.Listen("unix", socket)
 	if err != nil {
 		return err
 	}
+	_ = os.Chmod(socket, 0o600)
 	s.mu.Lock()
-	s.ln = ln
-	s.socket = socket
+	s.ln, s.socket, s.lockPath = ln, socket, lockPath
 	s.mu.Unlock()
-
 	go s.graceLoop(ctx)
-
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
-			select {
-			case <-ctx.Done():
+			if ctx.Err() != nil {
 				return ctx.Err()
-			default:
-				return err
 			}
+			return err
 		}
 		go s.serveConn(ctx, conn)
 	}
 }
 
+func acquireRuntimeLock(ctx context.Context, socket, lockPath string) error {
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if err := os.Mkdir(lockPath, 0o700); err == nil {
+			return nil
+		} else if !os.IsExist(err) {
+			return err
+		}
+		if conn, err := net.DialTimeout("unix", socket, 150*time.Millisecond); err == nil {
+			_ = conn.Close()
+			return errors.New("Remote Workbench runtime is already running")
+		}
+		if info, err := os.Stat(lockPath); err == nil && time.Since(info.ModTime()) > 30*time.Second {
+			if os.Remove(lockPath) == nil {
+				continue
+			}
+		}
+		if time.Now().After(deadline) {
+			return errors.New("Remote Workbench runtime start is already in progress")
+		}
+		timer := time.NewTimer(100 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
+}
+
+func (s *Server) serveConn(ctx context.Context, conn net.Conn) {
+	s.mu.Lock()
+	s.gen++
+	gen := s.gen
+	old := s.activeConn
+	s.activeConn = conn
+	s.attached = true
+	s.lastDetach = time.Time{}
+	s.mu.Unlock()
+	if old != nil && old != conn {
+		_ = old.Close()
+	}
+
+	router, err := protocol.NewCompleteRouter(s.handlers(gen, conn), protocol.RouterOptions{})
+	if err != nil {
+		_ = conn.Close()
+		return
+	}
+	wire := rpcwire.NewConn(conn, conn, router.WireOptions())
+	s.mu.Lock()
+	s.wires[gen] = wire
+	s.mu.Unlock()
+	if err := s.broker.Attach(wire, gen); err != nil {
+		_ = conn.Close()
+		return
+	}
+	router.Bind(wire)
+	_ = wire.Serve(ctx)
+
+	s.broker.Detach(gen)
+	s.mu.Lock()
+	delete(s.wires, gen)
+	for id, sub := range s.subs {
+		if sub.gen == gen {
+			delete(s.subs, id)
+		}
+	}
+	if s.gen == gen {
+		s.attached = false
+		s.activeConn = nil
+		if !s.explicitGen[gen] {
+			s.lastDetach = time.Now()
+		}
+	}
+	delete(s.explicitGen, gen)
+	s.mu.Unlock()
+}
+
+func (s *Server) handlers(gen uint64, conn net.Conn) protocol.HandlerSet {
+	handlers := protocol.HandlerSet{
+		protocol.MethodRemoteInitialize: func(ctx context.Context, value any) (any, error) {
+			return s.initialize(gen, value.(protocol.InitializeParams))
+		},
+		protocol.MethodRemotePing: func(ctx context.Context, value any) (any, error) { return s.ping(gen, value.(protocol.PingParams)) },
+		protocol.MethodRemoteDetach: func(ctx context.Context, value any) (any, error) {
+			return s.detach(gen, conn, value.(protocol.DetachParams))
+		},
+		protocol.MethodHostCapabilities: func(ctx context.Context, value any) (any, error) {
+			return s.capabilities(value.(protocol.HostCapabilitiesParams))
+		},
+		protocol.MethodWorkspaceList: func(ctx context.Context, value any) (any, error) {
+			return s.workspaceList(value.(protocol.WorkspaceListParams))
+		},
+		protocol.MethodCatalogWorkspace: func(ctx context.Context, value any) (any, error) {
+			return s.workspaceCatalog(value.(protocol.WorkspaceCatalogParams))
+		},
+		protocol.MethodCatalogSession: func(ctx context.Context, value any) (any, error) {
+			return s.sessionCatalog(ctx, value.(protocol.SessionCatalogParams))
+		},
+		protocol.MethodSessionList: func(ctx context.Context, value any) (any, error) { return s.list(value.(protocol.SessionListParams)) },
+		protocol.MethodSessionCreate: func(ctx context.Context, value any) (any, error) {
+			return s.create(ctx, value.(protocol.SessionCreateParams))
+		},
+		protocol.MethodSessionClose: func(ctx context.Context, value any) (any, error) {
+			return s.closeSession(value.(protocol.SessionCloseParams))
+		},
+		protocol.MethodSessionSubscribe: func(ctx context.Context, value any) (any, error) {
+			return s.subscribe(gen, value.(protocol.SessionSubscribeParams))
+		},
+		protocol.MethodSessionUnsubscribe: func(ctx context.Context, value any) (any, error) {
+			return s.unsubscribe(gen, value.(protocol.SessionUnsubscribeParams))
+		},
+		protocol.MethodSessionHistory: func(ctx context.Context, value any) (any, error) {
+			return s.history(value.(protocol.SessionHistoryParams))
+		},
+		protocol.MethodSessionContent: func(ctx context.Context, value any) (any, error) {
+			return s.sessionContent(value.(protocol.SessionContentParams))
+		},
+		protocol.MethodSessionSubmit: func(ctx context.Context, value any) (any, error) {
+			return s.submit(value.(protocol.SessionSubmitParams))
+		},
+		protocol.MethodTurnSteer: func(ctx context.Context, value any) (any, error) {
+			return s.steer(value.(protocol.TurnSteerParams))
+		},
+		protocol.MethodPromptApprove: func(ctx context.Context, value any) (any, error) {
+			return s.approve(value.(protocol.PromptApproveParams))
+		},
+		protocol.MethodPromptAnswer: func(ctx context.Context, value any) (any, error) {
+			return s.answer(value.(protocol.PromptAnswerParams))
+		},
+		protocol.MethodShellRun: func(ctx context.Context, value any) (any, error) {
+			return s.shellRun(value.(protocol.ShellRunParams))
+		},
+		protocol.MethodOperationCancel: func(ctx context.Context, value any) (any, error) {
+			return s.cancelOperation(value.(protocol.OperationCancelParams))
+		},
+		protocol.MethodSessionNew: func(ctx context.Context, value any) (any, error) {
+			return s.newSession(value.(protocol.SessionNewParams))
+		},
+		protocol.MethodSessionClear: func(ctx context.Context, value any) (any, error) {
+			return s.clearSession(value.(protocol.SessionClearParams))
+		},
+		protocol.MethodSessionCompact: func(ctx context.Context, value any) (any, error) {
+			return s.compact(ctx, value.(protocol.SessionCompactParams))
+		},
+		protocol.MethodSessionFork: func(ctx context.Context, value any) (any, error) {
+			return s.forkSession(ctx, value.(protocol.SessionForkParams))
+		},
+		protocol.MethodSessionRewind: func(ctx context.Context, value any) (any, error) {
+			return s.rewindSession(value.(protocol.SessionRewindParams))
+		},
+		protocol.MethodSessionSummarize: func(ctx context.Context, value any) (any, error) {
+			return s.summarizeSession(value.(protocol.SessionSummarizeParams))
+		},
+		protocol.MethodSessionProfileSet: func(ctx context.Context, value any) (any, error) {
+			return s.setProfile(ctx, value.(protocol.SessionProfileSetParams))
+		},
+		protocol.MethodSessionGoalSet: func(ctx context.Context, value any) (any, error) {
+			return s.setGoal(value.(protocol.SessionGoalSetParams))
+		},
+		protocol.MethodSessionGoalResume: func(ctx context.Context, value any) (any, error) {
+			return s.resumeGoal(value.(protocol.SessionGoalResumeParams))
+		},
+		protocol.MethodSessionGoalClear: func(ctx context.Context, value any) (any, error) {
+			return s.clearGoal(value.(protocol.SessionGoalClearParams))
+		},
+		protocol.MethodSessionContext: func(ctx context.Context, value any) (any, error) {
+			return s.sessionContext(value.(protocol.SessionContextParams))
+		},
+		protocol.MethodSessionBalance: func(ctx context.Context, value any) (any, error) {
+			return s.sessionBalance(ctx, value.(protocol.SessionBalanceParams))
+		},
+		protocol.MethodJobList: func(ctx context.Context, value any) (any, error) {
+			return s.jobList(value.(protocol.JobListParams))
+		},
+		protocol.MethodJobCancel: func(ctx context.Context, value any) (any, error) {
+			return s.jobCancel(value.(protocol.JobCancelParams))
+		},
+		protocol.MethodComposerSlashArgs: func(ctx context.Context, value any) (any, error) {
+			return s.composerSlashArgs(value.(protocol.ComposerSlashArgsParams))
+		},
+		protocol.MethodTurnCancel: func(ctx context.Context, value any) (any, error) { return s.cancel(value.(protocol.TurnCancelParams)) },
+		protocol.MethodFileList:   func(ctx context.Context, value any) (any, error) { return s.fileList(value.(protocol.FileListParams)) },
+		protocol.MethodFileSearch: func(ctx context.Context, value any) (any, error) {
+			return s.fileSearch(value.(protocol.FileSearchParams))
+		},
+		protocol.MethodFilePreview: func(ctx context.Context, value any) (any, error) {
+			return s.filePreview(value.(protocol.FilePreviewParams))
+		},
+		protocol.MethodWorkspaceChanges: func(ctx context.Context, value any) (any, error) {
+			return s.workspaceChanges(value.(protocol.WorkspaceChangesParams))
+		},
+		protocol.MethodGitHistory: func(ctx context.Context, value any) (any, error) {
+			return s.gitHistory(value.(protocol.GitHistoryParams))
+		},
+		protocol.MethodGitCommitDetail: func(ctx context.Context, value any) (any, error) {
+			return s.gitCommitDetail(value.(protocol.GitCommitDetailParams))
+		},
+	}
+	for _, spec := range protocol.Registry() {
+		if spec.Direction != protocol.DirectionClientRequest || handlers[spec.Name] != nil {
+			continue
+		}
+		handlers[spec.Name] = func(context.Context, any) (any, error) {
+			return nil, protocol.MustRemoteError(protocol.ErrCapabilityUnavailable, protocol.ErrorOptions{})
+		}
+	}
+	return handlers
+}
+
+func (s *Server) initialize(gen uint64, p protocol.InitializeParams) (protocol.InitializeResult, error) {
+	s.mu.Lock()
+	current := s.gen == gen
+	s.mu.Unlock()
+	if !current {
+		return protocol.InitializeResult{}, protocol.MustRemoteError(protocol.ErrStaleConnection, protocol.ErrorOptions{})
+	}
+	want, err := filepath.Abs(strings.TrimSpace(s.opts.Workspace))
+	if err != nil {
+		return protocol.InitializeResult{}, protocol.MustRemoteError(protocol.ErrWorkspaceNotFound, protocol.ErrorOptions{})
+	}
+	got, err := filepath.Abs(strings.TrimSpace(p.Workspace))
+	if err != nil || filepath.Clean(got) != filepath.Clean(want) {
+		return protocol.InitializeResult{}, protocol.MustRemoteError(protocol.ErrWorkspaceNotFound, protocol.ErrorOptions{})
+	}
+	return protocol.InitializeResult{
+		BuildID: s.buildID, HostEpoch: s.hostEpoch,
+		Lease:        protocol.LeaseInfo{LeaseID: leaseID(gen), TTLMillis: protocol.LeaseTTLMillis, PingIntervalMs: protocol.LeasePingIntervalMillis},
+		Host:         protocol.HostInfo{OS: goruntime.GOOS, Arch: goruntime.GOARCH, ShellKind: "sh", SandboxBackend: "reasonix"},
+		Capabilities: protocol.FrozenCapabilities(false, false),
+	}, nil
+}
+
+func (s *Server) ping(gen uint64, p protocol.PingParams) (protocol.PingResult, error) {
+	if p.LeaseID != leaseID(gen) {
+		return protocol.PingResult{}, protocol.MustRemoteError(protocol.ErrLeaseNotHeld, protocol.ErrorOptions{})
+	}
+	return protocol.PingResult{HostEpoch: s.hostEpoch, LeaseTTL: protocol.LeaseTTLMillis}, nil
+}
+
+func (s *Server) detach(gen uint64, conn net.Conn, p protocol.DetachParams) (any, error) {
+	if p.LeaseID != leaseID(gen) {
+		return nil, protocol.MustRemoteError(protocol.ErrLeaseNotHeld, protocol.ErrorOptions{})
+	}
+	return rpcwire.RespondThen(protocol.DetachResult{Detached: true}, func(writeErr error) {
+		if writeErr == nil {
+			s.mu.Lock()
+			s.explicitGen[gen] = true
+			if s.gen == gen {
+				s.attached = false
+				s.lastDetach = time.Now().Add(-GracePeriod)
+			}
+			s.mu.Unlock()
+		}
+		_ = conn.Close()
+	}), nil
+}
+
+func (s *Server) capabilities(p protocol.HostCapabilitiesParams) (protocol.HostCapabilitiesResult, error) {
+	if err := s.checkHost(p.ExpectedHostEpoch); err != nil {
+		return protocol.HostCapabilitiesResult{}, err
+	}
+	return protocol.HostCapabilitiesResult{HostEpoch: s.hostEpoch, Capabilities: protocol.FrozenCapabilities(false, false)}, nil
+}
+
+func (s *Server) workspaceList(p protocol.WorkspaceListParams) (protocol.WorkspaceListResult, error) {
+	if err := s.checkHost(p.ExpectedHostEpoch); err != nil {
+		return protocol.WorkspaceListResult{}, err
+	}
+	return protocol.WorkspaceListResult{Items: []protocol.WorkspaceSummary{{
+		WorkspaceID: s.workspaceID, Name: filepath.Base(s.opts.Workspace), DisplayPath: s.opts.Workspace,
+	}}, HasMore: false}, nil
+}
+
+func (s *Server) workspaceCatalog(p protocol.WorkspaceCatalogParams) (protocol.WorkspaceCatalogResult, error) {
+	if err := s.checkHostWorkspace(p.ExpectedHostEpoch, p.WorkspaceID); err != nil {
+		return protocol.WorkspaceCatalogResult{}, err
+	}
+	descriptors := s.broker.Catalog()
+	models := make([]protocol.ModelCatalogItem, 0, len(descriptors))
+	for _, descriptor := range descriptors {
+		providerName, model := splitModelRef(descriptor.Ref)
+		if model == "" {
+			model = descriptor.Model
+		}
+		if providerName == "" {
+			providerName = descriptor.DisplayName
+		}
+		models = append(models, protocol.ModelCatalogItem{
+			Ref: protocol.ModelRef(descriptor.Ref), Provider: providerName, Model: model,
+			Effort: protocol.EffortCatalog{
+				Supported: len(descriptor.Efforts) > 0, Default: descriptor.DefaultEffort,
+				Levels: append([]string(nil), descriptor.Efforts...),
+			},
+		})
+	}
+	defaultModel, defaultEffort := "unavailable", "default"
+	if len(descriptors) > 0 {
+		defaultModel = descriptors[0].Ref
+		if descriptors[0].DefaultEffort != "" {
+			defaultEffort = descriptors[0].DefaultEffort
+		}
+	}
+	return protocol.WorkspaceCatalogResult{
+		Revision: protocol.CatalogRevision("catalog_" + randomHex(8)), Models: models,
+		CollaborationModes: []protocol.CollaborationMode{protocol.CollaborationNormal, protocol.CollaborationPlan, protocol.CollaborationGoal},
+		TokenModes:         []protocol.TokenMode{protocol.TokenFull, protocol.TokenEconomy, protocol.TokenDelivery},
+		ToolApprovalModes:  []protocol.ToolApprovalMode{protocol.ToolApprovalAsk, protocol.ToolApprovalAuto, protocol.ToolApprovalYOLO},
+		DefaultProfile: protocol.ResolvedProfile{
+			Model: defaultModel, Effort: defaultEffort, CollaborationMode: protocol.CollaborationNormal,
+			TokenMode: protocol.TokenFull, ToolApprovalMode: protocol.ToolApprovalAsk,
+		},
+	}, nil
+}
+
+func (s *Server) sessionCatalog(ctx context.Context, p protocol.SessionCatalogParams) (protocol.SessionCatalogResult, error) {
+	sess, err := s.sessionForQuery(p.ExpectedHostEpoch, p.Target, p.ExpectedRuntimeEpoch)
+	if err != nil {
+		return protocol.SessionCatalogResult{}, err
+	}
+	return buildSessionCatalog(ctx, sess.ctrl), nil
+}
+
+func (s *Server) list(p protocol.SessionListParams) (protocol.SessionListResult, error) {
+	if err := s.checkHostWorkspace(p.ExpectedHostEpoch, p.WorkspaceID); err != nil {
+		return protocol.SessionListResult{}, err
+	}
+	s.mu.Lock()
+	items := make([]protocol.SessionSummary, 0, len(s.sessions))
+	for _, sess := range s.sessions {
+		items = append(items, s.summaryLocked(sess))
+	}
+	s.mu.Unlock()
+	sort.Slice(items, func(i, j int) bool { return items[i].LastActivityAtMs > items[j].LastActivityAtMs })
+	return protocol.SessionListResult{Items: items, HasMore: false}, nil
+}
+
+func (s *Server) create(ctx context.Context, p protocol.SessionCreateParams) (protocol.SessionCreateResult, error) {
+	if err := s.checkHostWorkspace(p.ExpectedHostEpoch, p.WorkspaceID); err != nil {
+		return protocol.SessionCreateResult{}, err
+	}
+	model := ""
+	if p.Profile.Model != nil {
+		model = strings.TrimSpace(*p.Profile.Model)
+	}
+	if model == "" {
+		if catalog := s.broker.Catalog(); len(catalog) > 0 {
+			model = catalog[0].Ref
+		}
+	}
+	if model == "" {
+		return protocol.SessionCreateResult{}, protocol.MustRemoteError(protocol.ErrModelNotAvailable, protocol.ErrorOptions{})
+	}
+	effort := "default"
+	var effortOverride *string
+	if p.Profile.Effort != nil {
+		effort = strings.TrimSpace(*p.Profile.Effort)
+		effortOverride = &effort
+	} else {
+		for _, descriptor := range s.broker.Catalog() {
+			if descriptor.Ref == model && descriptor.DefaultEffort != "" {
+				effort = descriptor.DefaultEffort
+				break
+			}
+		}
+	}
+	id := protocol.SessionID("session_" + randomHex(12))
+	sink := &sessionSink{server: s, sessionID: id}
+	collaboration := protocol.CollaborationNormal
+	if p.Profile.CollaborationMode != nil {
+		collaboration = *p.Profile.CollaborationMode
+	}
+	tokenMode := protocol.TokenFull
+	if p.Profile.TokenMode != nil {
+		tokenMode = *p.Profile.TokenMode
+	}
+	toolApproval := protocol.ToolApprovalAsk
+	if p.Profile.ToolApprovalMode != nil {
+		toolApproval = *p.Profile.ToolApprovalMode
+	}
+	ctrl, err := s.buildController(ctx, model, effortOverride, sink, tokenMode)
+	if err != nil {
+		return protocol.SessionCreateResult{}, protocol.MustRemoteError(protocol.ErrRuntimeStartFailed, protocol.ErrorOptions{})
+	}
+	if ctrl == nil {
+		return protocol.SessionCreateResult{}, errors.New("controller builder returned nil")
+	}
+	ctrl.EnsureSessionPath()
+	now := time.Now().UnixMilli()
+	title := strings.TrimSpace(p.Topic.Title)
+	if title == "" {
+		title = "New session"
+	}
+	topicID := p.Topic.TopicID
+	if topicID == "" {
+		topicID = protocol.TopicID("topic_" + randomHex(8))
+	}
+	sess := &session{
+		id: id, ctrl: ctrl, model: ctrl.ModelRef(), effort: effort,
+		collaboration: collaboration, tokenMode: tokenMode, toolApproval: toolApproval,
+		topicID: topicID, title: title,
+		runtimeEpoch: protocol.RuntimeEpoch("runtime_" + randomHex(12)),
+		createdAt:    now, updatedAt: now, sink: sink,
+	}
+	applyControllerProfile(ctrl, collaboration, toolApproval)
+	s.mu.Lock()
+	s.sessions[id] = sess
+	s.mu.Unlock()
+	return protocol.SessionCreateResult{
+		Target: s.target(id), RuntimeEpoch: sess.runtimeEpoch,
+		TopicID: topicID, TopicTitle: title, ResolvedProfile: resolvedProfile(sess),
+	}, nil
+}
+
+func (s *Server) buildController(ctx context.Context, model string, effort *string, sink event.Sink, tokenMode protocol.TokenMode) (SessionController, error) {
+	if s.opts.BuildController != nil {
+		return s.opts.BuildController(ctx, model, effort, sink)
+	}
+	return boot.Build(ctx, boot.Options{
+		Model: model, EffortOverride: effort, RequireKey: false,
+		WorkspaceRoot: s.opts.Workspace, ProviderResolver: s.broker, Sink: sink, TokenMode: string(tokenMode),
+	})
+}
+
+func (s *Server) closeSession(p protocol.SessionCloseParams) (protocol.SessionCloseResult, error) {
+	sess, err := s.sessionForMutation(p.ExpectedHostEpoch, p.Target, p.ExpectedRuntimeEpoch)
+	if err != nil {
+		return protocol.SessionCloseResult{}, err
+	}
+	if sess.ctrl.Running() {
+		return protocol.SessionCloseResult{Disposition: protocol.SessionRetainedActive}, nil
+	}
+	s.mu.Lock()
+	if s.sessions[sess.id] != sess {
+		s.mu.Unlock()
+		return protocol.SessionCloseResult{Disposition: protocol.SessionAlreadyClosed}, nil
+	}
+	delete(s.sessions, sess.id)
+	for id, sub := range s.subs {
+		if sub.sessionID == sess.id {
+			delete(s.subs, id)
+		}
+	}
+	s.mu.Unlock()
+	sess.ctrl.Close()
+	return protocol.SessionCloseResult{Disposition: protocol.SessionReleased}, nil
+}
+
+func (s *Server) subscribe(gen uint64, p protocol.SessionSubscribeParams) (any, error) {
+	sess, err := s.sessionForQuery(p.ExpectedHostEpoch, p.Target, "")
+	if err != nil {
+		return nil, err
+	}
+	s.mu.Lock()
+	if old := s.subs[p.ReplaceSubscriptionID]; old != nil && old.gen == gen {
+		delete(s.subs, p.ReplaceSubscriptionID)
+	}
+	conn := s.currentWireConnectionLocked(gen)
+	if conn == nil {
+		s.mu.Unlock()
+		return nil, protocol.MustRemoteError(protocol.ErrStaleConnection, protocol.ErrorOptions{})
+	}
+	id := protocol.SubscriptionID("subscription_" + randomHex(10))
+	sub := &subscription{id: id, gen: gen, conn: conn, sessionID: sess.id}
+	s.subs[id] = sub
+	snapshot := s.snapshotLocked(sess, p.PageTurns)
+	s.mu.Unlock()
+	return rpcwire.RespondThen(protocol.SessionSubscribeResult{SubscriptionID: id, Snapshot: snapshot}, func(writeErr error) {
+		s.activateSubscription(id, sub, writeErr)
+		if writeErr == nil {
+			if controller, ok := sess.ctrl.(interface{ ReplayPendingPrompts() }); ok {
+				controller.ReplayPendingPrompts()
+			}
+		}
+	}), nil
+}
+
+// currentWireConnectionLocked resolves the rpcwire peer indirectly from an
+// existing subscription or the generation-owned Broker. The serve connection
+// installs the actual wire in connectionWires before requests are served.
+func (s *Server) currentWireConnectionLocked(gen uint64) *rpcwire.Conn {
+	return s.wires[gen]
+}
+
+func (s *Server) activateSubscription(id protocol.SubscriptionID, sub *subscription, writeErr error) {
+	s.mu.Lock()
+	if writeErr != nil || s.subs[id] != sub {
+		delete(s.subs, id)
+		s.mu.Unlock()
+		return
+	}
+	sub.active = true
+	pending := append([]protocol.SessionEvent(nil), sub.pending...)
+	sub.pending = nil
+	s.mu.Unlock()
+	for _, event := range pending {
+		_ = sub.conn.Notify(string(protocol.MethodSessionEvent), event)
+	}
+}
+
+func (s *Server) unsubscribe(gen uint64, p protocol.SessionUnsubscribeParams) (protocol.SessionUnsubscribeResult, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	sub := s.subs[p.SubscriptionID]
+	if sub == nil || sub.gen != gen {
+		return protocol.SessionUnsubscribeResult{}, protocol.MustRemoteError(protocol.ErrSubscriptionNotFound, protocol.ErrorOptions{})
+	}
+	delete(s.subs, p.SubscriptionID)
+	return protocol.SessionUnsubscribeResult{Unsubscribed: true}, nil
+}
+
+func (s *Server) history(p protocol.SessionHistoryParams) (protocol.HistoryPage, error) {
+	sess, err := s.sessionForQuery(p.ExpectedHostEpoch, p.Target, p.ExpectedRuntimeEpoch)
+	if err != nil {
+		return protocol.HistoryPage{}, err
+	}
+	beforeTurn, err := historyCursorTurn(p.Cursor)
+	if err != nil {
+		return protocol.HistoryPage{}, protocol.MustRemoteError(protocol.ErrStaleCursor, protocol.ErrorOptions{Target: &p.Target})
+	}
+	return historyPage(sess, p.SnapshotID, beforeTurn, p.PageTurns), nil
+}
+
+func (s *Server) sessionContent(p protocol.SessionContentParams) (protocol.SessionContentResult, error) {
+	s.mu.Lock()
+	object, ok := s.contents[p.ContentRef]
+	s.mu.Unlock()
+	if !ok {
+		return protocol.SessionContentResult{}, protocol.MustRemoteError(protocol.ErrContentRefExpired, protocol.ErrorOptions{})
+	}
+	if p.Offset < 0 || p.Offset > int64(len(object.data)) {
+		return protocol.SessionContentResult{}, protocol.MustRemoteError(protocol.ErrContentRefExpired, protocol.ErrorOptions{})
+	}
+	end := p.Offset + protocol.ContentRefChunkBytes
+	if end > int64(len(object.data)) {
+		end = int64(len(object.data))
+	}
+	var next *int64
+	if end < int64(len(object.data)) {
+		value := end
+		next = &value
+	}
+	return protocol.SessionContentResult{
+		ContentRef: p.ContentRef, Offset: p.Offset,
+		DataBase64: base64.StdEncoding.EncodeToString(object.data[p.Offset:end]), NextOffset: next,
+		TotalBytes: int64(len(object.data)), SHA256: object.sha256, Encoding: protocol.ContentUTF8,
+	}, nil
+}
+
+func (s *Server) submit(p protocol.SessionSubmitParams) (protocol.SessionSubmitResult, error) {
+	sess, err := s.sessionForMutation(p.ExpectedHostEpoch, p.Target, p.ExpectedRuntimeEpoch)
+	if err != nil {
+		return protocol.SessionSubmitResult{}, err
+	}
+	if sess.ctrl.Running() {
+		return protocol.SessionSubmitResult{}, protocol.MustRemoteError(protocol.ErrTurnAlreadyRunning, protocol.ErrorOptions{Target: &p.Target})
+	}
+	turnID := protocol.TurnID("turn_" + randomHex(10))
+	s.mu.Lock()
+	if s.sessions[sess.id] != sess {
+		s.mu.Unlock()
+		return protocol.SessionSubmitResult{}, protocol.MustRemoteError(protocol.ErrSessionNotFound, protocol.ErrorOptions{})
+	}
+	sess.currentTurn = turnID
+	sess.updatedAt = time.Now().UnixMilli()
+	s.mu.Unlock()
+	sess.ctrl.Submit(p.Input)
+	return protocol.SessionSubmitResult{
+		Kind: protocol.SubmitTurn, TurnID: turnID,
+		Target: p.Target, RuntimeEpoch: sess.runtimeEpoch,
+	}, nil
+}
+
+func (s *Server) steer(p protocol.TurnSteerParams) (protocol.TurnSteerResult, error) {
+	sess, err := s.sessionForMutation(p.ExpectedHostEpoch, p.Target, p.ExpectedRuntimeEpoch)
+	if err != nil {
+		return protocol.TurnSteerResult{}, err
+	}
+	s.mu.Lock()
+	current := sess.currentTurn
+	s.mu.Unlock()
+	if current == "" {
+		return protocol.TurnSteerResult{}, protocol.MustRemoteError(protocol.ErrTurnNotActive, protocol.ErrorOptions{Target: &p.Target})
+	}
+	if current != p.ExpectedTurnID {
+		return protocol.TurnSteerResult{}, protocol.MustRemoteError(protocol.ErrTurnMismatch, protocol.ErrorOptions{Target: &p.Target, Expected: string(p.ExpectedTurnID), Actual: string(current)})
+	}
+	controller, ok := sess.ctrl.(interface{ Steer(string) })
+	if !ok {
+		return protocol.TurnSteerResult{}, protocol.MustRemoteError(protocol.ErrCapabilityUnavailable, protocol.ErrorOptions{})
+	}
+	controller.Steer(p.Text)
+	return protocol.TurnSteerResult{Accepted: true, TurnID: current}, nil
+}
+
+func (s *Server) approve(p protocol.PromptApproveParams) (protocol.PromptResolvedResult, error) {
+	sess, err := s.sessionForMutation(p.ExpectedHostEpoch, p.Target, p.ExpectedRuntimeEpoch)
+	if err != nil {
+		return protocol.PromptResolvedResult{}, err
+	}
+	controller, ok := sess.ctrl.(interface {
+		Approve(string, bool, bool, bool)
+	})
+	if !ok {
+		return protocol.PromptResolvedResult{}, protocol.MustRemoteError(protocol.ErrCapabilityUnavailable, protocol.ErrorOptions{})
+	}
+	s.mu.Lock()
+	pending := sess.pendingPrompt
+	if pending == nil || pending.Kind != protocol.PromptApproval || pending.Approval == nil || pending.Approval.PromptID != p.PromptID {
+		s.mu.Unlock()
+		return protocol.PromptResolvedResult{}, protocol.MustRemoteError(protocol.ErrPromptNotPending, protocol.ErrorOptions{Target: &p.Target})
+	}
+	sess.pendingPrompt = nil
+	s.mu.Unlock()
+	allow := p.Decision != protocol.DecisionDeny
+	controller.Approve(string(p.PromptID), allow, p.Decision == protocol.DecisionAllowSession, p.Decision == protocol.DecisionAllowPersistent)
+	return protocol.PromptResolvedResult{Resolved: true, PromptID: p.PromptID}, nil
+}
+
+func (s *Server) answer(p protocol.PromptAnswerParams) (protocol.PromptResolvedResult, error) {
+	sess, err := s.sessionForMutation(p.ExpectedHostEpoch, p.Target, p.ExpectedRuntimeEpoch)
+	if err != nil {
+		return protocol.PromptResolvedResult{}, err
+	}
+	controller, ok := sess.ctrl.(interface {
+		AnswerQuestion(string, []event.AskAnswer)
+	})
+	if !ok {
+		return protocol.PromptResolvedResult{}, protocol.MustRemoteError(protocol.ErrCapabilityUnavailable, protocol.ErrorOptions{})
+	}
+	s.mu.Lock()
+	pending := sess.pendingPrompt
+	if pending == nil || pending.Kind != protocol.PromptAsk || pending.Ask == nil || pending.Ask.PromptID != p.PromptID {
+		s.mu.Unlock()
+		return protocol.PromptResolvedResult{}, protocol.MustRemoteError(protocol.ErrPromptNotPending, protocol.ErrorOptions{Target: &p.Target})
+	}
+	sess.pendingPrompt = nil
+	s.mu.Unlock()
+	answers := make([]event.AskAnswer, 0, len(p.Answers))
+	for _, answer := range p.Answers {
+		answers = append(answers, event.AskAnswer{QuestionID: string(answer.QuestionID), Selected: append([]string(nil), answer.Selected...)})
+	}
+	controller.AnswerQuestion(string(p.PromptID), answers)
+	return protocol.PromptResolvedResult{Resolved: true, PromptID: p.PromptID}, nil
+}
+
+func (s *Server) shellRun(p protocol.ShellRunParams) (protocol.OperationStartedResult, error) {
+	sess, err := s.sessionForMutation(p.ExpectedHostEpoch, p.Target, p.ExpectedRuntimeEpoch)
+	if err != nil {
+		return protocol.OperationStartedResult{}, err
+	}
+	s.mu.Lock()
+	hasOperation := sess.currentOp != nil
+	s.mu.Unlock()
+	if sess.ctrl.Running() || hasOperation {
+		return protocol.OperationStartedResult{}, protocol.MustRemoteError(protocol.ErrSessionBusy, protocol.ErrorOptions{Target: &p.Target})
+	}
+	controller, ok := sess.ctrl.(interface{ RunShell(string) })
+	if !ok {
+		return protocol.OperationStartedResult{}, protocol.MustRemoteError(protocol.ErrCapabilityUnavailable, protocol.ErrorOptions{})
+	}
+	operationID := protocol.OperationID("operation_" + randomHex(10))
+	s.mu.Lock()
+	sess.currentOp = &protocol.OperationState{OperationID: operationID, Kind: protocol.OperationShell}
+	s.mu.Unlock()
+	controller.RunShell(p.Command)
+	return protocol.OperationStartedResult{OperationID: operationID, Disposition: "started"}, nil
+}
+
+func (s *Server) newSession(p protocol.SessionNewParams) (protocol.SessionNewResult, error) {
+	sess, err := s.sessionForMutation(p.ExpectedHostEpoch, p.Target, p.ExpectedRuntimeEpoch)
+	if err != nil {
+		return protocol.SessionNewResult{}, err
+	}
+	controller, ok := sess.ctrl.(interface{ NewSession() error })
+	if !ok {
+		return protocol.SessionNewResult{}, protocol.MustRemoteError(protocol.ErrCapabilityUnavailable, protocol.ErrorOptions{})
+	}
+	if err := controller.NewSession(); err != nil {
+		return protocol.SessionNewResult{}, protocol.MustRemoteError(protocol.ErrSessionPersistFailed, protocol.ErrorOptions{Target: &p.Target})
+	}
+	s.mu.Lock()
+	sess.runtimeEpoch = protocol.RuntimeEpoch("runtime_" + randomHex(12))
+	sess.currentTurn = ""
+	epoch := sess.runtimeEpoch
+	s.mu.Unlock()
+	return protocol.SessionNewResult{SourceTarget: p.Target, Target: p.Target, RuntimeEpoch: epoch, Disposition: "created", SnapshotRequired: true}, nil
+}
+
+func (s *Server) clearSession(p protocol.SessionClearParams) (protocol.SessionClearResult, error) {
+	sess, err := s.sessionForMutation(p.ExpectedHostEpoch, p.Target, p.ExpectedRuntimeEpoch)
+	if err != nil {
+		return protocol.SessionClearResult{}, err
+	}
+	controller, ok := sess.ctrl.(interface{ ClearSession() error })
+	if !ok {
+		return protocol.SessionClearResult{}, protocol.MustRemoteError(protocol.ErrCapabilityUnavailable, protocol.ErrorOptions{})
+	}
+	if err := controller.ClearSession(); err != nil {
+		return protocol.SessionClearResult{}, protocol.MustRemoteError(protocol.ErrSessionPersistFailed, protocol.ErrorOptions{Target: &p.Target})
+	}
+	s.mu.Lock()
+	sess.runtimeEpoch = protocol.RuntimeEpoch("runtime_" + randomHex(12))
+	sess.currentTurn = ""
+	epoch := sess.runtimeEpoch
+	s.mu.Unlock()
+	return protocol.SessionClearResult{PreviousTarget: p.Target, Target: p.Target, RuntimeEpoch: epoch, Disposition: protocol.SessionCleared, SnapshotRequired: true}, nil
+}
+
+func (s *Server) compact(ctx context.Context, p protocol.SessionCompactParams) (protocol.OperationStartedResult, error) {
+	sess, err := s.sessionForMutation(p.ExpectedHostEpoch, p.Target, p.ExpectedRuntimeEpoch)
+	if err != nil {
+		return protocol.OperationStartedResult{}, err
+	}
+	controller, ok := sess.ctrl.(interface {
+		Compact(context.Context, string) error
+	})
+	if !ok {
+		return protocol.OperationStartedResult{}, protocol.MustRemoteError(protocol.ErrCapabilityUnavailable, protocol.ErrorOptions{})
+	}
+	operationID := protocol.OperationID("operation_" + randomHex(10))
+	opCtx, cancel := context.WithCancel(context.Background())
+	s.mu.Lock()
+	if sess.currentOp != nil || sess.ctrl.Running() {
+		s.mu.Unlock()
+		cancel()
+		return protocol.OperationStartedResult{}, protocol.MustRemoteError(protocol.ErrSessionBusy, protocol.ErrorOptions{Target: &p.Target})
+	}
+	sess.currentOp = &protocol.OperationState{OperationID: operationID, Kind: protocol.OperationCompact}
+	sess.operationStop = cancel
+	s.mu.Unlock()
+	go func() {
+		_ = controller.Compact(opCtx, p.Instructions)
+		s.finishOperation(sess.id, operationID)
+	}()
+	return protocol.OperationStartedResult{OperationID: operationID, Disposition: "started"}, nil
+}
+
+func (s *Server) setProfile(ctx context.Context, p protocol.SessionProfileSetParams) (protocol.SessionProfileSetResult, error) {
+	sess, err := s.sessionForMutation(p.ExpectedHostEpoch, p.Target, p.ExpectedRuntimeEpoch)
+	if err != nil {
+		return protocol.SessionProfileSetResult{}, err
+	}
+	if sess.ctrl.Running() {
+		return protocol.SessionProfileSetResult{}, protocol.MustRemoteError(protocol.ErrSessionBusy, protocol.ErrorOptions{Target: &p.Target})
+	}
+	model, effort := sess.model, sess.effort
+	collaboration, tokenMode, toolApproval := sess.collaboration, sess.tokenMode, sess.toolApproval
+	if p.Patch.Model != nil {
+		model = strings.TrimSpace(*p.Patch.Model)
+	}
+	if p.Patch.Effort != nil {
+		effort = strings.TrimSpace(*p.Patch.Effort)
+	}
+	if p.Patch.CollaborationMode != nil {
+		collaboration = *p.Patch.CollaborationMode
+	}
+	if p.Patch.TokenMode != nil {
+		tokenMode = *p.Patch.TokenMode
+	}
+	if p.Patch.ToolApprovalMode != nil {
+		toolApproval = *p.Patch.ToolApprovalMode
+	}
+	rebuild := model != sess.model || effort != sess.effort || tokenMode != sess.tokenMode
+	if !rebuild {
+		s.mu.Lock()
+		if s.sessions[sess.id] != sess {
+			s.mu.Unlock()
+			return protocol.SessionProfileSetResult{}, protocol.MustRemoteError(protocol.ErrSessionNotFound, protocol.ErrorOptions{})
+		}
+		sess.collaboration, sess.toolApproval = collaboration, toolApproval
+		profile, epoch := resolvedProfile(sess), sess.runtimeEpoch
+		s.mu.Unlock()
+		applyControllerProfile(sess.ctrl, collaboration, toolApproval)
+		return protocol.SessionProfileSetResult{
+			ResolvedProfile: profile, RuntimeEpoch: epoch,
+			Disposition: protocol.ProfileUpdated, AutoResolvedPromptIDs: []protocol.PromptID{},
+		}, nil
+	}
+	effortOverride := &effort
+	newController, buildErr := s.buildController(ctx, model, effortOverride, sess.sink, tokenMode)
+	if buildErr != nil || newController == nil {
+		return protocol.SessionProfileSetResult{}, protocol.MustRemoteError(protocol.ErrInvalidProfile, protocol.ErrorOptions{Target: &p.Target})
+	}
+	newController.AdoptHistory(sess.ctrl.History(), sess.ctrl.SessionPath())
+	applyControllerProfile(newController, collaboration, toolApproval)
+	s.mu.Lock()
+	if s.sessions[sess.id] != sess || sess.ctrl.Running() {
+		s.mu.Unlock()
+		newController.Close()
+		return protocol.SessionProfileSetResult{}, protocol.MustRemoteError(protocol.ErrSessionBusy, protocol.ErrorOptions{Target: &p.Target})
+	}
+	old := sess.ctrl
+	sess.ctrl = newController
+	sess.model = newController.ModelRef()
+	sess.effort = effort
+	sess.collaboration, sess.tokenMode, sess.toolApproval = collaboration, tokenMode, toolApproval
+	sess.runtimeEpoch = protocol.RuntimeEpoch("runtime_" + randomHex(12))
+	sess.updatedAt = time.Now().UnixMilli()
+	profile, epoch := resolvedProfile(sess), sess.runtimeEpoch
+	s.mu.Unlock()
+	old.Close()
+	return protocol.SessionProfileSetResult{
+		ResolvedProfile: profile, RuntimeEpoch: epoch,
+		Disposition: protocol.ProfileRebuilt, AutoResolvedPromptIDs: []protocol.PromptID{},
+	}, nil
+}
+
+func (s *Server) sessionContext(p protocol.SessionContextParams) (protocol.SessionContextResult, error) {
+	sess, err := s.sessionForQuery(p.ExpectedHostEpoch, p.Target, p.ExpectedRuntimeEpoch)
+	if err != nil {
+		return protocol.SessionContextResult{}, err
+	}
+	return protocol.SessionContextResult{Context: sessionContextView(sess)}, nil
+}
+
+func sessionContextView(sess *session) protocol.ContextView {
+	view := emptyContext()
+	if controller, ok := sess.ctrl.(interface{ ContextSnapshot() (int, int) }); ok {
+		view.UsedTokens, view.WindowTokens = controller.ContextSnapshot()
+	}
+	if controller, ok := sess.ctrl.(interface{ LastUsage() *provider.Usage }); ok {
+		if usage := controller.LastUsage(); usage != nil {
+			view.PromptTokens = usage.PromptTokens
+			view.CompletionTokens = usage.CompletionTokens
+			view.TotalTokens = usage.TotalTokens
+			view.ReasoningTokens = usage.ReasoningTokens
+			view.CacheHitTokens = usage.CacheHitTokens
+			view.CacheMissTokens = usage.CacheMissTokens
+		}
+	}
+	if controller, ok := sess.ctrl.(interface{ SessionCache() (int, int) }); ok {
+		view.SessionCacheHitTokens, view.SessionCacheMissTokens = controller.SessionCache()
+	}
+	return view
+}
+
+func (s *Server) sessionBalance(ctx context.Context, p protocol.SessionBalanceParams) (protocol.SessionBalanceResult, error) {
+	sess, err := s.sessionForQuery(p.ExpectedHostEpoch, p.Target, p.ExpectedRuntimeEpoch)
+	if err != nil {
+		return protocol.SessionBalanceResult{}, err
+	}
+	controller, ok := sess.ctrl.(interface {
+		Balance(context.Context) (*billing.Balance, error)
+	})
+	if !ok {
+		return protocol.SessionBalanceResult{Available: false}, nil
+	}
+	balance, err := controller.Balance(ctx)
+	if err != nil {
+		return protocol.SessionBalanceResult{}, protocol.MustRemoteError(protocol.ErrQueryFailed, protocol.ErrorOptions{Target: &p.Target})
+	}
+	if balance == nil {
+		return protocol.SessionBalanceResult{Available: false}, nil
+	}
+	return protocol.SessionBalanceResult{Available: true, Display: balance.Display()}, nil
+}
+
+func (s *Server) jobList(p protocol.JobListParams) (protocol.JobListResult, error) {
+	sess, err := s.sessionForQuery(p.ExpectedHostEpoch, p.Target, p.ExpectedRuntimeEpoch)
+	if err != nil {
+		return protocol.JobListResult{}, err
+	}
+	return protocol.JobListResult{Jobs: sessionJobViews(sess), HasMore: false}, nil
+}
+
+func sessionJobViews(sess *session) []protocol.JobView {
+	controller, ok := sess.ctrl.(interface{ Jobs() []jobs.View })
+	if !ok {
+		return []protocol.JobView{}
+	}
+	values := controller.Jobs()
+	out := make([]protocol.JobView, 0, len(values))
+	for _, job := range values {
+		out = append(out, protocol.JobView{ID: protocol.JobID(job.ID), Kind: protocol.JobKind(job.Kind), Label: job.Label, Status: protocol.JobStatus(job.Status), StartedAt: job.StartedAt})
+	}
+	return out
+}
+
+func (s *Server) jobCancel(p protocol.JobCancelParams) (protocol.JobCancelResult, error) {
+	sess, err := s.sessionForMutation(p.ExpectedHostEpoch, p.Target, p.ExpectedRuntimeEpoch)
+	if err != nil {
+		return protocol.JobCancelResult{}, err
+	}
+	controller, ok := sess.ctrl.(interface{ CancelJob(string) bool })
+	if !ok {
+		return protocol.JobCancelResult{}, protocol.MustRemoteError(protocol.ErrCapabilityUnavailable, protocol.ErrorOptions{})
+	}
+	disposition := protocol.JobNotRunning
+	if controller.CancelJob(string(p.JobID)) {
+		disposition = protocol.JobCancelled
+	}
+	return protocol.JobCancelResult{Disposition: disposition}, nil
+}
+
+func (s *Server) cancel(p protocol.TurnCancelParams) (protocol.TurnCancelResult, error) {
+	sess, err := s.sessionForMutation(p.ExpectedHostEpoch, p.Target, p.ExpectedRuntimeEpoch)
+	if err != nil {
+		return protocol.TurnCancelResult{}, err
+	}
+	s.mu.Lock()
+	current := sess.currentTurn
+	s.mu.Unlock()
+	if current == "" {
+		return protocol.TurnCancelResult{}, protocol.MustRemoteError(protocol.ErrTurnNotActive, protocol.ErrorOptions{Target: &p.Target})
+	}
+	if p.ExpectedTurnID != current {
+		return protocol.TurnCancelResult{}, protocol.MustRemoteError(protocol.ErrTurnMismatch, protocol.ErrorOptions{Target: &p.Target, Expected: string(p.ExpectedTurnID), Actual: string(current)})
+	}
+	sess.ctrl.Cancel()
+	return protocol.TurnCancelResult{Status: protocol.CancelRequested, TurnID: current}, nil
+}
+
+func (s *Server) fileList(p protocol.FileListParams) (protocol.FileListResult, error) {
+	if _, err := s.sessionForQuery(p.ExpectedHostEpoch, p.Target, p.ExpectedRuntimeEpoch); err != nil {
+		return protocol.FileListResult{}, err
+	}
+	entries, _, err := files.ListDir(s.opts.Workspace, p.Path)
+	if err != nil {
+		return protocol.FileListResult{}, protocol.MustRemoteError(protocol.ErrQueryFailed, protocol.ErrorOptions{Target: &p.Target})
+	}
+	out := make([]protocol.FileEntry, 0, len(entries))
+	for _, entry := range entries {
+		path := filepath.ToSlash(filepath.Join(p.Path, entry.Name()))
+		out = append(out, protocol.FileEntry{Name: entry.Name(), Path: path, IsDir: entry.IsDir()})
+	}
+	return protocol.FileListResult{Entries: out, HasMore: false}, nil
+}
+
+func (s *Server) fileSearch(p protocol.FileSearchParams) (protocol.FileSearchResult, error) {
+	if _, err := s.sessionForQuery(p.ExpectedHostEpoch, p.Target, p.ExpectedRuntimeEpoch); err != nil {
+		return protocol.FileSearchResult{}, err
+	}
+	limit := protocol.SearchDefaultItems
+	if p.Limit != nil {
+		limit = *p.Limit
+	}
+	results := fileref.Search(s.opts.Workspace, p.Query, limit+1)
+	truncated := len(results) > limit
+	if truncated {
+		results = results[:limit]
+	}
+	entries := make([]protocol.FileEntry, 0, len(results))
+	for _, result := range results {
+		entries = append(entries, protocol.FileEntry{Name: filepath.Base(result.Path), Path: filepath.ToSlash(result.Path), IsDir: result.IsDir})
+	}
+	result := protocol.FileSearchResult{Entries: entries, Truncated: truncated, ReturnedItems: len(entries)}
+	if truncated {
+		result.TruncationReason = protocol.SearchResultLimit
+	}
+	return result, nil
+}
+
+func (s *Server) filePreview(p protocol.FilePreviewParams) (protocol.FilePreviewResult, error) {
+	if _, err := s.sessionForQuery(p.ExpectedHostEpoch, p.Target, p.ExpectedRuntimeEpoch); err != nil {
+		return protocol.FilePreviewResult{}, err
+	}
+	full, err := files.ResolveRel(s.opts.Workspace, p.Path)
+	if err != nil {
+		return protocol.FilePreviewResult{}, protocol.MustRemoteError(protocol.ErrPathNotFound, protocol.ErrorOptions{Target: &p.Target})
+	}
+	info, err := os.Stat(full)
+	if err != nil || !info.Mode().IsRegular() {
+		return protocol.FilePreviewResult{}, protocol.MustRemoteError(protocol.ErrNotFile, protocol.ErrorOptions{Target: &p.Target})
+	}
+	data, err := files.ReadFile(s.opts.Workspace, p.Path, protocol.PreviewBytes)
+	if err != nil {
+		return protocol.FilePreviewResult{}, protocol.MustRemoteError(protocol.ErrQueryFailed, protocol.ErrorOptions{Target: &p.Target})
+	}
+	kind := previewKind(p.Path, data)
+	if kind != protocol.FileText {
+		return protocol.FilePreviewResult{
+			Name: filepath.Base(p.Path), Path: p.Path, Kind: kind,
+			SizeBytes: info.Size(), Binary: true,
+		}, nil
+	}
+	// A preview can end in the middle of a UTF-8 rune. Trim only that partial
+	// suffix; invalid data elsewhere is treated as binary metadata.
+	for len(data) > 0 && !utf8.Valid(data) && info.Size() > int64(len(data)) && len(data) >= protocol.PreviewBytes-utf8.UTFMax {
+		data = data[:len(data)-1]
+	}
+	if !utf8.Valid(data) {
+		return protocol.FilePreviewResult{
+			Name: filepath.Base(p.Path), Path: p.Path, Kind: protocol.FileBinary,
+			SizeBytes: info.Size(), Binary: true,
+		}, nil
+	}
+	body := string(data)
+	truncated := info.Size() > int64(len(data))
+	result := protocol.FilePreviewResult{
+		Name: filepath.Base(p.Path), Path: p.Path, Kind: protocol.FileText,
+		SizeBytes: info.Size(), ReturnedBytes: int64(len(data)), Binary: false,
+		Truncated: truncated, Body: &body,
+	}
+	if truncated {
+		result.TruncationReason = protocol.ByteLimit
+	}
+	return result, nil
+}
+
+func previewKind(path string, data []byte) protocol.FileKind {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".ico", ".svg":
+		return protocol.FileImage
+	case ".pdf":
+		return protocol.FilePDF
+	}
+	if bytes.IndexByte(data, 0) >= 0 {
+		return protocol.FileBinary
+	}
+	return protocol.FileText
+}
+
+func (s *Server) sessionForQuery(host protocol.HostEpoch, target protocol.RuntimeTarget, epoch protocol.RuntimeEpoch) (*session, error) {
+	if err := s.checkHostWorkspace(host, target.WorkspaceID); err != nil {
+		return nil, err
+	}
+	s.mu.Lock()
+	sess := s.sessions[target.SessionID]
+	s.mu.Unlock()
+	if sess == nil {
+		return nil, protocol.MustRemoteError(protocol.ErrSessionNotFound, protocol.ErrorOptions{})
+	}
+	if epoch != "" && sess.runtimeEpoch != epoch {
+		return nil, protocol.MustRemoteError(protocol.ErrStaleRuntimeEpoch, protocol.ErrorOptions{Target: &target, Expected: string(epoch), Actual: string(sess.runtimeEpoch)})
+	}
+	return sess, nil
+}
+
+func (s *Server) sessionForMutation(host protocol.HostEpoch, target protocol.RuntimeTarget, epoch protocol.RuntimeEpoch) (*session, error) {
+	return s.sessionForQuery(host, target, epoch)
+}
+
+func (s *Server) checkHost(host protocol.HostEpoch) error {
+	if host != s.hostEpoch {
+		return protocol.MustRemoteError(protocol.ErrStaleHostEpoch, protocol.ErrorOptions{Expected: string(host), Actual: string(s.hostEpoch)})
+	}
+	return nil
+}
+
+func (s *Server) checkHostWorkspace(host protocol.HostEpoch, workspace protocol.WorkspaceID) error {
+	if err := s.checkHost(host); err != nil {
+		return err
+	}
+	if workspace != s.workspaceID {
+		return protocol.MustRemoteError(protocol.ErrWorkspaceNotFound, protocol.ErrorOptions{})
+	}
+	return nil
+}
+
+func (s *Server) target(id protocol.SessionID) protocol.RuntimeTarget {
+	return protocol.RuntimeTarget{WorkspaceID: s.workspaceID, SessionID: id}
+}
+
+func (s *Server) summaryLocked(sess *session) protocol.SessionSummary {
+	preview := ""
+	for _, message := range sess.ctrl.History() {
+		if message.Role == provider.RoleUser && strings.TrimSpace(message.Content) != "" {
+			preview = message.Content
+		}
+	}
+	return protocol.SessionSummary{
+		Target: s.target(sess.id), TopicID: sess.topicID, Title: sess.title,
+		Preview: preview, Turns: sess.ctrl.Turn(), CreatedAtMs: sess.createdAt,
+		LastActivityAtMs: sess.updatedAt, RecoveryInterrupted: false,
+		Runtime: &protocol.SessionRuntimeSummary{RuntimeEpoch: sess.runtimeEpoch, Running: sess.ctrl.Running()},
+	}
+}
+
+func resolvedProfile(sess *session) protocol.ResolvedProfile {
+	return protocol.ResolvedProfile{
+		Model: sess.model, Effort: sess.effort,
+		CollaborationMode: sess.collaboration,
+		TokenMode:         sess.tokenMode, ToolApprovalMode: sess.toolApproval,
+	}
+}
+
+func applyControllerProfile(ctrl SessionController, collaboration protocol.CollaborationMode, approval protocol.ToolApprovalMode) {
+	if controller, ok := ctrl.(interface{ SetPlanMode(bool) }); ok {
+		controller.SetPlanMode(collaboration == protocol.CollaborationPlan)
+	}
+	if controller, ok := ctrl.(interface{ SetToolApprovalMode(string) }); ok {
+		controller.SetToolApprovalMode(string(approval))
+	}
+}
+
+func (s *Server) snapshotLocked(sess *session, pageTurns int) protocol.SessionSnapshot {
+	snapshotID := protocol.SnapshotID("snapshot_" + randomHex(10))
+	history := historyPage(sess, snapshotID, 0, pageTurns)
+	lastError := (*string)(nil)
+	if sess.lastError != "" {
+		copy := sess.lastError
+		lastError = &copy
+	}
+	var current *protocol.TurnState
+	if sess.currentTurn != "" {
+		current = &protocol.TurnState{TurnID: sess.currentTurn}
+	}
+	var currentOperation *protocol.OperationState
+	if sess.currentOp != nil {
+		copy := *sess.currentOp
+		currentOperation = &copy
+	}
+	externalized := s.sessionMirrorArtifactLocked(sess)
+	var goal *string
+	var goalStatus protocol.GoalStatus
+	if controller, ok := sess.ctrl.(goalController); ok {
+		value, status := protocolGoal(controller)
+		if value != "" {
+			goal = &value
+		}
+		goalStatus = status
+	}
+	return protocol.SessionSnapshot{
+		SnapshotID: snapshotID, HostEpoch: s.hostEpoch, Target: s.target(sess.id),
+		RuntimeEpoch: sess.runtimeEpoch, BoundarySeq: 0,
+		Meta: protocol.SessionMetaSnapshot{
+			TopicID: sess.topicID, Title: sess.title, ResolvedProfile: resolvedProfile(sess),
+			Goal: goal, GoalStatus: goalStatus, Capabilities: protocol.FrozenCapabilities(false, false),
+		},
+		Runtime: protocol.SessionRuntimeState{
+			Running: sess.ctrl.Running() || currentOperation != nil, CurrentTurn: current, CurrentOperation: currentOperation,
+			CancelRequested: false, LastOutcome: sess.lastOutcome,
+			LastError: lastError, LiveEvents: append([]eventwire.Event{}, sess.liveEvents...),
+		},
+		History: history, Todos: sessionTodoViews(sess.ctrl),
+		PendingPrompt: clonePendingPrompt(sess.pendingPrompt),
+		Context:       sessionContextView(sess), Jobs: sessionJobViews(sess),
+		Checkpoints: sessionCheckpointViews(s.opts.Workspace, sess.ctrl), Externalized: externalized,
+	}
+}
+
+func (s *Server) sessionMirrorArtifactLocked(sess *session) []protocol.ExternalizedField {
+	path := strings.TrimSpace(sess.ctrl.SessionPath())
+	if path == "" {
+		return []protocol.ExternalizedField{}
+	}
+	data, err := os.ReadFile(path)
+	if err != nil || len(data) == 0 || len(data) > protocol.ContentRefObjectBytes {
+		return []protocol.ExternalizedField{}
+	}
+	sum := sha256.Sum256(data)
+	digest := hex.EncodeToString(sum[:])
+	ref := protocol.ContentRef("content_" + randomHex(12))
+	s.contents[ref] = contentObject{data: append([]byte(nil), data...), sha256: digest, createdAt: time.Now()}
+	if len(s.contents) > 64 {
+		var oldestRef protocol.ContentRef
+		var oldest time.Time
+		for candidate, object := range s.contents {
+			if candidate == ref {
+				continue
+			}
+			if oldestRef == "" || object.createdAt.Before(oldest) {
+				oldestRef, oldest = candidate, object.createdAt
+			}
+		}
+		delete(s.contents, oldestRef)
+	}
+	original := int64(len(data))
+	return []protocol.ExternalizedField{{
+		JSONPointer: "/mirror/session.jsonl", ContentRef: ref, TotalBytes: original,
+		SHA256: digest, OriginalBytes: &original,
+	}}
+}
+
+func emptyContext() protocol.ContextView {
+	return protocol.ContextView{Sources: []protocol.UsageSourceView{}, ReadFiles: []protocol.ReadFileRecord{}}
+}
+
+func approvalPendingPrompt(approval event.Approval) *protocol.PendingPrompt {
+	return &protocol.PendingPrompt{Kind: protocol.PromptApproval, Approval: &protocol.ApprovalPrompt{
+		PromptID: protocol.PromptID(approval.ID), Tool: approval.Tool, Subject: approval.Subject,
+		Reason: stringPtrOrNil(approval.Reason), Fresh: approval.Fresh,
+		AllowedDecisions: []protocol.PromptDecision{
+			protocol.DecisionAllowOnce, protocol.DecisionAllowSession,
+			protocol.DecisionAllowPersistent, protocol.DecisionDeny,
+		},
+	}}
+}
+
+func askPendingPrompt(ask event.Ask) *protocol.PendingPrompt {
+	questions := make([]protocol.AskQuestion, 0, len(ask.Questions))
+	for _, question := range ask.Questions {
+		options := make([]protocol.AskOption, 0, len(question.Options))
+		for _, option := range question.Options {
+			options = append(options, protocol.AskOption{Label: option.Label, Description: stringPtrOrNil(option.Description)})
+		}
+		questions = append(questions, protocol.AskQuestion{
+			QuestionID: protocol.QuestionID(question.ID), Header: question.Header,
+			Prompt: stringPtrOrNil(question.Prompt), Options: options, Multi: question.Multi,
+		})
+	}
+	return &protocol.PendingPrompt{Kind: protocol.PromptAsk, Ask: &protocol.AskPrompt{PromptID: protocol.PromptID(ask.ID), Questions: questions}}
+}
+
+func clonePendingPrompt(value *protocol.PendingPrompt) *protocol.PendingPrompt {
+	if value == nil {
+		return nil
+	}
+	copy := *value
+	if value.Approval != nil {
+		approval := *value.Approval
+		approval.AllowedDecisions = append([]protocol.PromptDecision(nil), value.Approval.AllowedDecisions...)
+		copy.Approval = &approval
+	}
+	if value.Ask != nil {
+		ask := *value.Ask
+		ask.Questions = append([]protocol.AskQuestion(nil), value.Ask.Questions...)
+		copy.Ask = &ask
+	}
+	return &copy
+}
+
+func (sink *sessionSink) Emit(e event.Event) {
+	if sink == nil || sink.server == nil {
+		return
+	}
+	s := sink.server
+	wired := eventwire.ToWire(e)
+	s.mu.Lock()
+	sess := s.sessions[sink.sessionID]
+	if sess == nil {
+		s.mu.Unlock()
+		return
+	}
+	turnID := sess.currentTurn
+	if e.Kind == event.TurnStarted {
+		sess.liveEvents = nil
+	}
+	sess.liveEvents = append(sess.liveEvents, wired)
+	if len(sess.liveEvents) > 256 {
+		sess.liveEvents = append([]eventwire.Event(nil), sess.liveEvents[len(sess.liveEvents)-256:]...)
+	}
+	switch e.Kind {
+	case event.ApprovalRequest:
+		sess.pendingPrompt = approvalPendingPrompt(e.Approval)
+	case event.AskRequest:
+		sess.pendingPrompt = askPendingPrompt(e.Ask)
+	}
+	if e.Kind == event.TurnDone {
+		sess.currentTurn = ""
+		if sess.currentOp != nil {
+			sess.currentOp = nil
+			if sess.operationStop != nil {
+				sess.operationStop()
+				sess.operationStop = nil
+			}
+		}
+		sess.updatedAt = time.Now().UnixMilli()
+		if e.Cancelled {
+			sess.lastOutcome = protocol.OutcomeCancelled
+		} else if e.Err != nil {
+			sess.lastOutcome = protocol.OutcomeFailed
+			sess.lastError = e.Err.Error()
+		} else {
+			sess.lastOutcome = protocol.OutcomeCompleted
+			sess.lastError = ""
+		}
+		if sess.pendingPrompt == nil {
+			sess.liveEvents = nil
+		}
+	}
+	ready := make([]struct {
+		conn  *rpcwire.Conn
+		event protocol.SessionEvent
+	}, 0)
+	for _, sub := range s.subs {
+		if sub.sessionID != sink.sessionID {
+			continue
+		}
+		sub.seq++
+		envelope := protocol.SessionEvent{
+			SubscriptionID: sub.id, HostEpoch: s.hostEpoch, Target: s.target(sess.id),
+			RuntimeEpoch: sess.runtimeEpoch, Seq: sub.seq, TurnID: turnID,
+			Event: wired, Externalized: []protocol.ExternalizedField{},
+		}
+		if !sub.active {
+			sub.pending = append(sub.pending, envelope)
+			continue
+		}
+		ready = append(ready, struct {
+			conn  *rpcwire.Conn
+			event protocol.SessionEvent
+		}{sub.conn, envelope})
+	}
+	s.mu.Unlock()
+	for _, notification := range ready {
+		_ = notification.conn.Notify(string(protocol.MethodSessionEvent), notification.event)
+	}
+}
+
 func (s *Server) graceLoop(ctx context.Context) {
-	t := time.NewTicker(15 * time.Second)
-	defer t.Stop()
+	ticker := time.NewTicker(15 * time.Second)
+	defer ticker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-t.C:
+		case <-ticker.C:
 			s.mu.Lock()
-			shouldExit := !s.attached && !s.lastDetach.IsZero() && time.Since(s.lastDetach) >= GracePeriod && !s.hasBusyLocked()
+			exit := !s.attached && !s.lastDetach.IsZero() && time.Since(s.lastDetach) >= GracePeriod && !s.hasBusyLocked()
+			ln := s.ln
 			s.mu.Unlock()
-			if shouldExit {
+			if exit {
 				s.snapshotAndClose()
-				if s.ln != nil {
-					_ = s.ln.Close()
+				if ln != nil {
+					_ = ln.Close()
 				}
 				return
 			}
@@ -153,267 +1508,42 @@ func (s *Server) graceLoop(ctx context.Context) {
 
 func (s *Server) hasBusyLocked() bool {
 	for _, sess := range s.sessions {
-		if sess.ctrl != nil && sess.ctrl.Running() {
+		if sess.currentOp != nil || (sess.ctrl != nil && sess.ctrl.Running()) {
 			return true
 		}
 	}
 	return false
 }
 
-func (s *Server) serveConn(ctx context.Context, conn net.Conn) {
-	defer conn.Close()
-	s.mu.Lock()
-	s.gen++
-	gen := s.gen
-	s.attached = true
-	s.lastDetach = time.Time{}
-	s.mu.Unlock()
-	defer func() {
-		s.mu.Lock()
-		if s.gen == gen {
-			s.attached = false
-			s.lastDetach = time.Now()
-		}
-		s.mu.Unlock()
-	}()
-
-	wire := rpcwire.NewConn(conn, conn, rpcwire.Options{
-		Name: "workbench-runtime", StrictJSONRPC: true,
-		MaxInboundBytes: protocol.FrameBytes, MaxOutboundBytes: protocol.FrameBytes,
-	})
-	// Minimal RuntimeAPI handlers for workbench hydrate/control.
-	wire.Handle(string(protocol.MethodRemoteInitialize), s.handleInitialize)
-	wire.Handle(string(protocol.MethodRemotePing), s.handlePing)
-	wire.Handle(string(protocol.MethodRemoteDetach), s.handleDetach)
-	wire.Handle(string(protocol.MethodSessionList), s.handleSessionList)
-	wire.Handle(string(protocol.MethodSessionCreate), s.handleSessionCreate)
-	wire.Handle(string(protocol.MethodSessionHistory), s.handleSessionHistory)
-	wire.Handle(string(protocol.MethodSessionSubmit), s.handleSessionSubmit)
-	wire.Handle(string(protocol.MethodTurnCancel), s.handleTurnCancel)
-	wire.Handle(string(protocol.MethodFileList), s.handleFileList)
-	wire.Handle(string(protocol.MethodFilePreview), s.handleFilePreview)
-	wire.Handle(string(protocol.MethodHostCapabilities), s.handleCapabilities)
-
-	_ = wire.Serve(ctx)
-}
-
-func (s *Server) handleInitialize(ctx context.Context, params json.RawMessage) (any, error) {
-	// Accept initialize; Schema Hash enforcement happens in attach bootstrap.
-	return map[string]any{
-		"hostEpoch": "he_1",
-		"lease":     map[string]any{"leaseId": "lease_local", "ttlMs": 30000, "pingIntervalMs": 10000},
-		"host": map[string]any{
-			"os": runtimeGOOS(), "arch": runtimeGOARCH(),
-			"shellKind": "sh", "sandboxBackend": "none",
-		},
-		"capabilities": map[string]any{
-			"features": map[string]any{
-				"coreSession": true, "primaryFileQueries": true,
-				"userShell": false, "jobCancel": true,
-			},
-		},
-		"buildId": map[string]any{
-			"productVersion":  s.opts.Version,
-			"protocolVersion": protocol.ProtocolVersion,
-			"schemaHash":      protocol.SchemaHash(),
-		},
-	}, nil
-}
-
-func (s *Server) handlePing(ctx context.Context, params json.RawMessage) (any, error) {
-	return map[string]any{"hostEpoch": "he_1", "leaseTtlMs": 30000}, nil
-}
-
-func (s *Server) handleDetach(ctx context.Context, params json.RawMessage) (any, error) {
-	return map[string]any{"detached": true}, nil
-}
-
-func (s *Server) handleCapabilities(ctx context.Context, params json.RawMessage) (any, error) {
-	return map[string]any{
-		"hostEpoch": "he_1",
-		"capabilities": map[string]any{
-			"features": map[string]any{
-				"coreSession": true, "primaryFileQueries": true,
-				"userShell": false, "jobCancel": true,
-			},
-		},
-	}, nil
-}
-
-func (s *Server) handleSessionList(ctx context.Context, params json.RawMessage) (any, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	out := make([]map[string]any, 0, len(s.sessions))
-	for _, sess := range s.sessions {
-		label := sess.model
-		if sess.ctrl != nil {
-			label = sess.ctrl.Label()
-		}
-		out = append(out, map[string]any{
-			"id": sess.id, "label": label, "modelRef": sess.model,
-			"running": sess.ctrl != nil && sess.ctrl.Running(),
-		})
-	}
-	return map[string]any{"sessions": out}, nil
-}
-
-func (s *Server) handleSessionCreate(ctx context.Context, params json.RawMessage) (any, error) {
-	var body struct {
-		Model string `json:"model"`
-	}
-	_ = json.Unmarshal(params, &body)
-	id := "rs_" + randomHex(8)
-	var ctrl SessionController
-	var err error
-	if s.opts.BuildController != nil {
-		ctrl, err = s.opts.BuildController(ctx, body.Model)
-		if err != nil {
-			return nil, &rpcwire.RPCError{Code: rpcwire.ErrInternal, Message: err.Error()}
-		}
-	}
-	s.mu.Lock()
-	s.sessions[id] = &session{id: id, ctrl: ctrl, model: body.Model}
-	s.mu.Unlock()
-	return map[string]any{
-		"session": map[string]any{"id": id, "modelRef": body.Model, "label": body.Model},
-	}, nil
-}
-
-func (s *Server) handleSessionHistory(ctx context.Context, params json.RawMessage) (any, error) {
-	// Params vary by full protocol; accept target.sessionId loosely.
-	var body struct {
-		Target struct {
-			SessionID string `json:"sessionId"`
-		} `json:"target"`
-		SessionID string `json:"sessionId"`
-	}
-	_ = json.Unmarshal(params, &body)
-	sid := body.Target.SessionID
-	if sid == "" {
-		sid = body.SessionID
-	}
-	s.mu.Lock()
-	sess := s.sessions[sid]
-	s.mu.Unlock()
-	if sess == nil {
-		return nil, &rpcwire.RPCError{Code: rpcwire.ErrInvalidParams, Message: "session not found"}
-	}
-	msgs := []map[string]any{}
-	if sess.ctrl != nil {
-		msgs = sess.ctrl.History()
-	}
-	return map[string]any{
-		"messages": msgs, "startTurn": 0, "endTurn": 0, "totalTurns": 0,
-	}, nil
-}
-
-func (s *Server) handleSessionSubmit(ctx context.Context, params json.RawMessage) (any, error) {
-	var body struct {
-		Target struct {
-			SessionID string `json:"sessionId"`
-		} `json:"target"`
-		Input string `json:"input"`
-		Text  string `json:"text"`
-	}
-	_ = json.Unmarshal(params, &body)
-	sid := body.Target.SessionID
-	input := body.Input
-	if input == "" {
-		input = body.Text
-	}
-	s.mu.Lock()
-	sess := s.sessions[sid]
-	s.mu.Unlock()
-	if sess == nil || sess.ctrl == nil {
-		return nil, &rpcwire.RPCError{Code: rpcwire.ErrInvalidParams, Message: "session not found"}
-	}
-	if err := sess.ctrl.Submit(input); err != nil {
-		return nil, &rpcwire.RPCError{Code: rpcwire.ErrInternal, Message: err.Error()}
-	}
-	return map[string]any{"kind": "turn", "turnId": "t_" + randomHex(4)}, nil
-}
-
-func (s *Server) handleTurnCancel(ctx context.Context, params json.RawMessage) (any, error) {
-	var body struct {
-		Target struct {
-			SessionID string `json:"sessionId"`
-		} `json:"target"`
-	}
-	_ = json.Unmarshal(params, &body)
-	s.mu.Lock()
-	sess := s.sessions[body.Target.SessionID]
-	s.mu.Unlock()
-	if sess != nil && sess.ctrl != nil {
-		sess.ctrl.Cancel()
-	}
-	return map[string]any{"status": "cancel_requested"}, nil
-}
-
-func (s *Server) handleFileList(ctx context.Context, params json.RawMessage) (any, error) {
-	var body struct {
-		Path string `json:"path"`
-		Ref  string `json:"directoryRef"`
-	}
-	_ = json.Unmarshal(params, &body)
-	rel := body.Ref
-	if rel == "" {
-		rel = body.Path
-	}
-	entries, _, err := files.ListDir(s.opts.Workspace, rel)
-	if err != nil {
-		return nil, &rpcwire.RPCError{Code: rpcwire.ErrInvalidParams, Message: err.Error()}
-	}
-	out := make([]map[string]any, 0, len(entries))
-	for _, e := range entries {
-		out = append(out, map[string]any{
-			"name": e.Name(), "isDir": e.IsDir(),
-		})
-	}
-	return map[string]any{"entries": out}, nil
-}
-
-func (s *Server) handleFilePreview(ctx context.Context, params json.RawMessage) (any, error) {
-	var body struct {
-		Path string `json:"path"`
-		Ref  string `json:"fileRef"`
-	}
-	_ = json.Unmarshal(params, &body)
-	rel := body.Ref
-	if rel == "" {
-		rel = body.Path
-	}
-	data, err := files.ReadFile(s.opts.Workspace, rel, 1<<20)
-	if err != nil {
-		return nil, &rpcwire.RPCError{Code: rpcwire.ErrInvalidParams, Message: err.Error()}
-	}
-	return map[string]any{
-		"kind": "text", "body": string(data), "binary": false,
-	}, nil
-}
-
 func (s *Server) snapshotAndClose() {
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	controllers := make([]SessionController, 0, len(s.sessions))
 	for _, sess := range s.sessions {
 		if sess.ctrl != nil {
-			sess.ctrl.Close()
+			controllers = append(controllers, sess.ctrl)
 		}
 	}
-	s.sessions = map[string]*session{}
-	if s.socket != "" {
-		_ = os.Remove(s.socket)
+	s.sessions = make(map[protocol.SessionID]*session)
+	s.subs = make(map[protocol.SubscriptionID]*subscription)
+	s.mu.Unlock()
+	for _, ctrl := range controllers {
+		ctrl.Close()
 	}
 }
 
-// Close forces runtime shutdown.
 func (s *Server) Close() {
-	s.snapshotAndClose()
-	if s.ln != nil {
-		_ = s.ln.Close()
+	s.mu.Lock()
+	ln, conn := s.ln, s.activeConn
+	s.mu.Unlock()
+	if conn != nil {
+		_ = conn.Close()
 	}
+	if ln != nil {
+		_ = ln.Close()
+	}
+	s.snapshotAndClose()
 }
 
-// ForceDetachForTest marks detached for grace tests.
 func (s *Server) ForceDetachForTest() {
 	s.mu.Lock()
 	s.attached = false
@@ -421,11 +1551,14 @@ func (s *Server) ForceDetachForTest() {
 	s.mu.Unlock()
 }
 
-// Attached reports whether an attach generation is live.
 func (s *Server) Attached() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.attached
+}
+
+func leaseID(gen uint64) protocol.LeaseID {
+	return protocol.LeaseID("lease_" + strings.TrimSpace(time.Unix(0, int64(gen)).Format("150405.000000000")))
 }
 
 func randomHex(n int) string {
@@ -434,6 +1567,50 @@ func randomHex(n int) string {
 	return hex.EncodeToString(b)
 }
 
-func runtimeGOOS() string { return goruntime.GOOS }
+func stringPtrOrNil(value string) *string {
+	if value == "" {
+		return nil
+	}
+	copy := value
+	return &copy
+}
 
-func runtimeGOARCH() string { return goruntime.GOARCH }
+func splitModelRef(ref string) (string, string) {
+	if i := strings.IndexByte(ref, '/'); i >= 0 {
+		return ref[:i], ref[i+1:]
+	}
+	return ref, ref
+}
+
+func currentBuildID(opts Options) protocol.BuildID {
+	revision := strings.TrimSpace(opts.SourceRevision)
+	modified := false
+	if revision == "" {
+		if info, ok := debug.ReadBuildInfo(); ok {
+			for _, setting := range info.Settings {
+				switch setting.Key {
+				case "vcs.revision":
+					revision = setting.Value
+				case "vcs.modified":
+					modified = setting.Value == "true"
+				}
+			}
+		}
+	}
+	if len(revision) != 40 {
+		revision = strings.Repeat("0", 40)
+		modified = false
+	}
+	if modified {
+		revision += "+dirty"
+	}
+	version := strings.TrimSpace(opts.Version)
+	if version == "" {
+		version = "dev"
+	}
+	id, err := protocol.NewBuildID(version, revision)
+	if err != nil {
+		panic(err)
+	}
+	return id
+}

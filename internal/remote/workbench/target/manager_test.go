@@ -44,6 +44,12 @@ func TestManagerStartsLocalAndFencesSwitch(t *testing.T) {
 	if hint.HostID != "lab" || hint.Workspace != "/home/u/w" {
 		t.Fatalf("hint = %+v", hint)
 	}
+	// Returning to the same connected adapter is allowed even if it became busy
+	// in the background; this does not replace the Host or transport.
+	m.SetRemoteBusy(true)
+	if active, _, _, err := m.ActivateRemote(rgen); err != nil || active.Kind != KindRemote {
+		t.Fatalf("reactivate connected remote = %+v err=%v", active, err)
+	}
 }
 
 func TestManagerRejectsBusyHostSwap(t *testing.T) {
@@ -67,5 +73,62 @@ func TestManagerRejectsBusyHostSwap(t *testing.T) {
 	id, _, _ := m.Active()
 	if id.Kind != KindLocal {
 		t.Fatalf("after detach active = %+v", id)
+	}
+}
+
+func TestManagerSeparatesAttachAndProjectionGenerations(t *testing.T) {
+	m := New()
+	_, attachGen, err := m.BeginRemoteConnect("lab", "/work")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.MarkRemoteConnected(attachGen); err != nil {
+		t.Fatal(err)
+	}
+	_, projectionGen, _, err := m.ActivateRemote(attachGen)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if projectionGen == attachGen {
+		t.Fatal("projection generation must fence the preceding connect transition")
+	}
+	remote := m.Remote()
+	if remote == nil || remote.Generation != attachGen || !remote.Connected {
+		t.Fatalf("remote lifecycle = %+v, want attach generation %d", remote, attachGen)
+	}
+	if !m.AbortRemoteConnect(attachGen) || m.Remote() != nil {
+		t.Fatal("current failed generation was not cleared")
+	}
+	if m.AbortRemoteConnect(attachGen) {
+		t.Fatal("stale abort unexpectedly cleared a newer state")
+	}
+}
+
+func TestManagerUnexpectedDisconnectReturnsToLocalAndClearsBusy(t *testing.T) {
+	m := New()
+	_, attachGen, err := m.BeginRemoteConnect("lab", "/work")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.MarkRemoteConnected(attachGen); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err := m.ActivateRemote(attachGen); err != nil {
+		t.Fatal(err)
+	}
+	m.SetRemoteBusy(true)
+	id, _, _, changed := m.MarkRemoteDisconnected(attachGen)
+	if !changed || id.Kind != KindLocal {
+		t.Fatalf("disconnect = %+v changed=%v", id, changed)
+	}
+	remote := m.Remote()
+	if remote == nil || remote.Connected {
+		t.Fatalf("remote lifecycle = %+v", remote)
+	}
+	if _, _, err := m.BeginRemoteConnect("lab", "/work"); err != nil {
+		t.Fatalf("reconnect remained fenced as busy: %v", err)
+	}
+	if _, _, _, changed := m.MarkRemoteDisconnected(attachGen); changed {
+		t.Fatal("stale disconnect changed replacement connection")
 	}
 }

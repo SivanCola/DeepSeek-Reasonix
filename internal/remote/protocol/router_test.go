@@ -11,7 +11,7 @@ import (
 )
 
 func validInitializeParams(t *testing.T) InitializeParams {
-	return InitializeParams{BuildID: validBuildID(t), ClientInstanceID: "client-1"}
+	return InitializeParams{BuildID: validBuildID(t), ClientInstanceID: "client-1", Workspace: "/workspace"}
 }
 
 func validInitializeResult(t *testing.T) InitializeResult {
@@ -114,6 +114,31 @@ func TestRouterClientNotificationPoisonsHandshakeBeforeAndAfterInitialize(t *tes
 	}
 	if err := router.BeforeRequest(string(MethodRemotePing), nil); err == nil {
 		t.Fatal("request accepted after post-initialize notification poisoned transport")
+	}
+}
+
+func TestRouterAcceptsTypedBrokerNotificationAfterInitialize(t *testing.T) {
+	router, err := NewRouter(HandlerSet{MethodRemoteInitialize: initHandler(t)}, RouterOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := router.BeforeRequest(string(MethodRemoteInitialize), nil); err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := json.Marshal(validInitializeParams(t))
+	spec, _ := LookupMethod(MethodRemoteInitialize)
+	if _, err := router.invoke(context.Background(), spec, raw); err != nil {
+		t.Fatal(err)
+	}
+	chunk, _ := json.Marshal(BrokerStreamChunkParams{
+		StreamID: "stream-1", Seq: 1,
+		Chunk: BrokerProviderChunk{Type: BrokerChunkText, Text: "ok"},
+	})
+	if err := router.BeforeNotification(string(MethodBrokerStreamChunk), chunk); err != nil {
+		t.Fatalf("valid Broker notification rejected: %v", err)
+	}
+	if !router.Ready() {
+		t.Fatal("valid Broker notification poisoned ready router")
 	}
 }
 

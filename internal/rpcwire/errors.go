@@ -15,6 +15,9 @@ const (
 	ErrMethodNotFound = -32601
 	ErrInvalidParams  = -32602
 	ErrInternal       = -32603
+	// ErrServerBusy is a stable transport-local overload response. It is outside
+	// the JSON-RPC reserved range and intentionally carries no peer data.
+	ErrServerBusy = -32099
 )
 
 // ErrorObject is the JSON-RPC error object carried on the wire.

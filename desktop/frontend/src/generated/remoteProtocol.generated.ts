@@ -2,7 +2,7 @@
 
 export const REMOTE_SCHEMA_FORMAT = "reasonix.remote.schema.v1" as const;
 export const REMOTE_PROTOCOL_VERSION = "1" as const;
-export const REMOTE_SCHEMA_HASH = "sha256:584faeb12d44da989d4aa24f416ae50ac559a2d97210ec34a647b49dc168db23" as const;
+export const REMOTE_SCHEMA_HASH = "sha256:4928d1eeb1fad16d509ab13f72613209d46082a89e3f68ab85dea123b42e11da" as const;
 
 export const REMOTE_FIXED_RESOURCES = {
   "protocol": {
@@ -21,7 +21,8 @@ export const REMOTE_FIXED_RESOURCES = {
     "searchMaxVisitedItems": 10000,
     "previewBytes": 262144,
     "gitHistoryCommits": 100,
-    "gitPatchBytes": 1048576
+    "gitPatchBytes": 1048576,
+    "rpcConcurrentHandlers": 64
   },
   "lease": {
     "ttlMs": 30000,
@@ -41,6 +42,8 @@ export type RemoteRequiredFeature = (typeof REMOTE_REQUIRED_FEATURES)[number];
 export type RemoteDynamicFeature = (typeof REMOTE_DYNAMIC_FEATURES)[number];
 export type RemoteDeferredFeature = (typeof REMOTE_DEFERRED_FEATURES)[number];
 export type RemoteFeatureName = RemoteRequiredFeature | RemoteDynamicFeature | RemoteDeferredFeature;
+
+export type RemoteJSONValue = null | boolean | number | string | Array<RemoteJSONValue> | { [key: string]: RemoteJSONValue };
 
 export type RemoteBuildIDRaw = {
   "productVersion": string;
@@ -85,6 +88,7 @@ export type RemoteCapabilitiesRaw = {
     "pageDefaultItems": 200;
     "pageMaxItems": 1000;
     "previewBytes": 262144;
+    "rpcConcurrentHandlers": 64;
     "searchDefaultItems": 20;
     "searchMaxItems": 100;
     "searchMaxVisitedItems": 10000;
@@ -121,6 +125,7 @@ export type RemoteCapabilitiesHydrated = {
     "pageDefaultItems": 200;
     "pageMaxItems": 1000;
     "previewBytes": 262144;
+    "rpcConcurrentHandlers": 64;
     "searchDefaultItems": 20;
     "searchMaxItems": 100;
     "searchMaxVisitedItems": 10000;
@@ -847,12 +852,64 @@ export type BrokerStreamCancelResultHydrated = {
 };
 
 export type BrokerStreamChunkParamsRaw = {
-  "chunk": Array<number>;
+  "chunk": {
+    "argChars"?: number;
+    "error"?: {
+      "code": "provider_failed" | "provider_interrupted";
+      "message": string;
+    };
+    "signature"?: string;
+    "text"?: string;
+    "toolCall"?: {
+      "added"?: number;
+      "arguments": string;
+      "diff"?: string;
+      "id": string;
+      "name": string;
+      "removed"?: number;
+    };
+    "type": "done" | "error" | "reasoning" | "text" | "tool_call" | "tool_call_args_delta" | "tool_call_start" | "usage";
+    "usage"?: {
+      "cacheHitTokens": number;
+      "cacheMissTokens": number;
+      "completionTokens": number;
+      "finishReason"?: string;
+      "promptTokens": number;
+      "reasoningTokens": number;
+      "totalTokens": number;
+    };
+  };
   "seq": number;
   "streamId": string;
 };
 export type BrokerStreamChunkParamsHydrated = {
-  "chunk": Array<number>;
+  "chunk": {
+    "argChars"?: number;
+    "error"?: {
+      "code": "provider_failed" | "provider_interrupted";
+      "message": string;
+    };
+    "signature"?: string;
+    "text"?: string;
+    "toolCall"?: {
+      "added"?: number;
+      "arguments": string;
+      "diff"?: string;
+      "id": string;
+      "name": string;
+      "removed"?: number;
+    };
+    "type": "done" | "error" | "reasoning" | "text" | "tool_call" | "tool_call_args_delta" | "tool_call_start" | "usage";
+    "usage"?: {
+      "cacheHitTokens": number;
+      "cacheMissTokens": number;
+      "completionTokens": number;
+      "finishReason"?: string;
+      "promptTokens": number;
+      "reasoningTokens": number;
+      "totalTokens": number;
+    };
+  };
   "seq": number;
   "streamId": string;
 };
@@ -860,24 +917,128 @@ export type BrokerStreamChunkParamsHydrated = {
 export type BrokerStreamEndParamsRaw = {
   "error"?: string;
   "interrupted"?: boolean;
+  "lastSeq": number;
   "streamId": string;
 };
 export type BrokerStreamEndParamsHydrated = {
   "error"?: string;
   "interrupted"?: boolean;
+  "lastSeq": number;
   "streamId": string;
 };
 
 export type BrokerStreamOpenParamsRaw = {
   "effort"?: string;
   "providerRef": string;
-  "request": Array<number>;
+  "request": {
+    "maxTokens": number;
+    "messages": Array<{
+      "content"?: string;
+      "createdAt"?: number;
+      "edited"?: boolean;
+      "images"?: Array<string>;
+      "interrupted_turn"?: {
+        "completed_tools"?: Array<{
+          "added"?: number;
+          "files"?: Array<string>;
+          "id"?: string;
+          "name": string;
+          "removed"?: number;
+        }>;
+        "dropped_partial_reasoning"?: boolean;
+        "dropped_partial_text"?: boolean;
+        "interrupted_tools"?: Array<string>;
+        "pending"?: boolean;
+      };
+      "local_only"?: boolean;
+      "memoryCitations"?: Array<{
+        "id"?: string;
+        "kind"?: string;
+        "lineEnd"?: number;
+        "lineStart"?: number;
+        "note"?: string;
+        "source": string;
+      }>;
+      "name"?: string;
+      "original"?: string;
+      "reasoning_content"?: string;
+      "reasoning_signature"?: string;
+      "role": "assistant" | "system" | "tool" | "user";
+      "tool_call_id"?: string;
+      "tool_calls"?: Array<{
+        "added"?: number;
+        "arguments": string;
+        "diff"?: string;
+        "id": string;
+        "name": string;
+        "removed"?: number;
+      }>;
+      "workDurationMs"?: number;
+    }>;
+    "temperature"?: number;
+    "tools": Array<{
+      "description": string;
+      "name": string;
+      "parameters": RemoteJSONValue;
+    }>;
+  };
   "streamId": string;
 };
 export type BrokerStreamOpenParamsHydrated = {
   "effort"?: string;
   "providerRef": string;
-  "request": Array<number>;
+  "request": {
+    "maxTokens": number;
+    "messages": Array<{
+      "content"?: string;
+      "createdAt"?: number;
+      "edited"?: boolean;
+      "images"?: Array<string>;
+      "interrupted_turn"?: {
+        "completed_tools"?: Array<{
+          "added"?: number;
+          "files"?: Array<string>;
+          "id"?: string;
+          "name": string;
+          "removed"?: number;
+        }>;
+        "dropped_partial_reasoning"?: boolean;
+        "dropped_partial_text"?: boolean;
+        "interrupted_tools"?: Array<string>;
+        "pending"?: boolean;
+      };
+      "local_only"?: boolean;
+      "memoryCitations"?: Array<{
+        "id"?: string;
+        "kind"?: string;
+        "lineEnd"?: number;
+        "lineStart"?: number;
+        "note"?: string;
+        "source": string;
+      }>;
+      "name"?: string;
+      "original"?: string;
+      "reasoning_content"?: string;
+      "reasoning_signature"?: string;
+      "role": "assistant" | "system" | "tool" | "user";
+      "tool_call_id"?: string;
+      "tool_calls"?: Array<{
+        "added"?: number;
+        "arguments": string;
+        "diff"?: string;
+        "id": string;
+        "name": string;
+        "removed"?: number;
+      }>;
+      "workDurationMs"?: number;
+    }>;
+    "temperature"?: number;
+    "tools": Array<{
+      "description": string;
+      "name": string;
+      "parameters": RemoteJSONValue;
+    }>;
+  };
   "streamId": string;
 };
 
@@ -1484,6 +1645,7 @@ export type HostCapabilitiesResultRaw = {
       "pageDefaultItems": number;
       "pageMaxItems": number;
       "previewBytes": number;
+      "rpcConcurrentHandlers": number;
       "searchDefaultItems": number;
       "searchMaxItems": number;
       "searchMaxVisitedItems": number;
@@ -1523,6 +1685,7 @@ export type HostCapabilitiesResultHydrated = {
       "pageDefaultItems": number;
       "pageMaxItems": number;
       "previewBytes": number;
+      "rpcConcurrentHandlers": number;
       "searchDefaultItems": number;
       "searchMaxItems": number;
       "searchMaxVisitedItems": number;
@@ -1589,6 +1752,7 @@ export type InitializeParamsRaw = {
   };
   "clientInstanceId": string;
   "resumeLeaseId"?: string;
+  "workspace": string;
 };
 export type InitializeParamsHydrated = {
   "buildId": {
@@ -1599,6 +1763,7 @@ export type InitializeParamsHydrated = {
   };
   "clientInstanceId": string;
   "resumeLeaseId"?: string;
+  "workspace": string;
 };
 
 export type InitializeResultRaw = {
@@ -1638,6 +1803,7 @@ export type InitializeResultRaw = {
       "pageDefaultItems": number;
       "pageMaxItems": number;
       "previewBytes": number;
+      "rpcConcurrentHandlers": number;
       "searchDefaultItems": number;
       "searchMaxItems": number;
       "searchMaxVisitedItems": number;
@@ -1694,6 +1860,7 @@ export type InitializeResultHydrated = {
       "pageDefaultItems": number;
       "pageMaxItems": number;
       "previewBytes": number;
+      "rpcConcurrentHandlers": number;
       "searchDefaultItems": number;
       "searchMaxItems": number;
       "searchMaxVisitedItems": number;
@@ -3536,7 +3703,7 @@ export type SessionRestoreResultHydrated = {
 export type SessionResyncRequiredRaw = ({
   "hostEpoch": string;
   "lastSeq": number;
-  "reason": "queue_overflow" | "runtime_replaced" | "target_replaced";
+  "reason": "queue_overflow" | "runtime_replaced" | "state_changed" | "target_replaced";
   "replacementRuntimeEpoch"?: string;
   "replacementTarget"?: {
     "sessionId": string;
@@ -3550,7 +3717,7 @@ export type SessionResyncRequiredRaw = ({
   };
 }) & (
   {
-    "reason": "queue_overflow";
+    "reason": "queue_overflow" | "state_changed";
     "replacementRuntimeEpoch"?: never;
     "replacementTarget"?: never;
   }
@@ -3571,7 +3738,7 @@ export type SessionResyncRequiredRaw = ({
 export type SessionResyncRequiredHydrated = ({
   "hostEpoch": string;
   "lastSeq": number;
-  "reason": "queue_overflow" | "runtime_replaced" | "target_replaced";
+  "reason": "queue_overflow" | "runtime_replaced" | "state_changed" | "target_replaced";
   "replacementRuntimeEpoch"?: string;
   "replacementTarget"?: {
     "sessionId": string;
@@ -3585,7 +3752,7 @@ export type SessionResyncRequiredHydrated = ({
   };
 }) & (
   {
-    "reason": "queue_overflow";
+    "reason": "queue_overflow" | "state_changed";
     "replacementRuntimeEpoch"?: never;
     "replacementTarget"?: never;
   }
@@ -3920,6 +4087,7 @@ export type SessionSubscribeResultRaw = {
           "pageDefaultItems": number;
           "pageMaxItems": number;
           "previewBytes": number;
+          "rpcConcurrentHandlers": number;
           "searchDefaultItems": number;
           "searchMaxItems": number;
           "searchMaxVisitedItems": number;
@@ -4314,6 +4482,7 @@ export type SessionSubscribeResultHydrated = {
           "pageDefaultItems": number;
           "pageMaxItems": number;
           "previewBytes": number;
+          "rpcConcurrentHandlers": number;
           "searchDefaultItems": number;
           "searchMaxItems": number;
           "searchMaxVisitedItems": number;

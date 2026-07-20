@@ -63,7 +63,7 @@ func buildCustomSchemaContracts() map[reflect.Type]SchemaValidation {
 		typeOf[SessionEvent]():         {Invariants: rules("seq>=1", "at_most_one(turnId,operationId)", "event.kind:eventwire_registered", "externalized.jsonPointer:unique_and_schema_marked")},
 		typeOf[SessionSnapshot]():      {Invariants: rules("history.snapshotId=snapshotId", "runtime.liveEvents.kind:eventwire_registered", "externalized.jsonPointer:unique_and_schema_marked")},
 		typeOf[SessionResyncRequired](): {Discriminator: discriminator("reason",
-			variant([]string{string(ResyncQueueOverflow)}, nil, []string{"replacementTarget", "replacementRuntimeEpoch"}, nil, nil),
+			variant([]string{string(ResyncQueueOverflow), string(ResyncStateChanged)}, nil, []string{"replacementTarget", "replacementRuntimeEpoch"}, nil, nil),
 			variant([]string{string(ResyncRuntimeReplaced)}, []string{"replacementRuntimeEpoch"}, []string{"replacementTarget"}, nil, nil),
 			variant([]string{string(ResyncTargetReplaced)}, []string{"replacementTarget", "replacementRuntimeEpoch"}, nil, nil, nil),
 		)},
@@ -78,8 +78,10 @@ func buildCustomSchemaContracts() map[reflect.Type]SchemaValidation {
 		typeOf[GitHistoryResult]():        {Invariants: rules("returnedItems=len(commits)", "truncated=iff(truncationReason=history_limit)")},
 		typeOf[Capabilities]():            {Invariants: rules("features.coreSession=true", "features.primaryFileQueries=true", "features.userShell=true", "features.jobCancel=true", "features.memory:dynamic", "features.research:dynamic", "deferred_features=false", "limits=frozen_remote_v1")},
 		typeOf[RemoteErrorData]():         {Invariants: rules("reasonixCode:selects_frozen_retryable_action_command", "expected:paired_with(actual)", "expected_actual:bounded_path_free_tokens", "HOST_BUSY:requires_nonnegative(retryAfterMs)", "other_errors:forbid(retryAfterMs)", "REWIND_PARTIAL:requires(snapshotRequired=true,at_least_one_change_flag=true)", "other_errors:forbid(change_flags,snapshotRequired)")},
-		typeOf[BrokerStreamOpenParams]():  {Invariants: rules("streamId:trimmed_nonempty", "providerRef:trimmed_nonempty", "request:non_null_json")},
-		typeOf[BrokerStreamChunkParams](): {Invariants: rules("streamId:trimmed_nonempty", "seq>=1", "chunk:non_null_json")},
+		typeOf[BrokerProviderRequest]():   {Invariants: rules("messages:non_null_array", "tools:non_null_array", "tools.parameters:valid_json_object", "maxTokens>=0")},
+		typeOf[BrokerProviderChunk]():     {Invariants: rules("argChars>=0", "type=error:requires(error)", "type!=error:forbids(error)", "type=usage:requires(usage)")},
+		typeOf[BrokerStreamOpenParams]():  {Invariants: rules("streamId:trimmed_nonempty", "providerRef:trimmed_nonempty", "request:typed_provider_request")},
+		typeOf[BrokerStreamChunkParams](): {Invariants: rules("streamId:trimmed_nonempty", "seq>=1", "chunk:typed_provider_chunk")},
 	}
 	page := SchemaValidation{Invariants: rules("hasMore=iff(nextCursor_present)")}
 	for _, typ := range []reflect.Type{

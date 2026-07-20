@@ -79,6 +79,60 @@ func TestInboundLimitAcceptsFrameAtExactBoundary(t *testing.T) {
 	}
 }
 
+func TestInboundHandlerConcurrencyIsBoundedWithoutBlockingResponses(t *testing.T) {
+	var input strings.Builder
+	for id := 1; id <= 5; id++ {
+		fmt.Fprintf(&input, "{\"jsonrpc\":\"2.0\",\"id\":%d,\"method\":\"block\",\"params\":{}}\n", id)
+	}
+	var out bytes.Buffer
+	release := make(chan struct{})
+	started := make(chan struct{}, 2)
+	var running atomic.Int32
+	var maximum atomic.Int32
+	conn := NewConn(strings.NewReader(input.String()), &out, Options{
+		StrictJSONRPC: true, MaxConcurrentHandlers: 2,
+	})
+	conn.Handle("block", func(context.Context, json.RawMessage) (any, error) {
+		current := running.Add(1)
+		for {
+			observed := maximum.Load()
+			if current <= observed || maximum.CompareAndSwap(observed, current) {
+				break
+			}
+		}
+		started <- struct{}{}
+		<-release
+		running.Add(-1)
+		return struct{}{}, nil
+	})
+	done := make(chan error, 1)
+	go func() { done <- conn.Serve(context.Background()) }()
+	for i := 0; i < 2; i++ {
+		select {
+		case <-started:
+		case <-time.After(time.Second):
+			t.Fatal("bounded handlers did not start")
+		}
+	}
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if got := maximum.Load(); got != 2 {
+		t.Fatalf("maximum concurrent handlers = %d, want 2", got)
+	}
+	frames := decodeStrictTestResponses(t, out.Bytes())
+	busy := 0
+	for _, frame := range frames {
+		if frame.Error != nil && frame.Error.Code == ErrServerBusy && frame.Error.Message == "server busy" {
+			busy++
+		}
+	}
+	if len(frames) != 5 || busy != 3 {
+		t.Fatalf("responses=%d busy=%d, want 5/3; raw=%q", len(frames), busy, out.String())
+	}
+}
+
 func TestStrictJSONRPCAcceptsLegalRequestNotificationAndResponses(t *testing.T) {
 	t.Run("request and notification", func(t *testing.T) {
 		input := strings.Join([]string{

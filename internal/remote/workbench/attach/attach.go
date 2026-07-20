@@ -83,25 +83,19 @@ func Run(ctx context.Context, stdin io.ReadCloser, stdout io.Writer, opts Option
 	if protocol.Method(frame.Method) != protocol.MethodRemoteInitialize {
 		return writeRPCError(stdout, frame.ID, rpcwire.ErrInvalidRequest, "remote/initialize must be first")
 	}
-	// Schema Hash gate: reject incompatible peers (Build/source may differ).
-	var init struct {
-		BuildID struct {
-			SchemaHash      string `json:"schemaHash"`
-			ProtocolVersion string `json:"protocolVersion"`
-			ProductVersion  string `json:"productVersion"`
-			SourceRevision  string `json:"sourceRevision"`
-		} `json:"buildId"`
-		Workspace string `json:"workspace"`
+	decoded, err := protocol.DecodeRequestParams(protocol.MethodRemoteInitialize, frame.Params)
+	if err != nil {
+		return writeRPCError(stdout, frame.ID, rpcwire.ErrInvalidParams, "invalid remote/initialize params")
 	}
-	_ = json.Unmarshal(frame.Params, &init)
-	// Prefer workspace from init DTO when provided (never from shell).
-	if strings.TrimSpace(init.Workspace) != "" {
-		if abs, err := filepath.Abs(strings.TrimSpace(init.Workspace)); err == nil {
-			ws = abs
-		}
+	init := decoded.(protocol.InitializeParams)
+	ws = strings.TrimSpace(init.Workspace)
+	if abs, absErr := filepath.Abs(ws); absErr == nil {
+		ws = abs
+	} else {
+		return writeRPCError(stdout, frame.ID, rpcwire.ErrInvalidParams, "invalid Remote workspace")
 	}
 	peerHash := strings.TrimSpace(init.BuildID.SchemaHash)
-	if peerHash != "" && !strings.EqualFold(peerHash, schemaHash) {
+	if !strings.EqualFold(peerHash, schemaHash) {
 		return writeRPCError(stdout, frame.ID, rpcwire.ErrInvalidRequest,
 			fmt.Sprintf("schema hash mismatch: expected %s", schemaHash))
 	}
@@ -117,8 +111,16 @@ func Run(ctx context.Context, stdin io.ReadCloser, stdout io.Writer, opts Option
 	}
 	defer conn.Close()
 
-	// Forward exact initialize frame then proxy remainder.
-	if _, err := conn.Write(frame.Raw); err != nil {
+	// Re-encode only the frozen typed fields. This prevents bootstrap-only or
+	// legacy fields from bypassing the runtime Router's strict DTO boundary.
+	forward, err := json.Marshal(map[string]any{
+		"jsonrpc": "2.0", "id": json.RawMessage(frame.ID),
+		"method": string(protocol.MethodRemoteInitialize), "params": init,
+	})
+	if err != nil {
+		return fmt.Errorf("encode initialize: %w", err)
+	}
+	if _, err := conn.Write(append(forward, '\n')); err != nil {
 		return fmt.Errorf("forward initialize: %w", err)
 	}
 	return proxy(ctx, stdin, reader, stdout, conn)
@@ -130,7 +132,30 @@ func ensureRuntime(ctx context.Context, opts Options, home, workspace, sock stri
 		_ = c.Close()
 		return nil
 	}
-	if opts.InProcess || opts.RuntimeBinary == "" {
+	lockDir := sock + ".start.lock"
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		if err := os.Mkdir(lockDir, 0o700); err == nil {
+			defer os.Remove(lockDir)
+			break
+		} else if !os.IsExist(err) {
+			return err
+		}
+		if c, err := dialSocket(ctx, sock, 200*time.Millisecond); err == nil {
+			_ = c.Close()
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return errors.New("timed out waiting for workspace runtime startup lease")
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	// Re-check after taking the lease: another attach may have started it.
+	if c, err := dialSocket(ctx, sock, 200*time.Millisecond); err == nil {
+		_ = c.Close()
+		return nil
+	}
+	if opts.InProcess {
 		// In-process: start listener in background of this process.
 		// For production CLI, prefer a detached child; tests use InProcess.
 		srv := runtime.New(runtime.Options{Workspace: workspace, Version: opts.Version})
@@ -146,8 +171,11 @@ func ensureRuntime(ctx context.Context, opts Options, home, workspace, sock stri
 		}
 		return errors.New("in-process runtime did not become ready")
 	}
+	if strings.TrimSpace(opts.RuntimeBinary) == "" {
+		return errors.New("runtime binary required outside tests")
+	}
 	// Detached child: reasonix remote-runtime-workbench --workspace --socket
-	cmd := exec.CommandContext(ctx, opts.RuntimeBinary, "remote", "runtime-workbench",
+	cmd := exec.Command(opts.RuntimeBinary, "remote", "runtime-workbench",
 		"--workspace", workspace, "--socket", sock, "--version", opts.Version)
 	cmd.Stdout = nil
 	cmd.Stderr = nil
@@ -155,7 +183,7 @@ func ensureRuntime(ctx context.Context, opts Options, home, workspace, sock stri
 		return err
 	}
 	_ = cmd.Process.Release()
-	deadline := time.Now().Add(8 * time.Second)
+	deadline = time.Now().Add(8 * time.Second)
 	for time.Now().Before(deadline) {
 		if c, err := dialSocket(ctx, sock, 200*time.Millisecond); err == nil {
 			_ = c.Close()

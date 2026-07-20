@@ -73,6 +73,11 @@ type HostKeyPolicy struct {
 	ManagedPath string
 	// Prompt decides unknown (first-seen) keys. Nil => strict reject.
 	Prompt HostKeyPrompt
+	// Verified observes a key only after the known_hosts check (and, for TOFU,
+	// the user's acceptance and durable append) succeeded. It lets an assembly
+	// layer bind higher-level capabilities to the peer actually authenticated by
+	// this transport without weakening HostKeyCallback authority.
+	Verified func(HostKeyQuestion)
 
 	mu sync.Mutex // serializes appends to ManagedPath
 }
@@ -89,6 +94,7 @@ func (p *HostKeyPolicy) Callback(ctx context.Context, host string) (ssh.HostKeyC
 		if base != nil {
 			err := base(hostname, remote, key)
 			if err == nil {
+				p.notifyVerified(host, hostname, remote, key)
 				return nil
 			}
 			var keyErr *knownhosts.KeyError
@@ -102,8 +108,25 @@ func (p *HostKeyPolicy) Callback(ctx context.Context, host string) (ssh.HostKeyC
 			}
 			// len(Want)==0 => host unknown. Fall through to TOFU.
 		}
-		return p.tofu(ctx, host, hostname, remote, key, managed)
+		if err := p.tofu(ctx, host, hostname, remote, key, managed); err != nil {
+			return err
+		}
+		p.notifyVerified(host, hostname, remote, key)
+		return nil
 	}, nil
+}
+
+func (p *HostKeyPolicy) notifyVerified(host, hostname string, remoteAddr net.Addr, key ssh.PublicKey) {
+	if p == nil || p.Verified == nil || key == nil {
+		return
+	}
+	address := hostname
+	if remoteAddr != nil && strings.TrimSpace(remoteAddr.String()) != "" {
+		address = remoteAddr.String()
+	}
+	p.Verified(HostKeyQuestion{
+		Host: host, Address: address, KeyType: key.Type(), Fingerprint: ssh.FingerprintSHA256(key),
+	})
 }
 
 // HostKeyAlgorithms returns host-key algorithms in negotiation order,

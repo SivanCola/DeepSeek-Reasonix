@@ -4905,6 +4905,16 @@ func (c *Controller) Jobs() []jobs.View {
 	return c.jobs.RunningForSession(c.parentSessionID())
 }
 
+// CancelJob stops one background job owned by this controller's session.
+// Remote Workbench exposes this through its required jobCancel capability;
+// local callers may continue using the existing manager-backed lifecycle.
+func (c *Controller) CancelJob(id string) bool {
+	if c.jobs == nil {
+		return false
+	}
+	return c.jobs.Kill(id)
+}
+
 // SetToolApprovalMode changes the runtime approval posture for permission-gated
 // tools. It does not answer business asks or plan approval. Sub-agents (task,
 // writer-capable skill sub-agents, the planner) have no UI to prompt through,

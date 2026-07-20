@@ -4,11 +4,7 @@
 import assert from "node:assert/strict";
 import { describe, it, beforeEach, afterEach } from "node:test";
 
-const g = globalThis as typeof globalThis & {
-  window?: {
-    go?: { main?: { App?: Record<string, (...args: unknown[]) => Promise<unknown>> } };
-  };
-};
+const g = globalThis as any;
 
 describe("workbenchTarget", () => {
   beforeEach(() => {
@@ -20,6 +16,7 @@ describe("workbenchTarget", () => {
             WorkbenchLastRemoteHint: async () => ({ hostId: "lab", workspace: "/w" }),
             WorkbenchSwitchLocal: async () => ({ kind: "local", identityGen: 2, requestSeq: 2 }),
             WorkbenchConnectRemote: async () => undefined,
+            WorkbenchDisconnectRemote: async () => undefined,
             WorkbenchRemoteRequest: async (_m: unknown, body: unknown) =>
               JSON.stringify({ ok: true, body }),
             WorkbenchResolveProviderTrust: async () => undefined,

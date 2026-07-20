@@ -38,7 +38,7 @@ func TestRemoteSSHTransportExactArgvAndProtocolPurity(t *testing.T) {
 	wantArgs := []string{
 		"-F", filepath.Clean(factory.SSHConfigPath),
 		"-T", "-o", "RequestTTY=no", "-o", "StrictHostKeyChecking=ask",
-		"-o", "ClearAllForwardings=yes", "-o", "PermitLocalCommand=no",
+		"-o", "ClearAllForwardings=yes", "-o", "SendEnv=-*", "-o", "LogLevel=DEBUG", "-o", "PermitLocalCommand=no",
 		"-o", "RemoteCommand=none", "--", "lab-linux",
 		"reasonix", "remote", "attach-workspace", "--stdio",
 	}
@@ -111,6 +111,30 @@ func TestRemoteSSHTransportDirectExactArgvIPv4AndIPv6(t *testing.T) {
 				t.Fatalf("direct connection unexpectedly used advanced config: %#v", gotArgs)
 			}
 		})
+	}
+}
+
+func TestRemoteSSHTransportConfiguredAliasPreservesExplicitOverrides(t *testing.T) {
+	t.Setenv("GO_WANT_REMOTE_SSH_FAKE", "1")
+	t.Setenv("REMOTE_SSH_FAKE_MODE", "protocol")
+	var gotArgs []string
+	factory := &RemoteSSHTransportFactory{commandContext: func(ctx context.Context, _ string, args ...string) *exec.Cmd {
+		gotArgs = append([]string(nil), args...)
+		return remoteSSHFakeCommand(ctx)
+	}}
+	transport, err := factory.StartConfigured(
+		context.Background(), "gpu.corp", "builder", 2207, "/keys/gpu key", "bastion-a,bastion-b",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = transport.Close() })
+	wantTail := []string{
+		"-l", "builder", "-p", "2207", "-i", "/keys/gpu key", "-J", "bastion-a,bastion-b",
+		"--", "gpu.corp", "reasonix", "remote", "attach-workspace", "--stdio",
+	}
+	if len(gotArgs) < len(wantTail) || !reflect.DeepEqual(gotArgs[len(gotArgs)-len(wantTail):], wantTail) {
+		t.Fatalf("configured argv = %#v, want tail %#v", gotArgs, wantTail)
 	}
 }
 
@@ -350,6 +374,45 @@ func TestRemoteSSHTransportAskPassEnvironmentIsControlled(t *testing.T) {
 		t.Fatal("inherited SSH_ASKPASS survived")
 	}
 	_ = transport.Close()
+}
+
+func TestRemoteSSHEnvironmentIsAllowlisted(t *testing.T) {
+	env := parseEnvironmentMap(sanitizeRemoteSSHEnvironment([]string{
+		"PATH=/usr/bin", "HOME=/home/dev", "SSH_AUTH_SOCK=/tmp/agent",
+		"LC_ALL=C", "DEEPSEEK_API_KEY=must-not-cross", "OPENAI_API_KEY=must-not-cross",
+		"REASONIX_REMOTE_ASKPASS_KEY=must-not-cross", "UNRELATED_APP_STATE=value",
+	}))
+	for key, want := range map[string]string{
+		"PATH": "/usr/bin", "HOME": "/home/dev", "SSH_AUTH_SOCK": "/tmp/agent", "LC_ALL": "C",
+	} {
+		if env[key] != want {
+			t.Fatalf("%s = %q, want %q", key, env[key], want)
+		}
+	}
+	for _, key := range []string{"DEEPSEEK_API_KEY", "OPENAI_API_KEY", remoteAskPassKeyEnv, "UNRELATED_APP_STATE"} {
+		if _, ok := env[key]; ok {
+			t.Fatalf("sensitive/unrelated variable %s crossed into OpenSSH", key)
+		}
+	}
+}
+
+func TestRemoteSSHTransportPeerIdentityUsesLocalDebugRecord(t *testing.T) {
+	transport := &RemoteSSHTransport{stderr: newBoundedRemoteSSHStderr(4096)}
+	transport.MarkBootstrapStarted()
+	_, _ = io.WriteString(transport.stderr, "debug1: Server host key: ssh-ed25519 SHA256:realPeer\n")
+	_, _ = io.WriteString(transport.stderr, "debug1: Server host key: ssh-rsa SHA256:remoteSpoof\n")
+	keyType, fingerprint, ok := transport.PeerIdentity()
+	if !ok || keyType != "ssh-ed25519" || fingerprint != "SHA256:realPeer" {
+		t.Fatalf("peer = %q %q ok=%v", keyType, fingerprint, ok)
+	}
+}
+
+func TestRemoteSSHTransportPeerIdentityRequiresProtocolBootstrap(t *testing.T) {
+	transport := &RemoteSSHTransport{stderr: newBoundedRemoteSSHStderr(4096)}
+	_, _ = io.WriteString(transport.stderr, "debug1: Server host key: ssh-ed25519 SHA256:unverified\n")
+	if _, _, ok := transport.PeerIdentity(); ok {
+		t.Fatal("peer identity was exposed before the attach protocol started")
+	}
 }
 
 func TestRemoteSSHTransportRejectsRelativeConfigPath(t *testing.T) {

@@ -8,11 +8,17 @@ import (
 
 func TestResolveRelRejectsEscapeAndAbsolute(t *testing.T) {
 	ws := t.TempDir()
-	if _, err := ResolveRel(ws, "../etc/passwd"); err == nil {
-		t.Fatal("expected escape rejection")
-	}
-	if _, err := ResolveRel(ws, "/etc/passwd"); err == nil {
-		t.Fatal("expected absolute rejection")
+	for _, candidate := range []string{
+		"../etc/passwd",
+		"/etc/passwd",
+		`\windows\system32`,
+		`C:\windows\system32`,
+		`C:/windows/system32`,
+		`\\server\share\secret`,
+	} {
+		if _, err := ResolveRel(ws, candidate); err == nil {
+			t.Fatalf("expected rejection for %q", candidate)
+		}
 	}
 	got, err := ResolveRel(ws, "src/main.go")
 	if err != nil {

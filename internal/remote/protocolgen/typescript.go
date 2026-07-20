@@ -70,6 +70,7 @@ func generateTypeScript(document protocol.SchemaDocument, bindings []methodBindi
 	out.WriteString("export type RemoteDynamicFeature = (typeof REMOTE_DYNAMIC_FEATURES)[number];\n")
 	out.WriteString("export type RemoteDeferredFeature = (typeof REMOTE_DEFERRED_FEATURES)[number];\n")
 	out.WriteString("export type RemoteFeatureName = RemoteRequiredFeature | RemoteDynamicFeature | RemoteDeferredFeature;\n\n")
+	out.WriteString("export type RemoteJSONValue = null | boolean | number | string | Array<RemoteJSONValue> | { [key: string]: RemoteJSONValue };\n\n")
 
 	if err := writePair(&out, renderer, "RemoteBuildID", buildID.Schema); err != nil {
 		return nil, err
@@ -335,6 +336,8 @@ func (tsRenderer) render(schema protocol.SchemaType, mode hydrationMode, stripNu
 			value = "boolean"
 		case "integer", "number":
 			value = "number"
+		case "json":
+			value = "RemoteJSONValue"
 		case "array":
 			if schema.Items == nil {
 				return "", fmt.Errorf("array schema is missing items")

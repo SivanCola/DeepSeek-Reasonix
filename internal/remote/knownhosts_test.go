@@ -173,6 +173,39 @@ func TestHostKeyPolicyRejectsChangedKeyOfSameAlgorithm(t *testing.T) {
 	}
 }
 
+func TestHostKeyPolicyObservesOnlyVerifiedPeer(t *testing.T) {
+	hostname := "example.test:2222"
+	knownKey := generateED25519Signer(t)
+	changedKey := generateED25519Signer(t)
+	systemPath := filepath.Join(t.TempDir(), "known_hosts")
+	writeKnownHost(t, systemPath, hostname, knownKey.PublicKey())
+	var verified []HostKeyQuestion
+	policy := &HostKeyPolicy{
+		SystemKnownHosts: []string{systemPath},
+		ManagedPath:      filepath.Join(t.TempDir(), "managed_known_hosts"),
+		Verified: func(q HostKeyQuestion) {
+			verified = append(verified, q)
+		},
+	}
+	callback, err := policy.Callback(context.Background(), "saved-host")
+	if err != nil {
+		t.Fatal(err)
+	}
+	remoteAddr := &net.TCPAddr{IP: net.ParseIP("192.0.2.10"), Port: 2222}
+	if err := callback(hostname, remoteAddr, knownKey.PublicKey()); err != nil {
+		t.Fatal(err)
+	}
+	if len(verified) != 1 || verified[0].Fingerprint != ssh.FingerprintSHA256(knownKey.PublicKey()) || verified[0].Host != "saved-host" {
+		t.Fatalf("verified observations = %+v", verified)
+	}
+	if err := callback(hostname, remoteAddr, changedKey.PublicKey()); !errors.Is(err, ErrHostKeyMismatch) {
+		t.Fatalf("changed key error = %v", err)
+	}
+	if len(verified) != 1 {
+		t.Fatalf("mismatched key was observed as verified: %+v", verified)
+	}
+}
+
 func writeKnownHost(t *testing.T, path, hostname string, key ssh.PublicKey) {
 	t.Helper()
 	line := knownhosts.Line([]string{knownhosts.Normalize(hostname)}, key)

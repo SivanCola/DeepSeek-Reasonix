@@ -94,6 +94,57 @@ func (f *RemoteSSHTransportFactory) Start(ctx context.Context, alias string) (*R
 	return f.start(ctx, args)
 }
 
+// StartConfigured preserves explicit Reasonix host fields while still letting
+// the saved Host alias select the user's full OpenSSH config (Include, Match,
+// ProxyCommand, certificates, and platform-specific authentication helpers).
+// Every value remains a distinct argv element; no shell participates.
+func (f *RemoteSSHTransportFactory) StartConfigured(ctx context.Context, alias, user string, port int, identityFile, proxyJump string) (*RemoteSSHTransport, error) {
+	if err := ValidateRemoteHostAlias(alias); err != nil {
+		return nil, err
+	}
+	args := make([]string, 0, 32)
+	if f.SSHConfigPath != "" {
+		if err := validateRemoteSSHConfigPath(f.SSHConfigPath); err != nil {
+			return nil, err
+		}
+		args = append(args, "-F", f.SSHConfigPath)
+	}
+	args = append(args, remoteSSHPolicyArgs()...)
+	if user != "" {
+		if !remoteSSHUsernamePattern.MatchString(user) || strings.HasPrefix(user, "-") {
+			return nil, errors.New("remote SSH username is invalid")
+		}
+		args = append(args, "-l", user)
+	}
+	if port != 0 {
+		if err := ValidateRemoteSSHPort(port); err != nil {
+			return nil, err
+		}
+		args = append(args, "-p", strconv.Itoa(port))
+	}
+	if identityFile != "" {
+		if err := validateRemoteSSHOptionValue("identity file", identityFile); err != nil {
+			return nil, err
+		}
+		args = append(args, "-i", identityFile)
+	}
+	if proxyJump != "" {
+		if err := validateRemoteSSHOptionValue("ProxyJump", proxyJump); err != nil {
+			return nil, err
+		}
+		args = append(args, "-J", proxyJump)
+	}
+	args = append(args, "--", alias, "reasonix", "remote", "attach-workspace", "--stdio")
+	return f.start(ctx, args)
+}
+
+func validateRemoteSSHOptionValue(name, value string) error {
+	if strings.TrimSpace(value) != value || strings.ContainsAny(value, "\x00\r\n") {
+		return fmt.Errorf("remote SSH %s is invalid", name)
+	}
+	return nil
+}
+
 func (f *RemoteSSHTransportFactory) StartDirect(ctx context.Context, destination string, port int) (*RemoteSSHTransport, error) {
 	target, err := ParseRemoteSSHDirectDestination(destination)
 	if err != nil {
@@ -119,6 +170,8 @@ func remoteSSHPolicyArgs() []string {
 		"-o", "RequestTTY=no",
 		"-o", "StrictHostKeyChecking=ask",
 		"-o", "ClearAllForwardings=yes",
+		"-o", "SendEnv=-*",
+		"-o", "LogLevel=DEBUG",
 		"-o", "PermitLocalCommand=no",
 		"-o", "RemoteCommand=none",
 	}
@@ -323,6 +376,34 @@ func (t *RemoteSSHTransport) Diagnostic() RemoteSSHDiagnostic {
 	}
 }
 
+// PeerIdentity reads the system OpenSSH client's own pre-authentication debug
+// record. The same process subsequently enforced known_hosts and reached the
+// attach protocol, so this is the key authenticated by this exact transport.
+// Only the first local debug record is accepted; remote command stderr cannot
+// replace it later in the stream.
+func (t *RemoteSSHTransport) PeerIdentity() (keyType, fingerprint string, ok bool) {
+	if t == nil || t.stderr == nil || !t.bootstrapStarted.Load() {
+		return "", "", false
+	}
+	raw, _, _ := t.stderr.snapshot()
+	const marker = "debug1: Server host key: "
+	for _, line := range strings.Split(string(raw), "\n") {
+		index := strings.Index(line, marker)
+		if index < 0 {
+			continue
+		}
+		fields := strings.Fields(strings.TrimSpace(line[index+len(marker):]))
+		if len(fields) < 2 || !strings.HasPrefix(fields[1], "SHA256:") {
+			return "", "", false
+		}
+		if strings.ContainsAny(fields[0], "\x00\r\n") || strings.ContainsAny(fields[1], "\x00\r\n") {
+			return "", "", false
+		}
+		return fields[0], fields[1], true
+	}
+	return "", "", false
+}
+
 func (t *RemoteSSHTransport) Close() error {
 	if t == nil {
 		return nil
@@ -409,10 +490,17 @@ func containsAnyRemoteSSHDiagnostic(value string, needles ...string) bool {
 }
 
 func sanitizeRemoteSSHEnvironment(base []string) []string {
-	blocked := map[string]struct{}{
-		"SSH_ASKPASS": {}, "SSH_ASKPASS_REQUIRE": {},
-		remoteAskPassModeEnv: {}, remoteAskPassEndpointEnv: {},
-		remoteAskPassKeyEnv: {}, remoteAskPassDeadlineEnv: {},
+	// OpenSSH needs a small OS/locale/agent environment, not the Desktop's
+	// provider API keys or arbitrary application variables. Keep the allowlist
+	// explicit so future provider names cannot accidentally cross the boundary.
+	allowed := map[string]struct{}{
+		"PATH": {}, "HOME": {}, "TMPDIR": {}, "TMP": {}, "TEMP": {},
+		"LANG": {}, "SSH_AUTH_SOCK": {},
+		"SYSTEMROOT": {}, "WINDIR": {}, "COMSPEC": {}, "PATHEXT": {},
+		"SYSTEMDRIVE": {}, "USERPROFILE": {}, "APPDATA": {},
+		"LOCALAPPDATA": {}, "PROGRAMDATA": {},
+		// Test-helper controls contain no credential material.
+		"GO_WANT_REMOTE_SSH_FAKE": {}, "REMOTE_SSH_FAKE_MODE": {},
 	}
 	result := make([]string, 0, len(base))
 	for _, item := range base {
@@ -420,14 +508,15 @@ func sanitizeRemoteSSHEnvironment(base []string) []string {
 		if !ok {
 			continue
 		}
-		remove := false
-		for blockedKey := range blocked {
-			if key == blockedKey || (runtime.GOOS == "windows" && strings.EqualFold(key, blockedKey)) {
-				remove = true
-				break
-			}
+		normalized := key
+		if runtime.GOOS == "windows" {
+			normalized = strings.ToUpper(key)
 		}
-		if !remove {
+		_, keep := allowed[normalized]
+		if !keep && strings.HasPrefix(normalized, "LC_") {
+			keep = true
+		}
+		if keep {
 			result = append(result, item)
 		}
 	}

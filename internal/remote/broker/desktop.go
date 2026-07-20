@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -20,7 +21,7 @@ type CatalogSource func(ctx context.Context, allowed map[string]struct{}) ([]pro
 
 // StreamOpener resolves a provider ref and starts a stream. Implementations
 // must use the local Provider (keys on Desktop only).
-type StreamOpener func(ctx context.Context, ref string, req provider.Request) (<-chan provider.Chunk, error)
+type StreamOpener func(ctx context.Context, ref, effort string, req provider.Request) (<-chan provider.Chunk, error)
 
 // Desktop is the Desktop-side Broker endpoint bound to one SSH/rpcwire connection.
 type Desktop struct {
@@ -33,15 +34,26 @@ type Desktop struct {
 	// maxConcurrent bounds simultaneous provider streams per connection.
 	maxConcurrent int
 	// gen increments on catalog-changed notifications.
-	gen atomic.Int64
+	gen             atomic.Int64
+	active          atomic.Bool
+	closeOnce       sync.Once
+	lifecycle       context.Context
+	cancelLifecycle context.CancelFunc
 	// closed is closed when the connection is torn down.
 	closed chan struct{}
 }
 
 type streamState struct {
-	cancel context.CancelFunc
-	seq    atomic.Int64
+	cancel          context.CancelFunc
+	seq             atomic.Int64
+	cancelRequested atomic.Bool
 }
+
+const (
+	ErrorNotReady         = -32050
+	ErrorUnavailable      = -32051
+	ErrorConcurrencyLimit = -32052
+)
 
 // Options configures a Desktop Broker endpoint.
 type Options struct {
@@ -62,13 +74,16 @@ func Attach(conn *rpcwire.Conn, opts Options) (*Desktop, error) {
 	if max <= 0 {
 		max = 4
 	}
+	lifecycle, cancelLifecycle := context.WithCancel(context.Background())
 	d := &Desktop{
-		conn:          conn,
-		catalog:       opts.Catalog,
-		open:          opts.Open,
-		streams:       map[string]*streamState{},
-		maxConcurrent: max,
-		closed:        make(chan struct{}),
+		conn:            conn,
+		catalog:         opts.Catalog,
+		open:            opts.Open,
+		streams:         map[string]*streamState{},
+		maxConcurrent:   max,
+		closed:          make(chan struct{}),
+		lifecycle:       lifecycle,
+		cancelLifecycle: cancelLifecycle,
 	}
 	conn.Handle(string(protocol.MethodBrokerCatalog), d.handleCatalog)
 	conn.Handle(string(protocol.MethodBrokerStreamOpen), d.handleStreamOpen)
@@ -76,24 +91,44 @@ func Attach(conn *rpcwire.Conn, opts Options) (*Desktop, error) {
 	return d, nil
 }
 
-// Close cancels all streams for this connection.
-func (d *Desktop) Close() {
-	select {
-	case <-d.closed:
-		return
-	default:
-		close(d.closed)
-	}
+// Activate makes Broker methods available after the Remote initialize
+// handshake and its protocol/schema checks have succeeded.
+func (d *Desktop) Activate() error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	for id, st := range d.streams {
-		st.cancel()
-		delete(d.streams, id)
+	select {
+	case <-d.closed:
+		return fmt.Errorf("broker: endpoint closed")
+	default:
+		d.active.Store(true)
+		return nil
 	}
+}
+
+// Close cancels all streams for this connection.
+func (d *Desktop) Close() {
+	d.closeOnce.Do(func() {
+		d.mu.Lock()
+		d.active.Store(false)
+		close(d.closed)
+		d.cancelLifecycle()
+		states := make([]*streamState, 0, len(d.streams))
+		for id, st := range d.streams {
+			states = append(states, st)
+			delete(d.streams, id)
+		}
+		d.mu.Unlock()
+		for _, st := range states {
+			st.cancel()
+		}
+	})
 }
 
 // NotifyCatalogChanged pushes a generation bump after re-authorization.
 func (d *Desktop) NotifyCatalogChanged() error {
+	if err := d.requireActive(); err != nil {
+		return err
+	}
 	gen := d.gen.Add(1)
 	return d.conn.Notify(string(protocol.MethodBrokerCatalogChanged), protocol.BrokerCatalogChangedParams{
 		Generation: gen,
@@ -101,19 +136,25 @@ func (d *Desktop) NotifyCatalogChanged() error {
 }
 
 func (d *Desktop) handleCatalog(ctx context.Context, params json.RawMessage) (any, error) {
-	var p protocol.BrokerCatalogParams
-	if err := json.Unmarshal(params, &p); err != nil {
+	if err := d.requireActive(); err != nil {
+		return nil, err
+	}
+	decoded, err := protocol.DecodeBrokerRequestParams(protocol.MethodBrokerCatalog, params)
+	if err != nil {
 		return nil, &rpcwire.RPCError{Code: rpcwire.ErrInvalidParams, Message: "invalid catalog params"}
 	}
+	p := decoded.(protocol.BrokerCatalogParams)
 	allowed := map[string]struct{}{}
 	for _, ref := range p.AllowedRefs {
-		if ref = trim(ref); ref != "" {
+		if ref = strings.TrimSpace(ref); ref != "" {
 			allowed[ref] = struct{}{}
 		}
 	}
-	list, err := d.catalog(ctx, allowed)
+	operationCtx, cancel := d.operationContext(ctx)
+	defer cancel()
+	list, err := d.catalog(operationCtx, allowed)
 	if err != nil {
-		return nil, &rpcwire.RPCError{Code: rpcwire.ErrInternal, Message: redactErr(err)}
+		return nil, &rpcwire.RPCError{Code: ErrorUnavailable, Message: "provider catalog unavailable"}
 	}
 	if list == nil {
 		list = []protocol.BrokerProviderDescriptor{}
@@ -122,77 +163,83 @@ func (d *Desktop) handleCatalog(ctx context.Context, params json.RawMessage) (an
 }
 
 func (d *Desktop) handleStreamOpen(ctx context.Context, params json.RawMessage) (any, error) {
-	var p protocol.BrokerStreamOpenParams
-	if err := json.Unmarshal(params, &p); err != nil {
+	if err := d.requireActive(); err != nil {
+		return nil, err
+	}
+	decoded, err := protocol.DecodeBrokerRequestParams(protocol.MethodBrokerStreamOpen, params)
+	if err != nil {
 		return nil, &rpcwire.RPCError{Code: rpcwire.ErrInvalidParams, Message: "invalid stream open params"}
 	}
-	if err := p.Validate(); err != nil {
-		return nil, &rpcwire.RPCError{Code: rpcwire.ErrInvalidParams, Message: err.Error()}
-	}
-	var req provider.Request
-	if err := json.Unmarshal(p.Request, &req); err != nil {
-		return nil, &rpcwire.RPCError{Code: rpcwire.ErrInvalidParams, Message: "invalid provider request"}
-	}
+	p := decoded.(protocol.BrokerStreamOpenParams)
 
 	d.mu.Lock()
+	select {
+	case <-d.closed:
+		d.mu.Unlock()
+		return nil, &rpcwire.RPCError{Code: ErrorUnavailable, Message: "provider broker unavailable"}
+	default:
+	}
 	if len(d.streams) >= d.maxConcurrent {
 		d.mu.Unlock()
-		return nil, &rpcwire.RPCError{Code: rpcwire.ErrInternal, Message: "broker stream concurrency limit"}
+		return nil, &rpcwire.RPCError{Code: ErrorConcurrencyLimit, Message: "provider stream limit reached"}
 	}
 	if _, exists := d.streams[p.StreamID]; exists {
 		d.mu.Unlock()
 		return nil, &rpcwire.RPCError{Code: rpcwire.ErrInvalidParams, Message: "streamId already in use"}
 	}
-	streamCtx, cancel := context.WithCancel(context.Background())
+	streamCtx, cancel := context.WithCancel(d.lifecycle)
 	st := &streamState{cancel: cancel}
 	d.streams[p.StreamID] = st
 	d.mu.Unlock()
 
-	ch, err := d.open(streamCtx, p.ProviderRef, req)
+	ch, err := d.open(streamCtx, p.ProviderRef, p.Effort, p.Request.ProviderRequest())
 	if err != nil {
-		d.finishStream(p.StreamID)
-		return nil, &rpcwire.RPCError{Code: rpcwire.ErrInternal, Message: redactErr(err)}
+		d.finishStream(p.StreamID, st)
+		return nil, &rpcwire.RPCError{Code: ErrorUnavailable, Message: "provider stream unavailable"}
+	}
+	if ch == nil {
+		d.finishStream(p.StreamID, st)
+		return nil, &rpcwire.RPCError{Code: ErrorUnavailable, Message: "provider stream unavailable"}
 	}
 	go d.pump(p.StreamID, st, ch)
 	return protocol.BrokerStreamOpenResult{Accepted: true}, nil
 }
 
 func (d *Desktop) handleStreamCancel(ctx context.Context, params json.RawMessage) (any, error) {
-	var p protocol.BrokerStreamCancelParams
-	if err := json.Unmarshal(params, &p); err != nil {
+	if err := d.requireActive(); err != nil {
+		return nil, err
+	}
+	decoded, err := protocol.DecodeBrokerRequestParams(protocol.MethodBrokerStreamCancel, params)
+	if err != nil {
 		return nil, &rpcwire.RPCError{Code: rpcwire.ErrInvalidParams, Message: "invalid cancel params"}
 	}
+	p := decoded.(protocol.BrokerStreamCancelParams)
 	d.mu.Lock()
 	st, ok := d.streams[p.StreamID]
 	d.mu.Unlock()
 	if ok {
+		st.cancelRequested.Store(true)
 		st.cancel()
 	}
 	return protocol.BrokerStreamCancelResult{Cancelled: ok}, nil
 }
 
 func (d *Desktop) pump(streamID string, st *streamState, ch <-chan provider.Chunk) {
-	defer d.finishStream(streamID)
+	defer d.finishStream(streamID, st)
 	for {
 		select {
 		case <-d.closed:
-			_ = d.notifyEnd(streamID, "connection closed", true)
 			return
 		case chunk, ok := <-ch:
 			if !ok {
-				_ = d.notifyEnd(streamID, "", false)
+				_ = d.notifyEnd(streamID, st.seq.Load(), "", st.cancelRequested.Load())
 				return
 			}
 			seq := st.seq.Add(1)
-			raw, err := marshalChunk(chunk)
-			if err != nil {
-				_ = d.notifyEnd(streamID, "chunk marshal failed", false)
-				return
-			}
-			err = d.conn.Notify(string(protocol.MethodBrokerStreamChunk), protocol.BrokerStreamChunkParams{
+			err := d.conn.Notify(string(protocol.MethodBrokerStreamChunk), protocol.BrokerStreamChunkParams{
 				StreamID: streamID,
 				Seq:      seq,
-				Chunk:    raw,
+				Chunk:    protocol.BrokerProviderChunkFromProvider(chunk),
 			})
 			if err != nil {
 				return
@@ -201,66 +248,43 @@ func (d *Desktop) pump(streamID string, st *streamState, ch <-chan provider.Chun
 	}
 }
 
-func (d *Desktop) notifyEnd(streamID, errMsg string, interrupted bool) error {
+func (d *Desktop) notifyEnd(streamID string, lastSeq int64, errMsg string, interrupted bool) error {
 	return d.conn.Notify(string(protocol.MethodBrokerStreamEnd), protocol.BrokerStreamEndParams{
 		StreamID:    streamID,
+		LastSeq:     lastSeq,
 		Error:       errMsg,
 		Interrupted: interrupted,
 	})
 }
 
-// wireChunk is a JSON-safe view of provider.Chunk (error is a string).
-type wireChunk struct {
-	Type      provider.ChunkType `json:"type"`
-	Text      string             `json:"text,omitempty"`
-	Signature string             `json:"signature,omitempty"`
-	ToolCall  *provider.ToolCall `json:"toolCall,omitempty"`
-	ArgChars  int                `json:"argChars,omitempty"`
-	Usage     *provider.Usage    `json:"usage,omitempty"`
-	Err       string             `json:"err,omitempty"`
-}
-
-func marshalChunk(c provider.Chunk) (json.RawMessage, error) {
-	w := wireChunk{
-		Type: c.Type, Text: c.Text, Signature: c.Signature,
-		ToolCall: c.ToolCall, ArgChars: c.ArgChars, Usage: c.Usage,
-	}
-	if c.Err != nil {
-		w.Err = redactErr(c.Err)
-	}
-	return json.Marshal(w)
-}
-
-func (d *Desktop) finishStream(id string) {
+func (d *Desktop) finishStream(id string, expected *streamState) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	if st, ok := d.streams[id]; ok {
+	if st, ok := d.streams[id]; ok && st == expected {
 		st.cancel()
 		delete(d.streams, id)
 	}
 }
 
-func trim(s string) string {
-	for len(s) > 0 && (s[0] == ' ' || s[0] == '\t') {
-		s = s[1:]
+func (d *Desktop) requireActive() error {
+	select {
+	case <-d.closed:
+		return &rpcwire.RPCError{Code: ErrorUnavailable, Message: "provider broker unavailable"}
+	default:
 	}
-	for len(s) > 0 && (s[len(s)-1] == ' ' || s[len(s)-1] == '\t') {
-		s = s[:len(s)-1]
+	if !d.active.Load() {
+		return &rpcwire.RPCError{Code: ErrorNotReady, Message: "provider broker not ready"}
 	}
-	return s
+	return nil
 }
 
-// redactErr returns a safe, non-secret error string for RPC.
-func redactErr(err error) string {
-	if err == nil {
-		return "error"
+func (d *Desktop) operationContext(request context.Context) (context.Context, context.CancelFunc) {
+	ctx, cancel := context.WithCancel(request)
+	stop := context.AfterFunc(d.lifecycle, cancel)
+	return ctx, func() {
+		stop()
+		cancel()
 	}
-	msg := err.Error()
-	// Never echo values that look like keys.
-	if len(msg) > 200 {
-		msg = msg[:200] + "…"
-	}
-	return msg
 }
 
 // DescriptorFromProvider builds a non-secret catalog row from a live Provider

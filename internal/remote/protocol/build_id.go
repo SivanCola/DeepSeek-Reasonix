@@ -3,6 +3,7 @@ package protocol
 import (
 	"fmt"
 	"regexp"
+	"runtime/debug"
 	"strings"
 )
 
@@ -42,6 +43,40 @@ func NewBuildID(productVersion, sourceRevision string) (BuildID, error) {
 		ProtocolVersion: ProtocolVersion, SchemaHash: SchemaHash(),
 	}
 	return id, id.Validate()
+}
+
+// CurrentBuildID derives the immutable source identity embedded by the Go
+// toolchain. Development/test binaries without VCS metadata use the all-zero
+// revision; this remains schema-valid while release builds compare their real
+// commit (and dirty bit) exactly across Desktop and Host.
+func CurrentBuildID(productVersion string) BuildID {
+	revision := strings.Repeat("0", 40)
+	modified := false
+	if info, ok := debug.ReadBuildInfo(); ok {
+		for _, setting := range info.Settings {
+			switch setting.Key {
+			case "vcs.revision":
+				candidate := strings.ToLower(strings.TrimSpace(setting.Value))
+				if revisionPattern.MatchString(candidate) {
+					revision = candidate
+				}
+			case "vcs.modified":
+				modified = setting.Value == "true"
+			}
+		}
+	}
+	if modified && !strings.HasSuffix(revision, "+dirty") {
+		revision += "+dirty"
+	}
+	id, err := NewBuildID(productVersion, revision)
+	if err == nil {
+		return id
+	}
+	// Product versions are supplied by trusted build metadata. Keep the helper
+	// total for tests and development builds while preserving strict validation
+	// on the wire.
+	id, _ = NewBuildID("dev", revision)
+	return id
 }
 
 type BuildIDField string

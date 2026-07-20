@@ -110,6 +110,28 @@ func TestDecodeResultAndNotificationUseFrozenStrictDTOs(t *testing.T) {
 	}
 }
 
+func TestDecodeBrokerResultUsesHostRequestDirectionAndStrictDTO(t *testing.T) {
+	decoded, err := DecodeBrokerResult(MethodBrokerStreamOpen, json.RawMessage(`{"accepted":true}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result, ok := decoded.(BrokerStreamOpenResult); !ok || !result.Accepted {
+		t.Fatalf("decoded Broker result = %#v", decoded)
+	}
+	if _, err := DecodeBrokerResult(MethodBrokerStreamOpen, json.RawMessage(`{"accepted":true,"unknown":true}`)); err == nil {
+		t.Fatal("Broker result decoder accepted unknown field")
+	}
+	if _, err := DecodeBrokerResult(MethodRemotePing, json.RawMessage(`{}`)); err == nil {
+		t.Fatal("Broker result decoder accepted ordinary Remote request")
+	}
+	if _, err := DecodeBrokerResult(MethodBrokerStreamChunk, json.RawMessage(`{}`)); err == nil {
+		t.Fatal("Broker result decoder accepted Broker notification")
+	}
+	if _, err := DecodeBrokerResult(Method("unknown/method"), json.RawMessage(`{}`)); err == nil {
+		t.Fatal("Broker result decoder accepted unregistered method")
+	}
+}
+
 func assertNoDynamicBusinessType(t *testing.T, typ reflect.Type, seen map[reflect.Type]bool) {
 	t.Helper()
 	for typ.Kind() == reflect.Pointer {

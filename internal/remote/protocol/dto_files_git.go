@@ -147,14 +147,15 @@ type GitCommitDetailResult struct {
 }
 
 func (r GitCommitDetailResult) Validate() error {
-	if r.Kind == GitDetailFiles {
+	switch r.Kind {
+	case GitDetailFiles:
 		if r.Files == nil || r.HasMore == nil {
 			return validationError("files result requires files and hasMore")
 		}
 		if r.Path != "" || r.Body != nil || r.SizeBytes != nil || r.ReturnedBytes != nil || r.Truncated != nil || r.TruncationReason != "" {
 			return validationError("files result contains patch fields")
 		}
-	} else if r.Kind == GitDetailPatch {
+	case GitDetailPatch:
 		if r.Path == "" || r.Body == nil || r.SizeBytes == nil || r.ReturnedBytes == nil || r.Truncated == nil {
 			return validationError("patch result requires path, body, sizeBytes, returnedBytes, and truncated")
 		}

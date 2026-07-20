@@ -48,11 +48,17 @@ func remoteAttachWorkspaceCLI(args []string, version string) int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	// Prefer in-process runtime when this binary is the attach entry (single binary path).
+	runtimeBinary, binErr := os.Executable()
+	if binErr != nil {
+		fmt.Fprintln(os.Stderr, "attach-workspace: resolve runtime binary:", binErr)
+		return 1
+	}
+	// The per-workspace runtime is detached from this SSH attach process so
+	// controllers survive an unexpected transport cut for the grace window.
 	err := attach.Run(ctx, os.Stdin, os.Stdout, attach.Options{
-		Workspace: workspace,
-		Version:   version,
-		InProcess: true,
+		Workspace:     workspace,
+		Version:       version,
+		RuntimeBinary: runtimeBinary,
 	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "attach-workspace:", err)

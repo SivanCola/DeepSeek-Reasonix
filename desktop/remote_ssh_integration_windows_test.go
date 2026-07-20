@@ -1,4 +1,9 @@
-//go:build windows
+//go:build windows && reasonix_legacy_remote_integration
+
+// This fixture targets the removed pre-workbench Remote client/protocol. Keep
+// it source-available for historical environments, but do not compile it into
+// the current Windows suite; the active workbench path is covered by the
+// transport, AskPass, process-lifecycle and target-transition tests.
 
 package main
 

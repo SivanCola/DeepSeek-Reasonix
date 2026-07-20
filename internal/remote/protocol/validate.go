@@ -12,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"reasonix/internal/provider"
 )
 
 type protocolValidatable interface {
@@ -67,7 +69,7 @@ var enumTypes = map[reflect.Type][]string{
 	reflect.TypeOf(TrashGuard("")):                 values(TrashNormal, TrashRedundantRecoveryOnly),
 	reflect.TypeOf(CatalogScope("")):               values(CatalogHost, CatalogWorkspace),
 	reflect.TypeOf(CatalogKind("")):                values(CatalogTopics, CatalogSessions, CatalogTrash, CatalogWorkspaceCatalog, CatalogSessionCatalog, CatalogMemory, CatalogResearch),
-	reflect.TypeOf(ResyncReason("")):               values(ResyncQueueOverflow, ResyncRuntimeReplaced, ResyncTargetReplaced),
+	reflect.TypeOf(ResyncReason("")):               values(ResyncQueueOverflow, ResyncRuntimeReplaced, ResyncTargetReplaced, ResyncStateChanged),
 	reflect.TypeOf(SessionOutcome("")):             values(OutcomeCompleted, OutcomeCancelled, OutcomeFailed, OutcomeInterrupted),
 	reflect.TypeOf(InterruptionReason("")):         values(InterruptionHostRestarted),
 	reflect.TypeOf(FileKind("")):                   values(FileText, FileBinary, FileImage, FilePDF),
@@ -88,6 +90,9 @@ var enumTypes = map[reflect.Type][]string{
 	reflect.TypeOf(SessionRestoreDisposition("")):  values(SessionRestored),
 	reflect.TypeOf(SessionClearDisposition("")):    values(SessionCleared, SessionCleanupPending),
 	reflect.TypeOf(ProfileSetDisposition("")):      values(ProfileUpdated, ProfileRebuilt),
+	reflect.TypeOf(provider.Role("")):              values(provider.RoleSystem, provider.RoleUser, provider.RoleAssistant, provider.RoleTool),
+	reflect.TypeOf(BrokerChunkType("")):            values(BrokerChunkText, BrokerChunkReasoning, BrokerChunkToolCallStart, BrokerChunkToolCallDelta, BrokerChunkToolCall, BrokerChunkUsage, BrokerChunkDone, BrokerChunkError),
+	reflect.TypeOf(BrokerProviderErrorCode("")):    values(BrokerProviderFailed, BrokerProviderInterrupted),
 }
 
 func init() {
@@ -199,6 +204,12 @@ func validateNestedRequired(raw json.RawMessage, typ reflect.Type, at string) er
 	for typ.Kind() == reflect.Pointer {
 		typ = typ.Elem()
 	}
+	if typ == reflect.TypeOf(json.RawMessage{}) {
+		if len(bytes.TrimSpace(raw)) == 0 || !json.Valid(raw) {
+			return validationError(at + " must contain valid JSON")
+		}
+		return nil
+	}
 	switch typ.Kind() {
 	case reflect.Struct:
 		return validateRequiredJSON(raw, typ, at)
@@ -240,6 +251,13 @@ func validateValue(value reflect.Value, at string, omitEmpty bool) error {
 		return validateValue(value.Elem(), at, false)
 	}
 	typ := value.Type()
+	if typ == reflect.TypeOf(json.RawMessage{}) {
+		raw := value.Interface().(json.RawMessage)
+		if len(bytes.TrimSpace(raw)) == 0 || !json.Valid(raw) {
+			return validationError(at + " must contain valid JSON")
+		}
+		return nil
+	}
 	if _, opaque := opaqueTypes[typ]; opaque {
 		if strings.TrimSpace(value.String()) == "" && !omitEmpty {
 			return validationError(at + " must be a non-empty opaque string")

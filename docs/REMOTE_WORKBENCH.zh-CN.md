@@ -26,11 +26,11 @@ remote-runtime --broker RPC→ Desktop Provider Broker → 本机 Provider / API
   - `desktop/frontend/src/generated/remoteProtocol.generated.ts`
 - 生成：`go run ./cmd/remote-protocol-gen -root .`
 - 校验：`go run ./cmd/remote-protocol-gen -check -root .`
-- 握手携带 Schema Hash：不一致则拒绝并可触发一次自动升级；Build/source 不同但 Schema 相同仅作诊断。
+- 握手严格比较完整 Build ID（产品版本、源码 revision、协议版本、Schema Hash）；任何一项不一致都会在 Provider Broker 激活前拒绝连接。V1 不自动安装或升级 Host CLI。
 
 ## Provider Broker
 
-Host → Desktop：`broker/catalog`、`broker/stream/open`、`broker/stream/cancel`  
+Host → Desktop：`broker/catalog`、`broker/stream/open`、`broker/stream/cancel`
 Desktop → Host：`broker/stream/chunk`、`broker/stream/end`、`broker/catalog-changed`
 
 目录项为非敏感 Descriptor，并透传 `toolCallReasoning` / `warnOnMissingToolCallReasoning`，保证 DeepSeek 工具循环与本地一致。
@@ -44,11 +44,12 @@ Desktop → Host：`broker/stream/chunk`、`broker/stream/end`、`broker/catalog
 
 ## 明确非目标
 
-- Host 持有 Provider 凭据  
-- systemd 常驻 daemon  
-- 远端子窗口、HTTP Gateway、SFTP 作为工作台数据面  
-- 超出工作台 RuntimeAPI 的完整 AppBindings 对齐  
-- 多个 Remote Host 同时常驻  
+- Host 持有 Provider 凭据
+- systemd 常驻 daemon
+- 远端子窗口、HTTP Gateway、SFTP 作为工作台数据面
+- 超出工作台 RuntimeAPI 的完整 AppBindings 对齐
+- 多个 Remote Host 同时常驻
+- 将远端 fork 投影到第二个 Desktop Tab、镜像上传/恢复、直接切换远端 Git 分支
 
 ## SSH 传输
 
@@ -64,6 +65,12 @@ Desktop → Host：`broker/stream/chunk`、`broker/stream/end`、`broker/catalog
 ## Provider Trust
 
 持久授权键：`HostID + fingerprint` → allowed refs。绝不写入 API Key / base URL / Header / env 名 / 密码。
+
+## 文件与镜像
+
+Host 只接受工作区内的相对路径，拒绝 `..`、绝对路径和逃逸工作区的符号链接。Runtime 文件 API 只读；智能体工具写入仍在 Host 上执行，并遵循正常审批策略。
+
+每次完成快照会将经过 digest 校验的只读 `session.jsonl` 拉取到本机 `remote-mirrors/`。V1 不开放镜像上传/恢复。
 
 ## 真实验收矩阵
 
@@ -86,7 +93,7 @@ Desktop → Host：`broker/stream/chunk`、`broker/stream/end`、`broker/catalog
 | --- | --- |
 | PR #6722 (@SivanCola) | 本机 Broker 方向、信任模型、远端无密钥 runtime、checkpoint/mirror 方向 |
 | PR #6725 (@taibai233) | `rpcwire`、生成式 Schema、RuntimeAPI registry、Windows AskPass/Job Object 方向、Target fencing |
-| 不采用 | #6725 Host 凭据、systemd、Build ID 强失败、完整 71 方法 Host 实现原样落地 |
+| 不采用 | #6725 Host 凭据、systemd、完整 71 方法 Host 实现原样落地；严格 Build ID 失败已采用 |
 | 不保留自 #6722 | 子窗口、HTTP Gateway、SSH 端口转发 Broker、SFTP 工作台 I/O |
 
 ## 缓存影响

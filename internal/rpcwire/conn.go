@@ -44,6 +44,10 @@ type Options struct {
 	// StrictJSONRPC validates the jsonrpc member and mutually exclusive frame
 	// shapes. ACP leaves this off for compatibility; Remote enables it.
 	StrictJSONRPC bool
+	// MaxConcurrentHandlers bounds inbound request and notification handlers
+	// without blocking response dispatch. Non-positive values use the safe
+	// default; overload requests receive ErrServerBusy and notifications drop.
+	MaxConcurrentHandlers int
 	// BeforeRequest runs synchronously on the read loop, after strict frame
 	// validation and before a handler goroutine is scheduled. It lets a protocol
 	// atomically record wire arrival order (for example, initialize-first) while
@@ -73,12 +77,15 @@ type Conn struct {
 	reqH map[string]RequestHandler
 	notH map[string]NotificationHandler
 
-	wg        sync.WaitGroup
-	closeOnce sync.Once
-	closed    chan struct{}
-	closeMu   sync.Mutex
-	closeErr  error
+	wg           sync.WaitGroup
+	closeOnce    sync.Once
+	closed       chan struct{}
+	closeMu      sync.Mutex
+	closeErr     error
+	handlerSlots chan struct{}
 }
+
+const DefaultMaxConcurrentHandlers = 64
 
 type rpcResult struct {
 	result json.RawMessage
@@ -108,14 +115,18 @@ func NewConn(r io.Reader, w io.Writer, opts Options) *Conn {
 	if opts.Name == "" {
 		opts.Name = "rpcwire"
 	}
+	if opts.MaxConcurrentHandlers <= 0 {
+		opts.MaxConcurrentHandlers = DefaultMaxConcurrentHandlers
+	}
 	return &Conn{
-		r:       r,
-		w:       w,
-		opts:    opts,
-		pending: make(map[int64]chan rpcResult),
-		reqH:    make(map[string]RequestHandler),
-		notH:    make(map[string]NotificationHandler),
-		closed:  make(chan struct{}),
+		r:            r,
+		w:            w,
+		opts:         opts,
+		pending:      make(map[int64]chan rpcResult),
+		reqH:         make(map[string]RequestHandler),
+		notH:         make(map[string]NotificationHandler),
+		closed:       make(chan struct{}),
+		handlerSlots: make(chan struct{}, opts.MaxConcurrentHandlers),
 	}
 }
 
@@ -196,16 +207,17 @@ func (c *Conn) dispatch(ctx context.Context, line []byte) {
 	case in.Method != "" && hasID:
 		if c.opts.BeforeRequest != nil {
 			if err := c.opts.BeforeRequest(in.Method, in.Params); err != nil {
-				c.wg.Add(1)
-				go func() {
-					defer c.wg.Done()
-					c.respondHandlerError(in.ID, err)
-				}()
+				c.respondHandlerError(in.ID, err)
 				return
 			}
 		}
+		if !c.tryStartHandler() {
+			c.respondError(in.ID, ErrServerBusy, "server busy", nil)
+			return
+		}
 		c.wg.Add(1)
 		go func() {
+			defer c.finishHandler()
 			defer c.wg.Done()
 			c.serveRequest(ctx, in.ID, in.Method, in.Params)
 		}()
@@ -216,8 +228,12 @@ func (c *Conn) dispatch(ctx context.Context, line []byte) {
 			}
 		}
 		if h := c.notH[in.Method]; h != nil {
+			if !c.tryStartHandler() {
+				return
+			}
 			c.wg.Add(1)
 			go func() {
+				defer c.finishHandler()
 				defer c.wg.Done()
 				h(ctx, in.Params)
 			}()
@@ -228,6 +244,17 @@ func (c *Conn) dispatch(ctx context.Context, line []byte) {
 		c.respondError(json.RawMessage("null"), ErrInvalidRequest, "invalid request", nil)
 	}
 }
+
+func (c *Conn) tryStartHandler() bool {
+	select {
+	case c.handlerSlots <- struct{}{}:
+		return true
+	default:
+		return false
+	}
+}
+
+func (c *Conn) finishHandler() { <-c.handlerSlots }
 
 func validateStrictFrame(line []byte, in inbound) error {
 	var members map[string]json.RawMessage

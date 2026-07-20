@@ -1,6 +1,10 @@
 package protocol
 
-import "time"
+import (
+	"time"
+
+	"reasonix/internal/rpcwire"
+)
 
 const (
 	FrameBytes                = 8 << 20
@@ -19,6 +23,7 @@ const (
 	PreviewBytes              = 256 << 10
 	GitHistoryCommits         = 100
 	GitPatchBytes             = 1 << 20
+	RPCConcurrentHandlers     = rpcwire.DefaultMaxConcurrentHandlers
 	LeaseTTLMillis            = 30 * 1000
 	LeasePingIntervalMillis   = 10 * 1000
 	IdempotencySessionEntries = 1024
@@ -45,6 +50,7 @@ type ProtocolLimits struct {
 	PreviewBytes          int `json:"previewBytes"`
 	GitHistoryCommits     int `json:"gitHistoryCommits"`
 	GitPatchBytes         int `json:"gitPatchBytes"`
+	RPCConcurrentHandlers int `json:"rpcConcurrentHandlers"`
 }
 
 func FrozenProtocolLimits() ProtocolLimits {
@@ -57,6 +63,7 @@ func FrozenProtocolLimits() ProtocolLimits {
 		SearchDefaultItems: SearchDefaultItems, SearchMaxItems: SearchMaxItems,
 		SearchMaxVisitedItems: SearchMaxVisitedItems, PreviewBytes: PreviewBytes,
 		GitHistoryCommits: GitHistoryCommits, GitPatchBytes: GitPatchBytes,
+		RPCConcurrentHandlers: RPCConcurrentHandlers,
 	}
 }
 

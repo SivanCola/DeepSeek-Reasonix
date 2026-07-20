@@ -1,11 +1,13 @@
 package broker
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -13,6 +15,107 @@ import (
 	"reasonix/internal/remote/protocol"
 	"reasonix/internal/rpcwire"
 )
+
+func TestDesktopBrokerUnavailableUntilActivatedAndAfterClose(t *testing.T) {
+	var catalogCalls atomic.Int32
+	conn := rpcwire.NewConn(strings.NewReader(""), io.Discard, rpcwire.Options{})
+	d, err := Attach(conn, Options{
+		Catalog: func(context.Context, map[string]struct{}) ([]protocol.BrokerProviderDescriptor, error) {
+			catalogCalls.Add(1)
+			return nil, nil
+		},
+		Open: func(context.Context, string, string, provider.Request) (<-chan provider.Chunk, error) {
+			t.Fatal("open called before activation")
+			return nil, nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.handleCatalog(context.Background(), json.RawMessage(`{}`)); rpcCode(err) != ErrorNotReady {
+		t.Fatalf("pre-activation catalog error = %v", err)
+	}
+	if catalogCalls.Load() != 0 {
+		t.Fatal("catalog source ran before activation")
+	}
+	if err := d.Activate(); err != nil {
+		t.Fatal(err)
+	}
+	d.Close()
+	d.Close()
+	if err := d.Activate(); err == nil {
+		t.Fatal("closed Broker reactivated")
+	}
+}
+
+func TestDesktopBrokerNeverReturnsProviderErrorDetails(t *testing.T) {
+	const secret = "sk-provider-secret-canary"
+	conn := rpcwire.NewConn(strings.NewReader(""), io.Discard, rpcwire.Options{})
+	d, err := Attach(conn, Options{
+		Catalog: func(context.Context, map[string]struct{}) ([]protocol.BrokerProviderDescriptor, error) {
+			return nil, errors.New("Authorization: Bearer " + secret)
+		},
+		Open: func(context.Context, string, string, provider.Request) (<-chan provider.Chunk, error) {
+			return nil, errors.New("endpoint=https://secret.invalid key=" + secret)
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := d.Activate(); err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	_, catalogErr := d.handleCatalog(context.Background(), json.RawMessage(`{}`))
+	openRaw, _ := json.Marshal(protocol.BrokerStreamOpenParams{
+		StreamID: "s", ProviderRef: "p",
+		Request: protocol.BrokerProviderRequestFromProvider(provider.Request{}),
+	})
+	_, openErr := d.handleStreamOpen(context.Background(), openRaw)
+	for _, got := range []error{catalogErr, openErr} {
+		if got == nil || strings.Contains(got.Error(), secret) || strings.Contains(got.Error(), "secret.invalid") {
+			t.Fatalf("unsafe Broker error: %v", got)
+		}
+	}
+}
+
+func TestDesktopBrokerConcurrentCloseIsIdempotent(t *testing.T) {
+	conn := rpcwire.NewConn(strings.NewReader(""), io.Discard, rpcwire.Options{})
+	d, err := Attach(conn, Options{
+		Catalog: func(context.Context, map[string]struct{}) ([]protocol.BrokerProviderDescriptor, error) {
+			return nil, nil
+		},
+		Open: func(context.Context, string, string, provider.Request) (<-chan provider.Chunk, error) {
+			return make(chan provider.Chunk), nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := d.Activate(); err != nil {
+		t.Fatal(err)
+	}
+	var wg sync.WaitGroup
+	for i := 0; i < 32; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			d.Close()
+		}()
+	}
+	wg.Wait()
+	if err := d.Activate(); err == nil {
+		t.Fatal("closed Broker reactivated")
+	}
+}
+
+func rpcCode(err error) int {
+	var rpcErr *rpcwire.RPCError
+	if errors.As(err, &rpcErr) {
+		return rpcErr.Code
+	}
+	return 0
+}
 
 type pipePair struct {
 	clientR io.Reader
@@ -71,16 +174,13 @@ func TestDesktopBrokerCatalogAndStreamRoundTrip(t *testing.T) {
 			t.Errorf("chunk params: %v", err)
 			return
 		}
-		var c wireChunk
-		if err := json.Unmarshal(p.Chunk, &c); err != nil {
-			t.Errorf("chunk body: %v", err)
-			return
-		}
 		mu.Lock()
-		gotChunks = append(gotChunks, provider.Chunk{Type: c.Type, Text: c.Text})
+		gotChunks = append(gotChunks, p.Chunk.ProviderChunk())
 		mu.Unlock()
 	})
 	hostConn.HandleNotify(string(protocol.MethodBrokerStreamEnd), func(ctx context.Context, params json.RawMessage) {
+		mu.Lock()
+		defer mu.Unlock()
 		_ = json.Unmarshal(params, &end)
 	})
 
@@ -88,21 +188,26 @@ func TestDesktopBrokerCatalogAndStreamRoundTrip(t *testing.T) {
 		{Type: provider.ChunkText, Text: "hi"},
 		{Type: provider.ChunkText, Text: " there"},
 	}}
+	gotEffort := ""
 	d, err := Attach(desktopConn, Options{
 		Catalog: func(ctx context.Context, allowed map[string]struct{}) ([]protocol.BrokerProviderDescriptor, error) {
 			return []protocol.BrokerProviderDescriptor{
 				DescriptorFromProvider("deepseek/chat", "DeepSeek", "chat", prov, nil, "", false),
 			}, nil
 		},
-		Open: func(ctx context.Context, ref string, req provider.Request) (<-chan provider.Chunk, error) {
+		Open: func(ctx context.Context, ref, effort string, req provider.Request) (<-chan provider.Chunk, error) {
 			if ref != "deepseek/chat" {
 				t.Fatalf("ref = %q", ref)
 			}
+			gotEffort = effort
 			// Request must round-trip byte-equivalent for cache safety.
 			return prov.Stream(ctx, req)
 		},
 	})
 	if err != nil {
+		t.Fatal(err)
+	}
+	if err := d.Activate(); err != nil {
 		t.Fatal(err)
 	}
 	defer d.Close()
@@ -129,17 +234,8 @@ func TestDesktopBrokerCatalogAndStreamRoundTrip(t *testing.T) {
 	req := provider.Request{
 		Messages: []provider.Message{{Role: provider.RoleUser, Content: "hello"}},
 	}
-	reqRaw, _ := json.Marshal(req)
-	// Ensure re-marshal is stable for the test assertion path.
-	var req2 provider.Request
-	_ = json.Unmarshal(reqRaw, &req2)
-	again, _ := json.Marshal(req2)
-	if !bytes.Equal(reqRaw, again) {
-		t.Fatalf("provider.Request not stable under marshal")
-	}
-
 	openRaw, err := hostConn.Request(ctx, string(protocol.MethodBrokerStreamOpen), protocol.BrokerStreamOpenParams{
-		StreamID: "s1", ProviderRef: "deepseek/chat", Request: reqRaw,
+		StreamID: "s1", ProviderRef: "deepseek/chat", Effort: "high", Request: protocol.BrokerProviderRequestFromProvider(req),
 	})
 	if err != nil {
 		t.Fatalf("open: %v", err)
@@ -148,13 +244,17 @@ func TestDesktopBrokerCatalogAndStreamRoundTrip(t *testing.T) {
 	if err := json.Unmarshal(openRaw, &open); err != nil || !open.Accepted {
 		t.Fatalf("open result = %s err=%v", openRaw, err)
 	}
+	if gotEffort != "high" {
+		t.Fatalf("effort = %q, want high", gotEffort)
+	}
 
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
 		mu.Lock()
 		n := len(gotChunks)
+		ended := end.StreamID == "s1"
 		mu.Unlock()
-		if n >= 2 && end.StreamID == "s1" {
+		if n >= 2 && ended {
 			break
 		}
 		time.Sleep(10 * time.Millisecond)
@@ -167,7 +267,7 @@ func TestDesktopBrokerCatalogAndStreamRoundTrip(t *testing.T) {
 	if gotChunks[0].Text+gotChunks[1].Text != "hi there" {
 		t.Fatalf("text = %q%q", gotChunks[0].Text, gotChunks[1].Text)
 	}
-	if end.Interrupted || end.Error != "" {
+	if end.Interrupted || end.Error != "" || end.LastSeq != 2 {
 		t.Fatalf("end = %+v", end)
 	}
 }
@@ -186,7 +286,7 @@ func TestDesktopBrokerCancelsStream(t *testing.T) {
 		Catalog: func(context.Context, map[string]struct{}) ([]protocol.BrokerProviderDescriptor, error) {
 			return nil, nil
 		},
-		Open: func(ctx context.Context, ref string, req provider.Request) (<-chan provider.Chunk, error) {
+		Open: func(ctx context.Context, ref, _ string, req provider.Request) (<-chan provider.Chunk, error) {
 			ch := make(chan provider.Chunk)
 			go func() {
 				defer close(ch)
@@ -199,6 +299,9 @@ func TestDesktopBrokerCancelsStream(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := d.Activate(); err != nil {
+		t.Fatal(err)
+	}
 	defer d.Close()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -206,9 +309,8 @@ func TestDesktopBrokerCancelsStream(t *testing.T) {
 	go desktopConn.Serve(ctx)
 	go hostConn.Serve(ctx)
 
-	reqRaw, _ := json.Marshal(provider.Request{Messages: []provider.Message{{Role: provider.RoleUser, Content: "x"}}})
 	if _, err := hostConn.Request(ctx, string(protocol.MethodBrokerStreamOpen), protocol.BrokerStreamOpenParams{
-		StreamID: "c1", ProviderRef: "stub/m", Request: reqRaw,
+		StreamID: "c1", ProviderRef: "stub/m", Request: protocol.BrokerProviderRequestFromProvider(provider.Request{Messages: []provider.Message{{Role: provider.RoleUser, Content: "x"}}}),
 	}); err != nil {
 		t.Fatal(err)
 	}

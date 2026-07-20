@@ -86,7 +86,8 @@ func ValidateHandlerCoverage(handlers HandlerSet) error {
 func (r *Router) WireOptions() rpcwire.Options {
 	return rpcwire.Options{
 		Name: "remote", MaxInboundBytes: FrameBytes, MaxOutboundBytes: FrameBytes,
-		StrictJSONRPC: true, BeforeRequest: r.BeforeRequest, BeforeNotification: r.BeforeNotification,
+		StrictJSONRPC: true, MaxConcurrentHandlers: RPCConcurrentHandlers,
+		BeforeRequest: r.BeforeRequest, BeforeNotification: r.BeforeNotification,
 	}
 }
 
@@ -129,14 +130,21 @@ func (r *Router) BeforeRequest(method string, _ json.RawMessage) error {
 	}
 }
 
-// BeforeNotification rejects every inbound client notification. Remote V1 has
-// no client-to-host notification direction, and any such frame poisons the
-// initialize-first handshake without producing a JSON-RPC response.
-func (r *Router) BeforeNotification(_ string, _ json.RawMessage) error {
+// BeforeNotification admits only frozen Desktop-to-Host Broker notifications
+// after initialization. Invalid, unknown, or early notifications poison the
+// transport because JSON-RPC notifications cannot carry an error response.
+func (r *Router) BeforeNotification(method string, raw json.RawMessage) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.state = handshakeFailed
-	return invalidRequest("Remote clients must not send notifications")
+	if r.state != handshakeReady {
+		r.state = handshakeFailed
+		return invalidRequest("Remote initialization must complete before notifications")
+	}
+	if _, err := DecodeBrokerNotificationParams(Method(method), raw); err != nil {
+		r.state = handshakeFailed
+		return invalidRequest("invalid Broker notification")
+	}
+	return nil
 }
 
 func (r *Router) Ready() bool {

@@ -254,6 +254,21 @@ func DecodeResult(method Method, raw json.RawMessage) (any, error) {
 	return decodeAndValidate(raw, spec.ResultType)
 }
 
+// DecodeBrokerResult applies the frozen result DTO for a Host-to-Desktop
+// Broker request. It intentionally rejects ordinary Remote requests and both
+// notification directions so Broker clients cannot bypass registry direction
+// checks while decoding peer responses.
+func DecodeBrokerResult(method Method, raw json.RawMessage) (any, error) {
+	spec, ok := LookupMethod(method)
+	if !ok {
+		return nil, fmt.Errorf("protocol: unregistered method %q", method)
+	}
+	if spec.Direction != DirectionHostRequest {
+		return nil, fmt.Errorf("protocol: %q is not a Broker request", method)
+	}
+	return decodeAndValidate(raw, spec.ResultType)
+}
+
 // DecodeNotificationParams applies the same strict decoder and validation
 // rules to the three frozen Host notification payloads. Unknown methods and
 // client-request methods are rejected rather than being silently ignored by a
@@ -265,6 +280,30 @@ func DecodeNotificationParams(method Method, raw json.RawMessage) (any, error) {
 	}
 	if spec.Direction != DirectionHostNotification {
 		return nil, fmt.Errorf("protocol: %q is not a Host notification", method)
+	}
+	return decodeAndValidate(raw, spec.ParamsType)
+}
+
+// DecodeBrokerRequestParams applies the frozen Host-to-Desktop Broker DTO.
+func DecodeBrokerRequestParams(method Method, raw json.RawMessage) (any, error) {
+	spec, ok := LookupMethod(method)
+	if !ok {
+		return nil, fmt.Errorf("protocol: unregistered method %q", method)
+	}
+	if spec.Direction != DirectionHostRequest {
+		return nil, fmt.Errorf("protocol: %q is not a Broker request", method)
+	}
+	return decodeAndValidate(raw, spec.ParamsType)
+}
+
+// DecodeBrokerNotificationParams applies the frozen Desktop-to-Host Broker DTO.
+func DecodeBrokerNotificationParams(method Method, raw json.RawMessage) (any, error) {
+	spec, ok := LookupMethod(method)
+	if !ok {
+		return nil, fmt.Errorf("protocol: unregistered method %q", method)
+	}
+	if spec.Direction != DirectionClientNotification {
+		return nil, fmt.Errorf("protocol: %q is not a Broker notification", method)
 	}
 	return decodeAndValidate(raw, spec.ParamsType)
 }

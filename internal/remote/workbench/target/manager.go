@@ -123,6 +123,55 @@ func (m *Manager) MarkRemoteConnected(gen uint64) error {
 	return nil
 }
 
+// MarkRemoteDisconnected fences a dead transport, clears the remote busy bit,
+// and returns the main window to Local without discarding the reconnect hint.
+// Late disconnect callbacks from an older connection are ignored.
+func (m *Manager) MarkRemoteDisconnected(gen uint64) (Identity, uint64, uint64, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.remote == nil || m.remote.Generation != gen {
+		return m.active, m.identityGen.Load(), m.requestSeq.Load(), false
+	}
+	m.remote.Connected = false
+	m.busyRemote = false
+	if m.active.Kind == KindRemote {
+		m.active = Identity{Kind: KindLocal}
+		return m.active, m.identityGen.Add(1), m.requestSeq.Add(1), true
+	}
+	return m.active, m.identityGen.Load(), m.requestSeq.Load(), true
+}
+
+// Remote returns a copy of the current remote lifecycle, including its attach
+// generation. Projection identity generations deliberately advance again on
+// ActivateRemote, so callers must compare a remote client with this token—not
+// with Active's projection token.
+func (m *Manager) Remote() *RemoteState {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.remote == nil {
+		return nil
+	}
+	cp := *m.remote
+	return &cp
+}
+
+// AbortRemoteConnect clears only the generation that failed. It is a no-op for
+// a newer replacement, preventing a late failure from tearing down the winner.
+func (m *Manager) AbortRemoteConnect(gen uint64) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.remote == nil || m.remote.Generation != gen {
+		return false
+	}
+	if m.active.Kind == KindRemote {
+		m.active = Identity{Kind: KindLocal}
+		m.identityGen.Add(1)
+		m.requestSeq.Add(1)
+	}
+	m.remote = nil
+	return true
+}
+
 // ActivateRemote projects the connected remote. Drops stale if gen mismatches.
 func (m *Manager) ActivateRemote(gen uint64) (Identity, uint64, uint64, error) {
 	m.mu.Lock()

@@ -44,6 +44,7 @@ type InitializeParams struct {
 	BuildID          BuildID          `json:"buildId"`
 	ClientInstanceID ClientInstanceID `json:"clientInstanceId"`
 	ResumeLeaseID    LeaseID          `json:"resumeLeaseId,omitempty"`
+	Workspace        string           `json:"workspace" validate:"nonempty"`
 }
 
 type LeaseInfo struct {

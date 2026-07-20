@@ -1,12 +1,16 @@
-// Package client is the Desktop-side Remote Workbench peer over a Transport.
+// Package client is the Desktop-side typed Remote Workbench peer.
 package client
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"reasonix/internal/remote/broker"
 	"reasonix/internal/remote/protocol"
@@ -14,7 +18,28 @@ import (
 	"reasonix/internal/rpcwire"
 )
 
-// Client is one Desktop↔Host workbench connection generation.
+type State struct {
+	Initialized     bool                     `json:"initialized"`
+	Generation      uint64                   `json:"generation"`
+	HostEpoch       protocol.HostEpoch       `json:"hostEpoch"`
+	LeaseID         protocol.LeaseID         `json:"leaseId"`
+	WorkspaceID     protocol.WorkspaceID     `json:"workspaceId"`
+	Target          protocol.RuntimeTarget   `json:"target"`
+	RuntimeEpoch    protocol.RuntimeEpoch    `json:"runtimeEpoch"`
+	SubscriptionID  protocol.SubscriptionID  `json:"subscriptionId"`
+	SnapshotID      protocol.SnapshotID      `json:"snapshotId"`
+	CurrentTurnID   protocol.TurnID          `json:"currentTurnId"`
+	Capabilities    protocol.Capabilities    `json:"capabilities"`
+	ResolvedProfile protocol.ResolvedProfile `json:"resolvedProfile"`
+}
+
+type Callbacks struct {
+	OnSessionEvent   func(protocol.SessionEvent)
+	OnResyncRequired func(protocol.SessionResyncRequired)
+	OnCatalogChanged func(protocol.CatalogChanged)
+	OnDisconnected   func()
+}
+
 type Client struct {
 	conn   *rpcwire.Conn
 	stream transport.Stream
@@ -22,15 +47,25 @@ type Client struct {
 	gen    uint64
 	cancel context.CancelFunc
 
-	mu     sync.Mutex
-	closed bool
+	mu             sync.Mutex
+	closed         bool
+	state          State
+	callbacks      Callbacks
+	notifyCh       chan any
+	completedTurns map[protocol.TurnID]struct{}
+	overflowed     atomic.Bool
 }
 
-// Connect dials via factory, runs rpcwire, registers Desktop Broker handlers,
-// and completes remote/initialize.
-func Connect(ctx context.Context, factory transport.Factory, gen uint64, brokerOpts broker.Options, buildID map[string]any, workspace string) (*Client, error) {
+// Connect performs a strict typed initialize before activating the local
+// Provider Broker. callbacks is optional for backward-compatible callers.
+func Connect(ctx context.Context, factory transport.Factory, gen uint64, brokerOpts broker.Options, buildID map[string]any, workspace string, callbacks ...Callbacks) (*Client, error) {
 	if factory == nil {
 		return nil, fmt.Errorf("transport factory required")
+	}
+	var id protocol.BuildID
+	rawID, err := json.Marshal(buildID)
+	if err != nil || json.Unmarshal(rawID, &id) != nil || id.Validate() != nil {
+		return nil, fmt.Errorf("invalid Remote Build ID")
 	}
 	stream, err := factory.Open(ctx)
 	if err != nil {
@@ -40,50 +75,472 @@ func Connect(ctx context.Context, factory transport.Factory, gen uint64, brokerO
 		Name: "workbench-desktop", StrictJSONRPC: true,
 		MaxInboundBytes: protocol.FrameBytes, MaxOutboundBytes: protocol.FrameBytes,
 	})
-	d, err := broker.Attach(wire, brokerOpts)
+	desktopBroker, err := broker.Attach(wire, brokerOpts)
 	if err != nil {
 		_ = stream.Close()
 		return nil, err
 	}
 	serveCtx, cancel := context.WithCancel(ctx)
-	c := &Client{conn: wire, stream: stream, broker: d, gen: gen, cancel: cancel}
+	c := &Client{
+		conn: wire, stream: stream, broker: desktopBroker, gen: gen, cancel: cancel,
+		state: State{Generation: gen}, notifyCh: make(chan any, 128), completedTurns: make(map[protocol.TurnID]struct{}),
+	}
+	if len(callbacks) > 0 {
+		c.callbacks = callbacks[0]
+	}
+	wire.HandleNotify(string(protocol.MethodSessionEvent), c.handleSessionEvent)
+	wire.HandleNotify(string(protocol.MethodSessionResyncRequired), c.handleResync)
+	wire.HandleNotify(string(protocol.MethodCatalogChanged), c.handleCatalogChanged)
+	go c.deliveryLoop(serveCtx)
 	go func() {
 		_ = wire.Serve(serveCtx)
-		c.Close()
+		c.close(false)
 	}()
 
-	params := map[string]any{
-		"buildId":          buildID,
-		"clientInstanceId": fmt.Sprintf("desktop_%d", gen),
-		"workspace":        workspace,
+	initParams := protocol.InitializeParams{
+		BuildID: id, ClientInstanceID: protocol.ClientInstanceID(fmt.Sprintf("desktop_%d", gen)), Workspace: strings.TrimSpace(workspace),
 	}
-	if _, err := wire.Request(ctx, string(protocol.MethodRemoteInitialize), params); err != nil {
-		c.Close()
+	initRaw, err := wire.Request(ctx, string(protocol.MethodRemoteInitialize), initParams)
+	if err != nil {
+		c.close(false)
 		return nil, fmt.Errorf("initialize: %w", err)
 	}
+	decoded, err := protocol.DecodeResult(protocol.MethodRemoteInitialize, initRaw)
+	if err != nil {
+		c.close(false)
+		return nil, fmt.Errorf("initialize result: %w", err)
+	}
+	initialized := decoded.(protocol.InitializeResult)
+	if err := protocol.CompareBuildID(id, initialized.BuildID); err != nil {
+		c.close(false)
+		return nil, fmt.Errorf("initialize build compatibility: %w", err)
+	}
+	c.mu.Lock()
+	c.state.Initialized = true
+	c.state.HostEpoch = initialized.HostEpoch
+	c.state.LeaseID = initialized.Lease.LeaseID
+	c.state.Capabilities = initialized.Capabilities
+	c.mu.Unlock()
+	if err := desktopBroker.Activate(); err != nil {
+		c.close(false)
+		return nil, fmt.Errorf("activate provider broker: %w", err)
+	}
+
+	listRaw, err := c.Request(ctx, string(protocol.MethodWorkspaceList), map[string]any{})
+	if err != nil {
+		c.close(false)
+		return nil, fmt.Errorf("workspace list: %w", err)
+	}
+	listDecoded, _ := protocol.DecodeResult(protocol.MethodWorkspaceList, listRaw)
+	list := listDecoded.(protocol.WorkspaceListResult)
+	var selected protocol.WorkspaceID
+	for _, item := range list.Items {
+		if filepathEquivalent(item.DisplayPath, workspace) {
+			selected = item.WorkspaceID
+			break
+		}
+	}
+	if selected == "" && len(list.Items) == 1 {
+		selected = list.Items[0].WorkspaceID
+	}
+	if selected == "" {
+		c.close(false)
+		return nil, fmt.Errorf("workspace %q is not open on the Host", workspace)
+	}
+	c.mu.Lock()
+	c.state.WorkspaceID = selected
+	c.mu.Unlock()
+	go c.leaseLoop(serveCtx, initialized.Lease.PingIntervalMs)
 	return c, nil
 }
 
-// Generation returns the attach generation this client was opened with.
 func (c *Client) Generation() uint64 { return c.gen }
 
-// Request issues a Host RuntimeAPI call. Callers must drop results when the
-// TargetManager generation no longer matches.
+func (c *Client) State() State {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.state
+}
+
+func (c *Client) SetCallbacks(callbacks Callbacks) {
+	c.mu.Lock()
+	c.callbacks = callbacks
+	c.mu.Unlock()
+}
+
+// SelectSession adopts a Host-advertised session before Subscribe. It is used
+// after transport reconnect so the detached runtime and transcript are reused
+// instead of silently creating a fresh conversation.
+func (c *Client) SelectSession(target protocol.RuntimeTarget, runtimeEpoch protocol.RuntimeEpoch) error {
+	if err := target.Validate(); err != nil || runtimeEpoch == "" {
+		return fmt.Errorf("invalid Remote session selection")
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.closed || !c.state.Initialized {
+		return fmt.Errorf("client closed")
+	}
+	if target.WorkspaceID != c.state.WorkspaceID {
+		return fmt.Errorf("Remote session belongs to a different workspace")
+	}
+	c.state.Target = target
+	c.state.RuntimeEpoch = runtimeEpoch
+	c.state.SubscriptionID = ""
+	c.state.SnapshotID = ""
+	c.state.CurrentTurnID = ""
+	return nil
+}
+
+// Request validates the frozen result DTO and automatically adds authority
+// fields from the client's current state. React callers never construct epochs,
+// targets, leases, or request IDs themselves.
 func (c *Client) Request(ctx context.Context, method string, params any) (json.RawMessage, error) {
 	if c == nil || c.conn == nil {
 		return nil, fmt.Errorf("client closed")
 	}
-	return c.conn.Request(ctx, method, params)
+	name := protocol.Method(method)
+	authorized, err := c.authorizeParams(name, params)
+	if err != nil {
+		return nil, err
+	}
+	raw, err := c.conn.Request(ctx, method, authorized)
+	if err != nil {
+		return nil, err
+	}
+	decoded, err := protocol.DecodeResult(name, raw)
+	if err != nil {
+		return nil, fmt.Errorf("%s result: %w", method, err)
+	}
+	c.applyResult(name, decoded)
+	return raw, nil
 }
 
-// Close tears down Broker streams and the transport.
-func (c *Client) Close() {
+func (c *Client) CreateSession(ctx context.Context, model, effort string) (protocol.SessionCreateResult, error) {
+	profile := protocol.ProfileSelection{}
+	if strings.TrimSpace(model) != "" {
+		profile.Model = stringPtr(strings.TrimSpace(model))
+	}
+	if strings.TrimSpace(effort) != "" {
+		profile.Effort = stringPtr(strings.TrimSpace(effort))
+	}
+	raw, err := c.Request(ctx, string(protocol.MethodSessionCreate), protocol.SessionCreateParams{
+		AdditionalDirectoryRefs: []protocol.DirectoryRef{}, Topic: protocol.TopicSelection{Kind: protocol.TopicNew}, Profile: profile,
+	})
+	if err != nil {
+		return protocol.SessionCreateResult{}, err
+	}
+	decoded, _ := protocol.DecodeResult(protocol.MethodSessionCreate, raw)
+	return decoded.(protocol.SessionCreateResult), nil
+}
+
+func (c *Client) Subscribe(ctx context.Context, pageTurns int) (protocol.SessionSubscribeResult, error) {
+	if pageTurns <= 0 {
+		pageTurns = protocol.HistoryMaxTurns
+	}
+	raw, err := c.Request(ctx, string(protocol.MethodSessionSubscribe), protocol.SessionSubscribeParams{PageTurns: pageTurns})
+	if err != nil {
+		return protocol.SessionSubscribeResult{}, err
+	}
+	decoded, _ := protocol.DecodeResult(protocol.MethodSessionSubscribe, raw)
+	return decoded.(protocol.SessionSubscribeResult), nil
+}
+
+func (c *Client) Submit(ctx context.Context, input string) (protocol.SessionSubmitResult, error) {
+	raw, err := c.Request(ctx, string(protocol.MethodSessionSubmit), protocol.SessionSubmitParams{Input: input, DisplayText: input})
+	if err != nil {
+		return protocol.SessionSubmitResult{}, err
+	}
+	decoded, _ := protocol.DecodeResult(protocol.MethodSessionSubmit, raw)
+	return decoded.(protocol.SessionSubmitResult), nil
+}
+
+func (c *Client) Cancel(ctx context.Context) (protocol.TurnCancelResult, error) {
+	raw, err := c.Request(ctx, string(protocol.MethodTurnCancel), protocol.TurnCancelParams{})
+	if err != nil {
+		return protocol.TurnCancelResult{}, err
+	}
+	decoded, _ := protocol.DecodeResult(protocol.MethodTurnCancel, raw)
+	return decoded.(protocol.TurnCancelResult), nil
+}
+
+func (c *Client) SetProfile(ctx context.Context, patch protocol.ProfilePatch) (protocol.SessionProfileSetResult, error) {
+	raw, err := c.Request(ctx, string(protocol.MethodSessionProfileSet), protocol.SessionProfileSetParams{Patch: patch})
+	if err != nil {
+		return protocol.SessionProfileSetResult{}, err
+	}
+	decoded, _ := protocol.DecodeResult(protocol.MethodSessionProfileSet, raw)
+	return decoded.(protocol.SessionProfileSetResult), nil
+}
+
+func (c *Client) History(ctx context.Context, pageTurns int) (protocol.HistoryPage, error) {
+	return c.HistoryBefore(ctx, 0, pageTurns)
+}
+
+func (c *Client) HistoryBefore(ctx context.Context, beforeTurn, pageTurns int) (protocol.HistoryPage, error) {
+	if pageTurns <= 0 {
+		pageTurns = protocol.HistoryMaxTurns
+	}
+	cursor := protocol.Cursor("")
+	if beforeTurn > 0 {
+		cursor = protocol.Cursor(fmt.Sprintf("turn:%d", beforeTurn))
+	}
+	raw, err := c.Request(ctx, string(protocol.MethodSessionHistory), protocol.SessionHistoryParams{Cursor: cursor, PageTurns: pageTurns})
+	if err != nil {
+		return protocol.HistoryPage{}, err
+	}
+	decoded, _ := protocol.DecodeResult(protocol.MethodSessionHistory, raw)
+	return decoded.(protocol.HistoryPage), nil
+}
+
+func (c *Client) authorizeParams(method protocol.Method, params any) (any, error) {
+	raw, err := json.Marshal(params)
+	if err != nil {
+		return nil, err
+	}
+	fields := map[string]any{}
+	if len(raw) > 0 && string(raw) != "null" {
+		if err := json.Unmarshal(raw, &fields); err != nil {
+			return nil, fmt.Errorf("%s params must be an object", method)
+		}
+	}
+	c.mu.Lock()
+	state := c.state
+	c.mu.Unlock()
+	put := func(key string, value any) {
+		if _, exists := fields[key]; !exists {
+			fields[key] = value
+		}
+	}
+	spec, ok := protocol.LookupMethod(method)
+	if !ok {
+		return nil, fmt.Errorf("unregistered Remote method %q", method)
+	}
+	switch method {
+	case protocol.MethodRemotePing, protocol.MethodRemoteDetach:
+		put("leaseId", state.LeaseID)
+	case protocol.MethodSessionUnsubscribe:
+		put("subscriptionId", state.SubscriptionID)
+	default:
+		if spec.Class != protocol.ClassConnection {
+			put("expectedHostEpoch", state.HostEpoch)
+		}
+		if spec.Class == protocol.ClassHostMutation || spec.Class == protocol.ClassSessionMutation || spec.Class == protocol.ClassSessionRecordMutation {
+			put("requestId", protocol.RequestID("request_"+randomID(10)))
+		}
+		if spec.Class == protocol.ClassSessionQuery || spec.Class == protocol.ClassSessionMutation || spec.Class == protocol.ClassSessionRecordMutation {
+			put("target", state.Target)
+		}
+		if spec.Class == protocol.ClassSessionQuery || spec.Class == protocol.ClassSessionMutation {
+			if method != protocol.MethodSessionSubscribe {
+				put("expectedRuntimeEpoch", state.RuntimeEpoch)
+			}
+		}
+		if method == protocol.MethodSessionCreate || method == protocol.MethodSessionList || method == protocol.MethodCatalogWorkspace {
+			put("workspaceId", state.WorkspaceID)
+		}
+		if method == protocol.MethodSessionHistory {
+			put("snapshotId", state.SnapshotID)
+			put("cursor", "")
+		}
+		if method == protocol.MethodTurnCancel {
+			put("expectedTurnId", state.CurrentTurnID)
+		}
+	}
+	encoded, err := json.Marshal(fields)
+	if err != nil {
+		return nil, err
+	}
+	decoded, err := protocol.DecodeRequestParams(method, encoded)
+	if err != nil {
+		return nil, fmt.Errorf("%s params: %w", method, err)
+	}
+	return decoded, nil
+}
+
+func (c *Client) applyResult(method protocol.Method, value any) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	switch result := value.(type) {
+	case protocol.SessionCreateResult:
+		c.state.Target, c.state.RuntimeEpoch, c.state.ResolvedProfile = result.Target, result.RuntimeEpoch, result.ResolvedProfile
+	case protocol.SessionSubscribeResult:
+		c.state.SubscriptionID = result.SubscriptionID
+		c.state.SnapshotID = result.Snapshot.SnapshotID
+		c.state.Target = result.Snapshot.Target
+		c.state.RuntimeEpoch = result.Snapshot.RuntimeEpoch
+		c.state.ResolvedProfile = result.Snapshot.Meta.ResolvedProfile
+		c.state.CurrentTurnID = ""
+		if result.Snapshot.Runtime.CurrentTurn != nil {
+			c.state.CurrentTurnID = result.Snapshot.Runtime.CurrentTurn.TurnID
+		}
+	case protocol.SessionSubmitResult:
+		c.state.Target, c.state.RuntimeEpoch = result.Target, result.RuntimeEpoch
+		if _, completed := c.completedTurns[result.TurnID]; !completed {
+			c.state.CurrentTurnID = result.TurnID
+		}
+	case protocol.SessionProfileSetResult:
+		c.state.RuntimeEpoch, c.state.ResolvedProfile = result.RuntimeEpoch, result.ResolvedProfile
+	case protocol.SessionCloseResult:
+		if result.Disposition != protocol.SessionRetainedActive {
+			c.state.Target, c.state.RuntimeEpoch, c.state.SubscriptionID, c.state.CurrentTurnID = protocol.RuntimeTarget{}, "", "", ""
+		}
+	}
+}
+
+func (c *Client) handleSessionEvent(_ context.Context, raw json.RawMessage) {
+	decoded, err := protocol.DecodeNotificationParams(protocol.MethodSessionEvent, raw)
+	if err == nil {
+		c.enqueue(decoded.(protocol.SessionEvent))
+	}
+}
+
+func (c *Client) handleResync(_ context.Context, raw json.RawMessage) {
+	decoded, err := protocol.DecodeNotificationParams(protocol.MethodSessionResyncRequired, raw)
+	if err == nil {
+		c.enqueue(decoded.(protocol.SessionResyncRequired))
+	}
+}
+
+func (c *Client) handleCatalogChanged(_ context.Context, raw json.RawMessage) {
+	decoded, err := protocol.DecodeNotificationParams(protocol.MethodCatalogChanged, raw)
+	if err == nil {
+		c.enqueue(decoded.(protocol.CatalogChanged))
+	}
+}
+
+func (c *Client) enqueue(value any) {
+	select {
+	case c.notifyCh <- value:
+	default:
+		// The queue is already full, so another write to it cannot reliably carry
+		// the resync signal. Deliver one out-of-band signal per overflow burst.
+		if !c.overflowed.CompareAndSwap(false, true) {
+			return
+		}
+		state := c.State()
+		c.mu.Lock()
+		callback := c.callbacks.OnResyncRequired
+		c.mu.Unlock()
+		if callback == nil {
+			c.overflowed.Store(false)
+			return
+		}
+		go func() {
+			defer c.overflowed.Store(false)
+			callback(protocol.SessionResyncRequired{
+				SubscriptionID: state.SubscriptionID, HostEpoch: state.HostEpoch, Target: state.Target,
+				RuntimeEpoch: state.RuntimeEpoch, Reason: protocol.ResyncQueueOverflow,
+			})
+		}()
+	}
+}
+
+func (c *Client) deliveryLoop(ctx context.Context) {
+	pending := map[uint64]protocol.SessionEvent{}
+	var next uint64 = 1
+	var activeSubscription protocol.SubscriptionID
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case value := <-c.notifyCh:
+			switch notification := value.(type) {
+			case protocol.SessionEvent:
+				state := c.State()
+				if notification.SubscriptionID != state.SubscriptionID {
+					continue
+				}
+				if activeSubscription != notification.SubscriptionID {
+					activeSubscription = notification.SubscriptionID
+					pending = map[uint64]protocol.SessionEvent{}
+					next = 1
+				}
+				pending[notification.Seq] = notification
+				for {
+					event, ok := pending[next]
+					if !ok {
+						break
+					}
+					delete(pending, next)
+					next++
+					c.mu.Lock()
+					if event.Event.Kind == "turn_done" {
+						c.completedTurns[event.TurnID] = struct{}{}
+						c.state.CurrentTurnID = ""
+					}
+					callback := c.callbacks.OnSessionEvent
+					c.mu.Unlock()
+					if callback != nil {
+						callback(event)
+					}
+				}
+			case protocol.SessionResyncRequired:
+				pending = map[uint64]protocol.SessionEvent{}
+				next = notification.LastSeq + 1
+				c.mu.Lock()
+				callback := c.callbacks.OnResyncRequired
+				c.mu.Unlock()
+				if callback != nil {
+					callback(notification)
+				}
+			case protocol.CatalogChanged:
+				c.mu.Lock()
+				callback := c.callbacks.OnCatalogChanged
+				c.mu.Unlock()
+				if callback != nil {
+					callback(notification)
+				}
+			}
+		}
+	}
+}
+
+func (c *Client) leaseLoop(ctx context.Context, intervalMillis int) {
+	if intervalMillis <= 0 {
+		return
+	}
+	ticker := time.NewTicker(time.Duration(intervalMillis) * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			state := c.State()
+			raw, err := c.conn.Request(ctx, string(protocol.MethodRemotePing), protocol.PingParams{LeaseID: state.LeaseID})
+			if err == nil {
+				var decoded any
+				decoded, err = protocol.DecodeResult(protocol.MethodRemotePing, raw)
+				if err == nil && decoded.(protocol.PingResult).HostEpoch != state.HostEpoch {
+					err = fmt.Errorf("Host epoch changed during lease renewal")
+				}
+			}
+			if err != nil {
+				c.close(false)
+				return
+			}
+		}
+	}
+}
+
+func (c *Client) Close() { c.close(true) }
+
+func (c *Client) close(explicit bool) {
+	c.mu.Lock()
 	if c.closed {
+		c.mu.Unlock()
 		return
 	}
 	c.closed = true
+	lease := c.state.LeaseID
+	established := c.state.Initialized
+	onDisconnected := c.callbacks.OnDisconnected
+	c.mu.Unlock()
+	if explicit && c.conn != nil && lease != "" {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		_, _ = c.conn.Request(ctx, string(protocol.MethodRemoteDetach), protocol.DetachParams{LeaseID: lease})
+		cancel()
+	}
 	if c.cancel != nil {
 		c.cancel()
 	}
@@ -93,7 +550,26 @@ func (c *Client) Close() {
 	if c.stream != nil {
 		_ = c.stream.Close()
 	}
+	if !explicit && established && onDisconnected != nil {
+		onDisconnected()
+	}
 }
 
-// NextGen is a helper for tests.
 func NextGen(counter *atomic.Uint64) uint64 { return counter.Add(1) }
+
+func randomID(n int) string {
+	b := make([]byte, n)
+	if _, err := rand.Read(b); err != nil {
+		return fmt.Sprintf("%d", time.Now().UnixNano())
+	}
+	return hex.EncodeToString(b)
+}
+
+func stringPtr(value string) *string { return &value }
+
+func filepathEquivalent(left, right string) bool {
+	clean := func(value string) string {
+		return strings.TrimRight(strings.ReplaceAll(strings.TrimSpace(value), "\\", "/"), "/")
+	}
+	return clean(left) == clean(right)
+}

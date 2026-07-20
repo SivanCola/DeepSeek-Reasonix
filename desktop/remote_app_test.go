@@ -506,3 +506,40 @@ func TestWorkbenchSwitchLocalAndHint(t *testing.T) {
 		t.Fatalf("switch = %+v", switched)
 	}
 }
+
+func TestWorkbenchSwitchLocalEmitsUnifiedTargetState(t *testing.T) {
+	events := make(chan WorkbenchTargetStateView, 1)
+	a := &App{ctx: context.Background()}
+	a.runtimeEvents.emit = func(_ context.Context, name string, payload ...interface{}) {
+		if name != workbenchTargetEvent || len(payload) != 1 {
+			return
+		}
+		if view, ok := payload[0].(WorkbenchTargetStateView); ok {
+			events <- view
+		}
+	}
+	result := a.WorkbenchSwitchLocal()
+	select {
+	case event := <-events:
+		if event.State != "disconnected" || event.Kind != target.KindLocal || event.IdentityGen != result["identityGen"] {
+			t.Fatalf("target event = %+v, result = %+v", event, result)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for remote:workbench-target")
+	}
+}
+
+func TestWorkbenchActiveTargetIncludesPersistedReconnectHint(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("REASONIX_HOME", home)
+	t.Setenv("HOME", home)
+	first := &App{ctx: context.Background()}
+	first.saveLastRemoteWorkspace("persisted-host", "/srv/work")
+
+	restarted := &App{ctx: context.Background()}
+	active := restarted.WorkbenchActiveTarget()
+	reconnect, ok := active["reconnect"].(map[string]string)
+	if !ok || reconnect["hostId"] != "persisted-host" || reconnect["workspace"] != "/srv/work" {
+		t.Fatalf("active reconnect = %#v", active["reconnect"])
+	}
+}
