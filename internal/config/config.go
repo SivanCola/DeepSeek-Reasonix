@@ -148,13 +148,13 @@ type DesktopConfig struct {
 	DefaultToolApprovalMode string   `toml:"default_tool_approval_mode"` // ask|auto|yolo; defaults to auto for newly-created desktop sessions
 	// DefaultAutoRecoveryCheckpoint is the new-session default for Auto-mode
 	// failure recovery confirmation. nil means enabled (on) for new sessions.
-	DefaultAutoRecoveryCheckpoint *bool `toml:"default_auto_recovery_checkpoint"`
-	CheckUpdates            *bool    `toml:"check_updates"`              // startup update checks; nil keeps the default enabled
-	Telemetry               *bool    `toml:"telemetry"`                  // anonymous launch ping (install id + version + OS); nil keeps the default enabled
-	Metrics                 *bool    `toml:"metrics"`                    // aggregate desktop metrics (anonymous signal/bucket counts; no content); nil keeps the default enabled
-	ProviderAccess          []string `toml:"provider_access"`            // desktop-only list of provider entries shown in Settings > Model > Access
-	ExpandThinking          bool     `toml:"expand_thinking"`            // true = show reasoning text expanded by default; false = collapsed
-	ConversationWidth       string   `toml:"conversation_width"`         // standard|full; max transcript width; empty = standard
+	DefaultAutoRecoveryCheckpoint *bool    `toml:"default_auto_recovery_checkpoint"`
+	CheckUpdates                  *bool    `toml:"check_updates"`      // startup update checks; nil keeps the default enabled
+	Telemetry                     *bool    `toml:"telemetry"`          // anonymous launch ping (install id + version + OS); nil keeps the default enabled
+	Metrics                       *bool    `toml:"metrics"`            // aggregate desktop metrics (anonymous signal/bucket counts; no content); nil keeps the default enabled
+	ProviderAccess                []string `toml:"provider_access"`    // desktop-only list of provider entries shown in Settings > Model > Access
+	ExpandThinking                bool     `toml:"expand_thinking"`    // true = show reasoning text expanded by default; false = collapsed
+	ConversationWidth             string   `toml:"conversation_width"` // standard|full; max transcript width; empty = standard
 }
 
 // DesktopExternalOpener returns the user-selected external opener id. The
@@ -1084,12 +1084,12 @@ type AgentConfig struct {
 	// Deprecated compatibility fields. Old TOML and desktop clients may still
 	// send them, but config loading normalizes both to zero and rendering omits
 	// them. One-off CLI and unattended bot limits remain separate controls.
-	MaxSteps            int               `toml:"max_steps"`
-	PlannerMaxSteps     int               `toml:"planner_max_steps"`
-	Temperature         float64           `toml:"temperature"`
-	PlannerModel        string            `toml:"planner_model"`
-	GuardianModel       string            `toml:"guardian_model"`
-	GuardianTemperature float64           `toml:"guardian_temperature"`
+	MaxSteps            int     `toml:"max_steps"`
+	PlannerMaxSteps     int     `toml:"planner_max_steps"`
+	Temperature         float64 `toml:"temperature"`
+	PlannerModel        string  `toml:"planner_model"`
+	GuardianModel       string  `toml:"guardian_model"`
+	GuardianTemperature float64 `toml:"guardian_temperature"`
 	// AutoRecoveryCheckpoint controls whether new sessions default the Auto-mode
 	// failure recovery checkpoint on. Values: "on" | "off". Empty defaults to "on".
 	// Per-session state still decides whether an existing session is armed;
@@ -1097,8 +1097,8 @@ type AgentConfig struct {
 	AutoRecoveryCheckpoint string `toml:"auto_recovery_checkpoint"`
 	// RecoveryModel optionally names a dedicated model for the independent
 	// recovery reviewer. Empty falls back to GuardianModel, then the main model.
-	RecoveryModel       string  `toml:"recovery_model"`
-	RecoveryTemperature float64 `toml:"recovery_temperature"`
+	RecoveryModel       string            `toml:"recovery_model"`
+	RecoveryTemperature float64           `toml:"recovery_temperature"`
 	SubagentModel       string            `toml:"subagent_model"`
 	SubagentModels      map[string]string `toml:"subagent_models"`
 	SubagentEffort      string            `toml:"subagent_effort"`

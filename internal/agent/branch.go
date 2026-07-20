@@ -37,11 +37,11 @@ type BranchMeta struct {
 	// RecoveryCheckpointEnabled records whether Auto-mode failure recovery is
 	// armed for this session. nil means the field was absent (pre-upgrade
 	// sessions): treat as false. New sessions write an explicit true/false.
-	RecoveryCheckpointEnabled *bool `json:"recovery_checkpoint_enabled,omitempty"`
+	RecoveryCheckpointEnabled *bool  `json:"recovery_checkpoint_enabled,omitempty"`
 	Goal                      string `json:"goal,omitempty"`
-	Recovered        bool      `json:"recovered,omitempty"`
-	RecoveryReason   string    `json:"recovery_reason,omitempty"`
-	RecoveryDigest   string    `json:"recovery_digest,omitempty"`
+	Recovered                 bool   `json:"recovered,omitempty"`
+	RecoveryReason            string `json:"recovery_reason,omitempty"`
+	RecoveryDigest            string `json:"recovery_digest,omitempty"`
 	// RecoveryDepth counts how many recovery forks separate this branch from a
 	// normal session (1 = forked from a normal session). SaveRecoveryBranch
 	// refuses to fork past SessionRecoveryMaxDepth so a conflict loop cannot

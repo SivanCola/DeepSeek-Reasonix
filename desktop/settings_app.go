@@ -276,7 +276,7 @@ type SettingsView struct {
 	DefaultToolApprovalMode string               `json:"defaultToolApprovalMode"`
 	// DefaultAutoRecoveryCheckpoint is the new-session default for Auto-mode
 	// failure recovery confirmation.
-	DefaultAutoRecoveryCheckpoint bool `json:"defaultAutoRecoveryCheckpoint"`
+	DefaultAutoRecoveryCheckpoint bool   `json:"defaultAutoRecoveryCheckpoint"`
 	CheckUpdates                  bool   `json:"checkUpdates"`
 	Telemetry                     bool   `json:"telemetry"`
 	Metrics                       bool   `json:"metrics"`
@@ -897,15 +897,15 @@ func (a *App) Settings() SettingsView {
 			ColdResumePrune:        cfg.ColdResumePruneEnabled(),
 			ReasoningLanguage:      cfg.ReasoningLanguage(),
 		},
-		Bot:                     botSettingsView(cfg.Bot),
-		DesktopLanguage:         cfg.DesktopLanguage(),
-		DesktopLayoutStyle:      cfg.DesktopLayoutStyle(),
-		DesktopTheme:            cfg.DesktopTheme(),
-		DesktopThemeStyle:       cfg.DesktopThemeStyle(),
-		CloseBehavior:           cfg.DesktopCloseBehavior(),
-		DisplayMode:             cfg.DesktopDisplayMode(),
-		StatusBarStyle:          cfg.DesktopStatusBarStyle(),
-		StatusBarItems:          cfg.DesktopStatusBarItems(),
+		Bot:                           botSettingsView(cfg.Bot),
+		DesktopLanguage:               cfg.DesktopLanguage(),
+		DesktopLayoutStyle:            cfg.DesktopLayoutStyle(),
+		DesktopTheme:                  cfg.DesktopTheme(),
+		DesktopThemeStyle:             cfg.DesktopThemeStyle(),
+		CloseBehavior:                 cfg.DesktopCloseBehavior(),
+		DisplayMode:                   cfg.DesktopDisplayMode(),
+		StatusBarStyle:                cfg.DesktopStatusBarStyle(),
+		StatusBarItems:                cfg.DesktopStatusBarItems(),
 		DefaultToolApprovalMode:       cfg.DesktopDefaultToolApprovalMode(),
 		DefaultAutoRecoveryCheckpoint: cfg.DesktopDefaultAutoRecoveryCheckpoint(),
 		CheckUpdates:                  cfg.DesktopCheckUpdates(),

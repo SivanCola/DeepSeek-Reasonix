@@ -1811,44 +1811,44 @@ type wireEventTab struct {
 
 // TabMeta is the frontend-facing shape of one tab.
 type TabMeta struct {
-	ID                string                   `json:"id"`
-	Scope             string                   `json:"scope"`
-	WorkspaceRoot     string                   `json:"workspaceRoot"`
-	WorkspaceName     string                   `json:"workspaceName"`
-	WorkspacePath     string                   `json:"workspacePath,omitempty"`
-	GitBranch         string                   `json:"gitBranch,omitempty"`
-	IsolatedWorktree  bool                     `json:"isolatedWorktree,omitempty"`
-	TopicID           string                   `json:"topicId"`
-	TopicTitle        string                   `json:"topicTitle"`
-	SessionPath       string                   `json:"sessionPath,omitempty"`
-	ReadOnly          bool                     `json:"readOnly,omitempty"`
-	ProjectColor      string                   `json:"projectColor,omitempty"`
-	Label             string                   `json:"label"`
-	Ready             bool                     `json:"ready"`
-	Running           bool                     `json:"running"`
-	PendingPrompt     bool                     `json:"pendingPrompt,omitempty"`
-	RemoteControlled  bool                     `json:"remoteControlled,omitempty"`
-	BackgroundJobs    int                      `json:"backgroundJobs,omitempty"`
-	CancelRequested   bool                     `json:"cancelRequested,omitempty"`
-	Cancellable       bool                     `json:"cancellable"`
-	Mode              string                   `json:"mode"`
-	CollaborationMode string                   `json:"collaborationMode"`
-	ToolApprovalMode  string                   `json:"toolApprovalMode"`
+	ID                string `json:"id"`
+	Scope             string `json:"scope"`
+	WorkspaceRoot     string `json:"workspaceRoot"`
+	WorkspaceName     string `json:"workspaceName"`
+	WorkspacePath     string `json:"workspacePath,omitempty"`
+	GitBranch         string `json:"gitBranch,omitempty"`
+	IsolatedWorktree  bool   `json:"isolatedWorktree,omitempty"`
+	TopicID           string `json:"topicId"`
+	TopicTitle        string `json:"topicTitle"`
+	SessionPath       string `json:"sessionPath,omitempty"`
+	ReadOnly          bool   `json:"readOnly,omitempty"`
+	ProjectColor      string `json:"projectColor,omitempty"`
+	Label             string `json:"label"`
+	Ready             bool   `json:"ready"`
+	Running           bool   `json:"running"`
+	PendingPrompt     bool   `json:"pendingPrompt,omitempty"`
+	RemoteControlled  bool   `json:"remoteControlled,omitempty"`
+	BackgroundJobs    int    `json:"backgroundJobs,omitempty"`
+	CancelRequested   bool   `json:"cancelRequested,omitempty"`
+	Cancellable       bool   `json:"cancellable"`
+	Mode              string `json:"mode"`
+	CollaborationMode string `json:"collaborationMode"`
+	ToolApprovalMode  string `json:"toolApprovalMode"`
 	// RecoveryCheckpointEnabled is the session preference for Auto-mode
 	// failure recovery. It is retained under Ask/YOLO but only takes effect
 	// while tool approval mode is Auto.
-	RecoveryCheckpointEnabled bool   `json:"recoveryCheckpointEnabled"`
-	TokenMode                 string `json:"tokenMode"`
-	Goal                      string `json:"goal,omitempty"`
-	GoalStatus        string                   `json:"goalStatus,omitempty"`
-	AutoResearch      *AutoResearchCompactView `json:"autoResearch,omitempty"`
-	Recovered         bool                     `json:"recovered,omitempty"`
-	RecoveryReason    string                   `json:"recoveryReason,omitempty"`
-	RecoveryDigest    string                   `json:"recoveryDigest,omitempty"`
-	RecoveryParentID  string                   `json:"recoveryParentId,omitempty"`
-	StartupErr        string                   `json:"startupErr,omitempty"`
-	Active            bool                     `json:"active"`
-	Cwd               string                   `json:"cwd"`
+	RecoveryCheckpointEnabled bool                     `json:"recoveryCheckpointEnabled"`
+	TokenMode                 string                   `json:"tokenMode"`
+	Goal                      string                   `json:"goal,omitempty"`
+	GoalStatus                string                   `json:"goalStatus,omitempty"`
+	AutoResearch              *AutoResearchCompactView `json:"autoResearch,omitempty"`
+	Recovered                 bool                     `json:"recovered,omitempty"`
+	RecoveryReason            string                   `json:"recoveryReason,omitempty"`
+	RecoveryDigest            string                   `json:"recoveryDigest,omitempty"`
+	RecoveryParentID          string                   `json:"recoveryParentId,omitempty"`
+	StartupErr                string                   `json:"startupErr,omitempty"`
+	Active                    bool                     `json:"active"`
+	Cwd                       string                   `json:"cwd"`
 }
 
 func enrichTabMeta(meta TabMeta) TabMeta {
@@ -1869,19 +1869,19 @@ func enrichTabMetas(metas []TabMeta) []TabMeta {
 
 func (a *App) tabMeta(tab *WorkspaceTab, active bool) TabMeta {
 	m := TabMeta{
-		ID:                tab.ID,
-		Scope:             tab.Scope,
-		WorkspaceRoot:     tab.WorkspaceRoot,
-		WorkspaceName:     workspaceName(tab.WorkspaceRoot),
-		WorkspacePath:     tab.WorkspaceRoot,
-		TopicID:           tab.TopicID,
-		TopicTitle:        tab.TopicTitle,
-		SessionPath:       tab.currentSessionPath(),
-		ReadOnly:          tab.ReadOnly,
-		Label:             tab.Label,
-		Ready:             tab.Ready,
-		Mode:              currentTabMode(tab),
-		CollaborationMode: currentTabCollaborationMode(tab),
+		ID:                        tab.ID,
+		Scope:                     tab.Scope,
+		WorkspaceRoot:             tab.WorkspaceRoot,
+		WorkspaceName:             workspaceName(tab.WorkspaceRoot),
+		WorkspacePath:             tab.WorkspaceRoot,
+		TopicID:                   tab.TopicID,
+		TopicTitle:                tab.TopicTitle,
+		SessionPath:               tab.currentSessionPath(),
+		ReadOnly:                  tab.ReadOnly,
+		Label:                     tab.Label,
+		Ready:                     tab.Ready,
+		Mode:                      currentTabMode(tab),
+		CollaborationMode:         currentTabCollaborationMode(tab),
 		ToolApprovalMode:          currentTabToolApprovalMode(tab),
 		RecoveryCheckpointEnabled: currentTabRecoveryCheckpointEnabled(tab),
 		TokenMode:                 currentTabTokenMode(tab),
