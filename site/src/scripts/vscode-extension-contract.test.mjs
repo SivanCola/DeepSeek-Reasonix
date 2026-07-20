@@ -8,6 +8,7 @@ test("homepage presents one VS Code extension through both registries", async ()
   const page = await source("../pages/index.astro");
 
   assert.match(page, /data-pane="vscode"/);
+  assert.match(page, /data-pane="desktop"[\s\S]*data-pane="npm"[\s\S]*data-pane="brew"[\s\S]*data-pane="vscode"/);
   assert.match(page, /SivanLiu\.reasonix-agent/);
   assert.match(page, /marketplace\.visualstudio\.com\/items\?itemName=SivanLiu\.reasonix-agent/);
   assert.match(page, /open-vsx\.org\/extension\/SivanLiu\/reasonix-agent/);
