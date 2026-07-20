@@ -110,50 +110,29 @@ make cross      # -> dist/ (darwin|linux|windows × amd64|arm64)
 
 ## Quick start
 
-After installation:
+### CLI / TUI
 
-1. Run `reasonix setup` to configure a provider and model.
-2. Start `reasonix`, then use `/init` to create project instructions when needed.
-3. Use `reasonix run` for one-off or scripted tasks.
+These commands are for the CLI/TUI installed through Path A:
 
 ```sh
-reasonix setup                      # manage providers in the user config
-reasonix setup --local              # optional: manage ./reasonix.toml
-export DEEPSEEK_API_KEY=sk-...      # or let setup save it to Reasonix home .env
-reasonix                            # interactive CLI / TUI
+reasonix setup                      # configure a provider and model
+reasonix                            # start an interactive session
 reasonix run "implement the TODOs in main.go"
-reasonix run --model deepseek-pro "add unit tests for this function"
-echo "explain this code" | reasonix run
 ```
 
-## Configuration
+In an interactive session, run `/init` when you want Reasonix to create project
+instructions.
 
-A minimal `reasonix.toml` — one provider and a default model — is enough to start:
+### Desktop app
 
-```toml
-default_model = "deepseek-flash"
+Download the installer for your platform from the
+[official download page](https://reasonix.io/?download=desktop#start), install
+and launch Reasonix, then configure a provider and model in the app. The CLI
+commands above are not required for the desktop app.
 
-[[providers]]
-name        = "deepseek-flash"
-kind        = "openai"
-base_url    = "https://api.deepseek.com"
-model       = "deepseek-v4-flash"
-api_key_env = "DEEPSEEK_API_KEY"
-```
-
-Resolution order is **flag > `./reasonix.toml` > the user config file >
-built-in defaults**; starting with **Reasonix v1.8.1**, the user file lives at
-`~/.reasonix/config.toml` on macOS/Linux and
-`%AppData%\reasonix\config.toml` on Windows. See
-**[Configuration paths](./docs/CONFIG_PATHS.md)** for migration details and the
-full `config.toml` / `.env` structure. Provider entries name secrets with
-`api_key_env`; the secret values themselves live in Reasonix's global
-`<Reasonix home>/.env`, shared by CLI and desktop. Project `.env` files are not
-provider-key runtime fallbacks, but still feed workspace-scoped, non-provider
-`${VAR}` expansion for MCP/plugin settings without importing Reasonix control
-variables. Permissions, the sandbox, plugins (MCP), slash
-commands, `@` references, and two-model setup are all in the
-**[Guide](./docs/GUIDE.md)**.
+For advanced CLI usage and configuration, see the **[CLI reference](./docs/CLI.md)**,
+**[Guide](./docs/GUIDE.md)**, and
+**[configuration paths](./docs/CONFIG_PATHS.md)**.
 
 ## Documentation
 

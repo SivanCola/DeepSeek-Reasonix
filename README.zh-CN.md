@@ -103,45 +103,27 @@ make cross      # -> dist/（darwin|linux|windows × amd64|arm64）
 
 ## 快速开始
 
-安装完成后：
+### CLI / TUI
 
-1. 运行 `reasonix setup` 配置 provider 和模型。
-2. 启动 `reasonix`；需要项目指令时，在会话中运行 `/init`。
-3. 一次性任务或脚本调用使用 `reasonix run`。
+以下命令仅适用于通过路径 A 安装的 CLI/TUI：
 
 ```sh
-reasonix setup                      # 管理用户配置中的 provider
-reasonix setup --local              # 可选：管理 ./reasonix.toml
-export DEEPSEEK_API_KEY=sk-...      # 也可以让 setup 保存到 Reasonix 全局 .env
-reasonix                            # 交互式 CLI / TUI
+reasonix setup                      # 配置 provider 和模型
+reasonix                            # 启动交互式会话
 reasonix run "把 main.go 里的 TODO 实现掉"
-reasonix run --model deepseek-pro "给这个函数补单元测试"
-echo "解释这段代码" | reasonix run
 ```
 
-## 配置
+需要项目指令时，可在交互式会话中运行 `/init`。
 
-一个最小的 `reasonix.toml`——一个 provider 加一个默认模型——就够跑起来:
+### 桌面端
 
-```toml
-default_model = "deepseek-flash"
+从[官方下载页](https://reasonix.io/?download=desktop#start)下载对应系统的安装包，
+安装并启动 Reasonix，然后在应用内配置 provider 和模型即可使用。桌面端无需执行
+上面的 CLI 命令。
 
-[[providers]]
-name        = "deepseek-flash"
-kind        = "openai"
-base_url    = "https://api.deepseek.com"
-model       = "deepseek-v4-flash"
-api_key_env = "DEEPSEEK_API_KEY"
-```
-
-优先级为 **flag > `./reasonix.toml` > 用户配置文件 > 内置默认值**；从
-**Reasonix v1.8.1** 开始，用户配置位于 macOS/Linux 的 `~/.reasonix/config.toml`，
-Windows 为 `%AppData%\reasonix\config.toml`。迁移细节见
-**[配置路径](./docs/CONFIG_PATHS.zh-CN.md)**，其中也说明了全局 `config.toml`
-和 `.env` 的完整结构。Provider 通过 `api_key_env` 命名密钥，真实密钥值保存在
-CLI 与桌面端共用的 Reasonix 全局 `<Reasonix home>/.env`；项目 `.env` 不再作为
-provider key 的运行时 fallback，但仍会作为当前 workspace 范围内的 MCP/plugin 非 provider `${VAR}` 展开来源，不导入 Reasonix 控制变量。权限、沙盒、插件(MCP)、
-斜杠命令、`@` 引用与双模型设置,全部在 **[指南](./docs/GUIDE.zh-CN.md)** 里。
+CLI 进阶用法和详细配置见 **[CLI 命令参考](./docs/CLI.zh-CN.md)**、
+**[指南](./docs/GUIDE.zh-CN.md)** 和
+**[配置路径](./docs/CONFIG_PATHS.zh-CN.md)**。
 
 ## 文档
 
