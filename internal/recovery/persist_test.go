@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sync"
 	"testing"
 )
@@ -37,7 +38,9 @@ func TestSaveSnapshotIsAtomicAndOwnerOnly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := info.Mode().Perm(); got != 0o600 {
+	// Windows reports synthetic permission bits for NTFS files; the requested
+	// mode is enforced by the inherited ACL rather than FileMode.Perm.
+	if got := info.Mode().Perm(); runtime.GOOS != "windows" && got != 0o600 {
 		t.Fatalf("recovery state permissions = %o, want 600", got)
 	}
 }
