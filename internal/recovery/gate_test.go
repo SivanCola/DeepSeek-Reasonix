@@ -28,7 +28,7 @@ func TestNoFailureAllowsMutation(t *testing.T) {
 func TestHighRiskMutationPromptsBeforeAnyFailure(t *testing.T) {
 	g := NewGate(Options{Enabled: true, Mode: func() string { return "auto" }})
 	var prompted atomic.Bool
-	g.opts.EmitPrompt = func(_ context.Context, _ string, pending PendingProposal, failure *FailureEvent) (string, error) {
+	g.opts.EmitPrompt = func(_ context.Context, taskID string, pending PendingProposal, failure *FailureEvent) (string, error) {
 		prompted.Store(true)
 		if failure != nil {
 			t.Fatalf("pre-action guard unexpectedly carried a failure: %+v", failure)
@@ -36,7 +36,10 @@ func TestHighRiskMutationPromptsBeforeAnyFailure(t *testing.T) {
 		if pending.ChangeKind != ChangeRisk {
 			t.Fatalf("change kind = %q, want risk", pending.ChangeKind)
 		}
-		go func() { _ = g.Resolve("pre-1", ActionContinue, "") }()
+		g.BindApprovalID(taskID, "pre-1")
+		if err := g.Resolve("pre-1", ActionContinue, ""); err != nil {
+			t.Fatalf("resolve pre-action prompt: %v", err)
+		}
 		return "pre-1", nil
 	}
 	dec, err := g.BeforeMutation(context.Background(), Proposal{
@@ -384,9 +387,12 @@ func TestReviewerBlockReturnsReasonThenEscalates(t *testing.T) {
 		Args: json.RawMessage(`{"command":"go test ./foo"}`), ErrSummary: "fail",
 	})
 	prompts := 0
-	g.opts.EmitPrompt = func(_ context.Context, _ string, _ PendingProposal, _ *FailureEvent) (string, error) {
+	g.opts.EmitPrompt = func(_ context.Context, taskID string, _ PendingProposal, _ *FailureEvent) (string, error) {
 		prompts++
-		go func() { _ = g.Resolve("review-3", ActionContinue, "") }()
+		g.BindApprovalID(taskID, "review-3")
+		if err := g.Resolve("review-3", ActionContinue, ""); err != nil {
+			t.Fatalf("resolve escalated prompt: %v", err)
+		}
 		return "review-3", nil
 	}
 	proposal := Proposal{
