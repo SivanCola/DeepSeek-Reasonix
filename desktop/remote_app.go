@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"net"
@@ -33,6 +34,8 @@ type RemoteHostView struct {
 	DefaultWorkspace string `json:"defaultWorkspace"`
 	ServeInstall     string `json:"serveInstall"`
 	UseSSHConfig     bool   `json:"useSSHConfig"`
+	PasswordSet      bool   `json:"passwordSet,omitempty"`
+	KeyPassphraseSet bool   `json:"keyPassphraseSet,omitempty"`
 }
 
 type RemoteHostInput struct {
@@ -45,6 +48,10 @@ type RemoteHostInput struct {
 	DefaultWorkspace string `json:"defaultWorkspace"`
 	ServeInstall     string `json:"serveInstall"`
 	UseSSHConfig     bool   `json:"useSSHConfig"`
+	Password         string `json:"password,omitempty"`
+	KeyPassphrase    string `json:"keyPassphrase,omitempty"`
+	ClearPassword    bool   `json:"clearPassword,omitempty"`
+	ClearPassphrase  bool   `json:"clearPassphrase,omitempty"`
 }
 
 type RemoteFingerprintView struct {
@@ -60,7 +67,16 @@ type RemoteConnectionStatusView struct {
 	Error        string                            `json:"error,omitempty"`
 	ErrorDetails *RemoteConnectionErrorDetailsView `json:"errorDetails,omitempty"`
 	Fingerprint  *RemoteFingerprintView            `json:"fingerprint,omitempty"`
+	SecretPrompt *RemoteSecretPromptView           `json:"secretPrompt,omitempty"`
 	Attempt      int                               `json:"attempt,omitempty"`
+}
+
+// RemoteSecretPromptView contains prompt metadata only. Secret text travels
+// one way through ConfirmRemoteSecret and is never emitted in status events.
+type RemoteSecretPromptView struct {
+	HostID string `json:"hostId"`
+	Host   string `json:"host"`
+	Kind   string `json:"kind"` // password | passphrase
 }
 
 type RemoteKnownHostLocationView struct {
@@ -141,6 +157,7 @@ type remoteKernel interface {
 	Disconnect(hostID string) error
 	Statuses() []RemoteConnectionStatusView
 	ResolveHostKey(hostID string, accept bool) error
+	ResolveSecret(hostID, secret string, accept bool) error
 
 	ListDir(ctx context.Context, hostID, path string) ([]RemoteDirEntry, error)
 	ReadFile(ctx context.Context, hostID, path string) (RemoteFilePreview, error)
@@ -320,6 +337,17 @@ func (a *App) ConfirmRemoteHostKey(hostID string, accept bool) error {
 	return rt.ResolveHostKey(hostID, accept)
 }
 
+// ConfirmRemoteSecret resolves a one-shot interactive SSH credential prompt.
+// The secret is retained only in the connection's in-memory reconnect cache;
+// callers must use the host settings form when they explicitly want storage.
+func (a *App) ConfirmRemoteSecret(hostID, secret string, accept bool) error {
+	rt, err := a.remoteRT()
+	if err != nil {
+		return err
+	}
+	return rt.ResolveSecret(hostID, secret, accept)
+}
+
 func (a *App) ListRemoteDir(hostID, path string) ([]RemoteDirEntry, error) {
 	rt, err := a.remoteRT()
 	if err != nil {
@@ -466,17 +494,98 @@ func editUserConfig(mutate func(*config.Config) error) error {
 	return cfg.SaveTo(path)
 }
 
+type remoteCredentialChange struct {
+	key    string
+	value  string
+	remove bool
+}
+
+type remoteCredentialSnapshot struct {
+	value string
+	set   bool
+}
+
+// editUserConfigWithCredentials keeps the user config and its Reasonix-owned
+// credential slots consistent. Credential writes happen before the config save;
+// if a later write or SaveTo fails, every touched slot is restored without ever
+// copying the secret into config.toml.
+func editUserConfigWithCredentials(mutate func(*config.Config) ([]remoteCredentialChange, error)) error {
+	unlock := config.LockUserConfigEdits()
+	defer unlock()
+	path := config.UserConfigPath()
+	if strings.TrimSpace(path) == "" {
+		return fmt.Errorf("cannot resolve user config path")
+	}
+	cfg := config.LoadForEdit(path)
+	if cfg == nil {
+		cfg = config.Default()
+	}
+	changes, err := mutate(cfg)
+	if err != nil {
+		return err
+	}
+	snapshots := map[string]remoteCredentialSnapshot{}
+	applied := make([]string, 0, len(changes))
+	rollback := func() {
+		seen := map[string]bool{}
+		for i := len(applied) - 1; i >= 0; i-- {
+			key := applied[i]
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			snapshot := snapshots[key]
+			if snapshot.set {
+				_, _ = config.SetCredential(key, snapshot.value)
+			} else {
+				_ = config.RemoveCredential(key)
+			}
+		}
+	}
+	for _, change := range changes {
+		change.key = strings.TrimSpace(change.key)
+		if change.key == "" {
+			continue
+		}
+		if _, ok := snapshots[change.key]; !ok {
+			resolved := config.ResolveCredentialForRootGlobalFirst(".", change.key)
+			snapshots[change.key] = remoteCredentialSnapshot{value: resolved.Value, set: resolved.Set}
+		}
+		if change.remove {
+			err = config.RemoveCredential(change.key)
+		} else {
+			_, err = config.SetCredential(change.key, change.value)
+		}
+		if err != nil {
+			rollback()
+			return fmt.Errorf("update remote credential %s: %w", change.key, err)
+		}
+		applied = append(applied, change.key)
+	}
+	if err := cfg.SaveTo(path); err != nil {
+		rollback()
+		return err
+	}
+	return nil
+}
+
 // ── desktopRemoteManager: concrete remoteKernel ──
 
 type managedHost struct {
-	client   desktopSSHClient
-	ctx      context.Context
-	cancel   context.CancelFunc
-	status   RemoteConnectionStatusView
-	server   RemoteServerView
-	token    string
-	fpAnswer chan bool  // TOFU resolution channel; non-nil while a prompt is pending
-	serveMu  sync.Mutex // serializes EnsureServer/StopServer for this host
+	client       desktopSSHClient
+	ctx          context.Context
+	cancel       context.CancelFunc
+	status       RemoteConnectionStatusView
+	server       RemoteServerView
+	token        string
+	fpAnswer     chan bool               // TOFU resolution channel; non-nil while pending
+	secretAnswer chan remoteSecretAnswer // one-shot credential channel; non-nil while pending
+	serveMu      sync.Mutex              // serializes EnsureServer/StopServer for this host
+}
+
+type remoteSecretAnswer struct {
+	secret string
+	accept bool
 }
 
 type desktopSSHClient interface {
@@ -498,7 +607,7 @@ type desktopRemoteManager struct {
 	stopServe   func(context.Context, bootstrap.Conn, string) error
 	serveLogs   func(context.Context, bootstrap.Conn, string, int, *strings.Builder) error
 	localBinary func() string
-	hostKeyGate chan struct{}
+	promptGate  chan struct{}
 }
 
 func newDesktopRemoteManager(sink remoteEventSink) *desktopRemoteManager {
@@ -514,7 +623,7 @@ func newDesktopRemoteManager(sink remoteEventSink) *desktopRemoteManager {
 			return bootstrap.Logs(ctx, conn, workspace, n, out)
 		},
 		localBinary: desktopCLIBinaryPath,
-		hostKeyGate: make(chan struct{}, 1),
+		promptGate:  make(chan struct{}, 1),
 	}
 }
 
@@ -531,8 +640,18 @@ func (m *desktopRemoteManager) Hosts() ([]RemoteHostView, error) {
 }
 
 func (m *desktopRemoteManager) AddHost(in RemoteHostInput) (RemoteHostView, error) {
-	entry := inputToHostEntry(in)
-	if err := editUserConfig(func(c *config.Config) error { return c.UpsertRemoteHost(entry) }); err != nil {
+	var entry config.RemoteHostEntry
+	if err := editUserConfigWithCredentials(func(c *config.Config) ([]remoteCredentialChange, error) {
+		entry = inputToHostEntry(in)
+		if existing, ok := c.RemoteHost(entry.Name); ok {
+			preserveRemoteHostHiddenFields(&entry, existing)
+		}
+		changes, removals := applyRemoteCredentialInput(&entry, in)
+		if err := c.UpsertRemoteHost(entry); err != nil {
+			return nil, err
+		}
+		return append(changes, unusedGeneratedRemoteCredentialChanges(c, removals)...), nil
+	}); err != nil {
 		return RemoteHostView{}, err
 	}
 	return hostEntryToView(entry), nil
@@ -540,19 +659,18 @@ func (m *desktopRemoteManager) AddHost(in RemoteHostInput) (RemoteHostView, erro
 
 func (m *desktopRemoteManager) UpdateHost(id string, in RemoteHostInput) (RemoteHostView, error) {
 	var merged config.RemoteHostEntry
-	if err := editUserConfig(func(c *config.Config) error {
+	if err := editUserConfigWithCredentials(func(c *config.Config) ([]remoteCredentialChange, error) {
 		entry := inputToHostEntry(in)
 		entry.Name = id
-		// Preserve fields the desktop input does not model, so editing a host in
-		// the UI never drops its stored credential references or persisted
-		// forwards (RemoteHostInput has no passphrase_env/password_env/forwards).
 		if existing, ok := c.RemoteHost(id); ok {
-			entry.PassphraseEnv = existing.PassphraseEnv
-			entry.PasswordEnv = existing.PasswordEnv
-			entry.Forwards = existing.Forwards
+			preserveRemoteHostHiddenFields(&entry, existing)
 		}
+		changes, removals := applyRemoteCredentialInput(&entry, in)
 		merged = entry
-		return c.UpsertRemoteHost(entry)
+		if err := c.UpsertRemoteHost(entry); err != nil {
+			return nil, err
+		}
+		return append(changes, unusedGeneratedRemoteCredentialChanges(c, removals)...), nil
 	}); err != nil {
 		return RemoteHostView{}, err
 	}
@@ -562,9 +680,17 @@ func (m *desktopRemoteManager) UpdateHost(id string, in RemoteHostInput) (Remote
 func (m *desktopRemoteManager) RemoveHost(id string) error {
 	_ = m.Disconnect(id)
 	removed := false
-	if err := editUserConfig(func(c *config.Config) error {
+	if err := editUserConfigWithCredentials(func(c *config.Config) ([]remoteCredentialChange, error) {
+		var removals []string
+		if existing, ok := c.RemoteHost(id); ok {
+			for _, key := range []string{existing.PasswordEnv, existing.PassphraseEnv} {
+				if isGeneratedRemoteCredential(id, key) {
+					removals = append(removals, key)
+				}
+			}
+		}
 		removed = c.RemoveRemoteHost(id)
-		return nil
+		return unusedGeneratedRemoteCredentialChanges(c, removals), nil
 	}); err != nil {
 		return err
 	}
@@ -583,17 +709,10 @@ func (m *desktopRemoteManager) ScanSSHConfig() ([]RemoteHostInput, error) {
 	// import page iterates safely.
 	out := []RemoteHostInput{}
 	for _, cand := range src.Aliases() {
-		host := cand.HostName
-		if host == "" {
-			host = cand.Alias
-		}
 		out = append(out, RemoteHostInput{
 			Label:        cand.Alias,
-			Host:         host,
-			Port:         cand.Port,
-			User:         cand.User,
-			IdentityFile: cand.IdentityFile,
-			ProxyJump:    cand.ProxyJump,
+			Host:         cand.Alias,
+			Port:         0,
 			UseSSHConfig: true,
 		})
 	}
@@ -611,14 +730,9 @@ func (m *desktopRemoteManager) Connect(hostID string) error {
 		return err
 	}
 
-	auth := desktopAuthForHost(host)
 	resolvedJumps, err := remote.ResolveJumpHosts(cfg, host.ProxyJump, sshCfg)
 	if err != nil {
 		return err
-	}
-	jumpHosts := make([]remote.JumpHostOptions, 0, len(resolvedJumps))
-	for _, jump := range resolvedJumps {
-		jumpHosts = append(jumpHosts, remote.JumpHostOptions{Host: jump, Auth: desktopAuthForHost(jump)})
 	}
 
 	// Honor the user's proxy settings for the SSH dial, same as the CLI.
@@ -631,6 +745,12 @@ func (m *desktopRemoteManager) Connect(hostID string) error {
 	mh := &managedHost{
 		ctx: hostCtx, cancel: cancel,
 		status: RemoteConnectionStatusView{HostID: hostID, State: "connecting"},
+	}
+	secretPrompt := m.secretPrompt(hostID, mh)
+	auth := desktopAuthForHost(host, secretPrompt)
+	jumpHosts := make([]remote.JumpHostOptions, 0, len(resolvedJumps))
+	for _, jump := range resolvedJumps {
+		jumpHosts = append(jumpHosts, remote.JumpHostOptions{Host: jump, Auth: desktopAuthForHost(jump, secretPrompt)})
 	}
 	policy := &remote.HostKeyPolicy{Prompt: m.hostKeyPrompt(hostID, mh)}
 	client, err := m.newClient(remote.Options{
@@ -672,8 +792,8 @@ func (m *desktopRemoteManager) Connect(hostID string) error {
 	return nil
 }
 
-func desktopAuthForHost(host remote.ResolvedHost) remote.AuthOptions {
-	auth := remote.AuthOptions{}
+func desktopAuthForHost(host remote.ResolvedHost, prompt remote.SecretPrompt) remote.AuthOptions {
+	auth := remote.AuthOptions{SecretPrompt: prompt}
 	if host.PassphraseEnv != "" {
 		env := host.PassphraseEnv
 		auth.Passphrase = func() (string, error) { return config.ResolveCredential(env).Value, nil }
@@ -705,9 +825,12 @@ func (m *desktopRemoteManager) Disconnect(hostID string) error {
 	mh := m.hosts[hostID]
 	delete(m.hosts, hostID)
 	var answer chan bool
+	var secretAnswer chan remoteSecretAnswer
 	if mh != nil {
 		answer = mh.fpAnswer
 		mh.fpAnswer = nil
+		secretAnswer = mh.secretAnswer
+		mh.secretAnswer = nil
 	}
 	if mh != nil && m.sink != nil {
 		m.sink.onStatus(RemoteConnectionStatusView{HostID: hostID, State: "stopped"})
@@ -719,6 +842,12 @@ func (m *desktopRemoteManager) Disconnect(hostID string) error {
 	if answer != nil {
 		select {
 		case answer <- false:
+		default:
+		}
+	}
+	if secretAnswer != nil {
+		select {
+		case secretAnswer <- remoteSecretAnswer{}:
 		default:
 		}
 	}
@@ -767,6 +896,25 @@ func (m *desktopRemoteManager) ResolveHostKey(hostID string, accept bool) error 
 	}
 }
 
+func (m *desktopRemoteManager) ResolveSecret(hostID, secret string, accept bool) error {
+	m.mu.Lock()
+	mh := m.hosts[hostID]
+	var ch chan remoteSecretAnswer
+	if mh != nil {
+		ch = mh.secretAnswer
+	}
+	m.mu.Unlock()
+	if ch == nil {
+		return fmt.Errorf("no pending SSH credential prompt for %q", hostID)
+	}
+	select {
+	case ch <- remoteSecretAnswer{secret: secret, accept: accept}:
+		return nil
+	default:
+		return fmt.Errorf("SSH credential prompt already resolved for %q", hostID)
+	}
+}
+
 // hostKeyPrompt returns a HostKeyPrompt that surfaces the fingerprint as a
 // pending_hostkey status and blocks on the answer channel until the UI calls
 // ConfirmRemoteHostKey.
@@ -775,8 +923,8 @@ func (m *desktopRemoteManager) hostKeyPrompt(hostID string, generation *managedH
 		// The frontend presents one global TOFU dialog. Serialize prompts so two
 		// simultaneous first-seen hosts cannot overwrite one another in the UI.
 		select {
-		case m.hostKeyGate <- struct{}{}:
-			defer func() { <-m.hostKeyGate }()
+		case m.promptGate <- struct{}{}:
+			defer func() { <-m.promptGate }()
 		case <-ctx.Done():
 			return false, ctx.Err()
 		}
@@ -814,6 +962,55 @@ func (m *desktopRemoteManager) hostKeyPrompt(hostID string, generation *managedH
 	}
 }
 
+// secretPrompt surfaces a password/passphrase request as a global desktop
+// dialog. Prompt metadata may be emitted, but the entered secret only crosses
+// the one-shot answer channel and AuthOptions' in-memory reconnect cache.
+func (m *desktopRemoteManager) secretPrompt(hostID string, generation *managedHost) remote.SecretPrompt {
+	return func(ctx context.Context, kind remote.SecretKind, host string) (string, error) {
+		select {
+		case m.promptGate <- struct{}{}:
+			defer func() { <-m.promptGate }()
+		case <-ctx.Done():
+			return "", ctx.Err()
+		}
+
+		answer := make(chan remoteSecretAnswer, 1)
+		m.mu.Lock()
+		mh := m.hosts[hostID]
+		if mh != generation {
+			m.mu.Unlock()
+			return "", fmt.Errorf("host %q connection was replaced", hostID)
+		}
+		mh.secretAnswer = answer
+		prompt := &RemoteSecretPromptView{HostID: hostID, Host: host, Kind: kind.String()}
+		mh.status = RemoteConnectionStatusView{HostID: hostID, State: "pending_secret", SecretPrompt: prompt}
+		status := mh.status
+		if m.sink != nil {
+			m.sink.onStatus(status)
+		}
+		m.mu.Unlock()
+		defer func() {
+			m.mu.Lock()
+			if m.hosts[hostID] == generation && generation.secretAnswer == answer {
+				generation.secretAnswer = nil
+			}
+			m.mu.Unlock()
+		}()
+
+		select {
+		case response := <-answer:
+			if !response.accept {
+				return "", fmt.Errorf("remote: %s prompt canceled", kind)
+			}
+			return response.secret, nil
+		case <-ctx.Done():
+			return "", ctx.Err()
+		case <-time.After(2 * time.Minute):
+			return "", fmt.Errorf("remote: %s prompt timed out", kind)
+		}
+	}
+}
+
 func (m *desktopRemoteManager) onClientStatus(hostID string, generation *managedHost, ev remote.StatusEvent) {
 	if ev.Status == remote.StatusIdle {
 		return
@@ -832,8 +1029,8 @@ func (m *desktopRemoteManager) onClientStatus(hostID string, generation *managed
 		m.mu.Unlock()
 		return
 	}
-	// Preserve a pending fingerprint that a separate prompt goroutine set.
-	if mh.status.State == "pending_hostkey" && view.State == "connecting" {
+	// Preserve a pending modal that a separate prompt goroutine set.
+	if (mh.status.State == "pending_hostkey" || mh.status.State == "pending_secret") && view.State == "connecting" {
 		m.mu.Unlock()
 		return
 	}
@@ -1199,16 +1396,27 @@ func (m *desktopRemoteManager) Close() error {
 	hosts := m.hosts
 	m.hosts = map[string]*managedHost{}
 	answers := make([]chan bool, 0, len(hosts))
+	secretAnswers := make([]chan remoteSecretAnswer, 0, len(hosts))
 	for _, mh := range hosts {
 		if mh.fpAnswer != nil {
 			answers = append(answers, mh.fpAnswer)
 			mh.fpAnswer = nil
+		}
+		if mh.secretAnswer != nil {
+			secretAnswers = append(secretAnswers, mh.secretAnswer)
+			mh.secretAnswer = nil
 		}
 	}
 	m.mu.Unlock()
 	for _, answer := range answers {
 		select {
 		case answer <- false:
+		default:
+		}
+	}
+	for _, answer := range secretAnswers {
+		select {
+		case answer <- remoteSecretAnswer{}:
 		default:
 		}
 	}
@@ -1291,11 +1499,87 @@ func desktopNormalizeBind(bind string) string {
 
 // ── helpers ──
 
+const (
+	remotePasswordCredentialKind   = "PASSWORD"
+	remotePassphraseCredentialKind = "KEY_PASSPHRASE"
+)
+
+// remoteCredentialEnvName returns a stable, dotenv-safe slot name without
+// leaking the user-supplied host label into the process environment.
+func remoteCredentialEnvName(hostID, kind string) string {
+	sum := sha256.Sum256([]byte(strings.TrimSpace(hostID)))
+	return fmt.Sprintf("REASONIX_REMOTE_%X_%s", sum[:8], kind)
+}
+
+func isGeneratedRemoteCredential(hostID, key string) bool {
+	key = strings.TrimSpace(key)
+	return key != "" && (key == remoteCredentialEnvName(hostID, remotePasswordCredentialKind) ||
+		key == remoteCredentialEnvName(hostID, remotePassphraseCredentialKind))
+}
+
+func preserveRemoteHostHiddenFields(entry *config.RemoteHostEntry, existing config.RemoteHostEntry) {
+	entry.PassphraseEnv = existing.PassphraseEnv
+	entry.PasswordEnv = existing.PasswordEnv
+	entry.Forwards = append([]config.RemoteForwardEntry(nil), existing.Forwards...)
+}
+
+// applyRemoteCredentialInput maps plaintext received from the one-shot Wails
+// call into Reasonix-owned credential slots. Blank fields preserve the current
+// reference; explicit clear flags remove only slots that this desktop created.
+func applyRemoteCredentialInput(entry *config.RemoteHostEntry, in RemoteHostInput) (changes []remoteCredentialChange, removalCandidates []string) {
+	if in.ClearPassword {
+		if isGeneratedRemoteCredential(entry.Name, entry.PasswordEnv) {
+			removalCandidates = append(removalCandidates, entry.PasswordEnv)
+		}
+		entry.PasswordEnv = ""
+	}
+	if in.Password != "" {
+		entry.PasswordEnv = remoteCredentialEnvName(entry.Name, remotePasswordCredentialKind)
+		changes = append(changes, remoteCredentialChange{key: entry.PasswordEnv, value: in.Password})
+	}
+
+	if in.ClearPassphrase {
+		if isGeneratedRemoteCredential(entry.Name, entry.PassphraseEnv) {
+			removalCandidates = append(removalCandidates, entry.PassphraseEnv)
+		}
+		entry.PassphraseEnv = ""
+	}
+	if in.KeyPassphrase != "" {
+		entry.PassphraseEnv = remoteCredentialEnvName(entry.Name, remotePassphraseCredentialKind)
+		changes = append(changes, remoteCredentialChange{key: entry.PassphraseEnv, value: in.KeyPassphrase})
+	}
+	return changes, removalCandidates
+}
+
+func unusedGeneratedRemoteCredentialChanges(c *config.Config, candidates []string) []remoteCredentialChange {
+	if len(candidates) == 0 {
+		return nil
+	}
+	used := make(map[string]bool, len(c.Remote.Hosts)*2)
+	for _, host := range c.Remote.Hosts {
+		used[strings.TrimSpace(host.PasswordEnv)] = true
+		used[strings.TrimSpace(host.PassphraseEnv)] = true
+	}
+	seen := map[string]bool{}
+	changes := make([]remoteCredentialChange, 0, len(candidates))
+	for _, key := range candidates {
+		key = strings.TrimSpace(key)
+		if key == "" || used[key] || seen[key] {
+			continue
+		}
+		seen[key] = true
+		changes = append(changes, remoteCredentialChange{key: key, remove: true})
+	}
+	return changes
+}
+
 func hostEntryToView(h config.RemoteHostEntry) RemoteHostView {
 	return RemoteHostView{
 		ID: h.Name, Label: h.Name, Host: h.Host, Port: h.Port, User: h.User,
 		IdentityFile: h.IdentityFile, ProxyJump: h.ProxyJump,
 		DefaultWorkspace: h.Workspace, ServeInstall: h.ServeInstallMode(), UseSSHConfig: h.UseSSHConfig,
+		PasswordSet:      config.ResolveCredential(h.PasswordEnv).Set,
+		KeyPassphraseSet: config.ResolveCredential(h.PassphraseEnv).Set,
 	}
 }
 

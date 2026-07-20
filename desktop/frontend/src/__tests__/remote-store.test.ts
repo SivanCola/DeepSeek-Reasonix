@@ -22,7 +22,7 @@ function eq(a: unknown, b: unknown, label: string) {
 }
 
 function reset() {
-  useRemoteStore.setState({ hosts: [], statuses: {}, pendingFingerprint: null, statusPopoverRequest: null });
+  useRemoteStore.setState({ hosts: [], statuses: {}, pendingFingerprint: null, pendingSecretPrompt: null, statusPopoverRequest: null });
 }
 
 useRemoteStore.getState().setHosts([
@@ -53,6 +53,26 @@ eq(useRemoteStore.getState().pendingFingerprint?.sha256, "BBBB", "stale dialog c
 useRemoteStore.getState().applyStatus({ hostId: "other", state: "connected" });
 eq(useRemoteStore.getState().pendingFingerprint, null, "resolution clears fingerprint");
 eq(useRemoteStore.getState().statuses["other"]?.state, "connected", "status recorded");
+
+// Interactive credentials expose metadata to the UI, never the secret value.
+reset();
+useRemoteStore.getState().applyStatus({
+  hostId: "box",
+  state: "pending_secret",
+  secretPrompt: { hostId: "box", host: "dev@box.test", kind: "password" },
+});
+eq(useRemoteStore.getState().pendingSecretPrompt?.kind, "password", "pending_secret opens the one-shot credential dialog");
+eq(JSON.stringify(useRemoteStore.getState().statuses.box).includes("secret-value"), false, "status contains no credential plaintext");
+const oldSecretPrompt = useRemoteStore.getState().pendingSecretPrompt!;
+useRemoteStore.getState().applyStatus({
+  hostId: "other",
+  state: "pending_secret",
+  secretPrompt: { hostId: "other", host: "other.test", kind: "passphrase" },
+});
+useRemoteStore.getState().clearPendingSecretPrompt(oldSecretPrompt);
+eq(useRemoteStore.getState().pendingSecretPrompt?.hostId, "other", "stale credential dialog cannot clear a newer prompt");
+useRemoteStore.getState().applyStatus({ hostId: "other", state: "connecting" });
+eq(useRemoteStore.getState().pendingSecretPrompt, null, "credential resolution clears the prompt");
 
 // setStatuses replaces the whole map (mount hydration).
 useRemoteStore.getState().setStatuses([

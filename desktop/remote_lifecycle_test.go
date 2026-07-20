@@ -38,6 +38,49 @@ func newLifecycleSSHClient(startErr error) *lifecycleSSHClient {
 	return &lifecycleSSHClient{startErr: startErr, forwards: forward.NewSet(nil)}
 }
 
+func TestDesktopSecretPromptPublishesMetadataAndReturnsOneShotSecret(t *testing.T) {
+	sink := &lifecycleEventSink{statuses: make(chan RemoteConnectionStatusView, 2)}
+	mgr := newDesktopRemoteManager(sink)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	generation := &managedHost{ctx: ctx, cancel: cancel, status: RemoteConnectionStatusView{HostID: "box", State: "connecting"}}
+	mgr.hosts["box"] = generation
+
+	type promptResult struct {
+		secret string
+		err    error
+	}
+	result := make(chan promptResult, 1)
+	go func() {
+		secret, err := mgr.secretPrompt("box", generation)(ctx, remote.SecretPassword, "dev@box.test")
+		result <- promptResult{secret: secret, err: err}
+	}()
+
+	select {
+	case status := <-sink.statuses:
+		if status.State != "pending_secret" || status.SecretPrompt == nil {
+			t.Fatalf("status = %+v", status)
+		}
+		if status.SecretPrompt.Host != "dev@box.test" || status.SecretPrompt.Kind != "password" {
+			t.Fatalf("prompt metadata = %+v", status.SecretPrompt)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("secret prompt status was not emitted")
+	}
+
+	if err := mgr.ResolveSecret("box", "one-shot-secret", true); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case got := <-result:
+		if got.err != nil || got.secret != "one-shot-secret" {
+			t.Fatalf("prompt result = %+v", got)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("secret prompt did not resolve")
+	}
+}
+
 func (c *lifecycleSSHClient) Start(context.Context) error {
 	c.mu.Lock()
 	sub, err := c.sub, c.startErr

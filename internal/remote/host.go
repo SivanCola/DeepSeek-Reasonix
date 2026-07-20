@@ -19,6 +19,7 @@ type ResolvedHost struct {
 	Port          int
 	User          string
 	IdentityFile  string   // explicit key path; empty => agent/default identities
+	IdentityFiles []string // ordered effective ssh_config identities
 	PassphraseEnv string   // credential env var name for the key passphrase
 	PasswordEnv   string   // credential env var name for password auth
 	ProxyJump     []string // resolved jump chain, in dial order
@@ -157,9 +158,15 @@ func resolveEntry(e config.RemoteHostEntry, sshCfg *SSHConfigSource) (ResolvedHo
 		r.ProxyJump = splitJumpChain(j)
 	}
 	if e.UseSSHConfig {
-		// The TOML host field doubles as the ssh_config alias lookup key; the
-		// resolved HostName may differ (ssh_config HostName wins for unset).
-		applySSHConfig(&r, r.HostName, sshCfg)
+		// New imports keep Host equal to the original alias. Older imports saved
+		// the resolved hostname, but their Name still preserves the alias. Only
+		// treat Name as the lookup key when it is a concrete config alias: `ssh -G`
+		// also succeeds for arbitrary display labels by returning defaults.
+		alias := r.HostName
+		if sshCfg != nil && sshCfg.HasAlias(e.Name) {
+			alias = strings.TrimSpace(e.Name)
+		}
+		applySSHConfig(&r, alias, sshCfg)
 	}
 	applyHostDefaults(&r)
 	if r.HostName == "" {
@@ -185,7 +192,12 @@ func applySSHConfig(r *ResolvedHost, alias string, sshCfg *SSHConfigSource) {
 		r.User = sshCfg.User(alias)
 	}
 	if r.IdentityFile == "" {
-		r.IdentityFile = sshCfg.IdentityFile(alias)
+		r.IdentityFiles = sshCfg.IdentityFiles(alias)
+		if len(r.IdentityFiles) > 0 {
+			r.IdentityFile = r.IdentityFiles[0]
+		}
+	} else if len(r.IdentityFiles) == 0 {
+		r.IdentityFiles = []string{r.IdentityFile}
 	}
 	if len(r.ProxyJump) == 0 {
 		if j := sshCfg.ProxyJump(alias); j != "" {

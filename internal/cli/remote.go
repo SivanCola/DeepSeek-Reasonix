@@ -196,17 +196,9 @@ func remoteImportCLI(args []string) int {
 			if !*all && len(wanted) == 0 {
 				continue // neither --all nor explicit aliases: nothing to do
 			}
-			host := cand.HostName
-			if host == "" {
-				host = cand.Alias
-			}
 			entry := config.RemoteHostEntry{
 				Name:         cand.Alias,
-				Host:         host,
-				Port:         cand.Port,
-				User:         cand.User,
-				IdentityFile: cand.IdentityFile,
-				ProxyJump:    cand.ProxyJump,
+				Host:         cand.Alias,
 				UseSSHConfig: true,
 			}
 			if err := c.UpsertRemoteHost(entry); err != nil {

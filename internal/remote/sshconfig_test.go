@@ -1,8 +1,10 @@
 package remote
 
 import (
+	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"reasonix/internal/config"
@@ -33,6 +35,27 @@ func writeSampleConfig(t *testing.T) string {
 		t.Fatal(err)
 	}
 	return p
+}
+
+func TestEffectiveSSHConfigUsesOpenSSHOutputAndKeepsAllIdentities(t *testing.T) {
+	src, err := LoadSSHConfig(writeSampleConfig(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	src.resolveOpenSSH = func(_ context.Context, path, alias string) ([]byte, error) {
+		if path != src.Path() || alias != "gpu" {
+			t.Fatalf("ssh -G request = path %q alias %q", path, alias)
+		}
+		return []byte("hostname resolved.example\nuser effective-user\nport 2207\nidentityfile ~/.ssh/first\nidentityfile ~/.ssh/second\nproxyjump jump-a,jump-b\n"), nil
+	}
+
+	got := src.Effective("gpu")
+	if got.HostName != "resolved.example" || got.User != "effective-user" || got.Port != 2207 || got.ProxyJump != "jump-a,jump-b" {
+		t.Fatalf("effective config = %+v", got)
+	}
+	if len(got.IdentityFiles) != 2 || !strings.HasSuffix(got.IdentityFiles[0], "/.ssh/first") || !strings.HasSuffix(got.IdentityFiles[1], "/.ssh/second") {
+		t.Fatalf("identity files = %v", got.IdentityFiles)
+	}
 }
 
 func TestSSHConfigLookups(t *testing.T) {
@@ -137,4 +160,45 @@ func TestResolveHostLayersSSHConfig(t *testing.T) {
 	if h.Port != 2222 {
 		t.Errorf("Port not taken from ssh_config: %d", h.Port)
 	}
+}
+
+func TestResolveHostPreservesLegacyImportedAliasButNotDisplayLabel(t *testing.T) {
+	src, err := LoadSSHConfig(writeSampleConfig(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Make the test independent of the local OpenSSH executable.
+	src.resolveOpenSSH = nil
+
+	t.Run("legacy import name is concrete alias", func(t *testing.T) {
+		cfg := config.Default()
+		if err := cfg.UpsertRemoteHost(config.RemoteHostEntry{
+			Name: "gpu", Host: "203.0.113.9", UseSSHConfig: true,
+		}); err != nil {
+			t.Fatal(err)
+		}
+		h, err := ResolveHost(cfg, "gpu", src)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if h.User != "dev" || h.Port != 2222 {
+			t.Fatalf("legacy alias was not resolved live: %+v", h)
+		}
+	})
+
+	t.Run("display label does not replace saved lookup key", func(t *testing.T) {
+		cfg := config.Default()
+		if err := cfg.UpsertRemoteHost(config.RemoteHostEntry{
+			Name: "my-gpu-label", Host: "gpu", UseSSHConfig: true,
+		}); err != nil {
+			t.Fatal(err)
+		}
+		h, err := ResolveHost(cfg, "my-gpu-label", src)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if h.HostName != "203.0.113.9" || h.User != "dev" {
+			t.Fatalf("saved Host alias was lost: %+v", h)
+		}
+	})
 }

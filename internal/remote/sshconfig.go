@@ -2,22 +2,41 @@ package remote
 
 import (
 	"bufio"
+	"context"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	ssh_config "github.com/kevinburke/ssh_config"
 )
 
-// SSHConfigSource answers per-alias lookups against a parsed OpenSSH client
-// config (~/.ssh/config plus Includes). Match blocks are not evaluated by the
-// underlying parser; ImportedHost.HasMatchRules is unset because such stanzas
-// are simply invisible here — `remote import` notes that limitation.
+// SSHConfigSource discovers aliases from a parsed OpenSSH client config and
+// resolves their effective values through the installed `ssh -G`. The embedded
+// parser remains a compatibility fallback when the OpenSSH executable is not
+// available.
 type SSHConfigSource struct {
-	cfg     *ssh_config.Config
-	path    string
-	aliases []string
+	cfg             *ssh_config.Config
+	path            string
+	aliases         []string
+	resolveOpenSSH  func(context.Context, string, string) ([]byte, error)
+	effectiveMu     sync.Mutex
+	effectiveByHost map[string]EffectiveSSHConfig
+}
+
+// EffectiveSSHConfig is the subset of `ssh -G` output consumed by Reasonix.
+// Keeping every IdentityFile is important: OpenSSH permits the directive to be
+// repeated and probes the resulting identities in order.
+type EffectiveSSHConfig struct {
+	HostName      string
+	User          string
+	Port          int
+	IdentityFiles []string
+	ProxyJump     string
 }
 
 // LoadUserSSHConfig parses ~/.ssh/config. A missing file yields an empty
@@ -25,7 +44,7 @@ type SSHConfigSource struct {
 func LoadUserSSHConfig() (*SSHConfigSource, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return &SSHConfigSource{}, nil
+		return newSSHConfigSource(nil, "", nil), nil
 	}
 	return LoadSSHConfig(filepath.Join(home, ".ssh", "config"))
 }
@@ -35,7 +54,7 @@ func LoadSSHConfig(path string) (*SSHConfigSource, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return &SSHConfigSource{path: path}, nil
+			return newSSHConfigSource(nil, path, nil), nil
 		}
 		return nil, err
 	}
@@ -45,7 +64,15 @@ func LoadSSHConfig(path string) (*SSHConfigSource, error) {
 		return nil, err
 	}
 	aliases, _ := discoverSSHAliases(path, 0, map[string]bool{})
-	return &SSHConfigSource{cfg: cfg, path: path, aliases: aliases}, nil
+	return newSSHConfigSource(cfg, path, aliases), nil
+}
+
+func newSSHConfigSource(cfg *ssh_config.Config, path string, aliases []string) *SSHConfigSource {
+	return &SSHConfigSource{
+		cfg: cfg, path: path, aliases: aliases,
+		resolveOpenSSH:  runOpenSSHEffectiveConfig,
+		effectiveByHost: map[string]EffectiveSSHConfig{},
+	}
 }
 
 // Path is the file this source was parsed from (may not exist).
@@ -62,25 +89,171 @@ func (s *SSHConfigSource) get(alias, key string) string {
 	return strings.TrimSpace(v)
 }
 
+// Effective resolves alias through the user's installed OpenSSH client. This
+// is the same source of truth used by VS Code Remote-SSH and covers Include,
+// Host wildcards, Match rules, token expansion, and OpenSSH's precedence. If
+// ssh is unavailable or rejects the config, Reasonix falls back to its embedded
+// parser so existing installations keep working.
+func (s *SSHConfigSource) Effective(alias string) EffectiveSSHConfig {
+	if s == nil || strings.TrimSpace(alias) == "" {
+		return EffectiveSSHConfig{}
+	}
+	alias = strings.TrimSpace(alias)
+	s.effectiveMu.Lock()
+	if s.effectiveByHost == nil {
+		s.effectiveByHost = map[string]EffectiveSSHConfig{}
+	}
+	if cfg, ok := s.effectiveByHost[alias]; ok {
+		s.effectiveMu.Unlock()
+		return cloneEffectiveSSHConfig(cfg)
+	}
+	s.effectiveMu.Unlock()
+
+	var effective EffectiveSSHConfig
+	if s.resolveOpenSSH != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		output, err := s.resolveOpenSSH(ctx, s.path, alias)
+		cancel()
+		if err == nil {
+			effective, err = parseOpenSSHEffectiveConfig(output, alias)
+			if err != nil {
+				effective = EffectiveSSHConfig{}
+			}
+		}
+	}
+	if effective.HostName == "" {
+		effective = s.parserEffective(alias)
+	}
+
+	s.effectiveMu.Lock()
+	s.effectiveByHost[alias] = cloneEffectiveSSHConfig(effective)
+	s.effectiveMu.Unlock()
+	return cloneEffectiveSSHConfig(effective)
+}
+
+// HasAlias reports whether alias was declared as a concrete Host entry. It is
+// intentionally stricter than `ssh -G`: OpenSSH returns defaults for arbitrary
+// host names, which must not make a user-facing label override an older saved
+// Host lookup key.
+func (s *SSHConfigSource) HasAlias(alias string) bool {
+	alias = strings.TrimSpace(alias)
+	if s == nil || alias == "" {
+		return false
+	}
+	for _, candidate := range s.aliases {
+		if candidate == alias && !strings.ContainsAny(candidate, "*?!") {
+			return true
+		}
+	}
+	return false
+}
+
+func runOpenSSHEffectiveConfig(ctx context.Context, path, alias string) ([]byte, error) {
+	args := []string{"-G"}
+	if strings.TrimSpace(path) != "" {
+		args = append(args, "-F", path)
+	}
+	args = append(args, "--", alias)
+	cmd := exec.CommandContext(ctx, "ssh", args...)
+	output, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("ssh -G %q: %w", alias, err)
+	}
+	return output, nil
+}
+
+func parseOpenSSHEffectiveConfig(output []byte, alias string) (EffectiveSSHConfig, error) {
+	var effective EffectiveSSHConfig
+	scanner := bufio.NewScanner(strings.NewReader(string(output)))
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		key, value, ok := strings.Cut(line, " ")
+		if !ok {
+			continue
+		}
+		value = strings.TrimSpace(value)
+		switch strings.ToLower(key) {
+		case "hostname":
+			effective.HostName = value
+		case "user":
+			effective.User = value
+		case "port":
+			port, err := strconv.Atoi(value)
+			if err == nil && port > 0 && port <= 65535 {
+				effective.Port = port
+			}
+		case "identityfile":
+			if value != "" && !strings.EqualFold(value, "none") {
+				effective.IdentityFiles = append(effective.IdentityFiles, expandHome(value))
+			}
+		case "proxyjump":
+			if !strings.EqualFold(value, "none") {
+				effective.ProxyJump = value
+			}
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return EffectiveSSHConfig{}, err
+	}
+	if effective.HostName == "" {
+		effective.HostName = alias
+	}
+	return effective, nil
+}
+
+func (s *SSHConfigSource) parserEffective(alias string) EffectiveSSHConfig {
+	if s == nil || s.cfg == nil {
+		return EffectiveSSHConfig{HostName: alias}
+	}
+	hostName := s.get(alias, "HostName")
+	if hostName == "" {
+		hostName = alias
+	}
+	var identities []string
+	if vals, err := s.cfg.GetAll(alias, "IdentityFile"); err == nil {
+		for _, value := range vals {
+			value = strings.TrimSpace(value)
+			if value == "" || value == ssh_config.Default("IdentityFile") || strings.EqualFold(value, "none") {
+				continue
+			}
+			identities = append(identities, expandHome(value))
+		}
+	}
+	port := 0
+	if value := s.get(alias, "Port"); value != "" {
+		if parsed, err := strconv.Atoi(value); err == nil && parsed > 0 && parsed <= 65535 {
+			port = parsed
+		}
+	}
+	return EffectiveSSHConfig{
+		HostName: hostName, User: s.get(alias, "User"), Port: port,
+		IdentityFiles: identities, ProxyJump: s.get(alias, "ProxyJump"),
+	}
+}
+
+func cloneEffectiveSSHConfig(in EffectiveSSHConfig) EffectiveSSHConfig {
+	in.IdentityFiles = append([]string(nil), in.IdentityFiles...)
+	return in
+}
+
 // HostName returns the ssh_config HostName for alias, or "" when it would
 // just echo the default/alias back.
 func (s *SSHConfigSource) HostName(alias string) string {
-	v := s.get(alias, "HostName")
+	v := s.Effective(alias).HostName
 	if v == "" || v == alias {
 		return ""
 	}
 	return v
 }
 
-func (s *SSHConfigSource) User(alias string) string { return s.get(alias, "User") }
+func (s *SSHConfigSource) User(alias string) string { return s.Effective(alias).User }
 
 func (s *SSHConfigSource) Port(alias string) int {
-	v := s.get(alias, "Port")
-	if v == "" {
-		return 0
-	}
-	p, err := strconv.Atoi(v)
-	if err != nil || p <= 0 || p > 65535 || p == 22 {
+	p := s.Effective(alias).Port
+	if p == 22 {
 		return 0
 	}
 	return p
@@ -88,24 +261,18 @@ func (s *SSHConfigSource) Port(alias string) int {
 
 // IdentityFile returns the first non-default identity file, ~-expanded.
 func (s *SSHConfigSource) IdentityFile(alias string) string {
-	if s == nil || s.cfg == nil {
+	identities := s.IdentityFiles(alias)
+	if len(identities) == 0 {
 		return ""
 	}
-	vals, err := s.cfg.GetAll(alias, "IdentityFile")
-	if err != nil || len(vals) == 0 {
-		return ""
-	}
-	v := strings.TrimSpace(vals[0])
-	// The parser reports its built-in default (~/.ssh/identity) when the
-	// config has no entry; treat it as unset so the auth chain probes the
-	// modern default identities instead.
-	if v == "" || v == ssh_config.Default("IdentityFile") {
-		return ""
-	}
-	return expandHome(v)
+	return identities[0]
 }
 
-func (s *SSHConfigSource) ProxyJump(alias string) string { return s.get(alias, "ProxyJump") }
+func (s *SSHConfigSource) IdentityFiles(alias string) []string {
+	return append([]string(nil), s.Effective(alias).IdentityFiles...)
+}
+
+func (s *SSHConfigSource) ProxyJump(alias string) string { return s.Effective(alias).ProxyJump }
 
 // ImportedHost is one concrete Host alias surfaced by `remote import`.
 type ImportedHost struct {
@@ -131,13 +298,26 @@ func (s *SSHConfigSource) Aliases() []ImportedHost {
 			continue
 		}
 		seen[alias] = true
+		effective := s.Effective(alias)
+		identity := ""
+		if len(effective.IdentityFiles) > 0 {
+			identity = effective.IdentityFiles[0]
+		}
+		hostName := effective.HostName
+		if hostName == alias {
+			hostName = ""
+		}
+		port := effective.Port
+		if port == 22 {
+			port = 0
+		}
 		out = append(out, ImportedHost{
 			Alias:        alias,
-			HostName:     s.HostName(alias),
-			User:         s.User(alias),
-			Port:         s.Port(alias),
-			IdentityFile: s.IdentityFile(alias),
-			ProxyJump:    s.ProxyJump(alias),
+			HostName:     hostName,
+			User:         effective.User,
+			Port:         port,
+			IdentityFile: identity,
+			ProxyJump:    effective.ProxyJump,
 		})
 	}
 	return out

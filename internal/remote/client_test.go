@@ -2,6 +2,7 @@ package remote
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -89,6 +90,128 @@ func TestClientConnectPublicKeyAuth(t *testing.T) {
 	defer c.Close()
 	if c.Status().Status != StatusConnected {
 		t.Fatalf("status = %v", c.Status().Status)
+	}
+}
+
+func TestClientTriesMultipleIdentityFilesInOrder(t *testing.T) {
+	wrongPEM, _, err := sshtest.GenerateKeyPEM()
+	if err != nil {
+		t.Fatal(err)
+	}
+	correctPEM, correctPublic, err := sshtest.GenerateKeyPEM()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The server accepts the second configured identity, not the first.
+	srv := sshtest.Start(t, sshtest.Options{AuthorizedKey: correctPublic})
+	dir := t.TempDir()
+	wrongPath := filepath.Join(dir, "id_wrong")
+	correctPath := filepath.Join(dir, "id_correct")
+	if err := writeFile0600(wrongPath, wrongPEM); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeFile0600(correctPath, correctPEM); err != nil {
+		t.Fatal(err)
+	}
+	c := newTestClient(t, srv, Options{})
+	c.opts.Host.IdentityFile = wrongPath
+	c.opts.Host.IdentityFiles = []string{wrongPath, correctPath}
+	c.opts.Auth.DisableAgent = true
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := c.Start(ctx); err != nil {
+		t.Fatalf("Start with second valid identity: %v", err)
+	}
+	defer c.Close()
+	if c.Status().Status != StatusConnected {
+		t.Fatalf("status = %v, want connected", c.Status().Status)
+	}
+}
+
+func TestClientFallsBackFromUnavailableAgentToIdentityFile(t *testing.T) {
+	pemBytes, authorized, err := sshtest.GenerateKeyPEM()
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := sshtest.Start(t, sshtest.Options{AuthorizedKey: authorized})
+	keyPath := filepath.Join(t.TempDir(), "id_ed25519")
+	if err := writeFile0600(keyPath, pemBytes); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("SSH_AUTH_SOCK", filepath.Join(t.TempDir(), "missing-agent.sock"))
+
+	c := newTestClient(t, srv, Options{})
+	c.opts.Host.IdentityFile = keyPath
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := c.Start(ctx); err != nil {
+		t.Fatalf("Start with unavailable agent and explicit identity: %v", err)
+	}
+	defer c.Close()
+	if c.Status().Status != StatusConnected {
+		t.Fatalf("status = %v, want connected", c.Status().Status)
+	}
+}
+
+func TestClientConnectEncryptedPublicKeyAuth(t *testing.T) {
+	pemBytes, pub, err := sshtest.GenerateEncryptedKeyPEM("correct horse battery staple")
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := sshtest.Start(t, sshtest.Options{AuthorizedKey: pub})
+	keyPath := filepath.Join(t.TempDir(), "id_ed25519")
+	if err := writeFile0600(keyPath, pemBytes); err != nil {
+		t.Fatal(err)
+	}
+	c := newTestClient(t, srv, Options{})
+	c.opts.Host.IdentityFile = keyPath
+	c.opts.Auth = AuthOptions{
+		DisableAgent: true,
+		Passphrase:   func() (string, error) { return "correct horse battery staple", nil },
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := c.Start(ctx); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer c.Close()
+	if c.Status().Status != StatusConnected {
+		t.Fatalf("status = %v, want connected", c.Status().Status)
+	}
+}
+
+func TestRejectedPublicKeyDoesNotReportMissingPasswordPrompt(t *testing.T) {
+	_, authorized, err := sshtest.GenerateKeyPEM()
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrongPEM, _, err := sshtest.GenerateKeyPEM()
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := sshtest.Start(t, sshtest.Options{AuthorizedKey: authorized})
+	keyPath := filepath.Join(t.TempDir(), "wrong_id_ed25519")
+	if err := writeFile0600(keyPath, wrongPEM); err != nil {
+		t.Fatal(err)
+	}
+	c := newTestClient(t, srv, Options{})
+	c.opts.Host.IdentityFile = keyPath
+	c.opts.Auth.DisableAgent = true
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	err = c.Start(ctx)
+	if err == nil {
+		t.Fatal("expected authentication failure")
+	}
+	if !errors.Is(err, ErrAuthFailed) {
+		t.Fatalf("error = %v, want ErrAuthFailed", err)
+	}
+	if strings.Contains(err.Error(), "password required") || strings.Contains(err.Error(), "no prompt available") {
+		t.Fatalf("public-key rejection was masked by a password-prompt error: %v", err)
 	}
 }
 

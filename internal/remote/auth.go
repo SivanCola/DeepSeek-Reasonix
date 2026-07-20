@@ -26,6 +26,11 @@ func (k SecretKind) String() string {
 	return "passphrase"
 }
 
+// SecretPrompt obtains a one-shot credential without persisting or publishing
+// it. Implementations should respect ctx cancellation when the connection is
+// stopped or superseded.
+type SecretPrompt func(ctx context.Context, kind SecretKind, host string) (string, error)
+
 // AuthOptions supplies credential resolution for a dial. Passphrase and
 // Password return already-resolved credential-store values (nil when none is
 // configured). SecretPrompt is the interactive fallback — a terminal prompt in
@@ -34,7 +39,7 @@ func (k SecretKind) String() string {
 type AuthOptions struct {
 	Passphrase   func() (string, error)
 	Password     func() (string, error)
-	SecretPrompt func(ctx context.Context, kind SecretKind, host string) (string, error)
+	SecretPrompt SecretPrompt
 	DisableAgent bool
 
 	// cache holds secrets obtained during the first connect so the supervisor
@@ -49,31 +54,51 @@ type secretCache struct {
 	havePw     bool
 }
 
-// buildAuthMethods assembles ssh.AuthMethod values in OpenSSH-like order:
-// agent, explicit identity file, default identities, password,
-// keyboard-interactive. host is the display label used in prompts.
-func buildAuthMethods(ctx context.Context, h ResolvedHost, opts *AuthOptions) ([]ssh.AuthMethod, func(), error) {
+// buildAuthMethods assembles authentication in OpenSSH-like order: agent,
+// explicit identity file (or default identities), password, then
+// keyboard-interactive. Public-key sources are returned through an AuthCallback
+// because x/crypto/ssh deliberately uses only the first static AuthMethod for a
+// protocol method. Without the callback, an empty or rejected agent consumes
+// "publickey" and the configured identity file is never attempted.
+//
+// Password methods are only offered when a stored credential or interactive
+// prompt exists. Otherwise a rejected public key must remain a public-key
+// authentication failure instead of being masked by a misleading "password
+// required but no prompt available" callback error.
+func buildAuthMethods(ctx context.Context, h ResolvedHost, opts *AuthOptions) ([]ssh.AuthMethod, ssh.ClientAuthCallback, func(), error) {
 	if opts.cache == nil {
 		opts.cache = &secretCache{}
 	}
-	var methods []ssh.AuthMethod
+	var publicKeys []ssh.AuthMethod
+	var fallback []ssh.AuthMethod
 	cleanup := func() {}
 
 	if !opts.DisableAgent {
 		if am, closeAgent := agentAuth(); am != nil {
-			methods = append(methods, am)
+			publicKeys = append(publicKeys, am)
 			cleanup = closeAgent
 		}
 	}
 
-	if h.IdentityFile != "" {
-		am, err := keyAuth(ctx, h, opts, h.IdentityFile)
-		if err != nil {
-			cleanup()
-			return nil, func() {}, err
-		}
-		if am != nil {
-			methods = append(methods, am)
+	identityFiles := append([]string(nil), h.IdentityFiles...)
+	if len(identityFiles) == 0 && h.IdentityFile != "" {
+		identityFiles = []string{h.IdentityFile}
+	}
+	if len(identityFiles) > 0 {
+		for _, identityFile := range identityFiles {
+			am, err := keyAuth(ctx, h, opts, identityFile)
+			if err != nil {
+				// Preserve the old explicit-single-key behavior, but let an
+				// OpenSSH identity list continue to its remaining candidates.
+				if len(identityFiles) == 1 {
+					cleanup()
+					return nil, nil, func() {}, err
+				}
+				continue
+			}
+			if am != nil {
+				publicKeys = append(publicKeys, am)
+			}
 		}
 	} else {
 		for _, path := range defaultIdentityFiles() {
@@ -84,14 +109,44 @@ func buildAuthMethods(ctx context.Context, h ResolvedHost, opts *AuthOptions) ([
 				continue
 			}
 			if am != nil {
-				methods = append(methods, am)
+				publicKeys = append(publicKeys, am)
 			}
 		}
 	}
 
-	methods = append(methods, passwordAuth(ctx, h, opts))
-	methods = append(methods, keyboardInteractiveAuth(ctx, h, opts))
-	return methods, cleanup, nil
+	if opts.Password != nil || opts.SecretPrompt != nil {
+		fallback = append(fallback, passwordAuth(ctx, h, opts))
+		fallback = append(fallback, keyboardInteractiveAuth(ctx, h, opts))
+	}
+	return fallback, publicKeyAuthCallback(publicKeys), cleanup, nil
+}
+
+// publicKeyAuthCallback returns each public-key source exactly once while the
+// server continues to allow publickey authentication. AuthCallback may return
+// multiple AuthMethod values with the same protocol name, unlike ClientConfig's
+// static Auth slice.
+func publicKeyAuthCallback(methods []ssh.AuthMethod) ssh.ClientAuthCallback {
+	if len(methods) == 0 {
+		return nil
+	}
+	next := 0
+	return func(ctx *ssh.ClientAuthContext) (ssh.AuthMethod, error) {
+		if next >= len(methods) || !containsAuthMethod(ctx.AllowedMethods, "publickey") {
+			return nil, nil
+		}
+		method := methods[next]
+		next++
+		return method, nil
+	}
+}
+
+func containsAuthMethod(methods []string, want string) bool {
+	for _, method := range methods {
+		if method == want {
+			return true
+		}
+	}
+	return false
 }
 
 func agentAuth() (ssh.AuthMethod, func()) {
@@ -162,7 +217,11 @@ func resolvePassphrase(ctx context.Context, h ResolvedHost, opts *AuthOptions) (
 		return opts.cache.passphrase, nil
 	}
 	if opts.Passphrase != nil {
-		if v, err := opts.Passphrase(); err == nil && v != "" {
+		v, err := opts.Passphrase()
+		if err != nil {
+			return "", err
+		}
+		if v != "" {
 			opts.cache.passphrase, opts.cache.havePass = v, true
 			return v, nil
 		}
@@ -205,7 +264,11 @@ func resolvePassword(ctx context.Context, h ResolvedHost, opts *AuthOptions) (st
 		return opts.cache.password, nil
 	}
 	if opts.Password != nil {
-		if v, err := opts.Password(); err == nil && v != "" {
+		v, err := opts.Password()
+		if err != nil {
+			return "", err
+		}
+		if v != "" {
 			opts.cache.password, opts.cache.havePw = v, true
 			return v, nil
 		}
