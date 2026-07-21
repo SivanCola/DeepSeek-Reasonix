@@ -236,22 +236,24 @@ func (a *App) WorkbenchConnectRemote(hostID, workspace string) error {
 	if err != nil {
 		return err
 	}
-	a.emitWorkbenchTarget("connecting", target.Identity{Kind: target.KindRemote, HostID: hostID, Workspace: workspace}, gen, 0, "")
+	committedID, committedGen, committedSeq := k.targets.Active()
+	a.emitWorkbenchTarget("connecting", committedID, committedGen, committedSeq, "")
 	committed := false
+	failureText := ""
 	defer func() {
 		if !committed {
 			if k.targets.AbortRemoteConnect(gen) {
 				active, identityGen, requestSeq := k.targets.Active()
+				state := "disconnected"
 				if active.Kind == target.KindRemote {
-					a.emitWorkbenchTarget("connected", active, identityGen, requestSeq, "")
+					state = "connected"
 				}
+				a.emitWorkbenchTarget(state, active, identityGen, requestSeq, failureText)
 			}
 		}
 	}()
 	fail := func(err error) error {
-		a.emitWorkbenchTarget("failed", target.Identity{
-			Kind: target.KindRemote, HostID: hostID, Workspace: workspace,
-		}, gen, 0, err.Error())
+		failureText = err.Error()
 		return err
 	}
 

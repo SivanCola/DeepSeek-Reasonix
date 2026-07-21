@@ -332,7 +332,7 @@ func TestRuntimeMutationRequestIDReplaysConcurrentSubmitOnce(t *testing.T) {
 	srv := New(Options{Workspace: t.TempDir(), Version: "test"})
 	ctrl := newBlockingController()
 	target := srv.installTestSession(ctrl)
-	handler := srv.handlers(1, nil)[protocol.MethodSessionSubmit]
+	handler := committedTestHandlers(srv, 1)[protocol.MethodSessionSubmit]
 	params := protocol.SessionSubmitParams{
 		SessionMutation: protocol.SessionMutation{
 			RequestID: "request-replay", ExpectedHostEpoch: srv.hostEpoch,
@@ -374,7 +374,7 @@ func TestRuntimeMutationRequestIDConflictPrecedesEpochChecks(t *testing.T) {
 	srv := New(Options{Workspace: t.TempDir(), Version: "test"})
 	ctrl := &fakeController{model: "local/stub"}
 	target := srv.installTestSession(ctrl)
-	handler := srv.handlers(1, nil)[protocol.MethodSessionSubmit]
+	handler := committedTestHandlers(srv, 1)[protocol.MethodSessionSubmit]
 	params := protocol.SessionSubmitParams{
 		SessionMutation: protocol.SessionMutation{
 			RequestID: "request-conflict", ExpectedHostEpoch: srv.hostEpoch,
@@ -399,7 +399,7 @@ func TestRuntimeProfileWaitsForSubmitAdmissionAndRejectsBusy(t *testing.T) {
 	srv := New(Options{Workspace: t.TempDir(), Version: "test"})
 	ctrl := newBlockingController()
 	target := srv.installTestSession(ctrl)
-	handlers := srv.handlers(1, nil)
+	handlers := committedTestHandlers(srv, 1)
 	submitDone := make(chan error, 1)
 	go func() {
 		_, err := handlers[protocol.MethodSessionSubmit](context.Background(), protocol.SessionSubmitParams{
@@ -496,10 +496,7 @@ func TestRuntimeSessionCreateAndFileList(t *testing.T) {
 	})
 	go wire.Serve(ctx)
 
-	buildID, err := protocol.NewBuildID("test", strings.Repeat("a", 40))
-	if err != nil {
-		t.Fatal(err)
-	}
+	buildID := srv.buildID
 	raw, err := wire.Request(ctx, string(protocol.MethodRemoteInitialize), protocol.InitializeParams{BuildID: buildID, ClientInstanceID: "desktop-test", Workspace: ws})
 	if err != nil {
 		t.Fatalf("initialize: %v", err)
@@ -997,6 +994,100 @@ func (s *Server) installTestSession(ctrl SessionController) protocol.RuntimeTarg
 	}
 	s.mu.Unlock()
 	return s.target(id)
+}
+
+func committedTestHandlers(s *Server, generation uint64) protocol.HandlerSet {
+	gate := newConnectionGate()
+	gate.resolve(true)
+	return s.handlers(generation, nil, gate)
+}
+
+func TestRuntimeProbeAndRejectedInitializePreserveCommittedConnection(t *testing.T) {
+	workspace := t.TempDir()
+	srv := New(Options{Workspace: workspace, Version: "test", SourceRevision: strings.Repeat("a", 40)})
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	open := func(name string) (*rpcwire.Conn, net.Conn) {
+		hostSide, desktopSide := net.Pipe()
+		go srv.serveConn(ctx, hostSide)
+		wire := rpcwire.NewConn(desktopSide, desktopSide, rpcwire.Options{
+			Name: name, StrictJSONRPC: true,
+			MaxInboundBytes: protocol.FrameBytes, MaxOutboundBytes: protocol.FrameBytes,
+			MaxQueuedNotifications: protocol.RPCQueuedNotifications,
+		})
+		go func() { _ = wire.Serve(ctx) }()
+		return wire, desktopSide
+	}
+	waitForGeneration := func(want uint64) {
+		t.Helper()
+		deadline := time.Now().Add(time.Second)
+		for {
+			srv.mu.Lock()
+			got := srv.nextGen
+			srv.mu.Unlock()
+			if got >= want {
+				return
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("next connection generation = %d, want at least %d", got, want)
+			}
+			time.Sleep(time.Millisecond)
+		}
+	}
+	assertActivePing := func(wire *rpcwire.Conn, lease protocol.LeaseInfo) {
+		t.Helper()
+		if _, err := wire.Request(ctx, string(protocol.MethodRemotePing), protocol.PingParams{LeaseID: lease.LeaseID}); err != nil {
+			t.Fatalf("committed connection ping: %v", err)
+		}
+		srv.mu.Lock()
+		attached, generation := srv.attached, srv.gen
+		srv.mu.Unlock()
+		if !attached || generation != 1 {
+			t.Fatalf("committed runtime attached=%v generation=%d, want true/1", attached, generation)
+		}
+	}
+
+	activeWire, activeStream := open("active-desktop")
+	defer activeStream.Close()
+	raw, err := activeWire.Request(ctx, string(protocol.MethodRemoteInitialize), protocol.InitializeParams{
+		BuildID: srv.buildID, ClientInstanceID: "desktop-active", Workspace: workspace,
+	})
+	if err != nil {
+		t.Fatalf("initialize active connection: %v", err)
+	}
+	var initialized protocol.InitializeResult
+	if err := json.Unmarshal(raw, &initialized); err != nil {
+		t.Fatal(err)
+	}
+	assertActivePing(activeWire, initialized.Lease)
+
+	probeHost, probeDesktop := net.Pipe()
+	go srv.serveConn(ctx, probeHost)
+	_ = probeDesktop.Close()
+	waitForGeneration(2)
+	assertActivePing(activeWire, initialized.Lease)
+
+	rejectedWire, rejectedStream := open("rejected-desktop")
+	badBuild := srv.buildID
+	badBuild.ProductVersion += "-mismatch"
+	_, err = rejectedWire.Request(ctx, string(protocol.MethodRemoteInitialize), protocol.InitializeParams{
+		BuildID: badBuild, ClientInstanceID: "desktop-rejected", Workspace: workspace,
+	})
+	if err == nil {
+		t.Fatal("mismatched candidate initialize succeeded")
+	}
+	var responseErr *rpcwire.ResponseError
+	if !errors.As(err, &responseErr) {
+		t.Fatalf("initialize error = %T %v", err, err)
+	}
+	var errorData protocol.RemoteErrorData
+	if json.Unmarshal(responseErr.Data, &errorData) != nil || errorData.ReasonixCode != protocol.ErrDaemonRestartRequired {
+		t.Fatalf("initialize error data = %s", responseErr.Data)
+	}
+	_ = rejectedStream.Close()
+	waitForGeneration(3)
+	assertActivePing(activeWire, initialized.Lease)
 }
 
 func TestRuntimeControllerUsesDesktopBrokerWithoutHostKey(t *testing.T) {

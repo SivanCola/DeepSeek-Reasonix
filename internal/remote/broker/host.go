@@ -54,17 +54,51 @@ const hostDeliveryQueueLimit = 256
 
 func NewHost() *Host { return &Host{streams: make(map[string]*hostStream)} }
 
-// Attach binds Broker notifications to conn and replaces the current Desktop
-// capability. Any stream still owned by the previous connection is completed
-// as interrupted instead of being silently spliced across generations.
-func (h *Host) Attach(conn *rpcwire.Conn, generation uint64) error {
+// Bind registers one prospective Desktop connection without granting it Broker
+// ownership. Runtime connections use this split phase so a socket probe or a
+// failed initialize cannot revoke the currently committed Desktop capability.
+// When ready is non-nil, notifications wait until the runtime has committed or
+// rejected the connection; generation checks discard rejected/stale traffic.
+func (h *Host) Bind(conn *rpcwire.Conn, generation uint64, ready <-chan struct{}) error {
 	if h == nil || conn == nil {
 		return fmt.Errorf("broker host: connection required")
 	}
-	conn.HandleNotify(string(protocol.MethodBrokerStreamChunk), h.handleChunk)
-	conn.HandleNotify(string(protocol.MethodBrokerStreamEnd), h.handleEnd)
-	conn.HandleNotify(string(protocol.MethodBrokerCatalogChanged), h.handleCatalogChanged)
+	wait := func(ctx context.Context) bool {
+		if ready == nil {
+			return true
+		}
+		select {
+		case <-ready:
+			return true
+		case <-ctx.Done():
+			return false
+		}
+	}
+	conn.HandleNotify(string(protocol.MethodBrokerStreamChunk), func(ctx context.Context, raw json.RawMessage) {
+		if wait(ctx) {
+			h.handleChunk(generation, raw)
+		}
+	})
+	conn.HandleNotify(string(protocol.MethodBrokerStreamEnd), func(ctx context.Context, raw json.RawMessage) {
+		if wait(ctx) {
+			h.handleEnd(generation, raw)
+		}
+	})
+	conn.HandleNotify(string(protocol.MethodBrokerCatalogChanged), func(ctx context.Context, raw json.RawMessage) {
+		if wait(ctx) {
+			h.handleCatalogChanged(generation, raw)
+		}
+	})
+	return nil
+}
 
+// Activate grants a successfully initialized connection Broker ownership. Any
+// stream still owned by the previous connection is completed as interrupted
+// instead of being silently spliced across generations.
+func (h *Host) Activate(conn *rpcwire.Conn, generation uint64) error {
+	if h == nil || conn == nil {
+		return fmt.Errorf("broker host: connection required")
+	}
 	h.mu.Lock()
 	if generation <= h.generation {
 		h.mu.Unlock()
@@ -80,6 +114,15 @@ func (h *Host) Attach(conn *rpcwire.Conn, generation uint64) error {
 	h.catalog = nil
 	h.mu.Unlock()
 	return nil
+}
+
+// Attach is the single-phase helper used by callers that do not need a
+// provisional handshake. Runtime server connections use Bind then Activate.
+func (h *Host) Attach(conn *rpcwire.Conn, generation uint64) error {
+	if err := h.Bind(conn, generation, nil); err != nil {
+		return err
+	}
+	return h.Activate(conn, generation)
 }
 
 // Detach removes ownership only when generation is still current.
@@ -264,7 +307,7 @@ func (h *Host) open(ctx context.Context, ref string, effort *string, request pro
 	return stream.out, nil
 }
 
-func (h *Host) handleChunk(_ context.Context, raw json.RawMessage) {
+func (h *Host) handleChunk(generation uint64, raw json.RawMessage) {
 	decoded, err := protocol.DecodeBrokerNotificationParams(protocol.MethodBrokerStreamChunk, raw)
 	if err != nil {
 		return
@@ -273,14 +316,14 @@ func (h *Host) handleChunk(_ context.Context, raw json.RawMessage) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	stream := h.streams[p.StreamID]
-	if stream == nil || stream.generation != h.generation || p.Seq < stream.nextSeq {
+	if generation != h.generation || stream == nil || stream.generation != generation || p.Seq < stream.nextSeq {
 		return
 	}
 	stream.pending[p.Seq] = p.Chunk.ProviderChunk()
 	h.flushLocked(p.StreamID, stream)
 }
 
-func (h *Host) handleEnd(_ context.Context, raw json.RawMessage) {
+func (h *Host) handleEnd(generation uint64, raw json.RawMessage) {
 	decoded, err := protocol.DecodeBrokerNotificationParams(protocol.MethodBrokerStreamEnd, raw)
 	if err != nil {
 		return
@@ -288,7 +331,7 @@ func (h *Host) handleEnd(_ context.Context, raw json.RawMessage) {
 	p := decoded.(protocol.BrokerStreamEndParams)
 	h.mu.Lock()
 	stream := h.streams[p.StreamID]
-	if stream == nil {
+	if generation != h.generation || stream == nil || stream.generation != generation {
 		h.mu.Unlock()
 		return
 	}
@@ -304,12 +347,14 @@ func (h *Host) handleEnd(_ context.Context, raw json.RawMessage) {
 	h.mu.Unlock()
 }
 
-func (h *Host) handleCatalogChanged(_ context.Context, raw json.RawMessage) {
+func (h *Host) handleCatalogChanged(generation uint64, raw json.RawMessage) {
 	if _, err := protocol.DecodeBrokerNotificationParams(protocol.MethodBrokerCatalogChanged, raw); err != nil {
 		return
 	}
 	h.mu.Lock()
-	h.catalog = nil
+	if generation == h.generation {
+		h.catalog = nil
+	}
 	h.mu.Unlock()
 }
 

@@ -16,6 +16,9 @@ func TestManagerStartsLocalAndFencesSwitch(t *testing.T) {
 	if remoteID.HostID != "lab" {
 		t.Fatalf("remote = %+v", remoteID)
 	}
+	if !m.Connecting() {
+		t.Fatal("candidate connection was not reported")
+	}
 	if err := m.MarkRemoteConnected(rgen); err != nil {
 		t.Fatal(err)
 	}
@@ -25,6 +28,9 @@ func TestManagerStartsLocalAndFencesSwitch(t *testing.T) {
 	}
 	if active.Kind != KindRemote {
 		t.Fatalf("active = %+v", active)
+	}
+	if m.Connecting() {
+		t.Fatal("committed connection remained marked as connecting")
 	}
 	// Old tokens are stale after activate.
 	if !m.IsStale(gen, seq) {

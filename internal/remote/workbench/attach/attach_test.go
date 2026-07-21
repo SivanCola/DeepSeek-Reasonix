@@ -125,12 +125,7 @@ func TestAttachUsesInitializeWorkspaceWhenTargetIsUnbound(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(home) })
 	params, _ := json.Marshal(map[string]any{
-		"buildId": map[string]any{
-			"productVersion":  "test",
-			"sourceRevision":  strings.Repeat("a", 40),
-			"schemaHash":      protocol.SchemaHash(),
-			"protocolVersion": protocol.ProtocolVersion,
-		},
+		"buildId":          protocol.CurrentBuildID("t"),
 		"clientInstanceId": "desktop-test",
 		"workspace":        "~/project",
 	})
@@ -196,12 +191,7 @@ func TestResolveWorkspacePathExpandsRemoteHome(t *testing.T) {
 func TestAttachInProcessInitializeOK(t *testing.T) {
 	ws := t.TempDir()
 	params, _ := json.Marshal(map[string]any{
-		"buildId": map[string]any{
-			"productVersion":  "test",
-			"sourceRevision":  strings.Repeat("a", 40),
-			"schemaHash":      protocol.SchemaHash(),
-			"protocolVersion": protocol.ProtocolVersion,
-		},
+		"buildId":          protocol.CurrentBuildID("t"),
 		"clientInstanceId": "desktop-test",
 		"workspace":        ws,
 	})

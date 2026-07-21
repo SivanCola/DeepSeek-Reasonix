@@ -28,7 +28,7 @@ func initHandler(t *testing.T) Handler {
 		if _, ok := params.(InitializeParams); !ok {
 			t.Fatalf("initialize params type = %T", params)
 		}
-		return validInitializeResult(t), nil
+		return rpcwire.RespondThen(validInitializeResult(t), func(error) {}), nil
 	}
 }
 

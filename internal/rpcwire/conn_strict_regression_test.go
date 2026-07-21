@@ -166,6 +166,56 @@ func TestInboundHandlerConcurrencyIsBoundedWithoutBlockingResponses(t *testing.T
 	}
 }
 
+func TestQueuedNotificationsPreserveBurstOrder(t *testing.T) {
+	const count = 500
+	var input strings.Builder
+	for i := 0; i < count; i++ {
+		fmt.Fprintf(&input, "{\"jsonrpc\":\"2.0\",\"method\":\"note\",\"params\":{\"index\":%d}}\n", i)
+	}
+	conn := NewConn(strings.NewReader(input.String()), io.Discard, Options{
+		Name: "ordered-notifications", StrictJSONRPC: true, MaxQueuedNotifications: count,
+	})
+	got := make([]int, 0, count)
+	conn.HandleNotify("note", func(_ context.Context, params json.RawMessage) {
+		var value struct {
+			Index int `json:"index"`
+		}
+		if err := json.Unmarshal(params, &value); err != nil {
+			t.Errorf("decode notification: %v", err)
+			return
+		}
+		got = append(got, value.Index)
+	})
+	if err := conn.Serve(context.Background()); err != nil {
+		t.Fatalf("Serve: %v", err)
+	}
+	if len(got) != count {
+		t.Fatalf("notification calls = %d, want %d", len(got), count)
+	}
+	for i, value := range got {
+		if value != i {
+			t.Fatalf("notification[%d] = %d, want %d", i, value, i)
+		}
+	}
+}
+
+func TestQueuedNotificationOverflowFailsConnection(t *testing.T) {
+	var input strings.Builder
+	for i := 0; i < 100; i++ {
+		fmt.Fprintf(&input, "{\"jsonrpc\":\"2.0\",\"method\":\"note\",\"params\":{\"index\":%d}}\n", i)
+	}
+	conn := NewConn(strings.NewReader(input.String()), io.Discard, Options{
+		Name: "notification-overflow", StrictJSONRPC: true, MaxQueuedNotifications: 1,
+	})
+	conn.HandleNotify("note", func(ctx context.Context, _ json.RawMessage) {
+		<-ctx.Done()
+	})
+	err := conn.Serve(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "notification-overflow: notification queue overflow") {
+		t.Fatalf("Serve error = %v, want notification queue overflow", err)
+	}
+}
+
 func TestStrictJSONRPCAcceptsLegalRequestNotificationAndResponses(t *testing.T) {
 	t.Run("request and notification", func(t *testing.T) {
 		input := strings.Join([]string{

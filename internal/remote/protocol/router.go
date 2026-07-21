@@ -86,7 +86,7 @@ func ValidateHandlerCoverage(handlers HandlerSet) error {
 func (r *Router) WireOptions() rpcwire.Options {
 	return rpcwire.Options{
 		Name: "remote", MaxInboundBytes: FrameBytes, MaxOutboundBytes: FrameBytes,
-		StrictJSONRPC: true, MaxConcurrentHandlers: RPCConcurrentHandlers,
+		StrictJSONRPC: true, MaxConcurrentHandlers: RPCConcurrentHandlers, MaxQueuedNotifications: RPCQueuedNotifications,
 		BeforeRequest: r.BeforeRequest, BeforeNotification: r.BeforeNotification,
 	}
 }
@@ -164,7 +164,7 @@ func (r *Router) invoke(ctx context.Context, spec MethodSpec, raw json.RawMessag
 		r.finishInitialize(spec.Name, false)
 		return nil, r.mapHandlerError(spec.Name, err)
 	}
-	requireAfterWrite := spec.Name == MethodRemoteDetach || spec.Name == MethodSessionSubscribe
+	requireAfterWrite := spec.Name == MethodRemoteInitialize || spec.Name == MethodRemoteDetach || spec.Name == MethodSessionSubscribe
 	normalized, err := validateHandlerResult(result, spec.ResultType, requireAfterWrite)
 	if err != nil {
 		r.finishInitialize(spec.Name, false)

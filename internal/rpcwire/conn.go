@@ -44,10 +44,16 @@ type Options struct {
 	// StrictJSONRPC validates the jsonrpc member and mutually exclusive frame
 	// shapes. ACP leaves this off for compatibility; Remote enables it.
 	StrictJSONRPC bool
-	// MaxConcurrentHandlers bounds inbound request and notification handlers
-	// without blocking response dispatch. Non-positive values use the safe
-	// default; overload requests receive ErrServerBusy and notifications drop.
+	// MaxConcurrentHandlers bounds inbound request and, unless a notification
+	// queue is configured, notification handlers without blocking response
+	// dispatch. Non-positive values use the safe default; overload requests
+	// receive ErrServerBusy.
 	MaxConcurrentHandlers int
+	// MaxQueuedNotifications enables ordered notification delivery through one
+	// bounded FIFO worker. A full queue fails the connection instead of silently
+	// losing a notification. Non-positive values preserve concurrent best-effort
+	// notification dispatch for protocols that do not require ordered delivery.
+	MaxQueuedNotifications int
 	// BeforeRequest runs synchronously on the read loop, after strict frame
 	// validation and before a handler goroutine is scheduled. It lets a protocol
 	// atomically record wire arrival order (for example, initialize-first) while
@@ -83,6 +89,7 @@ type Conn struct {
 	closeMu      sync.Mutex
 	closeErr     error
 	handlerSlots chan struct{}
+	notifyQueue  chan notificationCall
 }
 
 const DefaultMaxConcurrentHandlers = 64
@@ -90,6 +97,11 @@ const DefaultMaxConcurrentHandlers = 64
 type rpcResult struct {
 	result json.RawMessage
 	err    error
+}
+
+type notificationCall struct {
+	handler NotificationHandler
+	params  json.RawMessage
 }
 
 type outbound struct {
@@ -118,7 +130,7 @@ func NewConn(r io.Reader, w io.Writer, opts Options) *Conn {
 	if opts.MaxConcurrentHandlers <= 0 {
 		opts.MaxConcurrentHandlers = DefaultMaxConcurrentHandlers
 	}
-	return &Conn{
+	conn := &Conn{
 		r:            r,
 		w:            w,
 		opts:         opts,
@@ -128,6 +140,10 @@ func NewConn(r io.Reader, w io.Writer, opts Options) *Conn {
 		closed:       make(chan struct{}),
 		handlerSlots: make(chan struct{}, opts.MaxConcurrentHandlers),
 	}
+	if opts.MaxQueuedNotifications > 0 {
+		conn.notifyQueue = make(chan notificationCall, opts.MaxQueuedNotifications)
+	}
+	return conn
 }
 
 // Handle registers a request handler. It is not safe to mutate registrations
@@ -144,6 +160,10 @@ func (c *Conn) HandleNotify(method string, h NotificationHandler) { c.notH[metho
 func (c *Conn) Serve(ctx context.Context) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	if c.notifyQueue != nil {
+		c.wg.Add(1)
+		go c.serveNotifications(ctx)
+	}
 
 	br := bufio.NewReaderSize(c.r, 64<<10)
 	var loopErr error
@@ -165,12 +185,22 @@ func (c *Conn) Serve(ctx context.Context) error {
 	}
 
 	cancel()
+	if c.notifyQueue != nil {
+		close(c.notifyQueue)
+	}
 	c.wg.Wait()
 	if terminalErr := c.terminalError(); terminalErr != nil {
 		loopErr = terminalErr
 	}
 	c.shutdown(nil)
 	return loopErr
+}
+
+func (c *Conn) serveNotifications(ctx context.Context) {
+	defer c.wg.Done()
+	for call := range c.notifyQueue {
+		call.handler(ctx, call.params)
+	}
 }
 
 func (c *Conn) decorateReadError(err error) error {
@@ -228,6 +258,14 @@ func (c *Conn) dispatch(ctx context.Context, line []byte) {
 			}
 		}
 		if h := c.notH[in.Method]; h != nil {
+			if c.notifyQueue != nil {
+				select {
+				case c.notifyQueue <- notificationCall{handler: h, params: in.Params}:
+				default:
+					c.fail(fmt.Errorf("%s: notification queue overflow", c.opts.Name))
+				}
+				return
+			}
 			if !c.tryStartHandler() {
 				return
 			}

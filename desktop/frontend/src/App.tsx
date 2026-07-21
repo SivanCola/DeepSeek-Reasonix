@@ -40,7 +40,7 @@ import { asArray } from "./lib/array";
 import { clearLegacyLangPref, normalizeLangPref, readLegacyLangPref, t, useI18n, useT, type Translator } from "./lib/i18n";
 import { localizedNoticeText, useController, type Item, type LiveStream } from "./lib/useController";
 import { app, onEvent, onProjectTreeChanged, onReady, onRuntimeRebuilt, onSessionRecovered, onWorkbenchTarget, openExternal } from "./lib/bridge";
-import { preferredRemoteWorkspace, type WorkbenchActiveTarget } from "./lib/workbenchTarget";
+import { preferredRemoteWorkspace, workbenchTargetTransitioning, type WorkbenchActiveTarget } from "./lib/workbenchTarget";
 import { generativeMusic, isGenerativeMusicEnabled } from "./lib/generative-music";
 import { clearAttentionChimeKeys, playAttentionChime, playSuccessChime, shouldPlayAttentionChimeForEvent } from "./lib/sound";
 import { NoticeCard, Transcript } from "./components/Transcript";
@@ -1609,7 +1609,7 @@ export default function App() {
   const collaborationMode = displayedComposerProfileCollaborationMode(composerProfile);
   const toolApprovalMode = composerProfile.toolApprovalMode;
   const tokenMode: TokenMode = composerProfile.tokenMode;
-  const runtimeTransitioning = Boolean(activeTabId && runtimeTransitionsByTab[activeTabId]);
+  const runtimeTransitioning = Boolean(activeTabId && runtimeTransitionsByTab[activeTabId]) || workbenchTargetTransitioning(workbenchTarget);
   const controllerReady = state.meta?.ready === true && !state.backendActivationPending && !runtimeTransitioning;
   // Single footer decision surface. Composer stays mounted underneath and is
   // only visually/a11y-hidden so per-session draft caches survive.

@@ -2,6 +2,7 @@ package broker
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -9,6 +10,29 @@ import (
 	"reasonix/internal/remote/protocol"
 	"reasonix/internal/rpcwire"
 )
+
+func TestHostIgnoresNotificationsFromSupersededGeneration(t *testing.T) {
+	h := NewHost()
+	h.generation = 2
+	stream := &hostStream{
+		generation: 2, out: make(chan provider.Chunk, 1), done: make(chan struct{}),
+		deliveryWake: make(chan struct{}, 1), nextSeq: 1, pending: make(map[int64]provider.Chunk),
+	}
+	h.streams["reused-stream"] = stream
+	raw, err := json.Marshal(protocol.BrokerStreamChunkParams{
+		StreamID: "reused-stream", Seq: 1,
+		Chunk: protocol.BrokerProviderChunk{Type: protocol.BrokerChunkText, Text: "stale"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.handleChunk(1, raw)
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if len(stream.pending) != 0 || len(stream.delivery) != 0 || stream.nextSeq != 1 {
+		t.Fatalf("superseded generation mutated current stream: %+v", stream)
+	}
+}
 
 func TestHostOutputBackpressureDoesNotBlockDetach(t *testing.T) {
 	h := NewHost()

@@ -58,4 +58,11 @@ describe("workbenchTarget", () => {
     assert.equal(await mod.preferredRemoteWorkspace("lab", "/default"), "/default");
     assert.equal(await mod.preferredRemoteWorkspace("lab", ""), "");
   });
+
+  it("fences the composer only while a candidate target is connecting", async () => {
+    const mod = await import("../lib/workbenchTarget");
+    assert.equal(mod.workbenchTargetTransitioning({ kind: "local", state: "connecting" }), true);
+    assert.equal(mod.workbenchTargetTransitioning({ kind: "local", state: "disconnected" }), false);
+    assert.equal(mod.workbenchTargetTransitioning({ kind: "ssh", state: "connected" }), false);
+  });
 });

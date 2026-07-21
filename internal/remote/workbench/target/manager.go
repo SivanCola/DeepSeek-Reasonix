@@ -75,6 +75,15 @@ func (m *Manager) Active() (Identity, uint64, uint64) {
 	return m.active, m.identityGen.Load(), m.requestSeq.Load()
 }
 
+// Connecting reports whether a candidate Remote adapter is being prepared.
+// The committed active identity remains authoritative until activation, but
+// callers can use this bit to fence mutations during the transition.
+func (m *Manager) Connecting() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.connecting != nil
+}
+
 // LastRemoteHint is the reconnect entry shown after restart (never auto-SSH).
 func (m *Manager) LastRemoteHint() RemoteHint {
 	m.mu.Lock()

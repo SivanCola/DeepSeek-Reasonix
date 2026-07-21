@@ -78,16 +78,18 @@ type SessionController interface {
 type Server struct {
 	opts Options
 
-	requestMu   sync.Mutex
-	mu          sync.Mutex
-	sessions    map[protocol.SessionID]*session
-	subs        map[protocol.SubscriptionID]*subscription
-	wires       map[uint64]*rpcwire.Conn
-	gen         uint64
-	attached    bool
-	lastDetach  time.Time
-	activeConn  net.Conn
-	explicitGen map[uint64]bool
+	requestMu    sync.Mutex
+	connectionMu sync.Mutex
+	mu           sync.Mutex
+	sessions     map[protocol.SessionID]*session
+	subs         map[protocol.SubscriptionID]*subscription
+	wires        map[uint64]*rpcwire.Conn
+	nextGen      uint64
+	gen          uint64
+	attached     bool
+	lastDetach   time.Time
+	activeConn   net.Conn
+	explicitGen  map[uint64]bool
 
 	hostEpoch   protocol.HostEpoch
 	workspaceID protocol.WorkspaceID
@@ -148,6 +150,45 @@ type contentObject struct {
 	data      []byte
 	sha256    string
 	createdAt time.Time
+}
+
+// connectionGate keeps every post-initialize request/notification behind the
+// response-commit boundary. Closing ready publishes committed with the channel
+// close's happens-before guarantee; rejected candidates wake with a controlled
+// stale-connection error instead of falling through to the active runtime.
+type connectionGate struct {
+	ready     chan struct{}
+	once      sync.Once
+	committed bool
+}
+
+func newConnectionGate() *connectionGate {
+	return &connectionGate{ready: make(chan struct{})}
+}
+
+func (g *connectionGate) resolve(committed bool) {
+	if g == nil {
+		return
+	}
+	g.once.Do(func() {
+		g.committed = committed
+		close(g.ready)
+	})
+}
+
+func (g *connectionGate) wait(ctx context.Context) error {
+	if g == nil {
+		return nil
+	}
+	select {
+	case <-g.ready:
+		if g.committed {
+			return nil
+		}
+		return protocol.MustRemoteError(protocol.ErrStaleConnection, protocol.ErrorOptions{})
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 func New(opts Options) *Server {
@@ -243,19 +284,14 @@ func acquireRuntimeLock(ctx context.Context, socket, lockPath string) error {
 
 func (s *Server) serveConn(ctx context.Context, conn net.Conn) {
 	s.mu.Lock()
-	s.gen++
-	gen := s.gen
-	old := s.activeConn
-	s.activeConn = conn
-	s.attached = true
-	s.lastDetach = time.Time{}
+	s.nextGen++
+	gen := s.nextGen
 	s.mu.Unlock()
-	if old != nil && old != conn {
-		_ = old.Close()
-	}
+	gate := newConnectionGate()
 
-	router, err := protocol.NewCompleteRouter(s.handlers(gen, conn), protocol.RouterOptions{})
+	router, err := protocol.NewCompleteRouter(s.handlers(gen, conn, gate), protocol.RouterOptions{})
 	if err != nil {
+		gate.resolve(false)
 		_ = conn.Close()
 		return
 	}
@@ -263,13 +299,15 @@ func (s *Server) serveConn(ctx context.Context, conn net.Conn) {
 	s.mu.Lock()
 	s.wires[gen] = wire
 	s.mu.Unlock()
-	if err := s.broker.Attach(wire, gen); err != nil {
+	if err := s.broker.Bind(wire, gen, gate.ready); err != nil {
+		gate.resolve(false)
 		_ = conn.Close()
 		return
 	}
 	router.Bind(wire)
 	_ = wire.Serve(ctx)
 
+	gate.resolve(false)
 	s.broker.Detach(gen)
 	s.mu.Lock()
 	delete(s.wires, gen)
@@ -289,10 +327,10 @@ func (s *Server) serveConn(ctx context.Context, conn net.Conn) {
 	s.mu.Unlock()
 }
 
-func (s *Server) handlers(gen uint64, conn net.Conn) protocol.HandlerSet {
+func (s *Server) handlers(gen uint64, conn net.Conn, gate *connectionGate) protocol.HandlerSet {
 	handlers := protocol.HandlerSet{
 		protocol.MethodRemoteInitialize: func(ctx context.Context, value any) (any, error) {
-			return s.initialize(gen, value.(protocol.InitializeParams))
+			return s.initialize(gen, conn, gate, value.(protocol.InitializeParams))
 		},
 		protocol.MethodRemotePing: func(ctx context.Context, value any) (any, error) { return s.ping(gen, value.(protocol.PingParams)) },
 		protocol.MethodRemoteDetach: func(ctx context.Context, value any) (any, error) {
@@ -423,30 +461,86 @@ func (s *Server) handlers(gen uint64, conn net.Conn) protocol.HandlerSet {
 			return nil, protocol.MustRemoteError(protocol.ErrCapabilityUnavailable, protocol.ErrorOptions{})
 		}
 	}
+	for method, handler := range handlers {
+		if method == protocol.MethodRemoteInitialize {
+			continue
+		}
+		handler := handler
+		handlers[method] = func(ctx context.Context, value any) (any, error) {
+			if err := gate.wait(ctx); err != nil {
+				return nil, err
+			}
+			return handler(ctx, value)
+		}
+	}
 	return s.serializeHandlers(handlers)
 }
 
-func (s *Server) initialize(gen uint64, p protocol.InitializeParams) (protocol.InitializeResult, error) {
+func (s *Server) initialize(gen uint64, conn net.Conn, gate *connectionGate, p protocol.InitializeParams) (any, error) {
 	s.mu.Lock()
-	current := s.gen == gen
+	_, live := s.wires[gen]
+	activeGen := s.gen
 	s.mu.Unlock()
-	if !current {
-		return protocol.InitializeResult{}, protocol.MustRemoteError(protocol.ErrStaleConnection, protocol.ErrorOptions{})
+	if !live || gen <= activeGen {
+		return nil, protocol.MustRemoteError(protocol.ErrStaleConnection, protocol.ErrorOptions{})
 	}
 	want, err := filepath.Abs(strings.TrimSpace(s.opts.Workspace))
 	if err != nil {
-		return protocol.InitializeResult{}, protocol.MustRemoteError(protocol.ErrWorkspaceNotFound, protocol.ErrorOptions{})
+		return nil, protocol.MustRemoteError(protocol.ErrWorkspaceNotFound, protocol.ErrorOptions{})
 	}
 	got, err := filepath.Abs(strings.TrimSpace(p.Workspace))
 	if err != nil || filepath.Clean(got) != filepath.Clean(want) {
-		return protocol.InitializeResult{}, protocol.MustRemoteError(protocol.ErrWorkspaceNotFound, protocol.ErrorOptions{})
+		return nil, protocol.MustRemoteError(protocol.ErrWorkspaceNotFound, protocol.ErrorOptions{})
 	}
-	return protocol.InitializeResult{
+	if err := protocol.CompareBuildID(p.BuildID, s.buildID); err != nil {
+		return nil, protocol.MustRemoteError(protocol.ErrDaemonRestartRequired, protocol.ErrorOptions{})
+	}
+	result := protocol.InitializeResult{
 		BuildID: s.buildID, HostEpoch: s.hostEpoch,
 		Lease:        protocol.LeaseInfo{LeaseID: leaseID(gen), TTLMillis: protocol.LeaseTTLMillis, PingIntervalMs: protocol.LeasePingIntervalMillis},
 		Host:         protocol.HostInfo{OS: goruntime.GOOS, Arch: goruntime.GOARCH, ShellKind: "sh", SandboxBackend: "reasonix"},
 		Capabilities: protocol.FrozenCapabilities(false, false),
-	}, nil
+	}
+	return rpcwire.RespondThen(result, func(writeErr error) {
+		if writeErr != nil {
+			gate.resolve(false)
+			_ = conn.Close()
+			return
+		}
+		s.commitConnection(gen, conn, gate)
+	}), nil
+}
+
+func (s *Server) commitConnection(gen uint64, conn net.Conn, gate *connectionGate) {
+	s.connectionMu.Lock()
+	defer s.connectionMu.Unlock()
+
+	s.mu.Lock()
+	wire := s.wires[gen]
+	if wire == nil || gen <= s.gen {
+		s.mu.Unlock()
+		gate.resolve(false)
+		_ = conn.Close()
+		return
+	}
+	s.mu.Unlock()
+	if err := s.broker.Activate(wire, gen); err != nil {
+		gate.resolve(false)
+		_ = conn.Close()
+		return
+	}
+
+	s.mu.Lock()
+	old := s.activeConn
+	s.gen = gen
+	s.activeConn = conn
+	s.attached = true
+	s.lastDetach = time.Time{}
+	s.mu.Unlock()
+	gate.resolve(true)
+	if old != nil && old != conn {
+		_ = old.Close()
+	}
 }
 
 func (s *Server) ping(gen uint64, p protocol.PingParams) (protocol.PingResult, error) {

@@ -33,6 +33,12 @@ export type ProviderTrustPrompt = {
   warning: string;
 };
 
+/** True while the backend is preparing a candidate target. The identity in
+ * the event remains the currently committed target until activation. */
+export function workbenchTargetTransitioning(target: WorkbenchActiveTarget): boolean {
+  return target.state === "connecting";
+}
+
 /** Resolve the workspace used by one-click Remote connections. */
 export function resolveRemoteWorkspace(lastWorkspace?: string, defaultWorkspace?: string): string {
   return lastWorkspace?.trim() || defaultWorkspace?.trim() || "";

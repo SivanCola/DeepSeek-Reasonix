@@ -390,6 +390,9 @@ func (a *App) workbenchRequest(method protocol.Method, params any) ([]byte, erro
 }
 
 func (a *App) workbenchSubmit(input, display, editedOriginal string, invocations []protocol.Invocation, recovery bool) (bool, error) {
+	if a.workbench().targets.Connecting() {
+		return true, fmt.Errorf("Remote target is connecting; wait for the connection to finish")
+	}
 	cli, _, _, _, ok := a.activeRemoteWorkbench()
 	if !ok {
 		return false, nil
