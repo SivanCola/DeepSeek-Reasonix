@@ -85,7 +85,7 @@ reasonix acp --profile delivery
 | `session/delete` | 停止会话并删除其持久化 ACP 历史。 |
 
 `session/new`、`session/load` 和 `session/resume` 可以携带 `mcpServers`。
-Reasonix 支持 stdio 和 Streamable HTTP server；不会声明或接受 legacy SSE transport。
+Reasonix 支持 stdio、Streamable HTTP 和 legacy SSE server。
 stdio `env` 和 HTTP `headers` 支持 ACP 官方的
 `[{"name":"...","value":"..."}]` 结构，同时继续接受旧版 object-map 结构。
 

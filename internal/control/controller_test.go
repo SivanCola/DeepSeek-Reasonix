@@ -2473,6 +2473,7 @@ func TestDisconnectMCPServerRemovesLazyPlaceholder(t *testing.T) {
 func TestAddMCPServerAuthorizesExplicitUserAddBeforeConnecting(t *testing.T) {
 	var configured plugin.Spec
 	c := New(Options{
+		WorkspaceRoot:    "/workspace",
 		MCPConfigureSpec: func(spec *plugin.Spec) { configured = *spec },
 	})
 
@@ -2480,7 +2481,7 @@ func TestAddMCPServerAuthorizesExplicitUserAddBeforeConnecting(t *testing.T) {
 		t.Fatal("AddMCPServer without a command unexpectedly succeeded")
 	}
 	if configured.ConfigSource != string(config.MCPSourceUserConfig) ||
-		!configured.Authorized || configured.RequireLaunchApproval {
+		!configured.Authorized || configured.RequireLaunchApproval || configured.WorkspaceRoot != "/workspace" {
 		t.Fatalf("configured spec = %+v, want user-authorized add-and-use policy", configured)
 	}
 }

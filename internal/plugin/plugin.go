@@ -19,6 +19,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"reasonix/internal/event"
@@ -65,6 +66,11 @@ type Spec struct {
 	// for cwd-aware servers like CodeGraph, which detect the project from the
 	// directory they are launched in — they must be pinned to the project root.
 	Dir string
+	// WorkspaceRoot is the project root exposed through the MCP roots capability.
+	// It is runtime-only and intentionally separate from Dir: user-installed
+	// stdio servers keep inheriting Reasonix's cwd while still receiving the
+	// explicit workspace root when they ask for roots/list.
+	WorkspaceRoot string
 	// Stderr optionally mirrors plugin subprocess stderr output. Stderr is always
 	// captured in a bounded buffer for failure diagnostics; nil keeps it out of
 	// the terminal so child logs cannot corrupt interactive UIs.
@@ -109,9 +115,9 @@ type Spec struct {
 
 // transport carries JSON-RPC messages to and from one MCP server. call sends a
 // request and returns its result (correlating by id internally); notify sends a
-// fire-and-forget notification; close releases resources. Server notifications
-// are ignored. Transports answer ping requests and reject unsupported client
-// capabilities such as roots or sampling with JSON-RPC method-not-found.
+// fire-and-forget notification; close releases resources. Transports route MCP
+// progress notifications to the active tool call and answer the client
+// capabilities Reasonix advertises (currently ping and roots/list).
 type transport interface {
 	call(ctx context.Context, method string, params any) (json.RawMessage, error)
 	notify(ctx context.Context, method string, params any) error
@@ -565,6 +571,7 @@ type Client struct {
 	// MCP servers just to rebuild identical schemas.
 	toolsListed  bool
 	toolAdapters []tool.Tool
+	progressID   atomic.Uint64
 }
 
 func (c *Client) auxiliaryClient(ctx context.Context) (*Client, context.Context, context.CancelFunc, error) {
@@ -1199,17 +1206,16 @@ func newTransport(ctx context.Context, s Spec) (transport, error) {
 	case "http", "streamable-http", "streamable_http":
 		return newHTTPTransport(s)
 	case "sse":
-		// The legacy 2024-11-05 HTTP+SSE transport needs a persistent GET stream
-		// with a background dispatcher — deprecated upstream ("avoid for new
-		// work"). Use type="http" (Streamable HTTP), which most remote servers
-		// now speak. Tracked for later (SPEC §9).
-		return nil, fmt.Errorf("plugin %q: legacy sse transport not yet supported — use type=\"http\" (Streamable HTTP)", s.Name)
+		return newSSETransport(ctx, s)
 	default:
 		return nil, fmt.Errorf("unknown transport type %q (want stdio|http|sse)", s.Type)
 	}
 }
 
 func (c *Client) call(ctx context.Context, method string, params any) (json.RawMessage, error) {
+	params, unregisterProgress := c.withProgress(ctx, method, params)
+	defer unregisterProgress()
+
 	callCtx, cancel, timeout := c.contextWithCallTimeout(ctx, method, params)
 	if cancel != nil {
 		defer cancel()
@@ -1222,6 +1228,40 @@ func (c *Client) call(ctx context.Context, method string, params any) (json.RawM
 		return nil, c.timeoutError(method, params, timeout)
 	}
 	return res, err
+}
+
+func (c *Client) withProgress(ctx context.Context, method string, params any) (any, func()) {
+	if method != "tools/call" {
+		return params, func() {}
+	}
+	sink, ok := tool.ProgressFrom(ctx)
+	if !ok {
+		return params, func() {}
+	}
+	router, ok := c.t.(progressTransport)
+	if !ok {
+		return params, func() {}
+	}
+	callParams, ok := params.(map[string]any)
+	if !ok {
+		return params, func() {}
+	}
+
+	token := fmt.Sprintf("reasonix-%d", c.progressID.Add(1))
+	copyParams := make(map[string]any, len(callParams)+1)
+	for key, value := range callParams {
+		copyParams[key] = value
+	}
+	meta := map[string]any{}
+	if existing, ok := callParams["_meta"].(map[string]any); ok {
+		for key, value := range existing {
+			meta[key] = value
+		}
+	}
+	meta["progressToken"] = token
+	copyParams["_meta"] = meta
+	unregister := router.registerProgress(token, sink)
+	return copyParams, unregister
 }
 
 func (c *Client) callTransport(ctx context.Context, method string, params any) (json.RawMessage, error) {
@@ -1307,9 +1347,13 @@ func (c *Client) initialize(ctx context.Context) error {
 }
 
 func (c *Client) initializeSession(ctx context.Context, recordCapabilities bool) error {
+	capabilities := map[string]any{}
+	if len(mcpRoots(c.spec.WorkspaceRoot)) > 0 {
+		capabilities["roots"] = map[string]any{"listChanged": false}
+	}
 	res, err := c.call(ctx, "initialize", map[string]any{
 		"protocolVersion": protocolVersion,
-		"capabilities":    map[string]any{},
+		"capabilities":    capabilities,
 		"clientInfo":      map[string]any{"name": "reasonix", "version": "dev"},
 	})
 	if err != nil {

@@ -385,17 +385,6 @@ func canonicalPath(path string) string {
 	return filepath.Clean(path)
 }
 
-func canonicalPaths(values []string) []string {
-	out := make([]string, 0, len(values))
-	for _, value := range values {
-		if path := canonicalPath(value); path != "" {
-			out = append(out, path)
-		}
-	}
-	sort.Strings(out)
-	return compactStrings(out)
-}
-
 func cleanStrings(values []string, fold bool) []string {
 	out := make([]string, 0, len(values))
 	for _, value := range values {

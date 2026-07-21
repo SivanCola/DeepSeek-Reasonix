@@ -868,6 +868,27 @@ export interface MCPServerInput {
   toolTimeoutSeconds?: Record<string, number> | null;
 }
 
+export interface MCPMarketplaceEntry {
+  name: string;
+  suggestedName: string;
+  title?: string;
+  description?: string;
+  version?: string;
+  repositoryUrl?: string;
+  installable: boolean;
+  unavailableReason?: string;
+  transport?: "stdio" | "http" | "sse" | string;
+  command?: string;
+  args: string[];
+  url?: string;
+}
+
+export interface MCPMarketplaceView {
+  servers: MCPMarketplaceEntry[];
+  cached: boolean;
+  warning?: string;
+}
+
 export interface ModelInfo {
   ref: string; // "provider/model" — pass to SetModel
   provider: string;

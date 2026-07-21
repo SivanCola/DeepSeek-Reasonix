@@ -628,7 +628,15 @@ Reasonix is an MCP client. A `[[plugins]]` entry's `type` selects the transport:
 `stdio` (default) launches a local subprocess (`command`/`args`/`env`); `http`
 (Streamable HTTP) connects to a remote `url` with optional static `headers`
 (`${VAR}` / `${VAR:-default}` expanded from the environment, so tokens stay out
-of the file).
+of the file); `sse` connects to servers that still use the legacy persistent
+GET + announced POST endpoint transport.
+
+Browse the official MCP Registry from **Settings → MCP servers → Browse
+registry**, or use `reasonix mcp browse [query]` and
+`reasonix mcp install <registry-name>`. Registry access is explicit and never
+runs during startup. Entries that need secrets or required arguments are shown
+as manual setup instead of being installed with an incomplete configuration;
+query-specific cached results remain available during a registry outage.
 
 The normal setup path is intentionally one step. Use Desktop's **Add and
 connect**, `/mcp add`, or ask Reasonix to install a package, URL, or `.mcp.json`.

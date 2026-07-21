@@ -515,6 +515,12 @@ reasonix doctor capabilities --live --timeout 5s
 Reasonix 是一个 MCP 客户端。`[[plugins]]` 的 `type` 选择传输：`stdio`（默认）启动本地子进
 程（`command`/`args`/`env`）；`http`（Streamable HTTP）连接远程 `url`，可带静态
 `headers`（`${VAR}` / `${VAR:-default}` 从环境展开，密钥不入文件）。
+`sse` 则兼容仍使用持久 GET 与 server 公布 POST endpoint 的旧版远程 server。
+
+可在 **设置 → MCP 服务器 → 浏览市场** 打开官方 MCP Registry，也可使用
+`reasonix mcp browse [query]` 与 `reasonix mcp install <registry-name>`。Registry
+只在用户显式浏览或安装时联网，不进入启动路径。需要 secret 或必填参数的条目只显示为手动配置，
+不会写入不完整配置；Registry 故障时可回退到同一查询的缓存结果。
 
 普通配置流程现在只有一步：使用桌面端的“添加并连接”、`/mcp add`，或直接让 Reasonix
 安装一个 package、URL 或 `.mcp.json`。这次明确安装本身就是授权：server 会保存并在当前

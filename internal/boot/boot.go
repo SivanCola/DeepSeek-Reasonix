@@ -499,6 +499,9 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		pluginSpecOptions.DefaultCallTimeout,
 	)
 	for i := range extraSpecs {
+		if strings.TrimSpace(extraSpecs[i].WorkspaceRoot) == "" {
+			extraSpecs[i].WorkspaceRoot = root
+		}
 		if extraSpecs[i].LaunchManager == nil {
 			extraSpecs[i].LaunchManager = pluginSpecOptions.LaunchManager
 		}
@@ -2202,6 +2205,7 @@ func pluginSpecFromEntryWithOptions(e config.PluginEntry, workspaceRoot string, 
 		DefaultCallTimeout:    opts.DefaultCallTimeout,
 		CallTimeout:           secondsDuration(e.CallTimeoutSeconds),
 		ToolTimeouts:          toolTimeoutDurations(e.ToolTimeoutSeconds),
+		WorkspaceRoot:         strings.TrimSpace(workspaceRoot),
 		LaunchManager:         opts.LaunchManager,
 		ConfigSource:          configSource,
 		Authorized:            e.Source.UserAuthorized(),

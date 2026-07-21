@@ -15,6 +15,91 @@ function ok(value: unknown, message: string) {
   if (!value) throw new Error(message);
 }
 
+{
+  const dom = installDom();
+  const rootEl = document.getElementById("root");
+  if (!rootEl) throw new Error("missing root");
+  const root = createRoot(rootEl);
+  const meta: Meta = { label: "test", ready: true, eventChannel: "mcp-registry-channel", cwd: "/tmp/reasonix-test", workspaceRoot: "/tmp/reasonix-test" };
+  const tabs: TabMeta[] = [{
+    id: "tab-mcp-registry",
+    scope: "project",
+    workspaceRoot: "/tmp/reasonix-test",
+    workspaceName: "reasonix-test",
+    topicId: "topic-mcp-registry",
+    topicTitle: "Registry",
+    label: "Registry",
+    ready: true,
+    running: false,
+    mode: "normal",
+    toolApprovalMode: "auto",
+    active: true,
+    cwd: "/tmp/reasonix-test",
+  }];
+  let servers: ServerView[] = [];
+  let installed: MCPServerInput | null = null;
+  window.go = {
+    main: {
+      App: {
+        Meta: async () => meta,
+        ListTabs: async () => tabs,
+        MCPServers: async () => servers,
+        MCPMarketplace: async () => ({
+          cached: false,
+          servers: [{
+            name: "io.example/demo",
+            suggestedName: "demo",
+            title: "Demo MCP",
+            description: "Registry demo server",
+            version: "1.0.0",
+            installable: true,
+            transport: "http",
+            args: [],
+            url: "https://mcp.example.test/mcp",
+          }],
+        }),
+        AddMCPServer: async (input) => {
+          installed = input;
+          servers = [{
+            name: input.name,
+            transport: input.transport,
+            status: "connected",
+            configured: true,
+            autoStart: true,
+            tools: 1,
+            prompts: 0,
+            resources: 0,
+            url: input.url,
+          }];
+          return 1;
+        },
+      } as Partial<AppBindings> as AppBindings,
+    },
+  };
+
+  await act(async () => {
+    root.render(React.createElement(LocaleProvider, null, React.createElement(MCPServersSettingsPage)));
+    await flush();
+  });
+  await waitFor("registry browse action", () => Boolean(findButton("Browse registry")));
+  await act(async () => {
+    findButton("Browse registry")?.click();
+    await flush();
+  });
+  await waitFor("registry result", () => document.body.textContent?.includes("Demo MCP") ?? false);
+  await act(async () => {
+    findButton("Install")?.click();
+    await flush();
+  });
+  await waitFor("registry install", () => installed !== null && document.body.textContent?.includes("demo") === true);
+  ok(installed?.name === "demo" && installed?.transport === "http" && installed?.url === "https://mcp.example.test/mcp", "registry install converts the selected entry into the normal add-and-connect input");
+
+  await act(async () => {
+    root.unmount();
+  });
+  dom.window.close();
+}
+
 const completeMCPJSON = JSON.stringify({
   admin: {
     type: "streamable-http",

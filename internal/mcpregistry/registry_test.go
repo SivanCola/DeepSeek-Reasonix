@@ -1,0 +1,95 @@
+package mcpregistry
+
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"path/filepath"
+	"testing"
+	"time"
+)
+
+func TestSearchNormalizesOfficialRegistryEntries(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v0.1/servers" || r.URL.Query().Get("version") != "latest" || r.URL.Query().Get("search") != "demo" {
+			t.Fatalf("request = %s", r.URL)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"servers": []any{
+			map[string]any{"server": map[string]any{
+				"name": "io.example/remote", "title": "Remote", "version": "1.2.0",
+				"remotes": []any{map[string]any{"type": "streamable-http", "url": "https://mcp.example/mcp"}},
+			}},
+			map[string]any{"server": map[string]any{
+				"name": "io.example/package", "description": "Package server", "version": "2.0.0",
+				"packages": []any{map[string]any{
+					"registryType": "npm", "identifier": "@example/mcp", "version": "2.0.0",
+					"transport": map[string]any{"type": "stdio"},
+				}},
+			}},
+			map[string]any{"server": map[string]any{
+				"name": "io.example/manual", "version": "1.0.0",
+				"remotes": []any{map[string]any{
+					"type": "streamable-http", "url": "https://mcp.example/{tenant}",
+					"variables": map[string]any{"tenant": map[string]any{"isRequired": true}},
+				}},
+			}},
+		}})
+	}))
+	defer server.Close()
+
+	client := New(filepath.Join(t.TempDir(), "registry.json"))
+	client.BaseURL = server.URL
+	result, err := client.Search(context.Background(), "demo", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Cached || len(result.Entries) != 3 {
+		t.Fatalf("result = %+v", result)
+	}
+	remote := result.Entries[0]
+	if !remote.Installable || remote.Transport != "http" || remote.URL != "https://mcp.example/mcp" {
+		t.Fatalf("remote = %+v", remote)
+	}
+	pkg := result.Entries[1]
+	if !pkg.Installable || pkg.Transport != "stdio" || pkg.Command != "npx" || len(pkg.Args) != 2 || pkg.Args[1] != "@example/mcp@2.0.0" {
+		t.Fatalf("package = %+v", pkg)
+	}
+	if result.Entries[2].Installable || result.Entries[2].UnavailableReason == "" {
+		t.Fatalf("manual entry = %+v", result.Entries[2])
+	}
+	entry, err := pkg.PluginEntry("")
+	if err != nil || entry.Name != "package" || entry.Command != "npx" {
+		t.Fatalf("PluginEntry = %+v, %v", entry, err)
+	}
+}
+
+func TestSearchFallsBackToMatchingCache(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"servers": []any{map[string]any{"server": map[string]any{
+			"name": "io.example/cached", "version": "1", "remotes": []any{map[string]any{"type": "sse", "url": "https://mcp.example/sse"}},
+		}}}})
+	}))
+	cachePath := filepath.Join(t.TempDir(), "registry.json")
+	client := New(cachePath)
+	client.BaseURL = server.URL
+	client.Now = func() time.Time { return time.Unix(1_000_000, 0) }
+	if _, err := client.Search(context.Background(), "cached", 5); err != nil {
+		t.Fatal(err)
+	}
+	server.Close()
+	client.HTTP = &http.Client{Timeout: 100 * time.Millisecond}
+	result, err := client.Search(context.Background(), "cached", 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Cached || result.Warning == "" || len(result.Entries) != 1 || result.Entries[0].Transport != "sse" {
+		t.Fatalf("cached result = %+v", result)
+	}
+}
+
+func TestSuggestedName(t *testing.T) {
+	if got := SuggestedName("io.github.Example/My MCP Server"); got != "my-mcp-server" {
+		t.Fatalf("SuggestedName = %q", got)
+	}
+}

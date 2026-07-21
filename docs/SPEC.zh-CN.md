@@ -97,9 +97,11 @@ type Tool interface {
 
 - `stdio`：本地持久子进程，每行一条 JSON 消息。
 - `http` / `streamable-http`：向远程 `url` POST，支持 `application/json` 和 SSE 响应，并复用 `Mcp-Session-Id`。
-- `sse`：识别旧版 2024-11-05 传输，但当前明确拒绝并提示改用 `http`。
+- `sse`：兼容旧版 2024-11-05 HTTP+SSE；持久 GET 接收 server 公布的相对 POST endpoint、JSON-RPC 响应与 server 消息。为避免静态 header 泄漏，会拒绝跨域 endpoint。
 
 `${VAR}` 与 `${VAR:-default}` 可用于 `command`、`args`、`env`、`url` 和 `headers`，使 secret 留在环境中。生命周期为 `initialize` → `notifications/initialized` → `tools/list`，调用使用 `tools/call`。
+
+存在工作区根目录时，初始化会声明 `roots` 能力，并用文件 URI 响应 `roots/list`。`tools/call` 会附带逐调用 `_meta.progressToken`；匹配的 `notifications/progress` 会进入现有工具进度事件链路。
 
 远程工具适配为 `Tool`，命名为 `mcp__<server>__<tool>`。`annotations.readOnlyHint` 映射为 `Tool.ReadOnly()`，默认 false；只有显式声明为只读的工具才进入并行读取与默认只读权限路径。MCP prompt 暴露为 slash command，resource 可通过 `@<server>:<uri>` 引用。
 

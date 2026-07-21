@@ -92,8 +92,7 @@ State does not leak between sessions.
 | `session/delete` | Stops the session and removes its persisted ACP history. |
 
 `session/new`, `session/load`, and `session/resume` may include `mcpServers`.
-Reasonix accepts stdio and Streamable HTTP servers; legacy SSE transport is not
-advertised or accepted. ACP's official `[{"name":"...","value":"..."}]`
+Reasonix accepts stdio, Streamable HTTP, and legacy SSE servers. ACP's official `[{"name":"...","value":"..."}]`
 shape is supported for stdio `env` and HTTP `headers`; the older object-map
 shape remains accepted for compatibility.
 

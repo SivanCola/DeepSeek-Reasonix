@@ -4547,6 +4547,7 @@ func (c *Controller) connectMCPServer(e config.PluginEntry) (int, error) {
 		DefaultCallTimeout:    c.mcpDefaultCallTimeout,
 		CallTimeout:           controllerMCPTimeout(exp.CallTimeoutSeconds),
 		ToolTimeouts:          controllerMCPToolTimeouts(exp.ToolTimeoutSeconds),
+		WorkspaceRoot:         c.WorkspaceRoot(),
 		ConfigSource:          configSource,
 		Authorized:            exp.Source.UserAuthorized(),
 		RequireLaunchApproval: exp.Source.RequiresLaunchApproval(),

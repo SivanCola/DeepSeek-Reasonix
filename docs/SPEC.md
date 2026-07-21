@@ -143,12 +143,18 @@ interface (`call` / `notify` / `close`) abstracts that, so the MCP-level logic
     any server notifications). The `Mcp-Session-Id` response header, once seen,
     is echoed on subsequent requests. Static `headers` (e.g. a bearer token) are
     sent on every request. OAuth is out of scope for now (see §9).
-  - `sse` — the legacy 2024-11-05 HTTP+SSE transport; recognised but deferred
-    (deprecated upstream — use `http`). Configuring it returns a clear error.
+  - `sse` — the legacy 2024-11-05 HTTP+SSE transport. A persistent GET stream
+    receives an announced relative POST endpoint, JSON-RPC responses, and server
+    messages. Cross-origin announced endpoints are rejected so static headers
+    cannot leak.
 - `${VAR}` / `${VAR:-default}` are expanded in `command`, `args`, `env`, `url`,
   and `headers` so secrets come from the environment, not the config file.
 - Lifecycle: `initialize` → `notifications/initialized` → `tools/list`;
   invocation via `tools/call {name, arguments}`.
+- When a workspace root exists, initialize advertises `roots` and transports
+  answer `roots/list` with its file URI. `tools/call` includes a per-call
+  `_meta.progressToken`; matching `notifications/progress` messages stream into
+  the existing tool-progress event path.
 - A stdio server uses one persistent transport for initialize, reads, and
   writes, preserving state such as browser sessions across tool calls. The
   process uses the server's process sandbox because process confinement cannot

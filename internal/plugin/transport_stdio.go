@@ -18,6 +18,7 @@ import (
 	"reasonix/internal/proc"
 	"reasonix/internal/sandbox"
 	"reasonix/internal/secrets"
+	"reasonix/internal/tool"
 )
 
 const closeWaitBudget = 5 * time.Second
@@ -31,6 +32,7 @@ const closeWaitBudget = 5 * time.Second
 // callMu serialises a request/response round-trip over the shared pipe.
 type stdioTransport struct {
 	name   string
+	roots  []mcpRoot
 	cmd    *exec.Cmd
 	job    uintptr // Windows Job Object handle (0 elsewhere); reaps detached grandchildren on close
 	stdin  io.WriteCloser
@@ -47,6 +49,7 @@ type stdioTransport struct {
 
 	waitOnce    sync.Once
 	releaseSlot func() // returns a bounded instance slot (e.g. CodeGraph) on close; nil when unbounded
+	progress    progressRouter
 }
 
 func newStdioTransport(ctx context.Context, s Spec) (*stdioTransport, error) {
@@ -115,6 +118,7 @@ func newStdioTransport(ctx context.Context, s Spec) (*stdioTransport, error) {
 	}
 	t := &stdioTransport{
 		name:        s.Name,
+		roots:       mcpRoots(s.WorkspaceRoot),
 		cmd:         cmd,
 		job:         job,
 		stdin:       stdin,
@@ -513,7 +517,7 @@ func mergePathLists(primary, secondary string) string {
 const stdioReplyQueueBound = 16
 
 // readLoop owns stdout for the transport's lifetime: it reads one JSON-RPC
-// message per line, ignores server notifications, answers server requests, and
+// message per line, routes progress notifications, answers server requests, and
 // hands each response to the call waiting on its id. On any read error it fails
 // every pending call and exits.
 func (t *stdioTransport) readLoop() {
@@ -554,30 +558,18 @@ func (t *stdioTransport) replyLoop(replies <-chan any) {
 }
 
 func (t *stdioTransport) handleInboundLine(line []byte, replies chan<- any) {
-	var probe struct {
-		JSONRPC string          `json:"jsonrpc"`
-		ID      json.RawMessage `json:"id"`
-		Method  string          `json:"method"`
-	}
-	if err := json.Unmarshal(line, &probe); err != nil {
+	probe, ok := decodeInboundMessage(line)
+	if !ok {
 		return // unparseable line cannot be routed; keep the transport alive
 	}
 	if probe.Method != "" {
-		id := bytes.TrimSpace(probe.ID)
-		if len(id) == 0 || bytes.Equal(id, []byte("null")) {
-			return // server notification
+		if isNotificationID(probe.ID) {
+			if probe.Method == "notifications/progress" {
+				t.progress.dispatchProgress(probe.Params)
+			}
+			return
 		}
-		response := struct {
-			JSONRPC string          `json:"jsonrpc"`
-			ID      json.RawMessage `json:"id"`
-			Result  any             `json:"result,omitempty"`
-			Error   *rpcError       `json:"error,omitempty"`
-		}{JSONRPC: "2.0", ID: append(json.RawMessage(nil), id...)}
-		if probe.Method == "ping" {
-			response.Result = map[string]any{}
-		} else {
-			response.Error = &rpcError{Code: -32601, Message: "Method not found"}
-		}
+		response := serverRequestReply(probe.ID, probe.Method, t.roots)
 		select {
 		case replies <- response:
 		default:
@@ -599,6 +591,10 @@ func (t *stdioTransport) handleInboundLine(line []byte, replies chan<- any) {
 	if ch != nil {
 		ch <- resp // buffered(1): never blocks, even if the caller already left
 	}
+}
+
+func (t *stdioTransport) registerProgress(token string, sink tool.ProgressFunc) func() {
+	return t.progress.registerProgress(token, sink)
 }
 
 // failAll records the terminal read error and unblocks every pending call by

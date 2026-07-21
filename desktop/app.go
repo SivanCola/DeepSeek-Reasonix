@@ -44,6 +44,7 @@ import (
 	"reasonix/internal/jobs"
 	"reasonix/internal/mcpdiag"
 	"reasonix/internal/mcplaunch"
+	"reasonix/internal/mcpregistry"
 	"reasonix/internal/memory"
 	"reasonix/internal/notify"
 	"reasonix/internal/plugin"
@@ -6251,6 +6252,66 @@ func (a *App) Capabilities() CapabilitiesView {
 // skill discovery.
 func (a *App) MCPServers() []ServerView {
 	return a.mcpServersView()
+}
+
+type MCPMarketplaceEntryView struct {
+	Name              string   `json:"name"`
+	SuggestedName     string   `json:"suggestedName"`
+	Title             string   `json:"title,omitempty"`
+	Description       string   `json:"description,omitempty"`
+	Version           string   `json:"version,omitempty"`
+	RepositoryURL     string   `json:"repositoryUrl,omitempty"`
+	Installable       bool     `json:"installable"`
+	UnavailableReason string   `json:"unavailableReason,omitempty"`
+	Transport         string   `json:"transport,omitempty"`
+	Command           string   `json:"command,omitempty"`
+	Args              []string `json:"args"`
+	URL               string   `json:"url,omitempty"`
+}
+
+type MCPMarketplaceView struct {
+	Servers []MCPMarketplaceEntryView `json:"servers"`
+	Cached  bool                      `json:"cached"`
+	Warning string                    `json:"warning,omitempty"`
+}
+
+// MCPMarketplace explicitly queries the official MCP Registry. It is only
+// called from the settings marketplace; startup and tool discovery never touch
+// the network. A query-specific cache keeps the page useful during a registry
+// outage without treating cached entries as installed servers.
+func (a *App) MCPMarketplace(query string) (MCPMarketplaceView, error) {
+	cachePath := ""
+	if cacheDir := config.CacheDir(); cacheDir != "" {
+		cachePath = filepath.Join(cacheDir, "mcp-registry-v0.1.json")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	result, err := mcpregistry.New(cachePath).Search(ctx, query, 50)
+	if err != nil {
+		return MCPMarketplaceView{Servers: []MCPMarketplaceEntryView{}}, err
+	}
+	view := MCPMarketplaceView{
+		Servers: make([]MCPMarketplaceEntryView, 0, len(result.Entries)),
+		Cached:  result.Cached,
+		Warning: result.Warning,
+	}
+	for _, entry := range result.Entries {
+		view.Servers = append(view.Servers, MCPMarketplaceEntryView{
+			Name:              entry.Name,
+			SuggestedName:     entry.SuggestedName,
+			Title:             entry.Title,
+			Description:       entry.Description,
+			Version:           entry.Version,
+			RepositoryURL:     entry.RepositoryURL,
+			Installable:       entry.Installable,
+			UnavailableReason: entry.UnavailableReason,
+			Transport:         entry.Transport,
+			Command:           entry.Command,
+			Args:              append([]string{}, entry.Args...),
+			URL:               entry.URL,
+		})
+	}
+	return view, nil
 }
 
 // lockRuntimeMutation serializes controller rebuild/teardown operations and

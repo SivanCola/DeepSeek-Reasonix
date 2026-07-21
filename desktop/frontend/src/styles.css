@@ -11314,6 +11314,9 @@ body > .mermaid-diagram--fullscreen {
   background: var(--bg);
   color: var(--fg-faint);
 }
+.cap-mcp-search--action {
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+}
 .cap-mcp-search:focus-within {
   border-color: color-mix(in srgb, var(--accent) 58%, var(--border));
   box-shadow: var(--focus-ring);

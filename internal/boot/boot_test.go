@@ -3840,6 +3840,9 @@ func TestPluginSpecsForRootPinsCodeGraphToWorkspace(t *testing.T) {
 	if specs[0].Dir != "/workspace" {
 		t.Fatalf("codegraph Dir = %q, want workspace root", specs[0].Dir)
 	}
+	if specs[0].WorkspaceRoot != "/workspace" {
+		t.Fatalf("codegraph WorkspaceRoot = %q, want /workspace", specs[0].WorkspaceRoot)
+	}
 }
 
 func TestPluginSpecsForRootDoesNotPinHTTPCodeGraph(t *testing.T) {
@@ -3849,6 +3852,9 @@ func TestPluginSpecsForRootDoesNotPinHTTPCodeGraph(t *testing.T) {
 	}
 	if specs[0].Dir != "" {
 		t.Fatalf("http codegraph Dir = %q, want empty", specs[0].Dir)
+	}
+	if specs[0].WorkspaceRoot != "/workspace" {
+		t.Fatalf("http codegraph WorkspaceRoot = %q, want /workspace", specs[0].WorkspaceRoot)
 	}
 }
 
