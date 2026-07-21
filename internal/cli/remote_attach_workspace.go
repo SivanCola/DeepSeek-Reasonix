@@ -14,7 +14,8 @@ import (
 )
 
 // remoteAttachWorkspaceCLI runs `reasonix remote attach-workspace --stdio`.
-// Workspace is taken from --workspace or REASONIX_ATTACH_WORKSPACE (never shell-interpolated argv from user paths in free form beyond the flag).
+// An explicit --workspace / REASONIX_ATTACH_WORKSPACE binds the target; when
+// absent, attach uses the authenticated remote/initialize workspace DTO.
 func remoteAttachWorkspaceCLI(args []string, version string) int {
 	workspace := ""
 	stdio := false
@@ -35,14 +36,6 @@ func remoteAttachWorkspaceCLI(args []string, version string) int {
 	}
 	if workspace == "" {
 		workspace = strings.TrimSpace(os.Getenv("REASONIX_ATTACH_WORKSPACE"))
-	}
-	if workspace == "" {
-		if cwd, err := os.Getwd(); err == nil {
-			workspace = cwd
-		}
-	}
-	if abs, err := filepath.Abs(workspace); err == nil {
-		workspace = abs
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

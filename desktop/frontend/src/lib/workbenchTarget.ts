@@ -33,6 +33,22 @@ export type ProviderTrustPrompt = {
   warning: string;
 };
 
+export const REMOTE_ROOT_WORKSPACE = "/";
+
+/** Resolve the workspace used by one-click Remote connections. */
+export function resolveRemoteWorkspace(lastWorkspace?: string, defaultWorkspace?: string): string {
+  return lastWorkspace?.trim() || defaultWorkspace?.trim() || REMOTE_ROOT_WORKSPACE;
+}
+
+export async function preferredRemoteWorkspace(hostId: string, defaultWorkspace?: string): Promise<string> {
+  try {
+    const lastWorkspace = await app.RemoteLastWorkspace(hostId);
+    return resolveRemoteWorkspace(lastWorkspace, defaultWorkspace);
+  } catch {
+    return resolveRemoteWorkspace(undefined, defaultWorkspace);
+  }
+}
+
 export async function fetchActiveTarget(): Promise<WorkbenchActiveTarget> {
   return app.WorkbenchActiveTarget();
 }

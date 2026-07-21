@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -83,6 +84,72 @@ func TestAttachRejectsWorkspaceDifferentFromAttachTarget(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "workspace does not match attach target") {
 		t.Fatalf("out=%q", out.String())
+	}
+}
+
+func TestAttachUsesInitializeWorkspaceWhenTargetIsUnbound(t *testing.T) {
+	home, err := os.MkdirTemp("/tmp", "rx-attach-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(home) })
+	params, _ := json.Marshal(map[string]any{
+		"buildId": map[string]any{
+			"productVersion":  "test",
+			"sourceRevision":  strings.Repeat("a", 40),
+			"schemaHash":      protocol.SchemaHash(),
+			"protocolVersion": protocol.ProtocolVersion,
+		},
+		"clientInstanceId": "desktop-test",
+		"workspace":        "~/project",
+	})
+	frame, _ := json.Marshal(map[string]any{
+		"jsonrpc": "2.0", "id": 1, "method": "remote/initialize", "params": json.RawMessage(params),
+	})
+	pr, pw := io.Pipe()
+	go func() {
+		_, _ = pw.Write(append(frame, '\n'))
+		time.Sleep(200 * time.Millisecond)
+		_ = pw.Close()
+	}()
+	var out bytes.Buffer
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	err = Run(ctx, pr, &out, Options{
+		Home: home, Version: "t", InProcess: true,
+	})
+	if strings.Contains(out.String(), "workspace is required") || strings.Contains(out.String(), "invalid Remote workspace") {
+		t.Fatalf("initialize workspace was not accepted: out=%q err=%v", out.String(), err)
+	}
+	if !strings.Contains(out.String(), `"result"`) {
+		t.Fatalf("initialize did not reach the normalized runtime workspace: out=%q err=%v", out.String(), err)
+	}
+}
+
+func TestResolveWorkspacePathExpandsRemoteHome(t *testing.T) {
+	home := t.TempDir()
+	tests := []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{name: "home", raw: "~", want: home},
+		{name: "home child", raw: "~/project", want: filepath.Join(home, "project")},
+		{name: "root", raw: string(filepath.Separator), want: string(filepath.Separator)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := resolveWorkspacePath(tt.raw, home)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != tt.want {
+				t.Fatalf("resolveWorkspacePath(%q) = %q, want %q", tt.raw, got, tt.want)
+			}
+		})
+	}
+	if _, err := resolveWorkspacePath(" ", home); err == nil {
+		t.Fatal("blank workspace should be rejected")
 	}
 }
 

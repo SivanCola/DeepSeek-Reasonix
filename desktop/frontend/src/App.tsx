@@ -40,7 +40,7 @@ import { asArray } from "./lib/array";
 import { clearLegacyLangPref, normalizeLangPref, readLegacyLangPref, t, useI18n, useT, type Translator } from "./lib/i18n";
 import { localizedNoticeText, useController, type Item, type LiveStream } from "./lib/useController";
 import { app, onEvent, onProjectTreeChanged, onReady, onRuntimeRebuilt, onSessionRecovered, onWorkbenchTarget, openExternal } from "./lib/bridge";
-import type { WorkbenchActiveTarget } from "./lib/workbenchTarget";
+import { preferredRemoteWorkspace, type WorkbenchActiveTarget } from "./lib/workbenchTarget";
 import { generativeMusic, isGenerativeMusicEnabled } from "./lib/generative-music";
 import { clearAttentionChimeKeys, playAttentionChime, playSuccessChime, shouldPlayAttentionChimeForEvent } from "./lib/sound";
 import { NoticeCard, Transcript } from "./components/Transcript";
@@ -2573,24 +2573,24 @@ export default function App() {
     if (hostId) requestRemoteExplorer(hostId);
   }, [remoteExplorerHostId, remoteHosts, requestRemoteExplorer]);
 
-  const launchRemoteWorkspace = useCallback(async (host: RemoteHostView) => {
-    const workspace = host.defaultWorkspace.trim();
-    if (!workspace) {
-      useRemoteStore.getState().setExplorerTab("server");
-      requestRemoteExplorer(host.id);
-      return;
-    }
+  const remoteWorkspaceLaunchSeq = useRef(0);
+  const launchRemoteWorkspace = useCallback(async (host: RemoteHostView, requestSeq: number) => {
+    const workspace = await preferredRemoteWorkspace(host.id, host.defaultWorkspace);
+    if (requestSeq !== remoteWorkspaceLaunchSeq.current) return;
     await app.OpenRemoteWorkspace(host.id, workspace);
+    if (requestSeq !== remoteWorkspaceLaunchSeq.current) return;
     setWorkbenchTarget(await app.WorkbenchActiveTarget());
-  }, [requestRemoteExplorer]);
+  }, []);
 
   const openRemoteWorkspaceFromStatus = useCallback((host: RemoteHostView) => {
-    void launchRemoteWorkspace(host).catch((err) => {
+    const requestSeq = ++remoteWorkspaceLaunchSeq.current;
+    void launchRemoteWorkspace(host, requestSeq).catch((err) => {
       showToast(err instanceof Error ? err.message : String(err), "error", { durationMs: 6000 });
     });
   }, [launchRemoteWorkspace, showToast]);
 
   const connectAndOpenRemoteWorkspace = useCallback(function connectRemoteWorkspace(host: RemoteHostView) {
+    const requestSeq = ++remoteWorkspaceLaunchSeq.current;
     void (async () => {
       try {
         const status = useRemoteStore.getState().statuses[host.id]?.state;
@@ -2623,7 +2623,7 @@ export default function App() {
       }
 
       try {
-        await launchRemoteWorkspace(host);
+        await launchRemoteWorkspace(host, requestSeq);
       } catch (err) {
         showToast(err instanceof Error ? err.message : String(err), "error", { durationMs: 6000 });
       }

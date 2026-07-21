@@ -51,6 +51,16 @@ Catalog entries are non-secret and include `toolCallReasoning` / `warnOnMissingT
 - One `activeTarget` projection; hidden Target events use badge/Toast only (no global modal for hidden approvals).
 - Desktop restart always opens Local and only shows a **Reconnect** hint for the last Remote (no auto SSH / AskPass / trust).
 
+## Workspace selection
+
+One-click Remote connections select the Host workspace in this order:
+
+1. Last successfully opened workspace for that Host.
+2. The Host's configured default workspace.
+3. The Host filesystem root (`/`).
+
+`~` and `~/...` are expanded against the remote SSH user's home directory. Using `/` allows the workbench to browse everything that SSH user can read, so configure a narrower default workspace when whole-host visibility is unnecessary. Normal SSH permissions and tool approval rules still apply.
+
 ## Explicit non-goals (this integration)
 
 - Host-held Provider credentials

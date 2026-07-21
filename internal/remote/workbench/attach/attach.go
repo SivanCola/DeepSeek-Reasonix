@@ -26,7 +26,8 @@ import (
 
 // Options configures attach-workspace.
 type Options struct {
-	// Workspace absolute path (from init DTO or CLI flag; never shell-interpolated).
+	// Workspace optionally binds attach to a CLI/env target. When empty, the
+	// authenticated initialize DTO selects the workspace.
 	Workspace string
 	// Home is the remote user home for socket placement.
 	Home string
@@ -50,20 +51,20 @@ func Run(ctx context.Context, stdin io.ReadCloser, stdout io.Writer, opts Option
 	if stdin == nil || stdout == nil {
 		return errors.New("attach-workspace requires stdio")
 	}
-	ws := strings.TrimSpace(opts.Workspace)
-	if ws == "" {
-		return errors.New("workspace is required")
-	}
-	configuredWorkspace, err := filepath.Abs(ws)
-	if err != nil {
-		return fmt.Errorf("resolve workspace: %w", err)
-	}
 	home := strings.TrimSpace(opts.Home)
 	if home == "" {
 		var err error
 		home, err = os.UserHomeDir()
 		if err != nil {
 			return err
+		}
+	}
+	configuredWorkspace := ""
+	if strings.TrimSpace(opts.Workspace) != "" {
+		var err error
+		configuredWorkspace, err = resolveWorkspacePath(opts.Workspace, home)
+		if err != nil {
+			return fmt.Errorf("resolve workspace: %w", err)
 		}
 	}
 	schemaHash := strings.TrimSpace(opts.SchemaHash)
@@ -89,15 +90,16 @@ func Run(ctx context.Context, stdin io.ReadCloser, stdout io.Writer, opts Option
 		return writeRPCError(stdout, frame.ID, rpcwire.ErrInvalidParams, "invalid remote/initialize params")
 	}
 	init := decoded.(protocol.InitializeParams)
-	requestedWorkspace := strings.TrimSpace(init.Workspace)
-	if abs, absErr := filepath.Abs(requestedWorkspace); absErr == nil {
-		ws = abs
-	} else {
+	ws, err := resolveWorkspacePath(init.Workspace, home)
+	if err != nil {
 		return writeRPCError(stdout, frame.ID, rpcwire.ErrInvalidParams, "invalid Remote workspace")
 	}
-	if filepath.Clean(ws) != filepath.Clean(configuredWorkspace) {
+	if configuredWorkspace != "" && filepath.Clean(ws) != filepath.Clean(configuredWorkspace) {
 		return writeRPCError(stdout, frame.ID, rpcwire.ErrInvalidParams, "Remote workspace does not match attach target")
 	}
+	// The runtime is started with the canonical absolute workspace. Forward the
+	// same value so `~` and relative aliases cannot diverge at its second gate.
+	init.Workspace = ws
 	peerHash := strings.TrimSpace(init.BuildID.SchemaHash)
 	if !strings.EqualFold(peerHash, schemaHash) {
 		return writeRPCError(stdout, frame.ID, rpcwire.ErrInvalidRequest,
@@ -130,11 +132,32 @@ func Run(ctx context.Context, stdin io.ReadCloser, stdout io.Writer, opts Option
 	return proxy(ctx, stdin, reader, stdout, conn)
 }
 
+func resolveWorkspacePath(raw, home string) (string, error) {
+	workspace := strings.TrimSpace(raw)
+	if workspace == "" {
+		return "", errors.New("workspace is required")
+	}
+	switch {
+	case workspace == "~":
+		workspace = home
+	case strings.HasPrefix(workspace, "~/"):
+		workspace = filepath.Join(home, strings.TrimPrefix(workspace, "~/"))
+	}
+	abs, err := filepath.Abs(workspace)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Clean(abs), nil
+}
+
 func ensureRuntime(ctx context.Context, opts Options, home, workspace, sock string) error {
 	// Try dial first (reuse live runtime).
 	if c, err := dialSocket(ctx, sock, 200*time.Millisecond); err == nil {
 		_ = c.Close()
 		return nil
+	}
+	if err := os.MkdirAll(filepath.Dir(sock), 0o700); err != nil {
+		return fmt.Errorf("create runtime socket directory: %w", err)
 	}
 	lockDir := sock + ".start.lock"
 	deadline := time.Now().Add(10 * time.Second)

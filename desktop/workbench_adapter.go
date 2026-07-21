@@ -295,6 +295,9 @@ func (a *App) WorkbenchConnectRemote(hostID, workspace string) error {
 	}
 	providerAccess := newWorkbenchProviderAccess(allowed)
 
+	// Bind the attach transport to the workspace selected for this connection,
+	// not a possibly stale default from the persisted host entry.
+	entry.Workspace = workspace
 	factory, err := a.workbenchTransportFactory(hostID, entry)
 	if err != nil {
 		return fail(err)

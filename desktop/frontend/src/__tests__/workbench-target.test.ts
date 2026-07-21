@@ -14,6 +14,7 @@ describe("workbenchTarget", () => {
           App: {
             WorkbenchActiveTarget: async () => ({ kind: "local", identityGen: 1, requestSeq: 1 }),
             WorkbenchLastRemoteHint: async () => ({ hostId: "lab", workspace: "/w" }),
+            RemoteLastWorkspace: async () => "/remembered",
             WorkbenchSwitchLocal: async () => ({ kind: "local", identityGen: 2, requestSeq: 2 }),
             WorkbenchConnectRemote: async () => undefined,
             WorkbenchDisconnectRemote: async () => undefined,
@@ -42,5 +43,19 @@ describe("workbenchTarget", () => {
     const mod = await import("../lib/workbenchTarget");
     const res = (await mod.remoteRequest("session/list", { x: 1 })) as { ok: boolean };
     assert.equal(res.ok, true);
+  });
+
+  it("prefers the last workspace, then the host default, then the remote root", async () => {
+    const mod = await import("../lib/workbenchTarget");
+    assert.equal(mod.resolveRemoteWorkspace(" /last ", "/default"), "/last");
+    assert.equal(mod.resolveRemoteWorkspace(" ", " /default "), "/default");
+    assert.equal(mod.resolveRemoteWorkspace("", ""), "/");
+    assert.equal(await mod.preferredRemoteWorkspace("lab", "/default"), "/remembered");
+
+    g.window.go.main.App.RemoteLastWorkspace = async () => {
+      throw new Error("preferences unavailable");
+    };
+    assert.equal(await mod.preferredRemoteWorkspace("lab", "/default"), "/default");
+    assert.equal(await mod.preferredRemoteWorkspace("lab", ""), "/");
   });
 });

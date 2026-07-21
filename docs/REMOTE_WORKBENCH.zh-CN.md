@@ -42,6 +42,16 @@ Desktop → Host：`broker/stream/chunk`、`broker/stream/end`、`broker/catalog
 - 单一 `activeTarget`；隐藏 Target 仅 badge/Toast，不弹全局审批 Modal。
 - 重启后始终进入 Local，仅提示“重新连接”上次 Remote（不自动 SSH / AskPass / 授权）。
 
+## 工作区选择
+
+一键连接 Remote 时按以下优先级选择 Host 工作区：
+
+1. 该 Host 上次成功打开的工作区。
+2. Host 配置中的默认工作区。
+3. Host 文件系统根目录（`/`）。
+
+`~` 和 `~/...` 会按远端 SSH 用户的主目录展开。使用 `/` 后，工作台可以浏览该 SSH 用户有权读取的所有内容；如果不需要整机可见范围，建议配置更窄的默认工作区。SSH 权限与工具审批规则仍然有效。
+
 ## 明确非目标
 
 - Host 持有 Provider 凭据
