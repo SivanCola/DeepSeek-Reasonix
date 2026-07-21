@@ -211,14 +211,34 @@ func (c *projectionController) Rewind(turn int, scope control.RewindScope) error
 	return nil
 }
 
-type brokerStubProvider struct{ requests chan provider.Request }
+type brokerStubProvider struct {
+	requests chan provider.Request
+	mu       sync.Mutex
+	calls    int
+}
 
 func (p *brokerStubProvider) Name() string { return "desktop-stub" }
 func (p *brokerStubProvider) Stream(ctx context.Context, request provider.Request) (<-chan provider.Chunk, error) {
 	p.requests <- request
-	chunks := make(chan provider.Chunk, 2)
-	chunks <- provider.Chunk{Type: provider.ChunkText, Text: "hello from desktop"}
-	chunks <- provider.Chunk{Type: provider.ChunkDone}
+	p.mu.Lock()
+	call := p.calls
+	p.calls++
+	p.mu.Unlock()
+
+	chunks := make(chan provider.Chunk, 3)
+	switch call {
+	case 0:
+		chunks <- provider.Chunk{Type: provider.ChunkReasoning, Text: "inspect the remote workspace first"}
+		chunks <- provider.Chunk{Type: provider.ChunkToolCall, ToolCall: &provider.ToolCall{
+			ID: "remote-read-1", Name: "read_file", Arguments: `{"path":"broker-proof.txt"}`,
+		}}
+		chunks <- provider.Chunk{Type: provider.ChunkDone}
+	case 1:
+		chunks <- provider.Chunk{Type: provider.ChunkText, Text: "hello from desktop after the Host tool result"}
+		chunks <- provider.Chunk{Type: provider.ChunkDone}
+	default:
+		chunks <- provider.Chunk{Type: provider.ChunkError, Err: fmt.Errorf("unexpected Broker provider call %d", call+1)}
+	}
 	close(chunks)
 	return chunks, nil
 }
@@ -1093,6 +1113,10 @@ func TestRuntimeProbeAndRejectedInitializePreserveCommittedConnection(t *testing
 func TestRuntimeControllerUsesDesktopBrokerWithoutHostKey(t *testing.T) {
 	home := t.TempDir()
 	workspace := t.TempDir()
+	const toolResultMarker = "remote-broker-tool-result"
+	if err := os.WriteFile(filepath.Join(workspace, "broker-proof.txt"), []byte(toolResultMarker+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
 	t.Setenv("REASONIX_HOME", filepath.Join(home, ".reasonix"))
@@ -1115,7 +1139,7 @@ func TestRuntimeControllerUsesDesktopBrokerWithoutHostKey(t *testing.T) {
 		Name: "desktop-e2e", StrictJSONRPC: true,
 		MaxInboundBytes: protocol.FrameBytes, MaxOutboundBytes: protocol.FrameBytes,
 	})
-	stub := &brokerStubProvider{requests: make(chan provider.Request, 1)}
+	stub := &brokerStubProvider{requests: make(chan provider.Request, 2)}
 	desktopBroker, err := remotebroker.Attach(desktopWire, remotebroker.Options{
 		Catalog: func(context.Context, map[string]struct{}) ([]protocol.BrokerProviderDescriptor, error) {
 			return []protocol.BrokerProviderDescriptor{
@@ -1186,22 +1210,45 @@ func TestRuntimeControllerUsesDesktopBrokerWithoutHostKey(t *testing.T) {
 			t.Fatalf("broker provider request lost user prompt: %+v", providerRequest.Messages)
 		}
 	case <-ctx.Done():
-		t.Fatal("Desktop provider was not called")
+		t.Fatal("Desktop provider was not called for the initial turn")
 	}
-	seenText, seenDone := false, false
+	select {
+	case providerRequest := <-stub.requests:
+		var sawReasoningToolCall, sawHostToolResult bool
+		for _, message := range providerRequest.Messages {
+			if message.Role == provider.RoleAssistant &&
+				strings.Contains(message.ReasoningContent, "inspect the remote workspace") &&
+				len(message.ToolCalls) == 1 && message.ToolCalls[0].ID == "remote-read-1" &&
+				message.ToolCalls[0].Name == "read_file" {
+				sawReasoningToolCall = true
+			}
+			if message.Role == provider.RoleTool && message.ToolCallID == "remote-read-1" &&
+				message.Name == "read_file" && strings.Contains(message.Content, toolResultMarker) {
+				sawHostToolResult = true
+			}
+		}
+		if !sawReasoningToolCall || !sawHostToolResult {
+			t.Fatalf("second Broker request lost DeepSeek reasoning/tool replay or Host tool result: %+v", providerRequest.Messages)
+		}
+	case <-ctx.Done():
+		t.Fatal("Desktop provider was not called after the Host tool result")
+	}
+	seenToolDispatch, seenToolResult, seenText, seenDone := false, false, false, false
 	for !seenDone {
 		select {
 		case event := <-events:
 			if event.SubscriptionID != subscribed.SubscriptionID {
 				t.Fatalf("event subscription = %q", event.SubscriptionID)
 			}
-			seenText = seenText || (event.Event.Kind == "text" && strings.Contains(event.Event.Text, "hello from desktop"))
+			seenToolDispatch = seenToolDispatch || (event.Event.Kind == "tool_dispatch" && event.Event.Tool.Name == "read_file")
+			seenToolResult = seenToolResult || (event.Event.Kind == "tool_result" && event.Event.Tool.Name == "read_file" && strings.Contains(event.Event.Tool.Output, toolResultMarker))
+			seenText = seenText || (event.Event.Kind == "text" && strings.Contains(event.Event.Text, "hello from desktop after the Host tool result"))
 			seenDone = event.Event.Kind == "turn_done"
 		case <-ctx.Done():
 			t.Fatal("timed out waiting for Broker-backed turn events")
 		}
 	}
-	if !seenText {
-		t.Fatal("Broker-backed text event was not delivered")
+	if !seenToolDispatch || !seenToolResult || !seenText {
+		t.Fatalf("Broker-backed tool loop events incomplete: dispatch=%v result=%v text=%v", seenToolDispatch, seenToolResult, seenText)
 	}
 }
