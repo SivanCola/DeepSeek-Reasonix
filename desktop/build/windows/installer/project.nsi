@@ -67,6 +67,7 @@ ManifestDPIAware true
 !insertmacro MUI_PAGE_DIRECTORY # In which folder install page.
 !define MUI_PAGE_CUSTOMFUNCTION_SHOW reasonix.showUpdateProgress
 !insertmacro MUI_PAGE_INSTFILES # Installing page.
+!define MUI_PAGE_CUSTOMFUNCTION_PRE reasonix.skipFinishPageForUpdate
 !insertmacro MUI_PAGE_FINISH # Finished installation page.
 
 !insertmacro MUI_UNPAGE_INSTFILES # Uinstalling page
@@ -179,6 +180,13 @@ Function reasonix.showUpdateProgress
    BringToFront
 
 reasonix_update_progress_done:
+FunctionEnd
+
+Function reasonix.skipFinishPageForUpdate
+   StrCmp $ReasonixUpdateMode "1" 0 reasonix_show_finish_page
+   Abort
+
+reasonix_show_finish_page:
 FunctionEnd
 
 Function reasonix.waitForExecutableUnlock

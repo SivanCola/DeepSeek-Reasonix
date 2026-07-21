@@ -56,6 +56,9 @@ func TestWindowsInstallerScriptWaitsBeforeCopyingExecutable(t *testing.T) {
 		`${GetOptions} $R0 "/REASONIXUPDATE=" $R1`,
 		"Function reasonix.skipSetupPageForUpdate",
 		"Function reasonix.showUpdateProgress",
+		`!define MUI_PAGE_CUSTOMFUNCTION_PRE reasonix.skipFinishPageForUpdate`,
+		"Function reasonix.skipFinishPageForUpdate",
+		`StrCmp $ReasonixUpdateMode "1" 0 reasonix_show_finish_page`,
 		"SetAutoClose true",
 		"BringToFront",
 		`LangString reasonixUpdateTitle ${LANG_ENGLISH} "Updating Reasonix"`,
@@ -81,6 +84,11 @@ func TestWindowsInstallerScriptWaitsBeforeCopyingExecutable(t *testing.T) {
 		if !strings.Contains(script, want) {
 			t.Fatalf("project.nsi missing %q", want)
 		}
+	}
+	finishPageHook := strings.Index(script, "!define MUI_PAGE_CUSTOMFUNCTION_PRE reasonix.skipFinishPageForUpdate")
+	finishPage := strings.Index(script, "!insertmacro MUI_PAGE_FINISH")
+	if finishPageHook < 0 || finishPage < 0 || finishPageHook > finishPage {
+		t.Fatalf("update-only finish page hook must be attached to MUI_PAGE_FINISH (hook=%d page=%d)", finishPageHook, finishPage)
 	}
 	wait := strings.Index(script, "Call reasonix.waitForExecutableUnlock")
 	copyFiles := strings.Index(script, "!insertmacro wails.files")
