@@ -140,13 +140,6 @@ type MCPAnnotations interface {
 	MCPDestructiveHint() bool
 }
 
-// MCPCapabilityFingerprint exposes the host-local security fingerprint used to
-// reject a cached-to-live schema drift before tools/call. It is deliberately
-// separate from Schema(), so it cannot perturb provider cache prefixes.
-type MCPCapabilityFingerprint interface {
-	MCPCapabilityFingerprint() string
-}
-
 // MCPServerAuthorization reports whether the user installed this MCP server or
 // authorized its exact project identity. Authorization belongs to the server,
 // not to individual tools; readOnly/destructive metadata is checked separately.
@@ -161,22 +154,16 @@ type MCPServerAuthorization interface {
 // error instead of executing.
 type readerExecutionIntentKey struct{}
 
-// ReaderExecutionIntent pins what the authorization decision saw.
-type ReaderExecutionIntent struct {
-	// CapabilityFingerprint, when non-empty, must still match the live tool's
-	// security fingerprint at dispatch time.
-	CapabilityFingerprint string
-}
-
 // WithReaderExecutionIntent marks ctx as a reader-authorized MCP invocation.
-func WithReaderExecutionIntent(ctx context.Context, capabilityFingerprint string) context.Context {
-	return context.WithValue(ctx, readerExecutionIntentKey{}, ReaderExecutionIntent{CapabilityFingerprint: capabilityFingerprint})
+func WithReaderExecutionIntent(ctx context.Context) context.Context {
+	return context.WithValue(ctx, readerExecutionIntentKey{}, true)
 }
 
-// ReaderExecutionIntentFrom returns the pinned reader authorization, if any.
-func ReaderExecutionIntentFrom(ctx context.Context) (ReaderExecutionIntent, bool) {
-	intent, ok := ctx.Value(readerExecutionIntentKey{}).(ReaderExecutionIntent)
-	return intent, ok
+// HasReaderExecutionIntent reports whether this call entered through the
+// non-destructive reader lane.
+func HasReaderExecutionIntent(ctx context.Context) bool {
+	intent, _ := ctx.Value(readerExecutionIntentKey{}).(bool)
+	return intent
 }
 
 // SnipHint describes how context maintenance should shorten a stale, oversized

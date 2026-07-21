@@ -94,7 +94,7 @@ func TestCachePersistsDeclaredReaderIndependentlyOfServerAuthorization(t *testin
 	}
 }
 
-func TestCachedToolSafetyTracksReadOnlyClassificationAndSchema(t *testing.T) {
+func TestCachedToolSafetyTracksReadOnlyAndDestructiveHintsOnly(t *testing.T) {
 	redirectCache(t)
 	spec := Spec{
 		Name: "cached-reader", Type: "http", URL: "https://example.com/mcp",
@@ -114,14 +114,17 @@ func TestCachedToolSafetyTracksReadOnlyClassificationAndSchema(t *testing.T) {
 		t.Fatalf("explicit reader = (%+v,%v), want reader metadata", after, found)
 	}
 
-	oldFingerprint := after.CapabilityFingerprint
+	// Input/output schema changes are compatibility facts, not authorization or
+	// execution-safety decisions. The live server validates the current call and
+	// the refreshed schema cache becomes provider-visible next session.
 	reader.Schema = json.RawMessage(`{"type":"object","properties":{"q":{"type":"number"}}}`)
+	reader.Destructive = true
 	if err := SaveCachedSchema(spec.Name, CachedSchema{SpecHash: SpecFingerprint(spec), Tools: []CachedTool{reader}}); err != nil {
 		t.Fatal(err)
 	}
-	drifted, found := CachedToolSafetyForSpec(spec, "search")
-	if !found || drifted.CapabilityFingerprint == oldFingerprint {
-		t.Fatalf("schema update = (%+v,%v), want current capability fingerprint", drifted, found)
+	updated, found := CachedToolSafetyForSpec(spec, "search")
+	if !found || !updated.ReadOnly || !updated.Destructive {
+		t.Fatalf("safety update = (%+v,%v), want read-only/destructive hints", updated, found)
 	}
 }
 

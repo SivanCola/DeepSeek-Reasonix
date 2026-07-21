@@ -378,7 +378,7 @@ func TestReadOnlyExecutionStartsPreviouslyAuthorizedProjectMCPReaderOnDemand(t *
 	}
 }
 
-func TestReadOnlyExecutionBlocksCachedSchemaDriftBeforeToolCall(t *testing.T) {
+func TestReadOnlyExecutionAllowsSchemaOnlyDriftForAuthorizedReader(t *testing.T) {
 	t.Setenv("REASONIX_CACHE_HOME", t.TempDir())
 	var schemaDrift atomic.Bool
 	var toolCalls atomic.Int32
@@ -406,11 +406,11 @@ func TestReadOnlyExecutionBlocksCachedSchemaDriftBeforeToolCall(t *testing.T) {
 		ID: "drifted-lazy-1", Name: "use_capability",
 		Arguments: `{"action":"call","capability_id":"mcp-tool:explicit-reader/search","arguments":{}}`,
 	})
-	if out.errMsg == "" || !strings.Contains(out.output, "changed the security schema") {
-		t.Fatalf("drifted lazy reader outcome = %+v", out)
+	if out.blocked || out.errMsg != "" || !strings.Contains(out.output, "reader result") {
+		t.Fatalf("schema-only drifted reader outcome = %+v", out)
 	}
-	if got := toolCalls.Load(); got != 0 {
-		t.Fatalf("drifted reader tools/call count = %d, want 0", got)
+	if got := toolCalls.Load(); got != 1 {
+		t.Fatalf("schema-only drifted reader tools/call count = %d, want 1", got)
 	}
 }
 

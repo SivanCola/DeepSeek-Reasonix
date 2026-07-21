@@ -1381,21 +1381,19 @@ func (c *Client) listTools(ctx context.Context) ([]tool.Tool, error) {
 		if c.spec.StripRawPrefix != "" {
 			visibleName = strings.TrimPrefix(visibleName, c.spec.StripRawPrefix)
 		}
-		capability := capabilityOf(c.spec, t, schema)
-		readOnly := capability.ReadOnly
+		readOnly := readOnlyHint
 		toolInfos = append(toolInfos, info)
 		tools = append(tools, &remoteTool{
-			client:                c,
-			name:                  toolName(c.name, visibleName),
-			rawName:               t.Name,
-			visibleName:           visibleName,
-			desc:                  t.Description,
-			schema:                schema,
-			outputSchema:          t.OutputSchema,
-			capabilityFingerprint: capabilityFingerprint(capability),
-			declaredReadOnly:      capability.ReadOnly,
-			readOnly:              readOnly,
-			destructive:           destructiveHint,
+			client:           c,
+			name:             toolName(c.name, visibleName),
+			rawName:          t.Name,
+			visibleName:      visibleName,
+			desc:             t.Description,
+			schema:           schema,
+			outputSchema:     t.OutputSchema,
+			declaredReadOnly: readOnlyHint,
+			readOnly:         readOnly,
+			destructive:      destructiveHint,
 		})
 	}
 	sort.SliceStable(toolInfos, func(i, j int) bool { return toolInfos[i].Name < toolInfos[j].Name })
@@ -1579,16 +1577,15 @@ func (e *rpcError) Error() string { return fmt.Sprintf("rpc error %d: %s", e.Cod
 // --- remote tool adapter ---
 
 type remoteTool struct {
-	client                *Client
-	name                  string // namespaced "mcp__<server>__<tool>"
-	rawName               string // original name for tools/call
-	visibleName           string // raw name after configured prefix stripping
-	desc                  string
-	schema                json.RawMessage
-	outputSchema          json.RawMessage
-	capabilityFingerprint string
-	declaredReadOnly      bool // server hint, independent of server authorization
-	readOnly              bool // effective reader classification for this live snapshot
+	client           *Client
+	name             string // namespaced "mcp__<server>__<tool>"
+	rawName          string // original name for tools/call
+	visibleName      string // raw name after configured prefix stripping
+	desc             string
+	schema           json.RawMessage
+	outputSchema     json.RawMessage
+	declaredReadOnly bool // server hint, independent of server authorization
+	readOnly         bool // effective reader classification for this live snapshot
 	// destructive is the MCP destructiveHint. It takes precedence over a
 	// conflicting readOnlyHint in Plan and strict read-only execution.
 	destructive bool
@@ -1615,29 +1612,25 @@ func (t *remoteTool) MCPServerAuthorized() bool {
 	return t.client != nil && t.client.spec.ServerAuthorized()
 }
 
-func (t *remoteTool) MCPCapabilityFingerprint() string {
-	return t.capabilityFingerprint
-}
-
 // ReadOnly reflects MCP readOnlyHint plus backward-compatible Spec overrides.
 // It defaults to false, so opaque tools remain write-capable unless the server
 // or local configuration explicitly classifies them as read-only.
-func (t *remoteTool) securitySnapshot() (declaredReadOnly, readOnly, destructive bool, fingerprint string) {
+func (t *remoteTool) securitySnapshot() (declaredReadOnly, readOnly, destructive bool) {
 	if t.client == nil {
-		return t.declaredReadOnly, t.readOnly, t.destructive, t.capabilityFingerprint
+		return t.declaredReadOnly, t.readOnly, t.destructive
 	}
 	t.client.toolsMu.Lock()
 	defer t.client.toolsMu.Unlock()
-	return t.declaredReadOnly, t.readOnly, t.destructive, t.capabilityFingerprint
+	return t.declaredReadOnly, t.readOnly, t.destructive
 }
 
 func (t *remoteTool) ReadOnly() bool {
-	_, readOnly, _, _ := t.securitySnapshot()
+	_, readOnly, _ := t.securitySnapshot()
 	return readOnly
 }
 
 func (t *remoteTool) MCPDestructiveHint() bool {
-	_, _, destructive, _ := t.securitySnapshot()
+	_, _, destructive := t.securitySnapshot()
 	return destructive
 }
 
@@ -1663,15 +1656,15 @@ func (t *remoteTool) ExecuteWithImages(ctx context.Context, args json.RawMessage
 			return "", nil, fmt.Errorf("invalid args: %w", err)
 		}
 	}
-	_, readOnly, destructive, fingerprint := t.securitySnapshot()
-	if intent, ok := tool.ReaderExecutionIntentFrom(ctx); ok {
+	_, readOnly, destructive := t.securitySnapshot()
+	if tool.HasReaderExecutionIntent(ctx) {
 		// Final, linearizable check for a reader-authorized call: the snapshot
 		// above and every live security reconciliation serialize on the owning
 		// client's toolsMu. A call approved as a non-destructive reader must never
 		// execute after authorization or safety metadata changed — state drift
 		// here returns an actionable error instead of
 		// dispatching.
-		if !t.MCPServerAuthorized() || !readOnly || destructive || (intent.CapabilityFingerprint != "" && fingerprint != "" && fingerprint != intent.CapabilityFingerprint) {
+		if !t.MCPServerAuthorized() || !readOnly || destructive {
 			return "", nil, fmt.Errorf("MCP server %q changed the authorization or security metadata for tool %q; the call was blocked before dispatch — refresh the server from a parent session before retrying", t.client.name, t.rawName)
 		}
 	}

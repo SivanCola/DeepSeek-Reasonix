@@ -665,8 +665,8 @@ Installing an MCP server is the authorization decision. After installation, all
 of its tools run directly without a second server-level, per-tool, writer, or
 destructive approval setting. Explicit global deny rules still win. The host
 keeps `readOnlyHint` and `destructiveHint` internally for parallel scheduling,
-Plan restrictions, strict read-only sub-agents, and cached-to-live capability
-drift checks; these hints do not add user configuration.
+Plan restrictions, strict read-only sub-agents, and cached-to-live safety
+reclassification; these hints do not add user configuration.
 
 The retired `trusted_read_only_tools`, `default_tools_approval_mode`,
 `tools.<raw>.approval_mode`, and `approvals_reviewer` fields are ignored when
@@ -950,10 +950,12 @@ the strict read-only entrances:
 
 Inside a strict child, `use_capability` re-checks the resolved target before
 commit/permission/hooks/execution. An unconnected eligible MCP reader may start
-on demand from the current schema cache; its cached security fingerprint is
-checked against the live initialize/tools-list result before `tools/call`.
-Schema or safety drift means zero executions and a normal retry with current
-policy. An unauthorized server cannot raise privileges there. This
+on demand from the current schema cache. Before `tools/call`, cached
+`readOnlyHint`/`destructiveHint` facts are checked against the live
+initialize/tools-list result; a reader-to-writer change or destructive promotion
+means zero executions and a normal retry through the current boundary. A
+schema-only change refreshes the cache for the next session without interrupting
+the authorized call. An unauthorized server cannot raise privileges there. This
 is a stricter layer than the main Plan workflow: Plan hard-blocks MCP
 writer/destructive targets for the entire planning phase — no approval can
 release them until Plan exits — while built-in writers keep

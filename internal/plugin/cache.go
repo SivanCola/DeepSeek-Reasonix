@@ -36,7 +36,7 @@ func cacheableToolsOf(tools []tool.Tool) []CachedTool {
 		if !ok {
 			continue
 		}
-		declaredReadOnly, _, destructive, _ := rt.securitySnapshot()
+		declaredReadOnly, _, destructive := rt.securitySnapshot()
 		out = append(out, CachedTool{
 			Name:         rt.rawName,
 			Description:  rt.desc,

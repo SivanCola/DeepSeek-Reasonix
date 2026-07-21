@@ -194,13 +194,12 @@ func (s *lazySpawn) trySwap() {
 // sees cached metadata (or a stub when no cache exists); Execute consults the
 // state machine, kicking off the handshake on first call.
 type lazyTool struct {
-	shared                *lazySpawn
-	name                  string // namespaced "mcp__<server>__<tool>"
-	rawName               string // original server-local tool name, when cached
-	visibleName           string // raw name after configured prefix stripping
-	desc                  string
-	schema                json.RawMessage
-	capabilityFingerprint string
+	shared      *lazySpawn
+	name        string // namespaced "mcp__<server>__<tool>"
+	rawName     string // original server-local tool name, when cached
+	visibleName string // raw name after configured prefix stripping
+	desc        string
+	schema      json.RawMessage
 	// readOnly is guarded by shared.mu because a live handshake can demote a
 	// stale cached reader before asking the model to retry.
 	readOnly bool
@@ -244,14 +243,6 @@ func (lt *lazyTool) MCPServerAuthorized() bool {
 	return lt.shared != nil && lt.shared.spec.ServerAuthorized()
 }
 
-func (lt *lazyTool) MCPCapabilityFingerprint() string {
-	if lt.shared == nil {
-		return lt.capabilityFingerprint
-	}
-	lt.shared.mu.Lock()
-	defer lt.shared.mu.Unlock()
-	return lt.capabilityFingerprint
-}
 func (lt *lazyTool) MCPDestructiveHint() bool {
 	if lt.shared == nil {
 		return lt.destructive
@@ -414,13 +405,11 @@ func (lt *lazyTool) reconcileLiveSafety(real tool.Tool) error {
 		return nil
 	}
 	live, err := ReconcileCachedToolSafety(lt.shared.spec.Name, lt.rawName, CachedToolSafety{
-		ReadOnly:              lt.readOnly,
-		Destructive:           lt.destructive,
-		CapabilityFingerprint: lt.capabilityFingerprint,
+		ReadOnly:    lt.readOnly,
+		Destructive: lt.destructive,
 	}, real)
 	lt.readOnly = live.ReadOnly
 	lt.destructive = live.Destructive
-	lt.capabilityFingerprint = live.CapabilityFingerprint
 	return err
 }
 
@@ -453,23 +442,6 @@ func LazyToolset(spec Spec, cs *CachedSchema, host *Host, reg *tool.Registry, se
 	}
 	shared.generation = host.registerDeferredCancel(spec.Name, cancel)
 
-	cachedCapabilities := map[string]toolCapability{}
-	if cs != nil && len(cs.Tools) > 0 {
-		for _, ct := range cs.Tools {
-			visible := ct.Name
-			if spec.StripRawPrefix != "" {
-				visible = strings.TrimPrefix(visible, spec.StripRawPrefix)
-			}
-			cap := toolCapability{
-				RawName: ct.Name, ModelName: toolName(spec.Name, visible), VisibleName: visible,
-				InputSchema: ct.Schema, OutputSchema: ct.OutputSchema,
-				ReadOnly:    ct.ReadOnly,
-				Destructive: ct.Destructive,
-			}
-			cachedCapabilities[ct.Name] = cap
-		}
-	}
-
 	var out []tool.Tool
 	// A snapshot with zero tools presents nothing the model could call, so it
 	// gets the same connect stub as a cache miss — otherwise the live tools
@@ -490,19 +462,16 @@ func LazyToolset(spec Spec, cs *CachedSchema, host *Host, reg *tool.Registry, se
 			if spec.StripRawPrefix != "" {
 				visibleName = strings.TrimPrefix(visibleName, spec.StripRawPrefix)
 			}
-			capability := cachedCapabilities[ct.Name]
-			readOnly := capability.ReadOnly
 			out = append(out, &lazyTool{
-				shared:                shared,
-				name:                  toolName(spec.Name, visibleName),
-				rawName:               ct.Name,
-				visibleName:           visibleName,
-				desc:                  ct.Description,
-				schema:                ct.Schema,
-				capabilityFingerprint: capabilityFingerprint(cachedCapabilities[ct.Name]),
-				readOnly:              readOnly,
-				destructive:           ct.Destructive,
-				hasCache:              true,
+				shared:      shared,
+				name:        toolName(spec.Name, visibleName),
+				rawName:     ct.Name,
+				visibleName: visibleName,
+				desc:        ct.Description,
+				schema:      ct.Schema,
+				readOnly:    ct.ReadOnly,
+				destructive: ct.Destructive,
+				hasCache:    true,
 			})
 		}
 	}

@@ -539,7 +539,7 @@ reader 在任何审批前硬阻断，退出 Plan 后即可直接使用。
 安装 MCP server 本身就是授权决定。安装完成后，该 server 的所有工具都直接执行，不再存在
 server、raw tool、writer 或 destructive 的第二套审批设置；显式全局 deny 规则仍然优先。
 `readOnlyHint` 与 `destructiveHint` 只作为内部事实，用于并行调度、Plan 限制、严格只读
-subagent 和缓存到实时能力漂移检查，不增加用户配置。
+subagent 和缓存到实时安全分类复核，不增加用户配置。
 
 旧的 `trusted_read_only_tools`、`default_tools_approval_mode`、
 `tools.<raw>.approval_mode` 与 `approvals_reviewer` 字段在加载旧文件时会被忽略，并在 Reasonix
@@ -757,8 +757,9 @@ reader 仍可按需启动。严格只读入口一览：
 
 在严格只读子会话内：`use_capability` 在 Commit/permission/hook/执行前会对解析出的
 真实目标再次校验；未连接且符合条件的 MCP reader 可从当前 schema cache 按需启动，
-initialize/tools-list 后会在 `tools/call` 前核对缓存与 live security 指纹；发现 schema 或
-safety 漂移则零执行，普通重试会使用当前策略。未授权 server 无法在这里提升权限。
+initialize/tools-list 后会在 `tools/call` 前核对缓存与 live 的 `readOnlyHint`/
+`destructiveHint`；reader 变 writer 或升级为 destructive 时零执行，普通重试会重新经过当前
+边界。仅 schema 变化会静默刷新下一会话的缓存，不再中断已授权调用。未授权 server 无法在这里提升权限。
 这一层比主 Plan 更严格：Plan 在整个规划阶段硬阻断 MCP writer/destructive 目标——
 审批也不能放行，退出 Plan 后才恢复——内置 writer 仍走 Permissions/Sandbox，
 而严格只读子会话根本不暴露 writer。

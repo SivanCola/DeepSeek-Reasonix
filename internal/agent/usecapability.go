@@ -366,15 +366,12 @@ func (t *UseCapabilityTool) resolveCall(ctx context.Context, id string, args jso
 		}
 	}
 	readOnly := false
-	capabilityFingerprint := ""
 	if cached, found := plugin.CachedToolSafetyForSpec(spec, raw); found {
 		destructive = destructive || cached.Destructive
 		readOnly = cached.ReadOnly
-		capabilityFingerprint = cached.CapabilityFingerprint
 	}
 	lazy := &onDemandMCPTool{proxy: t, spec: spec, server: server, raw: raw, modelName: modelName, destructive: destructive}
 	lazy.readOnly = readOnly
-	lazy.capabilityFingerprint = capabilityFingerprint
 	base.Target = lazy
 	base.TargetName = modelName
 	// Cached server hints control ordinary approval. Strict read-only execution
@@ -433,10 +430,10 @@ type onDemandMCPTool struct {
 	raw       string
 	modelName string
 	// destructive comes from the schema cache when available. A live promotion
-	// is detected in Execute and deferred to a fresh-approved retry.
-	destructive           bool
-	readOnly              bool
-	capabilityFingerprint string
+	// is detected in Execute so a retry re-enters the current Plan/read-only
+	// execution boundary.
+	destructive bool
+	readOnly    bool
 }
 
 func (o *onDemandMCPTool) Name() string { return o.modelName }
@@ -463,9 +460,6 @@ func (o *onDemandMCPTool) ReadOnlyExecutionBlockReason() string {
 // diagnostics (tool.MCPMetadata).
 func (o *onDemandMCPTool) MCPServerName() string  { return o.server }
 func (o *onDemandMCPTool) MCPRawToolName() string { return o.raw }
-func (o *onDemandMCPTool) MCPCapabilityFingerprint() string {
-	return o.capabilityFingerprint
-}
 func (o *onDemandMCPTool) MCPDestructiveHint() bool {
 	return o.destructive
 }
@@ -489,9 +483,8 @@ func (o *onDemandMCPTool) Execute(ctx context.Context, args json.RawMessage) (st
 		return "", fmt.Errorf("%s", msg)
 	}
 	if _, err := plugin.ReconcileCachedToolSafety(o.server, o.raw, plugin.CachedToolSafety{
-		ReadOnly:              o.readOnly,
-		Destructive:           o.destructive,
-		CapabilityFingerprint: o.capabilityFingerprint,
+		ReadOnly:    o.readOnly,
+		Destructive: o.destructive,
 	}, target); err != nil {
 		return "", err
 	}

@@ -2,9 +2,6 @@ package plugin
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"net"
 	"net/url"
@@ -238,103 +235,12 @@ func launchConfigSource(s Spec) string {
 	return s.ConfigSource
 }
 
-type toolCapability struct {
-	RawName      string
-	ModelName    string
-	VisibleName  string
-	InputSchema  json.RawMessage
-	OutputSchema json.RawMessage
-	ReadOnly     bool
-	Destructive  bool
-}
-
-func capabilityOf(s Spec, raw mcpTool, schema []byte) toolCapability {
-	visible := raw.Name
-	if s.StripRawPrefix != "" {
-		visible = strings.TrimPrefix(visible, s.StripRawPrefix)
-	}
-	hinted := raw.Annotations != nil && raw.Annotations.ReadOnlyHint
-	destructive := raw.Annotations != nil && raw.Annotations.DestructiveHint
-	return toolCapability{
-		RawName: raw.Name, ModelName: toolName(s.Name, visible), VisibleName: visible,
-		InputSchema: schema, OutputSchema: raw.OutputSchema,
-		ReadOnly: hinted, Destructive: destructive,
-	}
-}
-
-func capabilityFingerprint(cap toolCapability) string {
-	in, err := canonicalSecuritySchema(cap.InputSchema)
-	if err != nil {
-		return ""
-	}
-	out, err := canonicalSecuritySchema(cap.OutputSchema)
-	if err != nil {
-		return ""
-	}
-	payload := struct {
-		RawName     string          `json:"raw_name"`
-		ModelName   string          `json:"model_name"`
-		Input       json.RawMessage `json:"input,omitempty"`
-		Output      json.RawMessage `json:"output,omitempty"`
-		ReadOnly    bool            `json:"read_only"`
-		Destructive bool            `json:"destructive"`
-	}{
-		RawName: strings.TrimSpace(cap.RawName), ModelName: strings.TrimSpace(cap.ModelName),
-		Input: in, Output: out, ReadOnly: cap.ReadOnly, Destructive: cap.Destructive,
-	}
-	body, err := json.Marshal(payload)
-	if err != nil {
-		return ""
-	}
-	sum := sha256.Sum256(body)
-	return hex.EncodeToString(sum[:])
-}
-
-func canonicalSecuritySchema(raw json.RawMessage) (json.RawMessage, error) {
-	if len(raw) == 0 {
-		return nil, nil
-	}
-	var value any
-	if err := json.Unmarshal(raw, &value); err != nil {
-		return nil, err
-	}
-	stripSchemaDisplayFields(value)
-	body, err := json.Marshal(value)
-	return json.RawMessage(body), err
-}
-
-func stripSchemaDisplayFields(value any) {
-	switch v := value.(type) {
-	case map[string]any:
-		for _, key := range []string{"description", "title", "examples", "$comment"} {
-			delete(v, key)
-		}
-		for key, child := range v {
-			switch key {
-			case "properties", "patternProperties", "$defs", "definitions", "dependentSchemas", "dependentRequired", "dependencies":
-				if named, ok := child.(map[string]any); ok {
-					for _, schema := range named {
-						stripSchemaDisplayFields(schema)
-					}
-					continue
-				}
-			}
-			stripSchemaDisplayFields(child)
-		}
-	case []any:
-		for _, child := range v {
-			stripSchemaDisplayFields(child)
-		}
-	}
-}
-
 // CachedToolSafety is the local safety classification for one tool in an
 // identity-matched schema cache. Authorization belongs to the MCP server;
 // cached tools retain only safety facts that must match the live server.
 type CachedToolSafety struct {
-	ReadOnly              bool
-	Destructive           bool
-	CapabilityFingerprint string
+	ReadOnly    bool
+	Destructive bool
 }
 
 // LiveToolSafety returns the host-local execution classification for a live MCP
@@ -346,19 +252,15 @@ func LiveToolSafety(target tool.Tool) CachedToolSafety {
 		return CachedToolSafety{}
 	}
 	if remote, ok := target.(*remoteTool); ok {
-		_, readOnly, destructive, fingerprint := remote.securitySnapshot()
+		_, readOnly, destructive := remote.securitySnapshot()
 		return CachedToolSafety{
-			ReadOnly:              readOnly,
-			Destructive:           destructive,
-			CapabilityFingerprint: fingerprint,
+			ReadOnly:    readOnly,
+			Destructive: destructive,
 		}
 	}
 	safety := CachedToolSafety{ReadOnly: target.ReadOnly()}
 	if annotations, ok := target.(tool.MCPAnnotations); ok {
 		safety.Destructive = annotations.MCPDestructiveHint()
-	}
-	if fingerprint, ok := target.(tool.MCPCapabilityFingerprint); ok {
-		safety.CapabilityFingerprint = fingerprint.MCPCapabilityFingerprint()
 	}
 	return safety
 }
@@ -370,9 +272,6 @@ func ReconcileCachedToolSafety(server, rawName string, cached CachedToolSafety, 
 	live := LiveToolSafety(target)
 	if target == nil {
 		return live, nil
-	}
-	if cached.CapabilityFingerprint != "" && live.CapabilityFingerprint != "" && cached.CapabilityFingerprint != live.CapabilityFingerprint {
-		return live, fmt.Errorf("MCP server %q changed the security schema for tool %q; the current call was blocked before execution — retry so current policy is applied", server, rawName)
 	}
 	if cached.ReadOnly && !live.ReadOnly {
 		return live, fmt.Errorf("MCP server %q no longer marks tool %q as read-only; the current call was blocked before execution — retry so Reasonix can apply the current Plan/read-only safety boundary", server, rawName)
@@ -388,29 +287,16 @@ func CachedToolSafetyForSpec(s Spec, rawName string) (CachedToolSafety, bool) {
 	if !ok {
 		return CachedToolSafety{}, false
 	}
-	var target *toolCapability
+	var target *CachedToolSafety
 	for _, cached := range cs.Tools {
-		visible := cached.Name
-		if s.StripRawPrefix != "" {
-			visible = strings.TrimPrefix(visible, s.StripRawPrefix)
-		}
-		cap := toolCapability{
-			RawName: cached.Name, ModelName: toolName(s.Name, visible), VisibleName: visible,
-			InputSchema: cached.Schema, OutputSchema: cached.OutputSchema,
-			ReadOnly:    cached.ReadOnly,
-			Destructive: cached.Destructive,
-		}
 		if cached.Name == rawName {
-			copy := cap
+			copy := CachedToolSafety{ReadOnly: cached.ReadOnly, Destructive: cached.Destructive}
 			target = &copy
+			break
 		}
 	}
 	if target == nil {
 		return CachedToolSafety{}, false
 	}
-	return CachedToolSafety{
-		ReadOnly:              target.ReadOnly,
-		Destructive:           target.Destructive,
-		CapabilityFingerprint: capabilityFingerprint(*target),
-	}, true
+	return *target, true
 }

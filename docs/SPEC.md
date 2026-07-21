@@ -336,7 +336,9 @@ func (p Policy) Decide(toolName string, readOnly bool, args json.RawMessage) Dec
   Explicit global deny rules still win. Repository-declared servers require one
   exact identity confirmation before startup and require confirmation again only
   if that identity changes. `readOnlyHint` and `destructiveHint` remain internal
-  facts for scheduling, Plan/read-only restrictions, and capability-drift checks.
+  facts for scheduling, Plan/read-only restrictions, and cached-to-live safety
+  reclassification. Schema-only changes refresh the next-session cache without
+  adding an execution approval or retry.
 - **Relationship to plan mode.** Plan mode (§3.4) is a plan-first collaboration
   workflow, not an all-tools read-only mode. Before Permissions/Sandbox, the
   host enforces explicit phase opt-outs (`complete_step` is read-only but

@@ -508,8 +508,7 @@ func TestUserAuthorizedMCPHintedReaderIsAuthorizedForSubagents(t *testing.T) {
 	if authority, ok := echo.(tool.MCPServerAuthorization); !ok || !authority.MCPServerAuthorized() {
 		t.Fatalf("installed hinted reader lacks server authorization: %T", echo)
 	}
-	fingerprint := echo.(tool.MCPCapabilityFingerprint).MCPCapabilityFingerprint()
-	if _, err := echo.Execute(tool.WithReaderExecutionIntent(context.Background(), fingerprint), json.RawMessage(`{"msg":"ok","z":"ok"}`)); err != nil {
+	if _, err := echo.Execute(tool.WithReaderExecutionIntent(context.Background()), json.RawMessage(`{"msg":"ok","z":"ok"}`)); err != nil {
 		t.Fatalf("installed hinted reader dispatch: %v", err)
 	}
 }
@@ -1440,7 +1439,7 @@ func TestReaderIntentRefusesDispatchAfterSafetyDrift(t *testing.T) {
 	rt.client.toolsMu.Lock()
 	rt.readOnly = true
 	rt.client.toolsMu.Unlock()
-	readerCtx := tool.WithReaderExecutionIntent(ctx, rt.MCPCapabilityFingerprint())
+	readerCtx := tool.WithReaderExecutionIntent(ctx)
 	if _, _, err := rt.ExecuteWithImages(readerCtx, json.RawMessage(`{"msg":"ok","z":"ok"}`)); err != nil {
 		t.Fatalf("authorized reader call failed: %v", err)
 	}
@@ -1466,17 +1465,18 @@ func TestReaderIntentRefusesDispatchAfterSafetyDrift(t *testing.T) {
 		t.Fatalf("revoked reader call reached tools/call: calls=%d", got)
 	}
 
-	// A stale capability fingerprint pinned at authorization time is refused
-	// even when the tool is still a reader.
+	// Schema-only changes do not revoke an installed server or its reader lane.
+	// The live server owns argument validation; refreshed provider-visible schema
+	// bytes land in the next session rather than interrupting this call.
 	rt.client.toolsMu.Lock()
 	rt.readOnly = true
 	rt.client.toolsMu.Unlock()
-	staleCtx := tool.WithReaderExecutionIntent(ctx, "stale-fingerprint")
-	if _, _, err := rt.ExecuteWithImages(staleCtx, json.RawMessage(`{"msg":"stale","z":"ok"}`)); err == nil || !strings.Contains(err.Error(), "changed the authorization or security metadata") {
-		t.Fatalf("stale fingerprint call = %v, want refusal", err)
+	rt.schema = json.RawMessage(`{"type":"object","properties":{"msg":{"type":"number"}}}`)
+	if _, _, err := rt.ExecuteWithImages(readerCtx, json.RawMessage(`{"msg":"schema-changed","z":"ok"}`)); err != nil {
+		t.Fatalf("schema-only reader change should execute: %v", err)
 	}
-	if got := readHelperCounter(t, callCount); got != 1 {
-		t.Fatalf("stale fingerprint call reached tools/call: calls=%d", got)
+	if got := readHelperCounter(t, callCount); got != 2 {
+		t.Fatalf("schema-only reader call count = %d, want 2", got)
 	}
 
 	// Without reader intent the ordinary writer path remains on the persistent
@@ -1490,7 +1490,7 @@ func TestReaderIntentRefusesDispatchAfterSafetyDrift(t *testing.T) {
 	if got := readHelperCounter(t, startCount); got != 1 {
 		t.Fatalf("writer call starts = %d, want one persistent process", got)
 	}
-	if got := readHelperCounter(t, callCount); got != 2 {
-		t.Fatalf("writer call count = %d, want 2", got)
+	if got := readHelperCounter(t, callCount); got != 3 {
+		t.Fatalf("writer call count = %d, want 3", got)
 	}
 }

@@ -3221,11 +3221,7 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 	// against server authorization and live safety metadata, and refuses to
 	// promote it into a writer lane if reclassification landed after the gate.
 	if readOnly && isInstalledMCPTool(runTool) && mcpServerAuthorized(runTool) && !mcpDestructiveHint(runTool) {
-		fingerprint := ""
-		if fp, ok := runTool.(tool.MCPCapabilityFingerprint); ok {
-			fingerprint = fp.MCPCapabilityFingerprint()
-		}
-		cctx = tool.WithReaderExecutionIntent(cctx, fingerprint)
+		cctx = tool.WithReaderExecutionIntent(cctx)
 	}
 	if it, ok := runTool.(tool.ImageTool); ok {
 		result, images, err = it.ExecuteWithImages(cctx, runArgs)

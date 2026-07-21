@@ -882,8 +882,8 @@ func TestLazyCacheHitPinsToolBytesAcrossDivergentHandshake(t *testing.T) {
 	// Let the background handshake finish and give trySwap every chance to run.
 	waitForServer(t, host, "mock", 5*time.Second)
 	echo, _ := reg.Get("mcp__mock__echo")
-	if out, err := echo.Execute(ctx, json.RawMessage(`{"msg":"pin"}`)); err == nil || out != "" || !strings.Contains(err.Error(), "changed the security schema") {
-		t.Fatalf("Execute after schema drift = %q, %v; want a pre-execution drift block", out, err)
+	if out, err := echo.Execute(ctx, json.RawMessage(`{"msg":"pin"}`)); err != nil || out != "echo: pin" {
+		t.Fatalf("Execute after schema drift = %q, %v; want live execution", out, err)
 	}
 
 	if got := registrySchemaBytes(t, reg); got != bootBytes {
