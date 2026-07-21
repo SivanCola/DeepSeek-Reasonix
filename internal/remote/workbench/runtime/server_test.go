@@ -1259,3 +1259,26 @@ func TestRuntimeBuildIDUsesSharedBuildIdentity(t *testing.T) {
 		t.Fatalf("runtime build ID = %+v, want shared protocol build ID %+v", got, want)
 	}
 }
+
+func TestSessionMirrorArtifactIsValidNonTruncatedReference(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "session.jsonl")
+	if err := os.WriteFile(path, []byte("{\"role\":\"user\"}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	srv := New(Options{Workspace: t.TempDir(), Version: "test"})
+	sess := &session{ctrl: &persistentFakeController{
+		fakeController: &fakeController{model: "local/test"}, sessionPath: path,
+	}}
+
+	artifacts := srv.sessionMirrorArtifactLocked(sess)
+	if len(artifacts) != 1 {
+		t.Fatalf("mirror artifacts = %+v, want one reference", artifacts)
+	}
+	artifact := artifacts[0]
+	if artifact.Truncated || artifact.OriginalBytes != nil || artifact.TruncationReason != "" {
+		t.Fatalf("complete mirror was marked as truncated: %+v", artifact)
+	}
+	if err := artifact.Validate(); err != nil {
+		t.Fatalf("complete mirror reference is invalid: %v", err)
+	}
+}

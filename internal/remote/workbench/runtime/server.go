@@ -1564,10 +1564,9 @@ func (s *Server) sessionMirrorArtifactLocked(sess *session) []protocol.Externali
 		}
 		delete(s.contents, oldestRef)
 	}
-	original := int64(len(data))
 	return []protocol.ExternalizedField{{
-		JSONPointer: "/mirror/session.jsonl", ContentRef: ref, TotalBytes: original,
-		SHA256: digest, OriginalBytes: &original,
+		JSONPointer: "/mirror/session.jsonl", ContentRef: ref, TotalBytes: int64(len(data)),
+		SHA256: digest,
 	}}
 }
 
