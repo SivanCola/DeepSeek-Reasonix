@@ -7628,16 +7628,6 @@ func currentTabToolApprovalMode(tab *WorkspaceTab) string {
 	return normalizeToolApprovalMode(tab.toolApprovalMode)
 }
 
-func currentTabRecoveryCheckpointEnabled(tab *WorkspaceTab) bool {
-	if tab == nil {
-		return false
-	}
-	if tab.Ctrl != nil {
-		return tab.Ctrl.RecoveryCheckpointEnabled()
-	}
-	return tab.recoveryCheckpointEnabled
-}
-
 func currentTabTokenMode(tab *WorkspaceTab) string {
 	if tab == nil {
 		return boot.TokenModeFull

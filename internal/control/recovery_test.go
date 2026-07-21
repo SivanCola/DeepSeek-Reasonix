@@ -241,12 +241,14 @@ func TestLegacyApproveResolvesWaiterOnlyHighRisk(t *testing.T) {
 	// live waiter but no taskRuntime, so Snapshot cannot discover them.
 	ag := agent.New(nil, tool.NewRegistry(), agent.NewSession("sys"), agent.Options{}, event.Discard)
 	var c *Controller
+	var approvalID string
 	c = New(Options{
 		Runner: ag, Executor: ag,
 		Policy:                    permission.Policy{Mode: permission.Allow},
 		RecoveryCheckpointEnabled: true,
 		Sink: event.FuncSink(func(e event.Event) {
 			if e.Kind == event.ApprovalRequest && e.Approval.Kind == recovery.ApprovalKindRecovery {
+				approvalID = e.Approval.ID
 				// Simulate a legacy client that only knows Approve.
 				c.Approve(e.Approval.ID, true, true, true) // session/persist must be ignored
 			}
@@ -267,8 +269,11 @@ func TestLegacyApproveResolvesWaiterOnlyHighRisk(t *testing.T) {
 	if err != nil || !dec.Allow {
 		t.Fatalf("legacy Approve did not unblock high-risk card: %+v %v", dec, err)
 	}
-	if gate.HasApproval("anything") {
-		// no leftover waiters for other ids
+	if approvalID == "" {
+		t.Fatal("expected a recovery approval id to be emitted")
+	}
+	if gate.HasApproval(approvalID) {
+		t.Fatalf("HasApproval(%q) = true after legacy Approve, want false", approvalID)
 	}
 }
 

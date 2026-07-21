@@ -1058,6 +1058,68 @@ model = "x"
 	}
 }
 
+// TestBuildHonorsProjectAutoRecoveryKillSwitch freezes the contract that
+// project reasonix.toml [agent].auto_recovery_checkpoint = "off" wins over a
+// global "on" default when boot.Build loads merged config. Desktop must not
+// re-apply a user-only helper after this initialization.
+func TestBuildHonorsProjectAutoRecoveryKillSwitch(t *testing.T) {
+	home := isolateConfigHome(t)
+	userCfg := filepath.Join(home, ".config", "reasonix", "config.toml")
+	if err := os.MkdirAll(filepath.Dir(userCfg), 0o755); err != nil {
+		t.Fatalf("mkdir user config: %v", err)
+	}
+	// Global default keeps Auto Guard on.
+	if err := os.WriteFile(userCfg, []byte(`
+default_model = "test-model"
+
+[agent]
+auto_recovery_checkpoint = "on"
+system_prompt = "GLOBAL"
+
+[[providers]]
+name = "test-model"
+kind = "openai"
+base_url = "https://example.invalid"
+model = "x"
+api_key_env = "REASONIX_TEST_KEY_UNSET"
+`), 0o644); err != nil {
+		t.Fatalf("write user config: %v", err)
+	}
+
+	dir := robustTempDir(t)
+	writeFile(t, dir, "reasonix.toml", `
+default_model = "test-model"
+
+[agent]
+auto_recovery_checkpoint = "off"
+system_prompt = "PROJECT"
+
+[[providers]]
+name = "test-model"
+kind = "openai"
+base_url = "https://example.invalid"
+model = "x"
+api_key_env = "REASONIX_TEST_KEY_UNSET"
+`)
+
+	ctrl, err := Build(context.Background(), Options{WorkspaceRoot: dir, Sink: event.Discard})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	defer ctrl.Close()
+	if ctrl.RecoveryCheckpointEnabled() {
+		t.Fatal("project auto_recovery_checkpoint=off must disable Auto Guard at boot")
+	}
+
+	// Fresh session rotation must keep the construction-time kill switch,
+	// matching desktop rebuild paths that must not re-read user-only config.
+	fresh := filepath.Join(dir, "fresh-session.jsonl")
+	ctrl.SetFreshSessionPath(fresh)
+	if ctrl.RecoveryCheckpointEnabled() {
+		t.Fatal("fresh session must keep project kill switch disabled")
+	}
+}
+
 func TestRecoveryHeadlessModeUsesExplicitFrontendCapability(t *testing.T) {
 	if recoveryHeadlessMode(Options{}) {
 		t.Fatal("interactive frontend without HeadlessApprovalMode must remain answerable")

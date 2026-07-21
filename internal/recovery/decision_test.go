@@ -140,7 +140,7 @@ func TestBehaviorMatrixGolden(t *testing.T) {
 		t.Helper()
 		var reviews atomic.Int32
 		var prompted atomic.Bool
-		var r Reviewer = reviewer
+		r := reviewer
 		if r == nil {
 			r = reviewerFunc(func(context.Context, *FailureEvent, []string, Proposal, string) (ReviewVerdict, error) {
 				reviews.Add(1)
