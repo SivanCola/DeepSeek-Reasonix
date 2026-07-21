@@ -2566,6 +2566,11 @@ func (c *Controller) NewSession() error {
 		return err
 	}
 	defer c.endRotation()
+	// Retire asynchronous recovery writes before Snapshot publishes the final
+	// old-session checkpoint. Otherwise an earlier write can outlive the path
+	// rotation (or process teardown) and race cleanup of the old session.
+	oldPath := c.SessionPath()
+	c.flushRecoveryPersistence(oldPath)
 	if err := c.Snapshot(); err != nil {
 		return err
 	}

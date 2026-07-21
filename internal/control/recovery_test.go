@@ -382,3 +382,64 @@ func TestFreshSessionRotationsClearRecoveryState(t *testing.T) {
 		})
 	}
 }
+
+func TestNewSessionWaitsForPendingRecoveryPersistence(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "old.jsonl")
+	sess := agent.NewSession("sys")
+	sess.Add(provider.Message{Role: provider.RoleUser, Content: "hello"})
+	if err := sess.Save(path); err != nil {
+		t.Fatalf("Save session: %v", err)
+	}
+	ag := agent.New(nil, tool.NewRegistry(), sess, agent.Options{}, event.Discard)
+	c := New(Options{Runner: ag, Executor: ag, SessionDir: dir, SessionPath: path})
+	defer c.Close()
+	c.SetToolApprovalMode(ToolApprovalAuto)
+
+	started := make(chan struct{})
+	release := make(chan struct{})
+	var startOnce sync.Once
+	var releaseOnce sync.Once
+	t.Cleanup(func() { releaseOnce.Do(func() { close(release) }) })
+	gate := recovery.NewGate(recovery.Options{
+		Mode:           c.ToolApprovalMode,
+		PersistenceKey: c.SessionPath,
+		Persist: func(capturedPath string, snap recovery.Snapshot) {
+			startOnce.Do(func() { close(started) })
+			<-release
+			c.persistRecoverySnapshot(capturedPath, snap)
+		},
+	})
+	c.mu.Lock()
+	c.recoveryGate = gate
+	c.mu.Unlock()
+	ag.SetRecoveryGate(gate)
+
+	gate.ObserveResult(context.Background(), recovery.Observation{
+		Tool: "bash", Verification: true,
+		Args: json.RawMessage(`{"command":"go test ./..."}`), ErrSummary: "fail",
+	})
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("recovery persistence did not start")
+	}
+
+	done := make(chan error, 1)
+	go func() { done <- c.NewSession() }()
+	select {
+	case err := <-done:
+		t.Fatalf("NewSession returned before old recovery persistence drained: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	releaseOnce.Do(func() { close(release) })
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("NewSession: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("NewSession did not resume after recovery persistence drained")
+	}
+}
