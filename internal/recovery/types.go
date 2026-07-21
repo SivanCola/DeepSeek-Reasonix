@@ -8,7 +8,8 @@ import (
 	"reasonix/internal/event"
 )
 
-// Phase is the per-task recovery state-machine phase.
+// Phase is a derived view of recovery progress for compatibility snapshots.
+// Runtime truth is "has failure" and "has waiter", not a stored phase enum.
 type Phase string
 
 const (
@@ -38,16 +39,22 @@ const (
 )
 
 // ReviewVerdict is the strict JSON shape the recovery reviewer must produce.
+// Host already knows failure/diagnosis/proposed action; only outcome fields are
+// required. Extra fields from older models are tolerated on parse.
 type ReviewVerdict struct {
-	Outcome        ReviewOutcome `json:"outcome"`
-	ChangeKind     ChangeKind    `json:"change_kind"`
-	FailureSummary string        `json:"failure_summary"`
-	Diagnosis      string        `json:"diagnosis"`
-	ProposedAction string        `json:"proposed_action"`
-	Rationale      string        `json:"rationale"`
+	Outcome    ReviewOutcome `json:"outcome"`
+	ChangeKind ChangeKind    `json:"change_kind"`
+	Rationale  string        `json:"rationale"`
+
+	// Legacy optional fields kept for older model outputs and tests.
+	FailureSummary string `json:"failure_summary,omitempty"`
+	Diagnosis      string `json:"diagnosis,omitempty"`
+	ProposedAction string `json:"proposed_action,omitempty"`
 }
 
-// FailureEvent records the active failure that armed the checkpoint.
+// FailureEvent records the active failure that armed Auto Guard.
+// SafeRetryLeft/RepeatCount/DiagnosisNotes remain on the wire for old
+// snapshots; runtime truth lives on activeFailure.
 type FailureEvent struct {
 	Tool           string          `json:"tool"`
 	ArgsSummary    string          `json:"args_summary,omitempty"`
@@ -68,6 +75,7 @@ type FailureEvent struct {
 }
 
 // PendingProposal is the mutation paused for user confirmation.
+// It is held only in the temporary waiter table, never as durable task state.
 type PendingProposal struct {
 	Tool        string          `json:"tool"`
 	Subject     string          `json:"subject,omitempty"`
@@ -82,7 +90,8 @@ type PendingProposal struct {
 	Proposed    string          `json:"proposed,omitempty"`
 }
 
-// TaskState is the recovery state for one task.
+// TaskState is the persistable compatibility view of one task's recovery state.
+// Runtime truth is taskRuntime; Snapshot/Restore project to and from this shape.
 type TaskState struct {
 	Phase            Phase            `json:"phase"`
 	Failure          *FailureEvent    `json:"failure,omitempty"`
@@ -166,6 +175,10 @@ const (
 	ActionContinue = agent.RecoveryActionContinue
 	ActionRevise   = agent.RecoveryActionRevise
 )
+
+// DefaultReviseFeedback is injected when the user chooses "try another approach"
+// without optional free-text feedback.
+const DefaultReviseFeedback = "The pending mutation was rejected. Do not retry the same action. Summarize the failure cause, narrow the scope, and propose a safer alternative before attempting another mutation."
 
 func firstNonEmpty(vals ...string) string {
 	for _, v := range vals {

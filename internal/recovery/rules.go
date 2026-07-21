@@ -50,8 +50,14 @@ func IsVerificationCall(tool string, args json.RawMessage, readOnly bool) bool {
 
 // IsSafeVerificationRetry reports whether proposal is a first safe retry of the
 // same host-proven verification command that failed.
+// Callers must also consult the runtime safe-retry budget (safeRetryUsed /
+// SafeRetryLeft); a spent budget never qualifies.
 func IsSafeVerificationRetry(failure *FailureEvent, proposal Proposal) bool {
-	if failure == nil || !failure.Verification || failure.SafeRetryLeft <= 0 {
+	if failure == nil || !failure.Verification {
+		return false
+	}
+	if failure.SafeRetryLeft <= 0 {
+		// evidenceCopy sets SafeRetryLeft from runtime truth; 0 means spent.
 		return false
 	}
 	if !proposal.Verification || proposal.HighRisk || proposal.ExpandedScope || proposal.StrategyChanged {

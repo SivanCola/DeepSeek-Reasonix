@@ -8,7 +8,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-	"unicode/utf8"
 
 	"reasonix/internal/agent"
 )
@@ -46,17 +45,21 @@ type Options struct {
 	Persist func(key string, snapshot Snapshot)
 }
 
-// Gate is the shared Auto Guard state machine for one controller session.
+// Gate is the Auto Guard coordinator for one controller session.
 // Root, foreground sub-agents, and background writer sub-agents share it;
-// state is isolated by TaskID.
+// state is isolated by TaskID. Pure routing lives in Decide; this type owns
+// state updates, reviewer calls, approval waiters, and persistence.
 type Gate struct {
 	mu      sync.Mutex
 	enabled atomic.Bool
 	opts    Options
-	tasks   map[string]*TaskState
+	tasks   map[string]*taskRuntime
 	metrics Metrics
 	waiters map[string]chan resolvePayload // keyed by approval id
 	taskOf  map[string]string              // approval id -> task id
+	// awaiting tracks in-flight human prompts so Phase can be derived without
+	// storing Pending on the task runtime.
+	awaiting map[string]struct{} // task ids with an open waiter
 
 	// persistMu orders asynchronous snapshots. A newer state may be scheduled
 	// before an older goroutine reaches disk; sequence checks prevent that older
@@ -89,9 +92,10 @@ func NewGate(opts Options) *Gate {
 	}
 	g := &Gate{
 		opts:           opts,
-		tasks:          map[string]*TaskState{},
+		tasks:          map[string]*taskRuntime{},
 		waiters:        map[string]chan resolvePayload{},
 		taskOf:         map[string]string{},
+		awaiting:       map[string]struct{}{},
 		persistPending: map[string]int{},
 		persistDone:    map[string]uint64{},
 	}
@@ -147,11 +151,35 @@ func (g *Gate) Snapshot() Snapshot {
 	}
 	g.mu.Lock()
 	defer g.mu.Unlock()
+	return g.snapshotLocked()
+}
+
+func (g *Gate) snapshotLocked() Snapshot {
+	// Map task id -> live approval id for observability. Restore always drops
+	// these fields so a restart never replays a one-shot grant.
+	approvalByTask := map[string]string{}
+	for approvalID, taskID := range g.taskOf {
+		if strings.HasPrefix(approvalID, "pending:") {
+			continue
+		}
+		approvalByTask[taskID] = approvalID
+	}
 	out := Snapshot{Tasks: map[string]*TaskState{}}
 	for id, st := range g.tasks {
-		if cp := cloneTaskState(st); cp != nil && !taskStateEmpty(cp) {
-			out.Tasks[id] = cp
+		phase := PhaseDiagnosing
+		if _, waiting := g.awaiting[id]; waiting {
+			phase = PhaseAwaitingDecision
 		}
+		cp := st.toTaskState(phase)
+		if cp == nil {
+			// Task may only be waiting without residual failure (rare); skip.
+			continue
+		}
+		if aid := approvalByTask[id]; aid != "" {
+			cp.ApprovalID = aid
+			cp.Phase = PhaseAwaitingDecision
+		}
+		out.Tasks[id] = cp
 	}
 	return out
 }
@@ -165,24 +193,17 @@ func (g *Gate) Restore(snap Snapshot) {
 	}
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	g.tasks = map[string]*TaskState{}
+	g.tasks = map[string]*taskRuntime{}
 	g.waiters = map[string]chan resolvePayload{}
 	g.taskOf = map[string]string{}
+	g.awaiting = map[string]struct{}{}
 	for id, st := range snap.Tasks {
-		if st == nil {
+		rt := taskRuntimeFromState(st)
+		if rt == nil {
 			continue
 		}
-		cp := cloneTaskState(st)
-		if cp == nil {
-			continue
-		}
-		if cp.Failure == nil {
-			continue
-		}
-		cp.Phase = PhaseDiagnosing
-		cp.Pending = nil
-		cp.ApprovalID = ""
-		g.tasks[id] = cp
+		// Ignore old Pending and ApprovalID — never restore as authorization.
+		g.tasks[id] = rt
 	}
 }
 
@@ -200,8 +221,6 @@ func (g *Gate) BindApprovalID(taskID, approvalID string) {
 	}
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	st := g.taskLocked(taskID)
-	st.ApprovalID = approvalID
 	provisional := "pending:" + taskID
 	if ch := g.waiters[provisional]; ch != nil {
 		delete(g.waiters, provisional)
@@ -209,6 +228,7 @@ func (g *Gate) BindApprovalID(taskID, approvalID string) {
 		g.waiters[approvalID] = ch
 	}
 	g.taskOf[approvalID] = taskID
+	g.awaiting[taskID] = struct{}{}
 }
 
 // Resolve applies a user decision to a pending Auto Guard approval.
@@ -226,26 +246,29 @@ func (g *Gate) Resolve(id string, action Action, feedback string) error {
 		g.mu.Unlock()
 		return fmt.Errorf("unknown recovery approval %q", id)
 	}
-	st := g.taskLocked(taskID)
+	st := g.tasks[taskID]
 	switch action {
 	case ActionContinue:
-		st.Phase = PhaseDiagnosing
-		st.Pending = nil
-		st.ReviewBlocks = 0
+		if st != nil {
+			st.reviewRejects = 0
+		}
 		g.metrics.HumanContinues++
 	case ActionRevise:
-		st.Phase = PhaseDiagnosing
-		st.Pending = nil
-		st.ReviewBlocks = 0
+		if st != nil {
+			st.reviewRejects = 0
+		}
 		g.metrics.HumanRevises++
+		if strings.TrimSpace(feedback) == "" {
+			feedback = DefaultReviseFeedback
+		}
 	default:
 		g.mu.Unlock()
 		return fmt.Errorf("unknown recovery action %q", action)
 	}
-	st.ApprovalID = ""
 	delete(g.waiters, id)
 	delete(g.taskOf, id)
-	if st.Failure == nil {
+	delete(g.awaiting, taskID)
+	if st == nil || st.failure == nil {
 		delete(g.tasks, taskID)
 	}
 	g.mu.Unlock()
@@ -292,8 +315,8 @@ func (g *Gate) ObserveResult(_ context.Context, obs Observation) string {
 	// evidence excerpt for the isolated reviewer; otherwise it sees the failure
 	// and proposed diff but none of the investigation that connected them.
 	if obs.Success {
-		if st != nil && st.Failure != nil && IsDiagnosticSuccess(obs) {
-			if appendDiagnosisNoteLocked(st, diagnosticObservationNote(obs)) {
+		if st != nil && st.failure != nil && IsDiagnosticSuccess(obs) {
+			if appendDiagnosisNote(st.failure, diagnosticObservationNote(obs)) {
 				g.persistUnlocked()
 			}
 		}
@@ -303,17 +326,18 @@ func (g *Gate) ObserveResult(_ context.Context, obs Observation) string {
 		return ""
 	}
 	if st == nil {
-		st = g.taskLocked(taskID)
+		st = &taskRuntime{}
+		g.tasks[taskID] = st
 	}
 
-	// Already recovering and another recovery op failed: raise repeat count.
-	if st.Phase != PhaseIdle && st.Failure != nil {
-		st.ConsecutiveFails++
-		st.Failure.RepeatCount++
-		st.Failure.ErrSummary = firstNonEmpty(obs.ErrSummary, st.Failure.ErrSummary)
-		st.Failure.OutputExcerpt = clip(obs.Output, 1500)
-		st.Phase = PhaseDiagnosing
-		st.Pending = nil
+	// Already recovering and another recovery op failed: raise failure count.
+	if st.failure != nil {
+		if st.failure.failureCount < 255 {
+			st.failure.failureCount++
+		}
+		st.failure.evidence.ErrSummary = firstNonEmpty(obs.ErrSummary, st.failure.evidence.ErrSummary)
+		st.failure.evidence.OutputExcerpt = clip(obs.Output, 1500)
+		st.reviewRejects = 0
 		g.metrics.FailureEvents++
 		guidance := g.recoveryGuidanceLocked(st)
 		g.persistUnlocked()
@@ -321,28 +345,27 @@ func (g *Gate) ObserveResult(_ context.Context, obs Observation) string {
 	}
 
 	fp := CallFingerprint(obs.Tool, obs.Subject, "", obs.Args)
-	st.Failure = &FailureEvent{
-		Tool:          obs.Tool,
-		ArgsSummary:   ArgsSummary(obs.Args, 200),
-		Subject:       obs.Subject,
-		ErrSummary:    obs.ErrSummary,
-		OutputExcerpt: clip(obs.Output, 1500),
-		SourceAgent:   obs.AgentID,
-		TaskID:        taskID,
-		ReadOnly:      obs.ReadOnly,
-		Verification:  obs.Verification,
-		Mutates:       obs.Mutates,
-		RepeatCount:   1,
-		CreatedAt:     g.opts.Now(),
-		Args:          append(json.RawMessage(nil), obs.Args...),
-		Fingerprint:   fp,
-		SafeRetryLeft: 1,
+	st.failure = &activeFailure{
+		evidence: FailureEvent{
+			Tool:          obs.Tool,
+			ArgsSummary:   ArgsSummary(obs.Args, 200),
+			Subject:       obs.Subject,
+			ErrSummary:    obs.ErrSummary,
+			OutputExcerpt: clip(obs.Output, 1500),
+			SourceAgent:   obs.AgentID,
+			TaskID:        taskID,
+			ReadOnly:      obs.ReadOnly,
+			Verification:  obs.Verification,
+			Mutates:       obs.Mutates,
+			CreatedAt:     g.opts.Now(),
+			Args:          append(json.RawMessage(nil), obs.Args...),
+			Fingerprint:   fp,
+		},
+		failureCount:  1,
+		safeRetryUsed: false,
 	}
-	st.Phase = PhaseDiagnosing
-	st.ConsecutiveFails = 1
-	st.ReviewBlocks = 0
-	st.Pending = nil
-	st.TailInjected = false
+	st.reviewRejects = 0
+	st.guidanceSent = false
 	g.metrics.FailureEvents++
 	guidance := g.recoveryGuidanceLocked(st)
 	g.persistUnlocked()
@@ -351,22 +374,51 @@ func (g *Gate) ObserveResult(_ context.Context, obs Observation) string {
 
 // BeforeMutation implements agent.RecoveryGate.
 func (g *Gate) BeforeMutation(ctx context.Context, proposal Proposal) (Decision, error) {
-	if g == nil || !g.enabled.Load() || !g.activeMode() {
+	if g == nil {
 		return Decision{Allow: true}, nil
 	}
-	// Host-proven read-only diagnostics always continue.
-	if proposal.ReadOnly && !proposal.Mutates {
+
+	// Host-proven read-only diagnostics always continue (even when disabled —
+	// Decide also encodes this; short-circuit matches prior behavior for
+	// disabled/non-auto via RouteBypass → allow through ordinary path).
+	facts, failure, diagNotes, taskID, fp := g.classify(proposal)
+	route := Decide(facts)
+
+	switch route.Route {
+	case RouteBypass, RouteAllow:
+		if route.ConsumeSafeRetry {
+			g.mu.Lock()
+			if st := g.tasks[taskID]; st != nil && st.failure != nil && !st.failure.safeRetryUsed {
+				st.failure.safeRetryUsed = true
+				g.metrics.RuleContinues++
+			}
+			g.mu.Unlock()
+			g.persist()
+		}
+		return Decision{Allow: true}, nil
+	case RouteAsk:
+		return g.askHuman(ctx, taskID, fp, proposal, failure, diagNotes, ChangeKindForAsk(route.AskReason), ruleRationale(ChangeKindForAsk(route.AskReason), int(facts.FailureCount)))
+	case RouteReview:
+		return g.reviewOrEscalate(ctx, taskID, fp, proposal, failure, diagNotes)
+	default:
 		return Decision{Allow: true}, nil
 	}
-	if !proposal.Mutates && !proposal.Verification {
-		return Decision{Allow: true}, nil
+}
+
+// classify builds pure Facts for Decide. It never calls the model or UI.
+func (g *Gate) classify(proposal Proposal) (Facts, *FailureEvent, []string, string, string) {
+	facts := Facts{
+		Enabled:      g.enabled.Load(),
+		AutoMode:     g.activeMode(),
+		ReadOnly:     proposal.ReadOnly,
+		Mutates:      proposal.Mutates,
+		Verification: proposal.Verification,
 	}
-	// Deterministic boundary checks run before the failure-recovery path. This
-	// gives Auto a real pre-action safety boundary without adding a model call to
-	// ordinary workspace edits.
+	// Deterministic boundary checks run before the failure-recovery path.
 	if !proposal.HighRisk {
 		proposal.HighRisk = IsHighRiskMutation(proposal)
 	}
+	facts.HighRisk = proposal.HighRisk
 
 	taskID := normalizeTaskID(proposal.TaskID)
 	fp := CallFingerprint(proposal.Tool, proposal.Subject, proposal.Preview, proposal.Args)
@@ -374,130 +426,96 @@ func (g *Gate) BeforeMutation(ctx context.Context, proposal Proposal) (Decision,
 	g.mu.Lock()
 	st := g.tasks[taskID]
 	var failure *FailureEvent
-	consec := 0
 	var diagNotes []string
-	if st != nil && st.Failure != nil {
-		cp := *st.Failure
-		cp.Args = append(json.RawMessage(nil), st.Failure.Args...)
-		cp.DiagnosisNotes = append([]string(nil), st.Failure.DiagnosisNotes...)
-		failure = &cp
-		consec = st.ConsecutiveFails
-		diagNotes = append([]string(nil), st.Failure.DiagnosisNotes...)
+	if st != nil && st.failure != nil {
+		failure = st.evidenceCopy()
+		diagNotes = st.diagnosisNotes()
+		facts.HasActiveFailure = true
+		facts.FailureCount = st.failureCount()
+		// Safe verification retry availability is host-classified.
+		if IsSafeVerificationRetry(failure, proposal) && st.safeRetryAvailable() {
+			facts.SafeRetryAvailable = true
+		}
 	}
 	g.mu.Unlock()
-	if failure == nil && !proposal.HighRisk {
-		return Decision{Allow: true}, nil
-	}
 
-	if failure != nil && !proposal.ExpandedScope {
-		proposal.ExpandedScope = ScopeExpanded(failure, proposal)
+	if failure != nil {
+		if !proposal.ExpandedScope {
+			proposal.ExpandedScope = ScopeExpanded(failure, proposal)
+		}
+		if !proposal.StrategyChanged {
+			proposal.StrategyChanged = StrategyChanged(failure, proposal)
+		}
+		facts.ExpandedScope = proposal.ExpandedScope
+		facts.StrategyChanged = proposal.StrategyChanged
+		// Safe retry cannot combine with scope/strategy/high-risk; classifier
+		// already requires those flags clear in IsSafeVerificationRetry.
+		if facts.SafeRetryAvailable && (facts.ExpandedScope || facts.StrategyChanged || facts.HighRisk) {
+			facts.SafeRetryAvailable = false
+		}
 	}
-	if failure != nil && !proposal.StrategyChanged {
-		proposal.StrategyChanged = StrategyChanged(failure, proposal)
-	}
-	if failure != nil && (proposal.SafeRetry || IsSafeVerificationRetry(failure, proposal)) {
+	return facts, failure, diagNotes, taskID, fp
+}
+
+func (g *Gate) reviewOrEscalate(ctx context.Context, taskID, fp string, proposal Proposal, failure *FailureEvent, diagNotes []string) (Decision, error) {
+	var verdict ReviewVerdict
+	if g.opts.Reviewer != nil {
+		start := g.opts.Now()
+		taskSummary := strings.TrimSpace(proposal.TaskSummary)
+		if taskSummary == "" && g.opts.TaskSummary != nil {
+			taskSummary = g.opts.TaskSummary()
+		}
+		v, err := g.opts.Reviewer.Review(ctx, failure, diagNotes, proposal, taskSummary)
+		latency := g.opts.Now().Sub(start).Milliseconds()
 		g.mu.Lock()
-		if st := g.taskLocked(taskID); st.Failure != nil && st.Failure.SafeRetryLeft > 0 {
-			st.Failure.SafeRetryLeft--
-			g.metrics.RuleContinues++
+		g.metrics.ReviewLatencyMsSum += latency
+		g.metrics.ReviewLatencyCount++
+		if err != nil {
+			g.metrics.ReviewErrors++
 		}
 		g.mu.Unlock()
-		g.persist()
-		return Decision{Allow: true}, nil
-	}
-
-	forceConfirm := failure == nil || proposal.HighRisk ||
-		proposal.ExpandedScope ||
-		proposal.StrategyChanged ||
-		consec >= 2
-
-	var verdict ReviewVerdict
-	if !forceConfirm && failure != nil {
-		if g.opts.Reviewer != nil {
-			start := g.opts.Now()
-			taskSummary := strings.TrimSpace(proposal.TaskSummary)
-			if taskSummary == "" && g.opts.TaskSummary != nil {
-				taskSummary = g.opts.TaskSummary()
+		if err != nil {
+			// Reviewer errors escalate immediately and do not burn reject budget.
+			verdict = ReviewVerdict{
+				Outcome:    ReviewConfirm,
+				ChangeKind: ChangeUncertain,
+				Rationale:  "Auto Guard could not verify this step automatically",
 			}
-			v, err := g.opts.Reviewer.Review(ctx, failure, diagNotes, proposal, taskSummary)
-			latency := g.opts.Now().Sub(start).Milliseconds()
+			return g.askHuman(ctx, taskID, fp, proposal, failure, diagNotes, verdict.ChangeKind, verdict.Rationale)
+		}
+		verdict = normalizeVerdict(v, failure, proposal, diagNotes)
+		if verdict.Outcome == ReviewContinue && verdict.ChangeKind == ChangeSameStrategy {
 			g.mu.Lock()
-			g.metrics.ReviewLatencyMsSum += latency
-			g.metrics.ReviewLatencyCount++
-			if err != nil {
-				g.metrics.ReviewErrors++
+			g.metrics.ReviewContinues++
+			if current := g.tasks[taskID]; current != nil {
+				current.reviewRejects = 0
 			}
 			g.mu.Unlock()
-			if err != nil {
-				verdict = ReviewVerdict{
-					Outcome:        ReviewConfirm,
-					ChangeKind:     ChangeUncertain,
-					FailureSummary: failure.ErrSummary,
-					Diagnosis:      "Auto Guard reviewer unavailable",
-					ProposedAction: firstNonEmpty(proposal.Subject, proposal.Tool),
-					Rationale:      "reviewer error: " + err.Error(),
-				}
-			} else {
-				verdict = normalizeVerdict(v, failure, proposal, diagNotes)
-				if verdict.Outcome == ReviewContinue && verdict.ChangeKind == ChangeSameStrategy {
-					g.mu.Lock()
-					g.metrics.ReviewContinues++
-					if current := g.tasks[taskID]; current != nil {
-						current.ReviewBlocks = 0
-					}
-					g.mu.Unlock()
-					g.persist()
-					return Decision{Allow: true}, nil
-				}
-				// Give the exact reviewer reason back to the proposing agent first.
-				// Only repeated inability to find a safe alternative escalates.
-				blocks := g.recordReviewBlock(taskID, verdict)
-				if blocks < g.opts.MaxReviewBlocks {
-					return Decision{
-						Allow:   false,
-						Blocked: true,
-						Message: reviewerBlockerMessage(verdict, blocks, g.opts.MaxReviewBlocks),
-					}, nil
-				}
-				verdict.Rationale = fmt.Sprintf(
-					"Auto Guard could not verify a safe alternative after %d consecutive attempts: %s",
-					blocks, verdict.Rationale,
-				)
-			}
-		} else {
-			verdict = ReviewVerdict{
-				Outcome:        ReviewConfirm,
-				ChangeKind:     ChangeUncertain,
-				FailureSummary: failure.ErrSummary,
-				Diagnosis:      strings.Join(diagNotes, "\n"),
-				ProposedAction: firstNonEmpty(proposal.Subject, proposal.Preview, proposal.Tool),
-				Rationale:      "no Auto Guard reviewer configured; confirming before mutation",
-			}
+			g.persist()
+			return Decision{Allow: true}, nil
 		}
-	} else {
-		kind := ChangeUncertain
-		switch {
-		case proposal.HighRisk || consec >= 2:
-			kind = ChangeRisk
-		case proposal.ExpandedScope:
-			kind = ChangeScope
-		case proposal.StrategyChanged:
-			kind = ChangeStrategy
+		// Give the exact reviewer reason back to the proposing agent first.
+		// Only repeated inability to find a safe alternative escalates.
+		blocks := g.recordReviewBlock(taskID, verdict)
+		if blocks < g.opts.MaxReviewBlocks {
+			return Decision{
+				Allow:   false,
+				Blocked: true,
+				Message: reviewerBlockerMessage(verdict, blocks, g.opts.MaxReviewBlocks),
+			}, nil
 		}
-		failureSummary := ""
-		if failure != nil {
-			failureSummary = failure.ErrSummary
-		}
-		verdict = ReviewVerdict{
-			Outcome:        ReviewConfirm,
-			ChangeKind:     kind,
-			FailureSummary: failureSummary,
-			Diagnosis:      strings.Join(diagNotes, "\n"),
-			ProposedAction: firstNonEmpty(proposal.Subject, proposal.Preview, proposal.Tool),
-			Rationale:      ruleRationale(kind, consec),
-		}
+		verdict.Rationale = fmt.Sprintf(
+			"Auto Guard could not verify a safe alternative after %d consecutive attempts: %s",
+			blocks, firstNonEmpty(verdict.Rationale, "needs confirmation"),
+		)
+		return g.askHuman(ctx, taskID, fp, proposal, failure, diagNotes, verdict.ChangeKind, verdict.Rationale)
 	}
+	// No reviewer configured: fail closed to human confirmation.
+	return g.askHuman(ctx, taskID, fp, proposal, failure, diagNotes, ChangeUncertain,
+		"no Auto Guard reviewer configured; confirming before mutation")
+}
 
+func (g *Gate) askHuman(ctx context.Context, taskID, fp string, proposal Proposal, failure *FailureEvent, diagNotes []string, kind ChangeKind, rationale string) (Decision, error) {
 	failureSource := ""
 	failureSummary := ""
 	if failure != nil {
@@ -511,11 +529,11 @@ func (g *Gate) BeforeMutation(ctx context.Context, proposal Proposal) (Decision,
 		Args:        append(json.RawMessage(nil), proposal.Args...),
 		Fingerprint: fp,
 		SourceAgent: firstNonEmpty(proposal.AgentID, failureSource),
-		ChangeKind:  verdict.ChangeKind,
-		Rationale:   firstNonEmpty(verdict.Rationale, verdict.Diagnosis),
-		Diagnosis:   firstNonEmpty(verdict.Diagnosis, strings.Join(diagNotes, "\n")),
-		Failure:     firstNonEmpty(verdict.FailureSummary, failureSummary),
-		Proposed:    firstNonEmpty(verdict.ProposedAction, proposal.Subject, proposal.Preview),
+		ChangeKind:  kind,
+		Rationale:   firstNonEmpty(rationale, userFacingReason(kind)),
+		Diagnosis:   strings.Join(diagNotes, "\n"),
+		Failure:     failureSummary,
+		Proposed:    firstNonEmpty(proposal.Subject, proposal.Preview, proposal.Tool),
 	}
 
 	if g.opts.Headless || g.opts.EmitPrompt == nil {
@@ -531,17 +549,14 @@ func (g *Gate) BeforeMutation(ctx context.Context, proposal Proposal) (Decision,
 	// real id immediately after EmitPrompt returns.
 	reply := make(chan resolvePayload, 1)
 	g.mu.Lock()
-	st = g.taskLocked(taskID)
-	st.Phase = PhaseAwaitingDecision
-	st.Pending = &pending
 	g.metrics.HumanPrompts++
-	if st.ConsecutiveFails > 1 {
+	if st := g.tasks[taskID]; st != nil && st.failureCount() > 1 {
 		g.metrics.RepeatPrompts++
 	}
-	// Park under a provisional task key until the real approval id is known.
 	provisional := "pending:" + taskID
 	g.waiters[provisional] = reply
 	g.taskOf[provisional] = taskID
+	g.awaiting[taskID] = struct{}{}
 	g.mu.Unlock()
 
 	approvalID, err := g.opts.EmitPrompt(ctx, taskID, pending, failure)
@@ -549,14 +564,7 @@ func (g *Gate) BeforeMutation(ctx context.Context, proposal Proposal) (Decision,
 		g.mu.Lock()
 		delete(g.waiters, provisional)
 		delete(g.taskOf, provisional)
-		if st := g.tasks[taskID]; st != nil {
-			st.Phase = PhaseDiagnosing
-			st.Pending = nil
-			st.ApprovalID = ""
-			if st.Failure == nil {
-				delete(g.tasks, taskID)
-			}
-		}
+		delete(g.awaiting, taskID)
 		g.mu.Unlock()
 		return Decision{Allow: false, Blocked: true, Message: "blocked: Auto Guard prompt failed: " + err.Error()}, err
 	}
@@ -565,13 +573,7 @@ func (g *Gate) BeforeMutation(ctx context.Context, proposal Proposal) (Decision,
 		g.mu.Lock()
 		delete(g.waiters, provisional)
 		delete(g.taskOf, provisional)
-		if st := g.tasks[taskID]; st != nil {
-			st.Phase = PhaseDiagnosing
-			st.Pending = nil
-			if st.Failure == nil {
-				delete(g.tasks, taskID)
-			}
-		}
+		delete(g.awaiting, taskID)
 		g.mu.Unlock()
 		return Decision{Allow: false, Blocked: true, Message: "blocked: Auto Guard prompt returned empty id"}, fmt.Errorf("empty Auto Guard approval id")
 	}
@@ -590,12 +592,11 @@ func (g *Gate) BeforeMutation(ctx context.Context, proposal Proposal) (Decision,
 			reply = provisionalReply
 			g.waiters[approvalID] = reply
 			g.taskOf[approvalID] = taskID
-			st = g.taskLocked(taskID)
-			st.ApprovalID = approvalID
 		}
 	} else if existing, ok := g.waiters[approvalID]; ok && existing != nil {
 		reply = existing
 	}
+	g.awaiting[taskID] = struct{}{}
 	g.mu.Unlock()
 	g.persist()
 
@@ -606,14 +607,7 @@ func (g *Gate) BeforeMutation(ctx context.Context, proposal Proposal) (Decision,
 		g.mu.Lock()
 		delete(g.waiters, approvalID)
 		delete(g.taskOf, approvalID)
-		if st := g.tasks[taskID]; st != nil {
-			st.Phase = PhaseDiagnosing
-			st.Pending = nil
-			st.ApprovalID = ""
-			if st.Failure == nil {
-				delete(g.tasks, taskID)
-			}
-		}
+		delete(g.awaiting, taskID)
 		g.mu.Unlock()
 		g.persist()
 		return Decision{Allow: false, Blocked: true, Message: "blocked: Auto Guard confirmation cancelled"}, ctx.Err()
@@ -626,16 +620,18 @@ func (g *Gate) decisionFromResolve(payload resolvePayload) (Decision, error) {
 		return Decision{Allow: true}, nil
 	case ActionRevise:
 		msg := "blocked: user requested a revised Auto Guard action"
-		if strings.TrimSpace(payload.feedback) != "" {
-			msg += ": " + strings.TrimSpace(payload.feedback)
+		feedback := strings.TrimSpace(payload.feedback)
+		if feedback == "" {
+			feedback = DefaultReviseFeedback
 		}
+		msg += ": " + feedback
 		return Decision{Allow: false, Blocked: true, Message: msg}, nil
 	default:
 		return Decision{Allow: false, Blocked: true, Message: "blocked: unknown Auto Guard action"}, nil
 	}
 }
 
-// RecordDiagnosis appends a diagnosis note while in diagnosing phase.
+// RecordDiagnosis appends a diagnosis note while recovering.
 func (g *Gate) RecordDiagnosis(taskID, note string) {
 	if g == nil || strings.TrimSpace(note) == "" {
 		return
@@ -643,13 +639,10 @@ func (g *Gate) RecordDiagnosis(taskID, note string) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	st := g.tasks[normalizeTaskID(taskID)]
-	if st == nil {
+	if st == nil || st.failure == nil {
 		return
 	}
-	if st.Failure == nil {
-		return
-	}
-	if appendDiagnosisNoteLocked(st, note) {
+	if appendDiagnosisNote(st.failure, note) {
 		g.persistUnlocked()
 	}
 }
@@ -661,30 +654,16 @@ func (g *Gate) activeMode() bool {
 	return mode == "auto"
 }
 
-func (g *Gate) taskLocked(taskID string) *TaskState {
-	st := g.tasks[taskID]
-	if st == nil {
-		st = &TaskState{Phase: PhaseIdle}
-		g.tasks[taskID] = st
-	}
-	return st
-}
-
-func (g *Gate) recoveryGuidanceLocked(st *TaskState) string {
-	if st.TailInjected {
+func (g *Gate) recoveryGuidanceLocked(st *taskRuntime) string {
+	if st.guidanceSent {
 		return ""
 	}
-	st.TailInjected = true
+	st.guidanceSent = true
 	return "Auto Guard is active after a tool/verification failure. " +
 		"Diagnose with read-only tools first (read logs, search code, inspect the failing command output). " +
 		"Before changing strategy, scope, or risk of the next write, explain the diagnosis and the proposed recovery step. " +
 		"The host will block uncertain proposals with a reason and escalate repeated or high-risk changes automatically."
 }
-
-const (
-	maxDiagnosisNotes     = 8
-	maxDiagnosisNoteBytes = 800
-)
 
 func diagnosticObservationNote(obs Observation) string {
 	tool := clip(strings.TrimSpace(obs.Tool), 120)
@@ -703,41 +682,6 @@ func diagnosticObservationNote(obs Observation) string {
 	return clipDiagnosisNote(header + ": " + output)
 }
 
-// appendDiagnosisNoteLocked deduplicates repeated reads and bounds both memory
-// and the provider-visible reviewer request. Caller must hold g.mu.
-func appendDiagnosisNoteLocked(st *TaskState, note string) bool {
-	if st == nil || st.Failure == nil {
-		return false
-	}
-	note = clipDiagnosisNote(note)
-	if note == "" {
-		return false
-	}
-	for _, existing := range st.Failure.DiagnosisNotes {
-		if existing == note {
-			return false
-		}
-	}
-	st.Failure.DiagnosisNotes = append(st.Failure.DiagnosisNotes, note)
-	if len(st.Failure.DiagnosisNotes) > maxDiagnosisNotes {
-		st.Failure.DiagnosisNotes = st.Failure.DiagnosisNotes[len(st.Failure.DiagnosisNotes)-maxDiagnosisNotes:]
-	}
-	return true
-}
-
-func clipDiagnosisNote(note string) string {
-	note = strings.TrimSpace(note)
-	if len(note) <= maxDiagnosisNoteBytes {
-		return note
-	}
-	const ellipsis = "…"
-	cut := maxDiagnosisNoteBytes - len(ellipsis)
-	for cut > 0 && !utf8.RuneStart(note[cut]) {
-		cut--
-	}
-	return note[:cut] + ellipsis
-}
-
 func (g *Gate) persist() {
 	if g == nil || g.opts.Persist == nil {
 		return
@@ -746,18 +690,11 @@ func (g *Gate) persist() {
 }
 
 func (g *Gate) persistUnlocked() {
-	// Caller holds g.mu. Snapshot needs the lock — build inline.
+	// Caller holds g.mu.
 	if g == nil || g.opts.Persist == nil {
 		return
 	}
-	out := Snapshot{Tasks: map[string]*TaskState{}}
-	for id, st := range g.tasks {
-		if cp := cloneTaskState(st); cp != nil && !taskStateEmpty(cp) {
-			out.Tasks[id] = cp
-		}
-	}
-	// Persist outside the state lock to avoid deadlocks if Persist re-enters.
-	g.schedulePersist(out, true)
+	g.schedulePersist(g.snapshotLocked(), true)
 }
 
 func (g *Gate) schedulePersist(snap Snapshot, async bool) {
@@ -797,45 +734,6 @@ func (g *Gate) schedulePersist(snap Snapshot, async bool) {
 	write()
 }
 
-func cloneTaskState(st *TaskState) *TaskState {
-	if st == nil {
-		return nil
-	}
-	cp := *st
-	if st.Failure != nil {
-		failure := *st.Failure
-		failure.Args = append(json.RawMessage(nil), st.Failure.Args...)
-		failure.DiagnosisNotes = append([]string(nil), st.Failure.DiagnosisNotes...)
-		cp.Failure = &failure
-	}
-	if st.Pending != nil {
-		pending := *st.Pending
-		pending.Args = append(json.RawMessage(nil), st.Pending.Args...)
-		cp.Pending = &pending
-	}
-	return &cp
-}
-
-func taskStateEmpty(st *TaskState) bool {
-	return st == nil || (st.Failure == nil && st.Pending == nil && st.ApprovalID == "")
-}
-
-func normalizeTaskID(id string) string {
-	id = strings.TrimSpace(id)
-	if id == "" {
-		return "root"
-	}
-	return id
-}
-
-func clip(s string, n int) string {
-	s = strings.TrimSpace(s)
-	if n <= 0 || len(s) <= n {
-		return s
-	}
-	return s[:n] + "…"
-}
-
 func ruleRationale(kind ChangeKind, consec int) string {
 	switch kind {
 	case ChangeRisk:
@@ -849,6 +747,20 @@ func ruleRationale(kind ChangeKind, consec int) string {
 		return "the proposed recovery uses a different method than the failed approach"
 	default:
 		return "the host cannot prove this recovery is the same strategy and scope"
+	}
+}
+
+// userFacingReason is the short localized-friendly reason shown on the card.
+func userFacingReason(kind ChangeKind) string {
+	switch kind {
+	case ChangeRisk:
+		return "This step is higher risk and needs your confirmation."
+	case ChangeScope:
+		return "This step would expand the change scope."
+	case ChangeStrategy:
+		return "Auto is about to try a different approach."
+	default:
+		return "Auto cannot confirm this step is as safe as the original plan."
 	}
 }
 
@@ -877,12 +789,18 @@ func headlessBlockerMessage(pending PendingProposal, failure *FailureEvent) stri
 
 func (g *Gate) recordReviewBlock(taskID string, verdict ReviewVerdict) int {
 	g.mu.Lock()
-	st := g.taskLocked(taskID)
-	st.ReviewBlocks++
-	blocks := st.ReviewBlocks
-	if st.Failure != nil {
-		note := "Auto Guard reviewer blocked the proposal: " + firstNonEmpty(verdict.Rationale, verdict.Diagnosis)
-		appendDiagnosisNoteLocked(st, note)
+	st := g.tasks[taskID]
+	if st == nil {
+		st = &taskRuntime{}
+		g.tasks[taskID] = st
+	}
+	if st.reviewRejects < 255 {
+		st.reviewRejects++
+	}
+	blocks := int(st.reviewRejects)
+	if st.failure != nil {
+		note := "Auto Guard reviewer blocked the proposal: " + firstNonEmpty(verdict.Rationale, string(verdict.ChangeKind))
+		appendDiagnosisNote(st.failure, note)
 	}
 	g.mu.Unlock()
 	g.persist()
@@ -890,7 +808,7 @@ func (g *Gate) recordReviewBlock(taskID string, verdict ReviewVerdict) int {
 }
 
 func reviewerBlockerMessage(verdict ReviewVerdict, attempt, limit int) string {
-	reason := firstNonEmpty(verdict.Rationale, verdict.Diagnosis, "the action could not be verified as safe")
+	reason := firstNonEmpty(verdict.Rationale, "the action could not be verified as safe")
 	return fmt.Sprintf(
 		"blocked: Auto Guard reviewer could not verify this action (attempt %d/%d): %s. Diagnose further or propose a narrower same-strategy action before retrying.",
 		attempt, limit, reason,
@@ -920,6 +838,10 @@ func normalizeVerdict(v ReviewVerdict, failure *FailureEvent, proposal Proposal,
 		}
 		v.ChangeKind = ChangeUncertain
 	}
+	// continue is only valid with same_strategy.
+	if v.Outcome == ReviewContinue && v.ChangeKind != ChangeSameStrategy {
+		v.Outcome = ReviewConfirm
+	}
 	if strings.TrimSpace(v.FailureSummary) == "" && failure != nil {
 		v.FailureSummary = failure.ErrSummary
 	}
@@ -930,7 +852,9 @@ func normalizeVerdict(v ReviewVerdict, failure *FailureEvent, proposal Proposal,
 		v.ProposedAction = firstNonEmpty(proposal.Subject, proposal.Preview, proposal.Tool)
 	}
 	if strings.TrimSpace(v.Rationale) == "" {
-		v.Rationale = "Auto Guard reviewer provided no rationale"
+		v.Rationale = userFacingReason(v.ChangeKind)
+	} else {
+		v.Rationale = clip(v.Rationale, 500)
 	}
 	return v
 }
