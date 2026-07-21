@@ -280,20 +280,3 @@ func writeKeys(h io.Writer, key string, m map[string]string) {
 		writeField(h, key+"."+k, "present")
 	}
 }
-
-func writeBoolKV(h io.Writer, key string, m map[string]bool) {
-	if len(m) == 0 {
-		writeField(h, key, "")
-		return
-	}
-	keys := make([]string, 0, len(m))
-	for k, v := range m {
-		if v {
-			keys = append(keys, k)
-		}
-	}
-	sort.Strings(keys)
-	for _, k := range keys {
-		writeField(h, key+"."+k, "true")
-	}
-}
