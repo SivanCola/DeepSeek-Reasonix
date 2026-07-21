@@ -41,7 +41,8 @@ func (a *App) CheckUpdate() (*UpdateInfo, error) {
 	}
 	ctx, cancel := context.WithTimeout(a.reqCtx(), httpTimeout)
 	defer cancel()
-	m, err := fetchManifest(ctx, c)
+	v4, _ := httpClientIPv4()
+	m, err := fetchManifest(ctx, c, v4)
 	if err != nil {
 		a.recordUpdateError(err)
 		return &UpdateInfo{
@@ -65,7 +66,8 @@ func (a *App) OpenDownloadPage() {
 	if c, err := httpClient(); err == nil {
 		ctx, cancel := context.WithTimeout(a.reqCtx(), httpTimeout)
 		defer cancel()
-		if m, err := fetchManifest(ctx, c); err == nil && m.DownloadPage != "" {
+		v4, _ := httpClientIPv4()
+		if m, err := fetchManifest(ctx, c, v4); err == nil && m.DownloadPage != "" {
 			page = m.DownloadPage
 		}
 	}
@@ -88,7 +90,8 @@ func (a *App) DownloadUpdate() (*UpdateDownloadResult, error) {
 	}
 	ctx, cancel := context.WithTimeout(a.reqCtx(), httpTimeout)
 	defer cancel()
-	m, err := fetchManifest(ctx, c)
+	v4, _ := httpClientIPv4()
+	m, err := fetchManifest(ctx, c, v4)
 	if err != nil {
 		return nil, a.failUpdate(err)
 	}
@@ -202,7 +205,7 @@ func (a *App) downloadVerify(asset update.Asset) ([]byte, error) {
 		return nil, err
 	}
 	a.emitProgress("verifying", asset.Size, asset.Size, "")
-	sig, err := fetchBytes(a.reqCtx(), c, asset.Sig)
+	sig, err := fetchBytesFallback(a.reqCtx(), c, v4, asset.Sig)
 	if err != nil {
 		return nil, err
 	}

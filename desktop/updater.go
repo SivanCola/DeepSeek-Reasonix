@@ -41,11 +41,14 @@ import (
 // avoids GitHub's repository-wide /releases/latest shortcut so the app is not
 // coupled to GitHub's homepage badge semantics.
 const (
-	r2Base             = "https://dl.reasonix.io"
-	releaseGatewayBase = "https://crash.reasonix.io/v1/desktop/releases"
-	downloadPageURL    = "https://reasonix.io/?download=desktop#start"
-	httpTimeout        = 15 * time.Second
+	r2Base                  = "https://dl.reasonix.io"
+	releaseGatewayBase      = "https://crash.reasonix.io/v1/desktop/releases"
+	downloadPageURL         = "https://reasonix.io/?download=desktop#start"
+	httpTimeout             = 15 * time.Second
+	manifestEndpointTimeout = 5 * time.Second
 )
+
+var fetchAttemptTimeout = 5 * time.Second
 
 // githubManifestFallback is the stable channel's last-resort manifest source.
 // dl.reasonix.io and crash.reasonix.io share one Cloudflare zone, so bot
@@ -171,10 +174,12 @@ func normalizeVersion(v string) (string, bool) {
 // responds and decodes. Every endpoint's failure is kept — a user staring at a
 // gateway 403 (#6005) needs to see that the R2 pointer failed too, not just
 // whichever endpoint happened to die last.
-func fetchManifest(ctx context.Context, c *http.Client) (*update.Manifest, error) {
+func fetchManifest(ctx context.Context, c, fallback *http.Client) (*update.Manifest, error) {
 	var errs []error
 	for _, url := range manifestEndpoints() {
-		b, err := fetchBytes(ctx, c, url)
+		endpointCtx, cancel := context.WithTimeout(ctx, manifestEndpointTimeout)
+		b, err := fetchManifestBytes(endpointCtx, c, fallback, url)
+		cancel()
 		if err != nil {
 			errs = append(errs, err)
 			continue
@@ -187,6 +192,26 @@ func fetchManifest(ctx context.Context, c *http.Client) (*update.Manifest, error
 		return &m, nil
 	}
 	return nil, fmt.Errorf("update: fetch manifest: %w", errors.Join(errs...))
+}
+
+// fetchManifestBytes gives the default and IPv4 transports separate halves of
+// the endpoint budget. A stalled IPv6 dial must not consume the whole timeout
+// before the IPv4 fallback gets a chance to run (#6713).
+func fetchManifestBytes(ctx context.Context, c, fallback *http.Client, url string) ([]byte, error) {
+	attemptTimeout := manifestEndpointTimeout / 2
+	attemptCtx, cancel := context.WithTimeout(ctx, attemptTimeout)
+	data, err := fetchBytesOnce(attemptCtx, c, url)
+	cancel()
+	if err == nil || !isTransientFetchError(err) || fallback == nil {
+		return data, err
+	}
+	attemptCtx, cancel = context.WithTimeout(ctx, attemptTimeout)
+	fallbackData, fallbackErr := fetchBytesOnce(attemptCtx, fallback, url)
+	cancel()
+	if fallbackErr == nil {
+		return fallbackData, nil
+	}
+	return nil, errors.Join(err, fallbackErr)
 }
 
 // evaluate compares the running version against the manifest and builds the
@@ -423,6 +448,9 @@ func retryTransient(ctx context.Context, fetch func(attempt int) error) error {
 		if err = fetch(attempt); err == nil {
 			return nil
 		}
+		if !isTransientFetchError(err) {
+			break
+		}
 		if ctx.Err() != nil || attempt == downloadAttempts {
 			break
 		}
@@ -435,12 +463,41 @@ func retryTransient(ctx context.Context, fetch func(attempt int) error) error {
 	return err
 }
 
+type httpStatusError struct {
+	url    string
+	status string
+	code   int
+}
+
+func (e *httpStatusError) Error() string { return fmt.Sprintf("GET %s: %s", e.url, e.status) }
+
+func isTransientFetchError(err error) bool {
+	var statusErr *httpStatusError
+	if !errors.As(err, &statusErr) {
+		return true
+	}
+	return statusErr.code == http.StatusRequestTimeout || statusErr.code == http.StatusTooManyRequests || statusErr.code >= 500
+}
+
 // fetchBytes GETs a URL fully into memory, retrying transient transport failures.
 func fetchBytes(ctx context.Context, c *http.Client, url string) ([]byte, error) {
+	return fetchBytesFallback(ctx, c, nil, url)
+}
+
+// fetchBytesFallback retries transport failures with the IPv4-pinned client.
+// This covers small manifest/signature requests as well as the artifact body;
+// previously only the large artifact download escaped a broken IPv6 route.
+func fetchBytesFallback(ctx context.Context, c, fallback *http.Client, url string) ([]byte, error) {
 	var data []byte
-	err := retryTransient(ctx, func(int) error {
+	err := retryTransient(ctx, func(attempt int) error {
+		client := c
+		if attempt > 1 && fallback != nil {
+			client = fallback
+		}
 		var e error
-		data, e = fetchBytesOnce(ctx, c, url)
+		attemptCtx, cancel := context.WithTimeout(ctx, fetchAttemptTimeout)
+		data, e = fetchBytesOnce(attemptCtx, client, url)
+		cancel()
 		return e
 	})
 	return data, err
@@ -458,7 +515,7 @@ func fetchBytesOnce(ctx context.Context, c *http.Client, url string) ([]byte, er
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("GET %s: %s", url, resp.Status)
+		return nil, &httpStatusError{url: url, status: resp.Status, code: resp.StatusCode}
 	}
 	return io.ReadAll(resp.Body)
 }
