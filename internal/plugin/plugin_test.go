@@ -492,10 +492,9 @@ func TestClientListToolsPropagatesReadOnlyAndDestructiveHints(t *testing.T) {
 }
 
 func TestUserAuthorizedMCPHintedReaderIsAuthorizedForSubagents(t *testing.T) {
-	manager := mcplaunch.NewManager(filepath.Join(t.TempDir(), mcplaunch.StateFilename), t.TempDir())
 	client := &Client{
 		name: "mock", t: &countingToolsTransport{},
-		spec: Spec{Name: "mock", LaunchManager: manager, AuthorizationGranted: true},
+		spec: Spec{Name: "mock", Authorized: true},
 	}
 	tools, err := client.listTools(context.Background())
 	if err != nil {
@@ -510,6 +509,15 @@ func TestUserAuthorizedMCPHintedReaderIsAuthorizedForSubagents(t *testing.T) {
 	}
 	if _, err := echo.Execute(tool.WithReaderExecutionIntent(context.Background()), json.RawMessage(`{"msg":"ok","z":"ok"}`)); err != nil {
 		t.Fatalf("installed hinted reader dispatch: %v", err)
+	}
+}
+
+func TestServerAuthorizedUsesResolvedBooleanOnly(t *testing.T) {
+	if !(Spec{Authorized: true}).ServerAuthorized() {
+		t.Fatal("an explicitly authorized server should not require a launch manager")
+	}
+	if (Spec{}).ServerAuthorized() {
+		t.Fatal("an unresolved server should remain unauthorized")
 	}
 }
 
@@ -1328,6 +1336,9 @@ func TestAuthorizeSpecLaunchRecordsInstallConsentWithoutStartingServer(t *testin
 	if err := AuthorizeSpecLaunch(ctx, spec); err != nil {
 		t.Fatalf("AuthorizeSpecLaunch: %v", err)
 	}
+	if resolved := ResolveStoredAuthorization(ctx, spec); !resolved.ServerAuthorized() {
+		t.Fatal("stored project launch grant did not resolve server authorization")
+	}
 	if got := readHelperCounter(t, startCount); got != 0 {
 		t.Fatalf("install authorization started server %d times, want 0", got)
 	}
@@ -1416,7 +1427,7 @@ func TestReaderIntentRefusesDispatchAfterSafetyDrift(t *testing.T) {
 			"GO_WANT_HELPER_START_COUNT": startCount,
 			"GO_WANT_HELPER_CALL_COUNT":  callCount,
 		},
-		StateDir: stateDir, AuthorizationGranted: true,
+		StateDir: stateDir, Authorized: true,
 		LaunchManager: mcplaunch.NewManager(filepath.Join(t.TempDir(), mcplaunch.StateFilename), t.TempDir()),
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

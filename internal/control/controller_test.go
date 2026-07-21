@@ -2480,7 +2480,7 @@ func TestAddMCPServerAuthorizesExplicitUserAddBeforeConnecting(t *testing.T) {
 		t.Fatal("AddMCPServer without a command unexpectedly succeeded")
 	}
 	if configured.ConfigSource != string(config.MCPSourceUserConfig) ||
-		!configured.AuthorizationGranted || configured.RequireLaunchApproval {
+		!configured.Authorized || configured.RequireLaunchApproval {
 		t.Fatalf("configured spec = %+v, want user-authorized add-and-use policy", configured)
 	}
 }

@@ -389,7 +389,7 @@ func TestLazyToolsetInheritsInstalledServerReaderAuthorization(t *testing.T) {
 	redirectCache(t)
 	spec := helperSpec()
 	spec.LaunchManager = mcplaunch.NewManager(filepath.Join(t.TempDir(), mcplaunch.StateFilename), t.TempDir())
-	spec.AuthorizationGranted = true
+	spec.Authorized = true
 	if err := SaveCachedSchema(spec.Name, CachedSchema{
 		SpecHash: SpecFingerprint(spec),
 		Tools: []CachedTool{{

@@ -509,7 +509,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 			// Session-scoped MCP specs arrive through an explicit host/user action
 			// (for example ACP session/new), so they follow installed-server
 			// authorization without another per-tool or per-session prompt.
-			extraSpecs[i].AuthorizationGranted = true
+			extraSpecs[i].Authorized = true
 		}
 		applyMCPIsolation(&extraSpecs[i], root, pluginSpecOptions)
 	}
@@ -2204,7 +2204,7 @@ func pluginSpecFromEntryWithOptions(e config.PluginEntry, workspaceRoot string, 
 		ToolTimeouts:          toolTimeoutDurations(e.ToolTimeoutSeconds),
 		LaunchManager:         opts.LaunchManager,
 		ConfigSource:          configSource,
-		AuthorizationGranted:  e.Source.UserAuthorized(),
+		Authorized:            e.Source.UserAuthorized(),
 		RequireLaunchApproval: e.Source.RequiresLaunchApproval(),
 	}, workspaceRoot)
 	applyMCPIsolation(&spec, workspaceRoot, opts)

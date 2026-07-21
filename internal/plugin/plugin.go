@@ -74,8 +74,11 @@ type Spec struct {
 	LaunchManager *mcplaunch.Manager
 	// ConfigSource disambiguates otherwise identical server names coming from
 	// workspace config, a host transport, or a user-installed plugin package.
-	ConfigSource          string
-	AuthorizationGranted  bool
+	ConfigSource string
+	// Authorized is the single runtime authorization result for this server.
+	// User-installed and explicit host-session servers set it directly; project
+	// servers set it only after an exact launch grant is resolved.
+	Authorized            bool
 	RequireLaunchApproval bool
 	// LaunchArgs and launcher metadata are host-local immutable resolutions for
 	// mutable package launchers. LauncherIdentityArgs is the same exact package
@@ -1146,7 +1149,7 @@ func applyEstablishedLaunchGrant(s Spec, identity string) (Spec, error) {
 	// A matching exact-identity launch grant is the user's authorization for
 	// this project server. Calls proceed like an explicit install, while global
 	// deny rules and execution safety boundaries remain authoritative.
-	s.AuthorizationGranted = true
+	s.Authorized = true
 	return s, nil
 }
 
@@ -1179,7 +1182,7 @@ func ResolveStoredAuthorization(ctx context.Context, s Spec) Spec {
 // authorizes the server, while read-only/destructive classification remains a
 // live per-tool safety fact.
 func (s Spec) ServerAuthorized() bool {
-	return s.AuthorizationGranted && s.LaunchManager != nil
+	return s.Authorized
 }
 
 // newTransport builds the transport for a spec's declared type. Empty / unknown

@@ -1108,7 +1108,8 @@ func ReadOnlySubagentToolRegistry(parent *tool.Registry, names []string) *tool.R
 
 // ReadOnlySubagentToolRegistryForDepth returns the tool set exposed to read-only
 // subagents. It permits only read-only delegation tools while another depth
-// layer is available.
+// layer is available. MCP tools must additionally come from an authorized
+// server and must not carry destructiveHint.
 func ReadOnlySubagentToolRegistryForDepth(parent *tool.Registry, names []string, childDepth, maxDepth int) *tool.Registry {
 	exclude := append([]string(nil), subagentAlwaysHiddenTools...)
 	if childDepth >= NormalizeMaxSubagentDepth(maxDepth) {
@@ -1148,7 +1149,7 @@ func ReadOnlySubagentToolRegistryForDepth(parent *tool.Registry, names []string,
 		if !tl.ReadOnly() {
 			continue
 		}
-		if isInstalledMCPTool(tl) && !mcpServerAuthorized(tl) {
+		if isInstalledMCPTool(tl) && (!mcpServerAuthorized(tl) || mcpDestructiveHint(tl)) {
 			continue
 		}
 		sub.Add(tl)
@@ -1187,7 +1188,9 @@ func expandToolPatterns(parent *tool.Registry, names []string) []string {
 }
 
 // FilterReadOnlyRegistry builds a sub-registry containing only tools whose
-// ReadOnly contract is true, minus explicit exclusions.
+// ReadOnly contract is true, minus explicit exclusions. MCP tools must
+// additionally come from an authorized server and must not carry
+// destructiveHint.
 func FilterReadOnlyRegistry(parent *tool.Registry, exclude ...string) *tool.Registry {
 	ex := make(map[string]bool, len(exclude))
 	for _, e := range exclude {
@@ -1205,7 +1208,7 @@ func FilterReadOnlyRegistry(parent *tool.Registry, exclude ...string) *tool.Regi
 		if !ok || !tl.ReadOnly() {
 			continue
 		}
-		if isInstalledMCPTool(tl) && !mcpServerAuthorized(tl) {
+		if isInstalledMCPTool(tl) && (!mcpServerAuthorized(tl) || mcpDestructiveHint(tl)) {
 			continue
 		}
 		sub.Add(tl)

@@ -152,13 +152,13 @@ interface (`call` / `notify` / `close`) abstracts that, so the MCP-level logic
 - A stdio server uses one persistent transport for initialize, reads, and
   writes, preserving state such as browser sessions across tool calls. The
   process uses the server's process sandbox because process confinement cannot
-  change per RPC; read-only eligibility and destructive approval remain local
-  dispatch gates rather than separate process sandboxes.
+  change per RPC; read-only eligibility and destructive filtering remain local
+  workflow gates rather than separate process sandboxes.
 - Configuration provenance is runtime metadata. Explicit installation from the
   user config, Desktop, `/mcp add`, or `install_source` is authorization: the
   host connects the server immediately when installation happens in a live
   session, records a durable exact command/endpoint launch grant for
-  project-scoped installs, and calls default to direct approval.
+  project-scoped installs, and runs authorized calls directly.
   Project `reasonix.toml` and `.mcp.json` servers that are only
   discovered from the repository require one durable launch confirmation before
   any process or network transport is created. Confirmation records the exact
@@ -174,6 +174,11 @@ interface (`call` / `notify` / `close`) abstracts that, so the MCP-level logic
   to false (a remote tool is opaque — we can't see its side effects), so a
   plugin opts a tool into parallel-batch dispatch and the permission layer's
   reader-default by declaring `readOnlyHint: true` in `tools/list`.
+- Installation is the trust decision for tool metadata. Reasonix assumes an
+  installed server reports `readOnlyHint` and `destructiveHint` honestly;
+  planner/read-only filtering is a workflow boundary for trusted servers, not
+  containment against a malicious MCP server. Explicit deny rules and the
+  process sandbox remain host-controlled boundaries.
 - `prompts/list` + `prompts/get` surface as `/mcp__<server>__<prompt>` slash
   commands; `resources/list` + `resources/read` are referenced as
   `@<server>:<uri>` in chat. `/mcp` shows connected servers and their counts.
@@ -337,8 +342,10 @@ func (p Policy) Decide(toolName string, readOnly bool, args json.RawMessage) Dec
   exact identity confirmation before startup and require confirmation again only
   if that identity changes. `readOnlyHint` and `destructiveHint` remain internal
   facts for scheduling, Plan/read-only restrictions, and cached-to-live safety
-  reclassification. Schema-only changes refresh the next-session cache without
-  adding an execution approval or retry.
+  reclassification. Planner and strict read-only registries expose only
+  authorized tools with `readOnlyHint: true` and no `destructiveHint`.
+  Schema-only changes refresh the next-session cache without adding an execution
+  approval or retry.
 - **Relationship to plan mode.** Plan mode (§3.4) is a plan-first collaboration
   workflow, not an all-tools read-only mode. Before Permissions/Sandbox, the
   host enforces explicit phase opt-outs (`complete_step` is read-only but

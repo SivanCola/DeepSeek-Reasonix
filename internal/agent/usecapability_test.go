@@ -318,7 +318,7 @@ func TestReadOnlyExecutionStartsInstalledUnconnectedMCPReader(t *testing.T) {
 	spec := plugin.Spec{
 		Name: "explicit-reader", Type: "http", URL: server.URL,
 		LaunchManager: manager, ConfigSource: "workspace_config",
-		AuthorizationGranted: true,
+		Authorized: true,
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -389,7 +389,7 @@ func TestReadOnlyExecutionAllowsSchemaOnlyDriftForAuthorizedReader(t *testing.T)
 	spec := plugin.Spec{
 		Name: "explicit-reader", Type: "http", URL: server.URL,
 		LaunchManager: manager, ConfigSource: "workspace_config",
-		AuthorizationGranted: true,
+		Authorized: true,
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

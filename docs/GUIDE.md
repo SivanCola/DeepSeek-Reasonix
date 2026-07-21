@@ -634,10 +634,9 @@ The normal setup path is intentionally one step. Use Desktop's **Add and
 connect**, `/mcp add`, or ask Reasonix to install a package, URL, or `.mcp.json`.
 That explicit install is also authorization: the server is saved and connected
 in the current session, and no second trust step appears now or on the next
-startup. Explicit deny rules still win. With no advanced approval override, the
-installed server's calls run directly, including tools that declare
-`destructiveHint`; choose `auto`, `prompt`, or `writes` when those calls should
-retain fresh review. Plan/read-only sub-agents still expose only eligible tool
+startup. Explicit deny rules still win. The installed server's calls run
+directly, including tools that declare
+`destructiveHint`. Plan/read-only sub-agents still expose only eligible tool
 identities. A server merely discovered in repository-controlled
 `reasonix.toml` or `.mcp.json` is different: Reasonix asks once to confirm the
 exact command or endpoint, records that decision without launching a temporary
@@ -651,8 +650,8 @@ process sandbox for every call; `readOnlyHint` and read-only sub-agent filtering
 are dispatch policy, not a second per-call process sandbox.
 
 Tools surface to the model as `mcp__<server>__<tool>`. A tool declaring MCP's
-`readOnlyHint: true` joins parallel dispatch and the ordinary
-permission reader-default. Installing a server, or confirming an exact
+`readOnlyHint: true` joins parallel dispatch and the strict read-only tool
+surfaces. Installing a server, or confirming an exact
 repository-provided server once, authorizes its non-destructive reader metadata;
 those tools are also available to the dedicated planner and read-only research
 sub-agents without another per-tool setting. Tools without the hint remain
@@ -667,6 +666,10 @@ destructive approval setting. Explicit global deny rules still win. The host
 keeps `readOnlyHint` and `destructiveHint` internally for parallel scheduling,
 Plan restrictions, strict read-only sub-agents, and cached-to-live safety
 reclassification; these hints do not add user configuration.
+Reasonix deliberately trusts an installed server to describe those hints
+honestly. Planner/read-only filtering is therefore a workflow boundary for
+trusted servers, not containment against a malicious MCP server; explicit deny
+rules and the process sandbox remain host-controlled boundaries.
 
 The retired `trusted_read_only_tools`, `default_tools_approval_mode`,
 `tools.<raw>.approval_mode`, and `approvals_reviewer` fields are ignored when

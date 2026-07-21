@@ -7477,7 +7477,7 @@ url = %q
 			// This test isolates effective-source selection from the project launch
 			// approval flow, which has its own end-to-end coverage.
 			spec.RequireLaunchApproval = false
-			spec.AuthorizationGranted = true
+			spec.Authorized = true
 		},
 	})
 	app := NewApp()

@@ -3742,18 +3742,40 @@ func TestPluginSpecsMapConfiguredCallTimeouts(t *testing.T) {
 }
 
 func TestPluginSpecsMapMCPSourceDefaults(t *testing.T) {
-	specs := PluginSpecsForRootWithOptions([]config.PluginEntry{
-		{Name: "user", Source: config.MCPSourceUserConfig},
-		{Name: "project", Source: config.MCPSourceProjectConfig},
-	}, "/workspace", PluginSpecOptions{ConfigSource: "workspace_config"})
-	if len(specs) != 2 {
-		t.Fatalf("spec count = %d", len(specs))
+	tests := []struct {
+		name           string
+		source         config.MCPConfigSource
+		wantAuthorized bool
+		wantApproval   bool
+	}{
+		{name: "user config", source: config.MCPSourceUserConfig, wantAuthorized: true},
+		{name: "legacy user config", source: config.MCPSourceLegacyUser, wantAuthorized: true},
+		{name: "plugin package", source: config.MCPSourcePluginPackage, wantAuthorized: true},
+		{name: "project config", source: config.MCPSourceProjectConfig, wantApproval: true},
+		{name: "project mcp json", source: config.MCPSourceProjectMCPJSON, wantApproval: true},
+		{name: "unknown"},
 	}
-	if !specs[0].AuthorizationGranted || specs[0].RequireLaunchApproval || specs[0].ConfigSource != string(config.MCPSourceUserConfig) {
-		t.Fatalf("user source defaults = %+v", specs[0])
-	}
-	if specs[1].AuthorizationGranted || !specs[1].RequireLaunchApproval || specs[1].ConfigSource != string(config.MCPSourceProjectConfig) {
-		t.Fatalf("project source defaults = %+v", specs[1])
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			specs := PluginSpecsForRootWithOptions([]config.PluginEntry{{
+				Name:   "server",
+				Source: tc.source,
+			}}, "/workspace", PluginSpecOptions{ConfigSource: "workspace_config"})
+			if len(specs) != 1 {
+				t.Fatalf("spec count = %d", len(specs))
+			}
+			if specs[0].Authorized != tc.wantAuthorized || specs[0].RequireLaunchApproval != tc.wantApproval {
+				t.Fatalf("source defaults = %+v, want authorized=%v approval=%v", specs[0], tc.wantAuthorized, tc.wantApproval)
+			}
+			wantSource := string(tc.source)
+			if wantSource == "" {
+				wantSource = "workspace_config"
+			}
+			if specs[0].ConfigSource != wantSource {
+				t.Fatalf("ConfigSource = %q, want %q", specs[0].ConfigSource, wantSource)
+			}
+		})
 	}
 }
 

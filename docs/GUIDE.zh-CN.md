@@ -540,6 +540,9 @@ reader 在任何审批前硬阻断，退出 Plan 后即可直接使用。
 server、raw tool、writer 或 destructive 的第二套审批设置；显式全局 deny 规则仍然优先。
 `readOnlyHint` 与 `destructiveHint` 只作为内部事实，用于并行调度、Plan 限制、严格只读
 subagent 和缓存到实时安全分类复核，不增加用户配置。
+Reasonix 明确信任已安装 server 会如实描述这些 hint。因此，planner/只读 subagent 的过滤是
+面向可信 server 的工作流边界，不是针对恶意 MCP server 的隔离边界；显式 deny 与进程沙箱
+仍由 host 控制。
 
 旧的 `trusted_read_only_tools`、`default_tools_approval_mode`、
 `tools.<raw>.approval_mode` 与 `approvals_reviewer` 字段在加载旧文件时会被忽略，并在 Reasonix
@@ -741,8 +744,8 @@ source 也可在 Plan 中加载，后续 writer 调用仍通过 Permissions/Sand
 所有严格只读子会话都经过同一对共享构造入口——批处理子会话用
 `RunReadOnlySubAgentWithSession`，交互式双模型 planner 用 `NewReadOnlyAgent`——
 两者都会把子会话标记为永久只读并做最终 registry 过滤：移除 writer、destructive MCP
-目标、只有第三方 server hint 的 reader，以及一切会改变 host capability 的工具。MCP reader
-只有在本地配置中显式声明，或由当前已验证的官方签名 package 声明时才符合条件；符合条件的
+目标、来自未授权 server 的 reader，以及一切会改变 host capability 的工具。用户安装的
+server 会立即获得授权；仓库声明的 server 则在其精确身份确认一次后符合条件。符合条件的
 reader 仍可按需启动。严格只读入口一览：
 
 | 入口 | 用途 |
