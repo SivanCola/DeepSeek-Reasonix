@@ -32,7 +32,6 @@ type mcpServerSpec struct {
 	Headers                  map[string]string        `json:"headers"`
 	CallTimeoutSeconds       int                      `json:"call_timeout_seconds"`
 	ToolTimeoutSeconds       map[string]int           `json:"tool_timeout_seconds"`
-	TrustedReadOnlyTools     []string                 `json:"trusted_read_only_tools"`
 	AutoStart                *bool                    `json:"auto_start"`
 	DefaultToolsApprovalMode string                   `json:"default_tools_approval_mode"`
 	Tools                    map[string]MCPToolPolicy `json:"tools"`
@@ -211,7 +210,6 @@ func pluginEntryFromMCPSpec(name string, s mcpServerSpec) PluginEntry {
 		Headers:                  s.Headers,
 		CallTimeoutSeconds:       s.CallTimeoutSeconds,
 		ToolTimeoutSeconds:       s.ToolTimeoutSeconds,
-		TrustedReadOnlyTools:     s.TrustedReadOnlyTools,
 		AutoStart:                s.AutoStart,
 		DefaultToolsApprovalMode: s.DefaultToolsApprovalMode,
 		Tools:                    mcpToolPoliciesWithApprovalMode(s.Tools),
@@ -336,7 +334,10 @@ func applyPluginEntryToMCPJSONServer(server map[string]json.RawMessage, entry Pl
 	}
 	setMCPJSONInt(server, "call_timeout_seconds", entry.CallTimeoutSeconds)
 	setMCPJSONIntMap(server, "tool_timeout_seconds", entry.ToolTimeoutSeconds)
-	setMCPJSONStringArray(server, "trusted_read_only_tools", entry.TrustedReadOnlyTools)
+	// The removed per-tool reader list is accepted on load for compatibility but
+	// never persisted. Explicitly delete it when updating an existing shared
+	// .mcp.json entry so the obsolete setting disappears naturally.
+	delete(server, "trusted_read_only_tools")
 	setMCPJSONBool(server, "auto_start", entry.AutoStart)
 	setMCPJSONString(server, "default_tools_approval_mode", strings.TrimSpace(entry.DefaultToolsApprovalMode))
 	if err := setMCPJSONToolPolicies(server, "tools", entry.Tools); err != nil {

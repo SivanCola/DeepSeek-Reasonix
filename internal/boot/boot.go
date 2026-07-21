@@ -2281,7 +2281,6 @@ func pluginSpecFromEntryWithOptions(e config.PluginEntry, workspaceRoot string, 
 		DefaultCallTimeout:       opts.DefaultCallTimeout,
 		CallTimeout:              secondsDuration(e.CallTimeoutSeconds),
 		ToolTimeouts:             toolTimeoutDurations(e.ToolTimeoutSeconds),
-		ReadOnlyToolNames:        legacyRawReadOnlyToolNames(e.TrustedReadOnlyTools),
 		DefaultToolsApprovalMode: e.DefaultToolsApprovalMode,
 		ToolApprovalModes:        mcpToolApprovalModes(e.Tools),
 		ApprovalsReviewer:        e.ApprovalsReviewer,
@@ -2534,23 +2533,6 @@ func applyPlanModeAllowedMCPReaders(specs []plugin.Spec, allowedTools []string) 
 			}
 			out[i].ReadOnlyModelToolNames[name] = true
 		}
-	}
-	return out
-}
-
-func legacyRawReadOnlyToolNames(names []string) map[string]bool {
-	if len(names) == 0 {
-		return nil
-	}
-	out := map[string]bool{}
-	for _, name := range names {
-		name = strings.TrimSpace(name)
-		if name != "" {
-			out[name] = true
-		}
-	}
-	if len(out) == 0 {
-		return nil
 	}
 	return out
 }

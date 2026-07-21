@@ -315,7 +315,7 @@ func cacheExplicitReaderSchema(t *testing.T, spec plugin.Spec) {
 	}
 }
 
-func TestReadOnlyExecutionStartsExplicitUnconnectedMCPReader(t *testing.T) {
+func TestReadOnlyExecutionStartsInstalledUnconnectedMCPReader(t *testing.T) {
 	t.Setenv("REASONIX_CACHE_HOME", t.TempDir())
 	var toolCalls atomic.Int32
 	server := explicitReaderMCPServer(t, nil, &toolCalls)
@@ -325,7 +325,7 @@ func TestReadOnlyExecutionStartsExplicitUnconnectedMCPReader(t *testing.T) {
 	spec := plugin.Spec{
 		Name: "explicit-reader", Type: "http", URL: server.URL,
 		LaunchManager: manager, ConfigSource: "workspace_config",
-		ReadOnlyToolNames: map[string]bool{"search": true},
+		ImplicitApproval: true,
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

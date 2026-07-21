@@ -36,6 +36,7 @@ ok(completeMCP.input.defaultToolsApprovalMode === "writes" && completeMCP.input.
 ok(completeMCP.input.approvalsReviewer === "auto_review", "advanced JSON should preserve the reviewer");
 const completeMCPRoundTrip = parseMCPServerJSON(mcpServerDraftJSON(completeMCP.draft));
 ok(completeMCPRoundTrip.input.transport === "http" && completeMCPRoundTrip.input.tools?.wipe.approval_mode === "prompt", "Form/JSON switching should preserve advanced fields");
+ok(!mcpServerDraftJSON(completeMCP.draft).includes("trusted_read_only_tools"), "Form/JSON switching should drop the removed reader setting");
 let unsupportedMCPFieldRejected = false;
 try {
   parseMCPServerJSON(JSON.stringify({ admin: { command: "admin-mcp", unsupported: true } }));
@@ -64,7 +65,7 @@ try {
 ok(nullToolTimeoutRejected, "a null per-tool timeout must be rejected instead of silently clearing all timeouts");
 const sparseEdit = withExplicitMCPClears(parseMCPServerJSON(JSON.stringify({ admin: { command: "admin-mcp" } })).input);
 ok(sparseEdit.callTimeoutSeconds === 0 && sparseEdit.defaultToolsApprovalMode === "" && sparseEdit.approvalsReviewer === "", "editing an existing server with fields removed must clear those settings");
-ok(sparseEdit.autoStart === true && Object.keys(sparseEdit.toolTimeoutSeconds ?? { x: 1 }).length === 0 && sparseEdit.trustedReadOnlyTools === undefined && Object.keys(sparseEdit.tools ?? { x: 1 }).length === 0, "removed collection fields must clear while legacy trust stays absent");
+ok(sparseEdit.autoStart === true && Object.keys(sparseEdit.toolTimeoutSeconds ?? { x: 1 }).length === 0 && Object.keys(sparseEdit.tools ?? { x: 1 }).length === 0, "removed collection fields must clear");
 ok(sparseEdit.env === null && sparseEdit.headers === null, "absent env/headers must stay preserve-on-absent because their values are never seeded into the editor");
 
 const refusedRegistryError = [
@@ -300,7 +301,6 @@ console.log("capabilities panel MCP actions");
       { name: "issue_write", description: "Write issues." },
       { name: "broken_read", description: "Broken tool.", readOnlyHint: true, schemaError: "invalid input schema: bad nested type" },
     ],
-    trustedReadOnlyTools: [],
   }];
   window.go = {
     main: {

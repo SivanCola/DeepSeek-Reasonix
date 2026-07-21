@@ -1494,10 +1494,6 @@ type PluginEntry struct {
 	// from this server. Keys are server-local tool names, not model-visible
 	// mcp__server__tool names.
 	ToolTimeoutSeconds map[string]int `toml:"tool_timeout_seconds"`
-	// TrustedReadOnlyTools is a local trust and compatibility override for
-	// audited readers. Third-party readOnlyHint alone is not a Plan-mode trust
-	// boundary.
-	TrustedReadOnlyTools []string `toml:"trusted_read_only_tools"`
 	// DefaultToolsApprovalMode is auto|prompt|writes|approve. Empty uses the
 	// source-aware runtime default (direct for user-authorized servers, auto for
 	// project-provided servers).

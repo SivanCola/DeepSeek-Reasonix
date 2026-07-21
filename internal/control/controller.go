@@ -4551,7 +4551,6 @@ func (c *Controller) connectMCPServer(e config.PluginEntry) (int, error) {
 		DefaultCallTimeout:       c.mcpDefaultCallTimeout,
 		CallTimeout:              controllerMCPTimeout(exp.CallTimeoutSeconds),
 		ToolTimeouts:             controllerMCPToolTimeouts(exp.ToolTimeoutSeconds),
-		ReadOnlyToolNames:        trustedReadOnlyToolNames(exp.TrustedReadOnlyTools),
 		DefaultToolsApprovalMode: exp.DefaultToolsApprovalMode,
 		ToolApprovalModes:        controllerMCPToolApprovalModes(exp.Tools),
 		ApprovalsReviewer:        exp.ApprovalsReviewer,
@@ -4596,23 +4595,6 @@ func controllerMCPToolApprovalModes(policies map[string]config.MCPToolPolicy) ma
 	for name, policy := range policies {
 		if name = strings.TrimSpace(name); name != "" {
 			out[name] = policy.ApprovalMode
-		}
-	}
-	if len(out) == 0 {
-		return nil
-	}
-	return out
-}
-
-func trustedReadOnlyToolNames(names []string) map[string]bool {
-	if len(names) == 0 {
-		return nil
-	}
-	out := map[string]bool{}
-	for _, name := range names {
-		name = strings.TrimSpace(name)
-		if name != "" {
-			out[name] = true
 		}
 	}
 	if len(out) == 0 {

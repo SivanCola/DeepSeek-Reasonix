@@ -79,8 +79,8 @@ agent 核心延续了原有能力：循环、读写编辑与 glob/grep/bash 等�
 - **MCP 添加后即可使用**：用户通过桌面端、全局配置、旧配置导入或已验证插件包添加的 server 会立即连接；未显式配置 MCP 审批策略时默认允许调用。仓库内 `reasonix.toml` / `.mcp.json` 声明的 server 则必须先针对稳定身份确认一次，确认前不会启动进程或发起网络请求。
 - **stdio MCP 连接持久化**：writer 调用不再创建新进程，浏览器或会话类 server 的状态可以保留。
 - **Plan 与权限策略相互独立**：普通内置工具和 Bash 仍遵循 Ask/Auto/YOLO 与 Sandbox；已安装或代理解析的 MCP 写入/破坏性工具及不受信任的读取工具在整个规划阶段保持阻止。`complete_step` 等执行阶段工具也要等计划获批后才能使用。
-- `[agent].plan_mode_allowed_tools` 与 `plan_mode_read_only_commands` 仍可解析和保存，以兼容旧配置，但不再决定主 Plan 流程能否调用工具。需要可信读取能力时，应在 `trusted_read_only_tools` 中声明已审计的原始 MCP 工具名。
-- 使用 `read_only_task` / `read_only_skill` 创建技术上只读的子智能体；普通 `task` / `run_skill` 仍可写入，并受权限与 Sandbox 控制。第三方 MCP 的 `readOnlyHint` 只影响常规权限和调度，不会自动获得专用 planner 或只读子智能体的信任。
+- `[agent].plan_mode_allowed_tools` 与 `plan_mode_read_only_commands` 仍可解析和保存，以兼容旧配置，但不再决定主 Plan 流程能否调用工具。安装或明确确认 MCP server 后，其非破坏性的 `readOnlyHint` 工具会自动进入 planner 与只读子智能体，不需要逐工具信任配置。
+- 使用 `read_only_task` / `read_only_skill` 创建技术上只读的子智能体；普通 `task` / `run_skill` 仍可写入，并受权限与 Sandbox 控制。未声明 `readOnlyHint` 的 MCP 工具仍按 writer 处理。
 - MCP 可通过 `default_tools_approval_mode`、`tools.<raw>.approval_mode` 和 `approvals_reviewer` 覆盖默认审批策略。标记 `destructiveHint: true` 的调用在 `auto`、`prompt` 或 `writes` 下每次都需要人工重新批准；有效的 `approve` 模式则直接允许。
 - **Web Dashboard 仍然可用，桌面端更推荐**：需要浏览器访问时，可运行
   `reasonix serve` 启动本地 Web UI；日常可视化使用优先选择 Wails 桌面端，

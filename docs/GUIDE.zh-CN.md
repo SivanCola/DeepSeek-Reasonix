@@ -112,8 +112,9 @@ tool_timeout_seconds = { "generate_video" = 1800 }   # 可选：raw MCP tool 名
 完整 schema 与每个字段的契约见 [`SPEC.md` §5](./SPEC.md#5-configuration-toml)。
 
 旧字段 `[agent].plan_mode_allowed_tools` 仍会被解析并重新渲染。具体的
-`mcp__<server>__<tool>` 条目继续充当本地只读信任别名，但推荐把已审计的 raw MCP reader
-名称写到对应 server 的 `trusted_read_only_tools`。这个字段不会放行或阻断主 Plan 工作流中的调用。
+`mcp__<server>__<tool>` 条目仅用于旧配置兼容；新安装或明确确认过的 MCP server 不再需要
+逐工具 reader 名单，其非破坏性的 `readOnlyHint` 工具会自动进入 planner 和只读 subagent。
+这个旧字段不会放行或阻断主 Plan 工作流中的调用。
 
 `[agent].plan_mode_read_only_commands` 也继续参与配置 round-trip，但主 Plan 工作流不再维护独立的
 bash allowlist 或信任提示。Plan 与常规模式使用相同的 Permissions 规则做 bash 分类和审批；Sandbox
@@ -533,9 +534,9 @@ writer 沙箱；`readOnlyHint` 与只读 subagent 过滤属于调用分发策略
 的进程沙箱。
 
 工具以 `mcp__<server>__<tool>` 暴露给模型，与 Claude Code 一致；声明 MCP `readOnlyHint: true`
-的工具会参与并行调度并命中普通权限层的只读默认放行。这个标注来自第三方 server，主 Plan 只把它
-当作普通权限分类；它不会让工具进入独立 planner 或只读研究 subagent。已审计的 reader 应写入本地
-`trusted_read_only_tools`。没有 `readOnlyHint` 的工具仍按写工具处理。计划期间，内置 writer 仍走
+的工具会参与并行调度并命中普通权限层的只读默认放行。用户安装 server，或首次确认仓库提供的
+精确 server 身份后，其非破坏性 reader 元数据即获得授权，这些工具会自动进入独立 planner 和
+只读研究 subagent，不再需要逐工具设置。没有 `readOnlyHint` 的工具仍按写工具处理。计划期间，内置 writer 仍走
 Permissions/Sandbox；已安装 MCP 与代理解析后的 MCP writer、destructive 目标和未信任
 reader 在任何审批前硬阻断，退出 Plan 后才恢复正常审批流程。
 
@@ -559,15 +560,14 @@ command = "github-mcp"
 default_tools_approval_mode = "writes" # auto|prompt|writes|approve
 tools = { "delete_repository" = { approval_mode = "prompt" } }
 approvals_reviewer = "auto_review"     # user|auto_review
-trusted_read_only_tools = ["issue_read", "pull_request_read"]
 ```
 
 用户已授权的 server 若省略这些高级审批字段，所有调用都会直接放行。显式配置后，`auto`
 交给全局 Ask/Auto/YOLO；`prompt` 每次调用都审查；`writes` 只审查写工具；`approve`
 直接放行所有调用，包括 destructive 调用。显式 deny 永远优先；除 `approve` 外，
 `destructiveHint` 会在其余模式下强制一次新审查。`tools` 中的 raw tool 配置覆盖 server 默认值。
-`trusted_read_only_tools` 继续作为兼容字段和显式本地声明，用于已审计、但没有可靠 annotation
-的 reader。
+`trusted_read_only_tools` 已删除；旧文件包含该字段时仍可加载，但 Reasonix 会忽略它，并在下次
+保存配置时移除。
 
 两条边界值得注意：`writes` 信任 server 自己的只读分类，把写工具谎报成 `readOnlyHint`
 的 server 会绕过这层审查——对不可信的 server 请用 `prompt`。启用 Guardian 且未配置

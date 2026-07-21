@@ -3253,7 +3253,7 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 	// basis into dispatch: the MCP execution layer re-verifies it linearizably
 	// against live trust state and refuses to promote it into a writer lane if
 	// a concurrent revocation or reclassification landed after the gate.
-	if readOnly && isInstalledMCPTool(runTool) && !mcpDestructiveHint(runTool) {
+	if readOnly && isInstalledMCPTool(runTool) && !planModeUntrustedReadOnly(runTool) && !mcpDestructiveHint(runTool) {
 		fingerprint := ""
 		if fp, ok := runTool.(tool.MCPCapabilityFingerprint); ok {
 			fingerprint = fp.MCPCapabilityFingerprint()

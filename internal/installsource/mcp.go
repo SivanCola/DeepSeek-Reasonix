@@ -186,7 +186,6 @@ func parseMCPJSON(b []byte) ([]config.PluginEntry, []string, error) {
 			AutoStart                *bool                           `json:"auto_start"`
 			CallTimeoutSeconds       int                             `json:"call_timeout_seconds"`
 			ToolTimeoutSeconds       map[string]int                  `json:"tool_timeout_seconds"`
-			TrustedReadOnlyTools     []string                        `json:"trusted_read_only_tools"`
 			DefaultToolsApprovalMode string                          `json:"default_tools_approval_mode"`
 			Tools                    map[string]config.MCPToolPolicy `json:"tools"`
 			ApprovalsReviewer        string                          `json:"approvals_reviewer"`
@@ -237,7 +236,6 @@ func parseMCPJSON(b []byte) ([]config.PluginEntry, []string, error) {
 			AutoStart:                s.AutoStart,
 			CallTimeoutSeconds:       s.CallTimeoutSeconds,
 			ToolTimeoutSeconds:       s.ToolTimeoutSeconds,
-			TrustedReadOnlyTools:     append([]string(nil), s.TrustedReadOnlyTools...),
 			DefaultToolsApprovalMode: s.DefaultToolsApprovalMode,
 			Tools:                    mcpToolPoliciesWithApprovalMode(s.Tools),
 			ApprovalsReviewer:        s.ApprovalsReviewer,

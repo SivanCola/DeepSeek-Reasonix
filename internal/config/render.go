@@ -743,10 +743,6 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 				b.WriteString("# Raw MCP tool names with per-tool call timeouts.\n")
 				fmt.Fprintf(&b, "tool_timeout_seconds = %s\n", renderIntMap(pl.ToolTimeoutSeconds))
 			}
-			if len(pl.TrustedReadOnlyTools) > 0 {
-				b.WriteString("# explicit Plan/read-only-research declaration for audited raw MCP reader names\n")
-				fmt.Fprintf(&b, "trusted_read_only_tools = %s\n", renderStringArray(pl.TrustedReadOnlyTools))
-			}
 			if strings.TrimSpace(pl.DefaultToolsApprovalMode) != "" {
 				fmt.Fprintf(&b, "default_tools_approval_mode = %q\n", pl.DefaultToolsApprovalMode)
 			}
@@ -1170,10 +1166,6 @@ func RenderTOMLProjectDelta(c *Config) string {
 		if hasPositiveIntMap(pl.ToolTimeoutSeconds) {
 			b.WriteString("# Raw MCP tool names with per-tool call timeouts.\n")
 			fmt.Fprintf(&b, "tool_timeout_seconds = %s\n", renderIntMap(pl.ToolTimeoutSeconds))
-		}
-		if len(pl.TrustedReadOnlyTools) > 0 {
-			b.WriteString("# explicit Plan/read-only-research declaration for audited raw MCP reader names\n")
-			fmt.Fprintf(&b, "trusted_read_only_tools = %s\n", renderStringArray(pl.TrustedReadOnlyTools))
 		}
 		if strings.TrimSpace(pl.DefaultToolsApprovalMode) != "" {
 			fmt.Fprintf(&b, "default_tools_approval_mode = %q\n", pl.DefaultToolsApprovalMode)

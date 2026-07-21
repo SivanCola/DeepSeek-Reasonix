@@ -132,6 +132,25 @@ func TestCachedToolSafetySeparatesServerHintFromExplicitReaderAuthority(t *testi
 	}
 }
 
+func TestCachedToolSafetyInheritsInstalledServerAuthorization(t *testing.T) {
+	redirectCache(t)
+	spec := Spec{
+		Name: "installed-reader", Type: "http", URL: "https://example.com/mcp",
+		ImplicitApproval: true,
+		LaunchManager:    mcplaunch.NewManager(filepath.Join(t.TempDir(), mcplaunch.StateFilename), t.TempDir()),
+	}
+	reader := CachedTool{
+		Name: "search", Schema: json.RawMessage(`{"type":"object","properties":{"q":{"type":"string"}}}`), ReadOnly: true,
+	}
+	if err := SaveCachedSchema(spec.Name, CachedSchema{SpecHash: SpecFingerprint(spec), Tools: []CachedTool{reader}}); err != nil {
+		t.Fatal(err)
+	}
+	safety, found := CachedToolSafetyForSpec(spec, "search")
+	if !found || !safety.ReadOnly || !safety.TrustedReader || safety.Destructive {
+		t.Fatalf("installed cached reader = (%+v,%v), want authorized non-destructive reader", safety, found)
+	}
+}
+
 func TestCacheLoadsLegacyToolWithoutDestructiveField(t *testing.T) {
 	redirectCache(t)
 	spec := sampleSpec()

@@ -363,9 +363,9 @@ func (p Policy) Decide(toolName string, readOnly bool, args json.RawMessage) Dec
   Ordinary built-in and Bash calls then use the same Ask/Auto/YOLO, explicit
   `ask`/`deny`, and Sandbox path as Standard mode; blocked MCP writers regain
   their normal approval flow after Plan exits. A third-party MCP `readOnlyHint` affects ordinary permission and dispatch
-  classification, but it does not grant access to the dedicated planner or
-  read-only sub-agent registries; use a locally audited
-  `trusted_read_only_tools` entry for those. The legacy
+  classification. Once the server is installed or its exact project identity is
+  confirmed, non-destructive readers also enter the dedicated planner and
+  read-only sub-agent registries automatically. The legacy
   `[agent].plan_mode_allowed_tools` field is still decoded and can act as a
   concrete MCP read-only compatibility alias, while `plan_mode_read_only_commands` is
   retained for config/session round trips. Neither field grants or revokes calls
@@ -674,7 +674,6 @@ args    = []
 # env   = { FOO = "bar" }
 # call_timeout_seconds = 600            # per-server MCP call timeout; 0 = global/default cap
 # tool_timeout_seconds = { "generate_video" = 1800 }   # raw MCP tool names
-# trusted_read_only_tools = ["search"]   # locally audited Plan/read-only-research readers
 # default_tools_approval_mode = "auto"   # auto|prompt|writes|approve
 # tools = { "delete_all" = { approval_mode = "prompt" } }
 # approvals_reviewer = "user"            # user|auto_review

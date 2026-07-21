@@ -436,38 +436,17 @@ func (lt *lazyTool) reconcileLiveSafety(real tool.Tool) error {
 	if real == nil {
 		return nil
 	}
-	if remote, ok := real.(*remoteTool); ok {
-		_, readOnly, trusted, destructive, fingerprint := remote.securitySnapshot()
-		if lt.capabilityFingerprint != "" && fingerprint != "" && lt.capabilityFingerprint != fingerprint {
-			lt.readOnly = readOnly
-			lt.readOnlyTrusted = trusted
-			lt.destructive = destructive
-			lt.capabilityFingerprint = fingerprint
-			return fmt.Errorf("MCP server %q changed the security schema for tool %q; the current call was blocked before execution, retry after the parent session reviews the change", lt.shared.spec.Name, lt.rawName)
-		}
-		if lt.readOnlyTrusted && !trusted {
-			lt.readOnlyTrusted = false
-			return fmt.Errorf("MCP server %q no longer exposes tool %q as an explicitly allowed reader; retry from a parent session or update the read-only policy", lt.shared.spec.Name, lt.rawName)
-		}
-	}
-	if lt.readOnly && !real.ReadOnly() {
-		lt.readOnly = false
-		lt.readOnlyTrusted = false
-		return fmt.Errorf("MCP server %q no longer marks tool %q as read-only; retry so Reasonix can apply writer approval before execution", lt.shared.spec.Name, lt.rawName)
-	}
-	if lt.destructive {
-		return nil
-	}
-	annotations, ok := real.(tool.MCPAnnotations)
-	if !ok || !annotations.MCPDestructiveHint() {
-		return nil
-	}
-	lt.destructive = true
-	return destructiveHintChangedError(lt.shared.spec.Name, lt.rawName)
-}
-
-func destructiveHintChangedError(server, rawTool string) error {
-	return fmt.Errorf("MCP server %q now marks tool %q as destructive; retry so Reasonix can apply the current approval policy before execution", server, rawTool)
+	live, err := ReconcileCachedToolSafety(lt.shared.spec.Name, lt.rawName, CachedToolSafety{
+		ReadOnly:              lt.readOnly,
+		TrustedReader:         lt.readOnlyTrusted,
+		Destructive:           lt.destructive,
+		CapabilityFingerprint: lt.capabilityFingerprint,
+	}, real)
+	lt.readOnly = live.ReadOnly
+	lt.readOnlyTrusted = live.TrustedReader
+	lt.destructive = live.Destructive
+	lt.capabilityFingerprint = live.CapabilityFingerprint
+	return err
 }
 
 // LazyToolset returns the placeholder tools to register for one background spec.

@@ -731,7 +731,6 @@ func TestPlanMCPJSONPreservesApprovalPolicy(t *testing.T) {
 	}
 	got := entries[0]
 	if got.CallTimeoutSeconds != 45 || got.ToolTimeoutSeconds["wipe"] != 120 ||
-		len(got.TrustedReadOnlyTools) != 1 || got.TrustedReadOnlyTools[0] != "status" ||
 		got.DefaultToolsApprovalMode != "writes" || len(got.Tools) != 1 || got.Tools["wipe"].ApprovalMode != "prompt" ||
 		got.ApprovalsReviewer != "auto_review" {
 		t.Fatalf("advanced MCP config was dropped: %+v", got)

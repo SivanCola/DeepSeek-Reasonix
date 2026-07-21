@@ -69,14 +69,14 @@ type Spec struct {
 	// captured in a bounded buffer for failure diagnostics; nil keeps it out of
 	// the terminal so child logs cannot corrupt interactive UIs.
 	Stderr io.Writer
-	// ReadOnlyToolNames marks raw MCP tool names as read-only when the server omits
-	// annotations.readOnlyHint. It preserves known and legacy compatibility
-	// overrides; normal MCP classification should rely on server metadata.
+	// ReadOnlyToolNames marks raw MCP tool names as read-only when a first-party
+	// integration must compensate for an older server that omits
+	// annotations.readOnlyHint. Normal MCP classification relies on server
+	// metadata plus installation authorization.
 	ReadOnlyToolNames map[string]bool
-	// ReadOnlyModelToolNames marks explicitly declared model-visible MCP tool names
-	// ("mcp__<server>__<tool>") as read-only. This supports user-level
-	// declarations such as agent.plan_mode_allowed_tools without reverse-parsing
-	// normalized MCP tool names back into raw server-local names.
+	// ReadOnlyModelToolNames marks model-visible MCP tool names
+	// ("mcp__<server>__<tool>") as read-only for internal profile compatibility
+	// without reverse-parsing normalized names back into raw server-local names.
 	ReadOnlyModelToolNames map[string]bool
 	// DefaultToolsApprovalMode controls MCP approval when no raw-tool override
 	// exists: auto|prompt|writes|approve. Empty uses auto unless the composition
@@ -1358,8 +1358,8 @@ type mcpTool struct {
 	} `json:"annotations"`
 }
 
-// toolReadOnlyOverride keeps legacy trusted_read_only_tools and first-party
-// overrides useful when an older MCP server omits readOnlyHint.
+// toolReadOnlyOverride keeps first-party and internal profile overrides useful
+// when an older MCP server omits readOnlyHint.
 func (s Spec) toolReadOnlyOverride(rawName, visibleName string) bool {
 	return s.ReadOnlyToolNames[rawName] || s.ReadOnlyModelToolNames[toolName(s.Name, visibleName)]
 }
@@ -1745,7 +1745,7 @@ func (t *remoteTool) ExecuteWithImages(ctx context.Context, args json.RawMessage
 		// changed — state drift here returns an actionable error instead of
 		// dispatching.
 		if !readOnly || !trusted || destructive || (intent.CapabilityFingerprint != "" && fingerprint != "" && fingerprint != intent.CapabilityFingerprint) {
-			return "", nil, fmt.Errorf("MCP server %q no longer classifies tool %q as an allowed reader; the call was blocked before dispatch — retry from a parent session or update the explicit read-only policy", t.client.name, t.rawName)
+			return "", nil, fmt.Errorf("MCP server %q no longer classifies tool %q as an authorized reader; the call was blocked before dispatch — reconnect the server from a parent session before retrying", t.client.name, t.rawName)
 		}
 	}
 	res, err := t.client.call(ctx, "tools/call", map[string]any{

@@ -472,7 +472,7 @@ func (o *onDemandMCPTool) ReadOnlyExecutionHostMutation() bool { return true }
 func (o *onDemandMCPTool) ReadOnlyExecutionAuthority() bool { return o.readerAuthority }
 
 func (o *onDemandMCPTool) ReadOnlyExecutionBlockReason() string {
-	return "start this MCP capability from a parent session or explicitly allow it as a read-only tool"
+	return "connect this MCP capability from a parent session first"
 }
 
 // MCPServerName/MCPRawToolName expose the deferred target for audit and
@@ -512,20 +512,15 @@ func (o *onDemandMCPTool) Execute(ctx context.Context, args json.RawMessage) (st
 		}
 		return "", fmt.Errorf("%s", msg)
 	}
-	if live, ok := target.(tool.MCPCapabilityFingerprint); ok && o.capabilityFingerprint != "" && live.MCPCapabilityFingerprint() != "" && live.MCPCapabilityFingerprint() != o.capabilityFingerprint {
-		return "", fmt.Errorf("MCP server %q changed the security schema for tool %q; the current call was blocked before tools/call — retry so current policy is applied", o.server, o.raw)
-	}
-	if o.readOnlyTrusted && (!target.ReadOnly() || planModeUntrustedReadOnly(target)) {
-		return "", fmt.Errorf("MCP server %q no longer exposes tool %q as an allowed reader; the current call was blocked before tools/call — retry so current policy is applied", o.server, o.raw)
-	}
-	if annotations, ok := target.(tool.MCPAnnotations); ok && annotations.MCPDestructiveHint() && !o.destructive {
-		return "", destructiveMCPDiscoveryError(o.server, o.raw)
+	if _, err := plugin.ReconcileCachedToolSafety(o.server, o.raw, plugin.CachedToolSafety{
+		ReadOnly:              o.readOnly,
+		TrustedReader:         o.readOnlyTrusted,
+		Destructive:           o.destructive,
+		CapabilityFingerprint: o.capabilityFingerprint,
+	}, target); err != nil {
+		return "", err
 	}
 	return target.Execute(ctx, args)
-}
-
-func destructiveMCPDiscoveryError(server, rawTool string) error {
-	return fmt.Errorf("MCP server %q marks tool %q as destructive; retry so Reasonix can apply the current approval policy before execution", server, rawTool)
 }
 
 func (t *UseCapabilityTool) ensureServerTools(ctx context.Context, server string) ([]tool.Tool, error) {

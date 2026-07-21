@@ -120,14 +120,14 @@ and DeepSeek prefix-cache–oriented design.
   remain unavailable until plan approval. `[agent].plan_mode_allowed_tools` and
   `plan_mode_read_only_commands` are still parsed and round-tripped so old
   configs do not break, but they no longer control main Plan availability.
-  Concrete MCP names in `plan_mode_allowed_tools` remain legacy local reader
-  aliases; prefer audited raw names in `trusted_read_only_tools` for the
-  dedicated planner/read-only sub-agent registries. Use `read_only_task` /
+  Concrete MCP names in `plan_mode_allowed_tools` remain legacy compatibility
+  aliases. Installed or explicitly authorized servers now contribute their
+  non-destructive `readOnlyHint` tools to planner/read-only registries
+  automatically. Use `read_only_task` /
   `read_only_skill` when a child must be technically restricted to read-only;
   ordinary `task` / `run_skill` calls remain writer-capable and permission-gated
   in Plan. Installed MCP tools use the server's `readOnlyHint` for ordinary
-  permission and dispatch, but third-party hints do not grant dedicated
-  planner/read-only sub-agent trust. Tools without the hint remain
+  permission and dispatch. Tools without the hint remain
   writer-classified. New optional MCP-local fields
   (`default_tools_approval_mode`, `tools.<raw>.approval_mode`, and
   `approvals_reviewer`) override the new source-aware default when present. MCP tools

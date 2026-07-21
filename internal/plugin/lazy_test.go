@@ -452,6 +452,45 @@ func TestLazyToolsetAppliesSpecReadOnlyOverrideToCachedTools(t *testing.T) {
 	}
 }
 
+func TestLazyToolsetInheritsInstalledServerReaderAuthorization(t *testing.T) {
+	redirectCache(t)
+	spec := helperSpec()
+	spec.LaunchManager = mcplaunch.NewManager(filepath.Join(t.TempDir(), mcplaunch.StateFilename), t.TempDir())
+	spec.ImplicitApproval = true
+	if err := SaveCachedSchema(spec.Name, CachedSchema{
+		SpecHash: SpecFingerprint(spec),
+		Tools: []CachedTool{{
+			Name: "echo", Description: "Echo back the message.",
+			Schema: json.RawMessage(`{"type":"object","properties":{"msg":{"type":"string"}}}`), ReadOnly: true,
+		}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	cs, ok := LoadCachedSchema(spec.Name, SpecFingerprint(spec))
+	if !ok {
+		t.Fatal("LoadCachedSchema: miss right after save")
+	}
+
+	host := NewHost()
+	defer host.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	tools := LazyToolset(spec, cs, host, tool.NewRegistry(), ctx, false)
+	var echo tool.Tool
+	for _, candidate := range tools {
+		if candidate.Name() == "mcp__mock__echo" {
+			echo = candidate
+			break
+		}
+	}
+	if echo == nil || !echo.ReadOnly() {
+		t.Fatalf("installed cached reader missing or not read-only: %T", echo)
+	}
+	if untrusted, ok := echo.(tool.PlanModeUntrustedReadOnly); !ok || untrusted.PlanModeUntrustedReadOnly() {
+		t.Fatalf("lazy installed reader did not inherit authorization: %T", echo)
+	}
+}
+
 // TestLazyCacheMissAsyncSpawn drives the cache-miss branch: with no cache, a
 // single "connect" placeholder shows up; first Execute returns a retry hint and
 // kicks the spawn async; once that spawn finishes, the registry swaps to the

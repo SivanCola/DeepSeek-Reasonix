@@ -325,7 +325,6 @@ function normalizeServerViews(servers: ServerView[] | null | undefined): ServerV
       envKeys: asArray(server.envKeys),
       headerKeys: asArray(server.headerKeys),
       toolList: asArray(server.toolList),
-      trustedReadOnlyTools: asArray(server.trustedReadOnlyTools),
     })),
   );
 }
@@ -1159,9 +1158,6 @@ function EditServerForm({
       url: isStdio ? "" : url.trim(),
       env: envText === "" ? null : parseKeyValueText(envText),
       headers: isStdio || headerText === "" ? null : parseKeyValueText(headerText),
-      // Preserve an existing local reader declaration in the backend. The
-      // basic settings form does not expose this advanced compatibility field.
-      trustedReadOnlyTools: undefined,
     });
   };
 
@@ -2289,7 +2285,6 @@ type MCPServerEditorDraft = {
 	autoStart?: boolean;
 	callTimeoutSeconds?: number;
 	toolTimeoutSeconds?: Record<string, number>;
-	trustedReadOnlyTools?: string[];
 	defaultToolsApprovalMode?: MCPApprovalMode | "";
 	tools?: Record<string, MCPToolPolicy>;
 	approvalsReviewer?: MCPApprovalsReviewer | "";
@@ -2495,7 +2490,6 @@ function mcpServerEditorDraft(server?: ServerView): MCPServerEditorDraft {
 		autoStart: server?.autoStart,
 		callTimeoutSeconds: server?.callTimeoutSeconds,
 		toolTimeoutSeconds: server?.toolTimeoutSeconds ? { ...server.toolTimeoutSeconds } : undefined,
-		trustedReadOnlyTools: server?.trustedReadOnlyTools ? [...server.trustedReadOnlyTools] : undefined,
 		defaultToolsApprovalMode: server?.defaultToolsApprovalMode,
 		tools: server?.toolPolicies ? { ...server.toolPolicies } : undefined,
 		approvalsReviewer: server?.approvalsReviewer,
@@ -2518,9 +2512,6 @@ function mcpServerDraftInput(draft: MCPServerEditorDraft): MCPServerInput {
 		autoStart: draft.autoStart ?? null,
 		callTimeoutSeconds: draft.callTimeoutSeconds ?? null,
 		toolTimeoutSeconds: draft.toolTimeoutSeconds ?? null,
-		// Keep parsing the legacy field for the two-release migration window,
-		// but never generate it in a new or edited server configuration.
-		trustedReadOnlyTools: undefined,
 		defaultToolsApprovalMode: draft.defaultToolsApprovalMode ?? null,
 		tools: draft.tools ?? null,
 		approvalsReviewer: draft.approvalsReviewer ?? null,
@@ -2588,7 +2579,6 @@ function nonNegativeIntegerRecord(value: unknown): Record<string, number> | unde
 export function withExplicitMCPClears(input: MCPServerInput): MCPServerInput {
 	return {
 		...input,
-		trustedReadOnlyTools: undefined,
 		autoStart: input.autoStart ?? true,
 		callTimeoutSeconds: input.callTimeoutSeconds ?? 0,
 		toolTimeoutSeconds: input.toolTimeoutSeconds ?? {},
@@ -2668,13 +2658,9 @@ export function parseMCPServerJSON(raw: string, fixedName?: string, options?: { 
 		throw new Error("invalid" satisfies MCPServerJSONError);
 	}
 	if (value.auto_start != null && typeof value.auto_start !== "boolean") throw new Error("invalid" satisfies MCPServerJSONError);
-	if (value.trusted_read_only_tools != null && (!Array.isArray(value.trusted_read_only_tools) || !value.trusted_read_only_tools.every((item) => typeof item === "string"))) {
-		throw new Error("invalid" satisfies MCPServerJSONError);
-	}
 	const autoStart = value.auto_start as boolean | undefined;
 	const callTimeoutSeconds = nonNegativeInteger(value.call_timeout_seconds);
 	const toolTimeoutSeconds = nonNegativeIntegerRecord(value.tool_timeout_seconds);
-	const trustedReadOnlyTools = value.trusted_read_only_tools ? [...value.trusted_read_only_tools as string[]] : undefined;
 	const defaultToolsApprovalMode = value.default_tools_approval_mode === "" ? "" : approvalMode(value.default_tools_approval_mode);
 	const tools = mcpToolPolicies(value.tools);
 	const reviewer = value.approvals_reviewer === "" ? "" : approvalsReviewer(value.approvals_reviewer);
@@ -2689,7 +2675,6 @@ export function parseMCPServerJSON(raw: string, fixedName?: string, options?: { 
 		autoStart: autoStart ?? null,
 		callTimeoutSeconds: callTimeoutSeconds ?? null,
 		toolTimeoutSeconds: toolTimeoutSeconds ?? null,
-		trustedReadOnlyTools,
 		defaultToolsApprovalMode: defaultToolsApprovalMode ?? null,
 		tools: tools ?? null,
 		approvalsReviewer: reviewer ?? null,
@@ -2711,7 +2696,6 @@ export function parseMCPServerJSON(raw: string, fixedName?: string, options?: { 
 			autoStart,
 			callTimeoutSeconds,
 			toolTimeoutSeconds,
-			trustedReadOnlyTools,
 			defaultToolsApprovalMode,
 			tools,
 			approvalsReviewer: reviewer,

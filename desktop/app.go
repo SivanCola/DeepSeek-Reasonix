@@ -6159,7 +6159,6 @@ type ServerView struct {
 	HasTools                 bool                            `json:"hasTools,omitempty"`
 	Error                    string                          `json:"error,omitempty"`
 	ToolList                 []ToolView                      `json:"toolList,omitempty"`
-	TrustedReadOnlyTools     []string                        `json:"trustedReadOnlyTools,omitempty"`
 	CallTimeoutSeconds       int                             `json:"callTimeoutSeconds,omitempty"`
 	ToolTimeoutSeconds       map[string]int                  `json:"toolTimeoutSeconds,omitempty"`
 	DefaultToolsApprovalMode string                          `json:"defaultToolsApprovalMode,omitempty"`
@@ -6836,7 +6835,6 @@ func withPluginConfig(v ServerView, p config.PluginEntry) ServerView {
 	v.Command = p.Command
 	v.Args = append([]string(nil), p.Args...)
 	v.URL = p.URL
-	v.TrustedReadOnlyTools = uniqueStrings(p.TrustedReadOnlyTools)
 	v.CallTimeoutSeconds = p.CallTimeoutSeconds
 	v.ToolTimeoutSeconds = cloneStringIntMap(p.ToolTimeoutSeconds)
 	v.DefaultToolsApprovalMode = p.DefaultToolsApprovalMode
@@ -7277,7 +7275,6 @@ type MCPServerInput struct {
 	AutoStart                *bool                           `json:"autoStart"`
 	CallTimeoutSeconds       *int                            `json:"callTimeoutSeconds"`
 	ToolTimeoutSeconds       map[string]int                  `json:"toolTimeoutSeconds"`
-	TrustedReadOnlyTools     []string                        `json:"trustedReadOnlyTools"`
 	DefaultToolsApprovalMode *string                         `json:"defaultToolsApprovalMode"`
 	ToolPolicies             map[string]config.MCPToolPolicy `json:"tools"`
 	ApprovalsReviewer        *string                         `json:"approvalsReviewer"`
@@ -7303,7 +7300,6 @@ func (a *App) AddMCPServer(in MCPServerInput) (int, error) {
 		URL:                      in.URL,
 		Env:                      in.Env,
 		Headers:                  in.Headers,
-		TrustedReadOnlyTools:     nil,
 		AutoStart:                in.AutoStart,
 		CallTimeoutSeconds:       mcpIntValue(in.CallTimeoutSeconds),
 		ToolTimeoutSeconds:       cloneStringIntMap(in.ToolTimeoutSeconds),

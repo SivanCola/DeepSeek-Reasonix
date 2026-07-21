@@ -16,6 +16,7 @@ import (
 	"reasonix/internal/mcplaunch"
 	"reasonix/internal/sandbox"
 	"reasonix/internal/secrets"
+	"reasonix/internal/tool"
 )
 
 // specIdentityFingerprint resolves a secret-free identity before a server is
@@ -298,6 +299,13 @@ func trustedReaderForSpec(s Spec, cap toolCapability) bool {
 	if !cap.ReadOnly || cap.Destructive {
 		return false
 	}
+	// Explicit installation or a matching project launch grant authorizes the
+	// server and its safety metadata as one unit. Users should not have to copy
+	// every readOnlyHint tool into a second per-tool trust list before planners
+	// and read-only subagents can use an MCP they already approved.
+	if s.ImplicitApproval && s.LaunchManager != nil {
+		return true
+	}
 	if s.toolReadOnlyOverride(cap.RawName, cap.VisibleName) {
 		return true
 	}
@@ -380,13 +388,67 @@ func stripSchemaDisplayFields(value any) {
 
 // CachedToolSafety is the local safety classification for one tool in an
 // identity-matched schema cache. Server hints control ordinary read-only
-// policy; only explicit local declarations or signed catalog readers are
-// admitted into strict read-only execution.
+// policy; strict read-only execution additionally requires installation,
+// launch authorization, or a signed catalog reader declaration.
 type CachedToolSafety struct {
 	ReadOnly              bool
 	TrustedReader         bool
 	Destructive           bool
 	CapabilityFingerprint string
+}
+
+// LiveToolSafety returns the host-local execution classification for a live MCP
+// target. remoteTool uses one locked snapshot; compatibility adapters fall back
+// to the public tool interfaces. The result never changes provider-visible
+// schemas.
+func LiveToolSafety(target tool.Tool) CachedToolSafety {
+	if target == nil {
+		return CachedToolSafety{}
+	}
+	if remote, ok := target.(*remoteTool); ok {
+		_, readOnly, trusted, destructive, fingerprint := remote.securitySnapshot()
+		return CachedToolSafety{
+			ReadOnly:              readOnly,
+			TrustedReader:         trusted,
+			Destructive:           destructive,
+			CapabilityFingerprint: fingerprint,
+		}
+	}
+	safety := CachedToolSafety{ReadOnly: target.ReadOnly()}
+	safety.TrustedReader = safety.ReadOnly
+	if untrusted, ok := target.(tool.PlanModeUntrustedReadOnly); ok && untrusted.PlanModeUntrustedReadOnly() {
+		safety.TrustedReader = false
+	}
+	if annotations, ok := target.(tool.MCPAnnotations); ok {
+		safety.Destructive = annotations.MCPDestructiveHint()
+	}
+	if fingerprint, ok := target.(tool.MCPCapabilityFingerprint); ok {
+		safety.CapabilityFingerprint = fingerprint.MCPCapabilityFingerprint()
+	}
+	return safety
+}
+
+// ReconcileCachedToolSafety is the single cached-to-live boundary shared by
+// lazy and on-demand MCP adapters. Both adapters stop the current call when the
+// live server is stricter than the snapshot, before the direct tool executes.
+func ReconcileCachedToolSafety(server, rawName string, cached CachedToolSafety, target tool.Tool) (CachedToolSafety, error) {
+	live := LiveToolSafety(target)
+	if target == nil {
+		return live, nil
+	}
+	if cached.CapabilityFingerprint != "" && live.CapabilityFingerprint != "" && cached.CapabilityFingerprint != live.CapabilityFingerprint {
+		return live, fmt.Errorf("MCP server %q changed the security schema for tool %q; the current call was blocked before execution — retry so current policy is applied", server, rawName)
+	}
+	if cached.TrustedReader && !live.TrustedReader {
+		return live, fmt.Errorf("MCP server %q no longer exposes tool %q as an authorized reader; reconnect it from a parent session before retrying", server, rawName)
+	}
+	if cached.ReadOnly && !live.ReadOnly {
+		return live, fmt.Errorf("MCP server %q no longer marks tool %q as read-only; retry so Reasonix can apply writer approval before execution", server, rawName)
+	}
+	if !cached.Destructive && live.Destructive {
+		return live, fmt.Errorf("MCP server %q now marks tool %q as destructive; retry so Reasonix can apply the current approval policy before execution", server, rawName)
+	}
+	return live, nil
 }
 
 func CachedToolSafetyForSpec(s Spec, rawName string) (CachedToolSafety, bool) {

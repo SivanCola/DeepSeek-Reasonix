@@ -2436,7 +2436,7 @@ env = { GO_WANT_HELPER_PROCESS = "1" }
 	}
 }
 
-func TestBuildTokenEconomyPlanModeKeepsLegacyMCPReadOnlyOverride(t *testing.T) {
+func TestBuildTokenEconomyPlanModeUsesInstalledMCPReaderHint(t *testing.T) {
 	isolateConfigHome(t)
 	dir := robustTempDir(t)
 	t.Chdir(dir)
@@ -2467,8 +2467,7 @@ model = "x"
 name = "mockmcp"
 command = %q
 args = ["-test.run=TestHelperProcess", "--"]
-env = { GO_WANT_HELPER_PROCESS = "1" }
-trusted_read_only_tools = ["echo"]
+env = { GO_WANT_HELPER_PROCESS = "1", GO_WANT_HELPER_READ_ONLY = "1" }
 `, os.Args[0]))
 
 	ctrl, err := Build(context.Background(), Options{Sink: event.Discard, TokenMode: TokenModeEconomy})
@@ -2486,11 +2485,11 @@ trusted_read_only_tools = ["echo"]
 		t.Fatalf("requests = %d, want 2", len(reqs))
 	}
 	if !requestHasTool(reqs[1], "mcp__mockmcp__echo") {
-		t.Fatalf("second request should expose MCP source with a legacy read-only override; tools=%v", toolSchemaNames(reqs[1].Tools))
+		t.Fatalf("second request should expose the installed MCP reader; tools=%v", toolSchemaNames(reqs[1].Tools))
 	}
 	for _, msg := range ctrl.History() {
 		if msg.Role == provider.RoleTool && msg.Name == "connect_tool_source" && strings.Contains(msg.Content, "blocked:") {
-			t.Fatalf("connect_tool_source should not block MCP with a legacy override in plan mode, got:\n%s", msg.Content)
+			t.Fatalf("connect_tool_source should not block an installed MCP reader in plan mode, got:\n%s", msg.Content)
 		}
 	}
 }
@@ -3764,24 +3763,6 @@ func TestPluginSpecsDeclareKnownCodeGraphReadTools(t *testing.T) {
 	}
 }
 
-func TestPluginSpecsDeclareConfiguredReadOnlyTools(t *testing.T) {
-	specs := PluginSpecs([]config.PluginEntry{{
-		Name:                 "github",
-		TrustedReadOnlyTools: []string{"issue_read", " pull_request_read ", ""},
-	}})
-	if len(specs) != 1 {
-		t.Fatalf("PluginSpecs returned %d specs, want 1", len(specs))
-	}
-	for _, name := range []string{"issue_read", "pull_request_read"} {
-		if !specs[0].ReadOnlyToolNames[name] {
-			t.Fatalf("configured trusted read-only tool %q missing: %+v", name, specs[0].ReadOnlyToolNames)
-		}
-	}
-	if specs[0].ReadOnlyToolNames[""] {
-		t.Fatalf("empty trusted read-only tool name should be ignored: %+v", specs[0].ReadOnlyToolNames)
-	}
-}
-
 func TestPluginSpecsMapConfiguredCallTimeouts(t *testing.T) {
 	specs := PluginSpecsForRootWithOptions([]config.PluginEntry{{
 		Name:               "maker",
@@ -4452,7 +4433,7 @@ func TestHelperProcess(t *testing.T) {
 				"capabilities":    map[string]any{},
 			}
 		case "tools/list":
-			result = map[string]any{"tools": []map[string]any{{
+			echo := map[string]any{
 				"name":        "echo",
 				"description": "Echo back the message.",
 				"inputSchema": map[string]any{
@@ -4460,7 +4441,11 @@ func TestHelperProcess(t *testing.T) {
 					"properties": map[string]any{"msg": map[string]any{"type": "string"}},
 					"required":   []string{"msg"},
 				},
-			}}}
+			}
+			if os.Getenv("GO_WANT_HELPER_READ_ONLY") == "1" {
+				echo["annotations"] = map[string]any{"readOnlyHint": true}
+			}
+			result = map[string]any{"tools": []map[string]any{echo}}
 		}
 
 		resp := map[string]any{"jsonrpc": "2.0", "id": *req.ID, "result": result}

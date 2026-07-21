@@ -703,7 +703,6 @@ export interface ServerView {
   hasTools?: boolean;
   error?: string;
   toolList?: MCPToolView[];
-  trustedReadOnlyTools?: string[];
   callTimeoutSeconds?: number;
   toolTimeoutSeconds?: Record<string, number>;
   defaultToolsApprovalMode?: MCPApprovalMode;
@@ -881,7 +880,6 @@ export interface MCPServerInput {
   url: string;
   env?: Record<string, string> | null;
   headers?: Record<string, string> | null;
-  trustedReadOnlyTools?: string[];
   autoStart?: boolean | null;
   callTimeoutSeconds?: number | null;
   toolTimeoutSeconds?: Record<string, number> | null;

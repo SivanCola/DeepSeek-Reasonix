@@ -73,16 +73,25 @@ func TestLoadMCPJSONDecodesGB18030(t *testing.T) {
 	}
 }
 
-func TestMCPJSONTrustedReadOnlyToolsRoundTrip(t *testing.T) {
+func TestMCPJSONDropsRemovedTrustedReadOnlyToolsSetting(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, mcpJSONFile)
+	if err := os.WriteFile(path, []byte(`{"mcpServers":{"github":{"command":"old","trusted_read_only_tools":["issue_read"]}}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := UpsertMCPJSONPlugin(path, PluginEntry{
-		Name:                 "github",
-		Command:              "npx",
-		Args:                 []string{"-y", "@modelcontextprotocol/server-github"},
-		TrustedReadOnlyTools: []string{"issue_read", "pull_request_read"},
+		Name:    "github",
+		Command: "npx",
+		Args:    []string{"-y", "@modelcontextprotocol/server-github"},
 	}); err != nil {
 		t.Fatal(err)
+	}
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(body), "trusted_read_only_tools") {
+		t.Fatalf("updated .mcp.json retained removed reader setting:\n%s", body)
 	}
 	got, err := loadMCPJSON(path)
 	if err != nil {
@@ -90,10 +99,6 @@ func TestMCPJSONTrustedReadOnlyToolsRoundTrip(t *testing.T) {
 	}
 	if len(got) != 1 {
 		t.Fatalf("entries = %+v, want one github entry", got)
-	}
-	tools := got[0].TrustedReadOnlyTools
-	if len(tools) != 2 || tools[0] != "issue_read" || tools[1] != "pull_request_read" {
-		t.Fatalf("trusted read-only tools = %+v", tools)
 	}
 }
 

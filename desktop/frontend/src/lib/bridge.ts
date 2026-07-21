@@ -1133,7 +1133,6 @@ function makeMockApp(): AppBindings {
       tools: 4,
       prompts: 2,
       resources: 0,
-      trustedReadOnlyTools: ["pull_request_read"],
       toolList: [
         { name: "issue_read", description: "Read GitHub issue details and comments.", readOnlyHint: true },
         { name: "pull_request_read", description: "Read pull request metadata, files, and review threads.", readOnlyHint: true },
@@ -3002,7 +3001,6 @@ function makeMockApp(): AppBindings {
           url: input.transport === "stdio" ? "" : input.url,
           envKeys: input.env ? Object.keys(input.env).sort() : s.envKeys,
           headerKeys: input.headers ? Object.keys(input.headers).sort() : s.headerKeys,
-          trustedReadOnlyTools: input.trustedReadOnlyTools ?? s.trustedReadOnlyTools,
           tools: nextTools,
           error: undefined,
           authStatus: nextStatus !== "connected" && input.transport !== "stdio" ? "possible" : undefined,

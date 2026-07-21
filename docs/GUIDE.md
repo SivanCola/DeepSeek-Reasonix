@@ -118,10 +118,10 @@ tool_timeout_seconds = { "generate_video" = 1800 }   # optional raw MCP tool nam
 For the full schema and every field's contract, see [`SPEC.md` §5](./SPEC.md#5-configuration-toml).
 
 The legacy `[agent].plan_mode_allowed_tools` field is still decoded and rendered
-for old configs. Concrete `mcp__<server>__<tool>` entries continue to act as a
-local read-only trust alias, but prefer each server's `trusted_read_only_tools`
-with raw MCP names. The field never grants or revokes calls in the main Plan
-workflow.
+for old configs, but newly installed or explicitly authorized MCP servers need
+no per-tool reader list. Their non-destructive `readOnlyHint` tools are available
+to planner and read-only sub-agent registries automatically. The legacy field
+never grants or revokes calls in the main Plan workflow.
 
 `[agent].plan_mode_read_only_commands` is also retained for config round trips,
 but the main Plan workflow no longer has a separate bash allowlist or trust
@@ -655,11 +655,11 @@ are dispatch policy, not a second per-call process sandbox.
 
 Tools surface to the model as `mcp__<server>__<tool>`. A tool declaring MCP's
 `readOnlyHint: true` joins parallel dispatch and the ordinary
-permission reader-default. Because the annotation is supplied by a third-party
-server, it is accepted by the main Plan workflow only as ordinary permission
-classification; it does not grant access to the dedicated planner or read-only
-research sub-agents. Use the local `trusted_read_only_tools` override for a
-reader you have audited. Tools without the hint remain write-capable. While planning, built-in
+permission reader-default. Installing a server, or confirming an exact
+repository-provided server once, authorizes its non-destructive reader metadata;
+those tools are also available to the dedicated planner and read-only research
+sub-agents without another per-tool setting. Tools without the hint remain
+write-capable. While planning, built-in
 writers keep the ordinary permission posture; installed MCP and proxy-resolved
 MCP writers, destructive targets, and untrusted readers are hard-blocked before
 any approval and return to their normal approval flow once Plan exits.
@@ -690,7 +690,6 @@ command = "github-mcp"
 default_tools_approval_mode = "writes" # auto|prompt|writes|approve
 tools = { "delete_repository" = { approval_mode = "prompt" } }
 approvals_reviewer = "auto_review"     # user|auto_review
-trusted_read_only_tools = ["issue_read", "pull_request_read"]
 ```
 
 For a user-authorized server, omitting these advanced approval fields permits
@@ -700,8 +699,8 @@ reviews every call; `writes` reviews only writer-classified calls; and `approve`
 allows calls directly, including destructive calls. Explicit deny rules always
 win; `destructiveHint` forces a new review for every mode except `approve`. A
 raw-tool `tools` entry overrides the server default. `trusted_read_only_tools`
-remains a compatibility field and explicit local declaration for audited
-readers on servers that omit or cannot reliably maintain annotations.
+has been removed; older files containing it still load, but Reasonix ignores and
+drops the field when the configuration is next saved.
 
 Two boundaries are worth knowing. `writes` trusts the server's read-only
 classification, so a server that mislabels a writer as `readOnlyHint` escapes

@@ -534,6 +534,32 @@ func TestUserAuthorizedMCPDefaultsToDirectApprovalWithoutChangingOverrides(t *te
 	}
 }
 
+func TestUserAuthorizedMCPHintedReaderIsAuthorizedForSubagents(t *testing.T) {
+	manager := mcplaunch.NewManager(filepath.Join(t.TempDir(), mcplaunch.StateFilename), t.TempDir())
+	client := &Client{
+		name: "mock", t: &countingToolsTransport{},
+		spec: Spec{Name: "mock", LaunchManager: manager, ImplicitApproval: true},
+	}
+	tools, err := client.listTools(context.Background())
+	if err != nil {
+		t.Fatalf("listTools: %v", err)
+	}
+	echo := findToolByName(tools, "mcp__mock__echo")
+	if echo == nil || !echo.ReadOnly() {
+		t.Fatalf("installed hinted reader missing or not read-only: %T", echo)
+	}
+	if untrusted, ok := echo.(tool.PlanModeUntrustedReadOnly); !ok || untrusted.PlanModeUntrustedReadOnly() {
+		t.Fatalf("installed hinted reader did not inherit server authorization: %T", echo)
+	}
+	if authority, ok := echo.(tool.ReadOnlyExecutionAuthority); !ok || !authority.ReadOnlyExecutionAuthority() {
+		t.Fatalf("installed hinted reader lacks host authority: %T", echo)
+	}
+	fingerprint := echo.(tool.MCPCapabilityFingerprint).MCPCapabilityFingerprint()
+	if _, err := echo.Execute(tool.WithReaderExecutionIntent(context.Background(), fingerprint), json.RawMessage(`{"msg":"ok","z":"ok"}`)); err != nil {
+		t.Fatalf("installed hinted reader dispatch: %v", err)
+	}
+}
+
 func TestSpecReadOnlyToolNamesMarksUnhintedToolsReadOnly(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

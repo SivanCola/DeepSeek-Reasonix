@@ -86,9 +86,9 @@ type PlanModeClassifier interface {
 }
 
 // PlanModeUntrustedReadOnly marks a tool whose ReadOnly classification comes
-// only from an external MCP server hint. The main Plan workflow may use that
-// hint for ordinary permission classification, while planner/read-only subagent
-// registries must not treat it as local trust.
+// from a server that has not been installed or explicitly authorized by the
+// user. The main workflow may use the hint for ordinary permission
+// classification, while planner/read-only registries must fail closed.
 type PlanModeUntrustedReadOnly interface {
 	PlanModeUntrustedReadOnly() bool
 }
@@ -110,8 +110,8 @@ type ReadOnlyExecutionBlockReason interface {
 
 // MCPMetadata exposes the original MCP identity behind a model-visible
 // "mcp__<server>__<tool>" adapter. The model name may be normalized for provider
-// function-name rules; config such as trusted_read_only_tools must use the raw
-// server-local tool name.
+// function-name rules; host policy and diagnostics use the raw server-local
+// tool name.
 type MCPMetadata interface {
 	MCPServerName() string
 	MCPRawToolName() string
@@ -155,10 +155,10 @@ type MCPCapabilityFingerprint interface {
 	MCPCapabilityFingerprint() string
 }
 
-// ReadOnlyExecutionAuthority reports whether an MCP-backed tool's reader
-// classification comes from explicit local policy or a signed official
-// package rather than an unaudited server hint. Strict read-only execution
-// requires that positive authority.
+// ReadOnlyExecutionAuthority reports whether an MCP-backed tool is governed by
+// host launch authorization. Strict read-only execution additionally requires
+// the server to be installed/authorized and the live tool to remain a
+// non-destructive reader.
 type ReadOnlyExecutionAuthority interface {
 	ReadOnlyExecutionAuthority() bool
 }
