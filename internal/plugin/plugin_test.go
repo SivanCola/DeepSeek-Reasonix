@@ -521,6 +521,22 @@ func TestServerAuthorizedUsesResolvedBooleanOnly(t *testing.T) {
 	}
 }
 
+func TestInstalledServerAuthorizationSkipsProjectIdentityDigest(t *testing.T) {
+	installed := Spec{Name: "installed", Authorized: true}
+	resolved, err := resolveProjectLaunchAuthorization(context.Background(), installed)
+	if err != nil || !resolved.ServerAuthorized() {
+		t.Fatalf("installed authorization = (%+v, %v), want authorized without identity resolution", resolved, err)
+	}
+
+	project := Spec{
+		Name: "project", RequireLaunchApproval: true,
+		LaunchManager: mcplaunch.NewManager(filepath.Join(t.TempDir(), mcplaunch.StateFilename), t.TempDir()),
+	}
+	if _, err := resolveProjectLaunchAuthorization(context.Background(), project); err == nil || !strings.Contains(err.Error(), "command is required") {
+		t.Fatalf("project authorization did not resolve its exact launch identity: %v", err)
+	}
+}
+
 func TestApplyKnownOverridesPinsCodeGraphStdioToWorkspace(t *testing.T) {
 	got := ApplyKnownOverrides(Spec{Name: "codegraph"}, "/workspace")
 	if got.Dir != "/workspace" {
@@ -1265,11 +1281,11 @@ func TestWorkspaceIdentityIgnoresHostPolicyChanges(t *testing.T) {
 	}
 	changed := base
 	changed.Sandbox.ForbidReadRoots = []string{"/secret/b"}
-	a, err := specIdentityFingerprint(context.Background(), base)
+	a, err := projectLaunchIdentityDigest(context.Background(), base)
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, err := specIdentityFingerprint(context.Background(), changed)
+	b, err := projectLaunchIdentityDigest(context.Background(), changed)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1342,7 +1358,7 @@ func TestAuthorizeSpecLaunchRecordsInstallConsentWithoutStartingServer(t *testin
 	if got := readHelperCounter(t, startCount); got != 0 {
 		t.Fatalf("install authorization started server %d times, want 0", got)
 	}
-	identity, err := specIdentityFingerprint(ctx, spec)
+	identity, err := projectLaunchIdentityDigest(ctx, spec)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1370,7 +1386,7 @@ func TestAuthorizeSpecLaunchDoesNotAddPersistentTransportRestrictions(t *testing
 	if err := AuthorizeSpecLaunch(ctx, spec); err != nil {
 		t.Fatalf("explicit install authorization: %v", err)
 	}
-	identity, err := specIdentityFingerprint(ctx, spec)
+	identity, err := projectLaunchIdentityDigest(ctx, spec)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1406,7 +1422,7 @@ func TestAuthorizeProjectSpecLaunchLocksMutableLauncherWithoutStartingServer(t *
 	if err != nil {
 		t.Fatal(err)
 	}
-	identity, err := specIdentityFingerprint(context.Background(), locked)
+	identity, err := projectLaunchIdentityDigest(context.Background(), locked)
 	if err != nil {
 		t.Fatal(err)
 	}

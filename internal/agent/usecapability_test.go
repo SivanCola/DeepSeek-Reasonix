@@ -296,7 +296,7 @@ func explicitReaderMCPServer(t *testing.T, schemaDrift *atomic.Bool, toolCalls *
 func cacheExplicitReaderSchema(t *testing.T, spec plugin.Spec) {
 	t.Helper()
 	err := plugin.SaveCachedSchema(spec.Name, plugin.CachedSchema{
-		SpecHash: plugin.SpecFingerprint(spec),
+		CacheKey: plugin.SchemaCacheKey(spec),
 		Tools: []plugin.CachedTool{{
 			Name: "search", Description: "search",
 			Schema:   json.RawMessage(`{"type":"object","properties":{"q":{"type":"string"}}}`),

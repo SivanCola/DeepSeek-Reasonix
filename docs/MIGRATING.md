@@ -98,10 +98,11 @@ and DeepSeek prefix-cache–oriented design.
   search + tree-sitter symbol index is not bundled in v2 yet, and CodeGraph is no
   longer shipped as an internal MCP server.
 - **Plan mode** + `complete_step` (evidence-backed step sign-off).
-- **MCP identity and schema-cache URLs are credential-aware**: userinfo and
-  credential query values (token, api_key, password, ...) do not enter the
-  host-local identity or cache fingerprints, so credential rotation keeps an
-  unchanged project launch authorization. Legacy per-tool reader receipts are
+- **MCP project identity and schema-cache URLs are credential-aware**: userinfo
+  and credential query values (token, api_key, password, ...) do not enter the
+  project launch identity digest or schema cache key, so credential rotation
+  keeps an unchanged project launch authorization. User-installed servers do
+  not compute a project identity digest. Legacy per-tool reader receipts are
   ignored and removed on the next authorization-state write.
 - **MCP setup is now add-and-use.** Servers added by the user (Desktop, user
   config, legacy user import, or a user-installed plugin package) connect

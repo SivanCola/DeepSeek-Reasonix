@@ -9,30 +9,46 @@ import (
 	"testing"
 )
 
-func TestIdentityFingerprintIgnoresHostPolicyAndCredentialValues(t *testing.T) {
-	base := Identity{
+func TestProjectLaunchIdentityDigestCanonicalizesStableIdentity(t *testing.T) {
+	base := ProjectLaunchIdentity{
 		Server: "reader", Transport: "stdio", CommandPath: "/bin/tool",
-		CommandSHA256: "abc", Args: []string{"--serve"}, EnvKeys: []string{"TOKEN"},
-		ConfigSource: "project_config", ReadRoots: []string{"/workspace"},
-		IsolationPolicy: "enforced",
+		CommandSHA256: "abc", Args: []string{"--serve"},
+		EnvKeys: []string{"TOKEN", "PATH"}, HeaderKeys: []string{"Authorization", "X-Tenant"},
 	}
-	changedPolicy := base
-	changedPolicy.ReadRoots = []string{"/different"}
-	changedPolicy.IsolationPolicy = "unavailable_unconfined"
-	a, err := IdentityFingerprint(base)
+	reordered := base
+	reordered.EnvKeys = []string{"PATH", "TOKEN"}
+	reordered.HeaderKeys = []string{"X-Tenant", "Authorization"}
+	a, err := ProjectLaunchIdentityDigest(base)
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, err := IdentityFingerprint(changedPolicy)
+	normalized := normalizeIdentity(base, runtime.GOOS == "windows")
+	legacyPayload := struct {
+		Server, Transport, CommandPath, CommandSHA256, Dir, URL string
+		Args, EnvKeys, HeaderKeys                               []string
+		PackageDigest, LauncherDigest                           string
+	}{
+		normalized.Server, normalized.Transport, normalized.CommandPath, normalized.CommandSHA256,
+		normalized.Dir, normalized.URL, normalized.Args, normalized.EnvKeys,
+		normalized.HeaderKeys, "", normalized.LauncherDigest,
+	}
+	body, err := json.Marshal(legacyPayload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := digestBytes(body); a != want {
+		t.Fatalf("project launch identity digest changed: got %q want legacy %q", a, want)
+	}
+	b, err := ProjectLaunchIdentityDigest(reordered)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if a != b {
-		t.Fatal("host policy changed the exact server identity")
+		t.Fatal("equivalent key ordering changed the project launch identity digest")
 	}
 	changedCommand := base
 	changedCommand.Args = []string{"--serve", "--network"}
-	c, err := IdentityFingerprint(changedCommand)
+	c, err := ProjectLaunchIdentityDigest(changedCommand)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -46,6 +62,13 @@ func TestLaunchGrantIsExactDurableAndWorkspaceScoped(t *testing.T) {
 	a := NewManager(path, "/workspace/a")
 	if err := a.Authorize("project", "project_config", "identity-a"); err != nil {
 		t.Fatal(err)
+	}
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), `"identity_fingerprint": "identity-a"`) || strings.Contains(string(body), `"identity_digest"`) {
+		t.Fatalf("launch grant JSON compatibility changed: %s", body)
 	}
 	if authorized, changed, err := a.LaunchAuthorized("project", "project_config", "identity-a"); err != nil || !authorized || changed {
 		t.Fatalf("exact grant = (%v,%v,%v)", authorized, changed, err)

@@ -37,8 +37,8 @@ func TestStoredNPXLauncherLockUsesExactOfflinePackage(t *testing.T) {
 	if locked.LauncherDigest == "" {
 		t.Fatal("launcher digest is empty")
 	}
-	if SpecFingerprint(locked) != SpecFingerprint(spec) {
-		t.Fatal("host-local launcher lock changed provider cache fingerprint")
+	if SchemaCacheKey(locked) != SchemaCacheKey(spec) {
+		t.Fatal("host-local launcher lock changed the schema cache key")
 	}
 }
 
@@ -89,7 +89,7 @@ func TestStoredLauncherEnforcementFlagPreservesAuthorizedIdentity(t *testing.T) 
 			}
 			preflight := spec
 			applyLauncherResolution(&preflight, locator, lock, false)
-			approvedIdentity, err := specIdentityFingerprint(context.Background(), preflight)
+			approvedIdentity, err := projectLaunchIdentityDigest(context.Background(), preflight)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -106,7 +106,7 @@ func TestStoredLauncherEnforcementFlagPreservesAuthorizedIdentity(t *testing.T) 
 			if !stringSliceContains(locked.LaunchArgs, tc.enforcementFlag) || stringSliceContains(locked.LauncherIdentityArgs, tc.enforcementFlag) {
 				t.Fatalf("launch args = %v, identity args = %v, enforcement flag = %q", locked.LaunchArgs, locked.LauncherIdentityArgs, tc.enforcementFlag)
 			}
-			restartIdentity, err := specIdentityFingerprint(context.Background(), locked)
+			restartIdentity, err := projectLaunchIdentityDigest(context.Background(), locked)
 			if err != nil {
 				t.Fatal(err)
 			}

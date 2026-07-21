@@ -70,7 +70,7 @@ type Spec struct {
 	// the terminal so child logs cannot corrupt interactive UIs.
 	Stderr io.Writer
 	// LaunchManager owns exact project launch grants and mutable launcher locks.
-	// It never contributes to SpecFingerprint or provider-visible tool schemas.
+	// It never contributes to SchemaCacheKey or provider-visible tool schemas.
 	LaunchManager *mcplaunch.Manager
 	// ConfigSource disambiguates otherwise identical server names coming from
 	// workspace config, a host transport, or a user-installed plugin package.
@@ -84,7 +84,7 @@ type Spec struct {
 	// mutable package launchers. LauncherIdentityArgs is the same exact package
 	// resolution without an automatically injected offline/no-install flag: that
 	// enforcement-only flag changes process invocation but not the server identity
-	// the user approved. These fields never contribute to SpecFingerprint or the
+	// the user approved. These fields never contribute to SchemaCacheKey or the
 	// provider-visible tool surface; Args remains the user's stable config.
 	LaunchArgs              []string
 	LauncherIdentityArgs    []string
@@ -378,7 +378,7 @@ func Start(ctx context.Context, specs []Spec, p StartPolicy) (*Host, []tool.Tool
 					defer h.bgWrites.Done()
 					_ = RecordStartup(spec.Name, phaseADur)
 					_ = SaveCachedSchema(spec.Name, CachedSchema{
-						SpecHash: SpecFingerprint(spec),
+						CacheKey: SchemaCacheKey(spec),
 						Capabilities: map[string]bool{
 							"tools":     c.hasTools,
 							"prompts":   c.hasPrompts,
@@ -552,8 +552,6 @@ type Client struct {
 	toolCount int    // tools discovered, for /mcp status
 	transport string // declared transport type, for /mcp status ("stdio"/"http")
 
-	identityFingerprint string
-
 	// Prompts and resources discovered during StartAll, stored here so the
 	// parallel startup can collect them per-client before merging into Host.
 	prompts   []Prompt
@@ -637,7 +635,7 @@ func authorizeSpecLaunch(ctx context.Context, spec Spec, lockMutableLauncher boo
 	if err != nil {
 		return err
 	}
-	identity, err := specIdentityFingerprint(ctx, prepared)
+	identityDigest, err := projectLaunchIdentityDigest(ctx, prepared)
 	if err != nil {
 		return err
 	}
@@ -648,7 +646,7 @@ func authorizeSpecLaunch(ctx context.Context, spec Spec, lockMutableLauncher boo
 			return err
 		}
 	}
-	return manager.Authorize(prepared.Name, launchConfigSource(prepared), identity)
+	return manager.Authorize(prepared.Name, launchConfigSource(prepared), identityDigest)
 }
 
 // Failure records one MCP server that was configured but could not connect.
@@ -1108,11 +1106,7 @@ func start(lifeCtx, callCtx context.Context, s Spec) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	identity, err := specIdentityFingerprint(callCtx, s)
-	if err != nil {
-		return nil, err
-	}
-	s, err = applyEstablishedLaunchGrant(s, identity)
+	s, err = resolveProjectLaunchAuthorization(callCtx, s)
 	if err != nil {
 		return nil, err
 	}
@@ -1124,7 +1118,7 @@ func start(lifeCtx, callCtx context.Context, s Spec) (*Client, error) {
 	if tt == "" {
 		tt = "stdio"
 	}
-	c := &Client{name: s.Name, t: t, spec: s, transport: tt, identityFingerprint: identity}
+	c := &Client{name: s.Name, t: t, spec: s, transport: tt}
 	if err := c.initialize(callCtx); err != nil {
 		c.close()
 		return nil, err
@@ -1132,14 +1126,29 @@ func start(lifeCtx, callCtx context.Context, s Spec) (*Client, error) {
 	return c, nil
 }
 
-func applyEstablishedLaunchGrant(s Spec, identity string) (Spec, error) {
+// resolveProjectLaunchAuthorization deliberately skips identity resolution for
+// installed and host-session servers. Their explicit installation is already
+// the authorization decision; only repository-declared servers need an exact
+// executable or endpoint digest before startup.
+func resolveProjectLaunchAuthorization(ctx context.Context, s Spec) (Spec, error) {
+	if !s.RequireLaunchApproval {
+		return s, nil
+	}
+	identityDigest, err := projectLaunchIdentityDigest(ctx, s)
+	if err != nil {
+		return s, err
+	}
+	return applyEstablishedLaunchGrant(s, identityDigest)
+}
+
+func applyEstablishedLaunchGrant(s Spec, identityDigest string) (Spec, error) {
 	if !s.RequireLaunchApproval {
 		return s, nil
 	}
 	if s.LaunchManager == nil {
 		return s, fmt.Errorf("MCP launch authorization store is unavailable")
 	}
-	authorized, changed, err := s.LaunchManager.LaunchAuthorized(s.Name, launchConfigSource(s), identity)
+	authorized, changed, err := s.LaunchManager.LaunchAuthorized(s.Name, launchConfigSource(s), identityDigest)
 	if err != nil {
 		return s, err
 	}
@@ -1166,11 +1175,7 @@ func ResolveStoredAuthorization(ctx context.Context, s Spec) Spec {
 	if err != nil {
 		return s
 	}
-	identity, err := specIdentityFingerprint(ctx, locked)
-	if err != nil {
-		return s
-	}
-	authorized, err := applyEstablishedLaunchGrant(locked, identity)
+	authorized, err := resolveProjectLaunchAuthorization(ctx, locked)
 	if err != nil {
 		return s
 	}

@@ -34,9 +34,9 @@ func sampleSpec() Spec {
 	}
 }
 
-func sampleCachedSchema(hash string) CachedSchema {
+func sampleCachedSchema(key string) CachedSchema {
 	return CachedSchema{
-		SpecHash:     hash,
+		CacheKey:     key,
 		Capabilities: map[string]bool{"prompts": true, "resources": false},
 		Tools: []CachedTool{{
 			Name:        "do_thing",
@@ -51,18 +51,25 @@ func sampleCachedSchema(hash string) CachedSchema {
 func TestCacheRoundTrip(t *testing.T) {
 	redirectCache(t)
 	spec := sampleSpec()
-	hash := SpecFingerprint(spec)
-	cs := sampleCachedSchema(hash)
+	key := SchemaCacheKey(spec)
+	cs := sampleCachedSchema(key)
 
 	if err := SaveCachedSchema(spec.Name, cs); err != nil {
 		t.Fatalf("SaveCachedSchema: %v", err)
 	}
-	got, ok := LoadCachedSchema(spec.Name, hash)
+	body, err := os.ReadFile(cachePath(spec.Name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), `"spec_hash"`) || strings.Contains(string(body), `"cache_key"`) {
+		t.Fatalf("schema cache JSON compatibility changed: %s", body)
+	}
+	got, ok := LoadCachedSchema(spec.Name, key)
 	if !ok {
 		t.Fatal("LoadCachedSchema: miss after save")
 	}
-	if got.SpecHash != hash {
-		t.Errorf("SpecHash: got %q want %q", got.SpecHash, hash)
+	if got.CacheKey != key {
+		t.Errorf("CacheKey: got %q want %q", got.CacheKey, key)
 	}
 	if len(got.Tools) != 1 || got.Tools[0].Name != "do_thing" {
 		t.Errorf("Tools: %+v", got.Tools)
@@ -102,7 +109,7 @@ func TestCachedToolSafetyTracksReadOnlyAndDestructiveHintsOnly(t *testing.T) {
 	reader := CachedTool{
 		Name: "search", Schema: json.RawMessage(`{"type":"object","properties":{"q":{"type":"string"}}}`), ReadOnly: true,
 	}
-	if err := SaveCachedSchema(spec.Name, CachedSchema{SpecHash: SpecFingerprint(spec), Tools: []CachedTool{reader}}); err != nil {
+	if err := SaveCachedSchema(spec.Name, CachedSchema{CacheKey: SchemaCacheKey(spec), Tools: []CachedTool{reader}}); err != nil {
 		t.Fatal(err)
 	}
 	before, found := CachedToolSafetyForSpec(spec, "search")
@@ -119,7 +126,7 @@ func TestCachedToolSafetyTracksReadOnlyAndDestructiveHintsOnly(t *testing.T) {
 	// the refreshed schema cache becomes provider-visible next session.
 	reader.Schema = json.RawMessage(`{"type":"object","properties":{"q":{"type":"number"}}}`)
 	reader.Destructive = true
-	if err := SaveCachedSchema(spec.Name, CachedSchema{SpecHash: SpecFingerprint(spec), Tools: []CachedTool{reader}}); err != nil {
+	if err := SaveCachedSchema(spec.Name, CachedSchema{CacheKey: SchemaCacheKey(spec), Tools: []CachedTool{reader}}); err != nil {
 		t.Fatal(err)
 	}
 	updated, found := CachedToolSafetyForSpec(spec, "search")
@@ -131,7 +138,7 @@ func TestCachedToolSafetyTracksReadOnlyAndDestructiveHintsOnly(t *testing.T) {
 func TestCacheLoadsLegacyToolWithoutDestructiveField(t *testing.T) {
 	redirectCache(t)
 	spec := sampleSpec()
-	hash := SpecFingerprint(spec)
+	hash := SchemaCacheKey(spec)
 	p := cachePath(spec.Name)
 	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 		t.Fatal(err)
@@ -153,7 +160,7 @@ func TestCacheLoadsLegacyToolWithoutDestructiveField(t *testing.T) {
 func TestCacheLoadQuarantinesMalformedToolSchema(t *testing.T) {
 	redirectCache(t)
 	spec := sampleSpec()
-	hash := SpecFingerprint(spec)
+	hash := SchemaCacheKey(spec)
 	cs := sampleCachedSchema(hash)
 	cs.Tools = append(cs.Tools, CachedTool{
 		Name: "generate_yso_bytes",
@@ -178,15 +185,15 @@ func TestCacheLoadQuarantinesMalformedToolSchema(t *testing.T) {
 	}
 }
 
-func TestCacheInvalidatesOnSpecHashMismatch(t *testing.T) {
+func TestCacheInvalidatesOnSchemaCacheKeyMismatch(t *testing.T) {
 	redirectCache(t)
 	spec := sampleSpec()
-	hash := SpecFingerprint(spec)
-	if err := SaveCachedSchema(spec.Name, sampleCachedSchema(hash)); err != nil {
+	key := SchemaCacheKey(spec)
+	if err := SaveCachedSchema(spec.Name, sampleCachedSchema(key)); err != nil {
 		t.Fatalf("SaveCachedSchema: %v", err)
 	}
-	if _, ok := LoadCachedSchema(spec.Name, "different-hash"); ok {
-		t.Fatal("LoadCachedSchema: hit despite mismatching expectedHash")
+	if _, ok := LoadCachedSchema(spec.Name, "different-cache-key"); ok {
+		t.Fatal("LoadCachedSchema: hit despite mismatching expectedKey")
 	}
 }
 
@@ -217,7 +224,7 @@ func TestCacheVersionMismatchReturnsFalse(t *testing.T) {
 	// not poison an older binary's cache reads.
 	redirectCache(t)
 	spec := sampleSpec()
-	hash := SpecFingerprint(spec)
+	hash := SchemaCacheKey(spec)
 	cs := sampleCachedSchema(hash)
 	cs.Version = cacheVersion + 99
 	p := cachePath(spec.Name)
@@ -236,12 +243,12 @@ func TestCacheVersionMismatchReturnsFalse(t *testing.T) {
 	}
 }
 
-func TestSpecFingerprintStable(t *testing.T) {
+func TestSchemaCacheKeyStable(t *testing.T) {
 	spec := sampleSpec()
-	h1 := SpecFingerprint(spec)
-	h2 := SpecFingerprint(spec)
+	h1 := SchemaCacheKey(spec)
+	h2 := SchemaCacheKey(spec)
 	if h1 != h2 {
-		t.Fatalf("SpecFingerprint not stable: %q vs %q", h1, h2)
+		t.Fatalf("SchemaCacheKey not stable: %q vs %q", h1, h2)
 	}
 
 	// Reorder the env (build a new map; Go map iteration order is randomised
@@ -250,13 +257,13 @@ func TestSpecFingerprintStable(t *testing.T) {
 	reordered := spec
 	for i := 0; i < 32; i++ {
 		reordered.Env = map[string]string{"BAR": "2", "FOO": "1"}
-		if got := SpecFingerprint(reordered); got != h1 {
-			t.Fatalf("SpecFingerprint changed when env was rebuilt: %q vs %q", got, h1)
+		if got := SchemaCacheKey(reordered); got != h1 {
+			t.Fatalf("SchemaCacheKey changed when env was rebuilt: %q vs %q", got, h1)
 		}
 	}
 }
 
-func TestSpecFingerprintIgnoresHostLocalAuthorizationAndIsolation(t *testing.T) {
+func TestSchemaCacheKeyIgnoresHostLocalAuthorizationAndIsolation(t *testing.T) {
 	base := sampleSpec()
 	changed := base
 	changed.LaunchManager = mcplaunch.NewManager(filepath.Join(t.TempDir(), mcplaunch.StateFilename), "/workspace")
@@ -264,54 +271,54 @@ func TestSpecFingerprintIgnoresHostLocalAuthorizationAndIsolation(t *testing.T) 
 	changed.Package = "figma"
 	changed.Sandbox = sandbox.Spec{Mode: "enforce", Network: true, WriteRoots: []string{"/workspace"}, MinimalWrites: true}
 	changed.StateDir = "/host/state"
-	if got, want := SpecFingerprint(changed), SpecFingerprint(base); got != want {
-		t.Fatalf("host-local security state changed provider cache fingerprint: %q != %q", got, want)
+	if got, want := SchemaCacheKey(changed), SchemaCacheKey(base); got != want {
+		t.Fatalf("host-local security state changed schema cache key: %q != %q", got, want)
 	}
 }
 
-func TestSpecFingerprintTracksNonSecretIdentityOnly(t *testing.T) {
+func TestSchemaCacheKeyTracksNonSecretSpecIdentityOnly(t *testing.T) {
 	a := sampleSpec()
 	renamed := a
 	renamed.Name = "other-server"
-	if SpecFingerprint(a) == SpecFingerprint(renamed) {
-		t.Fatal("SpecFingerprint did not change when server name changed")
+	if SchemaCacheKey(a) == SchemaCacheKey(renamed) {
+		t.Fatal("SchemaCacheKey did not change when server name changed")
 	}
 
 	b := a
 	b.Command = "/usr/local/bin/other"
-	if SpecFingerprint(a) == SpecFingerprint(b) {
-		t.Fatal("SpecFingerprint did not change when Command changed")
+	if SchemaCacheKey(a) == SchemaCacheKey(b) {
+		t.Fatal("SchemaCacheKey did not change when Command changed")
 	}
 
 	c := a
 	c.Args = append([]string{}, a.Args...)
 	c.Args[0] = "--different"
-	if SpecFingerprint(a) == SpecFingerprint(c) {
-		t.Fatal("SpecFingerprint did not change when Args changed")
+	if SchemaCacheKey(a) == SchemaCacheKey(c) {
+		t.Fatal("SchemaCacheKey did not change when Args changed")
 	}
 
 	d := a
 	d.Env = map[string]string{"FOO": "1", "BAR": "different"}
-	if SpecFingerprint(a) != SpecFingerprint(d) {
-		t.Fatal("SpecFingerprint changed when an environment credential value rotated")
+	if SchemaCacheKey(a) != SchemaCacheKey(d) {
+		t.Fatal("SchemaCacheKey changed when an environment credential value rotated")
 	}
 
 	e := a
 	e.Env = map[string]string{"FOO": "1", "NEW_KEY": "2"}
-	if SpecFingerprint(a) == SpecFingerprint(e) {
-		t.Fatal("SpecFingerprint did not change when environment key names changed")
+	if SchemaCacheKey(a) == SchemaCacheKey(e) {
+		t.Fatal("SchemaCacheKey did not change when environment key names changed")
 	}
 
 	f := a
 	f.Headers = map[string]string{"X-Custom": "rotated-secret"}
-	if SpecFingerprint(a) != SpecFingerprint(f) {
-		t.Fatal("SpecFingerprint changed when a header credential value rotated")
+	if SchemaCacheKey(a) != SchemaCacheKey(f) {
+		t.Fatal("SchemaCacheKey changed when a header credential value rotated")
 	}
 
 	g := a
 	g.Headers = map[string]string{"Authorization": "secret"}
-	if SpecFingerprint(a) == SpecFingerprint(g) {
-		t.Fatal("SpecFingerprint did not change when header key names changed")
+	if SchemaCacheKey(a) == SchemaCacheKey(g) {
+		t.Fatal("SchemaCacheKey did not change when header key names changed")
 	}
 
 	h := a
@@ -319,8 +326,8 @@ func TestSpecFingerprintTracksNonSecretIdentityOnly(t *testing.T) {
 	h.URL = "https://user:secret@example.com/mcp?access_token=first&workspace=one"
 	i := h
 	i.URL = "https://other:rotated@example.com/mcp?access_token=second&workspace=two"
-	if SpecFingerprint(h) == SpecFingerprint(i) {
-		t.Fatal("SpecFingerprint did not bind URL credential/query values")
+	if SchemaCacheKey(h) == SchemaCacheKey(i) {
+		t.Fatal("SchemaCacheKey did not bind URL credential/query values")
 	}
 }
 
@@ -382,54 +389,54 @@ func TestSlugAppendsHashForWindowsReservedDeviceNames(t *testing.T) {
 	}
 }
 
-func TestSpecFingerprintRedactsURLCredentialsButKeepsResourceScope(t *testing.T) {
+func TestSchemaCacheKeyRedactsURLCredentialsButKeepsResourceScope(t *testing.T) {
 	base := sampleSpec()
 	base.Type = "http"
 	base.URL = "https://user:first@example.com/mcp?access_token=one&workspace=alpha&tenant=t1"
 
 	rotated := base
 	rotated.URL = "https://user:second@example.com/mcp?access_token=two&workspace=alpha&tenant=t1"
-	if SpecFingerprint(base) != SpecFingerprint(rotated) {
-		t.Fatal("credential rotation changed the cache fingerprint")
+	if SchemaCacheKey(base) != SchemaCacheKey(rotated) {
+		t.Fatal("credential rotation changed the schema cache key")
 	}
 
 	reordered := base
 	reordered.URL = "https://user:first@example.com/mcp?tenant=t1&workspace=alpha&access_token=one"
-	if SpecFingerprint(base) != SpecFingerprint(reordered) {
-		t.Fatal("query parameter order changed the cache fingerprint")
+	if SchemaCacheKey(base) != SchemaCacheKey(reordered) {
+		t.Fatal("query parameter order changed the schema cache key")
 	}
 
 	movedWorkspace := base
 	movedWorkspace.URL = "https://user:first@example.com/mcp?access_token=one&workspace=beta&tenant=t1"
-	if SpecFingerprint(base) == SpecFingerprint(movedWorkspace) {
-		t.Fatal("workspace scope change did not change the cache fingerprint")
+	if SchemaCacheKey(base) == SchemaCacheKey(movedWorkspace) {
+		t.Fatal("workspace scope change did not change the schema cache key")
 	}
 
 	// Case/separator variants of credential keys are still recognized: their
-	// values redact, so rotating them never moves the fingerprint. The key
+	// values redact, so rotating them never moves the cache key. The key
 	// spelling itself remains identity-bearing.
 	variant := base
 	variant.URL = "https://user:first@example.com/mcp?ACCESS-TOKEN=three&workspace=alpha&tenant=t1"
 	variantRotated := base
 	variantRotated.URL = "https://user:first@example.com/mcp?ACCESS-TOKEN=four&workspace=alpha&tenant=t1"
-	if SpecFingerprint(variant) != SpecFingerprint(variantRotated) {
-		t.Fatal("variant-spelled credential key leaked its value into the fingerprint")
+	if SchemaCacheKey(variant) != SchemaCacheKey(variantRotated) {
+		t.Fatal("variant-spelled credential key leaked its value into the schema cache key")
 	}
 }
 
-func TestLoadCachedSchemaForSpecMigratesLegacyURLFingerprint(t *testing.T) {
+func TestLoadCachedSchemaForSpecMigratesLegacyURLCacheKey(t *testing.T) {
 	redirectCache(t)
 	spec := sampleSpec()
 	spec.Name = "legacy-url"
 	spec.Type = "http"
 	spec.URL = "https://example.com/mcp?access_token=secret&workspace=alpha"
 
-	legacy, ok := legacySpecFingerprint(spec)
+	legacy, ok := legacySchemaCacheKey(spec)
 	if !ok {
-		t.Fatal("legacy fingerprint unavailable for credential-bearing URL")
+		t.Fatal("legacy cache key unavailable for credential-bearing URL")
 	}
 	if err := SaveCachedSchema(spec.Name, CachedSchema{
-		SpecHash:     legacy,
+		CacheKey:     legacy,
 		Capabilities: map[string]bool{"tools": true},
 		Tools:        []CachedTool{{Name: "echo", Schema: json.RawMessage(`{"type":"object"}`)}},
 	}); err != nil {
@@ -440,11 +447,11 @@ func TestLoadCachedSchemaForSpecMigratesLegacyURLFingerprint(t *testing.T) {
 	if !ok || len(cs.Tools) != 1 || cs.Tools[0].Name != "echo" {
 		t.Fatalf("legacy cache entry did not load: ok=%v cs=%+v", ok, cs)
 	}
-	if cs.SpecHash != SpecFingerprint(spec) {
-		t.Fatalf("loaded cache kept legacy hash %q", cs.SpecHash)
+	if cs.CacheKey != SchemaCacheKey(spec) {
+		t.Fatalf("loaded cache kept legacy key %q", cs.CacheKey)
 	}
-	// The upgrade persists: a plain current-hash load now succeeds.
-	if _, ok := LoadCachedSchema(spec.Name, SpecFingerprint(spec)); !ok {
+	// The upgrade persists: a plain current-key load now succeeds.
+	if _, ok := LoadCachedSchema(spec.Name, SchemaCacheKey(spec)); !ok {
 		t.Fatal("legacy cache entry was not rewritten in place")
 	}
 }

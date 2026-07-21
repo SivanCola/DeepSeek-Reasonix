@@ -75,7 +75,7 @@ agent 核心延续了原有能力：循环、读写编辑与 glob/grep/bash 等�
 
 - **代码智能**：Go 重写版通过 LSP 辅助代码读取，并结合 `grep`、`read_file` 和 `glob` 理解本地代码。v1 的语义搜索与 tree-sitter 符号索引尚未移植，CodeGraph 也不再以内置 MCP server 形式提供。
 - **Plan 模式**：新增 `complete_step`，用于基于证据确认步骤完成。
-- **MCP 身份与 schema 缓存 URL 感知凭据**：userinfo 和 token/api_key/password 等查询值不会进入本机身份或缓存指纹，因此轮换凭据不会使项目授权失效。旧的逐工具 reader 回执不再使用，并会在下一次写入授权状态时移除。
+- **MCP 项目身份与 schema 缓存 URL 感知凭据**：userinfo 和 token/api_key/password 等查询值不会进入项目启动身份摘要或 schema 缓存键，因此轮换凭据不会使项目授权失效。用户安装的 server 不计算项目身份摘要。旧的逐工具 reader 回执不再使用，并会在下一次写入授权状态时移除。
 - **MCP 添加后即可使用**：用户通过桌面端、全局配置、旧配置导入或主动安装插件包添加的 server 会立即连接并允许调用。仓库内 `reasonix.toml` / `.mcp.json` 声明的 server 则必须先针对稳定身份确认一次，确认前不会启动进程或发起网络请求。
 - **stdio MCP 连接持久化**：writer 调用不再创建新进程，浏览器或会话类 server 的状态可以保留。
 - **Plan 与权限策略相互独立**：普通内置工具和 Bash 仍遵循 Ask/Auto/YOLO 与 Sandbox；已安装或代理解析的 MCP 写入/破坏性工具，以及来自未授权 server 的读取工具，在整个规划阶段保持阻止。`complete_step` 等执行阶段工具也要等计划获批后才能使用。

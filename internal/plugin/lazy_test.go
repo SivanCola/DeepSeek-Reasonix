@@ -65,7 +65,7 @@ func helperSpec() Spec {
 func writeMockCache(t *testing.T, spec Spec) {
 	t.Helper()
 	cs := CachedSchema{
-		SpecHash:     SpecFingerprint(spec),
+		CacheKey:     SchemaCacheKey(spec),
 		Capabilities: map[string]bool{"prompts": false, "resources": false},
 		Tools: []CachedTool{
 			{
@@ -107,7 +107,7 @@ func waitForCachedSchema(t *testing.T, spec Spec, timeout time.Duration) *Cached
 	t.Helper()
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		if cs, ok := LoadCachedSchema(spec.Name, SpecFingerprint(spec)); ok {
+		if cs, ok := LoadCachedSchema(spec.Name, SchemaCacheKey(spec)); ok {
 			return cs
 		}
 		time.Sleep(10 * time.Millisecond)
@@ -127,7 +127,7 @@ func TestLazyCacheHitSyncSpawn(t *testing.T) {
 	spec := helperSpec()
 	writeMockCache(t, spec)
 
-	cs, ok := LoadCachedSchema(spec.Name, SpecFingerprint(spec))
+	cs, ok := LoadCachedSchema(spec.Name, SchemaCacheKey(spec))
 	if !ok {
 		t.Fatal("LoadCachedSchema: miss right after save (sanity)")
 	}
@@ -204,7 +204,7 @@ func TestLazyCacheHitReusesExistingSharedHostClient(t *testing.T) {
 	spec := helperSpec()
 	writeMockCache(t, spec)
 
-	cs, ok := LoadCachedSchema(spec.Name, SpecFingerprint(spec))
+	cs, ok := LoadCachedSchema(spec.Name, SchemaCacheKey(spec))
 	if !ok {
 		t.Fatal("LoadCachedSchema: miss right after save (sanity)")
 	}
@@ -288,7 +288,7 @@ func TestLazyRemoveCancelsInFlightGenerationWithoutResurrection(t *testing.T) {
 	if _, ok := reg.Get(ToolPrefix(spec.Name) + "connect"); ok {
 		t.Fatal("removed lazy placeholder was re-registered")
 	}
-	if _, ok := LoadCachedSchema(spec.Name, SpecFingerprint(spec)); ok {
+	if _, ok := LoadCachedSchema(spec.Name, SchemaCacheKey(spec)); ok {
 		t.Fatal("cancelled lazy generation wrote a new schema cache")
 	}
 	tools, err := host.Add(ctx, spec)
@@ -347,7 +347,7 @@ func TestLazyCacheHitStartupTimeoutCanRetry(t *testing.T) {
 	spec.Env["GO_WANT_HELPER_INIT_MS"] = fmt.Sprint(int(defaultStartTimeout/time.Millisecond) + 200)
 	writeMockCache(t, spec)
 
-	cs, ok := LoadCachedSchema(spec.Name, SpecFingerprint(spec))
+	cs, ok := LoadCachedSchema(spec.Name, SchemaCacheKey(spec))
 	if !ok {
 		t.Fatal("LoadCachedSchema: miss right after save (sanity)")
 	}
@@ -391,7 +391,7 @@ func TestLazyToolsetInheritsInstalledServerReaderAuthorization(t *testing.T) {
 	spec.LaunchManager = mcplaunch.NewManager(filepath.Join(t.TempDir(), mcplaunch.StateFilename), t.TempDir())
 	spec.Authorized = true
 	if err := SaveCachedSchema(spec.Name, CachedSchema{
-		SpecHash: SpecFingerprint(spec),
+		CacheKey: SchemaCacheKey(spec),
 		Tools: []CachedTool{{
 			Name: "echo", Description: "Echo back the message.",
 			Schema: json.RawMessage(`{"type":"object","properties":{"msg":{"type":"string"}}}`), ReadOnly: true,
@@ -399,7 +399,7 @@ func TestLazyToolsetInheritsInstalledServerReaderAuthorization(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	cs, ok := LoadCachedSchema(spec.Name, SpecFingerprint(spec))
+	cs, ok := LoadCachedSchema(spec.Name, SchemaCacheKey(spec))
 	if !ok {
 		t.Fatal("LoadCachedSchema: miss right after save")
 	}
@@ -486,7 +486,7 @@ func TestLazySwapDoesNotRaceRegistrySchemas(t *testing.T) {
 	spec := helperSpec()
 	spec.Env["GO_WANT_HELPER_INIT_MS"] = "50"
 	writeMockCache(t, spec)
-	cs, _ := LoadCachedSchema(spec.Name, SpecFingerprint(spec))
+	cs, _ := LoadCachedSchema(spec.Name, SchemaCacheKey(spec))
 
 	host := NewHost()
 	defer host.Close()
@@ -538,7 +538,7 @@ func TestLazyBackgroundKick(t *testing.T) {
 	redirectCache(t)
 	spec := helperSpec()
 	writeMockCache(t, spec)
-	cs, _ := LoadCachedSchema(spec.Name, SpecFingerprint(spec))
+	cs, _ := LoadCachedSchema(spec.Name, SchemaCacheKey(spec))
 
 	host := NewHost()
 	defer host.Close()
@@ -611,7 +611,7 @@ func TestLazyBackgroundCloseCancelsInFlightKick(t *testing.T) {
 	spec.Name = "slow"
 	spec.Env["GO_WANT_HELPER_INIT_MS"] = "5000"
 	writeMockCache(t, spec)
-	cs, _ := LoadCachedSchema(spec.Name, SpecFingerprint(spec))
+	cs, _ := LoadCachedSchema(spec.Name, SchemaCacheKey(spec))
 
 	host := NewHost()
 	reg := tool.NewRegistry()
@@ -655,7 +655,7 @@ func TestLazyConcurrentExecuteOnlyOneSpawn(t *testing.T) {
 	redirectCache(t)
 	spec := helperSpec()
 	writeMockCache(t, spec)
-	cs, _ := LoadCachedSchema(spec.Name, SpecFingerprint(spec))
+	cs, _ := LoadCachedSchema(spec.Name, SchemaCacheKey(spec))
 
 	host := NewHost()
 	defer host.Close()
@@ -738,10 +738,10 @@ func TestLazyHandshakeFailureSurfaced(t *testing.T) {
 
 	// Hand-craft a cache so the cache-HIT branch runs (synchronous spawn,
 	// failure surfaces directly to the first caller rather than via a retry
-	// hint). The SpecHash must match — otherwise LoadCachedSchema would miss
+	// hint). The CacheKey must match — otherwise LoadCachedSchema would miss
 	// and we'd be exercising the async path.
 	cs := &CachedSchema{
-		SpecHash:     SpecFingerprint(spec),
+		CacheKey:     SchemaCacheKey(spec),
 		Capabilities: map[string]bool{},
 		Tools: []CachedTool{{
 			Name:        "doit",
@@ -797,7 +797,7 @@ func TestLazyToolsetCacheHitSchemaVisible(t *testing.T) {
 
 	rawSchema := json.RawMessage(`{"properties":{"msg":{"type":"string"}},"type":"object","required":["msg"]}`)
 	cs := &CachedSchema{
-		SpecHash:     SpecFingerprint(spec),
+		CacheKey:     SchemaCacheKey(spec),
 		Capabilities: map[string]bool{},
 		Tools: []CachedTool{{
 			Name:        "echo",
@@ -851,7 +851,7 @@ func TestLazyCacheHitPinsToolBytesAcrossDivergentHandshake(t *testing.T) {
 	redirectCache(t)
 	spec := helperSpec()
 	stale := CachedSchema{
-		SpecHash:     SpecFingerprint(spec),
+		CacheKey:     SchemaCacheKey(spec),
 		Capabilities: map[string]bool{},
 		Tools: []CachedTool{{
 			Name:        "echo",
@@ -863,7 +863,7 @@ func TestLazyCacheHitPinsToolBytesAcrossDivergentHandshake(t *testing.T) {
 	if err := SaveCachedSchema(spec.Name, stale); err != nil {
 		t.Fatalf("SaveCachedSchema: %v", err)
 	}
-	cs, ok := LoadCachedSchema(spec.Name, SpecFingerprint(spec))
+	cs, ok := LoadCachedSchema(spec.Name, SchemaCacheKey(spec))
 	if !ok {
 		t.Fatal("LoadCachedSchema miss after save")
 	}
@@ -899,7 +899,7 @@ func TestLazyCacheHitPinsToolBytesAcrossDivergentHandshake(t *testing.T) {
 	// slow machines) rather than accepting the first loadable snapshot.
 	deadline := time.Now().Add(5 * time.Second)
 	for {
-		refreshed, ok := LoadCachedSchema(spec.Name, SpecFingerprint(spec))
+		refreshed, ok := LoadCachedSchema(spec.Name, SchemaCacheKey(spec))
 		if ok {
 			names := map[string]bool{}
 			for _, ct := range refreshed.Tools {
@@ -980,7 +980,7 @@ func TestLazyToolDemotesStaleReaderBeforeExecution(t *testing.T) {
 func TestLazyEmptyCachedToolsFallsBackToConnectStub(t *testing.T) {
 	redirectCache(t)
 	spec := helperSpec()
-	cs := &CachedSchema{SpecHash: SpecFingerprint(spec), Tools: nil}
+	cs := &CachedSchema{CacheKey: SchemaCacheKey(spec), Tools: nil}
 
 	host := NewHost()
 	defer host.Close()

@@ -153,7 +153,7 @@ func (s *lazySpawn) run() {
 
 func saveLazyCachedSchema(spec Spec, real []tool.Tool) {
 	_ = SaveCachedSchema(spec.Name, CachedSchema{
-		SpecHash:     SpecFingerprint(spec),
+		CacheKey:     SchemaCacheKey(spec),
 		Capabilities: map[string]bool{"tools": len(real) > 0},
 		Tools:        cacheableToolsOf(real),
 	})

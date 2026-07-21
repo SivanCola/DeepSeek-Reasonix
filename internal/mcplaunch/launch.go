@@ -28,27 +28,21 @@ const (
 	workspaceScope = "workspace"
 )
 
-// Identity is the secret-free canonical input to a server identity digest.
+// ProjectLaunchIdentity is the secret-free canonical input to an exact project
+// server launch identity digest.
 // Environment and header values are intentionally excluded so credential
 // rotation does not invalidate an otherwise identical authorization.
-type Identity struct {
-	Server          string   `json:"server"`
-	Transport       string   `json:"transport"`
-	CommandPath     string   `json:"command_path,omitempty"`
-	CommandSHA256   string   `json:"command_sha256,omitempty"`
-	Args            []string `json:"args,omitempty"`
-	Dir             string   `json:"dir,omitempty"`
-	URL             string   `json:"url,omitempty"`
-	EnvKeys         []string `json:"env_keys,omitempty"`
-	HeaderKeys      []string `json:"header_keys,omitempty"`
-	PackageDigest   string   `json:"package_digest,omitempty"`
-	LauncherDigest  string   `json:"launcher_digest,omitempty"`
-	ConfigSource    string   `json:"config_source,omitempty"`
-	Network         bool     `json:"network"`
-	WriteRoots      []string `json:"write_roots,omitempty"`
-	ReadRoots       []string `json:"read_roots,omitempty"`
-	ForbidReadRoots []string `json:"forbid_read_roots,omitempty"`
-	IsolationPolicy string   `json:"isolation_policy,omitempty"`
+type ProjectLaunchIdentity struct {
+	Server         string   `json:"server"`
+	Transport      string   `json:"transport"`
+	CommandPath    string   `json:"command_path,omitempty"`
+	CommandSHA256  string   `json:"command_sha256,omitempty"`
+	Args           []string `json:"args,omitempty"`
+	Dir            string   `json:"dir,omitempty"`
+	URL            string   `json:"url,omitempty"`
+	EnvKeys        []string `json:"env_keys,omitempty"`
+	HeaderKeys     []string `json:"header_keys,omitempty"`
+	LauncherDigest string   `json:"launcher_digest,omitempty"`
 }
 
 type LauncherLock struct {
@@ -68,7 +62,7 @@ type LaunchGrant struct {
 	WorkspaceFingerprint string    `json:"workspace_fingerprint,omitempty"`
 	Server               string    `json:"server"`
 	ConfigSource         string    `json:"config_source"`
-	IdentityFingerprint  string    `json:"identity_fingerprint"`
+	IdentityDigest       string    `json:"identity_fingerprint"`
 	CreatedAt            time.Time `json:"created_at"`
 }
 
@@ -130,10 +124,11 @@ func WorkspaceFingerprint(workspace string) string {
 	return digestBytes([]byte(workspace))
 }
 
-func IdentityFingerprint(identity Identity) (string, error) {
+func ProjectLaunchIdentityDigest(identity ProjectLaunchIdentity) (string, error) {
 	identity = normalizeIdentity(identity, runtime.GOOS == "windows")
-	// Runtime confinement is deliberately excluded. Tightening Reasonix's own
-	// sandbox must not invalidate authorization for unchanged server code.
+	// PackageDigest was never populated, but its empty field was part of the
+	// original canonical JSON. Keep that placeholder so existing project launch
+	// grants remain byte-for-byte valid after the internal cleanup.
 	payload := struct {
 		Server, Transport, CommandPath, CommandSHA256, Dir, URL string
 		Args, EnvKeys, HeaderKeys                               []string
@@ -141,7 +136,7 @@ func IdentityFingerprint(identity Identity) (string, error) {
 	}{
 		identity.Server, identity.Transport, identity.CommandPath, identity.CommandSHA256,
 		identity.Dir, identity.URL, identity.Args, identity.EnvKeys, identity.HeaderKeys,
-		identity.PackageDigest, identity.LauncherDigest,
+		"", identity.LauncherDigest,
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {
@@ -150,19 +145,15 @@ func IdentityFingerprint(identity Identity) (string, error) {
 	return digestBytes(body), nil
 }
 
-func normalizeIdentity(identity Identity, envCaseInsensitive bool) Identity {
+func normalizeIdentity(identity ProjectLaunchIdentity, envCaseInsensitive bool) ProjectLaunchIdentity {
 	identity.Server = strings.TrimSpace(identity.Server)
 	identity.Transport = normalizeTransport(identity.Transport)
 	identity.CommandPath = canonicalPath(identity.CommandPath)
 	identity.Dir = canonicalPath(identity.Dir)
 	identity.URL = strings.TrimSpace(identity.URL)
-	identity.ConfigSource = strings.TrimSpace(identity.ConfigSource)
 	identity.Args = append([]string(nil), identity.Args...)
 	identity.EnvKeys = cleanStrings(identity.EnvKeys, envCaseInsensitive)
 	identity.HeaderKeys = cleanStrings(identity.HeaderKeys, true)
-	identity.WriteRoots = canonicalPaths(identity.WriteRoots)
-	identity.ReadRoots = canonicalPaths(identity.ReadRoots)
-	identity.ForbidReadRoots = canonicalPaths(identity.ForbidReadRoots)
 	return identity
 }
 
@@ -204,13 +195,13 @@ func (m *Manager) Load() (State, error) {
 }
 
 // Authorize records durable workspace consent for one exact server identity.
-func (m *Manager) Authorize(server, configSource, identityFingerprint string) error {
+func (m *Manager) Authorize(server, configSource, identityDigest string) error {
 	grant := LaunchGrant{
 		Scope: workspaceScope, WorkspaceFingerprint: m.workspaceFingerprint,
 		Server: strings.TrimSpace(server), ConfigSource: strings.TrimSpace(configSource),
-		IdentityFingerprint: strings.TrimSpace(identityFingerprint), CreatedAt: time.Now().UTC(),
+		IdentityDigest: strings.TrimSpace(identityDigest), CreatedAt: time.Now().UTC(),
 	}
-	if grant.Server == "" || grant.ConfigSource == "" || grant.IdentityFingerprint == "" {
+	if grant.Server == "" || grant.ConfigSource == "" || grant.IdentityDigest == "" {
 		return fmt.Errorf("MCP launch authorization requires server, config source, and identity")
 	}
 	m.mu.Lock()
@@ -221,10 +212,10 @@ func (m *Manager) Authorize(server, configSource, identityFingerprint string) er
 }
 
 // LaunchAuthorized checks exact server-level consent without starting the server.
-func (m *Manager) LaunchAuthorized(server, configSource, identityFingerprint string) (authorized, changed bool, err error) {
+func (m *Manager) LaunchAuthorized(server, configSource, identityDigest string) (authorized, changed bool, err error) {
 	server = strings.TrimSpace(server)
 	configSource = strings.TrimSpace(configSource)
-	identityFingerprint = strings.TrimSpace(identityFingerprint)
+	identityDigest = strings.TrimSpace(identityDigest)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	state, err := m.Load()
@@ -235,7 +226,7 @@ func (m *Manager) LaunchAuthorized(server, configSource, identityFingerprint str
 		if grant.Server != server || grant.ConfigSource != configSource || grant.WorkspaceFingerprint != m.workspaceFingerprint {
 			continue
 		}
-		if grant.IdentityFingerprint == identityFingerprint {
+		if grant.IdentityDigest == identityDigest {
 			return true, false, nil
 		}
 		changed = true

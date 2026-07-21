@@ -10,23 +10,23 @@ import (
 	"strings"
 
 	"reasonix/internal/mcplaunch"
-	"reasonix/internal/sandbox"
 	"reasonix/internal/secrets"
 	"reasonix/internal/tool"
 )
 
-// specIdentityFingerprint resolves a secret-free identity before a project
-// server is authorized. For stdio this pins the real executable path and file content; for
-// HTTP it normalizes the endpoint while retaining only header key names.
-func specIdentityFingerprint(ctx context.Context, s Spec) (string, error) {
-	identity, err := buildSpecIdentity(ctx, s)
+// projectLaunchIdentityDigest resolves a secret-free identity before a project
+// server is authorized. For stdio this pins the real executable path and file
+// content; for HTTP it normalizes the endpoint while retaining only header key
+// names. Installed and host-session servers never call this path.
+func projectLaunchIdentityDigest(ctx context.Context, s Spec) (string, error) {
+	identity, err := buildProjectLaunchIdentity(ctx, s)
 	if err != nil {
 		return "", err
 	}
-	return mcplaunch.IdentityFingerprint(identity)
+	return mcplaunch.ProjectLaunchIdentityDigest(identity)
 }
 
-func buildSpecIdentity(ctx context.Context, s Spec) (mcplaunch.Identity, error) {
+func buildProjectLaunchIdentity(ctx context.Context, s Spec) (mcplaunch.ProjectLaunchIdentity, error) {
 	transport := strings.ToLower(strings.TrimSpace(s.Type))
 	if transport == "" {
 		transport = "stdio"
@@ -35,26 +35,21 @@ func buildSpecIdentity(ctx context.Context, s Spec) (mcplaunch.Identity, error) 
 	if s.LauncherIdentityArgs != nil {
 		launchArgs = s.LauncherIdentityArgs
 	}
-	identity := mcplaunch.Identity{
-		Server: s.Name, Transport: transport, ConfigSource: s.ConfigSource,
+	identity := mcplaunch.ProjectLaunchIdentity{
+		Server: s.Name, Transport: transport,
 		Dir: s.Dir, Args: append([]string(nil), launchArgs...),
 		EnvKeys: sortedMapKeys(s.Env), HeaderKeys: sortedMapKeys(s.Headers),
-		Network:         s.Sandbox.Network,
-		WriteRoots:      append(append([]string(nil), s.Sandbox.WriteRoots...), s.Sandbox.AppContainerWriteRoots...),
-		ReadRoots:       append([]string(nil), s.Sandbox.ReadRoots...),
-		ForbidReadRoots: append([]string(nil), s.Sandbox.ForbidReadRoots...),
-		IsolationPolicy: isolationPolicy(s),
-		LauncherDigest:  s.LauncherDigest,
+		LauncherDigest: s.LauncherDigest,
 	}
 	switch transport {
 	case "stdio":
 		if strings.TrimSpace(s.Command) == "" {
-			return mcplaunch.Identity{}, fmt.Errorf("stdio plugin %q: command is required", s.Name)
+			return mcplaunch.ProjectLaunchIdentity{}, fmt.Errorf("stdio plugin %q: command is required", s.Name)
 		}
 		env := mergeEnv(secrets.ProcessEnv(), s.Env)
 		exe, _, err := resolveStdioExecutable(ctx, s, env)
 		if err != nil {
-			return mcplaunch.Identity{}, err
+			return mcplaunch.ProjectLaunchIdentity{}, err
 		}
 		if abs, err := filepath.Abs(exe); err == nil {
 			exe = abs
@@ -62,7 +57,7 @@ func buildSpecIdentity(ctx context.Context, s Spec) (mcplaunch.Identity, error) 
 		identity.CommandPath = exe
 		identity.CommandSHA256, err = mcplaunch.FileSHA256(exe)
 		if err != nil {
-			return mcplaunch.Identity{}, fmt.Errorf("hash MCP executable %q: %w", exe, err)
+			return mcplaunch.ProjectLaunchIdentity{}, fmt.Errorf("hash MCP executable %q: %w", exe, err)
 		}
 	case "http", "streamable-http", "streamable_http":
 		identity.Transport = "http"
@@ -87,20 +82,6 @@ func MCPStateDir(reasonixHome, workspace, server string) string {
 		workspaceID = "global"
 	}
 	return filepath.Join(reasonixHome, "mcp-state", workspaceID, slug(server))
-}
-
-func isolationPolicy(s Spec) string {
-	transport := strings.ToLower(strings.TrimSpace(s.Type))
-	if transport == "http" || transport == "streamable-http" || transport == "streamable_http" {
-		return "not_applicable"
-	}
-	if !s.Sandbox.Enforce() {
-		return "off"
-	}
-	if sandbox.Available() {
-		return "enforced"
-	}
-	return "unavailable_unconfined"
 }
 
 // identityURLRedacted replaces credential material inside identity and cache
@@ -146,7 +127,7 @@ func credentialURLQueryKey(key string) bool {
 }
 
 // normalizeIdentityURL canonicalizes an MCP endpoint for host-local identity
-// and schema-cache fingerprints: scheme/host case and default ports fold,
+// and schema-cache keys: scheme/host case and default ports fold,
 // the fragment drops, query keys sort stably, and credential material
 // (userinfo, credential query values) is replaced by a fixed placeholder so
 // rotation never invalidates an exact project launch authorization.

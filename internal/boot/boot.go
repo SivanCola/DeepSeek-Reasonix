@@ -1412,9 +1412,9 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	var capLedger *capability.Ledger
 	var capAudit *capability.Audit
 	capSpecs := PluginSpecsForRootWithOptions(cfg.Plugins, root, pluginSpecOptions)
-	cachedTools, cacheHashOK := capability.LoadCachedToolsForSpecs(capSpecs)
+	cachedTools, cacheKeyOK := capability.LoadCachedToolsForSpecs(capSpecs)
 	skillStore.ConfigureToolBindings(func(sk skill.Skill) []tool.MCPBinding {
-		return skillMCPBindings(sk, reg, capSpecs, cachedTools, cacheHashOK)
+		return skillMCPBindings(sk, reg, capSpecs, cachedTools, cacheKeyOK)
 	})
 	var capProxy *agent.UseCapabilityTool
 	if tokenDelivery {
@@ -1444,7 +1444,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 				Connected:   conn,
 				Failed:      failed,
 				CachedTools: cachedTools,
-				CacheHashOK: cacheHashOK,
+				CacheKeyOK:  cacheKeyOK,
 			}
 			// Live proxy-observed tools keep mcp-tool entries routable after an
 			// on-demand connect (proxied tools never enter the registry).
@@ -1482,7 +1482,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 			Connected:   connected,
 			Failed:      failed,
 			CachedTools: cachedTools,
-			CacheHashOK: cacheHashOK,
+			CacheKeyOK:  cacheKeyOK,
 			ProxyTools:  proxyTools,
 		})
 		_, missing := catalog.RequiresReady(requires)
@@ -2224,7 +2224,7 @@ func pluginPackageOwners(cfg *config.Config) map[string]string {
 	return out
 }
 
-func skillMCPBindings(sk skill.Skill, reg *tool.Registry, specs []plugin.Spec, cachedTools map[string][]plugin.CachedTool, cacheHashOK map[string]bool) []tool.MCPBinding {
+func skillMCPBindings(sk skill.Skill, reg *tool.Registry, specs []plugin.Spec, cachedTools map[string][]plugin.CachedTool, cacheKeyOK map[string]bool) []tool.MCPBinding {
 	var out []tool.MCPBinding
 	liveServers := map[string]bool{}
 	if reg != nil {
@@ -2241,7 +2241,7 @@ func skillMCPBindings(sk skill.Skill, reg *tool.Registry, specs []plugin.Spec, c
 	// package server before it is connected. The skill can then route through
 	// use_capability without inventing Reasonix's canonical name.
 	for _, spec := range specs {
-		if spec.Package != sk.Plugin || liveServers[spec.Name] || !cacheHashOK[spec.Name] {
+		if spec.Package != sk.Plugin || liveServers[spec.Name] || !cacheKeyOK[spec.Name] {
 			continue
 		}
 		for _, cached := range cachedTools[spec.Name] {
