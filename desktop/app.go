@@ -6043,6 +6043,9 @@ func (a *App) AutoResearchCurrent() AutoResearchStatusView {
 }
 
 func (a *App) AutoResearchStatus(tabID string) AutoResearchStatusView {
+	if a.activeWorkbenchTargetIsRemote() {
+		return AutoResearchStatusView{OpenCriteria: []AutoResearchCriterionView{}}
+	}
 	ctrl := a.ctrlByTabID(tabID)
 	if ctrl == nil {
 		return AutoResearchStatusView{OpenCriteria: []AutoResearchCriterionView{}}
@@ -6055,6 +6058,9 @@ func (a *App) AutoResearchStatus(tabID string) AutoResearchStatusView {
 }
 
 func (a *App) AutoResearchList(tabID string) []AutoResearchStatusView {
+	if a.activeWorkbenchTargetIsRemote() {
+		return []AutoResearchStatusView{}
+	}
 	ctrl := a.ctrlByTabID(tabID)
 	if ctrl == nil {
 		return []AutoResearchStatusView{}
@@ -6071,6 +6077,9 @@ func (a *App) AutoResearchList(tabID string) []AutoResearchStatusView {
 }
 
 func (a *App) AutoResearchFindings(tabID string, limit int) []AutoResearchFindingView {
+	if a.activeWorkbenchTargetIsRemote() {
+		return []AutoResearchFindingView{}
+	}
 	ctrl := a.ctrlByTabID(tabID)
 	if ctrl == nil {
 		return []AutoResearchFindingView{}
@@ -6096,6 +6105,9 @@ func (a *App) AutoResearchFindings(tabID string, limit int) []AutoResearchFindin
 }
 
 func (a *App) AutoResearchOpenTask(tabID string) error {
+	if a.activeWorkbenchTargetIsRemote() {
+		return remoteAutoResearchUnavailableErr()
+	}
 	status := a.AutoResearchStatus(tabID)
 	if strings.TrimSpace(status.TaskPath) == "" {
 		return os.ErrInvalid
@@ -6104,6 +6116,9 @@ func (a *App) AutoResearchOpenTask(tabID string) error {
 }
 
 func (a *App) AutoResearchRecordEvidence(tabID, criterionID string, input AutoResearchEvidenceView) error {
+	if a.activeWorkbenchTargetIsRemote() {
+		return remoteAutoResearchUnavailableErr()
+	}
 	ctrl := a.ctrlByTabID(tabID)
 	if ctrl == nil {
 		return os.ErrInvalid
@@ -10147,6 +10162,9 @@ var writableScopes = []memory.Scope{memory.ScopeUser, memory.ScopeProject, memor
 // active/archived auto-memories, and the writable scopes. Read-only; mutations
 // go through Remember / SaveDoc.
 func (a *App) Memory() MemoryView {
+	if a.activeWorkbenchTargetIsRemote() {
+		return emptyMemoryView()
+	}
 	return a.memoryForCtrl(nil, true)
 }
 
@@ -10157,6 +10175,9 @@ func (a *App) Memory() MemoryView {
 // An empty tabID is treated as "no tab specified" and falls back to the
 // active tab for backward compatibility.
 func (a *App) MemoryForTab(tabID string) MemoryView {
+	if a.activeWorkbenchTargetIsRemote() {
+		return emptyMemoryView()
+	}
 	if tabID == "" {
 		return a.memoryForCtrl(nil, true)
 	}
@@ -10164,7 +10185,7 @@ func (a *App) MemoryForTab(tabID string) MemoryView {
 }
 
 func (a *App) memoryForCtrl(ctrl control.SessionAPI, fallback bool) MemoryView {
-	view := MemoryView{Docs: []MemoryDoc{}, Facts: []MemoryFact{}, Archives: []MemoryArchive{}, Scopes: []MemoryScope{}}
+	view := emptyMemoryView()
 	if ctrl == nil {
 		if !fallback {
 			return view
@@ -10209,14 +10230,24 @@ func (a *App) memoryForCtrl(ctrl control.SessionAPI, fallback bool) MemoryView {
 	return view
 }
 
+func emptyMemoryView() MemoryView {
+	return MemoryView{Docs: []MemoryDoc{}, Facts: []MemoryFact{}, Archives: []MemoryArchive{}, Scopes: []MemoryScope{}}
+}
+
 // Remember quick-adds a one-line note to the doc-memory file for scope — the
 // panel's explicit "remember" action, equivalent to typing "/remember <note>".
 // An unknown scope falls back to project. Returns the file written.
 func (a *App) Remember(scope, note string) (string, error) {
+	if a.activeWorkbenchTargetIsRemote() {
+		return "", remoteMemoryUnavailableErr()
+	}
 	return a.rememberForCtrl(nil, scope, note, true)
 }
 
 func (a *App) RememberForTab(tabID, scope, note string) (string, error) {
+	if a.activeWorkbenchTargetIsRemote() {
+		return "", remoteMemoryUnavailableErr()
+	}
 	if tabID == "" {
 		return a.rememberForCtrl(nil, scope, note, true)
 	}
@@ -10241,10 +10272,16 @@ func (a *App) rememberForCtrl(ctrl control.SessionAPI, scope, note string, fallb
 // Forget deletes a saved auto-memory by name — the panel's delete action for a
 // fact the model owns. A no-op when no controller is attached.
 func (a *App) Forget(name string) error {
+	if a.activeWorkbenchTargetIsRemote() {
+		return remoteMemoryUnavailableErr()
+	}
 	return a.forgetForCtrl(nil, name, true)
 }
 
 func (a *App) ForgetForTab(tabID, name string) error {
+	if a.activeWorkbenchTargetIsRemote() {
+		return remoteMemoryUnavailableErr()
+	}
 	if tabID == "" {
 		return a.forgetForCtrl(nil, name, true)
 	}
@@ -10269,10 +10306,16 @@ func (a *App) forgetForCtrl(ctrl control.SessionAPI, name string, fallback bool)
 // SaveDoc overwrites a memory doc with the panel editor's contents. The controller
 // validates path against the recognized memory files. Returns the file written.
 func (a *App) SaveDoc(path, body string) (string, error) {
+	if a.activeWorkbenchTargetIsRemote() {
+		return "", remoteMemoryUnavailableErr()
+	}
 	return a.saveDocForCtrl(nil, path, body, true)
 }
 
 func (a *App) SaveDocForTab(tabID, path, body string) (string, error) {
+	if a.activeWorkbenchTargetIsRemote() {
+		return "", remoteMemoryUnavailableErr()
+	}
 	if tabID == "" {
 		return a.saveDocForCtrl(nil, path, body, true)
 	}

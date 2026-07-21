@@ -162,6 +162,14 @@ func remoteSavedSessionManagementErr() error {
 	return fmt.Errorf("CAPABILITY_UNAVAILABLE: Remote saved-session management is not available in V1")
 }
 
+func remoteMemoryUnavailableErr() error {
+	return fmt.Errorf("CAPABILITY_UNAVAILABLE: Remote Memory is not available in V1")
+}
+
+func remoteAutoResearchUnavailableErr() error {
+	return fmt.Errorf("CAPABILITY_UNAVAILABLE: Remote Auto Research is not available in V1")
+}
+
 func (a *App) workbenchSnapshot() (protocol.SessionSnapshot, bool) {
 	_, snapshot, _, _, ok := a.activeRemoteWorkbench()
 	return snapshot, ok
@@ -278,34 +286,33 @@ func (a *App) workbenchRefreshSnapshot(generation uint64, tabID string) {
 	}
 	ctx, cancel := context.WithTimeout(a.bootContext(), 15*time.Second)
 	defer cancel()
-	result, err := cli.Subscribe(ctx, protocol.HistoryMaxTurns)
+	_, err := cli.SubscribeCommitted(ctx, protocol.HistoryMaxTurns, func(result protocol.SessionSubscribeResult) error {
+		k := a.workbench()
+		k.transitionMu.Lock()
+		defer k.transitionMu.Unlock()
+		active, _, _ := k.targets.Active()
+		if active.Kind != target.KindRemote {
+			return nil
+		}
+		k.mu.Lock()
+		if k.remote == cli && k.remoteGen == generation {
+			k.snapshot = result.Snapshot
+			if k.remoteTabID != "" {
+				tabID = k.remoteTabID
+			}
+		} else {
+			k.mu.Unlock()
+			return nil
+		}
+		k.mu.Unlock()
+		go a.workbenchMirrorSnapshot(cli, result.Snapshot)
+		a.emitReady(a.ctx, tabID)
+		a.emitRuntimeEvent("runtime:rebuilt", tabID)
+		return nil
+	})
 	if err != nil {
 		return
 	}
-	if !cli.IsCurrentSnapshot(result) {
-		return
-	}
-	k := a.workbench()
-	k.transitionMu.Lock()
-	defer k.transitionMu.Unlock()
-	active, _, _ := k.targets.Active()
-	if active.Kind != target.KindRemote {
-		return
-	}
-	k.mu.Lock()
-	if k.remote == cli && k.remoteGen == generation {
-		k.snapshot = result.Snapshot
-		if k.remoteTabID != "" {
-			tabID = k.remoteTabID
-		}
-	} else {
-		k.mu.Unlock()
-		return
-	}
-	k.mu.Unlock()
-	go a.workbenchMirrorSnapshot(cli, result.Snapshot)
-	a.emitReady(a.ctx, tabID)
-	a.emitRuntimeEvent("runtime:rebuilt", tabID)
 }
 
 func (a *App) workbenchMirrorSnapshot(cli *client.Client, snapshot protocol.SessionSnapshot) {

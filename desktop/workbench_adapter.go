@@ -380,37 +380,42 @@ func (a *App) WorkbenchConnectRemote(hostID, workspace string) error {
 			return fail(fmt.Errorf("create Remote session: %w", err))
 		}
 	}
-	subscribed, err := cli.Subscribe(a.bootContext(), protocol.HistoryMaxTurns)
+	var activeID target.Identity
+	var activeGen, requestSeq uint64
+	var previous *client.Client
+	subscribed, err := cli.SubscribeCommitted(a.bootContext(), protocol.HistoryMaxTurns, func(result protocol.SessionSubscribeResult) error {
+		catalog, err := workbenchLoadCatalog(a.bootContext(), cli)
+		if err != nil {
+			return fmt.Errorf("load Remote model catalog: %w", err)
+		}
+		sessionCatalog, err := workbenchLoadSessionCatalog(a.bootContext(), cli)
+		if err != nil {
+			return fmt.Errorf("load Remote session catalog: %w", err)
+		}
+		if err := k.targets.MarkRemoteConnected(gen); err != nil {
+			return err
+		}
+		activeID, activeGen, requestSeq, err = k.targets.ActivateRemote(gen)
+		if err != nil {
+			return err
+		}
+		k.mu.Lock()
+		previous = k.remote
+		k.remote = cli
+		k.remoteGen = gen
+		k.remoteTabID = tabID
+		k.remoteFingerprint = fp
+		k.providerAccess = providerAccess
+		k.snapshot = result.Snapshot
+		k.catalog = catalog
+		k.sessionCatalog = sessionCatalog
+		k.mu.Unlock()
+		k.targets.SetRemoteBusy(result.Snapshot.Runtime.Running || result.Snapshot.Runtime.CurrentOperation != nil)
+		return nil
+	})
 	if err != nil {
 		return fail(fmt.Errorf("subscribe Remote session: %w", err))
 	}
-	catalog, err := workbenchLoadCatalog(a.bootContext(), cli)
-	if err != nil {
-		return fail(fmt.Errorf("load Remote model catalog: %w", err))
-	}
-	sessionCatalog, err := workbenchLoadSessionCatalog(a.bootContext(), cli)
-	if err != nil {
-		return fail(fmt.Errorf("load Remote session catalog: %w", err))
-	}
-	if err := k.targets.MarkRemoteConnected(gen); err != nil {
-		return fail(err)
-	}
-	activeID, activeGen, requestSeq, err := k.targets.ActivateRemote(gen)
-	if err != nil {
-		return fail(err)
-	}
-	k.mu.Lock()
-	previous := k.remote
-	k.remote = cli
-	k.remoteGen = gen
-	k.remoteTabID = tabID
-	k.remoteFingerprint = fp
-	k.providerAccess = providerAccess
-	k.snapshot = subscribed.Snapshot
-	k.catalog = catalog
-	k.sessionCatalog = sessionCatalog
-	k.mu.Unlock()
-	k.targets.SetRemoteBusy(subscribed.Snapshot.Runtime.Running || subscribed.Snapshot.Runtime.CurrentOperation != nil)
 	go a.workbenchMirrorSnapshot(cli, subscribed.Snapshot)
 	keepClient = true
 	if previous != nil {

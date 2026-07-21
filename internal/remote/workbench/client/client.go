@@ -49,9 +49,11 @@ type Client struct {
 
 	mu             sync.Mutex
 	subscribeMu    sync.Mutex
+	projectionMu   sync.Mutex
 	closed         bool
 	state          State
 	authorityRev   uint64
+	snapshotRev    uint64
 	callbacks      Callbacks
 	notifyCh       chan any
 	completedTurns map[protocol.TurnID]struct{}
@@ -190,6 +192,8 @@ func (c *Client) SelectSession(target protocol.RuntimeTarget, runtimeEpoch proto
 	if err := target.Validate(); err != nil || runtimeEpoch == "" {
 		return fmt.Errorf("invalid Remote session selection")
 	}
+	c.projectionMu.Lock()
+	defer c.projectionMu.Unlock()
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.closed || !c.state.Initialized {
@@ -236,7 +240,7 @@ func (c *Client) Request(ctx context.Context, method string, params any) (json.R
 		if err != nil {
 			return nil, fmt.Errorf("%s result: %w", method, err)
 		}
-		if c.applyRequestResult(name, decoded, authority) {
+		if c.applyRequestResultProjected(name, decoded, authority) {
 			return raw, nil
 		}
 		result, ok := decoded.(protocol.SessionSubscribeResult)
@@ -281,6 +285,29 @@ func (c *Client) Subscribe(ctx context.Context, pageTurns int) (protocol.Session
 	}
 	decoded, _ := protocol.DecodeResult(protocol.MethodSessionSubscribe, raw)
 	return decoded.(protocol.SessionSubscribeResult), nil
+}
+
+// SubscribeCommitted keeps session notifications and authority-changing
+// results behind the snapshot commit. The caller therefore cannot publish an
+// older snapshot after a notification or mutation result has already advanced
+// its local projection.
+func (c *Client) SubscribeCommitted(ctx context.Context, pageTurns int, commit func(protocol.SessionSubscribeResult) error) (protocol.SessionSubscribeResult, error) {
+	if commit == nil {
+		return protocol.SessionSubscribeResult{}, fmt.Errorf("snapshot commit required")
+	}
+	c.projectionMu.Lock()
+	defer c.projectionMu.Unlock()
+	result, err := c.Subscribe(ctx, pageTurns)
+	if err != nil {
+		return protocol.SessionSubscribeResult{}, err
+	}
+	if !c.IsCurrentSnapshot(result) {
+		return protocol.SessionSubscribeResult{}, fmt.Errorf("stale Remote snapshot")
+	}
+	if err := commit(result); err != nil {
+		return protocol.SessionSubscribeResult{}, err
+	}
+	return result, nil
 }
 
 func (c *Client) Submit(ctx context.Context, input string) (protocol.SessionSubmitResult, error) {
@@ -412,7 +439,15 @@ func (c *Client) applyResult(method protocol.Method, value any) {
 	c.mu.Lock()
 	authority := requestAuthority{revision: c.authorityRev}
 	c.mu.Unlock()
-	c.applyRequestResult(method, value, authority)
+	c.applyRequestResultProjected(method, value, authority)
+}
+
+func (c *Client) applyRequestResultProjected(method protocol.Method, value any, authority requestAuthority) bool {
+	if requestInvalidatesSnapshot(method, value) {
+		c.projectionMu.Lock()
+		defer c.projectionMu.Unlock()
+	}
+	return c.applyRequestResult(method, value, authority)
 }
 
 func (c *Client) applyRequestResult(method protocol.Method, value any, authority requestAuthority) bool {
@@ -437,6 +472,7 @@ func (c *Client) applyRequestResult(method protocol.Method, value any, authority
 		if result.Snapshot.Runtime.CurrentTurn != nil {
 			c.state.CurrentTurnID = result.Snapshot.Runtime.CurrentTurn.TurnID
 		}
+		c.snapshotRev = c.authorityRev
 	case protocol.SessionSubmitResult:
 		c.state.Target, c.state.RuntimeEpoch = result.Target, result.RuntimeEpoch
 		if _, completed := c.completedTurns[result.TurnID]; !completed {
@@ -479,7 +515,8 @@ func requestInvalidatesSnapshot(method protocol.Method, value any) bool {
 func (c *Client) IsCurrentSnapshot(result protocol.SessionSubscribeResult) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.state.SubscriptionID != result.SubscriptionID ||
+	if c.snapshotRev != c.authorityRev ||
+		c.state.SubscriptionID != result.SubscriptionID ||
 		c.state.Target != result.Snapshot.Target ||
 		c.state.RuntimeEpoch != result.Snapshot.RuntimeEpoch ||
 		c.state.ResolvedProfile != result.Snapshot.Meta.ResolvedProfile {
@@ -532,10 +569,18 @@ func (c *Client) enqueue(value any) {
 		}
 		go func() {
 			defer c.overflowed.Store(false)
-			callback(protocol.SessionResyncRequired{
-				SubscriptionID: state.SubscriptionID, HostEpoch: state.HostEpoch, Target: state.Target,
-				RuntimeEpoch: state.RuntimeEpoch, Reason: protocol.ResyncQueueOverflow,
-			})
+			c.projectionMu.Lock()
+			defer c.projectionMu.Unlock()
+			state = c.State()
+			c.mu.Lock()
+			callback = c.callbacks.OnResyncRequired
+			c.mu.Unlock()
+			if callback != nil {
+				callback(protocol.SessionResyncRequired{
+					SubscriptionID: state.SubscriptionID, HostEpoch: state.HostEpoch, Target: state.Target,
+					RuntimeEpoch: state.RuntimeEpoch, Reason: protocol.ResyncQueueOverflow,
+				})
+			}
 		}()
 	}
 }
@@ -551,35 +596,40 @@ func (c *Client) deliveryLoop(ctx context.Context) {
 		case value := <-c.notifyCh:
 			switch notification := value.(type) {
 			case protocol.SessionEvent:
-				state := c.State()
-				if notification.SubscriptionID != state.SubscriptionID {
-					continue
-				}
-				if activeSubscription != notification.SubscriptionID {
-					activeSubscription = notification.SubscriptionID
-					pending = map[uint64]protocol.SessionEvent{}
-					next = 1
-				}
-				pending[notification.Seq] = notification
-				for {
-					event, ok := pending[next]
-					if !ok {
-						break
+				c.projectionMu.Lock()
+				func() {
+					defer c.projectionMu.Unlock()
+					state := c.State()
+					if notification.SubscriptionID != state.SubscriptionID {
+						return
 					}
-					delete(pending, next)
-					next++
-					c.mu.Lock()
-					if event.Event.Kind == "turn_done" {
-						c.completedTurns[event.TurnID] = struct{}{}
-						c.state.CurrentTurnID = ""
+					if activeSubscription != notification.SubscriptionID {
+						activeSubscription = notification.SubscriptionID
+						pending = map[uint64]protocol.SessionEvent{}
+						next = 1
 					}
-					callback := c.callbacks.OnSessionEvent
-					c.mu.Unlock()
-					if callback != nil {
-						callback(event)
+					pending[notification.Seq] = notification
+					for {
+						event, ok := pending[next]
+						if !ok {
+							break
+						}
+						delete(pending, next)
+						next++
+						c.mu.Lock()
+						if event.Event.Kind == "turn_done" {
+							c.completedTurns[event.TurnID] = struct{}{}
+							c.state.CurrentTurnID = ""
+						}
+						callback := c.callbacks.OnSessionEvent
+						c.mu.Unlock()
+						if callback != nil {
+							callback(event)
+						}
 					}
-				}
+				}()
 			case protocol.SessionResyncRequired:
+				c.projectionMu.Lock()
 				pending = map[uint64]protocol.SessionEvent{}
 				next = notification.LastSeq + 1
 				c.mu.Lock()
@@ -588,6 +638,7 @@ func (c *Client) deliveryLoop(ctx context.Context) {
 				if callback != nil {
 					callback(notification)
 				}
+				c.projectionMu.Unlock()
 			case protocol.CatalogChanged:
 				c.mu.Lock()
 				callback := c.callbacks.OnCatalogChanged

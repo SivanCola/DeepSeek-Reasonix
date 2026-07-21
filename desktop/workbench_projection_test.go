@@ -168,3 +168,61 @@ func TestRemoteSavedSessionBindingsNeverFallBackToLocal(t *testing.T) {
 		t.Fatalf("Remote binding changed Local session: %v", err)
 	}
 }
+
+func TestRemoteUnsupportedCapabilitiesNeverFallBackToLocal(t *testing.T) {
+	app := &App{}
+	_, generation, err := app.workbench().targets.BeginRemoteConnect("remote-host", "/srv/work")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := app.workbench().targets.MarkRemoteConnected(generation); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err := app.workbench().targets.ActivateRemote(generation); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, view := range []MemoryView{app.Memory(), app.MemoryForTab("local-tab")} {
+		if view.Available || view.Docs == nil || view.Facts == nil || view.Archives == nil || view.Scopes == nil {
+			t.Fatalf("Remote memory view = %+v, want unavailable non-nil collections", view)
+		}
+	}
+	suggestions := app.MemorySuggestionsForTab("local-tab")
+	if suggestions.Available || suggestions.Memories == nil || suggestions.Skills == nil {
+		t.Fatalf("Remote memory suggestions = %+v, want unavailable non-nil collections", suggestions)
+	}
+	if status := app.AutoResearchStatus("local-tab"); status.OpenCriteria == nil {
+		t.Fatalf("Remote auto-research status = %+v, want non-nil criteria", status)
+	}
+	if app.AutoResearchList("local-tab") == nil || app.AutoResearchFindings("local-tab", 10) == nil {
+		t.Fatal("Remote auto-research reads returned nil collections")
+	}
+
+	checks := []struct {
+		name string
+		run  func() error
+	}{
+		{"remember", func() error { _, err := app.Remember("project", "local-only"); return err }},
+		{"remember for tab", func() error { _, err := app.RememberForTab("local-tab", "project", "local-only"); return err }},
+		{"forget", func() error { return app.Forget("local-only") }},
+		{"forget for tab", func() error { return app.ForgetForTab("local-tab", "local-only") }},
+		{"save doc", func() error { _, err := app.SaveDoc("REASONIX.md", "local-only"); return err }},
+		{"save doc for tab", func() error { _, err := app.SaveDocForTab("local-tab", "REASONIX.md", "local-only"); return err }},
+		{"accept memory suggestion", func() error { _, err := app.AcceptMemorySuggestion(MemorySuggestion{}); return err }},
+		{"accept memory suggestion for tab", func() error { _, err := app.AcceptMemorySuggestionForTab("local-tab", MemorySuggestion{}); return err }},
+		{"accept skill suggestion", func() error { _, err := app.AcceptSkillSuggestion(SkillSuggestion{}); return err }},
+		{"accept skill suggestion for tab", func() error { _, err := app.AcceptSkillSuggestionForTab("local-tab", SkillSuggestion{}); return err }},
+		{"open auto-research task", func() error { return app.AutoResearchOpenTask("local-tab") }},
+		{"record auto-research evidence", func() error {
+			return app.AutoResearchRecordEvidence("local-tab", "criterion", AutoResearchEvidenceView{})
+		}},
+	}
+	for _, check := range checks {
+		t.Run(check.name, func(t *testing.T) {
+			err := check.run()
+			if err == nil || !strings.Contains(err.Error(), "CAPABILITY_UNAVAILABLE") {
+				t.Fatalf("error = %v, want Remote capability rejection", err)
+			}
+		})
+	}
+}

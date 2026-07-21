@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"reasonix/internal/eventwire"
 	"reasonix/internal/remote/protocol"
 )
 
@@ -183,6 +184,71 @@ func TestCurrentSnapshotRejectsStateChangedAfterSubscribe(t *testing.T) {
 	})
 	if c.IsCurrentSnapshot(result) {
 		t.Fatal("snapshot remained current after a newer turn started")
+	}
+}
+
+func TestCurrentSnapshotRejectsAuthorityOnlyMutation(t *testing.T) {
+	target := protocol.RuntimeTarget{WorkspaceID: "workspace-live", SessionID: "session-live"}
+	profile := protocol.ResolvedProfile{
+		Model: "local/model", Effort: "high", CollaborationMode: protocol.CollaborationNormal,
+		TokenMode: protocol.TokenFull, ToolApprovalMode: protocol.ToolApprovalAsk,
+	}
+	result := protocol.SessionSubscribeResult{
+		SubscriptionID: "subscription-live",
+		Snapshot: protocol.SessionSnapshot{
+			SnapshotID: "snapshot-live", HostEpoch: "host-live", Target: target,
+			RuntimeEpoch: "runtime-live", Meta: protocol.SessionMetaSnapshot{ResolvedProfile: profile},
+		},
+	}
+	c := &Client{state: State{
+		Initialized: true, HostEpoch: "host-live", WorkspaceID: target.WorkspaceID,
+		Target: target, RuntimeEpoch: "runtime-live", ResolvedProfile: profile,
+	}, completedTurns: map[protocol.TurnID]struct{}{}}
+	c.applyResult(protocol.MethodSessionSubscribe, result)
+	if !c.IsCurrentSnapshot(result) {
+		t.Fatal("fresh subscribe result was not current")
+	}
+	c.applyResult(protocol.MethodSessionGoalSet, protocol.SessionGoalSetResult{Goal: "ship", Status: protocol.GoalRunning})
+	if c.IsCurrentSnapshot(result) {
+		t.Fatal("snapshot remained current after an authority-only mutation")
+	}
+}
+
+func TestSessionEventWaitsForSnapshotProjectionCommit(t *testing.T) {
+	projected := make(chan struct{})
+	delivered := make(chan struct{}, 1)
+	c := &Client{
+		notifyCh:       make(chan any, 1),
+		completedTurns: map[protocol.TurnID]struct{}{},
+		state:          State{SubscriptionID: "subscription-live"},
+		callbacks: Callbacks{OnSessionEvent: func(protocol.SessionEvent) {
+			select {
+			case <-projected:
+				delivered <- struct{}{}
+			default:
+				t.Error("session event ran before the snapshot projection committed")
+			}
+		}},
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	c.projectionMu.Lock()
+	go c.deliveryLoop(ctx)
+	c.enqueue(protocol.SessionEvent{
+		SubscriptionID: "subscription-live", Seq: 1,
+		Event: eventwire.Event{Kind: "text", Text: "newer"},
+	})
+	select {
+	case <-delivered:
+		t.Fatal("session event passed the projection commit boundary")
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(projected)
+	c.projectionMu.Unlock()
+	select {
+	case <-delivered:
+	case <-time.After(time.Second):
+		t.Fatal("session event was not delivered after the projection committed")
 	}
 }
 

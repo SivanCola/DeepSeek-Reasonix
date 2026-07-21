@@ -211,7 +211,7 @@ func TestDesktopBrokerCatalogAndStreamRoundTrip(t *testing.T) {
 		Name: "host", StrictJSONRPC: true, MaxInboundBytes: 1 << 20, MaxOutboundBytes: 1 << 20,
 	})
 
-	var gotChunks []provider.Chunk
+	gotChunks := map[int64]provider.Chunk{}
 	var end protocol.BrokerStreamEndParams
 	var mu sync.Mutex
 	hostConn.HandleNotify(string(protocol.MethodBrokerStreamChunk), func(ctx context.Context, params json.RawMessage) {
@@ -220,8 +220,12 @@ func TestDesktopBrokerCatalogAndStreamRoundTrip(t *testing.T) {
 			t.Errorf("chunk params: %v", err)
 			return
 		}
+		if p.StreamID != "s1" {
+			t.Errorf("chunk stream = %q, want s1", p.StreamID)
+			return
+		}
 		mu.Lock()
-		gotChunks = append(gotChunks, p.Chunk.ProviderChunk())
+		gotChunks[p.Seq] = p.Chunk.ProviderChunk()
 		mu.Unlock()
 	})
 	hostConn.HandleNotify(string(protocol.MethodBrokerStreamEnd), func(ctx context.Context, params json.RawMessage) {
@@ -310,8 +314,8 @@ func TestDesktopBrokerCatalogAndStreamRoundTrip(t *testing.T) {
 	if len(gotChunks) != 2 {
 		t.Fatalf("chunks = %d", len(gotChunks))
 	}
-	if gotChunks[0].Text+gotChunks[1].Text != "hi there" {
-		t.Fatalf("text = %q%q", gotChunks[0].Text, gotChunks[1].Text)
+	if gotChunks[1].Text+gotChunks[2].Text != "hi there" {
+		t.Fatalf("text = %q%q", gotChunks[1].Text, gotChunks[2].Text)
 	}
 	if end.Interrupted || end.Error != "" || end.LastSeq != 2 {
 		t.Fatalf("end = %+v", end)
