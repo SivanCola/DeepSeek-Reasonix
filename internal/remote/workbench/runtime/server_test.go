@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	goruntime "runtime"
 	"strings"
 	"testing"
 	"time"
@@ -36,6 +37,17 @@ type persistentFakeController struct {
 	sessionDir  string
 	sessionPath string
 	closed      bool
+}
+
+type profileFakeController struct {
+	*persistentFakeController
+	planMode     bool
+	approvalMode string
+}
+
+func (c *profileFakeController) SetPlanMode(enabled bool) { c.planMode = enabled }
+func (c *profileFakeController) SetToolApprovalMode(mode string) {
+	c.approvalMode = mode
 }
 
 func (c *persistentFakeController) SessionPath() string { return c.sessionPath }
@@ -247,7 +259,11 @@ func TestRuntimeSessionCreateAndFileList(t *testing.T) {
 	// Short absolute socket path — macOS rejects long unix paths.
 	sock := filepath.Join(t.TempDir(), "r.sock")
 	if len(sock) > 100 {
-		shortDir, err := os.MkdirTemp("/tmp", "rx-wb-")
+		tempBase := os.TempDir()
+		if goruntime.GOOS == "darwin" {
+			tempBase = "/tmp"
+		}
+		shortDir, err := os.MkdirTemp(tempBase, "rx-wb-")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -441,6 +457,80 @@ func TestRuntimeEarlyShutdownDoesNotOverwriteUnreadRegistry(t *testing.T) {
 	if string(after) != string(original) {
 		t.Fatalf("early shutdown replaced unread registry:\n%s", after)
 	}
+}
+
+func TestSetProfileRegistryFailurePreservesUsableSession(t *testing.T) {
+	newServer := func(t *testing.T) (*Server, *session, *profileFakeController, *[]*profileFakeController) {
+		t.Helper()
+		workspace := t.TempDir()
+		sessionDir := t.TempDir()
+		registryPath := t.TempDir() // AtomicWriteFile cannot replace this directory.
+		built := &[]*profileFakeController{}
+		srv := New(Options{
+			Workspace: workspace, SessionDir: sessionDir, RegistryPath: registryPath,
+			BuildController: func(_ context.Context, model string, _ *string, _ event.Sink) (SessionController, error) {
+				ctrl := &profileFakeController{persistentFakeController: &persistentFakeController{
+					fakeController: &fakeController{model: model}, sessionDir: sessionDir,
+				}}
+				*built = append(*built, ctrl)
+				return ctrl, nil
+			},
+		})
+		srv.registryRead = true
+		old := &profileFakeController{persistentFakeController: &persistentFakeController{
+			fakeController: &fakeController{model: "local/old"}, sessionDir: sessionDir,
+			sessionPath: filepath.Join(sessionDir, "session.jsonl"),
+		}}
+		old.approvalMode = string(protocol.ToolApprovalAsk)
+		now := time.Now().UnixMilli()
+		sess := &session{
+			id: "session_profile", ctrl: old, model: old.model, effort: "high",
+			collaboration: protocol.CollaborationNormal, tokenMode: protocol.TokenFull,
+			toolApproval: protocol.ToolApprovalAsk, topicID: "topic_profile", title: "Profile",
+			runtimeEpoch: "runtime_profile", createdAt: now, updatedAt: now,
+		}
+		srv.sessions[sess.id] = sess
+		return srv, sess, old, built
+	}
+
+	t.Run("metadata update rolls back", func(t *testing.T) {
+		srv, sess, old, _ := newServer(t)
+		collaboration := protocol.CollaborationPlan
+		approval := protocol.ToolApprovalYOLO
+		_, err := srv.setProfile(context.Background(), protocol.SessionProfileSetParams{
+			SessionMutation: protocol.SessionMutation{
+				ExpectedHostEpoch: srv.hostEpoch, Target: srv.target(sess.id), ExpectedRuntimeEpoch: sess.runtimeEpoch,
+			},
+			Patch: protocol.ProfilePatch{CollaborationMode: &collaboration, ToolApprovalMode: &approval},
+		})
+		if err == nil {
+			t.Fatal("profile update succeeded despite registry failure")
+		}
+		if sess.collaboration != protocol.CollaborationNormal || sess.toolApproval != protocol.ToolApprovalAsk || old.planMode || old.approvalMode != string(protocol.ToolApprovalAsk) {
+			t.Fatalf("profile after failed persist = collaboration=%q approval=%q controller=(%v,%q)", sess.collaboration, sess.toolApproval, old.planMode, old.approvalMode)
+		}
+	})
+
+	t.Run("controller rebuild rolls back", func(t *testing.T) {
+		srv, sess, old, built := newServer(t)
+		model := "local/new"
+		previousEpoch := sess.runtimeEpoch
+		_, err := srv.setProfile(context.Background(), protocol.SessionProfileSetParams{
+			SessionMutation: protocol.SessionMutation{
+				ExpectedHostEpoch: srv.hostEpoch, Target: srv.target(sess.id), ExpectedRuntimeEpoch: sess.runtimeEpoch,
+			},
+			Patch: protocol.ProfilePatch{Model: &model},
+		})
+		if err == nil {
+			t.Fatal("profile rebuild succeeded despite registry failure")
+		}
+		if sess.ctrl != old || sess.model != "local/old" || sess.runtimeEpoch != previousEpoch || old.closed {
+			t.Fatalf("session was not restored: ctrlOld=%v model=%q epoch=%q oldClosed=%v", sess.ctrl == old, sess.model, sess.runtimeEpoch, old.closed)
+		}
+		if len(*built) != 1 || !(*built)[0].closed {
+			t.Fatalf("replacement controllers = %d closed=%v", len(*built), len(*built) == 1 && (*built)[0].closed)
+		}
+	})
 }
 
 func TestRuntimeSessionRegistryAcceptsOpaqueTopicAndRejectsNestedPath(t *testing.T) {

@@ -7,12 +7,37 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	goruntime "runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"reasonix/internal/remote/protocol"
 )
+
+type responseBuffer struct {
+	mu    sync.Mutex
+	buf   bytes.Buffer
+	ready chan struct{}
+	once  sync.Once
+}
+
+func (w *responseBuffer) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	n, err := w.buf.Write(p)
+	if bytes.Contains(w.buf.Bytes(), []byte{'\n'}) {
+		w.once.Do(func() { close(w.ready) })
+	}
+	return n, err
+}
+
+func (w *responseBuffer) String() string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.buf.String()
+}
 
 func TestAttachRejectsSchemaMismatch(t *testing.T) {
 	var out bytes.Buffer
@@ -88,7 +113,13 @@ func TestAttachRejectsWorkspaceDifferentFromAttachTarget(t *testing.T) {
 }
 
 func TestAttachUsesInitializeWorkspaceWhenTargetIsUnbound(t *testing.T) {
-	home, err := os.MkdirTemp("/tmp", "rx-attach-")
+	tempBase := os.TempDir()
+	if goruntime.GOOS == "darwin" {
+		// macOS Unix-domain sockets have a short path limit, while os.TempDir()
+		// normally points into a long per-user /var/folders path.
+		tempBase = "/tmp"
+	}
+	home, err := os.MkdirTemp(tempBase, "rx-attach-")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,27 +138,36 @@ func TestAttachUsesInitializeWorkspaceWhenTargetIsUnbound(t *testing.T) {
 		"jsonrpc": "2.0", "id": 1, "method": "remote/initialize", "params": json.RawMessage(params),
 	})
 	pr, pw := io.Pipe()
-	go func() {
-		_, _ = pw.Write(append(frame, '\n'))
-		time.Sleep(200 * time.Millisecond)
-		_ = pw.Close()
-	}()
-	var out bytes.Buffer
+	out := &responseBuffer{ready: make(chan struct{})}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	err = Run(ctx, pr, &out, Options{
+	go func() {
+		_, _ = pw.Write(append(frame, '\n'))
+		select {
+		case <-out.ready:
+		case <-ctx.Done():
+		}
+		_ = pw.Close()
+	}()
+	err = Run(ctx, pr, out, Options{
 		Home: home, Version: "t", InProcess: true,
 	})
-	if strings.Contains(out.String(), "workspace is required") || strings.Contains(out.String(), "invalid Remote workspace") {
-		t.Fatalf("initialize workspace was not accepted: out=%q err=%v", out.String(), err)
+	output := out.String()
+	if strings.Contains(output, "workspace is required") || strings.Contains(output, "invalid Remote workspace") {
+		t.Fatalf("initialize workspace was not accepted: out=%q err=%v", output, err)
 	}
-	if !strings.Contains(out.String(), `"result"`) {
-		t.Fatalf("initialize did not reach the normalized runtime workspace: out=%q err=%v", out.String(), err)
+	if !strings.Contains(output, `"result"`) {
+		t.Fatalf("initialize did not reach the normalized runtime workspace: out=%q err=%v", output, err)
 	}
 }
 
 func TestResolveWorkspacePathExpandsRemoteHome(t *testing.T) {
 	home := t.TempDir()
+	rootInput := string(filepath.Separator)
+	rootExpected, err := filepath.Abs(rootInput)
+	if err != nil {
+		t.Fatal(err)
+	}
 	tests := []struct {
 		name string
 		raw  string
@@ -135,7 +175,7 @@ func TestResolveWorkspacePathExpandsRemoteHome(t *testing.T) {
 	}{
 		{name: "home", raw: "~", want: home},
 		{name: "home child", raw: "~/project", want: filepath.Join(home, "project")},
-		{name: "root", raw: string(filepath.Separator), want: string(filepath.Separator)},
+		{name: "root", raw: rootInput, want: filepath.Clean(rootExpected)},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

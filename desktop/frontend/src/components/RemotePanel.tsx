@@ -402,7 +402,7 @@ function RemoteServerTab({ hostId, connected, defaultWorkspace }: { hostId: stri
             workspaceEdited.current = true;
             setWorkspace(e.target.value);
           }}
-          placeholder="/"
+          placeholder="~/project"
         />
       </label>
       <div className="remote-server__status">

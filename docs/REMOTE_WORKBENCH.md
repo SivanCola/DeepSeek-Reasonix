@@ -57,9 +57,9 @@ One-click Remote connections select the Host workspace in this order:
 
 1. Last successfully opened workspace for that Host.
 2. The Host's configured default workspace.
-3. The Host filesystem root (`/`).
+3. If neither exists, require the user to choose a workspace explicitly in Remote → Server.
 
-`~` and `~/...` are expanded against the remote SSH user's home directory. Using `/` allows the workbench to browse everything that SSH user can read, so configure a narrower default workspace when whole-host visibility is unnecessary. Normal SSH permissions and tool approval rules still apply.
+`~` and `~/...` are expanded against the remote SSH user's home directory. Reasonix never silently falls back to `/`; users may still choose `/` explicitly, but doing so lets the workbench browse everything that SSH user can read. Configure a project directory as the default workspace. Normal SSH permissions and tool approval rules still apply.
 
 ## Explicit non-goals (this integration)
 

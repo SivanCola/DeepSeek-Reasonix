@@ -936,6 +936,7 @@ export const zhTW: Record<DictKey, string> = {
   "remote.disconnect": "中斷",
   "remote.disconnectHost": "中斷 {host}",
   "remote.openWorkspace": "開啟工作區",
+  "remote.workspaceRequired": "請先選擇遠端工作區，再開啟它。",
   "remote.manageHosts": "管理主機",
   "remote.explorer": "遠端瀏覽器",
   "remote.switcher.title": "開啟遠端視窗",

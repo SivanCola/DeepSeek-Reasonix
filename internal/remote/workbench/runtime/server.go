@@ -94,6 +94,7 @@ type Server struct {
 	lockPath    string
 
 	registryMu   sync.Mutex
+	profileMu    sync.Mutex
 	registryRead bool
 	dormant      map[protocol.SessionID]runtimeSessionRecord
 	shutdownOnce sync.Once
@@ -984,6 +985,9 @@ func (s *Server) compact(ctx context.Context, p protocol.SessionCompactParams) (
 }
 
 func (s *Server) setProfile(ctx context.Context, p protocol.SessionProfileSetParams) (protocol.SessionProfileSetResult, error) {
+	s.profileMu.Lock()
+	defer s.profileMu.Unlock()
+
 	sess, err := s.sessionForMutation(p.ExpectedHostEpoch, p.Target, p.ExpectedRuntimeEpoch)
 	if err != nil {
 		return protocol.SessionProfileSetResult{}, err
@@ -1015,11 +1019,23 @@ func (s *Server) setProfile(ctx context.Context, p protocol.SessionProfileSetPar
 			s.mu.Unlock()
 			return protocol.SessionProfileSetResult{}, protocol.MustRemoteError(protocol.ErrSessionNotFound, protocol.ErrorOptions{})
 		}
+		previousCollaboration, previousToolApproval := sess.collaboration, sess.toolApproval
 		sess.collaboration, sess.toolApproval = collaboration, toolApproval
+		ctrl := sess.ctrl
 		profile, epoch := resolvedProfile(sess), sess.runtimeEpoch
 		s.mu.Unlock()
-		applyControllerProfile(sess.ctrl, collaboration, toolApproval)
+		applyControllerProfile(ctrl, collaboration, toolApproval)
 		if err := s.persistSessionRegistry(); err != nil {
+			s.mu.Lock()
+			var rollbackCtrl SessionController
+			if s.sessions[sess.id] == sess && sess.collaboration == collaboration && sess.toolApproval == toolApproval {
+				sess.collaboration, sess.toolApproval = previousCollaboration, previousToolApproval
+				rollbackCtrl = sess.ctrl
+			}
+			s.mu.Unlock()
+			if rollbackCtrl != nil {
+				applyControllerProfile(rollbackCtrl, previousCollaboration, previousToolApproval)
+			}
 			return protocol.SessionProfileSetResult{}, protocol.MustRemoteError(protocol.ErrSessionPersistFailed, protocol.ErrorOptions{Target: &p.Target})
 		}
 		return protocol.SessionProfileSetResult{
@@ -1041,6 +1057,9 @@ func (s *Server) setProfile(ctx context.Context, p protocol.SessionProfileSetPar
 		return protocol.SessionProfileSetResult{}, protocol.MustRemoteError(protocol.ErrSessionBusy, protocol.ErrorOptions{Target: &p.Target})
 	}
 	old := sess.ctrl
+	previousModel, previousEffort := sess.model, sess.effort
+	previousCollaboration, previousTokenMode, previousToolApproval := sess.collaboration, sess.tokenMode, sess.toolApproval
+	previousEpoch, previousUpdatedAt := sess.runtimeEpoch, sess.updatedAt
 	sess.ctrl = newController
 	sess.model = newController.ModelRef()
 	sess.effort = effort
@@ -1049,10 +1068,20 @@ func (s *Server) setProfile(ctx context.Context, p protocol.SessionProfileSetPar
 	sess.updatedAt = time.Now().UnixMilli()
 	profile, epoch := resolvedProfile(sess), sess.runtimeEpoch
 	s.mu.Unlock()
-	old.Close()
 	if err := s.persistSessionRegistry(); err != nil {
+		s.mu.Lock()
+		restored := s.sessions[sess.id] == sess && sess.ctrl == newController
+		if restored {
+			sess.ctrl = old
+			sess.model, sess.effort = previousModel, previousEffort
+			sess.collaboration, sess.tokenMode, sess.toolApproval = previousCollaboration, previousTokenMode, previousToolApproval
+			sess.runtimeEpoch, sess.updatedAt = previousEpoch, previousUpdatedAt
+		}
+		s.mu.Unlock()
+		newController.Close()
 		return protocol.SessionProfileSetResult{}, protocol.MustRemoteError(protocol.ErrSessionPersistFailed, protocol.ErrorOptions{Target: &p.Target})
 	}
+	old.Close()
 	return protocol.SessionProfileSetResult{
 		ResolvedProfile: profile, RuntimeEpoch: epoch,
 		Disposition: protocol.ProfileRebuilt, AutoResolvedPromptIDs: []protocol.PromptID{},

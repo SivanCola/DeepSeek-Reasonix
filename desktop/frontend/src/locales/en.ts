@@ -1208,6 +1208,7 @@ export const en = {
   "remote.disconnect": "Disconnect",
   "remote.disconnectHost": "Disconnect {host}",
   "remote.openWorkspace": "Open workspace",
+  "remote.workspaceRequired": "Choose a Remote workspace before opening it.",
   "remote.manageHosts": "Manage hosts",
   "remote.explorer": "Remote explorer",
   "remote.switcher.title": "Open a remote window",

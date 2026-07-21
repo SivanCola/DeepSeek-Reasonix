@@ -1210,6 +1210,7 @@ export const zh: Record<DictKey, string> = {
   "remote.disconnect": "断开",
   "remote.disconnectHost": "断开 {host}",
   "remote.openWorkspace": "打开工作区",
+  "remote.workspaceRequired": "请先选择远程工作区，再打开它。",
   "remote.manageHosts": "管理主机",
   "remote.explorer": "远程浏览器",
   "remote.switcher.title": "打开远程窗口",

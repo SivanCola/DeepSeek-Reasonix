@@ -1116,6 +1116,7 @@ export default function App() {
   const setRemoteHosts = useRemoteStore((s) => s.setHosts);
   const hydrateRemoteStatuses = useRemoteStore((s) => s.hydrateStatuses);
   const requestRemoteExplorer = useRemoteStore((s) => s.openExplorer);
+  const setRemoteExplorerTab = useRemoteStore((s) => s.setExplorerTab);
   const closeRemoteExplorerRequest = useRemoteStore((s) => s.closeExplorer);
   const applyRemoteStatus = useRemoteStore((s) => s.applyStatus);
   const requestRemoteStatusPopover = useRemoteStore((s) => s.requestStatusPopover);
@@ -2577,10 +2578,15 @@ export default function App() {
   const launchRemoteWorkspace = useCallback(async (host: RemoteHostView, requestSeq: number) => {
     const workspace = await preferredRemoteWorkspace(host.id, host.defaultWorkspace);
     if (requestSeq !== remoteWorkspaceLaunchSeq.current) return;
+    if (!workspace) {
+      setRemoteExplorerTab("server");
+      requestRemoteExplorer(host.id);
+      throw new Error(t("remote.workspaceRequired"));
+    }
     await app.OpenRemoteWorkspace(host.id, workspace);
     if (requestSeq !== remoteWorkspaceLaunchSeq.current) return;
     setWorkbenchTarget(await app.WorkbenchActiveTarget());
-  }, []);
+  }, [requestRemoteExplorer, setRemoteExplorerTab, t]);
 
   const openRemoteWorkspaceFromStatus = useCallback((host: RemoteHostView) => {
     const requestSeq = ++remoteWorkspaceLaunchSeq.current;

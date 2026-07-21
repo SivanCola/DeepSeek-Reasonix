@@ -187,11 +187,12 @@ func ensureRuntime(ctx context.Context, opts Options, home, workspace, sock stri
 		// For production CLI, prefer a detached child; tests use InProcess.
 		srv := runtime.New(runtime.Options{Workspace: workspace, Version: opts.Version})
 		go func() { _ = srv.ListenAndServe(ctx, sock) }()
-		// Wait until socket accepts.
+		// Wait until the listener has published its socket. A readiness dial would
+		// be accepted as a real runtime generation and could race the immediately
+		// following attach, closing one of the two connections as stale.
 		deadline := time.Now().Add(3 * time.Second)
 		for time.Now().Before(deadline) {
-			if c, err := dialSocket(ctx, sock, 100*time.Millisecond); err == nil {
-				_ = c.Close()
+			if _, err := os.Stat(sock); err == nil {
 				return nil
 			}
 			time.Sleep(50 * time.Millisecond)

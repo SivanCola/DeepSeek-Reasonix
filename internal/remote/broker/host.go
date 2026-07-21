@@ -34,6 +34,7 @@ type hostStream struct {
 	conn          *rpcwire.Conn
 	out           chan provider.Chunk
 	done          chan struct{}
+	abortDelivery chan struct{}
 	nextSeq       int64
 	pending       map[int64]provider.Chunk
 	ended         bool
@@ -208,7 +209,7 @@ func (h *Host) open(ctx context.Context, ref string, effort *string, request pro
 	id := "bs_" + randomID(12)
 	stream := &hostStream{
 		generation: generation, conn: conn,
-		out: make(chan provider.Chunk, 64), done: make(chan struct{}),
+		out: make(chan provider.Chunk, 64), done: make(chan struct{}), abortDelivery: make(chan struct{}),
 		deliveryWake: make(chan struct{}, 1),
 		nextSeq:      1, pending: make(map[int64]provider.Chunk),
 	}
@@ -226,15 +227,18 @@ func (h *Host) open(ctx context.Context, ref string, effort *string, request pro
 	})
 	if err != nil {
 		h.removeStream(id, stream)
+		go requestStreamCancel(conn, id)
 		return nil, fmt.Errorf("provider broker open: %w", err)
 	}
 	var opened protocol.BrokerStreamOpenResult
 	if err := decodeBrokerResult(protocol.MethodBrokerStreamOpen, raw, &opened); err != nil {
 		h.removeStream(id, stream)
+		go requestStreamCancel(conn, id)
 		return nil, err
 	}
 	if !opened.Accepted {
 		h.removeStream(id, stream)
+		go requestStreamCancel(conn, id)
 		return nil, fmt.Errorf("provider broker declined stream")
 	}
 	go func() {
@@ -249,14 +253,13 @@ func (h *Host) open(ctx context.Context, ref string, effort *string, request pro
 		if current != stream {
 			return
 		}
-		cancelCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		_, _ = conn.Request(cancelCtx, string(protocol.MethodBrokerStreamCancel), protocol.BrokerStreamCancelParams{StreamID: id})
-		cancel()
 		h.mu.Lock()
 		if h.streams[id] == stream {
+			h.abortDeliveryLocked(stream)
 			h.finishLocked(id, stream, provider.Chunk{Type: provider.ChunkError, Err: &provider.StreamInterruptedError{Err: ctx.Err()}})
 		}
 		h.mu.Unlock()
+		requestStreamCancel(conn, id)
 	}()
 	return stream.out, nil
 }
@@ -356,7 +359,19 @@ func (h *Host) removeStream(id string, stream *hostStream) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if h.streams[id] == stream {
+		h.abortDeliveryLocked(stream)
 		h.finishLocked(id, stream, provider.Chunk{})
+	}
+}
+
+func (h *Host) abortDeliveryLocked(stream *hostStream) {
+	if stream.abortDelivery == nil {
+		return
+	}
+	select {
+	case <-stream.abortDelivery:
+	default:
+		close(stream.abortDelivery)
 	}
 }
 
@@ -388,7 +403,11 @@ func (h *Host) deliverStream(stream *hostStream) {
 			stream.delivery[0] = provider.Chunk{}
 			stream.delivery = stream.delivery[1:]
 			h.mu.Unlock()
-			stream.out <- chunk
+			select {
+			case stream.out <- chunk:
+			case <-stream.abortDelivery:
+				return
+			}
 			continue
 		}
 		if stream.deliveryFinal {
@@ -397,8 +416,21 @@ func (h *Host) deliverStream(stream *hostStream) {
 		}
 		wake := stream.deliveryWake
 		h.mu.Unlock()
-		<-wake
+		select {
+		case <-wake:
+		case <-stream.abortDelivery:
+			return
+		}
 	}
+}
+
+func requestStreamCancel(conn *rpcwire.Conn, id string) {
+	if conn == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	_, _ = conn.Request(ctx, string(protocol.MethodBrokerStreamCancel), protocol.BrokerStreamCancelParams{StreamID: id})
 }
 
 func (h *Host) expireGap(id string, stream *hostStream) {

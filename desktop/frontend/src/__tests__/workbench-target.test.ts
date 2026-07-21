@@ -45,17 +45,17 @@ describe("workbenchTarget", () => {
     assert.equal(res.ok, true);
   });
 
-  it("prefers the last workspace, then the host default, then the remote root", async () => {
+  it("prefers the last workspace, then the host default, and otherwise requires selection", async () => {
     const mod = await import("../lib/workbenchTarget");
     assert.equal(mod.resolveRemoteWorkspace(" /last ", "/default"), "/last");
     assert.equal(mod.resolveRemoteWorkspace(" ", " /default "), "/default");
-    assert.equal(mod.resolveRemoteWorkspace("", ""), "/");
+    assert.equal(mod.resolveRemoteWorkspace("", ""), "");
     assert.equal(await mod.preferredRemoteWorkspace("lab", "/default"), "/remembered");
 
     g.window.go.main.App.RemoteLastWorkspace = async () => {
       throw new Error("preferences unavailable");
     };
     assert.equal(await mod.preferredRemoteWorkspace("lab", "/default"), "/default");
-    assert.equal(await mod.preferredRemoteWorkspace("lab", ""), "/");
+    assert.equal(await mod.preferredRemoteWorkspace("lab", ""), "");
   });
 });
