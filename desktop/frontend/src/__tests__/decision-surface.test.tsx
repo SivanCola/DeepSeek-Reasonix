@@ -298,7 +298,6 @@ console.log("\ndecision surface");
       next_action: "git push origin feature",
       change_kind: "risk",
       can_grant_task: true,
-      task_grant_scope: "git push origin → feature",
     },
   };
 
@@ -322,6 +321,10 @@ console.log("\ndecision surface");
       await flushTimers();
     });
   };
+  ok(
+    document.body.textContent?.includes("Only the same operation type and target boundary are reused"),
+    "older recovery events without a display scope retain the generic safety explanation",
+  );
   await openGuidance();
 
   let input = document.querySelector(".recovery-guidance__input") as HTMLTextAreaElement;
