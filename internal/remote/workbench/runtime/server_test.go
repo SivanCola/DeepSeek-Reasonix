@@ -32,6 +32,19 @@ type fakeController struct {
 	history []provider.Message
 }
 
+func TestSocketPathStaysWithinPortableUnixLimitForLongHome(t *testing.T) {
+	home := filepath.Join(string(filepath.Separator), strings.Repeat("h", 55))
+	workspace := filepath.Join(home, "project")
+	got := SocketPath(home, workspace)
+	if len(got) >= 104 {
+		t.Fatalf("socket path length = %d, want less than portable AF_UNIX limit: %q", len(got), got)
+	}
+	wantPrefix := filepath.Join(home, ".reasonix") + string(filepath.Separator)
+	if !strings.HasPrefix(got, wantPrefix) {
+		t.Fatalf("socket path %q escaped runtime home %q", got, home)
+	}
+}
+
 type persistentFakeController struct {
 	*fakeController
 	sessionDir  string

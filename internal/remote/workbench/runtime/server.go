@@ -37,8 +37,12 @@ import (
 )
 
 const (
-	GracePeriod          = 5 * time.Minute
-	defaultSocketDirName = "workbench-runtime"
+	GracePeriod = 5 * time.Minute
+	// Keep the socket hierarchy compact. AF_UNIX addresses have a small
+	// platform-specific limit (108 bytes on Windows/Linux and less on macOS),
+	// and a normal Windows temporary home can already consume half of it.
+	defaultSocketDirName  = "wb"
+	defaultSocketFileName = "r.sock"
 )
 
 type ControllerBuilder func(context.Context, string, *string, event.Sink) (SessionController, error)
@@ -162,7 +166,7 @@ func New(opts Options) *Server {
 func SocketPath(home, workspace string) string {
 	sum := sha256.Sum256([]byte(strings.TrimSpace(workspace)))
 	dir := filepath.Join(home, ".reasonix", defaultSocketDirName, hex.EncodeToString(sum[:8]))
-	return filepath.Join(dir, "runtime.sock")
+	return filepath.Join(dir, defaultSocketFileName)
 }
 
 func (s *Server) ListenAndServe(ctx context.Context, socket string) error {
