@@ -144,9 +144,12 @@ darwin)
 	cp -R "build/bin/reasonix-desktop.app" "$app"
 	cp "$guard_out" "$app/Contents/MacOS/$GUARDNAME"
 	cp "$cli_out" "$app/Contents/MacOS/$CLINAME"
-	/usr/libexec/PlistBuddy -c "Set :CFBundleExecutable $GUARDNAME" "$app/Contents/Info.plist"
 	bundle_executable=$(/usr/libexec/PlistBuddy -c "Print :CFBundleExecutable" "$app/Contents/Info.plist")
-	[ "$bundle_executable" = "$GUARDNAME" ] || { echo "macOS bundle executable is $bundle_executable, want $GUARDNAME" >&2; exit 1; }
+	# LaunchServices must own the Wails/AppKit process directly. Making Guard the
+	# bundle executable leaves the Dock attached to a non-UI parent process, so
+	# clicking the icon cannot reliably reactivate the desktop window. Guard and
+	# the CLI remain bundled as independent recovery sidecars.
+	[ "$bundle_executable" = "$BINNAME" ] || { echo "macOS bundle executable is $bundle_executable, want $BINNAME" >&2; exit 1; }
 	bundle_icon=$(/usr/libexec/PlistBuddy -c "Print :CFBundleIconFile" "$app/Contents/Info.plist")
 	case "$bundle_icon" in
 	*.icns) ;;

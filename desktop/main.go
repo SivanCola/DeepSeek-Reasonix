@@ -106,8 +106,10 @@ func main() {
 	}
 
 	tracker := repair.NewStartupTracker("")
-	if tracker.SafeModeRecommended() {
-		launch.SafeMode = true
+	var continueLaunch bool
+	launch.SafeMode, continueLaunch = preparePackagedStartupRecovery(tracker, tracker.SafeModeRecommended(), launch.SafeMode)
+	if !continueLaunch {
+		return
 	}
 	if launch.SafeMode {
 		_ = os.Setenv("REASONIX_SAFE_MODE", "1")
