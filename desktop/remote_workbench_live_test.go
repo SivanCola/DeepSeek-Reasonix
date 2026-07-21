@@ -65,6 +65,9 @@ func TestRemoteWorkbenchLiveDesktopBroker(t *testing.T) {
 		_ = os.RemoveAll(workspace)
 		_ = os.RemoveAll(hostHome)
 	})
+	if err := os.WriteFile(filepath.Join(workspace, "live-broker-proof.txt"), []byte(remoteWorkbenchLiveMarker+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	t.Setenv("HOME", hostHome)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(hostHome, ".config"))
 	t.Setenv("REASONIX_HOME", filepath.Join(hostHome, ".reasonix"))
@@ -122,25 +125,32 @@ func TestRemoteWorkbenchLiveDesktopBroker(t *testing.T) {
 	if _, err := client.Subscribe(ctx, 20); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := client.Submit(ctx, "Reply with the exact token "+remoteWorkbenchLiveMarker+" and nothing else. Do not call tools."); err != nil {
+	if _, err := client.Submit(ctx, "Use the read_file tool to read live-broker-proof.txt, then reply with only the token stored in that file. You must use the tool; do not guess."); err != nil {
 		t.Fatal(err)
 	}
 
 	var response strings.Builder
+	var sawToolDispatch, sawToolResult bool
 	for {
 		select {
 		case event := <-events:
 			if event.Event.Kind == "text" {
 				response.WriteString(event.Event.Text)
 			}
+			if event.Event.Kind == "tool_dispatch" && event.Event.Tool.Name == "read_file" {
+				sawToolDispatch = true
+			}
+			if event.Event.Kind == "tool_result" && event.Event.Tool.Name == "read_file" && strings.Contains(event.Event.Tool.Output, remoteWorkbenchLiveMarker) {
+				sawToolResult = true
+			}
 			if event.Event.Kind != "turn_done" {
 				continue
 			}
-			if !strings.Contains(response.String(), remoteWorkbenchLiveMarker) {
-				t.Fatal("live Remote Broker turn completed without the acceptance marker")
+			if !sawToolDispatch || !sawToolResult || !strings.Contains(response.String(), remoteWorkbenchLiveMarker) {
+				t.Fatalf("live Remote Broker tool loop incomplete: dispatch=%v result=%v responseMarker=%v", sawToolDispatch, sawToolResult, strings.Contains(response.String(), remoteWorkbenchLiveMarker))
 			}
 			assertRemoteWorkbenchLiveHostCredentialFree(t, hostHome, providerEntry.APIKeyEnv)
-			t.Log("live DeepSeek turn completed through Desktop Broker with an isolated credential-free Host")
+			t.Log("live DeepSeek tool-call loop completed through Desktop Broker with an isolated credential-free Host")
 			return
 		case err := <-attachErr:
 			if err != nil && ctx.Err() == nil {
