@@ -33,6 +33,27 @@ func TestBuildIDAcceptsCommitAndDirtyCommitButRejectsGenericDevRevision(t *testi
 	}
 }
 
+func TestCurrentBuildIDUsesLinkedSourceRevision(t *testing.T) {
+	previous := linkedSourceRevision
+	linkedSourceRevision = testRevision
+	t.Cleanup(func() { linkedSourceRevision = previous })
+
+	id := CurrentBuildID("v1.2.3")
+	if id.ProductVersion != "v1.2.3" || id.SourceRevision != testRevision {
+		t.Fatalf("CurrentBuildID() = %+v, want linked revision %q", id, testRevision)
+	}
+}
+
+func TestCurrentBuildIDPreservesLinkedDirtyRevision(t *testing.T) {
+	previous := linkedSourceRevision
+	linkedSourceRevision = testRevision + "+dirty"
+	t.Cleanup(func() { linkedSourceRevision = previous })
+
+	if got := CurrentBuildID("dev").SourceRevision; got != testRevision+"+dirty" {
+		t.Fatalf("CurrentBuildID().SourceRevision = %q, want linked dirty revision", got)
+	}
+}
+
 func TestBuildIDRejectsEveryFieldMismatch(t *testing.T) {
 	expected := validBuildID(t)
 	cases := []struct {

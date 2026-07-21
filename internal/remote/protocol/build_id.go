@@ -12,6 +12,11 @@ const ProtocolVersion = "1"
 var (
 	revisionPattern   = regexp.MustCompile(`^[0-9a-f]{40}(\+dirty)?$`)
 	schemaHashPattern = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
+	// linkedSourceRevision is set by release builds because the Desktop lives in
+	// a nested Go module and therefore does not receive Go's vcs.revision build
+	// setting. Keep this in the shared protocol package so Desktop and Host use
+	// the same immutable source identity.
+	linkedSourceRevision string
 )
 
 type BuildID struct {
@@ -52,7 +57,10 @@ func NewBuildID(productVersion, sourceRevision string) (BuildID, error) {
 func CurrentBuildID(productVersion string) BuildID {
 	revision := strings.Repeat("0", 40)
 	modified := false
-	if info, ok := debug.ReadBuildInfo(); ok {
+	linkedRevision := strings.TrimSpace(linkedSourceRevision)
+	if revisionPattern.MatchString(linkedRevision) {
+		revision = linkedRevision
+	} else if info, ok := debug.ReadBuildInfo(); ok {
 		for _, setting := range info.Settings {
 			switch setting.Key {
 			case "vcs.revision":
