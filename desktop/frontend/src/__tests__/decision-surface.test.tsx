@@ -242,19 +242,26 @@ console.log("\ndecision surface");
   ok(!actions.some((action) => action.textContent?.includes("Stop task")), "Auto recovery does not add a third Stop decision");
   ok(!document.body.textContent?.includes("Stop task"), "Auto boundary card relies on the global Stop control");
   ok(!document.querySelector(".decision-confirm-bar__confirm"), "Auto recovery has no select-then-confirm bar");
-  ok(document.body.textContent?.includes("Confirm before execution"), "Auto boundary uses plain confirmation copy");
+  ok(document.body.textContent?.includes("Action needs confirmation"), "Auto boundary uses plain confirmation copy");
   ok(!document.body.textContent?.includes("Auto needs"), "Auto boundary hides the internal mechanism name");
   ok(!document.body.textContent?.includes("checkpoint"), "UI hides internal checkpoint terms");
   ok(!document.body.textContent?.includes("same_strategy"), "UI hides internal reviewer terms");
+  ok(actions[0].textContent?.includes("Try another approach (recommended)"), "safer action is first and explicitly recommended");
+  ok(actions[0].classList.contains("prompt-action--selected"), "recommended recovery action has primary emphasis");
+  ok(actions[1].textContent?.includes("Continue once"), "one-shot override remains available as the secondary action");
+  ok(document.querySelector(".recovery-summary"), "Auto boundary shows one concise summary by default");
+  ok(document.body.textContent?.includes("may affect an external system"), "summary explains the user-visible risk");
+  eq(document.body.textContent?.split("git push origin feature").length, 2, "pending action is shown once by default");
   ok(!document.querySelector(".recovery-details"), "details stay collapsed by default");
   ok(!document.body.textContent?.includes("Add guidance"), "optional guidance is removed from the default card");
   const taskGrant = document.querySelector(".recovery-task-grant input") as HTMLInputElement;
   ok(taskGrant, "bounded recovery offers a current-task semantic grant");
   ok(!taskGrant.checked, "task grant is opt-in");
+  ok(document.querySelector(".prompt-shelf__footer .recovery-task-grant"), "task grant follows the immediate decisions");
 
   await act(async () => {
-    actions[0].click();
-    actions[0].click();
+    actions[1].click();
+    actions[1].click();
     await flushTimers(220);
   });
   eq(decisions.length, 1, "double click submits only once");
@@ -295,7 +302,8 @@ console.log("\ndecision surface");
   });
 
   const taskGrant = document.querySelector(".recovery-task-grant input") as HTMLInputElement;
-  const continueButton = document.querySelector(".prompt-shelf__actions .prompt-action") as HTMLButtonElement;
+  const continueButton = [...document.querySelectorAll(".prompt-shelf__actions .prompt-action")]
+    .find((action) => action.textContent?.includes("Continue once")) as HTMLButtonElement;
   await act(async () => {
     taskGrant.click();
     await flushTimers();
@@ -338,8 +346,18 @@ console.log("\ndecision surface");
   });
 
   const actions = [...document.querySelectorAll(".prompt-shelf__actions .prompt-action")] as HTMLButtonElement[];
+  ok(!document.querySelector(".recovery-task-grant"), "unbounded scope change does not offer a task grant");
+  const detailsButton = document.querySelector(".prompt-shelf__header-button") as HTMLButtonElement;
+  ok(detailsButton.textContent?.includes("Technical details"), "technical diagnostics are available on demand");
   await act(async () => {
-    actions[1].click();
+    detailsButton.click();
+    await flushTimers();
+  });
+  ok(document.querySelector(".recovery-details"), "technical details expand on request");
+  ok(document.querySelector(".recovery-details .recovery-detail-row"), "expanded diagnostics use restrained detail rows");
+  ok(!document.querySelector(".recovery-details .approval-reason"), "expanded diagnostics do not render an alert wall");
+  await act(async () => {
+    actions[0].click();
     await flushTimers(220);
   });
   eq(decisions[0]?.action, "revise", "try another approach rejects immediately");

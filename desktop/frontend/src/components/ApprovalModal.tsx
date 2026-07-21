@@ -270,17 +270,18 @@ export function ApprovalModal({
     ? [
         {
           key: "1",
+          label: t("approval.recoveryRevise"),
+          desc: t("approval.recoveryReviseDesc"),
+          primary: true,
+          kind: "direct",
+          run: () => resolveRecovery("revise"),
+        },
+        {
+          key: "2",
           label: t("approval.recoveryContinue"),
           desc: t("approval.recoveryContinueDesc"),
           kind: "direct",
           run: () => resolveRecovery(grantSimilarForTask && approval.recovery?.can_grant_task ? "continue_task" : "continue"),
-        },
-        {
-          key: "2",
-          label: t("approval.recoveryRevise"),
-          desc: t("approval.recoveryReviseDesc"),
-          kind: "direct",
-          run: () => resolveRecovery("revise"),
         },
       ]
     : isPlanApproval
@@ -554,9 +555,13 @@ export function ApprovalModal({
     recovery?.next_tool ||
     subjectSummary ||
     approval.tool;
-  const recoveryMeta = isRecoveryApproval && recoveryActionSummary
-    ? t("approval.recoveryNext", { action: recoveryActionSummary })
-    : "";
+  const hasRecoveryDetails = Boolean(
+    recovery?.failed_summary ||
+    recovery?.diagnosis ||
+    recovery?.change_rationale ||
+    recovery?.review_rationale ||
+    recovery?.source_agent,
+  );
 
   const confirmIsDanger = selectedAction?.tone === "danger";
   const confirmLabel =
@@ -581,12 +586,12 @@ export function ApprovalModal({
             {isPlanApproval && revisionOpen && <PromptBadge>{t("approval.revisePlan")}</PromptBadge>}
           </>
         }
-        meta={isRecoveryApproval ? (recoveryMeta || toolMeta) : toolMeta}
+        meta={isRecoveryApproval ? undefined : toolMeta}
         headerActions={
           <>
-            {isRecoveryApproval && (
+            {isRecoveryApproval && hasRecoveryDetails && (
               <PromptHeaderAction onClick={() => setReasonOpen((open) => !open)} disabled={submitting}>
-                {t(reasonOpen ? "approval.hideDetails" : "approval.details")}
+                {t(reasonOpen ? "approval.recoveryHideTechnicalDetails" : "approval.recoveryTechnicalDetails")}
               </PromptHeaderAction>
             )}
             {!isPlanApproval && !isRecoveryApproval && hasToolDetails && reason && (
@@ -627,27 +632,8 @@ export function ApprovalModal({
           </>
         }
         footer={
-          isPlanApproval || isRecoveryApproval ? undefined : (
-            <DecisionConfirmBar
-              hint={t("decision.selectHint")}
-              confirmLabel={confirmLabel}
-              onConfirm={confirmSelected}
-              disabled={submitting}
-              danger={confirmIsDanger}
-            />
-          )
-        }
-      >
-        {(approvalModeRelaxed ||
-          (isRecoveryApproval && recovery?.can_grant_task) ||
-          (isRecoveryApproval && reasonOpen) ||
-          (!isPlanApproval && !isRecoveryApproval && (subject || (reasonOpen && reason))) ||
-          (isPlanApproval && revisionOpen)) && (
-          <>
-            {approvalModeRelaxed && !isRecoveryApproval && (
-              <div className="approval-mode-hint">{t("approval.modeSwitchPendingHint")}</div>
-            )}
-            {isRecoveryApproval && recovery?.can_grant_task && (
+          isRecoveryApproval ? (
+            recovery?.can_grant_task ? (
               <label className="recovery-task-grant">
                 <input
                   type="checkbox"
@@ -660,44 +646,68 @@ export function ApprovalModal({
                   <small>{t("approval.recoveryTaskGrantDesc")}</small>
                 </span>
               </label>
+            ) : undefined
+          ) : isPlanApproval ? undefined : (
+            <DecisionConfirmBar
+              hint={t("decision.selectHint")}
+              confirmLabel={confirmLabel}
+              onConfirm={confirmSelected}
+              disabled={submitting}
+              danger={confirmIsDanger}
+            />
+          )
+        }
+      >
+        {(approvalModeRelaxed ||
+          isRecoveryApproval ||
+          (!isPlanApproval && !isRecoveryApproval && (subject || (reasonOpen && reason))) ||
+          (isPlanApproval && revisionOpen)) && (
+          <>
+            {approvalModeRelaxed && !isRecoveryApproval && (
+              <div className="approval-mode-hint">{t("approval.modeSwitchPendingHint")}</div>
+            )}
+            {isRecoveryApproval && (
+              <section className="recovery-summary" aria-label={t("approval.recoverySummaryLabel")}>
+                <p className="recovery-summary__reason">{recoveryReason}</p>
+                {recoveryActionSummary && (
+                  <p className="recovery-summary__action">
+                    <span>{t("approval.recoveryNextLabel")}</span>
+                    <code>{recoveryActionSummary}</code>
+                  </p>
+                )}
+              </section>
             )}
             {isRecoveryApproval && reasonOpen && (
-              <div className="approval-details recovery-details">
-                <div className="approval-reason">{recoveryReason}</div>
-                {recoveryActionSummary && (
-                  <div className="approval-reason">
-                    <strong>{t("approval.recoveryNextLabel")}</strong>{" "}
-                    {recovery?.next_tool ? `${recovery.next_tool}: ` : ""}
-                    {recoveryActionSummary}
-                  </div>
-                )}
+              <dl className="approval-details recovery-details">
                 {recovery?.failed_summary && (
-                  <div className="approval-reason">
-                    <strong>{t("approval.recoveryFailedLabel")}</strong>{" "}
-                    {recovery.failed_tool ? `${recovery.failed_tool}: ` : ""}
-                    {recovery.failed_summary}
+                  <div className="recovery-detail-row">
+                    <dt>{t("approval.recoveryFailedLabel")}</dt>
+                    <dd>
+                      {recovery.failed_tool && <code>{recovery.failed_tool}</code>}
+                      {recovery.failed_tool && " · "}
+                      {recovery.failed_summary}
+                    </dd>
                   </div>
                 )}
                 {recovery?.diagnosis && (
-                  <div className="approval-reason">
-                    <strong>{t("approval.recoveryDiagnosisLabel")}</strong> {recovery.diagnosis}
+                  <div className="recovery-detail-row">
+                    <dt>{t("approval.recoveryDiagnosisLabel")}</dt>
+                    <dd>{recovery.diagnosis}</dd>
                   </div>
                 )}
                 {(recovery?.change_rationale || recovery?.review_rationale) && (
-                  <div className="approval-reason">
-                    <strong>{t("approval.recoveryWhyLabel")}</strong>{" "}
-                    {recovery.change_rationale || recovery.review_rationale}
+                  <div className="recovery-detail-row">
+                    <dt>{t("approval.recoveryWhyLabel")}</dt>
+                    <dd>{recovery.change_rationale || recovery.review_rationale}</dd>
                   </div>
                 )}
                 {recovery?.source_agent && (
-                  <div className="approval-reason">
-                    <strong>{t("approval.recoverySourceLabel")}</strong> {recovery.source_agent}
+                  <div className="recovery-detail-row">
+                    <dt>{t("approval.recoverySourceLabel")}</dt>
+                    <dd><code>{recovery.source_agent}</code></dd>
                   </div>
                 )}
-                {!recovery?.failed_summary && !recovery?.diagnosis && subject && (
-                  <pre className="approval-subject">{subject}</pre>
-                )}
-              </div>
+              </dl>
             )}
             {!isPlanApproval && !isRecoveryApproval && subject && (
               <div className="approval-details">
