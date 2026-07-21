@@ -218,7 +218,12 @@ console.log("\ndecision surface");
     tool: "bash",
     subject: "git push origin feature",
     kind: "recovery",
-    recovery: { next_action: "git push origin feature", change_kind: "risk", can_grant_task: true },
+    recovery: {
+      next_action: "git push origin feature",
+      change_kind: "risk",
+      can_grant_task: true,
+      task_grant_scope: "git push origin → feature",
+    },
   };
 
   await act(async () => {
@@ -261,7 +266,8 @@ console.log("\ndecision surface");
   const taskGrant = document.querySelector(".recovery-task-grant input") as HTMLInputElement;
   ok(taskGrant, "bounded recovery offers a current-task semantic grant");
   ok(!taskGrant.checked, "task grant is opt-in");
-  ok(document.querySelector(".prompt-shelf__footer .recovery-task-grant"), "task grant follows the immediate decisions");
+  ok(document.querySelector(".recovery-continue-option .recovery-task-grant"), "task grant is grouped with Continue");
+  ok(document.body.textContent?.includes("git push origin → feature"), "task grant shows the exact host-classified scope");
 
   await act(async () => {
     actions[1].click();
@@ -288,7 +294,12 @@ console.log("\ndecision surface");
     tool: "bash",
     subject: "git push origin feature",
     kind: "recovery",
-    recovery: { next_action: "git push origin feature", change_kind: "risk", can_grant_task: true },
+    recovery: {
+      next_action: "git push origin feature",
+      change_kind: "risk",
+      can_grant_task: true,
+      task_grant_scope: "git push origin → feature",
+    },
   };
 
   await act(async () => {
@@ -370,7 +381,12 @@ console.log("\ndecision surface");
     tool: "bash",
     subject: "git push origin feature",
     kind: "recovery",
-    recovery: { next_action: "git push origin feature", change_kind: "risk", can_grant_task: true },
+    recovery: {
+      next_action: "git push origin feature",
+      change_kind: "risk",
+      can_grant_task: true,
+      task_grant_scope: "git push origin → feature",
+    },
   };
 
   await act(async () => {
@@ -394,6 +410,8 @@ console.log("\ndecision surface");
     taskGrant.click();
     await flushTimers();
   });
+  ok(continueButton.textContent?.includes("Continue and remember for this task"), "checked grant updates the action label before consent");
+  ok(!continueButton.textContent?.includes("Continue once"), "checked grant no longer looks like a one-shot action");
   await act(async () => {
     continueButton.click();
     await flushTimers(220);

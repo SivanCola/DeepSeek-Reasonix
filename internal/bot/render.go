@@ -551,6 +551,9 @@ func renderRecoveryText(a event.Approval) string {
 		fmt.Fprintf(&b, "即将执行: %s\n", firstNonEmptyBot(a.Subject, a.Tool))
 	}
 	if rec != nil && rec.CanGrantTask {
+		if scope := strings.TrimSpace(rec.TaskGrantScope); scope != "" {
+			fmt.Fprintf(&b, "授权范围: %s\n", scope)
+		}
 		fmt.Fprintf(&b, "\nID: `%s`\n回复 1 继续一次，2 在本任务内允许同类操作，3 换个办法。范围扩大或风险升级仍会再次确认。", a.ID)
 	} else {
 		fmt.Fprintf(&b, "\nID: `%s`\n回复 1 继续，2 换个办法。", a.ID)

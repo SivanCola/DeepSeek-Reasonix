@@ -25,8 +25,11 @@ func TestApprovalCardCarriesChatType(t *testing.T) {
 		t.Fatalf("recovery text = %q", got)
 	}
 
-	grantApproval := event.Approval{ID: "r2", Kind: "recovery", Recovery: &event.RecoveryApproval{CanGrantTask: true}}
-	if got := renderRecoveryText(grantApproval); !strings.Contains(got, "2 在本任务内允许同类操作") || !strings.Contains(got, "风险升级仍会再次确认") {
+	grantApproval := event.Approval{ID: "r2", Kind: "recovery", Recovery: &event.RecoveryApproval{
+		CanGrantTask: true, TaskGrantScope: "git push origin → feature",
+	}}
+	if got := renderRecoveryText(grantApproval); !strings.Contains(got, "2 在本任务内允许同类操作") ||
+		!strings.Contains(got, "风险升级仍会再次确认") || !strings.Contains(got, "授权范围: git push origin → feature") {
 		t.Fatalf("task-grant recovery text = %q", got)
 	}
 	keyboard := recoveryKeyboard(grantApproval)

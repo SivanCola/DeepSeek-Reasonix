@@ -88,9 +88,11 @@ type PendingProposal struct {
 	Diagnosis   string          `json:"diagnosis,omitempty"`
 	Failure     string          `json:"failure,omitempty"`
 	Proposed    string          `json:"proposed,omitempty"`
-	// TaskGrantKey is transient host-classified scope. It is deliberately
+	// TaskGrant fields are transient host-classified scope. They are deliberately
 	// omitted from snapshots and never supplied by the model or wire client.
-	TaskGrantKey string `json:"-"`
+	TaskGrantKey       string `json:"-"`
+	TaskGrantTaskScope string `json:"-"`
+	TaskGrantDisplay   string `json:"-"`
 }
 
 // TaskState is the persistable compatibility view of one task's recovery state.
@@ -148,6 +150,7 @@ func ToEventApproval(id string, pending PendingProposal, failure *FailureEvent) 
 		ChangeRationale: pending.Rationale,
 		ReviewRationale: pending.Rationale,
 		CanGrantTask:    pending.TaskGrantKey != "",
+		TaskGrantScope:  pending.TaskGrantDisplay,
 	}
 	if failure != nil {
 		rec.FailedTool = failure.Tool

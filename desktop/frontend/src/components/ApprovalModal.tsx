@@ -196,6 +196,8 @@ export function ApprovalModal({
   const t = useT();
   const isPlanApproval = approval.tool === "exit_plan_mode";
   const isRecoveryApproval = approval.kind === "recovery" || Boolean(approval.recovery);
+  const recovery = approval.recovery;
+  const taskGrantScope = recovery?.task_grant_scope?.trim() ?? "";
   const toolLabel = approvalToolLabel(approval.tool, t);
   const isFreshHumanApproval = approval.fresh === true || requiresFreshHumanApproval(approval.tool) || isRecoveryApproval;
   const hasFreshSessionGrant = approval.tool === "sandbox_escape" || approval.tool === "config_write";
@@ -284,10 +286,14 @@ export function ApprovalModal({
         },
         {
           key: "2",
-          label: t("approval.recoveryContinue"),
-          desc: t("approval.recoveryContinueDesc"),
+          label: grantSimilarForTask
+            ? t("approval.recoveryContinueTask")
+            : t("approval.recoveryContinue"),
+          desc: grantSimilarForTask
+            ? t("approval.recoveryContinueTaskDesc")
+            : t("approval.recoveryContinueDesc"),
           kind: "direct",
-          run: () => resolveRecovery(grantSimilarForTask && approval.recovery?.can_grant_task ? "continue_task" : "continue"),
+          run: () => resolveRecovery(grantSimilarForTask && recovery?.can_grant_task ? "continue_task" : "continue"),
         },
       ]
     : isPlanApproval
@@ -588,7 +594,6 @@ export function ApprovalModal({
     event.stopPropagation();
   };
 
-  const recovery = approval.recovery;
   const recoveryReason = isRecoveryApproval
     ? recoveryReasonText(
         recovery?.change_kind,
@@ -658,23 +663,59 @@ export function ApprovalModal({
         }
         actions={
           <>
-            {toolActions.map((action, index) => (
-              <PromptAction
-                key={action.key}
-                keyLabel={action.key}
-                label={action.label}
-                description={action.desc}
-                onClick={() => {
-                  activateAction(action, index);
-                }}
-                primary={action.primary}
-                selected={selectedIndex === index}
-                tone={action.tone}
-                role={isPlanApproval || isRecoveryApproval ? "button" : "option"}
-                disabled={submitting}
-                title={action.desc}
-              />
-            ))}
+            {toolActions.map((action, index) => {
+              const actionNode = (
+                <PromptAction
+                  key={action.key}
+                  keyLabel={action.key}
+                  label={action.label}
+                  description={action.desc}
+                  onClick={() => {
+                    activateAction(action, index);
+                  }}
+                  primary={action.primary}
+                  selected={selectedIndex === index}
+                  tone={action.tone}
+                  role={isPlanApproval || isRecoveryApproval ? "button" : "option"}
+                  disabled={submitting}
+                  title={action.desc}
+                />
+              );
+              if (isRecoveryApproval && index === 1 && recovery?.can_grant_task) {
+                return (
+                  <div
+                    key={action.key}
+                    className={[
+                      "recovery-continue-option",
+                      grantSimilarForTask ? "recovery-continue-option--granted" : "",
+                    ].filter(Boolean).join(" ")}
+                  >
+                    {actionNode}
+                    {!recoveryGuidanceOpen && (
+                      <label className="recovery-task-grant">
+                        <input
+                          type="checkbox"
+                          checked={grantSimilarForTask}
+                          onChange={(event) => setGrantSimilarForTask(event.target.checked)}
+                          disabled={submitting}
+                        />
+                        <span>
+                          <strong>{t("approval.recoveryTaskGrant")}</strong>
+                          <small>
+                            {taskGrantScope ? (
+                              <>
+                                {t("approval.recoveryTaskGrantScope")} <code>{taskGrantScope}</code>
+                              </>
+                            ) : t("approval.recoveryTaskGrantDesc")}
+                          </small>
+                        </span>
+                      </label>
+                    )}
+                  </div>
+                );
+              }
+              return actionNode;
+            })}
           </>
         }
         note={
@@ -728,22 +769,7 @@ export function ApprovalModal({
           ) : undefined
         }
         footer={
-          isRecoveryApproval ? (
-            recovery?.can_grant_task && !recoveryGuidanceOpen ? (
-              <label className="recovery-task-grant">
-                <input
-                  type="checkbox"
-                  checked={grantSimilarForTask}
-                  onChange={(event) => setGrantSimilarForTask(event.target.checked)}
-                  disabled={submitting}
-                />
-                <span>
-                  <strong>{t("approval.recoveryTaskGrant")}</strong>
-                  <small>{t("approval.recoveryTaskGrantDesc")}</small>
-                </span>
-              </label>
-            ) : undefined
-          ) : isPlanApproval ? undefined : (
+          isRecoveryApproval || isPlanApproval ? undefined : (
             <DecisionConfirmBar
               hint={t("decision.selectHint")}
               confirmLabel={confirmLabel}

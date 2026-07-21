@@ -2618,6 +2618,11 @@ func approvalChoiceLabels(a *event.Approval) []string {
 		}
 		labels = append(labels, strings.TrimSpace(line[2:]))
 	}
+	if isRecoveryApprovalEvent(a) && a.Recovery != nil && a.Recovery.CanGrantTask && len(labels) > 1 {
+		if scope := strings.TrimSpace(a.Recovery.TaskGrantScope); scope != "" {
+			labels[1] += " — " + scope
+		}
+	}
 	return labels
 }
 

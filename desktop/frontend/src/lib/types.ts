@@ -95,6 +95,7 @@ export interface WireRecoveryApproval {
   change_rationale?: string;
   review_rationale?: string;
   can_grant_task?: boolean;
+  task_grant_scope?: string;
 }
 
 export interface WireApproval {

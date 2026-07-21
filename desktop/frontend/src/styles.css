@@ -8086,10 +8086,40 @@ body > .mermaid-diagram--fullscreen {
   line-height: 1.45;
 }
 
+.recovery-continue-option {
+  display: grid;
+  overflow: hidden;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  background: var(--bg-soft);
+  transition: border-color 0.12s, background 0.12s;
+}
+
+.recovery-continue-option:focus-within {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+}
+
+.recovery-continue-option--granted {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+  background: var(--accent-soft);
+}
+
+.prompt-shelf--recovery-approval .recovery-continue-option > .prompt-action {
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent;
+}
+
+.prompt-shelf--recovery-approval .recovery-continue-option > .prompt-action:hover {
+  background: color-mix(in srgb, var(--fg) 4%, transparent);
+}
+
 .recovery-task-grant {
   display: flex;
   align-items: flex-start;
   gap: 8px;
+  padding: 7px 10px 8px;
+  border-top: 1px solid var(--border-soft);
   color: var(--fg-dim);
   cursor: pointer;
 }
@@ -8113,6 +8143,12 @@ body > .mermaid-diagram--fullscreen {
 .recovery-task-grant small {
   font-size: 11px;
   line-height: 1.4;
+}
+
+.recovery-task-grant code {
+  color: var(--fg);
+  font-family: var(--mono);
+  overflow-wrap: anywhere;
 }
 .approval-reason {
   margin: 0;

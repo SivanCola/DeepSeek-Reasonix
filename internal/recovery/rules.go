@@ -82,15 +82,16 @@ func IsHighRiskMutation(proposal Proposal) bool {
 // TaskGrantKey returns a semantic, task-local authorization key for a bounded
 // hard boundary. Empty means the action must be confirmed every time. Keys are
 // deliberately narrower than a command name but broader than raw command bytes:
-// for example, ordinary pushes to the same Git remote share a key, while force
-// pushes and arbitrary HTTP/API mutations never do.
+// for example, ordinary pushes to the same Git remote destination share a key,
+// while a different ref, force push, or arbitrary HTTP/API mutation never does.
 func TaskGrantKey(proposal Proposal) string {
 	return riskBoundaryForProposal(proposal).taskGrantKey
 }
 
 type riskBoundary struct {
-	highRisk     bool
-	taskGrantKey string
+	highRisk         bool
+	taskGrantKey     string
+	taskGrantDisplay string
 }
 
 func riskBoundaryForProposal(proposal Proposal) riskBoundary {
@@ -242,7 +243,7 @@ func bashRiskBoundary(command string, enforceMutationAllowlist bool) riskBoundar
 	if !ok {
 		return riskBoundary{highRisk: true}
 	}
-	var grantKey string
+	var grant taskGrantBoundary
 	for _, segment := range segments {
 		fields, malformed := shellparse.StaticFields(segment)
 		if malformed != "" || len(fields) == 0 {
@@ -250,9 +251,13 @@ func bashRiskBoundary(command string, enforceMutationAllowlist bool) riskBoundar
 		}
 		if commandFieldsHighRisk(fields) {
 			if len(segments) == 1 {
-				grantKey = commandFieldsTaskGrantKey(fields)
+				grant = commandFieldsTaskGrantBoundary(fields)
 			}
-			return riskBoundary{highRisk: true, taskGrantKey: grantKey}
+			return riskBoundary{
+				highRisk:         true,
+				taskGrantKey:     grant.key,
+				taskGrantDisplay: grant.display,
+			}
 		}
 		if enforceMutationAllowlist && !commandFieldsKnownSafeMutation(fields) {
 			// The host knows this call can mutate, but this policy cannot prove it is
@@ -635,9 +640,14 @@ func gitSubcommand(args []string) string {
 	return ""
 }
 
-func commandFieldsTaskGrantKey(fields []string) string {
+type taskGrantBoundary struct {
+	key     string
+	display string
+}
+
+func commandFieldsTaskGrantBoundary(fields []string) taskGrantBoundary {
 	if len(fields) == 0 {
-		return ""
+		return taskGrantBoundary{}
 	}
 	base := strings.ToLower(filepath.Base(fields[0]))
 	rawArgs := fields[1:]
@@ -645,31 +655,31 @@ func commandFieldsTaskGrantKey(fields []string) string {
 	case "env":
 		wrapped, ok := unwrapEnvCommand(rawArgs)
 		if ok {
-			return commandFieldsTaskGrantKey(wrapped)
+			return commandFieldsTaskGrantBoundary(wrapped)
 		}
 	case "command":
 		wrapped, ok := unwrapCommandBuiltin(rawArgs)
 		if ok {
-			return commandFieldsTaskGrantKey(wrapped)
+			return commandFieldsTaskGrantBoundary(wrapped)
 		}
 	case "git":
-		return gitPushTaskGrantKey(rawArgs)
+		return gitPushTaskGrantBoundary(rawArgs)
 	case "gh":
-		return ghTaskGrantKey(rawArgs)
+		return ghTaskGrantBoundary(rawArgs)
 	}
-	return ""
+	return taskGrantBoundary{}
 }
 
-func gitPushTaskGrantKey(args []string) string {
+func gitPushTaskGrantBoundary(args []string) taskGrantBoundary {
 	lower := lowerFields(args)
 	if gitSubcommand(lower) != "push" || containsAny(lower,
 		"-f", "--force", "--mirror", "--delete", "--prune", "--all", "--tags", "--follow-tags",
 	) {
-		return ""
+		return taskGrantBoundary{}
 	}
 	for _, arg := range lower {
 		if strings.HasPrefix(arg, "--force") || strings.HasPrefix(arg, ":") || strings.HasPrefix(arg, "+") {
-			return ""
+			return taskGrantBoundary{}
 		}
 	}
 	pushAt := -1
@@ -679,46 +689,64 @@ func gitPushTaskGrantKey(args []string) string {
 			break
 		}
 	}
-	if pushAt < 0 {
-		return ""
+	if pushAt != 0 {
+		// Global options such as -C/--git-dir can redirect an otherwise identical
+		// command to another repository. Keep those forms one-shot because the
+		// displayed remote alias would no longer identify the same target context.
+		return taskGrantBoundary{}
 	}
-	remote := "default"
-	remoteSet := false
-	var refspecs []string
+	var positionals []string
 	for i := pushAt + 1; i < len(args); i++ {
 		arg := lower[i]
-		if arg == "-o" || arg == "--push-option" || arg == "--receive-pack" || arg == "--exec" {
-			i++
+		switch arg {
+		case "-u", "--set-upstream", "-q", "--quiet", "-v", "--verbose", "--progress", "--no-progress":
 			continue
 		}
 		if strings.HasPrefix(arg, "-") {
-			continue
+			// Behavior-changing and unknown push options are deliberately one-shot.
+			// In particular, push-option/receive-pack/no-verify must not inherit a
+			// grant issued for an ordinary push to the same ref.
+			return taskGrantBoundary{}
 		}
-		if !remoteSet {
-			remote = strings.TrimSpace(args[i])
-			remoteSet = true
-			continue
+		positionals = append(positionals, strings.TrimSpace(args[i]))
+	}
+	// A reusable grant needs both an explicit remote and exactly one explicit
+	// refspec. Bare `git push` depends on mutable branch/upstream configuration.
+	if len(positionals) != 2 {
+		return taskGrantBoundary{}
+	}
+	remote, refspec := positionals[0], positionals[1]
+	if remote == "" || refspec == "" || strings.Contains(refspec, "*") {
+		return taskGrantBoundary{}
+	}
+	target := refspec
+	if before, after, ok := strings.Cut(refspec, ":"); ok {
+		if strings.TrimSpace(before) == "" || strings.TrimSpace(after) == "" {
+			return taskGrantBoundary{}
 		}
-		refspecs = append(refspecs, strings.TrimSpace(args[i]))
+		target = strings.TrimSpace(after)
 	}
-	if len(refspecs) > 1 || (len(refspecs) == 1 && strings.Contains(refspecs[0], "*")) {
-		return ""
+	if target == "HEAD" || target == "@" {
+		return taskGrantBoundary{}
 	}
-	return "bash:git.push:" + remote
+	return taskGrantBoundary{
+		key:     "bash:git.push:" + CallFingerprint("git.push", remote, target, nil),
+		display: "git push " + remote + " → " + target,
+	}
 }
 
-func ghTaskGrantKey(args []string) string {
+func ghTaskGrantBoundary(args []string) taskGrantBoundary {
 	lower := lowerFields(args)
 	group, rest := ghCommandGroup(lower)
 	if len(rest) == 0 {
-		return ""
+		return taskGrantBoundary{}
 	}
 	verb := rest[0]
 	if (group != "pr" && group != "issue") || verb != "comment" {
-		return ""
+		return taskGrantBoundary{}
 	}
 	if containsAny(lower, "--edit-last", "--delete-last") {
-		return ""
+		return taskGrantBoundary{}
 	}
 	repo := "current"
 	for i, arg := range lower {
@@ -738,9 +766,23 @@ func ghTaskGrantKey(args []string) string {
 		// Options before a positional target are legal in gh. Avoid guessing
 		// through their values; a form the host cannot scope exactly stays
 		// one-shot rather than sharing an accidentally broad "current" grant.
-		return ""
+		return taskGrantBoundary{}
 	}
-	return "bash:gh." + group + ".comment:" + strings.TrimSpace(repo) + ":" + target
+	// "current" can change after a checkout or branch switch. Require an
+	// explicit PR/issue target before offering a reusable external-write grant.
+	if target == "current" {
+		return taskGrantBoundary{}
+	}
+	repo = strings.TrimSpace(repo)
+	target = strings.TrimSpace(target)
+	display := "gh " + group + " comment " + target
+	if repo != "current" {
+		display += " --repo " + repo
+	}
+	return taskGrantBoundary{
+		key:     "bash:gh." + group + ".comment:" + CallFingerprint("gh."+group+".comment", repo, target, nil),
+		display: display,
+	}
 }
 
 func httpCommandHighRisk(args []string) bool {

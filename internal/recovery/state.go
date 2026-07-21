@@ -15,7 +15,8 @@ type taskRuntime struct {
 	guidanceSent  bool
 	// taskGrants are runtime-only semantic authorizations. Snapshot/Restore never
 	// serializes them, so a restart or session switch always drops the grant.
-	taskGrants map[string]struct{}
+	taskGrants     map[string]struct{}
+	taskGrantScope string
 }
 
 // activeFailure is the armed failure-recovery context for one task.
@@ -52,6 +53,16 @@ func (st *taskRuntime) addTaskGrant(key string) {
 		st.taskGrants = map[string]struct{}{}
 	}
 	st.taskGrants[key] = struct{}{}
+}
+
+func (st *taskRuntime) useTaskGrantScope(scope string) {
+	if st == nil || scope == "" {
+		return
+	}
+	if st.taskGrantScope != "" && st.taskGrantScope != scope {
+		clear(st.taskGrants)
+	}
+	st.taskGrantScope = scope
 }
 
 func (st *taskRuntime) hasTaskGrants() bool {

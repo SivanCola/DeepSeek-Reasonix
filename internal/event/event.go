@@ -186,6 +186,7 @@ type RecoveryApproval struct {
 	ChangeRationale string // what changed vs the original approach
 	ReviewRationale string // why the host/reviewer needs confirmation
 	CanGrantTask    bool   // offer a semantic grant scoped to the current task
+	TaskGrantScope  string // concise host-classified operation + exact target
 }
 
 // AskOption is one choice the user can pick for an AskQuestion.

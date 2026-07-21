@@ -992,7 +992,10 @@ func TestApprovalChoicesPreserveDecisionSemantics(t *testing.T) {
 			t.Fatalf("grantable recovery choice %d = %+v, want %+v", i, grantable[i], wantGrantable[i])
 		}
 	}
-	if labels := approvalChoiceLabels(&event.Approval{Kind: "recovery", Recovery: &event.RecoveryApproval{CanGrantTask: true}}); len(labels) != 3 {
+	labels := approvalChoiceLabels(&event.Approval{Kind: "recovery", Recovery: &event.RecoveryApproval{
+		CanGrantTask: true, TaskGrantScope: "git push origin → feature",
+	}})
+	if len(labels) != 3 || !strings.Contains(labels[1], "git push origin → feature") {
 		t.Fatalf("grantable recovery labels = %v", labels)
 	}
 }

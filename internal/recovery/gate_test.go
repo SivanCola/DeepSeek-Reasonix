@@ -200,7 +200,7 @@ func TestTaskGrantUsesSemanticOperationAndTargetBoundary(t *testing.T) {
 		n := prompts.Add(1)
 		id := fmt.Sprintf("grant-%d", n)
 		g.BindApprovalID(taskID, id)
-		if pending.TaskGrantKey == "" {
+		if pending.TaskGrantKey == "" || pending.TaskGrantDisplay == "" || pending.TaskGrantTaskScope == "" {
 			t.Fatalf("ordinary push should expose a bounded task grant: %+v", pending)
 		}
 		action := ActionContinue
@@ -228,27 +228,40 @@ func TestTaskGrantUsesSemanticOperationAndTargetBoundary(t *testing.T) {
 	if dec := push("git push origin feature-a"); !dec.Allow {
 		t.Fatalf("first push = %+v", dec)
 	}
-	// Different command bytes and ref, same operation + remote boundary.
-	if dec := push("git push origin feature-b"); !dec.Allow {
+	// Presentation-only flags do not change the operation or target.
+	if dec := push("git push --set-upstream origin feature-a"); !dec.Allow {
 		t.Fatalf("semantically similar push = %+v", dec)
 	}
 	if got := prompts.Load(); got != 1 {
-		t.Fatalf("same-remote prompts = %d, want 1", got)
+		t.Fatalf("same-target prompts = %d, want 1", got)
 	}
-	// A different remote is a different external target and must ask again.
+	// A different destination ref is a different external target.
+	if dec := push("git push origin feature-b"); !dec.Allow {
+		t.Fatalf("different-ref push = %+v", dec)
+	}
+	if got := prompts.Load(); got != 2 {
+		t.Fatalf("different-ref prompts = %d, want 2", got)
+	}
+	// A different remote must also ask again.
 	if dec := push("git push upstream feature-b"); !dec.Allow {
 		t.Fatalf("different-remote push = %+v", dec)
 	}
-	if got := prompts.Load(); got != 2 {
-		t.Fatalf("different-remote prompts = %d, want 2", got)
+	if got := prompts.Load(); got != 3 {
+		t.Fatalf("different-remote prompts = %d, want 3", got)
 	}
 	// Root task ids span a chat; a new trusted task summary must not inherit the
 	// previous user request's external-write grant.
-	if dec := pushTask("turn:other-task", "git push origin feature-c"); !dec.Allow {
+	if dec := pushTask("turn:other-task", "git push origin feature-a"); !dec.Allow {
 		t.Fatalf("different-task push = %+v", dec)
 	}
-	if got := prompts.Load(); got != 3 {
-		t.Fatalf("different-task prompts = %d, want 3", got)
+	if got := prompts.Load(); got != 4 {
+		t.Fatalf("different-task prompts = %d, want 4", got)
+	}
+	g.mu.Lock()
+	_, retained := g.tasks["root"]
+	g.mu.Unlock()
+	if retained {
+		t.Fatal("expired task grant retained runtime state after the task scope changed")
 	}
 	metrics := g.Metrics()
 	if metrics.TaskGrantContinues != 1 || metrics.TaskGrantUses != 1 {
@@ -266,15 +279,24 @@ func TestTaskGrantKeyRejectsRiskExpansionAndScopesExternalTarget(t *testing.T) {
 		"git push origin :feature",
 		"git push --all origin",
 		"git push origin feature-a feature-b",
+		"git push origin",
+		"git push origin HEAD",
+		"git -C ../other push origin feature",
+		"git push --push-option=deploy=prod origin feature",
+		"git push --no-verify origin feature",
 		"gh api -XPOST repos/owner/repo/issues",
 		"gh pr comment 12 --edit-last --body amended",
+		"gh pr comment --body current-target-is-implicit",
 	} {
 		if key := TaskGrantKey(proposal(command)); key != "" {
 			t.Errorf("TaskGrantKey(%q) = %q, want one-shot", command, key)
 		}
 	}
-	if a, b := TaskGrantKey(proposal("git push Origin feature-a")), TaskGrantKey(proposal("git push origin feature-b")); a == "" || b == "" || a == b {
-		t.Fatalf("remote target keys = %q / %q, want distinct non-empty keys", a, b)
+	if a, b := TaskGrantKey(proposal("git push origin feature-a")), TaskGrantKey(proposal("git push origin feature-b")); a == "" || b == "" || a == b {
+		t.Fatalf("ref target keys = %q / %q, want distinct non-empty keys", a, b)
+	}
+	if a, b := TaskGrantKey(proposal("git push origin feature-a")), TaskGrantKey(proposal("git push -u origin feature-a")); a == "" || a != b {
+		t.Fatalf("same target keys = %q / %q, want equal non-empty keys", a, b)
 	}
 	if a, b := TaskGrantKey(proposal("gh pr comment 12 --body ok")), TaskGrantKey(proposal("gh pr comment 13 --body ok")); a == "" || b == "" || a == b {
 		t.Fatalf("PR target keys = %q / %q, want distinct non-empty keys", a, b)
@@ -318,7 +340,7 @@ func TestTaskGrantNeverCoversCriticalVariantOrPersists(t *testing.T) {
 	}
 	// A successful mutation clears failure state but not the live task grant.
 	g.ObserveResult(context.Background(), Observation{TaskID: "root", Tool: "bash", Mutates: true, Success: true})
-	if dec, err := g.BeforeMutation(context.Background(), proposal("git push origin other-ref")); err != nil || !dec.Allow {
+	if dec, err := g.BeforeMutation(context.Background(), proposal("git push origin feature")); err != nil || !dec.Allow {
 		t.Fatalf("grant after successful mutation = %+v, %v", dec, err)
 	}
 	if got := prompts.Load(); got != 1 {

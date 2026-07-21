@@ -283,6 +283,7 @@ func (g *Gate) Resolve(id string, action Action, feedback string) error {
 				st = &taskRuntime{}
 				g.tasks[taskID] = st
 			}
+			st.useTaskGrantScope(pending.TaskGrantTaskScope)
 			st.addTaskGrant(pending.TaskGrantKey)
 			g.metrics.TaskGrantContinues++
 		}
@@ -478,7 +479,15 @@ func (g *Gate) classify(proposal Proposal) (Facts, *FailureEvent, []string, stri
 			facts.SafeRetryAvailable = true
 		}
 	}
-	runtimeGrantKey := taskGrantRuntimeKey(proposal, boundary.taskGrantKey)
+	taskScope := taskGrantScopeKey(proposal)
+	if st != nil {
+		st.useTaskGrantScope(taskScope)
+		if st.empty() && !st.hasTaskGrants() {
+			delete(g.tasks, taskID)
+			st = nil
+		}
+	}
+	runtimeGrantKey := taskGrantRuntimeKey(boundary.taskGrantKey, taskScope)
 	if facts.HighRisk && runtimeGrantKey != "" && st != nil && st.hasTaskGrant(runtimeGrantKey) {
 		facts.HighRisk = false
 		g.metrics.TaskGrantUses++
@@ -585,7 +594,9 @@ func (g *Gate) askHuman(ctx context.Context, taskID, fp string, proposal Proposa
 		Proposed:    firstNonEmpty(proposal.Subject, proposal.Preview, proposal.Tool),
 	}
 	if boundary := riskBoundaryForProposal(proposal); boundary.highRisk {
-		pending.TaskGrantKey = taskGrantRuntimeKey(proposal, boundary.taskGrantKey)
+		pending.TaskGrantTaskScope = taskGrantScopeKey(proposal)
+		pending.TaskGrantKey = taskGrantRuntimeKey(boundary.taskGrantKey, pending.TaskGrantTaskScope)
+		pending.TaskGrantDisplay = boundary.taskGrantDisplay
 	}
 
 	if g.opts.Headless || g.opts.EmitPrompt == nil {
@@ -674,26 +685,27 @@ func (g *Gate) askHuman(ctx context.Context, taskID, fp string, proposal Proposa
 	}
 }
 
-func taskGrantRuntimeKey(proposal Proposal, semanticKey string) string {
-	if semanticKey == "" {
-		return ""
-	}
+func taskGrantScopeKey(proposal Proposal) string {
 	// Root task ids span a controller session. TaskScopeID is host-owned and
 	// unique per ordinary turn, while goal continuations reuse their delivery
-	// scope. Hash it so a grant survives one plan/goal task but cannot leak into a
-	// later unrelated request in the same chat. TaskSummary is a compatibility
-	// fallback for direct/older callers that do not yet supply a scope id.
+	// scope. Hash it so task-local runtime state never contains raw task text.
 	taskScope := strings.TrimSpace(proposal.TaskScopeID)
 	if taskScope == "" {
 		taskScope = strings.TrimSpace(proposal.TaskSummary)
 	}
-	scope := CallFingerprint(
+	return CallFingerprint(
 		"task-grant",
 		normalizeTaskID(proposal.TaskID),
 		taskScope,
 		nil,
 	)
-	return semanticKey + "#" + scope
+}
+
+func taskGrantRuntimeKey(semanticKey, taskScope string) string {
+	if semanticKey == "" || taskScope == "" {
+		return ""
+	}
+	return semanticKey + "#" + taskScope
 }
 
 func (g *Gate) decisionFromResolve(payload resolvePayload) (Decision, error) {
