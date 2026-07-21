@@ -6307,6 +6307,9 @@ func (a *App) MCPMarketplaceResolve(registryName string) (MCPMarketplaceEntryVie
 	if err != nil {
 		return MCPMarketplaceEntryView{}, err
 	}
+	if _, err := entry.PluginEntry(""); err != nil {
+		return MCPMarketplaceEntryView{}, err
+	}
 	return mcpMarketplaceEntryView(entry), nil
 }
 

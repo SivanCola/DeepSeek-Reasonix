@@ -198,6 +198,8 @@ func TestLegacySSERejectsCrossOriginEndpoint(t *testing.T) {
 func TestLegacySSEBoundsConcurrentServerRequestReplies(t *testing.T) {
 	events := make(chan string, 2*sseReplyQueueBound+2)
 	releasePosts := make(chan struct{})
+	postStarted := make(chan struct{})
+	var firstPost sync.Once
 	var activePosts atomic.Int32
 	var maxPosts atomic.Int32
 
@@ -222,6 +224,7 @@ func TestLegacySSEBoundsConcurrentServerRequestReplies(t *testing.T) {
 		}
 	})
 	mux.HandleFunc("/messages", func(w http.ResponseWriter, r *http.Request) {
+		firstPost.Do(func() { close(postStarted) })
 		active := activePosts.Add(1)
 		defer activePosts.Add(-1)
 		for {
@@ -268,7 +271,11 @@ func TestLegacySSEBoundsConcurrentServerRequestReplies(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("SSE reader stopped routing responses while a reply POST was blocked")
 	}
-	time.Sleep(100 * time.Millisecond)
+	select {
+	case <-postStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("SSE reply worker did not start its first POST")
+	}
 	if got := maxPosts.Load(); got != 1 {
 		t.Fatalf("concurrent reply POSTs = %d, want 1", got)
 	}
