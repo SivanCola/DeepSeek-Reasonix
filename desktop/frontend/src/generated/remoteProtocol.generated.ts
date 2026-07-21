@@ -2,7 +2,7 @@
 
 export const REMOTE_SCHEMA_FORMAT = "reasonix.remote.schema.v1" as const;
 export const REMOTE_PROTOCOL_VERSION = "1" as const;
-export const REMOTE_SCHEMA_HASH = "sha256:81f585df9c5d5008aad9d727bce80fbc69b2b42fa2b4e4a75f2ec7bcab5bd749" as const;
+export const REMOTE_SCHEMA_HASH = "sha256:e17ecf4f75a7b1413528b0fc2d88cbafd9bb1574d8d58bb20a15aa595e510125" as const;
 
 export const REMOTE_FIXED_RESOURCES = {
   "protocol": {
@@ -3424,7 +3424,7 @@ export type SessionGoalSetResultHydrated = {
 };
 
 export type SessionHistoryParamsRaw = {
-  "cursor": string;
+  "cursor"?: string;
   "expectedHostEpoch": string;
   "expectedRuntimeEpoch": string;
   "pageTurns": number;
@@ -3435,7 +3435,7 @@ export type SessionHistoryParamsRaw = {
   };
 };
 export type SessionHistoryParamsHydrated = {
-  "cursor": string;
+  "cursor"?: string;
   "expectedHostEpoch": string;
   "expectedRuntimeEpoch": string;
   "pageTurns": number;

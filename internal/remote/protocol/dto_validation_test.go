@@ -2,12 +2,35 @@ package protocol
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"reflect"
 	"strings"
 	"testing"
 
 	"reasonix/internal/eventwire"
 )
+
+func TestSessionHistoryInitialPageOmitsEmptyCursor(t *testing.T) {
+	params := SessionHistoryParams{
+		RuntimeQuery: RuntimeQuery{
+			ExpectedHostEpoch:    "host-1",
+			Target:               RuntimeTarget{WorkspaceID: "workspace-1", SessionID: "session-1"},
+			ExpectedRuntimeEpoch: "runtime-1",
+		},
+		SnapshotID: "snapshot-1",
+		PageTurns:  20,
+	}
+	raw, err := json.Marshal(params)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), `"cursor"`) {
+		t.Fatalf("initial history request serialized an empty cursor: %s", raw)
+	}
+	if _, err := DecodeRequestParams(MethodSessionHistory, raw); err != nil {
+		t.Fatalf("initial history request without cursor was rejected: %v", err)
+	}
+}
 
 func TestSessionContentResultByteInvariants(t *testing.T) {
 	body := []byte("hello")

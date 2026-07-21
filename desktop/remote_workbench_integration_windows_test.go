@@ -26,6 +26,7 @@ const (
 	remoteWorkbenchIntegrationUserEnv        = "REASONIX_REMOTE_WORKBENCH_USER"
 	remoteWorkbenchIntegrationIdentityEnv    = "REASONIX_REMOTE_WORKBENCH_IDENTITY_FILE"
 	remoteWorkbenchIntegrationWorkspaceEnv   = "REASONIX_REMOTE_WORKBENCH_WORKSPACE"
+	remoteWorkbenchIntegrationVersionEnv     = "REASONIX_REMOTE_WORKBENCH_EXPECTED_VERSION"
 	remoteWorkbenchIntegrationExpectedSHAEnv = "REASONIX_REMOTE_WORKBENCH_EXPECTED_SHA"
 	remoteWorkbenchIntegrationFingerprintEnv = "REASONIX_REMOTE_WORKBENCH_FINGERPRINT"
 	remoteWorkbenchIntegrationMarker         = "reasonix-remote-workbench-physical-tool-result"
@@ -80,6 +81,7 @@ func TestRemoteWorkbenchWindowsToLinuxPhysicalAcceptance(t *testing.T) {
 	user := requiredRemoteWorkbenchIntegrationEnv(t, remoteWorkbenchIntegrationUserEnv)
 	identityFile := requiredRemoteWorkbenchIntegrationEnv(t, remoteWorkbenchIntegrationIdentityEnv)
 	workspace := requiredRemoteWorkbenchIntegrationEnv(t, remoteWorkbenchIntegrationWorkspaceEnv)
+	expectedVersion := requiredRemoteWorkbenchIntegrationEnv(t, remoteWorkbenchIntegrationVersionEnv)
 	expectedSHA := requiredRemoteWorkbenchIntegrationEnv(t, remoteWorkbenchIntegrationExpectedSHAEnv)
 	expectedFingerprint := requiredRemoteWorkbenchIntegrationEnv(t, remoteWorkbenchIntegrationFingerprintEnv)
 	port, err := strconv.Atoi(requiredRemoteWorkbenchIntegrationEnv(t, remoteWorkbenchIntegrationPortEnv))
@@ -88,6 +90,9 @@ func TestRemoteWorkbenchWindowsToLinuxPhysicalAcceptance(t *testing.T) {
 	}
 
 	buildID := protocol.CurrentBuildID(version)
+	if buildID.ProductVersion != expectedVersion {
+		t.Fatalf("acceptance binary product version = %q, want %q", buildID.ProductVersion, expectedVersion)
+	}
 	if buildID.SourceRevision != expectedSHA {
 		t.Fatalf("acceptance binary source revision = %q, want exact clean SHA %q", buildID.SourceRevision, expectedSHA)
 	}

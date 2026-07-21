@@ -256,7 +256,7 @@ type SessionUnsubscribeResult struct {
 type SessionHistoryParams struct {
 	RuntimeQuery
 	SnapshotID SnapshotID `json:"snapshotId"`
-	Cursor     Cursor     `json:"cursor"`
+	Cursor     Cursor     `json:"cursor,omitempty"`
 	PageTurns  int        `json:"pageTurns" validate:"min=1,max=200"`
 }
 
