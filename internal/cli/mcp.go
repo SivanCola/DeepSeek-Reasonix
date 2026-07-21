@@ -567,6 +567,7 @@ its authorization; there is no separate trust step.
 
 Servers merely discovered in project configuration ask once for confirmation of
 the exact command or endpoint, then reconnect automatically while it is unchanged.
-Explicit deny rules, Plan Mode, and strict read-only subagents still constrain
-which installed MCP tools may run.`)
+After authorization, writer or destructive annotations never trigger per-call
+approval. Explicit deny rules still win; Plan Mode and strict read-only subagents
+may filter which tools are available.`)
 }
