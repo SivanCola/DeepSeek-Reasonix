@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-func TestDesktopPackagesUseGuardAsDefaultLauncher(t *testing.T) {
+func TestDesktopPackagesPreserveNativePlatformLaunchers(t *testing.T) {
 	buildData, err := os.ReadFile("../scripts/desktop-build.sh")
 	if err != nil {
 		t.Fatal(err)
@@ -18,7 +18,7 @@ func TestDesktopPackagesUseGuardAsDefaultLauncher(t *testing.T) {
 		`./cmd/reasonix`,
 		`cp "$guard_out" "$app/Contents/MacOS/$GUARDNAME"`,
 		`cp "$cli_out" "$app/Contents/MacOS/$CLINAME"`,
-		`Set :CFBundleExecutable $GUARDNAME`,
+		`[ "$bundle_executable" = "$BINNAME" ]`,
 		`Print :CFBundleIconFile`,
 		`Contents/Resources/$bundle_icon`,
 		`cp "$portable" "$staging/$BINNAME.exe"`,
@@ -34,6 +34,9 @@ func TestDesktopPackagesUseGuardAsDefaultLauncher(t *testing.T) {
 		if !strings.Contains(build, want) {
 			t.Errorf("desktop-build.sh missing guard launcher contract %q", want)
 		}
+	}
+	if strings.Contains(build, `Set :CFBundleExecutable $GUARDNAME`) {
+		t.Fatal("macOS package must not replace the native Wails bundle executable with Guard")
 	}
 	launcherStamp := strings.Index(build, `stamp_windows_executable "$launcher_out" "Reasonix Launcher"`)
 	portableCopy := strings.Index(build, `cp "$launcher_out" "$staging/${APPNAME}.exe"`)

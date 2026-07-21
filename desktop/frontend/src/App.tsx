@@ -39,7 +39,8 @@ import { useWailsResizeFix } from "./lib/useWailsResizeFix";
 import { asArray } from "./lib/array";
 import { clearLegacyLangPref, normalizeLangPref, readLegacyLangPref, t, useI18n, useT, type Translator } from "./lib/i18n";
 import { localizedNoticeText, useController, type Item, type LiveStream } from "./lib/useController";
-import { app, onEvent, onProjectTreeChanged, onReady, onRuntimeRebuilt, onSessionRecovered, openExternal } from "./lib/bridge";
+import { app, onEvent, onProjectTreeChanged, onReady, onRuntimeRebuilt, onSessionRecovered, onWorkbenchTarget, openExternal } from "./lib/bridge";
+import { preferredRemoteWorkspace, workbenchTargetTransitioning, type WorkbenchActiveTarget } from "./lib/workbenchTarget";
 import { generativeMusic, isGenerativeMusicEnabled } from "./lib/generative-music";
 import { clearAttentionChimeKeys, playAttentionChime, playSuccessChime, shouldPlayAttentionChimeForEvent } from "./lib/sound";
 import { NoticeCard, Transcript } from "./components/Transcript";
@@ -56,6 +57,7 @@ type DecisionSurfaceKind = "tool_approval" | "plan_approval" | "ask" | "clear_co
 import { StatusBar } from "./components/StatusBar";
 import { RemoteHostKeyDialog } from "./components/RemoteHostKeyDialog";
 import { RemoteSecretDialog } from "./components/RemoteSecretDialog";
+import { ProviderTrustDialog } from "./components/ProviderTrustDialog";
 import { onRemoteStatus, onRemoteForwards, onRemoteServer } from "./lib/bridge";
 import { RemoteConnectionTimeoutError, useRemoteStore, waitForRemoteConnection } from "./store/remote";
 import { CommandPalette, type PaletteItem } from "./components/CommandPalette";
@@ -1112,19 +1114,40 @@ export default function App() {
   const remoteExplorerHostId = useRemoteStore((s) => s.explorerHostId);
   const remoteHosts = useRemoteStore((s) => s.hosts);
   const remoteStatuses = useRemoteStore((s) => s.statuses);
+  const [workbenchTarget, setWorkbenchTarget] = useState<WorkbenchActiveTarget>({ kind: "local" });
+	const { showToast } = useToast();
   const setRemoteHosts = useRemoteStore((s) => s.setHosts);
   const hydrateRemoteStatuses = useRemoteStore((s) => s.hydrateStatuses);
   const requestRemoteExplorer = useRemoteStore((s) => s.openExplorer);
+  const setRemoteExplorerTab = useRemoteStore((s) => s.setExplorerTab);
   const closeRemoteExplorerRequest = useRemoteStore((s) => s.closeExplorer);
   const applyRemoteStatus = useRemoteStore((s) => s.applyStatus);
   const requestRemoteStatusPopover = useRemoteStore((s) => s.requestStatusPopover);
   const setRemoteForwards = useRemoteStore((s) => s.setForwards);
   const setRemoteServer = useRemoteStore((s) => s.setServer);
+
+  useEffect(() => {
+    let active = true;
+    void app.WorkbenchActiveTarget()
+      .then((target) => { if (active) setWorkbenchTarget(target); })
+      .catch(() => undefined);
+    const off = onWorkbenchTarget((target) => {
+		if (!active) return;
+		if (target.state === "background_activity") {
+			showToast(t("remote.backgroundActivity"), "info");
+			return;
+		}
+		setWorkbenchTarget(target);
+    });
+    return () => {
+      active = false;
+      off();
+    };
+	}, [showToast, t]);
   const shortcutsOpen = useOverlayStore((s) => s.shortcutsOpen);
   const setShortcutsOpen = useOverlayStore((s) => s.setShortcutsOpen);
   const paletteSessions = useOverlayStore((s) => s.paletteSessions);
   const setPaletteSessions = useOverlayStore((s) => s.setPaletteSessions);
-  const { showToast } = useToast();
   const [sidebarImConnections, setSidebarImConnections] = useState<SidebarImConnection[]>([]);
   const [imTopicSources, setImTopicSources] = useState<Record<string, SidebarImTopicSource>>({});
   const [sidebarImDetailConnectionId, setSidebarImDetailConnectionId] = useState("");
@@ -1589,7 +1612,7 @@ export default function App() {
   const collaborationMode = displayedComposerProfileCollaborationMode(composerProfile);
   const toolApprovalMode = composerProfile.toolApprovalMode;
   const tokenMode: TokenMode = composerProfile.tokenMode;
-  const runtimeTransitioning = Boolean(activeTabId && runtimeTransitionsByTab[activeTabId]);
+  const runtimeTransitioning = Boolean(activeTabId && runtimeTransitionsByTab[activeTabId]) || workbenchTargetTransitioning(workbenchTarget);
   const controllerReady = state.meta?.ready === true && !state.backendActivationPending && !runtimeTransitioning;
   // Single footer decision surface. Composer stays mounted underneath and is
   // only visually/a11y-hidden so per-session draft caches survive.
@@ -2563,23 +2586,29 @@ export default function App() {
     if (hostId) requestRemoteExplorer(hostId);
   }, [remoteExplorerHostId, remoteHosts, requestRemoteExplorer]);
 
-  const launchRemoteWorkspace = useCallback(async (host: RemoteHostView) => {
-    const workspace = host.defaultWorkspace.trim();
+  const remoteWorkspaceLaunchSeq = useRef(0);
+  const launchRemoteWorkspace = useCallback(async (host: RemoteHostView, requestSeq: number) => {
+    const workspace = await preferredRemoteWorkspace(host.id, host.defaultWorkspace);
+    if (requestSeq !== remoteWorkspaceLaunchSeq.current) return;
     if (!workspace) {
-      useRemoteStore.getState().setExplorerTab("server");
+      setRemoteExplorerTab("server");
       requestRemoteExplorer(host.id);
-      return;
+      throw new Error(t("remote.workspaceRequired"));
     }
     await app.OpenRemoteWorkspace(host.id, workspace);
-  }, [requestRemoteExplorer]);
+    if (requestSeq !== remoteWorkspaceLaunchSeq.current) return;
+    setWorkbenchTarget(await app.WorkbenchActiveTarget());
+  }, [requestRemoteExplorer, setRemoteExplorerTab, t]);
 
   const openRemoteWorkspaceFromStatus = useCallback((host: RemoteHostView) => {
-    void launchRemoteWorkspace(host).catch((err) => {
+    const requestSeq = ++remoteWorkspaceLaunchSeq.current;
+    void launchRemoteWorkspace(host, requestSeq).catch((err) => {
       showToast(err instanceof Error ? err.message : String(err), "error", { durationMs: 6000 });
     });
   }, [launchRemoteWorkspace, showToast]);
 
   const connectAndOpenRemoteWorkspace = useCallback(function connectRemoteWorkspace(host: RemoteHostView) {
+    const requestSeq = ++remoteWorkspaceLaunchSeq.current;
     void (async () => {
       try {
         const status = useRemoteStore.getState().statuses[host.id]?.state;
@@ -2612,7 +2641,7 @@ export default function App() {
       }
 
       try {
-        await launchRemoteWorkspace(host);
+        await launchRemoteWorkspace(host, requestSeq);
       } catch (err) {
         showToast(err instanceof Error ? err.message : String(err), "error", { durationMs: 6000 });
       }
@@ -4301,6 +4330,12 @@ export default function App() {
               onOpenRemoteWorkspace={openRemoteWorkspaceFromStatus}
               remoteHosts={remoteHosts}
               remoteStatuses={remoteStatuses}
+              workbenchTarget={workbenchTarget}
+              onSwitchLocal={() => {
+                void app.WorkbenchSwitchLocal()
+                  .then(setWorkbenchTarget)
+                  .catch((err) => showToast(err instanceof Error ? err.message : String(err), "error"));
+              }}
             />
           </footer>
           )}
@@ -4480,6 +4515,7 @@ export default function App() {
 
       <RemoteHostKeyDialog />
       <RemoteSecretDialog />
+      <ProviderTrustDialog />
 
       <CommandPalette
         open={paletteOpen}

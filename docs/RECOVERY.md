@@ -21,11 +21,15 @@ reasonix-guard apply-plan --file PLAN.json [--yes] [--allow-project]
 reasonix doctor repair [--root PATH] [--apply] [--project] [--json]
 ```
 
-Packaged desktop shortcuts and application bundles start through Guard. Running
-`reasonix-guard` without a subcommand therefore launches the sibling desktop
-executable; use the explicit `check` command for a read-only configuration check.
-Windows packages use the same Guard code in a GUI-subsystem launcher for shortcuts
-and retain `reasonix-guard.exe` as the terminal-oriented command.
+Windows and Linux packaged desktop shortcuts start through Guard. The macOS
+application bundle starts the Wails desktop directly so LaunchServices, the Dock,
+and the application window have the same native process identity; it runs the
+same startup recovery preflight before creating WebView. Guard remains bundled
+as an independent recovery command. Running `reasonix-guard` without a subcommand
+launches the sibling desktop executable; use the explicit `check` command for a
+read-only configuration check. Windows packages use the same Guard code in a
+GUI-subsystem launcher for shortcuts and retain `reasonix-guard.exe` as the
+terminal-oriented command.
 Windows and Linux shortcuts detach after starting the desktop; an explicit
 terminal `reasonix-guard launch` waits by default unless `--detach` is supplied.
 
@@ -59,10 +63,10 @@ it.
 
 The desktop records `starting`, `ready`, `healthy`, and `clean-exit` under the
 Reasonix state directory. `ready` begins a 30-second probation period. On the
-third incomplete startup within five minutes, Guard opens a native recovery
-dialog that does not depend on WebView. Safe Mode uses built-in configuration,
-does not restore saved tabs, and disables external integrations for that run. It
-does not rewrite the user's configuration.
+third incomplete startup within five minutes, Guard (or the macOS desktop
+preflight) opens a native recovery dialog that does not depend on WebView. Safe
+Mode uses built-in configuration, does not restore saved tabs, and disables
+external integrations for that run. It does not rewrite the user's configuration.
 
 ## Update rollback
 
@@ -70,14 +74,14 @@ Before an automatic update, Reasonix retains the complete installed release
 unit — the desktop executable plus the Guard/launcher binaries the installer
 also replaces (Windows and Linux) — or the application bundle (macOS). The
 backups remain until the replacement build reaches `healthy` or exits cleanly.
-If the replacement enters the startup failure threshold, Guard verifies every
-backup hash and restores all recorded binaries together before launching, so a
-rollback never produces a mixed-version install. When the Windows installer
-itself fails after the desktop has exited, the update helper records the
-failure and relaunches Guard, which performs the same full rollback immediately
-instead of waiting for a crash loop. Update metadata and hashes are stored
-under the Reasonix repair state; arbitrary backup or target paths are rejected,
-and unhashed backups are refused.
+If the replacement enters the startup failure threshold, Guard (or the macOS
+desktop preflight) verifies every backup hash and restores the complete release
+unit before relaunching, so a rollback never produces a mixed-version install.
+When the Windows installer itself fails after the desktop has exited, the update
+helper records the failure and relaunches Guard, which performs the same full
+rollback immediately instead of waiting for a crash loop. Update metadata and
+hashes are stored under the Reasonix repair state; arbitrary backup or target
+paths are rejected, and unhashed backups are refused.
 
 ## Optional AI assistance
 

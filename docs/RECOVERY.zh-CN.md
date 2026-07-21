@@ -21,8 +21,10 @@ reasonix-guard apply-plan --file PLAN.json [--yes] [--allow-project]
 reasonix doctor repair [--root PATH] [--apply] [--project] [--json]
 ```
 
-安装后的桌面快捷方式和应用 Bundle 默认先启动 Guard。因此直接运行
-`reasonix-guard` 会启动同目录的桌面程序；只读检查请显式使用 `check`。
+Windows/Linux 安装后的桌面快捷方式默认先启动 Guard。macOS 应用 Bundle 则直接
+启动 Wails 桌面进程，让 LaunchServices、Dock 图标和应用窗口拥有同一个原生进程身份；
+它会在创建 WebView 前执行同等的启动恢复预检。Guard 仍作为独立恢复命令随包提供。
+直接运行 `reasonix-guard` 会启动同目录的桌面程序；只读检查请显式使用 `check`。
 Windows 安装包的快捷方式使用同一套 Guard 代码编译出的无终端窗口启动器，同时保留
 `reasonix-guard.exe` 供命令行诊断使用。
 Windows/Linux 快捷方式启动桌面后会退出启动器；终端中显式执行
@@ -49,15 +51,17 @@ Guard 保留最近 5 个健康的全局配置快照。每个快照都有 SHA-256
 
 桌面端会在 Reasonix 状态目录记录 `starting`、`ready`、`healthy` 和
 `clean-exit`。`ready` 后还有 30 秒稳定观察期。五分钟内连续三次未完成启动时，
-Guard 会显示不依赖 WebView 的系统原生恢复对话框。安全模式使用内置配置、不恢复
-上次标签页，并在本次运行中禁用外部集成；它不会改写用户配置。
+Guard（macOS 上为桌面启动预检）会显示不依赖 WebView 的系统原生恢复对话框。
+安全模式使用内置配置、不恢复上次标签页，并在本次运行中禁用外部集成；它不会改写
+用户配置。
 
 ## 更新回滚
 
 自动更新前，Reasonix 会完整保留安装的发布单元——桌面可执行文件以及安装器同样会
 替换的 Guard/启动器二进制（Windows/Linux），或整个应用 Bundle（macOS）。只有新
-版本进入 `healthy` 或干净退出后才清理备份。新版本达到启动失败阈值时，Guard 会先
-校验全部备份哈希，再把记录的所有二进制一起恢复后启动，回滚不会留下新旧混装。
+版本进入 `healthy` 或干净退出后才清理备份。新版本达到启动失败阈值时，Guard（macOS
+上为桌面启动预检）会先校验全部备份哈希，再恢复完整发布单元并重新启动，回滚不会
+留下新旧混装。
 Windows 安装器在桌面退出后执行失败时，更新 helper 会记录失败并重新拉起 Guard，
 Guard 启动时立即执行同样的完整回滚，而不是等待崩溃循环。更新元数据和哈希位于
 Reasonix 修复状态目录；任何任意目标路径、目录外备份或缺失哈希的备份都会被拒绝。

@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 import { app } from "../lib/bridge";
 import { useT } from "../lib/i18n";
 import { isRemoteDegradedWarning, isRemoteTerminalFailure, remoteConnectionErrorSummaryKey } from "../lib/remoteErrors";
+import { resolveRemoteWorkspace } from "../lib/workbenchTarget";
 import { useOverlayStore } from "../store/overlays";
 import { useRemoteStore, type RemoteExplorerTab } from "../store/remote";
 import type { RemoteDirEntry, RemoteForwardView } from "../lib/types";
@@ -86,7 +87,7 @@ export function RemotePanel({ onClose }: { onClose: () => void }) {
       <div className="remote-panel__body">
         {tab === "files" && <RemoteFilesTab hostId={hostId} connected={connected} />}
         {tab === "ports" && <RemotePortsTab hostId={hostId} connected={connected} />}
-        {tab === "server" && <RemoteServerTab hostId={hostId} connected={connected} />}
+        {tab === "server" && <RemoteServerTab hostId={hostId} connected={connected} defaultWorkspace={host?.defaultWorkspace} />}
       </div>
     </section>
   );
@@ -325,7 +326,7 @@ function RemotePortsTab({ hostId, connected }: { hostId: string; connected: bool
 
 // ── Server tab ──
 
-function RemoteServerTab({ hostId, connected }: { hostId: string; connected: boolean }) {
+function RemoteServerTab({ hostId, connected, defaultWorkspace }: { hostId: string; connected: boolean; defaultWorkspace?: string }) {
   const t = useT();
   const server = useRemoteStore((s) => s.servers[hostId]);
   const setServer = useRemoteStore((s) => s.setServer);
@@ -333,11 +334,24 @@ function RemoteServerTab({ hostId, connected }: { hostId: string; connected: boo
   const [logs, setLogs] = useState("");
   const [actionErr, setActionErr] = useState("");
   const logsOpen = useRef(false);
+  const workspaceEdited = useRef(false);
 
   useEffect(() => {
-    void app.RemoteLastWorkspace(hostId).then((w) => setWorkspace((cur) => cur || w));
+    let cancelled = false;
+    workspaceEdited.current = false;
+    setWorkspace(resolveRemoteWorkspace(undefined, defaultWorkspace));
+    void app.RemoteLastWorkspace(hostId)
+      .then((lastWorkspace) => {
+        if (!cancelled && !workspaceEdited.current) {
+          setWorkspace(resolveRemoteWorkspace(lastWorkspace, defaultWorkspace));
+        }
+      })
+      .catch(() => undefined);
     void app.RemoteServerStatus(hostId).then(setServer);
-  }, [hostId, setServer]);
+    return () => {
+      cancelled = true;
+    };
+  }, [defaultWorkspace, hostId, setServer]);
 
   const refreshLogs = async () => {
     logsOpen.current = true;
@@ -382,7 +396,14 @@ function RemoteServerTab({ hostId, connected }: { hostId: string; connected: boo
     <div className="remote-server">
       <label className="remote-server__ws">
         {t("remote.server.workspace")}
-        <input value={workspace} onChange={(e) => setWorkspace(e.target.value)} placeholder="~/project" />
+        <input
+          value={workspace}
+          onChange={(e) => {
+            workspaceEdited.current = true;
+            setWorkspace(e.target.value);
+          }}
+          placeholder="~/project"
+        />
       </label>
       <div className="remote-server__status">
         {stateLabel}

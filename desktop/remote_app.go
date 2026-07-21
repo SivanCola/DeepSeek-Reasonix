@@ -433,24 +433,10 @@ func (a *App) EnsureRemoteServer(hostID, workspace string) error {
 	return nil
 }
 
+// OpenRemoteWorkspace opens the Remote Workbench path: SSH stdio attach-workspace
+// + local Provider Broker. It does not open a Serve HTML child window.
 func (a *App) OpenRemoteWorkspace(hostID, workspace string) error {
-	rt, err := a.remoteRT()
-	if err != nil {
-		return err
-	}
-	view, token, err := rt.EnsureServer(a.bootContext(), hostID, workspace)
-	if err != nil {
-		return err
-	}
-	if view.LocalURL == "" {
-		return fmt.Errorf("remote serve did not report a local URL")
-	}
-	url := view.LocalURL
-	if token != "" && !strings.Contains(url, "token=") {
-		url = fmt.Sprintf("%s?token=%s", strings.TrimRight(url, "/"), token)
-	}
-	a.saveLastRemoteWorkspace(hostID, workspace)
-	return a.openRemoteWindow(url, hostID)
+	return a.WorkbenchConnectRemote(hostID, workspace)
 }
 
 func (a *App) StopRemoteServer(hostID string) error {
@@ -508,6 +494,7 @@ type managedHost struct {
 	fpAnswer       chan bool               // TOFU resolution channel; non-nil while pending
 	secretAnswer   chan remoteSecretAnswer // one-shot credential channel; non-nil while pending
 	secretPromptID string                  // opaque ID prevents a stale dialog resolving a later prompt
+	verifiedPeer   *RemoteFingerprintView  // authenticated target key; retained after pending UI clears
 	serveMu        sync.Mutex              // serializes EnsureServer/StopServer for this host
 }
 
@@ -688,7 +675,21 @@ func (m *desktopRemoteManager) Connect(hostID string) error {
 	for _, jump := range resolvedJumps {
 		jumpHosts = append(jumpHosts, remote.JumpHostOptions{Host: jump, Auth: desktopAuthForHost(jump, secretPrompt)})
 	}
-	policy := &remote.HostKeyPolicy{Prompt: m.hostKeyPrompt(hostID, mh)}
+	policy := &remote.HostKeyPolicy{
+		Prompt: m.hostKeyPrompt(hostID, mh),
+		Verified: func(q remote.HostKeyQuestion) {
+			if q.Host != host.Label() {
+				return // a ProxyJump identity is not the target identity
+			}
+			m.mu.Lock()
+			if m.hosts[hostID] == mh {
+				mh.verifiedPeer = &RemoteFingerprintView{
+					HostID: hostID, Address: q.Address, KeyType: q.KeyType, SHA256: q.Fingerprint,
+				}
+			}
+			m.mu.Unlock()
+		},
+	}
 	client, err := m.newClient(remote.Options{
 		Host: host, Auth: auth, JumpHosts: jumpHosts, HostKeys: policy, Dialer: dialer,
 	})
@@ -850,6 +851,75 @@ func (m *desktopRemoteManager) ResolveSecret(hostID, promptID, secret string, ac
 	default:
 		return fmt.Errorf("SSH credential prompt already resolved for %q", hostID)
 	}
+}
+
+// workbenchPeerIdentity returns the target key authenticated by the live Go SSH
+// connection. It never synthesizes a placeholder identity: Provider Broker
+// authorization must be bound to a real, verified transport peer.
+func (m *desktopRemoteManager) workbenchPeerIdentity(hostID string) (RemoteFingerprintView, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	mh := m.hosts[hostID]
+	if mh == nil || mh.verifiedPeer == nil || (mh.status.State != "connected" && mh.status.State != "degraded") {
+		return RemoteFingerprintView{}, false
+	}
+	return *mh.verifiedPeer, true
+}
+
+// workbenchAskPassHandler reuses the established Remote SSH UI channel. The
+// main-window flow connects the managed Go SSH transport first, so an OpenSSH
+// host-key confirmation is accepted only when its fingerprint matches that
+// already-authenticated peer. Passwords/passphrases still travel through the
+// existing one-shot secret dialog and are never placed in argv or persisted.
+func (m *desktopRemoteManager) workbenchAskPassHandler(hostID string, entry config.RemoteHostEntry) RemoteAskPassHandler {
+	return func(ctx context.Context, prompt RemoteAskPassPrompt) (RemoteAskPassAnswer, error) {
+		m.mu.Lock()
+		mh := m.hosts[hostID]
+		var peer *RemoteFingerprintView
+		if mh != nil && mh.verifiedPeer != nil {
+			copyPeer := *mh.verifiedPeer
+			peer = &copyPeer
+		}
+		m.mu.Unlock()
+		if mh == nil {
+			return RemoteAskPassAnswer{}, fmt.Errorf("host %q is no longer connected", hostID)
+		}
+		switch prompt.Kind {
+		case RemoteAskPassHostKeyChanged:
+			return RemoteAskPassAnswer{}, fmt.Errorf("host key changed for %q", hostID)
+		case RemoteAskPassHostKeyConfirm:
+			if peer == nil || !strings.Contains(prompt.Message, peer.SHA256) {
+				return RemoteAskPassAnswer{}, fmt.Errorf("OpenSSH peer identity does not match the verified host %q", hostID)
+			}
+			return RemoteAskPassAnswer{Accepted: true, Value: "yes"}, nil
+		case RemoteAskPassKeyPassphrase:
+			if entry.PassphraseEnv != "" {
+				if value := config.ResolveCredential(entry.PassphraseEnv).Value; value != "" {
+					return RemoteAskPassAnswer{Accepted: true, Value: value}, nil
+				}
+			}
+			value, err := m.secretPrompt(hostID, mh)(ctx, remote.SecretPassphrase, peerLabel(peer, entry), entry.IdentityFile)
+			return RemoteAskPassAnswer{Accepted: err == nil, Value: value}, err
+		default:
+			if entry.PasswordEnv != "" {
+				if value := config.ResolveCredential(entry.PasswordEnv).Value; value != "" {
+					return RemoteAskPassAnswer{Accepted: true, Value: value}, nil
+				}
+			}
+			value, err := m.secretPrompt(hostID, mh)(ctx, remote.SecretPassword, peerLabel(peer, entry), "")
+			return RemoteAskPassAnswer{Accepted: err == nil, Value: value}, err
+		}
+	}
+}
+
+func peerLabel(peer *RemoteFingerprintView, entry config.RemoteHostEntry) string {
+	if peer != nil && strings.TrimSpace(peer.Address) != "" {
+		return peer.Address
+	}
+	if entry.User != "" {
+		return entry.User + "@" + entry.Host
+	}
+	return entry.Host
 }
 
 // hostKeyPrompt returns a HostKeyPrompt that surfaces the fingerprint as a
