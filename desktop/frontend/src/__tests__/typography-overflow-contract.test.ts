@@ -176,6 +176,10 @@ ok(
   /@container \(max-width: 560px\)\s*\{[\s\S]*?\.composer-meta__control--more\s*\{[\s\S]*?flex-basis:\s*38px;/.test(styles),
   "composer enters icon-only mode before model and effort controls overlap",
 );
+ok(
+  /@container \(max-width: 760px\)\s*\{[\s\S]*?\.composer-meta__control--approval \.composer-modebar--approval\s*\{[^}]*flex:\s*1 1 auto;[^}]*width:\s*100%;[^}]*min-width:\s*0;[^}]*max-width:\s*100%;/.test(styles),
+  "approval mode switcher shrinks with its compact composer container",
+);
 eq(finalDeclaration(".composer-modebar--approval", "--composer-modebar-active-bg"), "var(--mode-auto-bg)", "ask approval restores the solid semantic fill");
 eq(finalDeclaration('.composer-modebar--approval[data-mode="auto"]', "--composer-modebar-active-fg"), "#fff", "auto approval keeps high-contrast text on its solid fill");
 eq(finalDeclaration('.composer-modebar--approval[data-mode="yolo"]', "--composer-modebar-active-bg"), "var(--mode-yolo-bg)", "yolo approval restores the solid warning fill");

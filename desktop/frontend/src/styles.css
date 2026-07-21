@@ -6694,6 +6694,13 @@ body > .mermaid-diagram--fullscreen {
     max-width: 178px;
   }
 
+  .composer-meta__control--approval .composer-modebar--approval {
+    flex: 1 1 auto;
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+  }
+
   .composer-meta__control--profile {
     max-width: 126px;
   }
