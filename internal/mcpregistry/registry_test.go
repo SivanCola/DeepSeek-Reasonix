@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -85,6 +86,90 @@ func TestSearchFallsBackToMatchingCache(t *testing.T) {
 	}
 	if !result.Cached || result.Warning == "" || len(result.Entries) != 1 || result.Entries[0].Transport != "sse" {
 		t.Fatalf("cached result = %+v", result)
+	}
+}
+
+func TestSearchExpiresEachCachedQueryIndependently(t *testing.T) {
+	now := time.Unix(1_000_000, 0)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		query := r.URL.Query().Get("search")
+		_ = json.NewEncoder(w).Encode(map[string]any{"servers": []any{map[string]any{"server": map[string]any{
+			"name":    "io.example/" + query,
+			"remotes": []any{map[string]any{"type": "sse", "url": "https://mcp.example/" + query}},
+		}}}})
+	}))
+	cachePath := filepath.Join(t.TempDir(), "registry.json")
+	client := New(cachePath)
+	client.BaseURL = server.URL
+	client.Now = func() time.Time { return now }
+	if _, err := client.Search(context.Background(), "old", 5); err != nil {
+		t.Fatal(err)
+	}
+	now = now.Add(maxCacheAge + time.Hour)
+	if _, err := client.Search(context.Background(), "fresh", 5); err != nil {
+		t.Fatal(err)
+	}
+	server.Close()
+	client.HTTP = &http.Client{Timeout: 100 * time.Millisecond}
+
+	if _, err := client.Search(context.Background(), "old", 5); err == nil {
+		t.Fatal("expired query reused after an unrelated query refreshed the cache")
+	}
+	result, err := client.Search(context.Background(), "fresh", 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Cached || len(result.Entries) != 1 || result.Entries[0].Name != "io.example/fresh" {
+		t.Fatalf("fresh cached result = %+v", result)
+	}
+}
+
+func TestSearchReadsLegacyGlobalTimestampCache(t *testing.T) {
+	now := time.Unix(1_000_000, 0)
+	key := cacheKey("legacy", 5)
+	data, err := json.Marshal(cacheFile{
+		FetchedAt: now,
+		Queries: map[string][]Entry{
+			key: {{Name: "io.example/legacy", Transport: "sse", URL: "https://mcp.example/legacy"}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cachePath := filepath.Join(t.TempDir(), "registry.json")
+	if err := os.WriteFile(cachePath, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	client := New(cachePath)
+	client.BaseURL = "http://127.0.0.1:1"
+	client.HTTP = &http.Client{Timeout: 100 * time.Millisecond}
+	client.Now = func() time.Time { return now.Add(time.Hour) }
+	result, err := client.Search(context.Background(), "legacy", 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Cached || len(result.Entries) != 1 || result.Entries[0].Name != "io.example/legacy" {
+		t.Fatalf("legacy cached result = %+v", result)
+	}
+}
+
+func TestResolveRequiresLiveRegistryMetadata(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"servers": []any{map[string]any{"server": map[string]any{
+			"name":    "io.example/demo",
+			"remotes": []any{map[string]any{"type": "streamable-http", "url": "https://mcp.example/demo"}},
+		}}}})
+	}))
+	client := New(filepath.Join(t.TempDir(), "registry.json"))
+	client.BaseURL = server.URL
+	if _, err := client.Search(context.Background(), "io.example/demo", maxLimit); err != nil {
+		t.Fatal(err)
+	}
+	server.Close()
+	client.HTTP = &http.Client{Timeout: 100 * time.Millisecond}
+
+	if _, result, err := client.Resolve(context.Background(), "io.example/demo"); err == nil {
+		t.Fatalf("Resolve used cached install metadata: %+v", result)
 	}
 }
 

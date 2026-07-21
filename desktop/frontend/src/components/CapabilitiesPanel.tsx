@@ -2891,6 +2891,10 @@ export function MCPServersSettingsPage() {
 		setScreen({ kind: "marketplace" });
 		if (marketplace === null) void browseMarketplace("");
 	};
+	const installMarketplaceEntry = async (entry: MCPMarketplaceEntry) => {
+		const current = await app.MCPMarketplaceResolve(entry.name);
+		return app.AddMCPServer(mcpMarketplaceServerInput(current, servers ?? []));
+	};
 	const filteredServers = useMemo(() => {
 		const sorted = sortServersForDisplay(servers ?? []);
 		const normalizedQuery = query.trim().toLowerCase();
@@ -2996,7 +3000,7 @@ export function MCPServersSettingsPage() {
 									</div>
 									<div className="cap-mcp-list-row__actions">
 										{entry.installable ? (
-											<button className="btn btn--primary btn--small" disabled={actionBusy} type="button" onClick={() => void mutate(() => app.AddMCPServer(mcpMarketplaceServerInput(entry, servers ?? []))).then((ok) => { if (ok) setScreen({ kind: "list" }); })}>
+											<button className="btn btn--primary btn--small" disabled={actionBusy || marketplace.cached} type="button" onClick={() => void mutate(() => installMarketplaceEntry(entry)).then((ok) => { if (ok) setScreen({ kind: "list" }); })}>
 												{t("caps.install")}
 											</button>
 										) : <span className="cap-mcp-list-row__owner">{t("caps.manualSetup")}</span>}

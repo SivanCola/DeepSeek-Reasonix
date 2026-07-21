@@ -94,10 +94,15 @@ func (c *Client) Resolve(ctx context.Context, registryName string) (Entry, Resul
 	if name == "" {
 		return Entry{}, Result{}, fmt.Errorf("registry server name is required")
 	}
-	result, err := c.Search(ctx, name, maxLimit)
+	// Installation must use current Registry metadata. Search deliberately falls
+	// back to cache for offline browsing, but a cached package may have been
+	// removed or marked unavailable since it was stored.
+	entries, err := c.fetch(ctx, name, maxLimit)
 	if err != nil {
 		return Entry{}, Result{}, err
 	}
+	c.storeCache(cacheKey(name, maxLimit), entries)
+	result := Result{Entries: entries}
 	for _, entry := range result.Entries {
 		if entry.Name == name || strings.EqualFold(entry.Name, name) {
 			return entry, result, nil
@@ -331,8 +336,12 @@ func pythonPackageVersion(identifier, version string) string {
 }
 
 type cacheFile struct {
-	FetchedAt time.Time          `json:"fetchedAt"`
-	Queries   map[string][]Entry `json:"queries"`
+	// FetchedAt is retained as a read-only fallback for caches written by older
+	// Reasonix versions. New writes timestamp each query independently so a
+	// successful lookup cannot keep unrelated stale results alive.
+	FetchedAt      time.Time            `json:"fetchedAt,omitempty"`
+	QueryFetchedAt map[string]time.Time `json:"queryFetchedAt,omitempty"`
+	Queries        map[string][]Entry   `json:"queries"`
 }
 
 func cacheKey(query string, limit int) string {
@@ -355,10 +364,20 @@ func (c *Client) loadCache(key string) ([]Entry, bool) {
 		return nil, false
 	}
 	var cache cacheFile
-	if json.Unmarshal(data, &cache) != nil || cache.FetchedAt.IsZero() || c.now().Sub(cache.FetchedAt) > maxCacheAge {
+	if json.Unmarshal(data, &cache) != nil {
 		return nil, false
 	}
 	entries, ok := cache.Queries[key]
+	if !ok {
+		return nil, false
+	}
+	fetchedAt := cache.QueryFetchedAt[key]
+	if fetchedAt.IsZero() {
+		fetchedAt = cache.FetchedAt
+	}
+	if fetchedAt.IsZero() || c.now().Sub(fetchedAt) > maxCacheAge {
+		return nil, false
+	}
 	return append([]Entry(nil), entries...), ok
 }
 
@@ -366,14 +385,24 @@ func (c *Client) storeCache(key string, entries []Entry) {
 	if strings.TrimSpace(c.CachePath) == "" {
 		return
 	}
-	cache := cacheFile{Queries: map[string][]Entry{}}
+	cache := cacheFile{
+		QueryFetchedAt: map[string]time.Time{},
+		Queries:        map[string][]Entry{},
+	}
 	if data, err := os.ReadFile(c.CachePath); err == nil {
 		_ = json.Unmarshal(data, &cache)
 		if cache.Queries == nil {
 			cache.Queries = map[string][]Entry{}
 		}
+		if cache.QueryFetchedAt == nil {
+			cache.QueryFetchedAt = map[string]time.Time{}
+		}
 	}
-	cache.FetchedAt = c.now().UTC()
+	now := c.now().UTC()
+	if cache.FetchedAt.IsZero() {
+		cache.FetchedAt = now
+	}
+	cache.QueryFetchedAt[key] = now
 	cache.Queries[key] = append([]Entry(nil), entries...)
 	data, err := json.MarshalIndent(cache, "", "  ")
 	if err != nil {

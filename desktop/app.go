@@ -6280,13 +6280,9 @@ type MCPMarketplaceView struct {
 // the network. A query-specific cache keeps the page useful during a registry
 // outage without treating cached entries as installed servers.
 func (a *App) MCPMarketplace(query string) (MCPMarketplaceView, error) {
-	cachePath := ""
-	if cacheDir := config.CacheDir(); cacheDir != "" {
-		cachePath = filepath.Join(cacheDir, "mcp-registry-v0.1.json")
-	}
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	result, err := mcpregistry.New(cachePath).Search(ctx, query, 50)
+	result, err := mcpregistry.New(mcpRegistryCachePath()).Search(ctx, query, 50)
 	if err != nil {
 		return MCPMarketplaceView{Servers: []MCPMarketplaceEntryView{}}, err
 	}
@@ -6296,22 +6292,46 @@ func (a *App) MCPMarketplace(query string) (MCPMarketplaceView, error) {
 		Warning: result.Warning,
 	}
 	for _, entry := range result.Entries {
-		view.Servers = append(view.Servers, MCPMarketplaceEntryView{
-			Name:              entry.Name,
-			SuggestedName:     entry.SuggestedName,
-			Title:             entry.Title,
-			Description:       entry.Description,
-			Version:           entry.Version,
-			RepositoryURL:     entry.RepositoryURL,
-			Installable:       entry.Installable,
-			UnavailableReason: entry.UnavailableReason,
-			Transport:         entry.Transport,
-			Command:           entry.Command,
-			Args:              append([]string{}, entry.Args...),
-			URL:               entry.URL,
-		})
+		view.Servers = append(view.Servers, mcpMarketplaceEntryView(entry))
 	}
 	return view, nil
+}
+
+// MCPMarketplaceResolve re-fetches one Registry entry immediately before the
+// settings UI installs it. Offline cache remains useful for browsing, but it is
+// never accepted as installation metadata.
+func (a *App) MCPMarketplaceResolve(registryName string) (MCPMarketplaceEntryView, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	entry, _, err := mcpregistry.New(mcpRegistryCachePath()).Resolve(ctx, registryName)
+	if err != nil {
+		return MCPMarketplaceEntryView{}, err
+	}
+	return mcpMarketplaceEntryView(entry), nil
+}
+
+func mcpRegistryCachePath() string {
+	if cacheDir := config.CacheDir(); cacheDir != "" {
+		return filepath.Join(cacheDir, "mcp-registry-v0.1.json")
+	}
+	return ""
+}
+
+func mcpMarketplaceEntryView(entry mcpregistry.Entry) MCPMarketplaceEntryView {
+	return MCPMarketplaceEntryView{
+		Name:              entry.Name,
+		SuggestedName:     entry.SuggestedName,
+		Title:             entry.Title,
+		Description:       entry.Description,
+		Version:           entry.Version,
+		RepositoryURL:     entry.RepositoryURL,
+		Installable:       entry.Installable,
+		UnavailableReason: entry.UnavailableReason,
+		Transport:         entry.Transport,
+		Command:           entry.Command,
+		Args:              append([]string{}, entry.Args...),
+		URL:               entry.URL,
+	}
 }
 
 // lockRuntimeMutation serializes controller rebuild/teardown operations and

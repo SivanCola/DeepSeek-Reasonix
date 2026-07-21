@@ -56,6 +56,7 @@ import type {
   HookConfigView,
   HooksSettingsView,
   JobView,
+  MCPMarketplaceEntry,
   MCPServerInput,
   MCPMarketplaceView,
   MCPToolView,
@@ -247,6 +248,7 @@ export interface AppBindings {
   Capabilities(): Promise<CapabilitiesView>;
   MCPServers(): Promise<ServerView[]>;
   MCPMarketplace(query: string): Promise<MCPMarketplaceView>;
+  MCPMarketplaceResolve(registryName: string): Promise<MCPMarketplaceEntry>;
   SkillsSettings(): Promise<SkillsSettingsView>;
   CapabilityDiagnostics(includeSessionRuntime: boolean): Promise<CapabilityDiagnosticsReport>;
   Plugins(): Promise<PluginView[]>;
@@ -2855,6 +2857,12 @@ function makeMockApp(): AppBindings {
         servers: normalized ? servers.filter((entry) => [entry.name, entry.title, entry.description].join(" ").toLowerCase().includes(normalized)) : servers,
         cached: false,
       } as MCPMarketplaceView;
+    },
+    async MCPMarketplaceResolve(registryName: string) {
+      const result = await this.MCPMarketplace(registryName);
+      const entry = result.servers.find((candidate) => candidate.name.toLowerCase() === registryName.trim().toLowerCase());
+      if (!entry) throw new Error(`MCP Registry has no server named ${JSON.stringify(registryName)}`);
+      return entry;
     },
     async SkillsSettings() {
       return {

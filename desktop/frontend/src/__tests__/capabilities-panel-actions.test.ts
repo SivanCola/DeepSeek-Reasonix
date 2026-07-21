@@ -38,6 +38,19 @@ function ok(value: unknown, message: string) {
   }];
   let servers: ServerView[] = [];
   let installed: MCPServerInput | null = null;
+  let registryCached = false;
+  let resolvedRegistryName = "";
+  const registryEntry = {
+    name: "io.example/demo",
+    suggestedName: "demo",
+    title: "Demo MCP",
+    description: "Registry demo server",
+    version: "1.0.0",
+    installable: true,
+    transport: "http",
+    args: [],
+    url: "https://mcp.example.test/mcp",
+  };
   window.go = {
     main: {
       App: {
@@ -45,19 +58,14 @@ function ok(value: unknown, message: string) {
         ListTabs: async () => tabs,
         MCPServers: async () => servers,
         MCPMarketplace: async () => ({
-          cached: false,
-          servers: [{
-            name: "io.example/demo",
-            suggestedName: "demo",
-            title: "Demo MCP",
-            description: "Registry demo server",
-            version: "1.0.0",
-            installable: true,
-            transport: "http",
-            args: [],
-            url: "https://mcp.example.test/mcp",
-          }],
+          cached: registryCached,
+          warning: registryCached ? "offline" : undefined,
+          servers: [registryEntry],
         }),
+        MCPMarketplaceResolve: async (registryName) => {
+          resolvedRegistryName = registryName;
+          return registryEntry;
+        },
         AddMCPServer: async (input) => {
           installed = input;
           servers = [{
@@ -92,7 +100,24 @@ function ok(value: unknown, message: string) {
     await flush();
   });
   await waitFor("registry install", () => installed !== null && document.body.textContent?.includes("demo") === true);
-  ok(installed?.name === "demo" && installed?.transport === "http" && installed?.url === "https://mcp.example.test/mcp", "registry install converts the selected entry into the normal add-and-connect input");
+  const installedEntry = installed as MCPServerInput | null;
+  ok(installedEntry?.name === "demo" && installedEntry.transport === "http" && installedEntry.url === "https://mcp.example.test/mcp", "registry install converts the selected entry into the normal add-and-connect input");
+  ok(resolvedRegistryName === "io.example/demo", "registry install re-resolves current metadata by canonical name");
+
+  registryCached = true;
+  installed = null;
+  await act(async () => {
+    findButton("Browse registry")?.click();
+    await flush();
+    findButton("Search")?.click();
+    await flush();
+  });
+  await waitFor("cached registry warning", () => document.body.textContent?.includes("Showing cached results") ?? false);
+  const cachedInstall = findButton("Install");
+  ok(cachedInstall?.disabled === true, "cached Registry results must remain browse-only");
+  cachedInstall?.click();
+  await flush();
+  ok(installed === null, "cached Registry result must not be installed");
 
   await act(async () => {
     root.unmount();

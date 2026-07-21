@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"time"
 
 	"reasonix/internal/tool"
 )
@@ -21,12 +22,14 @@ import (
 // `event: endpoint` frame, and all JSON-RPC messages travel to that endpoint
 // while responses and server messages return on the GET stream.
 type sseTransport struct {
-	name     string
-	getURL   *url.URL
-	headers  map[string]string
-	client   *http.Client
-	roots    []mcpRoot
-	progress progressRouter
+	name         string
+	getURL       *url.URL
+	headers      map[string]string
+	client       *http.Client
+	roots        []mcpRoot
+	progress     progressRouter
+	replies      chan inboundMessage
+	replyTimeout time.Duration
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -42,6 +45,11 @@ type sseTransport struct {
 	endpointOnce  sync.Once
 	closeOnce     sync.Once
 }
+
+// sseReplyQueueBound keeps a server-request flood from creating an unbounded
+// number of blocked HTTP POST goroutines. Overflow is intentionally dropped so
+// the GET reader can continue routing client responses and notifications.
+const sseReplyQueueBound = 16
 
 func newSSETransport(ctx context.Context, s Spec) (*sseTransport, error) {
 	if strings.TrimSpace(s.URL) == "" {
@@ -61,10 +69,18 @@ func newSSETransport(ctx context.Context, s Spec) (*sseTransport, error) {
 		getURL:        getURL,
 		headers:       headers,
 		roots:         mcpRoots(s.WorkspaceRoot),
+		replies:       make(chan inboundMessage, sseReplyQueueBound),
+		replyTimeout:  s.CallTimeout,
 		ctx:           lifeCtx,
 		cancel:        cancel,
 		pending:       map[int]chan rpcResponse{},
 		endpointReady: make(chan struct{}),
+	}
+	if t.replyTimeout <= 0 {
+		t.replyTimeout = s.DefaultCallTimeout
+	}
+	if t.replyTimeout <= 0 {
+		t.replyTimeout = defaultCallTimeout
 	}
 	t.client = &http.Client{CheckRedirect: func(req *http.Request, via []*http.Request) error {
 		if len(via) == 0 || sameHTTPOrigin(via[0].URL, req.URL) {
@@ -72,6 +88,7 @@ func newSSETransport(ctx context.Context, s Spec) (*sseTransport, error) {
 		}
 		return http.ErrUseLastResponse
 	}}
+	go t.replyLoop()
 	go t.readLoop()
 	return t, nil
 }
@@ -81,6 +98,7 @@ func (t *sseTransport) registerProgress(token string, sink tool.ProgressFunc) fu
 }
 
 func (t *sseTransport) readLoop() {
+	defer close(t.replies)
 	req, err := http.NewRequestWithContext(t.ctx, http.MethodGet, t.getURL.String(), nil)
 	if err != nil {
 		t.fail(err)
@@ -192,18 +210,12 @@ func (t *sseTransport) handleMessage(payload []byte) {
 			}
 			return
 		}
-		// A server request must be answered through the announced POST endpoint.
-		// Keep the GET reader draining while the reply is in flight so a server
-		// cannot deadlock us by writing another event before reading the POST.
-		go func() {
-			body, err := json.Marshal(serverRequestReply(message.ID, message.Method, t.roots))
-			if err == nil {
-				err = t.post(t.ctx, body)
-			}
-			if err != nil && t.ctx.Err() == nil {
-				t.fail(fmt.Errorf("reply to %s: %w", message.Method, err))
-			}
-		}()
+		select {
+		case t.replies <- message:
+		default:
+			// Let the remote server time out excess requests. Blocking here could
+			// prevent an unrelated client response from ever reaching its caller.
+		}
 		return
 	}
 	var response rpcResponse
@@ -216,6 +228,29 @@ func (t *sseTransport) handleMessage(payload []byte) {
 	t.mu.Unlock()
 	if ch != nil {
 		ch <- response
+	}
+}
+
+// replyLoop serializes server-request responses through one bounded worker.
+// Each POST has a finite deadline inherited from the server's call-timeout
+// configuration; after a transport error the worker keeps draining so the SSE
+// reader never waits on the queue.
+func (t *sseTransport) replyLoop() {
+	dead := false
+	for message := range t.replies {
+		if dead {
+			continue
+		}
+		body, err := json.Marshal(serverRequestReply(message.ID, message.Method, t.roots))
+		if err == nil {
+			ctx, cancel := context.WithTimeout(t.ctx, t.replyTimeout)
+			err = t.post(ctx, body)
+			cancel()
+		}
+		if err != nil && t.ctx.Err() == nil {
+			t.fail(fmt.Errorf("reply to %s: %w", message.Method, err))
+			dead = true
+		}
 	}
 }
 
