@@ -96,11 +96,68 @@ func TestManagerSeparatesAttachAndProjectionGenerations(t *testing.T) {
 	if remote == nil || remote.Generation != attachGen || !remote.Connected {
 		t.Fatalf("remote lifecycle = %+v, want attach generation %d", remote, attachGen)
 	}
-	if !m.AbortRemoteConnect(attachGen) || m.Remote() != nil {
-		t.Fatal("current failed generation was not cleared")
-	}
 	if m.AbortRemoteConnect(attachGen) {
-		t.Fatal("stale abort unexpectedly cleared a newer state")
+		t.Fatal("abort unexpectedly cleared the committed remote")
+	}
+	if m.Remote() == nil {
+		t.Fatal("committed remote was lost after stale abort")
+	}
+}
+
+func TestFailedReplacementPreservesCommittedRemote(t *testing.T) {
+	m := New()
+	_, firstGen, err := m.BeginRemoteConnect("host-a", "/workspace-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.MarkRemoteConnected(firstGen); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err := m.ActivateRemote(firstGen); err != nil {
+		t.Fatal(err)
+	}
+	_, activeGenBefore, requestSeqBefore := m.Active()
+
+	_, replacementGen, err := m.BeginRemoteConnect("host-b", "/workspace-b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	committed := m.Remote()
+	if committed == nil || committed.Identity.HostID != "host-a" || committed.Generation != firstGen {
+		t.Fatalf("replacement attempt changed committed remote: %+v", committed)
+	}
+	if !m.AbortRemoteConnect(replacementGen) {
+		t.Fatal("failed replacement was not aborted")
+	}
+	committed = m.Remote()
+	active, activeGenAfter, requestSeqAfter := m.Active()
+	if committed == nil || committed.Identity.HostID != "host-a" || active.HostID != "host-a" {
+		t.Fatalf("failed replacement lost active remote: committed=%+v active=%+v", committed, active)
+	}
+	if activeGenAfter != activeGenBefore || requestSeqAfter != requestSeqBefore {
+		t.Fatalf("failed replacement fenced the committed projection: before=(%d,%d) after=(%d,%d)", activeGenBefore, requestSeqBefore, activeGenAfter, requestSeqAfter)
+	}
+}
+
+func TestSuccessfulReplacementPromotesAtomically(t *testing.T) {
+	m := New()
+	_, firstGen, _ := m.BeginRemoteConnect("host-a", "/workspace-a")
+	_ = m.MarkRemoteConnected(firstGen)
+	_, _, _, _ = m.ActivateRemote(firstGen)
+
+	_, replacementGen, err := m.BeginRemoteConnect("host-b", "/workspace-b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.MarkRemoteConnected(replacementGen); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err := m.ActivateRemote(replacementGen); err != nil {
+		t.Fatal(err)
+	}
+	committed := m.Remote()
+	if committed == nil || committed.Identity.HostID != "host-b" || committed.Generation != replacementGen {
+		t.Fatalf("replacement was not promoted: %+v", committed)
 	}
 }
 

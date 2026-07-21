@@ -2,10 +2,15 @@ package main
 
 import (
 	"context"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
+	"reasonix/internal/agent"
 	"reasonix/internal/eventwire"
+	"reasonix/internal/provider"
 	"reasonix/internal/remote/protocol"
 )
 
@@ -97,5 +102,69 @@ func TestWorkbenchLateCallbackUsesCurrentProjectionTab(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("late callback was not projected")
+	}
+}
+
+func TestRemoteSavedSessionBindingsNeverFallBackToLocal(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	app := &App{}
+	dir := desktopSessionDir("")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "20260721-remote-fallback.jsonl")
+	session := agent.NewSession("system")
+	session.Add(provider.Message{Role: provider.RoleUser, Content: "local-only message"})
+	if err := session.Save(path); err != nil {
+		t.Fatal(err)
+	}
+	if got := app.ListSessions(); len(got) != 1 {
+		t.Fatalf("local saved sessions = %d, want 1", len(got))
+	}
+
+	_, generation, err := app.workbench().targets.BeginRemoteConnect("remote-host", "/srv/work")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := app.workbench().targets.MarkRemoteConnected(generation); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err := app.workbench().targets.ActivateRemote(generation); err != nil {
+		t.Fatal(err)
+	}
+	if got := app.ListSessions(); len(got) != 0 {
+		t.Fatalf("Remote history exposed Local sessions: %+v", got)
+	}
+	if got := app.ListTrashedSessions(); len(got) != 0 {
+		t.Fatalf("Remote trash exposed Local sessions: %+v", got)
+	}
+
+	checks := []struct {
+		name string
+		run  func() error
+	}{
+		{"delete", func() error { return app.DeleteSession(path) }},
+		{"delete recovery", func() error { return app.DeleteRecoveryCopy(path) }},
+		{"restore", func() error { return app.RestoreSession(path) }},
+		{"purge", func() error { return app.PurgeTrashedSession(path) }},
+		{"purge recovery", func() error { return app.PurgeRecoveryCopy(path) }},
+		{"rename", func() error { return app.RenameSession(path, "renamed") }},
+		{"resume page", func() error { _, err := app.ResumeSessionPageForTab("", path, 10); return err }},
+		{"resume", func() error { _, err := app.ResumeSessionForTab("", path); return err }},
+		{"preview", func() error { _, err := app.PreviewSession(path); return err }},
+		{"open channel", func() error { _, err := app.OpenChannelSessionForTab("", path); return err }},
+		{"open channel page", func() error { _, err := app.OpenChannelSessionPageForTab("", path, 10); return err }},
+		{"prompt history", func() error { _, err := app.ScanPromptHistory(""); return err }},
+	}
+	for _, check := range checks {
+		t.Run(check.name, func(t *testing.T) {
+			err := check.run()
+			if err == nil || !strings.Contains(err.Error(), "CAPABILITY_UNAVAILABLE") {
+				t.Fatalf("error = %v, want Remote capability rejection", err)
+			}
+		})
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("Remote binding changed Local session: %v", err)
 	}
 }

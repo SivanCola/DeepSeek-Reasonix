@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -10,6 +11,7 @@ import (
 	"path/filepath"
 	goruntime "runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -30,6 +32,45 @@ import (
 type fakeController struct {
 	model   string
 	history []provider.Message
+}
+
+type blockingController struct {
+	*fakeController
+	started chan struct{}
+	release chan struct{}
+	once    sync.Once
+	mu      sync.Mutex
+	submits int
+	closes  int
+}
+
+func newBlockingController() *blockingController {
+	return &blockingController{
+		fakeController: &fakeController{model: "local/blocking"},
+		started:        make(chan struct{}),
+		release:        make(chan struct{}),
+	}
+}
+
+func (c *blockingController) Submit(input string) {
+	c.mu.Lock()
+	c.submits++
+	c.mu.Unlock()
+	c.once.Do(func() { close(c.started) })
+	<-c.release
+	c.fakeController.Submit(input)
+}
+
+func (c *blockingController) Close() {
+	c.mu.Lock()
+	c.closes++
+	c.mu.Unlock()
+}
+
+func (c *blockingController) counts() (int, int) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.submits, c.closes
 }
 
 func TestSocketPathStaysWithinPortableUnixLimitForLongHome(t *testing.T) {
@@ -262,6 +303,122 @@ func TestRuntimeOperationKeepsDetachedServerBusy(t *testing.T) {
 	server.mu.Unlock()
 	if !busy {
 		t.Fatal("detached runtime considered an active operation idle")
+	}
+}
+
+func TestRuntimeMutationRequestIDReplaysConcurrentSubmitOnce(t *testing.T) {
+	srv := New(Options{Workspace: t.TempDir(), Version: "test"})
+	ctrl := newBlockingController()
+	target := srv.installTestSession(ctrl)
+	handler := srv.handlers(1, nil)[protocol.MethodSessionSubmit]
+	params := protocol.SessionSubmitParams{
+		SessionMutation: protocol.SessionMutation{
+			RequestID: "request-replay", ExpectedHostEpoch: srv.hostEpoch,
+			Target: target, ExpectedRuntimeEpoch: "runtime_test",
+		},
+		Input: "hello", DisplayText: "hello",
+	}
+
+	type outcome struct {
+		result protocol.SessionSubmitResult
+		err    error
+	}
+	results := make(chan outcome, 2)
+	run := func() {
+		value, err := handler(context.Background(), params)
+		if err != nil {
+			results <- outcome{err: err}
+			return
+		}
+		results <- outcome{result: value.(protocol.SessionSubmitResult)}
+	}
+	go run()
+	<-ctrl.started
+	go run()
+	close(ctrl.release)
+	first, second := <-results, <-results
+	if first.err != nil || second.err != nil {
+		t.Fatalf("submit errors = %v, %v", first.err, second.err)
+	}
+	if first.result.TurnID == "" || first.result != second.result {
+		t.Fatalf("replayed results differ: first=%+v second=%+v", first.result, second.result)
+	}
+	if submits, _ := ctrl.counts(); submits != 1 {
+		t.Fatalf("controller submits = %d, want exactly 1", submits)
+	}
+}
+
+func TestRuntimeMutationRequestIDConflictPrecedesEpochChecks(t *testing.T) {
+	srv := New(Options{Workspace: t.TempDir(), Version: "test"})
+	ctrl := &fakeController{model: "local/stub"}
+	target := srv.installTestSession(ctrl)
+	handler := srv.handlers(1, nil)[protocol.MethodSessionSubmit]
+	params := protocol.SessionSubmitParams{
+		SessionMutation: protocol.SessionMutation{
+			RequestID: "request-conflict", ExpectedHostEpoch: srv.hostEpoch,
+			Target: target, ExpectedRuntimeEpoch: "runtime_test",
+		},
+		Input: "first", DisplayText: "first",
+	}
+	if _, err := handler(context.Background(), params); err != nil {
+		t.Fatal(err)
+	}
+	params.Input = "changed"
+	params.DisplayText = "changed"
+	params.ExpectedRuntimeEpoch = "runtime-stale"
+	_, err := handler(context.Background(), params)
+	var remoteErr *protocol.RemoteError
+	if !errors.As(err, &remoteErr) || remoteErr.Code != protocol.ErrRequestIDConflict {
+		t.Fatalf("conflicting request error = %v, want REQUEST_ID_CONFLICT", err)
+	}
+}
+
+func TestRuntimeProfileWaitsForSubmitAdmissionAndRejectsBusy(t *testing.T) {
+	srv := New(Options{Workspace: t.TempDir(), Version: "test"})
+	ctrl := newBlockingController()
+	target := srv.installTestSession(ctrl)
+	handlers := srv.handlers(1, nil)
+	submitDone := make(chan error, 1)
+	go func() {
+		_, err := handlers[protocol.MethodSessionSubmit](context.Background(), protocol.SessionSubmitParams{
+			SessionMutation: protocol.SessionMutation{
+				RequestID: "request-submit", ExpectedHostEpoch: srv.hostEpoch,
+				Target: target, ExpectedRuntimeEpoch: "runtime_test",
+			},
+			Input: "hello", DisplayText: "hello",
+		})
+		submitDone <- err
+	}()
+	<-ctrl.started
+
+	profileDone := make(chan error, 1)
+	go func() {
+		collaboration := protocol.CollaborationPlan
+		_, err := handlers[protocol.MethodSessionProfileSet](context.Background(), protocol.SessionProfileSetParams{
+			SessionMutation: protocol.SessionMutation{
+				RequestID: "request-profile", ExpectedHostEpoch: srv.hostEpoch,
+				Target: target, ExpectedRuntimeEpoch: "runtime_test",
+			},
+			Patch: protocol.ProfilePatch{CollaborationMode: &collaboration},
+		})
+		profileDone <- err
+	}()
+	select {
+	case err := <-profileDone:
+		t.Fatalf("profile raced submit admission: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(ctrl.release)
+	if err := <-submitDone; err != nil {
+		t.Fatal(err)
+	}
+	err := <-profileDone
+	var remoteErr *protocol.RemoteError
+	if !errors.As(err, &remoteErr) || remoteErr.Code != protocol.ErrSessionBusy {
+		t.Fatalf("profile error = %v, want SESSION_BUSY", err)
+	}
+	if submits, closes := ctrl.counts(); submits != 1 || closes != 0 {
+		t.Fatalf("controller lifecycle submits=%d closes=%d", submits, closes)
 	}
 }
 

@@ -319,10 +319,12 @@ func (c *Client) authorizeParams(method protocol.Method, params any) (any, error
 	c.mu.Lock()
 	state := c.state
 	c.mu.Unlock()
-	put := func(key string, value any) {
-		if _, exists := fields[key]; !exists {
-			fields[key] = value
+	set := func(key string, value any) { fields[key] = value }
+	putRequestID := func() {
+		if existing, ok := fields["requestId"].(string); ok && strings.TrimSpace(existing) != "" {
+			return
 		}
+		fields["requestId"] = protocol.RequestID("request_" + randomID(10))
 	}
 	spec, ok := protocol.LookupMethod(method)
 	if !ok {
@@ -330,33 +332,35 @@ func (c *Client) authorizeParams(method protocol.Method, params any) (any, error
 	}
 	switch method {
 	case protocol.MethodRemotePing, protocol.MethodRemoteDetach:
-		put("leaseId", state.LeaseID)
+		set("leaseId", state.LeaseID)
 	case protocol.MethodSessionUnsubscribe:
-		put("subscriptionId", state.SubscriptionID)
+		set("subscriptionId", state.SubscriptionID)
 	default:
 		if spec.Class != protocol.ClassConnection {
-			put("expectedHostEpoch", state.HostEpoch)
+			set("expectedHostEpoch", state.HostEpoch)
 		}
 		if spec.Class == protocol.ClassHostMutation || spec.Class == protocol.ClassSessionMutation || spec.Class == protocol.ClassSessionRecordMutation {
-			put("requestId", protocol.RequestID("request_"+randomID(10)))
+			putRequestID()
 		}
 		if spec.Class == protocol.ClassSessionQuery || spec.Class == protocol.ClassSessionMutation || spec.Class == protocol.ClassSessionRecordMutation {
-			put("target", state.Target)
+			set("target", state.Target)
 		}
 		if spec.Class == protocol.ClassSessionQuery || spec.Class == protocol.ClassSessionMutation {
 			if method != protocol.MethodSessionSubscribe {
-				put("expectedRuntimeEpoch", state.RuntimeEpoch)
+				set("expectedRuntimeEpoch", state.RuntimeEpoch)
 			}
 		}
 		if method == protocol.MethodSessionCreate || method == protocol.MethodSessionList || method == protocol.MethodCatalogWorkspace {
-			put("workspaceId", state.WorkspaceID)
+			set("workspaceId", state.WorkspaceID)
 		}
 		if method == protocol.MethodSessionHistory {
-			put("snapshotId", state.SnapshotID)
-			put("cursor", "")
+			set("snapshotId", state.SnapshotID)
+			if _, exists := fields["cursor"]; !exists {
+				set("cursor", "")
+			}
 		}
 		if method == protocol.MethodTurnCancel {
-			put("expectedTurnId", state.CurrentTurnID)
+			set("expectedTurnId", state.CurrentTurnID)
 		}
 	}
 	encoded, err := json.Marshal(fields)

@@ -240,7 +240,12 @@ func (a *App) WorkbenchConnectRemote(hostID, workspace string) error {
 	committed := false
 	defer func() {
 		if !committed {
-			k.targets.AbortRemoteConnect(gen)
+			if k.targets.AbortRemoteConnect(gen) {
+				active, identityGen, requestSeq := k.targets.Active()
+				if active.Kind == target.KindRemote {
+					a.emitWorkbenchTarget("connected", active, identityGen, requestSeq, "")
+				}
+			}
 		}
 	}()
 	fail := func(err error) error {

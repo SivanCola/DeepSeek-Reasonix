@@ -78,6 +78,7 @@ type SessionController interface {
 type Server struct {
 	opts Options
 
+	requestMu   sync.Mutex
 	mu          sync.Mutex
 	sessions    map[protocol.SessionID]*session
 	subs        map[protocol.SubscriptionID]*subscription
@@ -102,6 +103,7 @@ type Server struct {
 	registryRead bool
 	dormant      map[protocol.SessionID]runtimeSessionRecord
 	shutdownOnce sync.Once
+	mutations    *mutationLedger
 }
 
 type session struct {
@@ -157,6 +159,7 @@ func New(opts Options) *Server {
 		explicitGen: make(map[uint64]bool), broker: broker.NewHost(),
 		contents:    make(map[protocol.ContentRef]contentObject),
 		dormant:     make(map[protocol.SessionID]runtimeSessionRecord),
+		mutations:   newMutationLedger(),
 		hostEpoch:   protocol.HostEpoch("host_" + randomHex(12)),
 		workspaceID: protocol.WorkspaceID("workspace_" + hex.EncodeToString(sum[:8])),
 		buildID:     currentBuildID(opts),
@@ -420,7 +423,7 @@ func (s *Server) handlers(gen uint64, conn net.Conn) protocol.HandlerSet {
 			return nil, protocol.MustRemoteError(protocol.ErrCapabilityUnavailable, protocol.ErrorOptions{})
 		}
 	}
-	return handlers
+	return s.serializeHandlers(handlers)
 }
 
 func (s *Server) initialize(gen uint64, p protocol.InitializeParams) (protocol.InitializeResult, error) {
@@ -658,7 +661,10 @@ func (s *Server) closeSession(p protocol.SessionCloseParams) (protocol.SessionCl
 	if err != nil {
 		return protocol.SessionCloseResult{}, err
 	}
-	if sess.ctrl.Running() {
+	s.mu.Lock()
+	busy := sess.currentTurn != "" || sess.currentOp != nil || sess.ctrl.Running()
+	s.mu.Unlock()
+	if busy {
 		return protocol.SessionCloseResult{Disposition: protocol.SessionRetainedActive}, nil
 	}
 	s.mu.Lock()
@@ -796,7 +802,10 @@ func (s *Server) submit(p protocol.SessionSubmitParams) (protocol.SessionSubmitR
 	if err != nil {
 		return protocol.SessionSubmitResult{}, err
 	}
-	if sess.ctrl.Running() {
+	s.mu.Lock()
+	busy := sess.currentTurn != "" || sess.currentOp != nil || sess.ctrl.Running()
+	s.mu.Unlock()
+	if busy {
 		return protocol.SessionSubmitResult{}, protocol.MustRemoteError(protocol.ErrTurnAlreadyRunning, protocol.ErrorOptions{Target: &p.Target})
 	}
 	turnID := protocol.TurnID("turn_" + randomHex(10))
@@ -996,7 +1005,10 @@ func (s *Server) setProfile(ctx context.Context, p protocol.SessionProfileSetPar
 	if err != nil {
 		return protocol.SessionProfileSetResult{}, err
 	}
-	if sess.ctrl.Running() {
+	s.mu.Lock()
+	busy := sess.currentTurn != "" || sess.currentOp != nil || sess.ctrl.Running()
+	s.mu.Unlock()
+	if busy {
 		return protocol.SessionProfileSetResult{}, protocol.MustRemoteError(protocol.ErrSessionBusy, protocol.ErrorOptions{Target: &p.Target})
 	}
 	model, effort := sess.model, sess.effort
@@ -1055,7 +1067,7 @@ func (s *Server) setProfile(ctx context.Context, p protocol.SessionProfileSetPar
 	newController.AdoptHistory(sess.ctrl.History(), sess.ctrl.SessionPath())
 	applyControllerProfile(newController, collaboration, toolApproval)
 	s.mu.Lock()
-	if s.sessions[sess.id] != sess || sess.ctrl.Running() {
+	if s.sessions[sess.id] != sess || sess.currentTurn != "" || sess.currentOp != nil || sess.ctrl.Running() {
 		s.mu.Unlock()
 		newController.Close()
 		return protocol.SessionProfileSetResult{}, protocol.MustRemoteError(protocol.ErrSessionBusy, protocol.ErrorOptions{Target: &p.Target})
@@ -1303,12 +1315,14 @@ func (s *Server) sessionForQuery(host protocol.HostEpoch, target protocol.Runtim
 	}
 	s.mu.Lock()
 	sess := s.sessions[target.SessionID]
-	s.mu.Unlock()
 	if sess == nil {
+		s.mu.Unlock()
 		return nil, protocol.MustRemoteError(protocol.ErrSessionNotFound, protocol.ErrorOptions{})
 	}
-	if epoch != "" && sess.runtimeEpoch != epoch {
-		return nil, protocol.MustRemoteError(protocol.ErrStaleRuntimeEpoch, protocol.ErrorOptions{Target: &target, Expected: string(epoch), Actual: string(sess.runtimeEpoch)})
+	actualEpoch := sess.runtimeEpoch
+	s.mu.Unlock()
+	if epoch != "" && actualEpoch != epoch {
+		return nil, protocol.MustRemoteError(protocol.ErrStaleRuntimeEpoch, protocol.ErrorOptions{Target: &target, Expected: string(epoch), Actual: string(actualEpoch)})
 	}
 	return sess, nil
 }
@@ -1573,6 +1587,8 @@ func (sink *sessionSink) Emit(e event.Event) {
 	s.mu.Unlock()
 	if persistRegistry {
 		go func() {
+			s.requestMu.Lock()
+			defer s.requestMu.Unlock()
 			if err := s.persistSessionRegistry(); err != nil {
 				s.logRegistryError("persist completed turn", err)
 			}
@@ -1617,6 +1633,8 @@ func (s *Server) hasBusyLocked() bool {
 
 func (s *Server) snapshotAndClose() {
 	s.shutdownOnce.Do(func() {
+		s.requestMu.Lock()
+		defer s.requestMu.Unlock()
 		if err := s.persistSessionRegistry(); err != nil {
 			s.logRegistryError("persist before shutdown", err)
 		}

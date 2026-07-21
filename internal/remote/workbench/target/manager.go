@@ -43,8 +43,10 @@ type Manager struct {
 
 	active      Identity
 	identityGen atomic.Uint64
+	attachGen   atomic.Uint64
 	requestSeq  atomic.Uint64
 	remote      *RemoteState
+	connecting  *RemoteState
 	lastRemote  RemoteHint
 	// busyRemote is true when the remote adapter is running a turn/mutation.
 	busyRemote bool
@@ -97,18 +99,21 @@ func (m *Manager) SwitchLocal() (Identity, uint64, uint64) {
 	return m.active, gen, seq
 }
 
-// BeginRemoteConnect records intent to connect; does not open SSH by itself.
-// Returns error if another remote is busy (cannot replace).
+// BeginRemoteConnect records a candidate connection without replacing the
+// committed Remote adapter. Returns error if another remote is busy or a
+// candidate is already being connected.
 func (m *Manager) BeginRemoteConnect(hostID, workspace string) (Identity, uint64, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.connecting != nil {
+		return Identity{}, 0, fmt.Errorf("remote connection already in progress")
+	}
 	if m.remote != nil && m.busyRemote {
 		return Identity{}, 0, fmt.Errorf("remote target is busy; cancel the turn before switching hosts")
 	}
 	id := Identity{Kind: KindRemote, HostID: hostID, Workspace: workspace}
-	gen := m.identityGen.Add(1)
-	m.remote = &RemoteState{Identity: id, Connected: false, Generation: gen}
-	m.lastRemote = RemoteHint{HostID: hostID, Workspace: workspace}
+	gen := m.attachGen.Add(1)
+	m.connecting = &RemoteState{Identity: id, Connected: false, Generation: gen}
 	return id, gen, nil
 }
 
@@ -116,10 +121,10 @@ func (m *Manager) BeginRemoteConnect(hostID, workspace string) (Identity, uint64
 func (m *Manager) MarkRemoteConnected(gen uint64) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.remote == nil || m.remote.Generation != gen {
+	if m.connecting == nil || m.connecting.Generation != gen {
 		return fmt.Errorf("stale remote generation")
 	}
-	m.remote.Connected = true
+	m.connecting.Connected = true
 	return nil
 }
 
@@ -129,7 +134,7 @@ func (m *Manager) MarkRemoteConnected(gen uint64) error {
 func (m *Manager) MarkRemoteDisconnected(gen uint64) (Identity, uint64, uint64, bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.remote == nil || m.remote.Generation != gen {
+	if m.remote == nil || m.remote.Generation != gen || !m.remote.Connected {
 		return m.active, m.identityGen.Load(), m.requestSeq.Load(), false
 	}
 	m.remote.Connected = false
@@ -160,15 +165,10 @@ func (m *Manager) Remote() *RemoteState {
 func (m *Manager) AbortRemoteConnect(gen uint64) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.remote == nil || m.remote.Generation != gen {
+	if m.connecting == nil || m.connecting.Generation != gen {
 		return false
 	}
-	if m.active.Kind == KindRemote {
-		m.active = Identity{Kind: KindLocal}
-		m.identityGen.Add(1)
-		m.requestSeq.Add(1)
-	}
-	m.remote = nil
+	m.connecting = nil
 	return true
 }
 
@@ -176,7 +176,11 @@ func (m *Manager) AbortRemoteConnect(gen uint64) bool {
 func (m *Manager) ActivateRemote(gen uint64) (Identity, uint64, uint64, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.remote == nil || m.remote.Generation != gen || !m.remote.Connected {
+	if m.connecting != nil && m.connecting.Generation == gen && m.connecting.Connected {
+		m.remote = m.connecting
+		m.connecting = nil
+		m.lastRemote = RemoteHint{HostID: m.remote.Identity.HostID, Workspace: m.remote.Identity.Workspace}
+	} else if m.remote == nil || m.remote.Generation != gen || !m.remote.Connected {
 		return Identity{}, 0, 0, fmt.Errorf("remote not connected")
 	}
 	m.active = m.remote.Identity
@@ -205,6 +209,7 @@ func (m *Manager) DetachRemote() error {
 		m.requestSeq.Add(1)
 	}
 	m.remote = nil
+	m.connecting = nil
 	return nil
 }
 

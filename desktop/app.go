@@ -2662,6 +2662,9 @@ func (a *App) activeSessionDir() string {
 // marking the one the current conversation is writing to and attaching any
 // user-chosen titles.
 func (a *App) ListSessions() []SessionMeta {
+	if a.activeWorkbenchTargetIsRemote() {
+		return []SessionMeta{}
+	}
 	dir := a.activeSessionDir()
 	infos, err := agent.ListSessions(dir)
 	if err != nil {
@@ -2698,6 +2701,9 @@ func (a *App) ListSessions() []SessionMeta {
 // ListTrashedSessions returns sessions that were moved to the local trash,
 // newest-deleted first. These can be previewed, restored, or permanently purged.
 func (a *App) ListTrashedSessions() []SessionMeta {
+	if a.activeWorkbenchTargetIsRemote() {
+		return []SessionMeta{}
+	}
 	out := []SessionMeta{}
 	for _, dir := range a.knownSessionDirs() {
 		paths, err := listTrashedSessionFiles(dir)
@@ -2866,6 +2872,9 @@ func channelDisplayName(provider, domain string) string {
 // has an in-process runtime, the runtime is cancelled and removed first so
 // autosave cannot recreate or append to the deleted file later.
 func (a *App) DeleteSession(path string) error {
+	if a.activeWorkbenchTargetIsRemote() {
+		return remoteSavedSessionManagementErr()
+	}
 	return friendlySessionFileError(a.deleteSession(path, false))
 }
 
@@ -2873,6 +2882,9 @@ func (a *App) DeleteSession(path string) error {
 // marker is only a hint; the backend re-reads the branch and parent immediately
 // before changing runtime state or moving any files.
 func (a *App) DeleteRecoveryCopy(path string) error {
+	if a.activeWorkbenchTargetIsRemote() {
+		return remoteSavedSessionManagementErr()
+	}
 	return friendlySessionFileError(a.deleteSession(path, true))
 }
 
@@ -3375,6 +3387,9 @@ func (a *App) activeSessionPath(dir string) string {
 
 // RestoreSession moves a trashed session back into the saved-session list.
 func (a *App) RestoreSession(path string) error {
+	if a.activeWorkbenchTargetIsRemote() {
+		return remoteSavedSessionManagementErr()
+	}
 	return friendlySessionFileError(a.restoreSession(path))
 }
 
@@ -3437,12 +3452,18 @@ func (a *App) sessionOpen(dir, sessionPath string) bool {
 // PurgeTrashedSession permanently removes a trashed session and its title/display
 // sidecars.
 func (a *App) PurgeTrashedSession(path string) error {
+	if a.activeWorkbenchTargetIsRemote() {
+		return remoteSavedSessionManagementErr()
+	}
 	return friendlySessionFileError(a.purgeTrashedSession(path, false))
 }
 
 // PurgeRecoveryCopy is the guarded permanent-cleanup path. A trashed branch is
 // rechecked against its live parent; missing, stale, or divergent data is kept.
 func (a *App) PurgeRecoveryCopy(path string) error {
+	if a.activeWorkbenchTargetIsRemote() {
+		return remoteSavedSessionManagementErr()
+	}
 	return friendlySessionFileError(a.purgeTrashedSession(path, true))
 }
 
@@ -3480,6 +3501,9 @@ func (a *App) purgeTrashedSession(path string, requireRedundantRecovery bool) er
 // the branch meta sidecar, with the legacy .titles.json map kept as a
 // compatibility write-through for older desktop data paths.
 func (a *App) RenameSession(path, title string) error {
+	if a.activeWorkbenchTargetIsRemote() {
+		return remoteSavedSessionManagementErr()
+	}
 	dir := a.activeSessionDir()
 	sessionPath, _, err := validateSessionPath(dir, path)
 	if err != nil {
@@ -3509,6 +3533,9 @@ func (a *App) ResumeSessionPage(path string, limit int) (HistoryPage, error) {
 }
 
 func (a *App) ResumeSessionPageForTab(tabID, path string, limit int) (HistoryPage, error) {
+	if a.activeWorkbenchTargetIsRemote() {
+		return HistoryPage{}, remoteSavedSessionManagementErr()
+	}
 	tab, ctrl := a.tabAndCtrlByID(tabID)
 	if tab == nil || ctrl == nil {
 		return HistoryPage{}, fmt.Errorf("tab is not ready")
@@ -3534,6 +3561,9 @@ func (a *App) ResumeSessionPageForTab(tabID, path string, limit int) (HistoryPag
 // path is a runtime identity, so changing to a different path must replace the
 // tab's controller binding rather than mutating the current controller in place.
 func (a *App) ResumeSessionForTab(tabID, path string) ([]HistoryMessage, error) {
+	if a.activeWorkbenchTargetIsRemote() {
+		return nil, remoteSavedSessionManagementErr()
+	}
 	tab, ctrl := a.tabAndCtrlByID(tabID)
 	if tab == nil || ctrl == nil {
 		return []HistoryMessage{}, fmt.Errorf("tab is not ready")
@@ -3559,6 +3589,9 @@ func (a *App) ResumeSessionForTab(tabID, path string) ([]HistoryMessage, error) 
 }
 
 func (a *App) OpenChannelSessionForTab(tabID, path string) ([]HistoryMessage, error) {
+	if a.activeWorkbenchTargetIsRemote() {
+		return nil, remoteSavedSessionManagementErr()
+	}
 	tab, ctrl := a.tabAndCtrlByID(tabID)
 	if tab == nil || ctrl == nil {
 		return []HistoryMessage{}, fmt.Errorf("tab is not ready")
@@ -3581,6 +3614,9 @@ func (a *App) OpenChannelSessionForTab(tabID, path string) ([]HistoryMessage, er
 }
 
 func (a *App) OpenChannelSessionPageForTab(tabID, path string, limit int) (HistoryPage, error) {
+	if a.activeWorkbenchTargetIsRemote() {
+		return HistoryPage{}, remoteSavedSessionManagementErr()
+	}
 	tab, ctrl := a.tabAndCtrlByID(tabID)
 	if tab == nil || ctrl == nil {
 		return HistoryPage{}, fmt.Errorf("tab is not ready")
@@ -3766,6 +3802,9 @@ func loadResumableSession(sessionPath string) (*agent.Session, error) {
 // PreviewSession reads a saved session for display only. It does not snapshot or
 // swap the active controller, so the history drawer can call it while a turn runs.
 func (a *App) PreviewSession(path string) ([]HistoryMessage, error) {
+	if a.activeWorkbenchTargetIsRemote() {
+		return nil, remoteSavedSessionManagementErr()
+	}
 	sessionDir, sessionPath, err := a.sessionDirForPath(path)
 	if err != nil {
 		return nil, err
@@ -3815,6 +3854,9 @@ type promptHistoryTape struct {
 // carry a cursor and page limit. Older clients may still pass a bare nonce; that
 // path keeps the old cache-hit behavior.
 func (a *App) ScanPromptHistory(rawRequest string) (PromptHistoryResult, error) {
+	if a.activeWorkbenchTargetIsRemote() {
+		return PromptHistoryResult{}, remoteSavedSessionManagementErr()
+	}
 	req := parsePromptHistoryRequest(rawRequest)
 	dir := a.activeSessionDir()
 	sessionPath := a.activeSessionPath(dir)
@@ -4707,6 +4749,9 @@ func (a *App) HistoryPageForTab(tabID string, beforeTurn, limit int) HistoryPage
 			return HistoryPage{Messages: []HistoryMessage{}}
 		}
 		return workbenchHistoryPage(page)
+	}
+	if a.activeWorkbenchTargetIsRemote() {
+		return HistoryPage{Messages: []HistoryMessage{}}
 	}
 	a.mu.RLock()
 	tab := a.tabByIDLocked(tabID)

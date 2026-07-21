@@ -153,6 +153,15 @@ func (a *App) activeRemoteWorkbench() (*client.Client, protocol.SessionSnapshot,
 	return k.remote, k.snapshot, k.catalog, k.remoteTabID, true
 }
 
+func (a *App) activeWorkbenchTargetIsRemote() bool {
+	id, _, _ := a.workbench().targets.Active()
+	return id.Kind == target.KindRemote
+}
+
+func remoteSavedSessionManagementErr() error {
+	return fmt.Errorf("CAPABILITY_UNAVAILABLE: Remote saved-session management is not available in V1")
+}
+
 func (a *App) workbenchSnapshot() (protocol.SessionSnapshot, bool) {
 	_, snapshot, _, _, ok := a.activeRemoteWorkbench()
 	return snapshot, ok

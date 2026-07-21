@@ -212,6 +212,8 @@ func (s *Server) finishOperation(sessionID protocol.SessionID, operationID proto
 	sess.updatedAt = time.Now().UnixMilli()
 	s.mu.Unlock()
 	go func() {
+		s.requestMu.Lock()
+		defer s.requestMu.Unlock()
 		if err := s.persistSessionRegistry(); err != nil {
 			s.logRegistryError("persist completed operation", err)
 		}
