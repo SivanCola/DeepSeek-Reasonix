@@ -129,6 +129,10 @@ func newStdioTransport(ctx context.Context, s Spec) (*stdioTransport, error) {
 }
 
 func prepareMCPPrivateState(s Spec, processSandbox sandbox.Spec, env []string) (sandbox.Spec, []string, error) {
+	return prepareMCPPrivateStateForOS(s, processSandbox, env, runtime.GOOS)
+}
+
+func prepareMCPPrivateStateForOS(s Spec, processSandbox sandbox.Spec, env []string, goos string) (sandbox.Spec, []string, error) {
 	root := strings.TrimSpace(s.StateDir)
 	if root == "" {
 		return processSandbox, env, nil
@@ -137,21 +141,32 @@ func prepareMCPPrivateState(s Spec, processSandbox sandbox.Spec, env []string) (
 		return processSandbox, env, err
 	}
 	privateRoot := root
-	tmpDir := filepath.Join(privateRoot, "tmp")
 	cacheDir := filepath.Join(privateRoot, "cache")
 	stateDir := filepath.Join(privateRoot, "state")
-	for _, dir := range []string{tmpDir, cacheDir, stateDir} {
-		if err := os.MkdirAll(dir, 0o700); err != nil {
-			return processSandbox, env, err
-		}
-	}
-	for key, value := range map[string]string{
-		"TMP": tmpDir, "TEMP": tmpDir, "TMPDIR": tmpDir,
+	dirs := []string{cacheDir, stateDir}
+	privateEnv := map[string]string{
 		"XDG_CACHE_HOME": cacheDir, "XDG_STATE_HOME": stateDir,
 		"npm_config_cache":      filepath.Join(cacheDir, "npm"),
 		"UV_CACHE_DIR":          filepath.Join(cacheDir, "uv"),
 		"BUN_INSTALL_CACHE_DIR": filepath.Join(cacheDir, "bun"),
-	} {
+	}
+	if goos != "windows" {
+		tmpDir := filepath.Join(privateRoot, "tmp")
+		dirs = append(dirs, tmpDir)
+		privateEnv["TMP"] = tmpDir
+		privateEnv["TEMP"] = tmpDir
+		privateEnv["TMPDIR"] = tmpDir
+	}
+	for _, dir := range dirs {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			return processSandbox, env, err
+		}
+	}
+	// Windows stdio processes are currently unsandboxed and must keep the host's
+	// short temporary directory. Nesting TEMP below Reasonix's workspace-scoped
+	// state path can exceed the 108-byte Unix-domain-socket limit used by MCP
+	// servers such as MATLAB before their initialize response is written.
+	for key, value := range privateEnv {
 		env = setEnvValue(env, key, value)
 	}
 	processSandbox.WriteRoots = append(processSandbox.WriteRoots, root, privateRoot)
