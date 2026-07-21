@@ -1063,8 +1063,8 @@ model = "x"
 // global "on" default when boot.Build loads merged config. Desktop must not
 // re-apply a user-only helper after this initialization.
 func TestBuildHonorsProjectAutoRecoveryKillSwitch(t *testing.T) {
-	home := isolateConfigHome(t)
-	userCfg := filepath.Join(home, ".config", "reasonix", "config.toml")
+	isolateConfigHome(t)
+	userCfg := config.UserConfigPath()
 	if err := os.MkdirAll(filepath.Dir(userCfg), 0o755); err != nil {
 		t.Fatalf("mkdir user config: %v", err)
 	}
@@ -1111,8 +1111,8 @@ api_key_env = "REASONIX_TEST_KEY_UNSET"
 		t.Fatal("project auto_recovery_checkpoint=off must disable Auto Guard at boot")
 	}
 
-	// Fresh session rotation must keep the construction-time kill switch,
-	// matching desktop rebuild paths that must not re-read user-only config.
+	// Fresh session rotation must keep the construction-time kill switch. The
+	// desktop build/configuration path has a separate integration regression.
 	fresh := filepath.Join(dir, "fresh-session.jsonl")
 	ctrl.SetFreshSessionPath(fresh)
 	if ctrl.RecoveryCheckpointEnabled() {
