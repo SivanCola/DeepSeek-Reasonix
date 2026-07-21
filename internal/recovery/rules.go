@@ -181,14 +181,6 @@ func commandFromArgs(args json.RawMessage) string {
 	return strings.TrimSpace(cmd)
 }
 
-func pathFromArgs(args json.RawMessage) string {
-	paths := pathsFromArgs(args)
-	if len(paths) == 0 {
-		return ""
-	}
-	return paths[0]
-}
-
 func pathsFromArgs(args json.RawMessage) []string {
 	if len(args) == 0 {
 		return nil
