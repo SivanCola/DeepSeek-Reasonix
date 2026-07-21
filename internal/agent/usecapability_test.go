@@ -80,11 +80,9 @@ type layeredReadOnlyMCPBoundaryTarget struct {
 	serverAuthorized bool
 }
 
-func (layeredReadOnlyMCPBoundaryTarget) MCPServerName() string       { return "test" }
-func (layeredReadOnlyMCPBoundaryTarget) MCPRawToolName() string      { return "read" }
-func (layeredReadOnlyMCPBoundaryTarget) MCPApprovalMode() string     { return "approve" }
-func (layeredReadOnlyMCPBoundaryTarget) MCPApprovalReviewer() string { return "user" }
-func (t layeredReadOnlyMCPBoundaryTarget) MCPDestructiveHint() bool  { return t.destructive }
+func (layeredReadOnlyMCPBoundaryTarget) MCPServerName() string      { return "test" }
+func (layeredReadOnlyMCPBoundaryTarget) MCPRawToolName() string     { return "read" }
+func (t layeredReadOnlyMCPBoundaryTarget) MCPDestructiveHint() bool { return t.destructive }
 
 func (t layeredReadOnlyMCPBoundaryTarget) MCPServerAuthorized() bool { return t.serverAuthorized }
 
@@ -320,7 +318,7 @@ func TestReadOnlyExecutionStartsInstalledUnconnectedMCPReader(t *testing.T) {
 	spec := plugin.Spec{
 		Name: "explicit-reader", Type: "http", URL: server.URL,
 		LaunchManager: manager, ConfigSource: "workspace_config",
-		ImplicitApproval: true,
+		AuthorizationGranted: true,
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -391,7 +389,7 @@ func TestReadOnlyExecutionBlocksCachedSchemaDriftBeforeToolCall(t *testing.T) {
 	spec := plugin.Spec{
 		Name: "explicit-reader", Type: "http", URL: server.URL,
 		LaunchManager: manager, ConfigSource: "workspace_config",
-		ReadOnlyToolNames: map[string]bool{"search": true}, ImplicitApproval: true,
+		AuthorizationGranted: true,
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -691,40 +689,6 @@ func TestOnDemandModelNameMatchesPluginCanonicalName(t *testing.T) {
 	}
 }
 
-func TestOnDemandMCPToolUsesSharedApprovalResolution(t *testing.T) {
-	host := plugin.NewHost()
-	defer host.Close()
-	specs := []plugin.Spec{
-		{Name: "user", Type: "stdio", Command: "reasonix-test-definitely-missing-binary", ImplicitApproval: true},
-		{Name: "scoped", Type: "stdio", Command: "reasonix-test-definitely-missing-binary", ImplicitApproval: true,
-			ToolApprovalModes: map[string]string{"wipe": "prompt"}},
-		{Name: "project", Type: "stdio", Command: "reasonix-test-definitely-missing-binary"},
-	}
-	tl := NewUseCapabilityTool(context.Background(), host, specs, tool.NewRegistry(), capability.NewLedger(), nil, nil)
-	cases := []struct{ id, want string }{
-		// A user-configured server carries implicit approval; the delivery
-		// on-demand path must resolve it to direct approval exactly like the
-		// direct MCP tool path, not fall back to the global posture.
-		{"mcp-tool:user/write", tool.MCPApprovalApprove},
-		{"mcp-tool:scoped/wipe", tool.MCPApprovalPrompt},
-		{"mcp-tool:project/write", tool.MCPApprovalAuto},
-	}
-	for _, tc := range cases {
-		resolved, err := tl.ResolveCall(context.Background(),
-			json.RawMessage(`{"action":"call","capability_id":"`+tc.id+`"}`))
-		if err != nil {
-			t.Fatalf("%s: %v", tc.id, err)
-		}
-		policy, ok := resolved.Target.(tool.MCPApprovalPolicy)
-		if !ok {
-			t.Fatalf("%s: resolved target %T does not expose an MCP approval policy", tc.id, resolved.Target)
-		}
-		if got := policy.MCPApprovalMode(); got != tc.want {
-			t.Fatalf("%s: on-demand approval mode = %q, want %q (plugin.Spec.ToolApprovalMode parity)", tc.id, got, tc.want)
-		}
-	}
-}
-
 func TestProxyCallAuditCountsOnAgentPath(t *testing.T) {
 	reg := tool.NewRegistry()
 	reg.Add(fakeTool{name: "mcp__github__search_issues", readOnly: true})
@@ -804,10 +768,9 @@ func TestUseCapabilityResolveCallIsSideEffectFree(t *testing.T) {
 	host := plugin.NewHost()
 	defer host.Close()
 	specs := []plugin.Spec{{
-		Name:              "lazy",
-		Type:              "stdio",
-		Command:           "reasonix-test-definitely-missing-binary",
-		ReadOnlyToolNames: map[string]bool{"read_thing": true},
+		Name:    "lazy",
+		Type:    "stdio",
+		Command: "reasonix-test-definitely-missing-binary",
 	}}
 	tl := NewUseCapabilityTool(context.Background(), host, specs, tool.NewRegistry(), capability.NewLedger(), nil, nil)
 
@@ -823,17 +786,6 @@ func TestUseCapabilityResolveCallIsSideEffectFree(t *testing.T) {
 	}
 	if host.HasClient("lazy") {
 		t.Fatal("ResolveCall must not start the MCP server")
-	}
-	// A first-party read-only override is visible without starting the server.
-	roResolved, err := tl.ResolveCall(context.Background(), json.RawMessage(`{"action":"call","capability_id":"mcp-tool:lazy/read_thing"}`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !roResolved.ReadOnly {
-		t.Fatal("spec-declared read-only tool should resolve read-only")
-	}
-	if host.HasClient("lazy") {
-		t.Fatal("read-only resolution must not start the MCP server either")
 	}
 	// Execution is where the connect finally happens — and fails for the
 	// missing binary, marking the capability unavailable.
@@ -913,17 +865,18 @@ func TestPlanModeMCPStyleNameWithoutMetadataStillUsesPermission(t *testing.T) {
 	}
 }
 
-func TestDestructiveMCPThroughUseCapabilityUsesFreshApproval(t *testing.T) {
+func TestPlanModeBlocksAuthorizedDestructiveMCPThroughUseCapability(t *testing.T) {
 	reg := tool.NewRegistry()
 	reg.Add(annotatedMCPTool{
-		fakeTool:    fakeTool{name: "mcp__github__delete_issue", readOnly: false},
-		server:      "github",
-		raw:         "delete_issue",
-		destructive: true,
+		fakeTool:         fakeTool{name: "mcp__github__delete_issue", readOnly: false},
+		server:           "github",
+		raw:              "delete_issue",
+		destructive:      true,
+		serverAuthorized: true,
 	})
 	uc := NewUseCapabilityTool(context.Background(), nil, nil, reg, capability.NewLedger(), nil, nil)
 	reg.Add(uc)
-	gate := &mcpPermissionRecordingGate{allowNormal: true, allowFresh: true}
+	gate := &mcpPermissionRecordingGate{allowNormal: true}
 	a := New(&scriptedProvider{name: "p"}, reg, NewSession("sys"), Options{Gate: gate}, event.Discard)
 	a.planMode.Store(true)
 
@@ -931,8 +884,8 @@ func TestDestructiveMCPThroughUseCapabilityUsesFreshApproval(t *testing.T) {
 		ID: "1", Name: "use_capability",
 		Arguments: `{"action":"call","capability_id":"mcp-tool:github/delete_issue","arguments":{"number":1}}`,
 	})
-	if !out.blocked || gate.normalCalls != 0 || gate.freshCalls != 0 {
-		t.Fatalf("destructive proxy outcome=%+v normal=%d fresh=%d subject=%q", out, gate.normalCalls, gate.freshCalls, gate.subject)
+	if !out.blocked || gate.normalCalls != 0 {
+		t.Fatalf("destructive proxy should be blocked before permission, outcome=%+v normal=%d", out, gate.normalCalls)
 	}
 }
 
@@ -948,37 +901,5 @@ func TestCapabilityGateAppliesToReadOnlyTasks(t *testing.T) {
 	check := a.finalReadinessCheck()
 	if !strings.Contains(check.reason, "required capabilities") {
 		t.Fatalf("read-only answer must not skip the require gate; reason = %q", check.reason)
-	}
-}
-
-func TestStrictReadOnlyFailsClosedWithoutServerAuthorization(t *testing.T) {
-	host := plugin.NewHost()
-	defer host.Close()
-	// No LaunchManager: the compatibility path still classifies the config
-	// reader for ordinary permissions, but it carries no server authorization.
-	specs := []plugin.Spec{{
-		Name:              "lazy",
-		Type:              "stdio",
-		Command:           "reasonix-test-definitely-missing-binary",
-		ReadOnlyToolNames: map[string]bool{"read_thing": true},
-	}}
-	tl := NewUseCapabilityTool(context.Background(), host, specs, tool.NewRegistry(), capability.NewLedger(), nil, nil)
-	resolved, err := tl.ResolveCall(context.Background(), json.RawMessage(`{"action":"call","capability_id":"mcp-tool:lazy/read_thing"}`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !resolved.ReadOnly {
-		t.Fatal("compatibility classification should still resolve read-only for ordinary sessions")
-	}
-	if readOnlyExecutionAllowsMCPStartup(resolved.Target) {
-		t.Fatal("hint/config-classified reader without server authorization must not start hosts in strict mode")
-	}
-	reg := tool.NewRegistry()
-	reg.Add(resolved.Target)
-	if names := strictReadOnlyExecutionRegistry(reg).Names(); len(names) != 0 {
-		t.Fatalf("strict registry admitted an unauthorized MCP reader: %v", names)
-	}
-	if host.HasClient("lazy") {
-		t.Fatal("strict evaluation must not start the MCP server")
 	}
 }

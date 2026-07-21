@@ -700,9 +700,6 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 		b.WriteString("# command = \"reasonix-plugin-example\"\n")
 		b.WriteString("# call_timeout_seconds = 600       # optional per-server MCP call timeout\n")
 		b.WriteString("# tool_timeout_seconds = { \"generate_video\" = 1800 }   # raw MCP tool names\n")
-		b.WriteString("# default_tools_approval_mode = \"auto\"   # auto|prompt|writes|approve\n")
-		b.WriteString("# tools = { \"delete_all\" = { approval_mode = \"prompt\" } }\n")
-		b.WriteString("# approvals_reviewer = \"user\"   # user|auto_review\n")
 		b.WriteString("# [[plugins]]                                  # a remote server over Streamable HTTP\n")
 		b.WriteString("# name    = \"stripe\"\n")
 		b.WriteString("# type    = \"http\"\n")
@@ -737,15 +734,6 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 			if hasPositiveIntMap(pl.ToolTimeoutSeconds) {
 				b.WriteString("# Raw MCP tool names with per-tool call timeouts.\n")
 				fmt.Fprintf(&b, "tool_timeout_seconds = %s\n", renderIntMap(pl.ToolTimeoutSeconds))
-			}
-			if strings.TrimSpace(pl.DefaultToolsApprovalMode) != "" {
-				fmt.Fprintf(&b, "default_tools_approval_mode = %q\n", pl.DefaultToolsApprovalMode)
-			}
-			if len(pl.Tools) > 0 {
-				fmt.Fprintf(&b, "tools = %s\n", renderMCPToolPolicies(pl.Tools))
-			}
-			if strings.TrimSpace(pl.ApprovalsReviewer) != "" {
-				fmt.Fprintf(&b, "approvals_reviewer = %q\n", pl.ApprovalsReviewer)
 			}
 			if pl.AutoStart != nil {
 				fmt.Fprintf(&b, "auto_start = %v\n", *pl.AutoStart)
@@ -1158,15 +1146,6 @@ func RenderTOMLProjectDelta(c *Config) string {
 			b.WriteString("# Raw MCP tool names with per-tool call timeouts.\n")
 			fmt.Fprintf(&b, "tool_timeout_seconds = %s\n", renderIntMap(pl.ToolTimeoutSeconds))
 		}
-		if strings.TrimSpace(pl.DefaultToolsApprovalMode) != "" {
-			fmt.Fprintf(&b, "default_tools_approval_mode = %q\n", pl.DefaultToolsApprovalMode)
-		}
-		if len(pl.Tools) > 0 {
-			fmt.Fprintf(&b, "tools = %s\n", renderMCPToolPolicies(pl.Tools))
-		}
-		if strings.TrimSpace(pl.ApprovalsReviewer) != "" {
-			fmt.Fprintf(&b, "approvals_reviewer = %q\n", pl.ApprovalsReviewer)
-		}
 		if pl.AutoStart != nil {
 			fmt.Fprintf(&b, "auto_start = %v\n", *pl.AutoStart)
 		}
@@ -1398,26 +1377,6 @@ func renderStringMap(m map[string]string) string {
 			b.WriteString(", ")
 		}
 		fmt.Fprintf(&b, "%s = %q", renderTOMLKeyPart(k), m[k])
-	}
-	b.WriteString(" }")
-	return b.String()
-}
-
-func renderMCPToolPolicies(policies map[string]MCPToolPolicy) string {
-	keys := make([]string, 0, len(policies))
-	for name := range policies {
-		if strings.TrimSpace(name) != "" {
-			keys = append(keys, name)
-		}
-	}
-	sort.Strings(keys)
-	var b strings.Builder
-	b.WriteString("{ ")
-	for i, name := range keys {
-		if i > 0 {
-			b.WriteString(", ")
-		}
-		fmt.Fprintf(&b, "%s = { approval_mode = %q }", renderTOMLKeyPart(name), policies[name].ApprovalMode)
 	}
 	b.WriteString(" }")
 	return b.String()

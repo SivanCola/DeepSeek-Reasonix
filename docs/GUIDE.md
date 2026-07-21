@@ -647,7 +647,7 @@ while that value is unchanged and asks again only after a change.
 stdio servers keep one process for initialize, reads, and writes, so stateful
 servers such as browsers retain sessions and open pages. Because an OS sandbox
 is fixed when a process starts, this shared process uses the server's normal
-writer sandbox for every call; `readOnlyHint` and read-only sub-agent filtering
+process sandbox for every call; `readOnlyHint` and read-only sub-agent filtering
 are dispatch policy, not a second per-call process sandbox.
 
 Tools surface to the model as `mcp__<server>__<tool>`. A tool declaring MCP's
@@ -659,57 +659,18 @@ sub-agents without another per-tool setting. Tools without the hint remain
 write-capable. While planning, built-in
 writers keep the ordinary permission posture; installed MCP and proxy-resolved
 MCP writers, destructive targets, and readers from unauthorized servers are hard-blocked before
-any approval and return to their normal approval flow once Plan exits.
+any approval and become directly usable once Plan exits.
 
-MCP `destructiveHint: true` is stricter than the read-only classification. Under
-`auto`, `prompt`, or `writes`, every destructive call requires fresh human
-approval even if the tool also reports `readOnlyHint`, the current posture is
-Auto/YOLO, or an allow rule was saved — Guardian, `auto_review`, and session
-grants cannot authorize it. An effective `approve` mode records that the user
-authorized the server or tool and permits the call directly.
+Installing an MCP server is the authorization decision. After installation, all
+of its tools run directly without a second server-level, per-tool, writer, or
+destructive approval setting. Explicit global deny rules still win. The host
+keeps `readOnlyHint` and `destructiveHint` internally for parallel scheduling,
+Plan restrictions, strict read-only sub-agents, and cached-to-live capability
+drift checks; these hints do not add user configuration.
 
-`approvals_reviewer = "auto_review"` routes the calls that actually need a
-review — `prompt` mode, writer hits under `writes`, and `auto` calls the global
-posture would Ask about — to the session Guardian, and a successful verdict
-(allow or deny) is final. When the reviewer is missing, times out, fails, or
-returns no verdict, the call falls back to fresh human approval: a prompt that
-Auto/YOLO, the approved-plan window, and session grants cannot answer.
-Non-interactive runs and sub-agents fail closed in every reviewer-required
-case.
-
-Server and raw-tool approval policy stays local and never changes the schema
-sent to the model:
-
-```toml
-[[plugins]]
-name = "github"
-command = "github-mcp"
-default_tools_approval_mode = "writes" # auto|prompt|writes|approve
-tools = { "delete_repository" = { approval_mode = "prompt" } }
-approvals_reviewer = "auto_review"     # user|auto_review
-```
-
-For a user-authorized server, omitting these advanced approval fields permits
-all calls directly. If a field is present, `auto` delegates to the global
-Ask/Auto/YOLO permission posture; `prompt`
-reviews every call; `writes` reviews only writer-classified calls; and `approve`
-allows calls directly, including destructive calls. Explicit deny rules always
-win; `destructiveHint` forces a new review for every mode except `approve`. A
-raw-tool `tools` entry overrides the server default. `trusted_read_only_tools`
-has been removed; older files containing it still load, but Reasonix ignores and
-drops the field when the configuration is next saved.
-
-Two boundaries are worth knowing. `writes` trusts the server's read-only
-classification, so a server that mislabels a writer as `readOnlyHint` escapes
-that review — use `prompt` for servers you do not trust to maintain
-annotations. And when Guardian is enabled with no `approvals_reviewer`
-configured, `prompt`/`writes` reviews keep the legacy routing: Guardian
-pre-screens the call and may allow it without a human prompt; set
-`approvals_reviewer = "user"` when every review must reach a person. A
-project's `.mcp.json` merges these fields into the session, so review
-`approve`/`writes` policies in a repository you did not author like any other
-code — explicit deny rules still apply, and destructive reviews apply unless
-the effective mode is `approve`.
+The retired `trusted_read_only_tools`, `default_tools_approval_mode`,
+`tools.<raw>.approval_mode`, and `approvals_reviewer` fields are ignored when
+loading older files and removed the next time Reasonix saves that MCP entry.
 
 A server's **prompts** surface as `/mcp__<server>__<prompt>` slash commands
 (positional args after the command); its **resources** are pulled in by writing
@@ -992,8 +953,7 @@ commit/permission/hooks/execution. An unconnected eligible MCP reader may start
 on demand from the current schema cache; its cached security fingerprint is
 checked against the live initialize/tools-list result before `tools/call`.
 Schema or safety drift means zero executions and a normal retry with current
-policy. `auto_review` cannot raise
-privileges there; a reader that would need a local prompt fails closed. This
+policy. An unauthorized server cannot raise privileges there. This
 is a stricter layer than the main Plan workflow: Plan hard-blocks MCP
 writer/destructive targets for the entire planning phase — no approval can
 release them until Plan exits — while built-in writers keep

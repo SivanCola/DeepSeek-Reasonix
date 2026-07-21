@@ -151,7 +151,7 @@ interface (`call` / `notify` / `close`) abstracts that, so the MCP-level logic
   invocation via `tools/call {name, arguments}`.
 - A stdio server uses one persistent transport for initialize, reads, and
   writes, preserving state such as browser sessions across tool calls. The
-  process uses the server's writer sandbox because process confinement cannot
+  process uses the server's process sandbox because process confinement cannot
   change per RPC; read-only eligibility and destructive approval remain local
   dispatch gates rather than separate process sandboxes.
 - Configuration provenance is runtime metadata. Explicit installation from the
@@ -331,28 +331,12 @@ func (p Policy) Decide(toolName string, readOnly bool, args json.RawMessage) Dec
   it resolves `Ask` to **allow** — preserving autonomous behaviour. A `Deny` is a
   hard block in *every* mode: the tool never executes and the model receives a
   "blocked" result it can adapt to (the same shape as a plan-mode refusal).
-- **MCP approval policy.** Installed MCP tools may set a server default and raw
-  tool overrides using `auto|prompt|writes|approve`. A raw-tool mode overrides
-  the server or source-aware default; explicit deny still wins, `approve`
-  permits the call directly, and `destructiveHint` requires a fresh review for
-  every remaining mode before global Ask/Auto/YOLO is considered.
-  A user-authorized server with no explicit MCP approval fields defaults to
-  `approve`; repository-provided servers retain `auto` until their exact launch
-  is authorized, then the same source-aware default applies. `auto` delegates
-  to the ordinary permission decision; `prompt` reviews every call; `writes`
-  reviews writers only; and `approve` allows all calls directly.
-  `approvals_reviewer = "user"` uses the interactive user, while `auto_review`
-  sends the calls that need review (`prompt`, writer hits under `writes`, and
-  `auto` calls the global posture would Ask about) to the session Guardian; a
-  successful allow/deny verdict is final. A missing, timed-out, failed, or
-  indeterminate reviewer degrades to fresh human approval — a prompt that
-  Auto/YOLO, the approved-plan window, and session grants cannot answer — and
-  non-interactive sessions fail closed. For `auto`, `prompt`, and `writes`, a
-  destructive call requires fresh human approval on every invocation: no
-  reviewer, session grant, or Auto/YOLO posture can authorize it. An effective
-  `approve` mode represents the user's install/authorization decision and
-  permits destructive calls directly. All of this is local metadata and is
-  absent from provider-visible tool schemas.
+- **MCP authorization.** Installing an MCP server authorizes all of its tools;
+  there is no second server, raw-tool, writer, or destructive approval policy.
+  Explicit global deny rules still win. Repository-declared servers require one
+  exact identity confirmation before startup and require confirmation again only
+  if that identity changes. `readOnlyHint` and `destructiveHint` remain internal
+  facts for scheduling, Plan/read-only restrictions, and capability-drift checks.
 - **Relationship to plan mode.** Plan mode (§3.4) is a plan-first collaboration
   workflow, not an all-tools read-only mode. Before Permissions/Sandbox, the
   host enforces explicit phase opt-outs (`complete_step` is read-only but
@@ -362,7 +346,7 @@ func (p Policy) Decide(toolName string, readOnly bool, args json.RawMessage) Dec
   phase — no approval releases them while Plan is active.
   Ordinary built-in and Bash calls then use the same Ask/Auto/YOLO, explicit
   `ask`/`deny`, and Sandbox path as Standard mode; blocked MCP writers regain
-  their normal approval flow after Plan exits. A third-party MCP `readOnlyHint` affects ordinary permission and dispatch
+  direct execution after Plan exits. A third-party MCP `readOnlyHint` affects dispatch
   classification. Once the server is installed or its exact project identity is
   confirmed, non-destructive readers also enter the dedicated planner and
   read-only sub-agent registries automatically. `plan_mode_read_only_commands` is
@@ -425,7 +409,7 @@ func (p Policy) Decide(toolName string, readOnly bool, args json.RawMessage) Dec
 | Need approval / `ask` | Follow permission policy (`Ask` prompts interactively) | Waits for user | Waits for user |
 | Auto approve / `auto` | Writer fallback auto-allowed; explicit ask/deny rules still apply | Waits for user | Waits for user |
 | YOLO approval / `yolo` | Ordinary prompts auto-allowed; deny rules and fresh reviews remain | Waits for user | Waits for user |
-| Approved-plan execution window | Approved plan's writer fallback is auto-allowed; explicit `ask` / `deny`, MCP `prompt` / `writes`, and fresh reviews remain | Future plans still wait | Waits for user |
+| Approved-plan execution window | Approved plan's writer fallback is auto-allowed; explicit `ask` / `deny` rules remain | Future plans still wait | Waits for user |
 
 Out of the box (`mode = "ask"`, no rules) `reasonix run` behaves exactly as before
 (writers resolve `Ask`→allow with no TTY), while `reasonix` now prompts before
@@ -671,9 +655,6 @@ args    = []
 # env   = { FOO = "bar" }
 # call_timeout_seconds = 600            # per-server MCP call timeout; 0 = global/default cap
 # tool_timeout_seconds = { "generate_video" = 1800 }   # raw MCP tool names
-# default_tools_approval_mode = "auto"   # auto|prompt|writes|approve
-# tools = { "delete_all" = { approval_mode = "prompt" } }
-# approvals_reviewer = "user"            # user|auto_review
 # [[plugins]]                   # a remote MCP server over Streamable HTTP
 # name    = "stripe"
 # type    = "http"             # "stdio" (default) | "http" | "sse"

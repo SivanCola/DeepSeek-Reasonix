@@ -149,8 +149,8 @@ func (p Policy) Decide(toolName string, readOnly bool, args json.RawMessage) Dec
 }
 
 // ExplicitlyDenies reports only configured deny-rule matches. It deliberately
-// excludes the fallback Mode so higher-priority local MCP policy can be applied
-// before the global posture.
+// excludes the fallback Mode so installing or explicitly authorizing an MCP
+// server remains the final allow decision.
 func (p Policy) ExplicitlyDenies(toolName string, args json.RawMessage) bool {
 	subjects := Subjects(args)
 	if len(subjects) == 0 {
@@ -444,20 +444,6 @@ type ReasonedApprover interface {
 	ApproveWithReason(ctx context.Context, toolName, subject string, args json.RawMessage) (allow, remember bool, reason string, err error)
 }
 
-// FreshApprover handles safety decisions that must come from a current human
-// and cannot be satisfied by an allow rule, Auto/YOLO, or a remembered choice.
-type FreshApprover interface {
-	ApproveFresh(ctx context.Context, toolName, subject string, args json.RawMessage) (allow bool, reason string, err error)
-}
-
-// MCPApprover resolves an MCP approval through the configured reviewer. It is
-// separate from Approver because prompt/writes modes outrank the controller's
-// global Auto/YOLO posture, and destructive calls must never reuse a remembered
-// grant. reviewer is "user", "auto_review", or empty for legacy routing.
-type MCPApprover interface {
-	ApproveMCP(ctx context.Context, toolName, subject string, args json.RawMessage, destructive, forced bool, reviewer string) (allow bool, reason string, err error)
-}
-
 // Gate is what the agent consults at execute time: a Policy plus an optional
 // Approver. It satisfies the agent's Gate interface structurally.
 type Gate struct {
@@ -520,101 +506,11 @@ func (g *Gate) Check(ctx context.Context, toolName string, args json.RawMessage,
 	}
 }
 
-// CheckFresh preserves explicit deny precedence, then requires a fresh approver
-// regardless of ordinary allow/ask/fallback posture. It deliberately never
-// persists or installs an in-memory allow rule.
-func (g *Gate) CheckFresh(ctx context.Context, toolName, subject string, args json.RawMessage, readOnly bool) (bool, string, error) {
-	if g.Policy.Decide(toolName, readOnly, args) == Deny {
-		return false, "denied by permission policy — this tool/command is on the deny list. Do not retry it; choose another approach or stop and explain.", nil
-	}
-	approver, ok := g.Approver.(FreshApprover)
-	if !ok {
-		return false, "this tool requires fresh human approval and cannot run in a non-interactive session.", nil
-	}
-	allow, reason, err := approver.ApproveFresh(ctx, toolName, subject, args)
-	if err != nil {
-		return false, "approval aborted", err
-	}
-	if !allow {
-		if strings.TrimSpace(reason) == "" {
-			reason = "the user declined this tool call"
-		}
-		return false, reason, nil
-	}
-	return true, "", nil
-}
-
-// CheckMCP applies MCP-local approval policy. Precedence is explicit deny,
-// explicit approval, destructive fresh review, the remaining per-tool/server
-// modes, then the ordinary global permission posture. Local prompt/writes
-// decisions require an MCPApprover and therefore fail closed in headless and
-// sub-agent sessions.
-func (g *Gate) CheckMCP(ctx context.Context, toolName, subject string, args json.RawMessage, readOnly, destructive bool, mode, reviewer string) (bool, string, error) {
-	if g.Policy.ExplicitlyDenies(toolName, args) {
-		return false, "denied by permission policy — this tool/command is on the deny list. Do not retry it; choose another approach or stop and explain.", nil
-	}
-
-	effectiveMode := normalizeMCPApprovalMode(mode)
-	if effectiveMode == "approve" {
-		return true, "", nil
-	}
-	if destructive {
-		return g.approveMCP(ctx, toolName, subject, args, true, true, reviewer)
-	}
-
-	switch effectiveMode {
-	case "prompt":
-		return g.approveMCP(ctx, toolName, subject, args, false, true, reviewer)
-	case "writes":
-		if readOnly {
-			return true, "", nil
-		}
-		return g.approveMCP(ctx, toolName, subject, args, false, true, reviewer)
-	default: // auto preserves the existing global policy and posture.
-		switch g.Policy.Decide(toolName, readOnly, args) {
-		case Deny:
-			return g.Check(ctx, toolName, args, readOnly)
-		case Ask:
-			if strings.TrimSpace(reviewer) != "" {
-				return g.approveMCP(ctx, toolName, subject, args, false, false, reviewer)
-			}
-			return g.Check(ctx, toolName, args, readOnly)
-		default:
-			return true, "", nil
-		}
-	}
-}
-
-func (g *Gate) approveMCP(ctx context.Context, toolName, subject string, args json.RawMessage, destructive, forced bool, reviewer string) (bool, string, error) {
-	approver, ok := g.Approver.(MCPApprover)
-	if !ok {
-		return false, "this MCP tool requires an approval reviewer and cannot run in a non-interactive session.", nil
-	}
-	allow, reason, err := approver.ApproveMCP(ctx, toolName, subject, args, destructive, forced, reviewer)
-	if err != nil {
-		if strings.TrimSpace(reason) == "" {
-			reason = "approval review aborted"
-		}
-		return false, reason, err
-	}
-	if !allow {
-		if strings.TrimSpace(reason) == "" {
-			reason = "the MCP approval reviewer declined this tool call"
-		}
-		return false, reason, nil
-	}
-	return true, "", nil
-}
-
-func normalizeMCPApprovalMode(mode string) string {
-	switch strings.ToLower(strings.TrimSpace(mode)) {
-	case "", "auto":
-		return "auto"
-	case "approve", "prompt", "writes":
-		return strings.ToLower(strings.TrimSpace(mode))
-	default:
-		return "prompt"
-	}
+// ExplicitlyDenies reports whether an explicit deny rule matches. Authorized
+// MCP servers use this narrow view so install-time authorization is not
+// followed by redundant per-call approval prompts.
+func (g *Gate) ExplicitlyDenies(toolName string, args json.RawMessage) bool {
+	return g.Policy.ExplicitlyDenies(toolName, args)
 }
 
 func (g *Gate) approve(ctx context.Context, toolName, subject string, args json.RawMessage) (bool, bool, string, error) {

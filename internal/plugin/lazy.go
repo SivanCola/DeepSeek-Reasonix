@@ -260,18 +260,6 @@ func (lt *lazyTool) MCPDestructiveHint() bool {
 	defer lt.shared.mu.Unlock()
 	return lt.destructive
 }
-func (lt *lazyTool) MCPApprovalMode() string {
-	if lt.shared == nil {
-		return tool.MCPApprovalAuto
-	}
-	return lt.shared.spec.ToolApprovalMode(lt.rawName)
-}
-func (lt *lazyTool) MCPApprovalReviewer() string {
-	if lt.shared == nil {
-		return ""
-	}
-	return lt.shared.spec.approvalReviewer()
-}
 func (lt *lazyTool) Schema() json.RawMessage {
 	if len(lt.schema) == 0 {
 		return json.RawMessage(`{"type":"object"}`)
@@ -420,7 +408,7 @@ func (lt *lazyTool) Execute(ctx context.Context, args json.RawMessage) (string, 
 // reconcileLiveSafety updates a pinned cache-hit placeholder when the live
 // server becomes stricter. Caller must hold shared.mu. The current call always
 // stops on a reader-to-writer demotion or destructive promotion so the next
-// attempt re-enters the agent's approval policy with current metadata.
+// attempt re-enters the agent's Plan/read-only safety checks with current metadata.
 func (lt *lazyTool) reconcileLiveSafety(real tool.Tool) error {
 	if real == nil {
 		return nil
@@ -475,7 +463,7 @@ func LazyToolset(spec Spec, cs *CachedSchema, host *Host, reg *tool.Registry, se
 			cap := toolCapability{
 				RawName: ct.Name, ModelName: toolName(spec.Name, visible), VisibleName: visible,
 				InputSchema: ct.Schema, OutputSchema: ct.OutputSchema,
-				ReadOnly:    ct.ReadOnly || spec.toolReadOnlyOverride(ct.Name, visible),
+				ReadOnly:    ct.ReadOnly,
 				Destructive: ct.Destructive,
 			}
 			cachedCapabilities[ct.Name] = cap

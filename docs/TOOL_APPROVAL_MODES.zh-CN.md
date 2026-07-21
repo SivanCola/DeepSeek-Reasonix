@@ -51,7 +51,7 @@ Reasonix 桌面端输入框下方的“询问 / 自动 / Yolo”控制的是工�
 - 显式 `ask` 规则仍然会弹出审批。
 - 计划模式的“开始执行”确认仍然需要你选择。
 - `remember` / `forget` 等记忆写入或删除操作仍需要新鲜人工审批，Guardian/安全审查不能代替用户批准。
-- MCP 最终策略为 `auto`、`prompt` 或 `writes` 时，声明 `destructiveHint` 的调用需要全新的人工审批；Guardian/`auto_review`、自动/YOLO 与会话授权都不能代答。用户明确安装且未配置高级审批策略的 MCP 默认为 `approve`，包括 destructive 调用在内都直接执行。
+- 用户安装或明确授权的 MCP 直接执行，不再受这套逐调用模式影响；显式 `deny`、Plan 和严格只读子会话边界仍然生效。
 - ask 问题仍然等待你回答，不会由自动模式代选。
 
 ### 建议使用场景

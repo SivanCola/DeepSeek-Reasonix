@@ -509,7 +509,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 			// Session-scoped MCP specs arrive through an explicit host/user action
 			// (for example ACP session/new), so they follow installed-server
 			// authorization without another per-tool or per-session prompt.
-			extraSpecs[i].ImplicitApproval = true
+			extraSpecs[i].AuthorizationGranted = true
 		}
 		applyMCPIsolation(&extraSpecs[i], root, pluginSpecOptions)
 	}
@@ -1427,7 +1427,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 			}
 		}
 		// The proxy and the catalog share the boot-converted specs (env
-		// expansion, workspace overrides, timeouts, and read-only overrides) —
+		// expansion, workspace overrides, and timeouts) —
 		// every configured server, including auto_start=false, is proxy-callable.
 		catalogFn := func() capability.Catalog {
 			conn := map[string]bool{}
@@ -2191,24 +2191,21 @@ func pluginSpecFromEntryWithOptions(e config.PluginEntry, workspaceRoot string, 
 		configSource = opts.ConfigSource
 	}
 	spec := plugin.ApplyKnownOverrides(plugin.Spec{
-		Name:                     e.Name,
-		Package:                  strings.TrimSpace(opts.PackageOwners[e.Name]),
-		Type:                     e.Type,
-		Command:                  e.Command,
-		Args:                     e.Args,
-		Env:                      e.Env,
-		URL:                      e.URL,
-		Headers:                  e.Headers,
-		DefaultCallTimeout:       opts.DefaultCallTimeout,
-		CallTimeout:              secondsDuration(e.CallTimeoutSeconds),
-		ToolTimeouts:             toolTimeoutDurations(e.ToolTimeoutSeconds),
-		DefaultToolsApprovalMode: e.DefaultToolsApprovalMode,
-		ToolApprovalModes:        mcpToolApprovalModes(e.Tools),
-		ApprovalsReviewer:        e.ApprovalsReviewer,
-		LaunchManager:            opts.LaunchManager,
-		ConfigSource:             configSource,
-		ImplicitApproval:         e.Source.UserAuthorized(),
-		RequireLaunchApproval:    e.Source.RequiresLaunchApproval(),
+		Name:                  e.Name,
+		Package:               strings.TrimSpace(opts.PackageOwners[e.Name]),
+		Type:                  e.Type,
+		Command:               e.Command,
+		Args:                  e.Args,
+		Env:                   e.Env,
+		URL:                   e.URL,
+		Headers:               e.Headers,
+		DefaultCallTimeout:    opts.DefaultCallTimeout,
+		CallTimeout:           secondsDuration(e.CallTimeoutSeconds),
+		ToolTimeouts:          toolTimeoutDurations(e.ToolTimeoutSeconds),
+		LaunchManager:         opts.LaunchManager,
+		ConfigSource:          configSource,
+		AuthorizationGranted:  e.Source.UserAuthorized(),
+		RequireLaunchApproval: e.Source.RequiresLaunchApproval(),
 	}, workspaceRoot)
 	applyMCPIsolation(&spec, workspaceRoot, opts)
 	return spec
@@ -2276,37 +2273,13 @@ func applyMCPIsolation(spec *plugin.Spec, workspaceRoot string, opts PluginSpecO
 		readerRoots = appendUniquePaths(readerRoots, home)
 	}
 	spec.StateDir = stateDir
-	spec.ReaderSandbox = sandbox.Spec{
-		Mode: "enforce", WriteRoots: []string{stateDir},
-		ReadRoots:              readerRoots,
-		AppContainerWriteRoots: []string{stateDir},
-		ForbidReadRoots:        append([]string(nil), opts.ForbidReadRoots...),
-		Network:                opts.Network, MinimalWrites: true,
-	}
-	spec.WriterSandbox = sandbox.Spec{
+	spec.Sandbox = sandbox.Spec{
 		Mode: "enforce", WriteRoots: writerRoots,
 		ReadRoots:              readerRoots,
 		AppContainerWriteRoots: append([]string(nil), writerRoots...),
 		ForbidReadRoots:        append([]string(nil), opts.ForbidReadRoots...),
 		Network:                opts.Network, MinimalWrites: true,
 	}
-}
-
-func mcpToolApprovalModes(policies map[string]config.MCPToolPolicy) map[string]string {
-	if len(policies) == 0 {
-		return nil
-	}
-	out := make(map[string]string, len(policies))
-	for name, policy := range policies {
-		name = strings.TrimSpace(name)
-		if name != "" {
-			out[name] = policy.ApprovalMode
-		}
-	}
-	if len(out) == 0 {
-		return nil
-	}
-	return out
 }
 
 func secondsDuration(seconds int) time.Duration {

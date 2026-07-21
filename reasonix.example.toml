@@ -167,12 +167,6 @@ stalled_warning_seconds = 900   # warn once per background job after this many q
 # # call_timeout_seconds = 600
 # # Raw MCP tool names with per-tool call timeouts.
 # # tool_timeout_seconds = { "generate_video" = 1800 }
-# # Local approval policy for this server's tools: auto|prompt|writes|approve.
-# # default_tools_approval_mode = "auto"
-# # Raw-tool overrides of the server default.
-# # tools = { "delete_all" = { approval_mode = "prompt" } }
-# # Who resolves prompt/writes/destructive reviews: user|auto_review.
-# # approvals_reviewer = "user"
 # # Enabled MCP servers connect automatically in the background after session
 # # start. Use /mcp or the desktop MCP panel to refresh, reconnect, or disable.
 

@@ -105,8 +105,7 @@ and DeepSeek prefix-cache–oriented design.
   ignored and removed on the next authorization-state write.
 - **MCP setup is now add-and-use.** Servers added by the user (Desktop, user
   config, legacy user import, or a user-installed plugin package) connect
-  immediately and permit all calls when no explicit
-  MCP approval policy is configured. Repository `reasonix.toml` / `.mcp.json`
+  immediately and permit all calls. Repository `reasonix.toml` / `.mcp.json`
   servers instead require one pre-launch confirmation for their exact stable
   identity, before a subprocess or network request exists. Host sandbox,
   read-root, and write-root policy changes do not invalidate server identity.
@@ -125,14 +124,10 @@ and DeepSeek prefix-cache–oriented design.
   `read_only_skill` when a child must be technically restricted to read-only;
   ordinary `task` / `run_skill` calls remain writer-capable and permission-gated
   in Plan. Installed MCP tools use the server's `readOnlyHint` for ordinary
-  permission and dispatch. Tools without the hint remain
-  writer-classified. New optional MCP-local fields
-  (`default_tools_approval_mode`, `tools.<raw>.approval_mode`, and
-  `approvals_reviewer`) override the new source-aware default when present. MCP tools
-  declaring `destructiveHint: true` require fresh human approval on every call
-  under `auto`, `prompt`, or `writes` — the configured reviewer is never
-  consulted for them — while an effective `approve` mode permits them directly.
-  Non-interactive sessions fail closed whenever a fresh review is required.
+  dispatch. Tools without the hint remain writer-classified. The retired
+  `default_tools_approval_mode`, `tools.<raw>.approval_mode`, and
+  `approvals_reviewer` fields are ignored and removed on the next save; installing
+  or explicitly authorizing a server now makes all of its tools directly usable.
 - **Read-only subagent research**: use `read_only_task` for generic isolated
   research in plan mode, or `read_only_skill` when the work should follow an
   existing skill. Both expose only read-only tools and safe foreground bash, do

@@ -179,51 +179,6 @@ func ReaderExecutionIntentFrom(ctx context.Context) (ReaderExecutionIntent, bool
 	return intent, ok
 }
 
-const (
-	MCPApprovalAuto    = "auto"
-	MCPApprovalPrompt  = "prompt"
-	MCPApprovalWrites  = "writes"
-	MCPApprovalApprove = "approve"
-
-	MCPApprovalReviewerUser       = "user"
-	MCPApprovalReviewerAutoReview = "auto_review"
-)
-
-// MCPApprovalPolicy exposes local execution policy for one MCP tool. These
-// values are intentionally not part of Schema(), so changing approval policy
-// does not alter the provider-visible tool contract or prompt-cache prefix.
-type MCPApprovalPolicy interface {
-	MCPApprovalMode() string
-	MCPApprovalReviewer() string
-}
-
-// NormalizeMCPApprovalMode returns the conservative effective MCP approval
-// mode. Empty keeps annotation-driven behavior; unknown values force a prompt.
-func NormalizeMCPApprovalMode(mode string) string {
-	switch strings.ToLower(strings.TrimSpace(mode)) {
-	case "":
-		return MCPApprovalAuto
-	case MCPApprovalAuto, MCPApprovalPrompt, MCPApprovalWrites, MCPApprovalApprove:
-		return strings.ToLower(strings.TrimSpace(mode))
-	default:
-		return MCPApprovalPrompt
-	}
-}
-
-// NormalizeMCPApprovalReviewer returns the configured reviewer. Empty preserves
-// legacy behavior at the controller boundary; unknown values fail back to the
-// human reviewer rather than silently enabling automatic review.
-func NormalizeMCPApprovalReviewer(reviewer string) string {
-	switch strings.ToLower(strings.TrimSpace(reviewer)) {
-	case "":
-		return ""
-	case MCPApprovalReviewerAutoReview, "guardian":
-		return MCPApprovalReviewerAutoReview
-	default:
-		return MCPApprovalReviewerUser
-	}
-}
-
 // SnipHint describes how context maintenance should shorten a stale, oversized
 // result this tool produced. Head/Tail are the line counts kept from each end
 // when the result has many lines; HeadChars/TailChars bound the kept runes when

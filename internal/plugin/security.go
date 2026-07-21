@@ -42,12 +42,10 @@ func buildSpecIdentity(ctx context.Context, s Spec) (mcplaunch.Identity, error) 
 		Server: s.Name, Transport: transport, ConfigSource: s.ConfigSource,
 		Dir: s.Dir, Args: append([]string(nil), launchArgs...),
 		EnvKeys: sortedMapKeys(s.Env), HeaderKeys: sortedMapKeys(s.Headers),
-		Network: s.ReaderSandbox.Network || s.WriterSandbox.Network,
-		WriteRoots: append(append(append([]string(nil), s.ReaderSandbox.WriteRoots...),
-			s.ReaderSandbox.AppContainerWriteRoots...), s.WriterSandbox.WriteRoots...),
-		ReadRoots: append(append([]string(nil), s.ReaderSandbox.ReadRoots...), s.WriterSandbox.ReadRoots...),
-		ForbidReadRoots: append(append([]string(nil), s.ReaderSandbox.ForbidReadRoots...),
-			s.WriterSandbox.ForbidReadRoots...),
+		Network:         s.Sandbox.Network,
+		WriteRoots:      append(append([]string(nil), s.Sandbox.WriteRoots...), s.Sandbox.AppContainerWriteRoots...),
+		ReadRoots:       append([]string(nil), s.Sandbox.ReadRoots...),
+		ForbidReadRoots: append([]string(nil), s.Sandbox.ForbidReadRoots...),
 		IsolationPolicy: isolationPolicy(s),
 		LauncherDigest:  s.LauncherDigest,
 	}
@@ -99,7 +97,7 @@ func isolationPolicy(s Spec) string {
 	if transport == "http" || transport == "streamable-http" || transport == "streamable_http" {
 		return "not_applicable"
 	}
-	if !s.ReaderSandbox.Enforce() && !s.WriterSandbox.Enforce() {
+	if !s.Sandbox.Enforce() {
 		return "off"
 	}
 	if sandbox.Available() {
@@ -260,7 +258,7 @@ func capabilityOf(s Spec, raw mcpTool, schema []byte) toolCapability {
 	return toolCapability{
 		RawName: raw.Name, ModelName: toolName(s.Name, visible), VisibleName: visible,
 		InputSchema: schema, OutputSchema: raw.OutputSchema,
-		ReadOnly: hinted || s.toolReadOnlyOverride(raw.Name, visible), Destructive: destructive,
+		ReadOnly: hinted, Destructive: destructive,
 	}
 }
 
@@ -377,10 +375,10 @@ func ReconcileCachedToolSafety(server, rawName string, cached CachedToolSafety, 
 		return live, fmt.Errorf("MCP server %q changed the security schema for tool %q; the current call was blocked before execution — retry so current policy is applied", server, rawName)
 	}
 	if cached.ReadOnly && !live.ReadOnly {
-		return live, fmt.Errorf("MCP server %q no longer marks tool %q as read-only; retry so Reasonix can apply writer approval before execution", server, rawName)
+		return live, fmt.Errorf("MCP server %q no longer marks tool %q as read-only; the current call was blocked before execution — retry so Reasonix can apply the current Plan/read-only safety boundary", server, rawName)
 	}
 	if !cached.Destructive && live.Destructive {
-		return live, fmt.Errorf("MCP server %q now marks tool %q as destructive; retry so Reasonix can apply the current approval policy before execution", server, rawName)
+		return live, fmt.Errorf("MCP server %q now marks tool %q as destructive; retry so Reasonix can apply the current Plan/read-only safety boundary before execution", server, rawName)
 	}
 	return live, nil
 }
@@ -399,7 +397,7 @@ func CachedToolSafetyForSpec(s Spec, rawName string) (CachedToolSafety, bool) {
 		cap := toolCapability{
 			RawName: cached.Name, ModelName: toolName(s.Name, visible), VisibleName: visible,
 			InputSchema: cached.Schema, OutputSchema: cached.OutputSchema,
-			ReadOnly:    cached.ReadOnly || s.toolReadOnlyOverride(cached.Name, visible),
+			ReadOnly:    cached.ReadOnly,
 			Destructive: cached.Destructive,
 		}
 		if cached.Name == rawName {

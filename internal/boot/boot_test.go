@@ -3710,18 +3710,6 @@ func TestPartitionByTier(t *testing.T) {
 	}
 }
 
-func TestPluginSpecsDeclareKnownCodeGraphReadTools(t *testing.T) {
-	specs := PluginSpecs([]config.PluginEntry{{Name: "codegraph"}})
-	if len(specs) != 1 {
-		t.Fatalf("PluginSpecs returned %d specs, want 1", len(specs))
-	}
-	for _, name := range []string{"codegraph_context", "codegraph_search", "context", "search"} {
-		if !specs[0].ReadOnlyToolNames[name] {
-			t.Fatalf("codegraph spec missing read-only override for %q: %+v", name, specs[0].ReadOnlyToolNames)
-		}
-	}
-}
-
 func TestPluginSpecsMapConfiguredCallTimeouts(t *testing.T) {
 	specs := PluginSpecsForRootWithOptions([]config.PluginEntry{{
 		Name:               "maker",
@@ -3753,21 +3741,6 @@ func TestPluginSpecsMapConfiguredCallTimeouts(t *testing.T) {
 	}
 }
 
-func TestPluginSpecsMapMCPApprovalPolicy(t *testing.T) {
-	specs := PluginSpecs([]config.PluginEntry{{
-		Name:                     "admin",
-		DefaultToolsApprovalMode: "writes",
-		Tools: map[string]config.MCPToolPolicy{
-			"wipe": {ApprovalMode: "prompt"},
-		},
-		ApprovalsReviewer: "auto_review",
-	}})
-	if len(specs) != 1 || specs[0].DefaultToolsApprovalMode != "writes" ||
-		specs[0].ToolApprovalModes["wipe"] != "prompt" || specs[0].ApprovalsReviewer != "auto_review" {
-		t.Fatalf("mapped MCP approval policy = %+v", specs)
-	}
-}
-
 func TestPluginSpecsMapMCPSourceDefaults(t *testing.T) {
 	specs := PluginSpecsForRootWithOptions([]config.PluginEntry{
 		{Name: "user", Source: config.MCPSourceUserConfig},
@@ -3776,10 +3749,10 @@ func TestPluginSpecsMapMCPSourceDefaults(t *testing.T) {
 	if len(specs) != 2 {
 		t.Fatalf("spec count = %d", len(specs))
 	}
-	if !specs[0].ImplicitApproval || specs[0].RequireLaunchApproval || specs[0].ConfigSource != string(config.MCPSourceUserConfig) {
+	if !specs[0].AuthorizationGranted || specs[0].RequireLaunchApproval || specs[0].ConfigSource != string(config.MCPSourceUserConfig) {
 		t.Fatalf("user source defaults = %+v", specs[0])
 	}
-	if specs[1].ImplicitApproval || !specs[1].RequireLaunchApproval || specs[1].ConfigSource != string(config.MCPSourceProjectConfig) {
+	if specs[1].AuthorizationGranted || !specs[1].RequireLaunchApproval || specs[1].ConfigSource != string(config.MCPSourceProjectConfig) {
 		t.Fatalf("project source defaults = %+v", specs[1])
 	}
 }
@@ -3854,16 +3827,6 @@ func TestPluginSpecsForRootDoesNotPinHTTPCodeGraph(t *testing.T) {
 	}
 	if specs[0].Dir != "" {
 		t.Fatalf("http codegraph Dir = %q, want empty", specs[0].Dir)
-	}
-}
-
-func TestPluginSpecsDoNotTrustCodeGraphToolsForOtherServers(t *testing.T) {
-	specs := PluginSpecs([]config.PluginEntry{{Name: "not-codegraph"}})
-	if len(specs) != 1 {
-		t.Fatalf("PluginSpecs returned %d specs, want 1", len(specs))
-	}
-	if specs[0].ReadOnlyToolNames["codegraph_context"] {
-		t.Fatalf("non-codegraph spec should not receive codegraph read-only overrides: %+v", specs[0].ReadOnlyToolNames)
 	}
 }
 

@@ -25,35 +25,6 @@ type mutableLazyTarget struct {
 	calls int
 }
 
-func TestLazyAuthorizedProjectPlaceholderUsesDirectApproval(t *testing.T) {
-	manager := mcplaunch.NewManager(filepath.Join(t.TempDir(), mcplaunch.StateFilename), t.TempDir())
-	spec := Spec{
-		Name: "project-http", Type: "http", URL: "https://mcp.example.com/mcp",
-		ConfigSource: "project_config", LaunchManager: manager, RequireLaunchApproval: true,
-	}
-	if err := AuthorizeSpecLaunch(context.Background(), spec); err != nil {
-		t.Fatalf("AuthorizeSpecLaunch: %v", err)
-	}
-	cs := &CachedSchema{Tools: []CachedTool{{
-		Name: "write", Description: "Write data.", Schema: json.RawMessage(`{"type":"object"}`),
-	}}}
-	host := NewHost()
-	defer host.Close()
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	tools := LazyToolset(spec, cs, host, tool.NewRegistry(), ctx, false)
-	if len(tools) != 1 {
-		t.Fatalf("lazy tools = %d, want 1", len(tools))
-	}
-	policy, ok := tools[0].(tool.MCPApprovalPolicy)
-	if !ok {
-		t.Fatalf("lazy project tool %T does not expose MCP approval policy", tools[0])
-	}
-	if got := policy.MCPApprovalMode(); got != tool.MCPApprovalApprove {
-		t.Fatalf("lazy authorized project approval = %q, want direct approval", got)
-	}
-}
-
 func (t *mutableLazyTarget) Name() string            { return t.name }
 func (t *mutableLazyTarget) Description() string     { return "writer test target" }
 func (t *mutableLazyTarget) Schema() json.RawMessage { return json.RawMessage(`{"type":"object"}`) }
@@ -414,49 +385,11 @@ func TestLazyCacheHitStartupTimeoutCanRetry(t *testing.T) {
 	}
 }
 
-func TestLazyToolsetAppliesSpecReadOnlyOverrideToCachedTools(t *testing.T) {
-	redirectCache(t)
-	spec := helperSpec()
-	spec.ReadOnlyToolNames = map[string]bool{"echo": true}
-	writeMockCache(t, spec)
-
-	cs, ok := LoadCachedSchema(spec.Name, SpecFingerprint(spec))
-	if !ok {
-		t.Fatal("LoadCachedSchema: miss right after save (sanity)")
-	}
-
-	host := NewHost()
-	defer host.Close()
-	reg := tool.NewRegistry()
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	tools := LazyToolset(spec, cs, host, reg, ctx, false)
-	byName := map[string]tool.Tool{}
-	for _, tl := range tools {
-		byName[tl.Name()] = tl
-	}
-	echo := byName["mcp__mock__echo"]
-	if echo == nil {
-		t.Fatalf("mcp__mock__echo missing from %v", byName)
-	}
-	if !echo.ReadOnly() {
-		t.Fatal("lazy cached echo should use the spec read-only override")
-	}
-	zed := byName["mcp__mock__zed"]
-	if zed == nil {
-		t.Fatalf("mcp__mock__zed missing from %v", byName)
-	}
-	if zed.ReadOnly() {
-		t.Fatal("lazy cached zed should keep cached non-read-only status")
-	}
-}
-
 func TestLazyToolsetInheritsInstalledServerReaderAuthorization(t *testing.T) {
 	redirectCache(t)
 	spec := helperSpec()
 	spec.LaunchManager = mcplaunch.NewManager(filepath.Join(t.TempDir(), mcplaunch.StateFilename), t.TempDir())
-	spec.ImplicitApproval = true
+	spec.AuthorizationGranted = true
 	if err := SaveCachedSchema(spec.Name, CachedSchema{
 		SpecHash: SpecFingerprint(spec),
 		Tools: []CachedTool{{
@@ -1011,7 +944,7 @@ func TestLazyToolPromotesLiveDestructiveHintBeforeExecution(t *testing.T) {
 
 	out, err := lazy.Execute(context.Background(), nil)
 	if err != nil || out != "executed" || target.calls != 1 {
-		t.Fatalf("second Execute = (%q,%v), calls=%d, want execution after approval retry", out, err, target.calls)
+		t.Fatalf("second Execute = (%q,%v), calls=%d, want execution after metadata refresh retry", out, err, target.calls)
 	}
 }
 
@@ -1028,7 +961,7 @@ func TestLazyToolDemotesStaleReaderBeforeExecution(t *testing.T) {
 		shared: shared, name: name, rawName: "mutate", readOnly: true, hasCache: true,
 	}
 
-	if out, err := lazy.Execute(context.Background(), nil); err == nil || !strings.Contains(err.Error(), "writer approval") || out != "" {
+	if out, err := lazy.Execute(context.Background(), nil); err == nil || !strings.Contains(err.Error(), "Plan/read-only safety boundary") || out != "" {
 		t.Fatalf("first Execute = (%q,%v), want retry before writer execution", out, err)
 	}
 	if target.calls != 0 || lazy.ReadOnly() {

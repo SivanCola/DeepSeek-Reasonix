@@ -4,7 +4,7 @@ import { asArray } from "../lib/array";
 import { app, openExternal } from "../lib/bridge";
 import { useT } from "../lib/i18n";
 import { mcpServerLifecycleActions, mcpServerRetryableFromAvailableList } from "../lib/mcpServerLifecycle";
-import type { CapabilitiesView, MCPApprovalMode, MCPApprovalsReviewer, MCPServerInput, MCPToolPolicy, PluginAgentView, PluginCommandView, PluginCompatibilityIssue, PluginHookView, PluginInstallOptions, PluginMCPServerView, PluginSkillView, PluginView, ServerView, SkillRootSkillView, SkillRootView, SkillsSettingsView, SkillView, TabMeta } from "../lib/types";
+import type { CapabilitiesView, MCPServerInput, PluginAgentView, PluginCommandView, PluginCompatibilityIssue, PluginHookView, PluginInstallOptions, PluginMCPServerView, PluginSkillView, PluginView, ServerView, SkillRootSkillView, SkillRootView, SkillsSettingsView, SkillView, TabMeta } from "../lib/types";
 import { InlineConfirmButton } from "./InlineConfirmButton";
 import { ResizableDrawer } from "./ResizableDrawer";
 import { Tooltip } from "./Tooltip";
@@ -2285,9 +2285,6 @@ type MCPServerEditorDraft = {
 	autoStart?: boolean;
 	callTimeoutSeconds?: number;
 	toolTimeoutSeconds?: Record<string, number>;
-	defaultToolsApprovalMode?: MCPApprovalMode | "";
-	tools?: Record<string, MCPToolPolicy>;
-	approvalsReviewer?: MCPApprovalsReviewer | "";
 };
 
 type MCPServerJSONError = "invalid" | "single" | "name" | "required" | "unsupported";
@@ -2490,9 +2487,6 @@ function mcpServerEditorDraft(server?: ServerView): MCPServerEditorDraft {
 		autoStart: server?.autoStart,
 		callTimeoutSeconds: server?.callTimeoutSeconds,
 		toolTimeoutSeconds: server?.toolTimeoutSeconds ? { ...server.toolTimeoutSeconds } : undefined,
-		defaultToolsApprovalMode: server?.defaultToolsApprovalMode,
-		tools: server?.toolPolicies ? { ...server.toolPolicies } : undefined,
-		approvalsReviewer: server?.approvalsReviewer,
 	};
 }
 
@@ -2512,9 +2506,6 @@ function mcpServerDraftInput(draft: MCPServerEditorDraft): MCPServerInput {
 		autoStart: draft.autoStart ?? null,
 		callTimeoutSeconds: draft.callTimeoutSeconds ?? null,
 		toolTimeoutSeconds: draft.toolTimeoutSeconds ?? null,
-		defaultToolsApprovalMode: draft.defaultToolsApprovalMode ?? null,
-		tools: draft.tools ?? null,
-		approvalsReviewer: draft.approvalsReviewer ?? null,
 	};
 }
 
@@ -2531,9 +2522,6 @@ export function mcpServerDraftJSON(draft: MCPServerEditorDraft): string {
 	if (input.autoStart != null) entry.auto_start = input.autoStart;
 	if (input.callTimeoutSeconds != null) entry.call_timeout_seconds = input.callTimeoutSeconds;
 	if (input.toolTimeoutSeconds && Object.keys(input.toolTimeoutSeconds).length > 0) entry.tool_timeout_seconds = input.toolTimeoutSeconds;
-	if (input.defaultToolsApprovalMode != null) entry.default_tools_approval_mode = input.defaultToolsApprovalMode;
-	if (input.tools && Object.keys(input.tools).length > 0) entry.tools = input.tools;
-	if (input.approvalsReviewer != null) entry.approvals_reviewer = input.approvalsReviewer;
 	return JSON.stringify({ [input.name || "server-name"]: entry }, null, 2);
 }
 
@@ -2582,36 +2570,7 @@ export function withExplicitMCPClears(input: MCPServerInput): MCPServerInput {
 		autoStart: input.autoStart ?? true,
 		callTimeoutSeconds: input.callTimeoutSeconds ?? 0,
 		toolTimeoutSeconds: input.toolTimeoutSeconds ?? {},
-		defaultToolsApprovalMode: input.defaultToolsApprovalMode ?? "",
-		tools: input.tools ?? {},
-		approvalsReviewer: input.approvalsReviewer ?? "",
 	};
-}
-
-function approvalMode(value: unknown): MCPApprovalMode | undefined {
-	if (value == null || value === "") return undefined;
-	if (value === "auto" || value === "prompt" || value === "writes" || value === "approve") return value;
-	throw new Error("invalid" satisfies MCPServerJSONError);
-}
-
-function approvalsReviewer(value: unknown): MCPApprovalsReviewer | undefined {
-	if (value == null || value === "") return undefined;
-	if (value === "user" || value === "auto_review") return value;
-	throw new Error("invalid" satisfies MCPServerJSONError);
-}
-
-function mcpToolPolicies(value: unknown): Record<string, MCPToolPolicy> | undefined {
-	if (value == null) return undefined;
-	if (!isRecord(value)) throw new Error("invalid" satisfies MCPServerJSONError);
-	const out: Record<string, MCPToolPolicy> = {};
-	for (const [name, item] of Object.entries(value)) {
-		if (!name.trim() || !isRecord(item)) throw new Error("invalid" satisfies MCPServerJSONError);
-		assertSupportedKeys(item, ["approval_mode"]);
-		const mode = approvalMode(item.approval_mode);
-		if (!mode) throw new Error("invalid" satisfies MCPServerJSONError);
-		out[name] = { approval_mode: mode };
-	}
-	return out;
 }
 
 export function parseMCPServerJSON(raw: string, fixedName?: string, options?: { allowIncomplete?: boolean }): { input: MCPServerInput; draft: MCPServerEditorDraft } {
@@ -2661,9 +2620,6 @@ export function parseMCPServerJSON(raw: string, fixedName?: string, options?: { 
 	const autoStart = value.auto_start as boolean | undefined;
 	const callTimeoutSeconds = nonNegativeInteger(value.call_timeout_seconds);
 	const toolTimeoutSeconds = nonNegativeIntegerRecord(value.tool_timeout_seconds);
-	const defaultToolsApprovalMode = value.default_tools_approval_mode === "" ? "" : approvalMode(value.default_tools_approval_mode);
-	const tools = mcpToolPolicies(value.tools);
-	const reviewer = value.approvals_reviewer === "" ? "" : approvalsReviewer(value.approvals_reviewer);
 	const input: MCPServerInput = {
 		name: fixedName || name,
 		transport,
@@ -2675,9 +2631,6 @@ export function parseMCPServerJSON(raw: string, fixedName?: string, options?: { 
 		autoStart: autoStart ?? null,
 		callTimeoutSeconds: callTimeoutSeconds ?? null,
 		toolTimeoutSeconds: toolTimeoutSeconds ?? null,
-		defaultToolsApprovalMode: defaultToolsApprovalMode ?? null,
-		tools: tools ?? null,
-		approvalsReviewer: reviewer ?? null,
 	};
 	return {
 		input,
@@ -2696,9 +2649,6 @@ export function parseMCPServerJSON(raw: string, fixedName?: string, options?: { 
 			autoStart,
 			callTimeoutSeconds,
 			toolTimeoutSeconds,
-			defaultToolsApprovalMode,
-			tools,
-			approvalsReviewer: reviewer,
 		},
 	};
 }

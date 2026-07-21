@@ -32,11 +32,11 @@ const completeMCP = parseMCPServerJSON(completeMCPJSON);
 ok(completeMCP.input.transport === "http", "streamable-http should normalize to http");
 ok(completeMCP.input.autoStart === false, "advanced JSON should preserve auto_start=false");
 ok(completeMCP.input.callTimeoutSeconds === 45 && completeMCP.input.toolTimeoutSeconds?.wipe === 120, "advanced JSON should preserve timeouts");
-ok(completeMCP.input.defaultToolsApprovalMode === "writes" && completeMCP.input.tools?.wipe.approval_mode === "prompt", "advanced JSON should preserve approval modes");
-ok(completeMCP.input.approvalsReviewer === "auto_review", "advanced JSON should preserve the reviewer");
 const completeMCPRoundTrip = parseMCPServerJSON(mcpServerDraftJSON(completeMCP.draft));
-ok(completeMCPRoundTrip.input.transport === "http" && completeMCPRoundTrip.input.tools?.wipe.approval_mode === "prompt", "Form/JSON switching should preserve advanced fields");
-ok(!mcpServerDraftJSON(completeMCP.draft).includes("trusted_read_only_tools"), "Form/JSON switching should drop the removed reader setting");
+ok(completeMCPRoundTrip.input.transport === "http" && completeMCPRoundTrip.input.toolTimeoutSeconds?.wipe === 120, "Form/JSON switching should preserve connection fields");
+const normalizedMCPJSON = mcpServerDraftJSON(completeMCP.draft);
+ok(!normalizedMCPJSON.includes("trusted_read_only_tools"), "Form/JSON switching should drop the removed reader setting");
+ok(!normalizedMCPJSON.includes("approval_mode") && !normalizedMCPJSON.includes("approvals_reviewer"), "Form/JSON switching should drop retired MCP approval settings");
 let unsupportedMCPFieldRejected = false;
 try {
   parseMCPServerJSON(JSON.stringify({ admin: { command: "admin-mcp", unsupported: true } }));
@@ -54,8 +54,7 @@ try {
 ok(incompleteMCPRejected, "submitting incomplete MCP JSON must still require a command or URL");
 const incompleteMCPDraft = parseMCPServerJSON(incompleteMCPJSON, undefined, { allowIncomplete: true });
 ok(incompleteMCPDraft.draft.name === "admin" && incompleteMCPDraft.draft.command === "", "mode switching may recover an incomplete MCP draft for form editing");
-const clearedMCPPolicy = parseMCPServerJSON(JSON.stringify({ admin: { command: "admin-mcp", default_tools_approval_mode: "", approvals_reviewer: "" } }));
-ok(clearedMCPPolicy.input.defaultToolsApprovalMode === "" && clearedMCPPolicy.input.approvalsReviewer === "", "empty advanced policy values should clear saved overrides");
+parseMCPServerJSON(JSON.stringify({ admin: { command: "admin-mcp", default_tools_approval_mode: "", approvals_reviewer: "" } }));
 let nullToolTimeoutRejected = false;
 try {
   parseMCPServerJSON(JSON.stringify({ admin: { command: "admin-mcp", tool_timeout_seconds: { wipe: null } } }));
@@ -64,8 +63,8 @@ try {
 }
 ok(nullToolTimeoutRejected, "a null per-tool timeout must be rejected instead of silently clearing all timeouts");
 const sparseEdit = withExplicitMCPClears(parseMCPServerJSON(JSON.stringify({ admin: { command: "admin-mcp" } })).input);
-ok(sparseEdit.callTimeoutSeconds === 0 && sparseEdit.defaultToolsApprovalMode === "" && sparseEdit.approvalsReviewer === "", "editing an existing server with fields removed must clear those settings");
-ok(sparseEdit.autoStart === true && Object.keys(sparseEdit.toolTimeoutSeconds ?? { x: 1 }).length === 0 && Object.keys(sparseEdit.tools ?? { x: 1 }).length === 0, "removed collection fields must clear");
+ok(sparseEdit.callTimeoutSeconds === 0, "editing an existing server with fields removed must clear the timeout");
+ok(sparseEdit.autoStart === true && Object.keys(sparseEdit.toolTimeoutSeconds ?? { x: 1 }).length === 0, "removed timeout fields must clear");
 ok(sparseEdit.env === null && sparseEdit.headers === null, "absent env/headers must stay preserve-on-absent because their values are never seeded into the editor");
 
 const refusedRegistryError = [

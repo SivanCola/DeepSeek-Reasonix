@@ -69,28 +69,13 @@ type Spec struct {
 	// captured in a bounded buffer for failure diagnostics; nil keeps it out of
 	// the terminal so child logs cannot corrupt interactive UIs.
 	Stderr io.Writer
-	// ReadOnlyToolNames marks raw MCP tool names as read-only when a first-party
-	// integration must compensate for an older server that omits
-	// annotations.readOnlyHint. Normal MCP classification relies on server
-	// metadata plus installation authorization.
-	ReadOnlyToolNames map[string]bool
-	// DefaultToolsApprovalMode controls MCP approval when no raw-tool override
-	// exists: auto|prompt|writes|approve. Empty uses auto unless the composition
-	// root marks this explicitly user-authorized server for implicit approval.
-	DefaultToolsApprovalMode string
-	// ToolApprovalModes overrides approval behavior by raw server-local tool name.
-	ToolApprovalModes map[string]string
-	// ApprovalsReviewer selects user|auto_review for this server. Empty preserves
-	// legacy behavior: Guardian reviews ordinary Ask decisions, while destructive
-	// calls still require the user.
-	ApprovalsReviewer string
 	// LaunchManager owns exact project launch grants and mutable launcher locks.
 	// It never contributes to SpecFingerprint or provider-visible tool schemas.
 	LaunchManager *mcplaunch.Manager
 	// ConfigSource disambiguates otherwise identical server names coming from
 	// workspace config, a host transport, or a user-installed plugin package.
 	ConfigSource          string
-	ImplicitApproval      bool
+	AuthorizationGranted  bool
 	RequireLaunchApproval bool
 	// LaunchArgs and launcher metadata are host-local immutable resolutions for
 	// mutable package launchers. LauncherIdentityArgs is the same exact package
@@ -103,11 +88,11 @@ type Spec struct {
 	LauncherLocator         string
 	LauncherResolvedVersion string
 	LauncherDigest          string
-	// ReaderSandbox and WriterSandbox describe host isolation. The persistent stdio process runs with WriterSandbox
-	// so one stateful session is preserved across reads and writes.
-	ReaderSandbox sandbox.Spec
-	WriterSandbox sandbox.Spec
-	StateDir      string
+	// Sandbox isolates the persistent MCP process. One process serves both reads
+	// and writes, so separate reader/writer specs created configuration without
+	// changing the actual runtime boundary.
+	Sandbox  sandbox.Spec
+	StateDir string
 	// StripRawPrefix, when non-empty, removes this prefix from each MCP tool's
 	// raw name before namespacing. For example, StripRawPrefix="server_" turns
 	// "server_search" into "search", yielding "mcp__search__search" instead of
@@ -1159,9 +1144,9 @@ func applyEstablishedLaunchGrant(s Spec, identity string) (Spec, error) {
 		return s, &launchApprovalError{server: s.Name, changed: changed}
 	}
 	// A matching exact-identity launch grant is the user's authorization for
-	// this project server. Calls proceed like an explicit install;
-	// explicit policies still override the source-aware approval default.
-	s.ImplicitApproval = true
+	// this project server. Calls proceed like an explicit install, while global
+	// deny rules and execution safety boundaries remain authoritative.
+	s.AuthorizationGranted = true
 	return s, nil
 }
 
@@ -1194,7 +1179,7 @@ func ResolveStoredAuthorization(ctx context.Context, s Spec) Spec {
 // authorizes the server, while read-only/destructive classification remains a
 // live per-tool safety fact.
 func (s Spec) ServerAuthorized() bool {
-	return s.ImplicitApproval && s.LaunchManager != nil
+	return s.AuthorizationGranted && s.LaunchManager != nil
 }
 
 // newTransport builds the transport for a spec's declared type. Empty / unknown
@@ -1353,32 +1338,6 @@ type mcpTool struct {
 		ReadOnlyHint    bool `json:"readOnlyHint"`
 		DestructiveHint bool `json:"destructiveHint"`
 	} `json:"annotations"`
-}
-
-// toolReadOnlyOverride keeps first-party and internal profile overrides useful
-// when an older MCP server omits readOnlyHint.
-func (s Spec) toolReadOnlyOverride(rawName, visibleName string) bool {
-	return s.ReadOnlyToolNames[rawName]
-}
-
-// ToolApprovalMode resolves the effective approval mode for one raw tool
-// name: an explicit per-tool override wins, an unset server default becomes
-// direct approval for user-authorized (implicit approval) sources, and the
-// normalized server default applies otherwise. Every approval surface,
-// including proxies outside this package, must use this resolution instead of
-// re-deriving the policy from Spec fields.
-func (s Spec) ToolApprovalMode(rawName string) string {
-	if mode := strings.TrimSpace(s.ToolApprovalModes[rawName]); mode != "" {
-		return tool.NormalizeMCPApprovalMode(mode)
-	}
-	if strings.TrimSpace(s.DefaultToolsApprovalMode) == "" && s.ImplicitApproval {
-		return tool.MCPApprovalApprove
-	}
-	return tool.NormalizeMCPApprovalMode(s.DefaultToolsApprovalMode)
-}
-
-func (s Spec) approvalReviewer() string {
-	return tool.NormalizeMCPApprovalReviewer(s.ApprovalsReviewer)
 }
 
 func (c *Client) listTools(ctx context.Context) ([]tool.Tool, error) {
@@ -1628,11 +1587,10 @@ type remoteTool struct {
 	schema                json.RawMessage
 	outputSchema          json.RawMessage
 	capabilityFingerprint string
-	declaredReadOnly      bool // server hint/legacy override, independent of server authorization
+	declaredReadOnly      bool // server hint, independent of server authorization
 	readOnly              bool // effective reader classification for this live snapshot
 	// destructive is the MCP destructiveHint. It takes precedence over a
-	// conflicting readOnlyHint; the effective MCP approval mode decides whether
-	// it needs a fresh review.
+	// conflicting readOnlyHint in Plan and strict read-only execution.
 	destructive bool
 }
 
@@ -1681,20 +1639,6 @@ func (t *remoteTool) ReadOnly() bool {
 func (t *remoteTool) MCPDestructiveHint() bool {
 	_, _, destructive, _ := t.securitySnapshot()
 	return destructive
-}
-
-func (t *remoteTool) MCPApprovalMode() string {
-	if t.client == nil {
-		return tool.MCPApprovalAuto
-	}
-	return t.client.spec.ToolApprovalMode(t.rawName)
-}
-
-func (t *remoteTool) MCPApprovalReviewer() string {
-	if t.client == nil {
-		return ""
-	}
-	return t.client.spec.approvalReviewer()
 }
 
 func (t *remoteTool) Schema() json.RawMessage {

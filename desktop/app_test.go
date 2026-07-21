@@ -7477,7 +7477,7 @@ url = %q
 			// This test isolates effective-source selection from the project launch
 			// approval flow, which has its own end-to-end coverage.
 			spec.RequireLaunchApproval = false
-			spec.ImplicitApproval = true
+			spec.AuthorizationGranted = true
 		},
 	})
 	app := NewApp()
@@ -8755,7 +8755,7 @@ func TestAddMCPServerPersistsRemoteHeaders(t *testing.T) {
 	t.Fatalf("stripe MCP missing from view: %+v", view)
 }
 
-func TestAddMCPServerPersistsCompleteAdvancedConfiguration(t *testing.T) {
+func TestAddMCPServerPersistsConnectionConfiguration(t *testing.T) {
 	isolateDesktopUserDirs(t)
 	dir := robustTempDir(t)
 	t.Chdir(dir)
@@ -8767,8 +8767,6 @@ func TestAddMCPServerPersistsCompleteAdvancedConfiguration(t *testing.T) {
 	defer app.activeCtrl().Close()
 	autoStart := false
 	callTimeout := 45
-	defaultMode := "writes"
-	reviewer := "auto_review"
 	_, err := app.AddMCPServer(MCPServerInput{
 		Name:               "admin",
 		Transport:          "streamable-http",
@@ -8778,11 +8776,6 @@ func TestAddMCPServerPersistsCompleteAdvancedConfiguration(t *testing.T) {
 		ToolTimeoutSeconds: map[string]int{
 			"wipe": 120,
 		},
-		DefaultToolsApprovalMode: &defaultMode,
-		ToolPolicies: map[string]config.MCPToolPolicy{
-			"wipe": {ApprovalMode: "prompt"},
-		},
-		ApprovalsReviewer: &reviewer,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -8794,17 +8787,13 @@ func TestAddMCPServerPersistsCompleteAdvancedConfiguration(t *testing.T) {
 	}
 	entry, ok := findPluginEntry(cfg.Plugins, "admin")
 	if !ok || entry.Type != "http" || entry.AutoStart == nil || *entry.AutoStart ||
-		entry.CallTimeoutSeconds != 45 || entry.ToolTimeoutSeconds["wipe"] != 120 ||
-		entry.DefaultToolsApprovalMode != "writes" || entry.Tools["wipe"].ApprovalMode != "prompt" ||
-		entry.ApprovalsReviewer != "auto_review" {
+		entry.CallTimeoutSeconds != 45 || entry.ToolTimeoutSeconds["wipe"] != 120 {
 		t.Fatalf("persisted advanced MCP entry = %+v, found=%v", entry, ok)
 	}
 
 	views := app.MCPServers()
 	if len(views) != 1 || views[0].Transport != "http" || views[0].AutoStart ||
-		views[0].CallTimeoutSeconds != 45 || views[0].ToolTimeoutSeconds["wipe"] != 120 ||
-		views[0].DefaultToolsApprovalMode != "writes" || views[0].ToolPolicies["wipe"].ApprovalMode != "prompt" ||
-		views[0].ApprovalsReviewer != "auto_review" {
+		views[0].CallTimeoutSeconds != 45 || views[0].ToolTimeoutSeconds["wipe"] != 120 {
 		t.Fatalf("advanced MCP ServerView = %+v", views)
 	}
 }
@@ -8820,23 +8809,17 @@ func TestUpdateMCPServerPreservesAbsentFieldsAndClearsExplicitOnes(t *testing.T)
 	app.setTestCtrl(control.New(control.Options{Host: plugin.NewHost()}), "")
 	defer app.activeCtrl().Close()
 	callTimeout := 45
-	defaultMode := "writes"
-	reviewer := "auto_review"
 	if _, err := app.AddMCPServer(MCPServerInput{
-		Name:                     "admin",
-		Transport:                "http",
-		URL:                      srv.URL,
-		CallTimeoutSeconds:       &callTimeout,
-		ToolTimeoutSeconds:       map[string]int{"wipe": 120},
-		DefaultToolsApprovalMode: &defaultMode,
-		ToolPolicies:             map[string]config.MCPToolPolicy{"wipe": {ApprovalMode: "prompt"}},
-		ApprovalsReviewer:        &reviewer,
+		Name:               "admin",
+		Transport:          "http",
+		URL:                srv.URL,
+		CallTimeoutSeconds: &callTimeout,
+		ToolTimeoutSeconds: map[string]int{"wipe": 120},
 	}); err != nil {
 		t.Fatal(err)
 	}
 
-	// An old frontend (or a partial payload) omits the new fields entirely:
-	// approval settings survive when an old frontend omits newer fields.
+	// An old frontend (or a partial payload) omits optional timeout fields.
 	if err := app.UpdateMCPServer("admin", MCPServerInput{Name: "admin", Transport: "http", URL: srv.URL}); err != nil {
 		t.Fatal(err)
 	}
@@ -8845,25 +8828,18 @@ func TestUpdateMCPServerPreservesAbsentFieldsAndClearsExplicitOnes(t *testing.T)
 		t.Fatal(err)
 	}
 	entry, ok := findPluginEntry(cfg.Plugins, "admin")
-	if !ok || entry.CallTimeoutSeconds != 45 || entry.ToolTimeoutSeconds["wipe"] != 120 ||
-		entry.DefaultToolsApprovalMode != "writes" || entry.Tools["wipe"].ApprovalMode != "prompt" ||
-		entry.ApprovalsReviewer != "auto_review" {
+	if !ok || entry.CallTimeoutSeconds != 45 || entry.ToolTimeoutSeconds["wipe"] != 120 {
 		t.Fatalf("absent input fields must preserve persisted values, entry = %+v, found=%v", entry, ok)
 	}
 
 	// Explicit zero values are the editor's clear semantics.
 	cleared := 0
-	emptyMode := ""
-	emptyReviewer := ""
 	if err := app.UpdateMCPServer("admin", MCPServerInput{
-		Name:                     "admin",
-		Transport:                "http",
-		URL:                      srv.URL,
-		CallTimeoutSeconds:       &cleared,
-		ToolTimeoutSeconds:       map[string]int{},
-		DefaultToolsApprovalMode: &emptyMode,
-		ToolPolicies:             map[string]config.MCPToolPolicy{},
-		ApprovalsReviewer:        &emptyReviewer,
+		Name:               "admin",
+		Transport:          "http",
+		URL:                srv.URL,
+		CallTimeoutSeconds: &cleared,
+		ToolTimeoutSeconds: map[string]int{},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -8872,9 +8848,7 @@ func TestUpdateMCPServerPreservesAbsentFieldsAndClearsExplicitOnes(t *testing.T)
 		t.Fatal(err)
 	}
 	entry, ok = findPluginEntry(cfg.Plugins, "admin")
-	if !ok || entry.CallTimeoutSeconds != 0 || len(entry.ToolTimeoutSeconds) != 0 ||
-		entry.DefaultToolsApprovalMode != "" || len(entry.Tools) != 0 ||
-		entry.ApprovalsReviewer != "" {
+	if !ok || entry.CallTimeoutSeconds != 0 || len(entry.ToolTimeoutSeconds) != 0 {
 		t.Fatalf("explicit empty fields must clear persisted values, entry = %+v, found=%v", entry, ok)
 	}
 }

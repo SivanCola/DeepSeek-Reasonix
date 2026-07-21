@@ -518,60 +518,32 @@ Reasonix 是一个 MCP 客户端。`[[plugins]]` 的 `type` 选择传输：`stdi
 
 普通配置流程现在只有一步：使用桌面端的“添加并连接”、`/mcp add`，或直接让 Reasonix
 安装一个 package、URL 或 `.mcp.json`。这次明确安装本身就是授权：server 会保存并在当前
-会话连接，现在和下次启动都不会再弹出第二套信任步骤。显式 deny 仍然优先；未配置高级审批
-覆盖时，包括声明 `destructiveHint` 的工具在内都直接执行。如需保留新鲜审查，可主动设置
-`auto`、`prompt` 或 `writes`。Plan 与只读 subagent 仍只暴露符合条件的工具身份。只有被动从仓库
+会话连接，现在和下次启动都不会再弹出第二套信任步骤。显式 deny 仍然优先；包括声明
+`destructiveHint` 的工具在内都直接执行。Plan 与只读 subagent 仍只暴露符合条件的工具身份。只有被动从仓库
 `reasonix.toml` 或 `.mcp.json` 发现的 server 会在第一次启动前，请用户确认一次精确命令或
 地址；Reasonix 会先记录该决定而不启动临时检查进程，然后只启动一次正式连接。内容不变时
 以后自动连接，发生变化时才重新确认。
 
 stdio server 从初始化到读写都复用同一个进程，因此浏览器等有状态 MCP 能保留会话和
 已打开页面。由于进程启动后无法按调用切换 OS 沙箱，这个共享进程始终使用该 server 的普通
-writer 沙箱；`readOnlyHint` 与只读 subagent 过滤属于调用分发策略，不再对应第二个按调用隔离
+进程沙箱；`readOnlyHint` 与只读 subagent 过滤属于调用分发策略，不再对应第二个按调用隔离
 的进程沙箱。
 
 工具以 `mcp__<server>__<tool>` 暴露给模型，与 Claude Code 一致；声明 MCP `readOnlyHint: true`
 的工具会参与并行调度并命中普通权限层的只读默认放行。用户安装 server，或首次确认仓库提供的
 精确 server 身份后，其非破坏性 reader 元数据即获得授权，这些工具会自动进入独立 planner 和
 只读研究 subagent，不再需要逐工具设置。没有 `readOnlyHint` 的工具仍按写工具处理。计划期间，内置 writer 仍走
-Permissions/Sandbox；已安装 MCP 与代理解析后的 MCP writer、destructive 目标和未信任
-reader 在任何审批前硬阻断，退出 Plan 后才恢复正常审批流程。
+Permissions/Sandbox；已安装 MCP 与代理解析后的 MCP writer、destructive 目标和未授权
+reader 在任何审批前硬阻断，退出 Plan 后即可直接使用。
 
-MCP `destructiveHint: true` 比只读分类更严格。在 `auto`、`prompt` 或 `writes` 下，即使工具
-同时声明 `readOnlyHint`、当前是 Auto/YOLO，或已经存在 allow 规则，每次破坏性调用仍需要
-全新的人工审批——Guardian、`auto_review`、自动/YOLO 与会话授权都不能代答。最终策略为
-`approve` 表示用户已经授权该 server 或工具，因此调用直接执行。
+安装 MCP server 本身就是授权决定。安装完成后，该 server 的所有工具都直接执行，不再存在
+server、raw tool、writer 或 destructive 的第二套审批设置；显式全局 deny 规则仍然优先。
+`readOnlyHint` 与 `destructiveHint` 只作为内部事实，用于并行调度、Plan 限制、严格只读
+subagent 和缓存到实时能力漂移检查，不增加用户配置。
 
-`approvals_reviewer = "auto_review"` 只把真正需要审查的调用——`prompt` 模式、`writes`
-命中的写调用、以及全局策略本会 Ask 的 `auto` 调用——交给当前会话的 Guardian；成功给出的
-allow/deny 结论立即最终生效。reviewer 缺失、超时、失败或未给出结论时，调用降级为一次
-全新的人工审批：自动/YOLO、计划批准窗口与会话授权都不能代答。非交互运行和子代理在所有
-需要 reviewer 的场景下直接拒绝。
-
-server 和 raw tool 的审批策略只存在于本地，不会改变发给模型的 schema：
-
-```toml
-[[plugins]]
-name = "github"
-command = "github-mcp"
-default_tools_approval_mode = "writes" # auto|prompt|writes|approve
-tools = { "delete_repository" = { approval_mode = "prompt" } }
-approvals_reviewer = "auto_review"     # user|auto_review
-```
-
-用户已授权的 server 若省略这些高级审批字段，所有调用都会直接放行。显式配置后，`auto`
-交给全局 Ask/Auto/YOLO；`prompt` 每次调用都审查；`writes` 只审查写工具；`approve`
-直接放行所有调用，包括 destructive 调用。显式 deny 永远优先；除 `approve` 外，
-`destructiveHint` 会在其余模式下强制一次新审查。`tools` 中的 raw tool 配置覆盖 server 默认值。
-`trusted_read_only_tools` 已删除；旧文件包含该字段时仍可加载，但 Reasonix 会忽略它，并在下次
-保存配置时移除。
-
-两条边界值得注意：`writes` 信任 server 自己的只读分类，把写工具谎报成 `readOnlyHint`
-的 server 会绕过这层审查——对不可信的 server 请用 `prompt`。启用 Guardian 且未配置
-`approvals_reviewer` 时，`prompt`/`writes` 的审查保留 legacy 路由：Guardian 预审通过即可放行、
-不再弹人工提示；要求每次都由人决定时请显式配置 `approvals_reviewer = "user"`。项目
-`.mcp.json` 会把这些字段并入会话，所以像审代码一样审查别人仓库里的 `approve`/`writes`
-策略——显式 deny 规则仍然生效；最终策略不是 `approve` 时，`destructiveHint` 审查仍然生效。
+旧的 `trusted_read_only_tools`、`default_tools_approval_mode`、
+`tools.<raw>.approval_mode` 与 `approvals_reviewer` 字段在加载旧文件时会被忽略，并在 Reasonix
+下次保存该 MCP 条目时自动移除。
 
 服务器的 **prompts** 会暴露成 `/mcp__<server>__<prompt>` 斜杠命令（命令后空格分隔参
 数）；**resources** 通过在消息里写 `@<server>:<uri>` 拉入；`/mcp` 列出已连接服务器及
@@ -786,8 +758,7 @@ reader 仍可按需启动。严格只读入口一览：
 在严格只读子会话内：`use_capability` 在 Commit/permission/hook/执行前会对解析出的
 真实目标再次校验；未连接且符合条件的 MCP reader 可从当前 schema cache 按需启动，
 initialize/tools-list 后会在 `tools/call` 前核对缓存与 live security 指纹；发现 schema 或
-safety 漂移则零执行，普通重试会使用当前策略。
-`auto_review` 在这里不能提升权限；需要本地人工审批的 reader 直接 fail-closed。
+safety 漂移则零执行，普通重试会使用当前策略。未授权 server 无法在这里提升权限。
 这一层比主 Plan 更严格：Plan 在整个规划阶段硬阻断 MCP writer/destructive 目标——
 审批也不能放行，退出 Plan 后才恢复——内置 writer 仍走 Permissions/Sandbox，
 而严格只读子会话根本不暴露 writer。

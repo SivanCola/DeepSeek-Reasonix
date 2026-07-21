@@ -118,11 +118,6 @@ type Messages struct {
 	MemoryApprovalSaveUpdate               string // subject prefix for remember approval
 	MemoryApprovalBodyLabel                string // label before the body excerpt in remember approval
 	MemoryApprovalArchiveFmt               string // subject for forget approval, %q = memory name
-	MCPDestructiveSubjectFmt               string // subject for destructive MCP approval, target
-	MCPDestructiveReason                   string // reason for destructive MCP approval
-	MCPDestructiveDeclined                 string // model-facing denial after destructive MCP rejection
-	MCPReviewerUnavailableReason           string // reason for fresh approval when auto_review is unavailable
-	MCPReviewerUnavailableDeclined         string // model-facing denial after reviewer-unavailable rejection
 	PlanModeBashTrustSubjectFmt            string // subject for bash read-only prefix trust approval, prefix + command
 	PlanModeBashTrustReason                string // reason for bash read-only prefix trust approval
 	PlanModeBashTrustDeclined              string // model-facing denial after bash read-only prefix rejection

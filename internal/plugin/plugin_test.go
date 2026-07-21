@@ -491,53 +491,11 @@ func TestClientListToolsPropagatesReadOnlyAndDestructiveHints(t *testing.T) {
 	}
 }
 
-func TestMCPApprovalPolicyDoesNotChangeProviderSchemas(t *testing.T) {
-	schema := json.RawMessage(`{"type":"object","properties":{"target":{"type":"string"}}}`)
-	makeSchemas := func(spec Spec) []byte {
-		client := &Client{name: "admin", spec: spec}
-		reg := tool.NewRegistry()
-		reg.Add(&remoteTool{
-			client: client, name: "mcp__admin__wipe", rawName: "wipe",
-			desc: "wipe target", schema: schema,
-		})
-		out, err := json.Marshal(reg.Schemas())
-		if err != nil {
-			t.Fatal(err)
-		}
-		return out
-	}
-	baseline := makeSchemas(Spec{Name: "admin"})
-	configured := makeSchemas(Spec{
-		Name: "admin", DefaultToolsApprovalMode: "writes",
-		ToolApprovalModes: map[string]string{"wipe": "prompt"},
-		ApprovalsReviewer: "auto_review", ImplicitApproval: true,
-	})
-	if !bytes.Equal(baseline, configured) {
-		t.Fatalf("provider schemas changed with local approval policy:\nbaseline=%s\nconfigured=%s", baseline, configured)
-	}
-}
-
-func TestUserAuthorizedMCPDefaultsToDirectApprovalWithoutChangingOverrides(t *testing.T) {
-	spec := Spec{Name: "user-server", ImplicitApproval: true}
-	if got := spec.ToolApprovalMode("write"); got != tool.MCPApprovalApprove {
-		t.Fatalf("implicit user approval mode = %q, want approve", got)
-	}
-	spec.ToolApprovalModes = map[string]string{"write": "prompt"}
-	if got := spec.ToolApprovalMode("write"); got != tool.MCPApprovalPrompt {
-		t.Fatalf("explicit per-tool policy = %q, want prompt", got)
-	}
-	spec.ToolApprovalModes = nil
-	spec.DefaultToolsApprovalMode = "writes"
-	if got := spec.ToolApprovalMode("write"); got != tool.MCPApprovalWrites {
-		t.Fatalf("explicit server policy = %q, want writes", got)
-	}
-}
-
 func TestUserAuthorizedMCPHintedReaderIsAuthorizedForSubagents(t *testing.T) {
 	manager := mcplaunch.NewManager(filepath.Join(t.TempDir(), mcplaunch.StateFilename), t.TempDir())
 	client := &Client{
 		name: "mock", t: &countingToolsTransport{},
-		spec: Spec{Name: "mock", LaunchManager: manager, ImplicitApproval: true},
+		spec: Spec{Name: "mock", LaunchManager: manager, AuthorizationGranted: true},
 	}
 	tools, err := client.listTools(context.Background())
 	if err != nil {
@@ -556,67 +514,10 @@ func TestUserAuthorizedMCPHintedReaderIsAuthorizedForSubagents(t *testing.T) {
 	}
 }
 
-func TestSpecReadOnlyToolNamesMarksUnhintedToolsReadOnly(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	spec := Spec{
-		Name:    "mock",
-		Command: os.Args[0],
-		Args:    []string{"-test.run=TestHelperProcess", "--"},
-		Env:     map[string]string{"GO_WANT_HELPER_PROCESS": "1"},
-		ReadOnlyToolNames: map[string]bool{
-			"echo": true,
-		},
-	}
-
-	host, tools, err := StartAll(ctx, []Spec{spec})
-	if err != nil {
-		t.Fatalf("StartAll: %v", err)
-	}
-	defer host.Close()
-
-	byName := map[string]tool.Tool{}
-	for _, tl := range tools {
-		byName[tl.Name()] = tl
-	}
-	echo := byName["mcp__mock__echo"]
-	if echo == nil {
-		t.Fatalf("mcp__mock__echo missing from %v", byName)
-	}
-	if !echo.ReadOnly() {
-		t.Fatal("read-only override did not mark unhinted echo tool read-only")
-	}
-	zed := byName["mcp__mock__zed"]
-	if zed == nil {
-		t.Fatalf("mcp__mock__zed missing from %v", byName)
-	}
-	if zed.ReadOnly() {
-		t.Fatal("read-only override should not mark non-listed tools read-only")
-	}
-}
-
-func TestApplyKnownReadOnlyOverridesMarksCodeGraphReadTools(t *testing.T) {
-	got := ApplyKnownReadOnlyOverrides(Spec{Name: "codegraph", ReadOnlyToolNames: map[string]bool{"custom": true}})
-	for _, name := range []string{"custom", "codegraph_context", "codegraph_search", "context", "search"} {
-		if !got.ReadOnlyToolNames[name] {
-			t.Fatalf("codegraph read-only override missing %q: %+v", name, got.ReadOnlyToolNames)
-		}
-	}
-
-	other := ApplyKnownReadOnlyOverrides(Spec{Name: "not-codegraph"})
-	if other.ReadOnlyToolNames["codegraph_context"] {
-		t.Fatalf("non-codegraph spec should not receive codegraph overrides: %+v", other.ReadOnlyToolNames)
-	}
-}
-
 func TestApplyKnownOverridesPinsCodeGraphStdioToWorkspace(t *testing.T) {
 	got := ApplyKnownOverrides(Spec{Name: "codegraph"}, "/workspace")
 	if got.Dir != "/workspace" {
 		t.Fatalf("codegraph stdio Dir = %q, want workspace root", got.Dir)
-	}
-	if !got.ReadOnlyToolNames["codegraph_search"] {
-		t.Fatalf("codegraph read-only override missing: %+v", got.ReadOnlyToolNames)
 	}
 	if got.Env[codeGraphDaemonIdleTimeoutEnv] != codeGraphDaemonIdleTimeoutDefaultMS {
 		t.Fatalf("codegraph daemon idle timeout env = %q, want %s; env=%v", got.Env[codeGraphDaemonIdleTimeoutEnv], codeGraphDaemonIdleTimeoutDefaultMS, got.Env)
@@ -1353,10 +1254,10 @@ func TestNormalizeIdentityURLPreservesEndpointSemantics(t *testing.T) {
 func TestWorkspaceIdentityIgnoresHostPolicyChanges(t *testing.T) {
 	base := Spec{
 		Name: "custom", Command: os.Args[0], ConfigSource: "workspace_config",
-		ReaderSandbox: sandbox.Spec{Mode: "enforce", ForbidReadRoots: []string{"/secret/a"}},
+		Sandbox: sandbox.Spec{Mode: "enforce", ForbidReadRoots: []string{"/secret/a"}},
 	}
 	changed := base
-	changed.ReaderSandbox.ForbidReadRoots = []string{"/secret/b"}
+	changed.Sandbox.ForbidReadRoots = []string{"/secret/b"}
 	a, err := specIdentityFingerprint(context.Background(), base)
 	if err != nil {
 		t.Fatal(err)
@@ -1404,13 +1305,6 @@ func TestProjectLaunchApprovalBlocksBeforeProcessStart(t *testing.T) {
 	if len(tools) == 0 {
 		t.Fatal("authorized project server returned no tools")
 	}
-	policy, ok := tools[0].(tool.MCPApprovalPolicy)
-	if !ok {
-		t.Fatalf("authorized project tool %T does not expose MCP approval policy", tools[0])
-	}
-	if got := policy.MCPApprovalMode(); got != tool.MCPApprovalApprove {
-		t.Fatalf("authorized project tool approval = %q, want direct approval", got)
-	}
 	host.Close()
 	if got := readHelperCounter(t, startCount); got != 1 {
 		t.Fatalf("post-authorization starts = %d, want 1", got)
@@ -1453,13 +1347,6 @@ func TestAuthorizeSpecLaunchRecordsInstallConsentWithoutStartingServer(t *testin
 	defer host.Close()
 	if len(tools) == 0 {
 		t.Fatal("installed project server returned no tools")
-	}
-	policy, ok := tools[0].(tool.MCPApprovalPolicy)
-	if !ok {
-		t.Fatalf("installed project tool %T does not expose MCP approval policy", tools[0])
-	}
-	if got := policy.MCPApprovalMode(); got != tool.MCPApprovalApprove {
-		t.Fatalf("installed project tool approval = %q, want direct approval", got)
 	}
 }
 
@@ -1519,59 +1406,6 @@ func TestAuthorizeProjectSpecLaunchLocksMutableLauncherWithoutStartingServer(t *
 	}
 }
 
-// TestReadOnlyOverrideDoesNotChangeModelVisibleSchema locks the cache invariant
-// behind the backward-compatible MCP read-only override: classification may
-// change ReadOnly, but must not alter the provider-visible name or input schema.
-func TestReadOnlyOverrideDoesNotChangeModelVisibleSchema(t *testing.T) {
-	startMockEcho := func(spec Spec) (*Host, map[string]tool.Tool) {
-		t.Helper()
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		t.Cleanup(cancel)
-		spec.Name = "mock"
-		spec.Command = os.Args[0]
-		spec.Args = []string{"-test.run=TestHelperProcess", "--"}
-		spec.Env = map[string]string{"GO_WANT_HELPER_PROCESS": "1"}
-		host, tools, err := StartAll(ctx, []Spec{spec})
-		if err != nil {
-			t.Fatalf("StartAll: %v", err)
-		}
-		t.Cleanup(func() { host.Close() })
-		byName := map[string]tool.Tool{}
-		for _, tl := range tools {
-			byName[tl.Name()] = tl
-		}
-		return host, byName
-	}
-
-	_, baseTools := startMockEcho(Spec{})
-	_, overriddenTools := startMockEcho(Spec{ReadOnlyToolNames: map[string]bool{"echo": true}})
-
-	base, ok := baseTools["mcp__mock__echo"]
-	if !ok {
-		t.Fatalf("mcp__mock__echo missing from base tools %v", baseTools)
-	}
-	overriddenEcho, ok := overriddenTools["mcp__mock__echo"]
-	if !ok {
-		t.Fatalf("mcp__mock__echo missing from overridden tools %v", overriddenTools)
-	}
-
-	// The model-visible surface (name + schema bytes) must be byte-identical.
-	if base.Name() != overriddenEcho.Name() {
-		t.Fatalf("override changed model-visible tool name: %q vs %q", base.Name(), overriddenEcho.Name())
-	}
-	if got, want := string(overriddenEcho.Schema()), string(base.Schema()); got != want {
-		t.Fatalf("override changed model-visible schema bytes:\n override=%s\n     base=%s", got, want)
-	}
-
-	// The legacy override only flips the read-only classification.
-	if base.ReadOnly() {
-		t.Fatal("base echo should not be read-only without a hint")
-	}
-	if !overriddenEcho.ReadOnly() {
-		t.Fatal("overridden echo should be marked read-only")
-	}
-}
-
 func TestReaderIntentRefusesDispatchAfterSafetyDrift(t *testing.T) {
 	stateDir := t.TempDir()
 	startCount := filepath.Join(t.TempDir(), "starts")
@@ -1583,7 +1417,7 @@ func TestReaderIntentRefusesDispatchAfterSafetyDrift(t *testing.T) {
 			"GO_WANT_HELPER_START_COUNT": startCount,
 			"GO_WANT_HELPER_CALL_COUNT":  callCount,
 		},
-		StateDir: stateDir, ImplicitApproval: true,
+		StateDir: stateDir, AuthorizationGranted: true,
 		LaunchManager: mcplaunch.NewManager(filepath.Join(t.TempDir(), mcplaunch.StateFilename), t.TempDir()),
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -1608,7 +1442,7 @@ func TestReaderIntentRefusesDispatchAfterSafetyDrift(t *testing.T) {
 	rt.client.toolsMu.Unlock()
 	readerCtx := tool.WithReaderExecutionIntent(ctx, rt.MCPCapabilityFingerprint())
 	if _, _, err := rt.ExecuteWithImages(readerCtx, json.RawMessage(`{"msg":"ok","z":"ok"}`)); err != nil {
-		t.Fatalf("trusted reader call failed: %v", err)
+		t.Fatalf("authorized reader call failed: %v", err)
 	}
 	if got := readHelperCounter(t, startCount); got != 1 {
 		t.Fatalf("reader call spawned extra processes: starts=%d", got)
@@ -1651,7 +1485,7 @@ func TestReaderIntentRefusesDispatchAfterSafetyDrift(t *testing.T) {
 	rt.readOnly = false
 	rt.client.toolsMu.Unlock()
 	if _, _, err := rt.ExecuteWithImages(ctx, json.RawMessage(`{"msg":"writer","z":"ok"}`)); err != nil {
-		t.Fatalf("approved writer call failed: %v", err)
+		t.Fatalf("authorized writer call failed: %v", err)
 	}
 	if got := readHelperCounter(t, startCount); got != 1 {
 		t.Fatalf("writer call starts = %d, want one persistent process", got)

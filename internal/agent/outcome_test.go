@@ -22,6 +22,7 @@ func (t mcpAliasTool) MCPServerName() string      { return t.server }
 func (t mcpAliasTool) MCPRawToolName() string     { return t.raw }
 func (t mcpAliasTool) MCPVisibleToolName() string { return t.visible }
 func (t mcpAliasTool) MCPPackageName() string     { return t.pkg }
+func (t mcpAliasTool) MCPServerAuthorized() bool  { return true }
 
 // TestFailedCallsSurfaceError guards the bug where a failed tool call (an unknown
 // tool, e.g. a hallucinated "find", or a permission-denied writer) was reported
@@ -65,8 +66,8 @@ func TestPortableMCPCallUsesCanonicalSecurityIdentity(t *testing.T) {
 	if out.errMsg != "" {
 		t.Fatalf("portable MCP call failed: %+v", out)
 	}
-	if len(gate.calls) != 1 || gate.calls[0].name != "mcp__figma__get_design_context" {
-		t.Fatalf("permission gate calls = %v, want canonical MCP name", gate.calls)
+	if len(gate.denyCalls) != 1 || gate.denyCalls[0] != "mcp__figma__get_design_context" {
+		t.Fatalf("permission deny checks = %v, want canonical MCP name", gate.denyCalls)
 	}
 }
 

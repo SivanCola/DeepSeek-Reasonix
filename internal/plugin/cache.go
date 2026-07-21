@@ -69,7 +69,7 @@ type CachedSchema struct {
 // CachedTool mirrors the subset of an MCP tool definition we need to register
 // a placeholder before the real handshake completes: Name (raw, server-local),
 // Description (model-visible), Schema (raw JSON for input validation),
-// ReadOnly and Destructive (drive local approval policy).
+// ReadOnly and Destructive (drive Plan/read-only safety classification).
 type CachedTool struct {
 	Name         string          `json:"name"`
 	Description  string          `json:"description"`
@@ -112,9 +112,6 @@ func specFingerprintForURL(s Spec, urlValue string) string {
 	}
 	writeKeys(h, "env", s.Env)
 	writeKeys(h, "headers", s.Headers)
-	if len(s.ReadOnlyToolNames) > 0 {
-		writeBoolKV(h, "read_only_tool", s.ReadOnlyToolNames)
-	}
 	return hex.EncodeToString(h.Sum(nil))
 }
 

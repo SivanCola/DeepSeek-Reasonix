@@ -27,7 +27,7 @@ type UseCapabilityTool struct {
 	// timeout. nil falls back to context.Background() for direct/test use.
 	lifeCtx context.Context
 	// specs are the boot-converted plugin specs (env expansion, workspace
-	// overrides, timeouts, and read-only overrides). The proxy never rebuilds
+	// overrides and timeouts). The proxy never rebuilds
 	// specs from raw config entries — that would fork the conversion logic.
 	specs    []plugin.Spec
 	registry *tool.Registry // live registry for already-exposed MCP tools
@@ -371,9 +371,6 @@ func (t *UseCapabilityTool) resolveCall(ctx context.Context, id string, args jso
 		destructive = destructive || cached.Destructive
 		readOnly = cached.ReadOnly
 		capabilityFingerprint = cached.CapabilityFingerprint
-	} else if spec.LaunchManager == nil {
-		// Compatibility for direct library users that have no host authorization store.
-		readOnly = spec.ReadOnlyToolNames[raw]
 	}
 	lazy := &onDemandMCPTool{proxy: t, spec: spec, server: server, raw: raw, modelName: modelName, destructive: destructive}
 	lazy.readOnly = readOnly
@@ -428,8 +425,7 @@ func findMCPTool(tools []tool.Tool, raw, modelName string) tool.Tool {
 
 // onDemandMCPTool defers MCP server startup to Execute so permission and hook
 // gates always run before any subprocess or network side effect. Before the live
-// handshake it can only use a backward-compatible local read-only override;
-// otherwise it remains write-capable until the resolved MCP tool is classified.
+// handshake it remains write-capable until the resolved MCP tool is classified.
 type onDemandMCPTool struct {
 	proxy     *UseCapabilityTool
 	spec      plugin.Spec
@@ -446,7 +442,7 @@ type onDemandMCPTool struct {
 func (o *onDemandMCPTool) Name() string { return o.modelName }
 
 func (o *onDemandMCPTool) Description() string {
-	return "on-demand MCP tool " + o.server + "/" + o.raw + " (connects after approval)"
+	return "on-demand MCP tool " + o.server + "/" + o.raw + " (connects when first used)"
 }
 
 func (o *onDemandMCPTool) Schema() json.RawMessage { return json.RawMessage(`{"type":"object"}`) }
@@ -472,14 +468,6 @@ func (o *onDemandMCPTool) MCPCapabilityFingerprint() string {
 }
 func (o *onDemandMCPTool) MCPDestructiveHint() bool {
 	return o.destructive
-}
-
-func (o *onDemandMCPTool) MCPApprovalMode() string {
-	return o.spec.ToolApprovalMode(o.raw)
-}
-
-func (o *onDemandMCPTool) MCPApprovalReviewer() string {
-	return tool.NormalizeMCPApprovalReviewer(o.spec.ApprovalsReviewer)
 }
 
 func (o *onDemandMCPTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {

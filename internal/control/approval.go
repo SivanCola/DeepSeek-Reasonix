@@ -12,7 +12,6 @@ import (
 	"reasonix/internal/event"
 	"reasonix/internal/i18n"
 	"reasonix/internal/permission"
-	"reasonix/internal/tool"
 )
 
 // approvalManager owns the approval/ask prompt bookkeeping and the runtime
@@ -93,9 +92,7 @@ func BuildHeadlessApprovalGate(policy permission.Policy, mode string) *freshHuma
 	switch normalizeToolApprovalMode(mode) {
 	case ToolApprovalYolo:
 		policy.Mode = permission.Allow
-		gate := NewHeadlessPermissionGate(policy)
-		gate.bypassMCPAuto = true
-		return gate
+		return NewHeadlessPermissionGate(policy)
 	case ToolApprovalAuto:
 		policy.Mode = permission.Allow
 		return &freshHumanHeadlessGate{gate: permission.NewGate(policy, denyPermissionApprover{})}
@@ -151,23 +148,15 @@ func (g *SharedHeadlessGate) Check(ctx context.Context, toolName string, args js
 	return gate.Check(ctx, toolName, args, readOnly)
 }
 
-func (g *SharedHeadlessGate) CheckFresh(ctx context.Context, toolName, subject string, args json.RawMessage, readOnly bool) (bool, string, error) {
+func (g *SharedHeadlessGate) ExplicitlyDenies(toolName string, args json.RawMessage) bool {
 	g.mu.RLock()
 	gate := g.gate
 	g.mu.RUnlock()
-	return gate.CheckFresh(ctx, toolName, subject, args, readOnly)
-}
-
-func (g *SharedHeadlessGate) CheckMCP(ctx context.Context, toolName, subject string, args json.RawMessage, readOnly, destructive bool, mode, reviewer string) (bool, string, error) {
-	g.mu.RLock()
-	gate := g.gate
-	g.mu.RUnlock()
-	return gate.CheckMCP(ctx, toolName, subject, args, readOnly, destructive, mode, reviewer)
+	return gate.ExplicitlyDenies(toolName, args)
 }
 
 type freshHumanHeadlessGate struct {
-	gate          *permission.Gate
-	bypassMCPAuto bool
+	gate *permission.Gate
 }
 
 func (g *freshHumanHeadlessGate) Check(ctx context.Context, toolName string, args json.RawMessage, readOnly bool) (bool, string, error) {
@@ -177,15 +166,8 @@ func (g *freshHumanHeadlessGate) Check(ctx context.Context, toolName string, arg
 	return g.gate.Check(ctx, toolName, args, readOnly)
 }
 
-func (g *freshHumanHeadlessGate) CheckFresh(context.Context, string, string, json.RawMessage, bool) (bool, string, error) {
-	return false, "this tool requires fresh human approval and cannot run in a non-interactive session.", nil
-}
-
-func (g *freshHumanHeadlessGate) CheckMCP(ctx context.Context, toolName, subject string, args json.RawMessage, readOnly, destructive bool, mode, reviewer string) (bool, string, error) {
-	if g.bypassMCPAuto && !destructive && tool.NormalizeMCPApprovalMode(mode) == tool.MCPApprovalAuto {
-		reviewer = ""
-	}
-	return g.gate.CheckMCP(ctx, toolName, subject, args, readOnly, destructive, mode, reviewer)
+func (g *freshHumanHeadlessGate) ExplicitlyDenies(toolName string, args json.RawMessage) bool {
+	return g.gate.Policy.ExplicitlyDenies(toolName, args)
 }
 
 // preApproved reports whether a tool call can skip the prompt — either the

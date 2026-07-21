@@ -109,13 +109,6 @@ func TestCachedToolSafetyTracksReadOnlyClassificationAndSchema(t *testing.T) {
 	if !found || !before.ReadOnly {
 		t.Fatalf("server hint = (%+v,%v), want reader metadata", before, found)
 	}
-	spec.ReadOnlyToolNames = map[string]bool{"search": true}
-	if _, found := CachedToolSafetyForSpec(spec, "search"); found {
-		t.Fatal("classification change reused a cache from a different policy")
-	}
-	if err := SaveCachedSchema(spec.Name, CachedSchema{SpecHash: SpecFingerprint(spec), Tools: []CachedTool{reader}}); err != nil {
-		t.Fatal(err)
-	}
 	after, found := CachedToolSafetyForSpec(spec, "search")
 	if !found || !after.ReadOnly {
 		t.Fatalf("explicit reader = (%+v,%v), want reader metadata", after, found)
@@ -194,21 +187,6 @@ func TestCacheInvalidatesOnSpecHashMismatch(t *testing.T) {
 	}
 }
 
-func TestCacheInvalidatesWhenReadOnlyOverrideChanges(t *testing.T) {
-	redirectCache(t)
-	spec := sampleSpec()
-	spec.ReadOnlyToolNames = map[string]bool{"echo": true}
-	hash := SpecFingerprint(spec)
-	if err := SaveCachedSchema(spec.Name, sampleCachedSchema(hash)); err != nil {
-		t.Fatalf("SaveCachedSchema: %v", err)
-	}
-
-	withoutOverride := sampleSpec()
-	if _, ok := LoadCachedSchema(spec.Name, SpecFingerprint(withoutOverride)); ok {
-		t.Fatal("LoadCachedSchema: hit after read-only override changed")
-	}
-}
-
 func TestCacheCorruptedFileReturnsFalse(t *testing.T) {
 	redirectCache(t)
 	p := cachePath("broken")
@@ -281,8 +259,7 @@ func TestSpecFingerprintIgnoresHostLocalAuthorizationAndIsolation(t *testing.T) 
 	changed.LaunchManager = mcplaunch.NewManager(filepath.Join(t.TempDir(), mcplaunch.StateFilename), "/workspace")
 	changed.ConfigSource = "project:.mcp.json"
 	changed.Package = "figma"
-	changed.ReaderSandbox = sandbox.Spec{Mode: "enforce", Network: true, WriteRoots: []string{"/host/state"}, MinimalWrites: true}
-	changed.WriterSandbox = sandbox.Spec{Mode: "enforce", WriteRoots: []string{"/workspace"}, MinimalWrites: true}
+	changed.Sandbox = sandbox.Spec{Mode: "enforce", Network: true, WriteRoots: []string{"/workspace"}, MinimalWrites: true}
 	changed.StateDir = "/host/state"
 	if got, want := SpecFingerprint(changed), SpecFingerprint(base); got != want {
 		t.Fatalf("host-local security state changed provider cache fingerprint: %q != %q", got, want)

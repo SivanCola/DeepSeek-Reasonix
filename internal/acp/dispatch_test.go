@@ -530,14 +530,14 @@ func TestUpdateSinkApprovalUsesTurnContext(t *testing.T) {
 	}
 }
 
-func TestApprovalOptionsFreshDynamicMCPOnlyAllowOnceOrReject(t *testing.T) {
-	options := approvalOptions("mcp__srv__wipe", "srv/wipe", true)
+func TestApprovalOptionsFreshDynamicToolOnlyAllowOnceOrReject(t *testing.T) {
+	options := approvalOptions("extension__wipe", "extension/wipe", true)
 	if len(options) != 2 || options[0].Kind != OptAllowOnce || options[1].Kind != OptRejectOnce {
-		t.Fatalf("fresh destructive MCP options = %+v, want allow-once/reject", options)
+		t.Fatalf("fresh dynamic-tool options = %+v, want allow-once/reject", options)
 	}
 	for _, option := range options {
 		if option.Kind == OptAllowAlways {
-			t.Fatalf("fresh destructive MCP offered remembered permission: %+v", options)
+			t.Fatalf("fresh dynamic-tool decision offered remembered permission: %+v", options)
 		}
 	}
 }

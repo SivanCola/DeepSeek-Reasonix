@@ -547,19 +547,26 @@ func TestRenderTOMLDocumentsPlanModeReadOnlyCommands(t *testing.T) {
 	}
 }
 
-func TestRenderTOMLDropsRemovedPluginReadOnlyOverrides(t *testing.T) {
+func TestRenderTOMLDropsRetiredMCPPolicyFields(t *testing.T) {
 	var cfg Config
 	if _, err := toml.Decode(`[[plugins]]
 name = "github"
 command = "github-mcp"
 trusted_read_only_tools = ["issue_read", "pull_request_read"]
+default_tools_approval_mode = "writes"
+approvals_reviewer = "auto_review"
+
+[plugins.tools.wipe]
+approval_mode = "prompt"
 `, &cfg); err != nil {
 		t.Fatalf("legacy config should still decode: %v", err)
 	}
 
 	rendered := RenderTOML(&cfg)
-	if strings.Contains(rendered, "trusted_read_only_tools") {
-		t.Fatalf("rendered config retained removed reader setting:\n%s", rendered)
+	for _, retired := range []string{"trusted_read_only_tools", "default_tools_approval_mode", "approvals_reviewer", "\napproval_mode ="} {
+		if strings.Contains(rendered, retired) {
+			t.Fatalf("rendered config retained retired MCP field %q:\n%s", retired, rendered)
+		}
 	}
 
 	var got Config
@@ -605,39 +612,6 @@ func TestRenderTOMLPreservesMCPCallTimeouts(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got.Plugins[0].ToolTimeoutSeconds, cfg.Plugins[0].ToolTimeoutSeconds) {
 		t.Fatalf("ToolTimeoutSeconds round trip = %v, want %v", got.Plugins[0].ToolTimeoutSeconds, cfg.Plugins[0].ToolTimeoutSeconds)
-	}
-}
-
-func TestRenderTOMLPreservesMCPApprovalPolicy(t *testing.T) {
-	cfg := Default()
-	cfg.Plugins = []PluginEntry{{
-		Name:                     "admin",
-		Command:                  "admin-mcp",
-		DefaultToolsApprovalMode: "writes",
-		Tools: map[string]MCPToolPolicy{
-			"delete/all": {ApprovalMode: "prompt"},
-			"status":     {ApprovalMode: "approve"},
-		},
-		ApprovalsReviewer: "auto_review",
-	}}
-
-	rendered := RenderTOML(cfg)
-	for _, want := range []string{
-		`default_tools_approval_mode = "writes"`,
-		`tools = { "delete/all" = { approval_mode = "prompt" }, status = { approval_mode = "approve" } }`,
-		`approvals_reviewer = "auto_review"`,
-	} {
-		if !strings.Contains(rendered, want) {
-			t.Fatalf("rendered config missing %q:\n%s", want, rendered)
-		}
-	}
-	var got Config
-	if _, err := toml.Decode(rendered, &got); err != nil {
-		t.Fatalf("rendered TOML does not parse: %v\n%s", err, rendered)
-	}
-	if got.Plugins[0].DefaultToolsApprovalMode != "writes" || got.Plugins[0].ApprovalsReviewer != "auto_review" ||
-		!reflect.DeepEqual(got.Plugins[0].Tools, cfg.Plugins[0].Tools) {
-		t.Fatalf("approval policy round trip = %+v", got.Plugins[0])
 	}
 }
 

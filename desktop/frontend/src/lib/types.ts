@@ -705,19 +705,11 @@ export interface ServerView {
   toolList?: MCPToolView[];
   callTimeoutSeconds?: number;
   toolTimeoutSeconds?: Record<string, number>;
-  defaultToolsApprovalMode?: MCPApprovalMode;
-  toolPolicies?: Record<string, MCPToolPolicy>;
-  approvalsReviewer?: MCPApprovalsReviewer;
   requiresLaunchApproval?: boolean;
   authStatus?: "none" | "possible" | "required" | string;
   authUrl?: string;
   authConfigured?: boolean;
   managedByPlugin?: string;
-}
-export type MCPApprovalMode = "auto" | "prompt" | "writes" | "approve";
-export type MCPApprovalsReviewer = "user" | "auto_review";
-export interface MCPToolPolicy {
-  approval_mode: MCPApprovalMode;
 }
 export interface MCPToolView {
   name: string;
@@ -874,9 +866,6 @@ export interface MCPServerInput {
   autoStart?: boolean | null;
   callTimeoutSeconds?: number | null;
   toolTimeoutSeconds?: Record<string, number> | null;
-  defaultToolsApprovalMode?: MCPApprovalMode | "" | null;
-  tools?: Record<string, MCPToolPolicy> | null;
-  approvalsReviewer?: MCPApprovalsReviewer | "" | null;
 }
 
 export interface ModelInfo {
