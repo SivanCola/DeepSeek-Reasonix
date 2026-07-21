@@ -64,6 +64,49 @@ func TestAuthorizeParamsPreservesRequestIDButOverridesSpoofedAuthority(t *testin
 	}
 }
 
+func TestApplyResultAdoptsSessionRotationEpoch(t *testing.T) {
+	target := protocol.RuntimeTarget{WorkspaceID: "workspace-live", SessionID: "session-live"}
+	tests := []struct {
+		name   string
+		result any
+		epoch  protocol.RuntimeEpoch
+	}{
+		{
+			name: "new session",
+			result: protocol.SessionNewResult{
+				SourceTarget: target, Target: target, RuntimeEpoch: "runtime-new", Disposition: "created", SnapshotRequired: true,
+			},
+			epoch: "runtime-new",
+		},
+		{
+			name: "clear session",
+			result: protocol.SessionClearResult{
+				PreviousTarget: target, Target: target, RuntimeEpoch: "runtime-cleared", Disposition: protocol.SessionCleared, SnapshotRequired: true,
+			},
+			epoch: "runtime-cleared",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := &Client{state: State{
+				Initialized: true, HostEpoch: "host-live", WorkspaceID: target.WorkspaceID,
+				Target: target, RuntimeEpoch: "runtime-old", SnapshotID: "snapshot-old", CurrentTurnID: "turn-old",
+			}}
+			c.applyResult("", tt.result)
+			if c.state.Target != target || c.state.RuntimeEpoch != tt.epoch || c.state.SnapshotID != "" || c.state.CurrentTurnID != "" {
+				t.Fatalf("client state after rotation = %+v", c.state)
+			}
+			value, err := c.authorizeParams(protocol.MethodSessionContext, protocol.SessionContextParams{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := value.(protocol.SessionContextParams).ExpectedRuntimeEpoch; got != tt.epoch {
+				t.Fatalf("next request epoch = %q, want %q", got, tt.epoch)
+			}
+		})
+	}
+}
+
 func TestQueueOverflowSignalsResyncOutOfBand(t *testing.T) {
 	resync := make(chan protocol.SessionResyncRequired, 1)
 	c := &Client{

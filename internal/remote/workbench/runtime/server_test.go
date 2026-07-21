@@ -99,6 +99,28 @@ type profileFakeController struct {
 	approvalMode string
 }
 
+type rotatingFakeController struct {
+	*persistentFakeController
+	newPath    string
+	clearPath  string
+	newCalls   int
+	clearCalls int
+}
+
+func (c *rotatingFakeController) NewSession() error {
+	c.newCalls++
+	c.history = nil
+	c.sessionPath = c.newPath
+	return nil
+}
+
+func (c *rotatingFakeController) ClearSession() error {
+	c.clearCalls++
+	c.history = nil
+	c.sessionPath = c.clearPath
+	return nil
+}
+
 func (c *profileFakeController) SetPlanMode(enabled bool) { c.planMode = enabled }
 func (c *profileFakeController) SetToolApprovalMode(mode string) {
 	c.approvalMode = mode
@@ -701,6 +723,120 @@ func TestSetProfileRegistryFailurePreservesUsableSession(t *testing.T) {
 			t.Fatalf("replacement controllers = %d closed=%v", len(*built), len(*built) == 1 && (*built)[0].closed)
 		}
 	})
+}
+
+func TestSessionRotationRegistryFailureReturnsCommittedEpoch(t *testing.T) {
+	newFixture := func(t *testing.T) (*Server, *session, *rotatingFakeController, protocol.RuntimeTarget, *strings.Builder) {
+		t.Helper()
+		sessionDir := t.TempDir()
+		log := &strings.Builder{}
+		srv := New(Options{
+			Workspace: t.TempDir(), SessionDir: sessionDir,
+			RegistryPath: t.TempDir(), // AtomicWriteFile cannot replace this directory.
+			Logger:       log,
+		})
+		ctrl := &rotatingFakeController{
+			persistentFakeController: &persistentFakeController{
+				fakeController: &fakeController{model: "local/test", history: []provider.Message{{Role: provider.RoleUser, Content: "old"}}},
+				sessionDir:     sessionDir, sessionPath: filepath.Join(sessionDir, "old.jsonl"),
+			},
+			newPath: filepath.Join(sessionDir, "new.jsonl"), clearPath: filepath.Join(sessionDir, "cleared.jsonl"),
+		}
+		target := srv.installTestSession(ctrl)
+		srv.registryRead = true
+		srv.mu.Lock()
+		sess := srv.sessions[target.SessionID]
+		srv.mu.Unlock()
+		return srv, sess, ctrl, target, log
+	}
+
+	t.Run("new session", func(t *testing.T) {
+		srv, sess, ctrl, target, log := newFixture(t)
+		previousEpoch := sess.runtimeEpoch
+		result, err := srv.newSession(protocol.SessionNewParams{SessionMutation: protocol.SessionMutation{
+			ExpectedHostEpoch: srv.hostEpoch, Target: target, ExpectedRuntimeEpoch: previousEpoch,
+		}})
+		if err != nil {
+			t.Fatalf("new session returned an error after controller commit: %v", err)
+		}
+		if ctrl.newCalls != 1 || result.RuntimeEpoch == previousEpoch || sess.runtimeEpoch != result.RuntimeEpoch || !result.SnapshotRequired {
+			t.Fatalf("new session result = %+v calls=%d sessionEpoch=%q", result, ctrl.newCalls, sess.runtimeEpoch)
+		}
+		if _, err := srv.sessionForQuery(srv.hostEpoch, target, result.RuntimeEpoch); err != nil {
+			t.Fatalf("returned epoch is not usable: %v", err)
+		}
+		if !strings.Contains(log.String(), "persist committed new session") {
+			t.Fatalf("registry failure was not logged: %q", log.String())
+		}
+	})
+
+	t.Run("clear session", func(t *testing.T) {
+		srv, sess, ctrl, target, log := newFixture(t)
+		previousEpoch := sess.runtimeEpoch
+		result, err := srv.clearSession(protocol.SessionClearParams{SessionMutation: protocol.SessionMutation{
+			ExpectedHostEpoch: srv.hostEpoch, Target: target, ExpectedRuntimeEpoch: previousEpoch,
+		}})
+		if err != nil {
+			t.Fatalf("clear session returned an error after controller commit: %v", err)
+		}
+		if ctrl.clearCalls != 1 || result.RuntimeEpoch == previousEpoch || sess.runtimeEpoch != result.RuntimeEpoch || !result.SnapshotRequired {
+			t.Fatalf("clear session result = %+v calls=%d sessionEpoch=%q", result, ctrl.clearCalls, sess.runtimeEpoch)
+		}
+		if _, err := srv.sessionForQuery(srv.hostEpoch, target, result.RuntimeEpoch); err != nil {
+			t.Fatalf("returned epoch is not usable: %v", err)
+		}
+		if !strings.Contains(log.String(), "persist committed cleared session") {
+			t.Fatalf("registry failure was not logged: %q", log.String())
+		}
+	})
+}
+
+func TestTurnDoneClearsPendingPromptAndReplayEvents(t *testing.T) {
+	tests := []struct {
+		name   string
+		prompt event.Event
+	}{
+		{
+			name: "approval",
+			prompt: event.Event{Kind: event.ApprovalRequest, Approval: event.Approval{
+				ID: "approval_test", Tool: "bash", Subject: "go test ./...",
+			}},
+		},
+		{
+			name: "ask",
+			prompt: event.Event{Kind: event.AskRequest, Ask: event.Ask{
+				ID: "ask_test", Questions: []event.AskQuestion{{ID: "question_test", Prompt: "Continue?"}},
+			}},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := New(Options{Workspace: t.TempDir()})
+			target := srv.installTestSession(&fakeController{model: "local/test"})
+			srv.mu.Lock()
+			sess := srv.sessions[target.SessionID]
+			sess.currentTurn = "turn_test"
+			sess.lastError = "previous failure"
+			srv.mu.Unlock()
+			sink := &sessionSink{server: srv, sessionID: target.SessionID}
+
+			sink.Emit(tt.prompt)
+			srv.mu.Lock()
+			pendingBeforeDone := sess.pendingPrompt != nil
+			srv.mu.Unlock()
+			if !pendingBeforeDone {
+				t.Fatal("prompt event did not create a pending prompt")
+			}
+
+			sink.Emit(event.Event{Kind: event.TurnDone, Cancelled: true})
+			srv.mu.Lock()
+			snapshot := srv.snapshotLocked(sess, 20)
+			srv.mu.Unlock()
+			if snapshot.PendingPrompt != nil || len(snapshot.Runtime.LiveEvents) != 0 || snapshot.Runtime.CurrentTurn != nil || snapshot.Runtime.LastError != nil {
+				t.Fatalf("completed snapshot retained turn state: prompt=%+v live=%d turn=%+v error=%v", snapshot.PendingPrompt, len(snapshot.Runtime.LiveEvents), snapshot.Runtime.CurrentTurn, snapshot.Runtime.LastError)
+			}
+		})
+	}
 }
 
 func TestRuntimeSessionRegistryAcceptsOpaqueTopicAndRejectsNestedPath(t *testing.T) {

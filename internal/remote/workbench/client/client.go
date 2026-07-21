@@ -395,6 +395,12 @@ func (c *Client) applyResult(method protocol.Method, value any) {
 		if _, completed := c.completedTurns[result.TurnID]; !completed {
 			c.state.CurrentTurnID = result.TurnID
 		}
+	case protocol.SessionNewResult:
+		c.state.Target, c.state.RuntimeEpoch = result.Target, result.RuntimeEpoch
+		c.state.SnapshotID, c.state.CurrentTurnID = "", ""
+	case protocol.SessionClearResult:
+		c.state.Target, c.state.RuntimeEpoch = result.Target, result.RuntimeEpoch
+		c.state.SnapshotID, c.state.CurrentTurnID = "", ""
 	case protocol.SessionProfileSetResult:
 		c.state.RuntimeEpoch, c.state.ResolvedProfile = result.RuntimeEpoch, result.ResolvedProfile
 	case protocol.SessionCloseResult:

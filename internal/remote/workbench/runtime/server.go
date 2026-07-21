@@ -932,14 +932,12 @@ func (s *Server) newSession(p protocol.SessionNewParams) (protocol.SessionNewRes
 	if err := controller.NewSession(); err != nil {
 		return protocol.SessionNewResult{}, protocol.MustRemoteError(protocol.ErrSessionPersistFailed, protocol.ErrorOptions{Target: &p.Target})
 	}
-	s.mu.Lock()
-	sess.runtimeEpoch = protocol.RuntimeEpoch("runtime_" + randomHex(12))
-	sess.currentTurn = ""
-	sess.updatedAt = time.Now().UnixMilli()
-	epoch := sess.runtimeEpoch
-	s.mu.Unlock()
+	epoch := s.commitSessionRotation(sess)
 	if err := s.persistSessionRegistry(); err != nil {
-		return protocol.SessionNewResult{}, protocol.MustRemoteError(protocol.ErrSessionPersistFailed, protocol.ErrorOptions{Target: &p.Target})
+		// NewSession already rotated the controller and cannot be rolled back
+		// safely. Return the committed epoch so the client stays usable; a later
+		// registry write (including shutdown) can persist the new transcript path.
+		s.logRegistryError("persist committed new session", err)
 	}
 	return protocol.SessionNewResult{SourceTarget: p.Target, Target: p.Target, RuntimeEpoch: epoch, Disposition: "created", SnapshotRequired: true}, nil
 }
@@ -956,16 +954,28 @@ func (s *Server) clearSession(p protocol.SessionClearParams) (protocol.SessionCl
 	if err := controller.ClearSession(); err != nil {
 		return protocol.SessionClearResult{}, protocol.MustRemoteError(protocol.ErrSessionPersistFailed, protocol.ErrorOptions{Target: &p.Target})
 	}
+	epoch := s.commitSessionRotation(sess)
+	if err := s.persistSessionRegistry(); err != nil {
+		// ClearSession has already discarded the old controller state. Reporting
+		// failure here would leave the client on the previous epoch even though the
+		// destructive mutation committed, so keep the result authoritative.
+		s.logRegistryError("persist committed cleared session", err)
+	}
+	return protocol.SessionClearResult{PreviousTarget: p.Target, Target: p.Target, RuntimeEpoch: epoch, Disposition: protocol.SessionCleared, SnapshotRequired: true}, nil
+}
+
+func (s *Server) commitSessionRotation(sess *session) protocol.RuntimeEpoch {
 	s.mu.Lock()
 	sess.runtimeEpoch = protocol.RuntimeEpoch("runtime_" + randomHex(12))
 	sess.currentTurn = ""
+	sess.lastOutcome = ""
+	sess.lastError = ""
+	sess.pendingPrompt = nil
+	sess.liveEvents = nil
 	sess.updatedAt = time.Now().UnixMilli()
 	epoch := sess.runtimeEpoch
 	s.mu.Unlock()
-	if err := s.persistSessionRegistry(); err != nil {
-		return protocol.SessionClearResult{}, protocol.MustRemoteError(protocol.ErrSessionPersistFailed, protocol.ErrorOptions{Target: &p.Target})
-	}
-	return protocol.SessionClearResult{PreviousTarget: p.Target, Target: p.Target, RuntimeEpoch: epoch, Disposition: protocol.SessionCleared, SnapshotRequired: true}, nil
+	return epoch
 }
 
 func (s *Server) compact(ctx context.Context, p protocol.SessionCompactParams) (protocol.OperationStartedResult, error) {
@@ -1539,6 +1549,10 @@ func (sink *sessionSink) Emit(e event.Event) {
 	}
 	if e.Kind == event.TurnDone {
 		sess.currentTurn = ""
+		// Approval and ask prompts belong to the completed turn. Keeping one here
+		// makes a reconnect or snapshot refresh replay a decision that can no
+		// longer be answered safely.
+		sess.pendingPrompt = nil
 		if sess.currentOp != nil {
 			sess.currentOp = nil
 			if sess.operationStop != nil {
@@ -1549,6 +1563,7 @@ func (sink *sessionSink) Emit(e event.Event) {
 		sess.updatedAt = time.Now().UnixMilli()
 		if e.Cancelled {
 			sess.lastOutcome = protocol.OutcomeCancelled
+			sess.lastError = ""
 		} else if e.Err != nil {
 			sess.lastOutcome = protocol.OutcomeFailed
 			sess.lastError = e.Err.Error()
@@ -1556,9 +1571,7 @@ func (sink *sessionSink) Emit(e event.Event) {
 			sess.lastOutcome = protocol.OutcomeCompleted
 			sess.lastError = ""
 		}
-		if sess.pendingPrompt == nil {
-			sess.liveEvents = nil
-		}
+		sess.liveEvents = nil
 	}
 	persistRegistry := e.Kind == event.TurnDone
 	ready := make([]struct {
