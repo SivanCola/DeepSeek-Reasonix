@@ -1248,7 +1248,7 @@ func (c *Client) withProgress(ctx context.Context, method string, params any) (a
 	}
 
 	token := fmt.Sprintf("reasonix-%d", c.progressID.Add(1))
-	copyParams := make(map[string]any, len(callParams)+1)
+	copyParams := make(map[string]any, len(callParams))
 	for key, value := range callParams {
 		copyParams[key] = value
 	}
