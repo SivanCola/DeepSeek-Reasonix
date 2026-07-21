@@ -307,6 +307,10 @@ func (s *Server) serveConn(ctx context.Context, conn net.Conn) {
 	router.Bind(wire)
 	_ = wire.Serve(ctx)
 
+	// Serialize teardown with the initialize after-write callback. Otherwise a
+	// peer that closes immediately after the response could reject its gate and
+	// delete its wire between commitConnection's liveness check and activation.
+	s.connectionMu.Lock()
 	gate.resolve(false)
 	s.broker.Detach(gen)
 	s.mu.Lock()
@@ -325,6 +329,7 @@ func (s *Server) serveConn(ctx context.Context, conn net.Conn) {
 	}
 	delete(s.explicitGen, gen)
 	s.mu.Unlock()
+	s.connectionMu.Unlock()
 }
 
 func (s *Server) handlers(gen uint64, conn net.Conn, gate *connectionGate) protocol.HandlerSet {

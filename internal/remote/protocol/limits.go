@@ -24,7 +24,7 @@ const (
 	GitHistoryCommits         = 100
 	GitPatchBytes             = 1 << 20
 	RPCConcurrentHandlers     = rpcwire.DefaultMaxConcurrentHandlers
-	RPCQueuedNotifications    = 1024
+	RPCQueuedNotifications    = 256
 	LeaseTTLMillis            = 30 * 1000
 	LeasePingIntervalMillis   = 10 * 1000
 	IdempotencySessionEntries = 1024

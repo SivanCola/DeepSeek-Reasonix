@@ -199,6 +199,30 @@ func TestDetachRequiresAndPreservesAfterWriteResponse(t *testing.T) {
 	}
 }
 
+func TestRouterInitializeRequiresPostWriteCommit(t *testing.T) {
+	router, err := NewRouter(HandlerSet{
+		MethodRemoteInitialize: func(context.Context, any) (any, error) {
+			return validInitializeResult(t), nil
+		},
+	}, RouterOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := router.BeforeRequest(string(MethodRemoteInitialize), nil); err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := json.Marshal(validInitializeParams(t))
+	spec, _ := LookupMethod(MethodRemoteInitialize)
+	_, err = router.invoke(context.Background(), spec, raw)
+	var rpcErr *rpcwire.RPCError
+	if !errors.As(err, &rpcErr) || rpcErr.Code != rpcwire.ErrInternal {
+		t.Fatalf("plain initialize response error = %#v", err)
+	}
+	if router.Ready() {
+		t.Fatal("router became ready before an initialize response commit callback")
+	}
+}
+
 func TestRouterMapsControlledDomainError(t *testing.T) {
 	remoteErr := MustRemoteError(ErrSessionBusy, ErrorOptions{})
 	router := &Router{}
