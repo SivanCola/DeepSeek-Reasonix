@@ -1459,7 +1459,7 @@ export const zh: Record<DictKey, string> = {
   "subagents.readOnlyOff": "可写",
   "subagents.readOnlyHint": "只读 Profile 会剥离写入工具。旧 Profile 缺省为可写。",
   "settings.defaultToolApprovalMode": "新会话默认审批",
-  "settings.defaultToolApprovalModeHint": "默认使用自动。Yolo 是高级选项；已有会话保留当前模式。",
+  "settings.defaultToolApprovalModeHint": "默认使用自动；已有会话保留当前的询问、自动或 Yolo 模式。",
   "settings.defaultToolApprovalMode.ask": "询问",
   "settings.defaultToolApprovalMode.auto": "自动",
   "settings.defaultToolApprovalMode.yolo": "Yolo",

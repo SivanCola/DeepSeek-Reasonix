@@ -1457,7 +1457,7 @@ export const en = {
   "subagents.readOnlyOff": "Writable",
   "subagents.readOnlyHint": "Read-only profiles strip writer tools. Existing profiles default to writable.",
   "settings.defaultToolApprovalMode": "New session approval",
-  "settings.defaultToolApprovalModeHint": "Defaults to Auto. Yolo is an advanced option; existing sessions keep their current mode.",
+  "settings.defaultToolApprovalModeHint": "Defaults to Auto; existing sessions keep their current Ask, Auto, or Yolo mode.",
   "settings.defaultToolApprovalMode.ask": "Ask",
   "settings.defaultToolApprovalMode.auto": "Auto",
   "settings.defaultToolApprovalMode.yolo": "Yolo",

@@ -3774,19 +3774,17 @@ export function Composer({
                   <ShieldCheck size={14} />
                   <span>{t("composer.modeNormal")}</span>
                 </button>
-                {toolApprovalMode === "yolo" && (
-                  <button
-                    type="button"
-                    className="composer-modebar__item composer-modebar__item--yolo composer-modebar__item--active"
-                    onClick={() => chooseApprovalMode("auto")}
-                    disabled={approvalBarDisabled}
-                    aria-pressed="true"
-                    title={t("composer.accessYoloTitle")}
-                  >
-                    <ShieldAlert size={14} />
-                    <span>{t("composer.modeYolo")}</span>
-                  </button>
-                )}
+                <button
+                  type="button"
+                  className={`composer-modebar__item composer-modebar__item--yolo${toolApprovalMode === "yolo" ? " composer-modebar__item--active" : ""}`}
+                  onClick={() => chooseApprovalMode("yolo")}
+                  disabled={approvalBarDisabled}
+                  aria-pressed={toolApprovalMode === "yolo"}
+                  title={t("composer.accessYoloTitle")}
+                >
+                  <ShieldAlert size={14} />
+                  <span>{t("composer.modeYolo")}</span>
+                </button>
               </div>
             </div>
             <span className="composer-meta__divider" aria-hidden="true" />

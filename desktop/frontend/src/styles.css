@@ -6307,8 +6307,8 @@ body > .mermaid-diagram--fullscreen {
 }
 
 .composer-meta__control--approval .composer-modebar--approval {
-  flex: 0 0 168px;
-  min-width: 156px;
+  flex: 0 0 232px;
+  min-width: 200px;
   max-width: 232px;
 }
 

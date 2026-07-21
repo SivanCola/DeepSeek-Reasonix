@@ -1,6 +1,6 @@
 # Tool permissions: Ask, Auto, and Yolo
 
-The Ask / Auto control under the desktop composer sets how Reasonix handles tool permission approvals. Yolo remains an advanced setting and is shown in the composer only while it is active.
+The Ask / Auto / Yolo control under the desktop composer sets how Reasonix handles tool permission approvals. All three modes stay visible so you can switch directly without relying on a shortcut or settings page.
 
 Tool permission is independent of collaboration mode:
 
@@ -61,8 +61,8 @@ Yolo maximizes continuous execution. Ordinary tool permission prompts are skippe
 
 ### How to enable
 
-- Select it in the advanced default-approval setting, or toggle with `Ctrl+Y` / `Cmd+Y`.
-- While active, a Yolo warning item appears in the composer and returns to Auto when clicked.
+- Select Yolo directly under the composer, choose it as the new-session default, or toggle with `Ctrl+Y` / `Cmd+Y`.
+- Select Ask or Auto directly to leave Yolo.
 - When entered via shortcut, Reasonix remembers the previous Ask/Auto baseline and restores it on the next toggle.
 
 ## Combining with collaboration modes
