@@ -146,6 +146,13 @@ func validateRemoteSSHOptionValue(name, value string) error {
 }
 
 func (f *RemoteSSHTransportFactory) StartDirect(ctx context.Context, destination string, port int) (*RemoteSSHTransport, error) {
+	return f.StartDirectConfigured(ctx, destination, port, "", "")
+}
+
+// StartDirectConfigured preserves explicit identity and jump-host overrides
+// from the saved Reasonix Host while retaining the injection-safe direct target
+// parser. Each option remains a distinct argv element and no shell participates.
+func (f *RemoteSSHTransportFactory) StartDirectConfigured(ctx context.Context, destination string, port int, identityFile, proxyJump string) (*RemoteSSHTransport, error) {
 	target, err := ParseRemoteSSHDirectDestination(destination)
 	if err != nil {
 		return nil, err
@@ -158,9 +165,20 @@ func (f *RemoteSSHTransportFactory) StartDirect(ctx context.Context, destination
 	args = append(args,
 		"-l", target.Username,
 		"-p", strconv.Itoa(port),
-		"--", target.Host,
-		"reasonix", "remote", "attach-workspace", "--stdio",
 	)
+	if identityFile != "" {
+		if err := validateRemoteSSHOptionValue("identity file", identityFile); err != nil {
+			return nil, err
+		}
+		args = append(args, "-i", identityFile)
+	}
+	if proxyJump != "" {
+		if err := validateRemoteSSHOptionValue("ProxyJump", proxyJump); err != nil {
+			return nil, err
+		}
+		args = append(args, "-J", proxyJump)
+	}
+	args = append(args, "--", target.Host, "reasonix", "remote", "attach-workspace", "--stdio")
 	return f.start(ctx, args)
 }
 

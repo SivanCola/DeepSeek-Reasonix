@@ -64,17 +64,7 @@ func (f *windowsWorkbenchSSHFactory) Open(ctx context.Context) (transport.Stream
 	}
 	sshFactory := &RemoteSSHTransportFactory{AskPass: broker, AskPassHelper: f.helperPath}
 	var stream transport.Stream
-	if f.entry.UseSSHConfig {
-		stream, err = sshFactory.StartConfigured(
-			ctx, f.entry.Host, f.entry.User, f.entry.Port, f.entry.IdentityFile, f.entry.ProxyJump,
-		)
-	} else {
-		var bound RemoteSSHHostTransportFactory
-		bound, err = NewRemoteSSHHostTransportFactory(sshFactory, f.boundEntry)
-		if err == nil {
-			stream, err = bound.Open(ctx)
-		}
-	}
+	stream, err = openWindowsWorkbenchSSH(ctx, sshFactory, f.entry, f.boundEntry)
 	if err != nil {
 		_ = broker.Close()
 		return nil, err
@@ -89,6 +79,13 @@ func (f *windowsWorkbenchSSHFactory) Open(ctx context.Context) (transport.Stream
 	f.transport = sshStream
 	f.mu.Unlock()
 	return &askPassOwnedStream{Stream: stream, broker: broker}, nil
+}
+
+func openWindowsWorkbenchSSH(ctx context.Context, sshFactory *RemoteSSHTransportFactory, entry config.RemoteHostEntry, bound RemoteHostEntry) (transport.Stream, error) {
+	if entry.UseSSHConfig {
+		return sshFactory.StartConfigured(ctx, entry.Host, entry.User, entry.Port, entry.IdentityFile, entry.ProxyJump)
+	}
+	return sshFactory.StartDirectConfigured(ctx, bound.Destination, bound.Port, entry.IdentityFile, entry.ProxyJump)
 }
 
 func (f *windowsWorkbenchSSHFactory) PeerIdentity() (workbenchPeerIdentity, bool) {

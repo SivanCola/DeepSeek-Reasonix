@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"io"
+	"os/exec"
+	"reflect"
 	"testing"
 	"time"
 
@@ -23,6 +25,38 @@ func TestMapConfigHostKeepsEverySSHConfigAliasInConfigMode(t *testing.T) {
 		if got.Mode != RemoteHostConnectionConfig || got.Alias != entry.Host {
 			t.Fatalf("entry %+v mapped to %+v", entry, got)
 		}
+	}
+}
+
+func TestWindowsWorkbenchDirectPreservesIdentityAndProxyJump(t *testing.T) {
+	t.Setenv("GO_WANT_REMOTE_SSH_FAKE", "1")
+	t.Setenv("REMOTE_SSH_FAKE_MODE", "protocol")
+	entry := config.RemoteHostEntry{
+		Name: "direct", Host: "[2001:db8::20]", Port: 2200, User: "developer",
+		IdentityFile: `C:\keys\reasonix key`, ProxyJump: "bastion-a,bastion-b",
+	}
+	bound, err := mapConfigHostToWorkbenchEntry(entry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var gotArgs []string
+	sshFactory := &RemoteSSHTransportFactory{commandContext: func(ctx context.Context, _ string, args ...string) *exec.Cmd {
+		gotArgs = append([]string(nil), args...)
+		return remoteSSHFakeCommand(ctx)
+	}}
+	stream, err := openWindowsWorkbenchSSH(context.Background(), sshFactory, entry, bound)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = stream.Close() })
+
+	wantTail := []string{
+		"-l", "developer", "-p", "2200", "-i", entry.IdentityFile,
+		"-J", entry.ProxyJump, "--", "2001:db8::20",
+		"reasonix", "remote", "attach-workspace", "--stdio",
+	}
+	if len(gotArgs) < len(wantTail) || !reflect.DeepEqual(gotArgs[len(gotArgs)-len(wantTail):], wantTail) {
+		t.Fatalf("direct Workbench argv = %#v, want tail %#v", gotArgs, wantTail)
 	}
 }
 
