@@ -46,32 +46,13 @@ func applyMac(zipPath, targetVersion string) error {
 	if _, err := repair.PrepareAppBundleUpdate(version, targetVersion, currentApp, backupApp); err != nil {
 		return err
 	}
+	cacheDir, err := updateCacheDir()
+	if err != nil {
+		_ = repair.CancelPendingUpdate(targetVersion)
+		return err
+	}
 	script := filepath.Join(staging, "install-reasonix-update.sh")
-	body := fmt.Sprintf(`#!/bin/sh
-set -eu
-old_app=%q
-new_app=%q
-backup_app=%q
-pending_update=%q
-sleep 1
-rm -rf "$backup_app"
-if ! mv "$old_app" "$backup_app"; then
-  rm -f "$pending_update"
-  rm -rf %q
-  exit 1
-fi
-if ditto "$new_app" "$old_app"; then
-  open "$old_app"
-  rm -rf %q
-  exit 0
-fi
-rm -rf "$old_app"
-mv "$backup_app" "$old_app"
-rm -f "$pending_update"
-open "$old_app"
-rm -rf %q
-exit 1
-`, currentApp, nextApp, backupApp, repair.PendingUpdatePath(), staging, staging, staging)
+	body := macUpdateScript(currentApp, nextApp, backupApp, repair.PendingUpdatePath(), staging, filepath.Join(cacheDir, "update-helper.log"), os.Getpid())
 	if err := os.WriteFile(script, []byte(body), 0o700); err != nil {
 		_ = repair.CancelPendingUpdate(targetVersion)
 		return err
@@ -82,6 +63,71 @@ exit 1
 	}
 	handedOff = true
 	return nil
+}
+
+func macUpdateScript(currentApp, nextApp, backupApp, pendingUpdate, staging, logPath string, oldPID int) string {
+	return fmt.Sprintf(`#!/bin/sh
+set -u
+old_app=%q
+new_app=%q
+backup_app=%q
+pending_update=%q
+staging=%q
+log_file=%q
+old_pid=%d
+exec >>"$log_file" 2>&1
+echo "macOS update handoff started for PID $old_pid"
+
+# The desktop starts this helper before it shuts itself down. Wait for that exact
+# process instead of sleeping for a fixed interval; LaunchServices can otherwise
+# keep the old bundle registered and refuse to launch the replacement (#5149).
+attempt=0
+while kill -0 "$old_pid" 2>/dev/null; do
+  if [ "$attempt" -ge 300 ]; then
+    echo "timed out waiting for PID $old_pid to exit"
+    rm -f "$pending_update"
+    rm -rf "$staging"
+    open "$old_app" >/dev/null 2>&1 || true
+    exit 1
+  fi
+  attempt=$((attempt + 1))
+  sleep 0.2
+done
+
+rollback() {
+  echo "rolling back macOS update"
+  rm -rf "$old_app"
+  if ! mv "$backup_app" "$old_app"; then
+    echo "failed to restore backup bundle"
+  fi
+  rm -f "$pending_update"
+  xattr -dr com.apple.quarantine "$old_app" 2>/dev/null || true
+  open -n "$old_app" >/dev/null 2>&1 || open "$old_app" >/dev/null 2>&1 || true
+  rm -rf "$staging"
+  exit 1
+}
+
+rm -rf "$backup_app"
+if ! mv "$old_app" "$backup_app"; then
+  echo "failed to move current app bundle to backup"
+  rm -f "$pending_update"
+  rm -rf "$staging"
+  open "$old_app" >/dev/null 2>&1 || true
+  exit 1
+fi
+if ! ditto "$new_app" "$old_app"; then
+  echo "failed to copy replacement app bundle"
+  rollback
+fi
+xattr -dr com.apple.quarantine "$old_app" 2>/dev/null || true
+if ! open -n "$old_app"; then
+  echo "LaunchServices rejected the replacement app bundle"
+  rollback
+fi
+echo "replacement app bundle launched"
+rm -rf "$staging"
+exit 0
+`, currentApp, nextApp, backupApp, pendingUpdate, staging, logPath, oldPID)
 }
 
 func currentMacAppBundle() (string, error) {

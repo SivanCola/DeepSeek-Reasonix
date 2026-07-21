@@ -254,6 +254,43 @@ func TestNeedsOnboardingTreatsBlankSavedKeyAsMissing(t *testing.T) {
 	}
 }
 
+func TestNeedsOnboardingAcceptsConfiguredCustomProvider(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	cfg := config.Default()
+	cfg.DefaultModel = "custom/custom-model"
+	cfg.Desktop.ProviderAccess = []string{"custom"}
+	cfg.Providers = []config.ProviderEntry{{
+		Name: "custom", Kind: "openai", BaseURL: "https://models.example.invalid/v1",
+		Model: "custom-model", APIKeyEnv: "CUSTOM_API_KEY",
+	}}
+	if err := cfg.SaveTo(config.UserConfigPath()); err != nil {
+		t.Fatalf("save custom provider config: %v", err)
+	}
+	setDesktopTestCredential(t, "CUSTOM_API_KEY", "saved-custom-key")
+
+	if NewApp().NeedsOnboarding() {
+		t.Fatal("NeedsOnboarding should be false when a custom provider is configured")
+	}
+}
+
+func TestNeedsOnboardingAcceptsNoAuthLocalProvider(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	cfg := config.Default()
+	cfg.DefaultModel = "local/local-model"
+	cfg.Desktop.ProviderAccess = []string{"local"}
+	cfg.Providers = []config.ProviderEntry{{
+		Name: "local", Kind: "openai", BaseURL: "http://127.0.0.1:11434/v1",
+		Model: "local-model",
+	}}
+	if err := cfg.SaveTo(config.UserConfigPath()); err != nil {
+		t.Fatalf("save local provider config: %v", err)
+	}
+
+	if NewApp().NeedsOnboarding() {
+		t.Fatal("NeedsOnboarding should be false for a no-auth local provider")
+	}
+}
+
 func providerNamesFromView(providers []ProviderView) []string {
 	out := make([]string, 0, len(providers))
 	for _, p := range providers {
@@ -4750,6 +4787,50 @@ func TestConnectKeyRejectsBackgroundJobsBeforeSavingKey(t *testing.T) {
 	}
 }
 
+func TestConnectKeyRestoresDeepSeekProviderAccess(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	cfg := config.Default()
+	cfg.DefaultModel = "custom/custom-model"
+	cfg.Desktop.ProviderAccess = []string{"custom"}
+	cfg.Providers = []config.ProviderEntry{{
+		Name: "custom", Kind: "openai", BaseURL: "https://models.example.invalid/v1",
+		Model: "custom-model", APIKeyEnv: "CUSTOM_API_KEY",
+	}}
+	if err := cfg.SaveTo(config.UserConfigPath()); err != nil {
+		t.Fatalf("save custom provider config: %v", err)
+	}
+
+	oldFetch := connectKeyBalanceFetch
+	connectKeyBalanceFetch = func(context.Context, *http.Client, string, string) (*billing.Balance, error) {
+		return &billing.Balance{Available: true}, nil
+	}
+	t.Cleanup(func() { connectKeyBalanceFetch = oldFetch })
+
+	app := NewApp()
+	app.ctx = context.Background()
+	app.readyHook = func() {}
+	app.setTestCtrl(control.New(control.Options{Label: "custom"}), "custom/custom-model")
+	defer func() {
+		if ctrl := app.activeCtrl(); ctrl != nil {
+			ctrl.Close()
+		}
+	}()
+	if _, err := app.ConnectKey("sk-test"); err != nil {
+		t.Fatalf("ConnectKey: %v", err)
+	}
+
+	got := config.LoadForEditWithoutCredentials(config.UserConfigPath())
+	if !providerAccessSet(got.Desktop.ProviderAccess)["deepseek"] {
+		t.Fatalf("provider_access = %v, want DeepSeek restored", got.Desktop.ProviderAccess)
+	}
+	if _, ok := got.Provider("deepseek"); !ok {
+		t.Fatal("DeepSeek provider template should be restored")
+	}
+	if app.NeedsOnboarding() {
+		t.Fatal("restored DeepSeek access and saved key should satisfy onboarding")
+	}
+}
+
 func TestConnectKeyRebuildLeaseHeldKeepsCurrentController(t *testing.T) {
 	isolateDesktopUserDirs(t)
 	t.Setenv(onboardingKeyEnv, "")
@@ -6258,7 +6339,7 @@ func TestDeleteSessionCancelsInactiveOpenRuntime(t *testing.T) {
 	}
 }
 
-func TestTrashTopicWithStuckJobReturnsAfterSingleGrace(t *testing.T) {
+func TestTrashTopicRejectsBackgroundJob(t *testing.T) {
 	isolateDesktopUserDirs(t)
 
 	projectRoot := t.TempDir()
@@ -6275,9 +6356,7 @@ func TestTrashTopicWithStuckJobReturnsAfterSingleGrace(t *testing.T) {
 	}
 	sessionPath := writeTopicSession(t, dir, "stuck-topic.jsonl", topicID, "Stuck trash", projectRoot)
 
-	grace := 500 * time.Millisecond
-	teardownNotices := make(chan event.Event, 2)
-	jm := jobs.NewManager(teardownNoticeSink(teardownNotices), jobs.WithTeardownGrace(grace))
+	jm := jobs.NewManager(event.Discard)
 	ctrl := control.New(control.Options{SessionDir: dir, SessionPath: sessionPath, Label: "test", Jobs: jm, WorkspaceRoot: projectRoot})
 	releaseJob := startNonCooperativeSessionJob(t, jm, sessionPath)
 	defer func() {
@@ -6311,20 +6390,24 @@ func TestTrashTopicWithStuckJobReturnsAfterSingleGrace(t *testing.T) {
 		activeTabID: "stuck",
 	}
 
-	start := time.Now()
-	if err := app.TrashTopic(topicID); err != nil {
-		t.Fatalf("TrashTopic(stuck job): %v", err)
+	if err := app.TrashTopic(topicID); !errors.Is(err, errTopicHasActiveWork) {
+		t.Fatalf("TrashTopic(background job) error = %v, want %v", err, errTopicHasActiveWork)
 	}
-	elapsed := time.Since(start)
-	if elapsed > grace+2*time.Second {
-		t.Fatalf("TrashTopic took %s, want one teardown grace plus bounded metadata I/O", elapsed)
+	if _, ok := app.tabs["stuck"]; !ok {
+		t.Fatal("rejected archive should keep the background-job topic tab")
 	}
-	assertSingleTeardownTimeoutNotice(t, teardownNotices, grace)
-	if !agent.IsCleanupPending(sessionPath) {
-		t.Fatalf("stuck topic trash should mark cleanup pending")
+	if agent.IsCleanupPending(sessionPath) {
+		t.Fatal("rejected archive should not mark session cleanup pending")
 	}
 	if _, err := os.Stat(sessionPath); err != nil {
-		t.Fatalf("stuck topic session should remain until delayed trash: %v", err)
+		t.Fatalf("rejected archive should preserve the live session: %v", err)
+	}
+	trashPath := filepath.Join(dir, sessionTrashDir, "stuck-topic.jsonl", "stuck-topic.jsonl")
+	if _, err := os.Stat(trashPath); !os.IsNotExist(err) {
+		t.Fatalf("rejected archive created a trash entry, stat err = %v", err)
+	}
+	if got := loadTopicTitle(projectRoot, topicID); got != "Stuck trash" {
+		t.Fatalf("rejected archive topic title = %q, want Stuck trash", got)
 	}
 }
 
