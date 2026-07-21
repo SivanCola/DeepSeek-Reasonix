@@ -498,7 +498,7 @@ func (g *Gate) reviewOrEscalate(ctx context.Context, taskID, fp string, proposal
 			return Decision{Allow: true}, nil
 		}
 		verdict = normalizeVerdict(v, failure, proposal, diagNotes)
-		if verdict.Outcome == ReviewContinue && verdict.ChangeKind == ChangeSameStrategy {
+		if verdict.Outcome == ReviewContinue && reviewerContinueKind(verdict.ChangeKind) {
 			g.mu.Lock()
 			g.metrics.ReviewContinues++
 			if current := g.tasks[taskID]; current != nil {
@@ -754,10 +754,10 @@ func (g *Gate) schedulePersist(snap Snapshot, async bool) {
 func ruleRationale(kind ChangeKind, consec int) string {
 	switch kind {
 	case ChangeRisk:
-		if consec >= 2 {
-			return "a second recovery failure requires confirmation before further writes"
+		if consec >= 3 {
+			return "three consecutive recovery failures require confirmation before further writes"
 		}
-		return "the proposed mutation is high risk (destructive shell action, install, config, publish, or external write)"
+		return "the proposed mutation crosses a hard boundary (destructive shell action, global/system change, publish/deploy, or external write)"
 	case ChangeScope:
 		return "the proposed write expands beyond the original failure scope"
 	case ChangeStrategy:
@@ -827,7 +827,7 @@ func (g *Gate) recordReviewBlock(taskID string, verdict ReviewVerdict) int {
 func reviewerBlockerMessage(verdict ReviewVerdict, attempt, limit int) string {
 	reason := firstNonEmpty(verdict.Rationale, "the action could not be verified as safe")
 	return fmt.Sprintf(
-		"blocked: Auto Guard reviewer could not verify this action (attempt %d/%d): %s. Diagnose further or propose a narrower same-strategy action before retrying.",
+		"blocked: Auto Guard reviewer could not verify this action (attempt %d/%d): %s. Diagnose further or propose a bounded, task-aligned workspace action before retrying.",
 		attempt, limit, reason,
 	)
 }
@@ -850,13 +850,15 @@ func normalizeVerdict(v ReviewVerdict, failure *FailureEvent, proposal Proposal,
 		v.ChangeKind = ChangeKind(strings.ToLower(strings.TrimSpace(string(v.ChangeKind))))
 	default:
 		if v.Outcome == ReviewContinue {
-			// Cannot silently continue without a clear same_strategy label.
+			// Cannot silently continue without a clear bounded-recovery label.
 			v.Outcome = ReviewConfirm
 		}
 		v.ChangeKind = ChangeUncertain
 	}
-	// continue is only valid with same_strategy.
-	if v.Outcome == ReviewContinue && v.ChangeKind != ChangeSameStrategy {
+	// Risk and uncertainty always require confirmation. Strategy/scope may
+	// continue when the reviewer established that the change remains bounded,
+	// task-aligned, and reversible workspace recovery.
+	if v.Outcome == ReviewContinue && !reviewerContinueKind(v.ChangeKind) {
 		v.Outcome = ReviewConfirm
 	}
 	if strings.TrimSpace(v.FailureSummary) == "" && failure != nil {
@@ -874,6 +876,15 @@ func normalizeVerdict(v ReviewVerdict, failure *FailureEvent, proposal Proposal,
 		v.Rationale = clip(v.Rationale, 500)
 	}
 	return v
+}
+
+func reviewerContinueKind(kind ChangeKind) bool {
+	switch kind {
+	case ChangeSameStrategy, ChangeStrategy, ChangeScope:
+		return true
+	default:
+		return false
+	}
 }
 
 // Ensure Gate implements agent.RecoveryGate.

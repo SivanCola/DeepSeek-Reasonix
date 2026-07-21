@@ -319,6 +319,26 @@ func TestPolicyPromptBudget(t *testing.T) {
 	if len(PolicyPrompt) == 0 {
 		t.Fatal("empty policy")
 	}
+	for _, required := range []string{
+		"change_kind=same_strategy, strategy, or scope",
+		"Project-local dependency changes",
+		"different tool, implementation method, or file scope is not by itself",
+		"external or network mutations",
+		"system/global installs or config",
+		"writes outside the workspace",
+	} {
+		if !strings.Contains(PolicyPrompt, required) {
+			t.Fatalf("PolicyPrompt missing product boundary %q", required)
+		}
+	}
+	for _, stale := range []string{
+		"outcome=continue ONLY with change_kind=same_strategy",
+		"installing dependencies, editing config, or external/network writes must be confirm",
+	} {
+		if strings.Contains(PolicyPrompt, stale) {
+			t.Fatalf("PolicyPrompt retained stale interruption rule %q", stale)
+		}
+	}
 }
 
 func TestReviewerEvidenceBudgetKeepsValidJSON(t *testing.T) {

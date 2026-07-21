@@ -129,6 +129,15 @@ func TestDecisionMatrix(t *testing.T) {
 	}
 }
 
+func TestRuleRationaleMatchesThreeFailureThreshold(t *testing.T) {
+	if got := ruleRationale(ChangeRisk, 2); strings.Contains(got, "failure") {
+		t.Fatalf("second failure rationale escalated early: %q", got)
+	}
+	if got := ruleRationale(ChangeRisk, 3); !strings.Contains(got, "three consecutive recovery failures") {
+		t.Fatalf("third failure rationale = %q", got)
+	}
+}
+
 // TestBehaviorMatrixGolden freezes end-to-end Gate outcomes for the product matrix.
 // Ordinary paths must not call the reviewer; ambiguous recovery must.
 func TestBehaviorMatrixGolden(t *testing.T) {
@@ -391,26 +400,38 @@ func TestBehaviorMatrixGolden(t *testing.T) {
 			t.Fatalf("post-error reject = %+v %v", dec, err)
 		}
 	})
-	t.Run("illegal continue without same_strategy fails closed to agent or prompt", func(t *testing.T) {
-		// continue + non-same_strategy must never auto-allow.
-		got := run(t, func(g *Gate) {
-			g.ObserveResult(context.Background(), Observation{
-				Tool: "write_file", Mutates: true, ErrSummary: "fail",
-				Args: json.RawMessage(`{"path":"a.go"}`),
+	t.Run("bounded strategy and scope changes may continue", func(t *testing.T) {
+		for _, kind := range []ChangeKind{ChangeStrategy, ChangeScope} {
+			t.Run(string(kind), func(t *testing.T) {
+				got := run(t, func(g *Gate) {
+					g.ObserveResult(context.Background(), Observation{
+						Tool: "write_file", Mutates: true, ErrSummary: "fail",
+						Args: json.RawMessage(`{"path":"a.go"}`),
+					})
+				}, Proposal{
+					Tool: "write_file", Mutates: true, Args: json.RawMessage(`{"path":"b.go","content":"x"}`),
+				}, staticReviewer{ReviewVerdict{Outcome: ReviewContinue, ChangeKind: kind}})
+				if !got.allow || got.prompted || got.reviews != 1 {
+					t.Fatalf("bounded %s recovery = %+v", kind, got)
+				}
 			})
-		}, Proposal{
-			Tool: "write_file", Mutates: true, Args: json.RawMessage(`{"path":"a.go","content":"x"}`),
-		}, staticReviewer{ReviewVerdict{Outcome: ReviewContinue, ChangeKind: ChangeScope}})
-		if got.allow && !got.prompted {
-			// After normalize, continue+scope becomes confirm; first reject blocks agent.
-			t.Fatalf("illegal combination auto-allowed: %+v", got)
 		}
-		if got.allow && got.prompted {
-			// Or escalated path if blocks already high — still not silent allow without human.
-			return
-		}
-		if got.allow {
-			t.Fatalf("illegal combination auto-allowed: %+v", got)
+	})
+	t.Run("risk or uncertainty cannot silently continue", func(t *testing.T) {
+		for _, kind := range []ChangeKind{ChangeRisk, ChangeUncertain} {
+			t.Run(string(kind), func(t *testing.T) {
+				got := run(t, func(g *Gate) {
+					g.ObserveResult(context.Background(), Observation{
+						Tool: "write_file", Mutates: true, ErrSummary: "fail",
+						Args: json.RawMessage(`{"path":"a.go"}`),
+					})
+				}, Proposal{
+					Tool: "write_file", Mutates: true, Args: json.RawMessage(`{"path":"a.go","content":"x"}`),
+				}, staticReviewer{ReviewVerdict{Outcome: ReviewContinue, ChangeKind: kind}})
+				if got.allow {
+					t.Fatalf("unsafe %s recovery auto-allowed: %+v", kind, got)
+				}
+			})
 		}
 	})
 	t.Run("headless needs confirm fails closed without wait", func(t *testing.T) {
