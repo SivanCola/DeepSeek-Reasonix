@@ -118,6 +118,22 @@ Record SHA evidence before merge:
 10. Mirror pull and digest verification.
 11. Clean Desktop exit / force-kill: no orphan ssh/AskPass; remote runtime exits within 5 minutes.
 
+The opt-in live Broker check complements, but does not replace, the physical
+Windows-to-Linux matrix. It loads the real Desktop Provider, isolates the Host
+home and Provider environment, and sends one bounded model turn through the
+production Broker and runtime:
+
+```sh
+cd desktop
+REASONIX_HOME="$HOME/.reasonix" REASONIX_REMOTE_WORKBENCH_LIVE=1 \
+  go test -tags 'live reasonix_remote_integration' \
+  -run '^TestRemoteWorkbenchLiveDesktopBroker$' -count=1 -v .
+```
+
+Use `REASONIX_REMOTE_WORKBENCH_LIVE_PROVIDER_REF` to select a specific
+authorized DeepSeek model reference. The test never logs Provider credentials
+or response content.
+
 ## Repository co-contributors (source PRs)
 
 This integration records the following source authors as **GitHub repository co-contributors** via commit-level `Co-authored-by` trailers (PR body credits alone are not enough for contribution attribution):
