@@ -15,6 +15,116 @@ function ok(value: unknown, message: string) {
   if (!value) throw new Error(message);
 }
 
+{
+  const dom = installDom();
+  const rootEl = document.getElementById("root");
+  if (!rootEl) throw new Error("missing root");
+  const root = createRoot(rootEl);
+  const meta: Meta = { label: "test", ready: true, eventChannel: "mcp-registry-channel", cwd: "/tmp/reasonix-test", workspaceRoot: "/tmp/reasonix-test" };
+  const tabs: TabMeta[] = [{
+    id: "tab-mcp-registry",
+    scope: "project",
+    workspaceRoot: "/tmp/reasonix-test",
+    workspaceName: "reasonix-test",
+    topicId: "topic-mcp-registry",
+    topicTitle: "Registry",
+    label: "Registry",
+    ready: true,
+    running: false,
+    mode: "normal",
+    toolApprovalMode: "auto",
+    active: true,
+    cwd: "/tmp/reasonix-test",
+  }];
+  let servers: ServerView[] = [];
+  let installed: MCPServerInput | null = null;
+  let registryCached = false;
+  let resolvedRegistryName = "";
+  const registryEntry = {
+    name: "io.example/demo",
+    suggestedName: "demo",
+    title: "Demo MCP",
+    description: "Registry demo server",
+    version: "1.0.0",
+    installable: true,
+    transport: "http",
+    args: [],
+    url: "https://mcp.example.test/mcp",
+  };
+  window.go = {
+    main: {
+      App: {
+        Meta: async () => meta,
+        ListTabs: async () => tabs,
+        MCPServers: async () => servers,
+        MCPMarketplace: async () => ({
+          cached: registryCached,
+          warning: registryCached ? "offline" : undefined,
+          servers: [registryEntry],
+        }),
+        MCPMarketplaceResolve: async (registryName) => {
+          resolvedRegistryName = registryName;
+          return registryEntry;
+        },
+        AddMCPServer: async (input) => {
+          installed = input;
+          servers = [{
+            name: input.name,
+            transport: input.transport,
+            status: "connected",
+            configured: true,
+            autoStart: true,
+            tools: 1,
+            prompts: 0,
+            resources: 0,
+            url: input.url,
+          }];
+          return 1;
+        },
+      } as Partial<AppBindings> as AppBindings,
+    },
+  };
+
+  await act(async () => {
+    root.render(React.createElement(LocaleProvider, null, React.createElement(MCPServersSettingsPage)));
+    await flush();
+  });
+  await waitFor("registry browse action", () => Boolean(findButton("Browse registry")));
+  await act(async () => {
+    findButton("Browse registry")?.click();
+    await flush();
+  });
+  await waitFor("registry result", () => document.body.textContent?.includes("Demo MCP") ?? false);
+  await act(async () => {
+    findButton("Install")?.click();
+    await flush();
+  });
+  await waitFor("registry install", () => installed !== null && document.body.textContent?.includes("demo") === true);
+  const installedEntry = installed as MCPServerInput | null;
+  ok(installedEntry?.name === "demo" && installedEntry.transport === "http" && installedEntry.url === "https://mcp.example.test/mcp", "registry install converts the selected entry into the normal add-and-connect input");
+  ok(resolvedRegistryName === "io.example/demo", "registry install re-resolves current metadata by canonical name");
+
+  registryCached = true;
+  installed = null;
+  await act(async () => {
+    findButton("Browse registry")?.click();
+    await flush();
+    findButton("Search")?.click();
+    await flush();
+  });
+  await waitFor("cached registry warning", () => document.body.textContent?.includes("Showing cached results") ?? false);
+  const cachedInstall = findButton("Install");
+  ok(cachedInstall?.disabled === true, "cached Registry results must remain browse-only");
+  cachedInstall?.click();
+  await flush();
+  ok(installed === null, "cached Registry result must not be installed");
+
+  await act(async () => {
+    root.unmount();
+  });
+  dom.window.close();
+}
+
 const completeMCPJSON = JSON.stringify({
   admin: {
     type: "streamable-http",
@@ -32,10 +142,11 @@ const completeMCP = parseMCPServerJSON(completeMCPJSON);
 ok(completeMCP.input.transport === "http", "streamable-http should normalize to http");
 ok(completeMCP.input.autoStart === false, "advanced JSON should preserve auto_start=false");
 ok(completeMCP.input.callTimeoutSeconds === 45 && completeMCP.input.toolTimeoutSeconds?.wipe === 120, "advanced JSON should preserve timeouts");
-ok(completeMCP.input.defaultToolsApprovalMode === "writes" && completeMCP.input.tools?.wipe.approval_mode === "prompt", "advanced JSON should preserve approval modes");
-ok(completeMCP.input.approvalsReviewer === "auto_review", "advanced JSON should preserve the reviewer");
 const completeMCPRoundTrip = parseMCPServerJSON(mcpServerDraftJSON(completeMCP.draft));
-ok(completeMCPRoundTrip.input.transport === "http" && completeMCPRoundTrip.input.tools?.wipe.approval_mode === "prompt", "Form/JSON switching should preserve advanced fields");
+ok(completeMCPRoundTrip.input.transport === "http" && completeMCPRoundTrip.input.toolTimeoutSeconds?.wipe === 120, "Form/JSON switching should preserve connection fields");
+const normalizedMCPJSON = mcpServerDraftJSON(completeMCP.draft);
+ok(!normalizedMCPJSON.includes("trusted_read_only_tools"), "Form/JSON switching should drop the removed reader setting");
+ok(!normalizedMCPJSON.includes("approval_mode") && !normalizedMCPJSON.includes("approvals_reviewer"), "Form/JSON switching should drop retired MCP approval settings");
 let unsupportedMCPFieldRejected = false;
 try {
   parseMCPServerJSON(JSON.stringify({ admin: { command: "admin-mcp", unsupported: true } }));
@@ -53,8 +164,7 @@ try {
 ok(incompleteMCPRejected, "submitting incomplete MCP JSON must still require a command or URL");
 const incompleteMCPDraft = parseMCPServerJSON(incompleteMCPJSON, undefined, { allowIncomplete: true });
 ok(incompleteMCPDraft.draft.name === "admin" && incompleteMCPDraft.draft.command === "", "mode switching may recover an incomplete MCP draft for form editing");
-const clearedMCPPolicy = parseMCPServerJSON(JSON.stringify({ admin: { command: "admin-mcp", default_tools_approval_mode: "", approvals_reviewer: "" } }));
-ok(clearedMCPPolicy.input.defaultToolsApprovalMode === "" && clearedMCPPolicy.input.approvalsReviewer === "", "empty advanced policy values should clear saved overrides");
+parseMCPServerJSON(JSON.stringify({ admin: { command: "admin-mcp", default_tools_approval_mode: "", approvals_reviewer: "" } }));
 let nullToolTimeoutRejected = false;
 try {
   parseMCPServerJSON(JSON.stringify({ admin: { command: "admin-mcp", tool_timeout_seconds: { wipe: null } } }));
@@ -63,8 +173,8 @@ try {
 }
 ok(nullToolTimeoutRejected, "a null per-tool timeout must be rejected instead of silently clearing all timeouts");
 const sparseEdit = withExplicitMCPClears(parseMCPServerJSON(JSON.stringify({ admin: { command: "admin-mcp" } })).input);
-ok(sparseEdit.callTimeoutSeconds === 0 && sparseEdit.defaultToolsApprovalMode === "" && sparseEdit.approvalsReviewer === "", "editing an existing server with fields removed must clear those settings");
-ok(sparseEdit.autoStart === true && Object.keys(sparseEdit.toolTimeoutSeconds ?? { x: 1 }).length === 0 && sparseEdit.trustedReadOnlyTools === undefined && Object.keys(sparseEdit.tools ?? { x: 1 }).length === 0, "removed collection fields must clear while legacy trust stays absent");
+ok(sparseEdit.callTimeoutSeconds === 0, "editing an existing server with fields removed must clear the timeout");
+ok(sparseEdit.autoStart === true && Object.keys(sparseEdit.toolTimeoutSeconds ?? { x: 1 }).length === 0, "removed timeout fields must clear");
 ok(sparseEdit.env === null && sparseEdit.headers === null, "absent env/headers must stay preserve-on-absent because their values are never seeded into the editor");
 
 const refusedRegistryError = [
@@ -300,7 +410,6 @@ console.log("capabilities panel MCP actions");
       { name: "issue_write", description: "Write issues." },
       { name: "broken_read", description: "Broken tool.", readOnlyHint: true, schemaError: "invalid input schema: bad nested type" },
     ],
-    trustedReadOnlyTools: [],
   }];
   window.go = {
     main: {

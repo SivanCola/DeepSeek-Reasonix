@@ -59,7 +59,6 @@ default_model = "deepseek-flash"   # executor; set [agent].planner_model to add 
 
 [agent]
 reasoning_language = "auto"      # visible reasoning text: auto|zh|en
-# plan_mode_allowed_tools = ["mcp__legacy__reader"]   # legacy MCP read-only alias; does not change Plan availability
 # plan_mode_read_only_commands = ["gh issue view"]   # legacy compatibility only; Plan bash now uses Permissions
 # planner_model = "deepseek-pro"      # optional low-frequency planner
 # subagent_model = "deepseek-pro"     # optional default for runAs=subagent skills
@@ -117,11 +116,9 @@ tool_timeout_seconds = { "generate_video" = 1800 }   # optional raw MCP tool nam
 
 For the full schema and every field's contract, see [`SPEC.md` §5](./SPEC.md#5-configuration-toml).
 
-The legacy `[agent].plan_mode_allowed_tools` field is still decoded and rendered
-for old configs. Concrete `mcp__<server>__<tool>` entries continue to act as a
-local read-only trust alias, but prefer each server's `trusted_read_only_tools`
-with raw MCP names. The field never grants or revokes calls in the main Plan
-workflow.
+Newly installed or explicitly authorized MCP servers need no per-tool reader
+list. Their non-destructive `readOnlyHint` tools are available to planner and
+read-only sub-agent registries automatically.
 
 `[agent].plan_mode_read_only_commands` is also retained for config round trips,
 but the main Plan workflow no longer has a separate bash allowlist or trust
@@ -535,7 +532,7 @@ Mode meanings:
 | Ask | Prompts for fallback writer approvals. |
 | Auto | Auto-allows fallback approvals; explicit `ask` / `deny` rules still apply. |
 | YOLO | Skips ordinary tool approval prompts; `deny`, user `ask` questions, and plan approval prompts still wait. |
-| Plan | Directs the model to plan first — a plan-first workflow, not an all-tools read-only mode. Built-in writers still follow the active Ask/Auto/YOLO rules and Sandbox; installed MCP writers, destructive targets, and untrusted readers are hard-blocked for the whole planning phase (approval cannot release them; they return once Plan exits), and explicit phase-only tools such as `complete_step` wait until approval. |
+| Plan | Directs the model to plan first — a plan-first workflow, not an all-tools read-only mode. Built-in writers still follow the active Ask/Auto/YOLO rules and Sandbox; installed MCP writers, destructive targets, and readers from unauthorized servers are hard-blocked for the whole planning phase (approval cannot release them; they return once Plan exits), and explicit phase-only tools such as `complete_step` wait until approval. |
 | Goal | Pursues a saved objective until complete, blocked, or cleared. |
 
 ## Permissions & sandbox
@@ -631,16 +628,23 @@ Reasonix is an MCP client. A `[[plugins]]` entry's `type` selects the transport:
 `stdio` (default) launches a local subprocess (`command`/`args`/`env`); `http`
 (Streamable HTTP) connects to a remote `url` with optional static `headers`
 (`${VAR}` / `${VAR:-default}` expanded from the environment, so tokens stay out
-of the file).
+of the file); `sse` connects to servers that still use the legacy persistent
+GET + announced POST endpoint transport.
+
+Browse the official MCP Registry from **Settings → MCP servers → Browse
+registry**, or use `reasonix mcp browse [query]` and
+`reasonix mcp install <registry-name>`. Registry access is explicit and never
+runs during startup. Entries that need secrets or required arguments are shown
+as manual setup instead of being installed with an incomplete configuration;
+query-specific cached results remain available during a registry outage.
 
 The normal setup path is intentionally one step. Use Desktop's **Add and
 connect**, `/mcp add`, or ask Reasonix to install a package, URL, or `.mcp.json`.
 That explicit install is also authorization: the server is saved and connected
 in the current session, and no second trust step appears now or on the next
-startup. Explicit deny rules still win. With no advanced approval override, the
-installed server's calls run directly, including tools that declare
-`destructiveHint`; choose `auto`, `prompt`, or `writes` when those calls should
-retain fresh review. Plan/read-only sub-agents still expose only eligible tool
+startup. Explicit deny rules still win. The installed server's calls run
+directly, including tools that declare
+`destructiveHint`. Plan/read-only sub-agents still expose only eligible tool
 identities. A server merely discovered in repository-controlled
 `reasonix.toml` or `.mcp.json` is different: Reasonix asks once to confirm the
 exact command or endpoint, records that decision without launching a temporary
@@ -650,70 +654,34 @@ while that value is unchanged and asks again only after a change.
 stdio servers keep one process for initialize, reads, and writes, so stateful
 servers such as browsers retain sessions and open pages. Because an OS sandbox
 is fixed when a process starts, this shared process uses the server's normal
-writer sandbox for every call; `readOnlyHint` and read-only sub-agent filtering
+process sandbox for every call; `readOnlyHint` and read-only sub-agent filtering
 are dispatch policy, not a second per-call process sandbox.
 
 Tools surface to the model as `mcp__<server>__<tool>`. A tool declaring MCP's
-`readOnlyHint: true` joins parallel dispatch and the ordinary
-permission reader-default. Because the annotation is supplied by a third-party
-server, it is accepted by the main Plan workflow only as ordinary permission
-classification; it does not grant access to the dedicated planner or read-only
-research sub-agents. Use the local `trusted_read_only_tools` override for a
-reader you have audited. Tools without the hint remain write-capable. While planning, built-in
+`readOnlyHint: true` joins parallel dispatch and the strict read-only tool
+surfaces. Installing a server, or confirming an exact
+repository-provided server once, authorizes its non-destructive reader metadata;
+those tools are also available to the dedicated planner and read-only research
+sub-agents without another per-tool setting. Tools without the hint remain
+write-capable. While planning, built-in
 writers keep the ordinary permission posture; installed MCP and proxy-resolved
-MCP writers, destructive targets, and untrusted readers are hard-blocked before
-any approval and return to their normal approval flow once Plan exits.
+MCP writers, destructive targets, and readers from unauthorized servers are hard-blocked before
+any approval and become directly usable once Plan exits.
 
-MCP `destructiveHint: true` is stricter than the read-only classification. Under
-`auto`, `prompt`, or `writes`, every destructive call requires fresh human
-approval even if the tool also reports `readOnlyHint`, the current posture is
-Auto/YOLO, or an allow rule was saved — Guardian, `auto_review`, and session
-grants cannot authorize it. An effective `approve` mode records that the user
-authorized the server or tool and permits the call directly.
+Installing an MCP server is the authorization decision. After installation, all
+of its tools run directly without a second server-level, per-tool, writer, or
+destructive approval setting. Explicit global deny rules still win. The host
+keeps `readOnlyHint` and `destructiveHint` internally for parallel scheduling,
+Plan restrictions, strict read-only sub-agents, and cached-to-live safety
+reclassification; these hints do not add user configuration.
+Reasonix deliberately trusts an installed server to describe those hints
+honestly. Planner/read-only filtering is therefore a workflow boundary for
+trusted servers, not containment against a malicious MCP server; explicit deny
+rules and the process sandbox remain host-controlled boundaries.
 
-`approvals_reviewer = "auto_review"` routes the calls that actually need a
-review — `prompt` mode, writer hits under `writes`, and `auto` calls the global
-posture would Ask about — to the session Guardian, and a successful verdict
-(allow or deny) is final. When the reviewer is missing, times out, fails, or
-returns no verdict, the call falls back to fresh human approval: a prompt that
-Auto/YOLO, the approved-plan window, and session grants cannot answer.
-Non-interactive runs and sub-agents fail closed in every reviewer-required
-case.
-
-Server and raw-tool approval policy stays local and never changes the schema
-sent to the model:
-
-```toml
-[[plugins]]
-name = "github"
-command = "github-mcp"
-default_tools_approval_mode = "writes" # auto|prompt|writes|approve
-tools = { "delete_repository" = { approval_mode = "prompt" } }
-approvals_reviewer = "auto_review"     # user|auto_review
-trusted_read_only_tools = ["issue_read", "pull_request_read"]
-```
-
-For a user-authorized server, omitting these advanced approval fields permits
-all calls directly. If a field is present, `auto` delegates to the global
-Ask/Auto/YOLO permission posture; `prompt`
-reviews every call; `writes` reviews only writer-classified calls; and `approve`
-allows calls directly, including destructive calls. Explicit deny rules always
-win; `destructiveHint` forces a new review for every mode except `approve`. A
-raw-tool `tools` entry overrides the server default. `trusted_read_only_tools`
-remains a compatibility field and explicit local declaration for audited
-readers on servers that omit or cannot reliably maintain annotations.
-
-Two boundaries are worth knowing. `writes` trusts the server's read-only
-classification, so a server that mislabels a writer as `readOnlyHint` escapes
-that review — use `prompt` for servers you do not trust to maintain
-annotations. And when Guardian is enabled with no `approvals_reviewer`
-configured, `prompt`/`writes` reviews keep the legacy routing: Guardian
-pre-screens the call and may allow it without a human prompt; set
-`approvals_reviewer = "user"` when every review must reach a person. A
-project's `.mcp.json` merges these fields into the session, so review
-`approve`/`writes` policies in a repository you did not author like any other
-code — explicit deny rules still apply, and destructive reviews apply unless
-the effective mode is `approve`.
+The retired `trusted_read_only_tools`, `default_tools_approval_mode`,
+`tools.<raw>.approval_mode`, and `approvals_reviewer` fields are ignored when
+loading older files and removed the next time Reasonix saves that MCP entry.
 
 A server's **prompts** surface as `/mcp__<server>__<prompt>` slash commands
 (positional args after the command); its **resources** are pulled in by writing
@@ -975,11 +943,10 @@ Every strict read-only child is built through one shared construction
 pairing — `RunReadOnlySubAgentWithSession` for batch children and
 `NewReadOnlyAgent` for the interactive two-model planner — which marks the
 child permanently read-only and applies a final registry filter. The filter
-removes writers, destructive MCP targets, MCP readers backed only by a
-third-party server hint, and every host-mutating tool. An MCP reader is
-eligible only when explicitly declared in local configuration or declared by
-a currently verified signed official package. Eligible readers may still
-start on demand. These are
+removes writers, destructive MCP targets, readers from unauthorized servers,
+and every host-mutating tool. A user-installed server is authorized immediately;
+a repository-declared server becomes eligible after its exact identity is
+confirmed once. Eligible readers may still start on demand. These are
 the strict read-only entrances:
 
 | Entrance | Purpose |
@@ -994,11 +961,12 @@ the strict read-only entrances:
 
 Inside a strict child, `use_capability` re-checks the resolved target before
 commit/permission/hooks/execution. An unconnected eligible MCP reader may start
-on demand from the current schema cache; its cached security fingerprint is
-checked against the live initialize/tools-list result before `tools/call`.
-Schema or safety drift means zero executions and a normal retry with current
-policy. `auto_review` cannot raise
-privileges there; a reader that would need a local prompt fails closed. This
+on demand from the current schema cache. Before `tools/call`, cached
+`readOnlyHint`/`destructiveHint` facts are checked against the live
+initialize/tools-list result; a reader-to-writer change or destructive promotion
+means zero executions and a normal retry through the current boundary. A
+schema-only change refreshes the cache for the next session without interrupting
+the authorized call. An unauthorized server cannot raise privileges there. This
 is a stricter layer than the main Plan workflow: Plan hard-blocks MCP
 writer/destructive targets for the entire planning phase — no approval can
 release them until Plan exits — while built-in writers keep

@@ -6,11 +6,14 @@ import (
 	"testing"
 )
 
-func TestInstallerCommandLineIsSilentAndKeepsDFlagLast(t *testing.T) {
+func TestInstallerCommandLineUsesVisibleUpdateModeAndKeepsDFlagLast(t *testing.T) {
 	got := installerCommandLine(`C:\Temp\Reasonix Installer.exe`, `D:\Tools\Reasonix App`)
-	want := `"C:\Temp\Reasonix Installer.exe" /S /D=D:\Tools\Reasonix App`
+	want := `"C:\Temp\Reasonix Installer.exe" /REASONIXUPDATE=1 /D=D:\Tools\Reasonix App`
 	if got != want {
 		t.Fatalf("installerCommandLine = %q, want %q", got, want)
+	}
+	if strings.Contains(got, " /S") {
+		t.Fatalf("auto-update must expose progress instead of using silent mode, got %q", got)
 	}
 	if !strings.HasSuffix(got, `/D=D:\Tools\Reasonix App`) {
 		t.Fatalf("/D= must be the final unquoted NSIS token, got %q", got)
@@ -49,6 +52,21 @@ func TestWindowsInstallerScriptWaitsBeforeCopyingExecutable(t *testing.T) {
 		`!define REASONIX_LAUNCHER "reasonix-launcher.exe"`,
 		`!define REASONIX_CLI "reasonix.exe"`,
 		`!define REASONIX_PORTABLE_ENTRY "Reasonix.exe"`,
+		"Var ReasonixUpdateMode",
+		`${GetOptions} $R0 "/REASONIXUPDATE=" $R1`,
+		"Function reasonix.skipSetupPageForUpdate",
+		"Function reasonix.showUpdateProgress",
+		`!define MUI_PAGE_CUSTOMFUNCTION_PRE reasonix.skipFinishPageForUpdate`,
+		"Function reasonix.skipFinishPageForUpdate",
+		`StrCmp $ReasonixUpdateMode "1" 0 reasonix_show_finish_page`,
+		"SetAutoClose true",
+		"BringToFront",
+		`LangString reasonixUpdateTitle ${LANG_ENGLISH} "Updating Reasonix"`,
+		`LangString reasonixUpdateTitle ${LANG_SIMPCHINESE} "正在更新 Reasonix"`,
+		`LangString reasonixUpdateTitle ${LANG_TRADCHINESE} "正在更新 Reasonix"`,
+		`LangString reasonixUpdateSubtitle ${LANG_ENGLISH} "Installing the verified update. Reasonix will restart automatically."`,
+		`LangString reasonixUpdateSubtitle ${LANG_SIMPCHINESE} "正在安装已验证的更新，完成后 Reasonix 将自动重启。"`,
+		`LangString reasonixUpdateSubtitle ${LANG_TRADCHINESE} "正在安裝已驗證的更新，完成後 Reasonix 將自動重新啟動。"`,
 		"Function reasonix.waitForExecutableUnlock",
 		`FileOpen $1 "$INSTDIR\${PRODUCT_EXECUTABLE}" a`,
 		`FileOpen $1 "$INSTDIR\${REASONIX_GUARD}" a`,
@@ -66,6 +84,11 @@ func TestWindowsInstallerScriptWaitsBeforeCopyingExecutable(t *testing.T) {
 		if !strings.Contains(script, want) {
 			t.Fatalf("project.nsi missing %q", want)
 		}
+	}
+	finishPageHook := strings.Index(script, "!define MUI_PAGE_CUSTOMFUNCTION_PRE reasonix.skipFinishPageForUpdate")
+	finishPage := strings.Index(script, "!insertmacro MUI_PAGE_FINISH")
+	if finishPageHook < 0 || finishPage < 0 || finishPageHook > finishPage {
+		t.Fatalf("update-only finish page hook must be attached to MUI_PAGE_FINISH (hook=%d page=%d)", finishPageHook, finishPage)
 	}
 	wait := strings.Index(script, "Call reasonix.waitForExecutableUnlock")
 	copyFiles := strings.Index(script, "!insertmacro wails.files")
@@ -106,5 +129,16 @@ func TestWindowsUpdateRequiresObservedHelperHandoff(t *testing.T) {
 	}
 	if strings.Contains(source, "return installerCommand(installerPath, installDir).Start()") {
 		t.Fatal("Windows update silently falls back to an unobserved installer")
+	}
+	if !strings.Contains(source, "cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}") {
+		t.Fatal("Windows handoff helper should stay hidden while NSIS shows update progress")
+	}
+	helperData, err := os.ReadFile("cmd/update-helper/main_windows.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	helperSource := string(helperData)
+	if strings.Contains(helperSource, "installerCommandLine(installer, installDir), HideWindow: true") {
+		t.Fatal("update helper still hides the NSIS progress window")
 	}
 }

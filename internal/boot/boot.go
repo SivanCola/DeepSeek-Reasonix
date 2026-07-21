@@ -19,7 +19,6 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"reasonix/internal/agent"
@@ -36,7 +35,6 @@ import (
 	"reasonix/internal/instruction"
 	"reasonix/internal/jobs"
 	"reasonix/internal/lsp"
-	"reasonix/internal/mcpcatalog"
 	"reasonix/internal/mcplaunch"
 	"reasonix/internal/memory"
 	"reasonix/internal/migration"
@@ -44,7 +42,6 @@ import (
 	"reasonix/internal/outputstyle"
 	"reasonix/internal/permission"
 	"reasonix/internal/plugin"
-	"reasonix/internal/pluginpkg"
 	"reasonix/internal/provider"
 	"reasonix/internal/recovery"
 	"reasonix/internal/sandbox"
@@ -484,16 +481,14 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	// Partition configured plugins by tier so eager can block when explicitly
 	// requested while every other enabled MCP warms up in the background.
 	pluginSpecOptions := PluginSpecOptions{
-		DefaultCallTimeout:   time.Duration(cfg.MCPCallTimeoutSeconds()) * time.Second,
-		PlanModeAllowedTools: cfg.Agent.PlanModeAllowedTools,
-		LaunchManager:        mcplaunch.ForWorkspace(config.ReasonixHomeDir(), root),
-		ConfigSource:         "workspace_config",
-		StateHome:            config.ReasonixHomeDir(),
-		WriterRoots:          writeRoots,
-		ForbidReadRoots:      forbidReadRoots,
-		Network:              cfg.Sandbox.Network,
-		OfficialServers:      LoadVerifiedMCPPackages(ctx, cfg),
-		PackageOwners:        pluginPackageOwners(cfg),
+		DefaultCallTimeout: time.Duration(cfg.MCPCallTimeoutSeconds()) * time.Second,
+		LaunchManager:      mcplaunch.ForWorkspace(config.ReasonixHomeDir(), root),
+		ConfigSource:       "workspace_config",
+		StateHome:          config.ReasonixHomeDir(),
+		WriterRoots:        writeRoots,
+		ForbidReadRoots:    forbidReadRoots,
+		Network:            cfg.Sandbox.Network,
+		PackageOwners:      pluginPackageOwners(cfg),
 	}
 	autoStartEntries := cfg.AutoStartPlugins()
 	eagerEntries, bgEntries := partitionByTier(autoStartEntries)
@@ -505,15 +500,24 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		extraPlugins = nil
 	}
 	extraSpecs := applyDefaultMCPCallTimeout(
-		applyPlanModeAllowedMCPReaders(applyKnownPluginOverrides(extraPlugins, root), cfg.Agent.PlanModeAllowedTools),
+		applyKnownPluginOverrides(extraPlugins, root),
 		pluginSpecOptions.DefaultCallTimeout,
 	)
 	for i := range extraSpecs {
+		if strings.TrimSpace(extraSpecs[i].WorkspaceRoot) == "" {
+			extraSpecs[i].WorkspaceRoot = root
+		}
 		if extraSpecs[i].LaunchManager == nil {
 			extraSpecs[i].LaunchManager = pluginSpecOptions.LaunchManager
 		}
 		if strings.TrimSpace(extraSpecs[i].ConfigSource) == "" {
 			extraSpecs[i].ConfigSource = "host_session"
+		}
+		if !extraSpecs[i].RequireLaunchApproval {
+			// Session-scoped MCP specs arrive through an explicit host/user action
+			// (for example ACP session/new), so they follow installed-server
+			// authorization without another per-tool or per-session prompt.
+			extraSpecs[i].Authorized = true
 		}
 		applyMCPIsolation(&extraSpecs[i], root, pluginSpecOptions)
 	}
@@ -1416,9 +1420,9 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	var capLedger *capability.Ledger
 	var capAudit *capability.Audit
 	capSpecs := PluginSpecsForRootWithOptions(cfg.Plugins, root, pluginSpecOptions)
-	cachedTools, cacheHashOK := capability.LoadCachedToolsForSpecs(capSpecs)
+	cachedTools, cacheKeyOK := capability.LoadCachedToolsForSpecs(capSpecs)
 	skillStore.ConfigureToolBindings(func(sk skill.Skill) []tool.MCPBinding {
-		return skillMCPBindings(sk, reg, capSpecs, cachedTools, cacheHashOK)
+		return skillMCPBindings(sk, reg, capSpecs, cachedTools, cacheKeyOK)
 	})
 	var capProxy *agent.UseCapabilityTool
 	if tokenDelivery {
@@ -1431,7 +1435,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 			}
 		}
 		// The proxy and the catalog share the boot-converted specs (env
-		// expansion, workspace overrides, timeouts, trusted read-only tools) —
+		// expansion, workspace overrides, and timeouts) —
 		// every configured server, including auto_start=false, is proxy-callable.
 		catalogFn := func() capability.Catalog {
 			conn := map[string]bool{}
@@ -1448,7 +1452,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 				Connected:   conn,
 				Failed:      failed,
 				CachedTools: cachedTools,
-				CacheHashOK: cacheHashOK,
+				CacheKeyOK:  cacheKeyOK,
 			}
 			// Live proxy-observed tools keep mcp-tool entries routable after an
 			// on-demand connect (proxied tools never enter the registry).
@@ -1486,7 +1490,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 			Connected:   connected,
 			Failed:      failed,
 			CachedTools: cachedTools,
-			CacheHashOK: cacheHashOK,
+			CacheKeyOK:  cacheKeyOK,
 			ProxyTools:  proxyTools,
 		})
 		_, missing := catalog.RequiresReady(requires)
@@ -1520,7 +1524,6 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		ArchiveDir:               config.ArchiveDir(),
 		KeepPolicy:               keepPolicy,
 		ReasoningLanguage:        cfg.ReasoningLanguage(),
-		PlanModeAllowedTools:     cfg.Agent.PlanModeAllowedTools,
 		PlanModeReadOnlyCommands: cfg.Agent.PlanModeReadOnlyCommands,
 		SubagentDepth:            0,
 		MaxSubagentDepth:         maxSubagentDepth,
@@ -1600,7 +1603,6 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 				spec.ConfigSource = pluginSpecOptions.ConfigSource
 			}
 			applyMCPIsolation(spec, root, pluginSpecOptions)
-			applyVerifiedMCPPackage(spec, pluginSpecOptions)
 		},
 		WorkspaceRoot:          root,
 		ExternalFolderToolRefs: readPathResolver,
@@ -1608,7 +1610,6 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		ReasoningLanguage:      cfg.ReasoningLanguage(),
 		DisableColdResumePrune: !cfg.ColdResumePruneEnabled(),
 		Shell:                  shell,
-		PlanModeAllowedTools:   cfg.Agent.PlanModeAllowedTools,
 		ApprovalTimeout:        opts.ApprovalTimeout,
 		RuntimeProfile:         runtimeProfile,
 		OnRemember: func(rule string) control.RememberResult {
@@ -1672,7 +1673,6 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 			taskTool.WithRecoveryGate(g.RecoveryGate())
 		}
 	}
-	refreshMCPPackageRevocationsInBackground(pluginHost)
 	if tokenDelivery {
 		var router *capability.SemanticRouter
 		// Prefer agent.subagent_models["capability-router"] when configured.
@@ -1691,59 +1691,6 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		ctrl.WireCapabilityRouting(cfg.Plugins, capSpecs, nil, nil)
 	}
 	return ctrl, nil
-}
-
-var mcpPackageRevocationRefresh struct {
-	sync.Mutex
-	running bool
-	last    time.Time
-	index   mcpcatalog.Index
-	hosts   map[*plugin.Host]struct{}
-}
-
-func refreshMCPPackageRevocationsInBackground(host *plugin.Host) {
-	if host == nil {
-		return
-	}
-	mcpPackageRevocationRefresh.Lock()
-	if !mcpPackageRevocationRefresh.last.IsZero() && time.Since(mcpPackageRevocationRefresh.last) < 6*time.Hour {
-		index := mcpPackageRevocationRefresh.index
-		mcpPackageRevocationRefresh.Unlock()
-		host.ApplyCatalogRevocations(index.RevokedEntryIDs())
-		return
-	}
-	if mcpPackageRevocationRefresh.hosts == nil {
-		mcpPackageRevocationRefresh.hosts = map[*plugin.Host]struct{}{}
-	}
-	mcpPackageRevocationRefresh.hosts[host] = struct{}{}
-	if mcpPackageRevocationRefresh.running {
-		mcpPackageRevocationRefresh.Unlock()
-		return
-	}
-	mcpPackageRevocationRefresh.running = true
-	mcpPackageRevocationRefresh.Unlock()
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-		defer cancel()
-		result, err := (mcpcatalog.Loader{CacheDir: config.CacheDir()}).Load(ctx, true)
-		mcpPackageRevocationRefresh.Lock()
-		hosts := mcpPackageRevocationRefresh.hosts
-		mcpPackageRevocationRefresh.hosts = map[*plugin.Host]struct{}{}
-		mcpPackageRevocationRefresh.running = false
-		if err == nil {
-			mcpPackageRevocationRefresh.last = time.Now()
-			mcpPackageRevocationRefresh.index = result.Index
-		}
-		mcpPackageRevocationRefresh.Unlock()
-		if err != nil {
-			slog.Warn("refresh signed MCP catalog", "err", err)
-			return
-		}
-		revoked := result.Index.RevokedEntryIDs()
-		for target := range hosts {
-			target.ApplyCatalogRevocations(revoked)
-		}
-	}()
 }
 
 func rememberPermissionRule(workspaceRoot, rule string) control.RememberResult {
@@ -2250,43 +2197,20 @@ func PluginSpecs(entries []config.PluginEntry) []plugin.Spec {
 // PluginSpecsForRoot maps configured plugin entries to plugin.Spec and applies
 // workspace-aware compatibility overrides for known cwd-sensitive servers.
 func PluginSpecsForRoot(entries []config.PluginEntry, workspaceRoot string) []plugin.Spec {
-	return PluginSpecsForRootWithPlanModeAllowedTools(entries, workspaceRoot, nil)
+	return PluginSpecsForRootWithOptions(entries, workspaceRoot, PluginSpecOptions{})
 }
 
 // PluginSpecOptions carries runtime policy that is not stored on each plugin
 // entry but still needs to reach plugin.Spec.
 type PluginSpecOptions struct {
-	DefaultCallTimeout   time.Duration
-	PlanModeAllowedTools []string
-	LaunchManager        *mcplaunch.Manager
-	ConfigSource         string
-	StateHome            string
-	WriterRoots          []string
-	ForbidReadRoots      []string
-	Network              bool
-	OfficialServers      map[string]VerifiedMCPPackage
-	PackageOwners        map[string]string
-}
-
-type VerifiedMCPPackage struct {
-	CatalogEntryID  string
-	Readers         []string
-	PackageDigest   string
-	PackageRoot     string
-	Version         string
-	CatalogSequence uint64
-	Network         bool
-	Transport       string
-}
-
-// PluginSpecsForRootWithPlanModeAllowedTools promotes legacy model-visible MCP
-// names from agent.plan_mode_allowed_tools to trusted read-only names for their
-// matching server. The alias remains useful to planner/read-only research
-// registries but does not control the main Plan workflow.
-func PluginSpecsForRootWithPlanModeAllowedTools(entries []config.PluginEntry, workspaceRoot string, allowedTools []string) []plugin.Spec {
-	return PluginSpecsForRootWithOptions(entries, workspaceRoot, PluginSpecOptions{
-		PlanModeAllowedTools: allowedTools,
-	})
+	DefaultCallTimeout time.Duration
+	LaunchManager      *mcplaunch.Manager
+	ConfigSource       string
+	StateHome          string
+	WriterRoots        []string
+	ForbidReadRoots    []string
+	Network            bool
+	PackageOwners      map[string]string
 }
 
 // PluginSpecsForRootWithOptions maps configured plugin entries to plugin.Spec
@@ -2296,7 +2220,7 @@ func PluginSpecsForRootWithOptions(entries []config.PluginEntry, workspaceRoot s
 	for i, e := range entries {
 		specs[i] = pluginSpecFromEntryWithOptions(e, workspaceRoot, opts)
 	}
-	return applyPlanModeAllowedMCPReaders(specs, opts.PlanModeAllowedTools)
+	return specs
 }
 
 func pluginSpecFromEntryWithOptions(e config.PluginEntry, workspaceRoot string, opts PluginSpecOptions) plugin.Spec {
@@ -2306,28 +2230,24 @@ func pluginSpecFromEntryWithOptions(e config.PluginEntry, workspaceRoot string, 
 		configSource = opts.ConfigSource
 	}
 	spec := plugin.ApplyKnownOverrides(plugin.Spec{
-		Name:                     e.Name,
-		Package:                  strings.TrimSpace(opts.PackageOwners[e.Name]),
-		Type:                     e.Type,
-		Command:                  e.Command,
-		Args:                     e.Args,
-		Env:                      e.Env,
-		URL:                      e.URL,
-		Headers:                  e.Headers,
-		DefaultCallTimeout:       opts.DefaultCallTimeout,
-		CallTimeout:              secondsDuration(e.CallTimeoutSeconds),
-		ToolTimeouts:             toolTimeoutDurations(e.ToolTimeoutSeconds),
-		ReadOnlyToolNames:        legacyRawReadOnlyToolNames(e.TrustedReadOnlyTools),
-		DefaultToolsApprovalMode: e.DefaultToolsApprovalMode,
-		ToolApprovalModes:        mcpToolApprovalModes(e.Tools),
-		ApprovalsReviewer:        e.ApprovalsReviewer,
-		LaunchManager:            opts.LaunchManager,
-		ConfigSource:             configSource,
-		ImplicitApproval:         e.Source.UserAuthorized(),
-		RequireLaunchApproval:    e.Source.RequiresLaunchApproval(),
+		Name:                  e.Name,
+		Package:               strings.TrimSpace(opts.PackageOwners[e.Name]),
+		Type:                  e.Type,
+		Command:               e.Command,
+		Args:                  e.Args,
+		Env:                   e.Env,
+		URL:                   e.URL,
+		Headers:               e.Headers,
+		DefaultCallTimeout:    opts.DefaultCallTimeout,
+		CallTimeout:           secondsDuration(e.CallTimeoutSeconds),
+		ToolTimeouts:          toolTimeoutDurations(e.ToolTimeoutSeconds),
+		WorkspaceRoot:         strings.TrimSpace(workspaceRoot),
+		LaunchManager:         opts.LaunchManager,
+		ConfigSource:          configSource,
+		Authorized:            e.Source.UserAuthorized(),
+		RequireLaunchApproval: e.Source.RequiresLaunchApproval(),
 	}, workspaceRoot)
 	applyMCPIsolation(&spec, workspaceRoot, opts)
-	applyVerifiedMCPPackage(&spec, opts)
 	return spec
 }
 
@@ -2344,7 +2264,7 @@ func pluginPackageOwners(cfg *config.Config) map[string]string {
 	return out
 }
 
-func skillMCPBindings(sk skill.Skill, reg *tool.Registry, specs []plugin.Spec, cachedTools map[string][]plugin.CachedTool, cacheHashOK map[string]bool) []tool.MCPBinding {
+func skillMCPBindings(sk skill.Skill, reg *tool.Registry, specs []plugin.Spec, cachedTools map[string][]plugin.CachedTool, cacheKeyOK map[string]bool) []tool.MCPBinding {
 	var out []tool.MCPBinding
 	liveServers := map[string]bool{}
 	if reg != nil {
@@ -2361,7 +2281,7 @@ func skillMCPBindings(sk skill.Skill, reg *tool.Registry, specs []plugin.Spec, c
 	// package server before it is connected. The skill can then route through
 	// use_capability without inventing Reasonix's canonical name.
 	for _, spec := range specs {
-		if spec.Package != sk.Plugin || liveServers[spec.Name] || !cacheHashOK[spec.Name] {
+		if spec.Package != sk.Plugin || liveServers[spec.Name] || !cacheKeyOK[spec.Name] {
 			continue
 		}
 		for _, cached := range cachedTools[spec.Name] {
@@ -2382,80 +2302,6 @@ func skillMCPBindings(sk skill.Skill, reg *tool.Registry, specs []plugin.Spec, c
 	return out
 }
 
-func applyVerifiedMCPPackage(spec *plugin.Spec, opts PluginSpecOptions) {
-	if spec == nil {
-		return
-	}
-	if official, ok := opts.OfficialServers[spec.Name]; ok {
-		if normalizeMCPTransport(spec.Type) != normalizeMCPTransport(official.Transport) {
-			return
-		}
-		spec.OfficialCatalogEntryID = official.CatalogEntryID
-		spec.OfficialReaderNames = append([]string(nil), official.Readers...)
-		spec.PackageDigest = official.PackageDigest
-		spec.PackageRoot = official.PackageRoot
-		spec.VerifiedVersion = official.Version
-		spec.CatalogSequence = official.CatalogSequence
-		spec.ImplicitApproval = true
-		spec.RequireLaunchApproval = false
-		spec.ReaderSandbox.Network = official.Network
-		spec.WriterSandbox.Network = official.Network
-	}
-}
-
-// LoadVerifiedMCPPackages resolves installed package metadata against the
-// signed catalog so every runtime uses the same verified package policy.
-func LoadVerifiedMCPPackages(ctx context.Context, cfg *config.Config) map[string]VerifiedMCPPackage {
-	out := map[string]VerifiedMCPPackage{}
-	if cfg == nil {
-		return out
-	}
-	home := config.ReasonixHomeDir()
-	result, err := (mcpcatalog.Loader{CacheDir: config.CacheDir()}).Load(ctx, false)
-	if err != nil {
-		return out
-	}
-	for _, configured := range cfg.Plugins {
-		owner, ok := cfg.PluginPackageOwner(configured.Name)
-		if !ok {
-			continue
-		}
-		installed, ok, err := pluginpkg.FindInstalled(home, owner)
-		if err != nil || !ok || installed.Verification == nil || !pluginpkg.VerificationValid(home, installed) {
-			continue
-		}
-		for _, entry := range result.Index.Entries {
-			if entry.ID != installed.Verification.CatalogEntryID || result.Index.IsRevoked(entry.ID) ||
-				entry.Name != installed.Name || entry.Version != installed.Version || entry.Source != installed.Source ||
-				!strings.EqualFold(entry.Commit, installed.Commit) || !strings.EqualFold(entry.PackageSHA256, installed.Verification.PackageSHA256) {
-				continue
-			}
-			for _, server := range entry.Servers {
-				if server.Name != configured.Name {
-					continue
-				}
-				out[configured.Name] = VerifiedMCPPackage{
-					CatalogEntryID: entry.ID, Readers: append([]string(nil), server.Readers...),
-					PackageDigest: entry.PackageSHA256, PackageRoot: pluginpkg.ResolveRoot(home, installed.Root), Version: entry.Version,
-					CatalogSequence: result.Index.Sequence, Network: server.Network, Transport: server.Transport,
-				}
-			}
-		}
-	}
-	return out
-}
-
-func normalizeMCPTransport(value string) string {
-	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "", "stdio":
-		return "stdio"
-	case "http", "streamable-http", "streamable_http":
-		return "http"
-	default:
-		return strings.ToLower(strings.TrimSpace(value))
-	}
-}
-
 func applyMCPIsolation(spec *plugin.Spec, workspaceRoot string, opts PluginSpecOptions) {
 	if spec == nil || strings.TrimSpace(opts.StateHome) == "" {
 		return
@@ -2467,37 +2313,13 @@ func applyMCPIsolation(spec *plugin.Spec, workspaceRoot string, opts PluginSpecO
 		readerRoots = appendUniquePaths(readerRoots, home)
 	}
 	spec.StateDir = stateDir
-	spec.ReaderSandbox = sandbox.Spec{
-		Mode: "enforce", WriteRoots: []string{stateDir},
-		ReadRoots:              readerRoots,
-		AppContainerWriteRoots: []string{stateDir},
-		ForbidReadRoots:        append([]string(nil), opts.ForbidReadRoots...),
-		Network:                opts.Network, MinimalWrites: true,
-	}
-	spec.WriterSandbox = sandbox.Spec{
+	spec.Sandbox = sandbox.Spec{
 		Mode: "enforce", WriteRoots: writerRoots,
 		ReadRoots:              readerRoots,
 		AppContainerWriteRoots: append([]string(nil), writerRoots...),
 		ForbidReadRoots:        append([]string(nil), opts.ForbidReadRoots...),
 		Network:                opts.Network, MinimalWrites: true,
 	}
-}
-
-func mcpToolApprovalModes(policies map[string]config.MCPToolPolicy) map[string]string {
-	if len(policies) == 0 {
-		return nil
-	}
-	out := make(map[string]string, len(policies))
-	for name, policy := range policies {
-		name = strings.TrimSpace(name)
-		if name != "" {
-			out[name] = policy.ApprovalMode
-		}
-	}
-	if len(out) == 0 {
-		return nil
-	}
-	return out
 }
 
 func secondsDuration(seconds int) time.Duration {
@@ -2543,61 +2365,6 @@ func applyDefaultMCPCallTimeout(specs []plugin.Spec, timeout time.Duration) []pl
 		if out[i].DefaultCallTimeout <= 0 {
 			out[i].DefaultCallTimeout = timeout
 		}
-	}
-	return out
-}
-
-func applyPlanModeAllowedMCPReaders(specs []plugin.Spec, allowedTools []string) []plugin.Spec {
-	if len(specs) == 0 || len(allowedTools) == 0 {
-		return specs
-	}
-	out := make([]plugin.Spec, len(specs))
-	for i, spec := range specs {
-		out[i] = spec
-		prefix := plugin.ToolPrefix(spec.Name)
-		clonedModelNames := false
-		for _, name := range allowedTools {
-			name = strings.TrimSpace(name)
-			if !strings.HasPrefix(name, prefix) || len(name) <= len(prefix) {
-				continue
-			}
-			if out[i].ReadOnlyModelToolNames == nil {
-				out[i].ReadOnlyModelToolNames = map[string]bool{}
-				clonedModelNames = true
-			} else if !clonedModelNames {
-				out[i].ReadOnlyModelToolNames = cloneBoolMap(spec.ReadOnlyModelToolNames)
-				clonedModelNames = true
-			}
-			out[i].ReadOnlyModelToolNames[name] = true
-		}
-	}
-	return out
-}
-
-func legacyRawReadOnlyToolNames(names []string) map[string]bool {
-	if len(names) == 0 {
-		return nil
-	}
-	out := map[string]bool{}
-	for _, name := range names {
-		name = strings.TrimSpace(name)
-		if name != "" {
-			out[name] = true
-		}
-	}
-	if len(out) == 0 {
-		return nil
-	}
-	return out
-}
-
-func cloneBoolMap(in map[string]bool) map[string]bool {
-	if len(in) == 0 {
-		return nil
-	}
-	out := make(map[string]bool, len(in))
-	for k, v := range in {
-		out[k] = v
 	}
 	return out
 }

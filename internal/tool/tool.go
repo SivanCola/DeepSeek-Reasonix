@@ -85,14 +85,6 @@ type PlanModeClassifier interface {
 	PlanModeSafe() bool
 }
 
-// PlanModeUntrustedReadOnly marks a tool whose ReadOnly classification comes
-// only from an external MCP server hint. The main Plan workflow may use that
-// hint for ordinary permission classification, while planner/read-only subagent
-// registries must not treat it as local trust.
-type PlanModeUntrustedReadOnly interface {
-	PlanModeUntrustedReadOnly() bool
-}
-
 // ReadOnlyExecutionHostMutation marks a target that is logically read-only but
 // must first mutate host state to become executable, such as starting an
 // on-demand MCP process. Strict read-only agents reject these targets even when
@@ -110,8 +102,8 @@ type ReadOnlyExecutionBlockReason interface {
 
 // MCPMetadata exposes the original MCP identity behind a model-visible
 // "mcp__<server>__<tool>" adapter. The model name may be normalized for provider
-// function-name rules; config such as trusted_read_only_tools must use the raw
-// server-local tool name.
+// function-name rules; host policy and diagnostics use the raw server-local
+// tool name.
 type MCPMetadata interface {
 	MCPServerName() string
 	MCPRawToolName() string
@@ -148,19 +140,11 @@ type MCPAnnotations interface {
 	MCPDestructiveHint() bool
 }
 
-// MCPCapabilityFingerprint exposes the host-local security fingerprint used to
-// reject a cached-to-live schema drift before tools/call. It is deliberately
-// separate from Schema(), so it cannot perturb provider cache prefixes.
-type MCPCapabilityFingerprint interface {
-	MCPCapabilityFingerprint() string
-}
-
-// ReadOnlyExecutionAuthority reports whether an MCP-backed tool's reader
-// classification comes from explicit local policy or a signed official
-// package rather than an unaudited server hint. Strict read-only execution
-// requires that positive authority.
-type ReadOnlyExecutionAuthority interface {
-	ReadOnlyExecutionAuthority() bool
+// MCPServerAuthorization reports whether the user installed this MCP server or
+// authorized its exact project identity. Authorization belongs to the server,
+// not to individual tools; readOnly/destructive metadata is checked separately.
+type MCPServerAuthorization interface {
+	MCPServerAuthorized() bool
 }
 
 // readerExecutionIntentKey carries a per-call, immutable authorization basis:
@@ -170,67 +154,16 @@ type ReadOnlyExecutionAuthority interface {
 // error instead of executing.
 type readerExecutionIntentKey struct{}
 
-// ReaderExecutionIntent pins what the authorization decision saw.
-type ReaderExecutionIntent struct {
-	// CapabilityFingerprint, when non-empty, must still match the live tool's
-	// security fingerprint at dispatch time.
-	CapabilityFingerprint string
-}
-
 // WithReaderExecutionIntent marks ctx as a reader-authorized MCP invocation.
-func WithReaderExecutionIntent(ctx context.Context, capabilityFingerprint string) context.Context {
-	return context.WithValue(ctx, readerExecutionIntentKey{}, ReaderExecutionIntent{CapabilityFingerprint: capabilityFingerprint})
+func WithReaderExecutionIntent(ctx context.Context) context.Context {
+	return context.WithValue(ctx, readerExecutionIntentKey{}, true)
 }
 
-// ReaderExecutionIntentFrom returns the pinned reader authorization, if any.
-func ReaderExecutionIntentFrom(ctx context.Context) (ReaderExecutionIntent, bool) {
-	intent, ok := ctx.Value(readerExecutionIntentKey{}).(ReaderExecutionIntent)
-	return intent, ok
-}
-
-const (
-	MCPApprovalAuto    = "auto"
-	MCPApprovalPrompt  = "prompt"
-	MCPApprovalWrites  = "writes"
-	MCPApprovalApprove = "approve"
-
-	MCPApprovalReviewerUser       = "user"
-	MCPApprovalReviewerAutoReview = "auto_review"
-)
-
-// MCPApprovalPolicy exposes local execution policy for one MCP tool. These
-// values are intentionally not part of Schema(), so changing approval policy
-// does not alter the provider-visible tool contract or prompt-cache prefix.
-type MCPApprovalPolicy interface {
-	MCPApprovalMode() string
-	MCPApprovalReviewer() string
-}
-
-// NormalizeMCPApprovalMode returns the conservative effective MCP approval
-// mode. Empty keeps annotation-driven behavior; unknown values force a prompt.
-func NormalizeMCPApprovalMode(mode string) string {
-	switch strings.ToLower(strings.TrimSpace(mode)) {
-	case "":
-		return MCPApprovalAuto
-	case MCPApprovalAuto, MCPApprovalPrompt, MCPApprovalWrites, MCPApprovalApprove:
-		return strings.ToLower(strings.TrimSpace(mode))
-	default:
-		return MCPApprovalPrompt
-	}
-}
-
-// NormalizeMCPApprovalReviewer returns the configured reviewer. Empty preserves
-// legacy behavior at the controller boundary; unknown values fail back to the
-// human reviewer rather than silently enabling automatic review.
-func NormalizeMCPApprovalReviewer(reviewer string) string {
-	switch strings.ToLower(strings.TrimSpace(reviewer)) {
-	case "":
-		return ""
-	case MCPApprovalReviewerAutoReview, "guardian":
-		return MCPApprovalReviewerAutoReview
-	default:
-		return MCPApprovalReviewerUser
-	}
+// HasReaderExecutionIntent reports whether this call entered through the
+// non-destructive reader lane.
+func HasReaderExecutionIntent(ctx context.Context) bool {
+	intent, _ := ctx.Value(readerExecutionIntentKey{}).(bool)
+	return intent
 }
 
 // SnipHint describes how context maintenance should shorten a stale, oversized

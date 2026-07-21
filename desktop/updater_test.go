@@ -441,6 +441,77 @@ func TestDownloadFallsBackToSecondClient(t *testing.T) {
 	}
 }
 
+func TestFetchBytesFallsBackToSecondClient(t *testing.T) {
+	fastRetry(t)
+	primary := &http.Client{Transport: rtFunc(func(*http.Request) (*http.Response, error) {
+		return nil, errors.New("read tcp [ipv6]: connection reset")
+	})}
+	fallback := &http.Client{Transport: rtFunc(func(*http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Status:     "200 OK",
+			Body:       io.NopCloser(strings.NewReader("manifest")),
+			Header:     make(http.Header),
+		}, nil
+	})}
+
+	data, err := fetchBytesFallback(context.Background(), primary, fallback, "https://example.invalid/latest.json")
+	if err != nil {
+		t.Fatalf("fetchBytesFallback: %v", err)
+	}
+	if string(data) != "manifest" {
+		t.Fatalf("got %q, want manifest", data)
+	}
+}
+
+func TestFetchBytesFallbackEscapesStalledPrimary(t *testing.T) {
+	fastRetry(t)
+	originalTimeout := fetchAttemptTimeout
+	fetchAttemptTimeout = 10 * time.Millisecond
+	t.Cleanup(func() { fetchAttemptTimeout = originalTimeout })
+	primary := &http.Client{Transport: rtFunc(func(r *http.Request) (*http.Response, error) {
+		<-r.Context().Done()
+		return nil, r.Context().Err()
+	})}
+	fallback := &http.Client{Transport: rtFunc(func(*http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Status:     "200 OK",
+			Body:       io.NopCloser(strings.NewReader("ipv4")),
+			Header:     make(http.Header),
+		}, nil
+	})}
+
+	data, err := fetchBytesFallback(context.Background(), primary, fallback, "https://example.invalid/latest.json")
+	if err != nil {
+		t.Fatalf("fetchBytesFallback: %v", err)
+	}
+	if string(data) != "ipv4" {
+		t.Fatalf("got %q, want ipv4", data)
+	}
+}
+
+func TestFetchBytesDoesNotRetryPermanentHTTPStatus(t *testing.T) {
+	fastRetry(t)
+	var calls int32
+	client := &http.Client{Transport: rtFunc(func(*http.Request) (*http.Response, error) {
+		atomic.AddInt32(&calls, 1)
+		return &http.Response{
+			StatusCode: http.StatusForbidden,
+			Status:     "403 Forbidden",
+			Body:       io.NopCloser(strings.NewReader("forbidden")),
+			Header:     make(http.Header),
+		}, nil
+	})}
+
+	if _, err := fetchBytes(context.Background(), client, "https://example.invalid/latest.json"); err == nil {
+		t.Fatal("fetchBytes should return a permanent HTTP error")
+	}
+	if got := atomic.LoadInt32(&calls); got != 1 {
+		t.Fatalf("permanent HTTP error made %d requests, want 1", got)
+	}
+}
+
 type rtFunc func(*http.Request) (*http.Response, error)
 
 func (f rtFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }

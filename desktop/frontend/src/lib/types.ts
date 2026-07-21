@@ -719,24 +719,13 @@ export interface ServerView {
   hasTools?: boolean;
   error?: string;
   toolList?: MCPToolView[];
-  trustedReadOnlyTools?: string[];
   callTimeoutSeconds?: number;
   toolTimeoutSeconds?: Record<string, number>;
-  defaultToolsApprovalMode?: MCPApprovalMode;
-  toolPolicies?: Record<string, MCPToolPolicy>;
-  approvalsReviewer?: MCPApprovalsReviewer;
   requiresLaunchApproval?: boolean;
   authStatus?: "none" | "possible" | "required" | string;
   authUrl?: string;
   authConfigured?: boolean;
   managedByPlugin?: string;
-  catalogSequence?: number;
-  verifiedVersion?: string;
-}
-export type MCPApprovalMode = "auto" | "prompt" | "writes" | "approve";
-export type MCPApprovalsReviewer = "user" | "auto_review";
-export interface MCPToolPolicy {
-  approval_mode: MCPApprovalMode;
 }
 export interface MCPToolView {
   name: string;
@@ -830,13 +819,6 @@ export interface PluginView {
   mcpServerDetails?: PluginMCPServerView[];
   warnings?: string[];
   error?: string;
-  verification?: {
-    catalogEntryId: string;
-    commit: string;
-    packageSha256: string;
-    verifiedAt: string;
-    catalogSequence: number;
-  };
 }
 export interface PluginCompatibilityIssue {
   capability: string;
@@ -897,13 +879,30 @@ export interface MCPServerInput {
   url: string;
   env?: Record<string, string> | null;
   headers?: Record<string, string> | null;
-  trustedReadOnlyTools?: string[];
   autoStart?: boolean | null;
   callTimeoutSeconds?: number | null;
   toolTimeoutSeconds?: Record<string, number> | null;
-  defaultToolsApprovalMode?: MCPApprovalMode | "" | null;
-  tools?: Record<string, MCPToolPolicy> | null;
-  approvalsReviewer?: MCPApprovalsReviewer | "" | null;
+}
+
+export interface MCPMarketplaceEntry {
+  name: string;
+  suggestedName: string;
+  title?: string;
+  description?: string;
+  version?: string;
+  repositoryUrl?: string;
+  installable: boolean;
+  unavailableReason?: string;
+  transport?: "stdio" | "http" | "sse" | string;
+  command?: string;
+  args: string[];
+  url?: string;
+}
+
+export interface MCPMarketplaceView {
+  servers: MCPMarketplaceEntry[];
+  cached: boolean;
+  warning?: string;
 }
 
 export interface ModelInfo {

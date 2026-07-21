@@ -1069,7 +1069,7 @@ func addRestrictedCapabilityProxy(parent, sub *tool.Registry, names []string, ex
 		return
 	}
 	inner, ok := parent.Get("use_capability")
-	if !ok || requireReadOnly && (!inner.ReadOnly() || planModeUntrustedReadOnly(inner) || mcpDestructiveHint(inner)) {
+	if !ok || requireReadOnly && (!inner.ReadOnly() || mcpDestructiveHint(inner)) {
 		return
 	}
 	resolver, ok := inner.(tool.CallResolver)
@@ -1112,7 +1112,8 @@ func ReadOnlySubagentToolRegistry(parent *tool.Registry, names []string) *tool.R
 
 // ReadOnlySubagentToolRegistryForDepth returns the tool set exposed to read-only
 // subagents. It permits only read-only delegation tools while another depth
-// layer is available.
+// layer is available. MCP tools must additionally come from an authorized
+// server and must not carry destructiveHint.
 func ReadOnlySubagentToolRegistryForDepth(parent *tool.Registry, names []string, childDepth, maxDepth int) *tool.Registry {
 	exclude := append([]string(nil), subagentAlwaysHiddenTools...)
 	if childDepth >= NormalizeMaxSubagentDepth(maxDepth) {
@@ -1152,7 +1153,7 @@ func ReadOnlySubagentToolRegistryForDepth(parent *tool.Registry, names []string,
 		if !tl.ReadOnly() {
 			continue
 		}
-		if u, ok := tl.(tool.PlanModeUntrustedReadOnly); ok && u.PlanModeUntrustedReadOnly() {
+		if isInstalledMCPTool(tl) && (!mcpServerAuthorized(tl) || mcpDestructiveHint(tl)) {
 			continue
 		}
 		sub.Add(tl)
@@ -1191,7 +1192,9 @@ func expandToolPatterns(parent *tool.Registry, names []string) []string {
 }
 
 // FilterReadOnlyRegistry builds a sub-registry containing only tools whose
-// ReadOnly contract is true, minus explicit exclusions.
+// ReadOnly contract is true, minus explicit exclusions. MCP tools must
+// additionally come from an authorized server and must not carry
+// destructiveHint.
 func FilterReadOnlyRegistry(parent *tool.Registry, exclude ...string) *tool.Registry {
 	ex := make(map[string]bool, len(exclude))
 	for _, e := range exclude {
@@ -1209,7 +1212,7 @@ func FilterReadOnlyRegistry(parent *tool.Registry, exclude ...string) *tool.Regi
 		if !ok || !tl.ReadOnly() {
 			continue
 		}
-		if u, ok := tl.(tool.PlanModeUntrustedReadOnly); ok && u.PlanModeUntrustedReadOnly() {
+		if isInstalledMCPTool(tl) && (!mcpServerAuthorized(tl) || mcpDestructiveHint(tl)) {
 			continue
 		}
 		sub.Add(tl)
@@ -1476,8 +1479,8 @@ func RunReadOnlySubAgentWithSession(ctx context.Context, prov provider.Provider,
 // strictReadOnlyExecutionRegistry is the final construction-time filter shared
 // by every strict child. Callers still apply role-specific filtering (review,
 // planner, profile allowlists), while this layer guarantees that a missed call
-// site cannot expose writers, destructive MCP tools, untrusted readers, or an
-// untrusted host-starting target to the model.
+// site cannot expose writers, destructive MCP tools, readers from unauthorized
+// servers, or an unauthorized host-starting target to the model.
 func strictReadOnlyExecutionRegistry(reg *tool.Registry) *tool.Registry {
 	filtered := tool.NewRegistry()
 	if reg == nil {
@@ -1485,15 +1488,11 @@ func strictReadOnlyExecutionRegistry(reg *tool.Registry) *tool.Registry {
 	}
 	for _, name := range reg.Names() {
 		target, ok := reg.Get(name)
-		if !ok || !target.ReadOnly() || planModeUntrustedReadOnly(target) || mcpDestructiveHint(target) {
+		if !ok || !target.ReadOnly() || mcpDestructiveHint(target) {
 			continue
 		}
-		// An installed MCP reader needs an explicit local or signed package
-		// declaration, not a server hint carried through a compatibility path.
-		if isInstalledMCPTool(target) {
-			if authority, ok := target.(tool.ReadOnlyExecutionAuthority); !ok || !authority.ReadOnlyExecutionAuthority() {
-				continue
-			}
+		if isInstalledMCPTool(target) && !mcpServerAuthorized(target) {
+			continue
 		}
 		if mutation, ok := target.(tool.ReadOnlyExecutionHostMutation); ok && mutation.ReadOnlyExecutionHostMutation() && !readOnlyExecutionAllowsMCPStartup(target) {
 			continue

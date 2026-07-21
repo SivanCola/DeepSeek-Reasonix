@@ -2,9 +2,6 @@ package plugin
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"net"
 	"net/url"
@@ -12,81 +9,47 @@ import (
 	"sort"
 	"strings"
 
-	"reasonix/internal/mcpcatalog"
 	"reasonix/internal/mcplaunch"
-	"reasonix/internal/sandbox"
 	"reasonix/internal/secrets"
+	"reasonix/internal/tool"
 )
 
-// specIdentityFingerprint resolves a secret-free identity before a server is
-// trusted. For stdio this pins the real executable path and file content; for
-// HTTP it normalizes the endpoint while retaining only header key names.
-func specIdentityFingerprint(ctx context.Context, s Spec) (string, error) {
-	identity, err := buildSpecIdentity(ctx, s)
+// projectLaunchIdentityDigest resolves a secret-free identity before a project
+// server is authorized. For stdio this pins the real executable path and file
+// content; for HTTP it normalizes the endpoint while retaining only header key
+// names. Installed and host-session servers never call this path.
+func projectLaunchIdentityDigest(ctx context.Context, s Spec) (string, error) {
+	identity, err := buildProjectLaunchIdentity(ctx, s)
 	if err != nil {
 		return "", err
 	}
-	return mcplaunch.IdentityFingerprint(identity)
+	return mcplaunch.ProjectLaunchIdentityDigest(identity)
 }
 
-func buildSpecIdentity(ctx context.Context, s Spec) (mcplaunch.Identity, error) {
+func buildProjectLaunchIdentity(ctx context.Context, s Spec) (mcplaunch.ProjectLaunchIdentity, error) {
 	transport := strings.ToLower(strings.TrimSpace(s.Type))
 	if transport == "" {
 		transport = "stdio"
-	}
-	if strings.TrimSpace(s.OfficialCatalogEntryID) != "" {
-		if err := validateOfficialLauncher(s); err != nil {
-			return mcplaunch.Identity{}, err
-		}
-		if strings.TrimSpace(s.PackageRoot) == "" || strings.TrimSpace(s.PackageDigest) == "" {
-			return mcplaunch.Identity{}, fmt.Errorf("official MCP server %q is missing its verified package root or digest", s.Name)
-		}
-		liveDigest, err := mcpcatalog.TreeSHA256(s.PackageRoot)
-		if err != nil {
-			return mcplaunch.Identity{}, fmt.Errorf("verify official MCP package for %q: %w", s.Name, err)
-		}
-		if !strings.EqualFold(liveDigest, s.PackageDigest) {
-			return mcplaunch.Identity{}, fmt.Errorf("official MCP package for %q changed after verification; blocked before process or network startup", s.Name)
-		}
 	}
 	launchArgs := effectiveLaunchArgs(s)
 	if s.LauncherIdentityArgs != nil {
 		launchArgs = s.LauncherIdentityArgs
 	}
-	identity := mcplaunch.Identity{
-		Server: s.Name, Transport: transport, ConfigSource: s.ConfigSource,
+	identity := mcplaunch.ProjectLaunchIdentity{
+		Server: s.Name, Transport: transport,
 		Dir: s.Dir, Args: append([]string(nil), launchArgs...),
 		EnvKeys: sortedMapKeys(s.Env), HeaderKeys: sortedMapKeys(s.Headers),
-		Network: s.ReaderSandbox.Network || s.WriterSandbox.Network,
-		WriteRoots: append(append(append([]string(nil), s.ReaderSandbox.WriteRoots...),
-			s.ReaderSandbox.AppContainerWriteRoots...), s.WriterSandbox.WriteRoots...),
-		ReadRoots: append(append([]string(nil), s.ReaderSandbox.ReadRoots...), s.WriterSandbox.ReadRoots...),
-		ForbidReadRoots: append(append([]string(nil), s.ReaderSandbox.ForbidReadRoots...),
-			s.WriterSandbox.ForbidReadRoots...),
-		IsolationPolicy: isolationPolicy(s),
-		PackageDigest:   s.PackageDigest,
-		LauncherDigest:  s.LauncherDigest,
-	}
-	if strings.TrimSpace(s.OfficialCatalogEntryID) != "" {
-		// Verified official package identity is global across workspaces. The signed package digest
-		// pins executable code and the catalog pins the server definition, so
-		// workspace-expanded args and write-root paths are excluded here.
-		identity.Args = nil
-		identity.Dir = ""
-		identity.WriteRoots = nil
-		identity.ReadRoots = nil
-		identity.ForbidReadRoots = nil
-		identity.ConfigSource = "official_catalog:" + s.OfficialCatalogEntryID
+		LauncherDigest: s.LauncherDigest,
 	}
 	switch transport {
 	case "stdio":
 		if strings.TrimSpace(s.Command) == "" {
-			return mcplaunch.Identity{}, fmt.Errorf("stdio plugin %q: command is required", s.Name)
+			return mcplaunch.ProjectLaunchIdentity{}, fmt.Errorf("stdio plugin %q: command is required", s.Name)
 		}
 		env := mergeEnv(secrets.ProcessEnv(), s.Env)
 		exe, _, err := resolveStdioExecutable(ctx, s, env)
 		if err != nil {
-			return mcplaunch.Identity{}, err
+			return mcplaunch.ProjectLaunchIdentity{}, err
 		}
 		if abs, err := filepath.Abs(exe); err == nil {
 			exe = abs
@@ -94,7 +57,7 @@ func buildSpecIdentity(ctx context.Context, s Spec) (mcplaunch.Identity, error) 
 		identity.CommandPath = exe
 		identity.CommandSHA256, err = mcplaunch.FileSHA256(exe)
 		if err != nil {
-			return mcplaunch.Identity{}, fmt.Errorf("hash MCP executable %q: %w", exe, err)
+			return mcplaunch.ProjectLaunchIdentity{}, fmt.Errorf("hash MCP executable %q: %w", exe, err)
 		}
 	case "http", "streamable-http", "streamable_http":
 		identity.Transport = "http"
@@ -119,20 +82,6 @@ func MCPStateDir(reasonixHome, workspace, server string) string {
 		workspaceID = "global"
 	}
 	return filepath.Join(reasonixHome, "mcp-state", workspaceID, slug(server))
-}
-
-func isolationPolicy(s Spec) string {
-	transport := strings.ToLower(strings.TrimSpace(s.Type))
-	if transport == "http" || transport == "streamable-http" || transport == "streamable_http" {
-		return "not_applicable"
-	}
-	if !s.ReaderSandbox.Enforce() && !s.WriterSandbox.Enforce() {
-		return "off"
-	}
-	if sandbox.Available() {
-		return "enforced"
-	}
-	return "unavailable_unconfined"
 }
 
 // identityURLRedacted replaces credential material inside identity and cache
@@ -178,7 +127,7 @@ func credentialURLQueryKey(key string) bool {
 }
 
 // normalizeIdentityURL canonicalizes an MCP endpoint for host-local identity
-// and schema-cache fingerprints: scheme/host case and default ports fold,
+// and schema-cache keys: scheme/host case and default ports fold,
 // the fragment drops, query keys sort stably, and credential material
 // (userinfo, credential query values) is replaced by a fixed placeholder so
 // rotation never invalidates an exact project launch authorization.
@@ -264,129 +213,54 @@ func sortedMapKeys[V any](values map[string]V) []string {
 }
 
 func launchConfigSource(s Spec) string {
-	if s.OfficialCatalogEntryID != "" {
-		return "official_catalog:" + s.OfficialCatalogEntryID
-	}
 	return s.ConfigSource
 }
 
-type toolCapability struct {
-	RawName      string
-	ModelName    string
-	VisibleName  string
-	InputSchema  json.RawMessage
-	OutputSchema json.RawMessage
-	ReadOnly     bool
-	Destructive  bool
-}
-
-func capabilityOf(s Spec, raw mcpTool, schema []byte) toolCapability {
-	visible := raw.Name
-	if s.StripRawPrefix != "" {
-		visible = strings.TrimPrefix(visible, s.StripRawPrefix)
-	}
-	hinted := raw.Annotations != nil && raw.Annotations.ReadOnlyHint
-	destructive := raw.Annotations != nil && raw.Annotations.DestructiveHint
-	return toolCapability{
-		RawName: raw.Name, ModelName: toolName(s.Name, visible), VisibleName: visible,
-		InputSchema: schema, OutputSchema: raw.OutputSchema,
-		ReadOnly: hinted || s.toolReadOnlyOverride(raw.Name, visible), Destructive: destructive,
-	}
-}
-
-func trustedReaderForSpec(s Spec, cap toolCapability) bool {
-	if !cap.ReadOnly || cap.Destructive {
-		return false
-	}
-	if s.toolReadOnlyOverride(cap.RawName, cap.VisibleName) {
-		return true
-	}
-	if strings.TrimSpace(s.OfficialCatalogEntryID) == "" || mcpcatalog.RuntimeEntryRevoked(s.OfficialCatalogEntryID) {
-		return false
-	}
-	for _, name := range s.OfficialReaderNames {
-		if strings.TrimSpace(name) == cap.RawName {
-			return true
-		}
-	}
-	return false
-}
-
-func capabilityFingerprint(cap toolCapability) string {
-	in, err := canonicalSecuritySchema(cap.InputSchema)
-	if err != nil {
-		return ""
-	}
-	out, err := canonicalSecuritySchema(cap.OutputSchema)
-	if err != nil {
-		return ""
-	}
-	payload := struct {
-		RawName     string          `json:"raw_name"`
-		ModelName   string          `json:"model_name"`
-		Input       json.RawMessage `json:"input,omitempty"`
-		Output      json.RawMessage `json:"output,omitempty"`
-		ReadOnly    bool            `json:"read_only"`
-		Destructive bool            `json:"destructive"`
-	}{
-		RawName: strings.TrimSpace(cap.RawName), ModelName: strings.TrimSpace(cap.ModelName),
-		Input: in, Output: out, ReadOnly: cap.ReadOnly, Destructive: cap.Destructive,
-	}
-	body, err := json.Marshal(payload)
-	if err != nil {
-		return ""
-	}
-	sum := sha256.Sum256(body)
-	return hex.EncodeToString(sum[:])
-}
-
-func canonicalSecuritySchema(raw json.RawMessage) (json.RawMessage, error) {
-	if len(raw) == 0 {
-		return nil, nil
-	}
-	var value any
-	if err := json.Unmarshal(raw, &value); err != nil {
-		return nil, err
-	}
-	stripSchemaDisplayFields(value)
-	body, err := json.Marshal(value)
-	return json.RawMessage(body), err
-}
-
-func stripSchemaDisplayFields(value any) {
-	switch v := value.(type) {
-	case map[string]any:
-		for _, key := range []string{"description", "title", "examples", "$comment"} {
-			delete(v, key)
-		}
-		for key, child := range v {
-			switch key {
-			case "properties", "patternProperties", "$defs", "definitions", "dependentSchemas", "dependentRequired", "dependencies":
-				if named, ok := child.(map[string]any); ok {
-					for _, schema := range named {
-						stripSchemaDisplayFields(schema)
-					}
-					continue
-				}
-			}
-			stripSchemaDisplayFields(child)
-		}
-	case []any:
-		for _, child := range v {
-			stripSchemaDisplayFields(child)
-		}
-	}
-}
-
 // CachedToolSafety is the local safety classification for one tool in an
-// identity-matched schema cache. Server hints control ordinary read-only
-// policy; only explicit local declarations or signed catalog readers are
-// admitted into strict read-only execution.
+// identity-matched schema cache. Authorization belongs to the MCP server;
+// cached tools retain only safety facts that must match the live server.
 type CachedToolSafety struct {
-	ReadOnly              bool
-	TrustedReader         bool
-	Destructive           bool
-	CapabilityFingerprint string
+	ReadOnly    bool
+	Destructive bool
+}
+
+// LiveToolSafety returns the host-local execution classification for a live MCP
+// target. remoteTool uses one locked snapshot; compatibility adapters fall back
+// to the public tool interfaces. The result never changes provider-visible
+// schemas.
+func LiveToolSafety(target tool.Tool) CachedToolSafety {
+	if target == nil {
+		return CachedToolSafety{}
+	}
+	if remote, ok := target.(*remoteTool); ok {
+		_, readOnly, destructive := remote.securitySnapshot()
+		return CachedToolSafety{
+			ReadOnly:    readOnly,
+			Destructive: destructive,
+		}
+	}
+	safety := CachedToolSafety{ReadOnly: target.ReadOnly()}
+	if annotations, ok := target.(tool.MCPAnnotations); ok {
+		safety.Destructive = annotations.MCPDestructiveHint()
+	}
+	return safety
+}
+
+// ReconcileCachedToolSafety is the single cached-to-live boundary shared by
+// lazy and on-demand MCP adapters. Both adapters stop the current call when the
+// live server is stricter than the snapshot, before the direct tool executes.
+func ReconcileCachedToolSafety(server, rawName string, cached CachedToolSafety, target tool.Tool) (CachedToolSafety, error) {
+	live := LiveToolSafety(target)
+	if target == nil {
+		return live, nil
+	}
+	if cached.ReadOnly && !live.ReadOnly {
+		return live, fmt.Errorf("MCP server %q no longer marks tool %q as read-only; the current call was blocked before execution — retry so Reasonix can apply the current Plan/read-only safety boundary", server, rawName)
+	}
+	if !cached.Destructive && live.Destructive {
+		return live, fmt.Errorf("MCP server %q now marks tool %q as destructive; retry so Reasonix can apply the current Plan/read-only safety boundary before execution", server, rawName)
+	}
+	return live, nil
 }
 
 func CachedToolSafetyForSpec(s Spec, rawName string) (CachedToolSafety, bool) {
@@ -394,30 +268,16 @@ func CachedToolSafetyForSpec(s Spec, rawName string) (CachedToolSafety, bool) {
 	if !ok {
 		return CachedToolSafety{}, false
 	}
-	var target *toolCapability
+	var target *CachedToolSafety
 	for _, cached := range cs.Tools {
-		visible := cached.Name
-		if s.StripRawPrefix != "" {
-			visible = strings.TrimPrefix(visible, s.StripRawPrefix)
-		}
-		cap := toolCapability{
-			RawName: cached.Name, ModelName: toolName(s.Name, visible), VisibleName: visible,
-			InputSchema: cached.Schema, OutputSchema: cached.OutputSchema,
-			ReadOnly:    cached.ReadOnly || s.toolReadOnlyOverride(cached.Name, visible),
-			Destructive: cached.Destructive,
-		}
 		if cached.Name == rawName {
-			copy := cap
+			copy := CachedToolSafety{ReadOnly: cached.ReadOnly, Destructive: cached.Destructive}
 			target = &copy
+			break
 		}
 	}
 	if target == nil {
 		return CachedToolSafety{}, false
 	}
-	return CachedToolSafety{
-		ReadOnly:              target.ReadOnly,
-		TrustedReader:         trustedReaderForSpec(s, *target),
-		Destructive:           target.Destructive,
-		CapabilityFingerprint: capabilityFingerprint(*target),
-	}, true
+	return *target, true
 }

@@ -2555,23 +2555,26 @@ func mcpSpecs(in []MCPServerSpec, cwd string) ([]plugin.Spec, error) {
 			if strings.TrimSpace(m.Command) == "" {
 				return nil, fmt.Errorf("MCP server %q command is required", m.Name)
 			}
-		case "http", "streamable-http", "streamable_http":
+		case "http", "streamable-http", "streamable_http", "sse":
 			if strings.TrimSpace(m.URL) == "" {
 				return nil, fmt.Errorf("MCP server %q url is required", m.Name)
 			}
-			typ = "http"
+			if typ != "sse" {
+				typ = "http"
+			}
 		default:
 			return nil, fmt.Errorf("MCP server %q uses unsupported transport %q", m.Name, m.Type)
 		}
 		out = append(out, plugin.Spec{
-			Name:    strings.TrimSpace(m.Name),
-			Type:    typ,
-			Command: strings.TrimSpace(m.Command),
-			Args:    append([]string(nil), m.Args...),
-			Env:     mapString(m.Env),
-			URL:     strings.TrimSpace(m.URL),
-			Headers: mapString(m.Headers),
-			Dir:     cwd,
+			Name:          strings.TrimSpace(m.Name),
+			Type:          typ,
+			Command:       strings.TrimSpace(m.Command),
+			Args:          append([]string(nil), m.Args...),
+			Env:           mapString(m.Env),
+			URL:           strings.TrimSpace(m.URL),
+			Headers:       mapString(m.Headers),
+			Dir:           cwd,
+			WorkspaceRoot: cwd,
 		})
 	}
 	return out, nil

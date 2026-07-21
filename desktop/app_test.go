@@ -254,6 +254,43 @@ func TestNeedsOnboardingTreatsBlankSavedKeyAsMissing(t *testing.T) {
 	}
 }
 
+func TestNeedsOnboardingAcceptsConfiguredCustomProvider(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	cfg := config.Default()
+	cfg.DefaultModel = "custom/custom-model"
+	cfg.Desktop.ProviderAccess = []string{"custom"}
+	cfg.Providers = []config.ProviderEntry{{
+		Name: "custom", Kind: "openai", BaseURL: "https://models.example.invalid/v1",
+		Model: "custom-model", APIKeyEnv: "CUSTOM_API_KEY",
+	}}
+	if err := cfg.SaveTo(config.UserConfigPath()); err != nil {
+		t.Fatalf("save custom provider config: %v", err)
+	}
+	setDesktopTestCredential(t, "CUSTOM_API_KEY", "saved-custom-key")
+
+	if NewApp().NeedsOnboarding() {
+		t.Fatal("NeedsOnboarding should be false when a custom provider is configured")
+	}
+}
+
+func TestNeedsOnboardingAcceptsNoAuthLocalProvider(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	cfg := config.Default()
+	cfg.DefaultModel = "local/local-model"
+	cfg.Desktop.ProviderAccess = []string{"local"}
+	cfg.Providers = []config.ProviderEntry{{
+		Name: "local", Kind: "openai", BaseURL: "http://127.0.0.1:11434/v1",
+		Model: "local-model",
+	}}
+	if err := cfg.SaveTo(config.UserConfigPath()); err != nil {
+		t.Fatalf("save local provider config: %v", err)
+	}
+
+	if NewApp().NeedsOnboarding() {
+		t.Fatal("NeedsOnboarding should be false for a no-auth local provider")
+	}
+}
+
 func providerNamesFromView(providers []ProviderView) []string {
 	out := make([]string, 0, len(providers))
 	for _, p := range providers {
@@ -4750,6 +4787,50 @@ func TestConnectKeyRejectsBackgroundJobsBeforeSavingKey(t *testing.T) {
 	}
 }
 
+func TestConnectKeyRestoresDeepSeekProviderAccess(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	cfg := config.Default()
+	cfg.DefaultModel = "custom/custom-model"
+	cfg.Desktop.ProviderAccess = []string{"custom"}
+	cfg.Providers = []config.ProviderEntry{{
+		Name: "custom", Kind: "openai", BaseURL: "https://models.example.invalid/v1",
+		Model: "custom-model", APIKeyEnv: "CUSTOM_API_KEY",
+	}}
+	if err := cfg.SaveTo(config.UserConfigPath()); err != nil {
+		t.Fatalf("save custom provider config: %v", err)
+	}
+
+	oldFetch := connectKeyBalanceFetch
+	connectKeyBalanceFetch = func(context.Context, *http.Client, string, string) (*billing.Balance, error) {
+		return &billing.Balance{Available: true}, nil
+	}
+	t.Cleanup(func() { connectKeyBalanceFetch = oldFetch })
+
+	app := NewApp()
+	app.ctx = context.Background()
+	app.readyHook = func() {}
+	app.setTestCtrl(control.New(control.Options{Label: "custom"}), "custom/custom-model")
+	defer func() {
+		if ctrl := app.activeCtrl(); ctrl != nil {
+			ctrl.Close()
+		}
+	}()
+	if _, err := app.ConnectKey("sk-test"); err != nil {
+		t.Fatalf("ConnectKey: %v", err)
+	}
+
+	got := config.LoadForEditWithoutCredentials(config.UserConfigPath())
+	if !providerAccessSet(got.Desktop.ProviderAccess)["deepseek"] {
+		t.Fatalf("provider_access = %v, want DeepSeek restored", got.Desktop.ProviderAccess)
+	}
+	if _, ok := got.Provider("deepseek"); !ok {
+		t.Fatal("DeepSeek provider template should be restored")
+	}
+	if app.NeedsOnboarding() {
+		t.Fatal("restored DeepSeek access and saved key should satisfy onboarding")
+	}
+}
+
 func TestConnectKeyRebuildLeaseHeldKeepsCurrentController(t *testing.T) {
 	isolateDesktopUserDirs(t)
 	t.Setenv(onboardingKeyEnv, "")
@@ -6258,7 +6339,7 @@ func TestDeleteSessionCancelsInactiveOpenRuntime(t *testing.T) {
 	}
 }
 
-func TestTrashTopicWithStuckJobReturnsAfterSingleGrace(t *testing.T) {
+func TestTrashTopicRejectsBackgroundJob(t *testing.T) {
 	isolateDesktopUserDirs(t)
 
 	projectRoot := t.TempDir()
@@ -6275,9 +6356,7 @@ func TestTrashTopicWithStuckJobReturnsAfterSingleGrace(t *testing.T) {
 	}
 	sessionPath := writeTopicSession(t, dir, "stuck-topic.jsonl", topicID, "Stuck trash", projectRoot)
 
-	grace := 500 * time.Millisecond
-	teardownNotices := make(chan event.Event, 2)
-	jm := jobs.NewManager(teardownNoticeSink(teardownNotices), jobs.WithTeardownGrace(grace))
+	jm := jobs.NewManager(event.Discard)
 	ctrl := control.New(control.Options{SessionDir: dir, SessionPath: sessionPath, Label: "test", Jobs: jm, WorkspaceRoot: projectRoot})
 	releaseJob := startNonCooperativeSessionJob(t, jm, sessionPath)
 	defer func() {
@@ -6311,20 +6390,24 @@ func TestTrashTopicWithStuckJobReturnsAfterSingleGrace(t *testing.T) {
 		activeTabID: "stuck",
 	}
 
-	start := time.Now()
-	if err := app.TrashTopic(topicID); err != nil {
-		t.Fatalf("TrashTopic(stuck job): %v", err)
+	if err := app.TrashTopic(topicID); !errors.Is(err, errTopicHasActiveWork) {
+		t.Fatalf("TrashTopic(background job) error = %v, want %v", err, errTopicHasActiveWork)
 	}
-	elapsed := time.Since(start)
-	if elapsed > grace+2*time.Second {
-		t.Fatalf("TrashTopic took %s, want one teardown grace plus bounded metadata I/O", elapsed)
+	if _, ok := app.tabs["stuck"]; !ok {
+		t.Fatal("rejected archive should keep the background-job topic tab")
 	}
-	assertSingleTeardownTimeoutNotice(t, teardownNotices, grace)
-	if !agent.IsCleanupPending(sessionPath) {
-		t.Fatalf("stuck topic trash should mark cleanup pending")
+	if agent.IsCleanupPending(sessionPath) {
+		t.Fatal("rejected archive should not mark session cleanup pending")
 	}
 	if _, err := os.Stat(sessionPath); err != nil {
-		t.Fatalf("stuck topic session should remain until delayed trash: %v", err)
+		t.Fatalf("rejected archive should preserve the live session: %v", err)
+	}
+	trashPath := filepath.Join(dir, sessionTrashDir, "stuck-topic.jsonl", "stuck-topic.jsonl")
+	if _, err := os.Stat(trashPath); !os.IsNotExist(err) {
+		t.Fatalf("rejected archive created a trash entry, stat err = %v", err)
+	}
+	if got := loadTopicTitle(projectRoot, topicID); got != "Stuck trash" {
+		t.Fatalf("rejected archive topic title = %q, want Stuck trash", got)
 	}
 }
 
@@ -7396,7 +7479,7 @@ url = %q
 			// This test isolates effective-source selection from the project launch
 			// approval flow, which has its own end-to-end coverage.
 			spec.RequireLaunchApproval = false
-			spec.ImplicitApproval = true
+			spec.Authorized = true
 		},
 	})
 	app := NewApp()
@@ -8674,7 +8757,7 @@ func TestAddMCPServerPersistsRemoteHeaders(t *testing.T) {
 	t.Fatalf("stripe MCP missing from view: %+v", view)
 }
 
-func TestAddMCPServerPersistsCompleteAdvancedConfiguration(t *testing.T) {
+func TestAddMCPServerPersistsConnectionConfiguration(t *testing.T) {
 	isolateDesktopUserDirs(t)
 	dir := robustTempDir(t)
 	t.Chdir(dir)
@@ -8686,8 +8769,6 @@ func TestAddMCPServerPersistsCompleteAdvancedConfiguration(t *testing.T) {
 	defer app.activeCtrl().Close()
 	autoStart := false
 	callTimeout := 45
-	defaultMode := "writes"
-	reviewer := "auto_review"
 	_, err := app.AddMCPServer(MCPServerInput{
 		Name:               "admin",
 		Transport:          "streamable-http",
@@ -8697,12 +8778,6 @@ func TestAddMCPServerPersistsCompleteAdvancedConfiguration(t *testing.T) {
 		ToolTimeoutSeconds: map[string]int{
 			"wipe": 120,
 		},
-		TrustedReadOnlyTools:     []string{"status"},
-		DefaultToolsApprovalMode: &defaultMode,
-		ToolPolicies: map[string]config.MCPToolPolicy{
-			"wipe": {ApprovalMode: "prompt"},
-		},
-		ApprovalsReviewer: &reviewer,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -8714,17 +8789,13 @@ func TestAddMCPServerPersistsCompleteAdvancedConfiguration(t *testing.T) {
 	}
 	entry, ok := findPluginEntry(cfg.Plugins, "admin")
 	if !ok || entry.Type != "http" || entry.AutoStart == nil || *entry.AutoStart ||
-		entry.CallTimeoutSeconds != 45 || entry.ToolTimeoutSeconds["wipe"] != 120 ||
-		entry.DefaultToolsApprovalMode != "writes" || entry.Tools["wipe"].ApprovalMode != "prompt" ||
-		entry.ApprovalsReviewer != "auto_review" || len(entry.TrustedReadOnlyTools) != 0 {
+		entry.CallTimeoutSeconds != 45 || entry.ToolTimeoutSeconds["wipe"] != 120 {
 		t.Fatalf("persisted advanced MCP entry = %+v, found=%v", entry, ok)
 	}
 
 	views := app.MCPServers()
 	if len(views) != 1 || views[0].Transport != "http" || views[0].AutoStart ||
-		views[0].CallTimeoutSeconds != 45 || views[0].ToolTimeoutSeconds["wipe"] != 120 ||
-		views[0].DefaultToolsApprovalMode != "writes" || views[0].ToolPolicies["wipe"].ApprovalMode != "prompt" ||
-		views[0].ApprovalsReviewer != "auto_review" {
+		views[0].CallTimeoutSeconds != 45 || views[0].ToolTimeoutSeconds["wipe"] != 120 {
 		t.Fatalf("advanced MCP ServerView = %+v", views)
 	}
 }
@@ -8740,25 +8811,17 @@ func TestUpdateMCPServerPreservesAbsentFieldsAndClearsExplicitOnes(t *testing.T)
 	app.setTestCtrl(control.New(control.Options{Host: plugin.NewHost()}), "")
 	defer app.activeCtrl().Close()
 	callTimeout := 45
-	defaultMode := "writes"
-	reviewer := "auto_review"
 	if _, err := app.AddMCPServer(MCPServerInput{
-		Name:                     "admin",
-		Transport:                "http",
-		URL:                      srv.URL,
-		CallTimeoutSeconds:       &callTimeout,
-		ToolTimeoutSeconds:       map[string]int{"wipe": 120},
-		TrustedReadOnlyTools:     []string{"status"},
-		DefaultToolsApprovalMode: &defaultMode,
-		ToolPolicies:             map[string]config.MCPToolPolicy{"wipe": {ApprovalMode: "prompt"}},
-		ApprovalsReviewer:        &reviewer,
+		Name:               "admin",
+		Transport:          "http",
+		URL:                srv.URL,
+		CallTimeoutSeconds: &callTimeout,
+		ToolTimeoutSeconds: map[string]int{"wipe": 120},
 	}); err != nil {
 		t.Fatal(err)
 	}
 
-	// An old frontend (or a partial payload) omits the new fields entirely:
-	// approval settings survive, while legacy trusted_read_only_tools input is
-	// intentionally not generated by new saves.
+	// An old frontend (or a partial payload) omits optional timeout fields.
 	if err := app.UpdateMCPServer("admin", MCPServerInput{Name: "admin", Transport: "http", URL: srv.URL}); err != nil {
 		t.Fatal(err)
 	}
@@ -8767,26 +8830,18 @@ func TestUpdateMCPServerPreservesAbsentFieldsAndClearsExplicitOnes(t *testing.T)
 		t.Fatal(err)
 	}
 	entry, ok := findPluginEntry(cfg.Plugins, "admin")
-	if !ok || entry.CallTimeoutSeconds != 45 || entry.ToolTimeoutSeconds["wipe"] != 120 ||
-		entry.DefaultToolsApprovalMode != "writes" || entry.Tools["wipe"].ApprovalMode != "prompt" ||
-		entry.ApprovalsReviewer != "auto_review" || len(entry.TrustedReadOnlyTools) != 0 {
+	if !ok || entry.CallTimeoutSeconds != 45 || entry.ToolTimeoutSeconds["wipe"] != 120 {
 		t.Fatalf("absent input fields must preserve persisted values, entry = %+v, found=%v", entry, ok)
 	}
 
 	// Explicit zero values are the editor's clear semantics.
 	cleared := 0
-	emptyMode := ""
-	emptyReviewer := ""
 	if err := app.UpdateMCPServer("admin", MCPServerInput{
-		Name:                     "admin",
-		Transport:                "http",
-		URL:                      srv.URL,
-		CallTimeoutSeconds:       &cleared,
-		ToolTimeoutSeconds:       map[string]int{},
-		TrustedReadOnlyTools:     []string{},
-		DefaultToolsApprovalMode: &emptyMode,
-		ToolPolicies:             map[string]config.MCPToolPolicy{},
-		ApprovalsReviewer:        &emptyReviewer,
+		Name:               "admin",
+		Transport:          "http",
+		URL:                srv.URL,
+		CallTimeoutSeconds: &cleared,
+		ToolTimeoutSeconds: map[string]int{},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -8795,9 +8850,7 @@ func TestUpdateMCPServerPreservesAbsentFieldsAndClearsExplicitOnes(t *testing.T)
 		t.Fatal(err)
 	}
 	entry, ok = findPluginEntry(cfg.Plugins, "admin")
-	if !ok || entry.CallTimeoutSeconds != 0 || len(entry.ToolTimeoutSeconds) != 0 ||
-		entry.DefaultToolsApprovalMode != "" || len(entry.Tools) != 0 ||
-		entry.ApprovalsReviewer != "" || len(entry.TrustedReadOnlyTools) != 0 {
+	if !ok || entry.CallTimeoutSeconds != 0 || len(entry.ToolTimeoutSeconds) != 0 {
 		t.Fatalf("explicit empty fields must clear persisted values, entry = %+v, found=%v", entry, ok)
 	}
 }

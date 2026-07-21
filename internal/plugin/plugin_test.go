@@ -17,7 +17,6 @@ import (
 	"time"
 
 	"reasonix/internal/event"
-	"reasonix/internal/mcpcatalog"
 	"reasonix/internal/mcplaunch"
 	"reasonix/internal/sandbox"
 	"reasonix/internal/tool"
@@ -492,139 +491,49 @@ func TestClientListToolsPropagatesReadOnlyAndDestructiveHints(t *testing.T) {
 	}
 }
 
-func TestMCPApprovalPolicyDoesNotChangeProviderSchemas(t *testing.T) {
-	schema := json.RawMessage(`{"type":"object","properties":{"target":{"type":"string"}}}`)
-	makeSchemas := func(spec Spec) []byte {
-		client := &Client{name: "admin", spec: spec}
-		reg := tool.NewRegistry()
-		reg.Add(&remoteTool{
-			client: client, name: "mcp__admin__wipe", rawName: "wipe",
-			desc: "wipe target", schema: schema,
-		})
-		out, err := json.Marshal(reg.Schemas())
-		if err != nil {
-			t.Fatal(err)
-		}
-		return out
+func TestUserAuthorizedMCPHintedReaderIsAuthorizedForSubagents(t *testing.T) {
+	client := &Client{
+		name: "mock", t: &countingToolsTransport{},
+		spec: Spec{Name: "mock", Authorized: true},
 	}
-	baseline := makeSchemas(Spec{Name: "admin"})
-	configured := makeSchemas(Spec{
-		Name: "admin", DefaultToolsApprovalMode: "writes",
-		ToolApprovalModes: map[string]string{"wipe": "prompt"},
-		ApprovalsReviewer: "auto_review", ImplicitApproval: true,
-	})
-	if !bytes.Equal(baseline, configured) {
-		t.Fatalf("provider schemas changed with local approval policy:\nbaseline=%s\nconfigured=%s", baseline, configured)
-	}
-}
-
-func TestUserAuthorizedMCPDefaultsToDirectApprovalWithoutChangingOverrides(t *testing.T) {
-	spec := Spec{Name: "user-server", ImplicitApproval: true}
-	if got := spec.ToolApprovalMode("write"); got != tool.MCPApprovalApprove {
-		t.Fatalf("implicit user approval mode = %q, want approve", got)
-	}
-	spec.ToolApprovalModes = map[string]string{"write": "prompt"}
-	if got := spec.ToolApprovalMode("write"); got != tool.MCPApprovalPrompt {
-		t.Fatalf("explicit per-tool policy = %q, want prompt", got)
-	}
-	spec.ToolApprovalModes = nil
-	spec.DefaultToolsApprovalMode = "writes"
-	if got := spec.ToolApprovalMode("write"); got != tool.MCPApprovalWrites {
-		t.Fatalf("explicit server policy = %q, want writes", got)
-	}
-}
-
-func TestSpecReadOnlyToolNamesMarksUnhintedToolsReadOnly(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	spec := Spec{
-		Name:    "mock",
-		Command: os.Args[0],
-		Args:    []string{"-test.run=TestHelperProcess", "--"},
-		Env:     map[string]string{"GO_WANT_HELPER_PROCESS": "1"},
-		ReadOnlyToolNames: map[string]bool{
-			"echo": true,
-		},
-	}
-
-	host, tools, err := StartAll(ctx, []Spec{spec})
+	tools, err := client.listTools(context.Background())
 	if err != nil {
-		t.Fatalf("StartAll: %v", err)
+		t.Fatalf("listTools: %v", err)
 	}
-	defer host.Close()
-
-	byName := map[string]tool.Tool{}
-	for _, tl := range tools {
-		byName[tl.Name()] = tl
+	echo := findToolByName(tools, "mcp__mock__echo")
+	if echo == nil || !echo.ReadOnly() {
+		t.Fatalf("installed hinted reader missing or not read-only: %T", echo)
 	}
-	echo := byName["mcp__mock__echo"]
-	if echo == nil {
-		t.Fatalf("mcp__mock__echo missing from %v", byName)
+	if authority, ok := echo.(tool.MCPServerAuthorization); !ok || !authority.MCPServerAuthorized() {
+		t.Fatalf("installed hinted reader lacks server authorization: %T", echo)
 	}
-	if !echo.ReadOnly() {
-		t.Fatal("read-only override did not mark unhinted echo tool read-only")
-	}
-	zed := byName["mcp__mock__zed"]
-	if zed == nil {
-		t.Fatalf("mcp__mock__zed missing from %v", byName)
-	}
-	if zed.ReadOnly() {
-		t.Fatal("read-only override should not mark non-listed tools read-only")
+	if _, err := echo.Execute(tool.WithReaderExecutionIntent(context.Background()), json.RawMessage(`{"msg":"ok","z":"ok"}`)); err != nil {
+		t.Fatalf("installed hinted reader dispatch: %v", err)
 	}
 }
 
-func TestSpecReadOnlyModelToolNamesMarksVisibleToolsTrusted(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	spec := Spec{
-		Name:    "mock",
-		Command: os.Args[0],
-		Args:    []string{"-test.run=TestHelperProcess", "--"},
-		Env:     map[string]string{"GO_WANT_HELPER_PROCESS": "1"},
-		ReadOnlyModelToolNames: map[string]bool{
-			"mcp__mock__echo": true,
-		},
+func TestServerAuthorizedUsesResolvedBooleanOnly(t *testing.T) {
+	if !(Spec{Authorized: true}).ServerAuthorized() {
+		t.Fatal("an explicitly authorized server should not require a launch manager")
 	}
-
-	host, tools, err := StartAll(ctx, []Spec{spec})
-	if err != nil {
-		t.Fatalf("StartAll: %v", err)
-	}
-	defer host.Close()
-
-	byName := map[string]tool.Tool{}
-	for _, tl := range tools {
-		byName[tl.Name()] = tl
-	}
-	echo := byName["mcp__mock__echo"]
-	if echo == nil {
-		t.Fatalf("mcp__mock__echo missing from %v", byName)
-	}
-	if !echo.ReadOnly() {
-		t.Fatal("model-visible read-only override did not mark echo tool read-only")
-	}
-	zed := byName["mcp__mock__zed"]
-	if zed == nil {
-		t.Fatalf("mcp__mock__zed missing from %v", byName)
-	}
-	if zed.ReadOnly() {
-		t.Fatal("model-visible read-only override should not mark non-listed tools read-only")
+	if (Spec{}).ServerAuthorized() {
+		t.Fatal("an unresolved server should remain unauthorized")
 	}
 }
 
-func TestApplyKnownReadOnlyOverridesMarksCodeGraphReadTools(t *testing.T) {
-	got := ApplyKnownReadOnlyOverrides(Spec{Name: "codegraph", ReadOnlyToolNames: map[string]bool{"custom": true}})
-	for _, name := range []string{"custom", "codegraph_context", "codegraph_search", "context", "search"} {
-		if !got.ReadOnlyToolNames[name] {
-			t.Fatalf("codegraph read-only override missing %q: %+v", name, got.ReadOnlyToolNames)
-		}
+func TestInstalledServerAuthorizationSkipsProjectIdentityDigest(t *testing.T) {
+	installed := Spec{Name: "installed", Authorized: true}
+	resolved, err := resolveProjectLaunchAuthorization(context.Background(), installed)
+	if err != nil || !resolved.ServerAuthorized() {
+		t.Fatalf("installed authorization = (%+v, %v), want authorized without identity resolution", resolved, err)
 	}
 
-	other := ApplyKnownReadOnlyOverrides(Spec{Name: "not-codegraph"})
-	if other.ReadOnlyToolNames["codegraph_context"] {
-		t.Fatalf("non-codegraph spec should not receive codegraph overrides: %+v", other.ReadOnlyToolNames)
+	project := Spec{
+		Name: "project", RequireLaunchApproval: true,
+		LaunchManager: mcplaunch.NewManager(filepath.Join(t.TempDir(), mcplaunch.StateFilename), t.TempDir()),
+	}
+	if _, err := resolveProjectLaunchAuthorization(context.Background(), project); err == nil || !strings.Contains(err.Error(), "command is required") {
+		t.Fatalf("project authorization did not resolve its exact launch identity: %v", err)
 	}
 }
 
@@ -632,9 +541,6 @@ func TestApplyKnownOverridesPinsCodeGraphStdioToWorkspace(t *testing.T) {
 	got := ApplyKnownOverrides(Spec{Name: "codegraph"}, "/workspace")
 	if got.Dir != "/workspace" {
 		t.Fatalf("codegraph stdio Dir = %q, want workspace root", got.Dir)
-	}
-	if !got.ReadOnlyToolNames["codegraph_search"] {
-		t.Fatalf("codegraph read-only override missing: %+v", got.ReadOnlyToolNames)
 	}
 	if got.Env[codeGraphDaemonIdleTimeoutEnv] != codeGraphDaemonIdleTimeoutDefaultMS {
 		t.Fatalf("codegraph daemon idle timeout env = %q, want %s; env=%v", got.Env[codeGraphDaemonIdleTimeoutEnv], codeGraphDaemonIdleTimeoutDefaultMS, got.Env)
@@ -1368,62 +1274,18 @@ func TestNormalizeIdentityURLPreservesEndpointSemantics(t *testing.T) {
 	}
 }
 
-func TestOfficialIdentityIsStableAcrossWorkspaceIsolationRoots(t *testing.T) {
-	packageRoot := t.TempDir()
-	packageFile := filepath.Join(packageRoot, "server.js")
-	if err := os.WriteFile(packageFile, []byte("verified"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	packageDigest, err := mcpcatalog.TreeSHA256(packageRoot)
-	if err != nil {
-		t.Fatal(err)
-	}
-	base := Spec{
-		Name: "official", Command: os.Args[0], OfficialCatalogEntryID: "official@1",
-		PackageDigest: packageDigest, PackageRoot: packageRoot, ConfigSource: "workspace_config",
-		ReaderSandbox: sandbox.Spec{
-			Mode: "enforce", ReadRoots: []string{"/workspace/a", "/home/user"},
-			WriteRoots: []string{"/state/a"}, ForbidReadRoots: []string{"/workspace/a/private"},
-		},
-		WriterSandbox: sandbox.Spec{Mode: "enforce", ReadRoots: []string{"/workspace/a"}, WriteRoots: []string{"/workspace/a"}},
-	}
-	other := base
-	other.ReaderSandbox.ReadRoots = []string{"/workspace/b", "/home/user"}
-	other.ReaderSandbox.WriteRoots = []string{"/state/b"}
-	other.ReaderSandbox.ForbidReadRoots = []string{"/workspace/b/private"}
-	other.WriterSandbox.ReadRoots = []string{"/workspace/b"}
-	other.WriterSandbox.WriteRoots = []string{"/workspace/b"}
-	a, err := specIdentityFingerprint(context.Background(), base)
-	if err != nil {
-		t.Fatal(err)
-	}
-	b, err := specIdentityFingerprint(context.Background(), other)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if a != b {
-		t.Fatalf("official global identity changed across workspaces: %s != %s", a, b)
-	}
-	if err := os.WriteFile(packageFile, []byte("tampered"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := specIdentityFingerprint(context.Background(), base); err == nil || !strings.Contains(err.Error(), "changed after verification") {
-		t.Fatalf("tampered official package identity error = %v", err)
-	}
-}
-
 func TestWorkspaceIdentityIgnoresHostPolicyChanges(t *testing.T) {
 	base := Spec{
 		Name: "custom", Command: os.Args[0], ConfigSource: "workspace_config",
-		ReaderSandbox: sandbox.Spec{Mode: "enforce", ForbidReadRoots: []string{"/secret/a"}},
+		Sandbox: sandbox.Spec{Mode: "enforce", ForbidReadRoots: []string{"/secret/a"}},
 	}
 	changed := base
-	changed.ReaderSandbox.ForbidReadRoots = []string{"/secret/b"}
-	a, err := specIdentityFingerprint(context.Background(), base)
+	changed.Sandbox.ForbidReadRoots = []string{"/secret/b"}
+	a, err := projectLaunchIdentityDigest(context.Background(), base)
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, err := specIdentityFingerprint(context.Background(), changed)
+	b, err := projectLaunchIdentityDigest(context.Background(), changed)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1466,13 +1328,6 @@ func TestProjectLaunchApprovalBlocksBeforeProcessStart(t *testing.T) {
 	if len(tools) == 0 {
 		t.Fatal("authorized project server returned no tools")
 	}
-	policy, ok := tools[0].(tool.MCPApprovalPolicy)
-	if !ok {
-		t.Fatalf("authorized project tool %T does not expose MCP approval policy", tools[0])
-	}
-	if got := policy.MCPApprovalMode(); got != tool.MCPApprovalApprove {
-		t.Fatalf("authorized project tool approval = %q, want direct approval", got)
-	}
 	host.Close()
 	if got := readHelperCounter(t, startCount); got != 1 {
 		t.Fatalf("post-authorization starts = %d, want 1", got)
@@ -1497,10 +1352,13 @@ func TestAuthorizeSpecLaunchRecordsInstallConsentWithoutStartingServer(t *testin
 	if err := AuthorizeSpecLaunch(ctx, spec); err != nil {
 		t.Fatalf("AuthorizeSpecLaunch: %v", err)
 	}
+	if resolved := ResolveStoredAuthorization(ctx, spec); !resolved.ServerAuthorized() {
+		t.Fatal("stored project launch grant did not resolve server authorization")
+	}
 	if got := readHelperCounter(t, startCount); got != 0 {
 		t.Fatalf("install authorization started server %d times, want 0", got)
 	}
-	identity, err := specIdentityFingerprint(ctx, spec)
+	identity, err := projectLaunchIdentityDigest(ctx, spec)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1516,13 +1374,6 @@ func TestAuthorizeSpecLaunchRecordsInstallConsentWithoutStartingServer(t *testin
 	if len(tools) == 0 {
 		t.Fatal("installed project server returned no tools")
 	}
-	policy, ok := tools[0].(tool.MCPApprovalPolicy)
-	if !ok {
-		t.Fatalf("installed project tool %T does not expose MCP approval policy", tools[0])
-	}
-	if got := policy.MCPApprovalMode(); got != tool.MCPApprovalApprove {
-		t.Fatalf("installed project tool approval = %q, want direct approval", got)
-	}
 }
 
 func TestAuthorizeSpecLaunchDoesNotAddPersistentTransportRestrictions(t *testing.T) {
@@ -1535,7 +1386,7 @@ func TestAuthorizeSpecLaunchDoesNotAddPersistentTransportRestrictions(t *testing
 	if err := AuthorizeSpecLaunch(ctx, spec); err != nil {
 		t.Fatalf("explicit install authorization: %v", err)
 	}
-	identity, err := specIdentityFingerprint(ctx, spec)
+	identity, err := projectLaunchIdentityDigest(ctx, spec)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1571,7 +1422,7 @@ func TestAuthorizeProjectSpecLaunchLocksMutableLauncherWithoutStartingServer(t *
 	if err != nil {
 		t.Fatal(err)
 	}
-	identity, err := specIdentityFingerprint(context.Background(), locked)
+	identity, err := projectLaunchIdentityDigest(context.Background(), locked)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1581,60 +1432,7 @@ func TestAuthorizeProjectSpecLaunchLocksMutableLauncherWithoutStartingServer(t *
 	}
 }
 
-// TestReadOnlyOverrideDoesNotChangeModelVisibleSchema locks the cache invariant
-// behind the backward-compatible MCP read-only override: classification may
-// change ReadOnly, but must not alter the provider-visible name or input schema.
-func TestReadOnlyOverrideDoesNotChangeModelVisibleSchema(t *testing.T) {
-	startMockEcho := func(spec Spec) (*Host, map[string]tool.Tool) {
-		t.Helper()
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		t.Cleanup(cancel)
-		spec.Name = "mock"
-		spec.Command = os.Args[0]
-		spec.Args = []string{"-test.run=TestHelperProcess", "--"}
-		spec.Env = map[string]string{"GO_WANT_HELPER_PROCESS": "1"}
-		host, tools, err := StartAll(ctx, []Spec{spec})
-		if err != nil {
-			t.Fatalf("StartAll: %v", err)
-		}
-		t.Cleanup(func() { host.Close() })
-		byName := map[string]tool.Tool{}
-		for _, tl := range tools {
-			byName[tl.Name()] = tl
-		}
-		return host, byName
-	}
-
-	_, baseTools := startMockEcho(Spec{})
-	_, overriddenTools := startMockEcho(Spec{ReadOnlyModelToolNames: map[string]bool{"mcp__mock__echo": true}})
-
-	base, ok := baseTools["mcp__mock__echo"]
-	if !ok {
-		t.Fatalf("mcp__mock__echo missing from base tools %v", baseTools)
-	}
-	overriddenEcho, ok := overriddenTools["mcp__mock__echo"]
-	if !ok {
-		t.Fatalf("mcp__mock__echo missing from overridden tools %v", overriddenTools)
-	}
-
-	// The model-visible surface (name + schema bytes) must be byte-identical.
-	if base.Name() != overriddenEcho.Name() {
-		t.Fatalf("override changed model-visible tool name: %q vs %q", base.Name(), overriddenEcho.Name())
-	}
-	if got, want := string(overriddenEcho.Schema()), string(base.Schema()); got != want {
-		t.Fatalf("override changed model-visible schema bytes:\n override=%s\n     base=%s", got, want)
-	}
-
-	// The legacy override only flips the read-only classification.
-	if base.ReadOnly() {
-		t.Fatal("base echo should not be read-only without a hint")
-	}
-	if !overriddenEcho.ReadOnly() {
-		t.Fatal("overridden echo should be marked read-only")
-	}
-}
-
-func TestReaderIntentRefusesDispatchAfterRevocation(t *testing.T) {
+func TestReaderIntentRefusesDispatchAfterSafetyDrift(t *testing.T) {
 	stateDir := t.TempDir()
 	startCount := filepath.Join(t.TempDir(), "starts")
 	callCount := filepath.Join(t.TempDir(), "calls")
@@ -1645,7 +1443,8 @@ func TestReaderIntentRefusesDispatchAfterRevocation(t *testing.T) {
 			"GO_WANT_HELPER_START_COUNT": startCount,
 			"GO_WANT_HELPER_CALL_COUNT":  callCount,
 		},
-		StateDir: stateDir,
+		StateDir: stateDir, Authorized: true,
+		LaunchManager: mcplaunch.NewManager(filepath.Join(t.TempDir(), mcplaunch.StateFilename), t.TempDir()),
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -1663,13 +1462,13 @@ func TestReaderIntentRefusesDispatchAfterRevocation(t *testing.T) {
 		t.Fatalf("expected remoteTool adapter, got %T", target)
 	}
 
-	// The tool is authorized as a trusted reader.
+	// The installed server is authorized and currently advertises a reader.
 	rt.client.toolsMu.Lock()
-	rt.readOnly, rt.readOnlyTrusted = true, true
+	rt.readOnly = true
 	rt.client.toolsMu.Unlock()
-	readerCtx := tool.WithReaderExecutionIntent(ctx, rt.MCPCapabilityFingerprint())
+	readerCtx := tool.WithReaderExecutionIntent(ctx)
 	if _, _, err := rt.ExecuteWithImages(readerCtx, json.RawMessage(`{"msg":"ok","z":"ok"}`)); err != nil {
-		t.Fatalf("trusted reader call failed: %v", err)
+		t.Fatalf("authorized reader call failed: %v", err)
 	}
 	if got := readHelperCounter(t, startCount); got != 1 {
 		t.Fatalf("reader call spawned extra processes: starts=%d", got)
@@ -1678,14 +1477,13 @@ func TestReaderIntentRefusesDispatchAfterRevocation(t *testing.T) {
 		t.Fatalf("reader call count = %d, want 1", got)
 	}
 
-	// A concurrent revocation (catalog refresh, trust re-evaluation) lands
-	// after the authorization: the reader-authorized call must refuse instead
-	// of issuing tools/call.
+	// A concurrent read-to-write classification change lands after authorization:
+	// the reader-authorized call must refuse instead of issuing tools/call.
 	rt.client.toolsMu.Lock()
-	rt.readOnly, rt.readOnlyTrusted = false, false
+	rt.readOnly = false
 	rt.client.toolsMu.Unlock()
-	if _, _, err := rt.ExecuteWithImages(readerCtx, json.RawMessage(`{"msg":"blocked","z":"ok"}`)); err == nil || !strings.Contains(err.Error(), "no longer classifies") {
-		t.Fatalf("revoked reader call = %v, want trusted-reader refusal", err)
+	if _, _, err := rt.ExecuteWithImages(readerCtx, json.RawMessage(`{"msg":"blocked","z":"ok"}`)); err == nil || !strings.Contains(err.Error(), "changed the authorization or security metadata") {
+		t.Fatalf("changed reader call = %v, want reader refusal", err)
 	}
 	if got := readHelperCounter(t, startCount); got != 1 {
 		t.Fatalf("revoked reader call started a writer process: starts=%d", got)
@@ -1694,31 +1492,32 @@ func TestReaderIntentRefusesDispatchAfterRevocation(t *testing.T) {
 		t.Fatalf("revoked reader call reached tools/call: calls=%d", got)
 	}
 
-	// A stale capability fingerprint pinned at authorization time is refused
-	// even when the tool is still a reader.
+	// Schema-only changes do not revoke an installed server or its reader lane.
+	// The live server owns argument validation; refreshed provider-visible schema
+	// bytes land in the next session rather than interrupting this call.
 	rt.client.toolsMu.Lock()
-	rt.readOnly, rt.readOnlyTrusted = true, true
+	rt.readOnly = true
 	rt.client.toolsMu.Unlock()
-	staleCtx := tool.WithReaderExecutionIntent(ctx, "stale-fingerprint")
-	if _, _, err := rt.ExecuteWithImages(staleCtx, json.RawMessage(`{"msg":"stale","z":"ok"}`)); err == nil || !strings.Contains(err.Error(), "no longer classifies") {
-		t.Fatalf("stale fingerprint call = %v, want refusal", err)
+	rt.schema = json.RawMessage(`{"type":"object","properties":{"msg":{"type":"number"}}}`)
+	if _, _, err := rt.ExecuteWithImages(readerCtx, json.RawMessage(`{"msg":"schema-changed","z":"ok"}`)); err != nil {
+		t.Fatalf("schema-only reader change should execute: %v", err)
 	}
-	if got := readHelperCounter(t, callCount); got != 1 {
-		t.Fatalf("stale fingerprint call reached tools/call: calls=%d", got)
+	if got := readHelperCounter(t, callCount); got != 2 {
+		t.Fatalf("schema-only reader call count = %d, want 2", got)
 	}
 
 	// Without reader intent the ordinary writer path remains on the persistent
 	// connection.
 	rt.client.toolsMu.Lock()
-	rt.readOnly, rt.readOnlyTrusted = false, false
+	rt.readOnly = false
 	rt.client.toolsMu.Unlock()
 	if _, _, err := rt.ExecuteWithImages(ctx, json.RawMessage(`{"msg":"writer","z":"ok"}`)); err != nil {
-		t.Fatalf("approved writer call failed: %v", err)
+		t.Fatalf("authorized writer call failed: %v", err)
 	}
 	if got := readHelperCounter(t, startCount); got != 1 {
 		t.Fatalf("writer call starts = %d, want one persistent process", got)
 	}
-	if got := readHelperCounter(t, callCount); got != 2 {
-		t.Fatalf("writer call count = %d, want 2", got)
+	if got := readHelperCounter(t, callCount); got != 3 {
+		t.Fatalf("writer call count = %d, want 3", got)
 	}
 }

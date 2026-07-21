@@ -151,7 +151,7 @@ type Controller struct {
 	// prefix; only seeds the turn-scoped ledger and optional semantic router.
 	pluginCfg       []config.PluginEntry
 	capCachedTools  map[string][]plugin.CachedTool
-	capCacheHashOK  map[string]bool
+	capCacheKeyOK   map[string]bool
 	semanticRouter  *capability.SemanticRouter
 	capabilityAudit *capability.Audit
 	runtimeProfile  capability.Profile
@@ -435,10 +435,6 @@ type Options struct {
 	// OnSessionRecovered is called after a stale runtime's transcript has been
 	// saved as a recovery branch, before the controller commits to that branch.
 	OnSessionRecovered func(SessionRecoveryInfo) error
-	// PlanModeAllowedTools is retained for legacy config/controller data. MCP
-	// assembly may translate concrete entries into local read-only trust, but the
-	// field does not grant or revoke calls in the main Plan workflow.
-	PlanModeAllowedTools []string
 	// ApprovalTimeout bounds how long a tool-approval or ask prompt blocks waiting
 	// for a user decision. Zero (default) waits forever — right for an interactive
 	// terminal. Bot/headless frontends set a positive value so an unanswered
@@ -748,7 +744,10 @@ func (c *Controller) finishGuardedTurn(err error) {
 	c.mu.Lock()
 	cancelRequested := c.canceling
 	c.running = false
-	c.finishing = true
+	// A live controller keeps admission closed until TurnDone fan-out finishes.
+	// Close has already sealed admission permanently, so a late completion must
+	// not resurrect a finishing state after teardown.
+	c.finishing = !c.closed
 	c.cancel = nil
 	c.canceling = false
 	c.mu.Unlock()
@@ -4609,23 +4608,20 @@ func (c *Controller) connectMCPServer(e config.PluginEntry) (int, error) {
 	exp := e.ExpandedPlugin()
 	configSource := strings.TrimSpace(string(exp.Source))
 	spec := plugin.ApplyKnownOverrides(plugin.Spec{
-		Name:                     exp.Name,
-		Type:                     exp.Type,
-		Command:                  exp.Command,
-		Args:                     exp.Args,
-		Env:                      exp.Env,
-		URL:                      exp.URL,
-		Headers:                  exp.Headers,
-		DefaultCallTimeout:       c.mcpDefaultCallTimeout,
-		CallTimeout:              controllerMCPTimeout(exp.CallTimeoutSeconds),
-		ToolTimeouts:             controllerMCPToolTimeouts(exp.ToolTimeoutSeconds),
-		ReadOnlyToolNames:        trustedReadOnlyToolNames(exp.TrustedReadOnlyTools),
-		DefaultToolsApprovalMode: exp.DefaultToolsApprovalMode,
-		ToolApprovalModes:        controllerMCPToolApprovalModes(exp.Tools),
-		ApprovalsReviewer:        exp.ApprovalsReviewer,
-		ConfigSource:             configSource,
-		ImplicitApproval:         exp.Source.UserAuthorized(),
-		RequireLaunchApproval:    exp.Source.RequiresLaunchApproval(),
+		Name:                  exp.Name,
+		Type:                  exp.Type,
+		Command:               exp.Command,
+		Args:                  exp.Args,
+		Env:                   exp.Env,
+		URL:                   exp.URL,
+		Headers:               exp.Headers,
+		DefaultCallTimeout:    c.mcpDefaultCallTimeout,
+		CallTimeout:           controllerMCPTimeout(exp.CallTimeoutSeconds),
+		ToolTimeouts:          controllerMCPToolTimeouts(exp.ToolTimeoutSeconds),
+		WorkspaceRoot:         c.WorkspaceRoot(),
+		ConfigSource:          configSource,
+		Authorized:            exp.Source.UserAuthorized(),
+		RequireLaunchApproval: exp.Source.RequiresLaunchApproval(),
 	}, c.WorkspaceRoot())
 	if c.mcpConfigureSpec != nil {
 		c.mcpConfigureSpec(&spec)
@@ -4648,39 +4644,6 @@ func controllerMCPToolTimeouts(values map[string]int) map[string]time.Duration {
 	for name, seconds := range values {
 		if name = strings.TrimSpace(name); name != "" && seconds > 0 {
 			out[name] = time.Duration(seconds) * time.Second
-		}
-	}
-	if len(out) == 0 {
-		return nil
-	}
-	return out
-}
-
-func controllerMCPToolApprovalModes(policies map[string]config.MCPToolPolicy) map[string]string {
-	if len(policies) == 0 {
-		return nil
-	}
-	out := make(map[string]string, len(policies))
-	for name, policy := range policies {
-		if name = strings.TrimSpace(name); name != "" {
-			out[name] = policy.ApprovalMode
-		}
-	}
-	if len(out) == 0 {
-		return nil
-	}
-	return out
-}
-
-func trustedReadOnlyToolNames(names []string) map[string]bool {
-	if len(names) == 0 {
-		return nil
-	}
-	out := map[string]bool{}
-	for _, name := range names {
-		name = strings.TrimSpace(name)
-		if name != "" {
-			out[name] = true
 		}
 	}
 	if len(out) == 0 {
@@ -4917,6 +4880,7 @@ func (c *Controller) close(fireSessionEnd bool, jobsMode closeJobsMode) {
 	c.closeOnce.Do(func() {
 		c.mu.Lock()
 		started := c.startedOnce
+		cancel := c.cancel
 		// Seal turn admission and drop anything already parked: a parked turn
 		// must not start against a controller that is being torn down, and
 		// without the closed flag a submit landing after this critical
@@ -4924,7 +4888,21 @@ func (c *Controller) close(fireSessionEnd bool, jobsMode closeJobsMode) {
 		// flight) would park again and start after teardown.
 		c.closed = true
 		c.parkedTurns = nil
+		// A finishing-only controller no longer needs the delivery gate because
+		// closed seals every admission path. Keep running truthful until the
+		// foreground goroutine actually exits; clearing it here would report idle
+		// while tools and prompt waiters were still live.
+		c.finishing = false
+		if cancel != nil {
+			c.canceling = true
+		}
 		c.mu.Unlock()
+		if cancel != nil {
+			// clearAll deliberately does not signal waiters. Pair it with the
+			// foreground cancellation so approval/ask waits always unblock.
+			c.approval.clearAll()
+			cancel()
+		}
 		if fireSessionEnd && started {
 			c.hooks.SessionEnd(context.Background(), "other")
 		}
@@ -5118,112 +5096,6 @@ func (g gateApprover) ApproveWithReason(ctx context.Context, tool, subject strin
 	}
 	allow, remember, err := g.c.requestApproval(ctx, tool, subject, args)
 	return allow, remember, "", err
-}
-
-func (g gateApprover) ApproveFresh(ctx context.Context, toolName, subject string, args json.RawMessage) (bool, string, error) {
-	target := strings.TrimSpace(subject)
-	if target == "" {
-		target = toolName
-	}
-	reply, err := g.c.requestStrictFreshApprovalDecision(
-		ctx,
-		toolName,
-		fmt.Sprintf(i18n.M.MCPDestructiveSubjectFmt, target),
-		args,
-		i18n.M.MCPDestructiveReason,
-	)
-	if err != nil {
-		return false, "approval aborted", err
-	}
-	if !reply.allow {
-		return false, i18n.M.MCPDestructiveDeclined, nil
-	}
-	return true, "", nil
-}
-
-func (g gateApprover) ApproveMCP(ctx context.Context, toolName, subject string, args json.RawMessage, destructive, forced bool, reviewer string) (bool, string, error) {
-	reviewer = tool.NormalizeMCPApprovalReviewer(reviewer)
-	subject = approvalDisplaySubject(toolName, subject, args)
-	if !forced && g.c.approval.preApproved(toolName, subject, args) {
-		return true, "", nil
-	}
-	// A destructive MCP call routed here by the permission gate requires a fresh
-	// user decision. This check deliberately precedes Guardian/auto_review so no
-	// reviewer, session grant, Auto, or YOLO posture can authorize it.
-	if destructive {
-		return g.ApproveFresh(ctx, toolName, subject, args)
-	}
-	if reviewer == tool.MCPApprovalReviewerAutoReview {
-		if g.c.guardianSess != nil && g.c.executor != nil {
-			allow, reason, err := g.c.guardianSess.ReviewVerdict(ctx, toolName, args, g.c.executor.Session())
-			if err == nil {
-				// A successful verdict — allow or deny — is final for auto_review
-				// and never falls back.
-				return allow, reason, nil
-			}
-			slog.Warn("automatic MCP approval review unavailable; falling back to fresh human approval", "tool", toolName, "err", err)
-		}
-		// Missing reviewer/parent, timeout, transport failure, or indeterminate
-		// review degrades to a decision only a present human can make: Auto/YOLO,
-		// the approved-plan window, and session grants must not answer it.
-		// Non-interactive sessions never reach here — their gates fail closed
-		// before an approver is consulted.
-		target := strings.TrimSpace(subject)
-		if target == "" {
-			target = toolName
-		}
-		reply, err := g.c.requestStrictFreshApprovalDecision(ctx, toolName, target, args, i18n.M.MCPReviewerUnavailableReason)
-		if err != nil {
-			return false, "approval aborted", err
-		}
-		if !reply.allow {
-			return false, i18n.M.MCPReviewerUnavailableDeclined, nil
-		}
-		return true, "", nil
-	}
-
-	// An explicit MCP prompt/write policy outranks global Auto/YOLO. The legacy
-	// empty-reviewer path still lets Guardian approve low-risk calls or provide
-	// context for a final human decision.
-	var reason string
-	if reviewer == "" && g.c.guardianSess != nil {
-		if g.c.executor == nil {
-			return false, "automatic MCP approval review is configured, but no parent session is available", nil
-		}
-		allow, reviewReason, err := g.c.guardianSess.Review(ctx, toolName, args, g.c.executor.Session())
-		if err != nil {
-			return false, "automatic MCP approval review failed", err
-		}
-		if allow {
-			return true, "", nil
-		}
-		reason = reviewReason
-	}
-	target := strings.TrimSpace(subject)
-	if target == "" {
-		target = toolName
-	}
-	if !forced {
-		allow, _, err := g.c.requestApprovalWithReason(ctx, toolName, target, args, reason)
-		if err != nil {
-			return false, "approval aborted", err
-		}
-		if !allow && strings.TrimSpace(reason) == "" {
-			reason = "the user declined this MCP tool call"
-		}
-		return allow, reason, nil
-	}
-	reply, err := g.c.requestStrictFreshApprovalDecision(ctx, toolName, target, args, reason)
-	if err != nil {
-		return false, "approval aborted", err
-	}
-	if !reply.allow {
-		if strings.TrimSpace(reason) == "" {
-			reason = "the user declined this MCP tool call"
-		}
-		return false, reason, nil
-	}
-	return true, "", nil
 }
 
 type planModeReadOnlyTrustApprover struct{ c *Controller }
@@ -5773,28 +5645,18 @@ func (c *Controller) requestFreshApprovalDecision(ctx context.Context, tool, sub
 	return c.requestApprovalDecisionWithOptions(ctx, tool, subject, args, reason, approvalDecisionOptions{fresh: true})
 }
 
-// requestStrictFreshApprovalDecision requires a new click for this invocation.
-// Unlike other fresh business decisions, it cannot reuse a session grant.
-func (c *Controller) requestStrictFreshApprovalDecision(ctx context.Context, tool, subject string, args json.RawMessage, reason string) (approvalReply, error) {
-	return c.requestApprovalDecisionWithOptions(ctx, tool, subject, args, reason, approvalDecisionOptions{fresh: true, alwaysPrompt: true})
-}
-
 type approvalDecisionOptions struct {
 	// fresh marks a user trust/business decision rather than an ordinary tool
 	// permission. It may reuse an explicit session grant, but YOLO/auto approval
 	// must not answer or drain the prompt.
 	fresh bool
-	// alwaysPrompt prevents even an explicit session grant from satisfying the
-	// decision. Destructive MCP calls use this because every invocation needs a
-	// current human approval.
-	alwaysPrompt bool
 }
 
 func (c *Controller) requestApprovalDecisionWithOptions(ctx context.Context, tool, subject string, args json.RawMessage, reason string, opts approvalDecisionOptions) (approvalReply, error) {
 	// YOLO/full access and the just-approved-plan execution window auto-allow
 	// approval-gated tools without prompting. Plan approval is a user decision,
 	// not a tool permission, so it deliberately stays interactive.
-	if !opts.alwaysPrompt && c.approval.preApprovedForDecision(tool, subject, args, opts.fresh) {
+	if c.approval.preApprovedForDecision(tool, subject, args, opts.fresh) {
 		return approvalReply{allow: true}, nil
 	}
 
@@ -5803,7 +5665,7 @@ func (c *Controller) requestApprovalDecisionWithOptions(ctx context.Context, too
 
 	// Re-check: a session grant may have landed while we queued behind another
 	// prompt for the same subject.
-	if !opts.alwaysPrompt && c.approval.preApprovedForDecision(tool, subject, args, opts.fresh) {
+	if c.approval.preApprovedForDecision(tool, subject, args, opts.fresh) {
 		return approvalReply{allow: true}, nil
 	}
 

@@ -299,7 +299,7 @@ func TestRenderTOMLRoundTrips(t *testing.T) {
 	}
 	orig.Plugins = []PluginEntry{
 		{Name: "example", Command: "reasonix-plugin-example"},
-		{Name: "stripe", Type: "http", URL: "https://mcp.stripe.com", Headers: map[string]string{"Authorization": "Bearer x"}, TrustedReadOnlyTools: []string{"customer_read"}, AutoStart: boolPtr(false), Tier: "background"},
+		{Name: "stripe", Type: "http", URL: "https://mcp.stripe.com", Headers: map[string]string{"Authorization": "Bearer x"}, AutoStart: boolPtr(false), Tier: "background"},
 	}
 	mm, _ := orig.Provider("mimo-pro")
 	mm.BaseURL = "http://localhost:8000/v1"
@@ -518,8 +518,8 @@ func TestRenderTOMLRoundTrips(t *testing.T) {
 	if stripe.Headers["Authorization"] != "Bearer x" {
 		t.Errorf("plugin headers not preserved: %v", stripe.Headers)
 	}
-	if len(stripe.TrustedReadOnlyTools) != 1 || stripe.TrustedReadOnlyTools[0] != "customer_read" {
-		t.Errorf("plugin trusted_read_only_tools not preserved: %+v", stripe.TrustedReadOnlyTools)
+	if strings.Contains(rendered, "trusted_read_only_tools") {
+		t.Errorf("removed plugin reader setting survived render: entry=%+v\n%s", stripe, rendered)
 	}
 	if stripe.AutoStart == nil || *stripe.AutoStart {
 		t.Errorf("auto_start should render and parse as false, got %+v", stripe.AutoStart)
@@ -532,25 +532,14 @@ func TestRenderTOMLRoundTrips(t *testing.T) {
 	}
 }
 
-func TestRenderTOMLDocumentsPlanModeAllowedTools(t *testing.T) {
+func TestRenderTOMLDocumentsPlanModeReadOnlyCommands(t *testing.T) {
 	cfg := Default()
-	cfg.Agent.PlanModeAllowedTools = []string{"custom_reader"}
 	cfg.Agent.PlanModeReadOnlyCommands = []string{"gh issue view"}
 
 	rendered := RenderTOML(cfg)
-	if !strings.Contains(rendered, `plan_mode_allowed_tools = ["custom_reader"]`) {
-		t.Fatalf("rendered config should preserve plan_mode_allowed_tools:\n%s", rendered)
-	}
-	if !strings.Contains(rendered, "legacy MCP read-only aliases") || !strings.Contains(rendered, "does not change Plan availability") {
-		t.Fatalf("rendered config should document legacy plan_mode_allowed_tools semantics:\n%s", rendered)
-	}
-
 	var got Config
 	if _, err := toml.Decode(rendered, &got); err != nil {
 		t.Fatalf("rendered TOML does not parse: %v\n%s", err, rendered)
-	}
-	if !reflect.DeepEqual(got.Agent.PlanModeAllowedTools, cfg.Agent.PlanModeAllowedTools) {
-		t.Fatalf("PlanModeAllowedTools round trip = %v, want %v", got.Agent.PlanModeAllowedTools, cfg.Agent.PlanModeAllowedTools)
 	}
 	if !strings.Contains(rendered, `plan_mode_read_only_commands = ["gh issue view"]`) {
 		t.Fatalf("rendered config should preserve plan_mode_read_only_commands:\n%s", rendered)
@@ -563,28 +552,31 @@ func TestRenderTOMLDocumentsPlanModeAllowedTools(t *testing.T) {
 	}
 }
 
-func TestRenderTOMLPreservesLegacyPluginReadOnlyOverrides(t *testing.T) {
-	cfg := Default()
-	cfg.Plugins = []PluginEntry{{
-		Name:                 "github",
-		Command:              "github-mcp",
-		TrustedReadOnlyTools: []string{"issue_read", "pull_request_read"},
-	}}
+func TestRenderTOMLDropsRetiredMCPPolicyFields(t *testing.T) {
+	var cfg Config
+	if _, err := toml.Decode(`[[plugins]]
+name = "github"
+command = "github-mcp"
+trusted_read_only_tools = ["issue_read", "pull_request_read"]
+default_tools_approval_mode = "writes"
+approvals_reviewer = "auto_review"
 
-	rendered := RenderTOML(cfg)
-	if !strings.Contains(rendered, `trusted_read_only_tools = ["issue_read", "pull_request_read"]`) {
-		t.Fatalf("rendered config should preserve trusted_read_only_tools:\n%s", rendered)
+[plugins.tools.wipe]
+approval_mode = "prompt"
+`, &cfg); err != nil {
+		t.Fatalf("legacy config should still decode: %v", err)
 	}
-	if !strings.Contains(rendered, "explicit Plan/read-only-research declaration for audited raw MCP reader names") {
-		t.Fatalf("rendered config should document the legacy trusted_read_only_tools semantics:\n%s", rendered)
+
+	rendered := RenderTOML(&cfg)
+	for _, retired := range []string{"trusted_read_only_tools", "default_tools_approval_mode", "approvals_reviewer", "\napproval_mode ="} {
+		if strings.Contains(rendered, retired) {
+			t.Fatalf("rendered config retained retired MCP field %q:\n%s", retired, rendered)
+		}
 	}
 
 	var got Config
 	if _, err := toml.Decode(rendered, &got); err != nil {
 		t.Fatalf("rendered TOML does not parse: %v\n%s", err, rendered)
-	}
-	if !reflect.DeepEqual(got.Plugins[0].TrustedReadOnlyTools, cfg.Plugins[0].TrustedReadOnlyTools) {
-		t.Fatalf("TrustedReadOnlyTools round trip = %v, want %v", got.Plugins[0].TrustedReadOnlyTools, cfg.Plugins[0].TrustedReadOnlyTools)
 	}
 }
 
@@ -625,39 +617,6 @@ func TestRenderTOMLPreservesMCPCallTimeouts(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got.Plugins[0].ToolTimeoutSeconds, cfg.Plugins[0].ToolTimeoutSeconds) {
 		t.Fatalf("ToolTimeoutSeconds round trip = %v, want %v", got.Plugins[0].ToolTimeoutSeconds, cfg.Plugins[0].ToolTimeoutSeconds)
-	}
-}
-
-func TestRenderTOMLPreservesMCPApprovalPolicy(t *testing.T) {
-	cfg := Default()
-	cfg.Plugins = []PluginEntry{{
-		Name:                     "admin",
-		Command:                  "admin-mcp",
-		DefaultToolsApprovalMode: "writes",
-		Tools: map[string]MCPToolPolicy{
-			"delete/all": {ApprovalMode: "prompt"},
-			"status":     {ApprovalMode: "approve"},
-		},
-		ApprovalsReviewer: "auto_review",
-	}}
-
-	rendered := RenderTOML(cfg)
-	for _, want := range []string{
-		`default_tools_approval_mode = "writes"`,
-		`tools = { "delete/all" = { approval_mode = "prompt" }, status = { approval_mode = "approve" } }`,
-		`approvals_reviewer = "auto_review"`,
-	} {
-		if !strings.Contains(rendered, want) {
-			t.Fatalf("rendered config missing %q:\n%s", want, rendered)
-		}
-	}
-	var got Config
-	if _, err := toml.Decode(rendered, &got); err != nil {
-		t.Fatalf("rendered TOML does not parse: %v\n%s", err, rendered)
-	}
-	if got.Plugins[0].DefaultToolsApprovalMode != "writes" || got.Plugins[0].ApprovalsReviewer != "auto_review" ||
-		!reflect.DeepEqual(got.Plugins[0].Tools, cfg.Plugins[0].Tools) {
-		t.Fatalf("approval policy round trip = %+v", got.Plugins[0])
 	}
 }
 

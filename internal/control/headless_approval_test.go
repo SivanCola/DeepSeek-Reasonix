@@ -2,7 +2,6 @@ package control
 
 import (
 	"context"
-	"strings"
 	"testing"
 	"time"
 
@@ -94,31 +93,6 @@ func TestApplyHeadlessApprovalModeYoloBypassesAskRule(t *testing.T) {
 	}
 	if len(written) != 1 || written[0] != "a.txt" {
 		t.Fatalf("executed writes = %v, want a.txt (bypass runs even explicit ask rules)", written)
-	}
-}
-
-func TestHeadlessYoloOnlyBypassesAutoMCPPolicy(t *testing.T) {
-	policy := permission.New("ask", nil, []string{"mcp__srv__write"}, nil)
-	yolo := BuildHeadlessApprovalGate(policy, ToolApprovalYolo)
-	allow, _, err := yolo.CheckMCP(context.Background(), "mcp__srv__write", "srv/write", nil, false, false, "auto", "auto_review")
-	if err != nil || !allow {
-		t.Fatalf("YOLO auto MCP result = (%v,%v), want bypass", allow, err)
-	}
-	for _, tc := range []struct {
-		mode        string
-		destructive bool
-	}{
-		{mode: "prompt"},
-	} {
-		allow, reason, err := yolo.CheckMCP(context.Background(), "mcp__srv__write", "srv/write", nil, false, tc.destructive, tc.mode, "auto_review")
-		if err != nil || allow || !strings.Contains(reason, "non-interactive") {
-			t.Fatalf("mode=%s destructive=%v result=(%v,%q,%v), want fail closed", tc.mode, tc.destructive, allow, reason, err)
-		}
-	}
-
-	allow, reason, err := yolo.CheckMCP(context.Background(), "mcp__srv__write", "srv/write", nil, false, true, "approve", "auto_review")
-	if err != nil || !allow || reason != "" {
-		t.Fatalf("approve destructive result=(%v,%q,%v), want allow without reviewer", allow, reason, err)
 	}
 }
 

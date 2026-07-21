@@ -1,12 +1,18 @@
 package cli
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"os"
-	"reasonix/internal/config"
+	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
+
+	"reasonix/internal/config"
+	"reasonix/internal/mcpregistry"
 )
 
 // mcp.go holds the MCP server-management surface shared by the `reasonix mcp`
@@ -148,9 +154,9 @@ func tokenizeArgs(s string) []string {
 	return out
 }
 
-// mcpCommand implements `reasonix mcp <add|remove|list>`. It edits config only
-// (validate → UpsertPlugin/RemovePlugin → Save); the server connects on the next
-// session start. For a live connect inside an open chat, use `/mcp add`.
+// mcpCommand implements persisted server management plus explicit browse/install
+// access to the official MCP Registry. Config edits take effect on the next
+// session start; for a live manual connection inside an open chat, use `/mcp add`.
 func mcpCommand(args []string) int {
 	if len(args) == 0 {
 		mcpUsage()
@@ -167,6 +173,10 @@ func mcpCommand(args []string) int {
 		return mcpRemoveCLI(args[1:])
 	case "import":
 		return mcpImportCLI()
+	case "browse", "search":
+		return mcpBrowseCLI(args[1:])
+	case "install":
+		return mcpInstallCLI(args[1:])
 	case "help", "-h", "--help":
 		mcpUsage()
 		return 0
@@ -175,6 +185,150 @@ func mcpCommand(args []string) int {
 		mcpUsage()
 		return 2
 	}
+}
+
+func defaultMCPRegistryClient() *mcpregistry.Client {
+	cachePath := ""
+	if cacheDir := config.CacheDir(); cacheDir != "" {
+		cachePath = filepath.Join(cacheDir, "mcp-registry-v0.1.json")
+	}
+	return mcpregistry.New(cachePath)
+}
+
+func mcpBrowseCLI(args []string) int {
+	return mcpBrowseWithClient(args, defaultMCPRegistryClient())
+}
+
+func mcpBrowseWithClient(args []string, client *mcpregistry.Client) int {
+	query := ""
+	limit := 20
+	jsonOutput := false
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--json":
+			jsonOutput = true
+		case "--limit":
+			if i+1 >= len(args) {
+				fmt.Fprintln(os.Stderr, "mcp browse: --limit needs a value")
+				return 2
+			}
+			i++
+			value, err := strconv.Atoi(args[i])
+			if err != nil || value <= 0 || value > 100 {
+				fmt.Fprintln(os.Stderr, "mcp browse: --limit must be between 1 and 100")
+				return 2
+			}
+			limit = value
+		default:
+			if strings.HasPrefix(args[i], "-") {
+				fmt.Fprintf(os.Stderr, "mcp browse: unknown flag %q\n", args[i])
+				return 2
+			}
+			if query != "" {
+				fmt.Fprintln(os.Stderr, "mcp browse: provide at most one search query")
+				return 2
+			}
+			query = args[i]
+		}
+	}
+	result, err := client.Search(context.Background(), query, limit)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	if result.Warning != "" {
+		fmt.Fprintf(os.Stderr, "MCP Registry unavailable; showing cached results: %s\n", result.Warning)
+	}
+	if jsonOutput {
+		encoder := json.NewEncoder(os.Stdout)
+		encoder.SetIndent("", "  ")
+		if err := encoder.Encode(result.Entries); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 1
+		}
+		return 0
+	}
+	if len(result.Entries) == 0 {
+		fmt.Println("no MCP Registry servers matched")
+		return 0
+	}
+	for _, entry := range result.Entries {
+		status := entry.Transport
+		if !entry.Installable {
+			status = "manual setup: " + entry.UnavailableReason
+		}
+		title := entry.Title
+		if title == "" {
+			title = entry.Name
+		}
+		fmt.Printf("%s\t%s\t%s\t%s\n", entry.Name, entry.Version, status, title)
+	}
+	return 0
+}
+
+func mcpInstallCLI(args []string) int {
+	return mcpInstallWithClient(args, defaultMCPRegistryClient())
+}
+
+func mcpInstallWithClient(args []string, client *mcpregistry.Client) int {
+	if len(args) == 0 {
+		fmt.Fprintln(os.Stderr, "usage: reasonix mcp install <registry-name> [--as <local-name>]")
+		return 2
+	}
+	registryName := strings.TrimSpace(args[0])
+	if registryName == "" || strings.HasPrefix(registryName, "-") {
+		fmt.Fprintln(os.Stderr, "mcp install: registry server name is required")
+		return 2
+	}
+	localName := ""
+	for i := 1; i < len(args); i++ {
+		switch args[i] {
+		case "--as":
+			if i+1 >= len(args) || strings.TrimSpace(args[i+1]) == "" {
+				fmt.Fprintln(os.Stderr, "mcp install: --as needs a local name")
+				return 2
+			}
+			i++
+			localName = strings.TrimSpace(args[i])
+		default:
+			fmt.Fprintf(os.Stderr, "mcp install: unknown argument %q\n", args[i])
+			return 2
+		}
+	}
+	entry, result, err := client.Resolve(context.Background(), registryName)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	if result.Warning != "" {
+		fmt.Fprintf(os.Stderr, "MCP Registry unavailable; using cached result: %s\n", result.Warning)
+	}
+	pluginEntry, err := entry.PluginEntry(localName)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	cfg, err := config.Load()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	for _, configured := range cfg.Plugins {
+		if configured.Name == pluginEntry.Name {
+			fmt.Fprintf(os.Stderr, "MCP server %q is already configured; choose another name with --as or remove it first\n", pluginEntry.Name)
+			return 1
+		}
+	}
+	if err := cfg.UpsertPlugin(pluginEntry); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	if err := cfg.Save(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	fmt.Printf("installed MCP Registry server %q as %q — loads on the next session\n", entry.Name, pluginEntry.Name)
+	return 0
 }
 
 func mcpImportCLI() int {
@@ -393,6 +547,8 @@ Usage:
   reasonix mcp add <name> <command> [args...]        stdio server
   reasonix mcp add <name> --http <url> [--header K=V] remote (Streamable HTTP)
   reasonix mcp add <name> --sse  <url>               remote (legacy SSE)
+  reasonix mcp browse [query] [--limit N] [--json]   browse the official MCP Registry
+  reasonix mcp install <registry-name> [--as <name>] install a registry server
   reasonix mcp import                                import MCP servers from cc-switch
   reasonix mcp remove <name>
 
@@ -411,5 +567,7 @@ its authorization; there is no separate trust step.
 
 Servers merely discovered in project configuration ask once for confirmation of
 the exact command or endpoint, then reconnect automatically while it is unchanged.
-Explicit tool policies and destructive calls can still require approval.`)
+After authorization, writer or destructive annotations never trigger per-call
+approval. Explicit deny rules still win; Plan Mode and strict read-only subagents
+may filter which tools are available.`)
 }

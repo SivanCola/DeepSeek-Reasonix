@@ -15,8 +15,6 @@ import (
 	"sort"
 	"strings"
 
-	"golang.org/x/mod/semver"
-
 	"reasonix/internal/mcplaunch"
 	"reasonix/internal/secrets"
 )
@@ -34,8 +32,7 @@ var (
 	// fullGitCommit accepts exactly a complete SHA-1 (40 hex) or SHA-256
 	// (64 hex) object name. Intermediate lengths are abbreviations or custom
 	// refs, never a verified commit: they must resolve through git ls-remote.
-	// Official catalog validation and mutable launcher locks share this single
-	// exact-commit predicate.
+	// Mutable launcher locks require a complete immutable commit predicate.
 	fullGitCommit = regexp.MustCompile(`^(?:[0-9a-fA-F]{40}|[0-9a-fA-F]{64})$`)
 	pypiBaseURL   = "https://pypi.org/pypi"
 )
@@ -56,9 +53,6 @@ func effectiveLaunchArgs(spec Spec) []string {
 }
 
 func mutableLauncherLocator(spec Spec) (launcherLocator, bool) {
-	if strings.TrimSpace(spec.OfficialCatalogEntryID) != "" {
-		return launcherLocator{}, false
-	}
 	return launcherLocatorForSpec(spec)
 }
 
@@ -97,41 +91,6 @@ func launcherLocatorForSpec(spec Spec) (launcherLocator, bool) {
 		return launcherLocator{kind: kind, value: arg, arg: i, command: command}, true
 	}
 	return launcherLocator{kind: kind, command: command}, true
-}
-
-func validateOfficialLauncher(spec Spec) error {
-	if strings.TrimSpace(spec.OfficialCatalogEntryID) == "" {
-		return nil
-	}
-	locator, launcher := launcherLocatorForSpec(spec)
-	if !launcher {
-		return nil
-	}
-	if strings.TrimSpace(locator.value) == "" || !immutableLauncherLocator(locator) {
-		return fmt.Errorf("official MCP server %q uses mutable %s package locator %q; catalog packages must pin an exact version or Git commit", spec.Name, locator.kind, locator.value)
-	}
-	return nil
-}
-
-func immutableLauncherLocator(locator launcherLocator) bool {
-	value := strings.TrimSpace(locator.value)
-	if strings.HasPrefix(value, "git+") {
-		at := strings.LastIndex(value, "@")
-		return at > len("git+https://") && fullGitCommit.MatchString(value[at+1:])
-	}
-	switch locator.kind {
-	case "npx", "bunx":
-		name := npmPackageName(value)
-		if name == "" || len(value) <= len(name)+1 || value[len(name)] != '@' {
-			return false
-		}
-		return semver.IsValid("v" + value[len(name)+1:])
-	case "uvx":
-		match := pep508Package.FindStringSubmatch(value)
-		return match != nil && exactPEP440Version(match[3])
-	default:
-		return false
-	}
 }
 
 func safeLauncherFlag(kind, flag string) bool {

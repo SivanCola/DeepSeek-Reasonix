@@ -9,30 +9,46 @@ import (
 	"testing"
 )
 
-func TestIdentityFingerprintIgnoresHostPolicyAndCredentialValues(t *testing.T) {
-	base := Identity{
+func TestProjectLaunchIdentityDigestCanonicalizesStableIdentity(t *testing.T) {
+	base := ProjectLaunchIdentity{
 		Server: "reader", Transport: "stdio", CommandPath: "/bin/tool",
-		CommandSHA256: "abc", Args: []string{"--serve"}, EnvKeys: []string{"TOKEN"},
-		ConfigSource: "project_config", ReadRoots: []string{"/workspace"},
-		IsolationPolicy: "enforced",
+		CommandSHA256: "abc", Args: []string{"--serve"},
+		EnvKeys: []string{"TOKEN", "PATH"}, HeaderKeys: []string{"Authorization", "X-Tenant"},
 	}
-	changedPolicy := base
-	changedPolicy.ReadRoots = []string{"/different"}
-	changedPolicy.IsolationPolicy = "unavailable_unconfined"
-	a, err := IdentityFingerprint(base)
+	reordered := base
+	reordered.EnvKeys = []string{"PATH", "TOKEN"}
+	reordered.HeaderKeys = []string{"X-Tenant", "Authorization"}
+	a, err := ProjectLaunchIdentityDigest(base)
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, err := IdentityFingerprint(changedPolicy)
+	normalized := normalizeIdentity(base, runtime.GOOS == "windows")
+	legacyPayload := struct {
+		Server, Transport, CommandPath, CommandSHA256, Dir, URL string
+		Args, EnvKeys, HeaderKeys                               []string
+		PackageDigest, LauncherDigest                           string
+	}{
+		normalized.Server, normalized.Transport, normalized.CommandPath, normalized.CommandSHA256,
+		normalized.Dir, normalized.URL, normalized.Args, normalized.EnvKeys,
+		normalized.HeaderKeys, "", normalized.LauncherDigest,
+	}
+	body, err := json.Marshal(legacyPayload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := digestBytes(body); a != want {
+		t.Fatalf("project launch identity digest changed: got %q want legacy %q", a, want)
+	}
+	b, err := ProjectLaunchIdentityDigest(reordered)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if a != b {
-		t.Fatal("host policy changed the exact server identity")
+		t.Fatal("equivalent key ordering changed the project launch identity digest")
 	}
 	changedCommand := base
 	changedCommand.Args = []string{"--serve", "--network"}
-	c, err := IdentityFingerprint(changedCommand)
+	c, err := ProjectLaunchIdentityDigest(changedCommand)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -46,6 +62,13 @@ func TestLaunchGrantIsExactDurableAndWorkspaceScoped(t *testing.T) {
 	a := NewManager(path, "/workspace/a")
 	if err := a.Authorize("project", "project_config", "identity-a"); err != nil {
 		t.Fatal(err)
+	}
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), `"identity_fingerprint": "identity-a"`) || strings.Contains(string(body), `"identity_digest"`) {
+		t.Fatalf("launch grant JSON compatibility changed: %s", body)
 	}
 	if authorized, changed, err := a.LaunchAuthorized("project", "project_config", "identity-a"); err != nil || !authorized || changed {
 		t.Fatalf("exact grant = (%v,%v,%v)", authorized, changed, err)
@@ -109,14 +132,13 @@ func TestLauncherLockRoundTrip(t *testing.T) {
 	}
 }
 
-func TestRetiredStateIsPreservedButIgnored(t *testing.T) {
+func TestRetiredToolTrustStateIsDropped(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, StateFilename)
 	workspaceFP := WorkspaceFingerprint("/workspace")
 	body := `{
   "version": 1,
   "receipts": [{"scope":"workspace","workspace_fingerprint":"` + workspaceFP + `","server":"legacy","config_source":"project_config","identity_fingerprint":"other","tools":[{"raw_name":"read","trusted_reader":true,"future":"keep"}]}],
-  "official_denials": [{"server":"official","future":"keep"}],
   "legacy_imports": {"future":"keep"}
 }`
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
@@ -133,9 +155,14 @@ func TestRetiredStateIsPreservedButIgnored(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, marker := range []string{`"tools"`, `"trusted_reader"`, `"future": "keep"`, `"official_denials"`, `"legacy_imports"`} {
+	for _, marker := range []string{`"legacy_imports"`, `"future": "keep"`} {
 		if !strings.Contains(string(written), marker) {
 			t.Fatalf("retired state marker %s was lost:\n%s", marker, written)
+		}
+	}
+	for _, marker := range []string{`"tools"`, `"trusted_reader"`} {
+		if strings.Contains(string(written), marker) {
+			t.Fatalf("retired tool trust marker %s survived:\n%s", marker, written)
 		}
 	}
 	var decoded map[string]json.RawMessage
@@ -144,27 +171,6 @@ func TestRetiredStateIsPreservedButIgnored(t *testing.T) {
 	}
 	if len(decoded["launch_grants"]) == 0 {
 		t.Fatal("new launch grant missing")
-	}
-}
-
-func TestExactLegacyReceiptMigratesOnlyToLaunchGrant(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, StateFilename)
-	workspaceFP := WorkspaceFingerprint("/workspace")
-	body := `{"version":1,"receipts":[{"scope":"workspace","workspace_fingerprint":"` + workspaceFP + `","server":"project","config_source":"workspace_config","identity_fingerprint":"identity","tools":[{"raw_name":"read","trusted_reader":true}]}]}`
-	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	manager := NewManager(path, "/workspace")
-	if authorized, changed, err := manager.LaunchAuthorized("project", "project_config", "identity"); err != nil || !authorized || changed {
-		t.Fatalf("legacy launch migration = (%v,%v,%v)", authorized, changed, err)
-	}
-	state, err := manager.Load()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(state.LaunchGrants) != 1 || len(state.LegacyReceipts) != 1 {
-		t.Fatalf("migration state = %+v", state)
 	}
 }
 

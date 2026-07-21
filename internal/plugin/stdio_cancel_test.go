@@ -8,6 +8,8 @@ import (
 	"io"
 	"testing"
 	"time"
+
+	"reasonix/internal/tool"
 )
 
 type discardWriteCloser struct{}
@@ -106,6 +108,7 @@ func TestStdioCallCancelReturnsContextCanceled(t *testing.T) {
 // before it can finish the handshake; dropping server requests deadlocks both
 // sides even though notifications themselves are harmless.
 func TestStdioInitializeHandlesNotificationsAndServerPing(t *testing.T) {
+	workspaceRoot := t.TempDir()
 	serverReads, clientWrites := io.Pipe()
 	clientReads, serverWrites := io.Pipe()
 	t.Cleanup(func() {
@@ -117,6 +120,7 @@ func TestStdioInitializeHandlesNotificationsAndServerPing(t *testing.T) {
 
 	tr := &stdioTransport{
 		name:    "matlab",
+		roots:   mcpRoots(workspaceRoot),
 		stdin:   clientWrites,
 		stdout:  bufio.NewReader(clientReads),
 		stderr:  &tailBuffer{limit: 1024},
@@ -131,6 +135,9 @@ func TestStdioInitializeHandlesNotificationsAndServerPing(t *testing.T) {
 		var initialize struct {
 			ID     int    `json:"id"`
 			Method string `json:"method"`
+			Params struct {
+				Capabilities map[string]json.RawMessage `json:"capabilities"`
+			} `json:"params"`
 		}
 		if err := dec.Decode(&initialize); err != nil {
 			serverDone <- fmt.Errorf("decode initialize: %w", err)
@@ -140,11 +147,34 @@ func TestStdioInitializeHandlesNotificationsAndServerPing(t *testing.T) {
 			serverDone <- fmt.Errorf("first method = %q, want initialize", initialize.Method)
 			return
 		}
+		if _, ok := initialize.Params.Capabilities["roots"]; !ok {
+			serverDone <- fmt.Errorf("initialize capabilities = %v, want roots", initialize.Params.Capabilities)
+			return
+		}
 		for _, method := range []string{"notifications/tools/list_changed", "notifications/resources/list_changed"} {
 			if err := enc.Encode(map[string]any{"jsonrpc": "2.0", "method": method}); err != nil {
 				serverDone <- fmt.Errorf("encode %s: %w", method, err)
 				return
 			}
+		}
+		if err := enc.Encode(map[string]any{"jsonrpc": "2.0", "id": "server-roots", "method": "roots/list"}); err != nil {
+			serverDone <- fmt.Errorf("encode roots/list: %w", err)
+			return
+		}
+		var rootsResponse struct {
+			ID     string `json:"id"`
+			Result struct {
+				Roots []mcpRoot `json:"roots"`
+			} `json:"result"`
+		}
+		if err := dec.Decode(&rootsResponse); err != nil {
+			serverDone <- fmt.Errorf("decode roots/list response: %w", err)
+			return
+		}
+		wantRoots := mcpRoots(workspaceRoot)
+		if rootsResponse.ID != "server-roots" || len(rootsResponse.Result.Roots) != 1 || rootsResponse.Result.Roots[0] != wantRoots[0] {
+			serverDone <- fmt.Errorf("roots/list response = %+v, want %+v", rootsResponse, wantRoots)
+			return
 		}
 		if err := enc.Encode(map[string]any{"jsonrpc": "2.0", "id": "server-ping", "method": "ping"}); err != nil {
 			serverDone <- fmt.Errorf("encode ping: %w", err)
@@ -190,7 +220,7 @@ func TestStdioInitializeHandlesNotificationsAndServerPing(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	client := &Client{name: "matlab", t: tr}
+	client := &Client{name: "matlab", t: tr, spec: Spec{WorkspaceRoot: workspaceRoot}}
 	if err := client.initialize(ctx); err != nil {
 		t.Fatalf("initialize with server notifications and ping: %v", err)
 	}
@@ -201,6 +231,84 @@ func TestStdioInitializeHandlesNotificationsAndServerPing(t *testing.T) {
 		}
 	case <-ctx.Done():
 		t.Fatal("server did not complete the MCP initialization handshake")
+	}
+}
+
+func TestStdioToolCallRoutesProgressNotification(t *testing.T) {
+	serverReads, clientWrites := io.Pipe()
+	clientReads, serverWrites := io.Pipe()
+	t.Cleanup(func() {
+		_ = clientWrites.Close()
+		_ = serverReads.Close()
+		_ = serverWrites.Close()
+		_ = clientReads.Close()
+	})
+
+	tr := &stdioTransport{
+		name:    "worker",
+		stdin:   clientWrites,
+		stdout:  bufio.NewReader(clientReads),
+		stderr:  &tailBuffer{limit: 1024},
+		pending: map[int]chan rpcResponse{},
+	}
+	go tr.readLoop()
+
+	serverDone := make(chan error, 1)
+	go func() {
+		dec := json.NewDecoder(serverReads)
+		enc := json.NewEncoder(serverWrites)
+		var request struct {
+			ID     int    `json:"id"`
+			Method string `json:"method"`
+			Params struct {
+				Meta map[string]any `json:"_meta"`
+			} `json:"params"`
+		}
+		if err := dec.Decode(&request); err != nil {
+			serverDone <- err
+			return
+		}
+		token, _ := request.Params.Meta["progressToken"].(string)
+		if request.Method != "tools/call" || token == "" {
+			serverDone <- fmt.Errorf("tools/call request = %+v, want progressToken", request)
+			return
+		}
+		if err := enc.Encode(map[string]any{
+			"jsonrpc": "2.0",
+			"method":  "notifications/progress",
+			"params": map[string]any{
+				"progressToken": token,
+				"progress":      2,
+				"total":         5,
+				"message":       "Indexing",
+			},
+		}); err != nil {
+			serverDone <- err
+			return
+		}
+		if err := enc.Encode(map[string]any{"jsonrpc": "2.0", "id": request.ID, "result": map[string]any{"content": []any{}}}); err != nil {
+			serverDone <- err
+			return
+		}
+		serverDone <- nil
+	}()
+
+	progress := make(chan string, 1)
+	ctx := tool.WithProgress(context.Background(), func(chunk string) { progress <- chunk })
+	client := &Client{name: "worker", t: tr}
+	if _, err := client.call(ctx, "tools/call", map[string]any{"name": "index", "arguments": map[string]any{}}); err != nil {
+		t.Fatalf("tools/call: %v", err)
+	}
+	select {
+	case got := <-progress:
+		if got != "Indexing (2/5)\n" {
+			t.Fatalf("progress = %q", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("progress notification was not routed")
+	}
+	if err := <-serverDone; err != nil {
+		t.Fatal(err)
 	}
 }
 

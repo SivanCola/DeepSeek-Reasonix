@@ -2506,7 +2506,7 @@ env = { GO_WANT_HELPER_PROCESS = "1" }
 	}
 }
 
-func TestBuildTokenEconomyPlanModeKeepsLegacyMCPReadOnlyOverride(t *testing.T) {
+func TestBuildTokenEconomyPlanModeUsesInstalledMCPReaderHint(t *testing.T) {
 	isolateConfigHome(t)
 	dir := robustTempDir(t)
 	t.Chdir(dir)
@@ -2537,8 +2537,7 @@ model = "x"
 name = "mockmcp"
 command = %q
 args = ["-test.run=TestHelperProcess", "--"]
-env = { GO_WANT_HELPER_PROCESS = "1" }
-trusted_read_only_tools = ["echo"]
+env = { GO_WANT_HELPER_PROCESS = "1", GO_WANT_HELPER_READ_ONLY = "1" }
 `, os.Args[0]))
 
 	ctrl, err := Build(context.Background(), Options{Sink: event.Discard, TokenMode: TokenModeEconomy})
@@ -2556,11 +2555,11 @@ trusted_read_only_tools = ["echo"]
 		t.Fatalf("requests = %d, want 2", len(reqs))
 	}
 	if !requestHasTool(reqs[1], "mcp__mockmcp__echo") {
-		t.Fatalf("second request should expose MCP source with a legacy read-only override; tools=%v", toolSchemaNames(reqs[1].Tools))
+		t.Fatalf("second request should expose the installed MCP reader; tools=%v", toolSchemaNames(reqs[1].Tools))
 	}
 	for _, msg := range ctrl.History() {
 		if msg.Role == provider.RoleTool && msg.Name == "connect_tool_source" && strings.Contains(msg.Content, "blocked:") {
-			t.Fatalf("connect_tool_source should not block MCP with a legacy override in plan mode, got:\n%s", msg.Content)
+			t.Fatalf("connect_tool_source should not block an installed MCP reader in plan mode, got:\n%s", msg.Content)
 		}
 	}
 }
@@ -2740,47 +2739,6 @@ model = "x"
 	}
 	if !requestHasTool(reqs[3], "todo_write") {
 		t.Fatalf("todo_write should stay enabled after plan mode; tools=%v", toolSchemaNames(reqs[3].Tools))
-	}
-}
-
-func TestBuildLegacyPlanModeAllowedToolsDoesNotEmitGateWarning(t *testing.T) {
-	isolateConfigHome(t)
-	dir := robustTempDir(t)
-	t.Chdir(dir)
-
-	registerBootTokenProfileTestProvider()
-	prov := testutil.NewMock("plan-mode-allowed-tools", testutil.Turn{Text: "done"})
-	setBootTokenProfileTestProvider(t, prov)
-	writeFile(t, dir, "reasonix.toml", `
-default_model = "test-model"
-
-[agent]
-system_prompt = "BASE"
-plan_mode_allowed_tools = ["bash", "custom_reader"]
-
-[[providers]]
-name = "test-model"
-kind = "boot-token-profile-test"
-model = "x"
-`)
-
-	var notices []event.Event
-	sink := event.FuncSink(func(e event.Event) {
-		if e.Kind == event.Notice {
-			notices = append(notices, e)
-		}
-	})
-
-	ctrl, err := Build(context.Background(), Options{Sink: sink})
-	if err != nil {
-		t.Fatalf("Build: %v", err)
-	}
-	defer ctrl.Close()
-
-	for _, notice := range notices {
-		if strings.Contains(notice.Text, "plan-mode tool") || strings.Contains(notice.Detail, "plan_mode_allowed_tools") {
-			t.Fatalf("legacy Plan setting emitted obsolete gate warning: %+v", notice)
-		}
 	}
 }
 
@@ -3824,36 +3782,6 @@ func TestPartitionByTier(t *testing.T) {
 	}
 }
 
-func TestPluginSpecsDeclareKnownCodeGraphReadTools(t *testing.T) {
-	specs := PluginSpecs([]config.PluginEntry{{Name: "codegraph"}})
-	if len(specs) != 1 {
-		t.Fatalf("PluginSpecs returned %d specs, want 1", len(specs))
-	}
-	for _, name := range []string{"codegraph_context", "codegraph_search", "context", "search"} {
-		if !specs[0].ReadOnlyToolNames[name] {
-			t.Fatalf("codegraph spec missing read-only override for %q: %+v", name, specs[0].ReadOnlyToolNames)
-		}
-	}
-}
-
-func TestPluginSpecsDeclareConfiguredReadOnlyTools(t *testing.T) {
-	specs := PluginSpecs([]config.PluginEntry{{
-		Name:                 "github",
-		TrustedReadOnlyTools: []string{"issue_read", " pull_request_read ", ""},
-	}})
-	if len(specs) != 1 {
-		t.Fatalf("PluginSpecs returned %d specs, want 1", len(specs))
-	}
-	for _, name := range []string{"issue_read", "pull_request_read"} {
-		if !specs[0].ReadOnlyToolNames[name] {
-			t.Fatalf("configured trusted read-only tool %q missing: %+v", name, specs[0].ReadOnlyToolNames)
-		}
-	}
-	if specs[0].ReadOnlyToolNames[""] {
-		t.Fatalf("empty trusted read-only tool name should be ignored: %+v", specs[0].ReadOnlyToolNames)
-	}
-}
-
 func TestPluginSpecsMapConfiguredCallTimeouts(t *testing.T) {
 	specs := PluginSpecsForRootWithOptions([]config.PluginEntry{{
 		Name:               "maker",
@@ -3885,34 +3813,41 @@ func TestPluginSpecsMapConfiguredCallTimeouts(t *testing.T) {
 	}
 }
 
-func TestPluginSpecsMapMCPApprovalPolicy(t *testing.T) {
-	specs := PluginSpecs([]config.PluginEntry{{
-		Name:                     "admin",
-		DefaultToolsApprovalMode: "writes",
-		Tools: map[string]config.MCPToolPolicy{
-			"wipe": {ApprovalMode: "prompt"},
-		},
-		ApprovalsReviewer: "auto_review",
-	}})
-	if len(specs) != 1 || specs[0].DefaultToolsApprovalMode != "writes" ||
-		specs[0].ToolApprovalModes["wipe"] != "prompt" || specs[0].ApprovalsReviewer != "auto_review" {
-		t.Fatalf("mapped MCP approval policy = %+v", specs)
-	}
-}
-
 func TestPluginSpecsMapMCPSourceDefaults(t *testing.T) {
-	specs := PluginSpecsForRootWithOptions([]config.PluginEntry{
-		{Name: "user", Source: config.MCPSourceUserConfig},
-		{Name: "project", Source: config.MCPSourceProjectConfig},
-	}, "/workspace", PluginSpecOptions{ConfigSource: "workspace_config"})
-	if len(specs) != 2 {
-		t.Fatalf("spec count = %d", len(specs))
+	tests := []struct {
+		name           string
+		source         config.MCPConfigSource
+		wantAuthorized bool
+		wantApproval   bool
+	}{
+		{name: "user config", source: config.MCPSourceUserConfig, wantAuthorized: true},
+		{name: "legacy user config", source: config.MCPSourceLegacyUser, wantAuthorized: true},
+		{name: "plugin package", source: config.MCPSourcePluginPackage, wantAuthorized: true},
+		{name: "project config", source: config.MCPSourceProjectConfig, wantApproval: true},
+		{name: "project mcp json", source: config.MCPSourceProjectMCPJSON, wantApproval: true},
+		{name: "unknown"},
 	}
-	if !specs[0].ImplicitApproval || specs[0].RequireLaunchApproval || specs[0].ConfigSource != string(config.MCPSourceUserConfig) {
-		t.Fatalf("user source defaults = %+v", specs[0])
-	}
-	if specs[1].ImplicitApproval || !specs[1].RequireLaunchApproval || specs[1].ConfigSource != string(config.MCPSourceProjectConfig) {
-		t.Fatalf("project source defaults = %+v", specs[1])
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			specs := PluginSpecsForRootWithOptions([]config.PluginEntry{{
+				Name:   "server",
+				Source: tc.source,
+			}}, "/workspace", PluginSpecOptions{ConfigSource: "workspace_config"})
+			if len(specs) != 1 {
+				t.Fatalf("spec count = %d", len(specs))
+			}
+			if specs[0].Authorized != tc.wantAuthorized || specs[0].RequireLaunchApproval != tc.wantApproval {
+				t.Fatalf("source defaults = %+v, want authorized=%v approval=%v", specs[0], tc.wantAuthorized, tc.wantApproval)
+			}
+			wantSource := string(tc.source)
+			if wantSource == "" {
+				wantSource = "workspace_config"
+			}
+			if specs[0].ConfigSource != wantSource {
+				t.Fatalf("ConfigSource = %q, want %q", specs[0].ConfigSource, wantSource)
+			}
+		})
 	}
 }
 
@@ -3956,26 +3891,6 @@ func TestSkillMCPBindingsUseOnlyValidOwnedCache(t *testing.T) {
 	}
 }
 
-func TestVerifiedMCPPackageRequiresMatchingTransport(t *testing.T) {
-	entry := config.PluginEntry{Name: "official", Type: "http", URL: "https://example.com/mcp"}
-	official := VerifiedMCPPackage{
-		CatalogEntryID: "official@1", PackageDigest: "digest", Readers: []string{"read"}, Transport: "stdio",
-	}
-	specs := PluginSpecsForRootWithOptions([]config.PluginEntry{entry}, "/workspace", PluginSpecOptions{
-		OfficialServers: map[string]VerifiedMCPPackage{"official": official},
-	})
-	if len(specs) != 1 || specs[0].OfficialCatalogEntryID != "" {
-		t.Fatalf("mismatched transport received official trust: %+v", specs)
-	}
-	official.Transport = "streamable-http"
-	specs = PluginSpecsForRootWithOptions([]config.PluginEntry{entry}, "/workspace", PluginSpecOptions{
-		OfficialServers: map[string]VerifiedMCPPackage{"official": official},
-	})
-	if len(specs) != 1 || specs[0].OfficialCatalogEntryID != "official@1" {
-		t.Fatalf("equivalent HTTP transport did not receive official trust: %+v", specs)
-	}
-}
-
 func TestApplyDefaultMCPCallTimeoutPreservesConfiguredDefault(t *testing.T) {
 	specs := applyDefaultMCPCallTimeout([]plugin.Spec{
 		{Name: "configured", DefaultCallTimeout: 2 * time.Minute},
@@ -3989,32 +3904,6 @@ func TestApplyDefaultMCPCallTimeoutPreservesConfiguredDefault(t *testing.T) {
 	}
 }
 
-func TestPluginSpecsApplyPlanModeAllowedMCPReaders(t *testing.T) {
-	specs := PluginSpecsForRootWithPlanModeAllowedTools(
-		[]config.PluginEntry{{Name: "github"}, {Name: "linear"}},
-		"",
-		[]string{
-			"mcp__github__issue_read",
-			"mcp__linear__issue_read",
-			"mcp__github__",
-			"read_file",
-			"mcp__other__issue_read",
-		},
-	)
-	if len(specs) != 2 {
-		t.Fatalf("PluginSpecsForRootWithPlanModeAllowedTools returned %d specs, want 2", len(specs))
-	}
-	if !specs[0].ReadOnlyModelToolNames["mcp__github__issue_read"] {
-		t.Fatalf("github allowed MCP tool missing from model reader map: %+v", specs[0].ReadOnlyModelToolNames)
-	}
-	if specs[0].ReadOnlyModelToolNames["mcp__github__"] || specs[0].ReadOnlyModelToolNames["mcp__other__issue_read"] {
-		t.Fatalf("github trust map accepted non-concrete or other-server tools: %+v", specs[0].ReadOnlyModelToolNames)
-	}
-	if !specs[1].ReadOnlyModelToolNames["mcp__linear__issue_read"] {
-		t.Fatalf("linear allowed MCP tool missing from model reader map: %+v", specs[1].ReadOnlyModelToolNames)
-	}
-}
-
 func TestPluginSpecsForRootPinsCodeGraphToWorkspace(t *testing.T) {
 	specs := PluginSpecsForRoot([]config.PluginEntry{{Name: "codegraph"}}, "/workspace")
 	if len(specs) != 1 {
@@ -4022,6 +3911,9 @@ func TestPluginSpecsForRootPinsCodeGraphToWorkspace(t *testing.T) {
 	}
 	if specs[0].Dir != "/workspace" {
 		t.Fatalf("codegraph Dir = %q, want workspace root", specs[0].Dir)
+	}
+	if specs[0].WorkspaceRoot != "/workspace" {
+		t.Fatalf("codegraph WorkspaceRoot = %q, want /workspace", specs[0].WorkspaceRoot)
 	}
 }
 
@@ -4033,15 +3925,8 @@ func TestPluginSpecsForRootDoesNotPinHTTPCodeGraph(t *testing.T) {
 	if specs[0].Dir != "" {
 		t.Fatalf("http codegraph Dir = %q, want empty", specs[0].Dir)
 	}
-}
-
-func TestPluginSpecsDoNotTrustCodeGraphToolsForOtherServers(t *testing.T) {
-	specs := PluginSpecs([]config.PluginEntry{{Name: "not-codegraph"}})
-	if len(specs) != 1 {
-		t.Fatalf("PluginSpecs returned %d specs, want 1", len(specs))
-	}
-	if specs[0].ReadOnlyToolNames["codegraph_context"] {
-		t.Fatalf("non-codegraph spec should not receive codegraph read-only overrides: %+v", specs[0].ReadOnlyToolNames)
+	if specs[0].WorkspaceRoot != "/workspace" {
+		t.Fatalf("http codegraph WorkspaceRoot = %q, want /workspace", specs[0].WorkspaceRoot)
 	}
 }
 
@@ -4524,7 +4409,7 @@ func TestHelperProcess(t *testing.T) {
 				"capabilities":    map[string]any{},
 			}
 		case "tools/list":
-			result = map[string]any{"tools": []map[string]any{{
+			echo := map[string]any{
 				"name":        "echo",
 				"description": "Echo back the message.",
 				"inputSchema": map[string]any{
@@ -4532,7 +4417,11 @@ func TestHelperProcess(t *testing.T) {
 					"properties": map[string]any{"msg": map[string]any{"type": "string"}},
 					"required":   []string{"msg"},
 				},
-			}}}
+			}
+			if os.Getenv("GO_WANT_HELPER_READ_ONLY") == "1" {
+				echo["annotations"] = map[string]any{"readOnlyHint": true}
+			}
+			result = map[string]any{"tools": []map[string]any{echo}}
 		}
 
 		resp := map[string]any{"jsonrpc": "2.0", "id": *req.ID, "result": result}

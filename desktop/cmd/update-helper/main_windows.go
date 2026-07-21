@@ -116,7 +116,10 @@ func waitForProcessExit(pid uint32, timeout time.Duration) error {
 
 func runInstaller(installer, installDir string) error {
 	cmd := exec.Command(installer)
-	cmd.SysProcAttr = &syscall.SysProcAttr{CmdLine: installerCommandLine(installer, installDir), HideWindow: true}
+	// Keep the helper itself hidden, but let the NSIS update-progress window be
+	// visible. The dedicated /REASONIXUPDATE mode prevents directory changes and
+	// closes automatically after the update finishes.
+	cmd.SysProcAttr = &syscall.SysProcAttr{CmdLine: installerCommandLine(installer, installDir)}
 	return cmd.Run()
 }
 

@@ -188,20 +188,12 @@ type Gate interface {
 	Check(ctx context.Context, toolName string, args json.RawMessage, readOnly bool) (allow bool, reason string, err error)
 }
 
-// FreshApprovalGate is an optional Gate extension for calls that must be
-// answered by a current human decision even when Auto/YOLO or an allow rule
-// would normally bypass approval. MCP destructiveHint uses it as a conservative
-// fallback when the gate does not implement MCP-local approval policy.
-type FreshApprovalGate interface {
-	CheckFresh(ctx context.Context, toolName, subject string, args json.RawMessage, readOnly bool) (allow bool, reason string, err error)
-}
-
-// MCPApprovalGate applies local per-server/per-tool MCP policy without changing
-// provider-visible tool metadata. Destructive calls are identified separately
-// so the gate can apply the effective approval mode before deciding whether a
-// fresh review is required.
-type MCPApprovalGate interface {
-	CheckMCP(ctx context.Context, toolName, subject string, args json.RawMessage, readOnly, destructive bool, mode, reviewer string) (allow bool, reason string, err error)
+// ExplicitDenyGate exposes the only global permission decision that applies to
+// an already-authorized MCP server. Installing or approving a server is the
+// user's authorization boundary; ordinary ask/fallback posture must not add a
+// second per-call prompt, while explicit deny rules remain authoritative.
+type ExplicitDenyGate interface {
+	ExplicitlyDenies(toolName string, args json.RawMessage) bool
 }
 
 const PlanModeReadOnlyCommandApprovalTool = "plan_mode_read_only_command"
@@ -955,10 +947,6 @@ type Options struct {
 	// user-turn context. Empty/auto keeps the stable same-as-user policy.
 	ResponseLanguage string
 
-	// PlanModeAllowedTools is retained for source compatibility. MCP assembly may
-	// still translate legacy entries into local read-only trust, but it does not
-	// grant or revoke calls in the main Plan workflow.
-	PlanModeAllowedTools []string
 	// PlanModeReadOnlyCommands is retained for old config/controller data. Main
 	// Plan execution classifies bash through Permissions instead.
 	PlanModeReadOnlyCommands []string
@@ -3002,7 +2990,7 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 				safety = planmode.PlanSafetyUnsafe
 			}
 		}
-		if decision := a.planModeDecision(canonicalName, t.ReadOnly(), planModeUntrustedReadOnly(t), safety, json.RawMessage(call.Arguments)); decision.Blocked {
+		if decision := a.planModeDecision(canonicalName, t.ReadOnly(), safety, json.RawMessage(call.Arguments)); decision.Blocked {
 			return toolOutcome{
 				output:  decision.Message,
 				blocked: true,
@@ -3092,7 +3080,7 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 				safety = planmode.PlanSafetyUnsafe
 			}
 		}
-		if decision := a.planModeDecision(permName, resolved.ReadOnly, planModeUntrustedReadOnly(execTool), safety, permArgs); decision.Blocked {
+		if decision := a.planModeDecision(permName, resolved.ReadOnly, safety, permArgs); decision.Blocked {
 			return toolOutcome{
 				output:  decision.Message,
 				blocked: true,
@@ -3100,11 +3088,15 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 			}
 		}
 	}
-	if a.planMode.Load() && isMCPExecutionTarget(execTool, permName) && (!readOnly || planModeUntrustedReadOnly(execTool) || mcpDestructiveHint(execTool)) {
+	if a.planMode.Load() && isMCPExecutionTarget(execTool, permName) && (!readOnly || !mcpServerAuthorized(execTool) || mcpDestructiveHint(execTool)) {
+		reason := "writer/destructive target"
+		if readOnly && !mcpServerAuthorized(execTool) {
+			reason = "reader from an unauthorized server"
+		}
 		return toolOutcome{
-			output:  fmt.Sprintf("blocked: MCP writer/destructive target %q is unavailable during Plan mode; finish or exit Plan mode before requesting this call", permName),
+			output:  fmt.Sprintf("blocked: MCP %s %q is unavailable during Plan mode; finish or exit Plan mode before requesting this call", reason, permName),
 			blocked: true,
-			errMsg:  "blocked: MCP writer is unavailable during planning",
+			errMsg:  "blocked: MCP target is unavailable during planning",
 		}
 	}
 	if a.deliveryProfile && evidenceName == "bash" && evidence.BashToolCallMasksVerificationExit(evidenceArgs) {
@@ -3189,44 +3181,19 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 			}
 		}
 	}
-	destructive := mcpDestructiveHint(execTool)
 	if isInstalledMCPTool(execTool) {
-		mode, reviewer := mcpApprovalPolicy(execTool)
-		var allow bool
-		var reason string
-		var err error
-		if mcpGate, ok := a.gate.(MCPApprovalGate); ok {
-			allow, reason, err = mcpGate.CheckMCP(ctx, permName, mcpApprovalSubject(execTool, permName), permArgs, readOnly, destructive, mode, reviewer)
-		} else if destructive {
-			freshGate, ok := a.gate.(FreshApprovalGate)
-			if !ok {
-				return toolOutcome{
-					output:  "blocked: this destructive MCP tool requires fresh human approval or a configured automatic approval reviewer before execution.",
-					blocked: true,
-					errMsg:  "blocked: destructive MCP approval required",
-				}
-			}
-			allow, reason, err = freshGate.CheckFresh(ctx, permName, mcpApprovalSubject(execTool, permName), permArgs, readOnly)
-		} else if a.gate != nil {
-			allow, reason, err = a.gate.Check(ctx, permName, permArgs, readOnly)
-		} else {
-			allow = true
-		}
-		if err != nil {
+		if !mcpServerAuthorized(execTool) {
 			return toolOutcome{
-				output:  fmt.Sprintf("blocked: %s (%v)", reason, err),
+				output:  "blocked: this project MCP server identity has not been authorized; approve the server from a parent session and retry",
 				blocked: true,
-				errMsg:  fmt.Sprintf("blocked: %v", err),
+				errMsg:  "blocked: MCP server identity is not authorized",
 			}
 		}
-		if !allow {
-			if strings.TrimSpace(reason) == "" {
-				reason = "the MCP tool call was not approved"
-			}
+		if denyGate, ok := a.gate.(ExplicitDenyGate); ok && denyGate.ExplicitlyDenies(permName, permArgs) {
 			return toolOutcome{
-				output:  "blocked: " + reason,
+				output:  "blocked: denied by permission policy — this tool/command is on the deny list. Do not retry it; choose another approach or stop and explain.",
 				blocked: true,
-				errMsg:  "blocked by MCP approval policy",
+				errMsg:  "blocked by permission policy",
 			}
 		}
 	} else if a.gate != nil {
@@ -3356,14 +3323,10 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 	var err error
 	// A call that was authorized under reader classification carries that
 	// basis into dispatch: the MCP execution layer re-verifies it linearizably
-	// against live trust state and refuses to promote it into a writer lane if
-	// a concurrent revocation or reclassification landed after the gate.
-	if readOnly && isInstalledMCPTool(runTool) && !mcpDestructiveHint(runTool) {
-		fingerprint := ""
-		if fp, ok := runTool.(tool.MCPCapabilityFingerprint); ok {
-			fingerprint = fp.MCPCapabilityFingerprint()
-		}
-		cctx = tool.WithReaderExecutionIntent(cctx, fingerprint)
+	// against server authorization and live safety metadata, and refuses to
+	// promote it into a writer lane if reclassification landed after the gate.
+	if readOnly && isInstalledMCPTool(runTool) && mcpServerAuthorized(runTool) && !mcpDestructiveHint(runTool) {
+		cctx = tool.WithReaderExecutionIntent(cctx)
 	}
 	if it, ok := runTool.(tool.ImageTool); ok {
 		result, images, err = it.ExecuteWithImages(cctx, runArgs)
@@ -3459,8 +3422,8 @@ func (a *Agent) readOnlyExecutionBlock(visible tool.Tool, resolved *tool.Resolve
 			}
 			return block("execute a state-changing tool")
 		}
-		if u, ok := visible.(tool.PlanModeUntrustedReadOnly); ok && u.PlanModeUntrustedReadOnly() {
-			return block("trust an externally asserted read-only target")
+		if isInstalledMCPTool(visible) && !mcpServerAuthorized(visible) {
+			return block("execute a reader from an unauthorized MCP server")
 		}
 		if readOnlyExecutionMCPDestructive(visible) {
 			return block("execute a destructive MCP capability")
@@ -3489,8 +3452,8 @@ func (a *Agent) readOnlyExecutionBlock(visible tool.Tool, resolved *tool.Resolve
 			}
 			return block("execute a state-changing dynamic capability")
 		}
-		if u, ok := resolved.Target.(tool.PlanModeUntrustedReadOnly); ok && u.PlanModeUntrustedReadOnly() {
-			return block("trust an externally asserted read-only dynamic capability")
+		if isInstalledMCPTool(resolved.Target) && !mcpServerAuthorized(resolved.Target) {
+			return block("execute a dynamic reader from an unauthorized MCP server")
 		}
 		if readOnlyExecutionMCPDestructive(resolved.Target) {
 			return block("execute a destructive MCP capability")
@@ -3512,21 +3475,14 @@ func readOnlyExecutionAllowsMCPStartup(t tool.Tool) bool {
 	if t == nil || !t.ReadOnly() || readOnlyExecutionMCPDestructive(t) {
 		return false
 	}
-	if untrusted, ok := t.(tool.PlanModeUntrustedReadOnly); ok && untrusted.PlanModeUntrustedReadOnly() {
+	if !mcpServerAuthorized(t) {
 		return false
 	}
 	meta, ok := t.(tool.MCPMetadata)
 	if !ok || strings.TrimSpace(meta.MCPServerName()) == "" || strings.TrimSpace(meta.MCPRawToolName()) == "" {
 		return false
 	}
-	// A reader classification only admits a host start when explicit local or
-	// signed package policy backs it. A server hint alone never satisfies the
-	// strict boundary.
-	if authority, ok := t.(tool.ReadOnlyExecutionAuthority); !ok || !authority.ReadOnlyExecutionAuthority() {
-		return false
-	}
-	_, governed := t.(tool.MCPApprovalPolicy)
-	return governed
+	return true
 }
 
 func isInstalledMCPTool(t tool.Tool) bool {
@@ -3538,9 +3494,9 @@ func isMCPExecutionTarget(t tool.Tool, name string) bool {
 	return isInstalledMCPTool(t) || strings.HasPrefix(strings.TrimSpace(name), "mcp__")
 }
 
-func planModeUntrustedReadOnly(t tool.Tool) bool {
-	untrusted, ok := t.(tool.PlanModeUntrustedReadOnly)
-	return ok && untrusted.PlanModeUntrustedReadOnly()
+func mcpServerAuthorized(t tool.Tool) bool {
+	authority, ok := t.(tool.MCPServerAuthorization)
+	return ok && authority.MCPServerAuthorized()
 }
 
 func mcpDestructiveHint(t tool.Tool) bool {
@@ -3548,32 +3504,12 @@ func mcpDestructiveHint(t tool.Tool) bool {
 	return ok && annotations.MCPDestructiveHint()
 }
 
-func mcpApprovalPolicy(t tool.Tool) (mode, reviewer string) {
-	policy, ok := t.(tool.MCPApprovalPolicy)
-	if !ok {
-		return tool.MCPApprovalAuto, ""
-	}
-	return tool.NormalizeMCPApprovalMode(policy.MCPApprovalMode()), tool.NormalizeMCPApprovalReviewer(policy.MCPApprovalReviewer())
-}
-
-func mcpApprovalSubject(t tool.Tool, fallback string) string {
-	if meta, ok := t.(tool.MCPMetadata); ok {
-		server := strings.TrimSpace(meta.MCPServerName())
-		raw := strings.TrimSpace(meta.MCPRawToolName())
-		if server != "" && raw != "" {
-			return server + "/" + raw
-		}
-	}
-	return strings.TrimSpace(fallback)
-}
-
-func (a *Agent) planModeDecision(toolName string, readOnly, untrustedReadOnly bool, safety planmode.PlanSafety, args json.RawMessage) planmode.Decision {
+func (a *Agent) planModeDecision(toolName string, readOnly bool, safety planmode.PlanSafety, args json.RawMessage) planmode.Decision {
 	return (planmode.Policy{}).Decide(planmode.Call{
-		Name:              toolName,
-		ReadOnly:          readOnly,
-		UntrustedReadOnly: untrustedReadOnly,
-		Safety:            safety,
-		Args:              args,
+		Name:     toolName,
+		ReadOnly: readOnly,
+		Safety:   safety,
+		Args:     args,
 	})
 }
 

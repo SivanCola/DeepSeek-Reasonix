@@ -143,22 +143,28 @@ interface (`call` / `notify` / `close`) abstracts that, so the MCP-level logic
     any server notifications). The `Mcp-Session-Id` response header, once seen,
     is echoed on subsequent requests. Static `headers` (e.g. a bearer token) are
     sent on every request. OAuth is out of scope for now (see §9).
-  - `sse` — the legacy 2024-11-05 HTTP+SSE transport; recognised but deferred
-    (deprecated upstream — use `http`). Configuring it returns a clear error.
+  - `sse` — the legacy 2024-11-05 HTTP+SSE transport. A persistent GET stream
+    receives an announced relative POST endpoint, JSON-RPC responses, and server
+    messages. Cross-origin announced endpoints are rejected so static headers
+    cannot leak.
 - `${VAR}` / `${VAR:-default}` are expanded in `command`, `args`, `env`, `url`,
   and `headers` so secrets come from the environment, not the config file.
 - Lifecycle: `initialize` → `notifications/initialized` → `tools/list`;
   invocation via `tools/call {name, arguments}`.
+- When a workspace root exists, initialize advertises `roots` and transports
+  answer `roots/list` with its file URI. `tools/call` includes a per-call
+  `_meta.progressToken`; matching `notifications/progress` messages stream into
+  the existing tool-progress event path.
 - A stdio server uses one persistent transport for initialize, reads, and
   writes, preserving state such as browser sessions across tool calls. The
-  process uses the server's writer sandbox because process confinement cannot
-  change per RPC; read-only eligibility and destructive approval remain local
-  dispatch gates rather than separate process sandboxes.
+  process uses the server's process sandbox because process confinement cannot
+  change per RPC; read-only eligibility and destructive filtering remain local
+  workflow gates rather than separate process sandboxes.
 - Configuration provenance is runtime metadata. Explicit installation from the
   user config, Desktop, `/mcp add`, or `install_source` is authorization: the
   host connects the server immediately when installation happens in a live
   session, records a durable exact command/endpoint launch grant for
-  project-scoped installs, and calls default to direct approval.
+  project-scoped installs, and runs authorized calls directly.
   Project `reasonix.toml` and `.mcp.json` servers that are only
   discovered from the repository require one durable launch confirmation before
   any process or network transport is created. Confirmation records the exact
@@ -174,6 +180,11 @@ interface (`call` / `notify` / `close`) abstracts that, so the MCP-level logic
   to false (a remote tool is opaque — we can't see its side effects), so a
   plugin opts a tool into parallel-batch dispatch and the permission layer's
   reader-default by declaring `readOnlyHint: true` in `tools/list`.
+- Installation is the trust decision for tool metadata. Reasonix assumes an
+  installed server reports `readOnlyHint` and `destructiveHint` honestly;
+  planner/read-only filtering is a workflow boundary for trusted servers, not
+  containment against a malicious MCP server. Explicit deny rules and the
+  process sandbox remain host-controlled boundaries.
 - `prompts/list` + `prompts/get` surface as `/mcp__<server>__<prompt>` slash
   commands; `resources/list` + `resources/read` are referenced as
   `@<server>:<uri>` in chat. `/mcp` shows connected servers and their counts.
@@ -331,45 +342,31 @@ func (p Policy) Decide(toolName string, readOnly bool, args json.RawMessage) Dec
   it resolves `Ask` to **allow** — preserving autonomous behaviour. A `Deny` is a
   hard block in *every* mode: the tool never executes and the model receives a
   "blocked" result it can adapt to (the same shape as a plan-mode refusal).
-- **MCP approval policy.** Installed MCP tools may set a server default and raw
-  tool overrides using `auto|prompt|writes|approve`. A raw-tool mode overrides
-  the server or source-aware default; explicit deny still wins, `approve`
-  permits the call directly, and `destructiveHint` requires a fresh review for
-  every remaining mode before global Ask/Auto/YOLO is considered.
-  A user-authorized server with no explicit MCP approval fields defaults to
-  `approve`; repository-provided servers retain `auto` until their exact launch
-  is authorized, then the same source-aware default applies. `auto` delegates
-  to the ordinary permission decision; `prompt` reviews every call; `writes`
-  reviews writers only; and `approve` allows all calls directly.
-  `approvals_reviewer = "user"` uses the interactive user, while `auto_review`
-  sends the calls that need review (`prompt`, writer hits under `writes`, and
-  `auto` calls the global posture would Ask about) to the session Guardian; a
-  successful allow/deny verdict is final. A missing, timed-out, failed, or
-  indeterminate reviewer degrades to fresh human approval — a prompt that
-  Auto/YOLO, the approved-plan window, and session grants cannot answer — and
-  non-interactive sessions fail closed. For `auto`, `prompt`, and `writes`, a
-  destructive call requires fresh human approval on every invocation: no
-  reviewer, session grant, or Auto/YOLO posture can authorize it. An effective
-  `approve` mode represents the user's install/authorization decision and
-  permits destructive calls directly. All of this is local metadata and is
-  absent from provider-visible tool schemas.
+- **MCP authorization.** Installing an MCP server authorizes all of its tools;
+  there is no second server, raw-tool, writer, or destructive approval policy.
+  Explicit global deny rules still win. Repository-declared servers require one
+  exact identity confirmation before startup and require confirmation again only
+  if that identity changes. `readOnlyHint` and `destructiveHint` remain internal
+  facts for scheduling, Plan/read-only restrictions, and cached-to-live safety
+  reclassification. Planner and strict read-only registries expose only
+  authorized tools with `readOnlyHint: true` and no `destructiveHint`.
+  Schema-only changes refresh the next-session cache without adding an execution
+  approval or retry.
 - **Relationship to plan mode.** Plan mode (§3.4) is a plan-first collaboration
   workflow, not an all-tools read-only mode. Before Permissions/Sandbox, the
   host enforces explicit phase opt-outs (`complete_step` is read-only but
   belongs to the post-approval execution phase, so it self-reports plan-unsafe
   and is refused) and hard-blocks installed MCP and proxy-resolved MCP
-  writer/destructive targets plus untrusted readers for the entire planning
+  writer/destructive targets plus readers from unauthorized servers for the entire planning
   phase — no approval releases them while Plan is active.
   Ordinary built-in and Bash calls then use the same Ask/Auto/YOLO, explicit
   `ask`/`deny`, and Sandbox path as Standard mode; blocked MCP writers regain
-  their normal approval flow after Plan exits. A third-party MCP `readOnlyHint` affects ordinary permission and dispatch
-  classification, but it does not grant access to the dedicated planner or
-  read-only sub-agent registries; use a locally audited
-  `trusted_read_only_tools` entry for those. The legacy
-  `[agent].plan_mode_allowed_tools` field is still decoded and can act as a
-  concrete MCP read-only compatibility alias, while `plan_mode_read_only_commands` is
-  retained for config/session round trips. Neither field grants or revokes calls
-  in the main Plan workflow. `read_only_task` and `read_only_skill` remain strict
+  direct execution after Plan exits. A third-party MCP `readOnlyHint` affects dispatch
+  classification. Once the server is installed or its exact project identity is
+  confirmed, non-destructive readers also enter the dedicated planner and
+  read-only sub-agent registries automatically. `plan_mode_read_only_commands` is
+  retained for config/session round trips and does not grant or revoke calls in
+  the main Plan workflow. `read_only_task` and `read_only_skill` remain strict
   read-only capabilities with their own tool registry and safe foreground Bash;
   writer-capable `task` and skill execution remain permission-gated instead of
   Plan-blocked, and their child turns inherit the Plan workflow marker and
@@ -427,7 +424,7 @@ func (p Policy) Decide(toolName string, readOnly bool, args json.RawMessage) Dec
 | Need approval / `ask` | Follow permission policy (`Ask` prompts interactively) | Waits for user | Waits for user |
 | Auto approve / `auto` | Writer fallback auto-allowed; explicit ask/deny rules still apply | Waits for user | Waits for user |
 | YOLO approval / `yolo` | Ordinary prompts auto-allowed; deny rules and fresh reviews remain | Waits for user | Waits for user |
-| Approved-plan execution window | Approved plan's writer fallback is auto-allowed; explicit `ask` / `deny`, MCP `prompt` / `writes`, and fresh reviews remain | Future plans still wait | Waits for user |
+| Approved-plan execution window | Approved plan's writer fallback is auto-allowed; explicit `ask` / `deny` rules remain | Future plans still wait | Waits for user |
 
 Out of the box (`mode = "ask"`, no rules) `reasonix run` behaves exactly as before
 (writers resolve `Ask`→allow with no TTY), while `reasonix` now prompts before
@@ -605,7 +602,6 @@ default_model = "deepseek"   # provider name (→ its default model) or "provide
 system_prompt = "You are Reasonix, a coding agent..."  # or system_prompt_file = "..."
 temperature       = 0.0
 reasoning_language = "auto"       # visible reasoning text: auto|zh|en
-# plan_mode_allowed_tools = ["mcp__legacy__reader"]   # legacy MCP read-only alias; does not change Plan availability
 # plan_mode_read_only_commands = ["gh issue view"]   # legacy compatibility only; Plan bash uses Permissions
 # planner_model = "deepseek-pro"   # optional: two-model collaboration (low-frequency planner)
 # subagent_model = "deepseek-pro"   # optional default for runAs=subagent skills
@@ -674,10 +670,6 @@ args    = []
 # env   = { FOO = "bar" }
 # call_timeout_seconds = 600            # per-server MCP call timeout; 0 = global/default cap
 # tool_timeout_seconds = { "generate_video" = 1800 }   # raw MCP tool names
-# trusted_read_only_tools = ["search"]   # locally audited Plan/read-only-research readers
-# default_tools_approval_mode = "auto"   # auto|prompt|writes|approve
-# tools = { "delete_all" = { approval_mode = "prompt" } }
-# approvals_reviewer = "user"            # user|auto_review
 # [[plugins]]                   # a remote MCP server over Streamable HTTP
 # name    = "stripe"
 # type    = "http"             # "stdio" (default) | "http" | "sse"

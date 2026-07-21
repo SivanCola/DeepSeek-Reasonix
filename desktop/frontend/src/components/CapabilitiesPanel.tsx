@@ -4,7 +4,7 @@ import { asArray } from "../lib/array";
 import { app, openExternal } from "../lib/bridge";
 import { useT } from "../lib/i18n";
 import { mcpServerLifecycleActions, mcpServerRetryableFromAvailableList } from "../lib/mcpServerLifecycle";
-import type { CapabilitiesView, MCPApprovalMode, MCPApprovalsReviewer, MCPServerInput, MCPToolPolicy, PluginAgentView, PluginCommandView, PluginCompatibilityIssue, PluginHookView, PluginInstallOptions, PluginMCPServerView, PluginSkillView, PluginView, ServerView, SkillRootSkillView, SkillRootView, SkillsSettingsView, SkillView, TabMeta } from "../lib/types";
+import type { CapabilitiesView, MCPMarketplaceEntry, MCPMarketplaceView, MCPServerInput, PluginAgentView, PluginCommandView, PluginCompatibilityIssue, PluginHookView, PluginInstallOptions, PluginMCPServerView, PluginSkillView, PluginView, ServerView, SkillRootSkillView, SkillRootView, SkillsSettingsView, SkillView, TabMeta } from "../lib/types";
 import { InlineConfirmButton } from "./InlineConfirmButton";
 import { ResizableDrawer } from "./ResizableDrawer";
 import { Tooltip } from "./Tooltip";
@@ -325,7 +325,6 @@ function normalizeServerViews(servers: ServerView[] | null | undefined): ServerV
       envKeys: asArray(server.envKeys),
       headerKeys: asArray(server.headerKeys),
       toolList: asArray(server.toolList),
-      trustedReadOnlyTools: asArray(server.trustedReadOnlyTools),
     })),
   );
 }
@@ -1159,9 +1158,6 @@ function EditServerForm({
       url: isStdio ? "" : url.trim(),
       env: envText === "" ? null : parseKeyValueText(envText),
       headers: isStdio || headerText === "" ? null : parseKeyValueText(headerText),
-      // Preserve an existing local reader declaration in the backend. The
-      // basic settings form does not expose this advanced compatibility field.
-      trustedReadOnlyTools: undefined,
     });
   };
 
@@ -2271,6 +2267,7 @@ function pluginPlanNotice(plan: PluginInstallPlanView, t: ReturnType<typeof useT
 type MCPSettingsScreen =
 	| { kind: "list" }
 	| { kind: "add" }
+	| { kind: "marketplace" }
 	| { kind: "detail"; name: string }
 	| { kind: "edit"; name: string };
 
@@ -2289,10 +2286,6 @@ type MCPServerEditorDraft = {
 	autoStart?: boolean;
 	callTimeoutSeconds?: number;
 	toolTimeoutSeconds?: Record<string, number>;
-	trustedReadOnlyTools?: string[];
-	defaultToolsApprovalMode?: MCPApprovalMode | "";
-	tools?: Record<string, MCPToolPolicy>;
-	approvalsReviewer?: MCPApprovalsReviewer | "";
 };
 
 type MCPServerJSONError = "invalid" | "single" | "name" | "required" | "unsupported";
@@ -2495,10 +2488,6 @@ function mcpServerEditorDraft(server?: ServerView): MCPServerEditorDraft {
 		autoStart: server?.autoStart,
 		callTimeoutSeconds: server?.callTimeoutSeconds,
 		toolTimeoutSeconds: server?.toolTimeoutSeconds ? { ...server.toolTimeoutSeconds } : undefined,
-		trustedReadOnlyTools: server?.trustedReadOnlyTools ? [...server.trustedReadOnlyTools] : undefined,
-		defaultToolsApprovalMode: server?.defaultToolsApprovalMode,
-		tools: server?.toolPolicies ? { ...server.toolPolicies } : undefined,
-		approvalsReviewer: server?.approvalsReviewer,
 	};
 }
 
@@ -2518,12 +2507,26 @@ function mcpServerDraftInput(draft: MCPServerEditorDraft): MCPServerInput {
 		autoStart: draft.autoStart ?? null,
 		callTimeoutSeconds: draft.callTimeoutSeconds ?? null,
 		toolTimeoutSeconds: draft.toolTimeoutSeconds ?? null,
-		// Keep parsing the legacy field for the two-release migration window,
-		// but never generate it in a new or edited server configuration.
-		trustedReadOnlyTools: undefined,
-		defaultToolsApprovalMode: draft.defaultToolsApprovalMode ?? null,
-		tools: draft.tools ?? null,
-		approvalsReviewer: draft.approvalsReviewer ?? null,
+	};
+}
+
+function mcpMarketplaceServerInput(entry: MCPMarketplaceEntry, servers: ServerView[]): MCPServerInput {
+	const used = new Set(servers.map((server) => server.name));
+	const base = entry.suggestedName || entry.name.split("/").filter(Boolean).pop() || "mcp-server";
+	let name = base;
+	for (let suffix = 2; used.has(name); suffix += 1) name = `${base}-${suffix}`;
+	const transport = entry.transport || "stdio";
+	return {
+		name,
+		transport,
+		command: transport === "stdio" ? entry.command || "" : "",
+		args: transport === "stdio" ? [...(entry.args ?? [])] : [],
+		url: transport === "stdio" ? "" : entry.url || "",
+		env: null,
+		headers: null,
+		autoStart: null,
+		callTimeoutSeconds: null,
+		toolTimeoutSeconds: null,
 	};
 }
 
@@ -2540,9 +2543,6 @@ export function mcpServerDraftJSON(draft: MCPServerEditorDraft): string {
 	if (input.autoStart != null) entry.auto_start = input.autoStart;
 	if (input.callTimeoutSeconds != null) entry.call_timeout_seconds = input.callTimeoutSeconds;
 	if (input.toolTimeoutSeconds && Object.keys(input.toolTimeoutSeconds).length > 0) entry.tool_timeout_seconds = input.toolTimeoutSeconds;
-	if (input.defaultToolsApprovalMode != null) entry.default_tools_approval_mode = input.defaultToolsApprovalMode;
-	if (input.tools && Object.keys(input.tools).length > 0) entry.tools = input.tools;
-	if (input.approvalsReviewer != null) entry.approvals_reviewer = input.approvalsReviewer;
 	return JSON.stringify({ [input.name || "server-name"]: entry }, null, 2);
 }
 
@@ -2588,40 +2588,10 @@ function nonNegativeIntegerRecord(value: unknown): Record<string, number> | unde
 export function withExplicitMCPClears(input: MCPServerInput): MCPServerInput {
 	return {
 		...input,
-		trustedReadOnlyTools: undefined,
 		autoStart: input.autoStart ?? true,
 		callTimeoutSeconds: input.callTimeoutSeconds ?? 0,
 		toolTimeoutSeconds: input.toolTimeoutSeconds ?? {},
-		defaultToolsApprovalMode: input.defaultToolsApprovalMode ?? "",
-		tools: input.tools ?? {},
-		approvalsReviewer: input.approvalsReviewer ?? "",
 	};
-}
-
-function approvalMode(value: unknown): MCPApprovalMode | undefined {
-	if (value == null || value === "") return undefined;
-	if (value === "auto" || value === "prompt" || value === "writes" || value === "approve") return value;
-	throw new Error("invalid" satisfies MCPServerJSONError);
-}
-
-function approvalsReviewer(value: unknown): MCPApprovalsReviewer | undefined {
-	if (value == null || value === "") return undefined;
-	if (value === "user" || value === "auto_review") return value;
-	throw new Error("invalid" satisfies MCPServerJSONError);
-}
-
-function mcpToolPolicies(value: unknown): Record<string, MCPToolPolicy> | undefined {
-	if (value == null) return undefined;
-	if (!isRecord(value)) throw new Error("invalid" satisfies MCPServerJSONError);
-	const out: Record<string, MCPToolPolicy> = {};
-	for (const [name, item] of Object.entries(value)) {
-		if (!name.trim() || !isRecord(item)) throw new Error("invalid" satisfies MCPServerJSONError);
-		assertSupportedKeys(item, ["approval_mode"]);
-		const mode = approvalMode(item.approval_mode);
-		if (!mode) throw new Error("invalid" satisfies MCPServerJSONError);
-		out[name] = { approval_mode: mode };
-	}
-	return out;
 }
 
 export function parseMCPServerJSON(raw: string, fixedName?: string, options?: { allowIncomplete?: boolean }): { input: MCPServerInput; draft: MCPServerEditorDraft } {
@@ -2668,16 +2638,9 @@ export function parseMCPServerJSON(raw: string, fixedName?: string, options?: { 
 		throw new Error("invalid" satisfies MCPServerJSONError);
 	}
 	if (value.auto_start != null && typeof value.auto_start !== "boolean") throw new Error("invalid" satisfies MCPServerJSONError);
-	if (value.trusted_read_only_tools != null && (!Array.isArray(value.trusted_read_only_tools) || !value.trusted_read_only_tools.every((item) => typeof item === "string"))) {
-		throw new Error("invalid" satisfies MCPServerJSONError);
-	}
 	const autoStart = value.auto_start as boolean | undefined;
 	const callTimeoutSeconds = nonNegativeInteger(value.call_timeout_seconds);
 	const toolTimeoutSeconds = nonNegativeIntegerRecord(value.tool_timeout_seconds);
-	const trustedReadOnlyTools = value.trusted_read_only_tools ? [...value.trusted_read_only_tools as string[]] : undefined;
-	const defaultToolsApprovalMode = value.default_tools_approval_mode === "" ? "" : approvalMode(value.default_tools_approval_mode);
-	const tools = mcpToolPolicies(value.tools);
-	const reviewer = value.approvals_reviewer === "" ? "" : approvalsReviewer(value.approvals_reviewer);
 	const input: MCPServerInput = {
 		name: fixedName || name,
 		transport,
@@ -2689,10 +2652,6 @@ export function parseMCPServerJSON(raw: string, fixedName?: string, options?: { 
 		autoStart: autoStart ?? null,
 		callTimeoutSeconds: callTimeoutSeconds ?? null,
 		toolTimeoutSeconds: toolTimeoutSeconds ?? null,
-		trustedReadOnlyTools,
-		defaultToolsApprovalMode: defaultToolsApprovalMode ?? null,
-		tools: tools ?? null,
-		approvalsReviewer: reviewer ?? null,
 	};
 	return {
 		input,
@@ -2711,10 +2670,6 @@ export function parseMCPServerJSON(raw: string, fixedName?: string, options?: { 
 			autoStart,
 			callTimeoutSeconds,
 			toolTimeoutSeconds,
-			trustedReadOnlyTools,
-			defaultToolsApprovalMode,
-			tools,
-			approvalsReviewer: reviewer,
 		},
 	};
 }
@@ -2874,6 +2829,8 @@ export function MCPServersSettingsPage() {
 	const [err, setErr] = useState<string | null>(null);
 	const [query, setQuery] = useState("");
 	const [screen, setScreen] = useState<MCPSettingsScreen>({ kind: "list" });
+	const [marketplace, setMarketplace] = useState<MCPMarketplaceView | null>(null);
+	const [marketplaceQuery, setMarketplaceQuery] = useState("");
 
 	const reload = useCallback(async () => {
 		const [meta, tabs] = await Promise.all([
@@ -2916,6 +2873,28 @@ export function MCPServersSettingsPage() {
 	};
 	const authorizeProjectAndConnect = async (name: string) =>
 		mutate(() => app.AuthorizeAndConnectMCPServer(name));
+	const browseMarketplace = async (search = marketplaceQuery) => {
+		setBusy(true);
+		setErr(null);
+		try {
+			const result = await app.MCPMarketplace(search);
+			setMarketplace({ ...result, servers: asArray(result.servers) });
+			return true;
+		} catch (error) {
+			setErr(String((error as Error)?.message ?? error));
+			return false;
+		} finally {
+			setBusy(false);
+		}
+	};
+	const openMarketplace = () => {
+		setScreen({ kind: "marketplace" });
+		if (marketplace === null) void browseMarketplace("");
+	};
+	const installMarketplaceEntry = async (entry: MCPMarketplaceEntry) => {
+		const current = await app.MCPMarketplaceResolve(entry.name);
+		return app.AddMCPServer(mcpMarketplaceServerInput(current, servers ?? []));
+	};
 	const filteredServers = useMemo(() => {
 		const sorted = sortServersForDisplay(servers ?? []);
 		const normalizedQuery = query.trim().toLowerCase();
@@ -2953,6 +2932,10 @@ export function MCPServersSettingsPage() {
 									<RefreshCw aria-hidden size={15} />
 								</button>
 							</Tooltip>
+							<button className="btn btn--small" disabled={actionBusy} type="button" onClick={openMarketplace}>
+								<Search aria-hidden size={14} />
+								{t("caps.browseRegistry")}
+							</button>
 							<button className="btn btn--primary btn--small cap-mcp-add-btn" disabled={actionBusy} type="button" onClick={() => setScreen({ kind: "add" })}>
 								<Plus aria-hidden size={14} />
 								{t("caps.addServer")}
@@ -2986,6 +2969,47 @@ export function MCPServersSettingsPage() {
 						onToggle={(name, enabled) => void mutate(() => app.SetMCPServerEnabled(name, enabled))}
 					/>
 				</>
+			)}
+			{screen.kind === "marketplace" && (
+				<div className="cap-mcp-subpage">
+					<MCPSettingsSubpageHeader title={t("caps.registryTitle")} description={t("caps.registryHint")} onBack={() => setScreen({ kind: "list" })} />
+					<form className="cap-mcp-search cap-mcp-search--action" onSubmit={(event) => { event.preventDefault(); void browseMarketplace(); }}>
+						<Search aria-hidden size={15} />
+						<input type="search" value={marketplaceQuery} onInput={(event) => setMarketplaceQuery(event.currentTarget.value)} placeholder={t("caps.searchRegistry")} />
+						<button className="btn btn--small" disabled={busy} type="submit">{t("caps.search")}</button>
+					</form>
+					{marketplace?.warning && <div className="banner" role="status">{t("caps.registryCached")} {marketplace.warning}</div>}
+					{busy && marketplace === null && <div className="mem-empty">{t("caps.loading")}</div>}
+					{!busy && marketplace && marketplace.servers.length === 0 && <div className="mem-empty">{t("caps.noRegistryMatches")}</div>}
+					{marketplace && marketplace.servers.length > 0 && (
+						<div className="cap-mcp-list">
+							{marketplace.servers.map((entry) => (
+								<div className="cap-mcp-list-row" key={entry.name}>
+									<div className="cap-mcp-list-row__main">
+										<span className="cap-mcp-list-row__icon" aria-hidden><ServerIcon size={16} strokeWidth={1.8} /></span>
+										<span className="cap-mcp-list-row__copy">
+											<span className="cap-mcp-list-row__head">
+												<span className="cap-mcp-list-row__name">{entry.title || entry.name}</span>
+												{entry.version && <span className="cap-mcp-list-row__transport">{entry.version}</span>}
+												{entry.transport && <span className="cap-mcp-list-row__transport">{entry.transport}</span>}
+											</span>
+											<span className="cap-mcp-list-row__target">{entry.name}</span>
+											<span className="cap-mcp-list-row__summary">{entry.description || entry.unavailableReason}</span>
+											{!entry.installable && entry.unavailableReason && <span className="cap-mcp-list-row__owner">{entry.unavailableReason}</span>}
+										</span>
+									</div>
+									<div className="cap-mcp-list-row__actions">
+										{entry.installable ? (
+											<button className="btn btn--primary btn--small" disabled={actionBusy || marketplace.cached} type="button" onClick={() => void mutate(() => installMarketplaceEntry(entry)).then((ok) => { if (ok) setScreen({ kind: "list" }); })}>
+												{t("caps.install")}
+											</button>
+										) : <span className="cap-mcp-list-row__owner">{t("caps.manualSetup")}</span>}
+									</div>
+								</div>
+							))}
+						</div>
+					)}
+				</div>
 			)}
 			{screen.kind === "add" && (
 				<div className="cap-mcp-subpage">

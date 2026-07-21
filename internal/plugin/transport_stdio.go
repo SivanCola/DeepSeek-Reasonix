@@ -18,6 +18,7 @@ import (
 	"reasonix/internal/proc"
 	"reasonix/internal/sandbox"
 	"reasonix/internal/secrets"
+	"reasonix/internal/tool"
 )
 
 const closeWaitBudget = 5 * time.Second
@@ -31,6 +32,7 @@ const closeWaitBudget = 5 * time.Second
 // callMu serialises a request/response round-trip over the shared pipe.
 type stdioTransport struct {
 	name   string
+	roots  []mcpRoot
 	cmd    *exec.Cmd
 	job    uintptr // Windows Job Object handle (0 elsewhere); reaps detached grandchildren on close
 	stdin  io.WriteCloser
@@ -47,6 +49,7 @@ type stdioTransport struct {
 
 	waitOnce    sync.Once
 	releaseSlot func() // returns a bounded instance slot (e.g. CodeGraph) on close; nil when unbounded
+	progress    progressRouter
 }
 
 func newStdioTransport(ctx context.Context, s Spec) (*stdioTransport, error) {
@@ -74,10 +77,9 @@ func newStdioTransport(ctx context.Context, s Spec) (*stdioTransport, error) {
 		return nil, err
 	}
 	// A stateful stdio process cannot switch its OS sandbox after launch. Keep
-	// one process in the server's normal writer sandbox; local permission, Plan,
-	// read-only-child, and destructive-call gates still decide which tools may
-	// be dispatched over the shared transport.
-	processSandbox := s.WriterSandbox
+	// one process in the server's process sandbox; Plan and strict read-only
+	// checks still decide which tools may be dispatched over the shared transport.
+	processSandbox := s.Sandbox
 	processSandbox.MinimalWrites = true
 	processSandbox, env, err = prepareMCPPrivateState(s, processSandbox, env)
 	if err != nil {
@@ -116,6 +118,7 @@ func newStdioTransport(ctx context.Context, s Spec) (*stdioTransport, error) {
 	}
 	t := &stdioTransport{
 		name:        s.Name,
+		roots:       mcpRoots(s.WorkspaceRoot),
 		cmd:         cmd,
 		job:         job,
 		stdin:       stdin,
@@ -130,6 +133,10 @@ func newStdioTransport(ctx context.Context, s Spec) (*stdioTransport, error) {
 }
 
 func prepareMCPPrivateState(s Spec, processSandbox sandbox.Spec, env []string) (sandbox.Spec, []string, error) {
+	return prepareMCPPrivateStateForOS(s, processSandbox, env, runtime.GOOS)
+}
+
+func prepareMCPPrivateStateForOS(s Spec, processSandbox sandbox.Spec, env []string, goos string) (sandbox.Spec, []string, error) {
 	root := strings.TrimSpace(s.StateDir)
 	if root == "" {
 		return processSandbox, env, nil
@@ -138,21 +145,32 @@ func prepareMCPPrivateState(s Spec, processSandbox sandbox.Spec, env []string) (
 		return processSandbox, env, err
 	}
 	privateRoot := root
-	tmpDir := filepath.Join(privateRoot, "tmp")
 	cacheDir := filepath.Join(privateRoot, "cache")
 	stateDir := filepath.Join(privateRoot, "state")
-	for _, dir := range []string{tmpDir, cacheDir, stateDir} {
-		if err := os.MkdirAll(dir, 0o700); err != nil {
-			return processSandbox, env, err
-		}
-	}
-	for key, value := range map[string]string{
-		"TMP": tmpDir, "TEMP": tmpDir, "TMPDIR": tmpDir,
+	dirs := []string{cacheDir, stateDir}
+	privateEnv := map[string]string{
 		"XDG_CACHE_HOME": cacheDir, "XDG_STATE_HOME": stateDir,
 		"npm_config_cache":      filepath.Join(cacheDir, "npm"),
 		"UV_CACHE_DIR":          filepath.Join(cacheDir, "uv"),
 		"BUN_INSTALL_CACHE_DIR": filepath.Join(cacheDir, "bun"),
-	} {
+	}
+	if goos != "windows" {
+		tmpDir := filepath.Join(privateRoot, "tmp")
+		dirs = append(dirs, tmpDir)
+		privateEnv["TMP"] = tmpDir
+		privateEnv["TEMP"] = tmpDir
+		privateEnv["TMPDIR"] = tmpDir
+	}
+	for _, dir := range dirs {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			return processSandbox, env, err
+		}
+	}
+	// Windows stdio processes are currently unsandboxed and must keep the host's
+	// short temporary directory. Nesting TEMP below Reasonix's workspace-scoped
+	// state path can exceed the 108-byte Unix-domain-socket limit used by MCP
+	// servers such as MATLAB before their initialize response is written.
+	for key, value := range privateEnv {
 		env = setEnvValue(env, key, value)
 	}
 	processSandbox.WriteRoots = append(processSandbox.WriteRoots, root, privateRoot)
@@ -499,7 +517,7 @@ func mergePathLists(primary, secondary string) string {
 const stdioReplyQueueBound = 16
 
 // readLoop owns stdout for the transport's lifetime: it reads one JSON-RPC
-// message per line, ignores server notifications, answers server requests, and
+// message per line, routes progress notifications, answers server requests, and
 // hands each response to the call waiting on its id. On any read error it fails
 // every pending call and exits.
 func (t *stdioTransport) readLoop() {
@@ -540,30 +558,18 @@ func (t *stdioTransport) replyLoop(replies <-chan any) {
 }
 
 func (t *stdioTransport) handleInboundLine(line []byte, replies chan<- any) {
-	var probe struct {
-		JSONRPC string          `json:"jsonrpc"`
-		ID      json.RawMessage `json:"id"`
-		Method  string          `json:"method"`
-	}
-	if err := json.Unmarshal(line, &probe); err != nil {
+	probe, ok := decodeInboundMessage(line)
+	if !ok {
 		return // unparseable line cannot be routed; keep the transport alive
 	}
 	if probe.Method != "" {
-		id := bytes.TrimSpace(probe.ID)
-		if len(id) == 0 || bytes.Equal(id, []byte("null")) {
-			return // server notification
+		if isNotificationID(probe.ID) {
+			if probe.Method == "notifications/progress" {
+				t.progress.dispatchProgress(probe.Params)
+			}
+			return
 		}
-		response := struct {
-			JSONRPC string          `json:"jsonrpc"`
-			ID      json.RawMessage `json:"id"`
-			Result  any             `json:"result,omitempty"`
-			Error   *rpcError       `json:"error,omitempty"`
-		}{JSONRPC: "2.0", ID: append(json.RawMessage(nil), id...)}
-		if probe.Method == "ping" {
-			response.Result = map[string]any{}
-		} else {
-			response.Error = &rpcError{Code: -32601, Message: "Method not found"}
-		}
+		response := serverRequestReply(probe.ID, probe.Method, t.roots)
 		select {
 		case replies <- response:
 		default:
@@ -585,6 +591,10 @@ func (t *stdioTransport) handleInboundLine(line []byte, replies chan<- any) {
 	if ch != nil {
 		ch <- resp // buffered(1): never blocks, even if the caller already left
 	}
+}
+
+func (t *stdioTransport) registerProgress(token string, sink tool.ProgressFunc) func() {
+	return t.progress.registerProgress(token, sink)
 }
 
 // failAll records the terminal read error and unblocks every pending call by

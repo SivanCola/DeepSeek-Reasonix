@@ -30,7 +30,6 @@ ask_request = true   # notify when a question is waiting
 temperature       = 0.0
 # recovery_model = ""               # optional reviewer for low-risk automatic recovery; falls back to guardian_model then main model
 # reasoning_language = "auto"   # visible reasoning text: auto|zh|en
-# plan_mode_allowed_tools = ["mcp__legacy__reader"]   # legacy MCP read-only trust alias; does not change Plan availability
 # plan_mode_read_only_commands = ["gh issue view"]   # legacy compatibility only; Plan bash uses Permissions
 soft_compact_ratio  = 0.5   # notice only; keeps the cache-first prefix intact
 tool_result_snip_ratio = 0.6   # snip stale tool results before summary compaction
@@ -169,14 +168,6 @@ stalled_warning_seconds = 900   # warn once per background job after this many q
 # # call_timeout_seconds = 600
 # # Raw MCP tool names with per-tool call timeouts.
 # # tool_timeout_seconds = { "generate_video" = 1800 }
-# # Locally audited Plan/read-only-research readers (raw MCP tool names).
-# # trusted_read_only_tools = ["search"]
-# # Local approval policy for this server's tools: auto|prompt|writes|approve.
-# # default_tools_approval_mode = "auto"
-# # Raw-tool overrides of the server default.
-# # tools = { "delete_all" = { approval_mode = "prompt" } }
-# # Who resolves prompt/writes/destructive reviews: user|auto_review.
-# # approvals_reviewer = "user"
 # # Enabled MCP servers connect automatically in the background after session
 # # start. Use /mcp or the desktop MCP panel to refresh, reconnect, or disable.
 

@@ -6,7 +6,10 @@ import (
 )
 
 func installerCommandLine(installer, dir string) string {
-	line := fmt.Sprintf(`"%s" /S`, installer)
+	// Keep this in sync with cmd/update-helper/args.go. The desktop uses it for
+	// its Windows command invariant tests; the copied helper uses the same mode
+	// after the desktop exits.
+	line := fmt.Sprintf(`"%s" /REASONIXUPDATE=1`, installer)
 	if dir != "" {
 		line += " /D=" + dir
 	}
