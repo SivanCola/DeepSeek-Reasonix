@@ -16,7 +16,6 @@ import (
 	"os"
 	"path/filepath"
 	goruntime "runtime"
-	"runtime/debug"
 	"sort"
 	"strings"
 	"sync"
@@ -1818,34 +1817,14 @@ func splitModelRef(ref string) (string, string) {
 }
 
 func currentBuildID(opts Options) protocol.BuildID {
-	revision := strings.TrimSpace(opts.SourceRevision)
-	modified := false
-	if revision == "" {
-		if info, ok := debug.ReadBuildInfo(); ok {
-			for _, setting := range info.Settings {
-				switch setting.Key {
-				case "vcs.revision":
-					revision = setting.Value
-				case "vcs.modified":
-					modified = setting.Value == "true"
-				}
-			}
-		}
-	}
-	if len(revision) != 40 {
-		revision = strings.Repeat("0", 40)
-		modified = false
-	}
-	if modified {
-		revision += "+dirty"
-	}
 	version := strings.TrimSpace(opts.Version)
 	if version == "" {
 		version = "dev"
 	}
-	id, err := protocol.NewBuildID(version, revision)
-	if err != nil {
-		panic(err)
+	if revision := strings.TrimSpace(opts.SourceRevision); revision != "" {
+		if id, err := protocol.NewBuildID(version, revision); err == nil {
+			return id
+		}
 	}
-	return id
+	return protocol.CurrentBuildID(version)
 }

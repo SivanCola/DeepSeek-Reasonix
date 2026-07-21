@@ -1252,3 +1252,10 @@ func TestRuntimeControllerUsesDesktopBrokerWithoutHostKey(t *testing.T) {
 		t.Fatalf("Broker-backed tool loop events incomplete: dispatch=%v result=%v text=%v", seenToolDispatch, seenToolResult, seenText)
 	}
 }
+
+func TestRuntimeBuildIDUsesSharedBuildIdentity(t *testing.T) {
+	want := protocol.CurrentBuildID("shared-build")
+	if got := currentBuildID(Options{Version: "shared-build"}); got != want {
+		t.Fatalf("runtime build ID = %+v, want shared protocol build ID %+v", got, want)
+	}
+}
