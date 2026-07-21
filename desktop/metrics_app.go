@@ -406,6 +406,17 @@ func (m *metricsAggregator) observeRecoveryMetrics(stats recovery.Metrics) {
 	}
 }
 
+func observeControllerRecoveryMetrics(m *metricsAggregator, ctrl any) {
+	if m == nil || ctrl == nil {
+		return
+	}
+	if drainer, ok := ctrl.(interface {
+		DrainRecoveryMetrics() recovery.Metrics
+	}); ok {
+		m.observeRecoveryMetrics(drainer.DrainRecoveryMetrics())
+	}
+}
+
 // persist merges the session delta into the pending file and resets it, so a
 // force-kill loses at most the counts since the last turn.
 func (m *metricsAggregator) persist() {

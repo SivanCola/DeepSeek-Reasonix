@@ -100,7 +100,8 @@ func NewGate(opts Options) *Gate {
 	return g
 }
 
-// Metrics returns a copy of content-free counters.
+// Metrics returns a copy of content-free counters accumulated since gate
+// construction or the most recent DrainMetrics call.
 func (g *Gate) Metrics() Metrics {
 	if g == nil {
 		return Metrics{}
@@ -108,6 +109,20 @@ func (g *Gate) Metrics() Metrics {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	return g.metrics
+}
+
+// DrainMetrics atomically returns and clears recovery counters accumulated
+// since the last drain. Desktop telemetry uses this delta API at TurnDone so a
+// historical event is never counted again on later turns.
+func (g *Gate) DrainMetrics() Metrics {
+	if g == nil {
+		return Metrics{}
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	out := g.metrics
+	g.metrics = Metrics{}
+	return out
 }
 
 // FlushPersistence waits until every snapshot already scheduled for key has

@@ -9,7 +9,21 @@ import (
 	"reasonix/internal/config"
 	"reasonix/internal/event"
 	"reasonix/internal/provider"
+	"reasonix/internal/recovery"
 )
+
+type recoveryMetricsDeltaStub struct {
+	deltas []recovery.Metrics
+}
+
+func (s *recoveryMetricsDeltaStub) DrainRecoveryMetrics() recovery.Metrics {
+	if len(s.deltas) == 0 {
+		return recovery.Metrics{}
+	}
+	next := s.deltas[0]
+	s.deltas = s.deltas[1:]
+	return next
+}
 
 func TestObserveClassifiesEvents(t *testing.T) {
 	m := newMetricsAggregator(t.TempDir())
@@ -41,6 +55,27 @@ func TestObserveClassifiesEvents(t *testing.T) {
 				t.Errorf("%s/%s = %d, want %d", sig, b, got, n)
 			}
 		}
+	}
+}
+
+func TestObserveControllerRecoveryMetricsConsumesOnlyNewDelta(t *testing.T) {
+	m := newMetricsAggregator(t.TempDir())
+	ctrl := &recoveryMetricsDeltaStub{deltas: []recovery.Metrics{
+		{FailureEvents: 1, HumanPrompts: 1, ReviewLatencyMsSum: 750, ReviewLatencyCount: 1},
+		{},
+	}}
+
+	observeControllerRecoveryMetrics(m, ctrl)
+	observeControllerRecoveryMetrics(m, ctrl)
+
+	if got := m.c["recovery_failure"]["total"]; got != 1 {
+		t.Fatalf("recovery_failure/total = %d, want 1", got)
+	}
+	if got := m.c["recovery_human_prompt"]["total"]; got != 1 {
+		t.Fatalf("recovery_human_prompt/total = %d, want 1", got)
+	}
+	if got := m.c["recovery_review_latency"]["lt_2s"]; got != 1 {
+		t.Fatalf("recovery_review_latency/lt_2s = %d, want 1", got)
 	}
 }
 

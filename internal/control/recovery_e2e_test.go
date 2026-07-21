@@ -113,4 +113,11 @@ func TestRecoveryCheckpointScriptedE2E(t *testing.T) {
 	if m.FailureEvents == 0 || m.HumanPrompts == 0 || m.HumanContinues == 0 {
 		t.Fatalf("metrics = %+v", m)
 	}
+	delta := c.DrainRecoveryMetrics()
+	if delta.FailureEvents == 0 || delta.HumanPrompts == 0 || delta.HumanContinues == 0 {
+		t.Fatalf("drained metrics = %+v", delta)
+	}
+	if next := c.DrainRecoveryMetrics(); next != (recovery.Metrics{}) {
+		t.Fatalf("second metrics drain = %+v, want zero delta", next)
+	}
 }

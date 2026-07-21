@@ -219,10 +219,31 @@ func isConfigOrDependencyPath(path string) bool {
 	base := filepath.Base(path)
 	switch base {
 	case "package.json", "package-lock.json", "pnpm-lock.yaml", "yarn.lock",
-		"go.mod", "go.sum", "cargo.toml", "cargo.lock", "pyproject.toml",
+		"pnpm-workspace.yaml", "go.mod", "go.sum", "go.work", "go.work.sum",
+		"cargo.toml", "cargo.lock", "pyproject.toml",
 		"requirements.txt", "poetry.lock", "composer.json", "gemfile",
 		"gemfile.lock", ".env", ".env.local", "dockerfile", "docker-compose.yml",
-		"reasonix.toml", "config.toml", ".npmrc", ".yarnrc":
+		"docker-compose.yaml", "compose.yml", "compose.yaml", "makefile", "justfile",
+		"taskfile.yml", "taskfile.yaml", "jenkinsfile", ".gitlab-ci.yml", ".gitlab-ci.yaml",
+		"azure-pipelines.yml", "azure-pipelines.yaml", "reasonix.toml", "config.toml",
+		".npmrc", ".yarnrc", "biome.json", "biome.jsonc":
+		return true
+	}
+	if strings.HasPrefix(base, ".env.") ||
+		strings.HasPrefix(base, "dockerfile.") ||
+		(strings.HasPrefix(base, "tsconfig") && strings.HasSuffix(base, ".json")) ||
+		(strings.HasPrefix(base, "jsconfig") && strings.HasSuffix(base, ".json")) ||
+		strings.Contains(base, ".config.") ||
+		strings.HasPrefix(base, ".eslintrc") ||
+		strings.HasPrefix(base, ".prettierrc") ||
+		strings.HasPrefix(base, ".stylelintrc") ||
+		strings.HasPrefix(base, ".babelrc") {
+		return true
+	}
+	scopedPath := "/" + strings.TrimPrefix(path, "./")
+	if strings.Contains(scopedPath, "/.github/workflows/") ||
+		strings.Contains(scopedPath, "/.circleci/") ||
+		strings.Contains(scopedPath, "/.gitlab/") {
 		return true
 	}
 	if strings.Contains(path, "/.git/") || strings.HasSuffix(path, "/.git") {
@@ -282,11 +303,29 @@ func commandFieldsHighRisk(fields []string) bool {
 	base := strings.ToLower(filepath.Base(fields[0]))
 	args := lowerFields(fields[1:])
 	switch base {
+	case "sudo", "doas", "pkexec", "xargs":
+		// Privilege escalation and dynamic command dispatch are high risk even
+		// when the wrapped command itself is not statically recoverable here.
+		return true
+	case "env":
+		wrapped, ok := unwrapEnvCommand(args)
+		return !ok || commandFieldsHighRisk(wrapped)
+	case "command":
+		wrapped, ok := unwrapCommandBuiltin(args)
+		return !ok || (len(wrapped) > 0 && commandFieldsHighRisk(wrapped))
+	case "nohup":
+		return commandFieldsHighRisk(trimLeadingOptions(args))
 	case "rm", "rmdir", "unlink", "shred", "dd", "mkfs", "chmod", "chown",
 		"docker", "kubectl", "terraform":
 		return true
+	case "sed":
+		return hasSedInPlaceFlag(args) && containsConfigOrDependencyPath(args)
+	case "cp", "install":
+		return lastConfigOrDependencyPath(args)
+	case "mv", "touch", "truncate":
+		return containsConfigOrDependencyPath(args)
 	case "git":
-		return containsAny(args, "push", "reset", "clean", "checkout", "switch", "branch", "tag", "rebase", "merge")
+		return containsAny(args, "push", "reset", "clean", "checkout", "switch", "branch", "tag", "rebase", "merge", "config", "remote")
 	case "npm":
 		return containsAny(args, "install", "i", "add", "uninstall", "remove", "rm", "update", "upgrade", "publish", "unpublish", "link", "unlink", "config")
 	case "pnpm":
@@ -320,6 +359,87 @@ func commandFieldsHighRisk(fields []string) bool {
 		return containsAny(args, "add", "remove", "install", "uninstall", "update", "push", "delete")
 	case "gem", "bundle", "bundler":
 		return containsAny(args, "install", "uninstall", "update", "add", "remove", "push", "yank", "publish")
+	}
+	return false
+}
+
+func unwrapEnvCommand(args []string) ([]string, bool) {
+	for len(args) > 0 {
+		arg := args[0]
+		switch {
+		case arg == "-i" || arg == "--ignore-environment" || arg == "-0" || arg == "--null":
+			args = args[1:]
+		case arg == "-u" || arg == "--unset" || arg == "-c" || arg == "--chdir":
+			if len(args) < 2 {
+				return nil, false
+			}
+			args = args[2:]
+		case strings.HasPrefix(arg, "--unset=") || strings.HasPrefix(arg, "--chdir="):
+			args = args[1:]
+		case strings.HasPrefix(arg, "-"):
+			// Split-string and unknown options can change the command shape.
+			return nil, false
+		case strings.Contains(arg, "="):
+			args = args[1:]
+		default:
+			return args, true
+		}
+	}
+	return nil, false
+}
+
+func unwrapCommandBuiltin(args []string) ([]string, bool) {
+	for len(args) > 0 {
+		switch args[0] {
+		case "-p":
+			args = args[1:]
+		case "-v", "-V":
+			// Inspection-only command lookup; there is no wrapped execution.
+			return nil, true
+		default:
+			if strings.HasPrefix(args[0], "-") {
+				return nil, false
+			}
+			return args, true
+		}
+	}
+	return nil, false
+}
+
+func trimLeadingOptions(args []string) []string {
+	for len(args) > 0 && strings.HasPrefix(args[0], "-") {
+		args = args[1:]
+	}
+	return args
+}
+
+func containsConfigOrDependencyPath(fields []string) bool {
+	for _, field := range fields {
+		if strings.HasPrefix(field, "-") {
+			continue
+		}
+		if isConfigOrDependencyPath(field) {
+			return true
+		}
+	}
+	return false
+}
+
+func lastConfigOrDependencyPath(fields []string) bool {
+	for i := len(fields) - 1; i >= 0; i-- {
+		if strings.HasPrefix(fields[i], "-") {
+			continue
+		}
+		return isConfigOrDependencyPath(fields[i])
+	}
+	return false
+}
+
+func hasSedInPlaceFlag(args []string) bool {
+	for _, arg := range args {
+		if arg == "-i" || strings.HasPrefix(arg, "-i") || arg == "--in-place" || strings.HasPrefix(arg, "--in-place=") {
+			return true
+		}
 	}
 	return false
 }

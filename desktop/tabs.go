@@ -29,7 +29,6 @@ import (
 	"reasonix/internal/fileutil"
 	"reasonix/internal/notify"
 	"reasonix/internal/provider"
-	"reasonix/internal/recovery"
 	"reasonix/internal/store"
 	"reasonix/internal/worktree"
 )
@@ -1247,11 +1246,7 @@ func (s *tabEventSink) Emit(e event.Event) {
 			if e.Kind == event.TurnDone {
 				// Content-free recovery counters only (no failure text).
 				if tab := app.tabByID(tabID); tab != nil && tab.Ctrl != nil {
-					if rm, ok := tab.Ctrl.(interface {
-						RecoveryMetrics() recovery.Metrics
-					}); ok {
-						m.observeRecoveryMetrics(rm.RecoveryMetrics())
-					}
+					observeControllerRecoveryMetrics(m, tab.Ctrl)
 				}
 				m.persist()
 			}
