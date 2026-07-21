@@ -111,7 +111,7 @@ func Run(ctx context.Context, stdin io.ReadCloser, stdout io.Writer, opts Option
 		return writeRPCError(stdout, frame.ID, rpcwire.ErrInternal, "runtime start failed: "+err.Error())
 	}
 
-	conn, err := dialSocket(ctx, sock, 10*time.Second)
+	conn, err := dialSocketUntil(ctx, sock, 10*time.Second)
 	if err != nil {
 		return writeRPCError(stdout, frame.ID, rpcwire.ErrInternal, "runtime dial failed")
 	}
@@ -187,17 +187,10 @@ func ensureRuntime(ctx context.Context, opts Options, home, workspace, sock stri
 		// For production CLI, prefer a detached child; tests use InProcess.
 		srv := runtime.New(runtime.Options{Workspace: workspace, Version: opts.Version})
 		go func() { _ = srv.ListenAndServe(ctx, sock) }()
-		// Wait until the listener has published its socket. A readiness dial would
-		// be accepted as a real runtime generation and could race the immediately
-		// following attach, closing one of the two connections as stale.
-		deadline := time.Now().Add(3 * time.Second)
-		for time.Now().Before(deadline) {
-			if _, err := os.Stat(sock); err == nil {
-				return nil
-			}
-			time.Sleep(50 * time.Millisecond)
-		}
-		return errors.New("in-process runtime did not become ready")
+		// The caller's real attach connection performs bounded retries. Do not use
+		// a readiness dial here: runtime accepts are generation-owning connections,
+		// and Windows AF_UNIX does not expose a portable socket file to os.Stat.
+		return nil
 	}
 	if strings.TrimSpace(opts.RuntimeBinary) == "" {
 		return errors.New("runtime binary required outside tests")
@@ -225,6 +218,36 @@ func ensureRuntime(ctx context.Context, opts Options, home, workspace, sock stri
 func dialSocket(ctx context.Context, sock string, timeout time.Duration) (net.Conn, error) {
 	d := net.Dialer{Timeout: timeout}
 	return d.DialContext(ctx, "unix", sock)
+}
+
+func dialSocketUntil(ctx context.Context, sock string, timeout time.Duration) (net.Conn, error) {
+	deadline := time.Now().Add(timeout)
+	var lastErr error
+	for {
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			if lastErr == nil {
+				lastErr = context.DeadlineExceeded
+			}
+			return nil, lastErr
+		}
+		attempt := 200 * time.Millisecond
+		if remaining < attempt {
+			attempt = remaining
+		}
+		conn, err := dialSocket(ctx, sock, attempt)
+		if err == nil {
+			return conn, nil
+		}
+		lastErr = err
+		timer := time.NewTimer(25 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return nil, ctx.Err()
+		case <-timer.C:
+		}
+	}
 }
 
 func proxy(ctx context.Context, stdin io.ReadCloser, reader *bufio.Reader, stdout io.Writer, conn net.Conn) error {
