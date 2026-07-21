@@ -29,7 +29,7 @@ type desktopStartupRecoveryDeps struct {
 // and the window all share one process identity. Windows and Linux still enter
 // through Guard and do not use this path.
 func runDesktopStartupRecovery(recommended, explicitSafeMode bool, deps desktopStartupRecoveryDeps) (safeMode, continueLaunch bool) {
-	safeMode, continueLaunch = explicitSafeMode, true
+	safeMode = explicitSafeMode
 	report := func(message string) {
 		if deps.report != nil {
 			deps.report(message)
