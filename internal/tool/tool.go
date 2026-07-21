@@ -85,14 +85,6 @@ type PlanModeClassifier interface {
 	PlanModeSafe() bool
 }
 
-// PlanModeUntrustedReadOnly marks a tool whose ReadOnly classification comes
-// from a server that has not been installed or explicitly authorized by the
-// user. The main workflow may use the hint for ordinary permission
-// classification, while planner/read-only registries must fail closed.
-type PlanModeUntrustedReadOnly interface {
-	PlanModeUntrustedReadOnly() bool
-}
-
 // ReadOnlyExecutionHostMutation marks a target that is logically read-only but
 // must first mutate host state to become executable, such as starting an
 // on-demand MCP process. Strict read-only agents reject these targets even when
@@ -155,12 +147,11 @@ type MCPCapabilityFingerprint interface {
 	MCPCapabilityFingerprint() string
 }
 
-// ReadOnlyExecutionAuthority reports whether an MCP-backed tool is governed by
-// host launch authorization. Strict read-only execution additionally requires
-// the server to be installed/authorized and the live tool to remain a
-// non-destructive reader.
-type ReadOnlyExecutionAuthority interface {
-	ReadOnlyExecutionAuthority() bool
+// MCPServerAuthorization reports whether the user installed this MCP server or
+// authorized its exact project identity. Authorization belongs to the server,
+// not to individual tools; readOnly/destructive metadata is checked separately.
+type MCPServerAuthorization interface {
+	MCPServerAuthorized() bool
 }
 
 // readerExecutionIntentKey carries a per-call, immutable authorization basis:

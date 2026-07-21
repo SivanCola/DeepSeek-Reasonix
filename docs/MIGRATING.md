@@ -101,10 +101,10 @@ and DeepSeek prefix-cache–oriented design.
 - **MCP identity and schema-cache URLs are credential-aware**: userinfo and
   credential query values (token, api_key, password, ...) do not enter the
   host-local identity or cache fingerprints, so credential rotation keeps an
-  unchanged project launch authorization. An exact old workspace receipt can
-  migrate once into that launch grant; its tool snapshot is ignored.
+  unchanged project launch authorization. Legacy per-tool reader receipts are
+  ignored and removed on the next authorization-state write.
 - **MCP setup is now add-and-use.** Servers added by the user (Desktop, user
-  config, legacy user import, or an installed verified plugin package) connect
+  config, legacy user import, or a user-installed plugin package) connect
   immediately and permit all calls when no explicit
   MCP approval policy is configured. Repository `reasonix.toml` / `.mcp.json`
   servers instead require one pre-launch confirmation for their exact stable
@@ -115,13 +115,11 @@ and DeepSeek prefix-cache–oriented design.
 - **Plan mode and permission policy are now independent**: Plan directs the
   model to plan first. Ordinary built-in and Bash calls still use the active
   Ask/Auto/YOLO rules and Sandbox, while installed MCP and proxy-resolved MCP
-  writer/destructive targets plus untrusted readers stay hard-blocked for the
+  writer/destructive targets plus readers from unauthorized servers stay hard-blocked for the
   whole planning phase. Explicit execution-phase tools such as `complete_step` also
-  remain unavailable until plan approval. `[agent].plan_mode_allowed_tools` and
-  `plan_mode_read_only_commands` are still parsed and round-tripped so old
-  configs do not break, but they no longer control main Plan availability.
-  Concrete MCP names in `plan_mode_allowed_tools` remain legacy compatibility
-  aliases. Installed or explicitly authorized servers now contribute their
+  remain unavailable until plan approval. `plan_mode_read_only_commands` is
+  still parsed and round-tripped for old configs, but it no longer controls
+  main Plan availability. Installed or explicitly authorized servers contribute their
   non-destructive `readOnlyHint` tools to planner/read-only registries
   automatically. Use `read_only_task` /
   `read_only_skill` when a child must be technically restricted to read-only;

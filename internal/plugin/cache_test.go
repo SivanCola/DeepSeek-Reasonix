@@ -84,17 +84,17 @@ func TestCacheRoundTrip(t *testing.T) {
 	}
 }
 
-func TestCachePersistsDeclaredReaderIndependentlyOfLocalTrust(t *testing.T) {
+func TestCachePersistsDeclaredReaderIndependentlyOfServerAuthorization(t *testing.T) {
 	cached := cacheableToolsOf([]tool.Tool{&remoteTool{
 		rawName: "search", schema: json.RawMessage(`{"type":"object"}`),
-		declaredReadOnly: true, readOnly: false, readOnlyTrusted: false,
+		declaredReadOnly: true, readOnly: false,
 	}})
 	if len(cached) != 1 || !cached[0].ReadOnly {
 		t.Fatalf("cached tool = %+v, want the server-declared reader snapshot", cached)
 	}
 }
 
-func TestCachedToolSafetySeparatesServerHintFromExplicitReaderAuthority(t *testing.T) {
+func TestCachedToolSafetyTracksReadOnlyClassificationAndSchema(t *testing.T) {
 	redirectCache(t)
 	spec := Spec{
 		Name: "cached-reader", Type: "http", URL: "https://example.com/mcp",
@@ -106,8 +106,8 @@ func TestCachedToolSafetySeparatesServerHintFromExplicitReaderAuthority(t *testi
 		t.Fatal(err)
 	}
 	before, found := CachedToolSafetyForSpec(spec, "search")
-	if !found || !before.ReadOnly || before.TrustedReader {
-		t.Fatalf("server hint = (%+v,%v), want ordinary reader without strict authority", before, found)
+	if !found || !before.ReadOnly {
+		t.Fatalf("server hint = (%+v,%v), want reader metadata", before, found)
 	}
 	spec.ReadOnlyToolNames = map[string]bool{"search": true}
 	if _, found := CachedToolSafetyForSpec(spec, "search"); found {
@@ -117,8 +117,8 @@ func TestCachedToolSafetySeparatesServerHintFromExplicitReaderAuthority(t *testi
 		t.Fatal(err)
 	}
 	after, found := CachedToolSafetyForSpec(spec, "search")
-	if !found || !after.ReadOnly || !after.TrustedReader {
-		t.Fatalf("explicit reader = (%+v,%v), want strict reader authority", after, found)
+	if !found || !after.ReadOnly {
+		t.Fatalf("explicit reader = (%+v,%v), want reader metadata", after, found)
 	}
 
 	oldFingerprint := after.CapabilityFingerprint
@@ -127,27 +127,8 @@ func TestCachedToolSafetySeparatesServerHintFromExplicitReaderAuthority(t *testi
 		t.Fatal(err)
 	}
 	drifted, found := CachedToolSafetyForSpec(spec, "search")
-	if !found || !drifted.TrustedReader || drifted.CapabilityFingerprint == oldFingerprint {
-		t.Fatalf("schema update = (%+v,%v), want current fingerprint with explicit authority", drifted, found)
-	}
-}
-
-func TestCachedToolSafetyInheritsInstalledServerAuthorization(t *testing.T) {
-	redirectCache(t)
-	spec := Spec{
-		Name: "installed-reader", Type: "http", URL: "https://example.com/mcp",
-		ImplicitApproval: true,
-		LaunchManager:    mcplaunch.NewManager(filepath.Join(t.TempDir(), mcplaunch.StateFilename), t.TempDir()),
-	}
-	reader := CachedTool{
-		Name: "search", Schema: json.RawMessage(`{"type":"object","properties":{"q":{"type":"string"}}}`), ReadOnly: true,
-	}
-	if err := SaveCachedSchema(spec.Name, CachedSchema{SpecHash: SpecFingerprint(spec), Tools: []CachedTool{reader}}); err != nil {
-		t.Fatal(err)
-	}
-	safety, found := CachedToolSafetyForSpec(spec, "search")
-	if !found || !safety.ReadOnly || !safety.TrustedReader || safety.Destructive {
-		t.Fatalf("installed cached reader = (%+v,%v), want authorized non-destructive reader", safety, found)
+	if !found || drifted.CapabilityFingerprint == oldFingerprint {
+		t.Fatalf("schema update = (%+v,%v), want current capability fingerprint", drifted, found)
 	}
 }
 
@@ -213,19 +194,18 @@ func TestCacheInvalidatesOnSpecHashMismatch(t *testing.T) {
 	}
 }
 
-func TestCacheInvalidatesWhenReadOnlyTrustChanges(t *testing.T) {
+func TestCacheInvalidatesWhenReadOnlyOverrideChanges(t *testing.T) {
 	redirectCache(t)
 	spec := sampleSpec()
 	spec.ReadOnlyToolNames = map[string]bool{"echo": true}
-	spec.ReadOnlyModelToolNames = map[string]bool{"mcp__my-server__search": true}
 	hash := SpecFingerprint(spec)
 	if err := SaveCachedSchema(spec.Name, sampleCachedSchema(hash)); err != nil {
 		t.Fatalf("SaveCachedSchema: %v", err)
 	}
 
-	withoutTrust := sampleSpec()
-	if _, ok := LoadCachedSchema(spec.Name, SpecFingerprint(withoutTrust)); ok {
-		t.Fatal("LoadCachedSchema: hit after trusted read-only config changed")
+	withoutOverride := sampleSpec()
+	if _, ok := LoadCachedSchema(spec.Name, SpecFingerprint(withoutOverride)); ok {
+		t.Fatal("LoadCachedSchema: hit after read-only override changed")
 	}
 }
 
@@ -295,17 +275,12 @@ func TestSpecFingerprintStable(t *testing.T) {
 	}
 }
 
-func TestSpecFingerprintIgnoresHostLocalTrustAndIsolation(t *testing.T) {
+func TestSpecFingerprintIgnoresHostLocalAuthorizationAndIsolation(t *testing.T) {
 	base := sampleSpec()
 	changed := base
 	changed.LaunchManager = mcplaunch.NewManager(filepath.Join(t.TempDir(), mcplaunch.StateFilename), "/workspace")
 	changed.ConfigSource = "project:.mcp.json"
 	changed.Package = "figma"
-	changed.OfficialCatalogEntryID = "plugin@example.com@1.0.0"
-	changed.OfficialReaderNames = []string{"search"}
-	changed.PackageDigest = "sha256:package"
-	changed.VerifiedVersion = "1.0.0"
-	changed.CatalogSequence = 42
 	changed.ReaderSandbox = sandbox.Spec{Mode: "enforce", Network: true, WriteRoots: []string{"/host/state"}, MinimalWrites: true}
 	changed.WriterSandbox = sandbox.Spec{Mode: "enforce", WriteRoots: []string{"/workspace"}, MinimalWrites: true}
 	changed.StateDir = "/host/state"

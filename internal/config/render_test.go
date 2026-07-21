@@ -527,25 +527,14 @@ func TestRenderTOMLRoundTrips(t *testing.T) {
 	}
 }
 
-func TestRenderTOMLDocumentsPlanModeAllowedTools(t *testing.T) {
+func TestRenderTOMLDocumentsPlanModeReadOnlyCommands(t *testing.T) {
 	cfg := Default()
-	cfg.Agent.PlanModeAllowedTools = []string{"custom_reader"}
 	cfg.Agent.PlanModeReadOnlyCommands = []string{"gh issue view"}
 
 	rendered := RenderTOML(cfg)
-	if !strings.Contains(rendered, `plan_mode_allowed_tools = ["custom_reader"]`) {
-		t.Fatalf("rendered config should preserve plan_mode_allowed_tools:\n%s", rendered)
-	}
-	if !strings.Contains(rendered, "legacy MCP read-only aliases") || !strings.Contains(rendered, "does not change Plan availability") {
-		t.Fatalf("rendered config should document legacy plan_mode_allowed_tools semantics:\n%s", rendered)
-	}
-
 	var got Config
 	if _, err := toml.Decode(rendered, &got); err != nil {
 		t.Fatalf("rendered TOML does not parse: %v\n%s", err, rendered)
-	}
-	if !reflect.DeepEqual(got.Agent.PlanModeAllowedTools, cfg.Agent.PlanModeAllowedTools) {
-		t.Fatalf("PlanModeAllowedTools round trip = %v, want %v", got.Agent.PlanModeAllowedTools, cfg.Agent.PlanModeAllowedTools)
 	}
 	if !strings.Contains(rendered, `plan_mode_read_only_commands = ["gh issue view"]`) {
 		t.Fatalf("rendered config should preserve plan_mode_read_only_commands:\n%s", rendered)

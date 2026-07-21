@@ -423,10 +423,6 @@ type Options struct {
 	// OnSessionRecovered is called after a stale runtime's transcript has been
 	// saved as a recovery branch, before the controller commits to that branch.
 	OnSessionRecovered func(SessionRecoveryInfo) error
-	// PlanModeAllowedTools is retained for legacy config/controller data. MCP
-	// assembly may translate concrete entries into local read-only trust, but the
-	// field does not grant or revoke calls in the main Plan workflow.
-	PlanModeAllowedTools []string
 	// ApprovalTimeout bounds how long a tool-approval or ask prompt blocks waiting
 	// for a user decision. Zero (default) waits forever — right for an interactive
 	// terminal. Bot/headless frontends set a positive value so an unanswered

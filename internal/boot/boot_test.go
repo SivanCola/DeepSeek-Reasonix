@@ -2672,47 +2672,6 @@ model = "x"
 	}
 }
 
-func TestBuildLegacyPlanModeAllowedToolsDoesNotEmitGateWarning(t *testing.T) {
-	isolateConfigHome(t)
-	dir := robustTempDir(t)
-	t.Chdir(dir)
-
-	registerBootTokenProfileTestProvider()
-	prov := testutil.NewMock("plan-mode-allowed-tools", testutil.Turn{Text: "done"})
-	setBootTokenProfileTestProvider(t, prov)
-	writeFile(t, dir, "reasonix.toml", `
-default_model = "test-model"
-
-[agent]
-system_prompt = "BASE"
-plan_mode_allowed_tools = ["bash", "custom_reader"]
-
-[[providers]]
-name = "test-model"
-kind = "boot-token-profile-test"
-model = "x"
-`)
-
-	var notices []event.Event
-	sink := event.FuncSink(func(e event.Event) {
-		if e.Kind == event.Notice {
-			notices = append(notices, e)
-		}
-	})
-
-	ctrl, err := Build(context.Background(), Options{Sink: sink})
-	if err != nil {
-		t.Fatalf("Build: %v", err)
-	}
-	defer ctrl.Close()
-
-	for _, notice := range notices {
-		if strings.Contains(notice.Text, "plan-mode tool") || strings.Contains(notice.Detail, "plan_mode_allowed_tools") {
-			t.Fatalf("legacy Plan setting emitted obsolete gate warning: %+v", notice)
-		}
-	}
-}
-
 func TestBuildLegacyPlanModeReadOnlyCommandsDoesNotEmitGateWarning(t *testing.T) {
 	isolateConfigHome(t)
 	dir := robustTempDir(t)
@@ -3865,26 +3824,6 @@ func TestSkillMCPBindingsUseOnlyValidOwnedCache(t *testing.T) {
 	}
 }
 
-func TestVerifiedMCPPackageRequiresMatchingTransport(t *testing.T) {
-	entry := config.PluginEntry{Name: "official", Type: "http", URL: "https://example.com/mcp"}
-	official := VerifiedMCPPackage{
-		CatalogEntryID: "official@1", PackageDigest: "digest", Readers: []string{"read"}, Transport: "stdio",
-	}
-	specs := PluginSpecsForRootWithOptions([]config.PluginEntry{entry}, "/workspace", PluginSpecOptions{
-		OfficialServers: map[string]VerifiedMCPPackage{"official": official},
-	})
-	if len(specs) != 1 || specs[0].OfficialCatalogEntryID != "" {
-		t.Fatalf("mismatched transport received official trust: %+v", specs)
-	}
-	official.Transport = "streamable-http"
-	specs = PluginSpecsForRootWithOptions([]config.PluginEntry{entry}, "/workspace", PluginSpecOptions{
-		OfficialServers: map[string]VerifiedMCPPackage{"official": official},
-	})
-	if len(specs) != 1 || specs[0].OfficialCatalogEntryID != "official@1" {
-		t.Fatalf("equivalent HTTP transport did not receive official trust: %+v", specs)
-	}
-}
-
 func TestApplyDefaultMCPCallTimeoutPreservesConfiguredDefault(t *testing.T) {
 	specs := applyDefaultMCPCallTimeout([]plugin.Spec{
 		{Name: "configured", DefaultCallTimeout: 2 * time.Minute},
@@ -3895,32 +3834,6 @@ func TestApplyDefaultMCPCallTimeoutPreservesConfiguredDefault(t *testing.T) {
 	}
 	if specs[1].DefaultCallTimeout != 5*time.Minute {
 		t.Fatalf("empty DefaultCallTimeout = %v, want 5m", specs[1].DefaultCallTimeout)
-	}
-}
-
-func TestPluginSpecsApplyPlanModeAllowedMCPReaders(t *testing.T) {
-	specs := PluginSpecsForRootWithPlanModeAllowedTools(
-		[]config.PluginEntry{{Name: "github"}, {Name: "linear"}},
-		"",
-		[]string{
-			"mcp__github__issue_read",
-			"mcp__linear__issue_read",
-			"mcp__github__",
-			"read_file",
-			"mcp__other__issue_read",
-		},
-	)
-	if len(specs) != 2 {
-		t.Fatalf("PluginSpecsForRootWithPlanModeAllowedTools returned %d specs, want 2", len(specs))
-	}
-	if !specs[0].ReadOnlyModelToolNames["mcp__github__issue_read"] {
-		t.Fatalf("github allowed MCP tool missing from model reader map: %+v", specs[0].ReadOnlyModelToolNames)
-	}
-	if specs[0].ReadOnlyModelToolNames["mcp__github__"] || specs[0].ReadOnlyModelToolNames["mcp__other__issue_read"] {
-		t.Fatalf("github trust map accepted non-concrete or other-server tools: %+v", specs[0].ReadOnlyModelToolNames)
-	}
-	if !specs[1].ReadOnlyModelToolNames["mcp__linear__issue_read"] {
-		t.Fatalf("linear allowed MCP tool missing from model reader map: %+v", specs[1].ReadOnlyModelToolNames)
 	}
 }
 

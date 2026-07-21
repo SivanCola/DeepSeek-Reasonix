@@ -6558,8 +6558,7 @@ func (a *App) mcpLaunchSpec(root, name string) (plugin.Spec, error) {
 		LaunchManager:      mcplaunch.ForWorkspace(config.ReasonixHomeDir(), root),
 		ConfigSource:       "workspace_config", StateHome: config.ReasonixHomeDir(),
 		WriterRoots: cfg.WriteRootsForRoot(root), ForbidReadRoots: boot.RuntimeForbidReadRoots(cfg, root),
-		Network:         cfg.Sandbox.Network,
-		OfficialServers: boot.LoadVerifiedMCPPackages(context.Background(), cfg),
+		Network: cfg.Sandbox.Network,
 	})
 	if len(specs) != 1 {
 		return plugin.Spec{}, fmt.Errorf("failed to build MCP server %q", name)

@@ -909,10 +909,6 @@ type Options struct {
 	// user-turn context. Empty/auto keeps the stable same-as-user policy.
 	ResponseLanguage string
 
-	// PlanModeAllowedTools is retained for source compatibility. MCP assembly may
-	// still translate legacy entries into local read-only trust, but it does not
-	// grant or revoke calls in the main Plan workflow.
-	PlanModeAllowedTools []string
 	// PlanModeReadOnlyCommands is retained for old config/controller data. Main
 	// Plan execution classifies bash through Permissions instead.
 	PlanModeReadOnlyCommands []string
@@ -2942,7 +2938,7 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 				safety = planmode.PlanSafetyUnsafe
 			}
 		}
-		if decision := a.planModeDecision(canonicalName, t.ReadOnly(), planModeUntrustedReadOnly(t), safety, json.RawMessage(call.Arguments)); decision.Blocked {
+		if decision := a.planModeDecision(canonicalName, t.ReadOnly(), safety, json.RawMessage(call.Arguments)); decision.Blocked {
 			return toolOutcome{
 				output:  decision.Message,
 				blocked: true,
@@ -3032,7 +3028,7 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 				safety = planmode.PlanSafetyUnsafe
 			}
 		}
-		if decision := a.planModeDecision(permName, resolved.ReadOnly, planModeUntrustedReadOnly(execTool), safety, permArgs); decision.Blocked {
+		if decision := a.planModeDecision(permName, resolved.ReadOnly, safety, permArgs); decision.Blocked {
 			return toolOutcome{
 				output:  decision.Message,
 				blocked: true,
@@ -3040,7 +3036,7 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 			}
 		}
 	}
-	if a.planMode.Load() && isMCPExecutionTarget(execTool, permName) && (!readOnly || planModeUntrustedReadOnly(execTool) || mcpDestructiveHint(execTool)) {
+	if a.planMode.Load() && isMCPExecutionTarget(execTool, permName) && (!readOnly || !mcpServerAuthorized(execTool) || mcpDestructiveHint(execTool)) {
 		return toolOutcome{
 			output:  fmt.Sprintf("blocked: MCP writer/destructive target %q is unavailable during Plan mode; finish or exit Plan mode before requesting this call", permName),
 			blocked: true,
@@ -3251,9 +3247,9 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 	var err error
 	// A call that was authorized under reader classification carries that
 	// basis into dispatch: the MCP execution layer re-verifies it linearizably
-	// against live trust state and refuses to promote it into a writer lane if
-	// a concurrent revocation or reclassification landed after the gate.
-	if readOnly && isInstalledMCPTool(runTool) && !planModeUntrustedReadOnly(runTool) && !mcpDestructiveHint(runTool) {
+	// against server authorization and live safety metadata, and refuses to
+	// promote it into a writer lane if reclassification landed after the gate.
+	if readOnly && isInstalledMCPTool(runTool) && mcpServerAuthorized(runTool) && !mcpDestructiveHint(runTool) {
 		fingerprint := ""
 		if fp, ok := runTool.(tool.MCPCapabilityFingerprint); ok {
 			fingerprint = fp.MCPCapabilityFingerprint()
@@ -3344,8 +3340,8 @@ func (a *Agent) readOnlyExecutionBlock(visible tool.Tool, resolved *tool.Resolve
 			}
 			return block("execute a state-changing tool")
 		}
-		if u, ok := visible.(tool.PlanModeUntrustedReadOnly); ok && u.PlanModeUntrustedReadOnly() {
-			return block("trust an externally asserted read-only target")
+		if isInstalledMCPTool(visible) && !mcpServerAuthorized(visible) {
+			return block("execute a reader from an unauthorized MCP server")
 		}
 		if readOnlyExecutionMCPDestructive(visible) {
 			return block("execute a destructive MCP capability")
@@ -3374,8 +3370,8 @@ func (a *Agent) readOnlyExecutionBlock(visible tool.Tool, resolved *tool.Resolve
 			}
 			return block("execute a state-changing dynamic capability")
 		}
-		if u, ok := resolved.Target.(tool.PlanModeUntrustedReadOnly); ok && u.PlanModeUntrustedReadOnly() {
-			return block("trust an externally asserted read-only dynamic capability")
+		if isInstalledMCPTool(resolved.Target) && !mcpServerAuthorized(resolved.Target) {
+			return block("execute a dynamic reader from an unauthorized MCP server")
 		}
 		if readOnlyExecutionMCPDestructive(resolved.Target) {
 			return block("execute a destructive MCP capability")
@@ -3397,17 +3393,11 @@ func readOnlyExecutionAllowsMCPStartup(t tool.Tool) bool {
 	if t == nil || !t.ReadOnly() || readOnlyExecutionMCPDestructive(t) {
 		return false
 	}
-	if untrusted, ok := t.(tool.PlanModeUntrustedReadOnly); ok && untrusted.PlanModeUntrustedReadOnly() {
+	if !mcpServerAuthorized(t) {
 		return false
 	}
 	meta, ok := t.(tool.MCPMetadata)
 	if !ok || strings.TrimSpace(meta.MCPServerName()) == "" || strings.TrimSpace(meta.MCPRawToolName()) == "" {
-		return false
-	}
-	// A reader classification only admits a host start when explicit local or
-	// signed package policy backs it. A server hint alone never satisfies the
-	// strict boundary.
-	if authority, ok := t.(tool.ReadOnlyExecutionAuthority); !ok || !authority.ReadOnlyExecutionAuthority() {
 		return false
 	}
 	_, governed := t.(tool.MCPApprovalPolicy)
@@ -3423,9 +3413,9 @@ func isMCPExecutionTarget(t tool.Tool, name string) bool {
 	return isInstalledMCPTool(t) || strings.HasPrefix(strings.TrimSpace(name), "mcp__")
 }
 
-func planModeUntrustedReadOnly(t tool.Tool) bool {
-	untrusted, ok := t.(tool.PlanModeUntrustedReadOnly)
-	return ok && untrusted.PlanModeUntrustedReadOnly()
+func mcpServerAuthorized(t tool.Tool) bool {
+	authority, ok := t.(tool.MCPServerAuthorization)
+	return ok && authority.MCPServerAuthorized()
 }
 
 func mcpDestructiveHint(t tool.Tool) bool {
@@ -3452,13 +3442,12 @@ func mcpApprovalSubject(t tool.Tool, fallback string) string {
 	return strings.TrimSpace(fallback)
 }
 
-func (a *Agent) planModeDecision(toolName string, readOnly, untrustedReadOnly bool, safety planmode.PlanSafety, args json.RawMessage) planmode.Decision {
+func (a *Agent) planModeDecision(toolName string, readOnly bool, safety planmode.PlanSafety, args json.RawMessage) planmode.Decision {
 	return (planmode.Policy{}).Decide(planmode.Call{
-		Name:              toolName,
-		ReadOnly:          readOnly,
-		UntrustedReadOnly: untrustedReadOnly,
-		Safety:            safety,
-		Args:              args,
+		Name:     toolName,
+		ReadOnly: readOnly,
+		Safety:   safety,
+		Args:     args,
 	})
 }
 

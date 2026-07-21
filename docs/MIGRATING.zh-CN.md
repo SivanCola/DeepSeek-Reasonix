@@ -75,11 +75,11 @@ agent 核心延续了原有能力：循环、读写编辑与 glob/grep/bash 等�
 
 - **代码智能**：Go 重写版通过 LSP 辅助代码读取，并结合 `grep`、`read_file` 和 `glob` 理解本地代码。v1 的语义搜索与 tree-sitter 符号索引尚未移植，CodeGraph 也不再以内置 MCP server 形式提供。
 - **Plan 模式**：新增 `complete_step`，用于基于证据确认步骤完成。
-- **MCP 身份与 schema 缓存 URL 感知凭据**：userinfo 和 token/api_key/password 等查询值不会进入本机身份或缓存指纹，因此轮换凭据不会使项目授权失效。旧工作区凭据可一次性迁移为启动授权，旧工具快照不会沿用。
-- **MCP 添加后即可使用**：用户通过桌面端、全局配置、旧配置导入或已验证插件包添加的 server 会立即连接；未显式配置 MCP 审批策略时默认允许调用。仓库内 `reasonix.toml` / `.mcp.json` 声明的 server 则必须先针对稳定身份确认一次，确认前不会启动进程或发起网络请求。
+- **MCP 身份与 schema 缓存 URL 感知凭据**：userinfo 和 token/api_key/password 等查询值不会进入本机身份或缓存指纹，因此轮换凭据不会使项目授权失效。旧的逐工具 reader 回执不再使用，并会在下一次写入授权状态时移除。
+- **MCP 添加后即可使用**：用户通过桌面端、全局配置、旧配置导入或主动安装插件包添加的 server 会立即连接；未显式配置 MCP 审批策略时默认允许调用。仓库内 `reasonix.toml` / `.mcp.json` 声明的 server 则必须先针对稳定身份确认一次，确认前不会启动进程或发起网络请求。
 - **stdio MCP 连接持久化**：writer 调用不再创建新进程，浏览器或会话类 server 的状态可以保留。
-- **Plan 与权限策略相互独立**：普通内置工具和 Bash 仍遵循 Ask/Auto/YOLO 与 Sandbox；已安装或代理解析的 MCP 写入/破坏性工具及不受信任的读取工具在整个规划阶段保持阻止。`complete_step` 等执行阶段工具也要等计划获批后才能使用。
-- `[agent].plan_mode_allowed_tools` 与 `plan_mode_read_only_commands` 仍可解析和保存，以兼容旧配置，但不再决定主 Plan 流程能否调用工具。安装或明确确认 MCP server 后，其非破坏性的 `readOnlyHint` 工具会自动进入 planner 与只读子智能体，不需要逐工具信任配置。
+- **Plan 与权限策略相互独立**：普通内置工具和 Bash 仍遵循 Ask/Auto/YOLO 与 Sandbox；已安装或代理解析的 MCP 写入/破坏性工具，以及来自未授权 server 的读取工具，在整个规划阶段保持阻止。`complete_step` 等执行阶段工具也要等计划获批后才能使用。
+- `plan_mode_read_only_commands` 仍可解析和保存，以兼容旧配置，但不再决定主 Plan 流程能否调用工具。安装或明确确认 MCP server 后，其非破坏性的 `readOnlyHint` 工具会自动进入 planner 与只读子智能体，不需要逐工具信任配置。
 - 使用 `read_only_task` / `read_only_skill` 创建技术上只读的子智能体；普通 `task` / `run_skill` 仍可写入，并受权限与 Sandbox 控制。未声明 `readOnlyHint` 的 MCP 工具仍按 writer 处理。
 - MCP 可通过 `default_tools_approval_mode`、`tools.<raw>.approval_mode` 和 `approvals_reviewer` 覆盖默认审批策略。标记 `destructiveHint: true` 的调用在 `auto`、`prompt` 或 `writes` 下每次都需要人工重新批准；有效的 `approve` 模式则直接允许。
 - **Web Dashboard 仍然可用，桌面端更推荐**：需要浏览器访问时，可运行

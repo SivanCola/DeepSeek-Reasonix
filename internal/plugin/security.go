@@ -12,15 +12,14 @@ import (
 	"sort"
 	"strings"
 
-	"reasonix/internal/mcpcatalog"
 	"reasonix/internal/mcplaunch"
 	"reasonix/internal/sandbox"
 	"reasonix/internal/secrets"
 	"reasonix/internal/tool"
 )
 
-// specIdentityFingerprint resolves a secret-free identity before a server is
-// trusted. For stdio this pins the real executable path and file content; for
+// specIdentityFingerprint resolves a secret-free identity before a project
+// server is authorized. For stdio this pins the real executable path and file content; for
 // HTTP it normalizes the endpoint while retaining only header key names.
 func specIdentityFingerprint(ctx context.Context, s Spec) (string, error) {
 	identity, err := buildSpecIdentity(ctx, s)
@@ -34,21 +33,6 @@ func buildSpecIdentity(ctx context.Context, s Spec) (mcplaunch.Identity, error) 
 	transport := strings.ToLower(strings.TrimSpace(s.Type))
 	if transport == "" {
 		transport = "stdio"
-	}
-	if strings.TrimSpace(s.OfficialCatalogEntryID) != "" {
-		if err := validateOfficialLauncher(s); err != nil {
-			return mcplaunch.Identity{}, err
-		}
-		if strings.TrimSpace(s.PackageRoot) == "" || strings.TrimSpace(s.PackageDigest) == "" {
-			return mcplaunch.Identity{}, fmt.Errorf("official MCP server %q is missing its verified package root or digest", s.Name)
-		}
-		liveDigest, err := mcpcatalog.TreeSHA256(s.PackageRoot)
-		if err != nil {
-			return mcplaunch.Identity{}, fmt.Errorf("verify official MCP package for %q: %w", s.Name, err)
-		}
-		if !strings.EqualFold(liveDigest, s.PackageDigest) {
-			return mcplaunch.Identity{}, fmt.Errorf("official MCP package for %q changed after verification; blocked before process or network startup", s.Name)
-		}
 	}
 	launchArgs := effectiveLaunchArgs(s)
 	if s.LauncherIdentityArgs != nil {
@@ -65,19 +49,7 @@ func buildSpecIdentity(ctx context.Context, s Spec) (mcplaunch.Identity, error) 
 		ForbidReadRoots: append(append([]string(nil), s.ReaderSandbox.ForbidReadRoots...),
 			s.WriterSandbox.ForbidReadRoots...),
 		IsolationPolicy: isolationPolicy(s),
-		PackageDigest:   s.PackageDigest,
 		LauncherDigest:  s.LauncherDigest,
-	}
-	if strings.TrimSpace(s.OfficialCatalogEntryID) != "" {
-		// Verified official package identity is global across workspaces. The signed package digest
-		// pins executable code and the catalog pins the server definition, so
-		// workspace-expanded args and write-root paths are excluded here.
-		identity.Args = nil
-		identity.Dir = ""
-		identity.WriteRoots = nil
-		identity.ReadRoots = nil
-		identity.ForbidReadRoots = nil
-		identity.ConfigSource = "official_catalog:" + s.OfficialCatalogEntryID
 	}
 	switch transport {
 	case "stdio":
@@ -265,9 +237,6 @@ func sortedMapKeys[V any](values map[string]V) []string {
 }
 
 func launchConfigSource(s Spec) string {
-	if s.OfficialCatalogEntryID != "" {
-		return "official_catalog:" + s.OfficialCatalogEntryID
-	}
 	return s.ConfigSource
 }
 
@@ -293,31 +262,6 @@ func capabilityOf(s Spec, raw mcpTool, schema []byte) toolCapability {
 		InputSchema: schema, OutputSchema: raw.OutputSchema,
 		ReadOnly: hinted || s.toolReadOnlyOverride(raw.Name, visible), Destructive: destructive,
 	}
-}
-
-func trustedReaderForSpec(s Spec, cap toolCapability) bool {
-	if !cap.ReadOnly || cap.Destructive {
-		return false
-	}
-	// Explicit installation or a matching project launch grant authorizes the
-	// server and its safety metadata as one unit. Users should not have to copy
-	// every readOnlyHint tool into a second per-tool trust list before planners
-	// and read-only subagents can use an MCP they already approved.
-	if s.ImplicitApproval && s.LaunchManager != nil {
-		return true
-	}
-	if s.toolReadOnlyOverride(cap.RawName, cap.VisibleName) {
-		return true
-	}
-	if strings.TrimSpace(s.OfficialCatalogEntryID) == "" || mcpcatalog.RuntimeEntryRevoked(s.OfficialCatalogEntryID) {
-		return false
-	}
-	for _, name := range s.OfficialReaderNames {
-		if strings.TrimSpace(name) == cap.RawName {
-			return true
-		}
-	}
-	return false
 }
 
 func capabilityFingerprint(cap toolCapability) string {
@@ -387,12 +331,10 @@ func stripSchemaDisplayFields(value any) {
 }
 
 // CachedToolSafety is the local safety classification for one tool in an
-// identity-matched schema cache. Server hints control ordinary read-only
-// policy; strict read-only execution additionally requires installation,
-// launch authorization, or a signed catalog reader declaration.
+// identity-matched schema cache. Authorization belongs to the MCP server;
+// cached tools retain only safety facts that must match the live server.
 type CachedToolSafety struct {
 	ReadOnly              bool
-	TrustedReader         bool
 	Destructive           bool
 	CapabilityFingerprint string
 }
@@ -406,19 +348,14 @@ func LiveToolSafety(target tool.Tool) CachedToolSafety {
 		return CachedToolSafety{}
 	}
 	if remote, ok := target.(*remoteTool); ok {
-		_, readOnly, trusted, destructive, fingerprint := remote.securitySnapshot()
+		_, readOnly, destructive, fingerprint := remote.securitySnapshot()
 		return CachedToolSafety{
 			ReadOnly:              readOnly,
-			TrustedReader:         trusted,
 			Destructive:           destructive,
 			CapabilityFingerprint: fingerprint,
 		}
 	}
 	safety := CachedToolSafety{ReadOnly: target.ReadOnly()}
-	safety.TrustedReader = safety.ReadOnly
-	if untrusted, ok := target.(tool.PlanModeUntrustedReadOnly); ok && untrusted.PlanModeUntrustedReadOnly() {
-		safety.TrustedReader = false
-	}
 	if annotations, ok := target.(tool.MCPAnnotations); ok {
 		safety.Destructive = annotations.MCPDestructiveHint()
 	}
@@ -438,9 +375,6 @@ func ReconcileCachedToolSafety(server, rawName string, cached CachedToolSafety, 
 	}
 	if cached.CapabilityFingerprint != "" && live.CapabilityFingerprint != "" && cached.CapabilityFingerprint != live.CapabilityFingerprint {
 		return live, fmt.Errorf("MCP server %q changed the security schema for tool %q; the current call was blocked before execution — retry so current policy is applied", server, rawName)
-	}
-	if cached.TrustedReader && !live.TrustedReader {
-		return live, fmt.Errorf("MCP server %q no longer exposes tool %q as an authorized reader; reconnect it from a parent session before retrying", server, rawName)
 	}
 	if cached.ReadOnly && !live.ReadOnly {
 		return live, fmt.Errorf("MCP server %q no longer marks tool %q as read-only; retry so Reasonix can apply writer approval before execution", server, rawName)
@@ -478,7 +412,6 @@ func CachedToolSafetyForSpec(s Spec, rawName string) (CachedToolSafety, bool) {
 	}
 	return CachedToolSafety{
 		ReadOnly:              target.ReadOnly,
-		TrustedReader:         trustedReaderForSpec(s, *target),
 		Destructive:           target.Destructive,
 		CapabilityFingerprint: capabilityFingerprint(*target),
 	}, true

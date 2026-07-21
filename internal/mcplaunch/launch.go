@@ -72,17 +72,13 @@ type LaunchGrant struct {
 	CreatedAt            time.Time `json:"created_at"`
 }
 
-// State preserves retired fields as raw JSON during the compatibility window.
-// They are never consulted for tool authority and are never modified by new
-// code. This prevents a new CLI and an older Desktop sharing one Reasonix home
-// from deleting each other's state during read-modify-write cycles.
+// State stores server-level launch grants and exact mutable-launcher locks.
+// Legacy per-tool reader receipts are deliberately not retained or consulted.
 type State struct {
-	Version               int               `json:"version"`
-	LegacyReceipts        []json.RawMessage `json:"receipts,omitempty"`
-	LaunchGrants          []LaunchGrant     `json:"launch_grants,omitempty"`
-	LauncherLocks         []LauncherLock    `json:"launcher_locks,omitempty"`
-	LegacyOfficialDenials json.RawMessage   `json:"official_denials,omitempty"`
-	LegacyImports         json.RawMessage   `json:"legacy_imports,omitempty"`
+	Version       int             `json:"version"`
+	LaunchGrants  []LaunchGrant   `json:"launch_grants,omitempty"`
+	LauncherLocks []LauncherLock  `json:"launcher_locks,omitempty"`
+	LegacyImports json.RawMessage `json:"legacy_imports,omitempty"`
 }
 
 type Manager struct {
@@ -224,9 +220,7 @@ func (m *Manager) Authorize(server, configSource, identityFingerprint string) er
 	})
 }
 
-// LaunchAuthorized checks consent without starting the server. Exact legacy
-// receipts count only as a migration source for project launch authorization;
-// their tool snapshots and trust scopes are otherwise ignored.
+// LaunchAuthorized checks exact server-level consent without starting the server.
 func (m *Manager) LaunchAuthorized(server, configSource, identityFingerprint string) (authorized, changed bool, err error) {
 	server = strings.TrimSpace(server)
 	configSource = strings.TrimSpace(configSource)
@@ -245,36 +239,6 @@ func (m *Manager) LaunchAuthorized(server, configSource, identityFingerprint str
 			return true, false, nil
 		}
 		changed = true
-	}
-	for _, raw := range state.LegacyReceipts {
-		var receipt struct {
-			Scope                string `json:"scope"`
-			WorkspaceFingerprint string `json:"workspace_fingerprint"`
-			Server               string `json:"server"`
-			ConfigSource         string `json:"config_source"`
-			IdentityFingerprint  string `json:"identity_fingerprint"`
-		}
-		if json.Unmarshal(raw, &receipt) != nil || receipt.Server != server || receipt.WorkspaceFingerprint != m.workspaceFingerprint {
-			continue
-		}
-		if receipt.ConfigSource != configSource && receipt.ConfigSource != "workspace_config" {
-			continue
-		}
-		if receipt.IdentityFingerprint != identityFingerprint {
-			changed = true
-			continue
-		}
-		grant := LaunchGrant{
-			Scope: workspaceScope, WorkspaceFingerprint: m.workspaceFingerprint,
-			Server: server, ConfigSource: configSource, IdentityFingerprint: identityFingerprint,
-			CreatedAt: time.Now().UTC(),
-		}
-		if err := m.updatePersistent(func(latest *State) {
-			latest.LaunchGrants = upsertLaunchGrant(latest.LaunchGrants, grant)
-		}); err != nil {
-			return false, false, err
-		}
-		return true, false, nil
 	}
 	return false, changed, nil
 }

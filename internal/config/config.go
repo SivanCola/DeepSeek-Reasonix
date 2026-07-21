@@ -1096,10 +1096,6 @@ type AgentConfig struct {
 	// ColdResumePrune elides stale tool results when a session reopens past the
 	// provider cache window. nil = default enabled.
 	ColdResumePrune *bool `toml:"cold_resume_prune"`
-	// PlanModeAllowedTools is a legacy compatibility field. Concrete MCP names may
-	// still become local read-only trust aliases, but this field does not control
-	// main Plan workflow availability.
-	PlanModeAllowedTools []string `toml:"plan_mode_allowed_tools"`
 	// PlanModeReadOnlyCommands is retained for old config/session round trips. Main
 	// Plan bash calls now use the ordinary Permissions classifier and Sandbox.
 	PlanModeReadOnlyCommands []string `toml:"plan_mode_read_only_commands"`

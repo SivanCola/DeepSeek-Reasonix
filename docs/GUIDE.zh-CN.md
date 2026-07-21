@@ -53,7 +53,6 @@ default_model = "deepseek-flash"   # 执行器；设 [agent].planner_model 可�
 
 [agent]
 reasoning_language = "auto"      # 可见思考过程语言：auto|zh|en
-# plan_mode_allowed_tools = ["mcp__legacy__reader"]   # 旧 MCP 只读信任别名；不改变 Plan 可用性
 # plan_mode_read_only_commands = ["gh issue view"]   # 仅兼容旧配置；Plan bash 现由 Permissions 决定
 # planner_model = "deepseek-pro"      # 可选的低频规划器
 # subagent_model = "deepseek-pro"     # runAs=subagent skill 的默认模型
@@ -111,10 +110,8 @@ tool_timeout_seconds = { "generate_video" = 1800 }   # 可选：raw MCP tool 名
 
 完整 schema 与每个字段的契约见 [`SPEC.md` §5](./SPEC.md#5-configuration-toml)。
 
-旧字段 `[agent].plan_mode_allowed_tools` 仍会被解析并重新渲染。具体的
-`mcp__<server>__<tool>` 条目仅用于旧配置兼容；新安装或明确确认过的 MCP server 不再需要
-逐工具 reader 名单，其非破坏性的 `readOnlyHint` 工具会自动进入 planner 和只读 subagent。
-这个旧字段不会放行或阻断主 Plan 工作流中的调用。
+新安装或明确确认过的 MCP server 不需要逐工具 reader 名单，其非破坏性的
+`readOnlyHint` 工具会自动进入 planner 和只读 subagent。
 
 `[agent].plan_mode_read_only_commands` 也继续参与配置 round-trip，但主 Plan 工作流不再维护独立的
 bash allowlist 或信任提示。Plan 与常规模式使用相同的 Permissions 规则做 bash 分类和审批；Sandbox

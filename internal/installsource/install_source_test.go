@@ -30,7 +30,7 @@ func TestPluginGitCommandDisablesLineEndingConversion(t *testing.T) {
 	cmd := pluginGitCommand(context.Background(), "clone", "https://example.test/repo.git")
 	joined := strings.Join(cmd.Args, " ")
 	if !strings.Contains(joined, "-c core.autocrlf=false clone") {
-		t.Fatalf("plugin git command does not preserve signed package bytes: %v", cmd.Args)
+		t.Fatalf("plugin git command does not preserve approved source bytes: %v", cmd.Args)
 	}
 }
 

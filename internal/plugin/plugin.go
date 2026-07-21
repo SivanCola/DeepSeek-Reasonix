@@ -74,10 +74,6 @@ type Spec struct {
 	// annotations.readOnlyHint. Normal MCP classification relies on server
 	// metadata plus installation authorization.
 	ReadOnlyToolNames map[string]bool
-	// ReadOnlyModelToolNames marks model-visible MCP tool names
-	// ("mcp__<server>__<tool>") as read-only for internal profile compatibility
-	// without reverse-parsing normalized names back into raw server-local names.
-	ReadOnlyModelToolNames map[string]bool
 	// DefaultToolsApprovalMode controls MCP approval when no raw-tool override
 	// exists: auto|prompt|writes|approve. Empty uses auto unless the composition
 	// root marks this explicitly user-authorized server for implicit approval.
@@ -92,16 +88,10 @@ type Spec struct {
 	// It never contributes to SpecFingerprint or provider-visible tool schemas.
 	LaunchManager *mcplaunch.Manager
 	// ConfigSource disambiguates otherwise identical server names coming from
-	// workspace config, a host transport, or a verified plugin package.
-	ConfigSource           string
-	ImplicitApproval       bool
-	RequireLaunchApproval  bool
-	OfficialCatalogEntryID string
-	OfficialReaderNames    []string
-	PackageDigest          string
-	PackageRoot            string
-	VerifiedVersion        string
-	CatalogSequence        uint64
+	// workspace config, a host transport, or a user-installed plugin package.
+	ConfigSource          string
+	ImplicitApproval      bool
+	RequireLaunchApproval bool
 	// LaunchArgs and launcher metadata are host-local immutable resolutions for
 	// mutable package launchers. LauncherIdentityArgs is the same exact package
 	// resolution without an automatically injected offline/no-install flag: that
@@ -728,31 +718,6 @@ func (h *Host) Servers() []ServerStatus {
 	return out
 }
 
-// ApplyCatalogRevocations immediately removes official reader authority from
-// already-connected servers. Future lazy starts consult the same in-memory
-// revocation set before accepting signed reader declarations.
-func (h *Host) ApplyCatalogRevocations(revoked map[string]bool) {
-	if len(revoked) == 0 {
-		return
-	}
-	h.mu.RLock()
-	clients := append([]*Client(nil), h.clients...)
-	h.mu.RUnlock()
-	for _, client := range clients {
-		entryID := strings.TrimSpace(client.spec.OfficialCatalogEntryID)
-		if entryID == "" || !revoked[entryID] {
-			continue
-		}
-		client.toolsMu.Lock()
-		for _, adapter := range client.toolAdapters {
-			if remote, ok := adapter.(*remoteTool); ok {
-				remote.readOnlyTrusted = false
-			}
-		}
-		client.toolsMu.Unlock()
-	}
-}
-
 // Failures returns configured MCP servers that failed to connect.
 func (h *Host) Failures() []Failure {
 	h.mu.RLock()
@@ -1200,6 +1165,38 @@ func applyEstablishedLaunchGrant(s Spec, identity string) (Spec, error) {
 	return s, nil
 }
 
+// ResolveStoredAuthorization applies an existing exact project grant without
+// starting a process or opening a network connection. Cached lazy/on-demand
+// tools use it before strict read-only filtering so every execution path sees
+// the same server-level authorization. Errors fail closed by returning the
+// original unauthorized Spec; a parent connection surfaces the detailed error.
+func ResolveStoredAuthorization(ctx context.Context, s Spec) Spec {
+	if !s.RequireLaunchApproval {
+		return s
+	}
+	locked, err := applyStoredLauncherLock(s)
+	if err != nil {
+		return s
+	}
+	identity, err := specIdentityFingerprint(ctx, locked)
+	if err != nil {
+		return s
+	}
+	authorized, err := applyEstablishedLaunchGrant(locked, identity)
+	if err != nil {
+		return s
+	}
+	return authorized
+}
+
+// ServerAuthorized is the single MCP authorization source. Tools do not carry
+// an independent trust bit: installation or an exact project launch grant
+// authorizes the server, while read-only/destructive classification remains a
+// live per-tool safety fact.
+func (s Spec) ServerAuthorized() bool {
+	return s.ImplicitApproval && s.LaunchManager != nil
+}
+
 // newTransport builds the transport for a spec's declared type. Empty / unknown
 // defaults to stdio.
 func newTransport(ctx context.Context, s Spec) (transport, error) {
@@ -1361,7 +1358,7 @@ type mcpTool struct {
 // toolReadOnlyOverride keeps first-party and internal profile overrides useful
 // when an older MCP server omits readOnlyHint.
 func (s Spec) toolReadOnlyOverride(rawName, visibleName string) bool {
-	return s.ReadOnlyToolNames[rawName] || s.ReadOnlyModelToolNames[toolName(s.Name, visibleName)]
+	return s.ReadOnlyToolNames[rawName]
 }
 
 // ToolApprovalMode resolves the effective approval mode for one raw tool
@@ -1427,7 +1424,6 @@ func (c *Client) listTools(ctx context.Context) ([]tool.Tool, error) {
 		}
 		capability := capabilityOf(c.spec, t, schema)
 		readOnly := capability.ReadOnly
-		trusted := trustedReaderForSpec(c.spec, capability)
 		toolInfos = append(toolInfos, info)
 		tools = append(tools, &remoteTool{
 			client:                c,
@@ -1440,7 +1436,6 @@ func (c *Client) listTools(ctx context.Context) ([]tool.Tool, error) {
 			capabilityFingerprint: capabilityFingerprint(capability),
 			declaredReadOnly:      capability.ReadOnly,
 			readOnly:              readOnly,
-			readOnlyTrusted:       trusted,
 			destructive:           destructiveHint,
 		})
 	}
@@ -1633,11 +1628,8 @@ type remoteTool struct {
 	schema                json.RawMessage
 	outputSchema          json.RawMessage
 	capabilityFingerprint string
-	declaredReadOnly      bool // server hint/legacy override, independent of local trust
-	readOnly              bool // true only when the host accepts this reader snapshot
-	// readOnlyTrusted is true only when local configuration, not the server hint,
-	// classified the tool as read-only.
-	readOnlyTrusted bool
+	declaredReadOnly      bool // server hint/legacy override, independent of server authorization
+	readOnly              bool // effective reader classification for this live snapshot
 	// destructive is the MCP destructiveHint. It takes precedence over a
 	// conflicting readOnlyHint; the effective MCP approval mode decides whether
 	// it needs a fresh review.
@@ -1661,12 +1653,8 @@ func (t *remoteTool) MCPPackageName() string {
 	return t.client.spec.Package
 }
 
-// ReadOnlyExecutionAuthority reports whether this adapter's reader
-// classification comes from explicit local or signed package policy. Without a LaunchManager the
-// compatibility path derives readers from server hints, which must never
-// satisfy the strict read-only boundary.
-func (t *remoteTool) ReadOnlyExecutionAuthority() bool {
-	return t.client != nil && t.client.spec.LaunchManager != nil
+func (t *remoteTool) MCPServerAuthorized() bool {
+	return t.client != nil && t.client.spec.ServerAuthorized()
 }
 
 func (t *remoteTool) MCPCapabilityFingerprint() string {
@@ -1676,27 +1664,22 @@ func (t *remoteTool) MCPCapabilityFingerprint() string {
 // ReadOnly reflects MCP readOnlyHint plus backward-compatible Spec overrides.
 // It defaults to false, so opaque tools remain write-capable unless the server
 // or local configuration explicitly classifies them as read-only.
-func (t *remoteTool) securitySnapshot() (declaredReadOnly, readOnly, trusted, destructive bool, fingerprint string) {
+func (t *remoteTool) securitySnapshot() (declaredReadOnly, readOnly, destructive bool, fingerprint string) {
 	if t.client == nil {
-		return t.declaredReadOnly, t.readOnly, t.readOnlyTrusted, t.destructive, t.capabilityFingerprint
+		return t.declaredReadOnly, t.readOnly, t.destructive, t.capabilityFingerprint
 	}
 	t.client.toolsMu.Lock()
 	defer t.client.toolsMu.Unlock()
-	return t.declaredReadOnly, t.readOnly, t.readOnlyTrusted, t.destructive, t.capabilityFingerprint
+	return t.declaredReadOnly, t.readOnly, t.destructive, t.capabilityFingerprint
 }
 
 func (t *remoteTool) ReadOnly() bool {
-	_, readOnly, _, _, _ := t.securitySnapshot()
+	_, readOnly, _, _ := t.securitySnapshot()
 	return readOnly
 }
 
-func (t *remoteTool) PlanModeUntrustedReadOnly() bool {
-	_, readOnly, trusted, _, _ := t.securitySnapshot()
-	return readOnly && !trusted
-}
-
 func (t *remoteTool) MCPDestructiveHint() bool {
-	_, _, _, destructive, _ := t.securitySnapshot()
+	_, _, destructive, _ := t.securitySnapshot()
 	return destructive
 }
 
@@ -1736,16 +1719,16 @@ func (t *remoteTool) ExecuteWithImages(ctx context.Context, args json.RawMessage
 			return "", nil, fmt.Errorf("invalid args: %w", err)
 		}
 	}
-	_, readOnly, trusted, destructive, fingerprint := t.securitySnapshot()
+	_, readOnly, destructive, fingerprint := t.securitySnapshot()
 	if intent, ok := tool.ReaderExecutionIntentFrom(ctx); ok {
 		// Final, linearizable check for a reader-authorized call: the snapshot
-		// above and every authority mutation (catalog revocations, live security
-		// reconciliation) serialize on the owning client's toolsMu. A call that
-		// was approved as a non-destructive reader must never execute after authority
-		// changed — state drift here returns an actionable error instead of
+		// above and every live security reconciliation serialize on the owning
+		// client's toolsMu. A call approved as a non-destructive reader must never
+		// execute after authorization or safety metadata changed — state drift
+		// here returns an actionable error instead of
 		// dispatching.
-		if !readOnly || !trusted || destructive || (intent.CapabilityFingerprint != "" && fingerprint != "" && fingerprint != intent.CapabilityFingerprint) {
-			return "", nil, fmt.Errorf("MCP server %q no longer classifies tool %q as an authorized reader; the call was blocked before dispatch — reconnect the server from a parent session before retrying", t.client.name, t.rawName)
+		if !t.MCPServerAuthorized() || !readOnly || destructive || (intent.CapabilityFingerprint != "" && fingerprint != "" && fingerprint != intent.CapabilityFingerprint) {
+			return "", nil, fmt.Errorf("MCP server %q changed the authorization or security metadata for tool %q; the call was blocked before dispatch — refresh the server from a parent session before retrying", t.client.name, t.rawName)
 		}
 	}
 	res, err := t.client.call(ctx, "tools/call", map[string]any{

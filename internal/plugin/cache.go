@@ -36,7 +36,7 @@ func cacheableToolsOf(tools []tool.Tool) []CachedTool {
 		if !ok {
 			continue
 		}
-		declaredReadOnly, _, _, destructive, _ := rt.securitySnapshot()
+		declaredReadOnly, _, destructive, _ := rt.securitySnapshot()
 		out = append(out, CachedTool{
 			Name:         rt.rawName,
 			Description:  rt.desc,
@@ -114,9 +114,6 @@ func specFingerprintForURL(s Spec, urlValue string) string {
 	writeKeys(h, "headers", s.Headers)
 	if len(s.ReadOnlyToolNames) > 0 {
 		writeBoolKV(h, "read_only_tool", s.ReadOnlyToolNames)
-	}
-	if len(s.ReadOnlyModelToolNames) > 0 {
-		writeBoolKV(h, "read_only_model_tool", s.ReadOnlyModelToolNames)
 	}
 	return hex.EncodeToString(h.Sum(nil))
 }

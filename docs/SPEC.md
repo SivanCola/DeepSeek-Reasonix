@@ -358,18 +358,16 @@ func (p Policy) Decide(toolName string, readOnly bool, args json.RawMessage) Dec
   host enforces explicit phase opt-outs (`complete_step` is read-only but
   belongs to the post-approval execution phase, so it self-reports plan-unsafe
   and is refused) and hard-blocks installed MCP and proxy-resolved MCP
-  writer/destructive targets plus untrusted readers for the entire planning
+  writer/destructive targets plus readers from unauthorized servers for the entire planning
   phase — no approval releases them while Plan is active.
   Ordinary built-in and Bash calls then use the same Ask/Auto/YOLO, explicit
   `ask`/`deny`, and Sandbox path as Standard mode; blocked MCP writers regain
   their normal approval flow after Plan exits. A third-party MCP `readOnlyHint` affects ordinary permission and dispatch
   classification. Once the server is installed or its exact project identity is
   confirmed, non-destructive readers also enter the dedicated planner and
-  read-only sub-agent registries automatically. The legacy
-  `[agent].plan_mode_allowed_tools` field is still decoded and can act as a
-  concrete MCP read-only compatibility alias, while `plan_mode_read_only_commands` is
-  retained for config/session round trips. Neither field grants or revokes calls
-  in the main Plan workflow. `read_only_task` and `read_only_skill` remain strict
+  read-only sub-agent registries automatically. `plan_mode_read_only_commands` is
+  retained for config/session round trips and does not grant or revoke calls in
+  the main Plan workflow. `read_only_task` and `read_only_skill` remain strict
   read-only capabilities with their own tool registry and safe foreground Bash;
   writer-capable `task` and skill execution remain permission-gated instead of
   Plan-blocked, and their child turns inherit the Plan workflow marker and
@@ -605,7 +603,6 @@ default_model = "deepseek"   # provider name (→ its default model) or "provide
 system_prompt = "You are Reasonix, a coding agent..."  # or system_prompt_file = "..."
 temperature       = 0.0
 reasoning_language = "auto"       # visible reasoning text: auto|zh|en
-# plan_mode_allowed_tools = ["mcp__legacy__reader"]   # legacy MCP read-only alias; does not change Plan availability
 # plan_mode_read_only_commands = ["gh issue view"]   # legacy compatibility only; Plan bash uses Permissions
 # planner_model = "deepseek-pro"   # optional: two-model collaboration (low-frequency planner)
 # subagent_model = "deepseek-pro"   # optional default for runAs=subagent skills

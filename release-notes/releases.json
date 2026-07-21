@@ -1484,12 +1484,12 @@
         {
           "kind": "security",
           "title": {
-            "en": "Trusted MCP execution",
-            "zh": "MCP 可信执行"
+			"en": "MCP launch authorization",
+			"zh": "MCP 启动授权"
           },
           "body": {
-            "en": "MCP startup now verifies package identity, signed catalog metadata, approval receipts, executable paths, and credential boundaries before a server is trusted.",
-            "zh": "MCP 启动前会校验包身份、签名目录元数据、审批回执、可执行路径与凭据边界，避免旧授权被错误复用。"
+			"en": "User-installed MCP servers work immediately. Repository-declared servers still require one exact identity approval before startup, and identity changes invalidate that approval.",
+			"zh": "用户主动安装的 MCP server 可直接使用；仓库声明的 server 仍需在首次启动前确认一次精确身份，身份变化后原授权自动失效。"
           },
           "refs": [
             6482,

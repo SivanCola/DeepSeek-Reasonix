@@ -45,16 +45,16 @@ func (g *legacyPlanTrustGate) CheckPlanModeReadOnlyTrust(context.Context, PlanMo
 
 type annotatedMCPTool struct {
 	fakeTool
-	server            string
-	raw               string
-	destructive       bool
-	untrustedReadOnly bool
+	server           string
+	raw              string
+	destructive      bool
+	serverAuthorized bool
 }
 
-func (t annotatedMCPTool) MCPServerName() string           { return t.server }
-func (t annotatedMCPTool) MCPRawToolName() string          { return t.raw }
-func (t annotatedMCPTool) MCPDestructiveHint() bool        { return t.destructive }
-func (t annotatedMCPTool) PlanModeUntrustedReadOnly() bool { return t.untrustedReadOnly }
+func (t annotatedMCPTool) MCPServerName() string     { return t.server }
+func (t annotatedMCPTool) MCPRawToolName() string    { return t.raw }
+func (t annotatedMCPTool) MCPDestructiveHint() bool  { return t.destructive }
+func (t annotatedMCPTool) MCPServerAuthorized() bool { return t.serverAuthorized }
 
 type mcpPermissionRecordingGate struct {
 	normalCalls int
@@ -90,12 +90,12 @@ func TestPlanModeRoutesOrdinaryToolsThroughPermissionGate(t *testing.T) {
 		{name: "shell writer", tool: fakeTool{name: "bash"}, args: `{"command":"rm -rf build"}`},
 		{name: "reader", tool: fakeTool{name: "read_file", readOnly: true}, readOnly: true},
 		{
-			name: "host-trusted MCP reader",
+			name: "authorized MCP reader",
 			tool: annotatedMCPTool{
-				fakeTool:          fakeTool{name: "mcp__srv__query", readOnly: true},
-				server:            "srv",
-				raw:               "query",
-				untrustedReadOnly: false,
+				fakeTool:         fakeTool{name: "mcp__srv__query", readOnly: true},
+				server:           "srv",
+				raw:              "query",
+				serverAuthorized: true,
 			},
 			readOnly: true,
 		},
@@ -201,7 +201,6 @@ func TestPlanModeLegacyOverridesDoNotBypassPermissions(t *testing.T) {
 	gate := &recordingPermissionGate{reason: "denied"}
 	a := New(nil, reg, NewSession(""), Options{
 		Gate:                     gate,
-		PlanModeAllowedTools:     []string{"write_file"},
 		PlanModeReadOnlyCommands: []string{"gh issue view"},
 	}, event.Discard)
 	a.SetPlanMode(true)
@@ -281,14 +280,14 @@ func serializeToolSchemas(t *testing.T, schemas []provider.ToolSchema) string {
 	return string(b)
 }
 
-func TestUntrustedMCPReaderBlockedInMainPlanAndExcludedFromReadOnlyAgents(t *testing.T) {
+func TestUnauthorizedMCPReaderBlockedInMainPlanAndExcludedFromReadOnlyAgents(t *testing.T) {
 	parent := tool.NewRegistry()
 	parent.Add(fakeTool{name: "read_file", readOnly: true})
 	parent.Add(annotatedMCPTool{
-		fakeTool:          fakeTool{name: "mcp__srv__query", readOnly: true},
-		server:            "srv",
-		raw:               "query",
-		untrustedReadOnly: true,
+		fakeTool:         fakeTool{name: "mcp__srv__query", readOnly: true},
+		server:           "srv",
+		raw:              "query",
+		serverAuthorized: false,
 	})
 	gate := &recordingPermissionGate{allow: true}
 	a := New(nil, parent, NewSession(""), Options{Gate: gate}, event.Discard)
@@ -307,7 +306,7 @@ func TestUntrustedMCPReaderBlockedInMainPlanAndExcludedFromReadOnlyAgents(t *tes
 			t.Fatalf("%s registry lost local reader", name)
 		}
 		if _, ok := filtered.Get("mcp__srv__query"); ok {
-			t.Fatalf("%s registry admitted externally asserted reader", name)
+			t.Fatalf("%s registry admitted reader from unauthorized server", name)
 		}
 	}
 }

@@ -59,7 +59,6 @@ default_model = "deepseek-flash"   # executor; set [agent].planner_model to add 
 
 [agent]
 reasoning_language = "auto"      # visible reasoning text: auto|zh|en
-# plan_mode_allowed_tools = ["mcp__legacy__reader"]   # legacy MCP read-only alias; does not change Plan availability
 # plan_mode_read_only_commands = ["gh issue view"]   # legacy compatibility only; Plan bash now uses Permissions
 # planner_model = "deepseek-pro"      # optional low-frequency planner
 # subagent_model = "deepseek-pro"     # optional default for runAs=subagent skills
@@ -117,11 +116,9 @@ tool_timeout_seconds = { "generate_video" = 1800 }   # optional raw MCP tool nam
 
 For the full schema and every field's contract, see [`SPEC.md` §5](./SPEC.md#5-configuration-toml).
 
-The legacy `[agent].plan_mode_allowed_tools` field is still decoded and rendered
-for old configs, but newly installed or explicitly authorized MCP servers need
-no per-tool reader list. Their non-destructive `readOnlyHint` tools are available
-to planner and read-only sub-agent registries automatically. The legacy field
-never grants or revokes calls in the main Plan workflow.
+Newly installed or explicitly authorized MCP servers need no per-tool reader
+list. Their non-destructive `readOnlyHint` tools are available to planner and
+read-only sub-agent registries automatically.
 
 `[agent].plan_mode_read_only_commands` is also retained for config round trips,
 but the main Plan workflow no longer has a separate bash allowlist or trust
@@ -535,7 +532,7 @@ Mode meanings:
 | Ask | Prompts for fallback writer approvals. |
 | Auto | Auto-allows fallback approvals; explicit `ask` / `deny` rules still apply. |
 | YOLO | Skips ordinary tool approval prompts; `deny`, user `ask` questions, and plan approval prompts still wait. |
-| Plan | Directs the model to plan first — a plan-first workflow, not an all-tools read-only mode. Built-in writers still follow the active Ask/Auto/YOLO rules and Sandbox; installed MCP writers, destructive targets, and untrusted readers are hard-blocked for the whole planning phase (approval cannot release them; they return once Plan exits), and explicit phase-only tools such as `complete_step` wait until approval. |
+| Plan | Directs the model to plan first — a plan-first workflow, not an all-tools read-only mode. Built-in writers still follow the active Ask/Auto/YOLO rules and Sandbox; installed MCP writers, destructive targets, and readers from unauthorized servers are hard-blocked for the whole planning phase (approval cannot release them; they return once Plan exits), and explicit phase-only tools such as `complete_step` wait until approval. |
 | Goal | Pursues a saved objective until complete, blocked, or cleared. |
 
 ## Permissions & sandbox
@@ -661,7 +658,7 @@ those tools are also available to the dedicated planner and read-only research
 sub-agents without another per-tool setting. Tools without the hint remain
 write-capable. While planning, built-in
 writers keep the ordinary permission posture; installed MCP and proxy-resolved
-MCP writers, destructive targets, and untrusted readers are hard-blocked before
+MCP writers, destructive targets, and readers from unauthorized servers are hard-blocked before
 any approval and return to their normal approval flow once Plan exits.
 
 MCP `destructiveHint: true` is stricter than the read-only classification. Under
@@ -974,11 +971,10 @@ Every strict read-only child is built through one shared construction
 pairing — `RunReadOnlySubAgentWithSession` for batch children and
 `NewReadOnlyAgent` for the interactive two-model planner — which marks the
 child permanently read-only and applies a final registry filter. The filter
-removes writers, destructive MCP targets, MCP readers backed only by a
-third-party server hint, and every host-mutating tool. An MCP reader is
-eligible only when explicitly declared in local configuration or declared by
-a currently verified signed official package. Eligible readers may still
-start on demand. These are
+removes writers, destructive MCP targets, readers from unauthorized servers,
+and every host-mutating tool. A user-installed server is authorized immediately;
+a repository-declared server becomes eligible after its exact identity is
+confirmed once. Eligible readers may still start on demand. These are
 the strict read-only entrances:
 
 | Entrance | Purpose |

@@ -201,10 +201,9 @@ type lazyTool struct {
 	desc                  string
 	schema                json.RawMessage
 	capabilityFingerprint string
-	// readOnly/readOnlyTrusted are guarded by shared.mu because a live handshake
-	// can demote a stale cached reader before asking the model to retry.
-	readOnly        bool
-	readOnlyTrusted bool
+	// readOnly is guarded by shared.mu because a live handshake can demote a
+	// stale cached reader before asking the model to retry.
+	readOnly bool
 	// destructive is guarded by shared.mu because a live handshake may promote
 	// a stale cached false value before asking the model to retry.
 	destructive bool
@@ -241,10 +240,8 @@ func (lt *lazyTool) MCPPackageName() string {
 	return lt.shared.spec.Package
 }
 
-// ReadOnlyExecutionAuthority mirrors remoteTool: reader classification
-// counts for strict read-only execution only when launch state is available.
-func (lt *lazyTool) ReadOnlyExecutionAuthority() bool {
-	return lt.shared != nil && lt.shared.spec.LaunchManager != nil
+func (lt *lazyTool) MCPServerAuthorized() bool {
+	return lt.shared != nil && lt.shared.spec.ServerAuthorized()
 }
 
 func (lt *lazyTool) MCPCapabilityFingerprint() string {
@@ -254,14 +251,6 @@ func (lt *lazyTool) MCPCapabilityFingerprint() string {
 	lt.shared.mu.Lock()
 	defer lt.shared.mu.Unlock()
 	return lt.capabilityFingerprint
-}
-func (lt *lazyTool) PlanModeUntrustedReadOnly() bool {
-	if lt.shared == nil {
-		return lt.readOnly && !lt.readOnlyTrusted
-	}
-	lt.shared.mu.Lock()
-	defer lt.shared.mu.Unlock()
-	return lt.readOnly && !lt.readOnlyTrusted
 }
 func (lt *lazyTool) MCPDestructiveHint() bool {
 	if lt.shared == nil {
@@ -438,12 +427,10 @@ func (lt *lazyTool) reconcileLiveSafety(real tool.Tool) error {
 	}
 	live, err := ReconcileCachedToolSafety(lt.shared.spec.Name, lt.rawName, CachedToolSafety{
 		ReadOnly:              lt.readOnly,
-		TrustedReader:         lt.readOnlyTrusted,
 		Destructive:           lt.destructive,
 		CapabilityFingerprint: lt.capabilityFingerprint,
 	}, real)
 	lt.readOnly = live.ReadOnly
-	lt.readOnlyTrusted = live.TrustedReader
 	lt.destructive = live.Destructive
 	lt.capabilityFingerprint = live.CapabilityFingerprint
 	return err
@@ -465,19 +452,10 @@ func (lt *lazyTool) reconcileLiveSafety(real tool.Tool) error {
 // single Execute (use the controller's PluginCtx) — a turn-scoped ctx would
 // kill the stdio child between turns.
 func LazyToolset(spec Spec, cs *CachedSchema, host *Host, reg *tool.Registry, sessionCtx context.Context, kick bool) []tool.Tool {
-	// Resolve an already-authorized project server before constructing cached
-	// placeholders. Their approval policy is consulted before the background
-	// handshake finishes, so leaving the original project Spec here would cause
-	// one redundant approval even though the exact launch grant already exists.
-	if spec.RequireLaunchApproval {
-		if locked, err := applyStoredLauncherLock(spec); err == nil {
-			if identity, err := specIdentityFingerprint(sessionCtx, locked); err == nil {
-				if authorized, err := applyEstablishedLaunchGrant(locked, identity); err == nil {
-					spec = authorized
-				}
-			}
-		}
-	}
+	// Resolve an existing exact project grant before constructing cached
+	// placeholders. This is read-only host preparation; no MCP process or network
+	// connection starts here.
+	spec = ResolveStoredAuthorization(sessionCtx, spec)
 	spawnCtx, cancel := context.WithCancel(sessionCtx)
 	shared := &lazySpawn{
 		spec: spec,
@@ -526,7 +504,6 @@ func LazyToolset(spec Spec, cs *CachedSchema, host *Host, reg *tool.Registry, se
 			}
 			capability := cachedCapabilities[ct.Name]
 			readOnly := capability.ReadOnly
-			trusted := trustedReaderForSpec(spec, capability)
 			out = append(out, &lazyTool{
 				shared:                shared,
 				name:                  toolName(spec.Name, visibleName),
@@ -536,7 +513,6 @@ func LazyToolset(spec Spec, cs *CachedSchema, host *Host, reg *tool.Registry, se
 				schema:                ct.Schema,
 				capabilityFingerprint: capabilityFingerprint(cachedCapabilities[ct.Name]),
 				readOnly:              readOnly,
-				readOnlyTrusted:       trusted,
 				destructive:           ct.Destructive,
 				hasCache:              true,
 			})

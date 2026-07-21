@@ -486,7 +486,7 @@ func TestLazyToolsetInheritsInstalledServerReaderAuthorization(t *testing.T) {
 	if echo == nil || !echo.ReadOnly() {
 		t.Fatalf("installed cached reader missing or not read-only: %T", echo)
 	}
-	if untrusted, ok := echo.(tool.PlanModeUntrustedReadOnly); !ok || untrusted.PlanModeUntrustedReadOnly() {
+	if authority, ok := echo.(tool.MCPServerAuthorization); !ok || !authority.MCPServerAuthorized() {
 		t.Fatalf("lazy installed reader did not inherit authorization: %T", echo)
 	}
 }

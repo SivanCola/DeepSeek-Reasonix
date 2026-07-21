@@ -109,14 +109,13 @@ func TestLauncherLockRoundTrip(t *testing.T) {
 	}
 }
 
-func TestRetiredStateIsPreservedButIgnored(t *testing.T) {
+func TestRetiredToolTrustStateIsDropped(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, StateFilename)
 	workspaceFP := WorkspaceFingerprint("/workspace")
 	body := `{
   "version": 1,
   "receipts": [{"scope":"workspace","workspace_fingerprint":"` + workspaceFP + `","server":"legacy","config_source":"project_config","identity_fingerprint":"other","tools":[{"raw_name":"read","trusted_reader":true,"future":"keep"}]}],
-  "official_denials": [{"server":"official","future":"keep"}],
   "legacy_imports": {"future":"keep"}
 }`
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
@@ -133,9 +132,14 @@ func TestRetiredStateIsPreservedButIgnored(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, marker := range []string{`"tools"`, `"trusted_reader"`, `"future": "keep"`, `"official_denials"`, `"legacy_imports"`} {
+	for _, marker := range []string{`"legacy_imports"`, `"future": "keep"`} {
 		if !strings.Contains(string(written), marker) {
 			t.Fatalf("retired state marker %s was lost:\n%s", marker, written)
+		}
+	}
+	for _, marker := range []string{`"tools"`, `"trusted_reader"`} {
+		if strings.Contains(string(written), marker) {
+			t.Fatalf("retired tool trust marker %s survived:\n%s", marker, written)
 		}
 	}
 	var decoded map[string]json.RawMessage
@@ -144,27 +148,6 @@ func TestRetiredStateIsPreservedButIgnored(t *testing.T) {
 	}
 	if len(decoded["launch_grants"]) == 0 {
 		t.Fatal("new launch grant missing")
-	}
-}
-
-func TestExactLegacyReceiptMigratesOnlyToLaunchGrant(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, StateFilename)
-	workspaceFP := WorkspaceFingerprint("/workspace")
-	body := `{"version":1,"receipts":[{"scope":"workspace","workspace_fingerprint":"` + workspaceFP + `","server":"project","config_source":"workspace_config","identity_fingerprint":"identity","tools":[{"raw_name":"read","trusted_reader":true}]}]}`
-	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	manager := NewManager(path, "/workspace")
-	if authorized, changed, err := manager.LaunchAuthorized("project", "project_config", "identity"); err != nil || !authorized || changed {
-		t.Fatalf("legacy launch migration = (%v,%v,%v)", authorized, changed, err)
-	}
-	state, err := manager.Load()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(state.LaunchGrants) != 1 || len(state.LegacyReceipts) != 1 {
-		t.Fatalf("migration state = %+v", state)
 	}
 }
 

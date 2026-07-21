@@ -27,7 +27,7 @@ type UseCapabilityTool struct {
 	// timeout. nil falls back to context.Background() for direct/test use.
 	lifeCtx context.Context
 	// specs are the boot-converted plugin specs (env expansion, workspace
-	// overrides, timeouts, trusted read-only tools). The proxy never rebuilds
+	// overrides, timeouts, and read-only overrides). The proxy never rebuilds
 	// specs from raw config entries — that would fork the conversion logic.
 	specs    []plugin.Spec
 	registry *tool.Registry // live registry for already-exposed MCP tools
@@ -358,6 +358,7 @@ func (t *UseCapabilityTool) resolveCall(ctx context.Context, id string, args jso
 	if !ok {
 		return t.resolveUnavailable(base, id, modelName, fmt.Sprintf("MCP server %q is not configured", server)), nil
 	}
+	spec = plugin.ResolveStoredAuthorization(ctx, spec)
 	destructive := false
 	if t.catalog != nil {
 		if entry, found := t.catalog().Lookup(id); found {
@@ -365,29 +366,22 @@ func (t *UseCapabilityTool) resolveCall(ctx context.Context, id string, args jso
 		}
 	}
 	readOnly := false
-	trustedReader := false
 	capabilityFingerprint := ""
 	if cached, found := plugin.CachedToolSafetyForSpec(spec, raw); found {
 		destructive = destructive || cached.Destructive
 		readOnly = cached.ReadOnly
-		trustedReader = cached.TrustedReader
 		capabilityFingerprint = cached.CapabilityFingerprint
 	} else if spec.LaunchManager == nil {
-		// Compatibility for direct library users that have no host trust store.
-		readOnly = spec.ReadOnlyToolNames[raw] || spec.ReadOnlyModelToolNames[modelName]
-		trustedReader = readOnly
+		// Compatibility for direct library users that have no host authorization store.
+		readOnly = spec.ReadOnlyToolNames[raw]
 	}
 	lazy := &onDemandMCPTool{proxy: t, spec: spec, server: server, raw: raw, modelName: modelName, destructive: destructive}
 	lazy.readOnly = readOnly
-	lazy.readOnlyTrusted = trustedReader
 	lazy.capabilityFingerprint = capabilityFingerprint
-	// Strict read-only execution requires host-local policy authority. A server
-	// hint alone keeps ordinary approval smooth but cannot admit a strict child.
-	lazy.readerAuthority = spec.LaunchManager != nil
 	base.Target = lazy
 	base.TargetName = modelName
 	// Cached server hints control ordinary approval. Strict read-only execution
-	// additionally requires an explicit local or signed reader declaration.
+	// additionally requires server authorization and live read-only metadata.
 	base.ReadOnly = lazy.ReadOnly()
 	if len(args) == 0 {
 		base.Args = json.RawMessage(`{}`)
@@ -446,9 +440,7 @@ type onDemandMCPTool struct {
 	// is detected in Execute and deferred to a fresh-approved retry.
 	destructive           bool
 	readOnly              bool
-	readOnlyTrusted       bool
 	capabilityFingerprint string
-	readerAuthority       bool
 }
 
 func (o *onDemandMCPTool) Name() string { return o.modelName }
@@ -463,13 +455,9 @@ func (o *onDemandMCPTool) ReadOnly() bool {
 	return o.readOnly
 }
 
-func (o *onDemandMCPTool) PlanModeUntrustedReadOnly() bool {
-	return o.readOnly && !o.readOnlyTrusted
-}
-
 func (o *onDemandMCPTool) ReadOnlyExecutionHostMutation() bool { return true }
 
-func (o *onDemandMCPTool) ReadOnlyExecutionAuthority() bool { return o.readerAuthority }
+func (o *onDemandMCPTool) MCPServerAuthorized() bool { return o.spec.ServerAuthorized() }
 
 func (o *onDemandMCPTool) ReadOnlyExecutionBlockReason() string {
 	return "connect this MCP capability from a parent session first"
@@ -514,7 +502,6 @@ func (o *onDemandMCPTool) Execute(ctx context.Context, args json.RawMessage) (st
 	}
 	if _, err := plugin.ReconcileCachedToolSafety(o.server, o.raw, plugin.CachedToolSafety{
 		ReadOnly:              o.readOnly,
-		TrustedReader:         o.readOnlyTrusted,
 		Destructive:           o.destructive,
 		CapabilityFingerprint: o.capabilityFingerprint,
 	}, target); err != nil {
@@ -615,7 +602,7 @@ func (t *UseCapabilityTool) ConnectedProxyTools() map[string][]plugin.CachedTool
 
 // specFor looks up the boot-converted spec for server. The proxy deliberately
 // holds []plugin.Spec, not raw config entries: env expansion, workspace
-// overrides, call timeouts, and trusted read-only tool names all live in the
+// overrides, call timeouts, and read-only tool names all live in the
 // shared conversion and must not be re-derived here.
 func (t *UseCapabilityTool) specFor(server string) (plugin.Spec, bool) {
 	for _, s := range t.specs {

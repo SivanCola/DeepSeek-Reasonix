@@ -713,8 +713,6 @@ export interface ServerView {
   authUrl?: string;
   authConfigured?: boolean;
   managedByPlugin?: string;
-  catalogSequence?: number;
-  verifiedVersion?: string;
 }
 export type MCPApprovalMode = "auto" | "prompt" | "writes" | "approve";
 export type MCPApprovalsReviewer = "user" | "auto_review";
@@ -813,13 +811,6 @@ export interface PluginView {
   mcpServerDetails?: PluginMCPServerView[];
   warnings?: string[];
   error?: string;
-  verification?: {
-    catalogEntryId: string;
-    commit: string;
-    packageSha256: string;
-    verifiedAt: string;
-    catalogSequence: number;
-  };
 }
 export interface PluginCompatibilityIssue {
   capability: string;
