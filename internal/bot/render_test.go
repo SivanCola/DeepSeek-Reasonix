@@ -21,7 +21,7 @@ func TestApprovalCardCarriesChatType(t *testing.T) {
 			NextTool: "write_file", NextAction: "edit a.go", ChangeRationale: "strategy change",
 			SourceAgent: "subagent",
 		},
-	}); !strings.Contains(got, "Auto Guard") || !strings.Contains(got, "recovery-continue") {
+	}); !strings.Contains(got, "执行前确认") || !strings.Contains(got, "回复 1 继续，2 换个办法") || strings.Contains(got, "Auto Guard") {
 		t.Fatalf("recovery text = %q", got)
 	}
 

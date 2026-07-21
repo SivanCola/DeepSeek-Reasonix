@@ -75,11 +75,15 @@ type DecisionResult struct {
 // Order is fixed by product policy:
 //  1. non-Auto → bypass ordinary approval
 //  2. read-only diagnosis → allow
-//  3. deterministic high risk → ask
+//  3. deterministic hard boundary → ask
 //  4. no active failure → allow ordinary mutations
 //  5. first safe verification retry → allow (+ consume budget)
-//  6. expanded scope / method change / second failure → ask
+//  6. three consecutive failures → ask
 //  7. remaining failure-recovery mutations → reviewer
+//
+// Scope and strategy changes are not user decisions by themselves. When they
+// remain inside the host's ordinary workspace/sandbox boundary, Auto handles
+// them through the reviewer instead of interrupting the user.
 func Decide(f Facts) DecisionResult {
 	if !f.AutoMode {
 		return DecisionResult{Route: RouteBypass}
@@ -101,14 +105,9 @@ func Decide(f Facts) DecisionResult {
 	if f.SafeRetryAvailable {
 		return DecisionResult{Route: RouteAllow, ConsumeSafeRetry: true}
 	}
-	if f.ExpandedScope {
-		return DecisionResult{Route: RouteAsk, AskReason: AskScope}
-	}
-	if f.StrategyChanged {
-		return DecisionResult{Route: RouteAsk, AskReason: AskStrategy}
-	}
-	// A second qualifying failure during the same recovery process needs a human.
-	if f.FailureCount >= 2 {
+	// Escalate only after a bounded series of failed attempts. Scope and method
+	// changes take the reviewer path below and do not prompt on their own.
+	if f.FailureCount >= 3 {
 		return DecisionResult{Route: RouteAsk, AskReason: AskRepeat}
 	}
 	return DecisionResult{Route: RouteReview}

@@ -89,27 +89,11 @@ func IsHighRiskMutation(proposal Proposal) bool {
 		cmd := commandFromArgs(proposal.Args)
 		return bashIsHighRisk(cmd)
 	}
-	if isFileMutationTool(tool) {
-		// Every built-in file mutator can change dependency or configuration
-		// surfaces. Classify all of their source/destination paths instead of only
-		// the common write/edit tools so a delete or rename cannot bypass Auto Guard.
-		for _, path := range pathsFromArgs(proposal.Args) {
-			if isConfigOrDependencyPath(path) {
-				return true
-			}
-		}
-	}
+	// Workspace file tools remain on Auto's fast path, including dependency,
+	// configuration, and workflow files. Sandbox and explicit approval policy
+	// still own writes outside the workspace; this layer only adds hard-boundary
+	// confirmation for commands the host can classify deterministically.
 	return false
-}
-
-func isFileMutationTool(tool string) bool {
-	switch strings.TrimSpace(tool) {
-	case "write_file", "edit_file", "multi_edit", "multi-edit", "notebook_edit",
-		"move_file", "delete_range", "delete_symbol":
-		return true
-	default:
-		return false
-	}
 }
 
 // ClassifyEmptySearch reports whether a successful read-only search produced
@@ -211,66 +195,17 @@ func normalizeCommand(s string) string {
 	return strings.Join(strings.Fields(strings.TrimSpace(s)), " ")
 }
 
-func isConfigOrDependencyPath(path string) bool {
-	path = strings.ToLower(filepath.ToSlash(strings.TrimSpace(path)))
-	if path == "" {
-		return false
-	}
-	base := filepath.Base(path)
-	switch base {
-	case "package.json", "package-lock.json", "pnpm-lock.yaml", "yarn.lock",
-		"pnpm-workspace.yaml", "go.mod", "go.sum", "go.work", "go.work.sum",
-		"cargo.toml", "cargo.lock", "pyproject.toml",
-		"requirements.txt", "poetry.lock", "composer.json", "gemfile",
-		"gemfile.lock", ".env", ".env.local", "dockerfile", "docker-compose.yml",
-		"docker-compose.yaml", "compose.yml", "compose.yaml", "makefile", "justfile",
-		"taskfile.yml", "taskfile.yaml", "jenkinsfile", ".gitlab-ci.yml", ".gitlab-ci.yaml",
-		"azure-pipelines.yml", "azure-pipelines.yaml", "reasonix.toml", "config.toml",
-		".npmrc", ".yarnrc", "biome.json", "biome.jsonc":
-		return true
-	}
-	if strings.HasPrefix(base, ".env.") ||
-		strings.HasPrefix(base, "dockerfile.") ||
-		(strings.HasPrefix(base, "tsconfig") && strings.HasSuffix(base, ".json")) ||
-		(strings.HasPrefix(base, "jsconfig") && strings.HasSuffix(base, ".json")) ||
-		strings.Contains(base, ".config.") ||
-		strings.HasPrefix(base, ".eslintrc") ||
-		strings.HasPrefix(base, ".prettierrc") ||
-		strings.HasPrefix(base, ".stylelintrc") ||
-		strings.HasPrefix(base, ".babelrc") {
-		return true
-	}
-	scopedPath := "/" + strings.TrimPrefix(path, "./")
-	if strings.Contains(scopedPath, "/.github/workflows/") ||
-		strings.Contains(scopedPath, "/.circleci/") ||
-		strings.Contains(scopedPath, "/.gitlab/") {
-		return true
-	}
-	if strings.Contains(path, "/.git/") || strings.HasSuffix(path, "/.git") {
-		return true
-	}
-	return false
-}
-
 func bashIsHighRisk(command string) bool {
 	command = strings.TrimSpace(command)
 	if command == "" {
 		return true
 	}
 	lower := strings.ToLower(command)
-	// Install / package manager / destructive patterns.
+	// Fast markers cover destructive redirection and commands whose static
+	// tokenization may be obscured by shell punctuation. Project-local installs
+	// and version-controlled configuration edits intentionally stay automatic.
 	riskMarkers := []string{
 		"rm -", "rmdir", "unlink ", "shred ",
-		"npm install", "npm i ", "pnpm install", "yarn add", "yarn install",
-		"pip install", "pip3 install", "go get ", "go install ",
-		"go env -w", "go env -u", "go mod tidy", "go mod edit", "go work ",
-		"cargo add ", "cargo remove ", "cargo install", "cargo uninstall",
-		"cargo publish", "cargo yank", "cargo update",
-		"composer install", "composer require", "composer remove", "composer update",
-		"poetry add", "poetry remove", "poetry install", "poetry update", "poetry publish",
-		"uv add", "uv remove", "uv sync", "uv lock", "uv publish",
-		"brew install", "apt install", "apt-get install", "dnf install",
-		"docker ", "kubectl ", "terraform ",
 		"git push", "git reset --hard", "git clean",
 		"chmod ", "chown ", "mkfs", "dd if=",
 		"> /", ">> /",
@@ -318,49 +253,48 @@ func commandFieldsHighRisk(fields []string) bool {
 	case "rm", "rmdir", "unlink", "shred", "dd", "mkfs", "chmod", "chown",
 		"docker", "kubectl", "terraform":
 		return true
-	case "sed":
-		return hasSedInPlaceFlag(args) && containsConfigOrDependencyPath(args)
-	case "cp", "install":
-		return lastConfigOrDependencyPath(args)
-	case "mv", "touch", "truncate":
-		return containsConfigOrDependencyPath(args)
 	case "git":
-		return containsAny(args, "push", "reset", "clean", "checkout", "switch", "branch", "tag", "rebase", "merge", "config", "remote")
+		return containsAny(args, "push", "clean") ||
+			(containsAny(args, "reset") && containsAny(args, "--hard")) ||
+			(containsAny(args, "config") && containsAny(args, "--global", "--system"))
 	case "npm":
-		return containsAny(args, "install", "i", "add", "uninstall", "remove", "rm", "update", "upgrade", "publish", "unpublish", "link", "unlink", "config")
+		return containsAny(args, "publish", "unpublish", "link", "unlink", "config") || hasGlobalFlag(args)
 	case "pnpm":
-		return containsAny(args, "install", "i", "add", "remove", "rm", "update", "up", "publish", "deploy", "link", "unlink", "patch", "import")
+		return containsAny(args, "publish", "deploy", "link", "unlink") || hasGlobalFlag(args)
 	case "yarn":
-		return containsAny(args, "install", "add", "remove", "upgrade", "up", "set", "link", "unlink", "publish")
+		return containsAny(args, "publish", "link", "unlink") || hasGlobalFlag(args)
 	case "pip", "pip3", "pipx":
+		// Python installers mutate the active interpreter environment unless the
+		// host can prove a project-local target, which this command layer cannot.
 		return containsAny(args, "install", "uninstall", "inject", "upgrade")
 	case "brew", "apt", "apt-get", "dnf", "yum", "apk", "pacman":
 		return containsAny(args, "install", "add", "remove", "uninstall", "upgrade", "update")
 	case "go":
-		if containsAny(args, "get", "install", "clean") {
+		if containsAny(args, "install", "clean") {
 			return true
 		}
 		if containsAny(args, "env") && containsAny(args, "-w", "-u") {
 			return true
 		}
-		if containsAny(args, "mod") && containsAny(args, "tidy", "edit", "init", "download") {
-			return true
-		}
-		return containsAny(args, "work") && containsAny(args, "init", "use", "edit", "sync")
+		return false
 	case "cargo":
-		return containsAny(args, "add", "remove", "install", "uninstall", "publish", "yank", "update", "clean", "login", "logout")
+		return containsAny(args, "install", "uninstall", "publish", "yank", "login", "logout")
 	case "composer":
-		return containsAny(args, "install", "require", "remove", "update", "config")
+		return containsAny(args, "config") && hasGlobalFlag(args)
 	case "poetry":
-		return containsAny(args, "add", "remove", "install", "update", "publish", "config", "lock")
+		return containsAny(args, "publish", "config")
 	case "uv":
-		return containsAny(args, "add", "remove", "sync", "lock", "publish", "install", "uninstall")
+		return containsAny(args, "publish", "tool")
 	case "dotnet":
-		return containsAny(args, "add", "remove", "install", "uninstall", "update", "push", "delete")
+		return containsAny(args, "push", "delete") || hasGlobalFlag(args)
 	case "gem", "bundle", "bundler":
 		return containsAny(args, "install", "uninstall", "update", "add", "remove", "push", "yank", "publish")
 	}
 	return false
+}
+
+func hasGlobalFlag(fields []string) bool {
+	return containsAny(fields, "-g", "--global", "--system", "--user")
 }
 
 func unwrapEnvCommand(args []string) ([]string, bool) {
@@ -411,37 +345,6 @@ func trimLeadingOptions(args []string) []string {
 		args = args[1:]
 	}
 	return args
-}
-
-func containsConfigOrDependencyPath(fields []string) bool {
-	for _, field := range fields {
-		if strings.HasPrefix(field, "-") {
-			continue
-		}
-		if isConfigOrDependencyPath(field) {
-			return true
-		}
-	}
-	return false
-}
-
-func lastConfigOrDependencyPath(fields []string) bool {
-	for i := len(fields) - 1; i >= 0; i-- {
-		if strings.HasPrefix(fields[i], "-") {
-			continue
-		}
-		return isConfigOrDependencyPath(fields[i])
-	}
-	return false
-}
-
-func hasSedInPlaceFlag(args []string) bool {
-	for _, arg := range args {
-		if arg == "-i" || strings.HasPrefix(arg, "-i") || arg == "--in-place" || strings.HasPrefix(arg, "--in-place=") {
-			return true
-		}
-	}
-	return false
 }
 
 func lowerFields(fields []string) []string {

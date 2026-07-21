@@ -515,8 +515,8 @@ func approvalKeyboard(id string) *InlineKeyboard {
 func recoveryKeyboard(id string) *InlineKeyboard {
 	return &InlineKeyboard{Rows: []InlineKeyboardRow{{
 		Buttons: []InlineKeyboardButton{
-			{ID: "recovery_continue", Label: "1 继续此变更", Style: 1, CallbackID: "/recovery-continue " + id},
-			{ID: "recovery_revise", Label: "2 修改方案", Style: 0, CallbackID: "/recovery-revise " + id},
+			{ID: "recovery_continue", Label: "1 继续", Style: 1, CallbackID: "/recovery-continue " + id},
+			{ID: "recovery_revise", Label: "2 换个办法", Style: 0, CallbackID: "/recovery-revise " + id},
 		},
 	}}}
 }
@@ -535,39 +535,21 @@ func renderApprovalText(a event.Approval) string {
 
 func renderRecoveryText(a event.Approval) string {
 	var b strings.Builder
-	b.WriteString("🛟 Auto Guard 自动防护\n")
+	b.WriteString("⚠️ 执行前确认\n")
 	rec := a.Recovery
 	if rec != nil {
-		if rec.FailedSummary != "" {
-			fmt.Fprintf(&b, "失败: %s", rec.FailedSummary)
-			if rec.FailedTool != "" {
-				fmt.Fprintf(&b, "（%s）", rec.FailedTool)
-			}
-			b.WriteString("\n")
-		}
-		if rec.Diagnosis != "" {
-			fmt.Fprintf(&b, "诊断: %s\n", rec.Diagnosis)
-		}
 		next := firstNonEmptyBot(rec.NextAction, a.Subject, a.Tool)
 		if next != "" {
-			fmt.Fprintf(&b, "下一步: %s", next)
-			if rec.NextTool != "" && rec.NextTool != next {
-				fmt.Fprintf(&b, "（%s）", rec.NextTool)
-			}
-			b.WriteString("\n")
+			fmt.Fprintf(&b, "即将执行: %s\n", next)
 		}
 		why := firstNonEmptyBot(rec.ChangeRationale, rec.ReviewRationale, a.Reason)
 		if why != "" {
-			fmt.Fprintf(&b, "为何确认: %s\n", why)
-		}
-		if rec.SourceAgent != "" {
-			fmt.Fprintf(&b, "来源: %s\n", rec.SourceAgent)
+			fmt.Fprintf(&b, "原因: %s\n", why)
 		}
 	} else {
-		fmt.Fprintf(&b, "工具: %s\n操作: %s\n", a.Tool, a.Subject)
+		fmt.Fprintf(&b, "即将执行: %s\n", firstNonEmptyBot(a.Subject, a.Tool))
 	}
-	fmt.Fprintf(&b, "\nID: `%s`\n回复 1 继续此变更，2 修改方案。\n也可用 /recovery-continue %s、/recovery-revise %s [说明]。",
-		a.ID, a.ID, a.ID)
+	fmt.Fprintf(&b, "\nID: `%s`\n回复 1 继续，2 换个办法。", a.ID)
 	return b.String()
 }
 
@@ -588,13 +570,13 @@ func approvalCard(a event.Approval, chatType ChatType, userID string) *Interacti
 
 func recoveryCard(a event.Approval, chatType ChatType, userID string) *InteractiveCard {
 	return &InteractiveCard{
-		Header: "Auto Guard 自动防护",
+		Header: "执行前确认",
 		Elements: []InteractiveCardElement{
 			{Tag: "markdown", Content: renderRecoveryText(a)},
 			{Tag: "action", Extra: map[string]any{
 				"actions": []map[string]any{
-					{"tag": "button", "text": map[string]string{"tag": "plain_text", "content": "继续此变更"}, "type": "primary", "value": cardActionValue("/recovery-continue "+a.ID, chatType, userID)},
-					{"tag": "button", "text": map[string]string{"tag": "plain_text", "content": "修改方案"}, "type": "default", "value": cardActionValue("/recovery-revise "+a.ID, chatType, userID)},
+					{"tag": "button", "text": map[string]string{"tag": "plain_text", "content": "继续"}, "type": "primary", "value": cardActionValue("/recovery-continue "+a.ID, chatType, userID)},
+					{"tag": "button", "text": map[string]string{"tag": "plain_text", "content": "换个办法"}, "type": "default", "value": cardActionValue("/recovery-revise "+a.ID, chatType, userID)},
 				},
 			}},
 		},

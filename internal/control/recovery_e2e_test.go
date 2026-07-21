@@ -17,7 +17,7 @@ import (
 )
 
 // End-to-end: scripted provider fails verification, runs read-only diagnosis,
-// then a strategy-changing write waits for Continue before executing.
+// then a remote-write boundary waits for Continue before executing.
 // Also verifies recovery sidecar persistence and content-free metrics.
 func TestRecoveryCheckpointScriptedE2E(t *testing.T) {
 	dir := t.TempDir()
@@ -25,16 +25,14 @@ func TestRecoveryCheckpointScriptedE2E(t *testing.T) {
 
 	bash := &recoveryWriteTool{name: "bash", failOnce: true}
 	read := &recoveryWriteTool{name: "read_file", readOnly: true}
-	write := &recoveryWriteTool{name: "write_file"}
 	reg := tool.NewRegistry()
 	reg.Add(bash)
 	reg.Add(read)
-	reg.Add(write)
 
 	prov := &recordingProvider{streams: [][]provider.Chunk{
 		{{Type: provider.ChunkToolCall, ToolCall: &provider.ToolCall{ID: "1", Name: "bash", Arguments: `{"command":"go test ./..."}`}}},
 		{{Type: provider.ChunkToolCall, ToolCall: &provider.ToolCall{ID: "2", Name: "read_file", Arguments: `{"path":"main.go"}`}}},
-		{{Type: provider.ChunkToolCall, ToolCall: &provider.ToolCall{ID: "3", Name: "write_file", Arguments: `{"path":"fixed.go","content":"x"}`}}},
+		{{Type: provider.ChunkToolCall, ToolCall: &provider.ToolCall{ID: "3", Name: "bash", Arguments: `{"command":"git push origin feature"}`}}},
 		{{Type: provider.ChunkText, Text: "done"}},
 	}}
 
@@ -62,8 +60,8 @@ func TestRecoveryCheckpointScriptedE2E(t *testing.T) {
 			}
 			for _, st := range gate.Snapshot().Tasks {
 				if st != nil && st.ApprovalID != "" {
-					// Card visible: write must not have executed yet.
-					if write.runs != 0 {
+					// Card visible: only the failed verifier has executed.
+					if bash.runs != 1 {
 						return
 					}
 					_ = c.ResolveRecovery(st.ApprovalID, agent.RecoveryActionContinue, "")
@@ -78,14 +76,11 @@ func TestRecoveryCheckpointScriptedE2E(t *testing.T) {
 		t.Fatalf("Run: %v", err)
 	}
 
-	if write.runs != 1 {
-		t.Fatalf("write runs = %d, want 1 after continue", write.runs)
-	}
 	if read.runs < 1 {
 		t.Fatalf("expected read-only diagnosis, runs=%d", read.runs)
 	}
-	if bash.runs < 1 {
-		t.Fatalf("expected failing verification, bash runs=%d", bash.runs)
+	if bash.runs != 2 {
+		t.Fatalf("bash runs = %d, want failed verification plus confirmed push", bash.runs)
 	}
 
 	// Sidecar persistence (write a synthetic session path under temp dir).

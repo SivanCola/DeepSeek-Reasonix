@@ -47,16 +47,14 @@ func (recoveryTestFailError) Error() string { return "exit status 1" }
 
 var errRecoveryTestFail = recoveryTestFailError{}
 
-func TestRecoveryCheckpointBlocksStrategyChangeUntilContinue(t *testing.T) {
+func TestRecoveryHardBoundaryBlocksUntilContinue(t *testing.T) {
 	bash := &recoveryWriteTool{name: "bash", failOnce: true}
-	write := &recoveryWriteTool{name: "write_file"}
 	reg := tool.NewRegistry()
 	reg.Add(bash)
-	reg.Add(write)
 
 	prov := &recordingProvider{streams: [][]provider.Chunk{
 		{{Type: provider.ChunkToolCall, ToolCall: &provider.ToolCall{ID: "1", Name: "bash", Arguments: `{"command":"go test ./..."}`}}},
-		{{Type: provider.ChunkToolCall, ToolCall: &provider.ToolCall{ID: "2", Name: "write_file", Arguments: `{"path":"a.go","content":"x"}`}}},
+		{{Type: provider.ChunkToolCall, ToolCall: &provider.ToolCall{ID: "2", Name: "bash", Arguments: `{"command":"git push origin feature"}`}}},
 		{{Type: provider.ChunkText, Text: "done"}},
 	}}
 
@@ -96,24 +94,19 @@ func TestRecoveryCheckpointBlocksStrategyChangeUntilContinue(t *testing.T) {
 	}
 	<-done
 
-	if bash.runs < 1 {
-		t.Fatalf("expected failing bash to run")
-	}
-	if write.runs != 1 {
-		t.Fatalf("write runs = %d, want 1 after continue", write.runs)
+	if bash.runs != 2 {
+		t.Fatalf("bash runs = %d, want failed verification plus confirmed push", bash.runs)
 	}
 }
 
-func TestRecoveryReviseBlocksWrite(t *testing.T) {
+func TestRecoveryReviseBlocksBoundaryAction(t *testing.T) {
 	bash := &recoveryWriteTool{name: "bash", failOnce: true}
-	write := &recoveryWriteTool{name: "write_file"}
 	reg := tool.NewRegistry()
 	reg.Add(bash)
-	reg.Add(write)
 
 	prov := &recordingProvider{streams: [][]provider.Chunk{
 		{{Type: provider.ChunkToolCall, ToolCall: &provider.ToolCall{ID: "1", Name: "bash", Arguments: `{"command":"go test ./pkg"}`}}},
-		{{Type: provider.ChunkToolCall, ToolCall: &provider.ToolCall{ID: "2", Name: "write_file", Arguments: `{"path":"a.go","content":"x"}`}}},
+		{{Type: provider.ChunkToolCall, ToolCall: &provider.ToolCall{ID: "2", Name: "bash", Arguments: `{"command":"git push origin feature"}`}}},
 		{{Type: provider.ChunkText, Text: "done"}},
 	}}
 
@@ -149,8 +142,8 @@ func TestRecoveryReviseBlocksWrite(t *testing.T) {
 	if err := c.Run(context.Background(), "test then fix"); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	if write.runs != 0 {
-		t.Fatalf("write must not run after revise, runs=%d", write.runs)
+	if bash.runs != 1 {
+		t.Fatalf("push must not run after revise, bash runs=%d", bash.runs)
 	}
 	if len(prov.requests) == 0 {
 		t.Fatal("expected provider requests")
@@ -200,13 +193,11 @@ func TestRecoveryInactiveUnderYolo(t *testing.T) {
 
 func TestRecoveryHeadlessBlocksInsteadOfWaiting(t *testing.T) {
 	bash := &recoveryWriteTool{name: "bash", failOnce: true}
-	write := &recoveryWriteTool{name: "write_file"}
 	reg := tool.NewRegistry()
 	reg.Add(bash)
-	reg.Add(write)
 	prov := &recordingProvider{streams: [][]provider.Chunk{
 		{{Type: provider.ChunkToolCall, ToolCall: &provider.ToolCall{ID: "1", Name: "bash", Arguments: `{"command":"go test ./..."}`}}},
-		{{Type: provider.ChunkToolCall, ToolCall: &provider.ToolCall{ID: "2", Name: "write_file", Arguments: `{"path":"a.go","content":"x"}`}}},
+		{{Type: provider.ChunkToolCall, ToolCall: &provider.ToolCall{ID: "2", Name: "bash", Arguments: `{"command":"git push origin feature"}`}}},
 		{{Type: provider.ChunkText, Text: "reported blocker"}},
 	}}
 	sess := agent.NewSession("sys")
@@ -224,8 +215,8 @@ func TestRecoveryHeadlessBlocksInsteadOfWaiting(t *testing.T) {
 	if err := c.Run(ctx, "test then fix"); err != nil {
 		t.Fatalf("headless Run: %v", err)
 	}
-	if write.runs != 0 {
-		t.Fatalf("headless recovery must block the write, runs=%d", write.runs)
+	if bash.runs != 1 {
+		t.Fatalf("headless recovery must block the push, bash runs=%d", bash.runs)
 	}
 	if got := requestMessagesText(prov.requests[len(prov.requests)-1].Messages); !strings.Contains(got, "no decision channel") {
 		t.Fatalf("final provider request lacks structured blocker:\n%s", got)
@@ -258,8 +249,8 @@ func TestLegacyApproveResolvesWaiterOnlyHighRisk(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	dec, err := gate.BeforeMutation(ctx, recovery.Proposal{
-		Tool: "write_file", Subject: "package.json", Mutates: true,
-		Args: json.RawMessage(`{"path":"package.json","content":"{}"}`),
+		Tool: "bash", Subject: "git push origin feature", Mutates: true,
+		Args: json.RawMessage(`{"command":"git push origin feature"}`),
 	})
 	if err != nil || !dec.Allow {
 		t.Fatalf("legacy Approve did not unblock high-risk card: %+v %v", dec, err)
@@ -291,15 +282,11 @@ func TestRecoveryPromptCanResolveSynchronouslyFromSink(t *testing.T) {
 	c.mu.Lock()
 	gate := c.recoveryGate
 	c.mu.Unlock()
-	gate.ObserveResult(context.Background(), recovery.Observation{
-		Tool: "bash", Verification: true, Subject: "go test ./...",
-		Args: json.RawMessage(`{"command":"go test ./..."}`), ErrSummary: "fail",
-	})
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	dec, err := gate.BeforeMutation(ctx, recovery.Proposal{
-		Tool: "write_file", Subject: "a.go", Mutates: true, StrategyChanged: true,
-		Args: json.RawMessage(`{"path":"a.go","content":"fixed"}`),
+		Tool: "bash", Subject: "git push origin feature", Mutates: true,
+		Args: json.RawMessage(`{"command":"git push origin feature"}`),
 	})
 	if resolveErr != nil {
 		t.Fatalf("synchronous ResolveRecovery: %v", resolveErr)

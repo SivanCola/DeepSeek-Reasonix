@@ -206,7 +206,7 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 	}
 	fmt.Fprintf(&b, "temperature       = %s\n", formatFloat(c.Agent.Temperature))
 	if strings.TrimSpace(c.Agent.RecoveryModel) != "" {
-		fmt.Fprintf(&b, "recovery_model = %q   # optional independent Auto Guard reviewer\n", c.Agent.RecoveryModel)
+		fmt.Fprintf(&b, "recovery_model = %q   # optional independent reviewer for low-risk automatic recovery\n", c.Agent.RecoveryModel)
 	} else {
 		b.WriteString("# recovery_model = \"deepseek-pro\"   # optional; falls back to guardian then main model\n")
 	}

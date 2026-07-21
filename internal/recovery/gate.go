@@ -489,13 +489,13 @@ func (g *Gate) reviewOrEscalate(ctx context.Context, taskID, fp string, proposal
 		}
 		g.mu.Unlock()
 		if err != nil {
-			// Reviewer errors escalate immediately and do not burn reject budget.
-			verdict = ReviewVerdict{
-				Outcome:    ReviewConfirm,
-				ChangeKind: ChangeUncertain,
-				Rationale:  "Auto Guard could not verify this step automatically",
-			}
-			return g.askHuman(ctx, taskID, fp, proposal, failure, diagNotes, verdict.ChangeKind, verdict.Rationale)
+			// Deterministic hard boundaries were handled before the reviewer. If
+			// the optional reviewer is unavailable, keep low-risk Auto work moving
+			// instead of turning an infrastructure error into a user decision.
+			g.mu.Lock()
+			g.metrics.RuleContinues++
+			g.mu.Unlock()
+			return Decision{Allow: true}, nil
 		}
 		verdict = normalizeVerdict(v, failure, proposal, diagNotes)
 		if verdict.Outcome == ReviewContinue && verdict.ChangeKind == ChangeSameStrategy {
@@ -524,9 +524,12 @@ func (g *Gate) reviewOrEscalate(ctx context.Context, taskID, fp string, proposal
 		)
 		return g.askHuman(ctx, taskID, fp, proposal, failure, diagNotes, verdict.ChangeKind, verdict.Rationale)
 	}
-	// No reviewer configured: fail closed to human confirmation.
-	return g.askHuman(ctx, taskID, fp, proposal, failure, diagNotes, ChangeUncertain,
-		"no Auto Guard reviewer configured; confirming before mutation")
+	// Deterministic hard boundaries were handled before this point. A missing
+	// optional reviewer must not make ordinary, reversible Auto work interactive.
+	g.mu.Lock()
+	g.metrics.RuleContinues++
+	g.mu.Unlock()
+	return Decision{Allow: true}, nil
 }
 
 func (g *Gate) askHuman(ctx context.Context, taskID, fp string, proposal Proposal, failure *FailureEvent, diagNotes []string, kind ChangeKind, rationale string) (Decision, error) {

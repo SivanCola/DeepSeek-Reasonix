@@ -22,9 +22,10 @@ Ask is the most conservative tool-permission mode. When Reasonix needs approval 
 ### Approval card shortcuts
 
 - `←` / `→` cycle the highlighted action.
-- `Enter` confirms the highlighted action. Tool approvals default to “Allow once”; plan confirmation defaults to “Start execution”.
-- `1` / `2` / `3` / `4` select the matching numbered tool-approval action; plan confirmation only has `1` / `2` / `3`.
-- `Esc` denies the current tool approval; in plan confirmation it means exit or keep planning.
+- `Enter` confirms the highlighted ordinary tool-approval action, which defaults to “Allow once”.
+- `1` / `2` / `3` / `4` select the matching numbered ordinary tool-approval action.
+- Plan confirmation has two direct actions: **Start execution** / **Revise plan**. They run with one click or the matching number key; there is no second Confirm click.
+- `Esc` stops the current task.
 - If you `Tab` to a button and press `Enter`, that focused button runs (it is not overridden by the highlight).
 
 ## Auto mode
@@ -40,22 +41,23 @@ Auto still respects:
 - MCP destructive calls when the effective policy is `auto`, `prompt`, or `writes`.
 - Ask questions (never auto-answered).
 
-### Auto Guard
+### When Auto asks
 
-Auto includes **Auto Guard**, a host-side safety boundary. Product rule:
+Auto is designed as a behavior, not another feature to configure:
 
-> Auto handles ordinary operations automatically; it only asks when risk rises, the change scope expands, or it cannot safely recover after repeated failures.
+> Auto handles reversible workspace work automatically. It asks only before a destructive, external, global, or otherwise explicit human-decision boundary.
 
-- Ordinary workspace reads and edits stay on the fast path with no extra model calls and no extra clicks.
-- Deterministically high-risk mutations are checked before execution, even when no earlier tool failed. This includes destructive operations, dependency/configuration changes, installs, external mutations, and publish/push-style commands.
-- After a tool or verification failure, read-only diagnosis may continue; one host-proven same-strategy verification retry can run automatically.
-- After a failure, a bounded isolated reviewer evaluates only ambiguous recovery mutations. A rejection is returned to the same root or sub-agent with the reason; three consecutive rejected proposals escalate to a human. Reviewer errors fail closed immediately.
-- When confirmation is required, one card shows a short reason and the next action with two one-click choices: **Continue this step** / **Try another approach**. Optional free-text guidance is collapsed by default. Whole-task cancellation remains the ordinary Stop control.
-- **Continue this step** authorizes only the waiting call (never a session or permanent grant). Stale cards are never replayed after a restart; the next call is classified again.
+- Workspace reads, source/config/workflow edits, project-local dependency changes, tests, and retries stay on the fast path.
+- A change in implementation strategy or file scope inside the same task is handled automatically; it is not a user decision by itself.
+- Destructive commands, remote push/publish/deploy, privilege escalation, system/global installs, and writes outside ordinary workspace policy still require confirmation.
+- After a failure, read-only diagnosis and low-risk recovery continue automatically. Three consecutive failed attempts, or three reviewer-rejected alternatives, escalate to the user.
+- Reviewer unavailability does not turn low-risk work into a prompt; deterministic hard boundaries still fail closed.
+- When confirmation is required, one card shows the next action with two one-click choices: **Continue** / **Try another approach**. Technical details stay collapsed. Whole-task cancellation remains the global Stop control.
+- **Continue** authorizes only the waiting call (never a session or permanent grant). Stale cards are never replayed after a restart; the next call is classified again.
 - Headless runs fail closed when a human decision is required.
-- Effective only in Auto. Ask and YOLO keep their existing approval semantics. Auto Guard is built in and has no separate setting or kill switch.
+- These boundaries are effective only in Auto. Ask and YOLO keep their existing approval semantics, and there is no separate safety setting to learn.
 
-Auto Guard is not a filesystem checkpoint or rollback mechanism. Use a clean Git branch or disposable worktree when changes must be reversible. Plan confirmation decides whether to start execution; Auto Guard evaluates action boundaries during execution.
+Auto is not a filesystem snapshot or rollback mechanism. Use a clean Git branch or disposable worktree when changes must be reversible. Plan decides whether to start; Auto handles ordinary execution afterward.
 
 ## Yolo mode
 
@@ -80,6 +82,6 @@ Yolo maximizes continuous execution. Ordinary tool permission prompts are skippe
 
 ## Recommended defaults
 
-- Prefer **Auto** with built-in Auto Guard for trusted day-to-day work.
+- Prefer **Auto** for trusted day-to-day work.
 - Use **Ask** when the workspace, data, or operation risk is unclear.
 - Use **Yolo** only after the plan is confirmed and the tree is disposable or easily rolled back.

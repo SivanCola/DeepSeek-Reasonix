@@ -66,26 +66,34 @@ func TestDecisionMatrix(t *testing.T) {
 			want: DecisionResult{Route: RouteAllow, ConsumeSafeRetry: true},
 		},
 		{
-			name: "expanded scope after failure asks",
+			name: "expanded scope after failure stays automatic",
 			f: Facts{
 				AutoMode: true, Mutates: true,
 				HasActiveFailure: true, FailureCount: 1, ExpandedScope: true,
 			},
-			want: DecisionResult{Route: RouteAsk, AskReason: AskScope},
+			want: DecisionResult{Route: RouteReview},
 		},
 		{
-			name: "strategy change after failure asks",
+			name: "strategy change after failure stays automatic",
 			f: Facts{
 				AutoMode: true, Mutates: true,
 				HasActiveFailure: true, FailureCount: 1, StrategyChanged: true,
 			},
-			want: DecisionResult{Route: RouteAsk, AskReason: AskStrategy},
+			want: DecisionResult{Route: RouteReview},
 		},
 		{
-			name: "second failure during recovery asks",
+			name: "second failure during recovery stays automatic",
 			f: Facts{
 				AutoMode: true, Mutates: true,
 				HasActiveFailure: true, FailureCount: 2,
+			},
+			want: DecisionResult{Route: RouteReview},
+		},
+		{
+			name: "third failure during recovery asks",
+			f: Facts{
+				AutoMode: true, Mutates: true,
+				HasActiveFailure: true, FailureCount: 3,
 			},
 			want: DecisionResult{Route: RouteAsk, AskReason: AskRepeat},
 		},
@@ -104,8 +112,7 @@ func TestDecisionMatrix(t *testing.T) {
 				HasActiveFailure: true, FailureCount: 1,
 				SafeRetryAvailable: true, ExpandedScope: true,
 			},
-			// Safe retry is evaluated before scope; the product order is:
-			// safe retry → scope/strategy/second failure → review.
+			// Safe retry is evaluated before the bounded-failure/reviewer path.
 			// A true safe verification retry cannot also expand scope (classifier
 			// clears SafeRetryAvailable). When both flags appear, safe retry wins
 			// only if the host marked it available — the classifier must not.
@@ -183,10 +190,10 @@ func TestBehaviorMatrixGolden(t *testing.T) {
 			t.Fatalf("got %+v", got)
 		}
 	})
-	t.Run("pre-action high risk prompts without reviewer", func(t *testing.T) {
+	t.Run("pre-action hard boundary prompts without reviewer", func(t *testing.T) {
 		got := run(t, nil, Proposal{
-			Tool: "write_file", Mutates: true, Subject: "package.json",
-			Args: json.RawMessage(`{"path":"package.json","content":"{}"}`),
+			Tool: "bash", Mutates: true, Subject: "git push origin feature",
+			Args: json.RawMessage(`{"command":"git push origin feature"}`),
 		}, nil)
 		if !got.allow || !got.prompted || got.reviews != 0 {
 			t.Fatalf("got %+v", got)
@@ -214,7 +221,7 @@ func TestBehaviorMatrixGolden(t *testing.T) {
 			t.Fatalf("got %+v", got)
 		}
 	})
-	t.Run("expanded scope prompts without review", func(t *testing.T) {
+	t.Run("expanded scope uses reviewer without prompting", func(t *testing.T) {
 		got := run(t, func(g *Gate) {
 			g.ObserveResult(context.Background(), Observation{
 				Tool: "write_file", Mutates: true, Subject: "a.go", ErrSummary: "fail",
@@ -224,11 +231,11 @@ func TestBehaviorMatrixGolden(t *testing.T) {
 			Tool: "write_file", Mutates: true, Subject: "b.go", ExpandedScope: true,
 			Args: json.RawMessage(`{"path":"b.go","content":"x"}`),
 		}, nil)
-		if !got.allow || !got.prompted || got.reviews != 0 {
+		if !got.allow || got.prompted || got.reviews != 1 {
 			t.Fatalf("got %+v", got)
 		}
 	})
-	t.Run("strategy change prompts without review", func(t *testing.T) {
+	t.Run("strategy change uses reviewer without prompting", func(t *testing.T) {
 		got := run(t, func(g *Gate) {
 			g.ObserveResult(context.Background(), Observation{
 				Tool: "bash", Verification: true, ErrSummary: "fail",
@@ -238,11 +245,11 @@ func TestBehaviorMatrixGolden(t *testing.T) {
 			Tool: "write_file", Mutates: true, StrategyChanged: true,
 			Args: json.RawMessage(`{"path":"a.go","content":"x"}`),
 		}, nil)
-		if !got.allow || !got.prompted || got.reviews != 0 {
+		if !got.allow || got.prompted || got.reviews != 1 {
 			t.Fatalf("got %+v", got)
 		}
 	})
-	t.Run("second recovery failure prompts without review", func(t *testing.T) {
+	t.Run("second recovery failure uses reviewer without prompting", func(t *testing.T) {
 		got := run(t, func(g *Gate) {
 			g.ObserveResult(context.Background(), Observation{
 				Tool: "write_file", Mutates: true, Subject: "a.go", ErrSummary: "fail1",
@@ -252,6 +259,22 @@ func TestBehaviorMatrixGolden(t *testing.T) {
 				Tool: "write_file", Mutates: true, Subject: "a.go", ErrSummary: "fail2",
 				Args: json.RawMessage(`{"path":"a.go"}`),
 			})
+		}, Proposal{
+			Tool: "write_file", Mutates: true, Subject: "a.go",
+			Args: json.RawMessage(`{"path":"a.go","content":"x"}`),
+		}, nil)
+		if !got.allow || got.prompted || got.reviews != 1 {
+			t.Fatalf("got %+v", got)
+		}
+	})
+	t.Run("third recovery failure prompts without reviewer", func(t *testing.T) {
+		got := run(t, func(g *Gate) {
+			for i := 0; i < 3; i++ {
+				g.ObserveResult(context.Background(), Observation{
+					Tool: "write_file", Mutates: true, Subject: "a.go", ErrSummary: "fail",
+					Args: json.RawMessage(`{"path":"a.go"}`),
+				})
+			}
 		}, Proposal{
 			Tool: "write_file", Mutates: true, Subject: "a.go",
 			Args: json.RawMessage(`{"path":"a.go","content":"x"}`),
@@ -333,7 +356,7 @@ func TestBehaviorMatrixGolden(t *testing.T) {
 			t.Fatalf("escalation = %+v %v prompts=%d reviews=%d", dec, err, prompts, reviews.Load())
 		}
 	})
-	t.Run("reviewer error asks immediately without consuming reject budget", func(t *testing.T) {
+	t.Run("reviewer error keeps low risk work automatic", func(t *testing.T) {
 		var reviews atomic.Int32
 		var prompted atomic.Bool
 		g := NewGate(Options{
@@ -355,7 +378,7 @@ func TestBehaviorMatrixGolden(t *testing.T) {
 		dec, err := g.BeforeMutation(context.Background(), Proposal{
 			Tool: "write_file", Mutates: true, Args: json.RawMessage(`{"path":"a.go","content":"x"}`),
 		})
-		if err != nil || !dec.Allow || !prompted.Load() || reviews.Load() != 1 {
+		if err != nil || !dec.Allow || prompted.Load() || reviews.Load() != 1 {
 			t.Fatalf("got allow=%v prompted=%v reviews=%d err=%v", dec.Allow, prompted.Load(), reviews.Load(), err)
 		}
 		// A subsequent reject must still start at attempt 1 (error did not burn budget).
@@ -392,13 +415,9 @@ func TestBehaviorMatrixGolden(t *testing.T) {
 	})
 	t.Run("headless needs confirm fails closed without wait", func(t *testing.T) {
 		g := NewGate(Options{Headless: true})
-		g.ObserveResult(context.Background(), Observation{
-			Tool: "bash", Verification: true, ErrSummary: "fail",
-			Args: json.RawMessage(`{"command":"go test"}`),
-		})
 		dec, err := g.BeforeMutation(context.Background(), Proposal{
-			Tool: "write_file", Mutates: true, StrategyChanged: true,
-			Args: json.RawMessage(`{"path":"a.go"}`),
+			Tool: "bash", Mutates: true, Subject: "git push origin feature",
+			Args: json.RawMessage(`{"command":"git push origin feature"}`),
 		})
 		if err != nil || dec.Allow || !dec.Blocked {
 			t.Fatalf("got %+v %v", dec, err)

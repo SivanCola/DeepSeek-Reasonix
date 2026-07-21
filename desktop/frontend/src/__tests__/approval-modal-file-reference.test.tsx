@@ -156,6 +156,13 @@ async function selectAndConfirm(label: string) {
   });
 }
 
+async function clickImmediateAction(label: string) {
+  await act(async () => {
+    actionButton(label).click();
+    await flushTimers();
+  });
+}
+
 console.log("\napproval modal file references");
 
 {
@@ -180,7 +187,7 @@ console.log("\napproval modal file references");
   });
   const { root, revisions, rerender } = await renderApproval();
 
-  await selectAndConfirm("Revise plan");
+  await clickImmediateAction("Revise plan");
 
   const textarea = document.querySelector(".plan-revision__input") as HTMLTextAreaElement | null;
   if (!textarea) throw new Error("plan revision textarea did not render");
@@ -329,7 +336,7 @@ console.log("\napproval modal file references");
   });
   const { root, activeStates, rerender } = await renderApproval();
 
-  await selectAndConfirm("Revise plan");
+  await clickImmediateAction("Revise plan");
 
   const textarea = document.querySelector(".plan-revision__input") as HTMLTextAreaElement | null;
   if (!textarea) throw new Error("plan revision textarea did not render");
@@ -559,7 +566,7 @@ console.log("\napproval modal file references");
   });
   const { root, rerender } = await renderApproval({ workspaceScopeKey: "session-a" });
 
-  await selectAndConfirm("Revise plan");
+  await clickImmediateAction("Revise plan");
   await rerender({ insertRequest: { id: 20, text: "inspect @" } });
   await waitFor("initial approval session scope request", () => pending.length === 1);
   await rerender({ workspaceScopeKey: "session-b" });

@@ -44,8 +44,8 @@ func TestHasApprovalIncludesWaiterOnlyHighRisk(t *testing.T) {
 	}
 	go func() {
 		dec, err := g.BeforeMutation(context.Background(), Proposal{
-			Tool: "write_file", Subject: "package.json", Mutates: true,
-			Args: json.RawMessage(`{"path":"package.json","content":"{}"}`),
+			Tool: "bash", Subject: "git push origin feature", Mutates: true,
+			Args: json.RawMessage(`{"command":"git push origin feature"}`),
 		})
 		if err != nil {
 			t.Errorf("BeforeMutation: %v", err)
@@ -97,8 +97,8 @@ func TestHighRiskMutationPromptsBeforeAnyFailure(t *testing.T) {
 		return "pre-1", nil
 	}
 	dec, err := g.BeforeMutation(context.Background(), Proposal{
-		Tool: "write_file", Subject: "package.json", Mutates: true,
-		Args: json.RawMessage(`{"path":"package.json","content":"{}"}`),
+		Tool: "bash", Subject: "git push origin feature", Mutates: true,
+		Args: json.RawMessage(`{"command":"git push origin feature"}`),
 	})
 	if err != nil || !dec.Allow || !prompted.Load() {
 		t.Fatalf("pre-action decision = %+v, %v; prompted=%v", dec, err, prompted.Load())
@@ -112,10 +112,14 @@ func TestHighRiskClassifierKeepsOrdinaryAndMCPPermissionPathsSeparate(t *testing
 		want bool
 	}{
 		{name: "git push", p: Proposal{Tool: "bash", Mutates: true, Args: json.RawMessage(`{"command":"git push origin feature"}`)}, want: true},
-		{name: "dependency config edit", p: Proposal{Tool: "edit_file", Mutates: true, Args: json.RawMessage(`{"path":"go.mod"}`)}, want: true},
-		{name: "dependency config delete", p: Proposal{Tool: "delete_range", Mutates: true, Args: json.RawMessage(`{"path":"go.mod"}`)}, want: true},
-		{name: "dependency config move source", p: Proposal{Tool: "move_file", Mutates: true, Args: json.RawMessage(`{"source_path":"package.json","destination_path":"package.old.json"}`)}, want: true},
-		{name: "dependency config move destination", p: Proposal{Tool: "move_file", Mutates: true, Args: json.RawMessage(`{"source_path":"package.old.json","destination_path":"package.json"}`)}, want: true},
+		{name: "dependency config edit", p: Proposal{Tool: "edit_file", Mutates: true, Args: json.RawMessage(`{"path":"go.mod"}`)}},
+		{name: "dependency config delete", p: Proposal{Tool: "delete_range", Mutates: true, Args: json.RawMessage(`{"path":"go.mod"}`)}},
+		{name: "dependency config move source", p: Proposal{Tool: "move_file", Mutates: true, Args: json.RawMessage(`{"source_path":"package.json","destination_path":"package.old.json"}`)}},
+		{name: "dependency config move destination", p: Proposal{Tool: "move_file", Mutates: true, Args: json.RawMessage(`{"source_path":"package.old.json","destination_path":"package.json"}`)}},
+		{name: "project npm install", p: Proposal{Tool: "bash", Mutates: true, Args: json.RawMessage(`{"command":"npm install react"}`)}},
+		{name: "global npm install", p: Proposal{Tool: "bash", Mutates: true, Args: json.RawMessage(`{"command":"npm install -g typescript"}`)}, want: true},
+		{name: "project go get", p: Proposal{Tool: "bash", Mutates: true, Args: json.RawMessage(`{"command":"go get example.com/module"}`)}},
+		{name: "project go mod tidy", p: Proposal{Tool: "bash", Mutates: true, Args: json.RawMessage(`{"command":"go mod tidy"}`)}},
 		{name: "go install", p: Proposal{Tool: "bash", Mutates: true, Args: json.RawMessage(`{"command":"go install golang.org/x/tools/gopls@latest"}`)}, want: true},
 		{name: "go env write", p: Proposal{Tool: "bash", Mutates: true, Args: json.RawMessage(`{"command":"go env -w GOPROXY=direct"}`)}, want: true},
 		{name: "go env write with global flag", p: Proposal{Tool: "bash", Mutates: true, Args: json.RawMessage(`{"command":"go -C child env -w GOPROXY=direct"}`)}, want: true},
@@ -125,12 +129,12 @@ func TestHighRiskClassifierKeepsOrdinaryAndMCPPermissionPathsSeparate(t *testing
 		{name: "command wrapped publish", p: Proposal{Tool: "bash", Mutates: true, Args: json.RawMessage(`{"command":"command git push origin feature"}`)}, want: true},
 		{name: "env wrapped verification", p: Proposal{Tool: "bash", Verification: true, Args: json.RawMessage(`{"command":"env CI=1 go test ./..."}`)}},
 		{name: "command lookup", p: Proposal{Tool: "bash", Mutates: true, Args: json.RawMessage(`{"command":"command -v git"}`)}},
-		{name: "bash manifest edit", p: Proposal{Tool: "bash", Mutates: true, Args: json.RawMessage(`{"command":"sed -i.bak 's/old/new/' package.json"}`)}, want: true},
-		{name: "bash workflow edit", p: Proposal{Tool: "bash", Mutates: true, Args: json.RawMessage(`{"command":"sed -i.bak 's/old/new/' .github/workflows/release.yml"}`)}, want: true},
-		{name: "copy onto manifest", p: Proposal{Tool: "bash", Mutates: true, Args: json.RawMessage(`{"command":"cp package.next.json package.json"}`)}, want: true},
+		{name: "bash manifest edit", p: Proposal{Tool: "bash", Mutates: true, Args: json.RawMessage(`{"command":"sed -i.bak 's/old/new/' package.json"}`)}},
+		{name: "bash workflow edit", p: Proposal{Tool: "bash", Mutates: true, Args: json.RawMessage(`{"command":"sed -i.bak 's/old/new/' .github/workflows/release.yml"}`)}},
+		{name: "copy onto manifest", p: Proposal{Tool: "bash", Mutates: true, Args: json.RawMessage(`{"command":"cp package.next.json package.json"}`)}},
 		{name: "backup manifest copy", p: Proposal{Tool: "bash", Mutates: true, Args: json.RawMessage(`{"command":"cp package.json package.backup.json"}`)}},
-		{name: "typescript config edit", p: Proposal{Tool: "edit_file", Mutates: true, Args: json.RawMessage(`{"path":"tsconfig.json"}`)}, want: true},
-		{name: "workflow config edit", p: Proposal{Tool: "edit_file", Mutates: true, Args: json.RawMessage(`{"path":".github/workflows/release.yml"}`)}, want: true},
+		{name: "typescript config edit", p: Proposal{Tool: "edit_file", Mutates: true, Args: json.RawMessage(`{"path":"tsconfig.json"}`)}},
+		{name: "workflow config edit", p: Proposal{Tool: "edit_file", Mutates: true, Args: json.RawMessage(`{"path":".github/workflows/release.yml"}`)}},
 		{name: "ordinary source sed", p: Proposal{Tool: "bash", Mutates: true, Args: json.RawMessage(`{"command":"sed -i.bak 's/old/new/' internal/a.go"}`)}},
 		{name: "ordinary source edit", p: Proposal{Tool: "edit_file", Mutates: true, Args: json.RawMessage(`{"path":"internal/a.go"}`)}},
 		{name: "targeted source delete", p: Proposal{Tool: "delete_symbol", Mutates: true, Args: json.RawMessage(`{"path":"internal/a.go"}`)}},
@@ -147,7 +151,7 @@ func TestHighRiskClassifierKeepsOrdinaryAndMCPPermissionPathsSeparate(t *testing
 	}
 }
 
-func TestHighRiskDeletePromptsBeforeAnyFailure(t *testing.T) {
+func TestWorkspaceConfigEditDoesNotPromptBeforeAnyFailure(t *testing.T) {
 	g := NewGate(Options{Mode: func() string { return "auto" }})
 	var prompted atomic.Bool
 	g.opts.EmitPrompt = func(_ context.Context, taskID string, pending PendingProposal, failure *FailureEvent) (string, error) {
@@ -155,17 +159,13 @@ func TestHighRiskDeletePromptsBeforeAnyFailure(t *testing.T) {
 		if failure != nil || pending.ChangeKind != ChangeRisk {
 			t.Fatalf("pending = %+v, failure = %+v", pending, failure)
 		}
-		g.BindApprovalID(taskID, "delete-config")
-		if err := g.Resolve("delete-config", ActionContinue, ""); err != nil {
-			t.Fatalf("resolve: %v", err)
-		}
-		return "delete-config", nil
+		return "unexpected", nil
 	}
 	dec, err := g.BeforeMutation(context.Background(), Proposal{
 		Tool: "delete_range", Subject: "go.mod", Mutates: true,
 		Args: json.RawMessage(`{"path":"go.mod","start_anchor":"require (","end_anchor":")"}`),
 	})
-	if err != nil || !dec.Allow || !prompted.Load() {
+	if err != nil || !dec.Allow || prompted.Load() {
 		t.Fatalf("decision = %+v, err = %v, prompted = %v", dec, err, prompted.Load())
 	}
 }
@@ -307,7 +307,7 @@ func TestSafeVerificationRetryOnce(t *testing.T) {
 	_ = dec
 	_ = err
 
-	// Strategy change must prompt.
+	// A low-risk strategy change remains automatic.
 	prompted.Store(false)
 	g.opts.EmitPrompt = func(ctx context.Context, taskID string, pending PendingProposal, failure *FailureEvent) (string, error) {
 		prompted.Store(true)
@@ -325,8 +325,8 @@ func TestSafeVerificationRetryOnce(t *testing.T) {
 	if err != nil || !dec.Allow {
 		t.Fatalf("continue after strategy change = %+v %v", dec, err)
 	}
-	if !prompted.Load() {
-		t.Fatal("expected recovery prompt for strategy change")
+	if prompted.Load() {
+		t.Fatal("strategy change unexpectedly prompted")
 	}
 }
 
@@ -396,12 +396,8 @@ func TestRoutineWorkspaceEditsStayOnReviewerPath(t *testing.T) {
 
 func TestContinueAppliesOnlyToWaitingCall(t *testing.T) {
 	g := NewGate(Options{})
-	g.ObserveResult(context.Background(), Observation{
-		Tool: "bash", Subject: "go test", Verification: true,
-		Args: json.RawMessage(`{"command":"go test"}`), ErrSummary: "fail",
-	})
-	args := json.RawMessage(`{"path":"a.go","content":"fixed"}`)
-	prop := Proposal{Tool: "write_file", Subject: "a.go", Preview: "+fixed", Mutates: true, Args: args}
+	args := json.RawMessage(`{"command":"git push origin feature"}`)
+	prop := Proposal{Tool: "bash", Subject: "git push origin feature", Mutates: true, Args: args}
 	fp := CallFingerprint(prop.Tool, prop.Subject, prop.Preview, prop.Args)
 
 	g.opts.EmitPrompt = func(ctx context.Context, taskID string, pending PendingProposal, failure *FailureEvent) (string, error) {
@@ -429,7 +425,6 @@ func TestContinueAppliesOnlyToWaitingCall(t *testing.T) {
 		}()
 		return "c2", nil
 	}
-	// Failure still active (mutation was not observed successful).
 	dec, err = g.BeforeMutation(context.Background(), prop)
 	if err != nil || !dec.Allow {
 		t.Fatalf("second continue = %+v %v", dec, err)
@@ -605,11 +600,11 @@ func TestStrategyChangedRequiresSemanticSignal(t *testing.T) {
 	}
 	proposal.StrategyChanged = true
 	if !StrategyChanged(failure, proposal) {
-		t.Fatal("an explicit semantic strategy change must force confirmation")
+		t.Fatal("an explicit semantic strategy change must reach review")
 	}
 }
 
-func TestReviewerErrorFailsClosed(t *testing.T) {
+func TestReviewerErrorKeepsLowRiskAutoWorkMoving(t *testing.T) {
 	g := NewGate(Options{
 		Reviewer: errReviewer{},
 	})
@@ -633,8 +628,8 @@ func TestReviewerErrorFailsClosed(t *testing.T) {
 	if err != nil || !dec.Allow {
 		t.Fatalf("got %+v %v", dec, err)
 	}
-	if !prompted.Load() {
-		t.Fatal("reviewer error must prompt human")
+	if prompted.Load() {
+		t.Fatal("reviewer error unexpectedly prompted human")
 	}
 }
 
@@ -654,13 +649,9 @@ func TestAskYoloModesInactive(t *testing.T) {
 
 func TestHeadlessBlocksWithoutWait(t *testing.T) {
 	g := NewGate(Options{Headless: true})
-	g.ObserveResult(context.Background(), Observation{
-		Tool: "bash", Verification: true, Subject: "go test",
-		Args: json.RawMessage(`{"command":"go test"}`), ErrSummary: "fail",
-	})
 	dec, err := g.BeforeMutation(context.Background(), Proposal{
-		Tool: "write_file", Subject: "a.go", Mutates: true,
-		Args: json.RawMessage(`{"path":"a.go"}`),
+		Tool: "bash", Subject: "git push origin feature", Mutates: true,
+		Args: json.RawMessage(`{"command":"git push origin feature"}`),
 	})
 	if err != nil {
 		t.Fatalf("err: %v", err)

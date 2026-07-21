@@ -1144,7 +1144,7 @@ func recoveryShortcutCommand(text string) (string, bool) {
 	switch strings.ToLower(strings.TrimSpace(text)) {
 	case "1", "y", "yes", "ok", "继续", "继续此变更", "continue":
 		return "/recovery-continue", true
-	case "2", "修改", "修改方案", "revise":
+	case "2", "修改", "修改方案", "换个办法", "revise":
 		return "/recovery-revise", true
 	default:
 		return "", false
@@ -1366,13 +1366,13 @@ func (gw *BotGateway) handleSlashCommand(ctx context.Context, adapter Adapter, k
 		gw.mu.Unlock()
 		if ok && state.ctrl != nil {
 			if err := state.ctrl.ResolveRecovery(parts[1], agent.RecoveryActionContinue, ""); err != nil {
-				_ = gw.sendText(ctx, adapter, msg, "恢复确认失败: "+err.Error())
+				_ = gw.sendText(ctx, adapter, msg, "确认失败: "+err.Error())
 				return
 			}
 			gw.forgetPendingApproval(key, parts[1])
-			_ = gw.sendText(ctx, adapter, msg, "已继续此变更。")
+			_ = gw.sendText(ctx, adapter, msg, "已继续。")
 		} else {
-			_ = gw.sendText(ctx, adapter, msg, "没有找到当前会话中的恢复检查点。")
+			_ = gw.sendText(ctx, adapter, msg, "没有找到当前会话中的待确认操作。")
 		}
 
 	case strings.HasPrefix(msg.Text, "/recovery-revise"):

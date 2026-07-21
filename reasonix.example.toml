@@ -28,7 +28,7 @@ ask_request = true   # notify when a question is waiting
 # system_prompt = "You are ..."   # custom persona/prompt; unset or empty = built-in default
 # system_prompt_file = "prompts/system.md"   # overrides system_prompt when set
 temperature       = 0.0
-# recovery_model = ""               # optional dedicated Auto Guard reviewer; falls back to guardian_model then main model
+# recovery_model = ""               # optional reviewer for low-risk automatic recovery; falls back to guardian_model then main model
 # reasoning_language = "auto"   # visible reasoning text: auto|zh|en
 # plan_mode_allowed_tools = ["mcp__legacy__reader"]   # legacy MCP read-only trust alias; does not change Plan availability
 # plan_mode_read_only_commands = ["gh issue view"]   # legacy compatibility only; Plan bash uses Permissions
