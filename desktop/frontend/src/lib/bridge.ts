@@ -169,6 +169,11 @@ export interface AppBindings {
   ApproveTab(tabID: string, id: string, allow: boolean, session: boolean, persist: boolean): Promise<void>;
   ResolveRecovery(id: string, action: string, feedback: string): Promise<void>;
   ResolveRecoveryTab(tabID: string, id: string, action: string, feedback: string): Promise<void>;
+  // Legacy no-ops: Auto Guard is built into Auto; kill switch is config-only.
+  SetRecoveryCheckpointEnabled(enabled: boolean): Promise<void>;
+  SetRecoveryCheckpointEnabledTab(tabID: string, enabled: boolean): Promise<void>;
+  RecoveryCheckpointEnabled(): Promise<boolean>;
+  RecoveryCheckpointEnabledTab(tabID: string): Promise<boolean>;
   AnswerQuestion(id: string, answers: QuestionAnswer[]): Promise<void>;
   AnswerQuestionForTab(tabID: string, id: string, answers: QuestionAnswer[]): Promise<void>;
   ReplayPendingPrompts(): Promise<void>;
@@ -349,6 +354,7 @@ export interface AppBindings {
   SetMaxParallelWriters(n: number): Promise<void>;
   SetAutoPlan(mode: string): Promise<void>;
   SetDefaultToolApprovalMode(mode: string): Promise<void>;
+  SetDefaultAutoRecoveryCheckpoint(enabled: boolean): Promise<void>;
 
   SaveProvider(p: ProviderView): Promise<void>;
   SaveProviderWithKey(p: ProviderView, key: string): Promise<string>;
@@ -2398,6 +2404,14 @@ function makeMockApp(): AppBindings {
           });
           emitMockTurnDone();
         },
+        async SetRecoveryCheckpointEnabled(_enabled) {},
+        async SetRecoveryCheckpointEnabledTab(_tabID, _enabled) {},
+        async RecoveryCheckpointEnabled() {
+          return true;
+        },
+        async RecoveryCheckpointEnabledTab(_tabID) {
+          return true;
+        },
         async AnswerQuestion(_id, answers) {
       if (!pendingAskPreview) return;
       pendingAskPreview = false;
@@ -3646,6 +3660,9 @@ function makeMockApp(): AppBindings {
     },
     async SetDefaultToolApprovalMode(mode: string) {
       settings.defaultToolApprovalMode = normalizeToolApprovalMode(mode);
+    },
+    async SetDefaultAutoRecoveryCheckpoint(_enabled: boolean) {
+      // Legacy no-op in browser mock; real desktop migrates to agent config.
     },
     async SaveProvider(p: ProviderView) {
       p.added = true;

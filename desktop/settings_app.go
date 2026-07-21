@@ -1937,6 +1937,14 @@ func (a *App) SetDefaultToolApprovalMode(mode string) error {
 	})
 }
 
+// SetDefaultAutoRecoveryCheckpoint is retained for older frontends but only
+// migrates the advanced agent kill switch. It is not shown in Settings UI.
+func (a *App) SetDefaultAutoRecoveryCheckpoint(enabled bool) error {
+	return a.applyConfigOnly(func(c *config.Config) error {
+		return c.SetDesktopDefaultAutoRecoveryCheckpoint(enabled)
+	})
+}
+
 func officialProviderTemplate(kind, pricingLanguage string) ([]config.ProviderEntry, string, error) {
 	switch strings.ToLower(strings.TrimSpace(kind)) {
 	case "deepseek", "deepseek-official":

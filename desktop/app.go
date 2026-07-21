@@ -1555,6 +1555,25 @@ func (a *App) ResolveRecoveryTab(tabID, id, action, feedback string) error {
 	return ctrl.ResolveRecovery(id, agent.RecoveryAction(action), feedback)
 }
 
+// SetRecoveryCheckpointEnabled is retained as a no-op Wails surface for older
+// frontends. Auto Guard is built into Auto; the advanced kill switch is only
+// [agent].auto_recovery_checkpoint in config.
+func (a *App) SetRecoveryCheckpointEnabled(_ bool) {}
+
+// SetRecoveryCheckpointEnabledTab is retained as a no-op Wails surface.
+func (a *App) SetRecoveryCheckpointEnabledTab(_ string, _ bool) {}
+
+// RecoveryCheckpointEnabled reports the config kill switch (always the process
+// default; per-tab toggles were removed).
+func (a *App) RecoveryCheckpointEnabled() bool {
+	return desktopDefaultRecoveryCheckpoint()
+}
+
+// RecoveryCheckpointEnabledTab reports the config kill switch for any tab id.
+func (a *App) RecoveryCheckpointEnabledTab(_ string) bool {
+	return desktopDefaultRecoveryCheckpoint()
+}
+
 // ReplayPendingPrompts asks every tab's controller to re-emit any approval/ask
 // prompt that is currently blocking its run loop. The frontend calls this once
 // its event subscription is live (on load/reconnect) so a session that was
