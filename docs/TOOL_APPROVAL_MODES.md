@@ -53,7 +53,7 @@ Auto includes **Auto Guard**, a host-side safety boundary. Product rule:
 - When confirmation is required, one card shows a short reason and the next action with two one-click choices: **Continue this step** / **Try another approach**. Optional free-text guidance is collapsed by default. Whole-task cancellation remains the ordinary Stop control.
 - **Continue this step** authorizes only the waiting call (never a session or permanent grant). Stale cards are never replayed after a restart; the next call is classified again.
 - Headless runs fail closed when a human decision is required.
-- Effective only in Auto. Ask and YOLO keep their existing approval semantics. Advanced config `[agent].auto_recovery_checkpoint = "off"` remains a compatibility kill switch and is not shown in ordinary Settings.
+- Effective only in Auto. Ask and YOLO keep their existing approval semantics. Auto Guard is built in and has no separate setting or kill switch.
 
 Auto Guard is not a filesystem checkpoint or rollback mechanism. Use a clean Git branch or disposable worktree when changes must be reversible. Plan confirmation decides whether to start execution; Auto Guard evaluates action boundaries during execution.
 

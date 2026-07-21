@@ -11,46 +11,6 @@ import (
 	"reasonix/internal/recovery"
 )
 
-// SetRecoveryCheckpointEnabled arms or disarms Auto Guard for compatibility.
-// The preference is retained under Ask/YOLO but
-// only takes effect while the tool approval mode is Auto.
-func (c *Controller) SetRecoveryCheckpointEnabled(enabled bool) {
-	if c == nil {
-		return
-	}
-	c.mu.Lock()
-	c.recoveryEnabled = enabled
-	gate := c.recoveryGate
-	c.mu.Unlock()
-	if gate != nil {
-		gate.SetEnabled(enabled)
-	}
-	c.persistRecoveryEnabled(enabled)
-}
-
-// SetRecoveryCheckpointDefaultEnabled changes the default sampled only when
-// this controller rotates to a fresh session. It deliberately leaves the
-// current session preference untouched.
-func (c *Controller) SetRecoveryCheckpointDefaultEnabled(enabled bool) {
-	if c == nil {
-		return
-	}
-	c.mu.Lock()
-	c.recoveryDefaultEnabled = enabled
-	c.mu.Unlock()
-}
-
-// RecoveryCheckpointEnabled reports the session preference (not whether Auto
-// is currently active).
-func (c *Controller) RecoveryCheckpointEnabled() bool {
-	if c == nil {
-		return false
-	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.recoveryEnabled
-}
-
 // ResolveRecovery applies a user decision on an Auto Guard card.
 // action is continue|revise. For revise, feedback is returned in the
 // blocked tool result so the same agent sees it exactly once before retrying.
@@ -121,12 +81,11 @@ func clipUTF8(s string, n int) string {
 
 // initRecoveryGate constructs the shared recovery gate and attaches it to the
 // executor. Called from New when recovery is available.
-func (c *Controller) initRecoveryGate(enabled bool, reviewer recovery.Reviewer, headless bool) {
+func (c *Controller) initRecoveryGate(reviewer recovery.Reviewer, headless bool) {
 	if c == nil || c.executor == nil {
 		return
 	}
 	gate := recovery.NewGate(recovery.Options{
-		Enabled:  enabled,
 		Headless: headless,
 		Mode: func() string {
 			return c.ToolApprovalMode()
@@ -156,7 +115,6 @@ func (c *Controller) initRecoveryGate(enabled bool, reviewer recovery.Reviewer, 
 	})
 	c.mu.Lock()
 	c.recoveryGate = gate
-	c.recoveryEnabled = enabled
 	c.mu.Unlock()
 	c.executor.SetRecoveryGate(gate)
 }
@@ -199,22 +157,13 @@ func (c *Controller) loadRecoveryState(path string) {
 }
 
 // resetRecoveryForNewSession clears any failure checkpoint inherited from the
-// previous path and reapplies the configured new-session default. Metadata is
-// not created here: richer frontends still need to attach topic/scope ownership
-// before the first sidecar write, and ordinary snapshots persist the preference.
+// previous path. Metadata is not created here: richer frontends still need to
+// attach topic/scope ownership before the first sidecar write.
 func (c *Controller) resetRecoveryForNewSession(path string) {
 	if c == nil {
 		return
 	}
 	c.loadRecoveryState(path)
-	c.mu.Lock()
-	enabled := c.recoveryDefaultEnabled
-	c.recoveryEnabled = enabled
-	gate := c.recoveryGate
-	c.mu.Unlock()
-	if gate != nil {
-		gate.SetEnabled(enabled)
-	}
 }
 
 // carryRecoveryState moves a tip branch onto a new session identity without
@@ -330,32 +279,6 @@ func (c *Controller) emitRecoveryPrompt(ctx context.Context, taskID string, pend
 		go c.hooks.Notification(ctx, "Auto Guard: confirm the next action", "permission_prompt")
 	}
 	return id, nil
-}
-
-// loadRecoveryEnabled re-applies the controller's configured kill-switch
-// preference. Auto Guard is built into Auto; per-tab/meta toggles were removed.
-// Advanced opt-out is only [agent].auto_recovery_checkpoint at controller create.
-func (c *Controller) loadRecoveryEnabled(path string) {
-	_ = path
-	if c == nil {
-		return
-	}
-	c.mu.Lock()
-	enabled := c.recoveryDefaultEnabled
-	c.recoveryEnabled = enabled
-	gate := c.recoveryGate
-	c.mu.Unlock()
-	if gate != nil {
-		gate.SetEnabled(enabled)
-	}
-}
-
-// persistRecoveryEnabled is retained as a no-op for call-site compatibility.
-// The advanced kill switch lives only in config; we no longer write per-session
-// BranchMeta recovery flags.
-func (c *Controller) persistRecoveryEnabled(enabled bool) {
-	_ = c
-	_ = enabled
 }
 
 func recoveryFirstNonEmpty(vals ...string) string {

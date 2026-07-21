@@ -1556,22 +1556,21 @@ func (a *App) ResolveRecoveryTab(tabID, id, action, feedback string) error {
 }
 
 // SetRecoveryCheckpointEnabled is retained as a no-op Wails surface for older
-// frontends. Auto Guard is built into Auto; the advanced kill switch is only
-// [agent].auto_recovery_checkpoint in config.
+// generated frontends. Auto Guard is always built into Auto.
 func (a *App) SetRecoveryCheckpointEnabled(_ bool) {}
 
 // SetRecoveryCheckpointEnabledTab is retained as a no-op Wails surface.
 func (a *App) SetRecoveryCheckpointEnabledTab(_ string, _ bool) {}
 
-// RecoveryCheckpointEnabled reports the config kill switch (always the process
-// default; per-tab toggles were removed).
+// RecoveryCheckpointEnabled is retained for older generated frontends. Auto
+// Guard is always built into Auto, so it always reports true.
 func (a *App) RecoveryCheckpointEnabled() bool {
-	return desktopDefaultRecoveryCheckpoint()
+	return true
 }
 
-// RecoveryCheckpointEnabledTab reports the config kill switch for any tab id.
+// RecoveryCheckpointEnabledTab is the tab-scoped compatibility alias.
 func (a *App) RecoveryCheckpointEnabledTab(_ string) bool {
-	return desktopDefaultRecoveryCheckpoint()
+	return true
 }
 
 // ReplayPendingPrompts asks every tab's controller to re-emit any approval/ask
@@ -1864,12 +1863,6 @@ func (a *App) NewSessionForTab(tabID string) error {
 	if err := ctrl.NewSession(); err != nil {
 		return err
 	}
-	recoveryEnabled := ctrl.RecoveryCheckpointEnabled()
-	a.mu.Lock()
-	if current := a.tabs[tab.ID]; current == tab && tab.Ctrl == ctrl {
-		tab.recoveryCheckpointEnabled = recoveryEnabled
-	}
-	a.mu.Unlock()
 	// The rotated session starts with zero spend: without this reset the tab
 	// telemetry keeps the previous session's totals and the status bar 会话费用
 	// silently turns into an all-sessions running total (#5850).
@@ -1980,12 +1973,6 @@ func (a *App) ClearSessionForTab(tabID string) error {
 	if err := ctrl.ClearSession(); err != nil {
 		return err
 	}
-	recoveryEnabled := ctrl.RecoveryCheckpointEnabled()
-	a.mu.Lock()
-	if current := a.tabs[tab.ID]; current == tab && tab.Ctrl == ctrl {
-		tab.recoveryCheckpointEnabled = recoveryEnabled
-	}
-	a.mu.Unlock()
 	if err := tab.ensureSessionLease(ctrl.SessionPath()); err != nil {
 		// Wails bridge return: a raw lease error would carry the session path
 		// and holder id across to the frontend.
@@ -2132,7 +2119,6 @@ func (a *App) clearActiveSessionRuntime(tab *WorkspaceTab, oldCtrl control.Sessi
 	tab.sink = newSink
 	tab.SessionPath = path
 	tab.Label = newCtrl.Label()
-	tab.recoveryCheckpointEnabled = newCtrl.RecoveryCheckpointEnabled()
 	tab.Ready = true
 	clearTabStartupError(tab)
 	tab.goal = ""

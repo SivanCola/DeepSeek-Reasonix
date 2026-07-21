@@ -169,7 +169,7 @@ export interface AppBindings {
   ApproveTab(tabID: string, id: string, allow: boolean, session: boolean, persist: boolean): Promise<void>;
   ResolveRecovery(id: string, action: string, feedback: string): Promise<void>;
   ResolveRecoveryTab(tabID: string, id: string, action: string, feedback: string): Promise<void>;
-  // Legacy no-ops: Auto Guard is built into Auto; kill switch is config-only.
+  // Legacy no-ops: Auto Guard is always built into Auto.
   SetRecoveryCheckpointEnabled(enabled: boolean): Promise<void>;
   SetRecoveryCheckpointEnabledTab(tabID: string, enabled: boolean): Promise<void>;
   RecoveryCheckpointEnabled(): Promise<boolean>;
@@ -3662,7 +3662,7 @@ function makeMockApp(): AppBindings {
       settings.defaultToolApprovalMode = normalizeToolApprovalMode(mode);
     },
     async SetDefaultAutoRecoveryCheckpoint(_enabled: boolean) {
-      // Legacy no-op in browser mock; real desktop migrates to agent config.
+      // Legacy no-op; Auto Guard is always built into Auto.
     },
     async SaveProvider(p: ProviderView) {
       p.added = true;

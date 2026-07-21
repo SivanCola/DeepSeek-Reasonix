@@ -1107,15 +1107,9 @@ func TestSaveToRoundTrips(t *testing.T) {
 	}
 }
 
-func TestRecoverySettingsRoundTripThroughUserSave(t *testing.T) {
+func TestRecoveryReviewerSettingsRoundTripThroughUserSave(t *testing.T) {
 	isolateUserConfigHome(t)
 	c := Default()
-	if err := c.SetDesktopDefaultAutoRecoveryCheckpoint(false); err != nil {
-		t.Fatal(err)
-	}
-	if err := c.SetAutoRecoveryCheckpoint("off"); err != nil {
-		t.Fatal(err)
-	}
 	c.Agent.RecoveryModel = "deepseek-pro"
 	c.Agent.RecoveryTemperature = 0.25
 
@@ -1124,22 +1118,19 @@ func TestRecoverySettingsRoundTripThroughUserSave(t *testing.T) {
 		t.Fatalf("SaveTo: %v", err)
 	}
 	got := LoadForEdit(path)
-	if got.Desktop.DefaultAutoRecoveryCheckpoint != nil {
-		t.Fatalf("legacy desktop.default_auto_recovery_checkpoint survived migration: %+v", got.Desktop.DefaultAutoRecoveryCheckpoint)
-	}
-	if got.Agent.AutoRecoveryCheckpoint != "off" || got.Agent.RecoveryModel != "deepseek-pro" || got.Agent.RecoveryTemperature != 0 {
+	if got.Agent.RecoveryModel != "deepseek-pro" || got.Agent.RecoveryTemperature != 0 {
 		t.Fatalf("agent recovery settings not preserved: %+v", got.Agent)
 	}
 }
 
-func TestLegacyDesktopAutoGuardDefaultMigratesToUnifiedSwitch(t *testing.T) {
+func TestRetiredAutoGuardKeysAreIgnoredAndRemovedOnSave(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "reasonix.toml")
-	if err := os.WriteFile(path, []byte("[desktop]\ndefault_auto_recovery_checkpoint = false\n"), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte("[desktop]\ndefault_auto_recovery_checkpoint = false\n\n[agent]\nauto_recovery_checkpoint = \"off\"\nrecovery_model = \"deepseek-pro\"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	c := LoadForEdit(path)
-	if c.Desktop.DefaultAutoRecoveryCheckpoint != nil || c.Agent.AutoRecoveryCheckpoint != "off" {
-		t.Fatalf("legacy Auto Guard config not migrated: desktop=%+v agent=%q", c.Desktop.DefaultAutoRecoveryCheckpoint, c.Agent.AutoRecoveryCheckpoint)
+	if c.Agent.RecoveryModel != "deepseek-pro" {
+		t.Fatalf("unrelated recovery model was not loaded: %+v", c.Agent)
 	}
 	if err := c.SaveTo(path); err != nil {
 		t.Fatal(err)
@@ -1149,8 +1140,11 @@ func TestLegacyDesktopAutoGuardDefaultMigratesToUnifiedSwitch(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(raw)
-	if strings.Contains(text, "default_auto_recovery_checkpoint") || !strings.Contains(text, `auto_recovery_checkpoint = "off"`) {
-		t.Fatalf("migrated config was not consolidated:\n%s", text)
+	if strings.Contains(text, "default_auto_recovery_checkpoint") || strings.Contains(text, "auto_recovery_checkpoint") {
+		t.Fatalf("retired Auto Guard keys survived save:\n%s", text)
+	}
+	if !strings.Contains(text, `recovery_model = "deepseek-pro"`) {
+		t.Fatalf("save removed unrelated recovery model:\n%s", text)
 	}
 }
 

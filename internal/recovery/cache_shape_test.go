@@ -27,7 +27,7 @@ func TestRecoveryWiringPreservesSuccessPathCacheShape(t *testing.T) {
 	baseline := agent.CaptureShape(sys, schemas, 0)
 
 	// Gate with recovery enabled but no failures must not alter agent schemas.
-	gate := recovery.NewGate(recovery.Options{Enabled: true, Mode: func() string { return "auto" }})
+	gate := recovery.NewGate(recovery.Options{Mode: func() string { return "auto" }})
 	sess := agent.NewSession(sys)
 	ag := agent.New(nil, reg, sess, agent.Options{
 		RecoveryGate: gate,

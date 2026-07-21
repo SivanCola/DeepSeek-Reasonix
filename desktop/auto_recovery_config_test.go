@@ -11,11 +11,10 @@ import (
 	"reasonix/internal/control"
 )
 
-// TestBuildTabControllerHonorsProjectAutoRecoveryKillSwitch exercises the
-// desktop wiring that runs after boot.Build. A user-global "on" must never be
-// re-applied over a project-level "off", either while the tab controller is
-// configured or when it binds a fresh session.
-func TestBuildTabControllerHonorsProjectAutoRecoveryKillSwitch(t *testing.T) {
+// TestBuildTabControllerIgnoresRetiredAutoRecoveryKillSwitch exercises the
+// desktop wiring after boot.Build. Retired global/project keys must not disable
+// Auto Guard either during controller construction or fresh-session binding.
+func TestBuildTabControllerIgnoresRetiredAutoRecoveryKillSwitch(t *testing.T) {
 	isolateDesktopUserDirs(t)
 	userCfg := config.UserConfigPath()
 	if err := os.MkdirAll(filepath.Dir(userCfg), 0o755); err != nil {
@@ -87,12 +86,10 @@ api_key_env = "REASONIX_TEST_KEY_UNSET"
 	if !ok || ctrl == nil {
 		t.Fatalf("tab controller = %T, want *control.Controller", tab.Ctrl)
 	}
-	if ctrl.RecoveryCheckpointEnabled() {
-		t.Fatal("desktop runtime configuration overrode project auto_recovery_checkpoint=off")
-	}
 
-	ctrl.SetFreshSessionPath(filepath.Join(ctrl.SessionDir(), "fresh-auto-guard-off.jsonl"))
-	if ctrl.RecoveryCheckpointEnabled() {
-		t.Fatal("desktop fresh-session rotation overrode project auto_recovery_checkpoint=off")
+	fresh := filepath.Join(ctrl.SessionDir(), "fresh-auto-guard-off.jsonl")
+	ctrl.SetFreshSessionPath(fresh)
+	if got := ctrl.SessionPath(); got != fresh {
+		t.Fatalf("fresh session path = %q, want %q", got, fresh)
 	}
 }

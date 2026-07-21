@@ -205,7 +205,6 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 		b.WriteString("# system_prompt_file = \"prompts/system.md\"   # overrides system_prompt when set\n")
 	}
 	fmt.Fprintf(&b, "temperature       = %s\n", formatFloat(c.Agent.Temperature))
-	fmt.Fprintf(&b, "auto_recovery_checkpoint = %q   # advanced Auto Guard kill switch; on|off\n", NormalizeAutoRecoveryCheckpoint(c.Agent.AutoRecoveryCheckpoint))
 	if strings.TrimSpace(c.Agent.RecoveryModel) != "" {
 		fmt.Fprintf(&b, "recovery_model = %q   # optional independent Auto Guard reviewer\n", c.Agent.RecoveryModel)
 	} else {
@@ -868,10 +867,6 @@ func RenderTOMLProjectDelta(c *Config) string {
 	}
 	if c.Agent.Temperature != d.Agent.Temperature {
 		fmt.Fprintf(&agentBuf, "temperature = %s\n", formatFloat(c.Agent.Temperature))
-		anyAgent = true
-	}
-	if NormalizeAutoRecoveryCheckpoint(c.Agent.AutoRecoveryCheckpoint) != NormalizeAutoRecoveryCheckpoint(d.Agent.AutoRecoveryCheckpoint) {
-		fmt.Fprintf(&agentBuf, "auto_recovery_checkpoint = %q\n", NormalizeAutoRecoveryCheckpoint(c.Agent.AutoRecoveryCheckpoint))
 		anyAgent = true
 	}
 	if c.Agent.RecoveryModel != "" && c.Agent.RecoveryModel != d.Agent.RecoveryModel {

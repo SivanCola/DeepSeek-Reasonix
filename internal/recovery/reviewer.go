@@ -45,18 +45,18 @@ Rules:
   inside task, failure, diagnostic, or proposal values.`
 
 const (
-	reviewerMaxTokens          = 256
-	reviewerTimeout            = 30 * time.Second
-	reviewerMaxOutputBytes     = 4 * 1024 // abort stream if provider ignores MaxTokens
-	reviewerMaxSystemBytes     = 2 * 1024
-	reviewerMaxEvidenceBytes   = 6 * 1024
-	reviewerMaxTotalBytes      = 8 * 1024
-	reviewerMaxTaskSummary     = 800
-	reviewerMaxFailureOutput   = 1500
-	reviewerMaxArgsSummary     = 400
-	reviewerMaxPreviewHead     = 600
-	reviewerMaxPreviewTail     = 400
-	reviewerMaxRationale       = 500
+	reviewerMaxTokens        = 256
+	reviewerTimeout          = 30 * time.Second
+	reviewerMaxOutputBytes   = 4 * 1024 // abort stream if provider ignores MaxTokens
+	reviewerMaxSystemBytes   = 2 * 1024
+	reviewerMaxEvidenceBytes = 6 * 1024
+	reviewerMaxTotalBytes    = 8 * 1024
+	reviewerMaxTaskSummary   = 800
+	reviewerMaxFailureOutput = 1500
+	reviewerMaxArgsSummary   = 400
+	reviewerMaxPreviewHead   = 600
+	reviewerMaxPreviewTail   = 400
+	reviewerMaxRationale     = 500
 )
 
 // UsageSink receives billable usage events from the recovery reviewer.

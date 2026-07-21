@@ -710,7 +710,7 @@ func TestNewSessionUsesFreshTopicIdentity(t *testing.T) {
 	sess := &agent.Session{}
 	sess.Replace([]provider.Message{{Role: provider.RoleUser, Content: "old prompt"}})
 	ag := agent.New(stubProvider{}, tool.NewRegistry(), sess, agent.Options{}, event.Discard)
-	ctrl := control.New(control.Options{Executor: ag, SessionDir: dir, SessionPath: oldPath, Sink: event.Discard, RecoveryCheckpointEnabled: true})
+	ctrl := control.New(control.Options{Executor: ag, SessionDir: dir, SessionPath: oldPath, Sink: event.Discard})
 
 	app := NewApp()
 	app.setTestCtrl(ctrl, "model-a")
@@ -735,10 +735,6 @@ func TestNewSessionUsesFreshTopicIdentity(t *testing.T) {
 	if newPath == "" || filepath.Clean(newPath) == filepath.Clean(oldPath) {
 		t.Fatalf("new session path = %q, want fresh path distinct from %q", newPath, oldPath)
 	}
-	if !ctrl.RecoveryCheckpointEnabled() {
-		t.Fatal("new session should keep Auto Guard armed from config")
-	}
-
 	if err := os.WriteFile(newPath, []byte(`{"role":"user","content":"new prompt"}`+"\n"), 0o644); err != nil {
 		t.Fatalf("write new session: %v", err)
 	}

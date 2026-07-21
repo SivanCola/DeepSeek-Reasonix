@@ -1058,17 +1058,14 @@ model = "x"
 	}
 }
 
-// TestBuildHonorsProjectAutoRecoveryKillSwitch freezes the contract that
-// project reasonix.toml [agent].auto_recovery_checkpoint = "off" wins over a
-// global "on" default when boot.Build loads merged config. Desktop must not
-// re-apply a user-only helper after this initialization.
-func TestBuildHonorsProjectAutoRecoveryKillSwitch(t *testing.T) {
+// TestBuildIgnoresRetiredAutoRecoveryKillSwitch freezes the contract that the
+// short-lived global and project keys no longer disable built-in Auto Guard.
+func TestBuildIgnoresRetiredAutoRecoveryKillSwitch(t *testing.T) {
 	isolateConfigHome(t)
 	userCfg := config.UserConfigPath()
 	if err := os.MkdirAll(filepath.Dir(userCfg), 0o755); err != nil {
 		t.Fatalf("mkdir user config: %v", err)
 	}
-	// Global default keeps Auto Guard on.
 	if err := os.WriteFile(userCfg, []byte(`
 default_model = "test-model"
 
@@ -1107,16 +1104,11 @@ api_key_env = "REASONIX_TEST_KEY_UNSET"
 		t.Fatalf("Build: %v", err)
 	}
 	defer ctrl.Close()
-	if ctrl.RecoveryCheckpointEnabled() {
-		t.Fatal("project auto_recovery_checkpoint=off must disable Auto Guard at boot")
-	}
-
-	// Fresh session rotation must keep the construction-time kill switch. The
-	// desktop build/configuration path has a separate integration regression.
+	// Retired keys do not block construction or fresh-session rotation.
 	fresh := filepath.Join(dir, "fresh-session.jsonl")
 	ctrl.SetFreshSessionPath(fresh)
-	if ctrl.RecoveryCheckpointEnabled() {
-		t.Fatal("fresh session must keep project kill switch disabled")
+	if got := ctrl.SessionPath(); got != fresh {
+		t.Fatalf("fresh session path = %q, want %q", got, fresh)
 	}
 }
 

@@ -992,14 +992,9 @@ func TestSetDefaultToolApprovalModePersistsToUserConfig(t *testing.T) {
 	}
 }
 
-func TestAutoRecoveryCheckpointIsConfigOnlyKillSwitch(t *testing.T) {
+func TestRetiredAutoRecoveryCheckpointSettingsAreNoOps(t *testing.T) {
 	isolateDesktopUserDirs(t)
 
-	// Advanced kill switch lives on [agent].auto_recovery_checkpoint only.
-	// Desktop no longer exposes a separate Settings toggle or per-tab meta flag.
-	if !desktopDefaultRecoveryCheckpoint() {
-		t.Fatal("default Auto Guard kill switch should be on")
-	}
 	cfgPath := config.UserConfigPath()
 	if err := os.MkdirAll(filepath.Dir(cfgPath), 0o755); err != nil {
 		t.Fatalf("mkdir config: %v", err)
@@ -1007,8 +1002,12 @@ func TestAutoRecoveryCheckpointIsConfigOnlyKillSwitch(t *testing.T) {
 	if err := os.WriteFile(cfgPath, []byte("[agent]\nauto_recovery_checkpoint = \"off\"\n"), 0o644); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
-	if desktopDefaultRecoveryCheckpoint() {
-		t.Fatal("agent.auto_recovery_checkpoint=off should disable Auto Guard")
+	app := NewApp()
+	if err := app.SetDefaultAutoRecoveryCheckpoint(false); err != nil {
+		t.Fatalf("legacy setter: %v", err)
+	}
+	if !app.RecoveryCheckpointEnabled() || !app.RecoveryCheckpointEnabledTab("legacy") {
+		t.Fatal("retired config or legacy setter disabled built-in Auto Guard")
 	}
 }
 

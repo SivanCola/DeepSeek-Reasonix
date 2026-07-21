@@ -83,11 +83,9 @@ type Controller struct {
 	guardianPath string            // persisted guardian session file ("" when disabled)
 	// recoveryGate is the shared Auto Guard state for this controller.
 	// nil when the feature is not wired for this controller.
-	recoveryGate           *recovery.Gate
-	recoveryEnabled        bool // session preference; effective only in Auto mode
-	recoveryDefaultEnabled bool // configured default sampled by fresh session rotations
-	sink                   event.Sink
-	policy                 permission.Policy
+	recoveryGate *recovery.Gate
+	sink         event.Sink
+	policy       permission.Policy
 	// subagentGate is the shared gate every headless-only sub-agent surface
 	// reads from (see Options.SubagentGate). Nil when the caller didn't build
 	// one — sub-agents then keep whatever gate they were constructed with.
@@ -353,8 +351,6 @@ type Options struct {
 	// RecoveryReviewer is the optional independent recovery reviewer (nil =
 	// rule-only path with fail-closed human confirmation for ambiguous cases).
 	RecoveryReviewer recovery.Reviewer
-	// RecoveryCheckpointEnabled arms Auto Guard for this session.
-	RecoveryCheckpointEnabled bool
 	// RecoveryHeadless blocks mutations that need confirmation instead of
 	// waiting forever when no human decision channel exists.
 	RecoveryHeadless bool
@@ -475,7 +471,6 @@ func New(opts Options) *Controller {
 		executor:                          opts.Executor,
 		guardianSess:                      opts.Guardian,
 		guardianPath:                      guardian.PathFor(opts.SessionPath),
-		recoveryDefaultEnabled:            opts.RecoveryCheckpointEnabled,
 		sink:                              sink,
 		policy:                            opts.Policy,
 		subagentGate:                      opts.SubagentGate,
@@ -526,9 +521,9 @@ func New(opts Options) *Controller {
 		})
 		c.executor.SetMemoryQueue(c)
 	}
-	// Always wire the recovery gate so SetRecoveryCheckpointEnabled can arm it
-	// later. Effectiveness still requires Auto mode + enabled preference.
-	c.initRecoveryGate(opts.RecoveryCheckpointEnabled, opts.RecoveryReviewer, opts.RecoveryHeadless)
+	// Auto Guard is built into Auto. Ask and YOLO bypass it through the mode
+	// provider, so no separate enablement state is needed.
+	c.initRecoveryGate(opts.RecoveryReviewer, opts.RecoveryHeadless)
 	return c
 }
 
@@ -3063,7 +3058,6 @@ func (c *Controller) SwitchBranch(ref string) (agent.BranchInfo, error) {
 	c.rebindCheckpoints(match.Path)
 	c.restoreTerminalGoalTodos(match.Path)
 	c.loadGuardianSession()
-	c.loadRecoveryEnabled(match.Path)
 	c.loadRecoveryState(match.Path)
 	c.snapshotMu.Unlock()
 	c.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo,
@@ -3188,7 +3182,6 @@ func (c *Controller) Resume(s *agent.Session, path string) {
 	}
 	c.restoreTerminalGoalTodos(path)
 	c.loadGuardianSession()
-	c.loadRecoveryEnabled(path)
 	c.loadRecoveryState(path)
 	c.snapshotMu.Unlock()
 	c.recoverInterruptedTurn(path)
@@ -3420,9 +3413,6 @@ func (c *Controller) snapshot(markActivity, forceRewrite, shutdownRecovery bool)
 	}
 	// Persist recovery gate state so unresolved checkpoints survive restart.
 	c.saveRecoveryState(path)
-	// New metadata always records an explicit preference, while a resumed
-	// legacy session is normalized to its compatibility default on next save.
-	c.persistRecoveryEnabled(c.RecoveryCheckpointEnabled())
 	// Record the listing-only sidecar fields (model, preview, user-turn count)
 	// straight from the in-memory conversation, so the sidebar and resume picker
 	// never have to decode the whole .jsonl just to show them. markActivity bumps
@@ -3574,7 +3564,6 @@ func (c *Controller) recoverSnapshotConflict(path string, saveErr error, forceRe
 	if c.sessionRecoveryMeta != nil {
 		meta = c.sessionRecoveryMeta(req)
 	}
-	meta.RecoveryCheckpointEnabled = nil
 	info, err := c.executor.Session().SaveRecoveryBranch(agent.RecoveryBranchOptions{
 		OriginalPath: path,
 		Reason:       reason,
@@ -3634,7 +3623,6 @@ func (c *Controller) recoverShutdownSnapshot(path string, saveErr error) (string
 	if c.sessionRecoveryMeta != nil {
 		meta = c.sessionRecoveryMeta(req)
 	}
-	meta.RecoveryCheckpointEnabled = nil
 	info, err := c.executor.Session().SaveShutdownRecoveryBranch(agent.RecoveryBranchOptions{
 		OriginalPath: path,
 		Reason:       reason,

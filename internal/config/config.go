@@ -146,15 +146,12 @@ type DesktopConfig struct {
 	StatusBarStyle          string   `toml:"status_bar_style"`           // icon|text; desktop status bar metric labels
 	StatusBarItems          []string `toml:"status_bar_items"`           // ordered visible desktop status bar items
 	DefaultToolApprovalMode string   `toml:"default_tool_approval_mode"` // ask|auto|yolo; defaults to auto for newly-created desktop sessions
-	// DefaultAutoRecoveryCheckpoint is the legacy new-session Auto Guard default.
-	// nil means enabled.
-	DefaultAutoRecoveryCheckpoint *bool    `toml:"default_auto_recovery_checkpoint"`
-	CheckUpdates                  *bool    `toml:"check_updates"`      // startup update checks; nil keeps the default enabled
-	Telemetry                     *bool    `toml:"telemetry"`          // anonymous launch ping (install id + version + OS); nil keeps the default enabled
-	Metrics                       *bool    `toml:"metrics"`            // aggregate desktop metrics (anonymous signal/bucket counts; no content); nil keeps the default enabled
-	ProviderAccess                []string `toml:"provider_access"`    // desktop-only list of provider entries shown in Settings > Model > Access
-	ExpandThinking                bool     `toml:"expand_thinking"`    // true = show reasoning text expanded by default; false = collapsed
-	ConversationWidth             string   `toml:"conversation_width"` // standard|full; max transcript width; empty = standard
+	CheckUpdates            *bool    `toml:"check_updates"`              // startup update checks; nil keeps the default enabled
+	Telemetry               *bool    `toml:"telemetry"`                  // anonymous launch ping (install id + version + OS); nil keeps the default enabled
+	Metrics                 *bool    `toml:"metrics"`                    // aggregate desktop metrics (anonymous signal/bucket counts; no content); nil keeps the default enabled
+	ProviderAccess          []string `toml:"provider_access"`            // desktop-only list of provider entries shown in Settings > Model > Access
+	ExpandThinking          bool     `toml:"expand_thinking"`            // true = show reasoning text expanded by default; false = collapsed
+	ConversationWidth       string   `toml:"conversation_width"`         // standard|full; max transcript width; empty = standard
 }
 
 // DesktopExternalOpener returns the user-selected external opener id. The
@@ -366,34 +363,6 @@ func (c *Config) DesktopDefaultToolApprovalMode() string {
 		return "ask"
 	}
 	return NormalizeToolApprovalMode(c.Desktop.DefaultToolApprovalMode)
-}
-
-// NormalizeAutoRecoveryCheckpoint returns "on" or "off". Empty defaults to "on"
-// so Auto mode includes Auto Guard by default.
-func NormalizeAutoRecoveryCheckpoint(v string) string {
-	switch strings.ToLower(strings.TrimSpace(v)) {
-	case "off", "false", "0", "no":
-		return "off"
-	default:
-		return "on"
-	}
-}
-
-// AutoRecoveryCheckpointEnabled reports the advanced Auto Guard kill switch.
-func (c *Config) AutoRecoveryCheckpointEnabled() bool {
-	if c == nil {
-		return true
-	}
-	return NormalizeAutoRecoveryCheckpoint(c.Agent.AutoRecoveryCheckpoint) == "on"
-}
-
-// DesktopDefaultAutoRecoveryCheckpoint is the legacy Desktop-facing alias for
-// the unified agent-level Auto Guard switch.
-func (c *Config) DesktopDefaultAutoRecoveryCheckpoint() bool {
-	if c == nil {
-		return true
-	}
-	return c.AutoRecoveryCheckpointEnabled()
 }
 
 // DesktopStatusBarStyle normalizes the desktop status bar metric label style.
@@ -1085,9 +1054,6 @@ type AgentConfig struct {
 	PlannerModel        string  `toml:"planner_model"`
 	GuardianModel       string  `toml:"guardian_model"`
 	GuardianTemperature float64 `toml:"guardian_temperature"`
-	// AutoRecoveryCheckpoint is the advanced compatibility kill switch for Auto
-	// Guard. Values: "on" | "off". Empty defaults to "on".
-	AutoRecoveryCheckpoint string `toml:"auto_recovery_checkpoint"`
 	// RecoveryModel optionally names a dedicated model for the independent
 	// recovery reviewer. Empty falls back to GuardianModel, then the main model.
 	RecoveryModel string `toml:"recovery_model"`

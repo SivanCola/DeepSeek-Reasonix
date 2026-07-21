@@ -46,8 +46,6 @@ const (
 type Facts struct {
 	// AutoMode is true only when tool-approval mode is Auto.
 	AutoMode bool
-	// Enabled is the advanced auto_recovery_checkpoint kill switch.
-	Enabled bool
 
 	// Proposal classification.
 	ReadOnly     bool
@@ -75,7 +73,7 @@ type DecisionResult struct {
 // Decide is the pure Auto Guard decision engine.
 //
 // Order is fixed by product policy:
-//  1. non-Auto or advanced switch off → bypass ordinary approval
+//  1. non-Auto → bypass ordinary approval
 //  2. read-only diagnosis → allow
 //  3. deterministic high risk → ask
 //  4. no active failure → allow ordinary mutations
@@ -83,7 +81,7 @@ type DecisionResult struct {
 //  6. expanded scope / method change / second failure → ask
 //  7. remaining failure-recovery mutations → reviewer
 func Decide(f Facts) DecisionResult {
-	if !f.Enabled || !f.AutoMode {
+	if !f.AutoMode {
 		return DecisionResult{Route: RouteBypass}
 	}
 	// Non-mutating, non-verification calls (and host-proven read-only tools)

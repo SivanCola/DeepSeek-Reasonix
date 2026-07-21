@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"reasonix/internal/agent"
@@ -27,7 +26,6 @@ type Reviewer interface {
 
 // Options configures a Gate.
 type Options struct {
-	Enabled         bool
 	Mode            ModeProvider
 	EmitPrompt      EmitPromptFunc
 	Reviewer        Reviewer
@@ -51,7 +49,6 @@ type Options struct {
 // state updates, reviewer calls, approval waiters, and persistence.
 type Gate struct {
 	mu      sync.Mutex
-	enabled atomic.Bool
 	opts    Options
 	tasks   map[string]*taskRuntime
 	metrics Metrics
@@ -78,8 +75,8 @@ type resolvePayload struct {
 	feedback string
 }
 
-// NewGate constructs Auto Guard. When opts.Enabled is false, all checks
-// are no-ops until SetEnabled(true).
+// NewGate constructs Auto Guard. The gate is active whenever approval mode is
+// Auto; Ask and YOLO bypass it through the mode provider.
 func NewGate(opts Options) *Gate {
 	if opts.Mode == nil {
 		opts.Mode = func() string { return "auto" }
@@ -100,24 +97,7 @@ func NewGate(opts Options) *Gate {
 		persistDone:    map[string]uint64{},
 	}
 	g.persistCond = sync.NewCond(&g.persistMu)
-	g.enabled.Store(opts.Enabled)
 	return g
-}
-
-// SetEnabled toggles Auto Guard for this session.
-func (g *Gate) SetEnabled(enabled bool) {
-	if g == nil {
-		return
-	}
-	g.enabled.Store(enabled)
-}
-
-// Enabled reports whether Auto Guard is enabled for this session.
-func (g *Gate) Enabled() bool {
-	if g == nil {
-		return false
-	}
-	return g.enabled.Load()
 }
 
 // Metrics returns a copy of content-free counters.
@@ -307,7 +287,7 @@ func (g *Gate) Resolve(id string, action Action, feedback string) error {
 // ObserveResult implements agent.RecoveryGate. It returns one-shot guidance
 // for the caller to enqueue on the exact Agent.Run that observed the failure.
 func (g *Gate) ObserveResult(_ context.Context, obs Observation) string {
-	if g == nil || !g.enabled.Load() || !g.activeMode() {
+	if g == nil || !g.activeMode() {
 		return ""
 	}
 	taskID := normalizeTaskID(obs.TaskID)
@@ -399,9 +379,8 @@ func (g *Gate) BeforeMutation(ctx context.Context, proposal Proposal) (Decision,
 		return Decision{Allow: true}, nil
 	}
 
-	// Host-proven read-only diagnostics always continue (even when disabled —
-	// Decide also encodes this; short-circuit matches prior behavior for
-	// disabled/non-auto via RouteBypass → allow through ordinary path).
+	// Host-proven read-only diagnostics always continue. Decide also encodes the
+	// non-Auto bypass so Ask and YOLO keep their existing semantics.
 	facts, failure, diagNotes, taskID, fp := g.classify(proposal)
 	route := Decide(facts)
 
@@ -429,7 +408,6 @@ func (g *Gate) BeforeMutation(ctx context.Context, proposal Proposal) (Decision,
 // classify builds pure Facts for Decide. It never calls the model or UI.
 func (g *Gate) classify(proposal Proposal) (Facts, *FailureEvent, []string, string, string) {
 	facts := Facts{
-		Enabled:      g.enabled.Load(),
 		AutoMode:     g.activeMode(),
 		ReadOnly:     proposal.ReadOnly,
 		Mutates:      proposal.Mutates,

@@ -78,8 +78,6 @@ type Approvals interface {
 	// ResolveRecovery answers an Auto Guard card: continue|revise. Revise
 	// refuses the mutation and steers feedback.
 	ResolveRecovery(id string, action agent.RecoveryAction, feedback string) error
-	SetRecoveryCheckpointEnabled(enabled bool)
-	RecoveryCheckpointEnabled() bool
 	AnswerQuestion(id string, answers []event.AskAnswer)
 	Ask(ctx context.Context, questions []event.AskQuestion) ([]event.AskAnswer, error)
 	ReplayPendingPrompts()

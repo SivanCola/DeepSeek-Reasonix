@@ -97,37 +97,6 @@ func (c *Config) SetDesktopDefaultToolApprovalMode(mode string) error {
 	return nil
 }
 
-// SetDesktopDefaultAutoRecoveryCheckpoint is the legacy Desktop API for the
-// unified agent-level Auto Guard switch.
-func (c *Config) SetDesktopDefaultAutoRecoveryCheckpoint(enabled bool) error {
-	if c == nil {
-		return fmt.Errorf("config is nil")
-	}
-	if enabled {
-		c.Agent.AutoRecoveryCheckpoint = "on"
-	} else {
-		c.Agent.AutoRecoveryCheckpoint = "off"
-	}
-	c.Desktop.DefaultAutoRecoveryCheckpoint = nil
-	return nil
-}
-
-// SetAutoRecoveryCheckpoint sets [agent].auto_recovery_checkpoint to on|off.
-func (c *Config) SetAutoRecoveryCheckpoint(value string) error {
-	if c == nil {
-		return fmt.Errorf("config is nil")
-	}
-	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "on", "true", "1", "yes":
-		c.Agent.AutoRecoveryCheckpoint = "on"
-	case "off", "false", "0", "no":
-		c.Agent.AutoRecoveryCheckpoint = "off"
-	default:
-		return fmt.Errorf("auto_recovery_checkpoint %q: must be on|off", value)
-	}
-	return nil
-}
-
 // SetUIShortcutLayout selects the CLI keyboard shortcut layout. "classic" keeps
 // historical behavior; "desktop" enables the two-axis desktop-style shortcuts.
 func (c *Config) SetUIShortcutLayout(layout string) error {
@@ -1230,10 +1199,11 @@ func (c *Config) saveProjectIncremental(path string) error {
 	}
 	removePlugins := len(c.Plugins) == 0 && tomlBodyHasSection(body, "plugins")
 	removeSandboxBash := shouldRemoveIneffectiveProjectSandboxBash(body, c)
-	_, hasLegacyAutoGuard := tomlSectionKeyValue(body, "desktop", "default_auto_recovery_checkpoint")
-	removeLegacyAutoGuard := c.Desktop.DefaultAutoRecoveryCheckpoint == nil && hasLegacyAutoGuard
+	_, hasLegacyDesktopAutoGuard := tomlSectionKeyValue(body, "desktop", "default_auto_recovery_checkpoint")
+	_, hasRetiredAgentAutoGuard := tomlSectionKeyValue(body, "agent", "auto_recovery_checkpoint")
+	removeRetiredAutoGuard := hasLegacyDesktopAutoGuard || hasRetiredAgentAutoGuard
 	writeProviderAccess := c.Desktop.ProviderAccess != nil
-	if strings.TrimSpace(delta) == "" && !removePlugins && !removeSandboxBash && !removeLegacyAutoGuard && !writeProviderAccess {
+	if strings.TrimSpace(delta) == "" && !removePlugins && !removeSandboxBash && !removeRetiredAutoGuard && !writeProviderAccess {
 		return nil // no changes to write
 	}
 
@@ -1247,8 +1217,9 @@ func (c *Config) saveProjectIncremental(path string) error {
 	if removeSandboxBash {
 		body = removeTOMLSectionKey(body, "sandbox", "bash")
 	}
-	if removeLegacyAutoGuard {
+	if removeRetiredAutoGuard {
 		body = removeTOMLSectionKey(body, "desktop", "default_auto_recovery_checkpoint")
+		body = removeTOMLSectionKey(body, "agent", "auto_recovery_checkpoint")
 	}
 	if writeProviderAccess {
 		body = upsertTOMLSectionKey(body, "desktop", "provider_access", "provider_access = "+renderStringArray(c.Desktop.ProviderAccess))

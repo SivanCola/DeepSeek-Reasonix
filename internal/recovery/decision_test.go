@@ -21,43 +21,38 @@ func TestDecisionMatrix(t *testing.T) {
 	}{
 		{
 			name: "ask mode bypasses auto guard",
-			f:    Facts{Enabled: true, AutoMode: false, Mutates: true},
+			f:    Facts{AutoMode: false, Mutates: true},
 			want: DecisionResult{Route: RouteBypass},
 		},
 		{
 			name: "yolo mode bypasses auto guard",
-			f:    Facts{Enabled: true, AutoMode: false, Mutates: true, HighRisk: true},
-			want: DecisionResult{Route: RouteBypass},
-		},
-		{
-			name: "kill switch off bypasses auto guard",
-			f:    Facts{Enabled: false, AutoMode: true, Mutates: true, HighRisk: true},
+			f:    Facts{AutoMode: false, Mutates: true, HighRisk: true},
 			want: DecisionResult{Route: RouteBypass},
 		},
 		{
 			name: "ordinary read allows without review",
-			f:    Facts{Enabled: true, AutoMode: true, ReadOnly: true},
+			f:    Facts{AutoMode: true, ReadOnly: true},
 			want: DecisionResult{Route: RouteAllow},
 		},
 		{
 			name: "ordinary search allows without review",
-			f:    Facts{Enabled: true, AutoMode: true, ReadOnly: true, Mutates: false},
+			f:    Facts{AutoMode: true, ReadOnly: true, Mutates: false},
 			want: DecisionResult{Route: RouteAllow},
 		},
 		{
 			name: "ordinary mutation without failure allows without review",
-			f:    Facts{Enabled: true, AutoMode: true, Mutates: true},
+			f:    Facts{AutoMode: true, Mutates: true},
 			want: DecisionResult{Route: RouteAllow},
 		},
 		{
 			name: "pre-action high risk asks without review",
-			f:    Facts{Enabled: true, AutoMode: true, Mutates: true, HighRisk: true},
+			f:    Facts{AutoMode: true, Mutates: true, HighRisk: true},
 			want: DecisionResult{Route: RouteAsk, AskReason: AskRisk},
 		},
 		{
 			name: "high risk wins over active failure reviewer path",
 			f: Facts{
-				Enabled: true, AutoMode: true, Mutates: true, HighRisk: true,
+				AutoMode: true, Mutates: true, HighRisk: true,
 				HasActiveFailure: true, FailureCount: 1,
 			},
 			want: DecisionResult{Route: RouteAsk, AskReason: AskRisk},
@@ -65,7 +60,7 @@ func TestDecisionMatrix(t *testing.T) {
 		{
 			name: "first safe verification retry allows and consumes budget",
 			f: Facts{
-				Enabled: true, AutoMode: true, Verification: true,
+				AutoMode: true, Verification: true,
 				HasActiveFailure: true, FailureCount: 1, SafeRetryAvailable: true,
 			},
 			want: DecisionResult{Route: RouteAllow, ConsumeSafeRetry: true},
@@ -73,7 +68,7 @@ func TestDecisionMatrix(t *testing.T) {
 		{
 			name: "expanded scope after failure asks",
 			f: Facts{
-				Enabled: true, AutoMode: true, Mutates: true,
+				AutoMode: true, Mutates: true,
 				HasActiveFailure: true, FailureCount: 1, ExpandedScope: true,
 			},
 			want: DecisionResult{Route: RouteAsk, AskReason: AskScope},
@@ -81,7 +76,7 @@ func TestDecisionMatrix(t *testing.T) {
 		{
 			name: "strategy change after failure asks",
 			f: Facts{
-				Enabled: true, AutoMode: true, Mutates: true,
+				AutoMode: true, Mutates: true,
 				HasActiveFailure: true, FailureCount: 1, StrategyChanged: true,
 			},
 			want: DecisionResult{Route: RouteAsk, AskReason: AskStrategy},
@@ -89,7 +84,7 @@ func TestDecisionMatrix(t *testing.T) {
 		{
 			name: "second failure during recovery asks",
 			f: Facts{
-				Enabled: true, AutoMode: true, Mutates: true,
+				AutoMode: true, Mutates: true,
 				HasActiveFailure: true, FailureCount: 2,
 			},
 			want: DecisionResult{Route: RouteAsk, AskReason: AskRepeat},
@@ -97,7 +92,7 @@ func TestDecisionMatrix(t *testing.T) {
 		{
 			name: "ambiguous recovery mutation goes to reviewer",
 			f: Facts{
-				Enabled: true, AutoMode: true, Mutates: true,
+				AutoMode: true, Mutates: true,
 				HasActiveFailure: true, FailureCount: 1,
 			},
 			want: DecisionResult{Route: RouteReview},
@@ -105,7 +100,7 @@ func TestDecisionMatrix(t *testing.T) {
 		{
 			name: "safe retry budget does not apply when scope expands",
 			f: Facts{
-				Enabled: true, AutoMode: true, Mutates: true, Verification: true,
+				AutoMode: true, Mutates: true, Verification: true,
 				HasActiveFailure: true, FailureCount: 1,
 				SafeRetryAvailable: true, ExpandedScope: true,
 			},
@@ -153,7 +148,7 @@ func TestBehaviorMatrixGolden(t *testing.T) {
 				return inner.Review(ctx, f, d, p, s)
 			})
 		}
-		g := NewGate(Options{Enabled: true, Mode: func() string { return "auto" }, Reviewer: r})
+		g := NewGate(Options{Mode: func() string { return "auto" }, Reviewer: r})
 		g.opts.EmitPrompt = func(_ context.Context, taskID string, _ PendingProposal, _ *FailureEvent) (string, error) {
 			prompted.Store(true)
 			id := "a1"
@@ -311,7 +306,6 @@ func TestBehaviorMatrixGolden(t *testing.T) {
 		var reviews atomic.Int32
 		var prompts int
 		g := NewGate(Options{
-			Enabled: true,
 			Reviewer: reviewerFunc(func(context.Context, *FailureEvent, []string, Proposal, string) (ReviewVerdict, error) {
 				reviews.Add(1)
 				return ReviewVerdict{Outcome: ReviewConfirm, ChangeKind: ChangeUncertain, Rationale: "no"}, nil
@@ -343,7 +337,6 @@ func TestBehaviorMatrixGolden(t *testing.T) {
 		var reviews atomic.Int32
 		var prompted atomic.Bool
 		g := NewGate(Options{
-			Enabled: true,
 			Reviewer: reviewerFunc(func(context.Context, *FailureEvent, []string, Proposal, string) (ReviewVerdict, error) {
 				reviews.Add(1)
 				return ReviewVerdict{}, errors.New("timeout")
@@ -398,7 +391,7 @@ func TestBehaviorMatrixGolden(t *testing.T) {
 		}
 	})
 	t.Run("headless needs confirm fails closed without wait", func(t *testing.T) {
-		g := NewGate(Options{Enabled: true, Headless: true})
+		g := NewGate(Options{Headless: true})
 		g.ObserveResult(context.Background(), Observation{
 			Tool: "bash", Verification: true, ErrSummary: "fail",
 			Args: json.RawMessage(`{"command":"go test"}`),
@@ -412,7 +405,7 @@ func TestBehaviorMatrixGolden(t *testing.T) {
 		}
 	})
 	t.Run("success verification clears failure state", func(t *testing.T) {
-		g := NewGate(Options{Enabled: true})
+		g := NewGate(Options{})
 		g.ObserveResult(context.Background(), Observation{
 			Tool: "bash", Verification: true, ErrSummary: "fail",
 			Args: json.RawMessage(`{"command":"go test"}`),
@@ -443,7 +436,7 @@ func TestChangeKindForAsk(t *testing.T) {
 }
 
 func TestSafeRetryConsumedOnlyOnce(t *testing.T) {
-	g := NewGate(Options{Enabled: true})
+	g := NewGate(Options{})
 	args := json.RawMessage(`{"command":"go test ./..."}`)
 	g.ObserveResult(context.Background(), Observation{
 		Tool: "bash", Subject: "go test ./...", Verification: true, Args: args, ErrSummary: "fail",
@@ -475,7 +468,6 @@ func TestSafeRetryConsumedOnlyOnce(t *testing.T) {
 func TestTaskIsolationByTaskID(t *testing.T) {
 	var reviewedTask string
 	g := NewGate(Options{
-		Enabled: true,
 		Reviewer: reviewerFunc(func(_ context.Context, f *FailureEvent, _ []string, p Proposal, _ string) (ReviewVerdict, error) {
 			reviewedTask = p.TaskID
 			if f != nil && f.TaskID != "" && f.TaskID != normalizeTaskID(p.TaskID) {
@@ -516,7 +508,7 @@ func TestTaskIsolationByTaskID(t *testing.T) {
 }
 
 func TestResolveSyncNoDeadlock(t *testing.T) {
-	g := NewGate(Options{Enabled: true})
+	g := NewGate(Options{})
 	g.ObserveResult(context.Background(), Observation{
 		Tool: "bash", Verification: true, ErrSummary: "fail",
 		Args: json.RawMessage(`{"command":"go test"}`),

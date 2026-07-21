@@ -63,10 +63,9 @@ func TestRecoveryCheckpointBlocksStrategyChangeUntilContinue(t *testing.T) {
 	sess := agent.NewSession("sys")
 	ag := agent.New(prov, reg, sess, agent.Options{MaxSteps: 6}, event.Discard)
 	c := New(Options{
-		Runner:                    ag,
-		Executor:                  ag,
-		Policy:                    permission.Policy{Mode: permission.Allow},
-		RecoveryCheckpointEnabled: true,
+		Runner:   ag,
+		Executor: ag,
+		Policy:   permission.Policy{Mode: permission.Allow},
 	})
 	c.SetToolApprovalMode(ToolApprovalAuto)
 	c.EnableInteractiveApproval()
@@ -121,10 +120,9 @@ func TestRecoveryReviseBlocksWrite(t *testing.T) {
 	sess := agent.NewSession("sys")
 	ag := agent.New(prov, reg, sess, agent.Options{MaxSteps: 6}, event.Discard)
 	c := New(Options{
-		Runner:                    ag,
-		Executor:                  ag,
-		Policy:                    permission.Policy{Mode: permission.Allow},
-		RecoveryCheckpointEnabled: true,
+		Runner:   ag,
+		Executor: ag,
+		Policy:   permission.Policy{Mode: permission.Allow},
 	})
 	c.SetToolApprovalMode(ToolApprovalAuto)
 	c.EnableInteractiveApproval()
@@ -177,10 +175,9 @@ func TestRecoveryInactiveUnderYolo(t *testing.T) {
 	sess := agent.NewSession("sys")
 	ag := agent.New(prov, reg, sess, agent.Options{MaxSteps: 6}, event.Discard)
 	c := New(Options{
-		Runner:                    ag,
-		Executor:                  ag,
-		Policy:                    permission.Policy{Mode: permission.Allow},
-		RecoveryCheckpointEnabled: true,
+		Runner:   ag,
+		Executor: ag,
+		Policy:   permission.Policy{Mode: permission.Allow},
 	})
 	c.SetToolApprovalMode(ToolApprovalYolo)
 	c.EnableInteractiveApproval()
@@ -215,11 +212,10 @@ func TestRecoveryHeadlessBlocksInsteadOfWaiting(t *testing.T) {
 	sess := agent.NewSession("sys")
 	ag := agent.New(prov, reg, sess, agent.Options{MaxSteps: 6}, event.Discard)
 	c := New(Options{
-		Runner:                    ag,
-		Executor:                  ag,
-		Policy:                    permission.Policy{Mode: permission.Allow},
-		RecoveryCheckpointEnabled: true,
-		RecoveryHeadless:          true,
+		Runner:           ag,
+		Executor:         ag,
+		Policy:           permission.Policy{Mode: permission.Allow},
+		RecoveryHeadless: true,
 	})
 	c.SetToolApprovalMode(ToolApprovalAuto)
 
@@ -244,8 +240,7 @@ func TestLegacyApproveResolvesWaiterOnlyHighRisk(t *testing.T) {
 	var approvalID string
 	c = New(Options{
 		Runner: ag, Executor: ag,
-		Policy:                    permission.Policy{Mode: permission.Allow},
-		RecoveryCheckpointEnabled: true,
+		Policy: permission.Policy{Mode: permission.Allow},
 		Sink: event.FuncSink(func(e event.Event) {
 			if e.Kind == event.ApprovalRequest && e.Approval.Kind == recovery.ApprovalKindRecovery {
 				approvalID = e.Approval.ID
@@ -283,8 +278,7 @@ func TestRecoveryPromptCanResolveSynchronouslyFromSink(t *testing.T) {
 	var resolveErr error
 	c = New(Options{
 		Runner: ag, Executor: ag,
-		Policy:                    permission.Policy{Mode: permission.Allow},
-		RecoveryCheckpointEnabled: true,
+		Policy: permission.Policy{Mode: permission.Allow},
 		Sink: event.FuncSink(func(e event.Event) {
 			if e.Kind == event.ApprovalRequest && e.Approval.Kind == recovery.ApprovalKindRecovery {
 				resolveErr = c.ResolveRecovery(e.Approval.ID, agent.RecoveryActionContinue, "")
@@ -325,7 +319,6 @@ func TestSetFreshSessionPathClearsRecoveryState(t *testing.T) {
 	ag := agent.New(nil, tool.NewRegistry(), agent.NewSession("sys"), agent.Options{}, event.Discard)
 	c := New(Options{
 		Runner: ag, Executor: ag, SessionDir: dir, SessionPath: oldPath,
-		RecoveryCheckpointEnabled: true,
 	})
 	c.SetToolApprovalMode(ToolApprovalAuto)
 	c.mu.Lock()
@@ -338,8 +331,6 @@ func TestSetFreshSessionPathClearsRecoveryState(t *testing.T) {
 	if st := gate.Snapshot().Tasks["root"]; st == nil || st.Failure == nil {
 		t.Fatal("test setup did not arm recovery")
 	}
-	c.SetRecoveryCheckpointEnabled(false)
-
 	c.SetFreshSessionPath(newPath)
 	if got := gate.Snapshot().Tasks; len(got) != 0 {
 		t.Fatalf("new session retained old recovery state: %+v", got)
@@ -372,9 +363,6 @@ func TestSetFreshSessionPathClearsRecoveryState(t *testing.T) {
 	if len(newSnap.Tasks) != 0 {
 		t.Fatalf("old recovery snapshot landed on new session: %+v", newSnap.Tasks)
 	}
-	if !c.RecoveryCheckpointEnabled() {
-		t.Fatal("fresh session path did not restore the configured recovery default")
-	}
 }
 
 func TestFreshSessionRotationsClearRecoveryState(t *testing.T) {
@@ -394,10 +382,7 @@ func TestFreshSessionRotationsClearRecoveryState(t *testing.T) {
 				t.Fatalf("Save session: %v", err)
 			}
 			ag := agent.New(nil, tool.NewRegistry(), sess, agent.Options{}, event.Discard)
-			c := New(Options{
-				Runner: ag, Executor: ag, SessionDir: dir, SessionPath: path,
-				RecoveryCheckpointEnabled: true,
-			})
+			c := New(Options{Runner: ag, Executor: ag, SessionDir: dir, SessionPath: path})
 			defer c.Close()
 			c.SetToolApprovalMode(ToolApprovalAuto)
 			c.mu.Lock()
@@ -407,10 +392,6 @@ func TestFreshSessionRotationsClearRecoveryState(t *testing.T) {
 				Tool: "bash", Verification: true,
 				Args: json.RawMessage(`{"command":"go test ./..."}`), ErrSummary: "fail",
 			})
-			c.SetRecoveryCheckpointEnabled(false)
-			if c.RecoveryCheckpointEnabled() {
-				t.Fatal("test setup did not disable the current session preference")
-			}
 			if err := tc.rotate(c); err != nil {
 				t.Fatalf("rotate: %v", err)
 			}
@@ -420,41 +401,6 @@ func TestFreshSessionRotationsClearRecoveryState(t *testing.T) {
 			if c.SessionPath() == path {
 				t.Fatalf("session path did not rotate: %q", path)
 			}
-			if !c.RecoveryCheckpointEnabled() {
-				t.Fatal("fresh session did not restore the configured recovery default")
-			}
 		})
-	}
-}
-
-func TestResumeLegacySessionDefaultsAutoGuardEnabled(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "legacy.jsonl")
-	sess := agent.NewSession("sys")
-	sess.Add(provider.Message{Role: provider.RoleUser, Content: "hello"})
-	if err := sess.Save(path); err != nil {
-		t.Fatalf("Save legacy session: %v", err)
-	}
-	if err := agent.SaveBranchMeta(path, agent.BranchMeta{Name: "legacy"}); err != nil {
-		t.Fatalf("SaveBranchMeta: %v", err)
-	}
-	loaded, err := agent.LoadSession(path)
-	if err != nil {
-		t.Fatalf("LoadSession: %v", err)
-	}
-	ag := agent.New(nil, tool.NewRegistry(), agent.NewSession("sys"), agent.Options{}, event.Discard)
-	c := New(Options{
-		Runner: ag, Executor: ag, SessionDir: dir,
-		RecoveryCheckpointEnabled: true,
-	})
-	c.Resume(loaded, path)
-	if !c.RecoveryCheckpointEnabled() {
-		t.Fatal("legacy session without metadata field resumed with Auto Guard disabled")
-	}
-	if err := c.NewSession(); err != nil {
-		t.Fatalf("NewSession: %v", err)
-	}
-	if !c.RecoveryCheckpointEnabled() {
-		t.Fatal("fresh session did not keep Auto Guard enabled")
 	}
 }

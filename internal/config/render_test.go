@@ -206,14 +206,12 @@ func TestRenderTOMLRoundTrips(t *testing.T) {
 	orig.Desktop.StatusBarStyle = "text"
 	orig.Desktop.StatusBarItems = []string{"model", "balance", "cache"}
 	orig.Desktop.DefaultToolApprovalMode = "auto"
-	orig.Desktop.DefaultAutoRecoveryCheckpoint = boolPtr(false)
 	orig.Desktop.CheckUpdates = boolPtr(false)
 	orig.Desktop.Telemetry = boolPtr(false)
 	orig.Notifications.Enabled = true
 	orig.Notifications.TurnDone = true
 	orig.Notifications.ApprovalRequest = true
 	orig.Notifications.AskRequest = true
-	orig.Agent.AutoRecoveryCheckpoint = "off"
 	orig.Agent.RecoveryModel = "mimo-pro"
 	orig.Agent.RecoveryTemperature = 0.15
 	orig.Agent.ReasoningLanguage = "zh"
@@ -368,13 +366,10 @@ func TestRenderTOMLRoundTrips(t *testing.T) {
 	if got.DesktopDefaultToolApprovalMode() != "auto" {
 		t.Errorf("desktop.default_tool_approval_mode = %q, want auto", got.DesktopDefaultToolApprovalMode())
 	}
-	if got.Desktop.DefaultAutoRecoveryCheckpoint != nil {
-		t.Errorf("legacy desktop.default_auto_recovery_checkpoint survived migration: %+v", got.Desktop.DefaultAutoRecoveryCheckpoint)
-	}
 	if got.Desktop.CheckUpdates == nil || *got.Desktop.CheckUpdates {
 		t.Errorf("desktop.check_updates = %+v, want false", got.Desktop.CheckUpdates)
 	}
-	if got.Agent.AutoRecoveryCheckpoint != "off" || got.Agent.RecoveryModel != "mimo-pro" || got.Agent.RecoveryTemperature != 0 {
+	if got.Agent.RecoveryModel != "mimo-pro" || got.Agent.RecoveryTemperature != 0 {
 		t.Errorf("agent recovery settings not preserved: %+v", got.Agent)
 	}
 	if !got.Notifications.Enabled || !got.Notifications.TurnDone || !got.Notifications.ApprovalRequest || !got.Notifications.AskRequest {
@@ -807,14 +802,12 @@ func TestScopedRenderSeparatesUserAndProjectConfig(t *testing.T) {
 	c.Desktop.CloseBehavior = "background"
 	c.Desktop.StatusBarStyle = "text"
 	c.Desktop.DefaultToolApprovalMode = "auto"
-	c.Desktop.DefaultAutoRecoveryCheckpoint = boolPtr(false)
 	c.Desktop.CheckUpdates = boolPtr(false)
-	c.Agent.AutoRecoveryCheckpoint = "off"
 	c.Agent.RecoveryModel = "deepseek-pro"
 	c.Agent.RecoveryTemperature = 0.2
 
 	user := RenderTOMLForScope(c, RenderScopeUser)
-	for _, want := range []string{"config_version = 5", "[desktop]", `theme = "dark"`, `close_behavior = "background"`, `status_bar_style = "text"`, `default_tool_approval_mode = "auto"`, `check_updates = false`, `auto_recovery_checkpoint = "off"`, `recovery_model = "deepseek-pro"`, "[notifications]", "[tools.shell]"} {
+	for _, want := range []string{"config_version = 5", "[desktop]", `theme = "dark"`, `close_behavior = "background"`, `status_bar_style = "text"`, `default_tool_approval_mode = "auto"`, `check_updates = false`, `recovery_model = "deepseek-pro"`, "[notifications]", "[tools.shell]"} {
 		if !strings.Contains(user, want) {
 			t.Fatalf("user render missing %q:\n%s", want, user)
 		}
@@ -826,8 +819,10 @@ func TestScopedRenderSeparatesUserAndProjectConfig(t *testing.T) {
 			t.Fatalf("project render should not contain %q:\n%s", forbidden, project)
 		}
 	}
-	if strings.Contains(user, "default_auto_recovery_checkpoint") {
-		t.Fatalf("legacy desktop Auto Guard key must not be rendered:\n%s", user)
+	for _, retired := range []string{"default_auto_recovery_checkpoint", "auto_recovery_checkpoint"} {
+		if strings.Contains(user, retired) || strings.Contains(project, retired) {
+			t.Fatalf("retired Auto Guard key %q must not be rendered:\nuser:\n%s\nproject:\n%s", retired, user, project)
+		}
 	}
 	if strings.Contains(project, "\nsystem_prompt = \"\"\"") {
 		t.Fatalf("project render should not pin the built-in system prompt:\n%s", project)
@@ -835,7 +830,7 @@ func TestScopedRenderSeparatesUserAndProjectConfig(t *testing.T) {
 	if !strings.Contains(project, "# system_prompt =") {
 		t.Fatalf("project render should leave a system prompt hint:\n%s", project)
 	}
-	for _, want := range []string{`auto_recovery_checkpoint = "off"`, `recovery_model = "deepseek-pro"`} {
+	for _, want := range []string{`recovery_model = "deepseek-pro"`} {
 		if !strings.Contains(project, want) {
 			t.Fatalf("project render missing %q:\n%s", want, project)
 		}
@@ -848,14 +843,13 @@ func TestScopedRenderSeparatesUserAndProjectConfig(t *testing.T) {
 	}
 }
 
-func TestProjectDeltaRendersRecoveryOverrides(t *testing.T) {
+func TestProjectDeltaRendersRecoveryReviewerOverride(t *testing.T) {
 	c := Default()
-	c.Agent.AutoRecoveryCheckpoint = "off"
 	c.Agent.RecoveryModel = "deepseek-pro"
 	c.Agent.RecoveryTemperature = 0.2
 
 	delta := RenderTOMLProjectDelta(c)
-	for _, want := range []string{"[agent]", `auto_recovery_checkpoint = "off"`, `recovery_model = "deepseek-pro"`} {
+	for _, want := range []string{"[agent]", `recovery_model = "deepseek-pro"`} {
 		if !strings.Contains(delta, want) {
 			t.Fatalf("project delta missing %q:\n%s", want, delta)
 		}

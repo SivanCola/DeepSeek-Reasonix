@@ -14,7 +14,7 @@ import (
 func TestHasApprovalIncludesWaiterOnlyHighRisk(t *testing.T) {
 	// Pre-action high risk parks a waiter without arming taskRuntime.
 	// Snapshot must not be required for legacy Approve routing.
-	g := NewGate(Options{Enabled: true, Mode: func() string { return "auto" }})
+	g := NewGate(Options{Mode: func() string { return "auto" }})
 	done := make(chan Decision, 1)
 	g.opts.EmitPrompt = func(_ context.Context, taskID string, pending PendingProposal, failure *FailureEvent) (string, error) {
 		if failure != nil {
@@ -66,7 +66,7 @@ func TestHasApprovalIncludesWaiterOnlyHighRisk(t *testing.T) {
 }
 
 func TestNoFailureAllowsMutation(t *testing.T) {
-	g := NewGate(Options{Enabled: true, Mode: func() string { return "auto" }})
+	g := NewGate(Options{Mode: func() string { return "auto" }})
 	dec, err := g.BeforeMutation(context.Background(), Proposal{
 		Tool: "write_file", Subject: "a.go", Mutates: true,
 		Args: json.RawMessage(`{"path":"a.go"}`),
@@ -80,7 +80,7 @@ func TestNoFailureAllowsMutation(t *testing.T) {
 }
 
 func TestHighRiskMutationPromptsBeforeAnyFailure(t *testing.T) {
-	g := NewGate(Options{Enabled: true, Mode: func() string { return "auto" }})
+	g := NewGate(Options{Mode: func() string { return "auto" }})
 	var prompted atomic.Bool
 	g.opts.EmitPrompt = func(_ context.Context, taskID string, pending PendingProposal, failure *FailureEvent) (string, error) {
 		prompted.Store(true)
@@ -136,7 +136,7 @@ func TestHighRiskClassifierKeepsOrdinaryAndMCPPermissionPathsSeparate(t *testing
 }
 
 func TestHighRiskDeletePromptsBeforeAnyFailure(t *testing.T) {
-	g := NewGate(Options{Enabled: true, Mode: func() string { return "auto" }})
+	g := NewGate(Options{Mode: func() string { return "auto" }})
 	var prompted atomic.Bool
 	g.opts.EmitPrompt = func(_ context.Context, taskID string, pending PendingProposal, failure *FailureEvent) (string, error) {
 		prompted.Store(true)
@@ -159,7 +159,7 @@ func TestHighRiskDeletePromptsBeforeAnyFailure(t *testing.T) {
 }
 
 func TestQualifyingFailureArmsDiagnosingAndAllowsReadOnly(t *testing.T) {
-	g := NewGate(Options{Enabled: true, Mode: func() string { return "auto" }})
+	g := NewGate(Options{Mode: func() string { return "auto" }})
 	g.ObserveResult(context.Background(), Observation{
 		Tool: "bash", Subject: "go test ./...", Verification: true,
 		Args:       json.RawMessage(`{"command":"go test ./..."}`),
@@ -180,7 +180,6 @@ func TestQualifyingFailureArmsDiagnosingAndAllowsReadOnly(t *testing.T) {
 func TestQualifyingFailureReturnsGuidanceAndPersistsArmedState(t *testing.T) {
 	persisted := make(chan Snapshot, 1)
 	g := NewGate(Options{
-		Enabled: true,
 		Persist: func(_ string, s Snapshot) { persisted <- s },
 	})
 	guidance := g.ObserveResult(context.Background(), Observation{
@@ -206,7 +205,6 @@ func TestAsyncPersistenceCapturesKeyWhenScheduled(t *testing.T) {
 	key := "old-session"
 	written := make(chan string, 1)
 	g := NewGate(Options{
-		Enabled:        true,
 		PersistenceKey: func() string { return key },
 		Persist: func(captured string, _ Snapshot) {
 			written <- captured
@@ -228,7 +226,7 @@ func TestAsyncPersistenceCapturesKeyWhenScheduled(t *testing.T) {
 }
 
 func TestSnapshotDeepCopiesMutableFailureFields(t *testing.T) {
-	g := NewGate(Options{Enabled: true})
+	g := NewGate(Options{})
 	g.ObserveResult(context.Background(), Observation{
 		Tool: "bash", Verification: true,
 		Args:       json.RawMessage(`{"command":"go test ./..."}`),
@@ -250,7 +248,7 @@ func TestSnapshotDeepCopiesMutableFailureFields(t *testing.T) {
 }
 
 func TestEmptySearchDoesNotArm(t *testing.T) {
-	g := NewGate(Options{Enabled: true})
+	g := NewGate(Options{})
 	g.ObserveResult(context.Background(), Observation{
 		Tool: "grep", ReadOnly: true, Success: false, EmptySearch: true,
 		ErrSummary: "no matches",
@@ -261,7 +259,7 @@ func TestEmptySearchDoesNotArm(t *testing.T) {
 }
 
 func TestSafeVerificationRetryOnce(t *testing.T) {
-	g := NewGate(Options{Enabled: true})
+	g := NewGate(Options{})
 	args := json.RawMessage(`{"command":"go test ./..."}`)
 	g.ObserveResult(context.Background(), Observation{
 		Tool: "bash", Subject: "go test ./...", Verification: true, Args: args,
@@ -321,7 +319,7 @@ func TestSafeVerificationRetryOnce(t *testing.T) {
 }
 
 func TestHighRiskForcesConfirm(t *testing.T) {
-	g := NewGate(Options{Enabled: true})
+	g := NewGate(Options{})
 	g.ObserveResult(context.Background(), Observation{
 		Tool: "bash", Subject: "go test ./...", Verification: true,
 		Args: json.RawMessage(`{"command":"go test ./..."}`), ErrSummary: "fail",
@@ -358,7 +356,6 @@ func TestRoutineWorkspaceEditsStayOnReviewerPath(t *testing.T) {
 		t.Run(tool, func(t *testing.T) {
 			var reviews atomic.Int32
 			g := NewGate(Options{
-				Enabled:  true,
 				Headless: true,
 				Reviewer: reviewerFunc(func(context.Context, *FailureEvent, []string, Proposal, string) (ReviewVerdict, error) {
 					reviews.Add(1)
@@ -386,7 +383,7 @@ func TestRoutineWorkspaceEditsStayOnReviewerPath(t *testing.T) {
 }
 
 func TestContinueAppliesOnlyToWaitingCall(t *testing.T) {
-	g := NewGate(Options{Enabled: true})
+	g := NewGate(Options{})
 	g.ObserveResult(context.Background(), Observation{
 		Tool: "bash", Subject: "go test", Verification: true,
 		Args: json.RawMessage(`{"command":"go test"}`), ErrSummary: "fail",
@@ -432,7 +429,6 @@ func TestContinueAppliesOnlyToWaitingCall(t *testing.T) {
 
 func TestReviewerContinueSkipsPrompt(t *testing.T) {
 	g := NewGate(Options{
-		Enabled: true,
 		Reviewer: staticReviewer{ReviewVerdict{
 			Outcome: ReviewContinue, ChangeKind: ChangeSameStrategy,
 			FailureSummary: "test fail", Diagnosis: "flake", ProposedAction: "retry edit",
@@ -462,7 +458,6 @@ func TestReviewerContinueSkipsPrompt(t *testing.T) {
 
 func TestReviewerBlockReturnsReasonThenEscalates(t *testing.T) {
 	g := NewGate(Options{
-		Enabled: true,
 		Reviewer: staticReviewer{ReviewVerdict{
 			Outcome: ReviewConfirm, ChangeKind: ChangeUncertain,
 			Diagnosis: "scope is not yet proven", Rationale: "inspect the failing package first",
@@ -502,7 +497,6 @@ func TestReviewerUsesProposalTaskSummaryBeforeRootFallback(t *testing.T) {
 		Outcome: ReviewContinue, ChangeKind: ChangeSameStrategy,
 	}}
 	g := NewGate(Options{
-		Enabled:     true,
 		Reviewer:    reviewer,
 		TaskSummary: func() string { return "root task" },
 	})
@@ -526,7 +520,7 @@ func TestReviewerReceivesBoundedTaskLocalDiagnosticEvidence(t *testing.T) {
 	reviewer := &capturingReviewer{v: ReviewVerdict{
 		Outcome: ReviewContinue, ChangeKind: ChangeSameStrategy,
 	}}
-	g := NewGate(Options{Enabled: true, Reviewer: reviewer})
+	g := NewGate(Options{Reviewer: reviewer})
 	g.ObserveResult(context.Background(), Observation{
 		TaskID: "subagent:child", Tool: "bash", Verification: true,
 		Args: json.RawMessage(`{"command":"go test ./child"}`), ErrSummary: "fail",
@@ -605,7 +599,6 @@ func TestStrategyChangedRequiresSemanticSignal(t *testing.T) {
 
 func TestReviewerErrorFailsClosed(t *testing.T) {
 	g := NewGate(Options{
-		Enabled:  true,
 		Reviewer: errReviewer{},
 	})
 	g.ObserveResult(context.Background(), Observation{
@@ -635,7 +628,7 @@ func TestReviewerErrorFailsClosed(t *testing.T) {
 
 func TestAskYoloModesInactive(t *testing.T) {
 	for _, mode := range []string{"ask", "yolo"} {
-		g := NewGate(Options{Enabled: true, Mode: func() string { return mode }})
+		g := NewGate(Options{Mode: func() string { return mode }})
 		g.ObserveResult(context.Background(), Observation{
 			Tool: "bash", Verification: true, ErrSummary: "fail",
 			Args: json.RawMessage(`{"command":"go test"}`),
@@ -648,7 +641,7 @@ func TestAskYoloModesInactive(t *testing.T) {
 }
 
 func TestHeadlessBlocksWithoutWait(t *testing.T) {
-	g := NewGate(Options{Enabled: true, Headless: true})
+	g := NewGate(Options{Headless: true})
 	g.ObserveResult(context.Background(), Observation{
 		Tool: "bash", Verification: true, Subject: "go test",
 		Args: json.RawMessage(`{"command":"go test"}`), ErrSummary: "fail",
@@ -666,7 +659,7 @@ func TestHeadlessBlocksWithoutWait(t *testing.T) {
 }
 
 func TestSuccessfulMutationClearsFailure(t *testing.T) {
-	g := NewGate(Options{Enabled: true})
+	g := NewGate(Options{})
 	g.ObserveResult(context.Background(), Observation{
 		Tool: "bash", Verification: true, ErrSummary: "fail",
 		Args: json.RawMessage(`{"command":"go test"}`),
@@ -682,7 +675,7 @@ func TestSuccessfulMutationClearsFailure(t *testing.T) {
 }
 
 func TestSuccessfulCallsDoNotAccumulateEmptyTaskSlots(t *testing.T) {
-	g := NewGate(Options{Enabled: true})
+	g := NewGate(Options{})
 	for _, taskID := range []string{"root", "subagent:a", "subagent:b"} {
 		g.ObserveResult(context.Background(), Observation{
 			TaskID: taskID, Tool: "read_file", ReadOnly: true, Success: true,
@@ -701,7 +694,7 @@ func TestSuccessfulCallsDoNotAccumulateEmptyTaskSlots(t *testing.T) {
 }
 
 func TestRestoreDropsStalePendingAuthorization(t *testing.T) {
-	g := NewGate(Options{Enabled: true})
+	g := NewGate(Options{})
 	g.Restore(Snapshot{Tasks: map[string]*TaskState{
 		"root": {
 			Phase:   PhaseAwaitingDecision,
@@ -719,7 +712,7 @@ func TestRestoreDropsStalePendingAuthorization(t *testing.T) {
 }
 
 func TestUserRejectAndBlockedDoNotArm(t *testing.T) {
-	g := NewGate(Options{Enabled: true})
+	g := NewGate(Options{})
 	g.ObserveResult(context.Background(), Observation{
 		Tool: "write_file", Mutates: true, UserRejected: true, ErrSummary: "denied",
 	})

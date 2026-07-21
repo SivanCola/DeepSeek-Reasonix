@@ -34,13 +34,10 @@ type BranchMeta struct {
 	TokenMode        string    `json:"token_mode,omitempty"`
 	Mode             string    `json:"mode,omitempty"`
 	ToolApprovalMode string    `json:"tool_approval_mode,omitempty"`
-	// RecoveryCheckpointEnabled records whether Auto Guard is armed for this
-	// session. nil defaults on; explicit legacy true/false remains honored.
-	RecoveryCheckpointEnabled *bool  `json:"recovery_checkpoint_enabled,omitempty"`
-	Goal                      string `json:"goal,omitempty"`
-	Recovered                 bool   `json:"recovered,omitempty"`
-	RecoveryReason            string `json:"recovery_reason,omitempty"`
-	RecoveryDigest            string `json:"recovery_digest,omitempty"`
+	Goal             string    `json:"goal,omitempty"`
+	Recovered        bool      `json:"recovered,omitempty"`
+	RecoveryReason   string    `json:"recovery_reason,omitempty"`
+	RecoveryDigest   string    `json:"recovery_digest,omitempty"`
 	// RecoveryDepth counts how many recovery forks separate this branch from a
 	// normal session (1 = forked from a normal session). SaveRecoveryBranch
 	// refuses to fork past SessionRecoveryMaxDepth so a conflict loop cannot

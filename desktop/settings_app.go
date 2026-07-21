@@ -275,12 +275,12 @@ type SettingsView struct {
 	StatusBarItems          []string             `json:"statusBarItems"`
 	DefaultToolApprovalMode string               `json:"defaultToolApprovalMode"`
 
-	CheckUpdates                  bool   `json:"checkUpdates"`
-	Telemetry                     bool   `json:"telemetry"`
-	Metrics                       bool   `json:"metrics"`
-	ExpandThinking                bool   `json:"expandThinking"`
-	ConversationWidth             string `json:"conversationWidth,omitempty"`
-	ConfigPath                    string `json:"configPath"`
+	CheckUpdates      bool   `json:"checkUpdates"`
+	Telemetry         bool   `json:"telemetry"`
+	Metrics           bool   `json:"metrics"`
+	ExpandThinking    bool   `json:"expandThinking"`
+	ConversationWidth string `json:"conversationWidth,omitempty"`
+	ConfigPath        string `json:"configPath"`
 	// ProviderKinds lists the provider implementations the kernel actually
 	// registered (provider.Kinds()), so the editor's "kind" picker offers only
 	// kinds that resolve — selecting an unregistered one would fail the rebuild.
@@ -895,25 +895,25 @@ func (a *App) Settings() SettingsView {
 			ColdResumePrune:        cfg.ColdResumePruneEnabled(),
 			ReasoningLanguage:      cfg.ReasoningLanguage(),
 		},
-		Bot:                           botSettingsView(cfg.Bot),
-		DesktopLanguage:               cfg.DesktopLanguage(),
-		DesktopLayoutStyle:            cfg.DesktopLayoutStyle(),
-		DesktopTheme:                  cfg.DesktopTheme(),
-		DesktopThemeStyle:             cfg.DesktopThemeStyle(),
-		CloseBehavior:                 cfg.DesktopCloseBehavior(),
-		DisplayMode:                   cfg.DesktopDisplayMode(),
-		StatusBarStyle:                cfg.DesktopStatusBarStyle(),
-		StatusBarItems:                cfg.DesktopStatusBarItems(),
-		DefaultToolApprovalMode:       cfg.DesktopDefaultToolApprovalMode(),
-		CheckUpdates:                  cfg.DesktopCheckUpdates(),
-		Telemetry:                     cfg.DesktopTelemetry(),
-		Metrics:                       cfg.DesktopMetrics(),
-		ExpandThinking:                cfg.Desktop.ExpandThinking,
-		ConversationWidth:             cfg.DesktopConversationWidth(),
-		ConfigPath:                    cfgPath,
-		ProviderKinds:                 nonNil(provider.Kinds()),
-		AutoApproveTools:              ctrl != nil && ctrl.AutoApproveTools(),
-		Bypass:                        ctrl != nil && ctrl.AutoApproveTools(),
+		Bot:                     botSettingsView(cfg.Bot),
+		DesktopLanguage:         cfg.DesktopLanguage(),
+		DesktopLayoutStyle:      cfg.DesktopLayoutStyle(),
+		DesktopTheme:            cfg.DesktopTheme(),
+		DesktopThemeStyle:       cfg.DesktopThemeStyle(),
+		CloseBehavior:           cfg.DesktopCloseBehavior(),
+		DisplayMode:             cfg.DesktopDisplayMode(),
+		StatusBarStyle:          cfg.DesktopStatusBarStyle(),
+		StatusBarItems:          cfg.DesktopStatusBarItems(),
+		DefaultToolApprovalMode: cfg.DesktopDefaultToolApprovalMode(),
+		CheckUpdates:            cfg.DesktopCheckUpdates(),
+		Telemetry:               cfg.DesktopTelemetry(),
+		Metrics:                 cfg.DesktopMetrics(),
+		ExpandThinking:          cfg.Desktop.ExpandThinking,
+		ConversationWidth:       cfg.DesktopConversationWidth(),
+		ConfigPath:              cfgPath,
+		ProviderKinds:           nonNil(provider.Kinds()),
+		AutoApproveTools:        ctrl != nil && ctrl.AutoApproveTools(),
+		Bypass:                  ctrl != nil && ctrl.AutoApproveTools(),
 	}
 	added := providerAccessSet(cfg.Desktop.ProviderAccess)
 	resolver := config.NewCredentialResolverForRoot(root)
@@ -1937,13 +1937,9 @@ func (a *App) SetDefaultToolApprovalMode(mode string) error {
 	})
 }
 
-// SetDefaultAutoRecoveryCheckpoint is retained for older frontends but only
-// migrates the advanced agent kill switch. It is not shown in Settings UI.
-func (a *App) SetDefaultAutoRecoveryCheckpoint(enabled bool) error {
-	return a.applyConfigOnly(func(c *config.Config) error {
-		return c.SetDesktopDefaultAutoRecoveryCheckpoint(enabled)
-	})
-}
+// SetDefaultAutoRecoveryCheckpoint is retained as a no-op Wails surface for
+// older generated frontends. Auto Guard is always built into Auto.
+func (a *App) SetDefaultAutoRecoveryCheckpoint(_ bool) error { return nil }
 
 func officialProviderTemplate(kind, pricingLanguage string) ([]config.ProviderEntry, string, error) {
 	switch strings.ToLower(strings.TrimSpace(kind)) {

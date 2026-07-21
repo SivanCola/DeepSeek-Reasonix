@@ -5435,9 +5435,6 @@ func TestClearSessionCancelsRunningRuntimeAndKeepsTopic(t *testing.T) {
 	if got := tab.currentSessionPath(); got == "" || got == path {
 		t.Fatalf("new session path = %q, want fresh path", got)
 	}
-	if !tab.Ctrl.RecoveryCheckpointEnabled() {
-		t.Fatal("replacement controller did not keep Auto Guard armed from config")
-	}
 }
 
 func TestClearSessionRemovesRunningJobArtifacts(t *testing.T) {

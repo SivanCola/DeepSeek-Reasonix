@@ -42,10 +42,9 @@ func TestRecoveryCheckpointScriptedE2E(t *testing.T) {
 	ag := agent.New(prov, reg, sess, agent.Options{MaxSteps: 10}, event.Discard)
 	// Leave SessionPath empty so autosave does not hold file locks on dir.
 	c := New(Options{
-		Runner:                    ag,
-		Executor:                  ag,
-		Policy:                    permission.Policy{Mode: permission.Allow},
-		RecoveryCheckpointEnabled: true,
+		Runner:   ag,
+		Executor: ag,
+		Policy:   permission.Policy{Mode: permission.Allow},
 	})
 	t.Cleanup(func() { c.Close() })
 	c.SetToolApprovalMode(ToolApprovalAuto)
