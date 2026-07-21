@@ -8031,6 +8031,50 @@ body > .mermaid-diagram--fullscreen {
   margin-top: 8px;
   flex-wrap: wrap;
 }
+.recovery-guidance-trigger {
+  --wails-draggable: no-drag;
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 2px 0;
+  border: 0;
+  background: transparent;
+  color: var(--fg-dim);
+  cursor: pointer;
+  font: inherit;
+  font-size: 11.5px;
+  line-height: 1.4;
+  text-align: left;
+}
+.recovery-guidance-trigger:hover:not(:disabled) {
+  color: var(--fg);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.recovery-guidance-trigger:focus-visible {
+  border-radius: 4px;
+  outline: 2px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  outline-offset: 2px;
+}
+.recovery-guidance-trigger:disabled {
+  cursor: default;
+  opacity: 0.48;
+}
+.recovery-guidance {
+  display: grid;
+  gap: 8px;
+  padding-top: 2px;
+}
+.recovery-guidance__input {
+  min-height: 78px;
+  background: var(--bg-soft);
+}
+.recovery-guidance__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
 .approval-mode-hint {
   margin: 0;
   padding: 6px 10px;

@@ -145,6 +145,8 @@ type DecisionAction = {
   run?: () => void;
 };
 
+const RECOVERY_FEEDBACK_MAX = 1000;
+
 function recoveryReasonText(
   changeKind: string | undefined,
   fallback: string | undefined,
@@ -223,11 +225,15 @@ export function ApprovalModal({
   const [selectedIndex, setSelectedIndex] = useState(() => (isPlanApproval || isRecoveryApproval ? -1 : 0));
   const [revisionOpen, setRevisionOpen] = useState(false);
   const [revisionText, setRevisionText] = useState("");
+  const [recoveryGuidanceOpen, setRecoveryGuidanceOpen] = useState(false);
+  const [recoveryGuidanceText, setRecoveryGuidanceText] = useState("");
   const [grantSimilarForTask, setGrantSimilarForTask] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const cardRef = useRef<HTMLDivElement | null>(null);
   const shelfRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
+  const recoveryGuidanceRef = useRef<HTMLTextAreaElement | null>(null);
+  const recoveryGuidanceTriggerRef = useRef<HTMLButtonElement | null>(null);
   const consumedInsertIdRef = useRef(0);
   // When consecutive approvals arrive, animate the old card out before
   // the new one slides in.  GSAP fromTo on the shelf wrapper avoids the
@@ -257,7 +263,7 @@ export function ApprovalModal({
     (action: "continue" | "continue_task" | "revise", feedback?: string) => {
       const resolve = onResolveRecovery ?? ((a: "continue" | "continue_task" | "revise") => onAnswer(a !== "revise", false, false));
       if (action === "revise") {
-        const text = feedback?.trim().slice(0, 1000) ?? "";
+        const text = feedback?.trim().slice(0, RECOVERY_FEEDBACK_MAX) ?? "";
         resolve("revise", text || undefined);
         return;
       }
@@ -373,6 +379,8 @@ export function ApprovalModal({
     cardRef.current?.focus();
     setRevisionOpen(false);
     setRevisionText("");
+    setRecoveryGuidanceOpen(false);
+    setRecoveryGuidanceText("");
     setGrantSimilarForTask(false);
     setReasonOpen(isRecoveryApproval ? false : Boolean(reason) && reason.length <= 160);
     setSelectedIndex(isPlanApproval || isRecoveryApproval ? -1 : 0);
@@ -408,16 +416,23 @@ export function ApprovalModal({
   useEffect(() => {
     const onKeyDown = (event: globalThis.KeyboardEvent) => {
       if (submitting) return;
+      if (isRecoveryApproval && recoveryGuidanceOpen && event.key === "Escape") {
+        event.preventDefault();
+        setRecoveryGuidanceOpen(false);
+        setRecoveryGuidanceText("");
+        requestAnimationFrame(() => recoveryGuidanceTriggerRef.current?.focus());
+        return;
+      }
       const target = event.target instanceof Element ? event.target : null;
       const tag = target?.tagName.toLowerCase();
       // Editing revision / file menu owns arrows and digits while focused.
-      // Optional recovery feedback also disables digit shortcuts.
+      // Custom recovery guidance owns all decision shortcuts while expanded.
       const editing =
         tag === "input" ||
         tag === "textarea" ||
         tag === "select" ||
         (target instanceof HTMLElement && target.isContentEditable) ||
-        (isRecoveryApproval && revisionOpen);
+        (isRecoveryApproval && recoveryGuidanceOpen);
       if (editing && (event.key === "1" || event.key === "2" || event.key === "3" || event.key === "4")) {
         return;
       }
@@ -443,7 +458,7 @@ export function ApprovalModal({
         event.preventDefault();
         confirmSelected();
       } else if (event.key === "1" || event.key === "2" || event.key === "3" || event.key === "4") {
-        if (isRecoveryApproval && revisionOpen) return;
+        if (isRecoveryApproval && recoveryGuidanceOpen) return;
         const index = Number(event.key) - 1;
         if (index < 0 || index >= actionCount) return;
         event.preventDefault();
@@ -460,7 +475,7 @@ export function ApprovalModal({
     };
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
-  }, [actionCount, activateAction, confirmSelected, onStop, submitting, isPlanApproval, isRecoveryApproval, revisionOpen, toolActions]);
+  }, [actionCount, activateAction, confirmSelected, onStop, submitting, isPlanApproval, isRecoveryApproval, recoveryGuidanceOpen, toolActions]);
 
   useEffect(() => {
     if (revisionOpen) {
@@ -540,6 +555,37 @@ export function ApprovalModal({
       return;
     }
     answerWithExit(() => onRevisePlan?.(text));
+  };
+
+  const closeRecoveryGuidance = () => {
+    setRecoveryGuidanceOpen(false);
+    setRecoveryGuidanceText("");
+    requestAnimationFrame(() => recoveryGuidanceTriggerRef.current?.focus());
+  };
+
+  const submitRecoveryGuidance = () => {
+    const text = recoveryGuidanceText.trim();
+    if (!text) {
+      recoveryGuidanceRef.current?.focus();
+      return;
+    }
+    answerWithExit(() => resolveRecovery("revise", text));
+  };
+
+  const onRecoveryGuidanceKeyDown = (event: ReactKeyboardEvent<HTMLTextAreaElement>) => {
+    if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+      event.preventDefault();
+      event.stopPropagation();
+      submitRecoveryGuidance();
+      return;
+    }
+    if (event.key === "Escape") {
+      event.preventDefault();
+      event.stopPropagation();
+      closeRecoveryGuidance();
+      return;
+    }
+    event.stopPropagation();
   };
 
   const recovery = approval.recovery;
@@ -631,9 +677,59 @@ export function ApprovalModal({
             ))}
           </>
         }
+        note={
+          isRecoveryApproval ? (
+            recoveryGuidanceOpen ? (
+              <div className="recovery-guidance">
+                <textarea
+                  ref={recoveryGuidanceRef}
+                  className="plan-revision__input recovery-guidance__input"
+                  value={recoveryGuidanceText}
+                  rows={3}
+                  maxLength={RECOVERY_FEEDBACK_MAX}
+                  aria-label={t("approval.recoveryGuidanceLabel")}
+                  placeholder={t("approval.recoveryGuidancePlaceholder")}
+                  onChange={(event) => setRecoveryGuidanceText(event.target.value.slice(0, RECOVERY_FEEDBACK_MAX))}
+                  onKeyDown={onRecoveryGuidanceKeyDown}
+                  disabled={submitting}
+                  autoFocus
+                />
+                <div className="recovery-guidance__actions">
+                  <button className="btn" type="button" onClick={closeRecoveryGuidance} disabled={submitting}>
+                    {t("common.cancel")}
+                  </button>
+                  <button
+                    className="btn btn--primary"
+                    type="button"
+                    onClick={submitRecoveryGuidance}
+                    disabled={submitting || !recoveryGuidanceText.trim()}
+                  >
+                    {t("approval.recoveryGuidanceSubmit")}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <button
+                ref={recoveryGuidanceTriggerRef}
+                type="button"
+                className="recovery-guidance-trigger"
+                aria-expanded="false"
+                onClick={() => {
+                  // Guidance rejects the pending action; a task-scoped grant
+                  // belongs only to Continue and would be misleading here.
+                  setGrantSimilarForTask(false);
+                  setRecoveryGuidanceOpen(true);
+                }}
+                disabled={submitting}
+              >
+                {t("approval.recoveryGuidanceTrigger")}
+              </button>
+            )
+          ) : undefined
+        }
         footer={
           isRecoveryApproval ? (
-            recovery?.can_grant_task ? (
+            recovery?.can_grant_task && !recoveryGuidanceOpen ? (
               <label className="recovery-task-grant">
                 <input
                   type="checkbox"

@@ -253,7 +253,11 @@ console.log("\ndecision surface");
   ok(document.body.textContent?.includes("may affect an external system"), "summary explains the user-visible risk");
   eq(document.body.textContent?.split("git push origin feature").length, 2, "pending action is shown once by default");
   ok(!document.querySelector(".recovery-details"), "details stay collapsed by default");
-  ok(!document.body.textContent?.includes("Add guidance"), "optional guidance is removed from the default card");
+  const guidanceTrigger = document.querySelector(".recovery-guidance-trigger") as HTMLButtonElement;
+  ok(guidanceTrigger, "custom requirements stay available as a quiet progressive-disclosure link");
+  ok(guidanceTrigger.textContent?.includes("Tell Auto"), "guidance link uses plain user-facing copy");
+  ok(!document.querySelector(".recovery-guidance__input"), "custom requirements editor stays collapsed by default");
+  eq(actions.length, 2, "custom requirements do not become a third decision card");
   const taskGrant = document.querySelector(".recovery-task-grant input") as HTMLInputElement;
   ok(taskGrant, "bounded recovery offers a current-task semantic grant");
   ok(!taskGrant.checked, "task grant is opt-in");
@@ -270,6 +274,88 @@ console.log("\ndecision surface");
   await act(async () => {
     root.unmount();
   });
+  dom.window.close();
+}
+
+// Specific requirements are one-shot guidance for finding another approach.
+// They never inherit a checked task grant or become approval to execute.
+{
+  const dom = installDom();
+  const root = createRoot(document.getElementById("root")!);
+  const decisions: Array<{ action: string; feedback?: string }> = [];
+  const approval: WireApproval = {
+    id: "guard-guidance",
+    tool: "bash",
+    subject: "git push origin feature",
+    kind: "recovery",
+    recovery: { next_action: "git push origin feature", change_kind: "risk", can_grant_task: true },
+  };
+
+  await act(async () => {
+    root.render(
+      <LocaleProvider>
+        <ApprovalModal
+          approval={approval}
+          onAnswer={() => undefined}
+          onResolveRecovery={(action, feedback) => decisions.push({ action, feedback })}
+          onStop={() => undefined}
+        />
+      </LocaleProvider>,
+    );
+    await flushTimers();
+  });
+
+  const openGuidance = async () => {
+    await act(async () => {
+      (document.querySelector(".recovery-guidance-trigger") as HTMLButtonElement).click();
+      await flushTimers();
+    });
+  };
+  await openGuidance();
+
+  let input = document.querySelector(".recovery-guidance__input") as HTMLTextAreaElement;
+  ok(input != null, "guidance link expands an inline text area");
+  eq(input.maxLength, 1000, "guidance input exposes the same 1000-character client limit as submission");
+  ok(input.placeholder.includes("only edit the current file"), "placeholder demonstrates a concrete constraint");
+  ok(input === document.activeElement, "expanded guidance receives focus");
+  ok((document.querySelector(".recovery-guidance__actions .btn--primary") as HTMLButtonElement).disabled, "empty guidance cannot submit");
+  eq(document.querySelectorAll(".prompt-shelf__actions .prompt-action").length, 2, "expanded guidance preserves the two primary decisions");
+
+  await act(async () => {
+    input.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    await flushTimers(25);
+  });
+  ok(!document.querySelector(".recovery-guidance__input"), "Escape collapses custom guidance");
+  ok(document.querySelector(".recovery-guidance-trigger") === document.activeElement, "Escape restores focus to the guidance link");
+  eq(decisions.length, 0, "collapsing guidance does not answer the confirmation");
+
+  await act(async () => {
+    (document.querySelector(".recovery-task-grant input") as HTMLInputElement).click();
+    await flushTimers();
+  });
+  await openGuidance();
+  ok(!document.querySelector(".recovery-task-grant"), "guidance hides and clears the unrelated Continue task grant");
+  input = document.querySelector(".recovery-guidance__input") as HTMLTextAreaElement;
+  const feedback = "Only edit the current file; do not push.";
+  await act(async () => {
+    const setter = Object.getOwnPropertyDescriptor(dom.window.HTMLTextAreaElement.prototype, "value")?.set;
+    setter?.call(input, `  ${feedback}  `);
+    input.dispatchEvent(new dom.window.InputEvent("input", { bubbles: true, inputType: "insertText", data: feedback }));
+    input.dispatchEvent(new dom.window.Event("change", { bubbles: true }));
+    input.dispatchEvent(new dom.window.KeyboardEvent("keyup", { key: ".", bubbles: true }));
+    await flushTimers();
+  });
+  ok(!(document.querySelector(".recovery-guidance__actions .btn--primary") as HTMLButtonElement).disabled, "non-empty guidance enables submission");
+
+  await act(async () => {
+    input.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Enter", ctrlKey: true, bubbles: true }));
+    await flushTimers(220);
+  });
+  eq(decisions.length, 1, "Ctrl+Enter submits custom requirements once");
+  eq(decisions[0]?.action, "revise", "custom requirements always choose another approach");
+  eq(decisions[0]?.feedback, feedback, "custom requirements are trimmed and forwarded exactly once");
+
+  await act(async () => root.unmount());
   dom.window.close();
 }
 
