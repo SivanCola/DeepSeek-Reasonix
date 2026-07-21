@@ -92,6 +92,7 @@ func ToWire(e event.Event) Event {
 				ChangeKind:      r.ChangeKind,
 				ChangeRationale: r.ChangeRationale,
 				ReviewRationale: r.ReviewRationale,
+				CanGrantTask:    r.CanGrantTask,
 			}
 		}
 	case event.AskRequest:
@@ -261,6 +262,7 @@ type RecoveryApproval struct {
 	ChangeKind      string `json:"change_kind,omitempty"`
 	ChangeRationale string `json:"change_rationale,omitempty"`
 	ReviewRationale string `json:"review_rationale,omitempty"`
+	CanGrantTask    bool   `json:"can_grant_task,omitempty"`
 }
 
 // Guardian is the JSON form of an event.GuardianResult.

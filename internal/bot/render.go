@@ -144,7 +144,7 @@ func (s *renderSink) Emit(e event.Event) {
 		switch s.adapter.Platform() {
 		case PlatformQQ:
 			if isRecoveryApproval(e.Approval) {
-				msg.Keyboard = recoveryKeyboard(e.Approval.ID)
+				msg.Keyboard = recoveryKeyboard(e.Approval)
 			} else {
 				msg.Keyboard = approvalKeyboard(e.Approval.ID)
 			}
@@ -512,13 +512,14 @@ func approvalKeyboard(id string) *InlineKeyboard {
 	}}}
 }
 
-func recoveryKeyboard(id string) *InlineKeyboard {
-	return &InlineKeyboard{Rows: []InlineKeyboardRow{{
-		Buttons: []InlineKeyboardButton{
-			{ID: "recovery_continue", Label: "1 继续", Style: 1, CallbackID: "/recovery-continue " + id},
-			{ID: "recovery_revise", Label: "2 换个办法", Style: 0, CallbackID: "/recovery-revise " + id},
-		},
-	}}}
+func recoveryKeyboard(a event.Approval) *InlineKeyboard {
+	buttons := []InlineKeyboardButton{{ID: "recovery_continue", Label: "1 继续一次", Style: 1, CallbackID: "/recovery-continue " + a.ID}}
+	if a.Recovery != nil && a.Recovery.CanGrantTask {
+		buttons = append(buttons, InlineKeyboardButton{ID: "recovery_continue_task", Label: "2 本任务允许同类", Style: 0, CallbackID: "/recovery-continue-task " + a.ID})
+		return &InlineKeyboard{Rows: []InlineKeyboardRow{{Buttons: buttons}, {Buttons: []InlineKeyboardButton{{ID: "recovery_revise", Label: "3 换个办法", Style: 0, CallbackID: "/recovery-revise " + a.ID}}}}}
+	}
+	buttons = append(buttons, InlineKeyboardButton{ID: "recovery_revise", Label: "2 换个办法", Style: 0, CallbackID: "/recovery-revise " + a.ID})
+	return &InlineKeyboard{Rows: []InlineKeyboardRow{{Buttons: buttons}}}
 }
 
 func isRecoveryApproval(a event.Approval) bool {
@@ -549,7 +550,11 @@ func renderRecoveryText(a event.Approval) string {
 	} else {
 		fmt.Fprintf(&b, "即将执行: %s\n", firstNonEmptyBot(a.Subject, a.Tool))
 	}
-	fmt.Fprintf(&b, "\nID: `%s`\n回复 1 继续，2 换个办法。", a.ID)
+	if rec != nil && rec.CanGrantTask {
+		fmt.Fprintf(&b, "\nID: `%s`\n回复 1 继续一次，2 在本任务内允许同类操作，3 换个办法。范围扩大或风险升级仍会再次确认。", a.ID)
+	} else {
+		fmt.Fprintf(&b, "\nID: `%s`\n回复 1 继续，2 换个办法。", a.ID)
+	}
 	return b.String()
 }
 
@@ -569,15 +574,19 @@ func approvalCard(a event.Approval, chatType ChatType, userID string) *Interacti
 }
 
 func recoveryCard(a event.Approval, chatType ChatType, userID string) *InteractiveCard {
+	actions := []map[string]any{
+		{"tag": "button", "text": map[string]string{"tag": "plain_text", "content": "继续一次"}, "type": "primary", "value": cardActionValue("/recovery-continue "+a.ID, chatType, userID)},
+	}
+	if a.Recovery != nil && a.Recovery.CanGrantTask {
+		actions = append(actions, map[string]any{"tag": "button", "text": map[string]string{"tag": "plain_text", "content": "本任务允许同类"}, "type": "default", "value": cardActionValue("/recovery-continue-task "+a.ID, chatType, userID)})
+	}
+	actions = append(actions, map[string]any{"tag": "button", "text": map[string]string{"tag": "plain_text", "content": "换个办法"}, "type": "default", "value": cardActionValue("/recovery-revise "+a.ID, chatType, userID)})
 	return &InteractiveCard{
 		Header: "执行前确认",
 		Elements: []InteractiveCardElement{
 			{Tag: "markdown", Content: renderRecoveryText(a)},
 			{Tag: "action", Extra: map[string]any{
-				"actions": []map[string]any{
-					{"tag": "button", "text": map[string]string{"tag": "plain_text", "content": "继续"}, "type": "primary", "value": cardActionValue("/recovery-continue "+a.ID, chatType, userID)},
-					{"tag": "button", "text": map[string]string{"tag": "plain_text", "content": "换个办法"}, "type": "default", "value": cardActionValue("/recovery-revise "+a.ID, chatType, userID)},
-				},
+				"actions": actions,
 			}},
 		},
 	}

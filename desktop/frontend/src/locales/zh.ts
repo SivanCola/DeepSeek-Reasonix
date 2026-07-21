@@ -843,6 +843,8 @@ export const zh: Record<DictKey, string> = {
   "approval.recoveryPending": "执行前确认",
   "approval.recoveryContinue": "继续",
   "approval.recoveryContinueDesc": "仅执行上方显示的操作。",
+  "approval.recoveryTaskGrant": "本任务内同类操作不再询问",
+  "approval.recoveryTaskGrantDesc": "仅复用相同操作类型和目标边界；范围扩大或风险升级仍会询问。",
   "approval.recoveryRevise": "换个方案",
   "approval.recoveryReviseDesc": "不执行本次操作，继续寻找其他方案。",
   "approval.recoveryReasonRisk": "这一步风险较高，需要你确认。",

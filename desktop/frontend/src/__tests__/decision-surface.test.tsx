@@ -218,7 +218,7 @@ console.log("\ndecision surface");
     tool: "bash",
     subject: "git push origin feature",
     kind: "recovery",
-    recovery: { next_action: "git push origin feature", change_kind: "risk" },
+    recovery: { next_action: "git push origin feature", change_kind: "risk", can_grant_task: true },
   };
 
   await act(async () => {
@@ -248,6 +248,9 @@ console.log("\ndecision surface");
   ok(!document.body.textContent?.includes("same_strategy"), "UI hides internal reviewer terms");
   ok(!document.querySelector(".recovery-details"), "details stay collapsed by default");
   ok(!document.body.textContent?.includes("Add guidance"), "optional guidance is removed from the default card");
+  const taskGrant = document.querySelector(".recovery-task-grant input") as HTMLInputElement;
+  ok(taskGrant, "bounded recovery offers a current-task semantic grant");
+  ok(!taskGrant.checked, "task grant is opt-in");
 
   await act(async () => {
     actions[0].click();
@@ -260,6 +263,50 @@ console.log("\ndecision surface");
   await act(async () => {
     root.unmount();
   });
+  dom.window.close();
+}
+
+// The optional semantic grant is explicit and maps to a distinct backend
+// action; it is never inferred from a raw command match.
+{
+  const dom = installDom();
+  const root = createRoot(document.getElementById("root")!);
+  const decisions: Array<{ action: string; feedback?: string }> = [];
+  const approval: WireApproval = {
+    id: "guard-task-grant",
+    tool: "bash",
+    subject: "git push origin feature",
+    kind: "recovery",
+    recovery: { next_action: "git push origin feature", change_kind: "risk", can_grant_task: true },
+  };
+
+  await act(async () => {
+    root.render(
+      <LocaleProvider>
+        <ApprovalModal
+          approval={approval}
+          onAnswer={() => undefined}
+          onResolveRecovery={(action, feedback) => decisions.push({ action, feedback })}
+          onStop={() => undefined}
+        />
+      </LocaleProvider>,
+    );
+    await flushTimers();
+  });
+
+  const taskGrant = document.querySelector(".recovery-task-grant input") as HTMLInputElement;
+  const continueButton = document.querySelector(".prompt-shelf__actions .prompt-action") as HTMLButtonElement;
+  await act(async () => {
+    taskGrant.click();
+    await flushTimers();
+  });
+  await act(async () => {
+    continueButton.click();
+    await flushTimers(220);
+  });
+  eq(decisions[0]?.action, "continue_task", "checked semantic grant uses the task-scoped recovery action");
+
+  await act(async () => root.unmount());
   dom.window.close();
 }
 

@@ -54,6 +54,7 @@ type Gate struct {
 	metrics Metrics
 	waiters map[string]chan resolvePayload // keyed by approval id
 	taskOf  map[string]string              // approval id -> task id
+	pending map[string]PendingProposal     // approval id -> transient proposal scope
 	// awaiting tracks in-flight human prompts so Phase can be derived without
 	// storing Pending on the task runtime.
 	awaiting map[string]struct{} // task ids with an open waiter
@@ -92,6 +93,7 @@ func NewGate(opts Options) *Gate {
 		tasks:          map[string]*taskRuntime{},
 		waiters:        map[string]chan resolvePayload{},
 		taskOf:         map[string]string{},
+		pending:        map[string]PendingProposal{},
 		awaiting:       map[string]struct{}{},
 		persistPending: map[string]int{},
 		persistDone:    map[string]uint64{},
@@ -172,7 +174,7 @@ func (g *Gate) Snapshot() Snapshot {
 
 func (g *Gate) snapshotLocked() Snapshot {
 	// Map task id -> live approval id for observability. Restore always drops
-	// these fields so a restart never replays a one-shot grant.
+	// these fields so a restart never replays a transient authorization.
 	approvalByTask := map[string]string{}
 	for approvalID, taskID := range g.taskOf {
 		if strings.HasPrefix(approvalID, "pending:") {
@@ -201,8 +203,9 @@ func (g *Gate) snapshotLocked() Snapshot {
 }
 
 // Restore loads persisted failure context after restart/controller rebuild.
-// Live prompts and one-call grants are deliberately not replayed: the interrupted
-// call no longer exists, so the next proposed action must be classified again.
+// Live prompts and task-local grants are deliberately not replayed: the
+// interrupted call no longer exists, so the next proposed action must be
+// classified again.
 func (g *Gate) Restore(snap Snapshot) {
 	if g == nil {
 		return
@@ -212,6 +215,7 @@ func (g *Gate) Restore(snap Snapshot) {
 	g.tasks = map[string]*taskRuntime{}
 	g.waiters = map[string]chan resolvePayload{}
 	g.taskOf = map[string]string{}
+	g.pending = map[string]PendingProposal{}
 	g.awaiting = map[string]struct{}{}
 	for id, st := range snap.Tasks {
 		rt := taskRuntimeFromState(st)
@@ -243,12 +247,16 @@ func (g *Gate) BindApprovalID(taskID, approvalID string) {
 		delete(g.taskOf, provisional)
 		g.waiters[approvalID] = ch
 	}
+	if pending, ok := g.pending[provisional]; ok {
+		delete(g.pending, provisional)
+		g.pending[approvalID] = pending
+	}
 	g.taskOf[approvalID] = taskID
 	g.awaiting[taskID] = struct{}{}
 }
 
 // Resolve applies a user decision to a pending Auto Guard approval.
-// action is continue|revise. For revise, feedback is returned through the
+// action is continue|continue_task|revise. For revise, feedback is returned through the
 // blocked tool result and the current mutation is refused in the same operation.
 func (g *Gate) Resolve(id string, action Action, feedback string) error {
 	if g == nil {
@@ -258,13 +266,26 @@ func (g *Gate) Resolve(id string, action Action, feedback string) error {
 	g.mu.Lock()
 	ch := g.waiters[id]
 	taskID := g.taskOf[id]
+	pending := g.pending[id]
 	if taskID == "" {
 		g.mu.Unlock()
 		return fmt.Errorf("unknown recovery approval %q", id)
 	}
 	st := g.tasks[taskID]
 	switch action {
-	case ActionContinue:
+	case ActionContinue, ActionContinueTask:
+		if action == ActionContinueTask {
+			if pending.TaskGrantKey == "" {
+				g.mu.Unlock()
+				return fmt.Errorf("recovery approval %q cannot grant similar actions", id)
+			}
+			if st == nil {
+				st = &taskRuntime{}
+				g.tasks[taskID] = st
+			}
+			st.addTaskGrant(pending.TaskGrantKey)
+			g.metrics.TaskGrantContinues++
+		}
 		if st != nil {
 			st.reviewRejects = 0
 		}
@@ -283,8 +304,9 @@ func (g *Gate) Resolve(id string, action Action, feedback string) error {
 	}
 	delete(g.waiters, id)
 	delete(g.taskOf, id)
+	delete(g.pending, id)
 	delete(g.awaiting, taskID)
-	if st == nil || st.failure == nil {
+	if st == nil || (st.failure == nil && !st.hasTaskGrants()) {
 		delete(g.tasks, taskID)
 	}
 	g.mu.Unlock()
@@ -314,7 +336,10 @@ func (g *Gate) ObserveResult(_ context.Context, obs Observation) string {
 	// Successful host-recognized verification clears the failure event.
 	if obs.Success && obs.Verification {
 		if st != nil {
-			delete(g.tasks, taskID)
+			st.clearFailure()
+			if !st.hasTaskGrants() {
+				delete(g.tasks, taskID)
+			}
 			g.persistUnlocked()
 		}
 		return ""
@@ -322,7 +347,10 @@ func (g *Gate) ObserveResult(_ context.Context, obs Observation) string {
 	// Any successful mutation ends the current failure event.
 	if obs.Success && obs.Mutates {
 		if st != nil {
-			delete(g.tasks, taskID)
+			st.clearFailure()
+			if !st.hasTaskGrants() {
+				delete(g.tasks, taskID)
+			}
 			g.persistUnlocked()
 		}
 		return ""
@@ -429,10 +457,9 @@ func (g *Gate) classify(proposal Proposal) (Facts, *FailureEvent, []string, stri
 		Verification: proposal.Verification,
 	}
 	// Deterministic boundary checks run before the failure-recovery path.
-	if !proposal.HighRisk {
-		proposal.HighRisk = IsHighRiskMutation(proposal)
-	}
-	facts.HighRisk = proposal.HighRisk
+	boundary := riskBoundaryForProposal(proposal)
+	proposal.HighRisk = boundary.highRisk
+	facts.HighRisk = boundary.highRisk
 
 	taskID := normalizeTaskID(proposal.TaskID)
 	fp := CallFingerprint(proposal.Tool, proposal.Subject, proposal.Preview, proposal.Args)
@@ -450,6 +477,11 @@ func (g *Gate) classify(proposal Proposal) (Facts, *FailureEvent, []string, stri
 		if IsSafeVerificationRetry(failure, proposal) && st.safeRetryAvailable() {
 			facts.SafeRetryAvailable = true
 		}
+	}
+	runtimeGrantKey := taskGrantRuntimeKey(proposal, boundary.taskGrantKey)
+	if facts.HighRisk && runtimeGrantKey != "" && st != nil && st.hasTaskGrant(runtimeGrantKey) {
+		facts.HighRisk = false
+		g.metrics.TaskGrantUses++
 	}
 	g.mu.Unlock()
 
@@ -552,6 +584,9 @@ func (g *Gate) askHuman(ctx context.Context, taskID, fp string, proposal Proposa
 		Failure:     failureSummary,
 		Proposed:    firstNonEmpty(proposal.Subject, proposal.Preview, proposal.Tool),
 	}
+	if boundary := riskBoundaryForProposal(proposal); boundary.highRisk {
+		pending.TaskGrantKey = taskGrantRuntimeKey(proposal, boundary.taskGrantKey)
+	}
 
 	if g.opts.Headless || g.opts.EmitPrompt == nil {
 		return Decision{
@@ -573,6 +608,7 @@ func (g *Gate) askHuman(ctx context.Context, taskID, fp string, proposal Proposa
 	provisional := "pending:" + taskID
 	g.waiters[provisional] = reply
 	g.taskOf[provisional] = taskID
+	g.pending[provisional] = pending
 	g.awaiting[taskID] = struct{}{}
 	g.mu.Unlock()
 
@@ -581,6 +617,7 @@ func (g *Gate) askHuman(ctx context.Context, taskID, fp string, proposal Proposa
 		g.mu.Lock()
 		delete(g.waiters, provisional)
 		delete(g.taskOf, provisional)
+		delete(g.pending, provisional)
 		delete(g.awaiting, taskID)
 		g.mu.Unlock()
 		return Decision{Allow: false, Blocked: true, Message: "blocked: Auto Guard prompt failed: " + err.Error()}, err
@@ -590,6 +627,7 @@ func (g *Gate) askHuman(ctx context.Context, taskID, fp string, proposal Proposa
 		g.mu.Lock()
 		delete(g.waiters, provisional)
 		delete(g.taskOf, provisional)
+		delete(g.pending, provisional)
 		delete(g.awaiting, taskID)
 		g.mu.Unlock()
 		return Decision{Allow: false, Blocked: true, Message: "blocked: Auto Guard prompt returned empty id"}, fmt.Errorf("empty Auto Guard approval id")
@@ -603,6 +641,10 @@ func (g *Gate) askHuman(ctx context.Context, taskID, fp string, proposal Proposa
 	if provisionalReply, ok := g.waiters[provisional]; ok && provisionalReply != nil {
 		delete(g.waiters, provisional)
 		delete(g.taskOf, provisional)
+		if p, exists := g.pending[provisional]; exists {
+			delete(g.pending, provisional)
+			g.pending[approvalID] = p
+		}
 		if existing, exists := g.waiters[approvalID]; exists && existing != nil {
 			reply = existing
 		} else {
@@ -624,6 +666,7 @@ func (g *Gate) askHuman(ctx context.Context, taskID, fp string, proposal Proposa
 		g.mu.Lock()
 		delete(g.waiters, approvalID)
 		delete(g.taskOf, approvalID)
+		delete(g.pending, approvalID)
 		delete(g.awaiting, taskID)
 		g.mu.Unlock()
 		g.persist()
@@ -631,9 +674,31 @@ func (g *Gate) askHuman(ctx context.Context, taskID, fp string, proposal Proposa
 	}
 }
 
+func taskGrantRuntimeKey(proposal Proposal, semanticKey string) string {
+	if semanticKey == "" {
+		return ""
+	}
+	// Root task ids span a controller session. TaskScopeID is host-owned and
+	// unique per ordinary turn, while goal continuations reuse their delivery
+	// scope. Hash it so a grant survives one plan/goal task but cannot leak into a
+	// later unrelated request in the same chat. TaskSummary is a compatibility
+	// fallback for direct/older callers that do not yet supply a scope id.
+	taskScope := strings.TrimSpace(proposal.TaskScopeID)
+	if taskScope == "" {
+		taskScope = strings.TrimSpace(proposal.TaskSummary)
+	}
+	scope := CallFingerprint(
+		"task-grant",
+		normalizeTaskID(proposal.TaskID),
+		taskScope,
+		nil,
+	)
+	return semanticKey + "#" + scope
+}
+
 func (g *Gate) decisionFromResolve(payload resolvePayload) (Decision, error) {
 	switch payload.action {
-	case ActionContinue:
+	case ActionContinue, ActionContinueTask:
 		return Decision{Allow: true}, nil
 	case ActionRevise:
 		msg := "blocked: user requested a revised Auto Guard action"

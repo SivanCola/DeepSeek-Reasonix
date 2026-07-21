@@ -116,6 +116,7 @@ func TestHighRiskClassifierKeepsOrdinaryAndMCPPermissionPathsSeparate(t *testing
 		{name: "git stash clear", p: Proposal{Tool: "bash", Mutates: true, Args: json.RawMessage(`{"command":"git stash clear"}`)}, want: true},
 		{name: "git force checkout", p: Proposal{Tool: "bash", Mutates: true, Args: json.RawMessage(`{"command":"git checkout -f main"}`)}, want: true},
 		{name: "git path checkout", p: Proposal{Tool: "bash", Mutates: true, Args: json.RawMessage(`{"command":"git checkout -- internal/a.go"}`)}, want: true},
+		{name: "git dot checkout", p: Proposal{Tool: "bash", Mutates: true, Args: json.RawMessage(`{"command":"git checkout ."}`)}, want: true},
 		{name: "git worktree restore", p: Proposal{Tool: "bash", Mutates: true, Args: json.RawMessage(`{"command":"git restore internal/a.go"}`)}, want: true},
 		{name: "git index restore", p: Proposal{Tool: "bash", Mutates: true, Args: json.RawMessage(`{"command":"git restore --staged internal/a.go"}`)}},
 		{name: "git hooks config", p: Proposal{Tool: "bash", Mutates: true, Args: json.RawMessage(`{"command":"git config core.hooksPath /tmp/hooks"}`)}, want: true},
@@ -147,6 +148,7 @@ func TestHighRiskClassifierKeepsOrdinaryAndMCPPermissionPathsSeparate(t *testing
 		{name: "curl delete", p: Proposal{Tool: "bash", Mutates: true, Args: json.RawMessage(`{"command":"curl -X DELETE https://example.com/resource/1"}`)}, want: true},
 		{name: "env wrapped curl delete", p: Proposal{Tool: "bash", Mutates: true, Args: json.RawMessage(`{"command":"env MODE=test curl -X DELETE https://example.com/resource/1"}`)}, want: true},
 		{name: "curl attached delete", p: Proposal{Tool: "bash", Mutates: true, Args: json.RawMessage(`{"command":"curl -XDELETE https://example.com/resource/1"}`)}, want: true},
+		{name: "curl long attached delete", p: Proposal{Tool: "bash", Mutates: true, Args: json.RawMessage(`{"command":"curl --request=DELETE https://example.com/resource/1"}`)}, want: true},
 		{name: "curl form", p: Proposal{Tool: "bash", Mutates: true, Args: json.RawMessage(`{"command":"curl -F file=@artifact.zip https://example.com/upload"}`)}, want: true},
 		{name: "curl fail get", p: Proposal{Tool: "bash", Mutates: true, Args: json.RawMessage(`{"command":"curl -f https://example.com/status"}`)}},
 		{name: "wget post", p: Proposal{Tool: "bash", Mutates: true, Args: json.RawMessage(`{"command":"wget --post-data=x=1 https://example.com/resource"}`)}, want: true},
@@ -161,6 +163,12 @@ func TestHighRiskClassifierKeepsOrdinaryAndMCPPermissionPathsSeparate(t *testing
 		{name: "gh api delete", p: Proposal{Tool: "bash", Mutates: true, Args: json.RawMessage(`{"command":"gh api -X DELETE repos/owner/repo/issues/1"}`)}, want: true},
 		{name: "command wrapped gh api delete", p: Proposal{Tool: "bash", Mutates: true, Args: json.RawMessage(`{"command":"command gh api -X DELETE repos/owner/repo/issues/1"}`)}, want: true},
 		{name: "gh api implicit post", p: Proposal{Tool: "bash", Mutates: true, Args: json.RawMessage(`{"command":"gh api repos/owner/repo/issues -f title=bug"}`)}, want: true},
+		{name: "gh api attached delete", p: Proposal{Tool: "bash", Mutates: true, Args: json.RawMessage(`{"command":"gh api -XDELETE repos/owner/repo/issues/1"}`)}, want: true},
+		{name: "gh api attached implicit post", p: Proposal{Tool: "bash", Mutates: true, Args: json.RawMessage(`{"command":"gh api repos/owner/repo/issues -Ftitle=bug"}`)}, want: true},
+		{name: "find delete", p: Proposal{Tool: "bash", Mutates: true, Args: json.RawMessage(`{"command":"find . -name '*.tmp' -delete"}`)}, want: true},
+		{name: "powershell remove item", p: Proposal{Tool: "bash", Mutates: true, Args: json.RawMessage(`{"command":"Remove-Item -Recurse -Force .\\dist"}`)}, want: true},
+		{name: "unknown mutator fails closed", p: Proposal{Tool: "bash", Mutates: true, Args: json.RawMessage(`{"command":"bash deploy.sh"}`)}, want: true},
+		{name: "known formatter write", p: Proposal{Tool: "bash", Mutates: true, Args: json.RawMessage(`{"command":"gofmt -w internal/a.go"}`)}},
 		{name: "external cloud cli", p: Proposal{Tool: "bash", Mutates: true, Args: json.RawMessage(`{"command":"aws s3 rm s3://bucket/object"}`)}, want: true},
 		{name: "remote shell", p: Proposal{Tool: "bash", Mutates: true, Args: json.RawMessage(`{"command":"ssh prod.example sudo systemctl restart app"}`)}, want: true},
 		{name: "bash manifest edit", p: Proposal{Tool: "bash", Mutates: true, Args: json.RawMessage(`{"command":"sed -i.bak 's/old/new/' package.json"}`)}},
@@ -182,6 +190,154 @@ func TestHighRiskClassifierKeepsOrdinaryAndMCPPermissionPathsSeparate(t *testing
 				t.Fatalf("IsHighRiskMutation = %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestTaskGrantUsesSemanticOperationAndTargetBoundary(t *testing.T) {
+	g := NewGate(Options{Mode: func() string { return "auto" }})
+	var prompts atomic.Int32
+	g.opts.EmitPrompt = func(_ context.Context, taskID string, pending PendingProposal, _ *FailureEvent) (string, error) {
+		n := prompts.Add(1)
+		id := fmt.Sprintf("grant-%d", n)
+		g.BindApprovalID(taskID, id)
+		if pending.TaskGrantKey == "" {
+			t.Fatalf("ordinary push should expose a bounded task grant: %+v", pending)
+		}
+		action := ActionContinue
+		if n == 1 {
+			action = ActionContinueTask
+		}
+		if err := g.Resolve(id, action, ""); err != nil {
+			t.Fatalf("Resolve(%s): %v", action, err)
+		}
+		return id, nil
+	}
+
+	pushTask := func(taskScopeID, command string) Decision {
+		dec, err := g.BeforeMutation(context.Background(), Proposal{
+			TaskID: "root", TaskScopeID: taskScopeID, TaskSummary: "ship feature", Tool: "bash", Subject: command, Mutates: true,
+			Args: json.RawMessage(fmt.Sprintf(`{"command":%q}`, command)),
+		})
+		if err != nil {
+			t.Fatalf("BeforeMutation(%q): %v", command, err)
+		}
+		return dec
+	}
+	push := func(command string) Decision { return pushTask("goal:ship-feature", command) }
+
+	if dec := push("git push origin feature-a"); !dec.Allow {
+		t.Fatalf("first push = %+v", dec)
+	}
+	// Different command bytes and ref, same operation + remote boundary.
+	if dec := push("git push origin feature-b"); !dec.Allow {
+		t.Fatalf("semantically similar push = %+v", dec)
+	}
+	if got := prompts.Load(); got != 1 {
+		t.Fatalf("same-remote prompts = %d, want 1", got)
+	}
+	// A different remote is a different external target and must ask again.
+	if dec := push("git push upstream feature-b"); !dec.Allow {
+		t.Fatalf("different-remote push = %+v", dec)
+	}
+	if got := prompts.Load(); got != 2 {
+		t.Fatalf("different-remote prompts = %d, want 2", got)
+	}
+	// Root task ids span a chat; a new trusted task summary must not inherit the
+	// previous user request's external-write grant.
+	if dec := pushTask("turn:other-task", "git push origin feature-c"); !dec.Allow {
+		t.Fatalf("different-task push = %+v", dec)
+	}
+	if got := prompts.Load(); got != 3 {
+		t.Fatalf("different-task prompts = %d, want 3", got)
+	}
+	metrics := g.Metrics()
+	if metrics.TaskGrantContinues != 1 || metrics.TaskGrantUses != 1 {
+		t.Fatalf("task grant metrics = %+v", metrics)
+	}
+}
+
+func TestTaskGrantKeyRejectsRiskExpansionAndScopesExternalTarget(t *testing.T) {
+	proposal := func(command string) Proposal {
+		return Proposal{Tool: "bash", Mutates: true, Args: json.RawMessage(fmt.Sprintf(`{"command":%q}`, command))}
+	}
+	for _, command := range []string{
+		"git push --force origin feature",
+		"git push origin +feature",
+		"git push origin :feature",
+		"git push --all origin",
+		"git push origin feature-a feature-b",
+		"gh api -XPOST repos/owner/repo/issues",
+		"gh pr comment 12 --edit-last --body amended",
+	} {
+		if key := TaskGrantKey(proposal(command)); key != "" {
+			t.Errorf("TaskGrantKey(%q) = %q, want one-shot", command, key)
+		}
+	}
+	if a, b := TaskGrantKey(proposal("git push Origin feature-a")), TaskGrantKey(proposal("git push origin feature-b")); a == "" || b == "" || a == b {
+		t.Fatalf("remote target keys = %q / %q, want distinct non-empty keys", a, b)
+	}
+	if a, b := TaskGrantKey(proposal("gh pr comment 12 --body ok")), TaskGrantKey(proposal("gh pr comment 13 --body ok")); a == "" || b == "" || a == b {
+		t.Fatalf("PR target keys = %q / %q, want distinct non-empty keys", a, b)
+	}
+}
+
+func TestTaskGrantNeverCoversCriticalVariantOrPersists(t *testing.T) {
+	g := NewGate(Options{Mode: func() string { return "auto" }})
+	var prompts atomic.Int32
+	g.opts.EmitPrompt = func(_ context.Context, taskID string, pending PendingProposal, _ *FailureEvent) (string, error) {
+		n := prompts.Add(1)
+		id := fmt.Sprintf("critical-%d", n)
+		g.BindApprovalID(taskID, id)
+		if n == 1 {
+			if err := g.Resolve(id, ActionContinueTask, ""); err != nil {
+				t.Fatalf("grant ordinary push: %v", err)
+			}
+		} else if n == 2 {
+			if pending.TaskGrantKey != "" {
+				t.Fatalf("critical variant exposed task grant %q", pending.TaskGrantKey)
+			}
+			if err := g.Resolve(id, ActionContinueTask, ""); err == nil {
+				t.Fatal("force push accepted reusable task grant")
+			}
+			if err := g.Resolve(id, ActionContinue, ""); err != nil {
+				t.Fatalf("one-shot force push confirmation: %v", err)
+			}
+		} else if err := g.Resolve(id, ActionContinue, ""); err != nil {
+			t.Fatalf("post-restore one-shot confirmation: %v", err)
+		}
+		return id, nil
+	}
+	proposal := func(command string) Proposal {
+		return Proposal{TaskID: "root", Tool: "bash", Subject: command, Mutates: true, Args: json.RawMessage(fmt.Sprintf(`{"command":%q}`, command))}
+	}
+	if dec, err := g.BeforeMutation(context.Background(), proposal("git push origin feature")); err != nil || !dec.Allow {
+		t.Fatalf("ordinary push = %+v, %v", dec, err)
+	}
+	if snap := g.Snapshot(); len(snap.Tasks) != 0 {
+		t.Fatalf("runtime-only task grant leaked into snapshot: %+v", snap)
+	}
+	// A successful mutation clears failure state but not the live task grant.
+	g.ObserveResult(context.Background(), Observation{TaskID: "root", Tool: "bash", Mutates: true, Success: true})
+	if dec, err := g.BeforeMutation(context.Background(), proposal("git push origin other-ref")); err != nil || !dec.Allow {
+		t.Fatalf("grant after successful mutation = %+v, %v", dec, err)
+	}
+	if got := prompts.Load(); got != 1 {
+		t.Fatalf("grant was lost after success; prompts = %d", got)
+	}
+	if dec, err := g.BeforeMutation(context.Background(), proposal("git push --force origin feature")); err != nil || !dec.Allow {
+		t.Fatalf("force push = %+v, %v", dec, err)
+	}
+	if got := prompts.Load(); got != 2 {
+		t.Fatalf("force push prompts = %d, want 2", got)
+	}
+
+	// Restore is the session/restart boundary: runtime-only grants disappear.
+	g.Restore(g.Snapshot())
+	if dec, err := g.BeforeMutation(context.Background(), proposal("git push origin third-ref")); err != nil || !dec.Allow {
+		t.Fatalf("push after restore = %+v, %v", dec, err)
+	}
+	if got := prompts.Load(); got != 3 {
+		t.Fatalf("restore retained task grant; prompts = %d", got)
 	}
 }
 

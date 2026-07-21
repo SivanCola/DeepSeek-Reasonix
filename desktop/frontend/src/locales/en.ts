@@ -842,6 +842,8 @@ export const en = {
   "approval.recoveryPending": "Confirm before execution",
   "approval.recoveryContinue": "Continue",
   "approval.recoveryContinueDesc": "Run only the action shown above.",
+  "approval.recoveryTaskGrant": "Don't ask again for similar actions in this task",
+  "approval.recoveryTaskGrantDesc": "Only the same operation type and target boundary are reused. Broader or higher-risk actions still ask.",
   "approval.recoveryRevise": "Try another approach",
   "approval.recoveryReviseDesc": "Skip this action and keep looking for another approach.",
   "approval.recoveryReasonRisk": "This step is higher risk and needs your confirmation.",

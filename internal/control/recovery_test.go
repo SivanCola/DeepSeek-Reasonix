@@ -323,24 +323,15 @@ func TestSetFreshSessionPathClearsRecoveryState(t *testing.T) {
 		t.Fatalf("new session retained old recovery state: %+v", got)
 	}
 	// The async write scheduled above captured oldPath; it must not create a
-	// failing checkpoint beside the newly selected session.
-	deadline := time.Now().Add(time.Second)
-	oldPersisted := false
-	for {
-		oldSnap, err := recovery.LoadSnapshot(oldPath)
-		if err != nil {
-			t.Fatalf("LoadSnapshot(old): %v", err)
-		}
-		if len(oldSnap.Tasks) > 0 {
-			oldPersisted = true
-			break
-		}
-		if time.Now().After(deadline) {
-			break
-		}
-		time.Sleep(time.Millisecond)
+	// failing checkpoint beside the newly selected session. Wait through the
+	// gate instead of racing an atomic rename: Windows denies the read while
+	// antivirus/indexing filters still hold the destination during replacement.
+	gate.FlushPersistence(oldPath)
+	oldSnap, err := recovery.LoadSnapshot(oldPath)
+	if err != nil {
+		t.Fatalf("LoadSnapshot(old): %v", err)
 	}
-	if !oldPersisted {
+	if len(oldSnap.Tasks) == 0 {
 		t.Fatal("old-session recovery snapshot was not persisted")
 	}
 	newSnap, err := recovery.LoadSnapshot(newPath)

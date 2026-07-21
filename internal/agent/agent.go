@@ -334,6 +334,9 @@ type Agent struct {
 	// shared recovery gate review sub-agent mutations against the child task,
 	// rather than the root controller transcript.
 	recoveryTaskSummary string
+	// recoveryRunSeq gives ordinary (non-goal) runs a collision-free host scope.
+	// Goal runs use their stable delivery scope instead.
+	recoveryRunSeq atomic.Uint64
 
 	// planModeReadOnlyTrust is retained for legacy controller wiring. The main
 	// Plan execution path no longer consults it.
@@ -1114,6 +1117,7 @@ func (a *Agent) reserveParentWrite(runTool tool.Tool, args json.RawMessage, read
 // a round count. A positive maxSteps imposes an optional hard guard, surfaced as
 // a resumable notice when hit.
 func (a *Agent) Run(ctx context.Context, input string) (runErr error) {
+	a.recoveryRunSeq.Add(1)
 	if a.deliveryProfile && a.workspaceLease != nil {
 		a.workspaceLease.BeginRun()
 		defer a.workspaceLease.EndRun()
@@ -3153,6 +3157,7 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 		dec, rerr := a.recoveryGate.BeforeMutation(ctx, RecoveryProposal{
 			AgentID:      a.recoveryAgentID,
 			TaskID:       a.recoveryTaskID,
+			TaskScopeID:  recoveryTaskScopeID(a.deliveryScopeID, a.recoveryRunSeq.Load()),
 			TaskSummary:  a.recoveryTaskSummary,
 			Tool:         evidenceName,
 			Args:         evidenceArgs,
@@ -3427,6 +3432,13 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 	}
 	body, truncMsg := truncateToolOutput(result)
 	return toolOutcome{output: body, images: images, truncated: truncMsg != "", truncMsg: truncMsg}
+}
+
+func recoveryTaskScopeID(deliveryScopeID string, runSeq uint64) string {
+	if scope := strings.TrimSpace(deliveryScopeID); scope != "" {
+		return "goal:" + scope
+	}
+	return fmt.Sprintf("turn:%d", runSeq)
 }
 
 func (a *Agent) readOnlyExecutionBlock(visible tool.Tool, resolved *tool.ResolvedCall) (toolOutcome, bool) {

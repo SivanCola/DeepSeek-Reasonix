@@ -185,6 +185,7 @@ type RecoveryApproval struct {
 	ChangeKind      string // same_strategy | strategy | scope | risk | uncertain
 	ChangeRationale string // what changed vs the original approach
 	ReviewRationale string // why the host/reviewer needs confirmation
+	CanGrantTask    bool   // offer a semantic grant scoped to the current task
 }
 
 // AskOption is one choice the user can pick for an AskQuestion.

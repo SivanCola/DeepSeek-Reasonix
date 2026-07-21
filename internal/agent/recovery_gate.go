@@ -72,6 +72,10 @@ type RecoveryObservation struct {
 type RecoveryProposal struct {
 	AgentID string
 	TaskID  string
+	// TaskScopeID is a host-owned execution scope. Goal continuations reuse their
+	// delivery scope; ordinary runs get a unique turn scope. It never comes from
+	// model output and lets temporary grants expire at the real task boundary.
+	TaskScopeID string
 	// TaskSummary is the bounded task text for the agent proposing the action.
 	// Sub-agents must carry their own task instead of borrowing the root
 	// controller session's latest user message.
@@ -110,8 +114,9 @@ type RecoveryDecision struct {
 type RecoveryAction string
 
 const (
-	RecoveryActionContinue RecoveryAction = "continue"
-	RecoveryActionRevise   RecoveryAction = "revise"
+	RecoveryActionContinue     RecoveryAction = "continue"
+	RecoveryActionContinueTask RecoveryAction = "continue_task"
+	RecoveryActionRevise       RecoveryAction = "revise"
 )
 
 func (a *Agent) observeRecoveryResult(ctx context.Context, toolName string, args json.RawMessage, readOnly, mutates bool, result string, err error, blocked, userRejected bool) {

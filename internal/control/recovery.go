@@ -12,7 +12,7 @@ import (
 )
 
 // ResolveRecovery applies a user decision on an Auto Guard card.
-// action is continue|revise. For revise, feedback is returned in the
+// action is continue|continue_task|revise. For revise, feedback is returned in the
 // blocked tool result so the same agent sees it exactly once before retrying.
 func (c *Controller) ResolveRecovery(id string, action agent.RecoveryAction, feedback string) error {
 	if c == nil {
@@ -23,12 +23,14 @@ func (c *Controller) ResolveRecovery(id string, action agent.RecoveryAction, fee
 		return fmt.Errorf("empty recovery approval id")
 	}
 	switch action {
-	case agent.RecoveryActionContinue, agent.RecoveryActionRevise:
+	case agent.RecoveryActionContinue, agent.RecoveryActionContinueTask, agent.RecoveryActionRevise:
 	default:
 		// Accept plain strings from wire clients.
 		switch strings.ToLower(strings.TrimSpace(string(action))) {
 		case "continue":
 			action = agent.RecoveryActionContinue
+		case "continue_task":
+			action = agent.RecoveryActionContinueTask
 		case "revise":
 			action = agent.RecoveryActionRevise
 		case "stop":
@@ -43,18 +45,6 @@ func (c *Controller) ResolveRecovery(id string, action agent.RecoveryAction, fee
 		}
 	}
 
-	// Also resolve any matching approvalManager entry so legacy Approve paths
-	// and ReplayPending do not keep a stale prompt.
-	pending := c.approval.resolve(id)
-	if pending.reply != nil {
-		switch action {
-		case agent.RecoveryActionContinue:
-			pending.reply <- approvalReply{allow: true}
-		default:
-			pending.reply <- approvalReply{allow: false}
-		}
-	}
-
 	c.mu.Lock()
 	gate := c.recoveryGate
 	c.mu.Unlock()
@@ -64,7 +54,25 @@ func (c *Controller) ResolveRecovery(id string, action agent.RecoveryAction, fee
 	// Host hard-caps free-text feedback; empty revise is filled by the gate.
 	// Clip on a UTF-8 boundary so multi-byte runes are never split.
 	feedback = clipUTF8(feedback, 4*1024)
-	return gate.Resolve(id, recovery.Action(action), feedback)
+	// Validate and resolve the gate first. In particular, an unsupported
+	// continue_task must leave the live approval intact so the frontend can
+	// recover and offer a one-shot decision instead.
+	if err := gate.Resolve(id, recovery.Action(action), feedback); err != nil {
+		return err
+	}
+
+	// Also resolve any matching approvalManager entry so legacy Approve paths
+	// and ReplayPending do not keep a stale prompt.
+	pending := c.approval.resolve(id)
+	if pending.reply != nil {
+		switch action {
+		case agent.RecoveryActionContinue, agent.RecoveryActionContinueTask:
+			pending.reply <- approvalReply{allow: true}
+		default:
+			pending.reply <- approvalReply{allow: false}
+		}
+	}
+	return nil
 }
 
 func clipUTF8(s string, n int) string {
@@ -167,7 +175,7 @@ func (c *Controller) resetRecoveryForNewSession(path string) {
 }
 
 // carryRecoveryState moves a tip branch onto a new session identity without
-// carrying live approval channels or one-shot grants across the boundary.
+// carrying live approval channels or task-local grants across the boundary.
 func (c *Controller) carryRecoveryState(path string) {
 	if c == nil {
 		return

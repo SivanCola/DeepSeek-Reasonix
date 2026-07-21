@@ -77,6 +77,8 @@ var ChineseTraditional = Messages{
 	BashPrefixChoices:                      "1. 本次允許\n2. 本會話允許 %s\n3. 總是允許 %s（儲存到設定）\n4. 拒絕\n選擇 [1/2/3/4]（相容 y/a/p/n）",
 	PlanModeReadOnlyCommandChoices:         "1. 本次信任\n2. 本會話信任此前綴\n3. 總是在計劃模式信任此前綴（儲存到設定）\n4. 拒絕\n選擇 [1/2/3/4]（相容 y/a/p/n）",
 	FreshHumanApprovalChoices:              "1. 本次允許\n2. 拒絕\n選擇 [1/2]（相容 y/n）",
+	RecoveryApprovalChoices:                "1. 繼續一次\n2. 換個方案",
+	RecoveryTaskGrantChoices:               "1. 繼續一次\n2. 繼續，並在本任務內允許同類操作\n3. 換個方案",
 	SandboxEscapeApprovalChoices:           "1. 允許一次\n2. 本會話使用真實環境\n3. 拒絕\n選擇 [1/2/3]（相容 y/a/n）",
 	ApprovalNeededFmt:                      "需要核准：%s",
 	ApprovalNeededWithSubjectFmt:           "需要核准：%s %s",

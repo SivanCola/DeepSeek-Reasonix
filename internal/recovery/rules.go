@@ -76,24 +76,47 @@ func IsSafeVerificationRetry(failure *FailureEvent, proposal Proposal) bool {
 
 // IsHighRiskMutation forces human confirmation without calling the reviewer.
 func IsHighRiskMutation(proposal Proposal) bool {
+	return riskBoundaryForProposal(proposal).highRisk
+}
+
+// TaskGrantKey returns a semantic, task-local authorization key for a bounded
+// hard boundary. Empty means the action must be confirmed every time. Keys are
+// deliberately narrower than a command name but broader than raw command bytes:
+// for example, ordinary pushes to the same Git remote share a key, while force
+// pushes and arbitrary HTTP/API mutations never do.
+func TaskGrantKey(proposal Proposal) string {
+	return riskBoundaryForProposal(proposal).taskGrantKey
+}
+
+type riskBoundary struct {
+	highRisk     bool
+	taskGrantKey string
+}
+
+func riskBoundaryForProposal(proposal Proposal) riskBoundary {
 	if proposal.HighRisk {
-		return true
+		// Caller-supplied risk has no host-proven semantic scope, so it is never
+		// eligible for a reusable task grant.
+		return riskBoundary{highRisk: true}
 	}
 	tool := strings.TrimSpace(proposal.Tool)
 	if strings.HasPrefix(tool, "mcp__") || strings.Contains(tool, "mcp") {
 		// MCP already has a richer policy/destructive-hint gate. Duplicating that
 		// prompt here would create two human decisions for one call.
-		return false
+		return riskBoundary{}
 	}
 	if tool == "bash" {
 		cmd := commandFromArgs(proposal.Args)
-		return bashIsHighRisk(cmd)
+		// Host-recognized test/build commands may create project-local artifacts,
+		// but are already bounded by the verification classifier. Deterministic
+		// destructive forms still trip commandFieldsHighRisk below.
+		return bashRiskBoundary(cmd, proposal.Mutates && !proposal.Verification)
 	}
 	// Workspace file tools remain on Auto's fast path, including dependency,
 	// configuration, and workflow files. Sandbox and explicit approval policy
 	// still own writes outside the workspace; this layer only adds hard-boundary
 	// confirmation for commands the host can classify deterministically.
-	return false
+	return riskBoundary{}
 }
 
 // ClassifyEmptySearch reports whether a successful read-only search produced
@@ -195,10 +218,10 @@ func normalizeCommand(s string) string {
 	return strings.Join(strings.Fields(strings.TrimSpace(s)), " ")
 }
 
-func bashIsHighRisk(command string) bool {
+func bashRiskBoundary(command string, enforceMutationAllowlist bool) riskBoundary {
 	command = strings.TrimSpace(command)
 	if command == "" {
-		return true
+		return riskBoundary{highRisk: true}
 	}
 	lower := strings.ToLower(command)
 	// Fast markers cover destructive redirection and commands whose static
@@ -206,29 +229,39 @@ func bashIsHighRisk(command string) bool {
 	// and version-controlled configuration edits intentionally stay automatic.
 	riskMarkers := []string{
 		"rm -", "rmdir", "unlink ", "shred ",
-		"git push", "git reset --hard", "git clean",
+		"git reset --hard", "git clean",
 		"chmod ", "chown ", "mkfs", "dd if=",
 		"> /", ">> /",
 	}
 	for _, m := range riskMarkers {
 		if strings.Contains(lower, m) {
-			return true
+			return riskBoundary{highRisk: true}
 		}
 	}
 	segments, _, ok := shellparse.SplitTopLevel(command)
 	if !ok {
-		return true
+		return riskBoundary{highRisk: true}
 	}
+	var grantKey string
 	for _, segment := range segments {
 		fields, malformed := shellparse.StaticFields(segment)
 		if malformed != "" || len(fields) == 0 {
-			return true
+			return riskBoundary{highRisk: true}
 		}
 		if commandFieldsHighRisk(fields) {
-			return true
+			if len(segments) == 1 {
+				grantKey = commandFieldsTaskGrantKey(fields)
+			}
+			return riskBoundary{highRisk: true, taskGrantKey: grantKey}
+		}
+		if enforceMutationAllowlist && !commandFieldsKnownSafeMutation(fields) {
+			// The host knows this call can mutate, but this policy cannot prove it is
+			// a reversible workspace operation. Fail closed instead of letting an
+			// unlisted shell or PowerShell command silently widen Auto.
+			return riskBoundary{highRisk: true}
 		}
 	}
-	return false
+	return riskBoundary{}
 }
 
 func commandFieldsHighRisk(fields []string) bool {
@@ -254,6 +287,17 @@ func commandFieldsHighRisk(fields []string) bool {
 	case "rm", "rmdir", "unlink", "shred", "dd", "mkfs", "chmod", "chown",
 		"docker", "kubectl", "terraform":
 		return true
+	case "remove-item", "clear-content", "set-content", "add-content", "move-item", "copy-item",
+		"new-item", "rename-item", "invoke-restmethod", "invoke-webrequest", "start-process",
+		"stop-process", "restart-computer", "stop-computer", "format-volume", "clear-disk",
+		"initialize-disk", "powershell", "powershell.exe", "pwsh", "pwsh.exe", "cmd", "cmd.exe",
+		"del", "erase", "rd", "format", "diskpart":
+		// Reasonix runs the bash tool through PowerShell on Windows. Bash AST still
+		// gives us useful static words for simple native commands, but these verbs
+		// are not reversible workspace operations and must never fall through.
+		return true
+	case "find":
+		return containsAny(args, "-delete", "-exec", "-execdir", "-ok", "-okdir")
 	case "git":
 		return gitCommandHighRisk(args)
 	case "curl":
@@ -314,10 +358,16 @@ func gitCommandHighRisk(args []string) bool {
 	if containsAny(args, "push", "clean", "prune", "filter-branch", "filter-repo") {
 		return true
 	}
+	if containsAny(args, "gc") {
+		return true
+	}
 	if containsAny(args, "reset") && containsAny(args, "--hard", "--merge", "--keep") {
 		return true
 	}
-	if containsAny(args, "checkout") && containsAny(args, "-f", "--force", "--") {
+	if containsAny(args, "checkout") {
+		// `git checkout .` and `git checkout path` discard worktree contents even
+		// without -f/--. Prefer the unambiguous switch command for safe branch
+		// changes; keep all checkout forms behind confirmation.
 		return true
 	}
 	if containsAny(args, "switch") && containsAny(args, "--discard-changes") {
@@ -478,9 +528,13 @@ func ghAPICommandHighRisk(args []string) bool {
 				return true
 			}
 			method = strings.ToUpper(args[i+1])
+		case strings.HasPrefix(arg, "-x") && len(arg) > 2:
+			method = strings.ToUpper(arg[2:])
 		case strings.HasPrefix(arg, "--method="):
 			method = strings.ToUpper(strings.TrimPrefix(arg, "--method="))
 		case arg == "-f" || arg == "--raw-field" || arg == "--field" || arg == "--input":
+			hasBody = true
+		case strings.HasPrefix(arg, "-f") && len(arg) > 2:
 			hasBody = true
 		case strings.HasPrefix(arg, "--raw-field=") || strings.HasPrefix(arg, "--field=") || strings.HasPrefix(arg, "--input="):
 			hasBody = true
@@ -490,6 +544,203 @@ func ghAPICommandHighRisk(args []string) bool {
 		return hasBody // gh api switches its default from GET to POST when fields/input are supplied.
 	}
 	return method != "GET" && method != "HEAD" && method != "OPTIONS"
+}
+
+func commandFieldsKnownSafeMutation(fields []string) bool {
+	if len(fields) == 0 || commandFieldsHighRisk(fields) {
+		return false
+	}
+	base := strings.ToLower(filepath.Base(fields[0]))
+	rawArgs := fields[1:]
+	args := lowerFields(rawArgs)
+	switch base {
+	case "env":
+		wrapped, ok := unwrapEnvCommand(rawArgs)
+		return ok && commandFieldsKnownSafeMutation(wrapped)
+	case "command":
+		wrapped, ok := unwrapCommandBuiltin(rawArgs)
+		return ok && (len(wrapped) == 0 || commandFieldsKnownSafeMutation(wrapped))
+	case "nohup":
+		wrapped := trimLeadingOptions(rawArgs)
+		return len(wrapped) > 0 && commandFieldsKnownSafeMutation(wrapped)
+	case "git":
+		return gitCommandKnownSafe(args)
+	case "curl":
+		return !curlCommandHighRisk(rawArgs)
+	case "wget":
+		return !wgetCommandHighRisk(args)
+	case "gh":
+		return !ghCommandHighRisk(args)
+	case "http", "https", "xh":
+		return !httpCommandHighRisk(args)
+	case "sed", "gofmt", "goimports", "rustfmt", "prettier", "biome", "eslint", "black", "ruff",
+		"cp", "mv", "mkdir", "touch", "ln":
+		// These are deterministic workspace-editing families. The ordinary
+		// permission/sandbox layer still owns path confinement.
+		return true
+	case "npm":
+		return containsAny(args, "install", "add", "remove", "uninstall", "update", "dedupe") && !hasGlobalFlag(args)
+	case "pnpm":
+		return containsAny(args, "install", "add", "remove", "update", "dedupe", "import") && !hasGlobalFlag(args)
+	case "yarn":
+		return containsAny(args, "install", "add", "remove", "up", "upgrade", "dedupe") && !hasGlobalFlag(args) && !containsAny(args, "global")
+	case "go":
+		return containsAny(args, "get", "mod", "work", "fmt", "build", "test") && !containsAny(args, "install", "clean")
+	case "cargo":
+		return containsAny(args, "add", "remove", "update", "build", "check", "test", "fmt", "fix", "clippy")
+	case "composer":
+		return containsAny(args, "require", "remove", "update", "install", "dump-autoload") && !hasGlobalFlag(args) && !containsAny(args, "global")
+	case "poetry":
+		return containsAny(args, "add", "remove", "install", "update", "lock", "sync")
+	case "uv":
+		return containsAny(args, "add", "remove", "sync", "lock")
+	case "dotnet":
+		return containsAny(args, "add", "remove", "restore", "build", "test", "format") && !hasGlobalFlag(args)
+	}
+	// A coarse host mutation bit must not turn a statically proven read-only
+	// diagnostic into a confirmation. Destructive argument forms were rejected
+	// before reaching this point.
+	if _, _, readOnly := shellsafe.CommandIsReadOnly(strings.Join(fields, " ")); readOnly {
+		return true
+	}
+	return false
+}
+
+func gitCommandKnownSafe(args []string) bool {
+	sub := gitSubcommand(args)
+	switch sub {
+	case "add", "commit", "status", "diff", "log", "show", "rev-parse", "rev-list", "describe",
+		"blame", "grep", "ls-files", "ls-tree", "cat-file", "for-each-ref", "name-rev", "shortlog",
+		"whatchanged", "cherry", "fetch", "pull", "clone", "init", "merge", "rebase", "cherry-pick",
+		"revert", "apply", "am", "switch", "reset", "branch", "tag", "stash", "restore", "worktree",
+		"remote", "config", "reflog":
+		return true
+	default:
+		return false
+	}
+}
+
+func gitSubcommand(args []string) string {
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch {
+		case arg == "-c" || arg == "--git-dir" || arg == "--work-tree" || arg == "--namespace":
+			i++
+		case strings.HasPrefix(arg, "-"):
+			continue
+		default:
+			return strings.ToLower(arg)
+		}
+	}
+	return ""
+}
+
+func commandFieldsTaskGrantKey(fields []string) string {
+	if len(fields) == 0 {
+		return ""
+	}
+	base := strings.ToLower(filepath.Base(fields[0]))
+	rawArgs := fields[1:]
+	switch base {
+	case "env":
+		wrapped, ok := unwrapEnvCommand(rawArgs)
+		if ok {
+			return commandFieldsTaskGrantKey(wrapped)
+		}
+	case "command":
+		wrapped, ok := unwrapCommandBuiltin(rawArgs)
+		if ok {
+			return commandFieldsTaskGrantKey(wrapped)
+		}
+	case "git":
+		return gitPushTaskGrantKey(rawArgs)
+	case "gh":
+		return ghTaskGrantKey(rawArgs)
+	}
+	return ""
+}
+
+func gitPushTaskGrantKey(args []string) string {
+	lower := lowerFields(args)
+	if gitSubcommand(lower) != "push" || containsAny(lower,
+		"-f", "--force", "--mirror", "--delete", "--prune", "--all", "--tags", "--follow-tags",
+	) {
+		return ""
+	}
+	for _, arg := range lower {
+		if strings.HasPrefix(arg, "--force") || strings.HasPrefix(arg, ":") || strings.HasPrefix(arg, "+") {
+			return ""
+		}
+	}
+	pushAt := -1
+	for i, arg := range lower {
+		if arg == "push" {
+			pushAt = i
+			break
+		}
+	}
+	if pushAt < 0 {
+		return ""
+	}
+	remote := "default"
+	remoteSet := false
+	var refspecs []string
+	for i := pushAt + 1; i < len(args); i++ {
+		arg := lower[i]
+		if arg == "-o" || arg == "--push-option" || arg == "--receive-pack" || arg == "--exec" {
+			i++
+			continue
+		}
+		if strings.HasPrefix(arg, "-") {
+			continue
+		}
+		if !remoteSet {
+			remote = strings.TrimSpace(args[i])
+			remoteSet = true
+			continue
+		}
+		refspecs = append(refspecs, strings.TrimSpace(args[i]))
+	}
+	if len(refspecs) > 1 || (len(refspecs) == 1 && strings.Contains(refspecs[0], "*")) {
+		return ""
+	}
+	return "bash:git.push:" + remote
+}
+
+func ghTaskGrantKey(args []string) string {
+	lower := lowerFields(args)
+	group, rest := ghCommandGroup(lower)
+	if len(rest) == 0 {
+		return ""
+	}
+	verb := rest[0]
+	if (group != "pr" && group != "issue") || verb != "comment" {
+		return ""
+	}
+	if containsAny(lower, "--edit-last", "--delete-last") {
+		return ""
+	}
+	repo := "current"
+	for i, arg := range lower {
+		switch {
+		case (arg == "--repo" || arg == "-r") && i+1 < len(args):
+			repo = args[i+1]
+		case strings.HasPrefix(arg, "--repo="):
+			repo = strings.TrimSpace(args[i][len("--repo="):])
+		case strings.HasPrefix(arg, "-r") && len(arg) > 2:
+			repo = strings.TrimSpace(args[i][2:])
+		}
+	}
+	target := "current"
+	if len(rest) > 1 && !strings.HasPrefix(rest[1], "-") {
+		target = rest[1]
+	} else if len(rest) > 1 {
+		// Options before a positional target are legal in gh. Avoid guessing
+		// through their values; a form the host cannot scope exactly stays
+		// one-shot rather than sharing an accidentally broad "current" grant.
+		return ""
+	}
+	return "bash:gh." + group + ".comment:" + strings.TrimSpace(repo) + ":" + target
 }
 
 func httpCommandHighRisk(args []string) bool {

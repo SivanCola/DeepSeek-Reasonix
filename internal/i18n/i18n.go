@@ -98,6 +98,8 @@ type Messages struct {
 	BashPrefixChoices                      string // approval choice list when a bash prefix can be granted
 	PlanModeReadOnlyCommandChoices         string // approval choice list for plan-mode read-only command trust
 	FreshHumanApprovalChoices              string // approval choice list for prompts that cannot be remembered
+	RecoveryApprovalChoices                string // one-shot Auto Guard decision list
+	RecoveryTaskGrantChoices               string // Auto Guard list with a current-task semantic grant
 	SandboxEscapeApprovalChoices           string // approval choice list for OS sandbox escape prompts
 	ApprovalNeededFmt                      string // notification text for a pending approval, tool only
 	ApprovalNeededWithSubjectFmt           string // notification text for a pending approval with subject

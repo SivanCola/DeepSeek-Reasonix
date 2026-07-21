@@ -180,7 +180,7 @@ export function ApprovalModal({
 }: {
   approval: WireApproval;
   onAnswer: (allow: boolean, session: boolean, persist: boolean) => void;
-  onResolveRecovery?: (action: "continue" | "revise", feedback?: string) => void;
+  onResolveRecovery?: (action: "continue" | "continue_task" | "revise", feedback?: string) => void;
   onRevisePlan?: (text: string) => void;
   onExitPlan?: () => void;
   onStop: () => void;
@@ -223,6 +223,7 @@ export function ApprovalModal({
   const [selectedIndex, setSelectedIndex] = useState(() => (isPlanApproval || isRecoveryApproval ? -1 : 0));
   const [revisionOpen, setRevisionOpen] = useState(false);
   const [revisionText, setRevisionText] = useState("");
+  const [grantSimilarForTask, setGrantSimilarForTask] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const cardRef = useRef<HTMLDivElement | null>(null);
   const shelfRef = useRef<HTMLDivElement | null>(null);
@@ -253,14 +254,14 @@ export function ApprovalModal({
   };
 
   const resolveRecovery = useCallback(
-    (action: "continue" | "revise", feedback?: string) => {
-      const resolve = onResolveRecovery ?? ((a: "continue" | "revise") => onAnswer(a === "continue", false, false));
+    (action: "continue" | "continue_task" | "revise", feedback?: string) => {
+      const resolve = onResolveRecovery ?? ((a: "continue" | "continue_task" | "revise") => onAnswer(a !== "revise", false, false));
       if (action === "revise") {
         const text = feedback?.trim().slice(0, 1000) ?? "";
         resolve("revise", text || undefined);
         return;
       }
-      resolve("continue");
+      resolve(action);
     },
     [onResolveRecovery, onAnswer],
   );
@@ -272,7 +273,7 @@ export function ApprovalModal({
           label: t("approval.recoveryContinue"),
           desc: t("approval.recoveryContinueDesc"),
           kind: "direct",
-          run: () => resolveRecovery("continue"),
+          run: () => resolveRecovery(grantSimilarForTask && approval.recovery?.can_grant_task ? "continue_task" : "continue"),
         },
         {
           key: "2",
@@ -371,6 +372,7 @@ export function ApprovalModal({
     cardRef.current?.focus();
     setRevisionOpen(false);
     setRevisionText("");
+    setGrantSimilarForTask(false);
     setReasonOpen(isRecoveryApproval ? false : Boolean(reason) && reason.length <= 160);
     setSelectedIndex(isPlanApproval || isRecoveryApproval ? -1 : 0);
     setSubmitting(false);
@@ -637,12 +639,27 @@ export function ApprovalModal({
         }
       >
         {(approvalModeRelaxed ||
+          (isRecoveryApproval && recovery?.can_grant_task) ||
           (isRecoveryApproval && reasonOpen) ||
           (!isPlanApproval && !isRecoveryApproval && (subject || (reasonOpen && reason))) ||
           (isPlanApproval && revisionOpen)) && (
           <>
             {approvalModeRelaxed && !isRecoveryApproval && (
               <div className="approval-mode-hint">{t("approval.modeSwitchPendingHint")}</div>
+            )}
+            {isRecoveryApproval && recovery?.can_grant_task && (
+              <label className="recovery-task-grant">
+                <input
+                  type="checkbox"
+                  checked={grantSimilarForTask}
+                  onChange={(event) => setGrantSimilarForTask(event.target.checked)}
+                  disabled={submitting}
+                />
+                <span>
+                  <strong>{t("approval.recoveryTaskGrant")}</strong>
+                  <small>{t("approval.recoveryTaskGrantDesc")}</small>
+                </span>
+              </label>
             )}
             {isRecoveryApproval && reasonOpen && (
               <div className="approval-details recovery-details">

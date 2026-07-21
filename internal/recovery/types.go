@@ -88,6 +88,9 @@ type PendingProposal struct {
 	Diagnosis   string          `json:"diagnosis,omitempty"`
 	Failure     string          `json:"failure,omitempty"`
 	Proposed    string          `json:"proposed,omitempty"`
+	// TaskGrantKey is transient host-classified scope. It is deliberately
+	// omitted from snapshots and never supplied by the model or wire client.
+	TaskGrantKey string `json:"-"`
 }
 
 // TaskState is the persistable compatibility view of one task's recovery state.
@@ -114,6 +117,8 @@ type Metrics struct {
 	ReviewContinues    int64
 	HumanPrompts       int64
 	HumanContinues     int64
+	TaskGrantContinues int64
+	TaskGrantUses      int64
 	HumanRevises       int64
 	ReviewErrors       int64
 	ReviewLatencyMsSum int64
@@ -142,6 +147,7 @@ func ToEventApproval(id string, pending PendingProposal, failure *FailureEvent) 
 		ChangeKind:      string(pending.ChangeKind),
 		ChangeRationale: pending.Rationale,
 		ReviewRationale: pending.Rationale,
+		CanGrantTask:    pending.TaskGrantKey != "",
 	}
 	if failure != nil {
 		rec.FailedTool = failure.Tool
@@ -172,8 +178,9 @@ type Decision = agent.RecoveryDecision
 type Action = agent.RecoveryAction
 
 const (
-	ActionContinue = agent.RecoveryActionContinue
-	ActionRevise   = agent.RecoveryActionRevise
+	ActionContinue     = agent.RecoveryActionContinue
+	ActionContinueTask = agent.RecoveryActionContinueTask
+	ActionRevise       = agent.RecoveryActionRevise
 )
 
 // DefaultReviseFeedback is injected when the user chooses "try another approach"

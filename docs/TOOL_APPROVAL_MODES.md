@@ -52,8 +52,8 @@ Auto is designed as a behavior, not another feature to configure:
 - Destructive commands, remote push/publish/deploy, privilege escalation, system/global installs, and writes outside ordinary workspace policy still require confirmation.
 - After a failure, read-only diagnosis and low-risk recovery continue automatically. Three consecutive failed attempts, or three reviewer-rejected alternatives, escalate to the user.
 - Reviewer unavailability does not turn low-risk work into a prompt; deterministic hard boundaries still fail closed.
-- When confirmation is required, one card shows the next action with two one-click choices: **Continue** / **Try another approach**. Technical details stay collapsed. Whole-task cancellation remains the global Stop control.
-- **Continue** authorizes only the waiting call (never a session or permanent grant). Stale cards are never replayed after a restart; the next call is classified again.
+- When confirmation is required, one card shows the next action with two one-click choices: **Continue** / **Try another approach**. For host-classified bounded operations, an optional checkbox can also allow semantically similar actions for the current task. Technical details stay collapsed. Whole-task cancellation remains the global Stop control.
+- **Continue** alone authorizes only the waiting call. The optional current-task grant matches the operation type and target boundary rather than raw command text; broader targets, force/destructive variants, and risk escalation ask again. It is never a permanent grant and is dropped on restart or session switch.
 - Headless runs fail closed when a human decision is required.
 - These boundaries are effective only in Auto. Ask and YOLO keep their existing approval semantics, and there is no separate safety setting to learn.
 

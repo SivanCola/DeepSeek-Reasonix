@@ -645,6 +645,8 @@ export const zhTW: Record<DictKey, string> = {
   "approval.recoveryPending": "執行前確認",
   "approval.recoveryContinue": "繼續",
   "approval.recoveryContinueDesc": "僅執行上方顯示的操作。",
+  "approval.recoveryTaskGrant": "本任務內同類操作不再詢問",
+  "approval.recoveryTaskGrantDesc": "僅重用相同操作類型和目標邊界；範圍擴大或風險升級仍會詢問。",
   "approval.recoveryRevise": "換個方案",
   "approval.recoveryReviseDesc": "不執行本次操作，繼續尋找其他方案。",
   "approval.recoveryReasonRisk": "這一步風險較高，需要你確認。",

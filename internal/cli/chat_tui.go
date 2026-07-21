@@ -34,6 +34,7 @@ import (
 	"reasonix/internal/permission"
 	"reasonix/internal/plugin"
 	"reasonix/internal/provider"
+	"reasonix/internal/recovery"
 	"reasonix/internal/sandbox"
 	"reasonix/internal/skill"
 	"reasonix/internal/tool"
@@ -2550,6 +2551,14 @@ func approvalChoices(a *event.Approval) []approvalChoice {
 	var decisions []approvalChoice
 	fresh := a.Fresh || control.RequiresFreshHumanApprovalTool(a.Tool)
 	switch {
+	case isRecoveryApprovalEvent(a):
+		if a.Recovery != nil && a.Recovery.CanGrantTask {
+			// allowForSession is reused only as a local UI marker. The recovery
+			// handler maps it to a task-scoped semantic grant, never a session rule.
+			decisions = []approvalChoice{{allow: true}, {allow: true, allowForSession: true}, {}}
+		} else {
+			decisions = []approvalChoice{{allow: true}, {}}
+		}
 	case a.Tool == planApprovalTool:
 		decisions = []approvalChoice{{allow: true}, {}}
 	case fresh && freshApprovalAllowsSession(a.Tool):
@@ -2576,7 +2585,12 @@ func approvalChoices(a *event.Approval) []approvalChoice {
 func approvalChoiceLabels(a *event.Approval) []string {
 	choices := i18n.M.FreshHumanApprovalChoices
 	fresh := a.Fresh || control.RequiresFreshHumanApprovalTool(a.Tool)
-	if a.Tool == planApprovalTool {
+	if isRecoveryApprovalEvent(a) {
+		choices = i18n.M.RecoveryApprovalChoices
+		if a.Recovery != nil && a.Recovery.CanGrantTask {
+			choices = i18n.M.RecoveryTaskGrantChoices
+		}
+	} else if a.Tool == planApprovalTool {
 		choices = i18n.M.FreshHumanApprovalChoices
 	} else if !fresh {
 		exactSessionRule := permission.SessionGrantRuleForScope(a.Tool, a.Subject)
@@ -2619,6 +2633,18 @@ func (m chatTUI) handleApprovalKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	choices := approvalChoices(m.pendingApproval)
 	answer := func(choice approvalChoice) (tea.Model, tea.Cmd) {
 		allow, session, persist := choice.allow, choice.allowForSession, choice.persistToConfig
+		if isRecoveryApprovalEvent(m.pendingApproval) {
+			action := agent.RecoveryActionRevise
+			if allow {
+				action = agent.RecoveryActionContinue
+				if session {
+					action = agent.RecoveryActionContinueTask
+				}
+			}
+			_ = m.ctrl.ResolveRecovery(m.pendingApproval.ID, action, "")
+			m.pendingApproval = nil
+			return m, nil
+		}
 		if allow && m.pendingApproval.Tool == planApprovalTool {
 			m.planMode = false
 		}
@@ -2683,6 +2709,10 @@ func (m chatTUI) handleApprovalKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return answer(approvalChoice{})
 	}
 	return m, nil
+}
+
+func isRecoveryApprovalEvent(a *event.Approval) bool {
+	return a != nil && (a.Kind == recovery.ApprovalKindRecovery || a.Recovery != nil)
 }
 
 func freshApprovalAllowsSession(toolName string) bool {

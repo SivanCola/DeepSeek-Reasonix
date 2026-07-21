@@ -80,6 +80,8 @@ var English = Messages{
 	BashPrefixChoices:                      "1. Allow once\n2. Allow %s for this session\n3. Always allow %s (save to config)\n4. Deny\nChoose [1/2/3/4] (y/a/p/n also work)",
 	PlanModeReadOnlyCommandChoices:         "1. Trust once\n2. Trust this prefix for this session\n3. Always trust this prefix for plan mode (save to config)\n4. Deny\nChoose [1/2/3/4] (y/a/p/n also work)",
 	FreshHumanApprovalChoices:              "1. Allow once\n2. Deny\nChoose [1/2] (y/n also work)",
+	RecoveryApprovalChoices:                "1. Continue once\n2. Try another approach",
+	RecoveryTaskGrantChoices:               "1. Continue once\n2. Continue and allow similar actions in this task\n3. Try another approach",
 	SandboxEscapeApprovalChoices:           "1. Allow once\n2. Use real environment for this session\n3. Deny\nChoose [1/2/3] (y/a/n also work)",
 	ApprovalNeededFmt:                      "approval needed: %s",
 	ApprovalNeededWithSubjectFmt:           "approval needed: %s %s",

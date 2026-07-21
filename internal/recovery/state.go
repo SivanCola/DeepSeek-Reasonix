@@ -13,6 +13,9 @@ type taskRuntime struct {
 	failure       *activeFailure
 	reviewRejects uint8
 	guidanceSent  bool
+	// taskGrants are runtime-only semantic authorizations. Snapshot/Restore never
+	// serializes them, so a restart or session switch always drops the grant.
+	taskGrants map[string]struct{}
 }
 
 // activeFailure is the armed failure-recovery context for one task.
@@ -31,6 +34,37 @@ const (
 
 func (st *taskRuntime) empty() bool {
 	return st == nil || (st.failure == nil && !st.guidanceSent && st.reviewRejects == 0)
+}
+
+func (st *taskRuntime) hasTaskGrant(key string) bool {
+	if st == nil || key == "" || st.taskGrants == nil {
+		return false
+	}
+	_, ok := st.taskGrants[key]
+	return ok
+}
+
+func (st *taskRuntime) addTaskGrant(key string) {
+	if st == nil || key == "" {
+		return
+	}
+	if st.taskGrants == nil {
+		st.taskGrants = map[string]struct{}{}
+	}
+	st.taskGrants[key] = struct{}{}
+}
+
+func (st *taskRuntime) hasTaskGrants() bool {
+	return st != nil && len(st.taskGrants) > 0
+}
+
+func (st *taskRuntime) clearFailure() {
+	if st == nil {
+		return
+	}
+	st.failure = nil
+	st.reviewRejects = 0
+	st.guidanceSent = false
 }
 
 func (st *taskRuntime) failureCount() uint8 {
@@ -100,7 +134,7 @@ func (st *taskRuntime) toTaskState(phase Phase) *TaskState {
 		}
 	}
 	// Pending and ApprovalID are intentionally never written: restore must not
-	// revive a one-shot grant or waiter across restarts.
+	// revive a transient authorization or waiter across restarts.
 	return out
 }
 

@@ -2445,7 +2445,7 @@ export function useController() {
     });
   }, [activeTabId, dispatchTo]);
 
-  const resolveRecovery = useCallback((id: string, action: "continue" | "revise" | "stop", feedback = "") => {
+  const resolveRecovery = useCallback((id: string, action: "continue" | "continue_task" | "revise" | "stop", feedback = "") => {
     if (!activeTabId) return;
     const tabId = activeTabId;
     const epoch = statesRef.current.get(tabId)?.promptEpoch ?? 0;

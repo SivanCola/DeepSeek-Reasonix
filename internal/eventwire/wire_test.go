@@ -257,6 +257,14 @@ func TestToWireInteractionAndLifecyclePayloads(t *testing.T) {
 			want: []string{`"kind":"approval_request"`, `"tool":"mcp__srv__wipe"`, `"fresh":true`},
 		},
 		{
+			name: "recovery task grant",
+			in: event.Event{Kind: event.ApprovalRequest, Approval: event.Approval{
+				ID: "r1", Tool: "bash", Subject: "git push origin feature", Fresh: true, Kind: "recovery",
+				Recovery: &event.RecoveryApproval{NextAction: "git push origin feature", CanGrantTask: true},
+			}},
+			want: []string{`"kind":"recovery"`, `"next_action":"git push origin feature"`, `"can_grant_task":true`},
+		},
+		{
 			name: "ask",
 			in: event.Event{Kind: event.AskRequest, Ask: event.Ask{
 				ID: "ask-1",

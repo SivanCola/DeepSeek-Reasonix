@@ -25,6 +25,20 @@ func TestApprovalCardCarriesChatType(t *testing.T) {
 		t.Fatalf("recovery text = %q", got)
 	}
 
+	grantApproval := event.Approval{ID: "r2", Kind: "recovery", Recovery: &event.RecoveryApproval{CanGrantTask: true}}
+	if got := renderRecoveryText(grantApproval); !strings.Contains(got, "2 在本任务内允许同类操作") || !strings.Contains(got, "风险升级仍会再次确认") {
+		t.Fatalf("task-grant recovery text = %q", got)
+	}
+	keyboard := recoveryKeyboard(grantApproval)
+	if len(keyboard.Rows) != 2 || keyboard.Rows[0].Buttons[1].CallbackID != "/recovery-continue-task r2" {
+		t.Fatalf("task-grant keyboard = %#v", keyboard)
+	}
+	grantCard := recoveryCard(grantApproval, ChatDM, "allowed-user")
+	grantActions, ok := grantCard.Elements[1].Extra["actions"].([]map[string]any)
+	if !ok || len(grantActions) != 3 {
+		t.Fatalf("task-grant card actions = %#v", grantCard.Elements[1].Extra["actions"])
+	}
+
 	card := approvalCard(event.Approval{ID: "approval-1", Tool: "bash", Subject: "ls"}, ChatDM, "allowed-user")
 	if len(card.Elements) < 2 {
 		t.Fatalf("approval card elements = %d, want at least 2", len(card.Elements))

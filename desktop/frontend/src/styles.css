@@ -7947,6 +7947,34 @@ body > .mermaid-diagram--fullscreen {
   font-size: 12px;
   line-height: 1.45;
 }
+
+.recovery-task-grant {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  color: var(--fg-dim);
+  cursor: pointer;
+}
+
+.recovery-task-grant input {
+  margin-top: 3px;
+}
+
+.recovery-task-grant span {
+  display: grid;
+  gap: 2px;
+}
+
+.recovery-task-grant strong {
+  color: var(--fg);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.recovery-task-grant small {
+  font-size: 11px;
+  line-height: 1.4;
+}
 .approval-reason {
   margin: 0;
   padding: 8px 10px;

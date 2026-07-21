@@ -639,6 +639,28 @@ func TestGatewayNormalizesNumericApprovalShortcutsOnlyWhenPending(t *testing.T) 
 	}
 }
 
+func TestGatewayNormalizesTaskGrantRecoveryShortcuts(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	gw := NewGateway(GatewayConfig{}, nil, logger)
+	key := "recovery-key"
+	gw.controllers[key] = &sessionState{
+		pendingApprovals: map[string]event.Approval{
+			"r1": {ID: "r1", Kind: "recovery", Recovery: &event.RecoveryApproval{CanGrantTask: true}},
+		},
+		lastApprovalID: "r1",
+	}
+	for input, want := range map[string]string{
+		"1": "/recovery-continue r1",
+		"2": "/recovery-continue-task r1",
+		"3": "/recovery-revise r1",
+	} {
+		got, ok := gw.normalizeApprovalShortcut(key, input)
+		if !ok || got != want {
+			t.Fatalf("normalize %q = %q,%v; want %q,true", input, got, ok, want)
+		}
+	}
+}
+
 func TestGatewayNormalizesAskShortcutForPendingAsk(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	gw := NewGateway(GatewayConfig{}, nil, logger)
