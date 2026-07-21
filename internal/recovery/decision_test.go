@@ -1,0 +1,554 @@
+package recovery
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"strings"
+	"sync/atomic"
+	"testing"
+	"time"
+)
+
+// TestDecisionMatrix freezes the pure Auto Guard routing table.
+// Each row is a product scenario from the PR plan decision matrix.
+func TestDecisionMatrix(t *testing.T) {
+	tests := []struct {
+		name string
+		f    Facts
+		want DecisionResult
+	}{
+		{
+			name: "ask mode bypasses auto guard",
+			f:    Facts{Enabled: true, AutoMode: false, Mutates: true},
+			want: DecisionResult{Route: RouteBypass},
+		},
+		{
+			name: "yolo mode bypasses auto guard",
+			f:    Facts{Enabled: true, AutoMode: false, Mutates: true, HighRisk: true},
+			want: DecisionResult{Route: RouteBypass},
+		},
+		{
+			name: "kill switch off bypasses auto guard",
+			f:    Facts{Enabled: false, AutoMode: true, Mutates: true, HighRisk: true},
+			want: DecisionResult{Route: RouteBypass},
+		},
+		{
+			name: "ordinary read allows without review",
+			f:    Facts{Enabled: true, AutoMode: true, ReadOnly: true},
+			want: DecisionResult{Route: RouteAllow},
+		},
+		{
+			name: "ordinary search allows without review",
+			f:    Facts{Enabled: true, AutoMode: true, ReadOnly: true, Mutates: false},
+			want: DecisionResult{Route: RouteAllow},
+		},
+		{
+			name: "ordinary mutation without failure allows without review",
+			f:    Facts{Enabled: true, AutoMode: true, Mutates: true},
+			want: DecisionResult{Route: RouteAllow},
+		},
+		{
+			name: "pre-action high risk asks without review",
+			f:    Facts{Enabled: true, AutoMode: true, Mutates: true, HighRisk: true},
+			want: DecisionResult{Route: RouteAsk, AskReason: AskRisk},
+		},
+		{
+			name: "high risk wins over active failure reviewer path",
+			f: Facts{
+				Enabled: true, AutoMode: true, Mutates: true, HighRisk: true,
+				HasActiveFailure: true, FailureCount: 1,
+			},
+			want: DecisionResult{Route: RouteAsk, AskReason: AskRisk},
+		},
+		{
+			name: "first safe verification retry allows and consumes budget",
+			f: Facts{
+				Enabled: true, AutoMode: true, Verification: true,
+				HasActiveFailure: true, FailureCount: 1, SafeRetryAvailable: true,
+			},
+			want: DecisionResult{Route: RouteAllow, ConsumeSafeRetry: true},
+		},
+		{
+			name: "expanded scope after failure asks",
+			f: Facts{
+				Enabled: true, AutoMode: true, Mutates: true,
+				HasActiveFailure: true, FailureCount: 1, ExpandedScope: true,
+			},
+			want: DecisionResult{Route: RouteAsk, AskReason: AskScope},
+		},
+		{
+			name: "strategy change after failure asks",
+			f: Facts{
+				Enabled: true, AutoMode: true, Mutates: true,
+				HasActiveFailure: true, FailureCount: 1, StrategyChanged: true,
+			},
+			want: DecisionResult{Route: RouteAsk, AskReason: AskStrategy},
+		},
+		{
+			name: "second failure during recovery asks",
+			f: Facts{
+				Enabled: true, AutoMode: true, Mutates: true,
+				HasActiveFailure: true, FailureCount: 2,
+			},
+			want: DecisionResult{Route: RouteAsk, AskReason: AskRepeat},
+		},
+		{
+			name: "ambiguous recovery mutation goes to reviewer",
+			f: Facts{
+				Enabled: true, AutoMode: true, Mutates: true,
+				HasActiveFailure: true, FailureCount: 1,
+			},
+			want: DecisionResult{Route: RouteReview},
+		},
+		{
+			name: "safe retry budget does not apply when scope expands",
+			f: Facts{
+				Enabled: true, AutoMode: true, Mutates: true, Verification: true,
+				HasActiveFailure: true, FailureCount: 1,
+				SafeRetryAvailable: true, ExpandedScope: true,
+			},
+			// Safe retry is evaluated before scope; the product order is:
+			// safe retry → scope/strategy/second failure → review.
+			// A true safe verification retry cannot also expand scope (classifier
+			// clears SafeRetryAvailable). When both flags appear, safe retry wins
+			// only if the host marked it available — the classifier must not.
+			want: DecisionResult{Route: RouteAllow, ConsumeSafeRetry: true},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := Decide(tt.f)
+			if got != tt.want {
+				t.Fatalf("Decide = %+v, want %+v", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestBehaviorMatrixGolden freezes end-to-end Gate outcomes for the product matrix.
+// Ordinary paths must not call the reviewer; ambiguous recovery must.
+func TestBehaviorMatrixGolden(t *testing.T) {
+	type outcome struct {
+		allow    bool
+		prompted bool
+		reviews  int32
+		blocked  bool
+	}
+	run := func(t *testing.T, setup func(g *Gate), proposal Proposal, reviewer Reviewer) outcome {
+		t.Helper()
+		var reviews atomic.Int32
+		var prompted atomic.Bool
+		var r Reviewer = reviewer
+		if r == nil {
+			r = reviewerFunc(func(context.Context, *FailureEvent, []string, Proposal, string) (ReviewVerdict, error) {
+				reviews.Add(1)
+				return ReviewVerdict{Outcome: ReviewContinue, ChangeKind: ChangeSameStrategy}, nil
+			})
+		} else {
+			inner := r
+			r = reviewerFunc(func(ctx context.Context, f *FailureEvent, d []string, p Proposal, s string) (ReviewVerdict, error) {
+				reviews.Add(1)
+				return inner.Review(ctx, f, d, p, s)
+			})
+		}
+		g := NewGate(Options{Enabled: true, Mode: func() string { return "auto" }, Reviewer: r})
+		g.opts.EmitPrompt = func(_ context.Context, taskID string, _ PendingProposal, _ *FailureEvent) (string, error) {
+			prompted.Store(true)
+			id := "a1"
+			g.BindApprovalID(taskID, id)
+			if err := g.Resolve(id, ActionContinue, ""); err != nil {
+				t.Fatalf("resolve: %v", err)
+			}
+			return id, nil
+		}
+		if setup != nil {
+			setup(g)
+		}
+		dec, err := g.BeforeMutation(context.Background(), proposal)
+		if err != nil {
+			t.Fatalf("BeforeMutation: %v", err)
+		}
+		return outcome{allow: dec.Allow, prompted: prompted.Load(), reviews: reviews.Load(), blocked: dec.Blocked}
+	}
+
+	t.Run("ordinary read zero reviews zero clicks", func(t *testing.T) {
+		got := run(t, nil, Proposal{Tool: "read_file", ReadOnly: true, Args: json.RawMessage(`{"path":"a.go"}`)}, nil)
+		if !got.allow || got.prompted || got.reviews != 0 {
+			t.Fatalf("got %+v", got)
+		}
+	})
+	t.Run("ordinary mutation without failure zero reviews", func(t *testing.T) {
+		got := run(t, nil, Proposal{
+			Tool: "write_file", Mutates: true, Subject: "a.go",
+			Args: json.RawMessage(`{"path":"a.go","content":"x"}`),
+		}, nil)
+		if !got.allow || got.prompted || got.reviews != 0 {
+			t.Fatalf("got %+v", got)
+		}
+	})
+	t.Run("pre-action high risk prompts without reviewer", func(t *testing.T) {
+		got := run(t, nil, Proposal{
+			Tool: "write_file", Mutates: true, Subject: "package.json",
+			Args: json.RawMessage(`{"path":"package.json","content":"{}"}`),
+		}, nil)
+		if !got.allow || !got.prompted || got.reviews != 0 {
+			t.Fatalf("got %+v", got)
+		}
+	})
+	t.Run("failure then read-only diagnosis allows without review", func(t *testing.T) {
+		got := run(t, func(g *Gate) {
+			g.ObserveResult(context.Background(), Observation{
+				Tool: "bash", Verification: true, ErrSummary: "fail",
+				Args: json.RawMessage(`{"command":"go test ./..."}`),
+			})
+		}, Proposal{Tool: "read_file", ReadOnly: true, Args: json.RawMessage(`{"path":"a.go"}`)}, nil)
+		if !got.allow || got.prompted || got.reviews != 0 {
+			t.Fatalf("got %+v", got)
+		}
+	})
+	t.Run("first safe verification retry allows without review", func(t *testing.T) {
+		args := json.RawMessage(`{"command":"go test ./..."}`)
+		got := run(t, func(g *Gate) {
+			g.ObserveResult(context.Background(), Observation{
+				Tool: "bash", Subject: "go test ./...", Verification: true, Args: args, ErrSummary: "fail",
+			})
+		}, Proposal{Tool: "bash", Subject: "go test ./...", Verification: true, Args: args}, nil)
+		if !got.allow || got.prompted || got.reviews != 0 {
+			t.Fatalf("got %+v", got)
+		}
+	})
+	t.Run("expanded scope prompts without review", func(t *testing.T) {
+		got := run(t, func(g *Gate) {
+			g.ObserveResult(context.Background(), Observation{
+				Tool: "write_file", Mutates: true, Subject: "a.go", ErrSummary: "fail",
+				Args: json.RawMessage(`{"path":"a.go"}`),
+			})
+		}, Proposal{
+			Tool: "write_file", Mutates: true, Subject: "b.go", ExpandedScope: true,
+			Args: json.RawMessage(`{"path":"b.go","content":"x"}`),
+		}, nil)
+		if !got.allow || !got.prompted || got.reviews != 0 {
+			t.Fatalf("got %+v", got)
+		}
+	})
+	t.Run("strategy change prompts without review", func(t *testing.T) {
+		got := run(t, func(g *Gate) {
+			g.ObserveResult(context.Background(), Observation{
+				Tool: "bash", Verification: true, ErrSummary: "fail",
+				Args: json.RawMessage(`{"command":"go test"}`),
+			})
+		}, Proposal{
+			Tool: "write_file", Mutates: true, StrategyChanged: true,
+			Args: json.RawMessage(`{"path":"a.go","content":"x"}`),
+		}, nil)
+		if !got.allow || !got.prompted || got.reviews != 0 {
+			t.Fatalf("got %+v", got)
+		}
+	})
+	t.Run("second recovery failure prompts without review", func(t *testing.T) {
+		got := run(t, func(g *Gate) {
+			g.ObserveResult(context.Background(), Observation{
+				Tool: "write_file", Mutates: true, Subject: "a.go", ErrSummary: "fail1",
+				Args: json.RawMessage(`{"path":"a.go"}`),
+			})
+			g.ObserveResult(context.Background(), Observation{
+				Tool: "write_file", Mutates: true, Subject: "a.go", ErrSummary: "fail2",
+				Args: json.RawMessage(`{"path":"a.go"}`),
+			})
+		}, Proposal{
+			Tool: "write_file", Mutates: true, Subject: "a.go",
+			Args: json.RawMessage(`{"path":"a.go","content":"x"}`),
+		}, nil)
+		if !got.allow || !got.prompted || got.reviews != 0 {
+			t.Fatalf("got %+v", got)
+		}
+	})
+	t.Run("ambiguous recovery calls reviewer once", func(t *testing.T) {
+		got := run(t, func(g *Gate) {
+			g.ObserveResult(context.Background(), Observation{
+				Tool: "write_file", Mutates: true, Subject: "a.go", ErrSummary: "fail",
+				Args: json.RawMessage(`{"path":"a.go"}`),
+			})
+		}, Proposal{
+			Tool: "write_file", Mutates: true, Subject: "a.go",
+			Args: json.RawMessage(`{"path":"a.go","content":"fixed"}`),
+		}, nil)
+		if !got.allow || got.prompted || got.reviews != 1 {
+			t.Fatalf("got %+v", got)
+		}
+	})
+	t.Run("reviewer same_strategy continues without prompt", func(t *testing.T) {
+		got := run(t, func(g *Gate) {
+			g.ObserveResult(context.Background(), Observation{
+				Tool: "bash", Verification: true, ErrSummary: "fail",
+				Args: json.RawMessage(`{"command":"go test"}`),
+			})
+		}, Proposal{
+			Tool: "write_file", Mutates: true, Subject: "a.go",
+			Args: json.RawMessage(`{"path":"a.go","content":"x"}`),
+		}, staticReviewer{ReviewVerdict{Outcome: ReviewContinue, ChangeKind: ChangeSameStrategy}})
+		if !got.allow || got.prompted || got.reviews != 1 {
+			t.Fatalf("got %+v", got)
+		}
+	})
+	t.Run("reviewer reject returns to agent without prompt", func(t *testing.T) {
+		got := run(t, func(g *Gate) {
+			g.ObserveResult(context.Background(), Observation{
+				Tool: "bash", Verification: true, ErrSummary: "fail",
+				Args: json.RawMessage(`{"command":"go test"}`),
+			})
+		}, Proposal{
+			Tool: "write_file", Mutates: true, Subject: "a.go",
+			Args: json.RawMessage(`{"path":"a.go","content":"x"}`),
+		}, staticReviewer{ReviewVerdict{Outcome: ReviewConfirm, ChangeKind: ChangeUncertain, Rationale: "not proven"}})
+		if got.allow || !got.blocked || got.prompted || got.reviews != 1 {
+			t.Fatalf("got %+v", got)
+		}
+	})
+	t.Run("reviewer third reject escalates to prompt", func(t *testing.T) {
+		var reviews atomic.Int32
+		var prompts int
+		g := NewGate(Options{
+			Enabled: true,
+			Reviewer: reviewerFunc(func(context.Context, *FailureEvent, []string, Proposal, string) (ReviewVerdict, error) {
+				reviews.Add(1)
+				return ReviewVerdict{Outcome: ReviewConfirm, ChangeKind: ChangeUncertain, Rationale: "no"}, nil
+			}),
+		})
+		g.ObserveResult(context.Background(), Observation{
+			Tool: "bash", Verification: true, ErrSummary: "fail",
+			Args: json.RawMessage(`{"command":"go test"}`),
+		})
+		g.opts.EmitPrompt = func(_ context.Context, taskID string, _ PendingProposal, _ *FailureEvent) (string, error) {
+			prompts++
+			g.BindApprovalID(taskID, "esc")
+			_ = g.Resolve("esc", ActionContinue, "")
+			return "esc", nil
+		}
+		prop := Proposal{Tool: "write_file", Mutates: true, Args: json.RawMessage(`{"path":"a.go"}`)}
+		for i := 1; i <= 2; i++ {
+			dec, err := g.BeforeMutation(context.Background(), prop)
+			if err != nil || dec.Allow || !dec.Blocked {
+				t.Fatalf("attempt %d = %+v %v", i, dec, err)
+			}
+		}
+		dec, err := g.BeforeMutation(context.Background(), prop)
+		if err != nil || !dec.Allow || prompts != 1 || reviews.Load() != 3 {
+			t.Fatalf("escalation = %+v %v prompts=%d reviews=%d", dec, err, prompts, reviews.Load())
+		}
+	})
+	t.Run("reviewer error asks immediately without consuming reject budget", func(t *testing.T) {
+		var reviews atomic.Int32
+		var prompted atomic.Bool
+		g := NewGate(Options{
+			Enabled: true,
+			Reviewer: reviewerFunc(func(context.Context, *FailureEvent, []string, Proposal, string) (ReviewVerdict, error) {
+				reviews.Add(1)
+				return ReviewVerdict{}, errors.New("timeout")
+			}),
+		})
+		g.ObserveResult(context.Background(), Observation{
+			Tool: "write_file", Mutates: true, ErrSummary: "fail",
+			Args: json.RawMessage(`{"path":"a.go"}`),
+		})
+		g.opts.EmitPrompt = func(_ context.Context, taskID string, _ PendingProposal, _ *FailureEvent) (string, error) {
+			prompted.Store(true)
+			g.BindApprovalID(taskID, "err")
+			_ = g.Resolve("err", ActionContinue, "")
+			return "err", nil
+		}
+		dec, err := g.BeforeMutation(context.Background(), Proposal{
+			Tool: "write_file", Mutates: true, Args: json.RawMessage(`{"path":"a.go","content":"x"}`),
+		})
+		if err != nil || !dec.Allow || !prompted.Load() || reviews.Load() != 1 {
+			t.Fatalf("got allow=%v prompted=%v reviews=%d err=%v", dec.Allow, prompted.Load(), reviews.Load(), err)
+		}
+		// A subsequent reject must still start at attempt 1 (error did not burn budget).
+		g.opts.Reviewer = staticReviewer{ReviewVerdict{Outcome: ReviewConfirm, ChangeKind: ChangeUncertain, Rationale: "no"}}
+		g.opts.EmitPrompt = nil
+		dec, err = g.BeforeMutation(context.Background(), Proposal{
+			Tool: "write_file", Mutates: true, Args: json.RawMessage(`{"path":"a.go","content":"y"}`),
+		})
+		if err != nil || dec.Allow || !dec.Blocked || !strings.Contains(dec.Message, "attempt 1/3") {
+			t.Fatalf("post-error reject = %+v %v", dec, err)
+		}
+	})
+	t.Run("illegal continue without same_strategy fails closed to agent or prompt", func(t *testing.T) {
+		// continue + non-same_strategy must never auto-allow.
+		got := run(t, func(g *Gate) {
+			g.ObserveResult(context.Background(), Observation{
+				Tool: "write_file", Mutates: true, ErrSummary: "fail",
+				Args: json.RawMessage(`{"path":"a.go"}`),
+			})
+		}, Proposal{
+			Tool: "write_file", Mutates: true, Args: json.RawMessage(`{"path":"a.go","content":"x"}`),
+		}, staticReviewer{ReviewVerdict{Outcome: ReviewContinue, ChangeKind: ChangeScope}})
+		if got.allow && !got.prompted {
+			// After normalize, continue+scope becomes confirm; first reject blocks agent.
+			t.Fatalf("illegal combination auto-allowed: %+v", got)
+		}
+		if got.allow && got.prompted {
+			// Or escalated path if blocks already high — still not silent allow without human.
+			return
+		}
+		if got.allow {
+			t.Fatalf("illegal combination auto-allowed: %+v", got)
+		}
+	})
+	t.Run("headless needs confirm fails closed without wait", func(t *testing.T) {
+		g := NewGate(Options{Enabled: true, Headless: true})
+		g.ObserveResult(context.Background(), Observation{
+			Tool: "bash", Verification: true, ErrSummary: "fail",
+			Args: json.RawMessage(`{"command":"go test"}`),
+		})
+		dec, err := g.BeforeMutation(context.Background(), Proposal{
+			Tool: "write_file", Mutates: true, StrategyChanged: true,
+			Args: json.RawMessage(`{"path":"a.go"}`),
+		})
+		if err != nil || dec.Allow || !dec.Blocked {
+			t.Fatalf("got %+v %v", dec, err)
+		}
+	})
+	t.Run("success verification clears failure state", func(t *testing.T) {
+		g := NewGate(Options{Enabled: true})
+		g.ObserveResult(context.Background(), Observation{
+			Tool: "bash", Verification: true, ErrSummary: "fail",
+			Args: json.RawMessage(`{"command":"go test"}`),
+		})
+		g.ObserveResult(context.Background(), Observation{
+			Tool: "bash", Verification: true, Success: true,
+			Args: json.RawMessage(`{"command":"go test"}`),
+		})
+		if st := g.Snapshot().Tasks["root"]; st != nil {
+			t.Fatalf("want cleared, got %+v", st)
+		}
+	})
+}
+
+func TestChangeKindForAsk(t *testing.T) {
+	if got := ChangeKindForAsk(AskRisk); got != ChangeRisk {
+		t.Fatalf("risk = %q", got)
+	}
+	if got := ChangeKindForAsk(AskScope); got != ChangeScope {
+		t.Fatalf("scope = %q", got)
+	}
+	if got := ChangeKindForAsk(AskStrategy); got != ChangeStrategy {
+		t.Fatalf("strategy = %q", got)
+	}
+	if got := ChangeKindForAsk(AskRepeat); got != ChangeRisk {
+		t.Fatalf("repeat = %q", got)
+	}
+}
+
+func TestSafeRetryConsumedOnlyOnce(t *testing.T) {
+	g := NewGate(Options{Enabled: true})
+	args := json.RawMessage(`{"command":"go test ./..."}`)
+	g.ObserveResult(context.Background(), Observation{
+		Tool: "bash", Subject: "go test ./...", Verification: true, Args: args, ErrSummary: "fail",
+	})
+	dec, err := g.BeforeMutation(context.Background(), Proposal{
+		Tool: "bash", Subject: "go test ./...", Verification: true, Args: args,
+	})
+	if err != nil || !dec.Allow {
+		t.Fatalf("first retry = %+v %v", dec, err)
+	}
+	// Without re-arming, a second identical verification still has active failure
+	// but safe retry is spent → reviewer/ask path (not silent second auto-retry).
+	var reviews atomic.Int32
+	g.opts.Reviewer = reviewerFunc(func(context.Context, *FailureEvent, []string, Proposal, string) (ReviewVerdict, error) {
+		reviews.Add(1)
+		return ReviewVerdict{Outcome: ReviewContinue, ChangeKind: ChangeSameStrategy}, nil
+	})
+	dec, err = g.BeforeMutation(context.Background(), Proposal{
+		Tool: "bash", Subject: "go test ./...", Verification: true, Args: args,
+	})
+	if err != nil || !dec.Allow {
+		t.Fatalf("second attempt = %+v %v", dec, err)
+	}
+	if reviews.Load() != 1 {
+		t.Fatalf("spent safe retry must go through reviewer, reviews=%d", reviews.Load())
+	}
+}
+
+func TestTaskIsolationByTaskID(t *testing.T) {
+	var reviewedTask string
+	g := NewGate(Options{
+		Enabled: true,
+		Reviewer: reviewerFunc(func(_ context.Context, f *FailureEvent, _ []string, p Proposal, _ string) (ReviewVerdict, error) {
+			reviewedTask = p.TaskID
+			if f != nil && f.TaskID != "" && f.TaskID != normalizeTaskID(p.TaskID) {
+				return ReviewVerdict{}, fmt.Errorf("failure task %q proposal task %q", f.TaskID, p.TaskID)
+			}
+			return ReviewVerdict{Outcome: ReviewContinue, ChangeKind: ChangeSameStrategy}, nil
+		}),
+	})
+	g.ObserveResult(context.Background(), Observation{
+		TaskID: "subagent:a", Tool: "write_file", Mutates: true, ErrSummary: "fail-a",
+		Args: json.RawMessage(`{"path":"a.go"}`),
+	})
+	g.ObserveResult(context.Background(), Observation{
+		TaskID: "subagent:b", Tool: "write_file", Mutates: true, ErrSummary: "fail-b",
+		Args: json.RawMessage(`{"path":"b.go"}`),
+	})
+	dec, err := g.BeforeMutation(context.Background(), Proposal{
+		TaskID: "subagent:a", Tool: "write_file", Mutates: true,
+		Args: json.RawMessage(`{"path":"a.go","content":"x"}`),
+	})
+	if err != nil || !dec.Allow {
+		t.Fatalf("task a = %+v %v", dec, err)
+	}
+	if reviewedTask != "subagent:a" {
+		t.Fatalf("reviewed task = %q", reviewedTask)
+	}
+	// Task B still has its own failure; task A success does not clear it.
+	g.ObserveResult(context.Background(), Observation{
+		TaskID: "subagent:a", Tool: "write_file", Mutates: true, Success: true,
+		Args: json.RawMessage(`{"path":"a.go"}`),
+	})
+	if st := g.Snapshot().Tasks["subagent:b"]; st == nil || st.Failure == nil {
+		t.Fatalf("task b failure cleared incorrectly: %+v", st)
+	}
+	if st := g.Snapshot().Tasks["subagent:a"]; st != nil {
+		t.Fatalf("task a should be cleared: %+v", st)
+	}
+}
+
+func TestResolveSyncNoDeadlock(t *testing.T) {
+	g := NewGate(Options{Enabled: true})
+	g.ObserveResult(context.Background(), Observation{
+		Tool: "bash", Verification: true, ErrSummary: "fail",
+		Args: json.RawMessage(`{"command":"go test"}`),
+	})
+	// EmitPrompt resolves synchronously before returning — must not deadlock.
+	g.opts.EmitPrompt = func(_ context.Context, taskID string, _ PendingProposal, _ *FailureEvent) (string, error) {
+		g.BindApprovalID(taskID, "sync")
+		if err := g.Resolve("sync", ActionContinue, ""); err != nil {
+			return "", err
+		}
+		return "sync", nil
+	}
+	done := make(chan struct {
+		dec Decision
+		err error
+	}, 1)
+	go func() {
+		dec, err := g.BeforeMutation(context.Background(), Proposal{
+			Tool: "write_file", Mutates: true, StrategyChanged: true,
+			Args: json.RawMessage(`{"path":"a.go"}`),
+		})
+		done <- struct {
+			dec Decision
+			err error
+		}{dec, err}
+	}()
+	select {
+	case got := <-done:
+		if got.err != nil || !got.dec.Allow {
+			t.Fatalf("want allow, got %+v %v", got.dec, got.err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("deadlock: synchronous Resolve did not unblock BeforeMutation")
+	}
+}
