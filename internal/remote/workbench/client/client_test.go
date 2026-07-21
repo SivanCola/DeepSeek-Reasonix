@@ -64,6 +64,24 @@ func TestAuthorizeParamsPreservesRequestIDButOverridesSpoofedAuthority(t *testin
 	}
 }
 
+func TestAuthorizeSubscribeUsesCurrentReplacement(t *testing.T) {
+	target := protocol.RuntimeTarget{WorkspaceID: "workspace-live", SessionID: "session-live"}
+	c := &Client{state: State{
+		HostEpoch: "host-live", WorkspaceID: target.WorkspaceID, Target: target,
+		RuntimeEpoch: "runtime-live", SubscriptionID: "subscription-current",
+	}}
+	value, err := c.authorizeParams(protocol.MethodSessionSubscribe, protocol.SessionSubscribeParams{
+		PageTurns: protocol.HistoryMaxTurns, ReplaceSubscriptionID: "subscription-stale",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := value.(protocol.SessionSubscribeParams)
+	if got.ReplaceSubscriptionID != "subscription-current" {
+		t.Fatalf("replacement subscription = %q, want current client subscription", got.ReplaceSubscriptionID)
+	}
+}
+
 func TestApplyResultAdoptsSessionRotationEpoch(t *testing.T) {
 	target := protocol.RuntimeTarget{WorkspaceID: "workspace-live", SessionID: "session-live"}
 	tests := []struct {
@@ -104,6 +122,67 @@ func TestApplyResultAdoptsSessionRotationEpoch(t *testing.T) {
 				t.Fatalf("next request epoch = %q, want %q", got, tt.epoch)
 			}
 		})
+	}
+}
+
+func TestLateSubscribeResultCannotUndoSessionMutation(t *testing.T) {
+	target := protocol.RuntimeTarget{WorkspaceID: "workspace-live", SessionID: "session-live"}
+	profile := protocol.ResolvedProfile{
+		Model: "local/model", Effort: "high", CollaborationMode: protocol.CollaborationNormal,
+		TokenMode: protocol.TokenFull, ToolApprovalMode: protocol.ToolApprovalAsk,
+	}
+	c := &Client{state: State{
+		Initialized: true, HostEpoch: "host-live", WorkspaceID: target.WorkspaceID,
+		Target: target, RuntimeEpoch: "runtime-old", SubscriptionID: "subscription-old", ResolvedProfile: profile,
+	}}
+	_, authority, err := c.authorizeRequest(protocol.MethodSessionSubscribe, protocol.SessionSubscribeParams{PageTurns: protocol.HistoryMaxTurns})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.applyResult(protocol.MethodSessionNew, protocol.SessionNewResult{
+		SourceTarget: target, Target: target, RuntimeEpoch: "runtime-new", Disposition: "created", SnapshotRequired: true,
+	})
+	stale := protocol.SessionSubscribeResult{
+		SubscriptionID: "subscription-stale",
+		Snapshot: protocol.SessionSnapshot{
+			SnapshotID: "snapshot-stale", HostEpoch: "host-live", Target: target,
+			RuntimeEpoch: "runtime-old", Meta: protocol.SessionMetaSnapshot{ResolvedProfile: profile},
+		},
+	}
+	if c.applyRequestResult(protocol.MethodSessionSubscribe, stale, authority) {
+		t.Fatal("late subscribe result was accepted after the session authority changed")
+	}
+	if c.state.RuntimeEpoch != "runtime-new" || c.state.SubscriptionID != "subscription-old" {
+		t.Fatalf("late subscribe changed client authority: %+v", c.state)
+	}
+}
+
+func TestCurrentSnapshotRejectsStateChangedAfterSubscribe(t *testing.T) {
+	target := protocol.RuntimeTarget{WorkspaceID: "workspace-live", SessionID: "session-live"}
+	profile := protocol.ResolvedProfile{
+		Model: "local/model", Effort: "high", CollaborationMode: protocol.CollaborationNormal,
+		TokenMode: protocol.TokenFull, ToolApprovalMode: protocol.ToolApprovalAsk,
+	}
+	result := protocol.SessionSubscribeResult{
+		SubscriptionID: "subscription-live",
+		Snapshot: protocol.SessionSnapshot{
+			SnapshotID: "snapshot-live", HostEpoch: "host-live", Target: target,
+			RuntimeEpoch: "runtime-live", Meta: protocol.SessionMetaSnapshot{ResolvedProfile: profile},
+		},
+	}
+	c := &Client{state: State{
+		Initialized: true, HostEpoch: "host-live", WorkspaceID: target.WorkspaceID,
+		Target: target, RuntimeEpoch: "runtime-live", ResolvedProfile: profile,
+	}, completedTurns: map[protocol.TurnID]struct{}{}}
+	c.applyResult(protocol.MethodSessionSubscribe, result)
+	if !c.IsCurrentSnapshot(result) {
+		t.Fatal("fresh subscribe result was not current")
+	}
+	c.applyResult(protocol.MethodSessionSubmit, protocol.SessionSubmitResult{
+		Kind: protocol.SubmitTurn, TurnID: "turn-new", Target: target, RuntimeEpoch: "runtime-live",
+	})
+	if c.IsCurrentSnapshot(result) {
+		t.Fatal("snapshot remained current after a newer turn started")
 	}
 }
 

@@ -278,18 +278,13 @@ func (a *App) workbenchRefreshSnapshot(generation uint64, tabID string) {
 	}
 	ctx, cancel := context.WithTimeout(a.bootContext(), 15*time.Second)
 	defer cancel()
-	state := cli.State()
-	raw, err := cli.Request(ctx, string(protocol.MethodSessionSubscribe), protocol.SessionSubscribeParams{
-		PageTurns: protocol.HistoryMaxTurns, ReplaceSubscriptionID: state.SubscriptionID,
-	})
+	result, err := cli.Subscribe(ctx, protocol.HistoryMaxTurns)
 	if err != nil {
 		return
 	}
-	decoded, err := protocol.DecodeResult(protocol.MethodSessionSubscribe, raw)
-	if err != nil {
+	if !cli.IsCurrentSnapshot(result) {
 		return
 	}
-	result := decoded.(protocol.SessionSubscribeResult)
 	k := a.workbench()
 	k.transitionMu.Lock()
 	defer k.transitionMu.Unlock()

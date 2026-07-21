@@ -48,8 +48,10 @@ type Client struct {
 	cancel context.CancelFunc
 
 	mu             sync.Mutex
+	subscribeMu    sync.Mutex
 	closed         bool
 	state          State
+	authorityRev   uint64
 	callbacks      Callbacks
 	notifyCh       chan any
 	completedTurns map[protocol.TurnID]struct{}
@@ -201,7 +203,12 @@ func (c *Client) SelectSession(target protocol.RuntimeTarget, runtimeEpoch proto
 	c.state.SubscriptionID = ""
 	c.state.SnapshotID = ""
 	c.state.CurrentTurnID = ""
+	c.authorityRev++
 	return nil
+}
+
+type requestAuthority struct {
+	revision uint64
 }
 
 // Request validates the frozen result DTO and automatically adds authority
@@ -212,20 +219,38 @@ func (c *Client) Request(ctx context.Context, method string, params any) (json.R
 		return nil, fmt.Errorf("client closed")
 	}
 	name := protocol.Method(method)
-	authorized, err := c.authorizeParams(name, params)
-	if err != nil {
-		return nil, err
+	if name == protocol.MethodSessionSubscribe {
+		c.subscribeMu.Lock()
+		defer c.subscribeMu.Unlock()
 	}
-	raw, err := c.conn.Request(ctx, method, authorized)
-	if err != nil {
-		return nil, err
+	for {
+		authorized, authority, err := c.authorizeRequest(name, params)
+		if err != nil {
+			return nil, err
+		}
+		raw, err := c.conn.Request(ctx, method, authorized)
+		if err != nil {
+			return nil, err
+		}
+		decoded, err := protocol.DecodeResult(name, raw)
+		if err != nil {
+			return nil, fmt.Errorf("%s result: %w", method, err)
+		}
+		if c.applyRequestResult(name, decoded, authority) {
+			return raw, nil
+		}
+		result, ok := decoded.(protocol.SessionSubscribeResult)
+		if !ok {
+			return nil, fmt.Errorf("stale Remote result for %s", method)
+		}
+		// A session mutation completed while this snapshot was in flight. Remove
+		// the unused server-side subscription, then retry under the now-current
+		// authority while subscribeMu keeps competing refreshes serialized.
+		_, _ = c.conn.Request(ctx, string(protocol.MethodSessionUnsubscribe), protocol.SessionUnsubscribeParams{SubscriptionID: result.SubscriptionID})
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 	}
-	decoded, err := protocol.DecodeResult(name, raw)
-	if err != nil {
-		return nil, fmt.Errorf("%s result: %w", method, err)
-	}
-	c.applyResult(name, decoded)
-	return raw, nil
 }
 
 func (c *Client) CreateSession(ctx context.Context, model, effort string) (protocol.SessionCreateResult, error) {
@@ -306,18 +331,24 @@ func (c *Client) HistoryBefore(ctx context.Context, beforeTurn, pageTurns int) (
 }
 
 func (c *Client) authorizeParams(method protocol.Method, params any) (any, error) {
+	value, _, err := c.authorizeRequest(method, params)
+	return value, err
+}
+
+func (c *Client) authorizeRequest(method protocol.Method, params any) (any, requestAuthority, error) {
 	raw, err := json.Marshal(params)
 	if err != nil {
-		return nil, err
+		return nil, requestAuthority{}, err
 	}
 	fields := map[string]any{}
 	if len(raw) > 0 && string(raw) != "null" {
 		if err := json.Unmarshal(raw, &fields); err != nil {
-			return nil, fmt.Errorf("%s params must be an object", method)
+			return nil, requestAuthority{}, fmt.Errorf("%s params must be an object", method)
 		}
 	}
 	c.mu.Lock()
 	state := c.state
+	authority := requestAuthority{revision: c.authorityRev}
 	c.mu.Unlock()
 	set := func(key string, value any) { fields[key] = value }
 	putRequestID := func() {
@@ -328,7 +359,7 @@ func (c *Client) authorizeParams(method protocol.Method, params any) (any, error
 	}
 	spec, ok := protocol.LookupMethod(method)
 	if !ok {
-		return nil, fmt.Errorf("unregistered Remote method %q", method)
+		return nil, requestAuthority{}, fmt.Errorf("unregistered Remote method %q", method)
 	}
 	switch method {
 	case protocol.MethodRemotePing, protocol.MethodRemoteDetach:
@@ -350,6 +381,9 @@ func (c *Client) authorizeParams(method protocol.Method, params any) (any, error
 				set("expectedRuntimeEpoch", state.RuntimeEpoch)
 			}
 		}
+		if method == protocol.MethodSessionSubscribe {
+			set("replaceSubscriptionId", state.SubscriptionID)
+		}
 		if method == protocol.MethodSessionCreate || method == protocol.MethodSessionList || method == protocol.MethodCatalogWorkspace {
 			set("workspaceId", state.WorkspaceID)
 		}
@@ -365,18 +399,31 @@ func (c *Client) authorizeParams(method protocol.Method, params any) (any, error
 	}
 	encoded, err := json.Marshal(fields)
 	if err != nil {
-		return nil, err
+		return nil, requestAuthority{}, err
 	}
 	decoded, err := protocol.DecodeRequestParams(method, encoded)
 	if err != nil {
-		return nil, fmt.Errorf("%s params: %w", method, err)
+		return nil, requestAuthority{}, fmt.Errorf("%s params: %w", method, err)
 	}
-	return decoded, nil
+	return decoded, authority, nil
 }
 
 func (c *Client) applyResult(method protocol.Method, value any) {
 	c.mu.Lock()
+	authority := requestAuthority{revision: c.authorityRev}
+	c.mu.Unlock()
+	c.applyRequestResult(method, value, authority)
+}
+
+func (c *Client) applyRequestResult(method protocol.Method, value any, authority requestAuthority) bool {
+	c.mu.Lock()
 	defer c.mu.Unlock()
+	if _, ok := value.(protocol.SessionSubscribeResult); ok && authority.revision != c.authorityRev {
+		return false
+	}
+	if requestInvalidatesSnapshot(method, value) {
+		c.authorityRev++
+	}
 	switch result := value.(type) {
 	case protocol.SessionCreateResult:
 		c.state.Target, c.state.RuntimeEpoch, c.state.ResolvedProfile = result.Target, result.RuntimeEpoch, result.ResolvedProfile
@@ -408,6 +455,41 @@ func (c *Client) applyResult(method protocol.Method, value any) {
 			c.state.Target, c.state.RuntimeEpoch, c.state.SubscriptionID, c.state.CurrentTurnID = protocol.RuntimeTarget{}, "", "", ""
 		}
 	}
+	return true
+}
+
+func requestInvalidatesSnapshot(method protocol.Method, value any) bool {
+	if spec, ok := protocol.LookupMethod(method); ok {
+		switch spec.Class {
+		case protocol.ClassHostMutation, protocol.ClassSessionMutation, protocol.ClassSessionRecordMutation:
+			return true
+		}
+	}
+	switch value.(type) {
+	case protocol.SessionCreateResult, protocol.SessionSubmitResult, protocol.SessionNewResult,
+		protocol.SessionClearResult, protocol.SessionProfileSetResult, protocol.SessionCloseResult:
+		return true
+	default:
+		return false
+	}
+}
+
+// IsCurrentSnapshot reports whether a subscribe result still represents the
+// client's live authority after the network request returned.
+func (c *Client) IsCurrentSnapshot(result protocol.SessionSubscribeResult) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.state.SubscriptionID != result.SubscriptionID ||
+		c.state.Target != result.Snapshot.Target ||
+		c.state.RuntimeEpoch != result.Snapshot.RuntimeEpoch ||
+		c.state.ResolvedProfile != result.Snapshot.Meta.ResolvedProfile {
+		return false
+	}
+	turnID := protocol.TurnID("")
+	if result.Snapshot.Runtime.CurrentTurn != nil {
+		turnID = result.Snapshot.Runtime.CurrentTurn.TurnID
+	}
+	return c.state.CurrentTurnID == turnID
 }
 
 func (c *Client) handleSessionEvent(_ context.Context, raw json.RawMessage) {

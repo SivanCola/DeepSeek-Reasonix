@@ -54,7 +54,10 @@ func (s *Server) rewindSession(p protocol.SessionRewindParams) (protocol.Session
 	sess.updatedAt = time.Now().UnixMilli()
 	s.mu.Unlock()
 	if err := s.persistSessionRegistry(); err != nil {
-		return protocol.SessionRewindResult{}, protocol.MustRemoteError(protocol.ErrSessionPersistFailed, protocol.ErrorOptions{Target: &p.Target})
+		// Rewind has already restored files and/or rewritten the transcript. It
+		// cannot be rolled back safely, so keep the successful result authoritative
+		// and let a later registry write persist the metadata timestamp.
+		s.logRegistryError("persist committed rewind", err)
 	}
 	s.notifyStateChanged(sess.id)
 	return protocol.SessionRewindResult{
@@ -83,6 +86,19 @@ func (s *Server) forkSession(ctx context.Context, p protocol.SessionForkParams) 
 	if err != nil {
 		return protocol.SessionForkResult{}, protocol.MustRemoteError(protocol.ErrCheckpointScopeUnavailable, protocol.ErrorOptions{Target: &p.Target})
 	}
+	path, err = containedSessionPath(s.sessionDir(), path)
+	if err != nil {
+		return protocol.SessionForkResult{}, protocol.MustRemoteError(protocol.ErrSessionPersistFailed, protocol.ErrorOptions{Target: &p.Target})
+	}
+	forkCommitted := false
+	defer func() {
+		if forkCommitted {
+			return
+		}
+		if cleanupErr := control.RemoveSessionArtifacts(path); cleanupErr != nil {
+			s.logRegistryError("clean failed fork", cleanupErr)
+		}
+	}()
 	loaded, err := agent.LoadSession(path)
 	if err != nil {
 		return protocol.SessionForkResult{}, protocol.MustRemoteError(protocol.ErrSessionPersistFailed, protocol.ErrorOptions{Target: &p.Target})
@@ -123,6 +139,7 @@ func (s *Server) forkSession(ctx context.Context, p protocol.SessionForkParams) 
 		childCtrl.Close()
 		return protocol.SessionForkResult{}, protocol.MustRemoteError(protocol.ErrSessionPersistFailed, protocol.ErrorOptions{Target: &p.Target})
 	}
+	forkCommitted = true
 	return protocol.SessionForkResult{
 		SourceTarget: p.Target, SourceRuntimeEpoch: sess.runtimeEpoch,
 		ChildTarget: s.target(childID), ChildRuntimeEpoch: child.runtimeEpoch,
