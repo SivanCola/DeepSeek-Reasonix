@@ -1270,9 +1270,12 @@ func TestSessionMirrorArtifactIsValidNonTruncatedReference(t *testing.T) {
 		fakeController: &fakeController{model: "local/test"}, sessionPath: path,
 	}}
 
-	artifacts := srv.sessionMirrorArtifactLocked(sess)
+	mirror, artifacts := srv.sessionMirrorArtifactLocked(sess)
 	if len(artifacts) != 1 {
 		t.Fatalf("mirror artifacts = %+v, want one reference", artifacts)
+	}
+	if mirror.SessionJSONL == nil || !strings.Contains(*mirror.SessionJSONL, `"role":"user"`) {
+		t.Fatalf("mirror placeholder did not carry the source body before externalization: %+v", mirror)
 	}
 	artifact := artifacts[0]
 	if artifact.Truncated || artifact.OriginalBytes != nil || artifact.TruncationReason != "" {
@@ -1280,5 +1283,16 @@ func TestSessionMirrorArtifactIsValidNonTruncatedReference(t *testing.T) {
 	}
 	if err := artifact.Validate(); err != nil {
 		t.Fatalf("complete mirror reference is invalid: %v", err)
+	}
+	snapshot := protocol.SessionSnapshot{Mirror: mirror, Externalized: artifacts}
+	if err := snapshot.Validate(); err != nil {
+		t.Fatalf("snapshot rejected the schema-marked mirror pointer: %v", err)
+	}
+	raw, err := json.Marshal(snapshot)
+	if err != nil {
+		t.Fatalf("marshal externalized mirror snapshot: %v", err)
+	}
+	if strings.Contains(string(raw), `"role":"user"`) || !strings.Contains(string(raw), `"session.jsonl":null`) {
+		t.Fatalf("mirror body was not replaced by a null contentRef placeholder: %s", raw)
 	}
 }

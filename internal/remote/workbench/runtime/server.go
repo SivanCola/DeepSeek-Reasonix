@@ -1509,7 +1509,7 @@ func (s *Server) snapshotLocked(sess *session, pageTurns int) protocol.SessionSn
 		copy := *sess.currentOp
 		currentOperation = &copy
 	}
-	externalized := s.sessionMirrorArtifactLocked(sess)
+	mirror, externalized := s.sessionMirrorArtifactLocked(sess)
 	var goal *string
 	var goalStatus protocol.GoalStatus
 	if controller, ok := sess.ctrl.(goalController); ok {
@@ -1534,18 +1534,18 @@ func (s *Server) snapshotLocked(sess *session, pageTurns int) protocol.SessionSn
 		History: history, Todos: sessionTodoViews(sess.ctrl),
 		PendingPrompt: clonePendingPrompt(sess.pendingPrompt),
 		Context:       sessionContextView(sess), Jobs: sessionJobViews(sess),
-		Checkpoints: sessionCheckpointViews(s.opts.Workspace, sess.ctrl), Externalized: externalized,
+		Checkpoints: sessionCheckpointViews(s.opts.Workspace, sess.ctrl), Mirror: mirror, Externalized: externalized,
 	}
 }
 
-func (s *Server) sessionMirrorArtifactLocked(sess *session) []protocol.ExternalizedField {
+func (s *Server) sessionMirrorArtifactLocked(sess *session) (protocol.SessionMirrorSnapshot, []protocol.ExternalizedField) {
 	path := strings.TrimSpace(sess.ctrl.SessionPath())
 	if path == "" {
-		return []protocol.ExternalizedField{}
+		return protocol.SessionMirrorSnapshot{}, []protocol.ExternalizedField{}
 	}
 	data, err := os.ReadFile(path)
 	if err != nil || len(data) == 0 || len(data) > protocol.ContentRefObjectBytes {
-		return []protocol.ExternalizedField{}
+		return protocol.SessionMirrorSnapshot{}, []protocol.ExternalizedField{}
 	}
 	sum := sha256.Sum256(data)
 	digest := hex.EncodeToString(sum[:])
@@ -1564,7 +1564,8 @@ func (s *Server) sessionMirrorArtifactLocked(sess *session) []protocol.Externali
 		}
 		delete(s.contents, oldestRef)
 	}
-	return []protocol.ExternalizedField{{
+	body := string(data)
+	return protocol.SessionMirrorSnapshot{SessionJSONL: &body}, []protocol.ExternalizedField{{
 		JSONPointer: "/mirror/session.jsonl", ContentRef: ref, TotalBytes: int64(len(data)),
 		SHA256: digest,
 	}}

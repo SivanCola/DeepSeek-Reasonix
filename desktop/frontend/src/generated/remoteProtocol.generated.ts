@@ -2,7 +2,7 @@
 
 export const REMOTE_SCHEMA_FORMAT = "reasonix.remote.schema.v1" as const;
 export const REMOTE_PROTOCOL_VERSION = "1" as const;
-export const REMOTE_SCHEMA_HASH = "sha256:e17ecf4f75a7b1413528b0fc2d88cbafd9bb1574d8d58bb20a15aa595e510125" as const;
+export const REMOTE_SCHEMA_HASH = "sha256:f86e919b8e5ba14000cd8bf9ad341b27a3d4cf3920fa977ef8cbad3d95e7589d" as const;
 
 export const REMOTE_FIXED_RESOURCES = {
   "protocol": {
@@ -4116,6 +4116,9 @@ export type SessionSubscribeResultRaw = {
       "title": string;
       "topicId": string;
     };
+    "mirror": {
+      "session.jsonl": string | null;
+    };
     "pendingPrompt": (({
       "approval"?: {
         "allowedDecisions": Array<"allow_once" | "allow_persistent" | "allow_session" | "deny">;
@@ -4510,6 +4513,9 @@ export type SessionSubscribeResultHydrated = {
       };
       "title": string;
       "topicId": string;
+    };
+    "mirror": {
+      "session.jsonl": string;
     };
     "pendingPrompt": (({
       "approval"?: {

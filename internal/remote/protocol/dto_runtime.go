@@ -223,21 +223,29 @@ type JobView struct {
 	StartedAt int64     `json:"startedAt" validate:"min=0"`
 }
 
+// SessionMirrorSnapshot reserves schema-marked placeholders for Desktop's
+// read-only recovery mirror. Concrete values are always replaced by null on
+// the wire and transferred through the matching Externalized contentRef.
+type SessionMirrorSnapshot struct {
+	SessionJSONL *string `json:"session.jsonl" externalizable:"true"`
+}
+
 type SessionSnapshot struct {
-	SnapshotID    SnapshotID          `json:"snapshotId"`
-	HostEpoch     HostEpoch           `json:"hostEpoch"`
-	Target        RuntimeTarget       `json:"target"`
-	RuntimeEpoch  RuntimeEpoch        `json:"runtimeEpoch"`
-	BoundarySeq   uint64              `json:"boundarySeq"`
-	Meta          SessionMetaSnapshot `json:"meta"`
-	Runtime       SessionRuntimeState `json:"runtime"`
-	History       HistoryPage         `json:"history"`
-	PendingPrompt *PendingPrompt      `json:"pendingPrompt" nullable:"true"`
-	Todos         []TodoItem          `json:"todos"`
-	Context       ContextView         `json:"context"`
-	Jobs          []JobView           `json:"jobs"`
-	Checkpoints   []CheckpointView    `json:"checkpoints"`
-	Externalized  []ExternalizedField `json:"externalized"`
+	SnapshotID    SnapshotID            `json:"snapshotId"`
+	HostEpoch     HostEpoch             `json:"hostEpoch"`
+	Target        RuntimeTarget         `json:"target"`
+	RuntimeEpoch  RuntimeEpoch          `json:"runtimeEpoch"`
+	BoundarySeq   uint64                `json:"boundarySeq"`
+	Meta          SessionMetaSnapshot   `json:"meta"`
+	Runtime       SessionRuntimeState   `json:"runtime"`
+	History       HistoryPage           `json:"history"`
+	PendingPrompt *PendingPrompt        `json:"pendingPrompt" nullable:"true"`
+	Todos         []TodoItem            `json:"todos"`
+	Context       ContextView           `json:"context"`
+	Jobs          []JobView             `json:"jobs"`
+	Checkpoints   []CheckpointView      `json:"checkpoints"`
+	Mirror        SessionMirrorSnapshot `json:"mirror"`
+	Externalized  []ExternalizedField   `json:"externalized"`
 }
 
 type SessionSubscribeResult struct {
