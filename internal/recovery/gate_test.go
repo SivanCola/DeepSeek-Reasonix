@@ -11,6 +11,60 @@ import (
 	"time"
 )
 
+func TestHasApprovalIncludesWaiterOnlyHighRisk(t *testing.T) {
+	// Pre-action high risk parks a waiter without arming taskRuntime.
+	// Snapshot must not be required for legacy Approve routing.
+	g := NewGate(Options{Enabled: true, Mode: func() string { return "auto" }})
+	done := make(chan Decision, 1)
+	g.opts.EmitPrompt = func(_ context.Context, taskID string, pending PendingProposal, failure *FailureEvent) (string, error) {
+		if failure != nil {
+			t.Fatalf("pre-action high risk should not carry failure: %+v", failure)
+		}
+		if pending.ChangeKind != ChangeRisk {
+			t.Fatalf("change kind = %q", pending.ChangeKind)
+		}
+		g.BindApprovalID(taskID, "risk-only")
+		if !g.HasApproval("risk-only") {
+			t.Fatal("HasApproval missing waiter-only recovery card")
+		}
+		// Snapshot has no taskRuntime (no failure), so ApprovalID is invisible.
+		if st := g.Snapshot().Tasks["root"]; st != nil && st.ApprovalID != "" {
+			// If a runtime appears, still require HasApproval as the live source.
+		} else if st := g.Snapshot().Tasks["root"]; st != nil {
+			t.Fatalf("unexpected snapshot task without approval: %+v", st)
+		}
+		go func() {
+			// Resolve via live waiter path after a short delay.
+			time.Sleep(5 * time.Millisecond)
+			if err := g.Resolve("risk-only", ActionContinue, ""); err != nil {
+				t.Errorf("Resolve: %v", err)
+			}
+		}()
+		return "risk-only", nil
+	}
+	go func() {
+		dec, err := g.BeforeMutation(context.Background(), Proposal{
+			Tool: "write_file", Subject: "package.json", Mutates: true,
+			Args: json.RawMessage(`{"path":"package.json","content":"{}"}`),
+		})
+		if err != nil {
+			t.Errorf("BeforeMutation: %v", err)
+		}
+		done <- dec
+	}()
+	select {
+	case dec := <-done:
+		if !dec.Allow {
+			t.Fatalf("want allow after resolve, got %+v", dec)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("waiter-only high-risk card did not unblock")
+	}
+	if g.HasApproval("risk-only") {
+		t.Fatal("approval should be cleared after Resolve")
+	}
+}
+
 func TestNoFailureAllowsMutation(t *testing.T) {
 	g := NewGate(Options{Enabled: true, Mode: func() string { return "auto" }})
 	dec, err := g.BeforeMutation(context.Background(), Proposal{

@@ -3340,8 +3340,9 @@ func (a *App) buildTabControllerWithContextAdmissionHeld(tab *WorkspaceTab, load
 
 	a.bindControllerDisplayRecorder(ctrl)
 	configureControllerRuntime(ctrl, nil, buildRuntime)
-	// Auto Guard follows the controller config kill switch only.
-	ctrl.SetRecoveryCheckpointEnabled(desktopDefaultRecoveryCheckpointForRoot(tab.WorkspaceRoot))
+	// Auto Guard kill switch is set once when the controller is built (boot
+	// merges project+user config). Do not re-read user-only config here — that
+	// would ignore a project-level auto_recovery_checkpoint = "off".
 
 	acquiredLeaseKey := ""
 	restoredRuntime := buildRuntime

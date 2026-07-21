@@ -320,3 +320,38 @@ func TestPolicyPromptBudget(t *testing.T) {
 		t.Fatal("empty policy")
 	}
 }
+
+func TestReviewerEvidenceBudgetKeepsValidJSON(t *testing.T) {
+	// Extreme combination that would exceed 6 KiB if only clipped after marshal.
+	huge := strings.Repeat("中", 4000) // multi-byte runes stress UTF-8 clipping
+	failure := &FailureEvent{
+		Tool: "bash", ErrSummary: huge, OutputExcerpt: huge, ArgsSummary: huge,
+		Verification: true, RepeatCount: 2,
+	}
+	diagnosis := []string{huge, huge, huge, huge}
+	proposal := Proposal{
+		Tool: "write_file", Subject: huge, Preview: strings.Repeat("H", 5000) + "MID" + strings.Repeat("T", 5000),
+		Mutates: true, Args: json.RawMessage(`{"path":"` + strings.Repeat("p", 800) + `","content":"` + strings.Repeat("c", 800) + `"}`),
+	}
+	s, err := buildReviewEvidence(failure, diagnosis, proposal, huge)
+	if err != nil {
+		t.Fatalf("buildReviewEvidence: %v", err)
+	}
+	if !json.Valid([]byte(s)) {
+		t.Fatalf("evidence is not valid JSON (len=%d)", len(s))
+	}
+	if len(s) > reviewerMaxEvidenceBytes {
+		t.Fatalf("evidence len = %d, want <= %d", len(s), reviewerMaxEvidenceBytes)
+	}
+	// Still structured JSON with required proposal key.
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(s), &payload); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if _, ok := payload["proposal"]; !ok {
+		t.Fatalf("missing proposal after budget: %s", s)
+	}
+	if _, ok := payload["notice"]; !ok {
+		t.Fatalf("missing notice after budget: %s", s)
+	}
+}

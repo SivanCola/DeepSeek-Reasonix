@@ -130,9 +130,8 @@ func configureControllerRuntime(ctrl, oldCtrl control.SessionAPI, runtime normal
 		return
 	}
 	ctrl.EnableInteractiveApproval()
-	if setter, ok := ctrl.(interface{ SetRecoveryCheckpointDefaultEnabled(bool) }); ok {
-		setter.SetRecoveryCheckpointDefaultEnabled(desktopDefaultRecoveryCheckpointForRoot(ctrl.WorkspaceRoot()))
-	}
+	// Preserve the controller's Auto Guard default from boot/New. Re-reading
+	// user-only config here would drop a project-level kill switch.
 	applyTabModeToController(ctrl, runtime.tabMode())
 	applyTabToolApprovalModeToController(ctrl, runtime.toolApprovalMode)
 	if next, ok := ctrl.(*control.Controller); ok {

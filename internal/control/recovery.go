@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"unicode/utf8"
 
 	"reasonix/internal/agent"
 	"reasonix/internal/recovery"
@@ -101,11 +102,21 @@ func (c *Controller) ResolveRecovery(id string, action agent.RecoveryAction, fee
 		return fmt.Errorf("Auto Guard is not active")
 	}
 	// Host hard-caps free-text feedback; empty revise is filled by the gate.
-	const maxFeedback = 4 * 1024
-	if len(feedback) > maxFeedback {
-		feedback = feedback[:maxFeedback]
-	}
+	// Clip on a UTF-8 boundary so multi-byte runes are never split.
+	feedback = clipUTF8(feedback, 4*1024)
 	return gate.Resolve(id, recovery.Action(action), feedback)
+}
+
+func clipUTF8(s string, n int) string {
+	s = strings.TrimSpace(s)
+	if n <= 0 || len(s) <= n {
+		return s
+	}
+	// Walk back to a rune start so the slice stays valid UTF-8.
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
+	}
+	return s[:n]
 }
 
 // initRecoveryGate constructs the shared recovery gate and attaches it to the

@@ -144,6 +144,27 @@ func (g *Gate) FlushPersistence(key string) {
 	g.persistMu.Unlock()
 }
 
+// HasApproval reports whether a live recovery waiter is parked under id.
+// Unlike Snapshot, this includes pre-action high-risk prompts that have a
+// waiter but no armed failure/taskRuntime yet. Legacy Approve paths must use
+// this (or Resolve) instead of inferring from a persistence snapshot.
+func (g *Gate) HasApproval(id string) bool {
+	if g == nil {
+		return false
+	}
+	id = strings.TrimSpace(id)
+	if id == "" || strings.HasPrefix(id, "pending:") {
+		return false
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if _, ok := g.waiters[id]; ok {
+		return true
+	}
+	_, ok := g.taskOf[id]
+	return ok
+}
+
 // Snapshot returns a copy of task state for persistence.
 func (g *Gate) Snapshot() Snapshot {
 	if g == nil {

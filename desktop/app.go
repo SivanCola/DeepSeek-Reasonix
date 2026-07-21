@@ -2102,7 +2102,8 @@ func (a *App) clearActiveSessionRuntime(tab *WorkspaceTab, oldCtrl control.Sessi
 	newCtrl.EnableInteractiveApproval()
 	applyTabModeToController(newCtrl, snap.mode)
 	applyTabToolApprovalModeToController(newCtrl, snap.toolApprovalMode)
-	newCtrl.SetRecoveryCheckpointDefaultEnabled(desktopDefaultRecoveryCheckpointForRoot(snap.workspaceRoot))
+	// Keep the replacement controller's Auto Guard default from construction
+	// (merged project+user config). Do not re-apply a user-only helper here.
 	// Clearing the session clears the active goal too (same contract as
 	// Controller.ClearSession): the snapshot's goal belongs to the destroyed
 	// conversation and must not seed the replacement.

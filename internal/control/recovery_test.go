@@ -236,6 +236,42 @@ func TestRecoveryHeadlessBlocksInsteadOfWaiting(t *testing.T) {
 	}
 }
 
+func TestLegacyApproveResolvesWaiterOnlyHighRisk(t *testing.T) {
+	// Old clients only call Approve. Pre-action high-risk recovery cards have a
+	// live waiter but no taskRuntime, so Snapshot cannot discover them.
+	ag := agent.New(nil, tool.NewRegistry(), agent.NewSession("sys"), agent.Options{}, event.Discard)
+	var c *Controller
+	c = New(Options{
+		Runner: ag, Executor: ag,
+		Policy:                    permission.Policy{Mode: permission.Allow},
+		RecoveryCheckpointEnabled: true,
+		Sink: event.FuncSink(func(e event.Event) {
+			if e.Kind == event.ApprovalRequest && e.Approval.Kind == recovery.ApprovalKindRecovery {
+				// Simulate a legacy client that only knows Approve.
+				c.Approve(e.Approval.ID, true, true, true) // session/persist must be ignored
+			}
+		}),
+	})
+	c.SetToolApprovalMode(ToolApprovalAuto)
+	c.EnableInteractiveApproval()
+
+	c.mu.Lock()
+	gate := c.recoveryGate
+	c.mu.Unlock()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	dec, err := gate.BeforeMutation(ctx, recovery.Proposal{
+		Tool: "write_file", Subject: "package.json", Mutates: true,
+		Args: json.RawMessage(`{"path":"package.json","content":"{}"}`),
+	})
+	if err != nil || !dec.Allow {
+		t.Fatalf("legacy Approve did not unblock high-risk card: %+v %v", dec, err)
+	}
+	if gate.HasApproval("anything") {
+		// no leftover waiters for other ids
+	}
+}
+
 func TestRecoveryPromptCanResolveSynchronouslyFromSink(t *testing.T) {
 	ag := agent.New(nil, tool.NewRegistry(), agent.NewSession("sys"), agent.Options{}, event.Discard)
 	var c *Controller

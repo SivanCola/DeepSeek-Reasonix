@@ -1756,21 +1756,20 @@ func (c *Controller) Approve(id string, allow, session, persist bool) {
 	// continue/deny from an old client that only knows Approve still maps onto
 	// the recovery state machine (allow=continue, deny=revise without feedback).
 	// Session/persist grants are intentionally ignored for recovery.
+	//
+	// Lookup must use the live waiter table (HasApproval), not Snapshot: pre-
+	// action high-risk prompts park a waiter without an armed taskRuntime, so
+	// they never appear in the persistence snapshot.
 	c.mu.Lock()
 	gate := c.recoveryGate
 	c.mu.Unlock()
-	if gate != nil {
-		snap := gate.Snapshot()
-		for _, st := range snap.Tasks {
-			if st != nil && st.ApprovalID == id {
-				action := agent.RecoveryActionRevise
-				if allow {
-					action = agent.RecoveryActionContinue
-				}
-				_ = c.ResolveRecovery(id, action, "")
-				return
-			}
+	if gate != nil && gate.HasApproval(id) {
+		action := agent.RecoveryActionRevise
+		if allow {
+			action = agent.RecoveryActionContinue
 		}
+		_ = c.ResolveRecovery(id, action, "")
+		return
 	}
 	pending := c.approval.resolve(id)
 	if pending.reply != nil {
