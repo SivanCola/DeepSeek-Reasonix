@@ -2938,6 +2938,176 @@ func TestTrashTopicRejectsRunningSessionRuntime(t *testing.T) {
 	}
 }
 
+func TestTrashTopicRejectsRunningDetachedRuntime(t *testing.T) {
+	isolateDesktopUserDirs(t)
+
+	projectRoot := t.TempDir()
+	topicID := "topic_detached_running_trash"
+	if err := addProject(projectRoot, ""); err != nil {
+		t.Fatalf("add project: %v", err)
+	}
+	if err := setTopicTitle(projectRoot, topicID, "Detached running trash"); err != nil {
+		t.Fatalf("set topic title: %v", err)
+	}
+	dir := config.SessionDir()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir sessions: %v", err)
+	}
+	sessionPath := writeTopicSession(t, dir, "detached-running-trash.jsonl", topicID, "Detached running trash", projectRoot)
+	runner := &blockingRunner{started: make(chan struct{}), release: make(chan struct{})}
+	ctrl := control.New(control.Options{Runner: runner, SessionDir: dir, SessionPath: sessionPath, Label: "test", WorkspaceRoot: projectRoot})
+	defer ctrl.Close()
+	defer close(runner.release)
+	detachedKey := sessionRuntimeKey(sessionPath)
+	detached := &WorkspaceTab{
+		ID:            detachedRuntimeTabID(detachedKey),
+		Scope:         "project",
+		WorkspaceRoot: projectRoot,
+		TopicID:       topicID,
+		TopicTitle:    "Detached running trash",
+		SessionPath:   sessionPath,
+		Ctrl:          ctrl,
+		Ready:         true,
+		disabledMCP:   map[string]ServerView{},
+	}
+	app := &App{
+		tabs:             map[string]*WorkspaceTab{},
+		detachedSessions: map[string]*WorkspaceTab{detachedKey: detached},
+	}
+
+	ctrl.Submit("long detached turn")
+	<-runner.started
+	if err := app.TrashTopic(topicID); !errors.Is(err, errTopicHasActiveWork) {
+		t.Fatalf("trash detached running topic error = %v, want %v", err, errTopicHasActiveWork)
+	}
+	if !ctrl.Running() {
+		t.Fatal("rejected archive should leave the detached controller running")
+	}
+	if got := app.detachedSessions[detachedKey]; got != detached {
+		t.Fatalf("rejected archive detached runtime = %p, want %p", got, detached)
+	}
+	if _, err := os.Stat(sessionPath); err != nil {
+		t.Fatalf("rejected archive should preserve the detached session: %v", err)
+	}
+	trashPath := filepath.Join(dir, sessionTrashDir, "detached-running-trash.jsonl", "detached-running-trash.jsonl")
+	if _, err := os.Stat(trashPath); !os.IsNotExist(err) {
+		t.Fatalf("rejected archive created a trash entry, stat err = %v", err)
+	}
+	if got := loadTopicTitle(projectRoot, topicID); got != "Detached running trash" {
+		t.Fatalf("rejected archive topic title = %q, want Detached running trash", got)
+	}
+}
+
+func TestTrashTopicWaitsForConcurrentTurnAdmission(t *testing.T) {
+	isolateDesktopUserDirs(t)
+
+	topicID := "topic_concurrent_turn_trash"
+	if err := setTopicTitle("", topicID, "Concurrent turn trash"); err != nil {
+		t.Fatalf("set topic title: %v", err)
+	}
+	dir := config.SessionDir()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir sessions: %v", err)
+	}
+	sessionPath := writeTopicSessionWithPrompt(
+		t, dir, "concurrent-turn-trash.jsonl", topicID, "Concurrent turn trash", "", "existing turn", time.Now(),
+	)
+	runner := &blockingRunner{started: make(chan struct{}), release: make(chan struct{})}
+	ctrl := control.New(control.Options{Runner: runner, SessionDir: dir, SessionPath: sessionPath, Label: "test"})
+	defer ctrl.Close()
+	defer close(runner.release)
+	tab := &WorkspaceTab{
+		ID:            "concurrent",
+		Scope:         "global",
+		WorkspaceRoot: globalTabWorkspaceRoot(),
+		TopicID:       topicID,
+		TopicTitle:    "Concurrent turn trash",
+		SessionPath:   sessionPath,
+		Ctrl:          ctrl,
+		Ready:         true,
+		disabledMCP:   map[string]ServerView{},
+	}
+	app := &App{
+		tabs:        map[string]*WorkspaceTab{tab.ID: tab},
+		tabOrder:    []string{tab.ID},
+		activeTabID: tab.ID,
+	}
+
+	// Hold the per-tab gate so SubmitToTab owns the shared admission lock but
+	// cannot make the controller observably busy yet.
+	tab.turnStartMu.Lock()
+	turnGateHeld := true
+	defer func() {
+		if turnGateHeld {
+			tab.turnStartMu.Unlock()
+		}
+	}()
+	submitDone := make(chan error, 1)
+	go func() { submitDone <- app.SubmitToTab(tab.ID, "concurrent turn") }()
+
+	deadline := time.Now().Add(5 * time.Second)
+	for app.runtimeAdmissionMu.TryLock() {
+		app.runtimeAdmissionMu.Unlock()
+		if time.Now().After(deadline) {
+			t.Fatal("concurrent turn never acquired the runtime admission read lock")
+		}
+		time.Sleep(time.Millisecond)
+	}
+
+	trashEntered := make(chan struct{})
+	var trashEnteredOnce sync.Once
+	app.runtimeMutationBeforeLockHook = func(operation string) {
+		if operation == "trash-topic" {
+			trashEnteredOnce.Do(func() { close(trashEntered) })
+		}
+	}
+	trashDone := make(chan error, 1)
+	go func() { trashDone <- app.TrashTopic(topicID) }()
+	select {
+	case <-trashEntered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("TrashTopic did not reach the runtime mutation barrier")
+	}
+
+	// Wait until TrashTopic owns runtimeRebuildMu and is queued on the admission
+	// writer. Releasing the turn gate now must let SubmitToTab publish Running
+	// before TrashTopic can re-check active work.
+	deadline = time.Now().Add(5 * time.Second)
+	for app.runtimeRebuildMu.TryLock() {
+		app.runtimeRebuildMu.Unlock()
+		if time.Now().After(deadline) {
+			t.Fatal("TrashTopic never acquired the runtime rebuild lock")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	tab.turnStartMu.Unlock()
+	turnGateHeld = false
+
+	if err := <-submitDone; err != nil {
+		t.Fatalf("SubmitToTab: %v", err)
+	}
+	<-runner.started
+	if err := <-trashDone; !errors.Is(err, errTopicHasActiveWork) {
+		t.Fatalf("concurrent TrashTopic error = %v, want %v", err, errTopicHasActiveWork)
+	}
+	if !ctrl.Running() {
+		t.Fatal("rejected archive should leave the concurrently admitted turn running")
+	}
+	if got := app.tabs[tab.ID]; got != tab {
+		t.Fatalf("rejected archive tab = %p, want %p", got, tab)
+	}
+	if _, err := os.Stat(sessionPath); err != nil {
+		t.Fatalf("rejected archive should preserve the concurrently active session: %v", err)
+	}
+	trashPath := filepath.Join(dir, sessionTrashDir, "concurrent-turn-trash.jsonl", "concurrent-turn-trash.jsonl")
+	if _, err := os.Stat(trashPath); !os.IsNotExist(err) {
+		t.Fatalf("rejected archive created a trash entry, stat err = %v", err)
+	}
+	if got := loadTopicTitle("", topicID); got != "Concurrent turn trash" {
+		t.Fatalf("rejected archive topic title = %q, want Concurrent turn trash", got)
+	}
+}
+
 func TestTrashTopicRejectsPendingPrompt(t *testing.T) {
 	isolateDesktopUserDirs(t)
 
