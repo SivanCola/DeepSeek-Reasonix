@@ -8,6 +8,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 
 	"reasonix/internal/agent"
 )
@@ -287,8 +288,15 @@ func (g *Gate) ObserveResult(_ context.Context, obs Observation) string {
 		}
 		return ""
 	}
-	// Diagnostic read successes do not clear failure state.
+	// Diagnostic read successes do not clear failure state. Preserve a bounded
+	// evidence excerpt for the isolated reviewer; otherwise it sees the failure
+	// and proposed diff but none of the investigation that connected them.
 	if obs.Success {
+		if st != nil && st.Failure != nil && IsDiagnosticSuccess(obs) {
+			if appendDiagnosisNoteLocked(st, diagnosticObservationNote(obs)) {
+				g.persistUnlocked()
+			}
+		}
 		return ""
 	}
 	if !QualifyingFailure(obs) {
@@ -641,9 +649,8 @@ func (g *Gate) RecordDiagnosis(taskID, note string) {
 	if st.Failure == nil {
 		return
 	}
-	st.Failure.DiagnosisNotes = append(st.Failure.DiagnosisNotes, strings.TrimSpace(note))
-	if len(st.Failure.DiagnosisNotes) > 12 {
-		st.Failure.DiagnosisNotes = st.Failure.DiagnosisNotes[len(st.Failure.DiagnosisNotes)-12:]
+	if appendDiagnosisNoteLocked(st, note) {
+		g.persistUnlocked()
 	}
 }
 
@@ -672,6 +679,63 @@ func (g *Gate) recoveryGuidanceLocked(st *TaskState) string {
 		"Diagnose with read-only tools first (read logs, search code, inspect the failing command output). " +
 		"Before changing strategy, scope, or risk of the next write, explain the diagnosis and the proposed recovery step. " +
 		"The host will block uncertain proposals with a reason and escalate repeated or high-risk changes automatically."
+}
+
+const (
+	maxDiagnosisNotes     = 8
+	maxDiagnosisNoteBytes = 800
+)
+
+func diagnosticObservationNote(obs Observation) string {
+	tool := clip(strings.TrimSpace(obs.Tool), 120)
+	if tool == "" {
+		tool = "diagnostic"
+	}
+	subject := clip(firstNonEmpty(obs.Subject, ArgsSummary(obs.Args, 160)), 160)
+	header := tool
+	if subject != "" && subject != tool {
+		header += " (" + subject + ")"
+	}
+	output := strings.TrimSpace(obs.Output)
+	if output == "" {
+		return clipDiagnosisNote(header + ": completed successfully")
+	}
+	return clipDiagnosisNote(header + ": " + output)
+}
+
+// appendDiagnosisNoteLocked deduplicates repeated reads and bounds both memory
+// and the provider-visible reviewer request. Caller must hold g.mu.
+func appendDiagnosisNoteLocked(st *TaskState, note string) bool {
+	if st == nil || st.Failure == nil {
+		return false
+	}
+	note = clipDiagnosisNote(note)
+	if note == "" {
+		return false
+	}
+	for _, existing := range st.Failure.DiagnosisNotes {
+		if existing == note {
+			return false
+		}
+	}
+	st.Failure.DiagnosisNotes = append(st.Failure.DiagnosisNotes, note)
+	if len(st.Failure.DiagnosisNotes) > maxDiagnosisNotes {
+		st.Failure.DiagnosisNotes = st.Failure.DiagnosisNotes[len(st.Failure.DiagnosisNotes)-maxDiagnosisNotes:]
+	}
+	return true
+}
+
+func clipDiagnosisNote(note string) string {
+	note = strings.TrimSpace(note)
+	if len(note) <= maxDiagnosisNoteBytes {
+		return note
+	}
+	const ellipsis = "…"
+	cut := maxDiagnosisNoteBytes - len(ellipsis)
+	for cut > 0 && !utf8.RuneStart(note[cut]) {
+		cut--
+	}
+	return note[:cut] + ellipsis
 }
 
 func (g *Gate) persist() {
@@ -818,10 +882,7 @@ func (g *Gate) recordReviewBlock(taskID string, verdict ReviewVerdict) int {
 	blocks := st.ReviewBlocks
 	if st.Failure != nil {
 		note := "Auto Guard reviewer blocked the proposal: " + firstNonEmpty(verdict.Rationale, verdict.Diagnosis)
-		st.Failure.DiagnosisNotes = append(st.Failure.DiagnosisNotes, note)
-		if len(st.Failure.DiagnosisNotes) > 12 {
-			st.Failure.DiagnosisNotes = st.Failure.DiagnosisNotes[len(st.Failure.DiagnosisNotes)-12:]
-		}
+		appendDiagnosisNoteLocked(st, note)
 	}
 	g.mu.Unlock()
 	g.persist()

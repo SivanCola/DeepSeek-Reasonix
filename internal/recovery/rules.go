@@ -83,14 +83,27 @@ func IsHighRiskMutation(proposal Proposal) bool {
 		cmd := commandFromArgs(proposal.Args)
 		return bashIsHighRisk(cmd)
 	}
-	if tool == "write_file" || tool == "edit_file" || tool == "multi_edit" || tool == "notebook_edit" {
-		// Overwriting large surfaces or config paths elevates risk when marked.
-		path := pathFromArgs(proposal.Args)
-		if isConfigOrDependencyPath(path) {
-			return true
+	if isFileMutationTool(tool) {
+		// Every built-in file mutator can change dependency or configuration
+		// surfaces. Classify all of their source/destination paths instead of only
+		// the common write/edit tools so a delete or rename cannot bypass Auto Guard.
+		for _, path := range pathsFromArgs(proposal.Args) {
+			if isConfigOrDependencyPath(path) {
+				return true
+			}
 		}
 	}
 	return false
+}
+
+func isFileMutationTool(tool string) bool {
+	switch strings.TrimSpace(tool) {
+	case "write_file", "edit_file", "multi_edit", "multi-edit", "notebook_edit",
+		"move_file", "delete_range", "delete_symbol":
+		return true
+	default:
+		return false
+	}
 }
 
 // ClassifyEmptySearch reports whether a successful read-only search produced
@@ -127,10 +140,7 @@ func ClassifyEmptySearch(tool string, success bool, readOnly bool, output string
 // IsDiagnosticSuccess reports a successful read-only diagnostic that must not
 // clear the active failure event (ls/rg/grep/read_file, etc.).
 func IsDiagnosticSuccess(obs Observation) bool {
-	if !obs.Success || !obs.ReadOnly {
-		return false
-	}
-	if obs.Verification {
+	if !obs.Success || obs.Mutates || obs.Verification {
 		return false
 	}
 	switch strings.TrimSpace(obs.Tool) {
@@ -145,11 +155,10 @@ func IsDiagnosticSuccess(obs Observation) bool {
 			return true
 		}
 		return true // other host-proven read-only bash diagnostics
-	case "read_file", "grep", "glob", "ls", "web_fetch", "code_index", "codeindex",
-		"bash_output", "wait", "ask", "todo_write":
-		return true
+	case "read_file", "grep", "glob", "ls", "code_index", "codeindex":
+		return obs.ReadOnly
 	default:
-		return obs.ReadOnly && !obs.Mutates
+		return false
 	}
 }
 
@@ -173,19 +182,31 @@ func commandFromArgs(args json.RawMessage) string {
 }
 
 func pathFromArgs(args json.RawMessage) string {
-	if len(args) == 0 {
+	paths := pathsFromArgs(args)
+	if len(paths) == 0 {
 		return ""
+	}
+	return paths[0]
+}
+
+func pathsFromArgs(args json.RawMessage) []string {
+	if len(args) == 0 {
+		return nil
 	}
 	var fields map[string]any
 	if err := json.Unmarshal(args, &fields); err != nil {
-		return ""
+		return nil
 	}
-	for _, key := range []string{"path", "file_path", "file", "target", "destination"} {
+	var paths []string
+	for _, key := range []string{
+		"path", "file_path", "file", "target", "destination",
+		"source_path", "destination_path", "old_path", "new_path",
+	} {
 		if v, ok := fields[key].(string); ok && strings.TrimSpace(v) != "" {
-			return strings.TrimSpace(v)
+			paths = append(paths, strings.TrimSpace(v))
 		}
 	}
-	return ""
+	return uniqueStrings(paths)
 }
 
 func normalizeCommand(s string) string {
@@ -222,7 +243,13 @@ func bashIsHighRisk(command string) bool {
 	riskMarkers := []string{
 		"rm -", "rmdir", "unlink ", "shred ",
 		"npm install", "npm i ", "pnpm install", "yarn add", "yarn install",
-		"pip install", "pip3 install", "go get ", "cargo install",
+		"pip install", "pip3 install", "go get ", "go install ",
+		"go env -w", "go env -u", "go mod tidy", "go mod edit", "go work ",
+		"cargo add ", "cargo remove ", "cargo install", "cargo uninstall",
+		"cargo publish", "cargo yank", "cargo update",
+		"composer install", "composer require", "composer remove", "composer update",
+		"poetry add", "poetry remove", "poetry install", "poetry update", "poetry publish",
+		"uv add", "uv remove", "uv sync", "uv lock", "uv publish",
 		"brew install", "apt install", "apt-get install", "dnf install",
 		"docker ", "kubectl ", "terraform ",
 		"git push", "git reset --hard", "git clean",
@@ -243,19 +270,78 @@ func bashIsHighRisk(command string) bool {
 		if malformed != "" || len(fields) == 0 {
 			return true
 		}
-		base := strings.ToLower(filepath.Base(fields[0]))
-		switch base {
-		case "rm", "rmdir", "unlink", "shred", "dd", "mkfs", "chmod", "chown",
-			"npm", "pnpm", "yarn", "pip", "pip3", "brew", "apt", "apt-get",
-			"docker", "kubectl", "terraform":
+		if commandFieldsHighRisk(fields) {
 			return true
-		case "git":
-			if len(fields) > 1 {
-				switch fields[1] {
-				case "push", "reset", "clean", "checkout", "branch", "tag", "rebase", "merge":
-					return true
-				}
-			}
+		}
+	}
+	return false
+}
+
+func commandFieldsHighRisk(fields []string) bool {
+	if len(fields) == 0 {
+		return true
+	}
+	base := strings.ToLower(filepath.Base(fields[0]))
+	args := lowerFields(fields[1:])
+	switch base {
+	case "rm", "rmdir", "unlink", "shred", "dd", "mkfs", "chmod", "chown",
+		"docker", "kubectl", "terraform":
+		return true
+	case "git":
+		return containsAny(args, "push", "reset", "clean", "checkout", "switch", "branch", "tag", "rebase", "merge")
+	case "npm":
+		return containsAny(args, "install", "i", "add", "uninstall", "remove", "rm", "update", "upgrade", "publish", "unpublish", "link", "unlink", "config")
+	case "pnpm":
+		return containsAny(args, "install", "i", "add", "remove", "rm", "update", "up", "publish", "deploy", "link", "unlink", "patch", "import")
+	case "yarn":
+		return containsAny(args, "install", "add", "remove", "upgrade", "up", "set", "link", "unlink", "publish")
+	case "pip", "pip3", "pipx":
+		return containsAny(args, "install", "uninstall", "inject", "upgrade")
+	case "brew", "apt", "apt-get", "dnf", "yum", "apk", "pacman":
+		return containsAny(args, "install", "add", "remove", "uninstall", "upgrade", "update")
+	case "go":
+		if containsAny(args, "get", "install", "clean") {
+			return true
+		}
+		if containsAny(args, "env") && containsAny(args, "-w", "-u") {
+			return true
+		}
+		if containsAny(args, "mod") && containsAny(args, "tidy", "edit", "init", "download") {
+			return true
+		}
+		return containsAny(args, "work") && containsAny(args, "init", "use", "edit", "sync")
+	case "cargo":
+		return containsAny(args, "add", "remove", "install", "uninstall", "publish", "yank", "update", "clean", "login", "logout")
+	case "composer":
+		return containsAny(args, "install", "require", "remove", "update", "config")
+	case "poetry":
+		return containsAny(args, "add", "remove", "install", "update", "publish", "config", "lock")
+	case "uv":
+		return containsAny(args, "add", "remove", "sync", "lock", "publish", "install", "uninstall")
+	case "dotnet":
+		return containsAny(args, "add", "remove", "install", "uninstall", "update", "push", "delete")
+	case "gem", "bundle", "bundler":
+		return containsAny(args, "install", "uninstall", "update", "add", "remove", "push", "yank", "publish")
+	}
+	return false
+}
+
+func lowerFields(fields []string) []string {
+	out := make([]string, len(fields))
+	for i, field := range fields {
+		out[i] = strings.ToLower(strings.TrimSpace(field))
+	}
+	return out
+}
+
+func containsAny(fields []string, values ...string) bool {
+	wanted := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		wanted[value] = struct{}{}
+	}
+	for _, field := range fields {
+		if _, ok := wanted[field]; ok {
+			return true
 		}
 	}
 	return false
@@ -264,9 +350,9 @@ func bashIsHighRisk(command string) bool {
 // WriteScopePaths extracts path-like targets from mutation args for scope compare.
 func WriteScopePaths(tool string, args json.RawMessage) []string {
 	tool = strings.TrimSpace(tool)
-	var paths []string
-	if p := pathFromArgs(args); p != "" {
-		paths = append(paths, filepath.Clean(p))
+	paths := pathsFromArgs(args)
+	for i := range paths {
+		paths[i] = filepath.Clean(paths[i])
 	}
 	if tool == "multi_edit" || tool == "multi-edit" {
 		var payload struct {
