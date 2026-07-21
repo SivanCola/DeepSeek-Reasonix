@@ -213,7 +213,6 @@ export interface TabMeta {
   mode: Mode;
   collaborationMode?: CollaborationMode;
   toolApprovalMode?: ToolApprovalMode;
-  recoveryCheckpointEnabled?: boolean;
   tokenMode?: TokenMode;
   goal?: string;
   goalStatus?: GoalStatus;
@@ -492,7 +491,6 @@ export interface Meta {
   bypass?: boolean; // legacy JSON key for YOLO/full-access tool auto-approval
   collaborationMode?: CollaborationMode;
   toolApprovalMode?: ToolApprovalMode;
-  recoveryCheckpointEnabled?: boolean;
   tokenMode?: TokenMode;
   goal?: string;
   goalStatus?: GoalStatus;
@@ -1598,7 +1596,6 @@ export interface SettingsView {
   statusBarStyle: string; // "icon" | "text"
   statusBarItems: string[]; // ordered visible status bar item ids
   defaultToolApprovalMode: ToolApprovalMode | string; // default for newly-created sessions
-  defaultAutoRecoveryCheckpoint?: boolean; // legacy new-session Auto Guard default
   checkUpdates: boolean; // check for new versions on startup
   telemetry: boolean; // anonymous launch ping (install id + version + OS)
   metrics: boolean; // aggregate desktop metrics (anonymous signal/bucket counts)

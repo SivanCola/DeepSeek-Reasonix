@@ -122,13 +122,13 @@ console.log("\ndecision surface");
   dom.window.close();
 }
 
-// Auto Guard reuses the decision shelf with one-call continue or revision. Task
+// Auto reuses the decision shelf with one-click continue or revise. Task
 // cancellation stays on the ordinary Stop control instead of becoming a third
-// recovery-specific branch.
+// recovery-specific branch. Details stay collapsed; no select-then-confirm.
 {
   const dom = installDom();
   const root = createRoot(document.getElementById("root")!);
-  const decisions: string[] = [];
+  const decisions: Array<{ action: string; feedback?: string }> = [];
   const approval: WireApproval = {
     id: "guard-1",
     tool: "bash",
@@ -143,7 +143,7 @@ console.log("\ndecision surface");
         <ApprovalModal
           approval={approval}
           onAnswer={() => undefined}
-          onResolveRecovery={(action) => decisions.push(action)}
+          onResolveRecovery={(action, feedback) => decisions.push({ action, feedback })}
           onStop={() => undefined}
         />
       </LocaleProvider>,
@@ -152,13 +152,62 @@ console.log("\ndecision surface");
   });
 
   const actions = [...document.querySelectorAll(".prompt-shelf__actions .prompt-action")] as HTMLButtonElement[];
-  eq(actions.length, 2, "Auto Guard has continue-once and revise actions");
-  ok(!actions.some((action) => action.textContent?.includes("Stop task")), "Auto Guard does not add a third Stop decision");
+  eq(actions.length, 2, "Auto recovery has continue and try-another actions");
+  ok(!actions.some((action) => action.textContent?.includes("Stop task")), "Auto recovery does not add a third Stop decision");
+  ok(!document.querySelector(".decision-confirm-bar__confirm"), "Auto recovery has no select-then-confirm bar");
+  ok(!document.body.textContent?.includes("checkpoint"), "UI hides internal checkpoint terms");
+  ok(!document.body.textContent?.includes("same_strategy"), "UI hides internal reviewer terms");
+  ok(document.body.textContent?.includes("higher risk") || document.body.textContent?.includes("风险"), "shows localized risk reason");
+  ok(!document.querySelector(".recovery-details"), "details stay collapsed by default");
+
   await act(async () => {
-    (document.querySelector(".decision-confirm-bar__confirm") as HTMLButtonElement).click();
+    actions[0].click();
+    actions[0].click();
     await flushTimers(220);
   });
-  eq(decisions[0], "continue", "Auto Guard continue resolves only the waiting action");
+  eq(decisions.length, 1, "double click submits only once");
+  eq(decisions[0]?.action, "continue", "continue resolves only the waiting action");
+
+  await act(async () => {
+    root.unmount();
+  });
+  dom.window.close();
+}
+
+// Revise is one-click; optional empty feedback still works.
+{
+  const dom = installDom();
+  const root = createRoot(document.getElementById("root")!);
+  const decisions: Array<{ action: string; feedback?: string }> = [];
+  const approval: WireApproval = {
+    id: "guard-2",
+    tool: "write_file",
+    subject: "expand to b.go",
+    kind: "recovery",
+    recovery: { next_action: "edit b.go", change_kind: "scope", failed_summary: "a.go failed" },
+  };
+
+  await act(async () => {
+    root.render(
+      <LocaleProvider>
+        <ApprovalModal
+          approval={approval}
+          onAnswer={() => undefined}
+          onResolveRecovery={(action, feedback) => decisions.push({ action, feedback })}
+          onStop={() => undefined}
+        />
+      </LocaleProvider>,
+    );
+    await flushTimers();
+  });
+
+  const actions = [...document.querySelectorAll(".prompt-shelf__actions .prompt-action")] as HTMLButtonElement[];
+  await act(async () => {
+    actions[1].click();
+    await flushTimers(220);
+  });
+  eq(decisions[0]?.action, "revise", "try another approach rejects immediately");
+  ok(!decisions[0]?.feedback, "empty optional feedback is allowed");
 
   await act(async () => {
     root.unmount();

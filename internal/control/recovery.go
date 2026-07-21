@@ -100,6 +100,11 @@ func (c *Controller) ResolveRecovery(id string, action agent.RecoveryAction, fee
 	if gate == nil {
 		return fmt.Errorf("Auto Guard is not active")
 	}
+	// Host hard-caps free-text feedback; empty revise is filled by the gate.
+	const maxFeedback = 4 * 1024
+	if len(feedback) > maxFeedback {
+		feedback = feedback[:maxFeedback]
+	}
 	return gate.Resolve(id, recovery.Action(action), feedback)
 }
 
@@ -316,20 +321,16 @@ func (c *Controller) emitRecoveryPrompt(ctx context.Context, taskID string, pend
 	return id, nil
 }
 
-// loadRecoveryEnabled restores the per-session preference. Missing metadata
-// enables Auto Guard because it is built into Auto; explicit legacy opt-outs
-// remain honored.
+// loadRecoveryEnabled re-applies the controller's configured kill-switch
+// preference. Auto Guard is built into Auto; per-tab/meta toggles were removed.
+// Advanced opt-out is only [agent].auto_recovery_checkpoint at controller create.
 func (c *Controller) loadRecoveryEnabled(path string) {
-	enabled := true
-	if strings.TrimSpace(path) != "" {
-		meta, ok, err := agent.LoadBranchMeta(path)
-		if err != nil {
-			slog.Warn("controller: load recovery preference", "err", err)
-		} else if ok && meta.RecoveryCheckpointEnabled != nil {
-			enabled = *meta.RecoveryCheckpointEnabled
-		}
+	_ = path
+	if c == nil {
+		return
 	}
 	c.mu.Lock()
+	enabled := c.recoveryDefaultEnabled
 	c.recoveryEnabled = enabled
 	gate := c.recoveryGate
 	c.mu.Unlock()
@@ -338,26 +339,12 @@ func (c *Controller) loadRecoveryEnabled(path string) {
 	}
 }
 
+// persistRecoveryEnabled is retained as a no-op for call-site compatibility.
+// The advanced kill switch lives only in config; we no longer write per-session
+// BranchMeta recovery flags.
 func (c *Controller) persistRecoveryEnabled(enabled bool) {
-	if c == nil {
-		return
-	}
-	path := c.SessionPath()
-	if strings.TrimSpace(path) == "" {
-		return
-	}
-	unlock := agent.LockSessionMetaPath(path)
-	defer unlock()
-	meta, ok, err := agent.LoadBranchMeta(path)
-	if err != nil {
-		return
-	}
-	if !ok {
-		meta = agent.BranchMeta{}
-	}
-	v := enabled
-	meta.RecoveryCheckpointEnabled = &v
-	_ = agent.SaveBranchMetaPreserveUpdated(path, meta)
+	_ = c
+	_ = enabled
 }
 
 func recoveryFirstNonEmpty(vals ...string) string {

@@ -1343,7 +1343,6 @@ function normalizeSettingsView(view: SettingsView | null | undefined): SettingsV
     bot: normalizeBotSettings(view.bot),
     autoPlan: "off",
     defaultToolApprovalMode: normalizeToolApprovalMode(view.defaultToolApprovalMode),
-    defaultAutoRecoveryCheckpoint: view.defaultAutoRecoveryCheckpoint !== false,
     autoApproveTools: Boolean(view.autoApproveTools ?? view.bypass),
     bypass: Boolean(view.autoApproveTools ?? view.bypass),
     desktopLanguage: normalizeLangPref(view.desktopLanguage),

@@ -139,9 +139,32 @@ type DecisionAction = {
   desc: string;
   tone?: "default" | "danger";
   // Plan revision toggles the inline editor instead of submitting.
-  kind: "submit" | "toggle-revision";
+  // Recovery uses direct-click submit (no select-then-confirm).
+  kind: "submit" | "toggle-revision" | "direct";
   run?: () => void;
 };
+
+const RECOVERY_FEEDBACK_MAX = 1000;
+
+function recoveryReasonText(
+  changeKind: string | undefined,
+  fallback: string | undefined,
+  t: Translator,
+): string {
+  switch ((changeKind ?? "").toLowerCase()) {
+    case "risk":
+      return t("approval.recoveryReasonRisk");
+    case "scope":
+      return t("approval.recoveryReasonScope");
+    case "strategy":
+      return t("approval.recoveryReasonStrategy");
+    case "uncertain":
+    case "same_strategy":
+      return t("approval.recoveryReasonUncertain");
+    default:
+      return fallback?.trim() || t("approval.recoveryReasonUncertain");
+  }
+}
 
 export function ApprovalModal({
   approval,
@@ -193,9 +216,13 @@ export function ApprovalModal({
   const toolMeta = isPlanApproval ? t("approval.planReadyHint") : (subjectSummary || reason || approval.tool);
   const hasToolDetails = Boolean(reason || subject);
   // Subject (command) is visible by default; long reason can collapse.
-  const [reasonOpen, setReasonOpen] = useState(() => Boolean(reason) && reason.length <= 160);
+  const [reasonOpen, setReasonOpen] = useState(() => {
+    if (isRecoveryApproval) return false; // recovery details stay collapsed
+    return Boolean(reason) && reason.length <= 160;
+  });
   // Default: allow once (tool) or start execution (plan index 1).
-  const [selectedIndex, setSelectedIndex] = useState(() => (isPlanApproval ? 1 : 0));
+  // Recovery has no default selection so Enter cannot accidentally continue.
+  const [selectedIndex, setSelectedIndex] = useState(() => (isPlanApproval ? 1 : isRecoveryApproval ? -1 : 0));
   const [revisionOpen, setRevisionOpen] = useState(false);
   const [revisionText, setRevisionText] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -227,20 +254,34 @@ export function ApprovalModal({
     }
   };
 
+  const resolveRecovery = useCallback(
+    (action: "continue" | "revise", feedback?: string) => {
+      const resolve = onResolveRecovery ?? ((a: "continue" | "revise") => onAnswer(a === "continue", false, false));
+      if (action === "revise") {
+        const text = (feedback ?? revisionText).trim().slice(0, RECOVERY_FEEDBACK_MAX);
+        resolve("revise", text || undefined);
+        return;
+      }
+      resolve("continue");
+    },
+    [onResolveRecovery, onAnswer, revisionText],
+  );
+
   const toolActions: DecisionAction[] = isRecoveryApproval
     ? [
         {
           key: "1",
           label: t("approval.recoveryContinue"),
           desc: t("approval.recoveryContinueDesc"),
-          kind: "submit",
-          run: () => (onResolveRecovery ?? ((a) => onAnswer(a === "continue", false, false)))("continue"),
+          kind: "direct",
+          run: () => resolveRecovery("continue"),
         },
         {
           key: "2",
           label: t("approval.recoveryRevise"),
           desc: t("approval.recoveryReviseDesc"),
-          kind: "toggle-revision",
+          kind: "direct",
+          run: () => resolveRecovery("revise"),
         },
       ]
     : isPlanApproval
@@ -339,14 +380,21 @@ export function ApprovalModal({
     cardRef.current?.focus();
     setRevisionOpen(false);
     setRevisionText("");
-    setReasonOpen(Boolean(reason) && reason.length <= 160);
-    setSelectedIndex(isPlanApproval ? 1 : 0);
+    setReasonOpen(isRecoveryApproval ? false : Boolean(reason) && reason.length <= 160);
+    setSelectedIndex(isPlanApproval ? 1 : isRecoveryApproval ? -1 : 0);
     setSubmitting(false);
     closingRef.current = false;
-  }, [approval.id, isPlanApproval, reason]);
+  }, [approval.id, isPlanApproval, isRecoveryApproval, reason]);
 
   const confirmSelected = useCallback(() => {
     if (submitting || closingRef.current) return;
+    if (isRecoveryApproval) {
+      // Recovery never auto-submits on Enter without an explicit selection.
+      const action = toolActions[selectedIndexRef.current];
+      if (!action?.run) return;
+      answerWithExit(action.run);
+      return;
+    }
     const action = toolActions[selectedIndexRef.current];
     if (!action) return;
     if (action.kind === "toggle-revision") {
@@ -354,7 +402,7 @@ export function ApprovalModal({
       return;
     }
     if (action.run) answerWithExit(action.run);
-  }, [submitting, toolActions]);
+  }, [submitting, toolActions, isRecoveryApproval]);
 
   useEffect(() => {
     const onKeyDown = (event: globalThis.KeyboardEvent) => {
@@ -362,20 +410,44 @@ export function ApprovalModal({
       const target = event.target instanceof Element ? event.target : null;
       const tag = target?.tagName.toLowerCase();
       // Editing revision / file menu owns arrows and digits while focused.
+      // Optional recovery feedback also disables digit shortcuts.
+      const editing =
+        tag === "input" ||
+        tag === "textarea" ||
+        tag === "select" ||
+        (target instanceof HTMLElement && target.isContentEditable) ||
+        (isRecoveryApproval && revisionOpen);
+      if (editing && (event.key === "1" || event.key === "2" || event.key === "3" || event.key === "4")) {
+        return;
+      }
       if (tag === "input" || tag === "textarea" || tag === "select" || (target instanceof HTMLElement && target.isContentEditable)) return;
       if (event.key === "ArrowUp") {
         event.preventDefault();
-        setSelectedIndex((i) => (i - 1 + actionCount) % actionCount);
+        setSelectedIndex((i) => {
+          const base = i < 0 ? 0 : i;
+          return (base - 1 + actionCount) % actionCount;
+        });
       } else if (event.key === "ArrowDown") {
         event.preventDefault();
-        setSelectedIndex((i) => (i + 1) % actionCount);
+        setSelectedIndex((i) => {
+          const base = i < 0 ? -1 : i;
+          return (base + 1) % actionCount;
+        });
       } else if (event.key === "Enter") {
+        if (isRecoveryApproval && selectedIndexRef.current < 0) return;
         event.preventDefault();
         confirmSelected();
       } else if (event.key === "1" || event.key === "2" || event.key === "3" || event.key === "4") {
+        if (isRecoveryApproval && revisionOpen) return;
         const index = Number(event.key) - 1;
         if (index < 0 || index >= actionCount) return;
         event.preventDefault();
+        if (isRecoveryApproval) {
+          // Digit keys on recovery cards submit directly (one-click).
+          const action = toolActions[index];
+          if (action?.run) answerWithExit(action.run);
+          return;
+        }
         setSelectedIndex(index);
       } else if (event.key === "Escape") {
         event.preventDefault();
@@ -384,7 +456,7 @@ export function ApprovalModal({
     };
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
-  }, [actionCount, confirmSelected, onStop, submitting]);
+  }, [actionCount, confirmSelected, onStop, submitting, isRecoveryApproval, revisionOpen, toolActions]);
 
   useEffect(() => {
     if (revisionOpen) {
@@ -458,28 +530,33 @@ export function ApprovalModal({
   };
 
   const submitRevision = () => {
+    if (isRecoveryApproval) {
+      answerWithExit(() => resolveRecovery("revise", revisionText));
+      return;
+    }
     const text = revisionText.trim();
     if (!text) {
       inputRef.current?.focus();
-      return;
-    }
-    if (isRecoveryApproval) {
-      answerWithExit(() => (onResolveRecovery ?? (() => onAnswer(false, false, false)))("revise", text));
       return;
     }
     answerWithExit(() => onRevisePlan?.(text));
   };
 
   const recovery = approval.recovery;
+  const recoveryReason = isRecoveryApproval
+    ? recoveryReasonText(
+        recovery?.change_kind,
+        recovery?.change_rationale || recovery?.review_rationale || reason,
+        t,
+      )
+    : "";
+  const recoveryActionSummary =
+    recovery?.next_action ||
+    recovery?.next_tool ||
+    subjectSummary ||
+    approval.tool;
   const recoveryMeta = isRecoveryApproval
-    ? [
-        recovery?.failed_summary && t("approval.recoveryFailed", { summary: recovery.failed_summary }),
-        recovery?.diagnosis && t("approval.recoveryDiagnosis", { diagnosis: recovery.diagnosis }),
-        recovery?.next_action && t("approval.recoveryNext", { action: recovery.next_action }),
-        (recovery?.change_rationale || recovery?.review_rationale) &&
-          t("approval.recoveryWhy", { why: recovery.change_rationale || recovery.review_rationale || "" }),
-        recovery?.source_agent && t("approval.recoverySource", { agent: recovery.source_agent }),
-      ]
+    ? [recoveryReason, recoveryActionSummary && t("approval.recoveryNext", { action: recoveryActionSummary })]
         .filter(Boolean)
         .join(" · ")
     : "";
@@ -489,9 +566,7 @@ export function ApprovalModal({
     selectedAction?.kind === "toggle-revision"
       ? revisionOpen
         ? t("common.cancel")
-        : isRecoveryApproval
-          ? t("approval.recoveryRevise")
-          : t("approval.revisePlan")
+        : t("approval.revisePlan")
       : t("decision.confirm");
 
   return (
@@ -506,13 +581,17 @@ export function ApprovalModal({
           <>
             {!isPlanApproval && <PromptBadge tone="amber">{toolLabel}</PromptBadge>}
             {isPlanApproval && revisionOpen && <PromptBadge>{t("approval.revisePlan")}</PromptBadge>}
-            {isRecoveryApproval && revisionOpen && <PromptBadge>{t("approval.recoveryRevise")}</PromptBadge>}
           </>
         }
         meta={isRecoveryApproval ? (recoveryMeta || toolMeta) : toolMeta}
         headerActions={
           <>
-            {!isPlanApproval && hasToolDetails && reason && (
+            {isRecoveryApproval && (
+              <PromptHeaderAction onClick={() => setReasonOpen((open) => !open)} disabled={submitting}>
+                {t(reasonOpen ? "approval.hideDetails" : "approval.details")}
+              </PromptHeaderAction>
+            )}
+            {!isPlanApproval && !isRecoveryApproval && hasToolDetails && reason && (
               <PromptHeaderAction onClick={() => setReasonOpen((open) => !open)} disabled={submitting}>
                 {t(reasonOpen ? "approval.hideDetails" : "approval.details")}
               </PromptHeaderAction>
@@ -536,12 +615,14 @@ export function ApprovalModal({
                 description={action.desc}
                 onClick={() => {
                   if (submitting) return;
+                  if (action.kind === "direct" && action.run) {
+                    answerWithExit(action.run);
+                    return;
+                  }
                   setSelectedIndex(index);
                   if (action.kind === "toggle-revision") {
                     // Selecting revise opens the editor but still needs confirm
                     // only when the user hits Enter / Confirm (toggle on confirm).
-                    // Click selects; confirm toggles. Also open on first select
-                    // for discoverability when confirming revise.
                   }
                 }}
                 selected={selectedIndex === index}
@@ -553,51 +634,70 @@ export function ApprovalModal({
           </>
         }
         footer={
-          <DecisionConfirmBar
-            hint={t("decision.selectHint")}
-            confirmLabel={confirmLabel}
-            onConfirm={confirmSelected}
-            disabled={submitting}
-            danger={confirmIsDanger}
-          />
+          isRecoveryApproval ? (
+            <div className="recovery-optional-feedback">
+              <button
+                type="button"
+                className="prompt-shelf__header-action"
+                disabled={submitting}
+                onClick={() => setRevisionOpen((open) => !open)}
+              >
+                {t(revisionOpen ? "approval.recoveryHideFeedback" : "approval.recoveryOptionalFeedback")}
+              </button>
+            </div>
+          ) : (
+            <DecisionConfirmBar
+              hint={t("decision.selectHint")}
+              confirmLabel={confirmLabel}
+              onConfirm={confirmSelected}
+              disabled={submitting}
+              danger={confirmIsDanger}
+            />
+          )
         }
       >
         {(approvalModeRelaxed ||
-          isRecoveryApproval ||
-          (!isPlanApproval && (subject || (reasonOpen && reason))) ||
-          ((isPlanApproval || isRecoveryApproval) && revisionOpen)) && (
+          (isRecoveryApproval && (reasonOpen || revisionOpen)) ||
+          (!isPlanApproval && !isRecoveryApproval && (subject || (reasonOpen && reason))) ||
+          (isPlanApproval && revisionOpen)) && (
           <>
             {approvalModeRelaxed && !isRecoveryApproval && (
               <div className="approval-mode-hint">{t("approval.modeSwitchPendingHint")}</div>
             )}
-            {isRecoveryApproval && recovery && (
+            {isRecoveryApproval && reasonOpen && (
               <div className="approval-details recovery-details">
-                {recovery.failed_summary && (
+                {recoveryActionSummary && (
                   <div className="approval-reason">
-                    <strong>{t("approval.recoveryFailedLabel")}</strong> {recovery.failed_tool ? `${recovery.failed_tool}: ` : ""}
+                    <strong>{t("approval.recoveryNextLabel")}</strong>{" "}
+                    {recovery?.next_tool ? `${recovery.next_tool}: ` : ""}
+                    {recoveryActionSummary}
+                  </div>
+                )}
+                {recovery?.failed_summary && (
+                  <div className="approval-reason">
+                    <strong>{t("approval.recoveryFailedLabel")}</strong>{" "}
+                    {recovery.failed_tool ? `${recovery.failed_tool}: ` : ""}
                     {recovery.failed_summary}
                   </div>
                 )}
-                {recovery.diagnosis && (
+                {recovery?.diagnosis && (
                   <div className="approval-reason">
                     <strong>{t("approval.recoveryDiagnosisLabel")}</strong> {recovery.diagnosis}
                   </div>
                 )}
-                {(recovery.next_action || recovery.next_tool) && (
-                  <pre className="approval-subject">
-                    {recovery.next_tool ? `${recovery.next_tool}: ` : ""}
-                    {recovery.next_action || subject}
-                  </pre>
-                )}
-                {(recovery.change_rationale || recovery.review_rationale) && (
+                {(recovery?.change_rationale || recovery?.review_rationale) && (
                   <div className="approval-reason">
-                    <strong>{t("approval.recoveryWhyLabel")}</strong> {recovery.change_rationale || recovery.review_rationale}
+                    <strong>{t("approval.recoveryWhyLabel")}</strong>{" "}
+                    {recovery.change_rationale || recovery.review_rationale}
                   </div>
                 )}
-                {recovery.source_agent && (
+                {recovery?.source_agent && (
                   <div className="approval-reason">
                     <strong>{t("approval.recoverySourceLabel")}</strong> {recovery.source_agent}
                   </div>
+                )}
+                {!recovery?.failed_summary && !recovery?.diagnosis && subject && (
+                  <pre className="approval-subject">{subject}</pre>
                 )}
               </div>
             )}
@@ -607,14 +707,38 @@ export function ApprovalModal({
                 {reasonOpen && reason && <div className="approval-reason">{reason}</div>}
               </div>
             )}
-            {(isPlanApproval || isRecoveryApproval) && revisionOpen && (
+            {isRecoveryApproval && revisionOpen && (
               <div className="plan-revision">
                 <textarea
                   ref={inputRef}
                   className="plan-revision__input"
                   value={revisionText}
                   rows={3}
-                  placeholder={isRecoveryApproval ? t("approval.recoveryRevisePlaceholder") : t("approval.revisePlanPlaceholder")}
+                  maxLength={RECOVERY_FEEDBACK_MAX}
+                  placeholder={t("approval.recoveryRevisePlaceholder")}
+                  onChange={(event) => setRevisionText(event.target.value.slice(0, RECOVERY_FEEDBACK_MAX))}
+                  onFocus={() => onRevisionActiveChange?.(true)}
+                  onKeyDown={onRevisionKeyDown}
+                  disabled={submitting}
+                />
+                {fileMenu.open && (
+                  <FileReferenceMenu
+                    items={fileMenu.items}
+                    activeIndex={fileMenu.active}
+                    onPick={pickRevisionFile}
+                    onHover={fileMenu.setActive}
+                  />
+                )}
+              </div>
+            )}
+            {isPlanApproval && revisionOpen && (
+              <div className="plan-revision">
+                <textarea
+                  ref={inputRef}
+                  className="plan-revision__input"
+                  value={revisionText}
+                  rows={3}
+                  placeholder={t("approval.revisePlanPlaceholder")}
                   onChange={(event) => setRevisionText(event.target.value)}
                   onFocus={() => onRevisionActiveChange?.(true)}
                   onKeyDown={onRevisionKeyDown}

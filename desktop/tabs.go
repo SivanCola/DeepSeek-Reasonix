@@ -1833,10 +1833,6 @@ type TabMeta struct {
 	Mode              string `json:"mode"`
 	CollaborationMode string `json:"collaborationMode"`
 	ToolApprovalMode  string `json:"toolApprovalMode"`
-	// RecoveryCheckpointEnabled is the compatibility preference for Auto Guard.
-	// It is retained under Ask/YOLO but only takes effect
-	// while tool approval mode is Auto.
-	RecoveryCheckpointEnabled bool                     `json:"recoveryCheckpointEnabled"`
 	TokenMode                 string                   `json:"tokenMode"`
 	Goal                      string                   `json:"goal,omitempty"`
 	GoalStatus                string                   `json:"goalStatus,omitempty"`
@@ -1882,7 +1878,6 @@ func (a *App) tabMeta(tab *WorkspaceTab, active bool) TabMeta {
 		Mode:                      currentTabMode(tab),
 		CollaborationMode:         currentTabCollaborationMode(tab),
 		ToolApprovalMode:          currentTabToolApprovalMode(tab),
-		RecoveryCheckpointEnabled: currentTabRecoveryCheckpointEnabled(tab),
 		TokenMode:                 currentTabTokenMode(tab),
 		Goal:                      currentTabGoal(tab),
 		GoalStatus:                currentTabGoalStatus(tab),
@@ -2419,11 +2414,9 @@ func createEmptySessionFile(dir, model string) (string, error) {
 			if closeErr := f.Close(); closeErr != nil {
 				return "", closeErr
 			}
-			// New sessions explicitly write the configured Auto Guard default.
-			enabled := desktopDefaultRecoveryCheckpoint()
-			meta, _ := agent.EnsureBranchMeta(path)
-			meta.RecoveryCheckpointEnabled = &enabled
-			_ = agent.SaveBranchMeta(path, meta)
+			// Ensure branch meta exists for topic ownership; Auto Guard no longer
+			// stores a per-session toggle (it is built into Auto).
+			_, _ = agent.EnsureBranchMeta(path)
 			return path, nil
 		}
 		if os.IsExist(err) {
@@ -2434,8 +2427,9 @@ func createEmptySessionFile(dir, model string) (string, error) {
 	return "", fmt.Errorf("create empty session file: exhausted filename retries")
 }
 
-// desktopDefaultRecoveryCheckpoint is the legacy new-session Auto Guard
-// default. Missing config means on.
+// desktopDefaultRecoveryCheckpoint reads the advanced agent kill switch
+// [agent].auto_recovery_checkpoint (default on). It is not a user-facing
+// per-tab preference.
 func desktopDefaultRecoveryCheckpoint() bool {
 	return desktopDefaultRecoveryCheckpointForRoot("")
 }
@@ -2443,24 +2437,12 @@ func desktopDefaultRecoveryCheckpoint() bool {
 func desktopDefaultRecoveryCheckpointForRoot(root string) bool {
 	path := config.UserConfigPath()
 	if _, err := os.Stat(path); os.IsNotExist(err) {
-		// Before the user config is migrated, Desktop settings intentionally
-		// come from the legacy workspace config. Once the user file exists,
-		// project config must not override this user-global preference.
 		if legacyPath := config.SourcePathForRoot(root); legacyPath != "" {
 			path = legacyPath
 		}
 	}
 	cfg := config.LoadForEditWithoutCredentials(path)
-	return cfg.DesktopDefaultAutoRecoveryCheckpoint()
-}
-
-// recoveryCheckpointFromMeta interprets BranchMeta.RecoveryCheckpointEnabled:
-// missing field enables built-in Auto Guard; explicit true/false is honored.
-func recoveryCheckpointFromMeta(meta agent.BranchMeta) bool {
-	if meta.RecoveryCheckpointEnabled == nil {
-		return true
-	}
-	return *meta.RecoveryCheckpointEnabled
+	return cfg.AutoRecoveryCheckpointEnabled()
 }
 
 func blankTabSessionPathHasNoContent(tab *WorkspaceTab) bool {
@@ -3358,12 +3340,8 @@ func (a *App) buildTabControllerWithContextAdmissionHeld(tab *WorkspaceTab, load
 
 	a.bindControllerDisplayRecorder(ctrl)
 	configureControllerRuntime(ctrl, nil, buildRuntime)
-	// Restore the Auto Guard preference. Missing metadata defaults on. Tab state
-	// is set when the session path is bound (below) or at new-tab creation.
-	a.mu.RLock()
-	recoveryEnabled := tab.recoveryCheckpointEnabled
-	a.mu.RUnlock()
-	ctrl.SetRecoveryCheckpointEnabled(recoveryEnabled)
+	// Auto Guard follows the controller config kill switch only.
+	ctrl.SetRecoveryCheckpointEnabled(desktopDefaultRecoveryCheckpointForRoot(tab.WorkspaceRoot))
 
 	acquiredLeaseKey := ""
 	restoredRuntime := buildRuntime
@@ -3491,16 +3469,6 @@ func (a *App) buildTabControllerWithContextAdmissionHeld(tab *WorkspaceTab, load
 				return
 			}
 			a.persistTabSessionPath(tab, path)
-			// Prefer the session meta's recovery preference over the tab default
-			// when resuming an existing conversation.
-			if meta, ok, err := agent.LoadBranchMeta(path); err == nil && ok {
-				a.mu.Lock()
-				if !a.tabBuildSupersededLocked(tab, buildGeneration) {
-					tab.recoveryCheckpointEnabled = recoveryCheckpointFromMeta(meta)
-					ctrl.SetRecoveryCheckpointEnabled(tab.recoveryCheckpointEnabled)
-				}
-				a.mu.Unlock()
-			}
 			a.mu.RLock()
 			indexScope := tab.Scope
 			indexRoot := tab.WorkspaceRoot
@@ -8188,8 +8156,8 @@ func saveTabSessionMetaSnapshot(snap tabSessionMetaSnapshot) error {
 	m.TokenMode = persistedTabTokenMode(snap.tokenMode)
 	m.Mode = persistedTabMode(snap.mode)
 	m.ToolApprovalMode = persistedToolApprovalMode(snap.toolApprovalMode)
-	recoveryEnabled := snap.recoveryCheckpointEnabled
-	m.RecoveryCheckpointEnabled = &recoveryEnabled
+	// Do not persist per-session Auto Guard toggles; kill switch is config-only.
+	m.RecoveryCheckpointEnabled = nil
 	m.Goal = strings.TrimSpace(snap.goal)
 	if err := agent.SaveBranchMetaPreserveUpdated(snap.path, m); err != nil {
 		return err

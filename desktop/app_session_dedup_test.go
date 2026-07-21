@@ -720,8 +720,6 @@ func TestNewSessionUsesFreshTopicIdentity(t *testing.T) {
 	tab.TopicID = oldTopicID
 	tab.TopicTitle = oldTopicTitle
 	tab.SessionPath = oldPath
-	ctrl.SetRecoveryCheckpointEnabled(false)
-	tab.recoveryCheckpointEnabled = false
 	app.projectTreeChangedHook = func() {}
 
 	if err := app.NewSession(); err != nil {
@@ -737,8 +735,8 @@ func TestNewSessionUsesFreshTopicIdentity(t *testing.T) {
 	if newPath == "" || filepath.Clean(newPath) == filepath.Clean(oldPath) {
 		t.Fatalf("new session path = %q, want fresh path distinct from %q", newPath, oldPath)
 	}
-	if !ctrl.RecoveryCheckpointEnabled() || !tab.recoveryCheckpointEnabled {
-		t.Fatal("new session did not restore and synchronize the configured recovery default")
+	if !ctrl.RecoveryCheckpointEnabled() {
+		t.Fatal("new session should keep Auto Guard armed from config")
 	}
 
 	if err := os.WriteFile(newPath, []byte(`{"role":"user","content":"new prompt"}`+"\n"), 0o644); err != nil {
@@ -761,9 +759,6 @@ func TestNewSessionUsesFreshTopicIdentity(t *testing.T) {
 	}
 	if newMeta.TopicID != tab.TopicID || newMeta.TopicTitle != "new prompt" {
 		t.Fatalf("new session meta = %+v, want topic %q titled new prompt", newMeta, tab.TopicID)
-	}
-	if newMeta.RecoveryCheckpointEnabled == nil || !*newMeta.RecoveryCheckpointEnabled {
-		t.Fatalf("new session recovery preference = %+v, want true", newMeta.RecoveryCheckpointEnabled)
 	}
 }
 

@@ -992,47 +992,23 @@ func TestSetDefaultToolApprovalModePersistsToUserConfig(t *testing.T) {
 	}
 }
 
-func TestSetDefaultAutoRecoveryCheckpointPersistsAndUpdatesNewSessions(t *testing.T) {
+func TestAutoRecoveryCheckpointIsConfigOnlyKillSwitch(t *testing.T) {
 	isolateDesktopUserDirs(t)
 
-	dir := config.SessionDir()
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatalf("mkdir session dir: %v", err)
+	// Advanced kill switch lives on [agent].auto_recovery_checkpoint only.
+	// Desktop no longer exposes a separate Settings toggle or per-tab meta flag.
+	if !desktopDefaultRecoveryCheckpoint() {
+		t.Fatal("default Auto Guard kill switch should be on")
 	}
-	ctrl := control.New(control.Options{
-		SessionDir: dir, SessionPath: filepath.Join(dir, "recovery-settings-old.jsonl"),
-		RecoveryCheckpointEnabled: true,
-	})
-	ctrl.SetRecoveryCheckpointEnabled(true)
-	defer ctrl.Close()
-	app := NewApp()
-	app.setTestCtrl(ctrl, "deepseek-flash/deepseek-v4-flash")
-	if !app.Settings().DefaultAutoRecoveryCheckpoint {
-		t.Fatal("Settings().DefaultAutoRecoveryCheckpoint default = false, want true")
+	cfgPath := config.UserConfigPath()
+	if err := os.MkdirAll(filepath.Dir(cfgPath), 0o755); err != nil {
+		t.Fatalf("mkdir config: %v", err)
 	}
-	if err := app.SetDefaultAutoRecoveryCheckpoint(false); err != nil {
-		t.Fatalf("SetDefaultAutoRecoveryCheckpoint: %v", err)
+	if err := os.WriteFile(cfgPath, []byte("[agent]\nauto_recovery_checkpoint = \"off\"\n"), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
 	}
-	if app.Settings().DefaultAutoRecoveryCheckpoint {
-		t.Fatal("Settings().DefaultAutoRecoveryCheckpoint = true, want false")
-	}
-	if !ctrl.RecoveryCheckpointEnabled() {
-		t.Fatal("changing the default modified the current session preference")
-	}
-	ctrl.SetFreshSessionPath(filepath.Join(dir, "recovery-settings-new.jsonl"))
-	if ctrl.RecoveryCheckpointEnabled() {
-		t.Fatal("new session did not observe the updated recovery default")
-	}
-	cfg := config.LoadForEdit(config.UserConfigPath())
-	if cfg.Desktop.DefaultAutoRecoveryCheckpoint != nil || cfg.Agent.AutoRecoveryCheckpoint != "off" {
-		t.Fatalf("Auto Guard config was not consolidated: desktop=%+v agent=%q", cfg.Desktop.DefaultAutoRecoveryCheckpoint, cfg.Agent.AutoRecoveryCheckpoint)
-	}
-	project := t.TempDir()
-	if err := os.WriteFile(filepath.Join(project, "reasonix.toml"), []byte("[desktop]\ndefault_auto_recovery_checkpoint = true\n"), 0o644); err != nil {
-		t.Fatalf("write project config: %v", err)
-	}
-	if desktopDefaultRecoveryCheckpointForRoot(project) {
-		t.Fatal("project config overrode the user-global desktop recovery default")
+	if desktopDefaultRecoveryCheckpoint() {
+		t.Fatal("agent.auto_recovery_checkpoint=off should disable Auto Guard")
 	}
 }
 

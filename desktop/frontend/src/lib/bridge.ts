@@ -169,10 +169,6 @@ export interface AppBindings {
   ApproveTab(tabID: string, id: string, allow: boolean, session: boolean, persist: boolean): Promise<void>;
   ResolveRecovery(id: string, action: string, feedback: string): Promise<void>;
   ResolveRecoveryTab(tabID: string, id: string, action: string, feedback: string): Promise<void>;
-  SetRecoveryCheckpointEnabled(enabled: boolean): Promise<void>;
-  SetRecoveryCheckpointEnabledTab(tabID: string, enabled: boolean): Promise<void>;
-  RecoveryCheckpointEnabled(): Promise<boolean>;
-  RecoveryCheckpointEnabledTab(tabID: string): Promise<boolean>;
   AnswerQuestion(id: string, answers: QuestionAnswer[]): Promise<void>;
   AnswerQuestionForTab(tabID: string, id: string, answers: QuestionAnswer[]): Promise<void>;
   ReplayPendingPrompts(): Promise<void>;
@@ -353,7 +349,7 @@ export interface AppBindings {
   SetMaxParallelWriters(n: number): Promise<void>;
   SetAutoPlan(mode: string): Promise<void>;
   SetDefaultToolApprovalMode(mode: string): Promise<void>;
-  SetDefaultAutoRecoveryCheckpoint(enabled: boolean): Promise<void>;
+
   SaveProvider(p: ProviderView): Promise<void>;
   SaveProviderWithKey(p: ProviderView, key: string): Promise<string>;
   AddOfficialProviderAccess(kind: string, key: string): Promise<string>;
@@ -762,7 +758,7 @@ function bridgeBreadcrumb(method: string): string {
     return `turn ${method}`;
   if (/^(SetModel|SetEffort|SetTokenMode|SetDefaultModel|SetPlannerModel|SetSubagentModel|SetSubagentEffort|SetMaxSubagentDepth|SetMaxSubagentConcurrency|SetMaxParallelWriters)/.test(method))
     return `model ${method}`;
-  if (/^(SetDesktop|SetCloseBehavior|SetDisplayMode|SetStatusBar|SetExpandThinking|SetAutoPlan|SetDefaultToolApprovalMode|SetDefaultAutoRecoveryCheckpoint|SetReasoningLanguage)/.test(method))
+  if (/^(SetDesktop|SetCloseBehavior|SetDisplayMode|SetStatusBar|SetExpandThinking|SetAutoPlan|SetDefaultToolApprovalMode|SetReasoningLanguage)/.test(method))
     return `settings ${method}`;
   if (/^(SaveProvider|AddOfficialProviderAccess|AddProviderPresetAccess|ResetProviderPresetAccess|RemoveProviderAccess|DeleteProvider|SaveProviderKey|SetProviderKey|ClearProviderKey|FetchProviderModels|ConnectKey)/.test(method))
     return `provider ${method}`;
@@ -1459,7 +1455,6 @@ function makeMockApp(): AppBindings {
     statusBarStyle: "text",
     statusBarItems: [...DEFAULT_STATUS_BAR_ITEMS],
     defaultToolApprovalMode: "auto",
-    defaultAutoRecoveryCheckpoint: true,
     checkUpdates: true,
     telemetry: true,
     metrics: true,
@@ -2402,18 +2397,6 @@ function makeMockApp(): AppBindings {
             text: `recovery preview answered: ${action}`,
           });
           emitMockTurnDone();
-        },
-        async SetRecoveryCheckpointEnabled(enabled) {
-          const active = mockTabs.find((tab) => tab.active);
-          await this.SetRecoveryCheckpointEnabledTab(active?.id ?? "", enabled);
-        },
-        async SetRecoveryCheckpointEnabledTab(_tabID, _enabled) {},
-        async RecoveryCheckpointEnabled() {
-          const active = mockTabs.find((tab) => tab.active);
-          return this.RecoveryCheckpointEnabledTab(active?.id ?? "");
-        },
-        async RecoveryCheckpointEnabledTab(_tabID) {
-          return true;
         },
         async AnswerQuestion(_id, answers) {
       if (!pendingAskPreview) return;
@@ -3663,9 +3646,6 @@ function makeMockApp(): AppBindings {
     },
     async SetDefaultToolApprovalMode(mode: string) {
       settings.defaultToolApprovalMode = normalizeToolApprovalMode(mode);
-    },
-    async SetDefaultAutoRecoveryCheckpoint(enabled: boolean) {
-      settings.defaultAutoRecoveryCheckpoint = Boolean(enabled);
     },
     async SaveProvider(p: ProviderView) {
       p.added = true;

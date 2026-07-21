@@ -42,16 +42,18 @@ Auto still respects:
 
 ### Auto Guard
 
-Auto includes **Auto Guard**, a host-side safety boundary:
+Auto includes **Auto Guard**, a host-side safety boundary. Product rule:
 
-- Ordinary workspace reads and edits stay on the fast path with no extra model calls.
+> Auto handles ordinary operations automatically; it only asks when risk rises, the change scope expands, or it cannot safely recover after repeated failures.
+
+- Ordinary workspace reads and edits stay on the fast path with no extra model calls and no extra clicks.
 - Deterministically high-risk mutations are checked before execution, even when no earlier tool failed. This includes destructive operations, dependency/configuration changes, installs, external mutations, and publish/push-style commands.
 - After a tool or verification failure, read-only diagnosis may continue; one host-proven same-strategy verification retry can run automatically.
-- After a failure, an isolated reviewer evaluates ambiguous changes. A rejection is first returned to the same root or sub-agent with the reason so it can diagnose or narrow the action; three consecutive rejected proposals escalate to a human.
-- High-risk, expanded-scope, explicit strategy changes, repeated recovery failures, and reviewer escalation show one card: **Continue once** / **Revise action**. Whole-task cancellation remains the ordinary Stop control.
-- **Continue once** authorizes only the waiting call. Grants and stale cards are never replayed after a restart; the next call is classified again.
+- After a failure, a bounded isolated reviewer evaluates only ambiguous recovery mutations. A rejection is returned to the same root or sub-agent with the reason; three consecutive rejected proposals escalate to a human. Reviewer errors fail closed immediately.
+- When confirmation is required, one card shows a short reason and the next action with two one-click choices: **Continue this step** / **Try another approach**. Optional free-text guidance is collapsed by default. Whole-task cancellation remains the ordinary Stop control.
+- **Continue this step** authorizes only the waiting call (never a session or permanent grant). Stale cards are never replayed after a restart; the next call is classified again.
 - Headless runs fail closed when a human decision is required.
-- Effective only in Auto. The legacy `auto_recovery_checkpoint = "off"` setting remains as an advanced compatibility kill switch.
+- Effective only in Auto. Ask and YOLO keep their existing approval semantics. Advanced config `[agent].auto_recovery_checkpoint = "off"` remains a compatibility kill switch and is not shown in ordinary Settings.
 
 Auto Guard is not a filesystem checkpoint or rollback mechanism. Use a clean Git branch or disposable worktree when changes must be reversible. Plan confirmation decides whether to start execution; Auto Guard evaluates action boundaries during execution.
 

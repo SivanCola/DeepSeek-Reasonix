@@ -274,8 +274,7 @@ type SettingsView struct {
 	StatusBarStyle          string               `json:"statusBarStyle"`
 	StatusBarItems          []string             `json:"statusBarItems"`
 	DefaultToolApprovalMode string               `json:"defaultToolApprovalMode"`
-	// DefaultAutoRecoveryCheckpoint is the legacy new-session Auto Guard default.
-	DefaultAutoRecoveryCheckpoint bool   `json:"defaultAutoRecoveryCheckpoint"`
+
 	CheckUpdates                  bool   `json:"checkUpdates"`
 	Telemetry                     bool   `json:"telemetry"`
 	Metrics                       bool   `json:"metrics"`
@@ -906,7 +905,6 @@ func (a *App) Settings() SettingsView {
 		StatusBarStyle:                cfg.DesktopStatusBarStyle(),
 		StatusBarItems:                cfg.DesktopStatusBarItems(),
 		DefaultToolApprovalMode:       cfg.DesktopDefaultToolApprovalMode(),
-		DefaultAutoRecoveryCheckpoint: cfg.DesktopDefaultAutoRecoveryCheckpoint(),
 		CheckUpdates:                  cfg.DesktopCheckUpdates(),
 		Telemetry:                     cfg.DesktopTelemetry(),
 		Metrics:                       cfg.DesktopMetrics(),
@@ -1939,31 +1937,6 @@ func (a *App) SetDefaultToolApprovalMode(mode string) error {
 	})
 }
 
-// SetDefaultAutoRecoveryCheckpoint updates the legacy Auto Guard default. The
-// setting is retained for API/config compatibility but hidden from the main UI.
-func (a *App) SetDefaultAutoRecoveryCheckpoint(enabled bool) error {
-	if err := a.applyConfigOnly(func(c *config.Config) error {
-		return c.SetDesktopDefaultAutoRecoveryCheckpoint(enabled)
-	}); err != nil {
-		return err
-	}
-	// Existing sessions retain their current preference, but controller-side
-	// /new must observe the updated default without requiring a rebuild.
-	a.mu.RLock()
-	ctrls := make([]control.SessionAPI, 0, len(a.tabs))
-	for _, tab := range a.tabs {
-		if tab != nil && tab.Ctrl != nil {
-			ctrls = append(ctrls, tab.Ctrl)
-		}
-	}
-	a.mu.RUnlock()
-	for _, ctrl := range ctrls {
-		if setter, ok := ctrl.(interface{ SetRecoveryCheckpointDefaultEnabled(bool) }); ok {
-			setter.SetRecoveryCheckpointDefaultEnabled(enabled)
-		}
-	}
-	return nil
-}
 func officialProviderTemplate(kind, pricingLanguage string) ([]config.ProviderEntry, string, error) {
 	switch strings.ToLower(strings.TrimSpace(kind)) {
 	case "deepseek", "deepseek-official":

@@ -2895,17 +2895,15 @@ func (c *Controller) forkNamed(turn int, name string, switchToFork bool) (string
 	if err := sess.Save(newPath); err != nil {
 		return "", c.rewindFail(err)
 	}
-	recoveryEnabled := c.RecoveryCheckpointEnabled()
 	forkPreview, forkTurns := agent.SessionPreviewFromMessages(forked)
 	if err := agent.SaveBranchMeta(newPath, agent.BranchMeta{
-		Name:                      strings.TrimSpace(name),
-		ParentID:                  parentID,
-		ForkTurn:                  turn,
-		ForkMessageIndex:          boundary,
-		Preview:                   forkPreview,
-		Turns:                     forkTurns,
-		SchemaVersion:             agent.BranchMetaCountsVersion,
-		RecoveryCheckpointEnabled: &recoveryEnabled,
+		Name:             strings.TrimSpace(name),
+		ParentID:         parentID,
+		ForkTurn:         turn,
+		ForkMessageIndex: boundary,
+		Preview:          forkPreview,
+		Turns:            forkTurns,
+		SchemaVersion:    agent.BranchMetaCountsVersion,
 	}); err != nil {
 		return "", c.rewindFail(err)
 	}
@@ -2980,17 +2978,15 @@ func (c *Controller) Branch(name string) (string, error) {
 	if err := sess.Save(newPath); err != nil {
 		return "", c.rewindFail(err)
 	}
-	recoveryEnabled := c.RecoveryCheckpointEnabled()
 	branchPreview, branchTurns := agent.SessionPreviewFromMessages(branched)
 	if err := agent.SaveBranchMeta(newPath, agent.BranchMeta{
-		Name:                      strings.TrimSpace(name),
-		ParentID:                  parentID,
-		ForkTurn:                  -1,
-		ForkMessageIndex:          len(branched),
-		Preview:                   branchPreview,
-		Turns:                     branchTurns,
-		SchemaVersion:             agent.BranchMetaCountsVersion,
-		RecoveryCheckpointEnabled: &recoveryEnabled,
+		Name:             strings.TrimSpace(name),
+		ParentID:         parentID,
+		ForkTurn:         -1,
+		ForkMessageIndex: len(branched),
+		Preview:          branchPreview,
+		Turns:            branchTurns,
+		SchemaVersion:    agent.BranchMetaCountsVersion,
 	}); err != nil {
 		return "", c.rewindFail(err)
 	}
@@ -3579,8 +3575,7 @@ func (c *Controller) recoverSnapshotConflict(path string, saveErr error, forceRe
 	if c.sessionRecoveryMeta != nil {
 		meta = c.sessionRecoveryMeta(req)
 	}
-	recoveryEnabled := c.RecoveryCheckpointEnabled()
-	meta.RecoveryCheckpointEnabled = &recoveryEnabled
+	meta.RecoveryCheckpointEnabled = nil
 	info, err := c.executor.Session().SaveRecoveryBranch(agent.RecoveryBranchOptions{
 		OriginalPath: path,
 		Reason:       reason,
@@ -3640,8 +3635,7 @@ func (c *Controller) recoverShutdownSnapshot(path string, saveErr error) (string
 	if c.sessionRecoveryMeta != nil {
 		meta = c.sessionRecoveryMeta(req)
 	}
-	recoveryEnabled := c.RecoveryCheckpointEnabled()
-	meta.RecoveryCheckpointEnabled = &recoveryEnabled
+	meta.RecoveryCheckpointEnabled = nil
 	info, err := c.executor.Session().SaveShutdownRecoveryBranch(agent.RecoveryBranchOptions{
 		OriginalPath: path,
 		Reason:       reason,
