@@ -2600,7 +2600,7 @@ export const zh: Record<DictKey, string> = {
   "updater.releaseNotes": "更新说明",
   "updater.downloadUpdate": "下载更新",
   "updater.downloaded": "更新 {v} 已下载。",
-  "updater.restartInstall": "重启安装",
+  "updater.restartInstall": "安装并重启",
   "updater.installNow": "立即更新",
   "updater.goToDownload": "前往下载页",
   "updater.macHint": "当前 macOS 构建暂不支持自动安装，请前往下载页手动安装。",

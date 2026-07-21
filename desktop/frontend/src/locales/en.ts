@@ -2597,7 +2597,7 @@ export const en = {
   "updater.releaseNotes": "Release notes",
   "updater.downloadUpdate": "Download update",
   "updater.downloaded": "Update {v} has been downloaded.",
-  "updater.restartInstall": "Restart to install",
+  "updater.restartInstall": "Install and restart",
   "updater.installNow": "Update now",
   "updater.goToDownload": "Go to download page",
   "updater.macHint": "Automatic install isn't available for this macOS build — please download and install manually.",

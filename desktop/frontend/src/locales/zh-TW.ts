@@ -1798,7 +1798,7 @@ export const zhTW: Record<DictKey, string> = {
   "updater.releaseNotes": "更新說明",
   "updater.downloadUpdate": "下載更新",
   "updater.downloaded": "更新 {v} 已下載。",
-  "updater.restartInstall": "重新啟動並安裝",
+  "updater.restartInstall": "安裝並重新啟動",
   "updater.installNow": "立即更新",
   "updater.goToDownload": "前往下載頁",
   "updater.macHint": "目前 macOS 建置暫不支援自動安裝，請前往下載頁手動安裝。",
