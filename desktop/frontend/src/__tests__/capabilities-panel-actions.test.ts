@@ -82,7 +82,9 @@ function ok(value: unknown, message: string) {
           return 1;
         },
         InstallMCPServer: async (input) => {
-          const toolCount = await window.go!.main.App.AddMCPServer(input);
+          const app = window.go?.main?.App;
+          if (!app) throw new Error("missing App bindings");
+          const toolCount = await app.AddMCPServer(input);
           return { name: input.name, state: "ready", toolCount, action: "none", message: "ready" };
         },
       } as Partial<AppBindings> as AppBindings,
@@ -352,17 +354,6 @@ function setInputValue(input: HTMLInputElement, value: string) {
   const eventCtor = win?.Event ?? Event;
   input.dispatchEvent(new eventCtor("input", { bubbles: true }));
   input.dispatchEvent(new eventCtor("change", { bubbles: true }));
-}
-
-function setTextareaValue(textarea: HTMLTextAreaElement, value: string) {
-  const win = textarea.ownerDocument.defaultView;
-  const previous = textarea.value;
-  const setter = Object.getOwnPropertyDescriptor((win?.HTMLTextAreaElement ?? HTMLTextAreaElement).prototype, "value")?.set;
-  setter?.call(textarea, value);
-  (textarea as HTMLTextAreaElement & { _valueTracker?: { setValue: (next: string) => void } })._valueTracker?.setValue(previous);
-  const eventCtor = win?.Event ?? Event;
-  textarea.dispatchEvent(new eventCtor("input", { bubbles: true }));
-  textarea.dispatchEvent(new eventCtor("change", { bubbles: true }));
 }
 
 ok(
