@@ -89,13 +89,20 @@ export class PackageRepo {
       if (existing.publisher_id !== user.id && user.role !== "admin") {
         throw new ApiError(403, "not_owner", "That name belongs to another publisher.");
       }
+      // Changing an approved package's capability class changes what users
+      // consent to install. Non-admin publishers may request that change, but
+      // it must return to moderation and must not retain a verified badge.
+      const publisherChangedKind = user.role !== "admin" && existing.kind !== input.kind;
+      const status = publisherChangedKind && existing.status === "active" ? "pending" : existing.status;
+      const verified = publisherChangedKind ? 0 : existing.verified;
       const version = input.version || nextPatch(existing.latest_version);
       await this.insertVersion(existing.id, version, input, now);
       await this.db
         .prepare(
           `UPDATE packages SET kind = ?1, summary = ?2, description = ?3, source = ?4, install_kind = ?5,
-             homepage = ?6, repo_url = ?7, tags = ?8, latest_version = ?9, updated_at = ?10
-           WHERE id = ?11`,
+             homepage = ?6, repo_url = ?7, tags = ?8, latest_version = ?9, updated_at = ?10,
+             status = ?11, verified = ?12
+           WHERE id = ?13`,
         )
         .bind(
           input.kind,
@@ -108,6 +115,8 @@ export class PackageRepo {
           input.tags.join(","),
           version,
           now,
+          status,
+          verified,
           existing.id,
         )
         .run();

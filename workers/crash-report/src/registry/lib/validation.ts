@@ -139,11 +139,11 @@ export const PublishSchema = z
           "a plugin source must point at a GitHub plugin repository or path containing reasonix-plugin.json.",
       });
     }
-    if (val.kind === "plugin" && val.installKind !== "auto" && val.installKind !== "plugin") {
+    if (val.installKind !== "auto" && val.installKind !== val.kind) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ["installKind"],
-        message: "installKind must be plugin (or omitted) when kind is plugin.",
+        message: "installKind must match kind (or be omitted).",
       });
     }
   })

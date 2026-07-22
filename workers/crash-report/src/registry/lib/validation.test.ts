@@ -77,6 +77,19 @@ describe("PublishSchema source", () => {
       parse({ kind: "plugin", installKind: "mcp", source: "https://github.com/o/r" }).success,
     ).toBe(false);
   });
+
+  it("rejects plugin installers hidden behind skill or MCP package kinds", () => {
+    expect(
+      parse({
+        kind: "skill",
+        installKind: "plugin",
+        source: "https://github.com/o/r/tree/main/plugin",
+      }).success,
+    ).toBe(false);
+    expect(
+      parse({ kind: "mcp", installKind: "plugin", source: "https://github.com/o/r" }).success,
+    ).toBe(false);
+  });
 });
 
 describe("ListQuerySchema kind", () => {
