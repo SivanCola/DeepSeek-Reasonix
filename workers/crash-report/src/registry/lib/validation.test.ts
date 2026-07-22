@@ -72,6 +72,23 @@ describe("PublishSchema source", () => {
     }
   });
 
+  it("describes every plugin manifest format the installer supports", () => {
+    const result = parse({
+      kind: "plugin",
+      installKind: "plugin",
+      source: "https://example.com/plugin",
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      const sourceIssue = result.error.issues.find((issue) => issue.path[0] === "source");
+      expect(sourceIssue?.message).toContain("reasonix-plugin.json");
+      expect(sourceIssue?.message).toContain(".codex-plugin/plugin.json");
+      expect(sourceIssue?.message).toContain(".claude-plugin/plugin.json");
+      expect(sourceIssue?.message).toContain(".claude-plugin/marketplace.json");
+    }
+  });
+
   it("rejects a conflicting installer for kind=plugin", () => {
     expect(
       parse({ kind: "plugin", installKind: "mcp", source: "https://github.com/o/r" }).success,

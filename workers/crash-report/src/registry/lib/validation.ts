@@ -136,7 +136,7 @@ export const PublishSchema = z
         code: z.ZodIssueCode.custom,
         path: ["source"],
         message:
-          "a plugin source must point at a GitHub plugin repository or path containing reasonix-plugin.json.",
+          "a plugin source must point at a GitHub repository or path containing reasonix-plugin.json, .codex-plugin/plugin.json, .claude-plugin/plugin.json, or a supported .claude-plugin/marketplace.json.",
       });
     }
     if (val.installKind !== "auto" && val.installKind !== val.kind) {

@@ -111,8 +111,8 @@ const desc = "Browse, publish, and install community skills, plugins, and MCP se
             <input name="summary" maxlength="200" placeholder="What does it do?" />
           </label>
           <label><span class="l-en">Source</span><span class="l-zh">来源</span>
-            <input name="source" required pattern="(https?://[^ ]+|git:github[.]com/[^ ]+|@?[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)?)" title="A URL (SKILL.md, reasonix-plugin.json, .mcp.json, repository, or repository path), a git:github.com/… shorthand, or an MCP package name — not free text or a local path." placeholder="https://… SKILL.md · plugin repo · .mcp.json · MCP package" />
-            <small class="pub-hint"><span class="l-en">Plugins must point to a GitHub repository or path containing <code>reasonix-plugin.json</code>.</span><span class="l-zh">插件必须指向包含 <code>reasonix-plugin.json</code> 的 GitHub 仓库或路径。</span></small>
+            <input name="source" required pattern="(https?://[^ ]+|git:github[.]com/[^ ]+|@?[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)?)" title="A URL (SKILL.md, a Reasonix/Codex/Claude plugin repository, .mcp.json, repository path), a git:github.com/… shorthand, or an MCP package name — not free text or a local path." placeholder="https://… SKILL.md · plugin repo · .mcp.json · MCP package" />
+            <small class="pub-hint"><span class="l-en">Plugins must point to a GitHub repository or path containing <code>reasonix-plugin.json</code>, <code>.codex-plugin/plugin.json</code>, <code>.claude-plugin/plugin.json</code>, or a supported <code>.claude-plugin/marketplace.json</code>.</span><span class="l-zh">插件必须指向包含 <code>reasonix-plugin.json</code>、<code>.codex-plugin/plugin.json</code>、<code>.claude-plugin/plugin.json</code>，或受支持的 <code>.claude-plugin/marketplace.json</code> 的 GitHub 仓库或路径。</span></small>
           </label>
           <div class="pub-row">
             <label><span class="l-en">Repo (optional)</span><span class="l-zh">仓库(可选)</span>
