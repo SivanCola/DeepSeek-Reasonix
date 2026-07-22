@@ -36,6 +36,16 @@ function wait(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+async function waitForSelector(container: ParentNode, selector: string, timeoutMs = 1_000): Promise<Element> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const element = container.querySelector(selector);
+    if (element) return element;
+    await act(async () => wait(10));
+  }
+  throw new Error(`Timed out waiting for ${selector}`);
+}
+
 console.log("\nline-number code viewer");
 
 const repeatedMatches = findCodeMatches("x\nx\nx", "x").matches;
@@ -224,8 +234,10 @@ await act(async () => {
       <CodeViewer value="const unchanged = true;" language="typescript" />
     </LocaleProvider>,
   );
-  await flush();
 });
+// React.lazy may resolve after more than one task under React 19. Wait for the
+// real viewer instead of asserting against the transient Suspense fallback.
+await waitForSelector(defaultContainer, "pre.code.hljs");
 ok(defaultContainer.querySelector("pre.code.hljs") != null, "keeps the established viewer as the default seam");
 ok(defaultContainer.querySelector(".code--lines") == null, "requires an explicit line-number opt-in");
 ok(defaultContainer.querySelector(".code-block__copy") != null, "keeps copy available on default code blocks");

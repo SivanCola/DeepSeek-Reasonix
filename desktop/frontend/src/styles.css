@@ -34197,18 +34197,23 @@ body > .mermaid-diagram--fullscreen {
 .theme-gallery__menu button:hover { background: var(--bg-soft); }
 .theme-gallery__menu-danger { color: var(--err, #e55) !important; }
 .theme-gallery__editor-overlay {
-  position: fixed; inset: 0; z-index: var(--z-menu);
+  position: fixed; inset: 0; z-index: var(--z-modal);
   background: color-mix(in srgb, #000 58%, transparent);
   display: grid; place-items: center; padding: 20px;
+  overflow: hidden;
+  -webkit-app-region: no-drag;
 }
 .theme-gallery__editor {
   width: min(1180px, 100%);
   height: min(88vh, 860px);
-  max-height: 100%;
+  height: min(88dvh, 860px);
+  max-height: calc(100vh - 40px);
+  max-height: calc(100dvh - 40px);
   overflow: hidden;
   background: var(--panel); border-radius: var(--r-l, 12px);
   padding: 0; border: 1px solid var(--border);
   box-shadow: 0 24px 72px color-mix(in srgb, #000 42%, transparent);
+  container: theme-editor / inline-size;
 }
 
 /* Isolated preview surface */
@@ -34589,6 +34594,7 @@ body > .mermaid-diagram--fullscreen {
 }
 .theme-editor__setting-row > .set-seg,
 .theme-editor__setting-row > .theme-editor__recipe-groups { flex: 1; min-width: 0; }
+.theme-editor__setting-row > .set-seg .set-seg__btn { flex: 1; min-width: 0; }
 .theme-editor__recipe-groups { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
 .theme-editor__recipe-groups .set-seg,
 .theme-editor__base-styles { width: 100%; }
@@ -34671,20 +34677,40 @@ body > .mermaid-diagram--fullscreen {
 }
 .theme-editor__warn ul { margin: 6px 0 0; padding-left: 18px; }
 
-@media (max-width: 920px) {
+@container theme-editor (max-width: 920px) {
   .theme-editor__body { grid-template-columns: 1fr; overflow-y: auto; }
   .theme-editor__controls { overflow: visible; }
   .theme-editor__live { border-left: 0; border-top: 1px solid var(--border-soft); }
   .theme-editor__scene-grid { grid-template-columns: 1fr; }
 }
 
-@media (max-width: 620px) {
-  .theme-gallery__editor-overlay { padding: 8px; }
+@container theme-editor (max-width: 620px) {
   .theme-editor__fields--grid,
   .theme-editor__recipe-groups { grid-template-columns: 1fr; }
   .theme-editor__setting-row { align-items: flex-start; flex-direction: column; }
   .theme-editor__setting-row > span { flex-basis: auto; }
   .theme-editor__setting-hint { margin-left: 0; }
+  .theme-editor__base-styles {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .theme-gallery__editor > .theme-editor__actions .btn { flex: 1 1 140px; }
+}
+
+@container theme-editor (max-width: 420px) {
+  .theme-editor__base-styles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .theme-editor__header,
+  .theme-editor__controls,
+  .theme-editor__live,
+  .theme-gallery__editor > .theme-editor__actions { padding-left: 12px; padding-right: 12px; }
+}
+
+@media (max-width: 620px) {
+  .theme-gallery__editor-overlay { padding: 8px; }
+  .theme-gallery__editor {
+    max-height: calc(100vh - 16px);
+    max-height: calc(100dvh - 16px);
+  }
 }
 
 /* Restore-default control must stay readable even under broken packs */
