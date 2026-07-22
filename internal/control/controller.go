@@ -4637,9 +4637,20 @@ func (c *Controller) ConnectMCPServer(e config.PluginEntry) (int, error) {
 	return c.connectMCPServer(e)
 }
 
+// RegisterMCPServerOnDemand restores a configured server's cached provider
+// surface without forcing a handshake. It is the durable-enable counterpart to
+// ConnectMCPServer, which remains the explicit install/retry operation.
+func (c *Controller) RegisterMCPServerOnDemand(e config.PluginEntry) (int, error) {
+	return c.mcp.registerSpecOnDemand(c.mcpSpec(e))
+}
+
 // connectMCPServer expands an entry's ${VARS}, applies the known-server
 // overrides scoped to the workspace, and connects it live via the mcp manager.
 func (c *Controller) connectMCPServer(e config.PluginEntry) (int, error) {
+	return c.mcp.connectSpec(c.mcpSpec(e))
+}
+
+func (c *Controller) mcpSpec(e config.PluginEntry) plugin.Spec {
 	exp := e.ExpandedPlugin()
 	configSource := strings.TrimSpace(string(exp.Source))
 	spec := plugin.ApplyKnownOverrides(plugin.Spec{
@@ -4666,7 +4677,7 @@ func (c *Controller) connectMCPServer(e config.PluginEntry) (int, error) {
 			spec.ProcessMode = plugin.MCPProcessHost
 		}
 	}
-	return c.mcp.connectSpec(spec)
+	return spec
 }
 
 func controllerMCPTimeout(seconds int) time.Duration {

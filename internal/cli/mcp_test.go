@@ -123,6 +123,24 @@ func TestParseMCPAddDashDashArgv(t *testing.T) {
 	}
 }
 
+func TestParseMCPAddDashDashNamesLauncherPackageNotTrailingArgument(t *testing.T) {
+	e, err := parseMCPAdd([]string{"--", "npx", "-y", "@modelcontextprotocol/server-filesystem", "/srv/shared"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if e.Name != "server-filesystem" {
+		t.Fatalf("name = %q, want server-filesystem", e.Name)
+	}
+
+	python, err := parseMCPAdd([]string{"--", "python", "-m", "mcp_server_time", "--local-timezone=UTC"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if python.Name != "mcp-server-time" {
+		t.Fatalf("python module name = %q, want mcp-server-time", python.Name)
+	}
+}
+
 func TestParseMCPAddBareURL(t *testing.T) {
 	e, err := parseMCPAdd([]string{"https://mcp.example.com/path"})
 	if err != nil {

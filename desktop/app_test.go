@@ -7304,6 +7304,42 @@ tier = "lazy"
 	t.Fatalf("time missing after disable: %+v", view.Servers)
 }
 
+func TestSetMCPServerEnabledRestoresOnDemandWithoutConnecting(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	t.Setenv("REASONIX_CACHE_HOME", t.TempDir())
+	dir := robustTempDir(t)
+	t.Chdir(dir)
+	if err := os.WriteFile(filepath.Join(dir, "reasonix.toml"), []byte(`
+[[plugins]]
+name = "offline"
+type = "http"
+url = "http://127.0.0.1:1/mcp"
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	host := plugin.NewHost()
+	defer host.Close()
+	reg := tool.NewRegistry()
+	ctrl := control.New(control.Options{Host: host, Registry: reg, PluginCtx: context.Background(), WorkspaceRoot: dir})
+	app := NewApp()
+	app.setTestCtrl(ctrl, "")
+	app.tabs["test"].WorkspaceRoot = dir
+
+	if err := app.SetMCPServerEnabled("offline", false); err != nil {
+		t.Fatalf("SetMCPServerEnabled(false): %v", err)
+	}
+	if err := app.SetMCPServerEnabled("offline", true); err != nil {
+		t.Fatalf("SetMCPServerEnabled(true) forced an unavailable connection: %v", err)
+	}
+	if host.HasClient("offline") {
+		t.Fatal("durable enable started the disconnected MCP server")
+	}
+	if _, ok := reg.Get("mcp__offline__connect"); !ok {
+		t.Fatalf("on-demand connect stub missing after enable; names=%v", reg.Names())
+	}
+}
+
 func TestSetMCPServerEnabledSharedHostPreservesSiblingTabs(t *testing.T) {
 	isolateDesktopUserDirs(t)
 	dir := robustTempDir(t)

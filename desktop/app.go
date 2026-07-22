@@ -8185,10 +8185,9 @@ func (a *App) SetMCPServerEnabled(name string, enabled bool) error {
 		return err
 	}
 	if enabled {
-		// Restore cached tools without forcing a process start when possible.
-		// connectConfiguredMCPServerForTab may still connect for servers that
-		// have no schema cache yet; that matches install readiness.
-		_, err := a.connectConfiguredMCPServerForTab(tab, name)
+		// Restore cached tools (or a cache-miss connect stub) without forcing a
+		// process start. Explicit install/retry remains the readiness-probed path.
+		_, err := a.registerConfiguredMCPServerForTab(tab, name)
 		if err == nil {
 			a.mu.Lock()
 			delete(tab.disabledMCP, name)
@@ -8233,7 +8232,7 @@ func (a *App) SetMCPServerEnabled(name string, enabled bool) error {
 	return nil
 }
 
-func (a *App) connectConfiguredMCPServerForTab(tab *WorkspaceTab, name string) (int, error) {
+func (a *App) registerConfiguredMCPServerForTab(tab *WorkspaceTab, name string) (int, error) {
 	a.mu.RLock()
 	var ctrl control.SessionAPI
 	root := ""
@@ -8251,7 +8250,7 @@ func (a *App) connectConfiguredMCPServerForTab(tab *WorkspaceTab, name string) (
 	}
 	for _, p := range cfg.Plugins {
 		if p.Name == name {
-			return ctrl.ConnectMCPServer(p)
+			return ctrl.RegisterMCPServerOnDemand(p)
 		}
 	}
 	return 0, fmt.Errorf("no configured MCP server named %q", name)

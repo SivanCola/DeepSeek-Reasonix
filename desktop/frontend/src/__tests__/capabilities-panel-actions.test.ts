@@ -131,6 +131,12 @@ function ok(value: unknown, message: string) {
 
 const quickCommand = parseMCPQuickDefinition("npx -y chrome-devtools-mcp@latest");
 ok(quickCommand.name === "chrome-devtools-mcp" && quickCommand.transport === "stdio", "quick install should derive a stable name and stdio transport from one command");
+
+const quickFilesystem = parseMCPQuickDefinition('npx -y @modelcontextprotocol/server-filesystem "/srv/shared data"');
+ok(quickFilesystem.name === "server-filesystem", "quick install name should come from the launcher package, not a trailing server argument");
+
+const quickPythonModule = parseMCPQuickDefinition("python -m mcp_server_time --local-timezone=UTC");
+ok(quickPythonModule.name === "mcp-server-time", "python module quick install should derive its name from the module");
 const quickURL = parseMCPQuickDefinition("https://mcp.linear.app/mcp");
 ok(quickURL.name === "mcp" && quickURL.transport === "http", "quick install should derive HTTP transport from a URL");
 const quickJSON = parseMCPQuickDefinition(JSON.stringify({ custom: { command: "uvx", args: ["demo-mcp"] } }));
@@ -278,7 +284,8 @@ const failed = mcpServerLifecycleActions({ ...server("failed"), runtimeState: "i
 ok(failed.showRetryInRow, "failed server row should expose retry");
 
 ok(mcpServerRetryableFromAvailableList(server("initializing")), "connecting server should be included in available-list retry all");
-ok(mcpServerRetryableFromAvailableList({ ...server("deferred"), startIntent: "automatic" }), "automatic idle server should be included in available-list retry all");
+ok(!mcpServerRetryableFromAvailableList({ ...server("deferred"), startIntent: "automatic" }), "healthy on-demand server should not be included in retry all");
+ok(mcpServerRetryableFromAvailableList({ ...server("deferred"), startIntent: "automatic", action: "retry" }), "explicit retry action should remain available for an idle server");
 ok(!mcpServerRetryableFromAvailableList(server("connected")), "connected server should be excluded from available-list retry all");
 ok(!mcpServerRetryableFromAvailableList({ ...server("disabled"), startIntent: "off" }), "disabled server should be excluded from available-list retry all");
 ok(!mcpServerRetryableFromAvailableList({ ...server("failed"), runtimeState: "issue" }), "failed server is handled by the failure banner retry all");

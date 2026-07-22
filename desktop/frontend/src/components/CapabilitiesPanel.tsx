@@ -1533,14 +1533,83 @@ function summarizeSkillDescription(description: string): string {
   return `${normalized.slice(0, 128).trim()}…`;
 }
 
+function tokenizeMCPCommand(raw: string): string[] {
+	const tokens: string[] = [];
+	let token = "";
+	let quote = "";
+	for (let i = 0; i < raw.length; i += 1) {
+		const ch = raw[i];
+		if (quote) {
+			if (ch === quote) {
+				quote = "";
+				continue;
+			}
+			if (ch === "\\" && quote === '"' && i + 1 < raw.length && /["\\]/.test(raw[i + 1])) {
+				token += raw[i + 1];
+				i += 1;
+				continue;
+			}
+			token += ch;
+			continue;
+		}
+		if (ch === '"' || ch === "'") {
+			quote = ch;
+			continue;
+		}
+		if (ch === "\\" && i + 1 < raw.length && /\s/.test(raw[i + 1])) {
+			token += raw[i + 1];
+			i += 1;
+			continue;
+		}
+		if (/\s/.test(ch)) {
+			if (token) tokens.push(token);
+			token = "";
+			continue;
+		}
+		token += ch;
+	}
+	if (token) tokens.push(token);
+	return tokens;
+}
+
+function firstMCPCommandOperand(args: string[]): string {
+	const valueFlags = new Set(["-p", "--package", "-c", "--call", "--node-options", "--python"]);
+	let options = true;
+	for (let i = 0; i < args.length; i += 1) {
+		const arg = args[i];
+		if (options && arg === "--") {
+			options = false;
+			continue;
+		}
+		if (options && arg.startsWith("-")) {
+			if (valueFlags.has(arg)) i += 1;
+			continue;
+		}
+		return arg;
+	}
+	return "";
+}
+
 function quickMCPName(raw: string): string {
-  const withoutQuotes = raw.replace(/["']/g, " ");
-  const tokens = withoutQuotes.split(/\s+/).filter(Boolean);
-  const candidate = [...tokens].reverse().find((token) => !token.startsWith("-")) || "mcp-server";
-  const base = candidate.split(/[\\/]/).pop() || candidate;
-  const unversioned = base.startsWith("@") ? base : base.replace(/@[^@]+$/, "");
-  const sanitized = unversioned.toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
-  return sanitized && !["npx", "uvx", "node", "bunx", "python", "python3"].includes(sanitized) ? sanitized : "mcp-server";
+	const argv = tokenizeMCPCommand(raw);
+	const executable = argv[0]?.split(/[\\/]/).pop()?.toLowerCase().replace(/\.(?:cmd|exe|bat)$/i, "") || "";
+	let candidate = argv[0] || "mcp-server";
+	if (["npx", "bunx", "uvx"].includes(executable)) {
+		candidate = firstMCPCommandOperand(argv.slice(1)) || candidate;
+	} else if (["python", "python3", "py"].includes(executable)) {
+		const moduleIndex = argv.findIndex((arg) => arg === "-m");
+		candidate = moduleIndex >= 0 ? argv[moduleIndex + 1] || candidate : firstMCPCommandOperand(argv.slice(1)) || candidate;
+	} else if (executable === "node") {
+		candidate = firstMCPCommandOperand(argv.slice(1)) || candidate;
+	} else if (executable === "uv" && argv[1] === "run") {
+		candidate = firstMCPCommandOperand(argv.slice(2)) || candidate;
+	}
+	const base = candidate.split(/[\\/]/).pop() || candidate;
+	const unversioned = base.replace(/@[^@]+$/, "").replace(/\.(?:cmd|exe|bat)$/i, "");
+	const sanitized = unversioned.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+	return sanitized && /[a-z0-9]/.test(sanitized) && !["npx", "uvx", "uv", "node", "bunx", "python", "python3", "py"].includes(sanitized)
+		? sanitized
+		: "mcp-server";
 }
 
 export function parseMCPQuickDefinition(raw: string): MCPServerInput {

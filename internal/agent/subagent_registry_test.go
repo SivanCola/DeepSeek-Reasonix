@@ -284,7 +284,7 @@ func TestReadOnlySubagentToolRegistryIncludesMCPReadOnlyHint(t *testing.T) {
 	}
 }
 
-func TestCustomProfileAllowlistStillInheritsAuthorizedMCP(t *testing.T) {
+func TestCustomProfileAllowlistRestrictsMCPTools(t *testing.T) {
 	parent := tool.NewRegistry()
 	parent.Add(subagentRegistryTool{name: "read_file", readOnly: true})
 	parent.Add(subagentRegistryTool{name: "write_file"})
@@ -307,7 +307,7 @@ func TestCustomProfileAllowlistStillInheritsAuthorizedMCP(t *testing.T) {
 		serverAuthorized:     false,
 	})
 
-	// Custom profile lists only read_file — MCP must still inherit when authorized.
+	// A custom profile boundary is authoritative even for installed MCP tools.
 	general := SubagentToolRegistry(parent, []string{"read_file"})
 	if _, ok := general.Get("read_file"); !ok {
 		t.Fatalf("custom profile should keep allowlisted built-in; got %v", general.Names())
@@ -315,21 +315,33 @@ func TestCustomProfileAllowlistStillInheritsAuthorizedMCP(t *testing.T) {
 	if _, ok := general.Get("write_file"); ok {
 		t.Fatalf("custom profile should not include non-allowlisted writer; got %v", general.Names())
 	}
-	for _, name := range []string{"mcp__chrome__list_pages", "mcp__chrome__new_page"} {
-		if _, ok := general.Get(name); !ok {
-			t.Fatalf("general subagent should inherit authorized MCP %q; got %v", name, general.Names())
+	for _, name := range []string{"mcp__chrome__list_pages", "mcp__chrome__new_page", "mcp__other__secret"} {
+		if _, ok := general.Get(name); ok {
+			t.Fatalf("custom profile should exclude non-allowlisted MCP %q; got %v", name, general.Names())
 		}
 	}
-	if _, ok := general.Get("mcp__other__secret"); ok {
-		t.Fatalf("unauthorized MCP must not be inherited by custom profile; got %v", general.Names())
+
+	explicit := SubagentToolRegistry(parent, []string{"mcp__chrome__*"})
+	for _, name := range []string{"mcp__chrome__list_pages", "mcp__chrome__new_page"} {
+		if _, ok := explicit.Get(name); !ok {
+			t.Fatalf("explicit MCP wildcard should include %q; got %v", name, explicit.Names())
+		}
 	}
 
 	ro := ReadOnlySubagentToolRegistry(parent, []string{"read_file"})
-	if _, ok := ro.Get("mcp__chrome__list_pages"); !ok {
-		t.Fatalf("read-only subagent should inherit authorized reader MCP; got %v", ro.Names())
+	if _, ok := ro.Get("mcp__chrome__list_pages"); ok {
+		t.Fatalf("read-only custom profile should exclude non-allowlisted MCP; got %v", ro.Names())
 	}
 	if _, ok := ro.Get("mcp__chrome__new_page"); ok {
 		t.Fatalf("read-only subagent must not inherit writer MCP; got %v", ro.Names())
+	}
+
+	explicitRO := ReadOnlySubagentToolRegistry(parent, []string{"mcp__chrome__*"})
+	if _, ok := explicitRO.Get("mcp__chrome__list_pages"); !ok {
+		t.Fatalf("read-only MCP wildcard should include the authorized reader; got %v", explicitRO.Names())
+	}
+	if _, ok := explicitRO.Get("mcp__chrome__new_page"); ok {
+		t.Fatalf("read-only MCP wildcard must still exclude writers; got %v", explicitRO.Names())
 	}
 }
 

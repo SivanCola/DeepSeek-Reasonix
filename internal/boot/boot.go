@@ -594,7 +594,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 				}
 			}
 			addCtx, addCancel := context.WithTimeout(ctx, 5*time.Second)
-			tools, err := pluginHost.EnsureConnected(addCtx, s)
+			tools, err := pluginHost.EnsureConnectedWithLifecycle(ctx, addCtx, s, 0)
 			addCancel()
 			if err != nil {
 				if plugin.IsServerAlreadyConnected(err) {

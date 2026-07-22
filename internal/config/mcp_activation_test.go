@@ -1,8 +1,11 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
+	"sync"
 	"testing"
 )
 
@@ -41,7 +44,7 @@ func TestMCPActivationStoreDefaultsAndOverrides(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stat activation file: %v", err)
 	}
-	if perm := info.Mode().Perm(); perm != 0o600 {
+	if perm := info.Mode().Perm(); runtime.GOOS != "windows" && perm != 0o600 {
 		t.Fatalf("activation file mode = %o, want 0600", perm)
 	}
 
@@ -55,6 +58,42 @@ func TestMCPActivationStoreDefaultsAndOverrides(t *testing.T) {
 	}
 	if filepath.Base(path) != "mcp-activation.json" {
 		t.Fatalf("unexpected activation path base %q", path)
+	}
+}
+
+func TestMCPActivationStoreConcurrentIndependentWriters(t *testing.T) {
+	home := t.TempDir()
+	const writers = 24
+	stores := make([]*MCPActivationStore, writers)
+	for i := range stores {
+		stores[i] = NewMCPActivationStore(home)
+	}
+
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for i, store := range stores {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			if err := store.SetEnabled(MCPActivationOverride{
+				Scope:   MCPActivationGlobal,
+				Server:  fmt.Sprintf("server-%02d", i),
+				Enabled: true,
+			}); err != nil {
+				t.Errorf("SetEnabled(%d): %v", i, err)
+			}
+		}()
+	}
+	close(start)
+	wg.Wait()
+
+	file, err := NewMCPActivationStore(home).Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(file.Overrides) != writers {
+		t.Fatalf("activation overrides = %d, want %d (lost update)", len(file.Overrides), writers)
 	}
 }
 

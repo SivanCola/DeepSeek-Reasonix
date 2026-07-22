@@ -1,12 +1,15 @@
 package config
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
+	"reasonix/internal/filelock"
 	"reasonix/internal/fileutil"
 	"reasonix/internal/mcplaunch"
 )
@@ -18,6 +21,7 @@ import (
 const (
 	mcpActivationVersion  = 1
 	mcpActivationFilename = "mcp-activation.json"
+	mcpActivationLockFile = ".mcp-activation.lock"
 )
 
 // MCPActivationScope identifies where an enable override applies.
@@ -113,6 +117,11 @@ func (s *MCPActivationStore) SetEnabled(override MCPActivationOverride) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	unlockFile, err := s.lockUpdates()
+	if err != nil {
+		return err
+	}
+	defer unlockFile()
 	file, err := s.loadLocked()
 	if err != nil {
 		return err
@@ -133,6 +142,11 @@ func (s *MCPActivationStore) Clear(override MCPActivationOverride) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	unlockFile, err := s.lockUpdates()
+	if err != nil {
+		return err
+	}
+	defer unlockFile()
 	file, err := s.loadLocked()
 	if err != nil {
 		return err
@@ -226,6 +240,24 @@ func (s *MCPActivationStore) saveLocked(file MCPActivationFile) error {
 	}
 	data = append(data, '\n')
 	return fileutil.AtomicWriteFile(s.path, data, 0o600)
+}
+
+// lockUpdates serializes the full read-modify-write transaction across both
+// independent store instances and separate Reasonix processes. Atomic rename
+// prevents torn JSON; this lock additionally prevents the last writer from
+// silently dropping another server's override.
+func (s *MCPActivationStore) lockUpdates() (func(), error) {
+	dir := filepath.Dir(s.path)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return nil, err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	unlock, err := filelock.Acquire(ctx, filepath.Join(dir, mcpActivationLockFile))
+	if err != nil {
+		return nil, err
+	}
+	return unlock, nil
 }
 
 func activationIdentity(entry PluginEntry, workspace string) (MCPActivationScope, string, string, string) {

@@ -34,8 +34,9 @@ export function mcpServerLifecycleActions(s: ServerView): {
 }
 
 export function mcpServerRetryableFromAvailableList(s: ServerView): boolean {
-  if (s.status === "connected" || s.status === "disabled" || s.status === "failed") return false;
-  return isEnabled(s);
+	if (s.status === "connected" || s.status === "disabled" || s.status === "failed") return false;
+	if (!isEnabled(s)) return false;
+	return runtimeState(s) === "connecting" || s.action === "retry";
 }
 
 /** Prefer product availability labels over legacy status strings. */

@@ -182,24 +182,79 @@ func defaultMCPNameFromURL(raw string) string {
 }
 
 func defaultMCPNameFromArgv(command string, args []string) string {
-	candidates := append([]string{command}, args...)
-	for i := len(candidates) - 1; i >= 0; i-- {
-		token := strings.TrimSpace(candidates[i])
-		if token == "" || strings.HasPrefix(token, "-") {
-			continue
+	runner := strings.ToLower(strings.TrimSuffix(strings.TrimSuffix(strings.TrimSuffix(filepath.Base(command), ".exe"), ".cmd"), ".bat"))
+	candidate := command
+	switch runner {
+	case "npx", "bunx", "uvx":
+		if operand := firstMCPCommandOperand(args); operand != "" {
+			candidate = operand
 		}
-		base := filepath.Base(token)
-		// Strip package version tags and path noise: pkg@latest → pkg.
-		if at := strings.Index(base, "@"); at > 0 {
-			base = base[:at]
+	case "python", "python3", "py":
+		for i, arg := range args {
+			if arg == "-m" && i+1 < len(args) {
+				candidate = args[i+1]
+				break
+			}
 		}
-		base = strings.TrimSuffix(base, ".js")
-		base = sanitizeMCPName(base)
-		if base != "" && base != "npx" && base != "uvx" && base != "bunx" && base != "node" && base != "python" && base != "python3" {
-			return base
+		if candidate == command {
+			if operand := firstMCPCommandOperand(args); operand != "" {
+				candidate = operand
+			}
+		}
+	case "node":
+		if operand := firstMCPCommandOperand(args); operand != "" {
+			candidate = operand
+		}
+	case "uv":
+		if len(args) > 0 && args[0] == "run" {
+			if operand := firstMCPCommandOperand(args[1:]); operand != "" {
+				candidate = operand
+			}
 		}
 	}
-	return sanitizeMCPName(filepath.Base(command))
+	base := filepath.Base(candidate)
+	if at := strings.Index(base, "@"); at > 0 {
+		base = base[:at]
+	}
+	for _, ext := range []string{".js", ".exe", ".cmd", ".bat"} {
+		base = strings.TrimSuffix(base, ext)
+	}
+	name := sanitizeMCPName(base)
+	if name == "" {
+		return "mcp-server"
+	}
+	if candidate == command {
+		switch runner {
+		case "npx", "bunx", "uvx", "uv", "node", "python", "python3", "py":
+			return "mcp-server"
+		}
+	}
+	return name
+}
+
+func firstMCPCommandOperand(args []string) string {
+	valueFlags := map[string]bool{
+		"-p": true, "--package": true, "-c": true, "--call": true,
+		"--node-options": true, "--python": true,
+	}
+	options := true
+	for i := 0; i < len(args); i++ {
+		arg := strings.TrimSpace(args[i])
+		if options && arg == "--" {
+			options = false
+			continue
+		}
+		if options && strings.HasPrefix(arg, "-") {
+			if valueFlags[arg] {
+				i++
+			}
+			continue
+		}
+		if arg != "" {
+			return arg
+		}
+	}
+	return ""
 }
 
 func sanitizeMCPName(raw string) string {

@@ -123,10 +123,10 @@ func SubagentToolRegistry(parent *tool.Registry, names []string) *tool.Registry 
 // subagent at childDepth. Recursive delegation tools are available only when the
 // child still has room to spawn one more subagent.
 //
-// After applying the built-in/meta filter (and optional custom profile allowlist
-// for non-MCP tools), every authorized and enabled MCP tool from the parent is
-// appended unconditionally so custom allowedTools lists cannot accidentally drop
-// installed MCP servers.
+// With no explicit allowlist, installed MCP tools follow the parent registry so
+// ordinary and background subagents inherit the same zero-config MCP surface.
+// An explicit profile/call allowlist remains authoritative and may select MCP
+// tools by exact name or wildcard just like built-ins.
 func SubagentToolRegistryForDepth(parent *tool.Registry, names []string, childDepth, maxDepth int) *tool.Registry {
 	exclude := append([]string(nil), subagentAlwaysHiddenTools...)
 	if childDepth >= NormalizeMaxSubagentDepth(maxDepth) {
@@ -134,7 +134,6 @@ func SubagentToolRegistryForDepth(parent *tool.Registry, names []string, childDe
 	}
 	exclude = append(exclude, subagentJobTools...)
 	sub := FilterRegistry(parent, names, exclude...)
-	appendInheritedMCPTools(parent, sub, false)
 	if bash, ok := sub.Get("bash"); ok {
 		sub.Add(foregroundOnlyBash{inner: bash})
 	}
@@ -974,11 +973,6 @@ func (t *TaskTool) nextSubagentDepth(ctx context.Context) (int, error) {
 // every parent tool), minus any excluded names. Used to scope what a spawned
 // sub-agent — a `task` sub-agent or a subagent skill — may call, e.g. excluding
 // `task` to bar recursive nesting, or restricting to a skill's allowed-tools.
-//
-// MCP tools are intentionally skipped here when a custom allowlist is set: the
-// subagent constructors append authorized MCP tools separately so profile
-// allowedTools cannot accidentally drop installed servers. With an empty
-// allowlist, authorized and still-visible parent MCP tools remain.
 func FilterRegistry(parent *tool.Registry, names []string, exclude ...string) *tool.Registry {
 	sub := tool.NewRegistry()
 	if parent == nil {
@@ -1002,15 +996,6 @@ func FilterRegistry(parent *tool.Registry, names []string, exclude ...string) *t
 		tl, ok := parent.Get(name)
 		if !ok {
 			continue
-		}
-		if isInstalledMCPTool(tl) {
-			// Custom allowlists never select MCP by name; inheritance is
-			// unconditional for authorized servers. Empty allowlists keep
-			// every parent MCP that is still registered (including connect
-			// stubs) so general subagents match the parent surface.
-			if customAllowlist {
-				continue
-			}
 		}
 		sub.Add(tl)
 	}
@@ -1139,9 +1124,10 @@ func ReadOnlySubagentToolRegistry(parent *tool.Registry, names []string) *tool.R
 // server, declare readOnly, and must not carry destructiveHint. Writer and
 // destructive MCP tools are omitted from the provider schema entirely.
 //
-// Custom profile allowlists still filter built-ins, but authorized read-only
-// non-destructive MCP tools are always appended so strict agents inherit the
-// same MCP reader surface as the parent without listing every tool name.
+// With no explicit allowlist, strict agents inherit every authorized read-only,
+// non-destructive MCP tool from the parent. Custom profile/call allowlists remain
+// authoritative and may select the permitted MCP readers explicitly or by
+// wildcard.
 func ReadOnlySubagentToolRegistryForDepth(parent *tool.Registry, names []string, childDepth, maxDepth int) *tool.Registry {
 	exclude := append([]string(nil), subagentAlwaysHiddenTools...)
 	if childDepth >= NormalizeMaxSubagentDepth(maxDepth) {
@@ -1178,9 +1164,11 @@ func ReadOnlySubagentToolRegistryForDepth(parent *tool.Registry, names []string,
 			sub.Add(readOnlyBash{inner: tl})
 			continue
 		}
-		// MCP tools are appended after the allowlist pass so custom profiles
-		// cannot accidentally drop installed readers.
 		if isInstalledMCPTool(tl) {
+			if !mcpServerAuthorized(tl) || !tl.ReadOnly() || mcpDestructiveHint(tl) {
+				continue
+			}
+			sub.Add(tl)
 			continue
 		}
 		if !tl.ReadOnly() {
@@ -1188,35 +1176,8 @@ func ReadOnlySubagentToolRegistryForDepth(parent *tool.Registry, names []string,
 		}
 		sub.Add(tl)
 	}
-	appendInheritedMCPTools(parent, sub, true)
 	addRestrictedCapabilityProxy(parent, sub, names, ex, true)
 	return sub
-}
-
-// appendInheritedMCPTools copies authorized MCP tools from parent into sub.
-// When readOnlyOnly is true, only read-only non-destructive tools are copied.
-func appendInheritedMCPTools(parent, sub *tool.Registry, readOnlyOnly bool) {
-	if parent == nil || sub == nil {
-		return
-	}
-	for _, name := range parent.Names() {
-		if _, exists := sub.Get(name); exists {
-			continue
-		}
-		tl, ok := parent.Get(name)
-		if !ok || !isInstalledMCPTool(tl) {
-			continue
-		}
-		if !mcpServerAuthorized(tl) {
-			continue
-		}
-		if readOnlyOnly {
-			if !tl.ReadOnly() || mcpDestructiveHint(tl) {
-				continue
-			}
-		}
-		sub.Add(tl)
-	}
 }
 
 // expandToolPatterns resolves explicit wildcard allowlist entries from imported
