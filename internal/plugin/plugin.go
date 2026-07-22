@@ -979,13 +979,6 @@ func (h *Host) EnsureConnectedWithLifecycle(lifeCtx, callCtx context.Context, s 
 	return tools, err
 }
 
-// addDeferred connects a lazy/background server only while the generation
-// registered by LazyToolset remains current. Remove invalidates that generation
-// before cancelling startup, so a late handshake cannot resurrect the server.
-func (h *Host) addDeferred(ctx context.Context, s Spec, generation uint64) ([]tool.Tool, error) {
-	return h.addWithLifecycle(ctx, ctx, s, generation)
-}
-
 // AddWithLifecycle connects one server live, allowing caller to specify separate
 // contexts for the subprocess lifecycle (lifeCtx, session-scoped) and the startup
 // handshake/list calls (callCtx, turn-scoped/timeout-bound).
