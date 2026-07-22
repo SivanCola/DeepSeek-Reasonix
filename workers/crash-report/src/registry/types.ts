@@ -6,7 +6,8 @@ export interface RegistryUser {
   emailVerified: boolean;
 }
 
-export type PackageKind = "skill" | "mcp";
+export type PackageKind = "skill" | "plugin" | "mcp";
+export type InstallKind = "auto" | PackageKind;
 
 // A `packages` row as stored in D1.
 export interface PackageRow {
@@ -18,7 +19,7 @@ export interface PackageRow {
   summary: string;
   description: string;
   source: string;
-  install_kind: string;
+  install_kind: InstallKind;
   homepage: string;
   repo_url: string;
   tags: string;
@@ -41,7 +42,7 @@ export interface PackageDTO {
   summary: string;
   description: string;
   source: string;
-  installKind: string;
+  installKind: InstallKind;
   homepage: string;
   repoUrl: string;
   tags: string[];

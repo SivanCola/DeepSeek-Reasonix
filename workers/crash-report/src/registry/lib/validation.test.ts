@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { PublishSchema } from "./validation";
+import { ListQuerySchema, PublishSchema } from "./validation";
 
 const base = { kind: "skill", name: "demo", source: "https://example.com/SKILL.md" };
 const parse = (overrides: Record<string, unknown>) => PublishSchema.safeParse({ ...base, ...overrides });
@@ -46,5 +46,41 @@ describe("PublishSchema source", () => {
       expect(parse({ kind: "skill", source }).success, source).toBe(false);
       expect(parse({ kind: "mcp", source }).success, source).toBe(true);
     }
+  });
+
+  it("accepts plugin repositories and the explicit plugin install kind", () => {
+    for (const source of [
+      "https://github.com/o/r",
+      "https://github.com/o/r/tree/main/plugins/demo",
+      "git:github.com/o/r",
+    ]) {
+      const result = parse({ kind: "plugin", installKind: "plugin", source });
+      expect(result.success, source).toBe(true);
+      if (result.success) expect(result.data.installKind).toBe("plugin");
+    }
+  });
+
+  it("defaults plugin submissions to the explicit plugin installer", () => {
+    const result = parse({ kind: "plugin", source: "https://github.com/o/r" });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.installKind).toBe("plugin");
+  });
+
+  it("rejects non-GitHub sources for kind=plugin", () => {
+    for (const source of ["123", "my-plugin", "@scope/pkg", "https://example.com/reasonix-plugin.json"]) {
+      expect(parse({ kind: "plugin", installKind: "plugin", source }).success, source).toBe(false);
+    }
+  });
+
+  it("rejects a conflicting installer for kind=plugin", () => {
+    expect(
+      parse({ kind: "plugin", installKind: "mcp", source: "https://github.com/o/r" }).success,
+    ).toBe(false);
+  });
+});
+
+describe("ListQuerySchema kind", () => {
+  it("accepts plugin as a first-class registry filter", () => {
+    expect(ListQuerySchema.parse({ kind: "plugin" }).kind).toBe("plugin");
   });
 });

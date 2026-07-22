@@ -1,11 +1,11 @@
-import type { PackageRow, VersionRow, RegistryUser } from "../types";
+import type { PackageKind, PackageRow, VersionRow, RegistryUser } from "../types";
 import type { PublishInput } from "../lib/validation";
 import { ApiError } from "../http/errors";
 
 const TRENDING_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 
 export interface ListParams {
-  kind: "skill" | "mcp" | "all";
+  kind: PackageKind | "all";
   q: string;
   sort: "new" | "trending" | "installs";
   limit: number;
@@ -93,11 +93,12 @@ export class PackageRepo {
       await this.insertVersion(existing.id, version, input, now);
       await this.db
         .prepare(
-          `UPDATE packages SET summary = ?1, description = ?2, source = ?3, install_kind = ?4,
-             homepage = ?5, repo_url = ?6, tags = ?7, latest_version = ?8, updated_at = ?9
-           WHERE id = ?10`,
+          `UPDATE packages SET kind = ?1, summary = ?2, description = ?3, source = ?4, install_kind = ?5,
+             homepage = ?6, repo_url = ?7, tags = ?8, latest_version = ?9, updated_at = ?10
+           WHERE id = ?11`,
         )
         .bind(
+          input.kind,
           input.summary,
           input.description,
           input.source,

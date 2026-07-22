@@ -45,6 +45,17 @@ function isInstallableSource(source: string): boolean {
   return isHttpUrl(raw) || looksLikePackage(raw);
 }
 
+function isGitHubRepoSource(source: string): boolean {
+  let raw = source.trim();
+  if (raw.startsWith("git:github.com/")) raw = `https://github.com/${raw.slice("git:github.com/".length)}`;
+  try {
+    const u = new URL(raw);
+    return u.hostname.toLowerCase() === "github.com" && u.pathname.split("/").filter(Boolean).length >= 2;
+  } catch {
+    return false;
+  }
+}
+
 const sourcePointer = z
   .string()
   .trim()
@@ -83,12 +94,12 @@ function isWholeGitHubRepoSource(source: string): boolean {
 
 export const PublishSchema = z
   .object({
-    kind: z.enum(["skill", "mcp"]),
+    kind: z.enum(["skill", "plugin", "mcp"]),
     name: slug,
     summary: z.string().trim().max(200).default(""),
     description: z.string().trim().max(8000).default(""),
     source: sourcePointer,
-    installKind: z.enum(["auto", "skill", "mcp"]).default("auto"),
+    installKind: z.enum(["auto", "skill", "plugin", "mcp"]).default("auto"),
     version: z.string().trim().max(40).default(""),
     homepage: z.union([httpUrl, z.literal("")]).default(""),
     repoUrl: z.union([httpUrl, z.literal("")]).default(""),
@@ -118,12 +129,33 @@ export const PublishSchema = z
           "a skill source must be a SKILL.md URL or a GitHub repo path, not a bare package name.",
       });
     }
-  });
+    // Explicit plugin installs clone a GitHub package repository/path; they do
+    // not use the generic URL or npm-package MCP fallbacks.
+    if (val.kind === "plugin" && !isGitHubRepoSource(val.source)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["source"],
+        message:
+          "a plugin source must point at a GitHub plugin repository or path containing reasonix-plugin.json.",
+      });
+    }
+    if (val.kind === "plugin" && val.installKind !== "auto" && val.installKind !== "plugin") {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["installKind"],
+        message: "installKind must be plugin (or omitted) when kind is plugin.",
+      });
+    }
+  })
+  .transform((val) => ({
+    ...val,
+    installKind: val.kind === "plugin" && val.installKind === "auto" ? ("plugin" as const) : val.installKind,
+  }));
 
 export type PublishInput = z.infer<typeof PublishSchema>;
 
 export const ListQuerySchema = z.object({
-  kind: z.enum(["skill", "mcp", "all"]).default("all"),
+  kind: z.enum(["skill", "plugin", "mcp", "all"]).default("all"),
   q: z.string().trim().max(100).default(""),
   sort: z.enum(["new", "trending", "installs"]).default("new"),
   limit: z.coerce.number().int().min(1).max(100).default(24),
