@@ -259,7 +259,11 @@ export function CapabilitiesPanel({
                   </div>
                 )}
                 {adding ? (
-                  <AddServerForm busy={busy} onCancel={() => setAdding(false)} onAdd={async (input) => (await mutate(() => installMCPServer(input))) && setAdding(false)} />
+                  <MCPServerSettingsEditor
+                    busy={busy}
+                    onCancel={() => setAdding(false)}
+                    onSubmit={(input) => void mutate(() => installMCPServer(input)).then((ok) => { if (ok) setAdding(false); })}
+                  />
                 ) : null}
               </section>
             ) : (
@@ -1529,53 +1533,6 @@ function summarizeSkillDescription(description: string): string {
   return `${normalized.slice(0, 128).trim()}…`;
 }
 
-function AddServerForm({
-  busy,
-  onCancel,
-  onAdd,
-}: {
-  busy: boolean;
-  onCancel: () => void;
-  onAdd: (input: MCPServerInput) => void;
-}) {
-  const t = useT();
-  const [definition, setDefinition] = useState("");
-  const [parseError, setParseError] = useState("");
-  const ready = definition.trim() !== "";
-
-  const submit = () => {
-    try {
-      setParseError("");
-      onAdd(parseMCPQuickDefinition(definition));
-    } catch (error) {
-      setParseError(mcpServerJSONErrorLabel(error, t));
-    }
-  };
-
-  return (
-    <div className="prov-card prov-card--edit">
-      <label className="set-label">{t("caps.installDefinition")}</label>
-      <textarea
-        className="mem-textarea"
-        value={definition}
-        onChange={(event) => { setDefinition(event.target.value); setParseError(""); }}
-        placeholder={t("caps.installDefinitionPlaceholder")}
-        spellCheck={false}
-      />
-      <div className="set-hint">{t("caps.installDefinitionHint")}</div>
-      {parseError && <div className="banner banner--error">{parseError}</div>}
-      <div className="prov-card__actions">
-        <button className="btn btn--small" onClick={onCancel} disabled={busy}>
-          {t("common.cancel")}
-        </button>
-        <button className="btn btn--primary btn--small" onClick={submit} disabled={busy || !ready}>
-          {t("caps.add")}
-        </button>
-      </div>
-    </div>
-  );
-}
-
 function quickMCPName(raw: string): string {
   const withoutQuotes = raw.replace(/["']/g, " ");
   const tokens = withoutQuotes.split(/\s+/).filter(Boolean);
@@ -2531,6 +2488,27 @@ function mcpServerEditorDraft(server?: ServerView): MCPServerEditorDraft {
 	};
 }
 
+function mcpServerInputDraft(input: MCPServerInput): MCPServerEditorDraft {
+	const transport = normalizeTransportValue(input.transport);
+	const command = transport === "stdio" ? [input.command, ...input.args].filter(Boolean).join(" ").trim() : "";
+	return {
+		name: input.name,
+		transport,
+		command,
+		structuredCommand: transport === "stdio" ? {
+			display: command,
+			command: input.command,
+			args: [...input.args],
+		} : undefined,
+		url: transport === "stdio" ? "" : input.url,
+		env: input.env ? Object.entries(input.env).map(([key, value]) => `${key}=${value}`).join("\n") : "",
+		headers: input.headers ? Object.entries(input.headers).map(([key, value]) => `${key}=${value}`).join("\n") : "",
+		autoStart: input.autoStart ?? undefined,
+		callTimeoutSeconds: input.callTimeoutSeconds ?? undefined,
+		toolTimeoutSeconds: input.toolTimeoutSeconds ? { ...input.toolTimeoutSeconds } : undefined,
+	};
+}
+
 function mcpServerDraftInput(draft: MCPServerEditorDraft): MCPServerInput {
 	const isStdio = draft.transport === "stdio";
 	const structuredCommand = draft.structuredCommand?.display === draft.command ? draft.structuredCommand : undefined;
@@ -2735,7 +2713,10 @@ function MCPServerSettingsEditor({
 	onSubmit: (input: MCPServerInput) => void;
 }) {
 	const t = useT();
-	const [mode, setMode] = useState<"form" | "json">("form");
+	type EditorMode = "quick" | "form" | "json";
+	const [mode, setMode] = useState<EditorMode>(server ? "form" : "quick");
+	const [definition, setDefinition] = useState("");
+	const [quickError, setQuickError] = useState("");
 	const [draft, setDraft] = useState<MCPServerEditorDraft>(() => mcpServerEditorDraft(server));
 	const [json, setJSON] = useState(() => mcpServerDraftJSON(mcpServerEditorDraft(server)));
 	const [jsonError, setJSONError] = useState("");
@@ -2744,8 +2725,28 @@ function MCPServerSettingsEditor({
 	const ready = Boolean(draft.name.trim() && (isStdio ? draft.command.trim() : draft.url.trim()));
 
 	const updateDraft = (patch: Partial<MCPServerEditorDraft>) => setDraft((current) => ({ ...current, ...patch }));
-	const switchMode = (next: "form" | "json") => {
+	const switchMode = (next: EditorMode) => {
 		if (next === mode) return;
+		if (next === "quick") {
+			setQuickError("");
+			setMode("quick");
+			return;
+		}
+		if (mode === "quick") {
+			if (definition.trim()) {
+				try {
+					const nextDraft = mcpServerInputDraft(parseMCPQuickDefinition(definition));
+					setDraft(nextDraft);
+					if (next === "json") setJSON(mcpServerDraftJSON(nextDraft));
+					setQuickError("");
+				} catch (error) {
+					setQuickError(mcpServerJSONErrorLabel(error, t));
+					return;
+				}
+			}
+			setMode(next);
+			return;
+		}
 		if (next === "json") {
 			setJSON(mcpServerDraftJSON(draft));
 			setJSONError("");
@@ -2768,6 +2769,15 @@ function MCPServerSettingsEditor({
 	};
 	const finalize = (input: MCPServerInput) => (server ? withExplicitMCPClears(input) : input);
 	const submit = () => {
+		if (mode === "quick") {
+			try {
+				setQuickError("");
+				onSubmit(parseMCPQuickDefinition(definition));
+			} catch (error) {
+				setQuickError(mcpServerJSONErrorLabel(error, t));
+			}
+			return;
+		}
 		if (mode === "form") {
 			onSubmit(finalize(mcpServerDraftInput(draft)));
 			return;
@@ -2784,6 +2794,11 @@ function MCPServerSettingsEditor({
 	return (
 		<div className="cap-mcp-editor">
 			<div className="cap-mcp-editor__mode set-seg" role="tablist" aria-label={t("caps.editorMode")}>
+				{!server && (
+					<button className={`set-seg__btn${mode === "quick" ? " set-seg__btn--on" : ""}`} type="button" role="tab" aria-selected={mode === "quick"} onClick={() => switchMode("quick")}>
+						{t("caps.quickMode")}
+					</button>
+				)}
 				<button className={`set-seg__btn${mode === "form" ? " set-seg__btn--on" : ""}`} type="button" role="tab" aria-selected={mode === "form"} onClick={() => switchMode("form")}>
 					{t("caps.formMode")}
 				</button>
@@ -2791,7 +2806,28 @@ function MCPServerSettingsEditor({
 					{t("caps.jsonMode")}
 				</button>
 			</div>
-			{mode === "form" ? (
+			{mode === "quick" ? (
+				<div className="cap-mcp-quick">
+					<label className="cap-mcp-field">
+						<span>{t("caps.installDefinition")}</span>
+						<textarea
+							className="mem-textarea cap-mcp-quick__input"
+							value={definition}
+							disabled={busy}
+							onChange={(event) => { setDefinition(event.target.value); setQuickError(""); }}
+							placeholder={t("caps.installDefinitionPlaceholder")}
+							spellCheck={false}
+						/>
+					</label>
+					<div className="cap-mcp-quick__hint">{t("caps.installDefinitionHint")}</div>
+					<div className="cap-mcp-quick__benefits" aria-label={t("caps.quickBenefitsLabel")}>
+						<span>{t("caps.quickDetectTransport")}</span>
+						<span>{t("caps.quickVerifyConnection")}</span>
+						<span>{t("caps.quickEnableTools")}</span>
+					</div>
+					{quickError && <div className="banner banner--error" role="alert">{quickError}</div>}
+				</div>
+			) : mode === "form" ? (
 				<div className="cap-mcp-form-grid">
 					<label className="cap-mcp-field cap-mcp-field--name">
 						<span>{t("caps.name")}</span>
@@ -2851,7 +2887,7 @@ function MCPServerSettingsEditor({
 			)}
 			<div className="cap-mcp-editor__actions">
 				<button className="btn btn--small" disabled={busy} type="button" onClick={onCancel}>{t("common.cancel")}</button>
-				<button className="btn btn--primary btn--small" disabled={busy || (mode === "form" && !ready)} type="button" onClick={submit}>
+				<button className="btn btn--primary btn--small" disabled={busy || (mode === "quick" ? !definition.trim() : mode === "form" && !ready)} type="button" onClick={submit}>
 					{server ? t("caps.saveConfig") : t("caps.addAndConnect")}
 				</button>
 			</div>
@@ -3054,10 +3090,10 @@ export function MCPServersSettingsPage() {
 			{screen.kind === "add" && (
 				<div className="cap-mcp-subpage">
 					<MCPSettingsSubpageHeader title={t("caps.addServerTitle")} description={t("caps.addServerHint")} onBack={() => setScreen({ kind: "list" })} />
-					<AddServerForm
+					<MCPServerSettingsEditor
 						busy={busy}
 						onCancel={() => setScreen({ kind: "list" })}
-						onAdd={(input) => void mutate(() => installMCPServer(input)).then((ok) => { if (ok) setScreen({ kind: "list" }); })}
+						onSubmit={(input) => void mutate(() => installMCPServer(input)).then((ok) => { if (ok) setScreen({ kind: "list" }); })}
 					/>
 				</div>
 			)}

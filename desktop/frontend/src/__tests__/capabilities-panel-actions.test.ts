@@ -840,10 +840,17 @@ console.log("capabilities panel MCP actions");
     addServer.click();
     await flush();
   });
-  ok(!findButton("Advanced options") && !findButton("JSON"), "new server install keeps transport and advanced settings out of the common path");
-  const definitionEditor = document.querySelector<HTMLTextAreaElement>(".prov-card--edit .mem-textarea");
-  if (!definitionEditor) throw new Error("missing one-field MCP install input");
-  ok(definitionEditor.placeholder.includes("chrome-devtools-mcp@latest"), "the common install path asks only for a command, URL, or JSON definition");
+  const quickInstall = findButton("Quick install");
+  const manualSetup = findButton("Manual setup");
+  ok(quickInstall?.getAttribute("aria-selected") === "true" && Boolean(manualSetup) && Boolean(findButton("JSON")), "new server install defaults to quick install while keeping manual and JSON configuration in the same editor");
+  const definitionEditor = document.querySelector<HTMLTextAreaElement>(".cap-mcp-quick__input");
+  if (!definitionEditor) throw new Error("missing quick MCP install input");
+  ok(definitionEditor.placeholder.includes("chrome-devtools-mcp@latest"), "the default install path asks only for a command, URL, or JSON definition");
+  await act(async () => {
+    manualSetup?.click();
+    await flush();
+  });
+  ok(Boolean(document.querySelector(".cap-mcp-field--name input")) && Boolean(findButton("Advanced options")), "manual setup restores name, transport, and advanced configuration without leaving the install page");
   ok(!addedInput, "opening the quick installer does not mutate MCP state");
 
   await act(async () => {
