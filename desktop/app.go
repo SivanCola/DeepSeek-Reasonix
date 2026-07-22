@@ -7276,14 +7276,6 @@ func (a *App) mcpServersView() []ServerView {
 	return out
 }
 
-func mcpStartIntent(p config.PluginEntry) string {
-	// Deprecated compatibility field: derived from enable state only.
-	if !mcpEntryEnabled(p, "") {
-		return "off"
-	}
-	return "automatic"
-}
-
 func mcpEntryEnabled(p config.PluginEntry, workspace string) bool {
 	enabled, err := config.DefaultMCPActivationStore().IsEnabled(p, workspace)
 	if err != nil {
