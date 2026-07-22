@@ -4,7 +4,7 @@ import { asArray } from "../lib/array";
 import { app, openExternal } from "../lib/bridge";
 import { useT } from "../lib/i18n";
 import { mcpServerLifecycleActions, mcpServerRetryableFromAvailableList } from "../lib/mcpServerLifecycle";
-import type { CapabilitiesView, MCPMarketplaceEntry, MCPMarketplaceView, MCPServerInput, PluginAgentView, PluginCommandView, PluginCompatibilityIssue, PluginHookView, PluginInstallOptions, PluginMCPServerView, PluginSkillView, PluginView, ServerView, SkillRootSkillView, SkillRootView, SkillsSettingsView, SkillView, TabMeta } from "../lib/types";
+import type { CapabilitiesView, MCPInstallResult, MCPMarketplaceEntry, MCPMarketplaceView, MCPServerInput, PluginAgentView, PluginCommandView, PluginCompatibilityIssue, PluginHookView, PluginInstallOptions, PluginMCPServerView, PluginSkillView, PluginView, ServerView, SkillRootSkillView, SkillRootView, SkillsSettingsView, SkillView, TabMeta } from "../lib/types";
 import { InlineConfirmButton } from "./InlineConfirmButton";
 import { ResizableDrawer } from "./ResizableDrawer";
 import { Tooltip } from "./Tooltip";
@@ -17,6 +17,12 @@ import { ModalCloseButton } from "./ModalCloseButton";
 type CapTab = "servers" | "skills";
 
 type SettingsSnapshot<T> = { key: string; value: T };
+
+async function installMCPServer(input: MCPServerInput): Promise<MCPInstallResult> {
+  const result = await app.InstallMCPServer(input);
+  if (result.state === "issue") throw new Error(result.message);
+  return result;
+}
 
 let mcpSettingsSnapshot: SettingsSnapshot<ServerView[]> | null = null;
 let skillsSettingsSnapshot: SettingsSnapshot<SkillsSettingsView> | null = null;
@@ -253,7 +259,7 @@ export function CapabilitiesPanel({
                   </div>
                 )}
                 {adding ? (
-                  <AddServerForm busy={busy} onCancel={() => setAdding(false)} onAdd={async (input) => (await mutate(() => app.AddMCPServer(input))) && setAdding(false)} />
+                  <AddServerForm busy={busy} onCancel={() => setAdding(false)} onAdd={async (input) => (await mutate(() => installMCPServer(input))) && setAdding(false)} />
                 ) : null}
               </section>
             ) : (
@@ -1249,20 +1255,50 @@ function parseKeyValueText(text: string): Record<string, string> {
 }
 
 function serverStatusLabel(s: ServerView, t: ReturnType<typeof useT>): string {
-  switch (s.status) {
+  // Prefer product availability so idle enabled servers are not shown as disconnected.
+  const availability = s.availability
+    || (s.enabled === false || s.status === "disabled"
+      ? "disabled"
+      : s.status === "connected"
+        ? "connected"
+        : s.status === "initializing"
+          ? "starting"
+          : s.status === "failed"
+            ? (s.authStatus === "required" ? "auth_required" : "start_failed")
+            : s.status === "deferred"
+              ? "available_on_demand"
+              : s.status);
+  switch (availability) {
     case "connected":
       return t("caps.connected");
-    case "deferred":
+    case "available_on_demand":
       return t("caps.deferred");
-    case "initializing":
+    case "starting":
       return t("caps.initializing");
     case "disabled":
-      return s.configured && !s.autoStart ? t("caps.disabledAutoStart") : t("caps.disabled");
-    case "failed":
-      if (s.authStatus === "required") return t("caps.authRequired");
+      return t("caps.disabled");
+    case "auth_required":
+      return t("caps.authRequired");
+    case "project_auth_changed":
+      return t("caps.projectAuthChanged");
+    case "start_failed":
       return t("caps.failed");
     default:
-      return s.status;
+      switch (s.status) {
+        case "connected":
+          return t("caps.connected");
+        case "deferred":
+          return t("caps.deferred");
+        case "initializing":
+          return t("caps.initializing");
+        case "disabled":
+          return t("caps.disabled");
+        case "failed":
+          if (s.authStatus === "required") return t("caps.authRequired");
+          return t("caps.failed");
+        default:
+          return s.status;
+      }
   }
 }
 
@@ -1503,52 +1539,31 @@ function AddServerForm({
   onAdd: (input: MCPServerInput) => void;
 }) {
   const t = useT();
-  const [name, setName] = useState("");
-  const [transport, setTransport] = useState("stdio");
-  const [command, setCommand] = useState("");
-  const [url, setUrl] = useState("");
-  const [headers, setHeaders] = useState("");
-  const [env, setEnv] = useState("");
-
-  const isStdio = transport === "stdio";
-  const ready = name.trim() !== "" && (isStdio ? command.trim() !== "" : url.trim() !== "");
+  const [definition, setDefinition] = useState("");
+  const [parseError, setParseError] = useState("");
+  const ready = definition.trim() !== "";
 
   const submit = () => {
-    const envText = env.trim();
-    const headerText = headers.trim();
-    onAdd({
-      name: name.trim(),
-      transport,
-      command: isStdio ? command.trim() : "",
-      args: [],
-      url: isStdio ? "" : url.trim(),
-      env: envText === "" ? null : parseKeyValueText(envText),
-      headers: isStdio || headerText === "" ? null : parseKeyValueText(headerText),
-    });
+    try {
+      setParseError("");
+      onAdd(parseMCPQuickDefinition(definition));
+    } catch (error) {
+      setParseError(mcpServerJSONErrorLabel(error, t));
+    }
   };
 
   return (
     <div className="prov-card prov-card--edit">
-      <input className="mem-input" placeholder={t("caps.namePlaceholder")} value={name} onChange={(e) => setName(e.target.value)} />
-      <label className="set-label">{t("caps.transport")}</label>
-      <select className="mem-select" value={transport} onChange={(e) => setTransport(e.target.value)}>
-        <option value="stdio">stdio</option>
-        <option value="http">http</option>
-        <option value="sse">sse</option>
-      </select>
-      {isStdio ? (
-        <input className="mem-input" placeholder={t("caps.commandPlaceholder")} value={command} onChange={(e) => setCommand(e.target.value)} />
-      ) : (
-        <input className="mem-input" placeholder={t("caps.urlPlaceholder")} value={url} onChange={(e) => setUrl(e.target.value)} />
-      )}
-      {!isStdio && (
-        <>
-          <label className="set-label">{t("caps.headersLabel")}</label>
-          <textarea className="mem-textarea" value={headers} onChange={(e) => setHeaders(e.target.value)} placeholder={t("caps.headersPlaceholder")} spellCheck={false} />
-        </>
-      )}
-      <label className="set-label">{t("caps.envLabel")}</label>
-      <textarea className="mem-textarea" value={env} onChange={(e) => setEnv(e.target.value)} placeholder={t("caps.envPlaceholder")} spellCheck={false} />
+      <label className="set-label">{t("caps.installDefinition")}</label>
+      <textarea
+        className="mem-textarea"
+        value={definition}
+        onChange={(event) => { setDefinition(event.target.value); setParseError(""); }}
+        placeholder={t("caps.installDefinitionPlaceholder")}
+        spellCheck={false}
+      />
+      <div className="set-hint">{t("caps.installDefinitionHint")}</div>
+      {parseError && <div className="banner banner--error">{parseError}</div>}
       <div className="prov-card__actions">
         <button className="btn btn--small" onClick={onCancel} disabled={busy}>
           {t("common.cancel")}
@@ -1559,6 +1574,31 @@ function AddServerForm({
       </div>
     </div>
   );
+}
+
+function quickMCPName(raw: string): string {
+  const withoutQuotes = raw.replace(/["']/g, " ");
+  const tokens = withoutQuotes.split(/\s+/).filter(Boolean);
+  const candidate = [...tokens].reverse().find((token) => !token.startsWith("-")) || "mcp-server";
+  const base = candidate.split(/[\\/]/).pop() || candidate;
+  const unversioned = base.startsWith("@") ? base : base.replace(/@[^@]+$/, "");
+  const sanitized = unversioned.toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
+  return sanitized && !["npx", "uvx", "node", "bunx", "python", "python3"].includes(sanitized) ? sanitized : "mcp-server";
+}
+
+export function parseMCPQuickDefinition(raw: string): MCPServerInput {
+  const definition = raw.trim();
+  if (definition.startsWith("{")) return parseMCPServerJSON(definition).input;
+  if (/^https?:\/\//i.test(definition)) {
+    let name = "remote-mcp";
+    try {
+      name = new URL(definition).hostname.replace(/^www\./, "").split(".")[0] || name;
+    } catch {
+      throw new Error("invalid" satisfies MCPServerJSONError);
+    }
+    return { name, transport: "http", command: "", args: [], url: definition, env: null, headers: null };
+  }
+  return { name: quickMCPName(definition), transport: "stdio", command: definition, args: [], url: "", env: null, headers: null };
 }
 
 type PluginInstallPlanAction = {
@@ -2893,7 +2933,7 @@ export function MCPServersSettingsPage() {
 	};
 	const installMarketplaceEntry = async (entry: MCPMarketplaceEntry) => {
 		const current = await app.MCPMarketplaceResolve(entry.name);
-		return app.AddMCPServer(mcpMarketplaceServerInput(current, servers ?? []));
+		return installMCPServer(mcpMarketplaceServerInput(current, servers ?? []));
 	};
 	const filteredServers = useMemo(() => {
 		const sorted = sortServersForDisplay(servers ?? []);
@@ -3014,10 +3054,10 @@ export function MCPServersSettingsPage() {
 			{screen.kind === "add" && (
 				<div className="cap-mcp-subpage">
 					<MCPSettingsSubpageHeader title={t("caps.addServerTitle")} description={t("caps.addServerHint")} onBack={() => setScreen({ kind: "list" })} />
-					<MCPServerSettingsEditor
+					<AddServerForm
 						busy={busy}
 						onCancel={() => setScreen({ kind: "list" })}
-						onSubmit={(input) => void mutate(() => app.AddMCPServer(input)).then((ok) => { if (ok) setScreen({ kind: "list" }); })}
+						onAdd={(input) => void mutate(() => installMCPServer(input)).then((ok) => { if (ok) setScreen({ kind: "list" }); })}
 					/>
 				</div>
 			)}
