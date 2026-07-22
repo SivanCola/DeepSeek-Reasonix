@@ -17,11 +17,20 @@ test("the registry exposes plugins as a first-class package kind", async () => {
 
   assert.match(page, /<button data-kind="plugin" role="tab">Plugins<\/button>/);
   assert.match(page, /<option value="plugin">plugin<\/option>/);
-  assert.match(page, /installKind: f\.get\('kind'\) === 'plugin' \? 'plugin' : 'auto'/);
+  assert.match(page, /installKind: f\.get\('kind'\)/);
   assert.match(page, /Plugins must point to a GitHub repository or path containing/);
   assert.match(page, /reasonix-plugin\.json/);
   assert.match(page, /\.codex-plugin\/plugin\.json/);
   assert.match(page, /\.claude-plugin\/plugin\.json/);
   assert.match(page, /\.claude-plugin\/marketplace\.json/);
   assert.match(page, /pattern="\(https\?:\/\/\[\^ \]\+\|git:github\[\.\]com\/\[\^ \]\+/);
+});
+
+test("registry copy requests preserve the reviewed package kind", async () => {
+  const page = await source();
+
+  assert.match(page, /Install this Reasonix \$\{p\.kind\} package from \$\{p\.source\}/);
+  assert.match(page, /Use install_source with kind="\$\{p\.kind\}"/);
+  assert.match(page, /data-copy="\$\{esc\(installRequest\(p\)\)\}"/);
+  assert.doesNotMatch(page, /data-copy="\$\{esc\(p\.source\)\}"/);
 });

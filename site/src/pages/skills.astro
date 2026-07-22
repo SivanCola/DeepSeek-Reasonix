@@ -315,6 +315,8 @@ const desc = "Browse, publish, and install community skills, plugins, and MCP se
       { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m]
     ));
     const kindClass = (kind) => `pkg-kind${kind === 'plugin' ? ' plugin' : kind === 'mcp' ? ' mcp' : ''}`;
+    const installRequest = (p) =>
+      `Install this Reasonix ${p.kind} package from ${p.source}. Use install_source with kind="${p.kind}".`;
 
     function show(el, on) { if (el) el.hidden = !on; }
 
@@ -331,7 +333,7 @@ const desc = "Browse, publish, and install community skills, plugins, and MCP se
         <div class="pkg-sum">${esc(p.summary) || '<span style="color:var(--ink-3)">No summary.</span>'}</div>
         ${tags ? `<div class="pkg-tags">${tags}</div>` : ''}
         <div class="pkg-foot">
-          <span class="pkg-install" title="Install source — give it to Reasonix"><code>${esc(p.source)}</code><button data-copy="${esc(p.source)}" data-slug="${esc(p.handle)}/${esc(p.name)}">Copy</button></span>
+          <span class="pkg-install" title="Install source — give it to Reasonix"><code>${esc(p.source)}</code><button data-copy="${esc(installRequest(p))}" data-slug="${esc(p.handle)}/${esc(p.name)}">Copy</button></span>
         </div>
         <div class="pkg-meta">↓ ${p.installCount || 0} installs · v${esc(p.latestVersion) || '—'}${repo}</div>
       </article>`;
@@ -448,7 +450,7 @@ const desc = "Browse, publish, and install community skills, plugins, and MCP se
       const tags = String(f.get('tags') || '').split(',').map((t) => t.trim()).filter(Boolean);
       const body = {
         kind: f.get('kind'), name: f.get('name'), summary: f.get('summary') || '',
-        source: f.get('source'), installKind: f.get('kind') === 'plugin' ? 'plugin' : 'auto', version: f.get('version') || '',
+        source: f.get('source'), installKind: f.get('kind'), version: f.get('version') || '',
         repoUrl: f.get('repoUrl') || '', tags,
       };
       setMsg('Publishing…');

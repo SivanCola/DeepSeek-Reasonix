@@ -60,10 +60,18 @@ describe("PublishSchema source", () => {
     }
   });
 
-  it("defaults plugin submissions to the explicit plugin installer", () => {
-    const result = parse({ kind: "plugin", source: "https://github.com/o/r" });
-    expect(result.success).toBe(true);
-    if (result.success) expect(result.data.installKind).toBe("plugin");
+  it("pins omitted and auto installers to every submission's declared kind", () => {
+    for (const [kind, source] of [
+      ["skill", "https://github.com/o/r/tree/main/skills/demo"],
+      ["plugin", "https://github.com/o/r"],
+      ["mcp", "https://github.com/o/r"],
+    ] as const) {
+      for (const installKind of [undefined, "auto"] as const) {
+        const result = parse({ kind, source, ...(installKind ? { installKind } : {}) });
+        expect(result.success, `${kind}:${installKind ?? "omitted"}`).toBe(true);
+        if (result.success) expect(result.data.installKind).toBe(kind);
+      }
+    }
   });
 
   it("rejects non-GitHub sources for kind=plugin", () => {

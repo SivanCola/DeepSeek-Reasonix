@@ -114,7 +114,7 @@ describe("PackageRepo.publish", () => {
 
   it("keeps ordinary updates to an active package live and verified", async () => {
     const active: PackageRow = { ...existing, status: "active", verified: 1 };
-    const updated: PackageRow = { ...active, latest_version: "2.7.1" };
+    const updated: PackageRow = { ...active, install_kind: "mcp", latest_version: "2.7.1" };
     const { db, updates } = fakePackageDB([active, updated]);
     const input = PublishSchema.parse({
       kind: "mcp",
@@ -128,6 +128,7 @@ describe("PackageRepo.publish", () => {
 
     expect(result.row.status).toBe("active");
     expect(result.row.verified).toBe(1);
+    expect(updates[0].values[4]).toBe("mcp");
     expect(updates[0].values[10]).toBe("active");
     expect(updates[0].values[11]).toBe(1);
   });

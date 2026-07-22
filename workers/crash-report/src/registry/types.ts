@@ -42,7 +42,7 @@ export interface PackageDTO {
   summary: string;
   description: string;
   source: string;
-  installKind: InstallKind;
+  installKind: PackageKind;
   homepage: string;
   repoUrl: string;
   tags: string[];
@@ -87,7 +87,9 @@ export function toPackageDTO(row: PackageRow): PackageDTO {
     summary: row.summary,
     description: row.description,
     source: row.source,
-    installKind: row.install_kind,
+    // Legacy rows may contain `auto` or a mismatched explicit installer. The
+    // declared public kind is authoritative for every API consumer.
+    installKind: row.kind,
     homepage: row.homepage,
     repoUrl: row.repo_url,
     tags: splitTags(row.tags),

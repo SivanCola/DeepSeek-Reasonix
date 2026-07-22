@@ -149,7 +149,10 @@ export const PublishSchema = z
   })
   .transform((val) => ({
     ...val,
-    installKind: val.kind === "plugin" && val.installKind === "auto" ? ("plugin" as const) : val.installKind,
+    // The registry's public kind is also the installer's capability boundary.
+    // Never persist `auto`: the client planner probes plugins first for auto
+    // sources, which could otherwise install more than the publisher declared.
+    installKind: val.installKind === "auto" ? val.kind : val.installKind,
   }));
 
 export type PublishInput = z.infer<typeof PublishSchema>;
