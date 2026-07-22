@@ -228,6 +228,28 @@ export class PackageRepo {
     return this.bySlug(slug);
   }
 
+  // Admin approval must be bound to the exact row the reviewer inspected.
+  // The version protects publisher updates, while updated_at + status also
+  // fence concurrent moderation actions. D1 evaluates the predicate and write
+  // atomically, so a package cannot change between a preflight read and approval.
+  async setStatusIfCurrent(
+    slug: string,
+    status: string,
+    expectedVersion: string,
+    expectedUpdatedAt: string,
+    expectedStatus: string,
+    now: string,
+  ): Promise<PackageRow | null> {
+    return this.db
+      .prepare(
+        `UPDATE packages SET status = ?1, updated_at = ?2
+         WHERE slug = ?3 AND latest_version = ?4 AND updated_at = ?5 AND status = ?6
+         RETURNING *`,
+      )
+      .bind(status, now, slug, expectedVersion, expectedUpdatedAt, expectedStatus)
+      .first<PackageRow>();
+  }
+
   // Admin: grant or revoke the verified trust badge.
   async setVerified(slug: string, verified: boolean, now: string): Promise<PackageRow | null> {
     const res = await this.db
