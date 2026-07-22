@@ -883,6 +883,10 @@ function ThemeEditorInline({
   const editorRef = useRef<HTMLDivElement>(null);
   const initialFocusRef = useRef<HTMLInputElement>(null);
   const restoreFocusRef = useRef<HTMLElement | null>(null);
+  const busyRef = useRef(busy);
+  const onCancelRef = useRef(onCancel);
+  busyRef.current = busy;
+  onCancelRef.current = onCancel;
 
   const homeUrl = state.backgroundDataUrl || state.existingBackgroundUrl;
   const taskUrl = state.taskBackgroundDataUrl || state.existingTaskBackgroundUrl;
@@ -922,10 +926,9 @@ function ThemeEditorInline({
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
-        if (busy) return;
         event.preventDefault();
         event.stopPropagation();
-        onCancel();
+        if (!busyRef.current) onCancelRef.current();
         return;
       }
       if (event.key !== "Tab") return;
@@ -947,7 +950,7 @@ function ThemeEditorInline({
     };
     document.addEventListener("keydown", onKeyDown, { capture: true });
     return () => document.removeEventListener("keydown", onKeyDown, { capture: true });
-  }, [busy, onCancel]);
+  }, []);
 
   const setToken = (key: string, value: string) => {
     const next = {
