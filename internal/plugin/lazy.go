@@ -376,8 +376,10 @@ func (lt *lazyTool) Execute(ctx context.Context, args json.RawMessage) (string, 
 			safetyErr := lt.reconcileLiveSafety(r)
 			sp.broadcastReady()
 			sp.mu.Unlock()
+			sp.host.queueBackgroundWrite(func() {
+				saveLazyCachedSchema(sp.spec, real)
+			})
 			sp.host.endDeferredSpawn()
-			saveLazyCachedSchema(sp.spec, real)
 			if safetyErr != nil {
 				return "", safetyErr
 			}
