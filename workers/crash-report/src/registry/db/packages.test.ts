@@ -112,7 +112,78 @@ describe("PackageRepo.publish", () => {
     expect(updates[0].values[11]).toBe(0);
   });
 
-  it("keeps ordinary updates to an active package live and verified", async () => {
+  it("returns a same-kind active package update to review", async () => {
+    const active: PackageRow = { ...existing, status: "active", verified: 1 };
+    const updated: PackageRow = {
+      ...active,
+      summary: "new summary",
+      source: "https://github.com/o/r2",
+      repo_url: "https://github.com/o/r2",
+      install_kind: "mcp",
+      latest_version: "2.7.1",
+      status: "pending",
+      verified: 0,
+    };
+    const { db, updates } = fakePackageDB([active, updated]);
+    const input = PublishSchema.parse({
+      kind: "mcp",
+      name: "devkit",
+      summary: "new summary",
+      source: "https://github.com/o/r2",
+      repoUrl: "https://github.com/o/r2",
+      version: "2.7.1",
+    });
+
+    const result = await new PackageRepo(db).publish(user, input, now);
+
+    expect(result.row.status).toBe("pending");
+    expect(result.row.verified).toBe(0);
+    expect(updates[0].values[4]).toBe("mcp");
+    expect(updates[0].values[10]).toBe("pending");
+    expect(updates[0].values[11]).toBe(0);
+  });
+
+  it("returns a hidden package update to review and clears verification", async () => {
+    const hidden: PackageRow = { ...existing, status: "hidden", verified: 1 };
+    const updated: PackageRow = {
+      ...hidden,
+      kind: "plugin",
+      install_kind: "plugin",
+      latest_version: "2.7.1",
+      status: "pending",
+      verified: 0,
+    };
+    const { db, updates } = fakePackageDB([hidden, updated]);
+
+    const result = await new PackageRepo(db).publish(user, pluginInput(), now);
+
+    expect(result.row.status).toBe("pending");
+    expect(result.row.verified).toBe(0);
+    expect(updates[0].values[10]).toBe("pending");
+    expect(updates[0].values[11]).toBe(0);
+  });
+
+  it("returns a rejected package update to review", async () => {
+    const rejected: PackageRow = { ...existing, status: "rejected", verified: 0 };
+    const requeued: PackageRow = { ...rejected, latest_version: "2.7.1", status: "pending" };
+    const { db, updates } = fakePackageDB([rejected, requeued]);
+    const input = PublishSchema.parse({
+      kind: "mcp",
+      name: "devkit",
+      source: "https://github.com/o/r",
+      repoUrl: "https://github.com/o/r",
+      version: "2.7.1",
+    });
+
+    const result = await new PackageRepo(db).publish(user, input, now);
+
+    expect(result.row.status).toBe("pending");
+    expect(updates[0].values[10]).toBe("pending");
+    expect(updates[0].values[11]).toBe(0);
+  });
+
+  it("preserves status and verification for trusted admin updates", async () => {
+    const admin: RegistryUser = { ...user, role: "admin" };
     const active: PackageRow = { ...existing, status: "active", verified: 1 };
     const updated: PackageRow = { ...active, install_kind: "mcp", latest_version: "2.7.1" };
     const { db, updates } = fakePackageDB([active, updated]);
@@ -124,31 +195,11 @@ describe("PackageRepo.publish", () => {
       version: "2.7.1",
     });
 
-    const result = await new PackageRepo(db).publish(user, input, now);
+    const result = await new PackageRepo(db).publish(admin, input, now);
 
     expect(result.row.status).toBe("active");
     expect(result.row.verified).toBe(1);
-    expect(updates[0].values[4]).toBe("mcp");
     expect(updates[0].values[10]).toBe("active");
     expect(updates[0].values[11]).toBe(1);
-  });
-
-  it("clears verification when a non-active package changes kind", async () => {
-    const hidden: PackageRow = { ...existing, status: "hidden", verified: 1 };
-    const updated: PackageRow = {
-      ...hidden,
-      kind: "plugin",
-      install_kind: "plugin",
-      latest_version: "2.7.1",
-      verified: 0,
-    };
-    const { db, updates } = fakePackageDB([hidden, updated]);
-
-    const result = await new PackageRepo(db).publish(user, pluginInput(), now);
-
-    expect(result.row.status).toBe("hidden");
-    expect(result.row.verified).toBe(0);
-    expect(updates[0].values[10]).toBe("hidden");
-    expect(updates[0].values[11]).toBe(0);
   });
 });
