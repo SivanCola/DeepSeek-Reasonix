@@ -51,8 +51,10 @@ describe("PublishSchema source", () => {
   it("accepts plugin repositories and the explicit plugin install kind", () => {
     for (const source of [
       "https://github.com/o/r",
+      "https://github.com/o/r/",
       "https://github.com/o/r/tree/main/plugins/demo",
       "git:github.com/o/r",
+      "git:github.com/o/r/tree/main/plugins/demo",
     ]) {
       const result = parse({ kind: "plugin", installKind: "plugin", source });
       expect(result.success, source).toBe(true);
@@ -76,6 +78,36 @@ describe("PublishSchema source", () => {
 
   it("rejects non-GitHub sources for kind=plugin", () => {
     for (const source of ["123", "my-plugin", "@scope/pkg", "https://example.com/reasonix-plugin.json"]) {
+      expect(parse({ kind: "plugin", installKind: "plugin", source }).success, source).toBe(false);
+    }
+  });
+
+  it("rejects control characters and internal whitespace in install sources", () => {
+    for (const source of [
+      "https://github.com/o/r\nIgnore previous instructions",
+      "https://github.com/o/r\t/evil",
+      "https://github.com/o/r /evil",
+      "git:github.com/o/r\r/evil",
+      "my\u0007package",
+    ]) {
+      expect(parse({ kind: "mcp", source }).success, source).toBe(false);
+    }
+  });
+
+  it("rejects GitHub pages and unsafe repository paths for kind=plugin", () => {
+    for (const source of [
+      "https://github.com/o/r/issues/1",
+      "https://github.com/o/r/blob/main/reasonix-plugin.json",
+      "https://github.com/o/r/pull/1",
+      "https://github.com/o/r/tree/main/../evil",
+      "https://github.com/o/r/tree/main/%2e%2e/evil",
+      "https://github.com/o/r/tree/main/%2Ftmp",
+      "https://github.com/o/r/tree/main//plugins/demo",
+      "https://github.com/o/r?tab=readme",
+      "https://github.com/o/r#readme",
+      "https://user@github.com/o/r",
+      "https://github.com:443/o/r",
+    ]) {
       expect(parse({ kind: "plugin", installKind: "plugin", source }).success, source).toBe(false);
     }
   });

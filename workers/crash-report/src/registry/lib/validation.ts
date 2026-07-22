@@ -20,6 +20,11 @@ const httpUrl = z.string().trim().url().max(500);
 // (isURL || git: shorthand || looksLikePackage); a bare local path is refused
 // because it resolves on the publisher's machine, never the installer's.
 const pkgSegment = /^[a-zA-Z0-9._-]+$/;
+const unsafeSourceCharacter = /[\s\u0000-\u001f\u007f-\u009f]/u;
+
+function hasUnsafeSourceCharacters(source: string): boolean {
+  return unsafeSourceCharacter.test(source);
+}
 
 function looksLikePackage(source: string): boolean {
   if (/[\s\\]/.test(source) || source.startsWith(".") || source.startsWith("/")) return false;
@@ -31,6 +36,7 @@ function looksLikePackage(source: string): boolean {
 }
 
 function isHttpUrl(source: string): boolean {
+  if (hasUnsafeSourceCharacters(source)) return false;
   try {
     const u = new URL(source);
     return (u.protocol === "http:" || u.protocol === "https:") && u.hostname !== "";
@@ -41,16 +47,69 @@ function isHttpUrl(source: string): boolean {
 
 function isInstallableSource(source: string): boolean {
   const raw = source.trim();
+  if (hasUnsafeSourceCharacters(raw)) return false;
   if (raw.startsWith("git:github.com/") && raw.length > "git:github.com/".length) return true;
   return isHttpUrl(raw) || looksLikePackage(raw);
 }
 
 function isGitHubRepoSource(source: string): boolean {
   let raw = source.trim();
+  if (hasUnsafeSourceCharacters(raw) || raw.includes("\\")) return false;
   if (raw.startsWith("git:github.com/")) raw = `https://github.com/${raw.slice("git:github.com/".length)}`;
   try {
     const u = new URL(raw);
-    return u.hostname.toLowerCase() === "github.com" && u.pathname.split("/").filter(Boolean).length >= 2;
+    if (
+      (u.protocol !== "http:" && u.protocol !== "https:") ||
+      u.hostname.toLowerCase() !== "github.com" ||
+      u.username !== "" ||
+      u.password !== "" ||
+      u.port !== "" ||
+      u.search !== "" ||
+      u.hash !== ""
+    ) {
+      return false;
+    }
+
+    // URL parsers normalize dot segments before exposing pathname. Inspect
+    // the original encoded path so /tree/main/../outside cannot become a
+    // seemingly safe repository path during validation.
+    const authorityStart = raw.indexOf("://") + 3;
+    const pathStart = raw.indexOf("/", authorityStart);
+    const authorityEnd = pathStart === -1 ? raw.length : pathStart;
+    if (raw.slice(authorityStart, authorityEnd).toLowerCase() !== "github.com") return false;
+    let encodedPath = pathStart === -1 ? "" : raw.slice(pathStart);
+    if (encodedPath.endsWith("/")) encodedPath = encodedPath.slice(0, -1);
+    if (!encodedPath.startsWith("/") || encodedPath.includes("//")) return false;
+
+    const parts = encodedPath
+      .slice(1)
+      .split("/")
+      .map((part) => {
+        try {
+          return decodeURIComponent(part);
+        } catch {
+          return "";
+        }
+      });
+    if (
+      parts.some(
+        (part) =>
+          part === "" ||
+          part === "." ||
+          part === ".." ||
+          part.includes("/") ||
+          part.includes("\\") ||
+          hasUnsafeSourceCharacters(part),
+      )
+    ) {
+      return false;
+    }
+
+    const owner = parts[0] ?? "";
+    const repo = (parts[1] ?? "").replace(/\.git$/i, "");
+    if (!pkgSegment.test(owner) || !pkgSegment.test(repo)) return false;
+    if (parts.length === 2) return true;
+    return parts.length >= 4 && parts[2] === "tree";
   } catch {
     return false;
   }
