@@ -6,11 +6,16 @@ import (
 	"strings"
 	"testing"
 
+	"reasonix/internal/event"
 	"reasonix/internal/evidence"
+	"reasonix/internal/provider"
+	"reasonix/internal/tool"
 )
 
 type recordingRecoveryGate struct {
 	observation RecoveryObservation
+	proposals   []RecoveryProposal
+	decision    RecoveryDecision
 }
 
 func TestRecoveryPlanTransitionDetectsOnlyStructuralRewriteOfActivePlan(t *testing.T) {
@@ -53,8 +58,64 @@ func (g *recordingRecoveryGate) ObserveResult(_ context.Context, observation Rec
 	return ""
 }
 
-func (*recordingRecoveryGate) BeforeMutation(context.Context, RecoveryProposal) (RecoveryDecision, error) {
-	return RecoveryDecision{Allow: true}, nil
+func (g *recordingRecoveryGate) BeforeMutation(_ context.Context, proposal RecoveryProposal) (RecoveryDecision, error) {
+	g.proposals = append(g.proposals, proposal)
+	decision := g.decision
+	if decision == (RecoveryDecision{}) {
+		decision.Allow = true
+	}
+	return decision, nil
+}
+
+func TestAuthorizedRecoveryPlanTransitionCanReplaceCurrentTodo(t *testing.T) {
+	reg := tool.NewRegistry()
+	reg.Add(mustBuiltinTool(t, "todo_write"))
+	gate := &recordingRecoveryGate{decision: RecoveryDecision{
+		Allow: true, AuthorizePlanReplacement: true,
+	}}
+	a := New(nil, reg, NewSession(""), Options{RecoveryGate: gate}, event.Discard)
+	a.SeedTodoState([]evidence.TodoItem{
+		{Content: "Inspect environment", Status: "completed"},
+		{Content: "Implement parser", Status: "in_progress"},
+		{Content: "Run tests", Status: "pending"},
+	})
+
+	out := a.executeOne(context.Background(), provider.ToolCall{
+		ID:   "replace-plan",
+		Name: "todo_write",
+		Arguments: `{"todos":[
+			{"content":"Inspect environment","status":"completed"},
+			{"content":"Replace parser architecture","status":"in_progress"},
+			{"content":"Run tests","status":"pending"}
+		]}`,
+	})
+	if out.errMsg != "" {
+		t.Fatalf("authorized plan replacement was blocked: %+v", out)
+	}
+	if len(gate.proposals) != 1 || !gate.proposals[0].PlanTransition {
+		t.Fatalf("recovery proposals = %+v, want one plan transition", gate.proposals)
+	}
+	got := a.CanonicalTodoState()
+	if len(got) != 3 || got[0].Status != "completed" || got[1].Content != "Replace parser architecture" {
+		t.Fatalf("canonical todo state = %+v, want preserved history plus replacement", got)
+	}
+}
+
+func TestPlanTransitionNeedsDedicatedReplacementAuthorization(t *testing.T) {
+	reg := tool.NewRegistry()
+	reg.Add(mustBuiltinTool(t, "todo_write"))
+	gate := &recordingRecoveryGate{decision: RecoveryDecision{Allow: true}}
+	a := New(nil, reg, NewSession(""), Options{RecoveryGate: gate}, event.Discard)
+	a.SeedTodoState([]evidence.TodoItem{{Content: "Implement parser", Status: "in_progress"}})
+
+	out := a.executeOne(context.Background(), provider.ToolCall{
+		ID:        "replace-plan-without-authorization",
+		Name:      "todo_write",
+		Arguments: `{"todos":[{"content":"Replace parser architecture","status":"in_progress"}]}`,
+	})
+	if out.errMsg == "" || !strings.Contains(out.output, "cannot be removed or replaced") {
+		t.Fatalf("plain allow unexpectedly replaced current todo: %+v", out)
+	}
 }
 
 func TestObserveRecoveryResultMarksCancellation(t *testing.T) {

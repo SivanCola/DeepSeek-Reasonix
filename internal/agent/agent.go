@@ -3141,6 +3141,7 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 	// recovery card never holds a write lease.
 	verification := evidenceName == "bash" && evidence.IsDeliveryVerificationCommand(bashCommandFromArgs(evidenceArgs))
 	planTransition, planBefore, planAfter := a.recoveryPlanTransition(evidenceName, evidenceArgs)
+	planReplacementAuthorized := false
 	if a.recoveryGate != nil && (mutates || verification || planTransition) {
 		subject := recoverySubject(evidenceName, evidenceArgs)
 		if planTransition {
@@ -3190,6 +3191,7 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 				errMsg:  "blocked by Auto Guard",
 			}
 		}
+		planReplacementAuthorized = planTransition && dec.AuthorizePlanReplacement
 	}
 	if isInstalledMCPTool(execTool) {
 		if !mcpServerAuthorized(execTool) {
@@ -3298,6 +3300,9 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 	}
 	if !a.planMode.Load() {
 		cctx = evidence.WithTodoState(cctx, a.CanonicalTodoState())
+	}
+	if planReplacementAuthorized {
+		cctx = tool.WithPlanReplacementAuthorization(cctx)
 	}
 	if len(a.projectChecks) > 0 {
 		cctx = instruction.WithChecks(cctx, a.projectChecks)
@@ -3412,7 +3417,7 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 // path; changing step identity, order, or hierarchy while work remains is a
 // semantic transition for the independent Auto reviewer.
 func (a *Agent) recoveryPlanTransition(toolName string, args json.RawMessage) (bool, string, string) {
-	if a == nil || toolName != "todo_write" {
+	if a == nil || toolName != "todo_write" || a.planMode.Load() {
 		return false, "", ""
 	}
 	before := a.CanonicalTodoState()
@@ -3420,7 +3425,7 @@ func (a *Agent) recoveryPlanTransition(toolName string, args json.RawMessage) (b
 		return false, "", ""
 	}
 	after := evidence.ReceiptFromToolCall("todo_write", args, true, true).Todos
-	if len(after) == 0 || evidence.ValidateSerialTodos(after) != nil {
+	if len(after) == 0 || evidence.ValidateSerialTodos(after) != nil || !evidence.PreservesCompletedTodoPositions(before, after) {
 		// Let todo_write report malformed or invalid state directly; an invalid
 		// task list is not a meaningful plan proposal for the reviewer.
 		return false, "", ""

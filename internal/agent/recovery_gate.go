@@ -111,6 +111,11 @@ type RecoveryProposal struct {
 type RecoveryDecision struct {
 	// Allow continues without a user card.
 	Allow bool
+	// AuthorizePlanReplacement grants this one todo_write call permission to
+	// replace the current in_progress step. Only the active Auto Gate may issue
+	// it after reviewing a host-detected structural plan transition; it is never
+	// derived from model arguments or persisted beyond the call.
+	AuthorizePlanReplacement bool
 	// Blocked is true when the mutation must not run (reviewer/user revise, or
 	// headless blocker). Message is fed back to the model.
 	Blocked bool

@@ -2666,7 +2666,9 @@ func (m chatTUI) handleApprovalKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.ctrl.Cancel()
 		return answer(approvalChoice{})
 	case "up", "k", "ctrl+p":
-		if m.approvalSelection > 0 {
+		if m.approvalSelection < 0 && len(choices) > 0 {
+			m.approvalSelection = 0
+		} else if m.approvalSelection > 0 {
 			m.approvalSelection--
 		}
 		return m, nil
@@ -3821,6 +3823,11 @@ func (m *chatTUI) ingestEvent(e event.Event) {
 		a := e.Approval
 		m.pendingApproval = &a
 		m.approvalSelection = 0
+		if isRecoveryPlanChangeApproval(&a) {
+			// A plan decision must start neutral: Enter alone cannot make Auto's
+			// strategy/scope choice for the user.
+			m.approvalSelection = -1
+		}
 
 	case event.AskRequest:
 		// The `ask` tool raised a question card; the run goroutine blocks until

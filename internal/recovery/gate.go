@@ -556,7 +556,10 @@ func (g *Gate) reviewOrEscalate(ctx context.Context, taskID, fp string, proposal
 			}
 			g.mu.Unlock()
 			g.persist()
-			return Decision{Allow: true}, nil
+			return Decision{
+				Allow:                    true,
+				AuthorizePlanReplacement: proposal.PlanTransition,
+			}, nil
 		}
 		// A reviewer-confirmed strategy or scope decision is a material plan
 		// boundary, not another unsafe tool attempt for the agent to reword. Ask
@@ -690,7 +693,11 @@ func (g *Gate) askHuman(ctx context.Context, taskID, fp string, proposal Proposa
 
 	select {
 	case payload := <-reply:
-		return g.decisionFromResolve(payload)
+		decision, err := g.decisionFromResolve(payload)
+		if err == nil && decision.Allow && proposal.PlanTransition {
+			decision.AuthorizePlanReplacement = true
+		}
+		return decision, err
 	case <-ctx.Done():
 		g.mu.Lock()
 		delete(g.waiters, approvalID)

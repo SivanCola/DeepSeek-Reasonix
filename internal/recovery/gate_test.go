@@ -523,7 +523,7 @@ func TestPlanContinueAppliesOnlyToWaitingTransition(t *testing.T) {
 		return "c1", nil
 	}
 	dec, err := g.BeforeMutation(context.Background(), prop)
-	if err != nil || !dec.Allow {
+	if err != nil || !dec.Allow || !dec.AuthorizePlanReplacement {
 		t.Fatalf("first continue = %+v %v", dec, err)
 	}
 
@@ -538,11 +538,24 @@ func TestPlanContinueAppliesOnlyToWaitingTransition(t *testing.T) {
 		return "c2", nil
 	}
 	dec, err = g.BeforeMutation(context.Background(), prop)
-	if err != nil || !dec.Allow {
+	if err != nil || !dec.Allow || !dec.AuthorizePlanReplacement {
 		t.Fatalf("second continue = %+v %v", dec, err)
 	}
 	if atomic.LoadInt32(&prompts) != 1 {
 		t.Fatalf("expected re-prompt after fingerprint consumption")
+	}
+}
+
+func TestReviewerContinuedPlanTransitionAuthorizesReplacement(t *testing.T) {
+	g := NewGate(Options{Reviewer: staticReviewer{ReviewVerdict{
+		Outcome: ReviewContinue, ChangeKind: ChangeSameStrategy,
+	}}})
+	dec, err := g.BeforeMutation(context.Background(), Proposal{
+		Tool: "todo_write", ReadOnly: true, PlanTransition: true,
+		PlanBefore: "1. Keep API [in_progress]", PlanAfter: "1. Rephrase API work [in_progress]",
+	})
+	if err != nil || !dec.Allow || !dec.AuthorizePlanReplacement {
+		t.Fatalf("reviewer-continued plan transition = %+v, %v; want one-call authorization", dec, err)
 	}
 }
 
@@ -755,6 +768,12 @@ func TestAskYoloModesInactive(t *testing.T) {
 		// Mode inactive: ObserveResult ignored, no failure.
 		if st := g.Snapshot().Tasks["root"]; st != nil && st.Failure != nil {
 			t.Fatalf("mode %s armed failure", mode)
+		}
+		dec, err := g.BeforeMutation(context.Background(), Proposal{
+			Tool: "todo_write", ReadOnly: true, PlanTransition: true,
+		})
+		if err != nil || !dec.Allow || dec.AuthorizePlanReplacement {
+			t.Fatalf("mode %s plan bypass = %+v, %v; must not authorize replacement", mode, dec, err)
 		}
 	}
 }

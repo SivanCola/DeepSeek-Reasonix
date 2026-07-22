@@ -1023,6 +1023,35 @@ func TestPlanChangeApprovalBannerUsesNeutralCopyAndShowsPlans(t *testing.T) {
 	}
 }
 
+func TestPlanChangeApprovalStartsWithoutSelection(t *testing.T) {
+	m := newTestChatTUI()
+	m.ingestEvent(event.Event{
+		Kind: event.ApprovalRequest,
+		Approval: event.Approval{
+			ID: "plan-change", Tool: "todo_write", Kind: "recovery",
+			Recovery: &event.RecoveryApproval{ChangeKind: "strategy"},
+		},
+	})
+	if m.approvalSelection != -1 {
+		t.Fatalf("plan approval selection = %d, want no default", m.approvalSelection)
+	}
+	banner := ansi.Strip(m.renderApprovalBanner())
+	if strings.Contains(banner, "❯ 1.") || strings.Contains(banner, "❯ 2.") {
+		t.Fatalf("plan approval banner preselected a choice:\n%s", banner)
+	}
+
+	next, _ := m.handleApprovalKey(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = next.(chatTUI)
+	if m.pendingApproval == nil {
+		t.Fatal("Enter without a selection resolved the plan decision")
+	}
+	next, _ = m.handleApprovalKey(tea.KeyPressMsg{Code: tea.KeyDown})
+	m = next.(chatTUI)
+	if m.approvalSelection != 0 {
+		t.Fatalf("first navigation selected %d, want first choice", m.approvalSelection)
+	}
+}
+
 func TestApprovalArrowKeysMoveVisibleSelection(t *testing.T) {
 	m := newTestChatTUI()
 	m.pendingApproval = &event.Approval{ID: "approval", Tool: "bash", Subject: "echo hi"}
