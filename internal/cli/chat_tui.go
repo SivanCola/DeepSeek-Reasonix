@@ -2586,8 +2586,12 @@ func approvalChoiceLabels(a *event.Approval) []string {
 	choices := i18n.M.FreshHumanApprovalChoices
 	fresh := a.Fresh || control.RequiresFreshHumanApprovalTool(a.Tool)
 	if isRecoveryApprovalEvent(a) {
-		choices = i18n.M.RecoveryApprovalChoices
-		if a.Recovery != nil && a.Recovery.CanGrantTask {
+		if isRecoveryPlanChangeApproval(a) {
+			choices = i18n.M.RecoveryPlanChangeChoices
+		} else {
+			choices = i18n.M.RecoveryApprovalChoices
+		}
+		if !isRecoveryPlanChangeApproval(a) && a.Recovery != nil && a.Recovery.CanGrantTask {
 			choices = i18n.M.RecoveryTaskGrantChoices
 		}
 	} else if a.Tool == planApprovalTool {
@@ -2718,6 +2722,18 @@ func (m chatTUI) handleApprovalKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 func isRecoveryApprovalEvent(a *event.Approval) bool {
 	return a != nil && (a.Kind == recovery.ApprovalKindRecovery || a.Recovery != nil)
+}
+
+func isRecoveryPlanChangeApproval(a *event.Approval) bool {
+	if !isRecoveryApprovalEvent(a) || a.Recovery == nil {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(a.Recovery.ChangeKind)) {
+	case string(recovery.ChangeStrategy), string(recovery.ChangeScope):
+		return true
+	default:
+		return false
+	}
 }
 
 func freshApprovalAllowsSession(toolName string) bool {
@@ -3110,8 +3126,19 @@ func (m chatTUI) renderApprovalBanner() string {
 		return ""
 	}
 	var text string
+	var planDetails []string
 	if m.pendingApproval.Tool == planApprovalTool {
 		text = i18n.M.PlanApprovalPrompt
+	} else if isRecoveryPlanChangeApproval(m.pendingApproval) {
+		text = i18n.M.RecoveryPlanDecisionPrompt
+		if rec := m.pendingApproval.Recovery; rec != nil {
+			if before := compactApprovalPlan(rec.PlanBefore); before != "" {
+				planDetails = append(planDetails, fmt.Sprintf(i18n.M.RecoveryPlanBeforeFmt, truncateSubject(before, w)))
+			}
+			if after := compactApprovalPlan(rec.PlanAfter); after != "" {
+				planDetails = append(planDetails, fmt.Sprintf(i18n.M.RecoveryPlanAfterFmt, truncateSubject(after, w)))
+			}
+		}
 	} else {
 		name, detail := approvalToolDetails(m.pendingApproval.Tool)
 		subj := strings.TrimSpace(m.pendingApproval.Subject)
@@ -3123,6 +3150,9 @@ func (m chatTUI) renderApprovalBanner() string {
 	if reason := strings.TrimSpace(m.pendingApproval.Reason); reason != "" {
 		text += " · " + truncateSubject(reason, w)
 	}
+	if len(planDetails) > 0 {
+		text += "\n" + strings.Join(planDetails, "\n")
+	}
 	var b strings.Builder
 	b.WriteString("⏸ " + text + "\n")
 	for i, choice := range approvalChoices(m.pendingApproval) {
@@ -3130,6 +3160,10 @@ func (m chatTUI) renderApprovalBanner() string {
 	}
 	b.WriteString(dim("↑/↓ navigate · Enter select · y/a/p/n shortcuts"))
 	return choicePanelStyle.Width(w).Render(b.String())
+}
+
+func compactApprovalPlan(plan string) string {
+	return strings.Join(strings.Fields(strings.ReplaceAll(strings.TrimSpace(plan), "\n", " · ")), " ")
 }
 
 // approvalToolDetails turns provider-visible tool IDs into user-facing labels.
