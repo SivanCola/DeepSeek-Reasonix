@@ -1020,7 +1020,7 @@ func TestResolvedCapabilityDispatchRefreshesWriterClassification(t *testing.T) {
 		events = append(events, e)
 	}))
 
-	results, _ := a.executeBatch(context.Background(), []provider.ToolCall{call})
+	results := a.executeBatch(context.Background(), []provider.ToolCall{call}).results
 	if calls != 1 || len(results) != 1 || results[0] != "target executed" {
 		t.Fatalf("execution calls=%d results=%v", calls, results)
 	}

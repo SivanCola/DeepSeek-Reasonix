@@ -223,6 +223,7 @@ export function ApprovalModal({
   onAnswer,
   onResolveRecovery,
   onRevisePlan,
+  onExitPlan,
   onStop,
   cwd,
   tabId,
@@ -291,6 +292,9 @@ export function ApprovalModal({
   const recoveryGuidanceRef = useRef<HTMLTextAreaElement | null>(null);
   const recoveryGuidanceTriggerRef = useRef<HTMLButtonElement | null>(null);
   const consumedInsertIdRef = useRef(0);
+  const onRevisionActiveChangeRef = useRef(onRevisionActiveChange);
+  const revisionActiveRef = useRef(false);
+  onRevisionActiveChangeRef.current = onRevisionActiveChange;
   // When consecutive approvals arrive, animate the old card out before
   // the new one slides in.  GSAP fromTo on the shelf wrapper avoids the
   // jarring pop when the API cycles through 4+ pending approvals.
@@ -382,6 +386,15 @@ export function ApprovalModal({
           desc: t("approval.revisePlanDesc"),
           kind: "toggle-revision",
         },
+        ...(onExitPlan
+          ? [{
+              key: "3",
+              label: t("approval.exitPlanWithoutExecution"),
+              desc: t("approval.exitPlanWithoutExecutionDesc"),
+              kind: "direct" as const,
+              run: () => onExitPlan(),
+            }]
+          : []),
       ]
     : [
         {
@@ -567,13 +580,14 @@ export function ApprovalModal({
   }, [actionCount, activateAction, confirmSelected, onStop, submitting, isPlanApproval, isRecoveryApproval, isRecoveryPlanChange, recoveryGuidanceOpen, toolActions]);
 
   useEffect(() => {
-    if (revisionOpen) {
-      onRevisionActiveChange?.(true);
-      inputRef.current?.focus();
-      return () => onRevisionActiveChange?.(false);
-    }
-    onRevisionActiveChange?.(false);
-  }, [revisionOpen, onRevisionActiveChange]);
+    revisionActiveRef.current = revisionOpen;
+    onRevisionActiveChangeRef.current?.(revisionOpen);
+    if (revisionOpen) inputRef.current?.focus();
+  }, [revisionOpen]);
+
+  useEffect(() => () => {
+    if (revisionActiveRef.current) onRevisionActiveChangeRef.current?.(false);
+  }, []);
 
   const focusRevisionInput = (caret = revisionText.length) => {
     requestAnimationFrame(() => {
