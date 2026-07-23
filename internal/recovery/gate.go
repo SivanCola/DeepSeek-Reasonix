@@ -289,11 +289,16 @@ func (g *Gate) Resolve(id string, action Action, feedback string) error {
 		}
 		if st != nil {
 			st.reviewRejects = 0
+			st.reviewFingerprint = ""
+			st.reviewScope = ""
 		}
 		g.metrics.HumanContinues++
 	case ActionRevise:
 		if st != nil {
-			st.reviewRejects = 0
+			// Revise rejects the pending action and starts a fresh recovery
+			// episode. Keeping the old failure count here can make every
+			// alternative write inherit a task-wide three-strike lock.
+			st.clearFailure()
 		}
 		g.metrics.HumanRevises++
 		if strings.TrimSpace(feedback) == "" {
@@ -375,21 +380,29 @@ func (g *Gate) ObserveResult(_ context.Context, obs Observation) string {
 		g.tasks[taskID] = st
 	}
 
-	// Already recovering and another recovery op failed: raise failure count.
+	// Only exact repeats in the same execution scope share a failure budget.
+	// A different command/write or a new ordinary user turn starts a fresh
+	// recovery episode instead of inheriting a task-wide strike count.
 	if st.failure != nil {
-		if st.failure.failureCount < 255 {
-			st.failure.failureCount++
+		fingerprint := observationFingerprint(obs)
+		if sameRecoveryScope(st.failure.taskScope, obs.TaskScopeID) && st.failure.evidence.Fingerprint == fingerprint {
+			if st.failure.failureCount < 255 {
+				st.failure.failureCount++
+			}
+			st.failure.evidence.ErrSummary = firstNonEmpty(obs.ErrSummary, st.failure.evidence.ErrSummary)
+			st.failure.evidence.OutputExcerpt = clip(obs.Output, 1500)
+			st.reviewRejects = 0
+			st.reviewFingerprint = ""
+			st.reviewScope = ""
+			g.metrics.FailureEvents++
+			guidance := g.recoveryGuidanceLocked(st)
+			g.persistUnlocked()
+			return guidance
 		}
-		st.failure.evidence.ErrSummary = firstNonEmpty(obs.ErrSummary, st.failure.evidence.ErrSummary)
-		st.failure.evidence.OutputExcerpt = clip(obs.Output, 1500)
-		st.reviewRejects = 0
-		g.metrics.FailureEvents++
-		guidance := g.recoveryGuidanceLocked(st)
-		g.persistUnlocked()
-		return guidance
+		st.clearFailure()
 	}
 
-	fp := CallFingerprint(obs.Tool, obs.Subject, "", obs.Args)
+	fp := observationFingerprint(obs)
 	st.failure = &activeFailure{
 		evidence: FailureEvent{
 			Tool:          obs.Tool,
@@ -399,6 +412,7 @@ func (g *Gate) ObserveResult(_ context.Context, obs Observation) string {
 			OutputExcerpt: clip(obs.Output, 1500),
 			SourceAgent:   obs.AgentID,
 			TaskID:        taskID,
+			TaskScopeID:   persistentRecoveryScope(obs.TaskScopeID),
 			ReadOnly:      obs.ReadOnly,
 			Verification:  obs.Verification,
 			Mutates:       obs.Mutates,
@@ -408,6 +422,7 @@ func (g *Gate) ObserveResult(_ context.Context, obs Observation) string {
 		},
 		failureCount:  1,
 		safeRetryUsed: false,
+		taskScope:     strings.TrimSpace(obs.TaskScopeID),
 	}
 	st.reviewRejects = 0
 	st.guidanceSent = false
@@ -446,7 +461,7 @@ func (g *Gate) BeforeMutation(ctx context.Context, proposal Proposal) (Decision,
 		return Decision{
 			Allow:   false,
 			Blocked: true,
-			Message: repeatedFailureStopMessage(int(facts.FailureCount)),
+			Message: repeatedFailureStopMessage(int(facts.FailureCount), proposal),
 		}, nil
 	default:
 		return Decision{Allow: true}, nil
@@ -474,11 +489,23 @@ func (g *Gate) classify(proposal Proposal) (Facts, *FailureEvent, []string, stri
 	st := g.tasks[taskID]
 	var failure *FailureEvent
 	var diagNotes []string
+	stateChanged := false
+	if st != nil && st.failure != nil && (!facts.AutoMode || recoveryScopeChanged(st.failure.taskScope, proposal.TaskScopeID)) {
+		st.clearFailure()
+		stateChanged = true
+	}
+	if st != nil && st.reviewRejects > 0 && (!facts.AutoMode || recoveryScopeChanged(st.reviewScope, proposal.TaskScopeID)) {
+		st.reviewRejects = 0
+		st.reviewFingerprint = ""
+		st.reviewScope = ""
+		stateChanged = true
+	}
 	if st != nil && st.failure != nil {
 		failure = st.evidenceCopy()
 		diagNotes = st.diagnosisNotes()
 		facts.HasActiveFailure = true
 		facts.FailureCount = st.failureCount()
+		facts.SameFailedOperation = sameFailedOperation(failure, proposal)
 		// Safe verification retry availability is host-classified.
 		if IsSafeVerificationRetry(failure, proposal) && st.safeRetryAvailable() {
 			facts.SafeRetryAvailable = true
@@ -498,6 +525,9 @@ func (g *Gate) classify(proposal Proposal) (Facts, *FailureEvent, []string, stri
 		g.metrics.TaskGrantUses++
 	}
 	g.mu.Unlock()
+	if stateChanged {
+		g.persist()
+	}
 
 	if failure != nil {
 		if !proposal.ExpandedScope {
@@ -553,6 +583,8 @@ func (g *Gate) reviewOrEscalate(ctx context.Context, taskID, fp string, proposal
 			g.metrics.ReviewContinues++
 			if current := g.tasks[taskID]; current != nil {
 				current.reviewRejects = 0
+				current.reviewFingerprint = ""
+				current.reviewScope = ""
 			}
 			g.mu.Unlock()
 			g.persist()
@@ -571,7 +603,7 @@ func (g *Gate) reviewOrEscalate(ctx context.Context, taskID, fp string, proposal
 		// Risk and uncertainty are technical blockers, not user-owned choices.
 		// Give the exact reason back to the agent; repeated blocks stop and report
 		// instead of escalating into an execution-safety prompt.
-		blocks := g.recordReviewBlock(taskID, verdict)
+		blocks := g.recordReviewBlock(taskID, fp, proposal.TaskScopeID, verdict)
 		if blocks < g.opts.MaxReviewBlocks {
 			return Decision{
 				Allow:   false,
@@ -582,7 +614,7 @@ func (g *Gate) reviewOrEscalate(ctx context.Context, taskID, fp string, proposal
 		return Decision{
 			Allow:   false,
 			Blocked: true,
-			Message: reviewerStopMessage(verdict, blocks),
+			Message: reviewerStopMessage(verdict, blocks, proposal),
 		}, nil
 	}
 	if proposal.PlanTransition {
@@ -890,12 +922,18 @@ func headlessBlockerMessage(pending PendingProposal, failure *FailureEvent) stri
 	return b.String()
 }
 
-func (g *Gate) recordReviewBlock(taskID string, verdict ReviewVerdict) int {
+func (g *Gate) recordReviewBlock(taskID, fingerprint, taskScope string, verdict ReviewVerdict) int {
 	g.mu.Lock()
 	st := g.tasks[taskID]
 	if st == nil {
 		st = &taskRuntime{}
 		g.tasks[taskID] = st
+	}
+	taskScope = strings.TrimSpace(taskScope)
+	if st.reviewFingerprint != fingerprint || st.reviewScope != taskScope {
+		st.reviewRejects = 0
+		st.reviewFingerprint = fingerprint
+		st.reviewScope = taskScope
 	}
 	if st.reviewRejects < 255 {
 		st.reviewRejects++
@@ -918,19 +956,58 @@ func reviewerBlockerMessage(verdict ReviewVerdict, attempt, limit int) string {
 	)
 }
 
-func reviewerStopMessage(verdict ReviewVerdict, attempts int) string {
+func reviewerStopMessage(verdict ReviewVerdict, attempts int, proposal Proposal) string {
 	reason := firstNonEmpty(verdict.Rationale, "the proposed transition remains technically unresolved")
+	operation := clip(firstNonEmpty(proposal.Subject, proposal.Tool), 240)
 	return fmt.Sprintf(
-		"blocked: Auto stopped after %d rejected plan or recovery proposals: %s. Stop retrying mutations and report the technical blocker to the user; only use the ask tool if a genuine user-owned choice exists.",
-		attempts, reason,
+		"blocked: Auto stopped retrying this proposal after %d reviewer rejections: %s (%s). Do not retry this proposal in the current turn; diagnose it or use a different task-aligned approach. Other operations remain available. Only use the ask tool for a genuine user-owned choice.",
+		attempts, operation, reason,
 	)
 }
 
-func repeatedFailureStopMessage(failures int) string {
+func repeatedFailureStopMessage(failures int, proposal Proposal) string {
+	operation := clip(firstNonEmpty(proposal.Subject, proposal.Tool), 240)
 	return fmt.Sprintf(
-		"blocked: Auto stopped after %d consecutive execution failures. Do not ask the user to approve execution risk; report the blocker and evidence, or ask only if resolving it requires a genuine user-owned product or plan choice.",
-		failures,
+		"blocked: Auto stopped repeating this operation after %d consecutive failures: %s. Do not retry the same operation in this turn. Diagnose it with read-only tools, then use a different task-aligned edit or verification approach; other operations remain available. Ask the user only for a genuine product or plan choice.",
+		failures, operation,
 	)
+}
+
+func observationFingerprint(obs Observation) string {
+	return CallFingerprint(obs.Tool, obs.Subject, "", obs.Args)
+}
+
+func sameRecoveryScope(current, next string) bool {
+	current = strings.TrimSpace(current)
+	next = strings.TrimSpace(next)
+	return current == next
+}
+
+func recoveryScopeChanged(current, next string) bool {
+	next = strings.TrimSpace(next)
+	if next == "" {
+		return false
+	}
+	return strings.TrimSpace(current) != next
+}
+
+func persistentRecoveryScope(scope string) string {
+	scope = strings.TrimSpace(scope)
+	if strings.HasPrefix(scope, "goal:") {
+		return scope
+	}
+	return ""
+}
+
+func sameFailedOperation(failure *FailureEvent, proposal Proposal) bool {
+	if failure == nil {
+		return false
+	}
+	want := strings.TrimSpace(failure.Fingerprint)
+	if want == "" {
+		want = CallFingerprint(failure.Tool, failure.Subject, "", failure.Args)
+	}
+	return want == CallFingerprint(proposal.Tool, proposal.Subject, "", proposal.Args)
 }
 
 func normalizeVerdict(v ReviewVerdict, failure *FailureEvent, proposal Proposal, diagNotes []string) ReviewVerdict {

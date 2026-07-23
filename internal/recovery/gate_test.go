@@ -445,6 +445,195 @@ func TestSafeVerificationRetryOnce(t *testing.T) {
 	}
 }
 
+func TestRepeatedFailureStopsOnlyTheSameOperation(t *testing.T) {
+	g := NewGate(Options{Reviewer: staticReviewer{ReviewVerdict{
+		Outcome: ReviewContinue, ChangeKind: ChangeSameStrategy,
+	}}})
+	failedArgs := json.RawMessage(`{"command":"mvn test"}`)
+	failed := Observation{
+		TaskScopeID: "turn:1", Tool: "bash", Subject: "mvn test",
+		Verification: true, Args: failedArgs, ErrSummary: "exit 1",
+	}
+	retry := Proposal{
+		TaskScopeID: "turn:1", Tool: "bash", Subject: "mvn test",
+		Verification: true, Args: failedArgs,
+	}
+	g.ObserveResult(context.Background(), failed)
+	for attempt := 0; attempt < 2; attempt++ {
+		dec, err := g.BeforeMutation(context.Background(), retry)
+		if err != nil || !dec.Allow {
+			t.Fatalf("retry %d = %+v, %v", attempt+1, dec, err)
+		}
+		g.ObserveResult(context.Background(), failed)
+	}
+
+	same, err := g.BeforeMutation(context.Background(), retry)
+	if err != nil || same.Allow || !same.Blocked || !strings.Contains(same.Message, "mvn test") {
+		t.Fatalf("same operation = %+v, %v; want a scoped stop", same, err)
+	}
+
+	alternative, err := g.BeforeMutation(context.Background(), Proposal{
+		TaskScopeID: "turn:1", Tool: "write_file", Subject: "src/Fix.java", Mutates: true,
+		Args: json.RawMessage(`{"path":"src/Fix.java","content":"fixed"}`),
+	})
+	if err != nil || !alternative.Allow || alternative.Blocked {
+		t.Fatalf("alternative edit = %+v, %v; want recovery to continue", alternative, err)
+	}
+}
+
+func TestDifferentFailureStartsFreshRecoveryEpisode(t *testing.T) {
+	g := NewGate(Options{})
+	for i := 0; i < 2; i++ {
+		g.ObserveResult(context.Background(), Observation{
+			TaskScopeID: "turn:1", Tool: "bash", Subject: "go test ./...", Verification: true,
+			Args: json.RawMessage(`{"command":"go test ./..."}`), ErrSummary: "go failed",
+		})
+	}
+	g.ObserveResult(context.Background(), Observation{
+		TaskScopeID: "turn:1", Tool: "bash", Subject: "npm test", Verification: true,
+		Args: json.RawMessage(`{"command":"npm test"}`), ErrSummary: "npm failed",
+	})
+	st := g.Snapshot().Tasks["root"]
+	if st == nil || st.Failure == nil || st.ConsecutiveFails != 1 || st.Failure.Subject != "npm test" {
+		t.Fatalf("fresh failure episode = %+v", st)
+	}
+}
+
+func TestNewOrdinaryTurnRetiresTechnicalFailureLatch(t *testing.T) {
+	g := NewGate(Options{})
+	args := json.RawMessage(`{"command":"go test ./..."}`)
+	for i := 0; i < 3; i++ {
+		g.ObserveResult(context.Background(), Observation{
+			TaskScopeID: "turn:1", Tool: "bash", Subject: "go test ./...",
+			Verification: true, Args: args, ErrSummary: "fail",
+		})
+	}
+	dec, err := g.BeforeMutation(context.Background(), Proposal{
+		TaskScopeID: "turn:2", Tool: "bash", Subject: "go test ./...",
+		Verification: true, Args: args,
+	})
+	if err != nil || !dec.Allow || dec.Blocked {
+		t.Fatalf("new turn = %+v, %v; want fresh Auto episode", dec, err)
+	}
+	if st := g.Snapshot().Tasks["root"]; st != nil && st.Failure != nil {
+		t.Fatalf("new turn retained old technical failure: %+v", st)
+	}
+}
+
+func TestLeavingAutoRetiresTechnicalFailureLatch(t *testing.T) {
+	mode := "auto"
+	g := NewGate(Options{Mode: func() string { return mode }})
+	args := json.RawMessage(`{"command":"go test ./..."}`)
+	for i := 0; i < 3; i++ {
+		g.ObserveResult(context.Background(), Observation{
+			TaskScopeID: "goal:ship", Tool: "bash", Subject: "go test ./...",
+			Verification: true, Args: args, ErrSummary: "fail",
+		})
+	}
+	mode = "yolo"
+	dec, err := g.BeforeMutation(context.Background(), Proposal{
+		TaskScopeID: "goal:ship", Tool: "write_file", Subject: "a.go", Mutates: true,
+		Args: json.RawMessage(`{"path":"a.go","content":"x"}`),
+	})
+	if err != nil || !dec.Allow || dec.Blocked {
+		t.Fatalf("yolo bypass = %+v, %v", dec, err)
+	}
+	mode = "auto"
+	dec, err = g.BeforeMutation(context.Background(), Proposal{
+		TaskScopeID: "goal:ship", Tool: "write_file", Subject: "b.go", Mutates: true,
+		Args: json.RawMessage(`{"path":"b.go","content":"y"}`),
+	})
+	if err != nil || !dec.Allow || dec.Blocked {
+		t.Fatalf("return to Auto = %+v, %v; want no stale latch", dec, err)
+	}
+	if st := g.Snapshot().Tasks["root"]; st != nil && st.Failure != nil {
+		t.Fatalf("mode change retained old failure: %+v", st)
+	}
+}
+
+func TestReviseClosesFailureEpisodeBeforeAlternative(t *testing.T) {
+	g := NewGate(Options{Reviewer: staticReviewer{ReviewVerdict{
+		Outcome: ReviewConfirm, ChangeKind: ChangeStrategy, Rationale: "choose another implementation",
+	}}})
+	g.ObserveResult(context.Background(), Observation{
+		TaskScopeID: "turn:1", Tool: "bash", Subject: "go test ./...", Verification: true,
+		Args: json.RawMessage(`{"command":"go test ./..."}`), ErrSummary: "fail",
+	})
+	g.opts.EmitPrompt = func(_ context.Context, taskID string, _ PendingProposal, _ *FailureEvent) (string, error) {
+		g.BindApprovalID(taskID, "revise-1")
+		if err := g.Resolve("revise-1", ActionRevise, "use a targeted edit"); err != nil {
+			t.Fatalf("Resolve revise: %v", err)
+		}
+		return "revise-1", nil
+	}
+	dec, err := g.BeforeMutation(context.Background(), Proposal{
+		TaskScopeID: "turn:1", Tool: "write_file", Subject: "a.go", Mutates: true,
+		Args: json.RawMessage(`{"path":"a.go","content":"first"}`),
+	})
+	if err != nil || dec.Allow || !dec.Blocked || !strings.Contains(dec.Message, "targeted edit") {
+		t.Fatalf("revise decision = %+v, %v", dec, err)
+	}
+	if st := g.Snapshot().Tasks["root"]; st != nil && st.Failure != nil {
+		t.Fatalf("revise retained old failure episode: %+v", st)
+	}
+
+	alternative, err := g.BeforeMutation(context.Background(), Proposal{
+		TaskScopeID: "turn:1", Tool: "write_file", Subject: "b.go", Mutates: true,
+		Args: json.RawMessage(`{"path":"b.go","content":"alternative"}`),
+	})
+	if err != nil || !alternative.Allow || alternative.Blocked {
+		t.Fatalf("alternative after revise = %+v, %v", alternative, err)
+	}
+}
+
+func TestReviewerRejectBudgetIsProposalScoped(t *testing.T) {
+	g := NewGate(Options{Reviewer: staticReviewer{ReviewVerdict{
+		Outcome: ReviewConfirm, ChangeKind: ChangeUncertain, Rationale: "not proven",
+	}}})
+	g.ObserveResult(context.Background(), Observation{
+		TaskScopeID: "turn:1", Tool: "bash", Subject: "go test", Verification: true,
+		Args: json.RawMessage(`{"command":"go test"}`), ErrSummary: "fail",
+	})
+	proposalA := Proposal{TaskScopeID: "turn:1", Tool: "write_file", Subject: "a.go", Mutates: true, Args: json.RawMessage(`{"path":"a.go"}`)}
+	for i := 0; i < 3; i++ {
+		dec, err := g.BeforeMutation(context.Background(), proposalA)
+		if err != nil || dec.Allow || !dec.Blocked {
+			t.Fatalf("proposal A attempt %d = %+v, %v", i+1, dec, err)
+		}
+	}
+	proposalB := Proposal{TaskScopeID: "turn:1", Tool: "write_file", Subject: "b.go", Mutates: true, Args: json.RawMessage(`{"path":"b.go"}`)}
+	dec, err := g.BeforeMutation(context.Background(), proposalB)
+	if err != nil || dec.Allow || !dec.Blocked || !strings.Contains(dec.Message, "attempt 1/3") {
+		t.Fatalf("proposal B = %+v, %v; want a fresh reviewer budget", dec, err)
+	}
+	proposalA.TaskScopeID = "turn:2"
+	dec, err = g.BeforeMutation(context.Background(), proposalA)
+	if err != nil || !dec.Allow || dec.Blocked {
+		t.Fatalf("proposal A in a new turn = %+v, %v; want the old recovery episode retired", dec, err)
+	}
+}
+
+func TestReviewerRejectBudgetResetsAcrossPlanTurns(t *testing.T) {
+	g := NewGate(Options{Reviewer: staticReviewer{ReviewVerdict{
+		Outcome: ReviewConfirm, ChangeKind: ChangeUncertain, Rationale: "plan relationship not proven",
+	}}})
+	proposal := Proposal{
+		TaskScopeID: "turn:1", Tool: "todo_write", ReadOnly: true, PlanTransition: true,
+		PlanBefore: "1. Existing [in_progress]", PlanAfter: "1. Replacement [in_progress]",
+	}
+	for attempt := 1; attempt <= 2; attempt++ {
+		dec, err := g.BeforeMutation(context.Background(), proposal)
+		if err != nil || dec.Allow || !dec.Blocked || !strings.Contains(dec.Message, fmt.Sprintf("attempt %d/3", attempt)) {
+			t.Fatalf("turn 1 attempt %d = %+v, %v", attempt, dec, err)
+		}
+	}
+	proposal.TaskScopeID = "turn:2"
+	dec, err := g.BeforeMutation(context.Background(), proposal)
+	if err != nil || dec.Allow || !dec.Blocked || !strings.Contains(dec.Message, "attempt 1/3") {
+		t.Fatalf("turn 2 decision = %+v, %v; want a fresh reviewer budget", dec, err)
+	}
+}
+
 func TestExecutionRiskDoesNotForceAutoConfirmation(t *testing.T) {
 	g := NewGate(Options{Reviewer: staticReviewer{ReviewVerdict{
 		Outcome: ReviewContinue, ChangeKind: ChangeSameStrategy,
@@ -619,7 +808,7 @@ func TestReviewerBlockReturnsReasonThenStops(t *testing.T) {
 		}
 	}
 	dec, err := g.BeforeMutation(context.Background(), proposal)
-	if err != nil || dec.Allow || !dec.Blocked || prompts != 0 || !strings.Contains(dec.Message, "Stop retrying") {
+	if err != nil || dec.Allow || !dec.Blocked || prompts != 0 || !strings.Contains(dec.Message, "Do not retry this proposal") {
 		t.Fatalf("stopped decision = %+v, %v; prompts=%d", dec, err, prompts)
 	}
 }
@@ -842,6 +1031,49 @@ func TestRestoreDropsStalePendingAuthorization(t *testing.T) {
 	}
 	if st.Pending != nil || st.ApprovalID != "" {
 		t.Fatalf("stale authorization survived restore: %+v", st)
+	}
+}
+
+func TestRestoreKeepsGoalScopeButRetiresOrdinaryTurnScope(t *testing.T) {
+	args := json.RawMessage(`{"path":"a.go","content":"x"}`)
+	goal := NewGate(Options{})
+	for i := 0; i < 3; i++ {
+		goal.ObserveResult(context.Background(), Observation{
+			TaskScopeID: "goal:ship", Tool: "write_file", Subject: "a.go",
+			Mutates: true, Args: args, ErrSummary: "fail",
+		})
+	}
+	goalSnap := goal.Snapshot()
+	if got := goalSnap.Tasks["root"].Failure.TaskScopeID; got != "goal:ship" {
+		t.Fatalf("persisted goal scope = %q", got)
+	}
+	restoredGoal := NewGate(Options{})
+	restoredGoal.Restore(goalSnap)
+	dec, err := restoredGoal.BeforeMutation(context.Background(), Proposal{
+		TaskScopeID: "goal:ship", Tool: "write_file", Subject: "a.go", Mutates: true, Args: args,
+	})
+	if err != nil || dec.Allow || !dec.Blocked {
+		t.Fatalf("restored goal decision = %+v, %v; want goal-local stop retained", dec, err)
+	}
+
+	turn := NewGate(Options{})
+	for i := 0; i < 3; i++ {
+		turn.ObserveResult(context.Background(), Observation{
+			TaskScopeID: "turn:1", Tool: "write_file", Subject: "a.go",
+			Mutates: true, Args: args, ErrSummary: "fail",
+		})
+	}
+	turnSnap := turn.Snapshot()
+	if got := turnSnap.Tasks["root"].Failure.TaskScopeID; got != "" {
+		t.Fatalf("ordinary turn scope must not persist, got %q", got)
+	}
+	restoredTurn := NewGate(Options{})
+	restoredTurn.Restore(turnSnap)
+	dec, err = restoredTurn.BeforeMutation(context.Background(), Proposal{
+		TaskScopeID: "turn:2", Tool: "write_file", Subject: "a.go", Mutates: true, Args: args,
+	})
+	if err != nil || !dec.Allow || dec.Blocked {
+		t.Fatalf("restored ordinary turn = %+v, %v; want stale latch retired", dec, err)
 	}
 }
 

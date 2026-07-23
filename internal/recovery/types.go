@@ -56,13 +56,17 @@ type ReviewVerdict struct {
 // SafeRetryLeft/RepeatCount/DiagnosisNotes remain on the wire for old
 // snapshots; runtime truth lives on activeFailure.
 type FailureEvent struct {
-	Tool           string          `json:"tool"`
-	ArgsSummary    string          `json:"args_summary,omitempty"`
-	Subject        string          `json:"subject,omitempty"`
-	ErrSummary     string          `json:"err_summary,omitempty"`
-	OutputExcerpt  string          `json:"output_excerpt,omitempty"`
-	SourceAgent    string          `json:"source_agent,omitempty"`
-	TaskID         string          `json:"task_id,omitempty"`
+	Tool          string `json:"tool"`
+	ArgsSummary   string `json:"args_summary,omitempty"`
+	Subject       string `json:"subject,omitempty"`
+	ErrSummary    string `json:"err_summary,omitempty"`
+	OutputExcerpt string `json:"output_excerpt,omitempty"`
+	SourceAgent   string `json:"source_agent,omitempty"`
+	TaskID        string `json:"task_id,omitempty"`
+	// TaskScopeID persists only stable goal scopes. Ordinary turn scopes are
+	// runtime-local and intentionally omitted so a restart cannot revive a stale
+	// technical latch for a new user turn.
+	TaskScopeID    string          `json:"task_scope_id,omitempty"`
 	ReadOnly       bool            `json:"read_only,omitempty"`
 	Verification   bool            `json:"verification,omitempty"`
 	Mutates        bool            `json:"mutates,omitempty"`

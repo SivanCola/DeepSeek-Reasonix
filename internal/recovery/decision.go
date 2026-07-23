@@ -46,11 +46,12 @@ type Facts struct {
 	PlanTransition bool
 
 	// Active failure context (zero values when none).
-	HasActiveFailure   bool
-	ExpandedScope      bool
-	StrategyChanged    bool
-	SafeRetryAvailable bool
-	FailureCount       uint8 // 1 = first failure; 2+ = second failure in recovery
+	HasActiveFailure    bool
+	SameFailedOperation bool
+	ExpandedScope       bool
+	StrategyChanged     bool
+	SafeRetryAvailable  bool
+	FailureCount        uint8 // 1 = first failure; 2+ = second failure in recovery
 }
 
 // Decision is the pure routing result.
@@ -69,7 +70,7 @@ type DecisionResult struct {
 //  3. read-only diagnosis → allow
 //  4. no active failure → allow ordinary mutations
 //  5. first safe verification retry → allow (+ consume budget)
-//  6. three consecutive failures → stop and report
+//  6. three consecutive failures of the same operation → stop repeating it
 //  7. remaining failure-recovery mutations → reviewer
 //
 // Scope and strategy changes are not user decisions by themselves. When they
@@ -99,7 +100,7 @@ func Decide(f Facts) DecisionResult {
 	// Repeated technical failure is not a user-owned product decision. Stop the
 	// mutation and let the agent report the blocker instead of asking whether to
 	// continue an unsafe or unproven execution path.
-	if f.FailureCount >= 3 {
+	if f.FailureCount >= 3 && f.SameFailedOperation {
 		return DecisionResult{Route: RouteStop}
 	}
 	return DecisionResult{Route: RouteReview}

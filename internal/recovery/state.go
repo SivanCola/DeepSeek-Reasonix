@@ -12,7 +12,12 @@ import (
 type taskRuntime struct {
 	failure       *activeFailure
 	reviewRejects uint8
-	guidanceSent  bool
+	// reviewFingerprint scopes the reviewer rejection budget to one exact
+	// proposal. A different recovery action starts with a fresh budget instead
+	// of inheriting a task-wide lock.
+	reviewFingerprint string
+	reviewScope       string
+	guidanceSent      bool
 	// taskGrants are runtime-only semantic authorizations. Snapshot/Restore never
 	// serializes them, so a restart or session switch always drops the grant.
 	taskGrants     map[string]struct{}
@@ -25,6 +30,9 @@ type activeFailure struct {
 	failureCount  uint8
 	safeRetryUsed bool
 	diagnosis     []string
+	// taskScope matches the live recovery episode. Stable goal scopes survive a
+	// restart; ordinary turn scopes restore empty and retire on the next turn.
+	taskScope string
 }
 
 const (
@@ -75,6 +83,8 @@ func (st *taskRuntime) clearFailure() {
 	}
 	st.failure = nil
 	st.reviewRejects = 0
+	st.reviewFingerprint = ""
+	st.reviewScope = ""
 	st.guidanceSent = false
 }
 
@@ -162,6 +172,7 @@ func taskRuntimeFromState(st *TaskState) *taskRuntime {
 			OutputExcerpt: st.Failure.OutputExcerpt,
 			SourceAgent:   st.Failure.SourceAgent,
 			TaskID:        st.Failure.TaskID,
+			TaskScopeID:   st.Failure.TaskScopeID,
 			ReadOnly:      st.Failure.ReadOnly,
 			Verification:  st.Failure.Verification,
 			Mutates:       st.Failure.Mutates,
@@ -171,6 +182,7 @@ func taskRuntimeFromState(st *TaskState) *taskRuntime {
 		},
 		failureCount: 1,
 		diagnosis:    append([]string(nil), st.Failure.DiagnosisNotes...),
+		taskScope:    strings.TrimSpace(st.Failure.TaskScopeID),
 	}
 	switch {
 	case st.ConsecutiveFails > 0:

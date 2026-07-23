@@ -33,6 +33,11 @@ type RecoveryObservation struct {
 	AgentID string
 	// TaskID isolates recovery state across concurrent top-level tasks.
 	TaskID string
+	// TaskScopeID is the host-owned execution scope that produced this result.
+	// Ordinary user turns get a fresh scope, while goal continuations reuse one.
+	// It lets Auto retire a technical failure latch when the user starts a new
+	// ordinary turn without discarding goal-local recovery context.
+	TaskScopeID string
 	// Tool is the permission/evidence name used for the call.
 	Tool string
 	// Args are the resolved arguments for the call.
@@ -155,6 +160,7 @@ func (a *Agent) observeRecoveryResult(ctx context.Context, toolName string, args
 	guidance := a.recoveryGate.ObserveResult(ctx, RecoveryObservation{
 		AgentID:      a.recoveryAgentID,
 		TaskID:       a.recoveryTaskID,
+		TaskScopeID:  recoveryTaskScopeID(a.deliveryScopeID, a.recoveryRunSeq.Load()),
 		Tool:         toolName,
 		Args:         args,
 		Subject:      recoverySubject(toolName, args),

@@ -3188,7 +3188,9 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 			return toolOutcome{
 				output:  msg,
 				blocked: true,
-				errMsg:  "blocked by Auto Guard",
+				// Surface the concrete stopped operation and next step in the
+				// failed tool card instead of exposing only an internal guard name.
+				errMsg: firstLine(msg),
 			}
 		}
 		planReplacementAuthorized = planTransition && dec.AuthorizePlanReplacement
